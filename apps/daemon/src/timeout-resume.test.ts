@@ -5,8 +5,9 @@ import { dirname, join } from "node:path";
 import { type ActivityEvent, message } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  incompleteResumeLines,
   KEEPS_WORKSPACE_ROLES,
-  planTimeoutResume,
+  planContinuation,
   timedOutRunBefore,
   timeoutMinutes,
   timeoutResumeLines,
@@ -120,7 +121,7 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
     });
   });
 
-  describe("planTimeoutResume", () => {
+  describe("planContinuation", () => {
     const sha = (text: string) => createHash("sha256").update(text).digest("hex");
     const MAIN = "projects/-workspace/sess-1.jsonl";
     /** 写したファイルを置き、その記録（AgentSessionArchived）を作る。 */
@@ -155,7 +156,7 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
     const run = { role: "implement", agentId: "a", runtime: "claude-code" };
 
     it("同じ役割・同じエージェントで、写したファイルが記録どおりなら続ける", async () => {
-      const plan = await planTimeoutResume([archive("r1"), timedOut("r1")], run, filesDirOf);
+      const plan = await planContinuation([archive("r1"), timedOut("r1")], run, filesDirOf);
       expect(plan).toMatchObject({
         mode: "resume",
         sessionId: "sess-1",
@@ -164,9 +165,9 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
     });
 
     it("前の実行が時間切れでない・別の役割なら、何も決めない（記録もしない）", async () => {
-      expect(await planTimeoutResume([archive("r1")], run, filesDirOf)).toBeUndefined();
+      expect(await planContinuation([archive("r1")], run, filesDirOf)).toBeUndefined();
       expect(
-        await planTimeoutResume([archive("r1"), timedOut("r1", "design")], run, filesDirOf),
+        await planContinuation([archive("r1"), timedOut("r1", "design")], run, filesDirOf),
       ).toBeUndefined();
     });
 
@@ -174,7 +175,7 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
       ["エージェントの ID が違う", { ...run, agentId: "b" }, undefined, "agent_changed"],
       ["AI の種類が違う", { ...run, runtime: "codex" }, undefined, "agent_changed"],
     ] as const)("%s：続けない", async (_name, other, _x, reason) => {
-      const plan = await planTimeoutResume([archive("r1"), timedOut("r1")], other, filesDirOf);
+      const plan = await planContinuation([archive("r1"), timedOut("r1")], other, filesDirOf);
       expect(plan).toMatchObject({ mode: "restart", reason });
     });
 
@@ -190,7 +191,7 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
         [archive("r1", { payload: { sessionId: "../x" } }), timedOut("r1")],
       ];
       for (const events of cases) {
-        expect(await planTimeoutResume(events, run, filesDirOf)).toMatchObject({
+        expect(await planContinuation(events, run, filesDirOf)).toMatchObject({
           mode: "restart",
           reason: "no_session",
         });
@@ -203,12 +204,12 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
         ...(truncated.payload as { files: Record<string, unknown>[] }).files[0],
         truncated: { droppedBytes: 1, droppedLines: 1 },
       };
-      expect(await planTimeoutResume([truncated, timedOut("r1")], run, filesDirOf)).toMatchObject({
+      expect(await planContinuation([truncated, timedOut("r1")], run, filesDirOf)).toMatchObject({
         mode: "restart",
         reason: "truncated",
       });
       const noMain = archive("r1", { files: { "history.jsonl": "{}\n" } });
-      expect(await planTimeoutResume([noMain, timedOut("r1")], run, filesDirOf)).toMatchObject({
+      expect(await planContinuation([noMain, timedOut("r1")], run, filesDirOf)).toMatchObject({
         mode: "restart",
         reason: "files_broken",
       });
@@ -217,16 +218,16 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
     it("写したファイルが書き換えられた・消えた・置き場所が分からなければ files_broken", async () => {
       const events = [archive("r1"), timedOut("r1")];
       writeFileSync(join(filesDirOf("r1"), MAIN), "tampered\n");
-      expect(await planTimeoutResume(events, run, filesDirOf)).toMatchObject({
+      expect(await planContinuation(events, run, filesDirOf)).toMatchObject({
         mode: "restart",
         reason: "files_broken",
       });
       rmSync(join(filesDirOf("r1"), MAIN));
-      expect(await planTimeoutResume(events, run, filesDirOf)).toMatchObject({
+      expect(await planContinuation(events, run, filesDirOf)).toMatchObject({
         mode: "restart",
         reason: "files_broken",
       });
-      expect(await planTimeoutResume(events, run, () => undefined)).toMatchObject({
+      expect(await planContinuation(events, run, () => undefined)).toMatchObject({
         mode: "restart",
         reason: "files_broken",
       });
@@ -237,7 +238,7 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
       const payload = { runtime: "codex", sessionId: "thread-1" };
       const codex = { role: "implement", agentId: "a", runtime: "codex" };
       expect(
-        await planTimeoutResume(
+        await planContinuation(
           [
             archive("r1", { files: { [path]: "{}\n" }, payload }),
             timedOut("r1", "implement", "a", "codex"),
@@ -248,7 +249,7 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
       ).toMatchObject({ mode: "resume", sessionId: "thread-1" });
       // 別のスレッドのファイルしか無ければ、続けられない
       expect(
-        await planTimeoutResume(
+        await planContinuation(
           [
             archive("r1", {
               files: { "sessions/2026/11/02/rollout-2026-11-02T10-00-00-other.jsonl": "{}\n" },
@@ -260,6 +261,195 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
           filesDirOf,
         ),
       ).toMatchObject({ mode: "restart", reason: "files_broken" });
+    });
+
+    describe("未完了で終わった実装の実行の続き（PBI-350）", () => {
+      const completed = (runId: string, step = "implement", agentId = "a") =>
+        ev("AgentRunCompleted", { runId, step, agentId, output: "" });
+      const incomplete = () => ev("ImplementationIncomplete", { remaining: ["docs"] });
+      const started = (runId: string) =>
+        ev("AgentRunStarted", { runId, step: "implement", agentId: "a" });
+      /** 未完了で終わった実装の実行（写した記録 → 完了 → 未完了の記録）。 */
+      const unfinished = (runId: string) => [archive(runId), completed(runId), incomplete()];
+
+      it("直前の実装の実行が未完了で終わったら、同じエージェントのセッションの続きから進める", async () => {
+        const plan = await planContinuation(unfinished("r1"), run, filesDirOf);
+        expect(plan).toEqual({
+          mode: "resume",
+          stopped: { runId: "r1", role: "implement", agentId: "a", runtime: "claude-code" },
+          cause: { kind: "incomplete", paused: false },
+          sessionId: "sess-1",
+          filesDir: filesDirOf("r1"),
+        });
+        // いま実行する実行の開始の記録は、別の実行に数えない
+        expect(
+          await planContinuation(
+            [...unfinished("r1"), started("r2")],
+            { ...run, runId: "r2" },
+            filesDirOf,
+          ),
+        ).toMatchObject({ mode: "resume", stopped: { runId: "r1" } });
+      });
+
+      it("続きの実行もまた未完了で終わったら、その実行のセッションを続ける（何度でも）", async () => {
+        const events = [
+          ...unfinished("r1"),
+          started("r2"),
+          { ...continued("r2", "r1") },
+          ...unfinished("r2"),
+        ];
+        expect(await planContinuation(events, run, filesDirOf)).toMatchObject({
+          mode: "resume",
+          stopped: { runId: "r2" },
+          cause: { kind: "incomplete", paused: false },
+        });
+      });
+
+      it("未完了の後にタスクが一時停止していたら、そのことを伝える（指示の全文を渡すため）", async () => {
+        const events = [
+          ...unfinished("r1"),
+          ev("TaskPaused", { reason: "incomplete" }),
+          ev("TaskResumed", {}),
+        ];
+        expect(await planContinuation(events, run, filesDirOf)).toMatchObject({
+          mode: "resume",
+          cause: { kind: "incomplete", paused: true },
+        });
+        // 未完了より前の一時停止は数えない
+        expect(
+          await planContinuation(
+            [ev("TaskPaused", { reason: "manual" }), ev("TaskResumed", {}), ...unfinished("r1")],
+            run,
+            filesDirOf,
+          ),
+        ).toMatchObject({ cause: { kind: "incomplete", paused: false } });
+      });
+
+      it("未完了の後に別の実行があった・実装でない役割・未完了の記録が無いなら、何も決めない", async () => {
+        // 未完了の後に、別の実行が始まった・失敗した・ファイルを写した
+        for (const after of [
+          started("r2"),
+          ev("AgentRunFailed", { runId: "r2", step: "implement", reason: "error", message: "x" }),
+          archive("r2"),
+        ]) {
+          expect(
+            await planContinuation(
+              [...unfinished("r1"), after],
+              { ...run, runId: "r3" },
+              filesDirOf,
+            ),
+          ).toBeUndefined();
+        }
+        // 実装でない役割の実行（設計など）は続けない
+        expect(
+          await planContinuation(unfinished("r1"), { ...run, role: "design" }, filesDirOf),
+        ).toBeUndefined();
+        // 未完了の記録が無い（完了して提出に進んだ）
+        expect(
+          await planContinuation([archive("r1"), completed("r1")], run, filesDirOf),
+        ).toBeUndefined();
+        // 未完了の記録の前の完了が、実装のものでない
+        expect(
+          await planContinuation(
+            [archive("r1"), completed("r1", "design"), incomplete()],
+            run,
+            filesDirOf,
+          ),
+        ).toBeUndefined();
+        // 質問への答え（chat）は、挟まっても数えない
+        const chat = ev("AgentSessionArchived", {
+          runId: "c1",
+          role: "chat",
+          agentId: "a",
+          runtime: "claude-code",
+          files: [],
+          limitBytes: 1,
+          skipped: [],
+        });
+        expect(await planContinuation([...unfinished("r1"), chat], run, filesDirOf)).toMatchObject({
+          mode: "resume",
+          stopped: { runId: "r1" },
+        });
+      });
+
+      it("時間切れで止めた実行が後にあれば、時間切れの続きとして扱う", async () => {
+        const events = [...unfinished("r1"), archive("r2"), timedOut("r2")];
+        expect(await planContinuation(events, run, filesDirOf)).toMatchObject({
+          mode: "resume",
+          stopped: { runId: "r2" },
+          cause: { kind: "timeout", minutes: 3 },
+        });
+      });
+
+      it("エージェントを変えた・写した記録が無い・ファイルが壊れているなら、最初から実行し直す", async () => {
+        expect(
+          await planContinuation(unfinished("r1"), { ...run, agentId: "b" }, filesDirOf),
+        ).toMatchObject({
+          mode: "restart",
+          reason: "agent_changed",
+          cause: { kind: "incomplete", paused: false },
+        });
+        expect(
+          await planContinuation(unfinished("r1"), { ...run, runtime: "codex" }, filesDirOf),
+        ).toMatchObject({ mode: "restart", reason: "agent_changed" });
+        // 写した記録が無い（AI の種類が分からない）
+        expect(
+          await planContinuation([completed("r1"), incomplete()], run, filesDirOf),
+        ).toMatchObject({ mode: "restart", reason: "no_session" });
+        const events = unfinished("r1");
+        writeFileSync(join(filesDirOf("r1"), MAIN), "tampered\n");
+        expect(await planContinuation(events, run, filesDirOf)).toMatchObject({
+          mode: "restart",
+          reason: "files_broken",
+        });
+      });
+    });
+  });
+
+  describe("incompleteResumeLines（PBI-350）", () => {
+    it("自動の続きは、続きであること・残っていること・最後まで実装すること・出し直すことと、完了の申告の形だけを伝える", () => {
+      const lines = incompleteResumeLines({ remaining: ["API の入力", "docs"] }, false).join("\n");
+      expect(lines).toContain("【未完了からの続き】");
+      expect(lines).toContain("直前の実装の実行のセッションの続きです");
+      expect(lines).toContain("範囲を実装し終える前に終わり、未完了と申告しました");
+      expect(lines).toContain("sacty は提出していません");
+      expect(lines).toContain("直前の申告にあった、残っていること：\n- API の入力\n- docs");
+      expect(lines).toContain("この実行の中で、範囲のすべて");
+      expect(lines).toContain("途中で終えても進まない");
+      expect(lines).toContain("省かずに出し直す");
+      // 完了の申告の形は、もう一度添える（最初の指示の全文は送り直さない）
+      expect(lines).toContain("--- 完了の申告 ---");
+      expect(lines).toContain("```sacty-completion");
+      expect(lines).not.toContain("次の指示は、最初の指示と同じ内容");
+    });
+
+    it("申告が無かった・観点の対応が欠けていたときは、その理由を伝える", () => {
+      const undeclared = incompleteResumeLines({ remaining: [], undeclared: true }, false).join(
+        "\n",
+      );
+      expect(undeclared).toContain(
+        "完了の申告が無いか、決まった形どおりに読めないまま終わりました",
+      );
+      expect(undeclared).not.toContain("残っていること：");
+      const unmapped = incompleteResumeLines(
+        { remaining: ["TV-2 キーなし"], unmapped: ["TV-2", "TV-3"] },
+        false,
+      ).join("\n");
+      expect(unmapped).toContain("テストの対応していないテスト観点がありました");
+      expect(unmapped).toContain("テストが対応していなかったテスト観点：TV-2、TV-3");
+      // 前回の状況が分からなくても、続きの指示は出す
+      expect(incompleteResumeLines(undefined, false).join("\n")).toContain("【未完了からの続き】");
+    });
+
+    it("一時停止を挟んだ続きは、後ろに指示の全文が続くので、残っていることと完了の申告の形を繰り返さない", () => {
+      const lines = incompleteResumeLines({ remaining: ["docs"] }, true).join("\n");
+      expect(lines).toContain("【未完了からの続き】");
+      expect(lines).toContain(
+        "次の指示は、最初の指示と同じ内容に、止めている間に人が足した補足や新しい指摘を含めたものです。",
+      );
+      expect(lines).not.toContain("直前の申告にあった、残っていること");
+      expect(lines).not.toContain("--- 完了の申告 ---");
+      expect(lines.endsWith("\n")).toBe(true);
     });
   });
 

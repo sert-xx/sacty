@@ -82,6 +82,7 @@ import {
   MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
+  MAX_INCOMPLETE_CONTINUATIONS,
   MAX_INTEGRATION_ATTEMPTS,
   MAX_VERIFY_ATTEMPTS,
   MEMORY_BODY_MAX,
@@ -383,6 +384,7 @@ import {
   integrationViewpointIds,
   investigationMarker,
   lineContextText,
+  mergeConflictLines,
   operationSucceeded,
   passedContinuedFeedback,
   postedLatestCommit,
@@ -461,8 +463,10 @@ import { templateTask } from "./task-templates.js";
 import { findTestFiles, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 import {
+  type ContinueCause,
   type ContinuePlan,
-  planTimeoutResume,
+  incompleteResumeLines,
+  planContinuation,
   timeoutMinutes,
   timeoutResumeLines,
 } from "./timeout-resume.js";
@@ -893,6 +897,12 @@ type ExecuteRun = {
   taskId: string;
   runId: string;
   prompt: string;
+  /**
+   * 未完了で終わった実装の実行を、続きの指示だけで進めるときに、続きの指示の後ろに足す案内（PBI-350）。指示の全文のうち、
+   * 実行ごとに変わりうる部分（始める前の取り込みで競合したファイル・人が PR に足したコミット・使える API・起動したサービスの
+   * 接続先）。渡さない実行は、続きでも指示の全文を渡す。
+   */
+  continuation?: string;
   role: AgentRole;
   workspaceDir: string;
   /** エージェントの形式に変換したコンテキスト（工程エージェントとオーケストレーター。PBI-6・PBI-146）。 */
@@ -9040,6 +9050,16 @@ export class TaskService {
           // 起動したサービスの接続先（PBI-47）
           ...servicePromptLines(started?.services ?? []),
         ].join("\n"),
+        // 未完了の続きを、続きの指示だけで進めるときにも渡す、実行ごとに変わりうる案内（PBI-350）
+        ...(step === "implement"
+          ? {
+              continuation: [
+                ...mergeConflictLines(this.mustGet(task.id), mergeConflicts),
+                ...platformPromptLines(runPlatforms.platforms),
+                ...servicePromptLines(started?.services ?? []),
+              ].join("\n"),
+            }
+          : {}),
         platforms: runPlatforms.platforms,
         role: step,
         workspaceDir,
@@ -11277,11 +11297,11 @@ export class TaskService {
             cut(`${id} ${titles.get(id) ?? ""}`.trim(), COMPLETION_REMAINING_ITEM_MAX),
           );
     const undeclared = completion === null;
-    // 続いた回数が上限に達したか、やり直しても作業領域が何も変わらなければ（同じエージェントでやり直しても進まない）、
-    // 実装のやり直しを止めて人間に判断してもらう。未完了の記録と一時停止は、同じ追記で記録する（間でデーモンが止まると、
+    // 続きの実行が上限の回数に達しても未完了か（未完了の実行の数は、最初の実行と続きの実行の合計）、続けても作業領域が何も
+    // 変わらなければ（同じエージェントで続けても進まない）、実装を止めて人間に判断してもらう（PBI-350）。未完了の記録と一時停止は、同じ追記で記録する（間でデーモンが止まると、
     // 止めるはずの実装を、再起動の後にもう一度実行してしまうため）
     const runs = nextIncompleteRuns(latest.incompleteRuns, fingerprint);
-    const stop = runs.runs >= MAX_VERIFY_ATTEMPTS || runs.stalled === true;
+    const stop = runs.runs > MAX_INCOMPLETE_CONTINUATIONS || runs.stalled === true;
     this.append(latest, [
       {
         actor: "sacty",
@@ -12787,20 +12807,22 @@ export class TaskService {
    * 工程などの1回の実行（オーケストレーターと質問への答え以外）。直前の実行が時間切れで止まったものなら、同じエージェントの
    * セッションの続きから進め、続けられなければ最初から実行し直す。どちらも作業履歴に残す。時間切れで止めた実行も、次に続けられる
    * ように作業履歴に残す（PBI-280）。
+   * 直前の実装の実行が未完了で終わったものでも、同じようにセッションの続きから進める（PBI-350）。間に一時停止が無い自動の
+   * 続きでは、指示の全文を送り直さず、続きの指示だけを渡す（最初の指示は、続けるセッションの会話に残っている）。
    */
   private async executeResumable(run: ExecuteRun): Promise<Executed & { runId: string }> {
     const runtime = run.agent.runtime;
     let plan: ContinuePlan | undefined;
     if (runtime === "claude-code" || runtime === "codex") {
       try {
-        plan = await planTimeoutResume(
+        plan = await planContinuation(
           this.deps.activity.forTask(run.taskId),
           { role: run.role, agentId: run.agent.id, runtime, runId: run.runId },
           (runId) => this.deps.sessionLogs?.agentFilesDir(run.taskId, runId),
         );
       } catch (error) {
         console.warn(
-          `[daemon] 時間切れで止めた実行のセッションを確かめられませんでした（${run.taskId}）：`,
+          `[daemon] 続ける前の実行のセッションを確かめられませんでした（${run.taskId}）：`,
           error instanceof Error ? error.message : error,
         );
       }
@@ -12821,6 +12843,8 @@ export class TaskService {
               mode,
               ...(mode === "resumed" && resuming ? { sessionId: resuming.sessionId } : {}),
               ...(reason ? { reason } : {}),
+              // 時間切れの続きは、今までどおり何も足さない（無ければ時間切れの続き）
+              ...(plan.cause.kind === "incomplete" ? { cause: "incomplete" as const } : {}),
             },
           })
         : undefined;
@@ -12832,9 +12856,7 @@ export class TaskService {
       resuming
         ? {
             ...run,
-            prompt: [...timeoutResumeLines(run.role, resuming.stopped.minutes), run.prompt].join(
-              "\n",
-            ),
+            prompt: this.continuedPrompt(run, resuming.cause),
             session: { resume: resuming.sessionId, filesDir: resuming.filesDir },
           }
         : run,
@@ -12867,6 +12889,22 @@ export class TaskService {
   }
 
   /** 時間切れの実行と、その続きの記録を作業履歴に残す。記録できなくても、実行の結果は変えない（中止したタスクなど）。 */
+  /**
+   * セッションの続きから進める実行の指示。時間切れの続きは、再開の知らせの後に、指示の全文を続ける。未完了の続き（PBI-350）は、
+   * 一時停止を挟んでいれば同じく全文を続け、挟んでいなければ、続きの指示と、実行ごとに変わりうる案内（continuation）だけにする。
+   */
+  private continuedPrompt(run: ExecuteRun, cause: ContinueCause): string {
+    if (cause.kind === "timeout") {
+      return [...timeoutResumeLines(run.role, cause.minutes), run.prompt].join("\n");
+    }
+    const feedback = this.tasks.get(run.taskId)?.verifyFeedback;
+    const incomplete = feedback?.kind === "incomplete" ? feedback : undefined;
+    // 続きの指示だけにするのは、実行ごとに変わりうる案内を渡された実行だけ（渡されなければ、全文を続ける）
+    return cause.paused || run.continuation === undefined
+      ? [...incompleteResumeLines(incomplete, true), run.prompt].join("\n")
+      : [...incompleteResumeLines(incomplete, false), run.continuation].join("\n");
+  }
+
   private recordTimeoutEvent(
     taskId: string,
     event: Extract<EventInput, { type: "AgentRunTimedOut" | "AgentRunContinued" }>,

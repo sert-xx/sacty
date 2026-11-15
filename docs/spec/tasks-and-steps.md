@@ -1284,7 +1284,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 
 ### 終わっていない実装と、変更の無いやり直し
 
-関係する ADR: [終わっていない実装を提出にせず、変更の無いやり直しで行き止まりにしない](../adr/20261115-1224-stop-incomplete-implementation-and-unchanged-rework.md)
+関係する ADR: [終わっていない実装を提出にせず、変更の無いやり直しで行き止まりにしない](../adr/20261115-1224-superseded-stop-incomplete-implementation-and-unchanged-rework.md)
 
 実装の実行が終わると、sacty は作業領域の内容をそのまま提出する（PR を作る・更新する）。
 範囲の一部だけを実装して終わった実行と、AI のレビューの指摘を受けても何も変えなかった実行は、提出にしない（PBI-347）。
@@ -1311,17 +1311,25 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
     実装でない工程の出力にある同じ名前のコードブロックは、申告として読まず、本文に残す。
   - 申告させる前の版の記録には `completion` が無い。無い記録は、申告を確かめずに提出に進める。
 - 未完了のとき：`FinalReviewSkipped` の前に、最後の実行の申告（`Task.implementCompletion`）を確かめる。
-  `incomplete` か `null` なら、`ImplementationIncomplete` を記録して、実装をやり直す。PR は作らず、更新もしない。
+  `incomplete` か `null` なら、`ImplementationIncomplete` を記録して、実装を続ける。PR は作らず、更新もしない。
   記録には、残っていること・申告が無かったこと（`undeclared`）・作業領域の内容の目印（`fingerprint`）を持つ。
   - 申告は、競合の確認（人が PR に足したコミットの取り込みと、競合の目印の確認。`headSyncedBeforePublish`・`conflictsResolved`）より先に確かめる。
     未完了の実行は、競合の目印が残っていても、未完了として記録し、残っていることを次の指示に渡す。競合は、完了と申告した実行で確かめる（競合したファイルは、解消するまで、実装の指示に載り続ける）。
-  - やり直しの指示には、前回が未完了だった（申告が無かった）ことと、残っていることを渡す（`feedbackLines`。`Task.verifyFeedback` の `incomplete`）。
-  - 続いた回数（`Task.incompleteRuns`）が 3 回（`MAX_VERIFY_ATTEMPTS`）になったら、一時停止する（`nextIncompleteRuns`。理由は `incomplete`、文言は `implement.incomplete`）。
+  - 次の実装の実行は、未完了で終わった実行と同じエージェントのセッションの続きから進める（[エージェントの実行](agent-execution.md)の、未完了で終わった実装の実行の続き）。
+    最初からやり直すと、前の実行の会話を捨てて、指示の全文を読むところから始まるためである。
+    セッションを続けられないとき（エージェントを変えた・写したセッションが無いか壊れている・AI が再開を受け付けない）は、最初から実行し直す。
+  - 続きの指示（`incompleteResumeLines`）と、最初から実行し直すときの指示（`feedbackLines`。`Task.verifyFeedback` の `incomplete`）には、前回が未完了だった（申告が無かった）ことと、残っていることを渡す。
+  - 完了の申告の指示は、途中で実行を終えないことも伝える（`implementCompletionLines`）。
+    - この実行の中で、範囲のすべてを実装し終える。未完了で終えても、sacty は同じセッションを再開して続けさせるだけで、進まない。
+    - 未完了で終えてよいのは、これ以上進められないとき（人の判断や、外部の状態の変化が要るとき）だけ。
+    - エージェントには確かめられないこと（CI の結果など）は、`remaining` ではなく、人が確かめることとして実装の説明に書く。
+  - 作業領域が進んでいる間は続ける。続きの実行が 18 回（`MAX_INCOMPLETE_CONTINUATIONS`）に達しても未完了なら、一時停止する（`nextIncompleteRuns`。理由は `incomplete`、文言は `implement.incomplete`）。
+    続いた回数（`Task.incompleteRuns`）は、最初の実行と続きの実行の合計なので、19 回目の未完了で止まる。
     文言には、残っていることを 5 件まで出す。
-  - やり直しても作業領域の内容が変わらなければ、回数を待たずに一時停止する。
+  - 続けても作業領域の内容が変わらなければ、回数を待たずに一時停止する。
     目印は、作業領域の内容の git のツリーの ID で、前の未完了のときと同じなら、変わらなかったとする（`workspaceFingerprint`・`treeId`）。差分の文字列は大きいと切り詰めるので、使わない。作業領域を読めない・読めないファイルが1つでもあるときは、目印なしで回数まで数える（読めないファイルを除いた ID では、そのファイルの変更を見落とす）。
   - 止めるときは、未完了の記録と一時停止を、同じ追記で記録する（間でデーモンが止まっても、止めるはずの実装をやり直さない）。
-  - 再開すると、回数を数え直して実装をやり直す。目印は残すので、再開の後も何も変わらなければ、1回で止まる。
+  - 再開すると、回数を数え直して実装を続ける（同じエージェントなら、同じセッションの続きから。人の補足を含む指示の全文を渡す）。目印は残すので、再開の後も何も変わらなければ、1回で止まる。
     提出に進む・前の工程からやり直すと、回数と目印は消える。
 - 変更の無いやり直し：PR を更新する前（コミットを作った後）に、次のすべてに当たれば、提出にしない（`reviewLeftFindingsOn`）。
   - PR のレビューの子タスクの指摘なしを待つ PR である（`awaitsReview`）。
@@ -1336,7 +1344,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   - 子タスクがその先頭を指摘なしにしている・まだレビューしていない・レビューの途中のときと、子タスクを待たない PR（既存の PR を引き継ぐタスクなど）は、何も変えていなくても提出する。
 - どちらの一時停止も、以前の版の検証の一時停止（`verification`）ではないので、不合格のまま進める操作（`submitForReview`）の対象にしない。
 
-コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/agent-json.ts`（`takeFences`・`hasDuplicateKeys`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）
+コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/agent-json.ts`（`takeFences`・`hasDuplicateKeys`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`apps/daemon/src/timeout-resume.ts`（`planContinuation`・`incompleteResumeLines`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`・`MAX_INCOMPLETE_CONTINUATIONS`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）
 
 ### 同じ内容の検証の使い回し
 

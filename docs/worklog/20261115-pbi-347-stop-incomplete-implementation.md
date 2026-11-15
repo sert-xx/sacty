@@ -4,7 +4,7 @@
 - タスク: PBI-347
 - PR: #378
 - ブランチ: feat/issue-347-stop-incomplete-implementation
-- 関係する ADR: [終わっていない実装を提出にせず、変更の無いやり直しで行き止まりにしない](../adr/20261115-1224-stop-incomplete-implementation-and-unchanged-rework.md)
+- 関係する ADR: [終わっていない実装を提出にせず、変更の無いやり直しで行き止まりにしない](../adr/20261115-1224-superseded-stop-incomplete-implementation-and-unchanged-rework.md)
 
 ## 目的
 

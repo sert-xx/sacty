@@ -494,6 +494,12 @@ export type Verdict = z.infer<typeof Verdict>;
 export const MAX_VERIFY_ATTEMPTS = 3;
 
 /**
+ * 未完了で終わった実装の実行を、続けて実行する回数の上限（PBI-350）。未完了の実行の次は、同じセッションの続きから進める。
+ * 作業領域が進んでいる間は続け、続きの実行がこの回数に達しても未完了なら、一時停止する（人が再開すると数え直す）。
+ */
+export const MAX_INCOMPLETE_CONTINUATIONS = 18;
+
+/**
  * 最終レビューの出力から判定を読み取れなかった（FinalReviewFailed の verdictUnreadable）回数が、続けてこの回数になったら止める。
  * 読み取れなかった回は不合格にせず、最終レビューを出し直させる（実装には戻さない）。
  */
@@ -1901,6 +1907,7 @@ export type AgentRunContinuedReason = z.infer<typeof AgentRunContinuedReason>;
 /**
  * 時間切れで止めた実行（AgentRunTimedOut）の次に、同じ役割を実行した（PBI-280）。同じエージェントのセッションの続きから進めた
  * （resumed）か、続けられずに最初から実行し直した（restarted。理由を残す）。stoppedRunId は、止めた実行。
+ * 未完了で終わった実装の実行（ImplementationIncomplete）の次の実装の実行も、同じ形で残す（cause が incomplete。PBI-350）。
  */
 const AgentRunContinued = z.object({
   type: z.literal("AgentRunContinued"),
@@ -1911,6 +1918,11 @@ const AgentRunContinued = z.object({
     runtime: z.enum(["claude-code", "codex"]),
     mode: z.enum(["resumed", "restarted"]),
     stoppedRunId: z.string().min(1),
+    /**
+     * 何の続きか（PBI-350）。timeout は時間切れで止めた実行の続き、incomplete は未完了で終わった実装の実行の続き
+     * （stoppedRunId は、未完了で終わった実行）。無い記録（それより前の版）は、時間切れの続き。
+     */
+    cause: z.enum(["timeout", "incomplete"]).optional(),
     /** 続けたセッションの ID（mode が resumed のとき）。 */
     sessionId: z.string().optional(),
     /** 最初から実行し直した理由（mode が restarted のとき）。 */

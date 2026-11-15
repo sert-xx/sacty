@@ -858,9 +858,16 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "AgentRunContinued": {
       const p = event.payload;
       const role = runRoleLabel(l, p.role);
+      const reason = l.agentRunContinuedReason[p.reason ?? "no_session"];
+      // 未完了で終わった実装の実行の続き（PBI-350）。cause の無い記録は、時間切れの続き
+      if (p.cause === "incomplete") {
+        return p.mode === "resumed"
+          ? e.IncompleteRunResumed(role, p.sessionId ?? "")
+          : e.IncompleteRunRestarted(role, reason);
+      }
       return p.mode === "resumed"
         ? e.AgentRunResumed(role, p.sessionId ?? "")
-        : e.AgentRunRestarted(role, l.agentRunContinuedReason[p.reason ?? "no_session"]);
+        : e.AgentRunRestarted(role, reason);
     }
     case "OrchestratorSessionUsed": {
       const p = event.payload;

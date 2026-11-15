@@ -1492,7 +1492,38 @@ describe("時間切れで止めた実行の記録の表示（PBI-280）", () => 
         event("AgentRunContinued", { mode: "restarted", reason: "no_session", stoppedRunId: "x" }),
         labels.en,
       ),
-    ).toContain("ran it again from the start (the stopped run's session was not recorded)");
+    ).toContain("ran it again from the start (the previous run's session was not recorded)");
+  });
+
+  it("未完了で終わった実装の実行の続きは、時間切れの続きと分けて出す（PBI-350）", () => {
+    const resumed = event("AgentRunContinued", {
+      mode: "resumed",
+      sessionId: "s1",
+      stoppedRunId: "x",
+      cause: "incomplete",
+    });
+    expect(describeEvent(resumed)).toBe("未完了で終わった実装の実行のセッション（s1）を続けた");
+    expect(describeIn(resumed, labels.en)).toBe(
+      "Continued the session (s1) of the Implement run that ended unfinished",
+    );
+    const restarted = event("AgentRunContinued", {
+      mode: "restarted",
+      reason: "no_session",
+      stoppedRunId: "x",
+      cause: "incomplete",
+    });
+    expect(describeEvent(restarted)).toBe(
+      "未完了で終わった実装の実行のセッションを続けられず、最初から実行し直した（前の実行のセッションの記録が無かったため）",
+    );
+    expect(describeIn(restarted, labels.en)).toContain(
+      "run that ended unfinished; ran it again from the start (the previous run's session was not recorded)",
+    );
+    // cause の無い記録（それより前の版）は、時間切れの続き
+    expect(
+      describeEvent(
+        event("AgentRunContinued", { mode: "resumed", sessionId: "s1", stoppedRunId: "x" }),
+      ),
+    ).toBe("時間切れで止めた実装の実行のセッション（s1）を続けた");
   });
 });
 
