@@ -1283,6 +1283,8 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 - 未完了のとき：`FinalReviewSkipped` の前に、最後の実行の申告（`Task.implementCompletion`）を確かめる。
   `incomplete` か `null` なら、`ImplementationIncomplete` を記録して、実装をやり直す。PR は作らず、更新もしない。
   記録には、残っていること・申告が無かったこと（`undeclared`）・作業領域の内容の目印（`fingerprint`）を持つ。
+  - 申告は、競合の確認（人が PR に足したコミットの取り込みと、競合の目印の確認。`headSyncedBeforePublish`・`conflictsResolved`）より先に確かめる。
+    未完了の実行は、競合の目印が残っていても、未完了として記録し、残っていることを次の指示に渡す。競合は、完了と申告した実行で確かめる（競合したファイルは、解消するまで、実装の指示に載り続ける）。
   - やり直しの指示には、前回が未完了だった（申告が無かった）ことと、残っていることを渡す（`feedbackLines`。`Task.verifyFeedback` の `incomplete`）。
   - 続いた回数（`Task.incompleteRuns`）が 3 回（`MAX_VERIFY_ATTEMPTS`）になったら、一時停止する（`nextIncompleteRuns`。理由は `incomplete`、文言は `implement.incomplete`）。
     文言には、残っていることを 5 件まで出す。

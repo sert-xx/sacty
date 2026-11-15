@@ -8381,10 +8381,12 @@ export class TaskService {
       // 最終レビュー（テストの実行）も CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする。PBI-331）。
       // ベースブランチは取り込み直さないが、実装の間に人が PR のブランチに足したコミットは取り込む（PBI-334）。実装の前の
       // 取り込みで競合した目印が残っていれば、PR を作らずに実装をやり直す
+      // 実装し終えたと申告されていなければ、PR を作らずに（更新せずに）実装をやり直す（PBI-347）。競合の確認より先に確かめる：
+      // 先に競合で戻ると、未完了の記録が残らず、残っていることが次の指示に渡らない。競合は、完了と申告した実行で確かめる
+      // （競合したファイルは、解消するまで、実装の指示に載り続ける）
+      if (!(await this.implementationCompleted(initial))) return;
       if (!(await this.headSyncedBeforePublish(initial))) return;
       if (!(await this.conflictsResolved(this.mustGet(taskId)))) return;
-      // 実装し終えたと申告されていなければ、PR を作らずに（更新せずに）実装をやり直す（PBI-347）
-      if (!(await this.implementationCompleted(this.mustGet(taskId)))) return;
       const securityScope = await this.checkSecurityScope(initial);
       if (securityScope === "stopped") return;
       this.append(initial, [

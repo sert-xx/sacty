@@ -882,6 +882,8 @@ A run that ended after implementing only part of its scope, and a run that chang
 - When unfinished: before `FinalReviewSkipped`, sacty checks the declaration of the last run (`Task.implementCompletion`).
   If it is `incomplete` or `null`, sacty records `ImplementationIncomplete` and redoes the implementation. It does not open or update the PR.
   The record holds what remains, that nothing was declared (`undeclared`), and a mark of the workspace content (`fingerprint`).
+  - The declaration is checked before the conflict checks (merging the commits a person added to the PR, and checking for conflict markers; `headSyncedBeforePublish`, `conflictsResolved`).
+    An unfinished run is recorded as unfinished even when conflict markers remain, and what remains is passed to the next instruction. Conflicts are checked on a run that declared it is complete (the conflicting files stay in the implementation instruction until they are resolved).
   - The instruction of the redo tells the agent that the previous run was unfinished (or declared nothing) and what remains (`feedbackLines`; `incomplete` of `Task.verifyFeedback`).
   - When the count in a row (`Task.incompleteRuns`) reaches 3 (`MAX_VERIFY_ATTEMPTS`), the task pauses (`nextIncompleteRuns`; the reason is `incomplete`, the message is `implement.incomplete`).
     The message shows up to 5 of the remaining items.
