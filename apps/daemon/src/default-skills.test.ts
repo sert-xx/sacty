@@ -1289,3 +1289,80 @@ describe("既定の review スキルの、観点の資料が無いときの扱�
     expect(c17).toContain("基準のディレクトリの中に外を指すシンボリックリンクがあると防げない");
   });
 });
+
+describe("既定の review スキルの、PR のレビューの範囲と観点の見方の記録（PBI-349）", () => {
+  const prReview = () => read("skills/review/review-dispatch/references/pr-review.md");
+  const aggregation = () => read("skills/review/review-dispatch/references/aggregation.md");
+
+  it("親が担当に渡す範囲は差分で決まり、差分に入っている文書の変えていない本文の全体を範囲にしない", () => {
+    const text = prReview();
+    expect(text).toContain("## 範囲");
+    expect(text).toContain(
+      "担当に渡す範囲は、差分で決める。対象のファイルが長くても、変えていない所の全体は範囲にしない。",
+    );
+    expect(text).toContain(
+      "PR の本文が、差分に入っている文書を成果物として挙げていても、範囲は差分のままにする",
+    );
+    // 文書の全体を範囲にするのは、差分に入っていない文書と、新しく足した・全面的に書き直した文書だけ
+    expect(text).toContain("差分に入っていない文書を、レビューの対象にしたとき");
+    expect(text).toContain("差分がその文書を新しく足した、または全面的に書き直したとき");
+    expect(read("skills/review/review-dispatch/references/linked-docs.md")).toContain(
+      "`pr-review` で、リポジトリ内のパスの文書がその PR の差分に入っているときは、ここでは拾わず、差分として見る。",
+    );
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "`pr-review` の範囲は差分で決まり、差分に入っている長い文書の、変えていない本文の全体は範囲にしない",
+    );
+  });
+
+  it("親は範囲を途中で広げない（担当の結果・前回のレビューを理由にしない。再レビューでも）", () => {
+    expect(prReview()).toContain(
+      "範囲は途中で広げない。担当の結果や前回のレビューに「変えていない既存の箇所は見ていない」と書かれていても、範囲どおりであって、見落としではない。その箇所を見る担当を足さず、起動し直すときも範囲を変えない。再レビューでも同じ",
+    );
+    expect(prReview()).toContain(
+      "PR 全体は PR の差分で決まる範囲のことで、変えていない既存の本文の全体ではない",
+    );
+    expect(aggregation()).toContain(
+      "範囲の外を見ていないことは、途中で止まっていることではない（見させない）",
+    );
+  });
+
+  it("担当は、範囲の外を見なかったことを failed の理由にも limitations にも書かない", () => {
+    // 担当の出力の形式は、担当の SKILL.md と親の finding-format.md の両方にある（同じにする）
+    for (const path of [
+      "skills/review/review-execution/SKILL.md",
+      "skills/review/review-dispatch/references/finding-format.md",
+    ]) {
+      expect(read(path)).toContain(
+        "依頼文の範囲の外を見なかったことは `failed` の理由にしない（範囲の外は、もとから見るものではない）。`limitations` にも書かず、見た範囲を `checked` に書く",
+      );
+    }
+    const execution = read("skills/review/review-execution/SKILL.md");
+    expect(execution).toContain(
+      "同じファイルの中でも、差分に関係しない既存の箇所は範囲の外で、ファイルが長くても全体を見ようとしない。",
+    );
+    // 多言語の観点も、範囲が変更なら、変えた箇所と対応する箇所だけを照合する
+    expect(read("skills/review/review-execution/references/U-6.md")).toContain(
+      "変えていない既存の本文は、同じファイルにあっても、意味の照合をしない。",
+    );
+  });
+
+  it("親は、範囲の外を理由にした failed を起動し直さず、範囲を見きれなかった failed は範囲を分けて起動し直す", () => {
+    const text = aggregation();
+    expect(text).toContain(
+      "理由が、依頼文の範囲の外を見ていないこと（変えていない既存の箇所・文書の全体など）だけ：起動し直さない。",
+    );
+    expect(text).toContain("見られなかった観点に数えない");
+    expect(text).toContain(
+      "同じ観点のまま、範囲をファイルや節で分けて複数の担当に渡す（範囲は広げない）",
+    );
+    expect(prReview()).toContain(
+      "理由が範囲の外を見ていないことだけなら、起動し直さず、見られなかった観点にも数えない",
+    );
+  });
+
+  it("PR のレビューの本文に、観点をどう見たか（担当に分けたか、逐次モードか）を必ず1行で書く", () => {
+    expect(prReview()).toContain(
+      "観点をどう見たかを、本文の「レビューの範囲」に必ず1行で書く。観点ごとの担当（サブエージェント）に分けて見たなら、分けて見た観点の数。サブエージェントを起動できずに逐次モードで見たなら、逐次モードで見たことと観点の数。",
+    );
+  });
+});

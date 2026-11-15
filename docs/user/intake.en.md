@@ -144,6 +144,12 @@ Who the @ mention goes to is decided as follows.
 When some viewpoints could not be checked (for example, checking documents against the implementation could not be finished), the verdict is "読み取れませんでした" (could not be read), and the body starts with the viewpoints that could not be checked.
 However, if what was checked has a `[要修正]` finding (including an earlier one, or another reviewer's, confirmed as unaddressed), the verdict is "修正が必要" (changes required).
 
+For a PR that changes part of a long document, the review checks only the changed parts and the parts whose correctness those changes can affect against the implementation.
+It does not check the whole of the unchanged text.
+
+After the summary, the review body says in one line how the viewpoints were checked.
+It gives the number of viewpoints when they were split among per-viewpoint reviewers, or says so when the reviewers could not be started and the viewpoints were checked one at a time.
+
 The heading, verdict, and prefixes added by sacty are in Japanese.
 The findings follow the writing rules of the repository (Japanese when there are none).
 
