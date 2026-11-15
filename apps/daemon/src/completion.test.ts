@@ -23,9 +23,9 @@ describe("実装の完了の申告（PBI-347）", () => {
     });
   });
 
-  it("未完了の申告は、残っていることと一緒に読む。空の項目・文でない項目は除く", () => {
+  it("未完了の申告は、残っていることと一緒に読む。空の項目は除く", () => {
     const read = extractCompletion(
-      declare({ status: "incomplete", remaining: ["API の入力", "  ", 3, " docs の更新 "] }),
+      declare({ status: "incomplete", remaining: ["API の入力", "  ", " docs の更新 "] }),
     );
     expect(read.completion).toEqual({
       status: "incomplete",
@@ -41,6 +41,24 @@ describe("実装の完了の申告（PBI-347）", () => {
     expect(
       extractCompletion(declare({ status: "incomplete", remaining: "全部" })).completion,
     ).toEqual({ status: "incomplete", remaining: [] });
+    expect(
+      extractCompletion(declare({ status: "incomplete", remaining: ["API", 3] })).completion,
+    ).toEqual({ status: "incomplete", remaining: [] });
+  });
+
+  it("完了と申告していても、残っていることが一覧として読めない形なら、申告なしにする（完了として提出に進めない）", () => {
+    for (const remaining of ["docs", [3], ["docs", 3], { a: 1 }, null, 0, true]) {
+      expect(
+        extractCompletion(declare({ status: "complete", remaining })).completion,
+        JSON.stringify(remaining),
+      ).toBeUndefined();
+    }
+    // 空の項目だけの一覧は、残っていることが無い
+    expect(
+      extractCompletion(declare({ status: "complete", remaining: ["", "  "] })).completion,
+    ).toEqual({
+      status: "complete",
+    });
   });
 
   it("完了と申告していても、残っていることがあれば未完了にする", () => {
@@ -53,7 +71,7 @@ describe("実装の完了の申告（PBI-347）", () => {
     });
   });
 
-  it("残っていることは、件数と1件の長さの上限で切る", () => {
+  it("残っていることは、件数と1件の長さの上限で切る。文字の途中（サロゲートペアの間）では切らない", () => {
     const remaining = Array.from({ length: COMPLETION_REMAINING_MAX + 5 }, (_, i) =>
       i === 0 ? "あ".repeat(COMPLETION_REMAINING_ITEM_MAX + 50) : `残り${i}`,
     );
@@ -61,7 +79,18 @@ describe("実装の完了の申告（PBI-347）", () => {
     expect(read?.status).toBe("incomplete");
     if (read?.status !== "incomplete") return;
     expect(read.remaining).toHaveLength(COMPLETION_REMAINING_MAX);
-    expect(read.remaining[0]).toHaveLength(COMPLETION_REMAINING_ITEM_MAX);
+    expect(read.remaining[0]?.length).toBeLessThanOrEqual(COMPLETION_REMAINING_ITEM_MAX);
+    expect(read.remaining[0]?.endsWith("…")).toBe(true);
+    // 上限の位置が絵文字（サロゲートペア）の途中に当たる
+    const emoji = `${"a".repeat(COMPLETION_REMAINING_ITEM_MAX - 2)}😀😀😀`;
+    const cutEmoji = extractCompletion(
+      declare({ status: "incomplete", remaining: [emoji] }),
+    ).completion;
+    if (cutEmoji?.status !== "incomplete") throw new Error("not incomplete");
+    const [item = ""] = cutEmoji.remaining;
+    expect(item.length).toBeLessThanOrEqual(COMPLETION_REMAINING_ITEM_MAX);
+    // 壊れたサロゲート（対になっていない上位・下位）が残っていない
+    expect(item).toBe(item.toWellFormed());
   });
 
   it("申告が無い・状態が分からない申告は、申告なしにする", () => {

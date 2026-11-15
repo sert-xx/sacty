@@ -10,7 +10,13 @@ import {
   COMPLETION_REMAINING_MAX,
   type ImplementationCompletion,
 } from "@sacty/core";
-import { type HeadingSpan, headingMentions, headingSpans, jsonCandidates } from "./agent-json.js";
+import {
+  cut,
+  type HeadingSpan,
+  headingMentions,
+  headingSpans,
+  jsonCandidates,
+} from "./agent-json.js";
 
 /** 完了の申告の見出し。 */
 export const COMPLETION_HEADING = "sacty-completion";
@@ -47,12 +53,14 @@ export function implementCompletionLines(): string[] {
   ];
 }
 
-/** 残っていることの一覧を読む。文でない項目・空の項目は除き、件数と長さの上限で切る。 */
-function readRemaining(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim().slice(0, COMPLETION_REMAINING_ITEM_MAX))
+/**
+ * 残っていることの一覧を読む。空の項目は除き、件数と1件の長さの上限で切る（文字の途中では切らない）。一覧として読めない形
+ * （配列でない・文でない項目がある）なら undefined（残っていることがあるかを、決められない）。
+ */
+function readRemaining(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return undefined;
+  return (value as string[])
+    .map((item) => cut(item.trim(), COMPLETION_REMAINING_ITEM_MAX))
     .filter((item) => item.length > 0)
     .slice(0, COMPLETION_REMAINING_MAX);
 }
@@ -63,6 +71,8 @@ function readRemaining(value: unknown): string[] {
  * （前の申告は、作業の途中のものでありうるため）。
  * - status が incomplete なら、remaining が無い・読めなくても未完了にする（未完了の申告を、形の崩れで落とさない）。
  * - status が complete でも、remaining に残っていることがあれば未完了にする（食い違う申告は、提出に進めない側に倒す）。
+ * - status が complete で、remaining が一覧として読めない形（文字列・文でない項目など）なら、申告なしにする（残っていることが
+ *   あるかを決められないので、完了として提出に進めない）。
  */
 export function extractCompletion(output: string): {
   completion?: ImplementationCompletion;
@@ -87,13 +97,13 @@ export function extractCompletion(output: string): {
   )?.value;
   if (!last || typeof last !== "object" || Array.isArray(last)) return { spans };
   const declared = last as Record<string, unknown>;
-  const remaining = readRemaining(declared.remaining);
-  if (
-    declared.status === "incomplete" ||
-    (declared.status === "complete" && remaining.length > 0)
-  ) {
-    return { completion: { status: "incomplete", remaining }, spans };
+  // remaining を書いていなければ、残っていることは無い。書いてあって一覧として読めなければ、undefined
+  const remaining = declared.remaining === undefined ? [] : readRemaining(declared.remaining);
+  if (declared.status === "incomplete") {
+    return { completion: { status: "incomplete", remaining: remaining ?? [] }, spans };
   }
-  if (declared.status === "complete") return { completion: { status: "complete" }, spans };
-  return { spans };
+  if (declared.status !== "complete" || remaining === undefined) return { spans };
+  return remaining.length > 0
+    ? { completion: { status: "incomplete", remaining }, spans }
+    : { completion: { status: "complete" }, spans };
 }

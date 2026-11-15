@@ -1504,7 +1504,8 @@ When the Implementation step changes nothing (it decided the requirements are al
 
 In tasks whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).
 
-If a PR was already created and the implementation redone after a request for changes no longer changes anything, the task stops with an error. Decide what to do with the open PR, then cancel the task or request changes again.
+If a PR was already created and the implementation redone after a request for changes no longer differs from the base branch at all, the task stops with an error. Decide what to do with the open PR, then cancel the task or request changes again.
+When the redone implementation changes nothing from the content of the PR it published before, the task is handled differently ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)).
 
 ## When the implementation does not finish, or a rework changes nothing
 

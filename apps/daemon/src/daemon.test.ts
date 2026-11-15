@@ -26604,6 +26604,55 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
+      it("PR の指摘を受けたやり直しが未完了なら、PR を更新せず、残っていることと元の指摘を渡して実装をやり直す（受け入れ条件 2・3）", async () => {
+        const { activity, service, executor, pulls, repos, id } = await begin([
+          implement(),
+          verdictOut("changes_required"),
+          // 指摘を受けたやり直しが、途中で終わる
+          unfinished(["失敗時の受け入れ条件のテスト"]),
+          implement("# 実装の説明 v2"),
+        ]);
+        progress(executor, repos);
+        await settle(service, id);
+        const childId = childOf(service, id);
+        const first = commitOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+        await runReview(service, childId);
+        pulls.feedbackBy[7] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        expect(taskOf(service, id).status).toBe("queued");
+        const updates = pulls.calls.length;
+        const published = repos.published.length;
+        const before = executor.calls.length;
+        // やり直しの実行（未完了）の後：PR を更新しない（コミットもプッシュもしない）
+        for (let i = 0; i < 6 && count(service, id, "ImplementationIncomplete") < 1; i++) {
+          await service.runNext(id);
+        }
+        expect(executor.calls).toHaveLength(before + 1);
+        expect(completedRun(service, id)?.completion).toEqual({
+          status: "incomplete",
+          remaining: ["失敗時の受け入れ条件のテスト"],
+        });
+        expect(count(service, id, "ImplementationIncomplete")).toBe(1);
+        expect(pulls.calls).toHaveLength(updates);
+        expect(repos.published).toHaveLength(published);
+        expect(count(service, id, "StepSubmitted")).toBe(1);
+        expect(taskOf(service, id).pullRequest?.commit).toBe(first);
+        // 完了と申告したら、PR を更新して、2回目の提出にする
+        await settle(service, id);
+        // やり直しの次の実行の指示に、残っていることと、元の指摘の両方を渡している
+        const prompt = promptOf(executor, before + 1);
+        expect(prompt).toContain("--- 前回の実行：実装が終わっていませんでした ---");
+        expect(prompt).toContain("- 失敗時の受け入れ条件のテスト");
+        expect(prompt).toContain("受け入れ条件が足りない");
+        const task = taskOf(service, id);
+        expect(task.status).toBe("awaiting_approval");
+        expect(count(service, id, "StepSubmitted")).toBe(2);
+        expect(pulls.calls).toHaveLength(updates + 1);
+        expect(commitOf(service, id)).not.toBe(first);
+        activity.close();
+      });
+
       it("実装が続けて終わらなければ、PR を作らずに一時停止し、残っていることを出す。再開すると実装をやり直す（受け入れ条件 3・9）", async () => {
         const { activity, service, executor, pulls, repos, id } = await begin([
           unfinished(["API の入力", "候補の絞り込み", "docs"]),

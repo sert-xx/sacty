@@ -860,9 +860,10 @@ A run that ended after implementing only part of its scope, and a run that chang
 
 - Completion declaration: the instruction of the Implementation step makes the agent always declare whether it finished its scope, as JSON under the heading `sacty-completion` (`implementCompletionLines`).
   - The declaration has a `status` of `complete` or `incomplete`; when it is `incomplete`, `remaining` lists what remains.
-    `remaining` holds up to 20 items of up to 300 characters each, and the rest is cut (`COMPLETION_REMAINING_MAX`, `COMPLETION_REMAINING_ITEM_MAX`).
+    `remaining` holds up to 20 items of up to 300 characters each, and the rest is cut (`COMPLETION_REMAINING_MAX`, `COMPLETION_REMAINING_ITEM_MAX`; never in the middle of a character).
   - Only the last declaration is used. If the last declaration cannot be read as JSON, sacty does not fall back to an earlier one and treats the run as undeclared (`extractCompletion`).
     An `incomplete` declaration is unfinished even when `remaining` is missing or unreadable. A `complete` declaration is also unfinished when `remaining` lists something.
+    When a `complete` declaration has a `remaining` that cannot be read as a list (a string, items that are not text, and so on), sacty cannot tell whether something remains, so it treats the run as undeclared.
   - The declaration is kept in `completion` of `AgentRunCompleted` and removed from the implementation description (the PR body). When there is no readable declaration, it is `null`.
     JSON under the same heading in the output of a step other than Implementation is not read as a declaration and stays in the body.
   - Records from versions before the declaration have no `completion`. Such records go on to the submission without the declaration being checked.

@@ -1261,9 +1261,10 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 
 - 完了の申告：実装の工程の指示は、範囲を実装し終えたかを、見出し `sacty-completion` の JSON で必ず申告させる（`implementCompletionLines`）。
   - 申告は、`status` が `complete` か `incomplete` で、`incomplete` のときは `remaining` に残っていることを書く。
-    `remaining` は 20 件まで、1件は 300 文字までで、超えた分は切る（`COMPLETION_REMAINING_MAX`・`COMPLETION_REMAINING_ITEM_MAX`）。
+    `remaining` は 20 件まで、1件は 300 文字までで、超えた分は切る（`COMPLETION_REMAINING_MAX`・`COMPLETION_REMAINING_ITEM_MAX`。文字の途中では切らない）。
   - 最後の申告だけを使う。最後の申告が JSON として読めなければ、前の申告に戻らず、申告なしにする（`extractCompletion`）。
     `incomplete` の申告は、`remaining` が無い・読めなくても未完了にする。`complete` の申告でも、`remaining` に残っていることがあれば未完了にする。
+    `complete` の申告で、`remaining` が一覧として読めない形（文字列・文でない項目など）なら、残っていることがあるかを決められないので、申告なしにする。
   - 申告は `AgentRunCompleted` の `completion` に残し、実装の説明（PR の本文）からは取り除く。申告が無い・読めなければ `null` にする。
     実装でない工程の出力にある同じ見出しの JSON は、申告として読まず、本文に残す。
   - 申告させる前の版の記録には `completion` が無い。無い記録は、申告を確かめずに提出に進める。
