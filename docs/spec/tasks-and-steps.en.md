@@ -686,7 +686,7 @@ Code: `apps/daemon/src/service.ts` (`runNextInner`, `awaitingVerification`, `pro
 
 ## Verifying the implementation
 
-After the Implementation step, sacty runs neither the final review (running the tests and judging pass or fail) nor the wait for the PR's CI. The implementation PR is opened as a draft and the review child task of the PR reviews it ([The flow without the final review](#the-flow-without-the-final-review); [ADR](../adr/20261112-0714-review-child-task-replaces-final-review-and-ci-wait.md)).
+After the Implementation step, sacty runs neither the final review (running the tests and judging pass or fail) nor the wait for the PR's CI. The implementation PR is opened as a draft and the review child task of the PR reviews it ([The flow without the final review](#the-flow-without-the-final-review); [ADR](../adr/20261112-0714-superseded-review-child-task-replaces-final-review-and-ci-wait.md)).
 How tasks with records of an earlier version's final review are handled is in [Tasks from the version with the final review](#tasks-from-the-version-with-the-final-review).
 
 ### The flow without the final review
@@ -696,6 +696,8 @@ How tasks with records of an earlier version's final review are handled is in [T
   - Before `FinalReviewSkipped`, sacty first merges the commits a person added to the PR branch while the implementation ran (`headSyncedBeforePublish`; [Merging commits a person added to the PR](#merging-commits-a-person-added-to-the-pr)). Then it checks that no conflict markers with the base branch remain in the workspace (`conflictsResolved`).
     If any remain, it does not record it, records `BaseConflictsRemained`, and redoes the implementation (counted and stopped the same way as in [Merging the base branch](#merging-the-base-branch)).
     If it cannot check, the task is paused (`merge.failed`).
+  - After that, sacty checks whether the implementation run declared that it finished its scope (`implementationCompleted`).
+    If the run declared that it is unfinished, or declared nothing, sacty does not record it, records `ImplementationIncomplete`, and redoes the implementation ([Unfinished implementations and reworks that change nothing](#unfinished-implementations-and-reworks-that-change-nothing)).
   - For a security fix task, before `FinalReviewSkipped`, sacty checks the diff against the fix scope declared by the preceding investigation (`checkSecurityScope`; the check is the same as in "Security fix" below).
     The result is recorded in `securityScope` of `FinalReviewSkipped` (if there is a violation, `violation` holds the files outside the scope, the changed line count, and the cap; `Task.securityScopeCheck`).
     If the diff cannot be obtained, sacty pauses without recording it (`verify.diffUnavailable`).
@@ -838,6 +840,7 @@ Code: `apps/daemon/src/service.ts` (`syncPullRequestHead`, `syncBase`, `headSync
   - If the repository cannot use draft PRs (GitHub's 422), the PR is opened as a normal PR (a child task stacked on a dependency's PR stops without recording when it cannot be made a draft; [Task split and integration review](split-and-integrate.en.md#child-tasks-stacked-on-a-dependencys-pr)).
   - A task that takes over an existing PR pushes to the person's PR branch and does not open a new PR ([Taking over an existing PR](#taking-over-an-existing-pr)).
 - After opening the PR, sacty records `PullRequestPublished` and the implementation submission (`StepSubmitted`, with `step` set to `implement`) in the same append, and the task waits for the Implement approval. If the implementation changed nothing and there is no PR yet, sacty records `NoChangesFound` and the implementation submission without opening a PR ([Approval and request changes](approval.en.md#when-the-implementation-has-no-changes)).
+  If the rework of the implementation changed nothing in an existing PR and AI review findings remain on its head, sacty pauses the task instead of submitting ([Unfinished implementations and reworks that change nothing](#unfinished-implementations-and-reworks-that-change-nothing)).
 - If opening the PR fails, the reason is recorded and the task stops (`pr.failed` and so on). Resuming opens the PR again without redoing the implementation (waiting to open the PR survives a pause and a restart).
 - The PR is opened even when the budget cap has been reached (it costs nothing and only waits for a person's approval; see "Budget, pause, resume, and cancel" below). When the body overlaps, the agent is not run if the budget cap has been reached, and the person's body is left unchanged.
 - Pausing by a person: if a pause or cancel has been requested before the push or right before opening the PR, the task stops without opening the PR (for a pause, it keeps waiting to open the PR; resuming opens it). If the request comes after opening the PR has started, the PR is finished and recorded first (stopping without recording the opened PR could open a second PR on resume, or leave a PR that cancelling can't close), and then the final state depends on the request.
@@ -847,6 +850,44 @@ Code: `apps/daemon/src/service.ts` (`syncPullRequestHead`, `syncBase`, `headSync
 - If a person merges the implementation PR while the implementation is being reworked (after a rejection or imported PR comments), the rework (the run and the PR update) is stopped and the merge is taken as the approval. No new PR is created ([Merging during a rework of the implementation](approval.en.md#merging-during-a-rework-of-the-implementation)).
 
 Code: `apps/daemon/src/service.ts` (`runNextInner`, `publish`, `commitSubjectFor`, `implementSubmitted`, `submitEvents`, `pause`), `apps/daemon/src/github.ts` (`GitHubPullRequests.upsert`, `GitHubPullRequests.setDraft`), `apps/daemon/src/commit-message.ts` (`COMMIT_CONVENTION_FILES`, `detectCommitConvention`, `commitSubject`), `packages/core/src/projection.ts` (`publishPending`, `gatePullRequest`)
+
+### Unfinished implementations and reworks that change nothing
+
+Related ADR: [Do not submit an unfinished implementation, and do not reach a dead end on a rework that changes nothing](../adr/20261115-1224-stop-incomplete-implementation-and-unchanged-rework.md)
+
+When an implementation run ends, sacty submits the workspace as it is (it opens or updates the PR).
+A run that ended after implementing only part of its scope, and a run that changed nothing after AI review findings, are not submitted (PBI-347).
+
+- Completion declaration: the instruction of the Implementation step makes the agent always declare whether it finished its scope, as JSON under the heading `sacty-completion` (`implementCompletionLines`).
+  - The declaration has a `status` of `complete` or `incomplete`; when it is `incomplete`, `remaining` lists what remains.
+    `remaining` holds up to 20 items of up to 300 characters each, and the rest is cut (`COMPLETION_REMAINING_MAX`, `COMPLETION_REMAINING_ITEM_MAX`).
+  - Only the last declaration is used. If the last declaration cannot be read as JSON, sacty does not fall back to an earlier one and treats the run as undeclared (`extractCompletion`).
+    An `incomplete` declaration is unfinished even when `remaining` is missing or unreadable. A `complete` declaration is also unfinished when `remaining` lists something.
+  - The declaration is kept in `completion` of `AgentRunCompleted` and removed from the implementation description (the PR body). When there is no readable declaration, it is `null`.
+    JSON under the same heading in the output of a step other than Implementation is not read as a declaration and stays in the body.
+  - Records from versions before the declaration have no `completion`. Such records go on to the submission as before.
+- When unfinished: before `FinalReviewSkipped`, sacty checks the declaration of the last run (`Task.implementCompletion`).
+  If it is `incomplete` or `null`, sacty records `ImplementationIncomplete` and redoes the implementation. It does not open or update the PR.
+  The record holds what remains, that nothing was declared (`undeclared`), and a mark of the workspace diff (`fingerprint`).
+  - The instruction of the redo tells the agent that the previous run was unfinished (or declared nothing) and what remains (`feedbackLines`; `incomplete` of `Task.verifyFeedback`).
+  - When the count in a row (`Task.incompleteRuns`) reaches 3 (`MAX_VERIFY_ATTEMPTS`), the task pauses (`pauseIfImplementationKeepsIncomplete`; the reason is `incomplete`, the message is `implement.incomplete`).
+    The message shows up to 5 of the remaining items.
+  - If redoing does not change the workspace diff, the task pauses without waiting for the count.
+    The mark of the diff is the SHA-256 of the diff from the base; when it equals the one of the previous unfinished run, nothing changed (`workspaceFingerprint`). If the diff cannot be read, sacty counts up to the limit without a mark.
+  - Resuming counts again from zero and redoes the implementation. The mark of the diff is kept, so if nothing changes after resuming either, the task stops after one run.
+    Going on to the submission, or redoing from an earlier step, clears the count and the mark.
+- Rework that changes nothing: before updating the PR (after making the commit), sacty does not submit when all of the following hold (`reviewLeftFindingsOn`).
+  - The PR waits for the PR-review child task to find no findings (`awaitsReview`).
+  - The child task finished reviewing the commit about to be published as the head, and did not conclude with no findings.
+    When the reworked implementation changes nothing in the workspace, the commit to publish stays the one sacty published before, or the head a person added to the PR and sacty merged.
+- When a rework changes nothing in this way, sacty records `ImplementationUnchanged` (the PR, the head commit, and the child task) and a pause (the reason is `unchanged`, the message is `implement.unchanged`) in the same append.
+  It does not update the PR and does not advance the submission number.
+  The same head is not reviewed again ([The review child task of a PR](approval.en.md#the-review-child-task-of-a-pr)), so submitting it as is would lead to neither no findings nor a rework, and the PR would stay a draft forever.
+  - Resuming redoes the implementation with the findings and the fact that the previous run changed nothing (`unchanged` of `Task.verifyFeedback`).
+  - When the child task concluded with no findings on that head, has not reviewed it yet, or is still reviewing it, and for PRs that do not wait for the child task (such as a task that takes over an existing PR), sacty submits as before.
+- Neither pause is the verification pause of older versions (`verification`), so neither can be moved on without passing (`submitForReview`).
+
+Code: `apps/daemon/src/completion.ts` (`implementCompletionLines`, `extractCompletion`), `apps/daemon/src/service.ts` (`implementationCompleted`, `workspaceFingerprint`, `pauseIfImplementationKeepsIncomplete`, `reviewLeftFindingsOn`, `publish`), `apps/daemon/src/prompts.ts` (`feedbackLines`, `extractBlocks`), `packages/core/src/events.ts` (`ImplementationCompletion`, `ImplementationIncomplete`, `ImplementationUnchanged`), `packages/core/src/projection.ts` (`implementCompletion`, `incompleteRuns`)
 
 ### Reusing verification results for the same content
 
@@ -998,7 +1039,7 @@ Code: `apps/daemon/src/service.ts` (`runGuardian`, `judgeRework`, `integrate`), 
 
 - Budget cap: when a task is created, `budget.default_per_task_usd`. If the plan the orchestrator chose has a budget in `budget.per_plan_usd`, it is recorded as `budgetCapUsd` of `StepsChosen` and becomes the cap (the 80% notice is reset). If a person raised the cap before the steps were chosen (`BudgetCapRaised`; `budget.raised` in the projection), it is not recorded and the raised cap is kept.
 - Budget: when spending reaches 80% of the cap (`BUDGET_WARN_RATIO`), `BudgetWarned` is recorded (once). When the cap is reached, the task is paused (`budget`) before choosing steps and before running a step (when sacty opens the implementation PR inside the Implementation step (`publishPending`), it opens it without stopping, because that costs nothing). Tasks waiting for approval are not stopped. Resuming a task stopped by the budget requires a new cumulative cap larger than the amount spent (up to 10000 US dollars) (`BudgetCapRaised`).
-- Pause reasons (`PauseReason`): `budget`, `usage_limit` (the AI's usage limit), `auth` (an authentication error or missing secret), `error`, `verification`, `manual` (a person paused it), `child_cancelled` (a child task was canceled). A failed AI run pauses the task with that reason (`manual` if a person had paused it). There is no mechanism to resume automatically after a while.
+- Pause reasons (`PauseReason`): `budget`, `usage_limit` (the AI's usage limit), `auth` (an authentication error or missing secret), `error`, `verification`, `manual` (a person paused it), `child_cancelled` (a child task was canceled), `incomplete` (the implementation keeps ending unfinished), `unchanged` (the rework changed nothing in the PR). A failed AI run pauses the task with that reason (`manual` if a person had paused it). There is no mechanism to resume automatically after a while.
 - Pausing by a person: a task cannot be paused in Escalation (including a change request waiting for a person's decision) or while waiting for child tasks. A task waiting for approval (waiting for a PR merge) can be paused; since nothing is running, it is recorded on the spot, and a resume returns it to waiting for approval (for what happens to the PR while it is paused, see [Pausing while waiting for approval](approval.en.md#pausing-while-waiting-for-approval)). If it is running, the container and service startup are stopped before recording. If any container cannot be confirmed as stopped, the task does not resume until that is confirmed.
 - Resume: if the status before the pause was waiting to run, the stopped step is run again. Resume is rejected for an Operation that has started, keeping the task paused.
   Comments that arrive on the implementation PR during an implementation rework are kept as not yet applied while the task is paused (for any reason: the budget, an error, a person's pause, and so on). After the resume, before the step that stopped runs again, they are applied by deciding where to send them back to ([Importing PR comments](approval.en.md#importing-pr-comments)). With no comments, it is as before ([Comments that arrive while paused](approval.en.md#comments-that-arrive-while-paused)).

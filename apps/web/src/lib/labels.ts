@@ -709,6 +709,13 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         : e.branchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
     case "NoChangesFound":
       return e.NoChangesFound;
+    case "ImplementationIncomplete":
+      return e.ImplementationIncomplete(
+        event.payload.undeclared === true,
+        event.payload.remaining.slice(0, 3).join(" / "),
+      );
+    case "ImplementationUnchanged":
+      return e.ImplementationUnchanged(event.payload.number, event.payload.commit.slice(0, 7));
     case "PullRequestCiFinished":
       return e.PullRequestCiFinished(
         event.payload.result,

@@ -17,6 +17,7 @@ import {
   GATHERED_BRIEF_MAX,
   guardianTestsPassed,
   humanVisibleEnvironmentFailures,
+  type ImplementationCompletion,
   type IntegrationReview,
   InvestigationKind,
   investigationIsGoal,
@@ -81,6 +82,7 @@ import {
 import { redact } from "./agents/redact.js";
 import { redactDeep } from "./audit-evidence.js";
 import { redactLog, redactUrlCredentials } from "./ci.js";
+import { extractCompletion, implementCompletionLines } from "./completion.js";
 import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
 import {
   implementReviewCriteriaLines,
@@ -849,6 +851,34 @@ function feedbackLines(task: Task): string[] {
         : "--- 前回の検証：ベースブランチとの競合の目印が残っていました ---",
       "実装の PR を作る前に、競合の目印（<<<<<<<・=======・>>>>>>>）が作業領域のファイルに残っていました。PR は、まだ作っていません（更新もしていません）。",
       ...feedback.files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
+    ];
+  }
+  if (feedback.kind === "incomplete") {
+    // 前の実行が、実装し終えたと申告しなかった（PBI-347）。作業領域には前の実行の変更が残っている
+    return [
+      "",
+      feedback.undeclared
+        ? "--- 前回の実行：実装し終えたかの申告がありませんでした ---"
+        : "--- 前回の実行：実装が終わっていませんでした ---",
+      feedback.undeclared
+        ? "前回の実装の実行は、完了の申告（下の「完了の申告」）をせずに終わりました。sacty は提出していません（PR は、作っていません・更新していません）。"
+        : "前回の実装の実行は、範囲を実装し終える前に終わり、未完了と申告しました。sacty は提出していません（PR は、作っていません・更新していません）。",
+      "作業領域には、前回までの変更が残っています。差分を読んで、どこまで実装されているかを確かめてから続けてください。",
+      ...(feedback.remaining.length > 0
+        ? ["前回の申告にあった、残っていること：", ...feedback.remaining.map((r) => `- ${r}`)]
+        : []),
+      "- 上の一覧だけでなく、範囲（この指示が求める、実装すること・観点・指摘への対応のすべて）を実装し終えてから、実行を終える",
+      "- 実装し終えているなら、変えずに、完了と申告する。この実行でも終えられない理由があるなら、その理由を実装の説明に書いて、未完了と申告する",
+    ];
+  }
+  if (feedback.kind === "unchanged") {
+    // AI のレビューの指摘が残る PR を、前のやり直しが何も変えなかった（PBI-347）
+    return [
+      "",
+      "--- 前回の実行：PR の内容を何も変えませんでした ---",
+      `前回のやり直しの実行は、AI のレビューが指摘を残した PR #${feedback.number} の内容を、何も変えずに終わりました。同じ内容は再レビューされないので、sacty は提出せず、人が再開しました。`,
+      "- 下の指摘に対応する変更を、作業領域に加える。対応しないと判断した指摘は、その理由を指摘への対応に書く",
+      "- すべての指摘に対応しないと判断したなら、何も変えずに、その理由を実装の説明と指摘への対応に書く（人が PR を確かめて判断する）",
     ];
   }
   if (feedback.kind === "tests") {
@@ -2197,6 +2227,8 @@ function implementSelfReviewLines(
         ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses)
         : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses)),
     ...implementVerificationRecordLines(runsTests(task), !pullRequestReview),
+    // 実装し終えたかを申告させる（未完了の実行を提出にしない。PBI-347）
+    ...implementCompletionLines(),
   ];
 }
 
@@ -3258,6 +3290,8 @@ export type Extracted = {
   selfReview?: SelfReview;
   /** 実装の工程が、最後の変更の後に実行した検証の記録（PBI-305）。無い・読めなければ undefined。 */
   verificationRecord?: VerificationRecord;
+  /** 実装の工程の、完了の申告（PBI-347）。読ませていない・無い・読めなければ undefined。 */
+  completion?: ImplementationCompletion;
   /**
    * 出典の分類の答え（見出し sacty-provenance の値。最後のもの）。中身はまだ確かめていない（checkProvenance で読む）。
    * 無い・JSON として読めなければ undefined。
@@ -3389,6 +3423,11 @@ export function extractBlocks(
      * コードのとき、字下げを消すと、コードを普通の文と見分けられなくなるため（PBI-264）。ほかの工程は従来どおり前後の空白を除く。
      */
     keepIndent?: boolean;
+    /**
+     * 完了の申告（見出し sacty-completion）を読み、本文から取り除くか（PBI-347）。実装の工程だけ true にする。ほかの工程の
+     * 成果物（要求要件・設計など）に同じ見出しの JSON が書かれていても、申告として扱わず、本文のまま残す。
+     */
+    completion?: boolean;
   } = {},
 ): Extracted {
   let responses: RemarkResponse[] | undefined;
@@ -3496,7 +3535,9 @@ export function extractBlocks(
   const testCommandInvalid = "invalid" in declared ? declared.invalid : undefined;
   // 検証の記録（PBI-305）。最後のものだけを使い、どの記録も本文からは取り除く
   const verification = extractVerificationRecord(body);
-  const removed = [...used, ...reports, ...classified, ...verification.spans];
+  // 完了の申告（PBI-347）。最後のものだけを使い、どの申告も本文からは取り除く
+  const completion = options.completion ? extractCompletion(body) : { spans: [] };
+  const removed = [...used, ...reports, ...classified, ...verification.spans, ...completion.spans];
   return {
     output: options.keepIndent
       ? trimBlankLines(withoutCandidates(body, removed))
@@ -3508,6 +3549,9 @@ export function extractBlocks(
     testMap: testMap ?? [],
     ...(selfReview ? { selfReview } : {}),
     ...(verification.record ? { verificationRecord: verification.record } : {}),
+    ...("completion" in completion && completion.completion
+      ? { completion: completion.completion }
+      : {}),
     ...(lastClassified?.value !== undefined ? { provenance: lastClassified.value } : {}),
     ...(testCommand && !testCommandInvalid ? { testCommand } : {}),
     ...(testCommandInvalid ? { testCommandInvalid } : {}),

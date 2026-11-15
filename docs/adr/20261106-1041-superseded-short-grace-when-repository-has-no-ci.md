@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-309、#315
 - 置き換え元: なし
-- 置き換え先: [実装の最終レビュー（テストの実行）と PR の CI の待ちをやめ、PR のレビューの子タスクの指摘なしでドラフトを外す](20261112-0714-review-child-task-replaces-final-review-and-ci-wait.md)
+- 置き換え先: [実装の最終レビュー（テストの実行）と PR の CI の待ちをやめ、PR のレビューの子タスクの指摘なしでドラフトを外す](20261112-0714-superseded-review-child-task-replaces-final-review-and-ci-wait.md)
 
 ## 背景
 

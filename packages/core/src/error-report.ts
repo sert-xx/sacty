@@ -24,6 +24,10 @@ export function failureKind(event: ActivityEvent): FailureKind | undefined {
       return event.payload.passed ? undefined : "check";
     case "BaseConflictsRemained":
       return "check";
+    // 実装が終わっていない・やり直しが何も変えなかったので、提出しなかった（PBI-347）
+    case "ImplementationIncomplete":
+    case "ImplementationUnchanged":
+      return "check";
     case "PullRequestCiFinished":
       return event.payload.result === "failed" || event.payload.result === "timed_out"
         ? "check"

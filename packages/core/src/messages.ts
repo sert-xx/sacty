@@ -466,6 +466,16 @@ const PARAMS = {
     files: TextParam,
     total: z.number().int().nonnegative(),
   }),
+  "implement.incomplete": z.object({
+    count: Count,
+    /** やり直しても、作業領域の差分が変わらなかった（回数を待たずに止めた）。 */
+    stalled: z.boolean(),
+    /** 未完了と申告した（false は、完了の申告が無い・読めなかった）。 */
+    declared: z.boolean(),
+    remaining: TextParam,
+    total: z.number().int().nonnegative(),
+  }),
+  "implement.unchanged": z.object({ number: z.number() }),
   "merge.failed": z.object({ detail: TextParam }),
   "pr.unavailable": z.object({ detail: TextParam }),
   "pr.workspaceMissing": null,
@@ -1381,6 +1391,18 @@ const ja: MessageDictionary = {
     `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。再開すると実装をやり直します。PR を確かめて人が判断するなら、レビューへ進められます。`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
     `ベースブランチとの競合の目印が、${count}回続けて作業領域に残りました（${text(files)}${total > 5 ? ` ほか、全${total}件` : ""}）。目印を消して提出し直す必要があります。再開すると、目印の残るファイルを渡して実装をやり直します（レビューへは進められません）。`,
+  "implement.incomplete": ({ count, stalled, declared, remaining, total }, text) =>
+    `${
+      declared
+        ? "実装の工程が、範囲を実装し終える前に終わりました"
+        : "実装の工程が、実装し終えたかの申告をせずに終わりました"
+    }（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。${
+      total > 0
+        ? `残っていること：${text(remaining)}${total > 5 ? ` ほか、全${total}件` : ""}。`
+        : ""
+    }再開すると、実装をやり直します。工程のエージェントを変えて再開することもできます。`,
+  "implement.unchanged": ({ number }) =>
+    `AI のレビューが指摘を残した PR #${number} を、やり直しの実装が何も変えませんでした。同じ内容は再レビューされないので、提出していません。再開すると、指摘を渡して実装をやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "merge.failed": ({ detail }, text) =>
     `ベースブランチの最新を作業領域に取り込めませんでした：${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
@@ -2170,6 +2192,18 @@ const en: MessageDictionary = {
     `Verification of the implementation (tests and final review) failed ${count} times in a row. Resuming redoes the implementation. If a person checks the PR and decides, the task can be moved to review.`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
     `Conflict markers with the base branch stayed in the workspace ${count} times in a row (${text(files)}${total > 5 ? ` and more, ${total} in total` : ""}). The markers must be removed before the implementation can be submitted. Resuming redoes the implementation with the files that still have markers (the task cannot be moved to review).`,
+  "implement.incomplete": ({ count, stalled, declared, remaining, total }, text) =>
+    `${
+      declared
+        ? "The implementation step ended before it finished its scope"
+        : "The implementation step ended without declaring whether it finished"
+    } (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). ${
+      total > 0
+        ? `What remains: ${text(remaining)}${total > 5 ? ` and more, ${total} in total` : ""}. `
+        : ""
+    }Resuming redoes the implementation. You can also change the agent of the step and then resume.`,
+  "implement.unchanged": ({ number }) =>
+    `The rework of the implementation changed nothing in PR #${number}, on which the AI review left findings. The same content is not reviewed again, so nothing was submitted. Resuming redoes the implementation with the findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "merge.failed": ({ detail }, text) =>
     `Could not merge the latest base branch into the workspace: ${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,

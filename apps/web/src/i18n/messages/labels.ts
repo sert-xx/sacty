@@ -96,6 +96,8 @@ const ja = {
     verification: "実装の検証に通らないため一時停止",
     manual: "一時停止中",
     child_cancelled: "子タスクの中止で一時停止",
+    incomplete: "実装が終わらないため一時停止",
+    unchanged: "やり直しで変更が無いため一時停止",
   } satisfies Record<PauseReason, string>,
   pauseHelp: {
     budget: "予算の上限に達しました。作業中のものは残っています。",
@@ -108,6 +110,9 @@ const ja = {
     manual: "人が一時停止しました。再開すると、止めたところから続けます。",
     child_cancelled:
       "子タスクが中止されました。再開すると中止した子タスクを除いて進め、中止すると終わっていない子タスクも中止します。",
+    incomplete:
+      "実装が終わらず、PR を作っていません（更新もしていません）。再開すると実装をやり直します。",
+    unchanged: "やり直しが PR を何も変えず、提出していません。再開すると実装をやり直します。",
   } satisfies Record<PauseReason, string>,
   /** 実装の作り直しを、PR のマージで止めたときの段階（ReworkStoppedByMerge）。 */
   reworkStage: {
@@ -122,6 +127,8 @@ const ja = {
     tests: "テスト",
     review: "最終レビュー",
     merge: "競合の目印",
+    incomplete: "終わっていない実装の残り",
+    unchanged: "変更の無いやり直し",
   },
   auth: {
     subscription: "サブスクリプション",
@@ -390,6 +397,10 @@ const ja = {
     branchPushed: (branch: string, commit: string) =>
       `PR を作らず、ブランチまで（${branch}・${commit}）`,
     NoChangesFound: "実装に変更が無いため、PR を作らずに承認待ち",
+    ImplementationIncomplete: (undeclared: boolean, remaining: string) =>
+      `${undeclared ? "実装し終えたかの申告が無い" : "実装が終わっていない"}ため、提出せずに実装をやり直す${remaining ? `（残り：${remaining}）` : ""}`,
+    ImplementationUnchanged: (number: number, commit: string) =>
+      `やり直しの実装が、AI のレビューの指摘が残る PR #${number}（${commit}）を何も変えなかったため、提出しない`,
     prDrafted: (number: number | undefined, draft: boolean, commit: string) =>
       `最終レビューの前に PR を${draft ? "ドラフトで" : ""}作成・更新（#${number}・${commit}）。CI を待つ`,
     PullRequestCiFinished: (
@@ -790,6 +801,8 @@ const en: LabelMessages = {
     verification: "Paused: implementation keeps failing verification",
     manual: "Paused",
     child_cancelled: "Paused: a subtask was cancelled",
+    incomplete: "Paused: the implementation keeps ending unfinished",
+    unchanged: "Paused: the rework changed nothing",
   },
   pauseHelp: {
     budget: "The budget cap was reached. The work so far is kept.",
@@ -801,6 +814,10 @@ const en: LabelMessages = {
     manual: "A person paused this task. Resume to continue from where it stopped.",
     child_cancelled:
       "A subtask was cancelled. Resume to continue without it, or cancel to also cancel the unfinished subtasks.",
+    incomplete:
+      "The implementation ended unfinished, so no PR was opened or updated. Resume to implement again.",
+    unchanged:
+      "The rework changed nothing in the PR, so it was not submitted. Resume to implement again.",
   },
   reworkStage: {
     queued: "queued",
@@ -813,6 +830,8 @@ const en: LabelMessages = {
     tests: "tests",
     review: "final review",
     merge: "conflict markers",
+    incomplete: "what remained of the unfinished implementation",
+    unchanged: "the rework that changed nothing",
   },
   auth: {
     subscription: "Subscription",
@@ -1027,6 +1046,10 @@ const en: LabelMessages = {
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
     branchPushed: (branch, commit) => `No PR; branch only (${branch} · ${commit})`,
     NoChangesFound: "The implementation changed nothing, so no PR was opened; awaiting approval",
+    ImplementationIncomplete: (undeclared, remaining) =>
+      `${undeclared ? "The implementation did not declare whether it finished" : "The implementation is unfinished"}, so it is redone without being submitted${remaining ? ` (remaining: ${remaining})` : ""}`,
+    ImplementationUnchanged: (number, commit) =>
+      `The rework changed nothing in PR #${number} (${commit}), on which the AI review left findings, so it is not submitted`,
     prDrafted: (number, draft, commit) =>
       `Opened or updated the PR${draft ? " as a draft" : ""} before the final review (#${number} · ${commit}); waiting for CI`,
     PullRequestCiFinished: (result, failed, rerunSkipped) =>

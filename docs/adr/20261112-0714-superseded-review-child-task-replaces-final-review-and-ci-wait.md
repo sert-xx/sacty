@@ -1,10 +1,10 @@
 # 実装の最終レビュー（テストの実行）と PR の CI の待ちをやめ、PR のレビューの子タスクの指摘なしでドラフトを外す
 
 - 日時: 2026-11-12 07:14 UTC
-- ステータス: 採用
+- ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-331
 - 置き換え元: [最終レビューを、実装の PR の CI と並べて進める](20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[実装の PR の CI の失敗ジョブを、できるときにコミットごとに1回だけ再実行する](20261106-1100-superseded-rerun-failed-pull-request-ci-once-when-possible.md)、[実装の PR の CI の待ちは、リポジトリに CI が無いと確かめられたら短い猶予で終える](20261106-1041-superseded-short-grace-when-repository-has-no-ci.md)、[不安定なテストの台帳を作業履歴から導き、提案は人が作るタスクにする](20261106-1105-superseded-derive-flaky-test-ledger-from-activity.md)、[差分と無関係で実行し直すと結果が変わる失敗を、実装に戻さない](20261106-1130-superseded-accept-flaky-failures-unrelated-to-diff.md)
-- 置き換え先: なし
+- 置き換え先: [終わっていない実装を提出にせず、変更の無いやり直しで行き止まりにしない](20261115-1224-stop-incomplete-implementation-and-unchanged-rework.md)（実装の工程が終わったら、確かめずに実装の PR を作る・更新する部分。最終レビューと CI の待ちをしないこと、指摘なしでドラフトを外すことは、今も効く）
 
 ## 背景
 

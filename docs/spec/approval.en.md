@@ -125,6 +125,7 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
     - Other PRs (Requirements and Design PRs): the commit the parent currently has on the PR.
     This is when the parent fixed the findings, updated the PR, and went back to waiting for approval, and when a person added commits to the PR. It does not start while fixing (not waiting for approval).
     It starts only once for the same commit (`Task.reviewRestartCommit`; even if a push elsewhere makes the reviewed head differ from the parent's commit, it does not repeat).
+    If the parent's rework does not change the head of the implementation PR, no re-review starts. When findings remain on that head, the parent pauses instead of submitting ([Unfinished implementations and reworks that change nothing](tasks-and-steps.en.md#unfinished-implementations-and-reworks-that-change-nothing)).
     Child tasks that are paused, or for which pause or cancel was requested, are left alone.
 - If the child task's verdict is no findings (`no_findings`), nothing is delivered to the parent and the verdict itself starts no re-review, so the PR waits for a person's approval (merge). Even after no findings, a re-review starts as above when the PR's head changes (for example when a person adds commits).
   For an implementation PR (`awaitingReview`), when the current commit of the PR gets no findings, the PR check has sacty remove the draft (`PullRequestMarkedReady`; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)).
