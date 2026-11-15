@@ -1600,6 +1600,24 @@ describe("成果の書き出し（PBI-56）", () => {
 });
 
 describe("リポジトリを指定しないタスク（PBI-73）", () => {
+  it("複数の指定を選択後も保持し、リポジトリの有無は従来どおり判定する", () => {
+    seq = 0;
+    const repos = ["https://github.com/acme/api", "https://github.com/acme/web"];
+    const created = ev(
+      "multi",
+      {
+        type: "TaskCreated",
+        payload: { title: "t", body: "", start: "sacty", noRepo: true, repos },
+      },
+      "person",
+    );
+    const before = project([created]).get("multi");
+    expect(before?.repos).toEqual(repos);
+    expect(before && isRepoless(before)).toBe(true);
+    const after = project([created, chosen("multi")]).get("multi");
+    expect(after?.repos).toEqual(repos);
+    expect(after && isRepoless(after)).toBe(false);
+  });
   const noRepo = (taskId: string) =>
     ev(
       taskId,
