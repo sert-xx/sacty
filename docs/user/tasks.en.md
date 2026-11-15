@@ -924,6 +924,23 @@ A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existi
   sacty does not merge the base branch in even if you send the task back, so resolve the conflict on GitHub.
 - The row in "Needs you", the task details, and the approval screen say "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub".
 
+### Test viewpoints of the child tasks of a split
+
+A task split assigns the test viewpoints of the parent task's design to the child tasks.
+A child task that is implemented without Requirements and Design (a child task with no Design or Reproduction step) maps a test, or a reason for writing no test, to every viewpoint assigned to it.
+
+- "Subtasks" in the parent task's details shows the IDs of the test viewpoints of each child task.
+  Viewpoints to check in the integration review (viewpoints the child tasks alone cannot fully check) are shown below them, with the reasons. The same viewpoint may also be assigned to a child task.
+- "Assigned test viewpoints" in a child task's details shows the content of each viewpoint (its input and expected result).
+- If the viewpoint-to-test mapping of the implementation of a child task with no Design or Reproduction step misses an assigned viewpoint, sacty does not submit the implementation.
+  It redoes the implementation with the missing viewpoints, and the task pauses if they keep missing ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)).
+- If the result of the split leaves a viewpoint that is in no child task and not in the integration review, no child task is created and the parent task pauses.
+  The reason it stopped shows the viewpoints that are left out. Resuming redoes the task split.
+- For the following child tasks, the mapping of the assigned viewpoints is not checked.
+  - A child task with a Design or Reproduction step: it uses the viewpoints decided in that step (the test viewpoints of its own design, or the reproduction test).
+  - A child task without tests, and a child task whose request changes only documents: it writes no tests, so it describes in the implementation description how it meets each viewpoint.
+- When the parent task's design has no test viewpoints, no viewpoints are assigned. A child task then uses meeting the purpose of the task as its viewpoint.
+
 ### PRs of dependent child tasks (stacked PRs)
 
 In a task split, a child task that depends on other child tasks can start without waiting for the dependency's PR to be merged. This keeps later child tasks moving while the dependency's PR is reviewed and merged.
@@ -1515,11 +1532,13 @@ sacty submits only runs that declared they finished (it opens or updates the PR)
 When the implementation does not finish, the task proceeds as follows.
 
 1. A run that declared it is unfinished, or whose declaration is missing or unreadable, is not submitted. No PR is opened, and an existing PR is not updated.
+   A run that declared it is complete is not submitted either if a test viewpoint has no test mapped (the viewpoints are the test viewpoints of the design, or the ones assigned by a task split).
 2. sacty redoes the implementation, passing along what remains.
 3. If it does not finish 3 times in a row, the task becomes "Paused: the implementation keeps ending unfinished".
    If redoing changed nothing in the workspace, the task stops without waiting for 3 times.
 4. If the agent declared what remains, the reason it stopped shows it. Check it, then resume.
    When the task stopped with the declaration missing or unreadable, what remains is not shown.
+   When the task stopped because a test viewpoint has no test mapped, the reason shows those viewpoints.
    If you think the same agent will not get further, you can change the agent of the Implementation step in the resume form ([Resuming a stopped task](#resuming-a-stopped-task)).
 
 When a rework changes nothing, the task proceeds as follows.

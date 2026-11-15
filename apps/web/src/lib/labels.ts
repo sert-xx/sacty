@@ -710,6 +710,10 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "NoChangesFound":
       return e.NoChangesFound;
     case "ImplementationIncomplete":
+      // 完了と申告したが、テストの対応していないテスト観点があった（PBI-348）
+      if (event.payload.unmapped?.length) {
+        return e.ImplementationUnmapped(event.payload.unmapped.slice(0, 5).join("・"));
+      }
       return e.ImplementationIncomplete(
         event.payload.undeclared === true,
         event.payload.remaining.slice(0, 3).join(" / "),

@@ -399,6 +399,8 @@ const ja = {
     NoChangesFound: "実装に変更が無いため、PR を作らずに承認待ち",
     ImplementationIncomplete: (undeclared: boolean, remaining: string) =>
       `${undeclared ? "実装し終えたかの申告が無いか読めない" : "実装が終わっていない"}ため、提出せずに実装をやり直す${remaining ? `（残り：${remaining}）` : ""}`,
+    ImplementationUnmapped: (ids: string) =>
+      `テストの対応していないテスト観点があるため、提出せずに実装をやり直す（${ids}）`,
     ImplementationUnchanged: (number: number, commit: string) =>
       `やり直しの実装が、AI のレビューの指摘が残る PR #${number}（${commit}）を何も変えなかったため、提出しない`,
     prDrafted: (number: number | undefined, draft: boolean, commit: string) =>
@@ -1048,6 +1050,8 @@ const en: LabelMessages = {
     NoChangesFound: "The implementation changed nothing, so no PR was opened; awaiting approval",
     ImplementationIncomplete: (undeclared, remaining) =>
       `${undeclared ? "The declaration of whether the implementation finished is missing or unreadable" : "The implementation is unfinished"}, so it is redone without being submitted${remaining ? ` (remaining: ${remaining})` : ""}`,
+    ImplementationUnmapped: (ids) =>
+      `Some test viewpoints have no test mapped, so the implementation is redone without being submitted (${ids})`,
     ImplementationUnchanged: (number, commit) =>
       `The rework changed nothing in PR #${number} (${commit}), on which the AI review left findings, so it is not submitted`,
     prDrafted: (number, draft, commit) =>

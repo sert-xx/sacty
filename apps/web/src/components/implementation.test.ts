@@ -44,6 +44,13 @@ const task = (lastReview: FinalReview) =>
     lastReview,
   }) as unknown as Task;
 
+/** 設計の工程があるタスクの工程（観点は、承認済みの設計のテスト観点になる）。 */
+const DESIGNED_STEPS = [
+  { key: "requirements", state: "done" },
+  { key: "design", state: "done" },
+  { key: "implement", state: "active" },
+];
+
 const render = (t: Task, locale: "ja" | "en" = "ja") =>
   renderToStaticMarkup(
     h(
@@ -109,6 +116,7 @@ describe("Implementation のテストを書かずに差分で確かめる観点"
     ({
       ...task(lastReview ?? review()),
       verification: undefined,
+      steps: DESIGNED_STEPS,
       approved: {
         design: {
           output: "# 設計",
@@ -167,6 +175,7 @@ describe("Implementation の、終了コードが 0 でないのに合格にし�
     ({
       ...task(lastReview),
       verification: undefined,
+      steps: DESIGNED_STEPS,
       approved: {
         design: {
           output: "# 設計",
@@ -338,5 +347,61 @@ describe("Implementation の、前の段の結果を使い回したテスト（P
     const html = render(task(review({ tests: { command: "npm test", exitCode: 0, output: "" } })));
     expect(html).toContain("最終レビューで実行したテスト");
     expect(html).not.toContain("最終レビューが判定に使ったテスト");
+  });
+});
+
+describe("Implementation の、親タスクの分割で割り当てられたテスト観点（PBI-348）", () => {
+  const tv = (n: number, title: string) => ({
+    id: `TV-${n}`,
+    title,
+    input: "入力",
+    expected: "期待",
+  });
+  const child = (extra: Partial<Task> = {}) =>
+    ({
+      ...task(review({ viewpoints: [], humanChecks: undefined })),
+      lastReview: undefined,
+      verification: undefined,
+      steps: [{ key: "implement", state: "active" }],
+      inheritedViewpoints: [tv(1, "同じキーの再送"), tv(2, "キーなし")],
+      testMap: [{ viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] }],
+      ...extra,
+    }) as unknown as Task;
+
+  it("設計の工程が無い子タスクは、タスクの目的（REQ）の代わりに、割り当てられた観点ごとに、対応するテストを出す", () => {
+    const html = render(child());
+    expect(html).toContain("TV-1");
+    expect(html).toContain("同じキーの再送");
+    expect(html).toContain("pay.test.ts › 同じキーの再送");
+    // テストが対応していない観点も、行として出す
+    expect(html).toContain("TV-2");
+    expect(html).toContain("キーなし");
+    expect(html).not.toContain(">REQ<");
+  });
+
+  it("割り当ての無い子タスクは、REQ に対応があれば REQ を出す。設計の工程があれば、自分の設計の観点を出す", () => {
+    const req = render(
+      child({
+        inheritedViewpoints: undefined,
+        testMap: [{ viewpointId: "REQ", tests: ["form.test.ts"] }],
+      }),
+    );
+    expect(req).toContain("REQ");
+    expect(req).not.toContain("TV-1");
+    const designed = render(
+      child({
+        steps: DESIGNED_STEPS as Task["steps"],
+        approved: {
+          design: {
+            submission: 1,
+            output: "# 設計",
+            testViewpoints: [tv(7, "自分の設計")],
+            at: "",
+          },
+        },
+      }),
+    );
+    expect(designed).toContain("TV-7");
+    expect(designed).not.toContain("TV-2");
   });
 });

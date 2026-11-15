@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { budgetState, computeCostUsd } from "./cost.js";
-import type { ActivityEvent, EventInput } from "./events.js";
+import type { ActivityEvent, EventInput, StepKey } from "./events.js";
 import {
   bodyWithResumeNote,
   DERIVE_RECORD_HEADING,
@@ -42,6 +42,7 @@ import {
   heldReview,
   humanAsks,
   implementationMerged,
+  implementViewpoints,
   isCompleted,
   isFinished,
   isRepoless,
@@ -63,6 +64,7 @@ import {
   stepRunning,
   type Task,
   testToolsMissing,
+  unmappedViewpoints,
   unreflectedImplementRemarks,
   verificationImageOf,
   workBaseCommit,
@@ -4645,6 +4647,142 @@ describe("終わっていない実装と、変更の無いやり直し（PBI-347
     expect(project([...base, unchanged("t1", "h1")]).get("t1")?.verifyFeedback).toEqual({
       kind: "unchanged",
       number: 7,
+    });
+  });
+});
+
+describe("実装がテストを対応させるテスト観点（PBI-348）", () => {
+  const tv = (n: number) => ({ id: `TV-${n}`, title: `観点${n}`, input: "i", expected: "e" });
+  const child = (id: string, viewpoints?: ReturnType<typeof tv>[]) =>
+    ev(
+      id,
+      {
+        type: "TaskCreated",
+        payload: {
+          title: "子",
+          body: "",
+          start: "split",
+          parent: { taskId: "p", dependsOn: [] },
+          ...(viewpoints ? { viewpoints } : {}),
+        },
+      },
+      "sacty",
+    );
+  const base = (overrides: Partial<Task> = {}): Task =>
+    ({ ...(project([child("c1", [tv(1), tv(2)])]).get("c1") as Task), ...overrides }) as Task;
+
+  it("子タスクは、親の分割で割り当てられた観点を持つ。割り当ての無い子タスクは持たない", () => {
+    seq = 0;
+    const tasks = project([child("c1", [tv(1), tv(2)]), child("c2")]);
+    expect(tasks.get("c1")?.inheritedViewpoints).toEqual([tv(1), tv(2)]);
+    expect(tasks.get("c2")?.inheritedViewpoints).toBeUndefined();
+  });
+
+  it("実装の観点は、設計の工程があれば自分の設計のテスト観点、再現の工程があれば無し、どちらも無ければ割り当てられた観点（実装の指示と同じ決め方）", () => {
+    seq = 0;
+    const steps = (keys: StepKey[], skipped: StepKey[] = []): Task["steps"] =>
+      keys.map((key) => ({ key, state: skipped.includes(key) ? "skip" : "todo" }));
+    const design = (testViewpoints: ReturnType<typeof tv>[]) => ({
+      approved: {
+        design: { submission: 1, output: "# 設計", testViewpoints, at: "2026-11-15" },
+      },
+    });
+    // 設計も再現も無い子タスク（要求要件・設計を省いた実装）は、割り当てられた観点
+    const inherited = base({ steps: steps(["implement"]) });
+    expect(implementViewpoints(inherited).map((v) => v.id)).toEqual(["TV-1", "TV-2"]);
+    expect(
+      implementViewpoints(base({ steps: steps(["requirements", "implement"]) })).map((v) => v.id),
+    ).toEqual(["TV-1", "TV-2"]);
+    // 設計の工程があれば、自分の設計のテスト観点。指示はこの観点だけを並べるので、設計に観点が無くても、割り当てられた観点は使わない
+    const designSteps = steps(["requirements", "design", "implement"]);
+    expect(
+      implementViewpoints(base({ steps: designSteps, ...design([tv(7)]) })).map((v) => v.id),
+    ).toEqual(["TV-7"]);
+    expect(implementViewpoints(base({ steps: designSteps, ...design([]) }))).toEqual([]);
+    expect(implementViewpoints(base({ steps: designSteps }))).toEqual([]);
+    // 再現の工程があれば（不具合の修正）、観点は再現のテストが通ることなので、無し
+    expect(implementViewpoints(base({ steps: steps(["reproduce", "implement"]) }))).toEqual([]);
+    // 工程の見直しで飛ばした工程は、無いものとして扱う
+    expect(
+      implementViewpoints(
+        base({ steps: steps(["requirements", "design", "implement"], ["design"]) }),
+      ).map((v) => v.id),
+    ).toEqual(["TV-1", "TV-2"]);
+    expect(
+      implementViewpoints(base({ steps: steps(["reproduce", "implement"], ["reproduce"]) })).map(
+        (v) => v.id,
+      ),
+    ).toEqual(["TV-1", "TV-2"]);
+    // 割り当ての無いタスクは空
+    expect(
+      implementViewpoints(base({ steps: steps(["implement"]), inheritedViewpoints: undefined })),
+    ).toEqual([]);
+  });
+
+  it("対応の欠けた観点は、テストもテストを書かない理由も対応していない観点。テストを書かないタスクでは求めない", () => {
+    seq = 0;
+    const mapped = (testMap: Task["testMap"], overrides: Partial<Task> = {}) =>
+      unmappedViewpoints(base({ testMap, ...overrides })).map((v) => v.id);
+    expect(mapped([])).toEqual(["TV-1", "TV-2"]);
+    expect(mapped([{ viewpointId: "TV-1", tests: ["a"] }])).toEqual(["TV-2"]);
+    expect(
+      mapped([
+        { viewpointId: "TV-1", tests: ["a"] },
+        { viewpointId: "TV-2", tests: [], untested: "文言だけ" },
+      ]),
+    ).toEqual([]);
+    // テストも理由も無い対応は、対応していない
+    expect(mapped([{ viewpointId: "TV-1", tests: [] }])).toEqual(["TV-1", "TV-2"]);
+    // 知らない観点（REQ など）の対応は、欠けを埋めない
+    expect(mapped([{ viewpointId: "REQ", tests: ["a"] }])).toEqual(["TV-1", "TV-2"]);
+    // テストの仕組みが無いタスク・文書だけの依頼は、対応を求めない
+    expect(mapped([], { noTestsReason: "テストの仕組みが無い" })).toEqual([]);
+    expect(mapped([], { documentsOnly: true })).toEqual([]);
+    // 観点の無いタスク（REQ だけ）は、欠けが無い
+    expect(mapped([], { inheritedViewpoints: undefined })).toEqual([]);
+    // 再現の工程があるタスク（不具合の修正）は、指示が割り当てられた観点を並べないので、対応を求めない
+    expect(
+      mapped([], {
+        steps: [
+          { key: "reproduce", state: "done" },
+          { key: "implement", state: "active" },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("未完了の記録に、対応の欠けた観点を残す", () => {
+    seq = 0;
+    const events = [
+      created("t1"),
+      ev("t1", { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+      ev("t1", {
+        type: "AgentRunStarted",
+        payload: { runId: "r1", step: "implement", agentId: "a", authMode: "subscription" },
+      }),
+      ev("t1", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId: "r1",
+          step: "implement",
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: true,
+          output: "# 実装",
+          completion: { status: "complete" },
+        },
+      }),
+      ev("t1", {
+        type: "ImplementationIncomplete",
+        payload: { remaining: ["TV-2 観点2"], unmapped: ["TV-2"] },
+      }),
+    ];
+    expect(project(events).get("t1")?.verifyFeedback).toEqual({
+      kind: "incomplete",
+      remaining: ["TV-2 観点2"],
+      unmapped: ["TV-2"],
     });
   });
 });

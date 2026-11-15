@@ -1233,7 +1233,36 @@ class FakeExecutor implements AgentExecutor {
         rmSync(config, { recursive: true, force: true });
       }
     }
-    return this.withCompletion(invocation, outcome);
+    return this.withViewpointAssignment(invocation, this.withCompletion(invocation, outcome));
+  }
+  /**
+   * true なら、分割の答えに、テスト観点の割り当てを足さない（割り当ての無い分割を確かめるテスト。PBI-348）。割り当てそのものを
+   * 確かめるテストは、答えに自分で viewpoints か integrationViewpoints を書けば、足されない。
+   */
+  unassignedViewpoints = false;
+  /**
+   * 分割の工程の指示は、親の設計のテスト観点を、子タスクか統合レビューに割り当てるよう求める（PBI-348）。本物のエージェントが
+   * 指示どおりに割り当てる代わりに、割り当てを書いていないテストの答えには、すべての観点を統合レビューで確かめる割り当てを
+   * 足す（割り当てが無いと、sacty は子タスクを作らない。子タスクには割り当てないので、子タスクの実装は今までどおり進む）。
+   */
+  private withViewpointAssignment(invocation: Invocation, outcome: AgentOutcome): AgentOutcome {
+    if (this.unassignedViewpoints || outcome.kind !== "completed") return outcome;
+    const heading = "--- 承認済みのテスト観点 ---";
+    const prompt = invocation.command.find((arg) => arg.includes(heading));
+    if (!prompt || /"(?:viewpoints|integrationViewpoints)"/.test(outcome.output)) return outcome;
+    const section = (prompt.split(heading)[1] ?? "").split("\n--- ")[0] ?? "";
+    const ids = [...section.matchAll(/^- \[([^\]]+)\]/gm)].map((m) => m[1] ?? "");
+    if (ids.length === 0) return outcome;
+    const assigned = JSON.stringify(
+      ids.map((id) => ({ id, reason: "子タスクを組み合わせた後に確かめる" })),
+    );
+    return {
+      ...outcome,
+      output: outcome.output.replace(
+        /("sacty-split":\s*\{)/,
+        `$1"integrationViewpoints":${assigned},`,
+      ),
+    };
   }
   /**
    * true なら、実装の工程の出力に、完了の申告を足さない（申告の無い実行を確かめるテスト。PBI-347）。申告そのものを確かめる
@@ -4261,6 +4290,91 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       for (const id of ids) await service.runNext(id);
     }
   }
+
+  describe("観点とテストの対応に、設計のテスト観点が欠けた実装は提出しない（PBI-348）", () => {
+    const TV1 = { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] };
+    const TV2 = { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] };
+
+    it("設計のテスト観点にテストの対応が欠けていたら、完了と申告していても PR を作らず、欠けた観点を渡して実装をやり直す（受け入れ条件 5）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装", [TV1]), implement("# 実装 v2", [TV1, TV2])],
+        { pulls },
+      );
+      await service.runNext(id);
+      await service.runNext(id);
+      const incomplete = service
+        .get(id)
+        ?.activity.find((e) => e.type === "ImplementationIncomplete");
+      expect(incomplete?.payload).toMatchObject({
+        remaining: ["TV-2 キーなし"],
+        unmapped: ["TV-2"],
+      });
+      expect(pulls.calls).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("queued");
+      await drain(service);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("--- 前回の実行：テストが対応していないテスト観点がありました ---");
+      expect(prompt).toContain("- [TV-2] キーなし");
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(pulls.calls).toHaveLength(1);
+      activity.close();
+    });
+
+    it("設計のある実装の指示は、観点の対応が欠けると提出されないことと、変更が要らないときも対応させることを伝える", async () => {
+      const { activity, service, executor } = await toImplement([implement("# 実装", [TV1, TV2])]);
+      await drain(service);
+      const prompt = executor.calls
+        .map((_, i) => promptOf(executor, i))
+        .find((p) => p.includes("--- テスト観点（承認済み・すべてにテストを対応させる） ---"));
+      expect(prompt).toContain(
+        "- 観点とテストの対応に、上の観点が1つでも欠けていると、sacty は提出しない（欠けている観点を渡して、実装をやり直す）",
+      );
+      expect(prompt).toContain(
+        "変更が要らないとわかったときも、観点ごとに、その観点を確かめている既存のテスト（か、テストを書かない理由）を対応させる",
+      );
+      activity.close();
+    });
+
+    it("変更が要らないとわかった実行も、観点の対応が欠けていれば、対応を出し直させてから、変更なしの確認に進む", async () => {
+      const repos = new FakeRepos();
+      repos.unchanged = true;
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplement(
+        [implement("# 変更は要らない", [TV1]), implement("# 変更は要らない v2", [TV1, TV2])],
+        { repos, pulls },
+      );
+      await drain(service);
+      const recorded = types(service, id);
+      expect(recorded.filter((t) => t === "ImplementationIncomplete")).toHaveLength(1);
+      expect(recorded.indexOf("ImplementationIncomplete")).toBeLessThan(
+        recorded.indexOf("NoChangesFound"),
+      );
+      expect(recorded).not.toContain("TaskPaused");
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("awaiting_approval");
+      expect(task?.noChanges).toEqual({ submission: 1 });
+      expect(pulls.calls).toEqual([]);
+      activity.close();
+    });
+
+    it("テストを書かない理由（untested）を対応させた観点は、欠けていない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplement(
+        [
+          implement("# 実装", [
+            TV1,
+            { viewpointId: "TV-2", tests: [], untested: "文言だけを直したため" },
+          ]),
+        ],
+        { pulls },
+      );
+      await drain(service);
+      expect(types(service, id)).not.toContain("ImplementationIncomplete");
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+  });
 
   describe("ベースブランチの取り込み（競合の解消）", () => {
     const tip = "e".repeat(40);
@@ -18927,6 +19041,355 @@ describe("タスク分割（PBI-27）", () => {
     await restarted.runNext(id);
     expect(childrenOf(restarted, id).map((c) => c?.id)).toEqual(ids);
     fresh.close();
+  });
+});
+
+describe("分割の子タスクに、親の設計のテスト観点を割り当てる（PBI-348）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const VIEWPOINTS = [
+    { title: "同じキーの再送", input: "同じキーで2回送る", expected: "決済は1回" },
+    { title: "キーなし", input: "キーを付けない", expected: "400" },
+    { title: "画面から決済できる", input: "画面で決済する", expected: "API に届く" },
+  ];
+  /** 設計。viewpoints を渡さなければ、テスト観点を3つ持つ。 */
+  const design = (viewpoints: unknown[] = VIEWPOINTS) =>
+    out(`# 設計\n\n${block({ "sacty-test-viewpoints": viewpoints })}`);
+  const splitOutput = (children: unknown[], integrationViewpoints?: unknown[]) =>
+    out(
+      `分け方\n\n${block({
+        "sacty-split": {
+          reason: "機能ごとに分ける",
+          children,
+          ...(integrationViewpoints ? { integrationViewpoints } : {}),
+        },
+      })}`,
+    );
+  const implement = (
+    text: string,
+    map: { viewpointId: string; tests: string[]; untested?: string }[],
+  ) => out([text, block({ "sacty-test-map": map })].join("\n\n"));
+  const child = (key: string, title: string, viewpoints?: string[]) => ({
+    key,
+    title,
+    body: `## 実現すること\n\n- ${title}`,
+    dependsOn: [],
+    ...(viewpoints ? { viewpoints } : {}),
+  });
+  /** 親は分割、子は要求要件・設計を省いた実装を選ぶ。 */
+  const planner = async (task: Task) =>
+    task.parent
+      ? {
+          steps: ["implement" as const],
+          plan: "direct" as const,
+          reason: "子",
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+        }
+      : {
+          steps: ["requirements" as const, "design" as const, "split" as const],
+          plan: "split" as const,
+          reason: "大きいので分ける",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+        };
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
+  const taskOf = (svc: TaskService, id: string) => svc.get(id)?.task as Task;
+  const failures = (svc: TaskService, id: string) =>
+    (svc.get(id)?.activity ?? [])
+      .filter((e) => e.type === "AgentRunFailed")
+      .map((e) => (e.type === "AgentRunFailed" ? renderMessage(e.payload.message, "ja") : ""));
+
+  /** 親タスクを、設計の承認とタスク分割の実行まで進める。 */
+  async function splitParent(
+    outcomes: AgentOutcome[],
+    options: { design?: AgentOutcome; unassigned?: boolean } = {},
+  ) {
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(
+      activity,
+      [out("# 要求要件"), options.design ?? design(), ...outcomes],
+      { planner },
+    );
+    const { service, executor } = made;
+    if (options.unassigned) executor.unassignedViewpoints = true;
+    const { id } = service.createTask({ projectId: "default", title: "決済をまるごと作る" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    const ids = () => service.get(id)?.task.split?.children.map((c) => c.taskId) ?? [];
+    return { ...made, activity, id, ids };
+  }
+  /** 子タスクを、止まる（承認待ち・一時停止）まで進める。 */
+  async function settle(service: TaskService, id: string, max = 12) {
+    for (let i = 0; i < max; i++) {
+      const status = taskOf(service, id).status;
+      if (status === "awaiting_approval" || status === "paused") return;
+      await service.runNext(id);
+    }
+  }
+  const assigned = [child("A", "決済の API", ["TV-1", "TV-2"]), child("B", "決済の画面", ["TV-2"])];
+  const integration = [{ id: "TV-3", reason: "API と画面を組み合わせた後でないと確かめられない" }];
+
+  it("分割の指示が観点の割り当てを求め、割り当てた観点を分割の記録と子タスクに残す（受け入れ条件 1・2・3）", async () => {
+    const { service, executor, activity, id, ids } = await splitParent([
+      splitOutput(assigned, integration),
+    ]);
+    const prompt = promptOf(executor, 2);
+    expect(prompt).toContain("下の承認済みのテスト観点を、子タスクに割り当てる");
+    expect(prompt).toContain(
+      "integrationViewpoints に、観点の ID と、子タスクだけでは確かめきれない理由を書く",
+    );
+    // 統合レビューで確かめる観点を、子タスクにも割り当ててよいことを伝える
+    expect(prompt).toContain(
+      "一部を確かめられる子タスクがあれば、その子タスクの viewpoints にも書く",
+    );
+    expect(prompt).toContain("入っていない観点があると、sacty は子タスクを作らずに止める");
+    expect(prompt).toContain('"viewpoints": ["TV-1"]');
+    expect(prompt).toContain('"integrationViewpoints": [{"id": "TV-3"');
+    expect(prompt).toContain("--- 承認済みのテスト観点 ---");
+    expect(prompt).toMatch(
+      /- \[TV-1\] 同じキーの再送\n {2}- 入力：同じキーで2回送る\n {2}- 期待結果：決済は1回/,
+    );
+    // 分割の記録に、子タスクごとの観点（中身ごと）と、統合レビューで確かめる観点を残す
+    const split = service.get(id)?.activity.find((e) => e.type === "TaskSplit");
+    expect(split?.payload).toMatchObject({
+      children: [
+        { title: "決済の API", viewpoints: [{ id: "TV-1" }, { id: "TV-2", expected: "400" }] },
+        { title: "決済の画面", viewpoints: [{ id: "TV-2", title: "キーなし" }] },
+      ],
+      integrationViewpoints: integration,
+    });
+    const parent = taskOf(service, id);
+    expect(parent.status).toBe("waiting_children");
+    expect(parent.split?.integrationViewpoints).toEqual(integration);
+    expect(parent.split?.children.map((c) => c.viewpoints?.map((v) => v.id))).toEqual([
+      ["TV-1", "TV-2"],
+      ["TV-2"],
+    ]);
+    // 子タスクは、割り当てられた観点を持つ
+    const [a, b] = ids().map((childId) => taskOf(service, childId));
+    expect(a?.inheritedViewpoints).toEqual([
+      { id: "TV-1", ...VIEWPOINTS[0] },
+      { id: "TV-2", ...VIEWPOINTS[1] },
+    ]);
+    expect(b?.inheritedViewpoints?.map((v) => v.id)).toEqual(["TV-2"]);
+    activity.close();
+  });
+
+  it("割り当てに、漏れ・設計に無い ID・理由の無い統合レビューの観点があれば、子タスクを作らずに止め、再開すると分割をやり直す（受け入れ条件 2）", async () => {
+    const { service, activity, id } = await splitParent([
+      // TV-3 が、どの子タスクにも統合レビューにも無い
+      splitOutput(assigned),
+      // 設計に無い ID
+      splitOutput(
+        [child("A", "決済の API", ["TV-1", "TV-9"]), child("B", "決済の画面", ["TV-2"])],
+        integration,
+      ),
+      // 統合レビューの観点に、設計に無い ID
+      splitOutput(assigned, [{ id: "TV-8", reason: "理由" }]),
+      // 統合レビューの観点に理由が無い
+      splitOutput(assigned, [{ id: "TV-3" }]),
+      splitOutput(assigned, integration),
+    ]);
+    const paused = () => {
+      expect(taskOf(service, id).status).toBe("paused");
+      expect(taskOf(service, id).split).toBeUndefined();
+      return failures(service, id).at(-1);
+    };
+    expect(paused()).toMatch(/挙げられていないテスト観点があります（TV-3）/);
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(paused()).toMatch(/子タスク「A」に、承認済みの設計に無いテスト観点（TV-9）/);
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(paused()).toMatch(
+      /統合レビューで確かめる観点に、承認済みの設計に無いテスト観点（TV-8）/,
+    );
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(paused()).toMatch(
+      /テスト観点（TV-3）に、子タスクだけでは確かめきれない理由がありません/,
+    );
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(taskOf(service, id).split?.children).toHaveLength(2);
+    activity.close();
+  });
+
+  it("割り当てを何も書かない分割案は、すべての観点が漏れているので止める（受け入れ条件 2）", async () => {
+    const { service, activity, id } = await splitParent(
+      [splitOutput([child("A", "決済の API"), child("B", "決済の画面")])],
+      { unassigned: true },
+    );
+    expect(taskOf(service, id).status).toBe("paused");
+    expect(failures(service, id).at(-1)).toMatch(/テスト観点があります（TV-1, TV-2, TV-3）/);
+    const failed = service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed");
+    if (!failed) throw new Error("AgentRunFailed is not recorded");
+    expect(renderMessage((failed.payload as { message: DaemonText }).message, "en")).toContain(
+      "assigned to no subtask",
+    );
+    activity.close();
+  });
+
+  it("親の設計にテスト観点が無ければ、割り当てを求めず、割り当てが書かれていても読まない（受け入れ条件 8）", async () => {
+    const { service, executor, activity, id, ids } = await splitParent(
+      [splitOutput([child("A", "決済の API", ["TV-1"]), child("B", "決済の画面")])],
+      { design: out("# 設計"), unassigned: true },
+    );
+    const prompt = promptOf(executor, 2);
+    expect(prompt).not.toContain("--- 承認済みのテスト観点 ---");
+    expect(prompt).not.toContain("integrationViewpoints");
+    expect(prompt).not.toContain('"viewpoints"');
+    expect(taskOf(service, id).status).toBe("waiting_children");
+    const split = service.get(id)?.activity.find((e) => e.type === "TaskSplit");
+    expect(JSON.stringify(split?.payload)).not.toContain("viewpoints");
+    expect(taskOf(service, ids()[0] ?? "").inheritedViewpoints).toBeUndefined();
+    activity.close();
+  });
+
+  it("子タスクの実装の指示は、子タスクの範囲と、割り当てられた観点を伝え、PR の本文の観点の表も割り当てられた観点にする（受け入れ条件 4・6・7）", async () => {
+    const { service, executor, activity, pulls, ids } = await splitParent([
+      splitOutput(assigned, integration),
+      implement("# A の実装", [
+        { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+        { viewpointId: "TV-2", tests: [], untested: "文言だけの変更のため" },
+      ]),
+    ]);
+    const [a] = ids();
+    await settle(service, a ?? "");
+    const prompt =
+      executor.calls.map((c) => c.command.join(" ")).find((p) => p.includes("決済の API")) ?? "";
+    // 小さい変更という前提ではなく、子タスクであることと、範囲を伝える
+    expect(prompt).toContain("このタスクは、親タスクの分割で作った子タスクです");
+    expect(prompt).toContain("小さな変更とは限りません");
+    expect(prompt).toContain(
+      "見出し「親タスクの要求要件（承認済み）」より前に書かれたことのすべて（実現すること・受け入れ条件）",
+    );
+    // 範囲を分ける見出しは、子タスクの内容に、実際に1つだけある
+    expect(
+      prompt.split("\n").filter((l) => l === "## 親タスクの要求要件（承認済み）"),
+    ).toHaveLength(1);
+    expect(prompt).not.toContain("依頼が明確で、既存の仕組みに沿った変更のため");
+    // 進める順序
+    expect(prompt).toContain(
+      "範囲のすべて（実装すること・そのテスト・求められた文書）を実装してから、提出の前の検証と実装の説明に進む",
+    );
+    // 観点は、タスクの目的（REQ）ではなく、割り当てられた観点
+    expect(prompt).toContain(
+      "--- テスト観点（親タスクの設計から割り当て・すべてにテストを対応させる） ---",
+    );
+    expect(prompt).toMatch(/- \[TV-1\] 同じキーの再送/);
+    expect(prompt).toMatch(/- \[TV-2\] キーなし/);
+    expect(prompt).not.toContain("- [TV-3]");
+    expect(prompt).not.toContain("- [REQ]");
+    expect(prompt).toContain('{"sacty-test-map": [{"viewpointId": "TV-1"');
+    expect(prompt).toContain("観点が1つでも欠けていると、sacty は提出しない");
+    // 提出して、PR の本文の観点の表に、割り当てられた観点を並べる
+    const task = taskOf(service, a ?? "");
+    expect(task.status).toBe("awaiting_approval");
+    expect(types(service, a ?? "")).not.toContain("ImplementationIncomplete");
+    const body = pulls.calls[0]?.body ?? "";
+    expect(body).toContain("TV-1 同じキーの再送");
+    expect(body).toContain("TV-2 キーなし");
+    expect(body).not.toContain("REQ タスクの目的");
+    activity.close();
+  });
+
+  it("子タスクの実装の、観点とテストの対応に、割り当てられた観点が欠けていたら、完了と申告していても提出せず、欠けた観点を渡してやり直す（受け入れ条件 5）", async () => {
+    const { service, executor, activity, pulls, ids } = await splitParent([
+      splitOutput(assigned, integration),
+      // TV-2 にテストが対応していない
+      implement("# A の実装", [{ viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] }]),
+      implement("# A の実装 v2", [
+        { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+        { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+      ]),
+    ]);
+    const [a] = ids();
+    const runs = () => executor.calls.filter((c) => c.command.join(" ").includes("決済の API"));
+    for (let i = 0; i < 6 && runs().length < 2; i++) await service.runNext(a ?? "");
+    const incomplete = service
+      .get(a ?? "")
+      ?.activity.find((e) => e.type === "ImplementationIncomplete");
+    expect(incomplete?.payload).toMatchObject({
+      remaining: ["TV-2 キーなし"],
+      unmapped: ["TV-2"],
+    });
+    expect(incomplete?.payload).not.toHaveProperty("undeclared");
+    expect(pulls.calls).toHaveLength(0);
+    // やり直しの指示に、欠けていた観点を渡す
+    const prompt = runs()[1]?.command.join(" ") ?? "";
+    expect(prompt).toContain("--- 前回の実行：テストが対応していないテスト観点がありました ---");
+    expect(prompt).toContain(
+      "完了と申告しましたが、観点とテストの対応に、次のテスト観点が欠けていました",
+    );
+    expect(prompt).toContain("- [TV-2] キーなし");
+    await settle(service, a ?? "");
+    expect(taskOf(service, a ?? "").status).toBe("awaiting_approval");
+    expect(pulls.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("観点の欠けた実装が続けば、欠けている観点を理由に一時停止する（受け入れ条件 5）", async () => {
+    const partial = () =>
+      implement("# A の実装", [{ viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] }]);
+    const { service, activity, pulls, ids } = await splitParent([
+      splitOutput(assigned, integration),
+      partial(),
+      partial(),
+    ]);
+    const [a] = ids();
+    await settle(service, a ?? "");
+    const task = taskOf(service, a ?? "");
+    expect(task.status).toBe("paused");
+    expect(task.pausedReason).toBe("incomplete");
+    // やり直しても作業領域が変わらなかったので、2回目で止まる
+    expect(task.pausedMessage).toEqual({
+      code: "implement.unmappedViewpoints",
+      params: { count: 2, stalled: true, ids: "TV-2", total: 1 },
+    });
+    expect(renderMessage(task.pausedMessage as DaemonText, "ja")).toContain(
+      "テストが対応していない観点：TV-2",
+    );
+    expect(renderMessage(task.pausedMessage as DaemonText, "en")).toContain(
+      "Viewpoints without a test: TV-2",
+    );
+    expect(pulls.calls).toHaveLength(0);
+    activity.close();
+  });
+
+  it("観点を割り当てられていない子タスクは、今までどおり、タスクの目的（REQ）を観点にして進む（受け入れ条件 8）", async () => {
+    const { service, executor, activity, ids } = await splitParent([
+      // B には何も割り当てない（すべての観点を、A と統合レビューに入れる）
+      splitOutput(
+        [child("A", "決済の API", ["TV-1", "TV-2"]), child("B", "決済の画面")],
+        integration,
+      ),
+      implement("# B の実装", [{ viewpointId: "REQ", tests: ["ui.test.ts › 画面"] }]),
+    ]);
+    const [, b] = ids();
+    expect(taskOf(service, b ?? "").inheritedViewpoints).toBeUndefined();
+    await settle(service, b ?? "");
+    const prompt =
+      executor.calls.map((c) => c.command.join(" ")).find((p) => p.includes("決済の画面")) ?? "";
+    expect(prompt).toContain("- [REQ] タスクの目的（依頼の内容）を満たす");
+    expect(prompt).not.toContain("親タスクの設計から割り当て");
+    // 子タスクであることと、範囲は伝える
+    expect(prompt).toContain("このタスクは、親タスクの分割で作った子タスクです");
+    expect(taskOf(service, b ?? "").status).toBe("awaiting_approval");
+    activity.close();
   });
 });
 

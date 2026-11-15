@@ -761,6 +761,85 @@ describe("統合レビュー（PBI-31）", () => {
     expect(renderMessage(unreadable.viewpoints[0]?.reason, "ja")).toMatch(/統合レビューの出力から/);
   });
 
+  describe("テスト観点の割り当て（PBI-348）", () => {
+    const IDS = ["TV-1", "TV-2", "TV-3"];
+    const assign = (children: unknown[], integrationViewpoints?: unknown[], ids: string[] = IDS) =>
+      extractSplitPlan(
+        `本文\n\`\`\`json\n${JSON.stringify({
+          "sacty-split": {
+            reason: "理由",
+            children,
+            ...(integrationViewpoints ? { integrationViewpoints } : {}),
+          },
+        })}\n\`\`\``,
+        undefined,
+        ids,
+      );
+    const child = (key: string) => ({ key, title: key, body: "", dependsOn: [] });
+    const ja = (r: ReturnType<typeof extractSplitPlan>) =>
+      r.ok ? "" : renderMessage(r.message, "ja");
+    const withViewpoints = (key: string, viewpoints: unknown) => ({ ...child(key), viewpoints });
+
+    it("すべての観点が、子タスクか統合レビューの観点に入っていれば読む。重複はまとめ、1つの観点を複数の子タスクに割り当ててよい", () => {
+      expect(
+        assign(
+          [withViewpoints("A", ["TV-1", "TV-2", "TV-1", " "]), withViewpoints("B", ["TV-2"])],
+          [
+            { id: "TV-3", reason: "組み合わせた後に確かめる" },
+            { id: "TV-3", reason: "重複" },
+          ],
+        ),
+      ).toEqual({
+        ok: true,
+        reason: "理由",
+        children: [
+          { ...child("A"), viewpoints: ["TV-1", "TV-2"] },
+          { ...child("B"), viewpoints: ["TV-2"] },
+        ],
+        integrationViewpoints: [{ id: "TV-3", reason: "組み合わせた後に確かめる" }],
+      });
+      // 子タスクにも統合レビューにも入っている観点は、どちらにも残す
+      expect(
+        assign(
+          [withViewpoints("A", IDS), child("B")],
+          [{ id: "TV-3", reason: "組み合わせでも確かめる" }],
+        ),
+      ).toMatchObject({ ok: true, integrationViewpoints: [{ id: "TV-3" }] });
+    });
+
+    it("どこにも入っていない観点・設計に無い ID・理由の無い統合レビューの観点は、理由を返す", () => {
+      expect(ja(assign([withViewpoints("A", ["TV-1"]), child("B")]))).toMatch(
+        /挙げられていないテスト観点があります（TV-2, TV-3）/,
+      );
+      expect(
+        ja(assign([withViewpoints("A", ["TV-1", "TV-9"]), withViewpoints("B", ["TV-2", "TV-3"])])),
+      ).toMatch(/子タスク「A」に、承認済みの設計に無いテスト観点（TV-9）/);
+      expect(
+        ja(assign([withViewpoints("A", IDS), child("B")], [{ id: "TV-7", reason: "理由" }])),
+      ).toMatch(/統合レビューで確かめる観点に、承認済みの設計に無いテスト観点（TV-7）/);
+      expect(
+        ja(assign([withViewpoints("A", ["TV-1", "TV-2"]), child("B")], [{ id: "TV-3" }])),
+      ).toMatch(/テスト観点（TV-3）に、子タスクだけでは確かめきれない理由がありません/);
+      // 形の違う割り当て（配列でない）は、割り当てが無いものとして読む
+      expect(ja(assign([withViewpoints("A", "TV-1"), child("B")], "TV-2"))).toMatch(
+        /挙げられていないテスト観点があります（TV-1, TV-2, TV-3）/,
+      );
+    });
+
+    it("漏れた観点が多いときは、10件までを示して、総数を添える", () => {
+      const many = Array.from({ length: 12 }, (_, i) => `TV-${i + 1}`);
+      const result = assign([child("A"), child("B")], undefined, many);
+      expect(ja(result)).toContain("TV-10 ほか、全12件");
+      expect(ja(result)).not.toContain("TV-11");
+    });
+
+    it("親の設計にテスト観点が無ければ、割り当ては読まない", () => {
+      expect(
+        assign([withViewpoints("A", ["TV-1"]), child("B")], [{ id: "TV-2", reason: "理由" }], []),
+      ).toEqual({ ok: true, reason: "理由", children: [child("A"), child("B")] });
+    });
+  });
+
   it("修正の子タスクの追加は、1件から作れる", () => {
     const one = `\`\`\`json\n${JSON.stringify({ "sacty-split": { reason: "直す", children: [{ key: "F", title: "F" }] } })}\n\`\`\``;
     expect(extractSplitPlan(one).ok).toBe(false);
@@ -4683,6 +4762,172 @@ describe("タスクの開始時に集めた情報", () => {
       buildIntegrationReviewPrompt(task, [], { baseBranch: "main", commit: "abcdef1234" }),
     ).toContain("これを根拠に判定を決めないでください");
     expect(buildPrompt(task, "requirements")).not.toContain("これを根拠に判定を決めないでください");
+  });
+
+  it("統合レビューの指示は、タスク分割で統合レビューで確かめるとした観点と理由を渡し、子タスクにも割り当てているかを伝える。無ければ足さない（PBI-348）", () => {
+    const tv = (n: number) => ({
+      id: `TV-${n}`,
+      title: `観点${n}`,
+      input: "入力",
+      expected: "期待",
+    });
+    const parent = (integrationViewpoints?: { id: string; reason: string }[]): Task => {
+      const task = taskOf(false);
+      return {
+        ...task,
+        split: {
+          children: [
+            {
+              taskId: "c1",
+              title: "A",
+              body: "",
+              dependsOn: [],
+              round: 1,
+              viewpoints: [tv(1), tv(3)],
+            },
+            { taskId: "c2", title: "B", body: "", dependsOn: ["c1"], round: 1 },
+          ],
+          rounds: 1,
+          reason: "理由",
+          at: "2026-11-15T00:00:00.000Z",
+          acceptedCancellations: [],
+          ...(integrationViewpoints ? { integrationViewpoints } : {}),
+        },
+      };
+    };
+    const target = { baseBranch: "main", commit: "abcdef1234" };
+    const heading = "--- タスク分割で、統合レビューで確かめるとしたテスト観点 ---";
+    const prompt = buildIntegrationReviewPrompt(
+      parent([
+        { id: "TV-2", reason: "子タスクを組み合わせた後でないと確かめられない" },
+        { id: "TV-3", reason: "画面とつないだ後にも確かめる" },
+      ]),
+      [],
+      target,
+    );
+    expect(prompt).toContain(heading);
+    expect(prompt).toContain(
+      "子タスクだけでは確かめきれないとして、統合レビューで確かめることにしたものです",
+    );
+    expect(prompt).toContain(
+      "「子タスクに割り当てなし」の観点は、子タスクの実装とレビューでは確かめていません",
+    );
+    // どの子タスクにも割り当てていない観点と、子タスクにも割り当てている観点を、分けて伝える
+    expect(prompt).toContain(
+      "- [TV-2] 子タスクに割り当てなし。子タスクだけでは確かめきれない理由：子タスクを組み合わせた後でないと確かめられない",
+    );
+    expect(prompt).toContain(
+      "- [TV-3] 子タスクにも割り当てあり。子タスクだけでは確かめきれない理由：画面とつないだ後にも確かめる",
+    );
+    // 判定する観点の一覧（すべての観点）より後ろ、子タスクの一覧より前に置く
+    expect(prompt.indexOf("--- テスト観点 ---")).toBeLessThan(prompt.indexOf(heading));
+    expect(prompt.indexOf(heading)).toBeLessThan(prompt.indexOf("--- 子タスク ---"));
+    expect(buildIntegrationReviewPrompt(parent(), [], target)).not.toContain(
+      "統合レビューで確かめるとしたテスト観点",
+    );
+  });
+
+  describe("親タスクの分割でテスト観点を割り当てられた子タスクの指示（PBI-348）", () => {
+    const tv = (n: number, title: string) => ({
+      id: `TV-${n}`,
+      title,
+      input: "入力",
+      expected: "期待",
+    });
+    const approvedOutput = (output: string, testViewpoints: ReturnType<typeof tv>[] = []) => ({
+      submission: 1,
+      output,
+      testViewpoints,
+      at: "2026-11-15T00:00:00.000Z",
+    });
+    /** 要求要件はあるが設計を省いた、分割の子タスク（割り当てられた観点は TV-1・TV-2）。 */
+    const splitChild = (extra: Partial<Task> = {}): Task => ({
+      ...taskOf(false),
+      parent: { taskId: "p1", dependsOn: [] },
+      steps: [
+        { key: "requirements", state: "done" },
+        { key: "implement", state: "active" },
+      ],
+      approved: { requirements: approvedOutput("# 要求要件") },
+      inheritedViewpoints: [tv(1, "同じキーの再送"), tv(2, "キーなし")],
+      ...extra,
+    });
+
+    it("設計を省いた子タスクの、テストを書かない実装の指示は、冒頭でも、観点を割り当てられた観点と説明する", () => {
+      const noTests = buildPrompt(
+        splitChild({ noTestsReason: "テストの仕組みが無い" }),
+        "implement",
+      );
+      expect(noTests).toContain(
+        "観点は、親タスクの設計のテスト観点のうち、このタスクに割り当てられたものです",
+      );
+      expect(noTests).not.toContain("観点は、受け入れ条件の観点 REQ です");
+      expect(noTests).toContain("- [TV-1] 同じキーの再送");
+      expect(noTests).toContain("- [TV-2] キーなし");
+      // テストを書かないタスクには、対応が欠けると提出されない、とは書かない（対応を確かめない）
+      expect(noTests).not.toContain("上の観点が1つでも欠けていると、sacty は提出しない");
+      // 割り当ての無い子タスクは、受け入れ条件（REQ）を観点にする
+      const req = buildPrompt(
+        splitChild({ noTestsReason: "テストの仕組みが無い", inheritedViewpoints: undefined }),
+        "implement",
+      );
+      expect(req).toContain("観点は、受け入れ条件の観点 REQ です");
+      expect(req).not.toContain("このタスクに割り当てられたものです");
+      // テストを書くタスクは、冒頭も後ろも、割り当てられた観点
+      const tested = buildPrompt(splitChild(), "implement");
+      expect(tested).toContain(
+        "テスト観点は、親タスクの設計のテスト観点のうち、このタスクに割り当てられたものです",
+      );
+      expect(tested).toContain("上の観点が1つでも欠けていると、sacty は提出しない");
+      expect(tested).not.toContain("[REQ]");
+    });
+
+    it("PR のレビューの子タスクには、PR を作った子タスクに割り当てられた観点を渡す。割り当てていない観点は渡さない", () => {
+      const reviewTask = {
+        ...taskOf(false),
+        steps: [{ key: "review", state: "active" }],
+        reviewTarget: {
+          repo: "https://github.com/acme/app",
+          number: 12,
+          url: "https://github.com/acme/app/pull/12",
+          title: "retry",
+          body: "",
+          headCommit: "h".repeat(40),
+          baseCommit: "b".repeat(40),
+          author: "alice",
+        },
+      } as unknown as Task;
+      const review = (parent: Task) =>
+        buildPrompt(reviewTask, "review", {
+          diff: "diff",
+          reviewRework: { gateStep: "implement", targets: ["implement", "requirements"], parent },
+        });
+      const heading = "--- 承認済みのテスト観点 ---";
+      // 設計を省いた子タスク：割り当てられた観点（TV-1・TV-2）だけ
+      const assigned = review(splitChild());
+      expect(assigned).toContain(heading);
+      expect(assigned).toContain("- [TV-1] 同じキーの再送（入力：入力 / 期待：期待）");
+      expect(assigned).toContain("- [TV-2] キーなし（入力：入力 / 期待：期待）");
+      expect(assigned).not.toContain("TV-3");
+      // 自分の設計の工程がある子タスク：自分の設計の観点（割り当てられた観点は渡さない）
+      const designed = review(
+        splitChild({
+          steps: [
+            { key: "requirements", state: "done" },
+            { key: "design", state: "done" },
+            { key: "implement", state: "active" },
+          ],
+          approved: {
+            requirements: approvedOutput("# 要求要件"),
+            design: approvedOutput("# 設計", [tv(7, "自分の設計の観点")]),
+          },
+        }),
+      );
+      expect(designed).toContain("- [TV-7] 自分の設計の観点（入力：入力 / 期待：期待）");
+      expect(designed).not.toContain("同じキーの再送");
+      // 割り当ての無い子タスク：観点の節を出さない
+      expect(review(splitChild({ inheritedViewpoints: undefined }))).not.toContain(heading);
+    });
   });
 
   it("集めていないタスク（集める前の版・子タスク）では、何も足さない", () => {
