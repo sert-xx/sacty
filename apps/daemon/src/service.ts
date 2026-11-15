@@ -27,6 +27,8 @@ import {
   type CiCheck,
   type CiFailure,
   type CleanupTarget,
+  COMPLETION_REMAINING_ITEM_MAX,
+  COMPLETION_REMAINING_MAX,
   type ContinuedPullRequest,
   CreateTaskInput,
   CreateTemplateTaskInput,
@@ -68,6 +70,7 @@ import {
   humanAsks,
   type IntakeKind,
   implementationMerged,
+  implementViewpoints,
   investigationIsGoal,
   isAuditTarget,
   isCompleted,
@@ -154,6 +157,7 @@ import {
   targetImageOf,
   taskPlan,
   exportProject as toProjectExport,
+  unmappedViewpoints,
   unreflectedImplementRemarks,
   type VerificationRecord,
   verificationImageOf,
@@ -393,6 +397,7 @@ import {
   referencedPullRequest,
   reviewMarker,
   type SplitChild,
+  type SplitPlan,
   STEP_NAME,
   type SubtaskSummary,
   selectablePlans,
@@ -9113,7 +9118,14 @@ export class TaskService {
     // タスク分割は、子タスクの一覧を確かめて記録し、子タスクを作る（PBI-27）
     if (step === "split") {
       // 統合レビューの後に追加する修正の子タスクは、1件から作れる（PBI-31）
-      const extractedPlan = extractSplitPlan(outcome.output, latest.split ? 1 : undefined);
+      // 最初の分割では、親の設計のテスト観点を子タスクに割り当てさせ、割り当てを確かめる（PBI-348）。修正の子タスクの
+      // 追加（2回目から）は、観点を割り当てない
+      const designViewpoints = latest.split ? [] : (latest.approved.design?.testViewpoints ?? []);
+      const extractedPlan = extractSplitPlan(
+        outcome.output,
+        latest.split ? 1 : undefined,
+        designViewpoints.map((v) => v.id),
+      );
       // 対象リポジトリの無いタスクは、子タスクごとのリポジトリがプロジェクトの対象にあるかを確かめる（PBI-73）。
       // 無い・対象に無いなら使わない（再開すると分割をやり直して、選び直す）
       const plan =
@@ -9164,7 +9176,16 @@ export class TaskService {
                 dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
                 ...(repoless && c.repo ? { repo: c.repo } : {}),
                 ...(repoless && c.repo && c.repoReason ? { repoReason: c.repoReason } : {}),
+                // 割り当てたテスト観点は、中身ごと記録する（子タスクが、親の設計を読み直さずに持てるように。PBI-348）
+                ...(c.viewpoints?.length
+                  ? {
+                      viewpoints: designViewpoints.filter((v) => c.viewpoints?.includes(v.id)),
+                    }
+                  : {}),
               })),
+              ...(plan.integrationViewpoints
+                ? { integrationViewpoints: plan.integrationViewpoints }
+                : {}),
             },
           },
         },
@@ -11239,10 +11260,22 @@ export class TaskService {
    */
   private async implementationCompleted(task: Task): Promise<boolean> {
     const completion = task.implementCompletion;
-    if (completion === undefined || completion?.status === "complete") return true;
+    // 完了と申告していても、観点とテストの対応に欠けているテスト観点があれば、提出に進めない（PBI-348）。申告させる前の
+    // 記録（申告の項目が無い）は、対応も確かめずに、今までどおり進める
+    const unmapped =
+      completion?.status === "complete" ? unmappedViewpoints(task).map((v) => v.id) : [];
+    if (completion === undefined || (completion?.status === "complete" && unmapped.length === 0)) {
+      return true;
+    }
     const fingerprint = await this.workspaceFingerprint(task);
     const latest = this.mustGet(task.id);
-    const remaining = completion?.remaining ?? [];
+    const titles = new Map(implementViewpoints(task).map((v) => [v.id, v.title]));
+    const remaining =
+      completion?.status === "incomplete"
+        ? completion.remaining
+        : unmapped.map((id) =>
+            cut(`${id} ${titles.get(id) ?? ""}`.trim(), COMPLETION_REMAINING_ITEM_MAX),
+          );
     const undeclared = completion === null;
     // 続いた回数が上限に達したか、やり直しても作業領域が何も変わらなければ（同じエージェントでやり直しても進まない）、
     // 実装のやり直しを止めて人間に判断してもらう。未完了の記録と一時停止は、同じ追記で記録する（間でデーモンが止まると、
@@ -11255,8 +11288,9 @@ export class TaskService {
         event: {
           type: "ImplementationIncomplete",
           payload: {
-            remaining,
+            remaining: remaining.slice(0, COMPLETION_REMAINING_MAX),
             ...(undeclared ? { undeclared: true as const } : {}),
+            ...(unmapped.length > 0 ? { unmapped } : {}),
             ...(fingerprint ? { fingerprint } : {}),
           },
         },
@@ -11269,13 +11303,21 @@ export class TaskService {
                 type: "TaskPaused" as const,
                 payload: {
                   reason: "incomplete" as const,
-                  message: message("implement.incomplete", {
-                    count: runs.runs,
-                    stalled: runs.stalled === true,
-                    declared: !undeclared,
-                    remaining: remaining.slice(0, 5).join(" / "),
-                    total: remaining.length,
-                  }),
+                  message:
+                    unmapped.length > 0
+                      ? message("implement.unmappedViewpoints", {
+                          count: runs.runs,
+                          stalled: runs.stalled === true,
+                          ids: unmapped.slice(0, 10).join(", "),
+                          total: unmapped.length,
+                        })
+                      : message("implement.incomplete", {
+                          count: runs.runs,
+                          stalled: runs.stalled === true,
+                          declared: !undeclared,
+                          remaining: remaining.slice(0, 5).join(" / "),
+                          total: remaining.length,
+                        }),
                 },
               },
             },
@@ -12676,6 +12718,8 @@ export class TaskService {
               ...((child.repo ?? repo) ? { repo: child.repo ?? repo } : {}),
               ...(child.repo && child.repoReason ? { repoReason: child.repoReason } : {}),
               parent: { taskId: parent.id, dependsOn: child.dependsOn },
+              // 親の分割で割り当てられたテスト観点（PBI-348）
+              ...(child.viewpoints?.length ? { viewpoints: child.viewpoints } : {}),
             },
           },
         },
@@ -15992,9 +16036,9 @@ const REPO_STEPS: readonly StepKey[] = ["implement", "reproduce", "review"];
  * 無いなら理由を返す（使わない）。登録した名前にそろえる。
  */
 function splitWithRepositories(
-  plan: { ok: true; reason: string; children: SplitChild[] },
+  plan: SplitPlan,
   candidates: readonly string[],
-): { ok: true; reason: string; children: SplitChild[] } | { ok: false; message: DaemonText } {
+): SplitPlan | { ok: false; message: DaemonText } {
   const children: SplitChild[] = [];
   for (const child of plan.children) {
     if (!child.repo)

@@ -698,6 +698,7 @@ How tasks with records of an earlier version's final review are handled is in [T
     If it cannot check, the task is paused (`merge.failed`).
   - After that, sacty checks whether the implementation run declared that it finished its scope (`implementationCompleted`).
     If the run declared that it is unfinished, or declared nothing, sacty does not record it, records `ImplementationIncomplete`, and redoes the implementation ([Unfinished implementations and reworks that change nothing](#unfinished-implementations-and-reworks-that-change-nothing)).
+    Even when the run declared it is complete, the implementation is redone in the same way if the viewpoint-to-test mapping misses a viewpoint ([Viewpoints the implementation maps tests to](#viewpoints-the-implementation-maps-tests-to)).
   - For a security fix task, before `FinalReviewSkipped`, sacty checks the diff against the fix scope declared by the preceding investigation (`checkSecurityScope`; the check is the same as in "Security fix" below).
     The result is recorded in `securityScope` of `FinalReviewSkipped` (if there is a violation, `violation` holds the files outside the scope, the changed line count, and the cap; `Task.securityScopeCheck`).
     If the diff cannot be obtained, sacty pauses without recording it (`verify.diffUnavailable`).
@@ -850,6 +851,34 @@ Code: `apps/daemon/src/service.ts` (`syncPullRequestHead`, `syncBase`, `headSync
 - If a person merges the implementation PR while the implementation is being reworked (after a rejection or imported PR comments), the rework (the run and the PR update) is stopped and the merge is taken as the approval. No new PR is created ([Merging during a rework of the implementation](approval.en.md#merging-during-a-rework-of-the-implementation)).
 
 Code: `apps/daemon/src/service.ts` (`runNextInner`, `publish`, `commitSubjectFor`, `implementSubmitted`, `submitEvents`, `pause`), `apps/daemon/src/github.ts` (`GitHubPullRequests.upsert`, `GitHubPullRequests.setDraft`), `apps/daemon/src/commit-message.ts` (`COMMIT_CONVENTION_FILES`, `detectCommitConvention`, `commitSubject`), `packages/core/src/projection.ts` (`publishPending`, `gatePullRequest`)
+
+### Viewpoints the implementation maps tests to
+
+Related ADR: [Assign the parent design's test viewpoints to child tasks of a split, and do not submit an implementation that misses a viewpoint](../adr/20261115-1345-assign-test-viewpoints-to-child-tasks.md)
+
+- The viewpoints the Implementation step maps tests to (`implementViewpoints`) are decided in the same way as the viewpoints the implementation instruction lists (no mapping is required for a viewpoint the instruction does not list).
+  1. A task with the Design step: the test viewpoints of the task's own approved design
+  2. A task with the Reproduction step (a bug fix): that the reproduction test passes (assigned viewpoints are not used)
+  3. A task with neither: the viewpoints assigned by the parent task's split (`Task.inheritedViewpoints`; [Task split and integration review](split-and-integrate.en.md#splitting)). If there are none, the purpose of the task or its acceptance criteria (`REQ`)
+
+  A step skipped by the step review is treated as absent.
+- The implementation instruction of a child task with assigned viewpoints lists them instead of `REQ` (for an implementation without Requirements and Design, and for one without Design).
+  The viewpoint table in the PR body (`resultTableLines`), the viewpoints passed to the PR-review child task, and the viewpoint table in the task details use the same viewpoints.
+- Unmapped viewpoints (`unmappedViewpoints`): viewpoints to which the viewpoint-to-test mapping (`sacty-test-map`) maps neither a test nor a reason for writing no test (`untested`).
+  - Even when a run declared it is complete, it does not go on to the submission if a viewpoint is unmapped.
+    sacty records the IDs of the unmapped viewpoints (`unmapped`) in `ImplementationIncomplete` and redoes the implementation with them.
+    Counting, stopping, and resuming are the same as for an unfinished run ([Unfinished implementations and reworks that change nothing](#unfinished-implementations-and-reworks-that-change-nothing)). The message when it stops is `implement.unmappedViewpoints`.
+  - Tasks without tests, and requests that change only documents, write no tests, so no mapping is required.
+  - For a task whose only viewpoint is `REQ`, and for a task with the Reproduction step, unmapped viewpoints are not checked.
+  - An implementation instruction whose mapping is checked says, after the viewpoints, that the run is not submitted when a viewpoint is unmapped (`unmappedViewpointLines`).
+  - A run that finds no change is needed (it changes nothing in the workspace) goes through the same check.
+    It maps, for each viewpoint, the existing tests that check that viewpoint, and then goes on to the no-change confirmation (`NoChangesFound`).
+- For a child task created by a split, the instruction of an implementation without Requirements and Design tells the agent the scope of the child task (`directImplementLines`).
+  It says that Requirements and Design are skipped because the parent task already approved them, that the change is not necessarily small, and that the scope is everything written before the heading "親タスクの要求要件（承認済み）" in the task content (what follows that heading is what sacty attached from the parent task).
+  For a task that is not a child task, it says the steps are skipped because the request is clear and follows existing mechanisms.
+- Every implementation instruction states the order: implement the whole scope first, then go on to the pre-submission verification and the implementation description (`IMPLEMENT_ORDER_LINE`).
+
+Code: `packages/core/src/projection.ts` (`implementViewpoints`, `unmappedViewpoints`), `apps/daemon/src/service.ts` (`implementationCompleted`), `apps/daemon/src/prompts.ts` (`directImplementLines`, `resultTableLines`, `feedbackLines`, `unmappedViewpointLines`, `IMPLEMENT_ORDER_LINE`), `apps/web/src/components/implementation.tsx`
 
 ### Unfinished implementations and reworks that change nothing
 

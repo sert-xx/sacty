@@ -371,6 +371,10 @@ const PARAMS = {
   "split.duplicateKey": z.object({ key: z.string() }),
   "split.unknownDependency": z.object({ key: z.string(), dependsOn: z.string() }),
   "split.cycle": z.object({ keys: z.string() }),
+  "split.unknownViewpoint": z.object({ key: z.string(), id: z.string() }),
+  "split.unknownIntegrationViewpoint": z.object({ id: z.string() }),
+  "split.viewpointUnassigned": z.object({ ids: z.string(), total: Count }),
+  "split.integrationReasonMissing": z.object({ id: z.string() }),
   "split.childCancelled": z.object({ titles: z.string() }),
   // 依存先の PR に重ねた子タスク（PBI-317）
   "stack.dependencyCancelled": z.object({ title: z.string() }),
@@ -474,6 +478,13 @@ const PARAMS = {
     declared: z.boolean(),
     remaining: TextParam,
     total: z.number().int().nonnegative(),
+  }),
+  "implement.unmappedViewpoints": z.object({
+    count: Count,
+    /** やり直しても、作業領域の内容が変わらなかった（回数を待たずに止めた）。 */
+    stalled: z.boolean(),
+    ids: TextParam,
+    total: Count,
   }),
   "implement.unchanged": z.object({ number: z.number() }),
   "merge.failed": z.object({ detail: TextParam }),
@@ -1242,6 +1253,14 @@ const ja: MessageDictionary = {
     `分割案の子タスク「${key}」が、存在しない子タスク「${dependsOn}」に依存しています。再開すると、分割をやり直します。`,
   "split.cycle": ({ keys }) =>
     `分割案の子タスクの依存が循環しています（${keys}）。再開すると、分割をやり直します。`,
+  "split.unknownViewpoint": ({ key, id }) =>
+    `分割案の子タスク「${key}」に、承認済みの設計に無いテスト観点（${id}）が割り当てられています。再開すると、分割をやり直します。`,
+  "split.unknownIntegrationViewpoint": ({ id }) =>
+    `分割案の、統合レビューで確かめる観点に、承認済みの設計に無いテスト観点（${id}）があります。再開すると、分割をやり直します。`,
+  "split.viewpointUnassigned": ({ ids, total }) =>
+    `分割案で、どの子タスクにも割り当てられず、統合レビューで確かめる観点にも挙げられていないテスト観点があります（${ids}${total > 10 ? ` ほか、全${total}件` : ""}）。再開すると、分割をやり直します。`,
+  "split.integrationReasonMissing": ({ id }) =>
+    `分割案で、統合レビューで確かめるテスト観点（${id}）に、子タスクで確かめられない理由がありません。再開すると、分割をやり直します。`,
   "split.repoMissing": ({ key }) =>
     `リポジトリの無いタスクを分けるときは、子タスクごとにプロジェクトの対象からリポジトリを付けてください（子タスク「${key}」にありません）。再開すると、分割をやり直します。`,
   "split.repoNotCandidate": ({ key, repo }) =>
@@ -1401,6 +1420,8 @@ const ja: MessageDictionary = {
         ? `残っていること：${text(remaining)}${total > 5 ? ` ほか、全${total}件` : ""}。`
         : ""
     }再開すると、実装をやり直します。工程のエージェントを変えて再開することもできます。`,
+  "implement.unmappedViewpoints": ({ count, stalled, ids, total }, text) =>
+    `実装の工程が、テストの対応していないテスト観点を残して終わりました（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：${text(ids)}${total > 10 ? ` ほか、全${total}件` : ""}。再開すると、実装をやり直します。工程のエージェントを変えて再開することもできます。`,
   "implement.unchanged": ({ number }) =>
     `AI のレビューが指摘を残した PR #${number} を、やり直しの実装が何も変えませんでした。同じ内容は再レビューされないので、提出していません。再開すると、指摘を渡して実装をやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "merge.failed": ({ detail }, text) =>
@@ -2039,6 +2060,14 @@ const en: MessageDictionary = {
     `Subtask "${key}" depends on "${dependsOn}", which is not in the split. Resume to split again.`,
   "split.cycle": ({ keys }) =>
     `The subtask dependencies form a cycle (${keys}). Resume to split again.`,
+  "split.unknownViewpoint": ({ key, id }) =>
+    `Subtask "${key}" is assigned a test viewpoint (${id}) that is not in the approved design. Resume to split again.`,
+  "split.unknownIntegrationViewpoint": ({ id }) =>
+    `The split lists a test viewpoint (${id}) for the integration review that is not in the approved design. Resume to split again.`,
+  "split.viewpointUnassigned": ({ ids, total }) =>
+    `The split leaves test viewpoints that are assigned to no subtask and not listed for the integration review (${ids}${total > 10 ? ` and more, ${total} in total` : ""}). Resume to split again.`,
+  "split.integrationReasonMissing": ({ id }) =>
+    `The split lists the test viewpoint ${id} for the integration review without a reason why subtasks cannot check it. Resume to split again.`,
   "split.repoMissing": ({ key }) =>
     `When splitting a task without a repository, give each subtask a repository from the project's targets (subtask "${key}" has none). Resume to redo the split.`,
   "split.repoNotCandidate": ({ key, repo }) =>
@@ -2202,6 +2231,8 @@ const en: MessageDictionary = {
         ? `What remains: ${text(remaining)}${total > 5 ? ` and more, ${total} in total` : ""}. `
         : ""
     }Resuming redoes the implementation. You can also change the agent of the step and then resume.`,
+  "implement.unmappedViewpoints": ({ count, stalled, ids, total }, text) =>
+    `The implementation step ended with test viewpoints that have no test mapped (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: ${text(ids)}${total > 10 ? ` and more, ${total} in total` : ""}. Resuming redoes the implementation. You can also change the agent of the step and then resume.`,
   "implement.unchanged": ({ number }) =>
     `The rework of the implementation changed nothing in PR #${number}, on which the AI review left findings. The same content is not reviewed again, so nothing was submitted. Resuming redoes the implementation with the findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "merge.failed": ({ detail }, text) =>

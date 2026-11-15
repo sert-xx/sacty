@@ -20,6 +20,7 @@ import {
   type ImplementationCompletion,
   type IntegrationReview,
   InvestigationKind,
+  implementViewpoints,
   investigationIsGoal,
   isDocumentsDir,
   isRepoless,
@@ -852,6 +853,19 @@ function feedbackLines(task: Task): string[] {
         : "--- 前回の検証：ベースブランチとの競合の目印が残っていました ---",
       "実装の PR を作る前に、競合の目印（<<<<<<<・=======・>>>>>>>）が作業領域のファイルに残っていました。PR は、まだ作っていません（更新もしていません）。",
       ...feedback.files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
+    ];
+  }
+  if (feedback.kind === "incomplete" && feedback.unmapped?.length) {
+    // 前の実行が、完了と申告したが、テストの対応していないテスト観点があった（PBI-348）
+    const titles = new Map(implementViewpoints(task).map((v) => [v.id, v.title]));
+    return [
+      "",
+      "--- 前回の実行：テストが対応していないテスト観点がありました ---",
+      "前回の実装の実行は、完了と申告しましたが、観点とテストの対応に、次のテスト観点が欠けていました。sacty は提出していません（PR は、作っていません・更新していません）。",
+      ...feedback.unmapped.map((id) => `- [${id}] ${titles.get(id) ?? ""}`.trimEnd()),
+      "作業領域には、前回までの変更が残っています。差分を読んで、どこまで実装されているかを確かめてから続けてください。",
+      "- 欠けている観点ごとに、実装とテストを足し、観点とテストの対応に、その観点を入れる。実行される振る舞いの無い変更だけの観点は、テストを書かない理由（untested）を書く",
+      "- 観点とテストの対応は、欠けていた観点だけでなく、すべての観点を入れて出し直す",
     ];
   }
   if (feedback.kind === "incomplete") {
@@ -2084,6 +2098,33 @@ function splitRepositoryLines(task: Task, repositories: readonly string[] | unde
   ];
 }
 
+/**
+ * 親の設計のテスト観点を、子タスクに割り当てさせる指示（PBI-348）。子タスクは、要求要件・設計を省いた実装になることが
+ * 多く、割り当てが無いと、子タスクの実装の観点が「タスクの目的」の1つだけになる。観点が無ければ、何も足さない。
+ */
+function splitViewpointLines(viewpoints: readonly TestViewpoint[]): string[] {
+  if (viewpoints.length === 0) return [];
+  return [
+    "- 下の承認済みのテスト観点を、子タスクに割り当てる。観点ごとに、その観点を実装とテストで満たす子タスクの viewpoints に、観点の ID を書く（1つの観点を、複数の子タスクに割り当ててよい）。子タスクの実装は、割り当てられた観点のすべてにテストを対応させる（対応が欠けると、提出できない）",
+    "- 子タスクでは確かめられない観点（子タスクを組み合わせた後でないと確かめられない・人が確かめる、など）は、子タスクに割り当てずに、integrationViewpoints に、観点の ID と、子タスクで確かめられない理由を書く（統合レビューで確かめる）",
+    "- すべての観点を、どれかの子タスクの viewpoints か integrationViewpoints に入れる。入っていない観点があると、sacty は子タスクを作らずに止める",
+  ];
+}
+
+/** 分割の答えの形の例に足す、子タスクの観点の割り当て（PBI-348）。観点が無ければ、足さない。 */
+function splitViewpointField(viewpoints: readonly TestViewpoint[], index: number): string {
+  const id = viewpoints[Math.min(index, viewpoints.length - 1)]?.id;
+  return id ? `, "viewpoints": ["${id}"]` : "";
+}
+
+/** 分割の答えの形の例に足す、統合レビューで確かめる観点（PBI-348）。観点が無ければ、足さない。 */
+function splitIntegrationField(viewpoints: readonly TestViewpoint[]): string {
+  const id = viewpoints.at(-1)?.id;
+  return id
+    ? `, "integrationViewpoints": [{"id": "${id}", "reason": "子タスクで確かめられない理由（あるときだけ）"}]`
+    : "";
+}
+
 /** 分割の出力の形式に足す、子タスクのリポジトリ（PBI-73）。 */
 function splitRepositoryFields(task: Task): string {
   return isRepoless(task)
@@ -2537,17 +2578,29 @@ function directImplementLines(
 ): string[] {
   const step: StepKey = "implement";
   const noTests = task.noTestsReason;
+  // 親タスクの分割で割り当てられたテスト観点（PBI-348）。あれば、タスクの目的（REQ）の代わりに、観点にする
+  const viewpoints = implementViewpoints(task);
   const lines = [
     "あなたはソフトウェア開発の工程エージェントです。",
     `作業ディレクトリは実装の対象リポジトリです。下の${basisWithoutRequirements(task)}に従って実装してください。`,
-    "このタスクは、オーケストレーターの判断で要求要件・設計の工程を省いています（依頼が明確で、既存の仕組みに沿った変更のため）。",
+    ...(task.parent
+      ? [
+          // 分割の子タスクは、範囲が広いことがある。小さな変更という前提を伝えない（PBI-348）
+          "このタスクは、親タスクの分割で作った子タスクです。要求要件・設計は親タスクで承認済みなので、この子タスクでは、その工程を省いています（小さな変更とは限りません）。",
+          `- 範囲は、下のタスクの内容の、見出し「${CHILD_PARENT_REQUIREMENTS_HEADING}」より前に書かれたことのすべて（実現すること・受け入れ条件）。その見出しから後ろの、親タスクの要求要件・設計・集めた情報は、範囲を広げるものではなく、決まっていることを確かめるために読む`,
+        ]
+      : [
+          "このタスクは、オーケストレーターの判断で要求要件・設計の工程を省いています（依頼が明確で、既存の仕組みに沿った変更のため）。",
+        ]),
     "- 依頼に書かれたことを、既存の仕組み（関数・権限・設定・規約。コードを読んで確かめる）を使って実現する。依頼に無い仕組み・画面・設定を新しく作らない",
     "- 依頼から一意に決まらないこと（空白・上限・並び・列の位置のような細かい既定など）があれば、既存の実装・規約に合わせて決める。選んだことと理由は、実装の説明に「既定で決めたこと」の節を分けて、1件1行で書く（要求要件を省いたので、人は PR のここで確かめる。既存のやり方にそのまま従っただけのことは書かない）",
     "- 依頼に受け入れ条件が列挙されていれば、1つずつ満たすことを確かめる（テストで確かめられるものはテストで）。条件を省いたり、まとめて1つのテストで済ませたりしない",
     ...(noTests
       ? [
           `このリポジトリには、テストの仕組みがありません（${noTestsJudge(task)}）。sacty はテストを実行せず、`,
-          `${NO_TESTS_JUDGE_BY}が、タスクの目的と、実装後のコード・差分・あなたの実装の説明から、観点 ${REQUIREMENTS_VIEWPOINT}（タスクの目的）の受け入れをレビューします。`,
+          viewpoints.length > 0
+            ? `${NO_TESTS_JUDGE_BY}が、タスクの目的と、実装後のコード・差分・あなたの実装の説明から、下の観点ごとに受け入れをレビューします。`
+            : `${NO_TESTS_JUDGE_BY}が、タスクの目的と、実装後のコード・差分・あなたの実装の説明から、観点 ${REQUIREMENTS_VIEWPOINT}（タスクの目的）の受け入れをレビューします。`,
           "",
           `- 依頼が求めることを、どう満たしたか（変えたファイル・箇所、確かめた方法）を実装の説明に書く。${NO_TESTS_JUDGE_BY}は、コードと差分で裏付けられることだけを根拠にする`,
           "- 検証のためだけに、タスクが求めていないテストの仕組みを足さない",
@@ -2556,6 +2609,7 @@ function directImplementLines(
           `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
           "- コミットやプッシュはしない（sacty が行います）",
           NO_CHANGE_LINE,
+          IMPLEMENT_ORDER_LINE,
           IMPLEMENT_REPORT_LINE,
           SHARED_MECHANISM_IMPLEMENT_LINE,
           ...implementReworkLines(previous),
@@ -2566,13 +2620,16 @@ function directImplementLines(
           "```",
         ]
       : [
-          `依頼が求める振る舞いを検証するテストを書き、観点とテストの対応は、タスクの目的の観点 ${REQUIREMENTS_VIEWPOINT} に、書いたテストを対応させてください。`,
+          viewpoints.length > 0
+            ? "依頼が求める振る舞いを検証するテストを書き、下のテスト観点（親タスクの設計のテスト観点のうち、このタスクに割り当てられたもの）ごとに、その観点を検証するテストを対応させてください。"
+            : `依頼が求める振る舞いを検証するテストを書き、観点とテストの対応は、タスクの目的の観点 ${REQUIREMENTS_VIEWPOINT} に、書いたテストを対応させてください。`,
           "",
           "- テストは、依頼が求める振る舞いを与えて確かめるものにする（形だけのテストにしない）",
           ...UNTESTED_LINES,
           testCommandLine(task),
           "- コミットやプッシュはしない（sacty が行います）",
           NO_CHANGE_LINE,
+          IMPLEMENT_ORDER_LINE,
           IMPLEMENT_REPORT_LINE,
           SHARED_MECHANISM_IMPLEMENT_LINE,
           ...implementReworkLines(previous),
@@ -2580,15 +2637,27 @@ function directImplementLines(
           "- 実装の説明をMarkdownで書き、そのあとに、観点とテストの対応を次の形式で必ず付ける",
         ]),
     "```json",
-    `{"${TEST_MAP_HEADING}": [{"viewpointId": "${REQUIREMENTS_VIEWPOINT}", "tests": ["テストのファイル › テストの名前"]}]}`,
+    `{"${TEST_MAP_HEADING}": [{"viewpointId": "${viewpoints[0]?.id ?? REQUIREMENTS_VIEWPOINT}", "tests": ["テストのファイル › テストの名前"]}]}`,
     "```",
     "",
     "--- タスク ---",
     content,
     ...investigationLines(task),
     "",
-    noTests ? "--- 観点（すべてを満たす） ---" : "--- テスト観点（すべてにテストを対応させる） ---",
-    `- [${REQUIREMENTS_VIEWPOINT}] タスクの目的（依頼の内容）を満たす`,
+    ...(viewpoints.length > 0
+      ? [
+          noTests
+            ? "--- 観点（親タスクの設計から割り当て・すべてを満たす） ---"
+            : "--- テスト観点（親タスクの設計から割り当て・すべてにテストを対応させる） ---",
+          ...viewpointLines(viewpoints),
+          ...unmappedViewpointLines(task),
+        ]
+      : [
+          noTests
+            ? "--- 観点（すべてを満たす） ---"
+            : "--- テスト観点（すべてにテストを対応させる） ---",
+          `- [${REQUIREMENTS_VIEWPOINT}] タスクの目的（依頼の内容）を満たす`,
+        ]),
     ...(noTests ? ["", ...noTestsReasonLines(task, noTests)] : []),
     ...(isSecurityFix(task) ? securityFixImplementLines(task) : []),
   ];
@@ -3063,6 +3132,8 @@ export function buildPrompt(
         ].join("\n");
       }
       // タスク分割は、承認済みの要求要件と設計から子タスクを決める（PBI-27）。人間の承認は無い
+      // 設計のテスト観点は、子タスクに割り当てさせる（子タスクの実装の完了の基準にする。PBI-348）
+      const splitViewpoints = task.approved.design?.testViewpoints ?? [];
       const lines = [
         "あなたはソフトウェア開発のタスク分割エージェントです。",
         "人間が承認した要求要件と設計を、独立して実装・レビューできる子タスクに分けてください。",
@@ -3072,13 +3143,14 @@ export function buildPrompt(
         "- 子タスクの内容には、何を実現するか・受け入れ条件・範囲外のことを Markdown で書く。親の要求要件と設計は sacty が子タスクに添えるので、繰り返さなくてよい",
         "- 先に別の子タスクのマージが必要なら dependsOn にその key を書く。依存先の PR がマージされてから、その子タスクを始める。並べられるものは依存させない",
         `- 子タスクは ${MIN_SPLIT_CHILDREN}〜${MAX_SPLIT_CHILDREN} 件。子タスクをさらに分割することはできない`,
+        ...splitViewpointLines(splitViewpoints),
         "- コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）",
         ...codeLines(task),
         ...splitRepositoryLines(task, extra.repositories),
         "",
         "最初に分け方の考え方を短く書き、そのあとに子タスクの一覧を次の形式で必ず付けてください。",
         "```json",
-        `{"${SPLIT_HEADING}": {"reason": "分け方の理由", "children": [{"key": "A", "title": "子タスクのタイトル", "body": "内容と受け入れ条件（Markdown）", "dependsOn": []${splitRepositoryFields(task)}}, {"key": "B", "title": "…", "body": "…", "dependsOn": ["A"]${splitRepositoryFields(task)}}]}}`,
+        `{"${SPLIT_HEADING}": {"reason": "分け方の理由", "children": [{"key": "A", "title": "子タスクのタイトル", "body": "内容と受け入れ条件（Markdown）", "dependsOn": []${splitRepositoryFields(task)}${splitViewpointField(splitViewpoints, 0)}}, {"key": "B", "title": "…", "body": "…", "dependsOn": ["A"]${splitRepositoryFields(task)}${splitViewpointField(splitViewpoints, 1)}}]${splitIntegrationField(splitViewpoints)}}}`,
         "```",
         "",
         "--- 承認済みの要求要件 ---",
@@ -3086,6 +3158,9 @@ export function buildPrompt(
         "",
         "--- 承認済みの設計 ---",
         task.approved.design?.output ?? "（承認済みの設計がありません）",
+        ...(splitViewpoints.length > 0
+          ? ["", "--- 承認済みのテスト観点 ---", ...viewpointLines(splitViewpoints)]
+          : []),
         "",
         ...investigationLines(task),
         "",
@@ -3155,6 +3230,7 @@ export function buildPrompt(
           "- ほかのテストも通るようにする。必要なら、直した振る舞いを確かめるテストを足す",
           "- コミットやプッシュはしない（sacty が行います）",
           NO_CHANGE_LINE,
+          IMPLEMENT_ORDER_LINE,
           IMPLEMENT_REPORT_LINE,
           SHARED_MECHANISM_IMPLEMENT_LINE,
           ...implementReworkLines(previous),
@@ -3184,6 +3260,8 @@ export function buildPrompt(
       }
       // テストの仕組みが無いタスク（PBI-94）は、テストを書かせず、観点ごとにどう満たしたかを説明に書かせる
       const noTests = task.noTestsReason;
+      // 設計を省いた子タスクは、親タスクの分割で割り当てられたテスト観点を、観点にする（PBI-348）
+      const inherited = designed ? [] : implementViewpoints(task);
       // 要求要件・設計の工程を経ないタスク（direct・工程の見直し）は、タスクの内容と集めた情報（前段の調査があればその結果）から実装する
       if (!designed && withoutRequirements(task)) {
         return [
@@ -3209,11 +3287,17 @@ export function buildPrompt(
                 "作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件と設計に従って実装し、",
                 "テスト観点ごとに、その観点を検証するテストを書いてください。",
               ]
-            : [
-                "作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件に従って実装し、",
-                "受け入れ条件を検証するテストを書いてください（このタスクは、オーケストレーターの判断で設計の工程を省いています。",
-                `観点とテストの対応は、受け入れ条件の観点 ${REQUIREMENTS_VIEWPOINT} に、書いたテストを対応させてください）。`,
-              ]),
+            : inherited.length > 0
+              ? [
+                  "作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件に従って実装し、",
+                  "テスト観点ごとに、その観点を検証するテストを書いてください（このタスクは、オーケストレーターの判断で設計の工程を省いています。",
+                  "テスト観点は、親タスクの設計のテスト観点のうち、このタスクに割り当てられたものです）。",
+                ]
+              : [
+                  "作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件に従って実装し、",
+                  "受け入れ条件を検証するテストを書いてください（このタスクは、オーケストレーターの判断で設計の工程を省いています。",
+                  `観点とテストの対応は、受け入れ条件の観点 ${REQUIREMENTS_VIEWPOINT} に、書いたテストを対応させてください）。`,
+                ]),
         "",
         ...(noTests
           ? [
@@ -3224,6 +3308,7 @@ export function buildPrompt(
               `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
               "- コミットやプッシュはしない（sacty が行います）",
               NO_CHANGE_LINE,
+              IMPLEMENT_ORDER_LINE,
               IMPLEMENT_REPORT_LINE,
               SHARED_MECHANISM_IMPLEMENT_LINE,
               ...implementReworkLines(previous),
@@ -3233,7 +3318,7 @@ export function buildPrompt(
               '{"command": "テストのコマンド"}',
               "```",
               "```json",
-              `{"${TEST_MAP_HEADING}": [{"viewpointId": "${designed ? "TV-1" : REQUIREMENTS_VIEWPOINT}", "tests": ["テストのファイル › テストの名前"]}]}`,
+              `{"${TEST_MAP_HEADING}": [{"viewpointId": "${designed ? "TV-1" : (inherited[0]?.id ?? REQUIREMENTS_VIEWPOINT)}", "tests": ["テストのファイル › テストの名前"]}]}`,
               "```",
             ]
           : [
@@ -3242,6 +3327,7 @@ export function buildPrompt(
               testCommandLine(task),
               "- コミットやプッシュはしない（sacty が行います）",
               NO_CHANGE_LINE,
+              IMPLEMENT_ORDER_LINE,
               IMPLEMENT_REPORT_LINE,
               SHARED_MECHANISM_IMPLEMENT_LINE,
               ...implementReworkLines(previous),
@@ -3270,7 +3356,10 @@ export function buildPrompt(
           : "--- テスト観点（承認済み・すべてにテストを対応させる） ---",
         ...(designed
           ? viewpointLines(task.approved.design?.testViewpoints ?? [])
-          : [`- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件`]),
+          : inherited.length > 0
+            ? viewpointLines(inherited)
+            : [`- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件`]),
+        ...unmappedViewpointLines(task),
         ...(noTests ? ["", ...noTestsReasonLines(task, noTests)] : []),
       ];
       lines.push(...earlierRemarkSections(remarks));
@@ -3972,6 +4061,21 @@ export function integrationViewpointIds(task: Task): string[] {
 }
 
 /**
+ * タスク分割で、どの子タスクにも割り当てなかったテスト観点（PBI-348）。子タスクの実装とレビューでは確かめていないので、
+ * 統合レビューに、どの観点かと、分割のエージェントが書いた理由を渡す。無ければ、何も足さない。
+ */
+function integrationOnlyViewpointLines(task: Task): string[] {
+  const only = task.split?.integrationViewpoints ?? [];
+  if (only.length === 0) return [];
+  return [
+    "",
+    "--- 子タスクに割り当てなかったテスト観点 ---",
+    "次の観点は、タスク分割のときに、どの子タスクにも割り当てていません。子タスクの実装とレビューでは確かめていないので、この統合レビューで、コードとテストを読んで確かめてください。",
+    ...only.map((v) => `- [${v.id}] 子タスクで確かめられない理由：${v.reason}`),
+  ];
+}
+
+/**
  * 統合レビューの指示（PBI-31）。ゴールガーディアンが、子タスクの PR がマージされた後のベースブランチの
  * コードを読み、子タスクの成果を組み合わせた状態が親の要求要件・テスト観点を満たすかを判定する。
  */
@@ -4034,6 +4138,7 @@ export function buildIntegrationReviewPrompt(
       : [
           `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計にテスト観点が無いため、受け入れ条件をすべて満たすかを、この観点で判定する）`,
         ]),
+    ...integrationOnlyViewpointLines(task),
     "",
     "--- 子タスク ---",
     ...subtaskLines(subtasks),
@@ -4181,23 +4286,26 @@ function resultTableLines(task: Task): string[] {
               expected: "不具合が直り、再現のテストが通る",
             },
           ]
-        : withoutRequirements(task)
-          ? [
-              {
-                id: REQUIREMENTS_VIEWPOINT,
-                title: "タスクの目的",
-                input: "タスクの内容（依頼。要求要件・設計の工程は省いた）",
-                expected: "依頼が求めることを満たす",
-              },
-            ]
-          : [
-              {
-                id: REQUIREMENTS_VIEWPOINT,
-                title: "要求要件の受け入れ条件",
-                input: "承認済みの要求要件",
-                expected: "受け入れ条件を満たす",
-              },
-            ];
+        : implementViewpoints(task).length > 0
+          ? // 設計を省いた子タスクは、親タスクの分割で割り当てられたテスト観点（PBI-348）
+            implementViewpoints(task)
+          : withoutRequirements(task)
+            ? [
+                {
+                  id: REQUIREMENTS_VIEWPOINT,
+                  title: "タスクの目的",
+                  input: "タスクの内容（依頼。要求要件・設計の工程は省いた）",
+                  expected: "依頼が求めることを満たす",
+                },
+              ]
+            : [
+                {
+                  id: REQUIREMENTS_VIEWPOINT,
+                  title: "要求要件の受け入れ条件",
+                  input: "承認済みの要求要件",
+                  expected: "受け入れ条件を満たす",
+                },
+              ];
   const review = task.lastReview;
   const tests = task.lastTests;
   // ゴールガーディアンが最終レビューの中で実行したテスト（以前の版）
@@ -5269,7 +5377,7 @@ function reviewReworkLines(context: ReviewReworkContext | undefined): string[] {
       `--- 承認済みの${STEP_NAME[step]}（PR を作ったタスクの、承認済みの前の工程） ---`,
       parent.approved[step]?.output ?? "",
     ]);
-  const viewpoints = gateStep === "implement" ? (parent.approved.design?.testViewpoints ?? []) : [];
+  const viewpoints = gateStep === "implement" ? implementViewpoints(parent) : [];
   return [
     "",
     "--- 指摘の戻し先 ---",
@@ -6090,6 +6198,27 @@ const NO_CHANGE_LINE =
   "- すでに満たしていて変更が要らないとわかったら、ファイルを変えずに、変更が要らない理由と根拠（満たしている箇所・それを確かめているテスト）を説明に書く（何も変えなければ、sacty は PR を作らず、人間が確かめて変更なしで完了にする）";
 
 /**
+ * 観点とテストの対応に、テスト観点が欠けたときの扱い（PBI-348）。sacty は、欠けがあれば提出せずに実装をやり直す
+ * （unmappedViewpoints）ので、テストを対応させる観点（設計のテスト観点か、親タスクの分割で割り当てられた観点）を並べた後に
+ * 伝える。変更が要らないとわかった実行も、同じ確認を通るので、既存のテストを対応させるよう伝える。テストを書かないタスク
+ * （テストの仕組みが無い・文書だけの依頼）と、観点がタスクの目的（REQ）だけのタスクは、確かめないので、足さない。
+ */
+function unmappedViewpointLines(task: Task): string[] {
+  if (task.noTestsReason || task.documentsOnly === true) return [];
+  if (implementViewpoints(task).length === 0) return [];
+  return [
+    "- 観点とテストの対応に、上の観点が1つでも欠けていると、sacty は提出しない（欠けている観点を渡して、実装をやり直す）。変更が要らないとわかったときも、観点ごとに、その観点を確かめている既存のテスト（か、テストを書かない理由）を対応させる",
+  ];
+}
+
+/**
+ * 実装の進める順序（PBI-348）。範囲の一部を実装した時点で、検証と報告に進んで実行を終えた（PBI-347 の背景）ので、範囲の
+ * すべてを実装してから検証と説明に進むことを、どの実装の指示にも書く。
+ */
+const IMPLEMENT_ORDER_LINE =
+  "- 進める順序：範囲のすべて（実装すること・そのテスト・求められた文書）を実装してから、提出の前の検証と実装の説明に進む。範囲の一部を実装した時点で、検証と説明に進んで実行を終えない（実行が終わると、作業領域の内容がそのまま提出される）";
+
+/**
  * 実装の説明の書き方（PBI-264）。説明は sacty が PR の本文に載せる。PR を読む人に要るのは、何を変えたか・どう確かめたか・
  * 人が確かめることなので、作業の経過の報告は書かせない。
  */
@@ -6492,21 +6621,45 @@ export type SplitChild = {
   /** 子タスクのリポジトリと選んだ理由（リポジトリの無いタスクの分割。PBI-73）。プロジェクトの対象かは、呼び出し側が確かめる。 */
   repo?: string;
   repoReason?: string;
+  /** この子タスクに割り当てた、親の設計のテスト観点の ID（PBI-348）。親にテスト観点が無ければ無い。 */
+  viewpoints?: string[];
 };
+
+/** 読んだ分割案。integrationViewpoints は、子タスクに割り当てず、統合レビューで確かめるテスト観点と理由（PBI-348）。 */
+export type SplitPlan = {
+  ok: true;
+  reason: string;
+  children: SplitChild[];
+  integrationViewpoints?: { id: string; reason: string }[];
+};
+
+/** 文の一覧を読む（文でないもの・空を除き、重複をまとめる）。 */
+function textList(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.map(text).filter(Boolean))] : [];
+}
 
 /**
  * タスク分割の出力から、子タスクの一覧を読んで確かめる（PBI-27）。数・key の重複・存在しない依存・
- * 依存の循環があれば、理由を返す。
+ * 依存の循環があれば、理由を返す。viewpointIds（親の設計のテスト観点の ID）があれば、観点の割り当ても確かめる（PBI-348）：
+ * 知らない ID・どの子タスクにも統合レビューにも入っていない観点・理由の無い統合レビューの観点があれば、理由を返す。
+ * viewpointIds が空なら、観点の割り当ては読まない。
  */
 export function extractSplitPlan(
   output: string,
   /** 子タスクの最小の数。修正の子タスクの追加（PBI-31）は1件から。 */
   min: number = MIN_SPLIT_CHILDREN,
-): { ok: true; reason: string; children: SplitChild[] } | { ok: false; message: DaemonText } {
+  viewpointIds: readonly string[] = [],
+): SplitPlan | { ok: false; message: DaemonText } {
   const found = lastJsonAnswer(output, (value) => {
     const v = headedObject(value, SPLIT_HEADING);
     return v && Array.isArray(v.children)
-      ? { reason: text(v.reason), children: v.children as unknown[] }
+      ? {
+          reason: text(v.reason),
+          children: v.children as unknown[],
+          integration: Array.isArray(v.integrationViewpoints)
+            ? (v.integrationViewpoints as unknown[])
+            : [],
+        }
       : undefined;
   })?.value;
   if (!found) return { ok: false, message: message("split.unreadable") };
@@ -6519,6 +6672,7 @@ export function extractSplitPlan(
     const dependsOn = Array.isArray(c.dependsOn) ? c.dependsOn.map(text).filter(Boolean) : [];
     const repo = text(c.repo).slice(0, 500);
     const repoReason = text(c.repoReason).slice(0, 2000);
+    const viewpoints = viewpointIds.length > 0 ? textList(c.viewpoints) : [];
     children.push({
       key,
       title: title.slice(0, 200),
@@ -6526,6 +6680,7 @@ export function extractSplitPlan(
       dependsOn,
       ...(repo ? { repo } : {}),
       ...(repoReason ? { repoReason } : {}),
+      ...(viewpoints.length > 0 ? { viewpoints } : {}),
     });
   }
   const count = children.length;
@@ -6570,13 +6725,60 @@ export function extractSplitPlan(
     const keys = children.filter((c) => !done.has(c.key)).map((c) => c.key);
     return { ok: false, message: message("split.cycle", { keys: keys.join(", ") }) };
   }
-  return { ok: true, reason: found.reason, children };
+  if (viewpointIds.length === 0) return { ok: true, reason: found.reason, children };
+  // テスト観点の割り当て（PBI-348）：すべての観点が、どれかの子タスクか、統合レビューで確かめる観点に入っていること
+  const known = new Set(viewpointIds);
+  for (const c of children) {
+    const unknown = (c.viewpoints ?? []).find((id) => !known.has(id));
+    if (unknown !== undefined) {
+      return { ok: false, message: message("split.unknownViewpoint", { key: c.key, id: unknown }) };
+    }
+  }
+  const integrationViewpoints: { id: string; reason: string }[] = [];
+  for (const raw of found.integration) {
+    const v = (raw ?? {}) as Record<string, unknown>;
+    const id = text(v.id);
+    if (!id || integrationViewpoints.some((x) => x.id === id)) continue;
+    if (!known.has(id)) {
+      return { ok: false, message: message("split.unknownIntegrationViewpoint", { id }) };
+    }
+    const reason = text(v.reason).slice(0, 2000);
+    if (!reason) return { ok: false, message: message("split.integrationReasonMissing", { id }) };
+    integrationViewpoints.push({ id, reason });
+  }
+  const placed = new Set([
+    ...children.flatMap((c) => c.viewpoints ?? []),
+    ...integrationViewpoints.map((v) => v.id),
+  ]);
+  const unassigned = viewpointIds.filter((id) => !placed.has(id));
+  if (unassigned.length > 0) {
+    return {
+      ok: false,
+      message: message("split.viewpointUnassigned", {
+        ids: unassigned.slice(0, 10).join(", "),
+        total: unassigned.length,
+      }),
+    };
+  }
+  return {
+    ok: true,
+    reason: found.reason,
+    children,
+    ...(integrationViewpoints.length > 0 ? { integrationViewpoints } : {}),
+  };
 }
 
 /**
  * 子タスクの内容。分割案の内容に、親タスクの承認済みの要求要件と設計と、親が開始時に集めた情報を添える
  * （子タスクの工程エージェントが、親の決めたことを引き継げるように）。
  */
+/**
+ * 子タスクの内容で、子タスクの範囲（分割のエージェントが書いた内容）と、親タスクから添えるもの（要求要件・設計・集めた情報）を
+ * 分ける見出し（PBI-348）。子タスクの実装の指示が、範囲はこの見出しより前、と伝えるのに使う。区切り線（---）で伝えないのは、
+ * 分割のエージェントが、子タスクの内容に区切り線を書くことがあるため。
+ */
+const CHILD_PARENT_REQUIREMENTS_HEADING = "親タスクの要求要件（承認済み）";
+
 export function buildChildBody(
   parent: Task,
   child: SplitChild,
@@ -6598,7 +6800,7 @@ export function buildChildBody(
         ]
       : []),
     "",
-    "## 親タスクの要求要件（承認済み）",
+    `## ${CHILD_PARENT_REQUIREMENTS_HEADING}`,
     "",
     parent.approved.requirements?.output ?? "（なし）",
     "",

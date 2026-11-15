@@ -40,6 +40,11 @@ const ja = {
       "この PR を作った親タスクが、タスクの開始時に集めてまとめた情報です。このタスクでは集め直さずに引き継ぎ、レビューの工程に渡します。",
     inherited: (sources: string) => `${sources}・親タスクから引き継ぎ`,
   },
+  inheritedViewpoints: {
+    title: "割り当てられたテスト観点",
+    hint: "親タスクのタスク分割で、このタスクに割り当てられたテスト観点です。実装は、このすべてにテストを対応させます。対応が欠けた実装は、提出しません。",
+    count: (n: number) => `${n} 件`,
+  },
   operationSettings: {
     title: "作業の実行設定",
     description: "作業結果と照合してください。",
@@ -260,6 +265,8 @@ const ja = {
     cost: (usd: string) => `子タスクの費用の合計：${usd}`,
     reason: (reason: string) => `分け方：${reason}`,
     dependsOn: (titles: string[]) => `依存：${titles.map((t) => `「${t}」`).join("・")}`,
+    viewpoints: (ids: string[]) => `テスト観点：${ids.join("・")}`,
+    integrationViewpoints: "子タスクに割り当てず、統合レビューで確かめるテスト観点",
     pullRequest: "PR",
     missing: "（作成中）",
     fix: "修正",
@@ -568,6 +575,11 @@ const en: TaskMessages = {
       "The parent task that opened this pull request gathered and summarized this at its start. This task inherits it without gathering again and gives it to the review step.",
     inherited: (sources: string) => `${sources}, inherited from the parent task`,
   },
+  inheritedViewpoints: {
+    title: "Assigned test viewpoints",
+    hint: "The test viewpoints the parent task's split assigned to this task. The implementation maps a test to every one of them. An implementation that misses one is not submitted.",
+    count: (n: number) => `${n}`,
+  },
   operationSettings: {
     title: "Operation settings",
     description: "Compare them with the operation result.",
@@ -781,6 +793,9 @@ const en: TaskMessages = {
     cost: (usd) => `Total cost of subtasks: ${usd}`,
     reason: (reason) => `How it was split: ${reason}`,
     dependsOn: (titles) => `Depends on: ${titles.map((t) => `"${t}"`).join(", ")}`,
+    viewpoints: (ids) => `Test viewpoints: ${ids.join(", ")}`,
+    integrationViewpoints:
+      "Test viewpoints assigned to no subtask and checked in the integration review",
     pullRequest: "PR",
     missing: "(being created)",
     fix: "Fix",

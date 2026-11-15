@@ -1075,6 +1075,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     確かめられなければ一時停止する（`merge.failed`）。
   - その後に、実装の実行が範囲を実装し終えたと申告したかを確かめる（`implementationCompleted`）。
     未完了と申告した・申告が無ければ記録せず、`ImplementationIncomplete` を記録して実装をやり直す（[終わっていない実装と、変更の無いやり直し](#終わっていない実装と変更の無いやり直し)）。
+    完了と申告していても、観点とテストの対応に欠けた観点があれば、同じく実装をやり直す（[実装がテストを対応させる観点](#実装がテストを対応させる観点)）。
   - セキュリティ対応のタスクは、`FinalReviewSkipped` の前に、差分を前段の調査が宣言した修正の範囲と照らす（`checkSecurityScope`。照合の仕方は下の「セキュリティ対応」と同じ）。
     結果を `FinalReviewSkipped` の `securityScope`（違反があれば `violation` に範囲の外のファイル・変えた行の数・上限）に記録する（`Task.securityScopeCheck`）。
     差分を取れなければ、記録せずに一時停止する（`verify.diffUnavailable`）。
@@ -1251,6 +1252,34 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 - 差し戻し・PR の指摘で実装を作り直している間に、人が実装の PR をマージしたら、作り直し（実行・PR の更新）を止めて、マージを承認として進める。新しい PR は作らない（[実装の作り直しの間のマージ](approval.md#実装の作り直しの間のマージ)）。
 
 コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`commitSubjectFor`・`implementSubmitted`・`submitEvents`・`pause`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
+
+### 実装がテストを対応させる観点
+
+関係する ADR: [分割の子タスクに、親の設計のテスト観点を割り当て、観点の対応が欠けた実装を提出にしない](../adr/20261115-1345-assign-test-viewpoints-to-child-tasks.md)
+
+- 実装の工程がテストを対応させる観点（`implementViewpoints`）は、実装の指示が並べる観点と同じ決め方で決まる（指示に無い観点の対応を求めない）。
+  1. 設計の工程があるタスク：自分の承認済みの設計のテスト観点
+  2. 再現の工程があるタスク（不具合の修正）：再現のテストが通ること（割り当てられた観点は使わない）
+  3. どちらも無いタスク：親タスクの分割で割り当てられた観点（`Task.inheritedViewpoints`。[タスク分割と統合レビュー](split-and-integrate.md#分割)）。無ければ、タスクの目的・受け入れ条件（`REQ`）
+
+  工程の見直しで飛ばした工程は、無いものとして扱う。
+- 割り当てられた観点を持つ子タスクの実装の指示は、`REQ` の代わりに、割り当てられた観点を並べる（要求要件・設計を省いた実装と、設計を省いた実装）。
+  PR の本文の観点の表（`resultTableLines`）、PR のレビューの子タスクに渡す観点、タスクの詳細の観点の表も、同じ観点にする。
+- 対応の欠けた観点（`unmappedViewpoints`）：観点とテストの対応（`sacty-test-map`）に、テストも、テストを書かない理由（`untested`）も対応していない観点。
+  - 完了と申告した実行でも、欠けた観点があれば、提出に進めない。
+    `ImplementationIncomplete` に欠けた観点の ID（`unmapped`）を記録し、欠けた観点を渡して実装をやり直す。
+    回数の数え方・止め方・再開は、未完了のときと同じ（[終わっていない実装と、変更の無いやり直し](#終わっていない実装と変更の無いやり直し)）。止めるときの文言は `implement.unmappedViewpoints`。
+  - テストの仕組みが無いタスクと、文書だけの依頼は、テストを書かないので、対応を求めない。
+  - 観点が `REQ` だけのタスクと、再現の工程があるタスクは、対応の欠けを確かめない。
+  - 対応を確かめる実装の指示には、観点の後ろに、欠けがあると提出されないことを書く（`unmappedViewpointLines`）。
+  - 変更が要らないとわかった実行（作業領域を何も変えない）も、同じ確認を通る。
+    観点ごとに、その観点を確かめている既存のテストを対応させてから、変更なしの確認（`NoChangesFound`）に進む。
+- 分割で作った子タスクの、要求要件・設計を省いた実装の指示は、子タスクの範囲を伝える（`directImplementLines`）。
+  要求要件・設計は親タスクで承認済みなので省いていること、小さな変更とは限らないこと、範囲はタスクの内容の、見出し「親タスクの要求要件（承認済み）」より前に書かれたことのすべてであることを書く（その見出しから後ろは、sacty が親タスクから添えたもの）。
+  子タスクでないタスクには、依頼が明確で既存の仕組みに沿った変更なので省いていることを書く。
+- どの実装の指示にも、範囲のすべてを実装してから、提出の前の検証と実装の説明に進む順序を書く（`IMPLEMENT_ORDER_LINE`）。
+
+コード: `packages/core/src/projection.ts`（`implementViewpoints`・`unmappedViewpoints`）、`apps/daemon/src/service.ts`（`implementationCompleted`）、`apps/daemon/src/prompts.ts`（`directImplementLines`・`resultTableLines`・`feedbackLines`・`unmappedViewpointLines`・`IMPLEMENT_ORDER_LINE`）、`apps/web/src/components/implementation.tsx`
 
 ### 終わっていない実装と、変更の無いやり直し
 

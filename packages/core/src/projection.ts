@@ -672,11 +672,15 @@ export type Task = {
       /** 子タスクに付けたリポジトリと理由（リポジトリの無い親を分けたとき。PBI-73）。 */
       repo?: string;
       repoReason?: string;
+      /** 親の設計のテスト観点のうち、この子タスクに割り当てたもの（PBI-348）。 */
+      viewpoints?: TestViewpoint[];
     }[];
     /** 分割した回数（最初の分割と、修正の子タスクの追加。PBI-31）。 */
     rounds: number;
     reason: string;
     at: string;
+    /** 親の設計のテスト観点のうち、子タスクに割り当てず、統合レビューで確かめるものと理由（PBI-348）。 */
+    integrationViewpoints?: { id: string; reason: string }[];
     /** 人間が中止を認めた子タスク（親を再開した）。完了したものと同じく扱う。 */
     acceptedCancellations: string[];
   };
@@ -697,6 +701,11 @@ export type Task = {
   outputs: Partial<Record<StepKey, string>>;
   /** 設計の最新の提出のテスト観点。 */
   testViewpoints: TestViewpoint[];
+  /**
+   * 親タスクの分割で、この子タスクに割り当てられたテスト観点（親の設計のテスト観点。PBI-348）。自分の承認済みの設計に
+   * テスト観点があれば、そちらを使う（implementViewpoints）。
+   */
+  inheritedViewpoints?: TestViewpoint[];
   /** 承認済みで凍結された成果物。 */
   approved: Partial<Record<StepKey, ApprovedOutput>>;
   budget: {
@@ -879,7 +888,13 @@ export type Task = {
     /** 提出の前に、ベースブランチとの競合の目印が作業領域に残っていた（BaseConflictsRemained）。 */
     | { kind: "merge"; files: string[] }
     /** 実装の実行が、範囲を実装し終えたと申告しなかった（ImplementationIncomplete。PBI-347）。 */
-    | { kind: "incomplete"; remaining: string[]; undeclared?: true }
+    | {
+        kind: "incomplete";
+        remaining: string[];
+        undeclared?: true;
+        /** 完了と申告したが、テストが対応していなかったテスト観点の ID（PBI-348）。 */
+        unmapped?: string[];
+      }
     /** AI のレビューの指摘が残る PR を、やり直しの実装が何も変えなかった（ImplementationUnchanged。PBI-347）。 */
     | { kind: "unchanged"; number: number };
   /**
@@ -1189,6 +1204,35 @@ function mergeTestMaps(previous: TestMapping[], next: TestMapping[]): TestMappin
 }
 
 /**
+ * 実装の工程が、テストを対応させるテスト観点（PBI-348）。実装の指示が並べる観点と同じ決め方にする（指示に無い観点の対応を
+ * 求めない）。
+ * - 設計の工程があるタスク：自分の承認済みの設計のテスト観点
+ * - 再現の工程があるタスク（不具合の修正）：無い（観点は、再現のテストが通ること）
+ * - どちらも無いタスク：親タスクの分割で割り当てられた観点。無ければ空（観点は、タスクの目的・受け入れ条件の REQ だけ）
+ * 工程の見直しで飛ばした工程は、無いものとして扱う。
+ */
+export function implementViewpoints(task: Task): TestViewpoint[] {
+  const has = (step: StepKey) => task.steps.some((s) => s.key === step && s.state !== "skip");
+  if (has("design")) return task.approved.design?.testViewpoints ?? [];
+  if (has("reproduce")) return [];
+  return task.inheritedViewpoints ?? [];
+}
+
+/**
+ * 実装の工程の、観点とテストの対応（testMap）に欠けているテスト観点（PBI-348）。テスト（か、テストを書かない理由）が
+ * 対応していない観点。テストを書かないタスク（テストの仕組みが無い・文書だけの依頼）は、対応を求めないので空。
+ */
+export function unmappedViewpoints(task: Task): TestViewpoint[] {
+  if (task.noTestsReason || task.documentsOnly === true) return [];
+  const mapped = new Set(
+    (task.testMap ?? [])
+      .filter((m) => m.tests.length > 0 || Boolean(m.untested))
+      .map((m) => m.viewpointId),
+  );
+  return implementViewpoints(task).filter((v) => !mapped.has(v.id));
+}
+
+/**
  * 実装の実行がまた終わらなかったときの、続いた回数と作業領域の目印（PBI-347。ImplementationIncomplete の投影）。前の未完了の
  * ときから作業領域の目印が変わっていなければ、やり直しても進まなかった（stalled）。目印が無い（読めなかった）ときは、
  * 進まなかったとしない。記録の前に、止めるかを決めるのにも使う（未完了の記録と一時停止を、同じ追記で書くため）。
@@ -1311,6 +1355,7 @@ export function applyEvent(
         ? { repoChoice: { reason: event.payload.repoReason, by: "orchestrator" as const } }
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
+      ...(event.payload.viewpoints ? { inheritedViewpoints: event.payload.viewpoints } : {}),
       ...(event.payload.reviewOf ? { reviewOf: event.payload.reviewOf } : {}),
       ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.plan ? { requestedPlan: event.payload.plan } : {}),
@@ -2204,6 +2249,7 @@ export function applyEvent(
         kind: "incomplete",
         remaining: event.payload.remaining,
         ...(event.payload.undeclared ? { undeclared: true as const } : {}),
+        ...(event.payload.unmapped ? { unmapped: event.payload.unmapped } : {}),
       };
       task.incompleteRuns = nextIncompleteRuns(task.incompleteRuns, event.payload.fingerprint);
       task.status = "queued";
@@ -2999,6 +3045,13 @@ export function applyEvent(
         reason: event.payload.reason,
         at: event.at,
         acceptedCancellations: task.split?.acceptedCancellations ?? [],
+        // 最初の分割の割り当てを残す（修正の子タスクの追加は、観点を割り当てない。PBI-348）
+        ...((event.payload.integrationViewpoints ?? task.split?.integrationViewpoints)
+          ? {
+              integrationViewpoints:
+                event.payload.integrationViewpoints ?? task.split?.integrationViewpoints,
+            }
+          : {}),
       };
       task.status = "waiting_children";
       break;

@@ -745,6 +745,12 @@ const TaskCreated = z.object({
      */
     parent: z.object({ taskId: z.string(), dependsOn: z.array(z.string()) }).optional(),
     /**
+     * 親タスクの分割で、この子タスクに割り当てられたテスト観点（親の設計のテスト観点。PBI-348）。子タスクが自分の設計を
+     * 持たないとき（要求要件・設計を省いた実装など）、実装はこのすべてにテストを対応させる。割り当ての無い子タスク・
+     * 子タスクでないタスク・それより前の記録には無い。
+     */
+    viewpoints: z.array(TestViewpoint).min(1).optional(),
+    /**
      * sacty が作った PR をレビューする子タスクの、親（PR を作ったタスク）と、その PR を作った工程（PBI-330）。source は、その PR
      * （review: sacty）。分割の子タスク（parent）とは別で、分割の待ち・統合レビューの対象にしない。
      */
@@ -832,11 +838,24 @@ const TaskSplit = z.object({
            */
           repo: z.string().min(1).optional(),
           repoReason: z.string().max(2000).optional(),
+          /**
+           * 親の設計のテスト観点のうち、この子タスクに割り当てたもの（PBI-348）。子タスクの実装は、このすべてにテストを
+           * 対応させる。親に設計のテスト観点が無い分割・修正の子タスクの追加・それより前の記録には無い。
+           */
+          viewpoints: z.array(TestViewpoint).min(1).optional(),
         }),
       )
       .min(1),
     /** 分割のエージェントが書いた、分け方の理由。 */
     reason: z.string(),
+    /**
+     * 親の設計のテスト観点のうち、どの子タスクにも割り当てず、統合レビューで確かめるもの（PBI-348）。観点の ID と、
+     * 子タスクでは確かめられない理由。
+     */
+    integrationViewpoints: z
+      .array(z.object({ id: z.string().min(1), reason: z.string().min(1).max(2000) }))
+      .min(1)
+      .optional(),
   }),
 });
 
@@ -2456,6 +2475,11 @@ const ImplementationIncomplete = z.object({
       .max(COMPLETION_REMAINING_MAX),
     /** 完了の申告が無い・読めなかった。 */
     undeclared: z.literal(true).optional(),
+    /**
+     * 完了と申告したが、観点とテストの対応に欠けていたテスト観点の ID（PBI-348）。観点は、承認済みの設計のテスト観点か、
+     * 親タスクの分割で割り当てられた観点。
+     */
+    unmapped: z.array(z.string().min(1)).min(1).optional(),
     /**
      * そのときの作業領域の内容の目印（git のツリーの ID）。前の未完了のときと同じなら、やり直しても何も進まなかったので、
      * 回数を待たずに止める。作業領域を読めなかったときは無い。

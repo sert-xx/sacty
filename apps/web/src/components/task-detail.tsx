@@ -665,6 +665,18 @@ function Overview({ data }: { data: TaskDetailData }) {
           </dl>
         </CardSection>
       )}
+      {/* 親タスクの分割で割り当てられたテスト観点（PBI-348）。実装が、このすべてにテストを対応させる */}
+      {task.inheritedViewpoints && task.inheritedViewpoints.length > 0 && (
+        <CardSection
+          id="inherited-viewpoints"
+          title={m.inheritedViewpoints.title}
+          note={m.inheritedViewpoints.count(task.inheritedViewpoints.length)}
+          hint={m.inheritedViewpoints.hint}
+          collapsed={task.steps.some((s) => s.state !== "todo")}
+        >
+          <TestViewpoints viewpoints={task.inheritedViewpoints} />
+        </CardSection>
+      )}
       {/* タスクの開始時に集めた情報。工程が始まったら折りたたむ */}
       {task.gathered && (
         <CardSection
@@ -1718,9 +1730,28 @@ function Subtasks({ task, subtasks }: { task: Task; subtasks: Task[] }) {
                 {m.dependsOn(c.dependsOn.map((d) => titles.get(d) ?? d))}
               </p>
             )}
+            {/* この子タスクに割り当てたテスト観点（PBI-348） */}
+            {c.viewpoints && c.viewpoints.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {m.viewpoints(c.viewpoints.map((v) => v.id))}
+              </p>
+            )}
           </li>
         ))}
       </ol>
+      {/* 子タスクに割り当てず、統合レビューで確かめるテスト観点と理由（PBI-348） */}
+      {task.split?.integrationViewpoints && task.split.integrationViewpoints.length > 0 && (
+        <div className="text-sm leading-6 text-muted-foreground">
+          <p>{m.integrationViewpoints}</p>
+          <ul className="list-disc pl-5">
+            {task.split.integrationViewpoints.map((v) => (
+              <li key={v.id} className="[overflow-wrap:anywhere]">
+                {v.id}：{v.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </CardSection>
   );
 }

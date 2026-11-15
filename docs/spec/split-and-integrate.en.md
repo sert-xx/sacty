@@ -10,6 +10,20 @@ Related ADRs: [Dependent child tasks start stacked on the dependency's PR branch
 
 - The number of child tasks is from `MIN_SPLIT_CHILDREN` (2) to `MAX_SPLIT_CHILDREN` (10). From the second round, which adds fix child tasks, a single one can be created.
 - The agent's answer (heading `sacty-split`) is checked for the count, duplicate `key` values, missing dependencies, self-dependencies, and dependency cycles. If it cannot be read, the task is paused.
+- Assigning test viewpoints: in the first split, when the parent's approved design has test viewpoints, the split instruction includes them and makes the agent assign them to child tasks (`splitViewpointLines`; [ADR](../adr/20261115-1345-assign-test-viewpoints-to-child-tasks.md)).
+  - Each child task in the answer lists, in `viewpoints`, the IDs of the viewpoints that child satisfies with its implementation and tests. One viewpoint may be assigned to several child tasks.
+  - A viewpoint that no child task can check is not assigned; the answer lists its ID and a reason in `integrationViewpoints` (it is checked in the integration review).
+    The integration review judges every test viewpoint anyway. Its instruction also lists the viewpoints assigned to no child task with their reasons, and says that the implementations and reviews of the child tasks did not check them (`integrationOnlyViewpointLines`).
+  - sacty checks that every viewpoint is in the `viewpoints` of some child task or in `integrationViewpoints`.
+    If any of the following is found, no child task is created and the task is paused (resuming redoes the split).
+    - A viewpoint that is listed nowhere (`split.viewpointUnassigned`)
+    - An ID that is not in the design (`split.unknownViewpoint`, `split.unknownIntegrationViewpoint`)
+    - A viewpoint in `integrationViewpoints` without a reason (`split.integrationReasonMissing`)
+  - The assigned viewpoints are recorded in each child's `viewpoints` (with the viewpoint contents) and in `integrationViewpoints` of `TaskSplit`.
+    A child task receives them in `viewpoints` of `TaskCreated` (`Task.inheritedViewpoints`).
+  - The implementation of a child task maps a test to every assigned viewpoint ([Viewpoints the implementation maps tests to](tasks-and-steps.en.md#viewpoints-the-implementation-maps-tests-to)).
+  - A split whose parent design has no test viewpoints, and the addition of fix child tasks (from the second split on), assign no viewpoints.
+    A child task with no assignment uses the purpose of the task (`REQ`) as its viewpoint.
 - Child tasks are created with `start: split` and `parent` (the parent's ID and `dependsOn`). The body includes the parent's approved requirements and design, and the information the parent gathered at the start of the task (if any). Child tasks do not gather information again ([Tasks and steps](tasks-and-steps.en.md#information-gathering)). Child tasks without dependencies start waiting to run; child tasks with dependencies start as `blocked` and become waiting to run once all their dependencies are settled (`TaskUnblocked`).
   When the PR review child task gives a dependency's PR no findings and the draft is removed, a child task may also start stacked on that PR without waiting for it to be settled (see "Child tasks stacked on a dependency's PR" below).
 - A child task's repository is the child task's `repo`, or the parent's repository if absent. When splitting a parent without a repository, each child task's `repo` is checked against the project's targets; if it is missing or not in the targets, sacty does not use the split and stops the task. The instructions tell the agent to complete each child task within one repository, and to split changes across repositories and connect them with `dependsOn`.
@@ -17,7 +31,7 @@ Related ADRs: [Dependent child tasks start stacked on the dependency's PR branch
 - The parent waits for child tasks in `waiting_children`. When all child tasks are settled (completed, or canceled with a person's acknowledgment), it moves to the next step with `SplitCompleted`.
 - When a child task is canceled, the parent is paused (`child_cancelled`). Resuming the parent counts as acknowledging that cancellation.
 
-Code: `apps/daemon/src/service.ts` (`settleSplit`, `childSettled`, `splitWithRepositories`), `apps/daemon/src/prompts.ts` (`extractSplitPlan`, `buildChildBody`, `splitRepositoryLines`), `packages/core/src/events.ts` (`MIN_SPLIT_CHILDREN`, `MAX_SPLIT_CHILDREN`)
+Code: `apps/daemon/src/service.ts` (`settleSplit`, `childSettled`, `splitWithRepositories`), `apps/daemon/src/prompts.ts` (`extractSplitPlan`, `buildChildBody`, `splitRepositoryLines`, `splitViewpointLines`), `packages/core/src/events.ts` (`MIN_SPLIT_CHILDREN`, `MAX_SPLIT_CHILDREN`, `TaskSplit`, `TaskCreated`), `packages/core/src/projection.ts` (`inheritedViewpoints`)
 
 ## Child tasks stacked on a dependency's PR
 
