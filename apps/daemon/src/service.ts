@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -89,6 +89,7 @@ import {
   mergeProjectDefinitions,
   message,
   nextAuditDive,
+  nextIncompleteRuns,
   OperationSettings,
   openProposal,
   type PauseReason,
@@ -11238,68 +11239,66 @@ export class TaskService {
     const completion = task.implementCompletion;
     if (completion === undefined || completion?.status === "complete") return true;
     const fingerprint = await this.workspaceFingerprint(task);
-    const failed = this.append(this.mustGet(task.id), [
+    const latest = this.mustGet(task.id);
+    const remaining = completion?.remaining ?? [];
+    const undeclared = completion === null;
+    // 続いた回数が上限に達したか、やり直しても作業領域が何も変わらなければ（同じエージェントでやり直しても進まない）、
+    // 実装のやり直しを止めて人間に判断してもらう。未完了の記録と一時停止は、同じ追記で記録する（間でデーモンが止まると、
+    // 止めるはずの実装を、再起動の後にもう一度実行してしまうため）
+    const runs = nextIncompleteRuns(latest.incompleteRuns, fingerprint);
+    const stop = runs.runs >= MAX_VERIFY_ATTEMPTS || runs.stalled === true;
+    this.append(latest, [
       {
         actor: "sacty",
         event: {
           type: "ImplementationIncomplete",
           payload: {
-            remaining: completion?.remaining ?? [],
-            ...(completion === null ? { undeclared: true as const } : {}),
+            remaining,
+            ...(undeclared ? { undeclared: true as const } : {}),
             ...(fingerprint ? { fingerprint } : {}),
           },
         },
       },
+      ...(stop
+        ? [
+            {
+              actor: "sacty" as const,
+              event: {
+                type: "TaskPaused" as const,
+                payload: {
+                  reason: "incomplete" as const,
+                  message: message("implement.incomplete", {
+                    count: runs.runs,
+                    stalled: runs.stalled === true,
+                    declared: !undeclared,
+                    remaining: remaining.slice(0, 5).join(" / "),
+                    total: remaining.length,
+                  }),
+                },
+              },
+            },
+          ]
+        : []),
     ]);
-    this.pauseIfImplementationKeepsIncomplete(failed);
     return false;
   }
 
   /**
-   * 作業領域の、起点からの差分の目印（PBI-347）。やり直しの前後で同じなら、やり直しが何も変えなかったことが分かる。作業領域が
-   * 無い・差分を読めなければ undefined（目印なしで数える）。
+   * 作業領域の内容の目印（git のツリーの ID。PBI-347）。やり直しの前後で同じなら、やり直しが何も変えなかったことが分かる。
+   * 差分の文字列は大きいと切り詰められる（後ろだけが変わっても同じに見える）ので、使わない。作業領域が無い・読めなければ
+   * undefined（目印なしで数える）。
    */
   private async workspaceFingerprint(task: Task): Promise<string | undefined> {
     if (!task.repository || !existsSync(this.repoDir(task))) return undefined;
     try {
-      const diff = await this.deps.repos.diff(
+      return await this.deps.repos.treeId(
         this.repoDir(task),
         this.trustedGitDir(task),
         workBaseCommit(task.repository, task.baseMerge),
       );
-      return createHash("sha256").update(diff).digest("hex");
     } catch {
       return undefined;
     }
-  }
-
-  /**
-   * 実装の実行が続けて終わらなければ、実装のやり直しを止めて人間に判断してもらう（PBI-347）。やり直しても作業領域が何も
-   * 変わらなかったときは、回数を待たずに止める（同じエージェントでやり直しても進まないので）。
-   */
-  private pauseIfImplementationKeepsIncomplete(task: Task): void {
-    const runs = task.incompleteRuns;
-    const feedback = task.verifyFeedback;
-    if (!runs || feedback?.kind !== "incomplete") return;
-    if (runs.runs < MAX_VERIFY_ATTEMPTS && !runs.stalled) return;
-    this.append(task, [
-      {
-        actor: "sacty",
-        event: {
-          type: "TaskPaused",
-          payload: {
-            reason: "incomplete",
-            message: message("implement.incomplete", {
-              count: runs.runs,
-              stalled: runs.stalled === true,
-              declared: !feedback.undeclared,
-              remaining: feedback.remaining.slice(0, 5).join(" / "),
-              total: feedback.remaining.length,
-            }),
-          },
-        },
-      },
-    ]);
   }
 
   /**
@@ -11513,6 +11512,9 @@ export class TaskService {
       if (latest?.status !== "paused" || latest.pullRequest?.number !== pr.number) return;
       // 依存先の PR に重ねた、指摘なしを待つ PR は、人がドラフトを外してマージしてよい
       if (latest.pullRequest.awaitingReview && latest.stack) return;
+      // やり直しが PR を何も変えずに止まったタスク（PBI-347）は、人が PR を確かめて判断する。人がドラフトを外したら戻さない
+      // （AI のレビューの指摘を採らないと判断して、マージで実装を承認できるように）
+      if (latest.pausedReason === "unchanged") return;
       await this.redraftFor(task.id, pr.repo, pr.number, token, "タスクが一時停止している");
     } catch (error) {
       console.warn(

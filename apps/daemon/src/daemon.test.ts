@@ -464,6 +464,13 @@ class FakeRepos implements RepositoryWorkspace {
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
   }
+  /** 作業領域の内容の目印（ツリーの ID。PBI-347）。テストが、実行のたびに変えて「実装が進んだ」ことにする。 */
+  tree = "t".padEnd(40, "0");
+  treeFail: string | undefined;
+  async treeId() {
+    if (this.treeFail) throw new Error(this.treeFail);
+    return this.tree;
+  }
   /** diff と同じ差分のファイルの一覧。無ければ、diffText の見出し（引用の無い簡単な形）から作る。 */
   diffFileList: DiffFile[] | undefined;
   diffFilesFail: string | undefined;
@@ -26523,12 +26530,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           await service.runNext(id);
         }
       }
-      /** 実行のたびに、作業領域の差分を変える（実装が進んだことにする）。 */
+      /** 実行のたびに、作業領域の内容の目印を変える（実装が進んだことにする）。 */
       const progress = (executor: FakeExecutor, repos: FakeRepos) => {
         let n = 0;
         executor.logLines = () => {
           n += 1;
-          repos.diffText = `diff --git a/src/pay.ts b/src/pay.ts\n+// ${n}`;
+          repos.tree = `${n}`.padStart(40, "0");
           return undefined;
         };
       };
@@ -26648,7 +26655,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           unfinished(["API の入力", "docs"]),
           unfinished(["API の入力", "docs"]),
         ]);
-        // 差分は変えない（やり直しが何も変えなかった）
+        // 作業領域の内容の目印は変えない（やり直しが何も変えなかった）
         await settle(service, id);
         const task = taskOf(service, id);
         expect(executor.calls).toHaveLength(2);
@@ -26665,13 +26672,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("差分を読めなければ、差分の目印なしで回数まで数える", async () => {
+      it("作業領域を読めなければ、目印なしで回数まで数える", async () => {
         const { activity, service, executor, repos, id } = await begin([
           unfinished(["API の入力"]),
           unfinished(["API の入力"]),
           unfinished(["API の入力"]),
         ]);
-        repos.diffFail = "差分を読めない";
+        repos.treeFail = "作業領域を読めない";
         await settle(service, id);
         const task = taskOf(service, id);
         expect(executor.calls).toHaveLength(3);
@@ -26833,6 +26840,76 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         ).toMatchObject({ number: 7, commit: human, reviewTaskId: childId });
         expect(pulls.calls).toHaveLength(updates);
         expect(count(service, id, "StepSubmitted")).toBe(1);
+        activity.close();
+      });
+
+      it("止めるときは、未完了の記録と一時停止を同じ追記で記録する（間で止まっても、止めるはずの実装をやり直さない）", async () => {
+        const { activity, service, id } = await begin([
+          unfinished(["API の入力"]),
+          unfinished(["API の入力"]),
+        ]);
+        const appends: string[][] = [];
+        const original = activity.append.bind(activity);
+        vi.spyOn(activity, "append").mockImplementation((input) => {
+          appends.push(input.events.map((e) => e.event.type));
+          return original(input);
+        });
+        await settle(service, id);
+        expect(taskOf(service, id).pausedReason).toBe("incomplete");
+        // 1回目は未完了の記録だけ、止める2回目（やり直しても何も変わらなかった）は一時停止と一緒に記録する
+        const recorded = appends.filter((types) => types.includes("ImplementationIncomplete"));
+        expect(recorded).toEqual([
+          ["ImplementationIncomplete"],
+          ["ImplementationIncomplete", "TaskPaused"],
+        ]);
+        activity.close();
+      });
+
+      it("変更の無いやり直しで止まった PR は、人がドラフトを外しても戻さず、マージすると実装を承認して進む（受け入れ条件 7）", async () => {
+        const made = await begin([
+          implement(),
+          verdictOut("changes_required"),
+          implement("# 実装の説明（変更なし）"),
+        ]);
+        const { activity, service, pulls, repos, id } = made;
+        await settle(service, id);
+        const childId = childOf(service, id);
+        const first = commitOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+        await runReview(service, childId);
+        pulls.feedbackBy[7] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        repos.sameAsParent = true;
+        await settle(service, id);
+        expect(taskOf(service, id).pausedReason).toBe("unchanged");
+        // 人が、AI のレビューの指摘を採らないと判断して、GitHub でドラフトを外す
+        pulls.drafts[7] = false;
+        const changes = pulls.draftChanges.length;
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        expect(pulls.draftChanges).toHaveLength(changes);
+        expect(taskOf(service, id).status).toBe("paused");
+        // マージすると、実装を承認したことになる（やり直しに渡すはずだった内容は捨てる）
+        await merge(made, "implement");
+        const task = taskOf(service, id);
+        expect(task.status).not.toBe("paused");
+        expect(task.pullRequestState).toBe("merged");
+        expect(task.steps.find((s) => s.key === "implement")?.state).toBe("done");
+        expect(
+          service.get(id)?.activity.find((e) => e.type === "ReworkStoppedByMerge")?.payload,
+        ).toMatchObject({ was: "paused", discardedFeedback: "unchanged" });
+        activity.close();
+      });
+
+      it("ほかの理由で一時停止した、指摘なしを待つ PR は、人がドラフトを外しても、今までどおりドラフトに戻す", async () => {
+        const { activity, service, pulls, id } = await begin([implement()]);
+        await settle(service, id);
+        await service.pause(id);
+        expect(taskOf(service, id).pausedReason).toBe("manual");
+        pulls.drafts[7] = false;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
         activity.close();
       });
 

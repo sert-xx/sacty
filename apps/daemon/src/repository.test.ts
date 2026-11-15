@@ -651,6 +651,34 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     ]);
   });
 
+  it("作業領域の内容の目印は、内容が同じなら同じで、差分の上限より後ろだけが変わっても変わる（PBI-347）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+
+    // 何も変えていなければ、起点のツリーと同じ
+    const base = await workspace.treeId(clone, gitDir, baseCommit);
+    expect(base).toBe(git(origin, "rev-parse", `${baseCommit}^{tree}`));
+    // 差分の上限を超える大きなファイルの後に、新しいファイルがある
+    writeFileSync(join(clone, "a-large.lock"), "x\n".repeat(DIFF_LIMIT));
+    writeFileSync(join(clone, "z-new.ts"), "export const z = 1;\n");
+    const first = await workspace.treeId(clone, gitDir, baseCommit);
+    expect(first).toMatch(/^[0-9a-f]{40}$/);
+    expect(first).not.toBe(base);
+    expect(await workspace.treeId(clone, gitDir, baseCommit)).toBe(first);
+    // 上限より後ろのファイルだけを変える：切り詰めた差分は同じに見えるが、目印は変わる
+    const truncated = await workspace.diff(clone, gitDir, baseCommit);
+    writeFileSync(join(clone, "z-new.ts"), "export const z = 2;\n");
+    expect(await workspace.diff(clone, gitDir, baseCommit)).toBe(truncated);
+    const second = await workspace.treeId(clone, gitDir, baseCommit);
+    expect(second).not.toBe(first);
+    // 元に戻すと、目印も戻る
+    writeFileSync(join(clone, "z-new.ts"), "export const z = 1;\n");
+    expect(await workspace.treeId(clone, gitDir, baseCommit)).toBe(first);
+  });
+
   it("作業領域の .gitattributes で差分を隠したファイル・バイナリも、中身の行の数で数える", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

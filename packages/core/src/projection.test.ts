@@ -4509,7 +4509,7 @@ describe("終わっていない実装と、変更の無いやり直し（PBI-347
     expect(passed?.publishPending).toBe(true);
   });
 
-  it("やり直しても差分の目印が同じなら、進まなかった（stalled）とする。目印が無い記録どうしは、進まなかったとしない", () => {
+  it("やり直しても作業領域の目印が同じなら、進まなかった（stalled）とする。目印が無い記録どうしは、進まなかったとしない", () => {
     seq = 0;
     const run = (id: string, runId: string) =>
       implemented(id, runId, { status: "incomplete", remaining: ["docs"] });
@@ -4541,7 +4541,7 @@ describe("終わっていない実装と、変更の無いやり直し（PBI-347
     expect(task?.verifyFeedback).toEqual({ kind: "incomplete", remaining: [], undeclared: true });
   });
 
-  it("終わらない実装で止まったタスクを再開すると、回数は数え直し、差分の目印は残す。不合格のまま進める対象にはしない", () => {
+  it("終わらない実装で止まったタスクを再開すると、回数は数え直し、作業領域の目印は残す。不合格のまま進める対象にはしない", () => {
     seq = 0;
     const events = [
       ...prepared("t1"),

@@ -1104,8 +1104,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     - 外し直す間に差し戻された・PR を更新した・子タスクの再レビューが始まった・先頭が変わった、または外した答えを受け取れなかったら、
       タスクが終わっておらず PR の番号が同じならドラフトに戻す。外した答えを今の記録のまま受け取れなければ、外す要求が後から届くかもしれないので、
       次の提出でも指摘なしで外すまで確認のたびにドラフトに戻す（`undraftUnsettled`）。
-    - 一時停止したタスクの PR は、GitHub でドラフトでなければ、ドラフトに戻す（`settlePausedDrafts`。止めている間はマージさせない。依存先の PR に重ねた、
-      指摘なしを待つ PR は除く。`DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて確かめる）。外し直す間に止めた・戻せなかった・答えが返らなかった（`DRAFT_TIMEOUT_MS`）ときも、止めている間は確認のたびにやり直す。
+    - 一時停止したタスクの PR は、GitHub でドラフトでなければ、ドラフトに戻す（`settlePausedDrafts`。止めている間はマージさせない。依存先の PR に重ねた、指摘なしを待つ PR と、やり直しが何も変えずに止まったタスク（`unchanged`）の PR は除く。`DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて確かめる）。外し直す間に止めた・戻せなかった・答えが返らなかった（`DRAFT_TIMEOUT_MS`）ときも、止めている間は確認のたびにやり直す。
       再開したら、指摘なしで記録した PR は、上と同じく外し直す。
   - 実装の PR のコミットの日時と題は、実装の工程が終わったとき（`outputAt`）にする（最終レビューの日時が無いため）。
   - 外す要求の答えがドラフトのままなら、記録せずに次の確認でやり直す。
@@ -1270,13 +1269,14 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   - 申告させる前の版の記録には `completion` が無い。無い記録は、今までどおり提出に進める。
 - 未完了のとき：`FinalReviewSkipped` の前に、最後の実行の申告（`Task.implementCompletion`）を確かめる。
   `incomplete` か `null` なら、`ImplementationIncomplete` を記録して、実装をやり直す。PR は作らず、更新もしない。
-  記録には、残っていること・申告が無かったこと（`undeclared`）・作業領域の差分の目印（`fingerprint`）を持つ。
+  記録には、残っていること・申告が無かったこと（`undeclared`）・作業領域の内容の目印（`fingerprint`）を持つ。
   - やり直しの指示には、前回が未完了だった（申告が無かった）ことと、残っていることを渡す（`feedbackLines`。`Task.verifyFeedback` の `incomplete`）。
-  - 続いた回数（`Task.incompleteRuns`）が 3 回（`MAX_VERIFY_ATTEMPTS`）になったら、一時停止する（`pauseIfImplementationKeepsIncomplete`。理由は `incomplete`、文言は `implement.incomplete`）。
+  - 続いた回数（`Task.incompleteRuns`）が 3 回（`MAX_VERIFY_ATTEMPTS`）になったら、一時停止する（`nextIncompleteRuns`。理由は `incomplete`、文言は `implement.incomplete`）。
     文言には、残っていることを 5 件まで出す。
-  - やり直しても作業領域の差分が変わらなければ、回数を待たずに一時停止する。
-    差分の目印は、起点からの差分の SHA-256 で、前の未完了のときと同じなら、変わらなかったとする（`workspaceFingerprint`）。差分を読めなければ、目印なしで回数まで数える。
-  - 再開すると、回数を数え直して実装をやり直す。差分の目印は残すので、再開の後も何も変わらなければ、1回で止まる。
+  - やり直しても作業領域の内容が変わらなければ、回数を待たずに一時停止する。
+    目印は、作業領域の内容の git のツリーの ID で、前の未完了のときと同じなら、変わらなかったとする（`workspaceFingerprint`・`treeId`）。差分の文字列は大きいと切り詰めるので、使わない。作業領域を読めなければ、目印なしで回数まで数える。
+  - 止めるときは、未完了の記録と一時停止を、同じ追記で記録する（間でデーモンが止まっても、止めるはずの実装をやり直さない）。
+  - 再開すると、回数を数え直して実装をやり直す。目印は残すので、再開の後も何も変わらなければ、1回で止まる。
     提出に進む・前の工程からやり直すと、回数と目印は消える。
 - 変更の無いやり直し：PR を更新する前（コミットを作った後）に、次のすべてに当たれば、提出にしない（`reviewLeftFindingsOn`）。
   - PR のレビューの子タスクの指摘なしを待つ PR である（`awaitsReview`）。
@@ -1286,10 +1286,12 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   PR は更新せず、提出の回も進めない。
   同じ先頭は再レビューされないので（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）、そのまま提出すると、指摘なしにも作り直しにもならず、ドラフトのまま進まなくなるためである。
   - 再開すると、指摘と、前回が何も変えなかったこと（`Task.verifyFeedback` の `unchanged`）を渡して、実装をやり直す。
+  - この理由で止まっている間は、人が PR のドラフトを外しても、sacty はドラフトに戻さない（`settlePausedDraft`）。
+    人が AI のレビューの指摘を採らないと判断して PR をマージすると、マージを承認として進める（[実装の作り直しの間のマージ](approval.md#実装の作り直しの間のマージ)）。
   - 子タスクがその先頭を指摘なしにしている・まだレビューしていない・レビューの途中のときと、子タスクを待たない PR（既存の PR を引き継ぐタスクなど）は、今までどおり提出する。
 - どちらの一時停止も、以前の版の検証の一時停止（`verification`）ではないので、不合格のまま進める操作（`submitForReview`）の対象にしない。
 
-コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`pauseIfImplementationKeepsIncomplete`・`reviewLeftFindingsOn`・`publish`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`）
+コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）
 
 ### 同じ内容の検証の使い回し
 

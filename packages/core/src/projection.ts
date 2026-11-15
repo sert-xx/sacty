@@ -889,7 +889,7 @@ export type Task = {
   implementCompletion?: ImplementationCompletion | null;
   /**
    * 続けて終わらなかった実装の実行（ImplementationIncomplete。PBI-347）。runs は続いた回数、fingerprint はそのときの作業領域の
-   * 差分の目印、stalled は、やり直しても差分が変わらなかった（回数を待たずに止める）。提出に進む・前の工程からやり直すと消える。
+   * 内容の目印、stalled は、やり直しても作業領域が変わらなかった（回数を待たずに止める）。提出に進む・前の工程からやり直すと消える。
    * 人が再開すると、回数は数え直すが、目印は残す（再開の後も何も進まなければ、回数に関係なく止める）。
    */
   incompleteRuns?: { runs: number; fingerprint?: string; stalled?: true };
@@ -1186,6 +1186,23 @@ function mergeTestMaps(previous: TestMapping[], next: TestMapping[]): TestMappin
     const earlier = previous.find((p) => p.viewpointId === m.viewpointId)?.tests ?? [];
     return { ...m, tests: [...new Set([...earlier, ...m.tests])] };
   });
+}
+
+/**
+ * 実装の実行がまた終わらなかったときの、続いた回数と作業領域の目印（PBI-347。ImplementationIncomplete の投影）。前の未完了の
+ * ときから作業領域の目印が変わっていなければ、やり直しても進まなかった（stalled）。目印が無い（読めなかった）ときは、
+ * 進まなかったとしない。記録の前に、止めるかを決めるのにも使う（未完了の記録と一時停止を、同じ追記で書くため）。
+ */
+export function nextIncompleteRuns(
+  previous: Task["incompleteRuns"],
+  fingerprint: string | undefined,
+): NonNullable<Task["incompleteRuns"]> {
+  const stalled = fingerprint !== undefined && previous?.fingerprint === fingerprint;
+  return {
+    runs: (previous?.runs ?? 0) + 1,
+    ...(fingerprint ? { fingerprint } : {}),
+    ...(stalled ? { stalled: true as const } : {}),
+  };
 }
 
 /** 検証の失敗の回数と一緒に、回をまたいで比べる失敗の記憶も消す（PBI-308）。 */
@@ -2182,21 +2199,13 @@ export function applyEvent(
           "the implementation is not waiting for verification",
         );
       }
-      const previous = task.incompleteRuns;
-      const fingerprint = event.payload.fingerprint;
-      // 前の未完了のときから作業領域の差分が変わっていなければ、やり直しても進まなかった
-      const stalled = fingerprint !== undefined && previous?.fingerprint === fingerprint;
       task.verification = undefined;
       task.verifyFeedback = {
         kind: "incomplete",
         remaining: event.payload.remaining,
         ...(event.payload.undeclared ? { undeclared: true as const } : {}),
       };
-      task.incompleteRuns = {
-        runs: (previous?.runs ?? 0) + 1,
-        ...(fingerprint ? { fingerprint } : {}),
-        ...(stalled ? { stalled: true as const } : {}),
-      };
+      task.incompleteRuns = nextIncompleteRuns(task.incompleteRuns, event.payload.fingerprint);
       task.status = "queued";
       break;
     }
@@ -3320,7 +3329,7 @@ export function applyEvent(
         task.verifyFailures = 0;
         task.verifyStalled = undefined;
       }
-      // 終わらない実装で止まったタスクも、回数は数え直すが、差分の目印は残す（再開の後も進まなければ止める。PBI-347）
+      // 終わらない実装で止まったタスクも、回数は数え直すが、作業領域の目印は残す（再開の後も進まなければ止める。PBI-347）
       if (task.pausedReason === "incomplete" && task.incompleteRuns) {
         const { fingerprint } = task.incompleteRuns;
         task.incompleteRuns = { runs: 0, ...(fingerprint ? { fingerprint } : {}) };

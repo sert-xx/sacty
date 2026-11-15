@@ -796,6 +796,7 @@ At every PR check (every minute), sacty checks the PR's draft state and sets it 
 
 To hold the merge, pause the task or send it back instead of making the PR a draft on GitHub.
 When you pause the task, sacty turns the PR back into a draft, and removes the draft again when you resume it ([Pause, resume, and cancel](#pause-resume-and-cancel)).
+Only for a task paused because a rework changed nothing, sacty does not turn the PR back into a draft when you mark it ready ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)).
 
 To convert a PR to a draft and to remove the draft, sacty needs the same permission for the project's GitHub account as for opening a PR.
 If the draft cannot be removed, sacty tries again at the next PR check.
@@ -1518,12 +1519,15 @@ When the implementation does not finish, the task proceeds as follows.
 
 When a rework changes nothing, the task proceeds as follows.
 
-1. If the reworked implementation changed nothing in a PR that the PR-review child task has not concluded with "No findings", it is not submitted.
+1. Suppose the PR-review child task finished reviewing the current content of the PR and left findings.
+   If the reworked implementation changed nothing in that PR, it is not submitted.
    The same content is not reviewed again, so the PR would stay a draft and never move on.
+   When the child task has not reviewed it yet, or is still reviewing it, the rework is submitted as before even if it changed nothing.
 2. The task becomes "Paused: the rework changed nothing".
 3. Check the findings of the PR review, then do one of the following.
    - If the findings should be fixed, resume (you can also change the agent of the Implementation step). sacty redoes the implementation with the findings.
-   - If the findings do not apply, check the PR and decide yourself (marking the PR ready and merging it on GitHub approves the implementation).
+   - If the findings do not apply, check the PR and decide yourself.
+     Marking the PR ready and merging it on GitHub approves the implementation (while the task is paused for this reason, sacty does not turn the PR back into a draft).
 
 ## Tasks from earlier versions (with the Open PR step)
 

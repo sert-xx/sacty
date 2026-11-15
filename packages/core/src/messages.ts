@@ -468,7 +468,7 @@ const PARAMS = {
   }),
   "implement.incomplete": z.object({
     count: Count,
-    /** やり直しても、作業領域の差分が変わらなかった（回数を待たずに止めた）。 */
+    /** やり直しても、作業領域の内容が変わらなかった（回数を待たずに止めた）。 */
     stalled: z.boolean(),
     /** 未完了と申告した（false は、完了の申告が無い・読めなかった）。 */
     declared: z.boolean(),

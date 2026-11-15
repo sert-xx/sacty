@@ -120,6 +120,11 @@ export interface RepositoryWorkspace {
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
   /**
+   * 作業領域の内容の目印（新しく作ったファイルを含む、git のツリーの ID。PBI-347）。同じ内容なら同じ ID になる。差分（diff）と
+   * 違って切り詰めないので、やり直しの前後で作業領域が変わったかを、差分の大きさによらず見分けられる。
+   */
+  treeId(dir: string, gitDir: string, baseCommit: string): Promise<string>;
+  /**
    * diff と同じ差分の、ファイルの一覧（同じ並び。名前の変更を見つける）。パスは git が引用せずに出したまま（NUL 区切り）。
    * 差分の節をファイルに結び付けるために使う（PR #304 のレビュー）。
    */
@@ -694,6 +699,12 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         ? `${diff.slice(0, DIFF_LIMIT)}\n[sacty] 差分が大きいため、先頭の ${DIFF_LIMIT} バイトだけを渡しています。`
         : diff;
     });
+  }
+
+  async treeId(dir: string, gitDir: string, baseCommit: string) {
+    return this.stage(dir, gitDir, baseCommit, async (run) =>
+      (await run("write-tree", ["write-tree"])).trim(),
+    );
   }
 
   async diffFiles(dir: string, gitDir: string, baseCommit: string) {

@@ -727,7 +727,7 @@ How tasks with records of an earlier version's final review are handled is in [T
     - If the task is sent back, the PR is updated, a re-review of the child task starts, or the head changes while the draft is being removed again, or the answer to removing the draft is not received,
       sacty turns the PR back into a draft when the task is not finished and the PR number is the same. If the answer to removing the draft is not received while the record is unchanged, the request might still arrive later,
       so sacty turns the PR back into a draft at every check, also for the next submission, until it removes the draft after no findings (`undraftUnsettled`).
-    - For a paused task, if its PR is not a draft on GitHub, sacty turns it back into a draft (`settlePausedDrafts`; the PR is not to be merged while the task is paused. A PR waiting for no findings that is stacked on a dependency's PR is excluded. sacty checks `DRAFT_CHECK_CONCURRENCY` (4) PRs at a time in parallel).
+    - For a paused task, if its PR is not a draft on GitHub, sacty turns it back into a draft (`settlePausedDrafts`; the PR is not to be merged while the task is paused. A PR waiting for no findings that is stacked on a dependency's PR, and the PR of a task paused because a rework changed nothing (`unchanged`), are excluded. sacty checks `DRAFT_CHECK_CONCURRENCY` (4) PRs at a time in parallel).
       Even when the task was paused while the draft was being removed again, the redraft failed, or no answer came back (`DRAFT_TIMEOUT_MS`), sacty tries again at every check while it is paused.
       After the task is resumed, sacty removes the draft of a PR recorded after no findings again, as above.
   - The date and subject of the implementation PR's commit are those of when the Implementation step finished (`outputAt`), because there is no final review date.
@@ -868,13 +868,14 @@ A run that ended after implementing only part of its scope, and a run that chang
   - Records from versions before the declaration have no `completion`. Such records go on to the submission as before.
 - When unfinished: before `FinalReviewSkipped`, sacty checks the declaration of the last run (`Task.implementCompletion`).
   If it is `incomplete` or `null`, sacty records `ImplementationIncomplete` and redoes the implementation. It does not open or update the PR.
-  The record holds what remains, that nothing was declared (`undeclared`), and a mark of the workspace diff (`fingerprint`).
+  The record holds what remains, that nothing was declared (`undeclared`), and a mark of the workspace content (`fingerprint`).
   - The instruction of the redo tells the agent that the previous run was unfinished (or declared nothing) and what remains (`feedbackLines`; `incomplete` of `Task.verifyFeedback`).
-  - When the count in a row (`Task.incompleteRuns`) reaches 3 (`MAX_VERIFY_ATTEMPTS`), the task pauses (`pauseIfImplementationKeepsIncomplete`; the reason is `incomplete`, the message is `implement.incomplete`).
+  - When the count in a row (`Task.incompleteRuns`) reaches 3 (`MAX_VERIFY_ATTEMPTS`), the task pauses (`nextIncompleteRuns`; the reason is `incomplete`, the message is `implement.incomplete`).
     The message shows up to 5 of the remaining items.
-  - If redoing does not change the workspace diff, the task pauses without waiting for the count.
-    The mark of the diff is the SHA-256 of the diff from the base; when it equals the one of the previous unfinished run, nothing changed (`workspaceFingerprint`). If the diff cannot be read, sacty counts up to the limit without a mark.
-  - Resuming counts again from zero and redoes the implementation. The mark of the diff is kept, so if nothing changes after resuming either, the task stops after one run.
+  - If redoing does not change the workspace content, the task pauses without waiting for the count.
+    The mark is the git tree ID of the workspace content; when it equals the one of the previous unfinished run, nothing changed (`workspaceFingerprint`, `treeId`). The diff text is not used, because a large diff is truncated. If the workspace cannot be read, sacty counts up to the limit without a mark.
+  - When it stops, sacty records the unfinished run and the pause in the same append (even if the daemon stops in between, the implementation that should stop is not redone).
+  - Resuming counts again from zero and redoes the implementation. The mark is kept, so if nothing changes after resuming either, the task stops after one run.
     Going on to the submission, or redoing from an earlier step, clears the count and the mark.
 - Rework that changes nothing: before updating the PR (after making the commit), sacty does not submit when all of the following hold (`reviewLeftFindingsOn`).
   - The PR waits for the PR-review child task to find no findings (`awaitsReview`).
@@ -884,10 +885,12 @@ A run that ended after implementing only part of its scope, and a run that chang
   It does not update the PR and does not advance the submission number.
   The same head is not reviewed again ([The review child task of a PR](approval.en.md#the-review-child-task-of-a-pr)), so submitting it as is would lead to neither no findings nor a rework, and the PR would stay a draft forever.
   - Resuming redoes the implementation with the findings and the fact that the previous run changed nothing (`unchanged` of `Task.verifyFeedback`).
+  - While the task is paused for this reason, sacty does not turn the PR back into a draft when a person marks it ready (`settlePausedDraft`).
+    When a person decides not to take the AI review findings and merges the PR, the merge is taken as the approval ([Merging during a rework of the implementation](approval.en.md#merging-during-a-rework-of-the-implementation)).
   - When the child task concluded with no findings on that head, has not reviewed it yet, or is still reviewing it, and for PRs that do not wait for the child task (such as a task that takes over an existing PR), sacty submits as before.
 - Neither pause is the verification pause of older versions (`verification`), so neither can be moved on without passing (`submitForReview`).
 
-Code: `apps/daemon/src/completion.ts` (`implementCompletionLines`, `extractCompletion`), `apps/daemon/src/service.ts` (`implementationCompleted`, `workspaceFingerprint`, `pauseIfImplementationKeepsIncomplete`, `reviewLeftFindingsOn`, `publish`), `apps/daemon/src/prompts.ts` (`feedbackLines`, `extractBlocks`), `packages/core/src/events.ts` (`ImplementationCompletion`, `ImplementationIncomplete`, `ImplementationUnchanged`), `packages/core/src/projection.ts` (`implementCompletion`, `incompleteRuns`)
+Code: `apps/daemon/src/completion.ts` (`implementCompletionLines`, `extractCompletion`), `apps/daemon/src/service.ts` (`implementationCompleted`, `workspaceFingerprint`, `reviewLeftFindingsOn`, `publish`, `settlePausedDraft`), `apps/daemon/src/repository.ts` (`treeId`), `apps/daemon/src/prompts.ts` (`feedbackLines`, `extractBlocks`), `packages/core/src/events.ts` (`ImplementationCompletion`, `ImplementationIncomplete`, `ImplementationUnchanged`), `packages/core/src/projection.ts` (`implementCompletion`, `incompleteRuns`, `nextIncompleteRuns`)
 
 ### Reusing verification results for the same content
 
