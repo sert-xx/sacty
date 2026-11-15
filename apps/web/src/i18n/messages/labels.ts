@@ -226,9 +226,9 @@ const ja = {
       copy_failed: "保存の場所に書けなかった",
     },
   },
-  /** 時間切れで止めた実行の次の実行が、セッションを続けられなかった理由（PBI-280）。 */
+  /** 時間切れで止めた実行・未完了で終わった実行の次の実行が、セッションを続けられなかった理由（PBI-280・PBI-350）。 */
   agentRunContinuedReason: {
-    no_session: "止めた実行のセッションの記録が無かったため",
+    no_session: "前の実行のセッションの記録が無かったため",
     agent_changed: "エージェントを変えたため",
     truncated: "写したセッションが上限で省かれていたため",
     files_broken: "写したセッションのファイルが無い・壊れていたため",
@@ -398,9 +398,9 @@ const ja = {
       `PR を作らず、ブランチまで（${branch}・${commit}）`,
     NoChangesFound: "実装に変更が無いため、PR を作らずに承認待ち",
     ImplementationIncomplete: (undeclared: boolean, remaining: string) =>
-      `${undeclared ? "実装し終えたかの申告が無いか読めない" : "実装が終わっていない"}ため、提出せずに実装をやり直す${remaining ? `（残り：${remaining}）` : ""}`,
+      `${undeclared ? "実装し終えたかの申告が無いか読めない" : "実装が終わっていない"}ため、提出せずに実装を続ける${remaining ? `（残り：${remaining}）` : ""}`,
     ImplementationUnmapped: (ids: string) =>
-      `テストの対応していないテスト観点があるため、提出せずに実装をやり直す（${ids}）`,
+      `テストの対応していないテスト観点があるため、提出せずに実装を続ける（${ids}）`,
     ImplementationUnchanged: (number: number, commit: string) =>
       `やり直しの実装が、AI のレビューの指摘が残る PR #${number}（${commit}）を何も変えなかったため、提出しない`,
     prDrafted: (number: number | undefined, draft: boolean, commit: string) =>
@@ -507,6 +507,10 @@ const ja = {
       `時間切れで止めた${role}の実行のセッション（${id}）を続けた`,
     AgentRunRestarted: (role: string, reason: string) =>
       `時間切れで止めた${role}の実行のセッションを続けられず、最初から実行し直した（${reason}）`,
+    IncompleteRunResumed: (role: string, id: string) =>
+      `未完了で終わった${role}の実行のセッション（${id}）を続けた`,
+    IncompleteRunRestarted: (role: string, reason: string) =>
+      `未完了で終わった${role}の実行のセッションを続けられず、最初から実行し直した（${reason}）`,
     OrchestratorSessionResumed: (id: string) => `オーケストレーターのセッション（${id}）を再開した`,
     OrchestratorSessionStarted: (reason: string, id?: string) =>
       `オーケストレーターのセッションを新しく始めた（${reason}）${id ? `：${id}` : ""}`,
@@ -928,7 +932,7 @@ const en: LabelMessages = {
     },
   },
   agentRunContinuedReason: {
-    no_session: "the stopped run's session was not recorded",
+    no_session: "the previous run's session was not recorded",
     agent_changed: "the agent was changed",
     truncated: "the copied session was cut at the size limit",
     files_broken: "the copied session files were missing or broken",
@@ -1049,9 +1053,9 @@ const en: LabelMessages = {
     branchPushed: (branch, commit) => `No PR; branch only (${branch} · ${commit})`,
     NoChangesFound: "The implementation changed nothing, so no PR was opened; awaiting approval",
     ImplementationIncomplete: (undeclared, remaining) =>
-      `${undeclared ? "The declaration of whether the implementation finished is missing or unreadable" : "The implementation is unfinished"}, so it is redone without being submitted${remaining ? ` (remaining: ${remaining})` : ""}`,
+      `${undeclared ? "The declaration of whether the implementation finished is missing or unreadable" : "The implementation is unfinished"}, so it is continued without being submitted${remaining ? ` (remaining: ${remaining})` : ""}`,
     ImplementationUnmapped: (ids) =>
-      `Some test viewpoints have no test mapped, so the implementation is redone without being submitted (${ids})`,
+      `Some test viewpoints have no test mapped, so the implementation is continued without being submitted (${ids})`,
     ImplementationUnchanged: (number, commit) =>
       `The rework changed nothing in PR #${number} (${commit}), on which the AI review left findings, so it is not submitted`,
     prDrafted: (number, draft, commit) =>
@@ -1129,6 +1133,10 @@ const en: LabelMessages = {
       `Continued the session (${id}) of the ${role} run stopped by the timeout`,
     AgentRunRestarted: (role, reason) =>
       `Could not continue the session of the ${role} run stopped by the timeout; ran it again from the start (${reason})`,
+    IncompleteRunResumed: (role, id) =>
+      `Continued the session (${id}) of the ${role} run that ended unfinished`,
+    IncompleteRunRestarted: (role, reason) =>
+      `Could not continue the session of the ${role} run that ended unfinished; ran it again from the start (${reason})`,
     OrchestratorSessionResumed: (id) => `Resumed the orchestrator session (${id})`,
     OrchestratorSessionStarted: (reason, id) =>
       `Started a new orchestrator session (${reason})${id ? `: ${id}` : ""}`,

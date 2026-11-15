@@ -882,7 +882,7 @@ Code: `packages/core/src/projection.ts` (`implementViewpoints`, `unmappedViewpoi
 
 ### Unfinished implementations and reworks that change nothing
 
-Related ADR: [Do not submit an unfinished implementation, and do not reach a dead end on a rework that changes nothing](../adr/20261115-1224-stop-incomplete-implementation-and-unchanged-rework.md)
+Related ADR: [Do not submit an unfinished implementation, and do not reach a dead end on a rework that changes nothing](../adr/20261115-1224-superseded-stop-incomplete-implementation-and-unchanged-rework.md)
 
 When an implementation run ends, sacty submits the workspace as it is (it opens or updates the PR).
 A run that ended after implementing only part of its scope, and a run that changed nothing after AI review findings, are not submitted (PBI-347).
@@ -909,17 +909,26 @@ A run that ended after implementing only part of its scope, and a run that chang
     A code block of the same name in the output of a step other than Implementation is not read as a declaration and stays in the body.
   - Records from versions before the declaration have no `completion`. Such records go on to the submission without the declaration being checked.
 - When unfinished: before `FinalReviewSkipped`, sacty checks the declaration of the last run (`Task.implementCompletion`).
-  If it is `incomplete` or `null`, sacty records `ImplementationIncomplete` and redoes the implementation. It does not open or update the PR.
+  If it is `incomplete` or `null`, sacty records `ImplementationIncomplete` and continues the implementation. It does not open or update the PR.
   The record holds what remains, that nothing was declared (`undeclared`), and a mark of the workspace content (`fingerprint`).
   - The declaration is checked before the conflict checks (merging the commits a person added to the PR, and checking for conflict markers; `headSyncedBeforePublish`, `conflictsResolved`).
     An unfinished run is recorded as unfinished even when conflict markers remain, and what remains is passed to the next instruction. Conflicts are checked on a run that declared it is complete (the conflicting files stay in the implementation instruction until they are resolved).
-  - The instruction of the redo tells the agent that the previous run was unfinished (or declared nothing) and what remains (`feedbackLines`; `incomplete` of `Task.verifyFeedback`).
-  - When the count in a row (`Task.incompleteRuns`) reaches 3 (`MAX_VERIFY_ATTEMPTS`), the task pauses (`nextIncompleteRuns`; the reason is `incomplete`, the message is `implement.incomplete`).
+  - The next Implementation run continues the same agent session as the run that ended unfinished (the continuation of an Implementation run that ended unfinished, in [Agent execution](agent-execution.en.md)).
+    Running again from the start would discard the conversation of the previous run and begin by reading the full instruction.
+    When the session cannot be continued (the agent was changed, the copied session is missing or broken, or the AI does not accept the resume), sacty runs the step again from the start.
+  - Both the continuation instruction and the instruction of a run from the start tell the agent that the previous run was unfinished (or declared nothing) and what remains (`feedbackLines`; `incomplete` of `Task.verifyFeedback`).
+    The continuation instruction puts a notice that the run continues the session (`incompleteResumeLines`) before it.
+  - The instruction for the completion declaration also tells the agent not to end the run partway (`implementCompletionLines`).
+    - Implement the whole scope within this run. Ending unfinished only makes sacty resume the same session and continue; it does not move the work forward.
+    - Ending unfinished is allowed only when the agent cannot go any further (a person's decision or a change in external state is needed).
+    - What the agent cannot check (the result of CI, and so on) is written in the implementation description as something for a person to check, not in `remaining`.
+  - sacty continues while the workspace keeps changing. If the run is still unfinished when the continuations reach 10 (`MAX_INCOMPLETE_CONTINUATIONS`), the task pauses (`nextIncompleteRuns`; the reason is `incomplete`, the message is `implement.incomplete`).
+    The count in a row (`Task.incompleteRuns`) is the total of the first run and the continuations, so the task stops at the 11th unfinished run.
     The message shows up to 5 of the remaining items.
-  - If redoing does not change the workspace content, the task pauses without waiting for the count.
+  - If continuing does not change the workspace content, the task pauses without waiting for the count.
     The mark is the git tree ID of the workspace content; when it equals the one of the previous unfinished run, nothing changed (`workspaceFingerprint`, `treeId`). The diff text is not used, because a large diff is truncated. If the workspace cannot be read, or even one file in it cannot be read, sacty counts up to the limit without a mark (an ID that leaves out an unreadable file would miss changes to that file).
   - When it stops, sacty records the unfinished run and the pause in the same append (even if the daemon stops in between, the implementation that should stop is not redone).
-  - Resuming counts again from zero and redoes the implementation. The mark is kept, so if nothing changes after resuming either, the task stops after one run.
+  - Resuming counts again from zero and continues the implementation (with the same agent, from the same session; the full instruction, including the person's note, is passed). The mark is kept, so if nothing changes after resuming either, the task stops after one run.
     Going on to the submission, or redoing from an earlier step, clears the count and the mark.
 - Rework that changes nothing: before updating the PR (after making the commit), sacty does not submit when all of the following hold (`reviewLeftFindingsOn`).
   - The PR waits for the PR-review child task to find no findings (`awaitsReview`).
@@ -934,7 +943,7 @@ A run that ended after implementing only part of its scope, and a run that chang
   - When the child task concluded with no findings on that head, has not reviewed it yet, or is still reviewing it, and for PRs that do not wait for the child task (such as a task that takes over an existing PR), sacty submits even if nothing changed.
 - Neither pause is the verification pause of older versions (`verification`), so neither can be moved on without passing (`submitForReview`).
 
-Code: `apps/daemon/src/completion.ts` (`implementCompletionLines`, `extractCompletion`), `apps/daemon/src/agent-json.ts` (`takeFences`, `hasDuplicateKeys`), `apps/daemon/src/service.ts` (`implementationCompleted`, `workspaceFingerprint`, `reviewLeftFindingsOn`, `publish`, `settlePausedDraft`), `apps/daemon/src/repository.ts` (`treeId`), `apps/daemon/src/prompts.ts` (`feedbackLines`, `extractBlocks`), `packages/core/src/events.ts` (`ImplementationCompletion`, `ImplementationIncomplete`, `ImplementationUnchanged`), `packages/core/src/projection.ts` (`implementCompletion`, `incompleteRuns`, `nextIncompleteRuns`)
+Code: `apps/daemon/src/completion.ts` (`implementCompletionLines`, `extractCompletion`), `apps/daemon/src/agent-json.ts` (`takeFences`, `hasDuplicateKeys`), `apps/daemon/src/service.ts` (`implementationCompleted`, `workspaceFingerprint`, `reviewLeftFindingsOn`, `publish`, `settlePausedDraft`), `apps/daemon/src/repository.ts` (`treeId`), `apps/daemon/src/prompts.ts` (`feedbackLines`, `extractBlocks`), `apps/daemon/src/timeout-resume.ts` (`planContinuation`, `incompleteResumeLines`), `packages/core/src/events.ts` (`ImplementationCompletion`, `ImplementationIncomplete`, `ImplementationUnchanged`, `MAX_INCOMPLETE_CONTINUATIONS`), `packages/core/src/projection.ts` (`implementCompletion`, `incompleteRuns`, `nextIncompleteRuns`)
 
 ### Reusing verification results for the same content
 

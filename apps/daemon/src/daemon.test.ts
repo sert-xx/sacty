@@ -47,6 +47,7 @@ import {
   MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
+  MAX_INCOMPLETE_CONTINUATIONS,
   MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   message,
@@ -26966,6 +26967,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       const MAP = block({
         "sacty-test-map": [{ viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] }],
       });
+      /** 未完了が続いて止まるまでの実行の数（最初の実行と、続きの実行の上限。PBI-350）。 */
+      const RUNS_UNTIL_PAUSE = MAX_INCOMPLETE_CONTINUATIONS + 1;
       /** 範囲の一部だけを実装して、未完了と申告する実行。 */
       const unfinished = (remaining: string[], text = "**実装は未完了です。**") =>
         out([text, MAP, declare({ status: "incomplete", remaining })].join("\n\n"));
@@ -27292,23 +27295,28 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("実装が続けて終わらなければ、PR を作らずに一時停止し、残っていることを出す。再開すると実装をやり直す（受け入れ条件 3・9）", async () => {
+      it("実装が続けて終わらなければ、続きの実行の上限まで続け、PR を作らずに一時停止して、残っていることを出す。再開すると実装をやり直す（受け入れ条件 3・9、PBI-350 受け入れ条件 4）", async () => {
         const { activity, service, executor, pulls, repos, id } = await begin([
           unfinished(["API の入力", "候補の絞り込み", "docs"]),
-          unfinished(["候補の絞り込み", "docs"]),
+          ...Array.from({ length: RUNS_UNTIL_PAUSE - 2 }, () =>
+            unfinished(["候補の絞り込み", "docs"]),
+          ),
           unfinished(["docs の更新"]),
-          implement("# 実装の説明 v4"),
+          implement("# 実装の説明 完了"),
         ]);
         progress(executor, repos);
-        await settle(service, id);
+        await settle(service, id, RUNS_UNTIL_PAUSE * 3);
         let task = taskOf(service, id);
-        expect(executor.calls).toHaveLength(3);
+        // 最初の実行と、続きの実行の上限（10 回）まで実行して、止まる
+        expect(MAX_INCOMPLETE_CONTINUATIONS).toBe(10);
+        expect(executor.calls).toHaveLength(RUNS_UNTIL_PAUSE);
+        expect(count(service, id, "ImplementationIncomplete")).toBe(RUNS_UNTIL_PAUSE);
         expect(task.status).toBe("paused");
         expect(task.pausedReason).toBe("incomplete");
         expect(task.pausedMessage).toEqual({
           code: "implement.incomplete",
           params: {
-            count: 3,
+            count: RUNS_UNTIL_PAUSE,
             stalled: false,
             declared: true,
             remaining: "docs の更新",
@@ -27316,9 +27324,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           },
         });
         const ja = renderMessage(task.pausedMessage as DaemonText, "ja");
-        expect(ja).toContain("範囲を実装し終える前に終わりました（3回続けて）");
+        expect(ja).toContain(`範囲を実装し終える前に終わりました（${RUNS_UNTIL_PAUSE}回続けて）`);
         expect(ja).toContain("残っていること：docs の更新");
-        expect(renderMessage(task.pausedMessage as DaemonText, "en")).toContain("3 times in a row");
+        expect(renderMessage(task.pausedMessage as DaemonText, "en")).toContain(
+          `${RUNS_UNTIL_PAUSE} times in a row`,
+        );
         expect(repos.published).toHaveLength(0);
         expect(pulls.calls).toHaveLength(0);
         expect(types(service, id)).not.toContain("PullRequestPublished");
@@ -27330,8 +27340,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(taskOf(service, id).incompleteRuns?.runs).toBe(0);
         await settle(service, id);
         task = taskOf(service, id);
-        expect(executor.calls).toHaveLength(4);
-        expect(promptOf(executor, 3)).toContain("--- 前回の実行：実装が終わっていませんでした ---");
+        expect(executor.calls).toHaveLength(RUNS_UNTIL_PAUSE + 1);
+        expect(promptOf(executor, RUNS_UNTIL_PAUSE)).toContain(
+          "--- 前回の実行：実装が終わっていませんでした ---",
+        );
         expect(task.status).toBe("awaiting_approval");
         expect(pulls.calls).toHaveLength(1);
         activity.close();
@@ -27361,17 +27373,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       });
 
       it("作業領域を読めなければ、目印なしで回数まで数える", async () => {
-        const { activity, service, executor, repos, id } = await begin([
-          unfinished(["API の入力"]),
-          unfinished(["API の入力"]),
-          unfinished(["API の入力"]),
-        ]);
+        const { activity, service, executor, repos, id } = await begin(
+          Array.from({ length: RUNS_UNTIL_PAUSE }, () => unfinished(["API の入力"])),
+        );
         repos.treeFail = "作業領域を読めない";
-        await settle(service, id);
+        await settle(service, id, RUNS_UNTIL_PAUSE * 3);
         const task = taskOf(service, id);
-        expect(executor.calls).toHaveLength(3);
+        expect(executor.calls).toHaveLength(RUNS_UNTIL_PAUSE);
         expect(task.pausedReason).toBe("incomplete");
-        expect(task.pausedMessage).toMatchObject({ params: { count: 3, stalled: false } });
+        expect(task.pausedMessage).toMatchObject({
+          params: { count: RUNS_UNTIL_PAUSE, stalled: false },
+        });
         expect(
           service.get(id)?.activity.find((e) => e.type === "ImplementationIncomplete")?.payload,
         ).not.toHaveProperty("fingerprint");
@@ -27403,20 +27415,27 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       it("完了の申告が無い実行が続けば、申告が無いことを理由に一時停止する（受け入れ条件 4・9）", async () => {
         const { activity, service, executor, pulls, repos, id } = await begin([
           unfinished(["API の入力"]),
-          implement("# 実装の説明 v2"),
-          implement("# 実装の説明 v3"),
+          ...Array.from({ length: RUNS_UNTIL_PAUSE - 1 }, (_, i) =>
+            implement(`# 実装の説明 v${i + 2}`),
+          ),
         ]);
         progress(executor, repos);
         for (let i = 0; i < 4 && executor.calls.length < 1; i++) await service.runNext(id);
         // 2回目からは、申告を付けない
         executor.undeclaredCompletion = true;
-        await settle(service, id);
+        await settle(service, id, RUNS_UNTIL_PAUSE * 3);
         const task = taskOf(service, id);
-        expect(executor.calls).toHaveLength(3);
+        expect(executor.calls).toHaveLength(RUNS_UNTIL_PAUSE);
         expect(task.pausedReason).toBe("incomplete");
         expect(task.pausedMessage).toEqual({
           code: "implement.incomplete",
-          params: { count: 3, stalled: false, declared: false, remaining: "", total: 0 },
+          params: {
+            count: RUNS_UNTIL_PAUSE,
+            stalled: false,
+            declared: false,
+            remaining: "",
+            total: 0,
+          },
         });
         expect(renderMessage(task.pausedMessage as DaemonText, "ja")).toContain(
           "実装し終えたかの申告が無いか読めないまま終わりました",
@@ -29434,6 +29453,444 @@ describe("時間切れで止めた実行の再開（PBI-280）", () => {
     expect(argAfter(executor.calls[2], "--resume")).toBeUndefined();
     expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
     activity.close();
+  });
+
+  describe("未完了で終わった実装の実行を、同じセッションの続きから進める（PBI-350）", () => {
+    const out = (text: string): AgentOutcome => ({
+      kind: "completed",
+      output: text,
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+    });
+    const declare = (value: unknown) =>
+      `\`\`\`${COMPLETION_FENCE}\n${JSON.stringify(value)}\n\`\`\``;
+    /** 範囲の一部だけを実装して、未完了と申告する実行。 */
+    const unfinished = (remaining: string[]) =>
+      out(["**実装は未完了です。**", declare({ status: "incomplete", remaining })].join("\n\n"));
+    const finished = (text = "# 実装の説明") =>
+      out([text, declare({ status: "complete" })].join("\n\n"));
+    const NOTE = "【未完了からの続き】";
+    const FULL = "--- タスク ---";
+    /** 実装だけのタスクを作る（要求要件・設計を省いた実装）。 */
+    const begin = (outcomes: AgentOutcome[], options: Parameters<typeof makeService>[2] = {}) => {
+      const pulls = new FakePulls();
+      const repos = options?.repos ?? new FakeRepos();
+      const made = setup(outcomes, {
+        stepPullRequests: true,
+        pulls,
+        repos,
+        planner: async () => ({
+          steps: ["implement"],
+          plan: "direct",
+          reason: "依頼が明確",
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+        }),
+        ...options,
+      });
+      const { id } = made.service.createTask({
+        projectId: "default",
+        title: "決済API",
+        body: "タスクの本文",
+      });
+      return { ...made, pulls, repos, id };
+    };
+    /** 止まる（承認待ち・一時停止）まで進める。 */
+    const settle = async (service: TaskService, id: string, max = 16) => {
+      for (let i = 0; i < max; i++) {
+        const status = service.get(id)?.task.status;
+        if (status === "awaiting_approval" || status === "paused") return;
+        await service.runNext(id);
+      }
+    };
+    /** 実行のたびに、作業領域の内容の目印を変える（実装が進んだことにする）。 */
+    const progress = (executor: FakeExecutor, repos: FakeRepos) => {
+      let n = 0;
+      executor.logLines = () => {
+        n += 1;
+        repos.tree = `${n}`.padStart(40, "0");
+        return undefined;
+      };
+    };
+    const count = (service: TaskService, id: string, type: string) =>
+      (service.get(id)?.activity ?? []).filter((e) => e.type === type).length;
+
+    it("Claude Code：未完了で終わった実装の次の実行は、同じセッションの続きから進め、続きの知らせの後に指示の全文を渡す（受け入れ条件 1・2）", async () => {
+      const { activity, service, executor, pulls, repos, id } = begin([
+        unfinished(["API の入力", "docs の更新"]),
+        unfinished(["docs の更新"]),
+        finished(),
+      ]);
+      emulateClaude(executor);
+      progress(executor, repos);
+      await settle(service, id);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(executor.calls).toHaveLength(3);
+      const [first, second, third] = runIds(service, id);
+      // 最初の実行は、新しいセッションで、指示の全文を渡す
+      expect(argAfter(executor.calls[0], "--resume")).toBeUndefined();
+      expect(executor.stdins[0]).toContain(FULL);
+      expect(executor.stdins[0]).not.toContain(NOTE);
+      // 2回目は、最初の実行のセッションを、元のファイルごと戻して続ける
+      expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+      expect(executor.calls[1]?.command).not.toContain("--fork-session");
+      expect(Object.keys(executor.restored[1] ?? {})).toEqual([
+        `projects/-workspace/session-${first}.jsonl`,
+      ]);
+      // 続きの知らせ：続きであること・提出していないこと・最後まで実装すること・出し直すこと
+      const next = executor.stdins[1] ?? "";
+      expect(next.startsWith(NOTE)).toBe(true);
+      expect(next).toContain("sacty は提出していません");
+      expect(next).toContain("この実行の中で、範囲のすべて");
+      expect(next).toContain("省かずに出し直す");
+      // その後に、指示の全文を続ける（タスクの範囲・前回の実行の状況・完了の申告の形）
+      expect(next.indexOf(FULL)).toBeGreaterThan(next.indexOf(NOTE));
+      expect(next).toContain("タスクの本文");
+      expect(next).toContain("--- 前回の実行：実装が終わっていませんでした ---");
+      expect(next).toContain("前回の申告にあった、残っていること：\n- API の入力\n- docs の更新");
+      expect(next).toContain("--- 完了の申告 ---");
+      // 3回目も同じセッションを続け、戻したファイルには、それまでの会話が積み重なっている
+      expect(argAfter(executor.calls[2], "--resume")).toBe(`session-${first}`);
+      const path = `projects/-workspace/session-${first}.jsonl`;
+      expect(executor.restored[2]?.[path]?.split("\n").filter(Boolean)).toHaveLength(2);
+      expect(executor.stdins[2]).toContain("残っていること：\n- docs の更新");
+      expect(executor.stdins[2]).not.toContain("- API の入力");
+      // 続けたことを、作業履歴に残す（未完了で終わった実行の続き）
+      expect(continuedOf(service, id)).toEqual([
+        {
+          runId: second,
+          role: "implement",
+          agentId: "claude-subscription",
+          runtime: "claude-code",
+          mode: "resumed",
+          stoppedRunId: first,
+          sessionId: `session-${first}`,
+          cause: "incomplete",
+        },
+        {
+          runId: third,
+          role: "implement",
+          agentId: "claude-subscription",
+          runtime: "claude-code",
+          mode: "resumed",
+          stoppedRunId: second,
+          sessionId: `session-${first}`,
+          cause: "incomplete",
+        },
+      ]);
+      // 未完了の2回は提出せず、完了と申告した実行で、初めて PR を作る
+      expect(count(service, id, "ImplementationIncomplete")).toBe(2);
+      expect(pulls.calls).toHaveLength(1);
+      activity.close();
+    });
+
+    it("続きの実行にも、その実行の時点の案内（始める前の取り込みで競合したファイル）を渡す", async () => {
+      const repos = new FakeRepos();
+      // 作業領域を用意した後にベースブランチ（main）が進み、実装を始める前の取り込みで競合する
+      const conflicted = "src/conflicted.ts";
+      repos.remote.main = "e".repeat(40);
+      repos.mergeResult = { status: "conflicted", conflicts: [conflicted] };
+      repos.markers = [conflicted];
+      const { activity, service, executor, id } = begin([unfinished(["docs の更新"]), finished()], {
+        repos,
+        mergeBase: true,
+      });
+      emulateClaude(executor);
+      progress(executor, repos);
+      for (let i = 0; i < 8 && executor.calls.length < 2; i++) await service.runNext(id);
+      expect(executor.calls).toHaveLength(2);
+      const [first] = runIds(service, id);
+      expect(executor.stdins[0]).toContain(conflicted);
+      // 続きの実行は、同じセッションを続け、目印の残るファイルを伝える
+      expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+      const next = executor.stdins[1] ?? "";
+      expect(next.startsWith(NOTE)).toBe(true);
+      expect(next).toContain("ベースブランチとの競合");
+      expect(next).toContain(`- ${conflicted}`);
+      activity.close();
+    });
+
+    it("引き継いだ PR で、未完了の実行の後に足された指摘も、続きの指示に入れて、渡した指摘として記録する", async () => {
+      const head = "f".repeat(40);
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      const feedback = (n: number, text: string): PullRequestFeedback => ({
+        key: `review_comment:${n}`,
+        kind: "review_comment",
+        author: "bob",
+        at: `2026-01-0${n}T00:00:00Z`,
+        path: "src/retry.ts",
+        line: n,
+        body: text,
+      });
+      const made = setup([unfinished(["docs の更新"]), finished()], {
+        repos,
+        planner: async () => ({
+          steps: ["implement"],
+          plan: "direct",
+          reason: "指摘への対応",
+          fallback: false,
+          testCommand: "npm test",
+          continuePullRequest: true,
+          costUsd: 0,
+          estimated: false,
+        }),
+      });
+      const { activity, service, executor } = made;
+      const pulls = made.pulls as FakePulls;
+      pulls.prInfo = {
+        ...pulls.prInfo,
+        state: "open",
+        headRef: "feature/retry",
+        headRepo: "https://github.com/acme/app",
+        baseRef: "main",
+      };
+      pulls.feedbackBy[12] = [feedback(1, "回数は定数にしてください")];
+      emulateClaude(executor);
+      // 最初の実行（未完了）の間に、PR に新しい指摘が足される
+      let n = 0;
+      executor.logLines = () => {
+        n += 1;
+        repos.tree = `${n}`.padStart(40, "0");
+        if (n === 1) {
+          pulls.feedbackBy[12] = [
+            feedback(1, "回数は定数にしてください"),
+            feedback(2, "待ち時間の上限も足してください"),
+          ];
+        }
+        return undefined;
+      };
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "PR #12 の指摘",
+        body: "https://github.com/acme/app/pull/12 のレビューの指摘に対応する",
+      });
+      await settle(service, id);
+      expect(service.get(id)?.task.continuedPullRequest?.number).toBe(12);
+      expect(executor.calls).toHaveLength(2);
+      const [first] = runIds(service, id);
+      expect(executor.stdins[0]).toContain("回数は定数にしてください");
+      expect(executor.stdins[0]).not.toContain("待ち時間の上限も足してください");
+      // 続きの実行は、同じセッションを続け、新しい指摘を含む指示の全文を受け取る
+      expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+      const next = executor.stdins[1] ?? "";
+      expect(next.startsWith(NOTE)).toBe(true);
+      expect(next).toContain("回数は定数にしてください");
+      expect(next).toContain("待ち時間の上限も足してください");
+      // 渡した指摘だけを、渡したと記録する（実行ごと）
+      const passed = (service.get(id)?.activity ?? []).flatMap((e) =>
+        e.type === "ContinuedFeedbackPassed" ? [e.payload.keys] : [],
+      );
+      expect(passed).toEqual([["review_comment:1"], ["review_comment:1", "review_comment:2"]]);
+      activity.close();
+    });
+
+    it("Codex：resume で同じスレッドの続きから進める", async () => {
+      const { activity, service, executor, repos, id } = begin(
+        [unfinished(["docs の更新"]), finished()],
+        { config: configOf(codexAgent), secrets: { "openai-key": "sk-secret" } },
+      );
+      emulateCodex(executor);
+      progress(executor, repos);
+      await settle(service, id);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      const [first] = runIds(service, id);
+      expect(executor.calls[0]?.command).not.toContain("resume");
+      expect(argAfter(executor.calls[1], "resume")).toBe(`thread-${first}`);
+      expect(executor.stdins[1]?.startsWith(NOTE)).toBe(true);
+      expect(executor.stdins[1]).toContain(FULL);
+      expect(continuedOf(service, id)).toMatchObject([
+        { mode: "resumed", stoppedRunId: first, sessionId: `thread-${first}`, cause: "incomplete" },
+      ]);
+      activity.close();
+    });
+
+    it("一時停止を挟んだ続き（人が再開した）も、同じセッションを続け、補足を含む指示の全文を渡す。回数は数え直す（受け入れ条件 5）", async () => {
+      const { activity, service, executor, pulls, id } = begin([
+        unfinished(["docs の更新"]),
+        unfinished(["docs の更新"]),
+        finished(),
+      ]);
+      emulateClaude(executor);
+      // 作業領域の内容の目印は変えない：続けても何も変わらなかったので、2回目で止まる
+      await settle(service, id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(service.get(id)?.task.pausedReason).toBe("incomplete");
+      expect(service.get(id)?.task.pausedMessage).toMatchObject({
+        params: { count: 2, stalled: true },
+      });
+      expect(executor.calls).toHaveLength(2);
+      const [first] = runIds(service, id);
+      service.resume(id, { note: "docs は docs/user に書く" });
+      expect(service.get(id)?.task.incompleteRuns?.runs).toBe(0);
+      await settle(service, id);
+      expect(executor.calls).toHaveLength(3);
+      // 人が再開した続きも、同じセッションを続ける
+      expect(argAfter(executor.calls[2], "--resume")).toBe(`session-${first}`);
+      const resumed = executor.stdins[2] ?? "";
+      expect(resumed.startsWith(NOTE)).toBe(true);
+      // 指示の全文（人の補足と、前回の実行の状況を含む）を続ける
+      expect(resumed).toContain(FULL);
+      expect(resumed).toContain("docs は docs/user に書く");
+      expect(resumed).toContain("--- 前回の実行：実装が終わっていませんでした ---");
+      expect(continuedOf(service, id).map((c) => [c.mode, c.cause])).toEqual([
+        ["resumed", "incomplete"],
+        ["resumed", "incomplete"],
+      ]);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(pulls.calls).toHaveLength(1);
+      activity.close();
+    });
+
+    it("再開を指定したのに別のセッションで始まっても、指示の全文が渡っている。続けたとは記録せず、理由を残す", async () => {
+      const { activity, service, executor, pulls, repos, id } = begin([
+        unfinished(["docs の更新"]),
+        finished(),
+      ]);
+      emulateClaude(executor);
+      // いつも新しいセッションで始めるエージェント
+      executor.sessionIdOf = (_inv, runId) => `session-${runId}`;
+      progress(executor, repos);
+      await settle(service, id);
+      const [first, second] = runIds(service, id);
+      expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+      // 前の会話を持たない実行にも、タスクの範囲と、前回の実行の状況が渡っている
+      const next = executor.stdins[1] ?? "";
+      expect(next).toContain(FULL);
+      expect(next).toContain("タスクの本文");
+      expect(next).toContain("--- 前回の実行：実装が終わっていませんでした ---");
+      // 実行の前に続ける判断を記録し、続きではなかったと分かった後に記録し直す（新しい記録が優先される）
+      expect(continuedOf(service, id)).toMatchObject([
+        { runId: second, mode: "resumed", cause: "incomplete" },
+        { runId: second, mode: "restarted", reason: "resume_failed", cause: "incomplete" },
+      ]);
+      // 範囲を知ったうえでの完了の申告なので、提出に進む
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(pulls.calls).toHaveLength(1);
+      activity.close();
+    });
+
+    it("AI が再開を拒んで失敗したら、その結果は使わず、タスクを止めずに、新しいセッションで指示の全文から実行し直す", async () => {
+      const { activity, service, executor, pulls, repos, id } = begin([
+        unfinished(["docs の更新"]),
+        { kind: "failed", reason: "error", message: "No conversation found with session ID: x" },
+        unfinished(["docs の更新"]),
+        finished(),
+      ]);
+      emulateClaude(executor);
+      progress(executor, repos);
+      await settle(service, id);
+      expect(executor.calls).toHaveLength(4);
+      const [first, second, third, fourth] = runIds(service, id);
+      // 2回目は、最初の実行のセッションを続けようとして、拒まれた
+      expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+      // 3回目は、人の再開を待たずに、新しいセッションで、指示の全文から実行し直す（続きの知らせは付けない）
+      expect(argAfter(executor.calls[2], "--resume")).toBeUndefined();
+      expect(executor.stdins[2]).not.toContain(NOTE);
+      expect(executor.stdins[2]).toContain(FULL);
+      expect(executor.stdins[2]).toContain("--- 前回の実行：実装が終わっていませんでした ---");
+      // 4回目は、3回目（新しいセッション）の続き
+      expect(argAfter(executor.calls[3], "--resume")).toBe(`session-${third}`);
+      expect(continuedOf(service, id)).toMatchObject([
+        { runId: second, mode: "resumed", stoppedRunId: first },
+        { runId: second, mode: "restarted", reason: "resume_failed", cause: "incomplete" },
+        { runId: fourth, mode: "resumed", stoppedRunId: third },
+      ]);
+      // 拒まれた実行は失敗として残すが、タスクは止めず、エージェントも変えない
+      const events = service.get(id)?.activity ?? [];
+      expect(events.filter((e) => e.type === "AgentRunFailed").map((e) => e.payload.runId)).toEqual(
+        [second],
+      );
+      expect(count(service, id, "TaskPaused")).toBe(0);
+      expect(count(service, id, "AgentFellBack")).toBe(0);
+      // 未完了の回数には、拒まれた実行を数えない
+      expect(count(service, id, "ImplementationIncomplete")).toBe(2);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(pulls.calls).toHaveLength(1);
+      activity.close();
+    });
+
+    it("AI が再開を拒んだ実行の間に、人が一時停止を求めていたら、今までどおり一時停止する。再開すると最初から実行し直す", async () => {
+      const { activity, service, executor, repos, id } = begin([
+        unfinished(["docs の更新"]),
+        { kind: "failed", reason: "error", message: "No conversation found with session ID: x" },
+        finished(),
+      ]);
+      emulateClaude(executor);
+      let n = 0;
+      let pausing: Promise<unknown> | undefined;
+      executor.logLines = () => {
+        n += 1;
+        repos.tree = `${n}`.padStart(40, "0");
+        // 続きの実行（2回目）の間に、人が一時停止を求める
+        if (n === 2) pausing = service.pause(id).catch(() => undefined);
+        return undefined;
+      };
+      await settle(service, id);
+      await pausing;
+      expect(executor.calls).toHaveLength(2);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(service.get(id)?.task.pausedReason).toBe("manual");
+      service.resume(id, {});
+      await settle(service, id);
+      expect(executor.calls).toHaveLength(3);
+      expect(argAfter(executor.calls[2], "--resume")).toBeUndefined();
+      expect(executor.stdins[2]).not.toContain(NOTE);
+      expect(executor.stdins[2]).toContain(FULL);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+
+    it("セッションを続けられないとき（写したファイルが無い）は、最初から実行し直して、理由を作業履歴に残す（受け入れ条件 3）", async () => {
+      const { activity, service, executor, repos, id } = begin([
+        unfinished(["docs の更新"]),
+        finished(),
+      ]);
+      // セッションのファイルを書かない（写すものが無い）
+      progress(executor, repos);
+      await settle(service, id);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      const [first, second] = runIds(service, id);
+      expect(argAfter(executor.calls[1], "--resume")).toBeUndefined();
+      // 最初から実行し直すので、指示の全文と、前回の実行の状況を渡す
+      expect(executor.stdins[1]).not.toContain(NOTE);
+      expect(executor.stdins[1]).toContain(FULL);
+      expect(executor.stdins[1]).toContain("--- 前回の実行：実装が終わっていませんでした ---");
+      expect(continuedOf(service, id)).toEqual([
+        {
+          runId: second,
+          role: "implement",
+          agentId: "claude-subscription",
+          runtime: "claude-code",
+          mode: "restarted",
+          stoppedRunId: first,
+          reason: "no_session",
+          cause: "incomplete",
+        },
+      ]);
+      activity.close();
+    });
+
+    it("完了して提出に進んだ実装の次の実行（差し戻しのやり直し）は、続きにしない", async () => {
+      const { activity, service, executor, repos, id } = begin([finished(), finished("# v2")]);
+      emulateClaude(executor);
+      progress(executor, repos);
+      await settle(service, id);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "implement",
+        comments: ["境界のテストを足す"],
+      });
+      await settle(service, id);
+      expect(executor.calls).toHaveLength(2);
+      expect(argAfter(executor.calls[1], "--resume")).toBeUndefined();
+      expect(executor.stdins[1]).not.toContain(NOTE);
+      expect(continuedOf(service, id)).toEqual([]);
+      activity.close();
+    });
   });
 });
 

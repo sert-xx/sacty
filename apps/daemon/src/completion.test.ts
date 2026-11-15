@@ -27,6 +27,15 @@ describe("実装の完了の申告（PBI-347）", () => {
     expect(lines).toContain("このコードブロックの外に書いたものは申告として扱わない");
     expect(lines).toContain("申告が無い実行は、未完了として扱い、提出しない");
     expect(lines).toContain("申告を下の形どおりに読めない実行も同じ");
+    // 途中で実行を終えないこと・未完了で終えてよい場合・自分で確かめられないことの書き場所を伝える（PBI-350）
+    expect(lines).toContain("区切りのよい所で実行を終えて、続きを次の実行に回さない");
+    expect(lines).toContain("同じセッションを再開して続けさせるだけで、途中で終えても進まない");
+    expect(lines).toContain(
+      "incomplete で終えてよいのは、これ以上進められないとき（人の判断や、外部の状態の変化が要るとき）だけ",
+    );
+    expect(lines).toContain(
+      "あなたには確かめられないこと（CI の結果・実機での動作など）は、remaining ではなく、人が確かめることとして実装の説明に書く",
+    );
     expect(lines).toContain('```sacty-completion\n{"status":"complete"}\n```');
     expect(lines).toContain('```sacty-completion\n{"status":"incomplete","remaining":[');
     // 指示の例は、そのまま書けば読める

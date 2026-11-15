@@ -82,6 +82,7 @@ import {
   MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
+  MAX_INCOMPLETE_CONTINUATIONS,
   MAX_INTEGRATION_ATTEMPTS,
   MAX_VERIFY_ATTEMPTS,
   MEMORY_BODY_MAX,
@@ -461,8 +462,10 @@ import { templateTask } from "./task-templates.js";
 import { findTestFiles, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 import {
+  type ContinueCause,
   type ContinuePlan,
-  planTimeoutResume,
+  incompleteResumeLines,
+  planContinuation,
   timeoutMinutes,
   timeoutResumeLines,
 } from "./timeout-resume.js";
@@ -883,6 +886,11 @@ type Executed = {
   estimated: boolean;
   /** 使った分の全体を読めなかった（costUsd は読めた分の下限で、無ければ 0。時間切れなど。PBI-281）。 */
   costUnknown?: true;
+  /**
+   * 未完了で終わった実装の実行のセッションを続けようとして、AI が再開を受け付けなかった失敗（PBI-350）。この失敗では
+   * タスクを止めず、次の実行で、新しいセッションで最初から実行し直す。
+   */
+  incompleteResumeRejected?: true;
 };
 
 /** エージェントの1回の実行（TaskService.execute）に渡すもの。 */
@@ -9073,24 +9081,33 @@ export class TaskService {
 
     if (outcome.kind === "failed") {
       const manual = await this.manualPauseInfo(task.id);
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: {
-            type: "AgentRunFailed",
-            payload: {
-              runId,
-              step,
-              agentId: agent.id,
-              reason: outcome.reason,
-              message: outcome.message,
-              usage: outcome.usage,
-              costUsd,
-              estimated,
-              ...unknownCost(executed),
-            },
+      const failed: ActivityItem = {
+        actor: "sacty",
+        event: {
+          type: "AgentRunFailed",
+          payload: {
+            runId,
+            step,
+            agentId: agent.id,
+            reason: outcome.reason,
+            message: outcome.message,
+            usage: outcome.usage,
+            costUsd,
+            estimated,
+            ...unknownCost(executed),
           },
         },
+      };
+      // 未完了の続きで、AI がセッションの再開を受け付けなかった（何も使わずに失敗した）ときは、タスクを止めず、エージェントも
+      // 変えない（PBI-350）。失敗を記録して実行待ちに戻すので、次の実行は、新しいセッションで、指示の全文から実行し直す
+      // （失敗の記録が後にあるので、続きにはしない）。人間が止めた・中止したときは、今までどおり止める
+      if (executed.incompleteResumeRejected && !this.stopRequested(task.id)) {
+        this.append(task, [failed]);
+        this.warnIfNeeded(this.mustGet(task.id));
+        return;
+      }
+      this.append(task, [
+        failed,
         // 失敗したら、止めずに代わりのエージェントでやり直す
         this.pauseOrFallBack(
           task.id,
@@ -11277,11 +11294,11 @@ export class TaskService {
             cut(`${id} ${titles.get(id) ?? ""}`.trim(), COMPLETION_REMAINING_ITEM_MAX),
           );
     const undeclared = completion === null;
-    // 続いた回数が上限に達したか、やり直しても作業領域が何も変わらなければ（同じエージェントでやり直しても進まない）、
-    // 実装のやり直しを止めて人間に判断してもらう。未完了の記録と一時停止は、同じ追記で記録する（間でデーモンが止まると、
+    // 続きの実行が上限の回数に達しても未完了か（未完了の実行の数は、最初の実行と続きの実行の合計）、続けても作業領域が何も
+    // 変わらなければ（同じエージェントで続けても進まない）、実装を止めて人間に判断してもらう（PBI-350）。未完了の記録と一時停止は、同じ追記で記録する（間でデーモンが止まると、
     // 止めるはずの実装を、再起動の後にもう一度実行してしまうため）
     const runs = nextIncompleteRuns(latest.incompleteRuns, fingerprint);
-    const stop = runs.runs >= MAX_VERIFY_ATTEMPTS || runs.stalled === true;
+    const stop = runs.runs > MAX_INCOMPLETE_CONTINUATIONS || runs.stalled === true;
     this.append(latest, [
       {
         actor: "sacty",
@@ -12787,20 +12804,21 @@ export class TaskService {
    * 工程などの1回の実行（オーケストレーターと質問への答え以外）。直前の実行が時間切れで止まったものなら、同じエージェントの
    * セッションの続きから進め、続けられなければ最初から実行し直す。どちらも作業履歴に残す。時間切れで止めた実行も、次に続けられる
    * ように作業履歴に残す（PBI-280）。
+   * 直前の実装の実行が未完了で終わったものでも、同じようにセッションの続きから進める（PBI-350）。
    */
   private async executeResumable(run: ExecuteRun): Promise<Executed & { runId: string }> {
     const runtime = run.agent.runtime;
     let plan: ContinuePlan | undefined;
     if (runtime === "claude-code" || runtime === "codex") {
       try {
-        plan = await planTimeoutResume(
+        plan = await planContinuation(
           this.deps.activity.forTask(run.taskId),
           { role: run.role, agentId: run.agent.id, runtime, runId: run.runId },
           (runId) => this.deps.sessionLogs?.agentFilesDir(run.taskId, runId),
         );
       } catch (error) {
         console.warn(
-          `[daemon] 時間切れで止めた実行のセッションを確かめられませんでした（${run.taskId}）：`,
+          `[daemon] 続ける前の実行のセッションを確かめられませんでした（${run.taskId}）：`,
           error instanceof Error ? error.message : error,
         );
       }
@@ -12821,6 +12839,8 @@ export class TaskService {
               mode,
               ...(mode === "resumed" && resuming ? { sessionId: resuming.sessionId } : {}),
               ...(reason ? { reason } : {}),
+              // 時間切れの続きは、今までどおり何も足さない（無ければ時間切れの続き）
+              ...(plan.cause.kind === "incomplete" ? { cause: "incomplete" as const } : {}),
             },
           })
         : undefined;
@@ -12832,20 +12852,20 @@ export class TaskService {
       resuming
         ? {
             ...run,
-            prompt: [...timeoutResumeLines(run.role, resuming.stopped.minutes), run.prompt].join(
-              "\n",
-            ),
+            prompt: this.continuedPrompt(run, resuming.cause),
             session: { resume: resuming.sessionId, filesDir: resuming.filesDir },
           }
         : run,
     );
     // AI が再開を受け付けなかった・別のセッションで始めた（再開したつもりが、続きではない）なら、続けたとは言えないので、
     // 理由を記録し直す（新しい記録が優先される）
+    const rejected =
+      resuming !== undefined &&
+      (runtime === "claude-code" || runtime === "codex") &&
+      resumeRejected(runtime, executed.outcome);
     if (
       resuming &&
-      (runtime === "claude-code" || runtime === "codex") &&
-      (resumeRejected(runtime, executed.outcome) ||
-        (archived?.sessionId !== undefined && archived.sessionId !== resuming.sessionId))
+      (rejected || (archived?.sessionId !== undefined && archived.sessionId !== resuming.sessionId))
     ) {
       continued("restarted", "resume_failed");
     }
@@ -12863,7 +12883,28 @@ export class TaskService {
         },
       });
     }
-    return { ...executed, runId: run.runId };
+    return {
+      ...executed,
+      runId: run.runId,
+      // 未完了の続きは、人が再開した直後とは限らない（自動で続く）。再開を拒まれた失敗でタスクを止めると、人が再開するまで
+      // 進まないので、呼び出し側が、止めずに次の実行で最初から実行し直せるように知らせる。時間切れの続きは、今までどおり
+      ...(rejected && resuming?.cause.kind === "incomplete"
+        ? { incompleteResumeRejected: true as const }
+        : {}),
+    };
+  }
+
+  /**
+   * セッションの続きから進める実行の指示。時間切れの続きも、未完了の続き（PBI-350）も、続きであることの知らせの後に、指示の
+   * 全文を続ける（実行ごとに変わる部分を落とさないため。再開できずに別のセッションで始まっても、指示の全文が渡る）。
+   */
+  private continuedPrompt(run: ExecuteRun, cause: ContinueCause): string {
+    if (cause.kind === "timeout") {
+      return [...timeoutResumeLines(run.role, cause.minutes), run.prompt].join("\n");
+    }
+    const feedback = this.tasks.get(run.taskId)?.verifyFeedback;
+    const incomplete = feedback?.kind === "incomplete" ? feedback : undefined;
+    return [...incompleteResumeLines(incomplete), run.prompt].join("\n");
   }
 
   /** 時間切れの実行と、その続きの記録を作業履歴に残す。記録できなくても、実行の結果は変えない（中止したタスクなど）。 */
