@@ -2,6 +2,7 @@
 
 - 日付: 2026-11-15（UTC）
 - タスク: PBI-346
+- PR: #374
 - ブランチ: feat/issue-346-skip-self-review-when-pr-reviewed
 - 関係する ADR: [PR のレビューの子タスクがレビューする工程では、提出の前のセルフレビューを省く](../adr/20261115-0810-skip-self-review-when-pull-request-is-reviewed.md)
 
