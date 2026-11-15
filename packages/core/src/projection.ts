@@ -573,9 +573,15 @@ export type Task = {
   };
   /**
    * タスクの開始時に情報収集のエージェントが集めて絞り込んだ情報（まとめと情報源）。オーケストレーター・工程・ゴールガーディアンの
-   * 指示に添える。分割の子タスクは集めず、親のものを内容に添える。
+   * 指示に添える。分割の子タスクは集めず、親のものを内容に添える。PR のレビューの子タスクは、親のまとめがあれば集めずに
+   * 引き継ぐ（inheritedFrom は親タスクの ID。PBI-345）。
    */
-  gathered?: { brief: string; sources: { title: string; url?: string }[]; at: string };
+  gathered?: {
+    brief: string;
+    sources: { title: string; url?: string }[];
+    at: string;
+    inheritedFrom?: string;
+  };
   /** チケットから作業するリポジトリ・題・概要を決めた理由（PBI-52）。人が選んだら by は person。 */
   ticketTriage?: { reason: DaemonText; by: "orchestrator" | "person" };
   /**
@@ -2638,6 +2644,22 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "information is not being gathered");
       }
       task.gathered = { brief: event.payload.brief, sources: event.payload.sources, at: event.at };
+      break;
+
+    // PR のレビューの子タスクが、親タスクの集めた情報を引き継いだ（PBI-345）。集めるのと同じく、工程を選ぶ前に1回だけ
+    case "GatheredInherited":
+      if (task.steps.length > 0 || task.gathered) {
+        throw new ActivityIntegrityError(event, "information is not being gathered");
+      }
+      if (task.reviewOf?.taskId !== event.payload.from) {
+        throw new ActivityIntegrityError(event, "not a review task of the given parent");
+      }
+      task.gathered = {
+        brief: event.payload.brief,
+        sources: event.payload.sources,
+        at: event.at,
+        inheritedFrom: event.payload.from,
+      };
       break;
 
     // チケットから作業するリポジトリ・題・概要を決めた（PBI-52）。工程を選ぶ前だけ

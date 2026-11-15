@@ -23121,6 +23121,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ci?: ServiceDeps["ci"];
       /** sacty が作った PR をレビューする子タスクを作る（PBI-330）。 */
       reviewTasks?: boolean;
+      /** 情報収集を差し替える（無ければ、集めずに進める）。 */
+      gatherer?: ServiceDeps["gatherer"];
       /** レビューの子タスクが CI を読むのを待つ上限（ミリ秒。PBI-331）。 */
       reviewCiTimeoutMs?: number;
       /** ドラフトを外す・戻す・先頭を読む答えを待つ上限（ミリ秒。PBI-331）。 */
@@ -23136,6 +23138,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       stepPullRequests: true,
       ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
       ...(options.reviewTasks ? { reviewTasks: true } : {}),
+      ...(options.gatherer ? { gatherer: options.gatherer } : {}),
       ...(options.reviewCiTimeoutMs ? { reviewCiTimeoutMs: options.reviewCiTimeoutMs } : {}),
       ...(options.draftTimeoutMs ? { draftTimeoutMs: options.draftTimeoutMs } : {}),
       now: later,
@@ -26342,6 +26345,78 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(restarted.get(childId)?.task.reviewOf).toEqual({ taskId: id, step: "requirements" });
         again.close();
       }
+    });
+
+    it("レビューの子タスクは、親タスクが集めた情報を引き継ぎ、情報収集を実行せずにレビューの工程へ進む（PBI-345）", async () => {
+      const gatheredFor: string[] = [];
+      const made = await start([out("# 要求要件 v1")], {
+        reviewTasks: true,
+        gatherer: async (task) => {
+          gatheredFor.push(task.id);
+          return { brief: "PAY-100：二重請求をなくす", sources: [{ title: "PAY-100" }] };
+        },
+      });
+      const { activity, service, id } = made;
+      // start は親を1回だけ実行する（情報収集まで）。要求要件の PR を作るまで進める
+      for (let i = 0; i < 4 && !childOf(service, id); i++) await service.runNext(id);
+      const childId = childOf(service, id);
+      expect(childId).not.toBe("");
+      expect(gatheredFor).toEqual([id]);
+      await service.runNext(childId);
+      // 子タスクでは集めない。親のまとめと情報源を、親の ID と一緒に持つ
+      expect(gatheredFor).toEqual([id]);
+      const parent = taskOf(service, id);
+      expect(parent.gathered?.brief).toBe("PAY-100：二重請求をなくす");
+      expect(taskOf(service, childId).gathered).toMatchObject({
+        brief: parent.gathered?.brief,
+        sources: parent.gathered?.sources,
+        inheritedFrom: id,
+      });
+      expect(types(service, childId)).toContain("GatheredInherited");
+      expect(types(service, childId)).not.toContain("InformationGathered");
+      expect(
+        service.get(childId)?.activity.find((e) => e.type === "GatheredInherited"),
+      ).toMatchObject({ actor: "sacty", payload: { from: id } });
+      expect(taskOf(service, childId).budget.usedUsd).toBe(0);
+      // 次の実行で、レビューの工程に決まる（引き継ぎで止まらない）
+      for (let i = 0; i < 3 && taskOf(service, childId).steps.length === 0; i++) {
+        await service.runNext(childId);
+      }
+      expect(taskOf(service, childId).steps.map((s) => s.key)).toEqual(["review"]);
+      expect(gatheredFor).toEqual([id]);
+      // 再起動しても、引き継いだまとめを復元する
+      const done = taskOf(service, childId).gathered;
+      activity.close();
+      const again = new SqliteActivityStore(dbPath);
+      const restarted = makeService(again, [], { stepPullRequests: true }).service;
+      expect(restarted.get(childId)?.task.gathered).toEqual(done);
+      again.close();
+    });
+
+    it("親タスクにまとめが無いレビューの子タスクは、今までどおり自分で集める（PBI-345）", async () => {
+      const gatheredFor: string[] = [];
+      let parentId = "";
+      const made = await start([out("# 要求要件 v1")], {
+        reviewTasks: true,
+        // 親（最初に集めるタスク）は集めずに進め、ほかのタスクは集める
+        gatherer: async (task) => {
+          parentId ||= task.id;
+          gatheredFor.push(task.id);
+          return task.id === parentId ? undefined : { brief: "子で集めた", sources: [] };
+        },
+      });
+      const { activity, service, id } = made;
+      for (let i = 0; i < 4 && !childOf(service, id); i++) await service.runNext(id);
+      const childId = childOf(service, id);
+      expect(childId).not.toBe("");
+      expect(taskOf(service, id).gathered).toBeUndefined();
+      await service.runNext(childId);
+      expect(gatheredFor).toContain(childId);
+      expect(taskOf(service, childId).gathered).toMatchObject({ brief: "子で集めた" });
+      expect(taskOf(service, childId).gathered?.inheritedFrom).toBeUndefined();
+      expect(types(service, childId)).toContain("InformationGathered");
+      expect(types(service, childId)).not.toContain("GatheredInherited");
+      activity.close();
     });
 
     it("子タスクの指摘を親が直して PR を更新したら、子タスクが最新のコミットを再レビューし、指摘なしになったら繰り返さずに人の承認を待つ（受け入れ条件 2・3）", async () => {

@@ -1301,6 +1301,20 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     );
   });
 
+  it("親タスクの集めた情報の引き継ぎは、集め直していないと分かるように出す（PBI-345）", () => {
+    const inherited = event("GatheredInherited", {
+      from: "t0",
+      brief: "まとめ",
+      sources: [{ title: "PAY-100" }],
+    });
+    expect(describeEvent(inherited)).toBe(
+      "親タスクが集めた情報を引き継いだ（情報源 1 件。集め直していない）",
+    );
+    expect(describeIn(inherited, labels.en)).toBe(
+      "Inherited the information the parent task gathered (1 sources; not gathered again)",
+    );
+  });
+
   it("成功の記録も、先の実行の使用量が不明なら、不明と出す（再開を断られた後に成功したときなど）", () => {
     const base = { costUsd: 0, estimated: true, costUnknown: true };
     const steps = event("StepsChosen", { steps: ["requirements"], ...base });

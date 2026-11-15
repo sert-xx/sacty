@@ -5963,6 +5963,25 @@ export class TaskService {
    * 一時停止する（再開すると集め直す）。記録した・止めたら true（次の実行で続ける）。集めずに進めるなら false。
    */
   private async gatherInformation(task: Task, config: SactyConfig): Promise<boolean> {
+    // PR のレビューの子タスクは、親タスク（PR を作ったタスク）が同じ依頼について集めた情報を引き継ぎ、集め直さない（PBI-345）。
+    // 親にまとめが無い（集める前の版のタスクなど）・親が見つからないときは、下でいつもどおり集める
+    const parent = task.reviewOf && this.tasks.get(task.reviewOf.taskId);
+    if (parent?.gathered) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "GatheredInherited",
+            payload: {
+              from: parent.id,
+              brief: parent.gathered.brief,
+              sources: parent.gathered.sources,
+            },
+          },
+        },
+      ]);
+      return true;
+    }
     if (this.deps.gatherer) {
       const gathered = await this.deps.gatherer(task);
       if (!gathered) return false;

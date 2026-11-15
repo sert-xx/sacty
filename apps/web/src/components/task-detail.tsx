@@ -670,8 +670,13 @@ function Overview({ data }: { data: TaskDetailData }) {
         <CardSection
           id="gathered"
           title={m.gathered.title}
-          note={m.gathered.sources(task.gathered.sources.length)}
-          hint={m.gathered.hint}
+          // PR のレビューの子タスクが親タスクから引き継いだまとめは、そう分かるように出す（PBI-345）
+          note={
+            task.gathered.inheritedFrom
+              ? m.gathered.inherited(m.gathered.sources(task.gathered.sources.length))
+              : m.gathered.sources(task.gathered.sources.length)
+          }
+          hint={task.gathered.inheritedFrom ? m.gathered.inheritedHint : m.gathered.hint}
           collapsed={task.steps.some((s) => s.state !== "todo")}
         >
           <Markdown>{task.gathered.brief}</Markdown>

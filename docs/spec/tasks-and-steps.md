@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)、[PR のレビューの子タスクは、親タスクが開始時に集めた情報を引き継ぎ、情報収集をし直さない](../adr/20261115-0230-review-child-task-inherits-gathered-information.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -721,6 +721,12 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 - 工程を選んだ後のタスク（この仕組みの前の作業履歴を含む）と、分割の子タスク（`parent` のあるもの）では集めない（`awaitingGathering`）。
   子タスクの内容には、親のまとめを添える（`buildChildBody`）。
   再実行で作ったタスクは、新しいタスクとして集める。
+- PR のレビューの子タスク（`reviewOf` のあるもの）は、親タスクにまとめがあれば集めず、親のまとめと情報源を引き継ぐ（`GatheredInherited`。actor は `sacty`。費用は無い）。
+  引き継いだまとめは、親タスクの ID と一緒にタスクに持つ（`gathered.inheritedFrom`）。
+  指示に添えるときは、親タスクが集めたものを引き継いだことと、PR を作る前の情報なので PR の変更の内容は差分とコードで確かめることを添える（`gatheredLines`）。
+  タスクの詳細の「集めた情報」にも、親タスクから引き継いだことを出す。
+  親タスクにまとめが無い（集める前の版のタスクなど）・親タスクが見つからないときは、子タスクが集める。
+  依頼・ラベルで取り込んだレビューだけのタスクと、手動で作ったレビューのタスクは、いつもどおり集める。
 
 ### コードを読む
 
@@ -793,7 +799,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
     この指示にも集めた情報を添える。
 - まとめを読めないときは、トリアージも記録しない（上と同じく、集め直すか止まる）。
 
-コード: `apps/daemon/src/service.ts`（`gatherInformation`・`ticketTriageTarget`・`ticketTriaged`・`triageTicket`・`runOrchestrator`・`runNextInner`）、`apps/daemon/src/prompts.ts`（`buildGatherPrompt`・`GATHER_OUTSIDE_LINE`・`gatherServiceLines`・`extractGathered`・`gatheredLines`・`buildChildBody`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`InformationGathered`・`GATHERED_BRIEF_MAX`）、`packages/core/src/projection.ts`（`awaitingGathering`）、`apps/web/src/components/task-detail.tsx`
+コード: `apps/daemon/src/service.ts`（`gatherInformation`・`ticketTriageTarget`・`ticketTriaged`・`triageTicket`・`runOrchestrator`・`runNextInner`）、`apps/daemon/src/prompts.ts`（`buildGatherPrompt`・`GATHER_OUTSIDE_LINE`・`gatherServiceLines`・`extractGathered`・`gatheredLines`・`buildChildBody`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`InformationGathered`・`GatheredInherited`・`GATHERED_BRIEF_MAX`）、`packages/core/src/projection.ts`（`awaitingGathering`）、`apps/web/src/components/task-detail.tsx`
 
 ## オーケストレーター
 

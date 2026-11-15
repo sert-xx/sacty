@@ -3810,6 +3810,58 @@ describe("タスクの開始時の情報収集", () => {
     ]).get("c1");
     expect(child && awaitingGathering(child)).toBe(false);
   });
+
+  it("PR のレビューの子タスクは、親タスクのまとめを引き継げる。費用は増えず、工程を選ぶ前に1回だけ（PBI-345）", () => {
+    const reviewChild = (parentId = "t1") =>
+      ev(
+        "r1",
+        {
+          type: "TaskCreated",
+          payload: {
+            title: "[PR #7] 親",
+            body: "",
+            start: "github_pull_request",
+            source: {
+              kind: "github_pull_request",
+              repo: "https://github.com/acme/app",
+              number: 7,
+              url: "https://github.com/acme/app/pull/7",
+              review: "sacty",
+            },
+            reviewOf: { taskId: parentId, step: "implement" },
+          },
+        },
+        "sacty",
+      );
+    const inherited = (taskId: string, from = "t1") =>
+      ev(
+        taskId,
+        {
+          type: "GatheredInherited",
+          payload: { from, brief: "まとめ", sources: [{ title: "PAY-100" }] },
+        },
+        "sacty",
+      );
+    // 引き継ぐ前は、集めるのを待っている（親にまとめが無ければ、子タスクが集める）
+    const before = project([reviewChild()]).get("r1");
+    expect(before && awaitingGathering(before)).toBe(true);
+    const task = project([reviewChild(), inherited("r1")]).get("r1");
+    expect(task?.gathered).toEqual({
+      brief: "まとめ",
+      sources: [{ title: "PAY-100" }],
+      at: "2026-10-10T00:00:00.000Z",
+      inheritedFrom: "t1",
+    });
+    expect(task?.budget.usedUsd).toBe(0);
+    expect(task && awaitingGathering(task)).toBe(false);
+    // 二度目・集めた後・工程を選んだ後は記録できない
+    expect(() => project([reviewChild(), inherited("r1"), inherited("r1")])).toThrow();
+    expect(() => project([reviewChild(), gathered("r1"), inherited("r1")])).toThrow();
+    expect(() => project([reviewChild(), steps("r1"), inherited("r1")])).toThrow();
+    // レビューの子タスクではないタスク・別の親からは引き継げない
+    expect(() => project([created("t1"), inherited("t1")])).toThrow();
+    expect(() => project([reviewChild("t2"), inherited("r1")])).toThrow();
+  });
 });
 
 describe("人がゴールガーディアンの不合格のままレビューへ進められるか", () => {
