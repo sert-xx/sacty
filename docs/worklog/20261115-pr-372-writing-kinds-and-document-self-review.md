@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-15（UTC）
 - タスク: なし
-- PR: なし
+- PR: #372
 - ブランチ: claude/practical-dirac-gj66a3
 - 関係する ADR: [文章の種類を読む人が前提を知っているかで分け、後から読まれる文書の組み立て方と図・画像の決まりを writing に足し、文書作成の工程でもセルフレビューをさせる](../adr/20261115-0017-writing-kinds-figures-and-document-self-review.md)
 
