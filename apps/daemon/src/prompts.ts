@@ -1120,7 +1120,7 @@ function documentDraftLines(): string[] {
  * 要求要件・設計の構成と分量。冒頭に人間が判断すること（確認したいこと）と、エージェントが既定で決めたことを分けて置かせ、
  * どちらも件数を絞る。詳細には、依頼と今回の変更に要ることだけを、行数の目安に収まるように書かせる。
  */
-function readerLoadLines(deliverable: string): string[] {
+function readerLoadLines(deliverable: string, selfReview = true): string[] {
   return [
     ...minimalDraftLines(
       deliverable,
@@ -1139,7 +1139,7 @@ function readerLoadLines(deliverable: string): string[] {
     `  - 「既定で決めたこと」：依頼に書かれていないが、あなたが既存のコード・規約・慣習から決めたことのうち、人間が異論を持ちうるもの。最大 ${DECISIONS_MAX} 件、1件1行。既存のやり方にそのまま従っただけのことは書かない。確認したいことの should が ${SHOULD_QUESTIONS_MAX} 件を超えるときは、重要度の低いものを推奨の答えで決めて、ここに回す`,
     "  - 依頼者に不利益が出うる既定（元に戻せない・失われる・使えなくなる・手間や費用が増える・依頼の意図と逆に働く、など）と、依頼の目的に関わる判断は、「既定で決めたこと」に置かず、「確認したいこと」に出す。should の件数の上限を超えるときも、これらは「既定で決めたこと」に回さず、害の小さいものを回す",
     `- 目安：${deliverable}の全体を、小さな変更なら ${DRAFT_LINES.small} 行、大きな変更でも ${DRAFT_LINES.large} 行ほどまでにする（出力の形が決まった JSON のブロックは数えない）`,
-    ...deliverableBodyLines(deliverable),
+    ...deliverableBodyLines(deliverable, selfReview),
   ];
 }
 
@@ -1149,7 +1149,11 @@ function readerLoadLines(deliverable: string): string[] {
  * 本文で振る ID（要求の R-n など。sacty が振るテスト観点の TV-n は除く）の理由の分からない欠番と、別の文書への参照だけの項目も、
  * 読む人が引っかかる。提出の前に、本文を読み直して確かめさせる。
  */
-function deliverableBodyLines(deliverable: string): string[] {
+function deliverableBodyLines(
+  deliverable: string,
+  /** セルフレビューをさせる工程か（省く工程では、セルフレビューの観点に触れない。PBI-346）。 */
+  selfReview = true,
+): string[] {
   return [
     "",
     `--- ${deliverable}の本文に書くもの ---`,
@@ -1160,7 +1164,7 @@ function deliverableBodyLines(deliverable: string): string[] {
     "- 要求・受け入れ条件など、本文であなたが振る ID（R-1 など）は、最初の提出では 1 から欠番なく振る。差し戻しで項目を消したときは、ID を詰めず（人の指摘・承認済みの文書が ID で指しているため）、「R-5（削除：理由）」のように行を残して、欠番の理由が分かるようにする。この規則は、sacty が振る ID（テスト観点の TV-n は、JSON の配列の順に sacty が振り直す）には当てはめない（消すテスト観点は配列から外し、削除の行を JSON に残さない）",
     "- 別の文書（ほかのタスクの要求要件・チケット・PR など）を参照する項目は、参照だけにせず、参照先の中身（この項目で何を求めるか）を1行で併記する。読む人が参照先を開かなくても分かるようにする",
     `- 出力の最初は、${deliverable}の最初の見出しにする。見出しの前に、前置きや作業の報告を置かない（最後のメッセージがそのまま${deliverable}になる。sacty は、最初の見出しより前と最後の区切り線より後ろにある報告の段落を取り除くが、本文の途中は取り除けない）`,
-    "- 提出の前に、本文を最初から最後まで読み直して、上の3点が残っていないことを確かめ、残っていれば直す（セルフレビューの観点 D-6・D-10 でも確かめる）",
+    `- 提出の前に、本文を最初から最後まで読み直して、上の3点が残っていないことを確かめ、残っていれば直す${selfReview ? "（セルフレビューの観点 D-6・D-10 でも確かめる）" : ""}`,
   ];
 }
 
@@ -2109,6 +2113,20 @@ function selfReviewLines(
 }
 
 /**
+ * 提出の前のセルフレビューを省く工程への指示（PBI-346）。提出が sacty の作る PR になり、PR のレビューの子タスクが別の
+ * コンテキストでレビューするので、同じ成果物を提出の前にもレビューさせない。提出の前の検証は省かせない。
+ */
+function skippedSelfReviewLines(deliverable: string): string[] {
+  return [
+    "",
+    "--- 提出の前のセルフレビュー（行わない） ---",
+    `- この工程の提出は PR になり、sacty が別のコンテキストのレビューのタスクで、その PR をレビューする。同じ${deliverable}を二重にレビューしないよう、提出の前のセルフレビュー（既定のスキル review-dispatch、観点の担当の起動）は行わない`,
+    "- 省くのはセルフレビューだけで、上の提出の前の検証は省かない",
+    `- セルフレビューの報告（${SELF_REVIEW_HEADING} の JSON）は付けない`,
+  ];
+}
+
+/**
  * 指摘を受けた直しの実行か（PBI-296）。受けた原因の一覧を返す。直しの実行ではない（タスクの最初の実行・上流の変更だけの
  * やり直し）なら空。原因は、今回の人の差し戻し・AI のレビューの指摘（その工程の最新の回のうち、まだ提出に渡していないもの）と、
  * 実装なら最終レビューの不合格。
@@ -2147,7 +2165,12 @@ function fixRunReviewLines(causes: readonly string[]): string[] {
  * では、主対象の種類を文書向け（user-doc）にして、コード向けの観点を起動させない（PBI-295）。それ以外は code。
  * 文書は作業領域のファイルを直接直すので、要求要件・設計の下書きのための指示（design-doc）は付けない。
  */
-function implementSelfReviewLines(task: Task, verb: "実装" | "修正"): string[] {
+function implementSelfReviewLines(
+  task: Task,
+  verb: "実装" | "修正",
+  /** 提出を PR のレビューの子タスクがレビューするので、セルフレビューを省く（PBI-346）。検証と検証の記録は省かない。 */
+  pullRequestReview = false,
+): string[] {
   // 指摘を受けた直しの実行（PBI-296）の指示は、主対象の種類にかかわらず渡す
   const fixCauses = fixRunCauses(task, "implement");
   return [
@@ -2165,11 +2188,15 @@ function implementSelfReviewLines(task: Task, verb: "実装" | "修正"): string
       aiRemarks: humanRemarks(task).some((r) => r.source === "sacty_review"),
       acceptanceDepthLine: acceptanceDepthImplementLine(task.approved.requirements !== undefined),
     }),
-    ...implementVerificationLines(task),
-    ...(task.documentsOnly === true
-      ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses)
-      : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses)),
-    ...implementVerificationRecordLines(runsTests(task)),
+    ...implementVerificationLines(task, !pullRequestReview),
+    ...(pullRequestReview
+      ? skippedSelfReviewLines(
+          task.documentsOnly === true ? `${verb}（文書）` : `${verb}（コードとテスト）`,
+        )
+      : task.documentsOnly === true
+        ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses)
+        : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses)),
+    ...implementVerificationRecordLines(runsTests(task), !pullRequestReview),
   ];
 }
 
@@ -2195,7 +2222,12 @@ export const PROVENANCE_SKILL = "classify-provenance";
  * Input のファイルと最終版だけを読ませ、書いた側の要約・経緯を渡させない（書いた側の思い込みを分類に入れないため）。
  * 担当の答えは、手を加えずに見出し sacty-provenance の JSON で付けさせる。sacty はそれを読み、抜き出しを Input と照らす。
  */
-function provenanceLines(step: "requirements" | "design", inputDir: string): string[] {
+function provenanceLines(
+  step: "requirements" | "design",
+  inputDir: string,
+  /** セルフレビューをさせる工程か（省く工程では、提出する最終版を分類させる。PBI-346）。 */
+  selfReview = true,
+): string[] {
   const items =
     step === "requirements"
       ? "要求要件の要求（R-n）"
@@ -2203,7 +2235,7 @@ function provenanceLines(step: "requirements" | "design", inputDir: string): str
   return [
     "",
     "--- 提出の前の出典の分類 ---",
-    `- セルフレビューを終えた最終版に対して、既定のスキル ${PROVENANCE_SKILL} の「依頼の仕方」に従い、${items}ごとの出典を分類させる`,
+    `- ${selfReview ? "セルフレビューを終えた" : "提出する"}最終版に対して、既定のスキル ${PROVENANCE_SKILL} の「依頼の仕方」に従い、${items}ごとの出典を分類させる`,
     `- 最終版を一時ファイル（例：/tmp/sacty-provenance/draft.md）に書く（作業領域の外に置き、リポジトリには書かない）${step === "design" ? "。テスト観点の JSON も含める" : ""}`,
     `- 分類の担当のサブエージェントを1つ起動する。依頼文には、担当であること・スキルの名前・Input のディレクトリ（${inputDir}。sacty が置いたファイルで、書き換えない）・最終版のファイルのパス・項目の ID の付き方・下の出力の形だけを書く`,
     "- 依頼文に、Input の要約・言い換え・引用と、あなたが書いた経緯・考えたこと・どの項目を足したかを書かない（担当が自分で読む）",
@@ -2463,6 +2495,7 @@ function directImplementLines(
   content: string,
   previous: string | undefined,
   remarks: ReturnType<typeof humanRemarks>,
+  pullRequestReview = false,
 ): string[] {
   const step: StepKey = "implement";
   const noTests = task.noTestsReason;
@@ -2527,7 +2560,7 @@ function directImplementLines(
     ...feedbackLines(task),
     ...remarkLines(task, step, "観点ごとのテストの対応"),
     ...proposalLines(task, step),
-    ...implementSelfReviewLines(task, "実装"),
+    ...implementSelfReviewLines(task, "実装", pullRequestReview),
   );
   return lines;
 }
@@ -2624,6 +2657,11 @@ export function buildPrompt(
     reviewSecurity?: ReviewSecurity;
     /** PR のレビューの子タスクに、指摘ごとの戻し先を示させるための、PR を作ったタスクの情報（PBI-332）。 */
     reviewRework?: ReviewReworkContext;
+    /**
+     * この工程の提出が sacty の作る PR になり、PR のレビューの子タスクがレビューする（PBI-346）。要求要件・設計・実装の工程で
+     * 渡す。渡すと、提出の前のセルフレビューをさせない（同じ成果物を二重にレビューしない）。提出の前の検証はさせる。
+     */
+    pullRequestReview?: boolean;
   } = {},
 ): string {
   // 引き継いで直す既存の PR のことと、その PR の指摘
@@ -2631,6 +2669,8 @@ export function buildPrompt(
   const content = taskContent(task, extra, step);
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
   const previous = task.outputs[step];
+  // 提出を PR のレビューの子タスクがレビューする工程は、提出の前のセルフレビューを省く（PBI-346）
+  const skipSelfReview = extra.pullRequestReview === true;
 
   switch (step) {
     case "document":
@@ -2825,7 +2865,7 @@ export function buildPrompt(
         `- ${AGENT_INSTRUCTIONS}を書く・直すタスクの要求は、エージェントがどう振る舞うかではなく、文書に何が書かれているべきか（手順・条件・決まり）で書く。受け入れの確かめ方は、自動のテストではなく差分で文書の中身を確かめることとして書く（エージェントを起動して確かめる形にしない）`,
         "- タスクの内容から判断できないことは、推測で要求にせず、下の「確認したいこと」に挙げる",
         ...codeLines(task),
-        ...readerLoadLines("要求要件"),
+        ...readerLoadLines("要求要件", !skipSelfReview),
         "",
         ...investigationLines(task),
         "",
@@ -2845,17 +2885,21 @@ export function buildPrompt(
       );
       const narrowed = reviewRework(task, "requirements", rework);
       lines.push(
-        ...documentVerificationLines(task, "requirements"),
+        ...documentVerificationLines(task, "requirements", skipSelfReview),
         ...(light
           ? answerOnlyCheckLines("要求要件", previous)
-          : selfReviewLines(
-              "design-doc",
-              "要求要件",
-              narrowed,
-              narrowed ? fixRunCauses(task, "requirements") : [],
-            )),
+          : skipSelfReview
+            ? skippedSelfReviewLines("要求要件")
+            : selfReviewLines(
+                "design-doc",
+                "要求要件",
+                narrowed,
+                narrowed ? fixRunCauses(task, "requirements") : [],
+              )),
       );
-      if (extra.inputDir) lines.push(...provenanceLines("requirements", extra.inputDir));
+      if (extra.inputDir) {
+        lines.push(...provenanceLines("requirements", extra.inputDir, !skipSelfReview));
+      }
       return lines.join("\n");
     }
     case "design": {
@@ -2877,7 +2921,7 @@ export function buildPrompt(
         "- 文書・コメント・文言だけの変更（実行される振る舞いの無い変更）の観点は、何が書かれているべきかを期待する結果にし、実装は差分で確かめる（テストを書かない）。ファイルがある・読めることを確かめる観点にしない。sacty が置く要求要件・設計のファイルは、観点の対象にしない",
         `- ${AGENT_INSTRUCTIONS}を書く・直す観点は、エージェントがどう振る舞うかではなく、文書に何が書かれているべきか（手順・条件・決まり）を期待する結果にする（エージェントを起動して確かめる観点にしない）`,
         ...codeLines(task),
-        ...readerLoadLines("設計"),
+        ...readerLoadLines("設計", !skipSelfReview),
         "",
         "設計の本文のあとに、テスト観点を次の形式で必ず付けてください。",
         "```json",
@@ -2923,17 +2967,21 @@ export function buildPrompt(
       );
       const narrowed = reviewRework(task, "design", rework);
       lines.push(
-        ...documentVerificationLines(task, "design"),
+        ...documentVerificationLines(task, "design", skipSelfReview),
         ...(light
           ? answerOnlyCheckLines("設計とテスト観点", previous)
-          : selfReviewLines(
-              "design-doc",
-              "設計とテスト観点",
-              narrowed,
-              narrowed ? fixRunCauses(task, "design") : [],
-            )),
+          : skipSelfReview
+            ? skippedSelfReviewLines("設計とテスト観点")
+            : selfReviewLines(
+                "design-doc",
+                "設計とテスト観点",
+                narrowed,
+                narrowed ? fixRunCauses(task, "design") : [],
+              )),
       );
-      if (extra.inputDir) lines.push(...provenanceLines("design", extra.inputDir));
+      if (extra.inputDir) {
+        lines.push(...provenanceLines("design", extra.inputDir, !skipSelfReview));
+      }
       return lines.join("\n");
     }
     case "split": {
@@ -3093,7 +3141,7 @@ export function buildPrompt(
           // 取り込みで競合したファイルと、人が PR に足したコミットのこと（ほかの実装の指示と同じ。PBI-334）
           ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         );
-        lines.push(...implementSelfReviewLines(task, "修正"));
+        lines.push(...implementSelfReviewLines(task, "修正", skipSelfReview));
         return lines.join("\n");
       }
       // テストの仕組みが無いタスク（PBI-94）は、テストを書かせず、観点ごとにどう満たしたかを説明に書かせる
@@ -3101,7 +3149,7 @@ export function buildPrompt(
       // 要求要件・設計の工程を経ないタスク（direct・工程の見直し）は、タスクの内容と集めた情報（前段の調査があればその結果）から実装する
       if (!designed && withoutRequirements(task)) {
         return [
-          ...directImplementLines(task, content, previous, remarks),
+          ...directImplementLines(task, content, previous, remarks, skipSelfReview),
           ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         ].join("\n");
       }
@@ -3194,7 +3242,7 @@ export function buildPrompt(
         ...remarkLines(task, step, "観点ごとのテストの対応"),
         ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         ...proposalLines(task, step),
-        ...implementSelfReviewLines(task, "実装"),
+        ...implementSelfReviewLines(task, "実装", skipSelfReview),
       );
       return lines.join("\n");
     }
@@ -3607,7 +3655,12 @@ function outOfScopeApplies(task: Task): boolean {
  * 場所のパスで実行させる。実行するのは文書に効く検証だけで、文書が主対象のときの決まり（テスト・ビルド・型チェックは実行しない。
  * PBI-285）と食い違わせない。既存の PR を引き継ぐタスクは、成果物を PR に足さないので、入れない。
  */
-function documentVerificationLines(task: Task, step: "requirements" | "design"): string[] {
+function documentVerificationLines(
+  task: Task,
+  step: "requirements" | "design",
+  /** セルフレビューを省く工程か（報告が無いので、実行しなかった検証の理由の書き先を変える。PBI-346）。 */
+  skipSelfReview = false,
+): string[] {
   if (task.continuedPullRequest || !task.id) return [];
   return [
     "",
@@ -3615,7 +3668,9 @@ function documentVerificationLines(task: Task, step: "requirements" | "design"):
     `- 成果物は、sacty が ${stepDocumentPath(task, step)} に置いて PR に入れる。下書きは作業領域の外の一時ファイルなので、そのままではリポジトリの検証に掛からない`,
     "- リポジトリが定める、文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査など。AGENTS.md・CONTRIBUTING・README の開発手順、CI の設定、パッケージの設定で探す）を、その成果物に対して実行し、通してから提出する。下書きは置かれる場所とは別のパスにあるので、置かれる場所のパスとして検査できる方法（ファイルのパスを指定して、内容を標準入力から渡す指定など）で実行する。リポジトリには書かない",
     "- 実行するのは文書に効く検証だけにする。テスト・ビルド・型チェック・コードのリンターは実行しない（文書が主対象のときの決まり）",
-    "- 実行しなかった検証、実行できなかった検証（文書に効く検証が無い・ツールが環境に無いなど）は、その検証と理由を、セルフレビューの報告の summary に書く。理由を書かずに省かない",
+    skipSelfReview
+      ? "- 実行できなかった検証（文書に効く検証が無い・ツールが環境に無いなど）があっても、成果物の本文には書かずに提出する（PR の CI と PR のレビューが確かめる）。実行できる検証は省かない"
+      : "- 実行しなかった検証、実行できなかった検証（文書に効く検証が無い・ツールが環境に無いなど）は、その検証と理由を、セルフレビューの報告の summary に書く。理由を書かずに省かない",
     "- 検証を通すために、検証の設定を弱めない",
   ];
 }
@@ -3625,7 +3680,7 @@ function documentVerificationLines(task: Task, step: "requirements" | "design"):
  * 実行しなかった検証は理由を実装の説明に書かせる。セルフレビューの検証の手順（既定のスキルの verification-run）とは別に、
  * 指示の側で直接伝える（スキルの手順を読み飛ばしても、検証の対象が分かるように）。
  */
-function implementVerificationLines(task: Task): string[] {
+function implementVerificationLines(task: Task, selfReview = true): string[] {
   const places = stepDocumentPlaces(task);
   return [
     "",
@@ -3641,7 +3696,7 @@ function implementVerificationLines(task: Task): string[] {
       : []),
     // テストは、途中は関係するものだけ、全件は最後の変更の後に1回（PBI-316）。文書だけの依頼はテストを実行せず、テストの仕組みが
     // 無いタスク（noTestsReason）は実行するテストが無いので出さない（要求されていないテストの環境を足させない）
-    ...(runsTests(task) ? IMPLEMENT_TEST_SCOPE_LINES : []),
+    ...(runsTests(task) ? implementTestScopeLines(selfReview) : []),
     "- 実行しなかった検証、実行できなかった検証（ツールが環境に無いなど）は、その検証と理由を実装の説明に書く。理由を書かずに省かない",
     "- 検証を通すために、検証の設定やテストを弱めない",
   ];
@@ -3657,10 +3712,14 @@ function runsTests(task: Task): boolean {
  * 実行させ、全件は最後の変更の後に1回だけ実行させる（その記録を、最終レビューが同じ内容の結果として使い回す）。関係するテストの
  * 選び方は、リポジトリのテストの実行器の絞り込みから決めさせ、決められなければ全件にさせる。特定の言語・実行器に寄せない。
  */
-export const IMPLEMENT_TEST_SCOPE_LINES = [
-  "- テストは、作業の途中（実装と確かめの繰り返し・セルフレビューの各回）では、変更に関係するテスト（変えたファイルのテスト・足したテスト・変えたコードを使うテスト）だけを実行してよい。選び方は、リポジトリのテストの実行器の絞り込み（ファイル・ディレクトリ・パッケージ・テストの名前の指定など）で決め、決められなければ全件を実行する",
-  "- 最後の変更の後（セルフレビューを終え、もう作業領域を変えないとき）に、テストの全件を1回実行し、通してから提出する。関係するテストだけの結果で提出しない。全件の失敗を直したら、直した後にもう1回全件を実行する",
-];
+function implementTestScopeLines(selfReview: boolean): string[] {
+  return [
+    `- テストは、作業の途中（実装と確かめの繰り返し${selfReview ? "・セルフレビューの各回" : ""}）では、変更に関係するテスト（変えたファイルのテスト・足したテスト・変えたコードを使うテスト）だけを実行してよい。選び方は、リポジトリのテストの実行器の絞り込み（ファイル・ディレクトリ・パッケージ・テストの名前の指定など）で決め、決められなければ全件を実行する`,
+    `- 最後の変更の後（${selfReview ? "セルフレビューを終え、" : ""}もう作業領域を変えないとき）に、テストの全件を1回実行し、通してから提出する。関係するテストだけの結果で提出しない。全件の失敗を直したら、直した後にもう1回全件を実行する`,
+  ];
+}
+/** セルフレビューをさせる工程の、テストの範囲の指示。省く工程（PBI-346）では、セルフレビューに触れない。 */
+export const IMPLEMENT_TEST_SCOPE_LINES = implementTestScopeLines(true);
 
 /**
  * 要求要件・設計の成果物を PR に足すタスクの、成果物の置き場所。足さないタスク（工程を省いた・既存の PR を引き継いだ）は undefined。

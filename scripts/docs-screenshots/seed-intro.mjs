@@ -41,7 +41,6 @@ projects.put(PAY, {
 
 // ---- よく使う中身 ----
 const BASE = "4f2c9a1e7b3d";
-const selfReview = { rounds: 2, passed: true, remaining: [], notReviewed: [], summary: "" };
 const watch = { deployment: { skill: ".agents/skills/deployment-observer/SKILL.md" } };
 const noWatch = {
   deployment: {
@@ -91,7 +90,6 @@ const implementation = L(
   );
   t.run(2.9, "implement", implementation, 0.64, {
     testMap: [{ viewpointId: "REQ", tests: ["src/client.test.ts › timeout from settings"] }],
-    selfReview,
   });
   t.add(2.5, "sacty", "FinalReviewSkipped", {});
   t.pr(2.45, PAY_REPO, 128, { awaitingReview: true, draft: true });
@@ -150,7 +148,6 @@ const implementation = L(
       "## Requirements\n\n- R-1 While an admin views the order history, the system shall offer a CSV download.\n",
     ),
     0.33,
-    { selfReview },
   );
   t.add(25.3, "sacty", "StepPullRequestPublished", {
     step: "requirements",
@@ -173,7 +170,6 @@ const implementation = L(
       "## Design\n\n- The server builds the CSV with the same filters as the list.\n- Test viewpoint: users without permission cannot download it.\n",
     ),
     0.48,
-    { selfReview },
   );
   t.add(1.6, "sacty", "StepPullRequestPublished", {
     step: "design",
@@ -240,7 +236,6 @@ const implementation = L(
   });
   t.run(8.2, "implement", implementation, 0.52, {
     testMap: [{ viewpointId: "REQ", tests: ["src/pdf.test.ts › embeds the font"] }],
-    selfReview,
   });
   t.add(7.8, "sacty", "FinalReviewSkipped", {});
   t.pr(7.75, WEB_REPO, 87);
@@ -263,7 +258,7 @@ function delivered(t, hoursAgo, repo, number, plan, steps, reason, cost) {
     L("## 目的と背景\n\n依頼のとおり。\n", "## Goal and background\n\nAs requested.\n"),
   );
   t.plan(hoursAgo - 0.2, plan, steps, reason, { testCommand: "npm test", ...noWatch });
-  t.run(hoursAgo - 0.3, "implement", implementation, cost, { selfReview });
+  t.run(hoursAgo - 0.3, "implement", implementation, cost);
   t.add(hoursAgo - 0.7, "sacty", "FinalReviewSkipped", {});
   t.pr(hoursAgo - 0.75, repo, number);
   t.submit(hoursAgo - 0.75, "implement");

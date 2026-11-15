@@ -375,10 +375,24 @@ The AI it uses and its cost are as follows.
 In the Requirements, Design, Implementation, and Document steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting.
 It fixes the work until no `must` findings (the severity that requires a fix) are left, then submits it (up to 5 rounds including the first).
 
+However, in a step whose submission becomes a PR that sacty creates, the agent does not self-review.
+sacty reviews that PR in a separate task (a PR review child task).
+The same deliverable is not reviewed twice.
+
+| How the work is submitted | Self-review |
+| --- | --- |
+| Requirements, Design, and Implementation approved in a PR that sacty creates | Not done (the PR review child task reviews it) |
+| Requirements and Design approved on the screen | Done |
+| An existing PR is continued and fixed | Done |
+| The Document step, and tasks without a target repository | Done |
+
+Even in a step without the self-review, the agent runs verification such as formatters, linters, and tests before submitting, and makes it pass.
+In such a step, no self-review result appears on the screen (it does not become "no record" either).
+
 In the Requirements and Design steps, the agent also runs the document verification the repository defines (a document formatter, a document lint, a link check, and so on) before submitting, and makes it pass.
 What it verifies is the Requirements or Design deliverable that sacty puts into the PR as a repository file (by default under `docs/sacty/<short task ID>/`).
 It does not run verification of code, such as tests, builds, and type checks.
-The reason for any verification it did not run is kept in the self-review report.
+The reason for any verification it did not run is kept in the self-review report (it is not kept in a step without the self-review).
 
 The result of the self-review appears on the deliverable cards, the Implementation card, and the approval screen.
 
@@ -388,7 +402,7 @@ The result of the self-review appears on the deliverable cards, the Implementati
 | Self-review: not passed · n rounds · m findings left | `must` findings were still left at the limit. Check them before deciding |
 | No self-review record | The agent did not report a result. Check the deliverable yourself |
 
-A rework that skips the self-review ([Self-review when the work is redone after comments](#self-review-when-the-work-is-redone-after-comments)) also results in "no record".
+In a step with the self-review, a rework that skips the self-review ([Self-review when the work is redone after comments](#self-review-when-the-work-is-redone-after-comments)) also results in "no record".
 
 The cost of the self-review is included in the cost of that step.
 
@@ -421,6 +435,9 @@ Fixes, posting, and starting subagents written in the skills or instruction file
 
 ### Self-review when the work is redone after comments
 
+This section describes steps with the self-review.
+In a step approved in a PR that sacty creates, the agent does not self-review when it redoes the work either ([Self-review before submitting](#self-review-before-submitting)).
+
 When the agent redoes the work after requested changes from a person or a finding from the AI review, the self-review uses fewer viewpoints.
 When you request changes on Requirements or Design, the range and the number of rounds of the review are narrowed too.
 
@@ -451,7 +468,7 @@ However, a fix run of the implementation or of a document draft is also reviewed
 Some reworks skip the self-review.
 When a PR comment only answers the "確認したいこと" (questions) and every answer is as recommended, the deliverable is not redone and not self-reviewed ([Cause of a request for changes](#cause-of-a-request-for-changes)).
 The agent only removes the answered items and re-reads the text to check, for example, that nothing other than the places reflecting the answers differs from the previous version.
-The self-review result is then "no record", and the next rework reviews the whole.
+In a step with the self-review, the result is then "no record", and the next rework reviews the whole.
 
 ## Approval in PRs (Requirements, Design, Implement)
 

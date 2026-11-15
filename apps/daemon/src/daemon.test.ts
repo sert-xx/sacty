@@ -8374,6 +8374,34 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     };
     const body = "https://github.com/acme/app/pull/12 のレビューの指摘に対応する";
 
+    it("引き継いだ PR にはレビューの子タスクを作らないので、子タスクを作るデーモンでも、実装のセルフレビューをさせる（PBI-346 受け入れ条件 3）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      pulls.feedbackBy[12] = [old];
+      const { service, executor } = makeService(
+        activity,
+        [
+          steps(),
+          implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
+        ],
+        { realPlanner: true, pulls, repos, now: () => Date.now() + 10 * 60_000, reviewTasks: true },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.continuedPullRequest?.number).toBe(12);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("既定のスキル review-dispatch（流れは self-review");
+      expect(prompt).not.toContain("--- 提出の前のセルフレビュー（行わない） ---");
+      // させたので、報告が無ければ記録なしにする
+      expect(task?.selfReviews?.implement).toBeNull();
+      expect(task?.reviewTasks).toBeUndefined();
+      activity.close();
+    });
+
     it("オーケストレーターが引き継ぐと判断したら、PR のブランチで実装し、同じブランチに積んで、新しい PR を作らない", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
@@ -26345,6 +26373,99 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(restarted.get(childId)?.task.reviewOf).toEqual({ taskId: id, step: "requirements" });
         again.close();
       }
+    });
+
+    describe("PR のレビューの子タスクがレビューする工程は、提出の前のセルフレビューを省く（PBI-346）", () => {
+      const SKIPPED = "--- 提出の前のセルフレビュー（行わない） ---";
+      const DISPATCH = "既定のスキル review-dispatch（流れは self-review";
+      const completed = (svc: TaskService, id: string, step: StepKey) =>
+        svc
+          .get(id)
+          ?.activity.findLast((e) => e.type === "AgentRunCompleted" && e.payload.step === step)
+          ?.payload as Record<string, unknown> | undefined;
+
+      it("要求要件の PR を子タスクがレビューするタスクは、セルフレビューを指示せず、成果物の検証は指示し、セルフレビューの記録を残さない（受け入れ条件 1・2・4）", async () => {
+        const made = await start([out("# 要求要件 v1")], { reviewTasks: true });
+        const { activity, service, executor, id } = made;
+        const prompt = promptOf(executor, 0);
+        expect(prompt).toContain(SKIPPED);
+        expect(prompt).not.toContain(DISPATCH);
+        expect(prompt).not.toContain('{"sacty-self-review": {"rounds"');
+        expect(prompt).toContain("--- 提出の前の検証（成果物のファイル） ---");
+        // させていないので、記録なし（null）にもしない（画面に警告を出さない）
+        expect(completed(service, id, "requirements")).toBeDefined();
+        expect(completed(service, id, "requirements")).not.toHaveProperty("selfReview");
+        expect(taskOf(service, id).selfReviews?.requirements).toBeUndefined();
+        expect(childOf(service, id)).not.toBe("");
+        activity.close();
+      });
+
+      it("実装の PR を子タスクがレビューするタスクは、セルフレビューを指示せず、検証と検証の記録・テストの全件は指示する（受け入れ条件 1・2・4）", async () => {
+        const made = await start([implement()], { steps: ["implement"], reviewTasks: true });
+        const { activity, service, executor, id } = made;
+        const prompt = promptOf(executor, 0);
+        expect(prompt).toContain(SKIPPED);
+        expect(prompt).not.toContain(DISPATCH);
+        expect(prompt).toContain("--- 提出の前の検証 ---");
+        expect(prompt).toContain("--- 実行した検証の記録 ---");
+        expect(prompt).toContain("テストの全件を1回実行し、通してから提出する");
+        expect(prompt).toContain("--- 提出の前に確かめる、レビューの基準 ---");
+        expect(completed(service, id, "implement")).not.toHaveProperty("selfReview");
+        expect(taskOf(service, id).selfReviews?.implement).toBeUndefined();
+        activity.close();
+      });
+
+      it("子タスクを作らないデーモンでは、今までどおりセルフレビューをさせ、報告が無ければ記録なしにする（受け入れ条件 3）", async () => {
+        for (const steps of [undefined, ["implement"] as StepKey[]]) {
+          rmSync(dbPath, { force: true });
+          const made = await start([steps ? implement() : out("# 要求要件 v1")], {
+            ...(steps ? { steps } : {}),
+          });
+          const { activity, service, executor, id } = made;
+          const step = steps ? "implement" : "requirements";
+          expect(promptOf(executor, 0), step).toContain(DISPATCH);
+          expect(promptOf(executor, 0), step).not.toContain(SKIPPED);
+          expect(completed(service, id, step), step).toMatchObject({ selfReview: null });
+          activity.close();
+        }
+      });
+
+      it("要求要件を画面で承認するタスク（PR を作らない）は、子タスクを作るデーモンでも、セルフレビューをさせる（受け入れ条件 3）", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const { service, executor } = makeService(activity, [out("# 要求要件 v1")], {
+          reviewTasks: true,
+        });
+        const { id } = service.createTask({
+          projectId: "default",
+          title: "決済API",
+          body: "タスクの本文",
+        });
+        await service.runNext(id);
+        expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
+        expect(taskOf(service, id).stepPullRequests).toEqual([]);
+        expect(promptOf(executor, 0)).toContain(DISPATCH);
+        expect(promptOf(executor, 0)).not.toContain(SKIPPED);
+        expect(completed(service, id, "requirements")).toMatchObject({ selfReview: null });
+        activity.close();
+      });
+
+      it("指摘を受けた直しの実行でも、セルフレビューを省く（受け入れ条件 5）", async () => {
+        const pulls = new FakePulls();
+        const made = await start(
+          [out("# 要求要件 v1"), rework("requirements", "要求要件で直せる"), out("# 要求要件 v2")],
+          { pulls, reviewTasks: true },
+        );
+        const { activity, service, executor, id } = made;
+        pulls.feedbackBy[7] = [item("comment:1")];
+        await service.checkPullRequests();
+        await service.runNext(id);
+        const prompt = promptOf(executor, executor.calls.length - 1);
+        expect(prompt).toContain("受け入れ条件が曖昧");
+        expect(prompt).toContain(SKIPPED);
+        expect(prompt).not.toContain(DISPATCH);
+        expect(taskOf(service, id).selfReviews?.requirements).toBeUndefined();
+        activity.close();
+      });
     });
 
     it("レビューの子タスクは、親タスクが集めた情報を引き継ぎ、情報収集を実行せずにレビューの工程へ進む（PBI-345）", async () => {

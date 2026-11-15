@@ -67,7 +67,6 @@ const WEB_REPO = "https://github.com/acme/billing-web";
 const PORTAL_REPO = "https://github.com/acme/portal";
 
 // ---- よく使う中身 ----
-const selfReview = { rounds: 2, passed: true, remaining: [], notReviewed: [], summary: "" };
 /** マージの後の監視をする（対象のリポジトリに、デプロイの確認のスキルがある）。 */
 const watch = { deployment: { skill: ".agents/skills/deployment-observer/SKILL.md" } };
 /** マージの後の監視を飛ばす（スキルが無い）。 */
@@ -170,7 +169,6 @@ function implementationPr(t, hoursAgo, { child, repo, number, title, commit }) {
     0.64,
     {
       testMap: [{ viewpointId: "REQ", tests: ["src/client.test.ts › timeout from settings"] }],
-      selfReview,
     },
   );
   implementationPr(t, 4.38, {
@@ -239,7 +237,6 @@ function implementationPr(t, hoursAgo, { child, repo, number, title, commit }) {
       "## Requirements\n\n- R-1 While an admin views the order history, the system shall offer a CSV download.\n",
     ),
     0.33,
-    { selfReview },
   );
   requirementsPr(t, 25.38, {
     child: "b2d4f6a8-0102",
@@ -314,7 +311,6 @@ function implementationPr(t, hoursAgo, { child, repo, number, title, commit }) {
       "## Requirements\n\n- R-1 When a user enters a query, the system shall return matches from both titles and bodies.\n",
     ),
     0.31,
-    { selfReview },
   );
   requirementsPr(t, 7.38, {
     child: "c3e5a7b9-0103",
@@ -360,7 +356,6 @@ function implementationPr(t, hoursAgo, { child, repo, number, title, commit }) {
     0.52,
     {
       testMap: [{ viewpointId: "REQ", tests: ["src/pdf.test.ts › embeds the font"] }],
-      selfReview,
     },
   );
   implementationPr(t, 29.38, {
@@ -418,7 +413,6 @@ function implementationPr(t, hoursAgo, { child, repo, number, title, commit }) {
     0.29,
     {
       testMap: [{ viewpointId: "REQ", tests: ["docs check"] }],
-      selfReview,
     },
   );
   implementationPr(t, 51.38, {
@@ -546,7 +540,7 @@ function implementationPr(t, hoursAgo, { child, repo, number, title, commit }) {
       "## Requirements\n\n- R-1 When the user's browser language is English, the system shall show the sign-in page in English.\n",
     ),
     1.38,
-    { ...sub, selfReview },
+    sub,
   );
   t.stepPr(8.38, "requirements", {
     repo: PORTAL_REPO,
