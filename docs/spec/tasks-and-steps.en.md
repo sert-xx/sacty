@@ -864,6 +864,9 @@ A run that ended after implementing only part of its scope, and a run that chang
   - Only the last declaration is used. If the last declaration cannot be read as JSON, sacty does not fall back to an earlier one and treats the run as undeclared (`extractCompletion`).
     An `incomplete` declaration is unfinished even when `remaining` is missing or unreadable. A `complete` declaration is also unfinished when `remaining` lists something.
     When a `complete` declaration has a `remaining` that cannot be read as a list (a string, items that are not text, and so on), sacty cannot tell whether something remains, so it treats the run as undeclared.
+  - A declaration whose intended value cannot be decided is treated as undeclared (it does not go on to the submission as complete).
+    This covers a declaration with a duplicated key (`hasDuplicateKeys`; JSON is read with the later value overwriting the earlier one; a declaration nested too deeply to check for duplicates is treated the same way), and the case where the last declaration is complete but another declaration in the same output does not read as complete (an unfinished declaration or one that cannot be read).
+    When the last declaration is unfinished, the run is unfinished regardless of the other declarations.
   - The declaration is kept in `completion` of `AgentRunCompleted` and removed from the implementation description (the PR body). When there is no readable declaration, it is `null`.
     JSON under the same heading in the output of a step other than Implementation is not read as a declaration and stays in the body.
   - Records from versions before the declaration have no `completion`. Such records go on to the submission without the declaration being checked.

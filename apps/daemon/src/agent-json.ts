@@ -837,6 +837,100 @@ export function unescapeJson(text: string): string {
   );
 }
 
+/** hasDuplicateKeys が読む入れ子の深さの上限。 */
+export const DUPLICATE_KEYS_DEPTH_MAX = 64;
+
+/**
+ * JSON のオブジェクトの文字列に、同じオブジェクトの中で重複したキーがあるか（入れ子のオブジェクト・配列の中も見る）。
+ * JSON.parse は、重複したキーを後の値で上書きするので、重複のある申告は、どちらの値を意図したかを決められない。キーは、
+ * エスケープを戻してから比べる。JSON として読める文字列を渡すこと（途中で形が崩れていれば、そこまでで false）。
+ * 入れ子が DUPLICATE_KEYS_DEPTH_MAX を超えたら例外にする（再帰で読むので、深さを限る。呼び出し側が、読めないものとして扱う）。
+ */
+export function hasDuplicateKeys(json: string): boolean {
+  let p = 0;
+  let depth = 0;
+  const skipSpace = () => {
+    while (p < json.length && /\s/.test(json[p] ?? "")) p++;
+  };
+  /** 文字列を読み進め、エスケープを戻した中身を返す（p は開く引用符にあること）。 */
+  const string = (): string => {
+    const start = p;
+    p++;
+    while (p < json.length && json[p] !== '"') p += json[p] === "\\" ? 2 : 1;
+    p++;
+    const raw = json.slice(start, p);
+    try {
+      return JSON.parse(raw) as string;
+    } catch {
+      return raw;
+    }
+  };
+  /** 値を1つ読み進める。重複したキーを見つけたら true。 */
+  const value = (): boolean => {
+    if (++depth > DUPLICATE_KEYS_DEPTH_MAX) throw new Error("JSON is nested too deeply");
+    try {
+      return nested();
+    } finally {
+      depth--;
+    }
+  };
+  const nested = (): boolean => {
+    skipSpace();
+    const c = json[p];
+    if (c === "{") {
+      p++;
+      const keys = new Set<string>();
+      skipSpace();
+      if (json[p] === "}") {
+        p++;
+        return false;
+      }
+      for (;;) {
+        skipSpace();
+        if (json[p] !== '"') return false;
+        const key = string();
+        if (keys.has(key)) return true;
+        keys.add(key);
+        skipSpace();
+        if (json[p] !== ":") return false;
+        p++;
+        if (value()) return true;
+        skipSpace();
+        if (json[p] !== ",") {
+          p++;
+          return false;
+        }
+        p++;
+      }
+    }
+    if (c === "[") {
+      p++;
+      skipSpace();
+      if (json[p] === "]") {
+        p++;
+        return false;
+      }
+      for (;;) {
+        if (value()) return true;
+        skipSpace();
+        if (json[p] !== ",") {
+          p++;
+          return false;
+        }
+        p++;
+      }
+    }
+    if (c === '"') {
+      string();
+      return false;
+    }
+    // 数・true・false・null
+    while (p < json.length && !/[,\]}\s]/.test(json[p] ?? "")) p++;
+    return false;
+  };
+  return value();
+}
+
 /**
  * 上限（UTF-16 のコード単位）に収まるように切る。切る位置がサロゲートペアの間なら1つ戻し、文字を壊さない
  * （PR #135 レビュー指摘）。

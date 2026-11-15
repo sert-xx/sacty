@@ -13,6 +13,7 @@ import {
 import {
   cut,
   type HeadingSpan,
+  hasDuplicateKeys,
   headingMentions,
   headingSpans,
   jsonCandidates,
@@ -65,14 +66,46 @@ function readRemaining(value: unknown): string[] | undefined {
     .slice(0, COMPLETION_REMAINING_MAX);
 }
 
+/** 申告の範囲（囲みの行を含むことがある）から、申告の JSON のオブジェクトの文字列を取り出す。 */
+function declaredObject(output: string, span: HeadingSpan): string {
+  const text = output.slice(span.start, span.end);
+  const open = text.indexOf("{");
+  const close = text.lastIndexOf("}");
+  return open >= 0 && close > open ? text.slice(open, close + 1) : "";
+}
+
+/**
+ * 1つの申告を読む。次のときは undefined（申告として読めない・どちらの値を意図したかを決められない）。
+ * - JSON として読めない・オブジェクトでない・status が complete でも incomplete でもない
+ * - 同じキーが重複している（見出し・status・remaining など。後の値で上書きされて読まれるため）。重複を調べられないほど入れ子が
+ *   深いものも同じ
+ * - status が complete で、remaining が一覧として読めない形（文字列・文でない項目など。残っていることがあるかを決められない）
+ * status が incomplete なら、remaining が無い・読めなくても未完了にする（未完了の申告を、形の崩れで落とさない）。status が
+ * complete でも、remaining に残っていることがあれば未完了にする（食い違う申告は、提出に進めない側に倒す）。
+ */
+function readDeclaration(output: string, span: HeadingSpan): ImplementationCompletion | undefined {
+  const value = span.value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  try {
+    if (hasDuplicateKeys(declaredObject(output, span))) return undefined;
+  } catch {
+    return undefined;
+  }
+  const declared = value as Record<string, unknown>;
+  // remaining を書いていなければ、残っていることは無い。書いてあって一覧として読めなければ、undefined
+  const remaining = declared.remaining === undefined ? [] : readRemaining(declared.remaining);
+  if (declared.status === "incomplete") return { status: "incomplete", remaining: remaining ?? [] };
+  if (declared.status !== "complete" || remaining === undefined) return undefined;
+  return remaining.length > 0 ? { status: "incomplete", remaining } : { status: "complete" };
+}
+
 /**
  * 実装の工程の出力から、完了の申告（見出し sacty-completion の最後のもの）を読む。読んだ JSON の範囲（本文から取り除く）も返す。
- * 申告が無い・形が合わなければ completion は無い。最後の申告が JSON として読めないときも、前の申告には戻らず、申告なしにする
- * （前の申告は、作業の途中のものでありうるため）。
- * - status が incomplete なら、remaining が無い・読めなくても未完了にする（未完了の申告を、形の崩れで落とさない）。
- * - status が complete でも、remaining に残っていることがあれば未完了にする（食い違う申告は、提出に進めない側に倒す）。
- * - status が complete で、remaining が一覧として読めない形（文字列・文でない項目など）なら、申告なしにする（残っていることが
- *   あるかを決められないので、完了として提出に進めない）。
+ * 申告が無い・読めなければ completion は無い（読めるかは readDeclaration）。
+ * - 最後の申告が読めないときは、前の申告には戻らず、申告なしにする（前の申告は、作業の途中のものでありうるため）。
+ * - 最後の申告が完了でも、同じ出力のほかの申告に、完了として読めないもの（未完了・読めない申告）があれば、申告なしにする
+ *   （どちらを意図したかを決められないので、完了として提出に進めない）。最後の申告が未完了なら、ほかの申告にかかわらず
+ *   未完了にする。
  */
 export function extractCompletion(output: string): {
   completion?: ImplementationCompletion;
@@ -91,19 +124,14 @@ export function extractCompletion(output: string): {
   const spans = [...read, ...headingMentions(output, COMPLETION_HEADING, read)];
   // 最後の申告は、取り除く範囲ではなく、申告が出てきた位置で選ぶ
   const position = (r: HeadingSpan) => r.at ?? r.start;
-  const last = spans.reduce<HeadingSpan | undefined>(
+  const lastSpan = spans.reduce<HeadingSpan | undefined>(
     (latest, r) => (latest === undefined || position(r) >= position(latest) ? r : latest),
     undefined,
-  )?.value;
-  if (!last || typeof last !== "object" || Array.isArray(last)) return { spans };
-  const declared = last as Record<string, unknown>;
-  // remaining を書いていなければ、残っていることは無い。書いてあって一覧として読めなければ、undefined
-  const remaining = declared.remaining === undefined ? [] : readRemaining(declared.remaining);
-  if (declared.status === "incomplete") {
-    return { completion: { status: "incomplete", remaining: remaining ?? [] }, spans };
-  }
-  if (declared.status !== "complete" || remaining === undefined) return { spans };
-  return remaining.length > 0
-    ? { completion: { status: "incomplete", remaining }, spans }
-    : { completion: { status: "complete" }, spans };
+  );
+  const completion = lastSpan && readDeclaration(output, lastSpan);
+  if (!completion) return { spans };
+  const contradicted =
+    completion.status === "complete" &&
+    spans.some((s) => s !== lastSpan && readDeclaration(output, s)?.status !== "complete");
+  return contradicted ? { spans } : { completion, spans };
 }
