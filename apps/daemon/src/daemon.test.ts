@@ -74,7 +74,7 @@ import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { CiSnapshot, CiStatusReader } from "./ci.js";
 import { COMMIT_CONVENTION_FILES } from "./commit-message.js";
-import { COMPLETION_HEADING } from "./completion.js";
+import { COMPLETION_FENCE, completionBlock } from "./completion.js";
 import {
   type AgentConfig,
   agentFor,
@@ -1247,9 +1247,11 @@ class FakeExecutor implements AgentExecutor {
   private withCompletion(invocation: Invocation, outcome: AgentOutcome): AgentOutcome {
     if (this.undeclaredCompletion || outcome.kind !== "completed") return outcome;
     const asked = invocation.command.some((arg) => arg.includes("--- 完了の申告 ---"));
-    if (!asked || outcome.output.includes(COMPLETION_HEADING)) return outcome;
-    const declared = `\`\`\`json\n${JSON.stringify({ [COMPLETION_HEADING]: { status: "complete" } })}\n\`\`\``;
-    return { ...outcome, output: `${outcome.output}\n\n${declared}` };
+    if (!asked || outcome.output.includes(COMPLETION_FENCE)) return outcome;
+    return {
+      ...outcome,
+      output: `${outcome.output}\n\n${completionBlock({ status: "complete" })}`,
+    };
   }
   /** 実行ごとに、エージェントが設定の場所に書く元のファイル（相対パスと中身。PBI-66）。無ければ書かない。 */
   sessionFiles?: (invocation: Invocation, runId: string) => Record<string, string>;
@@ -26493,7 +26495,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     });
 
     describe("終わっていない実装を提出にせず、変更の無いやり直しで行き止まりにしない（PBI-347）", () => {
-      const declare = (value: unknown) => block({ "sacty-completion": value });
+      const declare = (value: unknown) =>
+        `\`\`\`${COMPLETION_FENCE}\n${JSON.stringify(value)}\n\`\`\``;
       const MAP = block({
         "sacty-test-map": [{ viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] }],
       });
@@ -26545,8 +26548,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await settle(service, id);
         const prompt = promptOf(executor, 0);
         expect(prompt).toContain("--- 完了の申告 ---");
-        expect(prompt).toContain("範囲を実装し終えたかを、次の形式で必ず申告する");
-        expect(prompt).toContain('{"sacty-completion":{"status":"complete"}}');
+        expect(prompt).toContain(
+          "申告は、言語の名前を sacty-completion にしたコードブロックの中にだけ、下の形の JSON で書く",
+        );
+        expect(prompt).toContain('```sacty-completion\n{"status":"complete"}\n```');
         activity.close();
       });
 
@@ -26740,7 +26745,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       });
 
       it("完了の申告が読めない実行も、未完了と同じに扱って提出しない（受け入れ条件 4）", async () => {
-        const broken = '```json\n{"sacty-completion": {"status": "complete",}}\n```';
+        const broken = '```sacty-completion\n{"status": "complete",}\n```';
         const { activity, service, executor, pulls, repos, id } = await begin([
           out(["# 実装の説明", MAP, broken].join("\n\n")),
           implement("# 実装の説明 v2"),
@@ -26753,7 +26758,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         ).toMatchObject({ remaining: [], undeclared: true });
         expect(pulls.calls).toHaveLength(0);
         const prompt = promptOf(executor, 1);
-        expect(prompt).toContain("--- 前回の実行：実装し終えたかの申告がありませんでした ---");
+        expect(prompt).toContain("--- 前回の実行：実装し終えたかの申告を読めませんでした ---");
         expect(prompt).not.toContain("前回の申告にあった、残っていること");
         await settle(service, id);
         expect(taskOf(service, id).status).toBe("awaiting_approval");
@@ -26780,7 +26785,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           params: { count: 3, stalled: false, declared: false, remaining: "", total: 0 },
         });
         expect(renderMessage(task.pausedMessage as DaemonText, "ja")).toContain(
-          "実装し終えたかの申告をせずに終わりました",
+          "実装し終えたかの申告が無いか読めないまま終わりました",
         );
         expect(pulls.calls).toHaveLength(0);
         activity.close();

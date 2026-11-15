@@ -1395,7 +1395,7 @@ const ja: MessageDictionary = {
     `${
       declared
         ? "実装の工程が、範囲を実装し終える前に終わりました"
-        : "実装の工程が、実装し終えたかの申告をせずに終わりました"
+        : "実装の工程が、実装し終えたかの申告が無いか読めないまま終わりました"
     }（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。${
       total > 0
         ? `残っていること：${text(remaining)}${total > 5 ? ` ほか、全${total}件` : ""}。`
@@ -2196,7 +2196,7 @@ const en: MessageDictionary = {
     `${
       declared
         ? "The implementation step ended before it finished its scope"
-        : "The implementation step ended without declaring whether it finished"
+        : "The implementation step ended with its declaration of whether it finished missing or unreadable"
     } (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). ${
       total > 0
         ? `What remains: ${text(remaining)}${total > 5 ? ` and more, ${total} in total` : ""}. `

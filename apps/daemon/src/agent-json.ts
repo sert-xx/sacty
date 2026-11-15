@@ -837,6 +837,49 @@ export function unescapeJson(text: string): string {
   );
 }
 
+/**
+ * 言語の名前が name のコードブロック（フェンス）を、出てきた順に取り出し、本文から取り除く。専用のコードブロックだけを申告として
+ * 読むために使う（どこからどこまでが申告かを、フェンスで区切る）。CommonMark のフェンスの規則で読む：行頭の空白は3つまで、
+ * ``` か ~~~ を3つ以上、閉じるのは同じ文字で同じ数以上。ほかのコードブロックの中（例を引用した4つのバッククォートのフェンス
+ * など）にあるものは、取り出さない。閉じていないフェンスは、出力の終わりまでを中身にして、closed を false にする（どこまでが
+ * 申告かを決められない）。
+ */
+export function takeFences(
+  output: string,
+  name: string,
+): { output: string; fences: { body: string; closed: boolean }[] } {
+  const kept: string[] = [];
+  const fences: { body: string; closed: boolean }[] = [];
+  let fence: { char: string; size: number; ours: boolean; body: string[] } | undefined;
+  for (const line of output.split("\n")) {
+    if (!fence) {
+      const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      const marker = open?.[1];
+      const info = (open?.[2] ?? "").trim();
+      // バッククォートのフェンスの情報文字列には、バッククォートを書けない（CommonMark）
+      if (marker && !(marker.startsWith("`") && info.includes("`"))) {
+        const ours = info.split(/\s+/)[0] === name;
+        fence = { char: marker.charAt(0), size: marker.length, ours, body: [] };
+        if (!ours) kept.push(line);
+        continue;
+      }
+      kept.push(line);
+      continue;
+    }
+    const close = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line)?.[1];
+    if (close && close.charAt(0) === fence.char && close.length >= fence.size) {
+      if (fence.ours) fences.push({ body: fence.body.join("\n"), closed: true });
+      else kept.push(line);
+      fence = undefined;
+      continue;
+    }
+    if (fence.ours) fence.body.push(line);
+    else kept.push(line);
+  }
+  if (fence?.ours) fences.push({ body: fence.body.join("\n"), closed: false });
+  return { output: kept.join("\n"), fences };
+}
+
 /** hasDuplicateKeys が読む入れ子の深さの上限。 */
 export const DUPLICATE_KEYS_DEPTH_MAX = 64;
 

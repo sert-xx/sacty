@@ -1259,17 +1259,26 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 実装の実行が終わると、sacty は作業領域の内容をそのまま提出する（PR を作る・更新する）。
 範囲の一部だけを実装して終わった実行と、AI のレビューの指摘を受けても何も変えなかった実行は、提出にしない（PBI-347）。
 
-- 完了の申告：実装の工程の指示は、範囲を実装し終えたかを、見出し `sacty-completion` の JSON で必ず申告させる（`implementCompletionLines`）。
-  - 申告は、`status` が `complete` か `incomplete` で、`incomplete` のときは `remaining` に残っていることを書く。
+- 完了の申告：実装の工程の指示は、範囲を実装し終えたかを、言語の名前が `sacty-completion` のコードブロックで必ず申告させる（`implementCompletionLines`）。
+  - 申告は、コードブロックの中に、JSON のオブジェクトで書く。キーは、`status`（`complete` か `incomplete`）と、`remaining`（残っていることの一覧。省いてよい）だけ。
     `remaining` は 20 件まで、1件は 300 文字までで、超えた分は切る（`COMPLETION_REMAINING_MAX`・`COMPLETION_REMAINING_ITEM_MAX`。文字の途中では切らない）。
-  - 最後の申告だけを使う。最後の申告が JSON として読めなければ、前の申告に戻らず、申告なしにする（`extractCompletion`）。
-    `incomplete` の申告は、`remaining` が無い・読めなくても未完了にする。`complete` の申告でも、`remaining` に残っていることがあれば未完了にする。
-    `complete` の申告で、`remaining` が一覧として読めない形（文字列・文でない項目など）なら、残っていることがあるかを決められないので、申告なしにする。
-  - どの値を意図したかを決められない申告は、申告なしにする（完了として提出に進めない）。
-    同じキーが重複した申告（`hasDuplicateKeys`。JSON は後の値で上書きして読まれる。重複を調べられないほど入れ子が深い申告も同じ）と、最後の申告が完了で、同じ出力のほかの申告に、完了として読めないもの（未完了の申告・読めない申告）があるときが当たる。
-    最後の申告が未完了なら、ほかの申告にかかわらず、未完了にする。
-  - 申告は `AgentRunCompleted` の `completion` に残し、実装の説明（PR の本文）からは取り除く。申告が無い・読めなければ `null` にする。
-    実装でない工程の出力にある同じ見出しの JSON は、申告として読まず、本文に残す。
+  - 申告として読むのは、このコードブロックの中だけ（`extractCompletion`・`takeFences`）。どこからどこまでが申告かを、コードブロックで区切る。
+    コードブロックは、テストのコマンドの申告と同じ、CommonMark のフェンスの規則で見つける。
+    コードブロックの外の JSON や文と、ほかのコードブロックの中に例として書いたものは、申告として扱わない。
+  - 申告のコードブロックは、中身のすべてを、決まった形どおりに読めたときだけ使う（`readDeclaration`）。次のどれかに当たるものは、読めない申告にする（どちらを意図したかを、推し量って決めない）。
+    - JSON として読めない・オブジェクトでない・コードブロックが閉じていない
+    - `status` と `remaining` のほかのキーがある
+    - 同じキーが重複している（`hasDuplicateKeys`。JSON は後の値で上書きして読まれる。重複を調べられないほど入れ子が深いものも同じ）
+    - `status` が `complete` でも `incomplete` でもない
+    - `remaining` が、文の一覧でない
+  - 完了にするのは、申告のコードブロックのすべてを読めて、すべてが完了のときだけ。
+    - 申告のコードブロックが無い・読めない申告が1つでもある：申告なし（未完了として扱い、提出しない）
+    - すべて読めて、最後の申告が未完了：未完了（残っていることは、最後の申告のもの）
+    - すべて読めて、最後の申告が完了で、ほかに未完了の申告がある：申告なし
+    - `complete` の申告でも、`remaining` に残っていることがあれば、未完了として読む
+  - 申告は `AgentRunCompleted` の `completion` に残す。申告なしなら `null` にする。
+    申告のコードブロックは、読めないものも、実装の説明（PR の本文）から取り除く。
+    実装でない工程の出力にある同じ名前のコードブロックは、申告として読まず、本文に残す。
   - 申告させる前の版の記録には `completion` が無い。無い記録は、申告を確かめずに提出に進める。
 - 未完了のとき：`FinalReviewSkipped` の前に、最後の実行の申告（`Task.implementCompletion`）を確かめる。
   `incomplete` か `null` なら、`ImplementationIncomplete` を記録して、実装をやり直す。PR は作らず、更新もしない。
@@ -1295,7 +1304,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   - 子タスクがその先頭を指摘なしにしている・まだレビューしていない・レビューの途中のときと、子タスクを待たない PR（既存の PR を引き継ぐタスクなど）は、何も変えていなくても提出する。
 - どちらの一時停止も、以前の版の検証の一時停止（`verification`）ではないので、不合格のまま進める操作（`submitForReview`）の対象にしない。
 
-コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）
+コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/agent-json.ts`（`takeFences`・`hasDuplicateKeys`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）
 
 ### 同じ内容の検証の使い回し
 

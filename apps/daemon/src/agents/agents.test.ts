@@ -2171,7 +2171,7 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
       const inv = await buildInvocation(agent, "prompt", secrets, () => {}, role);
       return (JSON.parse(inv.env.SACTY_STUB_RESULT ?? "{}") as { result: string }).result;
     };
-    const complete = '```json\n{"sacty-completion":{"status":"complete"}}\n```';
+    const complete = '```sacty-completion\n{"status":"complete"}\n```';
     expect(await resultOf(stubbed({}), "implement")).toBe(`# 実装（スタブ）\n\n${complete}`);
     // 工程ごとの出力でも同じ
     expect(await resultOf(stubbed({ outputs: { implement: "# 実装 A" } }), "implement")).toBe(
@@ -2179,7 +2179,7 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
     );
     // 申告を書いた出力（未完了の再現）は、そのまま
     const incomplete =
-      '途中まで\n\n```json\n{"sacty-completion":{"status":"incomplete","remaining":["docs"]}}\n```';
+      '途中まで\n\n```sacty-completion\n{"status":"incomplete","remaining":["docs"]}\n```';
     expect(await resultOf(stubbed({ outputs: { implement: incomplete } }), "implement")).toBe(
       incomplete,
     );

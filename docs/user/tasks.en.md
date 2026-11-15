@@ -1514,7 +1514,7 @@ sacty submits only runs that declared they finished (it opens or updates the PR)
 
 When the implementation does not finish, the task proceeds as follows.
 
-1. A run that declared it is unfinished, or declared nothing, is not submitted. No PR is opened, and an existing PR is not updated.
+1. A run that declared it is unfinished, or whose declaration is missing or unreadable, is not submitted. No PR is opened, and an existing PR is not updated.
 2. sacty redoes the implementation, passing along what remains.
 3. If it does not finish 3 times in a row, the task becomes "Paused: the implementation keeps ending unfinished".
    If redoing changed nothing in the workspace, the task stops without waiting for 3 times.

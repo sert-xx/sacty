@@ -398,7 +398,7 @@ const ja = {
       `PR を作らず、ブランチまで（${branch}・${commit}）`,
     NoChangesFound: "実装に変更が無いため、PR を作らずに承認待ち",
     ImplementationIncomplete: (undeclared: boolean, remaining: string) =>
-      `${undeclared ? "実装し終えたかの申告が無い" : "実装が終わっていない"}ため、提出せずに実装をやり直す${remaining ? `（残り：${remaining}）` : ""}`,
+      `${undeclared ? "実装し終えたかの申告が無いか読めない" : "実装が終わっていない"}ため、提出せずに実装をやり直す${remaining ? `（残り：${remaining}）` : ""}`,
     ImplementationUnchanged: (number: number, commit: string) =>
       `やり直しの実装が、AI のレビューの指摘が残る PR #${number}（${commit}）を何も変えなかったため、提出しない`,
     prDrafted: (number: number | undefined, draft: boolean, commit: string) =>
@@ -1047,7 +1047,7 @@ const en: LabelMessages = {
     branchPushed: (branch, commit) => `No PR; branch only (${branch} · ${commit})`,
     NoChangesFound: "The implementation changed nothing, so no PR was opened; awaiting approval",
     ImplementationIncomplete: (undeclared, remaining) =>
-      `${undeclared ? "The implementation did not declare whether it finished" : "The implementation is unfinished"}, so it is redone without being submitted${remaining ? ` (remaining: ${remaining})` : ""}`,
+      `${undeclared ? "The declaration of whether the implementation finished is missing or unreadable" : "The implementation is unfinished"}, so it is redone without being submitted${remaining ? ` (remaining: ${remaining})` : ""}`,
     ImplementationUnchanged: (number, commit) =>
       `The rework changed nothing in PR #${number} (${commit}), on which the AI review left findings, so it is not submitted`,
     prDrafted: (number, draft, commit) =>

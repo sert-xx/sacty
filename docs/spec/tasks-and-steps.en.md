@@ -858,17 +858,26 @@ Related ADR: [Do not submit an unfinished implementation, and do not reach a dea
 When an implementation run ends, sacty submits the workspace as it is (it opens or updates the PR).
 A run that ended after implementing only part of its scope, and a run that changed nothing after AI review findings, are not submitted (PBI-347).
 
-- Completion declaration: the instruction of the Implementation step makes the agent always declare whether it finished its scope, as JSON under the heading `sacty-completion` (`implementCompletionLines`).
-  - The declaration has a `status` of `complete` or `incomplete`; when it is `incomplete`, `remaining` lists what remains.
+- Completion declaration: the instruction of the Implementation step makes the agent always declare whether it finished its scope, in a code block whose language name is `sacty-completion` (`implementCompletionLines`).
+  - The declaration is a JSON object written inside the code block. Its only keys are `status` (`complete` or `incomplete`) and `remaining` (the list of what remains; it may be omitted).
     `remaining` holds up to 20 items of up to 300 characters each, and the rest is cut (`COMPLETION_REMAINING_MAX`, `COMPLETION_REMAINING_ITEM_MAX`; never in the middle of a character).
-  - Only the last declaration is used. If the last declaration cannot be read as JSON, sacty does not fall back to an earlier one and treats the run as undeclared (`extractCompletion`).
-    An `incomplete` declaration is unfinished even when `remaining` is missing or unreadable. A `complete` declaration is also unfinished when `remaining` lists something.
-    When a `complete` declaration has a `remaining` that cannot be read as a list (a string, items that are not text, and so on), sacty cannot tell whether something remains, so it treats the run as undeclared.
-  - A declaration whose intended value cannot be decided is treated as undeclared (it does not go on to the submission as complete).
-    This covers a declaration with a duplicated key (`hasDuplicateKeys`; JSON is read with the later value overwriting the earlier one; a declaration nested too deeply to check for duplicates is treated the same way), and the case where the last declaration is complete but another declaration in the same output does not read as complete (an unfinished declaration or one that cannot be read).
-    When the last declaration is unfinished, the run is unfinished regardless of the other declarations.
-  - The declaration is kept in `completion` of `AgentRunCompleted` and removed from the implementation description (the PR body). When there is no readable declaration, it is `null`.
-    JSON under the same heading in the output of a step other than Implementation is not read as a declaration and stays in the body.
+  - Only the inside of this code block is read as a declaration (`extractCompletion`, `takeFences`). The code block marks where a declaration starts and ends.
+    The code block is found by the CommonMark fence rules, the same as the test command declaration.
+    JSON or text outside the code block, and an example written inside another code block, are not treated as a declaration.
+  - A declaration code block is used only when its whole content reads exactly in the fixed shape (`readDeclaration`). A block that matches any of the following is an unreadable declaration (sacty does not guess which value was meant).
+    - It cannot be read as JSON, it is not an object, or the code block is not closed
+    - It has a key other than `status` and `remaining`
+    - A key is duplicated (`hasDuplicateKeys`; JSON is read with the later value overwriting the earlier one; a block nested too deeply to check for duplicates is treated the same way)
+    - `status` is neither `complete` nor `incomplete`
+    - `remaining` is not a list of text
+  - The run is complete only when every declaration code block is readable and every one is complete.
+    - No declaration code block, or at least one unreadable declaration: undeclared (treated as unfinished and not submitted)
+    - All readable, and the last declaration is unfinished: unfinished (what remains comes from the last declaration)
+    - All readable, the last declaration is complete, and another one is unfinished: undeclared
+    - A `complete` declaration is read as unfinished when `remaining` lists something
+  - The declaration is kept in `completion` of `AgentRunCompleted`. When the run is undeclared, it is `null`.
+    Declaration code blocks, including unreadable ones, are removed from the implementation description (the PR body).
+    A code block of the same name in the output of a step other than Implementation is not read as a declaration and stays in the body.
   - Records from versions before the declaration have no `completion`. Such records go on to the submission without the declaration being checked.
 - When unfinished: before `FinalReviewSkipped`, sacty checks the declaration of the last run (`Task.implementCompletion`).
   If it is `incomplete` or `null`, sacty records `ImplementationIncomplete` and redoes the implementation. It does not open or update the PR.
@@ -894,7 +903,7 @@ A run that ended after implementing only part of its scope, and a run that chang
   - When the child task concluded with no findings on that head, has not reviewed it yet, or is still reviewing it, and for PRs that do not wait for the child task (such as a task that takes over an existing PR), sacty submits even if nothing changed.
 - Neither pause is the verification pause of older versions (`verification`), so neither can be moved on without passing (`submitForReview`).
 
-Code: `apps/daemon/src/completion.ts` (`implementCompletionLines`, `extractCompletion`), `apps/daemon/src/service.ts` (`implementationCompleted`, `workspaceFingerprint`, `reviewLeftFindingsOn`, `publish`, `settlePausedDraft`), `apps/daemon/src/repository.ts` (`treeId`), `apps/daemon/src/prompts.ts` (`feedbackLines`, `extractBlocks`), `packages/core/src/events.ts` (`ImplementationCompletion`, `ImplementationIncomplete`, `ImplementationUnchanged`), `packages/core/src/projection.ts` (`implementCompletion`, `incompleteRuns`, `nextIncompleteRuns`)
+Code: `apps/daemon/src/completion.ts` (`implementCompletionLines`, `extractCompletion`), `apps/daemon/src/agent-json.ts` (`takeFences`, `hasDuplicateKeys`), `apps/daemon/src/service.ts` (`implementationCompleted`, `workspaceFingerprint`, `reviewLeftFindingsOn`, `publish`, `settlePausedDraft`), `apps/daemon/src/repository.ts` (`treeId`), `apps/daemon/src/prompts.ts` (`feedbackLines`, `extractBlocks`), `packages/core/src/events.ts` (`ImplementationCompletion`, `ImplementationIncomplete`, `ImplementationUnchanged`), `packages/core/src/projection.ts` (`implementCompletion`, `incompleteRuns`, `nextIncompleteRuns`)
 
 ### Reusing verification results for the same content
 
