@@ -526,6 +526,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       );
     case "InformationGathered":
       return e.InformationGathered(event.payload.sources.length);
+    case "GatheredInherited":
+      return e.GatheredInherited(event.payload.sources.length);
     case "TicketTriaged":
       return e.TicketTriaged(
         event.payload.repo,

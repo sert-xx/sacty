@@ -64,6 +64,8 @@ export function openSeed(name, argv = process.argv.slice(2)) {
     };
     /** タスクブランチを作ったか（要求要件・設計の PR の前に、1回だけ作る）。 */
     let branched = false;
+    /** 開始時に集めた情報（PR をレビューする子タスクが引き継ぐ）。 */
+    let gathered;
     return {
       add,
       create(hoursAgo, title, body, extra = {}) {
@@ -85,6 +87,7 @@ export function openSeed(name, argv = process.argv.slice(2)) {
       },
       /** タスクの開始時の情報収集（集めた情報のまとめ）。工程を選ぶ（plan）前に書く。 */
       gather(hoursAgo, brief, extra = {}) {
+        gathered = { brief, sources: extra.sources ?? [] };
         add(hoursAgo, "gatherer", "InformationGathered", {
           brief,
           sources: [],
@@ -205,7 +208,8 @@ export function openSeed(name, argv = process.argv.slice(2)) {
       },
       /**
        * この PR をレビューする子タスク（指摘なしでレビューを投稿して完了したもの）を入れ、このタスクに記録する。
-       * 子タスクも、ほかのタスクと同じく、リポジトリを用意して情報収集をしてから、工程（レビューだけ）が決まる。
+       * 子タスクは、リポジトリを用意し、このタスクが開始時に集めた情報を引き継いでから（集め直さない。このタスクに
+       * まとめが無ければ、子タスクが集める）、工程（レビューだけ）が決まる。
        * commit は、このタスクが PR に積んだコミット（同じコミットなので、デーモンは再レビューを始めない）。
        * @param {number} hoursAgo 子タスクを作った時刻（PR を作った直後）
        * @param {{ id: string, step: "requirements" | "design" | "implement", repo: string, number: number,
@@ -228,13 +232,17 @@ export function openSeed(name, argv = process.argv.slice(2)) {
         });
         add(hoursAgo, "sacty", "ReviewTaskCreated", { taskId: childId, step, repo, number });
         r.repo(hoursAgo - 0.005, repo);
-        r.gather(
-          hoursAgo - 0.01,
-          L(
-            `## 目的と背景\n\nPR #${number} のレビュー。\n`,
-            `## Goal and background\n\nReview of PR #${number}.\n`,
-          ),
-        );
+        if (gathered) {
+          r.add(hoursAgo - 0.01, "sacty", "GatheredInherited", { from: id, ...gathered });
+        } else {
+          r.gather(
+            hoursAgo - 0.01,
+            L(
+              `## 目的と背景\n\nPR #${number} のレビュー。\n`,
+              `## Goal and background\n\nReview of PR #${number}.\n`,
+            ),
+          );
+        }
         // 撮るときの設定（capture.mjs の CONFIG）には images があるので、レビューの工程のイメージだけは、
         // オーケストレーターが選ぶ（既定のイメージ）
         r.add(hoursAgo - 0.02, "orchestrator", "StepsChosen", {

@@ -289,6 +289,8 @@ const ja = {
       `${step}＝${to ? `${to.name}${to.location ? `：${to.location}` : ""}` : "書き出さない"}${reason ? `（${reason}）` : ""}`,
     InformationGathered: (sources: number) =>
       `タスクに関係する情報を集めて、まとめた（情報源 ${sources} 件）`,
+    GatheredInherited: (sources: number) =>
+      `親タスクが集めた情報を引き継いだ（情報源 ${sources} 件。集め直していない）`,
     TicketTriaged: (repo: string, reason: string, byPerson: boolean) =>
       byPerson
         ? `作業するリポジトリを選んだ：${repo}（人間）`
@@ -950,6 +952,8 @@ const en: LabelMessages = {
       `${step}=${to ? `${to.name}${to.location ? `: ${to.location}` : ""}` : "not exported"}${reason ? ` (${reason})` : ""}`,
     InformationGathered: (sources) =>
       `Gathered and summarized the information related to the task (${sources} sources)`,
+    GatheredInherited: (sources) =>
+      `Inherited the information the parent task gathered (${sources} sources; not gathered again)`,
     TicketTriaged: (repo, reason, byPerson) =>
       byPerson
         ? `Chose the repository: ${repo} (person)`

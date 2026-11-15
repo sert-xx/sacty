@@ -36,6 +36,9 @@ const ja = {
     title: "集めた情報",
     hint: "タスクの開始時に、情報収集のエージェントがチケットの親・リンク先・URL・MCP・外部 PF などから集め、関係するものだけにまとめた情報です。オーケストレーター・すべての工程に渡します。",
     sources: (n: number) => `情報源 ${n} 件`,
+    inheritedHint:
+      "この PR を作った親タスクが、タスクの開始時に集めてまとめた情報です。このタスクでは集め直さずに引き継ぎ、レビューの工程に渡します。",
+    inherited: (sources: string) => `${sources}・親タスクから引き継ぎ`,
   },
   operationSettings: {
     title: "作業の実行設定",
@@ -561,6 +564,9 @@ const en: TaskMessages = {
     title: "Gathered information",
     hint: "At the start of the task, the information gatherer collected this from the ticket's parents, links, URLs, MCP servers and external platforms, and kept only what is relevant. It is given to the Orchestrator and every step.",
     sources: (n: number) => `${n} sources`,
+    inheritedHint:
+      "The parent task that opened this pull request gathered and summarized this at its start. This task inherits it without gathering again and gives it to the review step.",
+    inherited: (sources: string) => `${sources}, inherited from the parent task`,
   },
   operationSettings: {
     title: "Operation settings",

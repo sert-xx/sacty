@@ -1988,6 +1988,28 @@ const InformationGathered = z.object({
 });
 
 /**
+ * PR のレビューの子タスクが、親タスク（PR を作ったタスク）の開始時に集めた情報を引き継いだ（PBI-345）。子タスクは情報収集の
+ * エージェントを実行しない（費用は無い）。from は親タスクの ID。親にまとめが無ければ記録せず、子タスクが自分で集める
+ * （InformationGathered）。
+ */
+const GatheredInherited = z.object({
+  type: z.literal("GatheredInherited"),
+  payload: z.object({
+    from: z.string().min(1),
+    brief: z.string().min(1).max(GATHERED_BRIEF_MAX),
+    sources: z
+      .array(
+        z.object({
+          title: z.string().min(1).max(500),
+          url: z.string().max(2000).optional(),
+        }),
+      )
+      .max(100)
+      .default([]),
+  }),
+});
+
+/**
  * チケットから取り込んだタスクの、作業するリポジトリ・題・概要を決めた（PBI-52）。オーケストレーターがチケットを読んで
  * 決める（actor は orchestrator。費用を含む）。決められなかったときは、人がリポジトリを選ぶ（actor は person）。
  */
@@ -3458,6 +3480,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepAgentChanged,
   ServicesStarted,
   InformationGathered,
+  GatheredInherited,
   TicketTriaged,
   RepositoryChosen,
   TicketPullRequestCommented,

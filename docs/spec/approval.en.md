@@ -104,6 +104,7 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
 - The child task is a PR-review-only task (`source.review: sacty`; [Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks)), and holds the parent's ID and the step that opened the PR in `reviewOf` of `TaskCreated`.
   Its title is `[PR #<number>] <parent title>` (a form that does not depend on the language; up to 200 characters; a long parent title is cut with `…` without splitting a character), its project is the parent's, and its budget cap is `budget.default_per_task_usd` (the child task's cost counts toward the child task's budget).
   It is separate from split subtasks (`parent`), and is not waited for by a split or included in an integration review.
+  When the parent task has information it gathered at its start, the child task inherits it and does not run the information gatherer ([Information gathering](tasks-and-steps.en.md#information-gathering)).
 - `ReviewTaskCreated` (the child task's ID, step, and PR) is recorded on the parent (`Task.reviewTasks`).
   One per PR (repository and number). A PR with a record does not get another when updated. When the PR is recreated (new number), one is created for the new PR.
   However, if the last child task was cancelled because the PR was closed (`reason: pull_request_closed`), the PR check after the PR is reopened creates a new child task and adds a record (a cancelled task cannot be re-reviewed; `needsReviewTask`).

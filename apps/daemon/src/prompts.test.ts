@@ -227,6 +227,28 @@ describe("レビューの工程の差分の渡し方（PBI-65）", () => {
   } as unknown as Task;
   const big = `diff --git a/x b/x\n${"+".repeat(10)}\n`.repeat(20_000);
 
+  it("親タスクから引き継いだまとめは、引き継いだものだと伝えてレビューの指示に添える。自分で集めたまとめには添えない（PBI-345）", () => {
+    const note =
+      "このまとめは、この PR を作った親タスクが開始時に集めたものを引き継いだものです（このタスクでは集め直していません）。PR を作る前の情報なので、PR の変更の内容は、渡された差分とコードで確かめてください。";
+    const gathered = {
+      brief: "PAY-100：二重請求をなくす",
+      sources: [],
+      at: "2026-11-15T00:00:00.000Z",
+    };
+    const inherited = buildPrompt(
+      { ...reviewTask, gathered: { ...gathered, inheritedFrom: "t0" } } as Task,
+      "review",
+      { diff: "diff" },
+    );
+    expect(inherited).toContain("--- タスクの開始時に集めた情報 ---");
+    expect(inherited).toContain(note);
+    expect(inherited).toContain("PAY-100：二重請求をなくす");
+    const own = buildPrompt({ ...reviewTask, gathered } as Task, "review", { diff: "diff" });
+    expect(own).toContain("PAY-100：二重請求をなくす");
+    expect(own).not.toContain(note);
+    expect(own).not.toContain("引き継いだ");
+  });
+
   it("差分が大きいときは先頭だけを渡し、全体のファイルの場所を伝える（写しに .git は無い）", () => {
     const prompt = buildPrompt(reviewTask, "review", {
       diff: big,

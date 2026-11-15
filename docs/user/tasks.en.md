@@ -333,6 +333,10 @@ How the code is read depends on whether the repository to work in is decided.
   To let it read them, choose the GitHub account for that host in the project settings ([GitHub account in project settings](project-settings.en.md#github-account)).
   Repositories it could not read, and Orgs whose repository list could not be read (expired credentials, missing permissions, and so on), are written in the summary as sources that could not be read.
 
+A child task that reviews a PR sacty opened does not gather information again.
+It inherits the summary of the parent task that opened the PR, and "Gathered information" shows "inherited from the parent task".
+When the parent task has no summary, the child task gathers.
+
 For a task taken in from a ticket, the information gatherer chooses the repository to work in from the gathered information, and also writes the title and summary of the task.
 
 - If it cannot choose a repository, the task stops.
