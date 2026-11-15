@@ -497,7 +497,7 @@ export const MAX_VERIFY_ATTEMPTS = 3;
  * 未完了で終わった実装の実行を、続けて実行する回数の上限（PBI-350）。未完了の実行の次は、同じセッションの続きから進める。
  * 作業領域が進んでいる間は続け、続きの実行がこの回数に達しても未完了なら、一時停止する（人が再開すると数え直す）。
  */
-export const MAX_INCOMPLETE_CONTINUATIONS = 18;
+export const MAX_INCOMPLETE_CONTINUATIONS = 10;
 
 /**
  * 最終レビューの出力から判定を読み取れなかった（FinalReviewFailed の verdictUnreadable）回数が、続けてこの回数になったら止める。

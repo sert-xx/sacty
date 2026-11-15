@@ -921,8 +921,8 @@ A run that ended after implementing only part of its scope, and a run that chang
     - Implement the whole scope within this run. Ending unfinished only makes sacty resume the same session and continue; it does not move the work forward.
     - Ending unfinished is allowed only when the agent cannot go any further (a person's decision or a change in external state is needed).
     - What the agent cannot check (the result of CI, and so on) is written in the implementation description as something for a person to check, not in `remaining`.
-  - sacty continues while the workspace keeps changing. If the run is still unfinished when the continuations reach 18 (`MAX_INCOMPLETE_CONTINUATIONS`), the task pauses (`nextIncompleteRuns`; the reason is `incomplete`, the message is `implement.incomplete`).
-    The count in a row (`Task.incompleteRuns`) is the total of the first run and the continuations, so the task stops at the 19th unfinished run.
+  - sacty continues while the workspace keeps changing. If the run is still unfinished when the continuations reach 10 (`MAX_INCOMPLETE_CONTINUATIONS`), the task pauses (`nextIncompleteRuns`; the reason is `incomplete`, the message is `implement.incomplete`).
+    The count in a row (`Task.incompleteRuns`) is the total of the first run and the continuations, so the task stops at the 11th unfinished run.
     The message shows up to 5 of the remaining items.
   - If continuing does not change the workspace content, the task pauses without waiting for the count.
     The mark is the git tree ID of the workspace content; when it equals the one of the previous unfinished run, nothing changed (`workspaceFingerprint`, `treeId`). The diff text is not used, because a large diff is truncated. If the workspace cannot be read, or even one file in it cannot be read, sacty counts up to the limit without a mark (an ID that leaves out an unreadable file would miss changes to that file).

@@ -27307,8 +27307,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         progress(executor, repos);
         await settle(service, id, RUNS_UNTIL_PAUSE * 3);
         let task = taskOf(service, id);
-        // 最初の実行と、続きの実行の上限（18 回）まで実行して、止まる
-        expect(MAX_INCOMPLETE_CONTINUATIONS).toBe(18);
+        // 最初の実行と、続きの実行の上限（10 回）まで実行して、止まる
+        expect(MAX_INCOMPLETE_CONTINUATIONS).toBe(10);
         expect(executor.calls).toHaveLength(RUNS_UNTIL_PAUSE);
         expect(count(service, id, "ImplementationIncomplete")).toBe(RUNS_UNTIL_PAUSE);
         expect(task.status).toBe("paused");
