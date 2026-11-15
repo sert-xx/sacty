@@ -277,7 +277,7 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
         expect(plan).toEqual({
           mode: "resume",
           stopped: { runId: "r1", role: "implement", agentId: "a", runtime: "claude-code" },
-          cause: { kind: "incomplete", paused: false },
+          cause: { kind: "incomplete" },
           sessionId: "sess-1",
           filesDir: filesDirOf("r1"),
         });
@@ -301,28 +301,23 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
         expect(await planContinuation(events, run, filesDirOf)).toMatchObject({
           mode: "resume",
           stopped: { runId: "r2" },
-          cause: { kind: "incomplete", paused: false },
+          cause: { kind: "incomplete" },
         });
       });
 
-      it("未完了の後にタスクが一時停止していたら、そのことを伝える（指示の全文を渡すため）", async () => {
+      it("未完了の後にタスクが一時停止して、人が再開しても、同じようにセッションの続きから進める", async () => {
         const events = [
           ...unfinished("r1"),
           ev("TaskPaused", { reason: "incomplete" }),
           ev("TaskResumed", {}),
         ];
-        expect(await planContinuation(events, run, filesDirOf)).toMatchObject({
+        expect(await planContinuation(events, run, filesDirOf)).toEqual({
           mode: "resume",
-          cause: { kind: "incomplete", paused: true },
+          stopped: { runId: "r1", role: "implement", agentId: "a", runtime: "claude-code" },
+          cause: { kind: "incomplete" },
+          sessionId: "sess-1",
+          filesDir: filesDirOf("r1"),
         });
-        // 未完了より前の一時停止は数えない
-        expect(
-          await planContinuation(
-            [ev("TaskPaused", { reason: "manual" }), ev("TaskResumed", {}), ...unfinished("r1")],
-            run,
-            filesDirOf,
-          ),
-        ).toMatchObject({ cause: { kind: "incomplete", paused: false } });
       });
 
       it("未完了の後に別の実行があった・実装でない役割・未完了の記録が無いなら、何も決めない", async () => {
@@ -387,7 +382,7 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
         ).toMatchObject({
           mode: "restart",
           reason: "agent_changed",
-          cause: { kind: "incomplete", paused: false },
+          cause: { kind: "incomplete" },
         });
         expect(
           await planContinuation(unfinished("r1"), { ...run, runtime: "codex" }, filesDirOf),
@@ -407,49 +402,38 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
   });
 
   describe("incompleteResumeLines（PBI-350）", () => {
-    it("自動の続きは、続きであること・残っていること・最後まで実装すること・出し直すことと、完了の申告の形だけを伝える", () => {
-      const lines = incompleteResumeLines({ remaining: ["API の入力", "docs"] }, false).join("\n");
+    it("続きであること・提出していないこと・最後まで実装すること・出し直すことを伝え、後ろに指示の全文が続くことを知らせる", () => {
+      const lines = incompleteResumeLines({}).join("\n");
       expect(lines).toContain("【未完了からの続き】");
       expect(lines).toContain("直前の実装の実行のセッションの続きです");
       expect(lines).toContain("範囲を実装し終える前に終わり、未完了と申告しました");
       expect(lines).toContain("sacty は提出していません");
-      expect(lines).toContain("直前の申告にあった、残っていること：\n- API の入力\n- docs");
+      // 再開を指定しても、別のセッションで始まることがある
+      expect(lines).toContain(
+        "これまでの会話が見当たらないとき（セッションを続けられなかったとき）は、下の指示と、作業領域の現状から進めてください。",
+      );
       expect(lines).toContain("この実行の中で、範囲のすべて");
       expect(lines).toContain("途中で終えても進まない");
       expect(lines).toContain("省かずに出し直す");
-      // 完了の申告の形は、もう一度添える（最初の指示の全文は送り直さない）
-      expect(lines).toContain("--- 完了の申告 ---");
-      expect(lines).toContain("```sacty-completion");
-      expect(lines).not.toContain("次の指示は、最初の指示と同じ内容");
+      expect(lines).toContain(
+        "次の指示は、直前の実行と同じ内容に、直前の実行の状況（残っていること）と、その後に足された補足や新しい指摘を含めたものです。",
+      );
+      // 残っていること・完了の申告の形は、後ろに続く指示の全文にあるので、ここでは繰り返さない
+      expect(lines).not.toContain("残っていること：");
+      expect(lines).not.toContain("--- 完了の申告 ---");
+      // 後ろに指示の全文を続けるので、空行で終わる
+      expect(lines.endsWith("\n")).toBe(true);
     });
 
     it("申告が無かった・観点の対応が欠けていたときは、その理由を伝える", () => {
-      const undeclared = incompleteResumeLines({ remaining: [], undeclared: true }, false).join(
-        "\n",
-      );
-      expect(undeclared).toContain(
+      expect(incompleteResumeLines({ undeclared: true }).join("\n")).toContain(
         "完了の申告が無いか、決まった形どおりに読めないまま終わりました",
       );
-      expect(undeclared).not.toContain("残っていること：");
-      const unmapped = incompleteResumeLines(
-        { remaining: ["TV-2 キーなし"], unmapped: ["TV-2", "TV-3"] },
-        false,
-      ).join("\n");
-      expect(unmapped).toContain("テストの対応していないテスト観点がありました");
-      expect(unmapped).toContain("テストが対応していなかったテスト観点：TV-2、TV-3");
-      // 前回の状況が分からなくても、続きの指示は出す
-      expect(incompleteResumeLines(undefined, false).join("\n")).toContain("【未完了からの続き】");
-    });
-
-    it("一時停止を挟んだ続きは、後ろに指示の全文が続くので、残っていることと完了の申告の形を繰り返さない", () => {
-      const lines = incompleteResumeLines({ remaining: ["docs"] }, true).join("\n");
-      expect(lines).toContain("【未完了からの続き】");
-      expect(lines).toContain(
-        "次の指示は、最初の指示と同じ内容に、止めている間に人が足した補足や新しい指摘を含めたものです。",
+      expect(incompleteResumeLines({ unmapped: ["TV-2", "TV-3"] }).join("\n")).toContain(
+        "テストの対応していないテスト観点がありました",
       );
-      expect(lines).not.toContain("直前の申告にあった、残っていること");
-      expect(lines).not.toContain("--- 完了の申告 ---");
-      expect(lines.endsWith("\n")).toBe(true);
+      // 前回の状況が分からなくても、続きの知らせは出す
+      expect(incompleteResumeLines(undefined).join("\n")).toContain("【未完了からの続き】");
     });
   });
 

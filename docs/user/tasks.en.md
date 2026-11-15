@@ -1537,6 +1537,7 @@ When the implementation does not finish, the task proceeds as follows.
    A continuation does not start over; it goes on from the same conversation (the agent session) as the run that ended unfinished.
    The activity shows "Continued the session (the session ID) of the Implement run that ended unfinished".
    When the conversation cannot be continued, for example after you change the agent, the step runs again from the start.
+   If the agent does not accept resuming the conversation, that run stays in the activity as a failure, but the task does not stop, and the next run starts again from the start.
 3. sacty repeats the continuation while the workspace keeps changing. If the implementation is still unfinished after 10 continuations, the task becomes "Paused: the implementation keeps ending unfinished".
    If continuing changed nothing in the workspace, the task stops without waiting for 10 continuations.
 4. If the agent declared what remains, the reason it stopped shows it. Check it, then resume.

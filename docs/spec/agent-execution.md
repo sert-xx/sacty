@@ -266,10 +266,15 @@
   - 直前の実装の実行が未完了で終わったかは、時間切れと同じ見方で決める（`incompleteRunBefore`）。作業履歴を新しいほうから見て、ほかの実行の記録より先に `ImplementationIncomplete` に出会えば、その前の実装の完了（`AgentRunCompleted`）の実行が対象になる。
     時間切れで止めた実行が後にあれば、時間切れの続きとして扱う。
   - 続けられるか・続けない理由の決め方は、時間切れの続きと同じ（`planContinuation`）。記録も同じ `AgentRunContinued` で、`cause` に `incomplete` を残す（`cause` の無い記録は、時間切れの続き）。
-  - 続きの指示（`incompleteResumeLines`）は、セッションの続きであること・提出していないこと・残っていること・この実行の中で最後まで実装すること・最後のメッセージを出し直すことを伝える。
-    - 未完了の後に一時停止が無い（自動の続き）：続きの指示と、完了の申告の形と、実行ごとに変わりうる案内（始める前の取り込みで競合したファイル・人が PR に足したコミット・使える API・起動したサービスの接続先）だけを渡す（`continuedPrompt`）。
-      指示の全文は、続けるセッションの会話に残っているので、送り直さない（続きのたびに全文を足すと、文脈が膨らむ）。
-    - 未完了の後に一時停止を挟んだ（人が再開した）：続きの指示の後に、指示の全文を続ける（人の補足や、止めている間に届いた指摘を含むため）。
+  - 続きの実行の指示は、続きであることの知らせ（`incompleteResumeLines`）の後に、指示の全文を続ける（`continuedPrompt`。時間切れの続きと同じ形。自動の続きでも、人が再開した続きでも同じ）。
+    - 知らせは、セッションの続きであること・提出していないこと・この実行の中で最後まで実装すること・最後のメッセージを出し直すことを伝える。
+    - 指示の全文には、直前の実行の状況（残っていること）と、その後に足されたもの（人の補足・引き継いだ PR に新しく届いた指摘・始める前の取り込みで競合したファイルなど）が入る。
+      知らせだけを渡す形にはしない。実行ごとに変わる部分を落とすと、渡していない指摘を、渡したと記録してしまう。再開したつもりが別のセッションで始まると、範囲を知らない実行が、完了と申告しうる。
+  - 再開したつもりが別のセッションで始まったときは、時間切れの続きと同じく、実行の後に `restarted`（`resume_failed`）を記録し直す。指示の全文を渡してあるので、結果はそのまま使う。
+  - AI が再開を断って失敗したときは、同じく記録し直したうえで、失敗（`AgentRunFailed`）を記録して、実行待ちに戻す。タスクは止めず、代わりのエージェントにも変えない（`incompleteResumeRejected`）。
+    - 次の実行は、失敗の記録が後にあるので続きにせず、新しいセッションで、指示の全文から実行し直す。
+    - 時間切れの続きと扱いが違うのは、未完了の続きが、人の再開を待たずに自動で進むためである（止めると、人が再開するまで進まない）。
+    - 人が止めた・中止した実行は、今までどおり止める。
 
 コード: `apps/daemon/src/agent-sessions.ts`（`SOURCES`・`selectAgentSessionFiles`・`AGENT_FILES_LIMIT`）、`apps/daemon/src/orchestrator-sessions.ts`（`OrchestratorSessionStore`・`plan`・`save`）、`apps/daemon/src/orchestrator-handoff.ts`（`sessionTranscript`・`stageHandoff`）、`apps/daemon/src/timeout-resume.ts`（`timedOutRunBefore`・`incompleteRunBefore`・`planContinuation`・`timeoutResumeLines`・`incompleteResumeLines`）、`apps/daemon/src/service.ts`（`resumeRejected`・`RESUME_REJECTED`・`executeWithSession`・`executeResumable`）
 

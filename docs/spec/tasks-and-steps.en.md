@@ -916,7 +916,8 @@ A run that ended after implementing only part of its scope, and a run that chang
   - The next Implementation run continues the same agent session as the run that ended unfinished (the continuation of an Implementation run that ended unfinished, in [Agent execution](agent-execution.en.md)).
     Running again from the start would discard the conversation of the previous run and begin by reading the full instruction.
     When the session cannot be continued (the agent was changed, the copied session is missing or broken, or the AI does not accept the resume), sacty runs the step again from the start.
-  - The continuation instruction (`incompleteResumeLines`) and the instruction of a run from the start (`feedbackLines`; `incomplete` of `Task.verifyFeedback`) tell the agent that the previous run was unfinished (or declared nothing) and what remains.
+  - Both the continuation instruction and the instruction of a run from the start tell the agent that the previous run was unfinished (or declared nothing) and what remains (`feedbackLines`; `incomplete` of `Task.verifyFeedback`).
+    The continuation instruction puts a notice that the run continues the session (`incompleteResumeLines`) before it.
   - The instruction for the completion declaration also tells the agent not to end the run partway (`implementCompletionLines`).
     - Implement the whole scope within this run. Ending unfinished only makes sacty resume the same session and continue; it does not move the work forward.
     - Ending unfinished is allowed only when the agent cannot go any further (a person's decision or a change in external state is needed).

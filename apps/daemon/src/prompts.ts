@@ -752,7 +752,7 @@ function promptPath(path: string): string {
  * （sacty が、ホストでベースブランチの最新を作業領域の内容にマージした結果）。解消した内容は、sacty がマージコミットとして
  * PR に積む。
  */
-export function mergeConflictLines(task: Task, files: readonly string[]): string[] {
+function mergeConflictLines(task: Task, files: readonly string[]): string[] {
   const head = pendingHeadMerge(task);
   const headFiles = new Set(head?.conflicts ?? []);
   return [
