@@ -344,11 +344,12 @@ export const SelfReview = z
     path: ["remaining"],
   });
 export type SelfReview = z.infer<typeof SelfReview>;
-/** セルフレビューをさせる工程（PBI-120）。 */
+/** セルフレビューをさせる工程（PBI-120）。文書作成の工程は、原稿を文書向けの観点で見直させる。 */
 export const SELF_REVIEW_STEPS = [
   "requirements",
   "design",
   "implement",
+  "document",
 ] as const satisfies readonly StepKey[];
 export type RemarkResponse = z.infer<typeof RemarkResponse>;
 

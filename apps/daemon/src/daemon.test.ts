@@ -32526,6 +32526,51 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     activity.close();
   });
 
+  it("文書作成の原稿のセルフレビューの報告を記録し、原稿の本文から取り除く。差し戻しの直しには、観点を絞る指示を渡す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const report = {
+      rounds: 2,
+      passed: true,
+      remaining: [],
+      notReviewed: [],
+      summary: "手順の結果を足した",
+    };
+    const { service, executor } = makeService(
+      activity,
+      [out(`# 利用手順 v1\n\n${block({ "sacty-self-review": report })}`), out("# 利用手順 v2")],
+      { planner: planner("document") },
+    );
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "利用手順を作る",
+      repo: null,
+    });
+    await service.runNext(id);
+    // 最初の実行の指示は、原稿のセルフレビューを求める（全部の観点で見る）
+    expect(promptOf(executor, 0)).toContain(
+      "既定のスキル review-dispatch（流れは self-review）で原稿をセルフレビューする",
+    );
+    expect(promptOf(executor, 0)).not.toContain("を受けた直しである");
+    expect(taskOf(service, id).selfReviews?.document).toEqual(report);
+    const done = service.get(id)?.activity.find((e) => e.type === "AgentRunCompleted");
+    expect(done?.type === "AgentRunCompleted" && done.payload.selfReview).toEqual(report);
+    // 報告は原稿に残さない（承認・書き出しの対象は原稿だけ）
+    expect(taskOf(service, id).outputs.document).toBe("# 利用手順 v1");
+    service.requestChanges(id, {
+      step: "document",
+      submission: 1,
+      comments: ["初回設定の説明を追加"],
+    });
+    await service.runNext(id);
+    // 前の提出がパスしているので、差し戻しの直しは、指摘に関わる観点だけで見させる
+    expect(promptOf(executor, 1)).toContain("を受けた直しである");
+    // 報告が無い提出は「記録なし」にして、工程は止めない
+    expect(taskOf(service, id).selfReviews?.document).toBeNull();
+    expect(taskOf(service, id).gate).toEqual({ step: "document", submission: 2 });
+    expect(taskOf(service, id).outputs.document).toBe("# 利用手順 v2");
+    activity.close();
+  });
+
   it("文書は承認後に指定先へ書き出し、URLを記録する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const selected: ServiceDeps["planner"] = async () => ({

@@ -367,6 +367,230 @@ describe("既定のスキル drawio（draw.io の公式のスキル）", () => {
   });
 });
 
+describe("既定のスキル writing の、文章の種類・後から読まれる文書・図と画像", () => {
+  const skill = () => read("skills/writing/SKILL.md");
+  const documents = () => read("skills/writing/references/documents.md");
+  const figures = () => read("skills/writing/references/figures.md");
+
+  it("説明に文書と図・画像を含め、資料をすべて SKILL.md から辿れるようにし、sacty に限った書き方をしない", () => {
+    const front = /^---\nname: writing\ndescription: (.+)\n---\n/.exec(skill());
+    expect(front).not.toBeNull();
+    const description = front?.[1] ?? "";
+    // スキルを使うかは説明で決まるので、文書（ユーザーガイドなど）を書くときにも使われるようにする
+    expect(description).toContain("ユーザーガイド・手順書・README などの文書");
+    expect(description).toContain("前提を知らない人が読む文書の組み立て方");
+    expect(description).toContain("図と画像の使い方");
+
+    const files = markdownUnder(join(DEFAULT_CONTEXT_DIR, "skills/writing"));
+    expect(files.map((f) => f.path).sort()).toEqual([
+      "skills/writing/SKILL.md",
+      "skills/writing/references/documents.md",
+      "skills/writing/references/figures.md",
+      "skills/writing/references/layout.md",
+      "skills/writing/references/sentences.md",
+      "skills/writing/references/wording.md",
+    ]);
+    for (const { path, text } of files) {
+      expect(text.toLowerCase(), path).not.toContain("sacty");
+      // 資料から資料へのリンクが切れていない
+      for (const [, target] of text.matchAll(/\]\(((?:references\/)?[a-z-]+\.md)\)/g)) {
+        const base = path.endsWith("SKILL.md") ? "skills/writing" : "skills/writing/references";
+        expect(
+          files.map((f) => f.path),
+          `${path} → ${target}`,
+        ).toContain(`${base}/${target}`);
+      }
+    }
+    // 資料は、必要なときに読むものなので、どれも SKILL.md の表から辿れる
+    for (const name of ["documents", "figures", "layout", "sentences", "wording"]) {
+      expect(skill(), name).toContain(`(references/${name}.md) |`);
+    }
+  });
+
+  it("読む人が前提を知っているかで文章の種類を分け、情報を絞る決まりを、前提を知っている人が読む文章に当てる", () => {
+    const text = skill();
+    const points = text.slice(text.indexOf("## 決まりの要点"), text.indexOf("## 書く手順"));
+    // 種類を決めるのが先。情報を絞る決まりは、そのあと
+    const kind = points.indexOf("- 読む人に合わせて、文章の種類を決める");
+    expect(kind).toBeGreaterThan(-1);
+    expect(points.indexOf("- 情報を絞る")).toBeGreaterThan(kind);
+    expect(points).toContain(
+      "承認・判断・返信のための文章（PR の本文、レビュー、コメント、要求要件・設計、調査の結果、報告）は、読む人が前提（暗黙知）を持っている。\n    情報を絞る",
+    );
+    expect(points).toContain(
+      "後から読まれる文書（ユーザーガイド、手順書、README、運用の文書）は、読む人が前提を知らない。\n    読む人が目的を果たすのに要ることを、省かずに書く",
+    );
+    expect(points).toContain(
+      "承認・判断・返信のための文章は、最初は最小限にし、読む人が詳しくするよう求めたら、求められた所だけを足す",
+    );
+    // 種類は、文章の名前ではなく読む人で決める（PR や Issue でも、読む人が知らなければ背景を省かない）
+    expect(points).toContain("種類は、文章の名前ではなく、読む人が前提を知っているかで決める");
+    expect(documents()).toContain(
+      "PR や Issue でも、読む人がその件を知らなければ（ほかのチームへの依頼、初めて報告する不具合など）、背景と再現の手順を省かない",
+    );
+    // 経緯や判断を残すための文章には、「今の状態だけを書く」を当てない
+    expect(documents()).toContain(
+      "経緯や判断を残すための文章（変更履歴、リリースノート、決定の記録、議事録、コミットメッセージ）は、何が・なぜ変わったかを書く。\n  「今の状態だけを書く」は当てはめず、同じ場所にある記録の形に合わせる",
+    );
+    // 手順でも、種類を決めてから書くことを決める
+    expect(text).toContain(
+      "2. 文章の種類を決める（承認・判断・返信のための文章か、後から読まれる文書か）",
+    );
+    // 種類の分け方は、資料に表で持つ。後から読まれる文書でも、目的に要らないことは書かない
+    expect(documents()).toContain(
+      "| 承認・判断・返信のための文章 | PR の本文、レビュー、コメント、要求要件・設計、調査の結果、作業の報告 | 前提を知っている | 情報を絞る |",
+    );
+    expect(documents()).toContain(
+      "| 後から読まれる文書 | ユーザーガイド、手順書、README、運用の文書、引き継ぎの文書 | 前提を知らない | 省かずに書く |",
+    );
+    expect(documents()).toContain(
+      "後から読まれる文書でも、読む人の目的に要らないこと（内部の仕組み、経緯、検討の過程）は書かない",
+    );
+    // 情報の絞り方の資料は、読む人が知らない語と前提を「書かないもの」に含めない
+    const sentences = read("skills/writing/references/sentences.md");
+    expect(sentences).toContain("読む人が知らない語と前提は、要る情報として書く");
+    expect(sentences).toContain(
+      "この節の箇条書き（書かないもの、最初は最小限にする）は、承認・判断・返信のための文章に当てはめる",
+    );
+  });
+
+  it("後から読まれる文書は、最初に書くこと・並べる順・節の最初の要点・手順・今の状態・ほかの節の指し方を決める", () => {
+    const text = documents();
+    for (const heading of [
+      "## 文章の種類を決める",
+      "## 読む人と目的を決める",
+      "## 最初に書くこと",
+      "## 並べる順",
+      "## 見出しと、節の最初",
+      "## 手順",
+      "## 今の状態だけを書く",
+      "## ほかの節・文書の指し方",
+      "## 既存の文書に書き足すとき",
+    ]) {
+      expect(text, heading).toContain(`\n${heading}\n`);
+    }
+    for (const rule of [
+      "- 何の文書か（読むと何ができるようになるか）",
+      "- 誰のための文書か",
+      "- 先に要るもの（環境、権限、先に読む文書）",
+      "節は、読む人が進む順（用意する、始める、使う、困ったとき）に並べる",
+      "ふつうの場合を先に書き、例外、細かい条件、古い版の話は後に書く",
+      "手順や説明の節は、最初に、その節の要点（何ができるか・いつ使うか）を1〜2文で書く",
+      "一覧を調べるための節（設定の項目、コマンド）は、見出しの直後に表を置いてよい",
+      "「この節では〜を説明します」のような予告にしない",
+      "読む人が順にする操作は、番号付きの手順にする",
+      "手順の前に、先に要るものを書く（道具、権限、どこで実行するか）",
+      "結果が見える手順には、結果を書く（何が表示されるか、何ができるようになるか）",
+      "最後に、うまくいったことの確かめ方を書く",
+      "壊れる操作・元に戻せない操作への注意は、その手順の前に書く",
+      "コマンドと設定は、写してそのまま使える形で書く",
+      "語は、最初に出る所で一言で説明するか、説明のある文書へリンクする",
+      "「これまでどおり」「以前は」「〜に変わりました」のような経緯は、変更履歴やリリースノートに書く",
+      "ほかの節や文書は、位置（「下の」「上記の」）で指さずに、名前とリンクで指す",
+      "箇条書きの最後に、項目を足すだけにしない",
+    ]) {
+      expect(text, rule).toContain(rule);
+    }
+    // 要点と見直しは SKILL.md に置く（資料を読まなくても、決まりの骨子が分かる）
+    const main = skill();
+    expect(main).toContain("- 後から読まれる文書は、組み立ててから書く");
+    const review = main.slice(main.indexOf("## 見直し"), main.indexOf("## 英語の文章"));
+    for (const check of [
+      "後から読まれる文書では、次も確かめる。",
+      "- 最初の数行で、何の文書か・誰のためか・先に要るものがわかる",
+      "- 読む人が知らない語を、説明なしに使っていない",
+      "節の最初に、その節の要点が書いてある（予告だけになっていない）",
+      "- 読む人が順にする操作が番号付きの手順になっていて、結果と確かめ方が書いてある",
+      "- 経緯の言い回し（「これまでどおり」「以前は」）と、位置での参照（「下の」「上記の」）が無い",
+    ]) {
+      expect(review, check).toContain(check);
+    }
+    // スキルの本文も、足した決まりを守る。ほかの節を位置で指さない
+    for (const { path, text: body } of markdownUnder(join(DEFAULT_CONTEXT_DIR, "skills/writing"))) {
+      expect(body, path).not.toMatch(/下の「|上の「|下を参照|上記の(?!」)/);
+    }
+    // 足した資料の節は、見出しの直後を箇条書き・表にせず、要点の文から始める
+    for (const body of [documents(), figures()]) {
+      // 例のコードブロック（悪い例は、決まりを破った形をわざと書いている）は除く
+      const prose = body.replace(/^(`{3,})[^\n]*\n[\s\S]*?\n\1$/gm, "");
+      const sections = prose.split(/\n(?=## )/).slice(1);
+      expect(sections.length).toBeGreaterThan(3);
+      for (const section of sections) {
+        const [heading, , first] = section.split("\n");
+        expect(first, heading).toMatch(/^[^-|#\s`]/);
+        expect(first, heading).toMatch(/。$/);
+      }
+    }
+  });
+
+  it("図にするのは関係だけにし、形式は書き出し先で決め、スクリーンショットは絞り、撮れないときは撮ったことにしない", () => {
+    const text = figures();
+    for (const rule of [
+      "図にするのは、文章で書くと長くなる「関係」",
+      "- 1列に並ぶだけの手順：番号付きの箇条書きにする",
+      "- 複数のものを同じ観点で比べる情報：表にする",
+      "- 本文に書いたことを並べ直しただけの図、飾りの図",
+      "承認・判断・返信のための文章では、図は、文章では関係を読み取りにくい所だけに使う（多くは1つで足りる）",
+      "1つの図で、1つのことを伝える",
+      "- 図の中の語は、本文と同じ語にする",
+      "- 色だけで区別しない",
+      "- 図の前に、何の図か・どこを見るかを1文で書く",
+      // 図は本文の言い直しにしない。本文に書くのは、図の要点だけ
+      "- 図の要点（何が何とつながるか、どこで分かれるか）は、本文にも1〜2文で書く",
+      // 形式は、書き出し先で表示できるかで決める（特定の道具に寄せない）
+      "図の形式は、書き出し先で決める",
+      "| テキストで書いた図を表示できる所 | テキストで書く |",
+      "| 表示できないが、画像を置ける所 | 画像にする |",
+      "| どちらもできない所 | 図にしない |",
+      "- 画像（SVG・PNG）にした図は、後から直せるように、元のファイルを一緒に置くか、元のデータを埋め込んだ画像にする",
+      // 図を作るスキルは、画像にするときだけ使う（テキストで書ける所では、テキストで書く）
+      "- 画像にするときに、図を作るためのスキル（`drawio` など）があれば、それに従って作る",
+      "- 図にしない所（チャット、コメント、画像を作る道具が無いとき）では、関係を箇条書きか表で書く",
+      "- リポジトリが図の作り方（道具、置き場所、色）を決めていれば、それに従う",
+      "- 画像には、何の図かが分かる代替テキストを付ける",
+      // スクリーンショット
+      "スクリーンショットは、画面のどこを見るか・どこを押すかが、言葉では伝わりにくい所に使う",
+      "メニューやボタンの名前は、本文に書く",
+      "- 架空のデータで撮る",
+      "手順の1つごとに1枚ずつ貼らない",
+      "画面を撮れないとき・画像を置けないときは、撮ったことにしない",
+      "- 無い画像を参照しない",
+      "- 画面の名前と、見る所を、言葉で書く",
+      "外に書く場所が無ければ、文書の末尾に分けて書く",
+    ]) {
+      expect(text, rule).toContain(rule);
+    }
+    const main = skill();
+    expect(main).toContain("- 図と画像は、文章より速く伝わる所だけに使う");
+    const review = main.slice(main.indexOf("## 見直し"), main.indexOf("## 英語の文章"));
+    for (const check of [
+      "図と画像を使ったときは、次も確かめる。",
+      "- 図が、本文を並べ直しただけのものや、1列に並ぶだけの手順になっていない",
+      "- 画像に代替テキストがあり、参照している画像が実際にある",
+      "- スクリーンショットに、秘密の値・個人の情報が写っていない",
+    ]) {
+      expect(review, check).toContain(check);
+    }
+  });
+
+  it("前からある決まり（改行・箇条書きと表・語と言い回し・確認の懸念・スコープ・簡潔さ）を、変えずに保つ", () => {
+    const text = skill();
+    for (const rule of [
+      "- 日本語では「。」の後で必ず改行する",
+      "- 構造のある情報は、箇条書きと表にする",
+      "- 日本語で一般的に使われる語と言い回しで書く",
+      "- 人に確認・判断を求めるときは、確認しないで進めた場合の具体的な懸念を添える",
+      "- 要求要件・設計は、スコープ（対象と対象外）を最初に書き、要求や設計の中身はそのあとに書く",
+      "- 簡潔に書く",
+      "- 文を組み直す",
+      "1. 依頼した人の指示",
+      "2. 対象のリポジトリの文章の決まり",
+    ]) {
+      expect(text, rule).toContain(rule);
+    }
+  });
+});
+
 describe("既定の review スキルの、要求要件・設計の読みやすさの観点", () => {
   const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
 
@@ -641,7 +865,7 @@ describe("既定の review スキルの、直しの実行の最初のレビュ�
       "人の差し戻し・AI のレビューの指摘・検証の不合格を受けた直しである。この実行の最初のセルフレビューを",
     );
     expect(text).toContain("最初のセルフレビューは、初回ではなく再レビュー（2回目以降）として扱う");
-    expect(text).toContain("成果物の種類（要求要件・設計・実装）は問わない");
+    expect(text).toContain("成果物の種類（要求要件・設計・実装・文書）は問わない");
     // 最初の実行は、初回の規則のまま
     expect(text).toContain("明示が無いときは、初回の規則で全部の観点で見る");
   });

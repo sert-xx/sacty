@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   type ActivityEvent,
   EventInput,
@@ -3216,18 +3217,86 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     );
   });
 
-  it("文書と、調査が目的のタスクの調査の結果にも、最小限の初版と差し戻しで詳しくすることを書く（冒頭の2つの節は求めない）", () => {
-    for (const [steps, step, name] of [
-      [["document"], "document", "原稿"],
-      [["investigate"], "investigate", "調査の結果"],
-    ] as const) {
-      const prompt = buildPrompt(task([...steps]), step);
-      expect(prompt, step).toContain(
-        `--- ${name}の分量（初版は最小限にし、詳しさは人間の差し戻しで足す） ---`,
-      );
-      expect(prompt, step).toContain(MINIMAL);
-      expect(prompt, step).toContain(EXPAND);
-      expect(prompt, step).not.toContain("「既定で決めたこと」");
+  it("調査が目的のタスクの調査の結果にも、最小限の初版と差し戻しで詳しくすることを書く（冒頭の2つの節は求めない）", () => {
+    const prompt = buildPrompt(task(["investigate"]), "investigate");
+    expect(prompt).toContain(
+      "--- 調査の結果の分量（初版は最小限にし、詳しさは人間の差し戻しで足す） ---",
+    );
+    expect(prompt).toContain(MINIMAL);
+    expect(prompt).toContain(EXPAND);
+    expect(prompt).not.toContain("「既定で決めたこと」");
+  });
+
+  it("文書作成の原稿は、読者が前提を知っているかで書く量を決めさせ、最小限の初版を一律には求めない", () => {
+    const prompt = buildPrompt(task(["document"]), "document");
+    expect(prompt).toContain("--- 原稿の書き方（読者に合わせる） ---");
+    // 承認する人が読む成果物と同じ「初版は最小限」を、原稿の全体には当てない（手順や前提が削られるため）
+    expect(prompt).not.toContain("原稿の分量（初版は最小限にし");
+    expect(prompt).not.toContain(MINIMAL);
+    expect(prompt).not.toContain("1項目は1〜2行にし");
+    // 前提を知っている読者には最小限に、知らない読者には要ることを省かずに書かせる
+    expect(prompt).toContain(
+      "前提を知っている読者（依頼した人・この件の関係者が読む、報告・議事録・草稿など）：最小限に書く",
+    );
+    expect(prompt).toContain(
+      "前提を知らない読者（その場にいなかった人が後から読む、ユーザーガイド・手順書・README・運用の文書など）：読者が目的を果たすのに要ることを、省かずに書く。読者が知らない語と前提は、要る情報として書く",
+    );
+    // 読者の目的に関係しないことは、どちらの読者にも書かせない
+    expect(prompt).toContain("読者の目的に関係しない仕組みや経緯の説明");
+    // 採らなかった案は、比較や判断の記録では中身なので、書かせないものから除く
+    expect(prompt).toContain(
+      "依頼に無いこと。検討して採らなかった案（比較や判断の記録の原稿は除く）",
+    );
+    expect(prompt).toContain("人間の求めで足した記述は、あとの直しでも削らない");
+    expect(prompt).not.toContain("「既定で決めたこと」");
+  });
+
+  it("文書作成の原稿の組み立て方と、図・画像の使い方を、既定のスキル writing の資料に従わせ、要点を指示にも書く", () => {
+    const prompt = buildPrompt(task(["document"]), "document");
+    expect(prompt).toContain(
+      "既定のスキル writing があれば、その references/documents.md の「文章の種類を決める」に従う",
+    );
+    // 指示が名前を挙げる節は、スキルの資料に実際にある
+    expect(
+      readFileSync(
+        fileURLToPath(
+          new URL("../default-context/skills/writing/references/documents.md", import.meta.url),
+        ),
+        "utf8",
+      ),
+    ).toContain("\n## 文章の種類を決める\n");
+    expect(prompt).toContain("スキル writing の references/documents.md があれば、それに従う");
+    expect(prompt).toContain("スキル writing の references/figures.md があれば、それに従う");
+    // スキルを消していても最低限がわかるよう、要点は指示にも書く
+    for (const line of [
+      "最初の数行で、何の文書か・誰のためか・先に要るもの（環境・権限・先に読む文書）が分かるようにする",
+      "節は、読者が進む順（用意する・始める・使う・困ったとき）に並べる",
+      "節の最初に、その節の要点を1〜2文で書く",
+      "読者が順にする操作は番号付きの手順にし、手順の前に、先に要るもの（道具・権限・実行する場所）を書く。結果が見える手順には結果を、最後に、うまくいったことの確かめ方を書く",
+      "今の状態だけを書く",
+      "図にするのは、構成・流れ・状態の移り方のような関係だけにする。1列に並ぶだけの手順と、本文を並べ直しただけのものは図にしない",
+    ]) {
+      expect(prompt, line).toContain(line);
+    }
+    // 原稿には画像のファイルを付けられない（承認の画面と書き出しには、原稿の文字だけが渡る）ので、無い画像を参照させない
+    for (const line of [
+      "原稿を出力するとき（外部に直接書かないとき）は、画像のファイルを付けられない",
+      "図は、原稿の中にテキストで書く形式（Mermaid など）にし、書き出し先がそれを表示できると分かっているときだけ使う。分からない・表示できないときは、図にせず、関係を箇条書きか表で書く",
+      "外部に直接書くときは、その書き出し先に画像を置けるときだけ、画像を使ってよい",
+      "画像（スクリーンショットを含む）を用意できないときは、あることにしない。無い画像を参照せず、画面の名前と見る所を言葉で書く。画像が要る所は、原稿の末尾の未確認事項にまとめる",
+    ]) {
+      expect(prompt, line).toContain(line);
+    }
+    // 資料の名前は、既定のスキルに実際にある
+    for (const reference of ["documents.md", "figures.md"]) {
+      expect(
+        existsSync(
+          fileURLToPath(
+            new URL(`../default-context/skills/writing/references/${reference}`, import.meta.url),
+          ),
+        ),
+        reference,
+      ).toBe(true);
     }
   });
 
@@ -3384,9 +3453,71 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     expect(prompt).toContain(HEADING);
   });
 
-  it("文書作成・調査の工程には付けない", () => {
-    expect(buildPrompt(task(["document"]), "document")).not.toContain("sacty-self-review");
+  it("調査の工程には付けない", () => {
     expect(buildPrompt(task(["investigate"]), "investigate")).not.toContain("sacty-self-review");
+  });
+
+  it("文書作成の工程は、原稿を文書向けの観点でセルフレビューさせる（主対象の種類は原稿の種類で決めさせる）", () => {
+    const prompt = buildPrompt(task(["document"]), "document");
+    expect(prompt).toContain(HEADING);
+    expect(prompt).toContain(
+      "既定のスキル review-dispatch（流れは self-review）で原稿をセルフレビューする。主対象の種類は、原稿の種類で決める（ユーザーガイド・手順書・README・運用の文書・報告などは user-doc、設計書・比較や判断の記録などは design-doc）",
+    );
+    // 原稿はリポジトリのファイルにしないので、下書きを一時ファイルに書かせ、リポジトリの検証は実行させない
+    expect(prompt).toContain(
+      "原稿の下書きを一時ファイル（例：/tmp/sacty-self-review/draft.md）に書き、それをレビューの対象にする",
+    );
+    expect(prompt).toContain(
+      "原稿はリポジトリのファイルにしないので、スキルの検証（references/verification-run.md）は実行しない",
+    );
+    expect(prompt).not.toContain(
+      "検証の実行は、スキルの references/verification-run.md の手順の全体",
+    );
+    // 外部に直接書く文書は、承認を待たずに読まれるので、書く前に見直させる
+    expect(prompt).toContain(
+      "外部に直接書くときは、書く前の下書きをセルフレビューし、直し終えてから（パスするか、回数の上限に達してから）外部に書く",
+    );
+    expect(prompt).toContain(
+      "すでに外部に書いた文書を直すときも、直した後の内容を先に一時ファイルに書いてセルフレビューし、直し終えてから外部に反映する",
+    );
+    // 外部の既存のページは、依頼された直しの外を、承認の前に書き換えさせない
+    expect(prompt).toContain(
+      "外部の既存のページを直すときは、直す前の内容と直した後の内容を、ページごとに一時ファイルに置く。レビューの範囲は、直した箇所と、その直しが直接必要にした箇所にする（ページの全体を見直さない）。範囲の外への指摘では、ページを直さない",
+    );
+    // 原稿の書き方（読者で書く量を決める）と、レビューの基準を食い違わせない
+    expect(prompt).toContain(
+      "担当への依頼の根拠に、決めた読者と、読者がこの件の前提を知っているかを書く",
+    );
+    expect(prompt).toContain(
+      "前提を知らない読者に向けた原稿では、読者が知らない語・前提・手順の説明を削る指摘には従わない",
+    );
+    expect(prompt).toContain(
+      "前提を知っている読者に向けた原稿では、記述を足す指摘は must だけを直し、should は直さない",
+    );
+    // 要求要件・設計のための決まり（観点 D-3・D-10 を名指しした直し方、リポジトリの決まりから導いた条件の扱いなど）は付けない
+    expect(prompt).not.toContain(
+      "記述を足す指摘（D-3 などの「書かれていない」）は must だけを直し",
+    );
+    expect(prompt).not.toContain("決まりの書き直し");
+    expect(prompt).toContain('{"sacty-self-review": {"rounds": 2, "passed": true');
+  });
+
+  it("文書作成の差し戻しの直しは、前の提出がパスしていれば、指摘に関わる観点だけで見直させる", () => {
+    const redo = task(["document"], {
+      outputs: { document: "# 手順書" },
+      remarks: [{ id: "document-1-1", step: "document", round: 1, text: "前提の節が無い" }],
+      selfReviews: {
+        document: { rounds: 1, passed: true, remaining: [], notReviewed: [], summary: "" },
+      },
+    } as Partial<Task>);
+    const prompt = buildPrompt(redo, "document");
+    expect(prompt).toContain("この実行は、人の差し戻し（document-1-1）を受けた直しである");
+    // 前の提出がパスしていなければ、全部の観点で見る
+    const failed = { ...redo, selfReviews: { document: null } } as Task;
+    expect(buildPrompt(failed, "document")).not.toContain("を受けた直しである");
+    // 前回の原稿が空なら、直す前の版が無く、差分を担当に渡せないので、全部の観点で見る
+    const empty = { ...redo, outputs: { document: "  \n" } } as Task;
+    expect(buildPrompt(empty, "document")).not.toContain("を受けた直しである");
   });
 
   it("報告を読み、本文から取り除く。形が違う・無いときは読まない", () => {
