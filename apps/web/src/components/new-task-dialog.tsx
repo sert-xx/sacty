@@ -290,12 +290,13 @@ export function TaskFields({
   const repositories = candidates.status === "loaded" ? candidates.repositories : [];
   const [repoFields, setRepoFields] = useState([0]);
   const [repoValues, setRepoValues] = useState<Record<number, string>>({ 0: repoDefault ?? "" });
-  const firstRepoEdited = useRef(false);
+  const editedRepoFields = useRef(new Set<number>());
   useEffect(() => {
-    if (!firstRepoEdited.current) {
-      setRepoValues((values) => ({ ...values, 0: repoDefault ?? "" }));
+    const firstField = repoFields[0];
+    if (!editedRepoFields.current.has(firstField)) {
+      setRepoValues((values) => ({ ...values, [firstField]: repoDefault ?? "" }));
     }
-  }, [repoDefault]);
+  }, [repoDefault, repoFields]);
   return (
     <>
       <fieldset className="flex flex-col gap-2">
@@ -323,6 +324,7 @@ export function TaskFields({
                 className="sr-only"
                 onChange={() => {
                   if (value) {
+                    for (const field of repoFields.slice(1)) editedRepoFields.current.delete(field);
                     setRepoFields((fields) => fields.slice(0, 1));
                     setRepoValues((values) => ({ [repoFields[0]]: values[repoFields[0]] ?? "" }));
                   }
@@ -388,7 +390,7 @@ export function TaskFields({
                 autoComplete="off"
                 value={repoValues[field] ?? ""}
                 onChange={(event) => {
-                  if (field === 0) firstRepoEdited.current = true;
+                  editedRepoFields.current.add(field);
                   setRepoValues((values) => ({ ...values, [field]: event.target.value }));
                 }}
                 placeholder={t.repositoryPlaceholder}
@@ -400,6 +402,7 @@ export function TaskFields({
                   type="button"
                   aria-label={t.removeRepositoryField(index + 1)}
                   onClick={() => {
+                    editedRepoFields.current.delete(field);
                     setRepoFields((fields) => removeRepositoryField(fields, field));
                     setRepoValues((values) => {
                       const next = { ...values };

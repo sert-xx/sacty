@@ -185,6 +185,40 @@ describe("作成フォームのリポジトリ欄", () => {
     await act(() => root.unmount());
   });
 
+  it.each([false, true])(
+    "先頭欄の削除後に候補が届くと残った欄の編集状態に従う（編集済み: %s）",
+    async (edited) => {
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      await act(() => root.render(h("form", null, h(TaskFields, { ...props, repoDefault: "" }))));
+      const form = container.querySelector("form");
+      const add = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === messagesFor("ja").forms.task.addRepository,
+      );
+      if (!form || !add) throw new Error("form or add missing");
+      await act(() => add.click());
+      if (edited) {
+        const input = form.querySelectorAll<HTMLInputElement>('input[name="repo"]')[1];
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        if (!input || !setter) throw new Error("input missing");
+        await act(() => {
+          setter.call(input, "acme/edited");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
+      const remove = form.querySelector<HTMLButtonElement>(
+        `[aria-label="${messagesFor("ja").forms.task.removeRepositoryField(1)}"]`,
+      );
+      if (!remove) throw new Error("remove missing");
+      await act(() => remove.click());
+      await act(() =>
+        root.render(h("form", null, h(TaskFields, { ...props, repoDefault: "acme/a" }))),
+      );
+      expect(new FormData(form).getAll("repo")).toEqual([edited ? "acme/edited" : "acme/a"]);
+      await act(() => root.unmount());
+    },
+  );
+
   it("静的描画で追加を示し、テンプレートは1欄に固定する", () => {
     for (const lang of ["ja", "en"] as const) {
       locale = lang;
