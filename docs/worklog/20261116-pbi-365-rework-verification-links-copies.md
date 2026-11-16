@@ -33,14 +33,14 @@ PBI-366・PBI-367 も、この PR に入れた（3つとも小さく、互いに
 
 ## 確かめたこと
 
-レビューの指摘への対応（パーサーへの置き換え・依存の追加・テストの追加）の後のコード（`8e78e0b0` に、この記録の更新を足したもの）で、実行し直した結果を書く。
+レビューの2回目の指摘への対応の後のコード（`pr-body-links.ts` の長くしない置き換え・事前の判定の見直しまでを入れたもの）で、実行し直した結果を書く。まっさらな複製での確認だけは、1回目の対応の後（`8e78e0b0`）に実行したもので、2回目の対応では依存を変えていない。
 
-- `npx vitest run --no-file-parallelism`：245 ファイル・4702 件が通った（1 件は以前からの skip）。
+- `npx vitest run --no-file-parallelism`：245 ファイル・4704 件が通った（1 件は以前からの skip）。
 - `npm run typecheck`：通った。
 - `npm run build`（この対応の前のコードで実行した。対応の後は、上のまっさらな複製での `tsc -b` と、CI のビルドで確かめる）：コンパイルと各ページの生成は終わるが、`next build` が、使っている Next.js に既知の脆弱性があるという知らせを出して、終了コード 1 で止まることがある（この変更の前からで、変更とは関係が無い）。同じコマンドをやり直すと通った。Next.js の更新は、この PR では行っていない。
 - `npx biome check apps packages docs tests scripts`：指摘なし。`npm run lint` は、Git 管理外の `.claude/settings.local.json`（この作業用のディレクトリにだけあるファイル）の整形の指摘 1 件で落ちる。リポジトリのファイルの指摘は無い。
 - 依存を足したので、まっさらな複製（`git clone` → `npm ci --ignore-scripts` → `tsc -b packages/core apps/daemon packages/cli`）でも確かめた。ビルドが通り、ビルドした `pr-body-links.js` が `[手順](/workspace/docs/setup(ja).md)` を ``手順（`docs/setup(ja).md`）`` にした。`npm ls` で、デーモンの依存に `mdast-util-from-markdown@2.1.0` が入っている。
-- 足したテスト：`pr-body-links.test.ts`（10 件）、`daemon-implement.test.ts`（実装の説明のリンクが、PR の本文と台帳の本文でリンクにならない）、`pr-body-rework.test.ts`（直しの実行だけに検証の行がある。要求要件を経ない・経る・テストの仕組みが無い・不具合の修正）、`daemon-repoless.test.ts`（調査の工程で、選ぶ前・選んだ後の写し、写しの失敗の停止と再開）、`prompts.test.ts`（調査の指示の写しの一覧。複数を指定していないタスクは変わらない）。
+- 足したテスト：`pr-body-links.test.ts`（12 件）、`daemon-implement.test.ts`（実装の説明のリンクが、PR の本文と台帳の本文でリンクにならない）、`pr-body-rework.test.ts`（直しの実行だけに検証の行がある。要求要件を経ない・経る・テストの仕組みが無い・不具合の修正）、`daemon-repoless.test.ts`（調査の工程で、選ぶ前・選んだ後の写し、写しの失敗の停止と再開）、`prompts.test.ts`（調査の指示の写しの一覧。複数を指定していないタスクは変わらない）。
 - 修正を戻すとテストが落ちること（対応の前のコードで確かめた。対応の後は、`REPOSITORY_COPY_STEPS` と呼び出しの箇所を変えていない）：`REPOSITORY_COPY_STEPS` から `investigate` を外すと `daemon-repoless.test.ts` の 4 件が、`withoutWorkspaceLinks` の呼び出しを外すと `daemon-implement.test.ts` の 1 件が落ちた。戻して通ることを確かめた。
 - 確かめていないこと：実際のエージェントが、足した指示のとおりに検証をやり直して書くか（指示の文があることだけをテストで確かめた）。実際の GitHub での本文の見え方。
 
