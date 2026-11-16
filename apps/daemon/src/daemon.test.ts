@@ -115,6 +115,7 @@ import {
   buildPullRequestBody,
   buildStepDocument,
   changeableSteps,
+  childScopeOf,
 } from "./prompts.js";
 import { buildRemarkReply } from "./remark-reply.js";
 import {
@@ -22019,6 +22020,256 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     expect(taskOf(service, c).gate?.step).toBe("implement");
     activity.close();
   });
+
+  describe("分割の子タスクの PR に範囲を明記し、レビューに範囲外を要修正にさせない（PBI-351）", () => {
+    const CONTENT = [
+      "## 実現すること",
+      "",
+      "- API で複数のリポジトリを受け付ける",
+      "",
+      "## 範囲外",
+      "",
+      "- 再開のフォームの候補（画面の子タスクが担当）",
+    ].join("\n");
+    const children = [
+      { key: "A", title: "決済の API", body: CONTENT, dependsOn: [] },
+      { key: "B", title: "決済の画面", body: "- 画面を作る", dependsOn: ["A"] },
+    ];
+    const verdict = (value: string, text: string) =>
+      out(`${text}\n\n${block({ "sacty-review-verdict": { verdict: value } })}`);
+    const HEADING = "## この PR の範囲（分割の子タスク）";
+    const SCOPE = "--- この PR の範囲（分割の子タスク） ---";
+    const quoted = CONTENT.split("\n")
+      .map((l) => (l === "" ? ">" : `> ${l}`))
+      .join("\n");
+    const reviewChild = (svc: TaskService, id: string) =>
+      taskOf(svc, id).reviewTasks?.findLast((r) => r.number === 7)?.taskId ?? "";
+    const runReview = async (svc: TaskService, pulls: FakePulls, id: string) => {
+      const child = reviewChild(svc, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: taskOf(svc, id).pullRequest?.commit };
+      for (let i = 0; i < 4 && !isCompleted(taskOf(svc, child)); i++) await svc.runNext(child);
+    };
+
+    it("子タスクの PR の本文と、最初のレビュー・再レビューの指示に、子タスクの範囲が入る。やり直しの提出で作り直した本文にも入る（受け入れ条件 1〜4）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id, ids } = await splitParent(
+        children,
+        [
+          implement("# A の実装"),
+          verdict("changes_required", "# 評価\n\n[要修正] 重複を除いていない"),
+          implement("# A の実装\n\n## 最後の直し\n\n重複を除きました。"),
+          verdict("no_findings", "# 評価\n\n問題なし"),
+        ],
+        new FakeRepos(),
+        pulls,
+        { reviewTasks: true },
+      );
+      const [a] = ids as [string, string];
+      const drainSteps = async () => {
+        for (let i = 0; i < 12; i++) {
+          const queued = service.queuedTaskIds().filter((q) => q === a);
+          if (queued.length === 0) return;
+          await service.runNext(a);
+        }
+      };
+      // 範囲は、子タスクの内容の文字列とは別に、分割の記録と子タスクの記録に残す
+      const scope = { content: CONTENT, parentTitle: "決済をまるごと作る" };
+      const split = service.get(id)?.activity.find((e) => e.type === "TaskSplit");
+      expect(split?.type === "TaskSplit" ? split.payload.children[0]?.scope : undefined).toEqual(
+        scope,
+      );
+      expect(taskOf(service, a).childScope).toEqual(scope);
+      // 再起動しても、記録から復元する
+      const again1 = new SqliteActivityStore(dbPath);
+      expect(makeService(again1, []).service.get(a)?.task.childScope).toEqual(scope);
+      again1.close();
+      await drainSteps();
+      // 最初の提出の PR の本文
+      const first = pulls.bodies[7] ?? "";
+      expect(first).toContain(HEADING);
+      expect(first).toContain(
+        "この PR は、親タスク「決済をまるごと作る」をタスク分割で分けた子タスクの1つの PR です。",
+      );
+      expect(first).toContain(quoted);
+      // 親タスクの要求要件・設計の全文は、範囲ではないので載せない
+      expect(first).not.toContain("親タスクの要求要件（承認済み）");
+      // 最初のレビューの指示
+      const before = executor.calls.length;
+      await runReview(service, pulls, a);
+      const prompt = executor.calls[before]?.command.join(" ") ?? "";
+      expect(prompt).toContain("レビューエージェント");
+      expect(prompt).not.toContain("--- 再レビュー ---");
+      expect(prompt).toContain(SCOPE);
+      expect(prompt).toContain(
+        "この PR を作ったタスク「決済の API」は、親タスク「決済をまるごと作る」をタスク分割で分けた子タスクの1つです。",
+      );
+      expect(prompt).toContain("この PR で未実装でも、[要修正] にしない");
+      expect(prompt).toContain("[要修正] にせず、本文に「人が確かめること」として書く");
+      expect(prompt).toContain("今までどおり指摘する");
+      expect(prompt).toContain(
+        `--- 子タスクの内容（PR を作ったタスク。タスク分割が書いたもの） ---\n${CONTENT}\n--- 子タスクの内容ここまで ---`,
+      );
+      // 指摘を子タスク A が直して、PR を更新する（本文を作り直す）
+      pulls.feedbackBy[7] = [
+        {
+          key: "review:50",
+          kind: "review",
+          author: "me",
+          at: "2026-11-16T00:00:00.000Z",
+          body: pulls.reviews[0]?.body ?? "",
+        },
+      ];
+      await service.checkPullRequests();
+      expect(taskOf(service, a).status).toBe("queued");
+      await drainSteps();
+      expect(taskOf(service, a).status).toBe("awaiting_approval");
+      const second = pulls.bodies[7] ?? "";
+      expect(second).not.toBe(first);
+      expect(second).toContain("最後の直し");
+      expect(second).toContain(HEADING);
+      expect(second).toContain(quoted);
+      // 再レビューの指示
+      await service.checkPullRequests();
+      const again = executor.calls.length;
+      await runReview(service, pulls, a);
+      const reprompt = executor.calls[again]?.command.join(" ") ?? "";
+      expect(reprompt).toContain("--- 再レビュー ---");
+      expect(reprompt).toContain(SCOPE);
+      expect(reprompt).toContain(`${CONTENT}\n--- 子タスクの内容ここまで ---`);
+      expect(
+        taskOf(service, reviewChild(service, a)).reviewVerdicts?.map((v) => v.verdict),
+      ).toEqual(["changes_required", "no_findings"]);
+      expect(taskOf(service, id).status).toBe("waiting_children");
+      activity.close();
+    });
+
+    it("範囲の記録が無い子タスク（記録を始める前の作業履歴）は、親タスクに残る分割のときの出力から読んだ範囲を、PR の本文とレビューの指示に入れる", async () => {
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      // 原文に、sacty が添える並び（区切り線・関係の文・見出し）と同じ文字列がある子タスク
+      const tricky = [
+        CONTENT,
+        "",
+        "---",
+        "",
+        "このタスクは、親タスク「決済をまるごと作る」をタスク分割で分けた子タスクの1つです。親の要求要件と設計のうち、このタスクの範囲だけを実現してください。",
+        "",
+        "## 親タスクの要求要件（承認済み）",
+        "",
+        "- 例の後ろの受け入れ条件",
+      ].join("\n");
+      const first = await splitParent(
+        [
+          { key: "A", title: "決済の API", body: tricky, dependsOn: [] },
+          { key: "B", title: "決済の画面", body: "- 画面を作る", dependsOn: ["A"] },
+        ],
+        [],
+        repos,
+        pulls,
+        { reviewTasks: true },
+      );
+      const [a, b] = first.ids as [string, string];
+      expect(taskOf(first.service, a).childScope?.content).toBe(tricky);
+      first.activity.close();
+      // 範囲の記録を始める前の作業履歴にする（記録から scope を除く）
+      const raw = new DatabaseSync(dbPath);
+      raw.exec("DROP TRIGGER IF EXISTS activity_no_update");
+      raw.exec(
+        "UPDATE activity SET payload = json_remove(payload, '$.scope') WHERE type = 'TaskCreated'",
+      );
+      raw.exec(
+        "UPDATE activity SET payload = json_remove(payload, '$.children[0].scope', '$.children[1].scope') WHERE type = 'TaskSplit'",
+      );
+      raw.close();
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [
+          implement("# A の実装"),
+          verdict("no_findings", "# 評価\n\n問題なし"),
+          implement("# B の実装"),
+          verdict("no_findings", "# 評価\n\n問題なし"),
+        ],
+        { planner, repos, pulls, mergeBase: true, reviewTasks: true },
+      );
+      expect(taskOf(service, a).childScope).toBeUndefined();
+      const run = async (id: string) => {
+        for (let i = 0; i < 12 && service.queuedTaskIds().includes(id); i++) {
+          await service.runNext(id);
+        }
+      };
+      await run(a);
+      // PR の本文：例の後ろの受け入れ条件まで、原文の全体が入る
+      const body = pulls.bodies[7] ?? "";
+      expect(body).toContain(HEADING);
+      expect(body).toContain("> - 例の後ろの受け入れ条件");
+      expect(body).toContain(
+        "この PR は、親タスク「決済をまるごと作る」をタスク分割で分けた子タスクの1つの PR です。",
+      );
+      // レビューの指示
+      const before = executor.calls.length;
+      await runReview(service, pulls, a);
+      const prompt = executor.calls[before]?.command.join(" ") ?? "";
+      expect(prompt).toContain(SCOPE);
+      expect(prompt).toContain(
+        `--- 子タスクの内容（PR を作ったタスク。タスク分割が書いたもの） ---\n${tricky}\n--- 子タスクの内容ここまで ---`,
+      );
+      // 分割の後に親タスクの題が変わっても、原文は分割のときの出力から読むので変わらない（親の題は、いまの題）
+      service.renameTask(first.id, { title: "決済を作り直す" });
+      pulls.states[7] = {
+        state: "merged",
+        mergedBy: "reviewer",
+        headSha: taskOf(service, a).pullRequest?.commit,
+        mergeCommit: "m".repeat(40),
+      };
+      await service.checkPullRequests();
+      for (let i = 0; i < 12 && taskOf(service, b).status !== "awaiting_approval"; i++) {
+        for (const q of service.queuedTaskIds().filter((x) => !taskOf(service, x).reviewOf)) {
+          await service.runNext(q);
+        }
+      }
+      const number = taskOf(service, b).pullRequest?.number ?? 0;
+      expect(number).toBeGreaterThan(7);
+      expect(pulls.bodies[number]).toContain(
+        "この PR は、親タスク「決済を作り直す」をタスク分割で分けた子タスクの1つの PR です。",
+      );
+      expect(pulls.bodies[number]).toContain("> - 画面を作る");
+      activity.close();
+    });
+
+    it("分割していないタスクの PR の本文と、そのレビューの指示には、範囲を入れない（受け入れ条件 5）", async () => {
+      const pulls = new FakePulls();
+      const activity = new SqliteActivityStore(dbPath);
+      const single = async () => ({
+        steps: ["implement" as const],
+        plan: "direct" as const,
+        reason: "小さい",
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+      });
+      const { service, executor } = makeService(
+        activity,
+        [implement("# 実装"), verdict("no_findings", "# 評価\n\n問題なし")],
+        { planner: single, pulls, repos: new FakeRepos(), reviewTasks: true },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "決済の API" });
+      for (let i = 0; i < 8 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+        await service.runNext(id);
+      }
+      expect(pulls.bodies[7]).toBeDefined();
+      expect(pulls.bodies[7]).not.toContain("この PR の範囲");
+      const before = executor.calls.length;
+      await runReview(service, pulls, id);
+      const prompt = executor.calls[before]?.command.join(" ") ?? "";
+      expect(prompt).toContain("レビューエージェント");
+      expect(prompt).toContain("--- 指摘の戻し先 ---");
+      expect(prompt).not.toContain("この PR の範囲");
+      expect(prompt).not.toContain("子タスクの内容");
+      activity.close();
+    });
+  });
 });
 
 describe("統合レビュー（PBI-31）", () => {
@@ -22215,6 +22466,65 @@ describe("統合レビュー（PBI-31）", () => {
     expect(parent?.gate).toEqual({ step: "integrate", submission: 1 });
     expect(parent?.integration?.passed).toBe(true);
     expect(parent?.integrationFailures).toBe(0);
+    activity.close();
+  });
+
+  it("分割を2回した作業履歴を再生すると、回ごとの分割の出力を残し、範囲の記録が無い各回の子タスクから、その回の原文を読める（PBI-351）", async () => {
+    // 2回目の分割の子タスクは、1回目の子タスクと同じ題で、内容が違う（別の回の出力を読むと、原文が合わない）
+    const first = [
+      { key: "A", title: "決済の API", body: "- 1回目：API を作る", dependsOn: [] },
+      { key: "B", title: "決済の画面", body: "- 1回目：画面を作る", dependsOn: [] },
+    ];
+    const second = [
+      { key: "F", title: "決済の API", body: "- 2回目：送信で API を呼ぶ", dependsOn: [] },
+      { key: "G", title: "決済の画面", body: "- 2回目：画面の文言を直す", dependsOn: [] },
+    ];
+    const made = await splitParent([
+      splitOutput(first),
+      out("# A の調査"),
+      out("# B の調査"),
+      integration(false, ["画面の送信ボタンから決済の API を呼ぶ"]),
+      splitOutput(second),
+      out("# F の調査"),
+      out("# G の調査"),
+      integration(true),
+    ]);
+    await drain(made.service, made.id);
+    expect(made.service.get(made.id)?.task.split?.rounds).toBe(2);
+    made.activity.close();
+    // 範囲の記録を始める前の作業履歴にする（記録から scope を除く）
+    const raw = new DatabaseSync(dbPath);
+    raw.exec("DROP TRIGGER IF EXISTS activity_no_update");
+    raw.exec(
+      "UPDATE activity SET payload = json_remove(payload, '$.scope') WHERE type = 'TaskCreated'",
+    );
+    raw.exec(
+      "UPDATE activity SET payload = json_remove(payload, '$.children[0].scope', '$.children[1].scope') WHERE type = 'TaskSplit'",
+    );
+    raw.close();
+    // 作業履歴を再生する
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, []);
+    const parent = service.get(made.id)?.task as Task;
+    const outputs = parent.split?.outputs ?? {};
+    expect(Object.keys(outputs)).toEqual(["1", "2"]);
+    expect(outputs[1]).toContain("1回目：API を作る");
+    expect(outputs[1]).not.toContain("2回目");
+    expect(outputs[2]).toContain("2回目：送信で API を呼ぶ");
+    expect(outputs[2]).not.toContain("1回目");
+    const children = parent.split?.children ?? [];
+    expect(children.map((c) => c.round)).toEqual([1, 1, 2, 2]);
+    const restored = children.map((c) => {
+      const child = service.get(c.taskId)?.task as Task;
+      expect(child.childScope).toBeUndefined();
+      return childScopeOf(child, parent);
+    });
+    expect(restored).toEqual([
+      { parentTitle: "決済をまるごと作る", fix: false, content: "- 1回目：API を作る" },
+      { parentTitle: "決済をまるごと作る", fix: false, content: "- 1回目：画面を作る" },
+      { parentTitle: "決済をまるごと作る", fix: true, content: "- 2回目：送信で API を呼ぶ" },
+      { parentTitle: "決済をまるごと作る", fix: true, content: "- 2回目：画面の文言を直す" },
+    ]);
     activity.close();
   });
 

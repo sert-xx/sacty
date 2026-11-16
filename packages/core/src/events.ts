@@ -688,6 +688,18 @@ const DeploymentFix = z.object({
   depth: z.number().int().positive(),
 });
 
+/**
+ * 分割の子タスクの範囲（PBI-351）。分割のエージェントが書いた子タスクの内容（親タスクから添える要求要件・設計・集めた情報を
+ * 含まない原文）と、親タスクの題、統合レビューの指摘を直す修正の子タスクか。子タスクの PR の本文の範囲の節と、その PR を
+ * レビューする子タスクの指示に使う。子タスクの内容（body）の文字列から読み直さずに済むよう、分けて記録する。
+ */
+export const ChildScope = z.object({
+  content: z.string(),
+  parentTitle: z.string(),
+  fix: z.literal(true).optional(),
+});
+export type ChildScope = z.infer<typeof ChildScope>;
+
 /** 再レビューで参照する、前回投稿の凍結された内容。 */
 const PreviousReviewSnapshot = z.object({
   round: z.number().int().positive(),
@@ -778,6 +790,8 @@ const TaskCreated = z.object({
      * 子タスクでないタスク・それより前の記録には無い。
      */
     viewpoints: z.array(TestViewpoint).min(1).optional(),
+    /** 分割で作った子タスクの範囲（PBI-351）。子タスクでないタスク・それより前の記録には無い。 */
+    scope: ChildScope.optional(),
     /**
      * sacty が作った PR をレビューする子タスクの、親（PR を作ったタスク）と、その PR を作った工程（PBI-330）。source は、その PR
      * （review: sacty）。分割の子タスク（parent）とは別で、分割の待ち・統合レビューの対象にしない。
@@ -871,6 +885,8 @@ const TaskSplit = z.object({
            * 対応させる。親に設計のテスト観点が無い分割・修正の子タスクの追加・それより前の記録には無い。
            */
           viewpoints: z.array(TestViewpoint).min(1).optional(),
+          /** この子タスクの範囲（PBI-351）。それより前の記録には無い。 */
+          scope: ChildScope.optional(),
         }),
       )
       .min(1),

@@ -5305,6 +5305,12 @@ export class TaskService {
     };
   }
 
+  /** PR の本文を作る材料に足す、分割の子タスクの親タスク（範囲の記録が無い子タスクの範囲を復元する。PBI-351）。 */
+  private splitParentStage(task: Task): { splitParent?: Task } {
+    const splitParent = task.parent && this.tasks.get(task.parent.taskId);
+    return splitParent ? { splitParent } : {};
+  }
+
   /**
    * PR のレビューの子タスクの指示に渡す、親の PR の工程・戻し先の候補・承認済みの成果物（PBI-332）。子タスクでなければ・親が
    * 無ければ渡さない（ラベルや依頼で取り込んだレビューだけのタスクは、戻し先を示さない）。
@@ -5313,7 +5319,16 @@ export class TaskService {
     const of = this.tasks.get(task.id)?.reviewOf;
     const parent = of && this.tasks.get(of.taskId);
     if (!of || !parent) return {};
-    return { reviewRework: { gateStep: of.step, targets: reworkTargets(parent, of.step), parent } };
+    // PR を作ったタスクが分割の子タスクなら、その親タスク（範囲の記録が無い子タスクの範囲を復元する。PBI-351）
+    const splitParent = parent.parent && this.tasks.get(parent.parent.taskId);
+    return {
+      reviewRework: {
+        gateStep: of.step,
+        targets: reworkTargets(parent, of.step),
+        parent,
+        ...(splitParent ? { splitParent } : {}),
+      },
+    };
   }
 
   /**
@@ -8158,6 +8173,7 @@ export class TaskService {
         secrets: usedSecrets,
         aiReview,
         ...(stackedOn ? { stackedOn } : {}),
+        ...this.splitParentStage(task),
       };
       // 本文は、待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
       const { body } = await this.pullRequestBody(
@@ -9558,6 +9574,12 @@ export class TaskService {
                 taskId: ids.get(c.key) ?? "",
                 title: c.title,
                 body: buildChildBody(latest, c, titles),
+                // 子タスクの範囲（分割のエージェントが書いた原文）は、添えた内容と分けて記録する（PBI-351）
+                scope: {
+                  content: c.body,
+                  parentTitle: latest.title,
+                  ...(latest.split ? { fix: true as const } : {}),
+                },
                 dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
                 ...(repoless && c.repo ? { repo: c.repo } : {}),
                 ...(repoless && c.repo && c.repoReason ? { repoReason: c.repoReason } : {}),
@@ -11097,12 +11119,14 @@ export class TaskService {
             secrets: usedSecrets,
             aiReview,
             ...(stackedOn ? { stackedOn } : {}),
+            ...this.splitParentStage(task),
           }),
         () =>
           buildPullRequestBodyParts(this.latestTitled(task), {
             secrets: usedSecrets,
             aiReview,
             ...(stackedOn ? { stackedOn } : {}),
+            ...this.splitParentStage(task),
           }),
       );
       // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
@@ -13125,6 +13149,8 @@ export class TaskService {
               parent: { taskId: parent.id, dependsOn: child.dependsOn },
               // 親の分割で割り当てられたテスト観点（PBI-348）
               ...(child.viewpoints?.length ? { viewpoints: child.viewpoints } : {}),
+              // 子タスクの範囲（PBI-351）
+              ...(child.scope ? { scope: child.scope } : {}),
             },
           },
         },
