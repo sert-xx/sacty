@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-16（UTC）
 - タスク: PBI-360
-- PR: なし
+- PR: #391
 - ブランチ: feat/issue-360-dialog-repo-fields
 - 関係する ADR: なし
 
