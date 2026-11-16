@@ -475,8 +475,8 @@ const ja = {
       `${target} に投稿できなかった（${message}）`,
     RemarkRepliesStarted: (number: number, account: string) =>
       `指摘への対応を PR #${number} に返信し始めた（GitHub のアカウント ${account}）`,
-    RemarkRepliesPosted: (number: number, count: number, failed: number) =>
-      `指摘への対応を PR #${number} に返信（${count}件${failed > 0 ? `。うち${failed}件は返信できなかった` : ""}）`,
+    RemarkRepliesPosted: (number: number, replied: number, failed: number) =>
+      `指摘への対応の、PR #${number} への返信の結果（返信した ${replied}件${failed > 0 ? `・返信できなかった ${failed}件` : ""}）`,
     RemarkReplyInline: (remarkId: string, url: string) =>
       `${remarkId} は行へのコメントに返信した${url ? `（${url}）` : ""}`,
     RemarkReplyComment: (remarkId: string, url: string) =>
@@ -1132,8 +1132,8 @@ const en: LabelMessages = {
     GitHubCommentFailed: (target, message) => `could not post to ${target} (${message})`,
     RemarkRepliesStarted: (number, account) =>
       `Started replying on PR #${number} about how the remarks were handled (GitHub account ${account})`,
-    RemarkRepliesPosted: (number, count, failed) =>
-      `Replied on PR #${number} about how the remarks were handled (${count}${failed > 0 ? `; ${failed} could not be replied to` : ""})`,
+    RemarkRepliesPosted: (number, replied, failed) =>
+      `Result of replying on PR #${number} about how the remarks were handled (${replied} replied${failed > 0 ? `, ${failed} could not be replied to` : ""})`,
     RemarkReplyInline: (remarkId, url) =>
       `${remarkId}: replied to the line comment${url ? ` (${url})` : ""}`,
     RemarkReplyComment: (remarkId, url) =>

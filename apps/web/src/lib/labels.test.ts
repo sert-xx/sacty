@@ -347,7 +347,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     });
     // 行には件数だけ。指摘ごとの結果は、詳細に出す（返信できなかった指摘が先）
     expect(describeEventParts(replied, ja)).toEqual({
-      text: "指摘への対応を PR #7 に返信（4件。うち1件は返信できなかった）",
+      text: "指摘への対応の、PR #7 への返信の結果（返信した 3件・返信できなかった 1件）",
       detail: [
         "implement-1-3 は返信できなかった（403 forbidden）",
         "implement-1-1 は行へのコメントに返信した（https://github.com/acme/app/pull/7#discussion_r9）",
@@ -356,7 +356,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
       ].join("\n"),
     });
     expect(describeEventParts(replied, labels.en)).toEqual({
-      text: "Replied on PR #7 about how the remarks were handled (4; 1 could not be replied to)",
+      text: "Result of replying on PR #7 about how the remarks were handled (3 replied, 1 could not be replied to)",
       detail: [
         "implement-1-3: could not reply (403 forbidden)",
         "implement-1-1: replied to the line comment (https://github.com/acme/app/pull/7#discussion_r9)",
@@ -364,6 +364,25 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         "implement-1-4: replied as a PR comment",
       ].join("\n"),
     });
+    // すべて返信できなかったときも、返信した件数（0件）と、返信できなかった件数を分けて出す
+    const allFailed = event({
+      type: "RemarkRepliesPosted",
+      payload: {
+        step: "implement",
+        submission: 2,
+        number: 7,
+        results: [
+          { remarkId: "implement-1-1", key: "comment:1", failed: "403" },
+          { remarkId: "implement-1-2", key: "comment:2", failed: "403" },
+        ],
+      },
+    });
+    expect(describeEventParts(allFailed, ja).text).toBe(
+      "指摘への対応の、PR #7 への返信の結果（返信した 0件・返信できなかった 2件）",
+    );
+    expect(describeEventParts(allFailed, labels.en).text).toBe(
+      "Result of replying on PR #7 about how the remarks were handled (0 replied, 2 could not be replied to)",
+    );
     const started = event({
       type: "RemarkRepliesStarted",
       payload: { step: "implement", submission: 2, number: 7, account: "acme-dev" },
@@ -383,9 +402,11 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         results: [{ remarkId: "implement-1-1", key: "comment:1", url: "https://example.com/c" }],
       },
     });
-    expect(describeEventParts(allDone, ja).text).toBe("指摘への対応を PR #7 に返信（1件）");
+    expect(describeEventParts(allDone, ja).text).toBe(
+      "指摘への対応の、PR #7 への返信の結果（返信した 1件）",
+    );
     expect(describeEventParts(allDone, labels.en).text).toBe(
-      "Replied on PR #7 about how the remarks were handled (1)",
+      "Result of replying on PR #7 about how the remarks were handled (1 replied)",
     );
   });
 
