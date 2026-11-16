@@ -263,6 +263,7 @@ import {
 } from "./gh.js";
 import {
   type FoundIssue,
+  githubRetryAfterMs,
   githubStatus,
   isTransientGitHubFailure,
   type PullRequestFeedback,
@@ -3492,17 +3493,46 @@ export class TaskService {
     return due && this.githubAccountOf(task, due.repo).account ? due : undefined;
   }
 
-  /** GitHub のレート制限に当たった指摘への返信を、やり直せる時刻（タスクごと。デーモンを起動し直すと、すぐにやり直す）。 */
+  /**
+   * 指摘への返信を、やり直せる時刻（デーモンを起動し直すと、すぐにやり直す）。キーは、GitHub のレート制限に当たった
+   * アカウント（同じアカウントで返信する、ほかのタスクも待つ）か、結果を記録できなかった・進まなかったタスク。
+   */
   private readonly remarkReplyRetryAt = new Map<string, number>();
 
-  /** 指摘への返信を、今は待っているか（レート制限に当たった後、やり直すまでの間）。 */
-  private remarkRepliesHeld(taskId: string): boolean {
-    return (this.remarkReplyRetryAt.get(taskId) ?? 0) > this.now();
+  /** 返信に使うアカウントの、待ちのキー（ホストとアカウント）。 */
+  private remarkReplyAccountKey(task: Task, repo: string): string {
+    const account = this.githubAccountOf(task, repo).account ?? "";
+    return `account:${httpsHost(`${repo}/`) ?? ""}:${account.toLowerCase()}`;
   }
 
-  /** 指摘への返信を、今、投稿できる提出（返信を待っていて、レート制限の後の待ちの間でない）。 */
+  /** 指摘への返信を、今は待っているか（レート制限に当たった・結果を記録できなかった後、やり直すまでの間）。 */
+  private remarkRepliesHeld(task: Task): boolean {
+    const now = this.now();
+    if ((this.remarkReplyRetryAt.get(`task:${task.id}`) ?? 0) > now) return true;
+    const due = awaitingRemarkReplies(task);
+    return (
+      due !== undefined &&
+      (this.remarkReplyRetryAt.get(this.remarkReplyAccountKey(task, due.repo)) ?? 0) > now
+    );
+  }
+
+  /** 指摘への返信を、今、投稿できる提出（返信を待っていて、やり直すまでの待ちの間でない）。 */
   private remarkRepliesReady(task: Task): ReturnType<typeof awaitingRemarkReplies> {
-    return this.remarkRepliesHeld(task.id) ? undefined : this.remarkRepliesDue(task);
+    return this.remarkRepliesHeld(task) ? undefined : this.remarkRepliesDue(task);
+  }
+
+  /**
+   * PR のレビューの子タスクが、PR を作ったタスクの指摘への返信を待っている（返信が、やり直すまでの待ちの間）。この間は、
+   * 子タスクを実行待ちに出さない（始めても進めないレビューが、実行の枠を取り続けて、後ろのタスクを止めないように）。
+   */
+  private reviewWaitsForReplies(task: Task): boolean {
+    if (!task.reviewOf || task.status !== "queued" || activeStep(task) !== "review") return false;
+    const parent = this.tasks.get(task.reviewOf.taskId);
+    return (
+      parent !== undefined &&
+      this.remarkRepliesDue(parent) !== undefined &&
+      this.remarkRepliesHeld(parent)
+    );
   }
 
   /**
@@ -3518,26 +3548,37 @@ export class TaskService {
    * 進まなかったときは false（レビューの子タスクは、レビューを始めずに待つ）。
    */
   private async remarkRepliesSettled(parentId: string, childId: string): Promise<boolean> {
+    // 進められないときは、間を置いてやり直す（その間、子タスクは実行待ちに出ない。reviewWaitsForReplies）
+    const wait = () => {
+      const parent = this.tasks.get(parentId);
+      if (parent && !this.remarkRepliesHeld(parent)) {
+        this.remarkReplyRetryAt.set(
+          `task:${parentId}`,
+          this.now() + (this.deps.remarkReplyRetryMs ?? 60_000),
+        );
+      }
+      return false;
+    };
     for (;;) {
       const parent = this.tasks.get(parentId);
       const due = parent && this.remarkRepliesDue(parent);
-      if (!due) return true;
-      // レート制限の後の待ちの間は、投稿を試みずに待つ
-      if (this.remarkRepliesHeld(parentId)) return false;
+      if (!parent || !due) return true;
+      // やり直すまでの待ちの間は、投稿を試みずに待つ
+      if (this.remarkRepliesHeld(parent)) return false;
       try {
         await this.postRemarkReplies(parentId);
       } catch (error) {
         console.warn(
-          `[daemon] レビューのタスク ${childId} の前に、タスク ${parentId} の指摘への返信を記録できませんでした。レビューを始めずに、次の実行でやり直します：${renderMessage(errorText(error), "ja")}`,
+          `[daemon] レビューのタスク ${childId} の前に、タスク ${parentId} の指摘への返信を記録できませんでした。レビューを始めずに、間を置いてやり直します：${renderMessage(errorText(error), "ja")}`,
         );
-        return false;
+        return wait();
       }
       const latest = this.tasks.get(parentId);
       const left = latest && this.remarkRepliesDue(latest);
       if (!left) return true;
-      // 進まなかった（一時停止・中止を求められている、など）なら、待つ
+      // 進まなかった（一時停止・中止を求められている、レート制限に当たった、など）なら、待つ
       if (left.submission === due.submission && left.replies.length >= due.replies.length) {
-        return false;
+        return wait();
       }
     }
   }
@@ -3588,7 +3629,12 @@ export class TaskService {
     // GitHub のレート制限に当たった：制限の間は投稿を続けない。ここまでの結果を記録し、残りの指摘は、失敗にせずに残して、
     // 間を置いてやり直す（行への返信が制限で断られても、PR のコメントに回さない）
     const holdForRateLimit = (error: unknown) => {
-      this.remarkReplyRetryAt.set(taskId, this.now() + (this.deps.remarkReplyRetryMs ?? 60_000));
+      // 待つ時間は、GitHub が示した時間（上限は 1 時間）と、既定の待ちの長いほう。同じアカウントで返信する、ほかのタスクも待つ
+      const wait = Math.max(
+        this.deps.remarkReplyRetryMs ?? 60_000,
+        Math.min(githubRetryAfterMs(error) ?? 0, 3_600_000),
+      );
+      this.remarkReplyRetryAt.set(this.remarkReplyAccountKey(task, due.repo), this.now() + wait);
       console.warn(
         `[daemon] タスク ${taskId} の指摘への返信が、GitHub のレート制限に当たりました。残りは、間を置いてやり直します：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
       );
@@ -3751,6 +3797,7 @@ export class TaskService {
             if (!replyRejected(error)) {
               // GitHub が断ったのではない（答えを受け取れなかった・期限を超えた）。返信は投稿されていることがあるので、探し直す。
               // 見つかれば使う。見つからない・探せないときは、投稿されたかが分からないので、PR のコメントを重ねずに失敗を残す
+              let searchFailed: unknown;
               const landed = await limited((signal) =>
                 this.deps.pulls.listReviewComments({
                   ...where,
@@ -3758,7 +3805,14 @@ export class TaskService {
                   complete: true,
                   signal,
                 }),
-              ).catch(() => undefined);
+              ).catch((failure: unknown) => {
+                searchFailed = failure;
+                return undefined;
+              });
+              // 探し直しがレート制限に当たったら、失敗にせずに、制限が解けてから照合し直す
+              if (searchFailed !== undefined && rateLimited(searchFailed)) {
+                return holdForRateLimit(searchFailed);
+              }
               const hit = landed && mine(landed)[0];
               results.push(
                 hit ? { ...base, inline: true, ...posted(hit.url) } : { ...base, failed: reason },
@@ -7689,6 +7743,8 @@ export class TaskService {
           (t) =>
             !this.cancelling.has(t.id) &&
             !this.pauseRequested.has(t.id) &&
+            // PR を作ったタスクの、指摘への返信を待っているレビューの子タスクは、待ちが明けるまで始めさせない（PBI-352）
+            !this.reviewWaitsForReplies(t) &&
             // PR のマージで作り直しを止めている間は、実行を始めさせない（PBI-276）
             !this.mergeStopping.has(t.id),
         )

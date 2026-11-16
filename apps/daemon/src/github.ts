@@ -679,7 +679,9 @@ export class GitHubPullRequests implements PullRequests {
     for (let page = 0; url && page < MAX_PAGES; page++) {
       const res = await this.fetchImpl(url, { headers, ...(signal ? { signal } : {}) });
       const json = (await res.json().catch(() => ({}))) as unknown;
-      if (!res.ok) throw apiError(action, res.status, json as Record<string, unknown>);
+      if (!res.ok) {
+        throw apiError(action, res.status, json as Record<string, unknown>, res.headers);
+      }
       // 最後まで読む指定では、読めない答え（JSON でない・配列でない）を、空の一覧として扱わない（PBI-352）
       if (complete && !Array.isArray(json)) {
         throw new MessageError(message("github.commentsIncomplete"));
@@ -740,7 +742,7 @@ export class GitHubPullRequests implements PullRequests {
       },
     );
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) throw apiError("commentIssue", res.status, json);
+    if (!res.ok) throw apiError("commentIssue", res.status, json, res.headers);
     return { url: String(json.html_url ?? "") };
   }
 
@@ -760,7 +762,7 @@ export class GitHubPullRequests implements PullRequests {
       },
     );
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) throw apiError("commentIssue", res.status, json);
+    if (!res.ok) throw apiError("commentIssue", res.status, json, res.headers);
     return { url: String(json.html_url ?? "") };
   }
 
@@ -1205,11 +1207,40 @@ export function apiError(
     | "draftPr",
   status: number,
   json: Record<string, unknown>,
+  /** 答えのヘッダー。あれば、GitHub が示した、次に試せるまでの時間を、エラーに持たせる（githubRetryAfterMs）。 */
+  headers?: Headers,
 ): Error {
   // GitHub の文（json.message）は外から来た文なので、翻訳せずに引数で渡す
   const detail = typeof json.message === "string" ? json.message : "";
   const hint = status === 401 ? "token" : status === 403 || status === 404 ? "permission" : "none";
-  return new MessageError(message("github.failed", { action, status, detail, hint }));
+  const error = new MessageError(message("github.failed", { action, status, detail, hint }));
+  const wait = headers ? retryAfterOf(headers) : undefined;
+  if (wait !== undefined) (error as RetryAfter).retryAfterMs = wait;
+  return error;
+}
+
+type RetryAfter = { retryAfterMs?: number };
+
+/**
+ * GitHub が答えのヘッダーで示した、次に試せるまでの時間（ミリ秒）。`retry-after`（秒）か、残りが 0 のときの
+ * `x-ratelimit-reset`（解ける時刻）。示されていなければ undefined。
+ */
+function retryAfterOf(headers: Headers): number | undefined {
+  const after = Number(headers.get("retry-after"));
+  if (headers.get("retry-after") !== null && Number.isFinite(after) && after >= 0) {
+    return Math.round(after * 1000);
+  }
+  const reset = Number(headers.get("x-ratelimit-reset"));
+  if (headers.get("x-ratelimit-remaining") === "0" && Number.isFinite(reset) && reset > 0) {
+    return Math.max(0, Math.round(reset * 1000 - Date.now()));
+  }
+  return undefined;
+}
+
+/** GitHub への問い合わせの失敗に、GitHub が示した、次に試せるまでの時間（ミリ秒）があれば、それ。 */
+export function githubRetryAfterMs(error: unknown): number | undefined {
+  const wait = (error as RetryAfter | null)?.retryAfterMs;
+  return typeof wait === "number" ? wait : undefined;
 }
 
 /** 取り込みの対象として見つかった Issue。 */

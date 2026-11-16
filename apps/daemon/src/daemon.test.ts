@@ -261,8 +261,11 @@ function authorOfToken(token: string): string {
   return token === "ghp_other" ? "other" : "me";
 }
 
-/** GitHub が、レート制限で断ったときのエラー。 */
-function rateLimitError(): Error {
+/** GitHub が、レート制限で断ったときのエラー。retryAfterMs は、GitHub が示した、次に試せるまでの時間。 */
+function rateLimitError(retryAfterMs?: number): Error {
+  return Object.assign(rateLimitMessage(), retryAfterMs !== undefined ? { retryAfterMs } : {});
+}
+function rateLimitMessage(): Error {
   return new MessageError(
     message("github.failed", {
       action: "commentIssue",
@@ -861,7 +864,8 @@ class FakePulls implements PullRequests {
   }) {
     // 本物の fetch と同じく、中断された通信は終わる（遅れて投稿されない。PBI-292）
     if (input.signal?.aborted) throw input.signal.reason;
-    if (this.rateLimited) throw rateLimitError();
+    if (input.body.startsWith("<!-- sacty-reply:")) this.replyPostTimes.push(Date.now());
+    if (this.rateLimited) throw rateLimitError(this.rateLimitRetryAfterMs);
     if (this.commentFail) throw new Error(this.commentFail);
     this.issueComments.push(input);
     return {
@@ -880,6 +884,12 @@ class FakePulls implements PullRequests {
   }
   /** あれば、書き込み（PR のコメント・行への返信）を、GitHub のレート制限で断る（PBI-352）。 */
   rateLimited = false;
+  /** レート制限で断るときに、GitHub が示す、次に試せるまでの時間（ミリ秒）。 */
+  rateLimitRetryAfterMs?: number;
+  /** 指摘への返信（行への返信・PR のコメント）を始めた時刻（投稿の間隔を確かめる）。 */
+  replyPostTimes: number[] = [];
+  /** あれば、行へのコメントの一覧を、この回数だけ読めた後に、レート制限で断る。 */
+  reviewListRateLimitedAfter?: number;
   /** 行へのコメントへの返信（指摘への対応の返信。PBI-352）。 */
   reviewReplies: {
     repo: string;
@@ -906,7 +916,8 @@ class FakePulls implements PullRequests {
     signal?: AbortSignal;
   }) {
     if (input.signal?.aborted) throw input.signal.reason;
-    if (this.rateLimited) throw rateLimitError();
+    this.replyPostTimes.push(Date.now());
+    if (this.rateLimited) throw rateLimitError(this.rateLimitRetryAfterMs);
     if (this.replyRejected) {
       throw new MessageError(
         message("github.failed", {
@@ -947,6 +958,12 @@ class FakePulls implements PullRequests {
       ...(input.account ? { account: input.account } : {}),
       ...(input.complete ? { complete: true } : {}),
     });
+    if (
+      this.reviewListRateLimitedAfter !== undefined &&
+      this.reviewListCalls >= this.reviewListRateLimitedAfter
+    ) {
+      throw rateLimitError();
+    }
     if (
       this.reviewListFailAfter !== undefined &&
       this.reviewListCalls >= this.reviewListFailAfter
@@ -1500,6 +1517,8 @@ function makeService(
     pulls?: FakePulls;
     /** レビューが止まったことの PR への知らせの期限（PBI-292）。 */
     stopNoticeTimeoutMs?: number;
+    /** 指摘への返信の、投稿と投稿の間（ミリ秒。PBI-352）。 */
+    remarkReplyIntervalMs?: number;
     /** レビューのタスクが GitHub の一時的な失敗を自動でやり直すまでの待ち（ミリ秒。PBI-301）。 */
     reviewRetryDelaysMs?: readonly number[];
     projects?: MemoryProjectStore;
@@ -1585,8 +1604,8 @@ function makeService(
     github: options.github ?? new FakeGitHub(),
     ...(options.now ? { now: options.now } : {}),
     ...(options.stopNoticeTimeoutMs ? { stopNoticeTimeoutMs: options.stopNoticeTimeoutMs } : {}),
-    // 指摘への返信（PBI-352）の、投稿と投稿の間は、テストでは置かない
-    remarkReplyIntervalMs: 0,
+    // 指摘への返信（PBI-352）の、投稿と投稿の間は、確かめるテストのほかでは置かない
+    remarkReplyIntervalMs: options.remarkReplyIntervalMs ?? 0,
     ...(options.reviewRetryDelaysMs ? { reviewRetryDelaysMs: options.reviewRetryDelaysMs } : {}),
     // 情報収集は、既定では集めずに進める（情報収集のテストでは差し替える）
     ...(options.realGatherer ? {} : { gatherer: options.gatherer ?? (async () => undefined) }),
@@ -4411,6 +4430,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       /** PR テンプレートを探す（PBI-87）。 */
       templates?: ServiceDeps["templates"];
       stopNoticeTimeoutMs?: number;
+      remarkReplyIntervalMs?: number;
       github?: FakeGitHub;
     } = {},
   ) {
@@ -9983,6 +10003,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       now?: () => number;
       memory?: boolean;
       stopNoticeTimeoutMs?: number;
+      remarkReplyIntervalMs?: number;
       github?: FakeGitHub;
     } = {},
   ) {
@@ -13502,6 +13523,92 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           ["implement-1-2", undefined],
         ]);
         warn.mockRestore();
+        activity.close();
+      });
+
+      it("レート制限の待ちは、GitHub が示した時間に合わせる。投稿されたかが分からない返信の探し直しが制限に当たったときも、失敗にせずに、制限が解けてから照合し直す", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        // GitHub が 5 分後と示した：既定の 1 分では、やり直さない
+        const pulls = new FakePulls();
+        pulls.rateLimitRetryAfterMs = 5 * 60_000;
+        let now = later();
+        const a = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+          { pulls, now: () => now },
+        );
+        pulls.feedbackList = [comment()];
+        await a.service.checkPullRequests();
+        for (let i = 0; i < 10 && a.service.get(a.id)?.task.gate?.submission !== 2; i++) {
+          await a.service.runNext(a.id);
+        }
+        pulls.rateLimited = true;
+        await drain(a.service);
+        pulls.rateLimited = false;
+        now += 61_000;
+        expect(a.service.queuedTaskIds()).toEqual([]);
+        now += 4 * 60_000;
+        expect(a.service.queuedTaskIds()).toEqual([a.id]);
+        await drain(a.service);
+        expect(prComments(pulls)).toHaveLength(1);
+        a.activity.close();
+        rmSync(dbPath, { force: true });
+
+        // 返信の答えを受け取れず、探し直しがレート制限に当たる（返信は GitHub にある）
+        const lost = new FakePulls();
+        lost.replyAnswerLost = "socket hang up";
+        lost.reviewListRateLimitedAfter = 1;
+        let clock = later();
+        const b = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+          { pulls: lost, now: () => clock },
+        );
+        lost.feedbackList = [inline()];
+        await b.service.checkPullRequests();
+        await drain(b.service);
+        // 失敗を記録せず、PR のコメントも重ねずに、待つ
+        expect(lost.reviewReplies).toHaveLength(1);
+        expect(prComments(lost)).toHaveLength(0);
+        expect(posted(b.service, b.id)).toHaveLength(0);
+        expect(b.service.queuedTaskIds()).toEqual([]);
+        // 制限が解けたら、投稿済みの返信を見つけて記録する（重ねて投稿しない）
+        lost.reviewListRateLimitedAfter = undefined;
+        clock += 61_000;
+        await drain(b.service);
+        expect(lost.reviewReplies).toHaveLength(1);
+        expect(posted(b.service, b.id)[0]?.results).toEqual([
+          {
+            remarkId: "implement-1-1",
+            key: "review_comment:501",
+            inline: true,
+            url: `${pr}#discussion_r9001`,
+          },
+        ]);
+        warn.mockRestore();
+        b.activity.close();
+      });
+
+      it("続けて投稿するときは、投稿と投稿の間をあける", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", text: "直した" },
+              { remarkId: "implement-1-2", text: "足した" },
+              { remarkId: "implement-1-3", text: "変えた" },
+            ]),
+          ],
+          { pulls, now: later, remarkReplyIntervalMs: 80 },
+        );
+        pulls.feedbackList = [inline(), comment(401), comment(402)];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(posted(service, id)[0]?.results).toHaveLength(3);
+        const [first = 0, second = 0, third = 0] = pulls.replyPostTimes;
+        expect(pulls.replyPostTimes).toHaveLength(3);
+        // タイマーの誤差を見込んで、間隔の 9 割以上あいていることを確かめる
+        expect(second - first).toBeGreaterThanOrEqual(72);
+        expect(third - second).toBeGreaterThanOrEqual(72);
         activity.close();
       });
 
@@ -25597,6 +25704,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       draftTimeoutMs?: number;
       /** 実装を始める前に、ベースブランチの最新を作業領域に取り込む（既定は取り込まない）。 */
       mergeBase?: boolean;
+      /** 今の時刻（無ければ、PR の指摘を書き終わるのを待つ時間がたった時刻）。 */
+      now?: () => number;
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -25612,7 +25721,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ...(options.gatherer ? { gatherer: options.gatherer } : {}),
       ...(options.reviewCiTimeoutMs ? { reviewCiTimeoutMs: options.reviewCiTimeoutMs } : {}),
       ...(options.draftTimeoutMs ? { draftTimeoutMs: options.draftTimeoutMs } : {}),
-      now: later,
+      now: options.now ?? later,
       pulls,
       repos,
       ...(options.projects ? { projects: options.projects } : {}),
@@ -29970,6 +30079,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       }
       const pulls = new Watching();
       const projects = projectsWithAccount();
+      let clock = later();
       const redone = [
         "# 要求要件 v2",
         `\`\`\`json\n${JSON.stringify({
@@ -29995,6 +30105,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           reviewTasks: true,
           projects,
           github: new FakeGitHub({ me: "ghp_secret", other: "ghp_other" }),
+          now: () => clock,
         },
       );
       const { activity, service, id } = made;
@@ -30043,7 +30154,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(taskOf(service, childId).status).toBe("queued");
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("レビューを始めずに"));
       warn.mockRestore();
-      // 次の実行で、投稿済みの返信を見つけて記録してから、レビューする
+      // 待っている間、子タスクは実行待ちに出ない（始めても進めないレビューが、実行の枠を取り続けない）。始めさせても進まない
+      expect(service.queuedTaskIds()).not.toContain(childId);
+      await service.runNext(childId);
+      expect(pulls.reviews).toHaveLength(1);
+      // 間を置いたら、実行待ちに戻り、投稿済みの返信を見つけて記録してから、レビューする
+      clock += 61_000;
+      expect(service.queuedTaskIds()).toContain(childId);
       await runReview(service, childId);
       expect(pulls.reviews).toHaveLength(2);
       // レビューが PR を読む前に、親の返信が投稿され、記録されている

@@ -5,6 +5,7 @@ import {
   apiError,
   GitHubIssueSearch,
   GitHubPullRequests,
+  githubRetryAfterMs,
   isTransientGitHubFailure,
 } from "./github.js";
 
@@ -784,6 +785,40 @@ describe("フィードバックの次のページ（PBI-14b レビュー指摘�
 
 describe("PR の行へのコメントへの返信（PBI-352）", () => {
   const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
+
+  it("レート制限で断られたときは、GitHub が示した、次に試せるまでの時間を、エラーに持たせる（retry-after・x-ratelimit-reset）", async () => {
+    const limit = { message: "You have exceeded a secondary rate limit." };
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    const { impl } = fakeFetch([
+      { status: 403, json: limit, headers: { "retry-after": "120" } },
+      {
+        status: 403,
+        json: limit,
+        headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+      },
+      { status: 404, json: { message: "Not Found" } },
+      { status: 429, json: limit, headers: { "retry-after": "30" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const input = { ...target, commentId: 501, body: "x" };
+    const after = await client.replyToReviewComment(input).catch((e: unknown) => e);
+    expect(githubRetryAfterMs(after)).toBe(120_000);
+    const untilReset = githubRetryAfterMs(
+      await client.commentIssue({ ...target, body: "x" }).catch((e: unknown) => e),
+    );
+    expect(untilReset).toBeGreaterThan(590_000);
+    expect(untilReset).toBeLessThanOrEqual(600_000);
+    // 示されていなければ、無い
+    expect(
+      githubRetryAfterMs(await client.replyToReviewComment(input).catch((e: unknown) => e)),
+    ).toBeUndefined();
+    // 一覧の読み取りでも持たせる
+    expect(
+      githubRetryAfterMs(
+        await client.listReviewComments({ ...target, prefix: "x" }).catch((e: unknown) => e),
+      ),
+    ).toBe(30_000);
+  });
 
   it("行へのコメントに返信して URL を返し、失敗（消えたコメント・返信への返信）は理由つきのエラーにする", async () => {
     const { impl, calls } = fakeFetch([
