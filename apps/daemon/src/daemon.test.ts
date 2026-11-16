@@ -33747,6 +33747,102 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     },
   );
 
+  it("停止未確認の実行は他のリポジトリの写しを保持する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "unconfirmed-multi-copy";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "person",
+          event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+          },
+        },
+      ],
+    });
+    const { service, executor } = makeService(activity, [out("# 結果")], { projects: twoRepos() });
+    executor.stops = false;
+    let path = "";
+    executor.respond = (invocation) => {
+      path =
+        invocation.mounts?.find((mount) => mount.containerPath === "/sacty-repos")?.hostPath ?? "";
+      return undefined;
+    };
+    await service.runNext(id);
+    expect(path).not.toBe("");
+    expect(existsSync(join(path, "2-acme__web", "README.md"))).toBe(true);
+    activity.close();
+  });
+
+  it("選択後の初回 clone 中の一時停止は手動停止として記録する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "pause-initial-multi-clone";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "person",
+          event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
+        },
+      ],
+    });
+    const { service, executor, repos } = makeService(activity, [], { projects: twoRepos() });
+    const gate = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    vi.spyOn(repos, "prepare").mockImplementation(async () => {
+      started.resolve();
+      await gate.promise;
+      throw new Error("stopped");
+    });
+    const running = service.runNext(id);
+    await started.promise;
+    const pausing = service.pause(id);
+    gate.resolve();
+    await Promise.all([running, pausing]);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "manual" });
+    expect(
+      service.get(id)?.activity.findLast((item) => item.type === "TaskPaused")?.payload,
+    ).toMatchObject({ reason: "manual" });
+    activity.close();
+  });
+
   it("複数指定のリモート確認中に一時停止すると通信を中断し、再開後に進む", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const id = "pause-repository-fetch";

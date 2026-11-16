@@ -15,7 +15,7 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
 import {
   DIFF_LIMIT,
@@ -144,9 +144,18 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       "origin",
       `git://127.0.0.1:${address.port}/repo`,
     );
-    await expect(
-      workspace.fetchBranch(metadata, "main", undefined, AbortSignal.timeout(100)),
-    ).rejects.toThrow("時間切れのため中断");
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const timer = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((ms) => timeout(ms === 120_000 ? 100 : ms));
+    try {
+      await expect(
+        workspace.fetchBranch(metadata, "main", undefined, new AbortController().signal),
+      ).rejects.toThrow("時間切れのため中断");
+      expect(timer).toHaveBeenCalledWith(120_000);
+    } finally {
+      timer.mockRestore();
+    }
     server.close();
     git(dir, "--git-dir", metadata, "remote", "set-url", "origin", origin);
     expect(await workspace.fetchBranch(metadata, "main")).toMatch(/^[0-9a-f]{40}$/);

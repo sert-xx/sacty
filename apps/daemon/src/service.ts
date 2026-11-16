@@ -9079,7 +9079,10 @@ export class TaskService {
                   },
                   {
                     actor: "sacty",
-                    event: { type: "TaskPaused", payload: { reason: "error", message: text } },
+                    event: {
+                      type: "TaskPaused",
+                      payload: { reason: "error", message: text },
+                    },
                   },
                 ]);
               }
@@ -9345,6 +9348,7 @@ export class TaskService {
           repo: initial.repo ?? initial.repos[0] ?? "",
           detail: ready.message,
         });
+        const manual = await this.manualPauseInfo(initial.id);
         if (awaitingGathering(initial) || initial.steps.length === 0) {
           this.append(initial, [
             {
@@ -9362,7 +9366,10 @@ export class TaskService {
             },
             {
               actor: "sacty",
-              event: { type: "TaskPaused", payload: { reason: "error", message: text } },
+              event: {
+                type: "TaskPaused",
+                payload: { reason: this.stopReason(initial.id, "error"), message: text, ...manual },
+              },
             },
           ]);
         } else if (step) {
@@ -9394,7 +9401,13 @@ export class TaskService {
                 payload: { runId, step, agentId: agent.id, reason: "error", message: text },
               },
             },
-            { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+            {
+              actor: "sacty",
+              event: {
+                type: "TaskPaused",
+                payload: { reason: this.stopReason(initial.id, "error"), ...manual },
+              },
+            },
           ]);
         }
         return;
@@ -10220,7 +10233,9 @@ export class TaskService {
       if (snapshotDir) await rm(snapshotDir, { recursive: true, force: true });
       if (reviewDiffDir) await rm(reviewDiffDir, { recursive: true, force: true });
       if (inputDir) await rm(inputDir, { recursive: true, force: true });
-      if (otherReposDir) await rm(otherReposDir, { recursive: true, force: true });
+      if (otherReposDir && (await this.confirmStopped([runId]))) {
+        await rm(otherReposDir, { recursive: true, force: true });
+      }
     }
     const { outcome, costUsd, estimated } = executed;
 
