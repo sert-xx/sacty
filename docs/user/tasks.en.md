@@ -759,7 +759,7 @@ Besides the level and the suggested depth, the section holds the following.
 Keep the following in mind about the assessment.
 
 - When it could not be assessed (the budget cap has been reached, the AI run failed, or the answer could not be read), the section says "評価できませんでした" (could not be assessed) with the reason. Opening the PR is not stopped.
-- When a PR with the same content is submitted again, it is not assessed again. When the implementation is redone and the content changes, it is assessed again.
+- When a PR with the same content is submitted again, it is not assessed again if it was assessed successfully. When it could not be assessed (the budget cap, a failed AI run, or an unreadable answer), it is assessed again the next time the PR is submitted. When the implementation is redone and the content changes, it is assessed again.
 - The result also appears in the "PR risk assessment" section of the task detail and in the activity.
 - A requirements or design PR does not carry a risk assessment.
 - When the project's or repository's context has a skill or rules about RADAR (the idea of varying the review depth with the risk of a change), the AI puts that content before the criteria above when it assesses (the levels stay low, medium, and high).

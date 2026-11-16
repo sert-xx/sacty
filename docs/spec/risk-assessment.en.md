@@ -105,11 +105,11 @@ Code: `apps/daemon/src/service.ts` (`assessRisk`, `publish`), `apps/daemon/src/r
 For a review task imported from a GitHub PR (a review request or a label), the criteria and the answer shape are added to the review prompt (`reviewRiskLines`).
 
 - The agent is told to give the assessment separately from the findings and the verdict, and not to let the assessment change the weight of a finding, the verdict, or what the review looks at.
-- The assessment JSON is removed from the posted body even when its shape is wrong (`extractReviewComments`).
+- The assessment JSON is removed from the posted body even when its shape is wrong (`extractReviewComments`). One that cannot be parsed as JSON (a trailing comma, and so on) is also removed, together with the code block that contains the assessment heading (`withoutRiskBlocks`). An unparseable assessment that is not in a code block stays, because its extent cannot be determined.
 - If the answer could be read, the assessment is recorded in `PullRequestRiskAssessed` together with the completion of the step's run; if not, the fact that it could not be assessed (`pr.riskUnreadable`) is recorded. The cost is counted on the step's run, so this record carries no cost.
 - Even when the assessment fails, posting the review is not stopped.
 
-Code: `apps/daemon/src/risk-assessment.ts` (`reviewRiskLines`), `apps/daemon/src/prompts.ts` (`extractReviewComments`), `apps/daemon/src/service.ts` (`assessesRiskInReview`)
+Code: `apps/daemon/src/risk-assessment.ts` (`reviewRiskLines`, `withoutRiskBlocks`), `apps/daemon/src/prompts.ts` (`extractReviewComments`), `apps/daemon/src/service.ts` (`assessesRiskInReview`)
 
 ## How it is shown
 

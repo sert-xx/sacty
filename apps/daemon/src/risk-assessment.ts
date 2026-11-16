@@ -243,6 +243,40 @@ export function extractRiskAssessment(
   return found ? { assessment: found.value, candidate: found.candidate } : undefined;
 }
 
+/**
+ * JSON として読めなかったリスク評価の答え（末尾のカンマなど）を、本文から取り除く。評価の見出しを含むコードブロック（``` か ~~~
+ * で囲んだもの）を、ブロックごと除く。JSON として読めた答えは、候補として別に取り除いてあるので、ここに残るのは読めなかった
+ * ものだけ。コードブロックに入っていないものは、範囲を決められないので触らない。
+ */
+export function withoutRiskBlocks(body: string): string {
+  const lines = body.split("\n");
+  const kept: string[] = [];
+  let removed = false;
+  let i = 0;
+  while (i < lines.length) {
+    const open = lines[i]?.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (!open?.[1]) {
+      kept.push(lines[i] ?? "");
+      i++;
+      continue;
+    }
+    const fence = open[1];
+    const closes = (line: string) => {
+      const m = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
+      return m?.[1] !== undefined && m[1][0] === fence[0] && m[1].length >= fence.length;
+    };
+    let end = i + 1;
+    while (end < lines.length && !closes(lines[end] ?? "")) end++;
+    // 閉じていないブロックは、本文の終わりまでをブロックとして扱う
+    const block = lines.slice(i, Math.min(end + 1, lines.length));
+    if (block.some((line) => line.includes(`"${RISK_ASSESSMENT_HEADING}"`))) removed = true;
+    else kept.push(...block);
+    i = end + 1;
+  }
+  // 取り除いたものが無ければ、本文を変えない（評価をさせていないレビューの本文に触れない）
+  return removed ? kept.join("\n").replace(/\n{3,}/g, "\n\n") : body;
+}
+
 type RiskPayload = Extract<EventInput, { type: "PullRequestRiskAssessed" }>["payload"];
 
 /** オーケストレーターの実行の結果（`TaskService.runOrchestrator` の戻り値のうち、ここで使う分）。 */

@@ -109,6 +109,7 @@ import {
   RISK_ASSESSMENT_HEADING,
   reviewRiskLines,
   riskAssessmentLines,
+  withoutRiskBlocks,
 } from "./risk-assessment.js";
 import {
   isSecurityFix,
@@ -8166,7 +8167,8 @@ export function extractReviewComments(
     if (candidate.value[RISK_ASSESSMENT_HEADING] !== undefined) used.push(candidate);
   }
   const risk = extractRiskAssessment(output, secrets)?.assessment;
-  const body = withoutCandidates(output, used).trim();
+  // JSON として読めなかった評価（末尾のカンマなど）は候補にならないので、評価の見出しを含むコードブロックごと取り除く
+  const body = withoutRiskBlocks(withoutCandidates(output, used)).trim();
   const comments = found ?? [];
   const verdict: ReviewVerdict | undefined = comments.some((c) => c.severity === "must")
     ? "changes_required"

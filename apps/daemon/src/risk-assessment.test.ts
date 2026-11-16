@@ -488,6 +488,48 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
     expect(none.output).toBe("総評です。");
   });
 
+  it("JSON として読めない評価（末尾のカンマ・閉じていない括弧）も、コードブロックごと本文から取り除く。ほかのコードブロックは残す", () => {
+    const heading = `"${RISK_ASSESSMENT_HEADING}"`;
+    const output = [
+      "総評です。",
+      "",
+      "```ts",
+      "const kept = 1;",
+      "```",
+      "",
+      "```json",
+      `{${heading}: {"level": "low", "signals": [],}}`,
+      "```",
+      "",
+      "- [提案] 名前を変える",
+      "",
+      "~~~json",
+      `{${heading}: {"level": "low"`,
+      "~~~",
+      "",
+      "```json",
+      JSON.stringify({ "sacty-review-verdict": { verdict: "suggestions" } }),
+      "```",
+    ].join("\n");
+    const read = extractReviewComments(output, diff);
+    expect(read.risk).toBeUndefined();
+    expect(read.verdict).toBe("suggestions");
+    expect(read.output).toBe(
+      ["総評です。", "", "```ts", "const kept = 1;", "```", "", "- [提案] 名前を変える"].join("\n"),
+    );
+    // 評価の無い本文は、空行の数も含めて変えない
+    const plain = '総評です。\n\n\n\n```json\n{"a": 1,}\n```';
+    expect(extractReviewComments(plain, diff).output).toBe(plain);
+    // 閉じていないコードブロックは、本文の終わりまでを取り除く
+    expect(
+      extractReviewComments(`総評です。\n\n\`\`\`json\n{${heading}: {"level":`, diff).output,
+    ).toBe("総評です。");
+    // コードブロックに入っていない、読めない評価は残る（範囲を決められない）
+    expect(extractReviewComments(`総評です。\n\n{${heading}: {"level":`, diff).output).toContain(
+      RISK_ASSESSMENT_HEADING,
+    );
+  });
+
   it("投稿するレビューの本文の、判定の後・総評の前に、評価の節を載せる", () => {
     const body = buildReviewBody(
       reviewTask({ riskAssessment: assessed(medium, "review", target.headCommit) }),

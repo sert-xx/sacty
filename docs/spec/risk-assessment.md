@@ -105,11 +105,11 @@ sacty は、PR の内容のリスクを AI に評価させ、段階・根拠・�
 GitHub の PR から取り込んだレビューのタスク（レビューの依頼・ラベル）では、レビューの指示に、評価の基準と答えの形を足す（`reviewRiskLines`）。
 
 - 評価は、指摘・判定とは別のものとして出させる。評価によって、指摘の重さ・判定・レビューで見る範囲を変えさせない。
-- 評価の JSON は、形が違っても、投稿する本文から取り除く（`extractReviewComments`）。
+- 評価の JSON は、形が違っても、投稿する本文から取り除く（`extractReviewComments`）。JSON として読めないもの（末尾のカンマなど）も、評価の見出しを含むコードブロックごと取り除く（`withoutRiskBlocks`）。コードブロックに入っていない、JSON として読めない評価は、範囲を決められないので残る。
 - 答えを読めたら評価を、読めなければ評価できなかったこと（`pr.riskUnreadable`）を、工程の実行の完了と一緒に `PullRequestRiskAssessed` に記録する。費用は工程の実行に数えるので、この記録は費用を持たない。
 - 評価できなくても、レビューの投稿は止めない。
 
-コード: `apps/daemon/src/risk-assessment.ts`（`reviewRiskLines`）、`apps/daemon/src/prompts.ts`（`extractReviewComments`）、`apps/daemon/src/service.ts`（`assessesRiskInReview`）
+コード: `apps/daemon/src/risk-assessment.ts`（`reviewRiskLines`・`withoutRiskBlocks`）、`apps/daemon/src/prompts.ts`（`extractReviewComments`）、`apps/daemon/src/service.ts`（`assessesRiskInReview`）
 
 ## 載せ方
 
