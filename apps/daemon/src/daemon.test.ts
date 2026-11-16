@@ -13771,30 +13771,29 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         warn.mockRestore();
       });
 
-      it("投稿を止めたことは、その工程・その PR・その提出だけのもの：ほかの工程や PR の、同じ番号の提出には持ち越さない", async () => {
-        const pulls = new FakePulls();
-        const { activity, service, id } = await toImplementGate(
-          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
-          { pulls, now: later },
-        );
-        pulls.feedbackList = [comment()];
-        await service.checkPullRequests();
-        // 前に、別の工程（要求要件）・別の PR の、同じ番号の提出で、投稿を止めたまま、結果を記録できなかった
-        const stopped = (
-          service as unknown as {
-            remarkReplyStopped: Map<
-              string,
-              { step: string; number: number; submission: number; reason: string }
-            >;
-          }
-        ).remarkReplyStopped;
-        stopped.set(id, { step: "requirements", number: 5, submission: 2, reason: "rate_limit" });
-        await drain(service);
-        // 実装の PR の提出 2 の返信は、止めずに投稿する。古い記憶は消す
-        expect(prComments(pulls)).toHaveLength(1);
-        expect(posted(service, id)[0]?.results[0]?.failed).toBeUndefined();
-        expect(stopped.has(id)).toBe(false);
-        activity.close();
+      it("投稿を止めたことは、その工程・その PR・その提出だけのもの：工程だけ・PR だけ・提出回だけが違う記憶は、持ち越さない", async () => {
+        // 前に、別の工程・別の PR・別の提出で、投稿を止めたまま、結果を記録できなかった（どれか1つだけが違う）
+        for (const other of [{ step: "requirements" }, { number: 99 }, { submission: 1 }]) {
+          const pulls = new FakePulls();
+          const { activity, service, id } = await toImplementGate(
+            [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+            { pulls, now: later },
+          );
+          pulls.feedbackList = [comment()];
+          await service.checkPullRequests();
+          const stopped = (
+            service as unknown as { remarkReplyStopped: Map<string, Record<string, unknown>> }
+          ).remarkReplyStopped;
+          const same = { step: "implement", number: 7, submission: 2, reason: "rate_limit" };
+          stopped.set(id, { ...same, ...other });
+          await drain(service);
+          // 実装の PR #7 の提出 2 の返信は、止めずに投稿する。合わない記憶は消す
+          expect(prComments(pulls)).toHaveLength(1);
+          expect(posted(service, id)[0]?.results[0]?.failed).toBeUndefined();
+          expect(stopped.has(id)).toBe(false);
+          activity.close();
+          rmSync(dbPath, { force: true });
+        }
       });
 
       it("一覧の読み取り・投稿されたかの探し直しがレート制限に当たったことも、同じアカウントで順番を待っている投稿に伝える", async () => {
