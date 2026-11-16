@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-16（UTC）
 - タスク: PBI-359
-- PR: なし
+- PR: #392
 - ブランチ: feat/issue-359-split-daemon-tests
 - 関係する ADR: なし
 
