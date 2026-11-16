@@ -864,6 +864,23 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
           .catch((e: unknown) => e),
       ),
     ).toMatchObject({ code: "github.commentsIncomplete" });
+    // 読めない答え（配列でない）も、空の一覧として扱わない
+    const unreadable = new GitHubPullRequests(fakeFetch([{ status: 200, json: {} }]).impl);
+    expect(
+      errorText(
+        await unreadable
+          .listReviewComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
+    const unreadableIssue = new GitHubPullRequests(fakeFetch([{ status: 200, json: {} }]).impl);
+    expect(
+      errorText(
+        await unreadableIssue
+          .listIssueComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
     const partial = new GitHubPullRequests(fakeFetch(pages()).impl);
     expect(await partial.listReviewComments({ ...target, prefix: "x" })).toHaveLength(50);
   });

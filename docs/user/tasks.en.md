@@ -628,9 +628,9 @@ Without opening the sacty screen, you can read, where you commented, whether it 
 - A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) also replies the same way, per PR comment passed to the implementation.
   It does not reply to those the AI judged to need no response (the author's replies, finished exchanges, and so on).
 - This reply is not imported as a change request.
-  On a PR sacty created, sacty's PR review reads this reply as the PR author's reply, and does not raise again a point answered as out of scope or to be handled later.
+  On a PR sacty created, sacty's PR review reads this reply, when it was posted with the same GitHub account as the PR author, as the PR author's reply, and does not raise again a point answered as out of scope or to be handled later.
   However, it raises the point again when the scope changed or the current change is its direct cause.
-  On a PR a person created (a task that fixes an existing PR), the reply is read as one of the comments on the PR, not as the author's reply.
+  A reply posted with an account other than the author's (when the project's GitHub account was changed after the PR was created, or in a task that fixes a PR a person created) is read as one of the comments on the PR, not as the author's reply.
 - The result of replying (the reply's URL, or why it could not reply) appears in the Activity.
   Even if replying fails, the task does not stop. The reply is not retried, so write to the PR yourself if needed.
   When some comments could not be replied to, the Activity row starts with their count.

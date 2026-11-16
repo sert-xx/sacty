@@ -1501,7 +1501,7 @@ const ja: MessageDictionary = {
   "github.eventsIncomplete":
     "ページ数の上限に達したため、PR のできごとを最後まで読めませんでした。",
   "github.commentsIncomplete":
-    "ページ数の上限に達したため、PR のコメントを最後まで読めませんでした。",
+    "PR のコメントを最後まで読めませんでした（ページ数の上限に達したか、GitHub の答えを読めませんでした）。",
   "intake.searchTimedOut":
     "GitHub の検索が時間内に終わらず、結果の一部しか得られませんでした（次の取り込みで、この範囲を検索し直します）。",
   "intake.tooManySameTime":
@@ -2312,7 +2312,8 @@ const en: MessageDictionary = {
   "github.failed": ({ action, status, detail, hint }) =>
     `${githubActionEn[action]}: GitHub API ${status} ${detail}${githubHintEn[hint]}`,
   "github.eventsIncomplete": "Reached the page limit before all PR events could be read.",
-  "github.commentsIncomplete": "Reached the page limit before all PR comments could be read.",
+  "github.commentsIncomplete":
+    "Could not read all PR comments (the page limit was reached, or the answer from GitHub could not be read).",
   "intake.searchTimedOut":
     "The GitHub search did not finish in time and returned partial results (this range will be searched again next time).",
   "intake.tooManySameTime":

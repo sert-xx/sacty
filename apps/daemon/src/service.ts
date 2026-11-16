@@ -3489,6 +3489,34 @@ export class TaskService {
    * 元へのリンクを付けた PR のコメントとして投稿する。前に投稿の後・記録の前に止まっていたら、目印で見つけた投稿を使う
    * （二度投稿しない）。投稿できなくても、理由を記録してタスクは進める（やり直さない）。
    */
+  /**
+   * PR を作ったタスクの、指摘への返信が、すべて処理された（投稿した・失敗を記録した・返信するものが無い）か。まだなら、
+   * ここで投稿する。1回に返信するのは上限の件数までなので、残りが無くなるまで繰り返す。記録できなかった・止められて
+   * 進まなかったときは false（レビューの子タスクは、レビューを始めずに待つ）。
+   */
+  private async remarkRepliesSettled(parentId: string, childId: string): Promise<boolean> {
+    for (;;) {
+      const parent = this.tasks.get(parentId);
+      const due = parent && this.remarkRepliesDue(parent);
+      if (!due) return true;
+      try {
+        await this.postRemarkReplies(parentId);
+      } catch (error) {
+        console.warn(
+          `[daemon] レビューのタスク ${childId} の前に、タスク ${parentId} の指摘への返信を記録できませんでした。レビューを始めずに、次の実行でやり直します：${renderMessage(errorText(error), "ja")}`,
+        );
+        return false;
+      }
+      const latest = this.tasks.get(parentId);
+      const left = latest && this.remarkRepliesDue(latest);
+      if (!left) return true;
+      // 進まなかった（一時停止・中止を求められている、など）なら、待つ
+      if (left.submission === due.submission && left.replies.length >= due.replies.length) {
+        return false;
+      }
+    }
+  }
+
   private postRemarkReplies(taskId: string): Promise<void> {
     // 同じタスクの返信は順に処理する（先の処理が検索や投稿の最中のまま、もう1本始まっても、二重に投稿しない）
     return this.serialized(`remark-replies:${taskId}`, () => this.postRemarkRepliesNow(taskId));
@@ -3544,7 +3572,8 @@ export class TaskService {
     let inlinePosted: { url: string; body: string }[];
     let commentPosted: { url: string; body: string }[];
     try {
-      const token = await this.githubToken(task, due.repo, usedSecrets);
+      // トークンの取り出し（gh の実行）にも、期限を付ける
+      const token = await limited(() => this.githubToken(task, due.repo, usedSecrets));
       where = { repo: due.repo, token, number: due.number };
       const own = { ...where, prefix, ...(account ? { account } : {}), complete: true };
       inlinePosted = await limited((signal) =>
@@ -3561,8 +3590,22 @@ export class TaskService {
     }
     const found = (list: { url: string; body: string }[], marker: string) =>
       list.find((c) => c.body.trimStart().startsWith(marker));
+    // 待っている間に、その指摘が無効にされた・対応が変わった・返信済みになったら、その指摘には投稿しない
+    const stillDue = (reply: RemarkReplyDue) => {
+      const latest = this.tasks.get(taskId);
+      const now = latest && this.remarkRepliesDue(latest);
+      return (
+        now?.replies.some(
+          (r) =>
+            r.id === reply.id &&
+            r.respondedIn === reply.respondedIn &&
+            r.response === reply.response,
+        ) === true
+      );
+    };
     for (const remark of due.replies) {
       if (!valid()) return;
+      if (!stillDue(remark)) continue;
       const base = { remarkId: remark.id, key: remark.key };
       try {
         const ref = remarkOriginRef(remark.key);
@@ -3627,6 +3670,7 @@ export class TaskService {
         }
         // 返信を待っている間に、止められた・提出が変わったら、PR のコメントにも投稿しない
         if (!valid()) return;
+        if (!stillDue(remark)) continue;
         const { url } = await limited((signal) =>
           this.deps.pulls.commentIssue({
             ...where,
@@ -8586,6 +8630,17 @@ export class TaskService {
     }
     // PR のレビュー・コメントから取り込んだ指摘への対応を、承認を待たずに PR に返信する（PBI-352）
     if (initial && this.remarkRepliesDue(initial)) return this.postRemarkReplies(initial.id);
+    // PR のレビューの子タスクは、PR を作ったタスクの指摘への返信（PBI-352）が済むまで、レビューを始めない（対応しなかった
+    // 理由が、作者の返答としてレビューに渡るように。親と子は並んで動くので、親の次の実行を待つと、返信の前に読んでしまう）。
+    // 済まなければ、今回は始めずに、次の実行でやり直す
+    if (
+      initial?.reviewOf &&
+      initial.status === "queued" &&
+      activeStep(initial) === "review" &&
+      !(await this.remarkRepliesSettled(initial.reviewOf.taskId, initial.id))
+    ) {
+      return;
+    }
     if (initial && awaitingVerification(initial)) {
       // 最終レビュー（テストの実行）も CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする。PBI-331）。
       // ベースブランチは取り込み直さないが、実装の間に人が PR のブランチに足したコミットは取り込む（PBI-334）。実装の前の
@@ -9107,15 +9162,6 @@ export class TaskService {
             // PR にすでにあるレビュー・コメント（PBI-144）と、再レビューでの作者の返答（PBI-111）を読む。
             // 読めなくてもレビューは止めない（読めなかったことをプロンプトに書く）
             // 運用する人のために、読めなかった理由はタスクと PR を添えてデーモンのログに残す（秘密の値は伏せる）
-            // PR を作ったタスクの、指摘への返信（PBI-352）がまだなら、先に投稿する（対応しなかった理由が、作者の返答として
-            // このレビューに渡るように。親と子は並んで動くので、親の次の実行を待つと、返信の前に読んでしまう）
-            if (latest.reviewOf) {
-              await this.postRemarkReplies(latest.reviewOf.taskId).catch((error: unknown) => {
-                console.warn(
-                  `[daemon] レビューのタスク ${task.id} の前に、タスク ${latest.reviewOf?.taskId} の指摘への返信を投稿できませんでした：${renderMessage(errorText(error), "ja")}`,
-                );
-              });
-            }
             const feedbackSecrets: string[] = [];
             const feedback = await this.reviewFeedback(latest, reviewTarget, feedbackSecrets).catch(
               (error: unknown) => {

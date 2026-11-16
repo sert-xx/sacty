@@ -4382,6 +4382,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       /** PR テンプレートを探す（PBI-87）。 */
       templates?: ServiceDeps["templates"];
       stopNoticeTimeoutMs?: number;
+      github?: FakeGitHub;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -9953,6 +9954,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       now?: () => number;
       memory?: boolean;
       stopNoticeTimeoutMs?: number;
+      github?: FakeGitHub;
     } = {},
   ) {
     const made = await toImplement([implement("# 実装の説明"), ...outcomes], options);
@@ -13248,6 +13250,72 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(prComments(pulls)).toHaveLength(0);
         expect(posted(service, id)).toHaveLength(0);
         warn.mockRestore();
+        activity.close();
+      });
+
+      it("返信を待っている間に無効にされた指摘には、投稿しない（ほかの指摘の返信は続ける）", async () => {
+        const made: { service?: TaskService; id?: string } = {};
+        class VoidingPulls extends FakePulls {
+          override async replyToReviewComment(
+            input: Parameters<FakePulls["replyToReviewComment"]>[0],
+          ) {
+            // 1件目の返信の間に、人が2件目の指摘を無効にする
+            if (made.service && made.id) made.service.voidRemark(made.id, "implement-1-2");
+            return super.replyToReviewComment(input);
+          }
+        }
+        const pulls = new VoidingPulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "直した" },
+              { remarkId: "implement-1-2", status: "addressed", text: "足した" },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        made.service = service;
+        made.id = id;
+        pulls.feedbackList = [inline(), comment()];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id).map((p) => p.results.map((r) => r.remarkId))).toEqual([
+          ["implement-1-1"],
+        ]);
+        expect(service.queuedTaskIds()).toEqual([]);
+        activity.close();
+      });
+
+      it("トークンの取り出しが終わらないときも、期限で打ち切って、失敗を残す", async () => {
+        class HangingGitHub extends FakeGitHub {
+          hang = false;
+          override async token(host: string, account: string) {
+            if (this.hang) await new Promise<void>(() => {});
+            return super.token(host, account);
+          }
+        }
+        const github = new HangingGitHub();
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+          { pulls, now: later, stopNoticeTimeoutMs: 30, github },
+        );
+        pulls.feedbackList = [inline()];
+        await service.checkPullRequests();
+        // 作り直した実装が承認待ちに戻るところまで進める（返信は、その次の処理）
+        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
+          await service.runNext(id);
+        }
+        github.hang = true;
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(0);
+        const result = posted(service, id)[0]?.results[0];
+        expect(result).toMatchObject({ remarkId: "implement-1-1", key: "review_comment:501" });
+        expect(result?.failed).toBeDefined();
+        expect(service.queuedTaskIds()).toEqual([]);
         activity.close();
       });
 
@@ -29420,7 +29488,27 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       await service.checkPullRequests();
       pulls.prInfo = { ...pulls.prInfo, headSha: second };
       repliesWhenRead.length = 0;
+      // 返信の結果を記録できない間は、レビューを始めない（成功・失敗の記録の前に、作者の返答を読まない）
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const append = activity.append.bind(activity);
+      let failOnce = true;
+      activity.append = (entry) => {
+        if (failOnce && entry.events.some((e) => e.event.type === "RemarkRepliesPosted")) {
+          failOnce = false;
+          throw new Error("disk full");
+        }
+        return append(entry);
+      };
+      await service.runNext(childId);
+      expect(failOnce).toBe(false);
+      expect(repliesWhenRead).toEqual([]);
+      expect(pulls.reviews).toHaveLength(1);
+      expect(taskOf(service, childId).status).toBe("queued");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("レビューを始めずに"));
+      warn.mockRestore();
+      // 次の実行で、投稿済みの返信を見つけて記録してから、レビューする
       await runReview(service, childId);
+      expect(pulls.reviews).toHaveLength(2);
       // レビューが PR を読む前に、親の返信が投稿され、記録されている
       expect(repliesWhenRead).toEqual([1]);
       expect(replies()).toHaveLength(1);

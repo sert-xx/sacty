@@ -655,6 +655,10 @@ export class GitHubPullRequests implements PullRequests {
       const res = await this.fetchImpl(url, { headers, ...(signal ? { signal } : {}) });
       const json = (await res.json().catch(() => ({}))) as unknown;
       if (!res.ok) throw apiError(action, res.status, json as Record<string, unknown>);
+      // 最後まで読む指定では、読めない答え（JSON でない・配列でない）を、空の一覧として扱わない（PBI-352）
+      if (complete && !Array.isArray(json)) {
+        throw new MessageError(message("github.commentsIncomplete"));
+      }
       if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
       const next = nextPage(res.headers.get("link"));
       url = next?.startsWith(`${api}/`) ? next : undefined;
