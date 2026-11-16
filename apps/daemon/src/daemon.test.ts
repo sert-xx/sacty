@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -121,6 +122,7 @@ import { buildRemarkReply } from "./remark-reply.js";
 import {
   type DiffFile,
   type FileChange,
+  GitRepositoryWorkspace,
   NothingToCommitError,
   type RepositoryWorkspace,
 } from "./repository.js";
@@ -33542,6 +33544,226 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
   const chosenOf = (activity: SqliteActivityStore, id: string) =>
     activity.forTask(id).find((e) => e.type === "StepsChosen");
   const textOf = (value: unknown) => renderMessage(value as DaemonText, "ja");
+
+  describe("実際の Git で複数のリポジトリを用意する", () => {
+    function fixtures() {
+      const paths = [join(dir, "api.git"), join(dir, "web.git")];
+      const commits = paths.map((path, index) => {
+        const branch = index === 0 ? "main" : "develop";
+        const source = join(dir, `source-${index}`);
+        execFileSync("git", ["init", "--initial-branch", branch, source]);
+        execFileSync("git", ["-C", source, "config", "user.name", "Test"]);
+        execFileSync("git", ["-C", source, "config", "user.email", "test@example.com"]);
+        writeFileSync(join(source, "README.md"), index === 0 ? "API の内容" : "Web の内容");
+        execFileSync("git", ["-C", source, "add", "."]);
+        execFileSync("git", ["-C", source, "commit", "-m", "initial"]);
+        execFileSync("git", ["clone", "--bare", source, path]);
+        return execFileSync("git", ["-C", source, "rev-parse", "HEAD"], {
+          encoding: "utf8",
+        }).trim();
+      });
+      class LocalRepos extends GitRepositoryWorkspace {
+        override async prepare(...args: Parameters<GitRepositoryWorkspace["prepare"]>) {
+          const index = [API, WEB].findIndex((url) => args[2] === url || args[2] === `${url}.git`);
+          if (index === -1) throw new Error(`想定外の clone URL: ${args[2]}`);
+          args[2] = paths[index] as string;
+          return super.prepare(...args);
+        }
+      }
+      return { paths, commits, repos: new LocalRepos() as unknown as FakeRepos };
+    }
+
+    it.each([false, true])(
+      "各工程は選択済み=%s でも既定ブランチの実際の内容と指示を渡す",
+      async (selected) => {
+        const { paths, commits, repos } = fixtures();
+        const activity = new SqliteActivityStore(dbPath);
+        const selectedId = "real-selected";
+        if (selected)
+          activity.append({
+            taskId: selectedId,
+            projectId: "default",
+            events: [
+              {
+                actor: "person",
+                event: {
+                  type: "TaskCreated",
+                  payload: {
+                    title: "複数",
+                    body: "",
+                    start: "sacty",
+                    noRepo: true,
+                    repos: [API, WEB],
+                    budgetCapUsd: 1,
+                  },
+                },
+              },
+              {
+                actor: "person",
+                event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
+              },
+            ],
+          });
+        const { service, executor, pulls } = makeService(activity, [], {
+          projects: twoRepos(),
+          repos,
+          planner: async (task) => ({
+            steps: task.parent ? ["implement"] : ["requirements", "design", "split"],
+            plan: task.parent ? "skip-design" : "split",
+            reason: "分割",
+            fallback: false,
+            costUsd: 0,
+            estimated: false,
+          }),
+        });
+        const id = selected
+          ? selectedId
+          : service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] }).id;
+        const copies: string[][] = [];
+        const childCopies: string[] = [];
+        const mounts: string[] = [];
+        const mountTargets: string[] = [];
+        executor.respond = (invocation) => {
+          const workspace = executor.dirs.at(-1) ?? "";
+          if (copies.length >= 3) {
+            const content = readFileSync(join(workspace, "README.md"), "utf8");
+            childCopies.push(content);
+            writeFileSync(join(workspace, "README.md"), `${content}\n変更`);
+            return out(
+              `# 実装\n${block({ "sacty-test-map": [{ viewpointId: "REQ", tests: ["test › 内容"] }] })}`,
+            );
+          }
+          const mount = invocation.mounts?.find((m) => m.containerPath.endsWith("-repos"));
+          if (mount) {
+            expect(mount.readOnly).toBe(true);
+            mounts.push(mount.hostPath);
+            mountTargets.push(mount.containerPath);
+          }
+          const apiDir = selected ? workspace : join(workspace, "1-acme__api");
+          const webDir = join(mount?.hostPath ?? workspace, "2-acme__web");
+          const contents = [
+            readFileSync(join(apiDir, "README.md"), "utf8"),
+            readFileSync(join(webDir, "README.md"), "utf8"),
+          ];
+          copies.push(contents);
+          if (copies.length === 1) return out(`# 要求 ${contents.join(" ")}`);
+          if (copies.length === 2)
+            return out(
+              `# 設計 ${contents.join(" ")}\n${block({ "sacty-test-viewpoints": [{ title: "t", input: "i", expected: "e" }] })}`,
+            );
+          return out(
+            block({
+              "sacty-split": {
+                reason: "分割",
+                children: contents.map((content, index) => ({
+                  key: index === 0 ? "A" : "B",
+                  title: content,
+                  body: content,
+                  dependsOn: [],
+                  repo: index === 0 ? API : WEB,
+                  repoReason: content,
+                })),
+              },
+            }),
+          );
+        };
+        await service.runNext(id);
+        service.approve(id, { step: "requirements", submission: 1 });
+        await service.runNext(id);
+        service.approve(id, { step: "design", submission: 1 });
+        await service.runNext(id);
+        expect(copies).toEqual(Array.from({ length: 3 }, () => ["API の内容", "Web の内容"]));
+        for (let i = 0; i < 3; i++) {
+          const prompt = promptOf(executor, i);
+          expect(prompt).toContain(
+            `- ${API}：${selected ? "." : "1-acme__api"}（main、${commits[0]}）`,
+          );
+          expect(prompt).toContain(
+            `- ${WEB}：${selected ? `${mountTargets[i]}/` : ""}2-acme__web（develop、${commits[1]}）`,
+          );
+        }
+        for (const path of selected ? mounts : executor.dirs) expect(existsSync(path)).toBe(false);
+        const children = service.get(id)?.task.split?.children ?? [];
+        expect(children.map((child) => child.repo)).toEqual([API, WEB]);
+        for (const [index, child] of children.entries()) {
+          expect(service.get(child.taskId)?.task.repo).toBe(index === 0 ? API : WEB);
+          for (let attempt = 0; attempt < 8 && pulls.calls.length <= index; attempt++)
+            await service.runNext(child.taskId);
+          expect(childCopies[index]).toBe(index === 0 ? "API の内容" : "Web の内容");
+          const pr = pulls.calls[index];
+          expect(pr).toMatchObject({
+            repo: index === 0 ? API : WEB,
+            baseBranch: index === 0 ? "main" : "develop",
+          });
+          expect(
+            execFileSync(
+              "git",
+              ["--git-dir", paths[index] ?? "", "rev-parse", `refs/heads/${pr?.branch}`],
+              { encoding: "utf8" },
+            ).trim(),
+          ).toMatch(/^[0-9a-f]{40}$/);
+          expect(() =>
+            execFileSync(
+              "git",
+              [
+                "--git-dir",
+                paths[1 - index] ?? "",
+                "rev-parse",
+                "--verify",
+                `refs/heads/${pr?.branch}`,
+              ],
+              { stdio: "pipe" },
+            ),
+          ).toThrow();
+        }
+        activity.close();
+      },
+    );
+
+    it("bare リポジトリを失うと名前を示して工程を止める", async () => {
+      const { paths, repos } = fixtures();
+      rmSync(paths[1] ?? "", { recursive: true, force: true });
+      const activity = new SqliteActivityStore(dbPath);
+      const id = "real-missing";
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "複数",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: [API, WEB],
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+            },
+          },
+        ],
+      });
+      const { service, executor } = makeService(activity, [out("# 要求")], {
+        projects: twoRepos(),
+        repos,
+      });
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("paused");
+      const failed = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+      expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(WEB);
+      activity.close();
+    });
+  });
 
   it("複数指定は次の工程で clone を再利用し、最新のコミットを取得する", async () => {
     const activity = new SqliteActivityStore(dbPath);
