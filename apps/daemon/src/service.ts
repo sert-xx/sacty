@@ -3547,9 +3547,18 @@ export class TaskService {
     const results: Result[] = [];
     const posted = (url: string) => (url ? { url: url.slice(0, 2000) } : {});
     // GitHub への問い合わせ1回ごとの期限。答えが返らなくても、実行の枠を占めたままにしない（通信が中断を無視しても戻る）
+    // 期限を超えた問い合わせがあったか（GitHub が答えを返さなくなっている）
+    let timedOut = false;
     const limited = <T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> => {
       const signal = this.stopNoticeDeadline();
-      return untilAborted(signal, work(signal));
+      // 期限は、問い合わせが終わった後にも切れる。終わっていない問い合わせの期限だけを数える
+      let settled = false;
+      signal.addEventListener("abort", () => {
+        if (!settled) timedOut = true;
+      });
+      return untilAborted(signal, work(signal)).finally(() => {
+        settled = true;
+      });
     };
     const record = () => {
       const latest = this.tasks.get(taskId);
@@ -3573,7 +3582,9 @@ export class TaskService {
     let commentPosted: { url: string; body: string }[];
     try {
       // トークンの取り出し（gh の実行）にも、期限を付ける
-      const token = await limited(() => this.githubToken(task, due.repo, usedSecrets));
+      const token = await limited((signal) =>
+        this.githubToken(task, due.repo, usedSecrets, undefined, signal),
+      );
       where = { repo: due.repo, token, number: due.number };
       const own = { ...where, prefix, ...(account ? { account } : {}), complete: true };
       inlinePosted = await limited((signal) =>
@@ -3603,10 +3614,25 @@ export class TaskService {
         ) === true
       );
     };
-    for (const remark of due.replies) {
+    for (const [index, remark] of due.replies.entries()) {
       if (!valid()) return;
       if (!stillDue(remark)) continue;
       const base = { remarkId: remark.id, key: remark.key };
+      // 期限を超えた問い合わせがあったら、残りの指摘は投稿を試みずに、失敗を残す（答えの返らない GitHub を、指摘の
+      // 数だけ期限まで待たない。実行の枠と、返信を待つ再レビューを、長く止めないため）
+      if (timedOut) {
+        results.push(
+          ...due.replies
+            .slice(index)
+            .filter((r) => stillDue(r))
+            .map((r) => ({
+              remarkId: r.id,
+              key: r.key,
+              failed: message("github.replySkippedAfterTimeout"),
+            })),
+        );
+        break;
+      }
       try {
         const ref = remarkOriginRef(remark.key);
         // どの提出回の返信でも見つける（1件の指摘には、1回だけ返信する）
@@ -8429,6 +8455,8 @@ export class TaskService {
     usedSecrets: string[],
     /** 保存していない設定で確かめるときの、プロジェクトの定義（PBI-76）。無ければ保存したもの。 */
     unsaved?: ProjectDefinition,
+    /** 中断されたら、取り出しをやめる（起動した gh を止める。PBI-352）。 */
+    signal?: AbortSignal,
   ): Promise<string> {
     const project = unsaved ?? this.deps.projects.get(task.projectId);
     const host = httpsHost(`${url}/`) ?? "";
@@ -8438,7 +8466,7 @@ export class TaskService {
         message("github.accountRequired", { project: project?.name ?? task.projectId, host }),
       );
     }
-    const token = await this.deps.github.token(host, account);
+    const token = await this.deps.github.token(host, account, signal);
     usedSecrets.push(...gitAuthSecrets(token));
     return token;
   }

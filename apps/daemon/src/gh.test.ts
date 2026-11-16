@@ -26,6 +26,31 @@ function fakeGh(result: { stdout?: string; stderr?: string; code?: number; error
   return { spawnImpl, calls };
 }
 
+describe("gh の実行の中断（PBI-352）", () => {
+  it("トークンの取り出しを中断されたら、起動した gh を止めて、待ちから戻る。中断済みなら、起動しない", async () => {
+    const killed: string[] = [];
+    let spawned = 0;
+    const spawnImpl = (() => {
+      spawned += 1;
+      // 終わらない gh
+      return Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: (signal: string) => killed.push(signal),
+      });
+    }) as never;
+    const controller = new AbortController();
+    const waiting = new GhCliAuth(spawnImpl).token("github.com", "me", controller.signal);
+    controller.abort(new Error("期限"));
+    await expect(waiting).rejects.toThrow("期限");
+    expect(killed).toEqual(["SIGKILL"]);
+    await expect(
+      new GhCliAuth(spawnImpl).token("github.com", "me", controller.signal),
+    ).rejects.toThrow("期限");
+    expect(spawned).toBe(1);
+  });
+});
+
 const original = {
   GH_TOKEN: process.env.GH_TOKEN,
   GITHUB_TOKEN: process.env.GITHUB_TOKEN,

@@ -13198,23 +13198,38 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
-      it("GitHub が答えを返さないときは、期限で打ち切って失敗を残す（実行の枠を占めたままにしない）", async () => {
+      it("GitHub が答えを返さないときは、期限で打ち切って失敗を残し、残りの指摘は投稿を試みない（実行の枠を占めたままにしない）", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const pulls = new FakePulls();
         pulls.replyGate = new Promise<void>(() => {});
         const { activity, service, id } = await toImplementGate(
-          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", text: "直した" },
+              { remarkId: "implement-1-2", text: "足した" },
+              { remarkId: "implement-1-3", text: "変えた" },
+            ]),
+          ],
           { pulls, now: later, stopNoticeTimeoutMs: 30 },
         );
-        pulls.feedbackList = [inline()];
+        pulls.feedbackList = [inline(), comment(401), comment(402)];
         await service.checkPullRequests();
         await drain(service);
         expect(service.get(id)?.task.status).toBe("awaiting_approval");
         expect(prComments(pulls)).toHaveLength(0);
-        const result = posted(service, id)[0]?.results[0];
-        expect(result).toMatchObject({ remarkId: "implement-1-1", key: "review_comment:501" });
-        expect(result?.failed).toBeDefined();
-        expect(result?.url).toBeUndefined();
+        const results = posted(service, id)[0]?.results ?? [];
+        expect(results.map((r) => [r.remarkId, r.url])).toEqual([
+          ["implement-1-1", undefined],
+          ["implement-1-2", undefined],
+          ["implement-1-3", undefined],
+        ]);
+        expect(results[0]?.failed).toBeDefined();
+        // 残りは、投稿を試みずに、その理由を残す
+        expect(results.slice(1).map((r) => r.failed)).toEqual([
+          { code: "github.replySkippedAfterTimeout" },
+          { code: "github.replySkippedAfterTimeout" },
+        ]);
         expect(service.queuedTaskIds()).toEqual([]);
         warn.mockRestore();
         activity.close();

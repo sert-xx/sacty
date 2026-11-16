@@ -387,6 +387,23 @@ export function describeEventParts(
         .join("\n"),
     };
   }
+  if (event.type === "RemarkRepliesPosted") {
+    // 指摘ごとの返信の結果（PBI-352）。返信できなかった指摘は、やり直さないので、先に並べる
+    const failed = event.payload.results.filter((r) => r.failed !== undefined);
+    const done = event.payload.results.filter((r) => r.failed === undefined);
+    return {
+      text: describeEventText(event, l),
+      detail: [...failed, ...done]
+        .map((r) =>
+          r.failed !== undefined
+            ? l.event.RemarkReplyFailed(r.remarkId, l.text(r.failed))
+            : r.inline
+              ? l.event.RemarkReplyInline(r.remarkId, r.url ?? "")
+              : l.event.RemarkReplyComment(r.remarkId, r.url ?? ""),
+        )
+        .join("\n"),
+    };
+  }
   if (event.type === "ReworkJudged" && event.payload.runResult !== "interrupted") {
     // 戻し先の判断の文。要点を行に出し、長いときは全文を開いて読めるようにする（作業履歴の記録は全文のまま。PBI-301）
     const { full } = summarizeDecision(l.text(event.payload.reason));
@@ -818,18 +835,11 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     }
     case "RemarkRepliesPosted": {
       const p = event.payload;
-      // 返信できなかった指摘は、やり直さないので、先に出す（長い URL の後ろに隠れないように）
-      const failed = p.results.filter((r) => r.failed !== undefined);
+      // 行には、件数と、返信できなかった件数だけを出す（指摘ごとの結果は、詳細に出す。describeEventParts）
       return e.RemarkRepliesPosted(
         p.number,
-        failed.length,
-        [...failed, ...p.results.filter((r) => r.failed === undefined)].map((r) =>
-          r.failed !== undefined
-            ? e.RemarkReplyFailed(r.remarkId, l.text(r.failed))
-            : r.inline
-              ? e.RemarkReplyInline(r.remarkId, r.url ?? "")
-              : e.RemarkReplyComment(r.remarkId, r.url ?? ""),
-        ),
+        p.results.length,
+        p.results.filter((r) => r.failed !== undefined).length,
       );
     }
     case "ReviewTargetResolved":

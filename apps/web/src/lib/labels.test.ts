@@ -321,7 +321,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     expect(describeIn(discarded, labels.en)).toContain("old head (ccccccc)");
   });
 
-  it("指摘への対応を PR に返信したことを、指摘ごとに、行への返信か・PR のコメントか・返信できなかった理由で出す（ja・en。PBI-352）", () => {
+  it("指摘への対応を PR に返信したことを、行に件数で、詳細に指摘ごとの結果（行への返信か・PR のコメントか・返信できなかった理由）で出す（ja・en。PBI-352）", () => {
     const replied = event({
       type: "RemarkRepliesPosted",
       payload: {
@@ -345,11 +345,37 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         ],
       },
     });
-    expect(describeEvent(replied)).toBe(
-      "指摘への対応を PR #7 に返信（1件は返信できなかった）：implement-1-3 は返信できなかった（403 forbidden）、implement-1-1 は行へのコメントに返信した（https://github.com/acme/app/pull/7#discussion_r9）、implement-1-2 は PR のコメントとして返信した（https://github.com/acme/app/pull/7#issuecomment-3）、implement-1-4 は PR のコメントとして返信した",
-    );
-    expect(describeIn(replied, labels.en)).toBe(
-      "Replied on PR #7 about how the remarks were handled (1 could not be replied to): implement-1-3: could not reply (403 forbidden); implement-1-1: replied to the line comment (https://github.com/acme/app/pull/7#discussion_r9); implement-1-2: replied as a PR comment (https://github.com/acme/app/pull/7#issuecomment-3); implement-1-4: replied as a PR comment",
+    // 行には件数だけ。指摘ごとの結果は、詳細に出す（返信できなかった指摘が先）
+    expect(describeEventParts(replied, ja)).toEqual({
+      text: "指摘への対応を PR #7 に返信（4件。うち1件は返信できなかった）",
+      detail: [
+        "implement-1-3 は返信できなかった（403 forbidden）",
+        "implement-1-1 は行へのコメントに返信した（https://github.com/acme/app/pull/7#discussion_r9）",
+        "implement-1-2 は PR のコメントとして返信した（https://github.com/acme/app/pull/7#issuecomment-3）",
+        "implement-1-4 は PR のコメントとして返信した",
+      ].join("\n"),
+    });
+    expect(describeEventParts(replied, labels.en)).toEqual({
+      text: "Replied on PR #7 about how the remarks were handled (4; 1 could not be replied to)",
+      detail: [
+        "implement-1-3: could not reply (403 forbidden)",
+        "implement-1-1: replied to the line comment (https://github.com/acme/app/pull/7#discussion_r9)",
+        "implement-1-2: replied as a PR comment (https://github.com/acme/app/pull/7#issuecomment-3)",
+        "implement-1-4: replied as a PR comment",
+      ].join("\n"),
+    });
+    const allDone = event({
+      type: "RemarkRepliesPosted",
+      payload: {
+        step: "implement",
+        submission: 2,
+        number: 7,
+        results: [{ remarkId: "implement-1-1", key: "comment:1", url: "https://example.com/c" }],
+      },
+    });
+    expect(describeEventParts(allDone, ja).text).toBe("指摘への対応を PR #7 に返信（1件）");
+    expect(describeEventParts(allDone, labels.en).text).toBe(
+      "Replied on PR #7 about how the remarks were handled (1)",
     );
   });
 

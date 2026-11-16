@@ -23,7 +23,8 @@ export interface GitHubAuth {
   /** gh にログイン済みのアカウント（すべてのホスト）。 */
   accounts(): Promise<GitHubAccount[]>;
   /** そのホストのアカウントのトークン（アクティブなアカウントは切り替わるので、必ずアカウントを指定する）。 */
-  token(host: string, account: string): Promise<string>;
+  /** signal が中断されたら、取り出しをやめる（起動した gh を止める）。 */
+  token(host: string, account: string, signal?: AbortSignal): Promise<string>;
 }
 
 /**
@@ -98,9 +99,9 @@ export class GhCliAuth implements GitHubAuth {
     );
   }
 
-  async token(host: string, account: string): Promise<string> {
+  async token(host: string, account: string, signal?: AbortSignal): Promise<string> {
     const args = ["auth", "token", "--hostname", host, "--user", account];
-    const { code, stdout } = await this.run(args);
+    const { code, stdout } = await this.run(args, signal);
     const token = stdout.trim();
     // エラー文にはトークンは含まれないが、念のため出さない
     if (code !== 0 || !token) {
@@ -109,12 +110,26 @@ export class GhCliAuth implements GitHubAuth {
     return token;
   }
 
-  private run(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  private run(
+    args: string[],
+    signal?: AbortSignal,
+  ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
       const child = this.spawnImpl("gh", args, {
         env: ghEnv(),
         stdio: ["ignore", "pipe", "pipe"],
       });
+      // 中断されたら、gh を止めて、待ちから戻る（gh や認証の補助が止まったままでも、プロセスを残さない）
+      const onAbort = () => {
+        child.kill("SIGKILL");
+        reject(signal?.reason);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      child.on("close", () => signal?.removeEventListener("abort", onAbort));
       let stdout = "";
       let stderr = "";
       child.stdout?.on("data", (chunk) => {

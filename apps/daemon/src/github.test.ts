@@ -881,6 +881,38 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
           .catch((e: unknown) => e),
       ),
     ).toMatchObject({ code: "github.commentsIncomplete" });
+    // 照合に要る項目（本文・ID・投稿者）を読めないコメントも、黙って除かない
+    for (const broken of [
+      { id: 1, body: null, user: { login: "a" } },
+      { id: "1", body: "x", user: { login: "a" } },
+      { id: 1, body: "x", user: null },
+    ]) {
+      const client = new GitHubPullRequests(fakeFetch([{ status: 200, json: [broken] }]).impl);
+      expect(
+        errorText(
+          await client
+            .listReviewComments({ ...target, prefix: "x", account: "a", complete: true })
+            .catch((e: unknown) => e),
+        ),
+      ).toMatchObject({ code: "github.commentsIncomplete" });
+    }
+    // たどれない次のページ（API の外の URL）を、読み終わりとして扱わない
+    const outside = new GitHubPullRequests(
+      fakeFetch([
+        {
+          status: 200,
+          json: [],
+          headers: { link: '<https://evil.example.com/next?page=2>; rel="next"' },
+        },
+      ]).impl,
+    );
+    expect(
+      errorText(
+        await outside
+          .listIssueComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
     const partial = new GitHubPullRequests(fakeFetch(pages()).impl);
     expect(await partial.listReviewComments({ ...target, prefix: "x" })).toHaveLength(50);
   });
@@ -1544,6 +1576,34 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
         "review_comment:11",
         "review_comment:12",
       ]);
+      // PR の作者が Bot のアカウントでも、sacty の返信は、含める指定があれば渡す（ほかの Bot の投稿は除いたまま）
+      const bot = (id: number, login: string, body: string) => ({
+        ...comment(id, login, body),
+        user: { login, type: "Bot" },
+      });
+      const botResponses = () => [
+        { status: 200, json: [] },
+        { status: 200, json: [] },
+        {
+          status: 200,
+          json: [
+            bot(21, "sacty[bot]", reply),
+            bot(22, "ci[bot]", reply),
+            bot(23, "sacty[bot]", "CI の結果"),
+          ],
+        },
+      ];
+      const botForReview = await new GitHubPullRequests(fakeFetch(botResponses()).impl).feedback({
+        ...pr,
+        account: "sacty[bot]",
+        includeSactyReplies: true,
+      });
+      expect(botForReview.map((f) => f.key)).toEqual(["comment:21"]);
+      const botImported = await new GitHubPullRequests(fakeFetch(botResponses()).impl).feedback({
+        ...pr,
+        account: "sacty[bot]",
+      });
+      expect(botImported).toEqual([]);
       expect(forReview.find((f) => f.key === "review_comment:11")).toMatchObject({
         kind: "review_comment",
         author: "sacty-bot",

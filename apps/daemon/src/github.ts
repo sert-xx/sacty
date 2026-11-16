@@ -442,10 +442,20 @@ export function repoApi(repoUrl: string): { api: string; base: string } {
 /** コメントの一覧から、本文が prefix で始まり、account（あれば）が投稿したものを選ぶ。 */
 function ownComments(
   comments: Record<string, unknown>[],
-  input: { prefix: string; account?: string },
+  input: { prefix: string; account?: string; complete?: boolean },
 ): { id: number; url: string; body: string }[] {
   return comments.flatMap((c) => {
     const login = (c.user as { login?: unknown } | null)?.login;
+    // 最後まで読む指定では、照合に要る項目（本文・ID・投稿者）を読めないコメントを、黙って除かない（PBI-352。
+    // 投稿済みの返信を見逃して、重ねて投稿しないように）
+    if (
+      input.complete &&
+      (typeof c.body !== "string" ||
+        typeof c.id !== "number" ||
+        (input.account !== undefined && typeof login !== "string"))
+    ) {
+      throw new MessageError(message("github.commentsIncomplete"));
+    }
     if (
       typeof c.body !== "string" ||
       typeof c.id !== "number" ||
@@ -504,6 +514,16 @@ export class GitHubPullRequests implements PullRequests {
       const round = sactyRound(item);
       if (round) return round.allowed;
       const login = user(item).login;
+      // レビューの工程に渡す読み取りでは、sacty のアカウントの、指摘への返信（PBI-352）を、Bot の投稿でも含める
+      // （PR の作者が Bot のアカウントでも、対応しなかった理由が、作者の返答として渡るように）
+      if (
+        input.includeSactyReplies &&
+        isSactyRemarkReply(item.body) &&
+        typeof login === "string" &&
+        noticeAccounts.has(login.toLowerCase())
+      ) {
+        return true;
+      }
       return (
         user(item).type !== "Bot" &&
         !(
@@ -661,6 +681,10 @@ export class GitHubPullRequests implements PullRequests {
       }
       if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
       const next = nextPage(res.headers.get("link"));
+      // 最後まで読む指定では、たどれない次のページ（API の外の URL）を、読み終わりとして扱わない（PBI-352）
+      if (complete && next && !next.startsWith(`${api}/`)) {
+        throw new MessageError(message("github.commentsIncomplete"));
+      }
       url = next?.startsWith(`${api}/`) ? next : undefined;
     }
     // 最後の依頼を判定するには全ページが必要。部分結果では再依頼なしと区別できない。
