@@ -818,9 +818,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     }
     case "RemarkRepliesPosted": {
       const p = event.payload;
+      // 返信できなかった指摘は、やり直さないので、先に出す（長い URL の後ろに隠れないように）
+      const failed = p.results.filter((r) => r.failed !== undefined);
       return e.RemarkRepliesPosted(
         p.number,
-        p.results.map((r) =>
+        failed.length,
+        [...failed, ...p.results.filter((r) => r.failed === undefined)].map((r) =>
           r.failed !== undefined
             ? e.RemarkReplyFailed(r.remarkId, l.text(r.failed))
             : r.inline

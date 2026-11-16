@@ -83,7 +83,12 @@ export type RemarkReplyInput = {
  */
 export function buildRemarkReply(input: RemarkReplyInput): string {
   const hidden = withoutInternalPaths(redact(input.text, input.secrets)).trim();
-  const cut = hidden.length > REPLY_TEXT_MAX ? `${hidden.slice(0, REPLY_TEXT_MAX)}…` : hidden;
+  // 文字の途中（サロゲートペアの間）で切らない
+  const end =
+    hidden.length > REPLY_TEXT_MAX && /[\uDC00-\uDFFF]/.test(hidden[REPLY_TEXT_MAX] ?? "")
+      ? REPLY_TEXT_MAX - 1
+      : REPLY_TEXT_MAX;
+  const cut = hidden.length > REPLY_TEXT_MAX ? `${hidden.slice(0, end)}…` : hidden;
   const text = cut.replace(/@(?=[A-Za-z0-9_-])/g, "@​");
   const head =
     input.status === "addressed"

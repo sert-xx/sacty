@@ -616,7 +616,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
 - It replies when the redone deliverable is back to waiting for approval (after the PR is updated).
   Each comment gets one reply only.
 - For a line comment, it posts a reply to that comment.
-  When it cannot reply (for example, the original comment is gone), it posts a PR comment.
+  When GitHub does not accept the reply (for example, the original comment is gone), it posts a PR comment.
 - For a review body and a regular comment, it posts a PR comment.
   It starts with a link to the original, so that it is clear which review or comment it replies to.
 - The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
@@ -628,9 +628,12 @@ Without opening the sacty screen, you can read, where you commented, whether it 
 - A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) also replies the same way, per PR comment passed to the implementation.
   It does not reply to those the AI judged to need no response (the author's replies, finished exchanges, and so on).
 - This reply is not imported as a change request.
-  sacty's PR review reads this reply as the PR author's reply, and does not raise again a point answered as out of scope or to be handled later.
+  On a PR sacty created, sacty's PR review reads this reply as the PR author's reply, and does not raise again a point answered as out of scope or to be handled later.
+  However, it raises the point again when the scope changed or the current change is its direct cause.
+  On a PR a person created (a task that fixes an existing PR), the reply is read as one of the comments on the PR, not as the author's reply.
 - The result of replying (the reply's URL, or why it could not reply) appears in the Activity.
   Even if replying fails, the task does not stop. The reply is not retried, so write to the PR yourself if needed.
+  When some comments could not be replied to, the Activity row starts with their count.
 
 It does not reply to the following.
 

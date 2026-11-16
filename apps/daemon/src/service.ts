@@ -268,6 +268,7 @@ import {
   type PullRequestFeedback,
   type PullRequestStatus,
   type PullRequests,
+  REMARK_REPLY_MARKER_PREFIX,
   type SactyReviewRound,
   sactyReviewKey,
   sactyReviewTask,
@@ -3484,7 +3485,7 @@ export class TaskService {
   /**
    * PR のレビュー・コメントから取り込んだ指摘への対応を、プロジェクトの gh のアカウントで、PR に返信する（PBI-352）。
    * 行へのコメントから取り込んだ指摘には、そのコメントへの返信として投稿する。返信できなければ（元のコメントが消えた・
-   * 返信への返信は受け付けられない、など）、PR のコメントとして投稿する。レビューの本文・通常のコメントから取り込んだ指摘には、
+   * 返信への返信は受け付けられない、など。GitHub が断ったとき）、PR のコメントとして投稿する。レビューの本文・通常のコメントから取り込んだ指摘には、
    * 元へのリンクを付けた PR のコメントとして投稿する。前に投稿の後・記録の前に止まっていたら、目印で見つけた投稿を使う
    * （二度投稿しない）。投稿できなくても、理由を記録してタスクは進める（やり直さない）。
    */
@@ -3497,7 +3498,7 @@ export class TaskService {
     const task = this.tasks.get(taskId);
     const due = task && this.remarkRepliesDue(task);
     if (!task || !due) return;
-    // 待っている間（トークンの取り出し・既存の投稿の検索）に、止められた・承認や提出が変わったら、新しく投稿しない
+    // 待っている間（トークンの取り出し・既存の投稿の検索・投稿）に、止められた・承認や提出が変わったら、新しく投稿しない
     // （記録もしない。再開したら、目印で投稿済みのものを見つけて続ける）
     const valid = () => {
       if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return false;
@@ -3517,29 +3518,66 @@ export class TaskService {
     >["payload"]["results"][number];
     const results: Result[] = [];
     const posted = (url: string) => (url ? { url: url.slice(0, 2000) } : {});
+    // GitHub への問い合わせ1回ごとの期限。答えが返らなくても、実行の枠を占めたままにしない（通信が中断を無視しても戻る）
+    const limited = <T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+      const signal = this.stopNoticeDeadline();
+      return untilAborted(signal, work(signal));
+    };
+    const record = () => {
+      const latest = this.tasks.get(taskId);
+      if (!latest || !valid() || results.length === 0) return;
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "RemarkRepliesPosted",
+            payload: { step: due.step, submission: due.submission, number: due.number, results },
+          },
+        },
+      ]);
+    };
+    // 投稿済みの返信は、プロジェクトのアカウントが投稿した、このタスクの目印で始まるものだけ（他人が目印をまねても・引用しても、
+    // 投稿済みと見なさない）。行へのコメントと PR のコメントを、1回ずつ、最後のページまで読む
+    const account = this.githubAccountOf(task, due.repo).account;
+    const prefix = `${REMARK_REPLY_MARKER_PREFIX}${taskId}:`;
+    let where: { repo: string; token: string; number: number };
+    let inlinePosted: { url: string; body: string }[];
+    let commentPosted: { url: string; body: string }[];
+    try {
+      const token = await this.githubToken(task, due.repo, usedSecrets);
+      where = { repo: due.repo, token, number: due.number };
+      const own = { ...where, prefix, ...(account ? { account } : {}), complete: true };
+      inlinePosted = await limited((signal) =>
+        this.deps.pulls.listReviewComments({ ...own, signal }),
+      );
+      commentPosted = await limited((signal) =>
+        this.deps.pulls.listIssueComments({ ...own, signal }),
+      );
+    } catch (error) {
+      // 投稿済みかを確かめられないので、重ねて投稿しない。失敗として残す
+      const failed = redactText(errorText(error), usedSecrets);
+      results.push(...due.replies.map((r) => ({ remarkId: r.id, key: r.key, failed })));
+      return record();
+    }
+    const found = (list: { url: string; body: string }[], marker: string) =>
+      list.find((c) => c.body.trimStart().startsWith(marker));
     for (const remark of due.replies) {
       if (!valid()) return;
       const base = { remarkId: remark.id, key: remark.key };
       try {
-        const token = await this.githubToken(task, due.repo, usedSecrets);
-        const where = { repo: due.repo, token, number: due.number };
         const ref = remarkOriginRef(remark.key);
         // どの提出回の返信でも見つける（1件の指摘には、1回だけ返信する）
         const marker = remarkReplyMarkerOf(taskId, remark.id);
-        const inline =
-          ref?.kind === "review_comment"
-            ? await this.deps.pulls.findReviewComment({ ...where, marker })
-            : undefined;
+        const inline = found(inlinePosted, marker);
         if (inline) {
           results.push({ ...base, inline: true, ...posted(inline.url) });
           continue;
         }
-        const existing = await this.deps.pulls.findIssueComment({ ...where, marker });
+        const existing = found(commentPosted, marker);
         if (existing) {
           results.push({ ...base, ...posted(existing.url) });
           continue;
         }
-        if (!valid()) return;
         const reply = {
           taskId,
           stepName: STEP_NAME[remark.step],
@@ -3552,50 +3590,59 @@ export class TaskService {
         };
         if (ref?.kind === "review_comment") {
           try {
-            const { url } = await this.deps.pulls.replyToReviewComment({
-              ...where,
-              commentId: ref.id,
-              body: buildRemarkReply(reply),
-            });
+            const { url } = await limited((signal) =>
+              this.deps.pulls.replyToReviewComment({
+                ...where,
+                commentId: ref.id,
+                body: buildRemarkReply(reply),
+                signal,
+              }),
+            );
             results.push({ ...base, inline: true, ...posted(url) });
             continue;
           } catch (error) {
-            console.warn(
-              `[daemon] タスク ${taskId} の指摘 ${remark.id} への対応を、行へのコメントへの返信として投稿できませんでした。PR のコメントとして投稿します：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-            );
-            // 答えを受け取れなかっただけで、返信は投稿されていることがある。見つかれば、それを使う（PR のコメントを重ねない）
-            const landed = await this.deps.pulls
-              .findReviewComment({ ...where, marker })
-              .catch(() => undefined);
-            if (landed) {
-              results.push({ ...base, inline: true, ...posted(landed.url) });
+            const reason = redactText(errorText(error), usedSecrets);
+            if (!replyRejected(error)) {
+              // GitHub が断ったのではない（答えを受け取れなかった・期限を超えた）。返信は投稿されていることがあるので、探し直す。
+              // 見つかれば使う。見つからない・探せないときは、投稿されたかが分からないので、PR のコメントを重ねずに失敗を残す
+              const landed = await limited((signal) =>
+                this.deps.pulls.listReviewComments({
+                  ...where,
+                  prefix: marker,
+                  ...(account ? { account } : {}),
+                  complete: true,
+                  signal,
+                }),
+              ).catch(() => undefined);
+              const hit = landed?.[0];
+              results.push(
+                hit ? { ...base, inline: true, ...posted(hit.url) } : { ...base, failed: reason },
+              );
               continue;
             }
+            console.warn(
+              `[daemon] タスク ${taskId} の指摘 ${remark.id} への対応を、行へのコメントへの返信として投稿できませんでした。PR のコメントとして投稿します：${renderMessage(reason, "ja")}`,
+            );
           }
         }
-        const { url } = await this.deps.pulls.commentIssue({
-          ...where,
-          body: buildRemarkReply({
-            ...reply,
-            ...(ref ? { origin: { ref, url: remarkOriginUrl(due.url, ref) } } : {}),
+        // 返信を待っている間に、止められた・提出が変わったら、PR のコメントにも投稿しない
+        if (!valid()) return;
+        const { url } = await limited((signal) =>
+          this.deps.pulls.commentIssue({
+            ...where,
+            body: buildRemarkReply({
+              ...reply,
+              ...(ref ? { origin: { ref, url: remarkOriginUrl(due.url, ref) } } : {}),
+            }),
+            signal,
           }),
-        });
+        );
         results.push({ ...base, ...posted(url) });
       } catch (error) {
         results.push({ ...base, failed: redactText(errorText(error), usedSecrets) });
       }
     }
-    const latest = this.tasks.get(taskId);
-    if (!latest || !valid() || results.length === 0) return;
-    this.append(latest, [
-      {
-        actor: "sacty",
-        event: {
-          type: "RemarkRepliesPosted",
-          payload: { step: due.step, submission: due.submission, number: due.number, results },
-        },
-      },
-    ]);
+    record();
   }
 
   /**
@@ -9060,6 +9107,15 @@ export class TaskService {
             // PR にすでにあるレビュー・コメント（PBI-144）と、再レビューでの作者の返答（PBI-111）を読む。
             // 読めなくてもレビューは止めない（読めなかったことをプロンプトに書く）
             // 運用する人のために、読めなかった理由はタスクと PR を添えてデーモンのログに残す（秘密の値は伏せる）
+            // PR を作ったタスクの、指摘への返信（PBI-352）がまだなら、先に投稿する（対応しなかった理由が、作者の返答として
+            // このレビューに渡るように。親と子は並んで動くので、親の次の実行を待つと、返信の前に読んでしまう）
+            if (latest.reviewOf) {
+              await this.postRemarkReplies(latest.reviewOf.taskId).catch((error: unknown) => {
+                console.warn(
+                  `[daemon] レビューのタスク ${task.id} の前に、タスク ${latest.reviewOf?.taskId} の指摘への返信を投稿できませんでした：${renderMessage(errorText(error), "ja")}`,
+                );
+              });
+            }
             const feedbackSecrets: string[] = [];
             const feedback = await this.reviewFeedback(latest, reviewTarget, feedbackSecrets).catch(
               (error: unknown) => {
@@ -16541,6 +16597,16 @@ function remarkOrigins(
 ): (RemarkOrigin | undefined)[] {
   if (number === undefined || pending.keys.length !== pending.remarks.length) return [];
   return pending.keys.map((key) => (key.length <= 200 ? { key, number } : undefined));
+}
+
+/**
+ * 行へのコメントへの返信を、GitHub が断ったか（4xx の答え。元のコメントが消えた・返信への返信は受け付けない、など）。
+ * 断られたなら、返信は投稿されていない。答えを受け取れなかった・期限を超えた・5xx は、投稿されたかが分からない。
+ */
+function replyRejected(error: unknown): boolean {
+  if (!(error instanceof MessageError) || error.text.code !== "github.failed") return false;
+  const status = (error.text.params as { status?: unknown }).status;
+  return typeof status === "number" && status >= 400 && status < 500;
 }
 
 /** 1回に返信する指摘の件数の上限（RemarkRepliesPosted の results の上限）。残りは、次の処理で返信する。 */

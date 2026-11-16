@@ -809,29 +809,63 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
     });
   });
 
-  it("行へのコメントから、目印を含むものを探す（無ければ undefined）", async () => {
+  it("行へのコメントから、本文が目印で始まる、そのアカウントの投稿だけを選ぶ（まねた・引用した投稿は選ばない）", async () => {
+    const marker = "<!-- sacty-reply:t1:implement-1-1:";
+    const c = (id: number, login: string, body: string) => ({
+      id,
+      body,
+      user: { login },
+      html_url: `https://github.com/acme/app/pull/7#discussion_r${id}`,
+    });
     const list = [
-      { id: 1, body: "人のコメント", html_url: "https://github.com/acme/app/pull/7#discussion_r1" },
-      {
-        id: 2,
-        body: "<!-- sacty-reply:t1:implement-1-1:2 -->\n直しました",
-        html_url: "https://github.com/acme/app/pull/7#discussion_r2",
-      },
+      c(1, "alice", "人のコメント"),
+      c(2, "mallory", `${marker}2 -->\nまねた投稿`),
+      c(3, "Sacty-Bot", `> 引用\n${marker}2 -->`),
+      c(4, "Sacty-Bot", `${marker}2 -->\n直しました`),
     ];
-    const { impl, calls } = fakeFetch([
-      { status: 200, json: list },
-      { status: 200, json: list },
-    ]);
+    const { impl, calls } = fakeFetch([{ status: 200, json: list }]);
     const client = new GitHubPullRequests(impl);
     expect(
-      await client.findReviewComment({ ...target, marker: "<!-- sacty-reply:t1:implement-1-1:" }),
-    ).toEqual({ url: "https://github.com/acme/app/pull/7#discussion_r2" });
+      await client.listReviewComments({ ...target, prefix: marker, account: "sacty-bot" }),
+    ).toEqual([
+      {
+        id: 4,
+        url: "https://github.com/acme/app/pull/7#discussion_r4",
+        body: `${marker}2 -->\n直しました`,
+      },
+    ]);
     expect(calls[0]?.url).toBe(
       "https://api.github.com/repos/acme/app/pulls/7/comments?per_page=100",
     );
+  });
+
+  it("最後まで読む指定では、ページ数の上限で読み切れなかったら失敗する（途中までの結果を、無いことの根拠にしない）。指定が無ければ、今までどおり途中までを返す", async () => {
+    const page = (n: number) => ({
+      status: 200,
+      json: [{ id: n, body: "x", user: { login: "a" } }],
+      headers: {
+        link: `<https://api.github.com/repos/acme/app/pulls/7/comments?per_page=100&page=${n + 1}>; rel="next"`,
+      },
+    });
+    const pages = () => Array.from({ length: 50 }, (_, i) => page(i + 1));
+    const complete = new GitHubPullRequests(fakeFetch(pages()).impl);
     expect(
-      await client.findReviewComment({ ...target, marker: "<!-- sacty-reply:t1:implement-1-2:" }),
-    ).toBeUndefined();
+      errorText(
+        await complete
+          .listReviewComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
+    const issue = new GitHubPullRequests(fakeFetch(pages()).impl);
+    expect(
+      errorText(
+        await issue
+          .listIssueComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
+    const partial = new GitHubPullRequests(fakeFetch(pages()).impl);
+    expect(await partial.listReviewComments({ ...target, prefix: "x" })).toHaveLength(50);
   });
 });
 

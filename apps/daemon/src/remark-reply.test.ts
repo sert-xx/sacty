@@ -88,6 +88,10 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
     const body = buildRemarkReply({ ...base, text, secrets: [secret] });
     expect(body).not.toContain(secret.slice(0, 8));
     expect(body).toContain("…");
+    // 上限の位置に絵文字（サロゲートペア）がまたがっても、文字を壊さない
+    const emoji = buildRemarkReply({ ...base, text: `${"a".repeat(REPLY_TEXT_MAX - 1)}😀の後ろ` });
+    expect(emoji).toContain(`${"a".repeat(REPLY_TEXT_MAX - 1)}…`);
+    expect(emoji.isWellFormed()).toBe(true);
     const mention = buildRemarkReply({
       ...base,
       text: "@alice さん、/sacty-input/task.md:77 のとおり src/a.ts を直しました",

@@ -119,14 +119,19 @@ export interface PullRequests {
     marker: string;
   }): Promise<{ url: string } | undefined>;
   /**
-   * PR の行へのコメントのうち、本文に marker を含むものを探す（指摘への返信を二度投稿しないため。PBI-352）。
+   * PR の行へのコメントのうち、本文が prefix で始まるもの（指摘への返信を二度投稿しないため。PBI-352）。account があれば、
+   * そのアカウントが投稿したものだけ（他人が目印をまねても・引用しても、自分の投稿と見なさない）。complete なら、ページ数の
+   * 上限で読み切れなかったときに失敗する（途中までの結果を、無いことの根拠にしない）。
    */
-  findReviewComment(input: {
+  listReviewComments(input: {
     repo: string;
     token: string;
     number: number;
-    marker: string;
-  }): Promise<{ url: string } | undefined>;
+    prefix: string;
+    account?: string;
+    complete?: boolean;
+    signal?: AbortSignal;
+  }): Promise<{ id: number; url: string; body: string }[]>;
   /**
    * PR の行へのコメントに返信する（PBI-352）。返信への返信・消えたコメントへの返信は、GitHub が受け付けない（失敗する）。
    */
@@ -137,6 +142,7 @@ export interface PullRequests {
     /** 返信する行へのコメントの ID。 */
     commentId: number;
     body: string;
+    signal?: AbortSignal;
   }): Promise<{ url: string }>;
   /** Issue にコメントする（調査の結果を返す。PBI-18）。 */
   commentIssue(input: {
@@ -157,6 +163,8 @@ export interface PullRequests {
     number: number;
     prefix: string;
     account?: string;
+    /** ページ数の上限で読み切れなかったときに失敗する（途中までの結果を、無いことの根拠にしない。PBI-352）。 */
+    complete?: boolean;
     /** 中断（読み込み中のリクエストも止める）。 */
     signal?: AbortSignal;
   }): Promise<{ id: number; url: string; body: string }[]>;
@@ -431,6 +439,26 @@ export function repoApi(repoUrl: string): { api: string; base: string } {
   return { api, base: `${api}/repos/${repo.path}` };
 }
 
+/** コメントの一覧から、本文が prefix で始まり、account（あれば）が投稿したものを選ぶ。 */
+function ownComments(
+  comments: Record<string, unknown>[],
+  input: { prefix: string; account?: string },
+): { id: number; url: string; body: string }[] {
+  return comments.flatMap((c) => {
+    const login = (c.user as { login?: unknown } | null)?.login;
+    if (
+      typeof c.body !== "string" ||
+      typeof c.id !== "number" ||
+      !c.body.trimStart().startsWith(input.prefix) ||
+      (input.account !== undefined &&
+        (typeof login !== "string" || login.toLowerCase() !== input.account.toLowerCase()))
+    ) {
+      return [];
+    }
+    return [{ id: c.id, url: String(c.html_url ?? ""), body: c.body }];
+  });
+}
+
 /** GitHub の REST API で PR を作る・更新する。 */
 export class GitHubPullRequests implements PullRequests {
   constructor(private readonly fetchImpl: Fetch = fetch) {}
@@ -600,9 +628,10 @@ export class GitHubPullRequests implements PullRequests {
     token: string,
     action: "getReviews" | "listIssueComments" | "listEvents",
     signal?: AbortSignal,
+    complete?: boolean,
   ): Promise<Record<string, unknown>[]> {
     const { api, base } = repoApi(repo);
-    return this.listAt(api, `${base}${path}`, token, action, signal);
+    return this.listAt(api, `${base}${path}`, token, action, signal, complete);
   }
 
   /** API の URL の一覧を、すべてのページから読む。 */
@@ -612,6 +641,8 @@ export class GitHubPullRequests implements PullRequests {
     token: string,
     action: "getReviews" | "listIssueComments" | "listRepositories" | "listEvents",
     signal?: AbortSignal,
+    /** ページ数の上限で読み切れなかったら、失敗にする（途中までの結果を返さない）。 */
+    complete?: boolean,
   ): Promise<Record<string, unknown>[]> {
     const headers = {
       accept: "application/vnd.github+json",
@@ -632,6 +663,8 @@ export class GitHubPullRequests implements PullRequests {
     if (action === "listEvents" && url) {
       throw new MessageError(message("github.eventsIncomplete"));
     }
+    // 投稿済みの返信を探すとき（PBI-352）も、途中までの結果では、まだ投稿していないことと区別できない
+    if (complete && url) throw new MessageError(message("github.commentsIncomplete"));
     return all;
   }
 
@@ -646,15 +679,16 @@ export class GitHubPullRequests implements PullRequests {
     return found ? { url: String(found.html_url ?? "") } : undefined;
   }
 
-  async findReviewComment(input: Parameters<PullRequests["findReviewComment"]>[0]) {
+  async listReviewComments(input: Parameters<PullRequests["listReviewComments"]>[0]) {
     const comments = await this.list(
       input.repo,
       `/pulls/${input.number}/comments?per_page=100`,
       input.token,
       "getReviews",
+      input.signal,
+      input.complete,
     );
-    const found = comments.find((c) => typeof c.body === "string" && c.body.includes(input.marker));
-    return found ? { url: String(found.html_url ?? "") } : undefined;
+    return ownComments(comments, input);
   }
 
   async replyToReviewComment(input: Parameters<PullRequests["replyToReviewComment"]>[0]) {
@@ -669,6 +703,7 @@ export class GitHubPullRequests implements PullRequests {
           "content-type": "application/json",
         },
         body: JSON.stringify({ body: input.body }),
+        ...(input.signal ? { signal: input.signal } : {}),
       },
     );
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -703,20 +738,9 @@ export class GitHubPullRequests implements PullRequests {
       input.token,
       "listIssueComments",
       input.signal,
+      input.complete,
     );
-    return comments.flatMap((c) => {
-      const login = (c.user as { login?: unknown } | null)?.login;
-      if (
-        typeof c.body !== "string" ||
-        typeof c.id !== "number" ||
-        !c.body.trimStart().startsWith(input.prefix) ||
-        (input.account !== undefined &&
-          (typeof login !== "string" || login.toLowerCase() !== input.account.toLowerCase()))
-      ) {
-        return [];
-      }
-      return [{ id: c.id, url: String(c.html_url ?? ""), body: c.body }];
-    });
+    return ownComments(comments, input);
   }
 
   async editIssueComment(input: Parameters<PullRequests["editIssueComment"]>[0]) {
