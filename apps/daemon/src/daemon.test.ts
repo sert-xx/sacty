@@ -33452,6 +33452,447 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     activity.forTask(id).find((e) => e.type === "StepsChosen");
   const textOf = (value: unknown) => renderMessage(value as DaemonText, "ja");
 
+  it("複数の指定を正規化して記録し、不正な指定を断る", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const extra = Array.from({ length: 9 }, (_, i) => `https://github.com/acme/extra${i}`);
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [API, WEB, ...extra].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    const { service } = makeService(activity, [], { projects });
+    const multi = service.createTask({
+      projectId: "default",
+      title: "複数",
+      repos: [API, WEB, API.toUpperCase()],
+    });
+    expect(multi).toMatchObject({ noRepo: true, repos: [API, WEB] });
+    const single = service.createTask({
+      projectId: "default",
+      title: "単数",
+      repos: [API, API.toUpperCase()],
+    });
+    expect(single.repo).toBe(API);
+    expect(single.repos).toBeUndefined();
+    const ten = service.createTask({
+      projectId: "default",
+      title: "10件",
+      repos: [API, WEB, ...extra.slice(0, 8), API],
+    });
+    expect(ten.repos).toHaveLength(10);
+    expect(() =>
+      service.createTask({ projectId: "default", title: "11件", repos: [API, WEB, ...extra] }),
+    ).toThrow(/10/);
+    expect(() =>
+      service.createTask({
+        projectId: "default",
+        title: "対象外",
+        repos: [API, "https://github.com/other/missing"],
+      }),
+    ).toThrow(/other\/missing/);
+    expect(() =>
+      service.createTask({ projectId: "default", title: "両方", repo: null, repos: [API] }),
+    ).toThrow(/repo/);
+    expect(() => service.createTask({ projectId: "default", title: "空", repos: [] })).toThrow();
+    activity.close();
+  });
+
+  it("API は複数の指定を作業履歴と投影に記録する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepos() });
+    const app = createApp(service, "tok");
+    const response = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { authorization: "Bearer tok", "content-type": "application/json" },
+      body: JSON.stringify({ projectId: "default", title: "複数", repos: [API, WEB] }),
+    });
+    expect(response.status).toBe(201);
+    const { task } = (await response.json()) as { task: Task };
+    expect(task).toMatchObject({ noRepo: true, repos: [API, WEB] });
+    expect(isRepoless(task)).toBe(true);
+    expect(activity.forTask(task.id).find((e) => e.type === "TaskCreated")?.payload).toMatchObject({
+      noRepo: true,
+      repos: [API, WEB],
+    });
+    activity.close();
+  });
+
+  it("複数指定の照合はプロジェクト一覧を一度読み、読み取り失敗をそのまま伝える", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const { service } = makeService(activity, [], { projects });
+    const all = vi.spyOn(projects, "all");
+    service.createTask({ projectId: "default", title: "重複", repos: [API, API, WEB] });
+    const calls = all.mock.calls.length;
+    all.mockClear();
+    service.createTask({ projectId: "default", title: "多数", repos: [API, API, API, WEB, WEB] });
+    expect(all).toHaveBeenCalledTimes(calls);
+    all.mockImplementation(() => {
+      throw new Error("project store failed");
+    });
+    expect(() =>
+      service.createTask({ projectId: "default", title: "失敗", repos: [API, WEB] }),
+    ).toThrow("project store failed");
+    all.mockRestore();
+    activity.close();
+  });
+
+  it("API は1件の配列を単数指定と同じ形で記録する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepos() });
+    const app = createApp(service, "tok");
+    const post = (input: object) =>
+      app.request("/api/tasks", {
+        method: "POST",
+        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        body: JSON.stringify({ projectId: "default", title: "単数", ...input }),
+      });
+    const single = await post({ repo: API });
+    const array = await post({ repos: [API] });
+    expect(single.status).toBe(201);
+    expect(array.status).toBe(201);
+    const a = ((await single.json()) as { task: Task }).task;
+    const b = ((await array.json()) as { task: Task }).task;
+    expect(b.repo).toBe(a.repo);
+    expect(b.noRepo).toBe(a.noRepo);
+    expect(b.repos).toBeUndefined();
+    expect(isRepoless(b)).toBe(isRepoless(a));
+    activity.close();
+  });
+
+  it.each(["unknown", "limit", "conflict"] as const)(
+    "API は不正な%sを名前または上限を示して記録せず断る",
+    async (kind) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const extra = Array.from({ length: 9 }, (_, i) => `https://github.com/acme/extra${i}`);
+      const projects = twoRepos();
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [API, WEB, ...extra].map((target) => ({ scope: "repo" as const, target })),
+        githubAccounts: { "github.com": "me" },
+      });
+      const { service } = makeService(activity, [], { projects });
+      const app = createApp(service, "tok");
+      const inputs = {
+        unknown: { repos: [API, "https://github.com/other/missing"] },
+        limit: { repos: [API, WEB, ...extra] },
+        conflict: { repo: API, repos: [WEB] },
+      };
+      const response = await app.request("/api/tasks", {
+        method: "POST",
+        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        body: JSON.stringify({ projectId: "default", title: "不正", ...inputs[kind] }),
+      });
+      expect(response.status).toBe(400);
+      const body = JSON.stringify(await response.json());
+      expect(body).toContain(
+        kind === "unknown"
+          ? "other/missing"
+          : kind === "limit"
+            ? "repositoriesLimit"
+            : "repositoriesConflict",
+      );
+      expect(service.list()).toHaveLength(0);
+      activity.close();
+    },
+  );
+
+  it("複数指定の候補外をオーケストレーターと人の選択で断る", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const extra = "https://github.com/acme/extra";
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [API, WEB, extra].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    const { service, executor } = makeService(
+      activity,
+      [plan({ plan: "standard", repo: extra, repoReason: "理由" })],
+      { projects, realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    await service.runNext(id);
+    expect(promptOf(executor, 0)).toContain(API);
+    expect(promptOf(executor, 0)).toContain(WEB);
+    expect(promptOf(executor, 0)).not.toContain(extra);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    expect(failure?.type === "OrchestratorFailed" && textOf(failure.payload.message)).toContain(
+      extra,
+    );
+    await expect(service.chooseRepository(id, extra)).rejects.toThrow(extra);
+    const before = activity.forTask(id);
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: API }],
+      githubAccounts: { "github.com": "me" },
+    });
+    await expect(service.chooseRepository(id, API)).rejects.toThrow(WEB);
+    expect(activity.forTask(id)).toEqual(before);
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [API, WEB, extra].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(activity.forTask(id).some((event) => event.type === "RepositoryChosen")).toBe(false);
+    await service.chooseRepository(id, WEB);
+    expect(service.get(id)?.task.repo).toBe(WEB);
+    activity.close();
+  });
+
+  it("候補取得の想定外の例外は停止に変換せず、復旧後に実行する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [plan({ plan: "investigate", investigation: "content" })],
+      { projects: twoRepos(), realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    const before = activity.forTask(id);
+    const listing = vi
+      .spyOn(service, "projectRepositories")
+      .mockRejectedValueOnce(new TypeError("listing failed"));
+    await expect(service.runNext(id)).rejects.toThrow("listing failed");
+    expect(activity.forTask(id)).toEqual(before);
+    expect(service.get(id)?.task.status).toBe("queued");
+    listing.mockRestore();
+    await service.runNext(id);
+    expect(executor.calls.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it("設定を読めない間は複数指定の候補を取得しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    let valid = true;
+    const { service } = makeService(activity, [], {
+      projects: twoRepos(),
+      config: () => (valid ? configOf(agent())() : { ok: false, problem: "設定を読めません" }),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    valid = false;
+    const listing = vi.spyOn(service, "projectRepositories");
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(listing).not.toHaveBeenCalled();
+    expect(service.get(id)?.task.status).toBe("queued");
+    activity.close();
+  });
+
+  it("候補から外れて停止しても再開後に工程を見直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const { service } = makeService(
+      activity,
+      [
+        plan({ plan: "standard", repo: API, repoReason: "API" }),
+        plan({ plan: "standard" }),
+        out("# 要求要件"),
+        stepReview(["design"], "設計不要"),
+        out(
+          `# 実装\n\n${block({ "sacty-test-map": [{ viewpointId: "REQ", tests: ["test › 確認"] }] })}`,
+        ),
+      ],
+      { projects, realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    await service.runNext(id);
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    const before = activity.forTask(id);
+    const listing = vi
+      .spyOn(service, "projectRepositories")
+      .mockRejectedValueOnce(new Error("listing failed"));
+    await expect(service.runNext(id)).rejects.toThrow("listing failed");
+    expect(activity.forTask(id)).toEqual(before);
+    listing.mockRestore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: API }],
+      githubAccounts: { "github.com": "me" },
+    });
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(
+      activity
+        .forTask(id)
+        .slice(before.length)
+        .map((e) => e.type),
+    ).toEqual(["TaskPaused"]);
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [API, WEB].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    service.resume(id, {});
+    for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+    expect(activity.forTask(id).find((e) => e.type === "StepsSkipped")?.payload).toMatchObject({
+      after: "requirements",
+      steps: ["design"],
+    });
+    activity.close();
+  });
+
+  it("選択後に対象から外れた場合もオーケストレーターを実行しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const { service, executor } = makeService(
+      activity,
+      [
+        plan({ plan: "standard", repo: API, repoReason: "API" }),
+        plan({ plan: "investigate", investigation: "content" }),
+        out("# 結果"),
+      ],
+      { projects, realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    await service.runNext(id);
+    expect(service.get(id)?.task.repo).toBe(API);
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: API }],
+      githubAccounts: { "github.com": "me" },
+    });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(1);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((e) => e.type === "OrchestratorFailed");
+    expect(failure?.type === "OrchestratorFailed" && textOf(failure.payload.message)).toContain(
+      WEB,
+    );
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [API, WEB].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(executor.calls.length).toBeGreaterThan(1);
+    activity.close();
+  });
+
+  it("選択した2件目の準備失敗はその名前と原因を示し、再開できる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const { service, executor, repos } = makeService(
+      activity,
+      [plan({ plan: "investigate", investigation: "content" })],
+      { projects, realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    await service.pause(id);
+    await service.chooseRepository(id, WEB);
+    service.resume(id, {});
+    repos.fail = "clone failed";
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity
+      .forTask(id)
+      .filter((event) => event.type === "TaskPaused")
+      .at(-1);
+    const text = failure?.type === "TaskPaused" ? textOf(failure.payload.message) : "";
+    expect(text).toContain(WEB);
+    expect(text).toContain("clone failed");
+    expect(text).not.toContain(API);
+    expect(
+      failure?.type === "TaskPaused" && renderMessage(failure.payload.message, "en"),
+    ).toContain(`Could not prepare the repository (${WEB}): clone failed`);
+    repos.fail = undefined;
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(executor.calls.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it("作成後に対象から外れた指定を検出し、再開時に照合し直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const { service, executor } = makeService(
+      activity,
+      [plan({ plan: "investigate", investigation: "content" }), out("# 結果")],
+      { projects, realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: API }],
+      githubAccounts: { "github.com": "me" },
+    });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    expect(failure?.type === "OrchestratorFailed" && textOf(failure.payload.message)).toContain(
+      WEB,
+    );
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [API, WEB].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(executor.calls.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it("旧形式の作業履歴は単数とリポジトリ無しの進め方を保つ", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    for (const [id, repo] of [
+      ["legacy-single", API],
+      ["legacy-none", undefined],
+    ] as const) {
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: id,
+                body: "",
+                start: "sacty",
+                ...(repo ? { repo } : { noRepo: true }),
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: ["investigate"], plan: "investigate", reason: "調査", costUsd: 0 },
+            },
+          },
+        ],
+      });
+    }
+    const { service, repos } = makeService(activity, [out("# 単数"), out("# 無し")], {
+      projects: twoRepos(),
+    });
+    expect(service.get("legacy-single")?.task).toMatchObject({
+      repo: API,
+      steps: [{ key: "investigate" }],
+    });
+    expect(service.get("legacy-none")?.task).toMatchObject({
+      noRepo: true,
+      steps: [{ key: "investigate" }],
+    });
+    expect(service.get("legacy-single")?.task.repos).toBeUndefined();
+    expect(service.get("legacy-none")?.task.repos).toBeUndefined();
+    await service.runNext("legacy-single");
+    await service.runNext("legacy-none");
+    expect(repos.prepared.map((p) => p.url)).toEqual([`${API}.git`]);
+    expect(service.get("legacy-single")?.task.gate?.step).toBe("investigate");
+    expect(service.get("legacy-none")?.task.gate?.step).toBe("investigate");
+    activity.close();
+  });
+
   it("リポジトリを選ばずに作れる（null・対象が複数で省略）。選んだとき・対象がリポジトリ1つで省略したときは今と同じ", () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [], { projects: twoRepos() });
@@ -33906,6 +34347,219 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       expect(integrationPrompt).toContain(`- 1-acme__api/：${API} のベースブランチ（main）`);
       expect(integrationPrompt).toContain(`画面を作る（${WEB}）：完了`);
       expect(service.get(id)?.task.gate?.step).toBe("integrate");
+      activity.close();
+    });
+
+    it("複数指定では分割の候補を絞り、指定外を断ってから指定内で子を作る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const extra = "https://github.com/acme/extra";
+      const projects = twoRepos();
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [API, WEB, extra].map((target) => ({ scope: "repo" as const, target })),
+        githubAccounts: { "github.com": "me" },
+      });
+      const { service, executor } = makeService(
+        activity,
+        [
+          out("# 要求要件"),
+          design,
+          splitOutput([children[0], { ...children[1], repo: extra }]),
+          splitOutput(children),
+        ],
+        { projects, planner },
+      );
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "大きい",
+        repos: [API, WEB],
+      });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      service.approve(id, { step: "design", submission: 1 });
+      await service.runNext(id);
+      expect(promptOf(executor, 2)).toContain(API);
+      expect(promptOf(executor, 2)).toContain(WEB);
+      expect(promptOf(executor, 2)).not.toContain(extra);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(service.get(id)?.task.split).toBeUndefined();
+      const failure = activity.forTask(id).find((e) => e.type === "AgentRunFailed");
+      expect(failure?.type === "AgentRunFailed" && textOf(failure.payload.message)).toContain(
+        extra,
+      );
+      service.resume(id, {});
+      await service.runNext(id);
+      const kids = service.get(id)?.task.split?.children ?? [];
+      expect(kids.map((c) => c.repo)).toEqual([API, WEB]);
+      expect(kids.map((c) => service.get(c.taskId)?.task.repo)).toEqual([API, WEB]);
+      activity.close();
+    });
+
+    it("複数指定の一部を使い同じリポジトリに複数の子を作る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [out("# 要求要件"), design, splitOutput([children[0], { ...children[1], repo: API }])],
+        { projects: twoRepos(), planner },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      service.approve(id, { step: "design", submission: 1 });
+      await service.runNext(id);
+      const kids = service.get(id)?.task.split?.children ?? [];
+      expect(kids.map((child) => child.repo)).toEqual([API, API]);
+      expect(kids.map((child) => service.get(child.taskId)?.task.repo)).toEqual([API, API]);
+      activity.close();
+    });
+
+    it.each(["requirements", "design", "split"] as const)(
+      "複数指定の%sで対象から外れたら実行せず再開時に照らし直す",
+      async (step) => {
+        const activity = new SqliteActivityStore(dbPath);
+        const projects = twoRepos();
+        const setTargets = (targets: string[]) =>
+          projects.put("default", {
+            name: "デフォルト",
+            targets: targets.map((target) => ({ scope: "repo" as const, target })),
+            githubAccounts: { "github.com": "me" },
+          });
+        const id = "multiple-step";
+        activity.append({
+          taskId: id,
+          projectId: "default",
+          events: [
+            {
+              actor: "person",
+              event: {
+                type: "TaskCreated",
+                payload: {
+                  title: "複数",
+                  body: "",
+                  start: "sacty",
+                  noRepo: true,
+                  repos: [API, WEB],
+                  budgetCapUsd: 1,
+                },
+              },
+            },
+            {
+              actor: "orchestrator",
+              event: {
+                type: "StepsChosen",
+                payload: {
+                  steps: [...STEP_PLANS.split],
+                  plan: "split",
+                  reason: "分割",
+                  costUsd: 0,
+                },
+              },
+            },
+          ],
+        });
+        const { service, executor } = makeService(
+          activity,
+          [out("# 要求要件"), design, splitOutput(children)],
+          { projects, planner },
+        );
+        if (step !== "requirements") {
+          await service.runNext(id);
+          service.approve(id, { step: "requirements", submission: 1 });
+        }
+        if (step === "split") {
+          await service.runNext(id);
+          service.approve(id, { step: "design", submission: 1 });
+        }
+        const calls = executor.calls.length;
+        const before = activity.forTask(id);
+        const original = service.projectRepositories.bind(service);
+        const listing = vi.spyOn(service, "projectRepositories");
+        listing
+          .mockImplementationOnce(original)
+          .mockRejectedValueOnce(new TypeError("listing failed"));
+        await expect(service.runNext(id)).rejects.toThrow("listing failed");
+        expect(activity.forTask(id)).toEqual(before);
+        expect(service.get(id)?.task.status).toBe("queued");
+        expect(executor.calls).toHaveLength(calls);
+        listing.mockRestore();
+        setTargets([API]);
+        await service.runNext(id);
+        expect(executor.calls).toHaveLength(calls);
+        expect(service.get(id)?.task.status).toBe("paused");
+        const failure = activity
+          .forTask(id)
+          .filter((e) => e.type === "TaskPaused")
+          .at(-1);
+        expect(failure?.type === "TaskPaused" && textOf(failure.payload.message)).toContain(WEB);
+        setTargets([API, WEB]);
+        service.resume(id, {});
+        await service.runNext(id);
+        expect(executor.calls).toHaveLength(calls + 1);
+        activity.close();
+      },
+    );
+
+    it("リポジトリを選んだ後も複数指定から子ごとに選ぶ", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const extra = "https://github.com/acme/extra";
+      const projects = twoRepos();
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [API, WEB, extra].map((target) => ({ scope: "repo" as const, target })),
+        githubAccounts: { "github.com": "me" },
+      });
+      const { service, executor, repos } = makeService(
+        activity,
+        [
+          plan({ plan: "standard", repo: API, repoReason: "API" }),
+          plan({ plan: "split" }),
+          out("# 要求要件"),
+          design,
+          splitOutput([children[0], { ...children[1], repo: extra }]),
+          splitOutput(children),
+          plan({ plan: "investigate", investigation: "content" }),
+          out("# A"),
+          plan({ plan: "investigate", investigation: "content" }),
+          out("# B"),
+          integration,
+        ],
+        { projects, realPlanner: true },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+      await service.runNext(id);
+      expect(service.get(id)?.task.repo).toBe(API);
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      service.approve(id, { step: "design", submission: 1 });
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(service.get(id)?.task.split).toBeUndefined();
+      const failure = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+      expect(failure?.type === "AgentRunFailed" && textOf(failure.payload.message)).toContain(
+        extra,
+      );
+      expect(promptOf(executor, 4)).toContain(WEB);
+      expect(promptOf(executor, 4)).not.toContain(extra);
+      service.resume(id, {});
+      await service.runNext(id);
+      const kids = service.get(id)?.task.split?.children ?? [];
+      expect(kids.map((c) => c.repo)).toEqual([API, WEB]);
+      expect(kids.map((c) => service.get(c.taskId)?.task.repo)).toEqual([API, WEB]);
+      for (const child of kids) {
+        await service.runNext(child.taskId);
+        service.approve(child.taskId, { step: "investigate", submission: 1 });
+        await service.runNext(id);
+      }
+      await service.runNext(id);
+      expect(service.get(id)?.task.integration?.repositories.map((r) => r.repo)).toEqual([
+        API,
+        WEB,
+      ]);
+      expect(executor.workspaceFiles.at(-1)).toEqual(["1-acme__api", "2-acme__web"]);
+      expect(repos.fetchedBranches.length).toBeGreaterThanOrEqual(2);
       activity.close();
     });
 
@@ -43147,6 +43801,182 @@ describe("タスクの開始時の情報収集", () => {
     expect(executor.stdins[0]).toContain("- https://github.com/acme/app");
     expect(executor.stdins[0]).toContain("- https://github.com/acme/api");
     expect(executor.stdins[0]).toContain("--- GitHub（読み取り） ---");
+    activity.close();
+  });
+
+  it("複数指定の情報収集は指定した全件だけを読み、対象から外れれば再開まで実行しない", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-multiple.db"));
+    const targets = [
+      "https://github.com/acme/app",
+      "https://github.com/acme/api",
+      "https://github.com/acme/web",
+      "https://github.com/acme/lib",
+      "https://github.com/acme/other",
+    ];
+    const projects = projectsWithAccount();
+    const setTargets = (items: string[]) =>
+      projects.put("default", {
+        name: "デフォルト",
+        targets: items.map((target) => ({ scope: "repo" as const, target })),
+        githubAccounts: { "github.com": "me" },
+      });
+    setTargets(targets);
+    const { service, executor } = makeService(activity, [gathered()], {
+      realGatherer: true,
+      projects,
+      gateway: fakeGateway(),
+    });
+    const task = service.createTask({
+      projectId: "default",
+      title: "複数",
+      repos: targets.slice(0, 4),
+    });
+    setTargets(targets.slice(0, 3));
+    await service.runNext(task.id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(task.id)?.task.status).toBe("paused");
+    const failure = service
+      .get(task.id)
+      ?.activity.filter((e) => e.type === "OrchestratorFailed")
+      .at(-1);
+    expect(
+      failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "ja"),
+    ).toContain(targets[3]);
+    setTargets(targets);
+    service.resume(task.id, {});
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.gathered?.brief).toBe(BRIEF);
+    const prompt = executor.stdins[0] ?? "";
+    for (const repo of targets.slice(0, 4)) expect(prompt).toContain(repo);
+    expect(prompt).not.toContain(targets[4]);
+    expect(prompt).toContain("指定した次のリポジトリをすべて");
+    expect(prompt).not.toContain("多くても 3 つ");
+    activity.close();
+  });
+
+  it("情報収集前に選択した後も指定先を照合し全件を読む", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-selected-multiple.db"));
+    const api = "https://github.com/acme/api";
+    const web = "https://github.com/acme/web";
+    const projects = projectsWithAccount();
+    const setTargets = (items: string[]) =>
+      projects.put("default", {
+        name: "デフォルト",
+        targets: items.map((target) => ({ scope: "repo" as const, target })),
+        githubAccounts: { "github.com": "me" },
+      });
+    setTargets([api, web]);
+    const { service, executor } = makeService(activity, [gathered()], {
+      realGatherer: true,
+      projects,
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [api, web] });
+    await service.pause(id);
+    await service.chooseRepository(id, api);
+    service.resume(id, {});
+    setTargets([api]);
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    expect(
+      failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "ja"),
+    ).toContain(web);
+    setTargets([api, web]);
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(service.get(id)?.task.gathered?.brief).toBe(BRIEF);
+    expect(executor.stdins[0]).toContain(api);
+    expect(executor.stdins[0]).toContain(web);
+    expect(executor.stdins[0]).toContain("指定した次のリポジトリをすべて");
+    activity.close();
+  });
+
+  it("情報収集の候補照合後の例外を伝え、次の実行で回復する", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-late-definition.db"));
+    const api = "https://github.com/acme/api";
+    const web = "https://github.com/acme/web";
+    const projects = projectsWithAccount();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [api, web].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    const { service, executor } = makeService(activity, [gathered()], {
+      realGatherer: true,
+      projects,
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [api, web] });
+    const list = service.projectRepositories.bind(service);
+    const get = projects.get.bind(projects);
+    let listings = 0;
+    let fail = false;
+    const read = vi.spyOn(projects, "get").mockImplementation((projectId) => {
+      if (fail) {
+        fail = false;
+        throw new Error("gather late read");
+      }
+      return get(projectId);
+    });
+    const listing = vi
+      .spyOn(service, "projectRepositories")
+      .mockImplementation(async (projectId) => {
+        const result = await list(projectId);
+        if (++listings === 2) fail = true;
+        return result;
+      });
+    await expect(service.runNext(id)).rejects.toThrow("gather late read");
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("queued");
+    expect(activity.forTask(id).some((event) => event.type === "OrchestratorFailed")).toBe(false);
+    listing.mockRestore();
+    read.mockRestore();
+    await service.runNext(id);
+    expect(service.get(id)?.task.gathered?.brief).toBe(BRIEF);
+    activity.close();
+  });
+
+  it("複数指定の Org 一覧を読めなければ止まり、読めるようになると再開できる", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-multiple-org.db"));
+    const projects = projectsWithAccount();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const pulls = new FakePulls();
+    pulls.ownerRepos["https://github.com/acme"] = [
+      "https://github.com/acme/api",
+      "https://github.com/acme/web",
+    ];
+    pulls.repositoriesFail = "unavailable";
+    const { service, executor } = makeService(activity, [gathered()], {
+      projects,
+      pulls,
+      realGatherer: true,
+      gateway: fakeGateway(),
+    });
+    const task = service.createTask({
+      projectId: "default",
+      title: "複数",
+      repos: pulls.ownerRepos["https://github.com/acme"],
+    });
+    await service.runNext(task.id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(task.id)?.task.status).toBe("paused");
+    const failure = service.get(task.id)?.activity.find((e) => e.type === "OrchestratorFailed");
+    expect(
+      failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "ja"),
+    ).toContain("https://github.com/acme/api");
+    expect(
+      failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "ja"),
+    ).toContain("unavailable");
+    pulls.repositoriesFail = undefined;
+    service.resume(task.id, {});
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.gathered?.brief).toBe(BRIEF);
     activity.close();
   });
 

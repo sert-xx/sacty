@@ -771,6 +771,8 @@ const TaskCreated = z.object({
      * Issue から取り込んだタスクは、その Issue のリポジトリが対象なので持たない。PBI-21 より前の作業履歴にも無い。
      */
     repo: z.string().optional(),
+    /** 作成時に指定した複数のリポジトリ。 */
+    repos: z.array(z.string()).min(2).max(10).optional(),
     /**
      * 対象リポジトリを指定せずに作った（PBI-73）。オーケストレーターが、プロジェクトのコンテキストと対象から進め方を
      * 決める（リポジトリ無しで進める・分割して子タスクにリポジトリを付ける・リポジトリを選ぶ）。対象リポジトリを
@@ -3826,6 +3828,7 @@ export const CreateTaskInput = z.object({
    * null は、リポジトリを指定しない（対象がリポジトリ1つだけでも）。
    */
   repo: z.string().trim().min(1).nullable().optional(),
+  repos: z.array(z.string().trim().min(1)).min(1).optional(),
   /**
    * 工程の組み合わせ（進め方）。省略すると、オーケストレーターが選ぶ。対象リポジトリの有無などで選べない組み合わせは、
    * デーモンが理由を示して断る。

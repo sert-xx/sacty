@@ -54,6 +54,9 @@ const PARAMS = {
   "task.notFound": null,
   "task.repositoryMissing": z.object({ project: z.string() }),
   "task.repositoryUnknown": z.object({ project: z.string() }),
+  "task.repositoriesUnknown": z.object({ repo: z.string() }),
+  "task.repositoriesLimit": null,
+  "task.repositoriesConflict": null,
   "task.templateRepositoryRequired": null,
   "task.reviewPlanNeedsPullRequest": null,
   "task.flakyTestNotFound": null,
@@ -281,6 +284,9 @@ const PARAMS = {
   "repo.chooseFailed": z.object({ detail: TextParam }),
   "repo.notChosen": null,
   "repo.notCandidate": z.object({ repo: z.string() }),
+  "repo.notSpecified": z.object({ repo: z.string() }),
+  "repo.noLongerTarget": z.object({ repo: z.string(), detail: TextParam.optional() }),
+  "repo.prepareFailed": z.object({ repo: z.string(), detail: TextParam }),
   "repo.chosenByPerson": null,
   "repo.notChoosable": null,
   "repo.stepNeedsRepository": z.object({ step: z.string() }),
@@ -380,6 +386,7 @@ const PARAMS = {
   "stack.dependencyCancelled": z.object({ title: z.string() }),
   "split.repoMissing": z.object({ key: z.string() }),
   "split.repoNotCandidate": z.object({ key: z.string(), repo: z.string() }),
+  "split.repoNotSpecified": z.object({ key: z.string(), repo: z.string() }),
   // 統合レビュー（PBI-31）
   "integrate.baseUnavailable": z.object({ branch: z.string(), detail: TextParam }),
   "integrate.unreadable": null,
@@ -852,6 +859,10 @@ const ja: MessageDictionary = {
     `プロジェクト「${project}」に対象（Org・リポジトリ）がありません。プロジェクトの設定で対象を追加してから、タスクを作ってください。`,
   "task.repositoryUnknown": ({ project }) =>
     `対象リポジトリを、プロジェクト「${project}」の対象（Org・リポジトリ）の中から選んでください。`,
+  "task.repositoriesUnknown": ({ repo }) =>
+    `リポジトリ（${repo}）はプロジェクトの対象にありません。`,
+  "task.repositoriesLimit": "リポジトリは10件まで指定できます。",
+  "task.repositoriesConflict": "repo と repos のどちらか一方を指定してください。",
   "task.templateRepositoryRequired":
     "このテンプレートでは、対象リポジトリを選んでください（リポジトリを指定せずには作れません）。",
   "task.flakyTestNotFound":
@@ -1091,6 +1102,11 @@ const ja: MessageDictionary = {
     `オーケストレーターが、作業するリポジトリを決められませんでした：${text(detail)} プロジェクトの対象からリポジトリを選んで再開してください。`,
   "repo.notChosen": "コードの変更が要る進め方を選びましたが、作業するリポジトリを書いていません。",
   "repo.notCandidate": ({ repo }) => `リポジトリ（${repo}）は、プロジェクトの対象にありません。`,
+  "repo.notSpecified": ({ repo }) => `リポジトリ（${repo}）は、このタスクに指定されていません。`,
+  "repo.noLongerTarget": ({ repo, detail }, text) =>
+    `指定したリポジトリ（${repo}）を現在のプロジェクトの対象で確認できません。${detail ? ` 理由：${text(detail)}` : ""}`,
+  "repo.prepareFailed": ({ repo, detail }, text) =>
+    `リポジトリ（${repo}）を用意できませんでした：${text(detail)}`,
   "repo.chosenByPerson": "人がリポジトリを選びました。",
   "repo.notChoosable":
     "リポジトリを選べるのは、リポジトリを指定せずに作り、まだ工程が決まっていない、止まっているタスクだけです。",
@@ -1268,6 +1284,8 @@ const ja: MessageDictionary = {
     `リポジトリの無いタスクを分けるときは、子タスクごとにプロジェクトの対象からリポジトリを付けてください（子タスク「${key}」にありません）。再開すると、分割をやり直します。`,
   "split.repoNotCandidate": ({ key, repo }) =>
     `子タスク「${key}」に付けたリポジトリ（${repo}）は、プロジェクトの対象にありません。再開すると、分割をやり直します（対象のリポジトリから選び直します）。`,
+  "split.repoNotSpecified": ({ key, repo }) =>
+    `子タスク「${key}」のリポジトリ（${repo}）は、このタスクに指定されていません。`,
   "split.childCancelled": ({ titles }) =>
     `子タスク（${titles}）が中止されました。再開すると、中止した子タスクを除いて進めます（中止した子タスクに依存する子タスクも始めます）。中止すると、終わっていない子タスクも中止します。`,
   "stack.dependencyCancelled": ({ title }) =>
@@ -1659,6 +1677,9 @@ const en: MessageDictionary = {
     `The project "${project}" has no targets (organizations or repositories). Add one in the project settings, then create the task.`,
   "task.repositoryUnknown": ({ project }) =>
     `Choose the target repository from the targets (organizations or repositories) of the project "${project}".`,
+  "task.repositoriesUnknown": ({ repo }) => `The repository (${repo}) is not a project target.`,
+  "task.repositoriesLimit": "Specify at most 10 repositories.",
+  "task.repositoriesConflict": "Specify either repo or repos.",
   "task.templateRepositoryRequired":
     "Choose a target repository for this template (it cannot be created without one).",
   "task.flakyTestNotFound":
@@ -1899,6 +1920,11 @@ const en: MessageDictionary = {
   "repo.notChosen":
     "The Orchestrator chose a plan that changes code but did not name the repository to work in.",
   "repo.notCandidate": ({ repo }) => `The repository (${repo}) is not a target of the project.`,
+  "repo.notSpecified": ({ repo }) => `The repository (${repo}) was not specified for this task.`,
+  "repo.noLongerTarget": ({ repo, detail }, text) =>
+    `The specified repository (${repo}) cannot be verified among the current project targets.${detail ? ` Reason: ${text(detail)}` : ""}`,
+  "repo.prepareFailed": ({ repo, detail }, text) =>
+    `Could not prepare the repository (${repo}): ${text(detail)}`,
   "repo.chosenByPerson": "A person chose the repository.",
   "repo.notChoosable":
     "A repository can be chosen only for a paused task created without a repository whose steps are not decided yet.",
@@ -2081,6 +2107,8 @@ const en: MessageDictionary = {
     `When splitting a task without a repository, give each subtask a repository from the project's targets (subtask "${key}" has none). Resume to redo the split.`,
   "split.repoNotCandidate": ({ key, repo }) =>
     `The repository given to subtask "${key}" (${repo}) is not a target of the project. Resume to redo the split (choosing from the target repositories).`,
+  "split.repoNotSpecified": ({ key, repo }) =>
+    `The repository (${repo}) for subtask "${key}" was not specified for this task.`,
   "split.childCancelled": ({ titles }) =>
     `Subtasks were cancelled (${titles}). Resume to continue without them (subtasks that depend on them also start). Cancel to also cancel the unfinished subtasks.`,
   "stack.dependencyCancelled": ({ title }) =>

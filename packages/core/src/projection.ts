@@ -615,6 +615,8 @@ export type Task = {
   ticketPrComment?: { url: string } | { failed: DaemonText };
   /** 画面で作ったタスクの対象リポジトリ（リポジトリの URL。PBI-21・PBI-40）。Issue から取り込んだタスクは source.repo。 */
   repo?: string;
+  /** 作成時に指定した複数のリポジトリ。 */
+  repos?: string[];
   /** 対象リポジトリを指定せずに作った（PBI-73）。リポジトリを決めた後も残る（作ったときの指定）。 */
   noRepo?: true;
   /** テンプレートで作った（PBI-90）。 */
@@ -1388,6 +1390,7 @@ export function applyEvent(
         : {}),
       ...(event.payload.ticket ? { ticket: event.payload.ticket } : {}),
       ...(event.payload.repo ? { repo: event.payload.repo } : {}),
+      ...(event.payload.repos ? { repos: event.payload.repos } : {}),
       ...(event.payload.noRepo ? { noRepo: true as const } : {}),
       ...(event.payload.repo && event.payload.repoReason
         ? { repoChoice: { reason: event.payload.repoReason, by: "orchestrator" as const } }

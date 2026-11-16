@@ -627,6 +627,9 @@ export class InvalidOperationError extends Error {
   }
 }
 
+/** 作成時の複数リポジトリ指定の入力エラー。 */
+export class InvalidTaskRepositoriesError extends InvalidOperationError {}
+
 /** 大まかな監査の記録の、メモリーをコンテキストにする提案（原因の形。PBI-128）。 */
 type SurveyPromotionRecord = NonNullable<
   Extract<EventInput, { type: "AuditSurveyed" }>["payload"]["promotions"]
@@ -4181,6 +4184,22 @@ export class TaskService {
     | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
     | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
   > {
+    const listedCandidates =
+      isRepoless(task) || task.repos ? await this.taskRepositoryCandidates(task) : undefined;
+    if (listedCandidates && "missing" in listedCandidates) {
+      return {
+        failure: {
+          reason: "error",
+          message: message("repo.noLongerTarget", {
+            repo: listedCandidates.missing,
+            detail: listedCandidates.detail,
+          }),
+          agentId: "unknown",
+          costUsd: 0,
+          estimated: false,
+        },
+      };
+    }
     // 再実行・作成時に人が指定した・プロジェクトの対象で指定したイメージがあれば、オーケストレーターに選ばせない（PBI-41・
     // PBI-318）。古い版の作業履歴で、人が作成時に進め方のすべての工程のイメージを指定したタスクも選ばせない
     const pinned = this.pinnedImage(task);
@@ -4202,7 +4221,10 @@ export class TaskService {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const repoless = isRepoless(task)
       ? {
-          repositories: (await this.projectRepositories(task.projectId))?.repositories ?? [],
+          repositories:
+            listedCandidates && "repositories" in listedCandidates
+              ? listedCandidates.repositories
+              : [],
           ...(contextSource
             ? {
                 context: `${contextSource.repo}${contextSource.path ? `の ${contextSource.path}` : ""}${contextSource.ref ? `（${contextSource.ref}）` : ""}`,
@@ -4225,7 +4247,13 @@ export class TaskService {
         choice.steps.some((step) => REPO_STEPS.includes(step)) ||
         choice.plan === "security-check"
       ) {
-        return this.repositoryFromPlan(choice, chosenRepo, repoReason, repoless.repositories);
+        return this.repositoryFromPlan(
+          choice,
+          chosenRepo,
+          repoReason,
+          repoless.repositories,
+          Boolean(task.repos),
+        );
       }
       // リポジトリの無いまま進めるので、リポジトリのコードに関わる決めごとは使わない
       const {
@@ -4281,6 +4309,7 @@ export class TaskService {
     repo: string | undefined,
     reason: string | undefined,
     candidates: readonly string[],
+    specified = false,
   ):
     | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
     | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
@@ -4300,7 +4329,7 @@ export class TaskService {
       return { repository: { repo: found, reason: reason || choice.reason || "", ...cost } };
     }
     const detail = repo
-      ? message("repo.notCandidate", { repo })
+      ? message(specified ? "repo.notSpecified" : "repo.notCandidate", { repo })
       : reason
         ? reason
         : message("repo.notChosen");
@@ -4328,9 +4357,16 @@ export class TaskService {
     if (!awaitingRepository(task) || task.status !== "paused") {
       throw new InvalidOperationError(message("repo.notChoosable"));
     }
-    const candidates = (await this.projectRepositories(task.projectId))?.repositories ?? [];
-    const chosen = candidates.find((c) => sameGitHubUrl(c, repo));
-    if (!chosen) throw new InvalidOperationError(message("repo.notCandidate", { repo }));
+    const candidates = await this.taskRepositoryCandidates(task);
+    if ("missing" in candidates)
+      throw new InvalidOperationError(
+        message("repo.noLongerTarget", { repo: candidates.missing, detail: candidates.detail }),
+      );
+    const chosen = candidates.repositories.find((c) => sameGitHubUrl(c, repo));
+    if (!chosen)
+      throw new InvalidOperationError(
+        message(task.repos ? "repo.notSpecified" : "repo.notCandidate", { repo }),
+      );
     const latest = this.mustGet(id);
     if (!awaitingRepository(latest) || latest.status !== "paused") {
       throw new InvalidOperationError(message("repo.notChoosable"));
@@ -5937,6 +5973,26 @@ export class TaskService {
     };
   }
 
+  private async taskRepositoryCandidates(
+    task: Task,
+  ): Promise<
+    | { repositories: string[]; errors: { org: string; message: DaemonText }[] }
+    | { missing: string; detail?: DaemonText }
+  > {
+    const listed = await this.projectRepositories(task.projectId);
+    const repositories = listed?.repositories ?? [];
+    if (!task.repos) return { repositories, errors: listed?.errors ?? [] };
+    for (const repo of task.repos) {
+      if (!repositories.some((candidate) => sameGitHubUrl(candidate, repo))) {
+        const error = listed?.errors.find(({ org }) =>
+          repo.toLowerCase().startsWith(`${org.toLowerCase().replace(/\/$/, "")}/`),
+        );
+        return { missing: repo, ...(error ? { detail: error.message } : {}) };
+      }
+    }
+    return { repositories: task.repos, errors: [] };
+  }
+
   /**
    * プロジェクトを作る、または変える。ほかのプロジェクトと対象が重複していれば拒否する。
    * 変えるときに `base`（読み込んだときの `updatedAt`）を渡すと、その後にほかの保存で変わっていれば、上書きせずに、互いの変更を
@@ -6577,9 +6633,26 @@ export class TaskService {
     // GitHub の読み取りの中継で読ませる（トリアージなら、トリアージの候補。用意したタスクは、作業領域の写しを読む）
     // 一覧を読めなかった Org（認証切れ・権限不足など）は、調べられなかった情報源として指示に伝える（候補に入らないので）
     const listed =
-      !task.repository && !triage && isRepoless(task)
-        ? await this.projectRepositories(task.projectId)
+      !triage && (task.repos || (!task.repository && isRepoless(task)))
+        ? await this.taskRepositoryCandidates(task)
         : undefined;
+    if (listed && "missing" in listed) {
+      const failure = {
+        reason: "error" as const,
+        message: message("repo.noLongerTarget", { repo: listed.missing, detail: listed.detail }),
+        agentId: "unknown",
+        costUsd: 0,
+        estimated: false,
+      };
+      this.append(task, [
+        { actor: "gatherer", event: { type: "OrchestratorFailed", payload: failure } },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "error", message: failure.message } },
+        },
+      ]);
+      return true;
+    }
     const candidates = listed?.repositories ?? [];
     const unreadable = triaging?.unreadable ?? listed?.errors ?? [];
     // 共用の compose（PBI-70）は、サービスを分けるときの候補にする（PBI-152。使うかはオーケストレーターが決める）
@@ -7363,10 +7436,40 @@ export class TaskService {
     if (project.targets.length === 0) {
       throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
     }
+    if (input.repo !== undefined && input.repos !== undefined) {
+      throw new InvalidTaskRepositoriesError(message("task.repositoriesConflict"));
+    }
+    const repositories: string[] = [];
+    const projects = input.repos ? this.deps.projects.all() : undefined;
+    const seen = new Set<string>();
+    for (const name of input.repos ?? []) {
+      const responsible = RepoUrl.safeParse(name).success
+        ? responsibleProject(projects ?? [], name)
+        : undefined;
+      if (responsible?.project.id !== project.id) {
+        throw new InvalidTaskRepositoriesError(message("task.repositoriesUnknown", { repo: name }));
+      }
+      const normalized =
+        responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(name);
+      const key = repoKey(normalized);
+      if (!seen.has(key)) {
+        seen.add(key);
+        repositories.push(normalized);
+      }
+    }
+    if (repositories.length > 10) {
+      throw new InvalidTaskRepositoriesError(message("task.repositoriesLimit"));
+    }
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const { title, body } = input;
-    const repo = wanted ? this.projectRepository(project, wanted) : undefined;
+    const repo = input.repos
+      ? repositories.length === 1
+        ? repositories[0]
+        : undefined
+      : wanted
+        ? this.projectRepository(project, wanted)
+        : undefined;
     // 人が指定した進め方は、タスクの形で選べるものだけ（レビューは、対象リポジトリの PR のリンクがあるときだけ）
     const plan = input.plan;
     if (
@@ -7398,6 +7501,7 @@ export class TaskService {
         start: "sacty",
         // リポジトリを指定しないタスク（PBI-73）。オーケストレーターが、プロジェクトのコンテキストと対象から進め方を決める
         ...(repo ? { repo } : { noRepo: true as const }),
+        ...(repositories.length > 1 ? { repos: repositories } : {}),
         budgetCapUsd,
         ...(plan ? { plan } : {}),
         ...stepSettings,
@@ -7811,7 +7915,12 @@ export class TaskService {
   runnableTaskIds(): string[] {
     return this.queuedTaskIds().filter((id) => {
       const task = this.tasks.get(id);
-      return !(task && !this.inflight.has(id) && this.awaitingContextImages(task));
+      try {
+        return !(task && !this.inflight.has(id) && this.awaitingContextImages(task));
+      } catch (error) {
+        if (task?.repos) return true;
+        throw error;
+      }
     });
   }
 
@@ -8834,13 +8943,58 @@ export class TaskService {
       return;
     }
     // コンテキストのイメージを作っている間は、実行を始めない（実行の印も付けない。次の見回りで確かめ直す。PBI-325）
-    if (task && this.awaitingContextImages(task)) return;
+    if (task && !task.repos && this.awaitingContextImages(task)) return;
     const entry = { runIds: new Set<string>(), done: Promise.resolve() };
     this.inflight.set(taskId, entry);
     this.trackQueue();
     // 完了は、止めたコンテナの確認と一時停止の記録まで含める（一時停止・中止はこれを待つ）
     entry.done = this.runningTask.run(taskId, async () => {
       try {
+        if (task?.repos && task.status === "queued") {
+          if (!this.deps.config().ok) return;
+          const step = activeStep(task);
+          const gathering = awaitingGathering(task);
+          if (
+            gathering ||
+            task.steps.length === 0 ||
+            step === "requirements" ||
+            step === "design" ||
+            step === "split"
+          ) {
+            const candidates = await this.taskRepositoryCandidates(task);
+            if ("missing" in candidates) {
+              const text = message("repo.noLongerTarget", {
+                repo: candidates.missing,
+                detail: candidates.detail,
+              });
+              this.append(task, [
+                ...(gathering || task.steps.length === 0
+                  ? [
+                      {
+                        actor: gathering ? ("gatherer" as const) : ("orchestrator" as const),
+                        event: {
+                          type: "OrchestratorFailed" as const,
+                          payload: {
+                            reason: "error" as const,
+                            message: text,
+                            agentId: "unknown",
+                            costUsd: 0,
+                            estimated: false,
+                          },
+                        },
+                      },
+                    ]
+                  : []),
+                {
+                  actor: "sacty",
+                  event: { type: "TaskPaused", payload: { reason: "error", message: text } },
+                },
+              ]);
+              return;
+            }
+          }
+          if (this.awaitingContextImages(task)) return;
+        }
         await this.runNextInner(taskId);
       } finally {
         if (this.pauseRequested.has(taskId)) {
@@ -9001,7 +9155,16 @@ export class TaskService {
         this.append(initial, [
           {
             actor: "sacty",
-            event: { type: "TaskPaused", payload: { reason: "error", message: ready.message } },
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message:
+                  initial.repos && initial.repo
+                    ? message("repo.prepareFailed", { repo: initial.repo, detail: ready.message })
+                    : ready.message,
+              },
+            },
           },
         ]);
         return;
@@ -9034,16 +9197,10 @@ export class TaskService {
       const review = this.mustGet(taskId).source?.review;
       // プロジェクトの対象で指定したイメージ（PBI-41）は、レビューだけの工程にも同じく使い、名前も確かめる（PBI-44 レビュー指摘）
       // images があれば、レビューの工程のイメージだけをオーケストレーターに選ばせる（検証コマンドを実行するため）
+      const imageConfig = this.projectImagesConfig(config.config, initial.projectId);
       const choice = review
-        ? await this.chooseReviewSteps(
-            this.mustGet(taskId),
-            this.projectImagesConfig(config.config, initial.projectId),
-            review,
-          )
-        : await this.chooseSteps(
-            this.mustGet(taskId),
-            this.projectImagesConfig(config.config, initial.projectId),
-          );
+        ? await this.chooseReviewSteps(this.mustGet(taskId), imageConfig, review)
+        : await this.chooseSteps(this.mustGet(taskId), imageConfig);
       // 対象リポジトリの無いタスクで、コードの変更が要り、分けないなら、選んだリポジトリを記録する（PBI-73）。
       // 次の実行でそのリポジトリを用意して、いつもどおり工程を選ぶ
       if ("repository" in choice) {
@@ -9282,6 +9439,31 @@ export class TaskService {
       if (!resolved.ok) return;
     }
 
+    // 候補照合は開始記録より前に行う。取得の例外でも未実行の工程が実行中に残らない。
+    let splitCandidates: string[] | undefined;
+    if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
+      const candidates = await this.taskRepositoryCandidates(task);
+      if ("missing" in candidates) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message: message("repo.noLongerTarget", {
+                  repo: candidates.missing,
+                  detail: candidates.detail,
+                }),
+              },
+            },
+          },
+        ]);
+        return;
+      }
+      if (step === "split") splitCandidates = candidates.repositories;
+    }
+
     // 工程に使う AI（人がタスクの詳細で選んだもの。無ければ step_agents か default_agent。PBI-40・PBI-121）。準備（レビューの
     // 対象の確認など）の間に人が変えていれば、それを使う。決めてから開始の記録までは待たない（PR #131 レビュー指摘）
     const chosenName = this.mustGet(task.id).agents?.[step];
@@ -9319,10 +9501,11 @@ export class TaskService {
     // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
     // 対象リポジトリの無いタスク（PBI-73）は、空の作業領域で実行する。コードが要る工程は選ばせないが、選ばれていたら止める
     const repoless = isRepoless(this.mustGet(task.id));
-    const ready: Awaited<ReturnType<TaskService["prepareRepository"]>> = repoless
+    const splitRepositories = repoless || Boolean(task.repos);
+    const ready = repoless
       ? REPO_STEPS.includes(step)
-        ? { ok: false, message: message("repo.stepNeedsRepository", { step }) }
-        : { ok: true, dir: join(this.deps.workspaceRoot, task.id, "empty") }
+        ? { ok: false as const, message: message("repo.stepNeedsRepository", { step }) }
+        : { ok: true as const, dir: join(this.deps.workspaceRoot, task.id, "empty") }
       : await this.prepareRepository(this.mustGet(task.id), config.config);
     if (!ready.ok) {
       this.append(task, [
@@ -9391,15 +9574,12 @@ export class TaskService {
     const runPlatforms = mergePlatforms(config.config.platforms, context?.platforms ?? []);
     // ここから実行の try（finally で消す）までに例外になっても、用意したコンテキスト（一時のディレクトリ・ホストで起動する
     // MCP サーバーの確保）を残さない（PR #89 レビュー指摘）
-    let splitCandidates: string[] | undefined;
     try {
       if (context) this.append(task, [this.contextResolved(runId, context, runPlatforms)]);
-
-      // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
-      splitCandidates =
-        step === "split" && repoless
-          ? ((await this.projectRepositories(task.projectId))?.repositories ?? [])
-          : undefined;
+      if (!task.repos && step === "split" && splitRepositories) {
+        const candidates = await this.taskRepositoryCandidates(task);
+        splitCandidates = "repositories" in candidates ? candidates.repositories : [];
+      }
     } catch (error) {
       context?.dispose();
       throw error;
@@ -9598,7 +9778,9 @@ export class TaskService {
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
             // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）
-            ...(step === "split" && repoless ? { repositories: splitCandidates ?? [] } : {}),
+            ...(step === "split" && splitRepositories
+              ? { repositories: splitCandidates ?? [] }
+              : {}),
           }),
           // 使える組織内 PF の API（PBI-35。プロジェクトのコンテキストの PF も。PBI-74）
           ...platformPromptLines(runPlatforms.platforms),
@@ -9703,8 +9885,8 @@ export class TaskService {
       // 対象リポジトリの無いタスクは、子タスクごとのリポジトリがプロジェクトの対象にあるかを確かめる（PBI-73）。
       // 無い・対象に無いなら使わない（再開すると分割をやり直して、選び直す）
       const plan =
-        extractedPlan.ok && repoless
-          ? splitWithRepositories(extractedPlan, splitCandidates ?? [])
+        extractedPlan.ok && splitRepositories
+          ? splitWithRepositories(extractedPlan, splitCandidates ?? [], Boolean(task.repos))
           : extractedPlan;
       const run = { runId, step, agentId: agent.id, costUsd, estimated, usage: outcome.usage };
       // 人間の差し戻しの指摘（統合レビューの承認待ちから。PBI-31）への対応
@@ -9754,8 +9936,10 @@ export class TaskService {
                   ...(latest.split ? { fix: true as const } : {}),
                 },
                 dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
-                ...(repoless && c.repo ? { repo: c.repo } : {}),
-                ...(repoless && c.repo && c.repoReason ? { repoReason: c.repoReason } : {}),
+                ...(splitRepositories && c.repo ? { repo: c.repo } : {}),
+                ...(splitRepositories && c.repo && c.repoReason
+                  ? { repoReason: c.repoReason }
+                  : {}),
                 // 割り当てたテスト観点は、中身ごと記録する（子タスクが、親の設計を読み直さずに持てるように。PBI-348）
                 ...(c.viewpoints?.length
                   ? {
@@ -12827,7 +13011,7 @@ export class TaskService {
       estimated: false,
     });
     // 対象リポジトリの無い親（PBI-73）は、子タスクのリポジトリごとにベースブランチの最新を用意する
-    const repoless = isRepoless(task);
+    const repoless = isRepoless(task) || Boolean(task.repos);
     let repositories:
       | { repo: string; baseBranch: string; commit: string; dir: string }[]
       | undefined;
@@ -16680,6 +16864,7 @@ const REPO_STEPS: readonly StepKey[] = ["implement", "reproduce", "review"];
 function splitWithRepositories(
   plan: SplitPlan,
   candidates: readonly string[],
+  specified = false,
 ): SplitPlan | { ok: false; message: DaemonText } {
   const children: SplitChild[] = [];
   for (const child of plan.children) {
@@ -16689,7 +16874,10 @@ function splitWithRepositories(
     if (!found) {
       return {
         ok: false,
-        message: message("split.repoNotCandidate", { key: child.key, repo: child.repo }),
+        message: message(specified ? "split.repoNotSpecified" : "split.repoNotCandidate", {
+          key: child.key,
+          repo: child.repo,
+        }),
       };
     }
     children.push({ ...child, repo: found });
