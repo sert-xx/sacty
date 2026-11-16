@@ -33564,8 +33564,9 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       });
       class LocalRepos extends GitRepositoryWorkspace {
         override async prepare(...args: Parameters<GitRepositoryWorkspace["prepare"]>) {
-          const index = args[2].startsWith(API) ? 0 : 1;
-          args[2] = paths[index] ?? "";
+          const index = [API, WEB].findIndex((url) => args[2] === url || args[2] === `${url}.git`);
+          if (index === -1) throw new Error(`想定外の clone URL: ${args[2]}`);
+          args[2] = paths[index] as string;
           return super.prepare(...args);
         }
       }

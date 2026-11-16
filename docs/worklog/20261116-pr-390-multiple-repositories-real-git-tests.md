@@ -2,8 +2,8 @@
 
 - 日付: 2026-11-16（UTC）
 - タスク: なし
-- PR: なし
-- ブランチ: main
+- PR: #390
+- ブランチ: sacty/task-267f1e95
 - 関係する ADR: なし
 
 ## 目的
@@ -17,11 +17,14 @@
 ## 確かめたこと
 
 `npx vitest run apps/daemon/src/daemon.test.ts -t '実際の Git で複数'` で3件が通った。
-提出前の全体の検証結果は PR の本文に記載する。
+前回の実装では `npm run lint`・`npm run typecheck`・`npx vitest run`・`npm run build` が通った。
 
 ## レビューの指摘と対応
 
-なし。
+| 指摘 | 対応 |
+| --- | --- |
+| clone URL の変換が想定外の URL を受け入れる | 2つの URL を完全一致で対応付け、想定外の URL は失敗させる。 |
+| 作業履歴の PR・ブランチ・ファイル名と検証結果が不正確 | PR 情報とファイル名を修正し、検証コマンドと結果を記録した。 |
 
 ## 残したこと
 
