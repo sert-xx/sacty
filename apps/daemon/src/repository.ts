@@ -116,6 +116,7 @@ export interface RepositoryWorkspace {
      * 用意する（タスクの起点を最後まで変えないため。PBI-15）。取得できなければエラーにする。
      */
     baseCommit?: string,
+    signal?: AbortSignal,
   ): Promise<{ baseCommit: string; baseBranch: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
@@ -243,8 +244,17 @@ export interface RepositoryWorkspace {
    * ブランチの最新のコミットを、リモートから退避したメタデータに取得して返す（統合レビューで、子タスクの
    * PR がマージされた後のベースブランチを読むため。PBI-31）。
    */
-  fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<string>;
-  remoteDefaultBranch(gitDir: string, authEnv?: Record<string, string>): Promise<string>;
+  fetchBranch(
+    gitDir: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<string>;
+  remoteDefaultBranch(
+    gitDir: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<string>;
   /**
    * 2つのコミットの間で変わったパス（PBI-57）。タスクブランチに、sacty が積んでいない変更（人が直接積んだ・
    * ベースブランチをマージした）が無いかを、実装を積む前に確かめるために使う。どちらのコミットも取得済みであること。
@@ -376,8 +386,9 @@ function git(
   args: string[],
   env: Record<string, string>,
   cwd?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  return gitBytes(label, args, env, cwd).then((out) => out.toString("utf8"));
+  return gitBytes(label, args, env, cwd, signal).then((out) => out.toString("utf8"));
 }
 
 /** git を実行し、標準出力をそのままのバイト列で返す（複数バイトの文字が、読み込みの区切りで壊れないように）。 */
@@ -386,9 +397,26 @@ function gitBytes(
   args: string[],
   env: Record<string, string>,
   cwd?: string,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("git", args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: Boolean(signal),
+    });
+    const abort = () => {
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
+      }
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     const out: Buffer[] = [];
     let err = "";
     child.stdout.on("data", (chunk: Buffer) => {
@@ -401,6 +429,7 @@ function gitBytes(
       reject(new MessageError(message("git.unavailable", { detail: error.message }))),
     );
     child.on("close", (code) => {
+      signal?.removeEventListener("abort", abort);
       if (code === 0) resolve(Buffer.concat(out));
       else if (err.trim()) {
         reject(new MessageError(message("git.failed", { command: label, detail: err.trim() })));
@@ -587,6 +616,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     baseBranch: string | undefined,
     authEnv?: Record<string, string>,
     recorded?: string,
+    signal?: AbortSignal,
   ) {
     if (recorded !== undefined && !COMMIT_RE.test(recorded)) {
       throw new MessageError(message("git.invalidBaseCommit"));
@@ -604,13 +634,15 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         "clone",
         ["clone", ...(branch !== undefined ? ["--branch", branch] : []), "--", url, dir],
         env,
+        undefined,
+        signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
       );
     try {
       await clone(baseBranch);
     } catch (error) {
       // 用意し直すときは、ブランチが消えていても（引き継いだ PR のブランチがマージの後に消されたなど）、既定のブランチを
       // clone して記録済みの起点のコミットを取得する（ブランチの存続を前提にしない。PBI-157 レビュー指摘）
-      if (!recorded || baseBranch === undefined) throw error;
+      if (signal?.aborted || !recorded || baseBranch === undefined) throw error;
       if (existsSync(dir)) await rm(dir, { recursive: true, force: true });
       await clone(undefined);
     }
@@ -625,7 +657,13 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         try {
           // git にオプションとして読まれる値（`--upload-pack=…` など）を渡さないよう、渡す直前の位置でも確かめる
           if (!COMMIT_RE.test(recorded)) throw new MessageError(message("git.invalidBaseCommit"));
-          await git("fetch", ["fetch", "--quiet", "origin", recorded], env, dir);
+          await git(
+            "fetch",
+            ["fetch", "--quiet", "origin", recorded],
+            env,
+            dir,
+            signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
+          );
           await checkout();
         } catch {
           throw new MessageError(message("git.baseCommitMissing", { commit: recorded }));
@@ -1335,11 +1373,17 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return run("cat-file", ["cat-file", "blob", entry.object]);
   }
 
-  async remoteDefaultBranch(gitDir: string, authEnv?: Record<string, string>) {
+  async remoteDefaultBranch(
+    gitDir: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
     const result = await git(
       "ls-remote",
       ["--git-dir", gitDir, ...SAFE_CONFIG, "ls-remote", "--symref", "--", "origin", "HEAD"],
       cloneEnv(authEnv),
+      undefined,
+      signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
     );
     const branch = /^ref: refs\/heads\/([^\n\t]+)\tHEAD$/m.exec(result)?.[1];
     if (!branch) throw new MessageError(message("git.invalidBranch"));
@@ -1361,7 +1405,12 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     }
   }
 
-  async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+  async fetchBranch(
+    gitDir: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
     await this.validateBranch(branch);
     // 取得したコミットは FETCH_HEAD に残る（退避したメタデータのブランチや設定は変えない）
     await git(
@@ -1378,6 +1427,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         `refs/heads/${branch}`,
       ],
       cloneEnv(authEnv),
+      undefined,
+      signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
     );
     const commit = (
       await git(

@@ -926,6 +926,7 @@ type ExecuteRun = {
   prompt: string;
   role: AgentRole;
   workspaceDir: string;
+  onInvoke?: () => void;
   /** エージェントの形式に変換したコンテキスト（工程エージェントとオーケストレーター。PBI-6・PBI-146）。 */
   context?: Parameters<typeof buildInvocation>[5];
   /**
@@ -1089,7 +1090,10 @@ export class TaskService {
   private intakeRuns: Partial<Record<IntakeKind, IntakeRun>> = {};
   private settingsSaves = 0;
   /** 実行中のタスクと、そのタスクで動いているコンテナ（一時停止・中止で止めるため）。 */
-  private readonly inflight = new Map<string, { runIds: Set<string>; done: Promise<void> }>();
+  private readonly inflight = new Map<
+    string,
+    { runIds: Set<string>; done: Promise<void>; abort: AbortController }
+  >();
   /** コンテキストのイメージを作り終えるのを待っているタスクと、待ち始めた時刻（PBI-325）。 */
   private readonly contextImageWaits = new Map<string, number>();
   /**
@@ -8856,7 +8860,19 @@ export class TaskService {
       await rm(gitDir, { recursive: true, force: true });
     }
     writeFileSync(marker, "");
-    const prepared = await this.deps.repos.prepare(...args);
+    const taskId = this.runningTask.getStore();
+    const signal =
+      taskId && this.tasks.get(taskId)?.repos ? this.inflight.get(taskId)?.abort.signal : undefined;
+    const [copyDir, copyGitDir, url, branch, auth, commit] = args;
+    const prepared = await this.deps.repos.prepare(
+      copyDir,
+      copyGitDir,
+      url,
+      branch,
+      auth,
+      commit,
+      signal,
+    );
     await rm(marker, { force: true });
     return prepared;
   }
@@ -8974,7 +8990,11 @@ export class TaskService {
     }
     // コンテキストのイメージを作っている間は、実行を始めない（実行の印も付けない。次の見回りで確かめ直す。PBI-325）
     if (task && !task.repos && this.awaitingContextImages(task)) return;
-    const entry = { runIds: new Set<string>(), done: Promise.resolve() };
+    const entry = {
+      runIds: new Set<string>(),
+      done: Promise.resolve(),
+      abort: new AbortController(),
+    };
     this.inflight.set(taskId, entry);
     this.trackQueue();
     // 完了は、止めたコンテナの確認と一時停止の記録まで含める（一時停止・中止はこれを待つ）
@@ -9814,6 +9834,9 @@ export class TaskService {
               agentId: agent.id,
               reason: "error",
               message: redactText(errorText(error), contextSecrets),
+              ...(task.repos && (step === "requirements" || step === "design" || step === "split")
+                ? { preparationFailed: true as const }
+                : {}),
             },
           },
         },
@@ -10021,8 +10044,9 @@ export class TaskService {
               await this.prepareRepositoryCopy(clone, gitDir, repo, undefined, auth);
               writeFileSync(complete, "");
             }
-            const branch = await this.deps.repos.remoteDefaultBranch(gitDir, auth);
-            const commit = await this.deps.repos.fetchBranch(gitDir, branch, auth);
+            const signal = this.inflight.get(task.id)?.abort.signal;
+            const branch = await this.deps.repos.remoteDefaultBranch(gitDir, auth, signal);
+            const commit = await this.deps.repos.fetchBranch(gitDir, branch, auth, signal);
             await this.deps.repos.snapshot(gitDir, commit, join(otherReposDir ?? snapshotDir, dir));
             codeRepositories.push({
               repo,
@@ -10171,8 +10195,10 @@ export class TaskService {
           ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
           ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
         };
-        onAgentInvoked();
-        agentInvoked = true;
+        run.onInvoke = () => {
+          onAgentInvoked();
+          agentInvoked = true;
+        };
         executed = await this.execute(run);
       }
     } finally {
@@ -13024,6 +13050,7 @@ export class TaskService {
       return this.mustGet(id);
     }
     this.pauseRequested.add(id);
+    this.inflight.get(id)?.abort.abort();
     this.pauseCounts.set(id, (this.pauseCounts.get(id) ?? 0) + 1);
     const inflight = this.inflight.get(id);
     if (inflight) {
@@ -13151,6 +13178,7 @@ export class TaskService {
       let containerStopped = true;
       if (inflight) {
         this.pauseRequested.add(id);
+        inflight.abort.abort();
         // 監査の深掘りの順番を待っているなら、待つのをやめさせる（PR #135 再レビュー指摘）
         this.auditLockWaits.get(id)?.();
         const runIds = [...inflight.runIds];
@@ -13987,18 +14015,22 @@ export class TaskService {
             },
           })
         : undefined;
-    if (plan) {
+    let invoked = false;
+    const onInvoke = () => {
+      invoked = true;
       if (resuming) continued("resumed");
-      else if (plan.mode === "restart") continued("restarted", plan.reason);
-    }
+      else if (plan?.mode === "restart") continued("restarted", plan.reason);
+      run.onInvoke?.();
+    };
     const { archived, ...executed } = await this.executeOnce(
       resuming
         ? {
             ...run,
+            onInvoke,
             prompt: this.continuedPrompt(run, resuming.cause),
             session: { resume: resuming.sessionId, filesDir: resuming.filesDir },
           }
-        : run,
+        : { ...run, onInvoke },
     );
     // AI が再開を受け付けなかった・別のセッションで始めた（再開したつもりが、続きではない）なら、続けたとは言えないので、
     // 理由を記録し直す（新しい記録が優先される）
@@ -14007,6 +14039,7 @@ export class TaskService {
       (runtime === "claude-code" || runtime === "codex") &&
       resumeRejected(runtime, executed.outcome);
     if (
+      invoked &&
       resuming &&
       (rejected || (archived?.sessionId !== undefined && archived.sessionId !== resuming.sessionId))
     ) {
@@ -14473,6 +14506,7 @@ export class TaskService {
         };
       }
       this.track(run.runId);
+      run.onInvoke?.();
       outcome = await this.deps.executor.run({
         runId: run.runId,
         image: run.image,

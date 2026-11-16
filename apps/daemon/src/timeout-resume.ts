@@ -61,8 +61,14 @@ export function timedOutRunBefore(
     const event = events[i];
     if (!event) continue;
     if (event.type === "AgentRunTimedOut") return event.payload;
-    if (event.type === "AgentRunContinued") return undefined;
-    if (event.type === "AgentSessionArchived" && event.payload.role !== "chat") return undefined;
+    if (event.type === "AgentRunContinued" && !preparationFailures.has(event.payload.runId))
+      return undefined;
+    if (
+      event.type === "AgentSessionArchived" &&
+      event.payload.role !== "chat" &&
+      !preparationFailures.has(event.payload.runId)
+    )
+      return undefined;
     if (
       (event.type === "AgentRunStarted" || event.type === "AgentRunFailed") &&
       event.payload.runId !== currentRunId &&
@@ -115,8 +121,17 @@ export function incompleteRunBefore(
       }
       return undefined;
     }
-    if (event.type === "AgentRunTimedOut" || event.type === "AgentRunContinued") return undefined;
-    if (event.type === "AgentSessionArchived" && event.payload.role !== "chat") return undefined;
+    if (
+      event.type === "AgentRunTimedOut" ||
+      (event.type === "AgentRunContinued" && !preparationFailures.has(event.payload.runId))
+    )
+      return undefined;
+    if (
+      event.type === "AgentSessionArchived" &&
+      event.payload.role !== "chat" &&
+      !preparationFailures.has(event.payload.runId)
+    )
+      return undefined;
     if (
       (event.type === "AgentRunStarted" || event.type === "AgentRunFailed") &&
       event.payload.runId !== currentRunId &&

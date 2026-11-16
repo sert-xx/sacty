@@ -12,6 +12,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -87,6 +88,44 @@ const itMerge = it.skipIf(!MERGE_BASE_SUPPORTED);
 
 // 実際の git を動かすので、テストをまとめて実行して重いときも時間切れにしない（PBI-35 レビューでの5秒の時間切れ）
 describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, () => {
+  it("応答しないリモートへの取得を中断し、復旧後に取得できる", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "clone");
+    const metadata = join(dir, "metadata");
+    await workspace.prepare(clone, metadata, origin, undefined);
+    let connected: () => void = () => {};
+    const accepted = new Promise<void>((resolve) => {
+      connected = resolve;
+    });
+    const server = createServer(() => connected());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    git(
+      dir,
+      "--git-dir",
+      metadata,
+      "remote",
+      "set-url",
+      "origin",
+      `git://127.0.0.1:${address.port}/repo`,
+    );
+    const controller = new AbortController();
+    const pending = workspace.remoteDefaultBranch(metadata, undefined, controller.signal);
+    await accepted;
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    server.close();
+    git(dir, "--git-dir", metadata, "remote", "set-url", "origin", origin);
+    expect(
+      await workspace.remoteDefaultBranch(metadata, undefined, new AbortController().signal),
+    ).toBe("main");
+    expect(
+      await workspace.fetchBranch(metadata, "main", undefined, new AbortController().signal),
+    ).toMatch(/^[0-9a-f]{40}$/);
+  });
+
   it.each(["release+2026", "リリース/最新版"])(
     "有効なブランチ %s の再準備で記録済みの起点を維持する",
     async (branch) => {

@@ -549,7 +549,11 @@ class FakeRepos implements RepositoryWorkspace {
   branchHead = "c".repeat(40);
   fetchedBranches: { gitDir: string; branch: string; authEnv?: Record<string, string> }[] = [];
   fetchBranchFail?: string;
-  async remoteDefaultBranch(_gitDir: string, _authEnv?: Record<string, string>) {
+  async remoteDefaultBranch(
+    _gitDir: string,
+    _authEnv?: Record<string, string>,
+    _signal?: AbortSignal,
+  ) {
     return this.defaultBranch;
   }
   async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
@@ -31720,74 +31724,77 @@ describe("時間切れで止めた実行の再開（PBI-280）", () => {
     activity.close();
   });
 
-  it("複数指定の実行前に設定読み取りが例外になっても時間切れのセッションを続ける", async () => {
-    const projects = projectsWithAccount();
-    const urls = ["https://github.com/acme/api", "https://github.com/acme/web"];
-    projects.put("default", {
-      name: "デフォルト",
-      targets: urls.map((target) => ({ scope: "repo" as const, target })),
-      githubAccounts: { "github.com": "me" },
-    });
-    const activity = new SqliteActivityStore(dbPath);
-    const id = "resume-multiple";
-    activity.append({
-      taskId: id,
-      projectId: "default",
-      events: [
-        {
-          actor: "person",
-          event: {
-            type: "TaskCreated",
-            payload: {
-              title: "A",
-              body: "",
-              start: "sacty",
-              noRepo: true,
-              repos: urls,
-              budgetCapUsd: 1,
+  it.each(["projectImagesConfig", "runContext", "executeLogged"])(
+    "複数指定の実行前の %s が例外になっても時間切れのセッションを続ける",
+    async (failure) => {
+      const projects = projectsWithAccount();
+      const urls = ["https://github.com/acme/api", "https://github.com/acme/web"];
+      projects.put("default", {
+        name: "デフォルト",
+        targets: urls.map((target) => ({ scope: "repo" as const, target })),
+        githubAccounts: { "github.com": "me" },
+      });
+      const activity = new SqliteActivityStore(dbPath);
+      const id = "resume-multiple";
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "A",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: urls,
+                budgetCapUsd: 1,
+              },
             },
           },
-        },
-        {
-          actor: "orchestrator",
-          event: {
-            type: "StepsChosen",
-            payload: {
-              steps: ["requirements", "design", "implement"],
-              plan: "standard",
-              reason: "理由",
-              costUsd: 0,
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: {
+                steps: ["requirements", "design", "implement"],
+                plan: "standard",
+                reason: "理由",
+                costUsd: 0,
+              },
             },
           },
-        },
-      ],
-    });
-    const sessionLogs = new SessionLogStore(join(dir, "runs"));
-    const { service, executor } = makeService(activity, [timeout(), completed(1_000)], {
-      projects,
-      sessionLogs,
-    });
-    emulateClaude(executor);
-    const task = { id };
-    await service.runNext(task.id);
-    const [first] = runIds(service, task.id);
-    const internal = service as unknown as { projectImagesConfig: (...args: unknown[]) => unknown };
-    const spy = vi.spyOn(internal, "projectImagesConfig").mockImplementationOnce(() => {
-      throw new Error("image settings failed");
-    });
-    await retry(service, task.id);
-    expect(executor.calls).toHaveLength(1);
-    expect(
-      service
-        .get(task.id)
-        ?.activity.filter((e) => e.type === "AgentRunFailed")
-        .at(-1)?.payload,
-    ).toMatchObject({ preparationFailed: true });
-    spy.mockRestore();
-    await retry(service, task.id);
-    expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
-    activity.close();
-  });
+        ],
+      });
+      const sessionLogs = new SessionLogStore(join(dir, "runs"));
+      const { service, executor } = makeService(activity, [timeout(), completed(1_000)], {
+        projects,
+        sessionLogs,
+      });
+      emulateClaude(executor);
+      const task = { id };
+      await service.runNext(task.id);
+      const [first] = runIds(service, task.id);
+      const internal = service as unknown as Record<string, (...args: never[]) => never>;
+      const spy = vi.spyOn(internal, failure).mockImplementationOnce(() => {
+        throw new Error("image settings failed");
+      });
+      await retry(service, task.id);
+      expect(executor.calls).toHaveLength(1);
+      expect(
+        service
+          .get(task.id)
+          ?.activity.filter((e) => e.type === "AgentRunFailed")
+          .at(-1)?.payload,
+      ).toMatchObject({ preparationFailed: true });
+      spy.mockRestore();
+      await retry(service, task.id);
+      expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+      activity.close();
+    },
+  );
 
   it("何度か時間切れで止めても、そのたびに同じセッションの続きから進み、最後は完了まで進む", async () => {
     const { activity, service, executor } = setup([
@@ -33739,6 +33746,65 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       activity.close();
     },
   );
+
+  it("複数指定のリモート確認中に一時停止すると通信を中断し、再開後に進む", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "pause-repository-fetch";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+          },
+        },
+      ],
+    });
+    const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+      projects: twoRepos(),
+    });
+    let ready: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const original = repos.remoteDefaultBranch.bind(repos);
+    vi.spyOn(repos, "remoteDefaultBranch")
+      .mockImplementationOnce(async (_dir, _auth, signal) => {
+        ready();
+        await new Promise<void>((_resolve, reject) =>
+          signal?.addEventListener("abort", () => reject(new Error("stopped")), { once: true }),
+        );
+        return "main";
+      })
+      .mockImplementation(original);
+    const running = service.runNext(id);
+    await started;
+    await service.pause(id);
+    await running;
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(1);
+    activity.close();
+  });
 
   it.each([false, true])(
     "複数指定の写しの失敗は選択状態 %s でも停止し、復旧後に再開する",
