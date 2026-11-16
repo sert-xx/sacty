@@ -33584,7 +33584,7 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
         headers: { authorization: "Bearer tok", "content-type": "application/json" },
         body: JSON.stringify({ projectId: "default", title: "不正", ...inputs[kind] }),
       });
-      expect(response.status).toBe(409);
+      expect(response.status).toBe(400);
       const body = JSON.stringify(await response.json());
       expect(body).toContain(
         kind === "unknown"
@@ -34473,6 +34473,17 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
           service.approve(id, { step: "design", submission: 1 });
         }
         const calls = executor.calls.length;
+        const before = activity.forTask(id);
+        const original = service.projectRepositories.bind(service);
+        const listing = vi.spyOn(service, "projectRepositories");
+        listing
+          .mockImplementationOnce(original)
+          .mockRejectedValueOnce(new TypeError("listing failed"));
+        await expect(service.runNext(id)).rejects.toThrow("listing failed");
+        expect(activity.forTask(id)).toEqual(before);
+        expect(service.get(id)?.task.status).toBe("queued");
+        expect(executor.calls).toHaveLength(calls);
+        listing.mockRestore();
         setTargets([API]);
         await service.runNext(id);
         expect(executor.calls).toHaveLength(calls);

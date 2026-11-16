@@ -627,6 +627,9 @@ export class InvalidOperationError extends Error {
   }
 }
 
+/** 作成時の複数リポジトリ指定の入力エラー。 */
+export class InvalidTaskRepositoriesError extends InvalidOperationError {}
+
 /** 大まかな監査の記録の、メモリーをコンテキストにする提案（原因の形。PBI-128）。 */
 type SurveyPromotionRecord = NonNullable<
   Extract<EventInput, { type: "AuditSurveyed" }>["payload"]["promotions"]
@@ -7434,7 +7437,7 @@ export class TaskService {
       throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
     }
     if (input.repo !== undefined && input.repos !== undefined) {
-      throw new InvalidOperationError(message("task.repositoriesConflict"));
+      throw new InvalidTaskRepositoriesError(message("task.repositoriesConflict"));
     }
     const repositories: string[] = [];
     const projects = input.repos ? this.deps.projects.all() : undefined;
@@ -7444,7 +7447,7 @@ export class TaskService {
         ? responsibleProject(projects ?? [], name)
         : undefined;
       if (responsible?.project.id !== project.id) {
-        throw new InvalidOperationError(message("task.repositoriesUnknown", { repo: name }));
+        throw new InvalidTaskRepositoriesError(message("task.repositoriesUnknown", { repo: name }));
       }
       const normalized =
         responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(name);
@@ -7455,7 +7458,7 @@ export class TaskService {
       }
     }
     if (repositories.length > 10) {
-      throw new InvalidOperationError(message("task.repositoriesLimit"));
+      throw new InvalidTaskRepositoriesError(message("task.repositoriesLimit"));
     }
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
@@ -9436,6 +9439,31 @@ export class TaskService {
       if (!resolved.ok) return;
     }
 
+    // 候補照合は開始記録より前に行う。取得の例外でも未実行の工程が実行中に残らない。
+    let splitCandidates: string[] | undefined;
+    if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
+      const candidates = await this.taskRepositoryCandidates(task);
+      if ("missing" in candidates) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message: message("repo.noLongerTarget", {
+                  repo: candidates.missing,
+                  detail: candidates.detail,
+                }),
+              },
+            },
+          },
+        ]);
+        return;
+      }
+      if (step === "split") splitCandidates = candidates.repositories;
+    }
+
     // 工程に使う AI（人がタスクの詳細で選んだもの。無ければ step_agents か default_agent。PBI-40・PBI-121）。準備（レビューの
     // 対象の確認など）の間に人が変えていれば、それを使う。決めてから開始の記録までは待たない（PR #131 レビュー指摘）
     const chosenName = this.mustGet(task.id).agents?.[step];
@@ -9546,38 +9574,9 @@ export class TaskService {
     const runPlatforms = mergePlatforms(config.config.platforms, context?.platforms ?? []);
     // ここから実行の try（finally で消す）までに例外になっても、用意したコンテキスト（一時のディレクトリ・ホストで起動する
     // MCP サーバーの確保）を残さない（PR #89 レビュー指摘）
-    let splitCandidates: string[] | undefined;
     try {
       if (context) this.append(task, [this.contextResolved(runId, context, runPlatforms)]);
-
-      // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
-      if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
-        const candidates = await this.taskRepositoryCandidates(task);
-        if ("missing" in candidates) {
-          this.append(task, [
-            {
-              actor: "sacty",
-              event: {
-                type: "AgentRunFailed",
-                payload: {
-                  runId,
-                  step,
-                  agentId: agent.id,
-                  reason: "error",
-                  message: message("repo.noLongerTarget", {
-                    repo: candidates.missing,
-                    detail: candidates.detail,
-                  }),
-                },
-              },
-            },
-            { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
-          ]);
-          context?.dispose();
-          return;
-        }
-        if (step === "split") splitCandidates = candidates.repositories;
-      } else if (step === "split" && splitRepositories) {
+      if (!task.repos && step === "split" && splitRepositories) {
         const candidates = await this.taskRepositoryCandidates(task);
         splitCandidates = "repositories" in candidates ? candidates.repositories : [];
       }
