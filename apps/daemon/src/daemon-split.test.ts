@@ -1848,12 +1848,18 @@ describe("統合レビュー（PBI-31）", () => {
     { key: "A", title: "決済の API", body: "- API を作る", dependsOn: [] },
     { key: "B", title: "決済の画面", body: "- 画面を作る", dependsOn: [] },
   ];
-  const integration = (passed: boolean, findings: string[] = [], remarks: unknown[] = []) =>
+  const integration = (
+    passed: boolean,
+    findings: string[] = [],
+    remarks: unknown[] = [],
+    humanChecks?: unknown,
+  ) =>
     out(
       [
         passed ? "# 統合できている" : "# つなぎ目が抜けている",
         block({
           "sacty-integration-review": {
+            ...(humanChecks !== undefined ? { humanChecks } : {}),
             viewpoints: [
               {
                 id: "TV-1",
@@ -1986,6 +1992,85 @@ describe("統合レビュー（PBI-31）", () => {
     expect(done && isCompleted(done)).toBe(true);
     expect(service.queuedTaskIds()).toEqual([]);
     activity.close();
+  });
+
+  it("人が確かめることだけが残った統合レビューは合格にし、修正の子タスクを作らずに、人が確かめることを記録して承認待ちにする（PBI-363）", async () => {
+    const CHECK =
+      "実際の決済サービスで、画面から決済が通ること。確かめないと、本番で決済が失敗しても気づけない";
+    const { service, executor, activity, id } = await splitParent([
+      splitOutput(twoChildren),
+      out("# A の調査"),
+      out("# B の調査"),
+      // 同じ項目・空の項目・文字列でない項目は落とす
+      integration(true, [], [], [CHECK, ` ${CHECK} `, "", 3]),
+    ]);
+    await drain(service, id);
+    const parent = service.get(id)?.task;
+    expect(parent?.status).toBe("awaiting_approval");
+    expect(parent?.gate).toEqual({ step: "integrate", submission: 1 });
+    expect(parent?.integration).toMatchObject({ passed: true, findings: [], humanChecks: [CHECK] });
+    expect(parent?.integrationFailures).toBe(0);
+    // 修正の子タスクを足さない（分割をやり直さない）
+    expect(parent?.split?.rounds).toBe(1);
+    expect(parent?.split?.children).toHaveLength(2);
+    // 指示で、確かめられないことを humanChecks に分けさせ、findings に書かせない
+    const prompt = promptOf(executor, executor.calls.length - 1);
+    expect(prompt).toContain("作業領域では確かめられないこと");
+    expect(prompt).toContain("humanChecks に1件ずつ書く");
+    expect(prompt).toContain("findings には書かない（修正の子タスクでは直せないため）");
+    expect(prompt).toContain("確かめずに humanChecks に回さない");
+    expect(prompt).toContain('"humanChecks":["人が確かめること（無ければ空）"]');
+    // 人は、確かめてから承認する（承認で完了する）
+    service.approve(id, { step: "integrate", submission: 1 });
+    const done = service.get(id)?.task;
+    expect(done && isCompleted(done)).toBe(true);
+    // 作業履歴を読み直しても同じ
+    const { service: restarted } = makeService(activity, []);
+    expect(restarted.get(id)?.task.integration?.humanChecks).toEqual([CHECK]);
+    activity.close();
+  });
+
+  it("人が確かめることがあっても、直すことがあれば不合格にして修正の子タスクを追加し、人が確かめることは子タスクにさせない（PBI-363）", async () => {
+    const CHECK = "実機のカードリーダーで読み取れること";
+    const { service, executor, activity, id } = await splitParent([
+      splitOutput(twoChildren),
+      out("# A の調査"),
+      out("# B の調査"),
+      integration(false, ["画面の送信ボタンから決済の API を呼ぶ"], [], [CHECK]),
+      splitOutput([
+        { key: "F", title: "画面と API をつなぐ", body: "- 送信で API を呼ぶ", dependsOn: [] },
+      ]),
+      out("# F の調査"),
+      integration(true),
+    ]);
+    await drain(service, id);
+    const fixPrompt = promptOf(executor, 6);
+    expect(fixPrompt).toContain("足りないこと：画面の送信ボタンから決済の API を呼ぶ");
+    expect(fixPrompt).toContain(
+      `人が確かめること（修正の子タスクでは直さない。子タスクにしない）：${CHECK}`,
+    );
+    const parent = service.get(id)?.task;
+    expect(parent?.split?.rounds).toBe(2);
+    // 2回目の統合レビューは、人が確かめることを挙げなかった（前の回のものを引き継がない）
+    expect(parent?.integration?.passed).toBe(true);
+    expect(parent?.integration?.humanChecks).toBeUndefined();
+    activity.close();
+  });
+
+  it("人が確かめることが配列でない・無い統合レビューは、今までどおりに読む（PBI-363）", async () => {
+    for (const humanChecks of [undefined, "実機で確かめる", []]) {
+      const { service, activity, id } = await splitParent([
+        splitOutput(twoChildren),
+        out("# A の調査"),
+        out("# B の調査"),
+        integration(true, [], [], humanChecks),
+      ]);
+      await drain(service, id);
+      const review = service.get(id)?.task.integration;
+      expect(review?.passed).toBe(true);
+      expect(review?.humanChecks).toBeUndefined();
+      activity.close();
+    }
   });
 
   it("不合格なら、足りないことをもとに修正の子タスクを追加し、それが完了したら統合レビューをやり直す", async () => {

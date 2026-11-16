@@ -17,6 +17,7 @@ import {
   isRepoless,
   isSecurityTask,
   openProposal,
+  pullRequestCiFailure,
   pullRequestConflict,
   rerunEditableBody,
   resumeNoteRoom,
@@ -543,6 +544,8 @@ function GateNotice({ task }: { task: Task }) {
   const watched = gatePullRequest(task);
   // 実装の PR がベースブランチと競合している（画面に出すだけ。取り込みは差し戻し・指摘のとき）
   const conflicting = pullRequestConflict(task) !== undefined;
+  // 指摘なしの後に、実装の PR の CI が落ちた（画面に出すだけ。PBI-364）
+  const ciFailure = pullRequestCiFailure(task);
   const action = personAction(task, labels);
   // PR の指摘の戻し先の確認（PBI-14b。PBI-58 より前の作業履歴だけ）
   const rework =
@@ -576,7 +579,12 @@ function GateNotice({ task }: { task: Task }) {
                   : task.gate?.step === "integrate"
                     ? task.integration?.passed === false
                       ? m.gate.integrateFailedHelp(task.integrationFailures)
-                      : m.gate.integrateHelp
+                      : // 合格で、人が確かめることがある（PBI-363）
+                        (task.integration?.humanChecks?.length ?? 0) > 0
+                        ? m.gate.integrateHumanChecksHelp(
+                            task.integration?.humanChecks?.length ?? 0,
+                          )
+                        : m.gate.integrateHelp
                     : // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
                       watched?.state === "closed"
                       ? m.gate.prClosedHelp
@@ -600,6 +608,33 @@ function GateNotice({ task }: { task: Task }) {
           <p data-testid="gate-pr-conflict" className="text-sm">
             {task.continuedPullRequest ? m.gate.prConflictContinuedHelp : m.gate.prConflictHelp}
           </p>
+        )}
+        {ciFailure && (
+          <div data-testid="gate-pr-ci-failed" className="flex flex-col gap-1 text-sm">
+            <p>{m.gate.prCiFailedHelp(ciFailure.head.slice(0, 7))}</p>
+            <p>{m.gate.prCiFailedChecks}</p>
+            <ul className="list-disc pl-5 [overflow-wrap:anywhere]">
+              {ciFailure.checks.map((check, i) => (
+                // 同じ名前のチェックが並ぶことがあるので、順番を key にする（並びは記録のとおりで変わらない）
+                // biome-ignore lint/suspicious/noArrayIndexKey: 記録の順のまま変わらない一覧
+                <li key={i}>
+                  {check.url && /^https?:\/\//.test(check.url) ? (
+                    <a
+                      href={check.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline underline-offset-2"
+                    >
+                      {check.name}
+                    </a>
+                  ) : (
+                    check.name
+                  )}
+                </li>
+              ))}
+              {ciFailure.more ? <li>{m.gate.prCiFailedMore(ciFailure.more)}</li> : null}
+            </ul>
+          </div>
         )}
       </div>
       <ActionLink

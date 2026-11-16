@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -1116,6 +1116,26 @@ GitHub で自分で競合を直してもかまいません。
   差し戻しても取り込まないので、GitHub で競合を解消してください。
 - 「あなたの出番」の行・タスクの詳細・承認の画面には、「引き継いだ PR なので、ベースブランチは取り込みません。GitHub で競合を解消してください」と出します。
 
+### 「指摘なし」の後に CI が失敗したとき
+
+sacty は、PR の CI が終わるのを待たずにレビューします。
+そのため、PR をレビューする子タスクが「指摘なし」にした後で、実行中だった CI が失敗することがあります。
+このとき、sacty は失敗を画面に出します（1分ごとの PR の確認で分かります）。
+
+- タスクの状態が「実装の PR の CI が失敗」になります。「あなたの出番」（ダッシュボード・タスクの一覧）とヘッダーのお知らせでも同じです。
+- タスクの詳細に、失敗したチェックの名前（リンクがあれば、GitHub のその実行へのリンク）が出ます。
+
+sacty は画面に出すだけで、自動では直しません。CI も再実行しません。
+あなたが、次のどれかをしてください。
+
+1. GitHub の PR で、失敗の内容を確かめます。
+2. 変更による失敗なら、sacty の画面から指摘を入れて差し戻すか、GitHub の PR に指摘を書きます。sacty が実装をやり直します。
+3. 変更と関係の無い失敗（不安定なテストなど）なら、GitHub で CI を再実行します。通ると、表示は数分のうちに消えます。
+
+CI が失敗したままでも、あなたが PR をマージすれば、sacty はそれを承認として進めます。
+要求要件・設計の PR と、レビューの子タスクが「指摘なし」にする前の PR には出しません（レビューの子タスクが、CI の失敗を指摘にします）。
+Slack・デスクトップの通知は出ません。
+
 ### タスク分割の子タスクのテスト観点
 
 タスク分割は、親タスクの設計のテスト観点を、子タスクに割り当てます。
@@ -1201,6 +1221,24 @@ GitHub で自分で競合を直してもかまいません。
   取り込み方と、競合したときの扱いは、[ベースブランチが進んだとき](#ベースブランチが進んだとき)と同じです。承認待ちの間は取り込みません。
 - 依存先が中止されると、その上に作った子タスクは一時停止し、再開できなくなります。
   子タスクを中止してください（足りない分は、統合レビューで修正の子タスクとして足されることがあります）。
+
+### 統合レビューの結果を確かめる
+
+進め方が「分割」のタスクは、子タスクの PR がすべてマージされると、統合レビューを行い、あなたの承認を待ちます。
+統合レビューは、子タスクを組み合わせたコードが、親タスクの要求要件を満たすかを AI が確かめるものです。
+
+1. タスクの詳細の「統合レビュー」で、合否・観点ごとの判定・足りないことを読みます。
+2. 「人が確かめること」があれば、承認の前に、その項目を自分で確かめます。
+3. 問題が無ければ承認します。タスクが完了します。
+4. 満たしていない項目があれば、指摘を書いて差し戻します。sacty が、指摘を直す修正の子タスクを足します。
+
+「人が確かめること」は、AI が作業領域では確かめられなかったことです（実際の外部のサービス・実機・目視での確認など）。
+こうした項目だけが残ったとき、統合レビューは不合格にせず、合格にして、項目をあなたに渡します。
+あなたが確かめた結果を項目ごとに記録する欄はありません。承認が、確かめたことを表します。
+
+コードとテストで確かめられる範囲に足りないことがあれば、統合レビューは不合格になり、sacty が修正の子タスクを足します。
+続けて3回通らなければ、不合格のまま、あなたの判断を待ちます。
+
 
 ## 差し戻したときの直し方
 

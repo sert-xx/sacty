@@ -4,6 +4,7 @@ import { isCompleted, MAX_INTEGRATION_ATTEMPTS, type Task } from "@sacty/core";
 import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
 
@@ -61,6 +62,24 @@ export function IntegrationResult({ task }: { task: Task }) {
             {review.findings.map((f) => (
               <li key={f} className="break-words">
                 {f}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {(review.humanChecks?.length ?? 0) > 0 && (
+        // 人が、統合レビューの承認で確かめること（PBI-363）。作業領域では確かめられなかったこと
+        <div
+          data-testid="integration-human-checks"
+          className="flex flex-col gap-1.5 rounded-lg border border-warn-line bg-warn-soft p-3 text-sm"
+        >
+          <p className="flex items-center gap-1 font-semibold text-warn">
+            {m.humanChecks} <Hint text={m.humanChecksHint} />
+          </p>
+          <ul className="flex list-disc flex-col gap-1 pl-5 leading-6">
+            {(review.humanChecks ?? []).map((c) => (
+              <li key={c} className="break-words">
+                {c}
               </li>
             ))}
           </ul>

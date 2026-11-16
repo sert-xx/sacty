@@ -115,10 +115,17 @@ const ja = {
       `${step}からのやり直しが提案されています：${note}。戻し先を確かめて差し戻してください。`,
     prClosedHelp: "PR がマージされずに閉じられました。GitHub で開き直すか、中止してください。",
     prConflictHelp: "競合は自動では取り込みません。差し戻すか PR に指摘を書くと取り込みます。",
+    /** 人の承認（マージ）を待つ実装の PR の CI が失敗している（PBI-364）。 */
+    prCiFailedHelp: (commit: string) =>
+      `PR の先頭のコミット（${commit}）の CI が失敗しています。sacty は自動では直しません・再実行しません。PR で確かめて、直すなら差し戻すか PR に指摘を書いてください。`,
+    prCiFailedChecks: "失敗したチェック",
+    prCiFailedMore: (count: number) => `ほか${count}件`,
     prConflictContinuedHelp:
       "引き継いだ PR なので、ベースブランチは取り込みません。GitHub で競合を解消してください。",
     integrateHelp:
       "子タスクを組み合わせた結果です。承認で完了、差し戻しで修正の子タスクを追加します。",
+    integrateHumanChecksHelp: (count: number) =>
+      `子タスクを組み合わせた結果です。人が確かめることが${count}件あります。確かめてから承認してください。差し戻しで修正の子タスクを追加します。`,
     integrateFailedHelp: (count: number) =>
       `統合レビューに${count}回続けて通りませんでした。承認すると不合格のまま完了、差し戻すと修正の子タスクを追加します。`,
     notReproducedHelp:
@@ -283,6 +290,10 @@ const ja = {
     target: (branch: string, commit: string) =>
       commit ? `読んだコード：${branch} の ${commit}` : `読んだコード：${branch}`,
     findings: "足りないこと",
+    /** 人が、統合レビューの承認で確かめること（PBI-363）。 */
+    humanChecks: "人が確かめること",
+    humanChecksHint:
+      "統合レビューで、作業領域では確かめられなかったことです。承認する前に確かめてください。満たしていなければ、差し戻してください。",
     viewpoints: "観点ごとの判定",
     recurrence: "過去の指摘の再発",
     verified: "満たす",
@@ -653,10 +664,16 @@ const en: TaskMessages = {
     prClosedHelp: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
     prConflictHelp:
       "The conflict is not merged in automatically. Send the task back or comment on the PR to merge the base branch in.",
+    prCiFailedHelp: (commit) =>
+      `CI is failing on the head commit of the PR (${commit}). sacty does not fix or rerun it automatically. Check it on the PR; to have it fixed, send the task back or comment on the PR.`,
+    prCiFailedChecks: "Failed checks",
+    prCiFailedMore: (count) => `and ${count} more`,
     prConflictContinuedHelp:
       "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub.",
     integrateHelp:
       "The combined result of the subtasks. Approve to complete; request changes to add subtasks that fix it.",
+    integrateHumanChecksHelp: (count) =>
+      `The combined result of the subtasks. There ${count === 1 ? "is 1 item" : `are ${count} items`} for a person to check. Check ${count === 1 ? "it" : "them"} before approving; request changes to add subtasks that fix it.`,
     integrateFailedHelp: (count) =>
       `The integration review failed ${count} times in a row. Approve to complete as it is, or request changes to add subtasks that fix it.`,
     notReproducedHelp:
@@ -814,6 +831,9 @@ const en: TaskMessages = {
     target: (branch, commit) =>
       commit ? `Code read: ${commit} on ${branch}` : `Code read: ${branch}`,
     findings: "Missing",
+    humanChecks: "For a person to check",
+    humanChecksHint:
+      "What the integration review could not check in the workspace. Check these before approving. If one is not met, request changes.",
     viewpoints: "Verdict per viewpoint",
     recurrence: "Recurrence of past comments",
     verified: "Met",

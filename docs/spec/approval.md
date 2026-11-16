@@ -175,6 +175,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   1. GitHub の今の PR の先頭を覚える（`latestHeads`。人が足したコミットで変わる。再レビューの先頭を決めるのに使う）。
   2. 実装の PR なら、ベースブランチとの競合の変化を記録する（[ベースブランチとの競合の表示](#ベースブランチとの競合の表示)）。
   3. 実装の PR なら、GitHub のドラフトの状態を台帳に合わせる（`settleDraft`。指摘なしを待つ PR（依存先の PR に重ねた PR を除く）がドラフトでなければドラフトに戻し、指摘なしで外した PR は、GitHub の今の先頭をレビューの子タスクが指摘なしにしていれば、ドラフトなら外し直し、外した後に人がコミットを足して先頭が変わっていれば、再レビューでその先頭が指摘なしになるまでドラフトに戻す（`wantsDraft`）。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
+     続けて、人の承認を待つ実装の PR の先頭のコミットの CI を読み、失敗の変化を記録する（`recordPullRequestCi`。[指摘なしの後の CI の失敗の表示](#指摘なしの後の-ci-の失敗の表示)）。
   4. レビュー・コメントを指摘として取り込む（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
 - 確認の途中で状態・PR・コミットが変わったときは記録しない。
 - 指摘の取り込みの間（戻し先の判断の最中など）にマージされた・マージされずに閉じられたときは、差し戻さない。同じ確認の中で状態を読み直し、上のマージ・閉じられた場合として記録する（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
@@ -291,6 +292,41 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - 判定はマージの可否ではない。競合のまま人がマージしたときは、通常のマージとして承認する。
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`recordPullRequestConflict`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.status`）、`packages/core/src/projection.ts`（`pullRequestConflict`・`Task.pullRequestConflict`）、`apps/web/src/lib/labels.ts`（`statusText`・`prConflictNote`）、`apps/web/src/lib/dashboard-data.ts`（`attentionRows`）、`apps/web/src/lib/task-list-data.ts`、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/components/gate-form.tsx`
+
+### 指摘なしの後の CI の失敗の表示
+
+sacty は PR の CI を待たずに、PR のレビューの子タスクの指摘なしでドラフトを外す（[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
+そのため、レビューの時点で実行中だった CI が後から落ちても、タスクは人の承認待ち（マージ待ち）のままになる。人が気づけるよう、人の承認を待つ実装の PR の CI の失敗を、タスクの画面と「あなたの出番」に出す（PBI-364）。
+出すだけで、実行・差し戻し・再レビュー・ドラフトへの変更・CI の再実行は始めない。
+
+- 読むもの：PR の確認（60秒ごと。`checkPullRequests`）で、PR の先頭のコミット（GitHub の今の先頭。読めなければ、指摘なしにした先頭 `reviewedCommit`、それも無ければ提出のコミット）の CI の状態（`CiStatusReader.snapshot`。ワークフローの実行・チェック・コミットの状態と、ワークフローの中のジョブ）。
+  - 読むのは、承認待ち（`awaiting_approval`）の、開いている実装の PR で、レビューの子タスクの指摘なしを待っていないもの。指摘なしを待つ間（`awaitingReview`）は、レビューの子タスクが CI を読んで指摘にするので読まない。
+  - 要求要件・設計の PR、PR の指摘の戻し先を判断している間（`pendingReview`）、エスカレーション中、以前の版の検証の待ちのための PR（`verifying`）は読まない。CI を読む口が無い（`ServiceDeps.ci`）ときも読まない。
+- 記録：actor `sacty`。同じ状態は重ねて記録しない。
+  - 失敗がある：`PullRequestCiFailed`（PR の番号・CI を読んだ先頭 `commit`・失敗したチェック `checks`）。`Task.pullRequestCiFailure`（PR の番号・そのときの提出のコミット・読んだ先頭 `head`・チェック・時刻）に持つ。
+    失敗とみなすのは、[マージの後の監視](deployment-watch.md)と同じ結論（`isFailedCiCheck`）。チェックは名前とリンクで、同じ名前とリンクは1件にし、`PR_CI_FAILED_CHECKS_MAX`（10）件まで持ち、超えた分は件数（`more`）だけ持つ。名前は `PR_CI_CHECK_NAME_MAX`（200）文字まで。リンクは `http`・`https` のものだけを残す。
+    失敗したチェック・読んだ先頭が前の記録と変わったら、記録し直す。
+  - 失敗が無くなった：`PullRequestCiRecovered`。`Task.pullRequestCiFailure` を消す。記録があり、失敗も実行中のものも無いとき。
+    実行中のものがある間（人が再実行した）は、同じ先頭の前の記録のままにする。先頭が変わり（人がコミットを足した）、新しい先頭に失敗が無ければ、実行中でも前の先頭の記録は消す。
+  - CI を読めない・`PR_CI_TIMEOUT_MS`（15秒）のうちに返らないときは、記録を変えずに、次の確認でやり直す（理由はデーモンのログに出す。トークンは伏せる）。PR の確認のほかの処理（マージの検出・指摘の取り込み）は続ける。
+  - 読んでいる間に、状態・PR・コミットが変わったときは記録しない。
+  - 記録そのものに失敗しても（例外）、理由をデーモンのログに出して、PR の確認のほかの処理を続ける。
+- 読む間隔（GitHub への問い合わせを増やし続けないため。`pullRequestCiWatch`。デーモンのメモリーに持ち、再起動すると読み直す）
+  - 実行中のものがある先頭：確認のたび。
+  - すべて終わって失敗が無い先頭：読み直さない。
+  - 失敗していて実行中のものが無い先頭：`PR_CI_FAILED_RECHECK_MS`（5分）ごと（人が再実行して通ったことに気づくため）。
+  - CI が1つも無い先頭：初めて見てから `PR_CI_EMPTY_WAIT_MS`（30分）の間は確認のたび。過ぎたら読まない（CI の無いリポジトリ）。
+  - 先頭が変わったら、読み直す。失敗として間隔を空けている間に記録が消えた（PR を閉じて開き直した）ときも、すぐに読み直す。
+- 画面に出す条件（`pullRequestCiFailure`）：承認待ちで、実装のゲートの PR が開いていて、記録の PR の番号とコミットが今の提出と同じで、PR の指摘の戻し先を判断している間でなく、レビューの子タスクの指摘なしを待っていないとき。
+  - PR を作り直した・更新した（`PullRequestPublished`）、マージされた・閉じられた・開き直された（`PullRequestMerged`・`PullRequestClosed`・`PullRequestReopened`）ときは、記録を消す。
+- 出す場所：
+  - 状態の表示（`statusText`）が「実装の PR の CI が失敗」になる。ダッシュボードの「あなたの出番」・ヘッダーのお知らせ・タスクの一覧・詳細で同じ。人の出番のままで、「あなたの出番」の行は PR を開く。ベースブランチとも競合していれば、競合の表示を先に出す。
+  - タスクの詳細の承認待ちの案内に、CI を読んだ先頭のコミット、sacty が自動では直さない・再実行しないこと、直すなら差し戻すか PR に指摘を書くことと、失敗したチェックの一覧（リンクがあればリンク。超えた分は件数）を出す。
+  - 作業履歴に「PR #N の CI が失敗している」「PR #N の CI の失敗が無くなった」を出す。
+- 判定はマージの可否ではない。CI が失敗したまま人がマージしたときは、通常のマージとして承認する。
+- 通知（Slack・デスクトップ）は出さない。
+
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`recordPullRequestCi`・`PR_CI_TIMEOUT_MS`・`PR_CI_FAILED_RECHECK_MS`・`PR_CI_EMPTY_WAIT_MS`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus.snapshot`）、`packages/core/src/events.ts`（`PullRequestCiFailed`・`PullRequestCiRecovered`・`PR_CI_FAILED_CHECKS_MAX`・`PR_CI_CHECK_NAME_MAX`・`isFailedCiCheck`）、`packages/core/src/projection.ts`（`pullRequestCiFailure`・`Task.pullRequestCiFailure`）、`apps/web/src/lib/labels.ts`（`statusText`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`reconcileReviewTasks`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 

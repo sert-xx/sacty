@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DaemonText, StepKey, Task } from "@sacty/core";
+import type { CiCheck, DaemonText, StepKey, Task } from "@sacty/core";
 import {
   activeStep,
   budgetState,
@@ -17,7 +17,9 @@ import {
   MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   message,
+  PR_CI_FAILED_CHECKS_MAX,
   pendingHeadMerge,
+  pullRequestCiFailure,
   pullRequestConflict,
   RESUME_NOTE_HEADING,
   renderMessage,
@@ -44,6 +46,8 @@ import { createApp } from "./server.js";
 import {
   awaitingRemarkReplies,
   InvalidOperationError,
+  PR_CI_EMPTY_WAIT_MS,
+  PR_CI_FAILED_RECHECK_MS,
   type ServiceDeps,
   type TaskService,
 } from "./service.js";
@@ -5713,6 +5717,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       remarkReplyIntervalMs?: number;
       remarkRepliesPerRecord?: number;
       github?: FakeGitHub;
+      ci?: CiStatusReader;
+      draftPullRequests?: boolean;
+      reviewCiTimeoutMs?: number;
     } = {},
   ) {
     const made = await toImplement([implement("# 実装の説明"), ...outcomes], options);
@@ -6820,6 +6827,308 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     await service.checkPullRequests();
     expect(pulls.checked).toHaveLength(checks);
     activity.close();
+  });
+
+  describe("人の承認を待つ実装の PR の CI が失敗したら、画面に出す（何も始めない。PBI-364）", () => {
+    const ciTypes = (service: TaskService, id: string) =>
+      types(service, id).filter(
+        (t) => t === "PullRequestCiFailed" || t === "PullRequestCiRecovered",
+      );
+    /** 読むたびに、そのときの checks・jobs を返す偽の CI。読んだコミットを覚える。 */
+    const fakeCi = () => {
+      const state: {
+        checks: CiCheck[];
+        jobs: CiCheck[];
+        read: string[];
+        fail?: Error;
+        hang?: boolean;
+      } = { checks: [], jobs: [], read: [] };
+      const ci: CiStatusReader = {
+        snapshot: async (input) => {
+          state.read.push(input.commit);
+          if (state.hang) return new Promise(() => {});
+          if (state.fail) throw state.fail;
+          return { checks: state.checks, jobs: state.jobs, failedRuns: [] };
+        },
+        failures: async () => [],
+        rerunFailedJobs: async () => {},
+        repositoryHasNoCi: async () => false,
+      };
+      return { ci, state };
+    };
+    const workflow = (conclusion?: string): CiCheck => ({
+      kind: "workflow",
+      name: "CI",
+      status: conclusion ? "completed" : "pending",
+      ...(conclusion ? { conclusion } : {}),
+      url: "https://github.com/acme/app/actions/runs/1",
+    });
+    const job = (name: string, conclusion: string, url?: string): CiCheck => ({
+      kind: "check",
+      name,
+      status: "completed",
+      conclusion,
+      ...(url ? { url } : {}),
+    });
+
+    it("レビューの時点で実行中だった CI が落ちたら一度だけ記録し、再実行で通ったら記録して消す。実行も PR の更新も始めない", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      let now = Date.parse("2026-11-17T00:00:00Z");
+      const { activity, service, executor, repos, id } = await toImplementGate([], {
+        pulls,
+        ci,
+        now: () => now,
+      });
+      const runs = executor.calls.length;
+      const before = types(service, id);
+      const commit = service.get(id)?.task.pullRequest?.commit ?? "";
+      // 実行中の間は、何も記録せずに、確認のたびに読む
+      state.checks = [workflow()];
+      pulls.state = { state: "open", headSha: commit };
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(state.read).toEqual([commit, commit]);
+      expect(ciTypes(service, id)).toEqual([]);
+
+      // 落ちた：失敗したワークフローとジョブを記録する（同じ名前とリンクは1件。通ったジョブ・飛ばしたジョブは入れない）
+      state.checks = [workflow("failure")];
+      state.jobs = [
+        job("test", "failure", "https://github.com/acme/app/actions/runs/1/job/2"),
+        job("test", "failure", "https://github.com/acme/app/actions/runs/1/job/2"),
+        job("lint", "success"),
+        job("deploy", "skipped"),
+        job("x".repeat(300), "timed_out", "javascript:alert(1)"),
+        // 絵文字（サロゲートペア）の途中では切らない
+        job("😀".repeat(150), "failure"),
+      ];
+      await service.checkPullRequests();
+      await service.checkPullRequests(); // 同じ失敗は二重に記録しない
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      const failed = service.get(id)?.task;
+      expect(failed && pullRequestCiFailure(failed)).toMatchObject({
+        number: 7,
+        commit,
+        head: commit,
+        checks: [
+          { name: "CI", url: "https://github.com/acme/app/actions/runs/1" },
+          { name: "test", url: "https://github.com/acme/app/actions/runs/1/job/2" },
+          // 長い名前は切り詰め、http(s) でないリンクは残さない
+          { name: `${"x".repeat(199)}…` },
+          { name: `${"😀".repeat(99)}…` },
+        ],
+      });
+      expect(failed?.status).toBe("awaiting_approval");
+      // 何も始めない（実行も、PR の更新も、ドラフトへの変更も無い）
+      expect(executor.calls).toHaveLength(runs);
+      expect(types(service, id).slice(before.length)).toEqual(["PullRequestCiFailed"]);
+      expect(repos.published).toHaveLength(1);
+      expect(pulls.calls).toHaveLength(1);
+
+      // 失敗して実行中のものが無い間は、間隔を空けて読む（確認のたびには読まない）
+      const reads = state.read.length;
+      await service.checkPullRequests();
+      expect(state.read).toHaveLength(reads);
+      // 人が再実行した：間隔の後に読み、実行中の間は前の記録のまま
+      now += PR_CI_FAILED_RECHECK_MS;
+      state.checks = [workflow()];
+      state.jobs = [];
+      await service.checkPullRequests();
+      expect(state.read).toHaveLength(reads + 1);
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      // 通った：記録して消す。通った先頭は、もう読まない
+      state.checks = [workflow("success")];
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed", "PullRequestCiRecovered"]);
+      const recovered = service.get(id)?.task;
+      expect(recovered && pullRequestCiFailure(recovered)).toBeUndefined();
+      const settled = state.read.length;
+      now += 24 * 60 * 60_000;
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(state.read).toHaveLength(settled);
+      activity.close();
+    });
+
+    it("失敗したチェックが変わったら記録し直し、多いときは上限までと残りの件数を持つ", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      let now = Date.parse("2026-11-17T00:00:00Z");
+      const { activity, service, id } = await toImplementGate([], { pulls, ci, now: () => now });
+      pulls.state = { state: "open" };
+      state.checks = [workflow("failure")];
+      await service.checkPullRequests();
+      now += PR_CI_FAILED_RECHECK_MS;
+      state.jobs = Array.from({ length: PR_CI_FAILED_CHECKS_MAX + 2 }, (_, i) =>
+        job(`job-${i}`, "failure"),
+      );
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed", "PullRequestCiFailed"]);
+      const task = service.get(id)?.task;
+      const failure = task && pullRequestCiFailure(task);
+      expect(failure?.checks).toHaveLength(PR_CI_FAILED_CHECKS_MAX);
+      // ワークフロー1件 + ジョブ12件 = 13件のうち、10件を持ち、残りは件数
+      expect(failure?.more).toBe(3);
+      activity.close();
+    });
+
+    it("CI を読めない・時間内に返らないときは、記録を変えず、マージの検出を止めない", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      let now = Date.parse("2026-11-17T00:00:00Z");
+      const { activity, service, id } = await toImplementGate([], {
+        pulls,
+        ci,
+        now: () => now,
+        reviewCiTimeoutMs: 20,
+      });
+      pulls.state = { state: "open" };
+      // 読めない間は、何も記録しない
+      state.fail = new Error("GitHub に接続できません ghp_secret");
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual([]);
+      // 理由はログに出し、トークンは伏せる
+      expect(warn.mock.calls.flat().join("\n")).toContain("CI を読めませんでした");
+      expect(warn.mock.calls.flat().join("\n")).not.toContain("ghp_secret");
+      state.fail = undefined;
+      state.checks = [workflow("failure")];
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      // 失敗を記録した後に読めなく・返らなくなっても、表示を消さない
+      now += PR_CI_FAILED_RECHECK_MS;
+      state.hang = true;
+      await service.checkPullRequests();
+      state.hang = false;
+      state.fail = new Error("network");
+      await service.checkPullRequests();
+      let task = service.get(id)?.task;
+      expect(task && pullRequestCiFailure(task)).toBeDefined();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      // CI が返らないままでも、人のマージは承認として完了する（失敗のままマージしてよい）
+      state.hang = true;
+      const commit = task?.pullRequest?.commit;
+      pulls.state = { state: "merged", mergedBy: "reviewer", headSha: commit };
+      await service.checkPullRequests();
+      task = service.get(id)?.task;
+      expect(task?.pullRequestState).toBe("merged");
+      expect(task && isCompleted(task)).toBe(true);
+      expect(task && pullRequestCiFailure(task)).toBeUndefined();
+      warn.mockRestore();
+      activity.close();
+    });
+
+    it("CI が1つも無い PR は、しばらくの間だけ読み、現れなければ読むのをやめる。現れて落ちたら記録する", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      let now = Date.parse("2026-11-17T00:00:00Z");
+      const { activity, service, id } = await toImplementGate([], { pulls, ci, now: () => now });
+      pulls.state = { state: "open" };
+      await service.checkPullRequests();
+      now += PR_CI_EMPTY_WAIT_MS - 1;
+      await service.checkPullRequests();
+      expect(state.read).toHaveLength(2);
+      // 間に現れて落ちたら、記録する
+      state.checks = [workflow("failure")];
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      activity.close();
+    });
+
+    it("CI が現れないままなら、読むのをやめる（CI の無いリポジトリに、問い合わせを続けない）", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      let now = Date.parse("2026-11-17T00:00:00Z");
+      const { activity, service, id } = await toImplementGate([], { pulls, ci, now: () => now });
+      pulls.state = { state: "open" };
+      await service.checkPullRequests();
+      now += PR_CI_EMPTY_WAIT_MS;
+      await service.checkPullRequests();
+      now += 60_000;
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(state.read).toHaveLength(2);
+      expect(ciTypes(service, id)).toEqual([]);
+      activity.close();
+    });
+
+    it("人がコミットを足して先頭が変わったら、新しい先頭の CI を読み、前の先頭の失敗の記録は消す", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      const { activity, service, id } = await toImplementGate([], { pulls, ci });
+      const commit = service.get(id)?.task.pullRequest?.commit ?? "";
+      state.checks = [workflow("failure")];
+      pulls.state = { state: "open", headSha: commit };
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      // 新しい先頭の CI は実行中：前の先頭の失敗は、今の先頭のものではないので消す
+      state.checks = [workflow()];
+      pulls.state = { state: "open", headSha: "newhead123" };
+      await service.checkPullRequests();
+      expect(state.read.at(-1)).toBe("newhead123");
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed", "PullRequestCiRecovered"]);
+      // 新しい先頭でも落ちたら、その先頭で記録する
+      state.checks = [workflow("failure")];
+      await service.checkPullRequests();
+      const task = service.get(id)?.task;
+      expect(task && pullRequestCiFailure(task)).toMatchObject({ head: "newhead123", commit });
+      activity.close();
+    });
+
+    it("GitHub の先頭を読めなかった（空）ときは、提出のコミットの CI を読んで記録する", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      const { activity, service, id } = await toImplementGate([], { pulls, ci });
+      const commit = service.get(id)?.task.pullRequest?.commit ?? "";
+      state.checks = [workflow("failure")];
+      pulls.state = { state: "open", headSha: "" };
+      await service.checkPullRequests();
+      expect(state.read).toEqual([commit]);
+      const task = service.get(id)?.task;
+      expect(task && pullRequestCiFailure(task)).toMatchObject({ head: commit, commit });
+      activity.close();
+    });
+
+    it("PR が閉じられたら表示を消し、開き直されて落ちたままなら、また出す。作業履歴を読み直しても同じ", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      const { activity, service, id } = await toImplementGate([], { pulls, ci });
+      state.checks = [workflow("failure")];
+      pulls.state = { state: "open" };
+      await service.checkPullRequests();
+      // 再起動しても、表示は残る
+      const { service: restarted } = makeService(activity, [], { pulls, ci });
+      const replayed = restarted.get(id)?.task;
+      expect(replayed && pullRequestCiFailure(replayed)).toMatchObject({ number: 7 });
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      let task = service.get(id)?.task;
+      expect(task && pullRequestCiFailure(task)).toBeUndefined();
+      pulls.state = { state: "open" };
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed", "PullRequestCiFailed"]);
+      task = service.get(id)?.task;
+      expect(task && pullRequestCiFailure(task)).toBeDefined();
+      activity.close();
+    });
+
+    it("レビューの子タスクの指摘なしを待つ PR は、読まない（レビューが CI を読む）", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      state.checks = [workflow("failure")];
+      const { activity, service, id } = await toImplementGate([], {
+        pulls,
+        ci,
+        draftPullRequests: true,
+      });
+      expect(service.get(id)?.task.pullRequest?.awaitingReview).toBe(true);
+      pulls.state = { state: "open", draft: true };
+      await service.checkPullRequests();
+      expect(state.read).toEqual([]);
+      expect(ciTypes(service, id)).toEqual([]);
+      activity.close();
+    });
   });
 
   describe("実装の承認待ちの間に PR がベースブランチと競合したら、画面に出す（取り込まない）", () => {

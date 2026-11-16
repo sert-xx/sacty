@@ -911,6 +911,99 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(container.querySelector("#gate")?.textContent).toContain("実装の PR のマージ待ち");
   });
 
+  it("指摘なしの後に実装の PR の CI が落ちたら、タスク詳細に失敗したチェックを出し、通ったら消す（PBI-364）", async () => {
+    const implement = task({
+      status: "awaiting_approval",
+      gate: { step: "implement", submission: 1 } as Task["gate"],
+      steps: [{ key: "implement", state: "active" }],
+      pullRequest: { branch: "b", commit: "c1abcdef", url: PR, number: 7, repo: "acme/web" },
+      pullRequestState: "open",
+    });
+    const notice = () => container.querySelector('[data-testid="gate-pr-ci-failed"]');
+    server = detail(implement);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(implement),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    expect(notice()).toBeNull();
+    server = detail(
+      task({
+        ...implement,
+        pullRequestCiFailure: {
+          number: 7,
+          commit: "c1abcdef",
+          head: "9f8e7d6c5b4a",
+          checks: [
+            { name: "CI", url: "https://github.com/acme/web/actions/runs/1" },
+            // http(s) でないリンクは、リンクにしない
+            { name: "lint", url: "javascript:alert(1)" },
+            { name: "status" },
+          ],
+          more: 2,
+          at: "2026-11-17T00:00:00.000Z",
+        },
+      }),
+    );
+    await wait();
+    expect(container.querySelector("#gate")?.textContent).toContain("実装の PR の CI が失敗");
+    expect(notice()?.textContent).toContain("9f8e7d6");
+    expect(notice()?.textContent).toContain("自動では直しません・再実行しません");
+    const items = [...(notice()?.querySelectorAll("li") ?? [])].map((li) => li.textContent);
+    expect(items).toEqual(["CI", "lint", "status", "ほか2件"]);
+    const links = [...(notice()?.querySelectorAll("a") ?? [])].map((a) => a.getAttribute("href"));
+    expect(links).toEqual(["https://github.com/acme/web/actions/runs/1"]);
+    // 人の出番の導線は、PR のまま
+    const link = [...container.querySelectorAll("a")].find((a) =>
+      a.textContent?.includes("チェックする"),
+    );
+    expect(external(link)).toEqual({ href: PR, target: "_blank" });
+    // 通ったら消える
+    server = detail(implement);
+    await wait();
+    expect(notice()).toBeNull();
+    expect(container.querySelector("#gate")?.textContent).toContain("実装の PR のマージ待ち");
+  });
+
+  it("統合レビューに人が確かめることがあれば、承認待ちの案内に件数を出す（PBI-363）", async () => {
+    const integrate = (humanChecks?: string[]) =>
+      task({
+        status: "awaiting_approval",
+        gate: { step: "integrate", submission: 1 } as Task["gate"],
+        steps: [{ key: "integrate", state: "active" }],
+        integration: {
+          passed: true,
+          baseBranch: "main",
+          commit: "abcdef1234",
+          viewpoints: [],
+          remarks: [],
+          findings: [],
+          summary: "要求要件を満たす",
+          ...(humanChecks ? { humanChecks } : {}),
+          at: "2026-11-17T00:00:00.000Z",
+        },
+      } as Partial<Task>);
+    server = detail(integrate());
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(integrate()),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    const gate = () => container.querySelector("#gate")?.parentElement?.textContent ?? "";
+    expect(gate()).toContain("承認で完了、差し戻しで修正の子タスクを追加します");
+    expect(gate()).not.toContain("人が確かめること");
+    server = detail(integrate(["実際の決済サービスで確かめる", "実機で確かめる"]));
+    await wait();
+    expect(gate()).toContain("人が確かめることが2件あります。確かめてから承認してください");
+    expect(
+      container.querySelector('[data-testid="integration-human-checks"]')?.textContent,
+    ).toContain("実際の決済サービスで確かめる");
+  });
+
   it("一時停止の間に PR に指摘が届いたら、タスク詳細に件数と再開の扱いを出し、再開したら消す（PBI-279）", async () => {
     const paused = task({
       status: "paused",

@@ -2423,7 +2423,8 @@ const FinalReviewFailed = z.object({
 /**
  * ゴールガーディアンの統合レビュー（PBI-31）。子タスクの PR がマージされた後のベースブランチのコードで、
  * 親の要求要件・テスト観点を満たすかを判定する。合格、または続けて通らない上限に達したら、統合レビューの
- * 承認待ちにする（続く StepSubmitted）。上限の前に不合格なら、タスク分割の工程をやり直して修正の子タスクを
+ * 承認待ちにする（続く StepSubmitted）。作業領域では確かめられないことだけが残ったときは、合格にして、人が確かめることとして
+ * 承認待ちに出す（PBI-363）。上限の前に不合格なら、タスク分割の工程をやり直して修正の子タスクを
  * 追加する。費用は、続く前の AgentRunCompleted に記録する。
  */
 const IntegrationReviewed = z.object({
@@ -2444,6 +2445,11 @@ const IntegrationReviewed = z.object({
     remarks: z.array(RemarkReview),
     /** 足りないこと（修正の子タスクで直すこと）。 */
     findings: z.array(z.string()),
+    /**
+     * 人が統合レビューの承認で確かめること（PBI-363）。作業領域では確かめられないこと（実際の外部のサービス・実機・目視など）。
+     * 修正の子タスクでは直せないので、findings に入れず、あっても不合格にしない。無ければ無い（それより前の版の記録にも無い）。
+     */
+    humanChecks: z.array(z.string()).optional(),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
     summary: DaemonText,
     /** 統合レビューの出力の JSON が崩れていて、直して読んだこと（PBI-298）。直さずに読めたときは無い。 */
@@ -2854,6 +2860,39 @@ const PullRequestConflicted = z.object({
 const PullRequestConflictResolved = z.object({
   type: z.literal("PullRequestConflictResolved"),
   payload: z.object({ number: z.number().int().positive() }),
+});
+
+/** 実装の PR の CI の失敗の記録に持つ、失敗したチェックの数の上限（PBI-364）。超えた分は件数（more）だけ持つ。 */
+export const PR_CI_FAILED_CHECKS_MAX = 10;
+/** 実装の PR の CI の失敗の記録に持つ、チェックの名前の長さの上限（文字。PBI-364）。 */
+export const PR_CI_CHECK_NAME_MAX = 200;
+
+/**
+ * 人の承認（マージ）を待つ実装の PR の、先頭のコミットの CI が失敗している（PBI-364）。sacty は PR の CI を待たずに、PR の
+ * レビューの子タスクの指摘なしでドラフトを外すので、その後に CI が落ちたことを画面に出すために記録する。出すだけで、実行・
+ * 差し戻し・再レビュー・CI の再実行は始めない。commit は、CI を読んだ PR の先頭（人が足したコミットを含む）。checks は
+ * 失敗したチェック（ワークフローの実行・ジョブ・チェック・コミットの状態）で、PR_CI_FAILED_CHECKS_MAX 件まで。超えた分は
+ * more に件数を持つ。失敗したチェックが変わったら、記録し直す。
+ */
+const PullRequestCiFailed = z.object({
+  type: z.literal("PullRequestCiFailed"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    commit: z.string().min(1),
+    checks: z
+      .array(z.object({ name: z.string().max(PR_CI_CHECK_NAME_MAX), url: z.string().optional() }))
+      .min(1)
+      .max(PR_CI_FAILED_CHECKS_MAX),
+    more: z.number().int().positive().optional(),
+  }),
+});
+/**
+ * 失敗を記録した実装の PR の先頭のコミットの CI に、失敗が無くなった（再実行で通った。PBI-364）。失敗の表示を消す。PR を
+ * 作り直した・更新したときと、マージ・クローズ・開き直しでも消えるが、その記録は残さない。
+ */
+const PullRequestCiRecovered = z.object({
+  type: z.literal("PullRequestCiRecovered"),
+  payload: z.object({ number: z.number().int().positive(), commit: z.string().min(1) }),
 });
 
 /**
@@ -3820,6 +3859,8 @@ export const EventInput = z.discriminatedUnion("type", [
   ReworkStoppedByMerge,
   PullRequestConflicted,
   PullRequestConflictResolved,
+  PullRequestCiFailed,
+  PullRequestCiRecovered,
   PullRequestReviewImported,
   PullRequestReviewDiscarded,
   ReworkJudged,

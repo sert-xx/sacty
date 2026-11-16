@@ -2138,6 +2138,10 @@ function integrationFindingLines(review: IntegrationReview): string[] {
   return [
     ...(review.summary ? [ja(review.summary)] : []),
     ...review.findings.map((f) => `- 足りないこと：${f}`),
+    // 人が確かめること（PBI-363）は、修正の子タスクでは直せないので、子タスクにさせない
+    ...(review.humanChecks ?? []).map(
+      (c) => `- 人が確かめること（修正の子タスクでは直さない。子タスクにしない）：${c}`,
+    ),
     ...review.viewpoints
       .filter((v) => !v.verified)
       .map((v) => `- [${v.viewpointId}] 観点を満たしていない：${ja(v.reason)}`),
@@ -3979,7 +3983,7 @@ function environmentPassNote(tests: {
 /** 統合レビューの出力の JSON の形（入れ子のオブジェクトは無いので、閉じ括弧は補わない）。 */
 const INTEGRATION_REVIEW_SHAPE: LenientShape = {
   heading: INTEGRATION_HEADING,
-  keys: ["viewpoints", "remarks", "findings", "summary"],
+  keys: ["viewpoints", "remarks", "findings", "humanChecks", "summary"],
   objects: {},
 };
 
@@ -4176,6 +4180,16 @@ function splitIntegrationViewpointLines(task: Task): string[] {
 }
 
 /**
+ * 統合レビューで、作業領域では確かめられないことが残る観点の扱い（PBI-363）。人の確認が要ることだけが残った観点を不合格に
+ * すると、修正の子タスクが作られるが、子タスクでは直せない。確かめられる範囲で判定させ、残ることは人が確かめることに分ける。
+ */
+const INTEGRATION_HUMAN_CHECK_LINES = [
+  "- 作業領域では確かめられないこと（実際の外部のサービス・本物の認証情報・実機・特定の OS・目視など）が残る観点は、コードとテストで確かめられる範囲を確かめて判定する。その範囲で満たしていれば、verified を true にし、reason に、確かめた範囲と、確かめられなかったことを書く",
+  "- 確かめられなかったことは、humanChecks に1件ずつ書く（人が、統合レビューの承認で確かめる項目になる）。何を・どう確かめるかと、確かめないまま進めた場合の具体的な懸念（何が・誰に・どう困るか）を書く。findings には書かない（修正の子タスクでは直せないため）。無ければ空にする",
+  "- コードとテストで確かめられる範囲に不足があるときは、verified を false にし、直すことを findings に書く。作業領域で確かめられることを、確かめずに humanChecks に回さない",
+];
+
+/**
  * 統合レビューの指示（PBI-31）。ゴールガーディアンが、子タスクの PR がマージされた後のベースブランチの
  * コードを読み、子タスクの成果を組み合わせた状態が親の要求要件・テスト観点を満たすかを判定する。
  */
@@ -4220,6 +4234,7 @@ export function buildIntegrationReviewPrompt(
     ACCEPTANCE_DEPTH_REVIEW_LINE,
     REMARK_RECURRENCE_LINE,
     "- findings には、要求要件を満たすために直す必要があること（修正の子タスクで直すこと）だけを、1件ずつ具体的に書く。合格なら空にする。好みや改善の提案は書かない",
+    ...INTEGRATION_HUMAN_CHECK_LINES,
     "",
     "",
     ...sharedMechanismLines("explanation"),
@@ -4257,6 +4272,7 @@ export function buildIntegrationReviewPrompt(
     "判定の説明をMarkdownで書き、そのあとに判定を次の形式で必ず出してください。観点と指摘は、上のものをすべて含めてください。",
     ...verdictFormatLines(INTEGRATION_HEADING, integrationViewpointIds(task), {
       findings: ["直す必要があること"],
+      humanChecks: ["人が確かめること（無ければ空）"],
     }),
     ...remarkVerdictLines(remarks),
   ].join("\n");
@@ -4274,7 +4290,7 @@ export function extractIntegrationReview(
   hide?: (text: string) => string,
 ): Pick<
   IntegrationReview,
-  "passed" | "viewpoints" | "remarks" | "findings" | "summary" | "outputRepaired"
+  "passed" | "viewpoints" | "remarks" | "findings" | "humanChecks" | "summary" | "outputRepaired"
 > & {
   output: string;
 } {
@@ -4295,10 +4311,18 @@ export function extractIntegrationReview(
   );
   const list = found?.raw.findings;
   const findings = Array.isArray(list) ? list.map(text).filter(Boolean) : [];
+  // 人が確かめること（PBI-363）。合否には使わない（あっても不合格にしない）。同じ項目は1件にし、1件の長さを抑える
+  const checks = found?.raw.humanChecks;
+  const humanChecks = Array.isArray(checks)
+    ? [...new Set(checks.map(text).filter(Boolean))].map((c) =>
+        c.length > HUMAN_CHECK_ITEM_MAX ? `${headOf(c, HUMAN_CHECK_ITEM_MAX)}…` : c,
+      )
+    : [];
   return {
     ...verdicts,
     passed: verdicts.passed && findings.length === 0,
     findings,
+    ...(humanChecks.length > 0 ? { humanChecks } : {}),
     ...(found && found.repairs.length > 0
       ? {
           outputRepaired: message("integrate.outputRepaired", {
@@ -6108,6 +6132,7 @@ export function chatJudgementLines(task: Task): string[] {
     lines.push(
       `- 統合レビュー（${i.at}）：${i.passed ? "合格" : "不合格"}${i.summary ? `（${ja(i.summary)}）` : ""}`,
       ...i.findings.map((f) => `  - 足りないこと：${f}`),
+      ...(i.humanChecks ?? []).map((c) => `  - 人が確かめること：${c}`),
     );
   }
   if (task.reproduction) {

@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -1017,6 +1017,26 @@ A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existi
   sacty does not merge the base branch in even if you send the task back, so resolve the conflict on GitHub.
 - The row in "Needs you", the task details, and the approval screen say "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub".
 
+### When CI fails after "no findings"
+
+sacty reviews without waiting for the PR's CI to finish.
+So CI that was still running can fail after the child task that reviews the PR reported "no findings".
+When that happens, sacty shows the failure on the screens (it notices at the PR check, once a minute).
+
+- The task's status becomes "CI is failing on the Implement PR". It is the same in "Needs you" (the dashboard and the task list) and in the header notifications.
+- The task details show the names of the failed checks (as links to that run on GitHub when they have one).
+
+sacty only shows it and does not fix it automatically. It does not rerun CI either.
+Do one of the following.
+
+1. Check the failure on the PR on GitHub.
+2. If the change caused it, send the task back with a comment from sacty's screen, or comment on the PR on GitHub. sacty redoes the implementation.
+3. If it is unrelated to the change (a flaky test, for example), rerun CI on GitHub. When it passes, the notice disappears within a few minutes.
+
+Even while CI is failing, if you merge the PR, sacty takes it as the approval and goes on.
+It is not shown for requirements and design PRs, or for a PR before the review child task reports "no findings" (the review child task turns CI failures into findings).
+No Slack or desktop notification is sent.
+
 ### Test viewpoints of the child tasks of a split
 
 A task split assigns the test viewpoints of the parent task's design to the child tasks.
@@ -1102,6 +1122,24 @@ In the following cases, things go differently.
   How it is merged in and how conflicts are handled are the same as in [When the base branch moves ahead](#when-the-base-branch-moves-ahead). It is not merged in while waiting for approval.
 - When the dependency is cancelled, the child task built on top of it is paused and can no longer be resumed.
   Cancel the child task (what is missing may be added as fix child tasks by the Integration review).
+
+### Checking the result of the Integration review
+
+A task whose plan is "Split" runs the Integration review when all the PRs of its child tasks are merged, and then waits for your approval.
+In the Integration review, an AI checks whether the code that combines the child tasks meets the requirements of the parent task.
+
+1. In "Integration review" in the task details, read the verdict, the verdict per viewpoint, and what is missing.
+2. When there is "For a person to check", check those items yourself before approving.
+3. If there is no problem, approve. The task completes.
+4. If an item is not met, write a comment and request changes. sacty adds fix child tasks for the comment.
+
+"For a person to check" lists what the AI could not check in the workspace (a real external service, a real device, visual inspection, and so on).
+When only such items remain, the Integration review does not fail; it passes and hands the items to you.
+There is no field that records the result of each item you checked. The approval stands for having checked.
+
+When something is missing within what can be checked with the code and tests, the Integration review fails and sacty adds fix child tasks.
+If it fails three times in a row, it waits for your decision while still failing.
+
 
 ## How the agent revises after you request changes
 
