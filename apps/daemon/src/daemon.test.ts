@@ -13652,6 +13652,99 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
+      it("投稿を止めた後に、結果を記録できなくても、やり直しで残りを投稿しない（分けた記録は、まとめて書く。止めたことを覚えておく）", async () => {
+        const pulls = new FakePulls();
+        let now = later();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", text: "直した" },
+              { remarkId: "implement-1-2", text: "足した" },
+              { remarkId: "implement-1-3", text: "変えた" },
+            ]),
+          ],
+          { pulls, now: () => now, remarkRepliesPerRecord: 2 },
+        );
+        pulls.feedbackList = [inline(), comment(401), comment(402)];
+        await service.checkPullRequests();
+        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
+          await service.runNext(id);
+        }
+        // 結果の記録を、一度だけ失敗させる
+        const append = activity.append.bind(activity);
+        let failOnce = true;
+        activity.append = (entry) => {
+          if (failOnce && entry.events.some((e) => e.event.type === "RemarkRepliesPosted")) {
+            failOnce = false;
+            throw new Error("disk full");
+          }
+          return append(entry);
+        };
+        pulls.rateLimited = true;
+        await expect(drain(service)).rejects.toThrow("disk full");
+        // 分けた記録の、どれも書かれていない（途中まで書けて、残りを失うことが無い）
+        expect(posted(service, id)).toHaveLength(0);
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        // 制限が解けた後にやり直しても、残りを投稿せずに、失敗として記録する
+        pulls.rateLimited = false;
+        now += 61_000;
+        await drain(service);
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id).map((p) => p.results.map((r) => r.remarkId))).toEqual([
+          ["implement-1-1", "implement-1-2"],
+          ["implement-1-3"],
+        ]);
+        expect(
+          posted(service, id)
+            .flatMap((p) => p.results)
+            .every((r) => r.failed !== undefined),
+        ).toBe(true);
+        expect(service.queuedTaskIds()).toEqual([]);
+        activity.close();
+      });
+
+      it("一覧の読み取り・投稿されたかの探し直しがレート制限に当たったことも、同じアカウントで順番を待っている投稿に伝える", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const limitedUpTo = (service: TaskService) =>
+          (
+            service as unknown as { remarkReplyLimitedUpTo: Map<string, number> }
+          ).remarkReplyLimitedUpTo.has("github.com:me");
+        // 初めの一覧の読み取りが、制限に当たる
+        const listing = new FakePulls();
+        listing.reviewListRateLimitedAfter = 0;
+        const a = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+          { pulls: listing, now: later },
+        );
+        listing.feedbackList = [inline()];
+        await a.service.checkPullRequests();
+        expect(limitedUpTo(a.service)).toBe(false);
+        await drain(a.service);
+        expect(limitedUpTo(a.service)).toBe(true);
+        expect(listing.replyPostTimes).toHaveLength(0);
+        expect(posted(a.service, a.id)[0]?.results[0]?.failed).toMatchObject({
+          code: "github.failed",
+        });
+        a.activity.close();
+        rmSync(dbPath, { force: true });
+        // 投稿されたかの探し直しが、制限に当たる
+        const lost = new FakePulls();
+        lost.replyAnswerLost = "socket hang up";
+        lost.reviewListRateLimitedAfter = 1;
+        const b = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+          { pulls: lost, now: later },
+        );
+        lost.feedbackList = [inline()];
+        await b.service.checkPullRequests();
+        await drain(b.service);
+        expect(limitedUpTo(b.service)).toBe(true);
+        warn.mockRestore();
+        b.activity.close();
+      });
+
       it("同じアカウントの先の投稿がレート制限に当たったら、順番を待っていた投稿（ほかのタスクのものも）は、投稿せずに止める。制限の後に頼まれた投稿は、止めない", async () => {
         const { activity, service } = await toImplementGate([], { now: later });
         type Sent<T> = { value: T } | "limited" | "skipped";

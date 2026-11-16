@@ -3599,6 +3599,20 @@ export class TaskService {
    */
   private readonly remarkReplyLimitedUpTo = new Map<string, number>();
 
+  /** ホストとアカウントが、GitHub のレート制限に当たった：順番を待っている投稿に伝える（投稿でも、一覧の読み取りでも）。 */
+  private markRemarkReplyLimited(key: string): void {
+    this.remarkReplyLimitedUpTo.set(key, this.remarkReplyRequests);
+  }
+
+  /**
+   * レート制限・時間切れで、返信の投稿を止めた提出（タスクごと）。結果を記録できたら消す。記録できずにやり直すときに、
+   * 止めたことを失って、残りを投稿しないように覚えておく（デーモンを起動し直すと消える）。
+   */
+  private readonly remarkReplyStopped = new Map<
+    string,
+    { submission: number; reason: "rate_limit" | "timeout" }
+  >();
+
   /**
    * 指摘への返信を、1件投稿する（行への返信も、PR のコメントも、ここを通す）。ホストとアカウントごとに、1件ずつ順に投稿し、
    * 投稿と投稿の間をあける（GitHub の、書き込みを続けて送るときの制限に当たりにくくする。同じアカウントで返信する、ほかの
@@ -3626,7 +3640,7 @@ export class TaskService {
         return { value: await work() };
       } catch (error) {
         // 順番を待っている、同じアカウントの後の投稿に、制限に当たったことを伝える
-        if (rateLimited(error)) this.remarkReplyLimitedUpTo.set(key, this.remarkReplyRequests);
+        if (rateLimited(error)) this.markRemarkReplyLimited(key);
         throw error;
       }
     });
@@ -3678,25 +3692,35 @@ export class TaskService {
     if (!account) return;
     const postKey = `${httpsHost(`${due.repo}/`) ?? ""}:${account.toLowerCase()}`;
     const record = () => {
-      if (!this.tasks.get(taskId) || !valid() || results.length === 0) return;
-      // 結果が多ければ、記録を分ける（1件の記録に入れる件数の上限まで）
+      // 投稿を止めたことは、結果を記録できるまで覚えておく（記録できずにやり直すときも、残りを投稿しないように）
+      if (timedOut || limitHit) {
+        this.remarkReplyStopped.set(taskId, {
+          submission: due.submission,
+          reason: limitHit ? "rate_limit" : "timeout",
+        });
+      }
+      const latest = this.tasks.get(taskId);
+      if (!latest || !valid() || results.length === 0) return;
+      // 結果が多ければ、記録を分ける（1件の記録に入れる件数の上限まで）。分けた記録は、1回の書き込みで残す
+      // （途中まで書けて、残りの結果を失うことが無いように）
       const size = Math.max(1, this.deps.remarkRepliesPerRecord ?? REMARK_REPLIES_PER_RECORD);
+      const events: { actor: Actor; event: EventInput }[] = [];
       for (let from = 0; from < results.length; from += size) {
-        this.append(this.mustGet(taskId), [
-          {
-            actor: "sacty",
-            event: {
-              type: "RemarkRepliesPosted",
-              payload: {
-                step: due.step,
-                submission: due.submission,
-                number: due.number,
-                results: results.slice(from, from + size),
-              },
+        events.push({
+          actor: "sacty",
+          event: {
+            type: "RemarkRepliesPosted",
+            payload: {
+              step: due.step,
+              submission: due.submission,
+              number: due.number,
+              results: results.slice(from, from + size),
             },
           },
-        ]);
+        });
       }
+      this.append(latest, events);
+      this.remarkReplyStopped.delete(taskId);
     };
     // 返信に使うアカウントを、投稿の前に記録する（投稿の後・結果の記録の前に止まり、その間にプロジェクトのアカウントが
     // 変わっても、前のアカウントの投稿を、投稿済みの返信として見つけ、PR の指摘として取り込まないため）
@@ -3739,6 +3763,11 @@ export class TaskService {
         await limited((signal) => this.deps.pulls.listIssueComments({ ...own, signal })),
       );
     } catch (error) {
+      // 一覧の読み取りがレート制限に当たったことも、同じアカウントで順番を待っている投稿に伝える
+      if (rateLimited(error)) {
+        limitHit = true;
+        this.markRemarkReplyLimited(postKey);
+      }
       // 投稿済みかを確かめられないので（レート制限で読めないときも）、重ねて投稿しない。失敗として残す
       const failed = redactText(errorText(error), usedSecrets);
       results.push(...due.replies.map((r) => ({ remarkId: r.id, key: r.key, failed })));
@@ -3746,6 +3775,11 @@ export class TaskService {
     }
     const found = (list: { url: string; body: string }[], marker: string) =>
       list.find((c) => c.body.trimStart().startsWith(marker));
+    // 前の処理で、この提出の投稿を止めた（結果は、記録できなかった）：残りを投稿せずに、失敗を残す
+    const stopped = this.remarkReplyStopped.get(taskId);
+    if (stopped && stopped.submission !== due.submission) this.remarkReplyStopped.delete(taskId);
+    else if (stopped?.reason === "rate_limit") limitHit = true;
+    else if (stopped) timedOut = true;
     // 待っている間に、その指摘が無効にされた・対応が変わった・返信済みになったら、その指摘には投稿しない
     const stillDue = (reply: RemarkReplyDue) => {
       const latest = this.tasks.get(taskId);
@@ -3865,7 +3899,10 @@ export class TaskService {
                 return undefined;
               });
               // 探し直しがレート制限に当たったら、残りの投稿を止める（この指摘は、投稿されたかが分からないので、失敗を残す）
-              if (searchFailed !== undefined && rateLimited(searchFailed)) limitHit = true;
+              if (searchFailed !== undefined && rateLimited(searchFailed)) {
+                limitHit = true;
+                this.markRemarkReplyLimited(postKey);
+              }
               const hit = landed && mine(landed)[0];
               results.push(
                 hit ? { ...base, inline: true, ...posted(hit.url) } : { ...base, failed: reason },
