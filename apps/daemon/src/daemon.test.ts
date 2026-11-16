@@ -115,6 +115,7 @@ import {
   buildPullRequestBody,
   buildStepDocument,
   changeableSteps,
+  childScopeOf,
 } from "./prompts.js";
 import {
   type DiffFile,
@@ -20825,6 +20826,65 @@ describe("統合レビュー（PBI-31）", () => {
     expect(parent?.gate).toEqual({ step: "integrate", submission: 1 });
     expect(parent?.integration?.passed).toBe(true);
     expect(parent?.integrationFailures).toBe(0);
+    activity.close();
+  });
+
+  it("分割を2回した作業履歴を再生すると、回ごとの分割の出力を残し、範囲の記録が無い各回の子タスクから、その回の原文を読める（PBI-351）", async () => {
+    // 2回目の分割の子タスクは、1回目の子タスクと同じ題で、内容が違う（別の回の出力を読むと、原文が合わない）
+    const first = [
+      { key: "A", title: "決済の API", body: "- 1回目：API を作る", dependsOn: [] },
+      { key: "B", title: "決済の画面", body: "- 1回目：画面を作る", dependsOn: [] },
+    ];
+    const second = [
+      { key: "F", title: "決済の API", body: "- 2回目：送信で API を呼ぶ", dependsOn: [] },
+      { key: "G", title: "決済の画面", body: "- 2回目：画面の文言を直す", dependsOn: [] },
+    ];
+    const made = await splitParent([
+      splitOutput(first),
+      out("# A の調査"),
+      out("# B の調査"),
+      integration(false, ["画面の送信ボタンから決済の API を呼ぶ"]),
+      splitOutput(second),
+      out("# F の調査"),
+      out("# G の調査"),
+      integration(true),
+    ]);
+    await drain(made.service, made.id);
+    expect(made.service.get(made.id)?.task.split?.rounds).toBe(2);
+    made.activity.close();
+    // 範囲の記録を始める前の作業履歴にする（記録から scope を除く）
+    const raw = new DatabaseSync(dbPath);
+    raw.exec("DROP TRIGGER IF EXISTS activity_no_update");
+    raw.exec(
+      "UPDATE activity SET payload = json_remove(payload, '$.scope') WHERE type = 'TaskCreated'",
+    );
+    raw.exec(
+      "UPDATE activity SET payload = json_remove(payload, '$.children[0].scope', '$.children[1].scope') WHERE type = 'TaskSplit'",
+    );
+    raw.close();
+    // 作業履歴を再生する
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, []);
+    const parent = service.get(made.id)?.task as Task;
+    const outputs = parent.split?.outputs ?? {};
+    expect(Object.keys(outputs)).toEqual(["1", "2"]);
+    expect(outputs[1]).toContain("1回目：API を作る");
+    expect(outputs[1]).not.toContain("2回目");
+    expect(outputs[2]).toContain("2回目：送信で API を呼ぶ");
+    expect(outputs[2]).not.toContain("1回目");
+    const children = parent.split?.children ?? [];
+    expect(children.map((c) => c.round)).toEqual([1, 1, 2, 2]);
+    const restored = children.map((c) => {
+      const child = service.get(c.taskId)?.task as Task;
+      expect(child.childScope).toBeUndefined();
+      return childScopeOf(child, parent);
+    });
+    expect(restored).toEqual([
+      { parentTitle: "決済をまるごと作る", fix: false, content: "- 1回目：API を作る" },
+      { parentTitle: "決済をまるごと作る", fix: false, content: "- 1回目：画面を作る" },
+      { parentTitle: "決済をまるごと作る", fix: true, content: "- 2回目：送信で API を呼ぶ" },
+      { parentTitle: "決済をまるごと作る", fix: true, content: "- 2回目：画面の文言を直す" },
+    ]);
     activity.close();
   });
 
