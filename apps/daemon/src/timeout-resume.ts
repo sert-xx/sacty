@@ -39,7 +39,7 @@ export function timeoutMinutes(message: DaemonText): number | undefined {
  * 直前の実行が時間切れで止まったものなら、その実行。作業履歴を新しいほうから見て、最初に出会う実行の記録で決める：
  * 時間切れの記録 (AgentRunTimedOut) ならその実行、続けた記録 (AgentRunContinued) ならすでに続けたので無し、
  * それ以外の実行（エージェントのファイルを写した記録）なら、時間切れの後に別の実行があったので無し。
- * 質問への答え（chat）は、時間切れの後に挟まっても数えない。
+ * 質問への答え（chat）と実行前の準備失敗は、時間切れの後に挟まっても数えない。
  * 続けた実行がデーモンの停止などで中断されると、写した記録も続けた記録も残らない。その実行の開始・失敗の記録（時間切れで止めた
  * 実行自身と、いま実行する currentRunId のものを除く）も別の実行として数え、進捗を含まない古い会話を続けない。
  */
@@ -47,6 +47,13 @@ export function timedOutRunBefore(
   events: readonly ActivityEvent[],
   currentRunId?: string,
 ): TimedOutRun | undefined {
+  const preparationFailures = new Set(
+    events.flatMap((e) =>
+      (e.type === "AgentRunStarted" || e.type === "AgentRunFailed") && e.payload.preparationFailed
+        ? [e.payload.runId]
+        : [],
+    ),
+  );
   const stoppedRuns = new Set<string>();
   for (const event of events)
     if (event.type === "AgentRunTimedOut") stoppedRuns.add(event.payload.runId);
@@ -54,12 +61,19 @@ export function timedOutRunBefore(
     const event = events[i];
     if (!event) continue;
     if (event.type === "AgentRunTimedOut") return event.payload;
-    if (event.type === "AgentRunContinued") return undefined;
-    if (event.type === "AgentSessionArchived" && event.payload.role !== "chat") return undefined;
+    if (event.type === "AgentRunContinued" && !preparationFailures.has(event.payload.runId))
+      return undefined;
+    if (
+      event.type === "AgentSessionArchived" &&
+      event.payload.role !== "chat" &&
+      !preparationFailures.has(event.payload.runId)
+    )
+      return undefined;
     if (
       (event.type === "AgentRunStarted" || event.type === "AgentRunFailed") &&
       event.payload.runId !== currentRunId &&
-      !stoppedRuns.has(event.payload.runId)
+      !stoppedRuns.has(event.payload.runId) &&
+      !preparationFailures.has(event.payload.runId)
     ) {
       return undefined;
     }
@@ -71,12 +85,19 @@ export function timedOutRunBefore(
  * 直前の実装の実行が未完了で終わったものなら、その実行（PBI-350）。作業履歴を新しいほうから見て、最初に出会う実行の記録で
  * 決める：未完了の記録（ImplementationIncomplete）なら、その前の実装の完了（AgentRunCompleted）の実行。ほかの実行の記録
  * （エージェントのファイルを写した記録・開始・失敗）に先に出会ったら、未完了の後に別の実行があったので無し（時間切れで
- * 止めた実行は、timedOutRunBefore が先に扱う）。質問への答え（chat）は、挟まっても数えない。
+ * 止めた実行は、timedOutRunBefore が先に扱う）。質問への答え（chat）と実行前の準備失敗は、挟まっても数えない。
  */
 export function incompleteRunBefore(
   events: readonly ActivityEvent[],
   currentRunId?: string,
 ): StoppedRun | undefined {
+  const preparationFailures = new Set(
+    events.flatMap((e) =>
+      (e.type === "AgentRunStarted" || e.type === "AgentRunFailed") && e.payload.preparationFailed
+        ? [e.payload.runId]
+        : [],
+    ),
+  );
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
     if (!event) continue;
@@ -100,11 +121,21 @@ export function incompleteRunBefore(
       }
       return undefined;
     }
-    if (event.type === "AgentRunTimedOut" || event.type === "AgentRunContinued") return undefined;
-    if (event.type === "AgentSessionArchived" && event.payload.role !== "chat") return undefined;
+    if (
+      event.type === "AgentRunTimedOut" ||
+      (event.type === "AgentRunContinued" && !preparationFailures.has(event.payload.runId))
+    )
+      return undefined;
+    if (
+      event.type === "AgentSessionArchived" &&
+      event.payload.role !== "chat" &&
+      !preparationFailures.has(event.payload.runId)
+    )
+      return undefined;
     if (
       (event.type === "AgentRunStarted" || event.type === "AgentRunFailed") &&
-      event.payload.runId !== currentRunId
+      event.payload.runId !== currentRunId &&
+      !preparationFailures.has(event.payload.runId)
     ) {
       return undefined;
     }

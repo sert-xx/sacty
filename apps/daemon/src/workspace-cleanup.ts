@@ -30,6 +30,7 @@ export const RUN_SCRATCH_DIRS = [
   "_snapshots",
   "_review",
   "_input",
+  "_repos",
   "_audit-logs",
   "_audit-ledger",
   "_deployment",
@@ -190,6 +191,7 @@ export function taskWorkspacePaths(workspaceRoot: string, taskId: string): strin
   return [
     join(workspaceRoot, taskId),
     join(workspaceRoot, "_git", `${taskId}.git`),
+    join(workspaceRoot, "_git", `${taskId}.git.preparing`),
     taskCachePath(workspaceRoot, taskId),
   ];
 }

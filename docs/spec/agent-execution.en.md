@@ -196,6 +196,7 @@ Code: `apps/daemon/src/service.ts` (`usableAgent`, `agentUnusable`, `markLimited
   - Before the next run, sacty looks through the activity from the newest and decides from the first run record it meets whether the previous run timed out (`timedOutRunBefore`).
     - `AgentRunTimedOut` means that run. `AgentRunContinued` (the record of continuing) means it was already continued, so there is nothing to do.
     - Any other run's file record (`AgentSessionArchived`, except answers to questions, `chat`) means another run came after the timeout, so there is nothing to do.
+    - For a step with multiple repositories, a run whose preparation failed before the agent started (`preparationFailed`) does not count as another run.
     - The start and failure of a step run (`AgentRunStarted`, `AgentRunFailed`) also count as another run, except those of the run stopped by the timeout itself and of the run about to start. If a continued run is interrupted by the daemon stopping, neither a file record nor a continued record remains, so sacty tells by this start and failure (it does not continue an old conversation without that run's progress).
   - If the run found and the role about to run are the same, sacty decides whether it can continue (`planContinuation`). If the roles differ, it does nothing.
     - Continue: the agent (AI type and ID) is the same, the stopped run's `AgentSessionArchived` has the session ID and the main file, no file was omitted, and the copied files match the recorded hashes.

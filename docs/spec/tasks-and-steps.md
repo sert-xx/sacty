@@ -150,6 +150,15 @@
 
 コード: `packages/core/src/events.ts`（`StepKey`・`GATED_STEPS`・`REWORK_STEPS`・`EXPORT_STEPS`・`exportSteps`）、`packages/core/src/projection.ts`（`investigationIsGoal`）、`apps/daemon/src/service.ts`（`REPO_STEPS`・`submitEvents`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`）
 
+複数のリポジトリを指定したタスクの要求要件・設計・分割では、各リポジトリのコードの写しをエージェントに渡す。
+リポジトリを選ぶ前は各既定ブランチの最新を作業領域に並べ、選んだ後は選択したリポジトリの起点を作業領域に置き、残りの既定ブランチの最新を読み取り専用で渡す。
+指示には各リポジトリの場所・ブランチ・コミットを示す。
+要求要件には各要求の対象リポジトリを、設計にはリポジトリごとの実装内容を求める。
+写しを用意できなければ名前と理由を記録して停止し、再開時に再び用意する。
+写しのリモート Git 通信は `ls-remote` と `fetch` を120秒で打ち切り、clone を含め一時停止・中止でも終了する。
+
+コード: `apps/daemon/src/service.ts`（`runNextInner`）、`apps/daemon/src/prompts.ts`（`buildPrompt`）
+
 ### 調査が目的のタスクの結果の形
 
 - 調査が目的のタスクの指示は、結果の形（見出し・章立て・表・項目の順・分量など）を、タスクに指定があればそれに従わせる。
@@ -908,6 +917,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   見直している間に人間が止めた・中止したなら記録しない。
 - 投影：飛ばした工程を `skip` にし、実行対象を飛ばしたら次のまだの工程を実行対象にする。
   `stepReview` は `StepsSkipped`・前の工程からのやり直し（`reopen`）・工程の実行の開始（`AgentRunStarted`）で消える。
+  複数リポジトリ指定の工程で、起動前の準備が失敗した実行の開始では消さない。
   見直しを待っていない・飛ばせない工程の記録は受け付けない。
 - 飛ばした工程には差し戻さない（`reworkTargets`）。
   タスクの画面は、飛ばした要求要件・設計・再現の成果物を出さない。
@@ -1618,7 +1628,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   - 中止したタスクの依存のキャッシュ（中止の片付けの途中でデーモンが止まったときなど）。
     完了したタスクと同じく、作業領域・退避した git のメタデータ・キャッシュのどれかがマウントと重なれば消さない。
     進行中のタスクの依存のキャッシュは残し、再起動の後も使い回す。
-  - 実行ごとの一時領域（`_code-copy`・`_guardian`（以前の版の写し）・`_snapshots`・`_review`・`_input`・`_audit-logs`・`_audit-ledger`・`_deployment`・`_export`・`_handoff`・`_question-logs` の下の `<実行 ID>`）のうち、
+  - 実行ごとの一時領域（`_code-copy`・`_guardian`（以前の版の写し）・`_snapshots`・`_review`・`_input`・`_repos`・`_audit-logs`・`_audit-ledger`・`_deployment`・`_export`・`_handoff`・`_question-logs` の下の `<実行 ID>`）のうち、
     動いている実行・停止を確かめられなかった実行のものでないもの。
     実行の終わりに消すが、実行中にデーモンを止めると残り、再起動の後は新しい実行 ID でやり直すので二度と使わない。
   - 消す候補は、片付けを始めたとき（API の待ち受け・ワーカーを始める前）に決める。片付けの間に始まった実行・質問・作ったタスクのものは消さない。

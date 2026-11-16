@@ -1219,6 +1219,7 @@ const AgentRunStarted = z.object({
      * そのときのイメージから求める）。
      */
     image: TaskImageName.optional(),
+    preparationFailed: z.literal(true).optional(),
   }),
 });
 
@@ -1317,6 +1318,7 @@ const AgentRunFailed = z.object({
     step: StepKey,
     agentId: z.string(),
     reason: z.enum(["usage_limit", "auth", "error"]),
+    preparationFailed: z.literal(true).optional(),
     /** sacty の文言はコードと引数、エージェントや外から来た文はそのまま（PBI-11）。 */
     message: DaemonText,
     usage: TokenUsage.optional(),

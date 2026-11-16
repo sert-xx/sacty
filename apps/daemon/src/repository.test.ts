@@ -12,10 +12,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
+import { stopFetchProcessesSync } from "./fetch-processes.js";
 import {
   DIFF_LIMIT,
   GitRepositoryWorkspace,
@@ -87,6 +89,205 @@ const itMerge = it.skipIf(!MERGE_BASE_SUPPORTED);
 
 // 実際の git を動かすので、テストをまとめて実行して重いときも時間切れにしない（PBI-35 レビューでの5秒の時間切れ）
 describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, () => {
+  it("応答しないリモートへの取得を中断し、復旧後に取得できる", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "clone");
+    const metadata = join(dir, "metadata");
+    await workspace.prepare(clone, metadata, origin, undefined);
+    let connected: () => void = () => {};
+    const accepted = new Promise<void>((resolve) => {
+      connected = resolve;
+    });
+    const server = createServer(() => connected());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    git(
+      dir,
+      "--git-dir",
+      metadata,
+      "remote",
+      "set-url",
+      "origin",
+      `git://127.0.0.1:${address.port}/repo`,
+    );
+    const controller = new AbortController();
+    const pending = workspace.remoteDefaultBranch(metadata, undefined, controller.signal);
+    await accepted;
+    controller.abort();
+    await expect(pending).rejects.toThrow("停止要求により中断");
+    server.close();
+    git(dir, "--git-dir", metadata, "remote", "set-url", "origin", origin);
+    expect(
+      await workspace.remoteDefaultBranch(metadata, undefined, new AbortController().signal),
+    ).toBe("main");
+    expect(
+      await workspace.fetchBranch(metadata, "main", undefined, new AbortController().signal),
+    ).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("clone に固定の時間制限を付けず、デーモン終了時には通信を止める", async () => {
+    const workspace = new GitRepositoryWorkspace();
+    const connected = Promise.withResolvers<void>();
+    const server = createServer(() => connected.resolve());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    const timer = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const pending = workspace.prepare(
+        join(dir, "clone"),
+        join(dir, "metadata"),
+        `git://127.0.0.1:${address.port}/repo`,
+        undefined,
+        undefined,
+        undefined,
+        new AbortController().signal,
+      );
+      await connected.promise;
+      expect(timer).not.toHaveBeenCalled();
+      stopFetchProcessesSync();
+      await expect(pending).rejects.toThrow();
+      const origin = makeOrigin();
+      const ready = await workspace.prepare(join(dir, "clone"), join(dir, "metadata"), origin);
+      expect(ready.baseBranch).toBe("main");
+    } finally {
+      timer.mockRestore();
+      server.close();
+    }
+  });
+
+  it("clone を停止要求で中断し、再準備できる", async () => {
+    const workspace = new GitRepositoryWorkspace();
+    const connected = Promise.withResolvers<void>();
+    const server = createServer(() => connected.resolve());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    const controller = new AbortController();
+    try {
+      const pending = workspace.prepare(
+        join(dir, "clone"),
+        join(dir, "metadata"),
+        `git://127.0.0.1:${address.port}/repo`,
+        undefined,
+        undefined,
+        undefined,
+        controller.signal,
+      );
+      await connected.promise;
+      controller.abort();
+      await expect(pending).rejects.toThrow("停止要求により中断");
+      const ready = await workspace.prepare(
+        join(dir, "clone"),
+        join(dir, "metadata"),
+        makeOrigin(),
+      );
+      expect(ready.baseBranch).toBe("main");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("デーモン終了時に取得中の Git を止め、その後の取得は成功する", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const metadata = join(dir, "metadata");
+    await workspace.prepare(join(dir, "clone"), metadata, origin);
+    const connected = Promise.withResolvers<void>();
+    const server = createServer(() => connected.resolve());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    git(
+      dir,
+      "--git-dir",
+      metadata,
+      "remote",
+      "set-url",
+      "origin",
+      `git://127.0.0.1:${address.port}/repo`,
+    );
+    try {
+      const pending = workspace.fetchBranch(
+        metadata,
+        "main",
+        undefined,
+        new AbortController().signal,
+      );
+      await connected.promise;
+      stopFetchProcessesSync();
+      await expect(pending).rejects.toThrow();
+      git(dir, "--git-dir", metadata, "remote", "set-url", "origin", origin);
+      expect(
+        await workspace.fetchBranch(metadata, "main", undefined, new AbortController().signal),
+      ).toMatch(/^[0-9a-f]{40}$/);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("応答しないリモートの時間切れは理由を示し、その後の取得は成功する", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const metadata = join(dir, "metadata");
+    await workspace.prepare(join(dir, "clone"), metadata, origin);
+    const server = createServer(() => {});
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    git(
+      dir,
+      "--git-dir",
+      metadata,
+      "remote",
+      "set-url",
+      "origin",
+      `git://127.0.0.1:${address.port}/repo`,
+    );
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const timer = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((ms) => timeout(ms === 120_000 ? 100 : ms));
+    try {
+      await expect(
+        workspace.fetchBranch(metadata, "main", undefined, new AbortController().signal),
+      ).rejects.toThrow("時間切れのため中断");
+      expect(timer).toHaveBeenCalledWith(120_000);
+    } finally {
+      timer.mockRestore();
+    }
+    server.close();
+    git(dir, "--git-dir", metadata, "remote", "set-url", "origin", origin);
+    expect(await workspace.fetchBranch(metadata, "main")).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it.each(["release+2026", "リリース/最新版"])(
+    "有効なブランチ %s の再準備で記録済みの起点を維持する",
+    async (branch) => {
+      const origin = makeOrigin();
+      git(origin, "checkout", "-b", branch);
+      const workspace = new GitRepositoryWorkspace();
+      const clone = join(dir, "clone");
+      const gitDir = join(dir, "metadata");
+      const first = await workspace.prepare(clone, gitDir, origin, branch);
+      writeFileSync(join(origin, "pay.ts"), "changed\n");
+      git(origin, "commit", "-am", "advance");
+      const again = await workspace.prepare(
+        clone,
+        gitDir,
+        origin,
+        branch,
+        undefined,
+        first.baseCommit,
+      );
+      expect(again.baseCommit).toBe(first.baseCommit);
+      expect(again.baseBranch).toBe(branch);
+      expect(readFileSync(join(clone, "pay.ts"), "utf8")).toBe("export const pay = () => 0;\n");
+      await expect(workspace.prepare(clone, gitDir, origin, "bad..name")).rejects.toThrow();
+    },
+  );
   it("用意し直すときは、ブランチが進んでいても記録済みの起点のコミットにする。無ければエラーにする（PBI-15）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();
@@ -227,6 +428,26 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     // オプションに見えるブランチ名・存在しないブランチは受け付けない
     await expect(workspace.fetchBranch(gitDir, "--upload-pack=evil")).rejects.toThrow();
     await expect(workspace.fetchBranch(gitDir, "missing")).rejects.toThrow();
+  });
+
+  it("既定ブランチの変更と Git で有効な名前をリモートから取得する", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const gitDir = join(dir, "_git", "default.git");
+    await workspace.prepare(join(dir, "default"), gitDir, origin, undefined);
+    expect(await workspace.remoteDefaultBranch(gitDir)).toBe("main");
+    for (const branch of ["release+2026", "日本語"]) {
+      git(origin, "checkout", "-b", branch);
+      writeFileSync(join(origin, "branch.txt"), branch);
+      git(origin, "add", "branch.txt");
+      git(origin, "commit", "-m", branch);
+      expect(await workspace.remoteDefaultBranch(gitDir)).toBe(branch);
+      const commit = await workspace.fetchBranch(gitDir, branch);
+      const target = join(dir, `snapshot-${branch}`);
+      await workspace.snapshot(gitDir, commit, target);
+      expect(readFileSync(join(target, "branch.txt"), "utf8")).toBe(branch);
+    }
+    await expect(workspace.fetchBranch(gitDir, "bad..name")).rejects.toThrow();
   });
 
   it("実装後のコードを、.git を除き、シンボリックリンクはたどらずに写す（PBI-16）", async () => {

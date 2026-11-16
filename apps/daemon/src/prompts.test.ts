@@ -3004,6 +3004,44 @@ describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
   const EARS =
     "受け入れ条件を EARS（Easy Approach to Requirements Syntax）の形式で書く。既定のスキル ears-requirements があれば、それに従う";
 
+  it("複数指定ではリポジトリごとの要求と設計を求める", () => {
+    const repos = ["https://github.com/acme/app", "https://github.com/acme/api"];
+    for (const repository of [undefined, task([]).repository]) {
+      const multi = task(["requirements", "design"], { repos, repository, noRepo: true });
+      expect(buildPrompt(multi, "requirements")).toContain(
+        "各要求に、指定されたどのリポジトリに当たるかを示す",
+      );
+      expect(buildPrompt(multi, "design")).toContain(
+        "指定されたリポジトリごとに、そのリポジトリで実装することの節を書く",
+      );
+    }
+    const single = task(["requirements", "design"]);
+    expect(buildPrompt(single, "requirements")).not.toContain("各要求に、指定されたどのリポジトリ");
+    expect(buildPrompt(single, "design")).not.toContain(
+      "指定されたリポジトリごとに、そのリポジトリ",
+    );
+  });
+
+  it.each(["requirements", "design", "split"] as const)(
+    "複数指定の%sは写しの場所とブランチとコミットを伝える",
+    (step) => {
+      const repos = ["https://github.com/acme/app", "https://github.com/acme/api"];
+      const copies = [
+        { repo: repos[0] as string, path: "1-acme__app", branch: "main", commit: "abc123" },
+        { repo: repos[1] as string, path: "2-acme__api", branch: "stable", commit: "def456" },
+      ];
+      for (const repository of [undefined, task([]).repository]) {
+        const prompt = buildPrompt(task([step], { repos, repository, noRepo: true }), step, {
+          codeRepositories: copies,
+        });
+        for (const copy of copies) {
+          expect(prompt).toContain(`${copy.repo}：${copy.path}（${copy.branch}、${copy.commit}）`);
+        }
+        expect(prompt).not.toContain("作業領域（カレントディレクトリ）は空");
+      }
+    },
+  );
+
   it("要求要件の指示に、EARS の形式と既定のスキル・文型・ID・異常系を書く（スキルが無くても形式がわかる）", () => {
     const prompt = buildPrompt(task(["requirements", "design", "implement"]), "requirements");
     expect(prompt).toContain(EARS);

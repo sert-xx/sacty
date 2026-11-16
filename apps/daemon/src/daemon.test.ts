@@ -549,6 +549,13 @@ class FakeRepos implements RepositoryWorkspace {
   branchHead = "c".repeat(40);
   fetchedBranches: { gitDir: string; branch: string; authEnv?: Record<string, string> }[] = [];
   fetchBranchFail?: string;
+  async remoteDefaultBranch(
+    _gitDir: string,
+    _authEnv?: Record<string, string>,
+    _signal?: AbortSignal,
+  ) {
+    return this.defaultBranch;
+  }
   async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
     if (this.fetchBranchFail) throw new Error(this.fetchBranchFail);
     this.fetchedBranches.push({ gitDir, branch, ...(authEnv ? { authEnv } : {}) });
@@ -31717,6 +31724,90 @@ describe("時間切れで止めた実行の再開（PBI-280）", () => {
     activity.close();
   });
 
+  it.each(["projectImagesConfig", "runContext", "executeLogged"])(
+    "複数指定の実行前の %s が例外になっても時間切れのセッションを続ける",
+    async (failure) => {
+      const projects = projectsWithAccount();
+      const urls = ["https://github.com/acme/api", "https://github.com/acme/web"];
+      projects.put("default", {
+        name: "デフォルト",
+        targets: urls.map((target) => ({ scope: "repo" as const, target })),
+        githubAccounts: { "github.com": "me" },
+      });
+      const activity = new SqliteActivityStore(dbPath);
+      const id = "resume-multiple";
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "A",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: urls,
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: {
+                steps: ["requirements", "design", "implement"],
+                plan: "standard",
+                reason: "理由",
+                costUsd: 0,
+              },
+            },
+          },
+        ],
+      });
+      const sessionLogs = new SessionLogStore(join(dir, "runs"));
+      const { service, executor } = makeService(activity, [timeout(), completed(1_000)], {
+        projects,
+        sessionLogs,
+      });
+      emulateClaude(executor);
+      const task = { id };
+      await service.runNext(task.id);
+      const [first] = runIds(service, task.id);
+      const internal = service as unknown as Record<string, (...args: never[]) => never>;
+      const spy = vi.spyOn(internal, failure).mockImplementationOnce(() => {
+        throw new Error("image settings failed");
+      });
+      if (failure === "executeLogged") {
+        const failures = service
+          .get(task.id)
+          ?.activity.filter((e) => e.type === "AgentRunFailed").length;
+        await expect(retry(service, task.id)).rejects.toThrow("image settings failed");
+        expect(
+          service.get(task.id)?.activity.filter((e) => e.type === "AgentRunFailed"),
+        ).toHaveLength(failures ?? 0);
+        spy.mockRestore();
+        activity.close();
+        return;
+      }
+      await retry(service, task.id);
+      expect(executor.calls).toHaveLength(1);
+      expect(
+        service
+          .get(task.id)
+          ?.activity.filter((e) => e.type === "AgentRunFailed")
+          .at(-1)?.payload,
+      ).toMatchObject({ preparationFailed: true });
+      spy.mockRestore();
+      await retry(service, task.id);
+      expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+      activity.close();
+    },
+  );
+
   it("何度か時間切れで止めても、そのたびに同じセッションの続きから進み、最後は完了まで進む", async () => {
     const { activity, service, executor } = setup([
       timeout(),
@@ -33452,6 +33543,552 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     activity.forTask(id).find((e) => e.type === "StepsChosen");
   const textOf = (value: unknown) => renderMessage(value as DaemonText, "ja");
 
+  it("複数指定は次の工程で clone を再利用し、最新のコミットを取得する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "copy-refresh";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: {
+              steps: ["requirements", "design", "implement"],
+              plan: "standard",
+              reason: "分割",
+              costUsd: 0,
+            },
+          },
+        },
+      ],
+    });
+    const projects = twoRepos();
+    const { service, executor, repos } = makeService(activity, [out("# 要求要件"), out("# 設計")], {
+      projects,
+    });
+    const originalPrepare = repos.prepare.bind(repos);
+    vi.spyOn(repos, "prepare").mockImplementation(async (...args) => {
+      const result = await originalPrepare(...args);
+      mkdirSync(join(args[0], ".git"), { recursive: true });
+      writeFileSync(join(args[0], ".git", "history"), "history");
+      return result;
+    });
+    const originalSnapshot = repos.snapshot.bind(repos);
+    vi.spyOn(repos, "snapshot").mockImplementation(async (gitDir, commit, destination) => {
+      await originalSnapshot(gitDir, commit, destination);
+      writeFileSync(
+        join(destination, "README.md"),
+        `${gitDir.includes("1-acme__api") ? "api" : "web"} ${commit}`,
+      );
+    });
+    const copies: string[][] = [];
+    executor.respond = () => {
+      const workspace = executor.dirs.at(-1) ?? "";
+      copies.push(
+        ["1-acme__api", "2-acme__web"].map((name) =>
+          readFileSync(join(workspace, name, "README.md"), "utf8"),
+        ),
+      );
+      return undefined;
+    };
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    expect(service.get(id)?.task.stepReview).toBe("requirements");
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: API }],
+      githubAccounts: { "github.com": "me" },
+    });
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(service.get(id)?.task.stepReview).toBe("requirements");
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [API, WEB].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    service.resume(id, {});
+    repos.branchHead = "d".repeat(40);
+    repos.defaultBranch = "release+2026";
+    await service.runNext(id);
+    for (const prepared of repos.prepared) {
+      expect(existsSync(join(prepared.dir, ".git"))).toBe(false);
+      expect(existsSync(prepared.gitDir)).toBe(true);
+    }
+    expect(repos.prepared.map((p) => p.url)).toEqual([API, WEB]);
+    expect(repos.fetchedBranches).toHaveLength(4);
+    expect(repos.fetchedBranches.map((f) => f.branch)).toEqual([
+      "main",
+      "main",
+      "release+2026",
+      "release+2026",
+    ]);
+    expect(copies).toEqual([
+      [`api ${"c".repeat(40)}`, `web ${"c".repeat(40)}`],
+      [`api ${repos.branchHead}`, `web ${repos.branchHead}`],
+    ]);
+    expect(promptOf(executor, 1)).toContain(repos.branchHead);
+    activity.close();
+  });
+
+  it.each(["requirements", "design", "split"] as const)(
+    "複数指定の%sは選択前に両方の最新を読み、clone を再利用する",
+    async (step) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const id = `copies-${step}`;
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "複数",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: [API, WEB],
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: [step], plan: "split", reason: "分割", costUsd: 0 },
+            },
+          },
+        ],
+      });
+      const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+        projects: twoRepos(),
+      });
+      await service.runNext(id);
+      expect(executor.workspaceFiles[0]).toEqual(["1-acme__api", "2-acme__web"]);
+      expect(repos.prepared.map((p) => p.url)).toEqual([API, WEB]);
+      expect(repos.fetchedBranches.map((p) => p.branch)).toEqual(["main", "main"]);
+      expect(promptOf(executor, 0)).toContain(`1-acme__api（main、${repos.branchHead}）`);
+      expect(promptOf(executor, 0)).toContain(`2-acme__web（main、${repos.branchHead}）`);
+      expect(promptOf(executor, 0)).not.toContain("作業領域（カレントディレクトリ）は空");
+      expect(existsSync(executor.dirs[0] ?? "")).toBe(false);
+      activity.close();
+    },
+  );
+
+  it.each(["requirements", "design", "split"] as const)(
+    "複数指定の%sは選択後に起点と他の写しを読み、実行後に片付ける",
+    async (step) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const id = `chosen-copies-${step}`;
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "複数",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: [API, WEB],
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          {
+            actor: "person",
+            event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
+          },
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: [step], plan: "split", reason: "分割", costUsd: 0 },
+            },
+          },
+        ],
+      });
+      const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+        projects: twoRepos(),
+      });
+      repos.head = "a".repeat(40);
+      repos.branchHead = "b".repeat(40);
+      vi.spyOn(repos, "snapshot").mockImplementation(async (gitDir, commit, destination) => {
+        mkdirSync(destination, { recursive: true });
+        writeFileSync(
+          join(destination, "README.md"),
+          `${gitDir.includes("2-acme__web") ? "web" : "api"} ${commit}`,
+        );
+      });
+      let mounted: { path: string; readOnly: boolean; content: string } | undefined;
+      let selectedContent: string | undefined;
+      executor.respond = (invocation) => {
+        selectedContent = readFileSync(join(executor.dirs.at(-1) ?? "", "README.md"), "utf8");
+        const mount = invocation.mounts?.find((m) => m.containerPath === "/sacty-repos");
+        if (mount)
+          mounted = {
+            path: mount.hostPath,
+            readOnly: mount.readOnly,
+            content: readFileSync(join(mount.hostPath, "2-acme__web", "README.md"), "utf8"),
+          };
+        return undefined;
+      };
+      await service.runNext(id);
+      expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
+      expect(selectedContent).toBe(`api ${repos.head}`);
+      expect(mounted).toMatchObject({ readOnly: true, content: `web ${repos.branchHead}` });
+      if (step !== "split") {
+        expect(executor.inputMounts[0]?.readOnly).toBe(true);
+        expect(executor.inputMounts[0]?.files["task.md"]).toContain("複数");
+      }
+      expect(existsSync(mounted?.path ?? "")).toBe(false);
+      expect(promptOf(executor, 0)).toContain(`2-acme__web（main、${repos.branchHead}）`);
+      expect(promptOf(executor, 0)).toContain(API);
+      activity.close();
+    },
+  );
+
+  it.each([false, true])("停止未確認の実行は選択済み=%s でも写しを保持する", async (selected) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "unconfirmed-multi-copy";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        ...(selected
+          ? [
+              {
+                actor: "person" as const,
+                event: {
+                  type: "RepositoryChosen" as const,
+                  payload: { repo: API, reason: "選択" },
+                },
+              },
+            ]
+          : []),
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+          },
+        },
+      ],
+    });
+    const { service, executor } = makeService(activity, [out("# 結果")], { projects: twoRepos() });
+    executor.stops = false;
+    let path = "";
+    executor.respond = (invocation) => {
+      path = selected
+        ? (invocation.mounts?.find((mount) => mount.containerPath === "/sacty-repos")?.hostPath ??
+          "")
+        : (executor.dirs.at(-1) ?? "");
+      return undefined;
+    };
+    await service.runNext(id);
+    expect(path).not.toBe("");
+    expect(existsSync(join(path, "2-acme__web", "README.md"))).toBe(true);
+    activity.close();
+  });
+
+  it("選択後の初回 clone 中の一時停止は手動停止として記録する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "pause-initial-multi-clone";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "person",
+          event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
+        },
+      ],
+    });
+    const { service, executor, repos } = makeService(activity, [], { projects: twoRepos() });
+    const gate = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    vi.spyOn(repos, "prepare").mockImplementation(async () => {
+      started.resolve();
+      await gate.promise;
+      throw new Error("stopped");
+    });
+    const running = service.runNext(id);
+    await started.promise;
+    const pausing = service.pause(id);
+    gate.resolve();
+    await Promise.all([running, pausing]);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "manual" });
+    expect(
+      service.get(id)?.activity.findLast((item) => item.type === "TaskPaused")?.payload,
+    ).toMatchObject({ reason: "manual" });
+    activity.close();
+  });
+
+  it("複数指定のリモート確認中に一時停止すると通信を中断し、再開後に進む", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "pause-repository-fetch";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+          },
+        },
+      ],
+    });
+    const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+      projects: twoRepos(),
+    });
+    let ready: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const original = repos.remoteDefaultBranch.bind(repos);
+    vi.spyOn(repos, "remoteDefaultBranch")
+      .mockImplementationOnce(async (_dir, _auth, signal) => {
+        ready();
+        await new Promise<void>((_resolve, reject) =>
+          signal?.addEventListener("abort", () => reject(new Error("stopped")), { once: true }),
+        );
+        return "main";
+      })
+      .mockImplementation(original);
+    const running = service.runNext(id);
+    await started;
+    await service.pause(id);
+    await running;
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const pause = service.get(id)?.activity.findLast((item) => item.type === "TaskPaused");
+    expect(pause?.payload).toMatchObject({ reason: "manual" });
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it.each([false, true])(
+    "複数指定の写しの失敗は選択状態 %s でも停止し、復旧後に再開する",
+    async (chosen) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const id = `copy-failure-${chosen}`;
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "複数",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: [API, WEB],
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          ...(chosen
+            ? [
+                {
+                  actor: "person" as const,
+                  event: {
+                    type: "RepositoryChosen" as const,
+                    payload: { repo: API, reason: "選択" },
+                  },
+                },
+              ]
+            : []),
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+            },
+          },
+        ],
+      });
+      const main = agent({ fallback: ["backup"] });
+      const backup = agent({ id: "backup" });
+      const config = () => {
+        const base = configOf(main)();
+        return base.ok
+          ? { ok: true as const, config: { ...base.config, agents: { [main.id]: main, backup } } }
+          : base;
+      };
+      const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+        projects: twoRepos(),
+        config,
+      });
+      const prepare = repos.prepare.bind(repos);
+      let failWeb = true;
+      vi.spyOn(repos, "prepare").mockImplementation(async (...args) => {
+        if (args[2] === WEB && failWeb) {
+          mkdirSync(args[0], { recursive: true });
+          mkdirSync(args[1], { recursive: true });
+          throw new Error("clone failed");
+        }
+        return prepare(...args);
+      });
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(0);
+      const failed = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+      expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(WEB);
+      expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(
+        "clone failed",
+      );
+      expect(service.get(id)?.task.status).toBe("paused");
+      failWeb = false;
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(1);
+      activity.close();
+    },
+  );
+
+  it("選択済みの再準備が途中で失敗しても名前と理由を記録し、未完了の写しを作り直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "chosen-incomplete-copy";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "person",
+          event: { type: "RepositoryChosen", payload: { repo: WEB, reason: "選択" } },
+        },
+        {
+          actor: "sacty",
+          event: {
+            type: "RepositoryPrepared",
+            payload: { url: WEB, baseBranch: "main", baseCommit: "base123" },
+          },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+          },
+        },
+      ],
+    });
+    const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+      projects: twoRepos(),
+    });
+    const prepare = repos.prepare.bind(repos);
+    let attempts = 0;
+    vi.spyOn(repos, "prepare").mockImplementation(async (...args) => {
+      if (args[2] === WEB && ++attempts === 1) {
+        mkdirSync(args[0], { recursive: true });
+        mkdirSync(args[1], { recursive: true });
+        writeFileSync(join(args[1], "partial"), "incomplete");
+        throw new Error("metadata copy failed");
+      }
+      if (args[2] === WEB) expect(existsSync(join(args[1], "partial"))).toBe(false);
+      return prepare(...args);
+    });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failed = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(WEB);
+    expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(
+      "metadata copy failed",
+    );
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(attempts).toBe(2);
+    expect(repos.prepared.find((entry) => entry.url === WEB)?.recorded).toBe("base123");
+    expect(executor.calls).toHaveLength(1);
+    activity.close();
+  });
+
   it("複数の指定を正規化して記録し、不正な指定を断る", () => {
     const activity = new SqliteActivityStore(dbPath);
     const projects = twoRepos();
@@ -33514,6 +34151,94 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     expect(activity.forTask(task.id).find((e) => e.type === "TaskCreated")?.payload).toMatchObject({
       noRepo: true,
       repos: [API, WEB],
+    });
+    activity.close();
+  });
+
+  it("複数指定でも準備以外の例外を準備失敗として記録しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], { projects: twoRepos() });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    const internal = service as unknown as { heldReviewDue: () => boolean };
+    const spy = vi.spyOn(internal, "heldReviewDue").mockImplementationOnce(() => {
+      throw new Error("unexpected failure");
+    });
+    await expect(service.runNext(id)).rejects.toThrow("unexpected failure");
+    expect(executor.calls).toHaveLength(0);
+    expect(
+      activity
+        .forTask(id)
+        .some(
+          (event) =>
+            event.type === "AgentRunStarted" ||
+            event.type === "AgentRunFailed" ||
+            event.type === "TaskPaused",
+        ),
+    ).toBe(false);
+    spy.mockRestore();
+    activity.close();
+  });
+
+  it("工程開始直前の候補照合中の一時停止は照合失敗を記録しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "pause-second-candidates";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+          },
+        },
+      ],
+    });
+    const { service, executor } = makeService(activity, [], { projects: twoRepos() });
+    const list = service.projectRepositories.bind(service);
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    vi.spyOn(service, "projectRepositories").mockImplementation(async (projectId) => {
+      if (++calls === 2) {
+        started.resolve();
+        await gate.promise;
+        throw new Error("listing failed");
+      }
+      return list(projectId);
+    });
+    const running = service.runNext(id);
+    await started.promise;
+    const stopping = service.pause(id);
+    gate.resolve();
+    await Promise.all([running, stopping]);
+    expect(executor.calls).toHaveLength(0);
+    const events = activity.forTask(id);
+    expect(
+      events.some(
+        (event) =>
+          event.type === "AgentRunStarted" ||
+          event.type === "AgentRunFailed" ||
+          event.type === "OrchestratorFailed",
+      ),
+    ).toBe(false);
+    expect(events.findLast((event) => event.type === "TaskPaused")?.payload).toMatchObject({
+      reason: "manual",
     });
     activity.close();
   });
@@ -33671,95 +34396,321 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     activity.close();
   });
 
-  it("候補取得の想定外の例外は停止に変換せず、復旧後に実行する", async () => {
+  it("一覧取得例外で停止し、人の選択にも原因を返して復旧後に再開する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(
       activity,
-      [plan({ plan: "investigate", investigation: "content" })],
+      [plan({ plan: "investigate", investigation: "content" }), out("# 結果")],
       { projects: twoRepos(), realPlanner: true },
     );
     const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
-    const before = activity.forTask(id);
     const listing = vi
       .spyOn(service, "projectRepositories")
-      .mockRejectedValueOnce(new TypeError("listing failed"));
-    await expect(service.runNext(id)).rejects.toThrow("listing failed");
+      .mockRejectedValue(new Error("listing failed"));
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((e) => e.type === "OrchestratorFailed");
+    expect(failure?.type === "OrchestratorFailed" && textOf(failure.payload.message)).toContain(
+      "listing failed",
+    );
+    const before = activity.forTask(id);
+    await expect(service.chooseRepository(id, API)).rejects.toThrow("listing failed");
     expect(activity.forTask(id)).toEqual(before);
-    expect(service.get(id)?.task.status).toBe("queued");
     listing.mockRestore();
+    service.resume(id, {});
     await service.runNext(id);
     expect(executor.calls.length).toBeGreaterThan(0);
     activity.close();
   });
 
-  it("設定を読めない間は複数指定の候補を取得しない", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    let valid = true;
-    const { service } = makeService(activity, [], {
-      projects: twoRepos(),
-      config: () => (valid ? configOf(agent())() : { ok: false, problem: "設定を読めません" }),
-    });
-    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
-    valid = false;
-    const listing = vi.spyOn(service, "projectRepositories");
-    await service.runNext(id);
-    await service.runNext(id);
-    expect(listing).not.toHaveBeenCalled();
-    expect(service.get(id)?.task.status).toBe("queued");
-    activity.close();
-  });
-
-  it("候補から外れて停止しても再開後に工程を見直す", async () => {
+  it("プロジェクト定義の読み取り例外でオーケストレーターを停止し復旧後に再開する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const projects = twoRepos();
-    const { service } = makeService(
+    const { service, executor } = makeService(
       activity,
-      [
-        plan({ plan: "standard", repo: API, repoReason: "API" }),
-        plan({ plan: "standard" }),
-        out("# 要求要件"),
-        stepReview(["design"], "設計不要"),
-        out(
-          `# 実装\n\n${block({ "sacty-test-map": [{ viewpointId: "REQ", tests: ["test › 確認"] }] })}`,
-        ),
-      ],
+      [plan({ plan: "investigate", investigation: "content" })],
       { projects, realPlanner: true },
     );
     const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    const read = vi.spyOn(projects, "get").mockImplementation(() => {
+      throw new Error("invalid project definition");
+    });
     await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    expect(failure?.type === "OrchestratorFailed" && textOf(failure.payload.message)).toContain(
+      "invalid project definition",
+    );
+    read.mockRestore();
+    service.resume(id, {});
     await service.runNext(id);
-    service.approve(id, { step: "requirements", submission: 1 });
-    const before = activity.forTask(id);
+    expect(executor.calls.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it("イメージ待ちと選択後の準備より前に定義の読み取り失敗で停止し、復旧後に再開する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const contextImages: NonNullable<ServiceDeps["contextImages"]> = {
+      images: () => [],
+      pending: () => true,
+      view: () => [],
+      rebuild: () => ({ ok: true }),
+      refresh: async () => {},
+    };
+    const { service, executor } = makeService(
+      activity,
+      [plan({ plan: "investigate", investigation: "content" })],
+      {
+        projects,
+        realPlanner: true,
+        contextImages,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    await service.pause(id);
+    await service.chooseRepository(id, API);
+    service.resume(id, {});
+    const read = vi.spyOn(projects, "get").mockImplementation(() => {
+      throw new Error("invalid project definition");
+    });
+    expect(service.runnableTaskIds()).toContain(id);
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    expect(failure?.type === "OrchestratorFailed" && textOf(failure.payload.message)).toContain(
+      "invalid project definition",
+    );
+    read.mockRestore();
+    contextImages.pending = () => false;
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(executor.calls.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it.each(["wait", "image", "repository"] as const)(
+    "候補照合後の%sの準備で定義を読めなければ停止し、再開できる",
+    async (preparation) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const projects = twoRepos();
+      let pending = preparation === "wait";
+      const contextImages: NonNullable<ServiceDeps["contextImages"]> = {
+        images: () =>
+          preparation === "image"
+            ? [
+                {
+                  name: "web",
+                  description: "web",
+                  from: "context",
+                  image: "example",
+                  language: {
+                    name: "web",
+                    image: "example",
+                    description: "web",
+                    baseImage: "node",
+                    env: {},
+                  },
+                  state: "ready" as const,
+                  log: "",
+                },
+              ]
+            : [],
+        pending: () => pending,
+        view: () => [],
+        rebuild: () => ({ ok: true }),
+        refresh: async () => {},
+      };
+      const { service, executor } = makeService(
+        activity,
+        [plan({ plan: "investigate", investigation: "content" })],
+        { projects, realPlanner: true, contextImages },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+      if (preparation === "repository") {
+        await service.pause(id);
+        await service.chooseRepository(id, API);
+        service.resume(id, {});
+      }
+      const list = service.projectRepositories.bind(service);
+      const get = projects.get.bind(projects);
+      let failNextRead = false;
+      const read = vi.spyOn(projects, "get").mockImplementation((projectId) => {
+        if (failNextRead) {
+          failNextRead = false;
+          throw new Error("late definition failure");
+        }
+        return get(projectId);
+      });
+      const listing = vi
+        .spyOn(service, "projectRepositories")
+        .mockImplementationOnce(async (projectId) => {
+          const result = await list(projectId);
+          failNextRead = true;
+          return result;
+        });
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("paused");
+      const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+      expect(failure?.type === "OrchestratorFailed" && textOf(failure.payload.message)).toContain(
+        "late definition failure",
+      );
+      const failureText =
+        failure?.type === "OrchestratorFailed" ? textOf(failure.payload.message) : "";
+      if (preparation === "repository") expect(failureText).toContain(API);
+      else expect(failureText).not.toContain(API);
+      listing.mockRestore();
+      read.mockRestore();
+      pending = false;
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls.length).toBeGreaterThan(0);
+      activity.close();
+    },
+  );
+
+  it.each([1, 2])(
+    "選択後の要求要件の準備で%d回目の照合後に定義を読めなくても停止し、再開する",
+    async (failureAfter) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const projects = twoRepos();
+      const id = "multiple-preparation-error";
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "複数",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: [API, WEB],
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          {
+            actor: "person",
+            event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
+          },
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: [...STEP_PLANS.split], plan: "split", reason: "分割", costUsd: 0 },
+            },
+          },
+        ],
+      });
+      const contextImages: NonNullable<ServiceDeps["contextImages"]> = {
+        images: () => [
+          {
+            name: "web",
+            description: "web",
+            from: "context",
+            image: "example",
+            language: {
+              name: "web",
+              image: "example",
+              description: "web",
+              baseImage: "node",
+              env: {},
+            },
+            state: "ready" as const,
+            log: "",
+          },
+        ],
+        pending: () => false,
+        view: () => [],
+        rebuild: () => ({ ok: true }),
+        refresh: async () => {},
+      };
+      const { service, executor } = makeService(activity, [out("# 要求要件")], {
+        projects,
+        contextImages,
+      });
+      const list = service.projectRepositories.bind(service);
+      const get = projects.get.bind(projects);
+      let failNextRead = false;
+      let listings = 0;
+      const read = vi.spyOn(projects, "get").mockImplementation((projectId) => {
+        if (failNextRead) {
+          failNextRead = false;
+          throw new Error("late step failure");
+        }
+        return get(projectId);
+      });
+      const listing = vi
+        .spyOn(service, "projectRepositories")
+        .mockImplementation(async (projectId) => {
+          const result = await list(projectId);
+          if (++listings === failureAfter) failNextRead = true;
+          return result;
+        });
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("paused");
+      const failure = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+      expect(failure?.type === "AgentRunFailed" && failure.payload.step).toBe("requirements");
+      expect(failure?.type === "AgentRunFailed" && textOf(failure.payload.message)).toContain(
+        "late step failure",
+      );
+      listing.mockRestore();
+      read.mockRestore();
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(1);
+      activity.close();
+    },
+  );
+
+  it("オーケストレーターの候補照合後の定義読み取り失敗で停止し再開する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const { service, executor } = makeService(
+      activity,
+      [plan({ plan: "investigate", investigation: "content" })],
+      { projects, realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    const list = service.projectRepositories.bind(service);
+    const get = projects.get.bind(projects);
+    let listings = 0;
+    let fail = false;
+    const read = vi.spyOn(projects, "get").mockImplementation((projectId) => {
+      if (fail) {
+        fail = false;
+        throw new Error("orchestrator late read");
+      }
+      return get(projectId);
+    });
     const listing = vi
       .spyOn(service, "projectRepositories")
-      .mockRejectedValueOnce(new Error("listing failed"));
-    await expect(service.runNext(id)).rejects.toThrow("listing failed");
-    expect(activity.forTask(id)).toEqual(before);
-    listing.mockRestore();
-    projects.put("default", {
-      name: "デフォルト",
-      targets: [{ scope: "repo", target: API }],
-      githubAccounts: { "github.com": "me" },
-    });
+      .mockImplementation(async (projectId) => {
+        const result = await list(projectId);
+        if (++listings === 2) fail = true;
+        return result;
+      });
     await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.status).toBe("paused");
-    expect(
-      activity
-        .forTask(id)
-        .slice(before.length)
-        .map((e) => e.type),
-    ).toEqual(["TaskPaused"]);
-    projects.put("default", {
-      name: "デフォルト",
-      targets: [API, WEB].map((target) => ({ scope: "repo" as const, target })),
-      githubAccounts: { "github.com": "me" },
-    });
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    expect(failure?.type === "OrchestratorFailed" && textOf(failure.payload.message)).toContain(
+      "orchestrator late read",
+    );
+    listing.mockRestore();
+    read.mockRestore();
     service.resume(id, {});
-    for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
-    expect(activity.forTask(id).find((e) => e.type === "StepsSkipped")?.payload).toMatchObject({
-      after: "requirements",
-      steps: ["design"],
-    });
+    await service.runNext(id);
+    expect(executor.calls.length).toBeGreaterThan(0);
     activity.close();
   });
 
@@ -33817,21 +34768,43 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     await service.runNext(id);
     expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.status).toBe("paused");
-    const failure = activity
-      .forTask(id)
-      .filter((event) => event.type === "TaskPaused")
-      .at(-1);
-    const text = failure?.type === "TaskPaused" ? textOf(failure.payload.message) : "";
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    const text = failure?.type === "OrchestratorFailed" ? textOf(failure.payload.message) : "";
     expect(text).toContain(WEB);
     expect(text).toContain("clone failed");
     expect(text).not.toContain(API);
     expect(
-      failure?.type === "TaskPaused" && renderMessage(failure.payload.message, "en"),
+      failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "en"),
     ).toContain(`Could not prepare the repository (${WEB}): clone failed`);
     repos.fail = undefined;
     service.resume(id, {});
     await service.runNext(id);
     expect(executor.calls.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it("候補照合中の一時停止を手動停止として記録する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], { projects: twoRepos() });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    vi.spyOn(service, "projectRepositories").mockImplementation(async () => {
+      started.resolve();
+      await gate.promise;
+      throw new Error("listing failed");
+    });
+    const running = service.runNext(id);
+    await started.promise;
+    const pausing = service.pause(id);
+    gate.resolve();
+    await Promise.all([running, pausing]);
+    expect(executor.calls).toHaveLength(0);
+    const paused = activity
+      .forTask(id)
+      .filter((event) => event.type === "TaskPaused")
+      .at(-1);
+    expect(paused?.type === "TaskPaused" && paused.payload.reason).toBe("manual");
     activity.close();
   });
 
@@ -34501,26 +35474,30 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
           service.approve(id, { step: "design", submission: 1 });
         }
         const calls = executor.calls.length;
-        const before = activity.forTask(id);
-        const original = service.projectRepositories.bind(service);
-        const listing = vi.spyOn(service, "projectRepositories");
-        listing
-          .mockImplementationOnce(original)
-          .mockRejectedValueOnce(new TypeError("listing failed"));
-        await expect(service.runNext(id)).rejects.toThrow("listing failed");
-        expect(activity.forTask(id)).toEqual(before);
-        expect(service.get(id)?.task.status).toBe("queued");
+        const listing = vi
+          .spyOn(service, "projectRepositories")
+          .mockRejectedValueOnce(new Error("listing failed"));
+        await service.runNext(id);
         expect(executor.calls).toHaveLength(calls);
+        expect(service.get(id)?.task.status).toBe("paused");
+        const listingFailure = activity.forTask(id).find((e) => e.type === "AgentRunFailed");
+        expect(
+          listingFailure?.type === "AgentRunFailed" && textOf(listingFailure.payload.message),
+        ).toContain("listing failed");
         listing.mockRestore();
+        service.resume(id, {});
         setTargets([API]);
         await service.runNext(id);
         expect(executor.calls).toHaveLength(calls);
         expect(service.get(id)?.task.status).toBe("paused");
         const failure = activity
           .forTask(id)
-          .filter((e) => e.type === "TaskPaused")
+          .filter((e) => e.type === "AgentRunFailed")
           .at(-1);
-        expect(failure?.type === "TaskPaused" && textOf(failure.payload.message)).toContain(WEB);
+        expect(failure?.type === "AgentRunFailed" && failure.payload.step).toBe(step);
+        expect(failure?.type === "AgentRunFailed" && textOf(failure.payload.message)).toContain(
+          WEB,
+        );
         setTargets([API, WEB]);
         service.resume(id, {});
         await service.runNext(id);
@@ -43859,6 +44836,21 @@ describe("タスクの開始時の情報収集", () => {
       title: "複数",
       repos: targets.slice(0, 4),
     });
+    const listing = vi
+      .spyOn(service, "projectRepositories")
+      .mockRejectedValueOnce(new Error("listing failed"));
+    await service.runNext(task.id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(task.id)?.task.status).toBe("paused");
+    const listingFailure = service
+      .get(task.id)
+      ?.activity.find((e) => e.type === "OrchestratorFailed");
+    expect(
+      listingFailure?.type === "OrchestratorFailed" &&
+        renderMessage(listingFailure.payload.message, "ja"),
+    ).toContain("listing failed");
+    listing.mockRestore();
+    service.resume(task.id, {});
     setTargets(targets.slice(0, 3));
     await service.runNext(task.id);
     expect(executor.calls).toHaveLength(0);
@@ -43921,7 +44913,7 @@ describe("タスクの開始時の情報収集", () => {
     activity.close();
   });
 
-  it("情報収集の候補照合後の例外を伝え、次の実行で回復する", async () => {
+  it("情報収集の候補照合後に定義を読めなければ停止し再開する", async () => {
     const activity = new SqliteActivityStore(join(dir, "gather-late-definition.db"));
     const api = "https://github.com/acme/api";
     const web = "https://github.com/acme/web";
@@ -43955,12 +44947,16 @@ describe("タスクの開始時の情報収集", () => {
         if (++listings === 2) fail = true;
         return result;
       });
-    await expect(service.runNext(id)).rejects.toThrow("gather late read");
+    await service.runNext(id);
     expect(executor.calls).toHaveLength(0);
-    expect(service.get(id)?.task.status).toBe("queued");
-    expect(activity.forTask(id).some((event) => event.type === "OrchestratorFailed")).toBe(false);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    expect(
+      failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "ja"),
+    ).toContain("gather late read");
     listing.mockRestore();
     read.mockRestore();
+    service.resume(id, {});
     await service.runNext(id);
     expect(service.get(id)?.task.gathered?.brief).toBe(BRIEF);
     activity.close();
@@ -44480,6 +45476,18 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(repos.prepared).toHaveLength(prepared + 1);
   });
 
+  it("中止時と起動時に中止済みタスクの準備中の印を消す", async () => {
+    const { service, activity, id } = await submittedTask();
+    const marker = `${gitDirOf(id)}.preparing`;
+    writeFileSync(marker, "");
+    await service.cancel(id);
+    expect(existsSync(marker)).toBe(false);
+    writeFileSync(marker, "");
+    await service.cleanupWorkspacesAtStartup();
+    expect(existsSync(marker)).toBe(false);
+    activity.close();
+  });
+
   it("起動時に、残った実行ごとの一時領域と、もう使わない・どのタスクのものでもない作業領域を消す", async () => {
     const { service, id: open } = await submittedTask();
     const runIds = Object.fromEntries(
@@ -44489,6 +45497,7 @@ describe("終わったタスクと、中断された実行の作業領域の片�
         "_snapshots",
         "_review",
         "_input",
+        "_repos",
         "_audit-logs",
         "_audit-ledger",
       ].map((name) => [name, randomUUID()]),
@@ -44512,7 +45521,10 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     mkdirSync(join(root(), orphan, "repo"), { recursive: true });
     mkdirSync(join(root(), "_git", `${orphan}.git`), { recursive: true });
 
+    const markerOnly = randomUUID();
+    writeFileSync(join(root(), "_git", `${markerOnly}.git.preparing`), "");
     const removed = await service.cleanupWorkspacesAtStartup();
+    expect(existsSync(join(root(), "_git", `${markerOnly}.git.preparing`))).toBe(false);
     for (const [name, runId] of Object.entries(runIds)) {
       expect(existsSync(join(root(), name, runId)), name).toBe(false);
     }
@@ -44520,7 +45532,7 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
     expect(existsSync(join(root(), orphan))).toBe(false);
     expect(existsSync(join(root(), "_git", `${orphan}.git`))).toBe(false);
-    expect(removed).toBe(7 + 1 + 2);
+    expect(removed).toBe(8 + 1 + 2 + 1);
     expect(existsSync(join(root(), "_guardian", "not-a-run"))).toBe(true);
     expect(existsSync(join(root(), "_cache", "shared-compose"))).toBe(true);
     expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
@@ -44574,10 +45586,11 @@ describe("終わったタスクと、中断された実行の作業領域の片�
   it("起動時に、動いているコンテナがマウントしているもの・停止を確かめられなかった実行のものは消さない", async () => {
     const mounted = randomUUID();
     const unconfirmed = randomUUID();
-    const mounts = [join(root(), "_guardian", mounted)];
+    const mounts = [join(root(), "_guardian", mounted), join(root(), "_repos", mounted, "repo")];
     const { service, id } = await submittedTask({ containerMounts: async () => mounts });
     for (const runId of [mounted, unconfirmed]) {
       mkdirSync(join(root(), "_guardian", runId), { recursive: true });
+      mkdirSync(join(root(), "_repos", runId), { recursive: true });
     }
     // 停止を確かめられなかった実行（運用の工程の中断など）は、タスクの状態に残る
     const task = service.get(id)?.task;
@@ -44585,6 +45598,8 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     await service.cleanupWorkspacesAtStartup();
     expect(existsSync(join(root(), "_guardian", mounted))).toBe(true);
     expect(existsSync(join(root(), "_guardian", unconfirmed))).toBe(true);
+    expect(existsSync(join(root(), "_repos", mounted))).toBe(true);
+    expect(existsSync(join(root(), "_repos", unconfirmed))).toBe(true);
   });
 
   it("起動時に、このリリースより前に完了したタスクの作業領域を、同じ基準で消す", async () => {

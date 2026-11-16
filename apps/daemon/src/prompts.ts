@@ -1846,8 +1846,28 @@ export function extractDocumentPages(output: string): { output: string; pages: s
  * 要求要件・設計の工程で、作業領域にある対象リポジトリのコードについて伝える（PBI-15）。
  * 起点のコミットのコードを使い捨ての写しで渡す（セットアップなどのコマンドは実行できるが、変更は残らない）。
  */
-function codeLines(task: Task, options: { setup: boolean } = { setup: true }): string[] {
-  if (isRepoless(task)) return REPOLESS_LINES;
+function codeLines(
+  task: Task,
+  options: {
+    setup: boolean;
+    repositories?: readonly { repo: string; path: string; branch: string; commit: string }[];
+  } = { setup: true },
+): string[] {
+  const listed = options.repositories;
+  const lines = listed
+    ? [
+        "",
+        "次のリポジトリのコードを読み、構成・規約・影響範囲を踏まえてください。",
+        ...listed.map((r) => `- ${r.repo}：${r.path}（${r.branch}、${r.commit}）`),
+      ]
+    : [];
+  if (isRepoless(task))
+    return listed
+      ? [
+          ...lines,
+          "作業領域は使い捨ての写しです。変更は残りません。コードの変更（実装）はしないでください。",
+        ]
+      : REPOLESS_LINES;
   if (!task.repository) return [];
   return [
     "",
@@ -1855,6 +1875,7 @@ function codeLines(task: Task, options: { setup: boolean } = { setup: true }): s
     options.setup
       ? "作業領域は、この実行のための使い捨ての写しです。リポジトリの手順にあるセットアップ（依存関係の取得など）や、調べるためのコマンド・テストは実行してかまいませんが、変更は残りません。この工程では、コードの変更（実装）はしないでください。"
       : "作業領域は、この実行のための使い捨ての写しです。変更は残りません。この工程では、コードの変更（実装）はしないでください。",
+    ...lines,
   ];
 }
 
@@ -2763,6 +2784,7 @@ export function buildPrompt(
     subtasks?: readonly SubtaskSummary[];
     /** 子タスクに付けられるリポジトリ（プロジェクトの対象。リポジトリの無いタスクの分割だけ。PBI-73）。 */
     repositories?: readonly string[];
+    codeRepositories?: readonly { repo: string; path: string; branch: string; commit: string }[];
     /**
      * 再レビューで、前回のレビューの投稿の後の、PR の作者の返答（PBI-111）。読めなかったときは "unreadable"。
      * 最初のレビューでは渡さない。
@@ -3008,10 +3030,11 @@ export function buildPrompt(
         "- 何を実現するかは、下の「スコープ」の節に1〜3文で書く",
         ...earsLines(),
         "- 実装方法には踏み込まない",
+        ...(task.repos ? ["- 各要求に、指定されたどのリポジトリに当たるかを示す"] : []),
         ...acceptanceCheckLines(),
         `- ${AGENT_INSTRUCTIONS}を書く・直すタスクの要求は、エージェントがどう振る舞うかではなく、文書に何が書かれているべきか（手順・条件・決まり）で書く。受け入れの確かめ方は、自動のテストではなく差分で文書の中身を確かめることとして書く（エージェントを起動して確かめる形にしない）`,
         "- タスクの内容から判断できないことは、推測で要求にせず、下の「確認したいこと」に挙げる",
-        ...codeLines(task),
+        ...codeLines(task, { setup: true, repositories: extra.codeRepositories }),
         ...readerLoadLines("要求要件", !skipSelfReview),
         "",
         ...investigationLines(task),
@@ -3062,12 +3085,15 @@ export function buildPrompt(
           : "人間が承認した要求要件から、設計とテスト観点を作ってください。",
         "",
         "- 設計はMarkdownで書く。節は、構成・データ・処理の流れ・エラー時の振る舞い・影響範囲のうち、今回の変更で書くことがあるものだけにする（今回の変更で変わらないものの節は作らない）",
+        ...(task.repos
+          ? ["- 指定されたリポジトリごとに、そのリポジトリで実装することの節を書く"]
+          : []),
         "- テスト観点は、受け入れ条件をすべて網羅する。異常系と境界値は、今回の変更で新しく起こりうるものを含める（既存の仕組みが保証していて、今回の変更で変わらないものは観点にしない）",
         "- テスト観点ごとに、何を確かめるか・入力（前提）・期待する結果を、第三者が検証できる具体さで、それぞれ1文で書く",
         "- テスト観点の数は、受け入れ条件を確かめるのに要る分だけにする（同じことを確かめる観点を重ねない）",
         "- 文書・コメント・文言だけの変更（実行される振る舞いの無い変更）の観点は、何が書かれているべきかを期待する結果にし、実装は差分で確かめる（テストを書かない）。ファイルがある・読めることを確かめる観点にしない。sacty が置く要求要件・設計のファイルは、観点の対象にしない",
         `- ${AGENT_INSTRUCTIONS}を書く・直す観点は、エージェントがどう振る舞うかではなく、文書に何が書かれているべきか（手順・条件・決まり）を期待する結果にする（エージェントを起動して確かめる観点にしない）`,
-        ...codeLines(task),
+        ...codeLines(task, { setup: true, repositories: extra.codeRepositories }),
         ...readerLoadLines("設計", !skipSelfReview),
         "",
         "設計の本文のあとに、テスト観点を次の形式で必ず付けてください。",
@@ -3146,7 +3172,7 @@ export function buildPrompt(
           "- 先に別の（今回追加する）子タスクのマージが必要なら dependsOn にその key を書く",
           `- 子タスクは 1〜${MAX_SPLIT_CHILDREN} 件。子タスクをさらに分割することはできない`,
           "- コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）",
-          ...codeLines(task),
+          ...codeLines(task, { setup: true, repositories: extra.codeRepositories }),
           ...splitRepositoryLines(task, extra.repositories),
           "",
           "最初に直し方の考え方を短く書き、そのあとに追加する子タスクの一覧を次の形式で必ず付けてください。",
@@ -3185,7 +3211,7 @@ export function buildPrompt(
         `- 子タスクは ${MIN_SPLIT_CHILDREN}〜${MAX_SPLIT_CHILDREN} 件。子タスクをさらに分割することはできない`,
         ...splitViewpointLines(splitViewpoints),
         "- コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）",
-        ...codeLines(task),
+        ...codeLines(task, { setup: true, repositories: extra.codeRepositories }),
         ...splitRepositoryLines(task, extra.repositories),
         "",
         "最初に分け方の考え方を短く書き、そのあとに子タスクの一覧を次の形式で必ず付けてください。",

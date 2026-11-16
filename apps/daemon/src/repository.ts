@@ -1,10 +1,11 @@
-import { spawn } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { access, constants, cp, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { message } from "@sacty/core";
 import { MessageError } from "./errors.js";
+import { spawnStoppable } from "./fetch-processes.js";
 
 /** 差分は、先頭のこのバイト数だけゴールガーディアンに渡す。 */
 export const DIFF_LIMIT = 200_000;
@@ -116,6 +117,7 @@ export interface RepositoryWorkspace {
      * 用意する（タスクの起点を最後まで変えないため。PBI-15）。取得できなければエラーにする。
      */
     baseCommit?: string,
+    signal?: AbortSignal,
   ): Promise<{ baseCommit: string; baseBranch: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
@@ -243,7 +245,17 @@ export interface RepositoryWorkspace {
    * ブランチの最新のコミットを、リモートから退避したメタデータに取得して返す（統合レビューで、子タスクの
    * PR がマージされた後のベースブランチを読むため。PBI-31）。
    */
-  fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<string>;
+  fetchBranch(
+    gitDir: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<string>;
+  remoteDefaultBranch(
+    gitDir: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<string>;
   /**
    * 2つのコミットの間で変わったパス（PBI-57）。タスクブランチに、sacty が積んでいない変更（人が直接積んだ・
    * ベースブランチをマージした）が無いかを、実装を積む前に確かめるために使う。どちらのコミットも取得済みであること。
@@ -280,6 +292,8 @@ export interface RepositoryWorkspace {
 
 /** 起点から変更が無く、コミットするものが無い。 */
 export class NothingToCommitError extends MessageError {}
+
+class GitInterruptedError extends MessageError {}
 
 const BASE_ENV_KEYS = ["PATH", "TMPDIR", "LANG"];
 
@@ -375,8 +389,9 @@ function git(
   args: string[],
   env: Record<string, string>,
   cwd?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  return gitBytes(label, args, env, cwd).then((out) => out.toString("utf8"));
+  return gitBytes(label, args, env, cwd, signal).then((out) => out.toString("utf8"));
 }
 
 /** git を実行し、標準出力をそのままのバイト列で返す（複数バイトの文字が、読み込みの区切りで壊れないように）。 */
@@ -385,22 +400,38 @@ function gitBytes(
   args: string[],
   env: Record<string, string>,
   cwd?: string,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    const options: SpawnOptions = { cwd, env, stdio: ["ignore", "pipe", "pipe"] };
+    const stoppable = signal ? spawnStoppable("git", args, options) : undefined;
+    const child = stoppable ? stoppable.child : spawn("git", args, options);
+    const abort = () => stoppable?.stop();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     const out: Buffer[] = [];
     let err = "";
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       out.push(chunk);
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk) => {
       err += chunk;
     });
     child.on("error", (error) =>
       reject(new MessageError(message("git.unavailable", { detail: error.message }))),
     );
     child.on("close", (code) => {
-      if (code === 0) resolve(Buffer.concat(out));
+      signal?.removeEventListener("abort", abort);
+      if (signal?.aborted) {
+        reject(
+          new GitInterruptedError(
+            message("git.interrupted", {
+              command: label,
+              timeout: signal.reason?.name === "TimeoutError",
+            }),
+          ),
+        );
+      } else if (code === 0) resolve(Buffer.concat(out));
       else if (err.trim()) {
         reject(new MessageError(message("git.failed", { command: label, detail: err.trim() })));
       } else reject(new MessageError(message("git.exitCode", { command: label, code })));
@@ -586,6 +617,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     baseBranch: string | undefined,
     authEnv?: Record<string, string>,
     recorded?: string,
+    signal?: AbortSignal,
   ) {
     if (recorded !== undefined && !COMMIT_RE.test(recorded)) {
       throw new MessageError(message("git.invalidBaseCommit"));
@@ -597,24 +629,22 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     }
     const env = cloneEnv(authEnv);
     // ブランチの指定が無ければ、リポジトリの既定のブランチを clone する（PBI-25）
-    if (
-      baseBranch !== undefined &&
-      (!/^[\w./-]+$/.test(baseBranch) || baseBranch.startsWith("-"))
-    ) {
-      throw new MessageError(message("git.invalidBranch"));
-    }
+    if (baseBranch !== undefined) await this.validateBranch(baseBranch);
     const clone = (branch: string | undefined) =>
       git(
         "clone",
         ["clone", ...(branch !== undefined ? ["--branch", branch] : []), "--", url, dir],
         env,
+        undefined,
+        signal,
       );
     try {
       await clone(baseBranch);
     } catch (error) {
       // 用意し直すときは、ブランチが消えていても（引き継いだ PR のブランチがマージの後に消されたなど）、既定のブランチを
       // clone して記録済みの起点のコミットを取得する（ブランチの存続を前提にしない。PBI-157 レビュー指摘）
-      if (!recorded || baseBranch === undefined) throw error;
+      if (error instanceof GitInterruptedError || !recorded || baseBranch === undefined)
+        throw error;
       if (existsSync(dir)) await rm(dir, { recursive: true, force: true });
       await clone(undefined);
     }
@@ -629,9 +659,16 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         try {
           // git にオプションとして読まれる値（`--upload-pack=…` など）を渡さないよう、渡す直前の位置でも確かめる
           if (!COMMIT_RE.test(recorded)) throw new MessageError(message("git.invalidBaseCommit"));
-          await git("fetch", ["fetch", "--quiet", "origin", recorded], env, dir);
+          await git(
+            "fetch",
+            ["fetch", "--quiet", "origin", recorded],
+            env,
+            dir,
+            signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
+          );
           await checkout();
-        } catch {
+        } catch (error) {
+          if (error instanceof GitInterruptedError) throw error;
           throw new MessageError(message("git.baseCommitMissing", { commit: recorded }));
         }
       }
@@ -1339,10 +1376,45 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return run("cat-file", ["cat-file", "blob", entry.object]);
   }
 
-  async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
-    if (!/^[\w./-]+$/.test(branch) || branch.startsWith("-")) {
+  async remoteDefaultBranch(
+    gitDir: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
+    const result = await git(
+      "ls-remote",
+      ["--git-dir", gitDir, ...SAFE_CONFIG, "ls-remote", "--symref", "--", "origin", "HEAD"],
+      cloneEnv(authEnv),
+      undefined,
+      signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
+    );
+    const branch = /^ref: refs\/heads\/([^\n\t]+)\tHEAD$/m.exec(result)?.[1];
+    if (!branch) throw new MessageError(message("git.invalidBranch"));
+    return branch;
+  }
+
+  private async validateBranch(branch: string) {
+    if (branch.startsWith("-") || branch.includes("\0")) {
       throw new MessageError(message("git.invalidBranch"));
     }
+    try {
+      await git(
+        "check-ref-format",
+        ["check-ref-format", `refs/heads/${branch}`],
+        isolatedEnv("/dev/null"),
+      );
+    } catch {
+      throw new MessageError(message("git.invalidBranch"));
+    }
+  }
+
+  async fetchBranch(
+    gitDir: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
+    await this.validateBranch(branch);
     // 取得したコミットは FETCH_HEAD に残る（退避したメタデータのブランチや設定は変えない）
     await git(
       "fetch",
@@ -1358,6 +1430,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         `refs/heads/${branch}`,
       ],
       cloneEnv(authEnv),
+      undefined,
+      signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
     );
     const commit = (
       await git(

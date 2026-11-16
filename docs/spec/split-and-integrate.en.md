@@ -8,6 +8,8 @@ Related ADRs: [Dependent child tasks start stacked on the dependency's PR branch
 
 ## Splitting
 
+When splitting a parent with multiple specified repositories, the agent reads a copy of each repository and uses the per-repository design to decide the child tasks. See [Tasks and steps](tasks-and-steps.en.md#steps) for where the copies are placed and how preparation failures are handled.
+
 - The number of child tasks is from `MIN_SPLIT_CHILDREN` (2) to `MAX_SPLIT_CHILDREN` (10). From the second round, which adds fix child tasks, a single one can be created.
 - The agent's answer (heading `sacty-split`) is checked for the count, duplicate `key` values, missing dependencies, self-dependencies, and dependency cycles. If it cannot be read, the task is paused.
 - Assigning test viewpoints: in the first split, when the parent's approved design has test viewpoints, the split instruction includes them and makes the agent assign them to child tasks (`splitViewpointLines`; [ADR](../adr/20261115-1345-assign-test-viewpoints-to-child-tasks.md)).

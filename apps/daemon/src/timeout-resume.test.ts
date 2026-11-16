@@ -103,6 +103,29 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
       expect(timedOutRunBefore([...base, started("r2")], "r3")).toBeUndefined();
     });
 
+    it("準備失敗を挟んでも時間切れのセッションを継続する", () => {
+      const start = ev("AgentRunStarted", { runId: "r2", step: "design", agentId: "a" });
+      const failure = ev("AgentRunFailed", {
+        runId: "r2",
+        step: "design",
+        agentId: "a",
+        preparationFailed: true,
+      });
+      expect(timedOutRunBefore([timedOut("r1", "design"), start, failure], "r3")?.runId).toBe("r1");
+      const early = ev("AgentRunStarted", {
+        runId: "r4",
+        step: "design",
+        agentId: "a",
+        preparationFailed: true,
+      });
+      expect(
+        timedOutRunBefore(
+          [timedOut("r1", "design"), early, ev("AgentRunFailed", { runId: "r4" })],
+          "r5",
+        )?.runId,
+      ).toBe("r1");
+    });
+
     it("時間切れの後に別の実行（写した記録がある）が挟まれば無し。質問への答え（chat）は数えない", () => {
       expect(timedOutRunBefore([timedOut("r1"), archived("r9", "design")])).toBeUndefined();
       expect(timedOutRunBefore([timedOut("r1"), archived("r9", "chat")])?.runId).toBe("r1");
