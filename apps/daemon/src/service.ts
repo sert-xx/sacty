@@ -8962,6 +8962,7 @@ export class TaskService {
             step === "split"
           ) {
             const candidates = await this.taskRepositoryCandidates(task);
+            if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
             if ("missing" in candidates) {
               const text = message("repo.noLongerTarget", {
                 repo: candidates.missing,
@@ -9443,6 +9444,7 @@ export class TaskService {
     let splitCandidates: string[] | undefined;
     if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
       const candidates = await this.taskRepositoryCandidates(task);
+      if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
       if ("missing" in candidates) {
         this.append(task, [
           {

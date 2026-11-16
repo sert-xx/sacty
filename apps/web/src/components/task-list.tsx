@@ -159,11 +159,17 @@ export function LiveTaskList({
                             <span className="sr-only">{m.childOf(task.parentTitle)}</span>
                           )}
                           {/* 作業するリポジトリ（repo だけ。PBI-141） */}
+                          {task.repos?.length ? (
+                            <span className="mt-0.5 block font-mono text-xs text-muted-foreground">
+                              {m.specifiedRepositories}: {task.repos.join(", ")}
+                            </span>
+                          ) : null}
                           {task.repoName && (
                             <span
                               className="mt-0.5 block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
                               data-testid={`task-repo-${task.id}`}
                             >
+                              {task.repos?.length ? `${m.workingRepository}: ` : ""}
                               {task.repoName}
                             </span>
                           )}
@@ -181,7 +187,7 @@ export function LiveTaskList({
                             <span className="block font-mono text-xs">#{task.source.number}</span>
                           )}
                           {/* リポジトリを指定せずに作ったタスク（PBI-73） */}
-                          {task.repoless && (
+                          {task.repoless && !task.repos?.length && (
                             <span className="mt-0.5 block w-fit rounded border border-border px-1.5 text-xs">
                               {m.noRepository}
                             </span>

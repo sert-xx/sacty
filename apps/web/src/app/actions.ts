@@ -83,7 +83,11 @@ export async function createTaskAction(
   _prev: CreateTaskState,
   formData: FormData,
 ): Promise<CreateTaskState> {
-  const repo = String(formData.get("repo") ?? "").trim();
+  const repos = formData
+    .getAll("repo")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  const repo = repos[0] ?? "";
   const plan = String(formData.get("plan") ?? "").trim();
   const template = TaskTemplate.safeParse(formData.get("template"));
   // テンプレートで作る（PBI-90）。題と説明は sacty が決めるので、リポジトリだけを渡す
@@ -96,7 +100,7 @@ export async function createTaskAction(
     title: String(formData.get("title") ?? ""),
     body: String(formData.get("body") ?? ""),
     // 対象リポジトリ（PBI-21）。プロジェクトの設定にあるかは、デーモンが検査する
-    ...(repo ? { repo } : {}),
+    ...(repos.length > 1 ? { repos } : repo ? { repo } : {}),
     // 工程の組み合わせ（進め方）。空なら自動（オーケストレーターが選ぶ）。タスクの形で選べるかは、デーモンが検査する
     ...(plan ? { plan } : {}),
     ...(plan && image ? { image } : {}),
@@ -138,7 +142,11 @@ export async function createTaskAction(
   let result: Awaited<ReturnType<typeof createTask>>;
   try {
     // 空欄なら、リポジトリを指定しない（対象がリポジトリ1つだけでも。PBI-73）
-    result = await createTask({ ...parsed.data, repo: parsed.data.repo ?? null, projectId });
+    result = await createTask({
+      ...parsed.data,
+      ...(parsed.data.repos ? {} : { repo: parsed.data.repo ?? null }),
+      projectId,
+    });
   } catch {
     return { message: a.createFailed, values: shown };
   }

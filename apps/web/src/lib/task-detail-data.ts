@@ -126,7 +126,9 @@ export async function loadTaskDetail(
     // 再実行のダイアログでも、選べるイメージを出す
     task.steps.length > 0 || canRerun(task) ? getStatus().catch(() => undefined) : undefined,
     repositories && needsTicketRepositories(task)
-      ? listProjectRepositories(task.projectId).catch(() => undefined)
+      ? task.repos?.length
+        ? Promise.resolve({ repositories: task.repos })
+        : listProjectRepositories(task.projectId).catch(() => undefined)
       : undefined,
     completed ? getTaskAudit(task.id).catch(() => null) : undefined,
     task.rerun ? getTask(task.rerun.taskId).catch(() => undefined) : undefined,

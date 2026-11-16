@@ -33518,6 +33518,34 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     activity.close();
   });
 
+  it("複数指定の候補取得中に一時停止すると照合失敗より手動停止を優先する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepos() });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    let release!: (value: { repositories: string[]; errors: [] }) => void;
+    let started!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    vi.spyOn(service, "projectRepositories").mockImplementationOnce(async () => {
+      started();
+      return await new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    const running = service.runNext(id);
+    await waiting;
+    const stopping = service.pause(id);
+    release({ repositories: [], errors: [] });
+    await running;
+    await stopping;
+    const pauses = activity.forTask(id).filter((event) => event.type === "TaskPaused");
+    expect(pauses).toHaveLength(1);
+    expect(pauses[0]?.payload).toMatchObject({ reason: "manual" });
+    expect(activity.forTask(id).some((event) => event.type === "OrchestratorFailed")).toBe(false);
+    activity.close();
+  });
+
   it("複数指定の照合はプロジェクト一覧を一度読み、読み取り失敗をそのまま伝える", () => {
     const activity = new SqliteActivityStore(dbPath);
     const projects = twoRepos();
