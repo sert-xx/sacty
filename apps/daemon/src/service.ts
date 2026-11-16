@@ -773,7 +773,9 @@ export type ServiceDeps = {
    * 送るときの制限に当たりにくくする）。
    */
   remarkReplyIntervalMs?: number;
-  /** 指摘への返信が GitHub のレート制限に当たったとき、残りをやり直すまで待つ時間（ミリ秒）。既定は 1 分。 */
+  /**
+   * 指摘への返信の結果を記録できなかった・進められなかったとき、次に試すまで待つ時間（ミリ秒）。既定は 1 分。
+   */
   remarkReplyRetryMs?: number;
   /**
    * Sacty のレビューのタスクが、GitHub の一時的な失敗（5xx・レート制限・接続の失敗）で止まりそうなとき、自動でやり直すまでの
@@ -3494,46 +3496,29 @@ export class TaskService {
   }
 
   /**
-   * 指摘への返信を、やり直せる時刻（デーモンを起動し直すと、すぐにやり直す）。キーは、GitHub のレート制限に当たった
-   * アカウント（同じアカウントで返信する、ほかのタスクも待つ）か、結果を記録できなかった・進まなかったタスク。
+   * 指摘への返信の結果を記録できなかった・進められなかったタスクの、次に試せる時刻（PBI-352）。記録できない状態が続いても、
+   * そのタスクと、返信を待つレビューの子タスクが、実行の枠を取り続けて、後ろのタスクを止めないように、間を置く。
+   * GitHub のレート制限の待ちではない（制限に当たった返信は、失敗として記録して、やり直さない）。デーモンを起動し直すと消える。
    */
   private readonly remarkReplyRetryAt = new Map<string, number>();
 
-  /**
-   * 指摘への返信を、これより前にはやり直さない時刻を、延ばす（縮めない）。すでにある期限と、今からの待ちの、遅いほうを残す
-   * （同じアカウントの並んだ問い合わせが、長い待ちの後に短い待ちを受けても、期限を前倒ししない）。
-   */
-  private holdRemarkReplies(key: string, waitMs: number): void {
-    this.remarkReplyRetryAt.set(
-      key,
-      Math.max(this.remarkReplyRetryAt.get(key) ?? 0, this.now() + waitMs),
-    );
+  /** 指摘への返信を、間を置いてから試す（記録できなかった・進められなかったとき）。 */
+  private holdRemarkReplies(taskId: string): void {
+    this.remarkReplyRetryAt.set(taskId, this.now() + (this.deps.remarkReplyRetryMs ?? 60_000));
   }
 
-  /** 返信に使うアカウントの、待ちのキー（ホストとアカウント）。 */
-  private remarkReplyAccountKey(task: Task, repo: string): string {
-    const account = this.githubAccountOf(task, repo).account ?? "";
-    return `account:${httpsHost(`${repo}/`) ?? ""}:${account.toLowerCase()}`;
+  /** 指摘への返信を、今は待っているか（結果を記録できなかった・進められなかった後、間を置いている）。 */
+  private remarkRepliesHeld(taskId: string): boolean {
+    return (this.remarkReplyRetryAt.get(taskId) ?? 0) > this.now();
   }
 
-  /** 指摘への返信を、今は待っているか（レート制限に当たった・結果を記録できなかった後、やり直すまでの間）。 */
-  private remarkRepliesHeld(task: Task): boolean {
-    const now = this.now();
-    if ((this.remarkReplyRetryAt.get(`task:${task.id}`) ?? 0) > now) return true;
-    const due = awaitingRemarkReplies(task);
-    return (
-      due !== undefined &&
-      (this.remarkReplyRetryAt.get(this.remarkReplyAccountKey(task, due.repo)) ?? 0) > now
-    );
-  }
-
-  /** 指摘への返信を、今、投稿できる提出（返信を待っていて、やり直すまでの待ちの間でない）。 */
+  /** 指摘への返信を、今、投稿できる提出（返信を待っていて、間を置いている最中でない）。 */
   private remarkRepliesReady(task: Task): ReturnType<typeof awaitingRemarkReplies> {
-    return this.remarkRepliesHeld(task) ? undefined : this.remarkRepliesDue(task);
+    return this.remarkRepliesHeld(task.id) ? undefined : this.remarkRepliesDue(task);
   }
 
   /**
-   * PR のレビューの子タスクが、PR を作ったタスクの指摘への返信を待っている（返信が、やり直すまでの待ちの間）。この間は、
+   * PR のレビューの子タスクが、PR を作ったタスクの指摘への返信を待っている（返信が、間を置いている最中）。この間は、
    * 子タスクを実行待ちに出さない（始めても進めないレビューが、実行の枠を取り続けて、後ろのタスクを止めないように）。
    */
   private reviewWaitsForReplies(task: Task): boolean {
@@ -3542,17 +3527,10 @@ export class TaskService {
     return (
       parent !== undefined &&
       this.remarkRepliesDue(parent) !== undefined &&
-      this.remarkRepliesHeld(parent)
+      this.remarkRepliesHeld(parent.id)
     );
   }
 
-  /**
-   * PR のレビュー・コメントから取り込んだ指摘への対応を、プロジェクトの gh のアカウントで、PR に返信する（PBI-352）。
-   * 行へのコメントから取り込んだ指摘には、そのコメントへの返信として投稿する。返信できなければ（元のコメントが消えた・
-   * 返信への返信は受け付けられない、など。GitHub が断ったとき）、PR のコメントとして投稿する。レビューの本文・通常のコメントから取り込んだ指摘には、
-   * 元へのリンクを付けた PR のコメントとして投稿する。前に投稿の後・記録の前に止まっていたら、目印で見つけた投稿を使う
-   * （二度投稿しない）。投稿できなくても、理由を記録してタスクは進める（やり直さない）。
-   */
   /**
    * PR を作ったタスクの、指摘への返信が、すべて処理された（投稿した・失敗を記録した・返信するものが無い）か。まだなら、
    * ここで投稿する。1回に返信するのは上限の件数までなので、残りが無くなるまで繰り返す。記録できなかった・止められて
@@ -3561,18 +3539,15 @@ export class TaskService {
   private async remarkRepliesSettled(parentId: string, childId: string): Promise<boolean> {
     // 進められないときは、間を置いてやり直す（その間、子タスクは実行待ちに出ない。reviewWaitsForReplies）
     const wait = () => {
-      const parent = this.tasks.get(parentId);
-      if (parent && !this.remarkRepliesHeld(parent)) {
-        this.holdRemarkReplies(`task:${parentId}`, this.deps.remarkReplyRetryMs ?? 60_000);
-      }
+      if (!this.remarkRepliesHeld(parentId)) this.holdRemarkReplies(parentId);
       return false;
     };
     for (;;) {
       const parent = this.tasks.get(parentId);
       const due = parent && this.remarkRepliesDue(parent);
       if (!parent || !due) return true;
-      // やり直すまでの待ちの間は、投稿を試みずに待つ
-      if (this.remarkRepliesHeld(parent)) return false;
+      // 間を置いている最中は、投稿を試みずに待つ
+      if (this.remarkRepliesHeld(parentId)) return false;
       try {
         await this.postRemarkReplies(parentId);
       } catch (error) {
@@ -3584,20 +3559,28 @@ export class TaskService {
       const latest = this.tasks.get(parentId);
       const left = latest && this.remarkRepliesDue(latest);
       if (!left) return true;
-      // 進まなかった（一時停止・中止を求められている、レート制限に当たった、など）なら、待つ
+      // 進まなかった（一時停止・中止を求められている、など）なら、待つ
       if (left.submission === due.submission && left.replies.length >= due.replies.length) {
         return wait();
       }
     }
   }
 
+  /**
+   * PR のレビュー・コメントから取り込んだ指摘への対応を、プロジェクトの gh のアカウントで、PR に返信する（PBI-352）。
+   * 行へのコメントから取り込んだ指摘には、そのコメントへの返信として投稿する。GitHub が、宛先を理由に返信を断ったとき
+   * （元のコメントが消えた・返信への返信は受け付けられない、など）は、PR のコメントとして投稿する。レビューの本文・通常の
+   * コメントから取り込んだ指摘には、元へのリンクを付けた PR のコメントとして投稿する。前に投稿の後・記録の前に止まって
+   * いたら、目印で見つけた投稿を使う（二度投稿しない）。投稿できなくても、理由を記録してタスクは進める（やり直さない）。
+   * GitHub のレート制限に当たったら、そこで投稿を止めて、残りの指摘も、失敗として記録する。
+   */
   private postRemarkReplies(taskId: string): Promise<void> {
     // 同じタスクの返信は順に処理する（先の処理が検索や投稿の最中のまま、もう1本始まっても、二重に投稿しない）
     return this.serialized(`remark-replies:${taskId}`, () =>
       this.postRemarkRepliesNow(taskId).catch((error: unknown) => {
         // 結果を記録できなかった（など）。間を置いてやり直す（その間、このタスクも、返信を待つレビューの子タスクも、
         // 実行待ちに出さない。失敗が続いても、実行の枠を取り続けて、後ろのタスクを止めないように）
-        this.holdRemarkReplies(`task:${taskId}`, this.deps.remarkReplyRetryMs ?? 60_000);
+        this.holdRemarkReplies(taskId);
         throw error;
       }),
     );
@@ -3609,22 +3592,19 @@ export class TaskService {
   /**
    * 指摘への返信を、1件投稿する（行への返信も、PR のコメントも、ここを通す）。ホストとアカウントごとに、1件ずつ順に投稿し、
    * 投稿と投稿の間をあける（GitHub の、書き込みを続けて送るときの制限に当たりにくくする。同じアカウントで返信する、ほかの
-   * タスクの投稿とも合わせる）。そのアカウントが、レート制限の後の待ちの間なら、投稿せずに "held" を返す。順番と間隔を
-   * 待っている間に、投稿してよい状態でなくなったら（still が偽）、投稿せずに "skipped" を返す。
+   * タスクの投稿とも合わせる）。順番と間隔を待っている間に、投稿してよい状態でなくなったら（still が偽）、投稿せずに
+   * "skipped" を返す。
    */
   private remarkReplyPost<T>(
     key: string,
     still: () => boolean,
     work: () => Promise<T>,
-  ): Promise<{ value: T } | "held" | "skipped"> {
+  ): Promise<{ value: T } | "skipped"> {
     return this.serialized(`remark-reply-post:${key}`, async () => {
-      const held = () => (this.remarkReplyRetryAt.get(key) ?? 0) > this.now();
-      if (held()) return "held" as const;
       const last = this.remarkReplyLastPostAt.get(key);
       const wait =
         last === undefined ? 0 : last + (this.deps.remarkReplyIntervalMs ?? 1_000) - Date.now();
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-      if (held()) return "held" as const;
       if (!still()) return "skipped" as const;
       this.remarkReplyLastPostAt.set(key, Date.now());
       return { value: await work() };
@@ -3669,23 +3649,13 @@ export class TaskService {
         settled = true;
       });
     };
-    // GitHub のレート制限に当たった：制限の間は投稿を続けない。ここまでの結果を記録し、残りの指摘は、失敗にせずに残して、
-    // 間を置いてやり直す（行への返信が制限で断られても、PR のコメントに回さない）
-    const holdForRateLimit = (error: unknown) => {
-      // 待つ時間は、GitHub が示した時間と、既定の待ちの長いほう。同じアカウントで返信する、ほかのタスクも待つ。
-      // 待ちは、投稿に使ったホストとアカウントに記録する（通信の間に、プロジェクトのアカウントが変わっていても）
-      this.holdRemarkReplies(
-        postKey,
-        Math.max(this.deps.remarkReplyRetryMs ?? 60_000, githubRetryAfterMs(error) ?? 0),
-      );
-      console.warn(
-        `[daemon] タスク ${taskId} の指摘への返信が、GitHub のレート制限に当たりました。残りは、間を置いてやり直します：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-      );
-      record();
-    };
-    // 投稿は、ホストとアカウントごとの共通の入口を通す（間隔と、レート制限の後の待ちを、ほかのタスクとも合わせる）。
-    // キーは、この処理の始めのアカウントで決めて、終わりまで使う
-    const postKey = this.remarkReplyAccountKey(task, due.repo);
+    // GitHub のレート制限に当たったか。当たったら、そこで投稿を止めて、残りの指摘は、投稿を試みずに失敗を残す（制限の間は
+    // 投稿を続けない。やり直さない。行への返信が制限で断られても、PR のコメントに回さない）
+    let limitHit = false;
+    // 投稿は、ホストとアカウントごとの共通の入口を通す（投稿の間隔を、同じアカウントのほかのタスクとも合わせる）
+    const account = this.githubAccountOf(task, due.repo).account;
+    if (!account) return;
+    const postKey = `${httpsHost(`${due.repo}/`) ?? ""}:${account.toLowerCase()}`;
     const record = () => {
       const latest = this.tasks.get(taskId);
       if (!latest || !valid() || results.length === 0) return;
@@ -3701,8 +3671,6 @@ export class TaskService {
     };
     // 返信に使うアカウントを、投稿の前に記録する（投稿の後・結果の記録の前に止まり、その間にプロジェクトのアカウントが
     // 変わっても、前のアカウントの投稿を、投稿済みの返信として見つけ、PR の指摘として取り込まないため）
-    const account = this.githubAccountOf(task, due.repo).account;
-    if (!account) return;
     const known = (list: readonly string[] | undefined) =>
       (list ?? []).some((a) => a.toLowerCase() === account.toLowerCase());
     if (!known(task.remarkReplyAccounts)) {
@@ -3742,9 +3710,7 @@ export class TaskService {
         await limited((signal) => this.deps.pulls.listIssueComments({ ...own, signal })),
       );
     } catch (error) {
-      // レート制限なら、失敗にせずに、間を置いてやり直す
-      if (rateLimited(error)) return holdForRateLimit(error);
-      // 投稿済みかを確かめられないので、重ねて投稿しない。失敗として残す
+      // 投稿済みかを確かめられないので（レート制限で読めないときも）、重ねて投稿しない。失敗として残す
       const failed = redactText(errorText(error), usedSecrets);
       results.push(...due.replies.map((r) => ({ remarkId: r.id, key: r.key, failed })));
       return record();
@@ -3768,10 +3734,10 @@ export class TaskService {
       if (!valid()) return;
       if (!stillDue(remark)) continue;
       const base = { remarkId: remark.id, key: remark.key };
-      // 期限を超えた問い合わせがあったら、残りの指摘は投稿を試みずに、失敗を残す（答えの返らない GitHub を、指摘の
-      // 数だけ期限まで待たない。実行の枠と、返信を待つ再レビューを、長く止めないため）
+      // 期限を超えた問い合わせがあった・レート制限に当たったら、残りの指摘は投稿を試みずに、失敗を残す（答えの返らない
+      // GitHub を、指摘の数だけ期限まで待たない。制限の間は、投稿を続けない）
       // 読んである一覧に投稿済みの返信があれば、それは返信済みとして残す（前に、投稿の後・記録の前に止まった分）
-      if (timedOut) {
+      if (timedOut || limitHit) {
         results.push(
           ...due.replies
             .slice(index)
@@ -3785,7 +3751,13 @@ export class TaskService {
                 key: r.key,
                 ...(existing
                   ? { ...(inline ? { inline: true as const } : {}), ...posted(existing.url) }
-                  : { failed: message("github.replySkippedAfterTimeout") }),
+                  : {
+                      failed: message(
+                        limitHit
+                          ? "github.replySkippedAfterRateLimit"
+                          : "github.replySkippedAfterTimeout",
+                      ),
+                    }),
               };
             }),
         );
@@ -3828,8 +3800,6 @@ export class TaskService {
                 }),
               ),
             );
-            // ほかのタスクがレート制限に当たって、このアカウントが待ちの間：ここまでの結果を記録して、残りは後でやり直す
-            if (sent === "held") return record();
             if (sent === "skipped") {
               if (!valid()) return;
               continue;
@@ -3837,8 +3807,13 @@ export class TaskService {
             results.push({ ...base, inline: true, ...posted(sent.value.url) });
             continue;
           } catch (error) {
-            if (rateLimited(error)) return holdForRateLimit(error);
             const reason = redactText(errorText(error), usedSecrets);
+            // レート制限で断られた：投稿されていない。PR のコメントに回さずに、失敗を残して、残りの投稿を止める
+            if (rateLimited(error)) {
+              limitHit = true;
+              results.push({ ...base, failed: reason });
+              continue;
+            }
             if (!replyRejected(error)) {
               // GitHub が断ったのではない（答えを受け取れなかった・期限を超えた）。返信は投稿されていることがあるので、探し直す。
               // 見つかれば使う。見つからない・探せないときは、投稿されたかが分からないので、PR のコメントを重ねずに失敗を残す
@@ -3854,10 +3829,8 @@ export class TaskService {
                 searchFailed = failure;
                 return undefined;
               });
-              // 探し直しがレート制限に当たったら、失敗にせずに、制限が解けてから照合し直す
-              if (searchFailed !== undefined && rateLimited(searchFailed)) {
-                return holdForRateLimit(searchFailed);
-              }
+              // 探し直しがレート制限に当たったら、残りの投稿を止める（この指摘は、投稿されたかが分からないので、失敗を残す）
+              if (searchFailed !== undefined && rateLimited(searchFailed)) limitHit = true;
               const hit = landed && mine(landed)[0];
               results.push(
                 hit ? { ...base, inline: true, ...posted(hit.url) } : { ...base, failed: reason },
@@ -3882,14 +3855,14 @@ export class TaskService {
             }),
           ),
         );
-        if (sent === "held") return record();
         if (sent === "skipped") {
           if (!valid()) return;
           continue;
         }
         results.push({ ...base, ...posted(sent.value.url) });
       } catch (error) {
-        if (rateLimited(error)) return holdForRateLimit(error);
+        // レート制限で断られたら、失敗を残して、残りの投稿を止める
+        if (rateLimited(error)) limitHit = true;
         results.push({ ...base, failed: redactText(errorText(error), usedSecrets) });
       }
     }
@@ -16937,7 +16910,10 @@ function replyRejected(error: unknown): boolean {
   return status === 404 || status === 410 || status === 422;
 }
 
-/** GitHub のレート制限で断られたか（429、または 403 でレート制限と説明するもの）。間を置けば、投稿できる。 */
+/**
+ * GitHub のレート制限で断られたか（429、または 403 で、本文がレート制限と説明するか、ヘッダーが制限を示すもの）。
+ * 宛先の拒否ではないので、PR のコメントに回さず、制限の間は投稿を続けない。
+ */
 function rateLimited(error: unknown): boolean {
   const status = githubStatus(error);
   if (status === 429) return true;

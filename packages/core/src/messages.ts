@@ -563,6 +563,7 @@ const PARAMS = {
   "github.eventsIncomplete": null,
   "github.commentsIncomplete": null,
   "github.replySkippedAfterTimeout": null,
+  "github.replySkippedAfterRateLimit": null,
   "intake.searchTimedOut": null,
   "intake.tooManySameTime": null,
   "intake.partial": null,
@@ -1503,6 +1504,8 @@ const ja: MessageDictionary = {
     "ページ数の上限に達したため、PR のできごとを最後まで読めませんでした。",
   "github.replySkippedAfterTimeout":
     "先の問い合わせに GitHub が時間内に答えなかったため、この指摘への返信は試みませんでした。",
+  "github.replySkippedAfterRateLimit":
+    "先の投稿が GitHub のレート制限に当たったため、この指摘への返信は試みませんでした。",
   "github.commentsIncomplete":
     "PR のコメントを最後まで読めませんでした（ページ数の上限に達したか、GitHub の答えを読めませんでした）。",
   "intake.searchTimedOut":
@@ -2317,6 +2320,8 @@ const en: MessageDictionary = {
   "github.eventsIncomplete": "Reached the page limit before all PR events could be read.",
   "github.replySkippedAfterTimeout":
     "An earlier request got no answer from GitHub in time, so the reply to this remark was not attempted.",
+  "github.replySkippedAfterRateLimit":
+    "An earlier post hit a GitHub rate limit, so the reply to this remark was not attempted.",
   "github.commentsIncomplete":
     "Could not read all PR comments (the page limit was reached, or the answer from GitHub could not be read).",
   "intake.searchTimedOut":

@@ -633,7 +633,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   A reply posted with an account other than the author's (when the project's GitHub account was changed after the PR was created, or in a task that fixes a PR a person created) is read as one of the comments on the PR, not as the author's reply.
 - The result of replying (the reply's URL, or why it could not reply) appears in the Activity.
   Even if replying fails, the task does not stop. The reply is not retried, so write to the PR yourself if needed.
-  Only when it hits GitHub's posting limit does sacty wait a little and try the remaining replies again.
+  When it hits GitHub's posting limit, sacty stops posting there. It does not post the replies to the remaining comments either, and records in the Activity which comments could not get a reply.
   The Activity row shows how many comments were replied to and how many could not be. Open the details of the row to read the result per comment.
 
 It does not reply to the following.
