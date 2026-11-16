@@ -33570,6 +33570,13 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     const { service, executor, repos } = makeService(activity, [out("# 要求要件"), out("# 設計")], {
       projects,
     });
+    const originalPrepare = repos.prepare.bind(repos);
+    vi.spyOn(repos, "prepare").mockImplementation(async (...args) => {
+      const result = await originalPrepare(...args);
+      mkdirSync(join(args[0], ".git"), { recursive: true });
+      writeFileSync(join(args[0], ".git", "history"), "history");
+      return result;
+    });
     const originalSnapshot = repos.snapshot.bind(repos);
     vi.spyOn(repos, "snapshot").mockImplementation(async (gitDir, commit, destination) => {
       await originalSnapshot(gitDir, commit, destination);
@@ -33608,6 +33615,10 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     repos.branchHead = "d".repeat(40);
     repos.defaultBranch = "release+2026";
     await service.runNext(id);
+    for (const prepared of repos.prepared) {
+      expect(existsSync(join(prepared.dir, ".git"))).toBe(false);
+      expect(existsSync(prepared.gitDir)).toBe(true);
+    }
     expect(repos.prepared.map((p) => p.url)).toEqual([API, WEB]);
     expect(repos.fetchedBranches).toHaveLength(4);
     expect(repos.fetchedBranches.map((f) => f.branch)).toEqual([
@@ -33747,7 +33758,7 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     },
   );
 
-  it("停止未確認の実行は他のリポジトリの写しを保持する", async () => {
+  it.each([false, true])("停止未確認の実行は選択済み=%s でも写しを保持する", async (selected) => {
     const activity = new SqliteActivityStore(dbPath);
     const id = "unconfirmed-multi-copy";
     activity.append({
@@ -33768,10 +33779,17 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
             },
           },
         },
-        {
-          actor: "person",
-          event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
-        },
+        ...(selected
+          ? [
+              {
+                actor: "person" as const,
+                event: {
+                  type: "RepositoryChosen" as const,
+                  payload: { repo: API, reason: "選択" },
+                },
+              },
+            ]
+          : []),
         {
           actor: "orchestrator",
           event: {
@@ -33785,8 +33803,10 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     executor.stops = false;
     let path = "";
     executor.respond = (invocation) => {
-      path =
-        invocation.mounts?.find((mount) => mount.containerPath === "/sacty-repos")?.hostPath ?? "";
+      path = selected
+        ? (invocation.mounts?.find((mount) => mount.containerPath === "/sacty-repos")?.hostPath ??
+          "")
+        : (executor.dirs.at(-1) ?? "");
       return undefined;
     };
     await service.runNext(id);
@@ -34631,6 +34651,31 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     service.resume(id, {});
     await service.runNext(id);
     expect(executor.calls.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it("候補照合中の一時停止を手動停止として記録する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], { projects: twoRepos() });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    vi.spyOn(service, "projectRepositories").mockImplementation(async () => {
+      started.resolve();
+      await gate.promise;
+      throw new Error("listing failed");
+    });
+    const running = service.runNext(id);
+    await started.promise;
+    const pausing = service.pause(id);
+    gate.resolve();
+    await Promise.all([running, pausing]);
+    expect(executor.calls).toHaveLength(0);
+    const paused = activity
+      .forTask(id)
+      .filter((event) => event.type === "TaskPaused")
+      .at(-1);
+    expect(paused?.type === "TaskPaused" && paused.payload.reason).toBe("manual");
     activity.close();
   });
 

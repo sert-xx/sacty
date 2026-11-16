@@ -287,7 +287,6 @@ const PARAMS = {
   "repo.notSpecified": z.object({ repo: z.string() }),
   "repo.noLongerTarget": z.object({ repo: z.string(), detail: TextParam.optional() }),
   "repo.prepareFailed": z.object({ repo: z.string(), detail: TextParam }),
-  "repo.snapshotFailed": z.object({ repo: z.string(), detail: TextParam }),
   "repo.chosenByPerson": null,
   "repo.notChoosable": null,
   "repo.stepNeedsRepository": z.object({ step: z.string() }),
@@ -1109,8 +1108,6 @@ const ja: MessageDictionary = {
     `指定したリポジトリ（${repo}）を現在のプロジェクトの対象で確認できません。${detail ? ` 理由：${text(detail)}` : ""}`,
   "repo.prepareFailed": ({ repo, detail }, text) =>
     `リポジトリ（${repo}）を用意できませんでした：${text(detail)}`,
-  "repo.snapshotFailed": ({ repo, detail }, text) =>
-    `リポジトリ（${repo}）の写しを用意できませんでした：${text(detail)}`,
   "repo.chosenByPerson": "人がリポジトリを選びました。",
   "repo.notChoosable":
     "リポジトリを選べるのは、リポジトリを指定せずに作り、まだ工程が決まっていない、止まっているタスクだけです。",
@@ -1931,8 +1928,6 @@ const en: MessageDictionary = {
     `The specified repository (${repo}) cannot be verified among the current project targets.${detail ? ` Reason: ${text(detail)}` : ""}`,
   "repo.prepareFailed": ({ repo, detail }, text) =>
     `Could not prepare the repository (${repo}): ${text(detail)}`,
-  "repo.snapshotFailed": ({ repo, detail }, text) =>
-    `Could not prepare a copy of the repository (${repo}): ${text(detail)}`,
   "repo.chosenByPerson": "A person chose the repository.",
   "repo.notChoosable":
     "A repository can be chosen only for a paused task created without a repository whose steps are not decided yet.",

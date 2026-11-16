@@ -9023,6 +9023,8 @@ export class TaskService {
                 repo: candidates.missing,
                 detail: candidates.detail,
               });
+              const manual = await this.manualPauseInfo(taskId);
+              const pauseReason = this.stopReason(taskId, "error");
               if (!gathering && task.steps.length > 0 && step) {
                 const config = this.deps.config();
                 if (!config.ok) return;
@@ -9060,7 +9062,10 @@ export class TaskService {
                       },
                     },
                   },
-                  { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+                  {
+                    actor: "sacty",
+                    event: { type: "TaskPaused", payload: { reason: pauseReason, ...manual } },
+                  },
                 ]);
               } else {
                 this.append(task, [
@@ -9081,7 +9086,7 @@ export class TaskService {
                     actor: "sacty",
                     event: {
                       type: "TaskPaused",
-                      payload: { reason: "error", message: text },
+                      payload: { reason: pauseReason, message: text, ...manual },
                     },
                   },
                 ]);
@@ -9458,6 +9463,7 @@ export class TaskService {
           repo: initial.repos[0] ?? "",
           detail: errorText(error),
         });
+        const manual = await this.manualPauseInfo(initial.id);
         this.append(initial, [
           {
             actor: "orchestrator",
@@ -9474,7 +9480,10 @@ export class TaskService {
           },
           {
             actor: "sacty",
-            event: { type: "TaskPaused", payload: { reason: "error", message: text } },
+            event: {
+              type: "TaskPaused",
+              payload: { reason: this.stopReason(initial.id, "error"), message: text, ...manual },
+            },
           },
         ]);
         return;
@@ -9881,6 +9890,7 @@ export class TaskService {
       if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
         const candidates = await this.taskRepositoryCandidates(task);
         if ("missing" in candidates) {
+          const manual = await this.manualPauseInfo(task.id);
           this.append(task, [
             {
               actor: "sacty",
@@ -9899,7 +9909,13 @@ export class TaskService {
                 },
               },
             },
-            { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+            {
+              actor: "sacty",
+              event: {
+                type: "TaskPaused",
+                payload: { reason: this.stopReason(task.id, "error"), ...manual },
+              },
+            },
           ]);
           context?.dispose();
           return;
@@ -10069,6 +10085,7 @@ export class TaskService {
               await this.prepareRepositoryCopy(clone, gitDir, repo, undefined, auth);
               writeFileSync(complete, "");
             }
+            await rm(join(clone, ".git"), { recursive: true, force: true });
             const signal = this.inflight.get(task.id)?.abort.signal;
             const branch = await this.deps.repos.remoteDefaultBranch(gitDir, auth, signal);
             const commit = await this.deps.repos.fetchBranch(gitDir, branch, auth, signal);
@@ -10230,11 +10247,10 @@ export class TaskService {
       // サービスは、作業領域（ビルドの context）を消す前に止めて消す
       await this.stopServices(task, step, runId);
       context?.dispose();
-      if (snapshotDir) await rm(snapshotDir, { recursive: true, force: true });
-      if (reviewDiffDir) await rm(reviewDiffDir, { recursive: true, force: true });
-      if (inputDir) await rm(inputDir, { recursive: true, force: true });
-      if (otherReposDir && (await this.confirmStopped([runId]))) {
-        await rm(otherReposDir, { recursive: true, force: true });
+      if (await this.confirmStopped([runId])) {
+        for (const dir of [snapshotDir, reviewDiffDir, inputDir, otherReposDir]) {
+          if (dir) await rm(dir, { recursive: true, force: true });
+        }
       }
     }
     const { outcome, costUsd, estimated } = executed;
