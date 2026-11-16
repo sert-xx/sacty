@@ -5,6 +5,7 @@ import {
   apiError,
   GitHubIssueSearch,
   GitHubPullRequests,
+  githubRetryAfterMs,
   isTransientGitHubFailure,
 } from "./github.js";
 
@@ -782,6 +783,211 @@ describe("フィードバックの次のページ（PBI-14b レビュー指摘�
   });
 });
 
+describe("PR の行へのコメントへの返信（PBI-352）", () => {
+  const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
+
+  it("レート制限で断られたときは、GitHub が示した、次に試せるまでの時間を、エラーに持たせる（retry-after・x-ratelimit-reset）", async () => {
+    const limit = { message: "You have exceeded a secondary rate limit." };
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    const { impl } = fakeFetch([
+      { status: 403, json: limit, headers: { "retry-after": "120" } },
+      {
+        status: 403,
+        json: limit,
+        headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+      },
+      { status: 404, json: { message: "Not Found" } },
+      { status: 429, json: limit, headers: { "retry-after": "30" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const input = { ...target, commentId: 501, body: "x" };
+    const after = await client.replyToReviewComment(input).catch((e: unknown) => e);
+    expect(githubRetryAfterMs(after)).toBe(120_000);
+    const untilReset = githubRetryAfterMs(
+      await client.commentIssue({ ...target, body: "x" }).catch((e: unknown) => e),
+    );
+    expect(untilReset).toBeGreaterThan(590_000);
+    expect(untilReset).toBeLessThanOrEqual(600_000);
+    // 本文を読めなくても、ヘッダーが制限を示していれば、持たせる
+    const unreadable = new GitHubPullRequests(
+      fakeFetch([
+        {
+          status: 403,
+          json: {},
+          headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+        },
+      ]).impl,
+    );
+    expect(
+      githubRetryAfterMs(
+        await unreadable
+          .listIssueComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toBeGreaterThan(590_000);
+    // 本文が null でも、状態とヘッダーからエラーを作る（一覧・返信・PR のコメント）
+    const nullBody = () => ({
+      status: 403,
+      json: null,
+      headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+    });
+    const nulls = new GitHubPullRequests(fakeFetch([nullBody(), nullBody(), nullBody()]).impl);
+    for (const failed of [
+      await nulls
+        .listReviewComments({ ...target, prefix: "x", complete: true })
+        .catch((e: unknown) => e),
+      await nulls.replyToReviewComment(input).catch((e: unknown) => e),
+      await nulls.commentIssue({ ...target, body: "x" }).catch((e: unknown) => e),
+    ]) {
+      expect(errorText(failed)).toMatchObject({ code: "github.failed", params: { status: 403 } });
+      expect(githubRetryAfterMs(failed)).toBeGreaterThan(590_000);
+    }
+    // 示されていなければ、無い
+    expect(
+      githubRetryAfterMs(await client.replyToReviewComment(input).catch((e: unknown) => e)),
+    ).toBeUndefined();
+    // 一覧の読み取りでも持たせる
+    expect(
+      githubRetryAfterMs(
+        await client.listReviewComments({ ...target, prefix: "x" }).catch((e: unknown) => e),
+      ),
+    ).toBe(30_000);
+  });
+
+  it("行へのコメントに返信して URL を返し、失敗（消えたコメント・返信への返信）は理由つきのエラーにする", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 201, json: { html_url: "https://github.com/acme/app/pull/7#discussion_r99" } },
+      { status: 404, json: { message: "Not Found" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const input = { ...target, commentId: 501, body: "**対応しました。**" };
+    expect(await client.replyToReviewComment(input)).toEqual({
+      url: "https://github.com/acme/app/pull/7#discussion_r99",
+    });
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.com/repos/acme/app/pulls/7/comments/501/replies",
+      method: "POST",
+      body: { body: "**対応しました。**" },
+      auth: "Bearer ghp_secret",
+    });
+    expect(
+      errorText(await client.replyToReviewComment(input).catch((e: unknown) => e)),
+    ).toMatchObject({
+      code: "github.failed",
+      params: { status: 404 },
+    });
+  });
+
+  it("行へのコメントから、本文が目印で始まる、そのアカウントの投稿だけを選ぶ（まねた・引用した投稿は選ばない）", async () => {
+    const marker = "<!-- sacty-reply:t1:implement-1-1:";
+    const c = (id: number, login: string, body: string) => ({
+      id,
+      body,
+      user: { login },
+      html_url: `https://github.com/acme/app/pull/7#discussion_r${id}`,
+    });
+    const list = [
+      c(1, "alice", "人のコメント"),
+      c(2, "mallory", `${marker}2 -->\nまねた投稿`),
+      c(3, "Sacty-Bot", `> 引用\n${marker}2 -->`),
+      c(4, "Sacty-Bot", `${marker}2 -->\n直しました`),
+    ];
+    const { impl, calls } = fakeFetch([{ status: 200, json: list }]);
+    const client = new GitHubPullRequests(impl);
+    expect(
+      await client.listReviewComments({ ...target, prefix: marker, account: "sacty-bot" }),
+    ).toEqual([
+      {
+        id: 4,
+        url: "https://github.com/acme/app/pull/7#discussion_r4",
+        body: `${marker}2 -->\n直しました`,
+        author: "Sacty-Bot",
+      },
+    ]);
+    expect(calls[0]?.url).toBe(
+      "https://api.github.com/repos/acme/app/pulls/7/comments?per_page=100",
+    );
+  });
+
+  it("最後まで読む指定では、ページ数の上限で読み切れなかったら失敗する（途中までの結果を、無いことの根拠にしない）。指定が無ければ、今までどおり途中までを返す", async () => {
+    const page = (n: number) => ({
+      status: 200,
+      json: [{ id: n, body: "x", user: { login: "a" } }],
+      headers: {
+        link: `<https://api.github.com/repos/acme/app/pulls/7/comments?per_page=100&page=${n + 1}>; rel="next"`,
+      },
+    });
+    const pages = () => Array.from({ length: 50 }, (_, i) => page(i + 1));
+    const complete = new GitHubPullRequests(fakeFetch(pages()).impl);
+    expect(
+      errorText(
+        await complete
+          .listReviewComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
+    const issue = new GitHubPullRequests(fakeFetch(pages()).impl);
+    expect(
+      errorText(
+        await issue
+          .listIssueComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
+    // 読めない答え（配列でない）も、空の一覧として扱わない
+    const unreadable = new GitHubPullRequests(fakeFetch([{ status: 200, json: {} }]).impl);
+    expect(
+      errorText(
+        await unreadable
+          .listReviewComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
+    const unreadableIssue = new GitHubPullRequests(fakeFetch([{ status: 200, json: {} }]).impl);
+    expect(
+      errorText(
+        await unreadableIssue
+          .listIssueComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
+    // 照合に要る項目（本文・ID・投稿者）を読めないコメントも、黙って除かない
+    for (const broken of [
+      { id: 1, body: null, user: { login: "a" } },
+      { id: "1", body: "x", user: { login: "a" } },
+      { id: 1, body: "x", user: null },
+    ]) {
+      const client = new GitHubPullRequests(fakeFetch([{ status: 200, json: [broken] }]).impl);
+      expect(
+        errorText(
+          await client
+            .listReviewComments({ ...target, prefix: "x", complete: true })
+            .catch((e: unknown) => e),
+        ),
+      ).toMatchObject({ code: "github.commentsIncomplete" });
+    }
+    // たどれない次のページ（API の外の URL）を、読み終わりとして扱わない
+    const outside = new GitHubPullRequests(
+      fakeFetch([
+        {
+          status: 200,
+          json: [],
+          headers: { link: '<https://evil.example.com/next?page=2>; rel="next"' },
+        },
+      ]).impl,
+    );
+    expect(
+      errorText(
+        await outside
+          .listIssueComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.commentsIncomplete" });
+    const partial = new GitHubPullRequests(fakeFetch(pages()).impl);
+    expect(await partial.listReviewComments({ ...target, prefix: "x" })).toHaveLength(50);
+  });
+});
+
 describe("Issue へのコメント（PBI-18）", () => {
   it("Issue にコメントして URL を返し、失敗は理由つきのエラーにする", async () => {
     const { impl, calls } = fakeFetch([
@@ -1389,6 +1595,103 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
         account: "sacty-bot",
       });
       expect(feedback.map((f) => f.key)).toEqual(["comment:2", "comment:3", "comment:4"]);
+    });
+
+    it("sacty の、指摘への返信（PBI-352）は、行への返信も PR のコメントも、そのアカウントのものだけ、PR の指摘に取り込まない。含める指定があれば含める（再レビューの作者の返答）", async () => {
+      const reply = "<!-- sacty-reply:t1:implement-1-1:2 -->\n**対応しました。**\n\n直しました";
+      const responses = () => [
+        { status: 200, json: [] },
+        {
+          status: 200,
+          json: [
+            // 行へのコメントへの返信（スレッドの中の投稿）
+            { ...comment(11, "sacty-bot", reply), path: "src/a.ts", line: 3, in_reply_to_id: 10 },
+            { ...comment(12, "mallory", reply), path: "src/a.ts", line: 3 },
+          ],
+        },
+        {
+          status: 200,
+          json: [
+            comment(1, "sacty-bot", reply),
+            comment(2, "alice", "人間のコメント"),
+            // 他人が目印をまねても、人間の指摘として取り込む（指摘を隠されないように）
+            comment(3, "mallory", reply),
+            comment(4, "sacty-bot", "同じアカウントの、目印の無いコメント"),
+          ],
+        },
+      ];
+      const imported = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+      });
+      expect(imported.map((f) => f.key).sort()).toEqual([
+        "comment:2",
+        "comment:3",
+        "comment:4",
+        "review_comment:12",
+      ]);
+      // 今のアカウントが変わっていても、返信に使ったアカウント（noticeAccounts）の返信は除く
+      const changed = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback({
+        ...pr,
+        account: "new-bot",
+        noticeAccounts: ["Sacty-Bot"],
+      });
+      expect(changed.map((f) => f.key).sort()).toEqual([
+        "comment:2",
+        "comment:3",
+        "comment:4",
+        "review_comment:12",
+      ]);
+      // アカウントが分からなければ、除かない（誰の投稿か確かめられない）
+      const unknown = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback(pr);
+      expect(unknown).toHaveLength(6);
+      const forReview = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+        includeSactyReplies: true,
+      });
+      expect(forReview.map((f) => f.key).sort()).toEqual([
+        "comment:1",
+        "comment:2",
+        "comment:3",
+        "comment:4",
+        "review_comment:11",
+        "review_comment:12",
+      ]);
+      // PR の作者が Bot のアカウントでも、sacty の返信は、含める指定があれば渡す（ほかの Bot の投稿は除いたまま）
+      const bot = (id: number, login: string, body: string) => ({
+        ...comment(id, login, body),
+        user: { login, type: "Bot" },
+      });
+      const botResponses = () => [
+        { status: 200, json: [] },
+        { status: 200, json: [] },
+        {
+          status: 200,
+          json: [
+            bot(21, "sacty[bot]", reply),
+            bot(22, "ci[bot]", reply),
+            bot(23, "sacty[bot]", "CI の結果"),
+          ],
+        },
+      ];
+      const botForReview = await new GitHubPullRequests(fakeFetch(botResponses()).impl).feedback({
+        ...pr,
+        account: "sacty[bot]",
+        includeSactyReplies: true,
+      });
+      expect(botForReview.map((f) => f.key)).toEqual(["comment:21"]);
+      const botImported = await new GitHubPullRequests(fakeFetch(botResponses()).impl).feedback({
+        ...pr,
+        account: "sacty[bot]",
+      });
+      expect(botImported).toEqual([]);
+      expect(forReview.find((f) => f.key === "review_comment:11")).toMatchObject({
+        kind: "review_comment",
+        author: "sacty-bot",
+        path: "src/a.ts",
+        body: reply,
+      });
     });
 
     it("人に確かめてほしいことの投稿（PBI-301）は、sacty のタスクのアカウントのものだけ、PR の指摘に取り込まない", async () => {

@@ -1258,8 +1258,9 @@ function ActivityList({
             {formatStamp(event.at, messages.locale)}
           </time>
           {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
-          <span className={cn("[overflow-wrap:anywhere]", compact && "line-clamp-2")}>
-            <EventText event={event} />
+          {/* 概要の2行の制限は、行の文にだけ掛ける（詳細を開く表示と、開いた詳細は切らない。PBI-352） */}
+          <span className="[overflow-wrap:anywhere]">
+            <EventText event={event} clamp={compact} />
             {/* エージェントの実行の行から、その実行のセッションログを開く（PBI-62） */}
             {!compact && runLogId(event) && (
               <Link
@@ -1407,10 +1408,27 @@ function StepsChoice({ task, data }: { task: Task; data: TaskDetailData }) {
  * 作業履歴の1行の文。長い行（コンテキストの用意の外部 PF の一覧）は、1行目だけを出し、詳細は開いて読む（PR #127 レビュー指摘）。
  * 差し戻しの行は、指摘の本文を詳細に出す。詳細の改行は、そのまま改行として出す。
  */
-export function EventText({ event }: { event: ActivityEvent }) {
+export function EventText({ event, clamp = false }: { event: ActivityEvent; clamp?: boolean }) {
   const { labels } = useMessages();
   const { text, detail } = describeEventParts(event, labels);
+  // clamp：行の文を2行までにする（概要の「最近の履歴」）。詳細を開く表示は、文の外に置いて、いつも見えるようにする
+  if (!detail && clamp) return <span className="line-clamp-2">{text}</span>;
   if (!detail) return <>{text}</>;
+  if (clamp) {
+    return (
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-start gap-2 [&::-webkit-details-marker]:hidden">
+          <span className="line-clamp-2 min-w-0 group-open:line-clamp-none">{text}</span>
+          <span className="shrink-0 text-xs text-accent-foreground underline">
+            {labels.event.more}
+          </span>
+        </summary>
+        <span className="block whitespace-pre-line pt-1 text-xs text-muted-foreground">
+          {detail}
+        </span>
+      </details>
+    );
+  }
   return (
     <details className="inline">
       <summary className="inline cursor-pointer list-none [&::-webkit-details-marker]:hidden">

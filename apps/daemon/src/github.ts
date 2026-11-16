@@ -93,6 +93,11 @@ export interface PullRequests {
      * account と sactyReviews のアカウントに加えて、この投稿の除外にだけ使う（sacty のレビューの判定には使わない）。
      */
     noticeAccounts?: readonly string[];
+    /**
+     * sacty が投稿した、指摘への返信（PBI-352）も含める。既定では、人の指摘ではないので含めない（PR の指摘の取り込み）。
+     * レビューの工程に渡す既存のレビューと、再レビューの作者の返答だけが含める。
+     */
+    includeSactyReplies?: boolean;
   }): Promise<PullRequestFeedback[]>;
   /**
    * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
@@ -113,6 +118,32 @@ export interface PullRequests {
     number: number;
     marker: string;
   }): Promise<{ url: string } | undefined>;
+  /**
+   * PR の行へのコメントのうち、本文が prefix で始まるもの（指摘への返信を二度投稿しないため。PBI-352）。account があれば、
+   * そのアカウントが投稿したものだけ（他人が目印をまねても・引用しても、自分の投稿と見なさない）。complete なら、ページ数の
+   * 上限で読み切れなかったときに失敗する（途中までの結果を、無いことの根拠にしない）。
+   */
+  listReviewComments(input: {
+    repo: string;
+    token: string;
+    number: number;
+    prefix: string;
+    account?: string;
+    complete?: boolean;
+    signal?: AbortSignal;
+  }): Promise<{ id: number; url: string; body: string; author: string }[]>;
+  /**
+   * PR の行へのコメントに返信する（PBI-352）。返信への返信・消えたコメントへの返信は、GitHub が受け付けない（失敗する）。
+   */
+  replyToReviewComment(input: {
+    repo: string;
+    token: string;
+    number: number;
+    /** 返信する行へのコメントの ID。 */
+    commentId: number;
+    body: string;
+    signal?: AbortSignal;
+  }): Promise<{ url: string }>;
   /** Issue にコメントする（調査の結果を返す。PBI-18）。 */
   commentIssue(input: {
     repo: string;
@@ -132,9 +163,11 @@ export interface PullRequests {
     number: number;
     prefix: string;
     account?: string;
+    /** ページ数の上限で読み切れなかったときに失敗する（途中までの結果を、無いことの根拠にしない。PBI-352）。 */
+    complete?: boolean;
     /** 中断（読み込み中のリクエストも止める）。 */
     signal?: AbortSignal;
-  }): Promise<{ id: number; url: string; body: string }[]>;
+  }): Promise<{ id: number; url: string; body: string; author: string }[]>;
   /** Issue・PR のコメントの本文を直す（PBI-292。レビューが止まったことの投稿を、解消済みにする）。id は listIssueComments の答え。 */
   editIssueComment(input: {
     repo: string;
@@ -243,6 +276,16 @@ const GITHUB_COMMENT_MARKER_PREFIX = "<!-- sacty-comment:";
 /** 本文が、sacty が頼みで投稿したコメントの目印で始まるか。承認を待つ間に投稿するので、人の指摘として取り込まない（PBI-301）。 */
 export function isSactyGitHubComment(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(GITHUB_COMMENT_MARKER_PREFIX);
+}
+
+/**
+ * sacty が、指摘への対応を PR に返信した投稿の目印の前半（PBI-352）。`<!-- sacty-reply:<タスク ID>:<指摘の ID>:<提出回> -->`。
+ */
+export const REMARK_REPLY_MARKER_PREFIX = "<!-- sacty-reply:";
+
+/** 本文が、指摘への返信の目印で始まるか（PBI-352）。人の指摘ではないので、PR の指摘に取り込まない。 */
+export function isSactyRemarkReply(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(REMARK_REPLY_MARKER_PREFIX);
 }
 
 /**
@@ -396,6 +439,41 @@ export function repoApi(repoUrl: string): { api: string; base: string } {
   return { api, base: `${api}/repos/${repo.path}` };
 }
 
+/** コメントの一覧から、本文が prefix で始まり、account（あれば）が投稿したものを選ぶ。 */
+function ownComments(
+  comments: Record<string, unknown>[],
+  input: { prefix: string; account?: string; complete?: boolean },
+): { id: number; url: string; body: string; author: string }[] {
+  return comments.flatMap((c) => {
+    const login = (c.user as { login?: unknown } | null)?.login;
+    // 最後まで読む指定では、照合に要る項目（本文・ID・投稿者）を読めないコメントを、黙って除かない（PBI-352。
+    // 投稿済みの返信を見逃して、重ねて投稿しないように）
+    if (
+      input.complete &&
+      (typeof c.body !== "string" || typeof c.id !== "number" || typeof login !== "string")
+    ) {
+      throw new MessageError(message("github.commentsIncomplete"));
+    }
+    if (
+      typeof c.body !== "string" ||
+      typeof c.id !== "number" ||
+      !c.body.trimStart().startsWith(input.prefix) ||
+      (input.account !== undefined &&
+        (typeof login !== "string" || login.toLowerCase() !== input.account.toLowerCase()))
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: c.id,
+        url: String(c.html_url ?? ""),
+        body: c.body,
+        author: typeof login === "string" ? login : "",
+      },
+    ];
+  });
+}
+
 /** GitHub の REST API で PR を作る・更新する。 */
 export class GitHubPullRequests implements PullRequests {
   constructor(private readonly fetchImpl: Fetch = fetch) {}
@@ -441,6 +519,16 @@ export class GitHubPullRequests implements PullRequests {
       const round = sactyRound(item);
       if (round) return round.allowed;
       const login = user(item).login;
+      // レビューの工程に渡す読み取りでは、sacty のアカウントの、指摘への返信（PBI-352）を、Bot の投稿でも含める
+      // （PR の作者が Bot のアカウントでも、対応しなかった理由が、作者の返答として渡るように）
+      if (
+        input.includeSactyReplies &&
+        isSactyRemarkReply(item.body) &&
+        typeof login === "string" &&
+        noticeAccounts.has(login.toLowerCase())
+      ) {
+        return true;
+      }
       return (
         user(item).type !== "Bot" &&
         !(
@@ -456,6 +544,13 @@ export class GitHubPullRequests implements PullRequests {
         // sacty が頼みで投稿したコメント（指摘への返信など。PBI-301）も、人の指摘ではない（取り込むと、返信が新しい指摘になる）
         !(
           isSactyGitHubComment(item.body) &&
+          typeof login === "string" &&
+          noticeAccounts.has(login.toLowerCase())
+        ) &&
+        // sacty が投稿した、指摘への返信（PBI-352）も、人の指摘ではない。レビューの工程に渡すとき（作者の返答）だけ含める
+        !(
+          !input.includeSactyReplies &&
+          isSactyRemarkReply(item.body) &&
           typeof login === "string" &&
           noticeAccounts.has(login.toLowerCase())
         )
@@ -558,9 +653,10 @@ export class GitHubPullRequests implements PullRequests {
     token: string,
     action: "getReviews" | "listIssueComments" | "listEvents",
     signal?: AbortSignal,
+    complete?: boolean,
   ): Promise<Record<string, unknown>[]> {
     const { api, base } = repoApi(repo);
-    return this.listAt(api, `${base}${path}`, token, action, signal);
+    return this.listAt(api, `${base}${path}`, token, action, signal, complete);
   }
 
   /** API の URL の一覧を、すべてのページから読む。 */
@@ -570,6 +666,8 @@ export class GitHubPullRequests implements PullRequests {
     token: string,
     action: "getReviews" | "listIssueComments" | "listRepositories" | "listEvents",
     signal?: AbortSignal,
+    /** ページ数の上限で読み切れなかったら、失敗にする（途中までの結果を返さない）。 */
+    complete?: boolean,
   ): Promise<Record<string, unknown>[]> {
     const headers = {
       accept: "application/vnd.github+json",
@@ -581,15 +679,27 @@ export class GitHubPullRequests implements PullRequests {
     for (let page = 0; url && page < MAX_PAGES; page++) {
       const res = await this.fetchImpl(url, { headers, ...(signal ? { signal } : {}) });
       const json = (await res.json().catch(() => ({}))) as unknown;
-      if (!res.ok) throw apiError(action, res.status, json as Record<string, unknown>);
+      if (!res.ok) {
+        throw apiError(action, res.status, json as Record<string, unknown>, res.headers);
+      }
+      // 最後まで読む指定では、読めない答え（JSON でない・配列でない）を、空の一覧として扱わない（PBI-352）
+      if (complete && !Array.isArray(json)) {
+        throw new MessageError(message("github.commentsIncomplete"));
+      }
       if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
       const next = nextPage(res.headers.get("link"));
+      // 最後まで読む指定では、たどれない次のページ（API の外の URL）を、読み終わりとして扱わない（PBI-352）
+      if (complete && next && !next.startsWith(`${api}/`)) {
+        throw new MessageError(message("github.commentsIncomplete"));
+      }
       url = next?.startsWith(`${api}/`) ? next : undefined;
     }
     // 最後の依頼を判定するには全ページが必要。部分結果では再依頼なしと区別できない。
     if (action === "listEvents" && url) {
       throw new MessageError(message("github.eventsIncomplete"));
     }
+    // 投稿済みの返信を探すとき（PBI-352）も、途中までの結果では、まだ投稿していないことと区別できない
+    if (complete && url) throw new MessageError(message("github.commentsIncomplete"));
     return all;
   }
 
@@ -602,6 +712,38 @@ export class GitHubPullRequests implements PullRequests {
     );
     const found = comments.find((c) => typeof c.body === "string" && c.body.includes(input.marker));
     return found ? { url: String(found.html_url ?? "") } : undefined;
+  }
+
+  async listReviewComments(input: Parameters<PullRequests["listReviewComments"]>[0]) {
+    const comments = await this.list(
+      input.repo,
+      `/pulls/${input.number}/comments?per_page=100`,
+      input.token,
+      "getReviews",
+      input.signal,
+      input.complete,
+    );
+    return ownComments(comments, input);
+  }
+
+  async replyToReviewComment(input: Parameters<PullRequests["replyToReviewComment"]>[0]) {
+    const res = await this.fetchImpl(
+      `${repoApi(input.repo).base}/pulls/${input.number}/comments/${input.commentId}/replies`,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${input.token}`,
+          "x-github-api-version": "2022-11-28",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ body: input.body }),
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw apiError("commentIssue", res.status, json, res.headers);
+    return { url: String(json.html_url ?? "") };
   }
 
   async commentIssue(input: Parameters<PullRequests["commentIssue"]>[0]) {
@@ -620,7 +762,7 @@ export class GitHubPullRequests implements PullRequests {
       },
     );
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) throw apiError("commentIssue", res.status, json);
+    if (!res.ok) throw apiError("commentIssue", res.status, json, res.headers);
     return { url: String(json.html_url ?? "") };
   }
 
@@ -631,20 +773,9 @@ export class GitHubPullRequests implements PullRequests {
       input.token,
       "listIssueComments",
       input.signal,
+      input.complete,
     );
-    return comments.flatMap((c) => {
-      const login = (c.user as { login?: unknown } | null)?.login;
-      if (
-        typeof c.body !== "string" ||
-        typeof c.id !== "number" ||
-        !c.body.trimStart().startsWith(input.prefix) ||
-        (input.account !== undefined &&
-          (typeof login !== "string" || login.toLowerCase() !== input.account.toLowerCase()))
-      ) {
-        return [];
-      }
-      return [{ id: c.id, url: String(c.html_url ?? ""), body: c.body }];
-    });
+    return ownComments(comments, input);
   }
 
   async editIssueComment(input: Parameters<PullRequests["editIssueComment"]>[0]) {
@@ -1076,11 +1207,42 @@ export function apiError(
     | "draftPr",
   status: number,
   json: Record<string, unknown>,
+  /** 答えのヘッダー。あれば、GitHub が示した、次に試せるまでの時間を、エラーに持たせる（githubRetryAfterMs）。 */
+  headers?: Headers,
 ): Error {
-  // GitHub の文（json.message）は外から来た文なので、翻訳せずに引数で渡す
-  const detail = typeof json.message === "string" ? json.message : "";
+  // GitHub の文（json.message）は外から来た文なので、翻訳せずに引数で渡す。本文がオブジェクトでない（null など）ときも、
+  // 状態とヘッダーからエラーを作る
+  const body = (json ?? {}) as { message?: unknown };
+  const detail = typeof body.message === "string" ? body.message : "";
   const hint = status === 401 ? "token" : status === 403 || status === 404 ? "permission" : "none";
-  return new MessageError(message("github.failed", { action, status, detail, hint }));
+  const error = new MessageError(message("github.failed", { action, status, detail, hint }));
+  const wait = headers ? retryAfterOf(headers) : undefined;
+  if (wait !== undefined) (error as RetryAfter).retryAfterMs = wait;
+  return error;
+}
+
+type RetryAfter = { retryAfterMs?: number };
+
+/**
+ * GitHub が答えのヘッダーで示した、次に試せるまでの時間（ミリ秒）。`retry-after`（秒）か、残りが 0 のときの
+ * `x-ratelimit-reset`（解ける時刻）。示されていなければ undefined。
+ */
+function retryAfterOf(headers: Headers): number | undefined {
+  const after = Number(headers.get("retry-after"));
+  if (headers.get("retry-after") !== null && Number.isFinite(after) && after >= 0) {
+    return Math.round(after * 1000);
+  }
+  const reset = Number(headers.get("x-ratelimit-reset"));
+  if (headers.get("x-ratelimit-remaining") === "0" && Number.isFinite(reset) && reset > 0) {
+    return Math.max(0, Math.round(reset * 1000 - Date.now()));
+  }
+  return undefined;
+}
+
+/** GitHub への問い合わせの失敗に、GitHub が示した、次に試せるまでの時間（ミリ秒）があれば、それ。 */
+export function githubRetryAfterMs(error: unknown): number | undefined {
+  const wait = (error as RetryAfter | null)?.retryAfterMs;
+  return typeof wait === "number" ? wait : undefined;
 }
 
 /** 取り込みの対象として見つかった Issue。 */

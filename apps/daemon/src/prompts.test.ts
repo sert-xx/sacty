@@ -6436,6 +6436,44 @@ describe("戻し先の判断文を、その判断で始まった作り直しの�
   });
 });
 
+describe("指摘への対応の、対応したか・しなかったかの申告（PBI-352）", () => {
+  const block = (responses: unknown) =>
+    `# 実装の説明\n\n\`\`\`json\n${JSON.stringify({ "sacty-responses": responses })}\n\`\`\`\n`;
+  const ids = new Set(["implement-1-1", "implement-1-2", "implement-1-3", "implement-1-4"]);
+
+  it("status を読み取る。知らない値・文字列でない値・無い申告（前の形の出力）は、無いものとして扱い、対応は捨てない", () => {
+    const read = extractBlocks(
+      block([
+        { remarkId: "implement-1-1", status: "addressed", text: "直した" },
+        {
+          remarkId: "implement-1-2",
+          status: "declined",
+          text: "範囲の外です",
+          confirm: "確かめたい",
+        },
+        { remarkId: "implement-1-3", status: "DECLINED", text: "直した" },
+        { remarkId: "implement-1-4", status: { a: 1 }, text: "直した" },
+        { remarkId: "implement-1-1", text: "前の形" },
+      ]),
+      ids,
+      [],
+    );
+    expect(read.responses).toEqual([
+      { remarkId: "implement-1-1", text: "直した", status: "addressed" },
+      {
+        remarkId: "implement-1-2",
+        text: "範囲の外です",
+        status: "declined",
+        confirm: "確かめたい",
+      },
+      { remarkId: "implement-1-3", text: "直した" },
+      { remarkId: "implement-1-4", text: "直した" },
+      { remarkId: "implement-1-1", text: "前の形" },
+    ]);
+    expect(read.output).not.toContain("sacty-responses");
+  });
+});
+
 describe("指摘への対応の「人に確かめたいこと」（PBI-301）", () => {
   const block = (responses: unknown) =>
     `# 実装の説明\n\n\`\`\`json\n${JSON.stringify({ "sacty-responses": responses })}\n\`\`\`\n`;

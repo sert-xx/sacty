@@ -115,6 +115,8 @@ import {
   questionBlocked,
   queueOverSince,
   RejectAuditProposalInput,
+  type RemarkOrigin,
+  type RemarkResponseStatus,
   RenameTaskInput,
   RepoUrl,
   RequestChangesInput,
@@ -261,11 +263,13 @@ import {
 } from "./gh.js";
 import {
   type FoundIssue,
+  githubRetryAfterMs,
   githubStatus,
   isTransientGitHubFailure,
   type PullRequestFeedback,
   type PullRequestStatus,
   type PullRequests,
+  REMARK_REPLY_MARKER_PREFIX,
   type SactyReviewRound,
   sactyReviewKey,
   sactyReviewTask,
@@ -410,6 +414,12 @@ import {
   withoutWorkReport,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
+import {
+  buildRemarkReply,
+  remarkOriginRef,
+  remarkOriginUrl,
+  remarkReplyMarkerOf,
+} from "./remark-reply.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import {
   buildResolvedNotice,
@@ -758,6 +768,17 @@ export type ServiceDeps = {
    * 超えたら通信も止めて、警告にして終える（実行の枠を放す）。
    */
   stopNoticeTimeoutMs?: number;
+  /**
+   * 指摘への返信（PBI-352）を続けて投稿するときの、投稿と投稿の間（ミリ秒）。既定は 1 秒（GitHub の、書き込みを続けて
+   * 送るときの制限に当たりにくくする）。
+   */
+  remarkReplyIntervalMs?: number;
+  /**
+   * 指摘への返信の結果を記録できなかった・進められなかったとき、次に試すまで待つ時間（ミリ秒）。既定は 1 分。
+   */
+  remarkReplyRetryMs?: number;
+  /** 1件の記録（RemarkRepliesPosted）に入れる、返信の結果の件数の上限。既定は 200（イベントの上限）。 */
+  remarkRepliesPerRecord?: number;
   /**
    * Sacty のレビューのタスクが、GitHub の一時的な失敗（5xx・レート制限・接続の失敗）で止まりそうなとき、自動でやり直すまでの
    * 待ち時間（ミリ秒）の並び（PBI-301）。長さが、やり直しの回数の上限。既定は 15 秒・1 分・3 分・5 分の 4 回（計 9 分余り）。
@@ -1473,6 +1494,7 @@ export class TaskService {
         number: pr.number,
         ...this.githubAccountOf(task, pr.repo),
         ...this.sactyReviewsOf(pr.repo, pr.number),
+        ...replyAccounts(task),
       })
     )
       .filter((item) => !task.importedFeedback.includes(item.key))
@@ -1711,11 +1733,16 @@ export class TaskService {
     // 回の番号と指摘の ID は、AI のレビューだけの回も含めて続ける。人の差し戻しの回数に数えるのは人の指摘だけ（PBI-275）
     const round = lastChangeRound(task, target) + 1;
     const aiIndexes = new Set(pending.aiReview ?? []);
-    const remarks = pending.remarks.map((text, i) => ({
-      id: `${target}-${round}-${i + 1}`,
-      text,
-      ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
-    }));
+    const origins = remarkOrigins(pending, reworkingPullRequest(task)?.number);
+    const remarks = pending.remarks.map((text, i) => {
+      const origin = origins[i];
+      return {
+        id: `${target}-${round}-${i + 1}`,
+        text,
+        ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
+        ...(origin ? { origin } : {}),
+      };
+    });
     const onlyAiReview = remarks.every((r) => r.source === "sacty_review");
     this.append(task, [
       {
@@ -2648,6 +2675,7 @@ export class TaskService {
           number: pr.number,
           ...this.githubAccountOf(current, pr.repo),
           ...this.sactyReviewsOf(pr.repo, pr.number),
+          ...replyAccounts(current),
         })
       )
         .filter((item) => !current.importedFeedback.includes(item.key))
@@ -2917,7 +2945,11 @@ export class TaskService {
             : {}),
       },
       // AI のレビューの指摘は、人の差し戻しの回数に数えない（PBI-275）
-      { aiReview: pending.aiReview ?? [] },
+      // 指摘ごとに、元の PR のコメントを持たせる（対応を、そのコメントへの返信として投稿する。PBI-352）
+      {
+        aiReview: pending.aiReview ?? [],
+        origins: remarkOrigins(pending, gatePullRequest(task)?.number),
+      },
     );
   }
 
@@ -3445,6 +3477,7 @@ export class TaskService {
         ...this.githubAccountOf(task, continued.repo),
         // sacty のタスクがこの PR に投稿したレビューも、PR の指摘として渡す（PR の指摘の取り込みの条件とは分ける）
         ...allSactyReviews(this.sactyReviewsOf(continued.repo, continued.number)),
+        ...replyAccounts(task),
         includeApprovals: true,
       });
     } catch (error) {
@@ -3456,9 +3489,484 @@ export class TaskService {
   }
 
   /**
+   * 指摘への対応を PR に返信するのを待っている提出（awaitingRemarkReplies）。GitHub のアカウントを選んでいないプロジェクトでは
+   * 返信しない（「人に確かめてほしいこと」のコメントと同じ条件。PBI-352）。
+   */
+  private remarkRepliesDue(task: Task): ReturnType<typeof awaitingRemarkReplies> {
+    const due = awaitingRemarkReplies(task);
+    return due && this.githubAccountOf(task, due.repo).account ? due : undefined;
+  }
+
+  /**
+   * 指摘への返信の結果を記録できなかった・進められなかったタスクの、次に試せる時刻（PBI-352）。記録できない状態が続いても、
+   * そのタスクと、返信を待つレビューの子タスクが、実行の枠を取り続けて、後ろのタスクを止めないように、間を置く。
+   * GitHub のレート制限の待ちではない（制限に当たった返信は、失敗として記録して、やり直さない）。デーモンを起動し直すと消える。
+   */
+  private readonly remarkReplyRetryAt = new Map<string, number>();
+
+  /** 指摘への返信を、間を置いてから試す（記録できなかった・進められなかったとき）。 */
+  private holdRemarkReplies(taskId: string): void {
+    this.remarkReplyRetryAt.set(taskId, this.now() + (this.deps.remarkReplyRetryMs ?? 60_000));
+  }
+
+  /** 指摘への返信を、今は待っているか（結果を記録できなかった・進められなかった後、間を置いている）。 */
+  private remarkRepliesHeld(taskId: string): boolean {
+    return (this.remarkReplyRetryAt.get(taskId) ?? 0) > this.now();
+  }
+
+  /** 指摘への返信を、今、投稿できる提出（返信を待っていて、間を置いている最中でない）。 */
+  private remarkRepliesReady(task: Task): ReturnType<typeof awaitingRemarkReplies> {
+    return this.remarkRepliesHeld(task.id) ? undefined : this.remarkRepliesDue(task);
+  }
+
+  /**
+   * PR のレビューの子タスクが、PR を作ったタスクの指摘への返信を待っている（返信が、間を置いている最中）。この間は、
+   * 子タスクを実行待ちに出さない（始めても進めないレビューが、実行の枠を取り続けて、後ろのタスクを止めないように）。
+   */
+  private reviewWaitsForReplies(task: Task): boolean {
+    if (!task.reviewOf || task.status !== "queued" || activeStep(task) !== "review") return false;
+    const parent = this.tasks.get(task.reviewOf.taskId);
+    return (
+      parent !== undefined &&
+      this.remarkRepliesDue(parent) !== undefined &&
+      this.remarkRepliesHeld(parent.id)
+    );
+  }
+
+  /**
+   * PR を作ったタスクの、指摘への返信が、すべて処理された（投稿した・失敗を記録した・返信するものが無い）か。まだなら、
+   * ここで投稿する。返信は、1回の処理で、対象のすべてに続けて投稿する（結果の記録だけを、上限の件数ごとに分ける）。
+   * 処理の間に対象が増えたときのために、残りが無くなるまで繰り返す。記録できなかった・止められて進まなかったときは
+   * false（レビューの子タスクは、レビューを始めずに待つ）。
+   */
+  private async remarkRepliesSettled(parentId: string, childId: string): Promise<boolean> {
+    // 進められないときは、間を置いてやり直す（その間、子タスクは実行待ちに出ない。reviewWaitsForReplies）
+    const wait = () => {
+      if (!this.remarkRepliesHeld(parentId)) this.holdRemarkReplies(parentId);
+      return false;
+    };
+    for (;;) {
+      const parent = this.tasks.get(parentId);
+      const due = parent && this.remarkRepliesDue(parent);
+      if (!parent || !due) return true;
+      // 間を置いている最中は、投稿を試みずに待つ
+      if (this.remarkRepliesHeld(parentId)) return false;
+      try {
+        await this.postRemarkReplies(parentId);
+      } catch (error) {
+        console.warn(
+          `[daemon] レビューのタスク ${childId} の前に、タスク ${parentId} の指摘への返信を記録できませんでした。レビューを始めずに、間を置いてやり直します：${renderMessage(errorText(error), "ja")}`,
+        );
+        return wait();
+      }
+      const latest = this.tasks.get(parentId);
+      const left = latest && this.remarkRepliesDue(latest);
+      if (!left) return true;
+      // 進まなかった（一時停止・中止を求められている、など）なら、待つ
+      if (left.submission === due.submission && left.replies.length >= due.replies.length) {
+        return wait();
+      }
+    }
+  }
+
+  /**
+   * PR のレビュー・コメントから取り込んだ指摘への対応を、プロジェクトの gh のアカウントで、PR に返信する（PBI-352）。
+   * 行へのコメントから取り込んだ指摘には、そのコメントへの返信として投稿する。GitHub が、宛先を理由に返信を断ったとき
+   * （元のコメントが消えた・返信への返信は受け付けられない、など）は、PR のコメントとして投稿する。レビューの本文・通常の
+   * コメントから取り込んだ指摘には、元へのリンクを付けた PR のコメントとして投稿する。前に投稿の後・記録の前に止まって
+   * いたら、目印で見つけた投稿を使う（二度投稿しない）。投稿できなくても、理由を記録してタスクは進める（やり直さない）。
+   * GitHub のレート制限に当たったら、そこで投稿を止めて、残りの指摘も、失敗として記録する。
+   */
+  private postRemarkReplies(taskId: string): Promise<void> {
+    // 同じタスクの返信は順に処理する（先の処理が検索や投稿の最中のまま、もう1本始まっても、二重に投稿しない）
+    return this.serialized(`remark-replies:${taskId}`, () =>
+      this.postRemarkRepliesNow(taskId).catch((error: unknown) => {
+        // 結果を記録できなかった（など）。間を置いてやり直す（その間、このタスクも、返信を待つレビューの子タスクも、
+        // 実行待ちに出さない。失敗が続いても、実行の枠を取り続けて、後ろのタスクを止めないように）
+        this.holdRemarkReplies(taskId);
+        throw error;
+      }),
+    );
+  }
+
+  /** ホストとアカウントごとの、最後に指摘への返信を投稿した時刻（投稿の間隔をあけるため）。 */
+  private readonly remarkReplyLastPostAt = new Map<string, number>();
+
+  /** 指摘への返信の投稿を頼まれた順の番号（順番を待っていた投稿かを、時刻でなく順で見分ける）。 */
+  private remarkReplyRequests = 0;
+  /**
+   * ホストとアカウントごとの、最後に GitHub のレート制限に当たったときまでに頼まれていた、投稿の番号。これ以下の番号の
+   * 投稿は、制限に当たったときに順番を待っていた。
+   */
+  private readonly remarkReplyLimitedUpTo = new Map<string, number>();
+
+  /** ホストとアカウントが、GitHub のレート制限に当たった：順番を待っている投稿に伝える（投稿でも、一覧の読み取りでも）。 */
+  private markRemarkReplyLimited(key: string): void {
+    this.remarkReplyLimitedUpTo.set(key, this.remarkReplyRequests);
+  }
+
+  /**
+   * レート制限・時間切れで、返信の投稿を止めた提出（タスクごと。工程・PR の番号・提出回で見分ける）。結果を記録できたら消す。記録できずにやり直すときに、
+   * 止めたことを失って、残りを投稿しないように覚えておく（デーモンを起動し直すと消える）。
+   */
+  private readonly remarkReplyStopped = new Map<
+    string,
+    { step: StepKey; number: number; submission: number; reason: "rate_limit" | "timeout" }
+  >();
+
+  /**
+   * 指摘への返信を、1件投稿する（行への返信も、PR のコメントも、ここを通す）。ホストとアカウントごとに、1件ずつ順に投稿し、
+   * 投稿と投稿の間をあける（GitHub の、書き込みを続けて送るときの制限に当たりにくくする。同じアカウントで返信する、ほかの
+   * タスクの投稿とも合わせる）。
+   * - 順番を待っている間に、同じアカウントの先の投稿がレート制限に当たったら、投稿せずに "limited" を返す（制限の間は、
+   *   待っていた投稿も続けない。制限の後に頼まれた投稿は、止めない。待ちの期限は持たない）
+   * - 順番と間隔を待っている間に、投稿してよい状態でなくなったら（still が偽）、投稿せずに "skipped" を返す
+   */
+  private remarkReplyPost<T>(
+    key: string,
+    still: () => boolean,
+    work: () => Promise<T>,
+  ): Promise<{ value: T } | "limited" | "skipped"> {
+    this.remarkReplyRequests += 1;
+    const requested = this.remarkReplyRequests;
+    return this.serialized(`remark-reply-post:${key}`, async () => {
+      const limited = () => (this.remarkReplyLimitedUpTo.get(key) ?? 0) >= requested;
+      if (limited()) return "limited" as const;
+      const last = this.remarkReplyLastPostAt.get(key);
+      const wait =
+        last === undefined ? 0 : last + (this.deps.remarkReplyIntervalMs ?? 1_000) - Date.now();
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      // 間隔を待っている間に、同じアカウントのほかの問い合わせ（一覧の読み取りなど）が制限に当たったら、投稿しない
+      if (limited()) return "limited" as const;
+      if (!still()) return "skipped" as const;
+      this.remarkReplyLastPostAt.set(key, Date.now());
+      try {
+        return { value: await work() };
+      } catch (error) {
+        // 順番を待っている、同じアカウントの後の投稿に、制限に当たったことを伝える
+        if (rateLimited(error)) this.markRemarkReplyLimited(key);
+        throw error;
+      }
+    });
+  }
+
+  private async postRemarkRepliesNow(taskId: string): Promise<void> {
+    const task = this.tasks.get(taskId);
+    const due = task && this.remarkRepliesReady(task);
+    if (!task || !due) return;
+    // 待っている間（トークンの取り出し・既存の投稿の検索・投稿）に、止められた・承認や提出が変わったら、新しく投稿しない
+    // （記録もしない。再開したら、目印で投稿済みのものを見つけて続ける）
+    const valid = () => {
+      if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return false;
+      const latest = this.tasks.get(taskId);
+      const now = latest && this.remarkRepliesDue(latest);
+      return (
+        now !== undefined &&
+        now.step === due.step &&
+        now.submission === due.submission &&
+        now.number === due.number
+      );
+    };
+    const usedSecrets: string[] = [];
+    type Result = Extract<
+      EventInput,
+      { type: "RemarkRepliesPosted" }
+    >["payload"]["results"][number];
+    const results: Result[] = [];
+    const posted = (url: string) => (url ? { url: url.slice(0, 2000) } : {});
+    // GitHub への問い合わせ1回ごとの期限。答えが返らなくても、実行の枠を占めたままにしない（通信が中断を無視しても戻る）
+    // 期限を超えた問い合わせがあったか（GitHub が答えを返さなくなっている）
+    let timedOut = false;
+    // GitHub のレート制限に当たったか。当たったら、そこで投稿を止めて、残りの指摘は、投稿を試みずに失敗を残す（制限の間は
+    // 投稿を続けない。やり直さない。行への返信が制限で断られても、PR のコメントに回さない）
+    let limitHit = false;
+    // 投稿を止める（制限・時間切れを見つけた、その場で）。止めたことは、結果を記録できるまで覚えておく（この後、一時停止
+    // などで結果を記録せずに抜けても・記録できずにやり直しても、残りを投稿しないように）
+    const stop = (reason: "rate_limit" | "timeout") => {
+      if (reason === "rate_limit") limitHit = true;
+      else timedOut = true;
+      this.remarkReplyStopped.set(taskId, {
+        step: due.step,
+        number: due.number,
+        submission: due.submission,
+        reason,
+      });
+    };
+    const limited = <T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+      const signal = this.stopNoticeDeadline();
+      // 期限は、問い合わせが終わった後にも切れる。終わっていない問い合わせの期限だけを数える
+      let settled = false;
+      signal.addEventListener("abort", () => {
+        if (!settled) stop("timeout");
+      });
+      return untilAborted(signal, work(signal)).finally(() => {
+        settled = true;
+      });
+    };
+    // 投稿は、ホストとアカウントごとの共通の入口を通す（投稿の間隔を、同じアカウントのほかのタスクとも合わせる）
+    const account = this.githubAccountOf(task, due.repo).account;
+    if (!account) return;
+    const postKey = `${httpsHost(`${due.repo}/`) ?? ""}:${account.toLowerCase()}`;
+    const record = () => {
+      const latest = this.tasks.get(taskId);
+      if (!latest || !valid() || results.length === 0) return;
+      // 結果が多ければ、記録を分ける（1件の記録に入れる件数の上限まで）。分けた記録は、1回の書き込みで残す
+      // （途中まで書けて、残りの結果を失うことが無いように）
+      const size = Math.max(1, this.deps.remarkRepliesPerRecord ?? REMARK_REPLIES_PER_RECORD);
+      const events: { actor: Actor; event: EventInput }[] = [];
+      for (let from = 0; from < results.length; from += size) {
+        events.push({
+          actor: "sacty",
+          event: {
+            type: "RemarkRepliesPosted",
+            payload: {
+              step: due.step,
+              submission: due.submission,
+              number: due.number,
+              results: results.slice(from, from + size),
+            },
+          },
+        });
+      }
+      this.append(latest, events);
+      this.remarkReplyStopped.delete(taskId);
+    };
+    // 返信に使うアカウントを、投稿の前に記録する（投稿の後・結果の記録の前に止まり、その間にプロジェクトのアカウントが
+    // 変わっても、前のアカウントの投稿を、投稿済みの返信として見つけ、PR の指摘として取り込まないため）
+    const known = (list: readonly string[] | undefined) =>
+      (list ?? []).some((a) => a.toLowerCase() === account.toLowerCase());
+    if (!known(task.remarkReplyAccounts)) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "RemarkRepliesStarted",
+            payload: { step: due.step, submission: due.submission, number: due.number, account },
+          },
+        },
+      ]);
+    }
+    // 投稿済みの返信は、返信に使ったと記録したアカウント（今のアカウントを含む）が投稿した、このタスクの目印で始まるものだけ
+    // （他人が目印をまねても・引用しても、投稿済みと見なさない）。行へのコメントと PR のコメントを、1回ずつ、最後のページまで読む
+    const accounts = new Set(
+      [account, ...(this.tasks.get(taskId)?.remarkReplyAccounts ?? [])].map((a) => a.toLowerCase()),
+    );
+    const mine = (list: { url: string; body: string; author: string }[]) =>
+      list.filter((c) => accounts.has(c.author.toLowerCase()));
+    const prefix = `${REMARK_REPLY_MARKER_PREFIX}${taskId}:`;
+    let where: { repo: string; token: string; number: number };
+    let inlinePosted: { url: string; body: string }[];
+    let commentPosted: { url: string; body: string }[];
+    try {
+      // トークンの取り出し（gh の実行）にも、期限を付ける
+      const token = await limited((signal) =>
+        this.githubToken(task, due.repo, usedSecrets, undefined, signal),
+      );
+      where = { repo: due.repo, token, number: due.number };
+      // 最後まで読む指定では、投稿者を読めないコメントがあれば失敗する（記録した投稿者と照合できないまま、進めない）
+      const own = { ...where, prefix, complete: true };
+      inlinePosted = mine(
+        await limited((signal) => this.deps.pulls.listReviewComments({ ...own, signal })),
+      );
+      commentPosted = mine(
+        await limited((signal) => this.deps.pulls.listIssueComments({ ...own, signal })),
+      );
+    } catch (error) {
+      // 一覧の読み取りがレート制限に当たったことも、同じアカウントで順番を待っている投稿に伝える
+      if (rateLimited(error)) {
+        stop("rate_limit");
+        this.markRemarkReplyLimited(postKey);
+      }
+      // 投稿済みかを確かめられないので（レート制限で読めないときも）、重ねて投稿しない。失敗として残す
+      const failed = redactText(errorText(error), usedSecrets);
+      results.push(...due.replies.map((r) => ({ remarkId: r.id, key: r.key, failed })));
+      return record();
+    }
+    const found = (list: { url: string; body: string }[], marker: string) =>
+      list.find((c) => c.body.trimStart().startsWith(marker));
+    // 前の処理で、この提出の投稿を止めた（結果は、記録できなかった）：残りを投稿せずに、失敗を残す
+    // 止めたのが、この工程・この PR・この提出のときだけ（ほかの工程や PR の、同じ番号の提出に、持ち越さない）
+    const stopped = this.remarkReplyStopped.get(taskId);
+    if (
+      stopped &&
+      (stopped.step !== due.step ||
+        stopped.number !== due.number ||
+        stopped.submission !== due.submission)
+    ) {
+      this.remarkReplyStopped.delete(taskId);
+    } else if (stopped?.reason === "rate_limit") limitHit = true;
+    else if (stopped) timedOut = true;
+    // 待っている間に、その指摘が無効にされた・対応が変わった・返信済みになったら、その指摘には投稿しない
+    const stillDue = (reply: RemarkReplyDue) => {
+      const latest = this.tasks.get(taskId);
+      const now = latest && this.remarkRepliesDue(latest);
+      return (
+        now?.replies.some(
+          (r) =>
+            r.id === reply.id &&
+            r.respondedIn === reply.respondedIn &&
+            r.response === reply.response,
+        ) === true
+      );
+    };
+    for (const [index, remark] of due.replies.entries()) {
+      if (!valid()) return;
+      if (!stillDue(remark)) continue;
+      const base = { remarkId: remark.id, key: remark.key };
+      // 期限を超えた問い合わせがあった・レート制限に当たったら、残りの指摘は投稿を試みずに、失敗を残す（答えの返らない
+      // GitHub を、指摘の数だけ期限まで待たない。制限の間は、投稿を続けない）
+      // 読んである一覧に投稿済みの返信があれば、それは返信済みとして残す（前に、投稿の後・記録の前に止まった分）
+      if (timedOut || limitHit) {
+        results.push(
+          ...due.replies
+            .slice(index)
+            .filter((r) => stillDue(r))
+            .map((r) => {
+              const marker = remarkReplyMarkerOf(taskId, r.id);
+              const inline = found(inlinePosted, marker);
+              const existing = inline ?? found(commentPosted, marker);
+              return {
+                remarkId: r.id,
+                key: r.key,
+                ...(existing
+                  ? { ...(inline ? { inline: true as const } : {}), ...posted(existing.url) }
+                  : {
+                      failed: message(
+                        limitHit
+                          ? "github.replySkippedAfterRateLimit"
+                          : "github.replySkippedAfterTimeout",
+                      ),
+                    }),
+              };
+            }),
+        );
+        break;
+      }
+      try {
+        const ref = remarkOriginRef(remark.key);
+        // どの提出回の返信でも見つける（1件の指摘には、1回だけ返信する）
+        const marker = remarkReplyMarkerOf(taskId, remark.id);
+        const inline = found(inlinePosted, marker);
+        if (inline) {
+          results.push({ ...base, inline: true, ...posted(inline.url) });
+          continue;
+        }
+        const existing = found(commentPosted, marker);
+        if (existing) {
+          results.push({ ...base, ...posted(existing.url) });
+          continue;
+        }
+        const reply = {
+          taskId,
+          stepName: STEP_NAME[remark.step],
+          remarkId: remark.id,
+          ...(remark.continued ? { continued: true as const } : {}),
+          submission: remark.respondedIn,
+          text: remark.response,
+          ...(remark.status ? { status: remark.status } : {}),
+          secrets: usedSecrets,
+        };
+        const still = () => valid() && stillDue(remark);
+        if (ref?.kind === "review_comment") {
+          try {
+            const sent = await this.remarkReplyPost(postKey, still, () =>
+              limited((signal) =>
+                this.deps.pulls.replyToReviewComment({
+                  ...where,
+                  commentId: ref.id,
+                  body: buildRemarkReply(reply),
+                  signal,
+                }),
+              ),
+            );
+            if (sent === "skipped") {
+              if (!valid()) return;
+              continue;
+            }
+            // 順番を待っている間に、同じアカウントの先の投稿（ほかのタスクのものも）が制限に当たった：投稿せずに止める
+            if (sent === "limited") {
+              stop("rate_limit");
+              results.push({ ...base, failed: message("github.replySkippedAfterRateLimit") });
+              continue;
+            }
+            results.push({ ...base, inline: true, ...posted(sent.value.url) });
+            continue;
+          } catch (error) {
+            const reason = redactText(errorText(error), usedSecrets);
+            // レート制限で断られた：投稿されていない。PR のコメントに回さずに、失敗を残して、残りの投稿を止める
+            if (rateLimited(error)) {
+              stop("rate_limit");
+              results.push({ ...base, failed: reason });
+              continue;
+            }
+            if (!replyRejected(error)) {
+              // GitHub が断ったのではない（答えを受け取れなかった・期限を超えた）。返信は投稿されていることがあるので、探し直す。
+              // 見つかれば使う。見つからない・探せないときは、投稿されたかが分からないので、PR のコメントを重ねずに失敗を残す
+              let searchFailed: unknown;
+              const landed = await limited((signal) =>
+                this.deps.pulls.listReviewComments({
+                  ...where,
+                  prefix: marker,
+                  complete: true,
+                  signal,
+                }),
+              ).catch((failure: unknown) => {
+                searchFailed = failure;
+                return undefined;
+              });
+              // 探し直しがレート制限に当たったら、残りの投稿を止める（この指摘は、投稿されたかが分からないので、失敗を残す）
+              if (searchFailed !== undefined && rateLimited(searchFailed)) {
+                stop("rate_limit");
+                this.markRemarkReplyLimited(postKey);
+              }
+              const hit = landed && mine(landed)[0];
+              results.push(
+                hit ? { ...base, inline: true, ...posted(hit.url) } : { ...base, failed: reason },
+              );
+              continue;
+            }
+            console.warn(
+              `[daemon] タスク ${taskId} の指摘 ${remark.id} への対応を、行へのコメントへの返信として投稿できませんでした。PR のコメントとして投稿します：${renderMessage(reason, "ja")}`,
+            );
+          }
+        }
+        // 返信を待っている間に、止められた・提出が変わったら、PR のコメントにも投稿しない（共通の入口で、投稿の直前に確かめる）
+        const sent = await this.remarkReplyPost(postKey, still, () =>
+          limited((signal) =>
+            this.deps.pulls.commentIssue({
+              ...where,
+              body: buildRemarkReply({
+                ...reply,
+                ...(ref ? { origin: { ref, url: remarkOriginUrl(due.url, ref) } } : {}),
+              }),
+              signal,
+            }),
+          ),
+        );
+        if (sent === "skipped") {
+          if (!valid()) return;
+          continue;
+        }
+        if (sent === "limited") {
+          stop("rate_limit");
+          results.push({ ...base, failed: message("github.replySkippedAfterRateLimit") });
+          continue;
+        }
+        results.push({ ...base, ...posted(sent.value.url) });
+      } catch (error) {
+        // レート制限で断られたら、失敗を残して、残りの投稿を止める
+        if (rateLimited(error)) stop("rate_limit");
+        results.push({ ...base, failed: redactText(errorText(error), usedSecrets) });
+      }
+    }
+    record();
+  }
+
+  /**
    * レビューの工程に渡す、対象の PR にすでにあるレビュー・行へのコメント・通常のコメント（existing。他のレビュアーの指摘と作者の返答。
    * このタスクのアカウントの sacty のレビューの目印で始まる投稿＝前回の投稿は含まない。PBI-144）と、再レビュー（PBI-44）での、
-   * 前回のレビューの投稿の後の PR の作者の返答（replies。PBI-111。作者が前回の投稿の後に書いたもので、目印で始まるものは除く）。
+   * 前回のレビューの投稿の後の PR の作者の返答（replies。PBI-111。作者が前回の投稿の後に書いたもので、sacty のレビューの
+   * 目印で始まるものは除く。sacty が投稿した、指摘への返信（PBI-352。返信の目印で始まる）は、作者の返答に含める）。
    * 返答は再レビューのときだけ。作者が分からなければ、返答を選べないので返答だけ読めなかったもの（"unreadable"）にする。
    */
   private async reviewFeedback(
@@ -3477,9 +3985,23 @@ export class TaskService {
       number: target.number,
       ...(account ? { account } : {}),
       // レビューが止まったことの投稿（PBI-292）を除くために、ほかのプロジェクトで選んだ同じホストのアカウントも渡す
-      noticeAccounts: this.githubAccountsOnHost(target.repo),
+      // この PR に指摘への返信（PBI-352）を投稿したタスクが記録したアカウントも渡す（投稿の後に、そのアカウントがどの
+      // プロジェクトからも外れていても、Bot のアカウントの返信を、作者の返答として読めるように）
+      noticeAccounts: [
+        ...new Set([
+          ...this.githubAccountsOnHost(target.repo),
+          ...remarkReplyAccountsOn(
+            [...this.tasks.values()],
+            task.reviewOf?.taskId,
+            target.repo,
+            target.number,
+          ),
+        ]),
+      ],
       // 本文のある承認（「承認するが、ここは直してほしい」）も、既存の指摘として渡す（PR #161 レビュー指摘）
       includeApprovals: true,
+      // sacty が作者のアカウントで投稿した、指摘への返信（PBI-352）も、作者の返答として渡す
+      includeSactyReplies: true,
     });
     const previous = task.previousReview;
     if (!previous) return { existing };
@@ -7325,6 +7847,8 @@ export class TaskService {
               awaitingGitHubComments(t) !== undefined ||
               // PR のマージで承認する工程の、承認を待つ提出で頼まれたコメントを投稿する（PBI-301）
               awaitingSubmittedGitHubComments(t) !== undefined ||
+              // PR のレビュー・コメントから取り込んだ指摘への対応を、PR に返信する（PBI-352）
+              this.remarkRepliesReady(t) !== undefined ||
               // 要求要件・設計の成果を、タスクブランチへの PR にする（PBI-57）
               this.awaitingStepPullRequest(t) !== undefined ||
               // マージの後のデプロイの確認（PBI-89）。一時停止中のタスクでは実行しない
@@ -7336,6 +7860,8 @@ export class TaskService {
           (t) =>
             !this.cancelling.has(t.id) &&
             !this.pauseRequested.has(t.id) &&
+            // PR を作ったタスクの、指摘への返信を待っているレビューの子タスクは、待ちが明けるまで始めさせない（PBI-352）
+            !this.reviewWaitsForReplies(t) &&
             // PR のマージで作り直しを止めている間は、実行を始めさせない（PBI-276）
             !this.mergeStopping.has(t.id),
         )
@@ -8207,6 +8733,8 @@ export class TaskService {
     usedSecrets: string[],
     /** 保存していない設定で確かめるときの、プロジェクトの定義（PBI-76）。無ければ保存したもの。 */
     unsaved?: ProjectDefinition,
+    /** 中断されたら、取り出しをやめる（起動した gh を止める。PBI-352）。 */
+    signal?: AbortSignal,
   ): Promise<string> {
     const project = unsaved ?? this.deps.projects.get(task.projectId);
     const host = httpsHost(`${url}/`) ?? "";
@@ -8216,7 +8744,7 @@ export class TaskService {
         message("github.accountRequired", { project: project?.name ?? task.projectId, host }),
       );
     }
-    const token = await this.deps.github.token(host, account);
+    const token = await this.deps.github.token(host, account, signal);
     usedSecrets.push(...gitAuthSecrets(token));
     return token;
   }
@@ -8405,6 +8933,19 @@ export class TaskService {
     const submittedComments = initial && awaitingSubmittedGitHubComments(initial);
     if (initial && submittedComments) {
       return this.postGitHubComments(initial, submittedComments, "submitted");
+    }
+    // PR のレビュー・コメントから取り込んだ指摘への対応を、承認を待たずに PR に返信する（PBI-352）
+    if (initial && this.remarkRepliesReady(initial)) return this.postRemarkReplies(initial.id);
+    // PR のレビューの子タスクは、PR を作ったタスクの指摘への返信（PBI-352）が済むまで、レビューを始めない（対応しなかった
+    // 理由が、作者の返答としてレビューに渡るように。親と子は並んで動くので、親の次の実行を待つと、返信の前に読んでしまう）。
+    // 済まなければ、今回は始めずに、次の実行でやり直す
+    if (
+      initial?.reviewOf &&
+      initial.status === "queued" &&
+      activeStep(initial) === "review" &&
+      !(await this.remarkRepliesSettled(initial.reviewOf.taskId, initial.id))
+    ) {
+      return;
     }
     if (initial && awaitingVerification(initial)) {
       // 最終レビュー（テストの実行）も CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする。PBI-331）。
@@ -9232,9 +9773,11 @@ export class TaskService {
       this.checkBudget(split);
       return this.settleSplit(this.mustGet(task.id));
     }
+    const remarkIds = latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id);
     const extracted = extractBlocks(
       outcome.output,
-      new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
+      // 引き継いだ PR の指摘への対応は、渡した指摘のキーを ID として読む（PBI-352）
+      new Set([...remarkIds, ...handedOverKeys]),
       changeableSteps(latest, step),
       // テストのコマンドの申告を読むのは、テストの仕組みが無いタスクの実装の工程だけ（PR #105 再レビュー指摘）
       {
@@ -9244,7 +9787,21 @@ export class TaskService {
         completion: step === "implement",
       },
     );
-    const { responses, testViewpoints, proposal, testMap, testCommand } = extracted;
+    const { testViewpoints, proposal, testMap, testCommand } = extracted;
+    // 指摘（ID の付いた差し戻しの指摘）への対応と、引き継いだ PR の指摘（ID がキー）への対応を分ける。同じ指摘への対応が
+    // 2つあれば、先のものを使う
+    const responses = extracted.responses.filter((r) => remarkIds.includes(r.remarkId));
+    const handedOverResponses = [
+      ...new Map(
+        extracted.responses
+          .filter((r) => !remarkIds.includes(r.remarkId) && r.remarkId.length <= 200)
+          .reverse()
+          .map((r) => [r.remarkId, r]),
+      ).values(),
+    ]
+      .reverse()
+      .slice(0, 200)
+      .map((r) => ({ key: r.remarkId, text: r.text, ...(r.status ? { status: r.status } : {}) }));
     // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない
     // （用意したテストを飛ばして通らないように）。止めて、再開すると実装をやり直す（PR #105 レビュー指摘）
     if (step === "implement" && latest.noTestsReason && extracted.testCommandInvalid) {
@@ -9302,7 +9859,11 @@ export class TaskService {
               actor: "sacty" as const,
               event: {
                 type: "ContinuedFeedbackPassed" as const,
-                payload: { runId, keys: handedOverKeys },
+                payload: {
+                  runId,
+                  keys: handedOverKeys,
+                  ...(handedOverResponses.length > 0 ? { responses: handedOverResponses } : {}),
+                },
               },
             },
           ]
@@ -15855,7 +16416,15 @@ export class TaskService {
    * （PR の指摘の取り込みだけが渡す。PBI-275）。AI のレビューの指摘だけの差し戻しは、人の差し戻しの回数と上限に数えない
    * （人の指摘が1件でも混ざれば数える）。
    */
-  requestChanges(id: string, raw: unknown, options: { aiReview?: readonly number[] } = {}): Task {
+  requestChanges(
+    id: string,
+    raw: unknown,
+    options: {
+      aiReview?: readonly number[];
+      /** comments と同じ位置の、指摘の元の PR のコメント（PR の指摘の取り込みだけが渡す。PBI-352）。 */
+      origins?: readonly (RemarkOrigin | undefined)[];
+    } = {},
+  ): Task {
     const input = RequestChangesInput.parse(raw);
     const task = this.gateTask(id, input.step, input.submission);
     // やり直す工程は、ゲートの工程か、それより前の工程エージェントが作る工程。
@@ -15868,10 +16437,14 @@ export class TaskService {
     // 人が差し戻した回数（上限に数える）。AI のレビューの指摘だけの回は含めない（PBI-275）
     const rounds = changeRounds(task, target);
     const aiIndexes = new Set(options.aiReview ?? []);
-    const comments = input.comments.map((text, i) => ({
-      text,
-      ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
-    }));
+    const comments = input.comments.map((text, i) => {
+      const origin = options.origins?.[i];
+      return {
+        text,
+        ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
+        ...(origin ? { origin } : {}),
+      };
+    });
     const onlyAiReview = comments.length > 0 && comments.every((c) => c.source === "sacty_review");
 
     if (task.status === "awaiting_approval" && input.comments.length === 0) {
@@ -15882,11 +16455,13 @@ export class TaskService {
     const settings = this.stepSettingChanges(task, input);
     // 回の番号と指摘の ID は、AI のレビューだけの回も含めて続ける（人の差し戻しの回数とは別）
     const round = lastChangeRound(task, target) + 1;
-    const toRemarks = (list: { text: string; source?: "sacty_review" }[]) =>
-      list.map(({ text, source }, i) => ({
+    // 指摘の元の PR のコメント（origin）は、エスカレーションで人が出し直しても失わない（PBI-352）
+    const toRemarks = (list: { text: string; source?: "sacty_review"; origin?: RemarkOrigin }[]) =>
+      list.map(({ text, source, origin }, i) => ({
         id: `${target}-${round}-${i + 1}`,
         text,
         ...(source ? { source } : {}),
+        ...(origin ? { origin } : {}),
       }));
 
     if (task.status === "awaiting_approval" && !onlyAiReview && rounds >= MAX_CHANGE_REQUESTS) {
@@ -16371,6 +16946,186 @@ export function awaitingSubmittedGitHubComments(task: Task): StepKey | undefined
     mentionsGitHubComments(output) &&
     task.githubComments?.[gate.step]?.submission !== gate.submission
     ? gate.step
+    : undefined;
+}
+
+/**
+ * 取り込んだ PR の指摘（pendingReview）の、指摘ごとの元のコメント（PBI-352）。keys と remarks は同じ位置の指摘
+ * （1件のフィードバックを1件の指摘にする）。数が合わない・PR の番号が分からないときは、持たせない。
+ */
+function remarkOrigins(
+  pending: NonNullable<Task["pendingReview"]>,
+  number: number | undefined,
+): (RemarkOrigin | undefined)[] {
+  if (number === undefined || pending.keys.length !== pending.remarks.length) return [];
+  return pending.keys.map((key) => (key.length <= 200 ? { key, number } : undefined));
+}
+
+/**
+ * PR に、指摘への返信（PBI-352）を投稿したタスクが、返信に使ったと記録したアカウント。その PR（実装の PR・要求要件と設計の
+ * PR）を作った・引き継いだタスクと、レビューの子タスクの親（parentId）のもの。
+ */
+export function remarkReplyAccountsOn(
+  tasks: readonly Task[],
+  parentId: string | undefined,
+  repo: string,
+  number: number,
+): string[] {
+  const on = (pr: { repo?: string; number?: number } | undefined) =>
+    pr?.number === number && pr.repo !== undefined && sameRepo(pr.repo, repo);
+  return [
+    ...new Set(
+      tasks.flatMap((t) =>
+        t.remarkReplyAccounts &&
+        (t.id === parentId ||
+          on(t.pullRequest) ||
+          on(t.continuedPullRequest) ||
+          // 要求要件・設計の PR
+          (t.stepPullRequests ?? []).some(on))
+          ? t.remarkReplyAccounts
+          : [],
+      ),
+    ),
+  ];
+}
+
+/**
+ * 指摘への返信の投稿に使ったアカウント（PBI-352）。PR の指摘を読むときに渡して、今のアカウントが変わっていても、前の
+ * アカウントが投稿した sacty の返信を、PR の指摘として取り込まない。
+ */
+function replyAccounts(task: Task): { noticeAccounts?: string[] } {
+  const accounts = task.remarkReplyAccounts;
+  return accounts && accounts.length > 0 ? { noticeAccounts: accounts } : {};
+}
+
+/**
+ * 行へのコメントへの返信を、GitHub が、宛先を理由に断ったか（404・410・422。元のコメントが消えた・返信への返信は受け付け
+ * ない、など）。断られたなら、返信は投稿されておらず、PR のコメントに回せる。レート制限・権限の不足は、PR のコメントでも
+ * 同じなので含めない。答えを受け取れなかった・期限を超えた・5xx は、投稿されたかが分からない。
+ */
+function replyRejected(error: unknown): boolean {
+  const status = githubStatus(error);
+  return status === 404 || status === 410 || status === 422;
+}
+
+/**
+ * GitHub のレート制限で断られたか（429、または 403 で、本文がレート制限と説明するか、ヘッダーが制限を示すもの）。
+ * 宛先の拒否ではないので、PR のコメントに回さず、制限の間は投稿を続けない。
+ */
+function rateLimited(error: unknown): boolean {
+  const status = githubStatus(error);
+  if (status === 429) return true;
+  // 403 は、本文がレート制限と説明するか、ヘッダーが制限を示す（残りが 0・次に試せるまでの時間。本文を読めなくても）とき
+  return (
+    status === 403 && (isTransientGitHubFailure(error) || githubRetryAfterMs(error) !== undefined)
+  );
+}
+
+/**
+ * 1件の記録（RemarkRepliesPosted）に入れる、返信の結果の件数の上限（results の上限）。返信する指摘がこれより多ければ、
+ * 記録を分ける（投稿は、1回の処理で続けて行う。レート制限・時間切れで投稿を止めたら、残りのすべてに及ぶ）。
+ */
+const REMARK_REPLIES_PER_RECORD = 200;
+
+/** PR に返信する、指摘への対応（PBI-352）。 */
+export type RemarkReplyDue = {
+  /** 指摘の ID。引き継いだ PR の指摘では、元のコメントのキー。 */
+  id: string;
+  /** 元のコメントのキー（`review:<ID>`・`review_comment:<ID>`・`comment:<ID>`）。 */
+  key: string;
+  /** 対応を書いた工程。 */
+  step: StepKey;
+  response: string;
+  status?: RemarkResponseStatus;
+  respondedIn: number;
+  /** 引き継いだ PR の指摘（指摘の ID を、人に見せない）。 */
+  continued?: true;
+};
+
+/**
+ * PR のレビュー・コメントから取り込んだ指摘への対応を、まだ PR に返信していない提出（PBI-352）。承認を待つ提出で頼まれた
+ * コメント（awaitingSubmittedGitHubComments）と同じく、その工程の PR が開いていて承認待ちの間に、マージを待たずに返信する
+ * （レビューの工程・セキュリティのタスク・中止・一時停止中・実行中は返信しない）。
+ * 対象は、その PR のコメントから取り込んだ（origin の PR の番号が同じ）、無効でない、対応のある、まだ返信していない指摘。
+ * 承認待ちの工程の指摘は、今の提出で対応したものだけ。前の工程に戻した指摘（実装の PR の指摘を、設計で直したなど）は、
+ * その工程の最新の対応を、PR を更新したこの提出で返信する。1件の指摘には、1回だけ返信する。
+ * 引き継いだ PR（人が作った PR を直すタスク）では、実装に渡した指摘（continuedResponses）のうち、今の提出で対応を書いた、
+ * まだ返信していないものも対象にする。取り込んだ指摘として返信するもの（同じコメントが元の指摘）は、重ねない。
+ */
+export function awaitingRemarkReplies(task: Task):
+  | {
+      step: StepKey;
+      submission: number;
+      number: number;
+      repo: string;
+      url: string;
+      replies: RemarkReplyDue[];
+    }
+  | undefined {
+  if (task.status !== "awaiting_approval" || isSecurityTask(task)) return undefined;
+  const gate = task.gate;
+  const pr = gatePullRequest(task);
+  if (
+    !gate ||
+    gate.step === "review" ||
+    !pr?.repo ||
+    pr.step !== gate.step ||
+    pr.state !== "open"
+  ) {
+    return undefined;
+  }
+  const remarks = task.remarks.flatMap((r): RemarkReplyDue[] =>
+    !r.voided &&
+    r.origin?.number === pr.number &&
+    r.response !== undefined &&
+    r.respondedIn !== undefined &&
+    r.repliedIn === undefined &&
+    (r.step !== gate.step || r.respondedIn === gate.submission)
+      ? [
+          {
+            id: r.id,
+            key: r.origin.key,
+            step: r.step,
+            response: r.response,
+            ...(r.status ? { status: r.status } : {}),
+            respondedIn: r.respondedIn,
+          },
+        ]
+      : [],
+  );
+  const continued = task.continuedPullRequest;
+  // 取り込んだ指摘（差し戻しの指摘）になっているコメントは、その指摘として返信する
+  const imported = new Set(
+    task.remarks.flatMap((r) => (r.origin?.number === pr.number ? [r.origin.key] : [])),
+  );
+  const handedOver =
+    continued && gate.step === "implement" && continued.number === pr.number
+      ? Object.entries(task.continuedResponses ?? {}).flatMap(([key, r]): RemarkReplyDue[] =>
+          r.repliedIn === undefined && r.respondedIn === gate.submission && !imported.has(key)
+            ? [
+                {
+                  id: key,
+                  key,
+                  step: "implement",
+                  response: r.text,
+                  ...(r.status ? { status: r.status } : {}),
+                  respondedIn: r.respondedIn,
+                  continued: true,
+                },
+              ]
+            : [],
+        )
+      : [];
+  const replies = [...remarks, ...handedOver];
+  return replies.length > 0
+    ? {
+        step: gate.step,
+        submission: gate.submission,
+        number: pr.number,
+        repo: pr.repo,
+        url: pr.url ?? `${pr.repo.replace(/\/+$/, "")}/pull/${pr.number}`,
+        replies,
+      }
     : undefined;
 }
 
