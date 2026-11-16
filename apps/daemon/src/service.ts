@@ -3499,6 +3499,17 @@ export class TaskService {
    */
   private readonly remarkReplyRetryAt = new Map<string, number>();
 
+  /**
+   * 指摘への返信を、これより前にはやり直さない時刻を、延ばす（縮めない）。すでにある期限と、今からの待ちの、遅いほうを残す
+   * （同じアカウントの並んだ問い合わせが、長い待ちの後に短い待ちを受けても、期限を前倒ししない）。
+   */
+  private holdRemarkReplies(key: string, waitMs: number): void {
+    this.remarkReplyRetryAt.set(
+      key,
+      Math.max(this.remarkReplyRetryAt.get(key) ?? 0, this.now() + waitMs),
+    );
+  }
+
   /** 返信に使うアカウントの、待ちのキー（ホストとアカウント）。 */
   private remarkReplyAccountKey(task: Task, repo: string): string {
     const account = this.githubAccountOf(task, repo).account ?? "";
@@ -3552,10 +3563,7 @@ export class TaskService {
     const wait = () => {
       const parent = this.tasks.get(parentId);
       if (parent && !this.remarkRepliesHeld(parent)) {
-        this.remarkReplyRetryAt.set(
-          `task:${parentId}`,
-          this.now() + (this.deps.remarkReplyRetryMs ?? 60_000),
-        );
+        this.holdRemarkReplies(`task:${parentId}`, this.deps.remarkReplyRetryMs ?? 60_000);
       }
       return false;
     };
@@ -3589,10 +3597,7 @@ export class TaskService {
       this.postRemarkRepliesNow(taskId).catch((error: unknown) => {
         // 結果を記録できなかった（など）。間を置いてやり直す（その間、このタスクも、返信を待つレビューの子タスクも、
         // 実行待ちに出さない。失敗が続いても、実行の枠を取り続けて、後ろのタスクを止めないように）
-        this.remarkReplyRetryAt.set(
-          `task:${taskId}`,
-          this.now() + (this.deps.remarkReplyRetryMs ?? 60_000),
-        );
+        this.holdRemarkReplies(`task:${taskId}`, this.deps.remarkReplyRetryMs ?? 60_000);
         throw error;
       }),
     );
@@ -3667,13 +3672,12 @@ export class TaskService {
     // GitHub のレート制限に当たった：制限の間は投稿を続けない。ここまでの結果を記録し、残りの指摘は、失敗にせずに残して、
     // 間を置いてやり直す（行への返信が制限で断られても、PR のコメントに回さない）
     const holdForRateLimit = (error: unknown) => {
-      // 待つ時間は、GitHub が示した時間（上限は 1 時間）と、既定の待ちの長いほう。同じアカウントで返信する、ほかのタスクも待つ
-      const wait = Math.max(
-        this.deps.remarkReplyRetryMs ?? 60_000,
-        Math.min(githubRetryAfterMs(error) ?? 0, 3_600_000),
-      );
+      // 待つ時間は、GitHub が示した時間と、既定の待ちの長いほう。同じアカウントで返信する、ほかのタスクも待つ。
       // 待ちは、投稿に使ったホストとアカウントに記録する（通信の間に、プロジェクトのアカウントが変わっていても）
-      this.remarkReplyRetryAt.set(postKey, this.now() + wait);
+      this.holdRemarkReplies(
+        postKey,
+        Math.max(this.deps.remarkReplyRetryMs ?? 60_000, githubRetryAfterMs(error) ?? 0),
+      );
       console.warn(
         `[daemon] タスク ${taskId} の指摘への返信が、GitHub のレート制限に当たりました。残りは、間を置いてやり直します：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
       );

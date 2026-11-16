@@ -13554,9 +13554,23 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         pulls.rateLimited = true;
         await drain(a.service);
         pulls.rateLimited = false;
+        // 同じアカウントの並んだ問い合わせが、後から短い待ちを受けても、期限を前倒ししない（並んだ問い合わせは、1つの
+        // タスクでは作れないので、待ちを延ばす処理を直接呼ぶ）
+        (
+          a.service as unknown as { holdRemarkReplies(key: string, waitMs: number): void }
+        ).holdRemarkReplies("account:github.com:me", 10_000);
         now += 61_000;
         expect(a.service.queuedTaskIds()).toEqual([]);
         now += 4 * 60_000;
+        expect(a.service.queuedTaskIds()).toEqual([a.id]);
+        // GitHub が 1 時間を超える待ちを示しても、その時刻より前には、やり直さない
+        pulls.rateLimited = true;
+        pulls.rateLimitRetryAfterMs = 2 * 3_600_000;
+        await drain(a.service);
+        pulls.rateLimited = false;
+        now += 61 * 60_000;
+        expect(a.service.queuedTaskIds()).toEqual([]);
+        now += 60 * 60_000;
         expect(a.service.queuedTaskIds()).toEqual([a.id]);
         await drain(a.service);
         expect(prComments(pulls)).toHaveLength(1);
