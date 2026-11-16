@@ -6822,8 +6822,8 @@ const CHILD_DEPENDS_PREFIX = "このタスクは、子タスク ";
 
 /** 分割の子タスクの範囲（PBI-351）。 */
 export type ChildScope = {
-  /** 親タスクの題。sacty が添えた関係の文を読めなかった（以前の版の子タスク）ときは無い。 */
-  parentTitle?: string;
+  /** 親タスクの題。 */
+  parentTitle: string;
   /** 統合レビューの指摘を直す、修正の子タスクか。 */
   fix: boolean;
   /** 分割のエージェントが書いた、子タスクの内容（実現すること・受け入れ条件・範囲外）。そのまま。 */
@@ -6850,47 +6850,46 @@ export function childScopeOf(task: Task): ChildScope | undefined {
 }
 
 /**
- * 範囲の記録（Task.childScope）が無い子タスクの範囲を、子タスクの内容（buildChildBody が作った文字列）から読む。
- * sacty が添えた並び（区切り線・関係の文・あれば依存先の文・空行・親タスクから添えた部分の見出し）を探し、それより前を
- * 分割のエージェントが書いた内容にする。
- * - 分割のエージェントが内容に同じ見出しを書いていても、直前に sacty の関係の文が無い見出しは、境目にしない。
- * - 親タスクの題に改行や「」」があっても読めるよう、関係の文は、決まった始まりと終わりの間の全体を題にする。
- * sacty の並びが見つからないとき（もっと前の版の子タスク）は、最初の見出しより前の全体を内容にし、親タスクの題は持たない。
- * 見出しが無ければ undefined（範囲を見分けられない）。
+ * 範囲の記録（Task.childScope）が無い子タスク（記録を始める前に作った子タスク）の範囲を、子タスクの内容（buildChildBody が
+ * 作った文字列）から復元する。復元するのは、sacty が添えた並びが一意に決まるときだけ。推測では切らない。
+ * - 親タスクから添えた部分の見出しの行が、内容の全体にちょうど1つある。
+ * - 見出しより前に、区切り線と関係の文の始まりが、ちょうど1つある。
+ * - その後ろから見出しまでが、関係の文（親タスクの題と、決まった終わりの文）と、あれば依存先の文の1行だけでできている。
+ * こうなっていれば、分割のエージェントの原文にも親タスクの題にも、境目と同じ文字列は入っておらず、原文と題は1通りに決まる。
+ * どれかが合わなければ、範囲は不明として undefined を返す（PR の本文にもレビューの指示にも、範囲を渡さない）。
  */
 function legacyChildScope(raw: string): ChildScope | undefined {
   const body = `\n${raw.replace(/\r\n?/g, "\n")}`;
   const heading = `\n## ${CHILD_PARENT_REQUIREMENTS_HEADING}\n`;
   const separator = `\n\n---\n\n${CHILD_NOTE_PREFIX}`;
+  const at = body.indexOf(heading);
+  if (at < 0 || body.indexOf(heading, at + 1) >= 0) return undefined;
+  const head = body.slice(1, at);
+  const sep = head.indexOf(separator);
+  // 見出しの前は空行（head は改行で終わる）
+  if (sep < 0 || head.indexOf(separator, sep + 1) >= 0 || !head.endsWith("\n")) return undefined;
+  const whole = head.slice(sep + separator.length, -1);
+  // 依存先の文は、関係の文の次の1行。関係の文の終わりの文とは終わり方が違うので、どちらの形かは1通りに決まる
+  const lastLine = whole.lastIndexOf("\n");
+  const depends =
+    lastLine >= 0 && whole.slice(lastLine + 1).startsWith(CHILD_DEPENDS_PREFIX)
+      ? whole.slice(0, lastLine)
+      : undefined;
   const tails = [
     { tail: `${CHILD_NOTE_SPLIT}${CHILD_NOTE_SPLIT_TAIL}`, fix: false },
     { tail: `${CHILD_NOTE_FIX}${CHILD_NOTE_FIX_TAIL}`, fix: true },
   ];
-  let first = -1;
-  for (let at = body.indexOf(heading); at >= 0; at = body.indexOf(heading, at + 1)) {
-    if (first < 0) first = at;
-    const head = body.slice(1, at);
-    const sep = head.lastIndexOf(separator);
-    // 見出しの前は空行（head は改行で終わる）
-    if (sep < 0 || !head.endsWith("\n")) continue;
-    const whole = head.slice(sep + separator.length, -1);
-    // 関係の文の次の行に、依存先の文が続くことがある。親タスクの題に同じ形の行があっても読み違えないよう、
-    // 依存先の文が無い読み方を先に試す
-    const depends = whole.lastIndexOf(`\n${CHILD_DEPENDS_PREFIX}`);
-    const notes = [whole, ...(depends >= 0 ? [whole.slice(0, depends)] : [])];
-    for (const note of notes) {
-      for (const { tail, fix } of tails) {
-        if (!note.endsWith(tail)) continue;
-        return {
-          parentTitle: note.slice(0, note.length - tail.length),
-          fix,
-          content: head.slice(0, sep).trim(),
-        };
-      }
+  for (const note of [whole, ...(depends === undefined ? [] : [depends])]) {
+    for (const { tail, fix } of tails) {
+      if (!note.endsWith(tail)) continue;
+      return {
+        parentTitle: note.slice(0, note.length - tail.length),
+        fix,
+        content: head.slice(0, sep).trim(),
+      };
     }
   }
-  if (first < 0) return undefined;
-  return { fix: false, content: body.slice(1, first).trim() };
+  return undefined;
 }
 
 /** PR の本文に載せる、子タスクの内容の上限（文字。PBI-351）。超えた分は、sacty のタスクの画面で読ませる。 */
@@ -6898,7 +6897,7 @@ export const CHILD_SCOPE_BODY_MAX = 8_000;
 
 /** 子タスクが、親タスクの何であるか（PR の本文と、レビューの指示の、範囲の説明の主語）。 */
 function childScopeKind(scope: ChildScope): string {
-  const parent = scope.parentTitle ? `親タスク「${scope.parentTitle}」` : "親タスク";
+  const parent = `親タスク「${scope.parentTitle}」`;
   return scope.fix
     ? `${parent}の統合レビューの指摘を直す、修正の子タスク`
     : `${parent}をタスク分割で分けた子タスクの1つ`;

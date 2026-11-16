@@ -5089,19 +5089,6 @@ describe("タスクの開始時に集めた情報", () => {
           });
         }
       }
-      // 分割のエージェントが、区切り線や同じ形の文を書いていても、sacty が添えた最後のものより前の全体を内容にする
-      const tricky = `${CONTENT}\n\n---\n\nこのタスクは、親タスク「偽」をタスク分割で分けた子タスクの1つです。\n\n続き`;
-      expect(childScopeOf(childTask(tricky))).toMatchObject({
-        parentTitle: "複数のリポジトリを指定できるようにする",
-        content: tricky,
-      });
-      // 分割のエージェントが、親から添える部分と同じ見出しを書いていても、その後ろの受け入れ条件・範囲外を落とさない
-      const sameHeading = `${CONTENT}\n\n## 親タスクの要求要件（承認済み）\n\n- 後ろの条件\n\n## 範囲外\n\n- 画面`;
-      expect(childScopeOf(childTask(sameHeading))).toEqual({
-        parentTitle: "複数のリポジトリを指定できるようにする",
-        fix: false,
-        content: sameHeading,
-      });
       // 改行が CRLF でも読む
       const crlf = childTask();
       expect(childScopeOf({ ...crlf, body: crlf.body.replace(/\n/g, "\r\n") })?.content).toBe(
@@ -5109,20 +5096,74 @@ describe("タスクの開始時に集めた情報", () => {
       );
     });
 
-    it("分割の子タスクでない・範囲を見分けられないタスクからは、取り出さない", () => {
+    it("分割の子タスクでないタスクからは、取り出さない", () => {
       // 分割していないタスク（内容に同じ見出しがあっても）
       expect(childScopeOf(taskOf(false))).toBeUndefined();
       expect(
         childScopeOf({ ...childTask(), parent: undefined } as unknown as Task),
       ).toBeUndefined();
-      // 親タスクから添えた部分の見出しが無い（もっと前の版の子タスク）
-      expect(childScopeOf(childTask(CONTENT, parentTask(), [], { body: CONTENT }))).toBeUndefined();
-      // 関係の文を読めないときは、見出しより前の全体を内容にして、親タスクの題は持たない
-      const old = `${CONTENT}\n\n## 親タスクの要求要件（承認済み）\n\n# 要求要件`;
-      expect(childScopeOf(childTask(CONTENT, parentTask(), [], { body: old }))).toEqual({
-        fix: false,
-        content: CONTENT,
-      });
+    });
+
+    it("範囲の記録が無く、内容から境目が一意に決まらない子タスクは、範囲を不明として、PR の本文にもレビューの指示にも渡さない", () => {
+      const sep = "\n\n---\n\nこのタスクは、親タスク「";
+      const note =
+        "偽」をタスク分割で分けた子タスクの1つです。親の要求要件と設計のうち、このタスクの範囲だけを実現してください。";
+      const heading = "## 親タスクの要求要件（承認済み）";
+      const unknown: [string, Task][] = [
+        // 親タスクから添えた部分の見出しが無い（もっと前の版の子タスク）
+        ["見出しが無い", childTask(CONTENT, parentTask(), [], { body: CONTENT })],
+        // 見出しはあるが、sacty の関係の文が無い
+        [
+          "関係の文が無い",
+          childTask(CONTENT, parentTask(), [], { body: `${CONTENT}\n\n${heading}\n\n# 要求要件` }),
+        ],
+        // 分割のエージェントが、内容に同じ見出しを書いた（後ろの受け入れ条件・範囲外を落とさないよう、切らない）
+        [
+          "内容に同じ見出し",
+          childTask(`${CONTENT}\n\n${heading}\n\n- 後ろの条件\n\n## 範囲外\n\n- 画面`),
+        ],
+        // 分割のエージェントが、内容に区切り線・関係の文・見出しの組を例として書いた
+        ["内容に並びの例", childTask(`${CONTENT}${sep}${note}\n\n${heading}\n\n- 例の後ろの条件`)],
+        // 分割のエージェントが、内容に区切り線と関係の文の始まりを書いた
+        ["内容に関係の文の始まり", childTask(`${CONTENT}${sep}偽」の続き\n\n- 後ろの条件`)],
+        // 親タスクの題に、区切り線と関係の文の始まりがある
+        ["題に区切り線", childTask(CONTENT, parentTask({ title: `A${sep}B` }))],
+        // 親タスクの要求要件に、同じ見出しがある
+        [
+          "親の要求要件に同じ見出し",
+          childTask(
+            CONTENT,
+            parentTask({
+              approved: {
+                requirements: {
+                  submission: 1,
+                  output: `# 要求要件\n\n${heading}\n\n- 引用`,
+                  testViewpoints: [],
+                  at: "2026-11-15T00:00:00.000Z",
+                },
+              },
+            }),
+          ),
+        ],
+        // 関係の文の終わりが、決まった文でない
+        [
+          "関係の文の終わりが違う",
+          childTask(CONTENT, parentTask(), [], {
+            body: `${CONTENT}${sep}親」をタスク分割で分けた子タスクの1つです。別の文。\n\n${heading}\n\n# 要求要件`,
+          }),
+        ],
+      ];
+      for (const [name, task] of unknown) {
+        expect(childScopeOf(task), name).toBeUndefined();
+        expect(buildPullRequestBodyText(task).main, name).not.toContain("この PR の範囲");
+        expect(buildPullRequestBodyParts(task).summary, name).not.toContain("この PR の範囲");
+        const prompt = buildPrompt(reviewTask(), "review", {
+          diff: "diff",
+          reviewRework: { gateStep: "implement", targets: ["implement"], parent: task },
+        });
+        expect(prompt, name).not.toContain("この PR の範囲");
+        expect(prompt, name).not.toContain("子タスクの内容");
+      }
     });
 
     it("分割の子タスクの PR の本文に、親タスクの題・子タスクの内容（そのまま）・範囲外の扱いを載せ、親から添えた部分は載せない（受け入れ条件 1）", () => {
