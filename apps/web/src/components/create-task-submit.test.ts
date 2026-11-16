@@ -14,7 +14,7 @@ vi.mock("next/cache", () => ({ refresh: vi.fn(), revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 const { createTaskAction } = await import("@/app/actions");
-const { TaskFields } = await import("./new-task-dialog");
+const { NewTaskDialog, TaskFields } = await import("./new-task-dialog");
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function Form() {
@@ -149,5 +149,135 @@ describe.each(["ja", "en"] as const)("作成フォームの送信（%s）", (lan
     await act(() => radio.click());
     await submit();
     expect(createTask).toHaveBeenCalledExactlyOnceWith({ template: "sacty-setup", projectId: "p" });
+  });
+
+  it("複数欄からテンプレートを選び、なしに戻すと1欄目だけを送る", async () => {
+    await setRepo(0, "acme/a");
+    await act(() => button(messagesFor(lang).forms.task.addRepository).click());
+    await setRepo(1, "acme/b");
+    const template = form().querySelector<HTMLInputElement>(
+      'input[name="template"][value="sacty-setup"]',
+    );
+    const none = form().querySelector<HTMLInputElement>('input[name="template"][value=""]');
+    if (!template || !none) throw new Error("template missing");
+    await act(() => template.click());
+    await submit();
+    expect(createTask).toHaveBeenNthCalledWith(1, {
+      template: "sacty-setup",
+      projectId: "p",
+      repo: "acme/a",
+    });
+    await act(() => none.click());
+    expect(form().querySelectorAll('input[name="repo"]')).toHaveLength(1);
+    const title = form().querySelector<HTMLInputElement>('input[name="title"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (!title || !setter) throw new Error("title missing");
+    await act(() => {
+      setter.call(title, "作業");
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await submit();
+    expect(createTask).toHaveBeenNthCalledWith(2, {
+      title: "作業",
+      body: "",
+      projectId: "p",
+      repo: "acme/a",
+    });
+    expect(createTask).toHaveBeenCalledTimes(2);
+  });
+
+  it("途中の空欄を除いて送る", async () => {
+    const add = button(messagesFor(lang).forms.task.addRepository);
+    await setRepo(0, "acme/a");
+    await act(() => add.click());
+    await act(() => add.click());
+    await setRepo(2, "acme/c");
+    await submit();
+    expect(createTask).toHaveBeenCalledExactlyOnceWith({
+      title: "作業",
+      body: "",
+      projectId: "p",
+      repos: ["acme/a", "acme/c"],
+    });
+  });
+
+  it("重複した値をそのまま送る", async () => {
+    await setRepo(0, "acme/a");
+    await act(() => button(messagesFor(lang).forms.task.addRepository).click());
+    await setRepo(1, "acme/a");
+    await submit();
+    expect(createTask).toHaveBeenCalledExactlyOnceWith({
+      title: "作業",
+      body: "",
+      projectId: "p",
+      repos: ["acme/a", "acme/a"],
+    });
+  });
+
+  it("値の前後の空白を取り除いて送る", async () => {
+    await setRepo(0, "  acme/a  ");
+    await act(() => button(messagesFor(lang).forms.task.addRepository).click());
+    await setRepo(1, "  acme/b  ");
+    await submit();
+    expect(createTask).toHaveBeenCalledExactlyOnceWith({
+      title: "作業",
+      body: "",
+      projectId: "p",
+      repos: ["acme/a", "acme/b"],
+    });
+  });
+});
+
+describe.each(["ja", "en"] as const)("作成ダイアログの送信（%s）", (lang) => {
+  it("候補を読み込み初期値に追加して送る", async () => {
+    locale = lang;
+    const fetchCandidates = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ repositories: ["acme/a"], problems: [] }),
+    });
+    vi.stubGlobal("fetch", fetchCandidates);
+    try {
+      await act(() =>
+        root.render(h(NewTaskDialog, { projectId: "p", projectName: "Project", hasTargets: true })),
+      );
+      const open = Array.from(container.querySelectorAll("button")).find(
+        (b) => b.textContent === messagesFor(lang).forms.task.create,
+      );
+      if (!open) throw new Error("open missing");
+      await act(async () => {
+        open.click();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      expect(fetchCandidates).toHaveBeenCalledWith("/projects/p/repositories", {
+        cache: "no-store",
+      });
+      const form = document.querySelector("form");
+      if (!form) throw new Error("form missing");
+      expect(form.querySelector<HTMLInputElement>('input[name="repo"]')?.value).toBe("acme/a");
+      const add = Array.from(form.querySelectorAll("button")).find(
+        (b) => b.textContent === messagesFor(lang).forms.task.addRepository,
+      );
+      if (!add) throw new Error("add missing");
+      await act(() => add.click());
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      const second = form.querySelectorAll<HTMLInputElement>('input[name="repo"]')[1];
+      const title = form.querySelector<HTMLInputElement>('input[name="title"]');
+      if (!setter || !second || !title) throw new Error("input missing");
+      await act(() => {
+        setter.call(second, "acme/b");
+        second.dispatchEvent(new Event("input", { bubbles: true }));
+        setter.call(title, "作業");
+        title.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => form.requestSubmit());
+      expect(createTask).toHaveBeenCalledExactlyOnceWith({
+        title: "作業",
+        body: "",
+        projectId: "p",
+        repos: ["acme/a", "acme/b"],
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
