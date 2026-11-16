@@ -2,13 +2,24 @@ import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { CONTAINER_WORKSPACE } from "./agents/docker.js";
 
+/** Markdown の文字参照（`&#115;`・`&#x73;`・`&sol;`）の形。 */
+const CHARACTER_REFERENCE = /&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/;
+
 /**
- * 作業領域へのリンクがありうる本文か。リンク先の始まり（`](`。空白・改行と `<` をはさんでよい）の後ろに、作業領域のパスが
- * 続く所があるかだけを見る（リンクかどうかは、パーサーが決める）。
+ * 解析しなくてよい本文か（作業領域へのリンク・画像が、ありえない本文）。リンク先を自前で読んで決めるのではなく、パーサーが
+ * 作業領域へのリンクと解釈しうる本文を、すべて解析に回す（見落とさない側に倒す）：
+ * - インラインのリンク・画像は、表示の文字の閉じ（`]`）の直後にリンク先の開き（`(`）が、そのままの文字で続く。`](` が
+ *   無ければ、リンクも画像も無い。
+ * - リンク先の文字は、バックスラッシュによる打ち消しと文字参照のほかは、書いたままに読まれる。本文に作業領域のパスが
+ *   そのままの文字で無く、バックスラッシュも文字参照も無ければ、作業領域へのリンクは無い。
+ * パーサーは、記号が長く続く本文で時間がかかるので、要らない解析を避ける。
  */
-const CANDIDATE = new RegExp(
-  `\\]\\([ \\t\\r\\n]*<?${CONTAINER_WORKSPACE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[/)>\\s]|$)`,
-);
+function cannotLinkToWorkspace(body: string): boolean {
+  if (!body.includes("](")) return true;
+  return (
+    !body.includes(CONTAINER_WORKSPACE) && !body.includes("\\") && !CHARACTER_REFERENCE.test(body)
+  );
+}
 
 /** リンク先が作業領域（とその下）なら、作業領域からの相対パス（作業領域そのものなら空）。違えば無い。 */
 function workspacePath(url: string): string | undefined {
@@ -61,7 +72,7 @@ function collect(node: Nodes, source: string, out: Replacement[]): void {
       }
       // 表示の文字にパス（行・節の指定を除く）が出ていれば、文字だけを残す
       const file = path.replace(/[#?].*$/, "").replace(/\/+$/, "");
-      const text =
+      const wanted =
         label.trim() === ""
           ? path === ""
             ? ""
@@ -69,7 +80,11 @@ function collect(node: Nodes, source: string, out: Replacement[]): void {
           : file === "" || label.includes(file)
             ? label
             : `${label}（${inlineCode(path)}）`;
-      out.push({ start, end, text });
+      // 置き換えで本文を長くしない（長さの上限の後に置き換えるため）。パスにバッククォートが続くと、コードの書式の囲みが
+      // 元のリンクより長くなる。そのときは、パスを添えずに表示の文字だけにする。表示の文字も無ければ、リンクを変えない
+      const original = end - start;
+      const text = wanted.length <= original ? wanted : label.trim() !== "" ? label : undefined;
+      if (text !== undefined && text.length <= original) out.push({ start, end, text });
       return;
     }
   }
@@ -87,13 +102,13 @@ function collect(node: Nodes, source: string, out: Replacement[]): void {
  * 名前のパス）は変えない。参照形式のリンク（`[a][b]` と、その定義）と HTML のリンクは変えない。解析できなければ、本文を
  * 変えずに返す（PR の作成を止めない）。
  *
- * 本文は長さの上限（PR_BODY_MAX）の後のものを渡す。その長さで、ふつうの本文の解析は 0.1 秒ほど。作業領域へのリンクを含み、
- * かつ記号が上限いっぱいまで続く本文では、数秒かかる（PR の作成・更新のたびに1回）。
+ * 本文は長さの上限（PR_BODY_MAX）の後のものを渡す。置き換えは、元のリンクより長い文字にしない（返す本文は、渡した本文より
+ * 長くならない）。その長さで、ふつうの本文の解析は 0.1 秒ほど。解析に回る本文（作業領域のパス・バックスラッシュ・文字参照の
+ * どれかと `](` を含む）で、かつ記号が上限いっぱいまで続くと、数秒〜数十秒かかる（PR の作成・更新のたびに1回。その間、
+ * デーモンのほかの処理は待つ）。
  */
 export function withoutWorkspaceLinks(body: string): string {
-  // リンク先の始まりの形（`](` の後ろに作業領域のパス）が無い本文は、解析しない。パーサーは、記号が長く続く本文
-  // （`>` や `*` の連続）で時間がかかるので、対象がありうる本文だけを解析する
-  if (!CANDIDATE.test(body)) return body;
+  if (cannotLinkToWorkspace(body)) return body;
   const found: Replacement[] = [];
   try {
     collect(fromMarkdown(body), body, found);

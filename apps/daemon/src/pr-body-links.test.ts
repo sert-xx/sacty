@@ -47,6 +47,48 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     expect(withoutWorkspaceLinks("[手順](\n/workspace/docs/a.md)")).toBe("手順（`docs/a.md`）");
   });
 
+  it("文字参照・バックスラッシュで書いたリンク先も、パーサーが作業領域と解釈するなら外す（ほかに通常のリンクが無くても）", () => {
+    expect(withoutWorkspaceLinks("[手順](/work&#115;pace/docs/a.md)")).toBe("手順（`docs/a.md`）");
+    expect(withoutWorkspaceLinks("[手順](/work&#x73;pace/docs/a.md)")).toBe("手順（`docs/a.md`）");
+    expect(withoutWorkspaceLinks("[手順](&sol;workspace&sol;docs&sol;a.md)")).toBe(
+      "手順（`docs/a.md`）",
+    );
+    expect(withoutWorkspaceLinks("[手順](\\/workspace/docs/a.md)")).toBe("手順（`docs/a.md`）");
+    expect(withoutWorkspaceLinks("[手順](/works\\pace/docs/a.md)")).toBe(
+      "[手順](/works\\pace/docs/a.md)",
+    );
+    // 符号化（%）は、パーサーが元の文字に戻さないので、作業領域へのリンクではない
+    expect(withoutWorkspaceLinks("[手順](/work%73pace/docs/a.md)")).toBe(
+      "[手順](/work%73pace/docs/a.md)",
+    );
+  });
+
+  it("置き換えで本文を長くしない（パスにバッククォートが続くときは、パスを添えない・変えない）", () => {
+    // コードの書式の囲みが元のリンクより長くなるときは、表示の文字だけにする
+    const ticks = "`".repeat(20);
+    expect(withoutWorkspaceLinks(`[手順](/workspace/a${ticks}b.md)`)).toBe("手順");
+    // 表示の文字も無ければ、リンクを変えない
+    const bare = `[](/workspace/a${ticks}b.md)`;
+    expect(withoutWorkspaceLinks(bare)).toBe(bare);
+    // 短いバッククォートは、より長いバッククォートで囲んで添える
+    expect(withoutWorkspaceLinks("[手順](/workspace/a`b.md)")).toBe("手順（`` a`b.md ``）");
+    // 本文の長さの上限いっぱいに並んでも、上限を超えない
+    const link = `[手順](/workspace/${"`".repeat(40)}.md) `;
+    const body = link.repeat(Math.floor(PR_BODY_MAX / link.length));
+    const out = withoutWorkspaceLinks(body);
+    expect(out.length).toBeLessThanOrEqual(body.length);
+    expect(out).toBe("手順 ".repeat(Math.floor(PR_BODY_MAX / link.length)));
+    for (const text of [
+      "[a](/workspace/`)",
+      "[`a`](/workspace/``)",
+      "![](/workspace/```.png)",
+      "[a [b] c](</workspace/` `` ```>)",
+      "[![a](/workspace/`.png)](/workspace/``.md)",
+    ]) {
+      expect(withoutWorkspaceLinks(text).length).toBeLessThanOrEqual(text.length);
+    }
+  });
+
   it("作業領域そのものへのリンクは、表示の文字だけにする", () => {
     expect(withoutWorkspaceLinks("[作業領域](/workspace) と [ルート](/workspace/)")).toBe(
       "作業領域 と ルート",
@@ -144,8 +186,13 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     const started = Date.now();
     expect(withoutWorkspaceLinks(many)).toBe("a.md ".repeat(Math.floor(PR_BODY_MAX / link.length)));
     expect(Date.now() - started).toBeLessThan(2_000);
-    // パーサーが時間のかかる本文（記号の連続）でも、作業領域へのリンクの形が無ければ、解析せずに返す
-    const heavy = [">".repeat(PR_BODY_MAX), "*a".repeat(PR_BODY_MAX / 2), "/workspace/a.md"];
+    // パーサーが時間のかかる本文（記号の連続）でも、作業領域へのリンクがありえなければ、解析せずに返す
+    const heavy = [
+      ">".repeat(PR_BODY_MAX),
+      "*a".repeat(PR_BODY_MAX / 2),
+      `${"+ ".repeat(PR_BODY_MAX / 2 - 20)}[a](docs/a.md)`,
+      `${"1. ".repeat(20_000)}/workspace/a.md`,
+    ];
     const before = Date.now();
     for (const body of heavy) expect(withoutWorkspaceLinks(body)).toBe(body);
     expect(Date.now() - before).toBeLessThan(500);

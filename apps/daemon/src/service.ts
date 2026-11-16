@@ -11586,7 +11586,8 @@ export class TaskService {
       text.keep.map((k) => redact(k, usedSecrets)),
     );
     return {
-      // コンテナの作業領域のパスへのリンク（GitHub では開けない）を外す（PBI-366）。外すと短くなるので、長さの上限の後でよい
+      // コンテナの作業領域のパスへのリンク（GitHub では開けない）を外す（PBI-366）。置き換えは本文を長くしないので、
+      // 長さの上限の後でよい（上限で省いた後の本文に、省けない部分が残る）
       body: withoutWorkspaceLinks(limited.body),
       template: { ...template, ...(limited.truncated ? { truncated: true } : {}) },
     };
