@@ -2795,7 +2795,7 @@ describe("実装の工程の中で PR を作り、承認を待つ（PBI-110）",
         ev("t", { type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person"),
       ]).get("t");
       expect(merged?.pullRequestConflict).toBeUndefined();
-      // 差し戻したら、承認待ちではなくなるので出さない（PR を更新したら記録も消える。daemon.test.ts で確かめる）
+      // 差し戻したら、承認待ちではなくなるので出さない（PR を更新したら記録も消える。daemon-implement.test.ts で確かめる）
       seq = 0;
       const base = [...waiting("t"), conflicted("t")];
       const updated = project([

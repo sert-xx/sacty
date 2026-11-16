@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { errorText } from "./errors.js";
 import { GhCliAuth, gitAuthEnv, gitAuthSecrets, httpsHost } from "./gh.js";
+import { waitFor } from "./testing/wait.js";
 
 /** gh コマンドの偽物。引数と環境変数を記録し、決めた出力と終了コードを返す。 */
 function fakeGh(result: { stdout?: string; stderr?: string; code?: number; error?: string }) {
@@ -39,11 +40,16 @@ describe("gh の実行の中断（PBI-352）", () => {
       spawn("sh", ["-c", `sleep 60 & echo $! > "${pidFile}"; wait`], options)) as never;
     const controller = new AbortController();
     const waiting = new GhCliAuth(spawnImpl).token("github.com", "me", controller.signal);
-    for (let i = 0; i < 100 && !existsSync(pidFile); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    const grandchild = Number(readFileSync(pidFile, "utf8").trim());
-    expect(grandchild).toBeGreaterThan(0);
+    // PID を書き終える（改行まで）のを待つ。ファイルができた直後は、まだ空のことがある（空を読むと 0 になる）
+    let grandchild = 0;
+    await waitFor(
+      () => {
+        const written = existsSync(pidFile) ? readFileSync(pidFile, "utf8") : "";
+        grandchild = /^\d+\n$/.test(written) ? Number(written) : 0;
+        return grandchild > 0;
+      },
+      { what: "gh の代わりのシェルが、起動した子プロセスの PID を書き終えること" },
+    );
     controller.abort(new Error("期限"));
     await expect(waiting).rejects.toThrow("期限");
     let alive = true;

@@ -121,7 +121,7 @@ git config user.email "12345678+your-account@users.noreply.github.com"
 ## PR を出す前に確かめること
 
 ```sh
-npm run lint        # Biome（整形と lint）。整形は npm run format で直せる
+npm run lint        # Biome（整形と lint。警告も失敗にする）。整形は npm run format で直せる
 npm run typecheck   # TypeScript の型検査
 npx vitest run      # テスト（docs の規則のテストを含む）
 npm run build       # すべてのパッケージのビルド
@@ -129,6 +129,28 @@ npm run build       # すべてのパッケージのビルド
 
 - 振る舞いを変えたら、テストを足すか直してください。
   直したテストが、変更を戻すと失敗することも確かめてください。
+- lint は、警告も失敗にします（`biome check --error-on-warnings`）。
+  Biome は、大きさの上限（`biome.json` の `files.maxSize`。2 MiB）を超えたファイルを、警告だけ出して検査から外します。
+  警告を失敗にしているのは、検査から外れたファイルに CI で気づくためです。上限を超えたら、上限を上げずに、ファイルを分けてください。
+- デーモンのサービス（`apps/daemon/src/service.ts` の `TaskService`）を、偽の GitHub・偽のエージェントと組んで確かめるテストは、題材ごとのファイルに分けています。
+  足すテストは、下の表で題材が合うファイルに置いてください。合うものが無ければ、`daemon-<題材>.test.ts` を足して、表に行を足してください。
+  共通の準備（偽物と、それらを組んだサービスを作る `makeService`）は `apps/daemon/src/testing/daemon.ts` にあります。テストファイルの先頭で `useTempDir()` を呼ぶと、テストごとの作業用のディレクトリ（`dir`）と台帳のパス（`dbPath`）が使えます。
+
+  | ファイル（`apps/daemon/src/`） | 置くテスト |
+  | --- | --- |
+  | `daemon-steps.test.ts` | 作業履歴、工程の実行と費用、予算と秘密情報の通知、承認ゲート、設計・再現の工程、変更の申し出、タスクの並行実行 |
+  | `daemon-implement.test.ts` | 実装の工程と実装の PR（テスト・セルフレビュー・レビューの指摘への対応・マージまで） |
+  | `daemon-step-pull-requests.test.ts` | 要求要件・設計の PR（タスクブランチへのフロー） |
+  | `daemon-split.test.ts` | タスク分割、子タスクのテスト観点、依存先の PR に重ねる子タスク、統合レビュー |
+  | `daemon-repoless.test.ts` | リポジトリを指定しないタスク |
+  | `daemon-deliverables.test.ts` | 成果の書き出し、PR テンプレート、非コードの成果と単発作業、提出の前のセルフレビュー・出典の分類の記録 |
+  | `daemon-task-lifecycle.test.ts` | 開始時の情報収集、テストの仕組みが無いリポジトリ、タスクのテンプレート、中止したタスクの再実行、続きのタスク（派生）、作業領域の片付け、依存のキャッシュ |
+  | `daemon-projects-intake.test.ts` | プロジェクト（対象・エクスポート・削除）、sacty の設定、Issue・PR・JIRA のチケットの取り込みとトリアージ、レビューの再依頼、Slack の通知先 |
+  | `daemon-context.test.ts` | コンテキスト（リポジトリ・取得の認証・MCP サーバー・外部 PF・プレビュー・イメージ）、秘密情報をまとめて取り出すこと、タスクの作成時のイメージとエージェントの指定 |
+  | `daemon-orchestrator-sessions.test.ts` | オーケストレーターへの質問、エラーレポート、セッションログと元のセッションのファイル、時間切れで止めた実行の再開、オーケストレーターのセッションの使い回し、サブエージェント |
+  | `daemon-deployment-security.test.ts` | マージの後の CI/CD とデプロイの監視、セキュリティチェックとセキュリティ対応 |
+  | `daemon-audit-memory.test.ts` | 完了したタスクの監査、メモリー |
+  | `daemon-api-settings.test.ts` | HTTP の API、設定に関する注意（使えないエージェント・実行の上限・Docker とイメージ・新しい版の知らせ）、タスクの詳細で工程のエージェントを変えること |
 - 必須ではありませんが、レビューの観点・自己レビュー・最終レビューの指示（`apps/daemon/default-context/skills/review/`、`apps/daemon/src/prompts.ts` の `selfReviewLines`・`outOfScopeLines`）を人が手で変えるときは、実験で見つかった取りこぼしに近い例に実際の AI を当てて、効き目を測れます（手動の測定手順）。
   AI を呼ぶので時間と費用がかかり、判定も揺れます。変更の前後で同じ例を複数回流して比べます（Claude Code の `claude` コマンドが要ります）。
   テストの実行（`npx vitest run`）では走らず、`SACTY_REVIEW_EVAL=1` を指定したときだけ走ります。工程のエージェントが指示を変えるときに、この測定を求めるものではありません。
