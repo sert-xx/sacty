@@ -956,7 +956,7 @@ Both the PR body and sacty's review show how far the scope of that PR goes.
   Read it to decide whether to merge the PR together with the PRs of the other child tasks.
 - What is in scope (what the child task's content says it achieves, its acceptance criteria, and defects caused by that PR's changes) is pointed out.
 - The PR of a task that was not split, and a PR created by a person, get no scope section, and their reviews receive no scope.
-- For some child tasks created by an earlier version of sacty, the scope cannot be told apart.
+- For some child tasks created by an earlier version of sacty, the scope cannot be restored (for example, when the parent task's title or approved outputs changed after the split).
   The PR of such a child task gets no scope section, and its review receives no scope. See the scope in the content shown in the child task's details in sacty.
 
 ### PRs of dependent child tasks (stacked PRs)
