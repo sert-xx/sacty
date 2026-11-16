@@ -9787,7 +9787,19 @@ export class TaskService {
             },
           },
         },
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload:
+              task.repos && (step === "requirements" || step === "design" || step === "split")
+                ? {
+                    reason: this.stopReason(task.id, "error"),
+                    ...(await this.manualPauseInfo(task.id)),
+                  }
+                : { reason: "error" },
+          },
+        },
       ]);
       return;
     }
@@ -10244,7 +10256,13 @@ export class TaskService {
         failed,
         // 失敗したら、止めずに代わりのエージェントでやり直す
         copyFailed
-          ? { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } }
+          ? {
+              actor: "sacty",
+              event: {
+                type: "TaskPaused",
+                payload: { reason: this.stopReason(task.id, "error"), ...manual },
+              },
+            }
           : this.pauseOrFallBack(
               task.id,
               { runId, role: step, agent, selected: chosen.agent },

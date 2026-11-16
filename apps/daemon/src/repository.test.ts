@@ -115,7 +115,7 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     const pending = workspace.remoteDefaultBranch(metadata, undefined, controller.signal);
     await accepted;
     controller.abort();
-    await expect(pending).rejects.toThrow();
+    await expect(pending).rejects.toThrow("停止要求により中断");
     server.close();
     git(dir, "--git-dir", metadata, "remote", "set-url", "origin", origin);
     expect(
@@ -124,6 +124,32 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(
       await workspace.fetchBranch(metadata, "main", undefined, new AbortController().signal),
     ).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("応答しないリモートの時間切れは理由を示し、その後の取得は成功する", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const metadata = join(dir, "metadata");
+    await workspace.prepare(join(dir, "clone"), metadata, origin);
+    const server = createServer(() => {});
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    git(
+      dir,
+      "--git-dir",
+      metadata,
+      "remote",
+      "set-url",
+      "origin",
+      `git://127.0.0.1:${address.port}/repo`,
+    );
+    await expect(
+      workspace.fetchBranch(metadata, "main", undefined, AbortSignal.timeout(100)),
+    ).rejects.toThrow("時間切れのため中断");
+    server.close();
+    git(dir, "--git-dir", metadata, "remote", "set-url", "origin", origin);
+    expect(await workspace.fetchBranch(metadata, "main")).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it.each(["release+2026", "リリース/最新版"])(

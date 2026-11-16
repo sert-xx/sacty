@@ -526,6 +526,7 @@ const PARAMS = {
   "cleanup.containerUnconfirmed": null,
   "git.unavailable": z.object({ detail: z.string() }),
   "git.failed": z.object({ command: z.string(), detail: z.string() }),
+  "git.interrupted": z.object({ command: z.string(), timeout: z.boolean() }),
   "git.exitCode": z.object({ command: z.string(), code: z.number().nullable() }),
   // 上限の時間を過ぎて、git を止めた（PBI-107）
   "git.aborted": null,
@@ -1498,6 +1499,8 @@ const ja: MessageDictionary = {
     "コンテナが止まったことを確かめられないため、作業領域は消していません。",
   "git.unavailable": ({ detail }) => `gitを実行できません（${detail}）。`,
   "git.failed": ({ command, detail }) => `git ${command} に失敗しました：${detail}`,
+  "git.interrupted": ({ command, timeout }) =>
+    `git ${command} を${timeout ? "時間切れのため" : "停止要求により"}中断しました。`,
   "git.exitCode": ({ command, code }) => `git ${command} に失敗しました：終了コード ${code}`,
   "git.aborted": "上限の時間を過ぎたので、git を止めました。",
   "git.invalidBaseCommit": "起点のコミットが不正です。",
@@ -2327,6 +2330,8 @@ const en: MessageDictionary = {
     "The workspace was kept because the container could not be confirmed as stopped.",
   "git.unavailable": ({ detail }) => `Cannot run git (${detail}).`,
   "git.failed": ({ command, detail }) => `git ${command} failed: ${detail}`,
+  "git.interrupted": ({ command, timeout }) =>
+    `git ${command} was interrupted ${timeout ? "because it timed out" : "by a stop request"}.`,
   "git.exitCode": ({ command, code }) => `git ${command} failed: exit code ${code}`,
   "git.aborted": "Stopped git because the time limit passed.",
   "git.invalidBaseCommit": "The base commit is not valid.",

@@ -33800,6 +33800,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     await running;
     expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.status).toBe("paused");
+    const pause = service.get(id)?.activity.findLast((item) => item.type === "TaskPaused");
+    expect(pause?.payload).toMatchObject({ reason: "manual" });
     service.resume(id, {});
     await service.runNext(id);
     expect(executor.calls).toHaveLength(1);

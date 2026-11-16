@@ -292,6 +292,8 @@ export interface RepositoryWorkspace {
 /** 起点から変更が無く、コミットするものが無い。 */
 export class NothingToCommitError extends MessageError {}
 
+class GitInterruptedError extends MessageError {}
+
 const BASE_ENV_KEYS = ["PATH", "TMPDIR", "LANG"];
 
 function pick(keys: string[]): Record<string, string> {
@@ -430,7 +432,16 @@ function gitBytes(
     );
     child.on("close", (code) => {
       signal?.removeEventListener("abort", abort);
-      if (code === 0) resolve(Buffer.concat(out));
+      if (signal?.aborted) {
+        reject(
+          new GitInterruptedError(
+            message("git.interrupted", {
+              command: label,
+              timeout: signal.reason?.name === "TimeoutError",
+            }),
+          ),
+        );
+      } else if (code === 0) resolve(Buffer.concat(out));
       else if (err.trim()) {
         reject(new MessageError(message("git.failed", { command: label, detail: err.trim() })));
       } else reject(new MessageError(message("git.exitCode", { command: label, code })));
@@ -642,7 +653,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     } catch (error) {
       // 用意し直すときは、ブランチが消えていても（引き継いだ PR のブランチがマージの後に消されたなど）、既定のブランチを
       // clone して記録済みの起点のコミットを取得する（ブランチの存続を前提にしない。PBI-157 レビュー指摘）
-      if (signal?.aborted || !recorded || baseBranch === undefined) throw error;
+      if (error instanceof GitInterruptedError || !recorded || baseBranch === undefined)
+        throw error;
       if (existsSync(dir)) await rm(dir, { recursive: true, force: true });
       await clone(undefined);
     }
@@ -665,7 +677,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
             signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
           );
           await checkout();
-        } catch {
+        } catch (error) {
+          if (error instanceof GitInterruptedError) throw error;
           throw new MessageError(message("git.baseCommitMissing", { commit: recorded }));
         }
       }
