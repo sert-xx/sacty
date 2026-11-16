@@ -642,20 +642,21 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
 - 返信する指摘：その PR のコメントから取り込んだ（`origin` の PR の番号が同じ）、無効にしていない、対応のある、まだ返信していない指摘。承認ゲートの工程の指摘は、今の提出で対応したものだけ。前の工程に戻した指摘（実装の PR の指摘を、設計で直したなど）は、その工程の最新の対応を、PR を更新した提出で返信する。対応の付いていない指摘には返信しない（後の提出で対応が付けば、そのときに返信する）。
 - 1件の指摘には、1回だけ返信する（`Task.remarks[].repliedIn`）。次の差し戻しで、前の指摘にもう一度対応が書かれても、重ねて返信しない。
 - 投稿の形（`postRemarkReplies`・`buildRemarkReply`）：
-  - 行へのコメントから取り込んだ指摘（`review_comment`）：そのコメントへの返信として投稿する（`replyToReviewComment`）。GitHub が返信を断ったとき（4xx の答え。元のコメントが消えた・返信への返信は受け付けない、など。`replyRejected`）は、PR のコメントとして投稿する。
+  - 行へのコメントから取り込んだ指摘（`review_comment`）：そのコメントへの返信として投稿する（`replyToReviewComment`）。GitHub が、宛先を理由に返信を断ったとき（404・410・422 の答え。元のコメントが消えた・返信への返信は受け付けない、など。`replyRejected`）は、PR のコメントとして投稿する。
   - レビューの本文・通常のコメントから取り込んだ指摘（`review`・`comment`）：PR のコメントとして投稿する。
   - PR のコメントとして投稿するときは、どのレビュー・コメントへの返信かが分かるよう、先頭に元へのリンク（`#pullrequestreview-<ID>`・`#issuecomment-<ID>`・`#discussion_r<ID>`）を付ける（`remarkOriginUrl`）。
   - 本文の頭に目印（`<!-- sacty-reply:<タスク ID>:<指摘の ID>:<提出回> -->`）を置く。続けて、申告が `addressed` なら「対応しました。」、`declined` なら「対応していません。理由：」を書き、対応の文を載せる。申告が無ければ、対応の文だけを載せる。末尾に、sacty のどのタスクのどの工程の AI が、どの指摘への対応として書いたかを添える。
   - 対応の文は外から来た文なので、秘密情報を伏せてから 4,000 文字（`REPLY_TEXT_MAX`）で切り、`@名前` で他人に通知が飛ばないよう `@` の後ろに幅の無い空白を挟む。作業領域の内部のパスは、人が辿れる呼び方に置き換える（`withoutInternalPaths`）。
 - 二重に投稿しない：投稿の前に、行へのコメントと PR のコメントを1回ずつ、最後のページまで読み、返信に使ったと記録したアカウント（今のアカウントを含む）が投稿した、本文がこのタスクの目印で始まるものを、投稿済みの返信として使う（`listReviewComments`・`listIssueComments`。指摘ごとの照合は、提出回を問わない）。ほかの人が目印をまねた・引用した投稿は、投稿済みと見なさない。投稿の後・記録の前にデーモンが止まっても、二度投稿しない。同じタスクの返信は順に処理する（`serialized`）。
   - 返信に使うアカウントは、投稿の前に `RemarkRepliesStarted`（工程・提出回・PR の番号・アカウント）に記録し、`Task.remarkReplyAccounts` に持つ（同じアカウントは1回だけ）。投稿の後・結果の記録の前に止まり、その間にプロジェクトの GitHub のアカウントが変わっても、前のアカウントの返信を見つけて、重ねて投稿しない。
+  - 続けて投稿するときは、投稿と投稿の間を 1 秒あける。GitHub のレート制限（429、または 403 でレート制限と説明する答え）に当たったら、制限の間は投稿を続けない：ここまでの結果を記録し、残りの指摘は、失敗にせずに残して、1 分たってからやり直す（その間は、実行待ちに出さない。行への返信が制限で断られても、PR のコメントに回さない）。
   - 一覧を読めない・ページ数の上限で読み切れない・答えを読めない（JSON の配列でない。コメントの本文・ID・投稿者を読めない。次のページの URL をたどれない）ときは、投稿済みかを確かめられないので、どの指摘にも投稿せず、失敗を記録する。
   - 行への返信が投稿されたかが分からないとき（答えを受け取れなかった・期限を超えた・5xx）は、行へのコメントを探し直し、見つかればそれを使う。見つからない・探せないときは、PR のコメントを重ねずに、失敗を記録する。
   - トークンの取り出しと、GitHub への問い合わせ（一覧・返信・コメント）には、1回ごとに 30 秒の期限を付ける。期限を超えたトークンの取り出しでは、`gh` を、それが起動したプロセスごと止める。期限を超えた問い合わせがあったら、残りの指摘は投稿を試みずに、失敗（`github.replySkippedAfterTimeout`）を記録する（答えの返らない GitHub を、指摘の数だけ待たない。読んである一覧に投稿済みの返信がある指摘は、その返信を記録する）。答えが返らなくても、実行の枠を占めたままにしない。
 - 各指摘を投稿する直前に、一時停止・中止を求められていないこと、承認待ちの提出が変わっていないことを確かめる。変わっていれば、新しく投稿せず、記録もしない（再開したら、目印で投稿済みのものを見つけて続ける）。待っている間に、その指摘が無効にされた・対応が変わったなら、その指摘だけを飛ばす。
-- 記録：結果を `RemarkRepliesPosted`（工程・提出回・PR の番号と、指摘ごとの、元のコメントのキー・行への返信か・投稿の URL・投稿できなかった理由）に残す。投稿できなくても、タスクは止めない。投稿できなかった指摘も、返信済みとして扱い、やり直さない。画面の作業履歴の行には、返信した件数と、返信できなかった件数を出し、指摘ごとの結果（返信できなかった指摘が先）は、行の詳細に出す（`describeEventParts`）。概要の「最近の履歴」の2行の制限は、詳細を開いた行では外す。
+- 記録：結果を `RemarkRepliesPosted`（工程・提出回・PR の番号と、指摘ごとの、元のコメントのキー・行への返信か・投稿の URL・投稿できなかった理由）に残す。投稿できなくても、タスクは止めない。投稿できなかった指摘も、返信済みとして扱い、やり直さない。画面の作業履歴の行には、返信した件数と、返信できなかった件数を出し、指摘ごとの結果（返信できなかった指摘が先）は、行の詳細に出す（`describeEventParts`）。概要の「最近の履歴」の2行の制限は、行の文にだけ掛け、詳細を開く表示と、開いた詳細は切らない。
 - この返信は、PR の指摘に取り込まない：そのタスクのアカウントと、返信に使ったと記録したアカウント（`Task.remarkReplyAccounts`）が投稿した、目印 `<!-- sacty-reply:` で始まる行へのコメント・PR のコメントは、PR の指摘の取り込み（承認待ち・一時停止の間・引き継いだ PR の読み取り）から除く（`feedback`・`isSactyRemarkReply`）。ほかのアカウントが目印をまねて書いたものは、除かない。
-- PR のレビューの子タスクには、作者の返答として渡る：レビューの工程に渡す読み取りだけ、この返信を含める（`includeSactyReplies`。sacty のアカウントが Bot でも含める。ほかの Bot の投稿は、これまでどおり除く）。sacty が作った PR の作者は sacty のアカウントなので、既存のレビューでは作者の投稿として、再レビューでは作者の返答（`authorReplies`）として渡る。再レビューの「作者が『対象外』『後続で対応』と返した論点は、もう一度指摘しない」という決まりが、sacty の返信にも効く（[タスクと工程](tasks-and-steps.md)）。
+- PR のレビューの子タスクには、作者の返答として渡る：レビューの工程に渡す読み取りだけ、この返信を含める（`includeSactyReplies`。sacty のアカウントが Bot でも含める。ほかの Bot の投稿は、これまでどおり除く）。sacty のアカウントには、その PR に返信したタスクが記録したアカウント（`remarkReplyAccountsOn`）も含める（返信の後に、そのアカウントがどのプロジェクトからも外れていても、読めるように）。sacty が作った PR の作者は sacty のアカウントなので、既存のレビューでは作者の投稿として、再レビューでは作者の返答（`authorReplies`）として渡る。再レビューの「作者が『対象外』『後続で対応』と返した論点は、もう一度指摘しない」という決まりが、sacty の返信にも効く（[タスクと工程](tasks-and-steps.md)）。
   レビューの子タスクは、レビューを始める前に、PR を作ったタスクの返信がまだなら、先に投稿する（`remarkRepliesSettled`。親と子は並んで動くので、親の次の実行を待つと、返信の前に読んでしまう）。返信する指摘が残らなくなるまで繰り返し、結果を記録できない・止められて進まないときは、レビューを始めずに、次の実行でやり直す。
   作者の返答に入るのは、PR の作者と同じアカウントの投稿だけ（引き継いだ PR は、作者が人なので、sacty の返信は既存のレビュー・コメントとして渡る）。返した論点でも、範囲が変わった・今回の変更が直接の原因になったときは、もう一度指摘される。
 - 引き継いだ PR（人が作った PR を直すタスク。`continuedPullRequest`）の、実装に渡した指摘にも、同じ形・同じ条件で返信する。
@@ -665,7 +666,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - 提出の後にその PR から取り込んだ指摘（差し戻しの指摘）は、取り込んだ指摘として返信する。同じコメントが実装に渡した指摘にもあるときは、重ねて返信しない。
   - 目印と記録の指摘の ID は、キー（`review_comment:<ID>` など）にする。返信の末尾には、指摘の ID を書かない。
 
-コード: `apps/daemon/src/service.ts`（`awaitingRemarkReplies`・`remarkRepliesDue`・`postRemarkReplies`・`remarkRepliesSettled`・`replyRejected`・`remarkOrigins`・`settleReview`・`settleHeldReview`・`requestChanges`・`reviewFeedback`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`・`remarkOriginRef`・`remarkOriginUrl`・`remarkReplyMarker`・`REPLY_TEXT_MAX`）、`apps/daemon/src/github.ts`（`replyToReviewComment`・`listReviewComments`・`listIssueComments`・`isSactyRemarkReply`・`GitHubPullRequests.feedback`）、`apps/daemon/src/prompts.ts`（`statusLines`・`continuedResponseLines`・`continuedPullRequestLines`・`extractBlocks`）、`packages/core/src/events.ts`（`RemarkOrigin`・`RemarkResponseStatus`・`RemarkRepliesStarted`・`RemarkRepliesPosted`・`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`
+コード: `apps/daemon/src/service.ts`（`awaitingRemarkReplies`・`remarkRepliesDue`・`postRemarkReplies`・`remarkRepliesSettled`・`remarkRepliesReady`・`replyRejected`・`rateLimited`・`remarkReplyAccountsOn`・`remarkOrigins`・`settleReview`・`settleHeldReview`・`requestChanges`・`reviewFeedback`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`・`remarkOriginRef`・`remarkOriginUrl`・`remarkReplyMarker`・`REPLY_TEXT_MAX`）、`apps/daemon/src/github.ts`（`replyToReviewComment`・`listReviewComments`・`listIssueComments`・`isSactyRemarkReply`・`GitHubPullRequests.feedback`）、`apps/daemon/src/prompts.ts`（`statusLines`・`continuedResponseLines`・`continuedPullRequestLines`・`extractBlocks`）、`packages/core/src/events.ts`（`RemarkOrigin`・`RemarkResponseStatus`・`RemarkRepliesStarted`・`RemarkRepliesPosted`・`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`
 
 ### 戻し先の判断の文の見せ方
 

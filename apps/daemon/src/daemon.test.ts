@@ -139,6 +139,7 @@ import {
   InvalidOperationError,
   type LocalSessionView,
   MEMORY_STEP_ROLES,
+  remarkReplyAccountsOn,
   reviewTaskTitle,
   type ServiceDeps,
   TaskService,
@@ -257,6 +258,19 @@ const configWithTimeouts =
 /** 偽の GitHub への投稿の投稿者（投稿に使ったトークンのアカウント。ghp_other は other、ほかは me）。 */
 function authorOfToken(token: string): string {
   return token === "ghp_other" ? "other" : "me";
+}
+
+/** GitHub が、レート制限で断ったときのエラー。 */
+function rateLimitError(): Error {
+  return new MessageError(
+    message("github.failed", {
+      action: "commentIssue",
+      status: 403,
+      detail:
+        "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+      hint: "none",
+    }),
+  );
 }
 
 /** gh の偽物。ログイン済みのアカウントごとのトークンを返す。 */
@@ -846,6 +860,7 @@ class FakePulls implements PullRequests {
   }) {
     // 本物の fetch と同じく、中断された通信は終わる（遅れて投稿されない。PBI-292）
     if (input.signal?.aborted) throw input.signal.reason;
+    if (this.rateLimited) throw rateLimitError();
     if (this.commentFail) throw new Error(this.commentFail);
     this.issueComments.push(input);
     return {
@@ -862,6 +877,8 @@ class FakePulls implements PullRequests {
           url: `${input.repo}/issues/${input.number}#issuecomment-${index + 1}`,
         };
   }
+  /** あれば、書き込み（PR のコメント・行への返信）を、GitHub のレート制限で断る（PBI-352）。 */
+  rateLimited = false;
   /** 行へのコメントへの返信（指摘への対応の返信。PBI-352）。 */
   reviewReplies: {
     repo: string;
@@ -888,6 +905,7 @@ class FakePulls implements PullRequests {
     signal?: AbortSignal;
   }) {
     if (input.signal?.aborted) throw input.signal.reason;
+    if (this.rateLimited) throw rateLimitError();
     if (this.replyRejected) {
       throw new MessageError(
         message("github.failed", {
@@ -1566,6 +1584,8 @@ function makeService(
     github: options.github ?? new FakeGitHub(),
     ...(options.now ? { now: options.now } : {}),
     ...(options.stopNoticeTimeoutMs ? { stopNoticeTimeoutMs: options.stopNoticeTimeoutMs } : {}),
+    // 指摘への返信（PBI-352）の、投稿と投稿の間は、テストでは置かない
+    remarkReplyIntervalMs: 0,
     ...(options.reviewRetryDelaysMs ? { reviewRetryDelaysMs: options.reviewRetryDelaysMs } : {}),
     // 情報収集は、既定では集めずに進める（情報収集のテストでは差し替える）
     ...(options.realGatherer ? {} : { gatherer: options.gatherer ?? (async () => undefined) }),
@@ -13436,6 +13456,87 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(prComments(pulls)).toHaveLength(1);
         warn.mockRestore();
         activity.close();
+      });
+
+      it("GitHub のレート制限に当たったら、制限の間は投稿を続けず（行への返信を PR のコメントに回さない）、残りは失敗にせずに、間を置いてやり直す", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const pulls = new FakePulls();
+        let now = later();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "直した" },
+              { remarkId: "implement-1-2", status: "addressed", text: "足した" },
+            ]),
+          ],
+          { pulls, now: () => now },
+        );
+        pulls.feedbackList = [inline(), comment()];
+        await service.checkPullRequests();
+        // 作り直した実装が承認待ちに戻るところまで進める（返信は、その次の処理）
+        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
+          await service.runNext(id);
+        }
+        pulls.rateLimited = true;
+        await drain(service);
+        // 何も投稿せず、失敗も記録しない。制限の間は、実行待ちにも出さない
+        expect(pulls.reviewReplies).toHaveLength(0);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(0);
+        expect(service.queuedTaskIds()).toEqual([]);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("レート制限に当たりました"));
+        // 制限が解けても、待ちの間はやり直さない
+        pulls.rateLimited = false;
+        now += 30_000;
+        expect(service.queuedTaskIds()).toEqual([]);
+        // 待ちが明けたら、残りを投稿する
+        now += 31_000;
+        expect(service.queuedTaskIds()).toEqual([id]);
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(posted(service, id)[0]?.results.map((r) => [r.remarkId, r.failed])).toEqual([
+          ["implement-1-1", undefined],
+          ["implement-1-2", undefined],
+        ]);
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("PR に返信したタスクが記録したアカウントを集める：PR を作った・引き継いだタスクと、レビューの子タスクの親", () => {
+        const task = (patch: Partial<Task>) => ({ id: "t", ...patch }) as Task;
+        const pull = { repo: "https://github.com/acme/app", number: 7 } as Task["pullRequest"];
+        const tasks = [
+          task({ id: "author", pullRequest: pull, remarkReplyAccounts: ["old-bot", "me"] }),
+          task({
+            id: "continued",
+            continuedPullRequest: {
+              repo: "https://github.com/acme/app",
+              number: 7,
+              url: "",
+              branch: "b",
+              baseBranch: "main",
+            },
+            remarkReplyAccounts: ["me", "helper"],
+          }),
+          task({ id: "parent", remarkReplyAccounts: ["step-bot"] }),
+          task({
+            id: "other-pr",
+            pullRequest: { ...pull, number: 8 } as Task["pullRequest"],
+            remarkReplyAccounts: ["elsewhere"],
+          }),
+          task({ id: "no-replies", pullRequest: pull }),
+        ];
+        expect(remarkReplyAccountsOn(tasks, "parent", "https://github.com/acme/app", 7)).toEqual([
+          "old-bot",
+          "me",
+          "helper",
+          "step-bot",
+        ]);
+        expect(remarkReplyAccountsOn(tasks, undefined, "https://github.com/acme/app", 9)).toEqual(
+          [],
+        );
       });
 
       it("sacty の返信は、PR の指摘として取り込み直さない（取り込みには、返信を含める指定を渡さない）", async () => {
@@ -29558,6 +29659,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         }
       }
       const pulls = new Watching();
+      const projects = projectsWithAccount();
       const redone = [
         "# 要求要件 v2",
         `\`\`\`json\n${JSON.stringify({
@@ -29576,8 +29678,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           verdictOut("changes_required"),
           out(redone),
           verdictOut("no_findings"),
+          verdictOut("no_findings"),
         ],
-        { pulls, reviewTasks: true },
+        {
+          pulls,
+          reviewTasks: true,
+          projects,
+          github: new FakeGitHub({ me: "ghp_secret", other: "ghp_other" }),
+        },
       );
       const { activity, service, id } = made;
       const childId = childOf(service, id);
@@ -29636,6 +29744,18 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       // 親の次の実行で、重ねて投稿しない
       await service.runNext(id);
       expect(replies()).toHaveLength(1);
+      // レビューの読み取りには、親が返信に使ったと記録したアカウントを渡す（そのアカウントが、どのプロジェクトからも
+      // 外れた後でも、返信を作者の返答として読めるように）
+      const current = projects.get("default");
+      projects.put("default", {
+        name: current?.name ?? "",
+        targets: current?.targets ?? [],
+        githubAccounts: { "github.com": "other" },
+      });
+      service.rereview(childId);
+      await runReview(service, childId);
+      expect(pulls.feedbackAccounts.at(-1)).toBe("other");
+      expect(pulls.feedbackNoticeAccounts.at(-1)).toEqual(["other", "me"]);
       activity.close();
     });
 
