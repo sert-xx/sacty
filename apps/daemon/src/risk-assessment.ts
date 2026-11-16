@@ -106,6 +106,7 @@ function riskCriteriaLines(): string[] {
     "```json",
     `{"${RISK_ASSESSMENT_HEADING}": {"level": "medium", "signals": [], "change": "変更の種類", "scope": "影響の範囲", "reversibility": "取り消しやすさ", "verification": "確かめた範囲", "focus": [{"where": "src/pay.ts:40-72", "why": "見る理由"}]}}`,
     "```",
+    "- signals：当たったリスクの合図の配列。必ず配列で書き、無ければ空の配列にする。上の8つの名前だけを使う（配列でない・ほかの名前が混ざる答えは、sacty が読めないものとして扱います）",
     "- change：変更の種類（何を、どう変えるか。安全な種類だけか、振る舞いを変えるか）",
     "- scope：影響の範囲（どの機能・利用者・呼び出し元に及ぶか）",
     "- reversibility：取り消しやすさ（変更を元に戻すだけで戻るか。戻らないものがあれば、それは何か）",
@@ -201,7 +202,8 @@ function field(value: unknown, secrets: readonly string[], max: number): string 
 /**
  * リスク評価の答えを読む。最後に出た、形の合うものを使う。段階が決めた値でない・根拠の項目が欠けているときは、読めないものと
  * する（呼び出し側が、評価できなかったと記録する）。段階は、リスクの合図が1つでもあれば high にする（エージェントが合図を
- * 挙げながら低い段階を付けても、基準どおりにする）。知らない合図・形の違う「とくに見る箇所」は除く。
+ * 挙げながら低い段階を付けても、基準どおりにする）。合図が配列でない・知らない合図が混ざるときも、読めないものとする（合図を
+ * 読み落として、低い段階を載せないため）。形の違う「とくに見る箇所」は除く。
  */
 export function extractRiskAssessment(
   output: string,
@@ -212,14 +214,12 @@ export function extractRiskAssessment(
     if (!v) return undefined;
     const level = RiskLevel.safeParse(v.level);
     if (!level.success) return undefined;
-    const signals = [
-      ...new Set(
-        (Array.isArray(v.signals) ? v.signals : []).flatMap((signal) => {
-          const parsed = RiskSignal.safeParse(signal);
-          return parsed.success ? [parsed.data] : [];
-        }),
-      ),
-    ];
+    // 合図は、決めた値の配列であること。配列でない（欠けている・null・文字列）・知らない値が混ざる答えは、合図を読み落として
+    // 低い段階を載せるおそれがあるので、読めないものとする
+    if (!Array.isArray(v.signals)) return undefined;
+    const parsedSignals = v.signals.map((signal) => RiskSignal.safeParse(signal));
+    if (parsedSignals.some((parsed) => !parsed.success)) return undefined;
+    const signals = [...new Set(parsedSignals.flatMap((p) => (p.success ? [p.data] : [])))];
     const focus = (Array.isArray(v.focus) ? v.focus : [])
       .flatMap((item) => {
         if (!item || typeof item !== "object") return [];
@@ -243,10 +243,14 @@ export function extractRiskAssessment(
   return found ? { assessment: found.value, candidate: found.candidate } : undefined;
 }
 
+/** コードブロックの中身が、評価の答えの形で始まっているか（`{"sacty-risk-assessment":` で始まる。空白は許す）。 */
+const RISK_ANSWER_START = new RegExp(`^\\s*\\{\\s*"${RISK_ASSESSMENT_HEADING}"\\s*:`);
+
 /**
- * JSON として読めなかったリスク評価の答え（末尾のカンマなど）を、本文から取り除く。評価の見出しを含むコードブロック（``` か ~~~
- * で囲んだもの）を、ブロックごと除く。JSON として読めた答えは、候補として別に取り除いてあるので、ここに残るのは読めなかった
- * ものだけ。コードブロックに入っていないものは、範囲を決められないので触らない。
+ * JSON として読めなかったリスク評価の答え（末尾のカンマなど）を、本文から取り除く。中身が評価の答えの形で始まるコードブロック
+ * （``` か ~~~ で囲んだもの）を、ブロックごと除く。評価の見出しの文字列を含むだけのコード例（説明のためのコードなど）は残す。
+ * JSON として読めた答えは、候補として別に取り除いてあるので、ここに残るのは読めなかったものだけ。コードブロックに入っていない
+ * ものは、範囲を決められないので触らない。評価をさせたレビューの本文にだけ使う。
  */
 export function withoutRiskBlocks(body: string): string {
   const lines = body.split("\n");
@@ -269,7 +273,7 @@ export function withoutRiskBlocks(body: string): string {
     while (end < lines.length && !closes(lines[end] ?? "")) end++;
     // 閉じていないブロックは、本文の終わりまでをブロックとして扱う
     const block = lines.slice(i, Math.min(end + 1, lines.length));
-    if (block.some((line) => line.includes(`"${RISK_ASSESSMENT_HEADING}"`))) removed = true;
+    if (RISK_ANSWER_START.test(block.slice(1).join("\n"))) removed = true;
     else kept.push(...block);
     i = end + 1;
   }

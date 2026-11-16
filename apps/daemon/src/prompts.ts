@@ -8111,7 +8111,8 @@ function tagComment(severity: unknown, body: string): { body: string; severity?:
 export function extractReviewComments(
   output: string,
   diff: string,
-  secrets: readonly string[] = [],
+  /** risk：リスクを評価させたレビュー（PBI-362）。評価の答えを読み、本文から取り除く。評価させていなければ、本文に触れない。 */
+  options: { risk?: boolean; secrets?: readonly string[] } = {},
 ): {
   output: string;
   comments: ReviewComment[];
@@ -8162,13 +8163,19 @@ export function extractReviewComments(
     const ok = commentable.get(comment.path)?.has(comment.line);
     (ok && inline.length < REVIEW_COMMENTS_MAX ? inline : outside).push(comment);
   }
-  // リスク評価の答え（PBI-362）は、形が違っても本文から取り除く（投稿する本文に JSON を残さない）
-  for (const candidate of jsonCandidates(output)) {
-    if (candidate.value[RISK_ASSESSMENT_HEADING] !== undefined) used.push(candidate);
+  // リスクを評価させたレビュー（PBI-362）は、評価の答えを、形が違っても本文から取り除く（投稿する本文に JSON を残さない）。
+  // 評価させていないレビューの本文は、評価の見出しを含んでいても触らない（レビューの中のコード例を消さない）
+  if (options.risk) {
+    for (const candidate of jsonCandidates(output)) {
+      if (candidate.value[RISK_ASSESSMENT_HEADING] !== undefined) used.push(candidate);
+    }
   }
-  const risk = extractRiskAssessment(output, secrets)?.assessment;
-  // JSON として読めなかった評価（末尾のカンマなど）は候補にならないので、評価の見出しを含むコードブロックごと取り除く
-  const body = withoutRiskBlocks(withoutCandidates(output, used)).trim();
+  const risk = options.risk
+    ? extractRiskAssessment(output, options.secrets)?.assessment
+    : undefined;
+  // JSON として読めなかった評価（末尾のカンマなど）は候補にならないので、評価の答えの形で始まるコードブロックごと取り除く
+  const stripped = withoutCandidates(output, used);
+  const body = (options.risk ? withoutRiskBlocks(stripped) : stripped).trim();
   const comments = found ?? [];
   const verdict: ReviewVerdict | undefined = comments.some((c) => c.severity === "must")
     ? "changes_required"

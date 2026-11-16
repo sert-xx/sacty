@@ -97,12 +97,27 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
 
   it("リスクの合図が1つでもあれば、エージェントが低い段階を付けていても、高にする", () => {
     const read = extractRiskAssessment(
-      answer({ ...medium, level: "low", signals: ["security", "security", "unknown"] }),
+      answer({ ...medium, level: "low", signals: ["security", "security", "large"] }),
     );
     expect(read?.assessment.level).toBe("high");
-    // 重複と、知らない合図は除く
-    expect(read?.assessment.signals).toEqual(["security"]);
+    // 重複は除く
+    expect(read?.assessment.signals).toEqual(["security", "large"]);
   });
+
+  it.each([
+    ["文字列", "security"],
+    ["null", null],
+    ["欠けている", undefined],
+    ["オブジェクト", { security: true }],
+    ["知らない合図が混ざる", ["security", "unknown"]],
+    ["知らない合図だけ", ["securty"]],
+    ["文字列でない要素", [1]],
+  ])(
+    "合図が決めた値の配列でない（%s）答えは、低い段階として載せず、読めないものとする",
+    (_name, signals) => {
+      expect(extractRiskAssessment(answer({ ...medium, level: "low", signals }))).toBeUndefined();
+    },
+  );
 
   it("合図が無ければ、エージェントの段階のまま（高も、そのまま）", () => {
     for (const level of ["low", "medium", "high"]) {
@@ -464,7 +479,7 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
       JSON.stringify({ "sacty-review-verdict": { verdict: "suggestions" } }),
       "```",
     ].join("\n");
-    const read = extractReviewComments(output, diff);
+    const read = extractReviewComments(output, diff, { risk: true });
     expect(read.risk).toEqual(medium);
     expect(read.verdict).toBe("suggestions");
     expect(read.output).toContain("- [提案] 名前を変える");
@@ -480,10 +495,10 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
       JSON.stringify({ [RISK_ASSESSMENT_HEADING]: { level: "unknown" } }),
       "```",
     ].join("\n");
-    const read = extractReviewComments(broken, diff);
+    const read = extractReviewComments(broken, diff, { risk: true });
     expect(read.risk).toBeUndefined();
     expect(read.output).toBe("総評です。");
-    const none = extractReviewComments("総評です。", diff);
+    const none = extractReviewComments("総評です。", diff, { risk: true });
     expect(none.risk).toBeUndefined();
     expect(none.output).toBe("総評です。");
   });
@@ -511,7 +526,7 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
       JSON.stringify({ "sacty-review-verdict": { verdict: "suggestions" } }),
       "```",
     ].join("\n");
-    const read = extractReviewComments(output, diff);
+    const read = extractReviewComments(output, diff, { risk: true });
     expect(read.risk).toBeUndefined();
     expect(read.verdict).toBe("suggestions");
     expect(read.output).toBe(
@@ -519,15 +534,49 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
     );
     // 評価の無い本文は、空行の数も含めて変えない
     const plain = '総評です。\n\n\n\n```json\n{"a": 1,}\n```';
-    expect(extractReviewComments(plain, diff).output).toBe(plain);
+    expect(extractReviewComments(plain, diff, { risk: true }).output).toBe(plain);
     // 閉じていないコードブロックは、本文の終わりまでを取り除く
     expect(
-      extractReviewComments(`総評です。\n\n\`\`\`json\n{${heading}: {"level":`, diff).output,
+      extractReviewComments(`総評です。\n\n\`\`\`json\n{${heading}: {"level":`, diff, {
+        risk: true,
+      }).output,
     ).toBe("総評です。");
     // コードブロックに入っていない、読めない評価は残る（範囲を決められない）
-    expect(extractReviewComments(`総評です。\n\n{${heading}: {"level":`, diff).output).toContain(
-      RISK_ASSESSMENT_HEADING,
-    );
+    expect(
+      extractReviewComments(`総評です。\n\n{${heading}: {"level":`, diff, { risk: true }).output,
+    ).toContain(RISK_ASSESSMENT_HEADING);
+  });
+
+  it("評価の見出しを含むだけのコード例（評価の答えの形で始まらないコードブロック）は、本文から取り除かない", () => {
+    const example = [
+      "総評です。",
+      "",
+      "- [要修正] 見出しの定数を使ってください。",
+      "",
+      "```ts",
+      `const heading = "${RISK_ASSESSMENT_HEADING}";`,
+      `const broken = '{"${RISK_ASSESSMENT_HEADING}": {';`,
+      "```",
+    ].join("\n");
+    expect(extractReviewComments(example, diff, { risk: true }).output).toBe(example);
+  });
+
+  it("リスクを評価させていないレビュー（子タスク）の本文は、評価の答えの形の JSON やコードブロックがあっても触らない", () => {
+    const heading = `"${RISK_ASSESSMENT_HEADING}"`;
+    const output = [
+      "総評です。",
+      "",
+      "```json",
+      JSON.stringify({ [RISK_ASSESSMENT_HEADING]: medium }),
+      "```",
+      "",
+      "```json",
+      `{${heading}: {"level": "low",}}`,
+      "```",
+    ].join("\n");
+    const read = extractReviewComments(output, diff);
+    expect(read.risk).toBeUndefined();
+    expect(read.output).toBe(output);
   });
 
   it("投稿するレビューの本文の、判定の後・総評の前に、評価の節を載せる", () => {

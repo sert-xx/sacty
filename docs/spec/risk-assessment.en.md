@@ -79,7 +79,8 @@ The agent answers with the assessment as `sacty-risk-assessment` JSON.
 
 - The last answer with a matching shape is used.
 - If the level is not one of the values, or any of the four grounds (`change`, `scope`, `reversibility`, `verification`) is missing, the answer is treated as unreadable.
-- Unknown signals and malformed places to look at are dropped.
+- If `signals` is not an array (missing, `null`, or a string), or it contains an unknown signal, the answer is also treated as unreadable (so that a missed signal does not lead to a low level being shown).
+- Malformed places to look at are dropped.
 - Each text is made one line, the secrets passed in are redacted, and then it is cut at the limit (400 characters for a ground, 200 characters for `where`).
 
 Code: `apps/daemon/src/risk-assessment.ts` (`extractRiskAssessment`), `packages/core/src/events.ts` (`RiskAssessment`)
@@ -105,7 +106,8 @@ Code: `apps/daemon/src/service.ts` (`assessRisk`, `publish`), `apps/daemon/src/r
 For a review task imported from a GitHub PR (a review request or a label), the criteria and the answer shape are added to the review prompt (`reviewRiskLines`).
 
 - The agent is told to give the assessment separately from the findings and the verdict, and not to let the assessment change the weight of a finding, the verdict, or what the review looks at.
-- The assessment JSON is removed from the posted body even when its shape is wrong (`extractReviewComments`). One that cannot be parsed as JSON (a trailing comma, and so on) is also removed, together with the code block that contains the assessment heading (`withoutRiskBlocks`). An unparseable assessment that is not in a code block stays, because its extent cannot be determined.
+- The assessment JSON is removed from the posted body even when its shape is wrong (`extractReviewComments`). One that cannot be parsed as JSON (a trailing comma, and so on) is also removed, together with the code block whose content starts in the shape of the assessment answer (`withoutRiskBlocks`). A code example that merely contains the assessment heading stays. An unparseable assessment that is not in a code block stays, because its extent cannot be determined.
+- The body of a review that was not asked to assess (a PR review child task) is not touched.
 - If the answer could be read, the assessment is recorded in `PullRequestRiskAssessed` together with the completion of the step's run; if not, the fact that it could not be assessed (`pr.riskUnreadable`) is recorded. The cost is counted on the step's run, so this record carries no cost.
 - Even when the assessment fails, posting the review is not stopped.
 

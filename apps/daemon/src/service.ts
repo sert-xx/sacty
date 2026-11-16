@@ -10534,7 +10534,12 @@ export class TaskService {
     }
     // レビューの工程は、PR の差分に含まれる行へのコメントを取り出す（差分の外のものは本文に入れる）
     const review =
-      step === "review" ? extractReviewComments(extracted.output, reviewDiff ?? "") : undefined;
+      step === "review"
+        ? extractReviewComments(extracted.output, reviewDiff ?? "", {
+            // PR から取り込んだレビューのタスクだけ、リスク評価の答えを読む（PBI-362）
+            risk: assessesRiskInReview(latest),
+          })
+        : undefined;
     // 再現の工程は、申告された再現のテストを取り出す（PBI-29）
     const reproduction = step === "reproduce" ? extractReproduction(extracted.output) : undefined;
     // 文書作成の工程は、外部に直接作った・直したページ（成果物）の申告を取り出す（差し戻し・書き出しで同じページを使う）。
