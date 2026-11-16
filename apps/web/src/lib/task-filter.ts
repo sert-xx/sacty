@@ -20,7 +20,11 @@ export type TaskFilter = {
   status: "" | typeof ACTIVE | StatusTone;
 };
 
-export const NO_REPO = "-";
+/**
+ * 「未定・リポジトリ無し」を表す値。リポジトリの名前（英数字と `.`・`_`・`-` だけ）と重ならないよう、名前に使えない `:` を含める
+ * （`-` という名前のリポジトリを、「未定・リポジトリ無し」と取り違えないため）。
+ */
+export const NO_REPO = ":none";
 export const ACTIVE = "active";
 
 export const EMPTY_FILTER: TaskFilter = {

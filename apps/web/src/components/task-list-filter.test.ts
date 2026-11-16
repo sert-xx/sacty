@@ -141,6 +141,25 @@ describe("複数のリポジトリを指定したタスクの絞り込み（PBI-
     expect(found("api")).toEqual([]);
   });
 
+  it("- という名前のリポジトリを、未定・リポジトリ無しと取り違えない", () => {
+    const dash: TaskRow[] = [
+      row({ id: "dash", repoName: "-" }),
+      row({
+        id: "dash-specified",
+        repoless: true,
+        repos: ["https://github.com/acme/-", "https://github.com/acme/web"],
+      }),
+      row({ id: "none", repoless: true }),
+    ];
+    const of = (repo: string) =>
+      dash.filter((r) => matchesFilter(r, { ...EMPTY_FILTER, repo })).map((r) => r.id);
+    expect(filterOptions(dash).repos).toEqual(["-", "web", NO_REPO]);
+    expect(of("-")).toEqual(["dash", "dash-specified"]);
+    expect(of(NO_REPO)).toEqual(["none"]);
+    // 予約の値は、リポジトリの名前に使えない文字を含む
+    expect(NO_REPO).toMatch(/[^A-Za-z0-9._-]/);
+  });
+
   it("選択肢に、指定したリポジトリの名前を重ねずに出す", () => {
     expect(filterOptions(multi).repos).toEqual(["docs", "web", NO_REPO]);
     // 指定だけのタスクしか無ければ、未定・リポジトリ無しは出さない

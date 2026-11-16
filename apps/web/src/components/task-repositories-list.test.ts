@@ -75,8 +75,9 @@ describe("複数リポジトリの一覧（R-8）", () => {
           locale = lang;
           const html = await render(true, chosen, urls);
           const document = new DOMParser().parseFromString(html, "text/html");
+          document.querySelector('[data-testid="task-repos-t1"] [data-slot="hint"]')?.remove();
           // URL の指定は、単数と同じリポジトリ名で出す（URL として読めない古い値は、そのまま。PBI-360）
-          expect(document.querySelector('[data-testid="task-repos-t1"]')?.textContent).toBe(
+          expect(document.querySelector('[data-testid="task-repos-t1"]')?.textContent?.trim()).toBe(
             `${messagesFor(lang).tasks.specifiedRepositories}: ${urls ? "a, b" : "acme/a, acme/b"}`,
           );
           expect(html).not.toContain('data-testid="no-repository"');
@@ -109,7 +110,14 @@ describe("複数リポジトリの一覧（R-8）", () => {
         [specified[3], specified[3]],
         [specified[4], specified[4]],
       ]);
-      expect(document.querySelector('[data-testid="task-repos-t1"]')?.textContent).toBe(
+      // キーボード・タップでも URL の全体を確かめられるよう、補足（フォーカスできる印）にも並べる。リンクは増やさない
+      const hint = document.querySelector('[data-testid="task-repos-t1"] [data-slot="hint"]');
+      expect(hint?.tagName).toBe("BUTTON");
+      expect(hint?.getAttribute("aria-label")).toBe(messagesFor(lang).common.hint);
+      expect(hint?.textContent).toBe(specified.join("\n"));
+      expect(document.querySelectorAll('[data-testid="task-repos-t1"] a')).toHaveLength(0);
+      hint?.remove();
+      expect(document.querySelector('[data-testid="task-repos-t1"]')?.textContent?.trim()).toBe(
         `${messagesFor(lang).tasks.specifiedRepositories}: acme/web, other/web, api, ${specified[3]}, ${specified[4]}`,
       );
     });

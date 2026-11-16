@@ -160,7 +160,8 @@ export function LiveTaskList({
                             <span className="sr-only">{m.childOf(task.parentTitle)}</span>
                           )}
                           {/* 作業するリポジトリ（repo だけ。PBI-141） */}
-                          {/* 複数を指定したタスクも、単数と同じリポジトリ名で出す（同じ名前があれば owner/name）。URL の全体はツールチップ（PBI-360） */}
+                          {/* 複数を指定したタスクも、単数と同じリポジトリ名で出す（同じ名前があれば owner/name）。URL の全体は、
+                              名前のツールチップと、キーボード・タップでも開ける補足に出す（リンクは増やさない。PBI-360） */}
                           {task.repos?.length ? (
                             <span
                               className="mt-0.5 block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
@@ -172,7 +173,8 @@ export function LiveTaskList({
                                   {index > 0 && ", "}
                                   <span title={repo.url}>{repo.label}</span>
                                 </span>
-                              ))}
+                              ))}{" "}
+                              <Hint text={task.repos.join("\n")} className="size-4 font-sans" />
                             </span>
                           ) : null}
                           {task.repoName && (
