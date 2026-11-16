@@ -8294,7 +8294,10 @@ export class TaskService {
           !this.workspaceBusy(taskId) &&
           !taskWorkspacePaths(root, taskId).some((path) => overlapsMounts(path, mounts))
         ) {
-          removed += await this.removeWorkspacePaths([taskCachePath(root, taskId)], mounts);
+          removed += await this.removeWorkspacePaths(
+            [taskCachePath(root, taskId), join(root, "_git", `${taskId}.git.preparing`)],
+            mounts,
+          );
         }
         removed += await this.retireWorkspace(taskId, mounts);
         continue;
@@ -9064,8 +9067,11 @@ export class TaskService {
             }
           } else if (this.awaitingContextImages(task)) return;
         }
+        let agentInvoked = false;
         try {
-          await this.runNextInner(taskId);
+          await this.runNextInner(taskId, () => {
+            agentInvoked = true;
+          });
         } catch (error) {
           const latest = this.mustGet(taskId);
           const step = activeStep(latest);
@@ -9116,6 +9122,7 @@ export class TaskService {
                     agentId: chosen.agent.id,
                     reason: "error",
                     message: text,
+                    ...(!agentInvoked ? { preparationFailed: true as const } : {}),
                   },
                 },
               },
@@ -9216,7 +9223,7 @@ export class TaskService {
     return this.pauseRequested.has(taskId) ? "manual" : reason;
   }
 
-  private async runNextInner(taskId: string): Promise<void> {
+  private async runNextInner(taskId: string, onAgentInvoked: () => void): Promise<void> {
     // 一時停止の間に届いた PR の指摘は、止まった工程を走り直す前に反映する（PBI-279）
     const held = this.tasks.get(taskId);
     // （反映の対象でなければ、待たずに先へ進む。待つと、ほかの処理との順番が変わる）
@@ -9904,6 +9911,7 @@ export class TaskService {
       multiRepoStep && !repoless ? join(this.deps.workspaceRoot, "_repos", runId) : undefined;
     const codeRepositories: { repo: string; path: string; branch: string; commit: string }[] = [];
     let copyFailed = false;
+    let agentInvoked = false;
     // 提出を PR のレビューの子タスクがレビューする工程か（PBI-346）。指示と記録で同じ判定を使うよう、実行の前に1回だけ決める
     const pullRequestReview = this.reviewedByPullRequest(this.mustGet(task.id), step);
     try {
@@ -10089,79 +10097,84 @@ export class TaskService {
       // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
       const reviewVerification =
         step === "review" ? this.reviewVerification(this.mustGet(task.id)) : undefined;
-      executed ??= await this.execute({
-        agent,
-        taskId: task.id,
-        image: (services?.ok && services.image) || imageName,
-        ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
-        taskCache: true,
-        ...(started ? serviceConnection(started) : {}),
-        runId,
-        prompt: [
-          buildPrompt(this.mustGet(task.id), step, {
-            ...(reviewDiff !== undefined
-              ? {
-                  diff: reviewDiff,
-                  diffFile: `${CONTAINER_REVIEW_DIR}/${REVIEW_DIFF_FILE}`,
-                }
-              : {}),
-            ...(reviewReplies !== undefined ? { replies: reviewReplies } : {}),
-            // PR にすでにあるレビュー・コメント（PBI-144）
-            ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
-            ...(reviewCi ? { reviewCi } : {}),
-            ...(reviewSecurity ? { reviewSecurity } : {}),
-            // PR のレビューの子タスクに、指摘ごとの戻し先を示させる（PBI-332）
-            ...this.reviewReworkContext(task),
-            // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
-            ...(reviewVerification ? { reviewVerification } : {}),
-            ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
-            ...(mergeConflicts.length > 0 ? { mergeConflicts } : {}),
-            ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
-            ...(multiRepoStep ? { codeRepositories } : {}),
-            // 提出を PR のレビューの子タスクがレビューする工程は、セルフレビューを省く（PBI-346）
-            ...(pullRequestReview ? { pullRequestReview } : {}),
-            // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
-            ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
-            // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）
-            ...(step === "split" && splitRepositories
-              ? { repositories: splitCandidates ?? [] }
-              : {}),
-          }),
-          // 使える組織内 PF の API（PBI-35。プロジェクトのコンテキストの PF も。PBI-74）
-          ...platformPromptLines(runPlatforms.platforms),
-          // 起動したサービスの接続先（PBI-47）
-          ...servicePromptLines(started?.services ?? []),
-        ].join("\n"),
-        platforms: runPlatforms.platforms,
-        role: step,
-        workspaceDir,
-        // 差分の全体（PBI-65）と出典の分類の Input は、作業領域の外に読み取り専用でマウントする
-        ...((reviewDiff !== undefined && reviewDiffDir) || inputDir || otherReposDir
-          ? {
-              mounts: [
-                ...(reviewDiff !== undefined && reviewDiffDir
-                  ? [
-                      {
-                        hostPath: reviewDiffDir,
-                        containerPath: CONTAINER_REVIEW_DIR,
-                        readOnly: true,
-                      },
-                    ]
-                  : []),
-                ...(inputDir
-                  ? [{ hostPath: inputDir, containerPath: CONTAINER_INPUT_DIR, readOnly: true }]
-                  : []),
-                ...(otherReposDir
-                  ? [{ hostPath: otherReposDir, containerPath: "/sacty-repos", readOnly: true }]
-                  : []),
-              ],
-            }
-          : {}),
-        ...(otherReposDir ? { readDirs: ["/sacty-repos"] } : {}),
-        context: context && { dir: context.dir, ...context.placed },
-        ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
-        ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
-      });
+      if (!executed) {
+        const run: ExecuteRun = {
+          agent,
+          taskId: task.id,
+          image: (services?.ok && services.image) || imageName,
+          ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
+          taskCache: true,
+          ...(started ? serviceConnection(started) : {}),
+          runId,
+          prompt: [
+            buildPrompt(this.mustGet(task.id), step, {
+              ...(reviewDiff !== undefined
+                ? {
+                    diff: reviewDiff,
+                    diffFile: `${CONTAINER_REVIEW_DIR}/${REVIEW_DIFF_FILE}`,
+                  }
+                : {}),
+              ...(reviewReplies !== undefined ? { replies: reviewReplies } : {}),
+              // PR にすでにあるレビュー・コメント（PBI-144）
+              ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
+              ...(reviewCi ? { reviewCi } : {}),
+              ...(reviewSecurity ? { reviewSecurity } : {}),
+              // PR のレビューの子タスクに、指摘ごとの戻し先を示させる（PBI-332）
+              ...this.reviewReworkContext(task),
+              // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
+              ...(reviewVerification ? { reviewVerification } : {}),
+              ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
+              ...(mergeConflicts.length > 0 ? { mergeConflicts } : {}),
+              ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
+              ...(multiRepoStep ? { codeRepositories } : {}),
+              // 提出を PR のレビューの子タスクがレビューする工程は、セルフレビューを省く（PBI-346）
+              ...(pullRequestReview ? { pullRequestReview } : {}),
+              // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
+              ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
+              // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）
+              ...(step === "split" && splitRepositories
+                ? { repositories: splitCandidates ?? [] }
+                : {}),
+            }),
+            // 使える組織内 PF の API（PBI-35。プロジェクトのコンテキストの PF も。PBI-74）
+            ...platformPromptLines(runPlatforms.platforms),
+            // 起動したサービスの接続先（PBI-47）
+            ...servicePromptLines(started?.services ?? []),
+          ].join("\n"),
+          platforms: runPlatforms.platforms,
+          role: step,
+          workspaceDir,
+          // 差分の全体（PBI-65）と出典の分類の Input は、作業領域の外に読み取り専用でマウントする
+          ...((reviewDiff !== undefined && reviewDiffDir) || inputDir || otherReposDir
+            ? {
+                mounts: [
+                  ...(reviewDiff !== undefined && reviewDiffDir
+                    ? [
+                        {
+                          hostPath: reviewDiffDir,
+                          containerPath: CONTAINER_REVIEW_DIR,
+                          readOnly: true,
+                        },
+                      ]
+                    : []),
+                  ...(inputDir
+                    ? [{ hostPath: inputDir, containerPath: CONTAINER_INPUT_DIR, readOnly: true }]
+                    : []),
+                  ...(otherReposDir
+                    ? [{ hostPath: otherReposDir, containerPath: "/sacty-repos", readOnly: true }]
+                    : []),
+                ],
+              }
+            : {}),
+          ...(otherReposDir ? { readDirs: ["/sacty-repos"] } : {}),
+          context: context && { dir: context.dir, ...context.placed },
+          ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
+          ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
+        };
+        onAgentInvoked();
+        agentInvoked = true;
+        executed = await this.execute(run);
+      }
     } finally {
       // サービスは、作業領域（ビルドの context）を消す前に止めて消す
       await this.stopServices(task, step, runId);
@@ -10189,7 +10202,7 @@ export class TaskService {
             costUsd,
             estimated,
             ...unknownCost(executed),
-            ...(copyFailed ? { preparationFailed: true as const } : {}),
+            ...(multiRepoStep && !agentInvoked ? { preparationFailed: true as const } : {}),
           },
         },
       };
@@ -13274,6 +13287,7 @@ export class TaskService {
         try {
           await rm(workspace, { recursive: true, force: true });
           await rm(gitDir, { recursive: true, force: true });
+          await rm(`${gitDir}.preparing`, { force: true });
           // タスクごとの依存のキャッシュも消す（PBI-319）。リンクならリンクだけを消し、途中の _task-cache がリンクなら
           // その先を消さずに失敗にする
           const cached = await (this.deps.removeWorkspaceEntry ?? removeEntry)(

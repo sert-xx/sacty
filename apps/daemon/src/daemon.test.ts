@@ -31720,6 +31720,75 @@ describe("時間切れで止めた実行の再開（PBI-280）", () => {
     activity.close();
   });
 
+  it("複数指定の実行前に設定読み取りが例外になっても時間切れのセッションを続ける", async () => {
+    const projects = projectsWithAccount();
+    const urls = ["https://github.com/acme/api", "https://github.com/acme/web"];
+    projects.put("default", {
+      name: "デフォルト",
+      targets: urls.map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "resume-multiple";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "A",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: urls,
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: {
+              steps: ["requirements", "design", "implement"],
+              plan: "standard",
+              reason: "理由",
+              costUsd: 0,
+            },
+          },
+        },
+      ],
+    });
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [timeout(), completed(1_000)], {
+      projects,
+      sessionLogs,
+    });
+    emulateClaude(executor);
+    const task = { id };
+    await service.runNext(task.id);
+    const [first] = runIds(service, task.id);
+    const internal = service as unknown as { projectImagesConfig: (...args: unknown[]) => unknown };
+    const spy = vi.spyOn(internal, "projectImagesConfig").mockImplementationOnce(() => {
+      throw new Error("image settings failed");
+    });
+    await retry(service, task.id);
+    expect(executor.calls).toHaveLength(1);
+    expect(
+      service
+        .get(task.id)
+        ?.activity.filter((e) => e.type === "AgentRunFailed")
+        .at(-1)?.payload,
+    ).toMatchObject({ preparationFailed: true });
+    spy.mockRestore();
+    await retry(service, task.id);
+    expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+    activity.close();
+  });
+
   it("何度か時間切れで止めても、そのたびに同じセッションの続きから進み、最後は完了まで進む", async () => {
     const { activity, service, executor } = setup([
       timeout(),
@@ -45067,6 +45136,18 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect((await second).ok).toBe(true);
     // 後の用意は、先の用意が終わってから確かめるので、clone し直さない
     expect(repos.prepared).toHaveLength(prepared + 1);
+  });
+
+  it("中止時と起動時に中止済みタスクの準備中の印を消す", async () => {
+    const { service, activity, id } = await submittedTask();
+    const marker = `${gitDirOf(id)}.preparing`;
+    writeFileSync(marker, "");
+    await service.cancel(id);
+    expect(existsSync(marker)).toBe(false);
+    writeFileSync(marker, "");
+    await service.cleanupWorkspacesAtStartup();
+    expect(existsSync(marker)).toBe(false);
+    activity.close();
   });
 
   it("起動時に、残った実行ごとの一時領域と、もう使わない・どのタスクのものでもない作業領域を消す", async () => {
