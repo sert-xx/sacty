@@ -3629,11 +3629,14 @@ export class TaskService {
     this.remarkReplyRequests += 1;
     const requested = this.remarkReplyRequests;
     return this.serialized(`remark-reply-post:${key}`, async () => {
-      if ((this.remarkReplyLimitedUpTo.get(key) ?? 0) >= requested) return "limited" as const;
+      const limited = () => (this.remarkReplyLimitedUpTo.get(key) ?? 0) >= requested;
+      if (limited()) return "limited" as const;
       const last = this.remarkReplyLastPostAt.get(key);
       const wait =
         last === undefined ? 0 : last + (this.deps.remarkReplyIntervalMs ?? 1_000) - Date.now();
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      // 間隔を待っている間に、同じアカウントのほかの問い合わせ（一覧の読み取りなど）が制限に当たったら、投稿しない
+      if (limited()) return "limited" as const;
       if (!still()) return "skipped" as const;
       this.remarkReplyLastPostAt.set(key, Date.now());
       try {
@@ -3673,32 +3676,32 @@ export class TaskService {
     // GitHub への問い合わせ1回ごとの期限。答えが返らなくても、実行の枠を占めたままにしない（通信が中断を無視しても戻る）
     // 期限を超えた問い合わせがあったか（GitHub が答えを返さなくなっている）
     let timedOut = false;
+    // GitHub のレート制限に当たったか。当たったら、そこで投稿を止めて、残りの指摘は、投稿を試みずに失敗を残す（制限の間は
+    // 投稿を続けない。やり直さない。行への返信が制限で断られても、PR のコメントに回さない）
+    let limitHit = false;
+    // 投稿を止める（制限・時間切れを見つけた、その場で）。止めたことは、結果を記録できるまで覚えておく（この後、一時停止
+    // などで結果を記録せずに抜けても・記録できずにやり直しても、残りを投稿しないように）
+    const stop = (reason: "rate_limit" | "timeout") => {
+      if (reason === "rate_limit") limitHit = true;
+      else timedOut = true;
+      this.remarkReplyStopped.set(taskId, { submission: due.submission, reason });
+    };
     const limited = <T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> => {
       const signal = this.stopNoticeDeadline();
       // 期限は、問い合わせが終わった後にも切れる。終わっていない問い合わせの期限だけを数える
       let settled = false;
       signal.addEventListener("abort", () => {
-        if (!settled) timedOut = true;
+        if (!settled) stop("timeout");
       });
       return untilAborted(signal, work(signal)).finally(() => {
         settled = true;
       });
     };
-    // GitHub のレート制限に当たったか。当たったら、そこで投稿を止めて、残りの指摘は、投稿を試みずに失敗を残す（制限の間は
-    // 投稿を続けない。やり直さない。行への返信が制限で断られても、PR のコメントに回さない）
-    let limitHit = false;
     // 投稿は、ホストとアカウントごとの共通の入口を通す（投稿の間隔を、同じアカウントのほかのタスクとも合わせる）
     const account = this.githubAccountOf(task, due.repo).account;
     if (!account) return;
     const postKey = `${httpsHost(`${due.repo}/`) ?? ""}:${account.toLowerCase()}`;
     const record = () => {
-      // 投稿を止めたことは、結果を記録できるまで覚えておく（記録できずにやり直すときも、残りを投稿しないように）
-      if (timedOut || limitHit) {
-        this.remarkReplyStopped.set(taskId, {
-          submission: due.submission,
-          reason: limitHit ? "rate_limit" : "timeout",
-        });
-      }
       const latest = this.tasks.get(taskId);
       if (!latest || !valid() || results.length === 0) return;
       // 結果が多ければ、記録を分ける（1件の記録に入れる件数の上限まで）。分けた記録は、1回の書き込みで残す
@@ -3765,7 +3768,7 @@ export class TaskService {
     } catch (error) {
       // 一覧の読み取りがレート制限に当たったことも、同じアカウントで順番を待っている投稿に伝える
       if (rateLimited(error)) {
-        limitHit = true;
+        stop("rate_limit");
         this.markRemarkReplyLimited(postKey);
       }
       // 投稿済みかを確かめられないので（レート制限で読めないときも）、重ねて投稿しない。失敗として残す
@@ -3869,7 +3872,7 @@ export class TaskService {
             }
             // 順番を待っている間に、同じアカウントの先の投稿（ほかのタスクのものも）が制限に当たった：投稿せずに止める
             if (sent === "limited") {
-              limitHit = true;
+              stop("rate_limit");
               results.push({ ...base, failed: message("github.replySkippedAfterRateLimit") });
               continue;
             }
@@ -3879,7 +3882,7 @@ export class TaskService {
             const reason = redactText(errorText(error), usedSecrets);
             // レート制限で断られた：投稿されていない。PR のコメントに回さずに、失敗を残して、残りの投稿を止める
             if (rateLimited(error)) {
-              limitHit = true;
+              stop("rate_limit");
               results.push({ ...base, failed: reason });
               continue;
             }
@@ -3900,7 +3903,7 @@ export class TaskService {
               });
               // 探し直しがレート制限に当たったら、残りの投稿を止める（この指摘は、投稿されたかが分からないので、失敗を残す）
               if (searchFailed !== undefined && rateLimited(searchFailed)) {
-                limitHit = true;
+                stop("rate_limit");
                 this.markRemarkReplyLimited(postKey);
               }
               const hit = landed && mine(landed)[0];
@@ -3932,14 +3935,14 @@ export class TaskService {
           continue;
         }
         if (sent === "limited") {
-          limitHit = true;
+          stop("rate_limit");
           results.push({ ...base, failed: message("github.replySkippedAfterRateLimit") });
           continue;
         }
         results.push({ ...base, ...posted(sent.value.url) });
       } catch (error) {
         // レート制限で断られたら、失敗を残して、残りの投稿を止める
-        if (rateLimited(error)) limitHit = true;
+        if (rateLimited(error)) stop("rate_limit");
         results.push({ ...base, failed: redactText(errorText(error), usedSecrets) });
       }
     }
@@ -16945,8 +16948,8 @@ function remarkOrigins(
 }
 
 /**
- * PR に、指摘への返信（PBI-352）を投稿したタスクが、返信に使ったと記録したアカウント。その PR を作った・引き継いだタスクと、
- * レビューの子タスクの親（parentId）のもの。
+ * PR に、指摘への返信（PBI-352）を投稿したタスクが、返信に使ったと記録したアカウント。その PR（実装の PR・要求要件と設計の
+ * PR）を作った・引き継いだタスクと、レビューの子タスクの親（parentId）のもの。
  */
 export function remarkReplyAccountsOn(
   tasks: readonly Task[],
@@ -16960,7 +16963,11 @@ export function remarkReplyAccountsOn(
     ...new Set(
       tasks.flatMap((t) =>
         t.remarkReplyAccounts &&
-        (t.id === parentId || on(t.pullRequest) || on(t.continuedPullRequest))
+        (t.id === parentId ||
+          on(t.pullRequest) ||
+          on(t.continuedPullRequest) ||
+          // 要求要件・設計の PR
+          (t.stepPullRequests ?? []).some(on))
           ? t.remarkReplyAccounts
           : [],
       ),

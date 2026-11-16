@@ -13780,6 +13780,30 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(ran).toEqual([]);
         // 制限の後に頼まれた投稿は、止めない（待ちの期限は持たない）
         expect(await post(async () => 4)).toEqual({ value: 4 });
+        // 投稿の間隔を待っている間に、ほかの問い合わせ（一覧の読み取りなど）が制限に当たったら、待った後にも投稿しない
+        const spaced = await toImplementGate([], { now: later, remarkReplyIntervalMs: 60 });
+        const postSpaced = <T>(work: () => Promise<T>) =>
+          (
+            spaced.service as unknown as {
+              remarkReplyPost(
+                key: string,
+                still: () => boolean,
+                work: () => Promise<T>,
+              ): Promise<Sent<T>>;
+            }
+          ).remarkReplyPost("github.com:me", () => true, work);
+        expect(await postSpaced(async () => 1)).toEqual({ value: 1 });
+        const waiting = postSpaced(async () => {
+          ran.push("waiting");
+          return 2;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        (
+          spaced.service as unknown as { markRemarkReplyLimited(key: string): void }
+        ).markRemarkReplyLimited("github.com:me");
+        expect(await waiting).toBe("limited");
+        expect(ran).toEqual([]);
+        spaced.activity.close();
         // 制限でない失敗は、順番を待っている投稿を止めない
         const failing = post(async () => {
           throw new Error("500");
@@ -13856,12 +13880,21 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
             remarkReplyAccounts: ["elsewhere"],
           }),
           task({ id: "no-replies", pullRequest: pull }),
+          // 要求要件・設計の PR に返信したタスク
+          task({
+            id: "design-author",
+            stepPullRequests: [
+              { repo: "https://github.com/acme/app", number: 7 },
+            ] as Task["stepPullRequests"],
+            remarkReplyAccounts: ["design-bot"],
+          }),
         ];
         expect(remarkReplyAccountsOn(tasks, "parent", "https://github.com/acme/app", 7)).toEqual([
           "old-bot",
           "me",
           "helper",
           "step-bot",
+          "design-bot",
         ]);
         expect(remarkReplyAccountsOn(tasks, undefined, "https://github.com/acme/app", 9)).toEqual(
           [],

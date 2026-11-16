@@ -616,7 +616,8 @@ Without opening the sacty screen, you can read, where you commented, whether it 
 - It replies when the redone deliverable is back to waiting for approval (after the PR is updated).
   Each comment gets one reply only.
 - For a line comment, it posts a reply to that comment.
-  When GitHub does not accept the reply (for example, the original comment is gone), it posts a PR comment.
+  When GitHub does not accept the reply because of its target (for example, the original comment is gone), it posts a PR comment.
+  When permission is missing or the posting limit is hit, it does not turn the reply into a PR comment and records in the Activity that it could not reply.
 - For a review body and a regular comment, it posts a PR comment.
   It starts with a link to the original, so that it is clear which review or comment it replies to.
 - The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
