@@ -22,7 +22,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
 import { projectSettingsPath } from "@/lib/paths";
 import { candidatesLoader, type RepositoryCandidates } from "@/lib/repository-candidates";
-import { addRepositoryField, removeRepositoryField } from "@/lib/repository-fields";
+import {
+  addRepositoryField,
+  duplicateRepositoryFields,
+  focusAfterRemove,
+  REPOSITORY_FIELDS_MAX,
+  removeRepositoryField,
+} from "@/lib/repository-fields";
 import {
   agentField,
   chosenForPlan,
@@ -291,12 +297,31 @@ export function TaskFields({
   const [repoFields, setRepoFields] = useState([0]);
   const [repoValues, setRepoValues] = useState<Record<number, string>>({ 0: repoDefault ?? "" });
   const editedRepoFields = useRef(new Set<number>());
+  // 初期値（候補が1つなら、その候補）は、届いたとき・変わったときにだけ、まだ人が触っていない先頭の欄に入れる。
+  // 欄を増減しただけでは入れ直さない（初期値の入った欄を削除したら、残った欄に戻さない。PBI-360）
+  const latestRepoFields = useRef(repoFields);
+  latestRepoFields.current = repoFields;
   useEffect(() => {
-    const firstField = repoFields[0];
-    if (!editedRepoFields.current.has(firstField)) {
+    const firstField = latestRepoFields.current[0];
+    if (firstField !== undefined && !editedRepoFields.current.has(firstField)) {
       setRepoValues((values) => ({ ...values, [firstField]: repoDefault ?? "" }));
     }
-  }, [repoDefault, repoFields]);
+  }, [repoDefault]);
+  // 欄を追加・削除したら、次に操作する欄にフォーカスを移す（追加した欄。削除なら消した位置の欄、無ければ前の欄。PBI-360）
+  const repoInputs = useRef(new Map<number, HTMLInputElement>());
+  const [focusField, setFocusField] = useState<number>();
+  useEffect(() => {
+    if (focusField === undefined) return;
+    repoInputs.current.get(focusField)?.focus();
+    setFocusField(undefined);
+  }, [focusField]);
+  // テンプレートを選んでいる間・スケジュールタスクでは、欄は先頭の1つだけ。増やした欄と値は残し、「なし」に戻すと出し直す
+  const multiple = !template && Boolean(steps);
+  const shownRepoFields = multiple ? repoFields : repoFields.slice(0, 1);
+  const duplicateFields = duplicateRepositoryFields(
+    shownRepoFields.map((field) => repoValues[field] ?? ""),
+  );
+  const atLimit = repoFields.length >= REPOSITORY_FIELDS_MAX;
   return (
     <>
       <fieldset className="flex flex-col gap-2">
@@ -322,14 +347,7 @@ export function TaskFields({
                 value={value}
                 checked={template === value}
                 className="sr-only"
-                onChange={() => {
-                  if (value) {
-                    for (const field of repoFields.slice(1)) editedRepoFields.current.delete(field);
-                    setRepoFields((fields) => fields.slice(0, 1));
-                    setRepoValues((values) => ({ [repoFields[0]]: values[repoFields[0]] ?? "" }));
-                  }
-                  onTemplate(value);
-                }}
+                onChange={() => onTemplate(value)}
               />
               {label}
             </label>
@@ -380,9 +398,13 @@ export function TaskFields({
           </span>
           {/* Org の対象ではリポジトリが多いので、入力して絞り込めるようにする */}
           {/* 空欄なら、リポジトリを指定せずに作る（PBI-73） */}
-          {(template || !steps ? repoFields.slice(0, 1) : repoFields).map((field, index) => (
+          {shownRepoFields.map((field, index) => (
             <div key={field} className="flex gap-2">
               <Input
+                ref={(element) => {
+                  if (element) repoInputs.current.set(field, element);
+                  else repoInputs.current.delete(field);
+                }}
                 id={index === 0 ? `${idPrefix}-repo` : `${idPrefix}-repo-${field}`}
                 aria-label={index === 0 ? undefined : `${t.repository} ${index + 1}`}
                 name="repo"
@@ -396,13 +418,14 @@ export function TaskFields({
                 placeholder={t.repositoryPlaceholder}
                 className="font-mono"
               />
-              {!template && steps && repoFields.length > 1 && (
+              {multiple && repoFields.length > 1 && (
                 <Button
                   variant="outline"
                   type="button"
                   aria-label={t.removeRepositoryField(index + 1)}
                   onClick={() => {
                     editedRepoFields.current.delete(field);
+                    setFocusField(focusAfterRemove(repoFields, field));
                     setRepoFields((fields) => removeRepositoryField(fields, field));
                     setRepoValues((values) => {
                       const next = { ...values };
@@ -416,16 +439,42 @@ export function TaskFields({
               )}
             </div>
           ))}
-          {!template && steps && (
-            <Button
-              variant="outline"
-              className="self-start"
-              type="button"
-              disabled={repoFields.length >= 10}
-              onClick={() => setRepoFields(addRepositoryField)}
+          {multiple && duplicateFields.length > 0 && (
+            <p
+              role="status"
+              data-testid={`${idPrefix}-repo-duplicates`}
+              className="text-xs leading-5 text-warn"
             >
-              {t.addRepository}
-            </Button>
+              {t.duplicateRepositories(duplicateFields)}
+            </p>
+          )}
+          {multiple && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Button
+                variant="outline"
+                type="button"
+                disabled={atLimit}
+                aria-describedby={atLimit ? `${idPrefix}-repo-limit` : undefined}
+                onClick={() => {
+                  const next = addRepositoryField(repoFields);
+                  if (next.length === repoFields.length) return;
+                  setRepoFields(next);
+                  setFocusField(next.at(-1));
+                }}
+              >
+                {t.addRepository}
+              </Button>
+              {/* 押せない理由を、ボタンの横に出す（PBI-360） */}
+              {atLimit && (
+                <p
+                  id={`${idPrefix}-repo-limit`}
+                  role="status"
+                  className="text-xs leading-5 text-muted-foreground"
+                >
+                  {t.repositoryLimit(REPOSITORY_FIELDS_MAX)}
+                </p>
+              )}
+            </div>
           )}
           <datalist id={`${idPrefix}-repo-options`}>
             {repositories.map((repo) => (

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { type ActivityEvent, project } from "@sacty/core";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -17,7 +18,12 @@ vi.mock("@/app/actions", () => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 const { TaskDetailView } = await import("./task-detail");
 
-function task(repos: boolean, chosen: boolean, urls = false) {
+function task(
+  repos: boolean,
+  chosen: boolean,
+  urls = false,
+  specified = ["https://github.com/acme/a", "https://github.com/acme/b"],
+) {
   const base = { taskId: "t1", projectId: "default", at: "2026-10-20T00:00:00.000Z" };
   const events = [
     {
@@ -34,9 +40,7 @@ function task(repos: boolean, chosen: boolean, urls = false) {
         noRepo: true,
         ...(repos
           ? {
-              repos: urls
-                ? ["https://github.com/acme/a", "https://github.com/acme/b"]
-                : ["acme/a", "acme/b"],
+              repos: urls ? specified : ["acme/a", "acme/b"],
             }
           : {}),
       },
@@ -72,8 +76,24 @@ describe("複数リポジトリの詳細（R-8）", () => {
               },
             }),
           );
-          expect(html).toContain(
-            `${messagesFor(lang).task.specifiedRepositories}: ${urls ? "https://github.com/acme/a, https://github.com/acme/b" : "acme/a, acme/b"}`,
+          const document = new DOMParser().parseFromString(html, "text/html");
+          // URL の指定は、単数と同じ owner/name で出し、URL の全体はリンク先とツールチップ（PBI-360）
+          expect(document.querySelector('[data-testid="task-repos"]')?.textContent).toBe(
+            `${messagesFor(lang).task.specifiedRepositories}: acme/a, acme/b`,
+          );
+          expect(
+            [...document.querySelectorAll('[data-testid="task-repos"] a')].map((a) => [
+              a.textContent,
+              a.getAttribute("href"),
+              a.getAttribute("title"),
+            ]),
+          ).toEqual(
+            urls
+              ? [
+                  ["acme/a", "https://github.com/acme/a", "https://github.com/acme/a"],
+                  ["acme/b", "https://github.com/acme/b", "https://github.com/acme/b"],
+                ]
+              : [],
           );
           expect(html).not.toContain('data-testid="no-repository"');
           if (chosen) {
@@ -83,6 +103,27 @@ describe("複数リポジトリの詳細（R-8）", () => {
         });
       }
     }
+    it(`${lang} で別のホストの同じ owner/name は URL の全体で区別する（PBI-360）`, () => {
+      locale = lang;
+      const specified = ["https://ghe.example.com/acme/tools", "https://github.com/acme/tools"];
+      const html = renderToStaticMarkup(
+        createElement(TaskDetailView, {
+          data: {
+            task: task(true, false, true, specified),
+            activity: [],
+            projectName: "Project",
+            children: [],
+          },
+        }),
+      );
+      const document = new DOMParser().parseFromString(html, "text/html");
+      expect(
+        [...document.querySelectorAll('[data-testid="task-repos"] a')].map((a) => [
+          a.textContent,
+          a.getAttribute("href"),
+        ]),
+      ).toEqual(specified.map((url) => [url, url]));
+    });
     it(`${lang} でリポジトリ無しの印を表示する`, () => {
       locale = lang;
       const html = renderToStaticMarkup(
