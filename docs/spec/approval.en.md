@@ -296,6 +296,7 @@ The implementation PR body is written to be read short, conclusion first. The fu
    - AI review state: whether a sacty AI review is attached to the current head ("Whether the current head has an AI review" under [AI review comments](#ai-review-comments); `aiReviewBodyLine`).
    - The record that a person moved the task on despite a failed final review of an earlier version, and the failed points (the failed viewpoints and the summary in one line as "最終レビューの所見"; if any; [A person moves it to review](tasks-and-steps.en.md#a-person-moves-it-to-review); `overrideBodyLines`)
    - What a person should confirm (if any; `humanCheckBodyLines`)
+   - Right after the bullets of the conclusion comes the "リスク評価" section (if there is an assessment record; [PR risk assessment](risk-assessment.en.md#how-it-is-shown); `riskAssessmentLines`). In a body that follows the template, it is placed at the start of sacty's notes at the end.
 3. The approved requirements (the bug reproduction for a reproduce task; `approvedBasisLines`)
    - The full text is not included; only the head of the first paragraph and where the full text is (`approvedBasisDigest`). The full text is at the URL and file path of the requirements and design PRs approved by merging. With no PR, "全文は sacty のタスクの画面で確かめてください。" is written.
      The form of the links is as in "Links to earlier steps' outputs" below.

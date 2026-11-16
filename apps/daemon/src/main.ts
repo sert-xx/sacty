@@ -239,6 +239,8 @@ const service = new TaskService({
   // 完了したタスクを監査する（PBI-125）
   audit: !auditMock,
   reviewTasks: true,
+  // PR を作る前に、PR の内容のリスクを評価する（PBI-362）
+  riskAssessment: true,
   config,
   secrets,
   projects,

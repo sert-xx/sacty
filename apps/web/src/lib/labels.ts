@@ -689,6 +689,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.outcome,
         event.payload.reason ? l.text(event.payload.reason) : "",
       );
+    case "PullRequestRiskAssessed":
+      return e.PullRequestRiskAssessed(
+        event.payload.via,
+        event.payload.assessment?.level,
+        event.payload.reason ? l.text(event.payload.reason) : "",
+      );
     case "TestsRun":
       return e.TestsRun(
         event.payload.passed,

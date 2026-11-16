@@ -697,6 +697,8 @@ When sacty uses its own format, the implementation PR body looks as follows.
 
 - The "結論" (conclusion) section at the top holds a summary of the change and sacty's review (the child task that reviews the PR reviews it and posts the review).
 - The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging.
+- Right after the conclusion comes a "リスク評価" (risk assessment) section ([PR risk assessment](#pr-risk-assessment)).
+  When the body follows the template's headings, it is at the end of the body.
 - The PR of a child task of a split has a "この PR の範囲（分割の子タスク）" (scope of this PR) section ([Scope of the PR of a child task of a split](#scope-of-the-pr-of-a-child-task-of-a-split)).
 - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated).
   When the implementation's description itself starts with a heading such as "## 変更内容", no empty "変更" heading is put in front of it.
@@ -722,6 +724,46 @@ For a task that had a final review in an earlier version, the body shows that re
   In a body that follows a template, what you should confirm is at the end of the body.
 - The findings of each viewpoint appear in the collapsed "観点ごとの詳細" (details per viewpoint).
 - The summary of the review is usually not shown in the body (only for a task that a person moved on to review despite a failed final review, the summary is shown in one line as "最終レビューの所見" (final review findings), together with that record).
+
+### PR risk assessment
+
+Before opening or updating an implementation PR, sacty has an AI assess the risk of the PR's content and puts it in the "リスク評価" (risk assessment) section of the PR body.
+Use it as a guide when you decide how deeply to review the PR.
+The assessment is a guide. sacty does not skip a review or a test, or merge automatically, because of it.
+
+There are three levels, and each level has a fixed suggested review depth.
+
+| Level | What kind of change | Suggested review depth |
+| --- | --- | --- |
+| High | At least one of the risk signals below applies | Check from the design and impact |
+| Medium | It changes behavior, but its reach is limited, reverting it undoes it, and the changed behavior has been verified | Read where the behavior changes |
+| Low | Only safe kinds of change, such as documents, comments, formatting, tests only, or refactoring that does not change behavior | A skim is enough |
+
+The risk signals are the following eight.
+
+- Security (related to authentication, permissions, secrets, input validation, and so on)
+- Hard-to-undo change (migrating or deleting data, changing a storage format, sending something externally, and so on)
+- Compatibility change (changing a public API, a setting, a file format, and so on incompatibly)
+- Structural or wide-reaching change
+- Performance or concurrency
+- Suspected defect
+- Large diff
+- Unverified behavior
+
+Besides the level and the suggested depth, the section holds the following.
+
+- The risk signals that apply
+- The kind of change, the reach of the impact, the ease of undoing, and what was verified
+- The places to look at (file and lines, and the reason to look)
+
+Keep the following in mind about the assessment.
+
+- When it could not be assessed (the budget cap has been reached, the AI run failed, or the answer could not be read), the section says "評価できませんでした" (could not be assessed) with the reason. Opening the PR is not stopped.
+- When a PR with the same content is submitted again, it is not assessed again. When the implementation is redone and the content changes, it is assessed again.
+- The result also appears in the "PR risk assessment" section of the task detail and in the activity.
+- A requirements or design PR does not carry a risk assessment.
+- When the project's or repository's context has a skill or rules about RADAR (the idea of varying the review depth with the risk of a change), the AI puts that content before the criteria above when it assesses (the levels stay low, medium, and high).
+- For the detailed rules of the criteria, see the [specification](../spec/risk-assessment.en.md).
 
 ### The form of the commit message
 

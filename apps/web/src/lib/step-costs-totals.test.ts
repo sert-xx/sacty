@@ -353,6 +353,34 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
       outcome === "resolved" ? "orchestrator" : "sacty",
     );
   }
+  // PR を出す前に、PR のリスクを評価した（PBI-362。評価できなかったときも、実行していれば費用を持つ）
+  if (rand() < 0.5) {
+    const assessed = rand() < 0.5;
+    add(
+      {
+        type: "PullRequestRiskAssessed",
+        payload: {
+          via: "publish",
+          commit: "c1",
+          ...(assessed
+            ? {
+                assessment: {
+                  level: "medium",
+                  signals: [],
+                  change: "変更",
+                  scope: "範囲",
+                  reversibility: "戻せる",
+                  verification: "テスト",
+                  focus: [],
+                },
+              }
+            : { reason: "読めない" }),
+          ...charged(),
+        },
+      },
+      assessed ? "orchestrator" : "sacty",
+    );
+  }
   // PR がマージされ、マージの後のデプロイの確認を実行した（PBI-89）
   if (rand() < 0.5) {
     add({ type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person");

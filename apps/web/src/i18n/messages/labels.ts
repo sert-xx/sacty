@@ -377,6 +377,16 @@ const ja = {
         ? `人が PR のブランチ ${branch} に足したコミット（${commit}）を作業領域に取り込み：${conflicts}件のファイルが競合（${files}）`
         : `人が PR のブランチ ${branch} に足したコミット（${commit}）を作業領域に取り込み（競合なし）`,
     PullRequestBodyWritten: (number: number) => `PR #${number} の本文を書いた`,
+    PullRequestRiskAssessed: (
+      via: "publish" | "review",
+      level: "low" | "medium" | "high" | undefined,
+      reason: string,
+    ) => {
+      const when = via === "publish" ? "PR を出す前に" : "レビューの工程で";
+      return level
+        ? `${when}、PR のリスクを評価した：${{ low: "低", medium: "中", high: "高" }[level]}`
+        : `${when}、PR のリスクを評価できなかった${reason ? `：${reason}` : ""}`;
+    },
     PullRequestBodyResolved: (
       number: number,
       outcome: "resolved" | "kept" | "overwritten",
@@ -1047,6 +1057,12 @@ const en: LabelMessages = {
         ? `Merged the commits a person added to the PR branch ${branch} (${commit}) into the workspace: ${conflicts} file(s) conflict (${files})`
         : `Merged the commits a person added to the PR branch ${branch} (${commit}) into the workspace (no conflicts)`,
     PullRequestBodyWritten: (number) => `Wrote the body of PR #${number}`,
+    PullRequestRiskAssessed: (via, level, reason) => {
+      const when = via === "publish" ? "before opening the PR" : "in the review step";
+      return level
+        ? `Assessed the PR's risk ${when}: ${level}`
+        : `Could not assess the PR's risk ${when}${reason ? `: ${reason}` : ""}`;
+    },
     PullRequestBodyResolved: (number, outcome, reason) =>
       outcome === "resolved"
         ? `An agent reconciled the person's edits to the body of PR #${number} with Sacty's new body`

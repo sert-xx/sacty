@@ -23,6 +23,7 @@ import type {
   ReviewVerdict,
   ReworkAnswer,
   ReworkCause,
+  RiskAssessment,
   SecurityCategory,
   SelfReview,
   StepKey,
@@ -779,6 +780,17 @@ export type Task = {
    * 本文を直したかを見分け、3方向でマージするときの共通の祖先にする。
    */
   pullRequestBodies?: Record<string, string>;
+  /**
+   * PR のリスク評価の最後のもの（PullRequestRiskAssessed。PBI-362）。assessment が無ければ、評価できなかった（reason に理由）。
+   * PR の説明（via が publish）と、投稿するレビューのコメント（via が review）に載せる。
+   */
+  riskAssessment?: {
+    via: "publish" | "review";
+    commit?: string;
+    assessment?: RiskAssessment;
+    reason?: DaemonText;
+    at: string;
+  };
   /**
    * 実装の観点とテストの対応。最新の提出が申告したもの。直しの提出（前に実装の提出がある）は、PR 全体の対応にするため、
    * 前の提出までに対応させたテストも、今回の申告に出てくる観点に残す（PBI-299）。
@@ -1991,6 +2003,18 @@ export function applyEvent(
 
     case "PullRequestBodyResolved":
       // 費用は chargeBudget が足す。本文は、更新した後の PullRequestBodyWritten で記録する
+      break;
+
+    case "PullRequestRiskAssessed":
+      // 最後の評価だけを持つ（評価できなかったときも、前の評価を残さない。前の先頭の評価を今の先頭のものに見せないため）。
+      // 費用は chargeBudget が足す
+      task.riskAssessment = {
+        via: event.payload.via,
+        ...(event.payload.commit ? { commit: event.payload.commit } : {}),
+        ...(event.payload.assessment ? { assessment: event.payload.assessment } : {}),
+        ...(event.payload.reason ? { reason: event.payload.reason } : {}),
+        at: event.at,
+      };
       break;
 
     case "BaseConflictsRemained":

@@ -49,6 +49,7 @@ import {
   ReviewVerdict as ReviewVerdictSchema,
   ReworkAnswer,
   ReworkCause,
+  type RiskAssessment,
   renderMessage,
   resumeNoteSections,
   reviewFlakyFailures,
@@ -102,6 +103,13 @@ import {
   type QuestionLogRun,
 } from "./question-logs.js";
 import { WORKSPACE_SCRATCH_DIR, WORKSPACE_TOOLS_DIR, type WorkingTreeCopy } from "./repository.js";
+import {
+  assessesRiskInReview,
+  extractRiskAssessment,
+  RISK_ASSESSMENT_HEADING,
+  reviewRiskLines,
+  riskAssessmentLines,
+} from "./risk-assessment.js";
 import {
   isSecurityFix,
   MINIMAL_CHANGE_VIEWPOINT,
@@ -2988,6 +2996,8 @@ export function buildPrompt(
         `{"${REVIEW_VERDICT_HEADING}": {"verdict": "changes_required"}}`,
         "```",
         ...reviewReworkLines(extra.reviewRework),
+        // PR から取り込んだレビューのタスクは、PR のリスクも評価させる（PBI-362）
+        ...reviewRiskLines(task),
         // レビューする PR が分割の子タスクの PR なら、その範囲（PBI-351）
         ...reviewChildScopeLines(extra.reviewRework),
         ...rereviewLines(task, extra.replies),
@@ -5086,6 +5096,11 @@ export function joinBodyText(text: BodyText): string {
   return text.footer ? `${text.main}\n\n${text.footer}` : text.main;
 }
 
+/** PR の説明に載せるリスク評価（PBI-362）。PR を作る・更新する前の評価だけ（レビューの工程の評価は、レビューのコメントに載せる）。 */
+function publishedRisk(task: Task): Task["riskAssessment"] {
+  return task.riskAssessment?.via === "publish" ? task.riskAssessment : undefined;
+}
+
 /**
  * テンプレートを使わない実装の PR の本文（PBI-87。つなぐと `buildPullRequestBody` と同じ）。結論（変更の要約・レビューの案内・
  * 人が確かめること）を冒頭に置き、承認済みの要求要件・設計は全文を載せずに要点とリンクにする（PBI-264）。
@@ -5114,6 +5129,8 @@ export function buildPullRequestBodyText(
   const human = humanCheckBodyLines(task).join("\n").trim();
   const stacked = stackedBodyLines(stage).join("\n");
   const scope = childScopeBodyLines(task, "##");
+  // リスク評価（PBI-362）は、人がレビューの深さを決める目安なので、結論のすぐ後に置き、長さの上限でも省かない
+  const risk = riskAssessmentLines(publishedRisk(task), "##").join("\n");
   const main = [
     intro,
     "",
@@ -5126,6 +5143,7 @@ export function buildPullRequestBodyText(
     `- ${REVIEW_BODY_LINE}`,
     ...(aiReviewBodyLine(stage.aiReview) ? [`- ${aiReviewBodyLine(stage.aiReview)}`] : []),
     "",
+    ...(risk ? [risk, ""] : []),
     ...(override ? [override, ""] : []),
     ...(human ? [human, ""] : []),
     // 分割の子タスクの PR は、この PR の範囲を、要求要件より前に置く（PBI-351）
@@ -5151,6 +5169,7 @@ export function buildPullRequestBodyText(
       intro,
       ...(stacked ? [stacked] : []),
       ...closesLines(task),
+      ...(risk ? [risk] : []),
       ...(override ? [override] : []),
       ...(human ? [human] : []),
     ],
@@ -5174,6 +5193,7 @@ export function buildPullRequestBodyParts(
     .join("\n\n");
   const humanCount = humanCheckItems(task).length;
   const scope = childScopeBodyLines(task, "bold");
+  const risk = riskAssessmentLines(publishedRisk(task), "bold");
   const record = [
     ...(exportedUrls(task).length > 0 ? ["**書き出した成果**", "", ...exportedUrls(task), ""] : []),
   ];
@@ -5197,6 +5217,8 @@ export function buildPullRequestBodyParts(
     ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
     record: record.join("\n"),
     footer: [
+      // リスク評価（PBI-362）は、テンプレートの見出しに入らなくても省かれないよう、footer の先頭に置く
+      ...(risk.length > 0 ? [...risk, ""] : []),
       ...overrideBodyLines(task),
       ...humanCheckBodyLines(task),
       sactyFooter(task, "成果物"),
@@ -8088,7 +8110,15 @@ function tagComment(severity: unknown, body: string): { body: string; severity?:
 export function extractReviewComments(
   output: string,
   diff: string,
-): { output: string; comments: ReviewComment[]; verdict?: ReviewVerdict; rework?: ReviewRework } {
+  secrets: readonly string[] = [],
+): {
+  output: string;
+  comments: ReviewComment[];
+  verdict?: ReviewVerdict;
+  rework?: ReviewRework;
+  /** リスク評価の答えを読めたもの（PBI-362。答えが無い・形が違えば無い）。 */
+  risk?: RiskAssessment;
+} {
   const commentable = commentableLines(diff);
   let found: (ReviewComment & { severity?: Severity })[] | undefined;
   // 判定（PBI-88・PBI-111）。最後のブロックを使い、どのブロックも本文から取り除く。決めた値で無ければ、判定は無いものとする
@@ -8131,6 +8161,11 @@ export function extractReviewComments(
     const ok = commentable.get(comment.path)?.has(comment.line);
     (ok && inline.length < REVIEW_COMMENTS_MAX ? inline : outside).push(comment);
   }
+  // リスク評価の答え（PBI-362）は、形が違っても本文から取り除く（投稿する本文に JSON を残さない）
+  for (const candidate of jsonCandidates(output)) {
+    if (candidate.value[RISK_ASSESSMENT_HEADING] !== undefined) used.push(candidate);
+  }
+  const risk = extractRiskAssessment(output, secrets)?.assessment;
   const body = withoutCandidates(output, used).trim();
   const comments = found ?? [];
   const verdict: ReviewVerdict | undefined = comments.some((c) => c.severity === "must")
@@ -8146,6 +8181,7 @@ export function extractReviewComments(
     comments: inline,
     ...(verdict ? { verdict } : {}),
     ...(rework ? { rework } : {}),
+    ...(risk ? { risk } : {}),
   };
 }
 
@@ -8225,6 +8261,13 @@ export function buildReviewBody(
   // 自分にメンションするときは、自分の login が読めなくても作者には知らせない
   const mention = mentionOf(options.mentionSelf ?? task.reviewTarget?.author);
   const reviewed = task.reviewTarget?.headCommit ?? "";
+  // 今回レビューした先頭の評価だけを載せる（前の回の評価を、今回のものとして載せない）
+  const risk =
+    assessesRiskInReview(task) &&
+    task.riskAssessment?.via === "review" &&
+    task.riskAssessment.commit === task.reviewTarget?.headCommit
+      ? riskAssessmentLines(task.riskAssessment, "###")
+      : [];
   const stale =
     options.latestCommit && reviewed && options.latestCommit !== reviewed
       ? [
@@ -8246,6 +8289,8 @@ export function buildReviewBody(
     ].join(" "),
     "",
     ...stale,
+    // PR から取り込んだレビューのタスクは、PR のリスク評価を、レビューの本文の前に載せる（PBI-362）
+    ...(risk.length > 0 ? [...risk, ""] : []),
     body,
     "",
     "---",

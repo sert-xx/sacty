@@ -56,6 +56,7 @@ import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { RerunDialog } from "@/components/rerun-dialog";
 import { ResumeForm, type ResumeStepSetting } from "@/components/resume-form";
+import { RiskAssessmentCard } from "@/components/risk-assessment";
 import { SecurityFixesCard } from "@/components/security-fixes";
 import { SelfReviewNote } from "@/components/self-review";
 import { StepAgentForm } from "@/components/step-agent-form";
@@ -624,6 +625,7 @@ function Overview({ data }: { data: TaskDetailData }) {
       <TaskContent task={task} />
       <Deliverables data={data} />
       <PullRequestCard task={task} />
+      <RiskAssessmentCard task={task} />
       {/* 承認したセキュリティチェックのレポートの区分ごとの対応のタスク */}
       {data.securityFindings !== undefined && (
         <SecurityFixesCard task={task} findings={data.securityFindings} />

@@ -1599,6 +1599,66 @@ const PullRequestBodyResolved = z.object({
   }),
 });
 
+/** PR のリスクの段階（PBI-362）。low：低、medium：中、high：高。 */
+export const RiskLevel = z.enum(["low", "medium", "high"]);
+export type RiskLevel = z.infer<typeof RiskLevel>;
+
+/**
+ * PR のリスクの合図（PBI-362）。1つでも当たれば、段階は high。
+ * security：セキュリティに関わる。irreversible：取り消しにくい。compatibility：互換性を変える。structural：構造を大きく変える・
+ * 広い範囲に及ぶ。performance：性能・並行処理・資源の使い方に効く。defect：不具合・論理の誤りが見つかった。
+ * large：差分が大きく、読むのに手間がかかる。unverified：変えた振る舞いを確かめていない。
+ */
+export const RiskSignal = z.enum([
+  "security",
+  "irreversible",
+  "compatibility",
+  "structural",
+  "performance",
+  "defect",
+  "large",
+  "unverified",
+]);
+export type RiskSignal = z.infer<typeof RiskSignal>;
+
+/**
+ * PR のリスク評価（PBI-362）。人が、PR をどの深さでレビューするかを決めるための目安。段階と、当たったリスクの合図、根拠
+ * （変更の種類・影響の範囲・取り消しやすさ・確かめた範囲）、とくに見る箇所。
+ */
+export const RiskAssessment = z.object({
+  level: RiskLevel,
+  signals: z.array(RiskSignal).default([]),
+  change: z.string().min(1),
+  scope: z.string().min(1),
+  reversibility: z.string().min(1),
+  verification: z.string().min(1),
+  focus: z.array(z.object({ where: z.string().min(1), why: z.string().min(1) })).default([]),
+});
+export type RiskAssessment = z.infer<typeof RiskAssessment>;
+
+/**
+ * PR のリスクを評価した（PBI-362）。via は、評価した場面。publish：sacty が PR を作る・更新する前（オーケストレーターの
+ * エージェントの実行。費用を持つ）。review：PR から取り込んだレビューのタスクの、レビューの工程の答え（費用は工程の実行に
+ * 数えるので、ここには持たない）。assessment が無ければ、評価できなかった（reason に理由）。評価できなくても、PR の作成・
+ * レビューの投稿は止めない。commit は、評価した先頭のコミット。
+ */
+const PullRequestRiskAssessed = z.object({
+  type: z.literal("PullRequestRiskAssessed"),
+  payload: z.object({
+    via: z.enum(["publish", "review"]),
+    commit: z.string().min(1).optional(),
+    assessment: RiskAssessment.optional(),
+    reason: DaemonText.optional(),
+    agentId: z.string().optional(),
+    ...AgentSetting,
+    ...RunRef,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+    costUnknown: z.boolean().optional(),
+  }),
+});
+
 /**
  * sacty がテストのコンテナでテストを実行した結果。終了コードが0で、すべての観点にテストが対応していれば合格。
  * 不合格なら実装をやり直す（続けて通らなければ一時停止）。
@@ -3721,6 +3781,7 @@ export const EventInput = z.discriminatedUnion("type", [
   BaseConflictsRemained,
   PullRequestHeadMerged,
   PullRequestBodyWritten,
+  PullRequestRiskAssessed,
   PullRequestBodyResolved,
   TestsRun,
   TestsSkipped,
