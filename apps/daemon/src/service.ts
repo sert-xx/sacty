@@ -3585,7 +3585,45 @@ export class TaskService {
 
   private postRemarkReplies(taskId: string): Promise<void> {
     // 同じタスクの返信は順に処理する（先の処理が検索や投稿の最中のまま、もう1本始まっても、二重に投稿しない）
-    return this.serialized(`remark-replies:${taskId}`, () => this.postRemarkRepliesNow(taskId));
+    return this.serialized(`remark-replies:${taskId}`, () =>
+      this.postRemarkRepliesNow(taskId).catch((error: unknown) => {
+        // 結果を記録できなかった（など）。間を置いてやり直す（その間、このタスクも、返信を待つレビューの子タスクも、
+        // 実行待ちに出さない。失敗が続いても、実行の枠を取り続けて、後ろのタスクを止めないように）
+        this.remarkReplyRetryAt.set(
+          `task:${taskId}`,
+          this.now() + (this.deps.remarkReplyRetryMs ?? 60_000),
+        );
+        throw error;
+      }),
+    );
+  }
+
+  /** ホストとアカウントごとの、最後に指摘への返信を投稿した時刻（投稿の間隔をあけるため）。 */
+  private readonly remarkReplyLastPostAt = new Map<string, number>();
+
+  /**
+   * 指摘への返信を、1件投稿する（行への返信も、PR のコメントも、ここを通す）。ホストとアカウントごとに、1件ずつ順に投稿し、
+   * 投稿と投稿の間をあける（GitHub の、書き込みを続けて送るときの制限に当たりにくくする。同じアカウントで返信する、ほかの
+   * タスクの投稿とも合わせる）。そのアカウントが、レート制限の後の待ちの間なら、投稿せずに "held" を返す。順番と間隔を
+   * 待っている間に、投稿してよい状態でなくなったら（still が偽）、投稿せずに "skipped" を返す。
+   */
+  private remarkReplyPost<T>(
+    key: string,
+    still: () => boolean,
+    work: () => Promise<T>,
+  ): Promise<{ value: T } | "held" | "skipped"> {
+    return this.serialized(`remark-reply-post:${key}`, async () => {
+      const held = () => (this.remarkReplyRetryAt.get(key) ?? 0) > this.now();
+      if (held()) return "held" as const;
+      const last = this.remarkReplyLastPostAt.get(key);
+      const wait =
+        last === undefined ? 0 : last + (this.deps.remarkReplyIntervalMs ?? 1_000) - Date.now();
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      if (held()) return "held" as const;
+      if (!still()) return "skipped" as const;
+      this.remarkReplyLastPostAt.set(key, Date.now());
+      return { value: await work() };
+    });
   }
 
   private async postRemarkRepliesNow(taskId: string): Promise<void> {
@@ -3640,13 +3678,8 @@ export class TaskService {
       );
       record();
     };
-    // 続けて投稿するときは、間を置く（GitHub の、書き込みを続けて送るときの制限に当たりにくくする）
-    let postedOnce = false;
-    const paced = async () => {
-      const interval = this.deps.remarkReplyIntervalMs ?? 1_000;
-      if (postedOnce && interval > 0) await new Promise((resolve) => setTimeout(resolve, interval));
-      postedOnce = true;
-    };
+    // 投稿は、ホストとアカウントごとの共通の入口を通す（間隔と、レート制限の後の待ちを、ほかのタスクとも合わせる）
+    const postKey = this.remarkReplyAccountKey(task, due.repo);
     const record = () => {
       const latest = this.tasks.get(taskId);
       if (!latest || !valid() || results.length === 0) return;
@@ -3776,20 +3809,26 @@ export class TaskService {
           ...(remark.status ? { status: remark.status } : {}),
           secrets: usedSecrets,
         };
-        await paced();
-        if (!valid()) return;
-        if (!stillDue(remark)) continue;
+        const still = () => valid() && stillDue(remark);
         if (ref?.kind === "review_comment") {
           try {
-            const { url } = await limited((signal) =>
-              this.deps.pulls.replyToReviewComment({
-                ...where,
-                commentId: ref.id,
-                body: buildRemarkReply(reply),
-                signal,
-              }),
+            const sent = await this.remarkReplyPost(postKey, still, () =>
+              limited((signal) =>
+                this.deps.pulls.replyToReviewComment({
+                  ...where,
+                  commentId: ref.id,
+                  body: buildRemarkReply(reply),
+                  signal,
+                }),
+              ),
             );
-            results.push({ ...base, inline: true, ...posted(url) });
+            // ほかのタスクがレート制限に当たって、このアカウントが待ちの間：ここまでの結果を記録して、残りは後でやり直す
+            if (sent === "held") return record();
+            if (sent === "skipped") {
+              if (!valid()) return;
+              continue;
+            }
+            results.push({ ...base, inline: true, ...posted(sent.value.url) });
             continue;
           } catch (error) {
             if (rateLimited(error)) return holdForRateLimit(error);
@@ -3824,20 +3863,25 @@ export class TaskService {
             );
           }
         }
-        // 返信を待っている間に、止められた・提出が変わったら、PR のコメントにも投稿しない
-        if (!valid()) return;
-        if (!stillDue(remark)) continue;
-        const { url } = await limited((signal) =>
-          this.deps.pulls.commentIssue({
-            ...where,
-            body: buildRemarkReply({
-              ...reply,
-              ...(ref ? { origin: { ref, url: remarkOriginUrl(due.url, ref) } } : {}),
+        // 返信を待っている間に、止められた・提出が変わったら、PR のコメントにも投稿しない（共通の入口で、投稿の直前に確かめる）
+        const sent = await this.remarkReplyPost(postKey, still, () =>
+          limited((signal) =>
+            this.deps.pulls.commentIssue({
+              ...where,
+              body: buildRemarkReply({
+                ...reply,
+                ...(ref ? { origin: { ref, url: remarkOriginUrl(due.url, ref) } } : {}),
+              }),
+              signal,
             }),
-            signal,
-          }),
+          ),
         );
-        results.push({ ...base, ...posted(url) });
+        if (sent === "held") return record();
+        if (sent === "skipped") {
+          if (!valid()) return;
+          continue;
+        }
+        results.push({ ...base, ...posted(sent.value.url) });
       } catch (error) {
         if (rateLimited(error)) return holdForRateLimit(error);
         results.push({ ...base, failed: redactText(errorText(error), usedSecrets) });
@@ -16890,7 +16934,11 @@ function replyRejected(error: unknown): boolean {
 /** GitHub のレート制限で断られたか（429、または 403 でレート制限と説明するもの）。間を置けば、投稿できる。 */
 function rateLimited(error: unknown): boolean {
   const status = githubStatus(error);
-  return (status === 429 || status === 403) && isTransientGitHubFailure(error);
+  if (status === 429) return true;
+  // 403 は、本文がレート制限と説明するか、ヘッダーが制限を示す（残りが 0・次に試せるまでの時間。本文を読めなくても）とき
+  return (
+    status === 403 && (isTransientGitHubFailure(error) || githubRetryAfterMs(error) !== undefined)
+  );
 }
 
 /** 1回に返信する指摘の件数の上限（RemarkRepliesPosted の results の上限）。残りは、次の処理で返信する。 */

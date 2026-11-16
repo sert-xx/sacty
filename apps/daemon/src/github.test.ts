@@ -808,6 +808,23 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
     );
     expect(untilReset).toBeGreaterThan(590_000);
     expect(untilReset).toBeLessThanOrEqual(600_000);
+    // 本文を読めなくても、ヘッダーが制限を示していれば、持たせる
+    const unreadable = new GitHubPullRequests(
+      fakeFetch([
+        {
+          status: 403,
+          json: {},
+          headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+        },
+      ]).impl,
+    );
+    expect(
+      githubRetryAfterMs(
+        await unreadable
+          .listIssueComments({ ...target, prefix: "x", complete: true })
+          .catch((e: unknown) => e),
+      ),
+    ).toBeGreaterThan(590_000);
     // 示されていなければ、無い
     expect(
       githubRetryAfterMs(await client.replyToReviewComment(input).catch((e: unknown) => e)),
