@@ -155,14 +155,15 @@
 
 コード: `packages/core/src/events.ts`（`StepKey`・`GATED_STEPS`・`REWORK_STEPS`・`EXPORT_STEPS`・`exportSteps`）、`packages/core/src/projection.ts`（`investigationIsGoal`）、`apps/daemon/src/service.ts`（`REPO_STEPS`・`submitEvents`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`）
 
-複数のリポジトリを指定したタスクの要求要件・設計・分割では、各リポジトリのコードの写しをエージェントに渡す。
+複数のリポジトリを指定したタスクの調査・要求要件・設計・分割（`REPOSITORY_COPY_STEPS`）では、各リポジトリのコードの写しをエージェントに渡す。
 リポジトリを選ぶ前は各既定ブランチの最新を作業領域に並べ、選んだ後は選択したリポジトリの起点を作業領域に置き、残りの既定ブランチの最新を読み取り専用で渡す。
 指示には各リポジトリの場所・ブランチ・コミットを示す。
 要求要件には各要求の対象リポジトリを、設計にはリポジトリごとの実装内容を求める。
+調査の指示は、リポジトリを選ぶ前でも、写しのコードを読んで調べさせる。
 写しを用意できなければ名前と理由を記録して停止し、再開時に再び用意する。
 写しのリモート Git 通信は `ls-remote` と `fetch` を120秒で打ち切り、clone を含め一時停止・中止でも終了する。
 
-コード: `apps/daemon/src/service.ts`（`runNextInner`）、`apps/daemon/src/prompts.ts`（`buildPrompt`）
+コード: `apps/daemon/src/service.ts`（`runNextInner`・`copiesRepositories`・`REPOSITORY_COPY_STEPS`）、`apps/daemon/src/prompts.ts`（`buildPrompt`・`codeLines`）
 
 ### 調査が目的のタスクの結果の形
 

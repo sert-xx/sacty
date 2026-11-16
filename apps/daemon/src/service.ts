@@ -318,6 +318,7 @@ import {
   platformSummary,
   readOnlyPlatforms,
 } from "./platforms.js";
+import { withoutWorkspaceLinks } from "./pr-body-links.js";
 import {
   buildPullRequestBodyMergePrompt,
   extractMergedPullRequestBody,
@@ -9052,9 +9053,7 @@ export class TaskService {
             if (
               gathering ||
               task.steps.length === 0 ||
-              step === "requirements" ||
-              step === "design" ||
-              step === "split"
+              (step !== undefined && REPOSITORY_COPY_STEPS.includes(step))
             ) {
               const candidates = await this.taskRepositoryCandidates(task);
               if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
@@ -9162,9 +9161,7 @@ export class TaskService {
             (latest.status !== "queued" && latest.status !== "running") ||
             (!gathering &&
               latest.steps.length > 0 &&
-              step !== "requirements" &&
-              step !== "design" &&
-              step !== "split")
+              !(step !== undefined && REPOSITORY_COPY_STEPS.includes(step)))
           )
             throw error;
           const text = error.detail;
@@ -9410,9 +9407,7 @@ export class TaskService {
         initial.repos &&
         (awaitingGathering(initial) ||
           initial.steps.length === 0 ||
-          step === "requirements" ||
-          step === "design" ||
-          step === "split")
+          (step !== undefined && REPOSITORY_COPY_STEPS.includes(step)))
       ) {
         const text = preparationException
           ? ready.message
@@ -9804,7 +9799,7 @@ export class TaskService {
 
     // 候補の照合中に停止されたら、工程を開始せずに手動停止する。
     let splitCandidates: string[] | undefined;
-    if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
+    if (copiesRepositories(task, step)) {
       const candidates = await this.taskRepositoryCandidates(task);
       if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
       if ("missing" in candidates) {
@@ -9865,8 +9860,7 @@ export class TaskService {
           : { ok: true, dir: join(this.deps.workspaceRoot, task.id, "empty") }
         : await this.prepareRepository(this.mustGet(task.id), config.config);
     } catch (error) {
-      if (!task.repos || (step !== "requirements" && step !== "design" && step !== "split"))
-        throw error;
+      if (!copiesRepositories(task, step)) throw error;
       preparationException = true;
       ready = {
         ok: false,
@@ -9875,10 +9869,7 @@ export class TaskService {
     }
     if (!ready.ok) {
       const failureMessage =
-        task.repos &&
-        !preparationException &&
-        !repoless &&
-        (step === "requirements" || step === "design" || step === "split")
+        copiesRepositories(task, step) && !preparationException && !repoless
           ? message("repo.prepareFailed", {
               repo: task.repository?.url ?? task.repo ?? "",
               detail: ready.message,
@@ -9895,9 +9886,7 @@ export class TaskService {
               agentId: agent.id,
               reason: "error",
               message: failureMessage,
-              ...(task.repos && (step === "requirements" || step === "design" || step === "split")
-                ? { preparationFailed: true as const }
-                : {}),
+              ...(copiesRepositories(task, step) ? { preparationFailed: true as const } : {}),
             },
           },
         },
@@ -9905,13 +9894,12 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "TaskPaused",
-            payload:
-              task.repos && (step === "requirements" || step === "design" || step === "split")
-                ? {
-                    reason: this.stopReason(task.id, "error"),
-                    ...(await this.manualPauseInfo(task.id)),
-                  }
-                : { reason: "error" },
+            payload: copiesRepositories(task, step)
+              ? {
+                  reason: this.stopReason(task.id, "error"),
+                  ...(await this.manualPauseInfo(task.id)),
+                }
+              : { reason: "error" },
           },
         },
       ]);
@@ -9949,9 +9937,7 @@ export class TaskService {
     try {
       context = await this.runContext(task, agent, config.config, contextSecrets, undefined, step);
     } catch (error) {
-      const multiPreparation = Boolean(
-        task.repos && (step === "requirements" || step === "design" || step === "split"),
-      );
+      const multiPreparation = copiesRepositories(task, step);
       const manual = multiPreparation ? await this.manualPauseInfo(task.id) : {};
       this.append(task, [
         {
@@ -9964,9 +9950,7 @@ export class TaskService {
               agentId: agent.id,
               reason: "error",
               message: redactText(errorText(error), contextSecrets),
-              ...(task.repos && (step === "requirements" || step === "design" || step === "split")
-                ? { preparationFailed: true as const }
-                : {}),
+              ...(copiesRepositories(task, step) ? { preparationFailed: true as const } : {}),
             },
           },
         },
@@ -10035,9 +10019,7 @@ export class TaskService {
           })
         : undefined;
     const inputDir = inputs ? join(this.deps.workspaceRoot, "_input", runId) : undefined;
-    const multiRepoStep = Boolean(
-      task.repos && (step === "requirements" || step === "design" || step === "split"),
-    );
+    const multiRepoStep = copiesRepositories(task, step);
     const otherReposDir =
       multiRepoStep && !repoless ? join(this.deps.workspaceRoot, "_repos", runId) : undefined;
     const codeRepositories: { repo: string; path: string; branch: string; commit: string }[] = [];
@@ -11604,7 +11586,8 @@ export class TaskService {
       text.keep.map((k) => redact(k, usedSecrets)),
     );
     return {
-      body: limited.body,
+      // コンテナの作業領域のパスへのリンク（GitHub では開けない）を外す（PBI-366）。外すと短くなるので、長さの上限の後でよい
+      body: withoutWorkspaceLinks(limited.body),
       template: { ...template, ...(limited.truncated ? { truncated: true } : {}) },
     };
   }
@@ -17477,6 +17460,22 @@ function legacyAllRequested(task: Task): boolean {
  * 対象リポジトリが要る工程（PBI-73）。対象リポジトリの無いタスクでは実行しない（コードを変える・PR を読む・PR を作る）。
  */
 const REPO_STEPS: readonly StepKey[] = ["implement", "reproduce", "review"];
+
+/**
+ * 複数のリポジトリを指定したタスクで、各リポジトリのコードの写しを渡す工程（調査は PBI-367）。コードを読んで書く工程で、
+ * 変更は残さない。
+ */
+const REPOSITORY_COPY_STEPS: readonly StepKey[] = [
+  "investigate",
+  "requirements",
+  "design",
+  "split",
+];
+
+/** 複数のリポジトリを指定したタスクの、各リポジトリの写しを渡す工程か。 */
+function copiesRepositories(task: Pick<Task, "repos">, step: StepKey): boolean {
+  return Boolean(task.repos) && REPOSITORY_COPY_STEPS.includes(step);
+}
 
 /**
  * 対象リポジトリの無いタスクの分割案で、子タスクごとのリポジトリを、プロジェクトの対象と照らす（PBI-73）。無い・対象に

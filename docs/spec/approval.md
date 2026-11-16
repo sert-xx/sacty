@@ -361,6 +361,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 - 作り直しの後の本文（PBI-299。実験 S5 r4 の F44：2回作り直した最後の本文の「結論」・「変更」・「検証」・観点表が、最後の直しだけを書き、何の PR か分からなくなった）：人の差し戻し・AI のレビューの指摘（以前の版では最終レビューの不合格も）のどれで始まった作り直しでも、更新する PR の本文は、その時点の PR 全体の説明にする。
   - 実装の提出ごとの出力を、`Task.implementHistory` に古い順に持つ（`AgentRunCompleted`（実装）から作る。10 件まで）。あわせて、前の提出までの PR 全体の説明の土台を `Task.implementBase` に持つ（最初の提出の前は無い。最初の提出、または「最後の直し」の節を付けて全体を書き直した提出の、節以外の部分。節の無い提出は土台を変えない。`advanceImplementBase`）。履歴が上限で古い提出を捨てても、土台は消えない。どちらも、要求要件・設計などの上流の工程を承認し直したとき、承認済みの上流の成果物を変える申し出を適用したときは空に戻す。
   - 実装の指示（`implementReworkLines`。前の実装の説明を添えるとき）で、説明は PR が加える変更の全体の説明にすること（前の説明を土台に、今回の直しを反映して書き直し、「最後の直し」の節の内容も全体に取り込む）、今回の直しは説明の最後の「## 最後の直し」の節（`LAST_FIX_HEADING`）に1つだけ分けて書くこと、観点とテストの対応も PR 全体の対応にすることを書かせる。
+    同じ指示で、提出の前の検証を、今回の直しを入れた後のコードで実行し直させる（`REWORK_VERIFICATION_LINE`。PBI-365）。実装の説明とリポジトリの文書（作業の記録など）に書く検証の結果は、今回実行して得たものだけにさせ、前の回の結果を今回の結果として書かせない。リポジトリの文書に前の回の結果が残っていれば今回の結果に書き換えさせ、実行しなかった検証は、実行していないことと理由を書かせる。最初の実行の指示には足さない。
   - 本文は、説明を「## 最後の直し」の節（`splitLastFix`。コードブロックの中の見出しは読まない。次の同じかより上の階層の見出しまで）とそれ以外に分け、それ以外を PR 全体の説明（結論の変更の要約・「変更」）、節を最後の直し（結論の「最後の直し」の行・「最後の直し」の節）にする（`implementDescription`）。テンプレートに沿わせる本文は、「変更」に全体の説明を置き、続けて太字の「最後の直し」と本文を置く。
   - 節を書かずに最後の直しだけを書いた提出は、PR 全体の説明にしない。前の提出までの土台（`implementBase`）を全体の説明に使い、最後の提出の説明全体を最後の直しにする。前の提出が無い（最初の実装）ときは、節があっても説明を変えない。作り直しが無いタスクの本文は、これまでと同じ。
   - 観点とテストの対応（`Task.testMap`）は、前の提出があるとき、今回の申告に出てくる観点に、前の提出までに対応させたテストを先に、今回のテストを後に並べる（同じテストは1件。`mergeTestMaps`）。テストを書かずに差分で確かめる観点（`tests` が空）は、今回の申告をそのまま使う。今回の申告に出てこない観点は、前の対応を残さない（対応していない観点として、これまでどおり検証で不合格になる）。
@@ -438,6 +439,10 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
     `Closes #123` があっても `Closes #12` が残ったとは見なさない。
 - 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。要約・短縮（結論の要約・表のテスト名や観点の題・人が確かめること・不合格のまま進めた記録の所見など）で切れた先頭が残らないよう、本文を作る前に、タスクのすべての文字列から伏せる（`PullRequestBodyStage.secrets`）。公開の直前の置換も残す。
   台帳に残す理由の文も伏せる。
+- コンテナの作業領域へのリンク（`withoutWorkspaceLinks`。PBI-366）：長さの上限と秘密の値の扱いの後の本文から、リンク先がコンテナの作業領域（`CONTAINER_WORKSPACE`。`/workspace` とその下）の Markdown のリンク・画像を、リンクでない表記にする（GitHub では開けないため）。
+  - 表示の文字を残す。表示の文字にパス（`#`・`?` より後ろを除く）が出ていなければ、全角の括弧の中に、作業領域からのパス（リポジトリのルートからのパス）をインラインのコードで添える。表示の文字が空なら、パスのインラインのコードだけにする。作業領域そのものへのリンクは、表示の文字だけにする。
+  - コードブロック（```` ``` ````・`~~~`）とインラインコードの中、ほかのリンク（URL・相対パス・`/workspace` で始まる別の名前のパス）は変えない。参照形式のリンクの定義と HTML のリンクは読まない。
+  - 要求要件・設計の PR と実装の PR の、作成と更新のどちらの本文にも行う。台帳に残す本文（`PullRequestBodyWritten`）も、外した後のもの。PR に投稿するレビュー・コメントには行わない。
 - 台帳：`PullRequestPublished`・`StepPullRequestPublished` の `template` に、次を残す。
   - 使ったテンプレート（`repo`：テンプレートのあったリポジトリの URL、`path`）
   - または、決まった形にした理由（`fallback`：`none`・`unusable`、`message`：`pr.templateFailed`・`pr.templateTooLarge`・`pr.templateInvalid`・`pr.templateEmpty`・`pr.templateOrgPrivate` など）
@@ -452,7 +457,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - パスは区切りごとに符号にし（括弧も符号にして、リンク先が途中で閉じないようにする）、リンクの文字はパスのインラインのコード（中にバッククォートがあれば、より長いバッククォートで囲む）。
   - PR の URL が `<リポジトリ>/pull/<番号>` の形でなければ、パスのインラインのコードと、全角の括弧の中に「PR：」と山括弧で囲んだ URL（自動リンク）にする。URL が無ければパスだけ。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/pr-body-links.ts`（`withoutWorkspaceLinks`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ### 人が直した本文の更新
 

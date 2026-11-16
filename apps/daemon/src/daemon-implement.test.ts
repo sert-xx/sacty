@@ -5748,6 +5748,31 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
+  it("実装の説明にあるコンテナの作業領域へのリンクは、PR の本文ではリンクにしない（PBI-366）", async () => {
+    const made = await toImplement([
+      implement(
+        [
+          "[README.md](/workspace/README.md) と [決済の処理](/workspace/src/pay.ts#L12) を直しました。",
+          "[設計](https://example.com/design) と [docs/a.md](docs/a.md) は変えていません。",
+          "`[b.md](/workspace/b.md)` は例です。",
+        ].join("\n"),
+      ),
+    ]);
+    await drain(made.service);
+    const body = made.pulls.calls[0]?.body ?? "";
+    expect(body).toContain("README.md と 決済の処理（`src/pay.ts#L12`） を直しました。");
+    expect(body).toContain("[設計](https://example.com/design) と [docs/a.md](docs/a.md)");
+    expect(body).toContain("`[b.md](/workspace/b.md)` は例です。");
+    expect(body).not.toContain("](/workspace/README.md)");
+    expect(body).not.toContain("](/workspace/src/pay.ts");
+    // 台帳に残す本文（次の更新で、人の直しと突き合わせる土台）も同じ
+    const written = made.service
+      .get(made.id)
+      ?.activity.findLast((e) => e.type === "PullRequestBodyWritten");
+    expect(JSON.stringify(written?.payload)).not.toContain("](/workspace/README.md)");
+    made.activity.close();
+  });
+
   it("実装の工程が終わったら、ブランチにプッシュしてPRを作り、実装の承認待ちで止まる（PBI-10b・PBI-110）", async () => {
     const { activity, service, repos, pulls, id } = await toImplementGate();
     // コミットの日時は、実装の工程の実行が終わった日時（PBI-331）

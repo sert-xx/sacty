@@ -3022,7 +3022,7 @@ describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
     );
   });
 
-  it.each(["requirements", "design", "split"] as const)(
+  it.each(["investigate", "requirements", "design", "split"] as const)(
     "複数指定の%sは写しの場所とブランチとコミットを伝える",
     (step) => {
       const repos = ["https://github.com/acme/app", "https://github.com/acme/api"];
@@ -3038,9 +3038,30 @@ describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
           expect(prompt).toContain(`${copy.repo}：${copy.path}（${copy.branch}、${copy.commit}）`);
         }
         expect(prompt).not.toContain("作業領域（カレントディレクトリ）は空");
+        // 写しがあるので、コードを読ませる（リポジトリを選ぶ前でも、コンテキストだけをもとにさせない）
+        if (step === "investigate") {
+          expect(prompt).toContain("対象リポジトリのコードを読んで");
+          expect(prompt).not.toContain("プロジェクトのコンテキストをもとに");
+        }
       }
     },
   );
+
+  it("複数を指定していないタスクの調査の指示は、写しの一覧を足さない（PBI-367）", () => {
+    for (const steps of [["investigate"], ["investigate", "implement"]] as const) {
+      const prompt = buildPrompt(task([...steps]), "investigate");
+      expect(prompt).not.toContain(
+        "次のリポジトリのコードを読み、構成・規約・影響範囲を踏まえてください。",
+      );
+      expect(prompt).toContain("対象リポジトリのコードを読んで");
+    }
+    const repoless = buildPrompt(
+      task(["investigate"], { repository: undefined, noRepo: true }),
+      "investigate",
+    );
+    expect(repoless).toContain("プロジェクトのコンテキストをもとに");
+    expect(repoless).toContain("作業領域（カレントディレクトリ）は空");
+  });
 
   it("要求要件の指示に、EARS の形式と既定のスキル・文型・ID・異常系を書く（スキルが無くても形式がわかる）", () => {
     const prompt = buildPrompt(task(["requirements", "design", "implement"]), "requirements");
