@@ -5,6 +5,7 @@ import {
   buildPullRequestBodyParts,
   buildPullRequestBodyText,
   joinBodyText,
+  REWORK_VERIFICATION_LINE,
 } from "./prompts.js";
 
 /*
@@ -234,5 +235,42 @@ describe("直しの実行の指示（PBI-299）", () => {
       expect(prompt).toContain(`「## ${LAST_FIX_HEADING}」の節を1つだけ作って書く`);
       expect(prompt).toContain("観点とテストの対応も、この PR の全体の対応にする");
     }
+  });
+
+  it("直しの実行だけに、検証を直しの後のコードで実行し直し、今回の結果だけを書くことを指示する（PBI-365）", () => {
+    // 最初の実行（前の実装の説明が無い）には足さない
+    for (const first of [
+      task({ outputs: {} }),
+      task({ outputs: {}, noTestsReason: "テストの仕組みが無い" }),
+      task({ outputs: {}, approved: { requirements: { output: "# 要求要件", submission: 1 } } }),
+    ]) {
+      expect(buildPrompt(first, "implement")).not.toContain(REWORK_VERIFICATION_LINE);
+    }
+    // 直しの実行は、要求要件を経ない・経る・テストの仕組みが無い・不具合の修正のどれにも足す
+    for (const rework of [
+      task(),
+      task({ noTestsReason: "テストの仕組みが無い" }),
+      task({ approved: { requirements: { output: "# 要求要件", submission: 1 } } }),
+      task({
+        approved: { requirements: { output: "# 要求要件", submission: 1 } },
+        noTestsReason: "テストの仕組みが無い",
+      }),
+      task({
+        steps: [
+          { key: "reproduce", state: "done" },
+          { key: "implement", state: "active" },
+        ],
+      }),
+    ]) {
+      const prompt = buildPrompt(rework, "implement");
+      expect(prompt).toContain("--- 前回の");
+      expect(prompt).toContain(REWORK_VERIFICATION_LINE);
+    }
+    expect(REWORK_VERIFICATION_LINE).toContain("今回の直しを入れた後のコードで実行し直す");
+    expect(REWORK_VERIFICATION_LINE).toContain(
+      "前の回の記録にある結果を、今回の結果として書かない",
+    );
+    expect(REWORK_VERIFICATION_LINE).toContain("今回の結果に書き換える");
+    expect(REWORK_VERIFICATION_LINE).toContain("実行していないことと理由を書く");
   });
 });

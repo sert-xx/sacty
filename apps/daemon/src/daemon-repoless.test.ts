@@ -390,7 +390,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     activity.close();
   });
 
-  it.each(["requirements", "design", "split"] as const)(
+  // 調査の工程（進め方が「調査だけ」のタスク）にも渡す（PBI-367）
+  it.each(["investigate", "requirements", "design", "split"] as const)(
     "複数指定の%sは選択前に両方の最新を読み、clone を再利用する",
     async (step) => {
       const activity = new SqliteActivityStore(dbPath);
@@ -417,7 +418,12 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
             actor: "orchestrator",
             event: {
               type: "StepsChosen",
-              payload: { steps: [step], plan: "split", reason: "分割", costUsd: 0 },
+              payload: {
+                steps: [step],
+                plan: step === "investigate" ? "investigate" : "split",
+                reason: "分割",
+                costUsd: 0,
+              },
             },
           },
         ],
@@ -437,7 +443,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     },
   );
 
-  it.each(["requirements", "design", "split"] as const)(
+  // 調査の工程（進め方が「調査だけ」のタスク）にも渡す（PBI-367）
+  it.each(["investigate", "requirements", "design", "split"] as const)(
     "複数指定の%sは選択後に起点と他の写しを読み、実行後に片付ける",
     async (step) => {
       const activity = new SqliteActivityStore(dbPath);
@@ -468,7 +475,12 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
             actor: "orchestrator",
             event: {
               type: "StepsChosen",
-              payload: { steps: [step], plan: "split", reason: "分割", costUsd: 0 },
+              payload: {
+                steps: [step],
+                plan: step === "investigate" ? "investigate" : "split",
+                reason: "分割",
+                costUsd: 0,
+              },
             },
           },
         ],
@@ -502,7 +514,7 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
       expect(selectedContent).toBe(`api ${repos.head}`);
       expect(mounted).toMatchObject({ readOnly: true, content: `web ${repos.branchHead}` });
-      if (step !== "split") {
+      if (step === "requirements" || step === "design") {
         expect(executor.inputMounts[0]?.readOnly).toBe(true);
         expect(executor.inputMounts[0]?.files["task.md"]).toContain("複数");
       }
@@ -679,11 +691,17 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     activity.close();
   });
 
-  it.each([false, true])(
-    "複数指定の写しの失敗は選択状態 %s でも停止し、復旧後に再開する",
-    async (chosen) => {
+  it.each([
+    [false, "requirements"],
+    [true, "requirements"],
+    // 調査の工程も、同じく止まって再開できる（PBI-367）
+    [false, "investigate"],
+    [true, "investigate"],
+  ] as const)(
+    "複数指定の写しの失敗は選択状態 %s の %s でも停止し、復旧後に再開する",
+    async (chosen, step) => {
       const activity = new SqliteActivityStore(dbPath);
-      const id = `copy-failure-${chosen}`;
+      const id = `copy-failure-${chosen}-${step}`;
       activity.append({
         taskId: id,
         projectId: "default",
@@ -717,7 +735,12 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
             actor: "orchestrator",
             event: {
               type: "StepsChosen",
-              payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+              payload: {
+                steps: [step],
+                plan: step === "investigate" ? "investigate" : "split",
+                reason: "分割",
+                costUsd: 0,
+              },
             },
           },
         ],
