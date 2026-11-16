@@ -89,6 +89,27 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     }
   });
 
+  it("置き換えで新しいリンクができる・ほかのリンクが変わる本文は、変えない", () => {
+    for (const body of [
+      // 表示の文字の角括弧が、後ろの括弧とつながってリンクになる
+      "[[a]](/workspace/a)(/workspace/b)",
+      "[[a]](/workspace/a)(https://example.com)",
+      // 画像の代わりの文字の中の、打ち消した角括弧が、リンクになる
+      "![\\[x\\](https://example.com)](/workspace/a.png)",
+      // 表示の文字の角括弧が、定義とつながって参照形式のリンクになる
+      "[[a]](/workspace/x.md)\n\n[a]: https://example.com",
+      // 外した後に、前後の文字がつながって別のリンクになる
+      "[x][](/workspace)(https://example.com)",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+    // 同じ本文のほかのリンクも、変えない（一部だけを変えて、構文が変わった本文を出さない）
+    const mixed = "[a.md](/workspace/a.md) と [[a]](/workspace/a)(/workspace/b)";
+    expect(withoutWorkspaceLinks(mixed)).toBe(mixed);
+    // 角括弧があっても、リンクにならなければ外す
+    expect(withoutWorkspaceLinks("[[a]](/workspace/a.md) (注)")).toBe("[a]（`a.md`） (注)");
+  });
+
   it("作業領域そのものへのリンクは、表示の文字だけにする", () => {
     expect(withoutWorkspaceLinks("[作業領域](/workspace) と [ルート](/workspace/)")).toBe(
       "作業領域 と ルート",

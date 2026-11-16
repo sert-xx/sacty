@@ -11585,10 +11585,13 @@ export class TaskService {
       PR_BODY_MAX,
       text.keep.map((k) => redact(k, usedSecrets)),
     );
+    // コンテナの作業領域のパスへのリンク（GitHub では開けない）を外す（PBI-366）。置き換えは本文を長くしないので、
+    // 長さの上限の後でよい（上限で省いた後の本文に、省けない部分が残る）。
+    // 置き換えで文字がつながる・リンク先の文字参照が元の文字に戻ると、伏せたはずの秘密の値が現れうるので、置き換えの後にも
+    // 伏せる。伏せた結果が上限を超える（伏せ字が値より長い）ときは、置き換えをやめて、上限の中の本文を使う
+    const unlinked = redact(withoutWorkspaceLinks(limited.body), usedSecrets);
     return {
-      // コンテナの作業領域のパスへのリンク（GitHub では開けない）を外す（PBI-366）。置き換えは本文を長くしないので、
-      // 長さの上限の後でよい（上限で省いた後の本文に、省けない部分が残る）
-      body: withoutWorkspaceLinks(limited.body),
+      body: unlinked.length <= PR_BODY_MAX ? unlinked : limited.body,
       template: { ...template, ...(limited.truncated ? { truncated: true } : {}) },
     };
   }

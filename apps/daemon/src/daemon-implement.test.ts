@@ -37,6 +37,7 @@ import type { ConfigResult, SactyConfig } from "./config.js";
 import { AgentTimeoutError, MessageError } from "./errors.js";
 import type { PullRequestFeedback, PullRequestInfo, PullRequestStatus } from "./github.js";
 import { BODY_BEGIN, BODY_END } from "./pr-body-merge.js";
+import { PR_BODY_MAX } from "./pr-template.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildPullRequestBody } from "./prompts.js";
 import { isOpenStopNotice } from "./review-stop-notice.js";
@@ -5770,6 +5771,28 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       .get(made.id)
       ?.activity.findLast((e) => e.type === "PullRequestBodyWritten");
     expect(JSON.stringify(written?.payload)).not.toContain("](/workspace/README.md)");
+    made.activity.close();
+  });
+
+  it("リンクを外した後の本文に秘密の値が現れても、PR の本文と台帳に残さない（PBI-366）", async () => {
+    // 文字参照が元の文字に戻る・外したリンクの前後の文字がつながると、伏せた後の本文に秘密の値（ここでは GitHub の
+    // トークン ghp_secret）が現れる
+    const made = await toImplement([
+      implement(
+        [
+          "[手順](/workspace/docs/ghp&#95;secret.md) を直しました。",
+          "値は ghp_[](/workspace)secret です。",
+          "![ghp&#95;secret](/workspace/a.png)",
+        ].join("\n\n"),
+      ),
+    ]);
+    await drain(made.service);
+    const body = made.pulls.calls[0]?.body ?? "";
+    expect(body).toContain("手順（`docs/[REDACTED].md`） を直しました。");
+    expect(body).toContain("値は [REDACTED] です。");
+    expect(body).not.toContain("ghp_secret");
+    expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+    expect(JSON.stringify(made.service.get(made.id)?.activity)).not.toContain("ghp_secret");
     made.activity.close();
   });
 

@@ -51,8 +51,23 @@ function replaced(source: string, start: number, end: number, found: Replacement
   return out + source.slice(done, end);
 }
 
-/** 構文木をたどり、作業領域へのリンク・画像の置き換えを集める。 */
-function collect(node: Nodes, source: string, out: Replacement[]): void {
+/**
+ * 構文木の中の、リンク・画像・参照形式のリンクと画像の並び（種類とリンク先。removed に入れたものは除く）。置き換えの後の
+ * 本文に、新しいリンクができていないか・ほかのリンクが変わっていないかを確かめるのに使う。
+ */
+function linkSignature(node: Nodes, removed: ReadonlySet<Nodes>, out: string[] = []): string[] {
+  if (!removed.has(node)) {
+    if (node.type === "link" || node.type === "image") out.push(`${node.type} ${node.url}`);
+    if (node.type === "linkReference" || node.type === "imageReference") {
+      out.push(`${node.type} ${node.identifier}`);
+    }
+  }
+  if ("children" in node) for (const child of node.children) linkSignature(child, removed, out);
+  return out;
+}
+
+/** 構文木をたどり、作業領域へのリンク・画像の置き換えを集める。置き換えるリンク・画像は removed に入れる。 */
+function collect(node: Nodes, source: string, out: Replacement[], removed: Set<Nodes>): void {
   if (node.type === "link" || node.type === "image") {
     const path = workspacePath(node.url);
     const start = node.position?.start.offset;
@@ -66,7 +81,7 @@ function collect(node: Nodes, source: string, out: Replacement[]): void {
         const last = node.children.at(-1)?.position?.end.offset;
         if (first !== undefined && last !== undefined) {
           const inner: Replacement[] = [];
-          for (const child of node.children) collect(child, source, inner);
+          for (const child of node.children) collect(child, source, inner, removed);
           label = replaced(source, first, last, inner);
         }
       }
@@ -84,11 +99,16 @@ function collect(node: Nodes, source: string, out: Replacement[]): void {
       // 元のリンクより長くなる。そのときは、パスを添えずに表示の文字だけにする。表示の文字も無ければ、リンクを変えない
       const original = end - start;
       const text = wanted.length <= original ? wanted : label.trim() !== "" ? label : undefined;
-      if (text !== undefined && text.length <= original) out.push({ start, end, text });
+      if (text !== undefined && text.length <= original) {
+        out.push({ start, end, text });
+        removed.add(node);
+      }
       return;
     }
   }
-  if ("children" in node) for (const child of node.children) collect(child, source, out);
+  if ("children" in node) {
+    for (const child of node.children) collect(child, source, out, removed);
+  }
 }
 
 /**
@@ -102,6 +122,11 @@ function collect(node: Nodes, source: string, out: Replacement[]): void {
  * 名前のパス）は変えない。参照形式のリンク（`[a][b]` と、その定義）と HTML のリンクは変えない。解析できなければ、本文を
  * 変えずに返す（PR の作成を止めない）。
  *
+ * 置き換えた後の本文も解析し、リンク・画像・参照形式のリンクの並びが、元の本文から外したものを除いて同じであることを
+ * 確かめる。表示の文字を周りの文字とつなぐと、新しいリンクができることがある（`[[a]](/workspace/a)(/workspace/b)` は
+ * `[a](/workspace/b)` になる。画像の代わりの文字の中の、打ち消した角括弧も、リンクになりうる）。並びが変わるときは、
+ * 本文を変えずに返す（リンクを増やさない・ほかのリンクを変えない。作業領域へのリンクは残る）。
+ *
  * 本文は長さの上限（PR_BODY_MAX）の後のものを渡す。置き換えは、元のリンクより長い文字にしない（返す本文は、渡した本文より
  * 長くならない）。その長さで、ふつうの本文の解析は 0.1 秒ほど。解析に回る本文（作業領域のパス・バックスラッシュ・文字参照の
  * どれかと `](` を含む）で、かつ記号が上限いっぱいまで続くと、数秒〜数十秒かかる（PR の作成・更新のたびに1回。その間、
@@ -110,10 +135,17 @@ function collect(node: Nodes, source: string, out: Replacement[]): void {
 export function withoutWorkspaceLinks(body: string): string {
   if (cannotLinkToWorkspace(body)) return body;
   const found: Replacement[] = [];
+  const removed = new Set<Nodes>();
   try {
-    collect(fromMarkdown(body), body, found);
+    const tree = fromMarkdown(body);
+    collect(tree, body, found, removed);
+    if (found.length === 0) return body;
+    const out = replaced(body, 0, body.length, found);
+    const expected = linkSignature(tree, removed);
+    const actual = linkSignature(fromMarkdown(out), new Set());
+    const same = expected.length === actual.length && expected.every((v, i) => v === actual[i]);
+    return same ? out : body;
   } catch {
     return body;
   }
-  return found.length === 0 ? body : replaced(body, 0, body.length, found);
 }
