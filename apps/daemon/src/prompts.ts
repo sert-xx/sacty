@@ -4515,8 +4515,8 @@ export type PullRequestBodyStage = {
   /** 依存先の子タスクの PR に重ねている（PBI-317）。重ねた先の PR と、その子タスクの題。 */
   stackedOn?: { number: number; url: string; title: string };
   /**
-   * 分割の子タスクの、親タスク（PBI-351）。範囲の記録が無い子タスク（記録を始める前に作った子タスク）の範囲を、親タスクの
-   * 記録から復元するのに使う。
+   * 分割の子タスクの、親タスク（PBI-351）。範囲の記録が無い子タスク（記録を始める前に作った子タスク）の範囲を、親タスクに
+   * 残る分割のエージェントの出力から読むのに使う。
    */
   splitParent?: Task;
 };
@@ -4560,7 +4560,7 @@ function hideSecrets(task: Task, secrets: readonly string[] | undefined): Task {
 }
 
 /**
- * 本文を作るタスク。分割の子タスクの範囲（PBI-351）を、伏せる前の記録から求めて持たせ（親タスクの記録と突き合わせて復元する
+ * 本文を作るタスク。分割の子タスクの範囲（PBI-351）を、伏せる前の記録から求めて持たせ（記録と子タスクの内容を突き合わせる
  * ので、伏せた後の文字列では合わない）、その後で、使った秘密の値と内部のパスを、範囲も含めて伏せる。
  */
 function bodyTask(rawTask: Task, stage: PullRequestBodyStage): Task {
@@ -5405,8 +5405,8 @@ export type ReviewReworkContext = {
   /** PR を作ったタスク（承認済みの前の工程の成果物を読む）。 */
   parent: Task;
   /**
-   * PR を作ったタスクが分割の子タスクのとき、その親タスク（PBI-351）。範囲の記録が無い子タスクの範囲を、親タスクの記録から
-   * 復元するのに使う。
+   * PR を作ったタスクが分割の子タスクのとき、その親タスク（PBI-351）。範囲の記録が無い子タスクの範囲を、親タスクに残る
+   * 分割のエージェントの出力から読むのに使う。
    */
   splitParent?: Task;
 };
@@ -6848,9 +6848,9 @@ export type ChildScope = {
 /**
  * 分割の子タスクの範囲（PBI-351）。PR の本文の範囲の節と、その PR をレビューする子タスクの指示に使う。
  * 分割のときに記録した範囲（Task.childScope。分割のエージェントが書いた原文・親タスクの題・修正の子タスクか）を使う。
- * 記録の無い子タスク（この記録を始める前に作った子タスク）は、親タスク（splitParent）の記録から復元する（restoredChildScope）。
- * 子タスクの内容（body）の自由記述から、境目を推測することはしない。分割の子タスクでない・復元できないときは undefined
- * （範囲は不明。PR の本文にもレビューの指示にも渡さない）。
+ * 記録の無い子タスク（この記録を始める前に作った子タスク）は、親タスク（splitParent）に残る、分割のエージェントの出力から
+ * 読む（restoredChildScope）。子タスクの内容（body）の自由記述から、境目を推測することはしない。分割の子タスクでない・
+ * 読めないときは undefined（範囲は不明。PR の本文にもレビューの指示にも渡さない）。
  */
 export function childScopeOf(task: Task, splitParent?: Task): ChildScope | undefined {
   if (!task.parent) return undefined;
@@ -6866,32 +6866,39 @@ export function childScopeOf(task: Task, splitParent?: Task): ChildScope | undef
 }
 
 /**
- * 範囲の記録（Task.childScope）が無い子タスクの、分割のエージェントが書いた原文を、親タスクの記録から復元する。
- * 子タスクの内容は、原文の後ろに、sacty が親タスクの記録（題・承認済みの要求要件と設計・集めた情報・依存先の題）から
- * 作った部分を添えたもの（buildChildBody）。同じ記録から、添えた部分を作り直し、子タスクの内容の末尾がそれと完全に一致する
- * ときだけ、その前を原文とする。添えた部分は決まった文字列なので、原文に何が書かれていても、取り違えない。
- * 一致しない（分割の後に親タスクの題・成果物が変わった、親の分割の記録にこの子タスクが無いなど）ときは undefined。
+ * 範囲の記録（Task.childScope）が無い子タスクの、分割のエージェントが書いた原文を、分割のときの記録から読む。
+ * 原文の記録は、その子タスクを決めた分割のエージェントの出力（親タスクの split.outputs。分割の回ごとに、TaskSplit の直前の
+ * 実行の出力を残したもの）。出力を分割案として読み直し、その回の子タスクの並びの同じ位置の子の内容を、原文とする。
+ * 子タスクの内容（body）や、いまの親タスクの題・成果物からは、原文を作らない（分割の後に変わっていても、原文は変わらない）。
+ * 記録を取り違えていないことを確かめられないときは undefined：
+ * - 親タスクの分割の記録に、この子タスクが無い。その回の出力が残っていない・分割案として読めない。
+ * - 分割案の子の数・題の並びが、その回の子タスクの記録と違う。
+ * - 子タスクの内容が、その原文と sacty の区切り線で始まっていない。
  */
 function restoredChildScope(task: Task, parent: Task): ChildScope | undefined {
   if (task.parent?.taskId !== parent.id) return undefined;
   const split = parent.split;
   const entry = split?.children.find((c) => c.taskId === task.id);
-  if (!split || !entry) return undefined;
-  // 最初の分割の子タスクには分割の文、統合レビューの後に足した修正の子タスク（2回目から）には修正の文を添えている
-  const fix = entry.round > 1;
-  const blank = buildChildBody(
-    { ...parent, split: fix ? split : undefined },
-    { key: entry.taskId, title: entry.title, body: "", dependsOn: entry.dependsOn },
-    new Map(split.children.map((c) => [c.taskId, c.title])),
-  );
-  // 添えた部分（原文の次の改行から後ろ）
-  const added = blank.slice(EMPTY_CHILD_BODY.length);
-  if (!added.startsWith("\n\n---\n") || !task.body.endsWith(added)) return undefined;
-  const content = task.body.slice(0, task.body.length - added.length);
+  const output = entry && split?.outputs?.[entry.round];
+  if (!split || !entry || output === undefined) return undefined;
+  const plan = extractSplitPlan(output, 1);
+  if (!plan.ok) return undefined;
+  // その回の子タスク（TaskSplit は、分割案の子を、同じ順で記録している）
+  const round = split.children.filter((c) => c.round === entry.round);
+  if (
+    plan.children.length !== round.length ||
+    !round.every((c, i) => c.title === plan.children[i]?.title)
+  ) {
+    return undefined;
+  }
+  const original = plan.children[round.indexOf(entry)];
+  if (!original) return undefined;
+  if (!task.body.startsWith(`${original.body || EMPTY_CHILD_BODY}\n\n---\n\n`)) return undefined;
   return {
     parentTitle: parent.title,
-    fix,
-    content: (content === EMPTY_CHILD_BODY ? "" : content).replace(/\r\n?/g, "\n").trim(),
+    // 最初の分割の子タスクは分割の子、統合レビューの後に足した子タスク（2回目から）は修正の子
+    fix: entry.round > 1,
+    content: original.body.replace(/\r\n?/g, "\n").trim(),
   };
 }
 

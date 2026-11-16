@@ -20502,7 +20502,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       activity.close();
     });
 
-    it("範囲の記録が無い子タスク（記録を始める前の作業履歴）は、親タスクの記録から復元した範囲を、PR の本文とレビューの指示に入れる。復元できなければ入れない", async () => {
+    it("範囲の記録が無い子タスク（記録を始める前の作業履歴）は、親タスクに残る分割のときの出力から読んだ範囲を、PR の本文とレビューの指示に入れる", async () => {
       const pulls = new FakePulls();
       const repos = new FakeRepos();
       // 原文に、sacty が添える並び（区切り線・関係の文・見出し）と同じ文字列がある子タスク
@@ -20573,7 +20573,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       expect(prompt).toContain(
         `--- 子タスクの内容（PR を作ったタスク。タスク分割が書いたもの） ---\n${tricky}\n--- 子タスクの内容ここまで ---`,
       );
-      // 分割の後に親タスクの題が変わると、添えた部分を作り直せないので、範囲は不明として入れない
+      // 分割の後に親タスクの題が変わっても、原文は分割のときの出力から読むので変わらない（親の題は、いまの題）
       service.renameTask(first.id, { title: "決済を作り直す" });
       pulls.states[7] = {
         state: "merged",
@@ -20589,8 +20589,10 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       }
       const number = taskOf(service, b).pullRequest?.number ?? 0;
       expect(number).toBeGreaterThan(7);
-      expect(pulls.bodies[number]).toBeDefined();
-      expect(pulls.bodies[number]).not.toContain("この PR の範囲");
+      expect(pulls.bodies[number]).toContain(
+        "この PR は、親タスク「決済を作り直す」をタスク分割で分けた子タスクの1つの PR です。",
+      );
+      expect(pulls.bodies[number]).toContain("> - 画面を作る");
       activity.close();
     });
 

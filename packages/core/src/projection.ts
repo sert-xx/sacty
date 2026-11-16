@@ -686,6 +686,11 @@ export type Task = {
     integrationViewpoints?: { id: string; reason: string }[];
     /** 人間が中止を認めた子タスク（親を再開した）。完了したものと同じく扱う。 */
     acceptedCancellations: string[];
+    /**
+     * 分割の回ごとの、子タスクを決めた分割のエージェントの出力（TaskSplit の直前の、同じ実行の AgentRunCompleted の出力。
+     * PBI-351）。範囲の記録（scope）が無い子タスクの、分割のエージェントが書いた原文を読むのに使う。出力が残っていない回には無い。
+     */
+    outputs?: Record<number, string>;
   };
   pausedReason?: PauseReason;
   /** 止まった理由の詳しい説明。 */
@@ -3054,6 +3059,15 @@ export function applyEvent(
         reason: event.payload.reason,
         at: event.at,
         acceptedCancellations: task.split?.acceptedCancellations ?? [],
+        // この回の子タスクを決めた、分割のエージェントの出力（直前の AgentRunCompleted が残したもの。PBI-351）
+        ...(task.split?.outputs || task.outputs.split !== undefined
+          ? {
+              outputs: {
+                ...task.split?.outputs,
+                ...(task.outputs.split !== undefined ? { [round]: task.outputs.split } : {}),
+              },
+            }
+          : {}),
         // 最初の分割の割り当てを残す（修正の子タスクの追加は、観点を割り当てない。PBI-348）
         ...((event.payload.integrationViewpoints ?? task.split?.integrationViewpoints)
           ? {

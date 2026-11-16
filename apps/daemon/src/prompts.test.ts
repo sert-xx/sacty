@@ -4996,9 +4996,17 @@ describe("タスクの開始時に集めた情報", () => {
       outputs: { implement: "API で複数のリポジトリを受け付けます。" },
       ...extra,
     });
+    /** 分割のエージェントの出力（分割案）。 */
+    const splitOutput = (children: { title: string; body: string }[]) =>
+      `分け方\n\n\`\`\`json\n${JSON.stringify({
+        "sacty-split": {
+          reason: "分ける",
+          children: children.map((c, i) => ({ key: `K${i}`, dependsOn: [], ...c })),
+        },
+      })}\n\`\`\``;
     /**
-     * 範囲の記録が無い子タスク（記録を始める前に作った子タスク）と、その親タスク。親タスクの分割の記録は、子タスクを作った
-     * ときのもの（round 1 が最初の分割、2 からは修正の子タスク）。
+     * 範囲の記録が無い子タスク（記録を始める前に作った子タスク）と、その親タスク。親タスクは、分割の記録（子タスクの並びと、
+     * 回ごとの分割のエージェントの出力）を持つ。子タスク c1 は、round の回の2番目の子。
      */
     const legacy = (
       content = CONTENT,
@@ -5007,10 +5015,27 @@ describe("タスクの開始時に集めた情報", () => {
       const round = options.round ?? 1;
       const dependsOn = options.dependsOn ?? [];
       const children = [
-        { taskId: "c0", title: "先の子", body: "", dependsOn: [], round: 1 },
+        ...(round > 1
+          ? [{ taskId: "b0", title: "前の回の子", body: "", dependsOn: [], round: 1 }]
+          : []),
+        { taskId: "c0", title: "先の子", body: "", dependsOn: [], round },
         { taskId: "c1", title: "作成の入力", body: "", dependsOn, round },
       ];
-      const split = { children, rounds: round, reason: "分ける", at: "2026-11-15T00:00:00.000Z" };
+      const outputs = {
+        ...(round > 1 ? { 1: splitOutput([{ title: "前の回の子", body: "前の回の内容" }]) } : {}),
+        [round]: splitOutput([
+          { title: "先の子", body: "先の子の内容" },
+          { title: "作成の入力", body: content },
+        ]),
+      };
+      const split = {
+        children,
+        rounds: round,
+        reason: "分ける",
+        at: "2026-11-15T00:00:00.000Z",
+        acceptedCancellations: [],
+        outputs,
+      };
       const parent = parentTask({ ...options.parent, split } as Partial<Task>);
       // 子タスクを作ったとき：最初の分割では、親はまだ分割の記録を持たない
       const atSplit = { ...parent, split: round > 1 ? split : undefined } as Task;
@@ -5110,18 +5135,18 @@ describe("タスクの開始時に集めた情報", () => {
       ).toBeUndefined();
     });
 
-    it("範囲の記録が無い子タスクは、親タスクの記録から sacty が添えた部分を作り直し、内容の末尾と一致するときだけ、原文を復元する", () => {
+    it("範囲の記録が無い子タスクは、親タスクに残る、分割のときのエージェントの出力から、原文を読む", () => {
       const plain = legacy();
       expect(childScopeOf(plain.child, plain.parent)).toEqual({
         parentTitle: PARENT_TITLE,
         fix: false,
         content: CONTENT,
       });
-      // 依存先の文が添えてあっても復元する
+      // 依存先の文が添えてあっても読む
       const deps = legacy(CONTENT, { dependsOn: ["c0"] });
       expect(deps.child.body).toContain("子タスク 「先の子」 に依存します");
       expect(childScopeOf(deps.child, deps.parent)?.content).toBe(CONTENT);
-      // 統合レビューの後に足した、修正の子タスク
+      // 統合レビューの後に足した、修正の子タスク（その回の出力から読む）
       const fix = legacy(CONTENT, { round: 2 });
       expect(fix.child.body).toContain("統合レビューの指摘を直す、修正の子タスクです");
       expect(childScopeOf(fix.child, fix.parent)).toEqual({
@@ -5132,22 +5157,23 @@ describe("タスクの開始時に集めた情報", () => {
       // 原文に、sacty が添える並び（区切り線・関係の文・見出し）と同じ文字列があっても、後ろを落とさない
       const tricky = legacy(TRICKY);
       expect(childScopeOf(tricky.child, tricky.parent)?.content).toBe(TRICKY);
-      // 親タスクの題に改行や「」」があっても、親タスクの要求要件に同じ見出しがあっても、取り違えない
-      const odd = legacy(TRICKY, {
-        parent: {
-          title: "1行目」\n\n---\n\nこのタスクは、親タスク「2行目",
-          approved: {
-            requirements: {
-              submission: 1,
-              output: "# 要求要件\n\n## 親タスクの要求要件（承認済み）\n\n- 引用",
-              testViewpoints: [],
-              at: "2026-11-15T00:00:00.000Z",
-            },
+      // 分割の後に、親タスクの題・承認済みの成果物・集めた情報が変わっても、原文は変わらない（親の題は、いまの題）。
+      // 変わった後の親から作った並びと同じ文字列が原文にあっても、原文の後ろを落とさず、親から添えた部分を混ぜない
+      const changed = {
+        ...tricky.parent,
+        title: "変えた題",
+        approved: {
+          requirements: {
+            submission: 2,
+            output: "- 例の後ろの受け入れ条件\n\n## 範囲外\n\n- 画面",
+            testViewpoints: [],
+            at: "2026-11-16T00:00:00.000Z",
           },
         },
-      });
-      expect(childScopeOf(odd.child, odd.parent)).toEqual({
-        parentTitle: "1行目」\n\n---\n\nこのタスクは、親タスク「2行目",
+        gathered: undefined,
+      } as Task;
+      expect(childScopeOf(tricky.child, changed)).toEqual({
+        parentTitle: "変えた題",
         fix: false,
         content: TRICKY,
       });
@@ -5166,8 +5192,14 @@ describe("タスクの開始時に集めた情報", () => {
       );
     });
 
-    it("範囲の記録が無く、親タスクの記録からも復元できない子タスクは、範囲を不明として、PR の本文にもレビューの指示にも渡さない", () => {
+    it("範囲の記録が無く、分割のときの記録からも原文を確かめられない子タスクは、範囲を不明として、PR の本文にもレビューの指示にも渡さない", () => {
       const { child, parent } = legacy();
+      const split = parent.split as NonNullable<Task["split"]>;
+      const withOutput = (output: string | undefined): Task =>
+        ({
+          ...parent,
+          split: { ...split, outputs: output === undefined ? {} : { 1: output } },
+        }) as Task;
       const unknown: [string, Task, Task | undefined][] = [
         // 親タスクを渡されていない・見つからない
         ["親タスクが無い", child, undefined],
@@ -5176,15 +5208,45 @@ describe("タスクの開始時に集めた情報", () => {
         // 親タスクの分割の記録に、この子タスクが無い
         ["分割の記録に無い", { ...child, id: "c9" }, parent],
         ["分割の記録が無い", child, { ...parent, split: undefined }],
-        // 分割の後に、親タスクの題・承認済みの成果物・集めた情報が変わった（添えた部分を作り直せない）
-        ["題が変わった", child, { ...parent, title: "変えた題" }],
-        ["要求要件が変わった", child, { ...parent, approved: {} } as Task],
-        ["集めた情報が変わった", child, { ...parent, gathered: undefined }],
-        // 子タスクの内容が、sacty の添えた部分で終わっていない（内容を書き換えられた・もっと前の版の形）
-        ["内容の末尾が違う", { ...child, body: `${child.body}\n追記` }, parent],
+        // その回の分割のエージェントの出力が残っていない・分割案として読めない
+        ["出力が無い", child, withOutput(undefined)],
+        ["出力の記録が無い", child, { ...parent, split: { ...split, outputs: undefined } } as Task],
+        ["出力を読めない", child, withOutput("分割案はありません")],
+        // 出力の分割案が、その回の子タスクの記録と違う（子の数・題の並び）
+        ["子の数が違う", child, withOutput(splitOutput([{ title: "作成の入力", body: CONTENT }]))],
+        [
+          "題の並びが違う",
+          child,
+          withOutput(
+            splitOutput([
+              { title: "作成の入力", body: CONTENT },
+              { title: "先の子", body: "先の子の内容" },
+            ]),
+          ),
+        ],
+        // 出力の原文が、子タスクの内容の始まりと合わない（別の分割案の出力・書き換えられた内容）
+        [
+          "原文が合わない",
+          child,
+          withOutput(
+            splitOutput([
+              { title: "先の子", body: "先の子の内容" },
+              { title: "作成の入力", body: "別の内容" },
+            ]),
+          ),
+        ],
+        // 原文が内容の始まりと同じでも、その後ろが sacty の区切り線でない（原文の途中までしか合っていない）
+        [
+          "原文の途中まで",
+          child,
+          withOutput(
+            splitOutput([
+              { title: "先の子", body: "先の子の内容" },
+              { title: "作成の入力", body: CONTENT.slice(0, 20) },
+            ]),
+          ),
+        ],
         ["添えた部分が無い", { ...child, body: CONTENT }, parent],
-        // 最初の分割の子タスクなのに、修正の子タスクの文が添えてある（回が合わない）
-        ["回が違う", legacy(CONTENT, { round: 2 }).child, parent],
       ];
       for (const [name, task, splitParent] of unknown) {
         expect(childScopeOf(task, splitParent), name).toBeUndefined();
@@ -5293,7 +5355,7 @@ describe("タスクの開始時に集めた情報", () => {
       expect(whole).not.toContain("子タスクの内容が長いので");
     });
 
-    it("使った秘密の値は、範囲の節でも伏せる。伏せる前の記録で復元するので、記録の無い子タスクでも範囲は入る", () => {
+    it("使った秘密の値は、範囲の節でも伏せる。伏せる前の記録で読むので、記録の無い子タスクでも範囲は入る", () => {
       const secret = "sk-secret-value-123";
       const content = `${CONTENT}\n- 鍵は ${secret}`;
       const main = buildPullRequestBodyText(childTask(content), { secrets: [secret] }).main;
