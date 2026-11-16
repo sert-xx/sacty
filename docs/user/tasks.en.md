@@ -647,6 +647,7 @@ When sacty uses its own format, the implementation PR body looks as follows.
 
 - The "結論" (conclusion) section at the top holds a summary of the change and sacty's review (the child task that reviews the PR reviews it and posts the review).
 - The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging.
+- The PR of a child task of a split has a "この PR の範囲（分割の子タスク）" (scope of this PR) section ([Scope of the PR of a child task of a split](#scope-of-the-pr-of-a-child-task-of-a-split)).
 - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated).
   When the implementation's description itself starts with a heading such as "## 変更内容", no empty "変更" heading is put in front of it.
 - The table matching viewpoints to tests is kept short, and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint).
@@ -940,6 +941,23 @@ A child task that is implemented without Requirements and Design (a child task w
   - A child task with a Design or Reproduction step: it uses the viewpoints decided in that step (the test viewpoints of its own design, or the reproduction test).
   - A child task without tests, and a child task whose request changes only documents: it writes no tests, so it describes in the implementation description how it meets each viewpoint.
 - When the parent task's design has no test viewpoints, no viewpoints are assigned. A child task then uses meeting the purpose of the task as its viewpoint.
+
+### Scope of the PR of a child task of a split
+
+The PR of a child task of a split achieves only a part of the parent task.
+Both the PR body and sacty's review show how far the scope of that PR goes.
+
+- The "この PR の範囲（分割の子タスク）" section of the PR body carries the parent task's title and the child task's content (what to achieve, the acceptance criteria, and what is out of scope, as the task split wrote them) as it is.
+  When the content is long, only the first part is carried, and you can see the rest on sacty's task screen.
+- The section stays when the implementation is redone and the PR is updated.
+- The child task that reviews the PR receives the scope of the child task and reviews with it.
+  Even when what is written as out of scope (what another child task handles) is not implemented in that PR, it is not raised as a "changes required" comment.
+- When the review notices that merging only that PR causes trouble with something out of scope (for example, the screen still shows choices that cannot be selected), it is written in the review body as "人が確かめること" (something for a person to confirm).
+  Read it to decide whether to merge the PR together with the PRs of the other child tasks.
+- What is in scope (what the child task's content says it achieves, its acceptance criteria, and defects caused by that PR's changes) is pointed out.
+- The PR of a task that was not split, and a PR created by a person, get no scope section, and their reviews receive no scope.
+- For some child tasks created by an earlier version of sacty, the scope cannot be confirmed (for example, when the records of the split are not kept).
+  The PR of such a child task gets no scope section, and its review receives no scope. See the scope in the content shown in the child task's details in sacty.
 
 ### PRs of dependent child tasks (stacked PRs)
 

@@ -4,6 +4,7 @@ import type {
   AuditAdoptNote,
   AuditMemoryRecord,
   AuditTarget,
+  ChildScope,
   ContinuedPullRequest,
   ExportPlan,
   ImplementationCompletion,
@@ -674,6 +675,8 @@ export type Task = {
       repoReason?: string;
       /** 親の設計のテスト観点のうち、この子タスクに割り当てたもの（PBI-348）。 */
       viewpoints?: TestViewpoint[];
+      /** この子タスクの範囲（PBI-351）。 */
+      scope?: ChildScope;
     }[];
     /** 分割した回数（最初の分割と、修正の子タスクの追加。PBI-31）。 */
     rounds: number;
@@ -683,6 +686,11 @@ export type Task = {
     integrationViewpoints?: { id: string; reason: string }[];
     /** 人間が中止を認めた子タスク（親を再開した）。完了したものと同じく扱う。 */
     acceptedCancellations: string[];
+    /**
+     * 分割の回ごとの、子タスクを決めた分割のエージェントの出力（TaskSplit の直前の、同じ実行の AgentRunCompleted の出力。
+     * PBI-351）。範囲の記録（scope）が無い子タスクの、分割のエージェントが書いた原文を読むのに使う。出力が残っていない回には無い。
+     */
+    outputs?: Record<number, string>;
   };
   pausedReason?: PauseReason;
   /** 止まった理由の詳しい説明。 */
@@ -706,6 +714,11 @@ export type Task = {
    * テスト観点があれば、そちらを使う（implementViewpoints）。
    */
   inheritedViewpoints?: TestViewpoint[];
+  /**
+   * 分割の子タスクの範囲（分割のエージェントが書いた内容の原文・親タスクの題・修正の子タスクか。PBI-351）。それより前の
+   * 子タスクには無い（子タスクの内容から読む。daemon の childScopeOf）。
+   */
+  childScope?: ChildScope;
   /** 承認済みで凍結された成果物。 */
   approved: Partial<Record<StepKey, ApprovedOutput>>;
   budget: {
@@ -1356,6 +1369,7 @@ export function applyEvent(
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       ...(event.payload.viewpoints ? { inheritedViewpoints: event.payload.viewpoints } : {}),
+      ...(event.payload.scope ? { childScope: event.payload.scope } : {}),
       ...(event.payload.reviewOf ? { reviewOf: event.payload.reviewOf } : {}),
       ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.plan ? { requestedPlan: event.payload.plan } : {}),
@@ -3045,6 +3059,15 @@ export function applyEvent(
         reason: event.payload.reason,
         at: event.at,
         acceptedCancellations: task.split?.acceptedCancellations ?? [],
+        // この回の子タスクを決めた、分割のエージェントの出力（直前の AgentRunCompleted が残したもの。PBI-351）
+        ...(task.split?.outputs || task.outputs.split !== undefined
+          ? {
+              outputs: {
+                ...task.split?.outputs,
+                ...(task.outputs.split !== undefined ? { [round]: task.outputs.split } : {}),
+              },
+            }
+          : {}),
         // 最初の分割の割り当てを残す（修正の子タスクの追加は、観点を割り当てない。PBI-348）
         ...((event.payload.integrationViewpoints ?? task.split?.integrationViewpoints)
           ? {
