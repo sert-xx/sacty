@@ -48,7 +48,7 @@
 | `daemon-task-lifecycle.test.ts` | 118,312 | 6% |
 | `daemon-split.test.ts` | 116,212 | 6% |
 | `daemon-context.test.ts` | 114,459 | 5% |
-| `daemon-repoless.test.ts` | 90,592 | 4% |
+| `daemon-repoless.test.ts` | 99,577 | 5% |
 | `daemon-deployment-security.test.ts` | 74,961 | 4% |
 | `daemon-api-settings.test.ts` | 40,933 | 2% |
 | `testing/daemon.ts` | 74,429 | 4% |
@@ -93,12 +93,22 @@
 - `npm run lint`：手元では、Git で管理していない `.claude/settings.local.json`（手元だけのファイル）の整形の指摘 1 件で失敗する（この変更の前から）。
   このファイルを除いた `npx biome check --error-on-warnings apps packages tests scripts docs *.json *.md .github` は、指摘なしで成功。大きさの警告は出ない。
 
+### main の取り込み（マージの前）
+
+- main に入った #390 が、`daemon.test.ts` の「リポジトリを指定しないタスク（PBI-73）」に、本物の git を使うテスト（222 行）を足していた。
+  取り込むと、消したファイルへの変更として衝突する。main の側の `daemon.test.ts` に、分けたときと同じスクリプトをもう一度当てて、分け直した。
+- 結果：変わったのは `daemon-repoless.test.ts` だけ（足された 222 行が入った。上の表の大きさは、取り込んだ後のもの）。ほかの 12 ファイルと共通の準備は、取り込む前と同じ。
+- テスト名の一覧と件数（`npx vitest list`）：main の `daemon.test.ts` 1,188 件／分けた後 1,188 件。名前の一覧が一致（消えた 0・増えた 0）。
+- 最初の `describe` 以降の、空行を除く行：43,700 行で、数が違う行は 0。
+- `npx vitest run --no-file-parallelism`（分けた 13 ファイル・`gh.test.ts`・`tests/docs`）：17 ファイル・1,337 件が成功。lint（手元だけのファイルを除く）・`npm run typecheck`：成功。
+
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
 | 1 回目（提案あり・マージは可）：`packages/core/src/projection.test.ts` のコメントが、消した `daemon.test.ts` を指している | 移動先の `daemon-implement.test.ts` に直した。`daemon.test.ts` を名指ししている場所は、過去の作業履歴（直さない決まり）のほかには、ここだけだった |
 | 1 回目：作業履歴の `describe` の個数が 76 個になっている（正しくは 75 個） | 数え直した（分ける前 75 個・分けた後の 13 ファイルの合計 75 個）。作業履歴と PR の本文を 75 個に直した |
+| 2 回目（指摘なし） | 前回の 2 件が直ったことの確認だけ。対応は無い |
 
 ## 残したこと
 
