@@ -150,6 +150,12 @@ It does not check the whole of the unchanged text.
 After the summary, the review body says in one line how the viewpoints were checked.
 It gives the number of viewpoints when they were split among per-viewpoint reviewers, or says so when the reviewers could not be started and the viewpoints were checked one at a time.
 
+For a review imported from a GitHub PR (a review request or a label), a "リスク評価" (risk assessment) section for the PR is added right after the verdict.
+It holds the level (low, medium, or high), the suggested review depth, the grounds, and the places to look at (the levels mean the same as in [PR risk assessment](tasks.en.md#pr-risk-assessment)).
+The assessment is separate from the findings and the verdict, and does not change the verdict.
+When it could not be assessed, the section says so, and the review is posted as usual.
+A [review of a PR that sacty created](#reviewing-prs-that-sacty-created) does not get this section (that PR's body carries the risk assessment).
+
 The heading, verdict, and prefixes added by sacty are in Japanese.
 The findings follow the writing rules of the repository (Japanese when there are none).
 

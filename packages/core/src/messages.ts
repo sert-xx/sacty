@@ -507,6 +507,9 @@ const PARAMS = {
   "pr.bodyMergeBudget": null,
   "pr.bodyMergeFailed": z.object({ detail: TextParam }),
   "pr.bodyMergeDeferred": null,
+  "pr.riskBudget": null,
+  "pr.riskFailed": z.object({ detail: TextParam }),
+  "pr.riskUnreadable": null,
   "pr.bodyMergeError": z.object({ detail: TextParam }),
   "pr.bodyEditedDuringMerge": null,
   "pr.bodyRereadFailed": null,
@@ -1462,6 +1465,10 @@ const ja: MessageDictionary = {
   "pr.bodyMergeBudget": "予算の上限に達しているため、エージェントに本文をまとめさせませんでした。",
   "pr.bodyMergeFailed": ({ detail }, text) =>
     `エージェントが本文をまとめられませんでした：${text(detail)}`,
+  "pr.riskBudget": "予算の上限に達しているため、エージェントにリスクを評価させませんでした。",
+  "pr.riskFailed": ({ detail }, text) =>
+    `エージェントがリスクを評価できませんでした：${text(detail)}`,
+  "pr.riskUnreadable": "エージェントの出力から、リスク評価を読み取れませんでした。",
   "pr.bodyMergeError": ({ detail }, text) =>
     `人が直した PR の本文と、Sacty の新しい本文をマージできませんでした：${text(detail)}`,
   "pr.bodyMergeDeferred":
@@ -2291,6 +2298,9 @@ const en: MessageDictionary = {
   "pr.bodyMergeBudget": "The budget cap has been reached, so an agent did not reconcile the body.",
   "pr.bodyMergeFailed": ({ detail }, text) =>
     `An agent could not reconcile the body: ${text(detail)}`,
+  "pr.riskBudget": "The budget cap has been reached, so an agent did not assess the risk.",
+  "pr.riskFailed": ({ detail }, text) => `An agent could not assess the risk: ${text(detail)}`,
+  "pr.riskUnreadable": "Could not read the risk assessment from the agent's output.",
   "pr.bodyMergeError": ({ detail }, text) =>
     `Could not merge the person's edits to the PR body with Sacty's new body: ${text(detail)}`,
   "pr.bodyMergeDeferred":

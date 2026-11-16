@@ -63,6 +63,7 @@ Code: `<path>` (`<function name>`)
 - [Notifications](notifications.en.md): conditions, destinations, and message text for Slack notifications, and browser desktop notifications
 - [Ticket intake and GitHub](intake.en.md): GitHub issues and PRs, JIRA, comments on the source, GitHub accounts
 - [Export](export.en.md): exporting results, exporting and importing projects
+- [PR risk assessment](risk-assessment.en.md): when it is assessed, levels and criteria, reading the assessment, how it is shown in the PR description and the review comment
 - [Error report](error-report.en.md): records treated as errors, the report's contents and size limits, the Orchestrator's analysis, UI
 - [Screen wording and hints](ui-wording.en.md): how body text and hints (tooltips) are split, the hint component, checks on the dictionaries
 - [Scheduled tasks](scheduled-tasks.en.md): how schedules are defined, missed times (only the latest one), when offline, the contents of the task, API, web UI

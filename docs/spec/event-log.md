@@ -12,7 +12,7 @@
 
 - 書くときの形は `{ type, payload }`。
   `type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。
-  種類は122（タスクの作成・分割、重ねた子タスクの依存先のマージ、工程の進行、エージェントの実行、予算・一時停止・再開・中止、タスクの題・イメージの変更、変更の申し出と判断、検証、終わっていない実装と変更の無いやり直し、git・PR、PR のドラフトの解除・向き先の付け替え・CI のやり直しの依頼、人が PR に足したコミットの取り込み、PR の本文の記録と人が直した本文のまとめ、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、PR のレビューの子タスクの作成、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
+  種類は123（タスクの作成・分割、重ねた子タスクの依存先のマージ、工程の進行、エージェントの実行、予算・一時停止・再開・中止、タスクの題・イメージの変更、変更の申し出と判断、検証、終わっていない実装と変更の無いやり直し、git・PR、PR のドラフトの解除・向き先の付け替え・CI のやり直しの依頼、人が PR に足したコミットの取り込み、PR の本文の記録と人が直した本文のまとめ、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、PR のレビューの子タスクの作成、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
 - 記録した後の形（`ActivityEvent`）は、書くときの形に次を足したもの。
   - `seq`（作業履歴全体で単調に増える）
   - `id`（UUID）
@@ -58,7 +58,7 @@
 - 適用できないイベント（二重の作成・知らないタスク・中止したタスクへのイベント・状態や実行の ID の食い違いなど）は、投影が例外にする。
   ただし中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` と、監査が登録したメモリーの削除 `AuditMemoryDeleted` は受け付ける。
 - 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`RunCostRecorded`・`ReviewGitHubRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`AgentRunTimedOut`・`AgentRunContinued`・`WorkspaceFilesSkipped`・`PullRequestBodyResolved`。費用を持つものは、下のとおり予算に足す）。
-- 費用を持つイベント（[費用](#費用)の17種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
+- 費用を持つイベント（[費用](#費用)の18種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
   `estimated` が1件でもあれば、`budget.estimated` を立てる。
 - `Task` の主な項目
   - `status`
@@ -95,7 +95,7 @@
 - 実行の費用は、CLI が報告した額（Claude Code の `total_cost_usd`）があればそれ、無ければモデルごとの使用量をそのモデルの単価で換算した額（単価が設定に無いモデルは、工程のエージェントの単価）にする
   （[エージェントの実行](agent-execution.md#出力の扱い)）。
   CLI の報告を使った実行と、モデルごとに換算した実行は、どちらにしたかを `RunCostRecorded`（`reported`・`converted`。設定の単価で換算した額も持つ）に記録する。予算には、実行の結果のイベントの `costUsd` だけを足す。
-- タスクの予算に入れる費用を持つイベントは、次の17種類（`CHARGED_EVENT_TYPES`）。
+- タスクの予算に入れる費用を持つイベントは、次の18種類（`CHARGED_EVENT_TYPES`）。
   `costUsd` を持つイベントはこれですべて。
   統合レビューの `IntegrationReviewed` は費用を持たず、続く `AgentRunCompleted` に記録する。
 
@@ -106,6 +106,7 @@
   | `RepositoryChosen` | リポジトリの選択（`repository`） |
   | `StepsChosen`・`StepsSkipped`・`OrchestratorFailed`（actor が `gatherer` のものを除く） | オーケストレーター（`orchestrator`） |
   | `PullRequestBodyResolved`（PBI-334） | オーケストレーター（`orchestrator`。人が直した PR の本文との競合をまとめた実行。エージェントを実行しなかった（`agentId` が無い）ものは、行にしない。[人が直した本文の更新](approval.md#人が直した本文の更新)） |
+  | `PullRequestRiskAssessed`（PBI-362） | オーケストレーター（`orchestrator`。PR を作る前のリスク評価の実行。エージェントを実行しなかった（`agentId` が無い。予算の上限で評価しなかったもの・レビューの工程の答えから読んだもの）は、行にしない。[PR のリスク評価](risk-assessment.md)） |
   | `AgentRunCompleted`・`AgentRunFailed` | その工程 |
   | `OutputExported` | 書き出し（`export`） |
   | `QuestionAnswered` | 質問への答え（`chat`） |
@@ -117,7 +118,7 @@
 - 投影と工程ごとの費用の表は、どちらも同じ規則（`chargeBudget`）で費用を足す。
   一覧に無い種類が `costUsd` を持つと、型の検査で typecheck が通らない。
 - 時間切れなどで使った分の全体を読めなかった実行は、読めた分（下限）を `costUsd` に足し、イベントに `costUnknown` を付ける（PBI-281）。
-  - 付けるのは、実行の失敗を記録しうる `AgentRunFailed`・`OrchestratorFailed`・`StepsSkipped`・`ChangeJudged`・`ReworkJudged`・`FinalReviewFailed`・`QuestionAnswered`・`ErrorAnalyzed`・`OutputExported`・`DeploymentChecked`・`PullRequestBodyResolved`。
+  - 付けるのは、実行の失敗を記録しうる `AgentRunFailed`・`OrchestratorFailed`・`StepsSkipped`・`ChangeJudged`・`ReworkJudged`・`FinalReviewFailed`・`QuestionAnswered`・`ErrorAnalyzed`・`OutputExported`・`DeploymentChecked`・`PullRequestBodyResolved`・`PullRequestRiskAssessed`。
   - 読めなければ `costUsd` は 0 のままで、この 0 は費用が無かったのではなく不明を意味する。拾い方は[エージェントの実行](agent-execution.md)の出力の扱い。
   - 失敗して代わりのエージェントで判定し直した判定や、再開を断られて新しいセッションで始め直した実行は、先の実行が不明なら合計も不明にする。そのため、成功を記録するイベント（`AgentRunCompleted`・`StepsChosen`・`TicketTriaged`・`RepositoryChosen`・`InformationGathered`・`FinalReviewed`）も `costUnknown` を持てる。
   - `chargeBudget` は、印のあるイベントの回数を `budget.unknownRuns` に数える（無ければ持たない）。読めた分は予算の判定に入る。

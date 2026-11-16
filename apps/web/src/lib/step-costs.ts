@@ -269,6 +269,16 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
           );
         }
         return;
+      // PR を出す前のリスク評価（PBI-362。オーケストレーターのエージェントで行う）。レビューの工程の答えから読んだ評価は、
+      // 実行していない（費用は工程の実行に数える）
+      case "PullRequestRiskAssessed":
+        if (event.payload.agentId) {
+          push(
+            "orchestrator",
+            runOf(event, event.payload, event.payload.assessment ? "completed" : "failed"),
+          );
+        }
+        return;
       default:
         return event satisfies never;
     }
