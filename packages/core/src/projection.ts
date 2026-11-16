@@ -4,6 +4,7 @@ import type {
   AuditAdoptNote,
   AuditMemoryRecord,
   AuditTarget,
+  ChildScope,
   ContinuedPullRequest,
   ExportPlan,
   ImplementationCompletion,
@@ -674,6 +675,8 @@ export type Task = {
       repoReason?: string;
       /** 親の設計のテスト観点のうち、この子タスクに割り当てたもの（PBI-348）。 */
       viewpoints?: TestViewpoint[];
+      /** この子タスクの範囲（PBI-351）。 */
+      scope?: ChildScope;
     }[];
     /** 分割した回数（最初の分割と、修正の子タスクの追加。PBI-31）。 */
     rounds: number;
@@ -706,6 +709,11 @@ export type Task = {
    * テスト観点があれば、そちらを使う（implementViewpoints）。
    */
   inheritedViewpoints?: TestViewpoint[];
+  /**
+   * 分割の子タスクの範囲（分割のエージェントが書いた内容の原文・親タスクの題・修正の子タスクか。PBI-351）。それより前の
+   * 子タスクには無い（子タスクの内容から読む。daemon の childScopeOf）。
+   */
+  childScope?: ChildScope;
   /** 承認済みで凍結された成果物。 */
   approved: Partial<Record<StepKey, ApprovedOutput>>;
   budget: {
@@ -1356,6 +1364,7 @@ export function applyEvent(
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       ...(event.payload.viewpoints ? { inheritedViewpoints: event.payload.viewpoints } : {}),
+      ...(event.payload.scope ? { childScope: event.payload.scope } : {}),
       ...(event.payload.reviewOf ? { reviewOf: event.payload.reviewOf } : {}),
       ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.plan ? { requestedPlan: event.payload.plan } : {}),

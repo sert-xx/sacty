@@ -9190,6 +9190,12 @@ export class TaskService {
                 taskId: ids.get(c.key) ?? "",
                 title: c.title,
                 body: buildChildBody(latest, c, titles),
+                // 子タスクの範囲（分割のエージェントが書いた原文）は、添えた内容と分けて記録する（PBI-351）
+                scope: {
+                  content: c.body,
+                  parentTitle: latest.title,
+                  ...(latest.split ? { fix: true as const } : {}),
+                },
                 dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
                 ...(repoless && c.repo ? { repo: c.repo } : {}),
                 ...(repoless && c.repo && c.repoReason ? { repoReason: c.repoReason } : {}),
@@ -12737,6 +12743,8 @@ export class TaskService {
               parent: { taskId: parent.id, dependsOn: child.dependsOn },
               // 親の分割で割り当てられたテスト観点（PBI-348）
               ...(child.viewpoints?.length ? { viewpoints: child.viewpoints } : {}),
+              // 子タスクの範囲（PBI-351）
+              ...(child.scope ? { scope: child.scope } : {}),
             },
           },
         },

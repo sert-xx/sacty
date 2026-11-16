@@ -6814,9 +6814,15 @@ const CHILD_NOTE_PREFIX = "このタスクは、親タスク「";
 const CHILD_NOTE_SPLIT = "」をタスク分割で分けた子タスクの1つです。";
 const CHILD_NOTE_FIX = "」の統合レビューの指摘を直す、修正の子タスクです。";
 
+/** 子タスクの内容で、関係の文に続ける、範囲だけを進める指示の文（buildChildBody）。 */
+const CHILD_NOTE_SPLIT_TAIL = "親の要求要件と設計のうち、このタスクの範囲だけを実現してください。";
+const CHILD_NOTE_FIX_TAIL = "親の要求要件と設計のうち、このタスクの範囲だけを直してください。";
+/** 子タスクの内容で、関係の文の次の行に置く、依存先の文の始まり（buildChildBody）。 */
+const CHILD_DEPENDS_PREFIX = "このタスクは、子タスク ";
+
 /** 分割の子タスクの範囲（PBI-351）。 */
 export type ChildScope = {
-  /** 親タスクの題。sacty が添えた関係の文を読めなかった（以前の版の子タスクなど）ときは無い。 */
+  /** 親タスクの題。sacty が添えた関係の文を読めなかった（以前の版の子タスク）ときは無い。 */
   parentTitle?: string;
   /** 統合レビューの指摘を直す、修正の子タスクか。 */
   fix: boolean;
@@ -6825,28 +6831,66 @@ export type ChildScope = {
 };
 
 /**
- * 分割の子タスクの範囲（PBI-351）。子タスクの内容（buildChildBody）のうち、分割のエージェントが書いた部分（親タスクから添えた
- * 要求要件・設計・集めた情報より前）を、そのまま取り出す。PR の本文の範囲の節と、その PR をレビューする子タスクの指示に使う。
- * 分割の子タスクでない・親タスクから添えた部分の見出しが無い（範囲を見分けられない）ときは undefined。
+ * 分割の子タスクの範囲（PBI-351）。PR の本文の範囲の節と、その PR をレビューする子タスクの指示に使う。
+ * 分割のときに記録した範囲（Task.childScope。分割のエージェントが書いた原文・親タスクの題・修正の子タスクか）を使う。
+ * 記録の無い子タスク（この記録を始める前に作った子タスク）は、子タスクの内容から読む（legacyChildScope）。
+ * 分割の子タスクでない・範囲を見分けられないときは undefined。
  */
 export function childScopeOf(task: Task): ChildScope | undefined {
   if (!task.parent) return undefined;
-  const body = `\n${task.body.replace(/\r\n?/g, "\n")}`;
-  const at = body.indexOf(`\n## ${CHILD_PARENT_REQUIREMENTS_HEADING}\n`);
-  if (at < 0) return undefined;
-  // 見出しより前（分割のエージェントが書いた内容と、sacty が添えた区切り線・関係の文）
-  const head = body.slice(1, at);
+  const recorded = task.childScope;
+  if (recorded) {
+    return {
+      parentTitle: recorded.parentTitle,
+      fix: recorded.fix === true,
+      content: recorded.content.replace(/\r\n?/g, "\n").trim(),
+    };
+  }
+  return legacyChildScope(task.body);
+}
+
+/**
+ * 範囲の記録（Task.childScope）が無い子タスクの範囲を、子タスクの内容（buildChildBody が作った文字列）から読む。
+ * sacty が添えた並び（区切り線・関係の文・あれば依存先の文・空行・親タスクから添えた部分の見出し）を探し、それより前を
+ * 分割のエージェントが書いた内容にする。
+ * - 分割のエージェントが内容に同じ見出しを書いていても、直前に sacty の関係の文が無い見出しは、境目にしない。
+ * - 親タスクの題に改行や「」」があっても読めるよう、関係の文は、決まった始まりと終わりの間の全体を題にする。
+ * sacty の並びが見つからないとき（もっと前の版の子タスク）は、最初の見出しより前の全体を内容にし、親タスクの題は持たない。
+ * 見出しが無ければ undefined（範囲を見分けられない）。
+ */
+function legacyChildScope(raw: string): ChildScope | undefined {
+  const body = `\n${raw.replace(/\r\n?/g, "\n")}`;
+  const heading = `\n## ${CHILD_PARENT_REQUIREMENTS_HEADING}\n`;
   const separator = `\n\n---\n\n${CHILD_NOTE_PREFIX}`;
-  // 分割のエージェントが同じ形を書いていても、sacty が添えたものは最後にある
-  const sep = head.lastIndexOf(separator);
-  const line = sep < 0 ? "" : (head.slice(sep + separator.length).split("\n")[0] ?? "");
-  // 親タスクの題に「」」が入っていても読めるよう、関係の文の終わりは最後のものを取る
-  const split = line.lastIndexOf(CHILD_NOTE_SPLIT);
-  const fix = line.lastIndexOf(CHILD_NOTE_FIX);
-  const end = Math.max(split, fix);
-  // 関係の文を読めない（以前の版の子タスクなど）ときは、見出しより前の全体を内容にする
-  if (end < 0) return { fix: false, content: head.trim() };
-  return { parentTitle: line.slice(0, end), fix: fix > split, content: head.slice(0, sep).trim() };
+  const tails = [
+    { tail: `${CHILD_NOTE_SPLIT}${CHILD_NOTE_SPLIT_TAIL}`, fix: false },
+    { tail: `${CHILD_NOTE_FIX}${CHILD_NOTE_FIX_TAIL}`, fix: true },
+  ];
+  let first = -1;
+  for (let at = body.indexOf(heading); at >= 0; at = body.indexOf(heading, at + 1)) {
+    if (first < 0) first = at;
+    const head = body.slice(1, at);
+    const sep = head.lastIndexOf(separator);
+    // 見出しの前は空行（head は改行で終わる）
+    if (sep < 0 || !head.endsWith("\n")) continue;
+    const whole = head.slice(sep + separator.length, -1);
+    // 関係の文の次の行に、依存先の文が続くことがある。親タスクの題に同じ形の行があっても読み違えないよう、
+    // 依存先の文が無い読み方を先に試す
+    const depends = whole.lastIndexOf(`\n${CHILD_DEPENDS_PREFIX}`);
+    const notes = [whole, ...(depends >= 0 ? [whole.slice(0, depends)] : [])];
+    for (const note of notes) {
+      for (const { tail, fix } of tails) {
+        if (!note.endsWith(tail)) continue;
+        return {
+          parentTitle: note.slice(0, note.length - tail.length),
+          fix,
+          content: head.slice(0, sep).trim(),
+        };
+      }
+    }
+  }
+  if (first < 0) return undefined;
+  return { fix: false, content: body.slice(1, first).trim() };
 }
 
 /** PR の本文に載せる、子タスクの内容の上限（文字。PBI-351）。超えた分は、sacty のタスクの画面で読ませる。 */
@@ -6873,8 +6917,9 @@ function childScopeBodyLines(task: Task, level: "##" | "bold"): string[] {
   let shown = content;
   if (content.length > CHILD_SCOPE_BODY_MAX) {
     const cut = headOf(content, CHILD_SCOPE_BODY_MAX);
+    // 行の途中では切らない。上限に収まる行が無ければ、引用を出さずに、続きの場所だけを書く
     const stop = cut.lastIndexOf("\n");
-    shown = (stop > 0 ? cut.slice(0, stop) : cut).trimEnd();
+    shown = stop > 0 ? cut.slice(0, stop).trimEnd() : "";
   }
   return [
     heading,
@@ -6883,10 +6928,10 @@ function childScopeBodyLines(task: Task, level: "##" | "bold"): string[] {
     "",
     "子タスクの内容（タスク分割が書いたものを、そのまま載せています）：",
     "",
-    ...shown.split("\n").map((line) => (line.trim() === "" ? ">" : `> ${line}`)),
+    ...(shown ? shown.split("\n").map((line) => (line.trim() === "" ? ">" : `> ${line}`)) : []),
     ...(shown !== content
       ? [
-          "",
+          ...(shown ? [""] : []),
           "…（子タスクの内容が長いので、ここから先を省きました。続きは sacty のタスクの画面で確かめてください）",
         ]
       : []),
@@ -6929,12 +6974,12 @@ export function buildChildBody(
     "---",
     "",
     parent.split
-      ? `${CHILD_NOTE_PREFIX}${parent.title}${CHILD_NOTE_FIX}親の要求要件と設計のうち、このタスクの範囲だけを直してください。`
-      : `${CHILD_NOTE_PREFIX}${parent.title}${CHILD_NOTE_SPLIT}親の要求要件と設計のうち、このタスクの範囲だけを実現してください。`,
+      ? `${CHILD_NOTE_PREFIX}${parent.title}${CHILD_NOTE_FIX}${CHILD_NOTE_FIX_TAIL}`
+      : `${CHILD_NOTE_PREFIX}${parent.title}${CHILD_NOTE_SPLIT}${CHILD_NOTE_SPLIT_TAIL}`,
     // 依存先の PR は、まだマージされていないことがある（指摘なしになった依存先の PR に重ねて始める。PBI-317）
     ...(deps.length > 0
       ? [
-          `このタスクは、子タスク ${deps.join("・")} に依存します。作業領域には、依存先の変更が入っています（依存先の PR がマージされたベースブランチか、PR のレビューで指摘なしになった依存先の PR のブランチから始めます。中止された依存先を除く）。`,
+          `${CHILD_DEPENDS_PREFIX}${deps.join("・")} に依存します。作業領域には、依存先の変更が入っています（依存先の PR がマージされたベースブランチか、PR のレビューで指摘なしになった依存先の PR のブランチから始めます。中止された依存先を除く）。`,
         ]
       : []),
     "",

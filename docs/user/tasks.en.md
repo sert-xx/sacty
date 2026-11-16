@@ -954,8 +954,10 @@ Both the PR body and sacty's review show how far the scope of that PR goes.
   Even when what is written as out of scope (what another child task handles) is not implemented in that PR, it is not raised as a "changes required" comment.
 - When the review notices that merging only that PR causes trouble with something out of scope (for example, the screen still shows choices that cannot be selected), it is written in the review body as "人が確かめること" (something for a person to confirm).
   Read it to decide whether to merge the PR together with the PRs of the other child tasks.
-- What is in scope is pointed out as before.
-- Reviews of the PR of a task that was not split, and of a PR created by a person, are unchanged.
+- What is in scope (what the child task's content says it achieves, its acceptance criteria, and defects caused by that PR's changes) is pointed out.
+- The PR of a task that was not split, and a PR created by a person, get no scope section, and their reviews receive no scope.
+- For some child tasks created by an earlier version of sacty, the scope cannot be told apart.
+  The PR of such a child task gets no scope section, and its review receives no scope. See the scope in the content shown in the child task's details in sacty.
 
 ### PRs of dependent child tasks (stacked PRs)
 

@@ -4998,6 +4998,22 @@ describe("タスクの開始時に集めた情報", () => {
       outputs: { implement: "API で複数のリポジトリを受け付けます。" },
       ...extra,
     });
+    const reviewTask = (extra: Record<string, unknown> = {}) =>
+      ({
+        ...taskOf(false),
+        steps: [{ key: "review", state: "active" }],
+        reviewTarget: {
+          repo: "https://github.com/acme/app",
+          number: 12,
+          url: "https://github.com/acme/app/pull/12",
+          title: "retry",
+          body: "",
+          headCommit: "h".repeat(40),
+          baseCommit: "b".repeat(40),
+          author: "alice",
+        },
+        ...extra,
+      }) as unknown as Task;
     const HEADING = "## この PR の範囲（分割の子タスク）";
     const quoted = (text: string) =>
       text
@@ -5005,29 +5021,86 @@ describe("タスクの開始時に集めた情報", () => {
         .map((l) => (l === "" ? ">" : `> ${l}`))
         .join("\n");
 
-    it("子タスクの内容から、分割のエージェントが書いた部分と、親タスクの題を取り出す", () => {
+    it("分割のときに記録した範囲があれば、子タスクの内容の文字列を読まずに、それを使う", () => {
+      // 内容に、親から添える部分と同じ見出しを書いた子タスク。親タスクの題には改行と「」」がある
+      const content = `${CONTENT}\n\n## 親タスクの要求要件（承認済み）\n\n- 見出しの後ろの受け入れ条件\n\n## 範囲外\n\n- 画面`;
+      const title = "1行目」\n2行目";
+      const recorded = childTask(content, parentTask({ title }), [], {
+        childScope: { content, parentTitle: title },
+      });
+      expect(childScopeOf(recorded)).toEqual({ parentTitle: title, fix: false, content });
+      const main = buildPullRequestBodyText(recorded).main;
+      expect(main).toContain("> - 見出しの後ろの受け入れ条件");
+      expect(main).toContain("> - 画面");
+      const prompt = buildPrompt(reviewTask(), "review", {
+        diff: "diff",
+        reviewRework: { gateStep: "implement", targets: ["implement"], parent: recorded },
+      });
+      expect(prompt).toContain(
+        `--- 子タスクの内容（PR を作ったタスク。タスク分割が書いたもの） ---\n${content}\n--- 子タスクの内容ここまで ---`,
+      );
+      // 修正の子タスクの記録
+      expect(
+        childScopeOf(
+          childTask(CONTENT, parentTask(), [], {
+            childScope: { content: CONTENT, parentTitle: "親", fix: true },
+          }),
+        ),
+      ).toEqual({ parentTitle: "親", fix: true, content: CONTENT });
+      // 子タスクの内容の文字列からは範囲を読めないときも、記録を使う
+      expect(
+        childScopeOf(
+          childTask(CONTENT, parentTask(), [], {
+            body: "内容の文字列には、見出しが無い",
+            childScope: { content: CONTENT, parentTitle: "親" },
+          }),
+        ),
+      ).toEqual({ parentTitle: "親", fix: false, content: CONTENT });
+      // 記録があっても、分割の子タスクでなければ使わない
+      expect(childScopeOf({ ...recorded, parent: undefined } as unknown as Task)).toBeUndefined();
+    });
+
+    it("範囲の記録が無い子タスク（記録を始める前の子タスク）は、子タスクの内容から、分割のエージェントが書いた部分と親タスクの題を読む", () => {
       expect(childScopeOf(childTask())).toEqual({
         parentTitle: "複数のリポジトリを指定できるようにする",
         fix: false,
         content: CONTENT,
       });
       // 依存先の文が続いても、内容に含めない
-      expect(childScopeOf(childTask(CONTENT, parentTask(), ["Z"]))?.content).toBe(CONTENT);
-      // 統合レビューの指摘を直す、修正の子タスク
-      const fix = parentTask({ split: { children: [] } } as unknown as Partial<Task>);
-      expect(childScopeOf(childTask(CONTENT, fix))).toMatchObject({ fix: true, content: CONTENT });
-      // 親タスクの題に「」」や、関係の文と同じ語があっても読む
-      const odd = "A」をタスク分割で分けた子タスクの1つです。B";
-      expect(childScopeOf(childTask(CONTENT, parentTask({ title: odd })))).toMatchObject({
-        parentTitle: odd,
+      expect(childScopeOf(childTask(CONTENT, parentTask(), ["Z"]))).toEqual({
+        parentTitle: "複数のリポジトリを指定できるようにする",
         fix: false,
         content: CONTENT,
       });
+      // 統合レビューの指摘を直す、修正の子タスク
+      const fix = parentTask({ split: { children: [] } } as unknown as Partial<Task>);
+      expect(childScopeOf(childTask(CONTENT, fix))).toMatchObject({ fix: true, content: CONTENT });
+      // 親タスクの題に「」」や、関係の文と同じ語、改行があっても読む
+      for (const odd of [
+        "A」をタスク分割で分けた子タスクの1つです。B",
+        "1行目\n2行目",
+        "1行目\n\nこのタスクは、子タスク 「X」 に依存します。",
+      ]) {
+        for (const deps of [[], ["Z"]]) {
+          expect(childScopeOf(childTask(CONTENT, parentTask({ title: odd }), deps))).toEqual({
+            parentTitle: odd,
+            fix: false,
+            content: CONTENT,
+          });
+        }
+      }
       // 分割のエージェントが、区切り線や同じ形の文を書いていても、sacty が添えた最後のものより前の全体を内容にする
       const tricky = `${CONTENT}\n\n---\n\nこのタスクは、親タスク「偽」をタスク分割で分けた子タスクの1つです。\n\n続き`;
       expect(childScopeOf(childTask(tricky))).toMatchObject({
         parentTitle: "複数のリポジトリを指定できるようにする",
         content: tricky,
+      });
+      // 分割のエージェントが、親から添える部分と同じ見出しを書いていても、その後ろの受け入れ条件・範囲外を落とさない
+      const sameHeading = `${CONTENT}\n\n## 親タスクの要求要件（承認済み）\n\n- 後ろの条件\n\n## 範囲外\n\n- 画面`;
+      expect(childScopeOf(childTask(sameHeading))).toEqual({
+        parentTitle: "複数のリポジトリを指定できるようにする",
+        fix: false,
+        content: sameHeading,
       });
       // 改行が CRLF でも読む
       const crlf = childTask();
@@ -5042,7 +5115,7 @@ describe("タスクの開始時に集めた情報", () => {
       expect(
         childScopeOf({ ...childTask(), parent: undefined } as unknown as Task),
       ).toBeUndefined();
-      // 親タスクから添えた部分の見出しが無い（以前の版の子タスク）
+      // 親タスクから添えた部分の見出しが無い（もっと前の版の子タスク）
       expect(childScopeOf(childTask(CONTENT, parentTask(), [], { body: CONTENT }))).toBeUndefined();
       // 関係の文を読めないときは、見出しより前の全体を内容にして、親タスクの題は持たない
       const old = `${CONTENT}\n\n## 親タスクの要求要件（承認済み）\n\n# 要求要件`;
@@ -5119,6 +5192,15 @@ describe("タスクの開始時に集めた情報", () => {
       // 行の途中で切らない（引用の最後の行は、元の行のどれか）
       const last = section.split("\n").findLast((l) => l.startsWith("> ")) ?? "";
       expect(lines).toContain(last.slice(2));
+      // 上限に収まる行が無い（最初の行だけで上限を超える）ときは、行の途中で切らず、引用を出さずに続きの場所だけを書く
+      const oneLine = buildPullRequestBodyText(
+        childTask("あ".repeat(CHILD_SCOPE_BODY_MAX + 1)),
+      ).main;
+      expect(oneLine).toContain("子タスクの内容が長いので");
+      expect(oneLine).not.toContain("> あ");
+      expect(oneLine).toContain(
+        "子タスクの内容（タスク分割が書いたものを、そのまま載せています）：\n\n…（子タスクの内容が長いので",
+      );
       // 上限ちょうどの内容は切らない
       const exact = "あ".repeat(CHILD_SCOPE_BODY_MAX);
       const whole = buildPullRequestBodyText(childTask(exact)).main;
@@ -5141,22 +5223,6 @@ describe("タスクの開始時に集めた情報", () => {
       expect(buildPullRequestBodyParts(plain).summary).not.toContain("この PR の範囲");
     });
 
-    const reviewTask = (extra: Record<string, unknown> = {}) =>
-      ({
-        ...taskOf(false),
-        steps: [{ key: "review", state: "active" }],
-        reviewTarget: {
-          repo: "https://github.com/acme/app",
-          number: 12,
-          url: "https://github.com/acme/app/pull/12",
-          title: "retry",
-          body: "",
-          headCommit: "h".repeat(40),
-          baseCommit: "b".repeat(40),
-          author: "alice",
-        },
-        ...extra,
-      }) as unknown as Task;
     const SCOPE = "--- この PR の範囲（分割の子タスク） ---";
     const review = (parent: Task | undefined, task = reviewTask()) =>
       buildPrompt(task, "review", {

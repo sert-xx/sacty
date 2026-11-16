@@ -313,11 +313,13 @@ For the PR of a child task of a split (including a fix child task), a "この PR
 Related ADR: [State the scope in the PR of a child task of a split, and keep the review from marking out-of-scope items as required changes](../adr/20261116-0036-pr-scope-for-split-child-review.md)
 
 - The section gives the parent task's title, says that this is the PR of a child task of a split (or of a fix child task that fixes integration review comments), and says that what is written as out of scope is not changed in this PR.
-- It then carries the part of the child task's body that the task split agent wrote (what to achieve, acceptance criteria, out of scope) as it is, as a quote (`>`), without summarizing (`childScopeOf`).
+- It then carries the child task's content that the task split agent wrote (what to achieve, acceptance criteria, out of scope) as it is, as a quote (`>`), without summarizing (`childScopeOf`).
   The part added from the parent task (the approved requirements and design, the gathered information, and the relation sentence sacty adds) is not included.
-- The carried content is up to 8,000 characters (`CHILD_SCOPE_BODY_MAX`). Beyond that, it is cut at a line break and a note says to see the rest on sacty's task screen.
+- The scope is the one recorded at the split (`Task.childScope`; [Splitting](split-and-integrate.en.md#splitting)).
+  For a child task without the record (created before the record was introduced), it is read from the child task's body text, as what comes before the sequence sacty adds (the separator, the relation sentence, and the heading of the part added from the parent task) (`legacyChildScope`).
+- The carried content is up to 8,000 characters (`CHILD_SCOPE_BODY_MAX`). Beyond that, it is cut at a line break and a note says to see the rest on sacty's task screen. When no line fits in the limit, no quote is shown and only the note is written.
 - The section is also included when the body is rebuilt (a redo submission). The length limit of the whole body, secret values, and a body edited by a person are handled as for the other sections (the common rules below).
-- It is not put in the PR of a task whose body has no heading for the part added from the parent task ("親タスクの要求要件（承認済み）"; for example a child task of an earlier version), or of a task that is not a child task of a split.
+- It is not put in the PR of a task that has no scope record and whose body has no heading for the part added from the parent task ("親タスクの要求要件（承認済み）"; a child task of an earlier version), or of a task that is not a child task of a split.
 
 The common rules are as follows.
 

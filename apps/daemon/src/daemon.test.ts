@@ -20431,6 +20431,17 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
           await service.runNext(a);
         }
       };
+      // 範囲は、子タスクの内容の文字列とは別に、分割の記録と子タスクの記録に残す
+      const scope = { content: CONTENT, parentTitle: "決済をまるごと作る" };
+      const split = service.get(id)?.activity.find((e) => e.type === "TaskSplit");
+      expect(split?.type === "TaskSplit" ? split.payload.children[0]?.scope : undefined).toEqual(
+        scope,
+      );
+      expect(taskOf(service, a).childScope).toEqual(scope);
+      // 再起動しても、記録から復元する
+      const again1 = new SqliteActivityStore(dbPath);
+      expect(makeService(again1, []).service.get(a)?.task.childScope).toEqual(scope);
+      again1.close();
       await drainSteps();
       // 最初の提出の PR の本文
       const first = pulls.bodies[7] ?? "";
