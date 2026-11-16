@@ -19,7 +19,7 @@
 
 ### テストを分けた（PBI-359）
 
-- `daemon.test.ts` の 76 個の `describe` を、題材ごとの 13 個のファイル（`apps/daemon/src/daemon-<題材>.test.ts`）に移した。
+- `daemon.test.ts` の 75 個の `describe` を、題材ごとの 13 個のファイル（`apps/daemon/src/daemon-<題材>.test.ts`）に移した。
   `describe` の中身は、1 行も変えていない。`describe` をまたいで分けてもいない。どのファイルに何を置くかは、`CONTRIBUTING.md` の表に書いた。
 - 共通の準備（偽の GitHub・偽のリポジトリ・偽のエージェントの実行と、それらを組んだサービスを作る `makeService` など 31 個）は、
   `apps/daemon/src/testing/daemon.ts` に出した（`src/testing` は、ビルドの対象から外している既存の置き場）。中身は変えず、`export` を付けた。
@@ -97,7 +97,8 @@
 
 | 指摘 | 対応 |
 | --- | --- |
-| （PR を作る前。まだ無い） | — |
+| 1 回目（提案あり・マージは可）：`packages/core/src/projection.test.ts` のコメントが、消した `daemon.test.ts` を指している | 移動先の `daemon-implement.test.ts` に直した。`daemon.test.ts` を名指ししている場所は、過去の作業履歴（直さない決まり）のほかには、ここだけだった |
+| 1 回目：作業履歴の `describe` の個数が 76 個になっている（正しくは 75 個） | 数え直した（分ける前 75 個・分けた後の 13 ファイルの合計 75 個）。作業履歴と PR の本文を 75 個に直した |
 
 ## 残したこと
 
