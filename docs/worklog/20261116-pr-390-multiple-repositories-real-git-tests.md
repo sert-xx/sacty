@@ -6,6 +6,9 @@
 - ブランチ: sacty/task-267f1e95
 - 関係する ADR: なし
 
+sacty のタスク ID は `267f1e95` で始まる。
+「タスク: なし」は PBI が無いことを示す。
+
 ## 目的
 
 複数指定したリポジトリの写しと子の PR の作成先を、実際の Git リポジトリで確かめる。
@@ -16,8 +19,11 @@
 
 ## 確かめたこと
 
-`npx vitest run apps/daemon/src/daemon.test.ts -t '実際の Git で複数'` で3件が通った。
-前回の実装では `npm run lint`・`npm run typecheck`・`npx vitest run`・`npm run build` が通った。
+- `npm run lint`：成功（大きさの上限により `daemon.test.ts` は対象外）。
+- `npx biome check --files-max-size=4000000 apps/daemon/src/daemon.test.ts`：成功（1ファイルを検査）。
+- `npm run typecheck`：成功。
+- `npx vitest run --no-file-parallelism`：226ファイル、4,579件が成功、14件がスキップ。
+- `npm run build`：成功。
 
 ## レビューの指摘と対応
 
@@ -25,6 +31,7 @@
 | --- | --- |
 | clone URL の変換が想定外の URL を受け入れる | 2つの URL を完全一致で対応付け、想定外の URL は失敗させる。 |
 | 作業履歴の PR・ブランチ・ファイル名と検証結果が不正確 | PR 情報とファイル名を修正し、検証コマンドと結果を記録した。 |
+| 検証結果が前回のもので、個別 lint とタスク ID の記録がない | 現在の内容で検証し、結果とタスク ID を記録した。 |
 
 ## 残したこと
 
