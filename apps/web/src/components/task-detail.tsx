@@ -86,6 +86,7 @@ import {
   usesTestCommand,
 } from "@/lib/labels";
 import { projectSettingsPath } from "@/lib/paths";
+import { repoLabels } from "@/lib/repo-label";
 import { runLogId } from "@/lib/session-log";
 import { subtaskSummary } from "@/lib/subtasks";
 import type { TaskDetailData } from "@/lib/task-detail-data";
@@ -1138,9 +1139,31 @@ function Properties({ data }: { data: TaskDetailData }) {
           </Link>
         </Prop>
         <Prop label={l.repository}>
+          {/* 複数を指定したタスクも、単数と同じ owner/name で出す。URL の全体はリンク先とツールチップ（PBI-360） */}
           {task.repos?.length ? (
-            <span className="block font-mono text-xs">
-              {m.specifiedRepositories}: {task.repos.join(", ")}
+            <span
+              className="block font-mono text-xs [overflow-wrap:anywhere]"
+              data-testid="task-repos"
+            >
+              {m.specifiedRepositories}:{" "}
+              {repoLabels(task.repos, "path").map((specified, index) => (
+                <span key={specified.url}>
+                  {index > 0 && ", "}
+                  {specified.href ? (
+                    <a
+                      href={specified.href}
+                      title={specified.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-accent-foreground underline"
+                    >
+                      {specified.label}
+                    </a>
+                  ) : (
+                    <span title={specified.url}>{specified.label}</span>
+                  )}
+                </span>
+              ))}
             </span>
           ) : null}
           {repo ? (

@@ -18,7 +18,12 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 const { loadTaskList } = await import("@/lib/task-list-data");
 const { LiveTaskList } = await import("./task-list");
 
-function task(repos: boolean, chosen: boolean, urls = false): Task {
+function task(
+  repos: boolean,
+  chosen: boolean,
+  urls = false,
+  specified = ["https://github.com/acme/a", "https://github.com/acme/b"],
+): Task {
   const base = { taskId: "t1", projectId: "default", at: "2026-10-20T00:00:00.000Z" };
   const events = [
     {
@@ -35,9 +40,7 @@ function task(repos: boolean, chosen: boolean, urls = false): Task {
         noRepo: true,
         ...(repos
           ? {
-              repos: urls
-                ? ["https://github.com/acme/a", "https://github.com/acme/b"]
-                : ["acme/a", "acme/b"],
+              repos: urls ? specified : ["acme/a", "acme/b"],
             }
           : {}),
       },
@@ -57,8 +60,8 @@ function task(repos: boolean, chosen: boolean, urls = false): Task {
   return result;
 }
 
-async function render(repos: boolean, chosen: boolean, urls = false) {
-  tasks = [task(repos, chosen, urls)];
+async function render(repos: boolean, chosen: boolean, urls = false, specified?: string[]) {
+  tasks = [task(repos, chosen, urls, specified)];
   const initial = await loadTaskList("default");
   if (!initial) throw new Error("project missing");
   return renderToStaticMarkup(createElement(LiveTaskList, { projectId: "default", initial }));
@@ -71,12 +74,13 @@ describe("複数リポジトリの一覧（R-8）", () => {
         it(`${lang} で${urls ? "URL" : "名前"}の指定を作業先の選択${chosen ? "後" : "前"}に表示する`, async () => {
           locale = lang;
           const html = await render(true, chosen, urls);
-          expect(html).toContain(
-            `${messagesFor(lang).tasks.specifiedRepositories}: ${urls ? "https://github.com/acme/a, https://github.com/acme/b" : "acme/a, acme/b"}`,
+          const document = new DOMParser().parseFromString(html, "text/html");
+          // URL の指定は、単数と同じリポジトリ名で出す（URL として読めない古い値は、そのまま。PBI-360）
+          expect(document.querySelector('[data-testid="task-repos-t1"]')?.textContent).toBe(
+            `${messagesFor(lang).tasks.specifiedRepositories}: ${urls ? "a, b" : "acme/a, acme/b"}`,
           );
           expect(html).not.toContain('data-testid="no-repository"');
           if (chosen) {
-            const document = new DOMParser().parseFromString(html, "text/html");
             expect(document.querySelector('[data-testid="task-repo-t1"]')?.textContent).toBe(
               `${messagesFor(lang).tasks.workingRepository}: a`,
             );
@@ -84,6 +88,31 @@ describe("複数リポジトリの一覧（R-8）", () => {
         });
       }
     }
+    it(`${lang} で短い名前に URL の全体のツールチップを付け、同じ名前は owner/name（それも同じなら URL）で区別する（PBI-360）`, async () => {
+      locale = lang;
+      const specified = [
+        "https://github.com/acme/web",
+        "https://github.com/other/web",
+        "https://github.com/acme/api",
+        "https://ghe.example.com/acme/tools",
+        "https://github.com/acme/tools",
+      ];
+      const html = await render(true, false, true, specified);
+      const document = new DOMParser().parseFromString(html, "text/html");
+      const shown = [...document.querySelectorAll('[data-testid="task-repos-t1"] [title]')].map(
+        (e) => [e.textContent, e.getAttribute("title")],
+      );
+      expect(shown).toEqual([
+        ["acme/web", specified[0]],
+        ["other/web", specified[1]],
+        ["api", specified[2]],
+        [specified[3], specified[3]],
+        [specified[4], specified[4]],
+      ]);
+      expect(document.querySelector('[data-testid="task-repos-t1"]')?.textContent).toBe(
+        `${messagesFor(lang).tasks.specifiedRepositories}: acme/web, other/web, api, ${specified[3]}, ${specified[4]}`,
+      );
+    });
     it(`${lang} でリポジトリ無しの印を表示する`, async () => {
       locale = lang;
       expect(await render(false, false)).toContain('data-testid="no-repository"');

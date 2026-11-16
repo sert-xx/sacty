@@ -2,6 +2,7 @@
 import { act, type FC, createElement as h, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { messagesFor } from "@/i18n";
 import { ACTIVE, EMPTY_FILTER, filterOptions, matchesFilter, NO_REPO } from "@/lib/task-filter";
 import type { TaskListData, TaskRow } from "@/lib/task-list-data";
 
@@ -116,6 +117,94 @@ describe("タスクの一覧の絞り込み", () => {
     expect(filterOptions([rows[0]], { ...EMPTY_FILTER, start: "jira", repo: NO_REPO })).toEqual({
       starts: ["sacty", "jira"],
       repos: ["web", NO_REPO],
+    });
+  });
+});
+
+describe("複数のリポジトリを指定したタスクの絞り込み（PBI-360）", () => {
+  const specified = ["https://github.com/acme/web", "https://github.com/acme/docs"];
+  const multi: TaskRow[] = [
+    row({ id: "single", repoName: "web" }),
+    // 作業するリポジトリが決まる前
+    row({ id: "before", repoless: true, repos: specified }),
+    // 決まった後（指定したもう一方でも探せる）
+    row({ id: "after", repoName: "docs", repos: specified }),
+    row({ id: "none", repoless: true }),
+  ];
+  const found = (repo: string) =>
+    multi.filter((r) => matchesFilter(r, { ...EMPTY_FILTER, repo })).map((r) => r.id);
+
+  it("指定したどのリポジトリを選んでも出し、未定・リポジトリ無しには出さない", () => {
+    expect(found("web")).toEqual(["single", "before", "after"]);
+    expect(found("docs")).toEqual(["before", "after"]);
+    expect(found(NO_REPO)).toEqual(["none"]);
+    expect(found("api")).toEqual([]);
+  });
+
+  it("選択肢に、指定したリポジトリの名前を重ねずに出す", () => {
+    expect(filterOptions(multi).repos).toEqual(["docs", "web", NO_REPO]);
+    // 指定だけのタスクしか無ければ、未定・リポジトリ無しは出さない
+    expect(filterOptions([multi[1] as TaskRow]).repos).toEqual(["docs", "web"]);
+  });
+
+  describe.each(["ja", "en"] as const)("画面の操作（%s）", (lang) => {
+    let container: HTMLDivElement;
+    let root: Root;
+    beforeEach(() => {
+      vi.stubGlobal("fetch", () => new Promise(() => {}));
+      container = document.createElement("div");
+      document.body.append(container);
+      root = createRoot(container);
+    });
+    afterEach(() => {
+      act(() => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    });
+
+    it("リポジトリの選択肢から、指定したどちらを選んでも複数を指定したタスクが出る", () => {
+      const data: TaskListData = { projectId: "p1", needsYou: [], rows: multi };
+      act(() =>
+        root.render(
+          h(
+            I18nProvider as unknown as FC<{ locale: "ja" | "en" }>,
+            { locale: lang },
+            h(LiveTaskList, { projectId: "p1", initial: data, initialVersion: liveVersion(data) }),
+          ),
+        ),
+      );
+      const m = messagesFor(lang).tasks.filter;
+      const select = [...container.querySelectorAll("label")]
+        .find((l) => l.textContent?.startsWith(m.repo))
+        ?.querySelector("select");
+      if (!select) throw new Error("select missing");
+      expect([...select.options].map((o) => o.textContent)).toEqual([
+        m.all,
+        "docs",
+        "web",
+        m.noRepo,
+      ]);
+      const shown = () =>
+        [...container.querySelectorAll('[data-testid^="task-row-"]')].map((e) =>
+          e.getAttribute("data-testid")?.replace("task-row-", ""),
+        );
+      const choose = (value: string) =>
+        act(() => {
+          Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
+            select,
+            value,
+          );
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      choose("docs");
+      expect(shown()).toEqual(["before", "after"]);
+      choose("web");
+      expect(shown()).toEqual(["single", "before", "after"]);
+      choose(NO_REPO);
+      expect(shown()).toEqual(["none"]);
+      expect(container.querySelector('[data-testid="task-filter-count"]')?.textContent).toBe(
+        m.count(1, 4),
+      );
     });
   });
 });

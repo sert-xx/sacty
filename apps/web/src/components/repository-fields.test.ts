@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement as h, useActionState } from "react";
+import { act, createElement as h, useActionState, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -218,6 +218,179 @@ describe("作成フォームのリポジトリ欄", () => {
       await act(() => root.unmount());
     },
   );
+
+  describe.each(["ja", "en"] as const)("欄の操作（PBI-360。%s）", (lang) => {
+    const mount = async (extra: Partial<Parameters<typeof TaskFields>[0]> = {}) => {
+      locale = lang;
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      await act(() => root.render(h("form", null, h(TaskFields, { ...props, ...extra }))));
+      const t = messagesFor(lang).forms.task;
+      const inputs = () =>
+        Array.from(container.querySelectorAll<HTMLInputElement>('input[name="repo"]'));
+      const add = () => {
+        const found = Array.from(container.querySelectorAll("button")).find(
+          (b) => b.textContent === t.addRepository,
+        );
+        if (!found) throw new Error("add missing");
+        return found;
+      };
+      const remove = async (position: number) => {
+        const found = container.querySelector<HTMLButtonElement>(
+          `[aria-label="${t.removeRepositoryField(position)}"]`,
+        );
+        if (!found) throw new Error("remove missing");
+        // 押したボタンにフォーカスがある状態から消す（実際の操作と同じ）
+        found.focus();
+        await act(() => found.click());
+      };
+      const set = async (index: number, value: string) => {
+        const input = inputs()[index];
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        if (!input || !setter) throw new Error("input missing");
+        await act(() => {
+          setter.call(input, value);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      };
+      const unmount = async () => {
+        await act(() => root.unmount());
+        container.remove();
+        locale = "ja";
+      };
+      return { container, t, inputs, add, remove, set, unmount };
+    };
+
+    it("初期値の入った1欄目を削除しても、残った欄に初期値が入り直らない", async () => {
+      const { inputs, add, remove, unmount } = await mount({ repoDefault: "acme/a" });
+      expect(inputs().map((i) => i.value)).toEqual(["acme/a"]);
+      await act(() => add().click());
+      await remove(1);
+      expect(inputs().map((i) => i.value)).toEqual([""]);
+      // 残った欄を増減しても戻らない
+      await act(() => add().click());
+      await remove(2);
+      expect(inputs().map((i) => i.value)).toEqual([""]);
+      await unmount();
+    });
+
+    it("追加したら新しい欄に、削除したら消した位置の欄（無ければ前の欄）にフォーカスを移す", async () => {
+      const { inputs, add, remove, set, unmount } = await mount();
+      await act(() => add().click());
+      expect(document.activeElement).toBe(inputs()[1]);
+      await act(() => add().click());
+      expect(document.activeElement).toBe(inputs()[2]);
+      await set(0, "acme/a");
+      await set(1, "acme/b");
+      await set(2, "acme/c");
+      // 途中の欄を消すと、その位置に上がってきた欄
+      await remove(2);
+      expect(inputs().map((i) => i.value)).toEqual(["acme/a", "acme/c"]);
+      expect(document.activeElement).toBe(inputs()[1]);
+      // 最後の欄を消すと、前の欄
+      await remove(2);
+      expect(inputs().map((i) => i.value)).toEqual(["acme/a"]);
+      expect(document.activeElement).toBe(inputs()[0]);
+      // 先頭の欄を消すと、先頭に上がってきた欄
+      await act(() => add().click());
+      await set(1, "acme/d");
+      await remove(1);
+      expect(inputs().map((i) => i.value)).toEqual(["acme/d"]);
+      expect(document.activeElement).toBe(inputs()[0]);
+      await unmount();
+    });
+
+    it("上限の10件に達したら、追加を押せない理由を出し、減らすと消す", async () => {
+      const { container, t, add, remove, unmount } = await mount();
+      const limit = () => container.querySelector("#task-repo-limit");
+      for (let i = 0; i < 8; i++) await act(() => add().click());
+      expect(add().disabled).toBe(false);
+      expect(limit()).toBeNull();
+      expect(add().getAttribute("aria-describedby")).toBeNull();
+      await act(() => add().click());
+      expect(add().disabled).toBe(true);
+      expect(limit()?.textContent).toBe(t.repositoryLimit(10));
+      expect(limit()?.textContent).toContain("10");
+      expect(limit()?.getAttribute("role")).toBe("status");
+      expect(add().getAttribute("aria-describedby")).toBe("task-repo-limit");
+      await remove(10);
+      expect(add().disabled).toBe(false);
+      expect(limit()).toBeNull();
+      await unmount();
+    });
+
+    it("同じリポジトリを入れた欄を知らせ、空欄どうしは知らせない", async () => {
+      const { container, t, add, set, unmount } = await mount();
+      const notice = () => container.querySelector('[data-testid="task-repo-duplicates"]');
+      await act(() => add().click());
+      await act(() => add().click());
+      // 空欄どうしは重複にしない
+      expect(notice()).toBeNull();
+      await set(0, "https://github.com/acme/a");
+      await set(1, " https://github.com/acme/a/ ");
+      await set(2, "https://github.com/ACME/a");
+      expect(notice()?.textContent).toBe(t.duplicateRepositories([2, 3]));
+      await set(1, "https://github.com/acme/b");
+      expect(notice()?.textContent).toBe(t.duplicateRepositories([3]));
+      await unmount();
+    });
+  });
+
+  it("テンプレートの間は1欄だけを出し、なしに戻すと増やした欄・値を残している（PBI-360）", async () => {
+    function Form() {
+      const [template, setTemplate] = useState<"" | "sacty-setup">("");
+      return h(
+        "form",
+        null,
+        h(TaskFields, {
+          ...props,
+          template,
+          onTemplate: (value) => setTemplate(value as "" | "sacty-setup"),
+        }),
+      );
+    }
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(() => root.render(h(Form)));
+    const t = messagesFor("ja").forms.task;
+    const inputs = () =>
+      Array.from(container.querySelectorAll<HTMLInputElement>('input[name="repo"]'));
+    const add = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === t.addRepository,
+    );
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (!add || !setter) throw new Error("add missing");
+    await act(() => add.click());
+    await act(() => add.click());
+    for (const [index, value] of ["acme/a", "acme/a", "acme/c"].entries()) {
+      const input = inputs()[index];
+      if (!input) throw new Error("input missing");
+      await act(() => {
+        setter.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    const radio = (value: string) => {
+      const found = container.querySelector<HTMLInputElement>(
+        `input[name="template"][value="${value}"]`,
+      );
+      if (!found) throw new Error("template missing");
+      return found;
+    };
+    await act(() => radio("sacty-setup").click());
+    expect(inputs().map((i) => i.value)).toEqual(["acme/a"]);
+    // 隠れている欄の重複は知らせない（送らないため）
+    expect(container.querySelector('[data-testid="task-repo-duplicates"]')).toBeNull();
+    await act(() => radio("").click());
+    expect(inputs().map((i) => i.value)).toEqual(["acme/a", "acme/a", "acme/c"]);
+    expect(container.querySelector('[data-testid="task-repo-duplicates"]')?.textContent).toBe(
+      t.duplicateRepositories([2]),
+    );
+    await act(() => root.unmount());
+    container.remove();
+  });
 
   it("静的描画で追加を示し、テンプレートは1欄に固定する", () => {
     for (const lang of ["ja", "en"] as const) {

@@ -69,6 +69,9 @@ const ja = {
     addRepository: "リポジトリを追加",
     removeRepository: "削除",
     removeRepositoryField: (index: number) => `リポジトリ欄 ${index} を削除`,
+    repositoryLimit: (max: number) => `リポジトリは ${max} 件まで指定できます。`,
+    duplicateRepositories: (fields: number[]) =>
+      `リポジトリ欄 ${fields.join("・")} は、前の欄と同じリポジトリです。同じリポジトリは 1 件として扱います。`,
     repositoryPlaceholder: "リポジトリの URL",
     repositoryHint:
       "すべて空欄なら、リポジトリを指定せずに作ります。調べものや全体の設計はリポジトリ無しで進み、コードの変更が要るときはオーケストレーターがプロジェクトの対象から選びます。入力すると候補を絞り込めます。",
@@ -163,6 +166,9 @@ const en: FormsMessages = {
     addRepository: "Add repository",
     removeRepository: "Remove",
     removeRepositoryField: (index: number) => `Remove repository field ${index}`,
+    repositoryLimit: (max: number) => `You can specify up to ${max} repositories.`,
+    duplicateRepositories: (fields: number[]) =>
+      `Repository ${fields.length === 1 ? "field" : "fields"} ${fields.join(", ")} ${fields.length === 1 ? "repeats" : "repeat"} an earlier field. The same repository counts once.`,
     repositoryPlaceholder: "Repository URL",
     repositoryHint:
       "Leave all fields empty to create the task without a repository. Research and overall design proceed without one; when code must change, the Orchestrator chooses a repository from the project's targets. Type to filter the suggestions.",

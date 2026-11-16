@@ -1,4 +1,5 @@
 import type { StatusTone } from "@/lib/labels";
+import { repoShortName } from "@/lib/repo-label";
 import type { TaskRow } from "@/lib/task-list-data";
 
 /**
@@ -6,7 +7,8 @@ import type { TaskRow } from "@/lib/task-list-data";
  * - query：題に含む文字（大文字と小文字を区別しない）
  * - from・to：作った日（画面のタイムゾーンの YYYY-MM-DD。両端を含む）
  * - start：開始地点
- * - repo：作業するリポジトリの名前（NO_REPO はリポジトリがまだ決まっていない・指定せずに作ったタスク）
+ * - repo：作業するリポジトリの名前か、複数を指定したタスクの、指定したリポジトリの名前のどれか
+ *   （NO_REPO は、リポジトリがまだ決まっておらず、指定もしていないタスク）
  * - status：状態の種類（ACTIVE は、完了と中止のほか）
  */
 export type TaskFilter = {
@@ -42,6 +44,16 @@ export function localDay(at: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/**
+ * 行のリポジトリの名前：作業するリポジトリと、複数を指定したタスクの、指定したリポジトリ（PBI-360）。
+ * 作業するリポジトリが決まる前も後も、指定したどのリポジトリでも探せるようにする。
+ */
+export function rowRepoNames(row: Pick<TaskRow, "repoName" | "repos">): string[] {
+  return [
+    ...new Set([...(row.repoName ? [row.repoName] : []), ...(row.repos ?? []).map(repoShortName)]),
+  ];
+}
+
 export function matchesFilter(row: TaskRow, filter: TaskFilter): boolean {
   const query = filter.query.trim().toLowerCase();
   if (query && !row.title.toLowerCase().includes(query)) return false;
@@ -51,7 +63,10 @@ export function matchesFilter(row: TaskRow, filter: TaskFilter): boolean {
     if (filter.to && day > filter.to) return false;
   }
   if (filter.start && row.start !== filter.start) return false;
-  if (filter.repo && (row.repoName ?? NO_REPO) !== filter.repo) return false;
+  if (filter.repo) {
+    const names = rowRepoNames(row);
+    if (filter.repo === NO_REPO ? names.length > 0 : !names.includes(filter.repo)) return false;
+  }
   if (filter.status === ACTIVE) {
     if (row.status.tone === "completed" || row.status.tone === "cancelled") return false;
   } else if (filter.status && row.status.tone !== filter.status) return false;
@@ -71,10 +86,10 @@ export function filterOptions(
   ];
   const names = [
     ...new Set([
-      ...rows.flatMap((r) => (r.repoName ? [r.repoName] : [])),
+      ...rows.flatMap(rowRepoNames),
       ...(filter.repo && filter.repo !== NO_REPO ? [filter.repo] : []),
     ]),
   ].sort();
-  const noRepo = filter.repo === NO_REPO || rows.some((r) => !r.repoName);
+  const noRepo = filter.repo === NO_REPO || rows.some((r) => rowRepoNames(r).length === 0);
   return { starts, repos: noRepo ? [...names, NO_REPO] : names };
 }

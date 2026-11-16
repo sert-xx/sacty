@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { useMessages } from "@/i18n/client";
+import { repoLabels } from "@/lib/repo-label";
 import {
   ACTIVE,
   EMPTY_FILTER,
@@ -159,9 +160,19 @@ export function LiveTaskList({
                             <span className="sr-only">{m.childOf(task.parentTitle)}</span>
                           )}
                           {/* 作業するリポジトリ（repo だけ。PBI-141） */}
+                          {/* 複数を指定したタスクも、単数と同じリポジトリ名で出す（同じ名前があれば owner/name）。URL の全体はツールチップ（PBI-360） */}
                           {task.repos?.length ? (
-                            <span className="mt-0.5 block font-mono text-xs text-muted-foreground">
-                              {m.specifiedRepositories}: {task.repos.join(", ")}
+                            <span
+                              className="mt-0.5 block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
+                              data-testid={`task-repos-${task.id}`}
+                            >
+                              {m.specifiedRepositories}:{" "}
+                              {repoLabels(task.repos).map((repo, index) => (
+                                <span key={repo.url}>
+                                  {index > 0 && ", "}
+                                  <span title={repo.url}>{repo.label}</span>
+                                </span>
+                              ))}
                             </span>
                           ) : null}
                           {task.repoName && (

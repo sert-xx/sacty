@@ -33,7 +33,7 @@ Press "Create task" to open this dialog.
 
 Fill in the dialog as follows.
 
-1. In "Target repository (optional)", choose a repository from the project's targets ([Project settings](project-settings.en.md#targets)). To select more than one, press "Add repository" and choose each repository (up to 10). Press "Remove" to delete a field. Templates accept one repository. You can also create a task without choosing a repository ([Create a task without a repository](#create-a-task-without-a-repository)).
+1. In "Target repository (optional)", choose a repository from the project's targets ([Project settings](project-settings.en.md#targets)). To select more than one, press "Add repository" and choose each repository (up to 10). At 10, "Add repository" is disabled and the reason appears next to the button. Press "Remove" to delete a field. When the same repository is in two or more fields, the dialog shows the numbers of the repeated fields (the same repository counts once). Templates accept one repository (while a template is chosen, only the first field is shown; the added fields and their values are kept and appear again after switching back to "None"). You can also create a task without choosing a repository ([Create a task without a repository](#create-a-task-without-a-repository)).
 2. If you leave "Plan" at the default, "Automatic", the Orchestrator chooses the combination of steps from the task. You can also choose it yourself ([Specify the plan](#specify-the-plan)).
 3. Enter the "Title" and the "Description".
 4. Press "Create".
@@ -221,7 +221,7 @@ A project's task list looks like this.
 
 ![The task list (Needs you cards and all tasks; the child tasks that review PRs are listed under their parent tasks)](images/task-list.en.png)
 
-Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks with multiple specified repositories show the specified list even before a working repository is chosen, and also show the working repository once chosen. Other tasks whose repository is not decided yet show none. Of these, a task created without a repository shows "No repository". Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
+Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks with multiple specified repositories show the specified list even before a working repository is chosen, and also show the working repository once chosen. The specified list also uses repository names (`org/repo` for names that repeat among the specified repositories). Point at a name to see the whole URL. "Repository" in the properties of the task detail shows the specified repositories as `org/repo`, and pressing one opens that repository. Other tasks whose repository is not decided yet show none. Of these, a task created without a repository shows "No repository". Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
 
 Child tasks are indented directly under their parent task.
 
@@ -240,7 +240,7 @@ Only tasks that match every filter are shown.
 | Search | Tasks whose title contains the text (case-insensitive) |
 | Start date (from), (to) | Tasks created between the dates (both days included; either one alone works too) |
 | Started from | Where the task started, such as Sacty or GitHub Issue |
-| Repository | The repository the task works on. "Not decided / No repository" is for tasks whose repository is not decided yet |
+| Repository | The repository the task works on. A task with multiple specified repositories appears for any of the specified repositories. "Not decided / No repository" is for tasks whose repository is not decided yet and that have no specified repositories |
 | Status | Not finished, Needs you, In progress, Waiting, Completed, Cancelled |
 
 The count (such as "1 of 5") is shown on the right of the fields.
