@@ -87,6 +87,31 @@ const itMerge = it.skipIf(!MERGE_BASE_SUPPORTED);
 
 // 実際の git を動かすので、テストをまとめて実行して重いときも時間切れにしない（PBI-35 レビューでの5秒の時間切れ）
 describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, () => {
+  it.each(["release+2026", "リリース/最新版"])(
+    "有効なブランチ %s の再準備で記録済みの起点を維持する",
+    async (branch) => {
+      const origin = makeOrigin();
+      git(origin, "checkout", "-b", branch);
+      const workspace = new GitRepositoryWorkspace();
+      const clone = join(dir, "clone");
+      const gitDir = join(dir, "metadata");
+      const first = await workspace.prepare(clone, gitDir, origin, branch);
+      writeFileSync(join(origin, "pay.ts"), "changed\n");
+      git(origin, "commit", "-am", "advance");
+      const again = await workspace.prepare(
+        clone,
+        gitDir,
+        origin,
+        branch,
+        undefined,
+        first.baseCommit,
+      );
+      expect(again.baseCommit).toBe(first.baseCommit);
+      expect(again.baseBranch).toBe(branch);
+      expect(readFileSync(join(clone, "pay.ts"), "utf8")).toBe("export const pay = () => 0;\n");
+      await expect(workspace.prepare(clone, gitDir, origin, "bad..name")).rejects.toThrow();
+    },
+  );
   it("用意し直すときは、ブランチが進んでいても記録済みの起点のコミットにする。無ければエラーにする（PBI-15）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

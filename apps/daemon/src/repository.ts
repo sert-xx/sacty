@@ -598,12 +598,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     }
     const env = cloneEnv(authEnv);
     // ブランチの指定が無ければ、リポジトリの既定のブランチを clone する（PBI-25）
-    if (
-      baseBranch !== undefined &&
-      (!/^[\w./-]+$/.test(baseBranch) || baseBranch.startsWith("-"))
-    ) {
-      throw new MessageError(message("git.invalidBranch"));
-    }
+    if (baseBranch !== undefined) await this.validateBranch(baseBranch);
     const clone = (branch: string | undefined) =>
       git(
         "clone",
@@ -1351,7 +1346,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return branch;
   }
 
-  async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+  private async validateBranch(branch: string) {
     if (branch.startsWith("-") || branch.includes("\0")) {
       throw new MessageError(message("git.invalidBranch"));
     }
@@ -1364,6 +1359,10 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     } catch {
       throw new MessageError(message("git.invalidBranch"));
     }
+  }
+
+  async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+    await this.validateBranch(branch);
     // 取得したコミットは FETCH_HEAD に残る（退避したメタデータのブランチや設定は変えない）
     await git(
       "fetch",

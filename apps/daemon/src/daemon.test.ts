@@ -33634,8 +33634,19 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       const { service, executor, repos } = makeService(activity, [out("# 結果")], {
         projects: twoRepos(),
       });
+      repos.head = "a".repeat(40);
+      repos.branchHead = "b".repeat(40);
+      vi.spyOn(repos, "snapshot").mockImplementation(async (gitDir, commit, destination) => {
+        mkdirSync(destination, { recursive: true });
+        writeFileSync(
+          join(destination, "README.md"),
+          `${gitDir.includes("2-acme__web") ? "web" : "api"} ${commit}`,
+        );
+      });
       let mounted: { path: string; readOnly: boolean; content: string } | undefined;
+      let selectedContent: string | undefined;
       executor.respond = (invocation) => {
+        selectedContent = readFileSync(join(executor.dirs.at(-1) ?? "", "README.md"), "utf8");
         const mount = invocation.mounts?.find((m) => m.containerPath === "/sacty-repos");
         if (mount)
           mounted = {
@@ -33647,7 +33658,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       };
       await service.runNext(id);
       expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
-      expect(mounted).toMatchObject({ readOnly: true, content: `base ${repos.branchHead}` });
+      expect(selectedContent).toBe(`api ${repos.head}`);
+      expect(mounted).toMatchObject({ readOnly: true, content: `web ${repos.branchHead}` });
       if (step !== "split") {
         expect(executor.inputMounts[0]?.readOnly).toBe(true);
         expect(executor.inputMounts[0]?.files["task.md"]).toContain("複数");
