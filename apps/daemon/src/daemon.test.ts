@@ -1517,6 +1517,8 @@ function makeService(
     stopNoticeTimeoutMs?: number;
     /** 指摘への返信の、投稿と投稿の間（ミリ秒。PBI-352）。 */
     remarkReplyIntervalMs?: number;
+    /** 1件の記録に入れる、返信の結果の件数の上限（PBI-352）。 */
+    remarkRepliesPerRecord?: number;
     /** レビューのタスクが GitHub の一時的な失敗を自動でやり直すまでの待ち（ミリ秒。PBI-301）。 */
     reviewRetryDelaysMs?: readonly number[];
     projects?: MemoryProjectStore;
@@ -1604,6 +1606,9 @@ function makeService(
     ...(options.stopNoticeTimeoutMs ? { stopNoticeTimeoutMs: options.stopNoticeTimeoutMs } : {}),
     // 指摘への返信（PBI-352）の、投稿と投稿の間は、確かめるテストのほかでは置かない
     remarkReplyIntervalMs: options.remarkReplyIntervalMs ?? 0,
+    ...(options.remarkRepliesPerRecord
+      ? { remarkRepliesPerRecord: options.remarkRepliesPerRecord }
+      : {}),
     ...(options.reviewRetryDelaysMs ? { reviewRetryDelaysMs: options.reviewRetryDelaysMs } : {}),
     // 情報収集は、既定では集めずに進める（情報収集のテストでは差し替える）
     ...(options.realGatherer ? {} : { gatherer: options.gatherer ?? (async () => undefined) }),
@@ -4429,6 +4434,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       templates?: ServiceDeps["templates"];
       stopNoticeTimeoutMs?: number;
       remarkReplyIntervalMs?: number;
+      remarkRepliesPerRecord?: number;
       github?: FakeGitHub;
     } = {},
   ) {
@@ -10005,6 +10011,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       memory?: boolean;
       stopNoticeTimeoutMs?: number;
       remarkReplyIntervalMs?: number;
+      remarkRepliesPerRecord?: number;
       github?: FakeGitHub;
     } = {},
   ) {
@@ -13601,6 +13608,93 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(b.service.queuedTaskIds()).toEqual([]);
         warn.mockRestore();
         b.activity.close();
+      });
+
+      it("レート制限での投稿の停止は、記録の区切りを越えて、提出の残りのすべてに及ぶ（結果が多くて記録が分かれても、残りを投稿し直さない）", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", text: "直した" },
+              { remarkId: "implement-1-2", text: "足した" },
+              { remarkId: "implement-1-3", text: "変えた" },
+              { remarkId: "implement-1-4", text: "消した" },
+              { remarkId: "implement-1-5", text: "移した" },
+            ]),
+          ],
+          { pulls, now: later, remarkRepliesPerRecord: 2 },
+        );
+        pulls.feedbackList = [inline(), comment(401), comment(402), comment(403), comment(404)];
+        await service.checkPullRequests();
+        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
+          await service.runNext(id);
+        }
+        pulls.rateLimited = true;
+        await drain(service);
+        pulls.rateLimited = false;
+        await drain(service);
+        // 投稿を試みたのは、制限に当たった1件だけ。残りは、3つの記録に分かれて、すべて失敗として残る
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id).map((p) => p.results.map((r) => r.remarkId))).toEqual([
+          ["implement-1-1", "implement-1-2"],
+          ["implement-1-3", "implement-1-4"],
+          ["implement-1-5"],
+        ]);
+        expect(
+          posted(service, id)
+            .flatMap((p) => p.results)
+            .slice(1)
+            .map((r) => r.failed),
+        ).toEqual(Array.from({ length: 4 }, () => ({ code: "github.replySkippedAfterRateLimit" })));
+        expect(service.queuedTaskIds()).toEqual([]);
+        activity.close();
+      });
+
+      it("同じアカウントの先の投稿がレート制限に当たったら、順番を待っていた投稿（ほかのタスクのものも）は、投稿せずに止める。制限の後に頼まれた投稿は、止めない", async () => {
+        const { activity, service } = await toImplementGate([], { now: later });
+        type Sent<T> = { value: T } | "limited" | "skipped";
+        const post = <T>(work: () => Promise<T>) =>
+          (
+            service as unknown as {
+              remarkReplyPost(
+                key: string,
+                still: () => boolean,
+                work: () => Promise<T>,
+              ): Promise<Sent<T>>;
+            }
+          ).remarkReplyPost("github.com:me", () => true, work);
+        const gate = Promise.withResolvers<void>();
+        const ran: string[] = [];
+        // 先の投稿が通信している間に、同じアカウントの投稿が2件、順番を待つ
+        const first = post(async () => {
+          await gate.promise;
+          throw rateLimitError();
+        });
+        const second = post(async () => {
+          ran.push("second");
+          return 2;
+        });
+        const third = post(async () => {
+          ran.push("third");
+          return 3;
+        });
+        gate.resolve();
+        await expect(first).rejects.toThrow();
+        expect(await second).toBe("limited");
+        expect(await third).toBe("limited");
+        expect(ran).toEqual([]);
+        // 制限の後に頼まれた投稿は、止めない（待ちの期限は持たない）
+        expect(await post(async () => 4)).toEqual({ value: 4 });
+        // 制限でない失敗は、順番を待っている投稿を止めない
+        const failing = post(async () => {
+          throw new Error("500");
+        });
+        const next = post(async () => 5);
+        await expect(failing).rejects.toThrow("500");
+        expect(await next).toEqual({ value: 5 });
+        activity.close();
       });
 
       it("続けて投稿するときは、投稿と投稿の間をあける", async () => {

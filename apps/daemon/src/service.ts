@@ -777,6 +777,8 @@ export type ServiceDeps = {
    * 指摘への返信の結果を記録できなかった・進められなかったとき、次に試すまで待つ時間（ミリ秒）。既定は 1 分。
    */
   remarkReplyRetryMs?: number;
+  /** 1件の記録（RemarkRepliesPosted）に入れる、返信の結果の件数の上限。既定は 200（イベントの上限）。 */
+  remarkRepliesPerRecord?: number;
   /**
    * Sacty のレビューのタスクが、GitHub の一時的な失敗（5xx・レート制限・接続の失敗）で止まりそうなとき、自動でやり直すまでの
    * 待ち時間（ミリ秒）の並び（PBI-301）。長さが、やり直しの回数の上限。既定は 15 秒・1 分・3 分・5 分の 4 回（計 9 分余り）。
@@ -3589,25 +3591,44 @@ export class TaskService {
   /** ホストとアカウントごとの、最後に指摘への返信を投稿した時刻（投稿の間隔をあけるため）。 */
   private readonly remarkReplyLastPostAt = new Map<string, number>();
 
+  /** 指摘への返信の投稿を頼まれた順の番号（順番を待っていた投稿かを、時刻でなく順で見分ける）。 */
+  private remarkReplyRequests = 0;
+  /**
+   * ホストとアカウントごとの、最後に GitHub のレート制限に当たったときまでに頼まれていた、投稿の番号。これ以下の番号の
+   * 投稿は、制限に当たったときに順番を待っていた。
+   */
+  private readonly remarkReplyLimitedUpTo = new Map<string, number>();
+
   /**
    * 指摘への返信を、1件投稿する（行への返信も、PR のコメントも、ここを通す）。ホストとアカウントごとに、1件ずつ順に投稿し、
    * 投稿と投稿の間をあける（GitHub の、書き込みを続けて送るときの制限に当たりにくくする。同じアカウントで返信する、ほかの
-   * タスクの投稿とも合わせる）。順番と間隔を待っている間に、投稿してよい状態でなくなったら（still が偽）、投稿せずに
-   * "skipped" を返す。
+   * タスクの投稿とも合わせる）。
+   * - 順番を待っている間に、同じアカウントの先の投稿がレート制限に当たったら、投稿せずに "limited" を返す（制限の間は、
+   *   待っていた投稿も続けない。制限の後に頼まれた投稿は、止めない。待ちの期限は持たない）
+   * - 順番と間隔を待っている間に、投稿してよい状態でなくなったら（still が偽）、投稿せずに "skipped" を返す
    */
   private remarkReplyPost<T>(
     key: string,
     still: () => boolean,
     work: () => Promise<T>,
-  ): Promise<{ value: T } | "skipped"> {
+  ): Promise<{ value: T } | "limited" | "skipped"> {
+    this.remarkReplyRequests += 1;
+    const requested = this.remarkReplyRequests;
     return this.serialized(`remark-reply-post:${key}`, async () => {
+      if ((this.remarkReplyLimitedUpTo.get(key) ?? 0) >= requested) return "limited" as const;
       const last = this.remarkReplyLastPostAt.get(key);
       const wait =
         last === undefined ? 0 : last + (this.deps.remarkReplyIntervalMs ?? 1_000) - Date.now();
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
       if (!still()) return "skipped" as const;
       this.remarkReplyLastPostAt.set(key, Date.now());
-      return { value: await work() };
+      try {
+        return { value: await work() };
+      } catch (error) {
+        // 順番を待っている、同じアカウントの後の投稿に、制限に当たったことを伝える
+        if (rateLimited(error)) this.remarkReplyLimitedUpTo.set(key, this.remarkReplyRequests);
+        throw error;
+      }
     });
   }
 
@@ -3657,17 +3678,25 @@ export class TaskService {
     if (!account) return;
     const postKey = `${httpsHost(`${due.repo}/`) ?? ""}:${account.toLowerCase()}`;
     const record = () => {
-      const latest = this.tasks.get(taskId);
-      if (!latest || !valid() || results.length === 0) return;
-      this.append(latest, [
-        {
-          actor: "sacty",
-          event: {
-            type: "RemarkRepliesPosted",
-            payload: { step: due.step, submission: due.submission, number: due.number, results },
+      if (!this.tasks.get(taskId) || !valid() || results.length === 0) return;
+      // 結果が多ければ、記録を分ける（1件の記録に入れる件数の上限まで）
+      const size = Math.max(1, this.deps.remarkRepliesPerRecord ?? REMARK_REPLIES_PER_RECORD);
+      for (let from = 0; from < results.length; from += size) {
+        this.append(this.mustGet(taskId), [
+          {
+            actor: "sacty",
+            event: {
+              type: "RemarkRepliesPosted",
+              payload: {
+                step: due.step,
+                submission: due.submission,
+                number: due.number,
+                results: results.slice(from, from + size),
+              },
+            },
           },
-        },
-      ]);
+        ]);
+      }
     };
     // 返信に使うアカウントを、投稿の前に記録する（投稿の後・結果の記録の前に止まり、その間にプロジェクトのアカウントが
     // 変わっても、前のアカウントの投稿を、投稿済みの返信として見つけ、PR の指摘として取り込まないため）
@@ -3804,6 +3833,12 @@ export class TaskService {
               if (!valid()) return;
               continue;
             }
+            // 順番を待っている間に、同じアカウントの先の投稿（ほかのタスクのものも）が制限に当たった：投稿せずに止める
+            if (sent === "limited") {
+              limitHit = true;
+              results.push({ ...base, failed: message("github.replySkippedAfterRateLimit") });
+              continue;
+            }
             results.push({ ...base, inline: true, ...posted(sent.value.url) });
             continue;
           } catch (error) {
@@ -3857,6 +3892,11 @@ export class TaskService {
         );
         if (sent === "skipped") {
           if (!valid()) return;
+          continue;
+        }
+        if (sent === "limited") {
+          limitHit = true;
+          results.push({ ...base, failed: message("github.replySkippedAfterRateLimit") });
           continue;
         }
         results.push({ ...base, ...posted(sent.value.url) });
@@ -16923,8 +16963,11 @@ function rateLimited(error: unknown): boolean {
   );
 }
 
-/** 1回に返信する指摘の件数の上限（RemarkRepliesPosted の results の上限）。残りは、次の処理で返信する。 */
-const REMARK_REPLIES_MAX = 200;
+/**
+ * 1件の記録（RemarkRepliesPosted）に入れる、返信の結果の件数の上限（results の上限）。返信する指摘がこれより多ければ、
+ * 記録を分ける（投稿は、1回の処理で続けて行う。レート制限・時間切れで投稿を止めたら、残りのすべてに及ぶ）。
+ */
+const REMARK_REPLIES_PER_RECORD = 200;
 
 /** PR に返信する、指摘への対応（PBI-352）。 */
 export type RemarkReplyDue = {
@@ -17023,7 +17066,7 @@ export function awaitingRemarkReplies(task: Task):
         number: pr.number,
         repo: pr.repo,
         url: pr.url ?? `${pr.repo.replace(/\/+$/, "")}/pull/${pr.number}`,
-        replies: replies.slice(0, REMARK_REPLIES_MAX),
+        replies,
       }
     : undefined;
 }
