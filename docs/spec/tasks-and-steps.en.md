@@ -90,6 +90,10 @@ The steps fall into the following categories.
 
 Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `EXPORT_STEPS`, `exportSteps`), `packages/core/src/projection.ts` (`investigationIsGoal`), `apps/daemon/src/service.ts` (`REPO_STEPS`, `submitEvents`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`)
 
+For a task with multiple specified repositories, the Requirements, Design, and Split steps pass copies of the code to the agent. Before a repository is chosen, the latest default branches are placed in the workspace; afterward, the selected repository is at its starting commit in the workspace and the latest default branches of the others are mounted read-only. The instructions list each repository, location, branch, and commit, ask requirements to identify their repositories, and ask the design to describe implementation per repository. If preparation fails, sacty records the repository and reason, pauses, and retries on resume.
+
+Code: `apps/daemon/src/service.ts` (`runNextInner`), `apps/daemon/src/prompts.ts` (`buildPrompt`)
+
 ### Form of the result of a task whose goal is investigation
 
 - The instructions of a task whose goal is investigation have it follow the form of the result (headings, sections, tables, order of items, length, and so on) when the task specifies one.

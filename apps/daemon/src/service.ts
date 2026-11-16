@@ -9717,7 +9717,21 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "AgentRunFailed",
-            payload: { runId, step, agentId: agent.id, reason: "error", message: ready.message },
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              reason: "error",
+              message:
+                task.repos &&
+                !repoless &&
+                (step === "requirements" || step === "design" || step === "split")
+                  ? message("repo.prepareFailed", {
+                      repo: task.repo ?? task.repository?.url ?? "",
+                      detail: ready.message,
+                    })
+                  : ready.message,
+            },
           },
         },
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
@@ -9856,6 +9870,12 @@ export class TaskService {
           })
         : undefined;
     const inputDir = inputs ? join(this.deps.workspaceRoot, "_input", runId) : undefined;
+    const multiRepoStep = Boolean(
+      task.repos && (step === "requirements" || step === "design" || step === "split"),
+    );
+    const otherReposDir =
+      multiRepoStep && !repoless ? join(this.deps.workspaceRoot, "_repos", runId) : undefined;
+    const codeRepositories: { repo: string; path: string; branch: string; commit: string }[] = [];
     // 提出を PR のレビューの子タスクがレビューする工程か（PBI-346）。指示と記録で同じ判定を使うよう、実行の前に1回だけ決める
     const pullRequestReview = this.reviewedByPullRequest(this.mustGet(task.id), step);
     try {
@@ -9922,11 +9942,73 @@ export class TaskService {
             outcome: {
               kind: "failed",
               reason: "error",
-              message: redactText(errorText(error), usedSecrets),
+              message:
+                multiRepoStep && latest.repository
+                  ? message("repo.prepareFailed", {
+                      repo: latest.repository.url,
+                      detail: redactText(errorText(error), usedSecrets),
+                    })
+                  : redactText(errorText(error), usedSecrets),
             },
             costUsd: 0,
             estimated: false,
           };
+        }
+      }
+      if (multiRepoStep && snapshotDir && !executed) {
+        const root = join(this.deps.workspaceRoot, task.id, "repos");
+        const chosen = this.mustGet(task.id).repository;
+        for (const [index, repo] of (task.repos ?? []).entries()) {
+          const dir = repositoryDirName(repo, index);
+          const selected = !repoless && chosen && repoKey(chosen.url) === repoKey(repo);
+          if (selected && chosen) {
+            codeRepositories.push({
+              repo,
+              path: ".",
+              branch: chosen.baseBranch,
+              commit: chosen.baseCommit,
+            });
+            continue;
+          }
+          const clone = join(root, dir);
+          const gitDir = join(root, `${dir}.git`);
+          const branchFile = join(root, `${dir}.branch`);
+          const secrets: string[] = [];
+          try {
+            mkdirSync(root, { recursive: true });
+            const auth = await this.gitAuth(task, repo, secrets);
+            let branch: string;
+            if (existsSync(clone) && existsSync(gitDir) && existsSync(branchFile)) {
+              branch = readFileSync(branchFile, "utf8");
+            } else {
+              rmSync(branchFile, { force: true });
+              const prepared = await this.deps.repos.prepare(clone, gitDir, repo, undefined, auth);
+              branch = prepared.baseBranch;
+              writeFileSync(branchFile, branch);
+            }
+            const commit = await this.deps.repos.fetchBranch(gitDir, branch, auth);
+            await this.deps.repos.snapshot(gitDir, commit, join(otherReposDir ?? snapshotDir, dir));
+            codeRepositories.push({
+              repo,
+              path: otherReposDir ? `/sacty-repos/${dir}` : dir,
+              branch,
+              commit,
+            });
+          } catch (error) {
+            executed = {
+              outcome: {
+                kind: "failed",
+                reason: "error",
+                message: message("repo.prepareFailed", {
+                  repo,
+                  detail: redactText(errorText(error), secrets),
+                }),
+              },
+              costUsd: 0,
+              estimated: false,
+            };
+            break;
+          }
         }
       }
       if (inputs && inputDir && !executed) {
@@ -10006,6 +10088,7 @@ export class TaskService {
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
             ...(mergeConflicts.length > 0 ? { mergeConflicts } : {}),
             ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
+            ...(multiRepoStep ? { codeRepositories } : {}),
             // 提出を PR のレビューの子タスクがレビューする工程は、セルフレビューを省く（PBI-346）
             ...(pullRequestReview ? { pullRequestReview } : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
@@ -10024,19 +10107,28 @@ export class TaskService {
         role: step,
         workspaceDir,
         // 差分の全体（PBI-65）と出典の分類の Input は、作業領域の外に読み取り専用でマウントする
-        ...(reviewDiff !== undefined && reviewDiffDir
+        ...((reviewDiff !== undefined && reviewDiffDir) || inputDir || otherReposDir
           ? {
               mounts: [
-                { hostPath: reviewDiffDir, containerPath: CONTAINER_REVIEW_DIR, readOnly: true },
+                ...(reviewDiff !== undefined && reviewDiffDir
+                  ? [
+                      {
+                        hostPath: reviewDiffDir,
+                        containerPath: CONTAINER_REVIEW_DIR,
+                        readOnly: true,
+                      },
+                    ]
+                  : []),
+                ...(inputDir
+                  ? [{ hostPath: inputDir, containerPath: CONTAINER_INPUT_DIR, readOnly: true }]
+                  : []),
+                ...(otherReposDir
+                  ? [{ hostPath: otherReposDir, containerPath: "/sacty-repos", readOnly: true }]
+                  : []),
               ],
             }
-          : inputDir
-            ? {
-                mounts: [
-                  { hostPath: inputDir, containerPath: CONTAINER_INPUT_DIR, readOnly: true },
-                ],
-              }
-            : {}),
+          : {}),
+        ...(otherReposDir ? { readDirs: ["/sacty-repos"] } : {}),
         context: context && { dir: context.dir, ...context.placed },
         ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
         ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
@@ -10048,6 +10140,7 @@ export class TaskService {
       if (snapshotDir) await rm(snapshotDir, { recursive: true, force: true });
       if (reviewDiffDir) await rm(reviewDiffDir, { recursive: true, force: true });
       if (inputDir) await rm(inputDir, { recursive: true, force: true });
+      if (otherReposDir) await rm(otherReposDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
 

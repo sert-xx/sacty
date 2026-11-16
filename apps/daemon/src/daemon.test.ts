@@ -33452,6 +33452,226 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     activity.forTask(id).find((e) => e.type === "StepsChosen");
   const textOf = (value: unknown) => renderMessage(value as DaemonText, "ja");
 
+  it("複数指定は次の工程で clone を再利用し、最新のコミットを取得する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "copy-refresh";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: {
+              steps: ["requirements", "design"],
+              plan: "split",
+              reason: "分割",
+              costUsd: 0,
+            },
+          },
+        },
+      ],
+    });
+    const { service, executor, repos } = makeService(activity, [out("# 要求要件"), out("# 設計")], {
+      projects: twoRepos(),
+    });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    repos.branchHead = "d".repeat(40);
+    await service.runNext(id);
+    expect(repos.prepared.map((p) => p.url)).toEqual([API, WEB]);
+    expect(repos.fetchedBranches).toHaveLength(4);
+    expect(promptOf(executor, 1)).toContain(repos.branchHead);
+    activity.close();
+  });
+
+  it.each(["requirements", "design", "split"] as const)(
+    "複数指定の%sは選択前に両方の最新を読み、clone を再利用する",
+    async (step) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const id = `copies-${step}`;
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "複数",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: [API, WEB],
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: [step], plan: "split", reason: "分割", costUsd: 0 },
+            },
+          },
+        ],
+      });
+      const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+        projects: twoRepos(),
+      });
+      await service.runNext(id);
+      expect(executor.workspaceFiles[0]).toEqual(["1-acme__api", "2-acme__web"]);
+      expect(repos.prepared.map((p) => p.url)).toEqual([API, WEB]);
+      expect(repos.fetchedBranches.map((p) => p.branch)).toEqual(["main", "main"]);
+      expect(promptOf(executor, 0)).toContain(`1-acme__api（main、${repos.branchHead}）`);
+      expect(promptOf(executor, 0)).toContain(`2-acme__web（main、${repos.branchHead}）`);
+      expect(promptOf(executor, 0)).not.toContain("作業領域（カレントディレクトリ）は空");
+      expect(existsSync(executor.dirs[0] ?? "")).toBe(false);
+      activity.close();
+    },
+  );
+
+  it.each(["requirements", "design", "split"] as const)(
+    "複数指定の%sは選択後に起点と他の写しを読み、実行後に片付ける",
+    async (step) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const id = `chosen-copies-${step}`;
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "複数",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: [API, WEB],
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          {
+            actor: "person",
+            event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
+          },
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: [step], plan: "split", reason: "分割", costUsd: 0 },
+            },
+          },
+        ],
+      });
+      const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+        projects: twoRepos(),
+      });
+      let mounted: { path: string; readOnly: boolean; content: string } | undefined;
+      executor.respond = (invocation) => {
+        const mount = invocation.mounts?.find((m) => m.containerPath === "/sacty-repos");
+        if (mount)
+          mounted = {
+            path: mount.hostPath,
+            readOnly: mount.readOnly,
+            content: readFileSync(join(mount.hostPath, "2-acme__web", "README.md"), "utf8"),
+          };
+        return undefined;
+      };
+      await service.runNext(id);
+      expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
+      expect(mounted).toMatchObject({ readOnly: true, content: `base ${repos.branchHead}` });
+      expect(existsSync(mounted?.path ?? "")).toBe(false);
+      expect(promptOf(executor, 0)).toContain(`2-acme__web（main、${repos.branchHead}）`);
+      expect(promptOf(executor, 0)).toContain(API);
+      activity.close();
+    },
+  );
+
+  it.each([false, true])(
+    "複数指定の写しの失敗は選択状態 %s でも停止し、復旧後に再開する",
+    async (chosen) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const id = `copy-failure-${chosen}`;
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "複数",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: [API, WEB],
+                budgetCapUsd: 1,
+              },
+            },
+          },
+          ...(chosen
+            ? [
+                {
+                  actor: "person" as const,
+                  event: {
+                    type: "RepositoryChosen" as const,
+                    payload: { repo: API, reason: "選択" },
+                  },
+                },
+              ]
+            : []),
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+            },
+          },
+        ],
+      });
+      const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+        projects: twoRepos(),
+      });
+      repos.fetchBranchFail = "fetch failed";
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(0);
+      const failed = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+      expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(
+        chosen ? WEB : API,
+      );
+      expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(
+        "fetch failed",
+      );
+      expect(service.get(id)?.task.status).toBe("paused");
+      repos.fetchBranchFail = undefined;
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(1);
+      activity.close();
+    },
+  );
+
   it("複数の指定を正規化して記録し、不正な指定を断る", () => {
     const activity = new SqliteActivityStore(dbPath);
     const projects = twoRepos();
