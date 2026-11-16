@@ -33819,72 +33819,144 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     },
   );
 
-  it("選択後の要求要件の準備で照合後に定義を読めなくても停止し、再開する", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const projects = twoRepos();
-    const id = "multiple-preparation-error";
-    activity.append({
-      taskId: id,
-      projectId: "default",
-      events: [
-        {
-          actor: "person",
-          event: {
-            type: "TaskCreated",
-            payload: {
-              title: "複数",
-              body: "",
-              start: "sacty",
-              noRepo: true,
-              repos: [API, WEB],
-              budgetCapUsd: 1,
+  it.each([1, 2])(
+    "選択後の要求要件の準備で%d回目の照合後に定義を読めなくても停止し、再開する",
+    async (failureAfter) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const projects = twoRepos();
+      const id = "multiple-preparation-error";
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "複数",
+                body: "",
+                start: "sacty",
+                noRepo: true,
+                repos: [API, WEB],
+                budgetCapUsd: 1,
+              },
             },
           },
-        },
-        {
-          actor: "person",
-          event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
-        },
-        {
-          actor: "orchestrator",
-          event: {
-            type: "StepsChosen",
-            payload: { steps: [...STEP_PLANS.split], plan: "split", reason: "分割", costUsd: 0 },
+          {
+            actor: "person",
+            event: { type: "RepositoryChosen", payload: { repo: API, reason: "選択" } },
           },
-        },
-      ],
-    });
-    const { service, executor } = makeService(activity, [out("# 要求要件")], { projects });
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: { steps: [...STEP_PLANS.split], plan: "split", reason: "分割", costUsd: 0 },
+            },
+          },
+        ],
+      });
+      const contextImages: NonNullable<ServiceDeps["contextImages"]> = {
+        images: () => [
+          {
+            name: "web",
+            description: "web",
+            from: "context",
+            image: "example",
+            language: {
+              name: "web",
+              image: "example",
+              description: "web",
+              baseImage: "node",
+              env: {},
+            },
+            state: "ready" as const,
+            log: "",
+          },
+        ],
+        pending: () => false,
+        view: () => [],
+        rebuild: () => ({ ok: true }),
+        refresh: async () => {},
+      };
+      const { service, executor } = makeService(activity, [out("# 要求要件")], {
+        projects,
+        contextImages,
+      });
+      const list = service.projectRepositories.bind(service);
+      const get = projects.get.bind(projects);
+      let failNextRead = false;
+      let listings = 0;
+      const read = vi.spyOn(projects, "get").mockImplementation((projectId) => {
+        if (failNextRead) {
+          failNextRead = false;
+          throw new Error("late step failure");
+        }
+        return get(projectId);
+      });
+      const listing = vi
+        .spyOn(service, "projectRepositories")
+        .mockImplementation(async (projectId) => {
+          const result = await list(projectId);
+          if (++listings === failureAfter) failNextRead = true;
+          return result;
+        });
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("paused");
+      const failure = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+      expect(failure?.type === "AgentRunFailed" && failure.payload.step).toBe("requirements");
+      expect(failure?.type === "AgentRunFailed" && textOf(failure.payload.message)).toContain(
+        "late step failure",
+      );
+      listing.mockRestore();
+      read.mockRestore();
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(1);
+      activity.close();
+    },
+  );
+
+  it("オーケストレーターの候補照合後の定義読み取り失敗で停止し再開する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const { service, executor } = makeService(
+      activity,
+      [plan({ plan: "investigate", investigation: "content" })],
+      { projects, realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
     const list = service.projectRepositories.bind(service);
     const get = projects.get.bind(projects);
-    let failNextRead = false;
+    let listings = 0;
+    let fail = false;
     const read = vi.spyOn(projects, "get").mockImplementation((projectId) => {
-      if (failNextRead) {
-        failNextRead = false;
-        throw new Error("late step failure");
+      if (fail) {
+        fail = false;
+        throw new Error("orchestrator late read");
       }
       return get(projectId);
     });
     const listing = vi
       .spyOn(service, "projectRepositories")
-      .mockImplementationOnce(async (projectId) => {
+      .mockImplementation(async (projectId) => {
         const result = await list(projectId);
-        failNextRead = true;
+        if (++listings === 2) fail = true;
         return result;
       });
     await service.runNext(id);
     expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.status).toBe("paused");
-    const failure = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
-    expect(failure?.type === "AgentRunFailed" && failure.payload.step).toBe("requirements");
-    expect(failure?.type === "AgentRunFailed" && textOf(failure.payload.message)).toContain(
-      "late step failure",
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    expect(failure?.type === "OrchestratorFailed" && textOf(failure.payload.message)).toContain(
+      "orchestrator late read",
     );
     listing.mockRestore();
     read.mockRestore();
     service.resume(id, {});
     await service.runNext(id);
-    expect(executor.calls).toHaveLength(1);
+    expect(executor.calls.length).toBeGreaterThan(0);
     activity.close();
   });
 
@@ -33923,6 +33995,37 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     service.resume(id, {});
     await service.runNext(id);
     expect(executor.calls.length).toBeGreaterThan(1);
+    activity.close();
+  });
+
+  it("選択した2件目の準備失敗はその名前と原因を示し、再開できる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const { service, executor, repos } = makeService(
+      activity,
+      [plan({ plan: "investigate", investigation: "content" })],
+      { projects, realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [API, WEB] });
+    await service.pause(id);
+    await service.chooseRepository(id, WEB);
+    service.resume(id, {});
+    repos.fail = "clone failed";
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    const text = failure?.type === "OrchestratorFailed" ? textOf(failure.payload.message) : "";
+    expect(text).toContain(WEB);
+    expect(text).toContain("clone failed");
+    expect(text).not.toContain(API);
+    expect(
+      failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "en"),
+    ).toContain(`Could not prepare the repository (${WEB}): clone failed`);
+    repos.fail = undefined;
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(executor.calls.length).toBeGreaterThan(0);
     activity.close();
   });
 
@@ -34660,6 +34763,10 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       await service.runNext(id);
       expect(service.get(id)?.task.status).toBe("paused");
       expect(service.get(id)?.task.split).toBeUndefined();
+      const failure = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+      expect(failure?.type === "AgentRunFailed" && textOf(failure.payload.message)).toContain(
+        extra,
+      );
       expect(promptOf(executor, 4)).toContain(WEB);
       expect(promptOf(executor, 4)).not.toContain(extra);
       service.resume(id, {});
@@ -44024,6 +44131,55 @@ describe("タスクの開始時の情報収集", () => {
     expect(executor.stdins[0]).toContain(api);
     expect(executor.stdins[0]).toContain(web);
     expect(executor.stdins[0]).toContain("指定した次のリポジトリをすべて");
+    activity.close();
+  });
+
+  it("情報収集の候補照合後に定義を読めなければ停止し再開する", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-late-definition.db"));
+    const api = "https://github.com/acme/api";
+    const web = "https://github.com/acme/web";
+    const projects = projectsWithAccount();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [api, web].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    const { service, executor } = makeService(activity, [gathered()], {
+      realGatherer: true,
+      projects,
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [api, web] });
+    const list = service.projectRepositories.bind(service);
+    const get = projects.get.bind(projects);
+    let listings = 0;
+    let fail = false;
+    const read = vi.spyOn(projects, "get").mockImplementation((projectId) => {
+      if (fail) {
+        fail = false;
+        throw new Error("gather late read");
+      }
+      return get(projectId);
+    });
+    const listing = vi
+      .spyOn(service, "projectRepositories")
+      .mockImplementation(async (projectId) => {
+        const result = await list(projectId);
+        if (++listings === 2) fail = true;
+        return result;
+      });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failure = activity.forTask(id).find((event) => event.type === "OrchestratorFailed");
+    expect(
+      failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "ja"),
+    ).toContain("gather late read");
+    listing.mockRestore();
+    read.mockRestore();
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(service.get(id)?.task.gathered?.brief).toBe(BRIEF);
     activity.close();
   });
 

@@ -9040,7 +9040,84 @@ export class TaskService {
             }
           } else if (this.awaitingContextImages(task)) return;
         }
-        await this.runNextInner(taskId);
+        try {
+          await this.runNextInner(taskId);
+        } catch (error) {
+          const latest = this.mustGet(taskId);
+          const step = activeStep(latest);
+          const gathering = awaitingGathering(latest);
+          if (
+            !latest.repos ||
+            (latest.status !== "queued" && latest.status !== "running") ||
+            (!gathering &&
+              latest.steps.length > 0 &&
+              step !== "requirements" &&
+              step !== "design" &&
+              step !== "split")
+          )
+            throw error;
+          const text = errorText(error);
+          if (!gathering && latest.steps.length > 0 && step) {
+            const config = this.deps.config();
+            if (!config.ok) throw error;
+            const chosen = stepAgentFor(config.config, step, latest.agents?.[step]);
+            if (!chosen.ok) throw error;
+            const runId = latest.currentRunId ?? randomUUID();
+            this.append(latest, [
+              ...(!latest.currentRunId
+                ? [
+                    {
+                      actor: "sacty" as const,
+                      event: {
+                        type: "AgentRunStarted" as const,
+                        payload: {
+                          runId,
+                          step,
+                          agentId: chosen.agent.id,
+                          ...agentSetting(chosen.agent),
+                          image: stepImageOf(latest, step) ?? DEFAULT_IMAGE_NAME,
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              {
+                actor: "sacty",
+                event: {
+                  type: "AgentRunFailed",
+                  payload: {
+                    runId,
+                    step,
+                    agentId: chosen.agent.id,
+                    reason: "error",
+                    message: text,
+                  },
+                },
+              },
+              { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+            ]);
+          } else {
+            this.append(latest, [
+              {
+                actor: gathering ? "gatherer" : "orchestrator",
+                event: {
+                  type: "OrchestratorFailed",
+                  payload: {
+                    reason: "error",
+                    message: text,
+                    agentId: "unknown",
+                    costUsd: 0,
+                    estimated: false,
+                  },
+                },
+              },
+              {
+                actor: "sacty",
+                event: { type: "TaskPaused", payload: { reason: "error", message: text } },
+              },
+            ]);
+          }
+        }
       } finally {
         if (this.pauseRequested.has(taskId)) {
           // 止めたコンテナが本当に無くなったかを確かめてから、一時停止を記録する
@@ -9212,8 +9289,8 @@ export class TaskService {
           step === "design" ||
           step === "split")
       ) {
-        const text = message("repo.noLongerTarget", {
-          repo: initial.repos[0] ?? "",
+        const text = message("repo.prepareFailed", {
+          repo: initial.repo ?? initial.repos[0] ?? "",
           detail: ready.message,
         });
         if (awaitingGathering(initial) || initial.steps.length === 0) {
@@ -9628,8 +9705,8 @@ export class TaskService {
         throw error;
       ready = {
         ok: false,
-        message: message("repo.noLongerTarget", {
-          repo: task.repos[0] ?? "",
+        message: message("repo.prepareFailed", {
+          repo: task.repo ?? task.repos[0] ?? "",
           detail: errorText(error),
         }),
       };

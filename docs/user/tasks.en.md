@@ -337,9 +337,11 @@ How the code is read depends on whether the repository to work in is decided.
   The information gatherer also summarizes how tests are written (the framework, the command to run them, where they are placed, and examples of existing tests).
   Tests are not necessarily written just because the summary describes them.
   The Orchestrator decides how tests are handled.
-- For a task whose repository is not decided (a task created without a repository, or a ticket task before its repository is chosen), without a specified list it picks out at most 3 likely relevant repositories from the project's targets; with a list it reads all specified repositories through the GitHub read relay (`gh api`).
-  To let it read them, choose the GitHub account for that host in the project settings ([GitHub account in project settings](project-settings.en.md#github-account)).
-  Repositories it could not read, and Orgs whose repository list could not be read (expired credentials, missing permissions, and so on), are written in the summary as sources that could not be read.
+- For a task whose repository is not decided (a task created without a repository, or a ticket task before its repository is chosen), without a specified list it picks out at most 3 likely relevant repositories from the project's targets and reads them through the GitHub read relay (`gh api`).
+- With a specified list, it reads all specified repositories through the GitHub read relay, even after a repository is chosen.
+
+To use the GitHub read relay, choose the GitHub account for that host in the project settings ([GitHub account in project settings](project-settings.en.md#github-account)).
+Repositories it could not read, and Orgs whose repository list could not be read (expired credentials, missing permissions, and so on), are written in the summary as sources that could not be read.
 
 A child task that reviews a PR sacty opened does not gather information again.
 It inherits the summary of the parent task that opened the PR, and "Gathered information" shows "inherited from the parent task".
