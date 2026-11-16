@@ -3047,6 +3047,29 @@ describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
     },
   );
 
+  it("複数指定の、後の工程がある調査（前段の調査）の指示も、写しの場所とブランチとコミットを伝え、コードを読ませる（PBI-367）", () => {
+    const repos = ["https://github.com/acme/app", "https://github.com/acme/api"];
+    const copies = [
+      { repo: repos[0] as string, path: "1-acme__app", branch: "main", commit: "abc123" },
+      { repo: repos[1] as string, path: "2-acme__api", branch: "stable", commit: "def456" },
+    ];
+    // リポジトリを選ぶ前と、選んだ後
+    for (const repository of [undefined, task([]).repository]) {
+      const multi = task(["investigate", "implement"], { repos, repository, noRepo: true });
+      const prompt = buildPrompt(multi, "investigate", { codeRepositories: copies });
+      // 調査だけの指示ではなく、後の工程のための調査の指示である
+      expect(prompt).toContain("このあと 実装 の工程で進めます");
+      for (const copy of copies) {
+        expect(prompt).toContain(`${copy.repo}：${copy.path}（${copy.branch}、${copy.commit}）`);
+      }
+      expect(prompt).toContain("対象リポジトリのコードを読んで、");
+      expect(prompt).not.toContain("プロジェクトのコンテキストをもとに");
+      expect(prompt).not.toContain("作業領域（カレントディレクトリ）は空");
+      // 写しを渡さなければ（写しを用意しない呼び出し）、一覧は出ない
+      expect(buildPrompt(multi, "investigate")).not.toContain("1-acme__app（main、abc123）");
+    }
+  });
+
   it("複数を指定していないタスクの調査の指示は、写しの一覧を足さない（PBI-367）", () => {
     for (const steps of [["investigate"], ["investigate", "implement"]] as const) {
       const prompt = buildPrompt(task([...steps]), "investigate");
