@@ -17,7 +17,7 @@ vi.mock("@/app/actions", () => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 const { TaskDetailView } = await import("./task-detail");
 
-function task(repos: boolean, chosen: boolean) {
+function task(repos: boolean, chosen: boolean, urls = false) {
   const base = { taskId: "t1", projectId: "default", at: "2026-10-20T00:00:00.000Z" };
   const events = [
     {
@@ -32,7 +32,13 @@ function task(repos: boolean, chosen: boolean) {
         start: "sacty",
         budgetCapUsd: 10,
         noRepo: true,
-        ...(repos ? { repos: ["acme/a", "acme/b"] } : {}),
+        ...(repos
+          ? {
+              repos: urls
+                ? ["https://github.com/acme/a", "https://github.com/acme/b"]
+                : ["acme/a", "acme/b"],
+            }
+          : {}),
       },
     },
   ] as ActivityEvent[];
@@ -53,17 +59,29 @@ function task(repos: boolean, chosen: boolean) {
 describe("複数リポジトリの詳細（R-8）", () => {
   for (const lang of ["ja", "en"] as const) {
     for (const chosen of [false, true]) {
-      it(`${lang} で作業先の選択${chosen ? "後" : "前"}に指定を表示する`, () => {
-        locale = lang;
-        const html = renderToStaticMarkup(
-          createElement(TaskDetailView, {
-            data: { task: task(true, chosen), activity: [], projectName: "Project", children: [] },
-          }),
-        );
-        expect(html).toContain(`${messagesFor(lang).task.specifiedRepositories}: acme/a, acme/b`);
-        expect(html).not.toContain('data-testid="no-repository"');
-        if (chosen) expect(html).toContain("選択理由");
-      });
+      for (const urls of [false, true]) {
+        it(`${lang} で${urls ? "URL" : "名前"}の指定を作業先の選択${chosen ? "後" : "前"}に表示する`, () => {
+          locale = lang;
+          const html = renderToStaticMarkup(
+            createElement(TaskDetailView, {
+              data: {
+                task: task(true, chosen, urls),
+                activity: [],
+                projectName: "Project",
+                children: [],
+              },
+            }),
+          );
+          expect(html).toContain(
+            `${messagesFor(lang).task.specifiedRepositories}: ${urls ? "https://github.com/acme/a, https://github.com/acme/b" : "acme/a, acme/b"}`,
+          );
+          expect(html).not.toContain('data-testid="no-repository"');
+          if (chosen) {
+            expect(html).toContain(`${messagesFor(lang).task.workingRepository}: acme/a`);
+            expect(html).toContain("選択理由");
+          }
+        });
+      }
     }
     it(`${lang} でリポジトリ無しの印を表示する`, () => {
       locale = lang;
