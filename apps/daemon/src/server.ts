@@ -7,7 +7,11 @@ import { ZodError, z } from "zod";
 import { safeRelativePath } from "./agent-sessions.js";
 import { type AuditService, NoAuditService } from "./audits.js";
 import { MemoryScheduleStore, ScheduledTasks } from "./schedules.js";
-import { InvalidOperationError, type TaskService } from "./service.js";
+import {
+  InvalidOperationError,
+  InvalidTaskRepositoriesError,
+  type TaskService,
+} from "./service.js";
 import { validLogId } from "./session-logs.js";
 
 function sameToken(given: string, expected: string): boolean {
@@ -48,7 +52,10 @@ function handleError(c: Context, error: unknown) {
   }
   if (error instanceof InvalidOperationError) {
     // 理由は文言のコードと引数で返し、画面が画面の言語の文言にする（PBI-11）
-    return c.json({ error: "invalid_operation", messages: error.messages }, 409);
+    return c.json(
+      { error: "invalid_operation", messages: error.messages },
+      error instanceof InvalidTaskRepositoriesError ? 400 : 409,
+    );
   }
   throw error;
 }

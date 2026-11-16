@@ -1543,7 +1543,7 @@ export function applyEvent(
       task.status = "running";
       task.currentRunId = event.payload.runId;
       // 見直さずに工程を始めた（工程の見直しより前の作業履歴）なら、見直しは待たない
-      task.stepReview = undefined;
+      if (!event.payload.preparationFailed) task.stepReview = undefined;
       break;
 
     case "AgentRunCompleted":

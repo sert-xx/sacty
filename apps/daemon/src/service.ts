@@ -627,6 +627,8 @@ export class InvalidOperationError extends Error {
   }
 }
 
+export class InvalidTaskRepositoriesError extends InvalidOperationError {}
+
 /** 大まかな監査の記録の、メモリーをコンテキストにする提案（原因の形。PBI-128）。 */
 type SurveyPromotionRecord = NonNullable<
   Extract<EventInput, { type: "AuditSurveyed" }>["payload"]["promotions"]
@@ -7441,7 +7443,7 @@ export class TaskService {
       throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
     }
     if (input.repo !== undefined && input.repos !== undefined) {
-      throw new InvalidOperationError(message("task.repositoriesConflict"));
+      throw new InvalidTaskRepositoriesError(message("task.repositoriesConflict"));
     }
     const repositories: string[] = [];
     const projects = input.repos ? this.deps.projects.all() : undefined;
@@ -7451,7 +7453,7 @@ export class TaskService {
         ? responsibleProject(projects ?? [], name)
         : undefined;
       if (responsible?.project.id !== project.id) {
-        throw new InvalidOperationError(message("task.repositoriesUnknown", { repo: name }));
+        throw new InvalidTaskRepositoriesError(message("task.repositoriesUnknown", { repo: name }));
       }
       const normalized =
         responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(name);
@@ -7462,7 +7464,7 @@ export class TaskService {
       }
     }
     if (repositories.length > 10) {
-      throw new InvalidOperationError(message("task.repositoriesLimit"));
+      throw new InvalidTaskRepositoriesError(message("task.repositoriesLimit"));
     }
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
@@ -8994,6 +8996,7 @@ export class TaskService {
                       payload: {
                         runId,
                         step,
+                        preparationFailed: true,
                         agentId: chosen.agent.id,
                         ...agentSetting(chosen.agent),
                         image: stepImageOf(task, step) ?? DEFAULT_IMAGE_NAME,
@@ -9073,6 +9076,7 @@ export class TaskService {
                         payload: {
                           runId,
                           step,
+                          preparationFailed: true as const,
                           agentId: chosen.agent.id,
                           ...agentSetting(chosen.agent),
                           image: stepImageOf(latest, step) ?? DEFAULT_IMAGE_NAME,
@@ -9862,6 +9866,7 @@ export class TaskService {
     const otherReposDir =
       multiRepoStep && !repoless ? join(this.deps.workspaceRoot, "_repos", runId) : undefined;
     const codeRepositories: { repo: string; path: string; branch: string; commit: string }[] = [];
+    let copyFailed = false;
     // 提出を PR のレビューの子タスクがレビューする工程か（PBI-346）。指示と記録で同じ判定を使うよう、実行の前に1回だけ決める
     const pullRequestReview = this.reviewedByPullRequest(this.mustGet(task.id), step);
     try {
@@ -9924,6 +9929,7 @@ export class TaskService {
             writeFileSync(join(reviewDiffDir, REVIEW_DIFF_FILE), reviewDiff);
           }
         } catch (error) {
+          if (multiRepoStep) copyFailed = true;
           executed = {
             outcome: {
               kind: "failed",
@@ -9962,8 +9968,13 @@ export class TaskService {
           try {
             mkdirSync(root, { recursive: true });
             const auth = await this.gitAuth(task, repo, secrets);
-            if (!existsSync(clone) || !existsSync(gitDir)) {
+            const complete = join(root, `${dir}.complete`);
+            if (!existsSync(clone) || !existsSync(gitDir) || !existsSync(complete)) {
+              await rm(clone, { recursive: true, force: true });
+              await rm(gitDir, { recursive: true, force: true });
+              await rm(complete, { force: true });
               await this.deps.repos.prepare(clone, gitDir, repo, undefined, auth);
+              writeFileSync(complete, "");
             }
             const branch = await this.deps.repos.remoteDefaultBranch(gitDir, auth);
             const commit = await this.deps.repos.fetchBranch(gitDir, branch, auth);
@@ -9975,6 +9986,7 @@ export class TaskService {
               commit,
             });
           } catch (error) {
+            copyFailed = true;
             executed = {
               outcome: {
                 kind: "failed",
@@ -10154,22 +10166,24 @@ export class TaskService {
       this.append(task, [
         failed,
         // 失敗したら、止めずに代わりのエージェントでやり直す
-        this.pauseOrFallBack(
-          task.id,
-          { runId, role: step, agent, selected: chosen.agent },
-          outcome.reason,
-          {
-            actor: "sacty",
-            event: {
-              type: "TaskPaused",
-              payload: {
-                reason: this.stopReason(task.id, outcome.reason),
-                ...manual,
+        copyFailed
+          ? { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } }
+          : this.pauseOrFallBack(
+              task.id,
+              { runId, role: step, agent, selected: chosen.agent },
+              outcome.reason,
+              {
+                actor: "sacty",
+                event: {
+                  type: "TaskPaused",
+                  payload: {
+                    reason: this.stopReason(task.id, outcome.reason),
+                    ...manual,
+                  },
+                },
               },
-            },
-          },
-          config.config,
-        ),
+              config.config,
+            ),
       ]);
       // 失敗した実行の費用でも、80%の通知は判定する（一時停止はすでにしている）
       this.warnIfNeeded(this.mustGet(task.id));

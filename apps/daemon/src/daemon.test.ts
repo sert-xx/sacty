@@ -33481,8 +33481,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
           event: {
             type: "StepsChosen",
             payload: {
-              steps: ["requirements", "design"],
-              plan: "split",
+              steps: ["requirements", "design", "implement"],
+              plan: "standard",
               reason: "分割",
               costUsd: 0,
             },
@@ -33490,8 +33490,17 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
         },
       ],
     });
+    const projects = twoRepos();
     const { service, executor, repos } = makeService(activity, [out("# 要求要件"), out("# 設計")], {
-      projects: twoRepos(),
+      projects,
+    });
+    const originalSnapshot = repos.snapshot.bind(repos);
+    vi.spyOn(repos, "snapshot").mockImplementation(async (gitDir, commit, destination) => {
+      await originalSnapshot(gitDir, commit, destination);
+      writeFileSync(
+        join(destination, "README.md"),
+        `${gitDir.includes("1-acme__api") ? "api" : "web"} ${commit}`,
+      );
     });
     const copies: string[][] = [];
     executor.respond = () => {
@@ -33505,6 +33514,21 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     };
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
+    expect(service.get(id)?.task.stepReview).toBe("requirements");
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: API }],
+      githubAccounts: { "github.com": "me" },
+    });
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(service.get(id)?.task.stepReview).toBe("requirements");
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [API, WEB].map((target) => ({ scope: "repo" as const, target })),
+      githubAccounts: { "github.com": "me" },
+    });
+    service.resume(id, {});
     repos.branchHead = "d".repeat(40);
     repos.defaultBranch = "release+2026";
     await service.runNext(id);
@@ -33517,8 +33541,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       "release+2026",
     ]);
     expect(copies).toEqual([
-      [`base ${"c".repeat(40)}`, `base ${"c".repeat(40)}`],
-      [`base ${repos.branchHead}`, `base ${repos.branchHead}`],
+      [`api ${"c".repeat(40)}`, `web ${"c".repeat(40)}`],
+      [`api ${repos.branchHead}`, `web ${repos.branchHead}`],
     ]);
     expect(promptOf(executor, 1)).toContain(repos.branchHead);
     activity.close();
@@ -33678,21 +33702,37 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
           },
         ],
       });
+      const main = agent({ fallback: ["backup"] });
+      const backup = agent({ id: "backup" });
+      const config = () => {
+        const base = configOf(main)();
+        return base.ok
+          ? { ok: true as const, config: { ...base.config, agents: { [main.id]: main, backup } } }
+          : base;
+      };
       const { service, executor, repos } = makeService(activity, [out("# 結果")], {
         projects: twoRepos(),
+        config,
       });
-      repos.fetchBranchFail = "fetch failed";
+      const prepare = repos.prepare.bind(repos);
+      let failWeb = true;
+      vi.spyOn(repos, "prepare").mockImplementation(async (...args) => {
+        if (args[2] === WEB && failWeb) {
+          mkdirSync(args[0], { recursive: true });
+          mkdirSync(args[1], { recursive: true });
+          throw new Error("clone failed");
+        }
+        return prepare(...args);
+      });
       await service.runNext(id);
       expect(executor.calls).toHaveLength(0);
       const failed = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+      expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(WEB);
       expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(
-        chosen ? WEB : API,
-      );
-      expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(
-        "fetch failed",
+        "clone failed",
       );
       expect(service.get(id)?.task.status).toBe("paused");
-      repos.fetchBranchFail = undefined;
+      failWeb = false;
       service.resume(id, {});
       await service.runNext(id);
       expect(executor.calls).toHaveLength(1);
@@ -33832,7 +33872,7 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
         headers: { authorization: "Bearer tok", "content-type": "application/json" },
         body: JSON.stringify({ projectId: "default", title: "不正", ...inputs[kind] }),
       });
-      expect(response.status).toBe(409);
+      expect(response.status).toBe(400);
       const body = JSON.stringify(await response.json());
       expect(body).toContain(
         kind === "unknown"

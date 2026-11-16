@@ -1219,6 +1219,7 @@ const AgentRunStarted = z.object({
      * そのときのイメージから求める）。
      */
     image: TaskImageName.optional(),
+    preparationFailed: z.literal(true).optional(),
   }),
 });
 
