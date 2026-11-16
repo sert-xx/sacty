@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-16（UTC）
 - タスク: PBI-351
-- PR: なし
+- PR: #384
 - ブランチ: feat/issue-351-pr-scope-for-split-child
 - 関係する ADR: [分割の子タスクの PR に範囲を明記し、レビューに範囲外を要修正にさせない](../adr/20261116-0036-pr-scope-for-split-child-review.md)
 
