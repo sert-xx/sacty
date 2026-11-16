@@ -16,7 +16,7 @@
     "build": "npm run build -w @sacty/core -w @sacty/daemon -w @sacty/web -w @sacty/cli",
     "cli:install": "npm run build && node scripts/cli-install.mjs",
     "test": "vitest run",
-    "lint": "biome check .",
+    "lint": "biome check --error-on-warnings .",
     "format": "biome format --write .",
     "docs:diagrams": "node scripts/docs-diagrams/build.mjs",
     "docs:screenshots": "node scripts/docs-screenshots/capture.mjs",
