@@ -7,7 +7,7 @@ vi.mock("@/i18n/server", async () => {
   return { getMessages: async () => messagesFor("ja") };
 });
 
-const { saveProject } = await import("./daemon");
+const { createTask, saveProject } = await import("./daemon");
 
 const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>();
 beforeEach(() => {
@@ -65,4 +65,25 @@ describe("プロジェクトの保存に、読み込んだ版を添える（PBI-
     expect(duplicated).toMatchObject({ ok: false });
     expect(duplicated).not.toHaveProperty("conflict");
   });
+});
+
+it("複数リポジトリの入力を拒否した HTTP 400 の理由を返す", async () => {
+  fetchMock.mockResolvedValue(
+    Response.json(
+      {
+        error: "invalid_operation",
+        messages: [{ code: "task.repositoriesUnknown", params: { repo: "acme/missing" } }],
+      },
+      { status: 400 },
+    ),
+  );
+  const result = await createTask({
+    projectId: "p",
+    title: "Task",
+    body: "",
+    repos: ["acme/a", "acme/missing"],
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected rejection");
+  expect(result.message).toContain("acme/missing");
 });

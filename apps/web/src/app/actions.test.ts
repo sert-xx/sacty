@@ -71,6 +71,14 @@ const form = (values: Record<string, string>) => {
 describe("タスクの作成先（PBI-4a レビュー指摘）", () => {
   beforeEach(() => createTask.mockReset());
 
+  it("複数指定の拒否理由をフォームに返す", async () => {
+    createTask.mockResolvedValue({ ok: false, message: "対象外: acme/missing" });
+    const data = form({ title: "作業", projectId: "project-a" });
+    data.append("repo", "acme/a");
+    data.append("repo", "acme/missing");
+    expect(await createTaskAction({}, data)).toMatchObject({ message: "対象外: acme/missing" });
+  });
+
   it("作成先は、フォームを表示したときのプロジェクトで、送信時の cookie ではない", async () => {
     createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
     await expect(
@@ -702,5 +710,34 @@ describe("プロジェクトの削除（deleteProjectAction）", () => {
     expect(deleteProject).toHaveBeenCalledWith("p1");
     expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
     expect(order).toEqual(["revalidatePath", "redirect"]);
+  });
+});
+
+describe("複数リポジトリの作成", () => {
+  it.each([
+    [[], { repo: null }],
+    [["acme/a"], { repo: "acme/a" }],
+    [["acme/a", "", "acme/b"], { repos: ["acme/a", "acme/b"] }],
+  ])("値のある欄を作成入力に渡す %#", async (repos, expected) => {
+    createTask.mockReset();
+    createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
+    const data = form({ title: "作業", projectId: "project-a" });
+    for (const repo of repos) data.append("repo", repo);
+    await expect(createTaskAction({}, data)).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask).toHaveBeenCalledWith({
+      title: "作業",
+      body: "",
+      projectId: "project-a",
+      ...expected,
+    });
+  });
+
+  it("テンプレートの空欄は省略する", async () => {
+    createTask.mockReset();
+    createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
+    await expect(
+      createTaskAction({}, form({ template: "sacty-setup", projectId: "project-a", repo: "" })),
+    ).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask).toHaveBeenCalledWith({ template: "sacty-setup", projectId: "project-a" });
   });
 });

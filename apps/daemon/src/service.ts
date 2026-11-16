@@ -617,6 +617,13 @@ function reviewCleared(child: Task): boolean {
 /** 一時的な失敗のやり直しの途中で、やり直しをやめた（止める・中止・デーモンの停止）。何も記録せずに処理を終える。 */
 class RetryAbandoned extends Error {}
 
+/** 工程の実行前に設定・候補を読み取れなかった場合。 */
+class PreparationError extends Error {
+  constructor(readonly detail: DaemonText) {
+    super("preparation failed");
+  }
+}
+
 /** 状態に合わない操作（一時停止していないタスクの再開など）。APIでは409にする。 */
 /** 状態に合わない操作。理由は文言のコードと引数で持ち、画面が画面の言語にする（PBI-11）。 */
 export class InvalidOperationError extends Error {
@@ -4205,7 +4212,13 @@ export class TaskService {
     }
     // 再実行・作成時に人が指定した・プロジェクトの対象で指定したイメージがあれば、オーケストレーターに選ばせない（PBI-41・
     // PBI-318）。古い版の作業履歴で、人が作成時に進め方のすべての工程のイメージを指定したタスクも選ばせない
-    const pinned = this.pinnedImage(task);
+    let pinned: ReturnType<TaskService["pinnedImage"]>;
+    try {
+      pinned = this.pinnedImage(task);
+    } catch (error) {
+      if (!task.repos) throw error;
+      throw new PreparationError(redactText(errorText(error), []));
+    }
     const allRequested = legacyAllRequested(task);
     const candidates =
       pinned || allRequested
@@ -4221,7 +4234,14 @@ export class TaskService {
       ? (this.deps.projects.get(task.projectId)?.sharedComposes ?? [])
       : [];
     // 対象リポジトリの無いタスク（PBI-73）は、プロジェクトの対象（作業するリポジトリの候補）とコンテキストを渡して選ばせる
-    const contextSource = this.deps.projects.get(task.projectId)?.context;
+    const contextSource = (() => {
+      try {
+        return this.deps.projects.get(task.projectId)?.context;
+      } catch (error) {
+        if (!task.repos) throw error;
+        throw new PreparationError(redactText(errorText(error), []));
+      }
+    })();
     const repoless = isRepoless(task)
       ? {
           repositories:
@@ -4360,7 +4380,14 @@ export class TaskService {
     if (!awaitingRepository(task) || task.status !== "paused") {
       throw new InvalidOperationError(message("repo.notChoosable"));
     }
-    const candidates = await this.taskRepositoryCandidates(task);
+    let candidates: Awaited<ReturnType<TaskService["taskRepositoryCandidates"]>>;
+    try {
+      candidates = await this.taskRepositoryCandidates(task);
+    } catch (error) {
+      if (error instanceof PreparationError)
+        throw new InvalidOperationError(message("repo.chooseFailed", { detail: error.detail }));
+      throw error;
+    }
     if ("missing" in candidates)
       throw new InvalidOperationError(
         message("repo.noLongerTarget", { repo: candidates.missing, detail: candidates.detail }),
@@ -5986,9 +6013,8 @@ export class TaskService {
     try {
       listed = await this.projectRepositories(task.projectId);
     } catch (error) {
-      const first = task.repos?.[0];
-      if (!first) throw error;
-      return { missing: first, detail: errorText(error) };
+      if (!task.repos) throw error;
+      throw new PreparationError(redactText(errorText(error), []));
     }
     const repositories = listed?.repositories ?? [];
     if (!task.repos) return { repositories, errors: listed?.errors ?? [] };
@@ -6666,13 +6692,19 @@ export class TaskService {
     const candidates = listed?.repositories ?? [];
     const unreadable = triaging?.unreadable ?? listed?.errors ?? [];
     // 共用の compose（PBI-70）は、サービスを分けるときの候補にする（PBI-152。使うかはオーケストレーターが決める）
-    const sharedComposes = (this.deps.projects.get(task.projectId)?.sharedComposes ?? []).map(
-      (s) => ({
-        name: s.name,
-        file: s.file,
-        ...(s.description ? { description: s.description } : {}),
-      }),
-    );
+    const gatherProject = (() => {
+      try {
+        return this.deps.projects.get(task.projectId);
+      } catch (error) {
+        if (!task.repos) throw error;
+        throw new PreparationError(redactText(errorText(error), []));
+      }
+    })();
+    const sharedComposes = (gatherProject?.sharedComposes ?? []).map((s) => ({
+      name: s.name,
+      file: s.file,
+      ...(s.description ? { description: s.description } : {}),
+    }));
     const ran = await this.runOrchestrator(
       task,
       config,
@@ -9000,108 +9032,117 @@ export class TaskService {
     // 完了は、止めたコンテナの確認と一時停止の記録まで含める（一時停止・中止はこれを待つ）
     entry.done = this.runningTask.run(taskId, async () => {
       try {
-        if (task?.repos && task.status === "queued") {
-          const step = activeStep(task);
-          const gathering = awaitingGathering(task);
-          if (
-            gathering ||
-            task.steps.length === 0 ||
-            step === "requirements" ||
-            step === "design" ||
-            step === "split"
-          ) {
-            let candidates = await this.taskRepositoryCandidates(task);
-            if ("repositories" in candidates) {
+        let agentInvoked = false;
+        try {
+          if (task?.repos && task.status === "queued") {
+            const step = activeStep(task);
+            const gathering = awaitingGathering(task);
+            if (
+              gathering ||
+              task.steps.length === 0 ||
+              step === "requirements" ||
+              step === "design" ||
+              step === "split"
+            ) {
+              const candidates = await this.taskRepositoryCandidates(task);
+              if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
+              if ("repositories" in candidates) {
+                try {
+                  if (this.awaitingContextImages(task)) return;
+                } catch (error) {
+                  throw new PreparationError(redactText(errorText(error), []));
+                }
+              }
+              if ("missing" in candidates) {
+                const text = message("repo.noLongerTarget", {
+                  repo: candidates.missing,
+                  detail: candidates.detail,
+                });
+                const manual = await this.manualPauseInfo(taskId);
+                const pauseReason = this.stopReason(taskId, "error");
+                if (!gathering && task.steps.length > 0 && step) {
+                  const config = this.deps.config();
+                  if (!config.ok) return;
+                  const chosen = stepAgentFor(config.config, step, task.agents?.[step]);
+                  if (!chosen.ok) {
+                    this.pauseForMissingAgent(task, step, chosen.missing);
+                    return;
+                  }
+                  const runId = randomUUID();
+                  this.append(task, [
+                    {
+                      actor: "sacty",
+                      event: {
+                        type: "AgentRunStarted",
+                        payload: {
+                          runId,
+                          step,
+                          preparationFailed: true,
+                          agentId: chosen.agent.id,
+                          ...agentSetting(chosen.agent),
+                          image: stepImageOf(task, step) ?? DEFAULT_IMAGE_NAME,
+                        },
+                      },
+                    },
+                    {
+                      actor: "sacty",
+                      event: {
+                        type: "AgentRunFailed",
+                        payload: {
+                          runId,
+                          step,
+                          agentId: chosen.agent.id,
+                          reason: "error",
+                          message: text,
+                        },
+                      },
+                    },
+                    {
+                      actor: "sacty",
+                      event: { type: "TaskPaused", payload: { reason: pauseReason, ...manual } },
+                    },
+                  ]);
+                } else {
+                  this.append(task, [
+                    {
+                      actor: gathering ? "gatherer" : "orchestrator",
+                      event: {
+                        type: "OrchestratorFailed",
+                        payload: {
+                          reason: "error",
+                          message: text,
+                          agentId: "unknown",
+                          costUsd: 0,
+                          estimated: false,
+                        },
+                      },
+                    },
+                    {
+                      actor: "sacty",
+                      event: {
+                        type: "TaskPaused",
+                        payload: { reason: pauseReason, message: text, ...manual },
+                      },
+                    },
+                  ]);
+                }
+                return;
+              }
+            } else {
               try {
                 if (this.awaitingContextImages(task)) return;
               } catch (error) {
-                candidates = { missing: task.repos[0] ?? "", detail: errorText(error) };
+                throw new PreparationError(redactText(errorText(error), []));
               }
             }
-            if ("missing" in candidates) {
-              const text = message("repo.noLongerTarget", {
-                repo: candidates.missing,
-                detail: candidates.detail,
-              });
-              const manual = await this.manualPauseInfo(taskId);
-              const pauseReason = this.stopReason(taskId, "error");
-              if (!gathering && task.steps.length > 0 && step) {
-                const config = this.deps.config();
-                if (!config.ok) return;
-                const chosen = stepAgentFor(config.config, step, task.agents?.[step]);
-                if (!chosen.ok) {
-                  this.pauseForMissingAgent(task, step, chosen.missing);
-                  return;
-                }
-                const runId = randomUUID();
-                this.append(task, [
-                  {
-                    actor: "sacty",
-                    event: {
-                      type: "AgentRunStarted",
-                      payload: {
-                        runId,
-                        step,
-                        preparationFailed: true,
-                        agentId: chosen.agent.id,
-                        ...agentSetting(chosen.agent),
-                        image: stepImageOf(task, step) ?? DEFAULT_IMAGE_NAME,
-                      },
-                    },
-                  },
-                  {
-                    actor: "sacty",
-                    event: {
-                      type: "AgentRunFailed",
-                      payload: {
-                        runId,
-                        step,
-                        agentId: chosen.agent.id,
-                        reason: "error",
-                        message: text,
-                      },
-                    },
-                  },
-                  {
-                    actor: "sacty",
-                    event: { type: "TaskPaused", payload: { reason: pauseReason, ...manual } },
-                  },
-                ]);
-              } else {
-                this.append(task, [
-                  {
-                    actor: gathering ? "gatherer" : "orchestrator",
-                    event: {
-                      type: "OrchestratorFailed",
-                      payload: {
-                        reason: "error",
-                        message: text,
-                        agentId: "unknown",
-                        costUsd: 0,
-                        estimated: false,
-                      },
-                    },
-                  },
-                  {
-                    actor: "sacty",
-                    event: {
-                      type: "TaskPaused",
-                      payload: { reason: pauseReason, message: text, ...manual },
-                    },
-                  },
-                ]);
-              }
-              return;
-            }
-          } else if (this.awaitingContextImages(task)) return;
-        }
-        let agentInvoked = false;
-        try {
+          }
           await this.runNextInner(taskId, () => {
             agentInvoked = true;
           });
         } catch (error) {
+          if (!(error instanceof PreparationError)) throw error;
           const latest = this.mustGet(taskId);
+          if (this.stopRequested(taskId) && latest.status === "queued") return;
           const step = activeStep(latest);
           const gathering = awaitingGathering(latest);
           if (
@@ -9114,7 +9155,8 @@ export class TaskService {
               step !== "split")
           )
             throw error;
-          const text = errorText(error);
+          const text = error.detail;
+          const manual = await this.manualPauseInfo(taskId);
           if (!gathering && latest.steps.length > 0 && step) {
             const config = this.deps.config();
             if (!config.ok) throw error;
@@ -9154,7 +9196,13 @@ export class TaskService {
                   },
                 },
               },
-              { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+              {
+                actor: "sacty",
+                event: {
+                  type: "TaskPaused",
+                  payload: { reason: this.stopReason(taskId, "error"), ...manual },
+                },
+              },
             ]);
           } else {
             this.append(latest, [
@@ -9173,7 +9221,10 @@ export class TaskService {
               },
               {
                 actor: "sacty",
-                event: { type: "TaskPaused", payload: { reason: "error", message: text } },
+                event: {
+                  type: "TaskPaused",
+                  payload: { reason: this.stopReason(taskId, "error"), message: text, ...manual },
+                },
               },
             ]);
           }
@@ -9333,11 +9384,13 @@ export class TaskService {
     // 決めたら、次の実行で用意する。それまでの情報収集は、リポジトリの候補のコードを GitHub の読み取りの中継で読む）
     if (!initial.repository && !isRepoless(initial) && !awaitingTicketTriage(initial)) {
       let ready: Awaited<ReturnType<TaskService["prepareRepository"]>>;
+      let preparationException = false;
       try {
         ready = await this.prepareRepository(initial, config.config);
       } catch (error) {
         if (!initial.repos) throw error;
-        ready = { ok: false, message: errorText(error) };
+        preparationException = true;
+        ready = { ok: false, message: redactText(errorText(error), []) };
       }
       const step = activeStep(initial);
       if (
@@ -9349,10 +9402,12 @@ export class TaskService {
           step === "design" ||
           step === "split")
       ) {
-        const text = message("repo.prepareFailed", {
-          repo: initial.repo ?? initial.repos[0] ?? "",
-          detail: ready.message,
-        });
+        const text = preparationException
+          ? ready.message
+          : message("repo.prepareFailed", {
+              repo: initial.repo ?? "",
+              detail: ready.message,
+            });
         const manual = await this.manualPauseInfo(initial.id);
         if (awaitingGathering(initial) || initial.steps.length === 0) {
           this.append(initial, [
@@ -9396,6 +9451,7 @@ export class TaskService {
                   agentId: agent.id,
                   ...agentSetting(agent),
                   image: stepImageOf(initial, step) ?? DEFAULT_IMAGE_NAME,
+                  preparationFailed: true,
                 },
               },
             },
@@ -9403,7 +9459,14 @@ export class TaskService {
               actor: "sacty",
               event: {
                 type: "AgentRunFailed",
-                payload: { runId, step, agentId: agent.id, reason: "error", message: text },
+                payload: {
+                  runId,
+                  step,
+                  agentId: agent.id,
+                  reason: "error",
+                  message: text,
+                  preparationFailed: true,
+                },
               },
             },
             {
@@ -9459,10 +9522,8 @@ export class TaskService {
         imageConfig = this.projectImagesConfig(config.config, initial.projectId);
       } catch (error) {
         if (!initial.repos) throw error;
-        const text = message("repo.noLongerTarget", {
-          repo: initial.repos[0] ?? "",
-          detail: errorText(error),
-        });
+        if (this.stopRequested(initial.id)) return;
+        const text = redactText(errorText(error), []);
         const manual = await this.manualPauseInfo(initial.id);
         this.append(initial, [
           {
@@ -9729,6 +9790,22 @@ export class TaskService {
       if (!resolved.ok) return;
     }
 
+    // 候補の照合中に停止されたら、工程を開始せずに手動停止する。
+    let splitCandidates: string[] | undefined;
+    if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
+      const candidates = await this.taskRepositoryCandidates(task);
+      if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
+      if ("missing" in candidates) {
+        throw new PreparationError(
+          message("repo.noLongerTarget", {
+            repo: candidates.missing,
+            detail: candidates.detail,
+          }),
+        );
+      }
+      if (step === "split") splitCandidates = candidates.repositories;
+    }
+
     // 工程に使う AI（人がタスクの詳細で選んだもの。無ければ step_agents か default_agent。PBI-40・PBI-121）。準備（レビューの
     // 対象の確認など）の間に人が変えていれば、それを使う。決めてから開始の記録までは待たない（PR #131 レビュー指摘）
     const chosenName = this.mustGet(task.id).agents?.[step];
@@ -9768,6 +9845,7 @@ export class TaskService {
     const repoless = isRepoless(this.mustGet(task.id));
     const splitRepositories = repoless || Boolean(task.repos);
     let ready: Awaited<ReturnType<TaskService["prepareRepository"]>>;
+    let preparationException = false;
     try {
       ready = repoless
         ? REPO_STEPS.includes(step)
@@ -9777,18 +9855,20 @@ export class TaskService {
     } catch (error) {
       if (!task.repos || (step !== "requirements" && step !== "design" && step !== "split"))
         throw error;
+      preparationException = true;
       ready = {
         ok: false,
-        message: errorText(error),
+        message: redactText(errorText(error), []),
       };
     }
     if (!ready.ok) {
       const failureMessage =
         task.repos &&
+        !preparationException &&
         !repoless &&
         (step === "requirements" || step === "design" || step === "split")
           ? message("repo.prepareFailed", {
-              repo: task.repository?.url ?? task.repo ?? task.repos[0] ?? "",
+              repo: task.repository?.url ?? task.repo ?? "",
               detail: ready.message,
             })
           : ready.message;
@@ -9857,6 +9937,10 @@ export class TaskService {
     try {
       context = await this.runContext(task, agent, config.config, contextSecrets, undefined, step);
     } catch (error) {
+      const multiPreparation = Boolean(
+        task.repos && (step === "requirements" || step === "design" || step === "split"),
+      );
+      const manual = multiPreparation ? await this.manualPauseInfo(task.id) : {};
       this.append(task, [
         {
           actor: "sacty",
@@ -9874,7 +9958,15 @@ export class TaskService {
             },
           },
         },
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: multiPreparation
+              ? { reason: this.stopReason(task.id, "error"), ...manual }
+              : { reason: "error" },
+          },
+        },
       ]);
       return;
     }
@@ -9882,46 +9974,9 @@ export class TaskService {
     const runPlatforms = mergePlatforms(config.config.platforms, context?.platforms ?? []);
     // ここから実行の try（finally で消す）までに例外になっても、用意したコンテキスト（一時のディレクトリ・ホストで起動する
     // MCP サーバーの確保）を残さない（PR #89 レビュー指摘）
-    let splitCandidates: string[] | undefined;
     try {
       if (context) this.append(task, [this.contextResolved(runId, context, runPlatforms)]);
-
-      // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
-      if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
-        const candidates = await this.taskRepositoryCandidates(task);
-        if ("missing" in candidates) {
-          const manual = await this.manualPauseInfo(task.id);
-          this.append(task, [
-            {
-              actor: "sacty",
-              event: {
-                type: "AgentRunFailed",
-                payload: {
-                  runId,
-                  step,
-                  agentId: agent.id,
-                  reason: "error",
-                  preparationFailed: true,
-                  message: message("repo.noLongerTarget", {
-                    repo: candidates.missing,
-                    detail: candidates.detail,
-                  }),
-                },
-              },
-            },
-            {
-              actor: "sacty",
-              event: {
-                type: "TaskPaused",
-                payload: { reason: this.stopReason(task.id, "error"), ...manual },
-              },
-            },
-          ]);
-          context?.dispose();
-          return;
-        }
-        if (step === "split") splitCandidates = candidates.repositories;
-      } else if (step === "split" && splitRepositories) {
+      if (!task.repos && step === "split" && splitRepositories) {
         const candidates = await this.taskRepositoryCandidates(task);
         splitCandidates = "repositories" in candidates ? candidates.repositories : [];
       }
@@ -10127,10 +10182,14 @@ export class TaskService {
         }
       }
       // 工程のイメージ（タスクのイメージ。PBI-41・PBI-318）。images から消した名前なら、実行せずに理由を示して止める
-      const stepImage = resolveImage(
-        this.projectImagesConfig(config.config, task.projectId),
-        runImageName,
-      );
+      let imageConfig: SactyConfig;
+      try {
+        imageConfig = this.projectImagesConfig(config.config, task.projectId);
+      } catch (error) {
+        if (!multiRepoStep) throw error;
+        throw new PreparationError(redactText(errorText(error), []));
+      }
+      const stepImage = resolveImage(imageConfig, runImageName);
       if (!stepImage.ok) {
         executed ??= {
           outcome: { kind: "failed", reason: "error", message: stepImage.message },

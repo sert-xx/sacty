@@ -1,10 +1,11 @@
-import { spawn } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { access, constants, cp, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { message } from "@sacty/core";
 import { MessageError } from "./errors.js";
+import { spawnStoppable } from "./fetch-processes.js";
 
 /** 差分は、先頭のこのバイト数だけゴールガーディアンに渡す。 */
 export const DIFF_LIMIT = 200_000;
@@ -402,29 +403,18 @@ function gitBytes(
   signal?: AbortSignal,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", args, {
-      cwd,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: Boolean(signal),
-    });
-    const abort = () => {
-      if (child.pid) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          child.kill("SIGKILL");
-        }
-      }
-    };
+    const options: SpawnOptions = { cwd, env, stdio: ["ignore", "pipe", "pipe"] };
+    const stoppable = signal ? spawnStoppable("git", args, options) : undefined;
+    const child = stoppable ? stoppable.child : spawn("git", args, options);
+    const abort = () => stoppable?.stop();
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
     const out: Buffer[] = [];
     let err = "";
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       out.push(chunk);
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk) => {
       err += chunk;
     });
     child.on("error", (error) =>
@@ -646,7 +636,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         ["clone", ...(branch !== undefined ? ["--branch", branch] : []), "--", url, dir],
         env,
         undefined,
-        signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
+        signal,
       );
     try {
       await clone(baseBranch);

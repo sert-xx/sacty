@@ -108,7 +108,7 @@ export async function createTask(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
-  if (res.status === 409) {
+  if (res.status === 400 || res.status === 409) {
     return { ok: false, message: await operationMessage(res) };
   }
   await ensureOk(res);

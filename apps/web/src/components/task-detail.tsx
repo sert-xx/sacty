@@ -1138,8 +1138,14 @@ function Properties({ data }: { data: TaskDetailData }) {
           </Link>
         </Prop>
         <Prop label={l.repository}>
+          {task.repos?.length ? (
+            <span className="block font-mono text-xs">
+              {m.specifiedRepositories}: {task.repos.join(", ")}
+            </span>
+          ) : null}
           {repo ? (
             <span className="font-mono text-xs">
+              {task.repos?.length ? `${m.workingRepository}: ` : ""}
               {repo.replace(/^https:\/\/github\.com\//, "")}
               {/* オーケストレーター・人が選んだリポジトリは、選んだ理由を出す（PBI-73） */}
               {task.repoChoice && task.repoChoice.by !== "person" && (
@@ -1149,7 +1155,7 @@ function Properties({ data }: { data: TaskDetailData }) {
                 </>
               )}
             </span>
-          ) : isRepoless(task) ? (
+          ) : task.repos?.length ? null : isRepoless(task) ? (
             <span data-testid="no-repository">{l.none}</span>
           ) : (
             "—"

@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
+import { stopFetchProcessesSync } from "./fetch-processes.js";
 import {
   DIFF_LIMIT,
   GitRepositoryWorkspace,
@@ -124,6 +125,107 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(
       await workspace.fetchBranch(metadata, "main", undefined, new AbortController().signal),
     ).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("clone に固定の時間制限を付けず、デーモン終了時には通信を止める", async () => {
+    const workspace = new GitRepositoryWorkspace();
+    const connected = Promise.withResolvers<void>();
+    const server = createServer(() => connected.resolve());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    const timer = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const pending = workspace.prepare(
+        join(dir, "clone"),
+        join(dir, "metadata"),
+        `git://127.0.0.1:${address.port}/repo`,
+        undefined,
+        undefined,
+        undefined,
+        new AbortController().signal,
+      );
+      await connected.promise;
+      expect(timer).not.toHaveBeenCalled();
+      stopFetchProcessesSync();
+      await expect(pending).rejects.toThrow();
+      const origin = makeOrigin();
+      const ready = await workspace.prepare(join(dir, "clone"), join(dir, "metadata"), origin);
+      expect(ready.baseBranch).toBe("main");
+    } finally {
+      timer.mockRestore();
+      server.close();
+    }
+  });
+
+  it("clone を停止要求で中断し、再準備できる", async () => {
+    const workspace = new GitRepositoryWorkspace();
+    const connected = Promise.withResolvers<void>();
+    const server = createServer(() => connected.resolve());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    const controller = new AbortController();
+    try {
+      const pending = workspace.prepare(
+        join(dir, "clone"),
+        join(dir, "metadata"),
+        `git://127.0.0.1:${address.port}/repo`,
+        undefined,
+        undefined,
+        undefined,
+        controller.signal,
+      );
+      await connected.promise;
+      controller.abort();
+      await expect(pending).rejects.toThrow("停止要求により中断");
+      const ready = await workspace.prepare(
+        join(dir, "clone"),
+        join(dir, "metadata"),
+        makeOrigin(),
+      );
+      expect(ready.baseBranch).toBe("main");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("デーモン終了時に取得中の Git を止め、その後の取得は成功する", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const metadata = join(dir, "metadata");
+    await workspace.prepare(join(dir, "clone"), metadata, origin);
+    const connected = Promise.withResolvers<void>();
+    const server = createServer(() => connected.resolve());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    git(
+      dir,
+      "--git-dir",
+      metadata,
+      "remote",
+      "set-url",
+      "origin",
+      `git://127.0.0.1:${address.port}/repo`,
+    );
+    try {
+      const pending = workspace.fetchBranch(
+        metadata,
+        "main",
+        undefined,
+        new AbortController().signal,
+      );
+      await connected.promise;
+      stopFetchProcessesSync();
+      await expect(pending).rejects.toThrow();
+      git(dir, "--git-dir", metadata, "remote", "set-url", "origin", origin);
+      expect(
+        await workspace.fetchBranch(metadata, "main", undefined, new AbortController().signal),
+      ).toMatch(/^[0-9a-f]{40}$/);
+    } finally {
+      server.close();
+    }
   });
 
   it("応答しないリモートの時間切れは理由を示し、その後の取得は成功する", async () => {
