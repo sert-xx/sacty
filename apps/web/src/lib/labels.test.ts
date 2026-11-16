@@ -364,6 +364,16 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         "implement-1-4: replied as a PR comment",
       ].join("\n"),
     });
+    const started = event({
+      type: "RemarkRepliesStarted",
+      payload: { step: "implement", submission: 2, number: 7, account: "acme-dev" },
+    });
+    expect(describeEvent(started)).toBe(
+      "指摘への対応を PR #7 に返信し始めた（GitHub のアカウント acme-dev）",
+    );
+    expect(describeIn(started, labels.en)).toBe(
+      "Started replying on PR #7 about how the remarks were handled (GitHub account acme-dev)",
+    );
     const allDone = event({
       type: "RemarkRepliesPosted",
       payload: {

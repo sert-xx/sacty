@@ -254,6 +254,11 @@ const configWithTimeouts =
     return base.ok ? { ok: true, config: { ...base.config, runTimeouts } } : base;
   };
 
+/** 偽の GitHub への投稿の投稿者（投稿に使ったトークンのアカウント。ghp_other は other、ほかは me）。 */
+function authorOfToken(token: string): string {
+  return token === "ghp_other" ? "other" : "me";
+}
+
 /** gh の偽物。ログイン済みのアカウントごとのトークンを返す。 */
 class FakeGitHub implements GitHubAuth {
   requested: string[] = [];
@@ -934,7 +939,7 @@ class FakePulls implements PullRequests {
     const own = this.reviewReplies.map((c, i) => ({
       id: 9000 + i + 1,
       number: c.number,
-      author: "me",
+      author: authorOfToken(c.token),
       body: c.body,
     }));
     const foreign = this.foreignReviewComments.map((c, i) => ({ id: 8000 + i, ...c }));
@@ -947,6 +952,7 @@ class FakePulls implements PullRequests {
               id: c.id,
               url: `${input.repo}/pull/${input.number}#discussion_r${c.id}`,
               body: c.body,
+              author: c.author,
             },
           ]
         : [],
@@ -975,6 +981,7 @@ class FakePulls implements PullRequests {
               id: 8000 + i,
               url: `${input.repo}/issues/${input.number}#issuecomment-f${i}`,
               body: c.body,
+              author: c.author,
             },
           ]
         : [],
@@ -990,6 +997,7 @@ class FakePulls implements PullRequests {
                 id: i + 1,
                 url: `${input.repo}/issues/${input.number}#issuecomment-${i + 1}`,
                 body: c.body,
+                author: authorOfToken(c.token),
               },
             ]
           : [],
@@ -13163,7 +13171,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
-      it("ほかの人が目印をまねた・引用した投稿は、投稿済みと見なさない（プロジェクトのアカウントの、目印で始まる投稿だけ。一覧は最後まで読む）", async () => {
+      it("ほかの人が目印をまねた・引用した投稿は、投稿済みと見なさない（返信に使ったと記録したアカウントの、目印で始まる投稿だけ。一覧は最後まで読む）", async () => {
         const pulls = new FakePulls();
         const { activity, service, id } = await toImplementGate(
           [
@@ -13191,10 +13199,11 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           `${pr}#discussion_r9001`,
           "https://github.com/acme/app/issues/7#issuecomment-1",
         ]);
+        // 一覧は、最後まで読む指定で読み、投稿者は、返信に使ったと記録したアカウントと照合する
         expect(pulls.reviewListInputs).toEqual([
-          { prefix: `<!-- sacty-reply:${id}:`, account: "me", complete: true },
+          { prefix: `<!-- sacty-reply:${id}:`, complete: true },
         ]);
-        expect(pulls.listedAccounts.at(-1)).toBe("me");
+        expect(service.get(id)?.task.remarkReplyAccounts).toEqual(["me"]);
         activity.close();
       });
 
@@ -13331,6 +13340,101 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(result).toMatchObject({ remarkId: "implement-1-1", key: "review_comment:501" });
         expect(result?.failed).toBeDefined();
         expect(service.queuedTaskIds()).toEqual([]);
+        activity.close();
+      });
+
+      it("投稿の後・記録の前に止まり、その間にプロジェクトの GitHub のアカウントが変わっても、前のアカウントの返信を見つけて重ねず、PR の指摘の取り込みからも除く", async () => {
+        const pulls = new FakePulls();
+        const projects = projectsWithAccount();
+        const github = new FakeGitHub({ me: "ghp_secret", other: "ghp_other" });
+        const made = await toImplement(
+          [
+            implement("# 実装の説明"),
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "直した" },
+              { remarkId: "implement-1-2", status: "addressed", text: "足した" },
+            ]),
+          ],
+          { pulls, now: later, projects, github },
+        );
+        const { activity, service, id } = made;
+        await drain(service);
+        pulls.feedbackList = [inline(), comment()];
+        await service.checkPullRequests();
+        const append = activity.append.bind(activity);
+        let failOnce = true;
+        activity.append = (entry) => {
+          if (failOnce && entry.events.some((e) => e.event.type === "RemarkRepliesPosted")) {
+            failOnce = false;
+            throw new Error("disk full");
+          }
+          return append(entry);
+        };
+        await expect(drain(service)).rejects.toThrow("disk full");
+        // 投稿の前に、返信に使うアカウントを記録している
+        const started = (service.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "RemarkRepliesStarted" ? [e.payload] : [],
+        );
+        expect(started).toEqual([{ step: "implement", submission: 2, number: 7, account: "me" }]);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(1);
+        // 止まっている間に、プロジェクトの GitHub のアカウントを変える
+        const current = projects.get("default");
+        projects.put("default", {
+          name: current?.name ?? "",
+          targets: current?.targets ?? [],
+          githubAccounts: { "github.com": "other" },
+        });
+        await drain(service);
+        // 前のアカウント（me）の返信を、投稿済みとして使う（other で重ねて投稿しない）
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(posted(service, id)[0]?.results.map((r) => [r.remarkId, r.url])).toEqual([
+          ["implement-1-1", `${pr}#discussion_r9001`],
+          ["implement-1-2", "https://github.com/acme/app/issues/7#issuecomment-1"],
+        ]);
+        expect(service.get(id)?.task.remarkReplyAccounts).toEqual(["me", "other"]);
+        // PR の指摘を読むときに、返信に使ったアカウントを渡す（前のアカウントの返信を、指摘として取り込まない）
+        await service.checkPullRequests();
+        expect(pulls.feedbackAccounts.at(-1)).toBe("other");
+        expect(pulls.feedbackNoticeAccounts.at(-1)).toEqual(["me", "other"]);
+        activity.close();
+      });
+
+      it("期限を超えた後の残りの指摘でも、読んである一覧に投稿済みの返信があれば、失敗にせずに、その返信を記録する", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const pulls = new FakePulls();
+        pulls.replyGate = new Promise<void>(() => {});
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", text: "直した" },
+              { remarkId: "implement-1-2", text: "足した" },
+              { remarkId: "implement-1-3", text: "変えた" },
+            ]),
+          ],
+          { pulls, now: later, stopNoticeTimeoutMs: 30 },
+        );
+        pulls.feedbackList = [inline(), comment(401), comment(402)];
+        await service.checkPullRequests();
+        // 前に、投稿の後・記録の前に止まった分（2件目の返信は、GitHub にある）
+        pulls.issueComments.push({
+          repo: "https://github.com/acme/app",
+          token: "ghp_secret",
+          number: 7,
+          body: `<!-- sacty-reply:${id}:implement-1-2:2 -->\n足した`,
+        });
+        await drain(service);
+        const results = posted(service, id)[0]?.results ?? [];
+        expect(results.map((r) => [r.remarkId, r.url, r.failed !== undefined])).toEqual([
+          ["implement-1-1", undefined, true],
+          ["implement-1-2", "https://github.com/acme/app/issues/7#issuecomment-1", false],
+          ["implement-1-3", undefined, true],
+        ]);
+        expect(prComments(pulls)).toHaveLength(1);
+        warn.mockRestore();
         activity.close();
       });
 

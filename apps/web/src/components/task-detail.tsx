@@ -1258,7 +1258,13 @@ function ActivityList({
             {formatStamp(event.at, messages.locale)}
           </time>
           {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
-          <span className={cn("[overflow-wrap:anywhere]", compact && "line-clamp-2")}>
+          {/* 概要の2行の制限は、詳細を開いた行では外す（開いた詳細が切れないように。PBI-352） */}
+          <span
+            className={cn(
+              "[overflow-wrap:anywhere]",
+              compact && "line-clamp-2 has-[details[open]]:line-clamp-none",
+            )}
+          >
             <EventText event={event} />
             {/* エージェントの実行の行から、その実行のセッションログを開く（PBI-62） */}
             {!compact && runLogId(event) && (

@@ -833,6 +833,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
             ),
       );
     }
+    case "RemarkRepliesStarted":
+      return e.RemarkRepliesStarted(event.payload.number, event.payload.account);
     case "RemarkRepliesPosted": {
       const p = event.payload;
       // 行には、件数と、返信できなかった件数だけを出す（指摘ごとの結果は、詳細に出す。describeEventParts）

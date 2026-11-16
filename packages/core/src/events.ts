@@ -3018,6 +3018,23 @@ const RemarkRepliesPosted = z.object({
 });
 
 /**
+ * 指摘への対応を、PR に返信し始める（PBI-352）。投稿の前に、返信に使うアカウントを記録する。投稿の後・結果の記録の前に
+ * デーモンが止まり、その間にプロジェクトの GitHub のアカウントが変わっても、前のアカウントの投稿を、投稿済みの返信として
+ * 見つけ、PR の指摘として取り込まないため。同じアカウントは、1回だけ記録する。
+ */
+const RemarkRepliesStarted = z.object({
+  type: z.literal("RemarkRepliesStarted"),
+  payload: z.object({
+    step: StepKey,
+    submission: z.number().int().positive(),
+    /** 返信する PR の番号。 */
+    number: z.number().int().positive(),
+    /** 返信に使う GitHub のアカウント。 */
+    account: z.string().min(1).max(200),
+  }),
+});
+
+/**
  * sacty のブランチにプッシュした（PRの作成の前に記録する。PRの作成に失敗しても、
  * プッシュ済みのブランチを中止で片付けられるように）。
  */
@@ -3728,6 +3745,7 @@ export const EventInput = z.discriminatedUnion("type", [
   IssueCommented,
   IssueCommentFailed,
   GitHubCommentsPosted,
+  RemarkRepliesStarted,
   RemarkRepliesPosted,
   ReviewTargetResolved,
   ReviewGitHubRetried,

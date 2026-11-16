@@ -1482,6 +1482,7 @@ export class TaskService {
         number: pr.number,
         ...this.githubAccountOf(task, pr.repo),
         ...this.sactyReviewsOf(pr.repo, pr.number),
+        ...replyAccounts(task),
       })
     )
       .filter((item) => !task.importedFeedback.includes(item.key))
@@ -2662,6 +2663,7 @@ export class TaskService {
           number: pr.number,
           ...this.githubAccountOf(current, pr.repo),
           ...this.sactyReviewsOf(pr.repo, pr.number),
+          ...replyAccounts(current),
         })
       )
         .filter((item) => !current.importedFeedback.includes(item.key))
@@ -3463,6 +3465,7 @@ export class TaskService {
         ...this.githubAccountOf(task, continued.repo),
         // sacty のタスクがこの PR に投稿したレビューも、PR の指摘として渡す（PR の指摘の取り込みの条件とは分ける）
         ...allSactyReviews(this.sactyReviewsOf(continued.repo, continued.number)),
+        ...replyAccounts(task),
         includeApprovals: true,
       });
     } catch (error) {
@@ -3573,9 +3576,30 @@ export class TaskService {
         },
       ]);
     };
-    // 投稿済みの返信は、プロジェクトのアカウントが投稿した、このタスクの目印で始まるものだけ（他人が目印をまねても・引用しても、
-    // 投稿済みと見なさない）。行へのコメントと PR のコメントを、1回ずつ、最後のページまで読む
+    // 返信に使うアカウントを、投稿の前に記録する（投稿の後・結果の記録の前に止まり、その間にプロジェクトのアカウントが
+    // 変わっても、前のアカウントの投稿を、投稿済みの返信として見つけ、PR の指摘として取り込まないため）
     const account = this.githubAccountOf(task, due.repo).account;
+    if (!account) return;
+    const known = (list: readonly string[] | undefined) =>
+      (list ?? []).some((a) => a.toLowerCase() === account.toLowerCase());
+    if (!known(task.remarkReplyAccounts)) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "RemarkRepliesStarted",
+            payload: { step: due.step, submission: due.submission, number: due.number, account },
+          },
+        },
+      ]);
+    }
+    // 投稿済みの返信は、返信に使ったと記録したアカウント（今のアカウントを含む）が投稿した、このタスクの目印で始まるものだけ
+    // （他人が目印をまねても・引用しても、投稿済みと見なさない）。行へのコメントと PR のコメントを、1回ずつ、最後のページまで読む
+    const accounts = new Set(
+      [account, ...(this.tasks.get(taskId)?.remarkReplyAccounts ?? [])].map((a) => a.toLowerCase()),
+    );
+    const mine = (list: { url: string; body: string; author: string }[]) =>
+      list.filter((c) => accounts.has(c.author.toLowerCase()));
     const prefix = `${REMARK_REPLY_MARKER_PREFIX}${taskId}:`;
     let where: { repo: string; token: string; number: number };
     let inlinePosted: { url: string; body: string }[];
@@ -3586,12 +3610,13 @@ export class TaskService {
         this.githubToken(task, due.repo, usedSecrets, undefined, signal),
       );
       where = { repo: due.repo, token, number: due.number };
-      const own = { ...where, prefix, ...(account ? { account } : {}), complete: true };
-      inlinePosted = await limited((signal) =>
-        this.deps.pulls.listReviewComments({ ...own, signal }),
+      // 最後まで読む指定では、投稿者を読めないコメントがあれば失敗する（記録した投稿者と照合できないまま、進めない）
+      const own = { ...where, prefix, complete: true };
+      inlinePosted = mine(
+        await limited((signal) => this.deps.pulls.listReviewComments({ ...own, signal })),
       );
-      commentPosted = await limited((signal) =>
-        this.deps.pulls.listIssueComments({ ...own, signal }),
+      commentPosted = mine(
+        await limited((signal) => this.deps.pulls.listIssueComments({ ...own, signal })),
       );
     } catch (error) {
       // 投稿済みかを確かめられないので、重ねて投稿しない。失敗として残す
@@ -3620,16 +3645,24 @@ export class TaskService {
       const base = { remarkId: remark.id, key: remark.key };
       // 期限を超えた問い合わせがあったら、残りの指摘は投稿を試みずに、失敗を残す（答えの返らない GitHub を、指摘の
       // 数だけ期限まで待たない。実行の枠と、返信を待つ再レビューを、長く止めないため）
+      // 読んである一覧に投稿済みの返信があれば、それは返信済みとして残す（前に、投稿の後・記録の前に止まった分）
       if (timedOut) {
         results.push(
           ...due.replies
             .slice(index)
             .filter((r) => stillDue(r))
-            .map((r) => ({
-              remarkId: r.id,
-              key: r.key,
-              failed: message("github.replySkippedAfterTimeout"),
-            })),
+            .map((r) => {
+              const marker = remarkReplyMarkerOf(taskId, r.id);
+              const inline = found(inlinePosted, marker);
+              const existing = inline ?? found(commentPosted, marker);
+              return {
+                remarkId: r.id,
+                key: r.key,
+                ...(existing
+                  ? { ...(inline ? { inline: true as const } : {}), ...posted(existing.url) }
+                  : { failed: message("github.replySkippedAfterTimeout") }),
+              };
+            }),
         );
         break;
       }
@@ -3678,12 +3711,11 @@ export class TaskService {
                 this.deps.pulls.listReviewComments({
                   ...where,
                   prefix: marker,
-                  ...(account ? { account } : {}),
                   complete: true,
                   signal,
                 }),
               ).catch(() => undefined);
-              const hit = landed?.[0];
+              const hit = landed && mine(landed)[0];
               results.push(
                 hit ? { ...base, inline: true, ...posted(hit.url) } : { ...base, failed: reason },
               );
@@ -16671,6 +16703,15 @@ function remarkOrigins(
 ): (RemarkOrigin | undefined)[] {
   if (number === undefined || pending.keys.length !== pending.remarks.length) return [];
   return pending.keys.map((key) => (key.length <= 200 ? { key, number } : undefined));
+}
+
+/**
+ * 指摘への返信の投稿に使ったアカウント（PBI-352）。PR の指摘を読むときに渡して、今のアカウントが変わっていても、前の
+ * アカウントが投稿した sacty の返信を、PR の指摘として取り込まない。
+ */
+function replyAccounts(task: Task): { noticeAccounts?: string[] } {
+  const accounts = task.remarkReplyAccounts;
+  return accounts && accounts.length > 0 ? { noticeAccounts: accounts } : {};
 }
 
 /**

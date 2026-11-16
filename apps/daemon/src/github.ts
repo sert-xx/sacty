@@ -131,7 +131,7 @@ export interface PullRequests {
     account?: string;
     complete?: boolean;
     signal?: AbortSignal;
-  }): Promise<{ id: number; url: string; body: string }[]>;
+  }): Promise<{ id: number; url: string; body: string; author: string }[]>;
   /**
    * PR の行へのコメントに返信する（PBI-352）。返信への返信・消えたコメントへの返信は、GitHub が受け付けない（失敗する）。
    */
@@ -167,7 +167,7 @@ export interface PullRequests {
     complete?: boolean;
     /** 中断（読み込み中のリクエストも止める）。 */
     signal?: AbortSignal;
-  }): Promise<{ id: number; url: string; body: string }[]>;
+  }): Promise<{ id: number; url: string; body: string; author: string }[]>;
   /** Issue・PR のコメントの本文を直す（PBI-292。レビューが止まったことの投稿を、解消済みにする）。id は listIssueComments の答え。 */
   editIssueComment(input: {
     repo: string;
@@ -443,16 +443,14 @@ export function repoApi(repoUrl: string): { api: string; base: string } {
 function ownComments(
   comments: Record<string, unknown>[],
   input: { prefix: string; account?: string; complete?: boolean },
-): { id: number; url: string; body: string }[] {
+): { id: number; url: string; body: string; author: string }[] {
   return comments.flatMap((c) => {
     const login = (c.user as { login?: unknown } | null)?.login;
     // 最後まで読む指定では、照合に要る項目（本文・ID・投稿者）を読めないコメントを、黙って除かない（PBI-352。
     // 投稿済みの返信を見逃して、重ねて投稿しないように）
     if (
       input.complete &&
-      (typeof c.body !== "string" ||
-        typeof c.id !== "number" ||
-        (input.account !== undefined && typeof login !== "string"))
+      (typeof c.body !== "string" || typeof c.id !== "number" || typeof login !== "string")
     ) {
       throw new MessageError(message("github.commentsIncomplete"));
     }
@@ -465,7 +463,14 @@ function ownComments(
     ) {
       return [];
     }
-    return [{ id: c.id, url: String(c.html_url ?? ""), body: c.body }];
+    return [
+      {
+        id: c.id,
+        url: String(c.html_url ?? ""),
+        body: c.body,
+        author: typeof login === "string" ? login : "",
+      },
+    ];
   });
 }
 

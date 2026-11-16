@@ -122,10 +122,17 @@ export class GhCliAuth implements GitHubAuth {
       const child = this.spawnImpl("gh", args, {
         env: ghEnv(),
         stdio: ["ignore", "pipe", "pipe"],
+        // 中断できる実行は、gh を自分のプロセスグループにする（gh が起動した認証の補助なども、まとめて止めるため）
+        ...(signal ? { detached: true } : {}),
       });
-      // 中断されたら、gh を止めて、待ちから戻る（gh や認証の補助が止まったままでも、プロセスを残さない）
+      // 中断されたら、gh と、gh が起動したプロセスを止めて、待ちから戻る（止まったままのプロセスを残さない）
       const onAbort = () => {
-        child.kill("SIGKILL");
+        try {
+          if (child.pid === undefined) throw new Error("no pid");
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
         reject(signal?.reason);
       };
       signal?.addEventListener("abort", onAbort, { once: true });

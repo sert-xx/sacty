@@ -473,6 +473,8 @@ const ja = {
     GitHubCommentPosted: (url: string) => `投稿した（${url}）`,
     GitHubCommentFailed: (target: string, message: string) =>
       `${target} に投稿できなかった（${message}）`,
+    RemarkRepliesStarted: (number: number, account: string) =>
+      `指摘への対応を PR #${number} に返信し始めた（GitHub のアカウント ${account}）`,
     RemarkRepliesPosted: (number: number, count: number, failed: number) =>
       `指摘への対応を PR #${number} に返信（${count}件${failed > 0 ? `。うち${failed}件は返信できなかった` : ""}）`,
     RemarkReplyInline: (remarkId: string, url: string) =>
@@ -1128,6 +1130,8 @@ const en: LabelMessages = {
       `Result of posting the GitHub comments requested in the ${step} output: ${results.join("; ") || "none"}`,
     GitHubCommentPosted: (url) => `posted (${url})`,
     GitHubCommentFailed: (target, message) => `could not post to ${target} (${message})`,
+    RemarkRepliesStarted: (number, account) =>
+      `Started replying on PR #${number} about how the remarks were handled (GitHub account ${account})`,
     RemarkRepliesPosted: (number, count, failed) =>
       `Replied on PR #${number} about how the remarks were handled (${count}${failed > 0 ? `; ${failed} could not be replied to` : ""})`,
     RemarkReplyInline: (remarkId, url) =>

@@ -895,6 +895,11 @@ export type Task = {
    * respondedIn は対応を書いた提出回、repliedIn は、対応を PR に返信した（投稿を試みて失敗したときも含む）ときの提出回。
    * 1件の指摘には1回だけ返信するので、返信した後の提出の対応では上書きしない。
    */
+  /**
+   * 指摘への返信の投稿に使った GitHub のアカウント（RemarkRepliesStarted。PBI-352）。投稿済みの返信を探すときと、PR の
+   * 指摘の取り込みから sacty の返信を除くときに、今のアカウントに加えて使う（投稿の後に、アカウントが変わっていても）。
+   */
+  remarkReplyAccounts?: string[];
   continuedResponses?: Record<
     string,
     { text: string; status?: RemarkResponseStatus; respondedIn: number; repliedIn?: number }
@@ -2570,6 +2575,15 @@ export function applyEvent(
         }
       }
       task.githubComments = { ...task.githubComments, [p.step]: { ...p, at: event.at } };
+      break;
+    }
+
+    case "RemarkRepliesStarted": {
+      const account = event.payload.account;
+      const known = task.remarkReplyAccounts ?? [];
+      if (!known.some((a) => a.toLowerCase() === account.toLowerCase())) {
+        task.remarkReplyAccounts = [...known, account];
+      }
       break;
     }
 

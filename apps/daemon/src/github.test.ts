@@ -832,6 +832,7 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
         id: 4,
         url: "https://github.com/acme/app/pull/7#discussion_r4",
         body: `${marker}2 -->\n直しました`,
+        author: "Sacty-Bot",
       },
     ]);
     expect(calls[0]?.url).toBe(
@@ -891,7 +892,7 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
       expect(
         errorText(
           await client
-            .listReviewComments({ ...target, prefix: "x", account: "a", complete: true })
+            .listReviewComments({ ...target, prefix: "x", complete: true })
             .catch((e: unknown) => e),
         ),
       ).toMatchObject({ code: "github.commentsIncomplete" });
@@ -1555,6 +1556,18 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
         account: "sacty-bot",
       });
       expect(imported.map((f) => f.key).sort()).toEqual([
+        "comment:2",
+        "comment:3",
+        "comment:4",
+        "review_comment:12",
+      ]);
+      // 今のアカウントが変わっていても、返信に使ったアカウント（noticeAccounts）の返信は除く
+      const changed = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback({
+        ...pr,
+        account: "new-bot",
+        noticeAccounts: ["Sacty-Bot"],
+      });
+      expect(changed.map((f) => f.key).sort()).toEqual([
         "comment:2",
         "comment:3",
         "comment:4",

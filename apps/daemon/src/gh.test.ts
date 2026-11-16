@@ -1,4 +1,8 @@
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { errorText } from "./errors.js";
 import { GhCliAuth, gitAuthEnv, gitAuthSecrets, httpsHost } from "./gh.js";
@@ -27,6 +31,34 @@ function fakeGh(result: { stdout?: string; stderr?: string; code?: number; error
 }
 
 describe("gh の実行の中断（PBI-352）", () => {
+  it("中断されたら、gh が起動したプロセス（認証の補助など）も、プロセスグループごと止める", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sacty-gh-"));
+    const pidFile = join(dir, "pid");
+    // gh の代わりに、子プロセスを起動して待ち続けるシェルを動かす
+    const spawnImpl = ((_cmd: string, _args: string[], options: object) =>
+      spawn("sh", ["-c", `sleep 60 & echo $! > "${pidFile}"; wait`], options)) as never;
+    const controller = new AbortController();
+    const waiting = new GhCliAuth(spawnImpl).token("github.com", "me", controller.signal);
+    for (let i = 0; i < 100 && !existsSync(pidFile); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const grandchild = Number(readFileSync(pidFile, "utf8").trim());
+    expect(grandchild).toBeGreaterThan(0);
+    controller.abort(new Error("期限"));
+    await expect(waiting).rejects.toThrow("期限");
+    let alive = true;
+    for (let i = 0; i < 100 && alive; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      try {
+        process.kill(grandchild, 0);
+      } catch {
+        alive = false;
+      }
+    }
+    expect(alive).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("トークンの取り出しを中断されたら、起動した gh を止めて、待ちから戻る。中断済みなら、起動しない", async () => {
     const killed: string[] = [];
     let spawned = 0;
