@@ -87,9 +87,12 @@ describe("複数リポジトリの詳細", () => {
     const task = project([created("t1", { noRepo: true, repos: ["acme/a", "acme/b"] })]).get(
       "t1",
     ) as Task;
+    task.repo = "https://github.com/acme/a";
+    task.repoChoice = { by: "orchestrator", reason: "選択理由" };
     for (const lang of ["ja", "en"] as const) {
       locale = lang;
       const html = render(task);
+      expect(html).toContain("選択理由");
       expect(html).toContain("acme/a");
       expect(html).toContain("acme/b");
       expect(html).not.toContain('data-testid="no-repository"');
@@ -107,6 +110,7 @@ it("一覧は複数の指定を日英で並べ、リポジトリ無しの印を�
     start: "sacty" as const,
     repoless: true,
     repos: ["acme/a", "acme/b"],
+    repoName: "a",
     steps: [],
     status: { text: "Idle", tone: "waiting" as const },
     createdAt: "2026-10-20T00:00:00.000Z",
@@ -121,6 +125,7 @@ it("一覧は複数の指定を日英で並べ、リポジトリ無しの印を�
     );
     expect(html).toContain("acme/a");
     expect(html).toContain("acme/b");
+    expect(html).toContain(`data-testid="task-repo-t1"`);
     expect(html).not.toContain(`>${messagesFor(lang).tasks.noRepository}</span>`);
   }
 });

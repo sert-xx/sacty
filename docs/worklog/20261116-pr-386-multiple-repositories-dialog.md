@@ -2,8 +2,8 @@
 
 - 日付: 2026-11-16（UTC）
 - タスク: なし
-- PR: なし
-- ブランチ: 作業ブランチ
+- PR: #386
+- ブランチ: sacty/task-57bd9008
 - 関係する ADR: なし
 
 ## 目的
@@ -21,10 +21,12 @@
 `npx vitest run apps/web/src/components/derive-dialog.test.ts tests/docs`：98件成功。
 `npm run lint`・`npm run typecheck`・`npx vitest run`・`npm run build`・`npx vitest run tests/docs`：成功。
 `npm run docs:screenshots -- docs`：日本語と英語の作成ダイアログを撮り直した。
+レビュー対応では、送信失敗後の再送と日英の欄の操作、候補照合中の手動停止をテストで確かめた。
 
 ## レビューの指摘と対応
 
-なし。
+入力の保持、ダイアログのスクロール、選択済みリポジトリの表示、操作ボタンと日英テストを修正した。
+候補照合中の停止要求を優先し、利用者向けの説明を補った。
 
 ## 残したこと
 

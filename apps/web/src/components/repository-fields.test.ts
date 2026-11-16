@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement as h } from "react";
+import { act, createElement as h, useActionState } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -23,31 +23,106 @@ const props = {
 };
 
 describe("作成フォームのリポジトリ欄", () => {
-  it("追加と削除で送信値が変わり、10欄では追加できない", async () => {
+  it.each(["ja", "en"] as const)(
+    "%s で追加と削除が送信値に反映され、1欄と10欄の境界を守る",
+    async (lang) => {
+      locale = lang;
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      await act(() => root.render(h("form", null, h(TaskFields, props))));
+      const form = container.querySelector("form");
+      if (!form) throw new Error("form missing");
+      const button = (label: string) => {
+        const found = Array.from(form.querySelectorAll("button")).find(
+          (b) => b.textContent === label,
+        );
+        if (!found) throw new Error(`button missing: ${label}`);
+        return found;
+      };
+      const t = messagesFor(lang).forms.task;
+      const inputs = () =>
+        Array.from(form.querySelectorAll<HTMLInputElement>('input[name="repo"]'));
+      const set = async (index: number, value: string) => {
+        const input = inputs()[index];
+        if (!input) throw new Error("input missing");
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        if (!setter) throw new Error("value setter missing");
+        await act(() => {
+          setter.call(input, value);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      };
+      expect(form.querySelector(`[aria-label="${t.removeRepositoryField(1)}"]`)).toBeNull();
+      await set(0, "acme/a");
+      await act(() => button(t.addRepository).click());
+      await set(1, "acme/b");
+      expect(new FormData(form).getAll("repo")).toEqual(["acme/a", "acme/b"]);
+      const remove = form.querySelector<HTMLButtonElement>(
+        `[aria-label="${t.removeRepositoryField(2)}"]`,
+      );
+      if (!remove) throw new Error("remove missing");
+      await act(() => remove.click());
+      expect(new FormData(form).getAll("repo")).toEqual(["acme/a"]);
+      expect(form.querySelector(`[aria-label="${t.removeRepositoryField(1)}"]`)).toBeNull();
+      for (let i = 0; i < 9; i++) await act(() => button(t.addRepository).click());
+      expect(inputs()).toHaveLength(10);
+      expect(button(t.addRepository).disabled).toBe(true);
+      await act(() => button(t.addRepository).click());
+      expect(inputs()).toHaveLength(10);
+      await act(() => root.unmount());
+      container.remove();
+      locale = "ja";
+    },
+  );
+
+  it("作成が拒否されても空欄を含む全欄の値と順序を保持して再送する", async () => {
+    const submitted: FormDataEntryValue[][] = [];
+    function Form() {
+      const [state, action] = useActionState(async (_state: number, data: FormData) => {
+        submitted.push(data.getAll("repo"));
+        return 1;
+      }, 0);
+      return h(
+        "form",
+        { action },
+        h(TaskFields, props),
+        h("button", { type: "submit" }, "Submit"),
+        state ? h("p", null, "Error") : null,
+      );
+    }
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
-    await act(() => root.render(h("form", null, h(TaskFields, props))));
-    const form = container.querySelector("form")!;
-    const add = () =>
-      Array.from(form.querySelectorAll("button")).find(
-        (b) => b.textContent === "リポジトリを追加",
-      )!;
-    const inputs = () => Array.from(form.querySelectorAll<HTMLInputElement>('input[name="repo"]'));
-    inputs()[0]!.value = "acme/a";
-    await act(() => add().click());
-    inputs()[1]!.value = "acme/b";
-    expect(new FormData(form).getAll("repo")).toEqual(["acme/a", "acme/b"]);
-    const remove = Array.from(form.querySelectorAll("button")).filter(
-      (b) => b.textContent === "削除",
+    await act(() => root.render(h(Form)));
+    const form = container.querySelector("form");
+    if (!form) throw new Error("form missing");
+    const add = Array.from(form.querySelectorAll("button")).find(
+      (b) => b.textContent === messagesFor("ja").forms.task.addRepository,
     );
-    await act(() => remove[1]!.click());
-    expect(new FormData(form).getAll("repo")).toEqual(["acme/a"]);
-    for (let i = 0; i < 9; i++) await act(() => add().click());
-    expect(inputs()).toHaveLength(10);
-    expect(add().disabled).toBe(true);
-    await act(() => add().click());
-    expect(inputs()).toHaveLength(10);
+    if (!add) throw new Error("add missing");
+    await act(() => add.click());
+    await act(() => add.click());
+    const inputs = form.querySelectorAll<HTMLInputElement>('input[name="repo"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (!setter || !inputs[0] || !inputs[2]) throw new Error("inputs missing");
+    await act(() => {
+      setter.call(inputs[0], "acme/a");
+      inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(inputs[2], "acme/b");
+      inputs[2].dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      form.requestSubmit();
+    });
+    expect(new FormData(form).getAll("repo")).toEqual(["acme/a", "", "acme/b"]);
+    await act(async () => {
+      form.requestSubmit();
+    });
+    expect(submitted).toEqual([
+      ["acme/a", "", "acme/b"],
+      ["acme/a", "", "acme/b"],
+    ]);
     await act(() => root.unmount());
     container.remove();
   });

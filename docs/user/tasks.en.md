@@ -221,7 +221,7 @@ A project's task list looks like this.
 
 ![The task list (Needs you cards and all tasks; the child tasks that review PRs are listed under their parent tasks)](images/task-list.en.png)
 
-Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository is not decided yet show none. Of these, a task created without a repository shows "No repository". Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
+Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks with multiple specified repositories show the specified list even before a working repository is chosen, and also show the working repository once chosen. Other tasks whose repository is not decided yet show none. Of these, a task created without a repository shows "No repository". Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
 
 Child tasks are indented directly under their parent task.
 
@@ -341,7 +341,7 @@ How the code is read depends on whether the repository to work in is decided.
 - With a specified list, it reads all specified repositories through the GitHub read relay, even after a repository is chosen.
 
 To use the GitHub read relay, choose the GitHub account for that host in the project settings ([GitHub account in project settings](project-settings.en.md#github-account)).
-Repositories it could not read, and Orgs whose repository list could not be read (expired credentials, missing permissions, and so on), are written in the summary as sources that could not be read.
+Repositories it could not read, and Orgs whose repository list could not be read (expired credentials, missing permissions, and so on), are written in the summary as sources that could not be read. For a task with multiple specified repositories, sacty pauses before gathering if it cannot verify the specified targets.
 
 A child task that reviews a PR sacty opened does not gather information again.
 It inherits the summary of the parent task that opened the PR, and "Gathered information" shows "inherited from the parent task".

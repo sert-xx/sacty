@@ -161,17 +161,17 @@ export function LiveTaskList({
                           {/* 作業するリポジトリ（repo だけ。PBI-141） */}
                           {task.repos?.length ? (
                             <span className="mt-0.5 block font-mono text-xs text-muted-foreground">
-                              {task.repos.join(", ")}
+                              {m.specifiedRepositories}: {task.repos.join(", ")}
                             </span>
-                          ) : (
-                            task.repoName && (
-                              <span
-                                className="mt-0.5 block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
-                                data-testid={`task-repo-${task.id}`}
-                              >
-                                {task.repoName}
-                              </span>
-                            )
+                          ) : null}
+                          {task.repoName && (
+                            <span
+                              className="mt-0.5 block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
+                              data-testid={`task-repo-${task.id}`}
+                            >
+                              {task.repos?.length ? `${m.workingRepository}: ` : ""}
+                              {task.repoName}
+                            </span>
                           )}
                         </td>
                         <td className="px-3 py-3.5 whitespace-nowrap text-muted-foreground">

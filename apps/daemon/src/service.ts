@@ -627,6 +627,9 @@ export class InvalidOperationError extends Error {
   }
 }
 
+/** 作成時の複数リポジトリ指定の入力エラー。 */
+export class InvalidTaskRepositoriesError extends InvalidOperationError {}
+
 /** 大まかな監査の記録の、メモリーをコンテキストにする提案（原因の形。PBI-128）。 */
 type SurveyPromotionRecord = NonNullable<
   Extract<EventInput, { type: "AuditSurveyed" }>["payload"]["promotions"]
@@ -5976,14 +5979,7 @@ export class TaskService {
     | { repositories: string[]; errors: { org: string; message: DaemonText }[] }
     | { missing: string; detail?: DaemonText }
   > {
-    let listed: Awaited<ReturnType<TaskService["projectRepositories"]>>;
-    try {
-      listed = await this.projectRepositories(task.projectId);
-    } catch (error) {
-      const first = task.repos?.[0];
-      if (!first) throw error;
-      return { missing: first, detail: errorText(error) };
-    }
+    const listed = await this.projectRepositories(task.projectId);
     const repositories = listed?.repositories ?? [];
     if (!task.repos) return { repositories, errors: listed?.errors ?? [] };
     for (const repo of task.repos) {
@@ -7441,7 +7437,7 @@ export class TaskService {
       throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
     }
     if (input.repo !== undefined && input.repos !== undefined) {
-      throw new InvalidOperationError(message("task.repositoriesConflict"));
+      throw new InvalidTaskRepositoriesError(message("task.repositoriesConflict"));
     }
     const repositories: string[] = [];
     const projects = input.repos ? this.deps.projects.all() : undefined;
@@ -7451,7 +7447,7 @@ export class TaskService {
         ? responsibleProject(projects ?? [], name)
         : undefined;
       if (responsible?.project.id !== project.id) {
-        throw new InvalidOperationError(message("task.repositoriesUnknown", { repo: name }));
+        throw new InvalidTaskRepositoriesError(message("task.repositoriesUnknown", { repo: name }));
       }
       const normalized =
         responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(name);
@@ -7462,7 +7458,7 @@ export class TaskService {
       }
     }
     if (repositories.length > 10) {
-      throw new InvalidOperationError(message("task.repositoriesLimit"));
+      throw new InvalidTaskRepositoriesError(message("task.repositoriesLimit"));
     }
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
@@ -8955,6 +8951,7 @@ export class TaskService {
     entry.done = this.runningTask.run(taskId, async () => {
       try {
         if (task?.repos && task.status === "queued") {
+          if (!this.deps.config().ok) return;
           const step = activeStep(task);
           const gathering = awaitingGathering(task);
           if (
@@ -8964,160 +8961,42 @@ export class TaskService {
             step === "design" ||
             step === "split"
           ) {
-            let candidates = await this.taskRepositoryCandidates(task);
-            if ("repositories" in candidates) {
-              try {
-                if (this.awaitingContextImages(task)) return;
-              } catch (error) {
-                candidates = { missing: task.repos[0] ?? "", detail: errorText(error) };
-              }
-            }
+            const candidates = await this.taskRepositoryCandidates(task);
+            if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
             if ("missing" in candidates) {
               const text = message("repo.noLongerTarget", {
                 repo: candidates.missing,
                 detail: candidates.detail,
               });
-              if (!gathering && task.steps.length > 0 && step) {
-                const config = this.deps.config();
-                if (!config.ok) return;
-                const chosen = stepAgentFor(config.config, step, task.agents?.[step]);
-                if (!chosen.ok) {
-                  this.pauseForMissingAgent(task, step, chosen.missing);
-                  return;
-                }
-                const runId = randomUUID();
-                this.append(task, [
-                  {
-                    actor: "sacty",
-                    event: {
-                      type: "AgentRunStarted",
-                      payload: {
-                        runId,
-                        step,
-                        agentId: chosen.agent.id,
-                        ...agentSetting(chosen.agent),
-                        image: stepImageOf(task, step) ?? DEFAULT_IMAGE_NAME,
-                      },
-                    },
-                  },
-                  {
-                    actor: "sacty",
-                    event: {
-                      type: "AgentRunFailed",
-                      payload: {
-                        runId,
-                        step,
-                        agentId: chosen.agent.id,
-                        reason: "error",
-                        message: text,
-                      },
-                    },
-                  },
-                  { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
-                ]);
-              } else {
-                this.append(task, [
-                  {
-                    actor: gathering ? "gatherer" : "orchestrator",
-                    event: {
-                      type: "OrchestratorFailed",
-                      payload: {
-                        reason: "error",
-                        message: text,
-                        agentId: "unknown",
-                        costUsd: 0,
-                        estimated: false,
-                      },
-                    },
-                  },
-                  {
-                    actor: "sacty",
-                    event: { type: "TaskPaused", payload: { reason: "error", message: text } },
-                  },
-                ]);
-              }
-              return;
-            }
-          } else if (this.awaitingContextImages(task)) return;
-        }
-        try {
-          await this.runNextInner(taskId);
-        } catch (error) {
-          const latest = this.mustGet(taskId);
-          const step = activeStep(latest);
-          const gathering = awaitingGathering(latest);
-          if (
-            !latest.repos ||
-            (latest.status !== "queued" && latest.status !== "running") ||
-            (!gathering &&
-              latest.steps.length > 0 &&
-              step !== "requirements" &&
-              step !== "design" &&
-              step !== "split")
-          )
-            throw error;
-          const text = errorText(error);
-          if (!gathering && latest.steps.length > 0 && step) {
-            const config = this.deps.config();
-            if (!config.ok) throw error;
-            const chosen = stepAgentFor(config.config, step, latest.agents?.[step]);
-            if (!chosen.ok) throw error;
-            const runId = latest.currentRunId ?? randomUUID();
-            this.append(latest, [
-              ...(!latest.currentRunId
-                ? [
-                    {
-                      actor: "sacty" as const,
-                      event: {
-                        type: "AgentRunStarted" as const,
-                        payload: {
-                          runId,
-                          step,
-                          agentId: chosen.agent.id,
-                          ...agentSetting(chosen.agent),
-                          image: stepImageOf(latest, step) ?? DEFAULT_IMAGE_NAME,
+              this.append(task, [
+                ...(gathering || task.steps.length === 0
+                  ? [
+                      {
+                        actor: gathering ? ("gatherer" as const) : ("orchestrator" as const),
+                        event: {
+                          type: "OrchestratorFailed" as const,
+                          payload: {
+                            reason: "error" as const,
+                            message: text,
+                            agentId: "unknown",
+                            costUsd: 0,
+                            estimated: false,
+                          },
                         },
                       },
-                    },
-                  ]
-                : []),
-              {
-                actor: "sacty",
-                event: {
-                  type: "AgentRunFailed",
-                  payload: {
-                    runId,
-                    step,
-                    agentId: chosen.agent.id,
-                    reason: "error",
-                    message: text,
-                  },
+                    ]
+                  : []),
+                {
+                  actor: "sacty",
+                  event: { type: "TaskPaused", payload: { reason: "error", message: text } },
                 },
-              },
-              { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
-            ]);
-          } else {
-            this.append(latest, [
-              {
-                actor: gathering ? "gatherer" : "orchestrator",
-                event: {
-                  type: "OrchestratorFailed",
-                  payload: {
-                    reason: "error",
-                    message: text,
-                    agentId: "unknown",
-                    costUsd: 0,
-                    estimated: false,
-                  },
-                },
-              },
-              {
-                actor: "sacty",
-                event: { type: "TaskPaused", payload: { reason: "error", message: text } },
-              },
-            ]);
+              ]);
+              return;
+            }
           }
+          if (this.awaitingContextImages(task)) return;
         }
+        await this.runNextInner(taskId);
       } finally {
         if (this.pauseRequested.has(taskId)) {
           // 止めたコンテナが本当に無くなったかを確かめてから、一時停止を記録する
@@ -9272,86 +9151,21 @@ export class TaskService {
     // 対象リポジトリの無いタスク（PBI-73）と、チケットのトリアージを待つタスク（PBI-52）は、用意しない（リポジトリを
     // 決めたら、次の実行で用意する。それまでの情報収集は、リポジトリの候補のコードを GitHub の読み取りの中継で読む）
     if (!initial.repository && !isRepoless(initial) && !awaitingTicketTriage(initial)) {
-      let ready: Awaited<ReturnType<TaskService["prepareRepository"]>>;
-      try {
-        ready = await this.prepareRepository(initial, config.config);
-      } catch (error) {
-        if (!initial.repos) throw error;
-        ready = { ok: false, message: errorText(error) };
-      }
-      const step = activeStep(initial);
-      if (
-        !ready.ok &&
-        initial.repos &&
-        (awaitingGathering(initial) ||
-          initial.steps.length === 0 ||
-          step === "requirements" ||
-          step === "design" ||
-          step === "split")
-      ) {
-        const text = message("repo.prepareFailed", {
-          repo: initial.repo ?? initial.repos[0] ?? "",
-          detail: ready.message,
-        });
-        if (awaitingGathering(initial) || initial.steps.length === 0) {
-          this.append(initial, [
-            {
-              actor: awaitingGathering(initial) ? "gatherer" : "orchestrator",
-              event: {
-                type: "OrchestratorFailed",
-                payload: {
-                  reason: "error",
-                  message: text,
-                  agentId: "unknown",
-                  costUsd: 0,
-                  estimated: false,
-                },
-              },
-            },
-            {
-              actor: "sacty",
-              event: { type: "TaskPaused", payload: { reason: "error", message: text } },
-            },
-          ]);
-        } else if (step) {
-          const chosen = stepAgentFor(config.config, step, initial.agents?.[step]);
-          if (!chosen.ok) {
-            this.pauseForMissingAgent(initial, step, chosen.missing);
-            return;
-          }
-          const agent = this.usableAgent(config.config, chosen.agent, initial.id, step);
-          const runId = randomUUID();
-          this.append(initial, [
-            {
-              actor: "sacty",
-              event: {
-                type: "AgentRunStarted",
-                payload: {
-                  runId,
-                  step,
-                  agentId: agent.id,
-                  ...agentSetting(agent),
-                  image: stepImageOf(initial, step) ?? DEFAULT_IMAGE_NAME,
-                },
-              },
-            },
-            {
-              actor: "sacty",
-              event: {
-                type: "AgentRunFailed",
-                payload: { runId, step, agentId: agent.id, reason: "error", message: text },
-              },
-            },
-            { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
-          ]);
-        }
-        return;
-      }
+      const ready = await this.prepareRepository(initial, config.config);
       if (!ready.ok) {
         this.append(initial, [
           {
             actor: "sacty",
-            event: { type: "TaskPaused", payload: { reason: "error", message: ready.message } },
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message:
+                  initial.repos && initial.repo
+                    ? message("repo.prepareFailed", { repo: initial.repo, detail: ready.message })
+                    : ready.message,
+              },
+            },
           },
         ]);
         return;
@@ -9384,36 +9198,7 @@ export class TaskService {
       const review = this.mustGet(taskId).source?.review;
       // プロジェクトの対象で指定したイメージ（PBI-41）は、レビューだけの工程にも同じく使い、名前も確かめる（PBI-44 レビュー指摘）
       // images があれば、レビューの工程のイメージだけをオーケストレーターに選ばせる（検証コマンドを実行するため）
-      let imageConfig: SactyConfig;
-      try {
-        imageConfig = this.projectImagesConfig(config.config, initial.projectId);
-      } catch (error) {
-        if (!initial.repos) throw error;
-        const text = message("repo.noLongerTarget", {
-          repo: initial.repos[0] ?? "",
-          detail: errorText(error),
-        });
-        this.append(initial, [
-          {
-            actor: "orchestrator",
-            event: {
-              type: "OrchestratorFailed",
-              payload: {
-                reason: "error",
-                message: text,
-                agentId: "unknown",
-                costUsd: 0,
-                estimated: false,
-              },
-            },
-          },
-          {
-            actor: "sacty",
-            event: { type: "TaskPaused", payload: { reason: "error", message: text } },
-          },
-        ]);
-        return;
-      }
+      const imageConfig = this.projectImagesConfig(config.config, initial.projectId);
       const choice = review
         ? await this.chooseReviewSteps(this.mustGet(taskId), imageConfig, review)
         : await this.chooseSteps(this.mustGet(taskId), imageConfig);
@@ -9655,6 +9440,32 @@ export class TaskService {
       if (!resolved.ok) return;
     }
 
+    // 候補照合は開始記録より前に行う。取得の例外でも未実行の工程が実行中に残らない。
+    let splitCandidates: string[] | undefined;
+    if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
+      const candidates = await this.taskRepositoryCandidates(task);
+      if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
+      if ("missing" in candidates) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message: message("repo.noLongerTarget", {
+                  repo: candidates.missing,
+                  detail: candidates.detail,
+                }),
+              },
+            },
+          },
+        ]);
+        return;
+      }
+      if (step === "split") splitCandidates = candidates.repositories;
+    }
+
     // 工程に使う AI（人がタスクの詳細で選んだもの。無ければ step_agents か default_agent。PBI-40・PBI-121）。準備（レビューの
     // 対象の確認など）の間に人が変えていれば、それを使う。決めてから開始の記録までは待たない（PR #131 レビュー指摘）
     const chosenName = this.mustGet(task.id).agents?.[step];
@@ -9693,24 +9504,11 @@ export class TaskService {
     // 対象リポジトリの無いタスク（PBI-73）は、空の作業領域で実行する。コードが要る工程は選ばせないが、選ばれていたら止める
     const repoless = isRepoless(this.mustGet(task.id));
     const splitRepositories = repoless || Boolean(task.repos);
-    let ready: Awaited<ReturnType<TaskService["prepareRepository"]>>;
-    try {
-      ready = repoless
-        ? REPO_STEPS.includes(step)
-          ? { ok: false, message: message("repo.stepNeedsRepository", { step }) }
-          : { ok: true, dir: join(this.deps.workspaceRoot, task.id, "empty") }
-        : await this.prepareRepository(this.mustGet(task.id), config.config);
-    } catch (error) {
-      if (!task.repos || (step !== "requirements" && step !== "design" && step !== "split"))
-        throw error;
-      ready = {
-        ok: false,
-        message: message("repo.prepareFailed", {
-          repo: task.repo ?? task.repos[0] ?? "",
-          detail: errorText(error),
-        }),
-      };
-    }
+    const ready = repoless
+      ? REPO_STEPS.includes(step)
+        ? { ok: false as const, message: message("repo.stepNeedsRepository", { step }) }
+        : { ok: true as const, dir: join(this.deps.workspaceRoot, task.id, "empty") }
+      : await this.prepareRepository(this.mustGet(task.id), config.config);
     if (!ready.ok) {
       this.append(task, [
         {
@@ -9778,38 +9576,9 @@ export class TaskService {
     const runPlatforms = mergePlatforms(config.config.platforms, context?.platforms ?? []);
     // ここから実行の try（finally で消す）までに例外になっても、用意したコンテキスト（一時のディレクトリ・ホストで起動する
     // MCP サーバーの確保）を残さない（PR #89 レビュー指摘）
-    let splitCandidates: string[] | undefined;
     try {
       if (context) this.append(task, [this.contextResolved(runId, context, runPlatforms)]);
-
-      // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
-      if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
-        const candidates = await this.taskRepositoryCandidates(task);
-        if ("missing" in candidates) {
-          this.append(task, [
-            {
-              actor: "sacty",
-              event: {
-                type: "AgentRunFailed",
-                payload: {
-                  runId,
-                  step,
-                  agentId: agent.id,
-                  reason: "error",
-                  message: message("repo.noLongerTarget", {
-                    repo: candidates.missing,
-                    detail: candidates.detail,
-                  }),
-                },
-              },
-            },
-            { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
-          ]);
-          context?.dispose();
-          return;
-        }
-        if (step === "split") splitCandidates = candidates.repositories;
-      } else if (step === "split" && splitRepositories) {
+      if (!task.repos && step === "split" && splitRepositories) {
         const candidates = await this.taskRepositoryCandidates(task);
         splitCandidates = "repositories" in candidates ? candidates.repositories : [];
       }

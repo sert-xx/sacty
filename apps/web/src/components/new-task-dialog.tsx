@@ -152,7 +152,7 @@ export function NewTaskDialog({
       <DialogTrigger render={<Button size={prefill ? "default" : "lg"} />}>
         {prefill?.label ?? t.create}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
         <form action={formAction} className="flex flex-col gap-4">
           <input type="hidden" name="projectId" value={target.id} />
           {prefill && <input type="hidden" name="flakyFixTest" value={prefill.flakyFixTest} />}
@@ -293,6 +293,7 @@ export function TaskFields({
   const t = messages.forms.task;
   const repositories = candidates.status === "loaded" ? candidates.repositories : [];
   const [repoFields, setRepoFields] = useState([0]);
+  const [repoValues, setRepoValues] = useState<Record<number, string>>({});
   return (
     <>
       <fieldset className="flex flex-col gap-2">
@@ -319,7 +320,13 @@ export function TaskFields({
                 checked={template === value}
                 className="sr-only"
                 onChange={() => {
-                  if (value) setRepoFields((fields) => fields.slice(0, 1));
+                  if (value) {
+                    setRepoFields((fields) => fields.slice(0, 1));
+                    setRepoValues((values) => ({
+                      [repoFields[0]]:
+                        values[repoFields[0]] ?? (repoFields[0] === 0 ? repoDefault : "") ?? "",
+                    }));
+                  }
                   onTemplate(value);
                 }}
               />
@@ -380,28 +387,42 @@ export function TaskFields({
                 name="repo"
                 list={`${idPrefix}-repo-options`}
                 autoComplete="off"
-                defaultValue={index === 0 ? repoDefault : ""}
+                value={repoValues[field] ?? (field === 0 ? (repoDefault ?? "") : "")}
+                onChange={(event) =>
+                  setRepoValues((values) => ({ ...values, [field]: event.target.value }))
+                }
                 placeholder={t.repositoryPlaceholder}
                 className="font-mono"
               />
               {!template && steps && repoFields.length > 1 && (
-                <button
+                <Button
+                  variant="outline"
                   type="button"
-                  onClick={() => setRepoFields((fields) => removeRepositoryField(fields, field))}
+                  aria-label={t.removeRepositoryField(index + 1)}
+                  onClick={() => {
+                    setRepoFields((fields) => removeRepositoryField(fields, field));
+                    setRepoValues((values) => {
+                      const next = { ...values };
+                      delete next[field];
+                      return next;
+                    });
+                  }}
                 >
                   {t.removeRepository}
-                </button>
+                </Button>
               )}
             </div>
           ))}
           {!template && steps && (
-            <button
+            <Button
+              variant="outline"
+              className="self-start"
               type="button"
               disabled={repoFields.length >= 10}
               onClick={() => setRepoFields(addRepositoryField)}
             >
               {t.addRepository}
-            </button>
+            </Button>
           )}
           <datalist id={`${idPrefix}-repo-options`}>
             {repositories.map((repo) => (

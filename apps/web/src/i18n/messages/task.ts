@@ -15,6 +15,8 @@ const ja = {
   template: " ・ テンプレート：",
   repoChoiceBy: (byPerson: boolean): string =>
     byPerson ? "（人が選択）" : "（オーケストレーターが選択）",
+  specifiedRepositories: "指定したリポジトリ",
+  workingRepository: "作業するリポジトリ",
   repoChoiceHint: (reason: string) => `選んだ理由：${reason}`,
   reviewOfStep: (step: string) => `（${step}の PR）`,
   reviewTaskOf: (step: string, number: number, status?: string) =>
@@ -552,6 +554,8 @@ const en: TaskMessages = {
   template: " · Template: ",
   repoChoiceBy: (byPerson) =>
     byPerson ? " (chosen by a person)" : " (chosen by the Orchestrator)",
+  specifiedRepositories: "Specified repositories",
+  workingRepository: "Working repository",
   repoChoiceHint: (reason) => `Why: ${reason}`,
   reviewOfStep: (step) => ` (${step} PR)`,
   reviewTaskOf: (step, number, status) => ` (${step} PR #${number}${status ? `, ${status}` : ""})`,
