@@ -33740,6 +33740,78 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     },
   );
 
+  it("選択済みの再準備が途中で失敗しても名前と理由を記録し、未完了の写しを作り直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = "chosen-incomplete-copy";
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "複数",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              repos: [API, WEB],
+              budgetCapUsd: 1,
+            },
+          },
+        },
+        {
+          actor: "person",
+          event: { type: "RepositoryChosen", payload: { repo: WEB, reason: "選択" } },
+        },
+        {
+          actor: "sacty",
+          event: {
+            type: "RepositoryPrepared",
+            payload: { url: WEB, baseBranch: "main", baseCommit: "base123" },
+          },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { steps: ["requirements"], plan: "split", reason: "分割", costUsd: 0 },
+          },
+        },
+      ],
+    });
+    const { service, executor, repos } = makeService(activity, [out("# 結果")], {
+      projects: twoRepos(),
+    });
+    const prepare = repos.prepare.bind(repos);
+    let attempts = 0;
+    vi.spyOn(repos, "prepare").mockImplementation(async (...args) => {
+      if (args[2] === WEB && ++attempts === 1) {
+        mkdirSync(args[0], { recursive: true });
+        mkdirSync(args[1], { recursive: true });
+        writeFileSync(join(args[1], "partial"), "incomplete");
+        throw new Error("metadata copy failed");
+      }
+      if (args[2] === WEB) expect(existsSync(join(args[1], "partial"))).toBe(false);
+      return prepare(...args);
+    });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    const failed = activity.forTask(id).find((event) => event.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(WEB);
+    expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toContain(
+      "metadata copy failed",
+    );
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(attempts).toBe(2);
+    expect(repos.prepared.find((entry) => entry.url === WEB)?.recorded).toBe("base123");
+    expect(executor.calls).toHaveLength(1);
+    activity.close();
+  });
+
   it("複数の指定を正規化して記録し、不正な指定を断る", () => {
     const activity = new SqliteActivityStore(dbPath);
     const projects = twoRepos();

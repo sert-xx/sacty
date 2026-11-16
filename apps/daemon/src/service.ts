@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type ActivityEvent,
   type Actor,
@@ -8785,7 +8785,7 @@ export class TaskService {
     // 完了の後に作業領域を消している途中なら、消し終わってから用意し直す（PBI-157）
     await this.workspaceSettled(task.id);
     const dir = this.repoDir(task);
-    if (!rebase && task.repository && existsSync(dir) && existsSync(this.trustedGitDir(task))) {
+    if (!rebase && task.repository && this.repositoryCopyReady(dir, this.trustedGitDir(task))) {
       return { ok: true, dir };
     }
     const target = this.targetRepository(task, config);
@@ -8800,7 +8800,7 @@ export class TaskService {
       rebase?.branch ?? task.repository?.baseBranch ?? task.stack?.branch ?? task.stackedBase;
     const usedSecrets: string[] = [];
     try {
-      const prepared = await this.deps.repos.prepare(
+      const prepared = await this.prepareRepositoryCopy(
         dir,
         this.trustedGitDir(task),
         url,
@@ -8835,6 +8835,24 @@ export class TaskService {
     } catch (error) {
       return { ok: false, message: redactText(errorText(error), usedSecrets) };
     }
+  }
+
+  private repositoryCopyReady(dir: string, gitDir: string): boolean {
+    return existsSync(dir) && existsSync(gitDir) && !existsSync(`${gitDir}.preparing`);
+  }
+
+  private async prepareRepositoryCopy(...args: Parameters<RepositoryWorkspace["prepare"]>) {
+    const [dir, gitDir] = args;
+    const marker = `${gitDir}.preparing`;
+    mkdirSync(dirname(gitDir), { recursive: true });
+    if (existsSync(marker)) {
+      await rm(dir, { recursive: true, force: true });
+      await rm(gitDir, { recursive: true, force: true });
+    }
+    writeFileSync(marker, "");
+    const prepared = await this.deps.repos.prepare(...args);
+    await rm(marker, { force: true });
+    return prepared;
   }
 
   /**
@@ -9709,19 +9727,25 @@ export class TaskService {
         throw error;
       ready = {
         ok: false,
-        message: message("repo.prepareFailed", {
-          repo: task.repo ?? task.repos[0] ?? "",
-          detail: errorText(error),
-        }),
+        message: errorText(error),
       };
     }
     if (!ready.ok) {
+      const failureMessage =
+        task.repos &&
+        !repoless &&
+        (step === "requirements" || step === "design" || step === "split")
+          ? message("repo.prepareFailed", {
+              repo: task.repository?.url ?? task.repo ?? task.repos[0] ?? "",
+              detail: ready.message,
+            })
+          : ready.message;
       this.append(task, [
         {
           actor: "sacty",
           event: {
             type: "AgentRunFailed",
-            payload: { runId, step, agentId: agent.id, reason: "error", message: ready.message },
+            payload: { runId, step, agentId: agent.id, reason: "error", message: failureMessage },
           },
         },
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
@@ -9969,11 +9993,11 @@ export class TaskService {
             mkdirSync(root, { recursive: true });
             const auth = await this.gitAuth(task, repo, secrets);
             const complete = join(root, `${dir}.complete`);
-            if (!existsSync(clone) || !existsSync(gitDir) || !existsSync(complete)) {
+            if (!this.repositoryCopyReady(clone, gitDir) || !existsSync(complete)) {
               await rm(clone, { recursive: true, force: true });
               await rm(gitDir, { recursive: true, force: true });
               await rm(complete, { force: true });
-              await this.deps.repos.prepare(clone, gitDir, repo, undefined, auth);
+              await this.prepareRepositoryCopy(clone, gitDir, repo, undefined, auth);
               writeFileSync(complete, "");
             }
             const branch = await this.deps.repos.remoteDefaultBranch(gitDir, auth);
