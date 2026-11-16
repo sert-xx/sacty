@@ -229,6 +229,26 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     await expect(workspace.fetchBranch(gitDir, "missing")).rejects.toThrow();
   });
 
+  it("既定ブランチの変更と Git で有効な名前をリモートから取得する", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const gitDir = join(dir, "_git", "default.git");
+    await workspace.prepare(join(dir, "default"), gitDir, origin, undefined);
+    expect(await workspace.remoteDefaultBranch(gitDir)).toBe("main");
+    for (const branch of ["release+2026", "日本語"]) {
+      git(origin, "checkout", "-b", branch);
+      writeFileSync(join(origin, "branch.txt"), branch);
+      git(origin, "add", "branch.txt");
+      git(origin, "commit", "-m", branch);
+      expect(await workspace.remoteDefaultBranch(gitDir)).toBe(branch);
+      const commit = await workspace.fetchBranch(gitDir, branch);
+      const target = join(dir, `snapshot-${branch}`);
+      await workspace.snapshot(gitDir, commit, target);
+      expect(readFileSync(join(target, "branch.txt"), "utf8")).toBe(branch);
+    }
+    await expect(workspace.fetchBranch(gitDir, "bad..name")).rejects.toThrow();
+  });
+
   it("実装後のコードを、.git を除き、シンボリックリンクはたどらずに写す（PBI-16）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

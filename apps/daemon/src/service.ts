@@ -9717,21 +9717,7 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "AgentRunFailed",
-            payload: {
-              runId,
-              step,
-              agentId: agent.id,
-              reason: "error",
-              message:
-                task.repos &&
-                !repoless &&
-                (step === "requirements" || step === "design" || step === "split")
-                  ? message("repo.prepareFailed", {
-                      repo: task.repo ?? task.repository?.url ?? "",
-                      detail: ready.message,
-                    })
-                  : ready.message,
-            },
+            payload: { runId, step, agentId: agent.id, reason: "error", message: ready.message },
           },
         },
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
@@ -9972,20 +9958,14 @@ export class TaskService {
           }
           const clone = join(root, dir);
           const gitDir = join(root, `${dir}.git`);
-          const branchFile = join(root, `${dir}.branch`);
           const secrets: string[] = [];
           try {
             mkdirSync(root, { recursive: true });
             const auth = await this.gitAuth(task, repo, secrets);
-            let branch: string;
-            if (existsSync(clone) && existsSync(gitDir) && existsSync(branchFile)) {
-              branch = readFileSync(branchFile, "utf8");
-            } else {
-              rmSync(branchFile, { force: true });
-              const prepared = await this.deps.repos.prepare(clone, gitDir, repo, undefined, auth);
-              branch = prepared.baseBranch;
-              writeFileSync(branchFile, branch);
+            if (!existsSync(clone) || !existsSync(gitDir)) {
+              await this.deps.repos.prepare(clone, gitDir, repo, undefined, auth);
             }
+            const branch = await this.deps.repos.remoteDefaultBranch(gitDir, auth);
             const commit = await this.deps.repos.fetchBranch(gitDir, branch, auth);
             await this.deps.repos.snapshot(gitDir, commit, join(otherReposDir ?? snapshotDir, dir));
             codeRepositories.push({

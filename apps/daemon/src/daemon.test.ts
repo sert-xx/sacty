@@ -549,6 +549,9 @@ class FakeRepos implements RepositoryWorkspace {
   branchHead = "c".repeat(40);
   fetchedBranches: { gitDir: string; branch: string; authEnv?: Record<string, string> }[] = [];
   fetchBranchFail?: string;
+  async remoteDefaultBranch(_gitDir: string, _authEnv?: Record<string, string>) {
+    return this.defaultBranch;
+  }
   async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
     if (this.fetchBranchFail) throw new Error(this.fetchBranchFail);
     this.fetchedBranches.push({ gitDir, branch, ...(authEnv ? { authEnv } : {}) });
@@ -33490,12 +33493,33 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     const { service, executor, repos } = makeService(activity, [out("# 要求要件"), out("# 設計")], {
       projects: twoRepos(),
     });
+    const copies: string[][] = [];
+    executor.respond = () => {
+      const workspace = executor.dirs.at(-1) ?? "";
+      copies.push(
+        ["1-acme__api", "2-acme__web"].map((name) =>
+          readFileSync(join(workspace, name, "README.md"), "utf8"),
+        ),
+      );
+      return undefined;
+    };
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     repos.branchHead = "d".repeat(40);
+    repos.defaultBranch = "release+2026";
     await service.runNext(id);
     expect(repos.prepared.map((p) => p.url)).toEqual([API, WEB]);
     expect(repos.fetchedBranches).toHaveLength(4);
+    expect(repos.fetchedBranches.map((f) => f.branch)).toEqual([
+      "main",
+      "main",
+      "release+2026",
+      "release+2026",
+    ]);
+    expect(copies).toEqual([
+      [`base ${"c".repeat(40)}`, `base ${"c".repeat(40)}`],
+      [`base ${repos.branchHead}`, `base ${repos.branchHead}`],
+    ]);
     expect(promptOf(executor, 1)).toContain(repos.branchHead);
     activity.close();
   });
@@ -33600,6 +33624,10 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       await service.runNext(id);
       expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
       expect(mounted).toMatchObject({ readOnly: true, content: `base ${repos.branchHead}` });
+      if (step !== "split") {
+        expect(executor.inputMounts[0]?.readOnly).toBe(true);
+        expect(executor.inputMounts[0]?.files["task.md"]).toContain("複数");
+      }
       expect(existsSync(mounted?.path ?? "")).toBe(false);
       expect(promptOf(executor, 0)).toContain(`2-acme__web（main、${repos.branchHead}）`);
       expect(promptOf(executor, 0)).toContain(API);
@@ -44926,6 +44954,7 @@ describe("終わったタスクと、中断された実行の作業領域の片�
         "_snapshots",
         "_review",
         "_input",
+        "_repos",
         "_audit-logs",
         "_audit-ledger",
       ].map((name) => [name, randomUUID()]),
@@ -44957,7 +44986,7 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
     expect(existsSync(join(root(), orphan))).toBe(false);
     expect(existsSync(join(root(), "_git", `${orphan}.git`))).toBe(false);
-    expect(removed).toBe(7 + 1 + 2);
+    expect(removed).toBe(8 + 1 + 2);
     expect(existsSync(join(root(), "_guardian", "not-a-run"))).toBe(true);
     expect(existsSync(join(root(), "_cache", "shared-compose"))).toBe(true);
     expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
@@ -45011,10 +45040,11 @@ describe("終わったタスクと、中断された実行の作業領域の片�
   it("起動時に、動いているコンテナがマウントしているもの・停止を確かめられなかった実行のものは消さない", async () => {
     const mounted = randomUUID();
     const unconfirmed = randomUUID();
-    const mounts = [join(root(), "_guardian", mounted)];
+    const mounts = [join(root(), "_guardian", mounted), join(root(), "_repos", mounted, "repo")];
     const { service, id } = await submittedTask({ containerMounts: async () => mounts });
     for (const runId of [mounted, unconfirmed]) {
       mkdirSync(join(root(), "_guardian", runId), { recursive: true });
+      mkdirSync(join(root(), "_repos", runId), { recursive: true });
     }
     // 停止を確かめられなかった実行（運用の工程の中断など）は、タスクの状態に残る
     const task = service.get(id)?.task;
@@ -45022,6 +45052,8 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     await service.cleanupWorkspacesAtStartup();
     expect(existsSync(join(root(), "_guardian", mounted))).toBe(true);
     expect(existsSync(join(root(), "_guardian", unconfirmed))).toBe(true);
+    expect(existsSync(join(root(), "_repos", mounted))).toBe(true);
+    expect(existsSync(join(root(), "_repos", unconfirmed))).toBe(true);
   });
 
   it("起動時に、このリリースより前に完了したタスクの作業領域を、同じ基準で消す", async () => {

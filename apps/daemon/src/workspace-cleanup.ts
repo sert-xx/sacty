@@ -30,6 +30,7 @@ export const RUN_SCRATCH_DIRS = [
   "_snapshots",
   "_review",
   "_input",
+  "_repos",
   "_audit-logs",
   "_audit-ledger",
   "_deployment",

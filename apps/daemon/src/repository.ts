@@ -244,6 +244,7 @@ export interface RepositoryWorkspace {
    * PR がマージされた後のベースブランチを読むため。PBI-31）。
    */
   fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<string>;
+  remoteDefaultBranch(gitDir: string, authEnv?: Record<string, string>): Promise<string>;
   /**
    * 2つのコミットの間で変わったパス（PBI-57）。タスクブランチに、sacty が積んでいない変更（人が直接積んだ・
    * ベースブランチをマージした）が無いかを、実装を積む前に確かめるために使う。どちらのコミットも取得済みであること。
@@ -1339,8 +1340,28 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return run("cat-file", ["cat-file", "blob", entry.object]);
   }
 
+  async remoteDefaultBranch(gitDir: string, authEnv?: Record<string, string>) {
+    const result = await git(
+      "ls-remote",
+      ["--git-dir", gitDir, ...SAFE_CONFIG, "ls-remote", "--symref", "--", "origin", "HEAD"],
+      cloneEnv(authEnv),
+    );
+    const branch = /^ref: refs\/heads\/([^\n\t]+)\tHEAD$/m.exec(result)?.[1];
+    if (!branch) throw new MessageError(message("git.invalidBranch"));
+    return branch;
+  }
+
   async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
-    if (!/^[\w./-]+$/.test(branch) || branch.startsWith("-")) {
+    if (branch.startsWith("-") || branch.includes("\0")) {
+      throw new MessageError(message("git.invalidBranch"));
+    }
+    try {
+      await git(
+        "check-ref-format",
+        ["check-ref-format", `refs/heads/${branch}`],
+        isolatedEnv("/dev/null"),
+      );
+    } catch {
       throw new MessageError(message("git.invalidBranch"));
     }
     // 取得したコミットは FETCH_HEAD に残る（退避したメタデータのブランチや設定は変えない）
