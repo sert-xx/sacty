@@ -4181,6 +4181,22 @@ export class TaskService {
     | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
     | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
   > {
+    const listedCandidates =
+      isRepoless(task) || task.repos ? await this.taskRepositoryCandidates(task) : undefined;
+    if (listedCandidates && "missing" in listedCandidates) {
+      return {
+        failure: {
+          reason: "error",
+          message: message("repo.noLongerTarget", {
+            repo: listedCandidates.missing,
+            detail: listedCandidates.detail,
+          }),
+          agentId: "unknown",
+          costUsd: 0,
+          estimated: false,
+        },
+      };
+    }
     // 再実行・作成時に人が指定した・プロジェクトの対象で指定したイメージがあれば、オーケストレーターに選ばせない（PBI-41・
     // PBI-318）。古い版の作業履歴で、人が作成時に進め方のすべての工程のイメージを指定したタスクも選ばせない
     const pinned = this.pinnedImage(task);
@@ -4200,22 +4216,6 @@ export class TaskService {
       : [];
     // 対象リポジトリの無いタスク（PBI-73）は、プロジェクトの対象（作業するリポジトリの候補）とコンテキストを渡して選ばせる
     const contextSource = this.deps.projects.get(task.projectId)?.context;
-    const listedCandidates =
-      isRepoless(task) || task.repos ? await this.taskRepositoryCandidates(task) : undefined;
-    if (listedCandidates && "missing" in listedCandidates) {
-      return {
-        failure: {
-          reason: "error",
-          message: message("repo.noLongerTarget", {
-            repo: listedCandidates.missing,
-            detail: listedCandidates.detail,
-          }),
-          agentId: "unknown",
-          costUsd: 0,
-          estimated: false,
-        },
-      };
-    }
     const repoless = isRepoless(task)
       ? {
           repositories:
@@ -6637,7 +6637,7 @@ export class TaskService {
     // GitHub の読み取りの中継で読ませる（トリアージなら、トリアージの候補。用意したタスクは、作業領域の写しを読む）
     // 一覧を読めなかった Org（認証切れ・権限不足など）は、調べられなかった情報源として指示に伝える（候補に入らないので）
     const listed =
-      !task.repository && !triage && isRepoless(task)
+      !triage && (task.repos || (!task.repository && isRepoless(task)))
         ? await this.taskRepositoryCandidates(task)
         : undefined;
     if (listed && "missing" in listed) {

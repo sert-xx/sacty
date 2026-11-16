@@ -7630,7 +7630,7 @@ function gatherCodeLines(
   candidates: readonly string[],
   unreadable: readonly { org: string; message: DaemonText }[],
 ): { lines: string[]; reads: boolean } {
-  if (task.repository) {
+  if (task.repository && !task.repos) {
     return {
       reads: true,
       lines: [
@@ -7665,7 +7665,7 @@ function gatherCodeLines(
     triage?.fixed
       ? `作業するリポジトリは ${repos[0]} です。作業領域にコードはまだ無いので、GitHub の読み取りの中継（下の「GitHub（読み取り）」の gh api）でコードを読んでください。`
       : task.repos
-        ? "作業するリポジトリはまだ決まっておらず、作業領域にコードはありません。指定した次のリポジトリをすべて GitHub の読み取りの中継（下の「GitHub（読み取り）」の gh api）で読んでください。"
+        ? `${task.repository ? `作業領域に ${task.repository.url} のコードがあります。` : "作業するリポジトリはまだ決まっておらず、作業領域にコードはありません。"}指定した次のリポジトリをすべて GitHub の読み取りの中継（下の「GitHub（読み取り）」の gh api）で読んでください。`
         : `作業するリポジトリはまだ決まっておらず、作業領域にコードはありません。次の候補（プロジェクトの対象）から、タスクの内容と集めた情報をもとに関係しそうなリポジトリを洗い出し（多くても ${GATHER_CANDIDATES_TO_READ} つ）、GitHub の読み取りの中継（下の「GitHub（読み取り）」の gh api）でコードを読んでください。`,
     ...(triage ? [] : repos.map((repo) => `- ${repo}`)),
     ...(triage && !triage.fixed ? ["（候補は、下の手順 7 に並べたもの）"] : []),
