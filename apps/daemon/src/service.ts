@@ -3606,12 +3606,12 @@ export class TaskService {
   }
 
   /**
-   * レート制限・時間切れで、返信の投稿を止めた提出（タスクごと）。結果を記録できたら消す。記録できずにやり直すときに、
+   * レート制限・時間切れで、返信の投稿を止めた提出（タスクごと。工程・PR の番号・提出回で見分ける）。結果を記録できたら消す。記録できずにやり直すときに、
    * 止めたことを失って、残りを投稿しないように覚えておく（デーモンを起動し直すと消える）。
    */
   private readonly remarkReplyStopped = new Map<
     string,
-    { submission: number; reason: "rate_limit" | "timeout" }
+    { step: StepKey; number: number; submission: number; reason: "rate_limit" | "timeout" }
   >();
 
   /**
@@ -3685,7 +3685,12 @@ export class TaskService {
     const stop = (reason: "rate_limit" | "timeout") => {
       if (reason === "rate_limit") limitHit = true;
       else timedOut = true;
-      this.remarkReplyStopped.set(taskId, { submission: due.submission, reason });
+      this.remarkReplyStopped.set(taskId, {
+        step: due.step,
+        number: due.number,
+        submission: due.submission,
+        reason,
+      });
     };
     const limited = <T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> => {
       const signal = this.stopNoticeDeadline();
@@ -3780,9 +3785,16 @@ export class TaskService {
     const found = (list: { url: string; body: string }[], marker: string) =>
       list.find((c) => c.body.trimStart().startsWith(marker));
     // 前の処理で、この提出の投稿を止めた（結果は、記録できなかった）：残りを投稿せずに、失敗を残す
+    // 止めたのが、この工程・この PR・この提出のときだけ（ほかの工程や PR の、同じ番号の提出に、持ち越さない）
     const stopped = this.remarkReplyStopped.get(taskId);
-    if (stopped && stopped.submission !== due.submission) this.remarkReplyStopped.delete(taskId);
-    else if (stopped?.reason === "rate_limit") limitHit = true;
+    if (
+      stopped &&
+      (stopped.step !== due.step ||
+        stopped.number !== due.number ||
+        stopped.submission !== due.submission)
+    ) {
+      this.remarkReplyStopped.delete(taskId);
+    } else if (stopped?.reason === "rate_limit") limitHit = true;
     else if (stopped) timedOut = true;
     // 待っている間に、その指摘が無効にされた・対応が変わった・返信済みになったら、その指摘には投稿しない
     const stillDue = (reply: RemarkReplyDue) => {

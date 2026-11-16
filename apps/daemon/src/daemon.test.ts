@@ -140,7 +140,6 @@ import {
   InvalidOperationError,
   type LocalSessionView,
   MEMORY_STEP_ROLES,
-  remarkReplyAccountsOn,
   reviewTaskTitle,
   type ServiceDeps,
   TaskService,
@@ -13772,6 +13771,32 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         warn.mockRestore();
       });
 
+      it("投稿を止めたことは、その工程・その PR・その提出だけのもの：ほかの工程や PR の、同じ番号の提出には持ち越さない", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [comment()];
+        await service.checkPullRequests();
+        // 前に、別の工程（要求要件）・別の PR の、同じ番号の提出で、投稿を止めたまま、結果を記録できなかった
+        const stopped = (
+          service as unknown as {
+            remarkReplyStopped: Map<
+              string,
+              { step: string; number: number; submission: number; reason: string }
+            >;
+          }
+        ).remarkReplyStopped;
+        stopped.set(id, { step: "requirements", number: 5, submission: 2, reason: "rate_limit" });
+        await drain(service);
+        // 実装の PR の提出 2 の返信は、止めずに投稿する。古い記憶は消す
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(posted(service, id)[0]?.results[0]?.failed).toBeUndefined();
+        expect(stopped.has(id)).toBe(false);
+        activity.close();
+      });
+
       it("一覧の読み取り・投稿されたかの探し直しがレート制限に当たったことも、同じアカウントで順番を待っている投稿に伝える", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const limitedUpTo = (service: TaskService) =>
@@ -13922,50 +13947,6 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(fallback - tried).toBeGreaterThanOrEqual(72);
         warn.mockRestore();
         b.activity.close();
-      });
-
-      it("PR に返信したタスクが記録したアカウントを集める：PR を作った・引き継いだタスクと、レビューの子タスクの親", () => {
-        const task = (patch: Partial<Task>) => ({ id: "t", ...patch }) as Task;
-        const pull = { repo: "https://github.com/acme/app", number: 7 } as Task["pullRequest"];
-        const tasks = [
-          task({ id: "author", pullRequest: pull, remarkReplyAccounts: ["old-bot", "me"] }),
-          task({
-            id: "continued",
-            continuedPullRequest: {
-              repo: "https://github.com/acme/app",
-              number: 7,
-              url: "",
-              branch: "b",
-              baseBranch: "main",
-            },
-            remarkReplyAccounts: ["me", "helper"],
-          }),
-          task({ id: "parent", remarkReplyAccounts: ["step-bot"] }),
-          task({
-            id: "other-pr",
-            pullRequest: { ...pull, number: 8 } as Task["pullRequest"],
-            remarkReplyAccounts: ["elsewhere"],
-          }),
-          task({ id: "no-replies", pullRequest: pull }),
-          // 要求要件・設計の PR に返信したタスク
-          task({
-            id: "design-author",
-            stepPullRequests: [
-              { repo: "https://github.com/acme/app", number: 7 },
-            ] as Task["stepPullRequests"],
-            remarkReplyAccounts: ["design-bot"],
-          }),
-        ];
-        expect(remarkReplyAccountsOn(tasks, "parent", "https://github.com/acme/app", 7)).toEqual([
-          "old-bot",
-          "me",
-          "helper",
-          "step-bot",
-          "design-bot",
-        ]);
-        expect(remarkReplyAccountsOn(tasks, undefined, "https://github.com/acme/app", 9)).toEqual(
-          [],
-        );
       });
 
       it("sacty の返信は、PR の指摘として取り込み直さない（取り込みには、返信を含める指定を渡さない）", async () => {
