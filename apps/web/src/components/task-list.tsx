@@ -188,7 +188,10 @@ export function LiveTaskList({
                           )}
                           {/* リポジトリを指定せずに作ったタスク（PBI-73） */}
                           {task.repoless && !task.repos?.length && (
-                            <span className="mt-0.5 block w-fit rounded border border-border px-1.5 text-xs">
+                            <span
+                              className="mt-0.5 block w-fit rounded border border-border px-1.5 text-xs"
+                              data-testid="no-repository"
+                            >
                               {m.noRepository}
                             </span>
                           )}
