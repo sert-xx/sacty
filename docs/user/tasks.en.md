@@ -33,7 +33,7 @@ Press "Create task" to open this dialog.
 
 Fill in the dialog as follows.
 
-1. In "Target repository (optional)", choose a repository from the project's targets ([Project settings](project-settings.en.md#targets)). You can also create a task without choosing a repository ([Create a task without a repository](#create-a-task-without-a-repository)).
+1. In "Target repository (optional)", choose a repository from the project's targets ([Project settings](project-settings.en.md#targets)). To select more than one, press "Add repository" and choose each repository (up to 10). Press "Remove" to delete a field. Templates accept one repository. You can also create a task without choosing a repository ([Create a task without a repository](#create-a-task-without-a-repository)).
 2. If you leave "Plan" at the default, "Automatic", the Orchestrator chooses the combination of steps from the task. You can also choose it yourself ([Specify the plan](#specify-the-plan)).
 3. Enter the "Title" and the "Description".
 4. Press "Create".

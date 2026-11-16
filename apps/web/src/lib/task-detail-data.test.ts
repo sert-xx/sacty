@@ -39,6 +39,17 @@ describe("一時停止でリポジトリを選ぶ候補（PR #119 レビュー�
     expect(none?.ticketRepositoriesFailed).toBeUndefined();
   });
 
+  it("複数指定の再開候補は指定したリポジトリに限る", async () => {
+    candidates.mockClear();
+    getTask.mockImplementationOnce(async () => ({
+      task: { ...paused, repos: ["acme/a", "acme/b"] },
+      activity: [],
+    }));
+    const data = await loadTaskDetail("t1", { repositories: true });
+    expect(data?.ticketRepositories).toEqual(["acme/a", "acme/b"]);
+    expect(candidates).not.toHaveBeenCalled();
+  });
+
   it("求められていなければ、候補を取らない（取り直しのたびに gh を呼ばない）", async () => {
     candidates.mockClear();
     const data = await loadTaskDetail("t1", { repositories: false });

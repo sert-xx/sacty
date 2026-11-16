@@ -32,6 +32,7 @@ export type TaskRow = {
    * まだ決まっていなければ無い。
    */
   repoName?: string;
+  repos?: string[];
   steps: Pick<Task["steps"][number], "key" | "state">[];
   status: { text: string; tone: StatusTone };
   /** 作った日時（ISO 8601）。一覧を開始時期で絞り込む。 */
@@ -89,6 +90,7 @@ export async function loadTaskList(projectId: string): Promise<TaskListData | nu
       ...(task.template ? { template: task.template } : {}),
       ...(task.source ? { source: { repo: task.source.repo, number: task.source.number } } : {}),
       repoless: isRepoless(task),
+      ...(task.repos?.length ? { repos: task.repos } : {}),
       ...repoNameOf(task),
       steps: task.steps.map((s) => ({ key: s.key, state: s.state })),
       status: { text: statusText(task, labels), tone: statusTone(task) },

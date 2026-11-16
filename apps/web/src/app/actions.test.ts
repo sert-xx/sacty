@@ -704,3 +704,32 @@ describe("プロジェクトの削除（deleteProjectAction）", () => {
     expect(order).toEqual(["revalidatePath", "redirect"]);
   });
 });
+
+describe("複数リポジトリの作成", () => {
+  it.each([
+    [[], { repo: null }],
+    [["acme/a"], { repo: "acme/a" }],
+    [["acme/a", "", "acme/b"], { repos: ["acme/a", "acme/b"] }],
+  ])("値のある欄を作成入力に渡す %#", async (repos, expected) => {
+    createTask.mockReset();
+    createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
+    const data = form({ title: "作業", projectId: "project-a" });
+    for (const repo of repos) data.append("repo", repo);
+    await expect(createTaskAction({}, data)).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask).toHaveBeenCalledWith({
+      title: "作業",
+      body: "",
+      projectId: "project-a",
+      ...expected,
+    });
+  });
+
+  it("テンプレートの空欄は省略する", async () => {
+    createTask.mockReset();
+    createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
+    await expect(
+      createTaskAction({}, form({ template: "sacty-setup", projectId: "project-a", repo: "" })),
+    ).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask).toHaveBeenCalledWith({ template: "sacty-setup", projectId: "project-a" });
+  });
+});

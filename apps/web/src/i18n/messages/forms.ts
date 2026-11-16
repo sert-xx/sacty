@@ -66,9 +66,11 @@ const ja = {
     repository: "対象リポジトリ（任意）",
     repositoryRequired: "対象リポジトリ",
     templateRepositoryHint: "テンプレートで扱うリポジトリを、プロジェクトの対象から選びます。",
+    addRepository: "リポジトリを追加",
+    removeRepository: "削除",
     repositoryPlaceholder: "リポジトリの URL",
     repositoryHint:
-      "空欄なら、リポジトリを指定せずに作ります。調べものや全体の設計はリポジトリ無しで進み、コードの変更が要るときはオーケストレーターがプロジェクトの対象から選びます。入力すると候補を絞り込めます。",
+      "すべて空欄なら、リポジトリを指定せずに作ります。調べものや全体の設計はリポジトリ無しで進み、コードの変更が要るときはオーケストレーターがプロジェクトの対象から選びます。入力すると候補を絞り込めます。",
     listFailed: (owner: string, reason: string) =>
       `${owner} のリポジトリを読めませんでした：${reason}`,
     // リポジトリの候補は、ダイアログを開いたときに読む（PBI-109）。待たずに URL を入力して作成できる
@@ -157,9 +159,11 @@ const en: FormsMessages = {
     repository: "Target repository (optional)",
     repositoryRequired: "Target repository",
     templateRepositoryHint: "The repository the template works on, from the project's targets.",
+    addRepository: "Add repository",
+    removeRepository: "Remove",
     repositoryPlaceholder: "Repository URL",
     repositoryHint:
-      "Leave it empty to create the task without a repository. Research and overall design proceed without one; when code must change, the Orchestrator chooses a repository from the project's targets. Type to filter the suggestions.",
+      "Leave all fields empty to create the task without a repository. Research and overall design proceed without one; when code must change, the Orchestrator chooses a repository from the project's targets. Type to filter the suggestions.",
     listFailed: (owner: string, reason: string) =>
       `Could not list the repositories of ${owner}: ${reason}`,
     repositoriesLoading: "Loading suggestions…",

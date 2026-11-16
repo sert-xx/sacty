@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
 import { projectSettingsPath } from "@/lib/paths";
 import { candidatesLoader, type RepositoryCandidates } from "@/lib/repository-candidates";
+import { addRepositoryField, removeRepositoryField } from "@/lib/repository-fields";
 import {
   agentField,
   chosenForPlan,
@@ -291,6 +292,7 @@ export function TaskFields({
   const messages = useMessages();
   const t = messages.forms.task;
   const repositories = candidates.status === "loaded" ? candidates.repositories : [];
+  const [repoFields, setRepoFields] = useState([0]);
   return (
     <>
       <fieldset className="flex flex-col gap-2">
@@ -316,7 +318,10 @@ export function TaskFields({
                 value={value}
                 checked={template === value}
                 className="sr-only"
-                onChange={() => onTemplate(value)}
+                onChange={() => {
+                  if (value) setRepoFields((fields) => fields.slice(0, 1));
+                  onTemplate(value);
+                }}
               />
               {label}
             </label>
@@ -367,18 +372,37 @@ export function TaskFields({
           </span>
           {/* Org の対象ではリポジトリが多いので、入力して絞り込めるようにする */}
           {/* 空欄なら、リポジトリを指定せずに作る（PBI-73） */}
-          <Input
-            id={`${idPrefix}-repo`}
-            name="repo"
-            list={`${idPrefix}-repo-options`}
-            autoComplete="off"
-            required={template !== ""}
-            // 候補が届く前に入力していれば、入力を残す（React は、入力していないときだけ defaultValue の変化を
-            // 表示に反映する）
-            defaultValue={repoDefault}
-            placeholder={t.repositoryPlaceholder}
-            className="font-mono"
-          />
+          {(template || !steps ? repoFields.slice(0, 1) : repoFields).map((field, index) => (
+            <div key={field} className="flex gap-2">
+              <Input
+                id={index === 0 ? `${idPrefix}-repo` : `${idPrefix}-repo-${field}`}
+                aria-label={index === 0 ? undefined : `${t.repository} ${index + 1}`}
+                name="repo"
+                list={`${idPrefix}-repo-options`}
+                autoComplete="off"
+                defaultValue={index === 0 ? repoDefault : ""}
+                placeholder={t.repositoryPlaceholder}
+                className="font-mono"
+              />
+              {!template && steps && repoFields.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setRepoFields((fields) => removeRepositoryField(fields, field))}
+                >
+                  {t.removeRepository}
+                </button>
+              )}
+            </div>
+          ))}
+          {!template && steps && (
+            <button
+              type="button"
+              disabled={repoFields.length >= 10}
+              onClick={() => setRepoFields(addRepositoryField)}
+            >
+              {t.addRepository}
+            </button>
+          )}
           <datalist id={`${idPrefix}-repo-options`}>
             {repositories.map((repo) => (
               <option key={repo} value={repo} />

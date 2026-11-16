@@ -81,3 +81,46 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
     expect(html).toContain("Task t1");
   });
 });
+
+describe("複数リポジトリの詳細", () => {
+  it("指定したすべてを日英で表示し、リポジトリ無しを表示しない", () => {
+    const task = project([created("t1", { noRepo: true, repos: ["acme/a", "acme/b"] })]).get(
+      "t1",
+    ) as Task;
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const html = render(task);
+      expect(html).toContain("acme/a");
+      expect(html).toContain("acme/b");
+      expect(html).not.toContain('data-testid="no-repository"');
+    }
+  });
+});
+
+it("一覧は複数の指定を日英で並べ、リポジトリ無しの印を出さない", async () => {
+  const { LiveTaskList } = await import("./task-list");
+  const row = {
+    id: "t1",
+    title: "Work",
+    child: false,
+    depth: 0,
+    start: "sacty" as const,
+    repoless: true,
+    repos: ["acme/a", "acme/b"],
+    steps: [],
+    status: { text: "Idle", tone: "waiting" as const },
+    createdAt: "2026-10-20T00:00:00.000Z",
+  };
+  for (const lang of ["ja", "en"] as const) {
+    locale = lang;
+    const html = renderToStaticMarkup(
+      createElement(LiveTaskList, {
+        projectId: "p1",
+        initial: { projectId: "p1", needsYou: [], rows: [row] },
+      }),
+    );
+    expect(html).toContain("acme/a");
+    expect(html).toContain("acme/b");
+    expect(html).not.toContain(`>${messagesFor(lang).tasks.noRepository}</span>`);
+  }
+});

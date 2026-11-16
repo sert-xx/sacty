@@ -1138,7 +1138,9 @@ function Properties({ data }: { data: TaskDetailData }) {
           </Link>
         </Prop>
         <Prop label={l.repository}>
-          {repo ? (
+          {task.repos?.length ? (
+            <span className="font-mono text-xs">{task.repos.join(", ")}</span>
+          ) : repo ? (
             <span className="font-mono text-xs">
               {repo.replace(/^https:\/\/github\.com\//, "")}
               {/* オーケストレーター・人が選んだリポジトリは、選んだ理由を出す（PBI-73） */}
