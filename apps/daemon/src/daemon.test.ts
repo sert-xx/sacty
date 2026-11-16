@@ -45102,7 +45102,10 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     mkdirSync(join(root(), orphan, "repo"), { recursive: true });
     mkdirSync(join(root(), "_git", `${orphan}.git`), { recursive: true });
 
+    const markerOnly = randomUUID();
+    writeFileSync(join(root(), "_git", `${markerOnly}.git.preparing`), "");
     const removed = await service.cleanupWorkspacesAtStartup();
+    expect(existsSync(join(root(), "_git", `${markerOnly}.git.preparing`))).toBe(false);
     for (const [name, runId] of Object.entries(runIds)) {
       expect(existsSync(join(root(), name, runId)), name).toBe(false);
     }
@@ -45110,7 +45113,7 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
     expect(existsSync(join(root(), orphan))).toBe(false);
     expect(existsSync(join(root(), "_git", `${orphan}.git`))).toBe(false);
-    expect(removed).toBe(8 + 1 + 2);
+    expect(removed).toBe(8 + 1 + 2 + 1);
     expect(existsSync(join(root(), "_guardian", "not-a-run"))).toBe(true);
     expect(existsSync(join(root(), "_cache", "shared-compose"))).toBe(true);
     expect(readdirSync(join(dir, "runs"))).toHaveLength(1);

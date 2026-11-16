@@ -8264,6 +8264,9 @@ export class TaskService {
     const taskIds = new Set([
       ...idEntries(root),
       ...idEntries(join(root, "_git"), ".git").map((name) => name.slice(0, -".git".length)),
+      ...idEntries(join(root, "_git"), ".git.preparing").map((name) =>
+        name.slice(0, -".git.preparing".length),
+      ),
       ...idEntries(join(root, TASK_CACHE_DIR)),
     ]);
     const mounts = await this.containerMounts();
@@ -9745,7 +9748,16 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "AgentRunFailed",
-            payload: { runId, step, agentId: agent.id, reason: "error", message: failureMessage },
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              reason: "error",
+              message: failureMessage,
+              ...(task.repos && (step === "requirements" || step === "design" || step === "split")
+                ? { preparationFailed: true as const }
+                : {}),
+            },
           },
         },
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
@@ -9824,6 +9836,7 @@ export class TaskService {
                   step,
                   agentId: agent.id,
                   reason: "error",
+                  preparationFailed: true,
                   message: message("repo.noLongerTarget", {
                     repo: candidates.missing,
                     detail: candidates.detail,
@@ -10176,6 +10189,7 @@ export class TaskService {
             costUsd,
             estimated,
             ...unknownCost(executed),
+            ...(copyFailed ? { preparationFailed: true as const } : {}),
           },
         },
       };

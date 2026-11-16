@@ -47,6 +47,13 @@ export function timedOutRunBefore(
   events: readonly ActivityEvent[],
   currentRunId?: string,
 ): TimedOutRun | undefined {
+  const preparationFailures = new Set(
+    events.flatMap((e) =>
+      (e.type === "AgentRunStarted" || e.type === "AgentRunFailed") && e.payload.preparationFailed
+        ? [e.payload.runId]
+        : [],
+    ),
+  );
   const stoppedRuns = new Set<string>();
   for (const event of events)
     if (event.type === "AgentRunTimedOut") stoppedRuns.add(event.payload.runId);
@@ -59,7 +66,8 @@ export function timedOutRunBefore(
     if (
       (event.type === "AgentRunStarted" || event.type === "AgentRunFailed") &&
       event.payload.runId !== currentRunId &&
-      !stoppedRuns.has(event.payload.runId)
+      !stoppedRuns.has(event.payload.runId) &&
+      !preparationFailures.has(event.payload.runId)
     ) {
       return undefined;
     }
@@ -77,6 +85,13 @@ export function incompleteRunBefore(
   events: readonly ActivityEvent[],
   currentRunId?: string,
 ): StoppedRun | undefined {
+  const preparationFailures = new Set(
+    events.flatMap((e) =>
+      (e.type === "AgentRunStarted" || e.type === "AgentRunFailed") && e.payload.preparationFailed
+        ? [e.payload.runId]
+        : [],
+    ),
+  );
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
     if (!event) continue;
@@ -104,7 +119,8 @@ export function incompleteRunBefore(
     if (event.type === "AgentSessionArchived" && event.payload.role !== "chat") return undefined;
     if (
       (event.type === "AgentRunStarted" || event.type === "AgentRunFailed") &&
-      event.payload.runId !== currentRunId
+      event.payload.runId !== currentRunId &&
+      !preparationFailures.has(event.payload.runId)
     ) {
       return undefined;
     }

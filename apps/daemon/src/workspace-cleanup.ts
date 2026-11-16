@@ -191,6 +191,7 @@ export function taskWorkspacePaths(workspaceRoot: string, taskId: string): strin
   return [
     join(workspaceRoot, taskId),
     join(workspaceRoot, "_git", `${taskId}.git`),
+    join(workspaceRoot, "_git", `${taskId}.git.preparing`),
     taskCachePath(workspaceRoot, taskId),
   ];
 }
