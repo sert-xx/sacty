@@ -31036,6 +31036,26 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     activity.close();
   });
 
+  it("複数指定の照合はプロジェクト一覧を一度読み、読み取り失敗をそのまま伝える", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = twoRepos();
+    const { service } = makeService(activity, [], { projects });
+    const all = vi.spyOn(projects, "all");
+    service.createTask({ projectId: "default", title: "重複", repos: [API, API, WEB] });
+    const calls = all.mock.calls.length;
+    all.mockClear();
+    service.createTask({ projectId: "default", title: "多数", repos: [API, API, API, WEB, WEB] });
+    expect(all).toHaveBeenCalledTimes(calls);
+    all.mockImplementation(() => {
+      throw new Error("project store failed");
+    });
+    expect(() =>
+      service.createTask({ projectId: "default", title: "失敗", repos: [API, WEB] }),
+    ).toThrow("project store failed");
+    all.mockRestore();
+    activity.close();
+  });
+
   it("API は1件の配列を単数指定と同じ形で記録する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [], { projects: twoRepos() });
@@ -39937,7 +39957,7 @@ describe("Docker とエージェントのイメージの注意（PBI-148）", ()
   it("確かめた注意を、画面の状態の docker に載せる（ほかの注意とは分ける。無ければ空）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const missing = message("image.missing", {
-      image: "sacty-agent:1.25.0",
+      image: "sacty-agent:1.26.0",
       command: "npx sacty image build",
     });
     let current = [missing];
@@ -39952,7 +39972,7 @@ describe("Docker とエージェントのイメージの注意（PBI-148）", ()
   it("設定ファイルが無いとき（既定のイメージだけ確かめる）も、注意を載せる（PR #166 レビュー指摘）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const missing = message("image.missing", {
-      image: "sacty-agent:1.25.0",
+      image: "sacty-agent:1.26.0",
       command: "npx sacty image build",
     });
     const unreachable = message("image.dockerUnreachable");
@@ -41208,6 +41228,9 @@ describe("タスクの開始時の情報収集", () => {
     expect(
       failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "ja"),
     ).toContain("https://github.com/acme/api");
+    expect(
+      failure?.type === "OrchestratorFailed" && renderMessage(failure.payload.message, "ja"),
+    ).toContain("unavailable");
     pulls.repositoriesFail = undefined;
     service.resume(task.id, {});
     await service.runNext(task.id);

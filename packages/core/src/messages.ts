@@ -285,7 +285,7 @@ const PARAMS = {
   "repo.notChosen": null,
   "repo.notCandidate": z.object({ repo: z.string() }),
   "repo.notSpecified": z.object({ repo: z.string() }),
-  "repo.noLongerTarget": z.object({ repo: z.string() }),
+  "repo.noLongerTarget": z.object({ repo: z.string(), detail: TextParam.optional() }),
   "repo.snapshotFailed": z.object({ repo: z.string(), detail: TextParam }),
   "repo.chosenByPerson": null,
   "repo.notChoosable": null,
@@ -1100,8 +1100,8 @@ const ja: MessageDictionary = {
   "repo.notChosen": "コードの変更が要る進め方を選びましたが、作業するリポジトリを書いていません。",
   "repo.notCandidate": ({ repo }) => `リポジトリ（${repo}）は、プロジェクトの対象にありません。`,
   "repo.notSpecified": ({ repo }) => `リポジトリ（${repo}）は、このタスクに指定されていません。`,
-  "repo.noLongerTarget": ({ repo }) =>
-    `指定したリポジトリ（${repo}）を現在のプロジェクトの対象で確認できません。`,
+  "repo.noLongerTarget": ({ repo, detail }, text) =>
+    `指定したリポジトリ（${repo}）を現在のプロジェクトの対象で確認できません。${detail ? ` 理由：${text(detail)}` : ""}`,
   "repo.snapshotFailed": ({ repo, detail }, text) =>
     `リポジトリ（${repo}）の写しを用意できませんでした：${text(detail)}`,
   "repo.chosenByPerson": "人がリポジトリを選びました。",
@@ -1912,8 +1912,8 @@ const en: MessageDictionary = {
     "The Orchestrator chose a plan that changes code but did not name the repository to work in.",
   "repo.notCandidate": ({ repo }) => `The repository (${repo}) is not a target of the project.`,
   "repo.notSpecified": ({ repo }) => `The repository (${repo}) was not specified for this task.`,
-  "repo.noLongerTarget": ({ repo }) =>
-    `The specified repository (${repo}) cannot be verified among the current project targets.`,
+  "repo.noLongerTarget": ({ repo, detail }, text) =>
+    `The specified repository (${repo}) cannot be verified among the current project targets.${detail ? ` Reason: ${text(detail)}` : ""}`,
   "repo.snapshotFailed": ({ repo, detail }, text) =>
     `Could not prepare a copy of the repository (${repo}): ${text(detail)}`,
   "repo.chosenByPerson": "A person chose the repository.",

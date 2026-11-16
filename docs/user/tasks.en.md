@@ -61,7 +61,7 @@ To specify multiple repositories through the API, send the following to `POST /a
 {"projectId":"default","title":"Change","repos":["https://github.com/acme/api","https://github.com/acme/web"]}
 ```
 
-You can specify up to 10 distinct project targets. One is treated as a single repository. With two or more, the Orchestrator, human choice, splitting, and information gathering use only the specified repositories. Splitting selects a repository for each child, and integration review reads each child's repository. If a specified repository can no longer be verified as a target, the task stops and checks again on resume. You cannot specify `repo` and `repos` together.
+You can specify up to 10 distinct project targets. One is treated as a single repository. With two or more, the Orchestrator, human choice, splitting, and information gathering use only the specified repositories. Splitting selects a repository for each child, and integration review reads each child's repository. It checks the targets during information gathering, orchestration, human selection, and the Requirements, Design, and Split steps. If a specified repository cannot be verified, it stops or rejects the selection and checks again on resume. You cannot specify `repo` and `repos` together.
 
 ### Specify the plan
 
@@ -337,7 +337,7 @@ How the code is read depends on whether the repository to work in is decided.
   The information gatherer also summarizes how tests are written (the framework, the command to run them, where they are placed, and examples of existing tests).
   Tests are not necessarily written just because the summary describes them.
   The Orchestrator decides how tests are handled.
-- For a task whose repository is not decided (a task created without a repository, or a ticket task before its repository is chosen), it picks out a few likely relevant repositories (at most 3) from the project's targets and reads their code through the GitHub read relay (`gh api`).
+- For a task whose repository is not decided (a task created without a repository, or a ticket task before its repository is chosen), without a specified list it picks out at most 3 likely relevant repositories from the project's targets; with a list it reads all specified repositories through the GitHub read relay (`gh api`).
   To let it read them, choose the GitHub account for that host in the project settings ([GitHub account in project settings](project-settings.en.md#github-account)).
   Repositories it could not read, and Orgs whose repository list could not be read (expired credentials, missing permissions, and so on), are written in the summary as sources that could not be read.
 

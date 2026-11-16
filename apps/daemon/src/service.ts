@@ -3684,7 +3684,10 @@ export class TaskService {
       return {
         failure: {
           reason: "error",
-          message: message("repo.noLongerTarget", { repo: listedCandidates.missing }),
+          message: message("repo.noLongerTarget", {
+            repo: listedCandidates.missing,
+            detail: listedCandidates.detail,
+          }),
           agentId: "unknown",
           costUsd: 0,
           estimated: false,
@@ -3831,7 +3834,9 @@ export class TaskService {
     }
     const candidates = await this.taskRepositoryCandidates(task);
     if ("missing" in candidates)
-      throw new InvalidOperationError(message("repo.noLongerTarget", { repo: candidates.missing }));
+      throw new InvalidOperationError(
+        message("repo.noLongerTarget", { repo: candidates.missing, detail: candidates.detail }),
+      );
     const chosen = candidates.repositories.find((c) => sameGitHubUrl(c, repo));
     if (!chosen)
       throw new InvalidOperationError(
@@ -5431,14 +5436,19 @@ export class TaskService {
   private async taskRepositoryCandidates(
     task: Task,
   ): Promise<
-    { repositories: string[]; errors: { org: string; message: DaemonText }[] } | { missing: string }
+    | { repositories: string[]; errors: { org: string; message: DaemonText }[] }
+    | { missing: string; detail?: DaemonText }
   > {
     const listed = await this.projectRepositories(task.projectId);
     const repositories = listed?.repositories ?? [];
     if (!task.repos) return { repositories, errors: listed?.errors ?? [] };
     for (const repo of task.repos) {
-      if (!repositories.some((candidate) => sameGitHubUrl(candidate, repo)))
-        return { missing: repo };
+      if (!repositories.some((candidate) => sameGitHubUrl(candidate, repo))) {
+        const error = listed?.errors.find(({ org }) =>
+          repo.toLowerCase().startsWith(`${org.toLowerCase().replace(/\/$/, "")}/`),
+        );
+        return { missing: repo, ...(error ? { detail: error.message } : {}) };
+      }
     }
     return { repositories: task.repos, errors: [] };
   }
@@ -6089,7 +6099,7 @@ export class TaskService {
     if (listed && "missing" in listed) {
       const failure = {
         reason: "error" as const,
-        message: message("repo.noLongerTarget", { repo: listed.missing }),
+        message: message("repo.noLongerTarget", { repo: listed.missing, detail: listed.detail }),
         agentId: "unknown",
         costUsd: 0,
         estimated: false,
@@ -6890,14 +6900,20 @@ export class TaskService {
       throw new InvalidOperationError(message("task.repositoriesConflict"));
     }
     const repositories: string[] = [];
+    const projects = input.repos ? this.deps.projects.all() : undefined;
+    const seen = new Set<string>();
     for (const name of input.repos ?? []) {
-      let normalized: string;
-      try {
-        normalized = this.projectRepository(project, name);
-      } catch {
+      const responsible = RepoUrl.safeParse(name).success
+        ? responsibleProject(projects ?? [], name)
+        : undefined;
+      if (responsible?.project.id !== project.id) {
         throw new InvalidOperationError(message("task.repositoriesUnknown", { repo: name }));
       }
-      if (!repositories.some((repo) => repoKey(repo) === repoKey(normalized))) {
+      const normalized =
+        responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(name);
+      const key = repoKey(normalized);
+      if (!seen.has(key)) {
+        seen.add(key);
         repositories.push(normalized);
       }
     }
@@ -8938,7 +8954,10 @@ export class TaskService {
                   step,
                   agentId: agent.id,
                   reason: "error",
-                  message: message("repo.noLongerTarget", { repo: candidates.missing }),
+                  message: message("repo.noLongerTarget", {
+                    repo: candidates.missing,
+                    detail: candidates.detail,
+                  }),
                 },
               },
             },

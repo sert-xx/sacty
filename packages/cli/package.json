@@ -1,6 +1,6 @@
 {
   "name": "@sacty/cli",
-  "version": "1.25.0",
+  "version": "1.26.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -11,8 +11,8 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@sacty/core": "1.25.0",
-    "@sacty/daemon": "1.25.0",
-    "@sacty/web": "1.25.0"
+    "@sacty/core": "1.26.0",
+    "@sacty/daemon": "1.26.0",
+    "@sacty/web": "1.26.0"
   }
 }
