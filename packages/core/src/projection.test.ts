@@ -883,6 +883,94 @@ describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別
     ev(id, { type: "StepSubmitted", payload: { step: "implement", submission: n } }),
   ];
 
+  it("指摘は、元の PR のコメントと、対応したか・しなかったかの申告、返信した提出回を持つ。返信は1回だけ。以前の作業履歴（どれも無い）も読める（PBI-352）", () => {
+    const origin = { key: "review_comment:501", number: 7 };
+    const sentBack = () =>
+      ev(
+        "t",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            round: 1,
+            remarks: [
+              { id: "implement-1-1", text: "PR の指摘", origin },
+              { id: "implement-1-2", text: "画面の指摘" },
+            ],
+          },
+        },
+        "person",
+      );
+    const run = (n: number, responses: Record<string, unknown>[]) => {
+      const [started, completed, ...rest] = resubmitted("t", n);
+      return [
+        started,
+        { ...completed, payload: { ...completed?.payload, responses } },
+        ...rest,
+      ] as ReturnType<typeof resubmitted>;
+    };
+    const replied = (remarkId: string, submission = 2) =>
+      ev("t", {
+        type: "RemarkRepliesPosted",
+        payload: {
+          step: "implement",
+          submission,
+          number: 7,
+          results: [{ remarkId, key: origin.key, inline: true, url: "https://example.test/r" }],
+        },
+      });
+    seq = 0;
+    const base = [
+      ...waiting("t"),
+      sentBack(),
+      ...run(2, [
+        { remarkId: "implement-1-1", text: "範囲の外です", status: "declined" },
+        { remarkId: "implement-1-2", text: "直した" },
+      ]),
+    ];
+    const submitted = project(base).get("t");
+    expect(
+      submitted?.remarks.map((r) => [r.id, r.origin, r.status, r.respondedIn, r.repliedIn]),
+    ).toEqual([
+      ["implement-1-1", origin, "declined", 2, undefined],
+      ["implement-1-2", undefined, undefined, 2, undefined],
+    ]);
+    const done = project([...base, replied("implement-1-1")]).get("t");
+    expect(done?.remarks.map((r) => r.repliedIn)).toEqual([2, undefined]);
+    // 同じ指摘に、二度は返信しない。元のコメントの無い指摘・知らない指摘への返信は記録できない
+    expect(() => project([...base, replied("implement-1-1"), replied("implement-1-1")])).toThrow(
+      "already replied",
+    );
+    expect(() => project([...base, replied("implement-1-2")])).toThrow("unknown remark");
+    expect(() => project([...base, replied("implement-9-9")])).toThrow("unknown remark");
+    // 次の提出で、申告が無ければ、前の申告は残さない（返信した記録は残る）
+    const next = project([
+      ...base,
+      replied("implement-1-1"),
+      ev(
+        "t",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            round: 2,
+            remarks: [{ id: "implement-2-1", text: "次の指摘" }],
+          },
+        },
+        "person",
+      ),
+      ...run(3, [{ remarkId: "implement-1-1", text: "直したまま" }]),
+    ]).get("t");
+    expect(next?.remarks[0]).toMatchObject({
+      response: "直したまま",
+      respondedIn: 3,
+      repliedIn: 2,
+    });
+    expect(next?.remarks[0]?.status).toBeUndefined();
+  });
+
   it("取り込んだ指摘のうち、AI のレビューの位置を覚え、差し戻した指摘に出どころを残す", () => {
     seq = 0;
     const pending = project([

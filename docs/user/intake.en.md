@@ -156,7 +156,7 @@ The findings follow the writing rules of the repository (Japanese when there are
 ### Re-review
 
 A re-review reviews the latest commit of the PR again and posts the result.
-It says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review).
+It says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review; on a PR sacty created, the [replies to your comments](tasks.en.md#replies-to-your-comments) that sacty posted with the same GitHub account as the PR author are read as the author's replies too).
 
 There are two ways to start a re-review.
 

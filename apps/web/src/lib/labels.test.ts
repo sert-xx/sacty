@@ -321,6 +321,95 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     expect(describeIn(discarded, labels.en)).toContain("old head (ccccccc)");
   });
 
+  it("指摘への対応を PR に返信したことを、行に件数で、詳細に指摘ごとの結果（行への返信か・PR のコメントか・返信できなかった理由）で出す（ja・en。PBI-352）", () => {
+    const replied = event({
+      type: "RemarkRepliesPosted",
+      payload: {
+        step: "implement",
+        submission: 2,
+        number: 7,
+        results: [
+          {
+            remarkId: "implement-1-1",
+            key: "review_comment:501",
+            inline: true,
+            url: "https://github.com/acme/app/pull/7#discussion_r9",
+          },
+          {
+            remarkId: "implement-1-2",
+            key: "review:601",
+            url: "https://github.com/acme/app/pull/7#issuecomment-3",
+          },
+          { remarkId: "implement-1-3", key: "comment:401", failed: "403 forbidden" },
+          { remarkId: "implement-1-4", key: "comment:402" },
+        ],
+      },
+    });
+    // 行には件数だけ。指摘ごとの結果は、詳細に出す（返信できなかった指摘が先）
+    expect(describeEventParts(replied, ja)).toEqual({
+      text: "指摘への対応の、PR #7 への返信の結果（返信した 3件・返信できなかった 1件）",
+      detail: [
+        "implement-1-3 は返信できなかった（403 forbidden）",
+        "implement-1-1 は行へのコメントに返信した（https://github.com/acme/app/pull/7#discussion_r9）",
+        "implement-1-2 は PR のコメントとして返信した（https://github.com/acme/app/pull/7#issuecomment-3）",
+        "implement-1-4 は PR のコメントとして返信した",
+      ].join("\n"),
+    });
+    expect(describeEventParts(replied, labels.en)).toEqual({
+      text: "Result of replying on PR #7 about how the remarks were handled (3 replied, 1 could not be replied to)",
+      detail: [
+        "implement-1-3: could not reply (403 forbidden)",
+        "implement-1-1: replied to the line comment (https://github.com/acme/app/pull/7#discussion_r9)",
+        "implement-1-2: replied as a PR comment (https://github.com/acme/app/pull/7#issuecomment-3)",
+        "implement-1-4: replied as a PR comment",
+      ].join("\n"),
+    });
+    // すべて返信できなかったときも、返信した件数（0件）と、返信できなかった件数を分けて出す
+    const allFailed = event({
+      type: "RemarkRepliesPosted",
+      payload: {
+        step: "implement",
+        submission: 2,
+        number: 7,
+        results: [
+          { remarkId: "implement-1-1", key: "comment:1", failed: "403" },
+          { remarkId: "implement-1-2", key: "comment:2", failed: "403" },
+        ],
+      },
+    });
+    expect(describeEventParts(allFailed, ja).text).toBe(
+      "指摘への対応の、PR #7 への返信の結果（返信した 0件・返信できなかった 2件）",
+    );
+    expect(describeEventParts(allFailed, labels.en).text).toBe(
+      "Result of replying on PR #7 about how the remarks were handled (0 replied, 2 could not be replied to)",
+    );
+    const started = event({
+      type: "RemarkRepliesStarted",
+      payload: { step: "implement", submission: 2, number: 7, account: "acme-dev" },
+    });
+    expect(describeEvent(started)).toBe(
+      "指摘への対応を PR #7 に返信し始めた（GitHub のアカウント acme-dev）",
+    );
+    expect(describeIn(started, labels.en)).toBe(
+      "Started replying on PR #7 about how the remarks were handled (GitHub account acme-dev)",
+    );
+    const allDone = event({
+      type: "RemarkRepliesPosted",
+      payload: {
+        step: "implement",
+        submission: 2,
+        number: 7,
+        results: [{ remarkId: "implement-1-1", key: "comment:1", url: "https://example.com/c" }],
+      },
+    });
+    expect(describeEventParts(allDone, ja).text).toBe(
+      "指摘への対応の、PR #7 への返信の結果（返信した 1件）",
+    );
+    expect(describeEventParts(allDone, labels.en).text).toBe(
+      "Result of replying on PR #7 about how the remarks were handled (1 replied)",
+    );
+  });
+
   it("再開で足した補足は、再開の行に「補足あり」を付け、本文を詳細に出す（日英）", () => {
     const resumed = event({
       type: "TaskResumed",

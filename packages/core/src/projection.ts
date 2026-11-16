@@ -4,6 +4,7 @@ import type {
   AuditAdoptNote,
   AuditMemoryRecord,
   AuditTarget,
+  ChildScope,
   ContinuedPullRequest,
   ExportPlan,
   ImplementationCompletion,
@@ -14,6 +15,8 @@ import type {
   PauseReason,
   Provenance,
   Remark,
+  RemarkOrigin,
+  RemarkResponseStatus,
   RemarkSource,
   ReviewComment,
   ReviewRework,
@@ -308,6 +311,15 @@ export type TaskRemark = {
   respondedIn?: number;
   /** 対応と一緒に、工程エージェントが人に確かめたいこととして挙げたこと（PBI-301）。対応と同じ提出回のものだけ持つ。 */
   confirm?: string;
+  /** 対応したか、理由があって対応しなかったか（PBI-352）。対応と同じ提出回のものだけ持つ。申告が無ければ無い。 */
+  status?: RemarkResponseStatus;
+  /** PR のレビュー・コメントから取り込んだ指摘の、元のコメント（PBI-352）。画面から書いた指摘には無い。 */
+  origin?: RemarkOrigin;
+  /**
+   * 対応を、元のコメントへの返信として PR に投稿した（投稿を試みて失敗したときも含む）ときの、対応の提出回（PBI-352）。
+   * 無ければ、まだ返信していない。1件の指摘には、1回だけ返信する。
+   */
+  repliedIn?: number;
   /**
    * この指摘を渡した実行が提出された提出回（回答の有無にかかわらず）。無ければ、まだその工程の実行がこの指摘を
    * 見て提出していない（差し戻しの直しの対象）。承認のあとに上流へ戻して再実行するとき、対応済みの古い指摘を
@@ -676,6 +688,8 @@ export type Task = {
       repoReason?: string;
       /** 親の設計のテスト観点のうち、この子タスクに割り当てたもの（PBI-348）。 */
       viewpoints?: TestViewpoint[];
+      /** この子タスクの範囲（PBI-351）。 */
+      scope?: ChildScope;
     }[];
     /** 分割した回数（最初の分割と、修正の子タスクの追加。PBI-31）。 */
     rounds: number;
@@ -685,6 +699,11 @@ export type Task = {
     integrationViewpoints?: { id: string; reason: string }[];
     /** 人間が中止を認めた子タスク（親を再開した）。完了したものと同じく扱う。 */
     acceptedCancellations: string[];
+    /**
+     * 分割の回ごとの、子タスクを決めた分割のエージェントの出力（TaskSplit の直前の、同じ実行の AgentRunCompleted の出力。
+     * PBI-351）。範囲の記録（scope）が無い子タスクの、分割のエージェントが書いた原文を読むのに使う。出力が残っていない回には無い。
+     */
+    outputs?: Record<number, string>;
   };
   pausedReason?: PauseReason;
   /** 止まった理由の詳しい説明。 */
@@ -708,6 +727,11 @@ export type Task = {
    * テスト観点があれば、そちらを使う（implementViewpoints）。
    */
   inheritedViewpoints?: TestViewpoint[];
+  /**
+   * 分割の子タスクの範囲（分割のエージェントが書いた内容の原文・親タスクの題・修正の子タスクか。PBI-351）。それより前の
+   * 子タスクには無い（子タスクの内容から読む。daemon の childScopeOf）。
+   */
+  childScope?: ChildScope;
   /** 承認済みで凍結された成果物。 */
   approved: Partial<Record<StepKey, ApprovedOutput>>;
   budget: {
@@ -881,6 +905,20 @@ export type Task = {
    * 引き継いだ PR の指摘のうち、実装の工程の指示に渡したもの（ContinuedFeedbackPassed の keys）。PR の指摘として取り込み直さない。
    */
   handedOverFeedback?: string[];
+  /**
+   * 引き継いだ PR の指摘への、実装の実行の対応（ContinuedFeedbackPassed の responses。キーは指摘のキー。PBI-352）。
+   * respondedIn は対応を書いた提出回、repliedIn は、対応を PR に返信した（投稿を試みて失敗したときも含む）ときの提出回。
+   * 1件の指摘には1回だけ返信するので、返信した後の提出の対応では上書きしない。
+   */
+  /**
+   * 指摘への返信の投稿に使った GitHub のアカウント（RemarkRepliesStarted。PBI-352）。投稿済みの返信を探すときと、PR の
+   * 指摘の取り込みから sacty の返信を除くときに、今のアカウントに加えて使う（投稿の後に、アカウントが変わっていても）。
+   */
+  remarkReplyAccounts?: string[];
+  continuedResponses?: Record<
+    string,
+    { text: string; status?: RemarkResponseStatus; respondedIn: number; repliedIn?: number }
+  >;
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
   misses: (PayloadOf<"GuardianMissed"> & { at: string })[];
   /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
@@ -1359,6 +1397,7 @@ export function applyEvent(
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       ...(event.payload.viewpoints ? { inheritedViewpoints: event.payload.viewpoints } : {}),
+      ...(event.payload.scope ? { childScope: event.payload.scope } : {}),
       ...(event.payload.reviewOf ? { reviewOf: event.payload.reviewOf } : {}),
       ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.plan ? { requestedPlan: event.payload.plan } : {}),
@@ -1607,6 +1646,7 @@ export function applyEvent(
                 response: undefined,
                 respondedIn: undefined,
                 confirm: undefined,
+                status: undefined,
                 submittedIn: submission,
               }
             : {
@@ -1614,6 +1654,7 @@ export function applyEvent(
                 response: response.text,
                 respondedIn: submission,
                 confirm: response.confirm,
+                status: response.status,
                 submittedIn: submission,
               };
         });
@@ -1777,6 +1818,7 @@ export function applyEvent(
           round: event.payload.round,
           text: r.text,
           ...(r.source ? { source: r.source } : {}),
+          ...(r.origin ? { origin: r.origin } : {}),
           voided: false,
         })),
       ];
@@ -2217,6 +2259,21 @@ export function applyEvent(
       task.handedOverFeedback = [
         ...new Set([...(task.handedOverFeedback ?? []), ...event.payload.keys]),
       ];
+      if (event.payload.responses && event.payload.responses.length > 0) {
+        // 同じ実行の完了（AgentRunCompleted）が、続けてこの提出回で記録される
+        const submission = (task.submissions.implement ?? 0) + 1;
+        const responses = { ...task.continuedResponses };
+        for (const r of event.payload.responses) {
+          // 返信した指摘は、そのままにする（もう返信しない）
+          if (responses[r.key]?.repliedIn !== undefined) continue;
+          responses[r.key] = {
+            text: r.text,
+            ...(r.status ? { status: r.status } : {}),
+            respondedIn: submission,
+          };
+        }
+        task.continuedResponses = responses;
+      }
       break;
 
     case "NoChangesFound":
@@ -2535,6 +2592,37 @@ export function applyEvent(
         }
       }
       task.githubComments = { ...task.githubComments, [p.step]: { ...p, at: event.at } };
+      break;
+    }
+
+    case "RemarkRepliesStarted": {
+      const account = event.payload.account;
+      const known = task.remarkReplyAccounts ?? [];
+      if (!known.some((a) => a.toLowerCase() === account.toLowerCase())) {
+        task.remarkReplyAccounts = [...known, account];
+      }
+      break;
+    }
+
+    case "RemarkRepliesPosted": {
+      // 指摘への対応を、PR に返信した（PBI-352）。投稿できなかった指摘も、返信済みとして扱う（やり直さない）
+      const p = event.payload;
+      const replied = new Map(p.results.map((r) => [r.remarkId, r]));
+      // 引き継いだ PR の指摘（指摘の ID が、元のコメントのキー）への返信
+      const continued = { ...task.continuedResponses };
+      for (const id of replied.keys()) {
+        const remark = task.remarks.find((r) => r.id === id);
+        const handed = remark ? undefined : continued[id];
+        if (!remark?.origin && !handed) throw new ActivityIntegrityError(event, "unknown remark");
+        if ((remark ?? handed)?.repliedIn !== undefined) {
+          throw new ActivityIntegrityError(event, "already replied");
+        }
+        if (handed) continued[id] = { ...handed, repliedIn: handed.respondedIn };
+      }
+      task.remarks = task.remarks.map((r) =>
+        replied.has(r.id) ? { ...r, repliedIn: r.respondedIn ?? p.submission } : r,
+      );
+      if (Object.keys(continued).length > 0) task.continuedResponses = continued;
       break;
     }
 
@@ -3048,6 +3136,15 @@ export function applyEvent(
         reason: event.payload.reason,
         at: event.at,
         acceptedCancellations: task.split?.acceptedCancellations ?? [],
+        // この回の子タスクを決めた、分割のエージェントの出力（直前の AgentRunCompleted が残したもの。PBI-351）
+        ...(task.split?.outputs || task.outputs.split !== undefined
+          ? {
+              outputs: {
+                ...task.split?.outputs,
+                ...(task.outputs.split !== undefined ? { [round]: task.outputs.split } : {}),
+              },
+            }
+          : {}),
         // 最初の分割の割り当てを残す（修正の子タスクの追加は、観点を割り当てない。PBI-348）
         ...((event.payload.integrationViewpoints ?? task.split?.integrationViewpoints)
           ? {
