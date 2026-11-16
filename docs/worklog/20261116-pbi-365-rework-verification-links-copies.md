@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-16（UTC）
 - タスク: PBI-365
-- PR: なし
+- PR: #395
 - ブランチ: feat/pbi-365-rework-verification-links-copies
 - 関係する ADR: なし
 
