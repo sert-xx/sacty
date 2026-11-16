@@ -13705,6 +13705,73 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
+      it("レート制限・時間切れで投稿を止めた直後に一時停止されて、結果を記録せずに抜けても、再開した後に、残りを投稿せずに失敗として記録する", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        for (const reason of ["rate_limit", "timeout"] as const) {
+          const gate = Promise.withResolvers<void>();
+          class StoppingPulls extends FakePulls {
+            override async replyToReviewComment(
+              input: Parameters<FakePulls["replyToReviewComment"]>[0],
+            ) {
+              // 1件目の返信の通信の間に、一時停止を求められる。その後、制限に当たる（か、答えが返らない）
+              this.replyPostTimes.push(Date.now());
+              this.replyStarted.resolve();
+              await gate.promise;
+              if (reason === "rate_limit") throw rateLimitError();
+              await new Promise<void>(() => {});
+              return super.replyToReviewComment(input);
+            }
+          }
+          const pulls = new StoppingPulls();
+          const { activity, service, id } = await toImplementGate(
+            [
+              decided(),
+              redone([
+                { remarkId: "implement-1-1", text: "直した" },
+                { remarkId: "implement-1-2", text: "足した" },
+              ]),
+            ],
+            { pulls, now: later, stopNoticeTimeoutMs: 40 },
+          );
+          pulls.feedbackList = [inline(), comment()];
+          await service.checkPullRequests();
+          const running = drain(service);
+          await pulls.replyStarted.promise;
+          const pausing = service.pause(id);
+          gate.resolve();
+          await pausing;
+          await running;
+          // 止めたことを見つけたが、一時停止されたので、結果は記録していない
+          expect(service.get(id)?.task.status).toBe("paused");
+          expect(posted(service, id)).toHaveLength(0);
+          // 再開した後も、残りを投稿せずに、失敗として記録する
+          service.resume(id, {});
+          await drain(service);
+          expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+          expect(pulls.replyPostTimes).toHaveLength(1);
+          expect(prComments(pulls)).toHaveLength(0);
+          expect(posted(service, id)).toHaveLength(1);
+          expect(posted(service, id)[0]?.results.map((r) => [r.remarkId, r.failed])).toEqual([
+            [
+              "implement-1-1",
+              {
+                code: `github.replySkippedAfter${reason === "rate_limit" ? "RateLimit" : "Timeout"}`,
+              },
+            ],
+            [
+              "implement-1-2",
+              {
+                code: `github.replySkippedAfter${reason === "rate_limit" ? "RateLimit" : "Timeout"}`,
+              },
+            ],
+          ]);
+          expect(service.queuedTaskIds()).toEqual([]);
+          activity.close();
+          rmSync(dbPath, { force: true });
+        }
+        warn.mockRestore();
+      });
+
       it("一覧の読み取り・投稿されたかの探し直しがレート制限に当たったことも、同じアカウントで順番を待っている投稿に伝える", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const limitedUpTo = (service: TaskService) =>
