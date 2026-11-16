@@ -194,11 +194,7 @@ export function NewTaskDialog({
                 openRef: stepsOpener,
               }}
               // 候補が1つなら入れておく
-              repoDefault={
-                state.values?.repo ??
-                prefill?.repo ??
-                (repositories.length === 1 ? repositories[0] : "")
-              }
+              repoDefault={prefill?.repo ?? (repositories.length === 1 ? repositories[0] : "")}
               titleDefault={state.values?.title ?? prefill?.title}
               bodyDefault={state.values?.body ?? prefill?.body}
               titleError={state.fieldErrors?.title?.[0]}
@@ -293,7 +289,13 @@ export function TaskFields({
   const t = messages.forms.task;
   const repositories = candidates.status === "loaded" ? candidates.repositories : [];
   const [repoFields, setRepoFields] = useState([0]);
-  const [repoValues, setRepoValues] = useState<Record<number, string>>({});
+  const [repoValues, setRepoValues] = useState<Record<number, string>>({ 0: repoDefault ?? "" });
+  const firstRepoEdited = useRef(false);
+  useEffect(() => {
+    if (!firstRepoEdited.current) {
+      setRepoValues((values) => ({ ...values, 0: repoDefault ?? "" }));
+    }
+  }, [repoDefault]);
   return (
     <>
       <fieldset className="flex flex-col gap-2">
@@ -322,10 +324,7 @@ export function TaskFields({
                 onChange={() => {
                   if (value) {
                     setRepoFields((fields) => fields.slice(0, 1));
-                    setRepoValues((values) => ({
-                      [repoFields[0]]:
-                        values[repoFields[0]] ?? (repoFields[0] === 0 ? repoDefault : "") ?? "",
-                    }));
+                    setRepoValues((values) => ({ [repoFields[0]]: values[repoFields[0]] ?? "" }));
                   }
                   onTemplate(value);
                 }}
@@ -387,10 +386,11 @@ export function TaskFields({
                 name="repo"
                 list={`${idPrefix}-repo-options`}
                 autoComplete="off"
-                value={repoValues[field] ?? (field === 0 ? (repoDefault ?? "") : "")}
-                onChange={(event) =>
-                  setRepoValues((values) => ({ ...values, [field]: event.target.value }))
-                }
+                value={repoValues[field] ?? ""}
+                onChange={(event) => {
+                  if (field === 0) firstRepoEdited.current = true;
+                  setRepoValues((values) => ({ ...values, [field]: event.target.value }));
+                }}
                 placeholder={t.repositoryPlaceholder}
                 className="font-mono"
               />

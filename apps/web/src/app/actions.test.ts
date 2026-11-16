@@ -71,6 +71,14 @@ const form = (values: Record<string, string>) => {
 describe("タスクの作成先（PBI-4a レビュー指摘）", () => {
   beforeEach(() => createTask.mockReset());
 
+  it("複数指定の拒否理由をフォームに返す", async () => {
+    createTask.mockResolvedValue({ ok: false, message: "対象外: acme/missing" });
+    const data = form({ title: "作業", projectId: "project-a" });
+    data.append("repo", "acme/a");
+    data.append("repo", "acme/missing");
+    expect(await createTaskAction({}, data)).toMatchObject({ message: "対象外: acme/missing" });
+  });
+
   it("作成先は、フォームを表示したときのプロジェクトで、送信時の cookie ではない", async () => {
     createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
     await expect(

@@ -127,6 +127,64 @@ describe("作成フォームのリポジトリ欄", () => {
     container.remove();
   });
 
+  it("先頭が未編集の空欄でも失敗後と再送時に後続欄を保持する", async () => {
+    const submitted: FormDataEntryValue[][] = [];
+    function Form() {
+      const [state, action] = useActionState(async (_state: number, data: FormData) => {
+        submitted.push(data.getAll("repo"));
+        return 1;
+      }, 0);
+      return h(
+        "form",
+        { action },
+        h(TaskFields, { ...props, repoDefault: state ? "" : "" }),
+        h("button", { type: "submit" }, "Submit"),
+      );
+    }
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(() => root.render(h(Form)));
+    const form = container.querySelector("form");
+    const add = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === messagesFor("ja").forms.task.addRepository,
+    );
+    if (!form || !add) throw new Error("form or add missing");
+    await act(() => add.click());
+    const input = form.querySelectorAll<HTMLInputElement>('input[name="repo"]')[1];
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (!input || !setter) throw new Error("input missing");
+    await act(() => {
+      setter.call(input, "acme/b");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => form.requestSubmit());
+    expect(new FormData(form).getAll("repo")).toEqual(["", "acme/b"]);
+    await act(async () => form.requestSubmit());
+    expect(submitted).toEqual([
+      ["", "acme/b"],
+      ["", "acme/b"],
+    ]);
+    await act(() => root.unmount());
+    container.remove();
+  });
+
+  it("候補の取得前にテンプレートを選んでも到着した初期値を反映する", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(() => root.render(h(TaskFields, { ...props, repoDefault: "" })));
+    const radio = container.querySelector<HTMLInputElement>(
+      'input[name="template"][value="sacty-setup"]',
+    );
+    if (!radio) throw new Error("template missing");
+    await act(() => radio.click());
+    await act(() =>
+      root.render(h(TaskFields, { ...props, template: "sacty-setup", repoDefault: "acme/a" })),
+    );
+    expect(container.querySelector<HTMLInputElement>('input[name="repo"]')?.value).toBe("acme/a");
+    await act(() => root.unmount());
+  });
+
   it("静的描画で追加を示し、テンプレートは1欄に固定する", () => {
     for (const lang of ["ja", "en"] as const) {
       locale = lang;

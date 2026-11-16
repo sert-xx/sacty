@@ -83,6 +83,18 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
 });
 
 describe("複数リポジトリの詳細", () => {
+  it("作業先の選択前も指定一覧を日英で表示し、リポジトリ無しを表示しない", () => {
+    const task = project([created("t1", { noRepo: true, repos: ["acme/a", "acme/b"] })]).get(
+      "t1",
+    ) as Task;
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const html = render(task);
+      expect(html).toContain("acme/a");
+      expect(html).toContain("acme/b");
+      expect(html).not.toContain('data-testid="no-repository"');
+    }
+  });
   it("指定したすべてを日英で表示し、リポジトリ無しを表示しない", () => {
     const task = project([created("t1", { noRepo: true, repos: ["acme/a", "acme/b"] })]).get(
       "t1",
