@@ -3672,13 +3672,15 @@ export class TaskService {
         this.deps.remarkReplyRetryMs ?? 60_000,
         Math.min(githubRetryAfterMs(error) ?? 0, 3_600_000),
       );
-      this.remarkReplyRetryAt.set(this.remarkReplyAccountKey(task, due.repo), this.now() + wait);
+      // 待ちは、投稿に使ったホストとアカウントに記録する（通信の間に、プロジェクトのアカウントが変わっていても）
+      this.remarkReplyRetryAt.set(postKey, this.now() + wait);
       console.warn(
         `[daemon] タスク ${taskId} の指摘への返信が、GitHub のレート制限に当たりました。残りは、間を置いてやり直します：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
       );
       record();
     };
-    // 投稿は、ホストとアカウントごとの共通の入口を通す（間隔と、レート制限の後の待ちを、ほかのタスクとも合わせる）
+    // 投稿は、ホストとアカウントごとの共通の入口を通す（間隔と、レート制限の後の待ちを、ほかのタスクとも合わせる）。
+    // キーは、この処理の始めのアカウントで決めて、終わりまで使う
     const postKey = this.remarkReplyAccountKey(task, due.repo);
     const record = () => {
       const latest = this.tasks.get(taskId);

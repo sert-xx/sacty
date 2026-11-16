@@ -1210,8 +1210,10 @@ export function apiError(
   /** 答えのヘッダー。あれば、GitHub が示した、次に試せるまでの時間を、エラーに持たせる（githubRetryAfterMs）。 */
   headers?: Headers,
 ): Error {
-  // GitHub の文（json.message）は外から来た文なので、翻訳せずに引数で渡す
-  const detail = typeof json.message === "string" ? json.message : "";
+  // GitHub の文（json.message）は外から来た文なので、翻訳せずに引数で渡す。本文がオブジェクトでない（null など）ときも、
+  // 状態とヘッダーからエラーを作る
+  const body = (json ?? {}) as { message?: unknown };
+  const detail = typeof body.message === "string" ? body.message : "";
   const hint = status === 401 ? "token" : status === 403 || status === 404 ? "permission" : "none";
   const error = new MessageError(message("github.failed", { action, status, detail, hint }));
   const wait = headers ? retryAfterOf(headers) : undefined;

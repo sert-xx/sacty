@@ -825,6 +825,23 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
           .catch((e: unknown) => e),
       ),
     ).toBeGreaterThan(590_000);
+    // 本文が null でも、状態とヘッダーからエラーを作る（一覧・返信・PR のコメント）
+    const nullBody = () => ({
+      status: 403,
+      json: null,
+      headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+    });
+    const nulls = new GitHubPullRequests(fakeFetch([nullBody(), nullBody(), nullBody()]).impl);
+    for (const failed of [
+      await nulls
+        .listReviewComments({ ...target, prefix: "x", complete: true })
+        .catch((e: unknown) => e),
+      await nulls.replyToReviewComment(input).catch((e: unknown) => e),
+      await nulls.commentIssue({ ...target, body: "x" }).catch((e: unknown) => e),
+    ]) {
+      expect(errorText(failed)).toMatchObject({ code: "github.failed", params: { status: 403 } });
+      expect(githubRetryAfterMs(failed)).toBeGreaterThan(590_000);
+    }
     // 示されていなければ、無い
     expect(
       githubRetryAfterMs(await client.replyToReviewComment(input).catch((e: unknown) => e)),

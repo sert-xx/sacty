@@ -13597,6 +13597,53 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         b.activity.close();
       });
 
+      it("レート制限の待ちは、投稿に使ったアカウントに記録する（通信の間に、プロジェクトのアカウントが変わっても、変えた後のアカウントを待たせない）", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const projects = projectsWithAccount();
+        const github = new FakeGitHub({ me: "ghp_secret", other: "ghp_other" });
+        class ChangingPulls extends FakePulls {
+          override async commentIssue(input: Parameters<FakePulls["commentIssue"]>[0]) {
+            // 投稿の通信の間に、プロジェクトの GitHub のアカウントが変わる
+            if (this.rateLimited) {
+              const current = projects.get("default");
+              projects.put("default", {
+                name: current?.name ?? "",
+                targets: current?.targets ?? [],
+                githubAccounts: { "github.com": "other" },
+              });
+            }
+            return super.commentIssue(input);
+          }
+        }
+        const pulls = new ChangingPulls();
+        const made = await toImplement(
+          [
+            implement("# 実装の説明"),
+            decided(),
+            redone([{ remarkId: "implement-1-1", status: "addressed", text: "直した" }]),
+          ],
+          { pulls, now: later, projects, github },
+        );
+        const { activity, service, id } = made;
+        await drain(service);
+        pulls.feedbackList = [comment()];
+        await service.checkPullRequests();
+        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
+          await service.runNext(id);
+        }
+        pulls.rateLimited = true;
+        await service.runNext(id);
+        expect(prComments(pulls)).toHaveLength(0);
+        // 制限に当たったのは me。変えた後のアカウント（other）は待たせないので、すぐに実行待ちに戻る
+        pulls.rateLimited = false;
+        expect(service.queuedTaskIds()).toEqual([id]);
+        await drain(service);
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(prComments(pulls)[0]?.token).toBe("ghp_other");
+        warn.mockRestore();
+        activity.close();
+      });
+
       it("続けて投稿するときは、投稿と投稿の間をあける", async () => {
         const pulls = new FakePulls();
         const { activity, service, id } = await toImplementGate(
