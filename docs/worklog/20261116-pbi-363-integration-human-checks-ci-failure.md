@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-16（UTC）
 - タスク: PBI-363
-- PR: なし
+- PR: #396
 - ブランチ: feat/pbi-363-integration-human-checks-ci-failure
 - 関係する ADR: [統合レビューで人の確認だけが残った観点は、不合格にせず、人が確かめることとして承認待ちに出す](../adr/20261116-2255-integration-review-human-checks.md)、[指摘なしの後に実装の PR の CI が失敗したら、画面に出す（自動では扱わない）](../adr/20261116-2256-show-ci-failure-after-no-findings.md)
 
