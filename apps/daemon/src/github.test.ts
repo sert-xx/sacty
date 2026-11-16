@@ -782,6 +782,59 @@ describe("フィードバックの次のページ（PBI-14b レビュー指摘�
   });
 });
 
+describe("PR の行へのコメントへの返信（PBI-352）", () => {
+  const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
+
+  it("行へのコメントに返信して URL を返し、失敗（消えたコメント・返信への返信）は理由つきのエラーにする", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 201, json: { html_url: "https://github.com/acme/app/pull/7#discussion_r99" } },
+      { status: 404, json: { message: "Not Found" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const input = { ...target, commentId: 501, body: "**対応しました。**" };
+    expect(await client.replyToReviewComment(input)).toEqual({
+      url: "https://github.com/acme/app/pull/7#discussion_r99",
+    });
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.com/repos/acme/app/pulls/7/comments/501/replies",
+      method: "POST",
+      body: { body: "**対応しました。**" },
+      auth: "Bearer ghp_secret",
+    });
+    expect(
+      errorText(await client.replyToReviewComment(input).catch((e: unknown) => e)),
+    ).toMatchObject({
+      code: "github.failed",
+      params: { status: 404 },
+    });
+  });
+
+  it("行へのコメントから、目印を含むものを探す（無ければ undefined）", async () => {
+    const list = [
+      { id: 1, body: "人のコメント", html_url: "https://github.com/acme/app/pull/7#discussion_r1" },
+      {
+        id: 2,
+        body: "<!-- sacty-reply:t1:implement-1-1:2 -->\n直しました",
+        html_url: "https://github.com/acme/app/pull/7#discussion_r2",
+      },
+    ];
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: list },
+      { status: 200, json: list },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    expect(
+      await client.findReviewComment({ ...target, marker: "<!-- sacty-reply:t1:implement-1-1:" }),
+    ).toEqual({ url: "https://github.com/acme/app/pull/7#discussion_r2" });
+    expect(calls[0]?.url).toBe(
+      "https://api.github.com/repos/acme/app/pulls/7/comments?per_page=100",
+    );
+    expect(
+      await client.findReviewComment({ ...target, marker: "<!-- sacty-reply:t1:implement-1-2:" }),
+    ).toBeUndefined();
+  });
+});
+
 describe("Issue へのコメント（PBI-18）", () => {
   it("Issue にコメントして URL を返し、失敗は理由つきのエラーにする", async () => {
     const { impl, calls } = fakeFetch([
@@ -1389,6 +1442,63 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
         account: "sacty-bot",
       });
       expect(feedback.map((f) => f.key)).toEqual(["comment:2", "comment:3", "comment:4"]);
+    });
+
+    it("sacty の、指摘への返信（PBI-352）は、行への返信も PR のコメントも、そのアカウントのものだけ、PR の指摘に取り込まない。含める指定があれば含める（再レビューの作者の返答）", async () => {
+      const reply = "<!-- sacty-reply:t1:implement-1-1:2 -->\n**対応しました。**\n\n直しました";
+      const responses = () => [
+        { status: 200, json: [] },
+        {
+          status: 200,
+          json: [
+            // 行へのコメントへの返信（スレッドの中の投稿）
+            { ...comment(11, "sacty-bot", reply), path: "src/a.ts", line: 3, in_reply_to_id: 10 },
+            { ...comment(12, "mallory", reply), path: "src/a.ts", line: 3 },
+          ],
+        },
+        {
+          status: 200,
+          json: [
+            comment(1, "sacty-bot", reply),
+            comment(2, "alice", "人間のコメント"),
+            // 他人が目印をまねても、人間の指摘として取り込む（指摘を隠されないように）
+            comment(3, "mallory", reply),
+            comment(4, "sacty-bot", "同じアカウントの、目印の無いコメント"),
+          ],
+        },
+      ];
+      const imported = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+      });
+      expect(imported.map((f) => f.key).sort()).toEqual([
+        "comment:2",
+        "comment:3",
+        "comment:4",
+        "review_comment:12",
+      ]);
+      // アカウントが分からなければ、除かない（誰の投稿か確かめられない）
+      const unknown = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback(pr);
+      expect(unknown).toHaveLength(6);
+      const forReview = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+        includeSactyReplies: true,
+      });
+      expect(forReview.map((f) => f.key).sort()).toEqual([
+        "comment:1",
+        "comment:2",
+        "comment:3",
+        "comment:4",
+        "review_comment:11",
+        "review_comment:12",
+      ]);
+      expect(forReview.find((f) => f.key === "review_comment:11")).toMatchObject({
+        kind: "review_comment",
+        author: "sacty-bot",
+        path: "src/a.ts",
+        body: reply,
+      });
     });
 
     it("人に確かめてほしいことの投稿（PBI-301）は、sacty のタスクのアカウントのものだけ、PR の指摘に取り込まない", async () => {

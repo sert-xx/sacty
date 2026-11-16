@@ -14,6 +14,8 @@ import type {
   PauseReason,
   Provenance,
   Remark,
+  RemarkOrigin,
+  RemarkResponseStatus,
   RemarkSource,
   ReviewComment,
   ReviewRework,
@@ -308,6 +310,15 @@ export type TaskRemark = {
   respondedIn?: number;
   /** 対応と一緒に、工程エージェントが人に確かめたいこととして挙げたこと（PBI-301）。対応と同じ提出回のものだけ持つ。 */
   confirm?: string;
+  /** 対応したか、理由があって対応しなかったか（PBI-352）。対応と同じ提出回のものだけ持つ。申告が無ければ無い。 */
+  status?: RemarkResponseStatus;
+  /** PR のレビュー・コメントから取り込んだ指摘の、元のコメント（PBI-352）。画面から書いた指摘には無い。 */
+  origin?: RemarkOrigin;
+  /**
+   * 対応を、元のコメントへの返信として PR に投稿した（投稿を試みて失敗したときも含む）ときの、対応の提出回（PBI-352）。
+   * 無ければ、まだ返信していない。1件の指摘には、1回だけ返信する。
+   */
+  repliedIn?: number;
   /**
    * この指摘を渡した実行が提出された提出回（回答の有無にかかわらず）。無ければ、まだその工程の実行がこの指摘を
    * 見て提出していない（差し戻しの直しの対象）。承認のあとに上流へ戻して再実行するとき、対応済みの古い指摘を
@@ -879,6 +890,15 @@ export type Task = {
    * 引き継いだ PR の指摘のうち、実装の工程の指示に渡したもの（ContinuedFeedbackPassed の keys）。PR の指摘として取り込み直さない。
    */
   handedOverFeedback?: string[];
+  /**
+   * 引き継いだ PR の指摘への、実装の実行の対応（ContinuedFeedbackPassed の responses。キーは指摘のキー。PBI-352）。
+   * respondedIn は対応を書いた提出回、repliedIn は、対応を PR に返信した（投稿を試みて失敗したときも含む）ときの提出回。
+   * 1件の指摘には1回だけ返信するので、返信した後の提出の対応では上書きしない。
+   */
+  continuedResponses?: Record<
+    string,
+    { text: string; status?: RemarkResponseStatus; respondedIn: number; repliedIn?: number }
+  >;
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
   misses: (PayloadOf<"GuardianMissed"> & { at: string })[];
   /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
@@ -1604,6 +1624,7 @@ export function applyEvent(
                 response: undefined,
                 respondedIn: undefined,
                 confirm: undefined,
+                status: undefined,
                 submittedIn: submission,
               }
             : {
@@ -1611,6 +1632,7 @@ export function applyEvent(
                 response: response.text,
                 respondedIn: submission,
                 confirm: response.confirm,
+                status: response.status,
                 submittedIn: submission,
               };
         });
@@ -1774,6 +1796,7 @@ export function applyEvent(
           round: event.payload.round,
           text: r.text,
           ...(r.source ? { source: r.source } : {}),
+          ...(r.origin ? { origin: r.origin } : {}),
           voided: false,
         })),
       ];
@@ -2214,6 +2237,21 @@ export function applyEvent(
       task.handedOverFeedback = [
         ...new Set([...(task.handedOverFeedback ?? []), ...event.payload.keys]),
       ];
+      if (event.payload.responses && event.payload.responses.length > 0) {
+        // 同じ実行の完了（AgentRunCompleted）が、続けてこの提出回で記録される
+        const submission = (task.submissions.implement ?? 0) + 1;
+        const responses = { ...task.continuedResponses };
+        for (const r of event.payload.responses) {
+          // 返信した指摘は、そのままにする（もう返信しない）
+          if (responses[r.key]?.repliedIn !== undefined) continue;
+          responses[r.key] = {
+            text: r.text,
+            ...(r.status ? { status: r.status } : {}),
+            respondedIn: submission,
+          };
+        }
+        task.continuedResponses = responses;
+      }
       break;
 
     case "NoChangesFound":
@@ -2532,6 +2570,28 @@ export function applyEvent(
         }
       }
       task.githubComments = { ...task.githubComments, [p.step]: { ...p, at: event.at } };
+      break;
+    }
+
+    case "RemarkRepliesPosted": {
+      // 指摘への対応を、PR に返信した（PBI-352）。投稿できなかった指摘も、返信済みとして扱う（やり直さない）
+      const p = event.payload;
+      const replied = new Map(p.results.map((r) => [r.remarkId, r]));
+      // 引き継いだ PR の指摘（指摘の ID が、元のコメントのキー）への返信
+      const continued = { ...task.continuedResponses };
+      for (const id of replied.keys()) {
+        const remark = task.remarks.find((r) => r.id === id);
+        const handed = remark ? undefined : continued[id];
+        if (!remark?.origin && !handed) throw new ActivityIntegrityError(event, "unknown remark");
+        if ((remark ?? handed)?.repliedIn !== undefined) {
+          throw new ActivityIntegrityError(event, "already replied");
+        }
+        if (handed) continued[id] = { ...handed, repliedIn: handed.respondedIn };
+      }
+      task.remarks = task.remarks.map((r) =>
+        replied.has(r.id) ? { ...r, repliedIn: r.respondedIn ?? p.submission } : r,
+      );
+      if (Object.keys(continued).length > 0) task.continuedResponses = continued;
       break;
     }
 

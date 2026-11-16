@@ -93,6 +93,11 @@ export interface PullRequests {
      * account と sactyReviews のアカウントに加えて、この投稿の除外にだけ使う（sacty のレビューの判定には使わない）。
      */
     noticeAccounts?: readonly string[];
+    /**
+     * sacty が投稿した、指摘への返信（PBI-352）も含める。既定では、人の指摘ではないので含めない（PR の指摘の取り込み）。
+     * レビューの工程に渡す既存のレビューと、再レビューの作者の返答だけが含める。
+     */
+    includeSactyReplies?: boolean;
   }): Promise<PullRequestFeedback[]>;
   /**
    * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
@@ -113,6 +118,26 @@ export interface PullRequests {
     number: number;
     marker: string;
   }): Promise<{ url: string } | undefined>;
+  /**
+   * PR の行へのコメントのうち、本文に marker を含むものを探す（指摘への返信を二度投稿しないため。PBI-352）。
+   */
+  findReviewComment(input: {
+    repo: string;
+    token: string;
+    number: number;
+    marker: string;
+  }): Promise<{ url: string } | undefined>;
+  /**
+   * PR の行へのコメントに返信する（PBI-352）。返信への返信・消えたコメントへの返信は、GitHub が受け付けない（失敗する）。
+   */
+  replyToReviewComment(input: {
+    repo: string;
+    token: string;
+    number: number;
+    /** 返信する行へのコメントの ID。 */
+    commentId: number;
+    body: string;
+  }): Promise<{ url: string }>;
   /** Issue にコメントする（調査の結果を返す。PBI-18）。 */
   commentIssue(input: {
     repo: string;
@@ -243,6 +268,16 @@ const GITHUB_COMMENT_MARKER_PREFIX = "<!-- sacty-comment:";
 /** 本文が、sacty が頼みで投稿したコメントの目印で始まるか。承認を待つ間に投稿するので、人の指摘として取り込まない（PBI-301）。 */
 export function isSactyGitHubComment(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(GITHUB_COMMENT_MARKER_PREFIX);
+}
+
+/**
+ * sacty が、指摘への対応を PR に返信した投稿の目印の前半（PBI-352）。`<!-- sacty-reply:<タスク ID>:<指摘の ID>:<提出回> -->`。
+ */
+export const REMARK_REPLY_MARKER_PREFIX = "<!-- sacty-reply:";
+
+/** 本文が、指摘への返信の目印で始まるか（PBI-352）。人の指摘ではないので、PR の指摘に取り込まない。 */
+export function isSactyRemarkReply(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(REMARK_REPLY_MARKER_PREFIX);
 }
 
 /**
@@ -458,6 +493,13 @@ export class GitHubPullRequests implements PullRequests {
           isSactyGitHubComment(item.body) &&
           typeof login === "string" &&
           noticeAccounts.has(login.toLowerCase())
+        ) &&
+        // sacty が投稿した、指摘への返信（PBI-352）も、人の指摘ではない。レビューの工程に渡すとき（作者の返答）だけ含める
+        !(
+          !input.includeSactyReplies &&
+          isSactyRemarkReply(item.body) &&
+          typeof login === "string" &&
+          noticeAccounts.has(login.toLowerCase())
         )
       );
     };
@@ -602,6 +644,36 @@ export class GitHubPullRequests implements PullRequests {
     );
     const found = comments.find((c) => typeof c.body === "string" && c.body.includes(input.marker));
     return found ? { url: String(found.html_url ?? "") } : undefined;
+  }
+
+  async findReviewComment(input: Parameters<PullRequests["findReviewComment"]>[0]) {
+    const comments = await this.list(
+      input.repo,
+      `/pulls/${input.number}/comments?per_page=100`,
+      input.token,
+      "getReviews",
+    );
+    const found = comments.find((c) => typeof c.body === "string" && c.body.includes(input.marker));
+    return found ? { url: String(found.html_url ?? "") } : undefined;
+  }
+
+  async replyToReviewComment(input: Parameters<PullRequests["replyToReviewComment"]>[0]) {
+    const res = await this.fetchImpl(
+      `${repoApi(input.repo).base}/pulls/${input.number}/comments/${input.commentId}/replies`,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${input.token}`,
+          "x-github-api-version": "2022-11-28",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ body: input.body }),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw apiError("commentIssue", res.status, json);
+    return { url: String(json.html_url ?? "") };
   }
 
   async commentIssue(input: Parameters<PullRequests["commentIssue"]>[0]) {

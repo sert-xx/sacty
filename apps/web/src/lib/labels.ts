@@ -816,6 +816,19 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
             ),
       );
     }
+    case "RemarkRepliesPosted": {
+      const p = event.payload;
+      return e.RemarkRepliesPosted(
+        p.number,
+        p.results.map((r) =>
+          r.failed !== undefined
+            ? e.RemarkReplyFailed(r.remarkId, l.text(r.failed))
+            : r.inline
+              ? e.RemarkReplyInline(r.remarkId, r.url ?? "")
+              : e.RemarkReplyComment(r.remarkId, r.url ?? ""),
+        ),
+      );
+    }
     case "ReviewTargetResolved":
       return e.ReviewTargetResolved(event.payload.url, event.payload.headCommit.slice(0, 7));
     case "ReviewGitHubRetried":

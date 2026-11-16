@@ -321,6 +321,38 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     expect(describeIn(discarded, labels.en)).toContain("old head (ccccccc)");
   });
 
+  it("指摘への対応を PR に返信したことを、指摘ごとに、行への返信か・PR のコメントか・返信できなかった理由で出す（ja・en。PBI-352）", () => {
+    const replied = event({
+      type: "RemarkRepliesPosted",
+      payload: {
+        step: "implement",
+        submission: 2,
+        number: 7,
+        results: [
+          {
+            remarkId: "implement-1-1",
+            key: "review_comment:501",
+            inline: true,
+            url: "https://github.com/acme/app/pull/7#discussion_r9",
+          },
+          {
+            remarkId: "implement-1-2",
+            key: "review:601",
+            url: "https://github.com/acme/app/pull/7#issuecomment-3",
+          },
+          { remarkId: "implement-1-3", key: "comment:401", failed: "403 forbidden" },
+          { remarkId: "implement-1-4", key: "comment:402" },
+        ],
+      },
+    });
+    expect(describeEvent(replied)).toBe(
+      "指摘への対応を PR #7 に返信：implement-1-1 は行へのコメントに返信した（https://github.com/acme/app/pull/7#discussion_r9）、implement-1-2 は PR のコメントとして返信した（https://github.com/acme/app/pull/7#issuecomment-3）、implement-1-3 は返信できなかった（403 forbidden）、implement-1-4 は PR のコメントとして返信した",
+    );
+    expect(describeIn(replied, labels.en)).toBe(
+      "Replied on PR #7 about how the remarks were handled: implement-1-1: replied to the line comment (https://github.com/acme/app/pull/7#discussion_r9); implement-1-2: replied as a PR comment (https://github.com/acme/app/pull/7#issuecomment-3); implement-1-3: could not reply (403 forbidden); implement-1-4: replied as a PR comment",
+    );
+  });
+
   it("再開で足した補足は、再開の行に「補足あり」を付け、本文を詳細に出す（日英）", () => {
     const resumed = event({
       type: "TaskResumed",

@@ -115,6 +115,8 @@ import {
   questionBlocked,
   queueOverSince,
   RejectAuditProposalInput,
+  type RemarkOrigin,
+  type RemarkResponseStatus,
   RenameTaskInput,
   RepoUrl,
   RequestChangesInput,
@@ -410,6 +412,12 @@ import {
   withoutWorkReport,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
+import {
+  buildRemarkReply,
+  remarkOriginRef,
+  remarkOriginUrl,
+  remarkReplyMarkerOf,
+} from "./remark-reply.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import {
   buildResolvedNotice,
@@ -1711,11 +1719,16 @@ export class TaskService {
     // 回の番号と指摘の ID は、AI のレビューだけの回も含めて続ける。人の差し戻しの回数に数えるのは人の指摘だけ（PBI-275）
     const round = lastChangeRound(task, target) + 1;
     const aiIndexes = new Set(pending.aiReview ?? []);
-    const remarks = pending.remarks.map((text, i) => ({
-      id: `${target}-${round}-${i + 1}`,
-      text,
-      ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
-    }));
+    const origins = remarkOrigins(pending, reworkingPullRequest(task)?.number);
+    const remarks = pending.remarks.map((text, i) => {
+      const origin = origins[i];
+      return {
+        id: `${target}-${round}-${i + 1}`,
+        text,
+        ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
+        ...(origin ? { origin } : {}),
+      };
+    });
     const onlyAiReview = remarks.every((r) => r.source === "sacty_review");
     this.append(task, [
       {
@@ -2917,7 +2930,11 @@ export class TaskService {
             : {}),
       },
       // AI のレビューの指摘は、人の差し戻しの回数に数えない（PBI-275）
-      { aiReview: pending.aiReview ?? [] },
+      // 指摘ごとに、元の PR のコメントを持たせる（対応を、そのコメントへの返信として投稿する。PBI-352）
+      {
+        aiReview: pending.aiReview ?? [],
+        origins: remarkOrigins(pending, gatePullRequest(task)?.number),
+      },
     );
   }
 
@@ -3456,6 +3473,132 @@ export class TaskService {
   }
 
   /**
+   * 指摘への対応を PR に返信するのを待っている提出（awaitingRemarkReplies）。GitHub のアカウントを選んでいないプロジェクトでは
+   * 返信しない（「人に確かめてほしいこと」のコメントと同じ条件。PBI-352）。
+   */
+  private remarkRepliesDue(task: Task): ReturnType<typeof awaitingRemarkReplies> {
+    const due = awaitingRemarkReplies(task);
+    return due && this.githubAccountOf(task, due.repo).account ? due : undefined;
+  }
+
+  /**
+   * PR のレビュー・コメントから取り込んだ指摘への対応を、プロジェクトの gh のアカウントで、PR に返信する（PBI-352）。
+   * 行へのコメントから取り込んだ指摘には、そのコメントへの返信として投稿する。返信できなければ（元のコメントが消えた・
+   * 返信への返信は受け付けられない、など）、PR のコメントとして投稿する。レビューの本文・通常のコメントから取り込んだ指摘には、
+   * 元へのリンクを付けた PR のコメントとして投稿する。前に投稿の後・記録の前に止まっていたら、目印で見つけた投稿を使う
+   * （二度投稿しない）。投稿できなくても、理由を記録してタスクは進める（やり直さない）。
+   */
+  private postRemarkReplies(taskId: string): Promise<void> {
+    // 同じタスクの返信は順に処理する（先の処理が検索や投稿の最中のまま、もう1本始まっても、二重に投稿しない）
+    return this.serialized(`remark-replies:${taskId}`, () => this.postRemarkRepliesNow(taskId));
+  }
+
+  private async postRemarkRepliesNow(taskId: string): Promise<void> {
+    const task = this.tasks.get(taskId);
+    const due = task && this.remarkRepliesDue(task);
+    if (!task || !due) return;
+    // 待っている間（トークンの取り出し・既存の投稿の検索）に、止められた・承認や提出が変わったら、新しく投稿しない
+    // （記録もしない。再開したら、目印で投稿済みのものを見つけて続ける）
+    const valid = () => {
+      if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return false;
+      const latest = this.tasks.get(taskId);
+      const now = latest && this.remarkRepliesDue(latest);
+      return (
+        now !== undefined &&
+        now.step === due.step &&
+        now.submission === due.submission &&
+        now.number === due.number
+      );
+    };
+    const usedSecrets: string[] = [];
+    type Result = Extract<
+      EventInput,
+      { type: "RemarkRepliesPosted" }
+    >["payload"]["results"][number];
+    const results: Result[] = [];
+    const posted = (url: string) => (url ? { url: url.slice(0, 2000) } : {});
+    for (const remark of due.replies) {
+      if (!valid()) return;
+      const base = { remarkId: remark.id, key: remark.key };
+      try {
+        const token = await this.githubToken(task, due.repo, usedSecrets);
+        const where = { repo: due.repo, token, number: due.number };
+        const ref = remarkOriginRef(remark.key);
+        // どの提出回の返信でも見つける（1件の指摘には、1回だけ返信する）
+        const marker = remarkReplyMarkerOf(taskId, remark.id);
+        const inline =
+          ref?.kind === "review_comment"
+            ? await this.deps.pulls.findReviewComment({ ...where, marker })
+            : undefined;
+        if (inline) {
+          results.push({ ...base, inline: true, ...posted(inline.url) });
+          continue;
+        }
+        const existing = await this.deps.pulls.findIssueComment({ ...where, marker });
+        if (existing) {
+          results.push({ ...base, ...posted(existing.url) });
+          continue;
+        }
+        if (!valid()) return;
+        const reply = {
+          taskId,
+          stepName: STEP_NAME[remark.step],
+          remarkId: remark.id,
+          ...(remark.continued ? { continued: true as const } : {}),
+          submission: remark.respondedIn,
+          text: remark.response,
+          ...(remark.status ? { status: remark.status } : {}),
+          secrets: usedSecrets,
+        };
+        if (ref?.kind === "review_comment") {
+          try {
+            const { url } = await this.deps.pulls.replyToReviewComment({
+              ...where,
+              commentId: ref.id,
+              body: buildRemarkReply(reply),
+            });
+            results.push({ ...base, inline: true, ...posted(url) });
+            continue;
+          } catch (error) {
+            console.warn(
+              `[daemon] タスク ${taskId} の指摘 ${remark.id} への対応を、行へのコメントへの返信として投稿できませんでした。PR のコメントとして投稿します：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+            );
+            // 答えを受け取れなかっただけで、返信は投稿されていることがある。見つかれば、それを使う（PR のコメントを重ねない）
+            const landed = await this.deps.pulls
+              .findReviewComment({ ...where, marker })
+              .catch(() => undefined);
+            if (landed) {
+              results.push({ ...base, inline: true, ...posted(landed.url) });
+              continue;
+            }
+          }
+        }
+        const { url } = await this.deps.pulls.commentIssue({
+          ...where,
+          body: buildRemarkReply({
+            ...reply,
+            ...(ref ? { origin: { ref, url: remarkOriginUrl(due.url, ref) } } : {}),
+          }),
+        });
+        results.push({ ...base, ...posted(url) });
+      } catch (error) {
+        results.push({ ...base, failed: redactText(errorText(error), usedSecrets) });
+      }
+    }
+    const latest = this.tasks.get(taskId);
+    if (!latest || !valid() || results.length === 0) return;
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: {
+          type: "RemarkRepliesPosted",
+          payload: { step: due.step, submission: due.submission, number: due.number, results },
+        },
+      },
+    ]);
+  }
+
+  /**
    * レビューの工程に渡す、対象の PR にすでにあるレビュー・行へのコメント・通常のコメント（existing。他のレビュアーの指摘と作者の返答。
    * このタスクのアカウントの sacty のレビューの目印で始まる投稿＝前回の投稿は含まない。PBI-144）と、再レビュー（PBI-44）での、
    * 前回のレビューの投稿の後の PR の作者の返答（replies。PBI-111。作者が前回の投稿の後に書いたもので、目印で始まるものは除く）。
@@ -3480,6 +3623,8 @@ export class TaskService {
       noticeAccounts: this.githubAccountsOnHost(target.repo),
       // 本文のある承認（「承認するが、ここは直してほしい」）も、既存の指摘として渡す（PR #161 レビュー指摘）
       includeApprovals: true,
+      // sacty が作者のアカウントで投稿した、指摘への返信（PBI-352）も、作者の返答として渡す
+      includeSactyReplies: true,
     });
     const previous = task.previousReview;
     if (!previous) return { existing };
@@ -7310,6 +7455,8 @@ export class TaskService {
               awaitingGitHubComments(t) !== undefined ||
               // PR のマージで承認する工程の、承認を待つ提出で頼まれたコメントを投稿する（PBI-301）
               awaitingSubmittedGitHubComments(t) !== undefined ||
+              // PR のレビュー・コメントから取り込んだ指摘への対応を、PR に返信する（PBI-352）
+              this.remarkRepliesDue(t) !== undefined ||
               // 要求要件・設計の成果を、タスクブランチへの PR にする（PBI-57）
               this.awaitingStepPullRequest(t) !== undefined ||
               // マージの後のデプロイの確認（PBI-89）。一時停止中のタスクでは実行しない
@@ -8390,6 +8537,8 @@ export class TaskService {
     if (initial && submittedComments) {
       return this.postGitHubComments(initial, submittedComments, "submitted");
     }
+    // PR のレビュー・コメントから取り込んだ指摘への対応を、承認を待たずに PR に返信する（PBI-352）
+    if (initial && this.remarkRepliesDue(initial)) return this.postRemarkReplies(initial.id);
     if (initial && awaitingVerification(initial)) {
       // 最終レビュー（テストの実行）も CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする。PBI-331）。
       // ベースブランチは取り込み直さないが、実装の間に人が PR のブランチに足したコミットは取り込む（PBI-334）。実装の前の
@@ -9210,9 +9359,11 @@ export class TaskService {
       this.checkBudget(split);
       return this.settleSplit(this.mustGet(task.id));
     }
+    const remarkIds = latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id);
     const extracted = extractBlocks(
       outcome.output,
-      new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
+      // 引き継いだ PR の指摘への対応は、渡した指摘のキーを ID として読む（PBI-352）
+      new Set([...remarkIds, ...handedOverKeys]),
       changeableSteps(latest, step),
       // テストのコマンドの申告を読むのは、テストの仕組みが無いタスクの実装の工程だけ（PR #105 再レビュー指摘）
       {
@@ -9222,7 +9373,21 @@ export class TaskService {
         completion: step === "implement",
       },
     );
-    const { responses, testViewpoints, proposal, testMap, testCommand } = extracted;
+    const { testViewpoints, proposal, testMap, testCommand } = extracted;
+    // 指摘（ID の付いた差し戻しの指摘）への対応と、引き継いだ PR の指摘（ID がキー）への対応を分ける。同じ指摘への対応が
+    // 2つあれば、先のものを使う
+    const responses = extracted.responses.filter((r) => remarkIds.includes(r.remarkId));
+    const handedOverResponses = [
+      ...new Map(
+        extracted.responses
+          .filter((r) => !remarkIds.includes(r.remarkId) && r.remarkId.length <= 200)
+          .reverse()
+          .map((r) => [r.remarkId, r]),
+      ).values(),
+    ]
+      .reverse()
+      .slice(0, 200)
+      .map((r) => ({ key: r.remarkId, text: r.text, ...(r.status ? { status: r.status } : {}) }));
     // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない
     // （用意したテストを飛ばして通らないように）。止めて、再開すると実装をやり直す（PR #105 レビュー指摘）
     if (step === "implement" && latest.noTestsReason && extracted.testCommandInvalid) {
@@ -9280,7 +9445,11 @@ export class TaskService {
               actor: "sacty" as const,
               event: {
                 type: "ContinuedFeedbackPassed" as const,
-                payload: { runId, keys: handedOverKeys },
+                payload: {
+                  runId,
+                  keys: handedOverKeys,
+                  ...(handedOverResponses.length > 0 ? { responses: handedOverResponses } : {}),
+                },
               },
             },
           ]
@@ -15829,7 +15998,15 @@ export class TaskService {
    * （PR の指摘の取り込みだけが渡す。PBI-275）。AI のレビューの指摘だけの差し戻しは、人の差し戻しの回数と上限に数えない
    * （人の指摘が1件でも混ざれば数える）。
    */
-  requestChanges(id: string, raw: unknown, options: { aiReview?: readonly number[] } = {}): Task {
+  requestChanges(
+    id: string,
+    raw: unknown,
+    options: {
+      aiReview?: readonly number[];
+      /** comments と同じ位置の、指摘の元の PR のコメント（PR の指摘の取り込みだけが渡す。PBI-352）。 */
+      origins?: readonly (RemarkOrigin | undefined)[];
+    } = {},
+  ): Task {
     const input = RequestChangesInput.parse(raw);
     const task = this.gateTask(id, input.step, input.submission);
     // やり直す工程は、ゲートの工程か、それより前の工程エージェントが作る工程。
@@ -15842,10 +16019,14 @@ export class TaskService {
     // 人が差し戻した回数（上限に数える）。AI のレビューの指摘だけの回は含めない（PBI-275）
     const rounds = changeRounds(task, target);
     const aiIndexes = new Set(options.aiReview ?? []);
-    const comments = input.comments.map((text, i) => ({
-      text,
-      ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
-    }));
+    const comments = input.comments.map((text, i) => {
+      const origin = options.origins?.[i];
+      return {
+        text,
+        ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
+        ...(origin ? { origin } : {}),
+      };
+    });
     const onlyAiReview = comments.length > 0 && comments.every((c) => c.source === "sacty_review");
 
     if (task.status === "awaiting_approval" && input.comments.length === 0) {
@@ -15856,11 +16037,13 @@ export class TaskService {
     const settings = this.stepSettingChanges(task, input);
     // 回の番号と指摘の ID は、AI のレビューだけの回も含めて続ける（人の差し戻しの回数とは別）
     const round = lastChangeRound(task, target) + 1;
-    const toRemarks = (list: { text: string; source?: "sacty_review" }[]) =>
-      list.map(({ text, source }, i) => ({
+    // 指摘の元の PR のコメント（origin）は、エスカレーションで人が出し直しても失わない（PBI-352）
+    const toRemarks = (list: { text: string; source?: "sacty_review"; origin?: RemarkOrigin }[]) =>
+      list.map(({ text, source, origin }, i) => ({
         id: `${target}-${round}-${i + 1}`,
         text,
         ...(source ? { source } : {}),
+        ...(origin ? { origin } : {}),
       }));
 
     if (task.status === "awaiting_approval" && !onlyAiReview && rounds >= MAX_CHANGE_REQUESTS) {
@@ -16345,6 +16528,123 @@ export function awaitingSubmittedGitHubComments(task: Task): StepKey | undefined
     mentionsGitHubComments(output) &&
     task.githubComments?.[gate.step]?.submission !== gate.submission
     ? gate.step
+    : undefined;
+}
+
+/**
+ * 取り込んだ PR の指摘（pendingReview）の、指摘ごとの元のコメント（PBI-352）。keys と remarks は同じ位置の指摘
+ * （1件のフィードバックを1件の指摘にする）。数が合わない・PR の番号が分からないときは、持たせない。
+ */
+function remarkOrigins(
+  pending: NonNullable<Task["pendingReview"]>,
+  number: number | undefined,
+): (RemarkOrigin | undefined)[] {
+  if (number === undefined || pending.keys.length !== pending.remarks.length) return [];
+  return pending.keys.map((key) => (key.length <= 200 ? { key, number } : undefined));
+}
+
+/** 1回に返信する指摘の件数の上限（RemarkRepliesPosted の results の上限）。残りは、次の処理で返信する。 */
+const REMARK_REPLIES_MAX = 200;
+
+/** PR に返信する、指摘への対応（PBI-352）。 */
+export type RemarkReplyDue = {
+  /** 指摘の ID。引き継いだ PR の指摘では、元のコメントのキー。 */
+  id: string;
+  /** 元のコメントのキー（`review:<ID>`・`review_comment:<ID>`・`comment:<ID>`）。 */
+  key: string;
+  /** 対応を書いた工程。 */
+  step: StepKey;
+  response: string;
+  status?: RemarkResponseStatus;
+  respondedIn: number;
+  /** 引き継いだ PR の指摘（指摘の ID を、人に見せない）。 */
+  continued?: true;
+};
+
+/**
+ * PR のレビュー・コメントから取り込んだ指摘への対応を、まだ PR に返信していない提出（PBI-352）。承認を待つ提出で頼まれた
+ * コメント（awaitingSubmittedGitHubComments）と同じく、その工程の PR が開いていて承認待ちの間に、マージを待たずに返信する
+ * （レビューの工程・セキュリティのタスク・中止・一時停止中・実行中は返信しない）。
+ * 対象は、その PR のコメントから取り込んだ（origin の PR の番号が同じ）、無効でない、対応のある、まだ返信していない指摘。
+ * 承認待ちの工程の指摘は、今の提出で対応したものだけ。前の工程に戻した指摘（実装の PR の指摘を、設計で直したなど）は、
+ * その工程の最新の対応を、PR を更新したこの提出で返信する。1件の指摘には、1回だけ返信する。
+ * 引き継いだ PR（人が作った PR を直すタスク）では、実装に渡した指摘（continuedResponses）のうち、今の提出で対応を書いた、
+ * まだ返信していないものも対象にする。取り込んだ指摘として返信するもの（同じコメントが元の指摘）は、重ねない。
+ */
+export function awaitingRemarkReplies(task: Task):
+  | {
+      step: StepKey;
+      submission: number;
+      number: number;
+      repo: string;
+      url: string;
+      replies: RemarkReplyDue[];
+    }
+  | undefined {
+  if (task.status !== "awaiting_approval" || isSecurityTask(task)) return undefined;
+  const gate = task.gate;
+  const pr = gatePullRequest(task);
+  if (
+    !gate ||
+    gate.step === "review" ||
+    !pr?.repo ||
+    pr.step !== gate.step ||
+    pr.state !== "open"
+  ) {
+    return undefined;
+  }
+  const remarks = task.remarks.flatMap((r): RemarkReplyDue[] =>
+    !r.voided &&
+    r.origin?.number === pr.number &&
+    r.response !== undefined &&
+    r.respondedIn !== undefined &&
+    r.repliedIn === undefined &&
+    (r.step !== gate.step || r.respondedIn === gate.submission)
+      ? [
+          {
+            id: r.id,
+            key: r.origin.key,
+            step: r.step,
+            response: r.response,
+            ...(r.status ? { status: r.status } : {}),
+            respondedIn: r.respondedIn,
+          },
+        ]
+      : [],
+  );
+  const continued = task.continuedPullRequest;
+  // 取り込んだ指摘（差し戻しの指摘）になっているコメントは、その指摘として返信する
+  const imported = new Set(
+    task.remarks.flatMap((r) => (r.origin?.number === pr.number ? [r.origin.key] : [])),
+  );
+  const handedOver =
+    continued && gate.step === "implement" && continued.number === pr.number
+      ? Object.entries(task.continuedResponses ?? {}).flatMap(([key, r]): RemarkReplyDue[] =>
+          r.repliedIn === undefined && r.respondedIn === gate.submission && !imported.has(key)
+            ? [
+                {
+                  id: key,
+                  key,
+                  step: "implement",
+                  response: r.text,
+                  ...(r.status ? { status: r.status } : {}),
+                  respondedIn: r.respondedIn,
+                  continued: true,
+                },
+              ]
+            : [],
+        )
+      : [];
+  const replies = [...remarks, ...handedOver];
+  return replies.length > 0
+    ? {
+        step: gate.step,
+        submission: gate.submission,
+        number: pr.number,
+        repo: pr.repo,
+        url: pr.url ?? `${pr.repo.replace(/\/+$/, "")}/pull/${pr.number}`,
+        replies: replies.slice(0, REMARK_REPLIES_MAX),
+      }
     : undefined;
 }
 

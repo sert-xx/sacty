@@ -561,6 +561,7 @@ The judgment and its reasons are kept and passed to the redo as follows.
   The judgment is an interpretation of the comments, so when it disagrees with the original text of your comment, the original text wins.
 - When the step to redo could not be judged, what could not be read is passed too, and the redo does not make big changes by guessing; it leaves what it could not read in the response field.
 - When there is something for a person to check, the approval screen and the task details show it, and the same content is also commented on the PR ([Things for a person to check](#things-for-a-person-to-check)).
+- After the redo, sacty replies on the PR, per comment, whether it was addressed or why it was not ([Replies to your comments](#replies-to-your-comments)).
 
 When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created.
 When the fix is merged, the PRs of the later steps are recreated.
@@ -606,6 +607,40 @@ In the following cases, nothing is commented on the PR (the screen still shows i
 
 If commenting fails, the task does not stop.
 If it could not be commented while the task was paused, sacty tries again when you resume (it does not write again if a comment for the same submission exists).
+
+### Replies to your comments
+
+When sacty redoes a deliverable because of comments you made in PR reviews and comments, it replies on the PR, per comment, about how it handled it.
+Without opening the sacty screen, you can read, where you commented, whether it was addressed or not.
+
+- It replies when the redone deliverable is back to waiting for approval (after the PR is updated).
+  Each comment gets one reply only.
+- For a line comment, it posts a reply to that comment.
+  When it cannot reply (for example, the original comment is gone), it posts a PR comment.
+- For a review body and a regular comment, it posts a PR comment.
+  It starts with a link to the original, so that it is clear which review or comment it replies to.
+- The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
+  When it was not addressed, the reason (for example, out of this task's scope) follows.
+  When the AI declared neither, only the explanation of the response is shown.
+- The end of the reply says which sacty task's AI wrote it.
+- Secret values are hidden and long text is cut.
+  Paths inside sacty's workspace are replaced with names a person can follow.
+- A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) also replies the same way, per PR comment passed to the implementation.
+  It does not reply to those the AI judged to need no response (the author's replies, finished exchanges, and so on).
+- This reply is not imported as a change request.
+  sacty's PR review reads this reply as the PR author's reply, and does not raise again a point answered as out of scope or to be handled later.
+- The result of replying (the reply's URL, or why it could not reply) appears in the Activity.
+  Even if replying fails, the task does not stop. The reply is not retried, so write to the PR yourself if needed.
+
+It does not reply to the following.
+
+- Remarks written on the sacty screen
+- Comments the AI wrote no response to
+
+It does not reply in the following cases either (you can read the responses on the approval screen).
+
+- A project with no GitHub account chosen
+- Security check and security fix tasks
 
 ### When you are taken to the sacty approval screen
 
@@ -1375,6 +1410,7 @@ sacty handles the feedback on the PR as follows.
 - The reviews and comments on the PR (including sacty's reviews) are passed to the agents of the steps.
 - If the agent of the Requirements or Design step decides not to address a comment of the PR, it appears under "確認したいこと" with the reason. The agent is not asked to report what it addressed.
 - Feedback not passed to the implementation (such as feedback added after it started) is imported and fixed, as with other PRs.
+- For the comments the implementation addressed and those it did not, sacty replies on the PR whether it was addressed or why it was not ([Replies to your comments](#replies-to-your-comments)).
 
 Cancelling the task neither closes the PR nor deletes its branch (the pushed commits stay).
 

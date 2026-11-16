@@ -473,6 +473,14 @@ const ja = {
     GitHubCommentPosted: (url: string) => `投稿した（${url}）`,
     GitHubCommentFailed: (target: string, message: string) =>
       `${target} に投稿できなかった（${message}）`,
+    RemarkRepliesPosted: (number: number, results: string[]) =>
+      `指摘への対応を PR #${number} に返信：${results.join("、")}`,
+    RemarkReplyInline: (remarkId: string, url: string) =>
+      `${remarkId} は行へのコメントに返信した${url ? `（${url}）` : ""}`,
+    RemarkReplyComment: (remarkId: string, url: string) =>
+      `${remarkId} は PR のコメントとして返信した${url ? `（${url}）` : ""}`,
+    RemarkReplyFailed: (remarkId: string, message: string) =>
+      `${remarkId} は返信できなかった（${message}）`,
     ReviewTargetResolved: (url: string, commit: string) =>
       `レビューの対象の PR を確認（${url}・${commit}）`,
     ReviewGitHubRetried: (
@@ -1120,6 +1128,13 @@ const en: LabelMessages = {
       `Result of posting the GitHub comments requested in the ${step} output: ${results.join("; ") || "none"}`,
     GitHubCommentPosted: (url) => `posted (${url})`,
     GitHubCommentFailed: (target, message) => `could not post to ${target} (${message})`,
+    RemarkRepliesPosted: (number, results) =>
+      `Replied on PR #${number} about how the remarks were handled: ${results.join("; ")}`,
+    RemarkReplyInline: (remarkId, url) =>
+      `${remarkId}: replied to the line comment${url ? ` (${url})` : ""}`,
+    RemarkReplyComment: (remarkId, url) =>
+      `${remarkId}: replied as a PR comment${url ? ` (${url})` : ""}`,
+    RemarkReplyFailed: (remarkId, message) => `${remarkId}: could not reply (${message})`,
     GuardianMissed: "Miss after a pass: a deliverable that passed a review was sent back",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,
     OrchestratorFailed: (message, cost) => `${message} (${cost})`,

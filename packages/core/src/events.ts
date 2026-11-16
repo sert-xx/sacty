@@ -267,17 +267,39 @@ const RunRef = { runId: z.string().optional() };
 export const RemarkSource = z.literal("sacty_review");
 export type RemarkSource = z.infer<typeof RemarkSource>;
 
+/**
+ * 指摘の元になった、PR のレビュー・行へのコメント・通常のコメント（PBI-352）。key は種類と GitHub の ID
+ * （`review:<ID>`・`review_comment:<ID>`・`comment:<ID>`。PR の指摘の取り込みのキーと同じ）、number は PR の番号。
+ * 指摘への対応を、元のコメントへの返信として投稿するのに使う。
+ */
+export const RemarkOrigin = z.object({
+  key: z.string().min(1).max(200),
+  number: z.number().int().positive(),
+});
+export type RemarkOrigin = z.infer<typeof RemarkOrigin>;
+
 export const Remark = z.object({
   id: z.string().min(1),
   text: z.string().min(1),
   source: RemarkSource.optional(),
+  /** PR のレビュー・コメントから取り込んだ指摘の、元のコメント（PBI-352）。画面から書いた指摘と、以前の作業履歴には無い。 */
+  origin: RemarkOrigin.optional(),
 });
 export type Remark = z.infer<typeof Remark>;
+
+/**
+ * 工程エージェントが、指摘に対応したか（PBI-352）。addressed は対応した、declined は理由があって対応しなかった
+ * （範囲外・指摘が当たらない、など。理由は対応の文に書く）。
+ */
+export const RemarkResponseStatus = z.enum(["addressed", "declined"]);
+export type RemarkResponseStatus = z.infer<typeof RemarkResponseStatus>;
 
 /** 工程エージェントの、指摘への対応。 */
 export const RemarkResponse = z.object({
   remarkId: z.string(),
   text: z.string(),
+  /** 対応したか、理由があって対応しなかったか（PBI-352）。申告が無い・読めない・以前の作業履歴には無い。 */
+  status: RemarkResponseStatus.optional(),
   /**
    * 人に確かめたいこと（PBI-301）。指摘の意図を読み取れず推測で直した・消えた値を作り直した・求められていない範囲を変えた、
    * など。承認の画面と PR のコメントで人に知らせる。無ければ確かめたいことは無い。以前の作業履歴には無い。
@@ -2520,10 +2542,25 @@ const ImplementationUnchanged = z.object({
 /**
  * 引き継いだ既存の PR（StepsChosen の continuedPullRequest）の指摘を、実装の工程の実行の指示に渡した。keys は渡した指摘
  * （PullRequestFeedback の key）。実装に対応させたので、PR の指摘として取り込み直さない（渡さなかった指摘は取り込む）。
+ * responses は、実装の実行が、渡した指摘ごとに書いた対応（PBI-352。指摘の ID はキー）。対応を、元のコメントへの返信として
+ * PR に投稿する。対応を書かなかった指摘・以前の作業履歴には無い。
  */
 const ContinuedFeedbackPassed = z.object({
   type: z.literal("ContinuedFeedbackPassed"),
-  payload: z.object({ runId: z.string(), keys: z.array(z.string().min(1)) }),
+  payload: z.object({
+    runId: z.string(),
+    keys: z.array(z.string().min(1)),
+    responses: z
+      .array(
+        z.object({
+          key: z.string().min(1).max(200),
+          text: z.string().min(1),
+          status: RemarkResponseStatus.optional(),
+        }),
+      )
+      .max(200)
+      .optional(),
+  }),
 });
 
 /**
@@ -2945,6 +2982,38 @@ const GitHubCommentsPosted = z.object({
       )
       .max(50),
     failed: DaemonText.optional(),
+  }),
+});
+
+/**
+ * PR のレビュー・コメントから取り込んだ指摘への対応を、PR に返信した（PBI-352）。行へのコメントから取り込んだ指摘には、
+ * そのコメントへの返信として、レビューの本文・通常のコメントから取り込んだ指摘には、PR のコメントとして投稿する。
+ * 提出した成果が承認待ちになったときに投稿する。投稿できなかった指摘は failed に理由を残し、やり直さない（タスクは進める）。
+ */
+const RemarkRepliesPosted = z.object({
+  type: z.literal("RemarkRepliesPosted"),
+  payload: z.object({
+    step: StepKey,
+    /** 対応を書いた提出の回。 */
+    submission: z.number().int().positive(),
+    /** 返信した PR の番号。 */
+    number: z.number().int().positive(),
+    results: z
+      .array(
+        z.object({
+          /** 指摘の ID。引き継いだ PR の指摘（指摘の ID が、元のコメントのキー）では、key と同じ。 */
+          remarkId: z.string().min(1),
+          /** 元のコメントのキー（RemarkOrigin の key）。 */
+          key: z.string().min(1).max(200),
+          /** 行へのコメントへの返信として投稿した。無ければ、PR のコメントとして投稿した。 */
+          inline: z.literal(true).optional(),
+          /** 投稿した返信の URL。 */
+          url: z.string().max(2000).optional(),
+          failed: DaemonText.optional(),
+        }),
+      )
+      .min(1)
+      .max(200),
   }),
 });
 
@@ -3659,6 +3728,7 @@ export const EventInput = z.discriminatedUnion("type", [
   IssueCommented,
   IssueCommentFailed,
   GitHubCommentsPosted,
+  RemarkRepliesPosted,
   ReviewTargetResolved,
   ReviewGitHubRetried,
   PullRequestReviewPosted,

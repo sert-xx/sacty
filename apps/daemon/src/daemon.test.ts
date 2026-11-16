@@ -116,6 +116,7 @@ import {
   buildStepDocument,
   changeableSteps,
 } from "./prompts.js";
+import { buildRemarkReply } from "./remark-reply.js";
 import {
   type DiffFile,
   type FileChange,
@@ -133,6 +134,7 @@ import {
 import { createApp } from "./server.js";
 import {
   awaitingIssueComment,
+  awaitingRemarkReplies,
   DRAFT_SETTLE_FACTOR,
   InvalidOperationError,
   type LocalSessionView,
@@ -855,6 +857,40 @@ class FakePulls implements PullRequests {
           url: `${input.repo}/issues/${input.number}#issuecomment-${index + 1}`,
         };
   }
+  /** 行へのコメントへの返信（指摘への対応の返信。PBI-352）。 */
+  reviewReplies: {
+    repo: string;
+    token: string;
+    number: number;
+    commentId: number;
+    body: string;
+  }[] = [];
+  /** あれば、行へのコメントへの返信を失敗させる（元のコメントが消えた・返信への返信は受け付けられない、など）。 */
+  replyFail?: string;
+  /** あれば、返信は GitHub で済むが、答えを受け取れずに失敗する。 */
+  replyAnswerLost?: string;
+  async replyToReviewComment(input: {
+    repo: string;
+    token: string;
+    number: number;
+    commentId: number;
+    body: string;
+  }) {
+    if (this.replyFail) throw new Error(this.replyFail);
+    this.reviewReplies.push(input);
+    if (this.replyAnswerLost) throw new Error(this.replyAnswerLost);
+    return {
+      url: `${input.repo}/pull/${input.number}#discussion_r${9000 + this.reviewReplies.length}`,
+    };
+  }
+  async findReviewComment(input: { repo: string; number: number; marker: string }) {
+    const index = this.reviewReplies.findIndex(
+      (c) => c.repo === input.repo && c.number === input.number && c.body.includes(input.marker),
+    );
+    return index < 0
+      ? undefined
+      : { url: `${input.repo}/pull/${input.number}#discussion_r${9000 + index + 1}` };
+  }
   /** 本文が prefix で始まるコメント（PBI-292）。id は issueComments の位置 + 1。 */
   listedAccounts: (string | undefined)[] = [];
   listFail?: string;
@@ -1009,14 +1045,18 @@ class FakePulls implements PullRequests {
   feedbackIncludeApprovals: (boolean | undefined)[] = [];
   /** 渡された、レビューが止まったことの投稿を除くための既知のアカウント（PBI-292）。 */
   feedbackNoticeAccounts: (readonly string[] | undefined)[] = [];
+  /** sacty の、指摘への返信も含めるか（レビューの工程に渡す既存のレビューだけ true。PBI-352）。 */
+  feedbackIncludeSactyReplies: (boolean | undefined)[] = [];
   async feedback(input: {
     account?: string;
     number: number;
     sactyReviews?: readonly SactyReviewRound[];
     includeApprovals?: boolean;
     noticeAccounts?: readonly string[];
+    includeSactyReplies?: boolean;
   }) {
     this.feedbackNoticeAccounts.push(input.noticeAccounts);
+    this.feedbackIncludeSactyReplies.push(input.includeSactyReplies);
     const allowed = (input.sactyReviews ?? []).filter((r) => r.allowed).map((r) => r.key);
     this.feedbackSactyReviews.push(allowed.length > 0 ? allowed : undefined);
     this.feedbackIncludeApprovals.push(input.includeApprovals);
@@ -1032,6 +1072,11 @@ class FakePulls implements PullRequests {
       // 投稿したレビューのタスクと回（目印の中身）も、本物と同じく添える（PBI-332）
       if (round) {
         return round.allowed ? [{ ...item, source: "sacty_review" as const, review: key }] : [];
+      }
+      // 本物と同じく、sacty の、指摘への返信（目印で始まる投稿）は、含める指定が無ければ除く（PBI-352。本物は、
+      // sacty のアカウントの投稿だけを除く。それは github.test.ts で確かめる）
+      if (!input.includeSactyReplies && item.body.trimStart().startsWith("<!-- sacty-reply:")) {
+        return [];
       }
       return key !== undefined && item.author === input.account ? [] : [item];
     });
@@ -8515,6 +8560,284 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     };
     const body = "https://github.com/acme/app/pull/12 のレビューの指摘に対応する";
 
+    describe("引き継いだ PR の指摘への対応を、PR に返信する（PBI-352）", () => {
+      const map = [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }];
+      const answered = (responses: unknown[], title = "# 実装の説明") =>
+        out(
+          [title, block({ "sacty-responses": responses }), block({ "sacty-test-map": map })].join(
+            "\n\n",
+          ),
+        );
+      const summary: PullRequestFeedback = {
+        key: "review:21",
+        kind: "review",
+        author: "bob",
+        at: "2026-01-01T00:01:00Z",
+        body: "全体に、ログが足りません",
+      };
+      const chat: PullRequestFeedback = {
+        key: "comment:31",
+        kind: "comment",
+        author: "carol",
+        at: "2026-01-01T00:02:00Z",
+        body: "ありがとうございます",
+      };
+      const replies = (pulls: FakePulls) =>
+        pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-reply:"));
+      const posted = (service: TaskService, id: string) =>
+        (service.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "RemarkRepliesPosted" ? [e.payload] : [],
+        );
+      const setup = (outcomes: AgentOutcome[], pulls = new FakePulls()) => {
+        const activity = new SqliteActivityStore(dbPath);
+        const repos = new FakeRepos();
+        repos.branchHeads["feature/retry"] = head;
+        humanPullRequest(pulls);
+        pulls.feedbackBy[12] = [old, summary, chat];
+        const made = makeService(activity, [steps(), ...outcomes], {
+          realPlanner: true,
+          pulls,
+          repos,
+          now: () => Date.now() + 10 * 60_000,
+        });
+        const { id } = made.service.createTask({
+          projectId: "default",
+          title: "PR #12 の指摘",
+          body,
+        });
+        return { ...made, activity, pulls, id };
+      };
+      const run = async (service: TaskService, id: string) => {
+        for (let i = 0; i < 12 && service.queuedTaskIds().includes(id); i++) {
+          await service.runNext(id);
+        }
+      };
+
+      it("実装の指示に、指摘ごとの ID（キー）と対応の形を渡し、対応を書いた指摘ごとに、行へのコメントには返信、それ以外には元へのリンクを付けた PR のコメントを1回ずつ投稿する。対応を書かなかった指摘には返信しない", async () => {
+        const { activity, service, executor, pulls, id } = setup([
+          answered([
+            { remarkId: "review_comment:1", status: "addressed", text: "回数を定数にしました" },
+            {
+              remarkId: "review:21",
+              status: "declined",
+              text: "ログの追加は、この PR の目的の外です",
+            },
+            // 渡していない ID への対応は読まない
+            { remarkId: "comment:999", status: "addressed", text: "知らない指摘" },
+          ]),
+        ]);
+        await run(service, id);
+        const task = service.get(id)?.task;
+        expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+        const prompt = promptOf(executor, 1);
+        expect(prompt).toContain('"id":"review_comment:1"');
+        expect(prompt).toContain('"id":"review:21"');
+        expect(prompt).toContain('"remarkId" には、下のデータの "id" をそのまま書く');
+        expect(prompt).toContain('"status": "addressed か declined"');
+        // 実装に渡した記録に、指摘ごとの対応が残る
+        const passed = service.get(id)?.activity.find((e) => e.type === "ContinuedFeedbackPassed");
+        expect(passed?.type === "ContinuedFeedbackPassed" && passed.payload).toMatchObject({
+          keys: ["review_comment:1", "review:21", "comment:31"],
+          responses: [
+            { key: "review_comment:1", status: "addressed", text: "回数を定数にしました" },
+            { key: "review:21", status: "declined", text: "ログの追加は、この PR の目的の外です" },
+          ],
+        });
+        // 行へのコメントの指摘：そのコメントへの返信
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(pulls.reviewReplies[0]).toMatchObject({
+          repo: "https://github.com/acme/app",
+          number: 12,
+          commentId: 1,
+        });
+        const threaded = pulls.reviewReplies[0]?.body ?? "";
+        expect(threaded.startsWith(`<!-- sacty-reply:${id}:review_comment:1:1 -->\n`)).toBe(true);
+        expect(threaded).toContain("**対応しました。**\n\n回数を定数にしました");
+        // 指摘の ID（キー）は、sacty の中のものなので、人には見せない
+        expect(threaded).toContain(`sacty のタスク ${id} の実装の工程で、AI が書きました。`);
+        expect(threaded).not.toContain("への対応）");
+        // レビューの本文の指摘：元へのリンクを付けた PR のコメント
+        expect(replies(pulls)).toHaveLength(1);
+        expect(replies(pulls)[0]).toMatchObject({
+          repo: "https://github.com/acme/app",
+          number: 12,
+        });
+        expect(replies(pulls)[0]?.body).toContain(
+          "[このレビュー](https://github.com/acme/app/pull/12#pullrequestreview-21)への返信です。",
+        );
+        expect(replies(pulls)[0]?.body).toContain(
+          "**対応していません。** 理由：\n\nログの追加は、この PR の目的の外です",
+        );
+        expect(posted(service, id)).toEqual([
+          {
+            step: "implement",
+            submission: 1,
+            number: 12,
+            results: [
+              {
+                remarkId: "review_comment:1",
+                key: "review_comment:1",
+                inline: true,
+                url: "https://github.com/acme/app/pull/12#discussion_r9001",
+              },
+              {
+                remarkId: "review:21",
+                key: "review:21",
+                url: "https://github.com/acme/app/issues/12#issuecomment-1",
+              },
+            ],
+          },
+        ]);
+        expect(task?.continuedResponses).toBeDefined();
+        expect(service.get(id)?.task.continuedResponses).toEqual({
+          "review_comment:1": {
+            text: "回数を定数にしました",
+            status: "addressed",
+            respondedIn: 1,
+            repliedIn: 1,
+          },
+          "review:21": {
+            text: "ログの追加は、この PR の目的の外です",
+            status: "declined",
+            respondedIn: 1,
+            repliedIn: 1,
+          },
+        });
+        // 続けて確認・実行しても、重ねて返信しない。返信は、PR の指摘として取り込まない
+        expect(service.queuedTaskIds()).toEqual([]);
+        await service.checkPullRequests();
+        await run(service, id);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(replies(pulls)).toHaveLength(1);
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+        activity.close();
+      });
+
+      it("一度返信した指摘には、後の提出でもう一度対応が書かれても、繰り返し返信しない。前の提出で対応の無かった指摘には、対応が付いた提出で返信する", async () => {
+        const { activity, service, executor, pulls, id } = setup([
+          answered([
+            { remarkId: "review_comment:1", status: "addressed", text: "回数を定数にしました" },
+          ]),
+          answered(
+            [
+              { remarkId: "review_comment:1", status: "addressed", text: "定数のままです" },
+              { remarkId: "review:21", status: "addressed", text: "ログを足しました" },
+              { remarkId: "implement-1-1", status: "addressed", text: "名前を直しました" },
+            ],
+            "# 実装の説明 v2",
+          ),
+        ]);
+        await run(service, id);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(replies(pulls)).toHaveLength(0);
+        // 画面から差し戻す（引き継いだ PR の指摘は、実装のたびに渡し直す）
+        service.requestChanges(id, {
+          step: "implement",
+          submission: 1,
+          comments: ["名前を直して"],
+        });
+        await run(service, id);
+        const task = service.get(id)?.task;
+        expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+        // 作り直しの指示では、返信した指摘に印を付ける（対応を書き直させない）
+        const reworkPrompt = promptOf(executor, executor.calls.length - 1);
+        expect(reworkPrompt).toContain('"id":"review_comment:1","answered":true');
+        expect(reworkPrompt).toContain('"id":"review:21","kind":"review"');
+        // 画面の指摘への対応は、指摘の対応として残る（引き継いだ PR の指摘の対応と混ざらない）
+        const completed = service
+          .get(id)
+          ?.activity.findLast(
+            (e) => e.type === "AgentRunCompleted" && e.payload.step === "implement",
+          );
+        expect(
+          completed?.type === "AgentRunCompleted" &&
+            completed.payload.responses.map((r) => r.remarkId),
+        ).toEqual(["implement-1-1"]);
+        expect(task?.remarks.at(-1)).toMatchObject({
+          id: "implement-1-1",
+          response: "名前を直しました",
+        });
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(replies(pulls).map((c) => c.body.split("\n")[0])).toEqual([
+          `<!-- sacty-reply:${id}:review:21:2 -->`,
+        ]);
+        expect(
+          posted(service, id).map((p) => [p.submission, p.results.map((r) => r.remarkId)]),
+        ).toEqual([
+          [1, ["review_comment:1"]],
+          [2, ["review:21"]],
+        ]);
+        expect(task?.continuedResponses?.["review_comment:1"]).toEqual({
+          text: "回数を定数にしました",
+          status: "addressed",
+          respondedIn: 1,
+          repliedIn: 1,
+        });
+        activity.close();
+      });
+
+      it("投稿の後・記録の前に止まっても二重に投稿せず、投稿に失敗してもタスクは止めずに作業履歴に残す", async () => {
+        const first = setup([
+          answered([
+            { remarkId: "review_comment:1", status: "addressed", text: "回数を定数にしました" },
+          ]),
+        ]);
+        const append = first.activity.append.bind(first.activity);
+        let failOnce = true;
+        first.activity.append = (entry) => {
+          if (failOnce && entry.events.some((e) => e.event.type === "RemarkRepliesPosted")) {
+            failOnce = false;
+            throw new Error("disk full");
+          }
+          return append(entry);
+        };
+        await expect(run(first.service, first.id)).rejects.toThrow("disk full");
+        expect(first.pulls.reviewReplies).toHaveLength(1);
+        await run(first.service, first.id);
+        expect(first.pulls.reviewReplies).toHaveLength(1);
+        expect(posted(first.service, first.id)).toHaveLength(1);
+        first.activity.close();
+        rmSync(dbPath, { force: true });
+
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const pulls = new FakePulls();
+        pulls.replyFail = "403 forbidden";
+        pulls.commentFail = "403 forbidden";
+        const failed = setup(
+          [
+            answered([
+              { remarkId: "review_comment:1", status: "addressed", text: "回数を定数にしました" },
+            ]),
+          ],
+          pulls,
+        );
+        await run(failed.service, failed.id);
+        expect(failed.service.get(failed.id)?.task.status).toBe("awaiting_approval");
+        expect(posted(failed.service, failed.id)[0]?.results[0]).toMatchObject({
+          remarkId: "review_comment:1",
+          failed: expect.anything(),
+        });
+        expect(failed.service.queuedTaskIds()).toEqual([]);
+        warn.mockRestore();
+        failed.activity.close();
+      });
+
+      it("対応を1件も書かなかった（前の形の出力）なら、返信も記録もしない", async () => {
+        const { activity, service, pulls, id } = setup([implement("# 実装の説明", map)]);
+        await run(service, id);
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+        const passed = service.get(id)?.activity.find((e) => e.type === "ContinuedFeedbackPassed");
+        expect(
+          passed?.type === "ContinuedFeedbackPassed" && passed.payload.responses,
+        ).toBeUndefined();
+        expect(service.get(id)?.task.continuedResponses).toBeUndefined();
+        expect(pulls.reviewReplies).toHaveLength(0);
+        expect(replies(pulls)).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(0);
+        activity.close();
+      });
+    });
+
     it("引き継いだ PR にはレビューの子タスクを作らないので、子タスクを作るデーモンでも、実装のセルフレビューをさせる（PBI-346 受け入れ条件 3）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
@@ -12022,6 +12345,703 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       });
     });
 
+    describe("取り込んだ PR の指摘への対応を、PR に返信する（PBI-352）", () => {
+      const map = [
+        { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+        { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+      ];
+      const redone = (responses: unknown[], title = "# 直した") =>
+        out(
+          [
+            title,
+            ...(responses.length > 0 ? [block({ "sacty-responses": responses })] : []),
+            block({ "sacty-test-map": map }),
+          ].join("\n\n"),
+        );
+      const decided = () => rework("implement", "実装で直せる");
+      const inline = (id = 501, patch: Partial<PullRequestFeedback> = {}) =>
+        item(`review_comment:${id}`, {
+          kind: "review_comment",
+          path: "src/pay.ts",
+          line: 3,
+          body: "ここは null を返すべき",
+          ...patch,
+        });
+      const review = (id = 601) =>
+        item(`review:${id}`, { kind: "review", body: "全体に、ログが足りない" });
+      const comment = (id = 401) => item(`comment:${id}`, { body: "再開のフォームの候補も直して" });
+      const prComments = (pulls: FakePulls) =>
+        pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-reply:"));
+      const posted = (service: TaskService, id: string) =>
+        (service.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "RemarkRepliesPosted" ? [e.payload] : [],
+        );
+      const pr = "https://github.com/acme/app/pull/7";
+
+      it("行へのコメントの指摘には、そのコメントへの返信として、レビューの本文・通常のコメントの指摘には、元へのリンクを付けた PR のコメントとして、1回ずつ投稿する。対応したか・しなかったかが先頭で分かり、申告が無ければ対応の文だけ", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "null を返すようにしました" },
+              {
+                remarkId: "implement-1-2",
+                status: "declined",
+                text: "ログの追加は、このタスクの範囲の外です",
+              },
+              { remarkId: "implement-1-3", status: "たぶん", text: "候補を直しました @alice" },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [inline(), review(), comment()];
+        await service.checkPullRequests();
+        // 指摘ごとに、元のコメントを持つ
+        expect(
+          service
+            .get(id)
+            ?.task.remarks.slice(-3)
+            .map((r) => r.origin),
+        ).toEqual([
+          { key: "review_comment:501", number: 7 },
+          { key: "review:601", number: 7 },
+          { key: "comment:401", number: 7 },
+        ]);
+        // 作り直している間は、まだ返信しない
+        expect(pulls.reviewReplies).toHaveLength(0);
+        expect(prComments(pulls)).toHaveLength(0);
+        await drain(service);
+        const task = service.get(id)?.task;
+        expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+        // 行へのコメントの指摘：そのコメントへの返信
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(pulls.reviewReplies[0]).toMatchObject({
+          repo: "https://github.com/acme/app",
+          number: 7,
+          commentId: 501,
+        });
+        const threaded = pulls.reviewReplies[0]?.body ?? "";
+        expect(threaded.startsWith(`<!-- sacty-reply:${id}:implement-1-1:2 -->\n`)).toBe(true);
+        expect(threaded).toContain("**対応しました。**\n\nnull を返すようにしました");
+        expect(threaded).not.toContain("への返信です");
+        expect(threaded).toContain(
+          `sacty のタスク ${id} の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。`,
+        );
+        // レビューの本文・通常のコメントの指摘：元へのリンクを付けた PR のコメント
+        const [onReview, onComment] = prComments(pulls).map((c) => c.body);
+        expect(prComments(pulls)).toHaveLength(2);
+        expect(prComments(pulls)[0]).toMatchObject({
+          repo: "https://github.com/acme/app",
+          number: 7,
+        });
+        expect(onReview).toContain(`<!-- sacty-reply:${id}:implement-1-2:2 -->`);
+        expect(onReview).toContain(`[このレビュー](${pr}#pullrequestreview-601)への返信です。`);
+        expect(onReview).toContain(
+          "**対応していません。** 理由：\n\nログの追加は、このタスクの範囲の外です",
+        );
+        // 申告が読めない（知らない値）なら、対応の文だけ。@名前では通知を飛ばさない
+        expect(onComment).toContain(`[このコメント](${pr}#issuecomment-401)への返信です。`);
+        expect(onComment).not.toContain("**対応");
+        expect(onComment).toContain("候補を直しました @​alice");
+        expect(task?.remarks.slice(-3).map((r) => [r.status, r.repliedIn])).toEqual([
+          ["addressed", 2],
+          ["declined", 2],
+          [undefined, 2],
+        ]);
+        // 作業履歴に、返信したことが残る
+        expect(posted(service, id)).toEqual([
+          {
+            step: "implement",
+            submission: 2,
+            number: 7,
+            results: [
+              {
+                remarkId: "implement-1-1",
+                key: "review_comment:501",
+                inline: true,
+                url: `${pr}#discussion_r9001`,
+              },
+              {
+                remarkId: "implement-1-2",
+                key: "review:601",
+                url: "https://github.com/acme/app/issues/7#issuecomment-1",
+              },
+              {
+                remarkId: "implement-1-3",
+                key: "comment:401",
+                url: "https://github.com/acme/app/issues/7#issuecomment-2",
+              },
+            ],
+          },
+        ]);
+        // 続けて確認・実行しても、同じ指摘に重ねて返信しない。実行待ちにも残らない
+        expect(service.queuedTaskIds()).toEqual([]);
+        await service.checkPullRequests();
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(2);
+        expect(posted(service, id)).toHaveLength(1);
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+        activity.close();
+      });
+
+      it("行へのコメントに返信できないとき（元のコメントが消えた・返信への返信）は、元へのリンクを付けた PR のコメントとして投稿する", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const pulls = new FakePulls();
+        pulls.replyFail = "404 Not Found";
+        const { activity, service, id } = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", status: "addressed", text: "直した" }])],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [inline(777)];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(0);
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(prComments(pulls)[0]?.body).toContain(
+          `[この行へのコメント](${pr}#discussion_r777)への返信です。`,
+        );
+        expect(posted(service, id)[0]?.results).toEqual([
+          {
+            remarkId: "implement-1-1",
+            key: "review_comment:777",
+            url: "https://github.com/acme/app/issues/7#issuecomment-1",
+          },
+        ]);
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining("行へのコメントへの返信として投稿できませんでした"),
+        );
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("行への返信の答えを受け取れなかっただけなら、投稿済みの返信を見つけて使い、PR のコメントを重ねない", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const pulls = new FakePulls();
+        pulls.replyAnswerLost = "socket hang up";
+        const { activity, service, id } = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [inline()];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id)[0]?.results).toEqual([
+          {
+            remarkId: "implement-1-1",
+            key: "review_comment:501",
+            inline: true,
+            url: `${pr}#discussion_r9001`,
+          },
+        ]);
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("返信の投稿に失敗しても、タスクは止めない。失敗は作業履歴に残し、やり直さない（秘密の値は伏せる）", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "直した" },
+              { remarkId: "implement-1-2", status: "addressed", text: "足した" },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [inline(), comment()];
+        await service.checkPullRequests();
+        pulls.replyFail = "403 forbidden";
+        pulls.commentFail = "403 forbidden for ghp_secret";
+        await drain(service);
+        const task = service.get(id)?.task;
+        expect(task?.status).toBe("awaiting_approval");
+        expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+        const results = posted(service, id)[0]?.results ?? [];
+        expect(results.map((r) => [r.remarkId, r.key, r.url, r.inline])).toEqual([
+          ["implement-1-1", "review_comment:501", undefined, undefined],
+          ["implement-1-2", "comment:401", undefined, undefined],
+        ]);
+        for (const r of results) {
+          expect(JSON.stringify(r.failed)).toContain("403 forbidden");
+          expect(JSON.stringify(r.failed)).not.toContain("ghp_secret");
+        }
+        // 投稿できるようになっても、やり直さない（実行待ちにも残らない）
+        pulls.replyFail = undefined;
+        pulls.commentFail = undefined;
+        expect(service.queuedTaskIds()).toEqual([]);
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(0);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(1);
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("投稿の後・記録の前にデーモンが止まっても、目印で投稿済みの返信を見つけて、二重に投稿しない", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "直した" },
+              { remarkId: "implement-1-2", status: "declined", text: "範囲の外です" },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [inline(), review()];
+        await service.checkPullRequests();
+        // RemarkRepliesPosted の記録だけを一度失敗させる（PR の返信だけが残る）
+        const append = activity.append.bind(activity);
+        let failOnce = true;
+        activity.append = (entry) => {
+          if (failOnce && entry.events.some((e) => e.event.type === "RemarkRepliesPosted")) {
+            failOnce = false;
+            throw new Error("disk full");
+          }
+          return append(entry);
+        };
+        await expect(drain(service)).rejects.toThrow("disk full");
+        expect(failOnce).toBe(false);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(posted(service, id)).toHaveLength(0);
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(posted(service, id)[0]?.results).toEqual([
+          {
+            remarkId: "implement-1-1",
+            key: "review_comment:501",
+            inline: true,
+            url: `${pr}#discussion_r9001`,
+          },
+          {
+            remarkId: "implement-1-2",
+            key: "review:601",
+            url: "https://github.com/acme/app/issues/7#issuecomment-1",
+          },
+        ]);
+        activity.close();
+      });
+
+      it("対応の付いていない指摘と、画面から書いた指摘には、返信しない（返信するものが無ければ、作業履歴にも残さない）", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            // PR の指摘への対応を書かない
+            decided(),
+            redone([]),
+            // 画面からの指摘には対応を書く
+            redone([
+              { remarkId: "implement-2-1", status: "addressed", text: "画面の指摘を直した" },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [comment()];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+        expect(service.get(id)?.task.remarks.at(-1)).toMatchObject({
+          id: "implement-1-1",
+          origin: { key: "comment:401", number: 7 },
+        });
+        expect(service.get(id)?.task.remarks.at(-1)?.response).toBeUndefined();
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(0);
+        // 画面から書いた指摘（元の PR のコメントが無い。以前の作業履歴の指摘も同じ形）
+        service.requestChanges(id, {
+          step: "implement",
+          submission: 2,
+          comments: ["画面からの指摘"],
+        });
+        await drain(service);
+        const task = service.get(id)?.task;
+        expect(task?.gate).toEqual({ step: "implement", submission: 3 });
+        expect(task?.remarks.at(-1)).toMatchObject({
+          id: "implement-2-1",
+          response: "画面の指摘を直した",
+          status: "addressed",
+        });
+        expect(task?.remarks.at(-1)?.origin).toBeUndefined();
+        expect(pulls.reviewReplies).toHaveLength(0);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(0);
+        expect(service.queuedTaskIds()).toEqual([]);
+        activity.close();
+      });
+
+      it("1件の指摘には1回だけ返信する：次の差し戻しでは、新しい指摘にだけ返信する。前の提出で対応が無かった指摘には、対応が付いた提出で返信する", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            // 1回目：1件目にだけ対応を書く
+            redone([{ remarkId: "implement-1-1", status: "addressed", text: "一つめを直した" }]),
+            decided(),
+            // 2回目：前の指摘にも、もう一度対応を書く
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "一つめは直したまま" },
+              { remarkId: "implement-1-2", status: "declined", text: "二つめは範囲の外" },
+              { remarkId: "implement-2-1", status: "addressed", text: "三つめを直した" },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [comment(401), comment(402)];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(prComments(pulls).map((c) => c.body.split("\n")[0])).toEqual([
+          `<!-- sacty-reply:${id}:implement-1-1:2 -->`,
+        ]);
+        pulls.feedbackList = [comment(401), comment(402), comment(403)];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 3 });
+        expect(prComments(pulls).map((c) => c.body.split("\n")[0])).toEqual([
+          `<!-- sacty-reply:${id}:implement-1-1:2 -->`,
+          `<!-- sacty-reply:${id}:implement-1-2:3 -->`,
+          `<!-- sacty-reply:${id}:implement-2-1:3 -->`,
+        ]);
+        expect(
+          posted(service, id).map((p) => [p.submission, p.results.map((r) => r.remarkId)]),
+        ).toEqual([
+          [2, ["implement-1-1"]],
+          [3, ["implement-1-2", "implement-2-1"]],
+        ]);
+        activity.close();
+      });
+
+      it("セキュリティ対応のタスクでは、返信しない（対応は、承認の画面には出る）", async () => {
+        const pulls = new FakePulls();
+        const securityPlanner = async () => ({
+          steps: [...MVP_STEPS],
+          plan: "security-fix" as const,
+          reason: "セキュリティ対応",
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+        });
+        const secure = [...map, { viewpointId: "SEC-MIN", tests: ["pay.test.ts › 最小権限"] }];
+        const made = await toImplement(
+          [
+            implement("# 実装の説明", secure),
+            decided(),
+            out(
+              [
+                "# 直した",
+                block({
+                  "sacty-responses": [
+                    { remarkId: "implement-1-1", status: "addressed", text: "脆弱な箇所を直した" },
+                  ],
+                }),
+                block({ "sacty-test-map": secure }),
+              ].join("\n\n"),
+            ),
+          ],
+          { pulls, now: later, planner: securityPlanner },
+        );
+        const { activity, service, id } = made;
+        await drain(service);
+        pulls.feedbackList = [inline()];
+        await service.checkPullRequests();
+        await drain(service);
+        const task = service.get(id)?.task;
+        expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+        expect(task?.remarks.at(-1)).toMatchObject({ response: "脆弱な箇所を直した" });
+        expect(pulls.reviewReplies).toHaveLength(0);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(0);
+        expect(service.queuedTaskIds()).toEqual([]);
+        activity.close();
+      });
+
+      it("GitHub のアカウントを選んでいないプロジェクトでは、返信しない（実行待ちにも残らない）", async () => {
+        const pulls = new FakePulls();
+        const projects = projectsWithAccount();
+        const made = await toImplement(
+          [
+            implement("# 実装の説明"),
+            decided(),
+            redone([{ remarkId: "implement-1-1", status: "addressed", text: "直した" }]),
+          ],
+          { pulls, now: later, projects },
+        );
+        const { activity, service, id } = made;
+        await drain(service);
+        pulls.feedbackList = [comment()];
+        await service.checkPullRequests();
+        // 作り直した実装が承認待ちに戻るところまで進める（返信は、その次の処理）
+        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
+          await service.runNext(id);
+        }
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+        expect(service.queuedTaskIds()).toEqual([id]);
+        const current = projects.get("default");
+        projects.put("default", { name: current?.name ?? "", targets: current?.targets ?? [] });
+        expect(service.queuedTaskIds()).toEqual([]);
+        await drain(service);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(0);
+        activity.close();
+      });
+
+      it("既存の返信を探している間に一時停止されたら、投稿も記録もせず、再開した後に1回だけ返信する", async () => {
+        const entered = Promise.withResolvers<void>();
+        const gate = Promise.withResolvers<void>();
+        let hold = true;
+        class SlowFind extends FakePulls {
+          override async findIssueComment(input: { repo: string; number: number; marker: string }) {
+            if (hold && input.marker.includes("sacty-reply")) {
+              hold = false;
+              entered.resolve();
+              await gate.promise;
+            }
+            return super.findIssueComment(input);
+          }
+        }
+        const pulls = new SlowFind();
+        const { activity, service, id } = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", status: "addressed", text: "直した" }])],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [comment()];
+        await service.checkPullRequests();
+        const running = drain(service);
+        await entered.promise;
+        const pausing = service.pause(id);
+        gate.resolve();
+        await pausing;
+        await running;
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(0);
+        service.resume(id, {});
+        await drain(service);
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(posted(service, id)).toHaveLength(1);
+        activity.close();
+      });
+
+      it("上限でエスカレーションした PR の指摘を、人が続けて差し戻しても、元のコメントを失わず、対応を返信する", async () => {
+        const pulls = new FakePulls();
+        const round = (n: number) => [implement(`# 実装の説明 v${n + 1}`)];
+        const { activity, service, id } = await toImplementGate(
+          [
+            ...round(1),
+            ...round(2),
+            ...round(3),
+            decided(),
+            redone([{ remarkId: "implement-4-1", status: "addressed", text: "ログを足した" }]),
+          ],
+          { pulls, now: later },
+        );
+        for (let n = 1; n <= 3; n++) {
+          service.requestChanges(id, {
+            step: "implement",
+            submission: service.get(id)?.task.gate?.submission ?? 0,
+            comments: [`指摘${n}`],
+          });
+          await drain(service);
+        }
+        pulls.feedbackList = [inline()];
+        await service.checkPullRequests();
+        expect(service.get(id)?.task.escalation?.pendingRemarks).toEqual([
+          {
+            id: "implement-4-1",
+            text: expect.stringContaining("ここは null を返すべき"),
+            origin: { key: "review_comment:501", number: 7 },
+          },
+        ]);
+        service.requestChanges(id, {
+          step: "implement",
+          submission: 4,
+          comments: [],
+          continueOverLimit: true,
+        });
+        expect(service.get(id)?.task.remarks.at(-1)).toMatchObject({
+          id: "implement-4-1",
+          origin: { key: "review_comment:501", number: 7 },
+        });
+        await drain(service);
+        expect(pulls.reviewReplies.map((r) => r.commentId)).toEqual([501]);
+        activity.close();
+      });
+
+      it("一時停止の間に届いた指摘も、元のコメントを持ち、作り直した実装が承認待ちになったら返信する", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            // 差し戻した実装が、エラーで止まる
+            { kind: "failed", reason: "error", message: "EACCES: permission denied" },
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "最初の指摘を直した" },
+              {
+                remarkId: "implement-2-1",
+                status: "addressed",
+                text: "環境に依存しないようにした",
+              },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        service.requestChanges(id, { step: "implement", submission: 1, comments: ["最初の指摘"] });
+        await service.runNext(id);
+        expect(service.get(id)?.task.status).toBe("paused");
+        pulls.feedbackList = [inline(502, { body: "npm test が環境に依存している" })];
+        await service.checkPullRequests();
+        service.resume(id, {});
+        await drain(service);
+        const task = service.get(id)?.task;
+        expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+        expect(task?.remarks.at(-1)).toMatchObject({
+          id: "implement-2-1",
+          origin: { key: "review_comment:502", number: 7 },
+          repliedIn: 2,
+        });
+        // 画面から書いた最初の指摘には返信しない
+        expect(pulls.reviewReplies.map((r) => r.commentId)).toEqual([502]);
+        expect(prComments(pulls)).toHaveLength(0);
+        activity.close();
+      });
+
+      it("実装の PR の指摘を設計に戻したときは、設計の対応を、実装の PR を更新した提出で返信する", async () => {
+        const pulls = new FakePulls();
+        const designRedone = out(
+          [
+            "# 設計 v2",
+            block({
+              "sacty-test-viewpoints": [
+                { title: "同じキーの再送", input: "同じキーで2回送る", expected: "決済は1回" },
+                { title: "キーなし", input: "キーを付けない", expected: "400" },
+              ],
+            }),
+            block({
+              "sacty-responses": [
+                { remarkId: "design-1-1", status: "addressed", text: "画面の姿の決定を変えました" },
+              ],
+            }),
+          ].join("\n\n"),
+        );
+        const { activity, service, id } = await toImplementGate(
+          [rework("design", "決定を変える"), designRedone, implement("# 実装の説明 v2")],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [comment()];
+        await service.checkPullRequests();
+        await drain(service);
+        const gate = service.get(id)?.task.gate;
+        expect(gate?.step).toBe("design");
+        // 設計の承認待ちでは、まだ返信しない（実装の PR は、まだ更新していない）
+        expect(prComments(pulls)).toHaveLength(0);
+        service.approve(id, { step: "design", submission: gate?.submission ?? 0 });
+        await drain(service);
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(prComments(pulls)[0]?.body).toContain(
+          "**対応しました。**\n\n画面の姿の決定を変えました",
+        );
+        expect(prComments(pulls)[0]?.body).toContain(
+          "の設計の工程で、AI が書きました（指摘 design-1-1 への対応）。",
+        );
+        expect(posted(service, id)[0]).toMatchObject({
+          step: "implement",
+          submission: 2,
+          results: [{ remarkId: "design-1-1", key: "comment:401" }],
+        });
+        activity.close();
+      });
+
+      it("返信を待つのは、開いている PR の承認待ちの提出だけ：閉じられた PR・一時停止中・無効にした指摘・ほかの PR の指摘では待たない", async () => {
+        const pulls = new FakePulls();
+        pulls.commentFail = "止めておく";
+        pulls.replyFail = "止めておく";
+        const { activity, service, id } = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", status: "addressed", text: "直した" }])],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [inline()];
+        await service.checkPullRequests();
+        // 作り直した実装が承認待ちに戻るところまで進める（返信は、その次の処理）
+        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
+          await service.runNext(id);
+        }
+        const task = service.get(id)?.task as Task;
+        expect(awaitingRemarkReplies(task)).toMatchObject({
+          step: "implement",
+          submission: 2,
+          number: 7,
+          repo: "https://github.com/acme/app",
+          url: "https://github.com/acme/app/pull/7",
+          replies: [
+            {
+              id: "implement-1-1",
+              key: "review_comment:501",
+              step: "implement",
+              response: "直した",
+              status: "addressed",
+              respondedIn: 2,
+            },
+          ],
+        });
+        expect(awaitingRemarkReplies({ ...task, pullRequestState: "closed" })).toBeUndefined();
+        expect(awaitingRemarkReplies({ ...task, status: "paused" })).toBeUndefined();
+        expect(
+          awaitingRemarkReplies({
+            ...task,
+            remarks: task.remarks.map((r) => ({ ...r, voided: true })),
+          }),
+        ).toBeUndefined();
+        // ほかの PR のコメントから取り込んだ指摘（PR を作り直した後など）にも返信しない
+        expect(
+          awaitingRemarkReplies({
+            ...task,
+            remarks: task.remarks.map((r) =>
+              r.origin ? { ...r, origin: { ...r.origin, number: 8 } } : r,
+            ),
+          }),
+        ).toBeUndefined();
+        activity.close();
+      });
+
+      it("sacty の返信は、PR の指摘として取り込み直さない（取り込みには、返信を含める指定を渡さない）", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", status: "addressed", text: "直した" }])],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [comment()];
+        await service.checkPullRequests();
+        await drain(service);
+        const body = prComments(pulls)[0]?.body ?? "";
+        expect(body).toContain("<!-- sacty-reply:");
+        // GitHub が返す一覧に、sacty の返信が入っている
+        pulls.feedbackList = [
+          comment(),
+          item("comment:9001", { author: "me", at: new Date(later()).toISOString(), body }),
+        ];
+        await service.checkPullRequests();
+        await drain(service);
+        const task = service.get(id)?.task;
+        expect(task?.status).toBe("awaiting_approval");
+        expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+        expect(task?.importedFeedback).toEqual(["comment:401"]);
+        expect(task?.pendingReview).toBeUndefined();
+        expect(pulls.feedbackIncludeSactyReplies.every((v) => v === undefined)).toBe(true);
+        activity.close();
+      });
+    });
+
     it("戻し先の判断文（戻し先と指摘の読み方）を、その判断で始まった作り直しの実行の指示に渡す。人の指摘の原文も渡す（PBI-300。S14）", async () => {
       const pulls = new FakePulls();
       const reason =
@@ -12177,7 +13197,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(task?.status).toBe("escalated");
       expect(task?.escalation).toMatchObject({ reason: "too_many_changes", target: "implement" });
       expect(task?.escalation?.pendingRemarks).toEqual([
-        { id: "implement-4-1", text: "全体として、失敗時のログが足りない" },
+        {
+          id: "implement-4-1",
+          text: "全体として、失敗時のログが足りない",
+          // 元の PR のコメント（対応を、その場所に返信する。PBI-352）
+          origin: { key: "comment:401", number: 7 },
+        },
       ]);
       activity.close();
     });
@@ -12280,7 +13305,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         task = service.get(id)?.task;
         expect(task?.status).toBe("escalated");
         expect(task?.escalation?.pendingRemarks).toEqual([
-          { id: "implement-8-1", text: "全体として、失敗時のログが足りない" },
+          {
+            id: "implement-8-1",
+            text: "全体として、失敗時のログが足りない",
+            // 元の PR のコメント（対応を、その場所に返信する。PBI-352）
+            origin: { key: "comment:900", number: 7 },
+          },
         ]);
         expect(executor.calls.length).toBeGreaterThan(0);
         activity.close();
@@ -12339,7 +13369,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(task?.status).toBe("escalated");
         expect(task?.escalation).toMatchObject({ reason: "too_many_changes", target: "implement" });
         expect(task?.escalation?.pendingRemarks).toEqual([
-          { id: "implement-5-1", text: "全体として、失敗時のログが足りない" },
+          {
+            id: "implement-5-1",
+            text: "全体として、失敗時のログが足りない",
+            // 元の PR のコメント（対応を、その場所に返信する。PBI-352）
+            origin: { key: "comment:901", number: 7 },
+          },
         ]);
         activity.close();
       });
@@ -16579,6 +17614,86 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     expect(second.derivedFrom).toEqual({ taskId: id, record });
     expect(rerunEditableBody(second)).toBe("");
     expect(service.get(id)?.task.derivedTasks).toEqual([derived.id, first.id, second.id]);
+    activity.close();
+  });
+
+  it("再レビューには、sacty が作者のアカウントで投稿した指摘への返信（行への返信・PR のコメント）が、作者の返答として渡る。既存のレビューでも作者の投稿として渡る（PBI-352）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
+    const settings = new MemorySettingsStore({ reviewLabel: "sacty-review" });
+    const { service, executor } = makeService(activity, [out("# 1回目"), out("# 2回目")], {
+      pulls,
+      settings,
+    });
+    const [task] = service.importIssues([pr(9, ["sacty-review"])]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    await service.runNext(id);
+    const postedAt = Date.parse(service.get(id)?.task.reviewPost?.at ?? "");
+    const at = new Date(postedAt + 60_000).toISOString();
+    // 実装のタスク（t-impl）の返信。PR の作者（sacty が PR を作ったアカウント）の投稿
+    const declined = buildRemarkReply({
+      taskId: "t-impl",
+      stepName: "実装",
+      remarkId: "implement-1-2",
+      submission: 2,
+      text: "再開のフォームの候補は、この子タスクの範囲の外です（後続の子タスクで対応します）",
+      status: "declined",
+      secrets: [],
+    });
+    const addressed = buildRemarkReply({
+      taskId: "t-impl",
+      stepName: "実装",
+      remarkId: "implement-1-1",
+      submission: 2,
+      text: "上限を足しました",
+      status: "addressed",
+      secrets: [],
+    });
+    pulls.feedbackBy[9] = [
+      {
+        key: "review_comment:11",
+        kind: "review_comment",
+        author: "alice",
+        at,
+        path: "src/retry.ts",
+        line: 2,
+        body: addressed,
+      },
+      { key: "comment:12", kind: "comment", author: "alice", at, body: declined },
+      { key: "comment:13", kind: "comment", author: "bob", at, body: "ほかの人のコメント" },
+    ];
+    service.rereview(id);
+    await service.runNext(id);
+    // レビューの工程に渡す読み取りだけが、sacty の返信を含める
+    expect(pulls.feedbackIncludeSactyReplies).toEqual([true, true]);
+    const prompt =
+      executor.calls
+        .map((c) => c.command.join(" "))
+        .filter((c) => c.includes("レビューエージェント"))[1] ?? "";
+    expect(prompt).toContain(
+      "作者が「対象外」「後続で対応」と返した論点は、範囲が変わるか、今回の変更が直接の原因になっていない限り、もう一度指摘しない",
+    );
+    const json = JSON.parse(
+      prompt.split("\n").find((l) => l.startsWith('{"previousReview"')) ?? "{}",
+    );
+    expect(json.authorReplies).toEqual([
+      { kind: "review_comment", at, path: "src/retry.ts", line: 2, body: addressed },
+      { kind: "comment", at, body: declined },
+    ]);
+    expect(json.authorReplies[1].body).toContain("**対応していません。** 理由：");
+    // 既存のレビューでは、作者（alice）の投稿として渡る（ほかのレビュアーの指摘にならない）
+    const existing = JSON.parse(
+      prompt.split("\n").find((l) => l.startsWith('{"existingReviews"')) ?? "{}",
+    );
+    expect(
+      existing.existingReviews.map((r: { author: string; body: string }) => [r.author, r.body]),
+    ).toEqual([
+      ["alice", addressed],
+      ["alice", declined],
+      ["bob", "ほかの人のコメント"],
+    ]);
     activity.close();
   });
 
