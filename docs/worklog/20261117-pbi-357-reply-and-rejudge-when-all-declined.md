@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-357
-- PR: #PR_NUMBER
+- PR: #402
 - ブランチ: feat/pbi-357-reply-when-all-declined
 - 関係する ADR: [AI のレビューの指摘をすべて断って何も変えなかったら、断った理由を返信し、同じ先頭を 1 回だけ判定し直させる](../adr/20261117-0250-reply-and-rejudge-when-all-findings-declined.md)
 
@@ -51,7 +51,12 @@
 
 - `npm run format`・`npm run lint`・`npm run typecheck`：通った。
 - `npx vitest run tests/docs`：3 ファイル・93 件が通った。
-- `npx vitest run --no-file-parallelism`：FULL_RESULT_1
+- `npx vitest run --no-file-parallelism`：結果は下の表。
+
+| 回 | コマンド | 結果 |
+| --- | --- | --- |
+| 1（PR を作る前） | `npx vitest run --no-file-parallelism` | 248 ファイル中 2 ファイル・3 件が落ちた。画面の文言の文字数の規則（一時停止の案内が、ja 60 文字・en 130 文字を超えた）2 件と、作業履歴の PR の番号（PR を作る前で、まだ入れていなかった）1 件。案内の文を短くし、PR の番号を入れた |
+| 2（上を直した後） | `npm run format`・`npm run lint`・`npx vitest run --no-file-parallelism` | 通った。248 ファイル・4,763 件が通った（1 件は、もとからの skip） |
 - 条件を 1 つずつ外して、足したテストが落ちることを確かめた（外した後は、元に戻した）。
 
 | 外した条件 | 落ちたテスト |
