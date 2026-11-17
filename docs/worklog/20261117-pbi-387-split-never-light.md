@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-387
-- PR: なし
+- PR: #423
 - ブランチ: feat/pbi-387-split-never-light
 - 関係する ADR: [子タスクに分けて進めるタスクは、依頼が軽いと判定しない](../adr/20261117-1255-split-parent-is-never-light.md)
 
