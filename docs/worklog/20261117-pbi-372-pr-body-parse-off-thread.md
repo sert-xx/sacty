@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-372
-- PR: なし
+- PR: #427
 - ブランチ: feat/pbi-372-pr-body-parse-blocking
 - 関係する ADR: [PR の本文のリンクの解析を別スレッドで行い、5 秒で打ち切る](../adr/20261117-1638-parse-pr-body-links-off-thread.md)
 
