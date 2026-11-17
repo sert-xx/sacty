@@ -1,5 +1,6 @@
 "use client";
 
+import { CircleX } from "lucide-react";
 import Link from "next/link";
 import { useId, useState } from "react";
 import { ActionLink } from "@/components/action-link";
@@ -214,6 +215,18 @@ export function LiveTaskList({
                         </td>
                         <td className="px-5 py-3.5">
                           <StatusLabelView text={task.status.text} tone={task.status.tone} />
+                          {/* 承認待ちの実装の PR の CI が失敗していた印（状態は変えない。色だけに頼らず、
+                              アイコンと文字で出す。PBI-371） */}
+                          {task.ciFailed && (
+                            <span
+                              className="mt-1 flex w-fit items-center gap-1 text-xs font-medium whitespace-nowrap text-warn"
+                              data-testid={`task-ci-failed-${task.id}`}
+                            >
+                              <CircleX aria-hidden="true" className="size-3.5" />
+                              {m.ciFailed}
+                              <Hint text={m.ciFailedHint} className="size-4" />
+                            </span>
+                          )}
                         </td>
                       </tr>
                     ))}
