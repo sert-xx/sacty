@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/web/src/components/self-review-depth.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/web/src/components/self-review-depth.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts、apps/web/src/components/deferral.tsx -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -19,7 +19,7 @@
 | --- | --- |
 | タスクを作る・探す・状況を見る | [タスクを作る](#タスクを作る)、[タスクの一覧](#タスクの一覧)、[タスクの詳細の見方](#タスクの詳細の見方)、[画面の補足](#画面の補足)、[画面の自動の更新](#画面の自動の更新) |
 | sacty が自分で進める部分を知る | [タスクの開始時の情報収集](#タスクの開始時の情報収集)、[提出の前のセルフレビュー](#提出の前のセルフレビュー)、[依頼が軽いときのセルフレビュー](#依頼が軽いときのセルフレビュー) |
-| 成果を確かめて、承認する・差し戻す | [PR での承認（要求要件・設計・実装）](#pr-での承認要求要件設計実装)、[要求要件・設計の読み方](#要求要件設計の読み方)、[確かめる項目（出典の分類）](#確かめる項目出典の分類)、[実装の PR のレビュー](#実装の-pr-のレビュー)、[差し戻したときの直し方](#差し戻したときの直し方)、[差し戻しの原因](#差し戻しの原因)、[変更の申し出](#変更の申し出)、[PR と Issue へのコメント](#pr-と-issue-へのコメント)、[統合レビューの結果を確かめる](#統合レビューの結果を確かめる) |
+| 成果を確かめて、承認する・差し戻す | [PR での承認（要求要件・設計・実装）](#pr-での承認要求要件設計実装)、[後続に回したい指摘を決める](#後続に回したい指摘を決める)、[要求要件・設計の読み方](#要求要件設計の読み方)、[確かめる項目（出典の分類）](#確かめる項目出典の分類)、[実装の PR のレビュー](#実装の-pr-のレビュー)、[差し戻したときの直し方](#差し戻したときの直し方)、[差し戻しの原因](#差し戻しの原因)、[変更の申し出](#変更の申し出)、[PR と Issue へのコメント](#pr-と-issue-へのコメント)、[統合レビューの結果を確かめる](#統合レビューの結果を確かめる) |
 | 進んでいるタスクに手を入れる | [オーケストレーターに質問する](#オーケストレーターに質問する)、[タスクの題を変える](#タスクの題を変える)、[タスクのイメージを変える](#タスクのイメージを変える)、[工程のエージェントを変える](#工程のエージェントを変える)、[一時停止・再開・中止](#一時停止再開中止)、[完了したタスクの続きのタスクを作る](#完了したタスクの続きのタスクを作る) |
 | 依頼の種類ごとの進み方を知る | [文書作成と単発の外部作業](#文書作成と単発の外部作業)、[既存の PR を直す](#既存の-pr-を直す)、[セキュリティチェックと対応](#セキュリティチェックと対応)、[テストの仕組みが無いリポジトリ](#テストの仕組みが無いリポジトリ)、[実装に変更が無いとき](#実装に変更が無いとき)、[実装が終わらないとき・やり直しで変更が無いとき](#実装が終わらないときやり直しで変更が無いとき) |
 | 以前の版で作ったタスクを扱う | [以前の版のタスク（「PR作成」の工程があった版）](#以前の版のタスクpr作成の工程があった版)、[以前の版のタスク（最終レビューがあった版）](#以前の版のタスク最終レビューがあった版) |
@@ -786,6 +786,7 @@ sacty の画面を開かなくても、指摘した場所で、対応された�
   どのレビュー・コメントへの返信かが分かるよう、先頭に元へのリンクを付けます。
 - 返信の先頭に、「対応しました。」か「対応していません。理由：」と書きます。
   対応しなかったときは、理由（このタスクの範囲の外、など）を続けて書きます。
+  実装が、この PR では直さず後続に回したいと考えた指摘には、案であり、人に確認中で、まだ決まっていないことを書きます（[後続に回したい指摘を決める](#後続に回したい指摘を決める)）。
   どちらかを AI が申告しなかったときは、対応の説明だけを載せます。
 - 返信の末尾に、sacty のどのタスクの AI が書いたかを添えます。
 - 秘密の値は伏せ、長い文は切って載せます。
@@ -819,6 +820,40 @@ sacty の画面を開かなくても、指摘した場所で、対応された�
 
 - GitHub のアカウントを選んでいないプロジェクト
 - セキュリティチェック・セキュリティ対応のタスク
+
+### 後続に回したい指摘を決める
+
+実装のエージェントは、指摘を「この PR では直さず、後続に回したい」と申告することがあります。
+これは案です。後続に回すかどうかは、あなたが、マージの前に 1 件ずつ決めます。
+
+1. タスクの詳細に「後続に回したい指摘がN件あります」と出たら、「承認の画面で決める」を押します。
+2. 承認の画面の一覧で、指摘と、後続に回したい理由を読みます。
+   PR のコメントから取り込んだ指摘は、「元のコメントを開く」から、GitHub の元のコメントを開けます。
+3. 指摘ごとに、「後続に回す」か「この PR で直す」を選びます。
+   まだ決めない指摘は、「まだ決めない」のままにします。
+4. 「決定する」を押します。
+
+決定の結果は、次のとおりです。
+
+| 選んだもの | 結果 |
+| --- | --- |
+| 後続に回す | その指摘は、この PR では直しません。タスクは承認待ちのままです |
+| この PR で直す | その指摘を、実装に差し戻します。差し戻しの回数に数えます |
+| まだ決めない | 一覧に残ります |
+
+- 決定と、その指摘の一覧は、sacty が PR のコメントに残します。
+  sacty の画面から書いた指摘は、指摘の番号と決定だけを載せます（画面で書いた文は、PR に載せません）。
+  コメントできたか・できなかった理由は、作業履歴に出ます。
+  GitHub のアカウントを選んでいないプロジェクトと、セキュリティチェック・セキュリティ対応のタスクでは、コメントしません。
+- 後続に回すと決めた指摘は、sacty の PR のレビューが、未対応に数えません。もう一度指摘もしません。
+- 後続に回すと決めた指摘を、sacty は、別のタスクや Issue にはしません。必要なら、あなたが作ってください。
+- 決める前でも、PR はマージできます。決めずにマージすると、案は決めないまま残ります。
+
+エージェントが案にしてよいのは、影響が小さい指摘か、稀な条件が重なったときだけ起きる指摘のうち、直すのに新しい仕組みが要るもの・タスクの範囲の外にあるものだけです。
+データの破損・セキュリティ・受け入れ条件の不適合のような、影響が大きい指摘は、案にせずに直します。
+
+案を出せるのは、実装の工程だけです。
+既存の PR を直すタスクで、実装に渡した PR の指摘には、案を出しません（[既存の PR を直す](#既存の-pr-を直す)）。
 
 ### sacty の承認の画面に案内されるとき
 
@@ -1955,6 +1990,7 @@ sacty は、実装し終えたと申告された実行だけを提出します�
    - 返信の後、子タスクが、同じ内容を 1 回だけ判定し直します。子タスクの作業履歴には「同じコミットを判定し直す再レビューを始めた」と出ます。
    - 子タスクが理由を受け入れて指摘なしにしたら、PR のドラフトが外れ、あなたの承認（マージ）を待ちます。
    - それでも指摘が残ったら、タスクが「やり直しで変更が無いため一時停止」になります。AI どうしのやり取りは、ここで止まります。同じ内容を判定し直すのは、1 回だけです。
+   - 断った指摘のほかに、後続に回したい案があるときも、止めずに提出して返信します。このときは、あなたが案のすべてを決めてから、子タスクが同じ内容を判定し直します（[後続に回したい指摘を決める](#後続に回したい指摘を決める)）。
    - 人の指摘が混ざっているとき、対応したと申告した指摘・断った理由の無い指摘があるとき、セキュリティチェック・セキュリティ対応のタスクのときは、提出せずに、次の一時停止になります。
 3. それ以外のときは、提出せずに、タスクが「やり直しで変更が無いため一時停止」になります。
 4. PR のレビューの指摘（断った理由の返信があれば、それも）を確かめて、次のどちらかにしてください。

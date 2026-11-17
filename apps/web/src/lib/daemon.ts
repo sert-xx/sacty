@@ -8,6 +8,7 @@ import {
   type CreateTemplateTaskInput,
   type DaemonText,
   type DashboardSummary,
+  type DeferralDecision,
   type DeriveTaskInput,
   type IntakeKind,
   type NotificationKind,
@@ -813,6 +814,18 @@ export function requestChanges(
   },
 ): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/request-changes`, input);
+}
+
+/** 実装が「後続に回したい」とした指摘（案）を、1 件ずつ決める（PBI-370）。 */
+export function decideDeferrals(
+  id: string,
+  input: {
+    step: StepKey;
+    submission: number;
+    decisions: { remarkId: string; decision: DeferralDecision }[];
+  },
+): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/deferrals/decide`, input);
 }
 
 export function decideChange(id: string, proposalId: string, accept: boolean): Promise<OpResult> {

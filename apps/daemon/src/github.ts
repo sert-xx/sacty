@@ -299,6 +299,17 @@ export function isHumanAskNotice(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(HUMAN_ASK_MARKER_PREFIX);
 }
 
+/**
+ * 後続に回したい案への、人の決定を PR に残す投稿の目印（PBI-370）。`<!-- sacty-deferral:<タスク ID>:<何回目の決定か> -->`。
+ * sacty が決定を写した記録で、人間の指摘ではないので、PR の指摘に取り込まない。
+ */
+export const DEFERRAL_NOTICE_MARKER_PREFIX = "<!-- sacty-deferral:";
+
+/** 本文が、後続に回したい案への決定の投稿の目印で始まるか（PBI-370）。 */
+export function isDeferralNotice(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(DEFERRAL_NOTICE_MARKER_PREFIX);
+}
+
 /** sacty のレビューの目印の中身（タスクの ID。再レビューの回は `<ID>:<回>`。PBI-44・PBI-88）。 */
 export function sactyReviewKey(taskId: string, round = 1): string {
   return round > 1 ? `${taskId}:${round}` : taskId;
@@ -537,7 +548,9 @@ export class GitHubPullRequests implements PullRequests {
           isSactyReview(item.body)
         ) &&
         !(
-          (isReviewStopNotice(item.body) || isHumanAskNotice(item.body)) &&
+          (isReviewStopNotice(item.body) ||
+            isHumanAskNotice(item.body) ||
+            isDeferralNotice(item.body)) &&
           typeof login === "string" &&
           noticeAccounts.has(login.toLowerCase())
         ) &&

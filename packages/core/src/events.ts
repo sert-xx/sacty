@@ -284,14 +284,20 @@ export const Remark = z.object({
   source: RemarkSource.optional(),
   /** PR のレビュー・コメントから取り込んだ指摘の、元のコメント（PBI-352）。画面から書いた指摘と、以前の作業履歴には無い。 */
   origin: RemarkOrigin.optional(),
+  /**
+   * 人が、後続に回したい案を「この PR で直す」と決めて差し戻した指摘の、元の指摘の ID（PBI-370）。文は、元の指摘の文。
+   * 実装は、この指摘を、もう一度、後続に回したい案にしない。
+   */
+  fixOf: z.string().min(1).optional(),
 });
 export type Remark = z.infer<typeof Remark>;
 
 /**
  * 工程エージェントが、指摘に対応したか（PBI-352）。addressed は対応した、declined は理由があって対応しなかった
- * （範囲外・指摘が当たらない、など。理由は対応の文に書く）。
+ * （範囲外・指摘が当たらない、など。理由は対応の文に書く）。deferred は、この PR では直さず、後続に回したいという案
+ * （PBI-370。実装の工程の、差し戻しの指摘への対応だけ。理由は対応の文に書く。回すかどうかは、人が決める）。
  */
-export const RemarkResponseStatus = z.enum(["addressed", "declined"]);
+export const RemarkResponseStatus = z.enum(["addressed", "declined", "deferred"]);
 export type RemarkResponseStatus = z.infer<typeof RemarkResponseStatus>;
 
 /** 工程エージェントの、指摘への対応。 */
@@ -2721,6 +2727,46 @@ const ReviewRejudgeRequested = z.object({
     commit: z.string().min(1),
     /** 判定し直す、PR のレビューの子タスク。 */
     reviewTaskId: z.string().min(1),
+    /**
+     * 断った指摘のほかに、後続に回したい案（deferred）がある（PBI-370）。判定し直しは、その案のすべてを人が決めてから始める
+     * （人が回すと決めた指摘を、レビューが未対応に数えないように）。
+     */
+    awaitsDecision: z.literal(true).optional(),
+  }),
+});
+
+/** 後続に回したい案への、人の決定（PBI-370）。defer は後続に回す、fix はこの PR で直す。 */
+export const DeferralDecision = z.enum(["defer", "fix"]);
+export type DeferralDecision = z.infer<typeof DeferralDecision>;
+
+/**
+ * 実装が「後続に回したい」と申告した指摘（案）について、人が、承認の画面で、1 件ずつ決めた（PBI-370）。defer は後続に回す、
+ * fix はこの PR で直す。fix が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す（ChangesRequested。上限に達していれば
+ * TaskEscalated）。決定と指摘の一覧は、sacty が PR のコメントに残す（DeferralDecisionsPosted）。
+ */
+const DeferralsDecided = z.object({
+  type: z.literal("DeferralsDecided"),
+  payload: z.object({
+    step: StepKey,
+    submission: z.number().int().positive(),
+    decisions: z
+      .array(z.object({ remarkId: z.string().min(1), decision: DeferralDecision }))
+      .min(1)
+      .max(50),
+  }),
+});
+
+/**
+ * 後続に回したい案への人の決定（DeferralsDecided）と、その指摘の一覧を、PR のコメントに残した（PBI-370）。decision は、
+ * 何回目の決定か（Task.deferralDecisions）。残せなければ、url の代わりに、その理由（failure）を記録する（やり直さない）。
+ */
+const DeferralDecisionsPosted = z.object({
+  type: z.literal("DeferralDecisionsPosted"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    decision: z.number().int().positive(),
+    url: z.string().optional(),
+    failure: DaemonText.optional(),
   }),
 });
 
@@ -3968,6 +4014,8 @@ export const EventInput = z.discriminatedUnion("type", [
   ImplementationIncomplete,
   ImplementationUnchanged,
   ReviewRejudgeRequested,
+  DeferralsDecided,
+  DeferralDecisionsPosted,
   ContinuedFeedbackPassed,
   WorkspaceFilesSkipped,
   PullRequestLabeled,
@@ -4295,6 +4343,19 @@ export const RequestChangesInput = z.object({
   agents: StepAgentMap.optional(),
 });
 export type RequestChangesInput = z.input<typeof RequestChangesInput>;
+
+/**
+ * 承認の画面で、実装が「後続に回したい」とした指摘（案）を、1 件ずつ決める入力（PBI-370）。defer は後続に回す、fix は
+ * この PR で直す（実装に差し戻す）。まだ決めない指摘は、入れない。
+ */
+export const DecideDeferralsInput = z.object({
+  step: StepKey,
+  submission: Submission,
+  decisions: z
+    .array(z.object({ remarkId: z.string().min(1).max(200), decision: DeferralDecision }))
+    .max(50),
+});
+export type DecideDeferralsInput = z.input<typeof DecideDeferralsInput>;
 
 /** タスクの詳細で、オーケストレーターに質問する入力（PBI-54）。 */
 export const AskQuestionInput = z.object({

@@ -32,6 +32,8 @@ import {
   canRerun,
   canRetryExport,
   changeRounds,
+  decidedDeferrals,
+  deferProposals,
   deliveredWithoutChanges,
   discardedAiReviews,
   documentOutput,
@@ -882,6 +884,308 @@ describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別
     }),
     ev(id, { type: "StepSubmitted", payload: { step: "implement", submission: n } }),
   ];
+
+  describe("後続に回したい案と、人の決定（PBI-370）", () => {
+    const origin = { key: "review:601", number: 7 };
+    const sentBack = (round = 1, remarks?: Record<string, unknown>[]) =>
+      ev(
+        "t",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            round,
+            remarks: remarks ?? [
+              { id: "implement-1-1", text: "稀な条件の指摘", source: "sacty_review", origin },
+              { id: "implement-1-2", text: "画面の指摘" },
+              { id: "implement-1-3", text: "直せる指摘", source: "sacty_review" },
+            ],
+          },
+        } as EventInput,
+        "person",
+      );
+    const run = (n: number, responses: Record<string, unknown>[]) => {
+      const [started, completed, ...rest] = resubmitted("t", n);
+      return [
+        started,
+        { ...completed, payload: { ...completed?.payload, responses } },
+        ...rest,
+      ] as ReturnType<typeof resubmitted>;
+    };
+    const decide = (
+      submission: number,
+      decisions: { remarkId: string; decision: "defer" | "fix" }[],
+    ) =>
+      ev(
+        "t",
+        { type: "DeferralsDecided", payload: { step: "implement", submission, decisions } },
+        "person",
+      );
+    const proposed = () => [
+      ...waiting("t"),
+      sentBack(),
+      ...run(2, [
+        { remarkId: "implement-1-1", text: "新しい仕組みが要る", status: "deferred" },
+        { remarkId: "implement-1-2", text: "範囲の外", status: "deferred" },
+        { remarkId: "implement-1-3", text: "直した", status: "addressed" },
+      ]),
+    ];
+
+    it("実装が「後続に回したい」と申告した指摘は、案として残り、承認待ちの一覧に並ぶ。人の指摘にも案を出せる", () => {
+      seq = 0;
+      const task = project(proposed()).get("t") as Task;
+      expect(task.status).toBe("awaiting_approval");
+      expect(task.remarks.map((r) => [r.id, r.status, r.deferral])).toEqual([
+        ["implement-1-1", "deferred", { proposedIn: 2, reason: "新しい仕組みが要る" }],
+        ["implement-1-2", "deferred", { proposedIn: 2, reason: "範囲の外" }],
+        ["implement-1-3", "addressed", undefined],
+      ]);
+      expect(deferProposals(task)).toEqual([
+        {
+          remarkId: "implement-1-1",
+          text: "稀な条件の指摘",
+          reason: "新しい仕組みが要る",
+          source: "sacty_review",
+          origin,
+        },
+        { remarkId: "implement-1-2", text: "画面の指摘", reason: "範囲の外" },
+      ]);
+      expect(decidedDeferrals(task)).toEqual([]);
+    });
+
+    it("案は、後の提出で対応が無くても残り、「対応した」と申告されたら取り下げる。無効にした指摘・承認待ちでないときは、一覧に出さない", () => {
+      seq = 0;
+      const again = [...proposed(), sentBack(2, [{ id: "implement-2-1", text: "別の指摘" }])];
+      // 作り直している間は、決められない（一覧に出さない）。案は残る
+      const reworking = project(again).get("t") as Task;
+      expect(reworking.status).toBe("queued");
+      expect(deferProposals(reworking)).toEqual([]);
+      expect(reworking.remarks[0]?.deferral).toEqual({
+        proposedIn: 2,
+        reason: "新しい仕組みが要る",
+      });
+      // 次の提出：1 件目は対応なし（案は残る）、2 件目は「対応した」（案を取り下げる）
+      const next = project([
+        ...again,
+        ...run(3, [
+          { remarkId: "implement-1-2", text: "やはり直した", status: "addressed" },
+          { remarkId: "implement-2-1", text: "直した", status: "addressed" },
+        ]),
+      ]).get("t") as Task;
+      expect(next.remarks[0]).toMatchObject({ id: "implement-1-1", response: undefined });
+      expect(next.remarks[0]?.status).toBeUndefined();
+      expect(deferProposals(next).map((p) => p.remarkId)).toEqual(["implement-1-1"]);
+      // 無効にした指摘は、一覧に出さない
+      const voided = project([
+        ...proposed(),
+        ev("t", { type: "RemarkVoided", payload: { remarkId: "implement-1-1" } }, "person"),
+      ]).get("t") as Task;
+      expect(deferProposals(voided).map((p) => p.remarkId)).toEqual(["implement-1-2"]);
+    });
+
+    it("実装のほかの工程の「後続に回したい」は、申告が無いものとして扱う（案にしない）", () => {
+      seq = 0;
+      const events = [
+        created("d"),
+        ev("d", { type: "StepsChosen", payload: { steps: ["design", "implement"] } }),
+        ev("d", {
+          type: "AgentRunStarted",
+          payload: { runId: "r1", step: "design", agentId: "a", authMode: "subscription" },
+        }),
+        ev("d", {
+          type: "AgentRunCompleted",
+          payload: {
+            runId: "r1",
+            step: "design",
+            agentId: "a",
+            authMode: "subscription",
+            usage: { input: 1, cacheRead: 0, cacheWrite: 0, output: 1 },
+            costUsd: 0,
+            estimated: true,
+            output: "# 設計",
+          },
+        }),
+        ev("d", { type: "StepSubmitted", payload: { step: "design", submission: 1 } }),
+        ev(
+          "d",
+          {
+            type: "ChangesRequested",
+            payload: {
+              step: "design",
+              target: "design",
+              round: 1,
+              remarks: [{ id: "design-1-1", text: "直して" }],
+            },
+          },
+          "person",
+        ),
+        ev("d", {
+          type: "AgentRunStarted",
+          payload: { runId: "r2", step: "design", agentId: "a", authMode: "subscription" },
+        }),
+        ev("d", {
+          type: "AgentRunCompleted",
+          payload: {
+            runId: "r2",
+            step: "design",
+            agentId: "a",
+            authMode: "subscription",
+            usage: { input: 1, cacheRead: 0, cacheWrite: 0, output: 1 },
+            costUsd: 0,
+            estimated: true,
+            output: "# 設計 v2",
+            responses: [{ remarkId: "design-1-1", text: "後で", status: "deferred" }],
+          },
+        }),
+      ];
+      const task = project(events).get("d") as Task;
+      expect(task.remarks[0]).toMatchObject({ id: "design-1-1", response: "後で" });
+      expect(task.remarks[0]?.status).toBeUndefined();
+      expect(task.remarks[0]?.deferral).toBeUndefined();
+    });
+
+    it("人の決定は、指摘ごとに残る。決めた指摘は一覧から外れ、後の申告では変わらない。決定の回数を数える", () => {
+      seq = 0;
+      const decided = [
+        ...proposed(),
+        decide(2, [{ remarkId: "implement-1-1", decision: "defer" }]),
+      ];
+      const task = project(decided).get("t") as Task;
+      // 決定だけでは、承認待ちのまま
+      expect(task.status).toBe("awaiting_approval");
+      expect(task.deferralDecisions).toBe(1);
+      expect(deferProposals(task).map((p) => p.remarkId)).toEqual(["implement-1-2"]);
+      expect(decidedDeferrals(task)).toEqual([
+        {
+          remarkId: "implement-1-1",
+          text: "稀な条件の指摘",
+          reason: "新しい仕組みが要る",
+          decision: "defer",
+          origin,
+        },
+      ]);
+      // 「この PR で直す」は、同じ追記で差し戻す（元の指摘の文・元のコメントを持ち、どの案の決定かを持つ）
+      const fixed = project([
+        ...decided,
+        decide(2, [{ remarkId: "implement-1-2", decision: "fix" }]),
+        sentBack(2, [{ id: "implement-2-1", text: "画面の指摘", fixOf: "implement-1-2" }]),
+      ]).get("t") as Task;
+      expect(fixed.status).toBe("queued");
+      expect(fixed.deferralDecisions).toBe(2);
+      expect(fixed.remarks.at(-1)).toMatchObject({
+        id: "implement-2-1",
+        fixOf: "implement-1-2",
+        round: 2,
+      });
+      expect(decidedDeferrals(fixed).map((d) => [d.remarkId, d.decision])).toEqual([
+        ["implement-1-1", "defer"],
+        ["implement-1-2", "fix"],
+      ]);
+      // 決めた後に、実装が「対応した」と申告しても、決定は消えない
+      const later = project([
+        ...decided,
+        decide(2, [{ remarkId: "implement-1-2", decision: "fix" }]),
+        sentBack(2, [{ id: "implement-2-1", text: "画面の指摘", fixOf: "implement-1-2" }]),
+        ...run(3, [
+          { remarkId: "implement-1-1", text: "直した", status: "addressed" },
+          { remarkId: "implement-2-1", text: "直した", status: "addressed" },
+        ]),
+      ]).get("t") as Task;
+      expect(later.remarks[0]?.deferral).toEqual({
+        proposedIn: 2,
+        reason: "新しい仕組みが要る",
+        decision: "defer",
+      });
+      expect(deferProposals(later)).toEqual([]);
+    });
+
+    it("人が「この PR で直す」と決めて差し戻した指摘と、決定済みの指摘への「後続に回したい」は、申告が無いものとして扱い、もう一度、案にしない（レビューの指摘）", () => {
+      seq = 0;
+      const task = project([
+        ...proposed(),
+        decide(2, [
+          { remarkId: "implement-1-1", decision: "defer" },
+          { remarkId: "implement-1-2", decision: "fix" },
+        ]),
+        sentBack(2, [{ id: "implement-2-1", text: "画面の指摘", fixOf: "implement-1-2" }]),
+        // 実装が、指示に反して、どちらにも「後続に回したい」と返した
+        ...run(3, [
+          { remarkId: "implement-1-1", text: "やはり後で", status: "deferred" },
+          { remarkId: "implement-2-1", text: "やはり範囲の外", status: "deferred" },
+        ]),
+      ]).get("t") as Task;
+      expect(task.status).toBe("awaiting_approval");
+      // 差し戻した指摘（fixOf）：対応の文は残すが、申告は無いものとして扱い、案にしない
+      const fixed = task.remarks.find((r) => r.id === "implement-2-1");
+      expect(fixed).toMatchObject({ response: "やはり範囲の外", respondedIn: 3 });
+      expect(fixed?.status).toBeUndefined();
+      expect(fixed?.deferral).toBeUndefined();
+      // 決定済みの指摘：決定はそのまま。申告は無いものとして扱う
+      const decided = task.remarks.find((r) => r.id === "implement-1-1");
+      expect(decided?.status).toBeUndefined();
+      expect(decided?.deferral).toEqual({
+        proposedIn: 2,
+        reason: "新しい仕組みが要る",
+        decision: "defer",
+      });
+      expect(deferProposals(task)).toEqual([]);
+    });
+
+    it("決められるのは、承認待ちの提出の、まだ決めていない案だけ（決定済み・案でない指摘・別の提出・同じ指摘の重複は記録できない）", () => {
+      seq = 0;
+      const base = proposed();
+      expect(() =>
+        project([...base, decide(1, [{ remarkId: "implement-1-1", decision: "defer" }])]),
+      ).toThrow(/not awaiting approval/);
+      expect(() =>
+        project([...base, decide(2, [{ remarkId: "implement-1-3", decision: "defer" }])]),
+      ).toThrow(/not an open deferral proposal/);
+      expect(() =>
+        project([
+          ...base,
+          decide(2, [
+            { remarkId: "implement-1-1", decision: "defer" },
+            { remarkId: "implement-1-1", decision: "fix" },
+          ]),
+        ]),
+      ).toThrow(/decided twice/);
+      expect(() =>
+        project([
+          ...base,
+          decide(2, [{ remarkId: "implement-1-1", decision: "defer" }]),
+          decide(2, [{ remarkId: "implement-1-1", decision: "fix" }]),
+        ]),
+      ).toThrow(/not an open deferral proposal/);
+      // PR のコメントの結果は、決定の回が無ければ記録できない
+      const posted = (decision: number) =>
+        ev("t", {
+          type: "DeferralDecisionsPosted",
+          payload: { number: 7, decision, url: "https://example.test/c" },
+        });
+      expect(() => project([...base, posted(1)])).toThrow(/no such deferral decision/);
+      expect(
+        project([
+          ...base,
+          decide(2, [{ remarkId: "implement-1-1", decision: "defer" }]),
+          posted(1),
+        ]).get("t")?.status,
+      ).toBe("awaiting_approval");
+    });
+
+    it("以前の作業履歴（申告が addressed・declined だけ。案の記録が無い）は、そのまま読める", () => {
+      seq = 0;
+      const task = project([
+        ...waiting("t"),
+        sentBack(),
+        ...run(2, [{ remarkId: "implement-1-1", text: "範囲の外です", status: "declined" }]),
+      ]).get("t") as Task;
+      expect(task.remarks[0]?.status).toBe("declined");
+      expect(task.remarks[0]?.deferral).toBeUndefined();
+      expect(deferProposals(task)).toEqual([]);
+      expect(task.deferralDecisions).toBeUndefined();
+    });
+  });
 
   it("指摘は、元の PR のコメントと、対応したか・しなかったかの申告、返信した提出回を持つ。返信は1回だけ。以前の作業履歴（どれも無い）も読める（PBI-352）", () => {
     const origin = { key: "review_comment:501", number: 7 };

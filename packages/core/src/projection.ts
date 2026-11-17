@@ -6,6 +6,7 @@ import type {
   AuditTarget,
   ChildScope,
   ContinuedPullRequest,
+  DeferralDecision,
   ExportPlan,
   ImplementationCompletion,
   InvestigationKind,
@@ -330,6 +331,14 @@ export type TaskRemark = {
   submittedIn?: number;
   /** 前提が変わったなどの理由で、人間が無効にした指摘。エージェントには渡さない。 */
   voided: boolean;
+  /**
+   * 実装が、この指摘を、この PR では直さず後続に回したいと申告した案（PBI-370）。proposedIn は申告した提出回、reason は
+   * その対応の文（理由）、decision は人の決定（defer は後続に回す、fix はこの PR で直す。無ければ、まだ決めていない）。
+   * 決める前に、後の提出で「対応した」と申告されたら消える（案の取り下げ）。対応の文と違い、後の提出で対応が無くても残る。
+   */
+  deferral?: { proposedIn: number; reason: string; decision?: DeferralDecision };
+  /** 人が「この PR で直す」と決めて差し戻した指摘の、元の指摘の ID（PBI-370）。 */
+  fixOf?: string;
 };
 
 /** 人間が承認した成果物。承認を取り消す（前の工程に差し戻す）まで変わらない。 */
@@ -671,7 +680,16 @@ export type Task = {
    * 指摘のすべてを断って、PR のレビューの子タスクに判定し直しを求めた、実装の PR の先頭（ReviewRejudgeRequested。PBI-357）。
    * 同じ先頭には 1 回だけ求める（PR の先頭は進むだけで戻らないので、最後の 1 つを持てば足りる）。
    */
-  reviewRejudge?: { repo: string; number: number; commit: string; reviewTaskId: string };
+  reviewRejudge?: {
+    repo: string;
+    number: number;
+    commit: string;
+    reviewTaskId: string;
+    /** 後続に回したい案がある。判定し直しは、その案のすべてを人が決めてから始める（PBI-370）。 */
+    awaitsDecision?: true;
+  };
+  /** 後続に回したい案を、人が決めた回数（DeferralsDecided の数。PR のコメントの目印に使う。PBI-370）。 */
+  deferralDecisions?: number;
   /**
    * 依存先の子タスク（taskId）の実装の PR に重ねて始めた子タスクの、重ねている先（PBI-317）。branch はその PR のブランチ
    * （子タスクの起点のブランチ・PR の向き先・取り込む元）、commit は始めたときの依存先の合格したコミット（作業領域の起点）。
@@ -1701,23 +1719,41 @@ export function applyEvent(
         task.remarks = task.remarks.map((r) => {
           if (r.step !== step || r.voided) return r;
           const response = responses.get(r.id);
-          return response === undefined
-            ? {
-                ...r,
-                response: undefined,
-                respondedIn: undefined,
-                confirm: undefined,
-                status: undefined,
-                submittedIn: submission,
-              }
-            : {
-                ...r,
-                response: response.text,
-                respondedIn: submission,
-                confirm: response.confirm,
-                status: response.status,
-                submittedIn: submission,
-              };
+          if (response === undefined) {
+            return {
+              ...r,
+              response: undefined,
+              respondedIn: undefined,
+              confirm: undefined,
+              status: undefined,
+              submittedIn: submission,
+            };
+          }
+          // 後続に回したい案（PBI-370）。案は実装の工程だけ。人が決めた後の申告では、決定を変えない。決める前に「対応した」
+          // と申告されたら、案を取り下げる
+          const { deferral: proposed, ...rest } = r;
+          // 案にできるのは、実装の工程の、人がまだ決めていない指摘だけ。人が「この PR で直す」と決めて差し戻した指摘
+          // （fixOf）と、決定済みの指摘への「後続に回したい」は、指示に反した申告なので、申告が無いものとして扱う
+          // （人が決めたことを、もう一度、案にしない。PR にも「人に確認中」と返信しない）
+          const proposable =
+            step === "implement" && r.fixOf === undefined && proposed?.decision === undefined;
+          const deferral =
+            proposed?.decision !== undefined
+              ? proposed
+              : proposable && response.status === "deferred"
+                ? { proposedIn: submission, reason: response.text }
+                : response.status === "addressed"
+                  ? undefined
+                  : proposed;
+          return {
+            ...rest,
+            response: response.text,
+            respondedIn: submission,
+            confirm: response.confirm,
+            status: response.status === "deferred" && !proposable ? undefined : response.status,
+            submittedIn: submission,
+            ...(deferral ? { deferral } : {}),
+          };
         });
       }
       break;
@@ -1880,6 +1916,7 @@ export function applyEvent(
           text: r.text,
           ...(r.source ? { source: r.source } : {}),
           ...(r.origin ? { origin: r.origin } : {}),
+          ...(r.fixOf ? { fixOf: r.fixOf } : {}),
           voided: false,
         })),
       ];
@@ -2419,6 +2456,38 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "not the pull request of the task");
       }
       task.reviewRejudge = { ...event.payload };
+      break;
+
+    case "DeferralsDecided": {
+      // 承認待ちの実装の、まだ決めていない案だけ（PBI-370）。同じ指摘を 2 回決めない
+      const p = event.payload;
+      if (
+        task.status !== "awaiting_approval" ||
+        task.gate?.step !== p.step ||
+        task.gate.submission !== p.submission
+      ) {
+        throw new ActivityIntegrityError(event, "the submission is not awaiting approval");
+      }
+      const decided = new Map(p.decisions.map((d) => [d.remarkId, d.decision]));
+      if (decided.size !== p.decisions.length) {
+        throw new ActivityIntegrityError(event, "a remark is decided twice");
+      }
+      const open = new Set(deferProposals(task).map((x) => x.remarkId));
+      for (const id of decided.keys()) {
+        if (!open.has(id)) throw new ActivityIntegrityError(event, "not an open deferral proposal");
+      }
+      task.remarks = task.remarks.map((r) => {
+        const decision = decided.get(r.id);
+        return decision && r.deferral ? { ...r, deferral: { ...r.deferral, decision } } : r;
+      });
+      task.deferralDecisions = (task.deferralDecisions ?? 0) + 1;
+      break;
+    }
+
+    case "DeferralDecisionsPosted":
+      if ((task.deferralDecisions ?? 0) < event.payload.decision) {
+        throw new ActivityIntegrityError(event, "no such deferral decision");
+      }
       break;
 
     case "ReviewTaskCreated": {
@@ -4055,6 +4124,57 @@ export function humanAsks(task: Task): {
       : {}),
     confirms,
   };
+}
+
+/**
+ * 実装が「後続に回したい」と申告した指摘（案）のうち、人がまだ決めていないもの（PBI-370）。承認の画面に一覧を出し、人が
+ * 1 件ずつ「後続に回す／この PR で直す」を決める。実装の承認待ちのときだけ（作り直している間・一時停止中は、決められない）。
+ * 無効にした指摘は出さない。指摘の順（回・ID の順）。
+ */
+export function deferProposals(task: Task): {
+  remarkId: string;
+  text: string;
+  reason: string;
+  source?: RemarkSource;
+  origin?: RemarkOrigin;
+}[] {
+  const gate = task.gate;
+  if (task.status !== "awaiting_approval" || gate?.step !== "implement") return [];
+  return task.remarks
+    .filter((r) => r.step === "implement" && !r.voided && r.deferral && !r.deferral.decision)
+    .map((r) => ({
+      remarkId: r.id,
+      text: r.text,
+      reason: r.deferral?.reason ?? "",
+      ...(r.source ? { source: r.source } : {}),
+      ...(r.origin ? { origin: r.origin } : {}),
+    }));
+}
+
+/**
+ * 人が決めた、後続に回したい案（PBI-370）。defer は後続に回すと決めた指摘、fix はこの PR で直すと決めた指摘。無効にした
+ * 指摘は除く。承認の画面の記録、実装とレビューの指示に使う。
+ */
+export function decidedDeferrals(task: Task): {
+  remarkId: string;
+  text: string;
+  reason: string;
+  decision: DeferralDecision;
+  origin?: RemarkOrigin;
+}[] {
+  return task.remarks.flatMap((r) =>
+    r.step === "implement" && !r.voided && r.deferral?.decision
+      ? [
+          {
+            remarkId: r.id,
+            text: r.text,
+            reason: r.deferral.reason,
+            decision: r.deferral.decision,
+            ...(r.origin ? { origin: r.origin } : {}),
+          },
+        ]
+      : [],
+  );
 }
 
 /** 承認ゲートで見守っている PR の、マージの記録（PBI-63）。マージされていなければ undefined。 */
