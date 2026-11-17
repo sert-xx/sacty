@@ -98,7 +98,9 @@ const ja = {
     handledIssue: "Issue を開く",
     handlingPendingTask: "このタスクの完了後に、後続のタスクを作成",
     handlingPendingIssue: "Issue を作成中",
-    handlingFailed: (reason: string) => `扱いを実行できませんでした：${reason}`,
+    handlingFailed: (reason: string) =>
+      `扱いを実行できませんでした。必要なら、手で作ってください：${reason}`,
+    issueNote: "「後続に回す」で決定すると、すぐに GitHub の Issue を作ります。",
     fixNote: "「この PR で直す」を選ぶと、実装に差し戻します。",
     submit: "決定する",
     decide: "承認の画面で決める",
@@ -698,7 +700,9 @@ const en: TaskMessages = {
     handledIssue: "Open the issue",
     handlingPendingTask: "A follow-up task is created after this task completes",
     handlingPendingIssue: "Creating the issue",
-    handlingFailed: (reason: string) => `The handling could not be carried out: ${reason}`,
+    handlingFailed: (reason: string) =>
+      `The handling could not be carried out. Create it by hand if you need it: ${reason}`,
+    issueNote: "Deciding with “Defer” creates the GitHub issue right away.",
     fixNote: "Choosing “Fix in this PR” sends the task back to the implementation.",
     submit: "Decide",
     decide: "Decide on the approval screen",

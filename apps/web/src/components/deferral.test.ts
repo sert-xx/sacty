@@ -186,7 +186,8 @@ describe("承認の画面：後続に回したい指摘の一覧と、指摘ご�
           }),
         }),
       ).querySelector('[data-testid="deferral-handled"]');
-    expect(decided({})).toBeNull();
+    // 扱いの無い決定は「何もしない」（決定のコメントと合わせる）
+    expect(decided({})?.textContent).toBe("何もしない");
     expect(decided({ handling: "task" })?.textContent).toBe(
       "Sacty の後続のタスクを作る ・ このタスクの完了後に、後続のタスクを作成",
     );
@@ -201,9 +202,20 @@ describe("承認の画面：後続に回したい指摘の一覧と、指摘ご�
       "https://github.com/acme/web/issues/901",
     );
     expect(decided({ handling: "issue" })?.textContent).toContain("Issue を作成中");
+    const failed = decided({ handling: "issue", handled: { failure: "403 forbidden" } });
+    expect(failed?.textContent).toContain(
+      "扱いを実行できませんでした。必要なら、手で作ってください：403 forbidden",
+    );
+    // 失敗があれば、決定済みの記録を開いて出す。無ければ、閉じたまま
+    expect(failed?.closest("details")?.hasAttribute("open")).toBe(true);
+    expect(made?.closest("details")?.hasAttribute("open")).toBe(false);
+    // GitHub の Issue を作る扱いを選んでいる間は、すぐに作ることを、常に出す
+    const note = (t: Task) =>
+      render(h(DeferralNotice, { task: t })).querySelector('[data-testid="deferral-issue-note"]');
+    expect(note(task({ remarks: [proposals[0]] }))).toBeNull();
     expect(
-      decided({ handling: "issue", handled: { failure: "403 forbidden" } })?.textContent,
-    ).toContain("扱いを実行できませんでした：403 forbidden");
+      note(task({ remarks: [proposals[0]], deferralHandlingDefault: "issue" }))?.textContent,
+    ).toBe("「後続に回す」で決定すると、すぐに GitHub の Issue を作ります。");
   });
 
   it("案が無い・無効にした指摘だけ・実装の承認待ちでないときは、何も出さない", () => {

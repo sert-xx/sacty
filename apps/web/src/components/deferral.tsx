@@ -56,6 +56,8 @@ export function DeferralNotice({ task }: { task: Task }) {
   const [state, formAction, pending] = useActionState(deferralAction, initial);
   // 選んでいる決定（扱いの選択は、「後続に回す」を選んだ指摘だけで使えるようにする。ラジオは非制御のまま、選び直しを追う）
   const [picked, setPicked] = useState<Record<string, string>>({});
+  // 選んでいる扱い（GitHub の Issue を作る扱いは、取り消せないので、選んでいる間、注意を常に出す）
+  const [handlings, setHandlings] = useState<Record<string, string>>({});
   const proposals = deferProposals(task);
   const gate = task.gate;
   // 決定済みの記録は、実装の承認待ちの間だけ出す（一覧と同じ所で読めるように）
@@ -143,6 +145,9 @@ export function DeferralNotice({ task }: { task: Task }) {
                       defaultValue={
                         state.handlings?.[p.remarkId] ?? task.deferralHandlingDefault ?? "none"
                       }
+                      onChange={(e) =>
+                        setHandlings((all) => ({ ...all, [p.remarkId]: e.target.value }))
+                      }
                       className="h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground disabled:opacity-50"
                     >
                       {HANDLINGS.map((value) => (
@@ -151,6 +156,14 @@ export function DeferralNotice({ task }: { task: Task }) {
                         </option>
                       ))}
                     </select>
+                    {(handlings[p.remarkId] ??
+                      state.handlings?.[p.remarkId] ??
+                      task.deferralHandlingDefault ??
+                      "none") === "issue" && (
+                      <span data-testid="deferral-issue-note" className="text-warn">
+                        {t.issueNote}
+                      </span>
+                    )}
                   </span>
                 </li>
               );
@@ -168,7 +181,12 @@ export function DeferralNotice({ task }: { task: Task }) {
         </form>
       )}
       {decided.length > 0 && (
-        <details data-testid="deferral-decided" className="text-sm leading-6">
+        <details
+          data-testid="deferral-decided"
+          className="text-sm leading-6"
+          // 扱いを実行できなかった指摘があれば、開いて出す（閉じたままだと、失敗に気づけない）
+          open={decided.some((d) => d.handled?.failure !== undefined) || undefined}
+        >
           <summary className="cursor-pointer font-medium">{t.decided(decided.length)}</summary>
           <ul className="flex flex-col gap-2 pt-2">
             {decided.map((d) => (
@@ -178,6 +196,12 @@ export function DeferralNotice({ task }: { task: Task }) {
                 </span>
                 <span className="max-h-32 overflow-y-auto whitespace-pre-line">{d.text}</span>
                 {/* 後続に回すと決めた指摘の扱いと、その結果 */}
+                {/* 扱いの無い決定は、何もしない（決定のコメントの「何もしません」と合わせる） */}
+                {d.decision === "defer" && !d.handling && (
+                  <span data-testid="deferral-handled" className="text-xs text-muted-foreground">
+                    {handlingLabel.none}
+                  </span>
+                )}
                 {d.decision === "defer" && d.handling && (
                   <span data-testid="deferral-handled" className="text-xs text-muted-foreground">
                     {handlingLabel[d.handling]}

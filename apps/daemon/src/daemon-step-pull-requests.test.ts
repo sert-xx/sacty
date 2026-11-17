@@ -20,6 +20,7 @@ import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { COMPLETION_FENCE } from "./completion.js";
 import type { ConfigResult } from "./config.js";
+import { MessageError } from "./errors.js";
 import type { PullRequestFeedback } from "./github.js";
 import { PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
@@ -5501,7 +5502,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               await service.checkPullRequests();
               expect(followUps()).toHaveLength(1);
               const followUp = followUps()[0];
-              expect(followUp?.title.startsWith("[PR #7 follow-up] ")).toBe(true);
+              expect(followUp?.title).toBe("[PR #7 follow-up] 後続に回した指摘 implement-1-1");
               expect(followUp?.body).toContain("後続に回すと人が決めた指摘に対応してください");
               expect(followUp?.body).toContain("直すには新しい保存の仕組みが要り");
               expect(followUp?.body).toContain(
@@ -5724,12 +5725,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                   { remarkId: "implement-1-2", decision: "defer", handling: "issue" },
                 ],
               });
-              await new Promise((resolve) => setTimeout(resolve, 60));
+              // 1 件目が期限を超えて、失敗が記録されるのを待つ（固定の時間では待たない）
+              await vi.waitFor(() => expect(handled(service, id)).toHaveLength(1));
               pulls.issueGate = undefined;
               release();
-              await new Promise((resolve) => setTimeout(resolve, 30));
+              await vi.waitFor(() => expect(handled(service, id)).toHaveLength(2));
               const results = handled(service, id).map((e) => e.payload as Record<string, unknown>);
-              expect(results).toHaveLength(2);
               expect(results[0]).toMatchObject({
                 remarkId: "implement-1-1",
                 failure: { code: "deferral.issueUncertain" },
@@ -5742,6 +5743,74 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(renderMessage(results[0]?.failure as DaemonText, "ja")).toContain(
                 "作られているかもしれない",
               );
+              activity.close();
+            });
+
+            it("GitHub が断った答え（4xx）は「作れなかった」、答えを受け取れなかった・5xx は「作られているかもしれない」と記録する", async () => {
+              const reasonOf = async (fail: () => never) => {
+                const made = await reviewed([deferred()]);
+                await settle(made.service, made.id);
+                made.pulls.createIssue = async () => fail();
+                issue(made.service, made.id);
+                await vi.waitFor(() => expect(handled(made.service, made.id)).toHaveLength(1));
+                const payload = handled(made.service, made.id)[0]?.payload as { failure?: unknown };
+                made.activity.close();
+                return payload.failure as { code?: string } | string;
+              };
+              const github = (status: number) => () => {
+                throw new MessageError(
+                  message("github.failed", {
+                    action: "createIssue",
+                    status,
+                    detail: "x",
+                    hint: "none",
+                  }),
+                );
+              };
+              expect(await reasonOf(github(410))).toMatchObject({ code: "github.failed" });
+              expect(await reasonOf(github(422))).toMatchObject({ code: "github.failed" });
+              expect(await reasonOf(github(502))).toMatchObject({
+                code: "deferral.issueUncertain",
+              });
+              expect(
+                await reasonOf(() => {
+                  throw new TypeError("fetch failed");
+                }),
+              ).toMatchObject({ code: "deferral.issueUncertain" });
+            });
+
+            it("中止したタスクには、途中で止まった Issue の作成を記録しようとしない（警告を出し続けない）", async () => {
+              const made = await reviewed([deferred()]);
+              const { pulls, repos, projects, id } = made;
+              await settle(made.service, id);
+              pulls.issueGate = new Promise(() => {});
+              issue(made.service, id);
+              await settled();
+              made.activity.close();
+              const again = reopen([], pulls, repos, projects);
+              await again.service.cancel(id);
+              expect(taskOf(again.service, id).status).toBe("cancelled");
+              const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+              await again.service.checkPullRequests();
+              expect(handled(again.service, id)).toHaveLength(0);
+              expect(
+                warn.mock.calls.filter((c) => String(c[0]).includes("途中で止まった Issue")),
+              ).toHaveLength(0);
+              warn.mockRestore();
+              again.activity.close();
+            });
+
+            it("複数のリポジトリを指定して作ったタスク（作成のときのリポジトリが無い）の後続のタスクは、作業したリポジトリで作る", async () => {
+              const made = await completedWithTask(({ service, id }) => {
+                // 作成のときのリポジトリを持たないタスクにする（作業したリポジトリは、用意したリポジトリと PR にある）
+                const tasks = (service as unknown as { tasks: Map<string, Task> }).tasks;
+                const { repo: _repo, ...rest } = tasks.get(id) as Task;
+                tasks.set(id, rest as Task);
+              });
+              const { activity, service, id } = made;
+              const followUp = service.list().find((t) => t.derivedFrom?.taskId === id);
+              expect(followUp?.repo).toBe("https://github.com/acme/app");
+              expect(handled(service, id)[0]?.payload).toMatchObject({ taskId: followUp?.id });
               activity.close();
             });
 

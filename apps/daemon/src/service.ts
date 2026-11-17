@@ -18204,10 +18204,12 @@ export class TaskService {
             handled(item.remarkId, { url: created.url });
           } catch (error) {
             const detail = redactText(errorText(error), usedSecrets);
-            // 期限を超えた通信は、GitHub の側で作られているかもしれない（人が、確かめてから作り直せるように伝える）
-            const failure = issueSignal.aborted
-              ? message("deferral.issueUncertain", { detail })
-              : detail;
+            // 期限を超えた・答えを受け取れなかった・GitHub の側の誤り（5xx）のときは、Issue が作られているかもしれない
+            // （人が、確かめてから作り直せるように伝える）。GitHub が断った答え（4xx）は、作られていない
+            const failure =
+              issueSignal.aborted || !refusedByGitHub(detail)
+                ? message("deferral.issueUncertain", { detail })
+                : detail;
             console.warn(
               `[daemon] タスク ${task.id} の、後続に回すと決めた指摘 ${item.remarkId} の Issue を作れませんでした：${renderMessage(failure, "ja")}`,
             );
@@ -18239,10 +18241,8 @@ export class TaskService {
                   }
                 : {}),
               ...(item.handling ? { handling: item.handling } : {}),
-              ...(item.handling === "issue"
-                ? issues.get(item.remarkId)
-                  ? { issueUrl: issues.get(item.remarkId) }
-                  : { issueFailed: true }
+              ...(item.handling === "issue" && issues.get(item.remarkId)
+                ? { issueUrl: issues.get(item.remarkId) }
                 : {}),
             };
           }),
@@ -18286,6 +18286,8 @@ export class TaskService {
    */
   private settleInterruptedDeferralIssues(): void {
     for (const task of [...this.tasks.values()]) {
+      // 中止したタスクには、記録できない（作業履歴が、中止の後の記録を受け付けない）
+      if (task.status === "cancelled") continue;
       for (const d of decidedDeferrals(task)) {
         if (d.decision !== "defer" || d.handling !== "issue" || d.handled) continue;
         if (this.deferralIssuesInflight.has(`${task.id}:${d.remarkId}`)) continue;
@@ -18315,7 +18317,8 @@ export class TaskService {
   /**
    * 人が後続に回すと決めて、sacty の後続のタスクを作ると選んだ指摘の、後続のタスクを作る（PBI-370）。元のタスクが完了して
    * から（PR がマージされ、残りの工程が終わった後。完了したタスクの続きのタスクと同じ作り）。指摘ごとに 1 つ。作れなければ、
-   * 理由を記録して、やり直さない。作った後・記録の前に止まっていたら、目印で見つけて、二度作らない。
+   * 理由を記録して、やり直さない。作った後・記録の前に止まっていたら、作成の記録（derivedFrom の、元のタスクと指摘の ID）
+   * で見つけて、二度作らない（依頼の文の中の文字列では照合しない）。
    */
   private settleDeferralTasks(): void {
     for (const original of [...this.tasks.values()]) {
@@ -18364,7 +18367,17 @@ export class TaskService {
           });
           const created = this.deriveTask(
             original.id,
-            { ...request, repo: original.repo ?? original.source?.repo ?? null },
+            {
+              ...request,
+              // 画面から続きのタスクを作るときの、リポジトリの初めの値と同じ順で決める。複数のリポジトリを指定して作った
+              // タスクは、作業したリポジトリ（用意したリポジトリ・PR のリポジトリ）にする
+              repo:
+                original.source?.repo ??
+                original.repo ??
+                original.repository?.url ??
+                original.pullRequest?.repo ??
+                null,
+            },
             { remarkId: due.remarkId },
           );
           record({ taskId: created.id });
@@ -18394,6 +18407,16 @@ export class TaskService {
       { actor: "person", event: { type: "RemarkVoided", payload: { remarkId } } },
     ]);
   }
+}
+
+/**
+ * GitHub が、要求を断った答え（4xx）の失敗か（PBI-370）。断られた要求では、Issue は作られていない。答えを受け取れなかった・
+ * 5xx の失敗は、作られているかもしれない。
+ */
+function refusedByGitHub(failure: DaemonText): boolean {
+  if (typeof failure === "string" || failure.code !== "github.failed") return false;
+  const status = (failure.params as { status?: unknown } | undefined)?.status;
+  return typeof status === "number" && status >= 400 && status < 500;
 }
 
 /** 指摘の1件あたりの上限（差し戻しの入力と同じ）と、件数の上限。 */

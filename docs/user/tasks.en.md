@@ -761,7 +761,7 @@ Choose "Handling when deferred" from the following three.
 - The handling chosen at first is "Handling of deferred findings" in the project settings ([Project settings](project-settings.en.md#handling-of-deferred-findings)).
 - A follow-up task is created after the PR is merged and the task completes. It is not created before the merge. When you close the PR without merging, or cancel the task, it is not created.
   The created task starts right away like any other task ([Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task)).
-- The title of the issue is the first line of the comment. The body has the comment, the reason for the proposal, and a link to the original PR.
+- The issue is created right away when you decide with "Defer". Its title is the first line of the comment. The body has the comment, the reason for the proposal, and a link to the original PR.
   Even for a comment written on the sacty screen, choosing to create an issue puts its text in the issue.
 - When it could not be created, the reason appears in the Activity and under "Decided". It is not retried, so create one yourself if you need it.
   When the reason says the issue may have been created (the request did not finish in time, or sacty stopped partway), check GitHub before you create one.

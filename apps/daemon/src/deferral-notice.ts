@@ -24,9 +24,8 @@ export type DeferralNoticeItem = {
   quoted?: { text: string; reason: string; url: string };
   /** 後続に回すと決めた指摘の扱い（無ければ、何もしない）。 */
   handling?: DeferralHandling;
-  /** 扱いが issue のとき：作った Issue の URL。作れなければ undefined（issueFailed が true）。 */
+  /** 扱いが issue のとき：作った Issue の URL。作れなければ無い。 */
   issueUrl?: string;
-  issueFailed?: boolean;
 };
 
 export type DeferralNoticeInput = {
@@ -56,7 +55,7 @@ function handlingLine(item: DeferralNoticeItem): string {
   return "扱い：何もしません（把握した・人が自分で扱う）。";
 }
 
-/** Issue と後続のタスクの題に使う、指摘の文の長さの上限（文字数）。 */
+/** Issue の題に使う、指摘の文の長さの上限（文字数）。 */
 export const DEFERRAL_TITLE_MAX = 80;
 /** Issue の本文に載せる、指摘の文と理由の長さの上限（文字数）。 */
 export const DEFERRAL_ISSUE_TEXT_MAX = 4_000;
@@ -122,9 +121,10 @@ export function buildDeferralIssue(input: {
 export const DEFERRAL_TASK_TEXT_MAX = 2_000;
 
 /**
- * 人が後続に回すと決めて、sacty の後続のタスクを作ると選んだ指摘の、タスクの題と依頼の文（PBI-370）。依頼の文は、sacty が
- * 決めた文だけにする。指摘の文と理由は外から来た文（PR のコメント・実装の出力）なので、指示とは分けた JSON のデータとして
- * 載せ、書かれた指示には従わせない（依頼は、元のタスクの記録より優先されるため、外から来た文を、そのまま依頼にしない）。
+ * 人が後続に回すと決めて、sacty の後続のタスクを作ると選んだ指摘の、タスクの題と依頼の文（PBI-370）。題と依頼の文は、
+ * sacty が決めた文だけにする。指摘の文と理由は外から来た文（PR のコメント・実装の出力・画面から書いた文）なので、指示とは
+ * 分けた JSON のデータとして載せ、書かれた指示には従わせない（題は、エージェントへの指示の見出しと、後続のタスクが作る
+ * PR の題になる。依頼は、元のタスクの記録より優先される。どちらにも、外から来た文を、そのまま入れない）。
  */
 export function buildDeferralTask(input: {
   remarkId: string;
@@ -137,7 +137,6 @@ export function buildDeferralTask(input: {
     const trimmed = text.trim();
     return trimmed.length > max ? clip(trimmed, max) : trimmed;
   };
-  const head = firstLine(input.text);
   const tag = input.pullRequest ? `[PR #${input.pullRequest.number} follow-up]` : "[follow-up]";
   const data = {
     deferredFinding: {
@@ -149,7 +148,7 @@ export function buildDeferralTask(input: {
     },
   };
   return {
-    title: `${tag} ${head.length > DEFERRAL_TITLE_MAX ? `${head.slice(0, DEFERRAL_TITLE_MAX)}…` : head}`,
+    title: `${tag} 後続に回した指摘 ${input.remarkId}`,
     body: [
       input.pullRequest
         ? `PR #${input.pullRequest.number}（${input.pullRequest.url}）のレビューで、その PR では直さず、後続に回すと人が決めた指摘に対応してください。`
