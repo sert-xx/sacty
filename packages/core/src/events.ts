@@ -1604,10 +1604,12 @@ export const RiskLevel = z.enum(["low", "medium", "high"]);
 export type RiskLevel = z.infer<typeof RiskLevel>;
 
 /**
- * PR のリスクの合図（PBI-362）。1つでも当たれば、段階は high。
- * security：セキュリティに関わる。irreversible：取り消しにくい。compatibility：互換性を変える。structural：構造を大きく変える・
- * 広い範囲に及ぶ。performance：性能・並行処理・資源の使い方に効く。defect：不具合・論理の誤りが見つかった。
+ * PR のリスクの合図（PBI-362）。合図には重さがある（`RISK_SIGNAL_WEIGHT`。PBI-377）。
+ * security：セキュリティにかかわる振る舞いを変える。irreversible：取り消しにくい。compatibility：互換性を変える。
+ * structural：構造を大きく変える・広い範囲に及ぶ。performance：性能・並行処理・資源の使い方に効く。
  * large：差分が大きく、読むのに手間がかかる。unverified：変えた振る舞いを確かめていない。
+ * defect：不具合・論理の誤りが見つかった。PBI-377 で合図から外した（レビューの判定が別に示すため）。以前の記録を読むためだけに
+ * 残していて、新しい評価には付かない。
  */
 export const RiskSignal = z.enum([
   "security",
@@ -1622,12 +1624,37 @@ export const RiskSignal = z.enum([
 export type RiskSignal = z.infer<typeof RiskSignal>;
 
 /**
+ * リスクの合図の重さ（PBI-377）。heavy：重い合図。1つでもあれば、段階は high。light：軽い合図。軽い合図だけなら、2つ以上で
+ * high、1つなら medium。retired：合図から外したもの（以前の記録にだけある。段階に数えない）。
+ */
+export const RISK_SIGNAL_WEIGHT: Record<RiskSignal, "heavy" | "light" | "retired"> = {
+  security: "heavy",
+  irreversible: "heavy",
+  compatibility: "heavy",
+  structural: "light",
+  performance: "light",
+  large: "light",
+  unverified: "light",
+  defect: "retired",
+};
+
+/**
+ * PR が含む、依存の版の更新の上げ幅（PBI-377）。none：依存の版の更新が無い。major：互換性の無い変更を含みうる上げ幅。
+ * minor：互換性を保つ機能の追加。patch：互換性を保つ修正だけ。unknown：上げ幅を読み取れない。複数の依存を更新するときは、
+ * いちばん大きい上げ幅。major と unknown は、段階を high にする。
+ */
+export const RiskDependencyUpdate = z.enum(["none", "patch", "minor", "major", "unknown"]);
+export type RiskDependencyUpdate = z.infer<typeof RiskDependencyUpdate>;
+
+/**
  * PR のリスク評価（PBI-362）。人が、PR をどの深さでレビューするかを決めるための目安。段階と、当たったリスクの合図、根拠
- * （変更の種類・影響の範囲・取り消しやすさ・確かめた範囲）、とくに見る箇所。
+ * （変更の種類・影響の範囲・取り消しやすさ・確かめた範囲）、とくに見る箇所。dependencyUpdate は、依存の版の更新があるときの
+ * 上げ幅（PBI-377。更新が無い評価・以前の記録には無い）。
  */
 export const RiskAssessment = z.object({
   level: RiskLevel,
   signals: z.array(RiskSignal).default([]),
+  dependencyUpdate: RiskDependencyUpdate.exclude(["none"]).optional(),
   change: z.string().min(1),
   scope: z.string().min(1),
   reversibility: z.string().min(1),
