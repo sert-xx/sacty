@@ -2083,6 +2083,8 @@ describe("統合レビュー（PBI-31）", () => {
     // 外さない項目は、外す申告に書かせない（PBI-382）
     expect(second).toContain("droppedHumanChecks にも書かない");
     expect(second).toContain("文字列で書いたもの");
+    expect(second).toContain("が1つでもあると、その回は、どの項目も外れない");
+    expect(second).toContain("droppedHumanChecks には、外す項目だけを、この形で書く");
     // 形式の例は空にする（例を書き写した答えで、確かめていない H1 が外れないように）
     expect(second).toContain('"droppedHumanChecks":[]');
     const parent = service.get(id)?.task;
@@ -2122,44 +2124,52 @@ describe("統合レビュー（PBI-31）", () => {
     const KEEP = "実機のカードリーダーで読み取れること";
     const DROP = "本番の決済サービスで、画面から決済が通ること";
     const NEW = "店舗の端末の画面で、文字が切れないこと";
-    const { service, activity, id } = await splitParent([
-      splitOutput(twoChildren),
-      out("# A の調査"),
-      out("# B の調査"),
-      integration(false, ["画面の送信ボタンから決済の API を呼ぶ"], [], [KEEP, DROP]),
-      fixChild("F"),
-      out("# F の調査"),
-      // 文字列の申告（H1）・理由の無いもの・前の回に無い番号（H9）・番号でない文は、外れない。外した項目（DROP）を挙げ直しても、
-      // 人が確かめることに戻さない。引き継ぐ項目（KEEP）を挙げ直しても、重ならない
-      integration(
-        true,
-        [],
-        [],
-        [NEW, KEEP, DROP],
-        [
-          { id: "H2", resolution: "verified", reason: "今回足した結合テストで確かめられた" },
-          "H1：まだ確かめられないので外さない",
-          { id: "H1", resolution: "verified", reason: " " },
-          { id: "H9", resolution: "verified", reason: "無い番号" },
-          DROP,
-        ],
-      ),
-    ]);
-    await drain(service, id);
-    const review = service.get(id)?.task.integration;
-    expect(review?.passed).toBe(true);
-    expect(review?.humanChecks).toEqual([KEEP, NEW]);
-    expect(review?.droppedHumanChecks).toEqual([
+    const VALID = {
+      id: "H2",
+      resolution: "verified",
+      reason: "今回足した結合テストで確かめられた",
+    };
+    const second = async (claims: unknown[]) => {
+      const { service, activity, id } = await splitParent([
+        splitOutput(twoChildren),
+        out("# A の調査"),
+        out("# B の調査"),
+        integration(false, ["画面の送信ボタンから決済の API を呼ぶ"], [], [KEEP, DROP]),
+        fixChild("F"),
+        out("# F の調査"),
+        integration(true, [], [], [NEW, KEEP, DROP], claims),
+      ]);
+      await drain(service, id);
+      const review = service.get(id)?.task.integration;
+      activity.close();
+      return review;
+    };
+    // 決まった形の申告だけなら、外す。外した項目（DROP）を挙げ直しても、人が確かめることに戻さない。引き継ぐ項目（KEEP）を
+    // 挙げ直しても、重ならない
+    const dropped = await second([VALID]);
+    expect(dropped?.passed).toBe(true);
+    expect(dropped?.humanChecks).toEqual([KEEP, NEW]);
+    expect(dropped?.droppedHumanChecks).toEqual([
       { check: DROP, reason: "今回足した結合テストで確かめられた" },
     ]);
-    // 外せなかった申告は、記録に残す（項目は残っている）
-    expect(review?.unreadDroppedHumanChecks).toEqual([
+    expect(dropped?.unreadDroppedHumanChecks).toBeUndefined();
+    // 決まった形でない申告（文字列・理由の無いもの・前の回に無い番号）が1つでもあれば、その回は、何も外さない（PBI-382）。
+    // 採らなかった申告は、決まった形のものも含めて、記録に残す（項目は残っている）
+    for (const other of [
       "H1：まだ確かめられないので外さない",
-      '{"id":"H1","resolution":"verified","reason":" "}',
-      '{"id":"H9","resolution":"verified","reason":"無い番号"}',
+      { id: "H1", resolution: "verified", reason: " " },
+      { id: "H9", resolution: "verified", reason: "無い番号" },
       DROP,
-    ]);
-    activity.close();
+    ]) {
+      const kept = await second([VALID, other]);
+      expect(kept?.passed).toBe(true);
+      expect(kept?.humanChecks).toEqual([KEEP, DROP, NEW]);
+      expect(kept?.droppedHumanChecks).toBeUndefined();
+      expect(kept?.unreadDroppedHumanChecks).toEqual([
+        typeof other === "string" ? other : JSON.stringify(other),
+        JSON.stringify(VALID),
+      ]);
+    }
   });
 
   it("形式の例を書き写した答えでは、前の回の項目は外れず、例の文は人が確かめることにならない（PBI-363）", async () => {
