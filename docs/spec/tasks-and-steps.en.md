@@ -629,6 +629,8 @@ The Orchestrator judges whether the request is light when it chooses the steps, 
   - An answer that is not one of the defined values, or a missing answer, is no judgement (treated as normal).
   - A `light` without a reason is no judgement (the reason could not be shown to a person). The reason is kept to 1000 characters.
   - For the security fix plan (`security-fix`), an answer of `light` becomes `normal`, and sacty's own text (`selfReview.depthForcedNormal`, which includes the Orchestrator's reason) is recorded as the reason.
+  - For the plan that splits into child tasks (`split`, the parent of a split), an answer of `light` also becomes `normal`, and sacty's own text (`selfReview.depthForcedNormalSplit`, which includes the Orchestrator's reason) is recorded as the reason.
+    A child task cannot choose `split` and chooses its own steps, so a child's judgement stays as the child's own answer.
   - Nothing is recorded for a plan with no step that does a self-review (`SELF_REVIEW_STEPS`): PR review only, investigation only, security check, and operation only.
 - The judgement is recorded in `selfReviewDepth` and `selfReviewDepthReason` of `StepsChosen`, and the projection keeps it in `Task.selfReviewDepth` (`judged`, `reason`).
   It is cleared when the steps are chosen again (`clearChosenSteps`).
@@ -652,7 +654,7 @@ The Orchestrator judges whether the request is light when it chooses the steps, 
 
 Code: `apps/daemon/src/prompts.ts` (`SELF_REVIEW_DEPTH_LINES`, `extractStepPlan`, `lightSelfReviewLines`, `selfReviewLines`), `apps/daemon/src/service.ts` (`selfReviewDepthOf`, `changeSelfReviewDepth`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`SelfReviewDepth`, `SelfReviewDepthChanged`, `ChangeSelfReviewDepthInput`), `packages/core/src/projection.ts` (`effectiveSelfReviewDepth`, `clearChosenSteps`), `apps/web/src/components/self-review-depth.tsx` (`SelfReviewDepthNote`), `apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`
 
-Related ADR: [Narrow the self-review viewpoints when the request is light](../adr/20261117-0359-narrow-self-review-for-light-requests.md)
+Related ADRs: [Narrow the self-review viewpoints when the request is light](../adr/20261117-0359-narrow-self-review-for-light-requests.md), [A task that is split into child tasks is never judged light](../adr/20261117-1255-split-parent-is-never-light.md)
 
 ## Changing the task image
 
