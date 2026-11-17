@@ -127,6 +127,17 @@ describe("実装が終わらないための一時停止の理由（PBI-353）", 
       "Resuming redoes the implementation with the findings",
     );
   });
+
+  it("断った理由を返信して判定し直させても指摘が残ったための一時停止の文は、止めた理由と、再開で何が起きるかを伝える（PBI-357）", () => {
+    const again = message("implement.declinedAgain", { number: 7 });
+    const ja = renderMessage(again, "ja");
+    expect(ja).toContain("PR #7 の AI のレビューの指摘をすべて、理由を付けて断り");
+    expect(ja).toContain("判定し直させましたが、指摘が残りました");
+    expect(ja).toContain("再開すると、残った指摘を渡してやり直します");
+    const en = renderMessage(again, "en");
+    expect(en).toContain("declined every finding of the AI review on PR #7");
+    expect(en).toContain("Resuming redoes the work with the remaining findings");
+  });
 });
 
 describe("オーケストレーターを実行できなかった理由（PBI-34）", () => {

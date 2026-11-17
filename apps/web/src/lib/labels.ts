@@ -759,6 +759,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       );
     case "ImplementationUnchanged":
       return e.ImplementationUnchanged(event.payload.number, event.payload.commit.slice(0, 7));
+    case "ReviewRejudgeRequested":
+      return e.ReviewRejudgeRequested(event.payload.number, event.payload.commit.slice(0, 7));
     case "PullRequestCiFinished":
       return e.PullRequestCiFinished(
         event.payload.result,
@@ -1053,7 +1055,9 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         ? e.ReviewRestartedByRequest(actor)
         : event.payload.reason === "updated"
           ? e.ReviewRestartedByUpdate((event.payload.commit ?? "").slice(0, 7))
-          : e.ReviewRestarted(actor);
+          : event.payload.reason === "declined"
+            ? e.ReviewRestartedByDecline((event.payload.commit ?? "").slice(0, 7))
+            : e.ReviewRestarted(actor);
     case "ContextResolved":
       // describeEventParts で分けて出す（ここには来ない）
       return describeEventParts(event, l).text;

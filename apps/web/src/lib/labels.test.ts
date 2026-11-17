@@ -1683,6 +1683,27 @@ describe("終わっていない実装の記録の表示（PBI-347・PBI-348・PB
     );
     expect(describeIn(unchanged, labels.en)).toContain("PR #51 (7a1b2c3)");
   });
+
+  it("指摘のすべてを断った提出と、同じコミットの判定のし直しは、PR の番号とコミットを出す（PBI-357）", () => {
+    const asked = event("ReviewRejudgeRequested", {
+      repo: "https://github.com/acme/app",
+      number: 51,
+      commit: "7a1b2c3d4e5f6a7b",
+      reviewTaskId: "r1",
+    });
+    expect(describeEvent(asked)).toBe(
+      "やり直しの実装が、PR #51（7a1b2c3）の AI のレビューの指摘をすべて、理由を付けて断り、何も変えなかった。断った理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる",
+    );
+    expect(describeIn(asked, labels.en)).toContain("PR #51 (7a1b2c3)");
+    const restarted = event("ReviewRestarted", { reason: "declined", commit: "7a1b2c3d4e5f6a7b" });
+    expect(describeEvent(restarted)).toBe(
+      "PR を作ったタスクが、指摘をすべて理由を付けて断ったので、同じコミットを判定し直す再レビューを始めた（7a1b2c3。同じコミットには 1 回だけ）",
+    );
+    expect(describeIn(restarted, labels.en)).toContain("judges the same commit again (7a1b2c3");
+    // 一時停止の案内は、提出しなかったときと、判定し直しても指摘が残ったときの両方に当てはまる
+    expect(labels.ja.pauseHelp.unchanged).toContain("断った理由を返信しても指摘が残りました");
+    expect(labels.en.pauseHelp.unchanged).toContain("findings remained after sacty replied");
+  });
 });
 
 describe("時間切れで止めた実行の記録の表示（PBI-280）", () => {
