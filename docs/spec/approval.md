@@ -490,16 +490,25 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 - 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。要約・短縮（結論の要約・表のテスト名や観点の題・人が確かめること・不合格のまま進めた記録の所見など）で切れた先頭が残らないよう、本文を作る前に、タスクのすべての文字列から伏せる（`PullRequestBodyStage.secrets`）。公開の直前の置換も残す。
   台帳に残す理由の文も伏せる。
 - コンテナの作業領域へのリンク（`withoutWorkspaceLinks`。PBI-366）：長さの上限と秘密の値の扱いの後の本文から、リンク先がコンテナの作業領域（`CONTAINER_WORKSPACE`。`/workspace` とその下）の Markdown のリンク・画像を、リンクでない表記にする（エージェントの説明に入ることがあり、GitHub では開けないため）。
-  - 表示の文字（リンクは元の書き方のまま。画像は代わりの文字）を残す。表示の文字にパス（`#`・`?` より後ろを除く）が出ていなければ、全角の括弧の中に、作業領域からのパス（リポジトリのルートからのパス）をインラインのコードで添える。表示の文字が空なら、パスのインラインのコードだけにする。作業領域そのものへのリンクは、表示の文字だけにする。リンクの中にある作業領域への画像も外す。
+  - 表示の文字（リンクは元の書き方のまま。画像は代わりの文字）を残す。表示の文字にパス（`#`・`?` より後ろを除く）が出ていなければ、全角の括弧の中に、作業領域からのパス（リポジトリのルートからのパス）をインラインのコードで添える。表示の文字が空なら、パスのインラインのコードだけにする。作業領域そのものへのリンクは、表示の文字だけにする（表示の文字も空なら、変えない。外すと何も残らず、前後の文字が、空白を挟んでつながるため）。リンクの中にある作業領域への画像も外す。
   - どこがリンク・画像かは、Markdown のパーサー（`mdast-util-from-markdown`。CommonMark）で決め、その範囲だけを置き換える。パーサーがリンクと見なさないもの（コードブロックとインラインコードの中、打ち消した角括弧）と、ほかのリンク（URL・相対パス・`/workspace` で始まる別の名前のパス）は変えない。参照形式のリンク（と、その定義）と HTML のリンクは変えない。
   - 置き換えは、本文を長くしない（長さの上限の後に行うため）。パスにバッククォートが続いて、コードの書式の囲みが元のリンクより長くなるときは、パスを添えずに表示の文字だけにする。表示の文字も無ければ、そのリンクは変えない。
   - 置き換えた後の本文も解析し、その構文木が、元の構文木の「外したリンク・画像を、中身（と添えたパス）にしたもの」と同じであることを確かめる（`shapeOf`。位置を除いた、種類・値・子の全体を比べる）。同じでなければ、本文を変えずに使う（その本文では、作業領域へのリンクは残る）。表示の文字が周りの文字とつながって、新しいリンク・HTML のコメントやタグ・参照の定義・箇条書きなどの別の構文になる本文が、これに当たる。
-  - 構文木の確かめは CommonMark の解釈で行うので、GitHub（GFM）だけの解釈の変化は見つけられない。そこで、リンクの外に出すと GitHub で別の働きをしうる文字を含むリンクは、変えない（`activeOutsideLink`）：メンション（`@` に英数字が続く）、Issue・PR の参照（`#` に数字が続く。`Closes #12` は、マージで Issue を閉じる）、自動リンク（`://`・`www.`）、表の列の区切り（`|`）。リンクの直前の文字が `@`・`#` のときも、変えない。
+  - 構文木の確かめは CommonMark の解釈で行うので、GitHub（GFM）だけの解釈の変化は見つけられない。そこで、次のリンクは変えない（その本文では、作業領域へのリンクが残る）。リンクの外で別の働きをしうる並びの種類は、1つの表（`ACTIVE_RUNS`）に書き、表示の文字の確かめと、つながりの確かめの両方が、それを使う。
+    - 表示の文字に、リンクの外に出すと GitHub で別の働きをしうる文字を含むリンク（`activeOutsideLink`）：メンション・メールアドレス（`@` に英数字・`.`・`_`・`-`・`/` が続く）、Issue・PR の参照（`#` に数字が続く・`GH-` に数字が続く。`Closes #12` は、マージで Issue を閉じる）、自動リンク（`://`・`www.`）。`GH-` と `www.` は、大文字小文字を区別しない。ほかに、表の列の区切り（`|`）、打ち消し線の記号（`~`）。
+      書いた文字と、読まれる文字（打ち消し・文字参照を戻したもの。`readLabel`）の両方で確かめる。
+    - 外した後の文字が、前後の文字とつながるリンク（`joinedSpans`）：置き換えた後の本文から、メンション・メールアドレス、Issue・PR の参照、自動リンク、打ち消し線の記号の並びを拾い（`activeRuns`）、置き換えた文字と重なるか隣り合い、かつ、その外へ続く並びがあれば、そのリンクを変えない。この確かめには、置き換えた文字を、読まれる文字にした本文を使う（表示の文字の中の打ち消し・文字参照は、それだけでは並びと見なさない。リンクの直前の `@`・`#` は、表示の文字と合わせて並びになるときに当たる）。
+      `ping [@](/workspace)octocat`（メンションになる）・`Closes [#](/workspace)12`・`see [http](/workspace)://example.com/x`・`[a](/workspace/a)www.example.com`（もとからある自動リンクが、働かなくなる）が、これに当たる。
+      バックスラッシュによる打ち消し・文字参照は、書いた文字のままでは並びを読めないので、置き換えた文字の外にある打ち消し・文字参照は、それを含む ASCII の文字の連なり（空白と、ASCII でない文字で区切る）も、並びとして扱う。打ち消しは、連なりに並びの決め手の記号（`@`・`#`・`:`・`~`・`.`・`-`）があるときだけ数える。
+      空白を置かない日本語の文でも、連なりは文の全体には広がらない。
+      当たったリンクを除いて、もう一度置き換え、それでも当たるリンクがあれば、本文を変えずに使う。
+    - パス（リンク先を読んだ後のもの）に縦棒があるリンク：表の中で、添えたパスの縦棒が列の区切りになり、行のセルが割れるため。
+  - 確かめるのは、上の種類だけである。GitHub のほかの解釈が、外した後の文字のつながりで変わることは、確かめない：空白を挟んでつながる並び（`[Fix](/workspace/Fix)es #12` は `Fixes #12` になる）、コミットの SHA のリンク、絵文字（`:名前:`）、タスクリストのチェックボックス、表の中で、行が区切りの行の形になる・添えたパスのバッククォートが、同じセルの組になっていないバッククォートと組になること。
   - 作業領域へのリンクがありえない本文は、解析しない（`cannotLinkToWorkspace`）。`](` が無い本文と、作業領域のパス・バックスラッシュ・文字参照（`&#115;` など）のどれも無い本文。リンク先を自前で読んで決めず、パーサーが作業領域へのリンクと解釈しうる本文は、すべて解析する。
-  - 解析は、デーモンの中で同期に行う。本文の上限（65,000 文字）で、ふつうの本文は 0.1 秒ほど。解析に回る本文で、記号（`>`・`*`・`+` など）が上限いっぱいまで続くと、数秒〜数十秒かかり、その間、デーモンのほかの処理は待つ（PR の作成・更新のたびに1回）。
+  - 解析は、デーモンの中で同期に行う。本文の上限（65,000 文字）で、ふつうの本文は 0.1 秒ほど。解析に回る本文で、記号（`>`・`*`・`+` など）が上限いっぱいまで続くと、数秒〜数十秒かかり、その間、デーモンのほかの処理は待つ（PR の作成・更新のたびに1回。すでにある PR の更新で、人の直しとマージした本文・エージェントがまとめた本文を使うときは、その本文にも1回）。
   - 解析に失敗したら、本文を変えずに使う（PR の作成・更新は止めない）。
-  - 置き換えの後に、秘密の値をもう一度伏せる（`pullRequestBody`）。リンク先の文字参照が元の文字に戻る・外したリンクの前後の文字がつながると、伏せた後の本文に秘密の値が現れうるため。伏せた結果が長さの上限を超えるときは、置き換えをやめて、上限の中の本文を使う。
-  - 要求要件・設計の PR と実装の PR の、作成と更新のどちらの本文にも行う。台帳に残す本文（`PullRequestBodyWritten`）も、外した後のもの。PR に投稿するレビュー・コメントには行わない。
+  - 置き換えの後に、秘密の値をもう一度伏せる（`unlinkedGeneratedBody`）。リンク先の文字参照が元の文字に戻る・外したリンクの前後の文字がつながると、伏せた後の本文に秘密の値が現れうるため。伏せた結果が長さの上限を超えるときは、置き換えをやめて、上限の中の本文を使う。
+  - 要求要件・設計の PR と実装の PR の、作成と更新のどちらの本文にも行う。すでにある PR の更新で、人の直しとマージした本文・エージェントがまとめた本文にも行う（`unlinkedMergedBody`。[人が直した本文の更新](#人が直した本文の更新)）。台帳に残す本文（`PullRequestBodyWritten`）も、外した後のもの。PR に投稿するレビュー・コメントには行わない。
 - 台帳：`PullRequestPublished`・`StepPullRequestPublished` の `template` に、次を残す。
   - 使ったテンプレート（`repo`：テンプレートのあったリポジトリの URL、`path`）
   - または、決まった形にした理由（`fallback`：`none`・`unusable`、`message`：`pr.templateFailed`・`pr.templateTooLarge`・`pr.templateInvalid`・`pr.templateEmpty`・`pr.templateOrgPrivate` など）
@@ -514,7 +523,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - パスは区切りごとに符号にし（括弧も符号にして、リンク先が途中で閉じないようにする）、リンクの文字はパスのインラインのコード（中にバッククォートがあれば、より長いバッククォートで囲む）。
   - PR の URL が `<リポジトリ>/pull/<番号>` の形でなければ、パスのインラインのコードと、全角の括弧の中に「PR：」と山括弧で囲んだ URL（自動リンク）にする。URL が無ければパスだけ。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/pr-body-links.ts`（`withoutWorkspaceLinks`・`cannotLinkToWorkspace`・`shapeOf`・`activeOutsideLink`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/pr-body-links.ts`（`withoutWorkspaceLinks`・`cannotLinkToWorkspace`・`shapeOf`・`activeOutsideLink`・`ACTIVE_RUNS`・`joinedSpans`・`unlinkedGeneratedBody`・`unlinkedMergedBody`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ### 人が直した本文の更新
 
@@ -557,10 +566,15 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
      - まとめる間に人が本文をまた直した（`pr.bodyEditedDuringMerge`）・読み直せない（`pr.bodyRereadFailed`）
      - 重ねた PR の向き先の付け替え（`retargetPullRequest`）のとき。付け替えはタスクの実行の外なので、エージェントを実行しない（`pr.bodyMergeDeferred`）
      - マージに失敗した（`pr.bodyMergeError`）
+- 作業領域へのリンク：更新に使う本文（上の 4. のマージの結果・5. のまとめた本文）からも、コンテナの作業領域へのリンクを外す（`unlinkedMergedBody`。外し方は [長さ・秘密の値・台帳](#長さ秘密の値台帳) の `withoutWorkspaceLinks`）。
+  - 人が書いた作業領域へのリンクも外れる。ほかのリンク・書き方は変えない。
+  - 外すリンクが無ければ、本文をそのまま使う（秘密の値も伏せ直さない。人が書いた本文に、ほかの手を加えない）。sacty が組み立てた本文（`unlinkedGeneratedBody`）は、外すリンクが無くても伏せ直すので、ここだけが違う。
+  - 外して本文が変わったときは、その PR の作成で使った秘密の値を伏せ直す（人が書いた文字も、値と同じなら伏せる）。伏せた結果が `PR_BODY_MAX` を超えるときは、外すのをやめて、外す前の本文を使う。
+  - 前回の版として記録するのは、新しく組み立てた本文のまま。
 - 費用：`PullRequestBodyResolved` の費用は、タスクの予算に入れる（`CHARGED_EVENT_TYPES`）。工程ごとの費用の表では、オーケストレーターの行に出す。
 - 作業履歴の表示：「PR #… の本文を書いた」、エージェントがまとめた・まとめられなかった（理由）を出す。
 
-コード: `apps/daemon/src/service.ts`（`reconcilePullRequestBody`・`recordPullRequestBody`・`publish`・`publishStepPullRequest`・`retargetPullRequest`）、`apps/daemon/src/pr-body-merge.ts`（`mergePullRequestBody`・`buildPullRequestBodyMergePrompt`・`extractMergedPullRequestBody`・`hasMergeMarkers`）、`apps/daemon/src/github.ts`（`pullRequestBody`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`PullRequestBodyWritten`・`PullRequestBodyResolved`）、`packages/core/src/projection.ts`（`pullRequestBodies`・`pullRequestBodyKey`）、`packages/core/src/cost.ts`（`CHARGED_EVENT_TYPES`）、`apps/web/src/lib/step-costs.ts`、`apps/web/src/lib/labels.ts`
+コード: `apps/daemon/src/service.ts`（`reconcilePullRequestBody`・`recordPullRequestBody`・`publish`・`publishStepPullRequest`・`retargetPullRequest`）、`apps/daemon/src/pr-body-links.ts`（`unlinkedMergedBody`）、`apps/daemon/src/pr-body-merge.ts`（`mergePullRequestBody`・`buildPullRequestBodyMergePrompt`・`extractMergedPullRequestBody`・`hasMergeMarkers`）、`apps/daemon/src/github.ts`（`pullRequestBody`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`PullRequestBodyWritten`・`PullRequestBodyResolved`）、`packages/core/src/projection.ts`（`pullRequestBodies`・`pullRequestBodyKey`）、`packages/core/src/cost.ts`（`CHARGED_EVENT_TYPES`）、`apps/web/src/lib/step-costs.ts`、`apps/web/src/lib/labels.ts`
 
 ## PR の指摘の取り込み
 

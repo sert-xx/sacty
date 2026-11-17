@@ -937,6 +937,37 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     activity.close();
   });
 
+  it("重ねた PR の向き先の付け替えでも、人の直しとマージした本文から作業領域へのリンクを外し、外した後に現れる秘密の値を伏せる（PBI-385。エージェントを実行しない呼び出し）", async () => {
+    const { activity, service, pulls, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      implement("# B の実装"),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    // 人が、子の PR の本文の先頭に補足を足した。作業領域へのリンクと、外すと秘密の値（GitHub のトークン ghp_secret）になる文字がある
+    const kept = "> 人のメモ：[設計](https://example.com/design) を見ること。";
+    pulls.bodies[8] = [
+      kept,
+      "> [手順](/workspace/docs/setup.md) に沿う。値は ghp_[s](/workspace)ecret です。",
+      "",
+      pulls.bodies[8] ?? "",
+    ].join("\n");
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    await service.checkPullRequests();
+    const call = pulls.calls.at(-1);
+    expect(call).toMatchObject({ number: 8, baseBranch: "main", retarget: true });
+    const updated = call?.body ?? "";
+    expect(
+      updated.startsWith(`${kept}\n> 手順（\`docs/setup.md\`） に沿う。値は [REDACTED] です。\n\n`),
+    ).toBe(true);
+    expect(updated).not.toContain("ghp_secret");
+    expect(updated).not.toContain("](/workspace");
+    expect(JSON.stringify(service.get(b)?.activity)).not.toContain("ghp_secret");
+    activity.close();
+  });
+
   it("依存先の PR がマージされたら、子の起点のブランチをベースブランチに付け替え、承認待ちの PR の向き先を付け替えてドラフトを外し、次のやり直しでベースブランチを取り込む", async () => {
     const { activity, service, repos, pulls, id, ids } = await splitParent(chain, [
       implement("# A の実装"),

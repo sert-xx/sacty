@@ -341,7 +341,7 @@ import {
   platformSummary,
   readOnlyPlatforms,
 } from "./platforms.js";
-import { withoutWorkspaceLinks } from "./pr-body-links.js";
+import { unlinkedGeneratedBody, unlinkedMergedBody } from "./pr-body-links.js";
 import {
   buildPullRequestBodyMergePrompt,
   extractMergedPullRequestBody,
@@ -9033,6 +9033,7 @@ export class TaskService {
         token,
         number: pr.number,
         generated: body,
+        secrets: usedSecrets,
         agent: false,
       });
       // 認証・本文の用意を待つ間に変わったら、古い向き先・本文で PR を更新しない
@@ -12108,6 +12109,7 @@ export class TaskService {
             token,
             number: reuse.number,
             generated: body,
+            secrets: usedSecrets,
           })
         : { body, record: true };
       // 本文をまとめる間に一時停止・中止を求められた・まとめたコンテナが止まったか確かめられなかったら、PR を更新しない
@@ -12222,9 +12224,8 @@ export class TaskService {
     // 長さの上限の後でよい（上限で省いた後の本文に、省けない部分が残る）。
     // 置き換えで文字がつながる・リンク先の文字参照が元の文字に戻ると、伏せたはずの秘密の値が現れうるので、置き換えの後にも
     // 伏せる。伏せた結果が上限を超える（伏せ字が値より長い）ときは、置き換えをやめて、上限の中の本文を使う
-    const unlinked = redact(withoutWorkspaceLinks(limited.body), usedSecrets);
     return {
-      body: unlinked.length <= PR_BODY_MAX ? unlinked : limited.body,
+      body: unlinkedGeneratedBody(limited.body, usedSecrets),
       template: { ...template, ...(limited.truncated ? { truncated: true } : {}) },
     };
   }
@@ -12240,10 +12241,19 @@ export class TaskService {
    *   エージェントを実行せずに本文に触れない（次のやり直しの提出で、もう一度まとめる）
    * record は、更新した後に generated を前回の版として記録するか（本文に触れなかったときは記録しない。次の更新で、もう一度
    * 今回の sacty の更新を取り込むため）。
+   * マージした本文・エージェントがまとめた本文からも、コンテナの作業領域へのリンクを外す（`unlinkedMergedBody`。generated は
+   * `pullRequestBody` で外してある。`unlinkedGeneratedBody`）。secrets は、その PR の作成で使った秘密の値。
    */
   private async reconcilePullRequestBody(
     task: Task,
-    input: { repo: string; token: string; number: number; generated: string; agent?: boolean },
+    input: {
+      repo: string;
+      token: string;
+      number: number;
+      generated: string;
+      secrets: readonly string[];
+      agent?: boolean;
+    },
   ): Promise<{ body?: string; record: boolean; stop?: true; overwritten?: DaemonText }> {
     const generated = input.generated;
     const base = task.pullRequestBodies?.[pullRequestBodyKey(input.repo, input.number)];
@@ -12287,7 +12297,7 @@ export class TaskService {
       return { record: false };
     }
     if (merged.conflicts === 0 && merged.text.length <= PR_BODY_MAX) {
-      return { body: merged.text, record: true };
+      return { body: unlinkedMergedBody(merged.text, input.secrets), record: true };
     }
     // 重なった箇所は、エージェントにまとめさせる
     const kept = (reason: DaemonText, cost: Record<string, unknown> = {}) => {
@@ -12366,7 +12376,7 @@ export class TaskService {
         },
       },
     ]);
-    return { body, record: true };
+    return { body: unlinkedMergedBody(body, input.secrets), record: true };
   }
 
   /**
@@ -12748,6 +12758,7 @@ export class TaskService {
             token,
             number,
             generated: body,
+            secrets: usedSecrets,
           })
         : { body, record: true };
       if ("stop" in sent || this.stopRequested(task.id)) return "stopped";

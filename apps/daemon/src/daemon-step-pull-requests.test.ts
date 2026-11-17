@@ -424,6 +424,36 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     again.close();
   });
 
+  it("要求要件の PR の更新でも、人の直しとマージした本文から作業領域へのリンクを外し、外した後に現れる秘密の値を伏せる（PBI-385。実装の PR の更新とは別の呼び出し）", async () => {
+    const made = await start([
+      out("# 要求要件 v1"),
+      rework("requirements", "要求要件で直せる"),
+      out("# 要求要件 v2"),
+    ]);
+    const { activity, service, pulls, id } = made;
+    const first = pulls.calls[0]?.body ?? "";
+    // 人が、本文の先頭に補足を足した。作業領域へのリンクと、外すと秘密の値（GitHub のトークン ghp_secret）になる文字がある
+    const kept = "> 人のメモ：[設計](https://example.com/design) を見ること。";
+    pulls.bodies[7] = [
+      kept,
+      "> [手順](/workspace/docs/setup.md) に沿う。値は ghp_[s](/workspace)ecret です。",
+      "",
+      first,
+    ].join("\n");
+    pulls.feedbackBy[7] = [item("review:1", { kind: "review", body: "", requestChanges: true })];
+    await service.checkPullRequests();
+    await service.runNext(id);
+    expect(pulls.calls[1]?.number).toBe(7);
+    const updated = pulls.calls[1]?.body ?? "";
+    expect(
+      updated.startsWith(`${kept}\n> 手順（\`docs/setup.md\`） に沿う。値は [REDACTED] です。\n\n`),
+    ).toBe(true);
+    expect(updated).not.toContain("ghp_secret");
+    expect(updated).not.toContain("](/workspace");
+    expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
+    activity.close();
+  });
+
   it("PR の指摘でゴールガーディアンがこの工程と判断したら、要求要件をやり直して同じ PR を更新する。判断と理由は台帳に残る（受け入れ条件 3）", async () => {
     const made = await start([
       out("# 要求要件 v1"),
