@@ -204,7 +204,7 @@ async function imageBuild(names: string[]): Promise<void> {
     );
   }
   if (pruned.listFailed) console.log("[sacty] 古い版のイメージを確かめられませんでした。");
-  if (pruned.cacheFailed) console.log("[sacty] 古いビルドキャッシュを消せませんでした。");
+  if (pruned.cacheFailed) console.log("[sacty] 使っていないビルドキャッシュを消せませんでした。");
 }
 
 async function contextPreview(

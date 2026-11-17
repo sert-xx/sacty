@@ -688,10 +688,10 @@ describe("古い版のイメージの片付け（PBI-313）", () => {
     expect(calls).toEqual([
       "image ls --format {{.Repository}}:{{.Tag}}",
       "image rm sacty-agent:1.0.0",
-      // 3日（PBI-388）。デーモンの片付けと同じ期間
-      "builder prune -f --filter until=72h",
+      // デーモンの片付けと同じ引数。期間では絞らず、--all も付けない（PBI-389）
+      "builder prune -f",
     ]);
-    expect(buildCachePruneArgs().join(" ")).toBe("builder prune -f --filter until=72h");
+    expect(buildCachePruneArgs()).toEqual(["builder", "prune", "-f"]);
   });
 
   it("1つ消せなくても残りを消し、消せなかったものを返す", async () => {
