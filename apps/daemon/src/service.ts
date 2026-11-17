@@ -1544,10 +1544,13 @@ export class TaskService {
    */
   private async readPullRequestCi(candidates: readonly PullRequestCiCandidate[]): Promise<void> {
     const ci = this.deps.ci;
-    // 見守らなくなったタスクの回数は、忘れる（常駐中に増え続けないため）
-    const watching = new Set(candidates.map((c) => c.taskId));
+    // 実装の PR が開いていないタスク（マージした・閉じた・中止した・消えた）の回数は、忘れる（常駐中に増え続けないため）。
+    // その確認で候補に入らなかっただけ（PR の状態を一時的に読めなかったなど）では、忘れない（回数と間隔を数え直さない）
     for (const id of [...this.pullRequestCiReads.keys()]) {
-      if (!watching.has(id)) this.pullRequestCiReads.delete(id);
+      const task = this.tasks.get(id);
+      if (!task || task.status === "cancelled" || task.pullRequestState !== "open") {
+        this.pullRequestCiReads.delete(id);
+      }
     }
     if (!ci || this.pullRequestCiReading || candidates.length === 0) return;
     const now = this.now();

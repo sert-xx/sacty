@@ -7076,6 +7076,31 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    it("PR の状態を一時的に読めない確認があっても、読んだ回数と間隔を数え直さない", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      let now = Date.parse("2026-11-17T00:00:00Z");
+      const { activity, service, id } = await toImplementGate([], { pulls, ci, now: () => now });
+      pulls.state = { state: "open" };
+      state.checks = [workflow()];
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // 間隔ごとに読む途中で、PR の状態を読めない確認（このタスクが、その確認の候補に入らない）をはさむ
+      for (let i = 0; i < PR_CI_READS_MAX + 5; i++) {
+        await service.checkPullRequests();
+        pulls.statusFail = "network";
+        await service.checkPullRequests();
+        pulls.statusFail = undefined;
+        // 読めなかった確認の直後も、間隔の前なので読まない
+        await service.checkPullRequests();
+        now += PR_CI_READ_INTERVAL_MS;
+      }
+      // 回数の上限は、先頭のコミットごとのまま
+      expect(state.read).toHaveLength(PR_CI_READS_MAX);
+      expect(ciTypes(service, id)).toEqual([]);
+      warn.mockRestore();
+      activity.close();
+    });
+
     it("CI を読めないときも1回と数え、記録せず、マージの検出を止めない", async () => {
       const pulls = new FakePulls();
       const { ci, state } = fakeCi();
