@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-384
-- PR: なし
+- PR: #422
 - ブランチ: feat/pbi-384-deferral-task-result
 - 関係する ADR: [後続に回した指摘の扱いの結果をタスクの詳細に出し、後続のタスクを元の PR の引き継ぎの候補にしない](../adr/20261117-1245-show-deferral-results-on-task-details.md)
 
