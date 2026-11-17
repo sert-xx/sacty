@@ -46,14 +46,14 @@
 
 ## 確かめたこと
 
-結果は、PR を作る前の最後の実行のもの。
+結果は、PR を作る前の最後の実行のもの（最新の main `bf50a964` を取り込んだ後のコード）。
 
 | 確かめたこと | コマンド | 結果 |
 | --- | --- | --- |
-| フォーマット・リンター | `npx biome check --error-on-warnings .` | LINT_RESULT |
-| 型検査 | `npm run typecheck` | TYPECHECK_RESULT |
-| 全テスト | `npx vitest run --no-file-parallelism` | TEST_RESULT |
-| ビルド | `npm run build` | BUILD_RESULT |
+| フォーマット・リンター | `npx biome check --error-on-warnings .` | 誤り・警告なし |
+| 型検査 | `npm run typecheck` | 誤りなし |
+| 全テスト | `npx vitest run --no-file-parallelism` | 253 ファイル・4,865 件が成功、1 件はスキップ（もとからのスキップ） |
+| ビルド | `npm run build` | 成功 |
 
 - 足したテスト
   - `packages/core/src/projection.test.ts`：案の記録・取り下げ・決定・決められない場合・以前の作業履歴の読み込み。
@@ -64,7 +64,7 @@
   - `apps/web/src/components/deferral.test.ts`・`apps/web/src/lib/labels.test.ts`：一覧・決定済みの記録・タスクの詳細の通知・作業履歴の文（日英）。
 - テストが変更を見分けることの確認：`rejudgeDue` の「案を人が決めてから」の条件と、`declinedEveryFinding` の `deferred` の扱いを外すと、足したテストが失敗することを確かめてから、元に戻した。
 - 実物での確認（別のポート 4856・4857、一時のホーム。GitHub には問い合わせず、投稿は偽の応答で受けて本文を残した）
-  - 案が 2 件（AI のレビューの指摘 1 件・画面から書いた指摘 1 件）ある承認待ちのタスクを入れ、日本語と英語の画面で、次を確かめた（VERIFY_RESULT）。
+  - 案が 2 件（AI のレビューの指摘 1 件・画面から書いた指摘 1 件）ある承認待ちのタスクを入れ、日本語と英語の画面で、次を確かめた（確かめた 32 項目がすべて合った）。
   - タスクの詳細に件数と承認の画面へのリンクが出る。承認の画面に、指摘・理由・元のコメントへのリンクと、3 つの選択肢が出る。
   - 何も選ばずに決定すると、理由が出て、何も記録されない。
   - 「後続に回す」で、承認待ちのまま一覧が減り、決定済みの記録が出て、PR にコメントが残る。
