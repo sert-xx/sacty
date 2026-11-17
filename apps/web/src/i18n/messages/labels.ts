@@ -111,7 +111,7 @@ const ja = {
     child_cancelled:
       "子タスクが中止されました。再開すると中止した子タスクを除いて進め、中止すると終わっていない子タスクも中止します。",
     incomplete:
-      "実装が終わらず、PR を作っていません（更新もしていません）。再開すると実装をやり直します。",
+      "実装が終わらず、PR を作成・更新していません。再開すると、できれば続きから、エージェントを変えると最初から実装します。",
     unchanged: "やり直しが PR を何も変えず、提出していません。再開すると実装をやり直します。",
   } satisfies Record<PauseReason, string>,
   /** 実装の作り直しを、PR のマージで止めたときの段階（ReworkStoppedByMerge）。 */
@@ -407,8 +407,11 @@ const ja = {
     branchPushed: (branch: string, commit: string) =>
       `PR を作らず、ブランチまで（${branch}・${commit}）`,
     NoChangesFound: "実装に変更が無いため、PR を作らずに承認待ち",
-    ImplementationIncomplete: (undeclared: boolean, remaining: string) =>
-      `${undeclared ? "実装し終えたかの申告が無いか読めない" : "実装が終わっていない"}ため、提出せずに実装を続ける${remaining ? `（残り：${remaining}）` : ""}`,
+    /** remaining：残っていることの件数（中身は、詳細に 1 件ずつ出す。PBI-355）。 */
+    ImplementationIncomplete: (undeclared: boolean, remaining: number) =>
+      `${undeclared ? "実装し終えたかの申告が無いか読めない" : "実装が終わっていない"}ため、提出せずに実装を続ける${remaining > 0 ? `（残り ${remaining} 件）` : ""}`,
+    /** 残っていることの 1 件（詳細の 1 行）。 */
+    remainingItem: (text: string) => `・${text}`,
     ImplementationUnmapped: (ids: string) =>
       `テストの対応していないテスト観点があるため、提出せずに実装を続ける（${ids}）`,
     ImplementationUnchanged: (number: number, commit: string) =>
@@ -841,7 +844,7 @@ const en: LabelMessages = {
     child_cancelled:
       "A subtask was cancelled. Resume to continue without it, or cancel to also cancel the unfinished subtasks.",
     incomplete:
-      "The implementation ended unfinished, so no PR was opened or updated. Resume to implement again.",
+      "The implementation is unfinished; no PR was opened or updated. Resume to continue if possible, or change the agent to start over.",
     unchanged:
       "The rework changed nothing in the PR, so it was not submitted. Resume to implement again.",
   },
@@ -1079,7 +1082,8 @@ const en: LabelMessages = {
     branchPushed: (branch, commit) => `No PR; branch only (${branch} · ${commit})`,
     NoChangesFound: "The implementation changed nothing, so no PR was opened; awaiting approval",
     ImplementationIncomplete: (undeclared, remaining) =>
-      `${undeclared ? "The declaration of whether the implementation finished is missing or unreadable" : "The implementation is unfinished"}, so it is continued without being submitted${remaining ? ` (remaining: ${remaining})` : ""}`,
+      `${undeclared ? "The declaration of whether the implementation finished is missing or unreadable" : "The implementation is unfinished"}, so it is continued without being submitted${remaining > 0 ? ` (${remaining} remaining)` : ""}`,
+    remainingItem: (text) => `- ${text}`,
     ImplementationUnmapped: (ids) =>
       `Some test viewpoints have no test mapped, so the implementation is continued without being submitted (${ids})`,
     ImplementationUnchanged: (number, commit) =>

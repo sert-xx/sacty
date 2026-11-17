@@ -409,6 +409,17 @@ export function describeEventParts(
     const { full } = summarizeDecision(l.text(event.payload.reason));
     return { text: describeEventText(event, l), ...(full ? { detail: full } : {}) };
   }
+  if (
+    event.type === "ImplementationIncomplete" &&
+    !event.payload.unmapped?.length &&
+    event.payload.remaining.length > 0
+  ) {
+    // 残っていること（PBI-355）。行には件数だけを出し、中身は 1 件ずつ 1 行で読めるようにする
+    return {
+      text: describeEventText(event, l),
+      detail: event.payload.remaining.map((item) => l.event.remainingItem(item)).join("\n"),
+    };
+  }
   if (event.type === "TaskResumed" && event.payload.note) {
     // 再開のときに人が足した補足（説明の後にも足すが、どの再開で足したかを作業履歴で読み返せるようにする）
     return {
@@ -737,9 +748,10 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       if (event.payload.unmapped?.length) {
         return e.ImplementationUnmapped(event.payload.unmapped.slice(0, 5).join("・"));
       }
+      // 残っていることは、行には件数だけを出す（中身は、1 件ずつ詳細に出す。describeEventParts。PBI-355）
       return e.ImplementationIncomplete(
         event.payload.undeclared === true,
-        event.payload.remaining.slice(0, 3).join(" / "),
+        event.payload.remaining.length,
       );
     case "ImplementationUnchanged":
       return e.ImplementationUnchanged(event.payload.number, event.payload.commit.slice(0, 7));
