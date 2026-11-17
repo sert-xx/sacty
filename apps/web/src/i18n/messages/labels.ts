@@ -179,8 +179,6 @@ const ja = {
       `${step}の PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
     prClosed: "PR が閉じられた・判断待ち",
     prConflicting: (n: number) => `実装の PR がベースブランチと競合${n > 1 ? `（${n}回目）` : ""}`,
-    /** 人の承認（マージ）を待つ実装の PR の CI が失敗している（PBI-364）。 */
-    prCiFailed: (n: number) => `実装の PR の CI が失敗${n > 1 ? `（${n}回目）` : ""}`,
     /** 競合している PR の行に添える、取り込む操作（「あなたの出番」）。 */
     prConflictNote: "差し戻すか、PR に指摘を書くと、ベースブランチを取り込みます",
     /** 引き継いだ PR の行に添える案内（ベースブランチは取り込まない）。 */
@@ -481,10 +479,6 @@ const ja = {
     PullRequestConflicted: (number: number) =>
       `PR #${number} がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）`,
     PullRequestConflictResolved: (number: number) => `PR #${number} の競合が解消された`,
-    PullRequestCiFailed: (number: number, commit: string, checks: string[], more: number) =>
-      `PR #${number} の CI が失敗している（${commit}。${checks.join("、")}${more > 0 ? ` ほか${more}件` : ""}）。sacty は何も始めない（PR で確かめる）`,
-    PullRequestCiRecovered: (number: number, commit: string) =>
-      `PR #${number} の CI の失敗が無くなった（${commit}）`,
     IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
     IssueCommentFailed: (message: string) => `調査の結果を Issue に返せなかった：${message}`,
     GitHubCommentsPosted: (step: string, results: string[]) =>
@@ -918,7 +912,6 @@ const en: LabelMessages = {
     prClosed: "PR closed · needs you",
     prConflicting: (n) =>
       `Implement PR conflicts with the base branch${n > 1 ? ` (submission ${n})` : ""}`,
-    prCiFailed: (n) => `CI is failing on the Implement PR${n > 1 ? ` (submission ${n})` : ""}`,
     prConflictNote: "Send it back or comment on the PR to merge the base branch in",
     prConflictContinuedNote:
       "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub",
@@ -1139,10 +1132,6 @@ const en: LabelMessages = {
     PullRequestConflicted: (number) =>
       `PR #${number} conflicts with the base branch (it is merged in when you send it back or comment)`,
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,
-    PullRequestCiFailed: (number, commit, checks, more) =>
-      `CI is failing on PR #${number} (${commit}: ${checks.join(", ")}${more > 0 ? ` and ${more} more` : ""}). sacty starts nothing (check it on the PR)`,
-    PullRequestCiRecovered: (number, commit) =>
-      `CI is no longer failing on PR #${number} (${commit})`,
     IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
     ReviewTargetResolved: (url, commit) => `Confirmed the PR to review (${url} · ${commit})`,
     ReviewGitHubRetried: (where, attempt, maxAttempts, seconds, message) =>

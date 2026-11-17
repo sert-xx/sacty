@@ -39,7 +39,6 @@ This section shows tasks awaiting approval, paused, or escalated, longest wait f
 - Press a title to go to the screen where you decide.
 - If the task is awaiting approval and the PR of the current submission is open, pressing the title opens the PR on GitHub in a new tab instead (the title has a "↗").
 - When the implementation PR conflicts with the base branch, the status says so ([When the base branch moves ahead](tasks.en.md#when-the-base-branch-moves-ahead)).
-- When CI fails on the implementation PR after the review, the status says so as well ([When CI fails after "no findings"](tasks.en.md#when-ci-fails-after-no-findings)).
 
 ### Why tasks are paused
 

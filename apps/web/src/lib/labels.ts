@@ -16,7 +16,6 @@ import {
   isCompleted,
   MAX_FIX_CHAIN,
   openProposal,
-  pullRequestCiFailure,
   pullRequestConflict,
   type StepKey,
   stepAgentChangeable,
@@ -76,8 +75,6 @@ export function statusText(task: Task, l: LabelMessages): string {
     if (task.pullRequestState === "open") {
       // ベースブランチと競合している（画面に出すだけ。取り込みは差し戻し・指摘のとき）
       if (pullRequestConflict(task)) return l.state.prConflicting(task.gate.submission);
-      // 指摘なしの後に CI が落ちた（画面に出すだけ。sacty は何も始めない。PBI-364）
-      if (pullRequestCiFailure(task)) return l.state.prCiFailed(task.gate.submission);
       return l.state.stepPrAwaitingMerge(l.step.implement, task.gate.submission);
     }
     return l.state.stepApproval(l.step.implement, task.gate.submission);
@@ -837,15 +834,6 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       return e.PullRequestConflicted(event.payload.number);
     case "PullRequestConflictResolved":
       return e.PullRequestConflictResolved(event.payload.number);
-    case "PullRequestCiFailed":
-      return e.PullRequestCiFailed(
-        event.payload.number,
-        event.payload.commit.slice(0, 7),
-        event.payload.checks.map((c) => c.name),
-        event.payload.more ?? 0,
-      );
-    case "PullRequestCiRecovered":
-      return e.PullRequestCiRecovered(event.payload.number, event.payload.commit.slice(0, 7));
     case "IssueCommented":
       return e.IssueCommented(event.payload.url);
     case "IssueCommentFailed":

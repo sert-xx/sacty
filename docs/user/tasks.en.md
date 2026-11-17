@@ -1019,36 +1019,6 @@ A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existi
   sacty does not merge the base branch in even if you send the task back, so resolve the conflict on GitHub.
 - The row in "Needs you", the task details, and the approval screen say "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub".
 
-### When CI fails after "no findings"
-
-sacty reviews without waiting for the PR's CI to finish.
-So CI that was still running can fail after the child task that reviews the PR reported "no findings".
-When that happens, sacty shows the failure on the screens (it notices at the PR check, once a minute).
-
-- The task's status becomes "CI is failing on the Implement PR". It is the same in "Needs you" (the dashboard and the task list) and in the header notifications.
-- The task details show the names of the failed checks (as links to that run on GitHub when they have one).
-
-sacty only shows it and does not fix it automatically. It does not rerun CI either.
-Do one of the following.
-
-1. Check the failure on the PR on GitHub.
-2. If the change caused it, send the task back with a comment from sacty's screen, or comment on the PR on GitHub. sacty redoes the implementation.
-3. If it is unrelated to the change (a flaky test, for example), rerun CI on GitHub. When it passes, the notice disappears within a few minutes.
-
-Even while CI is failing, if you merge the PR, sacty takes it as the approval and goes on.
-It is not shown for requirements and design PRs, or for a PR before the review child task reports "no findings" (the review child task turns CI failures into findings).
-No Slack or desktop notification is sent.
-
-sacty watches CI only during the following. A CI failure that starts after that is not shown on the screens.
-
-- While CI is running (it checks at every PR check, once a minute).
-- While nothing is running and there is failed or cancelled CI (it checks every 5 minutes, to notice a rerun).
-- Once everything has passed, CI for that head commit is not checked again.
-- For 30 minutes when no CI appears at all. After that, sacty stops checking, treating the repository as one without CI.
-- When a person adds a commit to the PR and the head changes, sacty watches CI for the new head.
-
-When the implementation PR also conflicts with the base branch, the status shows the conflict. Check the CI failure in the task details.
-
 ### Test viewpoints of the child tasks of a split
 
 A task split assigns the test viewpoints of the parent task's design to the child tasks.

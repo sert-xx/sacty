@@ -115,11 +115,6 @@ const ja = {
       `${step}からのやり直しが提案されています：${note}。戻し先を確かめて差し戻してください。`,
     prClosedHelp: "PR がマージされずに閉じられました。GitHub で開き直すか、中止してください。",
     prConflictHelp: "競合は自動では取り込みません。差し戻すか PR に指摘を書くと取り込みます。",
-    /** 人の承認（マージ）を待つ実装の PR の CI が失敗している（PBI-364）。 */
-    prCiFailedHelp: (commit: string) =>
-      `PR の先頭のコミット（${commit}）の CI が失敗しています（sacty は自動では直しません・再実行しません）。PR で確かめて、直すなら差し戻すか PR に指摘を書いてください。`,
-    prCiFailedChecks: "失敗したチェック",
-    prCiFailedMore: (count: number) => `ほか${count}件`,
     prConflictContinuedHelp:
       "引き継いだ PR なので、ベースブランチは取り込みません。GitHub で競合を解消してください。",
     integrateHelp:
@@ -665,10 +660,6 @@ const en: TaskMessages = {
     prClosedHelp: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
     prConflictHelp:
       "The conflict is not merged in automatically. Send the task back or comment on the PR to merge the base branch in.",
-    prCiFailedHelp: (commit) =>
-      `CI is failing on the head commit of the PR (${commit}); sacty does not fix or rerun it automatically. Check it on the PR, and to have it fixed, send the task back or comment on the PR.`,
-    prCiFailedChecks: "Failed checks",
-    prCiFailedMore: (count) => `and ${count} more`,
     prConflictContinuedHelp:
       "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub.",
     integrateHelp:
