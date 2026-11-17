@@ -4,8 +4,16 @@ import { PARSE_TIMEOUT_MS, unlinkedGeneratedBody, unlinkedMergedBody } from "./p
 import { type ConvertJob, convertWorkspaceLinks } from "./pr-body-links-worker.js";
 import { PR_BODY_MAX } from "./pr-template.js";
 
-/** 変換の本体を、このスレッドで直接呼ぶ（外した後の本文）。デーモンは、別スレッドで呼ぶ（`unlinkedGeneratedBody` など）。 */
-const withoutWorkspaceLinks = (body: string) => convertWorkspaceLinks(body, "/workspace").body;
+/**
+ * 変換の本体を、このスレッドで直接呼ぶ（外した後の本文）。デーモンは、別スレッドで呼ぶ（`unlinkedGeneratedBody` など）。
+ * 変換の途中の例外では、本体は渡した本文をそのまま返す。「外さない」ことを確かめるテストが、例外を見逃さないように、
+ * 例外が無かったことを、ここで確かめる。
+ */
+const withoutWorkspaceLinks = (body: string) => {
+  const converted = convertWorkspaceLinks(body, "/workspace");
+  expect(converted.failed).toBeUndefined();
+  return converted.body;
+};
 
 describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366）", () => {
   it("作業領域のパスへのリンクを外し、表示の文字を残す", () => {

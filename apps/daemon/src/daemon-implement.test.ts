@@ -101,8 +101,12 @@ vi.mock("./pr-body-links.js", async (importOriginal) => {
   };
 });
 
-/** 変換の本体を、このスレッドで直接呼ぶ（外した後の本文）。 */
-const withoutWorkspaceLinks = (body: string) => convertWorkspaceLinks(body, "/workspace").body;
+/** 変換の本体を、このスレッドで直接呼ぶ（外した後の本文）。変換の途中の例外が無かったことも、ここで確かめる。 */
+const withoutWorkspaceLinks = (body: string) => {
+  const converted = convertWorkspaceLinks(body, "/workspace");
+  expect(converted.failed).toBeUndefined();
+  return converted.body;
+};
 
 /** 警告のログのうち、作業領域へのリンクを外せなかったことの行。 */
 const linksKeptLogs = (warn: { mock: { calls: unknown[][] } }) =>

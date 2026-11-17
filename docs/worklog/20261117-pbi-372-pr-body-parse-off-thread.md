@@ -31,7 +31,7 @@ sacty が作る PR の本文から、作業領域（`/workspace`）へのリン�
   - 時間の上限（`PARSE_TIMEOUT_MS`。5 秒）で別スレッドを止めて、本文を変えずに返す。
   - 別スレッドの中の失敗・起動の失敗・答えずに終わったときも、本文を変えずに返す。
   - 別スレッドで読むファイルは、ビルドした成果物では `.js`、ソースのまま動かすとき（テスト）は `.ts`。
-  - `withoutWorkspaceLinks`（同期）は、テストが結果を比べるために残した。デーモンからは呼ばない。
+  - 同期の `withoutWorkspaceLinks` は、デーモンから呼ばれなくなったので消した（1回目のレビューへの対応）。テストは、変換の本体（`convertWorkspaceLinks(body, "/workspace").body`）を直接呼ぶ。
 - `unlinkedGeneratedBody`・`unlinkedMergedBody` を、非同期にした。結果は、本文と、外せなかった理由（`skipped`。`timeout`・`error`）。秘密の値の伏せ直しと、長さの上限の扱いは、これまでと同じ。
 - `apps/daemon/src/service.ts`：3か所の呼び出しを、待つ形にした。外せなかったときは、タスクの ID・リポジトリ・理由をログに出す（`linksUnlinked`）。本文の中身は出さない。`pullRequestBody` に、タスクの ID を渡すようにした。
 - 仕様書（`docs/spec/approval.md`・`approval.en.md`）：「同期に行い、その間デーモンのほかの処理は待つ」の記述を、別スレッド・時間の上限・ログの記述に直した。コードの参照に、移したファイルを足した。
