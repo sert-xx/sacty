@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-386
-- PR: なし
+- PR: #421
 - ブランチ: feat/pbi-386-risk-last-answer
 - 関係する ADR: [PR のリスク評価は、最後に出た答えだけを読み、読めなければ前の答えにさかのぼらない](../adr/20261117-1245-risk-assessment-reads-only-last-answer.md)
 
@@ -44,7 +44,7 @@
 - `npm run lint`：成功。`npm run typecheck`：成功。
 - `npx vitest run --no-file-parallelism`：261 ファイルのうち 257 が成功、4 が失敗（5025 件が成功、1 件が失敗、1 件はスキップ）。失敗の内訳と、その後の確認：
   - `tests/desktop/migration.test.ts`・`packages/cli/src/launch.test.ts`・`packages/cli/src/up-stop.test.ts`：依存を入れた直後で、パッケージのビルドの成果物が無く、読み込めなかった。`npm run typecheck`（ビルドを伴う）の後に、この 3 ファイルを実行し直して、成功（30 件）。
-  - `tests/docs/docs.test.ts` の 1 件：この作業履歴の PR の番号を、まだ入れていなかった。番号を入れた後に `npx vitest run tests/docs` を実行し直した（下）。
+  - `tests/docs/docs.test.ts` の 1 件：この作業履歴の PR の番号を、まだ入れていなかった。番号を入れた後に `npx vitest run tests/docs` を実行し直して、成功（93 件）。
 
 ## レビューの指摘と対応
 
