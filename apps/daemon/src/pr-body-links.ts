@@ -1,6 +1,8 @@
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { CONTAINER_WORKSPACE } from "./agents/docker.js";
+import { redact } from "./agents/redact.js";
+import { PR_BODY_MAX } from "./pr-template.js";
 
 /** Markdown の文字参照（`&#115;`・`&#x73;`・`&sol;`）の形。 */
 const CHARACTER_REFERENCE = /&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/;
@@ -37,12 +39,92 @@ function inlineCode(path: string): string {
 }
 
 /**
- * リンクの外に出すと、GitHub（GFM）で別の働きをしうる文字があるか。メンション（`@user`）、Issue・PR の参照（`#12`。
- * `Closes #12` は、マージで Issue を閉じる）、自動リンク（`https://…`・`www.…`）、表の列の区切り（`|`）。リンクの中では
- * 働かないので、こうした文字を含むリンクは、外さずに残す。
+ * リンクの外に出すと、GitHub（GFM）で別の働きをしうる文字があるか。メンション・メールアドレス（`@user`）、Issue・PR の
+ * 参照（`#12`・`GH-12`。`Closes #12` は、マージで Issue を閉じる）、自動リンク（`https://…`・`www.…`）、表の列の区切り
+ * （`|`）、打ち消し線（`~`。リンクの外の `~` と組になる）。リンクの中では働かないので、こうした文字を含むリンクは、
+ * 外さずに残す。
  */
 function activeOutsideLink(label: string): boolean {
-  return /@[A-Za-z0-9]|#\d|\||:\/\/|www\./i.test(label);
+  return /@[A-Za-z0-9._-]|#\d|GH-\d|[|~]|:\/\/|www\./i.test(label);
+}
+
+/** リンク・画像の表示の文字を、読まれる文字（打ち消し・文字参照を戻したもの）で返す。インラインコードの中は除く。 */
+function readLabel(node: Nodes): string {
+  if (node.type === "text") return node.value;
+  if (node.type === "image") return node.alt ?? "";
+  return "children" in node ? node.children.map(readLabel).join("") : "";
+}
+
+/** 文字の範囲（始まりと、終わりの次の位置）。 */
+type Span = { start: number; end: number };
+
+/**
+ * GitHub（GFM）で別の働きをしうる並び（`activeOutsideLink` と同じ種類。表の区切りを除く）の、決め手になる部分（tail）と、
+ * その前に続いて同じ並びに入りうる文字（head）。
+ * - 自動リンク（`https://example.com/a`）：`://` から、空白の前まで。前は、スキームの文字
+ * - 自動リンク（`www.example.com`）：`www.` から、空白の前まで
+ * - メンション・メールアドレス（`@octocat`・`a@example.com`）：`@` と、名前・ドメインの文字。前は、名前の文字
+ * - Issue・PR の参照（`#12`・`org/repo#12`・`GH-12`）：`#` と数字。前は、リポジトリの名前の文字
+ * - 打ち消し線の記号（`~`）：隣の文字がリンクの括弧か、ふつうの文字かで、開き・閉じになるかが変わる
+ * どれも、決め手の部分は前へ戻らずに読め、前に続く文字は決め手の書き出しの文字を含まないので、本文の長さに比例する
+ * 時間で拾える。
+ */
+const ACTIVE_RUNS: readonly { tail: RegExp; head?: RegExp }[] = [
+  { tail: /:\/\/\S*/g, head: /[A-Za-z0-9+.-]/ },
+  { tail: /www\.\S*/gi },
+  { tail: /@[A-Za-z0-9._/-]+/g, head: /[A-Za-z0-9._%+-]/ },
+  { tail: /#\d+/g, head: /[A-Za-z0-9._/-]/ },
+  { tail: /GH-\d+/gi },
+  { tail: /~+/g },
+];
+
+/** バックスラッシュによる打ち消しか、文字参照（どちらも、書いた文字と、読まれる文字が違う）。 */
+const REWRITTEN = new RegExp(`\\\\|${CHARACTER_REFERENCE.source}`);
+
+/**
+ * 本文の中の、GitHub で別の働きをしうる並びの範囲（始まりの順）。打ち消し・文字参照は、書いた文字のままでは並びを
+ * 読めない（`w\@example.com` は `w@example.com`、`&#64;octocat` は `@octocat` と読まれる）ので、それを含む、空白までの
+ * 文字のかたまりも、並びとして扱う（読まれる文字に直して確かめるのではなく、変えない側に倒す）。
+ */
+function activeRuns(text: string): Span[] {
+  const runs: Span[] = [];
+  for (const { tail, head } of ACTIVE_RUNS) {
+    for (const match of text.matchAll(tail)) {
+      let start = match.index;
+      while (head && start > 0 && head.test(text.charAt(start - 1))) start--;
+      runs.push({ start, end: match.index + match[0].length });
+    }
+  }
+  for (const match of text.matchAll(/\S+/g)) {
+    if (REWRITTEN.test(match[0]))
+      runs.push({ start: match.index, end: match.index + match[0].length });
+  }
+  return runs.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * 置き換えた後の本文（text）で、置き換えた文字（spans。始まりの順で、重ならない）のうち、周りの文字とつながって、
+ * GitHub で別の働きをしうる並びとつながったものの番号。並びが、置き換えた文字と重なるか隣り合い、かつ、その外へ続く
+ * ものを数える。
+ * - 重なる：`ping [@](/workspace)octocat` の `@` は、後ろの `octocat` とつながって、メンションになる
+ * - 隣り合う：`[a](/workspace/a)www.example.com` の `www.example.com` は、リンクのすぐ後ろでは自動リンクになるが、
+ *   `awww.example.com` では、ならない（もとからある並びが、働かなくなる・別の並びになる）
+ * 置き換えた文字の中に収まる並びは、数えない（表示の文字は `activeOutsideLink` で確かめてあり、添えるパスはインライン
+ * コードの中にある。表示の文字の中の打ち消し・文字参照は、周りの文字とつながらない）。
+ */
+function joinedSpans(text: string, spans: readonly Span[]): Set<number> {
+  const joined = new Set<number>();
+  let first = 0;
+  for (const run of activeRuns(text)) {
+    // 並びは始まりの順なので、この並びより前で終わる置き換えは、後の並びとも重ならない・隣り合わない
+    while (first < spans.length && (spans[first]?.end ?? 0) < run.start) first++;
+    for (let i = first; i < spans.length; i++) {
+      const span = spans[i];
+      if (!span || span.start > run.end) break;
+      if (run.start < span.start || run.end > span.end) joined.add(i);
+    }
+  }
+  return joined;
 }
 
 /** 置き換える範囲（元の文字位置）と、置き換えた後の文字。 */
@@ -108,18 +190,25 @@ function mergeText(shapes: Shape[]): Shape[] {
   return out;
 }
 
-/** 構文木をたどり、作業領域へのリンク・画像の置き換えを集める。置き換えるリンク・画像は removed に入れる。 */
+/**
+ * 構文木をたどり、作業領域へのリンク・画像の置き換えを集める。置き換えるリンク・画像は removed に入れる。skip にある位置
+ * （元の文字位置）から始まるリンク・画像は、変えない。
+ */
 function collect(
   node: Nodes,
   source: string,
   out: Replacement[],
   removed: Map<Nodes, Removal>,
+  skip: ReadonlySet<number>,
 ): void {
   if (node.type === "link" || node.type === "image") {
     const path = workspacePath(node.url);
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (path !== undefined && start !== undefined && end !== undefined) {
+      // 外すと周りの文字とつながると分かったリンク（skip）と、パスに縦棒があるリンクは、変えない。表の中では、添えるパスの
+      // 縦棒（リンク先では `\|`・`&#124;` と書ける）が列の区切りになって、行のセルが割れる
+      if (skip.has(start) || path.includes("|")) return;
       // 表示の文字は、元の書き方のまま残す（リンクは中身の範囲、画像は代わりの文字）。リンクの中にある作業領域への
       // リンク・画像（画像をリンクにした書き方）も外す
       let label = node.type === "image" ? (node.alt ?? "") : "";
@@ -128,14 +217,17 @@ function collect(
         const last = node.children.at(-1)?.position?.end.offset;
         if (first !== undefined && last !== undefined) {
           const inner: Replacement[] = [];
-          for (const child of node.children) collect(child, source, inner, removed);
+          for (const child of node.children) collect(child, source, inner, removed, skip);
           label = replaced(source, first, last, inner);
         }
       }
       // GitHub（GFM）では、リンクの外に出た文字が、メンション・Issue の参照・自動リンク・表の区切りとして働く。構文木の
       // 確かめ（CommonMark）では見つけられないので、そうなりうる文字を含むリンクは、変えない（通知が飛ぶ・別の Issue を
-      // 閉じる、という外への作用を起こさない）
-      if (activeOutsideLink(label) || /[@#]$/.test(source.slice(0, start))) return;
+      // 閉じる、という外への作用を、置き換えで増やさない）。外した後に周りの文字とつながってできる並びは、置き換えた後の
+      // 本文で確かめる（`joinedSpans`）
+      // 表示の文字は、書いた文字と、読まれる文字（`&#64;octocat` は `@octocat`）の両方で確かめる
+      if (activeOutsideLink(label) || activeOutsideLink(readLabel(node))) return;
+      if (/[@#]$/.test(source.slice(0, start))) return;
       const hasLabel = label.trim() !== "";
       // 表示の文字にパス（行・節の指定を除く）が出ていれば、文字だけを残す
       const file = path.replace(/[#?].*$/, "").replace(/\/+$/, "");
@@ -166,7 +258,7 @@ function collect(
     }
   }
   if ("children" in node) {
-    for (const child of node.children) collect(child, source, out, removed);
+    for (const child of node.children) collect(child, source, out, removed, skip);
   }
 }
 
@@ -189,8 +281,15 @@ function collect(
  * リンクは残る）。安全な文脈だけを選んで変えるのではなく、変えた結果を確かめて、違えば戻す。
  *
  * 構文木の確かめは CommonMark の解釈で行うので、GitHub（GFM）だけの解釈（メンション・Issue の参照・自動リンク・表）の
- * 変化は見つけられない。そこで、リンクの外に出すと GFM で別の働きをしうる文字（`activeOutsideLink`）を含むリンクは、
- * 変えない。
+ * 変化は見つけられない。そこで、次のリンクは変えない（その本文では、作業領域へのリンクが残る）：
+ * - 表示の文字に、リンクの外に出すと GFM で別の働きをしうる文字（`activeOutsideLink`）を含むリンク
+ * - 外した後の文字が、前後の文字とつながって、メンション・Issue の参照・自動リンク・打ち消し線の記号の一部になる・
+ *   隣り合うリンク（`joinedSpans`。`ping [@](/workspace)octocat`・`see [http](/workspace)://example.com/x`）。置き換えた後の
+ *   本文で確かめ、当たったリンクを除いて、もう一度置き換える。それでも当たるものがあれば、本文を変えずに返す
+ * - パスに縦棒があるリンク（表の中で、添えたパスの縦棒が列の区切りになる）
+ * 確かめるのは、この種類だけである。GitHub のほかの解釈が、外した後の文字のつながりで変わることは、確かめない
+ * （コミットの SHA のリンク・絵文字の `:名前:`・タスクリストのチェックボックス。表の中で、セルが空になる・行が区切りの
+ * 行の形になる・添えたパスのバッククォートが、同じセルの組になっていないバッククォートと組になる）。
  *
  * 本文は長さの上限（PR_BODY_MAX）の後のものを渡す。置き換えは、元のリンクより長い文字にしない（返す本文は、渡した本文より
  * 長くならない）。その長さで、ふつうの本文の解析は 0.1 秒ほど。解析に回る本文（作業領域のパス・バックスラッシュ・文字参照の
@@ -199,17 +298,49 @@ function collect(
  */
 export function withoutWorkspaceLinks(body: string): string {
   if (cannotLinkToWorkspace(body)) return body;
-  const found: Replacement[] = [];
-  const removed = new Map<Nodes, Removal>();
   try {
     const tree = fromMarkdown(body);
-    collect(tree, body, found, removed);
-    if (found.length === 0) return body;
-    const out = replaced(body, 0, body.length, found);
-    const expected = JSON.stringify(shapeOf(tree, removed));
-    const actual = JSON.stringify(shapeOf(fromMarkdown(out), new Map()));
-    return expected === actual ? out : body;
+    // 外すと周りの文字とつながるリンクの位置。1回目の置き換えで見つけて除き、2回目でも見つかれば、本文を変えない
+    const skip = new Set<number>();
+    for (const last of [false, true]) {
+      const found: Replacement[] = [];
+      const removed = new Map<Nodes, Removal>();
+      collect(tree, body, found, removed, skip);
+      if (found.length === 0) return body;
+      found.sort((a, b) => a.start - b.start);
+      const out = replaced(body, 0, body.length, found);
+      // 置き換えた文字の、置き換えた後の本文での範囲
+      let shift = 0;
+      const spans = found.map((r) => {
+        const start = r.start + shift;
+        shift += r.text.length - (r.end - r.start);
+        return { start, end: start + r.text.length };
+      });
+      const joined = joinedSpans(out, spans);
+      if (joined.size > 0) {
+        if (last) return body;
+        for (const i of joined) skip.add(found[i]?.start ?? -1);
+        continue;
+      }
+      const expected = JSON.stringify(shapeOf(tree, removed));
+      const actual = JSON.stringify(shapeOf(fromMarkdown(out), new Map()));
+      return expected === actual ? out : body;
+    }
+    return body;
   } catch {
     return body;
   }
+}
+
+/**
+ * すでにある PR の更新で、人の直しとマージした本文・エージェントがまとめた本文（どれも長さの上限の中）から、作業領域への
+ * リンクを外す。外して本文が変わったときだけ、秘密の値（secrets）を伏せ直す（外した後に文字がつながる・リンク先の文字参照が
+ * 元の文字に戻ると、伏せたはずの値が現れうる）。伏せた結果が上限を超える（伏せ字が値より長い）ときは、外すのをやめて、
+ * 渡された本文を返す。外すリンクが無ければ、渡された本文をそのまま返す（人が書いた本文に、ほかの手を加えない）。
+ */
+export function unlinkedMergedBody(body: string, secrets: readonly string[]): string {
+  const unlinked = withoutWorkspaceLinks(body);
+  if (unlinked === body) return body;
+  const hidden = redact(unlinked, secrets);
+  return hidden.length <= PR_BODY_MAX ? hidden : body;
 }
