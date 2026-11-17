@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { withoutWorkspaceLinks } from "./pr-body-links.js";
+import {
+  unlinkedGeneratedBody,
+  unlinkedMergedBody,
+  withoutWorkspaceLinks,
+} from "./pr-body-links.js";
 import { PR_BODY_MAX } from "./pr-template.js";
 
 describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366）", () => {
@@ -197,11 +201,219 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     );
   });
 
+  it("表示の文字は、読まれる文字（文字参照を戻したもの）でも確かめる。打ち消し線の記号・GH-12 の形の参照を含むリンクも、変えない", () => {
+    for (const body of [
+      "[&commat;octocat](/workspace/a.md)",
+      "Closes [&num;99](/workspace/a.md)",
+      "Closes [GH-99](/workspace/a.md)",
+      "[x@-a.example.com](/workspace/a.md)",
+      "~~古い~ [~新しい](/workspace/a.md)",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+  });
+
+  it("外した後の文字が、前後の文字とつながって、メンション・Issue の参照・自動リンクになるリンクは、変えない", () => {
+    for (const body of [
+      // メンション：`@` が、後ろの名前とつながる
+      "ping [@](/workspace)octocat please",
+      "ping @octo[cat](/workspace) please",
+      "[@](/workspace)[octocat](/workspace)",
+      // Issue・PR の参照：`Closes #12` の行になると、マージで別の Issue を閉じる
+      "Closes [#](/workspace)12",
+      "Closes #1[2](/workspace)",
+      "org/repo[#](/workspace)5",
+      "Closes [GH](/workspace)-12",
+      // 自動リンク
+      "see [http](/workspace)://example.com/x",
+      "see http[](/workspace)://example.com/x",
+      "see [ww](/workspace)w.example.com",
+      "[w](/workspace)[w](/workspace)[w](/workspace).example.com",
+      "mail [a](/workspace)@example.com",
+      "mail [a](/workspace)@-b.example.com",
+      // もとからある自動リンクの行き先が伸びる
+      "https://example.com/[a](/workspace/a)",
+      // 打ち消し・文字参照で書いた並び（書いた文字のままでは読めないので、つながる文字のかたまりごと、変えない）
+      "mail [w](/workspace)\\@example.com",
+      "ping [x](/workspace)&#64;octocat",
+      "see [http](/workspace)\\://example.com/x",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+  });
+
+  it("もとからあるメンション・参照・自動リンク・打ち消し線の記号と隣り合うリンクも、変えない（外すと、働かなくなる・別の並びになる）", () => {
+    for (const body of [
+      "[a](/workspace/a)www.example.com",
+      "www.example.com/[a](/workspace/a)",
+      "Closes #12[a.md](/workspace/a.md)",
+      "[a.md](/workspace/a.md)@octocat",
+      "~~[old.md](/workspace/old.md)~~",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+  });
+
+  it("前後の文字とつながらない、ふつうの形のリンクは外す（近くにメンション・参照・URL があっても）", () => {
+    expect(withoutWorkspaceLinks("[README.md](/workspace/README.md) を直した。")).toBe(
+      "README.md を直した。",
+    );
+    expect(
+      withoutWorkspaceLinks(
+        "[README.md](/workspace/README.md)を直した（https://example.com/x 参照）。",
+      ),
+    ).toBe("README.mdを直した（https://example.com/x 参照）。");
+    expect(
+      withoutWorkspaceLinks(
+        "See [README.md](/workspace/README.md). Closes #12, cc @octocat ([a.md](/workspace/a.md)): done",
+      ),
+    ).toBe("See README.md. Closes #12, cc @octocat (a.md): done");
+    expect(
+      withoutWorkspaceLinks(
+        "@octocat、[a.md](/workspace/a.md)と #12 の[b](/workspace/src/b.ts#L12)、www.example.com の [c.md](/workspace/c.md)",
+      ),
+    ).toBe("@octocat、a.mdと #12 のb（`src/b.ts#L12`）、www.example.com の c.md");
+    // 添えるパスの中の `#12`・`@` は、インラインコードの中なので働かない
+    expect(
+      withoutWorkspaceLinks("[手順](/workspace/a.md#12) と [b](/workspace/@octocat/b.md)"),
+    ).toBe("手順（`a.md#12`） と b（`@octocat/b.md`）");
+    // 表示の文字の中の打ち消し・文字参照は、周りの文字とつながらなければ、そのまま残して外す
+    expect(withoutWorkspaceLinks("[\\# 手順 &amp; 補足](/workspace/a.md) を読む")).toBe(
+      "\\# 手順 &amp; 補足（`a.md`） を読む",
+    );
+  });
+
+  it("つながるリンクだけを残し、同じ本文のほかのリンクは外す。残したリンクの文字とつながるリンクがあれば、本文を変えない", () => {
+    expect(
+      withoutWorkspaceLinks(
+        "[a.md](/workspace/a.md) と ping [@](/workspace)octocat と [b.md](/workspace/b.md)",
+      ),
+    ).toBe("a.md と ping [@](/workspace)octocat と b.md");
+    // 日本語の文で、空白を置かずに URL の後ろに続くリンクは、URL の行き先が伸びるので残す。離れたリンクは外す
+    expect(
+      withoutWorkspaceLinks(
+        "（https://example.com/x）[a.md](/workspace/a.md) と [c.md](/workspace/c.md)",
+      ),
+    ).toBe("（https://example.com/x）[a.md](/workspace/a.md) と c.md");
+    // 1つ目のリンクを残すと、その題の `://` が、2つ目の外した文字とつながる（2回目の確かめで当たる）
+    const twice = '[@](/workspace "x://y")octocat）[b](/workspace/b.md)';
+    expect(withoutWorkspaceLinks(twice)).toBe(twice);
+  });
+
+  it("パスに縦棒があるリンクは、変えない（表の中で、添えたパスの縦棒が列の区切りになり、隣のセルが消える）", () => {
+    const head = "| ファイル | 内容 |\n| --- | --- |\n";
+    for (const body of [
+      `${head}| [設定](/workspace/a\\|b.md) | 直した |`,
+      `${head}| [設定](/workspace/a&#124;b.md) | 直した |`,
+      `${head}| ![図](/workspace/a\\|b.png) | 直した |`,
+      // 表の外でも、変えない
+      "[設定](</workspace/a|b.md>)",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+    // 同じ表の、縦棒の無いリンクは外す
+    expect(
+      withoutWorkspaceLinks(`${head}| [設定](/workspace/a\\|b.md) | [c.md](/workspace/c.md) |`),
+    ).toBe(`${head}| [設定](/workspace/a\\|b.md) | c.md |`);
+  });
+
+  it("つながりの確かめは、本文の長さの上限いっぱいでも、時間がかからない", () => {
+    // 空白の無い本文に、打ち消し・メンション・参照の形と、リンクが並ぶ
+    const unit = "a\\@b#1@c[a.md](/workspace/a.md)、";
+    const body = unit.repeat(Math.floor(PR_BODY_MAX / unit.length));
+    const started = Date.now();
+    expect(withoutWorkspaceLinks(body)).toBe(body);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("表示の文字の中の打ち消し・文字参照は、すぐ外側に括弧・強調の記号があっても、それだけではつながりと見なさず、リンクを外す", () => {
+    expect(withoutWorkspaceLinks("see ([foo\\_bar.md](/workspace/foo_bar.md)) now")).toBe(
+      "see (foo\\_bar.md（`foo_bar.md`）) now",
+    );
+    expect(withoutWorkspaceLinks("see **[a&amp;b.md](/workspace/a.md)** now")).toBe(
+      "see **a&amp;b.md（`a.md`）** now",
+    );
+    expect(
+      withoutWorkspaceLinks(
+        '([docs/a\\_b.md](/workspace/docs/a_b.md))と、"[c&lt;d](/workspace/c.md)"',
+      ),
+    ).toBe('(docs/a\\_b.md（`docs/a_b.md`）)と、"c&lt;d（`c.md`）"');
+    // 表示の文字の中の打ち消し・文字参照が、読まれる文字では、外の文字と合わせて並びになるなら、変えない
+    for (const body of [
+      "[ww](/workspace)[w\\.](/workspace)example.com",
+      "ping [x\\@](/workspace)octocat",
+      "ping ([&commat;](/workspace)octocat)",
+      "Closes ([&num;](/workspace)12)",
+      // 打ち消し・文字参照が、外した文字の外にあれば、つながる文字の連なりごと、変えない
+      "see ([a.md](/workspace/a.md)\\@octocat)",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+  });
+
+  it("リンクの直前の `@`・`#` は、表示の文字と合わせて並びになるときだけ、変えない", () => {
+    for (const body of [
+      "@[octocat](/workspace/a.md)",
+      "#[99](/workspace/a.md)",
+      "@[**octo**cat](/workspace/a.md)",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+    expect(
+      withoutWorkspaceLinks("@[手順](/workspace/docs/setup.md) と #[節](/workspace/docs/a.md)"),
+    ).toBe("@手順（`docs/setup.md`） と #節（`docs/a.md`）");
+  });
+
   it("作業領域そのものへのリンクは、表示の文字だけにする", () => {
     expect(withoutWorkspaceLinks("[作業領域](/workspace) と [ルート](/workspace/)")).toBe(
       "作業領域 と ルート",
     );
-    expect(withoutWorkspaceLinks("前[](/workspace)後")).toBe("前後");
+  });
+
+  it("表示の文字が空で、作業領域そのものへのリンクは、変えない（外すと何も残らず、前後の文字が、空白を挟んでつながる）", () => {
+    for (const body of [
+      // `Fixes  #12` になると、マージで別の Issue を閉じうる
+      "Fixes [](/workspace) #12",
+      "前[](/workspace)後",
+      "前 [ ](/workspace/) 後",
+      "![](/workspace)",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+    // 同じ本文の、ほかのリンクは外す
+    expect(withoutWorkspaceLinks("Fixes [](/workspace) #12 と [a.md](/workspace/a.md)")).toBe(
+      "Fixes [](/workspace) #12 と a.md",
+    );
+  });
+
+  it("空白を置かない日本語の文に、打ち消し・文字参照があっても、リンクは外す（つながりを見るのは、ASCII の文字の連なりの中だけ）", () => {
+    expect(
+      withoutWorkspaceLinks("変更は[a.ts](/workspace/a.ts)にある。正規表現は`\\d+`を使う。"),
+    ).toBe("変更はa.tsにある。正規表現は`\\d+`を使う。");
+    expect(withoutWorkspaceLinks("[foo\\_bar](/workspace/foo_bar.md)を参照。")).toBe(
+      "foo\\_bar（`foo_bar.md`）を参照。",
+    );
+    expect(withoutWorkspaceLinks("[設計](/workspace/docs/d.md)とA&amp;Bの比較")).toBe(
+      "設計（`docs/d.md`）とA&amp;Bの比較",
+    );
+    expect(
+      withoutWorkspaceLinks(
+        "C:\\tmp\\a.txtを消し、[手順](/workspace/docs/setup.md)に\\@や&commat;の説明を足した。",
+      ),
+    ).toBe("C:\\tmp\\a.txtを消し、手順（`docs/setup.md`）に\\@や&commat;の説明を足した。");
+    // 外した文字のすぐ隣の、決め手の記号の無い打ち消しは、どの並びにもならない
+    expect(withoutWorkspaceLinks("[設定](/workspace/docs/s.md)\\_x を直した")).toBe(
+      "設定（`docs/s.md`）\\_x を直した",
+    );
+    // 日本語の文でも、外した文字と ASCII の文字でつながる打ち消し・文字参照があれば、変えない
+    for (const body of [
+      "宛先は[w](/workspace)\\@example.comです。",
+      "担当は[x](/workspace)&commat;octocatです。",
+      "[手順](/workspace/docs/setup.md)\\@octocatに確認。",
+      "見る先は[ww](/workspace)w\\.example.comです。",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
   });
 
   it("1行に複数あれば、すべて外す。リンクの中の画像は、リンクごと外す", () => {
@@ -304,5 +516,61 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     const before = Date.now();
     for (const body of heavy) expect(withoutWorkspaceLinks(body)).toBe(body);
     expect(Date.now() - before).toBeLessThan(500);
+  });
+});
+
+describe("すでにある PR の更新で、マージした本文・まとめた本文からも、作業領域へのリンクを外す（unlinkedMergedBody）", () => {
+  it("作業領域へのリンクを外す。ほかのリンク・書き方は変えない", () => {
+    const human = [
+      "> 人のメモ：[設計](https://example.com/design) と [相対](docs/a.md) を見ること。",
+      "",
+      "値は `ghp_secret` ではなく、[手順](/workspace/docs/setup.md) のとおりに入れる。  ",
+      "<!-- 人のコメント -->",
+    ].join("\n");
+    expect(unlinkedMergedBody(human, [])).toBe(
+      human.replace("[手順](/workspace/docs/setup.md)", "手順（`docs/setup.md`）"),
+    );
+  });
+
+  it("外すリンクが無ければ、渡された本文をそのまま返す（秘密の値と同じ文字があっても、人の本文に手を加えない）", () => {
+    const body = "人が書いた本文。[設計](https://example.com/design) の値は abc です。";
+    expect(unlinkedMergedBody(body, ["abc"])).toBe(body);
+    // sacty が組み立てた本文は、外すリンクが無くても、伏せ直す
+    expect(unlinkedGeneratedBody(body, ["abc"])).toBe(
+      "人が書いた本文。[設計](https://example.com/design) の値は [REDACTED] です。",
+    );
+    // 外せない（変えずに残す）リンクだけのときも、そのまま返す
+    const kept = "ping [@](/workspace)octocat の値は abc です。";
+    expect(unlinkedMergedBody(kept, ["abc"])).toBe(kept);
+  });
+
+  it("外した後に現れる秘密の値を、伏せる（文字がつながる・リンク先の文字参照が元の文字に戻る）", () => {
+    const body = [
+      "値は ghp_[s](/workspace)ecret です。",
+      "[手順](/workspace/docs/ghp&#95;secret.md) を直しました。",
+    ].join("\n\n");
+    expect(unlinkedMergedBody(body, ["ghp_secret"])).toBe(
+      ["値は [REDACTED] です。", "手順（`docs/[REDACTED].md`） を直しました。"].join("\n\n"),
+    );
+  });
+
+  it("伏せた結果が長さの上限を超えるときは、外すのをやめて、渡された本文を返す（秘密の値は現れない・上限を超えない）", () => {
+    // 短い秘密の値（伏せ字より短い）が、リンク先の文字参照から何度も現れる。伏せると、外して縮んだ分より長くなる
+    const secret = "ghx";
+    const link = `[手順](/workspace/${"gh&#120;".repeat(1_000)})`;
+    const body = `${link}\n\n${"説明。".repeat(30_000)}`.slice(0, PR_BODY_MAX);
+    expect(body.length).toBe(PR_BODY_MAX);
+    const out = unlinkedMergedBody(body, [secret]);
+    expect(out).toBe(body);
+    expect(out).not.toContain(secret);
+    // 外していれば、伏せた後に上限を超えていた（この分岐を通ったことの確認）
+    const unlinked = withoutWorkspaceLinks(body).replaceAll(secret, "[REDACTED]");
+    expect(unlinked).not.toBe(body);
+    expect(unlinked.length).toBeGreaterThan(PR_BODY_MAX);
+    // 上限に余裕があれば、外して伏せる
+    const short = `${link}\n\n説明。`;
+    expect(unlinkedMergedBody(short, [secret])).toBe(
+      `手順（\`${"[REDACTED]".repeat(1_000)}\`）\n\n説明。`,
+    );
   });
 });

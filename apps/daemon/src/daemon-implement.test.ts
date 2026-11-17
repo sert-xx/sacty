@@ -5807,7 +5807,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       implement(
         [
           "[手順](/workspace/docs/ghp&#95;secret.md) を直しました。",
-          "値は ghp_[](/workspace)secret です。",
+          "値は ghp_[s](/workspace)ecret です。",
           "![ghp&#95;secret](/workspace/a.png)",
         ].join("\n\n"),
       ),
@@ -7946,6 +7946,95 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const recorded = service.get(id)?.task.pullRequestBodies?.["https://github.com/acme/app#7"];
       expect(recorded).toBeDefined();
       expect(recorded).not.toContain("人のメモ");
+      activity.close();
+    });
+
+    it("人の直しとマージした本文からも、作業領域へのリンクを外し、外した後に現れる秘密の値を伏せる。人が書いたほかのリンクは変えない（PBI-385）", async () => {
+      const { activity, service, executor, pulls, id } = await toImplementGate(rework());
+      const first = pulls.calls[0]?.body ?? "";
+      // 人が、本文の先頭に補足を足した。作業領域へのリンクと、外すと秘密の値（GitHub のトークン ghp_secret）になる文字がある
+      const kept =
+        "> 人のメモ：[設計](https://example.com/design) と [相対](docs/a.md) を見ること。";
+      pulls.bodies[7] = [
+        kept,
+        "> [手順](/workspace/docs/setup.md) に沿う。値は ghp_[s](/workspace)ecret です。",
+        "",
+        first,
+      ].join("\n");
+      const before = executor.calls.length;
+      sendBack(service, id);
+      await drain(service);
+      // 重ならないので、本文をまとめるエージェントは実行しない
+      expect(executor.calls.length).toBe(before + 1);
+      const updated = pulls.calls[1]?.body ?? "";
+      expect(
+        updated.startsWith(
+          `${kept}\n> 手順（\`docs/setup.md\`） に沿う。値は [REDACTED] です。\n\n`,
+        ),
+      ).toBe(true);
+      // sacty の更新も入る
+      expect(updated).toContain("実装の説明 v2");
+      expect(updated).not.toContain("ghp_secret");
+      expect(updated).not.toContain("](/workspace");
+      expect(updated.length).toBeLessThanOrEqual(PR_BODY_MAX);
+      expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
+      activity.close();
+    });
+
+    it("マージした本文のリンクを外した後に秘密の値を伏せると長さの上限を超えるときは、外すのをやめて、マージした本文を使う（PBI-385）", async () => {
+      // 短い秘密の値（伏せ字より短い）が、人が足したリンク先の文字参照から何度も現れる。伏せると、外して縮んだ分より長くなる
+      const secret = "ghx";
+      const { activity, service, executor, pulls, id } = await toImplementGate(rework(), {
+        github: new FakeGitHub({ me: secret }),
+      });
+      const first = pulls.calls[0]?.body ?? "";
+      const link = `[手順](/workspace/${"gh&#120;".repeat(2_000)})`;
+      // マージした本文が、長さの上限の少し手前になるように、人が長い補足を足した
+      const filler = "補足。".repeat(
+        Math.floor((PR_BODY_MAX - first.length - link.length - 1_000) / 3),
+      );
+      pulls.bodies[7] = `${link}\n\n${filler}\n\n${first}`;
+      const before = executor.calls.length;
+      sendBack(service, id);
+      await drain(service);
+      expect(executor.calls.length).toBe(before + 1);
+      const updated = pulls.calls[1]?.body ?? "";
+      // マージした本文のまま（リンクは残る）。秘密の値は現れず、上限の中に収まる
+      expect(updated.startsWith(`${link}\n\n補足。`)).toBe(true);
+      expect(updated).toContain("実装の説明 v2");
+      expect(updated).not.toContain(secret);
+      expect(updated.length).toBeLessThanOrEqual(PR_BODY_MAX);
+      // 外していれば、伏せた後に上限を超えていた（この分岐を通ったことの確認）
+      const unlinked = withoutWorkspaceLinks(updated).replaceAll(secret, "[REDACTED]");
+      expect(unlinked).not.toBe(updated);
+      expect(unlinked.length).toBeGreaterThan(PR_BODY_MAX);
+      activity.close();
+    });
+
+    it("エージェントがまとめた本文からも、作業領域へのリンクを外し、外した後に現れる秘密の値を伏せる（PBI-385）", async () => {
+      const merged = [
+        "## まとめた本文",
+        "",
+        "[手順](/workspace/docs/setup.md) と [設計](https://example.com/design) のとおり。値は ghp_[s](/workspace)ecret です。",
+      ].join("\n");
+      const { activity, service, pulls, id } = await toImplementGate([
+        ...rework(),
+        out(`まとめました\n${BODY_BEGIN}\n${merged}\n${BODY_END}`),
+      ]);
+      pulls.bodies[7] = "人が全部書き直した本文";
+      sendBack(service, id);
+      await drain(service);
+      expect(pulls.calls[1]?.body).toBe(
+        [
+          "## まとめた本文",
+          "",
+          "手順（`docs/setup.md`） と [設計](https://example.com/design) のとおり。値は [REDACTED] です。",
+        ].join("\n"),
+      );
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
+        { actor: "orchestrator", payload: { number: 7, outcome: "resolved" } },
+      ]);
+      expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
       activity.close();
     });
 
