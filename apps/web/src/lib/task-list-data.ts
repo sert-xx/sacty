@@ -1,4 +1,4 @@
-import { isRepoless, type Task } from "@sacty/core";
+import { isRepoless, pullRequestCiFailure, type Task } from "@sacty/core";
 import { getMessages } from "@/i18n/server";
 import { listProjects, listTasks } from "@/lib/daemon";
 
@@ -35,6 +35,11 @@ export type TaskRow = {
   repos?: string[];
   steps: Pick<Task["steps"][number], "key" | "state">[];
   status: { text: string; tone: StatusTone };
+  /**
+   * 人の承認（マージ）を待つ実装の PR の CI が、Sacty が読んだ時点で失敗していた（PBI-364 の記録。`pullRequestCiFailure`）。
+   * 状態（status）とは別の印として、状態の列に添える（状態・絞り込み・並びは変えない。PBI-371）。
+   */
+  ciFailed?: true;
   /** 作った日時（ISO 8601）。一覧を開始時期で絞り込む。 */
   createdAt: string;
 };
@@ -94,6 +99,8 @@ export async function loadTaskList(projectId: string): Promise<TaskListData | nu
       ...repoNameOf(task),
       steps: task.steps.map((s) => ({ key: s.key, state: s.state })),
       status: { text: statusText(task, labels), tone: statusTone(task) },
+      // 出す条件は、タスクの詳細の案内と同じ（PR の更新・マージ・クローズで消える。PBI-364・PBI-371）
+      ...(pullRequestCiFailure(task) ? { ciFailed: true as const } : {}),
       createdAt: task.createdAt,
     })),
   };

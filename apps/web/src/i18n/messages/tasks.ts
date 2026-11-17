@@ -18,6 +18,10 @@ const ja = {
   },
   /** 工程の列の補足。 */
   stepsHint: "タスクの内容と対象リポジトリを読んで、オーケストレーターが選びます。",
+  /** 状態の列に添える印：承認待ちの実装の PR の CI が、Sacty が読んだ時点で失敗していた（PBI-371）。 */
+  ciFailed: "CI 失敗",
+  ciFailedHint:
+    "Sacty が PR の CI を読んだ時点の結果です。その後の結果は反映されません。失敗していたチェックは、タスクの詳細に出ます。",
   /** 子タスクの行で、読み上げに親を伝える（字下げは見た目だけなので。PBI-341）。 */
   specifiedRepositories: "指定したリポジトリ",
   workingRepository: "作業するリポジトリ",
@@ -68,6 +72,9 @@ const en: TasksMessages = {
     status: "Status",
   },
   stepsHint: "The Orchestrator chooses them from the task and the target repository.",
+  ciFailed: "CI failed",
+  ciFailedHint:
+    "The result when Sacty read the PR's CI. Later results are not reflected. The task details list the checks that were failing.",
   specifiedRepositories: "Specified repositories",
   workingRepository: "Working repository",
   childOf: (parent) => ` (child task of ${parent})`,

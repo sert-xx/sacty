@@ -302,7 +302,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 ### 指摘なしの後の CI の失敗の表示
 
 sacty は PR の CI を待たずに、PR のレビューの子タスクの指摘なしでドラフトを外す（[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
-そのため、レビューの時点で実行中だった CI が後から落ちても、タスクは人の承認待ち（マージ待ち）のままになる。人が気づけるよう、人の承認を待つ実装の PR の先頭のコミットの CI を読み、失敗していたら、タスクの詳細に出す（PBI-364）。
+そのため、レビューの時点で実行中だった CI が後から落ちても、タスクは人の承認待ち（マージ待ち）のままになる。人が気づけるよう、人の承認を待つ実装の PR の先頭のコミットの CI を読み、失敗していたら、タスクの詳細と、タスクの一覧のそのタスクの行に出す（PBI-364・PBI-371）。
 出すだけで、実行・差し戻し・再レビュー・ドラフトへの変更・CI の再実行は始めない。仕組みを小さく保つため、CI を読み続けない。
 
 - 読むもの：PR の確認（60秒ごと。`checkPullRequests`）の最後に、PR の先頭のコミット（GitHub の今の先頭。読めなければ、指摘なしにした先頭 `reviewedCommit`、それも無ければ提出のコミット）の CI の状態（`CiStatusReader.snapshot`。ワークフローの実行・チェック・コミットの状態と、ワークフローの中のジョブ）。
@@ -316,16 +316,17 @@ sacty は PR の CI を待たずに、PR のレビューの子タスクの指摘
   - PR を作り直した・更新した（`PullRequestPublished`）、マージされた・閉じられた・開き直された（`PullRequestMerged`・`PullRequestClosed`・`PullRequestReopened`）ときは、記録を消す。
 - 出す場所（`pullRequestCiFailure`。承認待ちで、実装のゲートの PR が開いていて、記録の PR の番号とコミットが今の提出と同じで、戻し先を判断している間でなく、指摘なしを待っていないとき）：
   - タスクの詳細の承認待ちの案内に、CI を読んだ先頭のコミットと時刻、その後の結果は sacty に反映されないこと、直すなら差し戻すか PR に指摘を書くことと、失敗していたチェックの一覧（リンクがあればリンク。超えた分は件数）を出す。
+  - タスクの一覧の、そのタスクの行の状態の列に、「CI 失敗」の印（アイコンと文字）を添える（`TaskRow.ciFailed`）。印の補足に、Sacty が CI を読んだ時点の結果であること、その後の結果は反映されないこと、失敗していたチェックはタスクの詳細に出ることを出す。状態の文言と種類（`statusText`・`statusTone`）は変えないので、一覧の絞り込み・並びは変わらない。
   - 作業履歴に「PR #N の CI が失敗していた」を出す。エラーレポートでは、確認の不合格（`check`）に分類する（[エラーレポート](error-report.md)）。
 - しないこと：
-  - 記録した後の変化は、読まない・反映しない（人が CI を再実行して通っても、表示は、PR を更新する・マージする・閉じるまで残る。読んだ時刻を出して、その時点の結果であることを示す）。
-  - 状態の表示（タスクの一覧・ダッシュボードの「あなたの出番」・ヘッダーのお知らせ）は変えない。通知（Slack・デスクトップ）も出さない。
+  - 記録した後の変化は、読まない・反映しない（人が CI を再実行して通っても、詳細の表示と一覧の印は、PR を更新する・マージする・閉じるまで残る。詳細には読んだ時刻を出し、一覧の印には補足を付けて、その時点の結果であることを示す）。
+  - 状態の文言と種類（タスクの一覧・ダッシュボードの「あなたの出番」・ヘッダーのお知らせ）は変えない。一覧の印では絞り込めない。ダッシュボード・「あなたの出番」のカード・ヘッダーのお知らせには、印を出さない。通知（Slack・デスクトップ）も出さない。
   - 最初に読んでから1時間ほどたっても終わらない CI、その後に始まった CI、通った後に再実行されて落ちた CI は、拾わない。
   - 閉じて開き直した PR では、同じ先頭の失敗を出し直さない（デーモンを再起動すると、読み直す）。
   - CI の一覧の取得が上限（`GitHubCiStatus` のページの上限）で打ち切られたときの、読めなかった分は見ない。
   - 判定はマージの可否ではない。CI が失敗したまま人がマージしたときは、通常のマージとして承認する。
 
-コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readPullRequestCi`・`watchesPullRequestCi`・`pullRequestCiSnapshot`・`PR_CI_TIMEOUT_MS`・`PR_CI_READ_INTERVAL_MS`・`PR_CI_READS_MAX`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus.snapshot`）、`packages/core/src/events.ts`（`PullRequestCiFailed`・`PR_CI_FAILED_CHECKS_MAX`・`PR_CI_CHECK_NAME_MAX`・`isFailedCiCheck`）、`packages/core/src/projection.ts`（`pullRequestCiFailure`・`Task.pullRequestCiFailure`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readPullRequestCi`・`watchesPullRequestCi`・`pullRequestCiSnapshot`・`PR_CI_TIMEOUT_MS`・`PR_CI_READ_INTERVAL_MS`・`PR_CI_READS_MAX`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus.snapshot`）、`packages/core/src/events.ts`（`PullRequestCiFailed`・`PR_CI_FAILED_CHECKS_MAX`・`PR_CI_CHECK_NAME_MAX`・`isFailedCiCheck`）、`packages/core/src/projection.ts`（`pullRequestCiFailure`・`Task.pullRequestCiFailure`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/lib/task-list-data.ts`（`loadTaskList`・`TaskRow`）、`apps/web/src/components/task-list.tsx`（`LiveTaskList`）
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`reconcileReviewTasks`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 

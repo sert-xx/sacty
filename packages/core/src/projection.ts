@@ -906,7 +906,8 @@ export type Task = {
   /**
    * 人の承認（マージ）を待つ実装の PR の、先頭のコミットの CI が失敗していた（PullRequestCiFailed。PBI-364）。commit は、
    * そのときの提出のコミット、head は CI を読んだ PR の先頭、at は読んだ時刻。sacty が読んだ時点の結果で、その後の変化は
-   * 反映しない。タスクの詳細に出すだけで、sacty は何も始めない。出すか（今の PR のものか）は `pullRequestCiFailure` で決める。
+   * 反映しない。タスクの詳細と、タスクの一覧の行に出すだけで（PBI-371）、sacty は何も始めない。出すか（今の PR のものか）は
+   * `pullRequestCiFailure` で決める。
    */
   pullRequestCiFailure?: {
     number: number;
@@ -3912,7 +3913,7 @@ export function pullRequestConflict(
 }
 
 /**
- * 人の承認（マージ）を待つ実装の PR の CI が失敗していたなら、その記録（タスクの詳細に出す。PBI-364）。人の出番（承認待ち）で、
+ * 人の承認（マージ）を待つ実装の PR の CI が失敗していたなら、その記録（タスクの詳細と、タスクの一覧の行に出す。PBI-364・PBI-371）。人の出番（承認待ち）で、
  * 今の提出の開いている PR のものだけ。PR を更新した・閉じた・マージした、PR の指摘の戻し先を判断している、PR のレビューの
  * 子タスクの指摘なしを待っている（レビューが CI を読んで指摘にする）間は無い。
  */
