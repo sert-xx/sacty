@@ -76,6 +76,8 @@
 
 対応の後の検証（先頭は、この対応のコミット）：`npx biome check --error-on-warnings .` は誤り・警告なし、`npm run typecheck` は誤りなし、`npx vitest run --no-file-parallelism` は 261 ファイル・5,051 件が成功（1 件はもとからのスキップ）、`npm run build` は成功。画面の部品は変えていないので、実物の画面の確認は実行し直していない。
 
+3 回目のレビュー（判定：指摘なし。観点ごとの担当 16 件）の後、マージの前に、最新の main（`b3ca8958` まで。#421・#423 を含む）を取り込んだ（merge。競合・手直しなし）。取り込みの後の検証：`npx biome check --error-on-warnings .` は誤り・警告なし、`npm run typecheck` は誤りなし、`npx vitest run --no-file-parallelism` は 261 ファイル・5,076 件が成功（1 件はもとからのスキップ）。
+
 ## 残したこと
 
 - 作った後続のタスクは、もとから、完了したタスクの詳細の「続きのタスク」にも並ぶ。作れなかったことは、そこには出ない。
