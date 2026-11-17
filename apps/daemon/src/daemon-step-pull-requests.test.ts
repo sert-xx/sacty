@@ -11,6 +11,8 @@ import {
   MAX_INCOMPLETE_CONTINUATIONS,
   MVP_STEPS,
   message,
+  RERUN_NOTE_HEADING,
+  RERUN_RECORD_HEADING,
   renderMessage,
   reviewedPullRequest,
   STEP_PLANS,
@@ -6492,6 +6494,30 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                   body: person.derivedFrom?.record ?? "",
                 } as Task),
               ).toBeUndefined();
+              // 再実行のタスクの、前の試行の記録（中止で閉じた PR の URL が入る）の中のリンクも、候補にしない。
+              // 人が足した補足（記録の前にある）の中のリンクは、候補にする
+              const { derivedFrom: _derivedFrom, ...plain } = person;
+              const closed = "- 作った PR（中止で閉じた）：https://github.com/acme/app/pull/9";
+              const rerun = (body: string) =>
+                ({
+                  ...plain,
+                  rerun: { taskId: id },
+                  body: `${body}\n\n${RERUN_RECORD_HEADING}\n\n${closed}`,
+                }) as Task;
+              expect(continuablePullRequest(rerun("一覧の並び順も直す"))).toBeUndefined();
+              expect(
+                continuablePullRequest(
+                  rerun(
+                    `一覧の並び順も直す\n\n${RERUN_NOTE_HEADING}\n\nhttps://github.com/acme/app/pull/12 を直す`,
+                  ),
+                ),
+              ).toEqual({ repo: "https://github.com/acme/app", number: 12 });
+              // 再実行で作ったタスクでなければ、同じ見出しの後ろも、人が書いた説明として見る
+              const { rerun: _rerun, ...written } = rerun("一覧の並び順も直す");
+              expect(continuablePullRequest(written as Task)).toEqual({
+                repo: "https://github.com/acme/app",
+                number: 9,
+              });
               // 後続のタスクは、sacty が決めた依頼にある PR も候補にしない（後続に回した指摘の記録が無ければ、候補になる文）
               const unmarked = { ...followUp, derivedFrom: { taskId: id } } as Task;
               expect(continuablePullRequest(unmarked)).toEqual({

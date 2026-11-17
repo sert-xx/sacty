@@ -620,7 +620,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   指示にこの項目を出すのは、タスクに PR のリンクがあり、実装する組み合わせ（`CONTINUABLE_PLANS`：`standard`・`skip-design`・`direct`・`bugfix`・`security-fix`）を選べるタスクだけ（`continuablePullRequest`）。
   PR から取り込んだタスク・分割の子タスクには出さない。
   人が後続に回すと決めた指摘の後続のタスク（`derivedFrom.deferredRemarkId` がある。[後続に回したい案と、人の決定](approval.md#後続に回したい案と人の決定)）にも出さず、答えの `continuePullRequest` も読まない（依頼にある PR は、元のタスクのマージ済みの PR で、引き継げない。新しいブランチと PR で直す）。
-  人が作った続きのタスク（[完了したタスクから続きのタスクを作る（派生）](#完了したタスクから続きのタスクを作る派生)）では、sacty が説明の後に足した元のタスクの記録（`derivedFrom.record`。元のタスクの PR の URL と、工程の成果の本文が入る）の中のリンクを見ない。人が書いた題と依頼の中のリンクだけを見る。
+  sacty が説明に足した記録の中のリンクは、見ない。続きのタスク（[完了したタスクから続きのタスクを作る（派生）](#完了したタスクから続きのタスクを作る派生)）の元のタスクの記録（`derivedFrom.record`）と、再実行で作ったタスクの前の試行の記録（どちらも、PR の URL と、工程の成果の本文が入る）を除いた、人が書いた題と説明（再実行の補足を含む）の中のリンクだけを見る（`rerunEditableBody`）。
   指示では、PR を参考にして別の変更をする・PR をレビューするだけなら書かないこと、指摘で直すことが具体的に決まっているなら `direct` を、セキュリティ上の問題を直すなら `security-fix` を選ぶこと、`baseBranch` を書かないことを求める。
   実装しない組み合わせの答えの `continuePullRequest` は読まない。
 - sacty は、工程を記録する前に PR を確かめる（`resolveContinuedPullRequest`）。

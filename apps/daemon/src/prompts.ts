@@ -9,7 +9,6 @@ import {
   DEFAULT_DOCUMENTS_DIR,
   DERIVE_RECORD_HEADING,
   DOCUMENT_PAGES_MAX,
-  derivedRecord,
   displayTestNames,
   ExportVia,
   effectiveSelfReviewDepth,
@@ -54,6 +53,7 @@ import {
   ReworkCause,
   type RiskAssessment,
   renderMessage,
+  rerunEditableBody,
   resumeNoteSections,
   reviewFlakyFailures,
   SCOPE_VIEWPOINT,
@@ -2329,30 +2329,18 @@ export const CONTINUABLE_PLANS: readonly StepPlan[] = [
 /**
  * オーケストレーターが引き継ぐかを決められる、タスクにある既存の PR（タスクの対象リポジトリの PR のリンクが題か内容にある）。
  * PR から取り込んだタスク（PR のレビューだけのタスクを含む）・分割の子タスク・実装する組み合わせを選べないタスクでは無い。
- * 完了したタスクの続きのタスク（PBI-384）では、元のタスクにつながるリンクを候補にしない。元のタスクの PR は、マージ済みか
- * 閉じた PR で、引き継げない（引き継ぐと判断すると、工程を決めずに止まる）。続きのタスクは、新しいブランチと PR で直す。
+ * sacty が足したものの中のリンクは、候補にしない（PBI-384）。そこにある PR は、元のタスク・前の試行の PR で、マージ済みか
+ * 閉じていて、引き継げない（引き継ぐと判断すると、工程を決めずに止まる）。
  * - 人が後続に回すと決めた指摘の後続のタスク：依頼は sacty が決めた文で、そこにある PR は元のタスクの PR。候補は無い。
- * - 人が作った続きのタスク：sacty が説明の後に足した元のタスクの記録（参考。元のタスクの PR の URL と、工程の成果の本文が
- *   入る）の中のリンクは、候補にしない。人が書いた題と依頼の中のリンクだけを見る。
+ * - 続きのタスクの元のタスクの記録・再実行のタスクの前の試行の記録（参考。PR の URL と、工程の成果の本文が入る）：
+ *   記録を除いた、人が書いた題と説明（再実行の補足を含む）の中のリンクだけを見る（rerunEditableBody）。
  */
 export function continuablePullRequest(task: Task): { repo: string; number: number } | undefined {
   if (task.source?.kind === "github_pull_request" || task.parent) return undefined;
   if (task.derivedFrom?.deferredRemarkId) return undefined;
   if (isRepoless(task) || !task.repository) return undefined;
   if (!allowedPlans(task).some((plan) => CONTINUABLE_PLANS.includes(plan))) return undefined;
-  return pullRequestInText(task.repository.url, `${task.title}\n${withoutDerivedRecord(task)}`);
-}
-
-/**
- * タスクの説明から、sacty が足した元のタスクの記録（派生で作ったタスクだけにある）を除いたもの。作成のときに記録した本文
- * そのものを除く（見出しや、文の中の文字列を探さない）。
- */
-function withoutDerivedRecord(task: Task): string {
-  const record = derivedRecord(task);
-  if (!record) return task.body;
-  if (task.body.startsWith(record)) return task.body.slice(record.length);
-  const at = task.body.indexOf(`\n\n${record}`);
-  return at < 0 ? task.body : `${task.body.slice(0, at)}${task.body.slice(at + 2 + record.length)}`;
+  return pullRequestInText(task.repository.url, `${task.title}\n${rerunEditableBody(task)}`);
 }
 
 /** オーケストレーターに、タスクにある既存の PR を引き継いで直すかを決めさせる指示。 */

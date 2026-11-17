@@ -1547,7 +1547,8 @@ It adds the original task's record (step outputs, PRs, an earlier version's fina
 
 - The original task doesn't change.
   You can create as many follow-up tasks from one task as you need.
-- A follow-up task makes its fix in a new PR. It does not take over a PR in the original task's record.
+- It does not take over a PR in the original task's record.
+  To take over an open PR and fix it, write a link to that PR in the title or the description.
 - The tasks you create are listed in the "Follow-up tasks" section, and "Follow-up of" in the properties of a follow-up task's details shows a link to the original task.
 - The ticket and the intake source (issue or PR) are not carried over (results are not returned to the ticket or issue).
 - From a security check or security fix task, you can create only a follow-up whose plan is "Security fix" or "Security check" ("Security fix" if you don't choose).
