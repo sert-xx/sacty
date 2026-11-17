@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-370
-- PR: なし
+- PR: #411
 - ブランチ: feat/pbi-370-deferral-handling
 - 関係する ADR: [後続に回すと決めた指摘の扱いを、人が指摘ごとに選ぶ](../adr/20261117-0504-choose-handling-of-deferred-findings.md)
 
