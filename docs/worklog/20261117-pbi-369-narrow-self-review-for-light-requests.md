@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-369
-- PR: なし
+- PR: #407
 - ブランチ: feat/pbi-369-self-review-cost
 - 関係する ADR: [依頼が軽いときは、自己レビューの観点を絞る](../adr/20261117-0359-narrow-self-review-for-light-requests.md)
 
@@ -100,6 +100,7 @@ ADR の「実装で決めたこと」に書いた。要点は次のとおり。
 | PR の前 | 作業履歴を足したコミット | `npm run lint`・`npm run typecheck` | 誤りなし |
 | PR の前 | 同上 | `npx vitest run --no-file-parallelism` | 253 ファイル・4,834 件が通過、1 件はスキップ（最初の 1 回は、画面のテスト 11 ファイル・85 件が落ちた。判定の無いタスクでも、深さを変える操作の部品を描いていたため。操作の部品を、軽いと判定されたタスクでだけ描くように分けて直した） |
 | PR の前 | 同上 | `npm run build` | 成功（実物の確認の前に 2 回。2 回目は、指示に「`notReviewed` には書かない」を足した後） |
+| PR の前 | main を取り込んだ先頭 | `npm run lint`・`npm run typecheck`・`npx vitest run --no-file-parallelism` | 誤りなし。254 ファイル・4,851 件が通過、1 件はスキップ |
 
 ## レビューの指摘と対応
 
