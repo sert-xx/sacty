@@ -105,18 +105,18 @@ describe("実装が終わらないための一時停止の理由（PBI-353）", 
     total: 2,
   });
 
-  it("再開すると、同じエージェントなら続きから、エージェントを変えると最初から進むことを伝える", () => {
+  it("再開すると、同じエージェントなら続きから（続けられなければ最初から）、エージェントを変えると最初から進むことを伝える", () => {
     expect(renderMessage(incomplete, "ja")).toBe(
-      "実装の工程が、範囲を実装し終える前に終わりました（11回続けて）。提出していません（PR は作っていません・更新していません）。残っていること：docs を直す / テストを足す。再開すると、同じエージェントなら、前の実行の続きから実装を続けます。工程のエージェントを変えて再開すると、最初から実行し直します。",
+      "実装の工程が、範囲を実装し終える前に終わりました（11回続けて）。提出していません（PR は作っていません・更新していません）。残っていること：docs を直す / テストを足す。再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。",
     );
     expect(renderMessage(incomplete, "en")).toBe(
-      "The implementation step ended before it finished its scope (11 times in a row). Nothing was submitted (no PR was opened or updated). What remains: docs を直す / テストを足す. Resuming with the same agent continues the implementation from where the previous run left off. If you change the agent of the step and then resume, the implementation starts over.",
+      "The implementation step ended before it finished its scope (11 times in a row). Nothing was submitted (no PR was opened or updated). What remains: docs を直す / テストを足す. Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.",
     );
     expect(renderMessage(unmapped, "ja")).toBe(
-      "実装の工程が、テストの対応していないテスト観点を残して終わりました（やり直しても、作業領域が何も変わりませんでした）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：TV-2, TV-3。再開すると、同じエージェントなら、前の実行の続きから実装を続けます。工程のエージェントを変えて再開すると、最初から実行し直します。",
+      "実装の工程が、テストの対応していないテスト観点を残して終わりました（やり直しても、作業領域が何も変わりませんでした）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：TV-2, TV-3。再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。",
     );
     expect(renderMessage(unmapped, "en")).toBe(
-      "The implementation step ended with test viewpoints that have no test mapped (redoing it changed nothing in the workspace). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: TV-2, TV-3. Resuming with the same agent continues the implementation from where the previous run left off. If you change the agent of the step and then resume, the implementation starts over.",
+      "The implementation step ended with test viewpoints that have no test mapped (redoing it changed nothing in the workspace). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: TV-2, TV-3. Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.",
     );
   });
 

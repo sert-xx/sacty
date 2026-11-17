@@ -1645,7 +1645,8 @@ When the implementation does not finish, the task proceeds as follows.
 1. A run that declared it is unfinished, or whose declaration is missing or unreadable, is not submitted. No PR is opened, and an existing PR is not updated.
    A run that declared it is complete is not submitted either if a test viewpoint has no test mapped (the viewpoints are the test viewpoints of the design, or the ones assigned by a task split).
 2. sacty makes the agent continue the implementation, passing along what remains.
-   The activity line shows how many items remain. Open "Details" to read them one by one.
+   If the agent declared what remains, the activity line shows how many items remain. Open "Details" to read them one by one.
+   When the declaration is missing or unreadable, neither the count nor "Details" appears. When a test viewpoint has no test mapped, the line shows the viewpoint IDs.
    A continuation does not start over; it goes on from the same conversation (the agent session) as the run that ended unfinished.
    The activity shows "Continued the session (the session ID) of the Implement run that ended unfinished".
    When the conversation cannot be continued, for example after you change the agent, the step runs again from the start.
@@ -1656,6 +1657,7 @@ When the implementation does not finish, the task proceeds as follows.
    When the task stopped with the declaration missing or unreadable, what remains is not shown.
    When the task stopped because a test viewpoint has no test mapped, the reason shows those viewpoints.
 5. When you resume, the implementation continues from the same conversation as the previous run.
+   When the conversation cannot be continued (its record is missing or broken, or the agent does not accept resuming it), the step runs again from the start.
    If you think the same agent will not get further, you can change the agent of the Implementation step in the resume form ([Resuming a stopped task](#resuming-a-stopped-task)).
    If you change the agent and then resume, the step runs again from the start.
 

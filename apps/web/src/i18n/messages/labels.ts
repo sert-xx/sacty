@@ -111,7 +111,7 @@ const ja = {
     child_cancelled:
       "子タスクが中止されました。再開すると中止した子タスクを除いて進め、中止すると終わっていない子タスクも中止します。",
     incomplete:
-      "実装が終わらず、PR を作成・更新していません。再開すると続きから、エージェントを変えると最初から実装します。",
+      "実装が終わらず、PR を作成・更新していません。再開すると、できれば続きから、エージェントを変えると最初から実装します。",
     unchanged: "やり直しが PR を何も変えず、提出していません。再開すると実装をやり直します。",
   } satisfies Record<PauseReason, string>,
   /** 実装の作り直しを、PR のマージで止めたときの段階（ReworkStoppedByMerge）。 */
@@ -844,7 +844,7 @@ const en: LabelMessages = {
     child_cancelled:
       "A subtask was cancelled. Resume to continue without it, or cancel to also cancel the unfinished subtasks.",
     incomplete:
-      "The implementation ended unfinished, so no PR was opened or updated. Resume to continue it, or change the agent to start over.",
+      "The implementation is unfinished; no PR was opened or updated. Resume to continue if possible, or change the agent to start over.",
     unchanged:
       "The rework changed nothing in the PR, so it was not submitted. Resume to implement again.",
   },
