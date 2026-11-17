@@ -76,14 +76,39 @@ export const IMITATED_NOTICES_MAX = 1000;
  * 字下げした行、引用の印（>）・リストの印の後ろ、文の途中に書かれたタグも数えない。
  */
 export function countImitatedNotices(text: string): number {
-  if (!text.includes("<task-notification>") && !text.includes("<system-reminder>")) return 0;
-  let count = 0;
-  for (const line of text.split("\n")) {
-    if (line.includes("```") || line.includes("~~~")) break;
-    if (/^<(task-notification|system-reminder)>/.test(line)) count++;
-    if (count >= IMITATED_NOTICES_MAX) break;
+  return scanImitatedNotices(text).count;
+}
+
+/**
+ * countImitatedNotices の数と、コードブロックの印に当たって数えるのをやめたか（fenced）。同じ発言の続きが別の出来事で届いた
+ * ときに、印より後ろを数えないために使う。行は、配列に分けずに前から順に読み、印のある行か上限に当たったら残りを読まない。
+ */
+export function scanImitatedNotices(text: string): { count: number; fenced: boolean } {
+  // 最初のコードブロックの印（``` か ~~~）の位置。その行から後ろは読まない
+  const marks = [text.indexOf("```"), text.indexOf("~~~")].filter((at) => at >= 0);
+  const firstMark = marks.length > 0 ? Math.min(...marks) : -1;
+  const fenced = firstMark >= 0;
+  if (!text.includes("<task-notification>") && !text.includes("<system-reminder>")) {
+    return { count: 0, fenced };
   }
-  return count;
+  let count = 0;
+  let start = 0;
+  while (start <= text.length) {
+    const newline = text.indexOf("\n", start);
+    const end = newline < 0 ? text.length : newline;
+    // 印のある行に来たら、やめる（印は、この行より前には無い）
+    if (fenced && firstMark < end) break;
+    if (
+      text.startsWith("<task-notification>", start) ||
+      text.startsWith("<system-reminder>", start)
+    ) {
+      count++;
+      if (count >= IMITATED_NOTICES_MAX) break;
+    }
+    if (newline < 0) break;
+    start = newline + 1;
+  }
+  return { count, fenced };
 }
 
 function nonNegInt(value: unknown): number {
@@ -239,6 +264,8 @@ export class ClaudeOutcomeReader extends OutcomeReader {
   private assistantText = "";
   /** 親の発言にあった、サブエージェントの完了の通知・システムの知らせの形の文面の数（PBI-368）。 */
   private imitated = 0;
+  /** コードブロックの印に当たった発言の id（同じ発言の続きの出来事を数えないため。直前の発言の分だけを持つ。PBI-368）。 */
+  private fencedMessageId: string | undefined;
 
   /** 親の発言にあった、通知の形の文面の数（finish の前でも、そこまでの分を返す。PBI-368）。 */
   get imitatedNotices(): number {
@@ -285,12 +312,21 @@ export class ClaudeOutcomeReader extends OutcomeReader {
       if (text) this.assistantText = text;
       // サブエージェントの発言（parent_tool_use_id を持つ）は数えない。親が、届いていない担当の結果を書いたかを見る
       if (text && (event.parent_tool_use_id === null || event.parent_tool_use_id === undefined)) {
-        // 発言の本文の全体を 1 つにつないでから数える（コードブロックが、本文の区切りをまたいでいても見分ける）
-        const whole = content
-          .map((c) => (c && typeof c === "object" && c.type === "text" ? String(c.text ?? "") : ""))
-          .filter(Boolean)
-          .join("\n");
-        this.imitated = Math.min(IMITATED_NOTICES_MAX, this.imitated + countImitatedNotices(whole));
+        // 発言の本文の全体を 1 つにつないでから数える。同じ発言（message.id）の続きが別の出来事で届いたときは、前の
+        // 出来事でコードブロックの印に当たっていれば、続きも数えない（印より後ろは、発言の終わりまで数えない）
+        const id = (event.message as { id?: unknown }).id;
+        const messageId = typeof id === "string" && id.length <= MESSAGE_ID_MAX ? id : undefined;
+        if (messageId === undefined || messageId !== this.fencedMessageId) {
+          const whole = content
+            .map((c) =>
+              c && typeof c === "object" && c.type === "text" ? String(c.text ?? "") : "",
+            )
+            .filter(Boolean)
+            .join("\n");
+          const { count, fenced } = scanImitatedNotices(whole);
+          this.imitated = Math.min(IMITATED_NOTICES_MAX, this.imitated + count);
+          this.fencedMessageId = fenced ? messageId : undefined;
+        }
       }
     }
   }

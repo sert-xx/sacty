@@ -8,6 +8,7 @@ import {
   countImitatedNotices,
   IMITATED_NOTICES_MAX,
   parseClaudeResult,
+  scanImitatedNotices,
 } from "./agents/parse.js";
 
 // エージェント（工程の親）の発言に、サブエージェントの完了の通知・システムの知らせの形の文面があったら、作業履歴に残す（PBI-368）。
@@ -114,6 +115,22 @@ describe("通知の形の文面の数え方", () => {
     expect(countImitatedNotices(`${REMINDERS}\n~~~\n引用\n~~~`)).toBe(2);
   });
 
+  it("長い発言でも、行を配列に分けずに前から読み、時間が行の数に比例する程度で終わる", () => {
+    // 短い行が 200 万行（タグあり・印なし）。行ごとに残りの全体を探し直す作りだと、終わらない
+    const long = `${ONE_LINE}\n${"a\n".repeat(2_000_000)}`;
+    const started = performance.now();
+    expect(countImitatedNotices(long)).toBe(1);
+    expect(performance.now() - started).toBeLessThan(5000);
+    // 印に当たったら、後ろは読まない
+    expect(scanImitatedNotices(`${ONE_LINE}\n\`\`\`\n${"<system-reminder>\n".repeat(10)}`)).toEqual(
+      {
+        count: 1,
+        fenced: true,
+      },
+    );
+    expect(scanImitatedNotices("タグの無い文\n~~~")).toEqual({ count: 0, fenced: true });
+  });
+
   it("数は上限で止める", () => {
     const many = "<system-reminder>\n".repeat(IMITATED_NOTICES_MAX + 50);
     expect(countImitatedNotices(many)).toBe(IMITATED_NOTICES_MAX);
@@ -155,6 +172,37 @@ describe("エージェントの出力の読み取り（Claude Code）", () => {
     );
     // 印より前の本文は数える
     expect(read([init, blocks([ONE_LINE, "```\n引用\n```"]), result("x")]).imitated).toBe(1);
+  });
+
+  it("同じ発言（message.id）が複数の出来事に分かれて届いても、前の出来事の印より後ろは数えない", () => {
+    const part = (id: string, text: string) =>
+      JSON.stringify({
+        type: "assistant",
+        session_id: "s",
+        parent_tool_use_id: null,
+        message: { id, content: [{ type: "text", text }] },
+      });
+    // 先の出来事にコードブロックの印、後の出来事に引用したタグ
+    expect(
+      read([init, part("m1", "引用：\n```"), part("m1", `${ONE_LINE}\n\`\`\``), result("x")])
+        .imitated,
+    ).toBe(0);
+    // 間に、同じ発言のツールの呼び出しの出来事（本文なし）が挟まっても同じ
+    const tool = JSON.stringify({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: { id: "m1", content: [{ type: "tool_use", id: "t", name: "Bash", input: {} }] },
+    });
+    expect(read([init, part("m1", "```"), tool, part("m1", ONE_LINE), result("x")]).imitated).toBe(
+      0,
+    );
+    // 別の発言になれば、数える
+    expect(read([init, part("m1", "```"), part("m2", ONE_LINE), result("x")]).imitated).toBe(1);
+    // 印の無い発言の続きは、数える
+    expect(
+      read([init, part("m1", "待っています。"), part("m1", ONE_LINE), result("x")]).imitated,
+    ).toBe(1);
   });
 
   it("サブエージェントの発言（parent_tool_use_id を持つ）は数えない", () => {
