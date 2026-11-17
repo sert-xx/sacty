@@ -139,9 +139,9 @@ function riskCriteriaLines(): string[] {
     "   - unknown：上げ幅を読み取れない（版の付け方が分からない、番号の版ではないもので指している、更新の前か後の版を確かめられない、版を下げている、など）",
     "   - 複数の依存を更新しているときは、いちばん大きい上げ幅を書く（1つでも major なら major。major が無く、1つでも unknown なら unknown）",
     "   - 依存を新しく足す・外すことは、版の更新ではない（1〜3 で決める）",
-    "   - 依存の版の更新そのもの（版の指定の変更と、そこから機械的に作られるファイルの変更）には、合図を付けない。脆弱性を直すための更新でも security を付けず、機械的に作られるファイルの差分が大きくても large を付けない。依存の版の更新は、上げ幅で決める：major と unknown は high。minor と patch は、安全な種類として扱う（ほかの変更が無ければ low）",
+    "   - 依存の版の更新そのもの（版の指定の変更と、そこから機械的に作られるファイルの変更）には、合図を付けない。脆弱性を直すための更新でも security を付けず、機械的に作られるファイルの差分が大きくても large を付けない。依存の版の更新は、上げ幅で決める：major は high。unknown は medium。minor と patch は、安全な種類として扱う（ほかの変更が無ければ low）",
     "   - 依存の版の更新と一緒に、ほかのコードや設定を変えているときは、その変更を 1〜3 で決め、依存の版の更新の段階と比べて、高いほうにする",
-    "sacty は、signals に合図があれば、あなたが書いた level に関わらず、合図の重さから段階を決め直します。dependencyUpdate が major・unknown なら high にします。",
+    "sacty は、signals に合図があれば、あなたが書いた level に関わらず、合図の重さから段階を決め直します。dependencyUpdate が major なら high に、unknown なら medium 以上にします。",
     "",
     "評価は、次の形式で出してください。",
     "```json",
@@ -166,7 +166,7 @@ const higher = (a: RiskLevel, b: RiskLevel): RiskLevel =>
  * 段階を決める（PBI-377）。合図と、依存の版の更新の上げ幅から決め、高いほうにする。
  * - 合図：重い合図が1つでもあれば high。軽い合図だけなら、2つ以上で high、1つなら medium（エージェントが付けた段階は使わない）。
  *   合図が無ければ、エージェントが付けた段階のまま。外した合図（`defect`）は数えない。
- * - 依存の版の更新：major と、上げ幅を読み取れないもの（unknown）は high。minor・patch・更新なしは、段階を上げない。
+ * - 依存の版の更新：major は high。上げ幅を読み取れないもの（unknown）は medium。minor・patch・更新なしは、段階を上げない。
  */
 export function riskLevelFor(input: {
   level: RiskLevel;
@@ -181,7 +181,11 @@ export function riskLevelFor(input: {
   const bySignals: RiskLevel =
     heavy > 0 || light >= 2 ? "high" : light === 1 ? "medium" : input.level;
   const byDependency: RiskLevel =
-    input.dependencyUpdate === "major" || input.dependencyUpdate === "unknown" ? "high" : "low";
+    input.dependencyUpdate === "major"
+      ? "high"
+      : input.dependencyUpdate === "unknown"
+        ? "medium"
+        : "low";
   return higher(bySignals, byDependency);
 }
 
