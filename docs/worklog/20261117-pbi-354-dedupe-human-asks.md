@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-354
-- PR: なし
+- PR: #397
 - ブランチ: feat/pbi-354-dedupe-human-asks
 - 関係する ADR: [人に確かめてほしいことを、PR のコメントと承認の画面の目立つ所に出す](../adr/20261103-2302-surface-human-asks.md)
 
