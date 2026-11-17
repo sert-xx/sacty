@@ -588,6 +588,17 @@ export function createApp(
     }
   });
 
+  // タスクの詳細で、提出の前のセルフレビューの深さを変える（PBI-369）。セルフレビューをする工程の次の実行から使う
+  app.post("/api/tasks/:id/self-review-depth", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.changeSelfReviewDepth(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // タスクの詳細で、タスクの題を変える（PBI-323）。この後に題を使うものから新しい題を使う
   app.post("/api/tasks/:id/title", async (c) => {
     const json = await readJson(c);

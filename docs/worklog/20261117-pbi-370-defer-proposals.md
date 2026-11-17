@@ -93,6 +93,12 @@
 
 出し直しの検証（先頭は、この対応のコミット）：`npx biome check --error-on-warnings .` は誤り・警告なし、`npm run typecheck` は誤りなし、`npx vitest run --no-file-parallelism` は 253 ファイル・4,866 件が成功（1 件はもとからのスキップ）。画面と PR のコメントは変えていないので、実物の確認は実行し直していない。
 
+### 2 回目のレビュー（先頭 `880d2d9f`）
+
+判定は「指摘なし」。リスク評価は「高」（合図：構造・広い範囲の変更、互換性の変更、確かめていない振る舞い）。前回の提案は、直っていると確かめられた。
+
+その後、main が進んで衝突したので（`docs/user/tasks.md`・`docs/user/tasks.en.md` の「このページの内容」の表と、先頭のコードの一覧）、main を取り込んで解消した。取り込んだ後のコードで、`npx biome check --error-on-warnings .` は誤り・警告なし、`npm run typecheck` は誤りなし、`npx vitest run --no-file-parallelism` は 256 ファイル・4,905 件が成功（1 件はもとからのスキップ）。
+
 ## 残したこと
 
 - 人が後続に回すと決めた指摘の扱いの選択（sacty の後続のタスク・GitHub の Issue・何もしない）と、プロジェクトごとの既定（次の PR）。

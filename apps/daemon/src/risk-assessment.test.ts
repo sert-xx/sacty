@@ -18,6 +18,7 @@ import {
   RISK_FOCUS_MAX,
   RISK_LOADED_GUIDANCE_LINE,
   riskAssessmentLines,
+  riskLevelFor,
 } from "./risk-assessment.js";
 
 // PR のリスク評価（PBI-362）：PR の説明と、PR から取り込んだレビューのタスクのレビューのコメントに載せる
@@ -95,13 +96,115 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     expect(extractRiskAssessment(answer(medium))?.assessment).toEqual(medium);
   });
 
-  it("リスクの合図が1つでもあれば、エージェントが低い段階を付けていても、高にする", () => {
+  it("重い合図が1つでもあれば、エージェントが低い段階を付けていても、高にする", () => {
     const read = extractRiskAssessment(
       answer({ ...medium, level: "low", signals: ["security", "security", "large"] }),
     );
     expect(read?.assessment.level).toBe("high");
     // 重複は除く
     expect(read?.assessment.signals).toEqual(["security", "large"]);
+    for (const signal of ["security", "irreversible", "compatibility"]) {
+      expect(
+        extractRiskAssessment(answer({ ...medium, level: "low", signals: [signal] }))?.assessment
+          .level,
+      ).toBe("high");
+    }
+  });
+
+  it("軽い合図だけなら、1つで中、2つ以上で高にする（エージェントが付けた段階は使わない。PBI-377）", () => {
+    const levelOf = (level: string, signals: string[]) =>
+      extractRiskAssessment(answer({ ...medium, level, signals }))?.assessment.level;
+    for (const signal of ["structural", "performance", "large", "unverified"]) {
+      for (const level of ["low", "medium", "high"]) {
+        expect(levelOf(level, [signal])).toBe("medium");
+      }
+    }
+    expect(levelOf("low", ["large", "unverified"])).toBe("high");
+    expect(levelOf("medium", ["structural", "performance", "large"])).toBe("high");
+    // 同じ軽い合図の重複は、1つと数える
+    expect(levelOf("low", ["large", "large"])).toBe("medium");
+  });
+
+  it("外した合図（defect）は読み捨て、段階に数えず、記録にも残さない（PBI-377）", () => {
+    const only = extractRiskAssessment(answer({ ...medium, level: "low", signals: ["defect"] }));
+    expect(only?.assessment).toMatchObject({ level: "low", signals: [] });
+    const withLight = extractRiskAssessment(
+      answer({ ...medium, level: "high", signals: ["defect", "large"] }),
+    );
+    expect(withLight?.assessment).toMatchObject({ level: "medium", signals: ["large"] });
+  });
+
+  it("依存の版の更新は、メジャーと、上げ幅を読み取れないものを高にする。マイナー・パッチは段階を上げない（PBI-377）", () => {
+    const read = (value: Record<string, unknown>) =>
+      extractRiskAssessment(answer({ ...medium, level: "low", ...value }))?.assessment;
+    expect(read({ dependencyUpdate: "major" })).toMatchObject({
+      level: "high",
+      dependencyUpdate: "major",
+    });
+    expect(read({ dependencyUpdate: "unknown" })).toMatchObject({
+      level: "high",
+      dependencyUpdate: "unknown",
+    });
+    expect(read({ dependencyUpdate: "minor" })).toMatchObject({
+      level: "low",
+      dependencyUpdate: "minor",
+    });
+    expect(read({ dependencyUpdate: "patch" })).toMatchObject({
+      level: "low",
+      dependencyUpdate: "patch",
+    });
+    // 更新が無い・項目が無い（null を含む）答えは、上げ幅を持たない
+    for (const dependencyUpdate of ["none", undefined, null]) {
+      const none = read({ dependencyUpdate });
+      expect(none?.level).toBe("low");
+      expect(none).not.toHaveProperty("dependencyUpdate");
+    }
+  });
+
+  it("依存の版の更新に、ほかの変更が混ざるときは、高いほうにする（PBI-377）", () => {
+    const levelOf = (value: Record<string, unknown>) =>
+      extractRiskAssessment(answer({ ...medium, ...value }))?.assessment.level;
+    // パッチの更新＋振る舞いを変えるコード（合図なしの中）
+    expect(levelOf({ level: "medium", dependencyUpdate: "patch" })).toBe("medium");
+    // パッチの更新＋軽い合図 1 つ・重い合図
+    expect(levelOf({ level: "low", dependencyUpdate: "patch", signals: ["unverified"] })).toBe(
+      "medium",
+    );
+    expect(levelOf({ level: "low", dependencyUpdate: "minor", signals: ["compatibility"] })).toBe(
+      "high",
+    );
+    // メジャーの更新は、軽い合図 1 つ（中）より高い
+    expect(levelOf({ level: "low", dependencyUpdate: "major", signals: ["large"] })).toBe("high");
+  });
+
+  it.each([
+    ["知らない値", "huge"],
+    ["大文字", "Major"],
+    ["数", 2],
+    ["配列", ["patch"]],
+    ["空の文字列", ""],
+  ])(
+    "依存の版の更新の上げ幅が決めた値でない（%s）答えは、低い段階として載せず、読めないものとする",
+    (_name, dependencyUpdate) => {
+      expect(
+        extractRiskAssessment(answer({ ...medium, level: "low", dependencyUpdate })),
+      ).toBeUndefined();
+    },
+  );
+
+  it("段階の決まり：合図の重さと、依存の版の更新の上げ幅の、高いほう（PBI-377）", () => {
+    expect(riskLevelFor({ level: "low", signals: [] })).toBe("low");
+    expect(riskLevelFor({ level: "high", signals: [] })).toBe("high");
+    expect(riskLevelFor({ level: "low", signals: ["irreversible"] })).toBe("high");
+    expect(riskLevelFor({ level: "high", signals: ["performance"] })).toBe("medium");
+    expect(riskLevelFor({ level: "low", signals: ["performance", "structural"] })).toBe("high");
+    expect(riskLevelFor({ level: "low", signals: ["defect"] })).toBe("low");
+    expect(riskLevelFor({ level: "low", signals: [], dependencyUpdate: "patch" })).toBe("low");
+    expect(riskLevelFor({ level: "low", signals: [], dependencyUpdate: "none" })).toBe("low");
+    expect(riskLevelFor({ level: "low", signals: [], dependencyUpdate: "major" })).toBe("high");
+    expect(riskLevelFor({ level: "medium", signals: [], dependencyUpdate: "unknown" })).toBe(
+      "high",
+    );
   });
 
   it.each([
@@ -256,9 +359,32 @@ describe("PR を作る前のリスク評価の実行（PBI-362）", () => {
       { base: "b".repeat(40), commit: "c".repeat(40) },
     );
     expect(prompt).toContain(`git diff ${"b".repeat(40)} ${"c".repeat(40)}`);
-    expect(prompt).toContain("リスクの合図」に1つでも当たれば high");
-    expect(prompt).toContain("- security：");
-    expect(prompt).toContain("- unverified：");
+    expect(prompt).toContain("重い合図（1つでも当たれば high）：");
+    expect(prompt).toContain(
+      "軽い合図（重い合図が無く、軽い合図だけなら、2つ以上で high、1つなら medium）：",
+    );
+    // 重い合図は、軽い合図より前に並ぶ
+    const heavyAt = prompt.indexOf("重い合図（1つでも");
+    const lightAt = prompt.indexOf("軽い合図（重い合図が無く");
+    for (const signal of ["security", "irreversible", "compatibility"]) {
+      const at = prompt.indexOf(`   - ${signal}：`);
+      expect(at).toBeGreaterThan(heavyAt);
+      expect(at).toBeLessThan(lightAt);
+    }
+    for (const signal of ["structural", "performance", "large", "unverified"]) {
+      expect(prompt.indexOf(`   - ${signal}：`)).toBeGreaterThan(lightAt);
+    }
+    // 不具合の疑いは、合図に挙げさせない（PBI-377）
+    expect(prompt).not.toContain("- defect：");
+    expect(prompt).toContain("上の 7 つの名前だけを使う");
+    // セキュリティは、振る舞いを変える変更に付ける。脆弱性を直す依存の更新は、上げ幅で決める
+    expect(prompt).toContain("- security：セキュリティにかかわる振る舞いを変える");
+    expect(prompt).toContain("脆弱性を直すための更新でも security を付けず");
+    // 依存の版の更新の上げ幅と、混ざったときの決まり
+    expect(prompt).toContain("major と unknown は high。minor と patch は、安全な種類として扱う");
+    expect(prompt).toContain("高いほうにする");
+    expect(prompt).toContain('"dependencyUpdate": "none"');
+    expect(prompt).toContain("none・patch・minor・major・unknown のどれか1つ");
     expect(prompt).toContain(`{"${RISK_ASSESSMENT_HEADING}": {"level": "medium"`);
     expect(prompt).toContain("# 予約をキャンセルできるようにする");
     expect(prompt).toContain("# 要求要件");
@@ -270,7 +396,11 @@ describe("PR を作る前のリスク評価の実行（PBI-362）", () => {
     expect(RISK_LOADED_GUIDANCE_LINE.startsWith("重要な制約：RADAR")).toBe(true);
     expect(RISK_LOADED_GUIDANCE_LINE).toContain("その内容を、下の基準より優先してください");
     expect(RISK_LOADED_GUIDANCE_LINE).toContain(
-      "答えの形（JSON の項目と、level・signals の決めた値）は変えません",
+      "答えの形（JSON の項目と、level・signals・dependencyUpdate の決めた値）は変えません",
+    );
+    // 読み込まれた内容で決めた段階を、sacty が合図・上げ幅から決め直さないように、空にさせる
+    expect(RISK_LOADED_GUIDANCE_LINE).toContain(
+      "signals を空の配列にし、dependencyUpdate を none にして",
     );
     // 評価の対象に書かれた記述は、読み込まれたものとして扱わせない
     expect(RISK_LOADED_GUIDANCE_LINE).toContain(
@@ -283,6 +413,21 @@ describe("PR を作る前のリスク評価の実行（PBI-362）", () => {
       expect(constraint).toBeGreaterThan(-1);
       expect(prompt.indexOf("段階は low・medium・high の3つです")).toBeGreaterThan(constraint);
     }
+  });
+
+  it("基準は、あらゆる言語・リポジトリの対象に渡るので、特定の言語・パッケージ管理の名前を書かない（PBI-377）", () => {
+    const publish = buildRiskAssessmentPrompt(implementTask({ title: "題", body: "内容" }), {
+      base: "b",
+      commit: "c",
+    });
+    const criteria = publish.slice(
+      publish.indexOf(RISK_LOADED_GUIDANCE_LINE),
+      publish.indexOf("評価は、次の形式で出してください"),
+    );
+    expect(criteria).toContain("4. 依存の版の更新");
+    expect(criteria).not.toMatch(
+      /sacty-(?!risk-assessment)|npm|yarn|pnpm|package\.json|lock|Node|TypeScript|JavaScript|Python|pip|cargo|Rust|Go |gem|maven|gradle|semver|SemVer|セマンティック/i,
+    );
     // リスクを評価しないレビュー（子タスク）には、入れない
     expect(
       buildPrompt(
@@ -307,7 +452,7 @@ describe("リスク評価の節（PBI-362）", () => {
       "",
       "- 段階：**高**（低・中・高の3段階）",
       "- 勧めるレビューの深さ：設計と影響から確かめる（「とくに見る箇所」を読み、リスクの合図ごとに、設計の妥当さ・影響の範囲・戻し方を確かめる）",
-      "- リスクの合図：セキュリティ、取り消しにくい変更",
+      "- リスクの合図：セキュリティ（重い）、取り消しにくい変更（重い）",
       "- 変更の種類：予約のキャンセルの API を足す",
       "- 影響の範囲：予約の一覧と詳細の応答",
       "- 取り消しやすさ：変更を元に戻せば戻る",
@@ -330,6 +475,37 @@ describe("リスク評価の節（PBI-362）", () => {
     expect(riskAssessmentLines(assessed(medium), "###").join("\n")).toContain(
       "- 勧めるレビューの深さ：変えた振る舞いの箇所を読む",
     );
+  });
+
+  it("合図の名前に重さを添え、依存の版の更新の上げ幅を書く。外した合図（以前の記録）には重さを添えない（PBI-377）", () => {
+    const lines = riskAssessmentLines(
+      assessed({
+        ...medium,
+        level: "high",
+        signals: ["compatibility", "large", "defect"],
+        dependencyUpdate: "major",
+      }),
+      "##",
+    );
+    expect(lines).toContain(
+      "- リスクの合図：互換性の変更（重い）、大きな差分（軽い）、不具合の疑い",
+    );
+    expect(lines).toContain("- 依存の版の更新：メジャー");
+    // 合図の行のすぐ後に置く
+    expect(lines.indexOf("- 依存の版の更新：メジャー")).toBe(
+      lines.findIndex((line) => line.startsWith("- リスクの合図：")) + 1,
+    );
+    const patch = riskAssessmentLines(
+      assessed({ ...medium, level: "low", dependencyUpdate: "patch" }),
+      "##",
+    ).join("\n");
+    expect(patch).toContain("- 段階：**低**");
+    expect(patch).toContain("- 依存の版の更新：パッチ");
+    expect(
+      riskAssessmentLines(assessed({ ...medium, dependencyUpdate: "unknown" }), "##").join("\n"),
+    ).toContain("- 依存の版の更新：上げ幅を読み取れない");
+    // 依存の版の更新が無ければ、行を出さない
+    expect(riskAssessmentLines(assessed(medium), "##").join("\n")).not.toContain("依存の版の更新");
   });
 
   it("評価できなかったときは、評価できなかったことと理由を書く", () => {

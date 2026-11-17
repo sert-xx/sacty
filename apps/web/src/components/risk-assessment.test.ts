@@ -40,7 +40,8 @@ describe("PR のリスク評価の欄（PBI-362）", () => {
     expect(html).toContain('data-testid="risk-level"');
     expect(html).toContain(">高<");
     expect(html).toContain("設計と影響から確かめる");
-    expect(html).toContain("セキュリティ · 確かめていない振る舞い");
+    expect(html).toContain("セキュリティ（重い） · 確かめていない振る舞い（軽い）");
+    expect(html).not.toContain("依存の版の更新");
     expect(html).toContain("認証の確認を変える");
     expect(html).toContain("すべての API");
     expect(html).toContain("元に戻せば戻る");
@@ -56,7 +57,7 @@ describe("PR のリスク評価の欄（PBI-362）", () => {
     expect(html).toContain("PR risk assessment");
     expect(html).toContain(">High<");
     expect(html).toContain("Check from the design and impact");
-    expect(html).toContain("Security · Unverified behavior");
+    expect(html).toContain("Security (heavy) · Unverified behavior (light)");
     expect(html).toContain("Assessed in the review step · Assessed commit 0123456");
   });
 
@@ -73,6 +74,33 @@ describe("PR のリスク評価の欄（PBI-362）", () => {
     expect(
       render({ via: "publish", assessment: { ...assessment, level: "medium" }, at: "x" }),
     ).toContain("変えた振る舞いの箇所を読む");
+  });
+
+  it("依存の版の更新があれば、上げ幅を出す。外した合図（以前の記録）には、重さを添えない（PBI-377）", () => {
+    const patch = render({
+      via: "review",
+      assessment: { ...assessment, level: "low", signals: [], dependencyUpdate: "patch" },
+      at: "x",
+    });
+    expect(patch).toContain('data-testid="risk-dependency-update"');
+    expect(patch).toContain("依存の版の更新");
+    expect(patch).toContain("パッチ");
+    const old = render({
+      via: "review",
+      assessment: { ...assessment, signals: ["defect", "large"], dependencyUpdate: "unknown" },
+      at: "x",
+    });
+    expect(old).toContain("不具合の疑い · 大きな差分（軽い）");
+    expect(old).toContain("上げ幅を読み取れない");
+    locale = "en";
+    const en = render({
+      via: "review",
+      assessment: { ...assessment, signals: ["defect", "large"], dependencyUpdate: "major" },
+      at: "x",
+    });
+    expect(en).toContain("Suspected defect · Large diff (light)");
+    expect(en).toContain("Dependency version update");
+    expect(en).toContain("Major");
   });
 
   it("評価できなかったときは、そのことと理由を出す", () => {
