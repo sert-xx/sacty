@@ -24,6 +24,7 @@ import { MessageError } from "./errors.js";
 import type { PullRequestFeedback } from "./github.js";
 import { PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
+import { buildOrchestratorPrompt, continuablePullRequest } from "./prompts.js";
 import { createApp } from "./server.js";
 import {
   InvalidOperationError,
@@ -6405,6 +6406,64 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               const followUp = service.list().find((t) => t.derivedFrom?.taskId === id);
               expect(followUp?.repo).toBe("https://github.com/acme/app");
               expect(handled(service, id)[0]?.payload).toMatchObject({ taskId: followUp?.id });
+              activity.close();
+            });
+
+            it("後続のタスクは、元の PR の引き継ぎの候補にしない。オーケストレーターが引き継ぐと答えても、工程を決めて進む（PBI-384）", async () => {
+              const made = await completedWithTask();
+              const { service, pulls, repos, projects, id } = made;
+              const followUpId = service.list().find((t) => t.derivedFrom?.taskId === id)?.id ?? "";
+              // 依頼には、元の（マージ済みの）PR の URL がある
+              expect(taskOf(service, followUpId).body).toContain(
+                "https://github.com/acme/app/pull/7",
+              );
+              made.activity.close();
+              // 起動し直して、オーケストレーターが「タスクにある PR を引き継ぐ」と答える
+              const activity = new SqliteActivityStore(dbPath);
+              const again = makeService(activity, [], {
+                stepPullRequests: true,
+                ci: CI,
+                draftPullRequests: true,
+                reviewTasks: true,
+                now: later,
+                pulls,
+                repos,
+                projects,
+                planner: async () => ({
+                  steps: ["implement"],
+                  plan: "direct",
+                  reason: "指摘への対応",
+                  fallback: false,
+                  testCommand: "npm test",
+                  continuePullRequest: true,
+                  costUsd: 0,
+                  estimated: false,
+                }),
+              });
+              const looked = pulls.prInfoRequests.length;
+              await again.service.runNext(followUpId);
+              const followUp = taskOf(again.service, followUpId);
+              // 引き継がず（PR を確かめにも行かない）、工程を決めずに止まることなく、工程を決める
+              expect(followUp.steps.map((s) => s.key)).toEqual(["implement"]);
+              // （この後の実装の実行は、ここでは用意していないので、工程を決めた所までを確かめる）
+              expect(
+                again.service
+                  .get(followUpId)
+                  ?.activity.map((e) => e.type)
+                  .slice(0, 3),
+              ).toEqual(["TaskCreated", "RepositoryPrepared", "StepsChosen"]);
+              expect(followUp.continuedPullRequest).toBeUndefined();
+              expect(pulls.prInfoRequests).toHaveLength(looked);
+              // オーケストレーターへの指示にも、引き継ぐかを決めさせる項目を出さない
+              expect(continuablePullRequest(followUp)).toBeUndefined();
+              expect(buildOrchestratorPrompt(followUp)).not.toContain("continuePullRequest");
+              // 同じ依頼でも、人が画面から作った続きのタスク（後続に回した指摘の記録が無い）は、今までどおり候補にする
+              const derived = { ...followUp, derivedFrom: { taskId: id } } as Task;
+              expect(continuablePullRequest(derived)).toEqual({
+                repo: "https://github.com/acme/app",
+                number: 7,
+              });
+              expect(buildOrchestratorPrompt(derived)).toContain("continuePullRequest");
               activity.close();
             });
 

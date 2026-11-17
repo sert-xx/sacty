@@ -2328,9 +2328,12 @@ export const CONTINUABLE_PLANS: readonly StepPlan[] = [
 /**
  * オーケストレーターが引き継ぐかを決められる、タスクにある既存の PR（タスクの対象リポジトリの PR のリンクが題か内容にある）。
  * PR から取り込んだタスク（PR のレビューだけのタスクを含む）・分割の子タスク・実装する組み合わせを選べないタスクでは無い。
+ * 人が後続に回すと決めた指摘の後続のタスク（PBI-384）でも無い。依頼にある PR は、元のタスクの、マージ済みの PR で、
+ * 引き継げない（引き継ぐと判断すると、工程を決めずに止まる）。後続のタスクは、新しいブランチと PR で直す。
  */
 export function continuablePullRequest(task: Task): { repo: string; number: number } | undefined {
   if (task.source?.kind === "github_pull_request" || task.parent) return undefined;
+  if (task.derivedFrom?.deferredRemarkId) return undefined;
   if (isRepoless(task) || !task.repository) return undefined;
   if (!allowedPlans(task).some((plan) => CONTINUABLE_PLANS.includes(plan))) return undefined;
   return pullRequestInText(task.repository.url, `${task.title}\n${task.body}`);

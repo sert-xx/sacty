@@ -97,6 +97,7 @@ const ja = {
     handlingIssue: "GitHub の Issue を作る",
     handledTask: "後続のタスクを開く",
     handledIssue: "Issue を開く",
+    handledTitle: (count: number) => `後続に回した指摘の扱い（${count}件）`,
     handlingPendingTask: "このタスクの完了後に、後続のタスクを作成",
     handlingPendingIssue: "Issue を作成中",
     handlingFailed: (reason: string) =>
@@ -726,6 +727,7 @@ const en: TaskMessages = {
     handlingIssue: "Create a GitHub issue",
     handledTask: "Open the follow-up task",
     handledIssue: "Open the issue",
+    handledTitle: (count: number) => `Handling of deferred findings (${count})`,
     handlingPendingTask: "A follow-up task is created after this task completes",
     handlingPendingIssue: "Creating the issue",
     handlingFailed: (reason: string) =>

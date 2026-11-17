@@ -747,7 +747,8 @@ The decisions have the following results.
   The Activity shows whether it could comment, or why not.
   It does not comment in a project with no GitHub account chosen, or in security check and security fix tasks.
 - The sacty PR review does not count a comment you decided to defer as unaddressed, and does not raise it again.
-- Decided comments appear under "Decided" below the list, with the decision and the result of the handling (a link to the follow-up task or the issue).
+- Decided comments appear under "Decided" below the list, with the decision and the handling.
+  The result of a handling that creates a follow-up task or an issue also appears under "Handling of deferred findings" in the task details.
 - You can merge the PR before deciding. If you merge without deciding, the proposals stay undecided.
 
 Choose "Handling when deferred" from the following three.
@@ -761,9 +762,12 @@ Choose "Handling when deferred" from the following three.
 - The handling chosen at first is "Handling of deferred findings" in the project settings ([Project settings](project-settings.en.md#handling-of-deferred-findings)).
 - A follow-up task is created after the PR is merged and the task completes. It is not created before the merge. When you close the PR without merging, or cancel the task, it is not created.
   The created task starts right away like any other task ([Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task)).
+  The original PR is already merged, so the follow-up task makes its fix in a new PR.
+  The link to the created follow-up task appears under "Handling of deferred findings" in the completed task's details.
 - The issue is created right away when you decide with "Defer". Its title is the first line of the comment. The body has the comment, the reason for the proposal, and a link to the original PR.
   Even for a comment written on the sacty screen, choosing to create an issue puts its text in the issue.
-- When it could not be created, the reason appears in the Activity and under "Decided". It is not retried, so create one yourself if you need it.
+- When it could not be created, the reason appears under "Handling of deferred findings" in the task details and in the Activity. It is not retried, so create one yourself if you need it.
+  The reason an issue could not be created also appears under "Decided" on the approval screen.
   When the reason says the issue may have been created (the request did not finish in time, or sacty stopped partway), check GitHub before you create one.
 - No issue is created in security check and security fix tasks, or in a project with no GitHub account chosen.
 
