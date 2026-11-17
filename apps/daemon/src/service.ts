@@ -97,6 +97,7 @@ import {
   MEMORY_SUMMARY_MAX,
   MEMORY_TITLE_MAX,
   type MemoryMove,
+  type MessageCode,
   mapFreeText,
   mergeProjectDefinitions,
   message,
@@ -625,9 +626,11 @@ export function selfReviewDepthOf(chosen: {
  * - split：子タスクに分けて進めるもの（分割の親）。子タスクは分割できず（split を選べない）、子ごとに工程を選ぶので、
  *   子の判定はここに当たらない。
  * セキュリティチェックと作業のみ（取り消しにくい外部への作業）は、セルフレビューをする工程が無いので、ここには要らない。
+ * 文言は、組み合わせごとに分ける（`selfReview.depthForcedNormal` は、セキュリティ対応のための文言。使い回さない）。
+ * 値の型は、文言のコードから引く（`selfReview.depthForcedNormal` で始まるコード）。
  */
 const NEVER_LIGHT_PLANS: Partial<
-  Record<StepPlan, "selfReview.depthForcedNormal" | "selfReview.depthForcedNormalSplit">
+  Record<StepPlan, Extract<MessageCode, `selfReview.depthForcedNormal${string}`>>
 > = {
   "security-fix": "selfReview.depthForcedNormal",
   split: "selfReview.depthForcedNormalSplit",

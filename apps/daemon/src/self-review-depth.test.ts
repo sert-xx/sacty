@@ -193,6 +193,17 @@ describe("子タスクに分ける組み合わせ（分割の親）は、軽い�
     expect(ja).not.toContain("セキュリティ対応");
   });
 
+  it("split で、理由の無い軽い答えも通常にし、理由には、括弧を付けずに、sacty が通常にしたことだけを残す", () => {
+    const forced = selfReviewDepthOf({ plan: "split", selfReviewDepth: "light" });
+    expect(forced.selfReviewDepth).toBe("normal");
+    expect(renderMessage(forced.selfReviewDepthReason ?? "", "ja")).toBe(
+      "子タスクに分けて進めるタスクは、依頼が軽いと判定しません。オーケストレーターは軽いと答えていました。",
+    );
+    expect(renderMessage(forced.selfReviewDepthReason ?? "", "en")).toBe(
+      "A task that is split into child tasks is never judged light. The Orchestrator answered light.",
+    );
+  });
+
   it("split で通常と答えたもの・答えが無いものは、そのまま", () => {
     expect(
       selfReviewDepthOf({
