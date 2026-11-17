@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/daemon/src/review-stop-notice.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts -->
+<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/daemon/src/review-stop-notice.ts、apps/daemon/src/review-dispatch-count.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts -->
 
 **日本語** | [English](intake.en.md)
 
@@ -158,6 +158,11 @@ PR にすでにあるレビュー・コメントは、エージェントが読�
 レビューの本文には、総評の後に、観点をどう見たかが1行で書かれます。
 観点ごとの担当に分けて見たときは観点の数が、担当を起動できずに1つずつ順に見たときはそのことが書かれます。
 
+レビューの最後には、sacty が、レビューしたエージェントの名前と、起動した観点ごとの担当の数を1行で書きます。
+レビューの工程に設定したエージェントが使えず、切り替え先のエージェントで実行したときは、そのことも書きます（[失敗したときの切り替え](config.md#失敗したときの切り替え)）。
+担当の数は、sacty が実行の記録から数えたものです。数えられなかったときは、確かめられなかったと書きます。
+同じ内容は、タスクの詳細のレビューの工程にも出ます。
+
 GitHub の PR から取り込んだレビュー（レビューの依頼・ラベル）では、判定のすぐ後に、PR の「リスク評価」の節が付きます。
 段階（低・中・高）、勧めるレビューの深さ、根拠、とくに見る箇所が書かれます（段階の意味は、[PR のリスク評価](tasks.md#pr-のリスク評価)と同じです）。
 評価は、指摘や判定とは別のもので、判定を変えません。
@@ -220,6 +225,16 @@ sacty は、PR へのコメントを、次のように書きます。
   - 権限がない・PR が見つからないなど、待っても変わらない失敗は、すぐ止まります。
 - モデルの混雑のような、エージェントの実行の一時的な失敗は、自動ではやり直しません。
   代わりのエージェントを書いておくと、止めずに切り替えます（[失敗したときの切り替え](config.md#失敗したときの切り替え)）。
+
+観点ごとの担当を 1 件も起動せずに書かれたレビューは、sacty が使いません。
+
+- そのレビューの判定と本文は使わず、PR にも投稿しません。
+  担当を起動するよう伝えて、レビューを自動でやり直します（3 回まで）。
+- やり直しても担当を起動しないレビューが続いたときは、タスクが止まり、PR にもコメントで知らせます。
+  理由には「担当（サブエージェント）を 1 件も起動しないレビューが、4 回続きました」と出ます。
+- 止まったら、レビューの工程のエージェントを変えるなどしてから再開します（[工程のエージェントを変える](tasks.md#工程のエージェントを変える)）。
+  再開すると、もう一度レビューします。
+- エージェントに担当を起動する手段が無いことを sacty が確かめられた実行と、担当の数を数えられなかった実行は、やり直しません。
 
 ### 信頼できない PR を取り込まない
 

@@ -123,6 +123,39 @@ describe("既定の review スキルの、段階のサブエージェント（PB
     }
   });
 
+  it("親は、SKILL.md の後に流れの資料と観点カタログを読み、担当を起動せずに自分で見て終えない（PBI-379）", () => {
+    const skill = read("skills/review/review-dispatch/SKILL.md");
+    // 役割の表のすぐ後（考え方・規則の前）に書く
+    const head = skill.slice(0, skill.indexOf("## 考え方"));
+    expect(head).toContain(
+      "親は、この SKILL.md を読み終えたら、対象を読み始める前に、流れの資料（`pr-review` なら [references/pr-review.md](references/pr-review.md)、`self-review` なら [references/self-review.md](references/self-review.md)）と観点カタログ（[references/viewpoints.md](references/viewpoints.md)）を開いて読む",
+    );
+    expect(head).toContain(
+      "親が自分で対象を読んで指摘を書き、担当を起動せずに終えるのは、このスキルに従ったレビューではない",
+    );
+    expect(head).toContain(
+      "対象が小さい、再レビューである、前回からの変更が少ない、差分がすでに手元にある、時間や費用がかかる、は、担当を起動しない理由にならない",
+    );
+    expect(head).toContain(
+      "起動する観点を減らしてよいのは、下の「観点の起動の規則」が決めた場合だけ",
+    );
+    expect(head).toContain(
+      "担当を起動しなかったことを結果に正直に書いても、起動の代わりにはならない",
+    );
+    expect(head).toContain(
+      "担当を起動しない唯一の例外は、サブエージェントを起動できない環境の「逐次モード」",
+    );
+    // 特定のエージェントの製品に寄せた記述を、この段落に書かない（既定のスキルは、どのエージェントにも渡る）
+    expect(head).not.toMatch(/Claude|Codex|Sonnet|sacty/);
+    const pr = read("skills/review/review-dispatch/references/pr-review.md");
+    expect(pr).toContain(
+      "サブエージェントを起動する手段があるのに、担当に分けずに親が自分で見る、という見方は無い（そう書いて済ませない。担当を起動してから本文を書く）",
+    );
+    expect(pr).toContain(
+      "初回も再レビューも、全観点の結果が揃い、集約を通ってから本文を書く。揃う前に（担当を起動する前にも）指摘を本文に書き始めない",
+    );
+  });
+
   it("親は段階の名前で担当を起動し、定義が無ければ段階を指定せずに起動して起動表に「親と同じ」と書く", () => {
     const skill = read("skills/review/review-dispatch/SKILL.md");
     // 起動の規則

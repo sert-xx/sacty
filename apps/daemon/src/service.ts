@@ -125,6 +125,7 @@ import {
   pullRequestCiFailure,
   questionBlocked,
   queueOverSince,
+  REVIEW_UNDISPATCHED_RETRIES,
   RejectAuditProposalInput,
   type RemarkOrigin,
   type RemarkResponseStatus,
@@ -135,6 +136,7 @@ import {
   RerunTaskInput,
   ResumeAuditInput,
   ResumeTaskInput,
+  type ReviewDispatch,
   renderMessage,
   repoKey,
   responsibleProject,
@@ -443,6 +445,7 @@ import {
   remarkReplyMarkerOf,
 } from "./remark-reply.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import { countReviewDispatch } from "./review-dispatch-count.js";
 import {
   buildResolvedNotice,
   buildStopNotice,
@@ -10885,6 +10888,68 @@ export class TaskService {
     }
 
     const latest = this.mustGet(task.id);
+    // PR のレビューは、観点ごとの担当（サブエージェント）を何件起動したかを、実行の記録から数える（PBI-379）。担当を起動する
+    // 手段があったのに 1 件も起動しなかった実行は、判定を採らず、PR にも投稿せずに、やり直させる。やり直しても続くなら止める
+    const dispatched =
+      step === "review"
+        ? await countReviewDispatch({
+            runtime: agent.runtime,
+            agentDir: this.deps.sessionLogs?.agentFilesDir(task.id, runId),
+            eventsPath: this.deps.sessionLogs?.path(task.id, runId, "events"),
+          })
+        : undefined;
+    const reviewDispatch: ReviewDispatch | undefined = dispatched && {
+      subagents: dispatched.subagents ?? null,
+      ...(agent.model ? { model: agent.model } : {}),
+      // 設定のエージェントが使えず、切り替え先で動いた実行
+      ...(chosen.agent.id !== agent.id ? { configuredAgentId: chosen.agent.id } : {}),
+    };
+    if (reviewDispatch && dispatched?.subagents === 0 && dispatched.canDispatch) {
+      const retried = latest.reviewUndispatched?.sinceResume ?? 0;
+      const retry = retried < REVIEW_UNDISPATCHED_RETRIES;
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunFailed",
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              reason: "error",
+              message: retry
+                ? message("review.notDispatched", {
+                    attempt: retried + 1,
+                    retries: REVIEW_UNDISPATCHED_RETRIES,
+                  })
+                : message("review.notDispatchedPaused", { runs: retried + 1 }),
+              usage: outcome.usage,
+              costUsd,
+              estimated,
+              ...unknownCost(executed),
+              reviewDispatch,
+            },
+          },
+        },
+        // 上限までは、止めずに実行待ちに戻す（次の実行が、担当を起動するよう指示を足してやり直す）
+        ...(retry
+          ? []
+          : [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "TaskPaused" as const,
+                  payload: {
+                    reason: this.stopReason(task.id, "error"),
+                    message: message("review.notDispatchedPaused", { runs: retried + 1 }),
+                  },
+                },
+              },
+            ]),
+      ]);
+      this.warnIfNeeded(this.mustGet(task.id));
+      return;
+    }
     // タスク分割は、子タスクの一覧を確かめて記録し、子タスクを作る（PBI-27）
     if (step === "split") {
       // 統合レビューの後に追加する修正の子タスクは、1件から作れる（PBI-31）
@@ -11120,6 +11185,8 @@ export class TaskService {
             // テストの仕組みが無いタスクで、実装がテストの仕組みを用意したときだけ、そのコマンドを使う（PBI-94）
             ...(step === "implement" && latest.noTestsReason && testCommand ? { testCommand } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
+            // どのエージェントで、観点ごとの担当を何件起動したか（PBI-379）
+            ...(reviewDispatch ? { reviewDispatch } : {}),
             ...(review?.verdict ? { reviewVerdict: review.verdict } : {}),
             // 判定が無い理由（PBI-378。レビューが付けなかったのか、付いていたのに読めなかったのか）
             ...(review?.verdictMissing ? { reviewVerdictMissing: review.verdictMissing } : {}),

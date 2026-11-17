@@ -1980,6 +1980,22 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
               </a>
             </li>
           )}
+          {/* どのエージェントで見たか・観点ごとの担当を何件起動したか（PBI-379） */}
+          {task.reviewDispatch && (
+            <li className="[overflow-wrap:anywhere]">
+              {m.reviewAgent(task.reviewDispatch.agentId, task.reviewDispatch.model)}
+              {" · "}
+              {m.reviewSubagents(task.reviewDispatch.subagents)}
+              {task.reviewDispatch.configuredAgentId && (
+                <> · {m.reviewAgentSwitched(task.reviewDispatch.configuredAgentId)}</>
+              )}
+            </li>
+          )}
+          {task.reviewUndispatched && task.reviewUndispatched.runs > 0 && (
+            <li className="[overflow-wrap:anywhere]">
+              {m.reviewUndispatched(task.reviewUndispatched.runs)}
+            </li>
+          )}
         </ul>
       )}
       {step === "design" && output && (
