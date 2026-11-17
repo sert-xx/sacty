@@ -1654,12 +1654,13 @@ export const foundTicket = (key: string, summary = `${key} の要約`): FoundTic
   url: `https://jira.example.com/browse/${key}`,
 });
 
-/** 画面が表示している（いま承認待ちの）提出回。 */
 /**
  * 待たずに送る処理（レビューが止まったことの PR への知らせと、順に処理するもの：人に確かめてほしいことの PR への知らせ・
  * 指摘への返信の投稿）が、すべて終わるまで待つ。これらは、タスクの状態が変わったときに同期で登録され、終わると登録が消える。
  * 登録が無ければ（送るものが無い）、すぐに戻る。本体に、これを待つ口は無いので、登録の表（private）を直接見る。
  * 表の名前が変わったら、ここが例外で落ちる（黙って通らない）。
+ * 順に処理する仕組み（serialTails）に、長く終わらない処理を登録するようになったら、これは期限まで待ってから落ちる。
+ * そのときは、ここで待つ対象を見直す。
  */
 export function noticesSettled(service: TaskService): Promise<void> {
   const internals = service as unknown as {
@@ -1671,6 +1672,7 @@ export function noticesSettled(service: TaskService): Promise<void> {
   });
 }
 
+/** 画面が表示している（いま承認待ちの）提出回。 */
 export const current = (svc: TaskService, id: string) => {
   const t = svc.get(id)?.task;
   const step = t?.gate?.step ?? t?.escalation?.step ?? "requirements";

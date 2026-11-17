@@ -61,3 +61,12 @@ PR を作る前のコードで実行した結果。
   - 解消が、投稿の最中の知らせを待つ行を消す → 「レビューが止まったことを…知らせる」の 4 件が落ちる。
   - 投稿の間隔を待つ行を消す → 時計を差し替えたテストが落ちる（待ちのタイマーが無い）。
   - 間隔を待った後に制限を確かめる行を消す → 同じテストが落ちる（`expected { value: 2 } to be 'limited'`）。
+
+## レビューの指摘と対応
+
+### 1 回目（判定：提案あり。リスク評価：低）
+
+- [提案] `apps/daemon/src/testing/daemon.ts` の `current` の説明と `current` の間に `noticesSettled` を挟んだため、`current` の説明が `noticesSettled` のものに見える → `current` の説明を、`current` の直前に戻した。
+- [提案] `noticesSettled` が見る表（`serialTails`）に、将来、長く終わらない処理が入ると、期限まで待ってから落ちる（今のコードでは起きない）→ 補助の説明に、そのときはここで待つ対象を見直す、という一文を足した。
+
+直した後のコードで確かめたこと：`npx vitest run --no-file-parallelism` で 4962 件が通った（1 件は以前からの skip）。`npm run lint`・`npm run typecheck`・`npx vitest run tests/docs`：通った。
