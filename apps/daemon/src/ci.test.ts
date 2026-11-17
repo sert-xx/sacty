@@ -550,7 +550,11 @@ describe("GitHub の CI/CD の状態（PBI-89）", () => {
     const first = await read(outside.fetchImpl);
     expect(first.checks).toHaveLength(1);
     expect(first.truncated).toBe(true);
-    expect(outside.calls.some((url) => url.includes("evil.example.com"))).toBe(false);
+    expect(outside.calls.map((url) => new URL(url).hostname)).toEqual([
+      "api.github.com",
+      "api.github.com",
+      "api.github.com",
+    ]);
   });
 
   it("失敗したワークフローの、失敗したジョブとログの末尾（伏せた後）を読む", async () => {

@@ -87,7 +87,15 @@ PR を作る前のコードで実行した結果。
 
 | 指摘 | 対応 |
 | --- | --- |
-| （まだ無い） | — |
+| 1回目（`811165c8`）：sacty のレビューは「指摘なし」（リスク評価の段階は中）。 | 直すものは無い。 |
+| 1回目：PR の CI のコードの検査（CodeQL）が、足したテスト（`apps/daemon/src/ci.test.ts`）の、URL に文字列が含まれるかで宛先を確かめる書き方を指摘した（`js/incomplete-url-substring-sanitization`）。 | 問い合わせた先のホスト名（`new URL(url).hostname`）がすべて `api.github.com` であることを確かめる書き方に直した。テストだけの直しで、実装は変えていない。 |
+
+### 2回目に出し直す前の検証（CodeQL の指摘を直した後のコード）
+
+- `npx vitest run --no-file-parallelism`：256 ファイル・4936 件が通った（1 件は以前からの skip）。
+- `npm run typecheck`：通った。`npx biome check --error-on-warnings apps packages docs tests scripts`：指摘なし。
+- 1回目の先頭（`811165c8`）の PR の CI：`check`（lint・型検査・テスト）は通り、コードの検査（CodeQL）だけが上の指摘で失敗していた。
+- 実装は変えていないので、実際の画面の確認はやり直していない。
 
 ## 残したこと
 
