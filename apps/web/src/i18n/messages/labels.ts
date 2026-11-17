@@ -436,7 +436,7 @@ const ja = {
     DeferralHandledIssue: (remarkId: string, url: string) =>
       `後続に回すと決めた指摘 ${remarkId} の、GitHub の Issue を作成（${url}）`,
     DeferralHandleFailed: (remarkId: string, task: boolean, reason: string) =>
-      `後続に回すと決めた指摘 ${remarkId} の、${task ? "後続のタスク" : "GitHub の Issue"}を作れなかった：${reason}`,
+      `後続に回すと決めた指摘 ${remarkId} の、${task ? "後続のタスクを" : "GitHub の Issue を"}作れなかった：${reason}`,
     DeferralDecisionsPosted: (number: number) =>
       `後続に回したい指摘の決定を、PR #${number} のコメントに記録`,
     DeferralDecisionsFailed: (number: number, reason: string) =>

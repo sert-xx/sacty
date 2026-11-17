@@ -5403,9 +5403,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               decideWith(service, id, "issue");
               await settled();
               expect(pulls.createdIssues).toHaveLength(0);
-              const failure = JSON.stringify(
-                (handled(service, id)[0]?.payload as { failure?: unknown }).failure,
-              );
+              const failed = (handled(service, id)[0]?.payload ?? {}) as { failure?: unknown };
+              const failure = JSON.stringify(failed.failure);
               expect(failure).toContain("Issues are disabled");
               expect(failure).not.toContain("ghp_secret");
               expect(notices(pulls)[0]?.body).toContain(

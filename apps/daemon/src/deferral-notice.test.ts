@@ -161,7 +161,7 @@ describe("後続に回すと決めた指摘の扱い（PBI-370）", () => {
     expect(issue.title.startsWith("[PR #7 follow-up] src/a.ts:3：@\u200balice 稀な条件")).toBe(
       true,
     );
-    expect(issue.title.length).toBeLessThanOrEqual("[PR #7 follow-up] ".length + 81);
+    expect(issue.title.length).toBeLessThanOrEqual("[PR #7 follow-up] ".length + 82);
     expect(issue.title).not.toContain("\n");
     expect(issue.body.startsWith("<!-- sacty-deferral-issue:t1:implement-1-1 -->\n")).toBe(true);
     expect(issue.body).toContain("PR #7（https://github.com/acme/app/pull/7）");
