@@ -695,3 +695,42 @@ describe("使った分の全体を読めなかった実行の費用（PBI-281）
     expect(stepCosts(taskOf(none), none).total.unknownRuns).toBe(0);
   });
 });
+
+describe("担当を起動しなかったために使わなかったレビューの実行（PBI-379）", () => {
+  it("実行の失敗と分けて「使わなかった」として出し、費用は数える。ふつうの失敗は、失敗のまま", () => {
+    seq = 0;
+    const events = [
+      created(),
+      ev({ type: "StepsChosen", payload: { steps: ["review"] } }),
+      ev({
+        type: "AgentRunStarted",
+        payload: { runId: "r1", step: "review", agentId: "a", authMode: "subscription" },
+      }),
+      ev({
+        type: "AgentRunFailed",
+        payload: {
+          runId: "r1",
+          step: "review",
+          agentId: "a",
+          reason: "error",
+          message: "x",
+          usage: usage(1000, 100),
+          costUsd: 0.4,
+          estimated: true,
+          reviewDispatch: { subagents: 0, runtime: "claude-code" },
+        },
+      }),
+      ev({
+        type: "AgentRunStarted",
+        payload: { runId: "r2", step: "review", agentId: "a", authMode: "subscription" },
+      }),
+      ev({
+        type: "AgentRunFailed",
+        payload: { runId: "r2", step: "review", agentId: "a", reason: "error", message: "boom" },
+      }),
+    ];
+    const row = stepCosts(taskOf(events), events).rows.find((r) => r.role === "review");
+    expect(row?.runs.map((r) => r.result)).toEqual(["notUsed", "failed"]);
+    expect(row?.runs[0]?.costUsd).toBe(0.4);
+  });
+});

@@ -437,4 +437,32 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
     expect(task && buildReviewBody(task)).not.toContain("観点ごとの担当");
     activity.close();
   });
+
+  it("本文の行は、モデルの名前を、PR の本文で別の働きをしない形にして書く。種類が分からなければ、モデルだけ・担当の数だけを書く", async () => {
+    const { service, activity, id } = start([out(`# 評価\n${verdict("no_findings")}`)], [3]);
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    if (!task?.reviewDispatch) throw new Error("no review dispatch");
+    const line = (dispatch: Partial<NonNullable<typeof task.reviewDispatch>>) =>
+      buildReviewBody({ ...task, reviewDispatch: { ...task.reviewDispatch, ...dispatch } as never })
+        .split("\n")
+        .at(-1);
+    // バッククォートと改行を除き、100 文字で切る
+    expect(line({ model: "m`o`d\r\nel" })).toBe(
+      "レビューしたエージェント：Claude Code（`model`）。観点ごとの担当（サブエージェント）を 3 件起動しました。",
+    );
+    expect(line({ model: "x".repeat(150) })).toContain(`（\`${"x".repeat(100)}\`）。`);
+    expect(line({ model: "x".repeat(150) })).not.toContain("x".repeat(101));
+    // 製品の名前を知らない種類：種類は書かず、モデルだけ
+    expect(line({ runtime: "other", model: "model-x" })).toBe(
+      "レビューしたエージェント：`model-x`。観点ごとの担当（サブエージェント）を 3 件起動しました。",
+    );
+    // 種類の記録が無く、モデルも無い：担当の数だけ
+    expect(line({ runtime: undefined, model: undefined })).toBe(
+      "観点ごとの担当（サブエージェント）を 3 件起動しました。",
+    );
+    // 別の回の記録は、今回の本文に書かない
+    expect(line({ round: 2 })).not.toContain("観点ごとの担当");
+    activity.close();
+  });
 });

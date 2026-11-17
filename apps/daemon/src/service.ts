@@ -10890,7 +10890,7 @@ export class TaskService {
     const latest = this.mustGet(task.id);
     // PR のレビューは、観点ごとの担当（サブエージェント）を何件起動したかを、実行の記録から数える（PBI-379）。担当を起動する
     // 手段があったのに 1 件も起動しなかった実行は、判定を採らず、PR にも投稿せずに、やり直させる。やり直しても続くなら止める
-    const dispatched =
+    const counted =
       step === "review"
         ? await countReviewDispatch({
             runtime: agent.runtime,
@@ -10898,16 +10898,22 @@ export class TaskService {
             eventsPath: this.deps.sessionLogs?.path(task.id, runId, "events"),
           })
         : undefined;
-    const reviewDispatch: ReviewDispatch | undefined = dispatched && {
-      subagents: dispatched.subagents ?? null,
+    const reviewDispatch: ReviewDispatch | undefined = counted && {
+      subagents: counted.subagents ?? null,
       runtime: agent.runtime,
       ...(agent.model ? { model: agent.model } : {}),
       // 設定のエージェントが使えず、切り替え先で動いた実行
       ...(chosen.agent.id !== agent.id ? { configuredAgentId: chosen.agent.id } : {}),
     };
-    if (reviewDispatch && dispatched?.subagents === 0 && dispatched.canDispatch) {
+    if (reviewDispatch && counted?.subagents === 0 && counted.canDispatch) {
       const retried = latest.reviewUndispatched?.sinceResume ?? 0;
       const retry = retried < REVIEW_UNDISPATCHED_RETRIES;
+      const text = retry
+        ? message("review.notDispatched", {
+            attempt: retried + 1,
+            retries: REVIEW_UNDISPATCHED_RETRIES,
+          })
+        : message("review.notDispatchedPaused", { runs: retried + 1 });
       this.append(latest, [
         {
           actor: "sacty",
@@ -10918,12 +10924,7 @@ export class TaskService {
               step,
               agentId: agent.id,
               reason: "error",
-              message: retry
-                ? message("review.notDispatched", {
-                    attempt: retried + 1,
-                    retries: REVIEW_UNDISPATCHED_RETRIES,
-                  })
-                : message("review.notDispatchedPaused", { runs: retried + 1 }),
+              message: text,
               usage: outcome.usage,
               costUsd,
               estimated,
@@ -10942,7 +10943,7 @@ export class TaskService {
                   type: "TaskPaused" as const,
                   payload: {
                     reason: this.stopReason(task.id, "error"),
-                    message: message("review.notDispatchedPaused", { runs: retried + 1 }),
+                    message: text,
                   },
                 },
               },

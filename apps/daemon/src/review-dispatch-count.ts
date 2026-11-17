@@ -8,8 +8,8 @@ import { TRUNCATED_EVENT } from "./session-logs.js";
  *
  * 数えるのは、実行の後に sacty が写した、エージェントのセッションのファイル（runs/<タスク>/<実行>/agent。PBI-66）。
  * エージェントの種類ごとに形が違う。
- * - Claude Code：担当ごとのセッションのファイル（projects/<作業ディレクトリ>/<セッション>/subagents/ の下。深さによらない）
- *   の数。起動のツールの名前には頼らない（1 件ずつ起動するツールでも、まとめて起動するツールでも、担当のセッションは
+ * - Claude Code：担当ごとのセッションのファイル（projects/<作業ディレクトリ>/<セッション>/subagents/ の下。深さによらない。
+ *   名前が `agent-<16進の ID>.jsonl` の形のものだけ）の数。起動のツールの名前には頼らない（1 件ずつ起動するツールでも、まとめて起動するツールでも、担当のセッションは
  *   この下に残る）。親のセッション（projects/<作業ディレクトリ>/<セッション>.jsonl）の中の `Agent`・`Task` の呼び出し
  *   （呼び出しの ID で重複を除く）も数え、多い方を使う
  * - Codex：rollout のファイルのうち、先頭の `session_meta` の `source` が `exec` のものが親。親の中の `spawn_agent` の
@@ -23,7 +23,7 @@ import { TRUNCATED_EVENT } from "./session-logs.js";
  * 数えられないとき（ファイルが無い・読めない・間を省いたファイルで 0 件・知らない種類のエージェント）は、subagents を
  * undefined（分からない）にする。担当の中身や質は見ない。
  *
- * エージェントの版が変わり、担当の起動が上の形で残らなくなると、親のセッションが読める限り、担当を起動した実行も 0 件と
+ * エージェントの版が変わり、担当の起動が上の形で残らなくなると（担当のセッションのファイルの名前の形が変わったときも）、親のセッションが読める限り、担当を起動した実行も 0 件と
  * 数える（手段があったと確かめられれば、やり直しになり、続けば止まる）。「分からない」にはならない。
  */
 export type ReviewDispatchCount = {
@@ -39,6 +39,9 @@ const UNKNOWN: ReviewDispatchCount = { subagents: undefined, canDispatch: false 
 const CLAUDE_DISPATCH_TOOLS = new Set(["Agent", "Task"]);
 /** Claude Code の、担当を起動する手段になるツール（まとめて起動するツールを含む）。手段があったかの確かめに使う。 */
 const CLAUDE_DISPATCH_MEANS = new Set([...CLAUDE_DISPATCH_TOOLS, "Workflow"]);
+
+/** Claude Code の、担当のセッションのファイルの名前（`agent-<16進の ID>.jsonl`）。 */
+const CLAUDE_SUBAGENT_FILE = /^agent-[0-9a-f]+\.jsonl$/;
 
 /** 実行の出力の先頭から、最初の出来事（init）を探す行数の上限。 */
 const INIT_LINES = 50;
@@ -57,12 +60,15 @@ async function eachLine(path: string, each: (line: string) => boolean | undefine
   }
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
 function parse(line: string): Record<string, unknown> | undefined {
   try {
-    const value: unknown = JSON.parse(line);
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : undefined;
+    return record(JSON.parse(line));
   } catch {
     return undefined;
   }
@@ -74,12 +80,6 @@ function parse(line: string): Record<string, unknown> | undefined {
  */
 function isTruncationMark(line: string): boolean {
   return line.includes(TRUNCATED_EVENT) && parse(line)?.type === TRUNCATED_EVENT;
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 /** dir の下の通常のファイル（シンボリックリンクは辿らない）を、dir からの相対パス（区切りは /）で返す。 */
@@ -110,14 +110,14 @@ async function countClaude(
   // 親：projects/<作業ディレクトリ>/<セッション>.jsonl
   const parents = files.filter((f) => f.split("/").length === 2 && f.endsWith(".jsonl"));
   // 担当のセッションは、<セッション>/subagents/ の下に、深さによらず数える（起動のしかたによって、置かれる深さが違う。
-  // まとめて起動するツールは subagents/workflows/<実行>/ の下に置く）。担当のセッションでない記録（journal.jsonl）は除く
+  // まとめて起動するツールは subagents/workflows/<実行>/ の下に置く）。数えるのは、担当のセッションの名前の形のファイルだけ
+  // （ほかの名前の記録は、担当として数えない）
   const children = files.filter((f) => {
     const parts = f.split("/");
     return (
       parts.length >= 4 &&
       parts[2] === "subagents" &&
-      f.endsWith(".jsonl") &&
-      parts[parts.length - 1] !== "journal.jsonl"
+      CLAUDE_SUBAGENT_FILE.test(parts[parts.length - 1] ?? "")
     );
   });
   if (parents.length === 0) return UNKNOWN;

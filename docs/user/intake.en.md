@@ -231,6 +231,7 @@ sacty does not use a review that was written without starting any per-viewpoint 
 
 - sacty does not use that review's verdict and body, and does not post it to the PR.
   It tells the agent to start the reviewers and runs the review again automatically (up to 3 times).
+  In the cost table of the task details, that run's result reads "Not used" (its cost is included in the task's cost).
 - If reviews that start no reviewer continue after the retries, the task stops, and sacty also tells the PR in a comment.
   The reason reads "4 reviews in a row did not start any per-viewpoint reviewer (subagent)".
 - When it stops, change the agent for the review step or fix the cause, then resume ([Changing a step's agent](tasks.en.md#changing-a-steps-agent)).

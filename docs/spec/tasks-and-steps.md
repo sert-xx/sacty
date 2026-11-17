@@ -1878,13 +1878,14 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   Codex の `codex exec --json` の出力には担当の起動が出ず、待機だけが出る（0.167.0 の実行のログで確かめた）ので、PR を読む人は、観点ごとのレビューが行われたかを本文のこの行で確かめる（PBI-349）。sacty は、写したセッションのファイルから数える（次の項目）。
 - 担当の起動：指示で、進める順（スキルの `SKILL.md` の後に、流れの資料 `references/pr-review.md` と観点カタログ `references/viewpoints.md` を読む。起動表を作って、スキルの起動の規則が決めた担当を全部起動する。結果が揃ってから本文を書く）と、担当を起動する前に自分で指摘・総評を書き始めないこと、対象の大小・再レビューかどうかによらず起動を省かないことを伝える（`REVIEW_DISPATCH_LINES`。エージェントの種類によらず同じ文。PBI-379）。
   - 実行の後に、sacty が、写したエージェントのセッションのファイルから、起動した担当の数を数える（`countReviewDispatch`）。
-    Claude Code は、担当ごとのセッションのファイル（`projects/<作業ディレクトリ>/<セッション>/subagents/` の下の `*.jsonl`。深さによらない。まとめて起動するツールは `subagents/workflows/` の下に置く。`journal.jsonl` は除く）の数と、親のセッション（`projects/<作業ディレクトリ>/<セッション>.jsonl`）の `Agent`・`Task` の呼び出し（呼び出しの ID で重複を除く）の数の、多い方。
+    Claude Code は、担当ごとのセッションのファイル（`projects/<作業ディレクトリ>/<セッション>/subagents/` の下の、名前が `agent-<16進の ID>.jsonl` の形のファイル。深さによらない。まとめて起動するツールは `subagents/workflows/` の下に置く。ほかの名前のファイルは数えない）の数と、親のセッション（`projects/<作業ディレクトリ>/<セッション>.jsonl`）の `Agent`・`Task` の呼び出し（呼び出しの ID で重複を除く）の数の、多い方。
     Codex は、先頭の `session_meta` の `source` が `exec` の rollout（親）の中の `spawn_agent` の呼び出し（担当の rollout は親の履歴を引き継ぐので、数えない）。
   - 数えられないとき（セッションのファイルを写していない・親のセッションが無い・上限で間を省いたファイルで 0 件・`claude-code` と `codex` のほかの種類のエージェント）は、分からないとして、そのまま進める。
     親のセッションが読めて、担当の起動が上の形で残っていない実行は、0 件と数える（エージェントの版が変わって記録の形が変わったときも）。
   - 担当を起動する手段がその実行にあったかも確かめる。Claude Code は、実行の出力の最初の出来事（`system`・`init`）の `tools` に `Agent`・`Task`・`Workflow` のどれかがあること。Codex は、親の `turn_context` に `multi_agent_version` があること。確かめられなければ、0 件でもそのまま進める（スキルの逐次モード）。
   - 数は、`AgentRunCompleted` の `reviewDispatch` に残す（`subagents`。分からなければ `null`。`runtime` はエージェントの種類、`model` は実行のモデル、`configuredAgentId` は、設定のエージェントが使えず切り替え先で動いたときの、設定のエージェント）。タスクの `reviewDispatch` に、回と実行のエージェントと合わせて持つ。
   - 手段があったのに 0 件の実行は、判定・本文を採らず、PR に投稿しない。`AgentRunFailed`（`reason` は `error`、`reviewDispatch` の `subagents` が 0、`review.notDispatched`）を記録して、止めずに実行待ちに戻す。次の実行の指示の先頭に、前の実行が担当を起動しなかったことを足す（`reviewUndispatchedLines`）。
+    この `AgentRunFailed` は、エージェントの実行は完了していて、sacty が結果を使わなかった記録。工程ごとの費用の表は、失敗と分けて「使わなかった」と出す（[作業履歴](event-log.md)）。エラーレポートの分類（`error`）と、監査のやり直しの数は、ほかの `AgentRunFailed` と同じに数える（理由の文言で見分ける）。
   - やり直しは 3 回まで（`REVIEW_UNDISPATCHED_RETRIES`）。その次も 0 件なら、`AgentRunFailed` と `TaskPaused`（`reason` は `error`、`review.notDispatchedPaused`）を記録して止める。人が再開すると、回数を数え直して、もう一度レビューする（タスクの `reviewUndispatched` の `sinceResume`。`runs` は、レビューが採られるまで数え続け、指示に出す）。
   - 担当の中身や質は確かめない。
 - 判定：エージェントに `sacty-review-verdict` の `verdict`（`changes_required`：修正が必要、`suggestions`：提案あり（マージは可）、`no_findings`：指摘なし）を付けさせる。

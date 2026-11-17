@@ -113,7 +113,7 @@ describe("PR のレビューが起動した担当の数を、実行の記録か�
       await claude([toolUse("t1", "Skill"), toolUse("t2", "Workflow"), toolUse("t3", "Workflow")]),
     ).toEqual({ subagents: 5, canDispatch: true });
     // 1 件ずつ起動した担当と合わせて数える
-    put("agent/projects/-workspace/s1/subagents/agent-z.jsonl", jsonl([said("y")]));
+    put("agent/projects/-workspace/s1/subagents/agent-f1.jsonl", jsonl([said("y")]));
     expect(await claude([toolUse("t2", "Workflow"), toolUse("t4", "Agent")])).toEqual({
       subagents: 6,
       canDispatch: true,
@@ -123,6 +123,28 @@ describe("PR のレビューが起動した担当の数を、実行の記録か�
       subagents: 6,
       canDispatch: false,
     });
+  });
+
+  it("Claude Code：担当のセッションの名前の形（agent-<16進の ID>.jsonl）でないファイルは、担当として数えない", async () => {
+    // 担当ではない内部の記録が subagents/ の下に置かれても、担当を起動していない実行を 1 件以上と数えない
+    for (const name of [
+      "agent-acompact-0123abcd.jsonl",
+      "journal.jsonl",
+      "notes.jsonl",
+      "agent-.jsonl",
+      "agent-0123abcd.jsonl.bak",
+      "xagent-0123abcd.jsonl",
+    ]) {
+      put(`agent/projects/-workspace/s1/subagents/${name}`, jsonl([said("x")]));
+    }
+    put(
+      "agent/projects/-workspace/s1/subagents/workflows/wf_a/agent-side-1.jsonl",
+      jsonl([said("x")]),
+    );
+    expect(await claude([toolUse("t1", "Bash")])).toEqual({ subagents: 0, canDispatch: true });
+    // 名前の形が合うものだけを数える
+    put("agent/projects/-workspace/s1/subagents/agent-0123abcd.jsonl", jsonl([said("x")]));
+    expect(await claude([toolUse("t1", "Bash")])).toEqual({ subagents: 1, canDispatch: true });
   });
 
   it("Claude Code：使えるツールが Workflow だけでも、担当を起動する手段があったと確かめる", async () => {
@@ -222,6 +244,40 @@ describe("PR のレビューが起動した担当の数を、実行の記録か�
     expect(await codex()).toEqual({ subagents: 0, canDispatch: true });
     rollout("parent", [meta("exec"), turn({}), call("exec_command", "c1")]);
     expect(await codex()).toEqual({ subagents: 0, canDispatch: false });
+  });
+
+  it("Codex：同じ ID の呼び出しは 1 件、ID の無い呼び出しは 1 件ずつ数える。archived_sessions の親も数える", async () => {
+    rollout("parent", [
+      meta("exec"),
+      turn(),
+      call("spawn_agent", "c1"),
+      // 同じ呼び出しが、もう一度記録されている
+      call("spawn_agent", "c1"),
+      {
+        type: "response_item",
+        payload: { type: "function_call", name: "spawn_agent", call_id: "k2" },
+      },
+      // ID の無い呼び出し
+      { type: "response_item", payload: { type: "function_call", name: "spawn_agent" } },
+      { type: "response_item", payload: { type: "function_call", name: "spawn_agent" } },
+      // 呼び出しでない記録（結果・本文）に名前があるだけでは、数えない
+      { type: "response_item", payload: { type: "function_call_output", name: "spawn_agent" } },
+      { type: "response_item", payload: { type: "message", text: 'the "spawn_agent" tool' } },
+    ]);
+    expect(await codex()).toEqual({ subagents: 4, canDispatch: true });
+    put(
+      "agent/archived_sessions/rollout-2026-01-01T00-00-00-old.jsonl",
+      jsonl([meta("exec"), turn(), call("spawn_agent", "a1")]),
+    );
+    expect(await codex()).toEqual({ subagents: 5, canDispatch: true });
+  });
+
+  it("Codex：間を省いた（上限を超えた）親の rollout で 0 件なら、分からない。1 件でも見つかれば数える", async () => {
+    const mark = { type: TRUNCATED_EVENT, droppedBytes: 10 };
+    rollout("parent", [meta("exec"), turn(), call("exec_command", "c1"), mark]);
+    expect(await codex()).toEqual({ subagents: undefined, canDispatch: false });
+    rollout("parent", [meta("exec"), turn(), call("spawn_agent", "c1"), mark]);
+    expect(await codex()).toEqual({ subagents: 1, canDispatch: true });
   });
 
   it("Codex：親の rollout が無い（担当のものしか無い・rollout が無い）なら、分からない", async () => {
