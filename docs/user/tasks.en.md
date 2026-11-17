@@ -749,7 +749,7 @@ There are three levels, and each level has a fixed suggested review depth.
 | --- | --- | --- |
 | High | At least one heavy signal applies. Or two or more light signals apply. Or a dependency version update is a major one, or its size could not be read | Check from the design and impact |
 | Medium | Exactly one light signal applies. Or no signal applies but it changes behavior (its reach is limited, reverting it undoes it, and the changed behavior has been verified) | Read where the behavior changes |
-| Low | Only safe kinds of change, such as documents, comments, formatting, tests only, or refactoring that does not change behavior. A change with only minor or patch dependency version updates is also low | A skim is enough |
+| Low | Only safe kinds of change, such as documents, comments, formatting, tests only, or refactoring that does not change behavior. A change is also low when it has only minor or patch dependency version updates, nothing else changes, and the AI judges that no signal applies | A skim is enough |
 
 The risk signals are the following seven. Some are heavy and some are light.
 
@@ -768,7 +768,7 @@ For a dependency version update (a change to the version of an external library 
 | Size | Level |
 | --- | --- |
 | Major | High |
-| Minor or patch | Low when nothing else changes (the same applies to an update that fixes a vulnerability) |
+| Minor or patch | The update alone does not raise the level. It is low when nothing else changes and the AI judges that no signal applies (the same applies to an update that fixes a vulnerability) |
 | The size could not be read | High |
 
 When other code changes together with a dependency version update, the level is the higher of that code change's level and the update's level.
@@ -787,7 +787,7 @@ Keep the following in mind about the assessment.
 - The result also appears in the "PR risk assessment" section of the task detail and in the activity.
 - A requirements or design PR does not carry a risk assessment.
 - When the project's or repository's context has a skill or rules about RADAR (the idea of varying the review depth with the risk of a change), the AI puts that content before the criteria above when it assesses (the levels stay low, medium, and high).
-- A task assessed by an earlier version may show the signal "不具合の疑い" (suspected defect). This signal does not count toward the level.
+- The signal "不具合の疑い" (suspected defect) may be shown. This signal does not count toward the level.
 - For the detailed rules of the criteria, see the [specification](../spec/risk-assessment.en.md).
 
 ### The form of the commit message
