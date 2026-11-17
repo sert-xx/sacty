@@ -1669,7 +1669,7 @@ export const RISK_SIGNAL_WEIGHT: Record<RiskSignal, "heavy" | "light" | "retired
 /**
  * PR が含む、依存の版の更新の上げ幅（PBI-377）。none：依存の版の更新が無い。major：互換性の無い変更を含みうる上げ幅。
  * minor：互換性を保つ機能の追加。patch：互換性を保つ修正だけ。unknown：上げ幅を読み取れない。複数の依存を更新するときは、
- * いちばん大きい上げ幅。major と unknown は、段階を high にする。
+ * いちばん大きい上げ幅。major は、段階を high にする。unknown は、medium 以上にする。
  */
 export const RiskDependencyUpdate = z.enum(["none", "patch", "minor", "major", "unknown"]);
 export type RiskDependencyUpdate = z.infer<typeof RiskDependencyUpdate>;

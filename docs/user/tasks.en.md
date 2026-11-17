@@ -798,8 +798,8 @@ There are three levels, and each level has a fixed suggested review depth.
 
 | Level | What kind of change | Suggested review depth |
 | --- | --- | --- |
-| High | At least one heavy signal applies. Or two or more light signals apply. Or a dependency version update is a major one, or its size could not be read | Check from the design and impact |
-| Medium | Exactly one light signal applies. Or no signal applies but it changes behavior (its reach is limited, reverting it undoes it, and the changed behavior has been verified) | Read where the behavior changes |
+| High | At least one heavy signal applies. Or two or more light signals apply. Or a dependency version update is a major one | Check from the design and impact |
+| Medium | Exactly one light signal applies. Or the size of a dependency version update could not be read. Or no signal applies but it changes behavior (its reach is limited, reverting it undoes it, and the changed behavior has been verified) | Read where the behavior changes |
 | Low | Only safe kinds of change, such as documents, comments, formatting, tests only, or refactoring that does not change behavior. A change is also low when it has only minor or patch dependency version updates, nothing else changes, and the AI judges that no signal applies | A skim is enough |
 
 The risk signals are the following seven. Some are heavy and some are light.
@@ -820,7 +820,7 @@ For a dependency version update (a change to the version of an external library 
 | --- | --- |
 | Major | High |
 | Minor or patch | The update alone does not raise the level. It is low when nothing else changes and the AI judges that no signal applies (the same applies to an update that fixes a vulnerability) |
-| The size could not be read | High |
+| The size could not be read | Medium |
 
 When other code changes together with a dependency version update, the level is the higher of that code change's level and the update's level.
 

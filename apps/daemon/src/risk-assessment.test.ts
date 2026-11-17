@@ -134,15 +134,16 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     expect(withLight?.assessment).toMatchObject({ level: "medium", signals: ["large"] });
   });
 
-  it("依存の版の更新は、メジャーと、上げ幅を読み取れないものを高にする。マイナー・パッチは段階を上げない（PBI-377）", () => {
+  it("依存の版の更新は、メジャーを高に、上げ幅を読み取れないものを中にする。マイナー・パッチは段階を上げない（PBI-377）", () => {
     const read = (value: Record<string, unknown>) =>
       extractRiskAssessment(answer({ ...medium, level: "low", ...value }))?.assessment;
     expect(read({ dependencyUpdate: "major" })).toMatchObject({
       level: "high",
       dependencyUpdate: "major",
     });
+    // 上げ幅を読み取れない更新は、中（エージェントが低を付けていても）
     expect(read({ dependencyUpdate: "unknown" })).toMatchObject({
-      level: "high",
+      level: "medium",
       dependencyUpdate: "unknown",
     });
     expect(read({ dependencyUpdate: "minor" })).toMatchObject({
@@ -173,6 +174,18 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     expect(levelOf({ level: "low", dependencyUpdate: "minor", signals: ["compatibility"] })).toBe(
       "high",
     );
+    // 上げ幅を読み取れない更新（中）に、ほかの合図があるときは、合図の決まりと比べて高いほう
+    expect(levelOf({ level: "low", dependencyUpdate: "unknown", signals: ["large"] })).toBe(
+      "medium",
+    );
+    expect(
+      levelOf({ level: "low", dependencyUpdate: "unknown", signals: ["large", "unverified"] }),
+    ).toBe("high");
+    expect(levelOf({ level: "low", dependencyUpdate: "unknown", signals: ["security"] })).toBe(
+      "high",
+    );
+    // 合図が無く、エージェントが高を付けていれば、高のまま
+    expect(levelOf({ level: "high", dependencyUpdate: "unknown" })).toBe("high");
     // メジャーの更新は、軽い合図 1 つ（中）より高い
     expect(levelOf({ level: "low", dependencyUpdate: "major", signals: ["large"] })).toBe("high");
   });
@@ -202,8 +215,9 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     expect(riskLevelFor({ level: "low", signals: [], dependencyUpdate: "patch" })).toBe("low");
     expect(riskLevelFor({ level: "low", signals: [], dependencyUpdate: "none" })).toBe("low");
     expect(riskLevelFor({ level: "low", signals: [], dependencyUpdate: "major" })).toBe("high");
+    expect(riskLevelFor({ level: "low", signals: [], dependencyUpdate: "unknown" })).toBe("medium");
     expect(riskLevelFor({ level: "medium", signals: [], dependencyUpdate: "unknown" })).toBe(
-      "high",
+      "medium",
     );
   });
 
@@ -381,7 +395,10 @@ describe("PR を作る前のリスク評価の実行（PBI-362）", () => {
     expect(prompt).toContain("- security：セキュリティにかかわる振る舞いを変える");
     expect(prompt).toContain("脆弱性を直すための更新でも security を付けず");
     // 依存の版の更新の上げ幅と、混ざったときの決まり
-    expect(prompt).toContain("major と unknown は high。minor と patch は、安全な種類として扱う");
+    expect(prompt).toContain(
+      "major は high。unknown は medium。minor と patch は、安全な種類として扱う",
+    );
+    expect(prompt).toContain("major なら high に、unknown なら medium 以上にします");
     expect(prompt).toContain("高いほうにする");
     expect(prompt).toContain('"dependencyUpdate": "none"');
     expect(prompt).toContain("none・patch・minor・major・unknown のどれか1つ");

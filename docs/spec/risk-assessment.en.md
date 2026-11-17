@@ -6,7 +6,7 @@ sacty has an AI assess the risk of a PR's content, and puts the level, the groun
 The assessment is a guide for a person deciding how deeply to review the PR.
 sacty does not skip a review, merge automatically, or change the steps because of the assessment.
 
-Related ADR: [Produce a PR risk assessment (not used to skip reviews or to merge automatically)](../adr/20261116-1632-superseded-pr-risk-assessment.md), [Decide the PR risk level by the weight of the signals and the size of a dependency version update](../adr/20261117-0433-risk-level-by-signal-weight.md)
+Related ADR: [Produce a PR risk assessment (not used to skip reviews or to merge automatically)](../adr/20261116-1632-superseded-pr-risk-assessment.md), [Decide the PR risk level by the weight of the signals and the size of a dependency version update](../adr/20261117-0433-superseded-risk-level-by-signal-weight.md), [When the size of a dependency version update cannot be read, make the PR risk level medium](../adr/20261117-0455-unknown-dependency-update-is-medium.md)
 
 ## When it is assessed
 
@@ -42,7 +42,8 @@ It compares the level from the signals with the level from the dependency versio
 | No heavy signal, and two or more light signals | High |
 | No heavy signal, and exactly one light signal | Medium |
 | No signal | The level the agent gave |
-| The size of the dependency version update is `major` or `unknown` | High |
+| The size of the dependency version update is `major` | High |
+| The size of the dependency version update is `unknown` | Medium or higher (high when the level from the signals is high) |
 | The size of the dependency version update is `minor` or `patch`, or there is no update | Not raised (the level from the signals is kept) |
 
 - When there is a signal, the level the agent gave is not used (with exactly one light signal, the level is medium even if the agent gave high).
@@ -81,7 +82,7 @@ The size is read from the versions before and after the update, following that d
 | `major` | A size that may include incompatible changes (including a size for which that dependency's versioning scheme does not promise compatibility) | High |
 | `minor` | A size that adds features while keeping compatibility | Not raised |
 | `patch` | A size with fixes only while keeping compatibility | Not raised |
-| `unknown` | The size could not be read (the versioning scheme is unclear, the version is pointed at by something other than a numbered version, the version before or after the update cannot be confirmed, the version is lowered, and so on) | High |
+| `unknown` | The size could not be read (the versioning scheme is unclear, the version is pointed at by something other than a numbered version, the version before or after the update cannot be confirmed, the version is lowered, and so on) | Medium or higher |
 | `none` | There is no dependency version update | Not raised |
 
 - When several dependencies are updated, the agent answers the largest size (`major` if any is `major`; `unknown` if none is `major` and any is `unknown`).
@@ -90,7 +91,7 @@ The size is read from the versions before and after the update, following that d
   - Even an update that fixes a vulnerability does not get `security`. Even when the mechanically generated files have a large diff, it does not get `large`.
   - A `minor` or `patch` update is treated as a safe kind. With no other change, the level is low.
 - When other code or settings change together with a dependency version update, that change is decided by the signals and the safe kinds, compared with the level of the dependency version update, and the higher one is taken.
-- The only sizes for which sacty itself raises the level are `major` and `unknown`. A change with only a `minor` or `patch` update becomes low because the agent gives no signal and answers low (sacty does not read the diff to check the size or whether there are other changes).
+- The only sizes for which sacty itself raises the level are `major` (to high) and `unknown` (to medium or higher). A change with only a `minor` or `patch` update becomes low because the agent gives no signal and answers low (sacty does not read the diff to check the size or whether there are other changes).
 
 ### Priority of loaded criteria
 
