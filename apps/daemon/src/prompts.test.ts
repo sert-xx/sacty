@@ -6625,5 +6625,8 @@ describe("指摘への対応の「人に確かめたいこと」（PBI-301）", 
     expect(prompt).toContain("元の値や文言が手元に無く作り直したとき");
     expect(prompt).toContain("指摘が求めていない範囲を変えたとき");
     expect(prompt).toContain('確かめたいことが無い対応には、"confirm" を書かないでください');
+    // 同じ確認を、複数の指摘の対応に重ねて書かせない（PBI-354）
+    expect(prompt).toContain("同じ確認を、複数の指摘の対応に重ねて書かないでください");
+    expect(prompt).toContain('いちばん関係の深い指摘の対応に、1 回だけ "confirm" として書きます');
   });
 });

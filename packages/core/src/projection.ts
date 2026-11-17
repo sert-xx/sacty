@@ -3865,22 +3865,37 @@ export function discardedAiReviews(task: Task):
  * - undecided：PR の指摘の戻し先を、ゴールガーディアンが判断できなかった（`prRework.decided` が偽）。実装をやり直しているが、
  *   指摘の意図を読み取れていないので、直した結果が意図と合うかを指摘した人が確かめる。理由はゴールガーディアンが書いた文。
  * - confirms：工程エージェントが、指摘への対応と一緒に挙げた「人に確かめたいこと」（聞き返し・推測で決めたこと）。
+ *   同じ文の確認が複数の指摘に付いていれば、1 件にまとめ、付いていた指摘を並べる（PBI-354）。同じ文かどうかは、空白
+ *   （前後の空白・改行・文の中の空白）を除いて比べる。空白のほかが 1 文字でも違う確認は、意味が同じでもまとめない
+ *   （sacty が推測で決めない）。
  * 今の提出が受けた指摘（無効にしたものを除く）についてだけ。承認待ちでなければ、どちらも無い。
  */
 export function humanAsks(task: Task): {
   undecided?: { step: StepKey; reason: string; remarkIds: string[] };
-  confirms: { remarkId: string; step: StepKey; text: string }[];
+  /** `remarkIds` は、この確認が付いていた指摘（指摘の順。1 件以上）。`text` は、その先頭の指摘に書かれていた文。 */
+  confirms: { remarkIds: string[]; step: StepKey; text: string }[];
 } {
   const gate = task.gate;
   if (task.status !== "awaiting_approval" || !gate) return { confirms: [] };
   const mine = task.remarks.filter(
     (r) => r.step === gate.step && !r.voided && r.submittedIn === gate.submission,
   );
-  const confirms = mine.flatMap((r) =>
-    r.confirm?.trim() && r.respondedIn === gate.submission
-      ? [{ remarkId: r.id, step: r.step, text: r.confirm.trim() }]
-      : [],
-  );
+  const confirms: { remarkIds: string[]; step: StepKey; text: string }[] = [];
+  const merged = new Map<string, { remarkIds: string[] }>();
+  for (const r of mine) {
+    const text = r.confirm?.trim();
+    if (!text || r.respondedIn !== gate.submission) continue;
+    // 比べるときだけ、空白をすべて除く（日本語の文は、改行の入り方で空白の有無が変わるため）。出す文は、書かれたまま
+    const key = text.replace(/\s+/gu, "");
+    const same = merged.get(key);
+    if (same) {
+      same.remarkIds.push(r.id);
+      continue;
+    }
+    const entry = { remarkIds: [r.id], step: r.step, text };
+    merged.set(key, entry);
+    confirms.push(entry);
+  }
   const rework = task.prRework;
   // 実行に失敗した・出力を読めなかったとき（理由が sacty の文言）は、指摘の読み方ではないので出さない
   const reason = typeof rework?.reason === "string" ? rework.reason.trim() : "";

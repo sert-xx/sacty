@@ -219,6 +219,9 @@ const ja = {
     ticketNoRepo:
       "プロジェクトの対象に、選べるリポジトリがありません。プロジェクトの設定を見直してください。",
     resume: "再開する",
+    /** 実装が終わらないための一時停止の、残っていることの箇条書きの見出しと、出し切れないときの注記（PBI-355）。 */
+    remainingTitle: "残っていること",
+    remainingMore: (total: number) => `ほか、全${total}件`,
     capNote: "上限に達したら、もう一度ここで決めます。",
     noteLabel: "補足（任意）",
     noteHint:
@@ -540,6 +543,8 @@ const en: PartsMessages = {
     repoKeepHint: "If you don't choose, the Orchestrator decides again.",
     ticketNoRepo: "The project has no repositories to choose from. Check the project settings.",
     resume: "Resume",
+    remainingTitle: "What remains",
+    remainingMore: (total) => `and more, ${total} in total`,
     capNote: "When the cap is reached, you decide here again.",
     noteLabel: "Additional notes (optional)",
     noteHint:

@@ -27,6 +27,7 @@ export function ResumeForm({
   usedUsd,
   capUsd,
   lastFailure,
+  remaining,
   repositories,
   repoLabel,
   repoOptional = false,
@@ -41,6 +42,11 @@ export function ResumeForm({
   usedUsd: number;
   capUsd: number;
   lastFailure?: string;
+  /**
+   * 実装が終わらないための一時停止の、残っていること（PBI-355）。理由の文（lastFailure）から分けて、1 件ずつの箇条書きで出す。
+   * total：エージェントが申告した件数（items より多ければ、「ほか、全 N 件」を出す）。
+   */
+  remaining?: { items: string[]; total: number };
   /** チケットのタスクで、リポジトリが決まっていなければ、選べる候補（PBI-52）。 */
   repositories?: string[];
   /** 前に人が選んだリポジトリ（選び直せる）。 */
@@ -87,9 +93,27 @@ export function ResumeForm({
       </h2>
       <p className="text-sm leading-6">{m.labels.pauseHelp[reason]}</p>
       {lastFailure && (
-        <p className="rounded-md bg-card px-3 py-2 font-mono text-xs leading-5 break-words whitespace-pre-wrap">
-          {lastFailure}
-        </p>
+        <div className="rounded-md bg-card px-3 py-2 font-mono text-xs leading-5 break-words">
+          <p className="whitespace-pre-wrap">{lastFailure}</p>
+          {remaining && remaining.items.length > 0 && (
+            <>
+              <p id="paused-remaining" className="pt-2 font-semibold">
+                {r.remainingTitle}
+              </p>
+              <ul aria-labelledby="paused-remaining" className="list-disc pl-5">
+                {remaining.items.map((item, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 同じ文の項目がありうる。並びは変わらない
+                  <li key={i} className="whitespace-pre-wrap">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              {remaining.total > remaining.items.length && (
+                <p className="text-muted-foreground">{r.remainingMore(remaining.total)}</p>
+              )}
+            </>
+          )}
+        </div>
       )}
       <form action={formAction} className="flex flex-wrap items-end gap-3">
         <input type="hidden" name="taskId" value={taskId} />

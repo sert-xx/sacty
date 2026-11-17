@@ -21,7 +21,7 @@ describe("人に確かめてほしいことの PR のコメント（PBI-301）",
         remarkIds: ["implement-1-1"],
         reason: "「前と言ってること」が何を指すか読み取れない",
       },
-      confirms: [{ remarkId: "implement-1-1", text: "上限の値は 31 日と推測しました" }],
+      confirms: [{ remarkIds: ["implement-1-1"], text: "上限の値は 31 日と推測しました" }],
     });
     expect(body?.startsWith(humanAskMarker(TASK, "implement", 2))).toBe(true);
     expect(body).toContain("人に確かめてほしいことがあります");
@@ -43,7 +43,7 @@ describe("人に確かめてほしいことの PR のコメント（PBI-301）",
         reason: "/sacty-input/task.md:77 の記述が読めない",
       },
       confirms: [
-        { remarkId: "implement-1-1", text: "/sacty-input/task.md:12 のとおりに直しました" },
+        { remarkIds: ["implement-1-1"], text: "/sacty-input/task.md:12 のとおりに直しました" },
       ],
     });
     expect(body).not.toContain("/sacty-input");
@@ -61,13 +61,25 @@ describe("人に確かめてほしいことの PR のコメント（PBI-301）",
     const body = buildHumanAskNotice({
       ...base,
       confirms: [
-        { remarkId: "implement-1-1", text: "一つ目" },
-        { remarkId: "implement-1-2", text: "二つ目" },
+        { remarkIds: ["implement-1-1"], text: "一つ目" },
+        { remarkIds: ["implement-1-2"], text: "二つ目" },
       ],
     });
     expect(body).toContain("指摘 implement-1-1");
     expect(body).toContain("> 二つ目");
     expect(body).not.toContain("ゴールガーディアンが判断できませんでした");
+  });
+
+  it("複数の指摘に付いていた同じ確認は、1 回だけ書き、付いていた指摘を並べる（PBI-354）", () => {
+    const body = buildHumanAskNotice({
+      ...base,
+      confirms: [
+        { remarkIds: ["implement-1-1", "implement-2-1"], text: "CI を再実行して確認してください" },
+      ],
+    });
+    expect(body).toContain("作り直しの実行が確かめたいこと（指摘 implement-1-1・implement-2-1）");
+    expect(body?.split("> CI を再実行して確認してください").length).toBe(2);
+    expect(body?.split("作り直しの実行が確かめたいこと").length).toBe(2);
   });
 
   it("目印は、タスク・工程・提出回ごとに別（同じ提出に二度書かず、別の提出には書ける。前方一致もしない）", () => {
