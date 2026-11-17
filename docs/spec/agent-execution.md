@@ -300,7 +300,9 @@
   - すべて作れたら、古い版を片付ける（`pruneOldImages`）。
     `sacty-agent`・`sacty-agent-<名前>` の `X.Y.Z` のタグのイメージを、名前ごとに新しい版から2つ残して、強制せずに消す。
     `image`・`images.*.image` が指すイメージと、ほかのタグ・ほかの名前のイメージは消さない。
-    イメージの層はビルドキャッシュにも残るので、7日より長く使っていないビルドキャッシュも消す。
+    イメージの層はビルドキャッシュにも残るので、3日（`BUILD_CACHE_MAX_UNUSED_DAYS`）より長く使っていないビルドキャッシュも `docker builder prune -f --filter until=72h` で消す（`buildCachePruneArgs`）。
+    対象は Docker 全体のビルドキャッシュで、sacty が作ったものに限らない。
+    デーモンも、使わなくなったコンテキストのイメージを片付けるときに、同じ期間で消す（[デーモンの起動と終了](daemon-lifecycle.md)の「コンテキストのイメージの作成」）。
     片付けに失敗しても、`sacty image build` は失敗にしない。
   - 元のイメージ（`BASE_IMAGE`）の既定は `node:26-bookworm-slim`。
     既定は、タグに加えて、マルチアーキのインデックスのダイジェスト（`node:26-bookworm-slim@sha256:…`）で固定する（`NODE_IMAGE` の既定も同じ）。

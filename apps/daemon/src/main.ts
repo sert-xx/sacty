@@ -11,8 +11,9 @@ import { GitHubCiStatus } from "./ci.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
 import {
+  type BuildCachePruneState,
   ContextImageBuilder,
-  removeStaleContextImages,
+  pruneContextImagesAndBuildCache,
   runDockerStreaming,
 } from "./context-images.js";
 import { ContextMcpServers } from "./context-mcp.js";
@@ -188,6 +189,8 @@ const images = new ImagePresenceChecker({
 const dockerDir =
   process.env.SACTY_DOCKER_DIR ??
   fileURLToPath(new URL("../../../packages/cli/docker", import.meta.url));
+// ビルドキャッシュの片付けが前に成功した時刻（PBI-388。成功してから一定の間隔は走らせない。起動し直すと忘れる）
+const buildCachePruneState: BuildCachePruneState = {};
 const contextImageBuilder = new ContextImageBuilder({
   // service はこの後に作る（読むときには作ってある）
   projects: () => service.contextImageProjects(),
@@ -212,10 +215,13 @@ const contextImageBuilder = new ContextImageBuilder({
   },
   // 同じ Docker を使う別の SACTY_HOME のデーモンのイメージを消さないよう、名前に SACTY_HOME から作った印を入れる
   owner: createHash("sha256").update(home).digest("hex").slice(0, 8),
-  removeStale: async (keep, prefix, signal) => {
-    const removed = await removeStaleContextImages(
+  // 使わなくなったコンテキストのイメージと、3日使っていないビルドキャッシュを消す（PBI-388）
+  removeStale: (keep, prefix, signal) =>
+    pruneContextImagesAndBuildCache({
       keep,
-      (args) => {
+      prefix,
+      signal,
+      run: (args) => {
         let stdout = "";
         return runDockerStreaming(
           args,
@@ -225,14 +231,11 @@ const contextImageBuilder = new ContextImageBuilder({
           signal,
         ).then((code) => ({ code, stdout }));
       },
-      prefix,
-    );
-    if (removed.length > 0) {
-      console.log(
-        `[daemon] 使わなくなったコンテキストのイメージを消しました：${removed.join("、")}`,
-      );
-    }
-  },
+      log: (line) => console.log(line),
+      // 消せなかったこと（失敗・打ち切り）は、警告として出す
+      warn: (line) => console.warn(line),
+      state: buildCachePruneState,
+    }),
   log: (line) => console.log(line),
 });
 const service = new TaskService({

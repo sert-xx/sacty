@@ -4,7 +4,7 @@
 - タスク: PBI-313
 - PR: #319
 - ブランチ: feat/issue-313-prune-old-images
-- 関係する ADR: [`sacty image build` の後に、古い版のイメージと使っていないビルドキャッシュを片付ける](../adr/20261106-1440-prune-old-images-after-build.md)
+- 関係する ADR: [`sacty image build` の後に、古い版のイメージと使っていないビルドキャッシュを片付ける](../adr/20261106-1440-superseded-prune-old-images-after-build.md)
 
 ## 目的
 

@@ -261,8 +261,17 @@ const SACTY_IMAGE_REPOSITORY = /^sacty-agent(-[a-z0-9._-]+)?$/;
 const VERSION_TAG = /^(\d+)\.(\d+)\.(\d+)$/;
 /** 名前ごとに残す版の数。今の版と、戻すときの1つ前の版。 */
 const KEPT_IMAGE_VERSIONS = 2;
-/** これより長く使っていないビルドキャッシュを消す。イメージを消しても、層はキャッシュに残るため。 */
-const BUILD_CACHE_MAX_UNUSED = "168h";
+/**
+ * この日数より長く使っていないビルドキャッシュを消す。イメージを消しても、層はキャッシュに残るため。
+ * `sacty image build` の片付けと、デーモンのコンテキストのイメージの片付けで同じ期間にする（PBI-388）。docker の引数も、
+ * ログの文言も、この値から作る。
+ */
+export const BUILD_CACHE_MAX_UNUSED_DAYS = 3;
+
+/** 使っていないビルドキャッシュを消す `docker` の引数。対象は Docker 全体のキャッシュ（sacty が作ったものに限らない）。 */
+export function buildCachePruneArgs(): string[] {
+  return ["builder", "prune", "-f", "--filter", `until=${BUILD_CACHE_MAX_UNUSED_DAYS * 24}h`];
+}
 
 /**
  * 消してよい古い版のイメージ（PBI-313）。listed は `repository:tag` の一覧。sacty の名前で版のタグのものを、
@@ -311,12 +320,6 @@ export async function pruneOldImages(deps: {
       (code === 0 ? removed : failed).push(image);
     }
   }
-  const cache = await deps.run([
-    "builder",
-    "prune",
-    "-f",
-    "--filter",
-    `until=${BUILD_CACHE_MAX_UNUSED}`,
-  ]);
+  const cache = await deps.run(buildCachePruneArgs());
   return { removed, failed, listFailed: list.code !== 0, cacheFailed: cache.code !== 0 };
 }

@@ -183,7 +183,20 @@ Images in `images.yaml` of context repositories ([Context composition](context.e
     It is not rebuilt automatically.
     `POST /api/projects/:id/context-images/:name/rebuild` ("Rebuild" on the screen) puts it back to `queued` (an image that has not failed is refused with `contextImage.notFailed`, and a missing one with `contextImage.notFound`).
   - After everything is built, and if the configuration could be read and every project's current definitions were read, it removes images with its own mark, `sacty-ctx-<mark>-`, other than the names of the current definitions with `docker image rm` (not forced).
-    If that does not finish within 2 minutes (`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`), it stops it and waits for the stopped docker to finish (up to `CONTEXT_IMAGE_ABANDON_MS`) before moving on.
+    This cleanup runs on every reread (at startup, when project settings are saved, and every 5 minutes), even when there is nothing to build.
+    It then removes build cache unused for more than 3 days (`BUILD_CACHE_MAX_UNUSED_DAYS`) with `docker builder prune -f --filter until=72h`, the same as the cleanup of `sacty image build` (`pruneContextImagesAndBuildCache`).
+    The build cache cleanup does not run until 6 hours (`BUILD_CACHE_PRUNE_INTERVAL_MS`) have passed since it last succeeded.
+    The time of the last success is kept in memory only (`BuildCachePruneState`), so the first cleanup after the daemon starts runs it.
+    A failure or a cut-short cleanup does not advance that time; the next cleanup tries again.
+    If the clock went back and the current time is before the last success, it treats the interval as passed and runs.
+    The build cache cleanup runs even when the image list could not be read or there is no image to remove.
+    If the cleanup of images and build cache together does not finish within 2 minutes (`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`), it stops it and waits for the stopped docker to finish (up to `CONTEXT_IMAGE_ABANDON_MS`) before moving on.
+    Even when the build cache cannot be removed (docker fails or the cleanup times out), builds and rereads continue.
+    The daemon log shows the result without interpreting it. On success: that the cleanup ran, and the last line of the docker output (also when there was nothing to remove). On failure: the docker exit code and the last line of its output (or the reason when docker could not be started).
+    While failures continue, each cleanup logs the failure line.
+    The success line goes to standard output (`console.log`); the failure and cut-short lines go out as warnings (`console.warn`).
+    While the condition for starting the whole cleanup (the configuration can be read and every project's current definitions were read) is not met, the build cache is not removed either, and nothing is logged.
+    The wording of a cut-short cleanup depends on the reason (`PRUNE_ABORT_TIMEOUT`: the time limit; `PRUNE_ABORT_STOP`: the daemon stopping) and on whether the build cache cleanup had started.
     While removing, a reread does not check which images are present; it checks after the removal finishes.
     If images get queued during the removal, it builds them after the removal finishes.
   - When the daemon stops, or a build times out, it sends `SIGTERM` to docker and, if it has not finished within 10 seconds (`DOCKER_KILL_GRACE_MS`), `SIGKILL` (`runDockerStreaming`).
@@ -205,7 +218,7 @@ Images in `images.yaml` of context repositories ([Context composition](context.e
   - Pausing or cancelling while waiting takes effect immediately, as for a task that is not running.
   - The worker drops waiting tasks from the run targets before counting concurrent runs (`runnableTaskIds`), so they do not take the slots of later tasks that can run.
 
-Code: `apps/daemon/src/context-images.ts` (`ContextImageBuilder`, `contextImageTag`, `contextImagePrefix`, `contextLanguageImage`, `runDockerStreaming`, `removeStaleContextImages`, `CONTEXT_IMAGES_REFRESH_MS`, `CONTEXT_IMAGE_LOG_MAX`, `CONTEXT_IMAGE_BUILD_TIMEOUT_MS`, `CONTEXT_IMAGES_LOAD_TIMEOUT_MS`, `CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`, `DOCKER_KILL_GRACE_MS`, `CONTEXT_IMAGE_ABANDON_MS`),
+Code: `apps/daemon/src/context-images.ts` (`ContextImageBuilder`, `contextImageTag`, `contextImagePrefix`, `contextLanguageImage`, `runDockerStreaming`, `removeStaleContextImages`, `pruneContextImagesAndBuildCache`, `BuildCachePruneState`, `BUILD_CACHE_PRUNE_INTERVAL_MS`, `PRUNE_ABORT_TIMEOUT`, `PRUNE_ABORT_STOP`, `CONTEXT_IMAGES_REFRESH_MS`, `CONTEXT_IMAGE_LOG_MAX`, `CONTEXT_IMAGE_BUILD_TIMEOUT_MS`, `CONTEXT_IMAGES_LOAD_TIMEOUT_MS`, `CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`, `DOCKER_KILL_GRACE_MS`, `CONTEXT_IMAGE_ABANDON_MS`),
 `apps/daemon/src/context.ts` (`contextImages`), `apps/daemon/src/config.ts` (`resolveImage`, `imageDefined`, `hasImage`),
 `apps/daemon/src/service.ts` (`projectImagesConfig`, `awaitingContextImages`, `runnableTaskIds`, `mayUseContextImage`, `loadContextImages`, `rebuildContextImage`, `refreshContextImages`, `CONTEXT_IMAGES_WAIT_MS`),
 `apps/daemon/src/server.ts`, `apps/daemon/src/main.ts`, `apps/daemon/src/worker.ts` (`Worker`), `packages/cli/src/up-env.ts` (`daemonEnv`),
