@@ -6825,6 +6825,42 @@ describe("後続に回したい案（PBI-370）", () => {
     expect(prompt).not.toContain("この PR で直すと決めた指摘");
   });
 
+  it("対応させる指摘が無くても、人に確認中の案は、直さないデータとして渡す。返信済みとは伝えない。長い指摘は、先頭だけを載せて、切ったことの印を付ける（PBI-383）", () => {
+    const secret = `ghp_${"c".repeat(36)}`;
+    const prompt = buildPrompt(
+      implementTask([
+        remark("implement-1-1", {
+          text: `${"長".repeat(590)}${secret}${"続".repeat(50)}`,
+          deferral: { proposedIn: 2, reason: "仕組みが要る" },
+        }),
+        remark("implement-1-2", {
+          text: "短い指摘",
+          deferral: { proposedIn: 2, reason: "範囲の外" },
+        }),
+      ]),
+      "implement",
+    );
+    expect(prompt).not.toContain("- [implement-1-1]");
+    expect(prompt).not.toContain("指摘ごとの対応を次の形式で必ず付けてください");
+    expect(prompt).toContain("--- 後続に回したい案にした指摘（この PR では直しません） ---");
+    expect(prompt).toContain(
+      "- awaitingDecision は、人間に確認中の案（まだ決まっていない）。人間が決めるまで、直さない・取り下げない（PR への返信は、sacty が扱う。自分では返信しない。返信済みかどうかを、前提にしない）",
+    );
+    expect(prompt).toContain(
+      "- truncated が true の項目は、文が長いため、先頭の 600 文字だけを載せている（続きは載せていない）",
+    );
+    const json = prompt.split("```json\n").find((b) => b.includes('"awaitingDecision"'));
+    const data = JSON.parse(json?.split("\n```")[0] ?? "{}");
+    expect(data.awaitingDecision).toHaveLength(2);
+    expect(data.awaitingDecision[0]).toMatchObject({ id: "implement-1-1", truncated: true });
+    expect(data.awaitingDecision[0].text).toHaveLength(600);
+    expect(data.awaitingDecision[1]).toEqual({ id: "implement-1-2", text: "短い指摘" });
+    // 伏せてから切る
+    expect(prompt).not.toContain(secret);
+    expect(prompt).not.toContain(secret.slice(0, 8));
+    expect(prompt).not.toContain("返信してある");
+  });
+
   it("実装のほかの工程の指示には、案の書き方を出さない", () => {
     const prompt = buildPrompt(
       implementTask([remark("design-1-1", { step: "design" })], "design"),
@@ -6967,7 +7003,7 @@ describe("後続に回したい案（PBI-370）", () => {
         reviewDeferrals: {
           deferred: [
             {
-              text: `${"長".repeat(590)}${secret}`,
+              text: `${"長".repeat(590)}${secret}${"続".repeat(50)}`,
               reason: `仕組みが要る ${secret}`,
               url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
             },
@@ -6987,6 +7023,13 @@ describe("後続に回したい案（PBI-370）", () => {
         finding: "画面から書いた指摘",
         proposal: "範囲の外",
       });
+      // 長くて先頭だけを載せた文には、切ったことの印を付け、その意味を伝える。切っていない文には付けない（PBI-383）
+      expect(data.deferredByPerson[0].finding).toHaveLength(600);
+      expect(data.deferredByPerson[0].findingTruncated).toBe(true);
+      expect(data.deferredByPerson[0]).not.toHaveProperty("proposalTruncated");
+      expect(prompt).toContain(
+        "- deferredByPerson の findingTruncated・proposalTruncated が true の項目は、文が長いため、先頭の 600 文字だけを載せている（続きは載せていない）",
+      );
       // 複数の指摘が 1 件にまとまっているときは、作者が回したいとした部分だけが対象
       expect(prompt).toContain("proposal が後続に回したいとした部分だけが対象");
       expect(prompt).not.toContain(secret);
@@ -7020,6 +7063,8 @@ describe("後続に回したい案（PBI-370）", () => {
         "理由を付けて対応しない、または、後続に回したいと返し、コードを変えていない",
       );
       expect(awaited).toContain("後続に回したい案は、人間が決めた");
+      // 切っていなければ、切ったことの印も、その説明も出さない
+      expect(awaited).not.toContain("findingTruncated");
       expect(awaited).toContain(DECIDED);
       // 案の無い判定のし直し（PBI-357）は、今までどおり
       const plain = buildPrompt(task, "review", {

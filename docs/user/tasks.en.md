@@ -1858,7 +1858,7 @@ When a rework changes nothing, the task proceeds as follows.
    - After the replies, the child task judges the same content once more. The Activity of the child task shows "started a re-review that judges the same commit again".
    - When the child task accepts the reasons and concludes with no findings, the PR is marked ready and waits for your approval (merge).
    - When findings still remain, the task becomes "Paused: the rework changed nothing". The exchange between the two AIs stops here. The same content is judged again only once.
-   - When some findings are declined and others are proposed for deferral, the rework is also submitted without stopping, and sacty replies. In this case the child task judges the same content again after you have decided all the proposals ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
+   - When some findings are declined and others are proposed for deferral, the rework is also submitted without stopping, and sacty replies. In this case the child task judges the same content again after you have decided all the proposals. The same applies when a proposal of an earlier submission is still undecided ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
    - When a finding from a person is among them, when a finding is declared as addressed or has no reason for declining it, or when the task is a security check or security fix task, the rework is not submitted and the pause below applies.
 3. Otherwise the rework is not submitted, and the task becomes "Paused: the rework changed nothing".
 4. Check the findings of the PR review (and the replies with the reasons for declining them, if any), then do one of the following.

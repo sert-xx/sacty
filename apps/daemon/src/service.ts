@@ -13330,6 +13330,9 @@ export class TaskService {
    * - 返信できる（セキュリティの組み合わせのタスクでない。GitHub のアカウントは、PR を更新できる時点で選んである）。
    * - その先頭で、まだ判定し直しを求めていない（同じ先頭には 1 回だけ。作業履歴から復元するので、デーモンの再起動・タスクの
    *   再開をまたいでも数え直さない）。
+   * 後続に回したい案は、この実行が申告したものと、前の実行が申告して持ち越したもの（提出に至らなかった実行の案。投影が、
+   * 理由を今回の対応として持ち越す。PBI-383）を、同じに数える。人がまだ決めていない案が、実装の指摘のどこかに 1 件でも
+   * あれば、"awaits_decision"（判定し直しは、人の決定を待つ）。
    */
   private declinedEveryFinding(task: Task, commit: string): false | "declined" | "awaits_decision" {
     const pr = task.pullRequest;
@@ -13354,7 +13357,8 @@ export class TaskService {
           r.repliedIn === undefined,
       );
     if (!all) return false;
-    return remarks.some((r) => r.status === "deferred") ? "awaits_decision" : "declined";
+    // 人がまだ決めていない案が 1 件でもあれば（前の提出の案・前の回の指摘の案も）、判定し直しは、その決定を待つ（PBI-383）
+    return undecidedDeferrals(task) ? "awaits_decision" : "declined";
   }
 
   /**
@@ -18984,6 +18988,13 @@ export type RemarkReplyDue = {
   continued?: true;
 };
 
+/** 実装の指摘に、人がまだ決めていない、後続に回したい案があるか（無効にした指摘は除く。PBI-370・PBI-383）。 */
+function undecidedDeferrals(task: Task): boolean {
+  return task.remarks.some(
+    (r) => r.step === "implement" && !r.voided && r.deferral && !r.deferral.decision,
+  );
+}
+
 /**
  * PR のレビュー・コメントから取り込んだ指摘への対応を、まだ PR に返信していない提出（PBI-352）。承認を待つ提出で頼まれた
  * コメント（awaitingSubmittedGitHubComments）と同じく、その工程の PR が開いていて承認待ちの間に、マージを待たずに返信する
@@ -18991,6 +19002,7 @@ export type RemarkReplyDue = {
  * 対象は、その PR のコメントから取り込んだ（origin の PR の番号が同じ）、無効でない、対応のある、まだ返信していない指摘。
  * 承認待ちの工程の指摘は、今の提出で対応したものだけ。前の工程に戻した指摘（実装の PR の指摘を、設計で直したなど）は、
  * その工程の最新の対応を、PR を更新したこの提出で返信する。1件の指摘には、1回だけ返信する。
+ * 後続に回したい案（deferred）の対応は、人がまだ決めていない間だけ返信する（人が決めた後は、返信しない。PBI-383）。
  * 引き継いだ PR（人が作った PR を直すタスク）では、実装に渡した指摘（continuedResponses）のうち、今の提出で対応を書いた、
  * まだ返信していないものも対象にする。取り込んだ指摘として返信するもの（同じコメントが元の指摘）は、重ねない。
  */
@@ -19022,6 +19034,9 @@ export function awaitingRemarkReplies(task: Task):
     r.response !== undefined &&
     r.respondedIn !== undefined &&
     r.repliedIn === undefined &&
+    // 人が決めた後の案は、返信しない（返信は「案で、人に確認中」と書くので、決定と食い違う。決定は、決定のコメントで
+    // PR に残る。返信を待っている間に人が決めたときも、ここで外れる。PBI-383）
+    !(r.status === "deferred" && r.deferral?.decision !== undefined) &&
     (r.step !== gate.step || r.respondedIn === gate.submission)
       ? [
           {
