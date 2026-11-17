@@ -1699,6 +1699,26 @@ describe("レビューの工程（PBI-19）", () => {
     expect(restarted?.earlierReviews).toBeUndefined();
   });
 
+  it("判定が無い回は、その理由を回ごとに残す。判定がある回には残さない（PBI-378）", () => {
+    const withPayload = (id: string, extra: Record<string, unknown>) => {
+      const events = run(id);
+      const completed = events[4] as Extract<ActivityEvent, { type: "AgentRunCompleted" }>;
+      completed.payload = { ...completed.payload, ...extra } as typeof completed.payload;
+      return project(events).get(id)?.reviewVerdicts;
+    };
+    expect(withPayload("m1", { reviewVerdictMissing: "absent" })).toEqual([
+      { round: 1, missing: "absent" },
+    ]);
+    expect(withPayload("m2", { reviewVerdictMissing: "invalid" })).toEqual([
+      { round: 1, missing: "invalid" },
+    ]);
+    // 理由を残す前の作業履歴
+    expect(withPayload("m3", {})).toEqual([{ round: 1 }]);
+    expect(
+      withPayload("m4", { reviewVerdict: "no_findings", reviewVerdictMissing: "absent" }),
+    ).toEqual([{ round: 1, verdict: "no_findings" }]);
+  });
+
   it("再レビューを重ねると、置き換えた前回のレビューを前々回以前のレビューとして古い順に残し、新しい5件までにする（PBI-342）", () => {
     const events = run("t8");
     const rounds = [...events];

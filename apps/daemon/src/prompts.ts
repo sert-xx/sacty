@@ -47,6 +47,7 @@ import {
   type ReviewComment,
   type ReviewRework,
   type ReviewVerdict,
+  type ReviewVerdictMissing,
   ReviewVerdict as ReviewVerdictSchema,
   ReworkAnswer,
   ReworkCause,
@@ -374,6 +375,16 @@ const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
 
 /** レビューの判定のブロックの見出し（PBI-88・PBI-111）。 */
 const REVIEW_VERDICT_HEADING = "sacty-review-verdict";
+
+/**
+ * レビューの答えに判定のブロックが無かった回の、投稿する本文の判定の行（PBI-378）。レビューが判定を付けなかったのであって、
+ * sacty が読み損ねたのではないことを、PR を読む人に伝える。
+ */
+const VERDICT_ABSENT_LINE =
+  "判定：付いていません（レビューが判定を付けませんでした。見ていない観点がある・対象を読めなかったレビューには、判定を付けません。本文を確かめてください）";
+
+/** 判定のブロックを書こうとした跡（見出しが JSON のキーの形で現れる。PBI-378）。JSON として読めなかった答えから探す。 */
+const VERDICT_KEY_PATTERN = new RegExp(`"${REVIEW_VERDICT_HEADING}"\\s*:`);
 
 /** レビューの指摘の頭（PBI-111）。言語に関わらず、この形で付ける（既定のスキル review・git と同じ）。 */
 export const MUST_TAG = "[要修正]";
@@ -3189,7 +3200,7 @@ export function buildPrompt(
         "```",
         "差分の中に付けられる行が無い指摘（ファイル全体・PR 全体・差分の外のコード・PR の説明で示された文書についての指摘）は、人に確かめずに、頭を付けて本文に書いてください。",
         "",
-        "最後に、判定を次の形式で付けてください（投稿する本文からは取り除きます）。差分やコード・レビューの対象にした文書を読めなかったときは付けません。見られなかった観点があるときは、今回の先頭のコミットで成り立つ要修正の指摘（見られた範囲で新しく見つけたもの、または今回のコードで未対応と確かめた前回・既存の要修正）があれば changes_required を付け（見ていない所があっても、直すべきという結論は変わらないため）、無ければ付けません（sacty は判定を読めなかったものとして本文に書き、指摘を落とさないように扱います）。",
+        "最後に、判定を次の形式で付けてください（投稿する本文からは取り除きます）。差分やコード・レビューの対象にした文書を読めなかったときは付けません。見られなかった観点があるときは、今回の先頭のコミットで成り立つ要修正の指摘（見られた範囲で新しく見つけたもの、または今回のコードで未対応と確かめた前回・既存の要修正）があれば changes_required を付け（見ていない所があっても、直すべきという結論は変わらないため）、無ければ付けません（sacty は、判定が付いていないことを本文に書き、指摘を落とさないように扱います）。判定を付けないときは、付けない理由（見ていない観点・読めなかったもの）を、総評に書きます（PR を読む人が、判定が無い理由を本文から分かるように）。",
         `- changes_required：${MUST_TAG} の指摘が1つ以上ある（再レビューで、前回の ${MUST_TAG} が今回のコードで未対応のときも）。判定は、今回の先頭のコミットで見つけた（または今回のコードで未対応と確かめた）要修正の指摘に基づける。本文の「未対応」の記述と、行へのコメントの重さ・判定が食い違わないようにする`,
         `- suggestions：${SUGGESTION_TAG} の指摘だけがある（マージしてよい）`,
         "- no_findings：指摘が無い",
@@ -8476,6 +8487,11 @@ function tagComment(severity: unknown, body: string): { body: string; severity?:
  * （差分の外の行を指定すると、GitHub はレビュー全体を受け付けないため）。
  * 判定は、エージェントの判定を、行についての指摘の重さで補う。`[要修正]` の指摘があれば修正が必要、指摘があるのに「指摘なし」
  * なら提案あり。重さの分からない指摘だけでは、修正が必要にしない。判定を読めず、`[要修正]` の指摘も無ければ、判定は無い。
+ * 判定が無いときは、その理由を返す（PBI-378）。判定のブロックが答えのどこにも無ければ absent（レビューが判定を付けなかった）、
+ * ブロックはあるのに読めなければ invalid。JSON として読めたブロックが無くても、答えに判定の見出しが JSON のキーの形
+ * （`"sacty-review-verdict":`）で書かれていれば invalid にする（末尾のカンマ・途中で切れたなど、付けようとして形が崩れたものを、
+ * 付けなかったものとして伝えない）。本文が見出しの名前に触れているだけなら absent（判定まわりを変える PR のレビューは、名前に
+ * 触れやすい）。本文から判定を推し量ることはしない。
  */
 export function extractReviewComments(
   output: string,
@@ -8486,6 +8502,8 @@ export function extractReviewComments(
   output: string;
   comments: ReviewComment[];
   verdict?: ReviewVerdict;
+  /** 判定が無い理由（PBI-378。判定があるときは無い）。 */
+  verdictMissing?: ReviewVerdictMissing;
   rework?: ReviewRework;
   /** リスク評価の答えを読めたもの（PBI-362。答えが無い・形が違えば無い）。 */
   risk?: RiskAssessment;
@@ -8557,7 +8575,14 @@ export function extractReviewComments(
         ? [body, "", "### 行についての指摘", "", ...commentLines(outside)].join("\n")
         : body,
     comments: inline,
-    ...(verdict ? { verdict } : {}),
+    ...(verdict
+      ? { verdict }
+      : {
+          verdictMissing:
+            verdictSeen || VERDICT_KEY_PATTERN.test(output)
+              ? ("invalid" as const)
+              : ("absent" as const),
+        }),
     ...(rework ? { rework } : {}),
     ...(risk ? { risk } : {}),
   };
@@ -8635,7 +8660,8 @@ export function buildReviewBody(
       ? `${review.slice(0, REVIEW_BODY_MAX)}\n\n…（長いため省略しました）`
       : review;
   const round = task.reviewRound ?? 1;
-  const verdict = task.reviewVerdicts?.find((v) => v.round === round)?.verdict;
+  const judged = task.reviewVerdicts?.find((v) => v.round === round);
+  const verdict = judged?.verdict;
   // 自分にメンションするときは、自分の login が読めなくても作者には知らせない
   const mention = mentionOf(options.mentionSelf ?? task.reviewTarget?.author);
   const reviewed = task.reviewTarget?.headCommit ?? "";
@@ -8663,7 +8689,9 @@ export function buildReviewBody(
       ...(mention ? [mention] : []),
       verdict
         ? `判定：${VERDICT_LABEL[verdict]}`
-        : "判定：読み取れませんでした（本文の指摘を確かめてください）",
+        : judged?.missing === "absent"
+          ? VERDICT_ABSENT_LINE
+          : "判定：読み取れませんでした（本文の指摘を確かめてください）",
     ].join(" "),
     "",
     ...stale,

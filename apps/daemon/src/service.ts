@@ -3206,7 +3206,7 @@ export class TaskService {
 
   /**
    * この PR をレビューした sacty のタスクの回と、そのタスクが投稿に使うアカウント（PBI-88）。この PR を参照する sacty のタスクの、
-   * 指摘のある回（修正が必要・提案あり。判定を読めなかった回も）は、元のタスクへの PR の指摘として取り込む（allowed。PBI-145）。
+   * 指摘のある回（修正が必要・提案あり。判定が無い回も。レビューが判定を付けなかった回と、判定を読めなかった回）は、元のタスクへの PR の指摘として取り込む（allowed。PBI-145）。
    * 取り込みの経路（レビュー用のラベル・レビューの依頼・手動で作ったタスク）は問わない（どれも人が求めたレビュー）。
    * 指摘の無い回・判定の記録が無い回は、アカウントが元のタスクと違っても除く。
    */
@@ -3225,7 +3225,7 @@ export class TaskService {
           key: sactyReviewKey(t.id, round),
           account,
           // 指摘のある回（修正が必要・提案あり）は、元のタスクに対応させるために取り込む。提案だけの回も取り込む（繰り返しの
-          // 費用は予算で止める。PBI-145）。指摘の無い回は取り込まない。判定を読めなければ、指摘を落とさないように取り込む（PBI-111）
+          // 費用は予算で止める。PBI-145）。指摘の無い回は取り込まない。判定が無ければ（付けなかった・読めなかった）、指摘を落とさないように取り込む（PBI-111・PBI-378）
           allowed: verdict !== undefined && verdict.verdict !== "no_findings",
         };
       });
@@ -11082,6 +11082,8 @@ export class TaskService {
             ...(step === "implement" && latest.noTestsReason && testCommand ? { testCommand } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
             ...(review?.verdict ? { reviewVerdict: review.verdict } : {}),
+            // 判定が無い理由（PBI-378。レビューが付けなかったのか、付いていたのに読めなかったのか）
+            ...(review?.verdictMissing ? { reviewVerdictMissing: review.verdictMissing } : {}),
             ...(review?.rework ? { reviewRework: review.rework } : {}),
             ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
             ...(documentPages && documentPages.pages.length > 0

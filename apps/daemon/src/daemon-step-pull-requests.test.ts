@@ -6232,6 +6232,33 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it("子タスクのレビューが判定を付けなかった回は、その理由を作業履歴に残し、PR に「判定が付いていない」と投稿して、指摘なしとして扱わない（PBI-378）", async () => {
+      const pulls = new FakePulls();
+      const made = await start(
+        [out("# 要求要件 v1"), out("# 評価\n\n観点ごとの担当は起動していません。\n\n指摘：なし。")],
+        { pulls, reviewTasks: true },
+      );
+      const { activity, service, id } = made;
+      const childId = childOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+      await runReview(service, childId);
+      const completed = service
+        .get(childId)
+        ?.activity.findLast((e) => e.type === "AgentRunCompleted");
+      expect(completed?.payload).toMatchObject({ step: "review", reviewVerdictMissing: "absent" });
+      expect(completed?.payload).not.toHaveProperty("reviewVerdict");
+      expect(taskOf(service, childId).reviewVerdicts).toEqual([{ round: 1, missing: "absent" }]);
+      expect(pulls.reviews[0]?.body).toContain(
+        "判定：付いていません（レビューが判定を付けませんでした。",
+      );
+      expect(pulls.reviews[0]?.body).not.toContain("判定：指摘なし");
+      // 指摘を落とさないように、親の PR の指摘として届ける（判定を読めなかった回と同じ扱い）
+      pulls.feedbackBy[7] = [posted(pulls, 0)];
+      await service.checkPullRequests();
+      expect(taskOf(service, id).remarks.at(-1)?.source).toBe("sacty_review");
+      activity.close();
+    });
+
     it("子タスクの指摘を親が直して PR を更新したら、子タスクが最新のコミットを再レビューし、指摘なしになったら繰り返さずに人の承認を待つ（受け入れ条件 2・3）", async () => {
       const pulls = new FakePulls();
       const made = await start(
@@ -6403,7 +6430,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           expect(pulls.feedbackSactyReviews.at(-1), c.name).toEqual([reviewId]);
           expect(task.importedFeedback, c.name).toEqual(["review:50"]);
           expect(taskOf(service, reviewId).reviewVerdicts, c.name).toEqual([
-            { round: 1, ...(c.verdict ? { verdict: c.verdict } : {}) },
+            // 判定のブロックが無い回は、レビューが判定を付けなかったと残す（PBI-378）
+            { round: 1, ...(c.verdict ? { verdict: c.verdict } : { missing: "absent" }) },
           ]);
           expect(task.status, c.name).toBe("queued");
         } else {

@@ -116,7 +116,8 @@ describe("レビューの出力から行へのコメントを取り出す（PBI-
     expect(extractReviewComments(output, diff)).toEqual({
       output: "# 評価",
       comments: [{ path: "src/new.ts", line: 2, body: "[提案] 文字列の行番号も読む" }],
-      // 判定のブロックが無く、[要修正] の指摘も無いので、判定は無い（読めない）
+      // 判定のブロックが無く、[要修正] の指摘も無いので、判定は無い（レビューが付けなかった。PBI-378）
+      verdictMissing: "absent",
     });
   });
 
@@ -179,8 +180,16 @@ describe("レビューの出力から行へのコメントを取り出す（PBI-
     // 最後のブロックを使う
     expect(read(`${verdict("changes_required")}\n\n${verdict("no_findings")}`)).toBe("no_findings");
     // 判定が無い・決めた値でない（前の形の真偽値も）なら、判定は無い（読めない）
-    expect(extractReviewComments("# 評価", diff)).toEqual({ output: "# 評価", comments: [] });
-    expect(extractReviewComments(verdict("no"), diff)).toEqual({ output: "", comments: [] });
+    expect(extractReviewComments("# 評価", diff)).toEqual({
+      output: "# 評価",
+      comments: [],
+      verdictMissing: "absent",
+    });
+    expect(extractReviewComments(verdict("no"), diff)).toEqual({
+      output: "",
+      comments: [],
+      verdictMissing: "invalid",
+    });
     expect(read(block({ "sacty-review-verdict": { changesRequested: true } }))).toBeUndefined();
     expect(read(comments("should"))).toBeUndefined();
     // 1つのブロックに両方あっても読む
@@ -333,9 +342,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain(
       "見られなかった観点があるときは、今回の先頭のコミットで成り立つ要修正の指摘（見られた範囲で新しく見つけたもの、または今回のコードで未対応と確かめた前回・既存の要修正）があれば changes_required を付け",
     );
-    expect(prompt).toContain(
-      "、無ければ付けません（sacty は判定を読めなかったものとして本文に書き",
-    );
+    expect(prompt).toContain("、無ければ付けません（sacty は、判定が付いていないことを本文に書き");
     // PR の説明で示された文書も、対象か根拠かを分け、対象ならレビューする（PBI-142）
     expect(prompt).toContain(
       "PR の説明で示された文書（Git の外に書いた設計書など）は、スキルの手順で、レビューの対象か根拠かを分ける。対象にした文書もレビューする",

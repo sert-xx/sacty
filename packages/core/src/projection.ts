@@ -23,6 +23,7 @@ import type {
   ReviewComment,
   ReviewRework,
   ReviewVerdict,
+  ReviewVerdictMissing,
   ReworkAnswer,
   ReworkCause,
   RiskAssessment,
@@ -1061,11 +1062,13 @@ export type Task = {
    */
   reviewPost?: { url: string; at: string; latestCommit?: string };
   /**
-   * レビューの工程の、回ごとの判定（PBI-88・PBI-111）。verdict が無い回は、判定を読めなかった。
+   * レビューの工程の、回ごとの判定（PBI-88・PBI-111）。verdict が無い回は、判定が無い。missing は、その理由（PBI-378。
+   * これより前の作業履歴の回には無い）。
    */
   reviewVerdicts?: {
     round: number;
     verdict?: ReviewVerdict;
+    missing?: ReviewVerdictMissing;
     /** PR のレビューの子タスクが示した、指摘の戻し先と原因（PBI-332）。 */
     rework?: ReviewRework;
     /** 戻し先を示した回の、実行のエージェント（PBI-332。戻し先の判断の記録に使う）。 */
@@ -1662,7 +1665,11 @@ export function applyEvent(
             ...(task.reviewVerdicts ?? []).filter((v) => v.round !== round),
             {
               round,
-              ...(event.payload.reviewVerdict ? { verdict: event.payload.reviewVerdict } : {}),
+              ...(event.payload.reviewVerdict
+                ? { verdict: event.payload.reviewVerdict }
+                : event.payload.reviewVerdictMissing
+                  ? { missing: event.payload.reviewVerdictMissing }
+                  : {}),
               // 戻し先を示した回は、その実行のエージェントも残す（戻し先の判断の記録に使う。PBI-332）
               ...(event.payload.reviewRework
                 ? { rework: event.payload.reviewRework, agentId: event.payload.agentId }

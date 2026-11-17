@@ -479,6 +479,14 @@ export const ReviewVerdict = z.enum(["changes_required", "suggestions", "no_find
 export type ReviewVerdict = z.infer<typeof ReviewVerdict>;
 
 /**
+ * PR のレビューの判定が無い回の理由（PBI-378）。absent：レビューの答えに、判定のブロックが無い（レビューが判定を付けなかった。
+ * 見ていない観点がある・対象を読めなかったときは、付けさせない）。invalid：判定のブロックはあるが、JSON として読めない、または
+ * 判定が決めた値でない。
+ */
+export const ReviewVerdictMissing = z.enum(["absent", "invalid"]);
+export type ReviewVerdictMissing = z.infer<typeof ReviewVerdictMissing>;
+
+/**
  * 差し戻しの原因（PBI-268）。
  * guardian_missed：確かめられたはずの不備の見逃し（PBI-332 より前は、ゴールガーディアンの見逃し。今は、その工程の見逃し）。
  * base_changed：ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物の不備ではない。
@@ -1318,6 +1326,8 @@ const AgentRunCompleted = z.object({
      * 決める。判定を読めず、`[要修正]` の指摘も無ければ無い。
      */
     reviewVerdict: ReviewVerdict.optional(),
+    /** レビューの工程の判定が無い理由（PBI-378）。判定があるとき・これより前の作業履歴には無い。 */
+    reviewVerdictMissing: ReviewVerdictMissing.optional(),
     /** PR のレビューの子タスクが示した、指摘の戻し先と原因（PBI-332）。読めなければ無い。 */
     reviewRework: ReviewRework.optional(),
     /** 再現の工程が申告した、不具合を再現するテスト（PBI-29）。 */
