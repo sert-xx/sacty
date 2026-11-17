@@ -19,7 +19,6 @@ import {
   RISK_LOADED_GUIDANCE_LINE,
   riskAssessmentLines,
   riskLevelFor,
-  riskUnreadableReason,
 } from "./risk-assessment.js";
 
 // PR のリスク評価（PBI-362）：PR の説明と、PR から取り込んだレビューのタスクのレビューのコメントに載せる
@@ -94,7 +93,7 @@ const reviewTask = (extra: Record<string, unknown> = {}) =>
 
 describe("リスク評価の答えの読み取り（PBI-362）", () => {
   it("段階・根拠・とくに見る箇所を読む", () => {
-    expect(extractRiskAssessment(answer(medium))?.assessment).toEqual(medium);
+    expect(extractRiskAssessment(answer(medium)).assessment).toEqual(medium);
   });
 
   it("重い合図が1つでもあれば、エージェントが低い段階を付けていても、高にする", () => {
@@ -106,7 +105,7 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     expect(read?.assessment.signals).toEqual(["security", "large"]);
     for (const signal of ["security", "irreversible", "compatibility"]) {
       expect(
-        extractRiskAssessment(answer({ ...medium, level: "low", signals: [signal] }))?.assessment
+        extractRiskAssessment(answer({ ...medium, level: "low", signals: [signal] })).assessment
           .level,
       ).toBe("high");
     }
@@ -114,7 +113,7 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
 
   it("軽い合図だけなら、1つで中、2つ以上で高にする（エージェントが付けた段階は使わない。PBI-377）", () => {
     const levelOf = (level: string, signals: string[]) =>
-      extractRiskAssessment(answer({ ...medium, level, signals }))?.assessment.level;
+      extractRiskAssessment(answer({ ...medium, level, signals })).assessment?.level;
     for (const signal of ["structural", "performance", "large", "unverified"]) {
       for (const level of ["low", "medium", "high"]) {
         expect(levelOf(level, [signal])).toBe("medium");
@@ -137,7 +136,7 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
 
   it("依存の版の更新は、メジャーを高に、上げ幅を読み取れないものを中にする。マイナー・パッチは段階を上げない（PBI-377）", () => {
     const read = (value: Record<string, unknown>) =>
-      extractRiskAssessment(answer({ ...medium, level: "low", ...value }))?.assessment;
+      extractRiskAssessment(answer({ ...medium, level: "low", ...value })).assessment;
     expect(read({ dependencyUpdate: "major" })).toMatchObject({
       level: "high",
       dependencyUpdate: "major",
@@ -165,7 +164,7 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
 
   it("依存の版の更新に、ほかの変更が混ざるときは、高いほうにする（PBI-377）", () => {
     const levelOf = (value: Record<string, unknown>) =>
-      extractRiskAssessment(answer({ ...medium, ...value }))?.assessment.level;
+      extractRiskAssessment(answer({ ...medium, ...value })).assessment?.level;
     // パッチの更新＋振る舞いを変えるコード（合図なしの中）
     expect(levelOf({ level: "medium", dependencyUpdate: "patch" })).toBe("medium");
     // パッチの更新＋軽い合図 1 つ・重い合図
@@ -201,7 +200,7 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     "依存の版の更新の上げ幅が決めた値でない（%s）答えは、低い段階として載せず、読めないものとする",
     (_name, dependencyUpdate) => {
       expect(
-        extractRiskAssessment(answer({ ...medium, level: "low", dependencyUpdate })),
+        extractRiskAssessment(answer({ ...medium, level: "low", dependencyUpdate })).assessment,
       ).toBeUndefined();
     },
   );
@@ -233,13 +232,15 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
   ])(
     "合図が決めた値の配列でない（%s）答えは、低い段階として載せず、読めないものとする",
     (_name, signals) => {
-      expect(extractRiskAssessment(answer({ ...medium, level: "low", signals }))).toBeUndefined();
+      expect(
+        extractRiskAssessment(answer({ ...medium, level: "low", signals })).assessment,
+      ).toBeUndefined();
     },
   );
 
   it("合図が無ければ、エージェントの段階のまま（高も、そのまま）", () => {
     for (const level of ["low", "medium", "high"]) {
-      expect(extractRiskAssessment(answer({ ...medium, level }))?.assessment.level).toBe(level);
+      expect(extractRiskAssessment(answer({ ...medium, level })).assessment?.level).toBe(level);
     }
   });
 
@@ -250,61 +251,76 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     ["根拠の項目が文字列でない", { ...medium, verification: 3 }],
     ["オブジェクトでない", "medium"],
   ])("%s 答えは、読めないものとする", (_name, value) => {
-    expect(extractRiskAssessment(answer(value))).toBeUndefined();
+    expect(extractRiskAssessment(answer(value)).assessment).toBeUndefined();
   });
 
   it("答えが無い・JSON として読めない出力は、読めないものとする", () => {
-    expect(extractRiskAssessment("")).toBeUndefined();
-    expect(extractRiskAssessment("評価できませんでした。")).toBeUndefined();
+    expect(extractRiskAssessment("").assessment).toBeUndefined();
+    expect(extractRiskAssessment("評価できませんでした。").assessment).toBeUndefined();
     expect(
-      extractRiskAssessment(`{"${RISK_ASSESSMENT_HEADING}": {"level": "low",`),
+      extractRiskAssessment(`{"${RISK_ASSESSMENT_HEADING}": {"level": "low",`).assessment,
     ).toBeUndefined();
   });
 
   it("答えが2つとも読めるときは、最後に出た答えを使う", () => {
     const output = `${answer({ ...medium, level: "low" })}\n\n直しました。\n\n${answer(medium)}`;
-    expect(extractRiskAssessment(output)?.assessment.level).toBe("medium");
+    expect(extractRiskAssessment(output).assessment?.level).toBe("medium");
     // 後ろが低でも、最後の答えを使う（前の答えの段階を持ち越さない）
     const lowered = `${answer(medium)}\n\n見直しました。\n\n${answer({ ...medium, level: "low" })}`;
-    expect(extractRiskAssessment(lowered)?.assessment.level).toBe("low");
+    expect(extractRiskAssessment(lowered).assessment?.level).toBe("low");
   });
 
   const fenced = (json: string) => `\`\`\`json\n${json}\n\`\`\``;
   const KEY = `"${RISK_ASSESSMENT_HEADING}"`;
   const broken = `{"level": "high", "signals": ["security"],}`;
 
+  // 最後の答えが、JSON として読めるが、形が合わない
+  const SHAPE = "pr.riskLastUnreadable";
+  // 最後に出た見出しのキーが、どの評価の答えの中にも無い
+  const OUTSIDE = "pr.riskKeyOutsideAnswer";
+
   it.each([
-    ["知らない合図が混ざる", answer({ ...medium, signals: ["security", "unknown"] })],
-    ["合図が配列でない", answer({ ...medium, signals: "security" })],
-    ["上げ幅が決めた値でない", answer({ ...medium, dependencyUpdate: "huge" })],
-    ["段階が決めた値でない", answer({ ...medium, level: "critical" })],
-    ["根拠の項目が無い", answer({ ...medium, scope: undefined })],
-    ["評価がオブジェクトでない", answer("medium")],
-    ["JSON として読めない（末尾のカンマ）", fenced(`{${KEY}: ${broken}}`)],
-    ["JSON として読めない（囲みが無く、途中で切れた）", `{${KEY}: {"level": "high", "signals": [`],
+    ["知らない合図が混ざる", answer({ ...medium, signals: ["security", "unknown"] }), SHAPE],
+    ["合図が配列でない", answer({ ...medium, signals: "security" }), SHAPE],
+    ["上げ幅が決めた値でない", answer({ ...medium, dependencyUpdate: "huge" }), SHAPE],
+    ["段階が決めた値でない", answer({ ...medium, level: "critical" }), SHAPE],
+    ["根拠の項目が無い", answer({ ...medium, scope: undefined }), SHAPE],
+    ["評価がオブジェクトでない", answer("medium"), SHAPE],
+    ["JSON として読めない（末尾のカンマ）", fenced(`{${KEY}: ${broken}}`), OUTSIDE],
+    [
+      "JSON として読めない（囲みが無く、途中で切れた）",
+      `{${KEY}: {"level": "high", "signals": [`,
+      OUTSIDE,
+    ],
     [
       "JSON として読めない（見出しが最初のキーでない）",
       fenced(`{"note": "見直し", ${KEY}: ${broken}}`),
+      OUTSIDE,
     ],
     [
       "ほかのオブジェクトの中に入れ子になっている",
       fenced(
         JSON.stringify({ result: { [RISK_ASSESSMENT_HEADING]: { ...medium, level: "high" } } }),
       ),
+      OUTSIDE,
     ],
-    ["入れ子で、JSON として読めない", fenced(`{"result": {${KEY}: ${broken}}}`)],
-  ])(
+    ["入れ子で、JSON として読めない", fenced(`{"result": {${KEY}: ${broken}}}`), OUTSIDE],
+    ["本文が、見出しをキーの形で書いている", `答えは、${KEY}: の形で出しました。`, OUTSIDE],
+  ] as const)(
     "最後の答えが読めない（%s）ときは、前に出た読める答えを使わず、読めないものとする（PBI-386）",
-    (_name, last) => {
+    (_name, last, reason) => {
       const draft = answer({ ...medium, level: "low" });
       // 前の答えだけなら読める（前の答えにさかのぼると、低として載る）
-      expect(extractRiskAssessment(draft)?.assessment.level).toBe("low");
-      const output = `${draft}\n\n見直しました。\n\n${last}`;
-      expect(extractRiskAssessment(output)).toBeUndefined();
-      // 評価できなかった理由は、前に出た答えを使わなかったことが分かるものにする
-      expect(riskUnreadableReason(output)).toEqual(message("pr.riskLastUnreadable"));
+      expect(extractRiskAssessment(draft).assessment?.level).toBe("low");
+      const read = extractRiskAssessment(`${draft}\n\n見直しました。\n\n${last}`);
+      expect(read.assessment).toBeUndefined();
+      // 評価できなかった理由は、前に出た答えを使わなかったことと、その形（最後の答えの形が合わない・見出しが答えの外に
+      // ある）が分かるものにする
+      expect(read.reason).toEqual(message(reason));
+      // 本文から取り除く評価の答え（読めた JSON）は、前の答えも含む
+      expect(read.answers.length).toBeGreaterThanOrEqual(1);
       // 読めない答えが前にあるだけなら、最後の読める答えを使う
-      expect(extractRiskAssessment(`${last}\n\n直しました。\n\n${draft}`)?.assessment.level).toBe(
+      expect(extractRiskAssessment(`${last}\n\n直しました。\n\n${draft}`).assessment?.level).toBe(
         "low",
       );
     },
@@ -316,7 +332,7 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
       fenced(`{${KEY}: ${broken}}`),
       answer({ ...medium, level: "high" }),
     ].join("\n\n");
-    expect(extractRiskAssessment(output)?.assessment.level).toBe("high");
+    expect(extractRiskAssessment(output).assessment?.level).toBe("high");
   });
 
   it("評価の答えでない JSON・見出しの名前だけに触れている本文が後ろにあっても、最後の評価の答えを使う", () => {
@@ -326,30 +342,43 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
       // ほかの JSON の文字列の値の中に、評価の答えの形（壊れたもの）が書かれている
       fenced(JSON.stringify({ note: `{${KEY}: {"level": "low",` })),
     ].join("\n\n");
-    expect(extractRiskAssessment(`${answer(medium)}\n\n${tail}`)?.assessment).toEqual(medium);
+    expect(extractRiskAssessment(`${answer(medium)}\n\n${tail}`).assessment).toEqual(medium);
     // 評価の答えの文字列の値の中に書かれていても、その答えを使う
     const quoting = { ...medium, change: `{${KEY}: {"level": "low",` };
-    expect(extractRiskAssessment(answer(quoting))?.assessment.level).toBe("medium");
+    expect(extractRiskAssessment(answer(quoting)).assessment?.level).toBe("medium");
   });
 
-  it("最後の評価の答えの後ろで、本文が見出しをキーの形で書いているときは、読めないものとする（読める評価を捨てるほうへ倒す）", () => {
-    const output = `${answer(medium)}\n\n答えは、${KEY}: の形で出しました。`;
-    expect(extractRiskAssessment(output)).toBeUndefined();
+  it("読める答えが1つだけでも、その後ろで本文が見出しをキーの形で書いていれば、読めないものとする。理由は、最後の答えが壊れていたとは言わない", () => {
+    const read = extractRiskAssessment(`${answer(medium)}\n\n答えは、${KEY}: の形で出しました。`);
+    expect(read.assessment).toBeUndefined();
+    expect(read.reason).toEqual(message("pr.riskKeyOutsideAnswer"));
+    expect(renderMessage(read.reason ?? "", "ja")).toContain(
+      "最後に出たリスク評価の見出しが、読み取れる答えの中にありませんでした",
+    );
     // 前に書いているだけなら、最後の評価の答えを使う
     expect(
-      extractRiskAssessment(`答えは、${KEY}: の形で出します。\n\n${answer(medium)}`)?.assessment,
+      extractRiskAssessment(`答えは、${KEY}: の形で出します。\n\n${answer(medium)}`).assessment,
     ).toEqual(medium);
   });
 
   it("評価できなかった理由は、前に出た読める答えを使わなかったときだけ、そのことが分かるものにする", () => {
     const unreadable = answer({ ...medium, level: "critical" });
-    // 答えが無い・1つだけの答えが読めない・どの答えも読めない
-    for (const output of ["", "分かりません", unreadable, `${unreadable}\n\n${unreadable}`]) {
-      expect(riskUnreadableReason(output), output).toEqual(message("pr.riskUnreadable"));
+    // 答えが無い・1つだけの答えが読めない・どの答えも読めない・読める答えが無く、見出しが答えの外にある
+    for (const output of [
+      "",
+      "分かりません",
+      unreadable,
+      `${unreadable}\n\n${unreadable}`,
+      `{${KEY}: {"level": "low",`,
+      `${unreadable}\n\n答えは、${KEY}: の形で出しました。`,
+    ]) {
+      expect(extractRiskAssessment(output).reason, output).toEqual(message("pr.riskUnreadable"));
     }
-    expect(riskUnreadableReason(`${answer(medium)}\n\n${unreadable}`)).toEqual(
+    expect(extractRiskAssessment(`${answer(medium)}\n\n${unreadable}`).reason).toEqual(
       message("pr.riskLastUnreadable"),
     );
+    // 読めたときは、理由を持たない
+    expect(extractRiskAssessment(answer(medium)).reason).toBeUndefined();
   });
 
   it("とくに見る箇所は、形の合うものだけを、上限の件数まで読む。無ければ空", () => {
@@ -358,11 +387,11 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
       "文字列",
       ...Array.from({ length: RISK_FOCUS_MAX + 2 }, (_, i) => ({ where: `a${i}.ts`, why: "理由" })),
     ];
-    const read = extractRiskAssessment(answer({ ...medium, focus }))?.assessment;
+    const read = extractRiskAssessment(answer({ ...medium, focus })).assessment;
     expect(read?.focus).toHaveLength(RISK_FOCUS_MAX);
     expect(read?.focus[0]).toEqual({ where: "a0.ts", why: "理由" });
     expect(
-      extractRiskAssessment(answer({ ...medium, focus: undefined }))?.assessment.focus,
+      extractRiskAssessment(answer({ ...medium, focus: undefined })).assessment?.focus,
     ).toEqual([]);
   });
 
@@ -372,13 +401,13 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     const change = `${"あ".repeat(390)}${secret}の後ろ`;
     const read = extractRiskAssessment(answer({ ...medium, change, scope: "1行目\n\n  2行目" }), [
       secret,
-    ])?.assessment;
+    ]).assessment;
     expect(read?.change).toHaveLength(400);
     expect(read?.change.endsWith("…")).toBe(true);
     expect(read?.change).not.toContain("s3cr");
     expect(read?.scope).toBe("1行目 2行目");
     // 伏せなければ、切れ目に先頭が残る（伏せてから切っていることの確認）
-    expect(extractRiskAssessment(answer({ ...medium, change }))?.assessment.change).toContain(
+    expect(extractRiskAssessment(answer({ ...medium, change })).assessment?.change).toContain(
       "s3cr",
     );
   });

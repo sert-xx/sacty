@@ -130,6 +130,13 @@ The agent answers with the assessment as `sacty-risk-assessment` JSON.
   - An answer nested inside another object
   - A place where the body merely writes the heading in the key form (this errs toward discarding a readable assessment)
 - A body that mentions only the heading name, and a heading written inside a JSON string value, do not count.
+- When the answer cannot be read, the reason it could not be assessed is decided as follows.
+
+  | Reason | Case |
+  | --- | --- |
+  | `pr.riskLastUnreadable` | The shape of the last answer is wrong and an earlier answer is readable (the earlier answer was not used) |
+  | `pr.riskKeyOutsideAnswer` | The last heading key is not inside any answer and an earlier answer is readable (the earlier answer was not used) |
+  | `pr.riskUnreadable` | Otherwise (no answer, or no readable answer at all) |
 - If the level is not one of the values, or any of the four grounds (`change`, `scope`, `reversibility`, `verification`) is missing, the answer is treated as unreadable.
 - If `signals` is not an array (missing, `null`, or a string), or it contains an unknown signal, the answer is also treated as unreadable (so that a missed signal does not lead to a low level being shown).
 - If `dependencyUpdate` is not one of the values, the answer is also treated as unreadable (so that a missed size does not lead to a low level being shown). An answer where the field is missing or `null` is read as having no dependency version update.
@@ -137,7 +144,7 @@ The agent answers with the assessment as `sacty-risk-assessment` JSON.
 - Malformed places to look at are dropped.
 - Each text is made one line, the secrets passed in are redacted, and then it is cut at the limit (400 characters for a ground, 200 characters for `where`).
 
-Code: `apps/daemon/src/risk-assessment.ts` (`extractRiskAssessment`, `riskUnreadableReason`), `packages/core/src/events.ts` (`RiskAssessment`)
+Code: `apps/daemon/src/risk-assessment.ts` (`extractRiskAssessment`), `packages/core/src/events.ts` (`RiskAssessment`)
 
 ## Assessment before opening a PR
 
@@ -148,7 +155,7 @@ When an implementation PR is opened or updated, the assessment runs after the co
 - Even when the assessment fails, opening or updating the PR is not stopped. The reason is recorded and the body says so. The assessment fails in these cases.
   - The budget cap has been reached (no agent is run; `pr.riskBudget`)
   - The agent's run failed (`pr.riskFailed`)
-  - The answer could not be read (`pr.riskUnreadable`; `pr.riskLastUnreadable` when an earlier readable answer was not used because the last answer could not be read; `riskUnreadableReason`)
+  - The answer could not be read (`pr.riskUnreadable`, `pr.riskLastUnreadable`, `pr.riskKeyOutsideAnswer`; see [Content of the assessment and how it is read](#content-of-the-assessment-and-how-it-is-read))
 - Only when a run could not be confirmed to have stopped does sacty pause without opening the PR, so that it does not overlap another run (the same as reconciling a conflict in [Updating a body a person edited](approval.en.md#updating-a-body-a-person-edited)).
 - The assessment is enabled when the daemon starts (`riskAssessment` of `ServiceDeps`). A service that does not enable it (a test) does not assess.
 - The result is recorded in `PullRequestRiskAssessed`. The cost is counted on the Orchestrator's row ([Activity](event-log.en.md#cost)).
@@ -162,7 +169,7 @@ For a review task imported from a GitHub PR (a review request or a label), the c
 - The agent is told to give the assessment separately from the findings and the verdict, and not to let the assessment change the weight of a finding, the verdict, or what the review looks at.
 - The assessment JSON is removed from the posted body even when its shape is wrong (`extractReviewComments`). One that cannot be parsed as JSON (a trailing comma, and so on) is also removed, together with the code block whose content starts in the shape of the assessment answer (`withoutRiskBlocks`). A code example that merely contains the assessment heading stays. An unparseable assessment that is not in a code block stays, because its extent cannot be determined.
 - The body of a review that was not asked to assess (a PR review child task) is not touched.
-- If the answer could be read, the assessment is recorded in `PullRequestRiskAssessed` together with the completion of the step's run; if not, the fact that it could not be assessed (`pr.riskUnreadable` or `pr.riskLastUnreadable`) is recorded. The cost is counted on the step's run, so this record carries no cost.
+- If the answer could be read, the assessment is recorded in `PullRequestRiskAssessed` together with the completion of the step's run; if not, the fact that it could not be assessed (with the same reasons as the assessment before opening a PR) is recorded. The cost is counted on the step's run, so this record carries no cost.
 - Even when the assessment fails, posting the review is not stopped.
 
 Code: `apps/daemon/src/risk-assessment.ts` (`reviewRiskLines`, `withoutRiskBlocks`), `apps/daemon/src/prompts.ts` (`extractReviewComments`), `apps/daemon/src/service.ts` (`assessesRiskInReview`)
