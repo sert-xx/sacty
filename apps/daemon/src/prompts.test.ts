@@ -480,10 +480,24 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     );
     // 指示は、前回の指摘と作者の返答のデータより前に置く
     expect(rejudge.indexOf(LINE)).toBeLessThan(rejudge.indexOf('{"previousReview"'));
-    // ふつうの再レビュー（PR が更新された）には足さない
-    expect(
-      buildPrompt(reviewTask({ reviewRound: 2, previousReview }), "review", { diff, replies: [] }),
-    ).not.toContain(LINE);
+    // ふつうの再レビューの「作者が対象外と返した論点は、もう一度指摘しない」は、この回には出さない（理由を確かめずに
+    // 取り下げさせない）。代わりに、対象外と返した論点も確かめさせる
+    const SKIP = "- 作者が「対象外」「後続で対応」と返した論点は、";
+    expect(rejudge).not.toContain(SKIP);
+    expect(rejudge).toContain(
+      "- 作者が「対象外」「範囲の外」「後続で対応」と返した論点も、同じように確かめる。",
+    );
+    // 残した指摘は、本文の「前回の指摘」の節に書かせる（sacty が PR を作ったタスクに届けるのは、レビューの本文）
+    expect(rejudge).toContain(
+      "- 残した指摘は、本文の「前回の指摘」の節に、未対応として 1 件ずつ書く",
+    );
+    // ふつうの再レビュー（PR が更新された）には足さない（「対象外」の行は、今までどおり出す）
+    const usual = buildPrompt(reviewTask({ reviewRound: 2, previousReview }), "review", {
+      diff,
+      replies: [],
+    });
+    expect(usual).not.toContain(LINE);
+    expect(usual).toContain(SKIP);
     // 判定し直した後に、PR が更新された回（別の先頭）にも足さない
     expect(
       buildPrompt(
