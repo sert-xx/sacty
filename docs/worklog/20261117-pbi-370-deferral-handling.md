@@ -35,14 +35,14 @@ PBI-370 の 2 つ目の PR。1 つ目（#406）で、人が、実装の案を 1 
 
 ## 確かめたこと
 
-結果は、PR を作る前の最後の実行のもの（#406 をマージした後の main `c70854fb` を取り込んだ後のコード）。
+結果は、PR を作る前の最後の実行のもの（最新の main `80c9cf9a` を取り込んだ後のコード）。
 
 | 確かめたこと | コマンド | 結果 |
 | --- | --- | --- |
-| フォーマット・リンター | `npx biome check --error-on-warnings .` | LINT_RESULT |
-| 型検査 | `npm run typecheck` | TYPECHECK_RESULT |
-| 全テスト | `npx vitest run --no-file-parallelism` | TEST_RESULT |
-| ビルド | `npm run build` | BUILD_RESULT |
+| フォーマット・リンター | `npx biome check --error-on-warnings .` | 誤り・警告なし |
+| 型検査 | `npm run typecheck` | 誤りなし |
+| 全テスト | `npx vitest run --no-file-parallelism` | 256 ファイル・4,917 件が成功、1 件はスキップ（もとからのスキップ） |
+| ビルド | `npm run build` | 成功 |
 
 - 足したテスト
   - `packages/core/src/projection.test.ts`：扱いと結果の記録、後続のタスクを作る時点（完了の後）、扱いの無い決定（以前の作業履歴）。
@@ -51,7 +51,7 @@ PBI-370 の 2 つ目の PR。1 つ目（#406）で、人が、実装の案を 1 
   - `apps/daemon/src/github.test.ts`：Issue の作成の要求の形と、失敗のエラー。
   - `apps/web/src/components/deferral.test.ts`・`apps/web/src/lib/labels.test.ts`：扱いの選択（初めの値）・決定済みの記録の結果・作業履歴の文（日英）。
 - 実物での確認（別のポート 4856・4857、一時のホーム。GitHub には問い合わせず、Issue とコメントの投稿は偽の応答で受けて本文を残した）
-  - 日本語と英語の画面で、次を確かめた（VERIFY_RESULT）。
+  - 日本語と英語の画面で、次を確かめた（確かめた 44 項目がすべて合った）。
   - 承認の画面の扱いの初めの値が、プロジェクトの既定（GitHub の Issue を作る）になる。選択肢が 3 つ出る。
   - 「後続に回す」で、Issue が作られ（題・本文）、決定のコメントに URL が載り、決定済みの記録に Issue へのリンクが出る。
   - プロジェクトの設定に、扱いの既定の欄が出る。
