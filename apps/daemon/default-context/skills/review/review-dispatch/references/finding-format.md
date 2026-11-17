@@ -13,6 +13,10 @@
       "line": 12,
       "title": "命令形の短い見出し（例：金額が 0 のとき割り算で例外になる）",
       "problem": "何が・どの入力や経路で・どう問題か",
+      "condition": "起きる条件。何と何が重なると起きるか（ふつうの使い方で起きるなら、そう書く）",
+      "impact": "起きたときの実害。誰が・何を失うか、何が止まるか",
+      "likelihood": "normal | conditional | rare",
+      "impact_level": "high | medium | low",
       "evidence": "確かめた事実（読んだ箇所、追った経路、実行した結果）。推測は「推測：」と前置きする",
       "suggestion": "どう直すとよいか",
       "confidence": "high | medium | low"
@@ -27,4 +31,5 @@
 - `viewpoint` は、依頼された観点の ID（リポジトリのレビュー用のスキルの担当は `R-1` など）
 - `status` は、`must` か `should` が1件以上なら `changes_required`、無ければ `passed`。入力が足りず観点を見られなかったときは `failed` にし、`limitations` に理由を書く（部分的な結果を `passed` にしない）。依頼文の範囲の外を見なかったことは `failed` の理由にしない（範囲の外は、もとから見るものではない）。`limitations` にも書かず、見た範囲を `checked` に書く
 - `path` と `line` は、コードなら対象のリポジトリのルートからのパスと、対象の先頭（PR の先頭コミット）での行番号。文書なら見出しや行。PR の本文で示された文書の写しなら、`path` は写しのパスではなく取得元（文書の名前か URL）、`line` は節の見出し。複数箇所に及ぶときは代表の1箇所にして `problem` に他を書く
+- `condition`・`impact`・`likelihood`・`impact_level` は、すべての指摘に書く（`nit` は `impact` に「実害なし」と書き、`impact_level` は `low`）。`severity` は、review-execution の「重要度」の表のとおりにする（影響：大は `must`。影響：中は、稀なら `should`、それ以外は `must`。影響：小は `should`、稀なら出さない。受け入れ条件・要求要件の不適合は、起きやすさを問わず `must`）。受け入れ条件・要求要件の不適合を理由に `must` にしたときは、`impact` に、根拠のどの条件を、根拠が述べるどの場面で満たしていないかを書く
 - `findings` は `must` → `should` → `nit` の順、同じ重要度では影響の大きい順

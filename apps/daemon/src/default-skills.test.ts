@@ -1410,3 +1410,113 @@ describe("既定の review スキルの、PR のレビューの範囲と観点�
     );
   });
 });
+
+describe("既定の review スキルの、指摘の重みの基準（PBI-358）", () => {
+  const execution = () => read("skills/review/review-execution/SKILL.md");
+  const aggregation = () => read("skills/review/review-dispatch/references/aggregation.md");
+  const prReview = () => read("skills/review/review-dispatch/references/pr-review.md");
+  const selfReview = () => read("skills/review/review-dispatch/references/self-review.md");
+  const format = () => read("skills/review/review-dispatch/references/finding-format.md");
+
+  it("重要度を、影響の大きさと起きやすさの表で決める（担当と親が同じ表を持つ）", () => {
+    for (const text of [execution(), aggregation()]) {
+      expect(text).toContain("| 影響：大 | `must` | `must` | `must` |");
+      expect(text).toContain("| 影響：中 | `must` | `must` | `should` |");
+      expect(text).toContain("| 影響：小 | `should` | `should` | 出さない |");
+      expect(text).toContain("受け入れ条件・要求要件の不適合は、起きやすさを問わず `must`");
+    }
+    const text = execution();
+    // 影響と起きやすさの分け方
+    expect(text).toContain(
+      "データの破損・消失、セキュリティ（秘密の値の漏れ、認証・認可の迂回など）、取り消せない外部への作用、互換性の破壊",
+    );
+    expect(text).toContain("独立した条件が 2 つ以上重なったときだけ起きる");
+    // 不適合を、稀な条件の穴を must にする口実にさせない
+    for (const t of [text, aggregation()]) {
+      expect(t).toContain(
+        "根拠に書かれていない条件がさらに重なったときだけ、求められた振る舞いにならないものは、不適合ではない",
+      );
+    }
+    expect(text).toContain(
+      "`severity` は、`likelihood` と `impact_level` から表で決まるものと同じにする（不適合の `must` を除く）",
+    );
+    expect(text).toContain("「起こりうる」だけでは `must` にしない");
+    // 条件の数え方（稀に逃がしすぎない）
+    expect(text).toContain("外部の者が意図して揃えられる条件は、数えない");
+    expect(text).toContain("1 つの原因が続けて引き起こすことは、まとめて 1 つに数える");
+    expect(text).toContain("ふつうの使い方で満たされる前提");
+    // 観点の資料の NG 例の重要度より、表を優先する
+    expect(text).toContain("稀な条件でだけ起きるときは、上の表で決め直す");
+    expect(text).toContain(
+      "資料が `must` とするものを影響：中以上、`should` とするものを影響：小として、表に当てる",
+    );
+    // 古い決まり（起きやすさを問わない must の定義）が残っていない
+    expect(text).not.toContain(
+      "受け入れ・正しさ・安全のために修正が必要。不具合、セキュリティ、データ破損",
+    );
+  });
+
+  it("担当は、指摘ごとに起きる条件と実害を書き、そこから重要度を決める", () => {
+    for (const text of [execution(), format()]) {
+      expect(text).toContain('"condition": "起きる条件。何と何が重なると起きるか');
+      expect(text).toContain('"impact": "起きたときの実害。');
+      expect(text).toContain('"likelihood": "normal | conditional | rare"');
+      expect(text).toContain('"impact_level": "high | medium | low"');
+      expect(text).toContain(
+        "`condition`・`impact`・`likelihood`・`impact_level` は、すべての指摘に書く",
+      );
+    }
+    expect(execution()).toContain("先に重要度を決めて、後から条件と実害を合わせない");
+  });
+
+  it("親は、担当の重要度を条件と実害から表で確かめ、決め直したものを記録する", () => {
+    const text = aggregation();
+    expect(text).toContain("## 重みの確認");
+    expect(text).toContain("条件と実害から表で決め直す");
+    expect(text).toContain("親は、条件や実害を足さない・削らない");
+    expect(text).toContain('"reweighted":');
+    expect(text).toContain("稀で、実害が小さい（上の「重みの確認」の「影響：小 × 稀」）");
+    // 重みの確認は、指摘の統合より前に行う
+    expect(text.indexOf("## 重みの確認")).toBeLessThan(text.indexOf("## 指摘の統合"));
+  });
+
+  it("再レビューと、直した箇所への指摘にも、同じ表を当てる", () => {
+    for (const text of [execution(), aggregation()]) {
+      expect(text).toContain("前回の指摘への直しで足した・変えた箇所への指摘でも、同じ表");
+    }
+    const text = prReview();
+    expect(text).toContain("直しに見つけた穴だからといって `must` にしない");
+    expect(text).toContain(
+      "表では `should` に当たると分かったとき（稀で、影響が中以下）は、未対応でも `must` に数えない",
+    );
+    // 指摘に、起きる条件と実害を書く
+    expect(text).toContain("指摘には、起きる条件（何と何が重なると起きるか。");
+    // 判定の決まりは変えない
+    expect(text).toContain("- `must` が1件以上：修正が必要");
+    expect(text).toContain("- `should`・`nit` だけ：提案あり（マージは可）");
+  });
+
+  it("自己レビューは、must だけを修正に戻し、should・nit だけでは戻さない", () => {
+    const text = selfReview();
+    expect(text).toContain("`should`・`nit` だけでは、修正に戻さない");
+    expect(text).toContain("5. `must` を修正する。`should`・`nit` では、修正に戻さない");
+    expect(text).toContain("修正しない `must` には、理由を記録する");
+    expect(text).toContain("`must` が無い回は、`should`・`nit` を直さずに提出へ進む");
+    expect(text).not.toContain("`must` と `should` を修正する");
+    expect(aggregation()).toContain("`should`・`nit` のみ：自己レビューでは修正に戻さない");
+    expect(aggregation()).not.toContain("`should` のみ：自己レビューでは修正に戻す");
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "`must` があれば修正へ戻す（self-review。`should`・`nit` だけでは戻さない）",
+    );
+    // design-doc の、記述を削る should は直す（書きすぎを残さない）
+    expect(text).toContain("記述を削る指摘（D-10）は `should` も直す（`must` が無い回でも直す。");
+  });
+
+  it("重みの基準に、特定のリポジトリや言語に寄せた例を書かない", () => {
+    const section = execution().split("## 重要度")[1]?.split("## 出力形式")[0] ?? "";
+    expect(section).not.toBe("");
+    expect(section).not.toMatch(/sacty|GitHub|npm|TypeScript|Node\.js/i);
+    const weight = aggregation().split("## 重みの確認")[1]?.split("## 指摘の統合")[0] ?? "";
+    expect(weight).not.toMatch(/sacty|GitHub|npm|TypeScript|Node\.js/i);
+  });
+});

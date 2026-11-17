@@ -132,6 +132,12 @@ If the PR changes before the review finishes, sacty behaves as follows.
 
 The posted review starts with an @ mention of the PR author and the verdict ("修正が必要" (changes required), "提案あり（マージは可）" (suggestions only, OK to merge), or "指摘なし" (no findings)).
 Findings start with `[要修正]` for those to fix before merging, and `[提案]` for those worth fixing.
+The weight is decided from the size of the impact when the problem happens and how likely it is to happen.
+
+- `[要修正]`: a problem with a large impact (data corruption or loss, security, an external effect that cannot be undone, a compatibility break), a failure to meet the acceptance criteria, or a defect that happens in ordinary use or under one condition.
+- `[提案]`: a defect that happens only when two or more independent conditions coincide and whose impact is not large, or an improvement that breaks nothing if left alone.
+
+Each finding states the conditions under which it happens and the harm when it does.
 
 Who the @ mention goes to is decided as follows.
 
