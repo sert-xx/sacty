@@ -11,7 +11,7 @@ import {
   renderMessage,
   type Task,
 } from "@sacty/core";
-import { headedObject, type JsonCandidate, lastJsonAnswer } from "./agent-json.js";
+import { headedObject, type JsonCandidate, jsonCandidates } from "./agent-json.js";
 import { redact } from "./agents/redact.js";
 import { headOf } from "./orchestrator-handoff.js";
 
@@ -272,57 +272,106 @@ function field(value: unknown, secrets: readonly string[], max: number): string 
   return line.length > max ? `${headOf(line, max - 1)}…` : line;
 }
 
+/** リスク評価の答えを読んだ結果。answers は、出力の中の評価の答え（読めた JSON。本文から取り除くのに使う）。 */
+export type RiskReading = { answers: JsonCandidate[] } & (
+  | { assessment: RiskAssessment; reason?: undefined }
+  | { assessment?: undefined; reason: DaemonText }
+);
+
 /**
- * リスク評価の答えを読む。最後に出た、形の合うものを使う。段階が決めた値でない・根拠の項目が欠けているときは、読めないものと
- * する（呼び出し側が、評価できなかったと記録する）。段階は、合図の重さと、依存の版の更新の上げ幅から決め直す（`riskLevelFor`。
- * エージェントが合図を挙げながら違う段階を付けても、基準どおりにする）。合図が配列でない・知らない合図が混ざるとき、依存の版の
- * 更新の上げ幅が決めた値でないときも、読めないものとする（合図・上げ幅を読み落として、低い段階を載せないため）。上げ幅が無い
- * 答えは、依存の版の更新が無いものとして読む。外した合図（`defect`）は、読み捨てる。形の違う「とくに見る箇所」は除く。
+ * リスク評価の答えを読む。最後に出た評価の答えだけを読む。最後の答えが読めなければ、前に出た答え（下書きなど）にはさかのぼらず、
+ * 読めないものとする（前の答えは、合図・上げ幅を足す前のものでありうるため。PBI-386）。読めなければ、評価できなかった理由
+ * （reason）を返し、呼び出し側が、評価できなかったと記録する。
+ * 段階が決めた値でない・根拠の項目が欠けているときは、読めないものとする。段階は、合図の重さと、依存の版の更新の上げ幅から
+ * 決め直す（`riskLevelFor`。エージェントが合図を挙げながら違う段階を付けても、基準どおりにする）。合図が配列でない・知らない
+ * 合図が混ざるとき、依存の版の更新の上げ幅が決めた値でないときも、読めないものとする（合図・上げ幅を読み落として、低い段階を
+ * 載せないため）。上げ幅が無い答えは、依存の版の更新が無いものとして読む。外した合図（`defect`）は、読み捨てる。形の違う
+ * 「とくに見る箇所」は除く。
+ *
+ * 評価できなかった理由は、前に出た読める答えを使わなかったときだけ、そのことが分かるものにする（答えが無い・読める答えが
+ * 1つも無いときと、記録で見分けられるように）。
+ * - 最後の答えの形が合わず、前に読める答えがある：`pr.riskLastUnreadable`
+ * - 最後に出た見出しのキーが、どの答えの中にも無く（JSON として読めない答え・入れ子の答え・本文の記述）、前に読める答えが
+ *   ある：`pr.riskKeyOutsideAnswer`（壊れた答えか、本文の記述かは、見分けない）
+ * - それ以外：`pr.riskUnreadable`
  */
 export function extractRiskAssessment(
   output: string,
   secrets: readonly string[] = [],
-): { assessment: RiskAssessment; candidate: JsonCandidate } | undefined {
-  const found = lastJsonAnswer(output, (value) => {
-    const v = headedObject(value, RISK_ASSESSMENT_HEADING);
-    if (!v) return undefined;
-    const level = RiskLevel.safeParse(v.level);
-    if (!level.success) return undefined;
-    // 合図は、決めた値の配列であること。配列でない（欠けている・null・文字列）・知らない値が混ざる答えは、合図を読み落として
-    // 低い段階を載せるおそれがあるので、読めないものとする
-    if (!Array.isArray(v.signals)) return undefined;
-    const parsedSignals = v.signals.map((signal) => RiskSignal.safeParse(signal));
-    if (parsedSignals.some((parsed) => !parsed.success)) return undefined;
-    // 外した合図（defect。PBI-377）は、読み捨てる（段階に数えず、記録にも残さない）
-    const signals = [...new Set(parsedSignals.flatMap((p) => (p.success ? [p.data] : [])))].filter(
-      (signal) => RISK_SIGNAL_WEIGHT[signal] !== "retired",
-    );
-    // 依存の版の更新の上げ幅は、無ければ「更新なし」。決めた値でないものは、読めないものとする
-    const dependency = RiskDependencyUpdate.safeParse(v.dependencyUpdate ?? "none");
-    if (!dependency.success) return undefined;
-    const dependencyUpdate = dependency.data === "none" ? undefined : dependency.data;
-    const focus = (Array.isArray(v.focus) ? v.focus : [])
-      .flatMap((item) => {
-        if (!item || typeof item !== "object") return [];
-        const r = item as Record<string, unknown>;
-        const where = field(r.where, secrets, RISK_WHERE_MAX);
-        const why = field(r.why, secrets, RISK_TEXT_MAX);
-        return where && why ? [{ where, why }] : [];
-      })
-      .slice(0, RISK_FOCUS_MAX);
-    const parsed = RiskAssessment.safeParse({
-      level: riskLevelFor({ level: level.data, signals, dependencyUpdate }),
-      signals,
-      ...(dependencyUpdate ? { dependencyUpdate } : {}),
-      change: field(v.change, secrets, RISK_TEXT_MAX),
-      scope: field(v.scope, secrets, RISK_TEXT_MAX),
-      reversibility: field(v.reversibility, secrets, RISK_TEXT_MAX),
-      verification: field(v.verification, secrets, RISK_TEXT_MAX),
-      focus,
-    });
-    return parsed.success ? parsed.data : undefined;
+): RiskReading {
+  const answers = jsonCandidates(output).filter(
+    (candidate) => candidate.value[RISK_ASSESSMENT_HEADING] !== undefined,
+  );
+  // 見出しのキーは、出力を1回走査して最後のものだけを見る（出力の長さに比例する時間で済ませる）
+  let lastKey = -1;
+  for (const match of output.matchAll(RISK_KEY_PATTERN)) lastKey = match.index;
+  const final = answers.at(-1);
+  // 最後に出た見出しのキーが、最後の評価の答えの中にあるときだけ、その答えを最後の答えとして読む
+  const last = final && final.start <= lastKey && lastKey < final.end ? final : undefined;
+  const assessment = last && readRiskAnswer(last.value, secrets);
+  if (assessment) return { assessment, answers };
+  const earlier = last ? answers.slice(0, -1) : answers;
+  const discarded = earlier.some((answer) => readRiskAnswer(answer.value, []) !== undefined);
+  return {
+    reason: !discarded
+      ? message("pr.riskUnreadable")
+      : last
+        ? message("pr.riskLastUnreadable")
+        : message("pr.riskKeyOutsideAnswer"),
+    answers,
+  };
+}
+
+/**
+ * 評価の見出しが、JSON のキーの形（`"sacty-risk-assessment":`）で書かれている箇所。評価の答え（見出しを最上位のキーに持つ、
+ * JSON として読めるオブジェクト）の外にあるものは、JSON として読めない答え（末尾のカンマ・途中で切れたなど）・ほかの
+ * オブジェクトの中に入れ子になっている答え・本文の記述のどれか。最後に出たものが答えの外にあれば、最後の答えが読めないと
+ * 見なす（本文の記述でも、読める評価を捨てるほうへ倒す。低い段階を載せるより安全）。
+ */
+const RISK_KEY_PATTERN = new RegExp(`"${RISK_ASSESSMENT_HEADING}"\\s*:`, "g");
+
+/** 評価の答え（JSON のオブジェクト）を読む。形が合わなければ undefined。 */
+function readRiskAnswer(
+  value: Record<string, unknown>,
+  secrets: readonly string[],
+): RiskAssessment | undefined {
+  const v = headedObject(value, RISK_ASSESSMENT_HEADING);
+  if (!v) return undefined;
+  const level = RiskLevel.safeParse(v.level);
+  if (!level.success) return undefined;
+  // 合図は、決めた値の配列であること。配列でない（欠けている・null・文字列）・知らない値が混ざる答えは、合図を読み落として
+  // 低い段階を載せるおそれがあるので、読めないものとする
+  if (!Array.isArray(v.signals)) return undefined;
+  const parsedSignals = v.signals.map((signal) => RiskSignal.safeParse(signal));
+  if (parsedSignals.some((parsed) => !parsed.success)) return undefined;
+  // 外した合図（defect。PBI-377）は、読み捨てる（段階に数えず、記録にも残さない）
+  const signals = [...new Set(parsedSignals.flatMap((p) => (p.success ? [p.data] : [])))].filter(
+    (signal) => RISK_SIGNAL_WEIGHT[signal] !== "retired",
+  );
+  // 依存の版の更新の上げ幅は、無ければ「更新なし」。決めた値でないものは、読めないものとする
+  const dependency = RiskDependencyUpdate.safeParse(v.dependencyUpdate ?? "none");
+  if (!dependency.success) return undefined;
+  const dependencyUpdate = dependency.data === "none" ? undefined : dependency.data;
+  const focus = (Array.isArray(v.focus) ? v.focus : [])
+    .flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const r = item as Record<string, unknown>;
+      const where = field(r.where, secrets, RISK_WHERE_MAX);
+      const why = field(r.why, secrets, RISK_TEXT_MAX);
+      return where && why ? [{ where, why }] : [];
+    })
+    .slice(0, RISK_FOCUS_MAX);
+  const parsed = RiskAssessment.safeParse({
+    level: riskLevelFor({ level: level.data, signals, dependencyUpdate }),
+    signals,
+    ...(dependencyUpdate ? { dependencyUpdate } : {}),
+    change: field(v.change, secrets, RISK_TEXT_MAX),
+    scope: field(v.scope, secrets, RISK_TEXT_MAX),
+    reversibility: field(v.reversibility, secrets, RISK_TEXT_MAX),
+    verification: field(v.verification, secrets, RISK_TEXT_MAX),
+    focus,
   });
-  return found ? { assessment: found.value, candidate: found.candidate } : undefined;
+  return parsed.success ? parsed.data : undefined;
 }
 
 /** コードブロックの中身が、評価の答えの形で始まっているか（`{"sacty-risk-assessment":` で始まる。空白は許す）。 */
@@ -415,7 +464,7 @@ export async function assessPullRequestRisk(input: {
   return {
     payload: {
       ...base,
-      ...(read ? { assessment: read.assessment } : { reason: message("pr.riskUnreadable") }),
+      ...(read.assessment ? { assessment: read.assessment } : { reason: read.reason }),
       ...ran.cost,
     } as RiskPayload,
   };

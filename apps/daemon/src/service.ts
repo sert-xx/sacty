@@ -97,6 +97,7 @@ import {
   MEMORY_SUMMARY_MAX,
   MEMORY_TITLE_MAX,
   type MemoryMove,
+  type MessageCode,
   mapFreeText,
   mergeProjectDefinitions,
   message,
@@ -595,8 +596,8 @@ type PinnedImage = { name: string; source: "project" | "rerun" | "request" };
 /**
  * 工程の選択で記録する、依頼の大きさの判定と理由（PBI-369）。セルフレビューをする工程（SELF_REVIEW_STEPS）が無い
  * 組み合わせ（PR のレビューだけ・調査だけ・セキュリティチェック・作業のみ）は、判定を使う所が無いので記録しない。
- * セキュリティ対応（security-fix）は、オーケストレーターが軽いと答えても通常にする（セキュリティにかかわる変更は、
- * 軽いと判定しない）。答えが無ければ記録しない（通常として扱う）。
+ * セキュリティ対応（security-fix）と、子タスクに分ける組み合わせ（split。分割の親。PBI-387）は、オーケストレーターが
+ * 軽いと答えても通常にする（NEVER_LIGHT_PLANS）。答えが無ければ記録しない（通常として扱う）。
  */
 export function selfReviewDepthOf(chosen: {
   plan: StepPlan;
@@ -604,12 +605,11 @@ export function selfReviewDepthOf(chosen: {
   selfReviewDepthReason?: string;
 }): { selfReviewDepth?: SelfReviewDepth; selfReviewDepthReason?: DaemonText } {
   if (!chosen.selfReviewDepth || !selfReviews(chosen.plan)) return {};
-  if (chosen.selfReviewDepth === "light" && NEVER_LIGHT_PLANS.includes(chosen.plan)) {
+  const forced = NEVER_LIGHT_PLANS[chosen.plan];
+  if (chosen.selfReviewDepth === "light" && forced) {
     return {
       selfReviewDepth: "normal",
-      selfReviewDepthReason: message("selfReview.depthForcedNormal", {
-        reason: chosen.selfReviewDepthReason ?? "",
-      }),
+      selfReviewDepthReason: message(forced, { reason: chosen.selfReviewDepthReason ?? "" }),
     };
   }
   return {
@@ -621,10 +621,20 @@ export function selfReviewDepthOf(chosen: {
 }
 
 /**
- * 依頼が軽いと判定しない工程の組み合わせ（PBI-369）。セキュリティにかかわる変更をするもの。セキュリティチェックと
- * 作業のみ（取り消しにくい外部への作業）は、セルフレビューをする工程が無いので、ここには要らない。
+ * 依頼が軽いと判定しない工程の組み合わせと、通常にした理由として記録する文言（PBI-369・PBI-387）。
+ * - security-fix：セキュリティにかかわる変更をするもの。
+ * - split：子タスクに分けて進めるもの（分割の親）。子タスクは分割できず（split を選べない）、子ごとに工程を選ぶので、
+ *   子の判定はここに当たらない。
+ * セキュリティチェックと作業のみ（取り消しにくい外部への作業）は、セルフレビューをする工程が無いので、ここには要らない。
+ * 文言は、組み合わせごとに分ける（`selfReview.depthForcedNormal` は、セキュリティ対応のための文言。使い回さない）。
+ * 値の型は、文言のコードから引く（`selfReview.depthForcedNormal` で始まるコード）。
  */
-const NEVER_LIGHT_PLANS: readonly StepPlan[] = ["security-fix"];
+const NEVER_LIGHT_PLANS: Partial<
+  Record<StepPlan, Extract<MessageCode, `selfReview.depthForcedNormal${string}`>>
+> = {
+  "security-fix": "selfReview.depthForcedNormal",
+  split: "selfReview.depthForcedNormalSplit",
+};
 
 /** 組み合わせに、提出の前のセルフレビューをする工程があるか。 */
 function selfReviews(plan: StepPlan): boolean {
@@ -11205,7 +11215,7 @@ export class TaskService {
             ...(commit ? { commit } : {}),
             ...(review.risk
               ? { assessment: review.risk }
-              : { reason: message("pr.riskUnreadable") }),
+              : { reason: review.riskUnreadable ?? message("pr.riskUnreadable") }),
           },
         },
       });
