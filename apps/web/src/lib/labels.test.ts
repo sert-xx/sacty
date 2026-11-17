@@ -1759,6 +1759,81 @@ describe("終わっていない実装の記録の表示（PBI-347・PBI-348・PB
   });
 });
 
+describe("後続に回したい案への決定の表示（PBI-370）", () => {
+  const event = (type: string, payload: Record<string, unknown>) =>
+    ({
+      id: "e1",
+      taskId: "t1",
+      seq: 1,
+      at: "2026-11-17T00:00:00.000Z",
+      actor: type === "DeferralsDecided" ? "person" : "sacty",
+      type,
+      payload,
+    }) as unknown as ActivityEvent;
+
+  it("決定の行は件数だけを出し、指摘ごとの決定は詳細に出す（日英）", () => {
+    const decided = event("DeferralsDecided", {
+      step: "implement",
+      submission: 2,
+      decisions: [
+        { remarkId: "implement-1-1", decision: "defer" },
+        { remarkId: "implement-1-2", decision: "fix" },
+        { remarkId: "implement-1-3", decision: "defer" },
+      ],
+    });
+    expect(describeEventParts(decided, labels.ja)).toEqual({
+      text: "後続に回したい指摘を決定（後続に回す 2件・この PR で直す 1件）",
+      detail:
+        "・implement-1-1：後続に回す\n・implement-1-2：この PR で直す\n・implement-1-3：後続に回す",
+    });
+    expect(describeEventParts(decided, labels.en)).toEqual({
+      text: "Decided the findings proposed to defer (defer 2, fix in this PR 1)",
+      detail: "- implement-1-1: defer\n- implement-1-2: fix in this PR\n- implement-1-3: defer",
+    });
+  });
+
+  it("PR のコメントに残せたか・残せなかった理由を出す（日英）", () => {
+    const posted = event("DeferralDecisionsPosted", {
+      number: 7,
+      decision: 1,
+      url: "https://github.com/acme/app/pull/7#issuecomment-1",
+    });
+    expect(describeEventParts(posted, labels.ja).text).toBe(
+      "後続に回したい指摘の決定を、PR #7 のコメントに記録",
+    );
+    expect(describeEventParts(posted, labels.en).text).toBe(
+      "Recorded the decisions on the findings proposed to defer in a comment on PR #7",
+    );
+    const failed = event("DeferralDecisionsPosted", {
+      number: 7,
+      decision: 1,
+      failure: { code: "deferral.noAccount" },
+    });
+    expect(describeEventParts(failed, labels.ja).text).toBe(
+      "後続に回したい指摘の決定を、PR #7 のコメントに記録できなかった：プロジェクトの GitHub のアカウントを選んでいないので、PR にコメントしていません。",
+    );
+    expect(describeEventParts(failed, labels.en).text).toContain(
+      "Could not record the decisions on the findings proposed to defer in a comment on PR #7: No GitHub account is chosen",
+    );
+  });
+
+  it("後続に回したい案がある、何も変えなかった提出は、人が決めた後に判定し直すことを出す", () => {
+    const asked = event("ReviewRejudgeRequested", {
+      repo: "https://github.com/acme/app",
+      number: 51,
+      commit: "7a1b2c3d4e5f6a7b",
+      reviewTaskId: "r1",
+      awaitsDecision: true,
+    });
+    expect(describeEventParts(asked, labels.ja).text).toBe(
+      "やり直しの実装が、PR #51（7a1b2c3）の AI のレビューの指摘を、断るか、後続に回したい案にして、何も変えなかった。理由を PR に返信し、案を人が決めた後、AI のレビューに同じ内容を 1 回だけ判定し直させる",
+    );
+    expect(describeEventParts(asked, labels.en).text).toContain(
+      "after a person decides the proposals",
+    );
+  });
+});
+
 describe("時間切れで止めた実行の記録の表示（PBI-280）", () => {
   const event = (type: string, payload: Record<string, unknown>) =>
     ({

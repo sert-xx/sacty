@@ -35,6 +35,7 @@ import { AiReviewNotice } from "@/components/ai-review-notice";
 import { TaskAuditCard } from "@/components/audit";
 import { CardSection, ExpandCards } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
+import { DeferralPendingNotice } from "@/components/deferral-pending";
 import { DeploymentWatchCard } from "@/components/deployment";
 import { DerivedTasksCard } from "@/components/derive-dialog";
 import { DiscardedReviewNotice } from "@/components/discarded-review";
@@ -60,6 +61,7 @@ import { ResumeForm, type ResumeStepSetting } from "@/components/resume-form";
 import { RiskAssessmentCard } from "@/components/risk-assessment";
 import { SecurityFixesCard } from "@/components/security-fixes";
 import { SelfReviewNote } from "@/components/self-review";
+import { SelfReviewDepthNote } from "@/components/self-review-depth";
 import { StepAgentForm } from "@/components/step-agent-form";
 import { StepCosts } from "@/components/step-costs";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
@@ -294,6 +296,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
       <GateNotice task={task} />
       <HeldReviewNotice task={task} />
       <HumanAskNotice task={task} />
+      <DeferralPendingNotice task={task} />
       <AiReviewNotice task={task} />
       <DiscardedReviewNotice task={task} />
       {task.status === "paused" && task.pausedReason && (
@@ -1441,6 +1444,8 @@ function StepsChoice({ task, data }: { task: Task; data: TaskDetailData }) {
             : m.stepsReason(labels.text(task.stepsChoice.reason))}
         </p>
       )}
+      {/* 依頼の大きさの判定と、提出の前のセルフレビューの深さ（PBI-369） */}
+      <SelfReviewDepthNote task={task} />
       {/* オーケストレーターが工程ごとに決めた書き出し先と理由（PBI-56） */}
       {task.exportPlans && Object.keys(task.exportPlans).length > 0 && (
         <div className="flex flex-col gap-1 text-sm leading-6">

@@ -113,6 +113,12 @@ const PARAMS = {
   "gate.remarksRequired": null,
   "gate.overLimit": z.object({ limit: Count }),
   "remark.notFound": null,
+  "deferral.notAwaitingImplement": null,
+  "deferral.notOpen": z.object({ remarkId: z.string() }),
+  "deferral.none": null,
+  "deferral.noAccount": null,
+  "deferral.securityTask": null,
+  "deferral.pullRequestNotOpen": null,
   // 入力の検査（zod の検査の文言に、このコードを入れる）
   // スケジュールタスク
   "schedule.notFound": null,
@@ -239,6 +245,10 @@ const PARAMS = {
   // タスクのイメージを人が指定する・変える（PBI-106・PBI-318）
   "image.notInImages": z.object({ name: z.string() }),
   "image.unchanged": z.object({ name: z.string() }),
+  // セルフレビューの深さ（依頼の大きさの判定と、人の上書き。PBI-369）
+  "selfReview.depthNotLight": null,
+  "selfReview.depthUnchanged": z.object({ depth: z.enum(["light", "normal"]) }),
+  "selfReview.depthForcedNormal": z.object({ reason: z.string() }),
   // タスクの題を人が変える（PBI-323）
   "title.unchanged": null,
   "title.pullRequestChanged": z.object({ number: z.number() }),
@@ -495,6 +505,7 @@ const PARAMS = {
   }),
   "implement.unchanged": z.object({ number: z.number() }),
   "implement.declinedAgain": z.object({ number: z.number() }),
+  "implement.deferredAgain": z.object({ number: z.number() }),
   "merge.failed": z.object({ detail: TextParam }),
   "pr.unavailable": z.object({ detail: TextParam }),
   "pr.workspaceMissing": null,
@@ -956,6 +967,16 @@ const ja: MessageDictionary = {
   "gate.overLimit": ({ limit }) =>
     `差し戻しが上限（${limit}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
   "remark.notFound": "指摘が見つかりません。",
+  "deferral.notAwaitingImplement":
+    "後続に回すかどうかは、実装の承認待ちのときに決められます。画面を開き直してください。",
+  "deferral.notOpen": ({ remarkId }) =>
+    `指摘 ${remarkId} は、決める案ではありません（決定済み・無効にした指摘・後続に回したい案でない指摘）。画面を開き直してください。`,
+  "deferral.none": "決定を1件以上選んでください。",
+  "deferral.noAccount":
+    "プロジェクトの GitHub のアカウントを選んでいないので、PR にコメントしていません。",
+  "deferral.securityTask":
+    "セキュリティの組み合わせのタスクなので、PR にコメントしていません（指摘の詳細を PR に書かないため）。",
+  "deferral.pullRequestNotOpen": "PR が開いていないので、PR にコメントしていません。",
   "schedule.notFound": "スケジュールタスクが見つかりません。",
   "schedule.nameRequired": "名前を入力してください。",
   "schedule.nameTooLong": `名前は${SCHEDULE_NAME_MAX}文字以内で入力してください。`,
@@ -1170,6 +1191,14 @@ const ja: MessageDictionary = {
   "image.notInImages": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images の名前か default を選んでください。`,
   "image.unchanged": ({ name }) => `タスクのイメージは、すでに「${name}」です。`,
+  "selfReview.depthNotLight":
+    "このタスクは、依頼が軽いと判定されていないため、セルフレビューの深さを変えられません（通常の深さでレビューします）。",
+  "selfReview.depthUnchanged": ({ depth }) =>
+    depth === "normal"
+      ? "セルフレビューは、すでに通常の深さです。"
+      : "セルフレビューは、すでにオーケストレーターの判定（軽い）のとおりです。",
+  "selfReview.depthForcedNormal": ({ reason }) =>
+    `セキュリティ対応のタスクは、依頼が軽いと判定しません。オーケストレーターは軽いと答えていました${reason ? `（理由：${reason}）` : ""}。`,
   "title.unchanged": "タスクの題は変わっていません。違う題を入力してください。",
   "title.pullRequestChanged": ({ number }) =>
     `題を変えると、このタスクが扱う PR（#${number}）が変わるため、変えられません。題の PR のリンクは、足したり消したり変えたりせずに、そのままにしてください。`,
@@ -1453,6 +1482,8 @@ const ja: MessageDictionary = {
     `AI のレビューが指摘を残した PR #${number} を、やり直しの実装が何も変えませんでした。同じ内容は再レビューされないので、提出していません。再開すると、指摘を渡して実装をやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "implement.declinedAgain": ({ number }) =>
     `やり直しの実装が、PR #${number} の AI のレビューの指摘をすべて、理由を付けて断り、何も変えませんでした。断った理由を PR に返信し、AI のレビューに同じ内容を判定し直させましたが、指摘が残りました。AI どうしの往復を続けないよう、ここで止めています。再開すると、残った指摘を渡してやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
+  "implement.deferredAgain": ({ number }) =>
+    `やり直しの実装が、PR #${number} の AI のレビューの指摘を、断るか、後続に回したい案にして、何も変えませんでした。案を人が決めた後、AI のレビューに同じ内容を判定し直させましたが、指摘が残りました。AI どうしの往復を続けないよう、ここで止めています。再開すると、残った指摘を渡してやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "merge.failed": ({ detail }, text) =>
     `ベースブランチの最新を作業領域に取り込めませんでした：${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
@@ -1784,6 +1815,16 @@ const en: MessageDictionary = {
   "gate.overLimit": ({ limit }) =>
     `Change requests reached the limit (${limit}). To continue, choose to request changes over the limit.`,
   "remark.notFound": "Comment not found.",
+  "deferral.notAwaitingImplement":
+    "You can decide whether to defer a finding while the implementation is awaiting approval. Reload the page.",
+  "deferral.notOpen": ({ remarkId }) =>
+    `Comment ${remarkId} is not a proposal to decide (already decided, voided, or not a proposal to defer). Reload the page.`,
+  "deferral.none": "Choose at least one decision.",
+  "deferral.noAccount":
+    "No GitHub account is chosen for the project, so nothing was commented on the PR.",
+  "deferral.securityTask":
+    "This is a task of the security pair, so nothing was commented on the PR (the details of the findings are not written on the PR).",
+  "deferral.pullRequestNotOpen": "The PR is not open, so nothing was commented on the PR.",
   "schedule.notFound": "Scheduled task not found.",
   "schedule.nameRequired": "Enter a name.",
   "schedule.nameTooLong": `Keep the name within ${SCHEDULE_NAME_MAX} characters.`,
@@ -1998,6 +2039,14 @@ const en: MessageDictionary = {
   "image.notInImages": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Choose a name in images, or default.`,
   "image.unchanged": ({ name }) => `The task already uses the image "${name}".`,
+  "selfReview.depthNotLight":
+    "The self-review depth can't be changed because the request of this task is not judged light (it is reviewed at the normal depth).",
+  "selfReview.depthUnchanged": ({ depth }) =>
+    depth === "normal"
+      ? "The self-review is already at the normal depth."
+      : "The self-review already follows the Orchestrator's judgement (light).",
+  "selfReview.depthForcedNormal": ({ reason }) =>
+    `A security fix task is never judged light. The Orchestrator answered light${reason ? ` (reason: ${reason})` : ""}.`,
   "title.unchanged": "The task title hasn't changed. Enter a different title.",
   "title.pullRequestChanged": ({ number }) =>
     `The title can't be changed this way because it would change the PR this task works on (#${number}). Don't add, remove, or change a PR link in the title; keep it as it is.`,
@@ -2290,6 +2339,8 @@ const en: MessageDictionary = {
     `The rework of the implementation changed nothing in PR #${number}, on which the AI review left findings. The same content is not reviewed again, so nothing was submitted. Resuming redoes the implementation with the findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "implement.declinedAgain": ({ number }) =>
     `The rework of the implementation declined every finding of the AI review on PR #${number} with a reason and changed nothing. sacty replied on the PR with the reasons and had the AI review judge the same content once more, but findings remained. sacty stops here so that the two AIs do not keep going back and forth. Resuming redoes the work with the remaining findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
+  "implement.deferredAgain": ({ number }) =>
+    `The rework of the implementation declined the findings of the AI review on PR #${number} or proposed to defer them, and changed nothing. After a person decided the proposals, sacty had the AI review judge the same content once more, but findings remained. sacty stops here so that the two AIs do not keep going back and forth. Resuming redoes the work with the remaining findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "merge.failed": ({ detail }, text) =>
     `Could not merge the latest base branch into the workspace: ${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,

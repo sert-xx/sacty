@@ -1,11 +1,12 @@
 "use client";
 
-import type { Task } from "@sacty/core";
+import { RISK_SIGNAL_WEIGHT, type Task } from "@sacty/core";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
 /**
- * PR のリスク評価（PBI-362）。人が PR をどの深さでレビューするかを決めるための目安。sacty が PR を出す前の評価と、PR から
+ * PR のリスク評価（PBI-362）。人が PR をどの深さでレビューするかを決めるための目安。合図には重さを添え、依存の版の更新が
+ * あれば上げ幅を出す（PBI-377）。sacty が PR を出す前の評価と、PR から
  * 取り込んだレビューのタスクの評価の、最後のもの。評価が無ければ何も出さない。評価できなかったときは、その理由を出す。
  */
 export function RiskAssessmentCard({ task }: { task: Pick<Task, "riskAssessment"> }) {
@@ -42,7 +43,26 @@ export function RiskAssessmentCard({ task }: { task: Pick<Task, "riskAssessment"
           {a.signals.length > 0 && (
             <>
               <dt className={term}>{m.signals}</dt>
-              <dd>{a.signals.map((signal) => m.signal[signal]).join(" · ")}</dd>
+              <dd data-testid="risk-signals">
+                {a.signals
+                  .map((signal) => {
+                    // 合図の名前に、重さを添える（PBI-377）。外した合図（以前の記録）には、添えない
+                    const weight = RISK_SIGNAL_WEIGHT[signal];
+                    return weight === "retired"
+                      ? m.signal[signal]
+                      : m.weighted[weight](m.signal[signal]);
+                  })
+                  .join(" · ")}{" "}
+                <Hint text={m.signalsHint} />
+              </dd>
+            </>
+          )}
+          {a.dependencyUpdate && (
+            <>
+              <dt className={term}>{m.dependencyUpdate}</dt>
+              <dd data-testid="risk-dependency-update">
+                {m.dependencyUpdates[a.dependencyUpdate]} <Hint text={m.dependencyUpdateHint} />
+              </dd>
             </>
           )}
           <dt className={term}>{m.change}</dt>

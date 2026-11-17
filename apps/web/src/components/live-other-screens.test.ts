@@ -22,6 +22,7 @@ vi.mock("@/app/actions", () => {
   return {
     gateAction: action,
     voidRemarkAction: action,
+    deferralAction: action,
     runIntakeAction: action,
     followProjectAction,
   };

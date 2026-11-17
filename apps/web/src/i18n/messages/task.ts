@@ -75,6 +75,27 @@ const ja = {
       "読み取れた範囲の最小限で直しています。意図と合うか、指摘した方が確かめてください。",
     confirm: (ids: readonly string[]) => `実行が確かめたいこと（指摘 ${ids.join("・")}）`,
   },
+  /** 実装が「後続に回したい」とした指摘（案）の一覧と、人の決定（PBI-370）。 */
+  deferral: {
+    title: (count: number) => `後続に回したい指摘が${count}件あります`,
+    help: "マージの前に、後続に回すか、この PR で直すかを、1 件ずつ決めてください。",
+    hint: "実装が、この PR では直さず後続に回したいと申告した指摘です。PR への返信には、案であり、人に確認中と書いています。決定は PR のコメントに残します。",
+    remark: (id: string) => `指摘 ${id}`,
+    ai: "AI のレビュー",
+    open: "元のコメントを開く",
+    reason: "後続に回したい理由",
+    legend: (id: string) => `指摘 ${id} の決定`,
+    defer: "後続に回す",
+    fix: "この PR で直す",
+    later: "まだ決めない",
+    fixNote: "「この PR で直す」を選ぶと、実装に差し戻します。",
+    submit: "決定する",
+    decide: "承認の画面で決める",
+    none: "決定を1件以上選んでください。",
+    decided: (count: number) => `決定済みの指摘（${count}件）`,
+    decidedDefer: "後続に回すと決定",
+    decidedFix: "この PR で直すと決定",
+  },
   discardedReview: {
     title: (count: number) => `取り込んでいない AI のレビューの指摘が${count}件あります`,
     help: (number: number, head: string) =>
@@ -372,6 +393,20 @@ const ja = {
     reviewPost: "投稿したレビュー：",
     reviewComments: (n: number) => `行へのコメント（${n}件）`,
   },
+  /** 提出の前のセルフレビューの深さ（依頼の大きさの判定と、人の上書き。PBI-369）。 */
+  selfReviewDepth: {
+    light: "セルフレビューの深さ：軽い。観点を絞ります",
+    normal: "セルフレビューの深さ：通常",
+    overridden: "セルフレビューの深さ：通常（人が指定）",
+    reason: (reason: string) => `判定の理由：${reason}`,
+    judgedLightReason: (reason: string) =>
+      `オーケストレーターの判定は「軽い」です。判定の理由：${reason}`,
+    hint: "オーケストレーターが、工程を選ぶときに依頼の大きさを判定します。軽い依頼では、提出の前のセルフレビューの観点を、要件への適合と横断の 2 つに絞ります。リポジトリに決まりやスキルがあれば、その観点も見ます。PR のレビューは変わりません。",
+    toNormal: "通常の深さで",
+    toJudged: "判定（軽い）に戻す",
+    changing: "変更中…",
+    when: "セルフレビューをする工程の次の実行から使います。実行中の実行は変えません。",
+  },
   /** 提出の前のセルフレビュー（PBI-120）。 */
   selfReview: {
     passed: (rounds: number) => `セルフレビュー：パス・${rounds}回`,
@@ -634,6 +669,27 @@ const en: TaskMessages = {
       "It made the smallest change it could read. Whoever commented should check it matches what they meant.",
     confirm: (ids: readonly string[]) =>
       `What the run wants you to check (comment${ids.length === 1 ? "" : "s"} ${ids.join(", ")})`,
+  },
+  deferral: {
+    title: (count: number) =>
+      `${count} finding${count === 1 ? "" : "s"} the implementation proposes to defer`,
+    help: "Before you merge, decide for each one: defer it, or fix it in this PR.",
+    hint: "The implementation declared that it would rather not fix these in this PR. Its replies on the PR say they are proposals awaiting a person's decision. Your decisions are recorded in a PR comment.",
+    remark: (id: string) => `Comment ${id}`,
+    ai: "AI review",
+    open: "Open the original comment",
+    reason: "Why it proposes to defer",
+    legend: (id: string) => `Decision for comment ${id}`,
+    defer: "Defer",
+    fix: "Fix in this PR",
+    later: "Decide later",
+    fixNote: "Choosing “Fix in this PR” sends the task back to the implementation.",
+    submit: "Decide",
+    decide: "Decide on the approval screen",
+    none: "Choose at least one decision.",
+    decided: (count: number) => `Decided (${count})`,
+    decidedDefer: "Decided to defer",
+    decidedFix: "Decided to fix in this PR",
   },
   discardedReview: {
     title: (count: number) =>
@@ -917,6 +973,18 @@ const en: TaskMessages = {
     reviewTarget: "PR under review: ",
     reviewPost: "Posted review: ",
     reviewComments: (n) => `Line comments (${n})`,
+  },
+  selfReviewDepth: {
+    light: "Self-review depth: light. Fewer viewpoints are used.",
+    normal: "Self-review depth: normal",
+    overridden: "Self-review depth: normal (set by a person)",
+    reason: (reason) => `Why: ${reason}`,
+    judgedLightReason: (reason) => `The Orchestrator judged the request light. Why: ${reason}`,
+    hint: "The Orchestrator judges the size of the request when it chooses the steps. For a light request, the self-review before submitting uses two viewpoints: fit to the requirements and the cross-cutting one. The repository's own rules and review skills are also checked, if any. PR reviews do not change.",
+    toNormal: "Use the normal depth",
+    toJudged: "Back to the judgement (light)",
+    changing: "Changing…",
+    when: "Applies from the next run of a step that does a self-review. A run in progress is not changed.",
   },
   selfReview: {
     passed: (rounds) => `Self-review: passed · ${rounds} round${rounds === 1 ? "" : "s"}`,

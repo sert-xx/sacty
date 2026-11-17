@@ -5,6 +5,7 @@ import {
   type AuditAdoptNoteKind,
   AuditTarget,
   CreateTaskInput,
+  DeferralDecision,
   normalizeNewlines,
   type ProjectDefinitionInput,
   RESUME_NOTE_MAX,
@@ -33,11 +34,13 @@ import {
   CONTEXT_CHECK_PARAM,
   type ContextPreviewResult,
   cancelTask,
+  changeSelfReviewDepth,
   changeStepAgent,
   changeTaskImage,
   chooseTicketRepository,
   createTask,
   decideChange,
+  decideDeferrals,
   deleteAuditMemory,
   deleteProject,
   deleteSchedule,
@@ -391,6 +394,53 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
   redirect(`/tasks/${taskId}`);
 }
 
+export type DeferralState = {
+  message?: string;
+  /** 選んでいた決定（エラーのときに戻す）。 */
+  decisions?: Record<string, DeferralDecision>;
+};
+
+/** 後続に回したい案の、指摘ごとの決定の入力の名前（`decision:<指摘の ID>`）の頭。 */
+const DEFERRAL_FIELD = "decision:";
+
+/**
+ * 承認の画面で、実装が「後続に回したい」とした指摘（案）を、1 件ずつ決める（PBI-370）。選んだ指摘だけを決める（選んで
+ * いない指摘は、まだ決めないまま残る）。「この PR で直す」が 1 件でもあれば、実装に差し戻すので、タスクの詳細へ移る。
+ */
+export async function deferralAction(
+  _prev: DeferralState,
+  formData: FormData,
+): Promise<DeferralState> {
+  const m = await getMessages();
+  const a = m.common.action;
+  const taskId = String(formData.get("taskId") ?? "");
+  const step = StepKey.safeParse(formData.get("step"));
+  const submission = Number(formData.get("submission"));
+  const decisions: Record<string, DeferralDecision> = {};
+  for (const [name, value] of formData.entries()) {
+    if (!name.startsWith(DEFERRAL_FIELD)) continue;
+    const decision = DeferralDecision.safeParse(value);
+    if (decision.success) decisions[name.slice(DEFERRAL_FIELD.length)] = decision.data;
+  }
+  if (!step.success) return { decisions, message: a.invalidStep };
+  if (!Number.isInteger(submission) || submission < 1) {
+    return { decisions, message: a.invalidSubmission };
+  }
+  const list = Object.entries(decisions).map(([remarkId, decision]) => ({ remarkId, decision }));
+  if (list.length === 0) return { decisions, message: m.task.deferral.none };
+  let result: Awaited<ReturnType<typeof decideDeferrals>>;
+  try {
+    result = await decideDeferrals(taskId, { step: step.data, submission, decisions: list });
+  } catch {
+    return { decisions, message: a.daemonDown };
+  }
+  if (!result.ok) return { decisions, message: result.message };
+  refresh();
+  // 「この PR で直す」を選ぶと、実装に差し戻すので、承認の画面ではなくなる（redirect は例外で画面を移すので、try の外で呼ぶ）
+  if (list.some((d) => d.decision === "fix")) redirect(`/tasks/${taskId}`);
+  return {};
+}
+
 export async function voidRemarkAction(formData: FormData): Promise<void> {
   const taskId = String(formData.get("taskId") ?? "");
   const remarkId = String(formData.get("remarkId") ?? "");
@@ -411,6 +461,30 @@ export async function renameTaskAction(
   let result: Awaited<ReturnType<typeof renameTask>>;
   try {
     result = await renameTask(taskId, title);
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+export type ChangeSelfReviewDepthState = { message?: string };
+
+/**
+ * タスクの詳細で、提出の前のセルフレビューの深さを変える（PBI-369）。軽いと判定されていないタスクは、デーモンが理由を
+ * 示して断る。
+ */
+export async function changeSelfReviewDepthAction(
+  _prev: ChangeSelfReviewDepthState,
+  formData: FormData,
+): Promise<ChangeSelfReviewDepthState> {
+  const a = (await getMessages()).common.action;
+  const taskId = String(formData.get("taskId") ?? "");
+  const depth = formData.get("depth") === "light" ? "light" : "normal";
+  let result: Awaited<ReturnType<typeof changeSelfReviewDepth>>;
+  try {
+    result = await changeSelfReviewDepth(taskId, depth);
   } catch {
     return { message: a.daemonDown };
   }

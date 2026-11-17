@@ -4,7 +4,7 @@
 - タスク: PBI-362
 - PR: #393
 - ブランチ: claude/issue-362-pr-risk-assessment-688a67
-- 関係する ADR: [PR のリスク評価を出す（レビューの省略・自動のマージには使わない）](../adr/20261116-1632-pr-risk-assessment.md)
+- 関係する ADR: [PR のリスク評価を出す（レビューの省略・自動のマージには使わない）](../adr/20261116-1632-superseded-pr-risk-assessment.md)
 
 ## 目的
 

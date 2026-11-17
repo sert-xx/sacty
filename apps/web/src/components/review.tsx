@@ -19,6 +19,7 @@ import Link from "next/link";
 import { voidRemarkAction } from "@/app/actions";
 import { AiReviewNotice } from "@/components/ai-review-notice";
 import { DaemonError } from "@/components/daemon-error";
+import { DeferralNotice } from "@/components/deferral";
 import { DiscardedReviewNotice } from "@/components/discarded-review";
 import { GateForm } from "@/components/gate-form";
 import { HumanAskNotice } from "@/components/human-ask";
@@ -137,6 +138,7 @@ export function ReviewView({ task }: { task: Task }) {
       <div className="flex flex-wrap items-start gap-6">
         <div className="flex min-w-0 flex-[999_1_520px] flex-col gap-6">
           <HumanAskNotice task={task} />
+          <DeferralNotice task={task} />
           <AiReviewNotice task={task} />
           <DiscardedReviewNotice task={task} />
           {fromProposal && (
@@ -356,6 +358,27 @@ export function RemarkItem({
         {remark.voided && (
           <span className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground">
             {t.voided}
+          </span>
+        )}
+        {/* 後続に回したい案と、人の決定（PBI-370） */}
+        {!remark.voided && remark.deferral && (
+          <span
+            data-testid="remark-deferral"
+            className="rounded-full border border-warn-line bg-warn-soft px-2 py-0.5 text-xs text-warn"
+          >
+            {remark.deferral.decision === "defer"
+              ? t.deferDecided
+              : remark.deferral.decision === "fix"
+                ? t.fixDecided
+                : t.deferProposed}
+          </span>
+        )}
+        {!remark.voided && remark.fixOf && (
+          <span
+            data-testid="remark-fix-of"
+            className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground"
+          >
+            {t.fixDecided}
           </span>
         )}
         <span className="font-mono text-xs text-muted-foreground">{remark.id}</span>

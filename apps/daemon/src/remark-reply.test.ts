@@ -101,3 +101,34 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
     expect(mention).toContain("タスクの依頼 のとおり src/a.ts を直しました");
   });
 });
+
+describe("後続に回したい案の返信（PBI-370）", () => {
+  it("案であり、人に確認中で、まだ決まっていないことを、先頭に明記する。末尾に、人がマージの前に決めることを添える", () => {
+    const body = buildRemarkReply({
+      taskId: "t1",
+      stepName: "実装",
+      remarkId: "implement-1-1",
+      submission: 2,
+      status: "deferred",
+      text: "直すには新しい保存の仕組みが要り、この PR の範囲を超えます",
+      secrets: [],
+    });
+    expect(body).toBe(
+      [
+        "<!-- sacty-reply:t1:implement-1-1:2 -->",
+        "**この PR では直さず、後続に回したいという案です（人に確認中で、まだ決まっていません）。** 理由：",
+        "",
+        "直すには新しい保存の仕組みが要り、この PR の範囲を超えます",
+        "",
+        "後続に回すか、この PR で直すかは、このタスクを承認する人が、マージの前に決めます。決定は、この PR にコメントで残します。",
+        "",
+        "---",
+        "sacty のタスク t1 の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。",
+      ].join("\n"),
+    );
+    // 決まったことのようには書かない
+    expect(body).not.toContain("対応しました");
+    expect(body).not.toContain("対応していません");
+    expect(isSactyRemarkReply(body)).toBe(true);
+  });
+});

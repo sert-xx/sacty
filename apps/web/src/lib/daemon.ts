@@ -8,6 +8,7 @@ import {
   type CreateTemplateTaskInput,
   type DaemonText,
   type DashboardSummary,
+  type DeferralDecision,
   type DeriveTaskInput,
   type IntakeKind,
   type NotificationKind,
@@ -750,6 +751,16 @@ export async function changeStepAgent(id: string, step: StepKey, agent: string):
   return postOp(`/api/tasks/${encodeURIComponent(id)}/agents`, { step, agent });
 }
 
+/**
+ * タスクの詳細で、提出の前のセルフレビューの深さを変える（PBI-369）。normal は通常の深さへの上書き、light は上書きの取り消し。
+ */
+export async function changeSelfReviewDepth(
+  id: string,
+  depth: "light" | "normal",
+): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/self-review-depth`, { depth });
+}
+
 /** タスクの詳細で、タスクのイメージを変える（PBI-318）。image は images の名前か default。 */
 export async function changeTaskImage(id: string, image: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/image`, { image });
@@ -803,6 +814,18 @@ export function requestChanges(
   },
 ): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/request-changes`, input);
+}
+
+/** 実装が「後続に回したい」とした指摘（案）を、1 件ずつ決める（PBI-370）。 */
+export function decideDeferrals(
+  id: string,
+  input: {
+    step: StepKey;
+    submission: number;
+    decisions: { remarkId: string; decision: DeferralDecision }[];
+  },
+): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/deferrals/decide`, input);
 }
 
 export function decideChange(id: string, proposalId: string, accept: boolean): Promise<OpResult> {

@@ -22,6 +22,7 @@ import {
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
   budgetState,
+  ChangeSelfReviewDepthInput,
   ChangeStepAgentInput,
   ChangeTaskImageInput,
   type CiCheck,
@@ -51,12 +52,16 @@ import {
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
   DecideChangeInput,
+  DecideDeferralsInput,
   DeriveTaskInput,
+  decidedDeferrals,
+  deferProposals,
   deploymentCheckRunning,
   derivedRecord,
   ERROR_ANALYSIS_MAX,
   EventInput,
   type ExportPlan,
+  effectiveSelfReviewDepth,
   errorAnalysisBlocked,
   excludedRepositories,
   exportDue,
@@ -143,6 +148,7 @@ import {
   SELF_REVIEW_STEPS,
   type SecurityCategory,
   type SecurityFinding,
+  type SelfReviewDepth,
   type SharedCompose,
   STEP_PLANS,
   StepKey,
@@ -253,6 +259,7 @@ import {
 } from "./context.js";
 import type { ContextImageBuilder, ContextImagesView } from "./context-images.js";
 import type { ContextMcpServers } from "./context-mcp.js";
+import { buildDeferralNotice } from "./deferral-notice.js";
 import {
   buildCiFixTask,
   buildDeploymentFixTask,
@@ -410,6 +417,7 @@ import {
   type RawExportPlan,
   type RawServices,
   type ReviewCi,
+  type ReviewDeferrals,
   type ReviewReworkContext,
   type ReviewSecurity,
   referencedPullRequest,
@@ -579,6 +587,45 @@ export type ContextPreviewView = Omit<ContextPreview, "platforms"> & {
 
 /** すべての工程で使うと決まっているイメージ（再実行で人が指定した・プロジェクトの対象で指定した。PBI-41）。 */
 type PinnedImage = { name: string; source: "project" | "rerun" | "request" };
+
+/**
+ * 工程の選択で記録する、依頼の大きさの判定と理由（PBI-369）。セルフレビューをする工程（SELF_REVIEW_STEPS）が無い
+ * 組み合わせ（PR のレビューだけ・調査だけ・セキュリティチェック・作業のみ）は、判定を使う所が無いので記録しない。
+ * セキュリティ対応（security-fix）は、オーケストレーターが軽いと答えても通常にする（セキュリティにかかわる変更は、
+ * 軽いと判定しない）。答えが無ければ記録しない（通常として扱う）。
+ */
+export function selfReviewDepthOf(chosen: {
+  plan: StepPlan;
+  selfReviewDepth?: SelfReviewDepth;
+  selfReviewDepthReason?: string;
+}): { selfReviewDepth?: SelfReviewDepth; selfReviewDepthReason?: DaemonText } {
+  if (!chosen.selfReviewDepth || !selfReviews(chosen.plan)) return {};
+  if (chosen.selfReviewDepth === "light" && NEVER_LIGHT_PLANS.includes(chosen.plan)) {
+    return {
+      selfReviewDepth: "normal",
+      selfReviewDepthReason: message("selfReview.depthForcedNormal", {
+        reason: chosen.selfReviewDepthReason ?? "",
+      }),
+    };
+  }
+  return {
+    selfReviewDepth: chosen.selfReviewDepth,
+    ...(chosen.selfReviewDepthReason
+      ? { selfReviewDepthReason: chosen.selfReviewDepthReason }
+      : {}),
+  };
+}
+
+/**
+ * 依頼が軽いと判定しない工程の組み合わせ（PBI-369）。セキュリティにかかわる変更をするもの。セキュリティチェックと
+ * 作業のみ（取り消しにくい外部への作業）は、セルフレビューをする工程が無いので、ここには要らない。
+ */
+const NEVER_LIGHT_PLANS: readonly StepPlan[] = ["security-fix"];
+
+/** 組み合わせに、提出の前のセルフレビューをする工程があるか。 */
+function selfReviews(plan: StepPlan): boolean {
+  return STEP_PLANS[plan].some((step) => (SELF_REVIEW_STEPS as readonly StepKey[]).includes(step));
+}
 
 function clipText(text: DaemonText, max: number): DaemonText {
   return mapFreeText(text, (value) => (value.length > max ? `…${value.slice(-max)}` : value));
@@ -3214,7 +3261,14 @@ export class TaskService {
         // 断った理由を読んで判定し直したレビューにも指摘が残った：差し戻しと同じ追記で一時停止して、人が判断する（AI どうしの
         // 往復を続けない。再開すると、残った指摘を渡してやり直す。PBI-357）
         ...(this.rejudgeLeftFindings(task) && pr?.number
-          ? { pause: message("implement.declinedAgain", { number: pr.number }) }
+          ? {
+              pause: message(
+                task.reviewRejudge?.awaitsDecision
+                  ? "implement.deferredAgain"
+                  : "implement.declinedAgain",
+                { number: pr.number },
+              ),
+            }
           : {}),
       },
     );
@@ -5896,6 +5950,7 @@ export class TaskService {
         ...(chosen.testCommand ? { testCommand: chosen.testCommand } : {}),
         ...(chosen.noTests ? { noTestsReason: chosen.noTests } : {}),
         ...(chosen.documentsOnly ? { documentsOnly: true as const } : {}),
+        ...selfReviewDepthOf(chosen),
         ...(chosen.investigation ? { investigation: chosen.investigation } : {}),
         ...(chosen.image ? { image: chosen.image } : {}),
         ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
@@ -10357,6 +10412,8 @@ export class TaskService {
     let reviewCi: ReviewCi | undefined;
     // PR のレビューの子タスクに渡す、セキュリティ対応の修正の範囲と照合の結果（PBI-331）
     let reviewSecurity: ReviewSecurity | undefined;
+    // PR のレビューの子タスクに渡す、PR を作ったタスクの、後続に回したい案の扱い（PBI-370）
+    let reviewDeferrals: ReviewDeferrals | undefined;
     // 引き継いで直す既存の PR の指摘（レビュー・行へのコメント・通常のコメント）。実装と、その前の工程に渡す
     const continued = this.mustGet(task.id).continuedPullRequest;
     const continuedFeedback =
@@ -10434,6 +10491,30 @@ export class TaskService {
               reviewSecurity = {
                 scope: securityScope(parent),
                 ...(parent.securityScopeCheck ? { check: parent.securityScopeCheck } : {}),
+              };
+            }
+            // 実装の PR なら、人が後続に回すと決めた指摘を渡す（未対応に数えさせない。PBI-370）
+            if (parent && latest.reviewOf?.step === "implement") {
+              const asked = parent.reviewRejudge;
+              reviewDeferrals = {
+                deferred: decidedDeferrals(parent)
+                  .filter((d) => d.decision === "defer")
+                  .map((d) => {
+                    const ref =
+                      d.origin?.number === reviewTarget.number
+                        ? remarkOriginRef(d.origin.key)
+                        : undefined;
+                    return {
+                      text: d.text,
+                      reason: d.reason,
+                      ...(ref ? { url: remarkOriginUrl(reviewTarget.url, ref) } : {}),
+                    };
+                  }),
+                ...(asked?.awaitsDecision &&
+                asked.number === reviewTarget.number &&
+                sameCommit(asked.commit, reviewTarget.headCommit)
+                  ? { awaitedDecision: true as const }
+                  : {}),
               };
             }
             if (latest.previousReview) {
@@ -10603,6 +10684,7 @@ export class TaskService {
               ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
               ...(reviewCi ? { reviewCi } : {}),
               ...(reviewSecurity ? { reviewSecurity } : {}),
+              ...(reviewDeferrals ? { reviewDeferrals } : {}),
               // PR のレビューの子タスクに、指摘ごとの戻し先を示させる（PBI-332）
               ...this.reviewReworkContext(task),
               // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
@@ -10849,7 +10931,12 @@ export class TaskService {
     ]
       .reverse()
       .slice(0, 200)
-      .map((r) => ({ key: r.remarkId, text: r.text, ...(r.status ? { status: r.status } : {}) }));
+      // 引き継いだ PR の指摘には、後続に回したい案（deferred）を出せない（申告が無いものとして扱う。PBI-370）
+      .map((r) => ({
+        key: r.remarkId,
+        text: r.text,
+        ...(r.status && r.status !== "deferred" ? { status: r.status } : {}),
+      }));
     // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない
     // （用意したテストを飛ばして通らないように）。止めて、再開すると実装をやり直す（PR #105 レビュー指摘）
     if (step === "implement" && latest.noTestsReason && extracted.testCommandInvalid) {
@@ -12370,12 +12457,9 @@ export class TaskService {
       // ただし、その指摘のすべてを、理由を付けて断っていて、その先頭ではまだ判定し直しを求めていなければ、提出にする
       // （断った理由を PR に返信し、レビューの子タスクに、同じ先頭を 1 回だけ判定し直させる。PBI-357）
       let rejudge: ActivityItem | undefined;
-      if (
-        reviewer &&
-        task.pullRequest?.number &&
-        task.pullRequest.repo &&
-        this.declinedEveryFinding(task, commit)
-      ) {
+      // 断った指摘のほかに、後続に回したい案があれば、判定し直しは、その案のすべてを人が決めてから始める（PBI-370）
+      const declined = reviewer ? this.declinedEveryFinding(task, commit) : false;
+      if (reviewer && task.pullRequest?.number && task.pullRequest.repo && declined) {
         rejudge = {
           actor: "sacty",
           event: {
@@ -12385,6 +12469,7 @@ export class TaskService {
               number: task.pullRequest.number,
               commit,
               reviewTaskId: reviewer.id,
+              ...(declined === "awaits_decision" ? { awaitsDecision: true as const } : {}),
             },
           },
         };
@@ -13176,7 +13261,7 @@ export class TaskService {
    * - その先頭で、まだ判定し直しを求めていない（同じ先頭には 1 回だけ。作業履歴から復元するので、デーモンの再起動・タスクの
    *   再開をまたいでも数え直さない）。
    */
-  private declinedEveryFinding(task: Task, commit: string): boolean {
+  private declinedEveryFinding(task: Task, commit: string): false | "declined" | "awaits_decision" {
     const pr = task.pullRequest;
     if (!pr?.number || !pr.repo || isSecurityTask(task)) return false;
     const asked = task.reviewRejudge;
@@ -13186,18 +13271,20 @@ export class TaskService {
       (r) => r.step === "implement" && r.round === round && !r.voided,
     );
     const submission = (task.submissions.implement ?? 0) + 1;
-    return (
+    const all =
       remarks.length > 0 &&
       remarks.every(
         (r) =>
           isAiReviewRemark(r) &&
           r.origin?.number === pr.number &&
-          r.status === "declined" &&
+          // 断った、または、後続に回したい案にした（PBI-370）。どちらも、理由を書いている
+          (r.status === "declined" || r.status === "deferred") &&
           (r.response ?? "").trim() !== "" &&
           r.respondedIn === submission &&
           r.repliedIn === undefined,
-      )
-    );
+      );
+    if (!all) return false;
+    return remarks.some((r) => r.status === "deferred") ? "awaits_decision" : "declined";
   }
 
   /**
@@ -13213,6 +13300,8 @@ export class TaskService {
       pr?.number === asked.number &&
       sameCommit(asked.commit, target) &&
       !(child.reviewRejudgeCommit && sameCommit(child.reviewRejudgeCommit, target)) &&
+      // 後続に回したい案があるときは、そのすべてを人が決めてから（人が回すと決めた指摘を、未対応に数えさせない。PBI-370）
+      !(asked.awaitsDecision && deferProposals(parent).length > 0) &&
       this.remarkRepliesDue(parent) === undefined
     );
   }
@@ -15477,6 +15566,28 @@ export class TaskService {
   }
 
   /**
+   * 人が、タスクの詳細で、提出の前のセルフレビューの深さを変える（PBI-369）。normal は、オーケストレーターが軽いと判定した
+   * タスクを、通常の深さでレビューさせる上書き。light は、その上書きの取り消し。軽いと判定されていないタスクは、理由を示して
+   * 断る（人が軽くすることはできない）。今の実行は止めず、セルフレビューをする工程の次の実行から使う。
+   */
+  changeSelfReviewDepth(id: string, raw: unknown): Task {
+    const { depth } = ChangeSelfReviewDepthInput.parse(raw);
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
+    if (task.selfReviewDepth?.judged !== "light") {
+      throw new InvalidOperationError(message("selfReview.depthNotLight"));
+    }
+    const from = effectiveSelfReviewDepth(task);
+    if (from === depth) {
+      throw new InvalidOperationError(message("selfReview.depthUnchanged", { depth }));
+    }
+    return this.append(task, [
+      { actor: "person", event: { type: "SelfReviewDepthChanged", payload: { from, to: depth } } },
+    ]);
+  }
+
+  /**
    * 人が、タスクの詳細でタスクのイメージを変える（PBI-318）。工程の状態は問わない（実行中・終わった工程があっても変えられる）。
    * 今の実行は止めず、すべての工程の次の実行から使う（実行の開始で、そのときのイメージを決める）。テスト・最終レビューも、
    * 実行を始めるときのタスクのイメージを使う。再実行・作成時・プロジェクトの対象の指定より、人の変更を優先する。
@@ -17730,6 +17841,10 @@ export class TaskService {
        * 渡す。断った理由を読んで判定し直したレビューにも、指摘が残ったとき。PBI-357）。
        */
       pause?: DaemonText;
+      /** comments と同じ位置の、人が「この PR で直す」と決めた、後続に回したい案の元の指摘の ID（PBI-370）。 */
+      fixOf?: readonly (string | undefined)[];
+      /** 差し戻し（上限でのエスカレーション）と同じ追記で、その前に記録するもの（後続に回したい案への決定。PBI-370）。 */
+      leading?: readonly ActivityItem[];
     } = {},
   ): Task {
     const input = RequestChangesInput.parse(raw);
@@ -17746,10 +17861,12 @@ export class TaskService {
     const aiIndexes = new Set(options.aiReview ?? []);
     const comments = input.comments.map((text, i) => {
       const origin = options.origins?.[i];
+      const fixOf = options.fixOf?.[i];
       return {
         text,
         ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
         ...(origin ? { origin } : {}),
+        ...(fixOf ? { fixOf } : {}),
       };
     });
     const onlyAiReview = comments.length > 0 && comments.every((c) => c.source === "sacty_review");
@@ -17763,16 +17880,21 @@ export class TaskService {
     // 回の番号と指摘の ID は、AI のレビューだけの回も含めて続ける（人の差し戻しの回数とは別）
     const round = lastChangeRound(task, target) + 1;
     // 指摘の元の PR のコメント（origin）は、エスカレーションで人が出し直しても失わない（PBI-352）
-    const toRemarks = (list: { text: string; source?: "sacty_review"; origin?: RemarkOrigin }[]) =>
-      list.map(({ text, source, origin }, i) => ({
+    const toRemarks = (
+      list: { text: string; source?: "sacty_review"; origin?: RemarkOrigin; fixOf?: string }[],
+    ) =>
+      list.map(({ text, source, origin, fixOf }, i) => ({
         id: `${target}-${round}-${i + 1}`,
         text,
         ...(source ? { source } : {}),
         ...(origin ? { origin } : {}),
+        ...(fixOf ? { fixOf } : {}),
       }));
+    const leading = options.leading ?? [];
 
     if (task.status === "awaiting_approval" && !onlyAiReview && rounds >= MAX_CHANGE_REQUESTS) {
       return this.append(task, [
+        ...leading,
         ...settings,
         {
           actor: "sacty",
@@ -17834,6 +17956,7 @@ export class TaskService {
           ]
         : [];
     return this.append(task, [
+      ...leading,
       ...settings,
       ...missed,
       {
@@ -17868,6 +17991,163 @@ export class TaskService {
           ]
         : []),
     ]);
+  }
+
+  /**
+   * 実装が「後続に回したい」と申告した指摘（案）を、人が 1 件ずつ決める（PBI-370）。defer は後続に回す、fix はこの PR で直す。
+   * 決められるのは、実装の承認待ちの、まだ決めていない案だけ。fix が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す
+   * （文は元の指摘の文。人の差し戻しとして、回数に数える。上限に達していれば、エスカレーションになる）。決定と指摘の一覧は、
+   * PR のコメントに残す（送るのは待たない）。
+   */
+  decideDeferrals(id: string, raw: unknown): Task {
+    const input = DecideDeferralsInput.parse(raw);
+    const task = this.gateTask(id, input.step, input.submission);
+    if (task.status !== "awaiting_approval" || input.step !== "implement") {
+      throw new InvalidOperationError(message("deferral.notAwaitingImplement"));
+    }
+    if (input.decisions.length === 0) {
+      throw new InvalidOperationError(message("deferral.none"));
+    }
+    const open = new Map(deferProposals(task).map((p) => [p.remarkId, p]));
+    const seen = new Set<string>();
+    for (const d of input.decisions) {
+      if (!open.has(d.remarkId) || seen.has(d.remarkId)) {
+        throw new InvalidOperationError(message("deferral.notOpen", { remarkId: d.remarkId }));
+      }
+      seen.add(d.remarkId);
+    }
+    const decided: ActivityItem = {
+      actor: "person",
+      event: {
+        type: "DeferralsDecided",
+        payload: { step: input.step, submission: input.submission, decisions: input.decisions },
+      },
+    };
+    const items = input.decisions.flatMap((d) => {
+      const proposal = open.get(d.remarkId);
+      return proposal ? [{ ...proposal, decision: d.decision }] : [];
+    });
+    const fixes = items.filter((item) => item.decision === "fix");
+    // PR のコメントに残す先（差し戻すと、承認ゲートが無くなるので、先に読む）
+    const pr = gatePullRequest(task);
+    const updated =
+      fixes.length > 0
+        ? this.requestChanges(
+            id,
+            {
+              step: input.step,
+              submission: input.submission,
+              target: "implement",
+              comments: fixes.map((f) => f.text),
+            },
+            {
+              origins: fixes.map((f) => f.origin),
+              fixOf: fixes.map((f) => f.remarkId),
+              leading: [decided],
+            },
+          )
+        : this.append(task, [decided]);
+    this.announceDeferralDecisions(updated, updated.deferralDecisions ?? 1, items, pr);
+    return updated;
+  }
+
+  /**
+   * 後続に回したい案への人の決定と、その指摘の一覧を、PR のコメントに残す（PBI-370）。決定のたびに 1 件。結果（コメントの
+   * URL か、残せなかった理由）は、作業履歴に記録する（やり直さない）。PR が無い実装（変更なし）には書かない。投稿できなく
+   * ても、決定とタスクの状態は変えない。指摘の文と理由を載せるのは、その PR のコメントから取り込んだ指摘だけ（sacty の画面
+   * から書いた指摘は、ID と決定だけ。画面で書いた文を、PR に載せない）。
+   */
+  private announceDeferralDecisions(
+    task: Task,
+    decision: number,
+    items: readonly {
+      remarkId: string;
+      text: string;
+      reason: string;
+      decision: "defer" | "fix";
+      origin?: RemarkOrigin;
+    }[],
+    watched: ReturnType<typeof gatePullRequest>,
+  ): void {
+    if (!watched?.repo || watched.step !== "implement") return;
+    const repo = watched.repo;
+    const number = watched.number;
+    const record = (result: { url: string } | { failure: DaemonText }): void => {
+      try {
+        this.append(this.mustGet(task.id), [
+          {
+            actor: "sacty",
+            event: { type: "DeferralDecisionsPosted", payload: { number, decision, ...result } },
+          },
+        ]);
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} の、後続に回したい案への決定の PR のコメントの結果を記録できませんでした：${renderMessage(errorText(error), "ja")}`,
+        );
+      }
+    };
+    // セキュリティのタスクは、指摘（脆弱性や修正の範囲の詳細を含みうる）を公開の PR に書かない（指摘への返信と同じ）
+    const project = this.deps.projects.get(task.projectId);
+    const skipped = isSecurityTask(task)
+      ? message("deferral.securityTask")
+      : watched.state !== "open"
+        ? message("deferral.pullRequestNotOpen")
+        : !project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]
+          ? message("deferral.noAccount")
+          : undefined;
+    if (skipped) {
+      record({ failure: skipped });
+      return;
+    }
+    const usedSecrets: string[] = [];
+    const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+    const url = watched.url ?? `${repo.replace(/\/+$/, "")}/pull/${number}`;
+    void this.serialized(`deferral:${task.id}`, async () => {
+      const signal = this.stopNoticeDeadline();
+      try {
+        const token = await untilAborted(
+          signal,
+          this.githubToken(task, repo, usedSecrets, project),
+        );
+        const pr = { repo, token, number };
+        const body = buildDeferralNotice({
+          taskId: task.id,
+          decision,
+          items: items.map((item) => {
+            const ref =
+              item.origin?.number === number ? remarkOriginRef(item.origin.key) : undefined;
+            return {
+              remarkId: item.remarkId,
+              decision: item.decision,
+              ...(ref
+                ? {
+                    quoted: {
+                      text: item.text,
+                      reason: item.reason,
+                      url: remarkOriginUrl(url, ref),
+                    },
+                  }
+                : {}),
+            };
+          }),
+          taskUrl: `${base}/tasks/${task.id}`,
+          ...(task.status === "escalated" ? { escalated: true } : {}),
+          secrets: usedSecrets,
+        });
+        if (!body) return;
+        const posted = await untilAborted(
+          signal,
+          this.deps.pulls.commentIssue({ ...pr, body, signal }),
+        );
+        record({ url: posted.url });
+      } catch (error) {
+        const failure = redactText(errorText(error), usedSecrets);
+        console.warn(
+          `[daemon] タスク ${task.id} の、後続に回したい案への決定を PR に残せませんでした：${renderMessage(failure, "ja")}`,
+        );
+        record({ failure });
+      }
+    });
   }
 
   /** 前提が変わった指摘を無効にする。以降、エージェントには渡さない。 */

@@ -284,14 +284,20 @@ export const Remark = z.object({
   source: RemarkSource.optional(),
   /** PR のレビュー・コメントから取り込んだ指摘の、元のコメント（PBI-352）。画面から書いた指摘と、以前の作業履歴には無い。 */
   origin: RemarkOrigin.optional(),
+  /**
+   * 人が、後続に回したい案を「この PR で直す」と決めて差し戻した指摘の、元の指摘の ID（PBI-370）。文は、元の指摘の文。
+   * 実装は、この指摘を、もう一度、後続に回したい案にしない。
+   */
+  fixOf: z.string().min(1).optional(),
 });
 export type Remark = z.infer<typeof Remark>;
 
 /**
  * 工程エージェントが、指摘に対応したか（PBI-352）。addressed は対応した、declined は理由があって対応しなかった
- * （範囲外・指摘が当たらない、など。理由は対応の文に書く）。
+ * （範囲外・指摘が当たらない、など。理由は対応の文に書く）。deferred は、この PR では直さず、後続に回したいという案
+ * （PBI-370。実装の工程の、差し戻しの指摘への対応だけ。理由は対応の文に書く。回すかどうかは、人が決める）。
  */
-export const RemarkResponseStatus = z.enum(["addressed", "declined"]);
+export const RemarkResponseStatus = z.enum(["addressed", "declined", "deferred"]);
 export type RemarkResponseStatus = z.infer<typeof RemarkResponseStatus>;
 
 /** 工程エージェントの、指摘への対応。 */
@@ -1003,6 +1009,14 @@ export const ContinuedPullRequest = z.object({
 });
 export type ContinuedPullRequest = z.infer<typeof ContinuedPullRequest>;
 
+/**
+ * 提出の前のセルフレビューの深さ（PBI-369）。light は、依頼が軽いので観点を絞る。normal は、通常の観点で見る。
+ */
+export const SelfReviewDepth = z.enum(["light", "normal"]);
+export type SelfReviewDepth = z.infer<typeof SelfReviewDepth>;
+/** 依頼の大きさの判定の理由の長さの上限。 */
+export const SELF_REVIEW_DEPTH_REASON_MAX = 1000;
+
 const StepsChosen = z.object({
   type: z.literal("StepsChosen"),
   payload: z.object({
@@ -1031,6 +1045,15 @@ const StepsChosen = z.object({
      * 最終レビューをせずに止める。実装を含み、不具合の修正でない組み合わせのときだけ持つ。
      */
     documentsOnly: z.literal(true).optional(),
+    /**
+     * オーケストレーターが、工程を選ぶ時点で判定した依頼の大きさ（PBI-369）。light（軽い）のタスクは、提出の前の
+     * セルフレビューの観点を絞る（人が通常の深さに上書きしていなければ。SelfReviewDepthChanged）。normal は通常。
+     * 答えが無い・読めないとき、セルフレビューをする工程が無い組み合わせ（PR のレビューだけ・調査だけなど）では持たない
+     * （通常として扱う）。セキュリティ対応（security-fix）は、オーケストレーターが軽いと答えても normal にする。
+     */
+    selfReviewDepth: SelfReviewDepth.optional(),
+    /** 依頼の大きさをそう判定した理由（オーケストレーターの文。sacty が normal にしたときは sacty の文言）。 */
+    selfReviewDepthReason: DaemonText.optional(),
     /** 調査の工程の性質（PBI-43）。無ければ内容の調査として扱う（セットアップをしない側）。 */
     investigation: InvestigationKind.optional(),
     /**
@@ -1182,6 +1205,17 @@ const StepImageChanged = z.object({
 const TaskImageChanged = z.object({
   type: z.literal("TaskImageChanged"),
   payload: z.object({ from: z.string().min(1).optional(), to: z.string().min(1) }),
+});
+
+/**
+ * 人が、タスクの詳細で、提出の前のセルフレビューの深さを変えた（PBI-369）。to が normal は、オーケストレーターが軽いと
+ * 判定したタスクを、通常の深さでレビューさせる上書き。to が light は、その上書きの取り消し（オーケストレーターの判定に戻す）。
+ * 軽いと判定されていないタスクを、人が軽くすることはできない。工程の状態は問わず、セルフレビューをする工程の次の実行から使う
+ * （実行中の実行は変えない）。actor は person。
+ */
+const SelfReviewDepthChanged = z.object({
+  type: z.literal("SelfReviewDepthChanged"),
+  payload: z.object({ from: SelfReviewDepth, to: SelfReviewDepth }),
 });
 
 /**
@@ -1604,10 +1638,12 @@ export const RiskLevel = z.enum(["low", "medium", "high"]);
 export type RiskLevel = z.infer<typeof RiskLevel>;
 
 /**
- * PR のリスクの合図（PBI-362）。1つでも当たれば、段階は high。
- * security：セキュリティに関わる。irreversible：取り消しにくい。compatibility：互換性を変える。structural：構造を大きく変える・
- * 広い範囲に及ぶ。performance：性能・並行処理・資源の使い方に効く。defect：不具合・論理の誤りが見つかった。
+ * PR のリスクの合図（PBI-362）。合図には重さがある（`RISK_SIGNAL_WEIGHT`。PBI-377）。
+ * security：セキュリティにかかわる振る舞いを変える。irreversible：取り消しにくい。compatibility：互換性を変える。
+ * structural：構造を大きく変える・広い範囲に及ぶ。performance：性能・並行処理・資源の使い方に効く。
  * large：差分が大きく、読むのに手間がかかる。unverified：変えた振る舞いを確かめていない。
+ * defect：不具合・論理の誤りが見つかった。PBI-377 で合図から外した（レビューの判定が別に示すため）。以前の記録を読むためだけに
+ * 残していて、新しい評価には付かない。
  */
 export const RiskSignal = z.enum([
   "security",
@@ -1622,12 +1658,37 @@ export const RiskSignal = z.enum([
 export type RiskSignal = z.infer<typeof RiskSignal>;
 
 /**
+ * リスクの合図の重さ（PBI-377）。heavy：重い合図。1つでもあれば、段階は high。light：軽い合図。軽い合図だけなら、2つ以上で
+ * high、1つなら medium。retired：合図から外したもの（以前の記録にだけある。段階に数えない）。
+ */
+export const RISK_SIGNAL_WEIGHT: Record<RiskSignal, "heavy" | "light" | "retired"> = {
+  security: "heavy",
+  irreversible: "heavy",
+  compatibility: "heavy",
+  structural: "light",
+  performance: "light",
+  large: "light",
+  unverified: "light",
+  defect: "retired",
+};
+
+/**
+ * PR が含む、依存の版の更新の上げ幅（PBI-377）。none：依存の版の更新が無い。major：互換性の無い変更を含みうる上げ幅。
+ * minor：互換性を保つ機能の追加。patch：互換性を保つ修正だけ。unknown：上げ幅を読み取れない。複数の依存を更新するときは、
+ * いちばん大きい上げ幅。major は、段階を high にする。unknown は、medium 以上にする。
+ */
+export const RiskDependencyUpdate = z.enum(["none", "patch", "minor", "major", "unknown"]);
+export type RiskDependencyUpdate = z.infer<typeof RiskDependencyUpdate>;
+
+/**
  * PR のリスク評価（PBI-362）。人が、PR をどの深さでレビューするかを決めるための目安。段階と、当たったリスクの合図、根拠
- * （変更の種類・影響の範囲・取り消しやすさ・確かめた範囲）、とくに見る箇所。
+ * （変更の種類・影響の範囲・取り消しやすさ・確かめた範囲）、とくに見る箇所。dependencyUpdate は、依存の版の更新があるときの
+ * 上げ幅（PBI-377。更新が無い評価・以前の記録には無い）。
  */
 export const RiskAssessment = z.object({
   level: RiskLevel,
   signals: z.array(RiskSignal).default([]),
+  dependencyUpdate: RiskDependencyUpdate.exclude(["none"]).optional(),
   change: z.string().min(1),
   scope: z.string().min(1),
   reversibility: z.string().min(1),
@@ -2666,6 +2727,46 @@ const ReviewRejudgeRequested = z.object({
     commit: z.string().min(1),
     /** 判定し直す、PR のレビューの子タスク。 */
     reviewTaskId: z.string().min(1),
+    /**
+     * 断った指摘のほかに、後続に回したい案（deferred）がある（PBI-370）。判定し直しは、その案のすべてを人が決めてから始める
+     * （人が回すと決めた指摘を、レビューが未対応に数えないように）。
+     */
+    awaitsDecision: z.literal(true).optional(),
+  }),
+});
+
+/** 後続に回したい案への、人の決定（PBI-370）。defer は後続に回す、fix はこの PR で直す。 */
+export const DeferralDecision = z.enum(["defer", "fix"]);
+export type DeferralDecision = z.infer<typeof DeferralDecision>;
+
+/**
+ * 実装が「後続に回したい」と申告した指摘（案）について、人が、承認の画面で、1 件ずつ決めた（PBI-370）。defer は後続に回す、
+ * fix はこの PR で直す。fix が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す（ChangesRequested。上限に達していれば
+ * TaskEscalated）。決定と指摘の一覧は、sacty が PR のコメントに残す（DeferralDecisionsPosted）。
+ */
+const DeferralsDecided = z.object({
+  type: z.literal("DeferralsDecided"),
+  payload: z.object({
+    step: StepKey,
+    submission: z.number().int().positive(),
+    decisions: z
+      .array(z.object({ remarkId: z.string().min(1), decision: DeferralDecision }))
+      .min(1)
+      .max(50),
+  }),
+});
+
+/**
+ * 後続に回したい案への人の決定（DeferralsDecided）と、その指摘の一覧を、PR のコメントに残した（PBI-370）。decision は、
+ * 何回目の決定か（Task.deferralDecisions）。残せなければ、url の代わりに、その理由（failure）を記録する（やり直さない）。
+ */
+const DeferralDecisionsPosted = z.object({
+  type: z.literal("DeferralDecisionsPosted"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    decision: z.number().int().positive(),
+    url: z.string().optional(),
+    failure: DaemonText.optional(),
   }),
 });
 
@@ -3880,6 +3981,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepsSkipped,
   StepImageChanged,
   TaskImageChanged,
+  SelfReviewDepthChanged,
   TaskRenamed,
   StepAgentChanged,
   ServicesStarted,
@@ -3942,6 +4044,8 @@ export const EventInput = z.discriminatedUnion("type", [
   ImplementationIncomplete,
   ImplementationUnchanged,
   ReviewRejudgeRequested,
+  DeferralsDecided,
+  DeferralDecisionsPosted,
   ContinuedFeedbackPassed,
   WorkspaceFilesSkipped,
   PullRequestLabeled,
@@ -4271,6 +4375,19 @@ export const RequestChangesInput = z.object({
 });
 export type RequestChangesInput = z.input<typeof RequestChangesInput>;
 
+/**
+ * 承認の画面で、実装が「後続に回したい」とした指摘（案）を、1 件ずつ決める入力（PBI-370）。defer は後続に回す、fix は
+ * この PR で直す（実装に差し戻す）。まだ決めない指摘は、入れない。
+ */
+export const DecideDeferralsInput = z.object({
+  step: StepKey,
+  submission: Submission,
+  decisions: z
+    .array(z.object({ remarkId: z.string().min(1).max(200), decision: DeferralDecision }))
+    .max(50),
+});
+export type DecideDeferralsInput = z.input<typeof DecideDeferralsInput>;
+
 /** タスクの詳細で、オーケストレーターに質問する入力（PBI-54）。 */
 export const AskQuestionInput = z.object({
   text: z
@@ -4280,6 +4397,10 @@ export const AskQuestionInput = z.object({
     .max(QUESTION_MAX, code("input.questionTooLong")),
 });
 export type AskQuestionInput = z.infer<typeof AskQuestionInput>;
+
+/** タスクの詳細で、提出の前のセルフレビューの深さを変える入力（PBI-369）。 */
+export const ChangeSelfReviewDepthInput = z.object({ depth: SelfReviewDepth });
+export type ChangeSelfReviewDepthInput = z.infer<typeof ChangeSelfReviewDepthInput>;
 
 /** タスクの詳細で、タスクのイメージを変える入力（PBI-318）。image は config.yaml の images の名前か default。 */
 export const ChangeTaskImageInput = z.object({

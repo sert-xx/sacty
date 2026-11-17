@@ -56,6 +56,15 @@ const ORIGIN_NAME: Record<RemarkOriginRef["kind"], string> = {
   comment: "このコメント",
 };
 
+/**
+ * 後続に回したい案（PBI-370）の返信の頭と、末尾の注記。指摘した人がすぐに読んで議論が起きうるので、決まったことのように
+ * 書かない。案であり、人に確認中で、まだ決まっていないことを明記する。
+ */
+export const DEFERRAL_PROPOSAL_HEAD =
+  "**この PR では直さず、後続に回したいという案です（人に確認中で、まだ決まっていません）。** 理由：";
+export const DEFERRAL_PROPOSAL_NOTE =
+  "後続に回すか、この PR で直すかは、このタスクを承認する人が、マージの前に決めます。決定は、この PR にコメントで残します。";
+
 export type RemarkReplyInput = {
   taskId: string;
   stepName: string;
@@ -66,7 +75,7 @@ export type RemarkReplyInput = {
   submission: number;
   /** 対応の文（エージェントの出力）。 */
   text: string;
-  /** 対応したか、理由があって対応しなかったか。申告が無ければ、対応の文だけを載せる。 */
+  /** 対応したか、理由があって対応しなかったか、後続に回したい案か。申告が無ければ、対応の文だけを載せる。 */
   status?: RemarkResponseStatus;
   /**
    * PR のコメントとして投稿するときの、元のレビュー・コメント（どれへの返信かが分かるように、リンクを付ける）。
@@ -95,7 +104,9 @@ export function buildRemarkReply(input: RemarkReplyInput): string {
       ? "**対応しました。**"
       : input.status === "declined"
         ? "**対応していません。** 理由："
-        : undefined;
+        : input.status === "deferred"
+          ? DEFERRAL_PROPOSAL_HEAD
+          : undefined;
   return [
     remarkReplyMarker(input.taskId, input.remarkId, input.submission),
     ...(input.origin
@@ -103,6 +114,7 @@ export function buildRemarkReply(input: RemarkReplyInput): string {
       : []),
     ...(head ? [head, ""] : []),
     text,
+    ...(input.status === "deferred" ? ["", DEFERRAL_PROPOSAL_NOTE] : []),
     "",
     "---",
     `sacty のタスク ${input.taskId} の${input.stepName}の工程で、AI が書きました${input.continued ? "" : `（指摘 ${input.remarkId} への対応）`}。`,

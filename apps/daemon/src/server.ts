@@ -471,6 +471,17 @@ export function createApp(
     }
   });
 
+  // 後続に回したい案（実装の申告）を、人が 1 件ずつ決める（PBI-370）
+  app.post("/api/tasks/:id/deferrals/decide", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.decideDeferrals(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post("/api/tasks/:id/remarks/:remarkId/void", (c) => {
     try {
       return c.json({ task: service.voidRemark(c.req.param("id"), c.req.param("remarkId")) });
@@ -572,6 +583,17 @@ export function createApp(
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
       return c.json({ task: service.changeStepAgent(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // タスクの詳細で、提出の前のセルフレビューの深さを変える（PBI-369）。セルフレビューをする工程の次の実行から使う
+  app.post("/api/tasks/:id/self-review-depth", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.changeSelfReviewDepth(c.req.param("id"), json.body) });
     } catch (error) {
       return handleError(c, error);
     }

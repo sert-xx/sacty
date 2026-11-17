@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx -->
 
 [日本語](tasks.md) | **English**
 
@@ -17,8 +17,8 @@ This page is long, so pick the sections to read by what you want to do.
 | What you want to do | Sections to read |
 | --- | --- |
 | Create tasks, find them, and see how they are going | [Create a task](#create-a-task), [Task list](#task-list), [Reading the task details](#reading-the-task-details), [Hints on the screen](#hints-on-the-screen), [Automatic updates on the screen](#automatic-updates-on-the-screen) |
-| Learn what sacty does on its own | [Information gathering at the start of a task](#information-gathering-at-the-start-of-a-task), [Self-review before submitting](#self-review-before-submitting) |
-| Check results, then approve or request changes | [Approval in PRs (Requirements, Design, Implement)](#approval-in-prs-requirements-design-implement), [Reading requirements and designs](#reading-requirements-and-designs), [Items to check (provenance)](#items-to-check-provenance), [Review of the implementation PR](#review-of-the-implementation-pr), [How the agent revises after you request changes](#how-the-agent-revises-after-you-request-changes), [Cause of a request for changes](#cause-of-a-request-for-changes), [Change requests](#change-requests), [Comments on PRs and issues](#comments-on-prs-and-issues), [Checking the result of the Integration review](#checking-the-result-of-the-integration-review) |
+| Learn what sacty does on its own | [Information gathering at the start of a task](#information-gathering-at-the-start-of-a-task), [Self-review before submitting](#self-review-before-submitting), [Self-review for a light request](#self-review-for-a-light-request) |
+| Check results, then approve or request changes | [Approval in PRs (Requirements, Design, Implement)](#approval-in-prs-requirements-design-implement), [Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral), [Reading requirements and designs](#reading-requirements-and-designs), [Items to check (provenance)](#items-to-check-provenance), [Review of the implementation PR](#review-of-the-implementation-pr), [How the agent revises after you request changes](#how-the-agent-revises-after-you-request-changes), [Cause of a request for changes](#cause-of-a-request-for-changes), [Change requests](#change-requests), [Comments on PRs and issues](#comments-on-prs-and-issues), [Checking the result of the Integration review](#checking-the-result-of-the-integration-review) |
 | Change a task that is under way | [Ask the Orchestrator](#ask-the-orchestrator), [Renaming a task](#renaming-a-task), [Changing the task image](#changing-the-task-image), [Changing a step's agent](#changing-a-steps-agent), [Pause, resume, and cancel](#pause-resume-and-cancel), [Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task) |
 | Learn how each kind of request proceeds | [Documents and one-off external work](#documents-and-one-off-external-work), [Fixing an existing PR](#fixing-an-existing-pr), [Security checks and fixes](#security-checks-and-fixes), [Repositories without tests](#repositories-without-tests), [When the implementation has no changes](#when-the-implementation-has-no-changes), [When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing) |
 | Handle tasks created with an earlier version | [Tasks from earlier versions (with the Open PR step)](#tasks-from-earlier-versions-with-the-open-pr-step), [Tasks from earlier versions (with the final review)](#tasks-from-earlier-versions-with-the-final-review) |
@@ -179,6 +179,8 @@ sacty decides the following after you create a task.
   - Skipped steps are shown struck through in the list of steps. The reason appears in the Activity.
   - For the skipped steps, the child task that reviews the implementation PR reviews it against the task's purpose (the request). You approve it by merging the PR.
   - When you specify a plan, steps are not skipped ([Specify the plan](#specify-the-plan)).
+- The Orchestrator also judges whether the request is light when it chooses the steps.
+  For a light request, the self-review uses fewer viewpoints ([Self-review for a light request](#self-review-for-a-light-request)).
 - Whether the development setup (installing dependencies, building, and so on) runs depends on the step.
   - Choosing the steps, and investigations that read and explain code or how things work, do not run it, even if the repository's AGENTS.md or similar has setup instructions.
     In an investigation, the agent may run the setup only when something cannot be confirmed by reading the code and has to be confirmed by running it (the agent then writes in the investigation result why the setup was needed).
@@ -418,7 +420,7 @@ The cost of the self-review is included in the cost of that step.
 
 ### Viewpoints used in the self-review
 
-The first round reviews with every viewpoint.
+The first round reviews with every viewpoint (for a task whose request was judged light, see [Self-review for a light request](#self-review-for-a-light-request)).
 A re-review after fixing (the second round on) uses only the viewpoints that raised a `must` in the previous round, plus X-1, which looks for defects without being tied to a viewpoint (only X-1 when there was no `must` and only `should` findings were fixed).
 The viewpoints a re-review did not use are recorded in the agent's run log as "not started (no `must` in the previous round)".
 
@@ -442,6 +444,55 @@ Neither reduces the default viewpoints.
 
 Nothing is added for ones that do not apply to this change, such as a skill for an area the change does not touch.
 Fixes, posting, and starting subagents written in the skills or instruction files are not done.
+
+### Self-review for a light request
+
+When the request is light, the self-review uses fewer viewpoints, so its cost and time fit the size of the request.
+The Orchestrator judges whether the request is light when it chooses the steps.
+You can override the judgement per task with "Use the normal depth".
+
+The judgement and its reason appear on the "Step settings" tab of the task details, under the reason for the plan.
+
+| What is shown | Meaning |
+| --- | --- |
+| Self-review depth: light. Fewer viewpoints are used. | The request was judged light. Fewer viewpoints are used |
+| Self-review depth: normal | The request was not judged light. Every viewpoint is used |
+| Self-review depth: normal (set by a person) | The request was judged light, but a person set the normal depth |
+
+A request is judged light when it is a small, local change, such as adding a section to a document or fixing wording.
+A request that falls under any of the following is not judged light.
+
+- It changes existing behavior, public interfaces, or the shape of stored data
+- It includes a security-related change (authentication and authorization, secrets, permissions, input validation, adding or updating dependencies, and so on)
+- It includes a change that is hard to undo (deleting or migrating data, an effect on external systems, release or deployment settings, and so on)
+- It is a security fix task
+
+The self-review of a task judged light goes as follows.
+
+- The first round uses only two viewpoints: fit to the requirements, and X-1, which looks for defects without being tied to a viewpoint.
+  When the target repository has skills or instruction files that apply to this change, those viewpoints are used too.
+- A viewpoint that is reviewed with a strong model is reviewed with a model one tier lower.
+- A re-review after fixing uses only the viewpoints that raised a `must` in the previous round.
+  When there was no `must`, no re-review is done.
+- The viewpoints that were not used, and why, stay in the agent's run log and in the summary of the self-review.
+- When the agent finds during the work that the change concerns security or is hard to undo, it reviews with every viewpoint and says so in the summary.
+
+To have the task reviewed at the normal depth, do the following.
+
+1. Open the "Step settings" tab of the task details.
+2. Press "Use the normal depth" under "Self-review depth".
+
+The change applies from the next run of a step that does a self-review.
+A run in progress does not change.
+The first step starts as soon as the steps are chosen, so it runs light.
+To redo a step that is running at the normal depth, pause the task, press "Use the normal depth", then resume ([Pause, resume, and cancel](#pause-resume-and-cancel)).
+A fix after you request changes on a submitted deliverable is reviewed with the viewpoints related to your comments, even at the normal depth ([Self-review when the work is redone after comments](#self-review-when-the-work-is-redone-after-comments)).
+To go back, press "Back to the judgement (light)" in the same place.
+A task that was not judged light cannot be made light.
+
+The viewpoints of PR reviews (the tasks in which sacty reviews a PR) do not change with this judgement.
+The judgement also has no effect on a step that does no self-review ([Self-review before submitting](#self-review-before-submitting)).
+No judgement is shown for a task with no step that does a self-review (investigation only, a security check, a one-off external operation, and so on).
 
 ### Self-review when the work is redone after comments
 
@@ -635,6 +686,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   It starts with a link to the original, so that it is clear which review or comment it replies to.
 - The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
   When it was not addressed, the reason (for example, out of this task's scope) follows.
+  For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
   When the AI declared neither, only the explanation of the response is shown.
 - The end of the reply says which sacty task's AI wrote it.
 - Secret values are hidden and long text is cut.
@@ -668,6 +720,40 @@ It does not reply in the following cases either (you can read the responses on t
 
 - A project with no GitHub account chosen
 - Security check and security fix tasks
+
+### Deciding the findings proposed for deferral
+
+The Implementation agent sometimes declares that it would rather not fix a comment in this PR and defer it.
+This is a proposal. You decide, one by one before the merge, whether to defer it.
+
+1. When the task details show "N findings the implementation proposes to defer", press "Decide on the approval screen".
+2. In the list on the approval screen, read each comment and the reason for the proposal.
+   For a comment imported from the PR, "Open the original comment" opens the original comment on GitHub.
+3. For each comment, choose "Defer" or "Fix in this PR".
+   Leave a comment you do not decide yet as "Decide later".
+4. Press "Decide".
+
+The decisions have the following results.
+
+| Choice | Result |
+| --- | --- |
+| Defer | The comment is not fixed in this PR. The task stays waiting for approval |
+| Fix in this PR | The comment is sent back to the implementation. It counts as a request for changes |
+| Decide later | It stays in the list |
+
+- sacty records the decisions and the list of those comments in a PR comment.
+  For a comment written on the sacty screen, it shows only the comment's number and the decision (text written on the screen is not put on the PR).
+  The Activity shows whether it could comment, or why not.
+  It does not comment in a project with no GitHub account chosen, or in security check and security fix tasks.
+- The sacty PR review does not count a comment you decided to defer as unaddressed, and does not raise it again.
+- sacty does not turn a comment you decided to defer into another task or an issue. Create one yourself if you need it.
+- You can merge the PR before deciding. If you merge without deciding, the proposals stay undecided.
+
+The agent may propose deferral only for a comment with a small impact, or one that occurs only when rare conditions coincide, whose fix needs a new mechanism or lies outside the task's scope.
+A comment with a large impact, such as data corruption, security, or not meeting an acceptance criterion, is fixed, not proposed for deferral.
+
+Only the Implementation step can make these proposals.
+In a task that fixes an existing PR, no proposal is made for the PR comments passed to the implementation ([Fixing an existing PR](#fixing-an-existing-pr)).
 
 ### When you are taken to the sacty approval screen
 
@@ -747,24 +833,36 @@ There are three levels, and each level has a fixed suggested review depth.
 
 | Level | What kind of change | Suggested review depth |
 | --- | --- | --- |
-| High | At least one of the risk signals below applies | Check from the design and impact |
-| Medium | It changes behavior, but its reach is limited, reverting it undoes it, and the changed behavior has been verified | Read where the behavior changes |
-| Low | Only safe kinds of change, such as documents, comments, formatting, tests only, or refactoring that does not change behavior | A skim is enough |
+| High | At least one heavy signal applies. Or two or more light signals apply. Or a dependency version update is a major one | Check from the design and impact |
+| Medium | Exactly one light signal applies. Or the size of a dependency version update could not be read. Or no signal applies but it changes behavior (its reach is limited, reverting it undoes it, and the changed behavior has been verified) | Read where the behavior changes |
+| Low | Only safe kinds of change, such as documents, comments, formatting, tests only, or refactoring that does not change behavior. A change is also low when it has only minor or patch dependency version updates, nothing else changes, and the AI judges that no signal applies | A skim is enough |
 
-The risk signals are the following eight.
+The risk signals are the following seven. Some are heavy and some are light.
 
-- Security (related to authentication, permissions, secrets, input validation, and so on)
-- Hard-to-undo change (migrating or deleting data, changing a storage format, sending something externally, and so on)
-- Compatibility change (changing a public API, a setting, a file format, and so on incompatibly)
-- Structural or wide-reaching change
-- Performance or concurrency
-- Suspected defect
-- Large diff
-- Unverified behavior
+| Signal | Weight | What kind of change |
+| --- | --- | --- |
+| Security | Heavy | Changes security-related behavior, such as authentication, permissions, the handling of secrets, or input validation |
+| Hard-to-undo change | Heavy | Migrating or deleting data, changing a storage format, sending something externally, and so on |
+| Compatibility change | Heavy | Changing a public API, a setting, a file format, and so on incompatibly |
+| Structural or wide-reaching change | Light | Changes the structure substantially, or changes behavior across many places |
+| Performance or concurrency | Light | Affects performance, concurrency, or resource use |
+| Large diff | Light | The diff is large, so following the intent takes effort |
+| Unverified behavior | Light | The changed behavior has not been verified by tests or by running it |
+
+For a dependency version update (a change to the version of an external library or the like that is used), the size of the update decides the level.
+
+| Size | Level |
+| --- | --- |
+| Major | High |
+| Minor or patch | The update alone does not raise the level. It is low when nothing else changes and the AI judges that no signal applies (the same applies to an update that fixes a vulnerability) |
+| The size could not be read | Medium |
+
+When other code changes together with a dependency version update, the level is the higher of that code change's level and the update's level.
 
 Besides the level and the suggested depth, the section holds the following.
 
-- The risk signals that apply
+- The risk signals that apply (each name carries heavy or light)
+- The size of the dependency version update (when there is one)
 - The kind of change, the reach of the impact, the ease of undoing, and what was verified
 - The places to look at (file and lines, and the reason to look)
 
@@ -775,6 +873,7 @@ Keep the following in mind about the assessment.
 - The result also appears in the "PR risk assessment" section of the task detail and in the activity.
 - A requirements or design PR does not carry a risk assessment.
 - When the project's or repository's context has a skill or rules about RADAR (the idea of varying the review depth with the risk of a change), the AI puts that content before the criteria above when it assesses (the levels stay low, medium, and high).
+- The signal "不具合の疑い" (suspected defect) may be shown. This signal does not count toward the level.
 - For the detailed rules of the criteria, see the [specification](../spec/risk-assessment.en.md).
 
 ### The form of the commit message
@@ -1737,6 +1836,7 @@ When a rework changes nothing, the task proceeds as follows.
    - After the replies, the child task judges the same content once more. The Activity of the child task shows "started a re-review that judges the same commit again".
    - When the child task accepts the reasons and concludes with no findings, the PR is marked ready and waits for your approval (merge).
    - When findings still remain, the task becomes "Paused: the rework changed nothing". The exchange between the two AIs stops here. The same content is judged again only once.
+   - When some findings are declined and others are proposed for deferral, the rework is also submitted without stopping, and sacty replies. In this case the child task judges the same content again after you have decided all the proposals ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
    - When a finding from a person is among them, when a finding is declared as addressed or has no reason for declining it, or when the task is a security check or security fix task, the rework is not submitted and the pause below applies.
 3. Otherwise the rework is not submitted, and the task becomes "Paused: the rework changed nothing".
 4. Check the findings of the PR review (and the replies with the reasons for declining them, if any), then do one of the following.

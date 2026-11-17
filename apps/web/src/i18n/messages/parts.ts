@@ -199,6 +199,21 @@ const ja = {
       large: "大きな差分",
       unverified: "確かめていない振る舞い",
     },
+    // 合図の重さ（PBI-377）。重い合図は1つで高、軽い合図だけなら2つ以上で高・1つで中
+    weighted: {
+      heavy: (signal: string) => `${signal}（重い）`,
+      light: (signal: string) => `${signal}（軽い）`,
+    },
+    signalsHint: "重い合図は、1つでもあれば高です。軽い合図だけなら、2つ以上で高、1つなら中です。",
+    dependencyUpdate: "依存の版の更新",
+    dependencyUpdates: {
+      major: "メジャー",
+      minor: "マイナー",
+      patch: "パッチ",
+      unknown: "上げ幅を読み取れない",
+    },
+    dependencyUpdateHint:
+      "メジャーの更新は高、上げ幅を読み取れない更新は中です。マイナー・パッチの更新は、ほかの変更が無ければ低です。",
     change: "変更の種類",
     scope: "影響の範囲",
     reversibility: "取り消しやすさ",
@@ -524,6 +539,21 @@ const en: PartsMessages = {
       large: "Large diff",
       unverified: "Unverified behavior",
     },
+    weighted: {
+      heavy: (signal) => `${signal} (heavy)`,
+      light: (signal) => `${signal} (light)`,
+    },
+    signalsHint:
+      "One heavy signal makes the level high. With light signals only, two or more make it high and one makes it medium.",
+    dependencyUpdate: "Dependency version update",
+    dependencyUpdates: {
+      major: "Major",
+      minor: "Minor",
+      patch: "Patch",
+      unknown: "Size of the update could not be read",
+    },
+    dependencyUpdateHint:
+      "A major update is high, and an update whose size could not be read is medium. A minor or patch update is low when nothing else changes.",
     change: "Kind of change",
     scope: "Reach of the impact",
     reversibility: "Ease of undoing",
