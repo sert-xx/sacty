@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-381
-- PR: なし
+- PR: #418
 - ブランチ: feat/pbi-381-ci-after-ready
 - 関係する ADR: [実装の PR の CI を、最初に読んだ回と、ドラフトを外した直後には「読み終わり」にしない](../adr/20261117-0820-do-not-settle-ci-right-after-undraft.md)
 
@@ -47,6 +47,7 @@ sacty は、レビューの子タスクの「指摘なし」でドラフトを�
 
 ## 確かめたこと
 
+- `npx vitest run --no-file-parallelism`：257 ファイル・4987 件が通った（1 件は以前からの skip）。`npm run lint`・`npm run typecheck`：通った。`npx vitest run tests/docs`：通った。
 - 足した・変えたテスト（どれも、対応する修正を戻すと落ちることを確かめた）：
   - `apps/daemon/src/daemon-implement.test.ts`：
     - 「すべて終わって失敗が無い先頭は、読むのをやめる」を、最初の読み取りではやめず、間隔の後の読み取りでやめる形に直した。再起動の後も、最初の読み取りではやめないこと。
