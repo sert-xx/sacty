@@ -595,6 +595,8 @@ It appears in the following cases.
   The person who commented should check that the result matches what they meant.
 - The redo run listed something it wants you to check along with its response to the comment.
   The comment it concerns is also shown.
+  When the same text is attached to several comments, it is shown once with those comments listed (the count is the number after merging).
+  Texts that differ even slightly are not merged (a difference in whitespace alone counts as the same text).
   For example, the run lists something in the following cases.
   - It guessed because it could not read what the comment meant
   - It recreated a value or wording it no longer had

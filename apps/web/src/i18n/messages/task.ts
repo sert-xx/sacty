@@ -73,7 +73,7 @@ const ja = {
     undecided: (ids: string) => `戻し先の判断で、指摘（${ids}）の意図を読み取れませんでした`,
     undecidedHelp:
       "読み取れた範囲の最小限で直しています。意図と合うか、指摘した方が確かめてください。",
-    confirm: (id: string) => `実行が確かめたいこと（指摘 ${id}）`,
+    confirm: (ids: readonly string[]) => `実行が確かめたいこと（指摘 ${ids.join("・")}）`,
   },
   discardedReview: {
     title: (count: number) => `取り込んでいない AI のレビューの指摘が${count}件あります`,
@@ -610,7 +610,8 @@ const en: TaskMessages = {
       `The meaning of comment ${ids} was unclear when deciding the step to redo`,
     undecidedHelp:
       "It made the smallest change it could read. Whoever commented should check it matches what they meant.",
-    confirm: (id: string) => `What the run wants you to check (comment ${id})`,
+    confirm: (ids: readonly string[]) =>
+      `What the run wants you to check (comment${ids.length === 1 ? "" : "s"} ${ids.join(", ")})`,
   },
   discardedReview: {
     title: (count: number) =>
