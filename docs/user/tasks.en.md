@@ -1280,7 +1280,7 @@ In the Integration review, an AI checks whether the code after the PRs of the ch
 When only such items remain, the Integration review does not fail; it passes and hands the items to you.
 There is no field that records the result of each item you checked. The approval stands for having checked.
 When the Integration review is redone (after fix child tasks, for example), the items of the previous round are carried over. Items the AI removed because they could now be checked or are no longer needed are shown in the same section under "Items removed from the previous round's "For a person to check"", with the reason for removing them.
-A removal the AI requested but sacty could not read is shown under "Removal requests that could not be read". That item is not removed and stays in "For a person to check".
+A removal the AI requested that sacty did not apply is shown under "Removal requests that were not applied". When even one of the AI's removal requests is not written in the fixed form or matches no item of the previous round, sacty removes no item in that round and shows all of that round's requests here (including the ones written in the fixed form). The items are not removed and stay in "For a person to check". Some of them may already have been checked, so read the requests and decide.
 
 When something is missing within what can be checked with the code and tests, the Integration review fails and sacty adds fix child tasks.
 If it fails three times in a row, it waits for your decision while still failing.
