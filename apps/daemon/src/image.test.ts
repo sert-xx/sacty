@@ -692,10 +692,6 @@ describe("古い版のイメージの片付け（PBI-313）", () => {
       "builder prune -f",
     ]);
     expect(buildCachePruneArgs()).toEqual(["builder", "prune", "-f"]);
-    for (const flag of ["--filter", "--all", "-a"]) {
-      expect(buildCachePruneArgs()).not.toContain(flag);
-    }
-    expect(buildCachePruneArgs().some((arg) => arg.includes("until"))).toBe(false);
   });
 
   it("1つ消せなくても残りを消し、消せなかったものを返す", async () => {

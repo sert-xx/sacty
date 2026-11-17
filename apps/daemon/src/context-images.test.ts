@@ -14,7 +14,6 @@ import {
   runDockerStreaming,
   CONTEXT_IMAGE_PRUNE_SKIPPED_LOG as SKIPPED,
 } from "./context-images.js";
-import { buildCachePruneArgs } from "./image.js";
 import type { ImageState } from "./image-presence.js";
 
 const def = (description: string, extra: Partial<ContextImageFile> = {}): ContextImageFile => ({
@@ -1047,15 +1046,11 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     expect(logs).toEqual([]);
   });
 
-  it("ビルドキャッシュの片付けの引数とログに、期間の絞り込みと --all が無い", async () => {
-    expect(buildCachePruneArgs()).toEqual(["builder", "prune", "-f"]);
+  it("デーモンの片付けが動かす docker は builder prune -f で、ログに期間を書かない", async () => {
     const { calls, logs, prune } = docker();
     await prune();
-    // 動かす docker にも、期間の絞り込み（--filter until=…）と --all が無い
-    const cache = calls.filter((c) => c.startsWith("builder "));
-    expect(cache).toEqual(["builder prune -f"]);
-    expect(cache.join(" ")).not.toMatch(/--filter|until|--all|(^| )-a( |$)/);
-    // ログにも、期間を書かない
+    // 期間の絞り込み（--filter until=…）も --all も無い（引数そのものは、image.test.ts で確かめる）
+    expect(calls.filter((c) => c.startsWith("builder "))).toEqual(["builder prune -f"]);
     expect(logs).toEqual(["[daemon] 使っていないビルドキャッシュの片付けを実行しました。"]);
   });
 
