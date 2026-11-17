@@ -416,6 +416,10 @@ export function describeEventParts(
       detail: event.payload.note,
     };
   }
+  if (event.type === "SubagentNoticeImitated") {
+    // 本文は、起きたことと次にすることだけ。仕組みと理由は、開いて読む詳細に分ける（PBI-368）
+    return { text: describeEventText(event, l), detail: l.event.SubagentNoticeImitatedHint };
+  }
   return { text: describeEventText(event, l) };
 }
 

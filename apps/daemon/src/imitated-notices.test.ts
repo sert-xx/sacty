@@ -92,6 +92,24 @@ describe("通知の形の文面の数え方", () => {
     expect(countImitatedNotices("")).toBe(0);
   });
 
+  it("字下げした ``` は、コードブロックを開かない（後ろの文面を見逃さない）", () => {
+    expect(countImitatedNotices(`    \`\`\`\n${ONE_LINE}`)).toBe(1);
+    expect(countImitatedNotices(`\t~~~\n${ONE_LINE}`)).toBe(1);
+    // 空白 3 つまでの字下げは、コードブロックを開く
+    expect(countImitatedNotices(`   \`\`\`\n${ONE_LINE}\n   \`\`\``)).toBe(0);
+  });
+
+  it("コードブロックの中の ```xml のような行では、コードブロックを閉じない", () => {
+    expect(countImitatedNotices(`\`\`\`\n\`\`\`xml\n${ONE_LINE}\n\`\`\``)).toBe(0);
+    expect(countImitatedNotices(`~~~\n~~~ text\n${ONE_LINE}\n~~~`)).toBe(0);
+    // 記号の違う行でも閉じない。閉じる行の後ろの空白は許す
+    expect(countImitatedNotices(`\`\`\`\n~~~\n${ONE_LINE}\n\`\`\`  \n${ONE_LINE}`)).toBe(1);
+  });
+
+  it("行の中のコード（``` で始まり、同じ行に ` がある）は、コードブロックを開かない", () => {
+    expect(countImitatedNotices(`\`\`\`<system-reminder>\`\`\` は目印\n${ONE_LINE}`)).toBe(1);
+  });
+
   it("コードブロックを閉じた後の文面は数える", () => {
     expect(countImitatedNotices(`\`\`\`\n引用\n\`\`\`\n${ONE_LINE}`)).toBe(1);
   });
@@ -121,6 +139,22 @@ describe("エージェントの出力の読み取り（Claude Code）", () => {
     expect(imitated).toBe(3);
     // 実行の結果（成果物）は変えない
     expect(outcome).toMatchObject({ kind: "completed", output: "# 設計" });
+  });
+
+  it("1 つの発言の本文が分かれていても、全体をつないでコードブロックを見分ける", () => {
+    const blocks = (texts: string[]) =>
+      JSON.stringify({
+        type: "assistant",
+        session_id: "s",
+        parent_tool_use_id: null,
+        message: { id: "m-blocks", content: texts.map((text) => ({ type: "text", text })) },
+      });
+    // コードブロックの開始と、引用した文面が、別の本文に分かれている
+    expect(read([init, blocks(["引用：\n```", `${ONE_LINE}\n\`\`\``]), result("x")]).imitated).toBe(
+      0,
+    );
+    // 閉じた後の本文は数える
+    expect(read([init, blocks(["```\n引用\n```", ONE_LINE]), result("x")]).imitated).toBe(1);
   });
 
   it("サブエージェントの発言（parent_tool_use_id を持つ）は数えない", () => {

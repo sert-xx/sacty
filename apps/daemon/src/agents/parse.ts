@@ -67,24 +67,33 @@ export const IMITATED_NOTICES_MAX = 1000;
 
 /**
  * 発言の中の、サブエージェントの完了の通知・システムの知らせの形の文面の数（PBI-368）。実行環境が入力として届けるタグ
- * （`<task-notification>`・`<system-reminder>`）で始まる行を数える。コードブロック（``` か ~~~ で囲んだ所と、4 つ以上の空白・
- * タブで字下げした行）と、行の途中に書かれたタグ（文の中での言及）は数えない。
+ * （`<task-notification>`・`<system-reminder>`）で始まる行を数える。コードブロックの中と、行の途中に書かれたタグ（文の中での
+ * 言及）は数えない。コードブロックは、Markdown の決まりで見分ける。
+ * - 囲んだコードブロック：開く行は、字下げが空白 3 つまでの、3 つ以上の ``` か ~~~。閉じる行は、同じ記号が同じ長さ以上で、
+ *   後ろに空白しか無い行（```xml のように言語の名前が付いた行は、閉じる行ではない）。
+ * - 字下げのコードブロック：4 つ以上の空白・タブで字下げした行。
  */
 export function countImitatedNotices(text: string): number {
   if (!text.includes("<task-notification>") && !text.includes("<system-reminder>")) return 0;
   let count = 0;
   let fence: string | undefined;
   for (const line of text.split("\n")) {
-    const trimmed = line.trimStart();
-    const mark = /^(`{3,}|~{3,})/.exec(trimmed)?.[1];
-    if (mark) {
-      // 閉じるのは、開いたのと同じ記号で、同じ長さ以上の行
-      if (fence === undefined) fence = mark;
-      else if (mark[0] === fence[0] && mark.length >= fence.length) fence = undefined;
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    const mark = match?.[1];
+    const rest = match?.[2] ?? "";
+    if (fence !== undefined) {
+      // 閉じるのは、開いたのと同じ記号で、同じ長さ以上で、後ろに空白しか無い行
+      if (mark && mark[0] === fence[0] && mark.length >= fence.length && rest.trim() === "") {
+        fence = undefined;
+      }
       continue;
     }
-    if (fence !== undefined) continue;
-    // 4 つ以上の空白・タブで字下げした行は、Markdown では字下げのコードブロック（引用）なので数えない
+    // ``` で開く行の後ろ（言語の名前）には、` を書けない（書いてあれば、行の中のコードで、コードブロックではない）
+    if (mark && !(mark.startsWith("`") && rest.includes("`"))) {
+      fence = mark;
+      continue;
+    }
+    // 4 つ以上の空白・タブで字下げした行は、字下げのコードブロック（引用）なので数えない
     if (/^ {0,3}<(task-notification|system-reminder)>/.test(line)) count++;
     if (count >= IMITATED_NOTICES_MAX) break;
   }
@@ -290,18 +299,12 @@ export class ClaudeOutcomeReader extends OutcomeReader {
       if (text) this.assistantText = text;
       // サブエージェントの発言（parent_tool_use_id を持つ）は数えない。親が、届いていない担当の結果を書いたかを見る
       if (text && (event.parent_tool_use_id === null || event.parent_tool_use_id === undefined)) {
-        this.imitated = Math.min(
-          IMITATED_NOTICES_MAX,
-          this.imitated +
-            content.reduce(
-              (sum, c) =>
-                sum +
-                (c && typeof c === "object" && c.type === "text"
-                  ? countImitatedNotices(String(c.text ?? ""))
-                  : 0),
-              0,
-            ),
-        );
+        // 発言の本文の全体を 1 つにつないでから数える（コードブロックが、本文の区切りをまたいでいても見分ける）
+        const whole = content
+          .map((c) => (c && typeof c === "object" && c.type === "text" ? String(c.text ?? "") : ""))
+          .filter(Boolean)
+          .join("\n");
+        this.imitated = Math.min(IMITATED_NOTICES_MAX, this.imitated + countImitatedNotices(whole));
       }
     }
   }
