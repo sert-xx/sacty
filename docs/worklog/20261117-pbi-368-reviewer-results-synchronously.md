@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-368
-- PR: なし
+- PR: #399
 - ブランチ: claude/pbi-368-review-result-wait-0cb301
 - 関係する ADR: [レビューの担当の結果を起動のツールの結果として受け取らせ、通知の形の文面を親が書いた実行を記録する](../adr/20261117-0038-receive-reviewer-results-synchronously.md)
 
