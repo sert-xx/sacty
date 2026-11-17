@@ -153,7 +153,7 @@ describe("既定の review スキルの、担当の起動と結果の受け取�
     expect(section).toContain("背景にしない指定を、担当ごとに明示する");
     expect(section).toContain("`run_in_background: false`");
     // 起動のツールが結果を返さない環境は、待つためのツールで待つ
-    expect(section).toContain("Codex は `wait`");
+    expect(section).toContain("Codex は `wait_agent`。版によっては `wait`");
   });
 
   it("待つためだけのコマンドを実行せず、担当の出力を途中で覗かない", () => {
