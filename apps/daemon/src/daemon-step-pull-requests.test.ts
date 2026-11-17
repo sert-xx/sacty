@@ -5,6 +5,7 @@ import type { DaemonText, StepKey, Task } from "@sacty/core";
 import {
   exportDue,
   isCompleted,
+  isSecurityTask,
   MAX_CHANGE_REQUESTS,
   MAX_INCOMPLETE_CONTINUATIONS,
   MVP_STEPS,
@@ -4417,6 +4418,522 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(count(service, id, "StepSubmitted")).toBe(2);
         expect(task.pullRequest?.commit).toBe(first);
         activity.close();
+      });
+
+      describe("AI のレビューの指摘をすべて断って何も変えなかったら、断った理由を返信し、同じ先頭を 1 回だけ判定し直させる（PBI-357）", () => {
+        /** 指摘への対応を添えた、実装の実行（作業領域は変えない）。 */
+        const responded = (responses: { remarkId: string; status?: string; text: string }[]) =>
+          out(
+            [
+              "# 実装の説明（変更なし）",
+              block({
+                "sacty-test-map": [
+                  { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+                ],
+              }),
+              block({ "sacty-responses": responses }),
+            ].join("\n\n"),
+          );
+        const declined = (remarkId = "implement-1-1") =>
+          responded([
+            { remarkId, status: "declined", text: "この指摘は、このタスクの範囲の外です" },
+          ]);
+        const replies = (pulls: FakePulls) =>
+          pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-reply:"));
+        const restarts = (svc: TaskService, childId: string) =>
+          svc
+            .get(childId)
+            ?.activity.filter(
+              (e) => e.type === "ReviewRestarted" && e.payload.reason === "declined",
+            ) ?? [];
+        const options = (pulls: FakePulls, repos: FakeRepos, projects: MemoryProjectStore) => ({
+          pulls,
+          repos,
+          steps: ["implement"] as StepKey[],
+          reviewTasks: true,
+          ci: CI,
+          projects,
+        });
+        /** デーモンを起動し直す（同じ作業履歴・同じ GitHub とリポジトリの偽物を読む）。 */
+        const reopen = (
+          outcomes: AgentOutcome[],
+          pulls: FakePulls,
+          repos: FakeRepos,
+          projects: MemoryProjectStore,
+        ) => {
+          const activity = new SqliteActivityStore(dbPath);
+          const made = makeService(activity, outcomes, {
+            stepPullRequests: true,
+            ci: CI,
+            draftPullRequests: true,
+            reviewTasks: true,
+            now: later,
+            pulls,
+            repos,
+            projects,
+            planner: async () => ({
+              steps: ["implement"],
+              fallback: false,
+              testCommand: "npm test",
+              costUsd: 0,
+              estimated: false,
+            }),
+          });
+          return { activity, ...made };
+        };
+        /**
+         * 実装の PR を作り、レビューの子タスクが指摘を残し、その指摘を取り込んで、やり直しの実装が始まる前まで進める。
+         * やり直しは、作業領域を何も変えない。
+         */
+        async function reviewed(outcomes: AgentOutcome[]) {
+          const pulls = new FakePulls();
+          const repos = new FakeRepos();
+          const projects = projectsWithAccount();
+          const made = await start(
+            [implement(), verdictOut("changes_required"), ...outcomes],
+            options(pulls, repos, projects),
+          );
+          const { service, id } = made;
+          await settle(service, id);
+          const childId = childOf(service, id);
+          const first = commitOf(service, id);
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            url: "https://github.com/acme/app/pull/7",
+            headSha: first,
+          };
+          await runReview(service, childId);
+          pulls.feedbackBy[7] = [posted(pulls, 0)];
+          await service.checkPullRequests();
+          expect(taskOf(service, id).status).toBe("queued");
+          repos.sameAsParent = true;
+          return { ...made, pulls, repos, projects, childId, first };
+        }
+
+        it("すべて断って何も変えなければ、止めずに提出し、断った理由を返信してから、同じ先頭を 1 回だけ再レビューさせる。指摘なしなら、ドラフトを外して人の承認を待つ（受け入れ条件 1〜3）", async () => {
+          const made = await reviewed([
+            declined(),
+            verdictOut("no_findings", "# 評価\n\n理由が成り立つので、取り下げる"),
+          ]);
+          const { activity, service, executor, pulls, id, childId, first } = made;
+          const appends: string[][] = [];
+          const original = activity.append.bind(activity);
+          vi.spyOn(activity, "append").mockImplementation((input) => {
+            appends.push(input.events.map((e) => e.event.type));
+            return original(input);
+          });
+          await settle(service, id);
+          // 止めずに、同じ先頭のまま提出する（判定し直しを求めた記録は、PR の公開・提出と同じ追記）
+          let task = taskOf(service, id);
+          expect(task.status).toBe("awaiting_approval");
+          expect(task.gate).toEqual({ step: "implement", submission: 2 });
+          expect(task.pullRequest?.commit).toBe(first);
+          expect(types(service, id)).not.toContain("ImplementationUnchanged");
+          expect(appends.filter((t) => t.includes("ReviewRejudgeRequested"))).toEqual([
+            ["ReviewRejudgeRequested", "PullRequestPublished", "StepSubmitted"],
+          ]);
+          expect(
+            service.get(id)?.activity.find((e) => e.type === "ReviewRejudgeRequested"),
+          ).toMatchObject({
+            actor: "sacty",
+            payload: { number: 7, commit: first, reviewTaskId: childId },
+          });
+          expect(task.reviewRejudge).toMatchObject({ number: 7, commit: first });
+          // 返信が済むまでは、判定し直しを始めない（断った理由を読ませるため）
+          await service.checkPullRequests();
+          expect(restarts(service, childId)).toHaveLength(0);
+          // 親の次の実行が、断った理由を、指摘の場所に返信する
+          expect(service.queuedTaskIds()).toContain(id);
+          await service.runNext(id);
+          expect(replies(pulls)).toHaveLength(1);
+          expect(replies(pulls)[0]?.body).toContain("**対応していません。** 理由：");
+          expect(replies(pulls)[0]?.body).toContain("このタスクの範囲の外です");
+          expect(count(service, id, "RemarkRepliesPosted")).toBe(1);
+          // 返信の後、同じ先頭を、1 回だけ再レビューさせる
+          await service.checkPullRequests();
+          await service.checkPullRequests();
+          expect(restarts(service, childId)).toHaveLength(1);
+          expect(restarts(service, childId)[0]).toMatchObject({
+            actor: "sacty",
+            payload: { reason: "declined", commit: first },
+          });
+          expect(taskOf(service, childId).reviewRejudgeCommit).toBe(first);
+          const before = executor.calls.length;
+          await runReview(service, childId);
+          // レビューには、同じ先頭を、作者の理由を確かめて判定し直す回だと伝える
+          const prompt = promptOf(executor, before);
+          expect(prompt).toContain("前回と同じ先頭のコミットを判定し直す回");
+          expect(taskOf(service, childId).reviewTarget?.headCommit).toBe(first);
+          expect(taskOf(service, childId).reviewVerdicts?.at(-1)).toMatchObject({
+            round: 2,
+            verdict: "no_findings",
+          });
+          // 指摘なし：ドラフトを外して、人の承認（マージ）を待つ。判定し直しは繰り返さない
+          await service.checkPullRequests();
+          await service.checkPullRequests();
+          task = taskOf(service, id);
+          expect(task.status).toBe("awaiting_approval");
+          expect(task.pullRequest?.draft).toBeUndefined();
+          expect(types(service, id)).toContain("PullRequestMarkedReady");
+          expect(restarts(service, childId)).toHaveLength(1);
+          expect(count(service, id, "ChangesRequested")).toBe(1);
+          activity.close();
+        });
+
+        it("判定し直しても指摘が残れば、差し戻しと同じ追記で一時停止する。再開して、また何も変えなければ、今までどおり止まり、同じ先頭は二度と判定し直さない（デーモンの再起動・再開をまたいでも。受け入れ条件 4）", async () => {
+          const made = await reviewed([
+            declined(),
+            verdictOut("changes_required", "# 評価\n\n理由は成り立たない。未対応"),
+          ]);
+          const { pulls, repos, projects, id, childId, first } = made;
+          await settle(made.service, id);
+          await made.service.runNext(id);
+          expect(replies(pulls)).toHaveLength(1);
+          await made.service.checkPullRequests();
+          expect(restarts(made.service, childId)).toHaveLength(1);
+          await runReview(made.service, childId);
+          expect(taskOf(made.service, childId).reviewVerdicts?.at(-1)?.verdict).toBe(
+            "changes_required",
+          );
+          // 判定し直したレビューの指摘が届く：やり直しを始めずに、差し戻しと同じ追記で一時停止する
+          pulls.feedbackBy[7] = [posted(pulls, 0), posted(pulls, 1)];
+          const appends: string[][] = [];
+          const original = made.activity.append.bind(made.activity);
+          vi.spyOn(made.activity, "append").mockImplementation((input) => {
+            appends.push(input.events.map((e) => e.event.type));
+            return original(input);
+          });
+          const runs = made.executor.calls.length;
+          await made.service.checkPullRequests();
+          let task = taskOf(made.service, id);
+          expect(task.status).toBe("paused");
+          expect(task.pausedReason).toBe("unchanged");
+          expect(task.pausedMessage).toEqual({
+            code: "implement.declinedAgain",
+            params: { number: 7 },
+          });
+          expect(renderMessage(task.pausedMessage as DaemonText, "ja")).toContain(
+            "判定し直させましたが、指摘が残りました",
+          );
+          expect(renderMessage(task.pausedMessage as DaemonText, "en")).toContain("PR #7");
+          expect(appends.filter((t) => t.includes("ChangesRequested"))).toEqual([
+            ["ChangesRequested", "TaskPaused"],
+          ]);
+          // 残った指摘は、次のやり直しに渡す指摘として記録されている
+          expect(task.remarks.at(-1)).toMatchObject({
+            id: "implement-2-1",
+            source: "sacty_review",
+          });
+          // 止まったまま：実装も、レビューも、動かない
+          await made.service.checkPullRequests();
+          expect(made.service.queuedTaskIds()).not.toContain(id);
+          expect(made.executor.calls).toHaveLength(runs);
+          expect(restarts(made.service, childId)).toHaveLength(1);
+          made.activity.close();
+
+          // デーモンを起動し直してから、人が再開する：残った指摘を渡して、実装をやり直す
+          const again = reopen([declined("implement-2-1")], pulls, repos, projects);
+          task = taskOf(again.service, id);
+          expect(task.status).toBe("paused");
+          expect(task.reviewRejudge).toMatchObject({ number: 7, commit: first });
+          expect(taskOf(again.service, childId).reviewRejudgeCommit).toBe(first);
+          again.service.resume(id, {});
+          await settle(again.service, id);
+          expect(promptOf(again.executor, 0)).toContain("理由は成り立たない。未対応");
+          // また、すべて断って何も変えなかった：同じ先頭には、もう判定し直しを求めず、今までどおり止まる
+          task = taskOf(again.service, id);
+          expect(task.status).toBe("paused");
+          expect(task.pausedMessage).toEqual({
+            code: "implement.unchanged",
+            params: { number: 7 },
+          });
+          expect(count(again.service, id, "ReviewRejudgeRequested")).toBe(1);
+          expect(count(again.service, id, "ImplementationUnchanged")).toBe(1);
+          expect(count(again.service, id, "StepSubmitted")).toBe(2);
+          await again.service.checkPullRequests();
+          expect(restarts(again.service, childId)).toHaveLength(1);
+          again.activity.close();
+
+          // もう一度起動し直して、再開しても同じ（数え直さない）
+          const third = reopen([declined("implement-2-1")], pulls, repos, projects);
+          third.service.resume(id, {});
+          await settle(third.service, id);
+          task = taskOf(third.service, id);
+          expect(task.status).toBe("paused");
+          expect(task.pausedMessage).toEqual({
+            code: "implement.unchanged",
+            params: { number: 7 },
+          });
+          expect(count(third.service, id, "ReviewRejudgeRequested")).toBe(1);
+          expect(count(third.service, id, "ImplementationUnchanged")).toBe(2);
+          await third.service.checkPullRequests();
+          await third.service.checkPullRequests();
+          expect(restarts(third.service, childId)).toHaveLength(1);
+          expect(taskOf(third.service, childId).reviewRound).toBe(2);
+          third.activity.close();
+        });
+
+        it("判定し直しを求めた後・始める前にデーモンを起動し直しても、返信の後に 1 回だけ始め、起動し直すたびに繰り返さない", async () => {
+          const made = await reviewed([declined()]);
+          const { pulls, repos, projects, id, childId, first } = made;
+          await settle(made.service, id);
+          expect(taskOf(made.service, id).status).toBe("awaiting_approval");
+          made.activity.close();
+          // 起動し直した後：返信してから、判定し直しを始める
+          const again = reopen([], pulls, repos, projects);
+          await again.service.checkPullRequests();
+          expect(restarts(again.service, childId)).toHaveLength(0);
+          await again.service.runNext(id);
+          expect(replies(pulls)).toHaveLength(1);
+          await again.service.checkPullRequests();
+          expect(restarts(again.service, childId)).toHaveLength(1);
+          again.activity.close();
+          // 始めた後に起動し直しても、もう一度は始めない（レビューが終わる前も、終わった後も）
+          const third = reopen(
+            [verdictOut("changes_required", "# 評価\n\n未対応")],
+            pulls,
+            repos,
+            projects,
+          );
+          await third.service.checkPullRequests();
+          expect(restarts(third.service, childId)).toHaveLength(1);
+          await runReview(third.service, childId);
+          expect(taskOf(third.service, childId).reviewTarget?.headCommit).toBe(first);
+          third.activity.close();
+          const fourth = reopen([], pulls, repos, projects);
+          await fourth.service.checkPullRequests();
+          await fourth.service.checkPullRequests();
+          expect(restarts(fourth.service, childId)).toHaveLength(1);
+          expect(replies(pulls)).toHaveLength(1);
+          fourth.activity.close();
+        });
+
+        it("断った理由の返信が GitHub のレート制限の待ちに入っている間は、判定し直しを始めず、返信できてから始める", async () => {
+          const pulls = new FakePulls();
+          const repos = new FakeRepos();
+          let clock = later();
+          const made = await start([implement(), verdictOut("changes_required"), declined()], {
+            ...options(pulls, repos, projectsWithAccount()),
+            now: () => clock,
+          });
+          const { activity, service, id } = made;
+          await settle(service, id);
+          const childId = childOf(service, id);
+          const first = commitOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+          await runReview(service, childId);
+          pulls.feedbackBy[7] = [posted(pulls, 0)];
+          await service.checkPullRequests();
+          repos.sameAsParent = true;
+          await settle(service, id);
+          expect(taskOf(service, id).status).toBe("awaiting_approval");
+          pulls.rateLimited = true;
+          await service.runNext(id);
+          pulls.rateLimited = false;
+          expect(count(service, id, "RemarkRepliesDeferred")).toBe(1);
+          await service.checkPullRequests();
+          expect(restarts(service, childId)).toHaveLength(0);
+          // 期限が明けて、返信できたら、判定し直しを始める
+          clock += 61_000;
+          await service.runNext(id);
+          expect(replies(pulls)).toHaveLength(1);
+          await service.checkPullRequests();
+          expect(restarts(service, childId)).toHaveLength(1);
+          activity.close();
+        });
+
+        it("判定し直したレビューの指摘に、人の指摘が混ざっていれば、止めずに、今までどおり差し戻してやり直す", async () => {
+          const made = await reviewed([
+            declined(),
+            verdictOut("changes_required", "# 評価\n\n未対応"),
+            rework("implement"),
+            implement("# 実装の説明 v3"),
+          ]);
+          const { activity, service, pulls, repos, id, childId } = made;
+          await settle(service, id);
+          await service.runNext(id);
+          await service.checkPullRequests();
+          await runReview(service, childId);
+          pulls.feedbackBy[7] = [
+            posted(pulls, 0),
+            posted(pulls, 1),
+            item("comment:900", { author: "reviewer", body: "ここも直してほしい" }),
+          ];
+          repos.sameAsParent = false;
+          await service.checkPullRequests();
+          const task = taskOf(service, id);
+          expect(task.status).toBe("queued");
+          expect(task.pausedReason).toBeUndefined();
+          expect(count(service, id, "ChangesRequested")).toBe(2);
+          activity.close();
+        });
+
+        const stops = async (made: Awaited<ReturnType<typeof reviewed>>) => {
+          const { activity, service, pulls, id, childId } = made;
+          const updates = pulls.calls.length;
+          await settle(service, id);
+          const task = taskOf(service, id);
+          expect(task.status).toBe("paused");
+          expect(task.pausedMessage).toEqual({
+            code: "implement.unchanged",
+            params: { number: 7 },
+          });
+          expect(types(service, id)).not.toContain("ReviewRejudgeRequested");
+          expect(count(service, id, "StepSubmitted")).toBe(1);
+          expect(pulls.calls).toHaveLength(updates);
+          await service.checkPullRequests();
+          expect(restarts(service, childId)).toHaveLength(0);
+          expect(replies(pulls)).toHaveLength(0);
+          activity.close();
+        };
+
+        it("対応したと申告した指摘があれば（何も変えていないのに）、今までどおり一時停止する（受け入れ条件 5）", async () => {
+          await stops(
+            await reviewed([
+              responded([{ remarkId: "implement-1-1", status: "addressed", text: "直しました" }]),
+            ]),
+          );
+        });
+
+        it("申告の無い対応があれば、今までどおり一時停止する（受け入れ条件 5）", async () => {
+          await stops(
+            await reviewed([responded([{ remarkId: "implement-1-1", text: "範囲の外です" }])]),
+          );
+        });
+
+        it("対応の付いていない指摘があれば、今までどおり一時停止する（受け入れ条件 5）", async () => {
+          await stops(await reviewed([implement("# 実装の説明（変更なし）")]));
+        });
+
+        it("断った理由が空なら、今までどおり一時停止する（受け入れ条件 5）", async () => {
+          await stops(
+            await reviewed([
+              responded([{ remarkId: "implement-1-1", status: "declined", text: " " }]),
+            ]),
+          );
+        });
+
+        it("セキュリティの組み合わせのタスク（指摘への返信をしない）は、すべて断っても、今までどおり一時停止する", async () => {
+          const pulls = new FakePulls();
+          const repos = new FakeRepos();
+          const activity = new SqliteActivityStore(dbPath);
+          const made = makeService(
+            activity,
+            [implement(), verdictOut("changes_required"), declined()],
+            {
+              stepPullRequests: true,
+              ci: CI,
+              draftPullRequests: true,
+              reviewTasks: true,
+              now: later,
+              pulls,
+              repos,
+              planner: async () => ({
+                steps: ["implement"],
+                plan: "security-fix",
+                fallback: false,
+                testCommand: "npm test",
+                costUsd: 0,
+                estimated: false,
+              }),
+            },
+          );
+          const { service } = made;
+          const { id } = service.createTask({
+            projectId: "default",
+            title: "GHSA を直す",
+            body: "タスクの本文",
+            plan: "security-fix",
+          });
+          await settle(service, id);
+          expect(isSecurityTask(taskOf(service, id))).toBe(true);
+          expect(taskOf(service, id).status).toBe("awaiting_approval");
+          const childId = childOf(service, id);
+          const first = commitOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+          await runReview(service, childId);
+          pulls.feedbackBy[7] = [posted(pulls, 0)];
+          await service.checkPullRequests();
+          expect(taskOf(service, id).status).toBe("queued");
+          expect(taskOf(service, id).remarks.at(-1)).toMatchObject({
+            source: "sacty_review",
+            origin: { number: 7 },
+          });
+          repos.sameAsParent = true;
+          await stops({
+            ...made,
+            activity,
+            id,
+            pulls,
+            repos,
+            projects: projectsWithAccount(),
+            childId,
+            first,
+          });
+        });
+
+        it("人の指摘が混ざっていれば、すべて断っても、今までどおり一時停止する（受け入れ条件 5）", async () => {
+          const pulls = new FakePulls();
+          const repos = new FakeRepos();
+          const made = await start(
+            [
+              implement(),
+              verdictOut("changes_required"),
+              rework("implement"),
+              responded([
+                { remarkId: "implement-1-1", status: "declined", text: "範囲の外です" },
+                { remarkId: "implement-1-2", status: "declined", text: "当たりません" },
+              ]),
+            ],
+            options(pulls, repos, projectsWithAccount()),
+          );
+          const { service, id } = made;
+          await settle(service, id);
+          const childId = childOf(service, id);
+          const first = commitOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+          await runReview(service, childId);
+          pulls.feedbackBy[7] = [
+            posted(pulls, 0),
+            item("comment:900", { author: "reviewer", body: "ここも直してほしい" }),
+          ];
+          await service.checkPullRequests();
+          expect(taskOf(service, id).remarks.map((r) => r.source)).toEqual([
+            "sacty_review",
+            undefined,
+          ]);
+          repos.sameAsParent = true;
+          await stops({ ...made, pulls, repos, projects: projectsWithAccount(), childId, first });
+        });
+
+        it("元のコメントの記録が無い指摘（この仕組みより前に取り込んだもの）は、返信できないので、今までどおり一時停止する（受け入れ条件 6）", async () => {
+          const pulls = new FakePulls();
+          const repos = new FakeRepos();
+          const made = await start(
+            [implement(), verdictOut("changes_required"), declined()],
+            options(pulls, repos, projectsWithAccount()),
+          );
+          const { service, id } = made;
+          await settle(service, id);
+          const childId = childOf(service, id);
+          const first = commitOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+          await runReview(service, childId);
+          // AI のレビューの指摘を、元のコメントの記録なしで差し戻す（以前の版の作業履歴と同じ形）
+          service.requestChanges(
+            id,
+            { step: "implement", submission: 1, comments: ["受け入れ条件が足りない"] },
+            { aiReview: [0] },
+          );
+          expect(taskOf(service, id).remarks.at(-1)).toMatchObject({
+            id: "implement-1-1",
+            source: "sacty_review",
+          });
+          expect(taskOf(service, id).remarks.at(-1)?.origin).toBeUndefined();
+          repos.sameAsParent = true;
+          await stops({ ...made, pulls, repos, projects: projectsWithAccount(), childId, first });
+        });
       });
     });
 

@@ -459,6 +459,41 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     ]);
   });
 
+  it("同じ先頭の判定のし直し（PBI-357）では、作者が断った理由が成り立つかを、先頭のコードで確かめさせる。その先頭をレビューする回にだけ足す", () => {
+    const previousReview = {
+      round: 1,
+      url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+      at: "2026-10-16T01:00:00.000Z",
+      headCommit: "h".repeat(40),
+      body: "前回の総評\n\n- [要修正] 0 で割る",
+      comments: [],
+    };
+    const LINE = "- 今回は、前回と同じ先頭のコミットを判定し直す回。";
+    const rejudge = buildPrompt(
+      reviewTask({ reviewRound: 2, previousReview, reviewRejudgeCommit: "h".repeat(40) }),
+      "review",
+      { diff, replies: [] },
+    );
+    expect(rejudge).toContain(LINE);
+    expect(rejudge).toContain(
+      "- 作者の理由を、確かめずに受け入れない。確かめずに退けもしない。前回の指摘を残すかどうかは、前回の判定に合わせず、今回確かめた結果で決める",
+    );
+    // 指示は、前回の指摘と作者の返答のデータより前に置く
+    expect(rejudge.indexOf(LINE)).toBeLessThan(rejudge.indexOf('{"previousReview"'));
+    // ふつうの再レビュー（PR が更新された）には足さない
+    expect(
+      buildPrompt(reviewTask({ reviewRound: 2, previousReview }), "review", { diff, replies: [] }),
+    ).not.toContain(LINE);
+    // 判定し直した後に、PR が更新された回（別の先頭）にも足さない
+    expect(
+      buildPrompt(
+        reviewTask({ reviewRound: 3, previousReview, reviewRejudgeCommit: "e".repeat(40) }),
+        "review",
+        { diff, replies: [] },
+      ),
+    ).not.toContain(LINE);
+  });
+
   it("再レビューでは、前回の指摘と作者の返答をデータとして渡し、前回の指摘ごとに対応を確かめさせる", () => {
     const task = reviewTask({
       reviewRound: 2,

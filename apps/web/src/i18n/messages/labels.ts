@@ -112,7 +112,8 @@ const ja = {
       "子タスクが中止されました。再開すると中止した子タスクを除いて進め、中止すると終わっていない子タスクも中止します。",
     incomplete:
       "実装が終わらず、PR を作成・更新していません。再開すると、できれば続きから、エージェントを変えると最初から実装します。",
-    unchanged: "やり直しが PR を何も変えず、提出していません。再開すると実装をやり直します。",
+    unchanged:
+      "やり直しが PR を変えなかったか、断った理由を返信しても指摘が残りました。再開すると、指摘を渡してやり直します。",
   } satisfies Record<PauseReason, string>,
   /** 実装の作り直しを、PR のマージで止めたときの段階（ReworkStoppedByMerge）。 */
   reworkStage: {
@@ -416,6 +417,8 @@ const ja = {
       `テストの対応していないテスト観点があるため、提出せずに実装を続ける（${ids}）`,
     ImplementationUnchanged: (number: number, commit: string) =>
       `やり直しの実装が、AI のレビューの指摘が残る PR #${number}（${commit}）を何も変えなかったため、提出しない`,
+    ReviewRejudgeRequested: (number: number, commit: string) =>
+      `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘をすべて、理由を付けて断り、何も変えなかった。断った理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる`,
     prDrafted: (number: number | undefined, draft: boolean, commit: string) =>
       `最終レビューの前に PR を${draft ? "ドラフトで" : ""}作成・更新（#${number}・${commit}）。CI を待つ`,
     PullRequestCiFinished: (
@@ -512,6 +515,8 @@ const ja = {
     ReviewRestarted: (actor: string) => `再レビューを始めた（${actor}）`,
     ReviewRestartedByUpdate: (commit: string) =>
       `PR が更新されたので、最新のコミットの再レビューを始めた（${commit}）`,
+    ReviewRestartedByDecline: (commit: string) =>
+      `PR を作ったタスクが、指摘をすべて理由を付けて断ったので、同じコミットを判定し直す再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
     ReviewRestartedByRequest: (actor: string) =>
       `PR でレビューが再依頼されたので、再レビューを始めた（${actor}）`,
     cancelledBecause: (
@@ -852,7 +857,7 @@ const en: LabelMessages = {
     incomplete:
       "The implementation is unfinished; no PR was opened or updated. Resume to continue if possible, or change the agent to start over.",
     unchanged:
-      "The rework changed nothing in the PR, so it was not submitted. Resume to implement again.",
+      "The rework changed nothing in the PR, or findings remained after sacty replied with the reasons. Resume to redo it with them.",
   },
   reworkStage: {
     queued: "queued",
@@ -1094,6 +1099,8 @@ const en: LabelMessages = {
       `Some test viewpoints have no test mapped, so the implementation is continued without being submitted (${ids})`,
     ImplementationUnchanged: (number, commit) =>
       `The rework changed nothing in PR #${number} (${commit}), on which the AI review left findings, so it is not submitted`,
+    ReviewRejudgeRequested: (number, commit) =>
+      `The rework declined every finding of the AI review on PR #${number} (${commit}) with a reason and changed nothing. sacty replies on the PR with the reasons and has the AI review judge the same content once more`,
     prDrafted: (number, draft, commit) =>
       `Opened or updated the PR${draft ? " as a draft" : ""} before the final review (#${number} · ${commit}); waiting for CI`,
     PullRequestCiFinished: (result, failed, rerunSkipped) =>
@@ -1146,6 +1153,8 @@ const en: LabelMessages = {
     ReviewRestarted: (actor) => `Started a re-review (${actor})`,
     ReviewRestartedByUpdate: (commit) =>
       `The PR was updated, so started a re-review of the latest commit (${commit})`,
+    ReviewRestartedByDecline: (commit) =>
+      `The task that opened the PR declined every finding with a reason, so started a re-review that judges the same commit again (${commit}; once per commit)`,
     ReviewRestartedByRequest: (actor) =>
       `Started a re-review because a review was re-requested on the PR (${actor})`,
     cancelledBecause: (text, reason) =>

@@ -2635,6 +2635,24 @@ const ImplementationUnchanged = z.object({
 });
 
 /**
+ * AI のレビューが指摘を残した実装の PR の先頭を、やり直しの実装が何も変えず、その指摘のすべてを、理由を付けて断った
+ * （PBI-357）。提出にして（先頭は同じ）、断った理由を PR に返信し、PR のレビューの子タスクに、同じ先頭を 1 回だけ判定し
+ * 直させる。同じ追記で、PR の公開と提出を記録する。同じ先頭には、1 回だけ（次に同じ先頭で何も変えなければ、
+ * ImplementationUnchanged で一時停止する）。
+ */
+const ReviewRejudgeRequested = z.object({
+  type: z.literal("ReviewRejudgeRequested"),
+  payload: z.object({
+    repo: z.string().min(1),
+    number: z.number().int().positive(),
+    /** 判定し直させる、PR の先頭のコミット。 */
+    commit: z.string().min(1),
+    /** 判定し直す、PR のレビューの子タスク。 */
+    reviewTaskId: z.string().min(1),
+  }),
+});
+
+/**
  * 引き継いだ既存の PR（StepsChosen の continuedPullRequest）の指摘を、実装の工程の実行の指示に渡した。keys は渡した指摘
  * （PullRequestFeedback の key）。実装に対応させたので、PR の指摘として取り込み直さない（渡さなかった指摘は取り込む）。
  * responses は、実装の実行が、渡した指摘ごとに書いた対応（PBI-352。指摘の ID はキー）。対応を、元のコメントへの返信として
@@ -3029,10 +3047,13 @@ const ReviewRestarted = z.object({
   type: z.literal("ReviewRestarted"),
   /**
    * reason：rerequested は GitHub のレビューの再依頼、updated は親のタスクが PR を更新した（レビューの子タスク。PBI-330）。
-   * commit は、updated のときの親の PR の先頭（同じ更新で再レビューを繰り返さないため）。
+   * declined は、親のタスクが、指摘のすべてを理由を付けて断り、何も変えなかった（同じ先頭を、断った理由を読んで判定し直す。
+   * PBI-357）。
+   * commit は、updated のときの親の PR の先頭（同じ更新で再レビューを繰り返さないため）、declined のときの、判定し直す先頭
+   * （同じ先頭の判定のし直しを、1 回だけにするため）。
    */
   payload: z.object({
-    reason: z.enum(["rerequested", "updated"]).optional(),
+    reason: z.enum(["rerequested", "updated", "declined"]).optional(),
     commit: z.string().min(1).optional(),
   }),
 });
@@ -3848,6 +3869,7 @@ export const EventInput = z.discriminatedUnion("type", [
   NoChangesFound,
   ImplementationIncomplete,
   ImplementationUnchanged,
+  ReviewRejudgeRequested,
   ContinuedFeedbackPassed,
   WorkspaceFilesSkipped,
   PullRequestLabeled,

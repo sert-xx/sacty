@@ -140,8 +140,13 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
     - ほかの PR（要求要件・設計の PR）：親が PR に積んだ今のコミット。
     親が指摘を直して PR を更新し承認待ちに戻ったときと、人が PR にコミットを足したときにあたる。直している間（承認待ちでない）は始めない。
     同じコミットでは1回だけ始める（`Task.reviewRestartCommit`。ほかで push されてレビューした先頭が親のコミットと違っても、繰り返さない）。
-    親のやり直しが実装の PR の先頭を変えなければ、再レビューは始まらない。その先頭に指摘が残っているときは、親が提出にせずに一時停止する（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。
+    親のやり直しが実装の PR の先頭を変えなければ、再レビューは始まらない。その先頭に指摘が残っているときは、親が提出にせずに一時停止する（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)。指摘のすべてを断ったときは、次の項目）。
     一時停止した・一時停止や中止を求められた子タスクは動かさない。
+  - 親が、指摘のすべてを断って、同じ先頭のまま提出していたら（`ReviewRejudgeRequested`）、子タスクがレビューした先頭が今の先頭と同じでも、再レビューを始める（`ReviewRestarted`、`reason: declined`、`commit` にその先頭。actor `sacty`。`rejudgeDue`）。
+    - 始めるのは、断った理由の返信が済んでから（返信するものが残っていない。[指摘への対応の返信](#指摘への対応の返信)）。返信が GitHub のレート制限の待ちに入っている間は、始めずに待つ。返信を投稿できずに失敗を記録した後は、返信の無いまま始める。
+    - 同じ先頭では 1 回だけ始める（`Task.reviewRejudgeCommit`）。デーモンを起動し直しても、繰り返さない。
+    - レビューの指示には、同じ先頭を判定し直す回であることを足す（`rejudgeLines`）。作者が断った理由が成り立つかを、先頭のコミットのコードで確かめさせ、成り立つなら指摘を取り下げさせ、成り立たないなら未対応として残させる。
+    - 指摘なしなら、下のとおりドラフトを外して、人の承認を待つ。指摘が残れば、親を一時停止する（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
 - 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず、判定そのものでは再レビューも起きないので、PR は人の承認（マージ）を待つ。指摘なしの後でも、PR の先頭が変われば（人がコミットを足したときなど）、上のとおり再レビューを始める。
   指摘なしを待つ実装の PR は、子タスクが今の先頭を指摘なしにするまで、確認のたびにドラフトに戻す（`redraftAwaiting`。提出のときに戻せなかった PR も、レビューの途中も）。
   実装の PR（`awaitingReview`）は、PR の今のコミットを指摘なしにしたら、PR の確認で sacty がドラフトを外す（`PullRequestMarkedReady`。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
@@ -157,7 +162,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   PR の確認は、子タスクの中止（片付けと記録）を待ってから終わる。
 - 以前の版の記録（PR の公開の記録の `label`・`intakeLabel`、`PullRequestLabeled`・`PullRequestLabelFailed`）は読み込めるが、ラベルを付ける予定としては扱わない（台帳は書き換えない）。
 
-コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`・`reviewSecurityLines`）、`apps/daemon/src/service.ts`（`REVIEW_CI_TIMEOUT_MS`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
+コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`rejudgeDue`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`・`reviewSecurityLines`・`rejudgeLines`）、`apps/daemon/src/service.ts`（`REVIEW_CI_TIMEOUT_MS`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
 
 ## PR の確認
 
@@ -577,6 +582,9 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
   - マージされずに閉じられた後に開き直されたら、記録した判断のまま差し戻す（判断し直さない）。
   - 読み直しの間に、人が差し戻した・中止したなどで状態が変わっていれば、記録しない。読めなければ、次の確認でやり直す。
   - マージの後に届いた指摘を、続きのタスクにするなどはしない。
+- 判定し直したレビューに残った指摘：親が指摘のすべてを断って提出し（`ReviewRejudgeRequested`）、子タスクが同じ先頭を判定し直した後に取り込んだ指摘が、すべて、その子タスクの最後の回の AI のレビューの指摘なら、差し戻し（`ChangesRequested`）と同じ追記で、一時停止（理由は `unchanged`、文言は `implement.declinedAgain`）を記録する（`rejudgeLeftFindings`）。やり直しは始めない（AI どうしの往復を続けず、人が判断する）。
+  - 再開すると、残った指摘を渡して、戻し先の工程をやり直す。止まっている間の扱い（人がドラフトを外しても戻さない・マージすると承認として進める）は、変更の無いやり直しの一時停止と同じ（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。
+  - 人の指摘・ほかのレビューのタスクの指摘が 1 件でも混ざっていれば、止めずに、今までどおり差し戻してやり直す。
 
 ### AI のレビューの指摘
 
@@ -625,7 +633,7 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
 - 表示：作業履歴の差し戻し・取り込みの行に、AI のレビューの指摘を分けて出し（「指摘3件（AI のレビュー）」「人間1件・AI のレビュー2件」）、承認の画面の指摘に「AI のレビュー」の印を付ける。作業履歴の差し戻しを展開した詳細にも、AI のレビューの指摘に印を付ける。承認の画面で「差し戻しの回数に数えない」と添えるのは、その回に人の指摘が無いときだけ。
   ダッシュボードの品質の信号は「AI のレビューの差し戻し」、監査の根拠の件数は「AI のレビューの指摘」（`aiReviewRemark`）として、人の差し戻し・PR の指摘と別に数える（[アーキテクチャ](architecture.md)・[監査](audit.md)）。
 
-コード: `apps/daemon/src/service.ts`（`importFeedback`・`withoutStaleReviews`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`・`remarkSections`・`guardianJudgmentLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）、`packages/core/src/projection.ts`（`changeRounds`・`lastChangeRound`・`isAiReviewRemark`）
+コード: `apps/daemon/src/service.ts`（`importFeedback`・`withoutStaleReviews`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`rejudgeLeftFindings`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`・`remarkSections`・`guardianJudgmentLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）、`packages/core/src/projection.ts`（`changeRounds`・`lastChangeRound`・`isAiReviewRemark`）
 
 ### 人に確かめてほしいこと
 
@@ -652,7 +660,7 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
 
 ### 指摘への対応の返信
 
-関係する ADR: [取り込んだ PR の指摘への対応を、指摘ごとに PR に返信する](../adr/20261116-0045-superseded-reply-to-review-feedback-on-pull-request.md)、[レート制限に当たった指摘への返信を、期限が明けてからやり直す](../adr/20261117-0110-retry-remark-replies-after-rate-limit.md)
+関係する ADR: [取り込んだ PR の指摘への対応を、指摘ごとに PR に返信する](../adr/20261116-0045-superseded-reply-to-review-feedback-on-pull-request.md)、[レート制限に当たった指摘への返信を、期限が明けてからやり直す](../adr/20261117-0110-retry-remark-replies-after-rate-limit.md)、[AI のレビューの指摘をすべて断って何も変えなかったら、断った理由を返信し、同じ先頭を 1 回だけ判定し直させる](../adr/20261117-0250-reply-and-rejudge-when-all-findings-declined.md)
 
 PR のレビュー・コメントから取り込んだ指摘を受けて工程をやり直し、PR を更新したら、指摘ごとに、対応を PR に返信する。指摘した人・AI が、指摘の場所で、対応されたか・断られたかを読めるようにする。
 
@@ -697,6 +705,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - 返信するのは、実装の承認待ちで、今の提出で対応を書いた、まだ返信していない指摘。引き継いだ PR の指摘は、実装のたびに渡し直すので、一度返信した指摘には、後の提出でもう一度対応が書かれても返信しない（対応も上書きしない）。作り直しの指示では、返信した指摘に `answered` の印を付けて、対応を書き直させない。
   - 提出の後にその PR から取り込んだ指摘（差し戻しの指摘）は、取り込んだ指摘として返信する。同じコメントが実装に渡した指摘にもあるときは、重ねて返信しない。
   - 目印と記録の指摘の ID は、キー（`review_comment:<ID>` など）にする。返信の末尾には、指摘の ID を書かない。
+- 指摘のすべてを断って、何も変えなかったとき：PR のレビューの子タスクが指摘を残した先頭を、やり直しの実装が変えず、その指摘のすべてを、理由を付けて断ったときも、提出にして、同じ形・同じ条件で返信する（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。返信の後、子タスクが同じ先頭を 1 回だけ判定し直し、返信は作者の返答として渡る（[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
 
 コード: `apps/daemon/src/service.ts`（`awaitingRemarkReplies`・`remarkRepliesDue`・`postRemarkReplies`・`remarkReplyPost`・`noteRemarkReplyLimited`・`remarkRepliesSettled`・`remarkRepliesReady`・`replyRejected`・`rateLimited`・`remarkReplyAccountsOn`・`remarkOrigins`・`settleReview`・`settleHeldReview`・`requestChanges`・`reviewFeedback`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`・`remarkOriginRef`・`remarkOriginUrl`・`remarkReplyMarker`・`REPLY_TEXT_MAX`）、`apps/daemon/src/github.ts`（`replyToReviewComment`・`listReviewComments`・`listIssueComments`・`isSactyRemarkReply`・`GitHubPullRequests.feedback`）、`apps/daemon/src/prompts.ts`（`statusLines`・`continuedResponseLines`・`continuedPullRequestLines`・`extractBlocks`）、`packages/core/src/events.ts`（`RemarkOrigin`・`RemarkResponseStatus`・`RemarkRepliesStarted`・`RemarkRepliesPosted`・`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`
 

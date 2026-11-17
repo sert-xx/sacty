@@ -1679,8 +1679,14 @@ When a rework changes nothing, the task proceeds as follows.
    If the reworked implementation changed nothing in that PR, it is not submitted.
    The same content is not reviewed again, so the PR would stay a draft and never move on.
    When the child task has not reviewed it yet, or is still reviewing it, the rework is submitted even if it changed nothing.
-2. The task becomes "Paused: the rework changed nothing".
-3. Check the findings of the PR review, then do one of the following.
+2. However, when the reworked implementation declined every finding of the AI review with a reason, the rework is submitted without stopping (the content of the PR does not change).
+   - sacty replies with the reasons where the findings were written on the PR.
+   - After the replies, the child task judges the same content once more. The Activity of the child task shows "started a re-review that judges the same commit again".
+   - When the child task accepts the reasons and concludes with no findings, the PR is marked ready and waits for your approval (merge).
+   - When findings still remain, the task becomes "Paused: the rework changed nothing". The exchange between the two AIs stops here. The same content is judged again only once.
+   - When a finding from a person is among them, when a finding is declared as addressed or has no reason for declining it, or when the task is a security check or security fix task, the rework is not submitted and the pause below applies.
+3. Otherwise the rework is not submitted, and the task becomes "Paused: the rework changed nothing".
+4. Check the findings of the PR review (and the replies with the reasons for declining them, if any), then do one of the following.
    - If the findings should be fixed, resume (you can also change the agent of the Implementation step). sacty redoes the implementation with the findings.
    - If the findings do not apply, check the PR and decide yourself.
      Marking the PR ready and merging it on GitHub approves the implementation (while the task is paused for this reason, sacty does not turn the PR back into a draft).

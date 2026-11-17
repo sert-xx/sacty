@@ -72,6 +72,7 @@ import {
   implementationMerged,
   implementViewpoints,
   investigationIsGoal,
+  isAiReviewRemark,
   isAuditTarget,
   isCompleted,
   isFinished,
@@ -2951,7 +2952,8 @@ export class TaskService {
     const pending = task.pendingReview;
     const judgement = pending?.judgement;
     const gate = task.gate;
-    if (!pending || !judgement || !gate || !gatePullRequest(task)) return;
+    const pr = gatePullRequest(task);
+    if (!pending || !judgement || !gate || !pr) return;
     if (task.status !== "awaiting_approval") return;
     // 判断できなければ、その工程をやり直す（実装なら実装。要求要件・設計なら同じ PR を更新する。PBI-57・PBI-110）
     const targets = reworkTargets(task, gate.step);
@@ -2985,6 +2987,11 @@ export class TaskService {
       {
         aiReview: pending.aiReview ?? [],
         origins: remarkOrigins(pending, gatePullRequest(task)?.number),
+        // 断った理由を読んで判定し直したレビューにも指摘が残った：差し戻しと同じ追記で一時停止して、人が判断する（AI どうしの
+        // 往復を続けない。再開すると、残った指摘を渡してやり直す。PBI-357）
+        ...(this.rejudgeLeftFindings(task) && pr?.number
+          ? { pause: message("implement.declinedAgain", { number: pr.number }) }
+          : {}),
       },
     );
   }
@@ -12131,7 +12138,28 @@ export class TaskService {
       // やり直しの実装が何も変えず、出すコミットが、AI のレビューの指摘が残る PR の先頭のままなら、提出にせずに止める（同じ
       // 先頭は再レビューされず、ドラフトのまま進まなくなるため。PBI-347）。再開すると、実装をやり直す
       const reviewer = this.reviewLeftFindingsOn(task, commit);
-      if (reviewer && task.pullRequest?.number && task.pullRequest.repo) {
+      // ただし、その指摘のすべてを、理由を付けて断っていて、その先頭ではまだ判定し直しを求めていなければ、提出にする
+      // （断った理由を PR に返信し、レビューの子タスクに、同じ先頭を 1 回だけ判定し直させる。PBI-357）
+      let rejudge: ActivityItem | undefined;
+      if (
+        reviewer &&
+        task.pullRequest?.number &&
+        task.pullRequest.repo &&
+        this.declinedEveryFinding(task, commit)
+      ) {
+        rejudge = {
+          actor: "sacty",
+          event: {
+            type: "ReviewRejudgeRequested",
+            payload: {
+              repo: task.pullRequest.repo,
+              number: task.pullRequest.number,
+              commit,
+              reviewTaskId: reviewer.id,
+            },
+          },
+        };
+      } else if (reviewer && task.pullRequest?.number && task.pullRequest.repo) {
         const { number, repo: reviewedRepo } = task.pullRequest;
         this.append(task, [
           {
@@ -12295,6 +12323,12 @@ export class TaskService {
         }
       }
       const submitted = this.append(task, [
+        // 指摘のすべてを断った提出（PBI-357）。同じ PR を、同じ先頭のまま提出するときだけ
+        ...(rejudge?.event.type === "ReviewRejudgeRequested" &&
+        rejudge.event.payload.number === pr.number &&
+        sameRepo(rejudge.event.payload.repo, prRepo)
+          ? [rejudge]
+          : []),
         {
           actor: "sacty",
           event: {
@@ -12650,6 +12684,24 @@ export class TaskService {
       if (child.reviewTarget?.headCommit === target) {
         // 今の先頭を指摘なしにしたら、ドラフトを外す（PBI-331）
         if (awaiting && cleared) await this.markReady(parent, child, target);
+        // 親が、その先頭の指摘のすべてを断って提出した：断った理由の返信が済んだら、同じ先頭を 1 回だけ判定し直す（PBI-357）
+        else if (awaiting && this.rejudgeDue(parent, child, target)) {
+          try {
+            this.append(child, [
+              {
+                actor: "sacty",
+                event: {
+                  type: "ReviewRestarted",
+                  payload: { reason: "declined", commit: target },
+                },
+              },
+            ]);
+          } catch (error) {
+            console.warn(
+              `[daemon] レビューの子タスク ${child.id} に、同じ先頭を判定し直させられませんでした：${renderMessage(errorText(error), "ja")}`,
+            );
+          }
+        }
         continue;
       }
       if (child.reviewRestartCommit === target) continue;
@@ -12879,6 +12931,84 @@ export class TaskService {
       return undefined;
     }
     return reviewCleared(child) ? undefined : child;
+  }
+
+  /**
+   * やり直しの実装が何も変えなかった先頭（commit）に残る AI のレビューの指摘のすべてを、実装が理由を付けて断ったか（PBI-357）。
+   * 断っていれば、提出にして、断った理由を PR に返信し、PR のレビューの子タスクに、同じ先頭を 1 回だけ判定し直させる。
+   * 1 つでも当たらなければ false（今までどおり、提出にせずに一時停止して、人が判断する）。
+   * - 実装の最新の回の指摘（無効にしていないもの）が 1 件以上ある。
+   * - そのすべてが、AI のレビューの指摘で、この PR のコメントから取り込んだ（元のコメントの記録がある）。人の指摘が混ざって
+   *   いない。
+   * - そのすべてに、この実行が「理由があって対応しなかった」（declined）と申告し、理由を書いた。申告の無い対応・対応の付いて
+   *   いない指摘・対応したと申告した指摘が無い。
+   * - そのどれにも、まだ返信していない（返信済みの理由は、もうレビューに渡っている）。
+   * - 返信できる（セキュリティの組み合わせのタスクでない。GitHub のアカウントは、PR を更新できる時点で選んである）。
+   * - その先頭で、まだ判定し直しを求めていない（同じ先頭には 1 回だけ。作業履歴から復元するので、デーモンの再起動・タスクの
+   *   再開をまたいでも数え直さない）。
+   */
+  private declinedEveryFinding(task: Task, commit: string): boolean {
+    const pr = task.pullRequest;
+    if (!pr?.number || !pr.repo || isSecurityTask(task)) return false;
+    const asked = task.reviewRejudge;
+    if (asked && asked.number === pr.number && sameCommit(asked.commit, commit)) return false;
+    const round = lastChangeRound(task, "implement");
+    const remarks = task.remarks.filter(
+      (r) => r.step === "implement" && r.round === round && !r.voided,
+    );
+    const submission = (task.submissions.implement ?? 0) + 1;
+    return (
+      remarks.length > 0 &&
+      remarks.every(
+        (r) =>
+          isAiReviewRemark(r) &&
+          r.origin?.number === pr.number &&
+          r.status === "declined" &&
+          (r.response ?? "").trim() !== "" &&
+          r.respondedIn === submission &&
+          r.repliedIn === undefined,
+      )
+    );
+  }
+
+  /**
+   * 指摘のすべてを断った提出（ReviewRejudgeRequested）の後、PR のレビューの子タスクに、同じ先頭を判定し直させるときか
+   * （PBI-357）。断った理由の返信が済んでから（返信するものが残っていない。レート制限の待ちの間は待つ）、同じ先頭には 1 回だけ。
+   */
+  private rejudgeDue(parent: Task, child: Task, target: string): boolean {
+    const asked = parent.reviewRejudge;
+    const pr = gatePullRequest(parent);
+    return (
+      asked !== undefined &&
+      asked.reviewTaskId === child.id &&
+      pr?.number === asked.number &&
+      sameCommit(asked.commit, target) &&
+      !(child.reviewRejudgeCommit && sameCommit(child.reviewRejudgeCommit, target)) &&
+      this.remarkRepliesDue(parent) === undefined
+    );
+  }
+
+  /**
+   * 取り込んだ指摘が、断った理由を読んで同じ先頭を判定し直したレビュー（PBI-357）に残った指摘か。指摘のすべてが、判定し直した
+   * PR のレビューの子タスクの最後の回の、AI のレビューの指摘のときだけ（人の指摘・ほかのレビューのタスクの指摘が混ざれば、
+   * 今までどおり差し戻して進める）。
+   */
+  private rejudgeLeftFindings(task: Task): boolean {
+    const asked = task.reviewRejudge;
+    const pending = task.pendingReview;
+    const pr = gatePullRequest(task);
+    if (!asked || !pending || pr?.step !== "implement" || pr.number !== asked.number) return false;
+    if (!pr.commit || !sameCommit(asked.commit, pr.commit)) return false;
+    const child = this.tasks.get(asked.reviewTaskId);
+    if (!child?.reviewRejudgeCommit || !sameCommit(child.reviewRejudgeCommit, asked.commit)) {
+      return false;
+    }
+    const ai = new Set(pending.aiReview ?? []);
+    const from = sactyReviewKey(child.id, child.reviewRound ?? 1);
+    return (
+      pending.remarks.length > 0 &&
+      pending.remarks.every((_, i) => ai.has(i) && pending.aiReviewFrom?.[String(i)] === from)
+    );
   }
 
   /**
@@ -17364,6 +17494,11 @@ export class TaskService {
       aiReview?: readonly number[];
       /** comments と同じ位置の、指摘の元の PR のコメント（PR の指摘の取り込みだけが渡す。PBI-352）。 */
       origins?: readonly (RemarkOrigin | undefined)[];
+      /**
+       * 差し戻しと同じ追記で、やり直しを始めずに一時停止する（理由は unchanged）ときの、案内の文（PR の指摘の取り込みだけが
+       * 渡す。断った理由を読んで判定し直したレビューにも、指摘が残ったとき。PBI-357）。
+       */
+      pause?: DaemonText;
     } = {},
   ): Task {
     const input = RequestChangesInput.parse(raw);
@@ -17489,6 +17624,18 @@ export class TaskService {
           },
         },
       },
+      // やり直しを始めずに止める（間でデーモンが止まっても、止めるはずのやり直しを始めない。PBI-357）
+      ...(options.pause
+        ? [
+            {
+              actor: "sacty" as const,
+              event: {
+                type: "TaskPaused" as const,
+                payload: { reason: "unchanged" as const, message: options.pause },
+              },
+            },
+          ]
+        : []),
     ]);
   }
 

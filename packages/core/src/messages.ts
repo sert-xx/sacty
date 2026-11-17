@@ -494,6 +494,7 @@ const PARAMS = {
     total: Count,
   }),
   "implement.unchanged": z.object({ number: z.number() }),
+  "implement.declinedAgain": z.object({ number: z.number() }),
   "merge.failed": z.object({ detail: TextParam }),
   "pr.unavailable": z.object({ detail: TextParam }),
   "pr.workspaceMissing": null,
@@ -1450,6 +1451,8 @@ const ja: MessageDictionary = {
     `実装の工程が、テストの対応していないテスト観点を残して終わりました（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：${text(ids)}${total > 10 ? ` ほか、全${total}件` : ""}。再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。`,
   "implement.unchanged": ({ number }) =>
     `AI のレビューが指摘を残した PR #${number} を、やり直しの実装が何も変えませんでした。同じ内容は再レビューされないので、提出していません。再開すると、指摘を渡して実装をやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
+  "implement.declinedAgain": ({ number }) =>
+    `やり直しの実装が、PR #${number} の AI のレビューの指摘をすべて、理由を付けて断り、何も変えませんでした。断った理由を PR に返信し、AI のレビューに同じ内容を判定し直させましたが、指摘が残りました。AI どうしの往復を続けないよう、ここで止めています。再開すると、残った指摘を渡してやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "merge.failed": ({ detail }, text) =>
     `ベースブランチの最新を作業領域に取り込めませんでした：${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
@@ -2285,6 +2288,8 @@ const en: MessageDictionary = {
     `The implementation step ended with test viewpoints that have no test mapped (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: ${text(ids)}${total > 10 ? ` and more, ${total} in total` : ""}. Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.`,
   "implement.unchanged": ({ number }) =>
     `The rework of the implementation changed nothing in PR #${number}, on which the AI review left findings. The same content is not reviewed again, so nothing was submitted. Resuming redoes the implementation with the findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
+  "implement.declinedAgain": ({ number }) =>
+    `The rework of the implementation declined every finding of the AI review on PR #${number} with a reason and changed nothing. sacty replied on the PR with the reasons and had the AI review judge the same content once more, but findings remained. sacty stops here so that the two AIs do not keep going back and forth. Resuming redoes the work with the remaining findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "merge.failed": ({ detail }, text) =>
     `Could not merge the latest base branch into the workspace: ${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,

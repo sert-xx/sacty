@@ -662,6 +662,16 @@ export type Task = {
   /** 親の PR の更新で再レビューを始めたときの、親の PR の先頭（同じ更新で繰り返さない。PBI-330）。 */
   reviewRestartCommit?: string;
   /**
+   * 親が指摘のすべてを断ったために、同じ先頭を判定し直したときの、その先頭（ReviewRestarted の reason: declined。PBI-357）。
+   * 同じ先頭の判定のし直しは、1 回だけ。
+   */
+  reviewRejudgeCommit?: string;
+  /**
+   * 指摘のすべてを断って、PR のレビューの子タスクに判定し直しを求めた、実装の PR の先頭（ReviewRejudgeRequested。PBI-357）。
+   * 同じ先頭には 1 回だけ求める（PR の先頭は進むだけで戻らないので、最後の 1 つを持てば足りる）。
+   */
+  reviewRejudge?: { repo: string; number: number; commit: string; reviewTaskId: string };
+  /**
    * 依存先の子タスク（taskId）の実装の PR に重ねて始めた子タスクの、重ねている先（PBI-317）。branch はその PR のブランチ
    * （子タスクの起点のブランチ・PR の向き先・取り込む元）、commit は始めたときの依存先の合格したコミット（作業領域の起点）。
    * 依存先の PR がマージされ、ベースブランチに付け替えると無くなる。
@@ -2361,6 +2371,20 @@ export function applyEvent(
       task.verifyFeedback = { kind: "unchanged", number: event.payload.number };
       break;
 
+    case "ReviewRejudgeRequested":
+      // 指摘のすべてを断って何も変えなかった実装を、提出にする前に記録する（続けて、PR の公開と提出を記録する。PBI-357）
+      if (activeStep(task) !== "implement" || !task.publishPending) {
+        throw new ActivityIntegrityError(
+          event,
+          "the implementation is not waiting for a pull request",
+        );
+      }
+      if (task.pullRequest?.number !== event.payload.number) {
+        throw new ActivityIntegrityError(event, "not the pull request of the task");
+      }
+      task.reviewRejudge = { ...event.payload };
+      break;
+
     case "ReviewTaskCreated": {
       // sacty がこのタスクのために作った PR だけ。同じ子タスクは1回（PR を開き直したときは、新しい子タスクを足す。PBI-330）
       const p = event.payload;
@@ -2586,6 +2610,10 @@ export function applyEvent(
       );
       task.reviewRound = (task.reviewRound ?? 1) + 1;
       if (event.payload.commit) task.reviewRestartCommit = event.payload.commit;
+      // 断った理由を読んで、同じ先頭を判定し直す（同じ先頭には 1 回だけ。PBI-357）
+      if (event.payload.reason === "declined" && event.payload.commit) {
+        task.reviewRejudgeCommit = event.payload.commit;
+      }
       break;
 
     case "IssueCommented":

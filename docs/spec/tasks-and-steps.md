@@ -1365,7 +1365,17 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   - PR のレビューの子タスクの指摘なしを待つ PR である（`awaitsReview`）。
   - 子タスクが、これから PR に出すコミットを先頭としてレビューを終えていて、指摘なしにしていない。
     やり直しの実装が作業領域を何も変えなければ、出すコミットは、sacty が前に出したコミットか、人が PR に足して sacty が取り込んだ先頭のままになる。
-- 変更の無いやり直しに当たったら、`ImplementationUnchanged`（PR・先頭のコミット・子タスク）と一時停止（理由は `unchanged`、文言は `implement.unchanged`）を、同じ追記で記録する。
+- 指摘のすべてを断った、変更の無いやり直し：上に当たっても、次のすべてに当たれば、提出にする（`declinedEveryFinding`。関係する ADR: [AI のレビューの指摘をすべて断って何も変えなかったら、断った理由を返信し、同じ先頭を 1 回だけ判定し直させる](../adr/20261117-0250-reply-and-rejudge-when-all-findings-declined.md)）。
+  - 実装の最新の回の指摘（無効にしていないもの）が 1 件以上あり、そのすべてが、AI のレビューの指摘で、その PR のコメントから取り込んだもの（`origin` がある）。人の指摘が 1 件でも混ざっていれば、当たらない。
+  - そのすべてに、この実行が、理由があって対応しなかった（`declined`）と申告し、理由（対応の文）を書いている。対応したと申告した指摘（`addressed`）・申告の無い対応・対応の付いていない指摘が 1 件でもあれば、当たらない。
+  - そのどれにも、まだ返信していない。
+  - セキュリティの組み合わせのタスクでない（指摘への対応を PR に返信しないため）。
+  - その先頭で、まだ判定し直しを求めていない（`Task.reviewRejudge`）。
+
+  提出するときは、`ReviewRejudgeRequested`（PR・先頭のコミット・子タスク）を、PR の公開と提出（`StepSubmitted`）と同じ追記で記録する。PR の先頭は変わらない。
+  提出の後、断った理由を PR に返信し、子タスクが同じ先頭を 1 回だけ判定し直す（[指摘への対応の返信](approval.md#指摘への対応の返信)・[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
+  判定し直しを求めるのは、同じ先頭に 1 回だけ。求めた先頭は作業履歴から復元するので、デーモンを起動し直しても、タスクを再開しても、数え直さない。次に同じ先頭で何も変えなければ、下の一時停止になる。
+- 変更の無いやり直しに当たり、上に当たらなければ、`ImplementationUnchanged`（PR・先頭のコミット・子タスク）と一時停止（理由は `unchanged`、文言は `implement.unchanged`）を、同じ追記で記録する。
   PR は更新せず、提出の回も進めない。
   同じ先頭は再レビューされないので（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）、そのまま提出すると、指摘なしにも作り直しにもならず、ドラフトのまま進まなくなるためである。
   - 再開すると、指摘と、前回が何も変えなかったこと（`Task.verifyFeedback` の `unchanged`）を渡して、実装をやり直す。
@@ -1374,7 +1384,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   - 子タスクがその先頭を指摘なしにしている・まだレビューしていない・レビューの途中のときと、子タスクを待たない PR（既存の PR を引き継ぐタスクなど）は、何も変えていなくても提出する。
 - どちらの一時停止も、以前の版の検証の一時停止（`verification`）ではないので、不合格のまま進める操作（`submitForReview`）の対象にしない。
 
-コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/agent-json.ts`（`takeFences`・`hasDuplicateKeys`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`apps/daemon/src/timeout-resume.ts`（`planContinuation`・`incompleteResumeLines`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`・`MAX_INCOMPLETE_CONTINUATIONS`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）、`apps/web/src/lib/paused-remaining.ts`（`pausedRemaining`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）
+コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/agent-json.ts`（`takeFences`・`hasDuplicateKeys`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`declinedEveryFinding`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`apps/daemon/src/timeout-resume.ts`（`planContinuation`・`incompleteResumeLines`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`・`ReviewRejudgeRequested`・`MAX_INCOMPLETE_CONTINUATIONS`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）、`apps/web/src/lib/paused-remaining.ts`（`pausedRemaining`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）
 
 ### 同じ内容の検証の使い回し
 

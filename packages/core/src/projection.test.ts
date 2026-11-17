@@ -1273,6 +1273,28 @@ describe("レビューの工程（PBI-19）", () => {
     });
     expect(restarted?.reviewRound).toBe(2);
     expect(restarted?.reviewPost).toBeUndefined();
+    // 人が求めた再レビューは、同じ先頭の判定のし直し（PBI-357）に数えない
+    expect(restarted?.reviewRejudgeCommit).toBeUndefined();
+    // 親が指摘のすべてを断ったための再レビューは、判定し直した先頭を持つ（同じ先頭には 1 回だけ）
+    const rejudged = project([
+      ...events,
+      posted,
+      ev("t7", {
+        type: "ReviewRestarted",
+        payload: { reason: "declined", commit: "h".repeat(40) },
+      }),
+    ]).get("t7");
+    expect(rejudged?.reviewRejudgeCommit).toBe("h".repeat(40));
+    expect(rejudged?.reviewRound).toBe(2);
+    expect(rejudged?.previousReview?.headCommit).toBe("h".repeat(40));
+    // PR の更新による再レビューは、数えない
+    const updated = project([
+      ...events,
+      posted,
+      ev("t7", { type: "ReviewRestarted", payload: { reason: "updated", commit: "n".repeat(40) } }),
+    ]).get("t7");
+    expect(updated?.reviewRejudgeCommit).toBeUndefined();
+    expect(updated?.reviewRestartCommit).toBe("n".repeat(40));
     expect(restarted?.reviewComments).toEqual([]);
     expect(restarted?.reviewVerdicts).toEqual([{ round: 1, verdict: "changes_required" }]);
     // 2回目では、前々回以前のレビューはまだ無い（PBI-342）
@@ -4774,6 +4796,83 @@ describe("終わっていない実装と、変更の無いやり直し（PBI-347
       kind: "unchanged",
       number: 7,
     });
+  });
+
+  it("指摘のすべてを断った提出は、判定し直しを求めた先頭を持ち、PR の作成の待ちのまま、続けて提出できる。差し戻しと同じ追記の一時停止は、再開で実行待ちに戻る（PBI-357）", () => {
+    seq = 0;
+    const remark = { id: "implement-1-1", text: "受け入れ条件が足りない", source: "sacty_review" };
+    const base = [
+      ...prepared("t1"),
+      ...implemented("t1", "r1", { status: "complete" }),
+      skipped("t1"),
+      publishedPr("t1", "c1"),
+      submitted("t1", 1),
+      ev("t1", {
+        type: "ChangesRequested",
+        payload: { step: "implement", target: "implement", round: 1, remarks: [remark] },
+      }),
+      ...implemented("t1", "r2", { status: "complete" }),
+      skipped("t1"),
+    ];
+    const rejudge = (commit: string, number = 7) =>
+      ev("t1", {
+        type: "ReviewRejudgeRequested",
+        payload: { repo: "https://github.com/acme/app", number, commit, reviewTaskId: "r1" },
+      });
+    const asked = project([...base, rejudge("c1")]).get("t1") as Task;
+    // 記録だけでは、状態は変えない（続けて、PR の公開と提出を記録する）
+    expect(asked.status).toBe("queued");
+    expect(asked.publishPending).toBe(true);
+    expect(asked.reviewRejudge).toEqual({
+      repo: "https://github.com/acme/app",
+      number: 7,
+      commit: "c1",
+      reviewTaskId: "r1",
+    });
+    const resubmitted = project([
+      ...base,
+      rejudge("c1"),
+      publishedPr("t1", "c1"),
+      submitted("t1", 2),
+    ]).get("t1") as Task;
+    expect(resubmitted.status).toBe("awaiting_approval");
+    expect(resubmitted.gate).toEqual({ step: "implement", submission: 2 });
+    expect(resubmitted.pullRequest?.commit).toBe("c1");
+    // 提出の後も、再開の後も、求めた先頭を忘れない（同じ先頭には 1 回だけ）
+    expect(resubmitted.reviewRejudge?.commit).toBe("c1");
+    // 判定し直したレビューにも指摘が残った：差し戻しと同じ追記で一時停止する。再開すると、実行待ちに戻る
+    const again = [
+      ...base,
+      rejudge("c1"),
+      publishedPr("t1", "c1"),
+      submitted("t1", 2),
+      ev("t1", {
+        type: "ChangesRequested",
+        payload: {
+          step: "implement",
+          target: "implement",
+          round: 2,
+          remarks: [{ ...remark, id: "implement-2-1" }],
+        },
+      }),
+      ev("t1", { type: "TaskPaused", payload: { reason: "unchanged" } }),
+    ];
+    const paused = project(again).get("t1") as Task;
+    expect(paused.status).toBe("paused");
+    expect(paused.pausedReason).toBe("unchanged");
+    expect(paused.reviewRejudge?.commit).toBe("c1");
+    expect(canOverrideVerification(paused)).toBe(false);
+    const resumed = project([
+      ...again,
+      ev("t1", { type: "TaskResumed", payload: { retry: true } }, "person"),
+    ]).get("t1") as Task;
+    expect(resumed.status).toBe("queued");
+    expect(resumed.reviewRejudge?.commit).toBe("c1");
+    // PR の作成の待ちでない・このタスクの PR ではないときは記録できない
+    expect(() => project([...base.slice(0, -1), rejudge("c1")])).toThrow(
+      /not waiting for a pull request/,
+    );
+    expect(() => project([...base, rejudge("c1", 8)])).toThrow(/not the pull request of the task/);
   });
 });
 
