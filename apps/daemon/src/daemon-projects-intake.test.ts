@@ -43,6 +43,7 @@ import {
   triageOut,
   useTempDir,
 } from "./testing/daemon.js";
+import { loopTurn } from "./testing/wait.js";
 
 useTempDir();
 
@@ -1794,7 +1795,8 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
     expect(await reply()).toEqual({ boot: feed.boot, latest: 0, items: [] });
     const task = service.createTask({ projectId: "default", title: "決済API" });
     await service.runNext(task.id);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // 通知を送っていないこと（何も起きないこと）を見る前に、送る処理の続き（マイクロタスクだけで進む）を済ませる
+    await loopTurn();
     expect(slack.calls).toHaveLength(0);
     expect(await reply("?after=0")).toMatchObject({
       latest: 1,

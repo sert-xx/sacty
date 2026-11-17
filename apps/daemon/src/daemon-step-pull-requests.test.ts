@@ -26,7 +26,6 @@ import { PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
 import { createApp } from "./server.js";
 import {
-  DRAFT_SETTLE_FACTOR,
   InvalidOperationError,
   reviewTaskTitle,
   type ServiceDeps,
@@ -39,6 +38,7 @@ import {
   configOf,
   dbPath,
   dir,
+  draftRequestsSettled,
   type FakeExecutor,
   FakeGitHub,
   FakePulls,
@@ -46,9 +46,11 @@ import {
   fakeGateway,
   ja,
   makeService,
+  noticesSettled,
   projectsWithAccount,
   useTempDir,
 } from "./testing/daemon.js";
+import { loopTurn, waitFor } from "./testing/wait.js";
 
 useTempDir();
 
@@ -2500,7 +2502,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         // 戻す要求が届いて終わったら、外して記録する（外した後に戻らない）
         late.resolve();
         await late.promise;
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        // 届いた要求の続き（マイクロタスクだけで進む）が済むまで
+        await loopTurn();
         expect(pulls.drafts[7]).toBe(true);
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(false);
@@ -2549,7 +2552,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         // 前の提出の外す要求が後から届いて外れても、次の確認で戻す
         late.resolve();
         await late.promise;
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        // 届いた要求の続き（マイクロタスクだけで進む）が済むまで
+        await loopTurn();
         expect(pulls.drafts[7]).toBe(false);
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(true);
@@ -2620,7 +2624,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             expect(types(service, id), String(ignoresAbort)).not.toContain(
               "PullRequestMarkedReady",
             );
-            await new Promise((resolve) => setTimeout(resolve, 20 * DRAFT_SETTLE_FACTOR + 50));
+            await draftRequestsSettled(service);
           }
           // 中断で終わった・上限を過ぎた要求は数えず、指摘なしでドラフトを外す
           await service.checkPullRequests();
@@ -2671,7 +2675,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         setDraft.mockImplementation(original);
         await service.checkPullRequests();
         await runReview(service, childId);
-        await new Promise((resolve) => setTimeout(resolve, 20 * DRAFT_SETTLE_FACTOR + 50));
+        await draftRequestsSettled(service);
         await service.checkPullRequests();
         expect(types(service, id)).toContain("PullRequestMarkedReady");
         expect(pulls.drafts[7]).toBe(false);
@@ -2712,7 +2716,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const { setDraft, late, landed } = lateFirstRedraft(pulls);
         await service.checkPullRequests();
         await runReview(service, childId);
-        await new Promise((resolve) => setTimeout(resolve, 20 * DRAFT_SETTLE_FACTOR + 50));
+        await draftRequestsSettled(service);
         // 外す要求の答えを待つ間に、遅れた戻す要求が GitHub に届く
         const gate = Promise.withResolvers<void>();
         pulls.setDraftGate = gate.promise;
@@ -2741,7 +2745,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const { setDraft, late, landed } = lateFirstRedraft(pulls);
         await service.checkPullRequests();
         await runReview(service, childId);
-        await new Promise((resolve) => setTimeout(resolve, 20 * DRAFT_SETTLE_FACTOR + 50));
+        await draftRequestsSettled(service);
         await service.checkPullRequests();
         expect(types(service, id)).toContain("PullRequestMarkedReady");
         // 外し直しが失敗する
@@ -4950,7 +4954,6 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             ]);
           const notices = (pulls: FakePulls) =>
             pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-deferral:"));
-          const settled = () => new Promise((resolve) => setTimeout(resolve, 5));
           const decide = (
             svc: TaskService,
             id: string,
@@ -5016,7 +5019,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 decisions: [{ remarkId: "implement-1-1", decision: "defer" }],
               },
             });
-            await settled();
+            await noticesSettled(service);
             expect(notices(pulls)).toHaveLength(1);
             const notice = notices(pulls)[0];
             expect(notice).toMatchObject({ repo: "https://github.com/acme/app", number: 7 });
@@ -5078,7 +5081,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             expect(taskOf(service, id).pullRequest?.draft).toBe(true);
             // 人が、後続に回すと決める：同じ先頭を、1 回だけ判定し直す
             decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
-            await settled();
+            await noticesSettled(service);
             await service.checkPullRequests();
             await service.checkPullRequests();
             expect(restarts(service, childId)).toHaveLength(1);
@@ -5106,7 +5109,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await settle(service, id);
             await service.runNext(id);
             decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
-            await settled();
+            await noticesSettled(service);
             await service.checkPullRequests();
             expect(restarts(service, childId)).toHaveLength(1);
             await runReview(service, childId);
@@ -5165,7 +5168,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             expect(decided.remarks.at(-1)?.source).toBeUndefined();
             expect(decided.remarks.at(-1)?.text).toBe(decided.remarks[0]?.text);
             expect(decided.remarks[0]?.deferral?.decision).toBe("fix");
-            await settled();
+            await noticesSettled(service);
             expect(notices(pulls)).toHaveLength(1);
             expect(notices(pulls)[0]?.body).toContain("### この PR で直す（1 件）");
             expect(notices(pulls)[0]?.body).toContain("実装をやり直して直します");
@@ -5256,7 +5259,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await service.runNext(id);
             pulls.commentFail = "GitHub API 500: token ghp_secret failed";
             decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
-            await settled();
+            await noticesSettled(service);
             expect(notices(pulls)).toHaveLength(0);
             const posted = service
               .get(id)
@@ -5282,7 +5285,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
             });
             decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
-            await settled();
+            await noticesSettled(service);
             expect(notices(pulls)).toHaveLength(0);
             expect(
               service.get(id)?.activity.find((e) => e.type === "DeferralDecisionsPosted")?.payload,
@@ -5327,7 +5330,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await service.runNext(id);
             expect(replies(pulls)).toHaveLength(0);
             decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
-            await settled();
+            await noticesSettled(service);
             expect(notices(pulls)).toHaveLength(1);
             const body = notices(pulls)[0]?.body ?? "";
             expect(body).toContain(
@@ -5368,7 +5371,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 decision: "defer",
                 handling: "issue",
               });
-              await settled();
+              await noticesSettled(service);
               expect(pulls.createdIssues).toHaveLength(1);
               const issue = pulls.createdIssues[0];
               expect(issue?.repo).toBe("https://github.com/acme/app");
@@ -5402,7 +5405,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               await settle(service, id);
               pulls.issueFail = "410 Issues are disabled ghp_secret";
               decideWith(service, id, "issue");
-              await settled();
+              await noticesSettled(service);
               expect(pulls.createdIssues).toHaveLength(0);
               const failed = (handled(service, id)[0]?.payload ?? {}) as { failure?: unknown };
               const failure = JSON.stringify(failed.failure);
@@ -5447,7 +5450,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               ).toMatchObject({
                 decisions: [{ remarkId: "implement-1-1", decision: "defer", handling: "issue" }],
               });
-              await settled();
+              await noticesSettled(service);
               expect(pulls.createdIssues).toHaveLength(1);
               // 決めた後は、既定を足さない（決める案が無い）
               expect(service.view(id)?.task.deferralHandlingDefault).toBeUndefined();
@@ -5465,7 +5468,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 deferralHandling: "issue",
               });
               decideWith(service, id, "none");
-              await settled();
+              await noticesSettled(service);
               expect(pulls.createdIssues).toHaveLength(0);
               expect(handled(service, id)).toHaveLength(0);
               expect(notices(pulls)[0]?.body).toContain("扱い：何もしません");
@@ -5482,7 +5485,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               await settle(service, id);
               await service.runNext(id);
               decideWith(service, id, "task");
-              await settled();
+              await noticesSettled(service);
               expect(notices(pulls)[0]?.body).toContain(
                 "扱い：このタスクが完了した後に、Sacty が後続のタスクを作ります。",
               );
@@ -5553,7 +5556,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 submission: 2,
                 decisions: [{ remarkId: "implement-1-1", decision: "defer", handling: "task" }],
               });
-              await settled();
+              await noticesSettled(service);
               prepare?.(made);
               pulls.states[7] = {
                 state: "merged",
@@ -5572,7 +5575,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               // gh に無いアカウント：トークンを取り出せない
               projects.put("default", { ...definition, githubAccounts: { "github.com": "ghost" } });
               issue(service, id);
-              await settled();
+              await noticesSettled(service);
               expect(pulls.createdIssues).toHaveLength(0);
               expect(handled(service, id)).toHaveLength(1);
               expect(handled(service, id)[0]?.payload).toMatchObject({
@@ -5591,7 +5594,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               await settle(service, id);
               projects.put("default", definition);
               issue(service, id);
-              await settled();
+              await noticesSettled(service);
               expect(pulls.createdIssues).toHaveLength(0);
               expect(handled(service, id)[0]?.payload).toMatchObject({
                 failure: { code: "deferral.noAccount" },
@@ -5644,7 +5647,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(isSecurityTask(taskOf(security.service, created.id))).toBe(true);
               expect(taskOf(security.service, created.id).status).toBe("awaiting_approval");
               issue(security.service, created.id);
-              await settled();
+              await noticesSettled(security.service);
               expect(securityPulls.createdIssues).toHaveLength(0);
               expect(handled(security.service, created.id)[0]?.payload).toMatchObject({
                 failure: { code: "deferral.securityTask" },
@@ -5661,7 +5664,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               // Issue の作成が、終わらない
               pulls.issueGate = new Promise(() => {});
               issue(made.service, id);
-              await settled();
+              await waitFor(() => pulls.issueStarted === 1, { what: "Issue の作成の開始" });
               await made.service.checkPullRequests();
               expect(handled(made.service, id)).toHaveLength(0);
               made.activity.close();
@@ -5785,7 +5788,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               await settle(made.service, id);
               pulls.issueGate = new Promise(() => {});
               issue(made.service, id);
-              await settled();
+              await waitFor(() => pulls.issueStarted === 1, { what: "Issue の作成の開始" });
               made.activity.close();
               const again = reopen([], pulls, repos, projects);
               await again.service.cancel(id);
@@ -5849,7 +5852,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 submission: 2,
                 decisions: [{ remarkId: "implement-1-1", decision: "defer", handling: "task" }],
               });
-              await settled();
+              await noticesSettled(made.service);
               pulls.states[7] = {
                 state: "merged",
                 mergedBy: "reviewer",
@@ -5952,7 +5955,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await settle(service, id);
             await service.runNext(id);
             decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
-            await settled();
+            await noticesSettled(service);
             // 人が、別の指摘を PR に書く：実装をやり直す
             pulls.feedbackBy[7] = [
               posted(pulls, 0),
