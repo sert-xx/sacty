@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-366
-- PR: なし
+- PR: #403
 - ブランチ: feat/pbi-366-pr-body-links
 - 関係する ADR: なし
 
