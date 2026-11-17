@@ -290,8 +290,7 @@ const ja = {
     humanChecksHint:
       "統合レビューで、作業領域では確かめられなかったことです。承認する前に確かめ、満たしていなければ差し戻してください。",
     /** 前の回の人が確かめることのうち、この回の統合レビューが外したもの（PBI-363）。 */
-    droppedHumanChecks:
-      "前の回の「人が確かめること」から外した項目（理由は、統合レビューのエージェントの説明）",
+    droppedHumanChecks: "前の回の「人が確かめること」から外した項目",
     viewpoints: "観点ごとの判定",
     recurrence: "過去の指摘の再発",
     verified: "満たす",
@@ -829,8 +828,7 @@ const en: TaskMessages = {
     humanChecks: "For a person to check",
     humanChecksHint:
       "What the integration review could not check in the workspace. Check these before approving, and request changes if one is not met.",
-    droppedHumanChecks:
-      "Items removed from the previous round's \"For a person to check\" (the reason is in the integration review agent's explanation)",
+    droppedHumanChecks: 'Items removed from the previous round\'s "For a person to check"',
     viewpoints: "Verdict per viewpoint",
     recurrence: "Recurrence of past comments",
     verified: "Met",
