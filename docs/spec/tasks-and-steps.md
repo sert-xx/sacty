@@ -955,6 +955,8 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 決めた値でない答えと、書かれていない答えは、判定なしにする（通常として扱う）。
   - 理由の無い `light` は、判定なしにする（理由を人に示せないため）。理由は 1000 文字までにする。
   - セキュリティ対応（`security-fix`）は、`light` と答えても `normal` にし、理由に sacty の文言（`selfReview.depthForcedNormal`。オーケストレーターの理由を含む）を記録する。
+  - 子タスクに分ける組み合わせ（`split`。分割の親）も、`light` と答えても `normal` にし、理由に sacty の文言（`selfReview.depthForcedNormalSplit`。オーケストレーターの理由を含む）を記録する。
+    子タスクは `split` を選べず、子ごとに工程を選ぶので、子の判定は、子ごとの答えのまま。
   - セルフレビューをする工程（`SELF_REVIEW_STEPS`）が無い組み合わせ（PR のレビューだけ・調査だけ・セキュリティチェック・作業のみ）には記録しない。
 - 判定は `StepsChosen` の `selfReviewDepth`・`selfReviewDepthReason` に記録し、投影は `Task.selfReviewDepth`（`judged`・`reason`）に持つ。
   工程の選択からやり直すと消える（`clearChosenSteps`）。
@@ -978,7 +980,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 コード: `apps/daemon/src/prompts.ts`（`SELF_REVIEW_DEPTH_LINES`・`extractStepPlan`・`lightSelfReviewLines`・`selfReviewLines`）、`apps/daemon/src/service.ts`（`selfReviewDepthOf`・`changeSelfReviewDepth`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`SelfReviewDepth`・`SelfReviewDepthChanged`・`ChangeSelfReviewDepthInput`）、`packages/core/src/projection.ts`（`effectiveSelfReviewDepth`・`clearChosenSteps`）、`apps/web/src/components/self-review-depth.tsx`（`SelfReviewDepthNote`）、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`
 
-関係する ADR: [依頼が軽いときは、自己レビューの観点を絞る](../adr/20261117-0359-narrow-self-review-for-light-requests.md)
+関係する ADR: [依頼が軽いときは、自己レビューの観点を絞る](../adr/20261117-0359-narrow-self-review-for-light-requests.md)、[子タスクに分けて進めるタスクは、依頼が軽いと判定しない](../adr/20261117-1255-split-parent-is-never-light.md)
 
 ## タスクのイメージを人が変える
 

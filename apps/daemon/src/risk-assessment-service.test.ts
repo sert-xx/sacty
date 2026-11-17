@@ -163,6 +163,21 @@ describe("PR を作る前のリスク評価の実行と記録（PBI-362）", () 
     );
   });
 
+  it("答えが2つあり、最後の答えが読めなければ、前の答えを載せず、評価できなかったと記録する（PBI-386）", async () => {
+    const output = `${answer("low")}\n\n見直しました。\n\n${answer("critical")}`;
+    const { latest: get, assess, risks } = setup([completed(output)]);
+    expect(await assess()).toBe("done");
+    const [event] = risks();
+    expect(event?.actor).toBe("sacty");
+    const latest = get();
+    expect(latest.riskAssessment?.assessment).toBeUndefined();
+    const body = joinBodyText(buildPullRequestBodyText(latest));
+    expect(body).toContain(
+      "- 評価できませんでした（エージェントの出力の、最後に出たリスク評価の答えを読み取れませんでした。前に出た答えは、使っていません）。",
+    );
+    expect(body).not.toContain("- 段階：");
+  });
+
   it("実行に失敗しても止めず、評価できなかった理由を記録する", async () => {
     const {
       latest: get,

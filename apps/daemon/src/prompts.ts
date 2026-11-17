@@ -111,7 +111,6 @@ import { WORKSPACE_SCRATCH_DIR, WORKSPACE_TOOLS_DIR, type WorkingTreeCopy } from
 import {
   assessesRiskInReview,
   extractRiskAssessment,
-  RISK_ASSESSMENT_HEADING,
   reviewRiskLines,
   riskAssessmentLines,
   withoutRiskBlocks,
@@ -8598,6 +8597,8 @@ export function extractReviewComments(
   rework?: ReviewRework;
   /** リスク評価の答えを読めたもの（PBI-362。答えが無い・形が違えば無い）。 */
   risk?: RiskAssessment;
+  /** リスクを評価させたレビューで、評価を読めなかった理由（PBI-386。評価を読めたとき・評価させていないときは無い）。 */
+  riskUnreadable?: DaemonText;
 } {
   const commentable = commentableLines(diff);
   let found: (ReviewComment & { severity?: Severity })[] | undefined;
@@ -8643,14 +8644,9 @@ export function extractReviewComments(
   }
   // リスクを評価させたレビュー（PBI-362）は、評価の答えを、形が違っても本文から取り除く（投稿する本文に JSON を残さない）。
   // 評価させていないレビューの本文は、評価の見出しを含んでいても触らない（レビューの中のコード例を消さない）
-  if (options.risk) {
-    for (const candidate of jsonCandidates(output)) {
-      if (candidate.value[RISK_ASSESSMENT_HEADING] !== undefined) used.push(candidate);
-    }
-  }
-  const risk = options.risk
-    ? extractRiskAssessment(output, options.secrets)?.assessment
-    : undefined;
+  const riskRead = options.risk ? extractRiskAssessment(output, options.secrets) : undefined;
+  if (riskRead) used.push(...riskRead.answers);
+  const risk = riskRead?.assessment;
   // JSON として読めなかった評価（末尾のカンマなど）は候補にならないので、評価の答えの形で始まるコードブロックごと取り除く
   const stripped = withoutCandidates(output, used);
   const body = (options.risk ? withoutRiskBlocks(stripped) : stripped).trim();
@@ -8676,6 +8672,7 @@ export function extractReviewComments(
         }),
     ...(rework ? { rework } : {}),
     ...(risk ? { risk } : {}),
+    ...(riskRead?.reason ? { riskUnreadable: riskRead.reason } : {}),
   };
 }
 
@@ -8852,7 +8849,7 @@ const SELF_REVIEW_DEPTH_LINES = [
   "  - light にするのは、次のすべてに当たるときだけ：変更が小さく局所的である（文書に節を足す・文言や表記を直す・数行の変更など）、既存の振る舞い・外に公開している I/F・保存するデータの形を変えない、セキュリティにかかわる変更を含まない、取り消しにくい変更を含まない",
   "  - セキュリティにかかわる変更は、認証・認可、秘密情報の扱い、権限、入力の検証、暗号、依存の追加・更新、外に公開する範囲に触れる変更",
   "  - 取り消しにくい変更は、データの削除・移行・形式の変更、外部への作用（送信・公開・デプロイ・課金など）、リリースやデプロイの設定に触れる変更",
-  "  - これらを含む・含むか分からない・迷うときは normal にする。security-check・security-fix・operation を選ぶときも normal にする",
+  "  - これらを含む・含むか分からない・迷うときは normal にする。security-check・security-fix・operation・split を選ぶときも normal にする",
   "  - 絞るのはセルフレビューだけで、PR のレビューには関係しない",
 ];
 /** 工程の選択の答えの形に足す、依頼の大きさの項目（PBI-369）。 */

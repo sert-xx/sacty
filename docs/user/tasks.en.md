@@ -466,6 +466,10 @@ A request that falls under any of the following is not judged light.
 - It includes a security-related change (authentication and authorization, secrets, permissions, input validation, adding or updating dependencies, and so on)
 - It includes a change that is hard to undo (deleting or migrating data, an effect on external systems, release or deployment settings, and so on)
 - It is a security fix task
+- It is a task that is split into child tasks (after the split, each child task is judged on its own)
+
+For a security fix task and a task that is split into child tasks, sacty uses the normal depth even when the Orchestrator answers light.
+In that case, the reason for the judgement shows that sacty set the normal depth, together with the Orchestrator's reason.
 
 The self-review of a task judged light goes as follows.
 
@@ -891,6 +895,7 @@ Besides the level and the suggested depth, the section holds the following.
 Keep the following in mind about the assessment.
 
 - When it could not be assessed (the budget cap has been reached, the AI run failed, or the answer could not be read), the section says "評価できませんでした" (could not be assessed) with the reason. Opening the PR is not stopped.
+- When the last assessment answer in the AI's output could not be read, sacty does not use an earlier answer even if there is one, and treats the PR as not assessed. The same applies when the assessment heading is written in the form of a JSON key (with quotation marks and a colon) after the assessment answer. Text that merely mentions the heading name has no effect. When an earlier answer was not used, the reason says so.
 - When a PR is submitted again at the same commit, it is not assessed again if it was assessed successfully (even with the same diff, a different commit is assessed again). When it could not be assessed (the budget cap, a failed AI run, or an unreadable answer), it is assessed again the next time the PR is submitted. When the implementation is redone and the content changes, it is assessed again.
 - The result also appears in the "PR risk assessment" section of the task detail and in the activity.
 - A requirements or design PR does not carry a risk assessment.

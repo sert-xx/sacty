@@ -253,6 +253,7 @@ const PARAMS = {
   "selfReview.depthNotLight": null,
   "selfReview.depthUnchanged": z.object({ depth: z.enum(["light", "normal"]) }),
   "selfReview.depthForcedNormal": z.object({ reason: z.string() }),
+  "selfReview.depthForcedNormalSplit": z.object({ reason: z.string() }),
   // タスクの題を人が変える（PBI-323）
   "title.unchanged": null,
   "title.pullRequestChanged": z.object({ number: z.number() }),
@@ -529,6 +530,8 @@ const PARAMS = {
   "pr.riskBudget": null,
   "pr.riskFailed": z.object({ detail: TextParam }),
   "pr.riskUnreadable": null,
+  "pr.riskLastUnreadable": null,
+  "pr.riskKeyOutsideAnswer": null,
   "pr.bodyMergeError": z.object({ detail: TextParam }),
   "pr.bodyEditedDuringMerge": null,
   "pr.bodyRereadFailed": null,
@@ -1216,6 +1219,8 @@ const ja: MessageDictionary = {
       : "セルフレビューは、すでにオーケストレーターの判定（軽い）のとおりです。",
   "selfReview.depthForcedNormal": ({ reason }) =>
     `セキュリティ対応のタスクは、依頼が軽いと判定しません。オーケストレーターは軽いと答えていました${reason ? `（理由：${reason}）` : ""}。`,
+  "selfReview.depthForcedNormalSplit": ({ reason }) =>
+    `子タスクに分けて進めるタスクは、依頼が軽いと判定しません。オーケストレーターは軽いと答えていました${reason ? `（理由：${reason}）` : ""}。`,
   "title.unchanged": "タスクの題は変わっていません。違う題を入力してください。",
   "title.pullRequestChanged": ({ number }) =>
     `題を変えると、このタスクが扱う PR（#${number}）が変わるため、変えられません。題の PR のリンクは、足したり消したり変えたりせずに、そのままにしてください。`,
@@ -1525,6 +1530,10 @@ const ja: MessageDictionary = {
   "pr.riskFailed": ({ detail }, text) =>
     `エージェントがリスクを評価できませんでした：${text(detail)}`,
   "pr.riskUnreadable": "エージェントの出力から、リスク評価を読み取れませんでした。",
+  "pr.riskLastUnreadable":
+    "エージェントの出力の、最後に出たリスク評価の答えを読み取れませんでした。前に出た答えは、使っていません。",
+  "pr.riskKeyOutsideAnswer":
+    "エージェントの出力の、最後に出たリスク評価の見出しが、読み取れる答えの中にありませんでした（JSON として読めない答え・ほかの JSON の中の答え・本文の記述のどれかです）。前に出た答えは、使っていません。",
   "pr.bodyMergeError": ({ detail }, text) =>
     `人が直した PR の本文と、Sacty の新しい本文をマージできませんでした：${text(detail)}`,
   "pr.bodyMergeDeferred":
@@ -2075,6 +2084,8 @@ const en: MessageDictionary = {
       : "The self-review already follows the Orchestrator's judgement (light).",
   "selfReview.depthForcedNormal": ({ reason }) =>
     `A security fix task is never judged light. The Orchestrator answered light${reason ? ` (reason: ${reason})` : ""}.`,
+  "selfReview.depthForcedNormalSplit": ({ reason }) =>
+    `A task that is split into child tasks is never judged light. The Orchestrator answered light${reason ? ` (reason: ${reason})` : ""}.`,
   "title.unchanged": "The task title hasn't changed. Enter a different title.",
   "title.pullRequestChanged": ({ number }) =>
     `The title can't be changed this way because it would change the PR this task works on (#${number}). Don't add, remove, or change a PR link in the title; keep it as it is.`,
@@ -2392,6 +2403,10 @@ const en: MessageDictionary = {
   "pr.riskBudget": "The budget cap has been reached, so an agent did not assess the risk.",
   "pr.riskFailed": ({ detail }, text) => `An agent could not assess the risk: ${text(detail)}`,
   "pr.riskUnreadable": "Could not read the risk assessment from the agent's output.",
+  "pr.riskLastUnreadable":
+    "Could not read the last risk assessment answer in the agent's output. An earlier answer was not used.",
+  "pr.riskKeyOutsideAnswer":
+    "The last risk assessment heading in the agent's output was not inside a readable answer (an answer that cannot be parsed as JSON, an answer inside another JSON object, or a mention in the text). An earlier answer was not used.",
   "pr.bodyMergeError": ({ detail }, text) =>
     `Could not merge the person's edits to the PR body with Sacty's new body: ${text(detail)}`,
   "pr.bodyMergeDeferred":

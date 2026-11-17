@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
-import { renderMessage, type Task } from "@sacty/core";
+import { message, renderMessage, type Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { SactyConfig } from "./config.js";
 import {
+  allowedPlans,
   buildOrchestratorPrompt,
   buildPrompt,
   buildReviewImagePrompt,
@@ -64,7 +65,7 @@ describe("依頼の大きさを、工程を選ぶ時点でオーケストレー�
       expect(prompt).toContain("取り消しにくい変更は、データの削除・移行・形式の変更");
       expect(prompt).toContain("これらを含む・含むか分からない・迷うときは normal にする");
       expect(prompt).toContain(
-        "security-check・security-fix・operation を選ぶときも normal にする",
+        "security-check・security-fix・operation・split を選ぶときも normal にする",
       );
       // PR のレビューには関係しない
       expect(prompt).toContain("絞るのはセルフレビューだけで、PR のレビューには関係しない");
@@ -150,7 +151,6 @@ describe("依頼の大きさを、工程を選ぶ時点でオーケストレー�
       "bugfix",
       "document",
       "design-only",
-      "split",
     ] as const) {
       expect(
         selfReviewDepthOf({ plan: p, selfReviewDepth: "light", selfReviewDepthReason: "節を足す" }),
@@ -169,6 +169,59 @@ describe("依頼の大きさを、工程を選ぶ時点でオーケストレー�
     }
     // 答えが無いときも記録しない
     expect(selfReviewDepthOf({ plan: "standard" })).toEqual({});
+  });
+});
+
+describe("子タスクに分ける組み合わせ（分割の親）は、軽いと答えても通常として記録する（PBI-387）", () => {
+  it("split は、軽いと答えても通常にし、理由に、sacty が通常にしたことと、オーケストレーターの理由を残す", () => {
+    const forced = selfReviewDepthOf({
+      plan: "split",
+      selfReviewDepth: "light",
+      selfReviewDepthReason: "文書の節を足すだけ",
+    });
+    expect(forced.selfReviewDepth).toBe("normal");
+    expect(forced.selfReviewDepthReason).toEqual(
+      message("selfReview.depthForcedNormalSplit", { reason: "文書の節を足すだけ" }),
+    );
+    const ja = renderMessage(forced.selfReviewDepthReason ?? "", "ja");
+    expect(ja).toContain("子タスクに分けて進めるタスクは、依頼が軽いと判定しません");
+    expect(ja).toContain("オーケストレーターは軽いと答えていました（理由：文書の節を足すだけ）");
+    const en = renderMessage(forced.selfReviewDepthReason ?? "", "en");
+    expect(en).toContain("A task that is split into child tasks is never judged light");
+    expect(en).toContain("(reason: 文書の節を足すだけ)");
+    // セキュリティ対応の文言とは別（どの決まりで通常にしたかが分かる）
+    expect(ja).not.toContain("セキュリティ対応");
+  });
+
+  it("split で、理由の無い軽い答えも通常にし、理由には、括弧を付けずに、sacty が通常にしたことだけを残す", () => {
+    const forced = selfReviewDepthOf({ plan: "split", selfReviewDepth: "light" });
+    expect(forced.selfReviewDepth).toBe("normal");
+    expect(renderMessage(forced.selfReviewDepthReason ?? "", "ja")).toBe(
+      "子タスクに分けて進めるタスクは、依頼が軽いと判定しません。オーケストレーターは軽いと答えていました。",
+    );
+    expect(renderMessage(forced.selfReviewDepthReason ?? "", "en")).toBe(
+      "A task that is split into child tasks is never judged light. The Orchestrator answered light.",
+    );
+  });
+
+  it("split で通常と答えたもの・答えが無いものは、そのまま", () => {
+    expect(
+      selfReviewDepthOf({
+        plan: "split",
+        selfReviewDepth: "normal",
+        selfReviewDepthReason: "理由",
+      }),
+    ).toEqual({ selfReviewDepth: "normal", selfReviewDepthReason: "理由" });
+    expect(selfReviewDepthOf({ plan: "split" })).toEqual({});
+  });
+
+  it("子タスクが選べる組み合わせには split が無く、子の判定は、子ごとの答えのまま", () => {
+    const child = { parent: { taskId: "p-1", dependsOn: [] } } as unknown as Task;
+    expect(allowedPlans(child)).not.toContain("split");
+    expect(allowedPlans({} as unknown as Task)).toContain("split");
+    expect(
+      selfReviewDepthOf({ plan: "direct", selfReviewDepth: "light", selfReviewDepthReason: "小" }),
+    ).toEqual({ selfReviewDepth: "light", selfReviewDepthReason: "小" });
   });
 });
 
@@ -502,6 +555,37 @@ describe("人が、タスクごとにセルフレビューを通常の深さに�
       expect(depthEvents(service, id), name).toEqual([]);
       activity.close();
     }
+  });
+
+  it("子タスクに分ける組み合わせを選んだタスクは、軽いと答えても通常として記録し、観点を絞らず、人が軽くすることもできない（PBI-387）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const split = chosen({
+      plan: "split",
+      reason: "大きいので分ける",
+      selfReviewDepth: "light",
+      selfReviewDepthReason: "文書の節を足すだけ",
+    });
+    const { service, executor } = makeService(activity, [split, out("# 要求要件")], {
+      realPlanner: true,
+      config,
+    });
+    const { id } = service.createTask({ projectId: "default", title: "機能を足す" });
+    await service.runNext(id);
+    const forced = {
+      judged: "normal",
+      reason: message("selfReview.depthForcedNormalSplit", { reason: "文書の節を足すだけ" }),
+    };
+    expect(service.get(id)?.task.stepsChoice?.plan).toBe("split");
+    expect(service.get(id)?.task.selfReviewDepth).toEqual(forced);
+    // 親の工程（要求要件）の指示は、観点を絞らない
+    expect(executor.stdins[1]).toContain("--- 提出の前のセルフレビュー ---");
+    expect(executor.stdins[1]).not.toContain("軽い依頼");
+    // 通常として記録したので、人の上書き（軽いと判定されたタスクだけ）は断る
+    for (const depth of ["light", "normal"] as const) {
+      expect(() => service.changeSelfReviewDepth(id, { depth })).toThrow(/軽いと判定されていない/);
+    }
+    expect(depthEvents(service, id)).toEqual([]);
+    activity.close();
   });
 
   it("API でも変えられる。決めた値でない深さ・無いタスクは断る", async () => {
