@@ -21,6 +21,7 @@ import { stopFetchProcessesSync } from "./fetch-processes.js";
 import { AiGateway } from "./gateway.js";
 import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
+import { GitHubRateLimitStore } from "./github-rate-limits.js";
 import { HostMcpServers } from "./host-mcp.js";
 import { HostMcpProcesses } from "./host-mcp-processes.js";
 import { buildImage } from "./image.js";
@@ -286,6 +287,8 @@ const service = new TaskService({
   }),
   // 画面のデスクトップ通知のための、最近の通知（メモリーに持つ）
   feed: new NotificationFeed(),
+  // 指摘への返信が GitHub のレート制限に当たったときの待ち（ホストとアカウントごと。起動し直しても失わない。PBI-356）
+  rateLimits: new GitHubRateLimitStore(join(home, "github-rate-limits.json")),
   // レビューが止まったことを PR に知らせる投稿の、タスクの画面へのリンク（PBI-292）
   webUrl: process.env.SACTY_WEB_URL ?? "http://127.0.0.1:4700",
 });

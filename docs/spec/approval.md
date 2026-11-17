@@ -652,7 +652,7 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
 
 ### 指摘への対応の返信
 
-関係する ADR: [取り込んだ PR の指摘への対応を、指摘ごとに PR に返信する](../adr/20261116-0045-reply-to-review-feedback-on-pull-request.md)
+関係する ADR: [取り込んだ PR の指摘への対応を、指摘ごとに PR に返信する](../adr/20261116-0045-reply-to-review-feedback-on-pull-request.md)、[レート制限に当たった指摘への返信を、期限が明けてからやり直す](../adr/20261117-0110-retry-remark-replies-after-rate-limit.md)
 
 PR のレビュー・コメントから取り込んだ指摘を受けて工程をやり直し、PR を更新したら、指摘ごとに、対応を PR に返信する。指摘した人・AI が、指摘の場所で、対応されたか・断られたかを読めるようにする。
 
@@ -669,15 +669,24 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - 対応の文は外から来た文なので、秘密情報を伏せてから 4,000 文字（`REPLY_TEXT_MAX`）で切り、`@名前` で他人に通知が飛ばないよう `@` の後ろに幅の無い空白を挟む。作業領域の内部のパスは、人が辿れる呼び方に置き換える（`withoutInternalPaths`）。
 - 二重に投稿しない：投稿の前に、行へのコメントと PR のコメントを1回ずつ、最後のページまで読み、返信に使ったと記録したアカウント（今のアカウントを含む）が投稿した、本文がこのタスクの目印で始まるものを、投稿済みの返信として使う（`listReviewComments`・`listIssueComments`。指摘ごとの照合は、提出回を問わない）。ほかの人が目印をまねた・引用した投稿は、投稿済みと見なさない。投稿の後・記録の前にデーモンが止まっても、二度投稿しない。同じタスクの返信は順に処理する（`serialized`）。
   - 返信に使うアカウントは、投稿の前に `RemarkRepliesStarted`（工程・提出回・PR の番号・アカウント）に記録し、`Task.remarkReplyAccounts` に持つ（同じアカウントは1回だけ）。投稿の後・結果の記録の前に止まり、その間にプロジェクトの GitHub のアカウントが変わっても、前のアカウントの返信を見つけて、重ねて投稿しない。
-  - 返信の投稿（行への返信も、PR のコメントも）は、ホストとアカウントごとの共通の入口を通す（`remarkReplyPost`）。1件ずつ順に投稿し、投稿と投稿の間を 1 秒あける（同じアカウントで返信する、ほかのタスクの投稿とも合わせる）。GitHub のレート制限（429、または 403 で、本文がレート制限と説明するか、ヘッダーが残り 0・次に試せるまでの時間を示す答え）に当たったら、そこで投稿を止める：制限に当たった指摘は、GitHub の答えを理由にして失敗を記録し、残りの指摘は、投稿を試みずに失敗（`github.replySkippedAfterRateLimit`）を記録する（読んである一覧に投稿済みの返信がある指摘は、その返信を記録する）。行への返信が制限で断られても、PR のコメントに回さない。投稿されたかが分からない返信の探し直しが制限に当たったときも、残りの投稿を止める。止めるのは、その提出の残りのすべて（結果が多くて記録が分かれても、残りを投稿し直さない）と、同じアカウントで順番を待っていた、ほかのタスクの投稿（制限の後に頼まれた投稿は止めない。待ちの期限は持たない）。一覧の読み取り・探し直しで見つけた制限も、順番を待っている投稿に伝える（投稿の間隔を待った後にも、確かめる）。投稿を止めたことは、見つけたその場で覚える（その後、一時停止で結果を記録せずに抜けても、残りを投稿しない）。分けた記録は、1回の書き込みで残し、投稿を止めたことは、結果を記録できるまで覚えておく（記録できずにやり直すときも、残りを投稿せずに、失敗を記録する）。制限に当たった返信は、ほかの失敗と同じく、やり直さない（どの指摘の返信が投稿できなかったかは、作業履歴の行の詳細で読める）。
+  - 返信の投稿（行への返信も、PR のコメントも）は、ホストとアカウントごとの共通の入口を通す（`remarkReplyPost`）。1件ずつ順に投稿し、投稿と投稿の間を 1 秒あける（同じアカウントで返信する、ほかのタスクの投稿とも合わせる）。
+  - GitHub のレート制限（429、または 403 で、本文がレート制限と説明するか、ヘッダーが残り 0・次に試せるまでの時間を示す答え）に当たったら、そこで投稿を止めて、期限が明けてからやり直す。
+    - 制限に当たった指摘と、その提出の残りの指摘は、投稿を試みず、失敗としても記録せずに残す（まだ返信していないまま。読んである一覧に投稿済みの返信がある指摘は、その返信を記録する）。行への返信が制限で断られても、PR のコメントに回さない。初めの一覧の読み取りが制限に当たったときは、どの指摘も記録せずに残す。投稿されたかが分からない返信の探し直しが制限に当たったときは、その指摘だけ失敗を記録し（重ねて投稿しないため）、残りは記録せずに残す。
+    - 待ちは、ホストとアカウントごとに持つ（`noteRemarkReplyLimited`）。次に試せる時刻と、連続して制限に当たった回数を、`SACTY_HOME/github-rate-limits.json`（権限 0600。`GitHubRateLimitStore`）に保存し、デーモンを起動し直しても失わない。保存できなければ、警告を残して、メモリーの上の待ちで続ける。
+    - 待つ時間は、GitHub が示した待ち（`retry-after` と、残りが 0 のときの `x-ratelimit-reset` の、遅い方。`retryAfterOf`）と、制限が続くたびに倍にする待ち（1 分から。上限は 1 時間）の、長い方。GitHub が示した待ちは、1 日で頭打ちにする。待ちの間にもう一度制限を見ても（一覧の読み取りなど）、回数は増やさず、期限を遅い方にする。投稿が1件できたら、そのアカウントの待ちと回数を消す。
+    - 待ちの間は、そのアカウントで返信を投稿しない（順番を待っていた投稿も、その後に頼まれた、ほかのタスクの投稿も。`remarkReplyPost` が `limited` を返す）。一覧の読み取りもしない。返信を待つタスクは、実行待ちに出ない（実行の枠を取らない。`remarkRepliesReady`）。タスクの状態は変えない（承認・差し戻し・マージは、待ちの間もできる）。
+    - 期限が明けたら、タスクが実行待ちに戻り、残していた指摘に返信する（目印で投稿済みのものを見つける作りは、同じ）。その間に、承認された・次の提出に変わった・PR が閉じた・指摘が無効になったなら、その返信はしない（返信する条件を満たさないため）。
+    - やり直しは 5 回まで。超えて制限に当たったら（連続 6 回目）、その提出の残りの指摘を、失敗（`github.replyGaveUpAfterRateLimit`）として記録し、やり直さない。回数はアカウントごとに数えるので、その後、投稿が1件できるまでは、同じアカウントで制限に当たった提出も、その場で失敗を記録する。
+    - 対象は、指摘への対応の返信だけ。ほかの投稿（PR のコメントの頼み・レビュー・人に確かめてほしいことのコメント）と、GitHub の読み取り（指摘の取り込み・PR の状態の確認）は、この待ちを見ず、やり直しもしない。
+  - 分けた記録は、1回の書き込みで残す。時間切れで投稿を止めたことは、結果を記録できるまで覚えておく（その後、一時停止で結果を記録せずに抜けても・記録できずにやり直すときも、残りを投稿せずに、失敗を記録する）。
   - 一覧を読めない・ページ数の上限で読み切れない・答えを読めない（JSON の配列でない。コメントの本文・ID・投稿者を読めない。次のページの URL をたどれない）ときは、投稿済みかを確かめられないので、どの指摘にも投稿せず、失敗を記録する。
   - 行への返信が投稿されたかが分からないとき（答えを受け取れなかった・期限を超えた・5xx）は、行へのコメントを探し直し、見つかればそれを使う。見つからない・探せないときは、PR のコメントを重ねずに、失敗を記録する。
   - トークンの取り出しと、GitHub への問い合わせ（一覧・返信・コメント）には、1回ごとに 30 秒の期限を付ける。期限を超えたトークンの取り出しでは、`gh` を、それが起動したプロセスごと止める。期限を超えた問い合わせがあったら、残りの指摘は投稿を試みずに、失敗（`github.replySkippedAfterTimeout`）を記録する（答えの返らない GitHub を、指摘の数だけ待たない。読んである一覧に投稿済みの返信がある指摘は、その返信を記録する）。答えが返らなくても、実行の枠を占めたままにしない。
 - 各指摘を投稿する直前に、一時停止・中止を求められていないこと、承認待ちの提出が変わっていないことを確かめる。変わっていれば、新しく投稿せず、記録もしない（再開したら、目印で投稿済みのものを見つけて続ける）。待っている間に、その指摘が無効にされた・対応が変わったなら、その指摘だけを飛ばす。
-- 記録：結果を `RemarkRepliesPosted`（工程・提出回・PR の番号と、指摘ごとの、元のコメントのキー・行への返信か・投稿の URL・投稿できなかった理由）に残す。投稿できなくても、タスクは止めない。投稿できなかった指摘も、返信済みとして扱い、やり直さない。画面の作業履歴の行には、返信した件数と、返信できなかった件数を出し、指摘ごとの結果（返信できなかった指摘が先）は、行の詳細に出す（`describeEventParts`）。概要の「最近の履歴」の2行の制限は、行の文にだけ掛け、詳細を開く表示と、開いた詳細は切らない。
+- 記録：結果を `RemarkRepliesPosted`（工程・提出回・PR の番号と、指摘ごとの、元のコメントのキー・行への返信か・投稿の URL・投稿できなかった理由）に残す。投稿できなくても、タスクは止めない。投稿できなかった指摘も、返信済みとして扱い、やり直さない（レート制限に当たった指摘は、ここに記録せず、上のとおりやり直す）。レート制限で待つときは、`RemarkRepliesDeferred`（工程・提出回・PR の番号・まだ返信していない件数・次に試せる時刻・連続して制限に当たった回数）を残す（状態は変えない。`Task.remarkRepliesDeferred` に、待っている提出を持つ）。待ちの後にやり直した結果の `RemarkRepliesPosted` には、`retried` を付ける。画面の作業履歴には、待っていること（約何分後にやり直すか・件数・回数）、待ちの後にやり直したこと、あきらめたこと（返信できなかった理由）が出る（ja・en）。画面の作業履歴の行には、返信した件数と、返信できなかった件数を出し、指摘ごとの結果（返信できなかった指摘が先）は、行の詳細に出す（`describeEventParts`）。概要の「最近の履歴」の2行の制限は、行の文にだけ掛け、詳細を開く表示と、開いた詳細は切らない。
 - この返信は、PR の指摘に取り込まない：そのタスクのアカウントと、返信に使ったと記録したアカウント（`Task.remarkReplyAccounts`）が投稿した、目印 `<!-- sacty-reply:` で始まる行へのコメント・PR のコメントは、PR の指摘の取り込み（承認待ち・一時停止の間・引き継いだ PR の読み取り）から除く（`feedback`・`isSactyRemarkReply`）。ほかのアカウントが目印をまねて書いたものは、除かない。
 - PR のレビューの子タスクには、作者の返答として渡る：レビューの工程に渡す読み取りだけ、この返信を含める（`includeSactyReplies`。sacty のアカウントが Bot でも含める。ほかの Bot の投稿は、これまでどおり除く）。sacty のアカウントには、その PR（実装の PR・要求要件と設計の PR）に返信したタスクが記録したアカウント（`remarkReplyAccountsOn`）も含める（返信の後に、そのアカウントがどのプロジェクトからも外れていても、読めるように）。sacty が作った PR の作者は sacty のアカウントなので、既存のレビューでは作者の投稿として、再レビューでは作者の返答（`authorReplies`）として渡る。再レビューの「作者が『対象外』『後続で対応』と返した論点は、もう一度指摘しない」という決まりが、sacty の返信にも効く（[タスクと工程](tasks-and-steps.md)）。
-  レビューの子タスクは、レビューを始める前に、PR を作ったタスクの返信がまだなら、先に投稿する（`remarkRepliesSettled`。親と子は並んで動くので、親の次の実行を待つと、返信の前に読んでしまう）。返信する指摘が残らなくなるまで繰り返し、結果を記録できない・止められて進まないときは、レビューを始めずに、1 分の間を置いてやり直す。結果を記録できなかったときの間は、返信の処理そのものが置くので、PR を作ったタスク自身も、その間は実行待ちに出ない。間を置いている最中、子タスクは実行待ちに出さない（始めても進めないレビューが、実行の枠を取り続けて、後ろのタスクを止めないように。`reviewWaitsForReplies`）。この間は、デーモンを起動し直すと消える（GitHub の制限の待ちではない）。
+  レビューの子タスクは、レビューを始める前に、PR を作ったタスクの返信がまだなら、先に投稿する（`remarkRepliesSettled`。親と子は並んで動くので、親の次の実行を待つと、返信の前に読んでしまう）。返信する指摘が残らなくなるまで繰り返し、結果を記録できない・止められて進まないときは、レビューを始めずに、1 分の間を置いてやり直す。結果を記録できなかったときの間は、返信の処理そのものが置くので、PR を作ったタスク自身も、その間は実行待ちに出ない。間を置いている最中、子タスクは実行待ちに出さない（始めても進めないレビューが、実行の枠を取り続けて、後ろのタスクを止めないように。`reviewWaitsForReplies`）。この間は、デーモンを起動し直すと消える（GitHub の制限の待ちではない）。返信が GitHub のレート制限の待ちに入っているときは、子タスクは返信を待たずにレビューを始める（待ちは長いことがあるため。その返信は、レビューに作者の返答として渡らない）。
   作者の返答に入るのは、PR の作者と同じアカウントの投稿だけ（引き継いだ PR は、作者が人なので、sacty の返信は既存のレビュー・コメントとして渡る）。返した論点でも、範囲が変わった・今回の変更が直接の原因になったときは、もう一度指摘される。
 - 引き継いだ PR（人が作った PR を直すタスク。`continuedPullRequest`）の、実装に渡した指摘にも、同じ形・同じ条件で返信する。
   - 実装の工程の指示では、PR の指摘のデータに、指摘ごとの ID（`id`。取り込みのキー）を付け、対応した指摘と、対応しない・対応できない指摘について、`sacty-responses` に `remarkId`（データの `id`）・`status`・`text` を書かせる（`continuedResponseLines`）。対応が要らないもの（作者の返答・済んだやり取り・感想など）には書かせない。要求要件・設計の工程には、ID を渡さない（これまでどおり）。
@@ -686,7 +695,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - 提出の後にその PR から取り込んだ指摘（差し戻しの指摘）は、取り込んだ指摘として返信する。同じコメントが実装に渡した指摘にもあるときは、重ねて返信しない。
   - 目印と記録の指摘の ID は、キー（`review_comment:<ID>` など）にする。返信の末尾には、指摘の ID を書かない。
 
-コード: `apps/daemon/src/service.ts`（`awaitingRemarkReplies`・`remarkRepliesDue`・`postRemarkReplies`・`remarkReplyPost`・`remarkRepliesSettled`・`remarkRepliesReady`・`replyRejected`・`rateLimited`・`remarkReplyAccountsOn`・`remarkOrigins`・`settleReview`・`settleHeldReview`・`requestChanges`・`reviewFeedback`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`・`remarkOriginRef`・`remarkOriginUrl`・`remarkReplyMarker`・`REPLY_TEXT_MAX`）、`apps/daemon/src/github.ts`（`replyToReviewComment`・`listReviewComments`・`listIssueComments`・`isSactyRemarkReply`・`GitHubPullRequests.feedback`）、`apps/daemon/src/prompts.ts`（`statusLines`・`continuedResponseLines`・`continuedPullRequestLines`・`extractBlocks`）、`packages/core/src/events.ts`（`RemarkOrigin`・`RemarkResponseStatus`・`RemarkRepliesStarted`・`RemarkRepliesPosted`・`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`
+コード: `apps/daemon/src/service.ts`（`awaitingRemarkReplies`・`remarkRepliesDue`・`postRemarkReplies`・`remarkReplyPost`・`noteRemarkReplyLimited`・`remarkRepliesSettled`・`remarkRepliesReady`・`replyRejected`・`rateLimited`・`remarkReplyAccountsOn`・`remarkOrigins`・`settleReview`・`settleHeldReview`・`requestChanges`・`reviewFeedback`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`・`remarkOriginRef`・`remarkOriginUrl`・`remarkReplyMarker`・`REPLY_TEXT_MAX`）、`apps/daemon/src/github.ts`（`replyToReviewComment`・`listReviewComments`・`listIssueComments`・`isSactyRemarkReply`・`GitHubPullRequests.feedback`）、`apps/daemon/src/prompts.ts`（`statusLines`・`continuedResponseLines`・`continuedPullRequestLines`・`extractBlocks`）、`packages/core/src/events.ts`（`RemarkOrigin`・`RemarkResponseStatus`・`RemarkRepliesStarted`・`RemarkRepliesPosted`・`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`
 
 ### 戻し先の判断の文の見せ方
 

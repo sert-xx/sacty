@@ -7,6 +7,7 @@ import {
   GitHubPullRequests,
   githubRetryAfterMs,
   isTransientGitHubFailure,
+  retryAfterOf,
 } from "./github.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
@@ -785,6 +786,30 @@ describe("フィードバックの次のページ（PBI-14b レビュー指摘�
 
 describe("PR の行へのコメントへの返信（PBI-352）", () => {
   const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
+
+  it("GitHub が示す待ちは、retry-after と x-ratelimit-reset の両方があれば、遅い方（PBI-356）", () => {
+    const now = 1_800_000_000_000;
+    const reset = (seconds: number) => String(now / 1000 + seconds);
+    const of = (headers: Record<string, string>) => retryAfterOf(new Headers(headers), now);
+    // retry-after の方が早い：reset まで待つ
+    expect(
+      of({ "retry-after": "60", "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset(600) }),
+    ).toBe(600_000);
+    // reset の方が早い：retry-after まで待つ
+    expect(
+      of({ "retry-after": "900", "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset(600) }),
+    ).toBe(900_000);
+    // 残りが 0 でなければ、reset は待ちの条件にしない
+    expect(
+      of({ "retry-after": "60", "x-ratelimit-remaining": "12", "x-ratelimit-reset": reset(600) }),
+    ).toBe(60_000);
+    // 片方だけ・どちらも無い・読めない値
+    expect(of({ "retry-after": "30" })).toBe(30_000);
+    expect(of({ "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset(45) })).toBe(45_000);
+    expect(of({ "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset(-45) })).toBe(0);
+    expect(of({})).toBeUndefined();
+    expect(of({ "retry-after": "soon" })).toBeUndefined();
+  });
 
   it("レート制限で断られたときは、GitHub が示した、次に試せるまでの時間を、エラーに持たせる（retry-after・x-ratelimit-reset）", async () => {
     const limit = { message: "You have exceeded a secondary rate limit." };

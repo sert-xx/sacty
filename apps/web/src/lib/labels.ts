@@ -848,7 +848,14 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         p.number,
         p.results.filter((r) => r.failed === undefined).length,
         p.results.filter((r) => r.failed !== undefined).length,
+        p.retried === true,
       );
+    }
+    case "RemarkRepliesDeferred": {
+      const p = event.payload;
+      // 待ちは、記録した時刻から、次に試せる時刻までの分（切り上げ。1分に満たなくても 1 分）
+      const minutes = Math.max(1, Math.ceil((Date.parse(p.until) - Date.parse(event.at)) / 60_000));
+      return e.RemarkRepliesDeferred(p.number, p.waiting, minutes, p.attempt);
     }
     case "ReviewTargetResolved":
       return e.ReviewTargetResolved(event.payload.url, event.payload.headCommit.slice(0, 7));
