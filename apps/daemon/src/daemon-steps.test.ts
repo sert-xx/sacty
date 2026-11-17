@@ -38,6 +38,7 @@ import {
   stepReview,
   useTempDir,
 } from "./testing/daemon.js";
+import { idleFor, waitFor } from "./testing/wait.js";
 
 useTempDir();
 
@@ -454,7 +455,8 @@ describe("工程の実行と費用", () => {
     const task = service.createTask({ projectId: "default", title: "クラウドを調べる" });
     const running = service.runNext(task.id);
     await vi.waitFor(() => expect(waits).toHaveLength(1));
-    await new Promise((r) => setTimeout(r, 20));
+    // 準備を待たずにエージェントを動かしていないこと（何も起きないこと）を見るための猶予。準備を待ち始めた後に置く
+    await idleFor(20);
     expect(executor.calls).toHaveLength(0);
     ready();
     await running;
@@ -1830,7 +1832,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
   it("停止時は、実行中の処理が作業履歴に記録されるまで待つ", async () => {
     const { Worker } = await import("./worker.js");
     const activity = new SqliteActivityStore(dbPath);
-    let finish: (o: AgentOutcome) => void = () => {};
+    let finish: ((o: AgentOutcome) => void) | undefined;
     const service = new TaskService({
       activity,
       config: configOf(agent()),
@@ -1854,14 +1856,15 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     const task = service.createTask({ projectId: "default", title: "A" });
     const worker = new Worker(service, 60_000);
     void worker.tick();
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => finish !== undefined, { what: "エージェントの実行の開始" });
     let drained = false;
     const draining = worker.drain().then(() => {
       drained = true;
     });
-    await new Promise((r) => setTimeout(r, 20));
+    // 実行中なのに停止が終わってしまわないこと（何も起きないこと）を見るための猶予。実行が始まった後に置く
+    await idleFor(20);
     expect(drained).toBe(false); // まだ実行中
-    finish({ kind: "failed", reason: "error", message: "中断" });
+    finish?.({ kind: "failed", reason: "error", message: "中断" });
     await draining;
     expect(service.get(task.id)?.task.status).toBe("paused");
     activity.close();
@@ -3119,7 +3122,21 @@ describe("タスクの並行実行（PBI-30）", () => {
       return [...this.held.values()].map((h) => h.title).sort();
     }
   }
-  const settle = () => new Promise((r) => setTimeout(r, 30));
+  /** 止めてある実行が、その題のタスクのものになるまで待つ（実行に入るまでの時間は、環境と負荷で変わる）。 */
+  const held = (executor: HeldExecutor, titles: string[]) =>
+    waitFor(() => JSON.stringify(executor.titles()) === JSON.stringify(titles), {
+      what: `止めてある実行が ${titles.join("・")} になること`,
+    });
+  /** Worker が始めた実行（runNext）を記録する。Worker は、tick の中で、同期で runNext を呼ぶ。 */
+  const startsOf = (service: TaskService) => vi.spyOn(service, "runNext");
+  /** そのタスクの実行が終わり、Worker が実行の枠を空けるまで待つ。 */
+  const freed = async (starts: ReturnType<typeof startsOf>, id: string) => {
+    const index = starts.mock.calls.findIndex(([taskId]) => taskId === id);
+    if (index < 0) throw new Error(`Worker は、タスク ${id} の実行を始めていない`);
+    await starts.mock.results[index]?.value;
+    // Worker は、実行の終わりに続く処理（マイクロタスク）で枠を空ける。イベントループを一巡させれば、済んでいる
+    await new Promise((resolve) => setImmediate(resolve));
+  };
 
   function setup(settings: MemorySettingsStore, planner?: ServiceDeps["planner"]) {
     const activity = new SqliteActivityStore(dbPath);
@@ -3154,22 +3171,26 @@ describe("タスクの並行実行（PBI-30）", () => {
   it("実行待ちのタスクを、古い順に上限の数まで同時に実行し、空いたら次を始める", async () => {
     const { Worker } = await import("./worker.js");
     const { activity, executor, service } = setup(new MemorySettingsStore({ maxParallelTasks: 2 }));
-    for (const title of ["タスク1", "タスク2", "タスク3"]) {
-      service.createTask({ projectId: "default", title });
-    }
+    const [first] = ["タスク1", "タスク2", "タスク3"].map((title) =>
+      service.createTask({ projectId: "default", title }),
+    );
     const worker = new Worker(service, 60_000);
+    const starts = startsOf(service);
     void worker.tick();
-    await settle();
+    // 上限を超えて始めていないことは、始めた数で確かめる（3 件目が遅れて実行に入るのを、待ちの長さに頼らずに見つける）
+    expect(starts).toHaveBeenCalledTimes(2);
+    await held(executor, ["タスク1", "タスク2"]);
     expect(executor.titles()).toEqual(["タスク1", "タスク2"]);
     // 実行中のタスクは、重ねて始めない（上限にも達している）
     void worker.tick();
-    await settle();
+    expect(starts).toHaveBeenCalledTimes(2);
     expect(executor.titles()).toEqual(["タスク1", "タスク2"]);
 
     executor.finish("タスク1");
-    await settle();
+    await freed(starts, first?.id ?? "");
     void worker.tick();
-    await settle();
+    expect(starts).toHaveBeenCalledTimes(3);
+    await held(executor, ["タスク2", "タスク3"]);
     expect(executor.titles()).toEqual(["タスク2", "タスク3"]);
     executor.finish("タスク2");
     executor.finish("タスク3");
@@ -3190,7 +3211,7 @@ describe("タスクの並行実行（PBI-30）", () => {
     const b = service.createTask({ projectId: "default", title: "タスクB" });
     const worker = new Worker(service, 60_000);
     void worker.tick();
-    await settle();
+    await held(executor, ["タスクA", "タスクB"]);
     expect(executor.titles()).toEqual(["タスクA", "タスクB"]);
     const runOf = (id: string) => service.get(id)?.task.currentRunId ?? "";
     const runB = runOf(b.id);
@@ -3209,7 +3230,7 @@ describe("タスクの並行実行（PBI-30）", () => {
     const { Worker } = await import("./worker.js");
     let calls = 0;
     const choosing = Promise.withResolvers<void>();
-    const { activity, service } = setup(new MemorySettingsStore(), async () => {
+    const { activity, executor, service } = setup(new MemorySettingsStore(), async () => {
       calls += 1;
       await choosing.promise;
       return {
@@ -3222,14 +3243,17 @@ describe("タスクの並行実行（PBI-30）", () => {
     });
     const task = service.createTask({ projectId: "default", title: "タスクA" });
     const worker = new Worker(service, 60_000);
+    const starts = startsOf(service);
     void worker.tick();
-    await settle();
+    await waitFor(() => calls >= 1, { what: "工程を選び始めること" });
     expect(service.get(task.id)?.task.status).toBe("queued");
     void worker.tick();
-    await settle();
+    // 重ねて始めていないことは、始めた数で確かめる（2 回目が遅れて工程を選び始めるのを、待ちの長さに頼らずに見つける）
+    expect(starts).toHaveBeenCalledTimes(1);
     expect(calls).toBe(1);
     choosing.resolve();
-    await settle();
+    await held(executor, ["タスクA"]);
+    expect(calls).toBe(1);
     await service.pause(task.id);
     await worker.drain();
     activity.close();

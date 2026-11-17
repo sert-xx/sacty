@@ -107,6 +107,15 @@ export async function waitFor(
   }
 }
 
+/**
+ * 「何も起きないこと」を確かめる前に置く猶予（固定の時間）。処理の完了を待つのには使わない（完了は waitFor で待つ）。
+ * 起きてはいけないことが起きる前提（待っている・止まっているなど）が成り立ったのを、条件で確かめた後に置く。
+ * 猶予が環境に対して短くても、テストは誤って落ちない（起きてはいけないことを見逃すことがあるだけ）。
+ */
+export function idleFor(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 type ChildLike = {
   once(
     event: "exit",
