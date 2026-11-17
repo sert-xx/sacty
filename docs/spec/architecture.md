@@ -393,6 +393,7 @@ sacty は、5つのパッケージでできている。
 | `workspaces/` | 作業領域。`<タスク ID>/repo`（対象リポジトリの clone）・`<タスク ID>/empty`（リポジトリの無いタスク）・`<タスク ID>/repos`（指定した複数リポジトリの clone）・`_git/<タスク ID>.git`（clone 直後の git のメタデータの退避。どのコンテナにもマウントしない）・実行ごとの `_code-copy/<実行 ID>`・`_snapshots/<実行 ID>`・`_review/<実行 ID>`・`_input/<実行 ID>`・`_repos/<実行 ID>`・`_export/<実行 ID>`・`_deployment/<実行 ID>`・`_handoff/<実行 ID>`・`_question-logs/<実行 ID>`・`_audit-logs/<実行 ID>`・`_audit-ledger/<実行 ID>`・`_shared-compose/<実行 ID>`（実行の終わりに消す。中断で残ったものは起動のときに消す。停止を確認できない実行の写しやマウント中の写しは、確認できるまで保持する。`_shared-compose` は起動のときにまとめて消す）・`_cache/`・`_task-cache/<タスク ID>`（タスクごとの依存のキャッシュ。[エージェントの実行](agent-execution.md#依存のキャッシュ)）。完了したタスクの `<タスク ID>` と `_git/<タスク ID>.git` と `_task-cache/<タスク ID>` は、もう使わなくなったら消す（[タスクと工程](tasks-and-steps.md#終わったタスクの作業領域の片付け)） |
 | `runs/` | エージェントの実行ごとのセッションログ |
 | `sessions/` | タスクごとのオーケストレーターのセッション（使い回しのためのキャッシュ） |
+| `github-rate-limits.json` | 指摘への返信が GitHub のレート制限に当たったときの待ち（ホストとアカウントごとの、次に試せる時刻と連続した回数。[承認と差し戻し](approval.md#指摘への対応の返信)） |
 | `cache/shared-compose/` | 共用の compose のリポジトリのキャッシュ |
 | `host-mcp/processes/` | ホストの MCP サーバー（コンテキストのコマンド型を含む）のプロセスの記録 |
 | `context-mcp/layers/` | ホストで起動するコンテキストのコマンド型の MCP サーバーの作業ディレクトリ（層のリポジトリの写し） |

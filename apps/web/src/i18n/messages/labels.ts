@@ -488,8 +488,10 @@ const ja = {
       `${target} に投稿できなかった（${message}）`,
     RemarkRepliesStarted: (number: number, account: string) =>
       `指摘への対応を PR #${number} に返信し始めた（GitHub のアカウント ${account}）`,
-    RemarkRepliesPosted: (number: number, replied: number, failed: number) =>
-      `指摘への対応の、PR #${number} への返信の結果（返信した ${replied}件${failed > 0 ? `・返信できなかった ${failed}件` : ""}）`,
+    RemarkRepliesPosted: (number: number, replied: number, failed: number, retried: boolean) =>
+      `指摘への対応の、PR #${number} への返信の結果（${retried ? "GitHub のレート制限の待ちの後のやり直し・" : ""}返信した ${replied}件${failed > 0 ? `・返信できなかった ${failed}件` : ""}）`,
+    RemarkRepliesDeferred: (number: number, waiting: number, minutes: number, attempt: number) =>
+      `指摘への対応の、PR #${number} への返信が GitHub のレート制限に当たったので、約${minutes}分後にやり直す（残り ${waiting}件・連続 ${attempt}回目）`,
     RemarkReplyInline: (remarkId: string, url: string) =>
       `${remarkId} は行へのコメントに返信した${url ? `（${url}）` : ""}`,
     RemarkReplyComment: (remarkId: string, url: string) =>
@@ -1156,8 +1158,10 @@ const en: LabelMessages = {
     GitHubCommentFailed: (target, message) => `could not post to ${target} (${message})`,
     RemarkRepliesStarted: (number, account) =>
       `Started replying on PR #${number} about how the remarks were handled (GitHub account ${account})`,
-    RemarkRepliesPosted: (number, replied, failed) =>
-      `Result of replying on PR #${number} about how the remarks were handled (${replied} replied${failed > 0 ? `, ${failed} could not be replied to` : ""})`,
+    RemarkRepliesPosted: (number, replied, failed, retried) =>
+      `Result of replying on PR #${number} about how the remarks were handled (${retried ? "retried after waiting for the GitHub rate limit; " : ""}${replied} replied${failed > 0 ? `, ${failed} could not be replied to` : ""})`,
+    RemarkRepliesDeferred: (number, waiting, minutes, attempt) =>
+      `Replying on PR #${number} about how the remarks were handled hit the GitHub rate limit, so it will be retried in about ${minutes} min (${waiting} left; ${attempt} in a row)`,
     RemarkReplyInline: (remarkId, url) =>
       `${remarkId}: replied to the line comment${url ? ` (${url})` : ""}`,
     RemarkReplyComment: (remarkId, url) =>

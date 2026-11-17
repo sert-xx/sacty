@@ -938,6 +938,26 @@ describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別
     ]);
     const done = project([...base, replied("implement-1-1")]).get("t");
     expect(done?.remarks.map((r) => r.repliedIn)).toEqual([2, undefined]);
+    // GitHub のレート制限で待っている間は、返信していないまま（状態も変えない）。その PR への返信の結果を記録したら、
+    // 待っている印を消す（PBI-356）
+    const deferred = ev("t", {
+      type: "RemarkRepliesDeferred",
+      payload: {
+        step: "implement",
+        submission: 2,
+        number: 7,
+        waiting: 1,
+        until: "2026-11-17T00:05:00.000Z",
+        attempt: 1,
+      },
+    });
+    const waited = project([...base, deferred]).get("t");
+    expect(waited?.status).toBe(submitted?.status);
+    expect(waited?.remarks.map((r) => r.repliedIn)).toEqual([undefined, undefined]);
+    expect(waited?.remarkRepliesDeferred).toEqual({ step: "implement", submission: 2, number: 7 });
+    const afterWait = project([...base, deferred, replied("implement-1-1")]).get("t");
+    expect(afterWait?.remarks.map((r) => r.repliedIn)).toEqual([2, undefined]);
+    expect(afterWait?.remarkRepliesDeferred).toBeUndefined();
     // 同じ指摘に、二度は返信しない。元のコメントの無い指摘・知らない指摘への返信は記録できない
     expect(() => project([...base, replied("implement-1-1"), replied("implement-1-1")])).toThrow(
       "already replied",

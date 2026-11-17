@@ -36,6 +36,7 @@ import type { CiStatusReader } from "./ci.js";
 import type { ConfigResult, SactyConfig } from "./config.js";
 import { AgentTimeoutError, MessageError } from "./errors.js";
 import type { PullRequestFeedback, PullRequestInfo, PullRequestStatus } from "./github.js";
+import { GitHubRateLimitStore } from "./github-rate-limits.js";
 import { BODY_BEGIN, BODY_END } from "./pr-body-merge.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildPullRequestBody } from "./prompts.js";
@@ -135,6 +136,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       stopNoticeTimeoutMs?: number;
       remarkReplyIntervalMs?: number;
       remarkRepliesPerRecord?: number;
+      rateLimits?: ServiceDeps["rateLimits"];
+      remarkReplyRateLimit?: ServiceDeps["remarkReplyRateLimit"];
       github?: FakeGitHub;
     } = {},
   ) {
@@ -5712,6 +5715,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       stopNoticeTimeoutMs?: number;
       remarkReplyIntervalMs?: number;
       remarkRepliesPerRecord?: number;
+      rateLimits?: ServiceDeps["rateLimits"];
+      remarkReplyRateLimit?: ServiceDeps["remarkReplyRateLimit"];
       github?: FakeGitHub;
     } = {},
   ) {
@@ -9242,60 +9247,254 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
-      it("GitHub のレート制限に当たったら、そこで投稿を止めて（行への返信を PR のコメントに回さない）、残りの指摘も失敗として記録し、やり直さない", async () => {
+      const deferredOf = (service: TaskService, id: string) =>
+        (service.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "RemarkRepliesDeferred" ? [e.payload] : [],
+        );
+      const three = () =>
+        redone([
+          { remarkId: "implement-1-1", status: "addressed", text: "直した" },
+          { remarkId: "implement-1-2", status: "addressed", text: "足した" },
+          { remarkId: "implement-1-3", status: "addressed", text: "変えた" },
+        ]);
+      /** 作り直した実装が承認待ちに戻るところまで進める（返信は、その次の処理）。 */
+      const toSecondGate = async (service: TaskService, id: string) => {
+        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
+          await service.runNext(id);
+        }
+      };
+
+      it("GitHub のレート制限に当たったら、そこで投稿を止めて（行への返信を PR のコメントに回さない）、失敗として記録せずに残し、GitHub が示した期限が明けてからやり直す。待ちの間、タスクは止めず、実行待ちにも出さない（PBI-356）", async () => {
         const pulls = new FakePulls();
+        let now = later();
+        const file = join(dir, "github-rate-limits.json");
+        const { activity, service, id } = await toImplementGate([decided(), three()], {
+          pulls,
+          now: () => now,
+          rateLimits: new GitHubRateLimitStore(file),
+        });
+        pulls.feedbackList = [inline(), comment(401), comment(402)];
+        await service.checkPullRequests();
+        await toSecondGate(service, id);
+        pulls.rateLimited = true;
+        pulls.rateLimitRetryAfterMs = 5 * 60_000;
+        await drain(service);
+        // 1件目で制限に当たる：PR のコメントに回さず、残りは投稿を試みない。失敗としても記録しない
+        expect(pulls.reviewReplies).toHaveLength(0);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        expect(posted(service, id)).toHaveLength(0);
+        // 待っていることが、作業履歴に残る（まだ返信していない件数・次に試せる時刻・連続して制限に当たった回数）
+        expect(deferredOf(service, id)).toEqual([
+          {
+            step: "implement",
+            submission: 2,
+            number: 7,
+            waiting: 3,
+            until: new Date(now + 5 * 60_000).toISOString(),
+            attempt: 1,
+          },
+        ]);
+        // 待ちは、ホストとアカウントごとに保存する（デーモンを起動し直しても、読み直せる）
+        expect(new GitHubRateLimitStore(file).get("github.com:me")).toEqual({
+          until: now + 5 * 60_000,
+          streak: 1,
+        });
+        // タスクは止めない。待ちの間は、実行待ちに出さず（実行の枠を取らない）、始めさせても投稿しない
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        expect(service.queuedTaskIds()).toEqual([]);
+        pulls.rateLimited = false;
+        now += 4 * 60_000;
+        expect(service.queuedTaskIds()).toEqual([]);
+        await service.runNext(id);
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        // 期限が明けたら、実行待ちに戻り、残していた返信を、すべて投稿する
+        now += 61_000;
+        expect(service.queuedTaskIds()).toEqual([id]);
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(2);
+        const records = posted(service, id);
+        expect(records).toHaveLength(1);
+        // やり直した結果であることが、記録に残る
+        expect(records[0]?.retried).toBe(true);
+        expect(records[0]?.results.map((r) => [r.remarkId, r.failed])).toEqual([
+          ["implement-1-1", undefined],
+          ["implement-1-2", undefined],
+          ["implement-1-3", undefined],
+        ]);
+        expect(service.get(id)?.task.remarkRepliesDeferred).toBeUndefined();
+        // 投稿できたら、待ちを消す。その後は、重ねて投稿しない
+        expect(new GitHubRateLimitStore(file).get("github.com:me")).toBeUndefined();
+        expect(service.queuedTaskIds()).toEqual([]);
+        activity.close();
+      });
+
+      it("保存してあった待ち（デーモンを起動し直した後）の期限の前には、投稿も一覧の読み取りもしない。期限が明けたら投稿する（PBI-356）", async () => {
+        const pulls = new FakePulls();
+        let now = later();
+        const rateLimits = new GitHubRateLimitStore();
+        rateLimits.set("github.com:me", { until: now + 10 * 60_000, streak: 2 });
+        const { activity, service, id } = await toImplementGate([decided(), three()], {
+          pulls,
+          now: () => now,
+          rateLimits,
+        });
+        pulls.feedbackList = [inline(), comment(401), comment(402)];
+        await service.checkPullRequests();
+        await toSecondGate(service, id);
+        const listed = pulls.reviewListCalls;
+        await drain(service);
+        await service.runNext(id);
+        expect(pulls.replyPostTimes).toHaveLength(0);
+        expect(pulls.reviewListCalls).toBe(listed);
+        expect(posted(service, id)).toHaveLength(0);
+        expect(service.queuedTaskIds()).toEqual([]);
+        now += 10 * 60_000 + 1;
+        expect(service.queuedTaskIds()).toEqual([id]);
+        await drain(service);
+        expect(pulls.replyPostTimes).toHaveLength(3);
+        expect(posted(service, id)[0]?.results.every((r) => r.failed === undefined)).toBe(true);
+        // 自分は制限に当たっていない（待っていただけ）ので、やり直しの印は付かない
+        expect(posted(service, id)[0]?.retried).toBeUndefined();
+        activity.close();
+      });
+
+      it("GitHub が待ちを示さないときは 1 分待ち、制限が続くたびに待ちを倍にする。やり直しの回数の上限を超えたら、あきらめて、残りを失敗として記録する（記録は、件数の上限ごとに分かれる）（PBI-356）", async () => {
+        const pulls = new FakePulls();
+        let now = later();
+        const { activity, service, id } = await toImplementGate([decided(), three()], {
+          pulls,
+          now: () => now,
+          remarkRepliesPerRecord: 2,
+          remarkReplyRateLimit: { maxRetries: 2 },
+        });
+        pulls.feedbackList = [inline(), comment(401), comment(402)];
+        await service.checkPullRequests();
+        await toSecondGate(service, id);
+        pulls.rateLimited = true;
+        const start = now;
+        await drain(service);
+        // 1回目の制限：1分待つ
+        now += 59_000;
+        expect(service.queuedTaskIds()).toEqual([]);
+        now += 2_000;
+        expect(service.queuedTaskIds()).toEqual([id]);
+        // やり直し 1 回目も制限：2分待つ
+        const second = now;
+        await drain(service);
+        now += 119_000;
+        expect(service.queuedTaskIds()).toEqual([]);
+        now += 2_000;
+        expect(service.queuedTaskIds()).toEqual([id]);
+        expect(
+          deferredOf(service, id).map((d) => [d.attempt, d.waiting, Date.parse(d.until)]),
+        ).toEqual([
+          [1, 3, start + 60_000],
+          [2, 3, second + 120_000],
+        ]);
+        expect(posted(service, id)).toHaveLength(0);
+        // やり直し 2 回目も制限：上限（2回）を超えたので、あきらめて、失敗として記録する
+        await drain(service);
+        expect(pulls.replyPostTimes).toHaveLength(3);
+        expect(deferredOf(service, id)).toHaveLength(2);
+        const records = posted(service, id);
+        expect(records.map((p) => p.results.map((r) => r.remarkId))).toEqual([
+          ["implement-1-1", "implement-1-2"],
+          ["implement-1-3"],
+        ]);
+        expect(records.every((p) => p.retried === true)).toBe(true);
+        expect(records.flatMap((p) => p.results).map((r) => r.failed)).toEqual(
+          Array.from({ length: 3 }, () => ({
+            code: "github.replyGaveUpAfterRateLimit",
+            params: { attempts: 3 },
+          })),
+        );
+        // あきらめた後は、時間がたっても、やり直さない。タスクは止まっていない
+        now += 24 * 3_600_000;
+        expect(service.queuedTaskIds()).toEqual([]);
+        await drain(service);
+        expect(pulls.replyPostTimes).toHaveLength(3);
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        activity.close();
+      });
+
+      it("倍にしていく待ちは 1 時間で頭打ちにする。GitHub が示した待ちは、それより長くても守る（1 日まで）（PBI-356）", async () => {
+        const { activity, service } = await toImplementGate([], { now: later });
+        const internals = service as unknown as {
+          noteRemarkReplyLimited(key: string, error: unknown): void;
+          rateLimits: GitHubRateLimitStore;
+        };
+        const key = "github.com:me";
+        internals.rateLimits.set(key, { until: later() - 1, streak: 9 });
+        internals.noteRemarkReplyLimited(key, rateLimitError());
+        expect(internals.rateLimits.get(key)).toEqual({ until: later() + 3_600_000, streak: 10 });
+        // すでに待ちの間に、同じ制限をもう一度見ても（一覧の読み取りなど）、回数は増やさず、期限は遅い方にする
+        internals.noteRemarkReplyLimited(key, rateLimitError(60_000));
+        expect(internals.rateLimits.get(key)).toEqual({ until: later() + 3_600_000, streak: 10 });
+        internals.noteRemarkReplyLimited(key, rateLimitError(2 * 3_600_000));
+        expect(internals.rateLimits.get(key)).toEqual({
+          until: later() + 2 * 3_600_000,
+          streak: 10,
+        });
+        // GitHub が示した待ちは、1 日で頭打ちにする（読み違えた・壊れた値で、返信をいつまでも止めない）
+        internals.noteRemarkReplyLimited(key, rateLimitError(1e30));
+        expect(internals.rateLimits.get(key)).toEqual({
+          until: later() + 24 * 3_600_000,
+          streak: 10,
+        });
+        activity.close();
+      });
+
+      it("途中の指摘で制限に当たったら、投稿できた分だけを記録し、残りを後でやり直す（投稿できた指摘に、重ねて投稿しない）（PBI-356）", async () => {
+        class LimitedAfterOne extends FakePulls {
+          limitFrom = 1;
+          override async commentIssue(input: Parameters<FakePulls["commentIssue"]>[0]) {
+            if (input.body.startsWith("<!-- sacty-reply:")) {
+              this.rateLimited = prComments(this).length >= this.limitFrom;
+            }
+            try {
+              return await super.commentIssue(input);
+            } finally {
+              this.rateLimited = false;
+            }
+          }
+        }
+        const pulls = new LimitedAfterOne();
         let now = later();
         const { activity, service, id } = await toImplementGate(
           [
             decided(),
             redone([
-              { remarkId: "implement-1-1", status: "addressed", text: "直した" },
-              { remarkId: "implement-1-2", status: "addressed", text: "足した" },
-              { remarkId: "implement-1-3", status: "addressed", text: "変えた" },
+              { remarkId: "implement-1-1", text: "直した" },
+              { remarkId: "implement-1-2", text: "足した" },
+              { remarkId: "implement-1-3", text: "変えた" },
             ]),
           ],
           { pulls, now: () => now },
         );
-        pulls.feedbackList = [inline(), comment(401), comment(402)];
+        pulls.feedbackList = [comment(401), comment(402), comment(403)];
         await service.checkPullRequests();
-        // 作り直した実装が承認待ちに戻るところまで進める（返信は、その次の処理）
-        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
-          await service.runNext(id);
-        }
-        pulls.rateLimited = true;
         await drain(service);
-        // 1件目で制限に当たる：PR のコメントに回さず、残りは投稿を試みない
-        expect(pulls.reviewReplies).toHaveLength(0);
-        expect(prComments(pulls)).toHaveLength(0);
-        expect(pulls.replyPostTimes).toHaveLength(1);
-        // どの指摘の返信が、制限のために投稿できなかったかが、作業履歴に残る
-        const results = posted(service, id)[0]?.results ?? [];
-        expect(results.map((r) => [r.remarkId, r.url])).toEqual([
-          ["implement-1-1", undefined],
-          ["implement-1-2", undefined],
-          ["implement-1-3", undefined],
-        ]);
-        expect(results[0]?.failed).toMatchObject({
-          code: "github.failed",
-          params: { status: 403 },
-        });
-        expect(results.slice(1).map((r) => r.failed)).toEqual([
-          { code: "github.replySkippedAfterRateLimit" },
-          { code: "github.replySkippedAfterRateLimit" },
-        ]);
-        // タスクは止めず、やり直さない（制限が解けて、時間がたっても）
-        expect(service.get(id)?.task.status).toBe("awaiting_approval");
-        expect(service.queuedTaskIds()).toEqual([]);
-        pulls.rateLimited = false;
-        now += 2 * 3_600_000;
-        expect(service.queuedTaskIds()).toEqual([]);
+        expect(prComments(pulls)).toHaveLength(1);
+        expect(
+          posted(service, id).map((p) => [p.retried, p.results.map((r) => r.remarkId)]),
+        ).toEqual([[undefined, ["implement-1-1"]]]);
+        expect(deferredOf(service, id).map((d) => [d.waiting, d.attempt])).toEqual([[2, 1]]);
+        pulls.limitFrom = 99;
+        now += 61_000;
         await drain(service);
-        expect(pulls.replyPostTimes).toHaveLength(1);
-        expect(posted(service, id)).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(3);
+        expect(
+          posted(service, id).map((p) => [p.retried, p.results.map((r) => r.remarkId)]),
+        ).toEqual([
+          [undefined, ["implement-1-1"]],
+          [true, ["implement-1-2", "implement-1-3"]],
+        ]);
         activity.close();
       });
 
-      it("本文を読めず、ヘッダーだけが制限を示す答えも、レート制限として扱う。投稿されたかが分からない返信の探し直しが制限に当たったら、その指摘は失敗を残し、残りの投稿を止める", async () => {
+      it("本文を読めず、ヘッダーだけが制限を示す答えも、レート制限として扱う。投稿されたかが分からない返信の探し直しが制限に当たったら、その指摘は失敗を残し（重ねて投稿しない）、残りは後でやり直す", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         // 行への返信が、ヘッダーだけの制限で断られる：宛先の拒否ではないので、PR のコメントに回さない
         const pulls = new FakePulls();
@@ -9317,9 +9516,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         await drain(a.service);
         expect(prComments(pulls)).toHaveLength(0);
         expect(pulls.replyPostTimes).toHaveLength(1);
-        expect(posted(a.service, a.id)[0]?.results.map((r) => r.failed)).toEqual([
-          expect.objectContaining({ code: "github.failed" }),
-          { code: "github.replySkippedAfterRateLimit" },
+        expect(posted(a.service, a.id)).toHaveLength(0);
+        expect(deferredOf(a.service, a.id).map((d) => [d.waiting, d.until])).toEqual([
+          [2, new Date(later() + 5 * 60_000).toISOString()],
         ]);
         a.activity.close();
         rmSync(dbPath, { force: true });
@@ -9341,83 +9540,96 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         lost.feedbackList = [inline(), comment()];
         await b.service.checkPullRequests();
         await drain(b.service);
-        // PR のコメントを重ねず、残りの指摘にも投稿しない
+        // PR のコメントを重ねず、残りの指摘にも投稿しない。投稿されたかが分からない指摘は、やり直さずに失敗を残す
         expect(lost.reviewReplies).toHaveLength(1);
         expect(prComments(lost)).toHaveLength(0);
-        expect(posted(b.service, b.id)[0]?.results).toEqual([
-          { remarkId: "implement-1-1", key: "review_comment:501", failed: "socket hang up" },
-          {
-            remarkId: "implement-1-2",
-            key: "comment:401",
-            failed: { code: "github.replySkippedAfterRateLimit" },
-          },
+        expect(posted(b.service, b.id).map((p) => p.results)).toEqual([
+          [{ remarkId: "implement-1-1", key: "review_comment:501", failed: "socket hang up" }],
         ]);
+        expect(deferredOf(b.service, b.id).map((d) => [d.waiting, d.attempt])).toEqual([[1, 1]]);
         expect(b.service.queuedTaskIds()).toEqual([]);
         warn.mockRestore();
         b.activity.close();
       });
 
-      it("レート制限での投稿の停止は、記録の区切りを越えて、提出の残りのすべてに及ぶ（結果が多くて記録が分かれても、残りを投稿し直さない）", async () => {
-        const pulls = new FakePulls();
+      it("初めの一覧の読み取りがレート制限に当たったら、どの指摘も投稿せず、記録もせずに残して、後でやり直す（PBI-356）", async () => {
+        const listing = new FakePulls();
+        listing.reviewListRateLimitedAfter = 0;
+        let now = later();
         const { activity, service, id } = await toImplementGate(
-          [
-            decided(),
-            redone([
-              { remarkId: "implement-1-1", text: "直した" },
-              { remarkId: "implement-1-2", text: "足した" },
-              { remarkId: "implement-1-3", text: "変えた" },
-              { remarkId: "implement-1-4", text: "消した" },
-              { remarkId: "implement-1-5", text: "移した" },
-            ]),
-          ],
-          { pulls, now: later, remarkRepliesPerRecord: 2 },
+          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
+          { pulls: listing, now: () => now },
         );
-        pulls.feedbackList = [inline(), comment(401), comment(402), comment(403), comment(404)];
+        listing.feedbackList = [inline()];
         await service.checkPullRequests();
-        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
-          await service.runNext(id);
-        }
-        pulls.rateLimited = true;
         await drain(service);
-        pulls.rateLimited = false;
-        await drain(service);
-        // 投稿を試みたのは、制限に当たった1件だけ。残りは、3つの記録に分かれて、すべて失敗として残る
-        expect(pulls.replyPostTimes).toHaveLength(1);
-        expect(prComments(pulls)).toHaveLength(0);
-        expect(posted(service, id).map((p) => p.results.map((r) => r.remarkId))).toEqual([
-          ["implement-1-1", "implement-1-2"],
-          ["implement-1-3", "implement-1-4"],
-          ["implement-1-5"],
-        ]);
-        expect(
-          posted(service, id)
-            .flatMap((p) => p.results)
-            .slice(1)
-            .map((r) => r.failed),
-        ).toEqual(Array.from({ length: 4 }, () => ({ code: "github.replySkippedAfterRateLimit" })));
+        expect(listing.replyPostTimes).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(0);
+        expect(deferredOf(service, id).map((d) => [d.waiting, d.attempt])).toEqual([[1, 1]]);
         expect(service.queuedTaskIds()).toEqual([]);
+        delete listing.reviewListRateLimitedAfter;
+        now += 61_000;
+        await drain(service);
+        expect(listing.reviewReplies).toHaveLength(1);
+        expect(posted(service, id).map((p) => [p.retried, p.results[0]?.failed])).toEqual([
+          [true, undefined],
+        ]);
         activity.close();
       });
 
-      it("投稿を止めた後に、結果を記録できなくても、やり直しで残りを投稿しない（分けた記録は、まとめて書く。止めたことを覚えておく）", async () => {
+      it("行への返信が時間切れになり、その探し直しがレート制限に当たったら、時間切れの扱いを優先する：残りは、やり直さずに、失敗として記録する（PBI-356）", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const pulls = new FakePulls();
+        pulls.replyGate = new Promise<void>(() => {});
+        pulls.reviewListRateLimitedAfter = 1;
         let now = later();
-        const { activity, service, id } = await toImplementGate(
-          [
-            decided(),
-            redone([
-              { remarkId: "implement-1-1", text: "直した" },
-              { remarkId: "implement-1-2", text: "足した" },
-              { remarkId: "implement-1-3", text: "変えた" },
-            ]),
-          ],
-          { pulls, now: () => now, remarkRepliesPerRecord: 2 },
-        );
+        const { activity, service, id } = await toImplementGate([decided(), three()], {
+          pulls,
+          now: () => now,
+          stopNoticeTimeoutMs: 30,
+        });
         pulls.feedbackList = [inline(), comment(401), comment(402)];
         await service.checkPullRequests();
-        for (let i = 0; i < 10 && service.get(id)?.task.gate?.submission !== 2; i++) {
-          await service.runNext(id);
-        }
+        await drain(service);
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        expect(deferredOf(service, id)).toHaveLength(0);
+        const results = posted(service, id).flatMap((p) => p.results);
+        expect(results.map((r) => r.remarkId)).toEqual([
+          "implement-1-1",
+          "implement-1-2",
+          "implement-1-3",
+        ]);
+        expect(results.slice(1).map((r) => r.failed)).toEqual([
+          { code: "github.replySkippedAfterTimeout" },
+          { code: "github.replySkippedAfterTimeout" },
+        ]);
+        expect(results[0]?.failed).toBeDefined();
+        // 制限の期限が明けても、やり直さない
+        pulls.replyGate = undefined;
+        delete pulls.reviewListRateLimitedAfter;
+        now += 2 * 3_600_000;
+        expect(service.queuedTaskIds()).toEqual([]);
+        await drain(service);
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(0);
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("時間切れで投稿を止めた後に、結果を記録できなくても、やり直しで残りを投稿しない（分けた記録は、まとめて書く。止めたことを覚えておく）", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const pulls = new FakePulls();
+        pulls.replyGate = new Promise<void>(() => {});
+        let now = later();
+        const { activity, service, id } = await toImplementGate([decided(), three()], {
+          pulls,
+          now: () => now,
+          remarkRepliesPerRecord: 2,
+          stopNoticeTimeoutMs: 30,
+        });
+        pulls.feedbackList = [inline(), comment(401), comment(402)];
+        await service.checkPullRequests();
+        await toSecondGate(service, id);
         // 結果の記録を、一度だけ失敗させる
         const append = activity.append.bind(activity);
         let failOnce = true;
@@ -9428,14 +9640,19 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           }
           return append(entry);
         };
-        pulls.rateLimited = true;
         await expect(drain(service)).rejects.toThrow("disk full");
         // 分けた記録の、どれも書かれていない（途中まで書けて、残りを失うことが無い）
         expect(posted(service, id)).toHaveLength(0);
         expect(pulls.replyPostTimes).toHaveLength(1);
-        // 制限が解けた後にやり直しても、残りを投稿せずに、失敗として記録する
-        pulls.rateLimited = false;
+        // GitHub が答えるようになった後にやり直しても、残りを投稿せずに、失敗として記録する。
+        // やり直しの一覧の読み取りが、レート制限に当たっても同じ（止めたことを失って、後で投稿し直さない。PBI-356）
+        pulls.replyGate = undefined;
+        pulls.reviewListRateLimitedAfter = pulls.reviewListCalls;
         now += 61_000;
+        await drain(service);
+        delete pulls.reviewListRateLimitedAfter;
+        expect(deferredOf(service, id)).toHaveLength(0);
+        now += 2 * 3_600_000;
         await drain(service);
         expect(pulls.replyPostTimes).toHaveLength(1);
         expect(prComments(pulls)).toHaveLength(0);
@@ -9449,74 +9666,61 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
             .every((r) => r.failed !== undefined),
         ).toBe(true);
         expect(service.queuedTaskIds()).toEqual([]);
+        warn.mockRestore();
         activity.close();
       });
 
-      it("レート制限・時間切れで投稿を止めた直後に一時停止されて、結果を記録せずに抜けても、再開した後に、残りを投稿せずに失敗として記録する", async () => {
+      it("時間切れで投稿を止めた直後に一時停止されて、結果を記録せずに抜けても、再開した後に、残りを投稿せずに失敗として記録する", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-        for (const reason of ["rate_limit", "timeout"] as const) {
-          const gate = Promise.withResolvers<void>();
-          class StoppingPulls extends FakePulls {
-            override async replyToReviewComment(
-              input: Parameters<FakePulls["replyToReviewComment"]>[0],
-            ) {
-              // 1件目の返信の通信の間に、一時停止を求められる。その後、制限に当たる（か、答えが返らない）
-              this.replyPostTimes.push(Date.now());
-              this.replyStarted.resolve();
-              await gate.promise;
-              if (reason === "rate_limit") throw rateLimitError();
-              await new Promise<void>(() => {});
-              return super.replyToReviewComment(input);
-            }
+        const gate = Promise.withResolvers<void>();
+        class StoppingPulls extends FakePulls {
+          override async replyToReviewComment(
+            input: Parameters<FakePulls["replyToReviewComment"]>[0],
+          ) {
+            // 1件目の返信の通信の間に、一時停止を求められる。その後、答えが返らない
+            this.replyPostTimes.push(Date.now());
+            this.replyStarted.resolve();
+            await gate.promise;
+            await new Promise<void>(() => {});
+            return super.replyToReviewComment(input);
           }
-          const pulls = new StoppingPulls();
-          const { activity, service, id } = await toImplementGate(
-            [
-              decided(),
-              redone([
-                { remarkId: "implement-1-1", text: "直した" },
-                { remarkId: "implement-1-2", text: "足した" },
-              ]),
-            ],
-            { pulls, now: later, stopNoticeTimeoutMs: 40 },
-          );
-          pulls.feedbackList = [inline(), comment()];
-          await service.checkPullRequests();
-          const running = drain(service);
-          await pulls.replyStarted.promise;
-          const pausing = service.pause(id);
-          gate.resolve();
-          await pausing;
-          await running;
-          // 止めたことを見つけたが、一時停止されたので、結果は記録していない
-          expect(service.get(id)?.task.status).toBe("paused");
-          expect(posted(service, id)).toHaveLength(0);
-          // 再開した後も、残りを投稿せずに、失敗として記録する
-          service.resume(id, {});
-          await drain(service);
-          expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
-          expect(pulls.replyPostTimes).toHaveLength(1);
-          expect(prComments(pulls)).toHaveLength(0);
-          expect(posted(service, id)).toHaveLength(1);
-          expect(posted(service, id)[0]?.results.map((r) => [r.remarkId, r.failed])).toEqual([
-            [
-              "implement-1-1",
-              {
-                code: `github.replySkippedAfter${reason === "rate_limit" ? "RateLimit" : "Timeout"}`,
-              },
-            ],
-            [
-              "implement-1-2",
-              {
-                code: `github.replySkippedAfter${reason === "rate_limit" ? "RateLimit" : "Timeout"}`,
-              },
-            ],
-          ]);
-          expect(service.queuedTaskIds()).toEqual([]);
-          activity.close();
-          rmSync(dbPath, { force: true });
         }
+        const pulls = new StoppingPulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", text: "直した" },
+              { remarkId: "implement-1-2", text: "足した" },
+            ]),
+          ],
+          { pulls, now: later, stopNoticeTimeoutMs: 40 },
+        );
+        pulls.feedbackList = [inline(), comment()];
+        await service.checkPullRequests();
+        const running = drain(service);
+        await pulls.replyStarted.promise;
+        const pausing = service.pause(id);
+        gate.resolve();
+        await pausing;
+        await running;
+        // 止めたことを見つけたが、一時停止されたので、結果は記録していない
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(posted(service, id)).toHaveLength(0);
+        // 再開した後も、残りを投稿せずに、失敗として記録する
+        service.resume(id, {});
+        await drain(service);
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(0);
+        expect(posted(service, id)).toHaveLength(1);
+        expect(posted(service, id)[0]?.results.map((r) => [r.remarkId, r.failed])).toEqual([
+          ["implement-1-1", { code: "github.replySkippedAfterTimeout" }],
+          ["implement-1-2", { code: "github.replySkippedAfterTimeout" }],
+        ]);
+        expect(service.queuedTaskIds()).toEqual([]);
         warn.mockRestore();
+        activity.close();
       });
 
       it("投稿を止めたことは、その工程・その PR・その提出だけのもの：工程だけ・PR だけ・提出回だけが違う記憶は、持ち越さない", async () => {
@@ -9532,7 +9736,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           const stopped = (
             service as unknown as { remarkReplyStopped: Map<string, Record<string, unknown>> }
           ).remarkReplyStopped;
-          const same = { step: "implement", number: 7, submission: 2, reason: "rate_limit" };
+          const same = { step: "implement", number: 7, submission: 2 };
           stopped.set(id, { ...same, ...other });
           await drain(service);
           // 実装の PR #7 の提出 2 の返信は、止めずに投稿する。合わない記憶は消す
@@ -9544,59 +9748,21 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         }
       });
 
-      it("一覧の読み取り・投稿されたかの探し直しがレート制限に当たったことも、同じアカウントで順番を待っている投稿に伝える", async () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-        const limitedUpTo = (service: TaskService) =>
-          (
-            service as unknown as { remarkReplyLimitedUpTo: Map<string, number> }
-          ).remarkReplyLimitedUpTo.has("github.com:me");
-        // 初めの一覧の読み取りが、制限に当たる
-        const listing = new FakePulls();
-        listing.reviewListRateLimitedAfter = 0;
-        const a = await toImplementGate(
-          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
-          { pulls: listing, now: later },
-        );
-        listing.feedbackList = [inline()];
-        await a.service.checkPullRequests();
-        expect(limitedUpTo(a.service)).toBe(false);
-        await drain(a.service);
-        expect(limitedUpTo(a.service)).toBe(true);
-        expect(listing.replyPostTimes).toHaveLength(0);
-        expect(posted(a.service, a.id)[0]?.results[0]?.failed).toMatchObject({
-          code: "github.failed",
-        });
-        a.activity.close();
-        rmSync(dbPath, { force: true });
-        // 投稿されたかの探し直しが、制限に当たる
-        const lost = new FakePulls();
-        lost.replyAnswerLost = "socket hang up";
-        lost.reviewListRateLimitedAfter = 1;
-        const b = await toImplementGate(
-          [decided(), redone([{ remarkId: "implement-1-1", text: "直した" }])],
-          { pulls: lost, now: later },
-        );
-        lost.feedbackList = [inline()];
-        await b.service.checkPullRequests();
-        await drain(b.service);
-        expect(limitedUpTo(b.service)).toBe(true);
-        warn.mockRestore();
-        b.activity.close();
-      });
-
-      it("同じアカウントの先の投稿がレート制限に当たったら、順番を待っていた投稿（ほかのタスクのものも）は、投稿せずに止める。制限の後に頼まれた投稿は、止めない", async () => {
-        const { activity, service } = await toImplementGate([], { now: later });
+      it("同じアカウントの先の投稿がレート制限に当たったら、順番を待っていた投稿も、その後に頼まれた投稿も（ほかのタスクのものも）、期限が明けるまで投稿しない（PBI-356）", async () => {
+        let now = later();
+        const { activity, service } = await toImplementGate([], { now: () => now });
         type Sent<T> = { value: T } | "limited" | "skipped";
-        const post = <T>(work: () => Promise<T>) =>
-          (
-            service as unknown as {
-              remarkReplyPost(
-                key: string,
-                still: () => boolean,
-                work: () => Promise<T>,
-              ): Promise<Sent<T>>;
-            }
-          ).remarkReplyPost("github.com:me", () => true, work);
+        const internals = service as unknown as {
+          remarkReplyPost<T>(
+            key: string,
+            still: () => boolean,
+            work: () => Promise<T>,
+          ): Promise<Sent<T>>;
+          noteRemarkReplyLimited(key: string, error: unknown): void;
+          rateLimits: GitHubRateLimitStore;
+        };
+        const post = <T>(work: () => Promise<T>, key = "github.com:me") =>
+          internals.remarkReplyPost(key, () => true, work);
         const gate = Promise.withResolvers<void>();
         const ran: string[] = [];
         // 先の投稿が通信している間に、同じアカウントの投稿が2件、順番を待つ
@@ -9616,30 +9782,44 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         await expect(first).rejects.toThrow();
         expect(await second).toBe("limited");
         expect(await third).toBe("limited");
+        // 制限の後に頼まれた投稿も、期限までは投稿しない
+        expect(await post(async () => ran.push("fourth"))).toBe("limited");
         expect(ran).toEqual([]);
-        // 制限の後に頼まれた投稿は、止めない（待ちの期限は持たない）
+        // ほかのアカウントの投稿は、止めない
+        expect(await post(async () => 9, "github.com:other")).toEqual({ value: 9 });
+        // 期限が明けたら、投稿する。投稿できたら、待ちを消す
+        now += 60_001;
         expect(await post(async () => 4)).toEqual({ value: 4 });
+        expect(internals.rateLimits.get("github.com:me")).toBeUndefined();
+        // 投稿の通信の間に、同じアカウントのほかの問い合わせ（ほかのタスクの一覧の読み取りなど）が制限に当たったら、
+        // 投稿ができても、その新しい待ちは消さない
+        const sending = Promise.withResolvers<void>();
+        const racing = post(async () => {
+          await sending.promise;
+          return 6;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        internals.noteRemarkReplyLimited("github.com:me", rateLimitError(5 * 60_000));
+        sending.resolve();
+        expect(await racing).toEqual({ value: 6 });
+        expect(internals.rateLimits.get("github.com:me")).toEqual({
+          until: now + 5 * 60_000,
+          streak: 1,
+        });
+        expect(await post(async () => 7)).toBe("limited");
+        now += 5 * 60_000 + 1;
         // 投稿の間隔を待っている間に、ほかの問い合わせ（一覧の読み取りなど）が制限に当たったら、待った後にも投稿しない
         const spaced = await toImplementGate([], { now: later, remarkReplyIntervalMs: 60 });
+        const spacedInternals = spaced.service as unknown as typeof internals;
         const postSpaced = <T>(work: () => Promise<T>) =>
-          (
-            spaced.service as unknown as {
-              remarkReplyPost(
-                key: string,
-                still: () => boolean,
-                work: () => Promise<T>,
-              ): Promise<Sent<T>>;
-            }
-          ).remarkReplyPost("github.com:me", () => true, work);
+          spacedInternals.remarkReplyPost("github.com:me", () => true, work);
         expect(await postSpaced(async () => 1)).toEqual({ value: 1 });
         const waiting = postSpaced(async () => {
           ran.push("waiting");
           return 2;
         });
         await new Promise((resolve) => setTimeout(resolve, 10));
-        (
-          spaced.service as unknown as { markRemarkReplyLimited(key: string): void }
-        ).markRemarkReplyLimited("github.com:me");
+        spacedInternals.noteRemarkReplyLimited("github.com:me", rateLimitError());
         expect(await waiting).toBe("limited");
         expect(ran).toEqual([]);
         spaced.activity.close();

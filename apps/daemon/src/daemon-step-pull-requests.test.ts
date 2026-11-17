@@ -4614,6 +4614,66 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it("親の指摘への返信が GitHub のレート制限に当たって待ちに入ったら、再レビューは返信を待たずに始める。期限が明けたら、親が返信をやり直す（PBI-356）", async () => {
+      const pulls = new FakePulls();
+      let clock = later();
+      const redone = [
+        "# 要求要件 v2",
+        `\`\`\`json\n${JSON.stringify({
+          "sacty-responses": [
+            { remarkId: "requirements-1-1", status: "addressed", text: "条件を足しました" },
+          ],
+        })}\n\`\`\``,
+      ].join("\n\n");
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          verdictOut("changes_required"),
+          out(redone),
+          verdictOut("no_findings"),
+          verdictOut("no_findings"),
+        ],
+        { pulls, reviewTasks: true, projects: projectsWithAccount(), now: () => clock },
+      );
+      const { activity, service, id } = made;
+      const childId = childOf(service, id);
+      const first = commitOf(service, id);
+      pulls.prInfo = {
+        ...pulls.prInfo,
+        number: 7,
+        url: "https://github.com/acme/app/pull/7",
+        headSha: first,
+      };
+      await runReview(service, childId);
+      pulls.feedbackBy[7] = [posted(pulls, 0)];
+      await service.checkPullRequests();
+      // 親が直して、PR を更新し、承認待ちに戻る（返信は、親の次の実行でする処理）
+      await service.runNext(id);
+      const second = commitOf(service, id);
+      expect(taskOf(service, id).status).toBe("awaiting_approval");
+      const replies = () =>
+        pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-reply:"));
+      await service.checkPullRequests();
+      pulls.prInfo = { ...pulls.prInfo, headSha: second };
+      // 返信が、制限に当たる：失敗として記録せずに、待ちに入る
+      pulls.rateLimited = true;
+      await runReview(service, childId);
+      pulls.rateLimited = false;
+      expect(replies()).toHaveLength(0);
+      expect(types(service, id).filter((t) => t === "RemarkRepliesPosted")).toHaveLength(0);
+      expect(types(service, id).filter((t) => t === "RemarkRepliesDeferred")).toHaveLength(1);
+      // 再レビューは、返信を待たずに済んでいる（待ちの間、レビューの子タスクを止めない）
+      expect(pulls.reviews).toHaveLength(2);
+      // 待ちの間は、親は実行待ちに出ない。期限が明けたら、親が返信をやり直す
+      expect(service.queuedTaskIds()).not.toContain(id);
+      clock += 61_000;
+      expect(service.queuedTaskIds()).toContain(id);
+      await service.runNext(id);
+      expect(replies()).toHaveLength(1);
+      expect(types(service, id).filter((t) => t === "RemarkRepliesPosted")).toHaveLength(1);
+      activity.close();
+    });
+
     it("子タスクの指摘を親が直して PR を更新したら、子タスクが最新のコミットを再レビューし、指摘なしになったら繰り返さずに人の承認を待つ（受け入れ条件 2・3）", async () => {
       const pulls = new FakePulls();
       const made = await start(

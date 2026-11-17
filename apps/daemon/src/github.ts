@@ -1224,19 +1224,20 @@ export function apiError(
 type RetryAfter = { retryAfterMs?: number };
 
 /**
- * GitHub が答えのヘッダーで示した、次に試せるまでの時間（ミリ秒）。`retry-after`（秒）か、残りが 0 のときの
- * `x-ratelimit-reset`（解ける時刻）。示されていなければ undefined。
+ * GitHub が答えのヘッダーで示した、次に試せるまでの時間（ミリ秒）。`retry-after`（秒）と、残りが 0 のときの
+ * `x-ratelimit-reset`（解ける時刻）。両方あれば、遅い方（PBI-356）。示されていなければ undefined。
  */
-function retryAfterOf(headers: Headers): number | undefined {
+export function retryAfterOf(headers: Headers, now = Date.now()): number | undefined {
+  const waits: number[] = [];
   const after = Number(headers.get("retry-after"));
   if (headers.get("retry-after") !== null && Number.isFinite(after) && after >= 0) {
-    return Math.round(after * 1000);
+    waits.push(Math.round(after * 1000));
   }
   const reset = Number(headers.get("x-ratelimit-reset"));
   if (headers.get("x-ratelimit-remaining") === "0" && Number.isFinite(reset) && reset > 0) {
-    return Math.max(0, Math.round(reset * 1000 - Date.now()));
+    waits.push(Math.max(0, Math.round(reset * 1000 - now)));
   }
-  return undefined;
+  return waits.length > 0 ? Math.max(...waits) : undefined;
 }
 
 /** GitHub への問い合わせの失敗に、GitHub が示した、次に試せるまでの時間（ミリ秒）があれば、それ。 */

@@ -1400,6 +1400,10 @@ export function makeService(
     remarkReplyIntervalMs?: number;
     /** 1件の記録に入れる、返信の結果の件数の上限（PBI-352）。 */
     remarkRepliesPerRecord?: number;
+    /** GitHub のレート制限の待ちの保存（PBI-356）。 */
+    rateLimits?: ServiceDeps["rateLimits"];
+    /** 指摘への返信が制限に当たったときの、やり直しの決まり（PBI-356）。 */
+    remarkReplyRateLimit?: ServiceDeps["remarkReplyRateLimit"];
     /** レビューのタスクが GitHub の一時的な失敗を自動でやり直すまでの待ち（ミリ秒。PBI-301）。 */
     reviewRetryDelaysMs?: readonly number[];
     projects?: MemoryProjectStore;
@@ -1490,6 +1494,8 @@ export function makeService(
     ...(options.remarkRepliesPerRecord
       ? { remarkRepliesPerRecord: options.remarkRepliesPerRecord }
       : {}),
+    ...(options.rateLimits ? { rateLimits: options.rateLimits } : {}),
+    ...(options.remarkReplyRateLimit ? { remarkReplyRateLimit: options.remarkReplyRateLimit } : {}),
     ...(options.reviewRetryDelaysMs ? { reviewRetryDelaysMs: options.reviewRetryDelaysMs } : {}),
     // 情報収集は、既定では集めずに進める（情報収集のテストでは差し替える）
     ...(options.realGatherer ? {} : { gatherer: options.gatherer ?? (async () => undefined) }),

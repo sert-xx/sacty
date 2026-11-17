@@ -3084,6 +3084,8 @@ const GitHubCommentsPosted = z.object({
  * PR のレビュー・コメントから取り込んだ指摘への対応を、PR に返信した（PBI-352）。行へのコメントから取り込んだ指摘には、
  * そのコメントへの返信として、レビューの本文・通常のコメントから取り込んだ指摘には、PR のコメントとして投稿する。
  * 提出した成果が承認待ちになったときに投稿する。投稿できなかった指摘は failed に理由を残し、やり直さない（タスクは進める）。
+ * GitHub のレート制限に当たった指摘は、ここに記録せずに、待ってからやり直す（RemarkRepliesDeferred。PBI-356）。やり直しの
+ * 回数の上限を超えたら、failed に理由を残す。
  */
 const RemarkRepliesPosted = z.object({
   type: z.literal("RemarkRepliesPosted"),
@@ -3093,6 +3095,8 @@ const RemarkRepliesPosted = z.object({
     submission: z.number().int().positive(),
     /** 返信した PR の番号。 */
     number: z.number().int().positive(),
+    /** GitHub のレート制限の待ちの後に、やり直した結果（PBI-356）。無ければ、待ちをはさんでいない。 */
+    retried: z.literal(true).optional(),
     results: z
       .array(
         z.object({
@@ -3109,6 +3113,28 @@ const RemarkRepliesPosted = z.object({
       )
       .min(1)
       .max(200),
+  }),
+});
+
+/**
+ * 指摘への対応の返信が、GitHub のレート制限に当たったので、待ってからやり直す（PBI-356）。タスクの状態・工程は変えない
+ * （待ちの間も、タスクは進む）。待ちの期限と、連続して制限に当たった回数は、ホストとアカウントごとに sacty が保存している。
+ * ここには、作業履歴で読めるように、その時点の値を残す。
+ */
+const RemarkRepliesDeferred = z.object({
+  type: z.literal("RemarkRepliesDeferred"),
+  payload: z.object({
+    step: StepKey,
+    /** 対応を書いた提出の回。 */
+    submission: z.number().int().positive(),
+    /** 返信する PR の番号。 */
+    number: z.number().int().positive(),
+    /** まだ返信していない指摘の件数。 */
+    waiting: z.number().int().positive(),
+    /** 次に試せる時刻（ISO 8601）。 */
+    until: z.string().max(40),
+    /** そのアカウントが、連続して制限に当たった回数（この回を含む）。 */
+    attempt: z.number().int().positive(),
   }),
 });
 
@@ -3843,6 +3869,7 @@ export const EventInput = z.discriminatedUnion("type", [
   IssueCommentFailed,
   GitHubCommentsPosted,
   RemarkRepliesStarted,
+  RemarkRepliesDeferred,
   RemarkRepliesPosted,
   ReviewTargetResolved,
   ReviewGitHubRetried,

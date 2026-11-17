@@ -927,6 +927,11 @@ export type Task = {
    * 指摘の取り込みから sacty の返信を除くときに、今のアカウントに加えて使う（投稿の後に、アカウントが変わっていても）。
    */
   remarkReplyAccounts?: string[];
+  /**
+   * 指摘への返信が、GitHub のレート制限に当たって、待ってからやり直す提出（RemarkRepliesDeferred。PBI-356）。その PR への
+   * 返信の結果を記録したら消す（やり直した結果であることを、記録に残すために持つ）。
+   */
+  remarkRepliesDeferred?: { step: StepKey; submission: number; number: number };
   continuedResponses?: Record<
     string,
     { text: string; status?: RemarkResponseStatus; respondedIn: number; repliedIn?: number }
@@ -2628,6 +2633,12 @@ export function applyEvent(
       break;
     }
 
+    case "RemarkRepliesDeferred": {
+      const { step, submission, number } = event.payload;
+      task.remarkRepliesDeferred = { step, submission, number };
+      break;
+    }
+
     case "RemarkRepliesPosted": {
       // 指摘への対応を、PR に返信した（PBI-352）。投稿できなかった指摘も、返信済みとして扱う（やり直さない）
       const p = event.payload;
@@ -2647,6 +2658,7 @@ export function applyEvent(
         replied.has(r.id) ? { ...r, repliedIn: r.respondedIn ?? p.submission } : r,
       );
       if (Object.keys(continued).length > 0) task.continuedResponses = continued;
+      if (task.remarkRepliesDeferred?.number === p.number) task.remarkRepliesDeferred = undefined;
       break;
     }
 
