@@ -145,7 +145,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   - 親が、指摘のすべてを断って、同じ先頭のまま提出していたら（`ReviewRejudgeRequested`）、子タスクがレビューした先頭が今の先頭と同じでも、再レビューを始める（`ReviewRestarted`、`reason: declined`、`commit` にその先頭。actor `sacty`。`rejudgeDue`）。
     - 始めるのは、断った理由の返信が済んでから（返信するものが残っていない。[指摘への対応の返信](#指摘への対応の返信)）。返信が GitHub のレート制限の待ちに入っている間は、始めずに待つ。返信を投稿できずに失敗を記録した後は、返信の無いまま始める。
     - 同じ先頭では 1 回だけ始める（`Task.reviewRejudgeCommit`）。デーモンを起動し直しても、繰り返さない。
-    - 親の提出に、後続に回したい案があるとき（`ReviewRejudgeRequested` の `awaitsDecision`）は、その案のすべてを人が決めるまで始めない（[後続に回したい案と、人の決定](#後続に回したい案と人の決定)）。
+    - 親の提出のときに、人がまだ決めていない後続に回したい案があったとき（`ReviewRejudgeRequested` の `awaitsDecision`。前の提出の案を含む）は、その案のすべてを人が決めるまで始めない（[後続に回したい案と、人の決定](#後続に回したい案と人の決定)）。
     - レビューの指示には、同じ先頭を判定し直す回であることを足す（`rejudgeLines`）。作者が断った理由が成り立つかを、先頭のコミットのコードで確かめさせ、成り立つなら指摘を取り下げさせ、成り立たないなら未対応として残させる。
       ふつうの再レビューの「作者が『対象外』『後続で対応』と返した論点は、もう一度指摘しない」という行は、この回には出さず、そう返した論点も、範囲を確かめた結果で決めさせる。残した指摘は、本文の「前回の指摘」の節に書かせる（親に届くのは、レビューの本文）。
     - 指摘なしなら、下のとおりドラフトを外して、人の承認を待つ。指摘が残れば、親を一時停止する（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
@@ -763,7 +763,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
 
 ### 後続に回したい案と、人の決定
 
-関係する ADR: [後続に回すかどうかは人が決め、実装は案と理由までを出す](../adr/20261117-0415-defer-proposals-decided-by-person.md)、[後続に回すと決めた指摘の扱いを、人が指摘ごとに選ぶ](../adr/20261117-0504-choose-handling-of-deferred-findings.md)
+関係する ADR: [後続に回すかどうかは人が決め、実装は案と理由までを出す](../adr/20261117-0415-defer-proposals-decided-by-person.md)、[後続に回すと決めた指摘の扱いを、人が指摘ごとに選ぶ](../adr/20261117-0504-choose-handling-of-deferred-findings.md)、[返信していない後続に回したい案は、理由を次の提出に持ち越して返信する](../adr/20261117-0822-carry-unreplied-defer-proposals.md)
 
 実装は、指摘を、この PR では直さず後続に回したいと申告できる。これは案で、後続に回すかどうかは、人が承認の画面で 1 件ずつ決める。
 
@@ -772,7 +772,9 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - 1 つの指摘に、直すものと、後続に回したいものが混ざるときは、`deferred` にして、対応の文に分けて書かせる。
   - 実装のほかの工程の対応と、引き継いだ PR の指摘への対応（`continuedResponses`）では、`deferred` を読まない（申告が無いものとして扱う）。人が「この PR で直す」と決めて差し戻した指摘（`fixOf`）と、決定済みの指摘への `deferred` も、申告が無いものとして扱う（もう一度、案にしない）。
 - 案の記録：`Task.remarks[].deferral`（申告した提出回 `proposedIn`・理由 `reason`・人の決定 `decision`）に持つ。対応の文と違い、後の提出で対応が無くても残る。人が決める前に、後の提出で `addressed` と申告されたら、案を取り下げる。無効にした指摘の案は、一覧に出さない。
-- 返信：PR のコメントから取り込んだ指摘への案は、[指摘への対応の返信](#指摘への対応の返信)で、案であり、人に確認中で、まだ決まっていないことを明記して返信する。
+  - 持ち越し：人がまだ決めておらず、PR にまだ返信していない案は、後の実行に対応が無ければ、案の理由を、その提出の対応として持ち越す（`response` が理由、`status` が `deferred`、`respondedIn` がその提出回）。案を申告した実行が提出に至らなかったとき（未完了・ベースとの競合の残り・変更なしの一時停止で、実装をやり直した）と、提出したが返信できないまま作り直したときに当たる。人に確かめたいこと（`confirm`）は、申告した実行がまだ提出されていないときだけ残す。
+  - 返信した案（`repliedIn` がある）と、人が決めた案は、持ち越さない（対応は、未回答に戻る。案は残る）。
+- 返信：PR のコメントから取り込んだ指摘への案は、[指摘への対応の返信](#指摘への対応の返信)で、案であり、人に確認中で、まだ決まっていないことを明記して返信する。案を申告した実行が提出に至らなくても、持ち越した理由で、次の提出のときに返信する。
 - 一覧（`deferProposals`）：実装の承認待ちのとき、まだ決めていない案を、承認の画面に出す（`DeferralNotice`）。案ごとに、指摘の文・理由・AI のレビューの指摘か・元のコメントへのリンクと、決定の選択肢（まだ決めない・後続に回す・この PR で直す）を出す。決定済みの案は、その下に記録として出す。タスクの詳細には、件数と、承認の画面へのリンクを出す（`DeferralPendingNotice`）。作り直している間・一時停止中・エスカレーションの間は、出さない。
 - 決定（`decideDeferrals`。API は `POST /api/tasks/:id/deferrals/decide`）：選んだ指摘だけを決め、`DeferralsDecided`（actor `person`。工程・提出回・指摘ごとの `defer` か `fix`）を記録する。選んでいない案は、決めないまま残る。
   - 決められるのは、実装の承認待ちの今の提出の、まだ決めていない案だけ。決定が 0 件（`deferral.none`）・案でない指摘や決定済みの指摘（`deferral.notOpen`）・古い提出（`gate.staleSubmission`）は断り、何も記録しない。
@@ -792,14 +794,14 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - 先頭に目印（`<!-- sacty-deferral:<タスク ID>:<何回目の決定か> -->`）を置く。指摘の文と理由は外から来た文なので、秘密情報を伏せてから 600 文字で切り、`@` の後ろに幅の無い空白を挟み、引用にして載せる（`askQuote`）。
   - 結果は `DeferralDecisionsPosted`（PR の番号・何回目の決定か・コメントの URL か、残せなかった理由）に記録する。残せなくても、決定とタスクの状態は変えず、やり直さない。セキュリティの組み合わせのタスク・PR が開いていない・GitHub のアカウントを選んでいないプロジェクトでは、コメントせず、その理由を記録する。PR を作っていない実装（変更なし）では、何も記録しない。
   - このコメントは、PR の指摘に取り込まない（タスクのアカウントが投稿した、目印で始まるものだけ。`isDeferralNotice`）。
-- 実装への渡し方（`remarkLines`・`ownerDeferralLines`）：前の提出で案にした指摘は、対応させる指摘から外し、指示とは分けたデータで渡す（人が後続に回すと決めた指摘 `deferredByPerson` と、人に確認中の案 `awaitingDecision`）。どちらも、この PR では直させず、対応も書かせない。この PR で直すと決めた指摘は、差し戻しの指摘に、人が決めたことの印を付けて渡し、もう一度案にさせない。
+- 実装への渡し方（`remarkLines`・`ownerDeferralLines`）：前の提出・前の実行で案にした指摘は、対応させる指摘から外し、指示とは分けたデータで渡す（人が後続に回すと決めた指摘 `deferredByPerson` と、人に確認中の案 `awaitingDecision`）。どちらも、この PR では直させず、対応も書かせない。対応させる指摘がほかに無くても、このデータは渡す。人に確認中の案には、sacty が、提出のときに PR に返信することを伝える（提出に至らなかった実行の案を、返信済みと伝えない）。指摘の文は、秘密情報を伏せてから、先頭の 600 文字だけを載せ、切ったものには、切ったことの印（`truncated`）を付けて、先頭だけであることを伝える。この PR で直すと決めた指摘は、差し戻しの指摘に、人が決めたことの印を付けて渡し、もう一度案にさせない。
 - レビューへの渡し方（`deferralReviewLines`）：実装の PR のレビューの子タスクの再レビューで、次を伝える。
   - 人に確認中の案：その指摘が提案の重みなら、未対応に数えず、もう一度指摘せず、判定の根拠にしない。要修正の重みなら、人が後続に回すと決めるまで、未対応として残す。
-  - 人が後続に回すと決めた指摘：指摘の文と、実装が書いた理由を、指示とは分けたデータ（`deferredByPerson`）で渡す。重みに関わらず、未対応に数えず、もう一度指摘せず、判定の根拠にしない。今回の変更で影響が大きくなったときだけ、新しい指摘として出させる。
-- 何も変えなかったやり直しに案があるとき：実装が、先頭を変えずに、最新の回の指摘のすべてを、断るか、案にしたときは、提出にして返信する（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。同じ先頭の判定のし直しは、案のすべてを人が決めてから始める（[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
+  - 人が後続に回すと決めた指摘：指摘の文と、実装が書いた理由を、指示とは分けたデータ（`deferredByPerson`）で渡す。重みに関わらず、未対応に数えず、もう一度指摘せず、判定の根拠にしない。今回の変更で影響が大きくなったときだけ、新しい指摘として出させる。指摘の文と理由は、秘密情報を伏せてから、先頭の 600 文字だけを載せ、切ったものには、切ったことの印（`findingTruncated`・`proposalTruncated`）を付けて、先頭だけであることを伝える。
+- 何も変えなかったやり直しに案があるとき：実装が、先頭を変えずに、最新の回の指摘のすべてを、断るか、案にしたとき（前の実行が申告して、持ち越した案を含む）は、提出にして返信する（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。同じ先頭の判定のし直しは、人がまだ決めていない案（前の提出の案・前の回の指摘の案を含む）のすべてを人が決めてから始める（[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
 - 人が決めないまま PR をマージしたときは、マージを承認として進める（案は、決めないまま残る。PR の返信は、案のまま）。
 
-コード: `apps/daemon/src/service.ts`（`decideDeferrals`・`announceDeferralDecisions`・`settleDeferralTasks`・`declinedEveryFinding`・`rejudgeDue`）、`apps/daemon/src/deferral-notice.ts`（`buildDeferralNotice`・`buildDeferralIssue`・`buildDeferralTask`・`deferralNoticeMarker`）、`apps/daemon/src/prompts.ts`（`deferLines`・`ownerDeferralLines`・`deferralReviewLines`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`）、`apps/daemon/src/github.ts`（`isDeferralNotice`）、`packages/core/src/events.ts`（`DeferralsDecided`・`DeferralDecisionsPosted`・`DecideDeferralsInput`）、`packages/core/src/projection.ts`（`deferProposals`・`decidedDeferrals`）、`apps/web/src/components/deferral.tsx`（`DeferralNotice`）、`apps/web/src/components/deferral-pending.tsx`（`DeferralPendingNotice`）、`apps/web/src/app/actions.ts`（`deferralAction`）
+コード: `apps/daemon/src/service.ts`（`decideDeferrals`・`announceDeferralDecisions`・`settleDeferralTasks`・`declinedEveryFinding`・`rejudgeDue`）、`apps/daemon/src/deferral-notice.ts`（`buildDeferralNotice`・`buildDeferralIssue`・`buildDeferralTask`・`deferralNoticeMarker`）、`apps/daemon/src/prompts.ts`（`deferLines`・`remarkLines`・`ownerDeferralLines`・`deferralReviewLines`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`）、`apps/daemon/src/github.ts`（`isDeferralNotice`）、`packages/core/src/events.ts`（`DeferralsDecided`・`DeferralDecisionsPosted`・`DecideDeferralsInput`）、`packages/core/src/projection.ts`（`deferProposals`・`decidedDeferrals`・`applyEvent`）、`apps/web/src/components/deferral.tsx`（`DeferralNotice`）、`apps/web/src/components/deferral-pending.tsx`（`DeferralPendingNotice`）、`apps/web/src/app/actions.ts`（`deferralAction`）
 
 ### 戻し先の判断の文の見せ方
 

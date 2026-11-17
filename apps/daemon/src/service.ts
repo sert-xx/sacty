@@ -13291,6 +13291,9 @@ export class TaskService {
    * - 返信できる（セキュリティの組み合わせのタスクでない。GitHub のアカウントは、PR を更新できる時点で選んである）。
    * - その先頭で、まだ判定し直しを求めていない（同じ先頭には 1 回だけ。作業履歴から復元するので、デーモンの再起動・タスクの
    *   再開をまたいでも数え直さない）。
+   * 後続に回したい案は、この実行が申告したものと、前の実行が申告して持ち越したもの（提出に至らなかった実行の案。投影が、
+   * 理由を今回の対応として持ち越す。PBI-383）を、同じに数える。人がまだ決めていない案が、実装の指摘のどこかに 1 件でも
+   * あれば、"awaits_decision"（判定し直しは、人の決定を待つ）。
    */
   private declinedEveryFinding(task: Task, commit: string): false | "declined" | "awaits_decision" {
     const pr = task.pullRequest;
@@ -13315,7 +13318,8 @@ export class TaskService {
           r.repliedIn === undefined,
       );
     if (!all) return false;
-    return remarks.some((r) => r.status === "deferred") ? "awaits_decision" : "declined";
+    // 人がまだ決めていない案が 1 件でもあれば（前の提出の案・前の回の指摘の案も）、判定し直しは、その決定を待つ（PBI-383）
+    return undecidedDeferrals(task) ? "awaits_decision" : "declined";
   }
 
   /**
@@ -18942,6 +18946,13 @@ export type RemarkReplyDue = {
   /** 引き継いだ PR の指摘（指摘の ID を、人に見せない）。 */
   continued?: true;
 };
+
+/** 実装の指摘に、人がまだ決めていない、後続に回したい案があるか（無効にした指摘は除く。PBI-370・PBI-383）。 */
+function undecidedDeferrals(task: Task): boolean {
+  return task.remarks.some(
+    (r) => r.step === "implement" && !r.voided && r.deferral && !r.deferral.decision,
+  );
+}
 
 /**
  * PR のレビュー・コメントから取り込んだ指摘への対応を、まだ PR に返信していない提出（PBI-352）。承認を待つ提出で頼まれた

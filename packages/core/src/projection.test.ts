@@ -955,9 +955,132 @@ describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別
       expect(decidedDeferrals(task)).toEqual([]);
     });
 
+    const replied = (remarkId: string, submission = 2) =>
+      ev("t", {
+        type: "RemarkRepliesPosted",
+        payload: {
+          step: "implement",
+          submission,
+          number: 7,
+          results: [{ remarkId, key: origin.key, inline: true, url: "https://example.test/r" }],
+        },
+      });
+    /** 実装の実行が、提出に至らずに、未完了で終わる（次の実行でやり直す）。 */
+    const unfinished = (n: string, responses: Record<string, unknown>[]) => {
+      const [started, completed] = resubmitted("t", 1);
+      return [
+        { ...started, payload: { ...started?.payload, runId: n } },
+        { ...completed, payload: { ...completed?.payload, runId: n, responses } },
+        ev("t", { type: "ImplementationIncomplete", payload: { remaining: ["残りのテスト"] } }),
+      ] as ReturnType<typeof resubmitted>;
+    };
+
+    it("提出に至らなかった実行の案は、次の実行に対応が無くても、理由を、その提出の対応として持ち越す（提出のときに返信するため。PBI-383）", () => {
+      /** 案を申告した実行が未完了で終わり、続きの実行（responses）が提出される。 */
+      const build = (responses: Record<string, unknown>[], after: () => unknown[] = () => []) => {
+        seq = 0;
+        return project([
+          ...waiting("t"),
+          sentBack(),
+          ...unfinished("impl-2a", [
+            {
+              remarkId: "implement-1-1",
+              text: "新しい仕組みが要る",
+              status: "deferred",
+              confirm: "後続でよいか",
+            },
+            { remarkId: "implement-1-3", text: "途中まで直した", status: "addressed" },
+          ]),
+          ...run(2, responses),
+          ...(after() as ReturnType<typeof resubmitted>),
+        ]).get("t") as Task;
+      };
+      // 続きの実行は、案にした指摘に、対応を書かない
+      const continued = [{ remarkId: "implement-1-3", text: "直した", status: "addressed" }];
+      const task = build(continued);
+      expect(task.status).toBe("awaiting_approval");
+      expect(task.remarks[0]).toMatchObject({
+        id: "implement-1-1",
+        response: "新しい仕組みが要る",
+        respondedIn: 2,
+        status: "deferred",
+        confirm: "後続でよいか",
+        submittedIn: 2,
+        deferral: { proposedIn: 2, reason: "新しい仕組みが要る" },
+      });
+      expect(task.remarks[0]?.repliedIn).toBeUndefined();
+      // 対応の無い、案でない指摘は、今までどおり未回答に戻す
+      expect(task.remarks[1]).toMatchObject({ id: "implement-1-2", response: undefined });
+      expect(task.remarks[1]?.status).toBeUndefined();
+      expect(deferProposals(task).map((p) => p.remarkId)).toEqual(["implement-1-1"]);
+      // 返信した後・人が決めた後は、今までどおり（決定の記録も、そのまま読める）
+      const decided = build(continued, () => [
+        replied("implement-1-1"),
+        decide(2, [{ remarkId: "implement-1-1", decision: "defer" }]),
+      ]);
+      expect(decided.remarks[0]).toMatchObject({
+        repliedIn: 2,
+        deferral: { proposedIn: 2, reason: "新しい仕組みが要る", decision: "defer" },
+      });
+      // 続きの実行が「対応した」と申告したら、案を取り下げる（決める前の取り下げは、今までどおり）
+      const withdrawn = build([{ remarkId: "implement-1-1", text: "直した", status: "addressed" }]);
+      expect(withdrawn.remarks[0]).toMatchObject({ response: "直した", status: "addressed" });
+      expect(withdrawn.remarks[0]?.deferral).toBeUndefined();
+    });
+
+    it("提出したが、まだ返信していない案も、後の提出に持ち越す（人に確かめたいことは持ち越さない）。返信した案・人が決めた案は、持ち越さない", () => {
+      /** 2 件を案にして提出し、between の後に、別の指摘で作り直して、案にした指摘には対応を書かずに提出する。 */
+      const build = (between: () => unknown[] = () => []) => {
+        seq = 0;
+        return project([
+          ...waiting("t"),
+          sentBack(),
+          ...run(2, [
+            {
+              remarkId: "implement-1-1",
+              text: "新しい仕組みが要る",
+              status: "deferred",
+              confirm: "後続でよいか",
+            },
+            { remarkId: "implement-1-2", text: "範囲の外", status: "deferred" },
+          ]),
+          ...(between() as ReturnType<typeof resubmitted>),
+          sentBack(2, [{ id: "implement-2-1", text: "別の指摘" }]),
+          ...run(3, [{ remarkId: "implement-2-1", text: "直した", status: "addressed" }]),
+        ]).get("t") as Task;
+      };
+      // 返信できないまま（レート制限の待ちの間など）、作り直した
+      const unreplied = build();
+      expect(unreplied.remarks[0]).toMatchObject({
+        response: "新しい仕組みが要る",
+        respondedIn: 3,
+        status: "deferred",
+        deferral: { proposedIn: 2, reason: "新しい仕組みが要る" },
+      });
+      expect(unreplied.remarks[0]?.confirm).toBeUndefined();
+      // 返信した案は、持ち越さない（1 件の指摘には、1 回だけ返信する）。案は残る
+      const repliedOnce = build(() => [replied("implement-1-1")]);
+      expect(repliedOnce.remarks[0]).toMatchObject({ response: undefined, repliedIn: 2 });
+      expect(repliedOnce.remarks[0]?.status).toBeUndefined();
+      expect(repliedOnce.remarks[0]?.deferral).toEqual({
+        proposedIn: 2,
+        reason: "新しい仕組みが要る",
+      });
+      // 人が後続に回すと決めた案は、持ち越さない
+      const decided = build(() => [decide(2, [{ remarkId: "implement-1-2", decision: "defer" }])]);
+      expect(decided.remarks[1]).toMatchObject({ id: "implement-1-2", response: undefined });
+      expect(decided.remarks[1]?.status).toBeUndefined();
+      expect(decided.remarks[1]?.deferral?.decision).toBe("defer");
+    });
+
     it("案は、後の提出で対応が無くても残り、「対応した」と申告されたら取り下げる。無効にした指摘・承認待ちでないときは、一覧に出さない", () => {
       seq = 0;
-      const again = [...proposed(), sentBack(2, [{ id: "implement-2-1", text: "別の指摘" }])];
+      const again = [
+        ...proposed(),
+        // 1 件目の案は、PR に返信した（返信していない案は、理由を持ち越す。PBI-383）
+        replied("implement-1-1"),
+        sentBack(2, [{ id: "implement-2-1", text: "別の指摘" }]),
+      ];
       // 作り直している間は、決められない（一覧に出さない）。案は残る
       const reworking = project(again).get("t") as Task;
       expect(reworking.status).toBe("queued");

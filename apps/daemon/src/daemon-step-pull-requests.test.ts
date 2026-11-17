@@ -4958,6 +4958,301 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             submission = 2,
           ) => svc.decideDeferrals(id, { step: "implement", submission, decisions });
 
+          describe("提出に至らなかった実行で申告した案を、提出のときに必ず返信する（PBI-383）", () => {
+            const REASON = "直すには新しい保存の仕組みが要り、このタスクの範囲を超えます";
+            const NOTE = "人に確認中で、まだ決まっていません";
+            /** 指摘を案にして、未完了と申告する実行。 */
+            const deferredUnfinished = () =>
+              out(
+                [
+                  "**実装は未完了です。**",
+                  MAP,
+                  block({
+                    "sacty-responses": [
+                      { remarkId: "implement-1-1", status: "deferred", text: REASON },
+                    ],
+                  }),
+                  declare({ status: "incomplete", remaining: ["失敗時のテスト"] }),
+                ].join("\n\n"),
+              );
+            /** 決定を PR のコメントに残し終えるまで待つ（記録を待つ。固定の時間は待たない）。 */
+            const decisionPosted = (svc: TaskService, id: string) =>
+              vi.waitFor(() => expect(count(svc, id, "DeferralDecisionsPosted")).toBe(1));
+            /** 案が、持ち越されて、今の提出の対応になっている。 */
+            const carried = (task: Task, submission: number) => {
+              expect(task.remarks[0]).toMatchObject({
+                id: "implement-1-1",
+                status: "deferred",
+                response: REASON,
+                respondedIn: submission,
+                deferral: { proposedIn: 2, reason: REASON },
+              });
+              expect(task.remarks[0]?.repliedIn).toBeUndefined();
+            };
+            /** 案の返信が 1 件だけ投稿されていて、人が決めるまで、同じ先頭を判定し直さない。決めたら、1 回だけ判定し直す。 */
+            const repliesThenWaits = async (
+              service: TaskService,
+              pulls: FakePulls,
+              id: string,
+              childId: string,
+              submission = 2,
+            ) => {
+              await service.runNext(id);
+              expect(replies(pulls)).toHaveLength(1);
+              expect(replies(pulls)[0]?.body).toContain(NOTE);
+              expect(replies(pulls)[0]?.body).toContain(REASON);
+              expect(taskOf(service, id).remarks[0]?.repliedIn).toBe(submission);
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              expect(restarts(service, childId)).toHaveLength(0);
+              expect(deferProposals(taskOf(service, id)).map((p) => p.remarkId)).toEqual([
+                "implement-1-1",
+              ]);
+              decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }], submission);
+              await decisionPosted(service, id);
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              expect(restarts(service, childId)).toHaveLength(1);
+            };
+
+            it("未完了のやり直し：案を申告した実行が未完了で終わり、続きの実行が対応を書かなくても、提出のときに案を返信する。続きの実行には、返信済みと伝えない", async () => {
+              const made = await reviewed([deferredUnfinished(), implement("# 実装の説明 v2")]);
+              const { activity, service, executor, pulls, repos, projects, id } = made;
+              repos.sameAsParent = false;
+              progress(executor, repos);
+              const before = executor.calls.length;
+              await settle(service, id);
+              expect(count(service, id, "ImplementationIncomplete")).toBe(1);
+              expect(executor.calls).toHaveLength(before + 2);
+              // 続きの実行には、案にした指摘を対応させない。まだ返信していないので、返信済みとは伝えない
+              const prompt = promptOf(executor, before + 1);
+              expect(prompt).not.toContain("- [implement-1-1]");
+              expect(prompt).toContain('"awaitingDecision"');
+              expect(prompt).toContain(
+                "sacty が、提出のときに、PR に、人間に確認中の案として返信する",
+              );
+              expect(prompt).not.toContain("PR には、人間に確認中と返信してある");
+              const task = taskOf(service, id);
+              expect(task.status).toBe("awaiting_approval");
+              expect(task.gate).toEqual({ step: "implement", submission: 2 });
+              carried(task, 2);
+              expect(deferProposals(task).map((p) => p.remarkId)).toEqual(["implement-1-1"]);
+              await service.runNext(id);
+              expect(replies(pulls)).toHaveLength(1);
+              expect(replies(pulls)[0]?.body).toContain(NOTE);
+              expect(replies(pulls)[0]?.body).toContain(REASON);
+              activity.close();
+              // デーモンを起動し直しても、返信を重ねない。案は、決められるまま残る
+              const again = reopen([], pulls, repos, projects);
+              await again.service.runNext(id);
+              await again.service.checkPullRequests();
+              expect(replies(pulls)).toHaveLength(1);
+              const restored = taskOf(again.service, id);
+              expect(restored.remarks[0]?.repliedIn).toBe(2);
+              expect(deferProposals(restored).map((p) => p.remarkId)).toEqual(["implement-1-1"]);
+              again.activity.close();
+            });
+
+            it("未完了のやり直し：続きの実行が何も変えなくても、案として数えて提出し、返信する。判定し直しは、人の決定を待つ（デーモンを起動し直しても）", async () => {
+              const made = await reviewed([
+                deferredUnfinished(),
+                implement("# 実装の説明（変更なし）"),
+              ]);
+              const { activity, service, executor, pulls, repos, projects, id, childId, first } =
+                made;
+              progress(executor, repos);
+              await settle(service, id);
+              expect(count(service, id, "ImplementationIncomplete")).toBe(1);
+              const task = taskOf(service, id);
+              expect(task.status).toBe("awaiting_approval");
+              expect(types(service, id)).not.toContain("ImplementationUnchanged");
+              expect(task.pullRequest?.commit).toBe(first);
+              expect(task.reviewRejudge).toMatchObject({ commit: first, awaitsDecision: true });
+              carried(task, 2);
+              activity.close();
+              const again = reopen([], pulls, repos, projects);
+              await repliesThenWaits(again.service, pulls, id, childId);
+              again.activity.close();
+            });
+
+            it("競合の残り：案を申告した実行が、人のコミットとの競合でやり直しになり、次の実行が対応を書かなくても、提出のときに案を返信する", async () => {
+              const made = await reviewed([deferred(), implement("# 実装の説明 v2")]);
+              const { activity, service, executor, pulls, repos, id } = made;
+              repos.sameAsParent = false;
+              const pushed = taskOf(service, id).pushedBranch;
+              if (!pushed) throw new Error("no pushed branch");
+              const before = executor.calls.length;
+              const conflicted = "src/conflicted.ts";
+              // 案を申告した実行の間に、人が、実装と競合するコミットを PR のブランチに足す
+              executor.logLines = () => {
+                if (executor.calls.length === before + 1) {
+                  repos.remote[pushed.branch] = "d".repeat(40);
+                  repos.mergeResult = { status: "conflicted", conflicts: [conflicted] };
+                  repos.markers = [conflicted];
+                }
+                return undefined;
+              };
+              for (let i = 0; i < 6 && count(service, id, "BaseConflictsRemained") < 1; i++) {
+                await service.runNext(id);
+              }
+              expect(executor.calls).toHaveLength(before + 1);
+              expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
+              expect(count(service, id, "StepSubmitted")).toBe(1);
+              expect(replies(pulls)).toHaveLength(0);
+              // 目印を消した次の実行は、案にした指摘に対応を書かない
+              repos.markers = [];
+              await settle(service, id);
+              expect(executor.calls).toHaveLength(before + 2);
+              expect(promptOf(executor, before + 1)).not.toContain("- [implement-1-1]");
+              const task = taskOf(service, id);
+              expect(task.status).toBe("awaiting_approval");
+              expect(task.gate).toEqual({ step: "implement", submission: 2 });
+              carried(task, 2);
+              expect(deferProposals(task).map((p) => p.remarkId)).toEqual(["implement-1-1"]);
+              await service.runNext(id);
+              expect(replies(pulls)).toHaveLength(1);
+              expect(replies(pulls)[0]?.body).toContain(NOTE);
+              expect(replies(pulls)[0]?.body).toContain(REASON);
+              activity.close();
+            });
+
+            /**
+             * AI のレビューの指摘（案にする）と、人の指摘（対応したと申告するが、何も変えない）で、変更なしの一時停止に
+             * なるところまで進める。
+             */
+            async function pausedUnchanged(outcomes: AgentOutcome[]) {
+              const pulls = new FakePulls();
+              const repos = new FakeRepos();
+              const projects = projectsWithAccount();
+              const made = await start(
+                [
+                  implement(),
+                  verdictOut("changes_required"),
+                  rework("implement"),
+                  responded([
+                    { remarkId: "implement-1-1", status: "deferred", text: REASON },
+                    { remarkId: "implement-1-2", status: "addressed", text: "直しました" },
+                  ]),
+                  ...outcomes,
+                ],
+                options(pulls, repos, projects),
+              );
+              const { service, id } = made;
+              await settle(service, id);
+              const childId = childOf(service, id);
+              const first = commitOf(service, id);
+              pulls.prInfo = {
+                ...pulls.prInfo,
+                number: 7,
+                url: "https://github.com/acme/app/pull/7",
+                headSha: first,
+              };
+              await runReview(service, childId);
+              pulls.feedbackBy[7] = [
+                posted(pulls, 0),
+                item("comment:900", { author: "reviewer", body: "ここも直してほしい" }),
+              ];
+              await service.checkPullRequests();
+              repos.sameAsParent = true;
+              await settle(service, id);
+              const task = taskOf(service, id);
+              expect(task.status).toBe("paused");
+              expect(task.pausedReason).toBe("unchanged");
+              expect(count(service, id, "StepSubmitted")).toBe(1);
+              expect(replies(pulls)).toHaveLength(0);
+              // 一時停止中は、案を決められない
+              expect(deferProposals(task)).toEqual([]);
+              expect(task.remarks[0]?.deferral).toEqual({ proposedIn: 2, reason: REASON });
+              return { ...made, pulls, repos, projects, childId, first };
+            }
+
+            it("変更なしの一時停止からの再開：再開した実行が、案にした指摘に対応を書かなくても、提出のときに案を返信する", async () => {
+              const made = await pausedUnchanged([
+                responded([{ remarkId: "implement-1-2", status: "addressed", text: "直しました" }]),
+              ]);
+              const { activity, service, executor, pulls, repos, id } = made;
+              repos.sameAsParent = false;
+              const before = executor.calls.length;
+              service.resume(id, {});
+              await settle(service, id);
+              const prompt = promptOf(executor, before);
+              expect(prompt).not.toContain("- [implement-1-1]");
+              expect(prompt).toContain("- [implement-1-2]");
+              const task = taskOf(service, id);
+              expect(task.status).toBe("awaiting_approval");
+              expect(task.gate).toEqual({ step: "implement", submission: 2 });
+              carried(task, 2);
+              expect(deferProposals(task).map((p) => p.remarkId)).toEqual(["implement-1-1"]);
+              await service.runNext(id);
+              const bodies = replies(pulls).map((r) => r.body);
+              expect(bodies).toHaveLength(2);
+              expect(bodies.filter((b) => b.includes(NOTE) && b.includes(REASON))).toHaveLength(1);
+              expect(bodies.filter((b) => b.includes("**対応しました。**"))).toHaveLength(1);
+              activity.close();
+            });
+
+            it("変更なしの一時停止からの再開：再開した実行が何も変えなくても、案として数えて提出し、返信する。判定し直しは、人の決定を待つ", async () => {
+              const made = await pausedUnchanged([implement("# 実装の説明（変更なし）")]);
+              const { activity, service, pulls, id, childId, first } = made;
+              // 人の指摘を無効にして再開する（残るのは、案にした AI のレビューの指摘だけ）
+              service.voidRemark(id, "implement-1-2");
+              service.resume(id, {});
+              await settle(service, id);
+              const task = taskOf(service, id);
+              expect(task.status).toBe("awaiting_approval");
+              expect(count(service, id, "ImplementationUnchanged")).toBe(1);
+              expect(task.pullRequest?.commit).toBe(first);
+              expect(task.reviewRejudge).toMatchObject({ commit: first, awaitsDecision: true });
+              carried(task, 2);
+              await repliesThenWaits(service, pulls, id, childId);
+              activity.close();
+            });
+
+            it("前の提出の案を人がまだ決めていなければ、最新の回の指摘をすべて断っても、判定し直しは、人の決定を待つ", async () => {
+              const made = await reviewed([
+                deferred(),
+                verdictOut("changes_required", "# 評価\n\n別の要修正"),
+                declined("implement-2-1"),
+              ]);
+              const { activity, service, pulls, repos, id, childId } = made;
+              // 先頭を変えて、案を出す（2 回目の提出）。案を返信する
+              repos.sameAsParent = false;
+              await settle(service, id);
+              await service.runNext(id);
+              expect(replies(pulls)).toHaveLength(1);
+              // 新しい先頭のレビューが、別の指摘を残す。その指摘を断って、何も変えない
+              const second = commitOf(service, id);
+              pulls.prInfo = { ...pulls.prInfo, headSha: second };
+              await service.checkPullRequests();
+              await runReview(service, childId);
+              pulls.feedbackBy[7] = [posted(pulls, 0), posted(pulls, 1)];
+              await service.checkPullRequests();
+              expect(taskOf(service, id).status).toBe("queued");
+              repos.sameAsParent = true;
+              await settle(service, id);
+              const task = taskOf(service, id);
+              expect(task.status).toBe("awaiting_approval");
+              expect(task.gate).toEqual({ step: "implement", submission: 3 });
+              expect(task.remarks.map((r) => [r.id, r.status])).toEqual([
+                ["implement-1-1", undefined],
+                ["implement-2-1", "declined"],
+              ]);
+              // 最新の回は断っただけでも、前の提出の案が決まっていないので、待つ印を付ける
+              expect(task.reviewRejudge).toMatchObject({ commit: second, awaitsDecision: true });
+              await service.runNext(id);
+              expect(replies(pulls)).toHaveLength(2);
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              expect(restarts(service, childId)).toHaveLength(0);
+              decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }], 3);
+              await decisionPosted(service, id);
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              expect(restarts(service, childId)).toHaveLength(1);
+              activity.close();
+            });
+          });
+
           it("先頭を変えて案を出すと、返信に「案・人に確認中」と明記し、承認待ちの一覧に並ぶ。人が後続に回すと決めると、決定を PR のコメントに残し、次のレビューに、未対応に数えない指摘として渡す（受け入れ条件 1〜3・5・6）", async () => {
             const made = await reviewed([
               deferred(),
