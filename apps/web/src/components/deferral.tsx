@@ -9,7 +9,7 @@ import {
   type RemarkOrigin,
   type Task,
 } from "@sacty/core";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { type DeferralState, deferralAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
@@ -54,6 +54,8 @@ export function DeferralNotice({ task }: { task: Task }) {
     issue: t.handlingIssue,
   };
   const [state, formAction, pending] = useActionState(deferralAction, initial);
+  // 選んでいる決定（扱いの選択は、「後続に回す」を選んだ指摘だけで使えるようにする。ラジオは非制御のまま、選び直しを追う）
+  const [picked, setPicked] = useState<Record<string, string>>({});
   const proposals = deferProposals(task);
   const gate = task.gate;
   // 決定済みの記録は、実装の承認待ちの間だけ出す（一覧と同じ所で読めるように）
@@ -119,24 +121,29 @@ export function DeferralNotice({ task }: { task: Task }) {
                           name={`decision:${p.remarkId}`}
                           value={value}
                           defaultChecked={value === (state.decisions?.[p.remarkId] ?? "")}
+                          onChange={() => setPicked((all) => ({ ...all, [p.remarkId]: value }))}
                           className="size-4 accent-primary"
                         />
                         <span>{label}</span>
                       </label>
                     ))}
                   </fieldset>
-                  <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      {t.handling}
-                      <Hint text={t.handlingHint} className="size-4" />
-                    </span>
+                  {/* 補足の印は、label の外に置く（select の名前に、補足の文を混ぜない） */}
+                  <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <label htmlFor={`deferral-handling-${p.remarkId}`}>{t.handling}</label>
+                    <Hint text={t.handlingHint} className="size-4" />
                     <select
+                      id={`deferral-handling-${p.remarkId}`}
                       name={`handling:${p.remarkId}`}
                       data-testid="deferral-handling"
+                      // 「後続に回す」を選んだ指摘だけで選べる（ほかの決定では使わないので、選べない見た目にする）
+                      disabled={
+                        (picked[p.remarkId] ?? state.decisions?.[p.remarkId] ?? "") !== "defer"
+                      }
                       defaultValue={
                         state.handlings?.[p.remarkId] ?? task.deferralHandlingDefault ?? "none"
                       }
-                      className="h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground"
+                      className="h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground disabled:opacity-50"
                     >
                       {HANDLINGS.map((value) => (
                         <option key={value} value={value}>
@@ -144,7 +151,7 @@ export function DeferralNotice({ task }: { task: Task }) {
                         </option>
                       ))}
                     </select>
-                  </label>
+                  </span>
                 </li>
               );
             })}

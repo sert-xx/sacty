@@ -1830,10 +1830,10 @@ describe("後続に回したい案への決定の表示（PBI-370）", () => {
       taskId: "t2",
     });
     expect(describeEventParts(task, labels.ja).text).toBe(
-      "後続に回すと決めた指摘 implement-1-1 の、後続のタスクを作成",
+      "後続に回すと決めた指摘 implement-1-1 の、後続のタスクを作成（t2）",
     );
     expect(describeEventParts(task, labels.en).text).toBe(
-      "Created the follow-up task for the deferred finding implement-1-1",
+      "Created the follow-up task for the deferred finding implement-1-1 (t2)",
     );
     const issue = event("DeferralHandled", {
       remarkId: "implement-1-2",

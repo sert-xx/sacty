@@ -121,6 +121,8 @@ const PARAMS = {
   "deferral.pullRequestNotOpen": null,
   "deferral.handlingOnFix": z.object({ remarkId: z.string() }),
   "deferral.noRepository": null,
+  "deferral.issueInterrupted": null,
+  "deferral.issueUncertain": z.object({ detail: TextParam }),
   // 入力の検査（zod の検査の文言に、このコードを入れる）
   // スケジュールタスク
   "schedule.notFound": null,
@@ -985,6 +987,10 @@ const ja: MessageDictionary = {
   "deferral.handlingOnFix": ({ remarkId }) =>
     `指摘 ${remarkId} は「この PR で直す」なので、後続に回すときの扱いは選べません。`,
   "deferral.noRepository": "GitHub のリポジトリが分からないので、Issue を作っていません。",
+  "deferral.issueInterrupted":
+    "Issue を作る処理が、途中で止まりました（Sacty が止まった、など）。Issue が作られているかもしれないので、GitHub で確かめてから、無ければ作ってください。",
+  "deferral.issueUncertain": ({ detail }, text) =>
+    `Issue を作る通信が、時間内に終わりませんでした。Issue が作られているかもしれないので、GitHub で確かめてから、無ければ作ってください（${text(detail)}）。`,
   "schedule.notFound": "スケジュールタスクが見つかりません。",
   "schedule.nameRequired": "名前を入力してください。",
   "schedule.nameTooLong": `名前は${SCHEDULE_NAME_MAX}文字以内で入力してください。`,
@@ -1836,6 +1842,10 @@ const en: MessageDictionary = {
   "deferral.handlingOnFix": ({ remarkId }) =>
     `Comment ${remarkId} is to be fixed in this PR, so no handling for a deferral can be chosen.`,
   "deferral.noRepository": "The GitHub repository is unknown, so no issue was created.",
+  "deferral.issueInterrupted":
+    "Creating the issue was interrupted (for example, Sacty stopped). The issue may have been created, so check GitHub and create one if it is missing.",
+  "deferral.issueUncertain": ({ detail }, text) =>
+    `The request to create the issue did not finish in time. The issue may have been created, so check GitHub and create one if it is missing (${text(detail)}).`,
   "schedule.notFound": "Scheduled task not found.",
   "schedule.nameRequired": "Enter a name.",
   "schedule.nameTooLong": `Keep the name within ${SCHEDULE_NAME_MAX} characters.`,

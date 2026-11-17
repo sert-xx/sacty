@@ -258,12 +258,7 @@ import {
 } from "./context.js";
 import type { ContextImageBuilder, ContextImagesView } from "./context-images.js";
 import type { ContextMcpServers } from "./context-mcp.js";
-import {
-  buildDeferralIssue,
-  buildDeferralNotice,
-  buildDeferralTask,
-  deferralTaskMarker,
-} from "./deferral-notice.js";
+import { buildDeferralIssue, buildDeferralNotice, buildDeferralTask } from "./deferral-notice.js";
 import {
   buildCiFixTask,
   buildDeploymentFixTask,
@@ -1589,6 +1584,8 @@ export class TaskService {
     await this.checkDeployments();
     // 人が後続に回すと決めた指摘の、後続のタスクを作る（元のタスクが完了してから。PBI-370）
     this.settleDeferralTasks();
+    // Issue を作ると決めたのに、途中で止まって結果の記録が無い指摘に、止まったことを記録する
+    this.settleInterruptedDeferralIssues();
     // 「指摘なし」の後に落ちた CI を、タスクの詳細に出す（PBI-364）。ほかの確認がすべて終わった後に、1件だけ読む
     try {
       await this.readPullRequestCi(ciCandidates);
@@ -8173,7 +8170,12 @@ export class TaskService {
    * （元のタスクの依頼は終わっていて、続きは新しい依頼のため）。セキュリティの組み合わせのタスクからは、セキュリティの
    * 組み合わせの続きだけを作る（記録に入るレポート・範囲を、公開の場所に出さないため）。
    */
-  deriveTask(id: string, raw: unknown, actor: "person" | "sacty" = "person"): Task {
+  deriveTask(
+    id: string,
+    raw: unknown,
+    /** 人が後続に回すと決めた指摘の後続のタスク（PBI-370）は、sacty が作り、その指摘の ID を持つ。 */
+    deferred?: { remarkId: string },
+  ): Task {
     const input = DeriveTaskInput.parse(raw);
     const original = this.tasks.get(id);
     if (!original) throw new InvalidOperationError(message("task.notFound"));
@@ -8206,7 +8208,7 @@ export class TaskService {
     return this.append({ id: randomUUID(), projectId: original.projectId }, [
       {
         // 人が後続に回すと決めた指摘の後続のタスク（PBI-370）は、sacty が作る
-        actor,
+        actor: deferred ? "sacty" : "person",
         event: {
           type: "TaskCreated",
           payload: {
@@ -8215,7 +8217,11 @@ export class TaskService {
             start: "sacty",
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
-            derivedFrom: { taskId: original.id, record },
+            derivedFrom: {
+              taskId: original.id,
+              record,
+              ...(deferred ? { deferredRemarkId: deferred.remarkId } : {}),
+            },
             ...(plan ? { plan } : {}),
           },
         },
@@ -18162,8 +18168,14 @@ export class TaskService {
     const usedSecrets: string[] = [];
     const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
     const url = watched.url ?? `${repo.replace(/\/+$/, "")}/pull/${number}`;
+    // Issue を作っている最中の指摘（PR の確認が、途中で止まった処理と取り違えないように）
+    const inflight = wantIssues.map((item) => `${task.id}:${item.remarkId}`);
+    for (const key of inflight) this.deferralIssuesInflight.add(key);
+    // 結果を記録した指摘（記録が無いまま終わる指摘を、残さない）
+    const issues = new Map<string, string | undefined>();
     void this.serialized(`deferral:${task.id}`, async () => {
-      const signal = this.stopNoticeDeadline();
+      // 決定のコメントの期限。Issue は、1 件ごとに別の期限を持つ（件数が多くても、後ろの指摘が、前の指摘の時間で失敗しない）
+      let signal = this.stopNoticeDeadline();
       try {
         const token = await untilAborted(
           signal,
@@ -18171,9 +18183,9 @@ export class TaskService {
         );
         const pr = { repo, token, number };
         // GitHub の Issue を作ると選んだ指摘は、先に Issue を作る（決定のコメントに、Issue の URL を載せる）
-        const issues = new Map<string, string | undefined>();
         for (const item of wantIssues) {
           const ref = item.origin?.number === number ? remarkOriginRef(item.origin.key) : undefined;
+          const issueSignal = this.stopNoticeDeadline();
           try {
             const issue = buildDeferralIssue({
               taskId: task.id,
@@ -18185,13 +18197,17 @@ export class TaskService {
               secrets: usedSecrets,
             });
             const created = await untilAborted(
-              signal,
-              this.deps.pulls.createIssue({ repo, token, ...issue, signal }),
+              issueSignal,
+              this.deps.pulls.createIssue({ repo, token, ...issue, signal: issueSignal }),
             );
             issues.set(item.remarkId, created.url);
             handled(item.remarkId, { url: created.url });
           } catch (error) {
-            const failure = redactText(errorText(error), usedSecrets);
+            const detail = redactText(errorText(error), usedSecrets);
+            // 期限を超えた通信は、GitHub の側で作られているかもしれない（人が、確かめてから作り直せるように伝える）
+            const failure = issueSignal.aborted
+              ? message("deferral.issueUncertain", { detail })
+              : detail;
             console.warn(
               `[daemon] タスク ${task.id} の、後続に回すと決めた指摘 ${item.remarkId} の Issue を作れませんでした：${renderMessage(failure, "ja")}`,
             );
@@ -18203,6 +18219,7 @@ export class TaskService {
           record({ failure: skipped });
           return;
         }
+        signal = this.stopNoticeDeadline();
         const body = buildDeferralNotice({
           taskId: task.id,
           decision,
@@ -18244,9 +18261,55 @@ export class TaskService {
         console.warn(
           `[daemon] タスク ${task.id} の、後続に回したい案への決定を PR に残せませんでした：${renderMessage(failure, "ja")}`,
         );
+        // Issue を作る前に失敗した（トークンを取り出せない、など）：Issue の結果も、失敗として記録する（記録が無いと、
+        // 画面が「Issue を作成中」のまま残る）
+        for (const item of wantIssues) {
+          if (!issues.has(item.remarkId)) {
+            issues.set(item.remarkId, undefined);
+            handled(item.remarkId, { failure });
+          }
+        }
         record({ failure });
+      } finally {
+        for (const key of inflight) this.deferralIssuesInflight.delete(key);
       }
     });
+  }
+
+  /** GitHub の Issue を作っている最中の指摘（`<タスク ID>:<指摘の ID>`。メモリーだけに持つ）。 */
+  private readonly deferralIssuesInflight = new Set<string>();
+
+  /**
+   * GitHub の Issue を作ると決めたのに、結果の記録が無く、作っている最中でもない指摘に、途中で止まったことを記録する
+   * （PBI-370）。決定の後・Issue を作る前か最中に、デーモンが止まったとき。作り直さない（作られているかもしれないため。
+   * 人が、GitHub で確かめる）。
+   */
+  private settleInterruptedDeferralIssues(): void {
+    for (const task of [...this.tasks.values()]) {
+      for (const d of decidedDeferrals(task)) {
+        if (d.decision !== "defer" || d.handling !== "issue" || d.handled) continue;
+        if (this.deferralIssuesInflight.has(`${task.id}:${d.remarkId}`)) continue;
+        try {
+          this.append(this.mustGet(task.id), [
+            {
+              actor: "sacty",
+              event: {
+                type: "DeferralHandled",
+                payload: {
+                  remarkId: d.remarkId,
+                  handling: "issue" as const,
+                  failure: message("deferral.issueInterrupted"),
+                },
+              },
+            },
+          ]);
+        } catch (error) {
+          console.warn(
+            `[daemon] タスク ${task.id} の、途中で止まった Issue の作成を記録できませんでした：${renderMessage(errorText(error), "ja")}`,
+          );
+        }
+      }
+    }
   }
 
   /**
@@ -18274,9 +18337,12 @@ export class TaskService {
             );
           }
         };
-        const marker = deferralTaskMarker(original.id, due.remarkId);
+        // 作った後・記録の前に止まっていたら、作ってある後続のタスクを使う。照合は、作成の記録（どのタスクの、どの指摘の
+        // 後続か）で行う（依頼の文の中の文字列では照合しない。外から来た文で、取り違えさせない）
         const existing = [...this.tasks.values()].find(
-          (t) => t.derivedFrom?.taskId === original.id && t.body.includes(marker),
+          (t) =>
+            t.derivedFrom?.taskId === original.id &&
+            t.derivedFrom.deferredRemarkId === due.remarkId,
         );
         if (existing) {
           record({ taskId: existing.id });
@@ -18290,7 +18356,6 @@ export class TaskService {
               ? remarkOriginRef(due.origin.key)
               : undefined;
           const request = buildDeferralTask({
-            taskId: original.id,
             remarkId: due.remarkId,
             text: due.text,
             reason: due.reason,
@@ -18300,7 +18365,7 @@ export class TaskService {
           const created = this.deriveTask(
             original.id,
             { ...request, repo: original.repo ?? original.source?.repo ?? null },
-            "sacty",
+            { remarkId: due.remarkId },
           );
           record({ taskId: created.id });
         } catch (error) {

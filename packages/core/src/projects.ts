@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DeferralHandling } from "./events.js";
 import {
   OrgUrl,
   orgUrlOf,
@@ -403,7 +404,7 @@ export const ProjectDefinition = z.object({
    * 人が後続に回すと決めた指摘の扱いの既定（PBI-370）。承認の画面の選択肢の、初めの値になる。task は sacty の後続のタスクを
    * 作る、issue は GitHub の Issue を作る、none は何もしない。無ければ none。
    */
-  deferralHandling: z.enum(["task", "issue", "none"]).optional(),
+  deferralHandling: DeferralHandling.optional(),
 });
 export type ProjectDefinition = z.infer<typeof ProjectDefinition>;
 export type ProjectDefinitionInput = z.input<typeof ProjectDefinition>;

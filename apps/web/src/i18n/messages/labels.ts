@@ -431,8 +431,8 @@ const ja = {
     /** 決定の 1 件（詳細の 1 行）。 */
     deferralItem: (remarkId: string, fix: boolean, handling: "task" | "issue" | undefined) =>
       `・${remarkId}：${fix ? "この PR で直す" : "後続に回す"}${handling === "task" ? "（Sacty の後続のタスクを作る）" : handling === "issue" ? "（GitHub の Issue を作る）" : ""}`,
-    DeferralHandledTask: (remarkId: string) =>
-      `後続に回すと決めた指摘 ${remarkId} の、後続のタスクを作成`,
+    DeferralHandledTask: (remarkId: string, taskId: string) =>
+      `後続に回すと決めた指摘 ${remarkId} の、後続のタスクを作成（${taskId}）`,
     DeferralHandledIssue: (remarkId: string, url: string) =>
       `後続に回すと決めた指摘 ${remarkId} の、GitHub の Issue を作成（${url}）`,
     DeferralHandleFailed: (remarkId: string, task: boolean, reason: string) =>
@@ -1135,8 +1135,8 @@ const en: LabelMessages = {
       `Decided the findings proposed to defer (defer ${defer}, fix in this PR ${fix})`,
     deferralItem: (remarkId, fix, handling) =>
       `- ${remarkId}: ${fix ? "fix in this PR" : "defer"}${handling === "task" ? " (create a Sacty follow-up task)" : handling === "issue" ? " (create a GitHub issue)" : ""}`,
-    DeferralHandledTask: (remarkId) =>
-      `Created the follow-up task for the deferred finding ${remarkId}`,
+    DeferralHandledTask: (remarkId, taskId) =>
+      `Created the follow-up task for the deferred finding ${remarkId} (${taskId})`,
     DeferralHandledIssue: (remarkId, url) =>
       `Created the GitHub issue for the deferred finding ${remarkId} (${url})`,
     DeferralHandleFailed: (remarkId, task, reason) =>

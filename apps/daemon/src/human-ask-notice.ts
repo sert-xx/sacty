@@ -22,15 +22,23 @@ export function humanAskMarker(taskId: string, step: StepKey, submission: number
  * PR に載せる文。秘密情報を伏せてから切り詰める（逆だと、切り口にかかった秘密情報の前半が残る）。@名前で知らない人に
  * 通知が飛ばないよう、@ の直後に見えない文字を挟み、引用にして、本文の記法（見出し・リンクなど）として解釈させない。
  */
-export function askQuote(text: string, secrets: readonly string[]): string {
-  // 作業領域の内部のパスは、人が辿れないので、人が辿れる呼び方に置き換える（PBI-301 A7）
-  const hidden = withoutInternalPaths(redact(text, secrets)).trim();
-  const cut = hidden.length > ASK_TEXT_MAX ? `${hidden.slice(0, ASK_TEXT_MAX)}…` : hidden;
-  return cut
-    .replace(/@(?=[A-Za-z0-9_-])/g, "@​")
+export function askQuote(text: string, secrets: readonly string[], max = ASK_TEXT_MAX): string {
+  return publicText(text, secrets, max)
     .split(/\r?\n/)
     .map((line) => `> ${line}`)
     .join("\n");
+}
+
+/**
+ * PR・Issue に載せる、外から来た文（引用にする前の形）。秘密情報を伏せ、作業領域の内部のパスを、人が辿れる呼び方に
+ * 置き換えてから、切り詰める（文字の途中では切らない）。@名前で通知が飛ばないよう、@ の直後に見えない文字を挟む。
+ */
+export function publicText(text: string, secrets: readonly string[], max: number): string {
+  // 作業領域の内部のパスは、人が辿れないので、人が辿れる呼び方に置き換える（PBI-301 A7）
+  const hidden = withoutInternalPaths(redact(text, secrets)).trim();
+  const end = hidden.length > max && /[\uDC00-\uDFFF]/.test(hidden[max] ?? "") ? max - 1 : max;
+  const cut = hidden.length > max ? `${hidden.slice(0, end)}…` : hidden;
+  return cut.replace(/@(?=[A-Za-z0-9_-])/g, "@​");
 }
 
 export type HumanAskNoticeInput = {

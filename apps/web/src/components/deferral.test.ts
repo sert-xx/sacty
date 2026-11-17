@@ -155,6 +155,11 @@ describe("承認の画面：後続に回したい指摘の一覧と、指摘ご�
       [...el.querySelectorAll("option")].map((o) => [o.value, o.textContent, o.selected]);
     const plain = select(task({ remarks: [proposals[0]] }));
     expect(plain.name).toBe("handling:implement-1-1");
+    // 「後続に回す」を選ぶまでは、選べない（ほかの決定では使わない）。補足の印は、label の外にある
+    expect(plain.disabled).toBe(true);
+    const label = document.querySelector(`label[for="${plain.id}"]`);
+    expect(label?.textContent).toBe("後続に回すときの扱い");
+    expect(label?.querySelector("button")).toBeNull();
     expect(options(plain)).toEqual([
       ["none", "何もしない", true],
       ["task", "Sacty の後続のタスクを作る", false],

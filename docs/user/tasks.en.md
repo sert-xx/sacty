@@ -764,6 +764,7 @@ Choose "Handling when deferred" from the following three.
 - The title of the issue is the first line of the comment. The body has the comment, the reason for the proposal, and a link to the original PR.
   Even for a comment written on the sacty screen, choosing to create an issue puts its text in the issue.
 - When it could not be created, the reason appears in the Activity and under "Decided". It is not retried, so create one yourself if you need it.
+  When the reason says the issue may have been created (the request did not finish in time, or sacty stopped partway), check GitHub before you create one.
 - No issue is created in security check and security fix tasks, or in a project with no GitHub account chosen.
 
 The agent may propose deferral only for a comment with a small impact, or one that occurs only when rare conditions coincide, whose fix needs a new mechanism or lies outside the task's scope.

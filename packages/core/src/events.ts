@@ -836,7 +836,17 @@ const TaskCreated = z.object({
      * 元のタスクの記録の本文（record。人が書いた依頼と分けるため、見出しを探さずにこの本文をそのまま取り除く）。1つの
      * タスクから、いくつでも作れる。派生で作ったタスクの再実行も、元のタスクと記録を引き継ぐ。
      */
-    derivedFrom: z.object({ taskId: z.string().min(1), record: z.string().optional() }).optional(),
+    derivedFrom: z
+      .object({
+        taskId: z.string().min(1),
+        record: z.string().optional(),
+        /**
+         * 元のタスクで、人が後続に回すと決めた指摘の ID（PBI-370。その指摘の後続のタスク）。同じ指摘の後続のタスクを、
+         * 二度作らないための照合に使う（依頼の文の中の文字列では照合しない）。
+         */
+        deferredRemarkId: z.string().min(1).optional(),
+      })
+      .optional(),
     /**
      * 人がタスクの作成時に指定した工程の組み合わせ（進め方）。オーケストレーターは、組み合わせを選ばずにこれを使い、
      * ベースブランチ・テストのコマンド・イメージなどだけを決める。工程の見直しでも工程を飛ばさない。無ければ

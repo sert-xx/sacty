@@ -795,7 +795,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
             l.text(event.payload.failure),
           )
         : event.payload.handling === "task"
-          ? e.DeferralHandledTask(event.payload.remarkId)
+          ? e.DeferralHandledTask(event.payload.remarkId, event.payload.taskId ?? "")
           : e.DeferralHandledIssue(event.payload.remarkId, event.payload.url ?? "");
     case "DeferralDecisionsPosted":
       return event.payload.failure === undefined
