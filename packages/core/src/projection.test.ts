@@ -1100,6 +1100,38 @@ describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別
       expect(deferProposals(later)).toEqual([]);
     });
 
+    it("人が「この PR で直す」と決めて差し戻した指摘と、決定済みの指摘への「後続に回したい」は、申告が無いものとして扱い、もう一度、案にしない（レビューの指摘）", () => {
+      seq = 0;
+      const task = project([
+        ...proposed(),
+        decide(2, [
+          { remarkId: "implement-1-1", decision: "defer" },
+          { remarkId: "implement-1-2", decision: "fix" },
+        ]),
+        sentBack(2, [{ id: "implement-2-1", text: "画面の指摘", fixOf: "implement-1-2" }]),
+        // 実装が、指示に反して、どちらにも「後続に回したい」と返した
+        ...run(3, [
+          { remarkId: "implement-1-1", text: "やはり後で", status: "deferred" },
+          { remarkId: "implement-2-1", text: "やはり範囲の外", status: "deferred" },
+        ]),
+      ]).get("t") as Task;
+      expect(task.status).toBe("awaiting_approval");
+      // 差し戻した指摘（fixOf）：対応の文は残すが、申告は無いものとして扱い、案にしない
+      const fixed = task.remarks.find((r) => r.id === "implement-2-1");
+      expect(fixed).toMatchObject({ response: "やはり範囲の外", respondedIn: 3 });
+      expect(fixed?.status).toBeUndefined();
+      expect(fixed?.deferral).toBeUndefined();
+      // 決定済みの指摘：決定はそのまま。申告は無いものとして扱う
+      const decided = task.remarks.find((r) => r.id === "implement-1-1");
+      expect(decided?.status).toBeUndefined();
+      expect(decided?.deferral).toEqual({
+        proposedIn: 2,
+        reason: "新しい仕組みが要る",
+        decision: "defer",
+      });
+      expect(deferProposals(task)).toEqual([]);
+    });
+
     it("決められるのは、承認待ちの提出の、まだ決めていない案だけ（決定済み・案でない指摘・別の提出・同じ指摘の重複は記録できない）", () => {
       seq = 0;
       const base = proposed();
