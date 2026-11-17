@@ -158,7 +158,7 @@ const ja = {
       `PR の先頭のコミット ${commit} の CI が、${at} に失敗していました。今の結果を PR で確かめ、直すなら差し戻すか PR に指摘を書いてください。`,
     /** CI の失敗の表示が、いつ消えるか（PBI-375）。 */
     prCiFailedHint:
-      "sacty が CI を読み直す間に通れば、この表示は消えます。読み直すのは、最初に読んでから1時間ほどの間だけで、その後の結果は反映されません。",
+      "sacty が CI を読み直す間に通れば、この表示は消えます。読み直すのは、PR の先頭のコミットごとに12回まで（ふつうは、最初に読んでから1時間ほどの間）で、その後の結果は反映されません。",
     prCiFailedChecks: "失敗していたチェック",
     prCiFailedMore: (count: number) => `ほか${count}件`,
     prConflictContinuedHelp:
@@ -763,7 +763,7 @@ const en: TaskMessages = {
     prCiFailedHelp: (commit, at) =>
       `CI on the PR's head commit ${commit} was failing at ${at}. Check the current result on the PR, and to have it fixed, send the task back or comment on the PR.`,
     prCiFailedHint:
-      "This notice clears if CI passes while sacty is still re-reading it. sacty re-reads for about an hour after its first read; later results are not reflected.",
+      "This notice clears if CI passes while sacty is still re-reading it. sacty re-reads up to 12 times per head commit of the PR (usually within about an hour of its first read); later results are not reflected.",
     prCiFailedChecks: "Checks that were failing",
     prCiFailedMore: (count) => `and ${count} more`,
     prConflictContinuedHelp:

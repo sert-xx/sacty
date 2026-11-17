@@ -1178,8 +1178,9 @@ This notice is the result at the time sacty looked at CI. Keep the following in 
   CI that starts when the draft is removed may not be in GitHub's list yet right after that.
 - The status in the task list, "Needs you", and the header notifications does not change. You cannot filter the list by the "CI failed" mark.
 - The dashboard, the "Needs you" cards, and the header notifications show no mark. No Slack or desktop notification is sent either.
-- sacty looks at CI for each head commit of the PR every 5 minutes, only for about one hour after it first looked. CI that fails after that is not shown.
-  This time is not extended after a CI failure is shown. When the failure was found late, sacty may stop watching before it sees CI pass.
+- sacty looks at CI for each head commit of the PR at most 12 times, at least 5 minutes apart. It usually finishes about one hour after it first looked. CI that fails after it finished is not shown.
+  When sacty removes the draft again after it stopped watching partway, it looks the remaining times after that (this can be more than one hour after it first looked).
+  This count does not grow after a CI failure is shown. When the failure was found late, sacty may stop watching before it sees CI pass.
 - Even while CI is failing, if you merge the PR, sacty takes it as the approval and goes on.
 - It is not shown for requirements and design PRs, or for a PR before the review child task reports "no findings" (the review child task turns CI failures into findings).
 
