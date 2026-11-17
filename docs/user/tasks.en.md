@@ -1150,6 +1150,7 @@ A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existi
 
 sacty reviews without waiting for the PR's CI to finish.
 So CI that was still running can fail after the child task that reviews the PR reported "no findings".
+CI that starts when the draft is removed (a workflow set up that way) can fail too.
 sacty watches CI for a while after that, and when it was failing, shows it in the task list and the task details.
 
 - The "Status" column of the task's row in the task list shows a "CI failed" mark.
@@ -1172,11 +1173,14 @@ This notice is the result at the time sacty looked at CI. Keep the following in 
   It does not disappear when CI passes after sacty stopped watching. In that case it disappears when the PR is updated, merged, or closed.
 - CI is not treated as passed while a cancelled CI item remains, while CI is running, when there is no CI at all, or when sacty could not read the CI list to the end. The notice stays.
 - When you add a commit to the PR, the notice disappears once all CI on the new head commit passes.
-- After the notice disappeared, a rerun of CI on the same commit that fails is not shown again.
+- After sacty stopped watching, a rerun of CI on the same commit that fails is not shown again.
+- Even when all CI finished without a failure, sacty does not stop watching on its first look, or on a look less than 5 minutes after it removed the draft. It looks once more about 5 minutes later.
+  CI that starts when the draft is removed may not be in GitHub's list yet right after that.
 - The status in the task list, "Needs you", and the header notifications does not change. You cannot filter the list by the "CI failed" mark.
 - The dashboard, the "Needs you" cards, and the header notifications show no mark. No Slack or desktop notification is sent either.
-- sacty looks at CI for each head commit of the PR every 5 minutes, only for about one hour after it first looked. CI that fails after that is not shown.
-  This time is not extended after a CI failure is shown. When the failure was found late, sacty may stop watching before it sees CI pass.
+- sacty looks at CI for each head commit of the PR at most 12 times, at least 5 minutes apart. It usually finishes about one hour after it first looked. CI that fails after it finished is not shown.
+  When sacty removes the draft again after it stopped watching partway, it looks the remaining times after that (this can be more than one hour after it first looked).
+  This count does not grow after a CI failure is shown. When the failure was found late, sacty may stop watching before it sees CI pass.
 - Even while CI is failing, if you merge the PR, sacty takes it as the approval and goes on.
 - It is not shown for requirements and design PRs, or for a PR before the review child task reports "no findings" (the review child task turns CI failures into findings).
 
@@ -1280,7 +1284,7 @@ In the Integration review, an AI checks whether the code after the PRs of the ch
 When only such items remain, the Integration review does not fail; it passes and hands the items to you.
 There is no field that records the result of each item you checked. The approval stands for having checked.
 When the Integration review is redone (after fix child tasks, for example), the items of the previous round are carried over. Items the AI removed because they could now be checked or are no longer needed are shown in the same section under "Items removed from the previous round's "For a person to check"", with the reason for removing them.
-A removal the AI requested but sacty could not read is shown under "Removal requests that could not be read". That item is not removed and stays in "For a person to check".
+A removal the AI requested that sacty did not apply is shown under "Removal requests that were not applied". When even one of the AI's removal requests is not written in the fixed form or matches no item of the previous round, sacty removes no item in that round and shows all of that round's requests here (including the ones written in the fixed form). The items are not removed and stay in "For a person to check". Some of them may already have been checked, so read the requests and decide.
 
 When something is missing within what can be checked with the code and tests, the Integration review fails and sacty adds fix child tasks.
 If it fails three times in a row, it waits for your decision while still failing.
@@ -1854,7 +1858,7 @@ When a rework changes nothing, the task proceeds as follows.
    - After the replies, the child task judges the same content once more. The Activity of the child task shows "started a re-review that judges the same commit again".
    - When the child task accepts the reasons and concludes with no findings, the PR is marked ready and waits for your approval (merge).
    - When findings still remain, the task becomes "Paused: the rework changed nothing". The exchange between the two AIs stops here. The same content is judged again only once.
-   - When some findings are declined and others are proposed for deferral, the rework is also submitted without stopping, and sacty replies. In this case the child task judges the same content again after you have decided all the proposals ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
+   - When some findings are declined and others are proposed for deferral, the rework is also submitted without stopping, and sacty replies. In this case the child task judges the same content again after you have decided all the proposals. The same applies when a proposal of an earlier submission is still undecided ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
    - When a finding from a person is among them, when a finding is declared as addressed or has no reason for declining it, or when the task is a security check or security fix task, the rework is not submitted and the pause below applies.
 3. Otherwise the rework is not submitted, and the task becomes "Paused: the rework changed nothing".
 4. Check the findings of the PR review (and the replies with the reasons for declining them, if any), then do one of the following.

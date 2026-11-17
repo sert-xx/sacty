@@ -337,6 +337,8 @@ export type TaskRemark = {
    * 実装が、この指摘を、この PR では直さず後続に回したいと申告した案（PBI-370）。proposedIn は申告した提出回、reason は
    * その対応の文（理由）、decision は人の決定（defer は後続に回す、fix はこの PR で直す。無ければ、まだ決めていない）。
    * 決める前に、後の提出で「対応した」と申告されたら消える（案の取り下げ）。対応の文と違い、後の提出で対応が無くても残る。
+   * 人がまだ決めておらず、PR にまだ返信していない案は、後の実行に対応が無ければ、理由を、その提出の対応として持ち越す
+   * （response・status・respondedIn。提出のときに、必ず PR に返信するため。PBI-383）。
    */
   deferral?: {
     proposedIn: number;
@@ -1742,6 +1744,26 @@ export function applyEvent(
           if (r.step !== step || r.voided) return r;
           const response = responses.get(r.id);
           if (response === undefined) {
+            // 人がまだ決めておらず、PR にまだ返信していない、後続に回したい案（PBI-383）は、案の理由を、今回の提出の対応として
+            // 持ち越す。案にした指摘は、後の実行に対応させないので、申告した実行が提出に至らなかった（未完了・競合の残り・
+            // 変更なしの一時停止でやり直した）・提出したが返信できないまま作り直した、のどちらでも、対応が消えると、
+            // 「案で、人に確認中」の返信が投稿されず、すべて断るか案にしたかの判定にも数えられなくなるため
+            if (
+              step === "implement" &&
+              r.deferral !== undefined &&
+              r.deferral.decision === undefined &&
+              r.repliedIn === undefined
+            ) {
+              return {
+                ...r,
+                response: r.deferral.reason,
+                respondedIn: submission,
+                // 人に確かめたいことは、同じ提出の中の持ち越し（申告した実行が、まだ提出されていない）のときだけ残す
+                confirm: r.deferral.proposedIn === submission ? r.confirm : undefined,
+                status: "deferred" as const,
+                submittedIn: submission,
+              };
+            }
             return {
               ...r,
               response: undefined,

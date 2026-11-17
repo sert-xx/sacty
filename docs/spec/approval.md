@@ -145,8 +145,9 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   - 親が、指摘のすべてを断って、同じ先頭のまま提出していたら（`ReviewRejudgeRequested`）、子タスクがレビューした先頭が今の先頭と同じでも、再レビューを始める（`ReviewRestarted`、`reason: declined`、`commit` にその先頭。actor `sacty`。`rejudgeDue`）。
     - 始めるのは、断った理由の返信が済んでから（返信するものが残っていない。[指摘への対応の返信](#指摘への対応の返信)）。返信が GitHub のレート制限の待ちに入っている間は、始めずに待つ。返信を投稿できずに失敗を記録した後は、返信の無いまま始める。
     - 同じ先頭では 1 回だけ始める（`Task.reviewRejudgeCommit`）。デーモンを起動し直しても、繰り返さない。
-    - 親の提出に、後続に回したい案があるとき（`ReviewRejudgeRequested` の `awaitsDecision`）は、その案のすべてを人が決めるまで始めない（[後続に回したい案と、人の決定](#後続に回したい案と人の決定)）。
+    - 親の提出のときに、人がまだ決めていない後続に回したい案があったとき（`ReviewRejudgeRequested` の `awaitsDecision`。前の提出の案を含む）は、その案のすべてを人が決めるまで始めない（[後続に回したい案と、人の決定](#後続に回したい案と人の決定)）。
     - レビューの指示には、同じ先頭を判定し直す回であることを足す（`rejudgeLines`）。作者が断った理由が成り立つかを、先頭のコミットのコードで確かめさせ、成り立つなら指摘を取り下げさせ、成り立たないなら未対応として残させる。
+      取り下げさせるのは、指摘そのものが当たらないと確かめたときだけ。理由が重さについてのもの（稀・影響が小さい）で、指摘が直っていないときは、取り下げさせず、重さを確かめ直させて、提案の重さなら、重みを見直した指摘として残させる（再レビューの重みの見直しは、[PR のレビューだけのタスク](tasks-and-steps.md#pr-のレビューだけのタスク)）。
       ふつうの再レビューの「作者が『対象外』『後続で対応』と返した論点は、もう一度指摘しない」という行は、この回には出さず、そう返した論点も、範囲を確かめた結果で決めさせる。残した指摘は、本文の「前回の指摘」の節に書かせる（親に届くのは、レビューの本文）。
     - 指摘なしなら、下のとおりドラフトを外して、人の承認を待つ。指摘が残れば、親を一時停止する（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
 - 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず、判定そのものでは再レビューも起きないので、PR は人の承認（マージ）を待つ。指摘なしの後でも、PR の先頭が変われば（人がコミットを足したときなど）、上のとおり再レビューを始める。
@@ -303,38 +304,43 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 ### 指摘なしの後の CI の失敗の表示
 
 sacty は PR の CI を待たずに、PR のレビューの子タスクの指摘なしでドラフトを外す（[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
-そのため、レビューの時点で実行中だった CI が後から落ちても、タスクは人の承認待ち（マージ待ち）のままになる。人が気づけるよう、人の承認を待つ実装の PR の先頭のコミットの CI を読み、失敗していたら、タスクの詳細と、タスクの一覧のそのタスクの行に出す（PBI-364・PBI-371）。CI を読んでいる間に通ったら、その表示を消す（PBI-375）。
+そのため、レビューの時点で実行中だった CI や、ドラフトを外したことで始まった CI が後から落ちても、タスクは人の承認待ち（マージ待ち）のままになる。人が気づけるよう、人の承認を待つ実装の PR の先頭のコミットの CI を読み、失敗していたら、タスクの詳細と、タスクの一覧のそのタスクの行に出す（PBI-364・PBI-371）。CI を読んでいる間に通ったら、その表示を消す（PBI-375）。
 出すだけで、実行・差し戻し・再レビュー・ドラフトへの変更・CI の再実行は始めない。仕組みを小さく保つため、CI を読み続けない。
 
 - 読むもの：PR の確認（60秒ごと。`checkPullRequests`）の最後に、PR の先頭のコミット（GitHub の今の先頭。読めなければ、指摘なしにした先頭 `reviewedCommit`、それも無ければ提出のコミット）の CI の状態（`CiStatusReader.snapshot`。ワークフローの実行・チェック・コミットの状態と、ワークフローの中のジョブ）。
   - 対象は、承認待ち（`awaiting_approval`）の、開いている実装の PR で、レビューの子タスクの指摘なしを待っていないもの（`watchesPullRequestCi`）。要求要件・設計の PR、PR の指摘の戻し先を判断している間、エスカレーション中は読まない。CI を読む口が無い（`ServiceDeps.ci`）ときも読まない。
   - 1回の PR の確認で読むのは、1件だけ。候補は、前に読んだタスクの次から順に探す。前の読み取りの通信が終わっていなければ、読まない。
-  - 先頭のコミットごとに、`PR_CI_READ_INTERVAL_MS`（5分）の間隔で、`PR_CI_READS_MAX`（12）回まで読む（最初に読んでから1時間ほど）。回数は、デーモンのメモリーに持つ（`pullRequestCiReads`。再起動すると、数え直す）。実装の PR が開いていなくなった（マージした・閉じた・中止した）タスクの回数は、忘れる。PR の状態を一時的に読めなかった確認があっても、数え直さない。
-  - 読むのをやめるのは、失敗の表示を出していなくて、CI が1つ以上あって、すべて終わっていて失敗が無いとき、失敗の表示を消したとき、回数の上限に達したとき。失敗を記録した後も、同じ回数の上限の中で、同じ間隔で読む（失敗を記録した回も、上限に数える）。読めない・`PR_CI_TIMEOUT_MS`（15秒）のうちに返らないときも、1回と数える（理由はデーモンのログに出す。トークンは伏せる）。
+  - 先頭のコミットごとに、`PR_CI_READ_INTERVAL_MS`（5分）の間隔で、`PR_CI_READS_MAX`（12）回まで読む（続けて読めば、最初に読んでから1時間ほど。読み終わりを取り消した先頭は、残りの回を、取り消した後に読むので、最初の読み取りから1時間より後になることがある）。回数は、デーモンのメモリーに持つ（`pullRequestCiReads`。再起動すると、数え直す）。実装の PR が開いていなくなった（マージした・閉じた・中止した）タスクの回数は、忘れる。PR の状態を一時的に読めなかった確認があっても、数え直さない。
+  - 読むのをやめるのは、失敗の表示を出していなくて、CI が1つ以上あって、すべて終わっていて失敗が無いとき、失敗の表示を消したとき（どちらも「読み終わり」）、回数の上限に達したとき。
+  - 読み終わりにするのは、その先頭を最初に読んでからと、sacty がその PR のドラフトを外してから（`notePullRequestUndrafted`。指摘なしで外した・外し直した・重ねた PR の付け替えで外した）の、どちらも `PR_CI_SETTLE_MS`（5分。読み直しの間隔と同じ）以上たった後の読み取りだけ（PBI-381）。ドラフトを外したことで始まる CI は、外した直後の一覧にまだ載っていないことがあるため。それより前の読み取りでは、失敗が無くても、間隔の後に読み直す（その読み取りも、回数の上限に数える）。
+    - 読み終わりにした先頭も、その後に sacty がドラフトを外したら、読み終わりを取り消して読み直す（外した後に人が足したコミットを、再レビューの間に読み終わりにしていたときのため）。読んだ回数は数え直さないので、回数の上限に達した先頭は、読まない。
+    - ドラフトを外した時刻は、デーモンのメモリーに持つ（`pullRequestCiUndrafted`）。再起動の後は、その先頭を最初に読んだ時刻から数える。
+  - 失敗を記録した後も、同じ回数の上限の中で、同じ間隔で読む（失敗を記録した回も、上限に数える）。読めない・`PR_CI_TIMEOUT_MS`（15秒）のうちに返らないときも、1回と数える（理由はデーモンのログに出す。トークンは伏せる）。
 - 記録：失敗があれば、actor `sacty` で `PullRequestCiFailed`（PR の番号・CI を読んだ先頭 `commit`・失敗したチェック `checks`）を、先頭のコミットごとに1度だけ記録する。`Task.pullRequestCiFailure`（PR の番号・そのときの提出のコミット・読んだ先頭 `head`・チェック・読んだ時刻）に持つ。
   - 失敗とみなすのは、[マージの後の監視](deployment-watch.md)と同じ結論（`isFailedCiCheck`）。チェックは名前とリンクで、同じ名前とリンクは1件にし、`PR_CI_FAILED_CHECKS_MAX`（10）件まで持ち、超えた分は件数（`more`）だけ持つ。名前は `PR_CI_CHECK_NAME_MAX`（200）文字まで。リンクは `http`・`https` のものだけを残す。
   - 読んでいる間に、状態・PR・コミットが変わったときは記録しない。
   - PR を作り直した・更新した（`PullRequestPublished`）、マージされた・閉じられた・開き直された（`PullRequestMerged`・`PullRequestClosed`・`PullRequestReopened`）ときは、記録を消す。
-- 消す：失敗の表示を出している間に読んだ CI が通っていたら、actor `sacty` で `PullRequestCiRecovered`（PR の番号・CI を読んだ先頭 `commit`）を記録し、`Task.pullRequestCiFailure` を消して、その先頭は読むのをやめる。
+    - 閉じられたことを記録した PR は、読んだ回数も忘れる。開き直されたら、同じ先頭でも、最初から読み直し、落ちていたら、記録し直す。
+- 消す：失敗の表示を出している間に読んだ CI が通っていたら、actor `sacty` で `PullRequestCiRecovered`（PR の番号・CI を読んだ先頭 `commit`）を記録し、`Task.pullRequestCiFailure` を消して、その先頭は読むのをやめる（読み終わりにしない間の読み取りでは、表示だけ消して、間隔の後に読み直す。その読み取りで落ちていたら、`PullRequestCiFailed` を記録し直す）。
   - 通ったとするのは、CI の一覧を読み切れていて（`CiSnapshot.truncated` でない）、一覧（ワークフローの実行・チェック・コミットの状態と、ジョブ）が `ciAllPassed` を満たすときだけ：空でなく、すべて終わっていて、結論が `success` か、`skipped`・`neutral`（コミットの状態は `success` だけ）で、`success` が1件以上ある。
   - 取り消し（`cancelled`）・古い結果（`stale`）・実行中・結論の無いものが1件でもある、一覧が空、一覧を読み切れなかった（ページの上限で打ち切った・続きのページをたどれなかった）ときは、消さない。回数の上限までは、間隔の後に読み直す。
   - 人が PR にコミットを足して先頭が変わったときは、新しい先頭の CI が通ったら、前の先頭の失敗の表示も消す（記録の `commit` は、通った先頭）。新しい先頭の CI も落ちていたら、その先頭で `PullRequestCiFailed` を記録し直す。
   - 同じ先頭の CI が落ちたままなら、記録し直さない。記録した失敗したチェックの一覧は、更新しない。
 - 出す場所（`pullRequestCiFailure`。承認待ちで、実装のゲートの PR が開いていて、記録の PR の番号とコミットが今の提出と同じで、戻し先を判断している間でなく、指摘なしを待っていないとき）：
-  - タスクの詳細の承認待ちの案内に、CI を読んだ先頭のコミットと時刻、今の結果を PR で確かめること、直すなら差し戻すか PR に指摘を書くことと、失敗していたチェックの一覧（リンクがあればリンク。超えた分は件数）を出す。案内の補足に、sacty が CI を読み直す間に通れば表示が消えること、読み直すのは最初に読んでから1時間ほどの間だけで、その後の結果は反映されないことを出す。
-  - タスクの一覧の、そのタスクの行の状態の列に、「CI 失敗」の印（アイコンと文字）を添える（`TaskRow.ciFailed`）。印の補足に、Sacty が CI を読んだ時点の結果であること、読み直す間に通れば消えること、読み直すのは最初に読んでから1時間ほどの間だけで、その後の結果は反映されないこと、失敗していたチェックはタスクの詳細に出ることを出す。状態の文言と種類（`statusText`・`statusTone`）は変えないので、一覧の絞り込み・並びは変わらない。
+  - タスクの詳細の承認待ちの案内に、CI を読んだ先頭のコミットと時刻、今の結果を PR で確かめること、直すなら差し戻すか PR に指摘を書くことと、失敗していたチェックの一覧（リンクがあればリンク。超えた分は件数）を出す。案内の補足に、sacty が CI を読み直す間に通れば表示が消えること、読み直すのは PR の先頭のコミットごとに12回まで（ふつうは、最初に読んでから1時間ほどの間）で、その後の結果は反映されないことを出す。
+  - タスクの一覧の、そのタスクの行の状態の列に、「CI 失敗」の印（アイコンと文字）を添える（`TaskRow.ciFailed`）。印の補足に、Sacty が CI を読んだ時点の結果であること、読み直す間に通れば消えること、読み直すのは PR の先頭のコミットごとに12回まで（ふつうは、最初に読んでから1時間ほどの間）で、その後の結果は反映されないこと、失敗していたチェックはタスクの詳細に出ることを出す。状態の文言と種類（`statusText`・`statusTone`）は変えないので、一覧の絞り込み・並びは変わらない。
   - 作業履歴に「PR #N の CI が失敗していた」を出す。エラーレポートでは、確認の不合格（`check`）に分類する（[エラーレポート](error-report.md)）。
   - 表示を消したときは、作業履歴に「PR #N の CI が通った。CI の失敗の表示を消した」を出す（エラーレポートでは、失敗に数えない）。
 - しないこと：
   - 読むのをやめた後の変化は、読まない・反映しない（回数の上限の後に、人が CI を再実行して通っても、詳細の表示と一覧の印は、PR を更新する・マージする・閉じるまで残る。詳細には読んだ時刻を出し、案内と一覧の印には補足を付けて、その時点の結果であることを示す）。読み直すのは、その先頭を最初に読んでからの期間の残りだけなので、最後の読み取りで失敗を見つけたときは、読み直さない。
   - 読む期間・回数は、失敗の表示を出していても延ばさない。デーモンを再起動すると、回数を数え直すので、表示を出している先頭も、もう一度、上限まで読む。
   - 状態の文言と種類（タスクの一覧・ダッシュボードの「あなたの出番」・ヘッダーのお知らせ）は変えない。一覧の印では絞り込めない。ダッシュボード・「あなたの出番」のカード・ヘッダーのお知らせには、印を出さない。通知（Slack・デスクトップ）も出さない。
-  - 最初に読んでから1時間ほどたっても終わらない CI、その後に始まった CI、通った後（表示を消した後を含む）に再実行されて落ちた CI は、拾わない。
-  - 閉じて開き直した PR では、同じ先頭の失敗を出し直さない（デーモンを再起動すると、読み直す）。
+  - 回数の上限まで読んでも（続けて読めば、最初に読んでから1時間ほど）終わらない CI、その後に始まった CI、読み終わりにした後（表示を消して読み終わりにした後を含む）に再実行されて落ちた CI は、拾わない（デーモンを再起動すると、読み直す）。
+  - ドラフトを外したことで始まる CI が、外してから `PR_CI_SETTLE_MS` たっても一覧に載らないときは、拾わない。人が GitHub でドラフトを外したことで始まる CI は、その先頭を読み終わりにした後に始まったものを、拾わない（sacty が外したときと違い、読み終わりを取り消さない）。
   - CI の一覧の取得が上限（`GitHubCiStatus` のページの上限。1つの一覧につき 1,000 件）で打ち切られたときの、読めなかった分は見ない。読めた分に失敗があれば記録するが、読めた分がすべて通っていても、表示は消さない。
   - 判定はマージの可否ではない。CI が失敗したまま人がマージしたときは、通常のマージとして承認する。
 
-コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readPullRequestCi`・`watchesPullRequestCi`・`pullRequestCiSnapshot`・`PR_CI_TIMEOUT_MS`・`PR_CI_READ_INTERVAL_MS`・`PR_CI_READS_MAX`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus.snapshot`・`CiSnapshot.truncated`）、`packages/core/src/events.ts`（`PullRequestCiFailed`・`PullRequestCiRecovered`・`PR_CI_FAILED_CHECKS_MAX`・`PR_CI_CHECK_NAME_MAX`・`isFailedCiCheck`・`ciAllPassed`）、`packages/core/src/projection.ts`（`pullRequestCiFailure`・`Task.pullRequestCiFailure`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/lib/task-list-data.ts`（`loadTaskList`・`TaskRow`）、`apps/web/src/components/task-list.tsx`（`LiveTaskList`）
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readPullRequestCi`・`watchesPullRequestCi`・`pullRequestCiSnapshot`・`notePullRequestUndrafted`・`PR_CI_TIMEOUT_MS`・`PR_CI_READ_INTERVAL_MS`・`PR_CI_READS_MAX`・`PR_CI_SETTLE_MS`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus.snapshot`・`CiSnapshot.truncated`）、`packages/core/src/events.ts`（`PullRequestCiFailed`・`PullRequestCiRecovered`・`PR_CI_FAILED_CHECKS_MAX`・`PR_CI_CHECK_NAME_MAX`・`isFailedCiCheck`・`ciAllPassed`）、`packages/core/src/projection.ts`（`pullRequestCiFailure`・`Task.pullRequestCiFailure`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/lib/task-list-data.ts`（`loadTaskList`・`TaskRow`）、`apps/web/src/components/task-list.tsx`（`LiveTaskList`）
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`reconcileReviewTasks`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 
@@ -763,7 +769,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
 
 ### 後続に回したい案と、人の決定
 
-関係する ADR: [後続に回すかどうかは人が決め、実装は案と理由までを出す](../adr/20261117-0415-defer-proposals-decided-by-person.md)、[後続に回すと決めた指摘の扱いを、人が指摘ごとに選ぶ](../adr/20261117-0504-choose-handling-of-deferred-findings.md)
+関係する ADR: [後続に回すかどうかは人が決め、実装は案と理由までを出す](../adr/20261117-0415-defer-proposals-decided-by-person.md)、[後続に回すと決めた指摘の扱いを、人が指摘ごとに選ぶ](../adr/20261117-0504-choose-handling-of-deferred-findings.md)、[返信していない後続に回したい案は、理由を次の提出に持ち越して返信する](../adr/20261117-0822-carry-unreplied-defer-proposals.md)
 
 実装は、指摘を、この PR では直さず後続に回したいと申告できる。これは案で、後続に回すかどうかは、人が承認の画面で 1 件ずつ決める。
 
@@ -772,7 +778,9 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - 1 つの指摘に、直すものと、後続に回したいものが混ざるときは、`deferred` にして、対応の文に分けて書かせる。
   - 実装のほかの工程の対応と、引き継いだ PR の指摘への対応（`continuedResponses`）では、`deferred` を読まない（申告が無いものとして扱う）。人が「この PR で直す」と決めて差し戻した指摘（`fixOf`）と、決定済みの指摘への `deferred` も、申告が無いものとして扱う（もう一度、案にしない）。
 - 案の記録：`Task.remarks[].deferral`（申告した提出回 `proposedIn`・理由 `reason`・人の決定 `decision`）に持つ。対応の文と違い、後の提出で対応が無くても残る。人が決める前に、後の提出で `addressed` と申告されたら、案を取り下げる。無効にした指摘の案は、一覧に出さない。
-- 返信：PR のコメントから取り込んだ指摘への案は、[指摘への対応の返信](#指摘への対応の返信)で、案であり、人に確認中で、まだ決まっていないことを明記して返信する。
+  - 持ち越し：人がまだ決めておらず、PR にまだ返信していない案は、後の実行に対応が無ければ、案の理由を、その提出の対応として持ち越す（`response` が理由、`status` が `deferred`、`respondedIn` がその提出回）。案を申告した実行が提出に至らなかったとき（未完了・ベースとの競合の残り・変更なしの一時停止で、実装をやり直した）と、提出したが返信できないまま作り直したときに当たる。人に確かめたいこと（`confirm`）は、申告した実行がまだ提出されていないときだけ残す。
+  - 返信した案（`repliedIn` がある）と、人が決めた案は、持ち越さない（対応は、未回答に戻る。案は残る）。
+- 返信：PR のコメントから取り込んだ指摘への案は、[指摘への対応の返信](#指摘への対応の返信)で、案であり、人に確認中で、まだ決まっていないことを明記して返信する。案を申告した実行が提出に至らなくても、持ち越した理由で、次の提出のときに返信する。人が決めた後は、案の返信をしない（返信を待っている間に人が決めたときも。決定は、決定のコメントで PR に残る）。「この PR で直す」と決めた指摘の、差し戻しの指摘への対応は、今の決まりのとおりに返信する。
 - 一覧（`deferProposals`）：実装の承認待ちのとき、まだ決めていない案を、承認の画面に出す（`DeferralNotice`）。案ごとに、指摘の文・理由・AI のレビューの指摘か・元のコメントへのリンクと、決定の選択肢（まだ決めない・後続に回す・この PR で直す）を出す。決定済みの案は、その下に記録として出す。タスクの詳細には、件数と、承認の画面へのリンクを出す（`DeferralPendingNotice`）。作り直している間・一時停止中・エスカレーションの間は、出さない。
 - 決定（`decideDeferrals`。API は `POST /api/tasks/:id/deferrals/decide`）：選んだ指摘だけを決め、`DeferralsDecided`（actor `person`。工程・提出回・指摘ごとの `defer` か `fix`）を記録する。選んでいない案は、決めないまま残る。
   - 決められるのは、実装の承認待ちの今の提出の、まだ決めていない案だけ。決定が 0 件（`deferral.none`）・案でない指摘や決定済みの指摘（`deferral.notOpen`）・古い提出（`gate.staleSubmission`）は断り、何も記録しない。
@@ -792,14 +800,14 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - 先頭に目印（`<!-- sacty-deferral:<タスク ID>:<何回目の決定か> -->`）を置く。指摘の文と理由は外から来た文なので、秘密情報を伏せてから 600 文字で切り、`@` の後ろに幅の無い空白を挟み、引用にして載せる（`askQuote`）。
   - 結果は `DeferralDecisionsPosted`（PR の番号・何回目の決定か・コメントの URL か、残せなかった理由）に記録する。残せなくても、決定とタスクの状態は変えず、やり直さない。セキュリティの組み合わせのタスク・PR が開いていない・GitHub のアカウントを選んでいないプロジェクトでは、コメントせず、その理由を記録する。PR を作っていない実装（変更なし）では、何も記録しない。
   - このコメントは、PR の指摘に取り込まない（タスクのアカウントが投稿した、目印で始まるものだけ。`isDeferralNotice`）。
-- 実装への渡し方（`remarkLines`・`ownerDeferralLines`）：前の提出で案にした指摘は、対応させる指摘から外し、指示とは分けたデータで渡す（人が後続に回すと決めた指摘 `deferredByPerson` と、人に確認中の案 `awaitingDecision`）。どちらも、この PR では直させず、対応も書かせない。この PR で直すと決めた指摘は、差し戻しの指摘に、人が決めたことの印を付けて渡し、もう一度案にさせない。
+- 実装への渡し方（`remarkLines`・`ownerDeferralLines`）：前の提出・前の実行で案にした指摘は、対応させる指摘から外し、指示とは分けたデータで渡す（人が後続に回すと決めた指摘 `deferredByPerson` と、人に確認中の案 `awaitingDecision`）。どちらも、この PR では直させず、対応も書かせない。対応させる指摘がほかに無くても、このデータは渡す。人に確認中の案には、PR への返信は sacty が扱うことを伝える（返信する・したを、言い切らない。提出に至らなかった実行の案は、まだ返信しておらず、sacty の画面から書いた指摘の案と、セキュリティの組み合わせのタスクの案は、返信しない）。指摘の文は、秘密情報を伏せてから、先頭の 600 文字だけを載せ、切ったものには、切ったことの印（`truncated`）を付けて、先頭だけであることを伝える。この PR で直すと決めた指摘は、差し戻しの指摘に、人が決めたことの印を付けて渡し、もう一度案にさせない。
 - レビューへの渡し方（`deferralReviewLines`）：実装の PR のレビューの子タスクの再レビューで、次を伝える。
   - 人に確認中の案：その指摘が提案の重みなら、未対応に数えず、もう一度指摘せず、判定の根拠にしない。要修正の重みなら、人が後続に回すと決めるまで、未対応として残す。
-  - 人が後続に回すと決めた指摘：指摘の文と、実装が書いた理由を、指示とは分けたデータ（`deferredByPerson`）で渡す。重みに関わらず、未対応に数えず、もう一度指摘せず、判定の根拠にしない。今回の変更で影響が大きくなったときだけ、新しい指摘として出させる。
-- 何も変えなかったやり直しに案があるとき：実装が、先頭を変えずに、最新の回の指摘のすべてを、断るか、案にしたときは、提出にして返信する（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。同じ先頭の判定のし直しは、案のすべてを人が決めてから始める（[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
+  - 人が後続に回すと決めた指摘：指摘の文と、実装が書いた理由を、指示とは分けたデータ（`deferredByPerson`）で渡す。重みに関わらず、未対応に数えず、もう一度指摘せず、判定の根拠にしない。今回の変更で影響が大きくなったときだけ、新しい指摘として出させる。指摘の文と理由は、秘密情報を伏せてから、先頭の 600 文字だけを載せ、切ったものには、切ったことの印（`findingTruncated`・`proposalTruncated`）を付けて、先頭だけであることを伝える。
+- 何も変えなかったやり直しに案があるとき：実装が、先頭を変えずに、最新の回の指摘のすべてを、断るか、案にしたとき（前の実行が申告して、持ち越した案を含む）は、提出にして返信する（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。同じ先頭の判定のし直しは、人がまだ決めていない案（前の提出の案・前の回の指摘の案を含む）のすべてを人が決めてから始める（[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
 - 人が決めないまま PR をマージしたときは、マージを承認として進める（案は、決めないまま残る。PR の返信は、案のまま）。
 
-コード: `apps/daemon/src/service.ts`（`decideDeferrals`・`announceDeferralDecisions`・`settleDeferralTasks`・`declinedEveryFinding`・`rejudgeDue`）、`apps/daemon/src/deferral-notice.ts`（`buildDeferralNotice`・`buildDeferralIssue`・`buildDeferralTask`・`deferralNoticeMarker`）、`apps/daemon/src/prompts.ts`（`deferLines`・`ownerDeferralLines`・`deferralReviewLines`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`）、`apps/daemon/src/github.ts`（`isDeferralNotice`）、`packages/core/src/events.ts`（`DeferralsDecided`・`DeferralDecisionsPosted`・`DecideDeferralsInput`）、`packages/core/src/projection.ts`（`deferProposals`・`decidedDeferrals`）、`apps/web/src/components/deferral.tsx`（`DeferralNotice`）、`apps/web/src/components/deferral-pending.tsx`（`DeferralPendingNotice`）、`apps/web/src/app/actions.ts`（`deferralAction`）
+コード: `apps/daemon/src/service.ts`（`decideDeferrals`・`announceDeferralDecisions`・`settleDeferralTasks`・`declinedEveryFinding`・`rejudgeDue`）、`apps/daemon/src/deferral-notice.ts`（`buildDeferralNotice`・`buildDeferralIssue`・`buildDeferralTask`・`deferralNoticeMarker`）、`apps/daemon/src/prompts.ts`（`deferLines`・`remarkLines`・`ownerDeferralLines`・`deferralReviewLines`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`）、`apps/daemon/src/github.ts`（`isDeferralNotice`）、`packages/core/src/events.ts`（`DeferralsDecided`・`DeferralDecisionsPosted`・`DecideDeferralsInput`）、`packages/core/src/projection.ts`（`deferProposals`・`decidedDeferrals`・`applyEvent`）、`apps/web/src/components/deferral.tsx`（`DeferralNotice`）、`apps/web/src/components/deferral-pending.tsx`（`DeferralPendingNotice`）、`apps/web/src/app/actions.ts`（`deferralAction`）
 
 ### 戻し先の判断の文の見せ方
 

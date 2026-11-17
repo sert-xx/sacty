@@ -100,7 +100,7 @@ export function IntegrationResult({ task }: { task: Task }) {
         </div>
       )}
       {(review.unreadDroppedHumanChecks?.length ?? 0) > 0 && (
-        // 外す申告のうち、読み取れなかった・前の回の項目に当たらなかったもの（項目は、外れずに残っている。PBI-363）
+        // 外す申告のうち、採らなかったもの（決まった形でない申告が1つでもあった回の、すべての申告。項目は、外れずに残っている。PBI-363・382）
         <div
           data-testid="integration-unread-dropped-human-checks"
           className="flex flex-col gap-1 text-sm"

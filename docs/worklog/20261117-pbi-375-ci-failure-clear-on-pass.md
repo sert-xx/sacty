@@ -4,7 +4,7 @@
 - タスク: PBI-375
 - PR: #410
 - ブランチ: feat/pbi-375-ci-failure-clear-on-pass
-- 関係する ADR: [指摘なしの後の CI の失敗の表示を、CI を読んでいる間に通ったら消す](../adr/20261117-0440-clear-ci-failure-when-ci-passes-while-reading.md)
+- 関係する ADR: [指摘なしの後の CI の失敗の表示を、CI を読んでいる間に通ったら消す](../adr/20261117-0440-superseded-clear-ci-failure-when-ci-passes-while-reading.md)
 
 ## 目的
 
