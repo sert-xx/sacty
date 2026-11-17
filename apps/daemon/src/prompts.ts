@@ -110,7 +110,6 @@ import { WORKSPACE_SCRATCH_DIR, WORKSPACE_TOOLS_DIR, type WorkingTreeCopy } from
 import {
   assessesRiskInReview,
   extractRiskAssessment,
-  RISK_ASSESSMENT_HEADING,
   reviewRiskLines,
   riskAssessmentLines,
   withoutRiskBlocks,
@@ -8591,6 +8590,8 @@ export function extractReviewComments(
   rework?: ReviewRework;
   /** リスク評価の答えを読めたもの（PBI-362。答えが無い・形が違えば無い）。 */
   risk?: RiskAssessment;
+  /** リスクを評価させたレビューで、評価を読めなかった理由（PBI-386。評価を読めたとき・評価させていないときは無い）。 */
+  riskUnreadable?: DaemonText;
 } {
   const commentable = commentableLines(diff);
   let found: (ReviewComment & { severity?: Severity })[] | undefined;
@@ -8636,14 +8637,9 @@ export function extractReviewComments(
   }
   // リスクを評価させたレビュー（PBI-362）は、評価の答えを、形が違っても本文から取り除く（投稿する本文に JSON を残さない）。
   // 評価させていないレビューの本文は、評価の見出しを含んでいても触らない（レビューの中のコード例を消さない）
-  if (options.risk) {
-    for (const candidate of jsonCandidates(output)) {
-      if (candidate.value[RISK_ASSESSMENT_HEADING] !== undefined) used.push(candidate);
-    }
-  }
-  const risk = options.risk
-    ? extractRiskAssessment(output, options.secrets)?.assessment
-    : undefined;
+  const riskRead = options.risk ? extractRiskAssessment(output, options.secrets) : undefined;
+  if (riskRead) used.push(...riskRead.answers);
+  const risk = riskRead?.assessment;
   // JSON として読めなかった評価（末尾のカンマなど）は候補にならないので、評価の答えの形で始まるコードブロックごと取り除く
   const stripped = withoutCandidates(output, used);
   const body = (options.risk ? withoutRiskBlocks(stripped) : stripped).trim();
@@ -8669,6 +8665,7 @@ export function extractReviewComments(
         }),
     ...(rework ? { rework } : {}),
     ...(risk ? { risk } : {}),
+    ...(riskRead?.reason ? { riskUnreadable: riskRead.reason } : {}),
   };
 }
 
