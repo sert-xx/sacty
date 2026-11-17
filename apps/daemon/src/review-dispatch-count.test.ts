@@ -147,6 +147,48 @@ describe("PR のレビューが起動した担当の数を、実行の記録か�
     expect(await claude([toolUse("t1", "Bash")])).toEqual({ subagents: 1, canDispatch: true });
   });
 
+  it("Claude Code：親がまとめて起動するツール（Workflow）を呼んでいれば、担当のセッションのファイルが 1 つも無くても（形が変わっても）、0 件と数えない", async () => {
+    // 担当のセッションのファイルが、数える名前の形で残っていない
+    put(
+      "agent/projects/-workspace/s1/subagents/workflows/wf_a/session-1.jsonl",
+      jsonl([said("x")]),
+    );
+    expect(await claude([toolUse("t1", "Skill"), toolUse("t2", "Workflow")])).toEqual({
+      subagents: 1,
+      canDispatch: true,
+    });
+    // 同じ呼び出しの重複は 1 件。1 件ずつ起動するツールの呼び出しと合わせて数える
+    expect(
+      await claude([toolUse("t2", "Workflow"), toolUse("t2", "Workflow"), toolUse("t3", "Agent")]),
+    ).toEqual({ subagents: 2, canDispatch: true });
+  });
+
+  it("Claude Code：間を省いた親のセッションでも、担当のセッションのファイルがあれば数える（0 件のときだけ、分からない）", async () => {
+    put("agent/projects/-workspace/s1/subagents/agent-0a.jsonl", jsonl([said("x")]));
+    expect(
+      await claude([toolUse("t1", "Bash"), { type: TRUNCATED_EVENT, droppedBytes: 10 }]),
+    ).toEqual({ subagents: 1, canDispatch: true });
+  });
+
+  it("写せなかったファイルがある実行で 0 件なら、分からない（写せなかった所に起動があったかもしれない）。1 件以上なら数える", async () => {
+    put("agent/projects/-workspace/s1.jsonl", jsonl([toolUse("t1", "Bash")]));
+    const count = (filesSkipped: boolean) =>
+      countReviewDispatch({
+        runtime: "claude-code",
+        agentDir: agentDir(),
+        eventsPath: put("run.jsonl", init(["Task"])),
+        filesSkipped,
+      });
+    expect(await count(true)).toEqual({
+      subagents: undefined,
+      canDispatch: false,
+      unknown: "files_skipped",
+    });
+    expect(await count(false)).toEqual({ subagents: 0, canDispatch: true });
+    put("agent/projects/-workspace/s1.jsonl", jsonl([toolUse("t1", "Agent")]));
+    expect(await count(true)).toEqual({ subagents: 1, canDispatch: true });
+  });
+
   it("Claude Code：使えるツールが Workflow だけでも、担当を起動する手段があったと確かめる", async () => {
     expect(await claude([toolUse("t1", "Bash")], ["Workflow", "Bash"])).toEqual({
       subagents: 0,
@@ -169,11 +211,11 @@ describe("PR のレビューが起動した担当の数を、実行の記録か�
         agentDir: agentDir(),
         eventsPath: undefined,
       }),
-    ).toEqual({ subagents: undefined, canDispatch: false });
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "no_parent_session" });
     // 間を省いた（上限を超えた）ファイルで 0 件：省いた所に呼び出しがあったかもしれない
     expect(
       await claude([toolUse("t1", "Bash"), { type: TRUNCATED_EVENT, droppedBytes: 10 }]),
-    ).toEqual({ subagents: undefined, canDispatch: false });
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "truncated" });
     // 目印の名前が、指示や差分の文字列の中にあるだけなら、間を省いたとは扱わない（0 件と数える）
     expect(
       await claude([toolUse("t1", "Bash"), said(`差分に ${TRUNCATED_EVENT} という文字列がある`)]),
@@ -206,7 +248,7 @@ describe("PR のレビューが起動した担当の数を、実行の記録か�
         agentDir: agentDir(),
         eventsPath: undefined,
       }),
-    ).toEqual({ subagents: undefined, canDispatch: false });
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "no_parent_session" });
   });
 
   // Codex の形
@@ -275,28 +317,40 @@ describe("PR のレビューが起動した担当の数を、実行の記録か�
   it("Codex：間を省いた（上限を超えた）親の rollout で 0 件なら、分からない。1 件でも見つかれば数える", async () => {
     const mark = { type: TRUNCATED_EVENT, droppedBytes: 10 };
     rollout("parent", [meta("exec"), turn(), call("exec_command", "c1"), mark]);
-    expect(await codex()).toEqual({ subagents: undefined, canDispatch: false });
+    expect(await codex()).toEqual({
+      subagents: undefined,
+      canDispatch: false,
+      unknown: "truncated",
+    });
     rollout("parent", [meta("exec"), turn(), call("spawn_agent", "c1"), mark]);
     expect(await codex()).toEqual({ subagents: 1, canDispatch: true });
   });
 
   it("Codex：親の rollout が無い（担当のものしか無い・rollout が無い）なら、分からない", async () => {
-    expect(await codex()).toEqual({ subagents: undefined, canDispatch: false });
+    expect(await codex()).toEqual({
+      subagents: undefined,
+      canDispatch: false,
+      unknown: "no_parent_session",
+    });
     rollout("child", [meta({ subagent: {} }), turn(), call("spawn_agent", "c1")]);
-    expect(await codex()).toEqual({ subagents: undefined, canDispatch: false });
+    expect(await codex()).toEqual({
+      subagents: undefined,
+      canDispatch: false,
+      unknown: "no_parent_session",
+    });
   });
 
   it("知らない種類のエージェント・セッションのファイルの場所が無いときは、分からない", async () => {
     put("agent/projects/-workspace/s1.jsonl", jsonl([toolUse("t1", "Bash")]));
     expect(
       await countReviewDispatch({ runtime: "stub", agentDir: agentDir(), eventsPath: undefined }),
-    ).toEqual({ subagents: undefined, canDispatch: false });
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "unknown_runtime" });
     expect(
       await countReviewDispatch({
         runtime: "claude-code",
         agentDir: undefined,
         eventsPath: undefined,
       }),
-    ).toEqual({ subagents: undefined, canDispatch: false });
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "no_files_dir" });
   });
 });

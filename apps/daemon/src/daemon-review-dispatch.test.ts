@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { REVIEW_UNDISPATCHED_RETRIES } from "@sacty/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { ConfigResult } from "./config.js";
@@ -214,7 +214,21 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
     });
     const [task] = service.importIssues([pr(9)]);
     const id = task?.id ?? "";
-    await service.runNext(id);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await service.runNext(id);
+      // 数えられなかった理由を、デーモンのログに 1 行出す（タスクと実行の ID と、理由の種類だけ。本文は出さない）
+      const runId = service
+        .get(id)
+        ?.activity.flatMap((e) => (e.type === "AgentRunCompleted" ? [e.payload.runId] : []))[0];
+      const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("担当の数"));
+      expect(lines).toEqual([
+        `[daemon] PR のレビューが起動した担当の数を、数えられませんでした（タスク ${id}・実行 ${runId}・種類 claude-code・理由 no_parent_session）。担当を起動したかを確かめずに、レビューを使います。`,
+      ]);
+      expect(lines.join("")).not.toContain("評価");
+    } finally {
+      warn.mockRestore();
+    }
     expect(failures(service, id)).toEqual([]);
     expect(service.get(id)?.task.reviewDispatch).toEqual({
       round: 1,

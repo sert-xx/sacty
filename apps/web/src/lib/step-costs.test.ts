@@ -733,4 +733,30 @@ describe("担当を起動しなかったために使わなかったレビュー�
     expect(row?.runs.map((r) => r.result)).toEqual(["notUsed", "failed"]);
     expect(row?.runs[0]?.costUsd).toBe(0.4);
   });
+
+  it("開始の記録が無い実行でも、「使わなかった」として出す", () => {
+    seq = 0;
+    // 開始の記録を除いた作業履歴（タスクの状態は、開始の記録を含む並びから作る）
+    const head = [created(), ev({ type: "StepsChosen", payload: { steps: ["review"] } })];
+    const started = ev({
+      type: "AgentRunStarted",
+      payload: { runId: "r1", step: "review", agentId: "a", authMode: "subscription" },
+    });
+    const failed = ev({
+      type: "AgentRunFailed",
+      payload: {
+        runId: "r1",
+        step: "review",
+        agentId: "a",
+        reason: "error",
+        message: "x",
+        costUsd: 0.4,
+        estimated: true,
+        reviewDispatch: { subagents: 0 },
+      },
+    });
+    const task = taskOf([...head, started, failed]);
+    const row = stepCosts(task, [...head, failed]).rows.find((r) => r.role === "review");
+    expect(row?.runs.map((r) => r.result)).toEqual(["notUsed"]);
+  });
 });

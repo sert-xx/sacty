@@ -10892,20 +10892,10 @@ export class TaskService {
     // 手段があったのに 1 件も起動しなかった実行は、判定を採らず、PR にも投稿せずに、やり直させる。やり直しても続くなら止める
     const counted =
       step === "review"
-        ? await countReviewDispatch({
-            runtime: agent.runtime,
-            agentDir: this.deps.sessionLogs?.agentFilesDir(task.id, runId),
-            eventsPath: this.deps.sessionLogs?.path(task.id, runId, "events"),
-          })
+        ? await this.countReviewDispatch(task.id, runId, agent, chosen.agent)
         : undefined;
-    const reviewDispatch: ReviewDispatch | undefined = counted && {
-      subagents: counted.subagents ?? null,
-      runtime: agent.runtime,
-      ...(agent.model ? { model: agent.model } : {}),
-      // 設定のエージェントが使えず、切り替え先で動いた実行
-      ...(chosen.agent.id !== agent.id ? { configuredAgentId: chosen.agent.id } : {}),
-    };
-    if (reviewDispatch && counted?.subagents === 0 && counted.canDispatch) {
+    const reviewDispatch = counted?.record;
+    if (reviewDispatch && counted?.undispatched) {
       const retried = latest.reviewUndispatched?.sinceResume ?? 0;
       const retry = retried < REVIEW_UNDISPATCHED_RETRIES;
       const text = retry
@@ -11268,6 +11258,48 @@ export class TaskService {
     });
     this.append(task, events);
     this.checkBudget(this.mustGet(task.id));
+  }
+
+  /**
+   * PR のレビューの実行が起動した、観点ごとの担当の数を数えて、記録の形にする（PBI-379）。undispatched は、担当を起動する
+   * 手段があったのに 0 件だった（採らずにやり直す）実行。数えられなかったときは、理由をデーモンのログに出す（タスクと実行の ID と、
+   * 理由の種類だけ。写したファイルの場所が無いデーモンでは、出さない）。
+   */
+  private async countReviewDispatch(
+    taskId: string,
+    runId: string,
+    agent: AgentConfig,
+    configured: AgentConfig,
+  ): Promise<{ record: ReviewDispatch; undispatched: boolean }> {
+    const counted = await countReviewDispatch({
+      runtime: agent.runtime,
+      agentDir: this.deps.sessionLogs?.agentFilesDir(taskId, runId),
+      eventsPath: this.deps.sessionLogs?.path(taskId, runId, "events"),
+      // 写せなかったファイルがあった実行（写したファイルの記録の skipped）
+      filesSkipped: this.deps.activity
+        .forTask(taskId)
+        .some(
+          (e) =>
+            e.type === "AgentSessionArchived" &&
+            e.payload.runId === runId &&
+            e.payload.skipped.length > 0,
+        ),
+    });
+    if (counted.unknown && counted.unknown !== "no_files_dir") {
+      console.warn(
+        `[daemon] PR のレビューが起動した担当の数を、数えられませんでした（タスク ${taskId}・実行 ${runId}・種類 ${agent.runtime}・理由 ${counted.unknown}）。担当を起動したかを確かめずに、レビューを使います。`,
+      );
+    }
+    return {
+      record: {
+        subagents: counted.subagents ?? null,
+        runtime: agent.runtime,
+        ...(agent.model ? { model: agent.model } : {}),
+        // 設定のエージェントが使えず、切り替え先で動いた実行
+        ...(configured.id !== agent.id ? { configuredAgentId: configured.id } : {}),
+      },
+      undispatched: counted.subagents === 0 && counted.canDispatch,
+    };
   }
 
   /**

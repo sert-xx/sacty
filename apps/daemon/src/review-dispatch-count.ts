@@ -9,36 +9,63 @@ import { TRUNCATED_EVENT } from "./session-logs.js";
  * 数えるのは、実行の後に sacty が写した、エージェントのセッションのファイル（runs/<タスク>/<実行>/agent。PBI-66）。
  * エージェントの種類ごとに形が違う。
  * - Claude Code：担当ごとのセッションのファイル（projects/<作業ディレクトリ>/<セッション>/subagents/ の下。深さによらない。
- *   名前が `agent-<16進の ID>.jsonl` の形のものだけ）の数。起動のツールの名前には頼らない（1 件ずつ起動するツールでも、まとめて起動するツールでも、担当のセッションは
- *   この下に残る）。親のセッション（projects/<作業ディレクトリ>/<セッション>.jsonl）の中の `Agent`・`Task` の呼び出し
- *   （呼び出しの ID で重複を除く）も数え、多い方を使う
+ *   名前が `agent-<16進の ID>.jsonl` の形のものだけ）の数と、親のセッション（projects/<作業ディレクトリ>/<セッション>.jsonl）
+ *   の中の、担当を起動するツール（`Agent`・`Task`・`Workflow`）の呼び出し（呼び出しの ID で重複を除く）の数の、多い方。
+ *   担当のセッションのファイルは、名前を知らない起動のツールで起動しても残る。親の呼び出しは、担当のセッションのファイルの
+ *   形が変わっても残る。どちらかが 1 件以上なら、0 件と数えない
  * - Codex：rollout のファイルのうち、先頭の `session_meta` の `source` が `exec` のものが親。親の中の `spawn_agent` の
  *   呼び出しを数える（担当ごとにも rollout ができ、親の履歴を引き継ぐので、全部のファイルで数えると重複する）
  *
  * 「起動が 0 件」をやり直しにするのは、担当を起動する手段がその実行にあったと確かめられたときだけ。
- * - Claude Code：実行の出力の最初の出来事（`system`・`init`）の `tools` に、`Agent`・`Task`・`Workflow` のどれかがある
+ * - Claude Code：実行の出力の最初の出来事（`system`・`init`）の `tools` に、上の担当を起動するツールのどれかがある
  * - Codex：親の `turn_context` に `multi_agent_version` がある
  * 確かめられなければ（手段が無い環境。スキルの逐次モードで見る）、0 件でもやり直しにしない。
  *
- * 数えられないとき（ファイルが無い・読めない・間を省いたファイルで 0 件・知らない種類のエージェント）は、subagents を
+ * 数えられないとき（ファイルが無い・読めない・間を省いたファイルや写せなかったファイルのある実行で 0 件・知らない種類の
+ * エージェント）は、subagents を
  * undefined（分からない）にする。担当の中身や質は見ない。
  *
- * エージェントの版が変わり、担当の起動が上の形で残らなくなると（担当のセッションのファイルの名前の形が変わったときも）、親のセッションが読める限り、担当を起動した実行も 0 件と
- * 数える（手段があったと確かめられれば、やり直しになり、続けば止まる）。「分からない」にはならない。
+ * エージェントの版が変わり、親の呼び出しと担当のセッションのファイルの両方が、上の形で残らなくなると、親のセッションが
+ * 読める限り、担当を起動した実行も 0 件と数える（手段があったと確かめられれば、やり直しになり、続けば止まる）。片方だけなら、
+ * もう片方で数える。上限で間を省いた親のセッションで 0 件のときは、「分からない」にする（担当のセッションのファイルは、
+ * 間を省いていても、あれば数える）。
  */
 export type ReviewDispatchCount = {
   /** 起動した担当の数。数えられなければ undefined。 */
   subagents: number | undefined;
   /** 担当を起動する手段が、その実行にあったと確かめられたか。 */
   canDispatch: boolean;
+  /** 数えられなかった理由（subagents が undefined のときだけ）。 */
+  unknown?: ReviewDispatchUnknown;
 };
 
-const UNKNOWN: ReviewDispatchCount = { subagents: undefined, canDispatch: false };
+/** 数えられなかった理由（デーモンのログに出す。記録には残さない）。 */
+export type ReviewDispatchUnknown =
+  /** 写したセッションのファイルの場所が無い。 */
+  | "no_files_dir"
+  /** 数え方を知らない種類のエージェント。 */
+  | "unknown_runtime"
+  /** 親のセッションのファイルが無い。 */
+  | "no_parent_session"
+  /** 上限で間を省いたファイルで、0 件だった（省いた所に起動があったかもしれない）。 */
+  | "truncated"
+  /** 写せなかったファイルがある実行で、0 件だった（写せなかった所に起動があったかもしれない）。 */
+  | "files_skipped"
+  /** 読んでいる途中で失敗した。 */
+  | "unreadable";
 
-/** Claude Code の、担当を 1 件ずつ起動するツールの名前（版によって `Task` か `Agent`）。親の呼び出しを数える。 */
-const CLAUDE_DISPATCH_TOOLS = new Set(["Agent", "Task"]);
-/** Claude Code の、担当を起動する手段になるツール（まとめて起動するツールを含む）。手段があったかの確かめに使う。 */
-const CLAUDE_DISPATCH_MEANS = new Set([...CLAUDE_DISPATCH_TOOLS, "Workflow"]);
+const unknown = (reason: ReviewDispatchUnknown): ReviewDispatchCount => ({
+  subagents: undefined,
+  canDispatch: false,
+  unknown: reason,
+});
+
+/**
+ * Claude Code の、担当を起動するツールの名前。1 件ずつ起動するツール（版によって `Task` か `Agent`）と、まとめて起動する
+ * ツール（`Workflow`）。親の呼び出しを数えるのにも、手段があったかの確かめにも、同じものを使う（手段として認めるツールを
+ * 親が呼んでいれば、担当のセッションのファイルの形が変わっても、0 件と数えない）。
+ */
+const CLAUDE_DISPATCH_TOOLS = new Set(["Agent", "Task", "Workflow"]);
 
 /** Claude Code の、担当のセッションのファイルの名前（`agent-<16進の ID>.jsonl`）。 */
 const CLAUDE_SUBAGENT_FILE = /^agent-[0-9a-f]+\.jsonl$/;
@@ -120,7 +147,7 @@ async function countClaude(
       CLAUDE_SUBAGENT_FILE.test(parts[parts.length - 1] ?? "")
     );
   });
-  if (parents.length === 0) return UNKNOWN;
+  if (parents.length === 0) return unknown("no_parent_session");
   const calls = new Set<string>();
   let truncated = false;
   for (const parent of parents) {
@@ -145,7 +172,7 @@ async function countClaude(
   }
   const subagents = Math.max(calls.size, children.length);
   // 間を省いたファイル（上限を超えた実行）で 0 件なら、省いた所に呼び出しがあったかもしれない
-  if (subagents === 0 && truncated) return UNKNOWN;
+  if (subagents === 0 && truncated) return unknown("truncated");
   return { subagents, canDispatch: eventsPath ? await claudeCanDispatch(eventsPath) : false };
 }
 
@@ -159,7 +186,7 @@ async function claudeCanDispatch(eventsPath: string): Promise<boolean> {
     if (event?.type === "system" && event.subtype === "init") {
       can =
         Array.isArray(event.tools) &&
-        event.tools.some((t) => typeof t === "string" && CLAUDE_DISPATCH_MEANS.has(t));
+        event.tools.some((t) => typeof t === "string" && CLAUDE_DISPATCH_TOOLS.has(t));
       return false;
     }
     return read < INIT_LINES;
@@ -213,8 +240,8 @@ async function countCodex(agentDir: string): Promise<ReviewDispatchCount> {
     });
     spawned += ids.size + anonymous;
   }
-  if (parents === 0) return UNKNOWN;
-  if (spawned === 0 && truncated) return UNKNOWN;
+  if (parents === 0) return unknown("no_parent_session");
+  if (spawned === 0 && truncated) return unknown("truncated");
   return { subagents: spawned, canDispatch };
 }
 
@@ -226,13 +253,23 @@ export async function countReviewDispatch(input: {
   runtime: string;
   agentDir: string | undefined;
   eventsPath: string | undefined;
+  /** セッションのファイルを写すときに、写せなかったファイルがあった（写しに欠けがある）。 */
+  filesSkipped?: boolean;
 }): Promise<ReviewDispatchCount> {
-  if (!input.agentDir) return UNKNOWN;
+  if (!input.agentDir) return unknown("no_files_dir");
+  let counted: ReviewDispatchCount;
   try {
-    if (input.runtime === "claude-code") return await countClaude(input.agentDir, input.eventsPath);
-    if (input.runtime === "codex") return await countCodex(input.agentDir);
+    if (input.runtime === "claude-code") {
+      counted = await countClaude(input.agentDir, input.eventsPath);
+    } else if (input.runtime === "codex") {
+      counted = await countCodex(input.agentDir);
+    } else {
+      return unknown("unknown_runtime");
+    }
   } catch {
     // 読めなければ、分からない（やり直しにしない）
+    return unknown("unreadable");
   }
-  return UNKNOWN;
+  // 写しに欠けがある実行で 0 件なら、写せなかったファイルに起動があったかもしれない
+  return counted.subagents === 0 && input.filesSkipped ? unknown("files_skipped") : counted;
 }
