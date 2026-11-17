@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
-import {
-  unlinkedGeneratedBody,
-  unlinkedMergedBody,
-  withoutWorkspaceLinks,
-} from "./pr-body-links.js";
+import { EventEmitter } from "node:events";
+import { describe, expect, it, vi } from "vitest";
+import { PARSE_TIMEOUT_MS, unlinkedGeneratedBody, unlinkedMergedBody } from "./pr-body-links.js";
+import { type ConvertJob, convertWorkspaceLinks } from "./pr-body-links-worker.js";
 import { PR_BODY_MAX } from "./pr-template.js";
+
+/** 変換の本体を、このスレッドで直接呼ぶ（外した後の本文）。デーモンは、別スレッドで呼ぶ（`unlinkedGeneratedBody` など）。 */
+const withoutWorkspaceLinks = (body: string) => convertWorkspaceLinks(body, "/workspace").body;
 
 describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366）", () => {
   it("作業領域のパスへのリンクを外し、表示の文字を残す", () => {
@@ -642,11 +643,12 @@ describe("本文の解析の間も、デーモンがほかの処理に応える�
     });
   });
 
-  it("解析に失敗した本文は、変えずに返す（失敗したことが分かる）", async () => {
-    // 引用が深く入れ子になり、構文木をたどる途中でスタックがあふれる
+  it("変換の途中の例外では、本文を変えずに返し、例外の名前を添える", () => {
+    // 引用が深く入れ子になり、構文木をたどる途中でスタックがあふれる。このスレッドで直接呼ぶ（スタックの大きさに
+    // 依存するが、このスレッドでは 2,000 段であふれるので、その 10 倍の深さにする）。別スレッドでの失敗の扱いは、
+    // 別スレッドを差し替えて確かめる
     const deep = heavy(">", 20_000);
-    expect(await unlinkedGeneratedBody(deep, [])).toEqual({ body: deep, skipped: "error" });
-    expect(await unlinkedMergedBody(deep, [])).toEqual({ body: deep, skipped: "error" });
+    expect(convertWorkspaceLinks(deep, "/workspace")).toEqual({ body: deep, failed: "RangeError" });
   });
 
   it("空の本文・作業領域へのリンクがありえない本文は、解析せずに、そのまま返す", async () => {
@@ -663,5 +665,207 @@ describe("本文の解析の間も、デーモンがほかの処理に応える�
     const bodies = Array.from({ length: 4 }, (_, i) => `[a${i}.md](/workspace/a${i}.md) を直した`);
     const results = await Promise.all(bodies.map((body) => unlinkedMergedBody(body, [])));
     expect(results).toEqual(bodies.map((_, i) => ({ body: `a${i}.md を直した` })));
+  });
+});
+
+describe("別スレッドの失敗・順番待ち（PBI-372。別スレッドを差し替えて確かめる）", () => {
+  const body = "[手順](/workspace/docs/setup.md) を直した。値は abc";
+
+  /** 差し替える別スレッド。テストから、答え・エラー・終了を起こす。 */
+  class FakeWorker extends EventEmitter {
+    terminated = 0;
+    constructor(readonly job: ConvertJob) {
+      super();
+    }
+    terminate(): Promise<number> {
+      this.terminated++;
+      return Promise.resolve(0);
+    }
+  }
+
+  /** 起動した別スレッドを覚えておく、差し替えの起動。 */
+  const fakes = () => {
+    const started: FakeWorker[] = [];
+    const startWorker = (job: ConvertJob) => {
+      const worker = new FakeWorker(job);
+      started.push(worker);
+      return worker;
+    };
+    return { started, startWorker };
+  };
+
+  /** 待っている処理（順番待ちの受け渡し・別スレッドの起動）を進める。 */
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+
+  it("別スレッドに、本文と作業領域のパスを渡し、答えの本文を使う。答えを受け取ったら、別スレッドを止める", async () => {
+    const { started, startWorker } = fakes();
+    const pending = unlinkedGeneratedBody(body, ["abc"], { startWorker });
+    await settle();
+    expect(started.map((w) => w.job)).toEqual([
+      { sactyPrBodyLinks: true, body, workspace: "/workspace" },
+    ]);
+    started[0]?.emit("message", { body: "手順 を直した。値は abc" });
+    // 答えの後の終了は、失敗にしない
+    started[0]?.emit("exit", 0);
+    expect(await pending).toEqual({ body: "手順 を直した。値は [REDACTED]" });
+    expect(started[0]?.terminated).toBe(1);
+  });
+
+  it("別スレッドを起動できないときは、本文を変えずに返す（原因は、例外のコードか名前。メッセージは出さない）", async () => {
+    const failing = (error: unknown) => () => {
+      throw error;
+    };
+    const missing = Object.assign(new Error(`Cannot find module ${body}`), {
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+    expect(await unlinkedMergedBody(body, ["abc"], { startWorker: failing(missing) })).toEqual({
+      body,
+      skipped: "error",
+      cause: "別スレッドを起動できない（ERR_MODULE_NOT_FOUND）",
+    });
+    expect(
+      await unlinkedMergedBody(body, [], { startWorker: failing(new TypeError(body)) }),
+    ).toEqual({ body, skipped: "error", cause: "別スレッドを起動できない（TypeError）" });
+    // 例外でないもの・名前が文字として使えないものは、中身を出さない
+    expect(await unlinkedMergedBody(body, [], { startWorker: failing(body) })).toEqual({
+      body,
+      skipped: "error",
+      cause: "別スレッドを起動できない（string）",
+    });
+    const named = Object.assign(new Error("x"), { name: `名前 ${body}` });
+    expect(await unlinkedMergedBody(body, [], { startWorker: failing(named) })).toEqual({
+      body,
+      skipped: "error",
+      cause: "別スレッドを起動できない（Error）",
+    });
+    // sacty が組み立てた本文は、外せなくても、秘密の値を伏せ直す
+    expect(await unlinkedGeneratedBody(body, ["abc"], { startWorker: failing(missing) })).toEqual({
+      body: body.replace("abc", "[REDACTED]"),
+      skipped: "error",
+      cause: "別スレッドを起動できない（ERR_MODULE_NOT_FOUND）",
+    });
+  });
+
+  it("別スレッドが、答える前に終わった・エラーになったときは、本文を変えずに返す", async () => {
+    const cases: [(worker: FakeWorker) => void, string][] = [
+      [(w) => w.emit("exit", 1), "別スレッドが答えずに終了（終了コード 1）"],
+      [(w) => w.emit("exit", 0), "別スレッドが答えずに終了（終了コード 0）"],
+      [
+        (w) =>
+          w.emit("error", Object.assign(new Error(body), { code: "ERR_WORKER_OUT_OF_MEMORY" })),
+        "別スレッドのエラー（ERR_WORKER_OUT_OF_MEMORY）",
+      ],
+      [(w) => w.emit("error", new SyntaxError(body)), "別スレッドのエラー（SyntaxError）"],
+    ];
+    for (const [fail, cause] of cases) {
+      const { started, startWorker } = fakes();
+      const pending = unlinkedMergedBody(body, [], { startWorker });
+      await settle();
+      const worker = started[0];
+      if (!worker) throw new Error("別スレッドが起動していない");
+      fail(worker);
+      // エラーの後の終了・遅れて届いた答えでは、結果は変わらない
+      worker.emit("exit", 1);
+      worker.emit("message", { body: "手順" });
+      expect(await pending).toEqual({ body, skipped: "error", cause });
+      expect(worker.terminated).toBe(1);
+    }
+  });
+
+  it("別スレッドの答えが、変換の例外・長くなった本文・本文でないものなら、使わずに、本文を変えずに返す", async () => {
+    const cases: [unknown, string][] = [
+      [{ body, failed: "RangeError" }, "変換の例外（RangeError）"],
+      // 例外の名前に、文字として使えないものが入っていても、そのままは出さない
+      [{ body, failed: `名前 ${body}` }, "変換の例外（Error）"],
+      // 置き換えは本文を長くしない。長くなった答えは、長さの上限を超えうるので、使わない
+      [{ body: `${body}。` }, "別スレッドの答えが不正"],
+      [{ body: 1 }, "別スレッドの答えが不正"],
+      [{}, "別スレッドの答えが不正"],
+      [null, "別スレッドの答えが不正"],
+      ["手順", "別スレッドの答えが不正"],
+    ];
+    for (const [answer, cause] of cases) {
+      const { started, startWorker } = fakes();
+      const pending = unlinkedGeneratedBody(body, [], { startWorker });
+      await settle();
+      started[0]?.emit("message", answer);
+      expect(await pending).toEqual({ body, skipped: "error", cause });
+    }
+    // 同じ長さ・短い答えは、使う
+    const { started, startWorker } = fakes();
+    const pending = unlinkedGeneratedBody(body, [], { startWorker });
+    await settle();
+    started[0]?.emit("message", { body: "x".repeat(body.length) });
+    expect(await pending).toEqual({ body: "x".repeat(body.length) });
+  });
+
+  it("別スレッドは1つずつ動かし、ほかは来た順に待つ。解析しない本文は、待たない", async () => {
+    const { started, startWorker } = fakes();
+    const bodies = [1, 2, 3].map((i) => `[a${i}](/workspace/a${i}.md)`);
+    const results: string[] = [];
+    const pending = bodies.map((b, i) =>
+      unlinkedMergedBody(b, [], { startWorker }).then((r) => {
+        results.push(`${i + 1}:${r.skipped ?? r.body}`);
+      }),
+    );
+    await settle();
+    // 動いているのは、最初の1つだけ
+    expect(started.map((w) => w.job.body)).toEqual([bodies[0]]);
+    // 作業領域へのリンクがありえない本文は、順番を待たずに返る
+    expect(await unlinkedMergedBody("リンクの無い本文", [], { startWorker })).toEqual({
+      body: "リンクの無い本文",
+    });
+    expect(started).toHaveLength(1);
+    // 1つ目が終わると、2つ目が動く。失敗で終わっても、次に番を渡す
+    started[0]?.emit("message", { body: "a1" });
+    await settle();
+    expect(started.map((w) => w.job.body)).toEqual([bodies[0], bodies[1]]);
+    started[1]?.emit("exit", 1);
+    await settle();
+    expect(started.map((w) => w.job.body)).toEqual(bodies);
+    started[2]?.emit("message", { body: "a3" });
+    await Promise.all(pending);
+    expect(results).toEqual(["1:a1", "2:error", "3:a3"]);
+    // 番を返してあるので、次の本文は、すぐに動く
+    const next = unlinkedMergedBody(bodies[0] ?? "", [], { startWorker });
+    await settle();
+    expect(started).toHaveLength(4);
+    started[3]?.emit("message", { body: "a1" });
+    expect(await next).toEqual({ body: "a1" });
+  });
+
+  it("時間の上限は、別スレッドを起動してから数える（順番を待つ時間は入れない）。打ち切ったら、別スレッドを止めて、次に番を渡す", async () => {
+    vi.useFakeTimers();
+    try {
+      const { started, startWorker } = fakes();
+      const first = unlinkedMergedBody(body, [], { startWorker });
+      const second = unlinkedMergedBody(`${body}。`, [], { startWorker });
+      let secondDone = false;
+      void second.then(() => {
+        secondDone = true;
+      });
+      await settle();
+      expect(started).toHaveLength(1);
+      // 既定の上限（5 秒）の直前では、まだ打ち切らない
+      await vi.advanceTimersByTimeAsync(PARSE_TIMEOUT_MS - 1);
+      expect(started[0]?.terminated).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await first).toEqual({ body, skipped: "timeout" });
+      expect(started[0]?.terminated).toBe(1);
+      // 2つ目は、ここで起動する。待っていた 5 秒は数えないので、起動してから 5 秒の直前までは、打ち切らない
+      await settle();
+      expect(started).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(PARSE_TIMEOUT_MS - 1);
+      expect(secondDone).toBe(false);
+      started[1]?.emit("message", { body: "手順 を直した。値は abc。" });
+      expect(await second).toEqual({ body: "手順 を直した。値は abc。" });
+      // 答えた後は、時間の上限が来ても、何も起きない
+      await vi.advanceTimersByTimeAsync(PARSE_TIMEOUT_MS);
+      expect(started[1]?.terminated).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

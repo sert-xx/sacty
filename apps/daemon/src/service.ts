@@ -1162,17 +1162,17 @@ function warnDraftUnknown(number: number, repo: string): void {
 
 /**
  * PR の本文から、コンテナの作業領域へのリンクを外した結果を受け取る（PBI-372）。外せなかった（解析が時間の上限までに
- * 終わらない・失敗した）ときは、本文を変えずに使い、そのことをログに残す（PR の作成・更新は止めない。本文の中身は、
- * ログに出さない）。
+ * 終わらない・失敗した）ときは、リンクを外さない本文を使い、そのことと原因をログに残す（PR の作成・更新は止めない。
+ * 本文の中身は、ログに出さない）。
  */
 function linksUnlinked(result: UnlinkedBody, taskId: string, repo: string): string {
   if (result.skipped) {
     const reason =
       result.skipped === "timeout"
         ? `解析が ${PARSE_TIMEOUT_MS / 1000} 秒で終わりませんでした`
-        : "解析に失敗しました";
+        : `解析に失敗しました：${result.cause ?? "原因は不明"}`;
     console.warn(
-      `[daemon] タスク ${taskId} の PR（${repo}）の本文から、作業領域へのリンクを外せませんでした（${reason}）。本文は変えずに使います`,
+      `[daemon] タスク ${taskId} の PR（${repo}）の本文から、作業領域へのリンクを外せませんでした（${reason}）。本文は、リンクを外さずに使います`,
     );
   }
   return result.body;

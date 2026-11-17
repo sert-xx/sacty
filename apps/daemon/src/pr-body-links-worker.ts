@@ -311,12 +311,13 @@ function collect(
  * セルの組になっていないバッククォートと組になる）。
  *
  * 本文は長さの上限（PR_BODY_MAX）の後のものを渡す。置き換えは、元のリンクより長い文字にしない（返す本文は、渡した本文より
- * 長くならない）。その長さで、ふつうの本文の解析は 0.1 秒ほど。解析に回る本文（作業領域のパス・バックスラッシュ・文字参照の
+ * 長くならない）。その長さで、ふつうの本文の解析は 0.1〜0.3 秒。解析に回る本文（作業領域のパス・バックスラッシュ・文字参照の
  * どれかと `](` を含む）で、かつ記号が上限いっぱいまで続くと、数秒〜数十秒かかる。この関数は同期で動き、途中で止められない
- * ので、デーモンは、別スレッドで動かして、時間を区切る（`pr-body-links.ts` の `unlinkedGeneratedBody`・`unlinkedMergedBody`。
- * PBI-372）。
+ * ので、デーモンのスレッドでは呼ばない。デーモンは、別スレッドで動かして、時間とメモリを区切る（`pr-body-links.ts` の
+ * `unlinkedGeneratedBody`・`unlinkedMergedBody`。PBI-372）。
  *
- * failed：解析・置き換えの途中で例外が出たので、本文を変えなかった（深い入れ子でスタックがあふれた、など）。
+ * failed：解析・置き換えの途中で例外が出たので、本文を変えなかった（深い入れ子でスタックがあふれた、など）。例外の名前
+ * （`RangeError` など。メッセージは入れない）。
  */
 export function convertWorkspaceLinks(body: string, workspace: string): Converted {
   if (cannotLinkToWorkspace(body, workspace)) return { body };
@@ -333,13 +334,13 @@ export function convertWorkspaceLinks(body: string, workspace: string): Converte
     const expected = JSON.stringify(shapeOf(tree, done.removed));
     const actual = JSON.stringify(shapeOf(fromMarkdown(done.out), new Map()));
     return { body: expected === actual ? done.out : body };
-  } catch {
-    return { body, failed: true };
+  } catch (error) {
+    return { body, failed: error instanceof Error ? error.name : "Error" };
   }
 }
 
-/** 変換の結果。body：外した後の本文（外さなかったら、渡した本文）。failed：例外で、外せなかった。 */
-export type Converted = { body: string; failed?: true };
+/** 変換の結果。body：外した後の本文（外さなかったら、渡した本文）。failed：例外で、外せなかった（例外の名前）。 */
+export type Converted = { body: string; failed?: string };
 
 /**
  * 1回分の置き換え。skip にある位置のリンクを除いて、作業領域へのリンク・画像を置き換えた本文（out）と、置き換えた
