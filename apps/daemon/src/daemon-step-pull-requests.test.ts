@@ -28,6 +28,8 @@ import { createApp } from "./server.js";
 import {
   DRAFT_SETTLE_FACTOR,
   InvalidOperationError,
+  PR_CI_READ_INTERVAL_MS,
+  PR_CI_READS_MAX,
   reviewTaskTitle,
   type ServiceDeps,
   type TaskService,
@@ -2862,6 +2864,181 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         ]);
         expect(taskOf(service, id).pullRequest?.reviewedCommit).toBe(human);
         activity.close();
+      });
+
+      describe("ドラフトを外した後に始まる CI の失敗を出す（外した直後の読み取りで、読み終わりにしない。PBI-381）", () => {
+        /** 読むたびに、そのときの結論（無ければ実行中）のワークフローを1件返す偽の CI。読んだコミットを覚える。 */
+        const ciOf = () => {
+          const state: { conclusion?: string; read: string[] } = {
+            conclusion: "success",
+            read: [],
+          };
+          const ci = {
+            snapshot: async (input: { commit: string }) => {
+              state.read.push(input.commit);
+              return {
+                checks: [
+                  {
+                    kind: "workflow" as const,
+                    name: "CI",
+                    status: state.conclusion ? ("completed" as const) : ("pending" as const),
+                    ...(state.conclusion ? { conclusion: state.conclusion } : {}),
+                  },
+                ],
+                failedRuns: [],
+              };
+            },
+            failures: async () => [],
+            rerunFailedJobs: async () => {},
+            repositoryHasNoCi: async () => false,
+          } as unknown as ServiceDeps["ci"];
+          return { ci, state };
+        };
+        const ciFailed = (svc: TaskService, id: string) =>
+          types(svc, id).filter((t) => t === "PullRequestCiFailed");
+        /** 実装の PR を、レビューの子タスクの指摘なしでドラフトを外すところまで進める（外した確認で、CI を1回読む）。 */
+        const readied = async (outcomes: AgentOutcome[] = []) => {
+          const pulls = new FakePulls();
+          const { ci, state } = ciOf();
+          const clock = { now: later() };
+          const made = await start(
+            [implement(), verdictOut("no_findings", "# 評価\n\n問題なし"), ...outcomes],
+            { pulls, steps: ["implement"], reviewTasks: true, ci, now: () => clock.now },
+          );
+          const { service, id } = made;
+          for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+            await service.runNext(id);
+          }
+          const childId = childOf(service, id);
+          const head = commitOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: head };
+          await runReview(service, childId);
+          // レビューの子タスクが、レビューの準備で読んだ分は、数えない
+          state.read = [];
+          // ドラフトを外した時刻を覚える処理が、呼ばれたか（指摘なしで外す経路だけでは、覚えた時刻が、最初に読んだ時刻と
+          // 同じになって、読み取りの結果には表れないので、呼び出しそのものを確かめる）
+          const noted = vi.spyOn(
+            service as unknown as { notePullRequestUndrafted: (taskId: string) => void },
+            "notePullRequestUndrafted",
+          );
+          await service.checkPullRequests();
+          expect(types(service, id)).toContain("PullRequestMarkedReady");
+          return { ...made, pulls, state, clock, childId, head, noted };
+        };
+
+        it("指摘なしでドラフトを外したら、外した時刻を覚える。その確認の、その先頭の最初の読み取りでは、失敗が無くても読み終わりにせず、間隔の後に読んで、落ちていたら出す", async () => {
+          const { activity, service, id, state, clock, head, noted } = await readied();
+          // 指摘なしで外した（markReady）ときに、外した時刻を覚える
+          expect(noted.mock.calls).toEqual([[id]]);
+          // 外した確認で読んだのは、前からある実行だけ（すべて成功）
+          expect(state.read).toEqual([head]);
+          expect(ciFailed(service, id)).toEqual([]);
+          // 間隔の前は、読まない（読む回数は増やさない）
+          await service.checkPullRequests();
+          expect(state.read).toHaveLength(1);
+          // ドラフトを外したことで始まった CI が、落ちた
+          state.conclusion = "failure";
+          clock.now += PR_CI_READ_INTERVAL_MS;
+          await service.checkPullRequests();
+          expect(state.read).toEqual([head, head]);
+          expect(ciFailed(service, id)).toEqual(["PullRequestCiFailed"]);
+          expect(taskOf(service, id).pullRequestCiFailure).toMatchObject({ number: 7, head });
+          activity.close();
+        });
+
+        it("ドラフトを外した後に始まった CI も通っていたら、間隔の後の読み取りで読み終わりにする", async () => {
+          const { activity, service, id, state, clock } = await readied();
+          clock.now += PR_CI_READ_INTERVAL_MS;
+          await service.checkPullRequests();
+          expect(state.read).toHaveLength(2);
+          // 読み終わりにした後は、落ちても読まない
+          state.conclusion = "failure";
+          clock.now += 24 * 60 * 60_000;
+          await service.checkPullRequests();
+          await service.checkPullRequests();
+          expect(state.read).toHaveLength(2);
+          expect(ciFailed(service, id)).toEqual([]);
+          activity.close();
+        });
+
+        it("失敗を出した後に外し直した同じ先頭は、通っていたら表示を消すが、読み終わりにせず、落ちていたら出し直す（回数は上限のまま）", async () => {
+          const { activity, service, pulls, id, state, clock, head } = await readied();
+          const ciEvents = () => types(service, id).filter((t) => t.startsWith("PullRequestCi"));
+          // 落ちた：失敗を出す
+          state.conclusion = "failure";
+          clock.now += PR_CI_READ_INTERVAL_MS;
+          await service.checkPullRequests();
+          expect(ciEvents()).toEqual(["PullRequestCiFailed"]);
+          // 人が GitHub でドラフトに戻した。sacty が外し直した確認で読んだ CI（前からある実行の再実行）は、通っていた：
+          // 表示は消すが、外し直した直後なので、読み終わりにはしない
+          pulls.drafts[7] = true;
+          state.conclusion = "success";
+          clock.now += PR_CI_READ_INTERVAL_MS;
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(ciEvents()).toEqual(["PullRequestCiFailed", "PullRequestCiRecovered"]);
+          expect(taskOf(service, id).pullRequestCiFailure).toBeUndefined();
+          // 外し直したことで始まった CI が落ちた：同じ先頭で、出し直す
+          state.conclusion = "failure";
+          clock.now += PR_CI_READ_INTERVAL_MS;
+          await service.checkPullRequests();
+          expect(ciEvents()).toEqual([
+            "PullRequestCiFailed",
+            "PullRequestCiRecovered",
+            "PullRequestCiFailed",
+          ]);
+          expect(taskOf(service, id).pullRequestCiFailure).toMatchObject({ number: 7, head });
+          // 読む回数は、先頭のコミットごとの上限のまま。落ちたままなら、記録し直さない
+          for (let i = 0; i < PR_CI_READS_MAX + 5; i++) {
+            clock.now += PR_CI_READ_INTERVAL_MS;
+            await service.checkPullRequests();
+          }
+          expect(state.read).toHaveLength(PR_CI_READS_MAX);
+          expect(state.read.every((commit) => commit === head)).toBe(true);
+          expect(ciEvents()).toHaveLength(3);
+          activity.close();
+        });
+
+        it("人が足したコミットの再レビューの間に読み終わりにした先頭も、ドラフトを外し直した後に読み直して、落ちていたら出す（回数は数え直さない）", async () => {
+          const { activity, service, pulls, id, state, clock, childId, head } = await readied([
+            verdictOut("no_findings", "# 評価\n\n足したコミットも問題なし"),
+          ]);
+          // 人がコミットを足して、ドラフトにした。再レビューの間に、足した先頭の CI（プッシュで始まったもの）を読み終わりにする
+          const human = "h".repeat(40);
+          pulls.prInfo = { ...pulls.prInfo, headSha: human };
+          pulls.drafts[7] = true;
+          await service.checkPullRequests();
+          clock.now += PR_CI_READ_INTERVAL_MS;
+          await service.checkPullRequests();
+          expect(state.read).toEqual([head, human, human]);
+          clock.now += 24 * 60 * 60_000;
+          await service.checkPullRequests();
+          expect(state.read).toHaveLength(3);
+          // 足した先頭が指摘なしになって、ドラフトを外し直した
+          await runReview(service, childId);
+          state.read = [];
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(taskOf(service, id).pullRequest?.reviewedCommit).toBe(human);
+          // 外し直した確認で読んだ CI（前からある実行）に失敗が無くても、読み終わりにしない
+          expect(state.read).toEqual([human]);
+          await service.checkPullRequests();
+          expect(state.read).toHaveLength(1);
+          // 外し直したことで始まった CI が落ちたら、出す
+          state.conclusion = "failure";
+          clock.now += PR_CI_READ_INTERVAL_MS;
+          await service.checkPullRequests();
+          expect(state.read).toEqual([human, human]);
+          expect(ciFailed(service, id)).toEqual(["PullRequestCiFailed"]);
+          // 読んだ回数は、先頭のコミットごとの上限のまま（外し直しても、数え直さない）：前の2回と合わせて、上限まで
+          state.conclusion = undefined;
+          for (let i = 0; i < PR_CI_READS_MAX + 5; i++) {
+            clock.now += PR_CI_READ_INTERVAL_MS;
+            await service.checkPullRequests();
+          }
+          expect(state.read).toHaveLength(PR_CI_READS_MAX - 2);
+          activity.close();
+        });
       });
 
       it("ドラフトを外し直す間に子タスクの再レビューが始まったら、ドラフトに戻す（PR #348 10回目のレビュー指摘）", async () => {

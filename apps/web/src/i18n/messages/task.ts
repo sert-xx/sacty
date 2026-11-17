@@ -158,7 +158,7 @@ const ja = {
       `PR の先頭のコミット ${commit} の CI が、${at} に失敗していました。今の結果を PR で確かめ、直すなら差し戻すか PR に指摘を書いてください。`,
     /** CI の失敗の表示が、いつ消えるか（PBI-375）。 */
     prCiFailedHint:
-      "sacty が CI を読み直す間に通れば、この表示は消えます。読み直すのは、最初に読んでから1時間ほどの間だけで、その後の結果は反映されません。",
+      "sacty が CI を読み直す間に通れば、この表示は消えます。読み直すのは、PR の先頭のコミットごとに12回まで（ふつうは、最初に読んでから1時間ほどの間）で、その後の結果は反映されません。",
     prCiFailedChecks: "失敗していたチェック",
     prCiFailedMore: (count: number) => `ほか${count}件`,
     prConflictContinuedHelp:
@@ -338,8 +338,8 @@ const ja = {
     /** 前の回の人が確かめることのうち、この回の統合レビューが外したもの（PBI-363）。 */
     droppedHumanChecks: "前の回の「人が確かめること」から外した項目",
     droppedReason: (reason: string) => `外した理由：${reason}`,
-    /** 外す申告のうち、読み取れなかった・前の回の項目に当たらなかったもの（項目は残っている。PBI-363）。 */
-    unreadDroppedHumanChecks: "外す申告のうち、読み取れなかったもの",
+    /** 外す申告のうち、採らなかったもの（決まった形でない申告が1つでもあった回の、すべての申告。項目は残っている。PBI-363・382）。 */
+    unreadDroppedHumanChecks: "外す申告のうち、採らなかったもの",
     viewpoints: "観点ごとの判定",
     recurrence: "過去の指摘の再発",
     verified: "満たす",
@@ -763,7 +763,7 @@ const en: TaskMessages = {
     prCiFailedHelp: (commit, at) =>
       `CI on the PR's head commit ${commit} was failing at ${at}. Check the current result on the PR, and to have it fixed, send the task back or comment on the PR.`,
     prCiFailedHint:
-      "This notice clears if CI passes while sacty is still re-reading it. sacty re-reads for about an hour after its first read; later results are not reflected.",
+      "This notice clears if CI passes while sacty is still re-reading it. sacty re-reads up to 12 times per head commit of the PR (usually within about an hour of its first read); later results are not reflected.",
     prCiFailedChecks: "Checks that were failing",
     prCiFailedMore: (count) => `and ${count} more`,
     prConflictContinuedHelp:
@@ -934,7 +934,7 @@ const en: TaskMessages = {
       "What the integration review could not check in the workspace. Check these before approving, and request changes if one is not met.",
     droppedHumanChecks: 'Items removed from the previous round\'s "For a person to check"',
     droppedReason: (reason) => `Reason for removing: ${reason}`,
-    unreadDroppedHumanChecks: "Removal requests that could not be read",
+    unreadDroppedHumanChecks: "Removal requests that were not applied",
     viewpoints: "Verdict per viewpoint",
     recurrence: "Recurrence of past comments",
     verified: "Met",
