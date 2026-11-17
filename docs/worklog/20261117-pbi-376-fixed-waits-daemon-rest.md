@@ -65,3 +65,10 @@ PR を作る前のコードで実行した結果。
 - 置き換えたテストが、本体の誤りを見つけること（`apps/daemon/src/service.ts` の 1 行を消して実行し、元に戻した）：
   - Issue を作っている最中の印を付ける行を消す → 「…作っている最中には記録しない…」が落ちる（`expected [ … ] to have a length of +0 but got 1`）。
   - 前の切り替えの要求が終わっていなければドラフトを外さない、という行を消す → 「…終わってから外す」と「…上限を過ぎたら、ドラフトを外せる」の 2 件が落ちる。
+
+## main の取り込み
+
+PR を作った後に進んだ main（`8cf97388` まで）を、このブランチに取り込んだ（merge。競合・手直しは無い）。
+
+- main の側で足されたデーモンのテストに、固定の時間で処理の完了を待つ書き方が無いこと、この PR で消した補助（5 ミリ秒の `settled`・`DRAFT_SETTLE_FACTOR` の import）を使っていないことを、差分と `grep` で確かめた。
+- 取り込んだ後のコードで確かめたこと：`npx vitest run --no-file-parallelism` で、258 ファイル・5009 件が通った（1 件は以前からの skip）。`npx biome format .`・`npm run lint`・`npm run typecheck`・`npx vitest run tests/docs`：通った。負荷をかけた繰り返しは、取り込んだ後には実行していない。
