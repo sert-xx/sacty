@@ -326,6 +326,44 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 
+  it("表示の文字の中の打ち消し・文字参照は、すぐ外側に括弧・強調の記号があっても、それだけではつながりと見なさず、リンクを外す", () => {
+    expect(withoutWorkspaceLinks("see ([foo\\_bar.md](/workspace/foo_bar.md)) now")).toBe(
+      "see (foo\\_bar.md（`foo_bar.md`）) now",
+    );
+    expect(withoutWorkspaceLinks("see **[a&amp;b.md](/workspace/a.md)** now")).toBe(
+      "see **a&amp;b.md（`a.md`）** now",
+    );
+    expect(
+      withoutWorkspaceLinks(
+        '([docs/a\\_b.md](/workspace/docs/a_b.md))と、"[c&lt;d](/workspace/c.md)"',
+      ),
+    ).toBe('(docs/a\\_b.md（`docs/a_b.md`）)と、"c&lt;d（`c.md`）"');
+    // 表示の文字の中の打ち消し・文字参照が、読まれる文字では、外の文字と合わせて並びになるなら、変えない
+    for (const body of [
+      "[ww](/workspace)[w\\.](/workspace)example.com",
+      "ping [x\\@](/workspace)octocat",
+      "ping ([&commat;](/workspace)octocat)",
+      "Closes ([&num;](/workspace)12)",
+      // 打ち消し・文字参照が、外した文字の外にあれば、つながる文字の連なりごと、変えない
+      "see ([a.md](/workspace/a.md)\\@octocat)",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+  });
+
+  it("リンクの直前の `@`・`#` は、表示の文字と合わせて並びになるときだけ、変えない", () => {
+    for (const body of [
+      "@[octocat](/workspace/a.md)",
+      "#[99](/workspace/a.md)",
+      "@[**octo**cat](/workspace/a.md)",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+    expect(
+      withoutWorkspaceLinks("@[手順](/workspace/docs/setup.md) と #[節](/workspace/docs/a.md)"),
+    ).toBe("@手順（`docs/setup.md`） と #節（`docs/a.md`）");
+  });
+
   it("作業領域そのものへのリンクは、表示の文字だけにする", () => {
     expect(withoutWorkspaceLinks("[作業領域](/workspace) と [ルート](/workspace/)")).toBe(
       "作業領域 と ルート",
