@@ -115,14 +115,27 @@ describe("PR のレビューの判定が無い理由（PBI-378）", () => {
     ["JSON が壊れている", '```json\n{"sacty-review-verdict": {"verdict": "no_findings",}}\n```'],
     // 途中で切れて、閉じていない
     ["ブロックが途中で切れている", '```json\n{"sacty-review-verdict": {"verdict": "no_f'],
-    // フェンスの外に、見出しだけを書いた
-    ["見出しを本文に書いただけ", "sacty-review-verdict は no_findings です。"],
+    // フェンスの外に、JSON の形で書いて、壊れている
+    ["フェンスの外の JSON が壊れている", '{"sacty-review-verdict" : {"verdict": "no_findings",}}'],
   ])(
     "判定を付けようとした跡があるのに読めない答え（%s）は、指摘なしにも、付けなかったことにもしない",
     (_name, tail) => {
       const result = read(`総評\n\n指摘：なし。\n\n${tail}`);
       expect(result.verdict).toBeUndefined();
       expect(result.verdictMissing).toBe("invalid");
+    },
+  );
+
+  it.each([
+    ["名前だけ", "判定（sacty-review-verdict）は、見ていない観点があるので付けません。"],
+    ["コードの形の名前", "`sacty-review-verdict` のブロックは付けません。"],
+    ["引用符つきの名前", '"sacty-review-verdict" という見出しの読み取りを変える PR です。'],
+  ])(
+    "本文が判定の見出しの名前に触れているだけ（%s）なら、判定を付けた跡とはせず、レビューが判定を付けなかったと記録する",
+    (_name, tail) => {
+      const result = read(`総評\n\n指摘：なし。\n\n${tail}\n\n${block(risk)}`);
+      expect(result.verdict).toBeUndefined();
+      expect(result.verdictMissing).toBe("absent");
     },
   );
 

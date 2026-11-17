@@ -383,6 +383,9 @@ const REVIEW_VERDICT_HEADING = "sacty-review-verdict";
 const VERDICT_ABSENT_LINE =
   "判定：付いていません（レビューが判定を付けませんでした。見ていない観点がある・対象を読めなかったレビューには、判定を付けません。本文を確かめてください）";
 
+/** 判定のブロックを書こうとした跡（見出しが JSON のキーの形で現れる。PBI-378）。JSON として読めなかった答えから探す。 */
+const VERDICT_KEY_PATTERN = new RegExp(`"${REVIEW_VERDICT_HEADING}"\\s*:`);
+
 /** レビューの指摘の頭（PBI-111）。言語に関わらず、この形で付ける（既定のスキル review・git と同じ）。 */
 export const MUST_TAG = "[要修正]";
 export const SUGGESTION_TAG = "[提案]";
@@ -8485,8 +8488,10 @@ function tagComment(severity: unknown, body: string): { body: string; severity?:
  * 判定は、エージェントの判定を、行についての指摘の重さで補う。`[要修正]` の指摘があれば修正が必要、指摘があるのに「指摘なし」
  * なら提案あり。重さの分からない指摘だけでは、修正が必要にしない。判定を読めず、`[要修正]` の指摘も無ければ、判定は無い。
  * 判定が無いときは、その理由を返す（PBI-378）。判定のブロックが答えのどこにも無ければ absent（レビューが判定を付けなかった）、
- * ブロックはあるのに読めなければ invalid。答えに判定の見出しが書かれているのに、JSON として読めたブロックが無いときも invalid に
- * する（付けようとして形が崩れたものを、付けなかったものとして伝えない）。本文から判定を推し量ることはしない。
+ * ブロックはあるのに読めなければ invalid。JSON として読めたブロックが無くても、答えに判定の見出しが JSON のキーの形
+ * （`"sacty-review-verdict":`）で書かれていれば invalid にする（末尾のカンマ・途中で切れたなど、付けようとして形が崩れたものを、
+ * 付けなかったものとして伝えない）。本文が見出しの名前に触れているだけなら absent（判定まわりを変える PR のレビューは、名前に
+ * 触れやすい）。本文から判定を推し量ることはしない。
  */
 export function extractReviewComments(
   output: string,
@@ -8574,7 +8579,7 @@ export function extractReviewComments(
       ? { verdict }
       : {
           verdictMissing:
-            verdictSeen || output.includes(REVIEW_VERDICT_HEADING)
+            verdictSeen || VERDICT_KEY_PATTERN.test(output)
               ? ("invalid" as const)
               : ("absent" as const),
         }),
