@@ -90,6 +90,45 @@ describe("デーモンの文言（PBI-11）", () => {
   });
 });
 
+describe("実装が終わらないための一時停止の理由（PBI-353）", () => {
+  const incomplete = message("implement.incomplete", {
+    count: 11,
+    stalled: false,
+    declared: true,
+    remaining: "docs を直す / テストを足す",
+    total: 2,
+  });
+  const unmapped = message("implement.unmappedViewpoints", {
+    count: 11,
+    stalled: true,
+    ids: "TV-2, TV-3",
+    total: 2,
+  });
+
+  it("再開すると、同じエージェントなら続きから（続けられなければ最初から）、エージェントを変えると最初から進むことを伝える", () => {
+    expect(renderMessage(incomplete, "ja")).toBe(
+      "実装の工程が、範囲を実装し終える前に終わりました（11回続けて）。提出していません（PR は作っていません・更新していません）。残っていること：docs を直す / テストを足す。再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。",
+    );
+    expect(renderMessage(incomplete, "en")).toBe(
+      "The implementation step ended before it finished its scope (11 times in a row). Nothing was submitted (no PR was opened or updated). What remains: docs を直す / テストを足す. Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.",
+    );
+    expect(renderMessage(unmapped, "ja")).toBe(
+      "実装の工程が、テストの対応していないテスト観点を残して終わりました（やり直しても、作業領域が何も変わりませんでした）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：TV-2, TV-3。再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。",
+    );
+    expect(renderMessage(unmapped, "en")).toBe(
+      "The implementation step ended with test viewpoints that have no test mapped (redoing it changed nothing in the workspace). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: TV-2, TV-3. Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.",
+    );
+  });
+
+  it("やり直しで変更が無いための一時停止の文は、最初からやり直すと伝える", () => {
+    const unchanged = message("implement.unchanged", { number: 7 });
+    expect(renderMessage(unchanged, "ja")).toContain("再開すると、指摘を渡して実装をやり直します");
+    expect(renderMessage(unchanged, "en")).toContain(
+      "Resuming redoes the implementation with the findings",
+    );
+  });
+});
+
 describe("オーケストレーターを実行できなかった理由（PBI-34）", () => {
   it("理由の文の終わりの句点を重ねない", () => {
     const detail = message("secret.opSignedOut", { ref: "op://Work/Bedrock/credential" });

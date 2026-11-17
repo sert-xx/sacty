@@ -1604,24 +1604,33 @@ describe("終わっていない実装の記録の表示（PBI-347・PBI-348・PB
   const event = (type: string, payload: Record<string, unknown>) =>
     ({ type, payload, actor: "sacty" }) as unknown as ActivityEvent;
 
-  it("未完了の実行は、提出せずに実装を続けることと、残っていることを 3 件まで出す", () => {
+  it("未完了の実行は、行に残っていることの件数を出し、中身は詳細に 1 件ずつ出す（PBI-355）", () => {
     const incomplete = event("ImplementationIncomplete", {
-      remaining: ["API の入力", "候補の絞り込み", "docs", "4件目"],
+      remaining: ["API の入力 / 出力", "候補の絞り込み", "docs", "4件目"],
     });
-    expect(describeEvent(incomplete)).toBe(
-      "実装が終わっていないため、提出せずに実装を続ける（残り：API の入力 / 候補の絞り込み / docs）",
-    );
-    expect(describeIn(incomplete, labels.en)).toBe(
-      "The implementation is unfinished, so it is continued without being submitted (remaining: API の入力 / 候補の絞り込み / docs)",
-    );
-    // 申告が無い・読めないとき。残っていることが無ければ、括弧を出さない
+    expect(describeEventParts(incomplete, ja)).toEqual({
+      text: "実装が終わっていないため、提出せずに実装を続ける（残り 4 件）",
+      detail: "・API の入力 / 出力\n・候補の絞り込み\n・docs\n・4件目",
+    });
+    expect(describeEventParts(incomplete, labels.en)).toEqual({
+      text: "The implementation is unfinished, so it is continued without being submitted (4 remaining)",
+      detail: "- API の入力 / 出力\n- 候補の絞り込み\n- docs\n- 4件目",
+    });
+    // 1 件でも、同じ形で出す
+    expect(
+      describeEventParts(event("ImplementationIncomplete", { remaining: ["docs"] }), ja),
+    ).toEqual({
+      text: "実装が終わっていないため、提出せずに実装を続ける（残り 1 件）",
+      detail: "・docs",
+    });
+    // 申告が無い・読めないとき。残っていることが無ければ、括弧も詳細も出さない
     const undeclared = event("ImplementationIncomplete", { remaining: [], undeclared: true });
-    expect(describeEvent(undeclared)).toBe(
-      "実装し終えたかの申告が無いか読めないため、提出せずに実装を続ける",
-    );
-    expect(describeIn(undeclared, labels.en)).toBe(
-      "The declaration of whether the implementation finished is missing or unreadable, so it is continued without being submitted",
-    );
+    expect(describeEventParts(undeclared, ja)).toEqual({
+      text: "実装し終えたかの申告が無いか読めないため、提出せずに実装を続ける",
+    });
+    expect(describeEventParts(undeclared, labels.en)).toEqual({
+      text: "The declaration of whether the implementation finished is missing or unreadable, so it is continued without being submitted",
+    });
   });
 
   it("テストの対応していない観点があった実行は、その観点を出す", () => {
@@ -1629,9 +1638,10 @@ describe("終わっていない実装の記録の表示（PBI-347・PBI-348・PB
       remaining: ["TV-2 キーなし"],
       unmapped: ["TV-2", "TV-3"],
     });
-    expect(describeEvent(unmapped)).toBe(
-      "テストの対応していないテスト観点があるため、提出せずに実装を続ける（TV-2・TV-3）",
-    );
+    // 観点の出し方は変えない（詳細も出さない）
+    expect(describeEventParts(unmapped, ja)).toEqual({
+      text: "テストの対応していないテスト観点があるため、提出せずに実装を続ける（TV-2・TV-3）",
+    });
     expect(describeIn(unmapped, labels.en)).toBe(
       "Some test viewpoints have no test mapped, so the implementation is continued without being submitted (TV-2・TV-3)",
     );

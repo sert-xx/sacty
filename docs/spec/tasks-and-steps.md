@@ -1352,7 +1352,10 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
     - エージェントには確かめられないこと（CI の結果など）は、`remaining` ではなく、人が確かめることとして実装の説明に書く。
   - 作業領域が進んでいる間は続ける。続きの実行が 10 回（`MAX_INCOMPLETE_CONTINUATIONS`）に達しても未完了なら、一時停止する（`nextIncompleteRuns`。理由は `incomplete`、文言は `implement.incomplete`）。
     続いた回数（`Task.incompleteRuns`）は、最初の実行と続きの実行の合計なので、11 回目の未完了で止まる。
-    文言には、残っていることを 5 件まで出す。
+    文言には、残っていることを 5 件まで、「 / 」でつないだ 1 つの文字列で入れる（通知・エラーの報告など、1 行で出す所は、この文のまま出す）。
+    タスクの詳細の一時停止の案内は、残っていることを理由の文から除き、「残っていること」の見出しの下に、1 件ずつの箇条書きで出す（`pausedRemaining`）。
+    箇条書きの中身は、同じ追記で記録した `ImplementationIncomplete` の `remaining`（1 件ずつ持つ）の先頭の 5 件で、申告の件数が 5 件を超えるときは「ほか、全 N 件」を添える。
+    作業履歴の最後の `ImplementationIncomplete` が、理由の文の文字列と合わないとき・残っていることが無いときは、分けずに、理由の文をそのまま出す。
   - 続けても作業領域の内容が変わらなければ、回数を待たずに一時停止する。
     目印は、作業領域の内容の git のツリーの ID で、前の未完了のときと同じなら、変わらなかったとする（`workspaceFingerprint`・`treeId`）。差分の文字列は大きいと切り詰めるので、使わない。作業領域を読めない・読めないファイルが1つでもあるときは、目印なしで回数まで数える（読めないファイルを除いた ID では、そのファイルの変更を見落とす）。
   - 止めるときは、未完了の記録と一時停止を、同じ追記で記録する（間でデーモンが止まっても、止めるはずの実装をやり直さない）。
@@ -1371,7 +1374,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   - 子タスクがその先頭を指摘なしにしている・まだレビューしていない・レビューの途中のときと、子タスクを待たない PR（既存の PR を引き継ぐタスクなど）は、何も変えていなくても提出する。
 - どちらの一時停止も、以前の版の検証の一時停止（`verification`）ではないので、不合格のまま進める操作（`submitForReview`）の対象にしない。
 
-コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/agent-json.ts`（`takeFences`・`hasDuplicateKeys`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`apps/daemon/src/timeout-resume.ts`（`planContinuation`・`incompleteResumeLines`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`・`MAX_INCOMPLETE_CONTINUATIONS`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）
+コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/agent-json.ts`（`takeFences`・`hasDuplicateKeys`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`apps/daemon/src/timeout-resume.ts`（`planContinuation`・`incompleteResumeLines`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`・`MAX_INCOMPLETE_CONTINUATIONS`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）、`apps/web/src/lib/paused-remaining.ts`（`pausedRemaining`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）
 
 ### 同じ内容の検証の使い回し
 

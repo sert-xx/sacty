@@ -202,6 +202,41 @@ describe("再開の欄の補足と、タスクのイメージ・工程のエー�
     expect(select("agent:implement")?.value).toBe("strong");
   });
 
+  it("実装が終わらないための一時停止は、残っていることを 1 件ずつの箇条書きで出す（PBI-355）", () => {
+    const r = messagesFor("ja").parts.resume;
+    const show = (remaining?: { items: string[]; total: number }) =>
+      act(() =>
+        root.render(
+          h(ResumeForm, {
+            taskId: "t1",
+            reason: "incomplete",
+            usedUsd: 0,
+            capUsd: 10,
+            lastFailure: "実装の工程が、範囲を実装し終える前に終わりました。",
+            ...(remaining ? { remaining } : {}),
+          }),
+        ),
+      );
+    const items = () => [...container.querySelectorAll("li")].map((li) => li.textContent);
+    // 5 件まで：件数の注記は出さない
+    show({ items: ["A / B", "C"], total: 2 });
+    expect(container.textContent).toContain("実装の工程が、範囲を実装し終える前に終わりました。");
+    expect(container.querySelector("#paused-remaining")?.textContent).toBe(r.remainingTitle);
+    expect(items()).toEqual(["A / B", "C"]);
+    expect(container.textContent).not.toContain(r.remainingMore(2));
+    // 出す件数を超える：「ほか、全 N 件」を出す
+    show({ items: ["1", "2", "3", "4", "5"], total: 6 });
+    expect(items()).toHaveLength(5);
+    expect(container.textContent).toContain("ほか、全6件");
+    // 残っていることが無い：見出しも箇条書きも出さない（理由の文だけ）
+    show();
+    expect(container.querySelector("#paused-remaining")).toBeNull();
+    expect(items()).toEqual([]);
+    expect(container.textContent).toContain("実装の工程が、範囲を実装し終える前に終わりました。");
+    show({ items: [], total: 0 });
+    expect(container.querySelector("#paused-remaining")).toBeNull();
+  });
+
   it("説明が長いときは足せる補足の長さを出し、足せなければ欄を使えなくして取れる手を出す", () => {
     const r = messagesFor("ja").parts.resume;
     // 足せる量が多いうちは、上限だけにして案内は出さない（いつも出すと読み飛ばされやすい）
