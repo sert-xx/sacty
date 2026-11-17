@@ -157,6 +157,12 @@
   バックグラウンドの処理の完了通知で起きた番が、本文を出さずに終わると、空の `result` が最後に来る。Claude Code では、使い分けたときに1行を、デーモンのログとセッションログ（標準エラー）に残す（Codex では残さない）。
   中身のある `result` がどこにも無ければ、空の成果物にせず、失敗（`error`。`run.emptyResult`）にする。使った分の使用量は残す。失敗の扱いは、ほかの失敗と同じ（代わりのエージェントへの切り替え、無ければ一時停止。再開すると同じ工程をやり直す）。
   どの役割の実行にも当たる（読み取りは `docker.ts` の実行の一箇所）。`is_error` の `result` は、前の `result` で置き換えず、これまでどおり失敗にする。短くても空でない返事（「待機します」など）は中身がある扱いなので、見分けない。
+- エージェントの発言に、サブエージェントの完了の通知の形の文面があったとき（PBI-368）。Claude Code の出力で、工程のエージェント（親）の発言（`assistant` の出来事のうち、`parent_tool_use_id` を持たないもの）の本文に、`<task-notification>` か `<system-reminder>` が行の先頭（字下げなし）にある行があれば、その数を数える（`countImitatedNotices`。上限 1000）。
+  これらのタグは、実行環境が入力として届けるもので、エージェントが書くものではない。背景で起動したサブエージェントの結果が届く前に、エージェントが結果を自分で書いたしるしになる。
+  字下げした行、引用の印・リストの印の後ろ、行の途中に書かれたタグ（文の中での言及）は数えない。コードブロックの印（3つ以上の `` ` `` か `~`）が最初に現れた行から後ろは、発言の終わりまで数えない（引用の範囲は見分けない。誤って拾わないことを優先し、コードブロックの後ろに書かれた文面は拾わない）。1つの発言の本文が分かれていれば、つないでから数える。同じ発言（`message.id`）が複数の出来事に分かれて届いたときも、前の出来事で印に当たっていれば、続きを数えない。この検出は目安で、引用の書き方によっては誤って拾うこと・拾わないことがある。サブエージェントの発言、実行環境が届けた通知（`user` の出来事）、`result` の本文は数えない。
+  1件でもあれば、実行の結果に件数を持たせ（`imitatedNotices`）、作業履歴に `SubagentNoticeImitated`（実行・エージェント・件数）を記録して、デーモンのログにも残す。実行の結果（成果物・成否・費用）は変えず、工程は止めない。
+  画面の作業履歴の行に、件数と、その実行の成果物とセルフレビューの結果を確かめる案内が出て、行からその実行のログを開ける。仕組みと理由は、行を開いて読む詳細に出す。
+  時間切れ・デーモンの停止で止めた実行と、Codex の実行では数えない（Codex の出力には、この形の通知が無い）。タグを使わずに「担当は指摘なしだった」と地の文で書いたものは拾えない。
 
 - Codex の出力（JSONL）は、`turn.completed` の `usage` を足し合わせ、最後の `agent_message` を答えにする。
   `cached_input_tokens` は `input` から引いてキャッシュの読み出しにする。
@@ -178,7 +184,7 @@
   sacty は出力の中の JSON のオブジェクトを後ろから順に試し、読めた最初のものを使う。
 - 実行の結果の文と出力は、その実行で使った秘密情報（取り出した値・ゲートウェイのトークン・認証ファイルの中の値など）を `[REDACTED]` に置き換えてから記録する。
 
-コード: `apps/daemon/src/agents/parse.ts`（`ClaudeOutcomeReader`・`CodexOutcomeReader`・`classifyFailure`・`MAX_LINE`）、`apps/daemon/src/agents/cost.ts`（`runCost`・`priceOfModel`）、`apps/daemon/src/agent-json.ts`（`jsonCandidates`・`lastJsonAnswer`）、`apps/daemon/src/prompts.ts`（`answerMarker`）、`apps/daemon/src/agents/redact.ts`（`redact`・`redactText`）
+コード: `apps/daemon/src/agents/parse.ts`（`ClaudeOutcomeReader`・`CodexOutcomeReader`・`classifyFailure`・`countImitatedNotices`・`scanImitatedNotices`・`MAX_LINE`）、`apps/daemon/src/service.ts`（`recordImitatedNotices`）、`apps/daemon/src/agents/cost.ts`（`runCost`・`priceOfModel`）、`apps/daemon/src/agent-json.ts`（`jsonCandidates`・`lastJsonAnswer`）、`apps/daemon/src/prompts.ts`（`answerMarker`）、`apps/daemon/src/agents/redact.ts`（`redact`・`redactText`）
 
 ## 失敗したときの代わりのエージェント
 

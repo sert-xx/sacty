@@ -1467,6 +1467,30 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
   });
 });
 
+describe("エージェントの発言に、サブエージェントの完了の通知の形の文面があった記録の表示（PBI-368）", () => {
+  it("本文に件数と確かめるものを出し、仕組みと理由は開いて読む詳細に分ける", () => {
+    const event = {
+      type: "SubagentNoticeImitated",
+      payload: { runId: "r", agentId: "a", count: 3 },
+      actor: "sacty",
+    } as unknown as ActivityEvent;
+    const { text, detail } = describeEventParts(event, ja);
+    expect(text).toBe(
+      "エージェントが、サブエージェントの完了の通知の形の文面を3件書いた。この実行の成果物とセルフレビューの結果を確かめる",
+    );
+    // 本文に括弧書きの注釈を入れない（画面の文言の規則）
+    expect(text).not.toMatch(/[（(]/);
+    expect(detail).toContain("実行環境が届けるもの");
+    expect(detail).toContain("届いていない結果をもとに、成果物を直した恐れがある");
+    const en = describeEventParts(event, labels.en);
+    expect(en.text).toBe(
+      "The agent wrote 3 blocks shaped like a subagent completion notice. Check this run's deliverable and self-review results",
+    );
+    expect(en.text).not.toMatch(/[（(]/);
+    expect(en.detail).toContain("The runtime delivers notices of this shape");
+  });
+});
+
 describe("ゲートウェイのリトライの表示（PBI-37）", () => {
   it("リトライした回数・原因・待った時間と、あきらめたかを出す", () => {
     const event = (gaveUp: boolean) =>

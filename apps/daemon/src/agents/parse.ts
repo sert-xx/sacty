@@ -17,8 +17,14 @@ export type CostReport = {
   unreportedUsage?: TokenUsage;
 };
 
+/**
+ * エージェント（親）の発言に、サブエージェントの完了の通知・システムの知らせの形の文面があった件数（PBI-368）。
+ * 実行環境が届けるはずの文面を、エージェントが自分で書いたしるし（届いていない結果を書いた恐れがある）。無ければ持たない。
+ */
+export type ImitationReport = { imitatedNotices?: number };
+
 export type AgentOutcome =
-  | ({ kind: "completed"; output: string; usage: TokenUsage } & CostReport)
+  | ({ kind: "completed"; output: string; usage: TokenUsage } & CostReport & ImitationReport)
   | ({
       kind: "failed";
       reason: FailureReason;
@@ -30,7 +36,8 @@ export type AgentOutcome =
        * 止まった実行。usage があれば、読めた分（下限）で、無ければ何も読めなかった。
        */
       costUnknown?: true;
-    } & CostReport);
+    } & CostReport &
+      ImitationReport);
 
 const ZERO: TokenUsage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 
@@ -53,6 +60,55 @@ export function classifyFailure(message: string): FailureReason {
     return "auth";
   }
   return "error";
+}
+
+/** 数える件数の上限（コンテナから届く値なので、際限なく数えない）。 */
+export const IMITATED_NOTICES_MAX = 1000;
+
+/**
+ * 発言の中の、サブエージェントの完了の通知・システムの知らせの形の文面の数（PBI-368）。実行環境が入力として届けるタグ
+ * （`<task-notification>`・`<system-reminder>`）が、**行の先頭（字下げなし）** にある行を数える。実行環境が届ける文面も、
+ * 見つかった実行でエージェントが書いた文面も、タグは行の先頭にある。
+ *
+ * 引用（コードブロック）の範囲は見分けない。コードブロックの印（``` か ~~~）が最初に現れた行から後ろは、発言の終わりまで
+ * 数えない。印より後ろは引用かもしれず、引用の始まりと終わりを自前で見分けると、Markdown の構文（リスト・引用・入れ子）の
+ * 分だけ誤りが出るため。誤って拾わないことを優先し、コードブロックの後ろに書かれた文面は拾わない。
+ * 字下げした行、引用の印（>）・リストの印の後ろ、文の途中に書かれたタグも数えない。
+ */
+export function countImitatedNotices(text: string): number {
+  return scanImitatedNotices(text).count;
+}
+
+/**
+ * countImitatedNotices の数と、コードブロックの印に当たって数えるのをやめたか（fenced）。同じ発言の続きが別の出来事で届いた
+ * ときに、印より後ろを数えないために使う。行は、配列に分けずに前から順に読み、印のある行か上限に当たったら残りを読まない。
+ */
+export function scanImitatedNotices(text: string): { count: number; fenced: boolean } {
+  // 最初のコードブロックの印（``` か ~~~）の位置。その行から後ろは読まない
+  const marks = [text.indexOf("```"), text.indexOf("~~~")].filter((at) => at >= 0);
+  const firstMark = marks.length > 0 ? Math.min(...marks) : -1;
+  const fenced = firstMark >= 0;
+  if (!text.includes("<task-notification>") && !text.includes("<system-reminder>")) {
+    return { count: 0, fenced };
+  }
+  let count = 0;
+  let start = 0;
+  while (start <= text.length) {
+    const newline = text.indexOf("\n", start);
+    const end = newline < 0 ? text.length : newline;
+    // 印のある行に来たら、やめる（印は、この行より前には無い）
+    if (fenced && firstMark < end) break;
+    if (
+      text.startsWith("<task-notification>", start) ||
+      text.startsWith("<system-reminder>", start)
+    ) {
+      count++;
+      if (count >= IMITATED_NOTICES_MAX) break;
+    }
+    if (newline < 0) break;
+    start = newline + 1;
+  }
+  return { count, fenced };
 }
 
 function nonNegInt(value: unknown): number {
@@ -206,6 +262,15 @@ export class ClaudeOutcomeReader extends OutcomeReader {
   private untyped: Record<string, unknown> | undefined;
   /** 最後のエージェントの発言（result が無いときの理由。認証の失敗の文など）。 */
   private assistantText = "";
+  /** 親の発言にあった、サブエージェントの完了の通知・システムの知らせの形の文面の数（PBI-368）。 */
+  private imitated = 0;
+  /** コードブロックの印に当たった発言の id（同じ発言の続きの出来事を数えないため。直前の発言の分だけを持つ。PBI-368）。 */
+  private fencedMessageId: string | undefined;
+
+  /** 親の発言にあった、通知の形の文面の数（finish の前でも、そこまでの分を返す。PBI-368）。 */
+  get imitatedNotices(): number {
+    return this.imitated;
+  }
 
   protected event(event: Record<string, unknown>): void {
     this.untyped = event.type === undefined ? event : undefined;
@@ -245,6 +310,24 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         .join("")
         .trim();
       if (text) this.assistantText = text;
+      // サブエージェントの発言（parent_tool_use_id を持つ）は数えない。親が、届いていない担当の結果を書いたかを見る
+      if (text && (event.parent_tool_use_id === null || event.parent_tool_use_id === undefined)) {
+        // 発言の本文の全体を 1 つにつないでから数える。同じ発言（message.id）の続きが別の出来事で届いたときは、前の
+        // 出来事でコードブロックの印に当たっていれば、続きも数えない（印より後ろは、発言の終わりまで数えない）
+        const id = (event.message as { id?: unknown }).id;
+        const messageId = typeof id === "string" && id.length <= MESSAGE_ID_MAX ? id : undefined;
+        if (messageId === undefined || messageId !== this.fencedMessageId) {
+          const whole = content
+            .map((c) =>
+              c && typeof c === "object" && c.type === "text" ? String(c.text ?? "") : "",
+            )
+            .filter(Boolean)
+            .join("\n");
+          const { count, fenced } = scanImitatedNotices(whole);
+          this.imitated = Math.min(IMITATED_NOTICES_MAX, this.imitated + count);
+          this.fencedMessageId = fenced ? messageId : undefined;
+        }
+      }
     }
   }
 

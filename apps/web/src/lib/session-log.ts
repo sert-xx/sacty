@@ -24,6 +24,8 @@ const RUN_EVENTS = new Set<ActivityEvent["type"]>([
   "OutputExported",
   "AgentSessionArchived",
   "OrchestratorSessionUsed",
+  // エージェントの発言に通知の形の文面があった実行（ログで、その発言と担当の結果を確かめる。PBI-368）
+  "SubagentNoticeImitated",
   // 完了したタスクの監査の実行（PBI-125）
   "AuditSurveyed",
   "AuditDeepDived",

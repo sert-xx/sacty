@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/cli/src/index.ts、apps/daemon/src/config.ts（loadConfig）、apps/daemon/src/instance-lock.ts、apps/daemon/src/intake.ts、apps/daemon/src/secrets.ts、apps/daemon/src/host-mcp.ts、apps/daemon/src/services.ts、apps/daemon/src/notifier.ts、apps/daemon/src/error-report.ts、apps/web/src/components/error-report.tsx -->
+<!-- 対応するコード: packages/cli/src/index.ts、apps/daemon/src/config.ts（loadConfig）、apps/daemon/src/instance-lock.ts、apps/daemon/src/intake.ts、apps/daemon/src/secrets.ts、apps/daemon/src/host-mcp.ts、apps/daemon/src/services.ts、apps/daemon/src/notifier.ts、apps/daemon/src/error-report.ts、apps/web/src/components/error-report.tsx、apps/web/src/i18n/messages/labels.ts（SubagentNoticeImitated） -->
 
 **日本語** | [English](troubleshooting.en.md)
 
@@ -67,6 +67,7 @@ Issue・PR・チケットが取り込まれないときは、取り込めなか�
 | Codex × Bedrock などで `Reconnecting... error sending request` のまま進まない | 仮想マシンの中の Docker（Rancher Desktop など）では、`gateway.host_address` にホストに届くアドレスを書いてください（[ゲートウェイ](gateway.md#ホストのアドレス)） |
 | ホストの MCP サーバーの準備ができないとタスクの一覧に出る | ホストでの認証ができるか、`command` と `env` を確かめてください。sacty は1分ごとに起動し直します（[ゲートウェイ](gateway.md#ホストで動かす-mcp-サーバー)） |
 | `mcp.yaml` の MCP サーバーのコマンドがホストに見つからないと作業履歴に出る | `command` のサーバーは既定でホストで起動します。`npx`・`uvx` などをホストに入れるか、そのサーバーに `via_gateway: false` を書いてコンテナの中で起動してください（[コンテキストリポジトリ](context.md#コマンドの-mcp-サーバーホストで動かす)） |
+| 作業履歴に「エージェントが、サブエージェントの完了の通知の形の文面をN件書いた」と出る | エージェントが、サブエージェント（レビューの担当など）の結果が届く前に、結果を自分で書いた恐れがあります。タスクは止まりません。その行から実行のログを開き、その実行の成果物とセルフレビューの結果を確かめてください。おかしければ、差し戻してやり直させます |
 | コンテキストの誤りで工程が止まった | プロジェクトの設定の「コンテキストのプレビュー」か `npx sacty context preview` で、どの層のどのファイルのどの項目かを確かめてください（[コンテキストリポジトリ](context.md#合成の結果を確かめる)） |
 | `images` に無いイメージの名前で止まった | `config.yaml` の `images` に足すか、プロジェクトの対象のイメージの指定を直してください（[コンテナイメージ](images.md#どのイメージで動くか)） |
 | docker compose のサービスを起動できずに止まった | 理由に出た設定（`privileged`・ホストのネットワーク・作業領域の外のマウントなど）を使っていないか確かめてください（[docker compose のサービス](compose.md#使えない設定)） |

@@ -626,6 +626,14 @@ export class DockerExecutor implements AgentExecutor {
           console.warn(`[daemon] ${containerName}：${notice}`);
           log?.stderr(`[sacty] ${notice}\n`);
         }
+        // 親の発言に、サブエージェントの完了の通知の形の文面があったら、結果に持たせる（作業履歴に残す。PBI-368）
+        const imitated = reader instanceof ClaudeOutcomeReader ? reader.imitatedNotices : 0;
+        if (imitated > 0) {
+          outcome = { ...outcome, imitatedNotices: imitated };
+          console.warn(
+            `[daemon] ${containerName}：エージェントの発言に、サブエージェントの完了の通知・システムの知らせの形の文面が ${imitated} 件ありました`,
+          );
+        }
       }
     } finally {
       // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない

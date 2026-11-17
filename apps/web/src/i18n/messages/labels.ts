@@ -560,6 +560,10 @@ const ja = {
       source === "reported"
         ? `費用 ${cost} は、エージェントの CLI が報告した額（設定の単価で換算すると ${converted}）`
         : `費用 ${cost} は、エージェントの CLI が費用を報告しなかったので、使用量を単価で換算した額${unpriced.length > 0 ? `（単価が設定に無いモデル ${unpriced.join("・")} は、工程のエージェントの単価）` : ""}`,
+    SubagentNoticeImitated: (count: number) =>
+      `エージェントが、サブエージェントの完了の通知の形の文面を${count}件書いた。この実行の成果物とセルフレビューの結果を確かめる`,
+    SubagentNoticeImitatedHint:
+      "この形の文面は実行環境が届けるもので、エージェントが書くものではない。届いていない結果をもとに、成果物を直した恐れがある。",
     AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
       `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・計${seconds}秒）${gaveUp ? "・上限であきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした`,
@@ -1191,6 +1195,10 @@ const en: LabelMessages = {
       source === "reported"
         ? `Cost ${cost} is the amount reported by the agent CLI (${converted} when converted with the configured prices)`
         : `Cost ${cost} was converted from token usage because the agent CLI did not report a cost${unpriced.length > 0 ? ` (models without a configured price, ${unpriced.join(", ")}, use the step agent's price)` : ""}`,
+    SubagentNoticeImitated: (count) =>
+      `The agent wrote ${count} block${count === 1 ? "" : "s"} shaped like a subagent completion notice. Check this run's deliverable and self-review results`,
+    SubagentNoticeImitatedHint:
+      "The runtime delivers notices of this shape; an agent does not write them. The agent may have revised the deliverable from results that had not arrived.",
     AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
       `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; ${seconds}s in total)${gaveUp ? " · gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued`,

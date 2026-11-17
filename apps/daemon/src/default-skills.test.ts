@@ -140,6 +140,50 @@ describe("既定の review スキルの、段階のサブエージェント（PB
   });
 });
 
+describe("既定の review スキルの、担当の起動と結果の受け取り（PBI-368）", () => {
+  const skill = read("skills/review/review-dispatch/SKILL.md");
+  const section = skill.slice(
+    skill.indexOf("## 担当の起動と結果の受け取り"),
+    skill.indexOf("## サブエージェントを起動できないとき"),
+  );
+
+  it("担当は 1 つの発言でまとめて起動し、背景にしない指定を明示して、結果を起動のツールの結果として受け取る", () => {
+    expect(section).toContain("起動のツールの結果として受け取る");
+    expect(section).toContain("1 つの発言（メッセージ）の中で、まとめて起動する");
+    expect(section).toContain("背景にしない指定を、担当ごとに明示する");
+    expect(section).toContain("`run_in_background: false`");
+    // 起動のツールが結果を返さない環境は、待つためのツールで待つ
+    expect(section).toContain("Codex は `wait_agent`。版によっては `wait`");
+  });
+
+  it("待つためだけのコマンドを実行せず、担当の出力を途中で覗かない", () => {
+    expect(section).toContain("待つためだけのコマンド（`sleep`・`echo` など）を実行しない");
+    expect(section).toContain("担当の出力のファイルを、途中で覗かない");
+    expect(skill).toContain("待つためだけのコマンドも実行しない");
+  });
+
+  it("担当の結果として扱うのは実際に届いたものだけで、通知の形の文面を自分で書かず、届く前に集約・修正に進まない", () => {
+    expect(section).toContain("実行環境が届けた通知に実際に入っていたものだけ");
+    expect(section).toContain("自分の発言として書かない");
+    expect(section).toContain("`<task-notification>`・`<system-reminder>`");
+    expect(section).toContain("予想・推測で補わない");
+    expect(section).toContain("1 つでも届いていなければ、集約・修正に進まない");
+    // 親の手順と制約からも辿れる
+    expect(skill).toContain("届いていない担当の結果を、自分で書かない。");
+    expect(skill).toContain("担当の結果として扱うのは、実際に届いたものだけ。");
+  });
+
+  it("担当が背景になったときは、1 行だけ書いて番を終え、通知が届くたびに記録して、揃ってから集約する", () => {
+    expect(section).toContain("担当が背景になったとき");
+    expect(section).toContain("ツールを呼ばずにその番を終える");
+    expect(section).toContain("全部の担当の結果が届いてから、集約に進む");
+  });
+
+  it("あらゆるリポジトリに渡るので、sacty に限った書き方をしない", () => {
+    expect(section).not.toMatch(/sacty/i);
+  });
+});
+
 describe("既定の review スキルの、本文で示された文書（PBI-142）", () => {
   const linked = "skills/review/review-dispatch/references/linked-docs.md";
 

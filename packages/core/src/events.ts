@@ -1908,6 +1908,21 @@ const AiRequestsRetried = z.object({
 });
 
 /**
+ * エージェント（工程の親）の発言に、サブエージェントの完了の通知・システムの知らせの形の文面があった（PBI-368）。これらは実行環境が
+ * 入力として届けるもので、エージェントが書くものではない。届いていないサブエージェントの結果を、エージェントが自分で書いた恐れが
+ * ある。記録だけで、実行の結果・状態は変えない（人が、その実行の成果物とセルフレビューの結果を確かめるため）。
+ */
+const SubagentNoticeImitated = z.object({
+  type: z.literal("SubagentNoticeImitated"),
+  payload: z.object({
+    runId: z.string(),
+    agentId: z.string(),
+    /** 通知の形の文面の数（タグで始まる行の数）。 */
+    count: z.number().int().positive(),
+  }),
+});
+
+/**
  * 実行の費用の出どころ（PBI-301）。実行の終わりに、実行ごとに記録する（記録だけで、費用は変えない。実行の費用は、その実行の結果の
  * イベントが持つ）。reported：エージェントの CLI が報告した実行の費用（Claude Code の total_cost_usd）を、実行の費用にした。
  * converted：使用量を単価で換算した（モデルごとの使用量があれば、そのモデルの単価で）。convertedUsd は、設定の単価で換算したら
@@ -3789,6 +3804,7 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewFailed,
   OrchestratorFailed,
   AiRequestsRetried,
+  SubagentNoticeImitated,
   RunCostRecorded,
   AgentFellBack,
   AgentSessionArchived,
