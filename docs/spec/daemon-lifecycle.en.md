@@ -183,8 +183,10 @@ Images in `images.yaml` of context repositories ([Context composition](context.e
     It is not rebuilt automatically.
     `POST /api/projects/:id/context-images/:name/rebuild` ("Rebuild" on the screen) puts it back to `queued` (an image that has not failed is refused with `contextImage.notFailed`, and a missing one with `contextImage.notFound`).
   - After everything is built, and if the configuration could be read and every project's current definitions were read, it removes images with its own mark, `sacty-ctx-<mark>-`, other than the names of the current definitions with `docker image rm` (not forced).
+    If the context of even one project could not be read (`contextImage.loadFailed`), the list of images to keep is incomplete, so it removes no image at all (it does not run `docker image ls` either; the list passed to `removeStale` is `null`).
     This cleanup runs on every reread (at startup, when project settings are saved, and every 5 minutes), even when there is nothing to build.
-    It then removes build cache unused for more than 3 days (`BUILD_CACHE_MAX_UNUSED_DAYS`) with `docker builder prune -f --filter until=72h`, the same as the cleanup of `sacty image build` (`pruneContextImagesAndBuildCache`).
+    It then removes unused build cache with `docker builder prune -f`, the same as the cleanup of `sacty image build` (`pruneContextImagesAndBuildCache`).
+    It does not narrow by age (`--filter`) and does not add `--all`.
     The build cache cleanup does not run until 6 hours (`BUILD_CACHE_PRUNE_INTERVAL_MS`) have passed since it last succeeded.
     The time of the last success is kept in memory only (`BuildCachePruneState`), so the first cleanup after the daemon starts runs it.
     A failure or a cut-short cleanup does not advance that time; the next cleanup tries again.
@@ -195,7 +197,8 @@ Images in `images.yaml` of context repositories ([Context composition](context.e
     The daemon log shows the result without interpreting it. On success: that the cleanup ran, and the last line of the docker output (also when there was nothing to remove). On failure: the docker exit code and the last line of its output (or the reason when docker could not be started).
     While failures continue, each cleanup logs the failure line.
     The success line goes to standard output (`console.log`); the failure and cut-short lines go out as warnings (`console.warn`).
-    While the condition for starting the whole cleanup (the configuration can be read and every project's current definitions were read) is not met, the build cache is not removed either, and nothing is logged.
+    The build cache cleanup does not use the list of images to keep, so it runs with the same interval, time limit, and log lines even while there is a project whose context could not be read.
+    While the configuration cannot be read, and while there is a project that was read when the configuration could not be read (not reread since the configuration came back), neither images nor build cache are removed, and nothing is logged.
     The wording of a cut-short cleanup depends on the reason (`PRUNE_ABORT_TIMEOUT`: the time limit; `PRUNE_ABORT_STOP`: the daemon stopping) and on whether the build cache cleanup had started.
     While removing, a reread does not check which images are present; it checks after the removal finishes.
     If images get queued during the removal, it builds them after the removal finishes.

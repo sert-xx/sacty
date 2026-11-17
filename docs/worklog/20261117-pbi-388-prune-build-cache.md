@@ -4,7 +4,7 @@
 - タスク: PBI-388
 - PR: #425
 - ブランチ: feat/pbi-388-prune-build-cache
-- 関係する ADR: [デーモンのコンテキストのイメージの片付けでも、3日使っていないビルドキャッシュを消す](../adr/20261117-1500-prune-build-cache-with-context-images.md)
+- 関係する ADR: [デーモンのコンテキストのイメージの片付けでも、3日使っていないビルドキャッシュを消す](../adr/20261117-1500-superseded-prune-build-cache-with-context-images.md)
 
 ## 目的
 

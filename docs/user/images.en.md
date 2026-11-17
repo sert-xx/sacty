@@ -268,11 +268,17 @@ When building, sacty works as follows.
 - To keep the load on Docker down, sacty builds them one at a time.
 - Context images that are no longer used (from old definitions or deleted projects) are removed after builds finish.
   Images that containers use, and images built by sacty for another `SACTY_HOME` on the same Docker, are kept.
-- At that time, sacty also removes build cache unused for more than 3 days (the build cache of the whole Docker is the target).
+- At that time, sacty also removes unused build cache (the build cache of the whole Docker is the target, and it is not narrowed by how long it has been unused).
+  The first build after the cleanup rebuilds layers and downloads packages again, so it takes longer.
+  Build cache of builds other than sacty that use the same Docker is removed too.
+  Layers shared with images that exist now are kept.
   sacty removes build cache in the first cleanup after it starts, and then once every 6 hours (when it could not be removed, sacty tries again on the next reread).
   The result (the last line of the docker output), and a failure to remove, appear in the log of the terminal where you started sacty.
-- While `config.yaml` or the context repository of any project cannot be read, sacty removes neither unused images nor build cache (and logs nothing about it).
-  Once they can be read, sacty removes them from the next reread. Until then, clean up with `npx sacty image build` or `docker builder prune`.
+- While the context repository of any project cannot be read, sacty does not remove unused context images (it cannot decide which images to keep).
+  It still removes build cache at the same interval during that time.
+  Once it can be read, sacty also removes unused images from the next reread.
+- While `config.yaml` cannot be read, sacty removes neither unused images nor build cache (and logs nothing about it).
+  Once it can be read, sacty removes them from the next reread. Until then, clean up with `npx sacty image build` or `docker builder prune`.
 - If fetching one project's context repository does not finish within 5 minutes, sacty stops it and treats it as unreadable (other projects go ahead).
 
 ### While images are being built

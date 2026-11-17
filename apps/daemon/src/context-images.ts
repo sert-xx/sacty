@@ -5,7 +5,7 @@ import { dockerClientEnv } from "./agents/docker.js";
 import { DEFAULT_IMAGE, hasImage, type LanguageImage, type SactyConfig } from "./config.js";
 import type { ContextImageFile } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
-import { BUILD_CACHE_MAX_UNUSED_DAYS, buildCachePruneArgs } from "./image.js";
+import { buildCachePruneArgs } from "./image.js";
 import type { ImageState } from "./image-presence.js";
 
 /**
@@ -100,10 +100,16 @@ type ProjectImages = {
   /** 一度でも読み終えた（読めなかったときも含む）。 */
   loaded: boolean;
   /**
-   * 設定と定義を読めて、entries が今の定義を表している（設定を読めずに読み終えたことにしたときは false。片付けは、すべての
-   * プロジェクトがこの状態のときだけ行う。空の一覧で、作ったイメージを消さないように）。
+   * 設定と定義を読めて、entries が今の定義を表している（設定を読めずに読み終えたことにしたときは false。イメージの
+   * 片付けは、すべてのプロジェクトがこの状態で、読み込みの失敗も無いときだけ行う。空の一覧で、作ったイメージを消さない
+   * ように）。
    */
   current: boolean;
+  /**
+   * 設定を読めないときに読み終えたことにしたまま（設定が戻ってから読み直すまで）。この間は、イメージもビルドキャッシュも
+   * 片付けない（前の読み込みの失敗が残っていても）。
+   */
+  configUnread?: boolean;
   loadError?: DaemonText;
   warnings: DaemonText[];
   entries: ContextImageEntry[];
@@ -153,9 +159,14 @@ export type ContextImagesDeps = {
   ) => Promise<string | undefined>;
   /**
    * keep 以外の、sacty が作ったコンテキストのイメージを消す（使っているものは消えなくてよい）。使っていないビルドキャッシュも
-   * ここで消す（PBI-388。pruneContextImagesAndBuildCache）。
+   * ここで消す（PBI-388。pruneContextImagesAndBuildCache）。keep が null なら、イメージは1つも消さず、ビルドキャッシュだけを
+   * 消す（PBI-389。コンテキストを読めないプロジェクトがあって、残す一覧が揃わないとき）。
    */
-  removeStale?: (keep: readonly string[], prefix: string, signal: AbortSignal) => Promise<void>;
+  removeStale?: (
+    keep: readonly string[] | null,
+    prefix: string,
+    signal: AbortSignal,
+  ) => Promise<void>;
   /** 片付けを待つ上限（ミリ秒）。無ければ CONTEXT_IMAGES_PRUNE_TIMEOUT_MS。 */
   pruneTimeoutMs?: number;
   /** 止めてから、終わるのを待つ上限（ミリ秒）。無ければ CONTEXT_IMAGE_ABANDON_MS。 */
@@ -426,12 +437,14 @@ export class ContextImageBuilder {
     this.projects.set(id, project);
     this.notify();
     const config = this.deps.config();
+    if (config) delete project.configUnread;
     if (!config) {
       // 設定を読めなければ作らない（設定の誤りは、別に知らせている）。待たせないよう、読み終えたことにする。定義は
       // 確かめていないので、片付けはしない
       project.loading = false;
       project.loaded = true;
       project.current = false;
+      project.configUnread = true;
       return;
     }
     let loaded: Awaited<ReturnType<ContextImagesDeps["load"]>>;
@@ -644,17 +657,25 @@ export class ContextImageBuilder {
   }
 
   /**
-   * 使っていない、sacty が作ったコンテキストのイメージ（と、使っていないビルドキャッシュ）を消す。読めなかったプロジェクトが
-   * あれば消さない。作っている最中・読み直しの最中には呼ばれない・消さない。
+   * 使っていない、sacty が作ったコンテキストのイメージ（と、使っていないビルドキャッシュ）を消す。作っている最中・
+   * 読み直しの最中には呼ばれない・消さない。設定を読めないときも消さない。
+   *
+   * コンテキストを読めなかったプロジェクトがあれば、イメージは消さず（残す一覧が揃わないので、作ったイメージを消して
+   * しまう）、ビルドキャッシュだけを消す（PBI-389。残す一覧を使わないので、読めない間も止めない）。
    */
   private async prune(): Promise<void> {
     const removeStale = this.deps.removeStale;
     if (!removeStale || this.controller.signal.aborted || this.pruning) return;
     const projects = [...this.projects.values()];
     if (!this.deps.config()) return;
-    if (projects.some((p) => p.loadError || !p.loaded || p.loading || !p.current)) return;
+    if (projects.some((p) => !p.loaded || p.loading)) return;
+    // 設定を読めないときに読んだまま（定義を確かめていない）のプロジェクトがあれば、読み直すまで何も消さない
+    if (projects.some((p) => p.configUnread)) return;
     if (this.refreshing.size > 0) return;
-    const keep = projects.flatMap((p) => p.entries.map((e) => e.image));
+    // 読めなかったプロジェクトがあれば、残す一覧が揃わないので、イメージは消さない（null）。ビルドキャッシュは消す
+    const keep = projects.some((p) => p.loadError)
+      ? null
+      : projects.flatMap((p) => p.entries.map((e) => e.image));
     // 片付けている間は、読み直しが手元にあるかを確かめない（確かめた後に消さないように。load が待つ）
     // 片付けにも上限を設ける（docker が応答しないと、読み直しと作成が待ち続けるため）。過ぎたら止めて先に進む
     const local = new AbortController();
@@ -774,7 +795,7 @@ function lastOutputLine(output: string): string {
 
 /**
  * ビルドキャッシュの片付けを、前に成功してから次に走らせるまでの間隔（6時間）。片付け（イメージの片付け）は読み直しのたび
- * （5分ごとを含む）に動くが、消す対象は「3日使っていないもの」なので、毎回走らせても消えるものはほとんど変わらない。
+ * （5分ごとを含む）に動くが、毎回走らせても消えるものはほとんど変わらない。
  */
 export const BUILD_CACHE_PRUNE_INTERVAL_MS = 6 * 60 * 60_000;
 
@@ -788,13 +809,15 @@ export type BuildCachePruneState = {
  * デーモンの片付け（PBI-388）。使わなくなったコンテキストのイメージを消してから（層がキャッシュに残るので、後で）、
  * 使っていないビルドキャッシュを消す。失敗しても例外にしない（イメージの作成・読み直しに関わらせない）。signal は、
  * 片付けの時間切れかデーモンの停止で止まる（reason で見分ける。run は、止まったら docker を止め、止まった後は動かさないこと）。
+ * keep が null なら、イメージの片付けを飛ばして、ビルドキャッシュだけを消す（PBI-389）。
  *
  * ビルドキャッシュの片付けは、前に成功してから BUILD_CACHE_PRUNE_INTERVAL_MS が経つまで走らせない（起動してから最初の
  * 片付けでは走らせる）。失敗・打ち切りでは時刻を進めず、次の片付けで試し直す。結果は、解釈せずに log に出す（成功なら
  * docker の出力の最後の行、失敗なら終了コードと最後の行）。成功は log に、失敗と打ち切りは warn に出す。
  */
 export async function pruneContextImagesAndBuildCache(deps: {
-  keep: readonly string[];
+  /** 残すイメージ。null なら、イメージは1つも消さない（docker の image ls・image rm を動かさない）。 */
+  keep: readonly string[] | null;
   prefix: string;
   signal: AbortSignal;
   /** docker を実行して、終了コードと出力を返す（テストでは差し替える）。 */
@@ -821,13 +844,17 @@ export async function pruneContextImagesAndBuildCache(deps: {
       deps.warn(`[daemon] 片付けを打ち切ったので、${what}。`);
     }
   };
-  try {
-    const removed = await removeStaleContextImages(deps.keep, deps.run, deps.prefix);
-    if (removed.length > 0) {
-      deps.log(`[daemon] 使わなくなったコンテキストのイメージを消しました：${removed.join("、")}`);
+  if (deps.keep !== null) {
+    try {
+      const removed = await removeStaleContextImages(deps.keep, deps.run, deps.prefix);
+      if (removed.length > 0) {
+        deps.log(
+          `[daemon] 使わなくなったコンテキストのイメージを消しました：${removed.join("、")}`,
+        );
+      }
+    } catch {
+      // イメージを消せなくても（docker を起動できないなど）、キャッシュの片付けは試み、その結果をログに出す
     }
-  } catch {
-    // イメージを消せなくても（docker を起動できないなど）、キャッシュの片付けは試み、その結果をログに出す
   }
   const { succeededAt } = deps.state;
   if (succeededAt !== undefined) {
@@ -865,6 +892,6 @@ export async function pruneContextImagesAndBuildCache(deps: {
   }
   deps.state.succeededAt = now();
   deps.log(
-    `[daemon] ${BUILD_CACHE_MAX_UNUSED_DAYS}日使っていないビルドキャッシュの片付けを実行しました${detail ? `（docker の出力の最後の行：${detail}）` : ""}。`,
+    `[daemon] 使っていないビルドキャッシュの片付けを実行しました${detail ? `（docker の出力の最後の行：${detail}）` : ""}。`,
   );
 }

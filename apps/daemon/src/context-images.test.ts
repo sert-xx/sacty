@@ -13,7 +13,7 @@ import {
   removeStaleContextImages,
   runDockerStreaming,
 } from "./context-images.js";
-import { BUILD_CACHE_MAX_UNUSED_DAYS, buildCachePruneArgs } from "./image.js";
+import { buildCachePruneArgs } from "./image.js";
 import type { ImageState } from "./image-presence.js";
 
 const def = (description: string, extra: Partial<ContextImageFile> = {}): ContextImageFile => ({
@@ -47,7 +47,7 @@ function setup(
   const present = new Set(options.present ?? []);
   const built: string[] = [];
   const pending: { image: string; finish: () => void }[] = [];
-  const removed: string[][] = [];
+  const removed: (string[] | null)[] = [];
   let auto = true;
   const deps: ContextImagesDeps = {
     projects: () => projects,
@@ -68,7 +68,7 @@ function setup(
         else pending.push({ image: language.image, finish });
       }),
     removeStale: async (keep) => {
-      removed.push([...keep]);
+      removed.push(keep === null ? null : [...keep]);
     },
     now: () => new Date("2026-11-11T00:00:00Z"),
   };
@@ -762,11 +762,11 @@ describe("使わなくなったコンテキストのイメージの片付け（P
 });
 
 describe("使っていないビルドキャッシュの片付け（PBI-388）", () => {
-  const CACHE = "builder prune -f --filter until=72h";
+  const CACHE = "builder prune -f";
   const LS = "image ls --format {{.Repository}}:{{.Tag}}";
   const images = [{ name: "node-pw", image: def("x"), from: "acme" }];
   const ran = (detail?: string) =>
-    `[daemon] 3日使っていないビルドキャッシュの片付けを実行しました${detail ? `（docker の出力の最後の行：${detail}）` : ""}。`;
+    `[daemon] 使っていないビルドキャッシュの片付けを実行しました${detail ? `（docker の出力の最後の行：${detail}）` : ""}。`;
   /** 警告（warn）に出た行は、頭に `warn: ` を付けて、出た順のまま logs に並べる。 */
   const failed = (detail: string) =>
     `warn: [daemon] 使っていないビルドキャッシュを消せませんでした（${detail}）。`;
@@ -789,7 +789,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
       clock,
       state,
       cacheCalls: () => calls.filter((c) => c === CACHE).length,
-      prune: (keep: readonly string[] = [], prefix = "sacty-ctx-") =>
+      prune: (keep: readonly string[] | null = [], prefix = "sacty-ctx-") =>
         pruneContextImagesAndBuildCache({
           keep,
           prefix,
@@ -809,7 +809,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     };
   }
 
-  it("使わなくなったイメージを消した後に、3日使っていないビルドキャッシュを消し、docker の出力の最後の行をログに出す", async () => {
+  it("使わなくなったイメージを消した後に、使っていないビルドキャッシュを消し、docker の出力の最後の行をログに出す", async () => {
     const { calls, logs, prune } = docker({
       "image ls": { stdout: "sacty-ctx-p1-a:1\nsacty-ctx-p1-a:0\n" },
       "builder prune": { stdout: "ID\tRECLAIMABLE\tSIZE\nabc\ttrue\t1GB\nTotal:\t1.2GB\n" },
@@ -1047,10 +1047,15 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
   });
 
   it("ログの期間と docker の引数は、同じ定数から作る", async () => {
-    expect(buildCachePruneArgs().at(-1)).toBe(`until=${BUILD_CACHE_MAX_UNUSED_DAYS * 24}h`);
-    const { logs, prune } = docker();
+    expect(buildCachePruneArgs()).toEqual(["builder", "prune", "-f"]);
+    const { calls, logs, prune } = docker();
     await prune();
-    expect(logs[0]).toContain(`${BUILD_CACHE_MAX_UNUSED_DAYS}日使っていないビルドキャッシュ`);
+    // 動かす docker にも、期間の絞り込み（--filter until=…）と --all が無い
+    const cache = calls.filter((c) => c.startsWith("builder "));
+    expect(cache).toEqual(["builder prune -f"]);
+    expect(cache.join(" ")).not.toMatch(/--filter|until|--all|(^| )-a( |$)/);
+    // ログにも、期間を書かない
+    expect(logs).toEqual(["[daemon] 使っていないビルドキャッシュの片付けを実行しました。"]);
   });
 
   /**
@@ -1063,6 +1068,10 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     build?: ContextImagesDeps["build"];
     load?: ContextImagesDeps["load"];
     projects?: { id: string; name: string }[];
+    /** 設定（無ければ、読める設定）。 */
+    config?: () => SactyConfig | undefined;
+    /** docker image ls が返すイメージ（無ければ、何も返さない）。 */
+    listed?: () => string[];
   }) {
     const calls: string[] = [];
     const logs: string[] = [];
@@ -1074,7 +1083,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     const builder = new ContextImageBuilder({
       projects: () => options.projects ?? [{ id: "p1", name: "p" }],
       load: options.load ?? (async () => ({ images, warnings: [] })),
-      config: () => baseConfig(),
+      config: options.config ?? (() => baseConfig()),
       inspect: async () => (options.build ? "missing" : "present"),
       build: options.build ?? (async () => undefined),
       ...(options.pruneTimeoutMs ? { pruneTimeoutMs: options.pruneTimeoutMs } : {}),
@@ -1087,6 +1096,9 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
           now: () => clock.now,
           run: (args) => {
             calls.push(args.join(" "));
+            if (args[0] === "image" && args[1] === "ls") {
+              return Promise.resolve({ code: 0, stdout: (options.listed?.() ?? []).join("\n") });
+            }
             if (args[0] !== "builder") return Promise.resolve({ code: 0, stdout: "" });
             if (signal.aborted) return Promise.resolve({ code: 1, stdout: "" });
             if (!options.hold) return Promise.resolve({ code: 0, stdout: "Total:\t1GB\n" });
@@ -1234,6 +1246,316 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     expect(max()).toBe(1);
     release(0);
     await builder.idle();
+  });
+
+  describe("コンテキストを読めないプロジェクトがある間の片付け（PBI-389）", () => {
+    const two = [
+      { id: "p1", name: "p1" },
+      { id: "p2", name: "p2" },
+    ];
+    /** 手元にある、このデーモンの印のイメージ。どれも今の定義の名前ではないので、イメージの片付けが動けば消される。 */
+    const listed = () => ["sacty-ctx-p1-old:1", "sacty-ctx-p2-old:1", "sacty-ctx-gone-old:1"];
+    const RM = "image rm ";
+    /** unreadable のプロジェクトは、読めない（取得の失敗）。ほかは読める。 */
+    const loadExcept =
+      (unreadable: () => string[]): ContextImagesDeps["load"] =>
+      async (id) => {
+        if (unreadable().includes(id)) throw new Error("clone failed");
+        return { images, warnings: [] };
+      };
+    const imageCalls = (calls: string[]) => calls.filter((c) => c.startsWith("image "));
+
+    it("読めないプロジェクトが1つあっても、ビルドキャッシュは片付け、イメージは1つも消さない", async () => {
+      const { builder, calls, logs, state } = wired({
+        projects: two,
+        load: loadExcept(() => ["p2"]),
+        listed,
+      });
+      await builder.refresh();
+      await builder.idle();
+      expect(builder.view().find((v) => v.projectId === "p2")?.loadError).toBeDefined();
+      // イメージの一覧も取らず、消しもしない（ビルドキャッシュの片付けだけ）
+      expect(calls).toEqual([CACHE]);
+      expect(logs).toEqual([ran("Total: 1GB")]);
+      expect(state.succeededAt).toBe(1_000_000);
+    });
+
+    it("どのプロジェクトも読めなくても、ビルドキャッシュは片付け、イメージは1つも消さない", async () => {
+      const { builder, calls, logs } = wired({
+        projects: two,
+        load: loadExcept(() => ["p1", "p2"]),
+        listed,
+      });
+      await builder.refresh();
+      await builder.idle();
+      expect(calls).toEqual([CACHE]);
+      expect(logs).toEqual([ran("Total: 1GB")]);
+    });
+
+    it("読めないプロジェクトが無ければ、使わなくなったイメージを消してから、ビルドキャッシュを片付ける", async () => {
+      const { builder, calls } = wired({ projects: two, load: loadExcept(() => []), listed });
+      await builder.refresh();
+      await builder.idle();
+      expect(calls).toEqual([LS, ...listed().map((image) => `${RM}${image}`), CACHE]);
+    });
+
+    it("前に読めていたプロジェクトが読めなくなっても、そのプロジェクトのイメージを含めて1つも消さない", async () => {
+      let unreadable: string[] = [];
+      const { builder, calls, clock } = wired({
+        projects: two,
+        load: loadExcept(() => unreadable),
+        listed,
+      });
+      await builder.refresh();
+      await builder.idle();
+      expect(imageCalls(calls).filter((c) => c.startsWith(RM))).toHaveLength(3);
+      calls.length = 0;
+      // p2 が読めなくなる（前に読んだ定義を使い続ける）。間隔が過ぎていれば、ビルドキャッシュだけを片付ける
+      unreadable = ["p2"];
+      clock.now += BUILD_CACHE_PRUNE_INTERVAL_MS;
+      await builder.refresh();
+      await builder.idle();
+      expect(builder.images("p2").map((e) => e.state)).toEqual(["ready"]);
+      expect(calls).toEqual([CACHE]);
+    });
+
+    it("読めるようになったら、次の読み直しからイメージも消す（間隔の内なら、ビルドキャッシュは片付けない）", async () => {
+      let unreadable = ["p2"];
+      const { builder, calls } = wired({
+        projects: two,
+        load: loadExcept(() => unreadable),
+        listed,
+      });
+      await builder.refresh();
+      await builder.idle();
+      expect(calls).toEqual([CACHE]);
+      unreadable = [];
+      await builder.refresh();
+      await builder.idle();
+      expect(calls).toEqual([CACHE, LS, ...listed().map((image) => `${RM}${image}`)]);
+    });
+
+    it("読めない間も、前に成功してから間隔（6時間）が経つまでは走らせず、過ぎたら走らせる", async () => {
+      const { builder, calls, clock, cacheCalls } = wired({
+        projects: two,
+        load: loadExcept(() => ["p2"]),
+        listed,
+      });
+      await builder.refresh();
+      await builder.idle();
+      expect(cacheCalls()).toBe(1);
+      clock.now += BUILD_CACHE_PRUNE_INTERVAL_MS - 1;
+      await builder.refresh();
+      await builder.idle();
+      expect(cacheCalls()).toBe(1);
+      clock.now += 1;
+      await builder.refresh();
+      await builder.idle();
+      expect(cacheCalls()).toBe(2);
+      expect(imageCalls(calls)).toEqual([]);
+    });
+
+    it("設定を読めないときは、読めないプロジェクトがあっても、ビルドキャッシュも片付けない", async () => {
+      let config: SactyConfig | undefined = baseConfig();
+      const { builder, calls, logs, clock } = wired({
+        projects: two,
+        load: loadExcept(() => ["p2"]),
+        listed,
+        config: () => config,
+      });
+      await builder.refresh();
+      await builder.idle();
+      expect(calls).toEqual([CACHE]);
+      calls.length = 0;
+      logs.length = 0;
+      // 設定を読めなくなる（p2 は、前の読み込みの失敗を持ったまま）。間隔は過ぎている
+      config = undefined;
+      clock.now += BUILD_CACHE_PRUNE_INTERVAL_MS;
+      await builder.refresh();
+      await builder.idle();
+      expect(calls).toEqual([]);
+      expect(logs).toEqual([]);
+    });
+
+    it("設定を読めないときに読んだままのプロジェクトがあれば、ほかが読めなくても、読み直すまで何も片付けない", async () => {
+      let config: SactyConfig | undefined;
+      let unreadable: string[] = [];
+      const { builder, calls } = wired({
+        projects: two,
+        load: loadExcept(() => unreadable),
+        listed,
+        config: () => config,
+      });
+      await builder.refresh();
+      await builder.idle();
+      // 設定が戻ってから、p2 だけを読み直して、読めない（p1 は、設定を読めないときに読んだまま）
+      config = baseConfig();
+      unreadable = ["p2"];
+      await builder.refresh("p2");
+      await builder.idle();
+      expect(calls).toEqual([]);
+      // p1 も読み直せば、ビルドキャッシュだけを片付ける（p2 は読めないまま）
+      await builder.refresh("p1");
+      await builder.idle();
+      expect(calls).toEqual([CACHE]);
+    });
+
+    it("読めなかった後に、設定を読めないときに読んだままのプロジェクトも、読み直すまで何も片付けない", async () => {
+      let config: SactyConfig | undefined = baseConfig();
+      const { builder, calls, clock } = wired({
+        projects: two,
+        load: loadExcept(() => ["p1"]),
+        listed,
+        config: () => config,
+      });
+      await builder.refresh();
+      await builder.idle();
+      expect(calls).toEqual([CACHE]);
+      clock.now += BUILD_CACHE_PRUNE_INTERVAL_MS;
+      // 設定を読めない間に読む（p1 は、前の読み込みの失敗を持ったまま、読み終えたことになる）
+      config = undefined;
+      await builder.refresh();
+      await builder.idle();
+      // 設定が戻ってから、p2 だけを読み直す
+      config = baseConfig();
+      await builder.refresh("p2");
+      await builder.idle();
+      expect(builder.view().find((v) => v.projectId === "p1")?.loadError).toBeDefined();
+      expect(calls).toEqual([CACHE]);
+      // p1 も読み直せば（読めないまま）、ビルドキャッシュだけを片付ける
+      await builder.refresh("p1");
+      await builder.idle();
+      expect(calls).toEqual([CACHE, CACHE]);
+    });
+
+    it("読めないプロジェクトがあっても、ほかのプロジェクトを読み直している最中には、片付けない", async () => {
+      let releaseP2 = () => {};
+      let holdP2 = false;
+      const { builder, calls, clock } = wired({
+        projects: two,
+        listed,
+        load: async (id) => {
+          if (id === "p1") throw new Error("clone failed");
+          if (holdP2) {
+            await new Promise<void>((r) => {
+              releaseP2 = r;
+            });
+          }
+          return { images, warnings: [] };
+        },
+      });
+      await builder.refresh();
+      await builder.idle();
+      expect(calls).toEqual([CACHE]);
+      clock.now += BUILD_CACHE_PRUNE_INTERVAL_MS;
+      holdP2 = true;
+      const p2 = builder.refresh("p2");
+      await builder.refresh("p1");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(calls).toEqual([CACHE]);
+      releaseP2();
+      await p2;
+      await builder.idle();
+      expect(calls).toEqual([CACHE, CACHE]);
+    });
+
+    it("読めないプロジェクトがあっても、イメージを作っている最中には、片付けない（作り終えてから、ビルドキャッシュだけ）", async () => {
+      let finish = () => {};
+      const { builder, calls } = wired({
+        projects: two,
+        load: loadExcept(() => ["p2"]),
+        listed,
+        build: () =>
+          new Promise((r) => {
+            finish = () => r(undefined);
+          }),
+      });
+      await builder.refresh();
+      await vi.waitFor(() => expect(builder.images("p1")[0]?.state).toBe("building"));
+      await builder.refresh();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(calls).toEqual([]);
+      finish();
+      await builder.idle();
+      expect(calls).toEqual([CACHE]);
+    });
+
+    it("読めない間の片付けも、同時に2つ動かさない", async () => {
+      const { builder, calls, release, cacheCalls, max } = wired({
+        hold: true,
+        projects: two,
+        load: loadExcept(() => ["p2"]),
+        listed,
+      });
+      await builder.refresh();
+      await vi.waitFor(() => expect(cacheCalls()).toBe(1));
+      await builder.refresh("no-such-project");
+      await builder.refresh("no-such-project");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(calls).toEqual([CACHE]);
+      expect(max()).toBe(1);
+      release(0);
+      await builder.idle();
+    });
+
+    it("読めない間の片付けも、上限の時間を過ぎたら止め、時刻を進めずに次の読み直しで試し直す", async () => {
+      const { builder, calls, logs, state } = wired({
+        hold: true,
+        pruneTimeoutMs: 20,
+        projects: two,
+        load: loadExcept(() => ["p2"]),
+        listed,
+      });
+      await builder.refresh();
+      await builder.idle();
+      const timedOut =
+        "warn: [daemon] 片付けが上限の時間を過ぎたので、ビルドキャッシュの片付けを打ち切りました。次の読み直しで試し直します。";
+      expect(logs).toEqual([timedOut]);
+      expect(state.succeededAt).toBeUndefined();
+      await builder.refresh();
+      await builder.idle();
+      expect(calls).toEqual([CACHE, CACHE]);
+      expect(logs).toEqual([timedOut, timedOut]);
+    });
+
+    it("読めない間の片付けも、デーモンを止めると止まり、止めた後は片付けない", async () => {
+      const { builder, calls, logs, state, cacheCalls } = wired({
+        hold: true,
+        projects: two,
+        load: loadExcept(() => ["p2"]),
+        listed,
+      });
+      await builder.refresh();
+      await vi.waitFor(() => expect(cacheCalls()).toBe(1));
+      await builder.stop();
+      expect(logs).toEqual([
+        "warn: [daemon] デーモンを止めるので、ビルドキャッシュの片付けを打ち切りました。",
+      ]);
+      expect(state.succeededAt).toBeUndefined();
+      await builder.refresh();
+      expect(calls).toEqual([CACHE]);
+    });
+
+    it("残す一覧が無い（null）片付けは、イメージの一覧を取らず・消さず、ビルドキャッシュだけを消す", async () => {
+      const { calls, logs, prune } = docker({
+        "image ls": { stdout: "sacty-ctx-p1-old:1\nsacty-ctx-p2-old:1\n" },
+        builder: { stdout: "Total:\t0B\n" },
+      });
+      await prune(null);
+      expect(calls).toEqual([CACHE]);
+      expect(logs).toEqual([ran("Total: 0B")]);
+    });
+
+    it("残す一覧が無い（null）片付けも、始める前に打ち切られていたら、docker を動かさず、理由を出す", async () => {
+      const controller = new AbortController();
+      controller.abort(PRUNE_ABORT_STOP);
+      const { calls, logs, prune } = docker({}, controller.signal);
+      await prune(null);
+      expect(calls).toEqual([]);
+      expect(logs).toEqual([
+        "warn: [daemon] デーモンを止めるので、ビルドキャッシュの片付けは始めていません。",
+      ]);
+    });
   });
 });
 
