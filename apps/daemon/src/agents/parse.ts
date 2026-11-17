@@ -68,44 +68,18 @@ export const IMITATED_NOTICES_MAX = 1000;
 /**
  * 発言の中の、サブエージェントの完了の通知・システムの知らせの形の文面の数（PBI-368）。実行環境が入力として届けるタグ
  * （`<task-notification>`・`<system-reminder>`）が、**行の先頭（字下げなし）** にある行を数える。実行環境が届ける文面も、
- * 見つかった実行でエージェントが書いた文面も、タグは行の先頭にある。次のものは数えない（引用・言及として書いたもの）。
- * - 字下げした行（リストの項目の中・字下げのコードブロック）、引用の印（>）・リストの印の後ろ、文の途中に書かれたタグ。
- * - 囲んだコードブロック（``` か ~~~）の中。閉じる行は、同じ記号が同じ長さ以上で、後ろに空白しか無い行（```xml のように
- *   言語の名前が付いた行は、閉じる行ではない）。
- *   - 開く行の字下げが空白 3 つまでなら、閉じる行まで（中の行が行の先頭から始まっていても、コードブロックの中）。
- *   - 開く行が、4 つ以上の字下げ・引用の印・リストの印の後ろにあるなら（リストや引用の中のコードブロック）、閉じる行か、
- *     字下げも引用の印も無い行まで（その行で、リスト・引用が終わる。開いたまま、後ろの文面を見逃さない）。
+ * 見つかった実行でエージェントが書いた文面も、タグは行の先頭にある。
+ *
+ * 引用（コードブロック）の範囲は見分けない。コードブロックの印（``` か ~~~）が最初に現れた行から後ろは、発言の終わりまで
+ * 数えない。印より後ろは引用かもしれず、引用の始まりと終わりを自前で見分けると、Markdown の構文（リスト・引用・入れ子）の
+ * 分だけ誤りが出るため。誤って拾わないことを優先し、コードブロックの後ろに書かれた文面は拾わない。
+ * 字下げした行、引用の印（>）・リストの印の後ろ、文の途中に書かれたタグも数えない。
  */
 export function countImitatedNotices(text: string): number {
   if (!text.includes("<task-notification>") && !text.includes("<system-reminder>")) return 0;
   let count = 0;
-  let fence: { mark: string; nested: boolean } | undefined;
   for (const line of text.split("\n")) {
-    // 字下げ・引用の印（>）・リストの印（- * + 1. 1)）を除いた後ろが、``` か ~~~ で始まる行
-    const match = /^((?:[ \t]|>|[-*+][ \t]|\d{1,9}[.)][ \t])*)(`{3,}|~{3,})(.*)$/.exec(line);
-    const prefix = match?.[1] ?? "";
-    const mark = match?.[2];
-    const rest = match?.[3] ?? "";
-    if (fence !== undefined) {
-      // 閉じるのは、開いたのと同じ記号で、同じ長さ以上で、後ろに空白しか無い行
-      if (
-        mark &&
-        mark[0] === fence.mark[0] &&
-        mark.length >= fence.mark.length &&
-        rest.trim() === ""
-      ) {
-        fence = undefined;
-        continue;
-      }
-      // リスト・引用の中のコードブロックは、字下げも引用の印も無い行で終わる（その行は、ふつうの行として読む）
-      if (!(fence.nested && line !== "" && !/^[ \t>]/.test(line))) continue;
-      fence = undefined;
-    }
-    // ``` で開く行の後ろ（言語の名前）には、` を書けない（書いてあれば、行の中のコードで、コードブロックではない）
-    if (mark && !(mark.startsWith("`") && rest.includes("`"))) {
-      fence = { mark, nested: !/^ {0,3}$/.test(prefix) };
-      continue;
-    }
+    if (line.includes("```") || line.includes("~~~")) break;
     if (/^<(task-notification|system-reminder)>/.test(line)) count++;
     if (count >= IMITATED_NOTICES_MAX) break;
   }
