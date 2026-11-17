@@ -2820,6 +2820,10 @@ export function applyEvent(
       // 記録だけ（作業履歴で確かめる。PBI-37）
       break;
 
+    case "SubagentNoticeImitated":
+      // 記録だけ（作業履歴で、その実行の成果物を確かめるきっかけにする。PBI-368）
+      break;
+
     case "RunCostRecorded":
       // 記録だけ（費用の出どころ。費用そのものは、実行の結果のイベントが持つ。PBI-301）
       break;

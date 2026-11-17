@@ -152,6 +152,8 @@ describe("セッションログの並べ方（PBI-62）", () => {
     // 写したエージェントの元のファイルの記録からも、その実行の画面に行ける（PBI-66）
     expect(runLogId(event("AgentSessionArchived", { runId: "r6", files: [] }))).toBe("r6");
     expect(runLogId(event("TaskPaused", { runId: "r5" }))).toBeUndefined();
+    // 通知の形の文面があった実行の記録からも、その実行の画面に行ける（PBI-368）
+    expect(runLogId(event("SubagentNoticeImitated", { runId: "r7", count: 1 }))).toBe("r7");
     // エラーの分析の実行の行からも、その実行の画面に行ける
     expect(runLogId(event("ErrorAnalyzed", { runId: "r7" }))).toBe("r7");
   });

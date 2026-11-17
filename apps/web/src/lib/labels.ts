@@ -871,6 +871,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         formatUsd(event.payload.convertedUsd),
         event.payload.unpricedModels ?? [],
       );
+    case "SubagentNoticeImitated":
+      return e.SubagentNoticeImitated(event.payload.count);
     case "AiRequestsRetried":
       return e.AiRequestsRetried(
         event.payload.retries,

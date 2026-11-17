@@ -1467,6 +1467,20 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
   });
 });
 
+describe("エージェントの発言に、サブエージェントの完了の通知の形の文面があった記録の表示（PBI-368）", () => {
+  it("件数と、実行環境が届けたものではないこと、確かめるものを出す", () => {
+    const event = {
+      type: "SubagentNoticeImitated",
+      payload: { runId: "r", agentId: "a", count: 3 },
+      actor: "sacty",
+    } as unknown as ActivityEvent;
+    const text = describeEvent(event);
+    expect(text).toContain("サブエージェントの完了の通知の形の文面が3件あった");
+    expect(text).toContain("実行環境が届けたものではない");
+    expect(text).toContain("この実行の成果物とセルフレビューの結果を確かめる");
+  });
+});
+
 describe("ゲートウェイのリトライの表示（PBI-37）", () => {
   it("リトライした回数・原因・待った時間と、あきらめたかを出す", () => {
     const event = (gaveUp: boolean) =>

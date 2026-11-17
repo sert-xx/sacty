@@ -14739,6 +14739,10 @@ export class TaskService {
     if (retried && retried.retries + (retried.gaveUp ? 1 : 0) > 0) {
       this.recordRetries(run.runId, run.agent.id, retried);
     }
+    // エージェントの発言に、サブエージェントの完了の通知の形の文面があったら、作業履歴に残す（PBI-368）
+    if (outcome.imitatedNotices) {
+      this.recordImitatedNotices(run.runId, run.agent.id, outcome.imitatedNotices);
+    }
     outcome =
       outcome.kind === "failed"
         ? { ...outcome, message: redactText(outcome.message, usedSecrets) }
@@ -14783,6 +14787,22 @@ export class TaskService {
             ...(cost.unpricedModels.length > 0 ? { unpricedModels: cost.unpricedModels } : {}),
           },
         },
+      },
+    ]);
+  }
+
+  /**
+   * エージェントの発言に、サブエージェントの完了の通知・システムの知らせの形の文面があったことを、実行中のタスクの作業履歴に
+   * 記録する（PBI-368）。実行の結果は変えない。
+   */
+  private recordImitatedNotices(runId: string, agentId: string, count: number): void {
+    const taskId = this.runningTask.getStore();
+    const task = taskId ? this.tasks.get(taskId) : undefined;
+    if (!task || task.status === "cancelled") return;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: { type: "SubagentNoticeImitated", payload: { runId, agentId, count } },
       },
     ]);
   }

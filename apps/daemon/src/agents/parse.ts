@@ -17,8 +17,14 @@ export type CostReport = {
   unreportedUsage?: TokenUsage;
 };
 
+/**
+ * エージェント（親）の発言に、サブエージェントの完了の通知・システムの知らせの形の文面があった件数（PBI-368）。
+ * 実行環境が届けるはずの文面を、エージェントが自分で書いたしるし（届いていない結果を書いた恐れがある）。無ければ持たない。
+ */
+export type ImitationReport = { imitatedNotices?: number };
+
 export type AgentOutcome =
-  | ({ kind: "completed"; output: string; usage: TokenUsage } & CostReport)
+  | ({ kind: "completed"; output: string; usage: TokenUsage } & CostReport & ImitationReport)
   | ({
       kind: "failed";
       reason: FailureReason;
@@ -30,7 +36,8 @@ export type AgentOutcome =
        * 止まった実行。usage があれば、読めた分（下限）で、無ければ何も読めなかった。
        */
       costUnknown?: true;
-    } & CostReport);
+    } & CostReport &
+      ImitationReport);
 
 const ZERO: TokenUsage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 
@@ -53,6 +60,35 @@ export function classifyFailure(message: string): FailureReason {
     return "auth";
   }
   return "error";
+}
+
+/** 数える件数の上限（コンテナから届く値なので、際限なく数えない）。 */
+export const IMITATED_NOTICES_MAX = 1000;
+
+/**
+ * 発言の中の、サブエージェントの完了の通知・システムの知らせの形の文面の数（PBI-368）。実行環境が入力として届けるタグ
+ * （`<task-notification>`・`<system-reminder>`）で始まる行を数える。コードブロック（``` か ~~~ で囲んだ所と、4 つ以上の空白・
+ * タブで字下げした行）と、行の途中に書かれたタグ（文の中での言及）は数えない。
+ */
+export function countImitatedNotices(text: string): number {
+  if (!text.includes("<task-notification>") && !text.includes("<system-reminder>")) return 0;
+  let count = 0;
+  let fence: string | undefined;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trimStart();
+    const mark = /^(`{3,}|~{3,})/.exec(trimmed)?.[1];
+    if (mark) {
+      // 閉じるのは、開いたのと同じ記号で、同じ長さ以上の行
+      if (fence === undefined) fence = mark;
+      else if (mark[0] === fence[0] && mark.length >= fence.length) fence = undefined;
+      continue;
+    }
+    if (fence !== undefined) continue;
+    // 4 つ以上の空白・タブで字下げした行は、Markdown では字下げのコードブロック（引用）なので数えない
+    if (/^ {0,3}<(task-notification|system-reminder)>/.test(line)) count++;
+    if (count >= IMITATED_NOTICES_MAX) break;
+  }
+  return count;
 }
 
 function nonNegInt(value: unknown): number {
@@ -206,6 +242,13 @@ export class ClaudeOutcomeReader extends OutcomeReader {
   private untyped: Record<string, unknown> | undefined;
   /** 最後のエージェントの発言（result が無いときの理由。認証の失敗の文など）。 */
   private assistantText = "";
+  /** 親の発言にあった、サブエージェントの完了の通知・システムの知らせの形の文面の数（PBI-368）。 */
+  private imitated = 0;
+
+  /** 親の発言にあった、通知の形の文面の数（finish の前でも、そこまでの分を返す。PBI-368）。 */
+  get imitatedNotices(): number {
+    return this.imitated;
+  }
 
   protected event(event: Record<string, unknown>): void {
     this.untyped = event.type === undefined ? event : undefined;
@@ -245,6 +288,21 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         .join("")
         .trim();
       if (text) this.assistantText = text;
+      // サブエージェントの発言（parent_tool_use_id を持つ）は数えない。親が、届いていない担当の結果を書いたかを見る
+      if (text && (event.parent_tool_use_id === null || event.parent_tool_use_id === undefined)) {
+        this.imitated = Math.min(
+          IMITATED_NOTICES_MAX,
+          this.imitated +
+            content.reduce(
+              (sum, c) =>
+                sum +
+                (c && typeof c === "object" && c.type === "text"
+                  ? countImitatedNotices(String(c.text ?? ""))
+                  : 0),
+              0,
+            ),
+        );
+      }
     }
   }
 
