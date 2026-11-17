@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-382
-- PR: なし
+- PR: #417
 - ブランチ: feat/pbi-382-dropped-checks
 - 関係する ADR: [統合レビューが前の回の「人が確かめること」を外す申告は、外す種類を明示したオブジェクトだけを読む](../adr/20261117-0825-drop-human-checks-by-explicit-resolution.md)
 
