@@ -1801,13 +1801,18 @@ describe("後続に回したい案への決定の表示（PBI-370）", () => {
       failure: { code: "deferral.noAccount" },
     });
     expect(describeEventParts(failed, labels.ja).text).toBe(
+<<<<<<< HEAD
       "後続に回したい指摘の決定を、PR #7 のコメントに記録できなかった：プロジェクトの GitHub のアカウントを選んでいないので、GitHub に書いていません。",
+=======
+      "後続に回したい指摘の決定を、PR #7 のコメントに記録できなかった：プロジェクトの GitHub のアカウントを選んでいないので、PR にコメントしていません。",
+>>>>>>> origin/main
     );
     expect(describeEventParts(failed, labels.en).text).toContain(
       "Could not record the decisions on the findings proposed to defer in a comment on PR #7: No GitHub account is chosen",
     );
   });
 
+<<<<<<< HEAD
   it("後続に回すと決めた指摘の扱いを、決定の詳細に出し、扱いの結果（後続のタスク・Issue・できなかった理由）の行を出す（日英）", () => {
     const decided = event("DeferralsDecided", {
       step: "implement",
@@ -1857,6 +1862,8 @@ describe("後続に回したい案への決定の表示（PBI-370）", () => {
     );
   });
 
+=======
+>>>>>>> origin/main
   it("後続に回したい案がある、何も変えなかった提出は、人が決めた後に判定し直すことを出す", () => {
     const asked = event("ReviewRejudgeRequested", {
       repo: "https://github.com/acme/app",
