@@ -269,6 +269,11 @@
   初回は全部の観点で見る。再レビュー（2回目以降）で起動する観点は、スキルの規則に任せ、前回の回で `must` を出した観点と X-1 だけにする（`must` が無く `should` だけを直したときは X-1 だけ。PBI-286。[コンテキスト](context.md)）。`should`・`nit` だけでは修正に戻さず、`must` が無い回に直すのは、下の `design-doc` の `should` など、直すと決まっているものだけにする（スキルの規則。PBI-358）。指示（`selfReviewLines`・`partialReworkReviewLines`）は回数と範囲だけを決め、起動する観点は決めない。
   ただし、人の差し戻し・AI のレビューの指摘（その工程の最新の回のうち、まだ提出に渡していないもの）（以前の版では、実装への最終レビューの不合格も）を受けた直しの実行では、その実行の最初のセルフレビューを再レビューとして扱わせる指示を足す（`fixRunCauses`・`fixRunReviewLines`。PBI-296。起動する観点は、スキルの「直しの実行の最初のレビュー」の規則どおり、今回の指摘に関わる観点と X-1 だけ。[コンテキスト](context.md)）。
   足すのは、その工程の前回の提出のセルフレビューが合格（`passed`）のときだけで、要求要件・設計は、前回の下書きを元に直す（`partial`）ときに限り、文書作成は、前回の原稿が空でないときに限る。未合格・記録なし・前回の下書きが空のときは、前回の未解決が今回の指摘の外に残りうるので、全部の観点で見る。タスクの最初の実行、上流の変更だけのやり直し（提出済みの指摘しか無い）、テストが通らなかっただけ・競合の目印だけの実装のやり直しにも足さない。
+  オーケストレーターが依頼を軽いと判定し、人が通常の深さに上書きしていないタスク（[セルフレビューの深さ](#セルフレビューの深さ)）では、観点を絞る指示を足す（`lightSelfReviewLines`。PBI-369）。
+  最初のレビューで起動する観点を、要件への適合の観点（`design-doc` は D-1、`code` は C-1、`user-doc` は U-1）と X-1 だけにし、リポジトリの決まり・レビュー用のスキルがあれば X-3・R も起動させる。X-2 は、実行した検証が失敗・警告を出したときだけ起動させる。
+  `standard` より上の段階の担当は、1 段下の段階で起動させ（既定の観点カタログでは、`advanced` の担当を `standard` で起動する）、再レビューは前回の回で `must` を出した観点だけにさせる（X-1 も同じ。起動する観点が無ければ再レビューをしない）。
+  起動しなかった観点は、起動表と報告の `summary` に残させ、`notReviewed`（起動したのに結果を得られなかった観点）には書かせない。作業の途中で、変更がセキュリティにかかわる・取り消しにくいと分かったら、通常の規則で観点を決めさせる。
+  直しの実行の指示と重なるときは、最初のレビューの観点は直しの実行の規則のままにし、段階と再レビューの規則だけを当てる。セルフレビューを省く工程と、PR のレビューの工程には足さない。
   `design-doc` では、記述を足す指摘は `must` だけを直し、`should` は直さない。書きすぎを指摘する観点 D-10 は `should` も直す（指示とスキルの規則。[コンテキスト](context.md)）。
   ただし D-10 の指摘でも、リポジトリの決まり（README・CONTRIBUTING・AGENTS.md・CHANGELOG の方針・PR テンプレートなど）から導いた条件（版・変更履歴・生成物・ドキュメントの更新など）とその確かめ方は、「決まりの書き直し」として消させない。決まりの出典を引ける条件は残し、消すときは、決まりから導かれないと確かめた理由を総評に書かせる。条件の中身が誤っている・確かめられないという指摘には、消さずに直して応えさせる（PBI-282。実験 S18）。
   同じく D-10 の指摘でも、リポジトリの文書（README・AGENTS.md・運用や仕様の文書。README や AGENTS.md から参照されていないものを含む）や既存の振る舞いに根拠のある記述は、「依頼・要求要件に無い」だけを理由に消させない。根拠（文書とその節、コードの場所）を示して残すか、残すかを人に確かめる「確認したいこと」にさせる。消すときは、根拠が無いと確かめた理由を総評に書かせる（PBI-301 A4。実験 S14 r4：`docs/operations.md` の「空き状況は常に DB の最新」に根拠のある「作成・キャンセル後に取り直す」を、D-10 が「要求要件に無い」として消した）。
@@ -863,6 +868,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 | `noTests` | `testCommand` が空のときだけ読む、リポジトリにテストの仕組みも検証のコマンドも無いと判断した根拠（1〜2000 文字）。実装する組み合わせでは、`testCommand` か `noTests` のどちらかを必ず書かせる（パッケージの設定・Makefile・CI の設定・README などの開発の手順・テストのファイルを調べさせ、見つからなければ根拠を書かせる。スキルやドキュメントを置くだけのリポジトリもこれに当たる）。`StepsChosen` の `noTestsReason` に記録する（下の「テストの仕組みが無いタスク」） |
 | `documentsOnly` | `true` のときだけ読む。依頼の成果物が文書のファイルだけ（拡張子が `md`・`markdown`・`rst`・`adoc`・`asciidoc`・`org`。コード・コード中のコメント・設定・`txt`・画像の変更を含むなら文書だけではない。迷うときは書かせない）。実装を含み、不具合の修正でない組み合わせのときだけ `StepsChosen` の `documentsOnly` に記録する（それ以外は捨てる）。持つタスクは、`noTests` を答えたときに起点のコードにテストのファイルがあっても止めず（下の「テストの仕組みが無いタスク」）、実装の差分に文書のファイル以外があっても止めない（以前の版は最終レビューの前に止めていた。下の「再開のときのテストの扱い」） |
 | `investigation` | 調査の種類（`content`：内容の調査、`bug`：不具合の調査） |
+| `selfReviewDepth`・`selfReviewDepthReason` | 依頼の大きさ（`light`：軽い、`normal`：通常）と理由。軽いタスクは、提出の前のセルフレビューの観点を絞る（[セルフレビューの深さ](#セルフレビューの深さ)） |
 | `image`・`imageReason` | タスクのイメージ（1つ。すべての工程で使う）と理由。決まっているイメージ（再実行・作成時の指定・プロジェクトの対象）があれば、選ばせずにそれを使う。`images` に無い名前なら止める |
 | `defaultReason` | 既定のイメージ（`default`）を使うときの、`images` のどれも合わない理由（下の「タスクのイメージ」） |
 | `services`・`servicesReason` | 起動する compose のファイル・サービス・工程（[サービス](services.md)）。共用の compose は名前で選ぶ（無い名前なら止める） |
@@ -934,6 +940,43 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   検証の基準（`verificationBasis`）は、飛ばした工程を無いものとして決める。
 
 コード: `packages/core/src/events.ts`（`SKIPPABLE_STEPS`・`StepsSkipped`）、`packages/core/src/projection.ts`（`skippableSteps`・`advance`・`reworkTargets`）、`apps/daemon/src/service.ts`（`runNextInner`・`reviewSteps`）、`apps/daemon/src/prompts.ts`（`buildStepReviewPrompt`・`extractStepReview`・`withoutRequirements`・`directImplementLines`・`verificationBasis`）
+
+## セルフレビューの深さ
+
+依頼が軽いときは、提出の前のセルフレビューの観点を絞る（PBI-369）。
+軽いかどうかは、オーケストレーターが工程を選ぶ時点で判定し、人がタスクごとに通常の深さに上書きできる。
+
+- オーケストレーターは、工程の選択の答えに、依頼の大きさ（`selfReviewDepth`。`light` か `normal`）と理由（`selfReviewDepthReason`）を書く（`SELF_REVIEW_DEPTH_LINES`）。
+  `light` にさせるのは、変更が小さく局所的で、既存の振る舞い・外に公開している I/F・保存するデータの形を変えず、セキュリティにかかわる変更も、取り消しにくい変更も含まないときだけ。
+  含むか分からない・迷うときは `normal` にさせる。
+- sacty は、答えを次のように読む（`extractStepPlan`・`selfReviewDepthOf`）。
+  - 決めた値でない答えと、書かれていない答えは、判定なしにする（通常として扱う）。
+  - 理由の無い `light` は、判定なしにする（理由を人に示せないため）。理由は 1000 文字までにする。
+  - セキュリティ対応（`security-fix`）は、`light` と答えても `normal` にし、理由に sacty の文言（`selfReview.depthForcedNormal`。オーケストレーターの理由を含む）を記録する。
+  - セルフレビューをする工程（`SELF_REVIEW_STEPS`）が無い組み合わせ（PR のレビューだけ・調査だけ・セキュリティチェック・作業のみ）には記録しない。
+- 判定は `StepsChosen` の `selfReviewDepth`・`selfReviewDepthReason` に記録し、投影は `Task.selfReviewDepth`（`judged`・`reason`）に持つ。
+  工程の選択からやり直すと消える（`clearChosenSteps`）。
+- 人は、タスクの詳細で、軽いと判定されたタスクを通常の深さに上書きでき、上書きを取り消せる（`POST /api/tasks/:id/self-review-depth`、入力は `ChangeSelfReviewDepthInput` の `depth`。`normal` が上書き、`light` が取り消し）。
+  工程の状態は問わない。
+  中止したタスクは変えられない。
+  次のときは、理由を示して断る（409）。
+  - 軽いと判定されていない（`selfReview.depthNotLight`。判定なしと通常のタスクを、人が軽くすることはできない）
+  - 今と同じ深さ（`selfReview.depthUnchanged`）
+- 変えたら `SelfReviewDepthChanged`（`from`・`to`。actor は `person`）を足す。
+  投影は、上書きを `Task.selfReviewDepthOverride` に持つ（取り消すと消す）。
+  上書きは人の決定なので、工程の選択からやり直しても残る。
+- 工程の指示は、指示を作るときの深さで決める（`effectiveSelfReviewDepth`。判定が `light` で、上書きが無いときだけ `light`）。
+  変更は、セルフレビューをする工程の次の実行から使い、今の実行は止めない。
+  最初の工程の実行は、工程の選択に続けて始まるので、判定を見てからの上書きは、その実行には効かない（一時停止して再開すると、やり直しの実行から効く）。
+- 画面は、「工程の設定」タブの選んだ理由の下に、深さと判定の理由を出す（`SelfReviewDepthNote`）。
+  軽いと判定されたタスクには、「通常の深さで」（上書きした後は「判定（軽い）に戻す」）の操作を出す。
+  判定の無いタスクには何も出さない。
+  作業履歴は、誰が・いつ変えたかを出す。
+- PR のレビュー（レビューの子タスク・取り込んだレビューのタスク）の観点は、この判定で変わらない。
+
+コード: `apps/daemon/src/prompts.ts`（`SELF_REVIEW_DEPTH_LINES`・`extractStepPlan`・`lightSelfReviewLines`・`selfReviewLines`）、`apps/daemon/src/service.ts`（`selfReviewDepthOf`・`changeSelfReviewDepth`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`SelfReviewDepth`・`SelfReviewDepthChanged`・`ChangeSelfReviewDepthInput`）、`packages/core/src/projection.ts`（`effectiveSelfReviewDepth`・`clearChosenSteps`）、`apps/web/src/components/self-review-depth.tsx`（`SelfReviewDepthNote`）、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`
+
+関係する ADR: [依頼が軽いときは、自己レビューの観点を絞る](../adr/20261117-0359-narrow-self-review-for-light-requests.md)
 
 ## タスクのイメージを人が変える
 

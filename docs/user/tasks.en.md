@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -17,7 +17,7 @@ This page is long, so pick the sections to read by what you want to do.
 | What you want to do | Sections to read |
 | --- | --- |
 | Create tasks, find them, and see how they are going | [Create a task](#create-a-task), [Task list](#task-list), [Reading the task details](#reading-the-task-details), [Hints on the screen](#hints-on-the-screen), [Automatic updates on the screen](#automatic-updates-on-the-screen) |
-| Learn what sacty does on its own | [Information gathering at the start of a task](#information-gathering-at-the-start-of-a-task), [Self-review before submitting](#self-review-before-submitting) |
+| Learn what sacty does on its own | [Information gathering at the start of a task](#information-gathering-at-the-start-of-a-task), [Self-review before submitting](#self-review-before-submitting), [Self-review for a light request](#self-review-for-a-light-request) |
 | Check results, then approve or request changes | [Approval in PRs (Requirements, Design, Implement)](#approval-in-prs-requirements-design-implement), [Reading requirements and designs](#reading-requirements-and-designs), [Items to check (provenance)](#items-to-check-provenance), [Review of the implementation PR](#review-of-the-implementation-pr), [How the agent revises after you request changes](#how-the-agent-revises-after-you-request-changes), [Cause of a request for changes](#cause-of-a-request-for-changes), [Change requests](#change-requests), [Comments on PRs and issues](#comments-on-prs-and-issues), [Checking the result of the Integration review](#checking-the-result-of-the-integration-review) |
 | Change a task that is under way | [Ask the Orchestrator](#ask-the-orchestrator), [Renaming a task](#renaming-a-task), [Changing the task image](#changing-the-task-image), [Changing a step's agent](#changing-a-steps-agent), [Pause, resume, and cancel](#pause-resume-and-cancel), [Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task) |
 | Learn how each kind of request proceeds | [Documents and one-off external work](#documents-and-one-off-external-work), [Fixing an existing PR](#fixing-an-existing-pr), [Security checks and fixes](#security-checks-and-fixes), [Repositories without tests](#repositories-without-tests), [When the implementation has no changes](#when-the-implementation-has-no-changes), [When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing) |
@@ -179,6 +179,8 @@ sacty decides the following after you create a task.
   - Skipped steps are shown struck through in the list of steps. The reason appears in the Activity.
   - For the skipped steps, the child task that reviews the implementation PR reviews it against the task's purpose (the request). You approve it by merging the PR.
   - When you specify a plan, steps are not skipped ([Specify the plan](#specify-the-plan)).
+- The Orchestrator also judges whether the request is light when it chooses the steps.
+  For a light request, the self-review uses fewer viewpoints ([Self-review for a light request](#self-review-for-a-light-request)).
 - Whether the development setup (installing dependencies, building, and so on) runs depends on the step.
   - Choosing the steps, and investigations that read and explain code or how things work, do not run it, even if the repository's AGENTS.md or similar has setup instructions.
     In an investigation, the agent may run the setup only when something cannot be confirmed by reading the code and has to be confirmed by running it (the agent then writes in the investigation result why the setup was needed).
@@ -418,7 +420,7 @@ The cost of the self-review is included in the cost of that step.
 
 ### Viewpoints used in the self-review
 
-The first round reviews with every viewpoint.
+The first round reviews with every viewpoint (for a task whose request was judged light, see [Self-review for a light request](#self-review-for-a-light-request)).
 A re-review after fixing (the second round on) uses only the viewpoints that raised a `must` in the previous round, plus X-1, which looks for defects without being tied to a viewpoint (only X-1 when there was no `must` and only `should` findings were fixed).
 The viewpoints a re-review did not use are recorded in the agent's run log as "not started (no `must` in the previous round)".
 
@@ -442,6 +444,55 @@ Neither reduces the default viewpoints.
 
 Nothing is added for ones that do not apply to this change, such as a skill for an area the change does not touch.
 Fixes, posting, and starting subagents written in the skills or instruction files are not done.
+
+### Self-review for a light request
+
+When the request is light, the self-review uses fewer viewpoints, so its cost and time fit the size of the request.
+The Orchestrator judges whether the request is light when it chooses the steps.
+You can override the judgement per task with "Use the normal depth".
+
+The judgement and its reason appear on the "Step settings" tab of the task details, under the reason for the plan.
+
+| What is shown | Meaning |
+| --- | --- |
+| Self-review depth: light. Fewer viewpoints are used. | The request was judged light. Fewer viewpoints are used |
+| Self-review depth: normal | The request was not judged light. Every viewpoint is used |
+| Self-review depth: normal (set by a person) | The request was judged light, but a person set the normal depth |
+
+A request is judged light when it is a small, local change, such as adding a section to a document or fixing wording.
+A request that falls under any of the following is not judged light.
+
+- It changes existing behavior, public interfaces, or the shape of stored data
+- It includes a security-related change (authentication and authorization, secrets, permissions, input validation, adding or updating dependencies, and so on)
+- It includes a change that is hard to undo (deleting or migrating data, an effect on external systems, release or deployment settings, and so on)
+- It is a security fix task
+
+The self-review of a task judged light goes as follows.
+
+- The first round uses only two viewpoints: fit to the requirements, and X-1, which looks for defects without being tied to a viewpoint.
+  When the target repository has skills or instruction files that apply to this change, those viewpoints are used too.
+- A viewpoint that is reviewed with a strong model is reviewed with a model one tier lower.
+- A re-review after fixing uses only the viewpoints that raised a `must` in the previous round.
+  When there was no `must`, no re-review is done.
+- The viewpoints that were not used, and why, stay in the agent's run log and in the summary of the self-review.
+- When the agent finds during the work that the change concerns security or is hard to undo, it reviews with every viewpoint and says so in the summary.
+
+To have the task reviewed at the normal depth, do the following.
+
+1. Open the "Step settings" tab of the task details.
+2. Press "Use the normal depth" under "Self-review depth".
+
+The change applies from the next run of a step that does a self-review.
+A run in progress does not change.
+The first step starts as soon as the steps are chosen, so it runs light.
+To redo a step that is running at the normal depth, pause the task, press "Use the normal depth", then resume ([Pause, resume, and cancel](#pause-resume-and-cancel)).
+A fix after you request changes on a submitted deliverable is reviewed with the viewpoints related to your comments, even at the normal depth ([Self-review when the work is redone after comments](#self-review-when-the-work-is-redone-after-comments)).
+To go back, press "Back to the judgement (light)" in the same place.
+A task that was not judged light cannot be made light.
+
+The viewpoints of PR reviews (the tasks in which sacty reviews a PR) do not change with this judgement.
+The judgement also has no effect on a step that does no self-review ([Self-review before submitting](#self-review-before-submitting)).
+No judgement is shown for a task with no step that does a self-review (investigation only, a security check, a one-off external operation, and so on).
 
 ### Self-review when the work is redone after comments
 

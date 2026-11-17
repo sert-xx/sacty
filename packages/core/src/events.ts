@@ -1003,6 +1003,14 @@ export const ContinuedPullRequest = z.object({
 });
 export type ContinuedPullRequest = z.infer<typeof ContinuedPullRequest>;
 
+/**
+ * 提出の前のセルフレビューの深さ（PBI-369）。light は、依頼が軽いので観点を絞る。normal は、通常の観点で見る。
+ */
+export const SelfReviewDepth = z.enum(["light", "normal"]);
+export type SelfReviewDepth = z.infer<typeof SelfReviewDepth>;
+/** 依頼の大きさの判定の理由の長さの上限。 */
+export const SELF_REVIEW_DEPTH_REASON_MAX = 1000;
+
 const StepsChosen = z.object({
   type: z.literal("StepsChosen"),
   payload: z.object({
@@ -1031,6 +1039,15 @@ const StepsChosen = z.object({
      * 最終レビューをせずに止める。実装を含み、不具合の修正でない組み合わせのときだけ持つ。
      */
     documentsOnly: z.literal(true).optional(),
+    /**
+     * オーケストレーターが、工程を選ぶ時点で判定した依頼の大きさ（PBI-369）。light（軽い）のタスクは、提出の前の
+     * セルフレビューの観点を絞る（人が通常の深さに上書きしていなければ。SelfReviewDepthChanged）。normal は通常。
+     * 答えが無い・読めないとき、セルフレビューをする工程が無い組み合わせ（PR のレビューだけ・調査だけなど）では持たない
+     * （通常として扱う）。セキュリティ対応（security-fix）は、オーケストレーターが軽いと答えても normal にする。
+     */
+    selfReviewDepth: SelfReviewDepth.optional(),
+    /** 依頼の大きさをそう判定した理由（オーケストレーターの文。sacty が normal にしたときは sacty の文言）。 */
+    selfReviewDepthReason: DaemonText.optional(),
     /** 調査の工程の性質（PBI-43）。無ければ内容の調査として扱う（セットアップをしない側）。 */
     investigation: InvestigationKind.optional(),
     /**
@@ -1182,6 +1199,17 @@ const StepImageChanged = z.object({
 const TaskImageChanged = z.object({
   type: z.literal("TaskImageChanged"),
   payload: z.object({ from: z.string().min(1).optional(), to: z.string().min(1) }),
+});
+
+/**
+ * 人が、タスクの詳細で、提出の前のセルフレビューの深さを変えた（PBI-369）。to が normal は、オーケストレーターが軽いと
+ * 判定したタスクを、通常の深さでレビューさせる上書き。to が light は、その上書きの取り消し（オーケストレーターの判定に戻す）。
+ * 軽いと判定されていないタスクを、人が軽くすることはできない。工程の状態は問わず、セルフレビューをする工程の次の実行から使う
+ * （実行中の実行は変えない）。actor は person。
+ */
+const SelfReviewDepthChanged = z.object({
+  type: z.literal("SelfReviewDepthChanged"),
+  payload: z.object({ from: SelfReviewDepth, to: SelfReviewDepth }),
 });
 
 /**
@@ -3877,6 +3905,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepsSkipped,
   StepImageChanged,
   TaskImageChanged,
+  SelfReviewDepthChanged,
   TaskRenamed,
   StepAgentChanged,
   ServicesStarted,
@@ -4276,6 +4305,10 @@ export const AskQuestionInput = z.object({
     .max(QUESTION_MAX, code("input.questionTooLong")),
 });
 export type AskQuestionInput = z.infer<typeof AskQuestionInput>;
+
+/** タスクの詳細で、提出の前のセルフレビューの深さを変える入力（PBI-369）。 */
+export const ChangeSelfReviewDepthInput = z.object({ depth: SelfReviewDepth });
+export type ChangeSelfReviewDepthInput = z.infer<typeof ChangeSelfReviewDepthInput>;
 
 /** タスクの詳細で、タスクのイメージを変える入力（PBI-318）。image は config.yaml の images の名前か default。 */
 export const ChangeTaskImageInput = z.object({
