@@ -241,7 +241,7 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
   - Once everything is built, it cleans up old versions (`pruneOldImages`).
     For `sacty-agent` and `sacty-agent-<name>` images with `X.Y.Z` tags, it keeps the two newest versions of each name and removes the rest without forcing.
     It does not remove images that `image` or `images.*.image` point to, or images with other tags or names.
-    Image layers also stay in the build cache, so it also removes build cache unused for more than 3 days (`BUILD_CACHE_MAX_UNUSED`) with `docker builder prune -f --filter until=72h` (`buildCachePruneArgs`).
+    Image layers also stay in the build cache, so it also removes build cache unused for more than 3 days (`BUILD_CACHE_MAX_UNUSED_DAYS`) with `docker builder prune -f --filter until=72h` (`buildCachePruneArgs`).
     The target is the build cache of the whole Docker, not only what sacty created.
     The daemon also removes it, with the same period, when it cleans up context images that are no longer used ("Building context images" in [Daemon startup and shutdown](daemon-lifecycle.en.md)).
     A cleanup failure does not fail `sacty image build`.

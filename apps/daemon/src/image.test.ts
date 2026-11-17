@@ -14,7 +14,6 @@ import { join } from "node:path";
 import { message } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
-  BUILD_CACHE_MAX_UNUSED,
   buildCachePruneArgs,
   buildImage,
   imageBuildArgs,
@@ -693,7 +692,6 @@ describe("古い版のイメージの片付け（PBI-313）", () => {
       "builder prune -f --filter until=72h",
     ]);
     expect(buildCachePruneArgs().join(" ")).toBe("builder prune -f --filter until=72h");
-    expect(BUILD_CACHE_MAX_UNUSED).toBe("72h");
   });
 
   it("1つ消せなくても残りを消し、消せなかったものを返す", async () => {

@@ -1,4 +1,4 @@
-<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort), scripts/cli-install.mjs, packages/cli/src/context-preview.ts, packages/cli/src/launch.ts, apps/daemon/src/local-launch.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE), apps/daemon/src/image.ts (pruneOldImages, BUILD_CACHE_MAX_UNUSED) -->
+<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort), scripts/cli-install.mjs, packages/cli/src/context-preview.ts, packages/cli/src/launch.ts, apps/daemon/src/local-launch.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE), apps/daemon/src/image.ts (pruneOldImages, BUILD_CACHE_MAX_UNUSED_DAYS) -->
 
 [日本語](cli.md) | **English**
 

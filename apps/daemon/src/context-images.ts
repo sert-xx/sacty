@@ -5,7 +5,7 @@ import { dockerClientEnv } from "./agents/docker.js";
 import { DEFAULT_IMAGE, hasImage, type LanguageImage, type SactyConfig } from "./config.js";
 import type { ContextImageFile } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
-import { buildCachePruneArgs } from "./image.js";
+import { BUILD_CACHE_MAX_UNUSED_DAYS, buildCachePruneArgs } from "./image.js";
 import type { ImageState } from "./image-presence.js";
 
 /**
@@ -47,6 +47,12 @@ export const DOCKER_KILL_GRACE_MS = 10_000;
  * 止められない処理が応答しなくても、見切って先に進む（見切った処理は、止めた signal を見て docker を動かさない）。
  */
 export const CONTEXT_IMAGE_ABANDON_MS = DOCKER_KILL_GRACE_MS + 5_000;
+
+/**
+ * 片付けを打ち切った理由（片付けに渡す signal の reason）。上限の時間を過ぎたか、デーモンを止めたか。ログの文言を分ける。
+ */
+export const PRUNE_ABORT_TIMEOUT = "timeout";
+export const PRUNE_ABORT_STOP = "stop";
 
 /** signal が止められてから ms 後に解ける（止められなければ、解けない）。 */
 function afterAbort(signal: AbortSignal, ms: number): Promise<"abandoned"> {
@@ -652,12 +658,12 @@ export class ContextImageBuilder {
     // 片付けている間は、読み直しが手元にあるかを確かめない（確かめた後に消さないように。load が待つ）
     // 片付けにも上限を設ける（docker が応答しないと、読み直しと作成が待ち続けるため）。過ぎたら止めて先に進む
     const local = new AbortController();
-    const onStop = () => local.abort();
+    const onStop = () => local.abort(PRUNE_ABORT_STOP);
     this.controller.signal.addEventListener("abort", onStop, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<void>((resolve) => {
       timer = setTimeout(() => {
-        local.abort();
+        local.abort(PRUNE_ABORT_TIMEOUT);
         resolve();
       }, this.deps.pruneTimeoutMs ?? CONTEXT_IMAGES_PRUNE_TIMEOUT_MS);
       timer.unref?.();
@@ -773,10 +779,24 @@ function lastOutputLine(output: string): string {
 }
 
 /**
+ * 前に出した、ビルドキャッシュの片付けの「うまくいっていない」ログ。片付けは読み直しのたび（5分ごとを含む）に動くので、
+ * 同じ行を続けて出さないために持つ（デーモンに1つ）。
+ */
+export type BuildCachePruneMemory = {
+  /** 前に出した行。 */
+  line?: string;
+  /** その行が、消せなかったこと（失敗・時間切れ）なら true。消せるようになったときに、そのことを出す。 */
+  failed?: boolean;
+};
+
+/**
  * デーモンの片付け（PBI-388）。使わなくなったコンテキストのイメージを消してから（層がキャッシュに残るので、後で）、
  * 使っていないビルドキャッシュを消す。消したこと・消せなかったことを log に出す。失敗しても例外にしない
- * （イメージの作成・読み直しに関わらせない）。signal は、片付けの時間切れかデーモンの停止で止まる（run は、止まったら
- * docker を止め、止まった後は動かさないこと）。
+ * （イメージの作成・読み直しに関わらせない）。signal は、片付けの時間切れかデーモンの停止で止まる（reason で見分ける。run は、
+ * 止まったら docker を止め、止まった後は動かさないこと）。
+ *
+ * 同じ「消せなかった」「量を読めなかった」は続けて出さない（memory）。出すのは、初回・内容が変わったとき・消せるように
+ * なったとき。
  */
 export async function pruneContextImagesAndBuildCache(deps: {
   keep: readonly string[];
@@ -785,7 +805,29 @@ export async function pruneContextImagesAndBuildCache(deps: {
   /** docker を実行して、終了コードと出力を返す（テストでは差し替える）。 */
   run: (args: string[]) => Promise<{ code: number; stdout: string }>;
   log: (line: string) => void;
+  memory: BuildCachePruneMemory;
 }): Promise<void> {
+  const { memory } = deps;
+  /** うまくいっていないことを出す（前と同じ行なら出さない）。 */
+  const trouble = (line: string, failed: boolean) => {
+    if (memory.line !== line) deps.log(line);
+    memory.line = line;
+    memory.failed = failed;
+  };
+  /** 打ち切りを出す。started は、ビルドキャッシュの docker を動かした後か。 */
+  const interrupted = (started: boolean) => {
+    const what = started
+      ? "ビルドキャッシュの片付けを打ち切りました"
+      : "ビルドキャッシュの片付けは始めていません";
+    if (deps.signal.reason === PRUNE_ABORT_STOP) {
+      // 止めるときは1度だけなので、そのまま出す（次の片付けは無い）
+      deps.log(`[daemon] デーモンを止めるので、${what}。`);
+    } else if (deps.signal.reason === PRUNE_ABORT_TIMEOUT) {
+      trouble(`[daemon] 片付けが上限の時間を過ぎたので、${what}。次の片付けで消します。`, true);
+    } else {
+      trouble(`[daemon] 片付けを打ち切ったので、${what}。`, true);
+    }
+  };
   try {
     const removed = await removeStaleContextImages(deps.keep, deps.run, deps.prefix);
     if (removed.length > 0) {
@@ -794,39 +836,51 @@ export async function pruneContextImagesAndBuildCache(deps: {
   } catch {
     // イメージを消せなくても（docker を起動できないなど）、キャッシュの片付けは試み、その結果をログに出す
   }
-  const interrupted =
-    "[daemon] 片付けを打ち切ったので（時間切れか、デーモンの停止）、使っていないビルドキャッシュを消し終えていません。次の片付けで消します。";
   if (deps.signal.aborted) {
-    deps.log(interrupted);
+    interrupted(false);
     return;
   }
   let cache: { code: number; stdout: string };
   try {
     cache = await deps.run(buildCachePruneArgs());
   } catch (error) {
-    if (deps.signal.aborted) deps.log(interrupted);
+    if (deps.signal.aborted) interrupted(true);
     else {
-      deps.log(
+      trouble(
         `[daemon] 使っていないビルドキャッシュを消せませんでした（docker を実行できません：${lastOutputLine(error instanceof Error ? error.message : String(error))}）。`,
+        true,
       );
     }
     return;
   }
   if (deps.signal.aborted) {
-    deps.log(interrupted);
+    interrupted(true);
     return;
   }
   if (cache.code !== 0) {
     const detail = lastOutputLine(cache.stdout);
-    deps.log(
+    trouble(
       `[daemon] 使っていないビルドキャッシュを消せませんでした（docker の終了コード ${cache.code}${detail ? `：${detail}` : ""}）。`,
+      true,
     );
     return;
   }
+  const target = `${BUILD_CACHE_MAX_UNUSED_DAYS}日使っていないビルドキャッシュ`;
   const reclaimed = reclaimedBuildCache(cache.stdout);
-  // 消すものが無かったとき（0B）は、片付けのたびにログを出さない
-  if (reclaimed && /^0(\.0+)?\s*[a-z]*$/i.test(reclaimed)) return;
-  deps.log(
-    `[daemon] 3日使っていないビルドキャッシュを消しました${reclaimed ? `（空いた容量：${reclaimed}）` : ""}。`,
-  );
+  if (!reclaimed) {
+    // 消したかどうかは分からないので、消したとは言わない
+    trouble(`[daemon] ${target}の片付けを実行しました（空いた容量は読めませんでした）。`, false);
+    return;
+  }
+  const recovered = memory.failed === true;
+  delete memory.line;
+  delete memory.failed;
+  // 消すものが無かったとき（0B）は、片付けのたびにログを出さない（消せなかった後に、消せるようになったときだけ出す）
+  if (/^0(\.0+)?\s*[a-z]*$/i.test(reclaimed)) {
+    if (recovered) {
+      deps.log(`[daemon] ${target}を消せるようになりました（消すものはありませんでした）。`);
+    }
+    return;
+  }
+  deps.log(`[daemon] ${target}を消しました（空いた容量：${reclaimed}）。`);
 }

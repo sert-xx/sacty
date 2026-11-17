@@ -22,7 +22,7 @@
 
 ## したこと
 
-- `apps/daemon/src/image.ts`：期間（`BUILD_CACHE_MAX_UNUSED`）を `168h` から `72h` に変え、docker の引数を `buildCachePruneArgs` にまとめた（`pruneOldImages` とデーモンの片付けが、同じ引数を使う）。
+- `apps/daemon/src/image.ts`：期間（`BUILD_CACHE_MAX_UNUSED`。1回目のレビューの対応で、日数の `BUILD_CACHE_MAX_UNUSED_DAYS` にした）を `168h` から `72h` に変え、docker の引数を `buildCachePruneArgs` にまとめた（`pruneOldImages` とデーモンの片付けが、同じ引数を使う）。
 - `apps/daemon/src/context-images.ts`：`pruneContextImagesAndBuildCache` を足した。使わなくなったコンテキストのイメージを消してから、ビルドキャッシュを消し、結果をログに出す。失敗は例外にしない。打ち切られていたら、ビルドキャッシュの docker を動かさない。
 - `apps/daemon/src/main.ts`：片付け（`removeStale`）の組み立てを、上の関数を呼ぶ形にした。片付けを呼ぶ条件・上限の時間・停止の扱い（`ContextImageBuilder` の `prune`）は変えていない。
 - docs：仕様書 `docs/spec/daemon-lifecycle`・`docs/spec/agent-execution`（日英）、ユーザードキュメント `docs/user/cli`・`docs/user/images`・`docs/user/troubleshooting`（日英）、ADR。
@@ -32,7 +32,7 @@
 
 - イメージの一覧を取れなくても・消すイメージが無くても、ビルドキャッシュは消す。
 - 消すものが無かったとき（docker の出力の合計が 0）は、ログを出さない（片付けは、5分ごとの読み直しのたびに動くため）。
-- 打ち切り（時間切れ・デーモンの停止）は、1つの文言でログに出す（片付けに渡る signal では、2つを見分けられない）。
+- 打ち切り（時間切れ・デーモンの停止）は、1つの文言でログに出す（片付けに渡る signal では、2つを見分けられない）。1回目のレビューの対応で、理由を渡して文言を分ける形に変えた。
 
 ## 確かめたこと
 
@@ -49,13 +49,29 @@
 - `npm run lint`：成功。`npm run typecheck`：成功。`npx vitest run --no-file-parallelism`：261 ファイル・5065 件が成功（1 件はスキップ）。
 - 手元の Docker（クライアント 29.6.2・サーバー 29.5.3）で `docker builder prune --help` を読み、`docker buildx prune` に渡ること・`-f`・`--filter` があることを確かめた。
 - 確かめていないこと
-  - 実際の `docker builder prune` は実行していない（手元のキャッシュが消えるため）。消した量の出力の形（`Total: …`・`Total reclaimed space: …`）は、実行して確かめたものではない。
+  - 実際の `docker builder prune` は、この作業では実行していない（手元のキャッシュが消えるため）。
+    出力の形は、リポジトリの持ち主が実物で確かめた（1回目のレビューの対応のとき）：何も消えない条件（`docker builder prune -f --filter until=87600h`）で、標準出力の最後の行が `Total:<タブ>0B`、終了コードが 0。
+    実際に消えたときの出力の形と、`Total reclaimed space: …` の形を出す版があるかは、確かめていない。
   - `apps/daemon/src/main.ts` の組み立ては、テストでは通していない（型の検査だけ）。動いているデーモンのログも見ていない。
   - 2分の上限で打ち切ったときに、それまでに消した分が残るか。
 
 ## レビューの指摘と対応
 
-まだ無い。
+1 回目のレビュー（判定：提案あり。提案 4 件）
+
+| 指摘 | 対応 |
+| --- | --- |
+| 出力の形が合わない・失敗が続くと、5分ごとに同じログが出続ける | 空いた容量を読めなかったときは、「消しました」と言い切らず、片付けを実行したこと（空いた容量は読めなかったこと）を出す形にした。消せなかったこと（失敗・時間切れ）と、読めなかったことは、前に出した行と同じなら出さない（`BuildCachePruneMemory`。デーモンに1つ）。消せなかった後に消せるようになったら、消すものが無くても1度出す。出力の形は、リポジトリの持ち主が実物で確かめた結果を、ADR とこの作業履歴に書いた |
+| 打ち切りのログが、時間切れと停止を区別できない | `ContextImageBuilder` の `prune` が、片付けを止めるときに理由（`PRUNE_ABORT_TIMEOUT`・`PRUNE_ABORT_STOP`）を渡し、文言を分けた。停止のときは「次の片付けで消します」を出さない。ビルドキャッシュの片付けを始める前の打ち切りは、「始めていません」と出す |
+| 「3日」と `BUILD_CACHE_MAX_UNUSED` が別々に書かれている | 日数の定数 `BUILD_CACHE_MAX_UNUSED_DAYS` にし、docker の引数（`until=72h`）とログの文言（「3日」）の両方を、この値から作る。`"72h"` を確かめるだけのテストの行は外した |
+| 英語版で製品名が「Sacty」になっている | 追記した文を `sacty` に直した |
+
+1 回目の対応の後の確認：
+
+- 足したテスト（`apps/daemon/src/context-images.test.ts`）：同じ失敗を続けて出さない・内容が変われば出す・消せるようになったら出す、量を読めない出力で言い切らず続けて出さない、読めなかった後の 0B では「消せるようになった」と出さない、打ち切りの理由と始める前・後の文言、続けて時間切れになっても同じ行を出さない、ログの期間と docker の引数が同じ定数から作られる。
+- 修正を戻して、足したテストが落ちることを確かめた（同じ行も毎回出す：3 件、時間切れ・停止の理由を渡さない：それぞれ 1 件、消せるようになったことを出さない・読めなかった後も出す・始める前の打ち切りを打ち切ったと出す・読めなくても消したと言い切る：それぞれ 1 件）。
+  ログの「3日」を定数から作らず直に書く形に戻しても、落ちるテストは無い（今の値が 3 のため）。
+- `origin/main` を merge で取り込んだ後に、`npm run lint`：成功。`npm run typecheck`：成功。`npx vitest run --no-file-parallelism`：__FULL__。
 
 ## 残したこと
 

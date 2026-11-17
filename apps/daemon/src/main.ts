@@ -11,6 +11,7 @@ import { GitHubCiStatus } from "./ci.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
 import {
+  type BuildCachePruneMemory,
   ContextImageBuilder,
   pruneContextImagesAndBuildCache,
   runDockerStreaming,
@@ -188,6 +189,8 @@ const images = new ImagePresenceChecker({
 const dockerDir =
   process.env.SACTY_DOCKER_DIR ??
   fileURLToPath(new URL("../../../packages/cli/docker", import.meta.url));
+// ビルドキャッシュの片付けの、同じログを続けて出さないための覚え（PBI-388）
+const buildCachePruneMemory: BuildCachePruneMemory = {};
 const contextImageBuilder = new ContextImageBuilder({
   // service はこの後に作る（読むときには作ってある）
   projects: () => service.contextImageProjects(),
@@ -229,6 +232,7 @@ const contextImageBuilder = new ContextImageBuilder({
         ).then((code) => ({ code, stdout }));
       },
       log: (line) => console.log(line),
+      memory: buildCachePruneMemory,
     }),
   log: (line) => console.log(line),
 });

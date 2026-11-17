@@ -262,14 +262,15 @@ const VERSION_TAG = /^(\d+)\.(\d+)\.(\d+)$/;
 /** 名前ごとに残す版の数。今の版と、戻すときの1つ前の版。 */
 const KEPT_IMAGE_VERSIONS = 2;
 /**
- * これより長く使っていないビルドキャッシュを消す（3日）。イメージを消しても、層はキャッシュに残るため。
- * `sacty image build` の片付けと、デーモンのコンテキストのイメージの片付けで同じ期間にする（PBI-388）。
+ * この日数より長く使っていないビルドキャッシュを消す。イメージを消しても、層はキャッシュに残るため。
+ * `sacty image build` の片付けと、デーモンのコンテキストのイメージの片付けで同じ期間にする（PBI-388）。docker の引数も、
+ * ログの文言も、この値から作る。
  */
-export const BUILD_CACHE_MAX_UNUSED = "72h";
+export const BUILD_CACHE_MAX_UNUSED_DAYS = 3;
 
 /** 使っていないビルドキャッシュを消す `docker` の引数。対象は Docker 全体のキャッシュ（sacty が作ったものに限らない）。 */
 export function buildCachePruneArgs(): string[] {
-  return ["builder", "prune", "-f", "--filter", `until=${BUILD_CACHE_MAX_UNUSED}`];
+  return ["builder", "prune", "-f", "--filter", `until=${BUILD_CACHE_MAX_UNUSED_DAYS * 24}h`];
 }
 
 /**
