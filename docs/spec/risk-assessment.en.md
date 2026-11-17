@@ -123,7 +123,9 @@ The agent answers with the assessment as `sacty-risk-assessment` JSON.
 | `verification` | What was verified (which tests or runs verified what, and what has not been verified) |
 | `focus` | The places a person should look at (`where` is a path and lines, `why` is the reason to look; up to 5) |
 
-- The last answer with a matching shape is used.
+- Only the last assessment answer is read. An assessment answer is a JSON object that has the heading `sacty-risk-assessment` as a key.
+- If the last answer cannot be read, sacty does not fall back to an earlier answer (a draft, and so on) and treats the answer as unreadable (an earlier answer may predate a signal or a size that was added later).
+  An answer that cannot be parsed as JSON (a trailing comma, cut off partway, and so on) counts as an answer when it has the heading as its first key. A place where the body merely mentions the heading name does not count.
 - If the level is not one of the values, or any of the four grounds (`change`, `scope`, `reversibility`, `verification`) is missing, the answer is treated as unreadable.
 - If `signals` is not an array (missing, `null`, or a string), or it contains an unknown signal, the answer is also treated as unreadable (so that a missed signal does not lead to a low level being shown).
 - If `dependencyUpdate` is not one of the values, the answer is also treated as unreadable (so that a missed size does not lead to a low level being shown). An answer where the field is missing or `null` is read as having no dependency version update.

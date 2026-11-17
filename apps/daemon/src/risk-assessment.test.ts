@@ -260,9 +260,49 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     ).toBeUndefined();
   });
 
-  it("最後に出た、形の合う答えを使う", () => {
+  it("答えが2つとも読めるときは、最後に出た答えを使う", () => {
     const output = `${answer({ ...medium, level: "low" })}\n\n直しました。\n\n${answer(medium)}`;
     expect(extractRiskAssessment(output)?.assessment.level).toBe("medium");
+    // 後ろが低でも、最後の答えを使う（前の答えの段階を持ち越さない）
+    const lowered = `${answer(medium)}\n\n見直しました。\n\n${answer({ ...medium, level: "low" })}`;
+    expect(extractRiskAssessment(lowered)?.assessment.level).toBe("low");
+  });
+
+  it.each([
+    ["知らない合図が混ざる", answer({ ...medium, signals: ["security", "unknown"] })],
+    ["合図が配列でない", answer({ ...medium, signals: "security" })],
+    ["上げ幅が決めた値でない", answer({ ...medium, dependencyUpdate: "huge" })],
+    ["段階が決めた値でない", answer({ ...medium, level: "critical" })],
+    ["根拠の項目が無い", answer({ ...medium, scope: undefined })],
+    ["評価がオブジェクトでない", answer("medium")],
+    [
+      "JSON として読めない（末尾のカンマ）",
+      `\`\`\`json\n{"${RISK_ASSESSMENT_HEADING}": {"level": "high", "signals": ["security"],}}\n\`\`\``,
+    ],
+    [
+      "JSON として読めない（囲みが無く、途中で切れた）",
+      `{"${RISK_ASSESSMENT_HEADING}": {"level": "high", "signals": ["security"],`,
+    ],
+  ])(
+    "最後の答えが読めない（%s）ときは、前に出た読める答えを使わず、読めないものとする（PBI-386）",
+    (_name, last) => {
+      const draft = answer({ ...medium, level: "low" });
+      // 前の答えだけなら読める（前の答えにさかのぼると、低として載る）
+      expect(extractRiskAssessment(draft)?.assessment.level).toBe("low");
+      expect(extractRiskAssessment(`${draft}\n\n見直しました。\n\n${last}`)).toBeUndefined();
+      // 読めない答えが前にあるだけなら、最後の読める答えを使う
+      expect(extractRiskAssessment(`${last}\n\n直しました。\n\n${draft}`)?.assessment.level).toBe(
+        "low",
+      );
+    },
+  );
+
+  it("評価の答えでない JSON・見出しの名前に触れているだけの本文が後ろにあっても、最後の評価の答えを使う", () => {
+    const tail = [
+      '```json\n{"sacty-review-verdict": "no_findings"}\n```',
+      `答えは、見出し "${RISK_ASSESSMENT_HEADING}": の JSON で出しました。`,
+    ].join("\n\n");
+    expect(extractRiskAssessment(`${answer(medium)}\n\n${tail}`)?.assessment).toEqual(medium);
   });
 
   it("とくに見る箇所は、形の合うものだけを、上限の件数まで読む。無ければ空", () => {
@@ -314,6 +354,21 @@ describe("PR を作る前のリスク評価の実行（PBI-362）", () => {
     const result = await assessPullRequestRisk({
       ...input,
       run: async () => ({ output: "分かりません", cost }),
+    });
+    expect(result.payload).toEqual({
+      via: "publish",
+      commit: "c1",
+      reason: message("pr.riskUnreadable"),
+      ...cost,
+    });
+  });
+
+  it("最後の答えが読めなければ、前に出た答えを載せず、評価できなかった記録にする（PBI-386）", async () => {
+    const draft = answer({ ...medium, level: "low" });
+    const last = answer({ ...medium, level: "low", signals: ["security", "unknown"] });
+    const result = await assessPullRequestRisk({
+      ...input,
+      run: async () => ({ output: `${draft}\n\n合図を足しました。\n\n${last}`, cost }),
     });
     expect(result.payload).toEqual({
       via: "publish",
@@ -694,6 +749,21 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
     const none = extractReviewComments("総評です。", diff, { risk: true });
     expect(none.risk).toBeUndefined();
     expect(none.output).toBe("総評です。");
+  });
+
+  it("評価が2つあり、最後が読めないレビューは、前の評価を載せず、どちらの JSON も本文から取り除く（PBI-386）", () => {
+    const block = (value: unknown) =>
+      ["```json", JSON.stringify({ [RISK_ASSESSMENT_HEADING]: value }), "```"].join("\n");
+    const output = [
+      "総評です。",
+      block({ ...medium, level: "low" }),
+      "合図を足しました。",
+      block({ ...medium, level: "low", dependencyUpdate: "huge" }),
+    ].join("\n\n");
+    const read = extractReviewComments(output, diff, { risk: true });
+    expect(read.risk).toBeUndefined();
+    expect(read.output).not.toContain(RISK_ASSESSMENT_HEADING);
+    expect(read.output.split("\n").filter(Boolean)).toEqual(["総評です。", "合図を足しました。"]);
   });
 
   it("JSON として読めない評価（末尾のカンマ・閉じていない括弧）も、コードブロックごと本文から取り除く。ほかのコードブロックは残す", () => {
