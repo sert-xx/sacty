@@ -905,6 +905,20 @@ export type Task = {
    */
   pullRequestConflict?: { number: number; commit: string; at: string };
   /**
+   * 人の承認（マージ）を待つ実装の PR の、先頭のコミットの CI が失敗していた（PullRequestCiFailed。PBI-364）。commit は、
+   * そのときの提出のコミット、head は CI を読んだ PR の先頭、at は読んだ時刻。sacty が読んだ時点の結果で、その後の変化は
+   * 反映しない。タスクの詳細と、タスクの一覧の行に出すだけで（PBI-371）、sacty は何も始めない。出すか（今の PR のものか）は
+   * `pullRequestCiFailure` で決める。
+   */
+  pullRequestCiFailure?: {
+    number: number;
+    commit: string;
+    head: string;
+    checks: { name: string; url?: string }[];
+    more?: number;
+    at: string;
+  };
+  /**
    * タスクブランチ（PBI-57）。これがあるタスクは、要求要件・設計をタスクブランチへの PR のマージで承認し、実装の PR を
    * タスクブランチからベースブランチに向けて作る。
    */
@@ -2185,6 +2199,7 @@ export function applyEvent(
         task.pullRequestState = event.payload.number ? "open" : undefined;
         task.pullRequestMerge = undefined;
         task.pullRequestConflict = undefined;
+        task.pullRequestCiFailure = undefined;
         task.pullRequestCi = {
           commit: event.payload.commit,
           startedAt: event.at,
@@ -2205,6 +2220,7 @@ export function applyEvent(
       task.pullRequestState = event.payload.number ? "open" : undefined;
       task.pullRequestMerge = undefined;
       task.pullRequestConflict = undefined;
+      task.pullRequestCiFailure = undefined;
       task.status = "idle";
       break;
 
@@ -2738,8 +2754,9 @@ export function applyEvent(
       if (watched.step === "implement") {
         task.pullRequestState = state;
         if (merge) task.pullRequestMerge = merge;
-        // マージ・クローズ・開き直しで、競合の表示は消す（開き直したなら、次の確認で確かめ直す）
+        // マージ・クローズ・開き直しで、競合と CI の失敗の表示は消す（競合は、開き直したなら、次の確認で確かめ直す）
         task.pullRequestConflict = undefined;
+        task.pullRequestCiFailure = undefined;
       } else {
         task.stepPullRequests = task.stepPullRequests.map((p) =>
           p.number === watched.number ? { ...p, state, ...(merge ? { merge } : {}) } : p,
@@ -2783,6 +2800,7 @@ export function applyEvent(
       task.publishPending = undefined;
       task.pullRequestCi = undefined;
       task.pullRequestConflict = undefined;
+      task.pullRequestCiFailure = undefined;
       task.stepReview = undefined;
       task.pendingReview = undefined;
       task.escalation = undefined;
@@ -2812,6 +2830,30 @@ export function applyEvent(
         event.type === "PullRequestConflicted"
           ? { number: watched.number, commit: watched.commit, at: event.at }
           : undefined;
+      break;
+    }
+
+    case "PullRequestCiFailed": {
+      // CI の失敗を出すのは、承認待ちで見守っている実装の PR だけ（PBI-364）
+      const watched = gatePullRequest(task);
+      if (
+        watched?.step !== "implement" ||
+        watched.state !== "open" ||
+        task.status !== "awaiting_approval"
+      ) {
+        throw new ActivityIntegrityError(event, "the implementation pull request is not watched");
+      }
+      if (watched.number !== event.payload.number) {
+        throw new ActivityIntegrityError(event, "not the pull request of the task");
+      }
+      task.pullRequestCiFailure = {
+        number: watched.number,
+        commit: watched.commit,
+        head: event.payload.commit,
+        checks: event.payload.checks,
+        ...(event.payload.more ? { more: event.payload.more } : {}),
+        at: event.at,
+      };
       break;
     }
 
@@ -3903,6 +3945,29 @@ export function pullRequestConflict(
     return undefined;
   }
   return conflict;
+}
+
+/**
+ * 人の承認（マージ）を待つ実装の PR の CI が失敗していたなら、その記録（タスクの詳細と、タスクの一覧の行に出す。PBI-364・PBI-371）。人の出番（承認待ち）で、
+ * 今の提出の開いている PR のものだけ。PR を更新した・閉じた・マージした、PR の指摘の戻し先を判断している、PR のレビューの
+ * 子タスクの指摘なしを待っている（レビューが CI を読んで指摘にする）間は無い。
+ */
+export function pullRequestCiFailure(
+  task: Task,
+): NonNullable<Task["pullRequestCiFailure"]> | undefined {
+  const failure = task.pullRequestCiFailure;
+  if (!failure || task.status !== "awaiting_approval" || task.pendingReview) return undefined;
+  if (task.pullRequest?.awaitingReview) return undefined;
+  const watched = gatePullRequest(task);
+  if (
+    watched?.step !== "implement" ||
+    watched.state !== "open" ||
+    watched.number !== failure.number ||
+    watched.commit !== failure.commit
+  ) {
+    return undefined;
+  }
+  return failure;
 }
 
 /**

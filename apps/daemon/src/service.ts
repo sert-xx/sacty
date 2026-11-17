@@ -100,6 +100,8 @@ import {
   OperationSettings,
   openProposal,
   type PauseReason,
+  PR_CI_CHECK_NAME_MAX,
+  PR_CI_FAILED_CHECKS_MAX,
   type Project,
   ProjectDefinition,
   ProjectExport,
@@ -204,7 +206,13 @@ import {
   type RejectedAuditProposal,
 } from "./audit-prompts.js";
 import { auditTargetCandidates } from "./audit-targets.js";
-import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion, redactLog } from "./ci.js";
+import {
+  CI_FAILURES_MAX,
+  type CiSnapshot,
+  type CiStatusReader,
+  isFailedConclusion,
+  redactLog,
+} from "./ci.js";
 import {
   COMMIT_CONVENTION_FILES,
   type CommitKind,
@@ -1085,6 +1093,17 @@ export const CONTEXT_SECRETS_TIMEOUT_MS = 30_000;
  * レビューを始められないままにしない（過ぎたら、読めなかったものとしてレビューを続ける）。
  */
 export const REVIEW_CI_TIMEOUT_MS = 30_000;
+/**
+ * 人の承認を待つ実装の PR の CI を読むのを待つ上限（PBI-364）。GitHub が答えなくても、PR の確認を長く止めない。
+ */
+export const PR_CI_TIMEOUT_MS = 15_000;
+/** 人の承認を待つ実装の PR の CI を、先頭のコミットごとに読み直す間隔（PBI-364。実行中の CI が終わるのを待つ）。 */
+export const PR_CI_READ_INTERVAL_MS = 5 * 60_000;
+/**
+ * 人の承認を待つ実装の PR の CI を、先頭のコミットごとに読む回数の上限（PBI-364）。読み続けない（GitHub への問い合わせの
+ * 数を、先頭のコミットごとに決める）。間隔と合わせて、最初に読んでから1時間ほどで読むのをやめる。
+ */
+export const PR_CI_READS_MAX = 12;
 
 /**
  * レビューを待つ実装の PR のドラフトを外す・戻す・先頭を読むときに、GitHub の答えを待つ上限（PBI-331）。GitHub が答えないまま
@@ -1183,6 +1202,18 @@ export class TaskService {
    * 消えるので、再起動で数え直しても困らない。
    */
   private readonly pauseCounts = new Map<string, number>();
+  /**
+   * 人の承認を待つ実装の PR の CI を読んだ回数と、次に読む時刻（タスク → 読んだ先頭・回数・次に読む時刻。PBI-364）。
+   * デーモンのメモリーに持つ（再起動すると、数え直す）。
+   */
+  private readonly pullRequestCiReads = new Map<
+    string,
+    { head: string; reads: number; nextAt: number }
+  >();
+  /** CI の読み取りの通信が、終わっていないか（PBI-364。終わるまで、次の読み取りを始めない）。 */
+  private pullRequestCiReading = false;
+  /** 最後に CI を読んだタスク（PBI-364。次の確認では、その次のタスクから探す）。 */
+  private pullRequestCiLast: string | undefined;
   /** 承認待ちの PR の、PR の確認で最後に読んだ head（タスク → PR の番号・提出したコミット・読んだ head。PR #304 のレビュー）。 */
   private readonly latestHeads = new Map<
     string,
@@ -1400,6 +1431,8 @@ export class TaskService {
     }
     // 指摘の取り込みの間に PR がマージされた・閉じられたタスクは、状態を読み直して一度だけ確かめ直す
     const rechecked = new Set<string>();
+    // 人の承認を待つ実装の PR（PBI-364）。確認の最後に、このうち1件の CI を読む
+    const ciCandidates: PullRequestCiCandidate[] = [];
     for (const task of waiting) {
       const pr = gatePullRequest(task);
       if (!pr?.number || !pr.repo) continue;
@@ -1460,6 +1493,9 @@ export class TaskService {
             latest = this.tasks.get(task.id) ?? latest;
           } else if (pr.step === "implement" && reviewFlowPullRequest(latest.pullRequest ?? {})) {
             warnDraftUnknown(pr.number, pr.repo);
+          }
+          if (pr.step === "implement") {
+            ciCandidates.push({ taskId: task.id, pr: { ...pr, repo: pr.repo }, head, token });
           }
           try {
             const settled = await this.importFeedback(latest, token);
@@ -1526,6 +1562,179 @@ export class TaskService {
     if (this.deps.reviewTasks === true) await this.settlePausedDrafts();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
+    // 「指摘なし」の後に落ちた CI を、タスクの詳細に出す（PBI-364）。ほかの確認がすべて終わった後に、1件だけ読む
+    try {
+      await this.readPullRequestCi(ciCandidates);
+    } catch (error) {
+      console.warn(
+        `[daemon] 実装の PR の CI の失敗を記録できませんでした：${renderMessage(redactText(errorText(error), []), "ja")}`,
+      );
+    }
+  }
+
+  /**
+   * 人の承認（マージ）を待つ実装の PR の、先頭のコミットの CI を読み、失敗していたら記録する（PBI-364）。sacty は PR の CI を
+   * 待たずに、PR のレビューの子タスクの指摘なしでドラフトを外すので、その後に落ちた CI は、ここで読まないと画面に出ない。
+   * 仕組みを小さく保つため、CI を読み続けない：
+   * - 1回の PR の確認で読むのは、1件だけ（前の読み取りの通信が終わっていなければ、読まない）。候補は、前に読んだタスクの
+   *   次から順に探す。
+   * - 先頭のコミットごとに、PR_CI_READ_INTERVAL_MS の間隔で、PR_CI_READS_MAX 回まで読む。失敗を見つけたら記録して、その
+   *   先頭は読むのをやめる。実行中のものが無く、失敗も無ければ、その先頭は読むのをやめる。
+   * - 記録は、先頭のコミットごとに1度だけ（PullRequestCiFailed）。その後の変化（再実行で通ったなど）は、読まない・記録しない。
+   * - 出すだけで、実行・差し戻し・再レビュー・ドラフトへの変更・CI の再実行は始めない。
+   * - 読めない・時間内に返らないときも、1回と数える（理由はデーモンのログに出す）。
+   */
+  private async readPullRequestCi(candidates: readonly PullRequestCiCandidate[]): Promise<void> {
+    const ci = this.deps.ci;
+    // 実装の PR が開いていないタスク（マージした・閉じた・中止した・消えた）の回数は、忘れる（常駐中に増え続けないため）。
+    // その確認で候補に入らなかっただけ（PR の状態を一時的に読めなかったなど）では、忘れない（回数と間隔を数え直さない）
+    for (const id of [...this.pullRequestCiReads.keys()]) {
+      const task = this.tasks.get(id);
+      if (!task || task.status === "cancelled" || task.pullRequestState !== "open") {
+        this.pullRequestCiReads.delete(id);
+      }
+    }
+    if (!ci || this.pullRequestCiReading || candidates.length === 0) return;
+    const now = this.now();
+    // 前に読んだタスクの次から、読む番のタスクを探す
+    const last = candidates.findIndex((c) => c.taskId === this.pullRequestCiLast);
+    const ordered = [...candidates.slice(last + 1), ...candidates.slice(0, last + 1)];
+    for (const candidate of ordered) {
+      const { taskId, pr, token } = candidate;
+      const task = this.tasks.get(taskId);
+      if (!task || !this.watchesPullRequestCi(task, pr)) continue;
+      // GitHub の先頭を読めなかった（空）ときは、指摘なしにした先頭、無ければ提出のコミットの CI を読む
+      const head = candidate.head?.trim() || task.pullRequest?.reviewedCommit || pr.commit;
+      // この先頭の失敗を記録済みなら、読まない（先頭のコミットごとに1度だけ）
+      const recorded = task.pullRequestCiFailure;
+      if (
+        recorded?.number === pr.number &&
+        recorded.commit === pr.commit &&
+        recorded.head === head
+      ) {
+        continue;
+      }
+      const known = this.pullRequestCiReads.get(taskId);
+      const entry = known?.head === head ? known : { head, reads: 0, nextAt: 0 };
+      if (entry.reads >= PR_CI_READS_MAX || now < entry.nextAt) continue;
+      this.pullRequestCiLast = taskId;
+      this.pullRequestCiReads.set(taskId, {
+        head,
+        reads: entry.reads + 1,
+        nextAt: now + PR_CI_READ_INTERVAL_MS,
+      });
+      const snapshot = await this.pullRequestCiSnapshot(ci, pr, head, token);
+      if (!snapshot) return;
+      // 読んでいる間に、人が差し戻した・マージした・PR を更新したなどで変わっていれば、記録しない
+      const latest = this.tasks.get(taskId);
+      if (!latest || !this.watchesPullRequestCi(latest, pr)) return;
+      // ワークフローの実行のほかに、その中のジョブも見る（失敗したジョブの名前とリンクを出す）
+      const all = [...snapshot.checks, ...(snapshot.jobs ?? [])];
+      const seen = new Set<string>();
+      const failed: { name: string; url?: string }[] = [];
+      for (const check of all) {
+        if (!isFailedConclusion(check)) continue;
+        // 長い名前は切り詰める（長さは UTF-16 の単位で数え、サロゲートペアの途中では切らない）
+        let name = check.name;
+        if (name.length > PR_CI_CHECK_NAME_MAX) {
+          let cut = "";
+          for (const char of name) {
+            if (cut.length + char.length > PR_CI_CHECK_NAME_MAX - 1) break;
+            cut += char;
+          }
+          name = `${cut}…`;
+        }
+        // リンクは、http(s) のものだけを残す（CI が付けた値を、そのまま画面のリンクにしない）
+        const url = check.url && /^https?:\/\//.test(check.url) ? check.url : undefined;
+        const key = `${name}\n${url ?? ""}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        failed.push({ name, ...(url ? { url } : {}) });
+      }
+      const done = () =>
+        this.pullRequestCiReads.set(taskId, { head, reads: PR_CI_READS_MAX, nextAt: 0 });
+      if (failed.length > 0) {
+        const checks = failed.slice(0, PR_CI_FAILED_CHECKS_MAX);
+        const more = failed.length - checks.length;
+        this.append(latest, [
+          {
+            actor: "sacty",
+            event: {
+              type: "PullRequestCiFailed",
+              payload: { number: pr.number, commit: head, checks, ...(more > 0 ? { more } : {}) },
+            },
+          },
+        ]);
+        done();
+      } else if (all.length > 0 && all.every((c) => c.status === "completed")) {
+        // 終わっていて、失敗が無い：この先頭は、もう読まない
+        done();
+      }
+      // 実行中のものがある・CI がまだ1つも無いときは、間隔の後に読み直す（回数の上限まで）
+      return;
+    }
+  }
+
+  /** CI の失敗を出す対象か（承認待ちの、開いている実装の PR で、レビューの子タスクの指摘なしを待っていないもの。PBI-364）。 */
+  private watchesPullRequestCi(
+    task: Task,
+    pr: { step: StepKey; number: number; commit: string },
+  ): boolean {
+    const watched = gatePullRequest(task);
+    return (
+      pr.step === "implement" &&
+      task.status === "awaiting_approval" &&
+      !task.pendingReview &&
+      !this.cancelling.has(task.id) &&
+      watched?.step === "implement" &&
+      watched.state === "open" &&
+      watched.number === pr.number &&
+      watched.commit === pr.commit &&
+      task.pullRequest !== undefined &&
+      !task.pullRequest.awaitingReview &&
+      !task.pullRequest.verifying
+    );
+  }
+
+  /**
+   * PR の先頭のコミットの CI を読む（PBI-364）。PR_CI_TIMEOUT_MS のうちに返らなければ、待つのをやめる。通信は中断されずに
+   * 続くので、終わるまでは、次の読み取りを始めない（pullRequestCiReading）。読めなければ undefined。
+   */
+  private async pullRequestCiSnapshot(
+    ci: CiStatusReader,
+    pr: { number: number; repo: string },
+    head: string,
+    token: string,
+  ): Promise<CiSnapshot | undefined> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const reading = ci.snapshot({ repo: pr.repo, token, commit: head });
+      this.pullRequestCiReading = true;
+      const settled = () => {
+        this.pullRequestCiReading = false;
+      };
+      // 時間切れの後に届いた失敗は、知らせない（時間切れとして知らせる）
+      reading.then(settled, settled);
+      const expired = new Promise<"expired">((resolve) => {
+        timer = setTimeout(
+          () => resolve("expired"),
+          this.deps.reviewCiTimeoutMs ?? PR_CI_TIMEOUT_MS,
+        );
+      });
+      const read = await Promise.race([reading, expired]);
+      if (read === "expired") {
+        console.warn(`[daemon] PR #${pr.number}（${pr.repo}）の CI が時間内に読めませんでした`);
+        return undefined;
+      }
+      return read;
+    } catch (error) {
+      console.warn(
+        `[daemon] PR #${pr.number}（${pr.repo}）の CI を読めませんでした：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+      );
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -17828,6 +18037,14 @@ function legacyAllRequested(task: Task): boolean {
     STEP_PLANS[task.requestedPlan].every((step) => task.requestedImages?.[step])
   );
 }
+
+/** 人の承認を待つ実装の PR（PBI-364）。PR の確認で読んだ、GitHub の先頭のコミットと、読むための認証を持つ。 */
+type PullRequestCiCandidate = {
+  taskId: string;
+  pr: { step: StepKey; number: number; commit: string; repo: string };
+  head: string | undefined;
+  token: string;
+};
 
 /**
  * 対象リポジトリが要る工程（PBI-73）。対象リポジトリの無いタスクでは実行しない（コードを変える・PR を読む・PR を作る）。

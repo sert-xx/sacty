@@ -487,6 +487,8 @@ const ja = {
     PullRequestConflicted: (number: number) =>
       `PR #${number} がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）`,
     PullRequestConflictResolved: (number: number) => `PR #${number} の競合が解消された`,
+    PullRequestCiFailed: (number: number, commit: string, checks: string[], more: number) =>
+      `PR #${number} の CI が失敗していた（${commit}。${checks.join("、")}${more > 0 ? ` ほか${more}件` : ""}）。sacty は何も始めない`,
     IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
     IssueCommentFailed: (message: string) => `調査の結果を Issue に返せなかった：${message}`,
     GitHubCommentsPosted: (step: string, results: string[]) =>
@@ -1154,6 +1156,8 @@ const en: LabelMessages = {
     PullRequestConflicted: (number) =>
       `PR #${number} conflicts with the base branch (it is merged in when you send it back or comment)`,
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,
+    PullRequestCiFailed: (number, commit, checks, more) =>
+      `CI was failing on PR #${number} (${commit}: ${checks.join(", ")}${more > 0 ? ` and ${more} more` : ""}). sacty starts nothing`,
     IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
     ReviewTargetResolved: (url, commit) => `Confirmed the PR to review (${url} · ${commit})`,
     ReviewGitHubRetried: (where, attempt, maxAttempts, seconds, message) =>

@@ -766,6 +766,50 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     expect(statusTone(conflicting())).toBe("person");
   });
 
+  it("作業履歴に、PR の CI が失敗していたことを表示する。状態の表示は変えない（PBI-364）", () => {
+    const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
+      ({
+        ...e,
+        seq: 1,
+        id: "e1",
+        taskId: "t",
+        projectId: "p",
+        at: "",
+        actor: "sacty",
+      }) as ActivityEvent;
+    expect(
+      describeEvent(
+        event({
+          type: "PullRequestCiFailed",
+          payload: {
+            number: 7,
+            commit: "abcdef1234567",
+            checks: [{ name: "CI" }, { name: "test", url: "https://example.com/1" }],
+            more: 2,
+          },
+        } as never),
+      ),
+    ).toBe("PR #7 の CI が失敗していた（abcdef1。CI、test ほか2件）。sacty は何も始めない");
+    // 読んだ時点の結果で、その後の変化を反映しないので、一覧・「あなたの出番」の状態には出さない
+    expect(
+      statusText(
+        task({
+          status: "awaiting_approval",
+          gate: { step: "implement", submission: 1 },
+          pullRequest: { branch: "b", commit: "c1", url: "u", number: 7 },
+          pullRequestState: "open",
+          pullRequestCiFailure: {
+            number: 7,
+            commit: "c1",
+            head: "c1",
+            checks: [{ name: "CI" }],
+            at: "2026-11-17T00:00:00.000Z",
+          },
+        }),
+      ),
+    ).toBe("実装の PR のマージ待ち");
+  });
+
   it("作業履歴に、PR の競合と解消を表示する", () => {
     const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
       ({

@@ -842,6 +842,13 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       return e.PullRequestConflicted(event.payload.number);
     case "PullRequestConflictResolved":
       return e.PullRequestConflictResolved(event.payload.number);
+    case "PullRequestCiFailed":
+      return e.PullRequestCiFailed(
+        event.payload.number,
+        event.payload.commit.slice(0, 7),
+        event.payload.checks.map((c) => c.name),
+        event.payload.more ?? 0,
+      );
     case "IssueCommented":
       return e.IssueCommented(event.payload.url);
     case "IssueCommentFailed":
