@@ -1051,7 +1051,10 @@ function Properties({ data }: { data: TaskDetailData }) {
   const reviewTaskState = (child: Task) => {
     const last = child.reviewVerdicts?.at(-1);
     const round = last
-      ? m.reviewTaskRound(last.round, m.reviewVerdict[last.verdict ?? "unreadable"])
+      ? m.reviewTaskRound(
+          last.round,
+          m.reviewVerdict[last.verdict ?? (last.missing === "absent" ? "absent" : "unreadable")],
+        )
       : undefined;
     return [statusText(child, labels), round].filter(Boolean).join("・");
   };

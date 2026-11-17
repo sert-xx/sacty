@@ -94,6 +94,33 @@ describe("PR のレビューの子タスクへのリンク（PBI-330）", () => 
         }),
       );
       expect(withRound).toContain(m.task.reviewTaskRound(2, m.task.reviewVerdict.no_findings));
+      // 判定が無い回は、レビューが判定を付けなかったのか、読めなかったのかを分けて出す（PBI-378）
+      const roundOf = (verdict: NonNullable<Task["reviewVerdicts"]>[number]) =>
+        renderToStaticMarkup(
+          createElement(TaskDetailView, {
+            data: {
+              task: parent as Task,
+              activity: [],
+              projectName: "Project",
+              children: [],
+              reviewTasks: [
+                {
+                  id: "c2",
+                  step: "requirements" as const,
+                  number: 7,
+                  task: { ...(second as Task), reviewVerdicts: [verdict] },
+                },
+              ],
+            },
+          }),
+        );
+      const absent = m.task.reviewTaskRound(3, m.task.reviewVerdict.absent);
+      const unreadable = m.task.reviewTaskRound(3, m.task.reviewVerdict.unreadable);
+      expect(absent).not.toBe(unreadable);
+      expect(roundOf({ round: 3, missing: "absent" })).toContain(absent);
+      expect(roundOf({ round: 3, missing: "invalid" })).toContain(unreadable);
+      // 理由を残す前の作業履歴の回
+      expect(roundOf({ round: 3 })).toContain(unreadable);
     }
   });
 });

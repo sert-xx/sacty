@@ -11082,6 +11082,8 @@ export class TaskService {
             ...(step === "implement" && latest.noTestsReason && testCommand ? { testCommand } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
             ...(review?.verdict ? { reviewVerdict: review.verdict } : {}),
+            // 判定が無い理由（PBI-378。レビューが付けなかったのか、付いていたのに読めなかったのか）
+            ...(review?.verdictMissing ? { reviewVerdictMissing: review.verdictMissing } : {}),
             ...(review?.rework ? { reviewRework: review.rework } : {}),
             ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
             ...(documentPages && documentPages.pages.length > 0
