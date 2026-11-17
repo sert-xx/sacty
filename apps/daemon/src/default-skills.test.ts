@@ -1547,13 +1547,129 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
     const text = prReview();
     expect(text).toContain("直しに見つけた穴だからといって `must` にしない");
     expect(text).toContain(
-      "表では `should` に当たると分かったとき（稀で、影響が中以下）は、未対応でも `must` に数えない",
+      "表では `should` に当たる、または影響：小で稀（表では出さない）と分かったときは、未対応でも `must` に数えず、`should` として扱う（以下、重みを見直した指摘）",
     );
     // 指摘に、起きる条件と実害を書く
     expect(text).toContain("指摘には、起きる条件（何と何が重なると起きるか。");
     // 判定の決まりは変えない
     expect(text).toContain("- `must` が1件以上：修正が必要");
     expect(text).toContain("- `should`・`nit` だけ：提案あり（マージは可）");
+  });
+
+  it("前回の要修正の重みの見直しは、表で should に当たるものすべてと影響：小で稀なものを should として扱い、不適合は見直さない（PBI-380）", () => {
+    const text = prReview();
+    // 見直しの範囲を、稀なものに限ると読める括弧書きを残さない（影響：小で稀でないものが、外れて読める）
+    expect(text).not.toContain("当たると分かったとき（稀で、影響が中以下）");
+    // 「対象」「同じに扱う」のような、指す先が二通りに読める語で書かない（扱いを言い切る）
+    expect(text).not.toContain("すべて対象にする");
+    expect(text).not.toContain("同じに扱う\n");
+    expect(text).toContain(
+      "表で `should` に当たるものは、稀なものに限らず、すべて `must` に数えず `should` として扱う（影響：中で稀なものも、影響：小で稀でないものも）",
+    );
+    // 表では出さないものも、前回すでに作者に出したので、消さない（持ち主の決定）
+    expect(text).toContain(
+      "影響：小で稀なものは、表では出さないが、前回すでに作者に出しているので、消さずに、同じく `must` に数えず `should` として扱う",
+    );
+    // 不適合は、重みを見直さない（持ち主の決定）
+    expect(text).toContain(
+      "前回の `must` が受け入れ条件・要求要件の不適合のときは、重みを見直さない。表に依らず `must` のままで、未対応なら `must` に数える",
+    );
+  });
+
+  it("重みを見直した指摘は、見直した回だけ、差分の外でも前回の指摘の一覧の行と総評に残し、次の回からはほかの should と同じに扱う（PBI-380）", () => {
+    const text = prReview();
+    // 書く場所を言い切る（一覧の行と、総評の 1 行）。「総評の前回の指摘の状況」のような、場所が決まらない言い方を残さない
+    expect(text).toContain(
+      "書く場所は2つ。前回の指摘の一覧（前回の指摘ごとに「対応を確認した」「未対応」を書く所。依頼した側が節を決めていれば、その節）のその指摘の行に、「未対応」とだけ書かず、重みを見直したことと根拠（起きる条件と影響）を書く。総評にも、重みを見直したことを1行で書く",
+    );
+    expect(text).not.toContain("総評の前回の指摘の状況");
+    // 重みを見直した指摘は、直っていないので前回以降の差分の外にある。差分の決まりで不採用にさせない
+    const diffRule = text.indexOf(
+      "`should`・`nit` は、指摘箇所が前回以降の差分に含まれるときだけ採用する",
+    );
+    const kept = text.indexOf(
+      "重みを見直した指摘は、見直した回に限り、指摘箇所が前回以降の差分の外でも不採用にせず、残す",
+    );
+    expect(diffRule).toBeGreaterThan(-1);
+    expect(kept).toBeGreaterThan(diffRule);
+    expect(text).toContain(
+      "残す場所は、上の2つ（前回の指摘の一覧のその指摘の行と、総評の1行）だけにする。新しい指摘として繰り返さない（行へのコメントにせず、採用した指摘にも入れない）。このときの判定は、下の「指摘と判定の書き方」で決める",
+    );
+    // 残すのは 1 回だけ（持ち主の決定）と、その境界
+    expect(text).toContain(
+      "残すのは、見直した回の1回だけ。先頭のコミットが進んだ次の回からは、前回の指摘の一覧にも総評にも挙げず、判定の根拠にもしない。ほかの `should` と同じに扱う（指摘箇所が前回以降の差分に含まれるときだけ、新しい指摘として採用できる）",
+    );
+    expect(text).toContain(
+      "すでに見直した指摘かどうかは、前回のレビューの、前回の指摘の一覧の同じ箇所・同じ問題の行で決める。その行に、重みを見直したと書かれていれば、挙げない。書かれているかを読めなければ、今回の見直しとして扱う（残す）",
+    );
+    expect(text).toContain(
+      "次の回に確かめ直して、今回の表で `must` に当たると分かったときは、`must` として採用する",
+    );
+    expect(text).toContain(
+      "依頼した側が、前回と同じ先頭のコミットを判定し直させる回は、見直した回の続きとして扱い、重みを見直した指摘を残す（挙げなくなるのは、先頭のコミットが進んだ次の回から）",
+    );
+  });
+
+  it("重みを見直した指摘が残るときの判定は、pr-review の判定の節の 1 か所で決め、見られなかった観点があれば書かない（PBI-380）", () => {
+    const text = prReview();
+    const section = text.slice(text.indexOf("## 指摘と判定の書き方"));
+    expect(section).toContain(
+      "- 再レビューで、重みを見直した指摘が残り、`must` が無い：採用した指摘が無くても、提案あり（「修正が必要」にも「指摘なし」にもしない）",
+    );
+    expect(section).toContain(
+      "- 見られなかった観点があるとき（担当が、起動し直しても `failed` のまま）は、上の4つより先に、「完了できないとき」で決める（`must` が無ければ、重みを見直した指摘が残っていても、判定を書かない）",
+    );
+    // 判定の決めを、ほかの箇所で言い直さない（「採用の規則」と「既存の指摘との重なり」は、判定の節を指す）
+    const before = text.slice(0, text.indexOf("## 指摘と判定の書き方"));
+    expect(before).not.toContain("判定は「提案あり」にする");
+    expect(before).toContain(
+      "再レビューで重みを見直した指摘があるときの判定は、下の「指摘と判定の書き方」で決める",
+    );
+    const agg = aggregation();
+    expect(agg).toContain(
+      "- `pr-review` の再レビューで、重みを見直した前回の指摘が残るときの判定は、[pr-review.md](pr-review.md) の「指摘と判定の書き方」で決める",
+    );
+    expect(agg).not.toContain("採用した指摘が無くても、「提案あり（マージは可）」");
+  });
+
+  it("集約の資料は、重みを見直した前回の指摘の範囲を言い直さず、不採用にしないことと記録のしかただけを決める（PBI-380）", () => {
+    const agg = aggregation();
+    // 例外は、不採用の一覧の後ろの 1 つの節に置く（「次は不採用にし」の直後に、不採用にしない段落を挟まない）
+    const dismissed = agg.indexOf("## 不採用");
+    const section = agg.indexOf("## 重みを見直した前回の指摘");
+    const verdict = agg.indexOf("## 判定");
+    expect(dismissed).toBeGreaterThan(-1);
+    expect(section).toBeGreaterThan(dismissed);
+    expect(verdict).toBeGreaterThan(section);
+    expect(agg.slice(dismissed, section)).not.toContain("重みを見直");
+    const body = agg.slice(section, verdict);
+    expect(body).toContain(
+      "どれが当たるか、何回残すか、本文のどこに書くか、判定は、[pr-review.md](pr-review.md) の「採用の規則」と「指摘と判定の書き方」が決める（ここでは言い直さない）",
+    );
+    // 担当が not_raised に回したもの（影響：小 × 稀）も、不採用にしない
+    expect(body).toContain(
+      "残す回には、上の「不採用」の「範囲の外」（前回以降の差分の外）と「稀で、実害が小さい」を理由に不採用にしない。担当が `findings` に入れたものも、`not_raised` に残したものも同じ。不採用のほかの理由（作者が対象外・後続対応を明示した論点など）は、そのまま当てる",
+    );
+    // 記録：採用に入れず reweighted に残し、担当の指摘の決め直しと見分ける項目を付ける
+    expect(body).toContain(
+      "採用（`adopted`）に入れない。`reweighted` に、もとの重要度・決め直した重要度・理由を残し、`previous` を `true` にする",
+    );
+    expect(body).toContain(
+      "本文を書き起こすときは、`reweighted` の `previous` が `true` のものだけを、前回の指摘の一覧と総評に書く。新しい指摘にしない",
+    );
+    expect(agg).toContain(
+      '"reason": "条件が 2 つ重なったときだけ起き、影響は中", "previous": false }',
+    );
+    expect(agg).toContain(
+      "`reweighted` の `previous` は、前回の `must` の重みを見直したもの（上の「重みを見直した前回の指摘」）だけを `true` にする",
+    );
+    // 「重みの確認」の 2 つの行（不採用にする行、not_raised を dismissed に残す行）は、この節を指す
+    expect(agg).toContain(
+      "- 「影響：小 × 稀」に当たる指摘は不採用にする（理由は「稀で、実害が小さい」。`pr-review` の再レビューで重みを見直した前回の指摘は除く。下の「重みを見直した前回の指摘」）",
+    );
+    expect(agg).toContain(
+      "を残す（PR には投稿しない）。`pr-review` の再レビューで、前回の `must` を確かめ直したものは除く（下の「重みを見直した前回の指摘」）",
+    );
   });
 
   it("自己レビューは、must だけを修正に戻し、should・nit だけでは戻さない", () => {
