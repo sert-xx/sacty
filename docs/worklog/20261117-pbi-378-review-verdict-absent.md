@@ -62,7 +62,7 @@ sacty が PR に投稿するレビューの判定の行が、「読み取れま�
 
 ## 確かめたこと
 
-コマンドと結果（1 回目。PR を作る前のコード）：
+コマンドと結果（1 回目。PR を作る前のコード。main を取り込む前と、取り込んだ後の 2 度実行して、同じ結果）：
 
 - `npm run format`・`npx biome check --error-on-warnings .`：指摘なし。
 - `npm run typecheck`：通過。
