@@ -239,6 +239,10 @@ const PARAMS = {
   // タスクのイメージを人が指定する・変える（PBI-106・PBI-318）
   "image.notInImages": z.object({ name: z.string() }),
   "image.unchanged": z.object({ name: z.string() }),
+  // セルフレビューの深さ（依頼の大きさの判定と、人の上書き。PBI-369）
+  "selfReview.depthNotLight": null,
+  "selfReview.depthUnchanged": z.object({ depth: z.enum(["light", "normal"]) }),
+  "selfReview.depthForcedNormal": z.object({ reason: z.string() }),
   // タスクの題を人が変える（PBI-323）
   "title.unchanged": null,
   "title.pullRequestChanged": z.object({ number: z.number() }),
@@ -1170,6 +1174,14 @@ const ja: MessageDictionary = {
   "image.notInImages": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images の名前か default を選んでください。`,
   "image.unchanged": ({ name }) => `タスクのイメージは、すでに「${name}」です。`,
+  "selfReview.depthNotLight":
+    "このタスクは、依頼が軽いと判定されていないため、セルフレビューの深さを変えられません（通常の深さでレビューします）。",
+  "selfReview.depthUnchanged": ({ depth }) =>
+    depth === "normal"
+      ? "セルフレビューは、すでに通常の深さです。"
+      : "セルフレビューは、すでにオーケストレーターの判定（軽い）のとおりです。",
+  "selfReview.depthForcedNormal": ({ reason }) =>
+    `セキュリティにかかわる組み合わせ・外部への作業の組み合わせは、依頼が軽いと判定しません。オーケストレーターは軽いと答えていました${reason ? `（理由：${reason}）` : ""}。`,
   "title.unchanged": "タスクの題は変わっていません。違う題を入力してください。",
   "title.pullRequestChanged": ({ number }) =>
     `題を変えると、このタスクが扱う PR（#${number}）が変わるため、変えられません。題の PR のリンクは、足したり消したり変えたりせずに、そのままにしてください。`,
@@ -1998,6 +2010,14 @@ const en: MessageDictionary = {
   "image.notInImages": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Choose a name in images, or default.`,
   "image.unchanged": ({ name }) => `The task already uses the image "${name}".`,
+  "selfReview.depthNotLight":
+    "The self-review depth can't be changed because the request of this task is not judged light (it is reviewed at the normal depth).",
+  "selfReview.depthUnchanged": ({ depth }) =>
+    depth === "normal"
+      ? "The self-review is already at the normal depth."
+      : "The self-review already follows the Orchestrator's judgement (light).",
+  "selfReview.depthForcedNormal": ({ reason }) =>
+    `A plan that concerns security or an operation on an external service is never judged light. The Orchestrator answered light${reason ? ` (reason: ${reason})` : ""}.`,
   "title.unchanged": "The task title hasn't changed. Enter a different title.",
   "title.pullRequestChanged": ({ number }) =>
     `The title can't be changed this way because it would change the PR this task works on (#${number}). Don't add, remove, or change a PR link in the title; keep it as it is.`,

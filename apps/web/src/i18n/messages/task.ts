@@ -361,6 +361,20 @@ const ja = {
     reviewPost: "投稿したレビュー：",
     reviewComments: (n: number) => `行へのコメント（${n}件）`,
   },
+  /** 提出の前のセルフレビューの深さ（依頼の大きさの判定と、人の上書き。PBI-369）。 */
+  selfReviewDepth: {
+    light: "セルフレビューの深さ：軽い。観点を絞ります",
+    normal: "セルフレビューの深さ：通常",
+    overridden: "セルフレビューの深さ：通常（人が指定）",
+    reason: (reason: string) => `判定の理由：${reason}`,
+    judgedLightReason: (reason: string) =>
+      `オーケストレーターの判定は「軽い」です。判定の理由：${reason}`,
+    hint: "オーケストレーターが、工程を選ぶときに依頼の大きさを判定します。軽い依頼では、提出の前のセルフレビューの観点を、要件への適合と横断の 2 つに絞ります。リポジトリに決まりやスキルがあれば、その観点も見ます。PR のレビューは変わりません。",
+    toNormal: "通常の深さで",
+    toJudged: "判定（軽い）に戻す",
+    changing: "変更中…",
+    when: "セルフレビューをする工程の次の実行から使います。実行中の実行は変えません。",
+  },
   /** 提出の前のセルフレビュー（PBI-120）。 */
   selfReview: {
     passed: (rounds: number) => `セルフレビュー：パス・${rounds}回`,
@@ -900,6 +914,18 @@ const en: TaskMessages = {
     reviewTarget: "PR under review: ",
     reviewPost: "Posted review: ",
     reviewComments: (n) => `Line comments (${n})`,
+  },
+  selfReviewDepth: {
+    light: "Self-review depth: light. Fewer viewpoints are used.",
+    normal: "Self-review depth: normal",
+    overridden: "Self-review depth: normal (set by a person)",
+    reason: (reason) => `Why: ${reason}`,
+    judgedLightReason: (reason) => `The Orchestrator judged the request light. Why: ${reason}`,
+    hint: "The Orchestrator judges the size of the request when it chooses the steps. For a light request, the self-review before submitting uses two viewpoints: fit to the requirements and the cross-cutting one. The repository's own rules and review skills are also checked, if any. PR reviews do not change.",
+    toNormal: "Use the normal depth",
+    toJudged: "Back to the judgement (light)",
+    changing: "Changing…",
+    when: "Applies from the next run of a step that does a self-review. A run in progress is not changed.",
   },
   selfReview: {
     passed: (rounds) => `Self-review: passed · ${rounds} round${rounds === 1 ? "" : "s"}`,

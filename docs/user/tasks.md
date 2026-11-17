@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/web/src/components/self-review-depth.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -18,7 +18,7 @@
 | したいこと | 読む節 |
 | --- | --- |
 | タスクを作る・探す・状況を見る | [タスクを作る](#タスクを作る)、[タスクの一覧](#タスクの一覧)、[タスクの詳細の見方](#タスクの詳細の見方)、[画面の補足](#画面の補足)、[画面の自動の更新](#画面の自動の更新) |
-| sacty が自分で進める部分を知る | [タスクの開始時の情報収集](#タスクの開始時の情報収集)、[提出の前のセルフレビュー](#提出の前のセルフレビュー) |
+| sacty が自分で進める部分を知る | [タスクの開始時の情報収集](#タスクの開始時の情報収集)、[提出の前のセルフレビュー](#提出の前のセルフレビュー)、[依頼が軽いときのセルフレビュー](#依頼が軽いときのセルフレビュー) |
 | 成果を確かめて、承認する・差し戻す | [PR での承認（要求要件・設計・実装）](#pr-での承認要求要件設計実装)、[要求要件・設計の読み方](#要求要件設計の読み方)、[確かめる項目（出典の分類）](#確かめる項目出典の分類)、[実装の PR のレビュー](#実装の-pr-のレビュー)、[差し戻したときの直し方](#差し戻したときの直し方)、[差し戻しの原因](#差し戻しの原因)、[変更の申し出](#変更の申し出)、[PR と Issue へのコメント](#pr-と-issue-へのコメント)、[統合レビューの結果を確かめる](#統合レビューの結果を確かめる) |
 | 進んでいるタスクに手を入れる | [オーケストレーターに質問する](#オーケストレーターに質問する)、[タスクの題を変える](#タスクの題を変える)、[タスクのイメージを変える](#タスクのイメージを変える)、[工程のエージェントを変える](#工程のエージェントを変える)、[一時停止・再開・中止](#一時停止再開中止)、[完了したタスクの続きのタスクを作る](#完了したタスクの続きのタスクを作る) |
 | 依頼の種類ごとの進み方を知る | [文書作成と単発の外部作業](#文書作成と単発の外部作業)、[既存の PR を直す](#既存の-pr-を直す)、[セキュリティチェックと対応](#セキュリティチェックと対応)、[テストの仕組みが無いリポジトリ](#テストの仕組みが無いリポジトリ)、[実装に変更が無いとき](#実装に変更が無いとき)、[実装が終わらないとき・やり直しで変更が無いとき](#実装が終わらないときやり直しで変更が無いとき) |
@@ -246,6 +246,8 @@ API からは、`POST /api/tasks` に `{"template": "docs-setup", "projectId": "
   - 飛ばした工程の分は、実装の PR をレビューする子タスクが、タスクの目的（依頼の内容）からレビューします。
     あなたは、PR のマージで承認します。
   - 進め方を指定したときは、工程を飛ばしません（[進め方を指定する](#進め方を指定する)）。
+- 依頼が軽いかどうかも、工程を選ぶときにオーケストレーターが判定します。
+  軽い依頼では、セルフレビューで見る観点を絞ります（[依頼が軽いときのセルフレビュー](#依頼が軽いときのセルフレビュー)）。
 - 開発のセットアップ（依存のインストール・ビルドなど）を実行するかは、工程で決まります。
   - 工程の選択と、コードや仕組みを読んで説明する調査では、リポジトリの AGENTS.md などにセットアップの手順があっても、実行しません。
     調査で、コードを読むだけでは確かめられず、動かして確かめる必要があるときだけ、エージェントがセットアップすることがあります（そのときは、必要だった理由を調査の結果に書きます）。
@@ -512,7 +514,7 @@ PR を作った親タスクのまとめを引き継ぎ、「集めた情報」�
 
 ### セルフレビューで見る観点
 
-初回は全部の観点で見ます。
+初回は全部の観点で見ます（依頼が軽いと判定されたタスクは、[依頼が軽いときのセルフレビュー](#依頼が軽いときのセルフレビュー)）。
 直した後の再レビュー（2回目以降）は、前回 `must` を出した観点と、観点にとらわれず欠陥を探す X-1 だけで見ます（`must` が無く、`should` だけを直したときは X-1 だけ）。
 再レビューで見なかった観点は、エージェントの実行の記録に「起動しない（前回の回で `must` なし）」と残ります。
 
@@ -536,6 +538,50 @@ PR を作った親タスクのまとめを引き継ぎ、「集めた情報」�
 
 変えていない領域のスキルなど、今回の変更に当てはまらないものでは足しません。
 スキルや指示書に書かれた修正・投稿・サブエージェントの起動は行いません。
+
+### 依頼が軽いときのセルフレビュー
+
+依頼が軽いときは、セルフレビューで見る観点を絞り、費用と時間を依頼の大きさに合わせます。
+軽いかどうかは、オーケストレーターが工程を選ぶときに判定します。
+判定は、タスクごとに「通常の深さで」と上書きできます。
+
+判定と理由は、タスクの詳細の「工程の設定」タブの、選んだ理由の下に出ます。
+
+| 表示 | 意味 |
+| --- | --- |
+| セルフレビューの深さ：軽い。観点を絞ります | 依頼が軽いと判定されました。観点を絞ります |
+| セルフレビューの深さ：通常 | 軽いと判定されませんでした。全部の観点で見ます |
+| セルフレビューの深さ：通常（人が指定） | 軽いと判定されましたが、人が通常の深さにしました |
+
+軽いと判定されるのは、文書に節を足す・文言を直すなどの、小さく局所的な変更です。
+次のどれかに当たる依頼は、軽いと判定されません。
+
+- 既存の振る舞い・外に公開している I/F・保存するデータの形を変える
+- セキュリティにかかわる変更を含む（認証・認可、秘密情報、権限、入力の検証、依存の追加・更新など）
+- 取り消しにくい変更を含む（データの削除・移行、外部への作用、リリースやデプロイの設定など）
+- セキュリティチェック・セキュリティ対応・単発の外部作業のタスク
+
+軽いと判定されたタスクのセルフレビューは、次のようになります。
+
+- 最初の回は、要件への適合の観点と、観点にとらわれず欠陥を探す X-1 の 2 つだけで見ます。
+  対象のリポジトリに、今回の変更に当てはまるスキルや指示書があれば、その観点も見ます。
+- 強いモデルで見る観点は、1 段下のモデルで見ます。
+- 直した後の再レビューは、前回 `must` を出した観点だけで見ます。
+  `must` が無ければ、再レビューをしません。
+- 見なかった観点と理由は、エージェントの実行の記録と、セルフレビューの総評に残ります。
+- 作業の途中で、変更がセキュリティにかかわる・取り消しにくいと分かったときは、エージェントが全部の観点で見て、そのことを総評に書きます。
+
+通常の深さでレビューさせたいときは、次のようにします。
+
+1. タスクの詳細の「工程の設定」タブを開きます。
+2. 「セルフレビューの深さ」の下の「通常の深さで」を押します。
+
+変更は、セルフレビューをする工程の次の実行から使います。
+実行中の実行は変わりません。すでに提出された成果物を通常の深さで見直したいときは、上書きしてから、その工程を差し戻してください。
+元に戻すときは、同じ所の「判定（軽い）に戻す」を押します。
+軽いと判定されなかったタスクを、軽くすることはできません。
+
+PR のレビュー（sacty が PR をレビューするタスク）の観点は、この判定で変わりません。
 
 ### 指摘を受けて直すときのセルフレビュー
 

@@ -22,6 +22,7 @@ import {
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
   budgetState,
+  ChangeSelfReviewDepthInput,
   ChangeStepAgentInput,
   ChangeTaskImageInput,
   type CiCheck,
@@ -56,6 +57,7 @@ import {
   ERROR_ANALYSIS_MAX,
   EventInput,
   type ExportPlan,
+  effectiveSelfReviewDepth,
   errorAnalysisBlocked,
   excludedRepositories,
   exportDue,
@@ -139,6 +141,7 @@ import {
   SELF_REVIEW_STEPS,
   type SecurityCategory,
   type SecurityFinding,
+  type SelfReviewDepth,
   type SharedCompose,
   STEP_PLANS,
   StepKey,
@@ -569,6 +572,37 @@ export type ContextPreviewView = Omit<ContextPreview, "platforms"> & {
 
 /** すべての工程で使うと決まっているイメージ（再実行で人が指定した・プロジェクトの対象で指定した。PBI-41）。 */
 type PinnedImage = { name: string; source: "project" | "rerun" | "request" };
+
+/**
+ * 工程の選択で記録する、依頼の大きさの判定と理由（PBI-369）。セキュリティにかかわる組み合わせ（security-check・
+ * security-fix）と、外部への作業の組み合わせ（operation。取り消しにくい）は、オーケストレーターが軽いと答えても通常にする
+ * （セキュリティにかかわる変更・取り消しにくい変更は、軽いと判定しない）。PR のレビューだけの組み合わせ（review）は、
+ * セルフレビューをしないので記録しない。答えが無ければ記録しない（通常として扱う）。
+ */
+export function selfReviewDepthOf(chosen: {
+  plan: StepPlan;
+  selfReviewDepth?: SelfReviewDepth;
+  selfReviewDepthReason?: string;
+}): { selfReviewDepth?: SelfReviewDepth; selfReviewDepthReason?: DaemonText } {
+  if (!chosen.selfReviewDepth || chosen.plan === "review") return {};
+  if (chosen.selfReviewDepth === "light" && NEVER_LIGHT_PLANS.includes(chosen.plan)) {
+    return {
+      selfReviewDepth: "normal",
+      selfReviewDepthReason: message("selfReview.depthForcedNormal", {
+        reason: chosen.selfReviewDepthReason ?? "",
+      }),
+    };
+  }
+  return {
+    selfReviewDepth: chosen.selfReviewDepth,
+    ...(chosen.selfReviewDepthReason
+      ? { selfReviewDepthReason: chosen.selfReviewDepthReason }
+      : {}),
+  };
+}
+
+/** 依頼が軽いと判定しない工程の組み合わせ（PBI-369）。セキュリティにかかわるものと、取り消しにくい外部への作業。 */
+const NEVER_LIGHT_PLANS: readonly StepPlan[] = ["security-check", "security-fix", "operation"];
 
 function clipText(text: DaemonText, max: number): DaemonText {
   return mapFreeText(text, (value) => (value.length > max ? `…${value.slice(-max)}` : value));
@@ -5673,6 +5707,7 @@ export class TaskService {
         ...(chosen.testCommand ? { testCommand: chosen.testCommand } : {}),
         ...(chosen.noTests ? { noTestsReason: chosen.noTests } : {}),
         ...(chosen.documentsOnly ? { documentsOnly: true as const } : {}),
+        ...selfReviewDepthOf(chosen),
         ...(chosen.investigation ? { investigation: chosen.investigation } : {}),
         ...(chosen.image ? { image: chosen.image } : {}),
         ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
@@ -15250,6 +15285,28 @@ export class TaskService {
     }
     return this.append(task, [
       { actor: "person", event: { type: "TaskRenamed", payload: { from: task.title, to: title } } },
+    ]);
+  }
+
+  /**
+   * 人が、タスクの詳細で、提出の前のセルフレビューの深さを変える（PBI-369）。normal は、オーケストレーターが軽いと判定した
+   * タスクを、通常の深さでレビューさせる上書き。light は、その上書きの取り消し。軽いと判定されていないタスクは、理由を示して
+   * 断る（人が軽くすることはできない）。今の実行は止めず、セルフレビューをする工程の次の実行から使う。
+   */
+  changeSelfReviewDepth(id: string, raw: unknown): Task {
+    const { depth } = ChangeSelfReviewDepthInput.parse(raw);
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
+    if (task.selfReviewDepth?.judged !== "light") {
+      throw new InvalidOperationError(message("selfReview.depthNotLight"));
+    }
+    const from = effectiveSelfReviewDepth(task);
+    if (from === depth) {
+      throw new InvalidOperationError(message("selfReview.depthUnchanged", { depth }));
+    }
+    return this.append(task, [
+      { actor: "person", event: { type: "SelfReviewDepthChanged", payload: { from, to: depth } } },
     ]);
   }
 
