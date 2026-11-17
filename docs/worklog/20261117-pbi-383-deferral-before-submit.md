@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-383
-- PR: なし
+- PR: #419
 - ブランチ: feat/pbi-383-deferral-before-submit
 - 関係する ADR: [返信していない後続に回したい案は、理由を次の提出に持ち越して返信する](../adr/20261117-0822-carry-unreplied-defer-proposals.md)
 
@@ -38,7 +38,7 @@
 ## 確かめたこと
 
 - `npm run format`・`npm run lint`・`npm run typecheck`：通った。
-- `npx vitest run --no-file-parallelism`：TEST_RESULT
+- `npx vitest run --no-file-parallelism`：257 ファイル・4,989 件が通った（1 件は、もとからのスキップ）。1 回目は、仕様書の「コード:」の参照の書き方の 1 件（`tests/docs`）が落ちたので、参照を直して、全件を実行し直した。
 - 足したテスト（修正を戻すと落ちることを、修正ごとに確かめた）：
   - `apps/daemon/src/daemon-step-pull-requests.test.ts` の「提出に至らなかった実行で申告した案を、提出のときに必ず返信する（PBI-383）」の 6 件。
     - 未完了のやり直し（先頭を変えた・変えなかった。デーモンの起動し直しを挟む）、競合の残り、変更なしの一時停止からの再開（先頭を変えた・変えなかった）：投影の持ち越しを戻すと、5 件とも落ちた。
