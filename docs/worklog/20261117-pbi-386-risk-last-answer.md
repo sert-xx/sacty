@@ -105,7 +105,8 @@
 
 3 回目の対応の後の確認（main の取り込みの後）：
 
-- VERIFY4_PLACEHOLDER
+- main を取り込んだ（merge。競合・手直しは無し）。
+- `npm run lint`：成功。`npm run typecheck`：成功。`npx vitest run --no-file-parallelism`：261 ファイル・5070 件が成功（1 件はスキップ）。
 
 ## 残したこと
 
