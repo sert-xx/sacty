@@ -2,6 +2,7 @@
 
 import {
   type DeferralDecision,
+  type DeferralHandling,
   decidedDeferrals,
   deferProposals,
   gatePullRequest,
@@ -13,6 +14,9 @@ import { type DeferralState, deferralAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
+
+/** 後続に回すときの扱いの選択肢（この順に出す）。 */
+const HANDLINGS: readonly DeferralHandling[] = ["none", "task", "issue"];
 
 const initial: DeferralState = {};
 
@@ -42,8 +46,13 @@ export function deferralOriginUrl(
  * まま残る。「この PR で直す」を 1 件でも選ぶと、実装に差し戻す。決定済みの指摘は、下に記録として出す。
  */
 export function DeferralNotice({ task }: { task: Task }) {
-  const { task: m } = useMessages();
+  const { task: m, labels } = useMessages();
   const t = m.deferral;
+  const handlingLabel: Record<DeferralHandling, string> = {
+    none: t.handlingNone,
+    task: t.handlingTask,
+    issue: t.handlingIssue,
+  };
   const [state, formAction, pending] = useActionState(deferralAction, initial);
   const proposals = deferProposals(task);
   const gate = task.gate;
@@ -116,6 +125,26 @@ export function DeferralNotice({ task }: { task: Task }) {
                       </label>
                     ))}
                   </fieldset>
+                  <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      {t.handling}
+                      <Hint text={t.handlingHint} className="size-4" />
+                    </span>
+                    <select
+                      name={`handling:${p.remarkId}`}
+                      data-testid="deferral-handling"
+                      defaultValue={
+                        state.handlings?.[p.remarkId] ?? task.deferralHandlingDefault ?? "none"
+                      }
+                      className="h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground"
+                    >
+                      {HANDLINGS.map((value) => (
+                        <option key={value} value={value}>
+                          {handlingLabel[value]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </li>
               );
             })}
@@ -141,6 +170,38 @@ export function DeferralNotice({ task }: { task: Task }) {
                   {t.remark(d.remarkId)} ・ {d.decision === "defer" ? t.decidedDefer : t.decidedFix}
                 </span>
                 <span className="max-h-32 overflow-y-auto whitespace-pre-line">{d.text}</span>
+                {/* 後続に回すと決めた指摘の扱いと、その結果 */}
+                {d.decision === "defer" && d.handling && (
+                  <span data-testid="deferral-handled" className="text-xs text-muted-foreground">
+                    {handlingLabel[d.handling]}
+                    {" ・ "}
+                    {d.handled?.failure !== undefined ? (
+                      <span className="text-warn">
+                        {t.handlingFailed(labels.text(d.handled.failure))}
+                      </span>
+                    ) : d.handled?.taskId ? (
+                      <a
+                        href={`/tasks/${d.handled.taskId}`}
+                        className="text-accent-foreground underline"
+                      >
+                        {t.handledTask}
+                      </a>
+                    ) : d.handled?.url ? (
+                      <a
+                        href={d.handled.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-accent-foreground underline"
+                      >
+                        {t.handledIssue}
+                      </a>
+                    ) : d.handling === "task" ? (
+                      t.handlingPendingTask
+                    ) : (
+                      t.handlingPendingIssue
+                    )}
+                  </span>
+                )}
               </li>
             ))}
           </ul>

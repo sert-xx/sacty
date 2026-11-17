@@ -54,6 +54,7 @@ import {
   DeriveTaskInput,
   decidedDeferrals,
   deferProposals,
+  deferralTasksDue,
   deploymentCheckRunning,
   derivedRecord,
   ERROR_ANALYSIS_MAX,
@@ -254,7 +255,12 @@ import {
 } from "./context.js";
 import type { ContextImageBuilder, ContextImagesView } from "./context-images.js";
 import type { ContextMcpServers } from "./context-mcp.js";
-import { buildDeferralNotice } from "./deferral-notice.js";
+import {
+  buildDeferralIssue,
+  buildDeferralNotice,
+  buildDeferralTask,
+  deferralTaskMarker,
+} from "./deferral-notice.js";
 import {
   buildCiFixTask,
   buildDeploymentFixTask,
@@ -1295,7 +1301,21 @@ export class TaskService {
       sameRepo,
       this.latestHeadOf(found.task),
     );
-    return aiReview ? { ...found, task: { ...found.task, aiReview } } : found;
+    // まだ決めていない、後続に回したい案があれば、扱いの既定（プロジェクトの設定）を足す（PBI-370）
+    const deferralHandlingDefault =
+      deferProposals(found.task).length > 0
+        ? (this.deps.projects.get(found.task.projectId)?.deferralHandling ?? "none")
+        : undefined;
+    return aiReview || deferralHandlingDefault
+      ? {
+          ...found,
+          task: {
+            ...found.task,
+            ...(aiReview ? { aiReview } : {}),
+            ...(deferralHandlingDefault ? { deferralHandlingDefault } : {}),
+          },
+        }
+      : found;
   }
 
   /**
@@ -1525,6 +1545,8 @@ export class TaskService {
     if (this.deps.reviewTasks === true) await this.settlePausedDrafts();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
+    // 人が後続に回すと決めた指摘の、後続のタスクを作る（元のタスクが完了してから。PBI-370）
+    this.settleDeferralTasks();
     // 「指摘なし」の後に落ちた CI を、タスクの詳細に出す（PBI-364）。ほかの確認がすべて終わった後に、1件だけ読む
     try {
       await this.readPullRequestCi(ciCandidates);
@@ -8108,7 +8130,7 @@ export class TaskService {
    * （元のタスクの依頼は終わっていて、続きは新しい依頼のため）。セキュリティの組み合わせのタスクからは、セキュリティの
    * 組み合わせの続きだけを作る（記録に入るレポート・範囲を、公開の場所に出さないため）。
    */
-  deriveTask(id: string, raw: unknown): Task {
+  deriveTask(id: string, raw: unknown, actor: "person" | "sacty" = "person"): Task {
     const input = DeriveTaskInput.parse(raw);
     const original = this.tasks.get(id);
     if (!original) throw new InvalidOperationError(message("task.notFound"));
@@ -8140,7 +8162,8 @@ export class TaskService {
     const record = deriveRecord(original);
     return this.append({ id: randomUUID(), projectId: original.projectId }, [
       {
-        actor: "person",
+        // 人が後続に回すと決めた指摘の後続のタスク（PBI-370）は、sacty が作る
+        actor,
         event: {
           type: "TaskCreated",
           payload: {
@@ -17935,18 +17958,39 @@ export class TaskService {
       if (!open.has(d.remarkId) || seen.has(d.remarkId)) {
         throw new InvalidOperationError(message("deferral.notOpen", { remarkId: d.remarkId }));
       }
+      // 扱いを選べるのは、後続に回すと決めた指摘だけ
+      if (d.decision === "fix" && d.handling !== undefined) {
+        throw new InvalidOperationError(
+          message("deferral.handlingOnFix", { remarkId: d.remarkId }),
+        );
+      }
       seen.add(d.remarkId);
     }
+    // 後続に回すと決めた指摘の扱い。選んでいなければ、プロジェクトの既定（無ければ、何もしない）
+    const fallback = this.deps.projects.get(task.projectId)?.deferralHandling ?? "none";
+    const decisions = input.decisions.map((d) => ({
+      remarkId: d.remarkId,
+      decision: d.decision,
+      ...(d.decision === "defer" ? { handling: d.handling ?? fallback } : {}),
+    }));
     const decided: ActivityItem = {
       actor: "person",
       event: {
         type: "DeferralsDecided",
-        payload: { step: input.step, submission: input.submission, decisions: input.decisions },
+        payload: { step: input.step, submission: input.submission, decisions },
       },
     };
-    const items = input.decisions.flatMap((d) => {
+    const items = decisions.flatMap((d) => {
       const proposal = open.get(d.remarkId);
-      return proposal ? [{ ...proposal, decision: d.decision }] : [];
+      return proposal
+        ? [
+            {
+              ...proposal,
+              decision: d.decision,
+              ...(d.handling && d.handling !== "none" ? { handling: d.handling } : {}),
+            },
+          ]
+        : [];
     });
     const fixes = items.filter((item) => item.decision === "fix");
     // PR のコメントに残す先（差し戻すと、承認ゲートが無くなるので、先に読む）
@@ -17987,10 +18031,36 @@ export class TaskService {
       reason: string;
       decision: "defer" | "fix";
       origin?: RemarkOrigin;
+      handling?: "task" | "issue";
     }[],
     watched: ReturnType<typeof gatePullRequest>,
   ): void {
-    if (!watched?.repo || watched.step !== "implement") return;
+    /** GitHub の Issue を作ると選んだ指摘の結果を記録する。 */
+    const handled = (remarkId: string, result: { url: string } | { failure: DaemonText }): void => {
+      try {
+        this.append(this.mustGet(task.id), [
+          {
+            actor: "sacty",
+            event: {
+              type: "DeferralHandled",
+              payload: { remarkId, handling: "issue" as const, ...result },
+            },
+          },
+        ]);
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} の、後続に回すと決めた指摘の Issue の結果を記録できませんでした：${renderMessage(errorText(error), "ja")}`,
+        );
+      }
+    };
+    const wantIssues = items.filter((item) => item.handling === "issue");
+    if (!watched?.repo || watched.step !== "implement") {
+      // PR が無い実装（変更なし）：Issue を作る先のリポジトリが分からない
+      for (const item of wantIssues) {
+        handled(item.remarkId, { failure: message("deferral.noRepository") });
+      }
+      return;
+    }
     const repo = watched.repo;
     const number = watched.number;
     const record = (result: { url: string } | { failure: DaemonText }): void => {
@@ -18009,14 +18079,18 @@ export class TaskService {
     };
     // セキュリティのタスクは、指摘（脆弱性や修正の範囲の詳細を含みうる）を公開の PR に書かない（指摘への返信と同じ）
     const project = this.deps.projects.get(task.projectId);
-    const skipped = isSecurityTask(task)
+    // GitHub に書けない理由（Issue も、PR のコメントも）
+    const blocked = isSecurityTask(task)
       ? message("deferral.securityTask")
-      : watched.state !== "open"
-        ? message("deferral.pullRequestNotOpen")
-        : !project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]
-          ? message("deferral.noAccount")
-          : undefined;
-    if (skipped) {
+      : !project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]
+        ? message("deferral.noAccount")
+        : undefined;
+    const skipped =
+      blocked ?? (watched.state !== "open" ? message("deferral.pullRequestNotOpen") : undefined);
+    if (blocked) {
+      for (const item of wantIssues) handled(item.remarkId, { failure: blocked });
+    }
+    if (skipped && (blocked || wantIssues.length === 0)) {
       record({ failure: skipped });
       return;
     }
@@ -18031,6 +18105,39 @@ export class TaskService {
           this.githubToken(task, repo, usedSecrets, project),
         );
         const pr = { repo, token, number };
+        // GitHub の Issue を作ると選んだ指摘は、先に Issue を作る（決定のコメントに、Issue の URL を載せる）
+        const issues = new Map<string, string | undefined>();
+        for (const item of wantIssues) {
+          const ref = item.origin?.number === number ? remarkOriginRef(item.origin.key) : undefined;
+          try {
+            const issue = buildDeferralIssue({
+              taskId: task.id,
+              remarkId: item.remarkId,
+              text: item.text,
+              reason: item.reason,
+              pullRequest: { url, number },
+              ...(ref ? { originUrl: remarkOriginUrl(url, ref) } : {}),
+              secrets: usedSecrets,
+            });
+            const created = await untilAborted(
+              signal,
+              this.deps.pulls.createIssue({ repo, token, ...issue, signal }),
+            );
+            issues.set(item.remarkId, created.url);
+            handled(item.remarkId, { url: created.url });
+          } catch (error) {
+            const failure = redactText(errorText(error), usedSecrets);
+            console.warn(
+              `[daemon] タスク ${task.id} の、後続に回すと決めた指摘 ${item.remarkId} の Issue を作れませんでした：${renderMessage(failure, "ja")}`,
+            );
+            issues.set(item.remarkId, undefined);
+            handled(item.remarkId, { failure });
+          }
+        }
+        if (skipped) {
+          record({ failure: skipped });
+          return;
+        }
         const body = buildDeferralNotice({
           taskId: task.id,
           decision,
@@ -18048,6 +18155,12 @@ export class TaskService {
                       url: remarkOriginUrl(url, ref),
                     },
                   }
+                : {}),
+              ...(item.handling ? { handling: item.handling } : {}),
+              ...(item.handling === "issue"
+                ? issues.get(item.remarkId)
+                  ? { issueUrl: issues.get(item.remarkId) }
+                  : { issueFailed: true }
                 : {}),
             };
           }),
@@ -18069,6 +18182,74 @@ export class TaskService {
         record({ failure });
       }
     });
+  }
+
+  /**
+   * 人が後続に回すと決めて、sacty の後続のタスクを作ると選んだ指摘の、後続のタスクを作る（PBI-370）。元のタスクが完了して
+   * から（PR がマージされ、残りの工程が終わった後。完了したタスクの続きのタスクと同じ作り）。指摘ごとに 1 つ。作れなければ、
+   * 理由を記録して、やり直さない。作った後・記録の前に止まっていたら、目印で見つけて、二度作らない。
+   */
+  private settleDeferralTasks(): void {
+    for (const original of [...this.tasks.values()]) {
+      for (const due of deferralTasksDue(original)) {
+        const record = (result: { taskId: string } | { failure: DaemonText }): void => {
+          try {
+            this.append(this.mustGet(original.id), [
+              {
+                actor: "sacty",
+                event: {
+                  type: "DeferralHandled",
+                  payload: { remarkId: due.remarkId, handling: "task" as const, ...result },
+                },
+              },
+            ]);
+          } catch (error) {
+            console.warn(
+              `[daemon] タスク ${original.id} の、後続のタスクの結果を記録できませんでした：${renderMessage(errorText(error), "ja")}`,
+            );
+          }
+        };
+        const marker = deferralTaskMarker(original.id, due.remarkId);
+        const existing = [...this.tasks.values()].find(
+          (t) => t.derivedFrom?.taskId === original.id && t.body.includes(marker),
+        );
+        if (existing) {
+          record({ taskId: existing.id });
+          continue;
+        }
+        try {
+          const pr = original.pullRequest;
+          const url = pr?.url ?? (pr?.repo && pr.number ? `${pr.repo}/pull/${pr.number}` : "");
+          const ref =
+            pr?.number && due.origin?.number === pr.number
+              ? remarkOriginRef(due.origin.key)
+              : undefined;
+          const request = buildDeferralTask({
+            taskId: original.id,
+            remarkId: due.remarkId,
+            text: due.text,
+            reason: due.reason,
+            ...(pr?.number && url ? { pullRequest: { url, number: pr.number } } : {}),
+            ...(ref && url ? { originUrl: remarkOriginUrl(url, ref) } : {}),
+          });
+          const created = this.deriveTask(
+            original.id,
+            { ...request, repo: original.repo ?? original.source?.repo ?? null },
+            "sacty",
+          );
+          record({ taskId: created.id });
+        } catch (error) {
+          const failure =
+            error instanceof InvalidOperationError && error.messages[0]
+              ? error.messages[0]
+              : errorText(error);
+          console.warn(
+            `[daemon] タスク ${original.id} の、後続に回すと決めた指摘 ${due.remarkId} の後続のタスクを作れませんでした：${renderMessage(failure, "ja")}`,
+          );
+          record({ failure });
+        }
+      }
+    }
   }
 
   /** 前提が変わった指摘を無効にする。以降、エージェントには渡さない。 */

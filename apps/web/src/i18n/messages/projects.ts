@@ -175,6 +175,13 @@ const ja = {
       "URL を読めない対象があります。その対象のホストのアカウントは、URL を直すと選べるようになります。",
     githubForContext: "（コンテキストリポジトリ・任意）",
     githubForShared: "（共用の compose・任意）",
+    deferralTitle: "後続に回す指摘の扱い",
+    deferralHint:
+      "実装が後続に回したいとした指摘を、承認の画面で「後続に回す」と決めたときの扱いの、初めの値です。指摘ごとに、承認の画面で変えられます。",
+    deferralLabel: "既定の扱い",
+    deferralNone: "何もしない",
+    deferralTask: "Sacty の後続のタスクを作る",
+    deferralIssue: "GitHub の Issue を作る",
     sharedTitle: "共用の compose（任意）",
     sharedHint:
       "テストに使う、チームで共用する docker compose です。設定しただけでは起動せず、オーケストレーターがタスクごとに要るかを決め、要るときだけ取得・起動して、終わったら消します。説明に、起動するサービスとどのテストに要るかを書くと、判断の手がかりになります。",
@@ -399,6 +406,13 @@ const en: ProjectsMessages = {
       "Some target URLs can't be read. You can choose an account for their host once the URL is fixed.",
     githubForContext: " (context repository, optional)",
     githubForShared: " (shared compose, optional)",
+    deferralTitle: "Handling of deferred findings",
+    deferralHint:
+      "The initial choice for how to handle a finding you decide to defer on the approval screen. You can change it per finding there.",
+    deferralLabel: "Default handling",
+    deferralNone: "Do nothing",
+    deferralTask: "Create a Sacty follow-up task",
+    deferralIssue: "Create a GitHub issue",
     sharedTitle: "Shared compose (optional)",
     sharedHint:
       "Team-shared docker compose for tests. Setting one does not start it: the Orchestrator decides per task whether it is needed, and only then Sacty fetches and starts it and removes it afterwards. In the description, write the services it starts and which tests need them.",

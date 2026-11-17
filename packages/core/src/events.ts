@@ -2685,6 +2685,13 @@ export const DeferralDecision = z.enum(["defer", "fix"]);
 export type DeferralDecision = z.infer<typeof DeferralDecision>;
 
 /**
+ * 人が後続に回すと決めた指摘の扱い（PBI-370）。task は sacty の後続のタスクを作る（元のタスクが完了してから）、issue は
+ * GitHub の Issue を作る、none は何もしない（把握した・自分で作る）。
+ */
+export const DeferralHandling = z.enum(["task", "issue", "none"]);
+export type DeferralHandling = z.infer<typeof DeferralHandling>;
+
+/**
  * 実装が「後続に回したい」と申告した指摘（案）について、人が、承認の画面で、1 件ずつ決めた（PBI-370）。defer は後続に回す、
  * fix はこの PR で直す。fix が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す（ChangesRequested。上限に達していれば
  * TaskEscalated）。決定と指摘の一覧は、sacty が PR のコメントに残す（DeferralDecisionsPosted）。
@@ -2695,9 +2702,31 @@ const DeferralsDecided = z.object({
     step: StepKey,
     submission: z.number().int().positive(),
     decisions: z
-      .array(z.object({ remarkId: z.string().min(1), decision: DeferralDecision }))
+      .array(
+        z.object({
+          remarkId: z.string().min(1),
+          decision: DeferralDecision,
+          /** 後続に回すと決めた指摘の扱い（defer のときだけ）。無ければ、何もしない（この項目より前の作業履歴）。 */
+          handling: DeferralHandling.optional(),
+        }),
+      )
       .min(1)
       .max(50),
+  }),
+});
+
+/**
+ * 人が後続に回すと決めた指摘を、選んだ扱いのとおりにした（PBI-370）。issue は GitHub の Issue を作った（url）、task は sacty の
+ * 後続のタスクを作った（taskId）。できなければ、その理由（failure）を記録する（やり直さない）。
+ */
+const DeferralHandled = z.object({
+  type: z.literal("DeferralHandled"),
+  payload: z.object({
+    remarkId: z.string().min(1),
+    handling: z.enum(["task", "issue"]),
+    url: z.string().optional(),
+    taskId: z.string().optional(),
+    failure: DaemonText.optional(),
   }),
 });
 
@@ -3960,6 +3989,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReviewRejudgeRequested,
   DeferralsDecided,
   DeferralDecisionsPosted,
+  DeferralHandled,
   ContinuedFeedbackPassed,
   WorkspaceFilesSkipped,
   PullRequestLabeled,
@@ -4296,7 +4326,14 @@ export const DecideDeferralsInput = z.object({
   step: StepKey,
   submission: Submission,
   decisions: z
-    .array(z.object({ remarkId: z.string().min(1).max(200), decision: DeferralDecision }))
+    .array(
+      z.object({
+        remarkId: z.string().min(1).max(200),
+        decision: DeferralDecision,
+        /** 後続に回すと決めた指摘の扱い（defer のときだけ）。省略すると、プロジェクトの既定（無ければ、何もしない）。 */
+        handling: DeferralHandling.optional(),
+      }),
+    )
     .max(50),
 });
 export type DecideDeferralsInput = z.input<typeof DecideDeferralsInput>;

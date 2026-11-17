@@ -1,4 +1,5 @@
-import type { DeferralDecision } from "@sacty/core";
+import type { DeferralDecision, DeferralHandling } from "@sacty/core";
+import { redact } from "./agents/redact.js";
 import { DEFERRAL_NOTICE_MARKER_PREFIX } from "./github.js";
 import { askQuote } from "./human-ask-notice.js";
 
@@ -21,6 +22,11 @@ export type DeferralNoticeItem = {
    * 書いた指摘には無い（画面で書いた文と、それへの対応は、PR に載せない。指摘への対応の返信と同じ）。
    */
   quoted?: { text: string; reason: string; url: string };
+  /** 後続に回すと決めた指摘の扱い（無ければ、何もしない）。 */
+  handling?: DeferralHandling;
+  /** 扱いが issue のとき：作った Issue の URL。作れなければ undefined（issueFailed が true）。 */
+  issueUrl?: string;
+  issueFailed?: boolean;
 };
 
 export type DeferralNoticeInput = {
@@ -37,6 +43,138 @@ export type DeferralNoticeInput = {
   secrets: readonly string[];
 };
 
+/** 後続に回すと決めた指摘の、扱いの行。 */
+function handlingLine(item: DeferralNoticeItem): string {
+  if (item.handling === "issue") {
+    return item.issueUrl
+      ? `扱い：GitHub の Issue を作りました（${item.issueUrl}）。`
+      : "扱い：GitHub の Issue を作ると決めましたが、作れませんでした（理由は、タスクの画面の作業履歴にあります）。";
+  }
+  if (item.handling === "task") {
+    return "扱い：このタスクが完了した後に、Sacty が後続のタスクを作ります。";
+  }
+  return "扱い：何もしません（把握した・人が自分で扱う）。";
+}
+
+/** Issue の題に使う、指摘の文の長さの上限（文字数）。 */
+export const DEFERRAL_ISSUE_TITLE_MAX = 80;
+/** Issue の本文に載せる、指摘の文と理由の長さの上限（文字数）。 */
+export const DEFERRAL_ISSUE_TEXT_MAX = 4_000;
+
+/** 人が後続に回すと決めた指摘から作る Issue の目印。`<!-- sacty-deferral-issue:<タスク ID>:<指摘の ID> -->`。 */
+export function deferralIssueMarker(taskId: string, remarkId: string): string {
+  return `<!-- sacty-deferral-issue:${taskId}:${remarkId} -->`;
+}
+
+/** 秘密情報を伏せてから切り詰め、@名前で通知が飛ばないようにした文（文字の途中では切らない）。 */
+function publicText(text: string, max: number, secrets: readonly string[]): string {
+  const hidden = redact(text, secrets).trim();
+  const end = hidden.length > max && /[\uDC00-\uDFFF]/.test(hidden[max] ?? "") ? max - 1 : max;
+  const cut = hidden.length > max ? `${hidden.slice(0, end)}…` : hidden;
+  return cut.replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b");
+}
+
+/**
+ * 人が後続に回すと決めて、GitHub の Issue を作ると選んだ指摘の、Issue の題と本文（PBI-370）。指摘の文と理由は外から来た
+ * 文なので、秘密情報を伏せてから切り詰め、引用にして載せる。題は、指摘の文の最初の行。人が Issue を作ると選んだ指摘
+ * なので、sacty の画面から書いた指摘の文も載せる。
+ */
+export function buildDeferralIssue(input: {
+  taskId: string;
+  remarkId: string;
+  text: string;
+  reason: string;
+  /** 元の PR の URL と番号。 */
+  pullRequest: { url: string; number: number };
+  /** 元の PR のコメントの URL（PR のコメントから取り込んだ指摘だけ）。 */
+  originUrl?: string;
+  secrets: readonly string[];
+}): { title: string; body: string } {
+  const first =
+    redact(input.text, input.secrets)
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line !== "") ?? "";
+  const head = publicText(first, DEFERRAL_ISSUE_TITLE_MAX, []);
+  const quote = (text: string) =>
+    publicText(text, DEFERRAL_ISSUE_TEXT_MAX, input.secrets)
+      .split(/\r?\n/)
+      .map((line) => `> ${line}`)
+      .join("\n");
+  return {
+    title: `[PR #${input.pullRequest.number} follow-up] ${head}`,
+    body: [
+      deferralIssueMarker(input.taskId, input.remarkId),
+      `PR #${input.pullRequest.number}（${input.pullRequest.url}）のレビューで、この PR では直さず、後続に回すと人が決めた指摘です。`,
+      "",
+      "## 指摘",
+      "",
+      quote(input.text),
+      "",
+      "## 実装が、後続に回したいとした理由",
+      "",
+      quote(input.reason),
+      ...(input.originUrl ? ["", `元のコメント：${input.originUrl}`] : []),
+      "",
+      "---",
+      `Sacty のタスク ${input.taskId} で、指摘 ${input.remarkId} を後続に回すと決めたときに、Sacty が作りました。`,
+    ].join("\n"),
+  };
+}
+
+/** 後続のタスクの目印（同じ指摘の後続のタスクを、二度作らないため）。 */
+export function deferralTaskMarker(taskId: string, remarkId: string): string {
+  return `<!-- sacty-deferral-task:${taskId}:${remarkId} -->`;
+}
+
+/** 後続のタスクの題と説明に載せる、指摘の文と理由の長さの上限（文字数）。 */
+export const DEFERRAL_TASK_TITLE_MAX = 80;
+export const DEFERRAL_TASK_TEXT_MAX = 6_000;
+
+/**
+ * 人が後続に回すと決めて、sacty の後続のタスクを作ると選んだ指摘の、タスクの題と依頼の文（PBI-370）。指摘の文と理由は、
+ * 元のタスクの記録（データ）として載せる。
+ */
+export function buildDeferralTask(input: {
+  taskId: string;
+  remarkId: string;
+  text: string;
+  reason: string;
+  pullRequest?: { url: string; number: number };
+  originUrl?: string;
+}): { title: string; body: string } {
+  const first =
+    input.text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line !== "") ?? "";
+  const clip = (text: string, max: number) => {
+    const trimmed = text.trim();
+    const end = trimmed.length > max && /[\uDC00-\uDFFF]/.test(trimmed[max] ?? "") ? max - 1 : max;
+    return trimmed.length > max ? `${trimmed.slice(0, end)}…` : trimmed;
+  };
+  const tag = input.pullRequest ? `[PR #${input.pullRequest.number} follow-up]` : "[follow-up]";
+  return {
+    title: `${tag} ${clip(first, DEFERRAL_TASK_TITLE_MAX)}`,
+    body: [
+      input.pullRequest
+        ? `PR #${input.pullRequest.number}（${input.pullRequest.url}）のレビューで、その PR では直さず、後続に回すと人が決めた指摘に対応してください。`
+        : "元のタスクで、後続に回すと人が決めた指摘に対応してください。",
+      "",
+      "## 指摘",
+      "",
+      clip(input.text, DEFERRAL_TASK_TEXT_MAX),
+      "",
+      "## 元の実装が、後続に回したいとした理由",
+      "",
+      clip(input.reason, DEFERRAL_TASK_TEXT_MAX),
+      ...(input.originUrl ? ["", `元のコメント：${input.originUrl}`] : []),
+      "",
+      deferralTaskMarker(input.taskId, input.remarkId),
+    ].join("\n"),
+  };
+}
+
 /**
  * 決定のコメントの本文。指摘の文と理由は外から来た文なので、秘密情報を伏せてから切り詰め、引用にして載せる（askQuote）。
  * 決定が無ければ undefined。
@@ -49,8 +187,8 @@ export function buildDeferralNotice(input: DeferralNoticeInput): string | undefi
     return [
       "",
       `### ${title}（${items.length} 件）`,
-      ...items.flatMap((item) =>
-        item.quoted
+      ...items.flatMap((item) => [
+        ...(item.quoted
           ? [
               "",
               `**指摘 ${item.remarkId}**（[元のコメント](${item.quoted.url})）`,
@@ -64,8 +202,9 @@ export function buildDeferralNotice(input: DeferralNoticeInput): string | undefi
           : [
               "",
               `**指摘 ${item.remarkId}**（Sacty の画面から書かれた指摘。内容は、タスクの画面で読めます）`,
-            ],
-      ),
+            ]),
+        ...(decision === "defer" ? ["", handlingLine(item)] : []),
+      ]),
     ];
   };
   const fixes = input.items.some((item) => item.decision === "fix");

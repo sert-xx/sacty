@@ -153,6 +153,14 @@ export interface PullRequests {
     /** 中断（PBI-292。レビューが止まったことの知らせが、処理全体の期限を超えたとき）。 */
     signal?: AbortSignal;
   }): Promise<{ url: string }>;
+  /** Issue を作る（PBI-370。人が後続に回すと決めて、GitHub の Issue を作ると選んだ指摘）。 */
+  createIssue(input: {
+    repo: string;
+    token: string;
+    title: string;
+    body: string;
+    signal?: AbortSignal;
+  }): Promise<{ url: string; number: number }>;
   /**
    * Issue・PR のコメントのうち、本文が prefix で始まるもの（PBI-292。レビューが止まったことの投稿を探す）。account があれば、
    * そのアカウントが投稿したものだけ（他人が目印を書いても、自分の投稿と見なさない）。
@@ -779,6 +787,23 @@ export class GitHubPullRequests implements PullRequests {
     return { url: String(json.html_url ?? "") };
   }
 
+  async createIssue(input: Parameters<PullRequests["createIssue"]>[0]) {
+    const res = await this.fetchImpl(`${repoApi(input.repo).base}/issues`, {
+      method: "POST",
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${input.token}`,
+        "x-github-api-version": "2022-11-28",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ title: input.title, body: input.body }),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw apiError("createIssue", res.status, json, res.headers);
+    return { url: String(json.html_url ?? ""), number: Number(json.number ?? 0) };
+  }
+
   async listIssueComments(input: Parameters<PullRequests["listIssueComments"]>[0]) {
     const comments = await this.list(
       input.repo,
@@ -1206,6 +1231,7 @@ export function apiError(
     | "getPr"
     | "getReviews"
     | "commentIssue"
+    | "createIssue"
     | "editIssueComment"
     | "listIssueComments"
     | "listRepositories"

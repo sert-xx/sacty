@@ -117,6 +117,10 @@ export function ProjectEditor({
   });
   // 設定画面（project あり）では、対象のホストのアカウントを選ぶまで保存させない
   const needsAccount = Boolean(project) && missing;
+  // 人が後続に回すと決めた指摘の扱いの既定（PBI-370）。空は、何もしない
+  const [deferralHandling, setDeferralHandling] = useState<string>(
+    project?.deferralHandling ?? "none",
+  );
   const [contextRef, setContextRef] = useState(project?.context?.ref ?? "");
   // リポジトリの中のディレクトリ（モノレポの一部をコンテキストにする）。空ならリポジトリの根
   const [contextPath, setContextPath] = useState(project?.context?.path ?? "");
@@ -134,6 +138,8 @@ export function ProjectEditor({
         }
       : {}),
     ...(hosts.length > 0 ? { githubAccounts } : {}),
+    // 何もしない（既定）は、渡さない
+    ...(deferralHandling !== "none" ? { deferralHandling } : {}),
     // チケットの取り込み先（PBI-52）。キーは、カンマか空白で区切って書く
     ...(tickets.length > 0
       ? {
@@ -550,6 +556,32 @@ export function ProjectEditor({
             >
               {t.addShared}
             </Button>
+          </section>
+
+          <section
+            aria-labelledby="deferral-handling"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="deferral-handling" className="text-[15px] font-semibold">
+              {t.deferralTitle} <Hint text={t.deferralHint} />
+            </h2>
+            <label
+              htmlFor={`${uid}-deferral-handling`}
+              className="flex flex-col gap-1 text-xs text-muted-foreground"
+            >
+              {t.deferralLabel}
+              <select
+                id={`${uid}-deferral-handling`}
+                data-testid="project-deferral-handling"
+                className={`${SELECT} w-fit`}
+                value={deferralHandling}
+                onChange={(e) => setDeferralHandling(e.target.value)}
+              >
+                <option value="none">{t.deferralNone}</option>
+                <option value="task">{t.deferralTask}</option>
+                <option value="issue">{t.deferralIssue}</option>
+              </select>
+            </label>
           </section>
 
           <section
