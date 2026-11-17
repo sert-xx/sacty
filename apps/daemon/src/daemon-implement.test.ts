@@ -7019,9 +7019,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
-    it("答えが返らない PR が多くても、終わっていない読み取りは上限までで、1回の確認は時間切れ1回分しか待たない", async () => {
+    it("答えが返らない PR が多くても、終わっていない読み取りは上限までで、終わるまでは新しい読み取りを始めない", async () => {
       const pulls = new FakePulls();
-      const gates: PromiseWithResolvers<void>[] = [];
+      let gates: PromiseWithResolvers<void>[] = [];
       let started = 0;
       let running = 0;
       let most = 0;
@@ -7048,28 +7048,114 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       }
       const service = made.at(-1)?.service as TaskService;
       pulls.state = { state: "open" };
-      const before = Date.now();
+      // 上限の件数だけ読み始め、残りは読まない（どの読み取りも、時間切れになる）
       await service.checkPullRequests();
-      // 上限の件数だけ読み始め、残りは読まない。待つのは、時間切れ1回分（件数ぶんは待たない）
       expect(started).toBe(PR_CI_CONCURRENCY);
-      expect(Date.now() - before).toBeLessThan(20 * (PR_CI_CONCURRENCY + 2));
       // 終わっていない間は、確認を重ねても、新しい読み取りを始めない
       await service.checkPullRequests();
       await service.checkPullRequests();
       expect(started).toBe(PR_CI_CONCURRENCY);
-      // 終わったら、後の確認で、残りのタスクも読む。同時に続く読み取りは、上限を超えない
-      for (let round = 0; round < 6 && started < 2 * PR_CI_CONCURRENCY + 2; round++) {
-        for (const gate of gates) gate.resolve();
-        await new Promise((r) => setTimeout(r, 5));
-        const checking = service.checkPullRequests();
-        await new Promise((r) => setTimeout(r, 5));
-        for (const gate of gates) gate.resolve();
-        await checking;
-      }
-      expect(started).toBeGreaterThanOrEqual(PR_CI_CONCURRENCY + 2);
-      expect(most).toBeLessThanOrEqual(PR_CI_CONCURRENCY);
+      expect(running).toBe(PR_CI_CONCURRENCY);
+      // 終わらせる（答えは、時間切れの後なので使わない）と、枠が空く
+      const release = async () => {
+        const open = gates;
+        gates = [];
+        for (const gate of open) gate.resolve();
+        await Promise.all(open.map((gate) => gate.promise));
+        // 読み取りの後始末（終わっていない読み取りの記録を消す）が済むのを待つ
+        await new Promise((resolve) => setImmediate(resolve));
+      };
+      await release();
+      expect(running).toBe(0);
+      // 後の確認で、残りのタスクも読む。同時に続く読み取りは、上限を超えない
+      await service.checkPullRequests();
+      expect(started).toBe(2 * PR_CI_CONCURRENCY);
+      await release();
+      await service.checkPullRequests();
+      expect(most).toBe(PR_CI_CONCURRENCY);
+      await release();
       warn.mockRestore();
       for (const m of made) m.activity.close();
+    });
+
+    it("読み取りが遅い PR が多くても、読み始めるのは決まった時間の間だけで、読めなかった PR は次の確認で先に読む", async () => {
+      const pulls = new FakePulls();
+      // 読み取り1回ごとに、時計を 8 ミリ秒進める（上限は 20 ミリ秒。3回読むと、上限を過ぎる）
+      const base = Date.now();
+      let clock = base;
+      const dateNow = vi.spyOn(Date, "now").mockImplementation(() => clock);
+      const ci: CiStatusReader = {
+        snapshot: async () => {
+          clock += 8;
+          return { checks: [workflow()], failedRuns: [] };
+        },
+        failures: async () => [],
+        rerunFailedJobs: async () => {},
+        repositoryHasNoCi: async () => false,
+      };
+      const made = [];
+      for (let i = 0; i < 6; i++) {
+        made.push(await toImplementGate([], { pulls, ci, reviewCiTimeoutMs: 20, now: () => base }));
+      }
+      const service = made.at(-1)?.service as TaskService;
+      const record = vi.spyOn(
+        service as unknown as { recordPullRequestCi: (taskId: string) => Promise<void> },
+        "recordPullRequestCi",
+      );
+      pulls.state = { state: "open" };
+      // 1回目：3件を読んだ所で上限を過ぎ、残りは読み始めない
+      clock = base;
+      await service.checkPullRequests();
+      const first = record.mock.calls.map((call) => call[0]);
+      expect(first).toHaveLength(3);
+      // 2回目：1回目に読めなかった3件から読む（同じ3件を読み直して、残りを後回しにし続けない）
+      record.mockClear();
+      clock = base;
+      await service.checkPullRequests();
+      const second = record.mock.calls.map((call) => call[0]);
+      expect(second).toHaveLength(3);
+      expect(new Set([...first, ...second]).size).toBe(6);
+      dateNow.mockRestore();
+      for (const m of made) m.activity.close();
+    });
+
+    it("取り消された CI は通ったと扱わず、同じ先頭で再実行された後の失敗を記録する。失敗の記録は、取り消しだけでは消さない", async () => {
+      const pulls = new FakePulls();
+      const { ci, state } = fakeCi();
+      let now = Date.parse("2026-11-17T00:00:00Z");
+      const { activity, service, id } = await toImplementGate([], { pulls, ci, now: () => now });
+      pulls.state = { state: "open" };
+      // 取り消されただけ：失敗は記録しないが、読み直しをやめない（間隔を空けて読む）
+      state.checks = [workflow("cancelled")];
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(state.read).toHaveLength(1);
+      expect(ciTypes(service, id)).toEqual([]);
+      // 同じ先頭で再実行されて落ちたら、記録する
+      now += PR_CI_FAILED_RECHECK_MS;
+      state.checks = [workflow("failure")];
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      // 失敗の記録がある間に取り消されても、通ってはいないので、記録を消さない
+      now += PR_CI_FAILED_RECHECK_MS;
+      state.checks = [workflow("cancelled")];
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      let task = service.get(id)?.task;
+      expect(task && pullRequestCiFailure(task)).toBeDefined();
+      // 実行されなかった（skipped）ジョブがあっても、ほかがすべて通れば、通ったと扱って記録を消し、読み直しをやめる
+      now += PR_CI_FAILED_RECHECK_MS;
+      state.checks = [workflow("success")];
+      state.jobs = [job("deploy", "skipped"), job("docs", "neutral")];
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed", "PullRequestCiRecovered"]);
+      task = service.get(id)?.task;
+      expect(task && pullRequestCiFailure(task)).toBeUndefined();
+      const settled = state.read.length;
+      now += 24 * 60 * 60_000;
+      await service.checkPullRequests();
+      expect(state.read).toHaveLength(settled);
+      activity.close();
     });
 
     it("時間切れになった読み取りが終わるまでは、新しい読み取りを始めない（未完了の通信を積み重ねない）", async () => {

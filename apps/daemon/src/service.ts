@@ -1046,6 +1046,17 @@ export const PR_CI_TIMEOUT_MS = 15_000;
  * 読み取り（時間切れの後も続いている通信を含む。すべてのタスクの合計）の上限でもある。
  */
 export const PR_CI_CONCURRENCY = 4;
+
+/**
+ * CI のチェックが、通って終わったか（PBI-364）。成功・中立・実行されなかった（skipped）。取り消された・古くなったなどは、
+ * 通ったとは扱わない（同じ先頭で再実行されうる）。
+ */
+function passedCiCheck(check: CiCheck): boolean {
+  return (
+    check.status === "completed" &&
+    ["success", "neutral", "skipped"].includes(check.conclusion ?? "")
+  );
+}
 /** CI が失敗していて実行中のものが無い PR の CI を、読み直す間隔（PBI-364。人が再実行して通ったことに気づくため）。 */
 export const PR_CI_FAILED_RECHECK_MS = 5 * 60_000;
 /** CI が1つも現れない PR の CI を、読み続ける時間（PBI-364。過ぎたら、CI が無いものとして読むのをやめる）。 */
@@ -1166,6 +1177,8 @@ export class TaskService {
    * されずに残るので、終わるまでは、そのタスクの新しい読み取りを始めない（未完了の通信を積み重ねない）。
    */
   private readonly pullRequestCiReads = new Map<string, Promise<unknown>>();
+  /** PR の確認の最後の CI の読み取りを、次に始める位置（PBI-364。時間内に読めなかった PR を、後の確認で先に読む）。 */
+  private pullRequestCiCursor = 0;
   /** 共用の compose の取得（deps に無いときの既定。PBI-70）。 */
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
@@ -1522,7 +1535,15 @@ export class TaskService {
     await this.checkDeployments();
     // 人の承認を待つ実装の PR の CI（PBI-364）。答えが返らない PR があっても、ほかの確認を遅らせないよう、確認の最後に、
     // PR_CI_CONCURRENCY 件ずつ並べて読む。記録の失敗で、ほかの PR の読み取りを止めない
-    await inParallel(ciReads, PR_CI_CONCURRENCY, async (read) => {
+    // 読み始めるのは、PR_CI_TIMEOUT_MS の間だけ（読み取りが遅い PR が多くても、1回の確認が件数に応じて長くならない。
+    // 次の定期の確認を遅らせない）。読めなかった PR を後の確認で先に読むよう、始める位置を回す
+    const ciStart = Date.now();
+    const offset = ciReads.length > 0 ? this.pullRequestCiCursor % ciReads.length : 0;
+    const ordered = [...ciReads.slice(offset), ...ciReads.slice(0, offset)];
+    let attempted = 0;
+    await inParallel(ordered, PR_CI_CONCURRENCY, async (read) => {
+      if (Date.now() - ciStart >= (this.deps.reviewCiTimeoutMs ?? PR_CI_TIMEOUT_MS)) return;
+      attempted++;
       try {
         await this.recordPullRequestCi(read.taskId, read.pr, read.head, read.token);
       } catch (error) {
@@ -1531,6 +1552,7 @@ export class TaskService {
         );
       }
     });
+    this.pullRequestCiCursor = ciReads.length > 0 ? (offset + attempted) % ciReads.length : 0;
   }
 
   /**
@@ -2239,13 +2261,13 @@ export class TaskService {
       });
       return;
     }
-    // 実行中のものがある間は、結果を待つ。同じ先頭の前の失敗の記録は、再実行が終わるまでそのままにする
-    // （前の先頭の失敗の記録は、先頭が変わったので消す）
-    if (pending && (!recorded || recorded.head === head)) {
-      this.pullRequestCiWatch.set(taskId, { head, nextAt: now });
-      return;
-    }
-    if (recorded) {
+    // 終わったが、通ったとも失敗とも言えないもの（取り消された・古くなったなど）。同じ先頭で再実行されうる
+    const unsettled = all.some(
+      (c) => c.status === "completed" && !isFailedConclusion(c) && !passedCiCheck(c),
+    );
+    // 失敗の記録を消すのは、先頭が変わって新しい先頭に失敗が無いときか、同じ先頭のすべてが通ったとき。実行中のものが
+    // ある間（再実行の途中）と、取り消されただけの間は、同じ先頭の前の失敗の記録をそのままにする
+    if (recorded && (recorded.head !== head || (!pending && !unsettled))) {
       this.append(latest, [
         {
           actor: "sacty",
@@ -2255,6 +2277,15 @@ export class TaskService {
     }
     if (pending) {
       this.pullRequestCiWatch.set(taskId, { head, nextAt: now });
+      return;
+    }
+    if (unsettled) {
+      // すべてが通るまでは、間隔を空けて読み直す（再実行の後の失敗に気づく）
+      this.pullRequestCiWatch.set(taskId, {
+        head,
+        nextAt: now + PR_CI_FAILED_RECHECK_MS,
+        ...(recorded?.head === head ? { failed: true } : {}),
+      });
       return;
     }
     if (all.length === 0) {
@@ -2267,7 +2298,7 @@ export class TaskService {
       });
       return;
     }
-    // すべて終わって失敗が無い先頭は、読み直さない
+    // すべて通った先頭は、読み直さない
     this.pullRequestCiWatch.set(taskId, { head, nextAt: Number.POSITIVE_INFINITY });
   }
 
