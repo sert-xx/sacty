@@ -16,7 +16,7 @@ import type { AgentOutcome } from "./agents/parse.js";
 import type { ConfigResult, SactyConfig } from "./config.js";
 import type { TemplateLookup } from "./pr-template.js";
 import { childScopeOf } from "./prompts.js";
-import type { ServiceDeps, TaskService } from "./service.js";
+import { PR_CI_READ_INTERVAL_MS, type ServiceDeps, type TaskService } from "./service.js";
 import {
   agent,
   configOf,
@@ -658,6 +658,8 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       draftPullRequests?: boolean;
       templates?: ServiceDeps["templates"];
       reviewTasks?: boolean;
+      ci?: ServiceDeps["ci"];
+      now?: () => number;
     } = {},
   ) {
     // ベースブランチ（main）は、子タスクの間は進まない（重ねた子タスクの取り込みだけを見る）
@@ -674,6 +676,8 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
         ...(options.draftPullRequests ? { draftPullRequests: true } : {}),
         ...(options.templates ? { templates: options.templates } : {}),
         ...(options.reviewTasks ? { reviewTasks: true } : {}),
+        ...(options.ci ? { ci: options.ci } : {}),
+        ...(options.now ? { now: options.now } : {}),
       },
     );
     const { service } = made;
@@ -982,6 +986,66 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     expect(
       taskOf(service, id).split?.children.every((c) => isCompleted(taskOf(service, c.taskId))),
     ).toBe(true);
+    activity.close();
+  });
+
+  it("重ねている間に CI を読み終わりにした PR も、付け替えでドラフトを外した後に読み直して、落ちていたら出す（PBI-381）", async () => {
+    const read: string[] = [];
+    let conclusion = "success";
+    const ci = {
+      snapshot: async (input: { commit: string }) => {
+        read.push(input.commit);
+        return {
+          checks: [
+            { kind: "workflow" as const, name: "CI", status: "completed" as const, conclusion },
+          ],
+          failedRuns: [],
+        };
+      },
+      failures: async () => [],
+      rerunFailedJobs: async () => {},
+      repositoryHasNoCi: async () => false,
+    } as unknown as ServiceDeps["ci"];
+    let now = Date.parse("2026-11-17T00:00:00Z");
+    const { activity, service, pulls, ids } = await splitParent(
+      chain,
+      [implement("# A の実装"), implement("# B の実装")],
+      new FakeRepos(),
+      new FakePulls(),
+      { ci, now: () => now },
+    );
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    const head = taskOf(service, b).pullRequest?.commit ?? "";
+    const reads = () => read.filter((commit) => commit === head);
+    // GitHub の先頭は、PR ごとに、提出したコミット
+    pulls.states[7] = { state: "open", headSha: taskOf(service, a).pullRequest?.commit };
+    pulls.states[8] = { state: "open", headSha: head };
+    // 重ねている間（ドラフト）に、重ねた PR の CI を読み終わりにする（1回の確認で読むのは1件なので、確認を重ねる）
+    for (let i = 0; i < 2; i++) {
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      now += PR_CI_READ_INTERVAL_MS;
+    }
+    expect(reads()).toHaveLength(2);
+    now += 24 * 60 * 60_000;
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    expect(reads()).toHaveLength(2);
+    // 依存先がマージされ、向き先を付け替えて、ドラフトを外した
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    await service.checkPullRequests();
+    expect(types(service, b)).toContain("PullRequestRetargeted");
+    expect(pulls.draftChanges).toEqual([{ number: 8, draft: false }]);
+    // 外した確認で読んだ CI に失敗が無くても、読み終わりにせず、間隔の後に読んで、落ちていたら出す
+    expect(reads()).toHaveLength(3);
+    conclusion = "failure";
+    now += PR_CI_READ_INTERVAL_MS;
+    await service.checkPullRequests();
+    expect(reads()).toHaveLength(4);
+    expect(types(service, b)).toContain("PullRequestCiFailed");
     activity.close();
   });
 
