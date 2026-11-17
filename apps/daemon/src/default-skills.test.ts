@@ -1547,13 +1547,44 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
     const text = prReview();
     expect(text).toContain("直しに見つけた穴だからといって `must` にしない");
     expect(text).toContain(
-      "表では `should` に当たると分かったとき（稀で、影響が中以下）は、未対応でも `must` に数えない",
+      "表では `should` に当たると分かったときは、未対応でも `must` に数えない",
     );
     // 指摘に、起きる条件と実害を書く
     expect(text).toContain("指摘には、起きる条件（何と何が重なると起きるか。");
     // 判定の決まりは変えない
     expect(text).toContain("- `must` が1件以上：修正が必要");
     expect(text).toContain("- `should`・`nit` だけ：提案あり（マージは可）");
+  });
+
+  it("前回の要修正の重みの見直しは、表で should に当たるものすべてを対象にし、差分の外でも should として残す（PBI-380）", () => {
+    const text = prReview();
+    // 見直しの対象を、稀なものに限ると読める括弧書きを残さない（影響：小で稀でないものが、対象から外れて読める）
+    expect(text).not.toContain("当たると分かったとき（稀で、影響が中以下）");
+    expect(text).toContain(
+      "表で `should` に当たるものは、すべて対象にする（影響：中で稀なものも、影響：小で稀でないものも）",
+    );
+    expect(text).toContain(
+      "影響：小で稀なもの（表では出さない）も、前回すでに出しているので、同じに扱う",
+    );
+    expect(text).toContain(
+      "受け入れ条件・要求要件の不適合は、対象にしない（表に依らず `must` のまま）",
+    );
+    // 重みを見直した指摘は、直っていないので前回以降の差分の外にある。差分の決まりで不採用にさせない
+    const diffRule = text.indexOf(
+      "`should`・`nit` は、指摘箇所が前回以降の差分に含まれるときだけ採用する",
+    );
+    const kept = text.indexOf(
+      "上のとおり重みを見直した前回の指摘は、指摘箇所が前回以降の差分の外でも不採用にせず、`should` として残す",
+    );
+    expect(diffRule).toBeGreaterThan(-1);
+    expect(kept).toBeGreaterThan(diffRule);
+    expect(text).toContain(
+      "ほかに `must` が無ければ、判定は「提案あり」にする（「修正が必要」にも「指摘なし」にもしない）",
+    );
+    // 集約の不採用の理由（前回以降の差分の外）も、同じ例外を言う
+    expect(aggregation()).toContain(
+      "重みを見直して `should` として扱う前回の指摘は、差分の外でも不採用にしない",
+    );
   });
 
   it("自己レビューは、must だけを修正に戻し、should・nit だけでは戻さない", () => {
