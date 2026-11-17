@@ -5338,6 +5338,183 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             activity.close();
           });
 
+          describe("後続に回すと決めた指摘の扱い", () => {
+            const handled = (svc: TaskService, id: string) =>
+              svc.get(id)?.activity.filter((e) => e.type === "DeferralHandled") ?? [];
+            const decideWith = (
+              svc: TaskService,
+              id: string,
+              handling?: "task" | "issue" | "none",
+            ) =>
+              svc.decideDeferrals(id, {
+                step: "implement",
+                submission: 2,
+                decisions: [
+                  {
+                    remarkId: "implement-1-1",
+                    decision: "defer",
+                    ...(handling ? { handling } : {}),
+                  },
+                ],
+              });
+
+            it("「GitHub の Issue を作る」を選ぶと、決定のときに Issue を作り、結果を作業履歴に記録して、決定のコメントに Issue の URL を載せる", async () => {
+              const made = await reviewed([deferred()]);
+              const { activity, service, pulls, id } = made;
+              await settle(service, id);
+              const decided = decideWith(service, id, "issue");
+              expect(decided.remarks[0]?.deferral).toMatchObject({
+                decision: "defer",
+                handling: "issue",
+              });
+              await settled();
+              expect(pulls.createdIssues).toHaveLength(1);
+              const issue = pulls.createdIssues[0];
+              expect(issue?.repo).toBe("https://github.com/acme/app");
+              expect(issue?.title.startsWith("[PR #7 follow-up] ")).toBe(true);
+              expect(issue?.body).toContain(`<!-- sacty-deferral-issue:${id}:implement-1-1 -->`);
+              expect(issue?.body).toContain("> 直すには新しい保存の仕組みが要り");
+              expect(issue?.body).toContain(
+                "元のコメント：https://github.com/acme/app/pull/7#pullrequestreview-50",
+              );
+              expect(handled(service, id)).toHaveLength(1);
+              expect(handled(service, id)[0]).toMatchObject({
+                actor: "sacty",
+                payload: {
+                  remarkId: "implement-1-1",
+                  handling: "issue",
+                  url: "https://github.com/acme/app/issues/901",
+                },
+              });
+              expect(notices(pulls)[0]?.body).toContain(
+                "扱い：GitHub の Issue を作りました（https://github.com/acme/app/issues/901）。",
+              );
+              expect(taskOf(service, id).remarks[0]?.deferral?.handled).toEqual({
+                url: "https://github.com/acme/app/issues/901",
+              });
+              activity.close();
+            });
+
+            it("Issue を作れなければ、理由を記録し（秘密の値は伏せる）、決定のコメントに、作れなかったことを書く。決定は変えない", async () => {
+              const made = await reviewed([deferred()]);
+              const { activity, service, pulls, id } = made;
+              await settle(service, id);
+              pulls.issueFail = "410 Issues are disabled ghp_secret";
+              decideWith(service, id, "issue");
+              await settled();
+              expect(pulls.createdIssues).toHaveLength(0);
+              const failure = JSON.stringify(
+                (handled(service, id)[0]?.payload as { failure?: unknown }).failure,
+              );
+              expect(failure).toContain("Issues are disabled");
+              expect(failure).not.toContain("ghp_secret");
+              expect(notices(pulls)[0]?.body).toContain(
+                "扱い：GitHub の Issue を作ると決めましたが、作れませんでした",
+              );
+              expect(taskOf(service, id).remarks[0]?.deferral?.decision).toBe("defer");
+              activity.close();
+            });
+
+            it("扱いを選ばなければ、プロジェクトの既定を使う（無ければ、何もしない）。画面に返すタスクに、既定を足す。「この PR で直す」には、扱いを選べない", async () => {
+              const made = await reviewed([deferred()]);
+              const { activity, service, pulls, projects, id } = made;
+              await settle(service, id);
+              // 既定が無ければ、何もしない
+              expect(service.view(id)?.task.deferralHandlingDefault).toBe("none");
+              projects.put("default", {
+                name: "デフォルト",
+                targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+                githubAccounts: { "github.com": "me" },
+                deferralHandling: "issue",
+              });
+              expect(service.view(id)?.task.deferralHandlingDefault).toBe("issue");
+              expect(() =>
+                service.decideDeferrals(id, {
+                  step: "implement",
+                  submission: 2,
+                  decisions: [{ remarkId: "implement-1-1", decision: "fix", handling: "issue" }],
+                }),
+              ).toThrow();
+              expect(count(service, id, "DeferralsDecided")).toBe(0);
+              decideWith(service, id);
+              expect(
+                service.get(id)?.activity.find((e) => e.type === "DeferralsDecided")?.payload,
+              ).toMatchObject({
+                decisions: [{ remarkId: "implement-1-1", decision: "defer", handling: "issue" }],
+              });
+              await settled();
+              expect(pulls.createdIssues).toHaveLength(1);
+              // 決めた後は、既定を足さない（決める案が無い）
+              expect(service.view(id)?.task.deferralHandlingDefault).toBeUndefined();
+              activity.close();
+            });
+
+            it("「何もしない」を選ぶと、Issue もタスクも作らず、決定のコメントに、何もしないと書く（プロジェクトの既定より、選んだ扱いを使う）", async () => {
+              const made = await reviewed([deferred()]);
+              const { activity, service, pulls, projects, id } = made;
+              await settle(service, id);
+              projects.put("default", {
+                name: "デフォルト",
+                targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+                githubAccounts: { "github.com": "me" },
+                deferralHandling: "issue",
+              });
+              decideWith(service, id, "none");
+              await settled();
+              expect(pulls.createdIssues).toHaveLength(0);
+              expect(handled(service, id)).toHaveLength(0);
+              expect(notices(pulls)[0]?.body).toContain("扱い：何もしません");
+              expect(taskOf(service, id).remarks[0]?.deferral?.handling).toBeUndefined();
+              activity.close();
+            });
+
+            it("「Sacty の後続のタスクを作る」を選ぶと、PR がマージされてタスクが完了した後に、指摘ごとに 1 つ、続きのタスクを作る（二度は作らない）", async () => {
+              const made = await reviewed([
+                deferred(),
+                verdictOut("no_findings", "# 評価\n\n指摘なし"),
+              ]);
+              const { activity, service, pulls, id, childId } = made;
+              await settle(service, id);
+              await service.runNext(id);
+              decideWith(service, id, "task");
+              await settled();
+              expect(notices(pulls)[0]?.body).toContain(
+                "扱い：このタスクが完了した後に、Sacty が後続のタスクを作ります。",
+              );
+              const followUps = () => service.list().filter((t) => t.derivedFrom?.taskId === id);
+              // 完了するまでは、作らない
+              await service.checkPullRequests();
+              await runReview(service, childId);
+              await service.checkPullRequests();
+              expect(followUps()).toHaveLength(0);
+              expect(handled(service, id)).toHaveLength(0);
+              // PR がマージされて、タスクが完了する
+              const pr = taskOf(service, id).pullRequest;
+              pulls.states[7] = { state: "merged", mergedBy: "reviewer", headSha: pr?.commit };
+              await service.checkPullRequests();
+              expect(isCompleted(taskOf(service, id))).toBe(true);
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              expect(followUps()).toHaveLength(1);
+              const followUp = followUps()[0];
+              expect(followUp?.title.startsWith("[PR #7 follow-up] ")).toBe(true);
+              expect(followUp?.body).toContain("後続に回すと人が決めた指摘に対応してください");
+              expect(followUp?.body).toContain("直すには新しい保存の仕組みが要り");
+              expect(followUp?.body).toContain(`<!-- sacty-deferral-task:${id}:implement-1-1 -->`);
+              expect(followUp?.repo).toBe("https://github.com/acme/app");
+              expect(
+                service.get(followUp?.id ?? "")?.activity.find((e) => e.type === "TaskCreated"),
+              ).toMatchObject({ actor: "sacty" });
+              expect(handled(service, id)).toHaveLength(1);
+              expect(handled(service, id)[0]?.payload).toMatchObject({
+                remarkId: "implement-1-1",
+                handling: "task",
+                taskId: followUp?.id,
+              });
+              activity.close();
+            });
+          });
+
           it("API（POST /api/tasks/:id/deferrals/decide）で決められる。断るときは、理由を日英で返せる形で返す", async () => {
             const made = await reviewed([deferred()]);
             const { activity, service, id } = made;

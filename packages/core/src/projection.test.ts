@@ -34,6 +34,7 @@ import {
   changeRounds,
   decidedDeferrals,
   deferProposals,
+  deferralTasksDue,
   deliveredWithoutChanges,
   discardedAiReviews,
   documentOutput,
@@ -1171,6 +1172,99 @@ describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別
           posted(1),
         ]).get("t")?.status,
       ).toBe("awaiting_approval");
+    });
+
+    it("後続に回すと決めた指摘の扱いと、その結果を持つ。後続のタスクを作るのは、タスクが完了してから。何もしない・扱いの無い決定（以前の作業履歴）は、扱いを持たない", () => {
+      seq = 0;
+      const handle = (
+        decisions: { remarkId: string; decision: "defer" | "fix"; handling?: string }[],
+      ) =>
+        ev(
+          "t",
+          {
+            type: "DeferralsDecided",
+            payload: { step: "implement", submission: 2, decisions },
+          } as EventInput,
+          "person",
+        );
+      const handled = (payload: Record<string, unknown>) =>
+        ev("t", { type: "DeferralHandled", payload } as EventInput);
+      const decided = [
+        ...proposed(),
+        handle([
+          { remarkId: "implement-1-1", decision: "defer", handling: "task" },
+          { remarkId: "implement-1-2", decision: "defer", handling: "issue" },
+        ]),
+      ];
+      const task = project(decided).get("t") as Task;
+      expect(decidedDeferrals(task).map((d) => [d.remarkId, d.handling, d.handled])).toEqual([
+        ["implement-1-1", "task", undefined],
+        ["implement-1-2", "issue", undefined],
+      ]);
+      // 完了していないので、まだ後続のタスクは作らない
+      expect(deferralTasksDue(task)).toEqual([]);
+      const issued = project([
+        ...decided,
+        handled({
+          remarkId: "implement-1-2",
+          handling: "issue",
+          url: "https://github.com/acme/app/issues/901",
+        }),
+      ]).get("t") as Task;
+      expect(decidedDeferrals(issued)[1]?.handled).toEqual({
+        url: "https://github.com/acme/app/issues/901",
+      });
+      // 完了したタスクでは、まだ作っていない後続のタスクが対象になる。作ったら（作れなかったら）、対象から外れる
+      const done = {
+        ...issued,
+        status: "idle",
+        steps: [{ key: "implement", state: "done" }],
+      } as Task;
+      expect(isCompleted(done)).toBe(true);
+      expect(deferralTasksDue(done).map((d) => d.remarkId)).toEqual(["implement-1-1"]);
+      const made = project([
+        ...decided,
+        handled({ remarkId: "implement-1-1", handling: "task", taskId: "t2" }),
+      ]).get("t") as Task;
+      expect(decidedDeferrals(made)[0]?.handled).toEqual({ taskId: "t2" });
+      expect(
+        deferralTasksDue({
+          ...made,
+          status: "idle",
+          steps: [{ key: "implement", state: "done" }],
+        } as Task),
+      ).toEqual([]);
+      const failed = project([
+        ...decided,
+        handled({ remarkId: "implement-1-1", handling: "task", failure: "作れない" }),
+      ]).get("t") as Task;
+      expect(decidedDeferrals(failed)[0]?.handled).toEqual({ failure: "作れない" });
+      // 何もしない・扱いの無い決定は、扱いを持たない
+      const none = project([
+        ...proposed(),
+        handle([
+          { remarkId: "implement-1-1", decision: "defer", handling: "none" },
+          { remarkId: "implement-1-2", decision: "defer" },
+        ]),
+      ]).get("t") as Task;
+      expect(decidedDeferrals(none).map((d) => d.handling)).toEqual([undefined, undefined]);
+      // 扱いの結果は、その扱いを選んだ指摘に、1 回だけ
+      expect(() =>
+        project([...decided, handled({ remarkId: "implement-1-1", handling: "issue", url: "u" })]),
+      ).toThrow(/not a deferred remark with that handling/);
+      expect(() =>
+        project([
+          ...decided,
+          handled({ remarkId: "implement-1-1", handling: "task", taskId: "t2" }),
+          handled({ remarkId: "implement-1-1", handling: "task", taskId: "t3" }),
+        ]),
+      ).toThrow(/handled twice/);
+      expect(() =>
+        project([
+          ...decided,
+          handled({ remarkId: "implement-1-3", handling: "task", taskId: "x" }),
+        ]),
+      ).toThrow(/not a deferred remark/);
     });
 
     it("以前の作業履歴（申告が addressed・declined だけ。案の記録が無い）は、そのまま読める", () => {

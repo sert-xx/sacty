@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildDeferralNotice, deferralNoticeMarker } from "./deferral-notice.js";
+import {
+  buildDeferralIssue,
+  buildDeferralNotice,
+  buildDeferralTask,
+  DEFERRAL_ISSUE_TEXT_MAX,
+  deferralNoticeMarker,
+  deferralTaskMarker,
+} from "./deferral-notice.js";
 import { isDeferralNotice } from "./github.js";
 import { ASK_TEXT_MAX } from "./human-ask-notice.js";
 
@@ -39,6 +46,8 @@ describe("後続に回したい案への、人の決定を PR に残すコメン
       "実装が、後続に回したいとした理由：",
       "",
       "> 直すには、新しい保存の仕組みが要る",
+      "",
+      "扱い：何もしません（把握した・人が自分で扱う）。",
       "",
       "### この PR で直す（1 件）",
       "",
@@ -104,5 +113,101 @@ describe("後続に回したい案への、人の決定を PR に残すコメン
     expect(isDeferralNotice("前置き <!-- sacty-deferral:t1:1 -->")).toBe(false);
     expect(isDeferralNotice(undefined)).toBe(false);
     expect(isDeferralNotice("  <!-- sacty-deferral:t1:1 -->\n本文")).toBe(true);
+  });
+});
+
+describe("後続に回すと決めた指摘の扱い（PBI-370）", () => {
+  const base = {
+    taskId: "t1",
+    decision: 1,
+    taskUrl: "http://127.0.0.1:4700/tasks/t1",
+    secrets: [] as string[],
+  };
+  const item = (extra: Record<string, unknown>) => ({
+    remarkId: "implement-1-1",
+    decision: "defer" as const,
+    ...extra,
+  });
+
+  it("決定のコメントに、指摘ごとの扱いを書く（Issue を作った・作れなかった・後続のタスクを作る・何もしない）。この PR で直す指摘には書かない", () => {
+    const line = (extra: Record<string, unknown>) =>
+      (buildDeferralNotice({ ...base, items: [item(extra)] }) ?? "")
+        .split("\n")
+        .find((l) => l.startsWith("扱い："));
+    expect(line({ handling: "issue", issueUrl: "https://github.com/acme/app/issues/901" })).toBe(
+      "扱い：GitHub の Issue を作りました（https://github.com/acme/app/issues/901）。",
+    );
+    expect(line({ handling: "issue", issueFailed: true })).toBe(
+      "扱い：GitHub の Issue を作ると決めましたが、作れませんでした（理由は、タスクの画面の作業履歴にあります）。",
+    );
+    expect(line({ handling: "task" })).toBe(
+      "扱い：このタスクが完了した後に、Sacty が後続のタスクを作ります。",
+    );
+    expect(line({})).toBe("扱い：何もしません（把握した・人が自分で扱う）。");
+    expect(line({ decision: "fix" })).toBeUndefined();
+  });
+
+  it("Issue の題は指摘の最初の行、本文は指摘と理由の引用。秘密の値は伏せてから切り詰め、@名前で通知を飛ばさない", () => {
+    const secret = "sk-secret-0123456789abcdef";
+    const issue = buildDeferralIssue({
+      taskId: "t1",
+      remarkId: "implement-1-1",
+      text: `\n  src/a.ts:3：@alice 稀な条件で二重になる ${"長".repeat(100)}\n2 行目\n${"あ".repeat(DEFERRAL_ISSUE_TEXT_MAX - 120)}${secret}`,
+      reason: `仕組みが要る ${secret}`,
+      pullRequest: { url: "https://github.com/acme/app/pull/7", number: 7 },
+      originUrl: "https://github.com/acme/app/pull/7#discussion_r501",
+      secrets: [secret],
+    });
+    expect(issue.title.startsWith("[PR #7 follow-up] src/a.ts:3：@\u200balice 稀な条件")).toBe(
+      true,
+    );
+    expect(issue.title.length).toBeLessThanOrEqual("[PR #7 follow-up] ".length + 81);
+    expect(issue.title).not.toContain("\n");
+    expect(issue.body.startsWith("<!-- sacty-deferral-issue:t1:implement-1-1 -->\n")).toBe(true);
+    expect(issue.body).toContain("PR #7（https://github.com/acme/app/pull/7）");
+    expect(issue.body).toContain("> 2 行目");
+    expect(issue.body).toContain("> 仕組みが要る [REDACTED]");
+    expect(issue.body).toContain(
+      "元のコメント：https://github.com/acme/app/pull/7#discussion_r501",
+    );
+    expect(issue.body).not.toContain(secret);
+    expect(issue.body).not.toContain(secret.slice(0, 6));
+    expect(issue.body).not.toContain("@alice");
+    // 題にも、秘密の値を残さない
+    const titled = buildDeferralIssue({
+      taskId: "t1",
+      remarkId: "implement-1-1",
+      text: `トークン ${secret} が見える`,
+      reason: "理由",
+      pullRequest: { url: "https://github.com/acme/app/pull/7", number: 7 },
+      secrets: [secret],
+    });
+    expect(titled.title).toBe("[PR #7 follow-up] トークン [REDACTED] が見える");
+    expect(titled.body).not.toContain("元のコメント");
+  });
+
+  it("後続のタスクの題と依頼の文に、指摘・理由・元の PR と、二度作らないための目印を入れる", () => {
+    const task = buildDeferralTask({
+      taskId: "t1",
+      remarkId: "implement-1-1",
+      text: "src/a.ts:3：稀な条件で二重になる\n詳しい説明",
+      reason: "新しい仕組みが要る",
+      pullRequest: { url: "https://github.com/acme/app/pull/7", number: 7 },
+      originUrl: "https://github.com/acme/app/pull/7#discussion_r501",
+    });
+    expect(task.title).toBe("[PR #7 follow-up] src/a.ts:3：稀な条件で二重になる");
+    expect(task.body).toContain("後続に回すと人が決めた指摘に対応してください");
+    expect(task.body).toContain("## 指摘\n\nsrc/a.ts:3：稀な条件で二重になる\n詳しい説明");
+    expect(task.body).toContain("新しい仕組みが要る");
+    expect(task.body).toContain(deferralTaskMarker("t1", "implement-1-1"));
+    // PR の無い実装（変更なし）の指摘
+    const plain = buildDeferralTask({
+      taskId: "t1",
+      remarkId: "implement-1-2",
+      text: "指摘",
+      reason: "理由",
+    });
+    expect(plain.title).toBe("[follow-up] 指摘");
+    expect(plain.body).toContain("元のタスクで、後続に回すと人が決めた指摘に対応してください。");
   });
 });

@@ -1041,6 +1041,34 @@ describe("Issue へのコメント（PBI-18）", () => {
     });
   });
 
+  it("Issue を作って URL と番号を返し、失敗は理由つきのエラーにする（PBI-370）", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 201, json: { html_url: "https://github.com/acme/app/issues/12", number: 12 } },
+      { status: 410, json: { message: "Issues are disabled for this repo" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const input = {
+      repo: "https://github.com/acme/app",
+      token: "ghp_secret",
+      title: "[PR #7 follow-up] 稀な条件",
+      body: "本文",
+    };
+    expect(await client.createIssue(input)).toEqual({
+      url: "https://github.com/acme/app/issues/12",
+      number: 12,
+    });
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.com/repos/acme/app/issues",
+      method: "POST",
+      body: { title: "[PR #7 follow-up] 稀な条件", body: "本文" },
+      auth: "Bearer ghp_secret",
+    });
+    expect(errorText(await client.createIssue(input).catch((e: unknown) => e))).toMatchObject({
+      code: "github.failed",
+      params: { action: "createIssue", status: 410 },
+    });
+  });
+
   it("目印を含むコメントを、すべてのページから探す", async () => {
     const api = "https://api.github.com/repos/acme/app";
     const { impl, calls } = fakeFetch([

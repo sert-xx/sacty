@@ -146,6 +146,61 @@ describe("承認の画面：後続に回したい指摘の一覧と、指摘ご�
     );
   });
 
+  it("指摘ごとに、後続に回すときの扱いを選べる。初めの値は、プロジェクトの既定（無ければ、何もしない）。決定済みの指摘には、扱いと結果を出す", () => {
+    const select = (t: Task, lang: "ja" | "en" = "ja") =>
+      render(h(DeferralNotice, { task: t }), lang).querySelector(
+        '[data-testid="deferral-handling"]',
+      ) as HTMLSelectElement;
+    const options = (el: HTMLSelectElement) =>
+      [...el.querySelectorAll("option")].map((o) => [o.value, o.textContent, o.selected]);
+    const plain = select(task({ remarks: [proposals[0]] }));
+    expect(plain.name).toBe("handling:implement-1-1");
+    expect(options(plain)).toEqual([
+      ["none", "何もしない", true],
+      ["task", "Sacty の後続のタスクを作る", false],
+      ["issue", "GitHub の Issue を作る", false],
+    ]);
+    const preset = select(
+      task({ remarks: [proposals[0]], deferralHandlingDefault: "issue" }),
+      "en",
+    );
+    expect(options(preset)).toEqual([
+      ["none", "Do nothing", false],
+      ["task", "Create a Sacty follow-up task", false],
+      ["issue", "Create a GitHub issue", true],
+    ]);
+    const decided = (deferral: Record<string, unknown>) =>
+      render(
+        h(DeferralNotice, {
+          task: task({
+            remarks: [
+              remark("implement-1-1", {
+                deferral: { proposedIn: 2, reason: "理由", decision: "defer", ...deferral },
+              }),
+            ],
+          }),
+        }),
+      ).querySelector('[data-testid="deferral-handled"]');
+    expect(decided({})).toBeNull();
+    expect(decided({ handling: "task" })?.textContent).toBe(
+      "Sacty の後続のタスクを作る ・ このタスクの完了後に、後続のタスクを作成",
+    );
+    const made = decided({ handling: "task", handled: { taskId: "t2" } });
+    expect(made?.querySelector("a")?.getAttribute("href")).toBe("/tasks/t2");
+    expect(made?.querySelector("a")?.textContent).toBe("後続のタスクを開く");
+    const issue = decided({
+      handling: "issue",
+      handled: { url: "https://github.com/acme/web/issues/901" },
+    });
+    expect(issue?.querySelector("a")?.getAttribute("href")).toBe(
+      "https://github.com/acme/web/issues/901",
+    );
+    expect(decided({ handling: "issue" })?.textContent).toContain("Issue を作成中");
+    expect(
+      decided({ handling: "issue", handled: { failure: "403 forbidden" } })?.textContent,
+    ).toContain("扱いを実行できませんでした：403 forbidden");
+  });
+
   it("案が無い・無効にした指摘だけ・実装の承認待ちでないときは、何も出さない", () => {
     const none = (t: Task) =>
       render(h(DeferralNotice, { task: t })).querySelector('[data-testid="deferral"]');
