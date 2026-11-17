@@ -567,7 +567,10 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain(
       "本文に「前回の指摘」の節を作り、前回の指摘ごとに、対応を確かめた（直っている）か、未対応かを1行ずつ書く",
     );
-    expect(prompt).toContain("未対応の前回の [要修正] があれば、判定は changes_required にする");
+    // 未対応の前回の要修正は、今回も表で要修正の重さに当たるものだけを「修正が必要」の根拠にさせる（PBI-380）
+    expect(prompt).toContain(
+      "未対応の前回の [要修正] のうち、今回も表で [要修正] の重さに当たるものがあれば、判定は changes_required にする",
+    );
     // 再レビューでもスキルの手順で、今回のコードで検証を実行し直す（PBI-153）
     expect(prompt).toContain(
       "再レビューでも、スキル review-dispatch（流れは pr-review）でレビューし、検証は今回のコードで実行し直す（前回の結果や CI の結果だけで済ませない）",
@@ -596,6 +599,60 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     const unreadable = buildPrompt(task, "review", { diff, replies: "unreadable" });
     expect(unreadable).toContain("PR の作者の返答は読めませんでした");
     expect(unreadable).not.toContain("authorReplies");
+  });
+
+  it("再レビューの指示は、スキルの「採用の規則」と同じく、重みを見直した前回の要修正を、未対応の要修正に数えさせない（PBI-380）", () => {
+    const task = reviewTask({
+      reviewRound: 2,
+      previousReview: {
+        round: 1,
+        url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+        at: "2026-10-16T01:00:00.000Z",
+        headCommit: "p".repeat(40),
+        body: "前回の総評\n\n- [要修正] 0 で割る",
+        comments: [],
+      },
+    });
+    const prompt = buildPrompt(task, "review", { diff, replies: [] });
+    // スキルの決まり（指示文が合わせる先）。スキルの文が変わったら、指示文も見直す
+    const skill = readFileSync(
+      new URL(
+        "../default-context/skills/review/review-dispatch/references/pr-review.md",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(skill).toContain(
+      "前回 `must` として出した指摘を確かめ直して、表では `should` に当たると分かったとき（稀で、影響が中以下）は、未対応でも `must` に数えない。`should` として扱い、総評の前回の指摘の状況に、重みを見直したことを1行で書く",
+    );
+    // 指示文も、同じ決まりを言う：数えない・提案として扱う・書き方（節の行と、総評の1行）
+    expect(prompt).toContain(
+      "- 前回 [要修正] として出した指摘が直っていないときは、スキルの重要度の表（影響の大きさと起きやすさ）で、重さを確かめ直す。表では [提案] の重さに当たると分かったとき（独立した条件が 2 つ以上重なったときだけ起き、影響が中以下）は、直っていなくても、未対応の [要修正] に数えず、[提案] として扱う（この指示のほかの行が言う、未対応の前回の [要修正]・要修正にも数えない）。「前回の指摘」の節のその指摘の行には、未対応とだけ書かず、重みを見直して [提案] として扱うことと、その根拠（起きる条件と影響）を書く。総評にも、前回の指摘の状況として、重みを見直したことを1行で書く",
+    );
+    expect(prompt).toContain("未対応かを1行ずつ書く（重みを見直した指摘は、下の行のとおりに書く）");
+    // そのときの判定
+    expect(prompt).toContain(
+      "残るのが、重みを見直して [提案] として扱う指摘だけで、ほかに [要修正] の指摘が無ければ、changes_required にせず、suggestions にする",
+    );
+    expect(prompt).toContain(
+      "または上のとおり今回のコードで未対応と確かめた前回・既存の [要修正]。再レビューで、重みを見直して [提案] として扱う前回の指摘は、数えない）",
+    );
+    expect(prompt).toContain(
+      "- changes_required：[要修正] の指摘が1つ以上ある（再レビューで、前回の [要修正] が今回のコードで未対応で、今回もスキルの重要度の表で [要修正] の重さに当たるときも）",
+    );
+    expect(prompt).toContain(
+      "- suggestions：[提案] の指摘だけがある（マージしてよい）。再レビューで、未対応の前回の [要修正] が、重みを見直して [提案] として扱うものだけで、ほかに [要修正] の指摘が無いときも、これにする",
+    );
+    // 未対応の前回の要修正があるだけで「修正が必要」にさせる、古い文を残さない
+    expect(prompt).not.toContain(
+      "未対応の前回の [要修正] があれば、判定は changes_required にする",
+    );
+    expect(prompt).not.toContain("前回の [要修正] が今回のコードで未対応のときも）");
+    // 後続に回したい案の扱いを渡さない回には、その扱いを指す行を出さない
+    expect(prompt).not.toContain("その行の扱いを優先する");
+    // 最初のレビュー（前回のレビューが無い）には、再レビューの決まりを足さない
+    const first = buildPrompt(reviewTask(), "review", { diff });
+    expect(first).not.toContain("重さを確かめ直す");
   });
 
   it("PR にすでにあるレビューをデータとして渡し、既存の指摘と同じ問題を繰り返させない（PBI-144）", () => {
@@ -3860,8 +3917,10 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
       "前提を知らない読者に向けた原稿では、読者が知らない語・前提・手順の説明を削る指摘には従わない",
     );
     expect(prompt).toContain(
-      "前提を知っている読者に向けた原稿では、記述を足す指摘は must だけを直し、should は直さない",
+      "前提を知っている読者に向けた原稿では、記述を足す指摘は must だけを直す。記述を足す should は、must を直す回でも直さない（足りなければ人間が差し戻しで求める）。ほかの should・nit は、スキルの決まりのとおりに扱う（should・nit だけでは、修正に戻さない）",
     );
+    // ほかの should は直す、と読める古い文を残さない（自己レビューは must だけを修正に戻す。PBI-380）
+    expect(prompt).not.toContain("must だけを直し、should は直さない");
     // 要求要件・設計のための決まり（観点 D-3・D-10 を名指しした直し方、リポジトリの決まりから導いた条件の扱いなど）は付けない
     expect(prompt).not.toContain(
       "記述を足す指摘（D-3 などの「書かれていない」）は must だけを直し",
@@ -6844,6 +6903,27 @@ describe("後続に回したい案（PBI-370）", () => {
     const PENDING = "- 作者が「後続に回したい案（人に確認中）」と返した指摘は、";
     const DECIDED =
       "- 下のデータの deferredByPerson は、人間（この PR を作ったタスクの承認者）が、";
+
+    const PRECEDENCE =
+      "- 上の行で未対応に数えないとした指摘（人間が後続に回すと決めた指摘、人間に確認中で [提案] の重さの指摘）は、その行の扱いを優先する。重みを見直した指摘として書かず、判定 suggestions の根拠にもしない。人間に確認中の指摘が [要修正] の重さか [提案] の重さかは、今回確かめ直した重さで決める";
+
+    it("後続に回したい案の扱いは、重みの見直しより優先すると伝える（案の扱いを渡さない回には出さない。PBI-380）", () => {
+      const withDeferrals = buildPrompt(reviewTask(), "review", {
+        diff: "diff",
+        replies: [],
+        reviewDeferrals: { deferred: [{ text: "稀な条件の指摘", reason: "後続で直す" }] },
+      }).split("\n");
+      // 優先すると伝える行は、案の扱いの行（確認中・人が決めた）の後に置く（「上の行」が指す先がある）
+      expect(withDeferrals).toContain(PRECEDENCE);
+      expect(withDeferrals.indexOf(PRECEDENCE)).toBeGreaterThan(
+        withDeferrals.findIndex((l) => l.startsWith(DECIDED)),
+      );
+      expect(withDeferrals.indexOf(PRECEDENCE)).toBeGreaterThan(
+        withDeferrals.findIndex((l) => l.startsWith(PENDING)),
+      );
+      const without = buildPrompt(reviewTask(), "review", { diff: "diff", replies: [] });
+      expect(without).not.toContain("その行の扱いを優先する");
+    });
 
     it("人に確認中の案は、提案の重みなら未対応に数えず、要修正の重みなら人が決めるまで残す、と伝える。人が決めた指摘が無ければ、決定の行とデータは出さない", () => {
       const prompt = buildPrompt(reviewTask(), "review", {
