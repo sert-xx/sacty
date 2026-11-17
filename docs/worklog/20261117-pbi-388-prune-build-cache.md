@@ -92,7 +92,7 @@
   - `kick` の `this.working` だけを外す：1 件（作っている最中のテスト）が落ちる。重なりのテストは通る（`prune` の確かめが止める）。
   - 両方を外す：重なりのテストを含む 2 件が落ちる。
   - `this.pruning` の確かめは消していない（この PR の範囲の外）。
-- `origin/main` を取り込んだ後に、`npm run lint`：成功。`npm run typecheck`：成功。`npx vitest run --no-file-parallelism`：__FULL2__。
+- `origin/main` を取り込んだ後に、`npm run lint`：成功。`npm run typecheck`：成功。`npx vitest run --no-file-parallelism`：261 ファイル・5095 件が成功（1 件はスキップ）。取り込む新しいコミットは無かった。
 
 ## 残したこと
 
