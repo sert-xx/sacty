@@ -78,12 +78,14 @@ import {
   ja,
   jiraPlatform,
   makeService,
+  noticesSettled,
   projectsWithAccount,
   rateLimitError,
   stepReview,
   triageOut,
   useTempDir,
 } from "./testing/daemon.js";
+import { idleFor, loopTurn, waitFor } from "./testing/wait.js";
 
 useTempDir();
 
@@ -3249,7 +3251,6 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           .get(id)
           ?.activity.filter((e) => e.type === "ReviewGitHubRetried")
           .map((e) => e.payload) ?? [];
-      const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
 
       it("レビューの投稿の直前の PR の確認が 503 で失敗しても、待ってやり直して投稿し、止まらず、PR に知らせも出さない", async () => {
         const activity = new SqliteActivityStore(dbPath);
@@ -3263,7 +3264,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         await service.runNext(id);
         pulls.statusFailures = 2;
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         const task = service.get(id)?.task;
         expect(task && isCompleted(task)).toBe(true);
         expect(pulls.reviews).toHaveLength(1);
@@ -3291,7 +3292,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         await service.runNext(id);
         pulls.statusFailures = 100;
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         const paused = service.get(id)?.task;
         expect(paused?.status).toBe("paused");
         expect(paused?.pausedReason).toBe("error");
@@ -3405,7 +3406,10 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         await service.runNext(id);
         pulls.statusFailures = 100;
         const running = service.runNext(id);
-        await settle();
+        // やり直しの前の待ち（60 秒）に入ってから、一時停止する
+        await waitFor(() => retried(service, id).length === 1, {
+          what: "やり直しの前の待ちに入ること",
+        });
         await service.pause(id);
         await running;
         expect(pulls.reviews).toHaveLength(0);
@@ -3426,8 +3430,6 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         output: text,
         usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
       });
-      /** 送るのを待たない処理（PR への知らせ）が終わるまで待つ。 */
-      const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
 
       it("モデルの混雑で止まったら、PR に止まったこと・理由・タスクの画面へのリンクを1回書く", async () => {
         const activity = new SqliteActivityStore(dbPath);
@@ -3435,7 +3437,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const { service } = makeService(activity, [capacity], { pulls, planner: reviewPlanner });
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "error" });
         expect(pulls.issueComments).toHaveLength(1);
         const comment = pulls.issueComments[0];
@@ -3467,23 +3469,23 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         );
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         service.resume(id, {});
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(service.get(id)?.task.status).toBe("paused");
         expect(pulls.issueComments).toHaveLength(1);
         // 違う止まり方
         service.resume(id, {});
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(pulls.issueComments).toHaveLength(2);
         expect(pulls.issueComments[1]?.body).toContain("disk full");
         // 再開してレビューを投稿すると、止まったことの投稿はどちらも解消済みになる
         service.resume(id, {});
         await service.runNext(id);
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         const done = service.get(id)?.task;
         expect(done && isCompleted(done)).toBe(true);
         expect(pulls.reviews).toHaveLength(1);
@@ -3504,16 +3506,16 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         });
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         service.resume(id, {});
         await service.runNext(id);
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(pulls.issueComments).toHaveLength(1);
         expect(isOpenStopNotice(pulls.issueComments[0]?.body ?? "")).toBe(false);
         service.rereview(id);
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(pulls.issueComments).toHaveLength(2);
         expect(isOpenStopNotice(pulls.issueComments[1]?.body ?? "")).toBe(true);
         activity.close();
@@ -3527,7 +3529,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(pulls.issueComments).toHaveLength(1);
         expect(pulls.issueComments[0]?.body).toContain("403");
         expect(pulls.issueComments[0]?.body).not.toContain("ghp_secret");
@@ -3552,7 +3554,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           },
         ]);
         await service.runNext(task?.id ?? "");
-        await settle();
+        await noticesSettled(service);
         expect(service.get(task?.id ?? "")?.task.reviewTarget).toBeUndefined();
         expect(pulls.issueComments).toHaveLength(1);
         expect(pulls.issueComments[0]).toMatchObject({ number: 30 });
@@ -3567,12 +3569,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
         await service.pause(id);
-        await settle();
+        await noticesSettled(service);
         expect(service.get(id)?.task.status).toBe("paused");
         // 対象の PR が無く、レビューを頼まれた PR が分からないタスク
         const other = service.createTask({ projectId: "default", title: "ほかの作業" });
         await service.runNext(other.id);
-        await settle();
+        await noticesSettled(service);
         expect(service.get(other.id)?.task.status).toBe("paused");
         expect(pulls.issueComments).toEqual([]);
         activity.close();
@@ -3589,7 +3591,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(service.get(id)?.task.status).toBe("paused");
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("PR に知らせられませんでした"));
         // 知らせが無くても、再開してレビューを投稿すれば完了する（解消する対象は無い）
@@ -3597,7 +3599,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         service.resume(id, {});
         await service.runNext(id);
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         const done = service.get(id)?.task;
         expect(done && isCompleted(done)).toBe(true);
         expect(pulls.editAttempts).toBe(0);
@@ -3615,14 +3617,14 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         // 解消していない知らせが正常にできている
         expect(pulls.issueComments).toHaveLength(1);
         pulls.editFail = "500 boom";
         service.resume(id, {});
         await service.runNext(id);
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(pulls.editAttempts).toBe(1);
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("解消済みにできませんでした"));
         const done = service.get(id)?.task;
@@ -3662,10 +3664,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         service.resume(id, {});
         await service.runNext(id);
         const posting = service.runNext(id);
-        await settle();
+        await waitFor(() => service.get(id)?.task.reviewPost !== undefined, {
+          what: "レビューの投稿の記録",
+        });
         gate.resolve();
         await posting;
-        await settle();
+        await noticesSettled(service);
         const done = service.get(id)?.task;
         expect(done && isCompleted(done)).toBe(true);
         expect(pulls.issueComments).toHaveLength(1);
@@ -3710,14 +3714,16 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         service.resume(id, {});
         await service.runNext(id);
         const posting = service.runNext(id);
-        await settle();
+        await waitFor(() => service.get(id)?.task.reviewPost !== undefined, {
+          what: "レビューの投稿の記録",
+        });
         // レビューを投稿した記録の後、解消の処理が知らせを待っている間に、再レビューが始まる（対象の PR が消える）
         expect(service.get(id)?.task.reviewPost).toBeDefined();
         service.rereview(id);
         expect(service.get(id)?.task.reviewTarget).toBeUndefined();
         gate.resolve();
         await posting;
-        await settle();
+        await noticesSettled(service);
         expect(pulls.issueComments).toHaveLength(1);
         expect(isOpenStopNotice(pulls.issueComments[0]?.body ?? "")).toBe(false);
         expect(pulls.issueComments[0]?.body).toContain("解消済み");
@@ -3746,7 +3752,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         }
         expect(service.get(id)?.task.status).toBe("paused");
         gate.resolve();
-        await settle();
+        await noticesSettled(service);
         expect(pulls.issueComments).toHaveLength(3);
         const bodies = pulls.issueComments.map((c) => c.body);
         expect(bodies[0]).toContain("Selected model is at capacity");
@@ -3802,7 +3808,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         // 待ちだけでなく通信も止める。遅れて終わっても、投稿されない
         expect(signal?.aborted).toBe(true);
         release.resolve();
-        await settle();
+        // 放した通信の続き（マイクロタスクだけで進む）が済むまで
+        await loopTurn();
         expect(pulls.issueComments).toEqual([]);
         warn.mockRestore();
         activity.close();
@@ -3830,7 +3837,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(pulls.issueComments).toHaveLength(1);
         service.resume(id, {});
         await service.runNext(id);
@@ -3881,16 +3888,19 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         // 知らせ1（終わらない）の後ろに、知らせ2を順番待ちにする
         await service.runNext(id);
-        await settle();
+        await waitFor(() => posts.length === 1, { what: "知らせ1の投稿の開始" });
         expect(posts).toHaveLength(1);
         service.resume(id, {});
         await service.runNext(id);
-        await settle();
+        // 知らせ2は、止まったときに同期で順番待ちに入る（待つ処理は無い）
+        await loopTurn();
         // 再開してレビューを投稿する。解消は、順番待ちの最後（知らせ2）を待つ
         service.resume(id, {});
         await service.runNext(id);
         const posting = service.runNext(id);
-        await settle();
+        await waitFor(() => service.get(id)?.task.reviewPost !== undefined, {
+          what: "レビューの投稿の記録",
+        });
         expect(service.get(id)?.task.reviewPost).toBeDefined();
         // 解消を待っている間に再レビューを始め、もう一度止める（知らせ3）
         service.rereview(id);
@@ -3906,7 +3916,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("解消済みにできませんでした"));
         // 通信を後から放しても、止めた知らせは投稿されない。その後に止まった知らせ3は書かれる
         release.resolve();
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // 放した通信の続き（マイクロタスクだけで進む）が済み、知らせ3の投稿が終わるまで
+        await loopTurn();
+        await noticesSettled(service);
         expect(posts).toHaveLength(3);
         expect(pulls.issueComments).toHaveLength(1);
         expect(pulls.issueComments[0]?.body).toContain("network down");
@@ -3938,13 +3950,14 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        // 知らせの処理が、期限（50 ミリ秒）で終わるまで
+        await noticesSettled(service);
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("PR に知らせられませんでした"));
         // 期限で終わったので、次に止まったときの知らせは、前の待ちに塞がれずに書ける
         pulls.hang = false;
         service.resume(id, {});
         await service.runNext(id);
-        await settle();
+        await noticesSettled(service);
         expect(pulls.issueComments).toHaveLength(1);
         warn.mockRestore();
         activity.close();
@@ -6051,7 +6064,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       await entered.promise;
       // 先の処理が検索の最中のまま、同じ提出の処理がもう1本始まる
       const second = service.runNext(id);
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // 先の処理が検索の最中の間に、後の処理が投稿していないこと（何も起きないこと）を見るための猶予
+      await idleFor(5);
       expect(pulls.issueComments).toHaveLength(0);
       gate.resolve();
       await Promise.all([first, second]);
@@ -8517,7 +8531,6 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
             }),
           ].join("\n\n"),
         );
-      const settleAsks = () => new Promise((resolve) => setTimeout(resolve, 5));
       const asks = (pulls: FakePulls) =>
         pulls.issueComments.filter((c) => c.body.includes("<!-- sacty-human-ask:"));
 
@@ -8539,10 +8552,10 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         pulls.feedbackList = [item("comment:401", { body: "ここ前と言ってること違わない？" })];
         await service.checkPullRequests();
         // 作り直している間は、まだ書かない（作り直した成果物が承認待ちに戻ったときに書く）
-        await settleAsks();
+        await noticesSettled(service);
         expect(asks(pulls)).toHaveLength(0);
         await drain(service);
-        await settleAsks();
+        await noticesSettled(service);
         const task = service.get(id)?.task;
         expect(task?.status).toBe("awaiting_approval");
         expect(task?.gate).toEqual({ step: "implement", submission: 2 });
@@ -8601,7 +8614,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         ];
         await service.checkPullRequests();
         await drain(service);
-        await settleAsks();
+        await noticesSettled(service);
         expect(service.get(id)?.task.status).toBe("awaiting_approval");
         const posted = asks(pulls);
         expect(posted).toHaveLength(1);
@@ -8654,7 +8667,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         pulls.feedbackList = [item("comment:405", { body: "ここ前と言ってること違わない？" })];
         await service.checkPullRequests();
         await drain(service);
-        await settleAsks();
+        await noticesSettled(service);
         expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
         const replies = () =>
           pulls.issueComments.filter((c) => c.body.includes("<!-- sacty-comment:"));
@@ -8667,7 +8680,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         pulls.feedbackList = [];
         await service.checkPullRequests();
         await drain(service);
-        await settleAsks();
+        await noticesSettled(service);
         expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
         expect(asks(pulls)).toHaveLength(1);
         expect(replies()).toHaveLength(1);
@@ -8718,7 +8731,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         pulls.feedbackList = [item("comment:410", { body: "ここ前と言ってること違わない？" })];
         await service.checkPullRequests();
         await drain(service);
-        await settleAsks();
+        await noticesSettled(service);
         const task = service.get(id)?.task;
         expect(task?.gate).toEqual({ step: "implement", submission: 2 });
         // 確かめたいことは、承認の画面の元になる記録には残るが、PR には書かない
@@ -8756,17 +8769,17 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         await entered.promise;
         await service.pause(id);
         gate.resolve();
-        await settleAsks();
+        await noticesSettled(service);
         expect(service.get(id)?.task.status).toBe("paused");
         expect(asks(pulls)).toHaveLength(0);
         // 再開すると、同じ提出の承認待ちに戻り、通知を書く。もう一度再開しても増えない
         service.resume(id, {});
-        await settleAsks();
+        await noticesSettled(service);
         expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
         expect(asks(pulls)).toHaveLength(1);
         await service.pause(id);
         service.resume(id, {});
-        await settleAsks();
+        await noticesSettled(service);
         expect(asks(pulls)).toHaveLength(1);
         activity.close();
       });
@@ -8802,11 +8815,11 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         // 先の検索が終わる前に、一時停止して再開する（同じ提出の通知処理がもう1本始まる）
         await service.pause(id);
         service.resume(id, {});
-        await settleAsks();
+        // 先の検索が終わっていない間に、通知を書いていないこと（何も起きないこと）を見るための猶予
+        await idleFor(5);
         expect(asks(pulls)).toHaveLength(0);
         gate.resolve();
-        await settleAsks();
-        await settleAsks();
+        await noticesSettled(service);
         expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
         expect(asks(pulls)).toHaveLength(1);
         activity.close();
@@ -8824,7 +8837,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         pulls.feedbackList = [item("comment:402")];
         await decided.service.checkPullRequests();
         await drain(decided.service);
-        await settleAsks();
+        await noticesSettled(decided.service);
         expect(decided.service.get(decided.id)?.task.gate).toEqual({
           step: "implement",
           submission: 2,
@@ -8842,7 +8855,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         pulls.feedbackList = [item("comment:403")];
         await service.checkPullRequests();
         await drain(service);
-        await settleAsks();
+        await noticesSettled(service);
         expect(service.get(id)?.task.status).toBe("awaiting_approval");
         expect(asks(pulls)).toHaveLength(1);
         expect(asks(pulls)[0]?.body).not.toContain("作り直しの実行が確かめたいこと");
@@ -8863,7 +8876,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         await service.checkPullRequests();
         pulls.commentFail = "403 forbidden";
         await drain(service);
-        await settleAsks();
+        await noticesSettled(service);
         expect(service.get(id)?.task.status).toBe("awaiting_approval");
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("PR に知らせられませんでした"));
         expect(asks(pulls)).toHaveLength(0);
@@ -10427,11 +10440,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         // 投稿の通信の間に、同じアカウントのほかの問い合わせ（ほかのタスクの一覧の読み取りなど）が制限に当たったら、
         // 投稿ができても、その新しい待ちは消さない
         const sending = Promise.withResolvers<void>();
+        const sendingStarted = Promise.withResolvers<void>();
         const racing = post(async () => {
+          sendingStarted.resolve();
           await sending.promise;
           return 6;
         });
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await sendingStarted.promise;
         internals.noteRemarkReplyLimited("github.com:me", rateLimitError(5 * 60_000));
         sending.resolve();
         expect(await racing).toEqual({ value: 6 });
@@ -10446,15 +10461,24 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const spacedInternals = spaced.service as unknown as typeof internals;
         const postSpaced = <T>(work: () => Promise<T>) =>
           spacedInternals.remarkReplyPost("github.com:me", () => true, work);
-        expect(await postSpaced(async () => 1)).toEqual({ value: 1 });
-        const waiting = postSpaced(async () => {
-          ran.push("waiting");
-          return 2;
-        });
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        spacedInternals.noteRemarkReplyLimited("github.com:me", rateLimitError());
-        expect(await waiting).toBe("limited");
-        expect(ran).toEqual([]);
+        // 投稿の間隔（60 ミリ秒）の待ちは、時計を差し替えて進める（本物の時計では、負荷が高いと、制限を記録する前に待ちが明ける）
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        try {
+          expect(await postSpaced(async () => 1)).toEqual({ value: 1 });
+          const waiting = postSpaced(async () => {
+            ran.push("waiting");
+            return 2;
+          });
+          await vi.advanceTimersByTimeAsync(10);
+          // 間隔を待っている最中（待ちのタイマーが 1 つある）
+          expect(vi.getTimerCount()).toBe(1);
+          spacedInternals.noteRemarkReplyLimited("github.com:me", rateLimitError());
+          await vi.advanceTimersByTimeAsync(60);
+          expect(await waiting).toBe("limited");
+          expect(ran).toEqual([]);
+        } finally {
+          vi.useRealTimers();
+        }
         spaced.activity.close();
         // 制限でない失敗は、順番を待っている投稿を止めない
         const failing = post(async () => {
@@ -13152,7 +13176,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       returned = true;
       return t;
     });
-    await new Promise((r) => setTimeout(r, 10));
+    // 停止の確認が終わる前に、一時停止が返っていないこと（何も起きないこと）を見るための猶予
+    await idleFor(10);
     expect(returned).toBe(false); // 確認が終わるまで返らない
     gate.resolve(true);
     const paused = await pausing;

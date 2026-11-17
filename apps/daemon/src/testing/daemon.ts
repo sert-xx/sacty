@@ -55,6 +55,7 @@ import type { SessionLogSink, SessionLogStore } from "../session-logs.js";
 import { MemorySettingsStore } from "../settings.js";
 import type { SharedComposeFetcher } from "../shared-compose.js";
 import type { FoundTicket, TicketClient } from "../tickets.js";
+import { waitFor } from "./wait.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 export const ja = (text: unknown) => renderMessage(text, "ja");
@@ -1652,6 +1653,24 @@ export const foundTicket = (key: string, summary = `${key} の要約`): FoundTic
   summary,
   url: `https://jira.example.com/browse/${key}`,
 });
+
+/**
+ * 待たずに送る処理（レビューが止まったことの PR への知らせと、順に処理するもの：人に確かめてほしいことの PR への知らせ・
+ * 指摘への返信の投稿）が、すべて終わるまで待つ。これらは、タスクの状態が変わったときに同期で登録され、終わると登録が消える。
+ * 登録が無ければ（送るものが無い）、すぐに戻る。本体に、これを待つ口は無いので、登録の表（private）を直接見る。
+ * 表の名前が変わったら、ここが例外で落ちる（黙って通らない）。
+ * 順に処理する仕組み（serialTails）に、長く終わらない処理を登録するようになったら、これは期限まで待ってから落ちる。
+ * そのときは、ここで待つ対象を見直す。
+ */
+export function noticesSettled(service: TaskService): Promise<void> {
+  const internals = service as unknown as {
+    stopNotices: Map<string, Promise<void>>;
+    serialTails: Map<string, Promise<void>>;
+  };
+  return waitFor(() => internals.stopNotices.size === 0 && internals.serialTails.size === 0, {
+    what: "待たずに送る処理（PR への知らせ・返信の投稿）の終わり",
+  });
+}
 
 /** 画面が表示している（いま承認待ちの）提出回。 */
 export const current = (svc: TaskService, id: string) => {

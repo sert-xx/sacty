@@ -116,6 +116,14 @@ export function idleFor(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * イベントループを一巡させる。マイクロタスクだけで進む処理（Promise の続き）は、戻るまでに済んでいる。
+ * タイマーや通信を待つ処理の完了は、これでは待てない（waitFor で、条件を待つ）。
+ */
+export function loopTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 type ChildLike = {
   once(
     event: "exit",
