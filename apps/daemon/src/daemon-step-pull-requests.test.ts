@@ -5420,12 +5420,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               await settle(service, id);
               // 既定が無ければ、何もしない
               expect(service.view(id)?.task.deferralHandlingDefault).toBe("none");
-              projects.put("default", {
+              // プロジェクトの設定の保存（API と同じ入口）で、既定を決める。知らない値は断る
+              const definition = {
                 name: "デフォルト",
                 targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
                 githubAccounts: { "github.com": "me" },
-                deferralHandling: "issue",
-              });
+              };
+              expect(() =>
+                service.saveProject("default", { ...definition, deferralHandling: "jira" }),
+              ).toThrow();
+              service.saveProject("default", { ...definition, deferralHandling: "issue" });
+              expect(projects.get("default")?.deferralHandling).toBe("issue");
               expect(service.view(id)?.task.deferralHandlingDefault).toBe("issue");
               expect(() =>
                 service.decideDeferrals(id, {
