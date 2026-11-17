@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-370
-- PR: なし
+- PR: #406
 - ブランチ: feat/pbi-370-defer-proposals
 - 関係する ADR: [後続に回すかどうかは人が決め、実装は案と理由までを出す](../adr/20261117-0415-defer-proposals-decided-by-person.md)
 
