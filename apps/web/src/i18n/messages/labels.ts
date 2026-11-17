@@ -417,8 +417,19 @@ const ja = {
       `テストの対応していないテスト観点があるため、提出せずに実装を続ける（${ids}）`,
     ImplementationUnchanged: (number: number, commit: string) =>
       `やり直しの実装が、AI のレビューの指摘が残る PR #${number}（${commit}）を何も変えなかったため、提出しない`,
-    ReviewRejudgeRequested: (number: number, commit: string) =>
-      `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘をすべて、理由を付けて断り、何も変えなかった。断った理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる`,
+    ReviewRejudgeRequested: (number: number, commit: string, awaitsDecision: boolean) =>
+      awaitsDecision
+        ? `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘を、断るか、後続に回したい案にして、何も変えなかった。理由を PR に返信し、案を人が決めた後、AI のレビューに同じ内容を 1 回だけ判定し直させる`
+        : `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘をすべて、理由を付けて断り、何も変えなかった。断った理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる`,
+    DeferralsDecided: (defer: number, fix: number) =>
+      `後続に回したい指摘を決定（後続に回す ${defer}件・この PR で直す ${fix}件）`,
+    /** 決定の 1 件（詳細の 1 行）。 */
+    deferralItem: (remarkId: string, fix: boolean) =>
+      `・${remarkId}：${fix ? "この PR で直す" : "後続に回す"}`,
+    DeferralDecisionsPosted: (number: number) =>
+      `後続に回したい指摘の決定を、PR #${number} のコメントに記録`,
+    DeferralDecisionsFailed: (number: number, reason: string) =>
+      `後続に回したい指摘の決定を、PR #${number} のコメントに記録できなかった：${reason}`,
     prDrafted: (number: number | undefined, draft: boolean, commit: string) =>
       `最終レビューの前に PR を${draft ? "ドラフトで" : ""}作成・更新（#${number}・${commit}）。CI を待つ`,
     PullRequestCiFinished: (
@@ -1099,8 +1110,17 @@ const en: LabelMessages = {
       `Some test viewpoints have no test mapped, so the implementation is continued without being submitted (${ids})`,
     ImplementationUnchanged: (number, commit) =>
       `The rework changed nothing in PR #${number} (${commit}), on which the AI review left findings, so it is not submitted`,
-    ReviewRejudgeRequested: (number, commit) =>
-      `The rework declined every finding of the AI review on PR #${number} (${commit}) with a reason and changed nothing. sacty replies on the PR with the reasons and has the AI review judge the same content once more`,
+    ReviewRejudgeRequested: (number, commit, awaitsDecision) =>
+      awaitsDecision
+        ? `The rework declined the findings of the AI review on PR #${number} (${commit}) or proposed to defer them, and changed nothing. Sacty replies on the PR with the reasons and, after a person decides the proposals, has the AI review judge the same content once more`
+        : `The rework declined every finding of the AI review on PR #${number} (${commit}) with a reason and changed nothing. sacty replies on the PR with the reasons and has the AI review judge the same content once more`,
+    DeferralsDecided: (defer, fix) =>
+      `Decided the findings proposed to defer (defer ${defer}, fix in this PR ${fix})`,
+    deferralItem: (remarkId, fix) => `- ${remarkId}: ${fix ? "fix in this PR" : "defer"}`,
+    DeferralDecisionsPosted: (number) =>
+      `Recorded the decisions on the findings proposed to defer in a comment on PR #${number}`,
+    DeferralDecisionsFailed: (number, reason) =>
+      `Could not record the decisions on the findings proposed to defer in a comment on PR #${number}: ${reason}`,
     prDrafted: (number, draft, commit) =>
       `Opened or updated the PR${draft ? " as a draft" : ""} before the final review (#${number} · ${commit}); waiting for CI`,
     PullRequestCiFinished: (result, failed, rerunSkipped) =>

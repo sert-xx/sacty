@@ -34,6 +34,7 @@ import { AiReviewNotice } from "@/components/ai-review-notice";
 import { TaskAuditCard } from "@/components/audit";
 import { CardSection, ExpandCards } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
+import { DeferralPendingNotice } from "@/components/deferral-pending";
 import { DeploymentWatchCard } from "@/components/deployment";
 import { DerivedTasksCard } from "@/components/derive-dialog";
 import { DiscardedReviewNotice } from "@/components/discarded-review";
@@ -293,6 +294,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
       <GateNotice task={task} />
       <HeldReviewNotice task={task} />
       <HumanAskNotice task={task} />
+      <DeferralPendingNotice task={task} />
       <AiReviewNotice task={task} />
       <DiscardedReviewNotice task={task} />
       {task.status === "paused" && task.pausedReason && (

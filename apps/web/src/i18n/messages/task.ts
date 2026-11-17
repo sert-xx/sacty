@@ -75,6 +75,27 @@ const ja = {
       "読み取れた範囲の最小限で直しています。意図と合うか、指摘した方が確かめてください。",
     confirm: (ids: readonly string[]) => `実行が確かめたいこと（指摘 ${ids.join("・")}）`,
   },
+  /** 実装が「後続に回したい」とした指摘（案）の一覧と、人の決定（PBI-370）。 */
+  deferral: {
+    title: (count: number) => `後続に回したい指摘が${count}件あります`,
+    help: "マージの前に、後続に回すか、この PR で直すかを、1 件ずつ決めてください。",
+    hint: "実装が、この PR では直さず後続に回したいと申告した指摘です。PR への返信には、案であり、人に確認中と書いています。決定は PR のコメントに残します。",
+    remark: (id: string) => `指摘 ${id}`,
+    ai: "AI のレビュー",
+    open: "元のコメントを開く",
+    reason: "後続に回したい理由",
+    legend: (id: string) => `指摘 ${id} の決定`,
+    defer: "後続に回す",
+    fix: "この PR で直す",
+    later: "まだ決めない",
+    fixNote: "「この PR で直す」を選ぶと、実装に差し戻します。",
+    submit: "決定する",
+    decide: "承認の画面で決める",
+    none: "決定を1件以上選んでください。",
+    decided: (count: number) => `決定済みの指摘（${count}件）`,
+    decidedDefer: "後続に回すと決定",
+    decidedFix: "この PR で直すと決定",
+  },
   discardedReview: {
     title: (count: number) => `取り込んでいない AI のレビューの指摘が${count}件あります`,
     help: (number: number, head: string) =>
@@ -623,6 +644,27 @@ const en: TaskMessages = {
       "It made the smallest change it could read. Whoever commented should check it matches what they meant.",
     confirm: (ids: readonly string[]) =>
       `What the run wants you to check (comment${ids.length === 1 ? "" : "s"} ${ids.join(", ")})`,
+  },
+  deferral: {
+    title: (count: number) =>
+      `${count} finding${count === 1 ? "" : "s"} the implementation proposes to defer`,
+    help: "Before you merge, decide for each one: defer it, or fix it in this PR.",
+    hint: "The implementation declared that it would rather not fix these in this PR. Its replies on the PR say they are proposals awaiting a person's decision. Your decisions are recorded in a PR comment.",
+    remark: (id: string) => `Comment ${id}`,
+    ai: "AI review",
+    open: "Open the original comment",
+    reason: "Why it proposes to defer",
+    legend: (id: string) => `Decision for comment ${id}`,
+    defer: "Defer",
+    fix: "Fix in this PR",
+    later: "Decide later",
+    fixNote: "Choosing “Fix in this PR” sends the task back to the implementation.",
+    submit: "Decide",
+    decide: "Decide on the approval screen",
+    none: "Choose at least one decision.",
+    decided: (count: number) => `Decided (${count})`,
+    decidedDefer: "Decided to defer",
+    decidedFix: "Decided to fix in this PR",
   },
   discardedReview: {
     title: (count: number) =>

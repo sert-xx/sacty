@@ -3,6 +3,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { DaemonText, StepKey, Task } from "@sacty/core";
 import {
+  deferProposals,
   exportDue,
   isCompleted,
   isSecurityTask,
@@ -22,8 +23,10 @@ import type { ConfigResult } from "./config.js";
 import type { PullRequestFeedback } from "./github.js";
 import { PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
+import { createApp } from "./server.js";
 import {
   DRAFT_SETTLE_FACTOR,
+  InvalidOperationError,
   reviewTaskTitle,
   type ServiceDeps,
   type TaskService,
@@ -4933,6 +4936,476 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           expect(taskOf(service, id).remarks.at(-1)?.origin).toBeUndefined();
           repos.sameAsParent = true;
           await stops({ ...made, pulls, repos, projects: projectsWithAccount(), childId, first });
+        });
+
+        describe("後続に回したい案を、人が 1 件ずつ決める（PBI-370）", () => {
+          const deferred = (remarkId = "implement-1-1") =>
+            responded([
+              {
+                remarkId,
+                status: "deferred",
+                text: "直すには新しい保存の仕組みが要り、このタスクの範囲を超えます",
+              },
+            ]);
+          const notices = (pulls: FakePulls) =>
+            pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-deferral:"));
+          const settled = () => new Promise((resolve) => setTimeout(resolve, 5));
+          const decide = (
+            svc: TaskService,
+            id: string,
+            decisions: { remarkId: string; decision: "defer" | "fix" }[],
+            submission = 2,
+          ) => svc.decideDeferrals(id, { step: "implement", submission, decisions });
+
+          it("先頭を変えて案を出すと、返信に「案・人に確認中」と明記し、承認待ちの一覧に並ぶ。人が後続に回すと決めると、決定を PR のコメントに残し、次のレビューに、未対応に数えない指摘として渡す（受け入れ条件 1〜3・5・6）", async () => {
+            const made = await reviewed([
+              deferred(),
+              verdictOut("suggestions", "# 評価\n\n別の提案"),
+              verdictOut("no_findings", "# 評価\n\n指摘なし"),
+            ]);
+            const { activity, service, executor, pulls, repos, id, childId, first } = made;
+            repos.sameAsParent = false;
+            await settle(service, id);
+            let task = taskOf(service, id);
+            expect(task.status).toBe("awaiting_approval");
+            expect(task.gate).toEqual({ step: "implement", submission: 2 });
+            expect(task.pullRequest?.commit).not.toBe(first);
+            // 実装の指示は、案の書き方を伝えている
+            expect(promptOf(executor, executor.calls.length - 1)).toContain(
+              '"status": "addressed か declined か deferred"',
+            );
+            // 一覧に並ぶ（まだ決まっていない）
+            expect(deferProposals(task)).toEqual([
+              {
+                remarkId: "implement-1-1",
+                text: expect.any(String),
+                reason: "直すには新しい保存の仕組みが要り、このタスクの範囲を超えます",
+                source: "sacty_review",
+                origin: { key: "review:50", number: 7 },
+              },
+            ]);
+            // 返信は、決まったことのように書かない
+            await service.runNext(id);
+            expect(replies(pulls)).toHaveLength(1);
+            const reply = replies(pulls)[0]?.body ?? "";
+            expect(reply).toContain(
+              "**この PR では直さず、後続に回したいという案です（人に確認中で、まだ決まっていません）。** 理由：",
+            );
+            expect(reply).toContain("このタスクを承認する人が、マージの前に決めます");
+            expect(reply).not.toContain("対応していません");
+            // 先頭が変わったので、ふつうの再レビュー。人に確認中の案の扱いを伝える（決定のデータは、まだ無い）
+            pulls.prInfo = { ...pulls.prInfo, headSha: commitOf(service, id) };
+            await service.checkPullRequests();
+            let before = executor.calls.length;
+            await runReview(service, childId);
+            let prompt = promptOf(executor, before);
+            expect(prompt).toContain("- 作者が「後続に回したい案（人に確認中）」と返した指摘は、");
+            expect(prompt).not.toContain('"deferredByPerson"');
+            // 人が、後続に回すと決める：承認待ちのまま。決定は、作業履歴と PR のコメントに残る
+            const decided = decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+            expect(decided.status).toBe("awaiting_approval");
+            expect(deferProposals(decided)).toEqual([]);
+            expect(
+              service.get(id)?.activity.find((e) => e.type === "DeferralsDecided"),
+            ).toMatchObject({
+              actor: "person",
+              payload: {
+                step: "implement",
+                submission: 2,
+                decisions: [{ remarkId: "implement-1-1", decision: "defer" }],
+              },
+            });
+            await settled();
+            expect(notices(pulls)).toHaveLength(1);
+            const notice = notices(pulls)[0];
+            expect(notice).toMatchObject({ repo: "https://github.com/acme/app", number: 7 });
+            expect(notice?.body).toContain(`<!-- sacty-deferral:${id}:1 -->`);
+            expect(notice?.body).toContain("### 後続に回す（1 件）");
+            expect(notice?.body).toContain(
+              "**指摘 implement-1-1**（[元のコメント](https://github.com/acme/app/pull/7#pullrequestreview-50)）",
+            );
+            expect(notice?.body).toContain("> 直すには新しい保存の仕組みが要り");
+            expect(
+              service.get(id)?.activity.find((e) => e.type === "DeferralDecisionsPosted"),
+            ).toMatchObject({
+              actor: "sacty",
+              payload: { number: 7, decision: 1, url: expect.stringContaining("#issuecomment-") },
+            });
+            task = taskOf(service, id);
+            expect(task.status).toBe("awaiting_approval");
+            // 次のレビュー（人が再レビューを求めた）には、人が決めた指摘を、未対応に数えないデータとして渡す
+            service.rereview(childId);
+            before = executor.calls.length;
+            await runReview(service, childId);
+            prompt = promptOf(executor, before);
+            expect(prompt).toContain("- 下のデータの deferredByPerson は、");
+            const json = prompt.split("```json\n").find((b) => b.includes('"deferredByPerson"'));
+            const data = JSON.parse(json?.split("\n```")[0] ?? "{}");
+            expect(data.deferredByPerson).toEqual([
+              {
+                url: "https://github.com/acme/app/pull/7#pullrequestreview-50",
+                finding: expect.any(String),
+                proposal: "直すには新しい保存の仕組みが要り、このタスクの範囲を超えます",
+              },
+            ]);
+            activity.close();
+          });
+
+          it("先頭を変えずに、すべて案にすると、止めずに提出して返信し、人が決めるまで判定し直さない。後続に回すと決めたら、同じ先頭を 1 回だけ判定し直し、指摘なしならドラフトを外す（受け入れ条件 6・8）", async () => {
+            const made = await reviewed([
+              deferred(),
+              verdictOut("no_findings", "# 評価\n\n人が後続に回すと決めたので、数えない"),
+            ]);
+            const { activity, service, executor, pulls, id, childId, first } = made;
+            await settle(service, id);
+            let task = taskOf(service, id);
+            expect(task.status).toBe("awaiting_approval");
+            expect(task.pullRequest?.commit).toBe(first);
+            expect(types(service, id)).not.toContain("ImplementationUnchanged");
+            expect(task.reviewRejudge).toMatchObject({
+              number: 7,
+              commit: first,
+              awaitsDecision: true,
+            });
+            await service.runNext(id);
+            expect(replies(pulls)).toHaveLength(1);
+            expect(replies(pulls)[0]?.body).toContain("人に確認中で、まだ決まっていません");
+            // 返信が済んでも、人が決めるまでは、判定し直しを始めない
+            await service.checkPullRequests();
+            await service.checkPullRequests();
+            expect(restarts(service, childId)).toHaveLength(0);
+            expect(taskOf(service, id).pullRequest?.draft).toBe(true);
+            // 人が、後続に回すと決める：同じ先頭を、1 回だけ判定し直す
+            decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+            await settled();
+            await service.checkPullRequests();
+            await service.checkPullRequests();
+            expect(restarts(service, childId)).toHaveLength(1);
+            const before = executor.calls.length;
+            await runReview(service, childId);
+            const prompt = promptOf(executor, before);
+            expect(prompt).toContain("後続に回したい案は、人間が決めた");
+            expect(prompt).toContain('"deferredByPerson"');
+            await service.checkPullRequests();
+            await service.checkPullRequests();
+            task = taskOf(service, id);
+            expect(task.status).toBe("awaiting_approval");
+            expect(task.pullRequest?.draft).toBeUndefined();
+            expect(types(service, id)).toContain("PullRequestMarkedReady");
+            expect(restarts(service, childId)).toHaveLength(1);
+            activity.close();
+          });
+
+          it("断った指摘と案が混ざっていても、同じ扱い。判定し直しても指摘が残れば、案を人が決めた後であることを伝えて一時停止する", async () => {
+            const made = await reviewed([
+              deferred(),
+              verdictOut("changes_required", "# 評価\n\n別の要修正が未対応"),
+            ]);
+            const { activity, service, pulls, id, childId } = made;
+            await settle(service, id);
+            await service.runNext(id);
+            decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+            await settled();
+            await service.checkPullRequests();
+            expect(restarts(service, childId)).toHaveLength(1);
+            await runReview(service, childId);
+            pulls.feedbackBy[7] = [posted(pulls, 0), posted(pulls, 1)];
+            await service.checkPullRequests();
+            const task = taskOf(service, id);
+            expect(task.status).toBe("paused");
+            expect(task.pausedMessage).toEqual({
+              code: "implement.deferredAgain",
+              params: { number: 7 },
+            });
+            expect(renderMessage(task.pausedMessage as DaemonText, "ja")).toContain(
+              "案を人が決めた後",
+            );
+            expect(renderMessage(task.pausedMessage as DaemonText, "en")).toContain("PR #7");
+            activity.close();
+          });
+
+          it("人が「この PR で直す」と決めると、決定と同じ追記で、その指摘を実装に差し戻す（人の差し戻し）。実装には、人が決めた指摘として渡り、直した対応を、元のコメントにもう一度返信する（受け入れ条件 4）", async () => {
+            const made = await reviewed([
+              deferred(),
+              responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+            ]);
+            const { activity, service, executor, pulls, repos, id, childId } = made;
+            await settle(service, id);
+            await service.runNext(id);
+            expect(replies(pulls)).toHaveLength(1);
+            const appends: string[][] = [];
+            const original = activity.append.bind(activity);
+            vi.spyOn(activity, "append").mockImplementation((input) => {
+              appends.push(input.events.map((e) => e.event.type));
+              return original(input);
+            });
+            const decided = decide(service, id, [{ remarkId: "implement-1-1", decision: "fix" }]);
+            expect(appends[0]).toEqual(["DeferralsDecided", "ChangesRequested"]);
+            expect(decided.status).toBe("queued");
+            const requested = service
+              .get(id)
+              ?.activity.findLast((e) => e.type === "ChangesRequested");
+            expect(requested).toMatchObject({
+              actor: "person",
+              payload: {
+                step: "implement",
+                target: "implement",
+                round: 2,
+                remarks: [
+                  {
+                    id: "implement-2-1",
+                    fixOf: "implement-1-1",
+                    origin: { key: "review:50", number: 7 },
+                  },
+                ],
+              },
+            });
+            // 人の決定なので、人の指摘として渡る（AI のレビューの指摘の印は付けない）
+            expect(decided.remarks.at(-1)?.source).toBeUndefined();
+            expect(decided.remarks.at(-1)?.text).toBe(decided.remarks[0]?.text);
+            expect(decided.remarks[0]?.deferral?.decision).toBe("fix");
+            await settled();
+            expect(notices(pulls)).toHaveLength(1);
+            expect(notices(pulls)[0]?.body).toContain("### この PR で直す（1 件）");
+            expect(notices(pulls)[0]?.body).toContain("実装をやり直して直します");
+            // 差し戻したので、判定し直しは始めない。実装をやり直す
+            await service.checkPullRequests();
+            expect(restarts(service, childId)).toHaveLength(0);
+            repos.sameAsParent = false;
+            const before = executor.calls.length;
+            await settle(service, id);
+            const prompt = promptOf(executor, before);
+            expect(prompt).toContain(
+              "- [implement-2-1] （人間が、後続に回さず、この PR で直すと決めた指摘）",
+            );
+            expect(prompt).not.toContain("- [implement-1-1]");
+            const task = taskOf(service, id);
+            expect(task.status).toBe("awaiting_approval");
+            expect(task.gate).toEqual({ step: "implement", submission: 3 });
+            // 直した対応を、元のコメントに返信する（案の返信に続けて、直したことが読める）
+            await service.runNext(id);
+            expect(replies(pulls)).toHaveLength(2);
+            expect(replies(pulls)[1]?.body).toContain("**対応しました。**");
+            expect(replies(pulls)[1]?.body).toContain("#pullrequestreview-50");
+            expect(deferProposals(task)).toEqual([]);
+            activity.close();
+          });
+
+          it("人が決めた決定は、案のあるときだけ受け付ける（決定なし・案でない指摘・決定済み・同じ指摘の重複・別の提出・実装でない工程は断る）", async () => {
+            const made = await reviewed([deferred()]);
+            const { activity, service, id } = made;
+            await settle(service, id);
+            const code = (run: () => unknown) => {
+              try {
+                run();
+              } catch (error) {
+                return error instanceof InvalidOperationError
+                  ? (error.messages[0] as { code?: string }).code
+                  : String(error);
+              }
+              return "no error";
+            };
+            expect(code(() => decide(service, id, []))).toBe("deferral.none");
+            expect(
+              code(() => decide(service, id, [{ remarkId: "implement-9-9", decision: "defer" }])),
+            ).toBe("deferral.notOpen");
+            expect(
+              code(() =>
+                decide(service, id, [
+                  { remarkId: "implement-1-1", decision: "defer" },
+                  { remarkId: "implement-1-1", decision: "fix" },
+                ]),
+              ),
+            ).toBe("deferral.notOpen");
+            expect(
+              code(() =>
+                decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }], 1),
+              ),
+            ).toBe("gate.staleSubmission");
+            expect(
+              code(() =>
+                service.decideDeferrals(id, {
+                  step: "design",
+                  submission: 2,
+                  decisions: [{ remarkId: "implement-1-1", decision: "defer" }],
+                }),
+              ),
+            ).toBe("gate.stepNotAwaiting");
+            expect(() =>
+              service.decideDeferrals(id, {
+                step: "implement",
+                submission: 2,
+                decisions: [{ remarkId: "implement-1-1", decision: "later" }],
+              }),
+            ).toThrow();
+            // 何も記録していない
+            expect(count(service, id, "DeferralsDecided")).toBe(0);
+            decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+            expect(
+              code(() => decide(service, id, [{ remarkId: "implement-1-1", decision: "fix" }])),
+            ).toBe("deferral.notOpen");
+            expect(count(service, id, "DeferralsDecided")).toBe(1);
+            activity.close();
+          });
+
+          it("決定を PR のコメントに残せなければ、理由を作業履歴に記録する（秘密の値は伏せる。決定とタスクの状態は変えない）", async () => {
+            const made = await reviewed([deferred()]);
+            const { activity, service, pulls, id } = made;
+            await settle(service, id);
+            await service.runNext(id);
+            pulls.commentFail = "GitHub API 500: token ghp_secret failed";
+            decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+            await settled();
+            expect(notices(pulls)).toHaveLength(0);
+            const posted = service
+              .get(id)
+              ?.activity.find((e) => e.type === "DeferralDecisionsPosted");
+            expect(posted?.payload).toMatchObject({ number: 7, decision: 1 });
+            const payload = (posted?.payload ?? {}) as { failure?: unknown; url?: string };
+            const failure = JSON.stringify(payload.failure);
+            expect(failure).toContain("GitHub API 500");
+            expect(failure).not.toContain("ghp_secret");
+            expect(payload.url).toBeUndefined();
+            const task = taskOf(service, id);
+            expect(task.status).toBe("awaiting_approval");
+            expect(task.remarks[0]?.deferral?.decision).toBe("defer");
+            activity.close();
+          });
+
+          it("GitHub のアカウントを選んでいないプロジェクトでは、PR にコメントせず、その理由を記録する", async () => {
+            const made = await reviewed([deferred()]);
+            const { activity, service, pulls, projects, id } = made;
+            await settle(service, id);
+            projects.put("default", {
+              name: "デフォルト",
+              targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+            });
+            decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+            await settled();
+            expect(notices(pulls)).toHaveLength(0);
+            expect(
+              service.get(id)?.activity.find((e) => e.type === "DeferralDecisionsPosted")?.payload,
+            ).toMatchObject({ failure: { code: "deferral.noAccount" } });
+            activity.close();
+          });
+
+          it("人が sacty の画面から書いた指摘にも、案を出せる。決定のコメントには、指摘の ID と決定だけを載せ、画面で書いた文と理由は PR に載せない。PR には返信しない", async () => {
+            const pulls = new FakePulls();
+            const repos = new FakeRepos();
+            const made = await start(
+              [
+                implement(),
+                responded([
+                  {
+                    remarkId: "implement-1-1",
+                    status: "deferred",
+                    text: "管理画面は、このタスクの範囲の外です（秘密の計画に触れます）",
+                  },
+                ]),
+              ],
+              options(pulls, repos, projectsWithAccount()),
+            );
+            const { activity, service, id } = made;
+            await settle(service, id);
+            service.requestChanges(id, {
+              step: "implement",
+              submission: 1,
+              comments: ["管理画面からも変えられるようにしてほしい（社外に出していない計画）"],
+            });
+            await settle(service, id);
+            const task = taskOf(service, id);
+            expect(task.status).toBe("awaiting_approval");
+            expect(deferProposals(task)).toEqual([
+              {
+                remarkId: "implement-1-1",
+                text: "管理画面からも変えられるようにしてほしい（社外に出していない計画）",
+                reason: "管理画面は、このタスクの範囲の外です（秘密の計画に触れます）",
+              },
+            ]);
+            // 画面から書いた指摘には、PR に返信しない（今までどおり）
+            await service.runNext(id);
+            expect(replies(pulls)).toHaveLength(0);
+            decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+            await settled();
+            expect(notices(pulls)).toHaveLength(1);
+            const body = notices(pulls)[0]?.body ?? "";
+            expect(body).toContain(
+              "**指摘 implement-1-1**（Sacty の画面から書かれた指摘。内容は、タスクの画面で読めます）",
+            );
+            expect(body).not.toContain("社外に出していない計画");
+            expect(body).not.toContain("秘密の計画");
+            expect(body).not.toContain("実装が、後続に回したいとした理由");
+            activity.close();
+          });
+
+          it("API（POST /api/tasks/:id/deferrals/decide）で決められる。断るときは、理由を日英で返せる形で返す", async () => {
+            const made = await reviewed([deferred()]);
+            const { activity, service, id } = made;
+            await settle(service, id);
+            const token = "test-token";
+            const app = createApp(service, token);
+            const post = (body: unknown) =>
+              app.request(`/api/tasks/${id}/deferrals/decide`, {
+                method: "POST",
+                headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+                body: JSON.stringify(body),
+              });
+            const refused = await post({ step: "implement", submission: 2, decisions: [] });
+            expect(refused.status).toBeGreaterThanOrEqual(400);
+            expect(JSON.stringify(await refused.json())).toContain("deferral.none");
+            expect(count(service, id, "DeferralsDecided")).toBe(0);
+            const ok = await post({
+              step: "implement",
+              submission: 2,
+              decisions: [{ remarkId: "implement-1-1", decision: "defer" }],
+            });
+            expect(ok.status).toBe(200);
+            const body = (await ok.json()) as { task: Task };
+            expect(body.task.remarks[0]?.deferral?.decision).toBe("defer");
+            expect(count(service, id, "DeferralsDecided")).toBe(1);
+            // 認証の無い要求は、受け付けない
+            const anonymous = await app.request(`/api/tasks/${id}/deferrals/decide`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: "{}",
+            });
+            expect(anonymous.status).toBe(401);
+            activity.close();
+          });
+
+          it("人が後続に回すと決めた指摘は、その後の実装の実行に、対応させる指摘として渡さず、直さないデータとして渡す（受け入れ条件 9）", async () => {
+            const made = await reviewed([
+              deferred(),
+              rework("implement"),
+              responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+            ]);
+            const { activity, service, executor, pulls, repos, id } = made;
+            repos.sameAsParent = false;
+            await settle(service, id);
+            await service.runNext(id);
+            decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+            await settled();
+            // 人が、別の指摘を PR に書く：実装をやり直す
+            pulls.feedbackBy[7] = [
+              posted(pulls, 0),
+              item("comment:900", { author: "reviewer", body: "ここも直してほしい" }),
+            ];
+            await service.checkPullRequests();
+            expect(taskOf(service, id).status).toBe("queued");
+            const before = executor.calls.length;
+            await settle(service, id);
+            const prompt = executor.calls
+              .slice(before)
+              .map((c) => c.command.join(" "))
+              .find((p) => p.includes("- [implement-2-1]"));
+            expect(prompt).toBeDefined();
+            expect(prompt).not.toContain("- [implement-1-1]");
+            expect(prompt).toContain(
+              "--- 後続に回したい案にした指摘（この PR では直しません） ---",
+            );
+            expect(prompt).toContain('"deferredByPerson"');
+            activity.close();
+          });
         });
       });
     });

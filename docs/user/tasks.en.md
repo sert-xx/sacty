@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx -->
 
 [日本語](tasks.md) | **English**
 
@@ -18,7 +18,7 @@ This page is long, so pick the sections to read by what you want to do.
 | --- | --- |
 | Create tasks, find them, and see how they are going | [Create a task](#create-a-task), [Task list](#task-list), [Reading the task details](#reading-the-task-details), [Hints on the screen](#hints-on-the-screen), [Automatic updates on the screen](#automatic-updates-on-the-screen) |
 | Learn what sacty does on its own | [Information gathering at the start of a task](#information-gathering-at-the-start-of-a-task), [Self-review before submitting](#self-review-before-submitting) |
-| Check results, then approve or request changes | [Approval in PRs (Requirements, Design, Implement)](#approval-in-prs-requirements-design-implement), [Reading requirements and designs](#reading-requirements-and-designs), [Items to check (provenance)](#items-to-check-provenance), [Review of the implementation PR](#review-of-the-implementation-pr), [How the agent revises after you request changes](#how-the-agent-revises-after-you-request-changes), [Cause of a request for changes](#cause-of-a-request-for-changes), [Change requests](#change-requests), [Comments on PRs and issues](#comments-on-prs-and-issues), [Checking the result of the Integration review](#checking-the-result-of-the-integration-review) |
+| Check results, then approve or request changes | [Approval in PRs (Requirements, Design, Implement)](#approval-in-prs-requirements-design-implement), [Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral), [Reading requirements and designs](#reading-requirements-and-designs), [Items to check (provenance)](#items-to-check-provenance), [Review of the implementation PR](#review-of-the-implementation-pr), [How the agent revises after you request changes](#how-the-agent-revises-after-you-request-changes), [Cause of a request for changes](#cause-of-a-request-for-changes), [Change requests](#change-requests), [Comments on PRs and issues](#comments-on-prs-and-issues), [Checking the result of the Integration review](#checking-the-result-of-the-integration-review) |
 | Change a task that is under way | [Ask the Orchestrator](#ask-the-orchestrator), [Renaming a task](#renaming-a-task), [Changing the task image](#changing-the-task-image), [Changing a step's agent](#changing-a-steps-agent), [Pause, resume, and cancel](#pause-resume-and-cancel), [Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task) |
 | Learn how each kind of request proceeds | [Documents and one-off external work](#documents-and-one-off-external-work), [Fixing an existing PR](#fixing-an-existing-pr), [Security checks and fixes](#security-checks-and-fixes), [Repositories without tests](#repositories-without-tests), [When the implementation has no changes](#when-the-implementation-has-no-changes), [When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing) |
 | Handle tasks created with an earlier version | [Tasks from earlier versions (with the Open PR step)](#tasks-from-earlier-versions-with-the-open-pr-step), [Tasks from earlier versions (with the final review)](#tasks-from-earlier-versions-with-the-final-review) |
@@ -635,6 +635,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   It starts with a link to the original, so that it is clear which review or comment it replies to.
 - The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
   When it was not addressed, the reason (for example, out of this task's scope) follows.
+  For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
   When the AI declared neither, only the explanation of the response is shown.
 - The end of the reply says which sacty task's AI wrote it.
 - Secret values are hidden and long text is cut.
@@ -668,6 +669,40 @@ It does not reply in the following cases either (you can read the responses on t
 
 - A project with no GitHub account chosen
 - Security check and security fix tasks
+
+### Deciding the findings proposed for deferral
+
+The Implementation agent sometimes declares that it would rather not fix a comment in this PR and defer it.
+This is a proposal. You decide, one by one before the merge, whether to defer it.
+
+1. When the task details show "N findings the implementation proposes to defer", press "Decide on the approval screen".
+2. In the list on the approval screen, read each comment and the reason for the proposal.
+   For a comment imported from the PR, "Open the original comment" opens the original comment on GitHub.
+3. For each comment, choose "Defer" or "Fix in this PR".
+   Leave a comment you do not decide yet as "Decide later".
+4. Press "Decide".
+
+The decisions have the following results.
+
+| Choice | Result |
+| --- | --- |
+| Defer | The comment is not fixed in this PR. The task stays waiting for approval |
+| Fix in this PR | The comment is sent back to the implementation. It counts as a request for changes |
+| Decide later | It stays in the list |
+
+- sacty records the decisions and the list of those comments in a PR comment.
+  For a comment written on the sacty screen, it shows only the comment's number and the decision (text written on the screen is not put on the PR).
+  The Activity shows whether it could comment, or why not.
+  It does not comment in a project with no GitHub account chosen, or in security check and security fix tasks.
+- The sacty PR review does not count a comment you decided to defer as unaddressed, and does not raise it again.
+- sacty does not turn a comment you decided to defer into another task or an issue. Create one yourself if you need it.
+- You can merge the PR before deciding. If you merge without deciding, the proposals stay undecided.
+
+The agent may propose deferral only for a comment with a small impact, or one that occurs only when rare conditions coincide, whose fix needs a new mechanism or lies outside the task's scope.
+A comment with a large impact, such as data corruption, security, or not meeting an acceptance criterion, is fixed, not proposed for deferral.
+
+Only the Implementation step can make these proposals.
+In a task that fixes an existing PR, no proposal is made for the PR comments passed to the implementation ([Fixing an existing PR](#fixing-an-existing-pr)).
 
 ### When you are taken to the sacty approval screen
 
@@ -1703,6 +1738,7 @@ When a rework changes nothing, the task proceeds as follows.
    - After the replies, the child task judges the same content once more. The Activity of the child task shows "started a re-review that judges the same commit again".
    - When the child task accepts the reasons and concludes with no findings, the PR is marked ready and waits for your approval (merge).
    - When findings still remain, the task becomes "Paused: the rework changed nothing". The exchange between the two AIs stops here. The same content is judged again only once.
+   - When some findings are declined and others are proposed for deferral, the rework is also submitted without stopping, and sacty replies. In this case the child task judges the same content again after you have decided all the proposals ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
    - When a finding from a person is among them, when a finding is declared as addressed or has no reason for declining it, or when the task is a security check or security fix task, the rework is not submitted and the pause below applies.
 3. Otherwise the rework is not submitted, and the task becomes "Paused: the rework changed nothing".
 4. Check the findings of the PR review (and the replies with the reasons for declining them, if any), then do one of the following.

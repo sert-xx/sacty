@@ -6690,3 +6690,258 @@ describe("指摘への対応の「人に確かめたいこと」（PBI-301）", 
     expect(prompt).toContain('いちばん関係の深い指摘の対応に、1 回だけ "confirm" として書きます');
   });
 });
+
+describe("後続に回したい案（PBI-370）", () => {
+  const remark = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    step: "implement",
+    round: Number(id.split("-")[1]),
+    text: `指摘 ${id} の文`,
+    voided: false,
+    ...extra,
+  });
+  const implementTask = (remarks: unknown[], step = "implement") =>
+    ({
+      id: "t-1",
+      title: "予約",
+      body: "本文",
+      steps: [{ key: step, state: "active" }],
+      remarks,
+      outputs: { [step]: "# 前回" },
+      approved: {},
+      testViewpoints: [],
+      reproductionTests: [],
+      proposals: [],
+    }) as unknown as Task;
+  const DEFER = '"status" を "deferred" にして';
+
+  it("実装の指示に、案の書き方（決めるのは人。決まったことのように書かない）と、いま直すか・案にするかの基準を書く", () => {
+    const prompt = buildPrompt(implementTask([remark("implement-1-1")]), "implement");
+    expect(prompt).toContain('"status": "addressed か declined か deferred"');
+    expect(prompt).toContain(DEFER);
+    expect(prompt).toContain(
+      '"deferred" は案です。後続に回すかどうかは、マージの前に、人間が 1 件ずつ決めます',
+    );
+    expect(prompt).toContain("決まったことのように書かないでください");
+    // 基準（影響が大きいものは直す。小さく閉じて範囲の中なら直す。案にしてよいのは、提案の重みで、新しい仕組みが要る・範囲の外）
+    expect(prompt).toContain(
+      "- 影響が大きい指摘（データの破損・消失、セキュリティ、取り消せない外部への作用、互換性の破壊、受け入れ条件の不適合）は、起きやすさに関わらず、この PR で直す",
+    );
+    expect(prompt).toContain(
+      "- 後続に回したい案にしてよいのは、提案の重みの指摘（影響が小さい、または、影響は中くらいだが、独立した条件が 2 つ以上重なったときだけ起きる）のうち、直すのに新しい仕組みが要るもの・このタスクの範囲の外にあるものだけ",
+    );
+    expect(prompt).toContain(
+      "新しい仕組み（新しい状態・保存・やり直しの処理など）を自分で足して、範囲を広げない",
+    );
+    // 1 つの指摘に、直すものと回したいものが混ざるときは、案にして、人に見せる
+    expect(prompt).toContain(
+      '- 1 つの指摘に、直すものと、後続に回したいものが混ざっているときは、"status" を "deferred" にして',
+    );
+    // 案にした指摘・決定が無ければ、そのデータと行は出さない
+    expect(prompt).not.toContain("後続に回したい案にした指摘");
+    expect(prompt).not.toContain("この PR で直すと決めた指摘");
+  });
+
+  it("実装のほかの工程の指示には、案の書き方を出さない", () => {
+    const prompt = buildPrompt(
+      implementTask([remark("design-1-1", { step: "design" })], "design"),
+      "design",
+    );
+    expect(prompt).toContain('"status": "addressed か declined"');
+    expect(prompt).not.toContain("deferred");
+  });
+
+  it("前の提出で案にした指摘は、対応させる指摘から外す。後続に回すと決めた指摘と、人に確認中の案は、直さないデータとして渡し、この PR で直すと決めた指摘は、印を付けて渡す", () => {
+    const secret = `ghp_${"a".repeat(36)}`;
+    const prompt = buildPrompt(
+      implementTask([
+        remark("implement-1-1", {
+          text: `稀な条件の指摘 ${secret}`,
+          deferral: { proposedIn: 2, reason: "仕組みが要る", decision: "defer" },
+        }),
+        remark("implement-1-2", {
+          text: "文言の指摘",
+          deferral: { proposedIn: 2, reason: "範囲の外", decision: "fix" },
+        }),
+        remark("implement-1-3", {
+          text: "まだ決めていない案",
+          deferral: { proposedIn: 2, reason: "範囲の外" },
+        }),
+        remark("implement-2-1", { text: "文言の指摘", fixOf: "implement-1-2" }),
+      ]),
+      "implement",
+    );
+    // 案にした指摘は、対応させる指摘に並べない（人に確認中の案も。人が決めるまで、直さない・取り下げない）
+    expect(prompt).not.toContain("- [implement-1-1]");
+    expect(prompt).not.toContain("- [implement-1-2]");
+    expect(prompt).not.toContain("- [implement-1-3]");
+    expect(prompt).toContain(
+      "- [implement-2-1] （人間が、後続に回さず、この PR で直すと決めた指摘）文言の指摘",
+    );
+    expect(prompt).toContain(
+      '- 頭に「（人間が、後続に回さず、この PR で直すと決めた指摘）」とある指摘は、人間が決めたので、この PR で直す（もう一度 "deferred" にしない）',
+    );
+    // 後続に回すと決めた指摘と、人に確認中の案は、指示とは分けたデータ。秘密の値は伏せる。この PR で直すと決めた
+    // 指摘の元の指摘は、データにも入れない（差し戻しの指摘として渡っている）
+    expect(prompt).toContain("--- 後続に回したい案にした指摘（この PR では直しません） ---");
+    const json = prompt.split("```json\n").find((b) => b.includes('"deferredByPerson"'));
+    const data = JSON.parse(json?.split("\n```")[0] ?? "{}");
+    expect(data.deferredByPerson).toHaveLength(1);
+    expect(data.deferredByPerson[0].id).toBe("implement-1-1");
+    expect(data.deferredByPerson[0].text).toContain("稀な条件の指摘");
+    expect(data.awaitingDecision).toEqual([{ id: "implement-1-3", text: "まだ決めていない案" }]);
+    expect(prompt).not.toContain(secret);
+    expect(prompt).toContain(
+      '- deferredByPerson は、人間が、後続に回すと決めた指摘。対応を求められた指摘が、同じことを求めているときは、その指摘の "status" を "declined" にして',
+    );
+    expect(prompt).toContain(
+      "- awaitingDecision は、人間に確認中の案（まだ決まっていない）。人間が決めるまで、直さない・取り下げない",
+    );
+  });
+
+  describe("PR のレビューの指示", () => {
+    const target = {
+      repo: "https://github.com/acme/app",
+      number: 12,
+      url: "https://github.com/acme/app/pull/12",
+      title: "retry",
+      body: "",
+      headCommit: "h".repeat(40),
+      baseCommit: "b".repeat(40),
+      author: "alice",
+    };
+    const previousReview = {
+      round: 1,
+      url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+      at: "2026-10-16T01:00:00.000Z",
+      headCommit: "p".repeat(40),
+      body: "前回の総評\n\n- [提案] 稀な条件で通知が二重になる",
+      comments: [],
+    };
+    const reviewTask = (extra: Partial<Task> = {}) =>
+      ({
+        id: "t-1",
+        title: "レビュー",
+        body: "",
+        steps: [{ key: "review", state: "active" }],
+        remarks: [],
+        outputs: {},
+        approved: {},
+        reproductionTests: [],
+        reviewComments: [],
+        reviewTarget: target,
+        reviewRound: 2,
+        previousReview,
+        ...extra,
+      }) as unknown as Task;
+    const PENDING = "- 作者が「後続に回したい案（人に確認中）」と返した指摘は、";
+    const DECIDED =
+      "- 下のデータの deferredByPerson は、人間（この PR を作ったタスクの承認者）が、";
+
+    it("人に確認中の案は、提案の重みなら未対応に数えず、要修正の重みなら人が決めるまで残す、と伝える。人が決めた指摘が無ければ、決定の行とデータは出さない", () => {
+      const prompt = buildPrompt(reviewTask(), "review", {
+        diff: "diff",
+        replies: [],
+        reviewDeferrals: { deferred: [] },
+      });
+      expect(prompt).toContain(PENDING);
+      expect(prompt).toContain(
+        "[提案] の重さなら、未対応に数えず、もう一度指摘せず、判定の根拠にしない",
+      );
+      expect(prompt).toContain(
+        "[要修正] の重さなら、人間が後続に回すと決めるまで、未対応として残す",
+      );
+      expect(prompt).not.toContain(DECIDED);
+      expect(prompt).not.toContain('"deferredByPerson"');
+    });
+
+    it("人が後続に回すと決めた指摘を、指示とは分けたデータで渡し、重さに関わらず未対応に数えさせない（秘密の値は伏せてから切る）", () => {
+      const secret = `ghp_${"b".repeat(36)}`;
+      const prompt = buildPrompt(reviewTask(), "review", {
+        diff: "diff",
+        replies: [],
+        reviewDeferrals: {
+          deferred: [
+            {
+              text: `${"長".repeat(590)}${secret}`,
+              reason: `仕組みが要る ${secret}`,
+              url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+            },
+            { text: "画面から書いた指摘", reason: "範囲の外" },
+          ],
+        },
+      });
+      expect(prompt).toContain(DECIDED);
+      expect(prompt).toContain("重さに関わらず、未対応に数えず、もう一度指摘せず");
+      const json = prompt.split("```json\n").find((b) => b.includes('"deferredByPerson"'));
+      const data = JSON.parse(json?.split("\n```")[0] ?? "{}");
+      expect(data.deferredByPerson).toHaveLength(2);
+      expect(data.deferredByPerson[0].url).toBe(
+        "https://github.com/acme/app/pull/12#pullrequestreview-1",
+      );
+      expect(data.deferredByPerson[1]).toEqual({
+        finding: "画面から書いた指摘",
+        proposal: "範囲の外",
+      });
+      // 複数の指摘が 1 件にまとまっているときは、作者が回したいとした部分だけが対象
+      expect(prompt).toContain("proposal が後続に回したいとした部分だけが対象");
+      expect(prompt).not.toContain(secret);
+      expect(prompt).not.toContain(secret.slice(0, 8));
+      // 指示は、データより前
+      expect(prompt.indexOf(DECIDED)).toBeLessThan(prompt.indexOf('{"previousReview"'));
+    });
+
+    it("sacty が作った実装の PR のレビューでなければ（案の扱いを渡さなければ）、案の行は出さない。最初のレビューにも出さない", () => {
+      const other = buildPrompt(reviewTask(), "review", { diff: "diff", replies: [] });
+      expect(other).not.toContain(PENDING);
+      const first = buildPrompt(
+        reviewTask({ reviewRound: 1, previousReview: undefined }),
+        "review",
+        { diff: "diff", reviewDeferrals: { deferred: [{ text: "指摘", reason: "理由" }] } },
+      );
+      expect(first).not.toContain(PENDING);
+    });
+
+    it("案の決定を待って始めた、同じ先頭の判定のし直しでは、作者が断るか案にしたことと、案を人が決めたことを伝える", () => {
+      const task = reviewTask({
+        reviewTarget: { ...target, headCommit: "p".repeat(40) },
+        reviewRejudgeCommit: "p".repeat(40),
+      });
+      const awaited = buildPrompt(task, "review", {
+        diff: "diff",
+        replies: [],
+        reviewDeferrals: { deferred: [{ text: "指摘", reason: "理由" }], awaitedDecision: true },
+      });
+      expect(awaited).toContain(
+        "理由を付けて対応しない、または、後続に回したいと返し、コードを変えていない",
+      );
+      expect(awaited).toContain("後続に回したい案は、人間が決めた");
+      expect(awaited).toContain(DECIDED);
+      // 案の無い判定のし直し（PBI-357）は、今までどおり
+      const plain = buildPrompt(task, "review", {
+        diff: "diff",
+        replies: [],
+        reviewDeferrals: { deferred: [] },
+      });
+      expect(plain).toContain(
+        "前回の指摘のすべてに、理由を付けて対応しないと返し、コードを変えていない",
+      );
+      expect(plain).not.toContain("後続に回したい案は、人間が決めた");
+    });
+  });
+
+  it("対応の申告の deferred を読み取る", () => {
+    const read = extractBlocks(
+      `# 実装の説明\n\n\`\`\`json\n${JSON.stringify({
+        "sacty-responses": [
+          { remarkId: "implement-1-1", status: "deferred", text: "新しい仕組みが要る" },
+        ],
+      })}\n\`\`\`\n`,
+      new Set(["implement-1-1"]),
+      [],
+    );
+    expect(read.responses).toEqual([
+      { remarkId: "implement-1-1", text: "新しい仕組みが要る", status: "deferred" },
+    ]);
+  });
+});

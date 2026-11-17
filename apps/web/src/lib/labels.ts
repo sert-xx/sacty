@@ -387,6 +387,15 @@ export function describeEventParts(
         .join("\n"),
     };
   }
+  if (event.type === "DeferralsDecided") {
+    // 後続に回したい案への、指摘ごとの決定（PBI-370）。行には件数だけを出す
+    return {
+      text: describeEventText(event, l),
+      detail: event.payload.decisions
+        .map((d) => l.event.deferralItem(d.remarkId, d.decision === "fix"))
+        .join("\n"),
+    };
+  }
   if (event.type === "RemarkRepliesPosted") {
     // 指摘ごとの返信の結果（PBI-352）。返信できなかった指摘は、やり直さないので、先に並べる
     const failed = event.payload.results.filter((r) => r.failed !== undefined);
@@ -760,7 +769,20 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "ImplementationUnchanged":
       return e.ImplementationUnchanged(event.payload.number, event.payload.commit.slice(0, 7));
     case "ReviewRejudgeRequested":
-      return e.ReviewRejudgeRequested(event.payload.number, event.payload.commit.slice(0, 7));
+      return e.ReviewRejudgeRequested(
+        event.payload.number,
+        event.payload.commit.slice(0, 7),
+        event.payload.awaitsDecision === true,
+      );
+    case "DeferralsDecided":
+      return e.DeferralsDecided(
+        event.payload.decisions.filter((d) => d.decision === "defer").length,
+        event.payload.decisions.filter((d) => d.decision === "fix").length,
+      );
+    case "DeferralDecisionsPosted":
+      return event.payload.failure === undefined
+        ? e.DeferralDecisionsPosted(event.payload.number)
+        : e.DeferralDecisionsFailed(event.payload.number, l.text(event.payload.failure));
     case "PullRequestCiFinished":
       return e.PullRequestCiFinished(
         event.payload.result,
