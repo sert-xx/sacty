@@ -9644,9 +9644,15 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         // 分けた記録の、どれも書かれていない（途中まで書けて、残りを失うことが無い）
         expect(posted(service, id)).toHaveLength(0);
         expect(pulls.replyPostTimes).toHaveLength(1);
-        // GitHub が答えるようになった後にやり直しても、残りを投稿せずに、失敗として記録する
+        // GitHub が答えるようになった後にやり直しても、残りを投稿せずに、失敗として記録する。
+        // やり直しの一覧の読み取りが、レート制限に当たっても同じ（止めたことを失って、後で投稿し直さない。PBI-356）
         pulls.replyGate = undefined;
+        pulls.reviewListRateLimitedAfter = pulls.reviewListCalls;
         now += 61_000;
+        await drain(service);
+        delete pulls.reviewListRateLimitedAfter;
+        expect(deferredOf(service, id)).toHaveLength(0);
+        now += 2 * 3_600_000;
         await drain(service);
         expect(pulls.replyPostTimes).toHaveLength(1);
         expect(prComments(pulls)).toHaveLength(0);

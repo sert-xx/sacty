@@ -3917,6 +3917,18 @@ export class TaskService {
     const mine = (list: { url: string; body: string; author: string }[]) =>
       list.filter((c) => accounts.has(c.author.toLowerCase()));
     const prefix = `${REMARK_REPLY_MARKER_PREFIX}${taskId}:`;
+    // 前の処理で、時間切れのために、この提出の投稿を止めた（結果は、記録できなかった）：残りを投稿せずに、失敗を残す。
+    // 一覧の読み取りの前に思い出す（読み取りが制限に当たっても、止めたことを失って、後でやり直さないように）
+    // 止めたのが、この工程・この PR・この提出のときだけ（ほかの工程や PR の、同じ番号の提出に、持ち越さない）
+    const stopped = this.remarkReplyStopped.get(taskId);
+    if (
+      stopped &&
+      (stopped.step !== due.step ||
+        stopped.number !== due.number ||
+        stopped.submission !== due.submission)
+    ) {
+      this.remarkReplyStopped.delete(taskId);
+    } else if (stopped) timedOut = true;
     let where: { repo: string; token: string; number: number };
     let inlinePosted: { url: string; body: string }[];
     let commentPosted: { url: string; body: string }[];
@@ -3950,17 +3962,6 @@ export class TaskService {
     }
     const found = (list: { url: string; body: string }[], marker: string) =>
       list.find((c) => c.body.trimStart().startsWith(marker));
-    // 前の処理で、この提出の投稿を止めた（結果は、記録できなかった）：残りを投稿せずに、失敗を残す
-    // 止めたのが、この工程・この PR・この提出のときだけ（ほかの工程や PR の、同じ番号の提出に、持ち越さない）
-    const stopped = this.remarkReplyStopped.get(taskId);
-    if (
-      stopped &&
-      (stopped.step !== due.step ||
-        stopped.number !== due.number ||
-        stopped.submission !== due.submission)
-    ) {
-      this.remarkReplyStopped.delete(taskId);
-    } else if (stopped) timedOut = true;
     for (const [index, remark] of due.replies.entries()) {
       if (!valid()) return;
       if (!stillDue(remark)) continue;

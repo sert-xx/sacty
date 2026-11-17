@@ -41,6 +41,7 @@ export class GitHubRateLimitStore {
       );
       return;
     }
+    let dropped = 0;
     for (const [key, value] of Object.entries(parsed)) {
       const { until, streak } = (value ?? {}) as Partial<GitHubRateLimitWait>;
       if (
@@ -53,7 +54,14 @@ export class GitHubRateLimitStore {
         streak > 0
       ) {
         this.waits.set(key, { until, streak });
+      } else {
+        dropped += 1;
       }
+    }
+    if (dropped > 0) {
+      console.warn(
+        `[daemon] 保存してあった GitHub のレート制限の待ちのうち、${dropped} 件を読めませんでした（その分は、待ち無しで始めます）。`,
+      );
     }
   }
 

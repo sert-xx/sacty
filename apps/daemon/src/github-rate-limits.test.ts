@@ -63,7 +63,11 @@ describe("GitHub のレート制限の待ちの保存（PBI-356）", () => {
         "github.com:minus": { until: -1, streak: 1 },
       }),
     );
+    const partly = vi.spyOn(console, "warn").mockImplementation(() => {});
     const store = new GitHubRateLimitStore(file);
+    // 読めなかった項目があることを、件数つきで警告に残す
+    expect(partly).toHaveBeenCalledWith(expect.stringContaining("6 件を読めませんでした"));
+    partly.mockRestore();
     expect(store.get("github.com:me")).toEqual({ until: 5, streak: 1 });
     for (const key of ["text", "zero", "half", "null", "huge", "minus"]) {
       expect(store.get(`github.com:${key}`)).toBeUndefined();
