@@ -6325,7 +6325,7 @@ describe("人に確かめてほしいこと（PBI-301）", () => {
       }),
     ).get("t") as Task;
     expect(humanAsks(task).confirms).toEqual([
-      { remarkId: "implement-1-1", step: "implement", text: "上限の値は 31 日と推測しました" },
+      { remarkIds: ["implement-1-1"], step: "implement", text: "上限の値は 31 日と推測しました" },
     ]);
     // 複数あれば、指摘の順に並ぶ
     seq = 0;
@@ -6340,6 +6340,101 @@ describe("人に確かめてほしいこと（PBI-301）", () => {
       }),
     ).get("t") as Task;
     expect(humanAsks(many).confirms.map((c) => c.text)).toEqual(["一つ目", "二つ目"]);
+  });
+
+  it("同じ文の確認が複数の指摘に付いていれば、1 件にまとめ、付いていた指摘を指摘の順に並べる（PBI-354）", () => {
+    seq = 0;
+    const task = project(
+      reworked("t", {
+        decided: true,
+        remarkTexts: ["指摘 comment:1", "指摘 comment:2", "指摘 comment:3", "指摘 comment:4"],
+        responses: [
+          {
+            remarkId: "implement-1-3",
+            text: "直した",
+            confirm: "CI を再実行し、結果を確認してください。",
+          },
+          {
+            remarkId: "implement-1-1",
+            text: "直した",
+            confirm: "CI を再実行し、結果を確認してください。",
+          },
+          { remarkId: "implement-1-2", text: "直した", confirm: "別の確認" },
+          // 空白の違い（前後の空白・改行・文の中の空白）だけなら、同じ文として扱う
+          {
+            remarkId: "implement-1-4",
+            text: "直した",
+            confirm: "  CI  を再実行し、\n結果を確認してください。\n",
+          },
+        ],
+      }),
+    ).get("t") as Task;
+    expect(humanAsks(task).confirms).toEqual([
+      {
+        remarkIds: ["implement-1-1", "implement-1-3", "implement-1-4"],
+        step: "implement",
+        text: "CI を再実行し、結果を確認してください。",
+      },
+      { remarkIds: ["implement-1-2"], step: "implement", text: "別の確認" },
+    ]);
+  });
+
+  it("文の違う確認は、前半が同じでも・意味が同じでも、まとめない（PBI-354）", () => {
+    seq = 0;
+    const task = project(
+      reworked("t", {
+        decided: true,
+        remarkTexts: ["指摘 comment:1", "指摘 comment:2"],
+        responses: [
+          {
+            remarkId: "implement-1-1",
+            text: "直した",
+            confirm: "CI を再実行し、結果を確認してください。ローカルでは全テストが通りました。",
+          },
+          {
+            remarkId: "implement-1-2",
+            text: "直した",
+            confirm: "CI を再実行し、結果を確認してください。確認しない場合、失敗を見落とします。",
+          },
+        ],
+      }),
+    ).get("t") as Task;
+    expect(humanAsks(task).confirms.map((c) => c.remarkIds)).toEqual([
+      ["implement-1-1"],
+      ["implement-1-2"],
+    ]);
+  });
+
+  // 比べるときに除くのは空白だけ。違いを 1 種類ずつ変えた文が、元の文とまとまらないことを確かめる
+  it.each([
+    ["大文字と小文字", "ci を再実行し、結果を確認してください。"],
+    ["全角と半角", "ＣＩ を再実行し、結果を確認してください。"],
+    ["句読点の有無", "CI を再実行し、結果を確認してください"],
+    ["句読点の種類", "CI を再実行し,結果を確認してください。"],
+  ])("%sだけが違う確認は、まとめない（PBI-354）", (_kind, other) => {
+    seq = 0;
+    const task = project(
+      reworked("t", {
+        decided: true,
+        remarkTexts: ["指摘 comment:1", "指摘 comment:2"],
+        responses: [
+          {
+            remarkId: "implement-1-1",
+            text: "直した",
+            confirm: "CI を再実行し、結果を確認してください。",
+          },
+          { remarkId: "implement-1-2", text: "直した", confirm: other },
+        ],
+      }),
+    ).get("t") as Task;
+    expect(humanAsks(task).confirms).toEqual([
+      {
+        remarkIds: ["implement-1-1"],
+        step: "implement",
+        text: "CI を再実行し、結果を確認してください。",
+      },
+      { remarkIds: ["implement-1-2"], step: "implement", text: other },
+    ]);
   });
 
   it("対応が無い・確かめたいことが無ければ、何も出さない（空）", () => {
