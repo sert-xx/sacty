@@ -12,6 +12,7 @@ import {
   pruneContextImagesAndBuildCache,
   removeStaleContextImages,
   runDockerStreaming,
+  CONTEXT_IMAGE_PRUNE_SKIPPED_LOG as SKIPPED,
 } from "./context-images.js";
 import { buildCachePruneArgs } from "./image.js";
 import type { ImageState } from "./image-presence.js";
@@ -1046,7 +1047,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     expect(logs).toEqual([]);
   });
 
-  it("ログの期間と docker の引数は、同じ定数から作る", async () => {
+  it("ビルドキャッシュの片付けの引数とログに、期間の絞り込みと --all が無い", async () => {
     expect(buildCachePruneArgs()).toEqual(["builder", "prune", "-f"]);
     const { calls, logs, prune } = docker();
     await prune();
@@ -1276,7 +1277,8 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
       expect(builder.view().find((v) => v.projectId === "p2")?.loadError).toBeDefined();
       // イメージの一覧も取らず、消しもしない（ビルドキャッシュの片付けだけ）
       expect(calls).toEqual([CACHE]);
-      expect(logs).toEqual([ran("Total: 1GB")]);
+      // イメージの片付けを飛ばしたことを、ビルドキャッシュの片付けの前に1行出す（警告ではない）
+      expect(logs).toEqual([SKIPPED, ran("Total: 1GB")]);
       expect(state.succeededAt).toBe(1_000_000);
     });
 
@@ -1289,14 +1291,16 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
       await builder.refresh();
       await builder.idle();
       expect(calls).toEqual([CACHE]);
-      expect(logs).toEqual([ran("Total: 1GB")]);
+      expect(logs).toEqual([SKIPPED, ran("Total: 1GB")]);
     });
 
     it("読めないプロジェクトが無ければ、使わなくなったイメージを消してから、ビルドキャッシュを片付ける", async () => {
-      const { builder, calls } = wired({ projects: two, load: loadExcept(() => []), listed });
+      const { builder, calls, logs } = wired({ projects: two, load: loadExcept(() => []), listed });
       await builder.refresh();
       await builder.idle();
       expect(calls).toEqual([LS, ...listed().map((image) => `${RM}${image}`), CACHE]);
+      // イメージを片付けたときは、飛ばしたことを出さない
+      expect(logs).not.toContain(SKIPPED);
     });
 
     it("前に読めていたプロジェクトが読めなくなっても、そのプロジェクトのイメージを含めて1つも消さない", async () => {
@@ -1336,7 +1340,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     });
 
     it("読めない間も、前に成功してから間隔（6時間）が経つまでは走らせず、過ぎたら走らせる", async () => {
-      const { builder, calls, clock, cacheCalls } = wired({
+      const { builder, calls, logs, clock, cacheCalls } = wired({
         projects: two,
         load: loadExcept(() => ["p2"]),
         listed,
@@ -1348,10 +1352,13 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
       await builder.refresh();
       await builder.idle();
       expect(cacheCalls()).toBe(1);
+      // 間隔の内の読み直しでは、イメージの片付けを飛ばしたことも出さない（ビルドキャッシュの片付けを実行する回にだけ出す）
+      expect(logs).toEqual([SKIPPED, ran("Total: 1GB")]);
       clock.now += 1;
       await builder.refresh();
       await builder.idle();
       expect(cacheCalls()).toBe(2);
+      expect(logs).toEqual([SKIPPED, ran("Total: 1GB"), SKIPPED, ran("Total: 1GB")]);
       expect(imageCalls(calls)).toEqual([]);
     });
 
@@ -1510,12 +1517,12 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
       await builder.idle();
       const timedOut =
         "warn: [daemon] 片付けが上限の時間を過ぎたので、ビルドキャッシュの片付けを打ち切りました。次の読み直しで試し直します。";
-      expect(logs).toEqual([timedOut]);
+      expect(logs).toEqual([SKIPPED, timedOut]);
       expect(state.succeededAt).toBeUndefined();
       await builder.refresh();
       await builder.idle();
       expect(calls).toEqual([CACHE, CACHE]);
-      expect(logs).toEqual([timedOut, timedOut]);
+      expect(logs).toEqual([SKIPPED, timedOut, SKIPPED, timedOut]);
     });
 
     it("読めない間の片付けも、デーモンを止めると止まり、止めた後は片付けない", async () => {
@@ -1529,6 +1536,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
       await vi.waitFor(() => expect(cacheCalls()).toBe(1));
       await builder.stop();
       expect(logs).toEqual([
+        SKIPPED,
         "warn: [daemon] デーモンを止めるので、ビルドキャッシュの片付けを打ち切りました。",
       ]);
       expect(state.succeededAt).toBeUndefined();
@@ -1543,7 +1551,10 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
       });
       await prune(null);
       expect(calls).toEqual([CACHE]);
-      expect(logs).toEqual([ran("Total: 0B")]);
+      expect(logs).toEqual([SKIPPED, ran("Total: 0B")]);
+      expect(SKIPPED).toBe(
+        "[daemon] コンテキストを読めないプロジェクトがあるので、使わなくなったコンテキストのイメージの片付けは飛ばします（ビルドキャッシュだけを片付けます）。",
+      );
     });
 
     it("残す一覧が無い（null）片付けも、始める前に打ち切られていたら、docker を動かさず、理由を出す", async () => {
@@ -1555,6 +1566,17 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
       expect(logs).toEqual([
         "warn: [daemon] デーモンを止めるので、ビルドキャッシュの片付けは始めていません。",
       ]);
+    });
+
+    it("残す一覧が無い（null）片付けで、ビルドキャッシュの片付けが失敗しても、イメージの片付けを飛ばしたことは出す", async () => {
+      const { logs, prune, clock } = docker({ builder: { code: 1, stdout: "boom\n" } });
+      await prune(null);
+      expect(logs).toEqual([SKIPPED, failed("docker の終了コード 1：boom")]);
+      // 一覧があれば（イメージを片付ければ）、出さない
+      clock.now += BUILD_CACHE_PRUNE_INTERVAL_MS;
+      logs.length = 0;
+      await prune([]);
+      expect(logs).toEqual([failed("docker の終了コード 1：boom")]);
     });
   });
 });

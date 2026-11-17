@@ -100,16 +100,15 @@ type ProjectImages = {
   /** 一度でも読み終えた（読めなかったときも含む）。 */
   loaded: boolean;
   /**
-   * 設定と定義を読めて、entries が今の定義を表している（設定を読めずに読み終えたことにしたときは false。イメージの
-   * 片付けは、すべてのプロジェクトがこの状態で、読み込みの失敗も無いときだけ行う。空の一覧で、作ったイメージを消さない
-   * ように）。
-   */
-  current: boolean;
-  /**
-   * 設定を読めないときに読み終えたことにしたまま（設定が戻ってから読み直すまで）。この間は、イメージもビルドキャッシュも
-   * 片付けない（前の読み込みの失敗が残っていても）。
+   * 設定を読めないときに読み終えたことにしたまま（設定が戻ってから読み直すまで。entries は今の定義を表していない）。
+   * この間は、イメージもビルドキャッシュも片付けない（前の読み込みの失敗が残っていても。空の一覧で、作ったイメージを
+   * 消さないように）。
    */
   configUnread?: boolean;
+  /**
+   * 前の読み込みの失敗（読めれば消す）。ある間は、entries が今の定義を表しているか分からないので、イメージは片付けない
+   * （ビルドキャッシュは片付ける）。
+   */
   loadError?: DaemonText;
   warnings: DaemonText[];
   entries: ContextImageEntry[];
@@ -428,7 +427,6 @@ export class ContextImageBuilder {
       name,
       loading: true,
       loaded: false,
-      current: false,
       warnings: [],
       entries: [],
     };
@@ -443,7 +441,6 @@ export class ContextImageBuilder {
       // 確かめていないので、片付けはしない
       project.loading = false;
       project.loaded = true;
-      project.current = false;
       project.configUnread = true;
       return;
     }
@@ -528,7 +525,6 @@ export class ContextImageBuilder {
     delete project.loadError;
     project.loading = false;
     project.loaded = true;
-    project.current = true;
   }
 
   /** 順番待ちのものを、1つずつ作る（作っている途中なら、その続きで作る）。 */
@@ -795,7 +791,8 @@ function lastOutputLine(output: string): string {
 
 /**
  * ビルドキャッシュの片付けを、前に成功してから次に走らせるまでの間隔（6時間）。片付け（イメージの片付け）は読み直しのたび
- * （5分ごとを含む）に動くが、毎回走らせても消えるものはほとんど変わらない。
+ * （5分ごとを含む）に動く。そのたびに走らせると、成功のログが5分ごとに出て、片付けの間は読み直しが手元にあるかの確かめを
+ * 待つので、間隔を置いて、ログの量と待たせる回数を抑える。
  */
 export const BUILD_CACHE_PRUNE_INTERVAL_MS = 6 * 60 * 60_000;
 
@@ -805,11 +802,16 @@ export type BuildCachePruneState = {
   succeededAt?: number;
 };
 
+/** 残す一覧が揃わず、イメージの片付けを飛ばしたときのログ（PBI-389）。 */
+export const CONTEXT_IMAGE_PRUNE_SKIPPED_LOG =
+  "[daemon] コンテキストを読めないプロジェクトがあるので、使わなくなったコンテキストのイメージの片付けは飛ばします（ビルドキャッシュだけを片付けます）。";
+
 /**
  * デーモンの片付け（PBI-388）。使わなくなったコンテキストのイメージを消してから（層がキャッシュに残るので、後で）、
  * 使っていないビルドキャッシュを消す。失敗しても例外にしない（イメージの作成・読み直しに関わらせない）。signal は、
  * 片付けの時間切れかデーモンの停止で止まる（reason で見分ける。run は、止まったら docker を止め、止まった後は動かさないこと）。
- * keep が null なら、イメージの片付けを飛ばして、ビルドキャッシュだけを消す（PBI-389）。
+ * keep が null なら、イメージの片付けを飛ばして、ビルドキャッシュだけを消す（PBI-389）。飛ばしたことは、ビルドキャッシュの
+ * docker を動かす回に、log に1行出す。
  *
  * ビルドキャッシュの片付けは、前に成功してから BUILD_CACHE_PRUNE_INTERVAL_MS が経つまで走らせない（起動してから最初の
  * 片付けでは走らせる）。失敗・打ち切りでは時刻を進めず、次の片付けで試し直す。結果は、解釈せずに log に出す（成功なら
@@ -867,6 +869,9 @@ export async function pruneContextImagesAndBuildCache(deps: {
     interrupted(false);
     return;
   }
+  // イメージの片付けを飛ばしていることを、ビルドキャッシュの片付けを実行する回にだけ出す（読み直しのたびには出さない）。
+  // 片付けの失敗ではないので、警告にはしない（読めなかったことは、読み込みの失敗として別に出ている）
+  if (deps.keep === null) deps.log(CONTEXT_IMAGE_PRUNE_SKIPPED_LOG);
   let cache: { code: number; stdout: string };
   try {
     cache = await deps.run(buildCachePruneArgs());

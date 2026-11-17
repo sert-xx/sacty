@@ -1,4 +1,4 @@
-<!-- Code: packages/cli/src/index.ts, apps/daemon/src/config.ts (loadConfig), apps/daemon/src/instance-lock.ts, apps/daemon/src/intake.ts, apps/daemon/src/secrets.ts, apps/daemon/src/host-mcp.ts, apps/daemon/src/services.ts, apps/daemon/src/image.ts (pruneOldImages, BUILD_CACHE_MAX_UNUSED_DAYS), apps/daemon/src/context-images.ts (pruneContextImagesAndBuildCache), apps/daemon/src/notifier.ts, apps/daemon/src/error-report.ts, apps/web/src/components/error-report.tsx, apps/web/src/i18n/messages/labels.ts (SubagentNoticeImitated) -->
+<!-- Code: packages/cli/src/index.ts, apps/daemon/src/config.ts (loadConfig), apps/daemon/src/instance-lock.ts, apps/daemon/src/intake.ts, apps/daemon/src/secrets.ts, apps/daemon/src/host-mcp.ts, apps/daemon/src/services.ts, apps/daemon/src/image.ts (pruneOldImages, buildCachePruneArgs), apps/daemon/src/context-images.ts (pruneContextImagesAndBuildCache), apps/daemon/src/notifier.ts, apps/daemon/src/error-report.ts, apps/web/src/components/error-report.tsx, apps/web/src/i18n/messages/labels.ts (SubagentNoticeImitated) -->
 
 [日本語](troubleshooting.md) | **English**
 

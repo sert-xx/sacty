@@ -197,6 +197,7 @@ Images in `images.yaml` of context repositories ([Context composition](context.e
     The daemon log shows the result without interpreting it. On success: that the cleanup ran, and the last line of the docker output (also when there was nothing to remove). On failure: the docker exit code and the last line of its output (or the reason when docker could not be started).
     While failures continue, each cleanup logs the failure line.
     The success line goes to standard output (`console.log`); the failure and cut-short lines go out as warnings (`console.warn`).
+    When the image cleanup is skipped (there is a project whose context could not be read), one line saying so goes to standard output, only on a run that executes the build cache cleanup (`CONTEXT_IMAGE_PRUNE_SKIPPED_LOG`; not on rereads within the interval).
     The build cache cleanup does not use the list of images to keep, so it runs with the same interval, time limit, and log lines even while there is a project whose context could not be read.
     While the configuration cannot be read, and while there is a project that was read when the configuration could not be read (not reread since the configuration came back), neither images nor build cache are removed, and nothing is logged.
     The wording of a cut-short cleanup depends on the reason (`PRUNE_ABORT_TIMEOUT`: the time limit; `PRUNE_ABORT_STOP`: the daemon stopping) and on whether the build cache cleanup had started.
