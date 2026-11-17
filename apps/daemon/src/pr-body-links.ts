@@ -78,13 +78,15 @@ const ACTIVE_RUNS: readonly { tail: RegExp; head?: RegExp }[] = [
   { tail: /~+/g },
 ];
 
-/** バックスラッシュによる打ち消しか、文字参照（どちらも、書いた文字と、読まれる文字が違う）。 */
-const REWRITTEN = new RegExp(`\\\\|${CHARACTER_REFERENCE.source}`);
+/** 並びの決め手になりうる記号（`@`・`#`・`://`・`~`・`www.`・`GH-` のどれかの一部）。 */
+const DECISIVE = /[@#:~.-]/;
 
 /**
  * 本文の中の、GitHub で別の働きをしうる並びの範囲（始まりの順）。打ち消し・文字参照は、書いた文字のままでは並びを
- * 読めない（`w\@example.com` は `w@example.com`、`&#64;octocat` は `@octocat` と読まれる）ので、それを含む、空白までの
- * 文字のかたまりも、並びとして扱う（読まれる文字に直して確かめるのではなく、変えない側に倒す）。
+ * 読めない（`w\@example.com` は `w@example.com`、`&commat;octocat` は `@octocat` と読まれる）。読まれる文字に直して
+ * 確かめるのではなく、それを含む ASCII の文字の連なり（空白と、ASCII でない文字で区切る）を、並びとして扱う（変えない
+ * 側に倒す）。打ち消しは、連なりに決め手の記号があるときだけ数える（`foo\_bar` は、どの並びにもならない）。並びは
+ * ASCII の文字だけでできているので、空白を置かない日本語の文でも、連なりは文の全体には広がらない。
  */
 function activeRuns(text: string): Span[] {
   const runs: Span[] = [];
@@ -95,9 +97,11 @@ function activeRuns(text: string): Span[] {
       runs.push({ start, end: match.index + match[0].length });
     }
   }
-  for (const match of text.matchAll(/\S+/g)) {
-    if (REWRITTEN.test(match[0]))
-      runs.push({ start: match.index, end: match.index + match[0].length });
+  for (const match of text.matchAll(/[!-~]+/g)) {
+    const chunk = match[0];
+    if (CHARACTER_REFERENCE.test(chunk) || (chunk.includes("\\") && DECISIVE.test(chunk))) {
+      runs.push({ start: match.index, end: match.index + chunk.length });
+    }
   }
   return runs.sort((a, b) => a.start - b.start);
 }
@@ -233,11 +237,10 @@ function collect(
       const file = path.replace(/[#?].*$/, "").replace(/\/+$/, "");
       const candidates: { text: string; removal: Removal }[] = [];
       if (!hasLabel) {
-        candidates.push(
-          path === ""
-            ? { text: "", removal: { label: false } }
-            : { text: inlineCode(path), removal: { label: false, path } },
-        );
+        // 表示の文字が空で、作業領域そのものへのリンクは、変えない。外すと何も残らず、前後の文字が、空白を挟んで
+        // つながる（`Fixes [](/workspace) #12` が `Fixes  #12` になる）。見えないリンクなので、残しても表示は変わらない
+        if (path === "") return;
+        candidates.push({ text: inlineCode(path), removal: { label: false, path } });
       } else {
         if (file !== "" && !label.includes(file)) {
           candidates.push({
@@ -287,9 +290,11 @@ function collect(
  *   隣り合うリンク（`joinedSpans`。`ping [@](/workspace)octocat`・`see [http](/workspace)://example.com/x`）。置き換えた後の
  *   本文で確かめ、当たったリンクを除いて、もう一度置き換える。それでも当たるものがあれば、本文を変えずに返す
  * - パスに縦棒があるリンク（表の中で、添えたパスの縦棒が列の区切りになる）
+ * - 表示の文字が空で、作業領域そのものへのリンク（外すと何も残らず、前後の文字が、空白を挟んでつながる）
  * 確かめるのは、この種類だけである。GitHub のほかの解釈が、外した後の文字のつながりで変わることは、確かめない
- * （コミットの SHA のリンク・絵文字の `:名前:`・タスクリストのチェックボックス。表の中で、セルが空になる・行が区切りの
- * 行の形になる・添えたパスのバッククォートが、同じセルの組になっていないバッククォートと組になる）。
+ * （空白を挟んでつながる並び。`[Fix](/workspace/Fix)es #12` は `Fixes #12` になる。コミットの SHA のリンク・絵文字の
+ * `:名前:`・タスクリストのチェックボックス。表の中で、行が区切りの行の形になる・添えたパスのバッククォートが、同じ
+ * セルの組になっていないバッククォートと組になる）。
  *
  * 本文は長さの上限（PR_BODY_MAX）の後のものを渡す。置き換えは、元のリンクより長い文字にしない（返す本文は、渡した本文より
  * 長くならない）。その長さで、ふつうの本文の解析は 0.1 秒ほど。解析に回る本文（作業領域のパス・バックスラッシュ・文字参照の
@@ -300,47 +305,72 @@ export function withoutWorkspaceLinks(body: string): string {
   if (cannotLinkToWorkspace(body)) return body;
   try {
     const tree = fromMarkdown(body);
-    // 外すと周りの文字とつながるリンクの位置。1回目の置き換えで見つけて除き、2回目でも見つかれば、本文を変えない
-    const skip = new Set<number>();
-    for (const last of [false, true]) {
-      const found: Replacement[] = [];
-      const removed = new Map<Nodes, Removal>();
-      collect(tree, body, found, removed, skip);
-      if (found.length === 0) return body;
-      found.sort((a, b) => a.start - b.start);
-      const out = replaced(body, 0, body.length, found);
-      // 置き換えた文字の、置き換えた後の本文での範囲
-      let shift = 0;
-      const spans = found.map((r) => {
-        const start = r.start + shift;
-        shift += r.text.length - (r.end - r.start);
-        return { start, end: start + r.text.length };
-      });
-      const joined = joinedSpans(out, spans);
-      if (joined.size > 0) {
-        if (last) return body;
-        for (const i of joined) skip.add(found[i]?.start ?? -1);
-        continue;
-      }
-      const expected = JSON.stringify(shapeOf(tree, removed));
-      const actual = JSON.stringify(shapeOf(fromMarkdown(out), new Map()));
-      return expected === actual ? out : body;
-    }
-    return body;
+    // 外すと周りの文字とつながるリンクを1回目の置き換えで見つけ、それを除いて、もう一度置き換える。2回目でも
+    // つながるリンクがあれば、本文を変えない
+    const first = replaceOnce(tree, body, new Set());
+    const done =
+      first && first.joined.length > 0 ? replaceOnce(tree, body, new Set(first.joined)) : first;
+    if (!done || done.joined.length > 0) return body;
+    const expected = JSON.stringify(shapeOf(tree, done.removed));
+    const actual = JSON.stringify(shapeOf(fromMarkdown(done.out), new Map()));
+    return expected === actual ? done.out : body;
   } catch {
     return body;
   }
 }
 
 /**
+ * 1回分の置き換え。skip にある位置のリンクを除いて、作業領域へのリンク・画像を置き換えた本文（out）と、置き換えた
+ * リンク・画像（removed）、置き換えた文字が周りの文字とつながったリンクの、元の本文での位置（joined）を返す。置き換える
+ * リンクが無ければ、何も返さない。
+ */
+function replaceOnce(
+  tree: Nodes,
+  body: string,
+  skip: ReadonlySet<number>,
+): { out: string; removed: Map<Nodes, Removal>; joined: number[] } | undefined {
+  const found: Replacement[] = [];
+  const removed = new Map<Nodes, Removal>();
+  collect(tree, body, found, removed, skip);
+  if (found.length === 0) return undefined;
+  found.sort((a, b) => a.start - b.start);
+  const out = replaced(body, 0, body.length, found);
+  // 置き換えた文字の、置き換えた後の本文での範囲
+  let shift = 0;
+  const spans = found.map((r) => {
+    const start = r.start + shift;
+    shift += r.text.length - (r.end - r.start);
+    return { start, end: start + r.text.length };
+  });
+  const joined = [...joinedSpans(out, spans)].flatMap((i) => found[i]?.start ?? []);
+  return { out, removed, joined };
+}
+
+/**
+ * 作業領域へのリンクを外した本文を、PR に書ける形にする。外した後に文字がつながる・リンク先の文字参照が元の文字に戻ると、
+ * 伏せたはずの秘密の値（secrets）が現れうるので、外した後に伏せ直す。伏せた結果が長さの上限を超える（伏せ字が値より
+ * 長い）ときは、外すのをやめて、渡された本文（上限の中）を返す。always：外すリンクが無くても、伏せ直すか。
+ */
+function unlinked(body: string, secrets: readonly string[], always: boolean): string {
+  const out = withoutWorkspaceLinks(body);
+  if (out === body && !always) return body;
+  const hidden = redact(out, secrets);
+  return hidden.length <= PR_BODY_MAX ? hidden : body;
+}
+
+/**
+ * sacty が組み立てた本文（長さの上限と、秘密の値の扱いの後のもの）から、作業領域へのリンクを外す。外すリンクが無くても、
+ * 伏せ直す（sacty が書いた文字だけの本文なので、秘密の値と同じ文字は、いつも伏せてよい）。
+ */
+export function unlinkedGeneratedBody(body: string, secrets: readonly string[]): string {
+  return unlinked(body, secrets, true);
+}
+
+/**
  * すでにある PR の更新で、人の直しとマージした本文・エージェントがまとめた本文（どれも長さの上限の中）から、作業領域への
- * リンクを外す。外して本文が変わったときだけ、秘密の値（secrets）を伏せ直す（外した後に文字がつながる・リンク先の文字参照が
- * 元の文字に戻ると、伏せたはずの値が現れうる）。伏せた結果が上限を超える（伏せ字が値より長い）ときは、外すのをやめて、
- * 渡された本文を返す。外すリンクが無ければ、渡された本文をそのまま返す（人が書いた本文に、ほかの手を加えない）。
+ * リンクを外す。`unlinkedGeneratedBody` と違い、伏せ直すのは、外して本文が変わったときだけ。外すリンクが無ければ、
+ * 渡された本文をそのまま返す（人が書いた文字を含む本文なので、作業領域へのリンクが無い本文には、手を加えない）。
  */
 export function unlinkedMergedBody(body: string, secrets: readonly string[]): string {
-  const unlinked = withoutWorkspaceLinks(body);
-  if (unlinked === body) return body;
-  const hidden = redact(unlinked, secrets);
-  return hidden.length <= PR_BODY_MAX ? hidden : body;
+  return unlinked(body, secrets, false);
 }

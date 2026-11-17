@@ -5807,7 +5807,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       implement(
         [
           "[手順](/workspace/docs/ghp&#95;secret.md) を直しました。",
-          "値は ghp_[](/workspace)secret です。",
+          "値は ghp_[s](/workspace)ecret です。",
           "![ghp&#95;secret](/workspace/a.png)",
         ].join("\n\n"),
       ),
@@ -7957,7 +7957,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         "> 人のメモ：[設計](https://example.com/design) と [相対](docs/a.md) を見ること。";
       pulls.bodies[7] = [
         kept,
-        "> [手順](/workspace/docs/setup.md) に沿う。値は ghp_[](/workspace)secret です。",
+        "> [手順](/workspace/docs/setup.md) に沿う。値は ghp_[s](/workspace)ecret です。",
         "",
         first,
       ].join("\n");
@@ -8015,7 +8015,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const merged = [
         "## まとめた本文",
         "",
-        "[手順](/workspace/docs/setup.md) と [設計](https://example.com/design) のとおり。値は ghp_[](/workspace)secret です。",
+        "[手順](/workspace/docs/setup.md) と [設計](https://example.com/design) のとおり。値は ghp_[s](/workspace)ecret です。",
       ].join("\n");
       const { activity, service, pulls, id } = await toImplementGate([
         ...rework(),
