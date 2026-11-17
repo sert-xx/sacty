@@ -108,7 +108,7 @@
 
 - 足したテスト（`apps/daemon/src/context-images.test.ts`）：時計が戻って前に成功した時刻より前になっても走らせ、時刻を覚え直してからはふつうに間隔を数える。成功は `log`、失敗（終了コード・例外）と打ち切り（時間切れ・停止・理由なし）は `warn` に出る。
 - 修正を戻して、落ちることを確かめた（時計が戻ったときの扱いを外す：1 件、失敗を `log` に出す：5 件、打ち切りを `log` に出す：4 件）。
-- `origin/main` を merge で取り込んだ後に、`npm run lint`：成功。`npm run typecheck`：成功。`npx vitest run --no-file-parallelism`：__FULL3__。
+- `origin/main` を merge で取り込んだ後に、`npm run lint`：成功。`npm run typecheck`：成功。`npx vitest run --no-file-parallelism`：261 ファイル・5117 件が成功（1 件はスキップ）。
 - 確かめていないこと：`main.ts` で `console.warn` を渡している所は、テストでは通していない（型の検査だけ）。
 
 ## 残したこと
