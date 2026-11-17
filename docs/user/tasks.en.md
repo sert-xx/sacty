@@ -1125,8 +1125,8 @@ In the following cases, things go differently.
 
 ### Checking the result of the Integration review
 
-A task whose plan is "Split" runs the Integration review when all the PRs of its child tasks are merged, and then waits for your approval.
-In the Integration review, an AI checks whether the code that combines the child tasks meets the requirements of the parent task.
+A task whose plan is "Split" runs the Integration review when all its child tasks are settled (completed, or cancelled with your acceptance), and then waits for your approval.
+In the Integration review, an AI checks whether the code after the PRs of the child tasks were merged meets the requirements of the parent task (the changes of cancelled child tasks are not in it).
 
 1. In "Integration review" in the task details, read the verdict, the verdict per viewpoint, and what is missing.
 2. When there is "For a person to check", check those items yourself before approving.

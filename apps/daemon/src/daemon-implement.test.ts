@@ -7018,6 +7018,47 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    it("時間切れになった読み取りが終わるまでは、新しい読み取りを始めない（未完了の通信を積み重ねない）", async () => {
+      const pulls = new FakePulls();
+      const gate = Promise.withResolvers<CiCheck[]>();
+      let reads = 0;
+      let slow = true;
+      const ci: CiStatusReader = {
+        snapshot: async () => {
+          reads++;
+          return { checks: slow ? await gate.promise : [workflow("failure")], failedRuns: [] };
+        },
+        failures: async () => [],
+        rerunFailedJobs: async () => {},
+        repositoryHasNoCi: async () => false,
+      };
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { activity, service, id } = await toImplementGate([], {
+        pulls,
+        ci,
+        reviewCiTimeoutMs: 20,
+      });
+      pulls.state = { state: "open" };
+      // 1回目の読み取りが時間切れになる（通信は続いている）
+      await service.checkPullRequests();
+      expect(reads).toBe(1);
+      // 終わるまでは、確認のたびに読み直さない
+      slow = false;
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(reads).toBe(1);
+      expect(ciTypes(service, id)).toEqual([]);
+      // 終わったら（時間切れの後に届いた答えは使わない）、次の確認で読み直す
+      gate.resolve([workflow("failure")]);
+      await gate.promise;
+      await Promise.resolve();
+      await service.checkPullRequests();
+      expect(reads).toBe(2);
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      warn.mockRestore();
+      activity.close();
+    });
+
     it("CI が1つも無い PR は、しばらくの間だけ読み、現れなければ読むのをやめる。現れて落ちたら記録する", async () => {
       const pulls = new FakePulls();
       const { ci, state } = fakeCi();
@@ -7787,6 +7828,58 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(judge?.command.join(" ")).not.toContain("--- メモリー ---");
       expect(judge?.command).not.toContain("/sacty-memory/project");
     });
+
+    it.each([
+      ["読めない", () => Promise.reject(new Error("network"))],
+      ["返らない", () => new Promise<never>(() => {})],
+      // 記録そのものが例外になる（下で、記録の処理を失敗させる）
+      ["記録に失敗する", undefined],
+    ] as const)(
+      "CI を%s確認でも、同じ確認で、開いている PR の指摘を取り込む（PBI-364）",
+      async (_name, snapshot) => {
+        const pulls = new FakePulls();
+        let reads = 0;
+        const ci: CiStatusReader = {
+          snapshot: () => {
+            reads++;
+            return snapshot ? snapshot() : Promise.resolve({ checks: [], failedRuns: [] });
+          },
+          failures: async () => [],
+          rerunFailedJobs: async () => {},
+          repositoryHasNoCi: async () => false,
+        };
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { activity, service, id } = await toImplementGate(
+          [rework("implement", "実装で直せる")],
+          { pulls, now: later, ci, reviewCiTimeoutMs: 20 },
+        );
+        if (!snapshot) {
+          vi.spyOn(
+            service as unknown as { recordPullRequestCi: () => Promise<void> },
+            "recordPullRequestCi",
+          ).mockImplementation(async () => {
+            reads++;
+            throw new Error("記録できない ghp_secret");
+          });
+        }
+        // 指摘がまだ無い確認：CI を読みに行き、失敗しても確認は終わる
+        await service.checkPullRequests();
+        expect(reads).toBe(1);
+        // 理由はログに出し、トークンは伏せる
+        expect(warn.mock.calls.flat().join("\n")).toContain("CI");
+        expect(warn.mock.calls.flat().join("\n")).not.toContain("ghp_secret");
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        // 指摘が届いた確認：取り込んで、差し戻す
+        pulls.feedbackList = [item("comment:1")];
+        await service.checkPullRequests();
+        const events = service.get(id)?.activity ?? [];
+        expect(events.some((e) => e.type === "PullRequestReviewImported")).toBe(true);
+        expect(events.at(-1)?.type).toBe("ChangesRequested");
+        expect(events.some((e) => e.type === "PullRequestCiFailed")).toBe(false);
+        warn.mockRestore();
+        activity.close();
+      },
+    );
 
     it("レビュー・行のコメント・通常のコメントを指摘として取り込み、ゴールガーディアンが実装と判断したら差し戻す", async () => {
       const pulls = new FakePulls();

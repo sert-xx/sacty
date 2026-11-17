@@ -998,7 +998,7 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(gate()).not.toContain("人が確かめること");
     server = detail(integrate(["実際の決済サービスで確かめる", "実機で確かめる"]));
     await wait();
-    expect(gate()).toContain("人が確かめることが2件あります。確かめてから承認してください");
+    expect(gate()).toContain("人が確かめることが2件あります。確かめてから承認するか、差し戻して");
     expect(
       container.querySelector('[data-testid="integration-human-checks"]')?.textContent,
     ).toContain("実際の決済サービスで確かめる");

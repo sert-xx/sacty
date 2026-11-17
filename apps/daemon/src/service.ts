@@ -1041,6 +1041,8 @@ export const REVIEW_CI_TIMEOUT_MS = 30_000;
  * （マージの検出・指摘の取り込み）を長く止めない。
  */
 export const PR_CI_TIMEOUT_MS = 15_000;
+/** PR の確認の最後に、人の承認を待つ実装の PR の CI を、並べて読む件数（PBI-364）。 */
+export const PR_CI_CONCURRENCY = 4;
 /** CI が失敗していて実行中のものが無い PR の CI を、読み直す間隔（PBI-364。人が再実行して通ったことに気づくため）。 */
 export const PR_CI_FAILED_RECHECK_MS = 5 * 60_000;
 /** CI が1つも現れない PR の CI を、読み続ける時間（PBI-364。過ぎたら、CI が無いものとして読むのをやめる）。 */
@@ -1156,6 +1158,11 @@ export class TaskService {
     string,
     { head: string; nextAt: number; emptySince?: number; failed?: boolean }
   >();
+  /**
+   * 終わっていない CI の読み取り（タスク → 読み取り。PBI-364）。答えを待つのをやめた（時間切れ）読み取りの通信は、中断
+   * されずに残るので、終わるまでは、そのタスクの新しい読み取りを始めない（未完了の通信を積み重ねない）。
+   */
+  private readonly pullRequestCiReads = new Map<string, Promise<unknown>>();
   /** 共用の compose の取得（deps に無いときの既定。PBI-70）。 */
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
@@ -1371,6 +1378,13 @@ export class TaskService {
     }
     // 指摘の取り込みの間に PR がマージされた・閉じられたタスクは、状態を読み直して一度だけ確かめ直す
     const rechecked = new Set<string>();
+    // 人の承認を待つ実装の PR の CI の読み取り（PBI-364）。確認の最後に、まとめて読む
+    const ciReads: {
+      taskId: string;
+      pr: { step: StepKey; number: number; commit: string; repo: string };
+      head: string | undefined;
+      token: string;
+    }[] = [];
     for (const task of waiting) {
       const pr = gatePullRequest(task);
       if (!pr?.number || !pr.repo) continue;
@@ -1432,16 +1446,12 @@ export class TaskService {
           } else if (pr.step === "implement" && reviewFlowPullRequest(latest.pullRequest ?? {})) {
             warnDraftUnknown(pr.number, pr.repo);
           }
-          // 指摘なしの後に CI が落ちたことを、画面に出す（出すだけ。PBI-364）
-          // CI の記録の失敗で、PR の確認のほかの処理（指摘の取り込み・ほかのタスクの確認）を止めない
-          try {
-            await this.recordPullRequestCi(task.id, { ...pr, repo: pr.repo }, head, token);
-          } catch (error) {
-            console.warn(
-              `[daemon] PR #${pr.number}（${pr.repo}）の CI の失敗を記録できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-            );
+          // 指摘なしの後に CI が落ちたことを、画面に出す（出すだけ。PBI-364）。CI の読み取りは、GitHub が答えないと
+          // 待つので、ここでは読まない。PR の確認のほかの処理（マージの検出・指摘の取り込み・ほかのタスクの確認）が
+          // すべて終わった後に、まとめて読む
+          if (pr.step === "implement") {
+            ciReads.push({ taskId: task.id, pr: { ...pr, repo: pr.repo }, head, token });
           }
-          latest = this.tasks.get(task.id) ?? latest;
           try {
             const settled = await this.importFeedback(latest, token);
             if (settled === "pull_request_changed" && !rechecked.has(task.id)) {
@@ -1507,6 +1517,17 @@ export class TaskService {
     if (this.deps.reviewTasks === true) await this.settlePausedDrafts();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
+    // 人の承認を待つ実装の PR の CI（PBI-364）。答えが返らない PR があっても、ほかの確認を遅らせないよう、確認の最後に、
+    // PR_CI_CONCURRENCY 件ずつ並べて読む。記録の失敗で、ほかの PR の読み取りを止めない
+    await inParallel(ciReads, PR_CI_CONCURRENCY, async (read) => {
+      try {
+        await this.recordPullRequestCi(read.taskId, read.pr, read.head, read.token);
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${read.pr.number}（${read.pr.repo}）の CI の失敗を記録できませんでした：${renderMessage(redactText(errorText(error), [read.token]), "ja")}`,
+        );
+      }
+    });
   }
 
   /**
@@ -2063,7 +2084,8 @@ export class TaskService {
    *   無くなったら PullRequestCiRecovered。実行中のものがある間（再実行の途中）は、同じ先頭の前の記録のままにする。
    *   先頭が変わって（人がコミットを足した）、新しい先頭に失敗が無ければ、実行中でも前の先頭の記録は消す。
    * - 出すだけで、実行・差し戻し・再レビュー・ドラフトへの変更・CI の再実行は始めない。
-   * - 読めない・時間内に返らないときは、記録を変えずに、次の確認でやり直す（理由はデーモンのログに出す）。
+   * - 読めない・時間内に返らないときは、記録を変えずに、次の確認でやり直す（理由はデーモンのログに出す）。時間切れの
+   *   読み取りの通信が終わるまでは、そのタスクの新しい読み取りを始めない。
    * - 問い合わせを増やし続けないよう、読む間隔を空ける：すべて通った先頭は読み直さない。失敗して実行中のものが無い先頭は
    *   PR_CI_FAILED_RECHECK_MS ごと（再実行に気づくため）。CI が1つも無い先頭は、PR_CI_EMPTY_WAIT_MS の間だけ読む。
    */
@@ -2103,13 +2125,20 @@ export class TaskService {
     const watch = known?.failed && !recordedNow ? undefined : known;
     if (watch?.head === head && now < watch.nextAt) return;
     const emptySince = watch?.head === head ? watch.emptySince : undefined;
+    // 前の読み取りが終わっていなければ（時間切れの後も、通信は続いている）、新しい読み取りを始めない
+    if (this.pullRequestCiReads.has(taskId)) return;
     const usedSecrets: string[] = [token];
     let snapshot: CiSnapshot;
     let timer: NodeJS.Timeout | undefined;
     try {
       const reading = ci.snapshot({ repo: pr.repo, token, commit: head });
-      // 時間切れの後に届いた失敗は、知らせない（時間切れとして知らせる）
-      reading.catch(() => {});
+      // 終わる（答えが返る・失敗する）まで、終わっていない読み取りとして覚える。時間切れの後に届いた失敗は、知らせない
+      // （時間切れとして知らせる）
+      this.pullRequestCiReads.set(taskId, reading);
+      const forget = () => {
+        if (this.pullRequestCiReads.get(taskId) === reading) this.pullRequestCiReads.delete(taskId);
+      };
+      reading.then(forget, forget);
       const expired = new Promise<"expired">((resolve) => {
         timer = setTimeout(
           () => resolve("expired"),
