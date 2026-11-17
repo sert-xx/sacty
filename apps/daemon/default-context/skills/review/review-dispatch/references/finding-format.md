@@ -22,6 +22,9 @@
       "confidence": "high | medium | low"
     }
   ],
+  "not_raised": [
+    { "title": "稀で実害が小さいので出さなかったものの見出し", "path": "src/pay.ts", "line": 40, "condition": "重なる条件を、1 つずつ", "impact": "起きたときの実害" }
+  ],
   "out_of_scope_notes": ["観点の外で気づいたことを1行ずつ（親が他の観点の結果と照らす）"],
   "checked": ["観点の「見るもの」ごとに、何をどこまで確かめたか"],
   "limitations": ["足りなかった入力、読めなかった箇所、実行できなかった確認"]
@@ -32,4 +35,5 @@
 - `status` は、`must` か `should` が1件以上なら `changes_required`、無ければ `passed`。入力が足りず観点を見られなかったときは `failed` にし、`limitations` に理由を書く（部分的な結果を `passed` にしない）。依頼文の範囲の外を見なかったことは `failed` の理由にしない（範囲の外は、もとから見るものではない）。`limitations` にも書かず、見た範囲を `checked` に書く
 - `path` と `line` は、コードなら対象のリポジトリのルートからのパスと、対象の先頭（PR の先頭コミット）での行番号。文書なら見出しや行。PR の本文で示された文書の写しなら、`path` は写しのパスではなく取得元（文書の名前か URL）、`line` は節の見出し。複数箇所に及ぶときは代表の1箇所にして `problem` に他を書く
 - `condition`・`impact`・`likelihood`・`impact_level` は、すべての指摘に書く（`nit` は `impact` に「実害なし」と書き、`impact_level` は `low`）。`severity` は、review-execution の「重要度」の表のとおりにする（影響：大は `must`。影響：中は、稀なら `should`、それ以外は `must`。影響：小は `should`、稀なら出さない。受け入れ条件・要求要件の不適合は、起きやすさを問わず `must`）。受け入れ条件・要求要件の不適合を理由に `must` にしたときは、`impact` に、根拠のどの条件を、根拠が述べるどの場面で満たしていないかを書く
+- `not_raised` は、確かめて成り立ったが、「影響：小 × 稀」なので出さなかったもの。無ければ空の配列にする。`status` には数えない
 - `findings` は `must` → `should` → `nit` の順、同じ重要度では影響の大きい順

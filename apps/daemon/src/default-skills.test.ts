@@ -1469,6 +1469,24 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
     expect(execution()).toContain("先に重要度を決めて、後から条件と実害を合わせない");
   });
 
+  it("稀で実害が小さいので出さなかったものを、担当が残し、親が確かめて記録する", () => {
+    for (const text of [execution(), format()]) {
+      expect(text).toContain('"not_raised": [');
+      expect(text).toContain(
+        "`not_raised` は、確かめて成り立ったが、「影響：小 × 稀」なので出さなかったもの",
+      );
+    }
+    expect(execution()).toContain("出さなかったものは、見出し・条件・実害を `not_raised` に残す");
+    const text = aggregation();
+    expect(text).toContain("担当が `not_raised` に残したもの");
+    expect(text).toContain(
+      "数え直して「影響：小 × 稀」でなくなるものは、表の重要度の指摘として採用し",
+    );
+    // 親は条件を足さないが、数え方の規則を当てはめて数え直してよい
+    expect(text).toContain("数え方の規則（ふつうの使い方で満たされる前提は数えない。");
+    expect(text).toContain("を当てはめて、数え直すことはしてよい");
+  });
+
   it("親は、担当の重要度を条件と実害から表で確かめ、決め直したものを記録する", () => {
     const text = aggregation();
     expect(text).toContain("## 重みの確認");
