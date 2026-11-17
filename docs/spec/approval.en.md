@@ -178,6 +178,7 @@ Every 60 seconds the daemon checks the PRs of tasks that have a PR for the curre
   3. The review child tasks of PRs waiting for approval are put in order (one that stopped before being created is created, and if the parent updated the PR, a re-review starts; `reconcileReviewTasks`; [The review child task of a PR](#the-review-child-task-of-a-pr)).
   4. The implementation PRs of paused tasks that are not drafts on GitHub are turned back into drafts (`settlePausedDrafts`; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)).
   5. The CI/CD of tasks waiting for the after-merge watch is checked (`checkDeployments`).
+  6. The CI of the head commit of one of the implementation PRs that wait for a person's approval is read, and a failure is recorded (`readPullRequestCi`; [Showing a CI failure after no findings](#showing-a-ci-failure-after-no-findings)).
 
 Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `latestHeads`, `settleDraft`, `settlePausedDrafts`), `apps/daemon/src/pr-watcher.ts`
 
@@ -280,6 +281,35 @@ It only shows it; the base branch is not merged in (it is merged in, before the 
 - The judgment does not decide whether the PR can be merged. If a person merges it while it conflicts, it is approved as a normal merge.
 
 Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `recordPullRequestConflict`), `apps/daemon/src/github.ts` (`GitHubPullRequests.status`), `packages/core/src/projection.ts` (`pullRequestConflict`, `Task.pullRequestConflict`), `apps/web/src/lib/labels.ts` (`statusText`, `prConflictNote`), `apps/web/src/lib/dashboard-data.ts` (`attentionRows`), `apps/web/src/lib/task-list-data.ts`, `apps/web/src/components/task-detail.tsx` (`GateNotice`), `apps/web/src/components/gate-form.tsx`
+
+### Showing a CI failure after no findings
+
+sacty does not wait for the PR's CI, and takes the PR out of draft when the review child task of the PR has no findings ([The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)).
+So when CI that was still running at the time of the review fails later, the task stays waiting for a person's approval (the merge). So that a person can notice, sacty reads the CI of the head commit of an implementation PR that waits for a person's approval, and when it was failing, shows it in the task details and on the task's row in the task list (PBI-364, PBI-371).
+It only shows it; it starts no run, no sending back, no re-review, no change to draft, and no CI rerun. To keep the mechanism small, it does not keep reading CI.
+
+- What is read: at the end of the PR check (every 60 seconds; `checkPullRequests`), the CI state (`CiStatusReader.snapshot`; workflow runs, checks, commit statuses, and the jobs inside workflows) of the head commit of the PR (the current head on GitHub; when it cannot be read, the head that had no findings `reviewedCommit`, and when there is none, the submitted commit).
+  - The target is an open implementation PR that waits for approval (`awaiting_approval`) and does not wait for the review child task's no findings (`watchesPullRequestCi`). It is not read for requirements and design PRs, while the step to send PR comments back to is being decided, or during an escalation. It is not read either when there is no CI reader (`ServiceDeps.ci`).
+  - One round of the PR check reads only one PR. The candidate is looked for in order, starting after the task read last. When the request of the previous read has not ended, nothing is read.
+  - For each head commit, it is read at most `PR_CI_READS_MAX` (12) times, `PR_CI_READ_INTERVAL_MS` (5 minutes) apart (about one hour after the first read). The count is kept in the daemon's memory (`pullRequestCiReads`; counted again after a restart). The count of a task whose implementation PR is no longer open (merged, closed, or cancelled) is forgotten. A round that could not read the PR state temporarily does not restart the count.
+  - Reading stops when a failure was recorded, when there is at least one CI item and everything finished without a failure, or when the count reaches the limit. A read that fails or does not answer within `PR_CI_TIMEOUT_MS` (15 seconds) also counts as one (the reason goes to the daemon log; the token is redacted).
+- Record: when there is a failure, `PullRequestCiFailed` (the PR number, the head whose CI was read `commit`, and the failed checks `checks`) is recorded once per head commit, with actor `sacty`. It is kept in `Task.pullRequestCiFailure` (the PR number, the submitted commit at that time, the head read `head`, the checks, and the time it was read).
+  - What counts as a failure is the same conclusions as [After-merge watch](deployment-watch.en.md) (`isFailedCiCheck`). A check is a name and a link; the same name and link become one, up to `PR_CI_FAILED_CHECKS_MAX` (10) are kept, and only the count (`more`) is kept for the rest. A name is at most `PR_CI_CHECK_NAME_MAX` (200) characters. Only `http` and `https` links are kept.
+  - When the state, the PR, or the commit changed while reading, nothing is recorded.
+  - The record is cleared when the PR is recreated or updated (`PullRequestPublished`), merged, closed, or reopened (`PullRequestMerged`, `PullRequestClosed`, `PullRequestReopened`).
+- Where it is shown (`pullRequestCiFailure`; the task waits for approval, the PR of the implementation gate is open, the PR number and commit of the record are the same as the current submission, the step to send comments back to is not being decided, and it does not wait for no findings):
+  - The notice of the wait for approval in the task details shows the head commit whose CI was read and the time, that later results are not reflected in sacty, that sending the task back or commenting on the PR has it fixed, and the list of checks that were failing (as links when they have one; the count for the rest).
+  - The status column of the task's row in the task list gets a "CI failed" mark (an icon and text) (`TaskRow.ciFailed`). The hint of the mark says that it is the result when Sacty read CI, that later results are not reflected, and that the task details list the checks that were failing. The status text and tone (`statusText`, `statusTone`) do not change, so the filters and the order of the list do not change.
+  - The activity shows "CI was failing on PR #N". In the error report it is classified as a failed check (`check`) ([Error report](error-report.en.md)).
+- What it does not do:
+  - Changes after the record are not read or reflected (even when a person reruns CI and it passes, the notice in the details and the mark in the list stay until the PR is updated, merged, or closed; the details show the time it was read and the mark in the list has a hint, to make clear that it is the result at that time).
+  - The status text and tone (the task list, the dashboard's "Needs you", the header notifications) do not change. The list cannot be filtered by the mark. The dashboard, the "Needs you" cards, and the header notifications show no mark. No notification (Slack, desktop) is sent either.
+  - CI that has not finished about one hour after the first read, CI that starts after that, and CI that is rerun and fails after it passed are not picked up.
+  - For a PR that was closed and reopened, a failure on the same head is not shown again (after a daemon restart, it is read again).
+  - When listing CI was cut off at the limit (the page limit of `GitHubCiStatus`), the part that could not be read is not looked at.
+  - The verdict is not about whether it can be merged. When a person merges while CI is failing, it is approved as a normal merge.
+
+Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `readPullRequestCi`, `watchesPullRequestCi`, `pullRequestCiSnapshot`, `PR_CI_TIMEOUT_MS`, `PR_CI_READ_INTERVAL_MS`, `PR_CI_READS_MAX`), `apps/daemon/src/ci.ts` (`GitHubCiStatus.snapshot`), `packages/core/src/events.ts` (`PullRequestCiFailed`, `PR_CI_FAILED_CHECKS_MAX`, `PR_CI_CHECK_NAME_MAX`, `isFailedCiCheck`), `packages/core/src/projection.ts` (`pullRequestCiFailure`, `Task.pullRequestCiFailure`), `apps/web/src/components/task-detail.tsx` (`GateNotice`), `apps/web/src/lib/task-list-data.ts` (`loadTaskList`, `TaskRow`), `apps/web/src/components/task-list.tsx` (`LiveTaskList`)
 
 Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `readMergedDocument`, `cleanupPromotedMemories`, `checkReviewPullRequests`, `reconcileReviewTasks`, `checkDeployments`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`)
 

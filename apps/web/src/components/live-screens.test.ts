@@ -948,6 +948,58 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     ).toContain("実際の決済サービスで確かめる");
   });
 
+  it("「指摘なし」の後に実装の PR の CI が落ちていたら、タスク詳細に、読んだ時点と失敗していたチェックを出す（PBI-364）", async () => {
+    const implement = task({
+      status: "awaiting_approval",
+      gate: { step: "implement", submission: 1 } as Task["gate"],
+      steps: [{ key: "implement", state: "active" }],
+      pullRequest: { branch: "b", commit: "c1abcdef", url: PR, number: 7, repo: "acme/web" },
+      pullRequestState: "open",
+    });
+    const notice = () => container.querySelector('[data-testid="gate-pr-ci-failed"]');
+    server = detail(implement);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(implement),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    expect(notice()).toBeNull();
+    server = detail(
+      task({
+        ...implement,
+        pullRequestCiFailure: {
+          number: 7,
+          commit: "c1abcdef",
+          head: "9f8e7d6c5b4a",
+          checks: [
+            { name: "CI", url: "https://github.com/acme/web/actions/runs/1" },
+            // http(s) でないリンクは、リンクにしない
+            { name: "lint", url: "javascript:alert(1)" },
+            { name: "status" },
+          ],
+          more: 2,
+          at: "2026-11-17T00:00:00.000Z",
+        },
+      }),
+    );
+    await wait();
+    // 状態の表示は変えない（読んだ時点の結果なので）。案内に、読んだコミットと、その後の結果は反映しないことを出す
+    expect(container.querySelector("#gate")?.textContent).toContain("実装の PR のマージ待ち");
+    expect(notice()?.textContent).toContain("9f8e7d6");
+    expect(notice()?.textContent).toContain("に失敗していました");
+    expect(notice()?.textContent).toContain("その後の結果は sacty には反映されない");
+    const items = [...(notice()?.querySelectorAll("li") ?? [])].map((li) => li.textContent);
+    expect(items).toEqual(["CI", "lint", "status", "ほか2件"]);
+    const links = [...(notice()?.querySelectorAll("a") ?? [])].map((a) => a.getAttribute("href"));
+    expect(links).toEqual(["https://github.com/acme/web/actions/runs/1"]);
+    // PR を更新すると（記録が消えると）、消える
+    server = detail(implement);
+    await wait();
+    expect(notice()).toBeNull();
+  });
+
   it("一時停止の間に PR に指摘が届いたら、タスク詳細に件数と再開の扱いを出し、再開したら消す（PBI-279）", async () => {
     const paused = task({
       status: "paused",

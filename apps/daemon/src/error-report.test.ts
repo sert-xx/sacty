@@ -110,6 +110,15 @@ describe("エラーとして扱う記録", () => {
     expect(activity.map(failureKind)).toEqual([undefined, undefined, undefined, "error", "stop"]);
     expect(hasFailures(activity)).toBe(true);
     expect(failureKind(ev({ type: "TaskPaused", payload: { reason: "manual" } }))).toBeUndefined();
+    // 人の承認を待つ実装の PR の CI の失敗（PBI-364）は、実行・操作の失敗ではなく、検査の不合格
+    expect(
+      failureKind(
+        ev({
+          type: "PullRequestCiFailed",
+          payload: { number: 7, commit: "abc123", checks: [{ name: "CI" }] },
+        }),
+      ),
+    ).toBe("check");
     expect(
       failureKind(
         ev({

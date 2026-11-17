@@ -32,6 +32,9 @@ export function failureKind(event: ActivityEvent): FailureKind | undefined {
       return event.payload.result === "failed" || event.payload.result === "timed_out"
         ? "check"
         : undefined;
+    // 人の承認を待つ実装の PR の CI の失敗（PBI-364）。実行・操作の失敗ではなく、検査の不合格
+    case "PullRequestCiFailed":
+      return "check";
     case "DeploymentChecked":
       // 確認の実行そのものの失敗（failed・runResult）は、下の共通の判定で失敗にする
       if (event.payload.result === "unhealthy") return "check";

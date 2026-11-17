@@ -221,7 +221,7 @@ A project's task list looks like this.
 
 ![The task list (Needs you cards and all tasks; the child tasks that review PRs are listed under their parent tasks)](images/task-list.en.png)
 
-Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks with multiple specified repositories show the specified list even before a working repository is chosen, and also show the working repository once chosen. The specified list also uses repository names (`org/repo` for names that repeat among the specified repositories). Point at a name, or open the hint mark (ⓘ) next to the list, to see the whole URL (the mark also opens from the keyboard or by tapping). "Repository" in the properties of the task detail shows the specified repositories as `org/repo`, and pressing one opens that repository. A value that cannot be read as a URL (recorded by an older version) is shown as recorded and does not open anything. Other tasks whose repository is not decided yet show none. Of these, a task created without a repository shows "No repository". Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
+Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks with multiple specified repositories show the specified list even before a working repository is chosen, and also show the working repository once chosen. The specified list also uses repository names (`org/repo` for names that repeat among the specified repositories). Point at a name, or open the hint mark (ⓘ) next to the list, to see the whole URL (the mark also opens from the keyboard or by tapping). "Repository" in the properties of the task detail shows the specified repositories as `org/repo`, and pressing one opens that repository. A value that cannot be read as a URL (recorded by an older version) is shown as recorded and does not open anything. Other tasks whose repository is not decided yet show none. Of these, a task created without a repository shows "No repository". Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started. A task whose implementation PR, waiting to be merged, had failing CI shows a "CI failed" mark in the "Status" column ([When CI fails after "no findings"](#when-ci-fails-after-no-findings)).
 
 Child tasks are indented directly under their parent task.
 
@@ -1063,6 +1063,32 @@ A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existi
 - A continued PR also shows the conflict while the task waits for approval.
   sacty does not merge the base branch in even if you send the task back, so resolve the conflict on GitHub.
 - The row in "Needs you", the task details, and the approval screen say "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub".
+
+### When CI fails after "no findings"
+
+sacty reviews without waiting for the PR's CI to finish.
+So CI that was still running can fail after the child task that reviews the PR reported "no findings".
+sacty watches CI for a while after that, and when it was failing, shows it in the task list and the task details.
+
+- The "Status" column of the task's row in the task list shows a "CI failed" mark.
+- The notice of the wait for approval in the task details shows the time sacty looked at CI and the names of the checks that were failing (as links to that run on GitHub when they have one).
+- The activity also shows that CI was failing.
+
+sacty only shows it and does not fix it automatically. It does not rerun CI either.
+Do one of the following.
+
+1. Check the failure and the current CI result on the PR on GitHub.
+2. If the change caused it, send the task back with a comment from sacty's screen, or comment on the PR on GitHub. sacty redoes the implementation.
+3. If it is unrelated to the change (a flaky test, for example), rerun CI on GitHub and check that it passes.
+
+This notice is the result at the time sacty looked at CI. Keep the following in mind.
+
+- The mark in the list and the notice in the details do not disappear when you rerun CI and it passes. They disappear when the PR is updated, merged, or closed.
+- The status in the task list, "Needs you", and the header notifications does not change. You cannot filter the list by the "CI failed" mark.
+- The dashboard, the "Needs you" cards, and the header notifications show no mark. No Slack or desktop notification is sent either.
+- sacty looks at CI every 5 minutes, for about one hour only. CI that fails after that is not shown.
+- Even while CI is failing, if you merge the PR, sacty takes it as the approval and goes on.
+- It is not shown for requirements and design PRs, or for a PR before the review child task reports "no findings" (the review child task turns CI failures into findings).
 
 ### Test viewpoints of the child tasks of a split
 
