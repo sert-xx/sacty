@@ -1612,6 +1612,45 @@ describe("工程の実行と費用", () => {
     expect(restarted.resume(task.id, {}).status).toBe("queued");
     activity.close();
   });
+
+  it("エージェントの発言に通知の形の文面があった実行は、どの実行かと件数を記録し、工程はそのまま承認待ちに進む（PBI-368）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [{ ...completed(100), imitatedNotices: 3 }]);
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    const events = service.get(task.id)?.activity ?? [];
+    const started = events.find((e) => e.type === "AgentRunStarted");
+    const imitated = events.filter((e) => e.type === "SubagentNoticeImitated");
+    expect(imitated.map((e) => ({ actor: e.actor, payload: e.payload }))).toEqual([
+      {
+        actor: "sacty",
+        payload: {
+          runId: started?.type === "AgentRunStarted" ? started.payload.runId : "",
+          agentId: started?.type === "AgentRunStarted" ? started.payload.agentId : "",
+          count: 3,
+        },
+      },
+    ]);
+    // 記録だけで、実行の結果・状態は変えない
+    expect(events.some((e) => e.type === "AgentRunCompleted")).toBe(true);
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
+    activity.close();
+    // 開き直しても（作業履歴から状態を作り直しても）、同じ状態になる
+    const reopened = new SqliteActivityStore(dbPath);
+    const again = makeService(reopened, []);
+    expect(again.service.get(task.id)?.task.status).toBe("awaiting_approval");
+    reopened.close();
+  });
+
+  it("通知の形の文面の件数が無い実行は、記録しない（PBI-368）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [completed(100)]);
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    const events = service.get(task.id)?.activity ?? [];
+    expect(events.some((e) => e.type === "SubagentNoticeImitated")).toBe(false);
+    activity.close();
+  });
 });
 
 describe("秘密情報と予算の通知（レビュー指摘）", () => {

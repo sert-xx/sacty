@@ -2,7 +2,6 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { SqliteActivityStore } from "./activity.js";
 import { DockerExecutor } from "./agents/docker.js";
 import {
   ClaudeOutcomeReader,
@@ -10,10 +9,10 @@ import {
   IMITATED_NOTICES_MAX,
   parseClaudeResult,
 } from "./agents/parse.js";
-import { completed, dbPath, makeService, useTempDir } from "./testing/daemon.js";
 
 // エージェント（工程の親）の発言に、サブエージェントの完了の通知・システムの知らせの形の文面があったら、作業履歴に残す（PBI-368）。
 // 実行の記録で見つかった 3 つの形（背景で起動した担当の結果が届く前に、親が自分で書いた文面）を拾う。
+// 作業履歴への記録（TaskService）のテストは、daemon-steps.test.ts の「工程の実行と費用」にある。
 
 /** 見つかった形 1：システムの知らせの形で、担当ごとの結果を書いた（9 件のうち 2 件に縮めた）。 */
 const REMINDERS = [
@@ -75,9 +74,14 @@ describe("通知の形の文面の数え方", () => {
     expect(countImitatedNotices(TASK_NOTIFICATION)).toBe(1);
   });
 
-  it("行の先頭の空白は 3 つまで許し、字下げのコードブロック（4 つ以上の空白・タブ）と閉じるタグは数えない", () => {
-    expect(countImitatedNotices("   <task-notification>\n</task-notification>")).toBe(1);
-    expect(countImitatedNotices("    <task-notification>\n\t<system-reminder>")).toBe(0);
+  it("数えるのは、行の先頭（字下げなし）のタグだけ。字下げした行・引用の印やリストの印の後ろ・閉じるタグは数えない", () => {
+    expect(countImitatedNotices("<task-notification>\n</task-notification>")).toBe(1);
+    expect(
+      countImitatedNotices("  <task-notification>\n    <system-reminder>\n\t<system-reminder>"),
+    ).toBe(0);
+    expect(
+      countImitatedNotices("> <system-reminder>\n- <system-reminder>\n1. <task-notification>"),
+    ).toBe(0);
     expect(countImitatedNotices("</system-reminder>\n</task-notification>")).toBe(0);
   });
 
@@ -92,11 +96,24 @@ describe("通知の形の文面の数え方", () => {
     expect(countImitatedNotices("")).toBe(0);
   });
 
-  it("字下げした ``` は、コードブロックを開かない（後ろの文面を見逃さない）", () => {
+  it("リスト・引用の中のコードブロック（開く行が、リストの印・引用の印・字下げの後ろ）の中の引用は数えない", () => {
+    const quoted = ["  <system-reminder>", '  Agent "D-4" completed.', "  </system-reminder>"].join(
+      "\n",
+    );
+    expect(countImitatedNotices(`- 例：\n- \`\`\`\n${quoted}\n  \`\`\``)).toBe(0);
+    expect(countImitatedNotices(`1. \`\`\`xml\n${quoted}\n   \`\`\``)).toBe(0);
+    expect(countImitatedNotices(`> \`\`\`\n> <system-reminder>\n> \`\`\``)).toBe(0);
+    expect(countImitatedNotices(`- 例\n\n  ~~~\n${quoted}\n  ~~~`)).toBe(0);
+  });
+
+  it("リスト・引用の中や、4 つ以上字下げした ``` は、字下げの無い行で終わる（開いたまま、後ろの文面を見逃さない）", () => {
     expect(countImitatedNotices(`    \`\`\`\n${ONE_LINE}`)).toBe(1);
     expect(countImitatedNotices(`\t~~~\n${ONE_LINE}`)).toBe(1);
-    // 空白 3 つまでの字下げは、コードブロックを開く
+    expect(countImitatedNotices(`- \`\`\`\n  引用\n${ONE_LINE}`)).toBe(1);
+    // 空白 3 つまでの字下げで開いたコードブロックは、閉じる行まで続く（中の行が行の先頭から始まっていても数えない）
     expect(countImitatedNotices(`   \`\`\`\n${ONE_LINE}\n   \`\`\``)).toBe(0);
+    // 空行では終わらない
+    expect(countImitatedNotices(`- \`\`\`\n\n  <system-reminder>\n  \`\`\``)).toBe(0);
   });
 
   it("コードブロックの中の ```xml のような行では、コードブロックを閉じない", () => {
@@ -222,48 +239,5 @@ describe("コンテナの実行（偽の docker コマンド）", () => {
   it("文面が無い実行の結果には持たせない", async () => {
     const outcome = await run([init, assistant("集約します。"), result("# 設計")]);
     expect(outcome).not.toHaveProperty("imitatedNotices");
-  });
-});
-
-describe("作業履歴への記録", () => {
-  useTempDir();
-
-  it("件数を持つ実行は、どの実行かと件数を記録し、工程はそのまま承認待ちに進む", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const { service } = makeService(activity, [{ ...completed(100), imitatedNotices: 3 }]);
-    const task = service.createTask({ projectId: "default", title: "決済API" });
-    await service.runNext(task.id);
-    const events = service.get(task.id)?.activity ?? [];
-    const started = events.find((e) => e.type === "AgentRunStarted");
-    const imitated = events.filter((e) => e.type === "SubagentNoticeImitated");
-    expect(imitated.map((e) => ({ actor: e.actor, payload: e.payload }))).toEqual([
-      {
-        actor: "sacty",
-        payload: {
-          runId: started?.type === "AgentRunStarted" ? started.payload.runId : "",
-          agentId: started?.type === "AgentRunStarted" ? started.payload.agentId : "",
-          count: 3,
-        },
-      },
-    ]);
-    // 記録だけで、実行の結果・状態は変えない
-    expect(events.some((e) => e.type === "AgentRunCompleted")).toBe(true);
-    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
-    activity.close();
-    // 開き直しても（作業履歴から状態を作り直しても）、同じ状態になる
-    const reopened = new SqliteActivityStore(dbPath);
-    const again = makeService(reopened, []);
-    expect(again.service.get(task.id)?.task.status).toBe("awaiting_approval");
-    reopened.close();
-  });
-
-  it("件数の無い実行は、記録しない", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const { service } = makeService(activity, [completed(100)]);
-    const task = service.createTask({ projectId: "default", title: "決済API" });
-    await service.runNext(task.id);
-    const events = service.get(task.id)?.activity ?? [];
-    expect(events.some((e) => e.type === "SubagentNoticeImitated")).toBe(false);
-    activity.close();
   });
 });
