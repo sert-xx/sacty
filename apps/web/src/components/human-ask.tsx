@@ -8,6 +8,7 @@ import { summarizeDecision } from "@/lib/decision-summary";
  * 人に確かめてほしいこと（PBI-301）を、承認の画面とタスクの詳細の目立つ所に出す。
  * - 戻し先の判断で、PR の指摘の意図を読み取れなかった理由（実装は読み取れた範囲で直している）
  * - 実行が指摘への対応と一緒に挙げた、聞き返し・推測で決めたこと（`confirm`）
+ *   同じ文の確認が複数の指摘に付いていれば、1 件にまとめて、付いていた指摘を並べる（PBI-354。件数もまとめた後の数）
  * 同じ内容は PR のコメントにも書く（PR を見ている人が気づけるように）。判断の理由は長いので、要点を先に出し、全文は開いて読む。
  */
 export function HumanAskNotice({ task }: { task: Task }) {
@@ -49,11 +50,11 @@ export function HumanAskNotice({ task }: { task: Task }) {
         )}
         {asks.confirms.map((c) => (
           <li
-            key={c.remarkId}
+            key={c.remarkIds[0]}
             data-testid="human-ask-confirm"
             className="flex flex-col [overflow-wrap:anywhere]"
           >
-            <span className="font-medium">{m.humanAsk.confirm(c.remarkId)}</span>
+            <span className="font-medium">{m.humanAsk.confirm(c.remarkIds.join("・"))}</span>
             <span className="whitespace-pre-line">{c.text}</span>
           </li>
         ))}

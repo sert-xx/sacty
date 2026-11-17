@@ -70,6 +70,34 @@ describe("人に確かめてほしいことの欄（PBI-301）", () => {
     expect(html).not.toContain("指摘 implement-1-2");
   });
 
+  it("同じ文の確認が複数の指摘に付いていれば、1 件にまとめて、付いていた指摘を並べる。件数はまとめた後の数（PBI-354）", () => {
+    const html = render(
+      task({
+        remarks: [
+          remark("implement-1-1", { confirm: "CI を再実行して確認してください" }),
+          remark("implement-2-1", { round: 2, confirm: " CI を再実行して確認してください\n" }),
+          remark("implement-2-2", {
+            round: 2,
+            confirm: "CI を再実行して確認してください。念のため。",
+          }),
+        ],
+      }),
+    );
+    expect(html).toContain("人に確かめてほしいことが2件あります");
+    expect(html).toContain("実行が確かめたいこと（指摘 implement-1-1・implement-2-1）");
+    expect(html).toContain("実行が確かめたいこと（指摘 implement-2-2）");
+    expect(html.split('data-testid="human-ask-confirm"').length).toBe(3);
+  });
+
+  it("確かめたいことが 1 件だけのときの表示は、これまでと同じ（PBI-354）", () => {
+    const html = render(
+      task({ remarks: [remark("implement-1-1", { confirm: "上限は 31 日と推測しました" })] }),
+    );
+    expect(html).toContain("人に確かめてほしいことが1件あります");
+    expect(html).toContain("実行が確かめたいこと（指摘 implement-1-1）");
+    expect(html.split('data-testid="human-ask-confirm"').length).toBe(2);
+  });
+
   it("長い判断の理由は、要点を先に出し、全文は開いて読む", () => {
     const long = `読み取れない。複数の読み方がある。${"詳しい理由が続く。".repeat(80)}`;
     const html = render(task({ prRework: undecided(long) }));

@@ -40,8 +40,8 @@ export type HumanAskNoticeInput = {
   submission: number;
   /** ゴールガーディアンが指摘の意図を判断できなかったときの、指摘の ID と理由。 */
   undecided?: { remarkIds: string[]; reason: string };
-  /** 実行が挙げた、人に確かめたいこと。 */
-  confirms: { remarkId: string; text: string }[];
+  /** 実行が挙げた、人に確かめたいこと。同じ文の確認は 1 件にまとまっていて、付いていた指摘を `remarkIds` に並べる（PBI-354）。 */
+  confirms: { remarkIds: string[]; text: string }[];
   /** タスクの画面の URL。 */
   taskUrl: string;
   secrets: readonly string[];
@@ -69,7 +69,7 @@ export function buildHumanAskNotice(input: HumanAskNoticeInput): string | undefi
   for (const c of input.confirms) {
     lines.push(
       "",
-      `**作り直しの実行が確かめたいこと（指摘 ${c.remarkId}）：**`,
+      `**作り直しの実行が確かめたいこと（指摘 ${c.remarkIds.join("・")}）：**`,
       "",
       askQuote(c.text, input.secrets),
     );

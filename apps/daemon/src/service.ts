@@ -7193,7 +7193,7 @@ export class TaskService {
           ...(asks.undecided
             ? { undecided: { remarkIds: asks.undecided.remarkIds, reason: asks.undecided.reason } }
             : {}),
-          confirms: asks.confirms.map((c) => ({ remarkId: c.remarkId, text: c.text })),
+          confirms: asks.confirms.map((c) => ({ remarkIds: c.remarkIds, text: c.text })),
           taskUrl: `${base}/tasks/${task.id}`,
           secrets: usedSecrets,
         });
