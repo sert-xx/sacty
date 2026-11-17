@@ -46,6 +46,7 @@ import { createApp } from "./server.js";
 import {
   awaitingRemarkReplies,
   InvalidOperationError,
+  PR_CI_CONCURRENCY,
   PR_CI_EMPTY_WAIT_MS,
   PR_CI_FAILED_RECHECK_MS,
   type ServiceDeps,
@@ -7016,6 +7017,59 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(task && pullRequestCiFailure(task)).toBeUndefined();
       warn.mockRestore();
       activity.close();
+    });
+
+    it("答えが返らない PR が多くても、終わっていない読み取りは上限までで、1回の確認は時間切れ1回分しか待たない", async () => {
+      const pulls = new FakePulls();
+      const gates: PromiseWithResolvers<void>[] = [];
+      let started = 0;
+      let running = 0;
+      let most = 0;
+      const ci: CiStatusReader = {
+        snapshot: async () => {
+          started++;
+          running++;
+          most = Math.max(most, running);
+          const gate = Promise.withResolvers<void>();
+          gates.push(gate);
+          await gate.promise;
+          running--;
+          return { checks: [workflow("success")], failedRuns: [] };
+        },
+        failures: async () => [],
+        rerunFailedJobs: async () => {},
+        repositoryHasNoCi: async () => false,
+      };
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // 同じ台帳に、人の承認を待つ実装の PR のタスクを6件作る（最後のサービスが、6件すべてを見守る）
+      const made = [];
+      for (let i = 0; i < PR_CI_CONCURRENCY + 2; i++) {
+        made.push(await toImplementGate([], { pulls, ci, reviewCiTimeoutMs: 20 }));
+      }
+      const service = made.at(-1)?.service as TaskService;
+      pulls.state = { state: "open" };
+      const before = Date.now();
+      await service.checkPullRequests();
+      // 上限の件数だけ読み始め、残りは読まない。待つのは、時間切れ1回分（件数ぶんは待たない）
+      expect(started).toBe(PR_CI_CONCURRENCY);
+      expect(Date.now() - before).toBeLessThan(20 * (PR_CI_CONCURRENCY + 2));
+      // 終わっていない間は、確認を重ねても、新しい読み取りを始めない
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(started).toBe(PR_CI_CONCURRENCY);
+      // 終わったら、後の確認で、残りのタスクも読む。同時に続く読み取りは、上限を超えない
+      for (let round = 0; round < 6 && started < 2 * PR_CI_CONCURRENCY + 2; round++) {
+        for (const gate of gates) gate.resolve();
+        await new Promise((r) => setTimeout(r, 5));
+        const checking = service.checkPullRequests();
+        await new Promise((r) => setTimeout(r, 5));
+        for (const gate of gates) gate.resolve();
+        await checking;
+      }
+      expect(started).toBeGreaterThanOrEqual(PR_CI_CONCURRENCY + 2);
+      expect(most).toBeLessThanOrEqual(PR_CI_CONCURRENCY);
+      warn.mockRestore();
+      for (const m of made) m.activity.close();
     });
 
     it("時間切れになった読み取りが終わるまでは、新しい読み取りを始めない（未完了の通信を積み重ねない）", async () => {

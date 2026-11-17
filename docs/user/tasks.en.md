@@ -1037,6 +1037,14 @@ Even while CI is failing, if you merge the PR, sacty takes it as the approval an
 It is not shown for requirements and design PRs, or for a PR before the review child task reports "no findings" (the review child task turns CI failures into findings).
 No Slack or desktop notification is sent.
 
+sacty watches CI only during the following. A CI failure that starts after that is not shown on the screens.
+
+- While CI is running. Once everything has passed, CI for that head commit is not checked again.
+- For 30 minutes when no CI appears at all. After that, sacty stops checking, treating the repository as one without CI.
+- When a person adds a commit to the PR and the head changes, sacty watches CI for the new head.
+
+When the implementation PR also conflicts with the base branch, the status shows the conflict. Check the CI failure in the task details.
+
 ### Test viewpoints of the child tasks of a split
 
 A task split assigns the test viewpoints of the parent task's design to the child tasks.

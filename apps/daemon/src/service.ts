@@ -1041,7 +1041,10 @@ export const REVIEW_CI_TIMEOUT_MS = 30_000;
  * （マージの検出・指摘の取り込み）を長く止めない。
  */
 export const PR_CI_TIMEOUT_MS = 15_000;
-/** PR の確認の最後に、人の承認を待つ実装の PR の CI を、並べて読む件数（PBI-364）。 */
+/**
+ * 人の承認を待つ実装の PR の CI を、同時に読む件数の上限（PBI-364）。PR の確認の最後に並べて読む件数で、終わっていない
+ * 読み取り（時間切れの後も続いている通信を含む。すべてのタスクの合計）の上限でもある。
+ */
 export const PR_CI_CONCURRENCY = 4;
 /** CI が失敗していて実行中のものが無い PR の CI を、読み直す間隔（PBI-364。人が再実行して通ったことに気づくため）。 */
 export const PR_CI_FAILED_RECHECK_MS = 5 * 60_000;
@@ -2085,7 +2088,8 @@ export class TaskService {
    *   先頭が変わって（人がコミットを足した）、新しい先頭に失敗が無ければ、実行中でも前の先頭の記録は消す。
    * - 出すだけで、実行・差し戻し・再レビュー・ドラフトへの変更・CI の再実行は始めない。
    * - 読めない・時間内に返らないときは、記録を変えずに、次の確認でやり直す（理由はデーモンのログに出す）。時間切れの
-   *   読み取りの通信が終わるまでは、そのタスクの新しい読み取りを始めない。
+   *   読み取りの通信が終わるまでは、そのタスクの新しい読み取りを始めない。終わっていない読み取りの合計が
+   *   PR_CI_CONCURRENCY に達している間は、ほかのタスクの読み取りも始めない（後の確認で読む）。
    * - 問い合わせを増やし続けないよう、読む間隔を空ける：すべて通った先頭は読み直さない。失敗して実行中のものが無い先頭は
    *   PR_CI_FAILED_RECHECK_MS ごと（再実行に気づくため）。CI が1つも無い先頭は、PR_CI_EMPTY_WAIT_MS の間だけ読む。
    */
@@ -2127,6 +2131,9 @@ export class TaskService {
     const emptySince = watch?.head === head ? watch.emptySince : undefined;
     // 前の読み取りが終わっていなければ（時間切れの後も、通信は続いている）、新しい読み取りを始めない
     if (this.pullRequestCiReads.has(taskId)) return;
+    // 終わっていない読み取り（すべてのタスクの合計）が上限に達していれば、この確認では読まない。答えが返らない読み取りが
+    // 積み重ならず、1回の確認で待つのも、上限の件数の時間切れ1回分までになる（次の定期の確認を遅らせない）
+    if (this.pullRequestCiReads.size >= PR_CI_CONCURRENCY) return;
     const usedSecrets: string[] = [token];
     let snapshot: CiSnapshot;
     let timer: NodeJS.Timeout | undefined;
