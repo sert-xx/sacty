@@ -14,6 +14,8 @@ import { join } from "node:path";
 import { message } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
+  BUILD_CACHE_MAX_UNUSED,
+  buildCachePruneArgs,
   buildImage,
   imageBuildArgs,
   imageBuildSettings,
@@ -687,8 +689,11 @@ describe("古い版のイメージの片付け（PBI-313）", () => {
     expect(calls).toEqual([
       "image ls --format {{.Repository}}:{{.Tag}}",
       "image rm sacty-agent:1.0.0",
-      "builder prune -f --filter until=168h",
+      // 3日（PBI-388）。デーモンの片付けと同じ期間
+      "builder prune -f --filter until=72h",
     ]);
+    expect(buildCachePruneArgs().join(" ")).toBe("builder prune -f --filter until=72h");
+    expect(BUILD_CACHE_MAX_UNUSED).toBe("72h");
   });
 
   it("1つ消せなくても残りを消し、消せなかったものを返す", async () => {

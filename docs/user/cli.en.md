@@ -1,4 +1,4 @@
-<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort), scripts/cli-install.mjs, packages/cli/src/context-preview.ts, packages/cli/src/launch.ts, apps/daemon/src/local-launch.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE) -->
+<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort), scripts/cli-install.mjs, packages/cli/src/context-preview.ts, packages/cli/src/launch.ts, apps/daemon/src/local-launch.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE), apps/daemon/src/image.ts (pruneOldImages, BUILD_CACHE_MAX_UNUSED) -->
 
 [日本語](cli.md) | **English**
 
@@ -90,7 +90,7 @@ Which images it builds is decided as follows.
 Once everything is built, it cleans up old images and build cache.
 
 - It removes old image versions (`sacty-agent` and `sacty-agent-<name>` images with `X.Y.Z` tags), keeping the two newest versions of each name.
-- It also removes build cache unused for more than 7 days.
+- It also removes build cache unused for more than 3 days (the build cache of the whole Docker is the target).
 - It does not remove the following images.
   - Images listed in `image` or `images`
   - Images with other tags or names

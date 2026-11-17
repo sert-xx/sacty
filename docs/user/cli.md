@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/cli/src/index.ts（USAGE・main・parsePort）、scripts/cli-install.mjs、packages/cli/src/context-preview.ts、packages/cli/src/launch.ts、apps/daemon/src/local-launch.ts、apps/daemon/src/context-template.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE） -->
+<!-- 対応するコード: packages/cli/src/index.ts（USAGE・main・parsePort）、scripts/cli-install.mjs、packages/cli/src/context-preview.ts、packages/cli/src/launch.ts、apps/daemon/src/local-launch.ts、apps/daemon/src/context-template.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE）、apps/daemon/src/image.ts（pruneOldImages・BUILD_CACHE_MAX_UNUSED） -->
 
 **日本語** | [English](cli.en.md)
 
@@ -102,7 +102,7 @@ npx sacty image build [<名前>...]
 すべて作れたら、古いイメージとビルドキャッシュを片付けます。
 
 - 古い版のイメージ（`sacty-agent`・`sacty-agent-<名前>` の `X.Y.Z` のタグのもの）を、名前ごとに新しい版から2つ残して消します。
-- 7日より長く使っていないビルドキャッシュも消します。
+- 3日より長く使っていないビルドキャッシュも消します（Docker 全体のビルドキャッシュが対象です）。
 - 次のイメージは消しません。
   - `image`・`images` に書いたイメージ
   - ほかのタグ・ほかの名前のイメージ

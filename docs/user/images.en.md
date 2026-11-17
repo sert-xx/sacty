@@ -268,6 +268,8 @@ When building, sacty works as follows.
 - To keep the load on Docker down, sacty builds them one at a time.
 - Context images that are no longer used (from old definitions or deleted projects) are removed after builds finish.
   Images that containers use, and images built by sacty for another `SACTY_HOME` on the same Docker, are kept.
+- At that time, sacty also removes build cache unused for more than 3 days (the build cache of the whole Docker is the target).
+  What was removed, and what could not be removed, appears in the log of the terminal where you started sacty.
 - If fetching one project's context repository does not finish within 5 minutes, sacty stops it and treats it as unreadable (other projects go ahead).
 
 ### While images are being built
