@@ -911,6 +911,43 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(container.querySelector("#gate")?.textContent).toContain("実装の PR のマージ待ち");
   });
 
+  it("統合レビューに人が確かめることがあれば、承認待ちの案内に件数を出す（PBI-363）", async () => {
+    const integrate = (humanChecks?: string[]) =>
+      task({
+        status: "awaiting_approval",
+        gate: { step: "integrate", submission: 1 } as Task["gate"],
+        steps: [{ key: "integrate", state: "active" }],
+        integration: {
+          passed: true,
+          baseBranch: "main",
+          commit: "abcdef1234",
+          viewpoints: [],
+          remarks: [],
+          findings: [],
+          summary: "要求要件を満たす",
+          ...(humanChecks ? { humanChecks } : {}),
+          at: "2026-11-17T00:00:00.000Z",
+        },
+      } as Partial<Task>);
+    server = detail(integrate());
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(integrate()),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    const gate = () => container.querySelector("#gate")?.parentElement?.textContent ?? "";
+    expect(gate()).toContain("承認で完了、差し戻しで修正の子タスクを追加します");
+    expect(gate()).not.toContain("人が確かめること");
+    server = detail(integrate(["実際の決済サービスで確かめる", "実機で確かめる"]));
+    await wait();
+    expect(gate()).toContain("人が確かめることが2件あります。確かめてから承認するか、差し戻して");
+    expect(
+      container.querySelector('[data-testid="integration-human-checks"]')?.textContent,
+    ).toContain("実際の決済サービスで確かめる");
+  });
+
   it("一時停止の間に PR に指摘が届いたら、タスク詳細に件数と再開の扱いを出し、再開したら消す（PBI-279）", async () => {
     const paused = task({
       status: "paused",

@@ -115,15 +115,17 @@ describe("A1 受け入れの確かめを、受け入れ条件より弱い手段�
 });
 
 describe("A2 共有の仕組みを新しく入れたとき、異常の後に後続の処理が続くかを確かめる", () => {
-  it("統合レビューにも同じ確かめを求める。人が確かめることの欄が無いので、判定の説明に書かせる", () => {
+  it("統合レビューにも同じ確かめを求める。確かめられなかったことは、人が確かめること（humanChecks）に書かせる（PBI-363）", () => {
     const prompt = buildIntegrationReviewPrompt(task(), [], {
       baseBranch: "main",
       commit: "abcdef1234",
     });
     expect(prompt).toContain("--- 共有の仕組みの確認 ---");
     expect(prompt).toContain("異常や失敗（例外・不正な入力・途中での中断）が起きた後も");
-    expect(prompt).toContain("判定の説明に書く（findings には書かない）");
-    expect(prompt).not.toContain("理由を humanChecks に書く");
+    expect(prompt).toContain("人が確かめないまま進めた場合の具体的な懸念を、humanChecks に書く");
+    // 書き先は1つ（判定の説明には書かせない）。最終レビューだけの確かめ（足した理由）は求めない
+    expect(prompt).not.toContain("判定の説明に書く（findings には書かない）");
+    expect(prompt).not.toContain("共有の仕組みを足した理由");
   });
 });
 

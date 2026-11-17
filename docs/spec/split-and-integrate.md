@@ -111,13 +111,28 @@
   リポジトリの無い親と複数を指定した親では、リポジトリを選んだ後も、子タスクのリポジトリとベースブランチごとに写しを並べる。
   指示には、承認済みの要求要件・設計、テスト観点（無ければ `REQ`）、子タスクの要約（題・状態・PR の URL・回・リポジトリ）、人の過去の指摘と AI のレビューの過去の指摘（節を分けて）を入れる。
   出力の形式の例の観点の ID は、判定する観点の ID（`integrationViewpointIds`）にする（PBI-137）。
-- 指示は、受け入れ条件の確かめを名前・項目・ファイル・リンクが存在することの確認に縮めさせず（`ACCEPTANCE_DEPTH_REVIEW_LINE`）、共有の仕組み（キュー・ロック・キャッシュ・フラグなど）を新しく入れた・変えたときは、異常や失敗の後に後続の処理が続くかを確かめさせ（`sharedMechanismLines`。人が確かめることの欄が無いので、確かめられなかったことは判定の説明に書かせる）、出力の文をタスクの言語で書かせる（`OUTPUT_LANGUAGE_LINE`。PBI-301）。
+- 指示は、受け入れ条件の確かめを名前・項目・ファイル・リンクが存在することの確認に縮めさせず（`ACCEPTANCE_DEPTH_REVIEW_LINE`）、共有の仕組み（キュー・ロック・キャッシュ・フラグなど）を新しく入れた・変えたときは、異常や失敗の後に後続の処理が続くかを確かめさせ（`sharedMechanismLines`。確かめられなかったことは、人が確かめること（`humanChecks`）に書かせる）、出力の文をタスクの言語で書かせる（`OUTPUT_LANGUAGE_LINE`。PBI-301）。
+- 作業領域では確かめられないこと（実際の外部のサービス・本物の認証情報・実機・特定の OS・目視など）が残る観点は、コードとテストで確かめられる範囲で判定させ、残ることを答えの `humanChecks` に書かせる（`INTEGRATION_HUMAN_CHECK_LINES`。PBI-363）。
+  - その範囲で満たしていれば、観点は満たす（`verified: true`）とし、理由に、確かめた範囲と確かめられなかったことを書かせる。
+  - `humanChecks` には、何を・どう確かめるかと、確かめないまま進めた場合の懸念を、1件ずつ書かせる。`findings` には書かせない（修正の子タスクでは直せないため）。
+  - コードとテストで確かめられる範囲に不足があれば、観点を満たさない（`verified: false`）とし、直すことを `findings` に書かせる。作業領域で確かめられることを、確かめずに `humanChecks` に回させない。
 - 答え（見出し `sacty-integration-review`）で、すべての観点を満たし、すべての指摘が再発しておらず、`findings` が空のときだけ合格。
+  `humanChecks` は合否に使わない（あっても不合格にしない）。`IntegrationReviewed` の `humanChecks` に記録する（無ければ記録しない）。
+  - 人に渡す情報を落とさない。同じ項目は1件にし、空の項目だけを落とす。配列でない値は1件として、文字列でない項目は JSON の文字にして残す。長さは切り詰めない。
+  - 前の回の統合レビューが挙げた項目（`Task.integration.humanChecks`）は、次の統合レビューに引き継ぐ。前の回が不合格で、修正の子タスクの後にやり直した統合レビューが項目を挙げなくても、承認待ちまで残す。
+    指示には、前の回の項目を、番号（`H1`・`H2`…）を付けた JSON のデータとして渡す（前の回のエージェントが書いた文なので、指示として読ませない）。確かめられた・要らなくなった項目だけを、答えの `droppedHumanChecks` に「<番号>：<外す理由>」の形の文字列で書かせる（`previousHumanCheckLines`）。前の回の項目が無ければ、この節と `droppedHumanChecks` の例は出さない。
+    出力の形式の例の `humanChecks`・`droppedHumanChecks` は、空の配列にする（例を書き写した答えが、人が確かめること・外す申告として読まれないように）。
+    外すのは、番号が前の回の項目にあり、理由があるものだけ（`readDroppedHumanChecks`）。書き方の揺れも読む：全角・小文字の番号、角括弧つきの番号、先頭の箇条書きの印、区切りが `：`・`:`・`-` のもの、1項目に複数の番号、`{"id": "H1", "reason": "…"}` の形。理由の文は、書かれたまま残す。番号と理由の間に区切りの記号が無い文（`H1 は外さない` など）は、外す申告として読まない。
+    外した項目と理由を、`IntegrationReviewed` の `droppedHumanChecks` に、項目（`check`）と理由（`reason`）の組で記録する。読み取れなかった・番号が前の回の項目に当たらなかった申告は、外さずに、`unreadDroppedHumanChecks` に記録する。外した項目は、同じ回の答えが同じ文を挙げ直していても、`humanChecks` に戻さない。答えを読めなかった回も、前の回の項目を引き継ぐ。
+    引き継ぎは、不合格が続く間、合格の後に人が差し戻した次の回、上限で不合格のまま承認待ちになる回のどれでも行う。
+    答えの JSON を直して読んだときも、`humanChecks`・`droppedHumanChecks` は配列でなくても読む（ほかの配列の項目は、配列でなければ、直した答えを採らない）。
   指摘は人の指摘と AI のレビューの指摘の両方で、指示は両方に再発の判定を求める（`REMARK_RECURRENCE_LINE`・`remarkVerdictLines`）。AI のレビューの指摘の判定が無ければ不合格。
 - 答えの JSON が崩れていても、直しながら読む（PBI-298。文字列の中の二重引用符・制御文字など。統合レビューの答えには入れ子のオブジェクトがないので、閉じ括弧の欠けは補わない）。直して読んだことは `IntegrationReviewed` の `outputRepaired` に記録する。直しても読めなければ不合格のままで、所見に壊れた位置（JSON の何行目の何文字目。`integrate.unreadableAt`）か、項目が足りないこと（`integrate.unreadableShape`）を残す。
 - 合格したら、人の承認待ちにする。
+  人が確かめること（`humanChecks`）があれば、タスクの画面の統合レビューの欄と承認の画面に「人が確かめること」として出し、承認待ちの案内に件数を出す。前の回の項目から外したもの（`droppedHumanChecks`）があれば、同じ欄に、外した項目と理由を出す（「外した理由：」の文言は、画面の言語のもの）。読み取れなかった外す申告（`unreadDroppedHumanChecks`）があれば、それも出す。人は、確かめてから承認し、満たしていなければ差し戻す（差し戻すと、指摘をもとに修正の子タスクを足す）。確かめた結果を項目ごとに記録する仕組みは無い（承認が、確かめたことを表す）。
+  不合格で、人が確かめることもあるときは、修正の子タスクを足す指示に、人が確かめることを「子タスクにしない」ものとして、JSON の文字列のデータで渡す（`integrationFindingLines`）。
   不合格なら `split` に戻して修正の子タスクを足させる。
   続けて `MAX_INTEGRATION_ATTEMPTS`（3）回通らなければ、修正の子タスクを足さずに、不合格のまま人の承認待ちにする。
   統合レビューの承認待ちで差し戻すと、回数を数え直す。
 
-コード: `apps/daemon/src/service.ts`（`integrate`・`childRepositories`）、`apps/daemon/src/prompts.ts`（`buildIntegrationReviewPrompt`・`extractIntegrationReview`・`integrationViewpointIds`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`MAX_INTEGRATION_ATTEMPTS`）
+コード: `apps/daemon/src/service.ts`（`integrate`・`childRepositories`）、`apps/daemon/src/prompts.ts`（`buildIntegrationReviewPrompt`・`extractIntegrationReview`・`integrationViewpointIds`・`INTEGRATION_HUMAN_CHECK_LINES`・`previousHumanCheckLines`・`readDroppedHumanChecks`・`integrationFindingLines`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`MAX_INTEGRATION_ATTEMPTS`・`IntegrationReviewed`）、`apps/web/src/components/integration.tsx`（`IntegrationResult`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）

@@ -119,6 +119,8 @@ const ja = {
       "引き継いだ PR なので、ベースブランチは取り込みません。GitHub で競合を解消してください。",
     integrateHelp:
       "子タスクを組み合わせた結果です。承認で完了、差し戻しで修正の子タスクを追加します。",
+    integrateHumanChecksHelp: (count: number) =>
+      `子タスクを組み合わせた結果で、人が確かめることが${count}件あります。確かめてから承認するか、差し戻して修正の子タスクを追加してください。`,
     integrateFailedHelp: (count: number) =>
       `統合レビューに${count}回続けて通りませんでした。承認すると不合格のまま完了、差し戻すと修正の子タスクを追加します。`,
     notReproducedHelp:
@@ -283,6 +285,15 @@ const ja = {
     target: (branch: string, commit: string) =>
       commit ? `読んだコード：${branch} の ${commit}` : `読んだコード：${branch}`,
     findings: "足りないこと",
+    /** 人が、統合レビューの承認で確かめること（PBI-363）。 */
+    humanChecks: "人が確かめること",
+    humanChecksHint:
+      "統合レビューで、作業領域では確かめられなかったことです。承認する前に確かめ、満たしていなければ差し戻してください。",
+    /** 前の回の人が確かめることのうち、この回の統合レビューが外したもの（PBI-363）。 */
+    droppedHumanChecks: "前の回の「人が確かめること」から外した項目",
+    droppedReason: (reason: string) => `外した理由：${reason}`,
+    /** 外す申告のうち、読み取れなかった・前の回の項目に当たらなかったもの（項目は残っている。PBI-363）。 */
+    unreadDroppedHumanChecks: "外す申告のうち、読み取れなかったもの",
     viewpoints: "観点ごとの判定",
     recurrence: "過去の指摘の再発",
     verified: "満たす",
@@ -658,6 +669,8 @@ const en: TaskMessages = {
       "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub.",
     integrateHelp:
       "The combined result of the subtasks. Approve to complete; request changes to add subtasks that fix it.",
+    integrateHumanChecksHelp: (count) =>
+      `The combined result of the subtasks has ${count === 1 ? "1 item" : `${count} items`} for a person to check. Check ${count === 1 ? "it" : "them"} and approve, or request changes to add subtasks for what is not met.`,
     integrateFailedHelp: (count) =>
       `The integration review failed ${count} times in a row. Approve to complete as it is, or request changes to add subtasks that fix it.`,
     notReproducedHelp:
@@ -815,6 +828,12 @@ const en: TaskMessages = {
     target: (branch, commit) =>
       commit ? `Code read: ${commit} on ${branch}` : `Code read: ${branch}`,
     findings: "Missing",
+    humanChecks: "For a person to check",
+    humanChecksHint:
+      "What the integration review could not check in the workspace. Check these before approving, and request changes if one is not met.",
+    droppedHumanChecks: 'Items removed from the previous round\'s "For a person to check"',
+    droppedReason: (reason) => `Reason for removing: ${reason}`,
+    unreadDroppedHumanChecks: "Removal requests that could not be read",
     viewpoints: "Verdict per viewpoint",
     recurrence: "Recurrence of past comments",
     verified: "Met",

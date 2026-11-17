@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -19,7 +19,7 @@
 | --- | --- |
 | タスクを作る・探す・状況を見る | [タスクを作る](#タスクを作る)、[タスクの一覧](#タスクの一覧)、[タスクの詳細の見方](#タスクの詳細の見方)、[画面の補足](#画面の補足)、[画面の自動の更新](#画面の自動の更新) |
 | sacty が自分で進める部分を知る | [タスクの開始時の情報収集](#タスクの開始時の情報収集)、[提出の前のセルフレビュー](#提出の前のセルフレビュー) |
-| 成果を確かめて、承認する・差し戻す | [PR での承認（要求要件・設計・実装）](#pr-での承認要求要件設計実装)、[要求要件・設計の読み方](#要求要件設計の読み方)、[確かめる項目（出典の分類）](#確かめる項目出典の分類)、[実装の PR のレビュー](#実装の-pr-のレビュー)、[差し戻したときの直し方](#差し戻したときの直し方)、[差し戻しの原因](#差し戻しの原因)、[変更の申し出](#変更の申し出)、[PR と Issue へのコメント](#pr-と-issue-へのコメント) |
+| 成果を確かめて、承認する・差し戻す | [PR での承認（要求要件・設計・実装）](#pr-での承認要求要件設計実装)、[要求要件・設計の読み方](#要求要件設計の読み方)、[確かめる項目（出典の分類）](#確かめる項目出典の分類)、[実装の PR のレビュー](#実装の-pr-のレビュー)、[差し戻したときの直し方](#差し戻したときの直し方)、[差し戻しの原因](#差し戻しの原因)、[変更の申し出](#変更の申し出)、[PR と Issue へのコメント](#pr-と-issue-へのコメント)、[統合レビューの結果を確かめる](#統合レビューの結果を確かめる) |
 | 進んでいるタスクに手を入れる | [オーケストレーターに質問する](#オーケストレーターに質問する)、[タスクの題を変える](#タスクの題を変える)、[タスクのイメージを変える](#タスクのイメージを変える)、[工程のエージェントを変える](#工程のエージェントを変える)、[一時停止・再開・中止](#一時停止再開中止)、[完了したタスクの続きのタスクを作る](#完了したタスクの続きのタスクを作る) |
 | 依頼の種類ごとの進み方を知る | [文書作成と単発の外部作業](#文書作成と単発の外部作業)、[既存の PR を直す](#既存の-pr-を直す)、[セキュリティチェックと対応](#セキュリティチェックと対応)、[テストの仕組みが無いリポジトリ](#テストの仕組みが無いリポジトリ)、[実装に変更が無いとき](#実装に変更が無いとき)、[実装が終わらないとき・やり直しで変更が無いとき](#実装が終わらないときやり直しで変更が無いとき) |
 | 以前の版で作ったタスクを扱う | [以前の版のタスク（「PR作成」の工程があった版）](#以前の版のタスクpr作成の工程があった版)、[以前の版のタスク（最終レビューがあった版）](#以前の版のタスク最終レビューがあった版) |
@@ -1213,6 +1213,25 @@ GitHub で自分で競合を直してもかまいません。
   取り込み方と、競合したときの扱いは、[ベースブランチが進んだとき](#ベースブランチが進んだとき)と同じです。承認待ちの間は取り込みません。
 - 依存先が中止されると、その上に作った子タスクは一時停止し、再開できなくなります。
   子タスクを中止してください（足りない分は、統合レビューで修正の子タスクとして足されることがあります）。
+
+### 統合レビューの結果を確かめる
+
+進め方が「分割」のタスクは、子タスクがすべて片付く（完了するか、中止をあなたが認める）と、統合レビューを行い、あなたの承認を待ちます。
+統合レビューは、子タスクの PR をマージした後のコードが、親タスクの要求要件を満たすかを AI が確かめるものです（中止した子タスクの変更は、入っていません）。
+
+1. タスクの詳細の「統合レビュー」で、合否・観点ごとの判定・足りないことを読みます。
+2. 「人が確かめること」があれば、承認の前に、その項目を自分で確かめます。
+3. 問題が無ければ承認します。タスクが完了します。
+4. 満たしていない項目があれば、指摘を書いて差し戻します。sacty が、指摘を直す修正の子タスクを足します。
+
+「人が確かめること」は、AI が作業領域では確かめられなかったことです（実際の外部のサービス・実機・目視での確認など）。
+こうした項目だけが残ったとき、統合レビューは不合格にせず、合格にして、項目をあなたに渡します。
+あなたが確かめた結果を項目ごとに記録する欄はありません。承認が、確かめたことを表します。
+統合レビューをやり直しても（修正の子タスクの後など）、前の回の項目は引き継がれます。AI が、確かめられた・要らなくなったとして外した項目は、同じ欄の「前の回の「人が確かめること」から外した項目」に、外した理由と一緒に出ます。
+AI が外そうとしたのに、sacty が読み取れなかった申告は、「外す申告のうち、読み取れなかったもの」に出ます。その項目は、外れずに「人が確かめること」に残っています。
+
+コードとテストで確かめられる範囲に足りないことがあれば、統合レビューは不合格になり、sacty が修正の子タスクを足します。
+続けて3回通らなければ、不合格のまま、あなたの判断を待ちます。
 
 ## 差し戻したときの直し方
 

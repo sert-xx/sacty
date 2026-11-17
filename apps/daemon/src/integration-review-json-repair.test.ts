@@ -30,6 +30,24 @@ describe("統合レビューの出力", () => {
     expect(review).not.toHaveProperty("outputRepaired");
   });
 
+  it("答えを読めなかった回も、前の回の人が確かめることは引き継ぐ（PBI-363）", () => {
+    expect(
+      extractIntegrationReview("判定なし", ids, [], undefined, ["実機で確かめる"]),
+    ).toMatchObject({ passed: false, humanChecks: ["実機で確かめる"] });
+  });
+
+  it("直して読んだ答えの人が確かめることは、配列でなくても読む（PBI-363）", () => {
+    // 文字列の中の二重引用符が打ち消されていない（直して読む）。humanChecks は、配列でなく文字列
+    const output = `\`\`\`json\n{"sacty-integration-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"「"決済"」を確かめた"}],"remarks":[],"findings":[],"humanChecks":"実機で確かめる","summary":"ok"}}\n\`\`\``;
+    const review = extractIntegrationReview(output, ids, []);
+    expect(review).toHaveProperty("outputRepaired");
+    expect(review.passed).toBe(true);
+    expect(review.humanChecks).toEqual(["実機で確かめる"]);
+    // findings は、配列でなければ読まない（今までどおり、直した答えを採らない）
+    const broken = output.replace('"findings":[]', '"findings":"足りない"');
+    expect(extractIntegrationReview(broken, ids, []).passed).toBe(false);
+  });
+
   it("直しても読めなければ、不合格のまま、壊れた位置を所見に残す", () => {
     const output = `\`\`\`json\n{"sacty-integration-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"ok"},"remarks":[],"findings":[],"summary":"ok"}}\n\`\`\``;
     const review = extractIntegrationReview(output, ids, [], (t) => t);

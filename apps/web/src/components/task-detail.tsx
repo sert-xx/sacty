@@ -585,7 +585,12 @@ function GateNotice({ task }: { task: Task }) {
                   : task.gate?.step === "integrate"
                     ? task.integration?.passed === false
                       ? m.gate.integrateFailedHelp(task.integrationFailures)
-                      : m.gate.integrateHelp
+                      : // 合格で、人が確かめることがある（PBI-363）
+                        (task.integration?.humanChecks?.length ?? 0) > 0
+                        ? m.gate.integrateHumanChecksHelp(
+                            task.integration?.humanChecks?.length ?? 0,
+                          )
+                        : m.gate.integrateHelp
                     : // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
                       watched?.state === "closed"
                       ? m.gate.prClosedHelp

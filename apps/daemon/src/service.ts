@@ -13873,6 +13873,8 @@ export class TaskService {
       integrationViewpointIds(latest),
       latest.remarks.filter((r) => !r.voided).map((r) => r.id),
       hide,
+      // 前の回の統合レビューが挙げた、人が確かめること（外されなければ、引き継ぐ。PBI-363）
+      latest.integration?.humanChecks ?? [],
     );
     const events: ActivityItem[] = [
       {

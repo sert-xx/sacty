@@ -2438,7 +2438,8 @@ const FinalReviewFailed = z.object({
 /**
  * ゴールガーディアンの統合レビュー（PBI-31）。子タスクの PR がマージされた後のベースブランチのコードで、
  * 親の要求要件・テスト観点を満たすかを判定する。合格、または続けて通らない上限に達したら、統合レビューの
- * 承認待ちにする（続く StepSubmitted）。上限の前に不合格なら、タスク分割の工程をやり直して修正の子タスクを
+ * 承認待ちにする（続く StepSubmitted）。作業領域では確かめられないことだけが残ったときは、合格にして、人が確かめることとして
+ * 承認待ちに出す（PBI-363）。上限の前に不合格なら、タスク分割の工程をやり直して修正の子タスクを
  * 追加する。費用は、続く前の AgentRunCompleted に記録する。
  */
 const IntegrationReviewed = z.object({
@@ -2459,6 +2460,22 @@ const IntegrationReviewed = z.object({
     remarks: z.array(RemarkReview),
     /** 足りないこと（修正の子タスクで直すこと）。 */
     findings: z.array(z.string()),
+    /**
+     * 人が統合レビューの承認で確かめること（PBI-363）。作業領域では確かめられないこと（実際の外部のサービス・実機・目視など）。
+     * 修正の子タスクでは直せないので、findings に入れず、あっても不合格にしない。無ければ無い（それより前の版の記録にも無い）。
+     */
+    humanChecks: z.array(z.string()).optional(),
+    /**
+     * 前の回の統合レビューが挙げた、人が確かめることのうち、この回で外したものと、外した理由（PBI-363）。外さなかった
+     * 項目は、sacty が humanChecks に引き継ぐ（この回の答えが挙げなくても、承認待ちまで残す）。前の回が無い、または
+     * 外していなければ無い。
+     */
+    droppedHumanChecks: z.array(z.object({ check: z.string(), reason: z.string() })).optional(),
+    /**
+     * 外す申告（答えの droppedHumanChecks）のうち、読み取れなかった・前の回の項目に当たらなかったもの（PBI-363）。項目は
+     * 外れずに残る。外したつもりの項目が残っていることに、人が気づけるように記録する。無ければ無い。
+     */
+    unreadDroppedHumanChecks: z.array(z.string()).optional(),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
     summary: DaemonText,
     /** 統合レビューの出力の JSON が崩れていて、直して読んだこと（PBI-298）。直さずに読めたときは無い。 */

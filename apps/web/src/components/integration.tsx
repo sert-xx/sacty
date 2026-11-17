@@ -4,6 +4,7 @@ import { isCompleted, MAX_INTEGRATION_ATTEMPTS, type Task } from "@sacty/core";
 import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
 
@@ -61,6 +62,54 @@ export function IntegrationResult({ task }: { task: Task }) {
             {review.findings.map((f) => (
               <li key={f} className="break-words">
                 {f}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {(review.humanChecks?.length ?? 0) > 0 && (
+        // 人が、統合レビューの承認で確かめること（PBI-363）。作業領域では確かめられなかったこと
+        <div
+          data-testid="integration-human-checks"
+          className="flex flex-col gap-1.5 rounded-lg border border-warn-line bg-warn-soft p-3 text-sm"
+        >
+          <p className="flex items-center gap-1 font-semibold text-warn">
+            {m.humanChecks} <Hint text={m.humanChecksHint} />
+          </p>
+          <ul className="flex list-disc flex-col gap-1 pl-5 leading-6">
+            {(review.humanChecks ?? []).map((c) => (
+              <li key={c} className="break-words">
+                {c}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {(review.droppedHumanChecks?.length ?? 0) > 0 && (
+        // 前の回の人が確かめることのうち、この回の統合レビューが外したものと、外した理由（PBI-363）
+        <div data-testid="integration-dropped-human-checks" className="flex flex-col gap-1 text-sm">
+          <p className="text-xs text-muted-foreground">{m.droppedHumanChecks}</p>
+          <ul className="list-disc pl-5 leading-6 text-muted-foreground">
+            {(review.droppedHumanChecks ?? []).map((c) => (
+              <li key={c.check} className="break-words">
+                {c.check}
+                <span className="block">{m.droppedReason(c.reason)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {(review.unreadDroppedHumanChecks?.length ?? 0) > 0 && (
+        // 外す申告のうち、読み取れなかった・前の回の項目に当たらなかったもの（項目は、外れずに残っている。PBI-363）
+        <div
+          data-testid="integration-unread-dropped-human-checks"
+          className="flex flex-col gap-1 text-sm"
+        >
+          <p className="text-xs text-muted-foreground">{m.unreadDroppedHumanChecks}</p>
+          <ul className="list-disc pl-5 leading-6 text-muted-foreground">
+            {(review.unreadDroppedHumanChecks ?? []).map((c) => (
+              <li key={c} className="break-words">
+                {c}
               </li>
             ))}
           </ul>
