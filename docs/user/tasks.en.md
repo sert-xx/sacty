@@ -466,6 +466,10 @@ A request that falls under any of the following is not judged light.
 - It includes a security-related change (authentication and authorization, secrets, permissions, input validation, adding or updating dependencies, and so on)
 - It includes a change that is hard to undo (deleting or migrating data, an effect on external systems, release or deployment settings, and so on)
 - It is a security fix task
+- It is a task that is split into child tasks (after the split, each child task is judged on its own)
+
+For a security fix task and a task that is split into child tasks, sacty uses the normal depth even when the Orchestrator answers light.
+In that case, the reason for the judgement shows that sacty set the normal depth, together with the Orchestrator's reason.
 
 The self-review of a task judged light goes as follows.
 

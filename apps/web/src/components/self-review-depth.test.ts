@@ -70,6 +70,23 @@ describe("セルフレビューの深さの表示（PBI-369）", () => {
     expect(render(forced)).toContain("is never judged light");
   });
 
+  it("子タスクに分けて進めるタスクを sacty が通常にした理由も、画面の言語で出す。人が軽くする操作は出さない（PBI-387）", () => {
+    const forced = {
+      selfReviewDepth: {
+        judged: "normal" as const,
+        reason: { code: "selfReview.depthForcedNormalSplit", params: { reason: "節を足すだけ" } },
+      },
+    };
+    locale = "ja";
+    const ja = render(forced);
+    expect(ja).toContain("セルフレビューの深さ：通常");
+    expect(ja).toContain("子タスクに分けて進めるタスクは、依頼が軽いと判定しません");
+    expect(ja).toContain("オーケストレーターは軽いと答えていました（理由：節を足すだけ）");
+    expect(ja).not.toContain("<form");
+    locale = "en";
+    expect(render(forced)).toContain("A task that is split into child tasks is never judged light");
+  });
+
   it("判定の無いタスクには何も出さない。中止したタスクには、操作を出さない", () => {
     locale = "ja";
     expect(render({})).toBe("");
