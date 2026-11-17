@@ -5853,6 +5853,31 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     made.activity.close();
   });
 
+  it("本文の解析に失敗したら、リンクを外さずに PR を作り、外せなかったことをログに残す（PBI-372）", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // 引用が深く入れ子になり、別スレッドでの解析の途中でスタックがあふれる
+      const deep = ">".repeat(20_000);
+      const made = await toImplement([
+        implement(["[手順](/workspace/docs/setup.md) を直しました。", deep].join("\n\n")),
+      ]);
+      await drain(made.service);
+      // PR は作る。本文は変えない（リンクは残る）
+      expect(made.pulls.calls).toHaveLength(1);
+      const body = made.pulls.calls[0]?.body ?? "";
+      expect(body).toContain("[手順](/workspace/docs/setup.md) を直しました。");
+      expect(body).toContain(deep);
+      const logged = warn.mock.calls.map((call) => String(call[0]));
+      const kept = logged.filter((line) => line.includes("作業領域へのリンクを外せませんでした"));
+      expect(kept).toEqual([
+        `[daemon] タスク ${made.id} の PR（https://github.com/acme/app）の本文から、作業領域へのリンクを外せませんでした（解析に失敗しました）。本文は変えずに使います`,
+      ]);
+      made.activity.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("実装の工程が終わったら、ブランチにプッシュしてPRを作り、実装の承認待ちで止まる（PBI-10b・PBI-110）", async () => {
     const { activity, service, repos, pulls, id } = await toImplementGate();
     // コミットの日時は、実装の工程の実行が終わった日時（PBI-331）

@@ -520,47 +520,48 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
 });
 
 describe("すでにある PR の更新で、マージした本文・まとめた本文からも、作業領域へのリンクを外す（unlinkedMergedBody）", () => {
-  it("作業領域へのリンクを外す。ほかのリンク・書き方は変えない", () => {
+  it("作業領域へのリンクを外す。ほかのリンク・書き方は変えない", async () => {
     const human = [
       "> 人のメモ：[設計](https://example.com/design) と [相対](docs/a.md) を見ること。",
       "",
       "値は `ghp_secret` ではなく、[手順](/workspace/docs/setup.md) のとおりに入れる。  ",
       "<!-- 人のコメント -->",
     ].join("\n");
-    expect(unlinkedMergedBody(human, [])).toBe(
-      human.replace("[手順](/workspace/docs/setup.md)", "手順（`docs/setup.md`）"),
-    );
+    expect(await unlinkedMergedBody(human, [])).toEqual({
+      body: human.replace("[手順](/workspace/docs/setup.md)", "手順（`docs/setup.md`）"),
+    });
   });
 
-  it("外すリンクが無ければ、渡された本文をそのまま返す（秘密の値と同じ文字があっても、人の本文に手を加えない）", () => {
+  it("外すリンクが無ければ、渡された本文をそのまま返す（秘密の値と同じ文字があっても、人の本文に手を加えない）", async () => {
     const body = "人が書いた本文。[設計](https://example.com/design) の値は abc です。";
-    expect(unlinkedMergedBody(body, ["abc"])).toBe(body);
+    expect(await unlinkedMergedBody(body, ["abc"])).toEqual({ body });
     // sacty が組み立てた本文は、外すリンクが無くても、伏せ直す
-    expect(unlinkedGeneratedBody(body, ["abc"])).toBe(
-      "人が書いた本文。[設計](https://example.com/design) の値は [REDACTED] です。",
-    );
+    expect(await unlinkedGeneratedBody(body, ["abc"])).toEqual({
+      body: "人が書いた本文。[設計](https://example.com/design) の値は [REDACTED] です。",
+    });
     // 外せない（変えずに残す）リンクだけのときも、そのまま返す
     const kept = "ping [@](/workspace)octocat の値は abc です。";
-    expect(unlinkedMergedBody(kept, ["abc"])).toBe(kept);
+    expect(await unlinkedMergedBody(kept, ["abc"])).toEqual({ body: kept });
   });
 
-  it("外した後に現れる秘密の値を、伏せる（文字がつながる・リンク先の文字参照が元の文字に戻る）", () => {
+  it("外した後に現れる秘密の値を、伏せる（文字がつながる・リンク先の文字参照が元の文字に戻る）", async () => {
     const body = [
       "値は ghp_[s](/workspace)ecret です。",
       "[手順](/workspace/docs/ghp&#95;secret.md) を直しました。",
     ].join("\n\n");
-    expect(unlinkedMergedBody(body, ["ghp_secret"])).toBe(
-      ["値は [REDACTED] です。", "手順（`docs/[REDACTED].md`） を直しました。"].join("\n\n"),
-    );
+    expect(await unlinkedMergedBody(body, ["ghp_secret"])).toEqual({
+      body: ["値は [REDACTED] です。", "手順（`docs/[REDACTED].md`） を直しました。"].join("\n\n"),
+    });
   });
 
-  it("伏せた結果が長さの上限を超えるときは、外すのをやめて、渡された本文を返す（秘密の値は現れない・上限を超えない）", () => {
+  it("伏せた結果が長さの上限を超えるときは、外すのをやめて、渡された本文を返す（秘密の値は現れない・上限を超えない）", async () => {
     // 短い秘密の値（伏せ字より短い）が、リンク先の文字参照から何度も現れる。伏せると、外して縮んだ分より長くなる
     const secret = "ghx";
     const link = `[手順](/workspace/${"gh&#120;".repeat(1_000)})`;
     const body = `${link}\n\n${"説明。".repeat(30_000)}`.slice(0, PR_BODY_MAX);
     expect(body.length).toBe(PR_BODY_MAX);
-    const out = unlinkedMergedBody(body, [secret]);
+    const { body: out, skipped } = await unlinkedMergedBody(body, [secret]);
+    expect(skipped).toBeUndefined();
     expect(out).toBe(body);
     expect(out).not.toContain(secret);
     // 外していれば、伏せた後に上限を超えていた（この分岐を通ったことの確認）
@@ -569,8 +570,98 @@ describe("すでにある PR の更新で、マージした本文・まとめた
     expect(unlinked.length).toBeGreaterThan(PR_BODY_MAX);
     // 上限に余裕があれば、外して伏せる
     const short = `${link}\n\n説明。`;
-    expect(unlinkedMergedBody(short, [secret])).toBe(
-      `手順（\`${"[REDACTED]".repeat(1_000)}\`）\n\n説明。`,
-    );
+    expect(await unlinkedMergedBody(short, [secret])).toEqual({
+      body: `手順（\`${"[REDACTED]".repeat(1_000)}\`）\n\n説明。`,
+    });
+  });
+});
+
+describe("本文の解析の間も、デーモンがほかの処理に応える（PBI-372）", () => {
+  /** 先頭に作業領域へのリンクを置いて（解析に回る）、記号を長さ length まで続けた本文。 */
+  const heavy = (unit: string, length: number) => {
+    const head = "[a](/workspace/a.md)\n\n";
+    return head + unit.repeat(Math.floor((length - head.length) / unit.length));
+  };
+
+  /**
+   * work を待つ間に、このスレッドのほかの処理（先に予約したコールバック）が動いたか。解析をこのスレッドで同期に行うと、
+   * 解析が終わるまでコールバックは動かず、終わった後は、結果を待つ処理のほうが先に進む。時間は測らない。
+   */
+  const respondsWhile = async <T>(work: () => Promise<T>): Promise<{ result: T; ran: boolean }> => {
+    let ran = false;
+    const immediate = setImmediate(() => {
+      ran = true;
+    });
+    const result = await work();
+    const ranBefore = ran;
+    clearImmediate(immediate);
+    return { result, ran: ranBefore };
+  };
+
+  it("記号が上限近くまで続く本文は、時間の上限で解析を打ち切り、本文を変えずに返す。その間も、ほかの処理が動く", async () => {
+    // 同期の解析では、3〜50 秒かかる形（`>`・`*a`・`*_`・`1. `・`+ `）。上限を短くして、打ち切りを確かめる
+    for (const unit of [">", "*a", "*_", "1. ", "+ "]) {
+      const body = heavy(unit, PR_BODY_MAX);
+      expect(body.length).toBeGreaterThan(PR_BODY_MAX - 3);
+      const generated = await respondsWhile(() =>
+        unlinkedGeneratedBody(body, [], { timeoutMs: 20 }),
+      );
+      expect(generated).toEqual({ result: { body, skipped: "timeout" }, ran: true });
+      const merged = await respondsWhile(() => unlinkedMergedBody(body, [], { timeoutMs: 20 }));
+      expect(merged).toEqual({ result: { body, skipped: "timeout" }, ran: true });
+    }
+  });
+
+  it("打ち切った本文でも、sacty が組み立てた本文は、秘密の値を伏せ直す。人の直しを含む本文は、そのまま返す", async () => {
+    const body = `${heavy("*_", PR_BODY_MAX - 20)}\n\n値は abc`;
+    expect(await unlinkedGeneratedBody(body, ["abc"], { timeoutMs: 20 })).toEqual({
+      body: body.replace("値は abc", "値は [REDACTED]"),
+      skipped: "timeout",
+    });
+    expect(await unlinkedMergedBody(body, ["abc"], { timeoutMs: 20 })).toEqual({
+      body,
+      skipped: "timeout",
+    });
+  });
+
+  it("時間の上限の中で終わる解析は、同期の変換と同じ結果を返す。その間も、ほかの処理が動く", async () => {
+    // 同期の解析に時間がかかる形（4,000 文字の `*_` で、0.1 秒ほど。遅い実行環境でも、時間の上限に届かない長さ）。
+    // 結果は、リンクを外した本文になる
+    const slow = heavy("*_", 4_000);
+    const converted = await respondsWhile(() => unlinkedGeneratedBody(slow, []));
+    expect(converted).toEqual({ result: { body: withoutWorkspaceLinks(slow) }, ran: true });
+    expect(converted.result.body).toBe(slow.replace("[a](/workspace/a.md)", "a（`a.md`）"));
+    // ふつうの本文（上限いっぱいにリンクが並ぶ）は、これまでと同じ結果になる
+    const link = "[a.md](/workspace/a.md) ";
+    const many = link.repeat(Math.floor(PR_BODY_MAX / link.length));
+    expect(await unlinkedGeneratedBody(many, [])).toEqual({
+      body: "a.md ".repeat(Math.floor(PR_BODY_MAX / link.length)),
+    });
+    expect(await unlinkedMergedBody(many, [])).toEqual({
+      body: "a.md ".repeat(Math.floor(PR_BODY_MAX / link.length)),
+    });
+  });
+
+  it("解析に失敗した本文は、変えずに返す（失敗したことが分かる）", async () => {
+    // 引用が深く入れ子になり、構文木をたどる途中でスタックがあふれる
+    const deep = heavy(">", 20_000);
+    expect(await unlinkedGeneratedBody(deep, [])).toEqual({ body: deep, skipped: "error" });
+    expect(await unlinkedMergedBody(deep, [])).toEqual({ body: deep, skipped: "error" });
+  });
+
+  it("空の本文・作業領域へのリンクがありえない本文は、解析せずに、そのまま返す", async () => {
+    expect(await unlinkedGeneratedBody("", [])).toEqual({ body: "" });
+    expect(await unlinkedMergedBody("", [])).toEqual({ body: "" });
+    // 解析すれば時間の上限を超える形でも、解析しないので、打ち切りにならない
+    const unlinkable = `${"+ ".repeat(PR_BODY_MAX / 2 - 20)}[a](docs/a.md)`;
+    expect(await unlinkedGeneratedBody(unlinkable, [], { timeoutMs: 20 })).toEqual({
+      body: unlinkable,
+    });
+  });
+
+  it("同時に呼んでも、それぞれの結果を返す", async () => {
+    const bodies = Array.from({ length: 4 }, (_, i) => `[a${i}.md](/workspace/a${i}.md) を直した`);
+    const results = await Promise.all(bodies.map((body) => unlinkedMergedBody(body, [])));
+    expect(results).toEqual(bodies.map((_, i) => ({ body: `a${i}.md を直した` })));
   });
 });
