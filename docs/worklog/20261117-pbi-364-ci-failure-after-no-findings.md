@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-364
-- PR: なし
+- PR: #404
 - ブランチ: feat/pbi-364-ci-failure-notice
 - 関係する ADR: [指摘なしの後に実装の PR の CI が失敗していたら、タスクの詳細に出す（読み続けず、自動では扱わない）](../adr/20261117-0320-show-ci-failure-after-no-findings.md)
 
