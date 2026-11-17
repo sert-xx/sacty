@@ -86,11 +86,28 @@ export function IntegrationResult({ task }: { task: Task }) {
         </div>
       )}
       {(review.droppedHumanChecks?.length ?? 0) > 0 && (
-        // 前の回の人が確かめることのうち、この回の統合レビューが外したもの（理由は、下の説明にある。PBI-363）
+        // 前の回の人が確かめることのうち、この回の統合レビューが外したものと、外した理由（PBI-363）
         <div data-testid="integration-dropped-human-checks" className="flex flex-col gap-1 text-sm">
           <p className="text-xs text-muted-foreground">{m.droppedHumanChecks}</p>
           <ul className="list-disc pl-5 leading-6 text-muted-foreground">
             {(review.droppedHumanChecks ?? []).map((c) => (
+              <li key={c.check} className="break-words">
+                {c.check}
+                <span className="block">{m.droppedReason(c.reason)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {(review.unreadDroppedHumanChecks?.length ?? 0) > 0 && (
+        // 外す申告のうち、読み取れなかった・前の回の項目に当たらなかったもの（項目は、外れずに残っている。PBI-363）
+        <div
+          data-testid="integration-unread-dropped-human-checks"
+          className="flex flex-col gap-1 text-sm"
+        >
+          <p className="text-xs text-muted-foreground">{m.unreadDroppedHumanChecks}</p>
+          <ul className="list-disc pl-5 leading-6 text-muted-foreground">
+            {(review.unreadDroppedHumanChecks ?? []).map((c) => (
               <li key={c} className="break-words">
                 {c}
               </li>

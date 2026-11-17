@@ -57,19 +57,36 @@ describe("統合レビューの人が確かめること（PBI-363）", () => {
     expect(html).not.toContain("不合格");
   });
 
-  it("前の回の項目から外したものがあれば、外した項目として出す。無ければ出さない", () => {
-    const html = render(
-      task(review({ humanChecks: [CHECK], droppedHumanChecks: ["実機で読み取れること"] })),
-    );
+  it("前の回の項目から外したものがあれば、外した項目と理由を出す。無ければ出さない", () => {
+    const dropped = [{ check: "実機で読み取れること", reason: "結合テストで確かめられた" }];
+    const html = render(task(review({ humanChecks: [CHECK], droppedHumanChecks: dropped })));
     expect(html).toContain('data-testid="integration-dropped-human-checks"');
     expect(html).toContain("外した項目");
-    expect(html).toContain('<li class="break-words">実機で読み取れること</li>');
+    expect(html).toContain("実機で読み取れること");
+    expect(html).toContain("外した理由：結合テストで確かめられた");
     expect(render(task(review({ humanChecks: [CHECK] })))).not.toContain(
       "integration-dropped-human-checks",
     );
-    expect(render(task(review({ droppedHumanChecks: ["実機で読み取れること"] })), "en")).toContain(
-      "Items removed from the previous round",
+    // 英語の画面では、区切りの文も英語で出す
+    const en = render(task(review({ droppedHumanChecks: dropped })), "en");
+    expect(en).toContain("Items removed from the previous round");
+    expect(en).toContain("Reason for removing: 結合テストで確かめられた");
+    expect(en).not.toContain("外した理由");
+  });
+
+  it("外す申告のうち読み取れなかったものがあれば出す。無ければ出さない", () => {
+    const html = render(
+      task(review({ humanChecks: [CHECK], unreadDroppedHumanChecks: ["確かめられたので外す"] })),
     );
+    expect(html).toContain('data-testid="integration-unread-dropped-human-checks"');
+    expect(html).toContain("外す申告のうち、読み取れなかったもの");
+    expect(html).toContain('<li class="break-words">確かめられたので外す</li>');
+    expect(render(task(review({ humanChecks: [CHECK] })))).not.toContain(
+      "integration-unread-dropped-human-checks",
+    );
+    expect(
+      render(task(review({ unreadDroppedHumanChecks: ["確かめられたので外す"] })), "en"),
+    ).toContain("Removal requests that could not be read");
   });
 
   it("不合格の結果にも、足りないことと一緒に、人が確かめることを出す", () => {

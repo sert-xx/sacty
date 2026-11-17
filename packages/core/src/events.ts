@@ -2451,11 +2451,16 @@ const IntegrationReviewed = z.object({
      */
     humanChecks: z.array(z.string()).optional(),
     /**
-     * 前の回の統合レビューが挙げた、人が確かめることのうち、この回で外したものと、外した理由（PBI-363。
-     * 「<外した項目> → 外した理由：<理由>」）。外さなかった項目は、sacty が humanChecks に引き継ぐ（この回の答えが
-     * 挙げなくても、承認待ちまで残す）。前の回が無い、または外していなければ無い。
+     * 前の回の統合レビューが挙げた、人が確かめることのうち、この回で外したものと、外した理由（PBI-363）。外さなかった
+     * 項目は、sacty が humanChecks に引き継ぐ（この回の答えが挙げなくても、承認待ちまで残す）。前の回が無い、または
+     * 外していなければ無い。
      */
-    droppedHumanChecks: z.array(z.string()).optional(),
+    droppedHumanChecks: z.array(z.object({ check: z.string(), reason: z.string() })).optional(),
+    /**
+     * 外す申告（答えの droppedHumanChecks）のうち、読み取れなかった・前の回の項目に当たらなかったもの（PBI-363）。項目は
+     * 外れずに残る。外したつもりの項目が残っていることに、人が気づけるように記録する。無ければ無い。
+     */
+    unreadDroppedHumanChecks: z.array(z.string()).optional(),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
     summary: DaemonText,
     /** 統合レビューの出力の JSON が崩れていて、直して読んだこと（PBI-298）。直さずに読めたときは無い。 */

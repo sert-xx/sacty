@@ -291,6 +291,9 @@ const ja = {
       "統合レビューで、作業領域では確かめられなかったことです。承認する前に確かめ、満たしていなければ差し戻してください。",
     /** 前の回の人が確かめることのうち、この回の統合レビューが外したもの（PBI-363）。 */
     droppedHumanChecks: "前の回の「人が確かめること」から外した項目",
+    droppedReason: (reason: string) => `外した理由：${reason}`,
+    /** 外す申告のうち、読み取れなかった・前の回の項目に当たらなかったもの（項目は残っている。PBI-363）。 */
+    unreadDroppedHumanChecks: "外す申告のうち、読み取れなかったもの",
     viewpoints: "観点ごとの判定",
     recurrence: "過去の指摘の再発",
     verified: "満たす",
@@ -829,6 +832,8 @@ const en: TaskMessages = {
     humanChecksHint:
       "What the integration review could not check in the workspace. Check these before approving, and request changes if one is not met.",
     droppedHumanChecks: 'Items removed from the previous round\'s "For a person to check"',
+    droppedReason: (reason) => `Reason for removing: ${reason}`,
+    unreadDroppedHumanChecks: "Removal requests that could not be read",
     viewpoints: "Verdict per viewpoint",
     recurrence: "Recurrence of past comments",
     verified: "Met",
