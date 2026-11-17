@@ -43,6 +43,7 @@ import {
   useTempDir,
 } from "./testing/daemon.js";
 import { removal } from "./testing/failing-removal.js";
+import { idleFor } from "./testing/wait.js";
 
 /** 消すのを失敗させられるようにする（removal.fail に場所を指定したときだけ。testing/failing-removal.ts）。 */
 vi.mock("node:fs", async (importOriginal) =>
@@ -3179,7 +3180,8 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     const first = execute(runOf(a.id, "a1"));
     await executor.started.promise;
     const second = execute(runOf(a.id, "a2"));
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // 1つ目が終わる前に、2つ目が始まっていないこと（何も起きないこと）を見るための猶予。1つ目が始まった後に置く
+    await idleFor(50);
     // 同じタスクの2つ目は、1つ目が終わるまで始まらない
     expect(executor.calls).toHaveLength(1);
     // ほかのタスクのオーケストレーター・同じタスクの工程のエージェントは待たない

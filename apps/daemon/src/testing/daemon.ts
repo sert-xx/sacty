@@ -754,6 +754,8 @@ export class FakePulls implements PullRequests {
   createdIssues: { repo: string; token: string; title: string; body: string }[] = [];
   issueFail?: string;
   issueGate?: Promise<void>;
+  /** Issue の作成を始めた回数（作成の最中であることを、テストが待つのに使う）。 */
+  issueStarted = 0;
   async createIssue(input: {
     repo: string;
     token: string;
@@ -761,6 +763,7 @@ export class FakePulls implements PullRequests {
     body: string;
     signal?: AbortSignal;
   }) {
+    this.issueStarted += 1;
     if (input.signal?.aborted) throw input.signal.reason;
     // あれば、これが解決するまで終わらせない（Issue を作っている最中の停止・期限切れのテスト）
     if (this.issueGate) {
@@ -1669,6 +1672,17 @@ export function noticesSettled(service: TaskService): Promise<void> {
   };
   return waitFor(() => internals.stopNotices.size === 0 && internals.serialTails.size === 0, {
     what: "待たずに送る処理（PR への知らせ・返信の投稿）の終わり",
+  });
+}
+
+/**
+ * 終わっていないものとして数えている、PR のドラフトの切り替えの要求が、無くなるまで待つ（要求が終わるか、中断に応じない要求を
+ * 数えるのをやめる上限を過ぎるまで）。noticesSettled と同じく、本体に待つ口が無いので、数の表（private）を直接見る。
+ */
+export function draftRequestsSettled(service: TaskService): Promise<void> {
+  const internals = service as unknown as { draftRequests: Map<string, number> };
+  return waitFor(() => internals.draftRequests.size === 0, {
+    what: "終わっていないドラフトの切り替えの要求が、無くなること",
   });
 }
 

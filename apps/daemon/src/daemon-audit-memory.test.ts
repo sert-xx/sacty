@@ -37,6 +37,7 @@ import {
   projectsWithAccount,
   useTempDir,
 } from "./testing/daemon.js";
+import { idleFor } from "./testing/wait.js";
 
 useTempDir();
 
@@ -1317,7 +1318,8 @@ describe("監査の再々レビューの指摘（PR #135）", () => {
     await waitingB;
     // B の中止の後に C が来ても、A の深掘りの間は始めない
     const waitingC = service.runNext(c);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // A の深掘りの間に、C の深掘りが始まっていないこと（何も起きないこと）を見るための猶予
+    await idleFor(20);
     expect(order).toEqual(["監査A"]);
     executor.kill(heldRun);
     await runningA;
@@ -1529,7 +1531,9 @@ describe("監査で伏せる秘密情報の値の使い回し（PR #135 再レ�
     const heldRun = await executor.started.promise;
     // B は A の深掘りの後を待つ。その間に参照を変える
     const waitingB = service.runNext(b);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // B が、A の深掘りの後を待つ所まで進むための猶予。猶予が短くても、テストは誤って落ちない
+    // （B は、変えた後の参照だけを読むことになり、伏せる値は同じ）
+    await idleFor(20);
     ref = "new-ref";
     executor.kill(heldRun);
     await runningA;

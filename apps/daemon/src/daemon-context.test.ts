@@ -54,6 +54,7 @@ import {
   triageOut,
   useTempDir,
 } from "./testing/daemon.js";
+import { idleFor } from "./testing/wait.js";
 
 useTempDir();
 
@@ -395,7 +396,8 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     expect(ja(started.problems[0])).toContain("1 秒のうちに取得できませんでした。");
     // 時間切れの後に返った取得は使わない（op を呼ばない）
     for (const release of releases) release();
-    await new Promise((r) => setTimeout(r, 20));
+    // 時間切れの後に返った取得で、op を呼んでいないこと（何も起きないこと）を見るための猶予
+    await idleFor(20);
     expect(op.calls).toHaveLength(1);
     activity.close();
   });
@@ -441,7 +443,8 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     expect(op.calls[1]).toEqual({ command: "run", refs: allRefs.slice(1) });
     // 同じ内容で保存し直しても、持っている参照は 1Password に問い合わせない
     expect((await send("PUT", "/api/projects/a", definition("A", "a", teamRepo))).status).toBe(200);
-    await new Promise((r) => setTimeout(r, 50));
+    // 保存の後に、1Password に問い合わせていないこと（何も起きないこと）を見るための猶予
+    await idleFor(50);
     expect(op.calls).toHaveLength(2);
     // 起動の後に足された秘密情報は、保存し直すと、それだけを取り出す。取り出せないものは画面の警告に出す
     files[baseRepo] = {
@@ -472,7 +475,8 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     files[baseRepo] = contextFiles()[baseRepo] ?? {};
     const created = await send("POST", "/api/projects", definition("B", "b", baseRepo));
     expect(created.status).toBe(201);
-    await new Promise((r) => setTimeout(r, 50));
+    // 作成の後に、1Password に問い合わせていないこと（何も起きないこと）を見るための猶予
+    await idleFor(50);
     expect(op.calls).toHaveLength(5);
     expect(service.status().warnings).toHaveLength(1);
     // 直してから保存し直すと、そのプロジェクトの警告は消える
@@ -547,7 +551,9 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     // 承認を待っている間に、タスクを作って実行する
     const task = service.createTask({ projectId: "a", title: "ドキュメントを直す" });
     const running = service.runNext(task.id);
-    await new Promise((r) => setTimeout(r, 30));
+    // タスクが、承認を待っている参照に行き当たるまでの猶予。その間に、別に問い合わせていないこと（何も起きないこと）を、
+    // 後の op.calls の確認で見る。猶予が短くても、テストは誤って落ちない（タスクは、承認の後に同じ結果を使うだけ）
+    await idleFor(30);
     approve?.();
     await running;
     expect(executor.calls[0]?.env).toEqual(
