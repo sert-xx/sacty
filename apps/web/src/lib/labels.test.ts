@@ -428,17 +428,17 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     };
     // 待ちは、記録した時刻から次に試せる時刻までを、分に切り上げて出す
     expect(describeEventParts(deferred, ja).text).toBe(
-      "指摘への対応の、PR #7 への返信が、GitHub のレート制限に当たった。約5分後にやり直す（まだ返信していない指摘 3件・連続 2回目の制限）",
+      "指摘への対応の、PR #7 への返信が GitHub のレート制限に当たったので、約5分後にやり直す（残り 3件・連続 2回目）",
     );
     expect(describeEventParts(deferred, labels.en).text).toBe(
-      "Replying on PR #7 about how the remarks were handled hit the GitHub rate limit. It will be retried in about 5 min (3 remarks not replied to yet; rate limit hit 2 times in a row)",
+      "Replying on PR #7 about how the remarks were handled hit the GitHub rate limit, so it will be retried in about 5 min (3 left; 2 in a row)",
     );
     const single = {
       ...deferred,
       payload: { ...deferred.payload, waiting: 1, attempt: 1, until: at },
     } as typeof deferred;
     expect(describeEventParts(single, labels.en).text).toBe(
-      "Replying on PR #7 about how the remarks were handled hit the GitHub rate limit. It will be retried in about 1 min (1 remark not replied to yet; rate limit hit 1 time in a row)",
+      "Replying on PR #7 about how the remarks were handled hit the GitHub rate limit, so it will be retried in about 1 min (1 left; 1 in a row)",
     );
     // 待ちの後にやり直した結果。あきらめた指摘は、返信できなかった理由に出る
     const retried = event({
@@ -459,7 +459,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
       },
     });
     expect(describeEventParts(retried, ja)).toEqual({
-      text: "指摘への対応の、PR #7 への返信の結果（GitHub のレート制限の待ちの後に、やり直した。返信した 1件・返信できなかった 1件）",
+      text: "指摘への対応の、PR #7 への返信の結果（GitHub のレート制限の待ちの後のやり直し・返信した 1件・返信できなかった 1件）",
       detail: [
         "implement-1-2 は返信できなかった（GitHub のレート制限に、待ちをはさんで連続 6 回当たったため、この指摘への返信をあきらめました。）",
         "implement-1-1 は PR のコメントとして返信した（https://example.com/c）",
