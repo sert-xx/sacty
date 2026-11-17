@@ -574,17 +574,17 @@ export type ContextPreviewView = Omit<ContextPreview, "platforms"> & {
 type PinnedImage = { name: string; source: "project" | "rerun" | "request" };
 
 /**
- * 工程の選択で記録する、依頼の大きさの判定と理由（PBI-369）。セキュリティにかかわる組み合わせ（security-check・
- * security-fix）と、外部への作業の組み合わせ（operation。取り消しにくい）は、オーケストレーターが軽いと答えても通常にする
- * （セキュリティにかかわる変更・取り消しにくい変更は、軽いと判定しない）。PR のレビューだけの組み合わせ（review）は、
- * セルフレビューをしないので記録しない。答えが無ければ記録しない（通常として扱う）。
+ * 工程の選択で記録する、依頼の大きさの判定と理由（PBI-369）。セルフレビューをする工程（SELF_REVIEW_STEPS）が無い
+ * 組み合わせ（PR のレビューだけ・調査だけ・セキュリティチェック・作業のみ）は、判定を使う所が無いので記録しない。
+ * セキュリティ対応（security-fix）は、オーケストレーターが軽いと答えても通常にする（セキュリティにかかわる変更は、
+ * 軽いと判定しない）。答えが無ければ記録しない（通常として扱う）。
  */
 export function selfReviewDepthOf(chosen: {
   plan: StepPlan;
   selfReviewDepth?: SelfReviewDepth;
   selfReviewDepthReason?: string;
 }): { selfReviewDepth?: SelfReviewDepth; selfReviewDepthReason?: DaemonText } {
-  if (!chosen.selfReviewDepth || chosen.plan === "review") return {};
+  if (!chosen.selfReviewDepth || !selfReviews(chosen.plan)) return {};
   if (chosen.selfReviewDepth === "light" && NEVER_LIGHT_PLANS.includes(chosen.plan)) {
     return {
       selfReviewDepth: "normal",
@@ -601,8 +601,16 @@ export function selfReviewDepthOf(chosen: {
   };
 }
 
-/** 依頼が軽いと判定しない工程の組み合わせ（PBI-369）。セキュリティにかかわるものと、取り消しにくい外部への作業。 */
-const NEVER_LIGHT_PLANS: readonly StepPlan[] = ["security-check", "security-fix", "operation"];
+/**
+ * 依頼が軽いと判定しない工程の組み合わせ（PBI-369）。セキュリティにかかわる変更をするもの。セキュリティチェックと
+ * 作業のみ（取り消しにくい外部への作業）は、セルフレビューをする工程が無いので、ここには要らない。
+ */
+const NEVER_LIGHT_PLANS: readonly StepPlan[] = ["security-fix"];
+
+/** 組み合わせに、提出の前のセルフレビューをする工程があるか。 */
+function selfReviews(plan: StepPlan): boolean {
+  return STEP_PLANS[plan].some((step) => (SELF_REVIEW_STEPS as readonly StepKey[]).includes(step));
+}
 
 function clipText(text: DaemonText, max: number): DaemonText {
   return mapFreeText(text, (value) => (value.length > max ? `…${value.slice(-max)}` : value));

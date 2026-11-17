@@ -120,37 +120,54 @@ describe("依頼の大きさを、工程を選ぶ時点でオーケストレー�
     expect(got?.selfReviewDepth).toBe("light");
   });
 
-  it("セキュリティにかかわる組み合わせと、外部への作業の組み合わせは、軽いと答えても通常として記録する", () => {
-    for (const p of ["security-check", "security-fix", "operation"] as const) {
-      const got = selfReviewDepthOf({
-        plan: p,
-        selfReviewDepth: "light",
-        selfReviewDepthReason: "数行の変更",
-      });
-      expect(got.selfReviewDepth, p).toBe("normal");
-      // 理由には、sacty が通常にしたことと、オーケストレーターの理由を残す（日英）
-      const ja = renderMessage(got.selfReviewDepthReason ?? "", "ja");
-      expect(ja, p).toContain("依頼が軽いと判定しません");
-      expect(ja, p).toContain("（理由：数行の変更）");
-      expect(renderMessage(got.selfReviewDepthReason ?? "", "en"), p).toContain(
-        "is never judged light",
-      );
-      // 通常と答えたものは、そのまま
-      expect(
-        selfReviewDepthOf({ plan: p, selfReviewDepth: "normal", selfReviewDepthReason: "理由" }),
-      ).toEqual({ selfReviewDepth: "normal", selfReviewDepthReason: "理由" });
-    }
-    // ほかの組み合わせは、答えのまま
-    for (const p of ["standard", "skip-design", "direct", "document", "design-only"] as const) {
+  it("セキュリティ対応の組み合わせは、軽いと答えても通常として記録する。セルフレビューをする工程が無い組み合わせには記録しない", () => {
+    const forced = selfReviewDepthOf({
+      plan: "security-fix",
+      selfReviewDepth: "light",
+      selfReviewDepthReason: "数行の変更",
+    });
+    expect(forced.selfReviewDepth).toBe("normal");
+    // 理由には、sacty が通常にしたことと、オーケストレーターの理由を残す（日英）
+    const ja = renderMessage(forced.selfReviewDepthReason ?? "", "ja");
+    expect(ja).toContain("セキュリティ対応のタスクは、依頼が軽いと判定しません");
+    expect(ja).toContain("（理由：数行の変更）");
+    expect(renderMessage(forced.selfReviewDepthReason ?? "", "en")).toContain(
+      "is never judged light",
+    );
+    // 通常と答えたものは、そのまま
+    expect(
+      selfReviewDepthOf({
+        plan: "security-fix",
+        selfReviewDepth: "normal",
+        selfReviewDepthReason: "理由",
+      }),
+    ).toEqual({ selfReviewDepth: "normal", selfReviewDepthReason: "理由" });
+    // セルフレビューをする工程（要求要件・設計・実装・文書作成）がある、ほかの組み合わせは、答えのまま
+    for (const p of [
+      "standard",
+      "skip-design",
+      "direct",
+      "bugfix",
+      "document",
+      "design-only",
+      "split",
+    ] as const) {
       expect(
         selfReviewDepthOf({ plan: p, selfReviewDepth: "light", selfReviewDepthReason: "節を足す" }),
         p,
       ).toEqual({ selfReviewDepth: "light", selfReviewDepthReason: "節を足す" });
     }
-    // PR のレビューだけの組み合わせは、セルフレビューをしないので記録しない。答えが無いときも記録しない
-    expect(
-      selfReviewDepthOf({ plan: "review", selfReviewDepth: "light", selfReviewDepthReason: "小" }),
-    ).toEqual({});
+    // セルフレビューをする工程が無い組み合わせ（PR のレビューだけ・調査だけ・セキュリティチェック・作業のみ）には、
+    // 判定を使う所が無いので、軽いとも通常とも記録しない
+    for (const p of ["review", "investigate", "security-check", "operation"] as const) {
+      for (const depth of ["light", "normal"] as const) {
+        expect(
+          selfReviewDepthOf({ plan: p, selfReviewDepth: depth, selfReviewDepthReason: "小" }),
+          `${p}/${depth}`,
+        ).toEqual({});
+      }
+    }
+    // 答えが無いときも記録しない
     expect(selfReviewDepthOf({ plan: "standard" })).toEqual({});
   });
 });
@@ -213,7 +230,7 @@ describe("軽いと判定されたタスクでは、セルフレビューの観�
       expect(prompt, step).toContain("X-2 は、実行した検証が失敗・警告を出したときだけ起動する");
       // 上位の段階の担当は 1 段下げる
       expect(prompt, step).toContain(
-        "段階が advanced の観点の担当（X-1・C-1・R など）は、1 段下の standard で起動する",
+        "standard より上の段階の観点の担当は、1 段下の段階で起動する（既定の観点カタログでは、advanced の X-1・C-1・R を standard で起動する）",
       );
       // 横断の 2 回目を省く
       expect(prompt, step).toContain("X-1 も、前回の回で must を出したときだけ起動する");
@@ -221,6 +238,10 @@ describe("軽いと判定されたタスクでは、セルフレビューの観�
       // 起動しなかった観点と理由を、今までどおり残す
       expect(prompt, step).toContain(
         "起動しなかった観点は、起動表に「起動しない」と理由（軽い依頼）を残し、報告の summary でも、起動した観点と起動しなかった観点が分かるように書く",
+      );
+      // 意図して起動しなかった観点を、見られなかった観点（画面で確かめるよう出すもの）に混ぜさせない
+      expect(prompt, step).toContain(
+        "報告の notReviewed には書かない（notReviewed は、起動したのに結果を得られなかった観点だけ）",
       );
       // セキュリティにかかわる・取り消しにくいと分かったら、軽い依頼として扱わない
       expect(prompt, step).toContain("軽い依頼として扱わず、通常の規則で観点を決め");
@@ -281,7 +302,7 @@ describe("軽いと判定されたタスクでは、セルフレビューの観�
     );
     // 観点を 2 つに絞る指示（初回の規則）は、直しの実行の規則と食い違うので出さない
     expect(prompt).not.toContain(VIEWPOINTS);
-    expect(prompt).toContain("1 段下の standard で起動する");
+    expect(prompt).toContain("standard より上の段階の観点の担当は、1 段下の段階で起動する");
   });
 
   it("PR のレビューの工程と、セルフレビューを省く工程（提出を PR のレビューの子タスクがレビューする）には、絞る指示を出さない", () => {

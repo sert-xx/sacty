@@ -465,7 +465,7 @@ A request that falls under any of the following is not judged light.
 - It changes existing behavior, public interfaces, or the shape of stored data
 - It includes a security-related change (authentication and authorization, secrets, permissions, input validation, adding or updating dependencies, and so on)
 - It includes a change that is hard to undo (deleting or migrating data, an effect on external systems, release or deployment settings, and so on)
-- It is a security check, a security fix, or a one-off external operation
+- It is a security fix task
 
 The self-review of a task judged light goes as follows.
 
@@ -483,11 +483,16 @@ To have the task reviewed at the normal depth, do the following.
 2. Press "Use the normal depth" under "Self-review depth".
 
 The change applies from the next run of a step that does a self-review.
-A run in progress does not change. To have a deliverable that was already submitted reviewed at the normal depth, override first, then request changes on that step.
+A run in progress does not change.
+The first step starts as soon as the steps are chosen, so it runs light.
+To redo a step that is running at the normal depth, pause the task, press "Use the normal depth", then resume ([Pause, resume, and cancel](#pause-resume-and-cancel)).
+A fix after you request changes on a submitted deliverable is reviewed with the viewpoints related to your comments, even at the normal depth ([Self-review when the work is redone after comments](#self-review-when-the-work-is-redone-after-comments)).
 To go back, press "Back to the judgement (light)" in the same place.
 A task that was not judged light cannot be made light.
 
 The viewpoints of PR reviews (the tasks in which sacty reviews a PR) do not change with this judgement.
+The judgement also has no effect on a step that does no self-review ([Self-review before submitting](#self-review-before-submitting)).
+No judgement is shown for a task with no step that does a self-review (investigation only, a security check, a one-off external operation, and so on).
 
 ### Self-review when the work is redone after comments
 
