@@ -28,7 +28,10 @@
 
 PBI-364 を外し、main（#398 までを含む）を取り込んだ後のコードで、すべて実行し直した結果を書く。
 
-（下に、実行した結果を書く）
+- `npx vitest run --no-file-parallelism`：247 ファイル・4720 件が通った（1 件は以前からの skip）。
+- `npm run typecheck`：通った。`npx biome check apps packages docs tests scripts`：指摘なし（`npm run lint` は、Git 管理外の `.claude/settings.local.json` の整形の指摘 1 件で落ちる。リポジトリのファイルの指摘は無い）。`npm run build`：通った。
+- 足したテスト：`daemon-split.test.ts`（人が確かめることだけが残ると、合格にして修正の子タスクを作らずに承認待ちにする・直すことがあれば不合格にして、人が確かめることは子タスクにさせない・配列でない／無い答えは今までどおり）、`integration.test.ts`（画面の欄。日英・無ければ出さない）、`live-screens.test.ts`（承認待ちの案内の件数）。
+- 修正を戻すとテストが落ちること：答えの読み取りから `humanChecks` を外すと、`daemon-split.test.ts` の 2 件が落ちた。戻して通ることを確かめた。
 
 ## レビューの指摘と対応
 
