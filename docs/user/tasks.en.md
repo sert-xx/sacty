@@ -731,7 +731,8 @@ This is a proposal. You decide, one by one before the merge, whether to defer it
    For a comment imported from the PR, "Open the original comment" opens the original comment on GitHub.
 3. For each comment, choose "Defer" or "Fix in this PR".
    Leave a comment you do not decide yet as "Decide later".
-4. Press "Decide".
+4. For a comment you chose "Defer" for, choose "Handling when deferred".
+5. Press "Decide".
 
 The decisions have the following results.
 
@@ -746,8 +747,25 @@ The decisions have the following results.
   The Activity shows whether it could comment, or why not.
   It does not comment in a project with no GitHub account chosen, or in security check and security fix tasks.
 - The sacty PR review does not count a comment you decided to defer as unaddressed, and does not raise it again.
-- sacty does not turn a comment you decided to defer into another task or an issue. Create one yourself if you need it.
+- Decided comments appear under "Decided" below the list, with the decision and the result of the handling (a link to the follow-up task or the issue).
 - You can merge the PR before deciding. If you merge without deciding, the proposals stay undecided.
+
+Choose "Handling when deferred" from the following three.
+
+| Handling | What sacty does |
+| --- | --- |
+| Do nothing | It creates nothing. The comment only stays in the PR comment. Choose this when you have noted it or will handle it yourself |
+| Create a Sacty follow-up task | After this task completes, it creates one follow-up task per comment |
+| Create a GitHub issue | When you decide, it creates an issue in the repository of the PR |
+
+- The handling chosen at first is "Handling of deferred findings" in the project settings ([Project settings](project-settings.en.md#handling-of-deferred-findings)).
+- A follow-up task is created after the PR is merged and the task completes. It is not created before the merge. When you close the PR without merging, or cancel the task, it is not created.
+  The created task starts right away like any other task ([Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task)).
+- The issue is created right away when you decide with "Defer". Its title is the first line of the comment. The body has the comment, the reason for the proposal, and a link to the original PR.
+  Even for a comment written on the sacty screen, choosing to create an issue puts its text in the issue.
+- When it could not be created, the reason appears in the Activity and under "Decided". It is not retried, so create one yourself if you need it.
+  When the reason says the issue may have been created (the request did not finish in time, or sacty stopped partway), check GitHub before you create one.
+- No issue is created in security check and security fix tasks, or in a project with no GitHub account chosen.
 
 The agent may propose deferral only for a comment with a small impact, or one that occurs only when rare conditions coincide, whose fix needs a new mechanism or lies outside the task's scope.
 A comment with a large impact, such as data corruption, security, or not meeting an acceptance criterion, is fixed, not proposed for deferral.

@@ -7,6 +7,7 @@ const deleteProject = vi.fn();
 const revalidatePath = vi.fn();
 const approveStep = vi.fn();
 const requestChanges = vi.fn();
+const decideDeferrals = vi.fn();
 const saveSettings = vi.fn();
 const getGitHubAccounts = vi.fn();
 const requestSecurityFix = vi.fn();
@@ -20,6 +21,7 @@ vi.mock("@/lib/daemon", () => ({
   deleteProject,
   approveStep,
   requestChanges,
+  decideDeferrals,
   saveSettings,
   getGitHubAccounts,
   requestSecurityFix,
@@ -52,6 +54,7 @@ vi.mock("next/cache", () => ({
 
 const {
   createTaskAction,
+  deferralAction,
   deleteProjectAction,
   gateAction,
   importProjectAction,
@@ -739,5 +742,86 @@ describe("複数リポジトリの作成", () => {
       createTaskAction({}, form({ template: "sacty-setup", projectId: "project-a", repo: "" })),
     ).rejects.toThrow("redirect:/tasks/t1");
     expect(createTask).toHaveBeenCalledWith({ template: "sacty-setup", projectId: "project-a" });
+  });
+});
+
+describe("後続に回したい案の決定（PBI-370）", () => {
+  beforeEach(() => {
+    decideDeferrals.mockReset();
+    refresh.mockReset();
+    order.length = 0;
+  });
+  const fields = {
+    taskId: "t1",
+    step: "implement",
+    submission: "2",
+    "decision:implement-1-1": "defer",
+    "handling:implement-1-1": "issue",
+    "decision:implement-1-2": "fix",
+    "handling:implement-1-2": "issue",
+    "decision:implement-1-3": "",
+    "handling:implement-1-3": "task",
+  };
+
+  it("選んだ指摘だけを決める。扱いを渡すのは、後続に回すと決めた指摘だけ。断られたら、選んだ決定と扱いを戻す", async () => {
+    decideDeferrals.mockResolvedValue({ ok: false, message: "断られた" });
+    expect(await deferralAction({}, form(fields))).toEqual({
+      decisions: { "implement-1-1": "defer", "implement-1-2": "fix" },
+      handlings: { "implement-1-1": "issue", "implement-1-2": "issue", "implement-1-3": "task" },
+      message: "断られた",
+    });
+    expect(decideDeferrals).toHaveBeenCalledWith("t1", {
+      step: "implement",
+      submission: 2,
+      decisions: [
+        { remarkId: "implement-1-1", decision: "defer", handling: "issue" },
+        { remarkId: "implement-1-2", decision: "fix" },
+      ],
+    });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("どれも選んでいなければ、デーモンに送らずに、理由を返す。知らない値の決定・扱いは読まない", async () => {
+    const none = await deferralAction(
+      {},
+      form({
+        taskId: "t1",
+        step: "implement",
+        submission: "2",
+        "decision:implement-1-1": "",
+        "decision:implement-1-2": "later",
+        "handling:implement-1-1": "jira",
+      }),
+    );
+    expect(none).toEqual({
+      decisions: {},
+      handlings: {},
+      message: "決定を1件以上選んでください。",
+    });
+    expect(decideDeferrals).not.toHaveBeenCalled();
+  });
+
+  it("「後続に回す」だけなら、画面を描き直して、承認の画面に残る。「この PR で直す」があれば、タスクの詳細へ移る", async () => {
+    decideDeferrals.mockResolvedValue({ ok: true });
+    expect(
+      await deferralAction(
+        {},
+        form({
+          taskId: "t1",
+          step: "implement",
+          submission: "2",
+          "decision:implement-1-1": "defer",
+        }),
+      ),
+    ).toEqual({});
+    expect(decideDeferrals).toHaveBeenCalledWith("t1", {
+      step: "implement",
+      submission: 2,
+      decisions: [{ remarkId: "implement-1-1", decision: "defer" }],
+    });
+    expect(order).toEqual(["refresh"]);
+    order.length = 0;
+    await expect(deferralAction({}, form(fields))).rejects.toThrow("redirect:/tasks/t1");
+    expect(order).toEqual(["refresh", "redirect"]);
   });
 });

@@ -749,6 +749,32 @@ export class FakePulls implements PullRequests {
       url: `${input.repo}/issues/${input.number}#issuecomment-${this.issueComments.length}`,
     };
   }
+  /** 作った Issue（PBI-370）。issueFail があれば、作れない。 */
+  createdIssues: { repo: string; token: string; title: string; body: string }[] = [];
+  issueFail?: string;
+  issueGate?: Promise<void>;
+  async createIssue(input: {
+    repo: string;
+    token: string;
+    title: string;
+    body: string;
+    signal?: AbortSignal;
+  }) {
+    if (input.signal?.aborted) throw input.signal.reason;
+    // あれば、これが解決するまで終わらせない（Issue を作っている最中の停止・期限切れのテスト）
+    if (this.issueGate) {
+      await Promise.race([
+        this.issueGate,
+        new Promise((_resolve, reject) => {
+          input.signal?.addEventListener("abort", () => reject(input.signal?.reason));
+        }),
+      ]);
+    }
+    if (this.issueFail) throw new Error(this.issueFail);
+    this.createdIssues.push(input);
+    const number = 900 + this.createdIssues.length;
+    return { url: `${input.repo}/issues/${number}`, number };
+  }
   async findIssueComment(input: { repo: string; number: number; marker: string }) {
     const index = this.issueComments.findIndex(
       (c) => c.repo === input.repo && c.number === input.number && c.body.includes(input.marker),

@@ -119,6 +119,10 @@ const PARAMS = {
   "deferral.noAccount": null,
   "deferral.securityTask": null,
   "deferral.pullRequestNotOpen": null,
+  "deferral.handlingOnFix": z.object({ remarkId: z.string() }),
+  "deferral.noRepository": null,
+  "deferral.issueInterrupted": null,
+  "deferral.issueUncertain": z.object({ detail: TextParam }),
   // 入力の検査（zod の検査の文言に、このコードを入れる）
   // スケジュールタスク
   "schedule.notFound": null,
@@ -566,6 +570,7 @@ const PARAMS = {
       "getPr",
       "getReviews",
       "commentIssue",
+      "createIssue",
       "editIssueComment",
       "listIssueComments",
       "listRepositories",
@@ -774,6 +779,7 @@ const githubActionJa = {
   getPr: "PRの状態を確認できませんでした",
   getReviews: "PRのレビューを確認できませんでした",
   commentIssue: "Issue にコメントできませんでした",
+  createIssue: "Issue を作れませんでした",
   editIssueComment: "Issue のコメントを直せませんでした",
   listIssueComments: "Issue のコメントを確認できませんでした",
   listRepositories: "リポジトリの一覧を読めませんでした",
@@ -794,6 +800,7 @@ const githubActionEn = {
   getPr: "Could not check the PR",
   getReviews: "Could not check the PR reviews",
   commentIssue: "Could not comment on the issue",
+  createIssue: "Could not create the issue",
   editIssueComment: "Could not edit the issue comment",
   listIssueComments: "Could not check the issue comments",
   listRepositories: "Could not list the repositories",
@@ -973,10 +980,17 @@ const ja: MessageDictionary = {
     `指摘 ${remarkId} は、決める案ではありません（決定済み・無効にした指摘・後続に回したい案でない指摘）。画面を開き直してください。`,
   "deferral.none": "決定を1件以上選んでください。",
   "deferral.noAccount":
-    "プロジェクトの GitHub のアカウントを選んでいないので、PR にコメントしていません。",
+    "プロジェクトの GitHub のアカウントを選んでいないので、GitHub に書いていません。",
   "deferral.securityTask":
-    "セキュリティの組み合わせのタスクなので、PR にコメントしていません（指摘の詳細を PR に書かないため）。",
+    "セキュリティの組み合わせのタスクなので、GitHub に書いていません（指摘の詳細を公開しないため）。",
   "deferral.pullRequestNotOpen": "PR が開いていないので、PR にコメントしていません。",
+  "deferral.handlingOnFix": ({ remarkId }) =>
+    `指摘 ${remarkId} は「この PR で直す」なので、後続に回すときの扱いは選べません。`,
+  "deferral.noRepository": "GitHub のリポジトリが分からないので、Issue を作っていません。",
+  "deferral.issueInterrupted":
+    "Issue を作る処理が、途中で止まりました（Sacty が止まった、など）。Issue が作られているかもしれないので、GitHub で確かめてから、無ければ作ってください。",
+  "deferral.issueUncertain": ({ detail }, text) =>
+    `Issue を作る通信が、時間内に終わりませんでした。Issue が作られているかもしれないので、GitHub で確かめてから、無ければ作ってください（${text(detail)}）。`,
   "schedule.notFound": "スケジュールタスクが見つかりません。",
   "schedule.nameRequired": "名前を入力してください。",
   "schedule.nameTooLong": `名前は${SCHEDULE_NAME_MAX}文字以内で入力してください。`,
@@ -1821,10 +1835,17 @@ const en: MessageDictionary = {
     `Comment ${remarkId} is not a proposal to decide (already decided, voided, or not a proposal to defer). Reload the page.`,
   "deferral.none": "Choose at least one decision.",
   "deferral.noAccount":
-    "No GitHub account is chosen for the project, so nothing was commented on the PR.",
+    "No GitHub account is chosen for the project, so nothing was written to GitHub.",
   "deferral.securityTask":
-    "This is a task of the security pair, so nothing was commented on the PR (the details of the findings are not written on the PR).",
+    "This is a task of the security pair, so nothing was written to GitHub (the details of the findings are not made public).",
   "deferral.pullRequestNotOpen": "The PR is not open, so nothing was commented on the PR.",
+  "deferral.handlingOnFix": ({ remarkId }) =>
+    `Comment ${remarkId} is to be fixed in this PR, so no handling for a deferral can be chosen.`,
+  "deferral.noRepository": "The GitHub repository is unknown, so no issue was created.",
+  "deferral.issueInterrupted":
+    "Creating the issue was interrupted (for example, Sacty stopped). The issue may have been created, so check GitHub and create one if it is missing.",
+  "deferral.issueUncertain": ({ detail }, text) =>
+    `The request to create the issue did not finish in time. The issue may have been created, so check GitHub and create one if it is missing (${text(detail)}).`,
   "schedule.notFound": "Scheduled task not found.",
   "schedule.nameRequired": "Enter a name.",
   "schedule.nameTooLong": `Keep the name within ${SCHEDULE_NAME_MAX} characters.`,

@@ -9,6 +9,7 @@ import {
   type DaemonText,
   type DashboardSummary,
   type DeferralDecision,
+  type DeferralHandling,
   type DeriveTaskInput,
   type IntakeKind,
   type NotificationKind,
@@ -822,7 +823,7 @@ export function decideDeferrals(
   input: {
     step: StepKey;
     submission: number;
-    decisions: { remarkId: string; decision: DeferralDecision }[];
+    decisions: { remarkId: string; decision: DeferralDecision; handling?: DeferralHandling }[];
   },
 ): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/deferrals/decide`, input);

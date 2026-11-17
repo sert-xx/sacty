@@ -392,7 +392,13 @@ export function describeEventParts(
     return {
       text: describeEventText(event, l),
       detail: event.payload.decisions
-        .map((d) => l.event.deferralItem(d.remarkId, d.decision === "fix"))
+        .map((d) =>
+          l.event.deferralItem(
+            d.remarkId,
+            d.decision === "fix",
+            d.handling === "task" || d.handling === "issue" ? d.handling : undefined,
+          ),
+        )
         .join("\n"),
     };
   }
@@ -781,6 +787,16 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.decisions.filter((d) => d.decision === "defer").length,
         event.payload.decisions.filter((d) => d.decision === "fix").length,
       );
+    case "DeferralHandled":
+      return event.payload.failure !== undefined
+        ? e.DeferralHandleFailed(
+            event.payload.remarkId,
+            event.payload.handling === "task",
+            l.text(event.payload.failure),
+          )
+        : event.payload.handling === "task"
+          ? e.DeferralHandledTask(event.payload.remarkId, event.payload.taskId ?? "")
+          : e.DeferralHandledIssue(event.payload.remarkId, event.payload.url ?? "");
     case "DeferralDecisionsPosted":
       return event.payload.failure === undefined
         ? e.DeferralDecisionsPosted(event.payload.number)

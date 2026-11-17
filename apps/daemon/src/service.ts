@@ -56,6 +56,7 @@ import {
   DeriveTaskInput,
   decidedDeferrals,
   deferProposals,
+  deferralTasksDue,
   deploymentCheckRunning,
   derivedRecord,
   ERROR_ANALYSIS_MAX,
@@ -259,7 +260,7 @@ import {
 } from "./context.js";
 import type { ContextImageBuilder, ContextImagesView } from "./context-images.js";
 import type { ContextMcpServers } from "./context-mcp.js";
-import { buildDeferralNotice } from "./deferral-notice.js";
+import { buildDeferralIssue, buildDeferralNotice, buildDeferralTask } from "./deferral-notice.js";
 import {
   buildCiFixTask,
   buildDeploymentFixTask,
@@ -1339,7 +1340,21 @@ export class TaskService {
       sameRepo,
       this.latestHeadOf(found.task),
     );
-    return aiReview ? { ...found, task: { ...found.task, aiReview } } : found;
+    // まだ決めていない、後続に回したい案があれば、扱いの既定（プロジェクトの設定）を足す（PBI-370）
+    const deferralHandlingDefault =
+      deferProposals(found.task).length > 0
+        ? (this.deps.projects.get(found.task.projectId)?.deferralHandling ?? "none")
+        : undefined;
+    return aiReview || deferralHandlingDefault
+      ? {
+          ...found,
+          task: {
+            ...found.task,
+            ...(aiReview ? { aiReview } : {}),
+            ...(deferralHandlingDefault ? { deferralHandlingDefault } : {}),
+          },
+        }
+      : found;
   }
 
   /**
@@ -1569,6 +1584,10 @@ export class TaskService {
     if (this.deps.reviewTasks === true) await this.settlePausedDrafts();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
+    // 人が後続に回すと決めた指摘の、後続のタスクを作る（元のタスクが完了してから。PBI-370）
+    this.settleDeferralTasks();
+    // Issue を作ると決めたのに、途中で止まって結果の記録が無い指摘に、止まったことを記録する
+    this.settleInterruptedDeferralIssues();
     // 「指摘なし」の後に落ちた CI を、タスクの詳細に出す（PBI-364）。ほかの確認がすべて終わった後に、1件だけ読む
     try {
       await this.readPullRequestCi(ciCandidates);
@@ -8165,7 +8184,12 @@ export class TaskService {
    * （元のタスクの依頼は終わっていて、続きは新しい依頼のため）。セキュリティの組み合わせのタスクからは、セキュリティの
    * 組み合わせの続きだけを作る（記録に入るレポート・範囲を、公開の場所に出さないため）。
    */
-  deriveTask(id: string, raw: unknown): Task {
+  deriveTask(
+    id: string,
+    raw: unknown,
+    /** 人が後続に回すと決めた指摘の後続のタスク（PBI-370）は、sacty が作り、その指摘の ID を持つ。 */
+    deferred?: { remarkId: string },
+  ): Task {
     const input = DeriveTaskInput.parse(raw);
     const original = this.tasks.get(id);
     if (!original) throw new InvalidOperationError(message("task.notFound"));
@@ -8197,7 +8221,8 @@ export class TaskService {
     const record = deriveRecord(original);
     return this.append({ id: randomUUID(), projectId: original.projectId }, [
       {
-        actor: "person",
+        // 人が後続に回すと決めた指摘の後続のタスク（PBI-370）は、sacty が作る
+        actor: deferred ? "sacty" : "person",
         event: {
           type: "TaskCreated",
           payload: {
@@ -8206,7 +8231,11 @@ export class TaskService {
             start: "sacty",
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
-            derivedFrom: { taskId: original.id, record },
+            derivedFrom: {
+              taskId: original.id,
+              record,
+              ...(deferred ? { deferredRemarkId: deferred.remarkId } : {}),
+            },
             ...(plan ? { plan } : {}),
           },
         },
@@ -18014,18 +18043,39 @@ export class TaskService {
       if (!open.has(d.remarkId) || seen.has(d.remarkId)) {
         throw new InvalidOperationError(message("deferral.notOpen", { remarkId: d.remarkId }));
       }
+      // 扱いを選べるのは、後続に回すと決めた指摘だけ
+      if (d.decision === "fix" && d.handling !== undefined) {
+        throw new InvalidOperationError(
+          message("deferral.handlingOnFix", { remarkId: d.remarkId }),
+        );
+      }
       seen.add(d.remarkId);
     }
+    // 後続に回すと決めた指摘の扱い。選んでいなければ、プロジェクトの既定（無ければ、何もしない）
+    const fallback = this.deps.projects.get(task.projectId)?.deferralHandling ?? "none";
+    const decisions = input.decisions.map((d) => ({
+      remarkId: d.remarkId,
+      decision: d.decision,
+      ...(d.decision === "defer" ? { handling: d.handling ?? fallback } : {}),
+    }));
     const decided: ActivityItem = {
       actor: "person",
       event: {
         type: "DeferralsDecided",
-        payload: { step: input.step, submission: input.submission, decisions: input.decisions },
+        payload: { step: input.step, submission: input.submission, decisions },
       },
     };
-    const items = input.decisions.flatMap((d) => {
+    const items = decisions.flatMap((d) => {
       const proposal = open.get(d.remarkId);
-      return proposal ? [{ ...proposal, decision: d.decision }] : [];
+      return proposal
+        ? [
+            {
+              ...proposal,
+              decision: d.decision,
+              ...(d.handling && d.handling !== "none" ? { handling: d.handling } : {}),
+            },
+          ]
+        : [];
     });
     const fixes = items.filter((item) => item.decision === "fix");
     // PR のコメントに残す先（差し戻すと、承認ゲートが無くなるので、先に読む）
@@ -18066,10 +18116,36 @@ export class TaskService {
       reason: string;
       decision: "defer" | "fix";
       origin?: RemarkOrigin;
+      handling?: "task" | "issue";
     }[],
     watched: ReturnType<typeof gatePullRequest>,
   ): void {
-    if (!watched?.repo || watched.step !== "implement") return;
+    /** GitHub の Issue を作ると選んだ指摘の結果を記録する。 */
+    const handled = (remarkId: string, result: { url: string } | { failure: DaemonText }): void => {
+      try {
+        this.append(this.mustGet(task.id), [
+          {
+            actor: "sacty",
+            event: {
+              type: "DeferralHandled",
+              payload: { remarkId, handling: "issue" as const, ...result },
+            },
+          },
+        ]);
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} の、後続に回すと決めた指摘の Issue の結果を記録できませんでした：${renderMessage(errorText(error), "ja")}`,
+        );
+      }
+    };
+    const wantIssues = items.filter((item) => item.handling === "issue");
+    if (!watched?.repo || watched.step !== "implement") {
+      // PR が無い実装（変更なし）：Issue を作る先のリポジトリが分からない
+      for (const item of wantIssues) {
+        handled(item.remarkId, { failure: message("deferral.noRepository") });
+      }
+      return;
+    }
     const repo = watched.repo;
     const number = watched.number;
     const record = (result: { url: string } | { failure: DaemonText }): void => {
@@ -18088,28 +18164,78 @@ export class TaskService {
     };
     // セキュリティのタスクは、指摘（脆弱性や修正の範囲の詳細を含みうる）を公開の PR に書かない（指摘への返信と同じ）
     const project = this.deps.projects.get(task.projectId);
-    const skipped = isSecurityTask(task)
+    // GitHub に書けない理由（Issue も、PR のコメントも）
+    const blocked = isSecurityTask(task)
       ? message("deferral.securityTask")
-      : watched.state !== "open"
-        ? message("deferral.pullRequestNotOpen")
-        : !project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]
-          ? message("deferral.noAccount")
-          : undefined;
-    if (skipped) {
+      : !project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]
+        ? message("deferral.noAccount")
+        : undefined;
+    const skipped =
+      blocked ?? (watched.state !== "open" ? message("deferral.pullRequestNotOpen") : undefined);
+    if (blocked) {
+      for (const item of wantIssues) handled(item.remarkId, { failure: blocked });
+    }
+    if (skipped && (blocked || wantIssues.length === 0)) {
       record({ failure: skipped });
       return;
     }
     const usedSecrets: string[] = [];
     const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
     const url = watched.url ?? `${repo.replace(/\/+$/, "")}/pull/${number}`;
+    // Issue を作っている最中の指摘（PR の確認が、途中で止まった処理と取り違えないように）
+    const inflight = wantIssues.map((item) => `${task.id}:${item.remarkId}`);
+    for (const key of inflight) this.deferralIssuesInflight.add(key);
+    // 結果を記録した指摘（記録が無いまま終わる指摘を、残さない）
+    const issues = new Map<string, string | undefined>();
     void this.serialized(`deferral:${task.id}`, async () => {
-      const signal = this.stopNoticeDeadline();
+      // 決定のコメントの期限。Issue は、1 件ごとに別の期限を持つ（件数が多くても、後ろの指摘が、前の指摘の時間で失敗しない）
+      let signal = this.stopNoticeDeadline();
       try {
         const token = await untilAborted(
           signal,
           this.githubToken(task, repo, usedSecrets, project),
         );
         const pr = { repo, token, number };
+        // GitHub の Issue を作ると選んだ指摘は、先に Issue を作る（決定のコメントに、Issue の URL を載せる）
+        for (const item of wantIssues) {
+          const ref = item.origin?.number === number ? remarkOriginRef(item.origin.key) : undefined;
+          const issueSignal = this.stopNoticeDeadline();
+          try {
+            const issue = buildDeferralIssue({
+              taskId: task.id,
+              remarkId: item.remarkId,
+              text: item.text,
+              reason: item.reason,
+              pullRequest: { url, number },
+              ...(ref ? { originUrl: remarkOriginUrl(url, ref) } : {}),
+              secrets: usedSecrets,
+            });
+            const created = await untilAborted(
+              issueSignal,
+              this.deps.pulls.createIssue({ repo, token, ...issue, signal: issueSignal }),
+            );
+            issues.set(item.remarkId, created.url);
+            handled(item.remarkId, { url: created.url });
+          } catch (error) {
+            const detail = redactText(errorText(error), usedSecrets);
+            // 期限を超えた・答えを受け取れなかった・GitHub の側の誤り（5xx）のときは、Issue が作られているかもしれない
+            // （人が、確かめてから作り直せるように伝える）。GitHub が断った答え（4xx）は、作られていない
+            const failure =
+              issueSignal.aborted || !refusedByGitHub(detail)
+                ? message("deferral.issueUncertain", { detail })
+                : detail;
+            console.warn(
+              `[daemon] タスク ${task.id} の、後続に回すと決めた指摘 ${item.remarkId} の Issue を作れませんでした：${renderMessage(failure, "ja")}`,
+            );
+            issues.set(item.remarkId, undefined);
+            handled(item.remarkId, { failure });
+          }
+        }
+        if (skipped) {
+          record({ failure: skipped });
+          return;
+        }
+        signal = this.stopNoticeDeadline();
         const body = buildDeferralNotice({
           taskId: task.id,
           decision,
@@ -18128,6 +18254,10 @@ export class TaskService {
                     },
                   }
                 : {}),
+              ...(item.handling ? { handling: item.handling } : {}),
+              ...(item.handling === "issue" && issues.get(item.remarkId)
+                ? { issueUrl: issues.get(item.remarkId) }
+                : {}),
             };
           }),
           taskUrl: `${base}/tasks/${task.id}`,
@@ -18145,9 +18275,138 @@ export class TaskService {
         console.warn(
           `[daemon] タスク ${task.id} の、後続に回したい案への決定を PR に残せませんでした：${renderMessage(failure, "ja")}`,
         );
+        // Issue を作る前に失敗した（トークンを取り出せない、など）：Issue の結果も、失敗として記録する（記録が無いと、
+        // 画面が「Issue を作成中」のまま残る）
+        for (const item of wantIssues) {
+          if (!issues.has(item.remarkId)) {
+            issues.set(item.remarkId, undefined);
+            handled(item.remarkId, { failure });
+          }
+        }
         record({ failure });
+      } finally {
+        for (const key of inflight) this.deferralIssuesInflight.delete(key);
       }
     });
+  }
+
+  /** GitHub の Issue を作っている最中の指摘（`<タスク ID>:<指摘の ID>`。メモリーだけに持つ）。 */
+  private readonly deferralIssuesInflight = new Set<string>();
+
+  /**
+   * GitHub の Issue を作ると決めたのに、結果の記録が無く、作っている最中でもない指摘に、途中で止まったことを記録する
+   * （PBI-370）。決定の後・Issue を作る前か最中に、デーモンが止まったとき。作り直さない（作られているかもしれないため。
+   * 人が、GitHub で確かめる）。
+   */
+  private settleInterruptedDeferralIssues(): void {
+    for (const task of [...this.tasks.values()]) {
+      // 中止したタスクには、記録できない（作業履歴が、中止の後の記録を受け付けない）
+      if (task.status === "cancelled") continue;
+      for (const d of decidedDeferrals(task)) {
+        if (d.decision !== "defer" || d.handling !== "issue" || d.handled) continue;
+        if (this.deferralIssuesInflight.has(`${task.id}:${d.remarkId}`)) continue;
+        try {
+          this.append(this.mustGet(task.id), [
+            {
+              actor: "sacty",
+              event: {
+                type: "DeferralHandled",
+                payload: {
+                  remarkId: d.remarkId,
+                  handling: "issue" as const,
+                  failure: message("deferral.issueInterrupted"),
+                },
+              },
+            },
+          ]);
+        } catch (error) {
+          console.warn(
+            `[daemon] タスク ${task.id} の、途中で止まった Issue の作成を記録できませんでした：${renderMessage(errorText(error), "ja")}`,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * 人が後続に回すと決めて、sacty の後続のタスクを作ると選んだ指摘の、後続のタスクを作る（PBI-370）。元のタスクが完了して
+   * から（PR がマージされ、残りの工程が終わった後。完了したタスクの続きのタスクと同じ作り）。指摘ごとに 1 つ。作れなければ、
+   * 理由を記録して、やり直さない。作った後・記録の前に止まっていたら、作成の記録（derivedFrom の、元のタスクと指摘の ID）
+   * で見つけて、二度作らない（依頼の文の中の文字列では照合しない）。
+   */
+  private settleDeferralTasks(): void {
+    for (const original of [...this.tasks.values()]) {
+      for (const due of deferralTasksDue(original)) {
+        const record = (result: { taskId: string } | { failure: DaemonText }): void => {
+          try {
+            this.append(this.mustGet(original.id), [
+              {
+                actor: "sacty",
+                event: {
+                  type: "DeferralHandled",
+                  payload: { remarkId: due.remarkId, handling: "task" as const, ...result },
+                },
+              },
+            ]);
+          } catch (error) {
+            console.warn(
+              `[daemon] タスク ${original.id} の、後続のタスクの結果を記録できませんでした：${renderMessage(errorText(error), "ja")}`,
+            );
+          }
+        };
+        // 作った後・記録の前に止まっていたら、作ってある後続のタスクを使う。照合は、作成の記録（どのタスクの、どの指摘の
+        // 後続か）で行う（依頼の文の中の文字列では照合しない。外から来た文で、取り違えさせない）
+        const existing = [...this.tasks.values()].find(
+          (t) =>
+            t.derivedFrom?.taskId === original.id &&
+            t.derivedFrom.deferredRemarkId === due.remarkId,
+        );
+        if (existing) {
+          record({ taskId: existing.id });
+          continue;
+        }
+        try {
+          const pr = original.pullRequest;
+          const url = pr?.url ?? (pr?.repo && pr.number ? `${pr.repo}/pull/${pr.number}` : "");
+          const ref =
+            pr?.number && due.origin?.number === pr.number
+              ? remarkOriginRef(due.origin.key)
+              : undefined;
+          const request = buildDeferralTask({
+            remarkId: due.remarkId,
+            text: due.text,
+            reason: due.reason,
+            ...(pr?.number && url ? { pullRequest: { url, number: pr.number } } : {}),
+            ...(ref && url ? { originUrl: remarkOriginUrl(url, ref) } : {}),
+          });
+          const created = this.deriveTask(
+            original.id,
+            {
+              ...request,
+              // 画面から続きのタスクを作るときの、リポジトリの初めの値と同じ順で決める。複数のリポジトリを指定して作った
+              // タスクは、作業したリポジトリ（用意したリポジトリ・PR のリポジトリ）にする
+              repo:
+                original.source?.repo ??
+                original.repo ??
+                original.repository?.url ??
+                original.pullRequest?.repo ??
+                null,
+            },
+            { remarkId: due.remarkId },
+          );
+          record({ taskId: created.id });
+        } catch (error) {
+          const failure =
+            error instanceof InvalidOperationError && error.messages[0]
+              ? error.messages[0]
+              : errorText(error);
+          console.warn(
+            `[daemon] タスク ${original.id} の、後続に回すと決めた指摘 ${due.remarkId} の後続のタスクを作れませんでした：${renderMessage(failure, "ja")}`,
+          );
+          record({ failure });
+        }
+      }
+    }
   }
 
   /** 前提が変わった指摘を無効にする。以降、エージェントには渡さない。 */
@@ -18162,6 +18421,16 @@ export class TaskService {
       { actor: "person", event: { type: "RemarkVoided", payload: { remarkId } } },
     ]);
   }
+}
+
+/**
+ * GitHub が、要求を断った答え（4xx）の失敗か（PBI-370）。断られた要求では、Issue は作られていない。答えを受け取れなかった・
+ * 5xx の失敗は、作られているかもしれない。
+ */
+function refusedByGitHub(failure: DaemonText): boolean {
+  if (typeof failure === "string" || failure.code !== "github.failed") return false;
+  const status = (failure.params as { status?: unknown } | undefined)?.status;
+  return typeof status === "number" && status >= 400 && status < 500;
 }
 
 /** 指摘の1件あたりの上限（差し戻しの入力と同じ）と、件数の上限。 */

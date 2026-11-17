@@ -26,6 +26,7 @@ The project settings have the following fields.
 | Available external platforms | APIs that step agents can call through `$SACTY_PF_URL` (display only) | [Gateway](gateway.en.md#organization-platform-pf-apis) |
 | GitHub account | The `gh` account to use for each host | [GitHub account](#github-account) |
 | Shared compose (optional) | A team-shared docker compose used for tests | [docker compose services](compose.en.md#shared-compose) |
+| Handling of deferred findings | The initial choice for how a finding you decide to defer is handled | [Handling of deferred findings](#handling-of-deferred-findings) |
 
 The following two are not set in project settings.
 
@@ -108,6 +109,17 @@ See [Context repository](context.en.md) ([Where to put it](context.en.md#where-t
 
 When you save, sacty reads and checks the context, and tells you if `mcp.yaml`, `platforms.yaml`, or other files have errors. sacty still saves the settings, but as they are, step runs will stop.
 
+## Handling of deferred findings
+
+In the "Handling of deferred findings" field, choose the initial handling for a comment you decide to defer on the approval screen.
+You can change the handling per comment on the approval screen ([Deciding the findings proposed for deferral](tasks.en.md#deciding-the-findings-proposed-for-deferral)).
+
+| Value | Handling |
+| --- | --- |
+| Do nothing | It creates nothing. This is the initial value |
+| Create a Sacty follow-up task | It creates a follow-up task after the task completes |
+| Create a GitHub issue | It creates an issue in the repository of the PR when you decide |
+
 ## When several people change the settings
 
 When several people (or agents) open and save the settings of the same project, sacty does not silently erase a change that was saved first with a later save.
@@ -147,7 +159,7 @@ You can export a project definition and import it into another sacty.
 The exported file contains the following.
 
 - Included: the name, targets (including image choices), the context repository, ticket sources, and shared composes.
-- Not included: GitHub accounts (personal settings), tokens, and Slack notifications (they are in the "Sacty settings", not in project settings).
+- Not included: GitHub accounts (personal settings), the handling of deferred findings, tokens, and Slack notifications (they are in the "Sacty settings", not in project settings).
 
 On import, files with unknown fields are rejected.
 

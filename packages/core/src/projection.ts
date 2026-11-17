@@ -7,6 +7,7 @@ import type {
   ChildScope,
   ContinuedPullRequest,
   DeferralDecision,
+  DeferralHandling,
   ExportPlan,
   ImplementationCompletion,
   InvestigationKind,
@@ -336,7 +337,15 @@ export type TaskRemark = {
    * その対応の文（理由）、decision は人の決定（defer は後続に回す、fix はこの PR で直す。無ければ、まだ決めていない）。
    * 決める前に、後の提出で「対応した」と申告されたら消える（案の取り下げ）。対応の文と違い、後の提出で対応が無くても残る。
    */
-  deferral?: { proposedIn: number; reason: string; decision?: DeferralDecision };
+  deferral?: {
+    proposedIn: number;
+    reason: string;
+    decision?: DeferralDecision;
+    /** 後続に回すと決めた指摘の扱い（無ければ、何もしない）。 */
+    handling?: DeferralHandling;
+    /** 扱いのとおりにした結果（作った Issue の URL・作った後続のタスク・できなかった理由）。無ければ、まだ。 */
+    handled?: { url?: string; taskId?: string; failure?: DaemonText };
+  };
   /** 人が「この PR で直す」と決めて差し戻した指摘の、元の指摘の ID（PBI-370）。 */
   fixOf?: string;
 };
@@ -867,6 +876,11 @@ export type Task = {
    * 足す（`TaskService.view`）。
    */
   aiReview?: AiReviewOfHead;
+  /**
+   * 後続に回すと決めた指摘の扱いの、プロジェクトの既定（PBI-370）。承認の画面の選択肢の、初めの値。作業履歴からは復元
+   * しない。デーモンが画面に返すときだけ、まだ決めていない案があるタスクに足す（`TaskService.view`）。
+   */
+  deferralHandlingDefault?: DeferralHandling;
   /** 人が、ゴールガーディアンの不合格のまま実装の承認へ進めた（VerificationOverridden）。submission はその提出回。 */
   verificationOverride?: { at: string; submission: number };
   /**
@@ -2469,7 +2483,7 @@ export function applyEvent(
       ) {
         throw new ActivityIntegrityError(event, "the submission is not awaiting approval");
       }
-      const decided = new Map(p.decisions.map((d) => [d.remarkId, d.decision]));
+      const decided = new Map(p.decisions.map((d) => [d.remarkId, d]));
       if (decided.size !== p.decisions.length) {
         throw new ActivityIntegrityError(event, "a remark is decided twice");
       }
@@ -2478,10 +2492,50 @@ export function applyEvent(
         if (!open.has(id)) throw new ActivityIntegrityError(event, "not an open deferral proposal");
       }
       task.remarks = task.remarks.map((r) => {
-        const decision = decided.get(r.id);
-        return decision && r.deferral ? { ...r, deferral: { ...r.deferral, decision } } : r;
+        const d = decided.get(r.id);
+        return d && r.deferral
+          ? {
+              ...r,
+              deferral: {
+                ...r.deferral,
+                decision: d.decision,
+                // 扱いは、後続に回すと決めた指摘だけ。何もしない（none）は、持たない
+                ...(d.decision === "defer" && d.handling && d.handling !== "none"
+                  ? { handling: d.handling }
+                  : {}),
+              },
+            }
+          : r;
       });
       task.deferralDecisions = (task.deferralDecisions ?? 0) + 1;
+      break;
+    }
+
+    case "DeferralHandled": {
+      // 後続に回すと決めて、その扱いを選んだ指摘だけ。1 件の指摘に、1 回だけ
+      const p = event.payload;
+      const remark = task.remarks.find((r) => r.id === p.remarkId);
+      if (remark?.deferral?.decision !== "defer" || remark.deferral.handling !== p.handling) {
+        throw new ActivityIntegrityError(event, "not a deferred remark with that handling");
+      }
+      if (remark.deferral.handled) {
+        throw new ActivityIntegrityError(event, "the deferred remark is handled twice");
+      }
+      task.remarks = task.remarks.map((r) =>
+        r.id === p.remarkId && r.deferral
+          ? {
+              ...r,
+              deferral: {
+                ...r.deferral,
+                handled: {
+                  ...(p.url ? { url: p.url } : {}),
+                  ...(p.taskId ? { taskId: p.taskId } : {}),
+                  ...(p.failure !== undefined ? { failure: p.failure } : {}),
+                },
+              },
+            }
+          : r,
+      );
       break;
     }
 
@@ -4182,6 +4236,8 @@ export function decidedDeferrals(task: Task): {
   reason: string;
   decision: DeferralDecision;
   origin?: RemarkOrigin;
+  handling?: DeferralHandling;
+  handled?: { url?: string; taskId?: string; failure?: DaemonText };
 }[] {
   return task.remarks.flatMap((r) =>
     r.step === "implement" && !r.voided && r.deferral?.decision
@@ -4192,9 +4248,23 @@ export function decidedDeferrals(task: Task): {
             reason: r.deferral.reason,
             decision: r.deferral.decision,
             ...(r.origin ? { origin: r.origin } : {}),
+            ...(r.deferral.handling ? { handling: r.deferral.handling } : {}),
+            ...(r.deferral.handled ? { handled: r.deferral.handled } : {}),
           },
         ]
       : [],
+  );
+}
+
+/**
+ * 人が後続に回すと決めて、sacty の後続のタスクを作ると選んだ指摘のうち、まだ作っていないもの（PBI-370）。作るのは、元の
+ * タスクが完了してから（PR がマージされ、残りの工程が終わった後。続きのタスクは、完了したタスクから作る）。完了して
+ * いなければ、空。
+ */
+export function deferralTasksDue(task: Task): ReturnType<typeof decidedDeferrals> {
+  if (!canDerive(task)) return [];
+  return decidedDeferrals(task).filter(
+    (d) => d.decision === "defer" && d.handling === "task" && !d.handled,
   );
 }
 

@@ -429,8 +429,14 @@ const ja = {
     DeferralsDecided: (defer: number, fix: number) =>
       `後続に回したい指摘を決定（後続に回す ${defer}件・この PR で直す ${fix}件）`,
     /** 決定の 1 件（詳細の 1 行）。 */
-    deferralItem: (remarkId: string, fix: boolean) =>
-      `・${remarkId}：${fix ? "この PR で直す" : "後続に回す"}`,
+    deferralItem: (remarkId: string, fix: boolean, handling: "task" | "issue" | undefined) =>
+      `・${remarkId}：${fix ? "この PR で直す" : "後続に回す"}${handling === "task" ? "（Sacty の後続のタスクを作る）" : handling === "issue" ? "（GitHub の Issue を作る）" : ""}`,
+    DeferralHandledTask: (remarkId: string, taskId: string) =>
+      `後続に回すと決めた指摘 ${remarkId} の、後続のタスクを作成（${taskId}）`,
+    DeferralHandledIssue: (remarkId: string, url: string) =>
+      `後続に回すと決めた指摘 ${remarkId} の、GitHub の Issue を作成（${url}）`,
+    DeferralHandleFailed: (remarkId: string, task: boolean, reason: string) =>
+      `後続に回すと決めた指摘 ${remarkId} の、${task ? "後続のタスクを" : "GitHub の Issue を"}作れなかった：${reason}`,
     DeferralDecisionsPosted: (number: number) =>
       `後続に回したい指摘の決定を、PR #${number} のコメントに記録`,
     DeferralDecisionsFailed: (number: number, reason: string) =>
@@ -1129,7 +1135,14 @@ const en: LabelMessages = {
         : `The rework declined every finding of the AI review on PR #${number} (${commit}) with a reason and changed nothing. sacty replies on the PR with the reasons and has the AI review judge the same content once more`,
     DeferralsDecided: (defer, fix) =>
       `Decided the findings proposed to defer (defer ${defer}, fix in this PR ${fix})`,
-    deferralItem: (remarkId, fix) => `- ${remarkId}: ${fix ? "fix in this PR" : "defer"}`,
+    deferralItem: (remarkId, fix, handling) =>
+      `- ${remarkId}: ${fix ? "fix in this PR" : "defer"}${handling === "task" ? " (create a Sacty follow-up task)" : handling === "issue" ? " (create a GitHub issue)" : ""}`,
+    DeferralHandledTask: (remarkId, taskId) =>
+      `Created the follow-up task for the deferred finding ${remarkId} (${taskId})`,
+    DeferralHandledIssue: (remarkId, url) =>
+      `Created the GitHub issue for the deferred finding ${remarkId} (${url})`,
+    DeferralHandleFailed: (remarkId, task, reason) =>
+      `Could not create the ${task ? "follow-up task" : "GitHub issue"} for the deferred finding ${remarkId}: ${reason}`,
     DeferralDecisionsPosted: (number) =>
       `Recorded the decisions on the findings proposed to defer in a comment on PR #${number}`,
     DeferralDecisionsFailed: (number, reason) =>

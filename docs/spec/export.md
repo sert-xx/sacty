@@ -47,7 +47,7 @@ sacty は書き出し先の種類ごとの設定を持たない。
 
 - `GET /api/projects/:id/export` は `{ sacty: "project", version: 5, project: { … } }`（`PROJECT_EXPORT_VERSION`）を返す。
   - `project` には `name`・`targets`・`context`・`tickets`・`sharedComposes` を入れる。
-  - ID・日時・`githubAccounts`（個人の設定）は入れない。
+  - ID・日時・`githubAccounts`（個人の設定）は入れない。`deferralHandling`（後続に回す指摘の扱いの既定）も入れない。
   - 画面からは `sacty-project-<名前>.json` としてダウンロードする。
 - Slack の通知先は、エクスポートに入れない。
   通知先は sacty の設定にあり（[通知](notifications.md)）、プロジェクトの定義に無いためである。

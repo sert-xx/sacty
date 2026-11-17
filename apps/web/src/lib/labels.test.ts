@@ -1810,10 +1810,59 @@ describe("後続に回したい案への決定の表示（PBI-370）", () => {
       failure: { code: "deferral.noAccount" },
     });
     expect(describeEventParts(failed, labels.ja).text).toBe(
-      "後続に回したい指摘の決定を、PR #7 のコメントに記録できなかった：プロジェクトの GitHub のアカウントを選んでいないので、PR にコメントしていません。",
+      "後続に回したい指摘の決定を、PR #7 のコメントに記録できなかった：プロジェクトの GitHub のアカウントを選んでいないので、GitHub に書いていません。",
     );
     expect(describeEventParts(failed, labels.en).text).toContain(
       "Could not record the decisions on the findings proposed to defer in a comment on PR #7: No GitHub account is chosen",
+    );
+  });
+
+  it("後続に回すと決めた指摘の扱いを、決定の詳細に出し、扱いの結果（後続のタスク・Issue・できなかった理由）の行を出す（日英）", () => {
+    const decided = event("DeferralsDecided", {
+      step: "implement",
+      submission: 2,
+      decisions: [
+        { remarkId: "implement-1-1", decision: "defer", handling: "task" },
+        { remarkId: "implement-1-2", decision: "defer", handling: "issue" },
+        { remarkId: "implement-1-3", decision: "defer", handling: "none" },
+      ],
+    });
+    expect(describeEventParts(decided, labels.ja).detail).toBe(
+      "・implement-1-1：後続に回す（Sacty の後続のタスクを作る）\n・implement-1-2：後続に回す（GitHub の Issue を作る）\n・implement-1-3：後続に回す",
+    );
+    expect(describeEventParts(decided, labels.en).detail).toBe(
+      "- implement-1-1: defer (create a Sacty follow-up task)\n- implement-1-2: defer (create a GitHub issue)\n- implement-1-3: defer",
+    );
+    const task = event("DeferralHandled", {
+      remarkId: "implement-1-1",
+      handling: "task",
+      taskId: "t2",
+    });
+    expect(describeEventParts(task, labels.ja).text).toBe(
+      "後続に回すと決めた指摘 implement-1-1 の、後続のタスクを作成（t2）",
+    );
+    expect(describeEventParts(task, labels.en).text).toBe(
+      "Created the follow-up task for the deferred finding implement-1-1 (t2)",
+    );
+    const issue = event("DeferralHandled", {
+      remarkId: "implement-1-2",
+      handling: "issue",
+      url: "https://github.com/acme/app/issues/901",
+    });
+    expect(describeEventParts(issue, labels.ja).text).toBe(
+      "後続に回すと決めた指摘 implement-1-2 の、GitHub の Issue を作成（https://github.com/acme/app/issues/901）",
+    );
+    expect(describeEventParts(issue, labels.en).text).toContain("Created the GitHub issue");
+    const failed = event("DeferralHandled", {
+      remarkId: "implement-1-2",
+      handling: "issue",
+      failure: "403 forbidden",
+    });
+    expect(describeEventParts(failed, labels.ja).text).toBe(
+      "後続に回すと決めた指摘 implement-1-2 の、GitHub の Issue を作れなかった：403 forbidden",
+    );
+    expect(describeEventParts(failed, labels.en).text).toBe(
+      "Could not create the GitHub issue for the deferred finding implement-1-2: 403 forbidden",
     );
   });
 

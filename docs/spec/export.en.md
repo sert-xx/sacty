@@ -39,7 +39,7 @@ Code: `apps/daemon/src/service.ts` (`awaitingExport`, `exportOutput`, `retryExpo
 
 - `GET /api/projects/:id/export` returns `{ sacty: "project", version: 5, project: { … } }` (`PROJECT_EXPORT_VERSION`).
   - `project` contains `name`, `targets`, `context`, `tickets`, and `sharedComposes`.
-  - It does not include IDs, timestamps, or `githubAccounts` (personal settings).
+  - It does not include IDs, timestamps, or `githubAccounts` (personal settings). It does not include `deferralHandling` (the default handling of deferred findings) either.
   - From the web UI, it downloads as `sacty-project-<name>.json`.
 - The export does not include the Slack notification destination. The destination is in the sacty settings ([Notifications](notifications.en.md)), not in the project definition.
 - `POST /api/projects/import` strictly checks the same shape and saves it as a project with a new ID. Unknown fields, a different `sacty`, or a different version are errors. Before saving, it checks for conflicts with other projects. From the web UI, it reads files up to 1,000,000 bytes.

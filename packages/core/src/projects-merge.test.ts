@@ -82,6 +82,17 @@ describe("mergeProjectDefinitions", () => {
     const withContext = { ...def(["a"]), context: { repo: "https://github.com/acme/ctx" } };
     expect(mergeProjectDefinitions(base, base, withContext)?.context).toEqual(withContext.context);
     expect(mergeProjectDefinitions(base, withContext, base)?.context).toEqual(withContext.context);
+    // 後続に回す指摘の扱いの既定（PBI-370）
+    const handling = { ...def(["a"]), deferralHandling: "issue" as const };
+    expect(mergeProjectDefinitions(base, handling, def(["a", "b"]))?.deferralHandling).toBe(
+      "issue",
+    );
+    expect(mergeProjectDefinitions(base, def(["a", "b"]), handling)?.deferralHandling).toBe(
+      "issue",
+    );
+    expect(
+      mergeProjectDefinitions(base, handling, { ...def(["a"]), deferralHandling: "task" as const }),
+    ).toBeUndefined();
     const accounts = { ...def(["a"]), githubAccounts: { "github.com": "me" } };
     expect(mergeProjectDefinitions(base, accounts, base)?.githubAccounts).toEqual({
       "github.com": "me",

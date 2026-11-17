@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DeferralHandling } from "./events.js";
 import {
   OrgUrl,
   orgUrlOf,
@@ -399,6 +400,11 @@ export const ProjectDefinition = z.object({
         .regex(/^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$/, code("input.invalidGithubName")),
     )
     .optional(),
+  /**
+   * 人が後続に回すと決めた指摘の扱いの既定（PBI-370）。承認の画面の選択肢の、初めの値になる。task は sacty の後続のタスクを
+   * 作る、issue は GitHub の Issue を作る、none は何もしない。無ければ none。
+   */
+  deferralHandling: DeferralHandling.optional(),
 });
 export type ProjectDefinition = z.infer<typeof ProjectDefinition>;
 export type ProjectDefinitionInput = z.input<typeof ProjectDefinition>;
@@ -687,7 +693,14 @@ export function mergeProjectDefinitions(
   const targets = mergeTargets(base.targets, current.targets, incoming.targets);
   if (!targets) return undefined;
   const merged: Record<string, unknown> = { targets };
-  for (const key of ["name", "context", "tickets", "sharedComposes", "githubAccounts"] as const) {
+  for (const key of [
+    "name",
+    "context",
+    "tickets",
+    "sharedComposes",
+    "githubAccounts",
+    "deferralHandling",
+  ] as const) {
     const picked = pick(key);
     if (!picked.ok) return undefined;
     if (picked.value !== undefined) merged[key] = picked.value;

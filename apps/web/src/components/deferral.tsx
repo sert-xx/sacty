@@ -2,17 +2,21 @@
 
 import {
   type DeferralDecision,
+  type DeferralHandling,
   decidedDeferrals,
   deferProposals,
   gatePullRequest,
   type RemarkOrigin,
   type Task,
 } from "@sacty/core";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { type DeferralState, deferralAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
+
+/** 後続に回すときの扱いの選択肢（この順に出す）。 */
+const HANDLINGS: readonly DeferralHandling[] = ["none", "task", "issue"];
 
 const initial: DeferralState = {};
 
@@ -42,9 +46,18 @@ export function deferralOriginUrl(
  * まま残る。「この PR で直す」を 1 件でも選ぶと、実装に差し戻す。決定済みの指摘は、下に記録として出す。
  */
 export function DeferralNotice({ task }: { task: Task }) {
-  const { task: m } = useMessages();
+  const { task: m, labels } = useMessages();
   const t = m.deferral;
+  const handlingLabel: Record<DeferralHandling, string> = {
+    none: t.handlingNone,
+    task: t.handlingTask,
+    issue: t.handlingIssue,
+  };
   const [state, formAction, pending] = useActionState(deferralAction, initial);
+  // 選んでいる決定（扱いの選択は、「後続に回す」を選んだ指摘だけで使えるようにする。ラジオは非制御のまま、選び直しを追う）
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  // 選んでいる扱い（GitHub の Issue を作る扱いは、取り消せないので、選んでいる間、注意を常に出す）
+  const [handlings, setHandlings] = useState<Record<string, string>>({});
   const proposals = deferProposals(task);
   const gate = task.gate;
   // 決定済みの記録は、実装の承認待ちの間だけ出す（一覧と同じ所で読めるように）
@@ -110,12 +123,48 @@ export function DeferralNotice({ task }: { task: Task }) {
                           name={`decision:${p.remarkId}`}
                           value={value}
                           defaultChecked={value === (state.decisions?.[p.remarkId] ?? "")}
+                          onChange={() => setPicked((all) => ({ ...all, [p.remarkId]: value }))}
                           className="size-4 accent-primary"
                         />
                         <span>{label}</span>
                       </label>
                     ))}
                   </fieldset>
+                  {/* 補足の印は、label の外に置く（select の名前に、補足の文を混ぜない） */}
+                  <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <label htmlFor={`deferral-handling-${p.remarkId}`}>{t.handling}</label>
+                    <Hint text={t.handlingHint} className="size-4" />
+                    <select
+                      id={`deferral-handling-${p.remarkId}`}
+                      name={`handling:${p.remarkId}`}
+                      data-testid="deferral-handling"
+                      // 「後続に回す」を選んだ指摘だけで選べる（ほかの決定では使わないので、選べない見た目にする）
+                      disabled={
+                        (picked[p.remarkId] ?? state.decisions?.[p.remarkId] ?? "") !== "defer"
+                      }
+                      defaultValue={
+                        state.handlings?.[p.remarkId] ?? task.deferralHandlingDefault ?? "none"
+                      }
+                      onChange={(e) =>
+                        setHandlings((all) => ({ ...all, [p.remarkId]: e.target.value }))
+                      }
+                      className="h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground disabled:opacity-50"
+                    >
+                      {HANDLINGS.map((value) => (
+                        <option key={value} value={value}>
+                          {handlingLabel[value]}
+                        </option>
+                      ))}
+                    </select>
+                    {(handlings[p.remarkId] ??
+                      state.handlings?.[p.remarkId] ??
+                      task.deferralHandlingDefault ??
+                      "none") === "issue" && (
+                      <span data-testid="deferral-issue-note" className="text-warn">
+                        {t.issueNote}
+                      </span>
+                    )}
+                  </span>
                 </li>
               );
             })}
@@ -132,7 +181,12 @@ export function DeferralNotice({ task }: { task: Task }) {
         </form>
       )}
       {decided.length > 0 && (
-        <details data-testid="deferral-decided" className="text-sm leading-6">
+        <details
+          data-testid="deferral-decided"
+          className="text-sm leading-6"
+          // 扱いを実行できなかった指摘があれば、開いて出す（閉じたままだと、失敗に気づけない）
+          open={decided.some((d) => d.handled?.failure !== undefined) || undefined}
+        >
           <summary className="cursor-pointer font-medium">{t.decided(decided.length)}</summary>
           <ul className="flex flex-col gap-2 pt-2">
             {decided.map((d) => (
@@ -141,6 +195,44 @@ export function DeferralNotice({ task }: { task: Task }) {
                   {t.remark(d.remarkId)} ・ {d.decision === "defer" ? t.decidedDefer : t.decidedFix}
                 </span>
                 <span className="max-h-32 overflow-y-auto whitespace-pre-line">{d.text}</span>
+                {/* 後続に回すと決めた指摘の扱いと、その結果 */}
+                {/* 扱いの無い決定は、何もしない（決定のコメントの「何もしません」と合わせる） */}
+                {d.decision === "defer" && !d.handling && (
+                  <span data-testid="deferral-handled" className="text-xs text-muted-foreground">
+                    {handlingLabel.none}
+                  </span>
+                )}
+                {d.decision === "defer" && d.handling && (
+                  <span data-testid="deferral-handled" className="text-xs text-muted-foreground">
+                    {handlingLabel[d.handling]}
+                    {" ・ "}
+                    {d.handled?.failure !== undefined ? (
+                      <span className="text-warn">
+                        {t.handlingFailed(labels.text(d.handled.failure))}
+                      </span>
+                    ) : d.handled?.taskId ? (
+                      <a
+                        href={`/tasks/${d.handled.taskId}`}
+                        className="text-accent-foreground underline"
+                      >
+                        {t.handledTask}
+                      </a>
+                    ) : d.handled?.url ? (
+                      <a
+                        href={d.handled.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-accent-foreground underline"
+                      >
+                        {t.handledIssue}
+                      </a>
+                    ) : d.handling === "task" ? (
+                      t.handlingPendingTask
+                    ) : (
+                      t.handlingPendingIssue
+                    )}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
