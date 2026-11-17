@@ -3724,9 +3724,12 @@ export class TaskService {
       if (this.remarkReplyLimitedNow(key)) return "limited" as const;
       if (!still()) return "skipped" as const;
       this.remarkReplyLastPostAt.set(key, Date.now());
+      // 投稿を始める前の待ち（期限の明けた待ちか、無い）
+      const before = this.rateLimits.get(key);
       try {
         const value = await work();
-        this.rateLimits.clear(key);
+        // 投稿の間に、新しい制限が記録されていなければ（同じアカウントの、ほかのタスクの一覧の読み取りなど）、待ちを消す
+        if (this.rateLimits.get(key) === before) this.rateLimits.clear(key);
         return { value };
       } catch (error) {
         // 制限に当たった：次に試せる時刻を保存する（順番を待っている、同じアカウントの後の投稿も、投稿しない）
@@ -3867,6 +3870,17 @@ export class TaskService {
     // 失敗として記録する（PBI-356）
     const finish = () => {
       const left = deferred.filter((r) => stillDue(r));
+      // 時間切れと重なったときは、時間切れの扱いを優先する（残りは、やり直さずに、失敗として記録する）
+      if (timedOut) {
+        results.push(
+          ...left.map((r) => ({
+            remarkId: r.id,
+            key: r.key,
+            failed: message("github.replySkippedAfterTimeout"),
+          })),
+        );
+        return record();
+      }
       if (left.length > 0 && this.remarkReplyRetriesExhausted(postKey)) {
         const attempts = this.rateLimits.get(postKey)?.streak ?? 0;
         results.push(
@@ -3953,7 +3967,7 @@ export class TaskService {
       const base = { remarkId: remark.id, key: remark.key };
       // 期限を超えた問い合わせがあった・レート制限に当たったら、残りの指摘は投稿を試みない（答えの返らない GitHub を、
       // 指摘の数だけ期限まで待たない。制限の間は、投稿を続けない）。制限のときは、記録せずに残して、後でやり直す。
-      // 時間切れのときは、失敗を残す
+      // 時間切れのとき（制限と重なったときも）は、失敗を残す
       // 読んである一覧に投稿済みの返信があれば、それは返信済みとして残す（前に、投稿の後・記録の前に止まった分）
       if (timedOut || limitHit) {
         for (const r of due.replies.slice(index)) {
@@ -3968,7 +3982,7 @@ export class TaskService {
               ...(inline ? { inline: true as const } : {}),
               ...posted(existing.url),
             });
-          } else if (limitHit) {
+          } else if (limitHit && !timedOut) {
             deferred.push(r);
           } else {
             results.push({

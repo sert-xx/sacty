@@ -9577,6 +9577,45 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
+      it("行への返信が時間切れになり、その探し直しがレート制限に当たったら、時間切れの扱いを優先する：残りは、やり直さずに、失敗として記録する（PBI-356）", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const pulls = new FakePulls();
+        pulls.replyGate = new Promise<void>(() => {});
+        pulls.reviewListRateLimitedAfter = 1;
+        let now = later();
+        const { activity, service, id } = await toImplementGate([decided(), three()], {
+          pulls,
+          now: () => now,
+          stopNoticeTimeoutMs: 30,
+        });
+        pulls.feedbackList = [inline(), comment(401), comment(402)];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        expect(deferredOf(service, id)).toHaveLength(0);
+        const results = posted(service, id).flatMap((p) => p.results);
+        expect(results.map((r) => r.remarkId)).toEqual([
+          "implement-1-1",
+          "implement-1-2",
+          "implement-1-3",
+        ]);
+        expect(results.slice(1).map((r) => r.failed)).toEqual([
+          { code: "github.replySkippedAfterTimeout" },
+          { code: "github.replySkippedAfterTimeout" },
+        ]);
+        expect(results[0]?.failed).toBeDefined();
+        // 制限の期限が明けても、やり直さない
+        pulls.replyGate = undefined;
+        delete pulls.reviewListRateLimitedAfter;
+        now += 2 * 3_600_000;
+        expect(service.queuedTaskIds()).toEqual([]);
+        await drain(service);
+        expect(pulls.replyPostTimes).toHaveLength(1);
+        expect(prComments(pulls)).toHaveLength(0);
+        warn.mockRestore();
+        activity.close();
+      });
+
       it("時間切れで投稿を止めた後に、結果を記録できなくても、やり直しで残りを投稿しない（分けた記録は、まとめて書く。止めたことを覚えておく）", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const pulls = new FakePulls();
@@ -9714,6 +9753,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
             work: () => Promise<T>,
           ): Promise<Sent<T>>;
           noteRemarkReplyLimited(key: string, error: unknown): void;
+          rateLimits: GitHubRateLimitStore;
         };
         const post = <T>(work: () => Promise<T>, key = "github.com:me") =>
           internals.remarkReplyPost(key, () => true, work);
@@ -9741,9 +9781,27 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(ran).toEqual([]);
         // ほかのアカウントの投稿は、止めない
         expect(await post(async () => 9, "github.com:other")).toEqual({ value: 9 });
-        // 期限が明けたら、投稿する
+        // 期限が明けたら、投稿する。投稿できたら、待ちを消す
         now += 60_001;
         expect(await post(async () => 4)).toEqual({ value: 4 });
+        expect(internals.rateLimits.get("github.com:me")).toBeUndefined();
+        // 投稿の通信の間に、同じアカウントのほかの問い合わせ（ほかのタスクの一覧の読み取りなど）が制限に当たったら、
+        // 投稿ができても、その新しい待ちは消さない
+        const sending = Promise.withResolvers<void>();
+        const racing = post(async () => {
+          await sending.promise;
+          return 6;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        internals.noteRemarkReplyLimited("github.com:me", rateLimitError(5 * 60_000));
+        sending.resolve();
+        expect(await racing).toEqual({ value: 6 });
+        expect(internals.rateLimits.get("github.com:me")).toEqual({
+          until: now + 5 * 60_000,
+          streak: 1,
+        });
+        expect(await post(async () => 7)).toBe("limited");
+        now += 5 * 60_000 + 1;
         // 投稿の間隔を待っている間に、ほかの問い合わせ（一覧の読み取りなど）が制限に当たったら、待った後にも投稿しない
         const spaced = await toImplementGate([], { now: later, remarkReplyIntervalMs: 60 });
         const spacedInternals = spaced.service as unknown as typeof internals;

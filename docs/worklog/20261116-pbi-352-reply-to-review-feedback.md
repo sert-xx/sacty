@@ -4,7 +4,7 @@
 - タスク: PBI-352
 - PR: #385
 - ブランチ: feat/issue-352-reply-to-review-feedback
-- 関係する ADR: [取り込んだ PR の指摘への対応を、指摘ごとに PR に返信する](../adr/20261116-0045-reply-to-review-feedback-on-pull-request.md)
+- 関係する ADR: [取り込んだ PR の指摘への対応を、指摘ごとに PR に返信する](../adr/20261116-0045-superseded-reply-to-review-feedback-on-pull-request.md)
 
 ## 目的
 

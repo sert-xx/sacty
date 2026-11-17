@@ -35,10 +35,22 @@ describe("GitHub のレート制限の待ちの保存（PBI-356）", () => {
 
   it("ファイルが無い・壊れている・形が違うときは、待ち無しで始める（読める項目だけを使う）", () => {
     const file = join(dir, "github-rate-limits.json");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // まだ保存していない（ファイルが無い）ときは、警告しない
+    expect(new GitHubRateLimitStore(file).get("github.com:me")).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+    // 壊れている・形が違うときは、保存してあった待ちを失ったことを、警告に残す
     for (const content of ["", "{", "[]", "null", '"x"']) {
+      warn.mockClear();
       writeFileSync(file, content);
       expect(new GitHubRateLimitStore(file).get("github.com:me")).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("読めませんでした"));
     }
+    // 読めない（ファイルでなくディレクトリ）ときも、警告に残す
+    warn.mockClear();
+    expect(new GitHubRateLimitStore(dir).get("github.com:me")).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("読めませんでした"));
+    warn.mockRestore();
     writeFileSync(
       file,
       JSON.stringify({

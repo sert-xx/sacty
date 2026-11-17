@@ -25,11 +25,22 @@ export class GitHubRateLimitStore {
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(file, "utf8"));
-    } catch {
-      // 無い・読めない・壊れているときは、待ち無しで始める
+    } catch (error) {
+      // 無い・読めない・壊れているときは、待ち無しで始める。まだ保存していない（ファイルが無い）ときのほかは、
+      // 保存してあった待ちを失ったことに気づけるよう、警告を残す
+      if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
+        console.warn(
+          `[daemon] 保存してあった GitHub のレート制限の待ちを読めませんでした（待ち無しで始めます）：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       return;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      console.warn(
+        "[daemon] 保存してあった GitHub のレート制限の待ちを読めませんでした（待ち無しで始めます）：形が違います。",
+      );
+      return;
+    }
     for (const [key, value] of Object.entries(parsed)) {
       const { until, streak } = (value ?? {}) as Partial<GitHubRateLimitWait>;
       if (

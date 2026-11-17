@@ -647,14 +647,15 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   A reply posted with an account other than the author's (when the project's GitHub account was changed after the PR was created, or in a task that fixes a PR a person created) is read as one of the comments on the PR, not as the author's reply.
 - The result of replying (the reply's URL, or why it could not reply) appears in the Activity.
   Even if replying fails, the task does not stop. When it could not reply for a reason other than the posting limit, the reply is not retried, so write to the PR yourself if needed.
-- When it hits GitHub's posting limit, sacty stops posting there, waits for the time GitHub shows, and then retries the replies to the remaining comments.
-  - When GitHub shows no time to wait, sacty waits 1 minute. Each time the limit continues, it doubles the wait (up to 1 hour).
+- When it hits GitHub's posting limit, sacty stops posting there, waits, and then retries the replies to the remaining comments.
+  - The time to wait is the longer of the time GitHub shows (capped at 1 day) and a time sacty extends.
+    The time sacty extends starts at 1 minute and doubles each time the limit continues (up to 1 hour).
   - The task does not stop while sacty waits (you can approve, send back, and merge). The wait continues even if sacty is restarted.
   - While sacty waits, other tasks that use the same GitHub account do not post replies to comments either.
   - If you merge the PR, a new redo is submitted, or the PR is closed while sacty waits, that reply is not posted.
   - It retries up to 5 times. If the limit is still hit, sacty gives up and records in the Activity which comments could not get a reply.
   - The Activity shows that it is waiting (in about how many minutes it retries), that it retried after the wait, and that it gave up.
-  - Only replies to comments are retried. Other posts by sacty (PR comments, reviews, and so on) are not retried when they hit the limit.
+  - This wait and retry cover only replies to comments. Other posts by sacty (PR comments, reviews, and so on) do not look at this wait and keep their current handling (posting a review retries temporary failures automatically; [PR review](intake.en.md)).
 - How to read the result of replying in the Activity:
   The Activity row shows how many comments were replied to and how many could not be. Open the details of the row to read the result per comment.
 
