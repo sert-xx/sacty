@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-375
-- PR: なし
+- PR: #410
 - ブランチ: feat/pbi-375-ci-failure-clear-on-pass
 - 関係する ADR: [指摘なしの後の CI の失敗の表示を、CI を読んでいる間に通ったら消す](../adr/20261117-0440-clear-ci-failure-when-ci-passes-while-reading.md)
 
@@ -54,7 +54,7 @@
 
 PR を作る前のコードで実行した結果。
 
-- `npx vitest run --no-file-parallelism`：251 ファイル・4857 件が通った（1 件は以前からの skip）。
+- `npx vitest run --no-file-parallelism`：main（`80c9cf9a`）を取り込んだ後のコードで、256 ファイル・4936 件が通った（1 件は以前からの skip）。取り込む前は、251 ファイル・4857 件。
 - `npm run typecheck`：通った。`npx biome check --error-on-warnings apps packages docs tests scripts`：指摘なし。`npm run build`：通った。
 - 足した・変えたテスト：
   - `apps/daemon/src/daemon-implement.test.ts`：
