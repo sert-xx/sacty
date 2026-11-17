@@ -7048,12 +7048,20 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       }
       const service = made.at(-1)?.service as TaskService;
       pulls.state = { state: "open" };
+      // 時間切れのタイマーと、読み始める時間の時計を差し替える（実時間の進み方に依らない）。確認を呼び、時間切れの
+      // 時間だけ時計を進めてから、終わるのを待つ
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const check = async () => {
+        const checking = service.checkPullRequests();
+        await vi.advanceTimersByTimeAsync(20);
+        await checking;
+      };
       // 上限の件数だけ読み始め、残りは読まない（どの読み取りも、時間切れになる）
-      await service.checkPullRequests();
+      await check();
       expect(started).toBe(PR_CI_CONCURRENCY);
       // 終わっていない間は、確認を重ねても、新しい読み取りを始めない
-      await service.checkPullRequests();
-      await service.checkPullRequests();
+      await check();
+      await check();
       expect(started).toBe(PR_CI_CONCURRENCY);
       expect(running).toBe(PR_CI_CONCURRENCY);
       // 終わらせる（答えは、時間切れの後なので使わない）と、枠が空く
@@ -7068,12 +7076,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       await release();
       expect(running).toBe(0);
       // 後の確認で、残りのタスクも読む。同時に続く読み取りは、上限を超えない
-      await service.checkPullRequests();
+      await check();
       expect(started).toBe(2 * PR_CI_CONCURRENCY);
       await release();
-      await service.checkPullRequests();
+      await check();
       expect(most).toBe(PR_CI_CONCURRENCY);
       await release();
+      vi.useRealTimers();
       warn.mockRestore();
       for (const m of made) m.activity.close();
     });
@@ -7142,6 +7151,17 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       await service.checkPullRequests();
       expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
       let task = service.get(id)?.task;
+      expect(task && pullRequestCiFailure(task)).toBeDefined();
+      // CI の一覧が空になっても（成功を確かめていない）、記録を消さず、間隔を空けて読み直す
+      now += PR_CI_FAILED_RECHECK_MS;
+      state.checks = [];
+      await service.checkPullRequests();
+      expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+      now += PR_CI_EMPTY_WAIT_MS;
+      const beforeEmpty = state.read.length;
+      await service.checkPullRequests();
+      expect(state.read).toHaveLength(beforeEmpty + 1);
+      task = service.get(id)?.task;
       expect(task && pullRequestCiFailure(task)).toBeDefined();
       // 実行されなかった（skipped）ジョブがあっても、ほかがすべて通れば、通ったと扱って記録を消し、読み直しをやめる
       now += PR_CI_FAILED_RECHECK_MS;

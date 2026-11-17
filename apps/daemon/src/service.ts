@@ -2261,13 +2261,11 @@ export class TaskService {
       });
       return;
     }
-    // 終わったが、通ったとも失敗とも言えないもの（取り消された・古くなったなど）。同じ先頭で再実行されうる
-    const unsettled = all.some(
-      (c) => c.status === "completed" && !isFailedConclusion(c) && !passedCiCheck(c),
-    );
-    // 失敗の記録を消すのは、先頭が変わって新しい先頭に失敗が無いときか、同じ先頭のすべてが通ったとき。実行中のものが
-    // ある間（再実行の途中）と、取り消されただけの間は、同じ先頭の前の失敗の記録をそのままにする
-    if (recorded && (recorded.head !== head || (!pending && !unsettled))) {
+    // 通ったと言えるのは、1つ以上あって、すべてが通って終わったときだけ（空の一覧・取り消された・古くなったなどは、
+    // 通ったとは扱わない。同じ先頭で、後から始まる・再実行されうる）
+    const allPassed = all.length > 0 && all.every(passedCiCheck);
+    // 失敗の記録を消すのは、先頭が変わって新しい先頭に失敗が無いときか、同じ先頭のすべてが通ったとき
+    if (recorded && (recorded.head !== head || allPassed)) {
       this.append(latest, [
         {
           actor: "sacty",
@@ -2275,16 +2273,21 @@ export class TaskService {
         },
       ]);
     }
+    if (allPassed) {
+      // すべて通った先頭は、読み直さない
+      this.pullRequestCiWatch.set(taskId, { head, nextAt: Number.POSITIVE_INFINITY });
+      return;
+    }
     if (pending) {
       this.pullRequestCiWatch.set(taskId, { head, nextAt: now });
       return;
     }
-    if (unsettled) {
-      // すべてが通るまでは、間隔を空けて読み直す（再実行の後の失敗に気づく）
+    // 同じ先頭の失敗の記録が残っている（一覧が空になった・取り消されただけ）間は、間隔を空けて読み直す
+    if (recorded?.head === head) {
       this.pullRequestCiWatch.set(taskId, {
         head,
         nextAt: now + PR_CI_FAILED_RECHECK_MS,
-        ...(recorded?.head === head ? { failed: true } : {}),
+        failed: true,
       });
       return;
     }
@@ -2298,8 +2301,9 @@ export class TaskService {
       });
       return;
     }
-    // すべて通った先頭は、読み直さない
-    this.pullRequestCiWatch.set(taskId, { head, nextAt: Number.POSITIVE_INFINITY });
+    // 終わったが、通ったとも失敗とも言えないものがある（取り消されたなど）。すべてが通るまでは、間隔を空けて読み直す
+    // （再実行の後の失敗に気づく）
+    this.pullRequestCiWatch.set(taskId, { head, nextAt: now + PR_CI_FAILED_RECHECK_MS });
   }
 
   /**

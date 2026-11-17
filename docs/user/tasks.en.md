@@ -1039,7 +1039,9 @@ No Slack or desktop notification is sent.
 
 sacty watches CI only during the following. A CI failure that starts after that is not shown on the screens.
 
-- While CI is running, and while there is failed or cancelled CI (it checks every 5 minutes, to notice a rerun). Once everything has passed, CI for that head commit is not checked again.
+- While CI is running (it checks at every PR check, once a minute).
+- While nothing is running and there is failed or cancelled CI (it checks every 5 minutes, to notice a rerun).
+- Once everything has passed, CI for that head commit is not checked again.
 - For 30 minutes when no CI appears at all. After that, sacty stops checking, treating the repository as one without CI.
 - When a person adds a commit to the PR and the head changes, sacty watches CI for the new head.
 
