@@ -2450,6 +2450,11 @@ const IntegrationReviewed = z.object({
      * 修正の子タスクでは直せないので、findings に入れず、あっても不合格にしない。無ければ無い（それより前の版の記録にも無い）。
      */
     humanChecks: z.array(z.string()).optional(),
+    /**
+     * 前の回の統合レビューが挙げた、人が確かめることのうち、この回で外したもの（PBI-363）。外さなかった項目は、sacty が
+     * humanChecks に引き継ぐ（この回の答えが挙げなくても、承認待ちまで残す）。前の回が無い、または外していなければ無い。
+     */
+    droppedHumanChecks: z.array(z.string()).optional(),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
     summary: DaemonText,
     /** 統合レビューの出力の JSON が崩れていて、直して読んだこと（PBI-298）。直さずに読めたときは無い。 */

@@ -117,14 +117,18 @@
   - `humanChecks` には、何を・どう確かめるかと、確かめないまま進めた場合の懸念を、1件ずつ書かせる。`findings` には書かせない（修正の子タスクでは直せないため）。
   - コードとテストで確かめられる範囲に不足があれば、観点を満たさない（`verified: false`）とし、直すことを `findings` に書かせる。作業領域で確かめられることを、確かめずに `humanChecks` に回させない。
 - 答え（見出し `sacty-integration-review`）で、すべての観点を満たし、すべての指摘が再発しておらず、`findings` が空のときだけ合格。
-  `humanChecks` は合否に使わない（あっても不合格にしない）。同じ項目は1件にし、空の項目・文字列でない項目は落とし、1件は `HUMAN_CHECK_ITEM_MAX`（1,000）文字までにして、`IntegrationReviewed` の `humanChecks` に記録する（無ければ記録しない）。
+  `humanChecks` は合否に使わない（あっても不合格にしない）。`IntegrationReviewed` の `humanChecks` に記録する（無ければ記録しない）。
+  - 人に渡す情報を落とさない。同じ項目は1件にし、空の項目だけを落とす。配列でない値は1件として、文字列でない項目は JSON の文字にして残す。長さは切り詰めない。
+  - 前の回の統合レビューが挙げた項目（`Task.integration.humanChecks`）は、次の統合レビューに引き継ぐ。前の回が不合格で、修正の子タスクの後にやり直した統合レビューが項目を挙げなくても、承認待ちまで残す。
+    指示には、前の回の項目と、確かめられた・要らなくなった項目だけを、答えの `droppedHumanChecks` に同じ文を書いて外し、外す理由を判定の説明に書くことを渡す（`previousHumanCheckLines`）。前の回の項目が無ければ、この節と `droppedHumanChecks` の例は出さない。
+    答えの `droppedHumanChecks` のうち、前の回の項目と同じ文のものだけを外し、外したものを `IntegrationReviewed` の `droppedHumanChecks` に記録する。答えを読めなかった回も、前の回の項目を引き継ぐ。
   指摘は人の指摘と AI のレビューの指摘の両方で、指示は両方に再発の判定を求める（`REMARK_RECURRENCE_LINE`・`remarkVerdictLines`）。AI のレビューの指摘の判定が無ければ不合格。
 - 答えの JSON が崩れていても、直しながら読む（PBI-298。文字列の中の二重引用符・制御文字など。統合レビューの答えには入れ子のオブジェクトがないので、閉じ括弧の欠けは補わない）。直して読んだことは `IntegrationReviewed` の `outputRepaired` に記録する。直しても読めなければ不合格のままで、所見に壊れた位置（JSON の何行目の何文字目。`integrate.unreadableAt`）か、項目が足りないこと（`integrate.unreadableShape`）を残す。
 - 合格したら、人の承認待ちにする。
-  人が確かめること（`humanChecks`）があれば、タスクの画面の統合レビューの欄と承認の画面に「人が確かめること」として出し、承認待ちの案内に件数を出す。人は、確かめてから承認し、満たしていなければ差し戻す（差し戻すと、指摘をもとに修正の子タスクを足す）。確かめた結果を項目ごとに記録する仕組みは無い（承認が、確かめたことを表す）。
+  人が確かめること（`humanChecks`）があれば、タスクの画面の統合レビューの欄と承認の画面に「人が確かめること」として出し、承認待ちの案内に件数を出す。前の回の項目から外したもの（`droppedHumanChecks`）があれば、同じ欄に、外した項目として出す。人は、確かめてから承認し、満たしていなければ差し戻す（差し戻すと、指摘をもとに修正の子タスクを足す）。確かめた結果を項目ごとに記録する仕組みは無い（承認が、確かめたことを表す）。
   不合格で、人が確かめることもあるときは、修正の子タスクを足す指示に、人が確かめることを「子タスクにしない」ものとして渡す（`integrationFindingLines`）。
   不合格なら `split` に戻して修正の子タスクを足させる。
   続けて `MAX_INTEGRATION_ATTEMPTS`（3）回通らなければ、修正の子タスクを足さずに、不合格のまま人の承認待ちにする。
   統合レビューの承認待ちで差し戻すと、回数を数え直す。
 
-コード: `apps/daemon/src/service.ts`（`integrate`・`childRepositories`）、`apps/daemon/src/prompts.ts`（`buildIntegrationReviewPrompt`・`extractIntegrationReview`・`integrationViewpointIds`・`INTEGRATION_HUMAN_CHECK_LINES`・`integrationFindingLines`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`MAX_INTEGRATION_ATTEMPTS`・`IntegrationReviewed`）、`apps/web/src/components/integration.tsx`（`IntegrationResult`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）
+コード: `apps/daemon/src/service.ts`（`integrate`・`childRepositories`）、`apps/daemon/src/prompts.ts`（`buildIntegrationReviewPrompt`・`extractIntegrationReview`・`integrationViewpointIds`・`INTEGRATION_HUMAN_CHECK_LINES`・`previousHumanCheckLines`・`integrationFindingLines`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`MAX_INTEGRATION_ATTEMPTS`・`IntegrationReviewed`）、`apps/web/src/components/integration.tsx`（`IntegrationResult`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）

@@ -3984,7 +3984,7 @@ function environmentPassNote(tests: {
 /** 統合レビューの出力の JSON の形（入れ子のオブジェクトは無いので、閉じ括弧は補わない）。 */
 const INTEGRATION_REVIEW_SHAPE: LenientShape = {
   heading: INTEGRATION_HEADING,
-  keys: ["viewpoints", "remarks", "findings", "humanChecks", "summary"],
+  keys: ["viewpoints", "remarks", "findings", "humanChecks", "droppedHumanChecks", "summary"],
   objects: {},
 };
 
@@ -4191,6 +4191,22 @@ const INTEGRATION_HUMAN_CHECK_LINES = [
 ];
 
 /**
+ * 前の回の統合レビューが挙げた、人が確かめること（PBI-363）を、次の統合レビューに渡す節。前の回が不合格で、修正の
+ * 子タスクの後にやり直した統合レビューが項目を挙げないと、人に渡らないまま承認待ちになる。挙げ直させるのではなく、sacty が
+ * 引き継ぎ、確かめられた・要らなくなった項目だけを、理由を添えて外させる。前の回の項目が無ければ、何も足さない。
+ */
+function previousHumanCheckLines(previous: readonly string[]): string[] {
+  if (previous.length === 0) return [];
+  return [
+    "",
+    "--- 前の回の統合レビューが挙げた、人が確かめること ---",
+    "次の項目は、前の回の統合レビューが、作業領域では確かめられないとして挙げたものです。今回も作業領域で確かめられない項目は、何も書かなくてかまいません（sacty が、今回の結果に引き継ぎます）。",
+    "今回のコードとテストで確かめられた項目・要らなくなった項目だけを、droppedHumanChecks に、下の文をそのまま書いて外し、外す理由を判定の説明に書いてください。理由なく外さないでください。",
+    ...previous.map((check) => `- ${check}`),
+  ];
+}
+
+/**
  * 統合レビューの指示（PBI-31）。ゴールガーディアンが、子タスクの PR がマージされた後のベースブランチの
  * コードを読み、子タスクの成果を組み合わせた状態が親の要求要件・テスト観点を満たすかを判定する。
  */
@@ -4210,6 +4226,8 @@ export function buildIntegrationReviewPrompt(
   const viewpoints = task.approved.design?.testViewpoints ?? [];
   const remarks = humanRemarks(task);
   const repositories = target.repositories;
+  // 前の回の統合レビューが挙げた、人が確かめること（PBI-363）。外さなければ、sacty が今回の結果に引き継ぐ
+  const previousHumanChecks = task.integration?.humanChecks ?? [];
   return [
     "あなたは統合レビューのエージェントです。人間が承認した成果物（ゴール）を守る立場で、子タスクに分けて進めたタスクを、統合の観点でレビューしてください。",
     "",
@@ -4258,6 +4276,7 @@ export function buildIntegrationReviewPrompt(
     "",
     "--- 子タスク ---",
     ...subtaskLines(subtasks),
+    ...previousHumanCheckLines(previousHumanChecks),
     ...remarkSections(
       remarks,
       { human: "人間の過去の指摘", ai: "AI のレビューの過去の指摘（人間の指摘ではない）" },
@@ -4274,6 +4293,9 @@ export function buildIntegrationReviewPrompt(
     ...verdictFormatLines(INTEGRATION_HEADING, integrationViewpointIds(task), {
       findings: ["直す必要があること"],
       humanChecks: ["人が確かめること（無ければ空）"],
+      ...(previousHumanChecks.length > 0
+        ? { droppedHumanChecks: ["前の回の項目のうち、外すもの（無ければ空）"] }
+        : {}),
     }),
     ...remarkVerdictLines(remarks),
   ].join("\n");
@@ -4289,9 +4311,18 @@ export function extractIntegrationReview(
   remarkIds: readonly string[],
   /** 秘密情報を伏せる関数。読めなかった理由に残す、壊れた所の前後の文字に使う（無ければ位置だけを残す。PBI-298）。 */
   hide?: (text: string) => string,
+  /** 前の回の統合レビューが挙げた、人が確かめること（PBI-363）。この回の答えが外さなければ、引き継ぐ。 */
+  previousHumanChecks: readonly string[] = [],
 ): Pick<
   IntegrationReview,
-  "passed" | "viewpoints" | "remarks" | "findings" | "humanChecks" | "summary" | "outputRepaired"
+  | "passed"
+  | "viewpoints"
+  | "remarks"
+  | "findings"
+  | "humanChecks"
+  | "droppedHumanChecks"
+  | "summary"
+  | "outputRepaired"
 > & {
   output: string;
 } {
@@ -4312,18 +4343,26 @@ export function extractIntegrationReview(
   );
   const list = found?.raw.findings;
   const findings = Array.isArray(list) ? list.map(text).filter(Boolean) : [];
-  // 人が確かめること（PBI-363）。合否には使わない（あっても不合格にしない）。同じ項目は1件にし、1件の長さを抑える
-  const checks = found?.raw.humanChecks;
-  const humanChecks = Array.isArray(checks)
-    ? [...new Set(checks.map(text).filter(Boolean))].map((c) =>
-        c.length > HUMAN_CHECK_ITEM_MAX ? `${headOf(c, HUMAN_CHECK_ITEM_MAX)}…` : c,
-      )
-    : [];
+  // 人が確かめること（PBI-363）。合否には使わない（あっても不合格にしない）。人に渡す情報を落とさないよう、配列でない値は
+  // 1件として、文字列でない項目は JSON の文字にして残し、長さも切り詰めない。同じ項目は1件にする
+  const texts = (value: unknown): string[] =>
+    (value === undefined || value === null ? [] : Array.isArray(value) ? value : [value])
+      .map((item) => (typeof item === "string" ? item.trim() : (JSON.stringify(item) ?? "")))
+      .filter(Boolean);
+  const own = texts(found?.raw.humanChecks);
+  // 前の回の項目は、この回の答えが外したもの（droppedHumanChecks に同じ文を書いたもの）を除いて、引き継ぐ。答えを
+  // 読めなかった回も、引き継ぐ
+  const dropping = new Set(texts(found?.raw.droppedHumanChecks));
+  const droppedHumanChecks = previousHumanChecks.filter((check) => dropping.has(check));
+  const humanChecks = [
+    ...new Set([...previousHumanChecks.filter((check) => !dropping.has(check)), ...own]),
+  ];
   return {
     ...verdicts,
     passed: verdicts.passed && findings.length === 0,
     findings,
     ...(humanChecks.length > 0 ? { humanChecks } : {}),
+    ...(droppedHumanChecks.length > 0 ? { droppedHumanChecks } : {}),
     ...(found && found.repairs.length > 0
       ? {
           outputRepaired: message("integrate.outputRepaired", {

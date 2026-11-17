@@ -1853,6 +1853,7 @@ describe("統合レビュー（PBI-31）", () => {
     findings: string[] = [],
     remarks: unknown[] = [],
     humanChecks?: unknown,
+    droppedHumanChecks?: unknown,
   ) =>
     out(
       [
@@ -1860,6 +1861,7 @@ describe("統合レビュー（PBI-31）", () => {
         block({
           "sacty-integration-review": {
             ...(humanChecks !== undefined ? { humanChecks } : {}),
+            ...(droppedHumanChecks !== undefined ? { droppedHumanChecks } : {}),
             viewpoints: [
               {
                 id: "TV-1",
@@ -2001,8 +2003,8 @@ describe("統合レビュー（PBI-31）", () => {
       splitOutput(twoChildren),
       out("# A の調査"),
       out("# B の調査"),
-      // 同じ項目・空の項目・文字列でない項目は落とす
-      integration(true, [], [], [CHECK, ` ${CHECK} `, "", 3]),
+      // 同じ項目は1件にし、空の項目は落とす
+      integration(true, [], [], [CHECK, ` ${CHECK} `, ""]),
     ]);
     await drain(service, id);
     const parent = service.get(id)?.task;
@@ -2030,7 +2032,7 @@ describe("統合レビュー（PBI-31）", () => {
     activity.close();
   });
 
-  it("人が確かめることがあっても、直すことがあれば不合格にして修正の子タスクを追加し、人が確かめることは子タスクにさせない（PBI-363）", async () => {
+  it("不合格の回の人が確かめることは、修正の子タスクにさせず、次の統合レビューが挙げなくても承認待ちまで引き継ぐ（PBI-363）", async () => {
     const CHECK = "実機のカードリーダーで読み取れること";
     const { service, executor, activity, id } = await splitParent([
       splitOutput(twoChildren),
@@ -2041,6 +2043,7 @@ describe("統合レビュー（PBI-31）", () => {
         { key: "F", title: "画面と API をつなぐ", body: "- 送信で API を呼ぶ", dependsOn: [] },
       ]),
       out("# F の調査"),
+      // 2回目の統合レビューは、人が確かめることを挙げない
       integration(true),
     ]);
     await drain(service, id);
@@ -2049,16 +2052,76 @@ describe("統合レビュー（PBI-31）", () => {
     expect(fixPrompt).toContain(
       `人が確かめること（修正の子タスクでは直さない。子タスクにしない）：${CHECK}`,
     );
+    // 2回目の統合レビューの指示に、前の回の項目と、外し方を渡す
+    const second = promptOf(executor, 8);
+    expect(second).toContain("--- 前の回の統合レビューが挙げた、人が確かめること ---");
+    expect(second).toContain(`- ${CHECK}`);
+    expect(second).toContain("droppedHumanChecks に、下の文をそのまま書いて外し");
+    expect(second).toContain('"droppedHumanChecks":["前の回の項目のうち、外すもの（無ければ空）"]');
     const parent = service.get(id)?.task;
     expect(parent?.split?.rounds).toBe(2);
-    // 2回目の統合レビューは、人が確かめることを挙げなかった（前の回のものを引き継がない）
-    expect(parent?.integration?.passed).toBe(true);
-    expect(parent?.integration?.humanChecks).toBeUndefined();
+    // 挙げなくても、合格の結果に引き継がれて、人に渡る
+    expect(parent?.gate).toEqual({ step: "integrate", submission: 1 });
+    expect(parent?.integration).toMatchObject({ passed: true, humanChecks: [CHECK] });
+    expect(parent?.integration?.droppedHumanChecks).toBeUndefined();
     activity.close();
   });
 
-  it("人が確かめることが配列でない・無い統合レビューは、今までどおりに読む（PBI-363）", async () => {
-    for (const humanChecks of [undefined, "実機で確かめる", []]) {
+  it("前の回の人が確かめることは、次の統合レビューが同じ文を挙げて外したものだけを外し、外したことを記録する（PBI-363）", async () => {
+    const KEEP = "実機のカードリーダーで読み取れること";
+    const DROP = "本番の決済サービスで、画面から決済が通ること";
+    const NEW = "店舗の端末の画面で、文字が切れないこと";
+    const { service, activity, id } = await splitParent([
+      splitOutput(twoChildren),
+      out("# A の調査"),
+      out("# B の調査"),
+      integration(false, ["画面の送信ボタンから決済の API を呼ぶ"], [], [KEEP, DROP]),
+      splitOutput([
+        { key: "F", title: "画面と API をつなぐ", body: "- 送信で API を呼ぶ", dependsOn: [] },
+      ]),
+      out("# F の調査"),
+      // 前の回に無い文（"無い項目"）を外そうとしても、何も外れない。同じ項目を挙げ直しても、重ならない
+      integration(true, [], [], [NEW, KEEP], [DROP, "無い項目"]),
+    ]);
+    await drain(service, id);
+    const review = service.get(id)?.task.integration;
+    expect(review?.passed).toBe(true);
+    expect(review?.humanChecks).toEqual([KEEP, NEW]);
+    expect(review?.droppedHumanChecks).toEqual([DROP]);
+    // 最初の統合レビュー（前の回が無い）の指示には、外し方の節も、例の項目も無い
+    activity.close();
+  });
+
+  it("前の回の項目が無い統合レビューの指示には、引き継ぎの節を足さない（PBI-363）", async () => {
+    const { service, executor, activity, id } = await splitParent([
+      splitOutput(twoChildren),
+      out("# A の調査"),
+      out("# B の調査"),
+      integration(true),
+    ]);
+    await drain(service, id);
+    const prompt = promptOf(executor, executor.calls.length - 1);
+    expect(prompt).not.toContain("前の回の統合レビューが挙げた、人が確かめること");
+    expect(prompt).not.toContain("droppedHumanChecks");
+    activity.close();
+  });
+
+  it("人が確かめることの形が崩れていても・長くても、人に渡す情報を落とさない。無い・空なら、記録しない（PBI-363）", async () => {
+    const LONG = `実機で確かめる：${"手順を1つずつ確かめる。".repeat(200)}`;
+    for (const [humanChecks, expected] of [
+      [undefined, undefined],
+      [[], undefined],
+      [null, undefined],
+      // 配列でない値は、1件として残す
+      ["実機で確かめる", ["実機で確かめる"]],
+      // 文字列でない項目は、JSON の文字にして残す
+      [
+        ["実機で確かめる", { check: "目視", why: "色" }, 3],
+        ["実機で確かめる", '{"check":"目視","why":"色"}', "3"],
+      ],
+      // 長い項目も、切り詰めない
+      [[LONG], [LONG]],
+    ] as const) {
       const { service, activity, id } = await splitParent([
         splitOutput(twoChildren),
         out("# A の調査"),
@@ -2068,7 +2131,7 @@ describe("統合レビュー（PBI-31）", () => {
       await drain(service, id);
       const review = service.get(id)?.task.integration;
       expect(review?.passed).toBe(true);
-      expect(review?.humanChecks).toBeUndefined();
+      expect(review?.humanChecks).toEqual(expected);
       activity.close();
     }
   });

@@ -57,6 +57,21 @@ describe("統合レビューの人が確かめること（PBI-363）", () => {
     expect(html).not.toContain("不合格");
   });
 
+  it("前の回の項目から外したものがあれば、外した項目として出す。無ければ出さない", () => {
+    const html = render(
+      task(review({ humanChecks: [CHECK], droppedHumanChecks: ["実機で読み取れること"] })),
+    );
+    expect(html).toContain('data-testid="integration-dropped-human-checks"');
+    expect(html).toContain("外した項目");
+    expect(html).toContain('<li class="break-words">実機で読み取れること</li>');
+    expect(render(task(review({ humanChecks: [CHECK] })))).not.toContain(
+      "integration-dropped-human-checks",
+    );
+    expect(render(task(review({ droppedHumanChecks: ["実機で読み取れること"] })), "en")).toContain(
+      "Items removed from the previous round",
+    );
+  });
+
   it("英語の画面でも出す", () => {
     const html = render(task(review({ humanChecks: [CHECK] })), "en");
     expect(html).toContain("For a person to check");

@@ -40,6 +40,10 @@ describe("統合レビューの出力", () => {
     const bare = extractIntegrationReview(output, ids, []);
     expect(renderMessage(bare.summary, "ja")).not.toContain("：");
     // JSON が無ければ、これまでの文言
+    // 答えを読めなかった回も、前の回の人が確かめることは引き継ぐ（PBI-363）
+    expect(
+      extractIntegrationReview("判定なし", ids, [], undefined, ["実機で確かめる"]),
+    ).toMatchObject({ passed: false, humanChecks: ["実機で確かめる"] });
     expect(extractIntegrationReview("判定なし", ids, []).summary).toMatchObject({
       code: "integrate.unreadable",
     });
