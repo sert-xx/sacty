@@ -36,6 +36,15 @@ function inlineCode(path: string): string {
   return longest > 0 ? `${fence} ${path} ${fence}` : `${fence}${path}${fence}`;
 }
 
+/**
+ * リンクの外に出すと、GitHub（GFM）で別の働きをしうる文字があるか。メンション（`@user`）、Issue・PR の参照（`#12`。
+ * `Closes #12` は、マージで Issue を閉じる）、自動リンク（`https://…`・`www.…`）、表の列の区切り（`|`）。リンクの中では
+ * 働かないので、こうした文字を含むリンクは、外さずに残す。
+ */
+function activeOutsideLink(label: string): boolean {
+  return /@[A-Za-z0-9]|#\d|\||:\/\/|www\./i.test(label);
+}
+
 /** 置き換える範囲（元の文字位置）と、置き換えた後の文字。 */
 type Replacement = { start: number; end: number; text: string };
 
@@ -123,6 +132,10 @@ function collect(
           label = replaced(source, first, last, inner);
         }
       }
+      // GitHub（GFM）では、リンクの外に出た文字が、メンション・Issue の参照・自動リンク・表の区切りとして働く。構文木の
+      // 確かめ（CommonMark）では見つけられないので、そうなりうる文字を含むリンクは、変えない（通知が飛ぶ・別の Issue を
+      // 閉じる、という外への作用を起こさない）
+      if (activeOutsideLink(label) || /[@#]$/.test(source.slice(0, start))) return;
       const hasLabel = label.trim() !== "";
       // 表示の文字にパス（行・節の指定を除く）が出ていれば、文字だけを残す
       const file = path.replace(/[#?].*$/, "").replace(/\/+$/, "");
@@ -174,6 +187,10 @@ function collect(
  * コメントの始まりになって、後ろの文章を隠す。代わりの文字から参照の定義ができて、ほかのリンクの行き先が変わる）。
  * 同じにならないときは、本文を変えずに返す（置き換えで変わるのは、リンク・画像でなくなることだけ。その本文では、作業領域への
  * リンクは残る）。安全な文脈だけを選んで変えるのではなく、変えた結果を確かめて、違えば戻す。
+ *
+ * 構文木の確かめは CommonMark の解釈で行うので、GitHub（GFM）だけの解釈（メンション・Issue の参照・自動リンク・表）の
+ * 変化は見つけられない。そこで、リンクの外に出すと GFM で別の働きをしうる文字（`activeOutsideLink`）を含むリンクは、
+ * 変えない。
  *
  * 本文は長さの上限（PR_BODY_MAX）の後のものを渡す。置き換えは、元のリンクより長い文字にしない（返す本文は、渡した本文より
  * 長くならない）。その長さで、ふつうの本文の解析は 0.1 秒ほど。解析に回る本文（作業領域のパス・バックスラッシュ・文字参照の

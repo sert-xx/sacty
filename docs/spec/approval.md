@@ -444,6 +444,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - どこがリンク・画像かは、Markdown のパーサー（`mdast-util-from-markdown`。CommonMark）で決め、その範囲だけを置き換える。パーサーがリンクと見なさないもの（コードブロックとインラインコードの中、打ち消した角括弧）と、ほかのリンク（URL・相対パス・`/workspace` で始まる別の名前のパス）は変えない。参照形式のリンク（と、その定義）と HTML のリンクは変えない。
   - 置き換えは、本文を長くしない（長さの上限の後に行うため）。パスにバッククォートが続いて、コードの書式の囲みが元のリンクより長くなるときは、パスを添えずに表示の文字だけにする。表示の文字も無ければ、そのリンクは変えない。
   - 置き換えた後の本文も解析し、その構文木が、元の構文木の「外したリンク・画像を、中身（と添えたパス）にしたもの」と同じであることを確かめる（`shapeOf`。位置を除いた、種類・値・子の全体を比べる）。同じでなければ、本文を変えずに使う（その本文では、作業領域へのリンクは残る）。表示の文字が周りの文字とつながって、新しいリンク・HTML のコメントやタグ・参照の定義・箇条書きなどの別の構文になる本文が、これに当たる。
+  - 構文木の確かめは CommonMark の解釈で行うので、GitHub（GFM）だけの解釈の変化は見つけられない。そこで、リンクの外に出すと GitHub で別の働きをしうる文字を含むリンクは、変えない（`activeOutsideLink`）：メンション（`@` に英数字が続く）、Issue・PR の参照（`#` に数字が続く。`Closes #12` は、マージで Issue を閉じる）、自動リンク（`://`・`www.`）、表の列の区切り（`|`）。リンクの直前の文字が `@`・`#` のときも、変えない。
   - 作業領域へのリンクがありえない本文は、解析しない（`cannotLinkToWorkspace`）。`](` が無い本文と、作業領域のパス・バックスラッシュ・文字参照（`&#115;` など）のどれも無い本文。リンク先を自前で読んで決めず、パーサーが作業領域へのリンクと解釈しうる本文は、すべて解析する。
   - 解析は、デーモンの中で同期に行う。本文の上限（65,000 文字）で、ふつうの本文は 0.1 秒ほど。解析に回る本文で、記号（`>`・`*`・`+` など）が上限いっぱいまで続くと、数秒〜数十秒かかり、その間、デーモンのほかの処理は待つ（PR の作成・更新のたびに1回）。
   - 解析に失敗したら、本文を変えずに使う（PR の作成・更新は止めない）。
@@ -463,7 +464,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - パスは区切りごとに符号にし（括弧も符号にして、リンク先が途中で閉じないようにする）、リンクの文字はパスのインラインのコード（中にバッククォートがあれば、より長いバッククォートで囲む）。
   - PR の URL が `<リポジトリ>/pull/<番号>` の形でなければ、パスのインラインのコードと、全角の括弧の中に「PR：」と山括弧で囲んだ URL（自動リンク）にする。URL が無ければパスだけ。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/pr-body-links.ts`（`withoutWorkspaceLinks`・`cannotLinkToWorkspace`・`shapeOf`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/pr-body-links.ts`（`withoutWorkspaceLinks`・`cannotLinkToWorkspace`・`shapeOf`・`activeOutsideLink`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ### 人が直した本文の更新
 

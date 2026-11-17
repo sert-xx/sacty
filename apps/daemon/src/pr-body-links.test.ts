@@ -169,6 +169,34 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     );
   });
 
+  it("リンクの外に出すと GitHub で別の働きをする文字（メンション・Issue の参照・自動リンク・表の区切り）を含むリンクは、変えない", () => {
+    for (const body of [
+      // メンション：リンクの外に出ると、通知が飛ぶ
+      "[@octocat に確認](/workspace/docs/a.md)",
+      "![@octocat](/workspace/a.png)",
+      "@[octocat](/workspace/a.md)",
+      // Issue・PR の参照：`Closes #99` の行になると、マージで別の Issue を閉じる
+      "Closes [#99](/workspace/docs/a.md)",
+      "[Closes #99](/workspace/docs/a.md)",
+      "#[99](/workspace/a.md)",
+      // 自動リンク
+      "[https://example.com/a を見る](/workspace/a.md)",
+      "[www.example.com](/workspace/a.md)",
+      // 表の列の区切り
+      "| ファイル |\n| --- |\n| ![a | b](/workspace/a.png) |",
+    ]) {
+      expect(withoutWorkspaceLinks(body)).toBe(body);
+    }
+    // 番号でない `#`（節の指定）・メールでない `@` の後ろが記号のものは、外す
+    expect(withoutWorkspaceLinks("[docs/a.md#始める](/workspace/docs/a.md#始める)")).toBe(
+      "docs/a.md#始める",
+    );
+    // 同じ本文の、ほかのリンクは外す
+    expect(withoutWorkspaceLinks("[a.md](/workspace/a.md) と [@octocat](/workspace/b.md)")).toBe(
+      "a.md と [@octocat](/workspace/b.md)",
+    );
+  });
+
   it("作業領域そのものへのリンクは、表示の文字だけにする", () => {
     expect(withoutWorkspaceLinks("[作業領域](/workspace) と [ルート](/workspace/)")).toBe(
       "作業領域 と ルート",
