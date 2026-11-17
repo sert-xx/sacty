@@ -17,6 +17,7 @@ import {
   isRepoless,
   isSecurityTask,
   openProposal,
+  pullRequestCiFailure,
   pullRequestConflict,
   rerunEditableBody,
   resumeNoteRoom,
@@ -545,9 +546,11 @@ function HeldReviewNotice({ task }: { task: Task }) {
 }
 
 function GateNotice({ task }: { task: Task }) {
-  const { task: m, labels } = useMessages();
+  const { task: m, labels, locale } = useMessages();
   if (task.status !== "awaiting_approval" && task.status !== "escalated") return null;
   const proposal = openProposal(task);
+  // 「指摘なし」の後に、実装の PR の CI が落ちていた（sacty が読んだ時点。出すだけ。PBI-364）
+  const ciFailure = pullRequestCiFailure(task);
   // 承認ゲートで見守っている、sacty が作った PR（実装・要求要件・設計。PBI-57・PBI-110）
   const watched = gatePullRequest(task);
   // 実装の PR がベースブランチと競合している（画面に出すだけ。取り込みは差し戻し・指摘のとき）
@@ -614,6 +617,35 @@ function GateNotice({ task }: { task: Task }) {
           <p data-testid="gate-pr-conflict" className="text-sm">
             {task.continuedPullRequest ? m.gate.prConflictContinuedHelp : m.gate.prConflictHelp}
           </p>
+        )}
+        {ciFailure && (
+          <div data-testid="gate-pr-ci-failed" className="flex flex-col gap-1 text-sm">
+            <p>
+              {m.gate.prCiFailedHelp(ciFailure.head.slice(0, 7), formatStamp(ciFailure.at, locale))}
+            </p>
+            <p>{m.gate.prCiFailedChecks}</p>
+            <ul className="list-disc pl-5 [overflow-wrap:anywhere]">
+              {ciFailure.checks.map((check, i) => (
+                // 同じ名前のチェックが並ぶことがあるので、順番を key にする（並びは記録のとおりで変わらない）
+                // biome-ignore lint/suspicious/noArrayIndexKey: 記録の順のまま変わらない一覧
+                <li key={i}>
+                  {check.url && /^https?:\/\//.test(check.url) ? (
+                    <a
+                      href={check.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline underline-offset-2"
+                    >
+                      {check.name}
+                    </a>
+                  ) : (
+                    check.name
+                  )}
+                </li>
+              ))}
+              {ciFailure.more ? <li>{m.gate.prCiFailedMore(ciFailure.more)}</li> : null}
+            </ul>
+          </div>
         )}
       </div>
       <ActionLink

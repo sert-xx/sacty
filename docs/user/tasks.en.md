@@ -1029,6 +1029,30 @@ A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existi
   sacty does not merge the base branch in even if you send the task back, so resolve the conflict on GitHub.
 - The row in "Needs you", the task details, and the approval screen say "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub".
 
+### When CI fails after "no findings"
+
+sacty reviews without waiting for the PR's CI to finish.
+So CI that was still running can fail after the child task that reviews the PR reported "no findings".
+sacty watches CI for a while after that, and when it was failing, shows it in the task details.
+
+- The notice of the wait for approval in the task details shows the time sacty looked at CI and the names of the checks that were failing (as links to that run on GitHub when they have one).
+- The activity also shows that CI was failing.
+
+sacty only shows it and does not fix it automatically. It does not rerun CI either.
+Do one of the following.
+
+1. Check the failure and the current CI result on the PR on GitHub.
+2. If the change caused it, send the task back with a comment from sacty's screen, or comment on the PR on GitHub. sacty redoes the implementation.
+3. If it is unrelated to the change (a flaky test, for example), rerun CI on GitHub and check that it passes.
+
+This notice is the result at the time sacty looked at CI. Keep the following in mind.
+
+- The notice does not disappear when you rerun CI and it passes. It disappears when the PR is updated, merged, or closed.
+- The status in the task list, "Needs you", and the header notifications does not change. No Slack or desktop notification is sent either.
+- sacty looks at CI every 5 minutes, for about one hour only. CI that fails after that is not shown.
+- Even while CI is failing, if you merge the PR, sacty takes it as the approval and goes on.
+- It is not shown for requirements and design PRs, or for a PR before the review child task reports "no findings" (the review child task turns CI failures into findings).
+
 ### Test viewpoints of the child tasks of a split
 
 A task split assigns the test viewpoints of the parent task's design to the child tasks.

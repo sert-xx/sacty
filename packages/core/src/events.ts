@@ -2906,6 +2906,31 @@ const PullRequestConflictResolved = z.object({
   payload: z.object({ number: z.number().int().positive() }),
 });
 
+/** 実装の PR の CI の失敗の記録に持つ、失敗したチェックの数の上限（PBI-364）。超えた分は件数（more）だけ持つ。 */
+export const PR_CI_FAILED_CHECKS_MAX = 10;
+/** 実装の PR の CI の失敗の記録に持つ、チェックの名前の長さの上限（文字。PBI-364）。 */
+export const PR_CI_CHECK_NAME_MAX = 200;
+
+/**
+ * 人の承認（マージ）を待つ実装の PR の、先頭のコミットの CI が失敗していた（PBI-364）。sacty は PR の CI を待たずに、PR の
+ * レビューの子タスクの指摘なしでドラフトを外すので、その後に CI が落ちたことを、タスクの詳細に出すために記録する。
+ * sacty が CI を読んだ時点の結果で、先頭のコミットごとに1度だけ記録する。その後の変化（再実行で通ったなど）は記録しない。
+ * 出すだけで、実行・差し戻し・再レビュー・CI の再実行は始めない。commit は、CI を読んだ PR の先頭（人が足したコミットを
+ * 含む）。checks は失敗したチェックで、PR_CI_FAILED_CHECKS_MAX 件まで。超えた分は more に件数を持つ。
+ */
+const PullRequestCiFailed = z.object({
+  type: z.literal("PullRequestCiFailed"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    commit: z.string().min(1),
+    checks: z
+      .array(z.object({ name: z.string().max(PR_CI_CHECK_NAME_MAX), url: z.string().optional() }))
+      .min(1)
+      .max(PR_CI_FAILED_CHECKS_MAX),
+    more: z.number().int().positive().optional(),
+  }),
+});
+
 /**
  * PR へのフィードバックを、実装の指摘として取り込んだ（PBI-14b・PBI-110）。レビュー（Request changes・
  * コメント）の本文、行ごとのコメント、PR への通常のコメントを、まだ取り込んでいないものだけ取り込む
@@ -3901,6 +3926,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReworkStoppedByMerge,
   PullRequestConflicted,
   PullRequestConflictResolved,
+  PullRequestCiFailed,
   PullRequestReviewImported,
   PullRequestReviewDiscarded,
   ReworkJudged,
