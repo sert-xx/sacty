@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-388
-- PR: なし
+- PR: #425
 - ブランチ: feat/pbi-388-prune-build-cache
 - 関係する ADR: [デーモンのコンテキストのイメージの片付けでも、3日使っていないビルドキャッシュを消す](../adr/20261117-1500-prune-build-cache-with-context-images.md)
 
