@@ -748,7 +748,7 @@ The decisions have the following results.
   It does not comment in a project with no GitHub account chosen, or in security check and security fix tasks.
 - The sacty PR review does not count a comment you decided to defer as unaddressed, and does not raise it again.
 - Decided comments appear under "Decided" below the list, with the decision and the handling.
-  The result of a handling that creates a follow-up task or an issue also appears under "Handling of deferred findings" in the task details.
+  The result of a handling that creates a follow-up task or an issue also appears under "Results for deferred findings" in the task details.
 - You can merge the PR before deciding. If you merge without deciding, the proposals stay undecided.
 
 Choose "Handling when deferred" from the following three.
@@ -763,10 +763,10 @@ Choose "Handling when deferred" from the following three.
 - A follow-up task is created after the PR is merged and the task completes. It is not created before the merge. When you close the PR without merging, or cancel the task, it is not created.
   The created task starts right away like any other task ([Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task)).
   The original PR is already merged, so the follow-up task makes its fix in a new PR.
-  The link to the created follow-up task appears under "Handling of deferred findings" in the completed task's details.
+  The link to the created follow-up task appears under "Results for deferred findings" in the completed task's details.
 - The issue is created right away when you decide with "Defer". Its title is the first line of the comment. The body has the comment, the reason for the proposal, and a link to the original PR.
   Even for a comment written on the sacty screen, choosing to create an issue puts its text in the issue.
-- When it could not be created, the reason appears under "Handling of deferred findings" in the task details and in the Activity. It is not retried, so create one yourself if you need it.
+- When it could not be created, the reason appears under "Results for deferred findings" in the task details and in the Activity. It is not retried, so create one yourself if you need it.
   The reason an issue could not be created also appears under "Decided" on the approval screen.
   When the reason says the issue may have been created (the request did not finish in time, or sacty stopped partway), check GitHub before you create one.
 - No issue is created in security check and security fix tasks, or in a project with no GitHub account chosen.
@@ -1547,6 +1547,7 @@ It adds the original task's record (step outputs, PRs, an earlier version's fina
 
 - The original task doesn't change.
   You can create as many follow-up tasks from one task as you need.
+- A follow-up task makes its fix in a new PR. It does not take over a PR in the original task's record.
 - The tasks you create are listed in the "Follow-up tasks" section, and "Follow-up of" in the properties of a follow-up task's details shows a link to the original task.
 - The ticket and the intake source (issue or PR) are not carried over (results are not returned to the ticket or issue).
 - From a security check or security fix task, you can create only a follow-up whose plan is "Security fix" or "Security check" ("Security fix" if you don't choose).

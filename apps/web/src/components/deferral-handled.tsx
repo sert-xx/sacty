@@ -87,10 +87,24 @@ export function DeferralHandledNotice({ task }: { task: Task }) {
       </h2>
       <ul className="flex flex-col gap-1 text-sm leading-6">
         {items.map((d) => (
-          <li key={d.remarkId} data-testid="deferral-result" className="[overflow-wrap:anywhere]">
-            <span className="font-medium">{t.remark(d.remarkId)}</span>
-            {" ・ "}
-            <DeferralHandledLine handling={d.handling} handled={d.handled} />
+          <li
+            key={d.remarkId}
+            data-testid="deferral-result"
+            className="flex flex-col [overflow-wrap:anywhere]"
+          >
+            <span>
+              <span className="font-medium">{t.remark(d.remarkId)}</span>
+              {" ・ "}
+              <DeferralHandledLine handling={d.handling} handled={d.handled} />
+            </span>
+            {/* どの指摘かを、ID だけでなく文でも見分けられるようにする（長ければ 2 行まで。全文は title で読める） */}
+            <span
+              data-testid="deferral-result-text"
+              title={d.text}
+              className="line-clamp-2 text-xs text-muted-foreground"
+            >
+              {d.text}
+            </span>
           </li>
         ))}
       </ul>

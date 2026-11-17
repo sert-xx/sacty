@@ -727,7 +727,7 @@ const en: TaskMessages = {
     handlingIssue: "Create a GitHub issue",
     handledTask: "Open the follow-up task",
     handledIssue: "Open the issue",
-    handledTitle: (count: number) => `Handling of deferred findings (${count})`,
+    handledTitle: (count: number) => `Results for deferred findings (${count})`,
     handlingPendingTask: "A follow-up task is created after this task completes",
     handlingPendingIssue: "Creating the issue",
     handlingFailed: (reason: string) =>
