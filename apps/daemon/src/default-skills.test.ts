@@ -123,6 +123,48 @@ describe("既定の review スキルの、段階のサブエージェント（PB
     }
   });
 
+  it("親は、SKILL.md の後に流れの資料と観点カタログを読み、規則が決めた担当を省かない（PBI-379）", () => {
+    const skill = read("skills/review/review-dispatch/SKILL.md");
+    // 役割の表のすぐ後（考え方・規則の前）に書く
+    const head = skill.slice(0, skill.indexOf("## 考え方"));
+    expect(head).toContain(
+      "親は、この SKILL.md を読み終えたら、対象を読み始める前に、流れの資料（`pr-review` なら [references/pr-review.md](references/pr-review.md)、`self-review` なら [references/self-review.md](references/self-review.md)）と観点カタログ（[references/viewpoints.md](references/viewpoints.md)）を開いて読む",
+    );
+    expect(head).toContain(
+      "下の「観点の起動の規則」と流れの資料が起動すると決めた担当は、省かない",
+    );
+    expect(head).toContain(
+      "その担当を起動せずに、親が自分で対象を読んで指摘を書いて終えるのは、このスキルに従ったレビューではない",
+    );
+    expect(head).toContain(
+      "決まった担当を起動しなかったことを結果に正直に書いても、起動の代わりにはならない",
+    );
+    // 自己レビューの、観点を絞る決まり（再レビュー・軽い依頼・直しの実行）とぶつからない言い方にする：
+    // 省けないのは「規則が決めた担当」で、再レビューであること・変更が少ないことを、ここでは理由に挙げない
+    expect(head).toContain("起動する観点を絞るのは、規則と流れの資料がそう決めた場合だけ");
+    expect(head).not.toContain("再レビューである");
+    expect(head).not.toContain("前回からの変更が少ない");
+    // 担当を 1 つも起動せずに終える場合は、スキルの既存の決まり（逐次モード・完了できないとき・起動する観点が無い再レビュー）と揃える
+    expect(head).toContain(
+      "担当を 1 つも起動せずに終えるのは、規則と流れの資料がそう決めている場合だけ。上の逐次モード、流れの資料の「完了できないとき」（対象を読めないなど）、規則が起動する観点が無いと決めた再レビュー",
+    );
+    expect(head).not.toContain("担当を起動しない唯一の例外");
+    // 特定のエージェントの製品に寄せた記述を、この段落に書かない（既定のスキルは、どのエージェントにも渡る）
+    expect(head).not.toMatch(/Claude|Codex|Sonnet|sacty/);
+    const pr = read("skills/review/review-dispatch/references/pr-review.md");
+    // PR のレビューに限ること（対象の大小・再レビューでも起動する）は、流れの資料に書く
+    expect(pr).toContain(
+      "サブエージェントを起動する手段があり、対象を読めるのに、担当に分けずに親が自分で見る、という見方は無い（そう書いて済ませない。担当を起動してから本文を書く）。対象が小さくても、再レビューでも、前回からの変更が少なくても、起動の規則が決めた担当を起動する",
+    );
+    // 担当の起動を実行の記録から数える依頼元と、向きの逆の記述を残さない
+    expect(pr).not.toContain("環境によって実行の記録に出ない");
+    expect(pr).toContain(
+      "初回も再レビューも、全観点の結果が揃い、集約を通ってから本文を書く。揃う前に（担当を起動する前にも）指摘を本文に書き始めない",
+    );
+    // 「完了できないとき」は、担当を起動しない（上の例外と揃っている）
+    expect(pr).toContain("差分も作業領域も読めない：担当を起動しない");
+  });
+
   it("親は段階の名前で担当を起動し、定義が無ければ段階を指定せずに起動して起動表に「親と同じ」と書く", () => {
     const skill = read("skills/review/review-dispatch/SKILL.md");
     // 起動の規則

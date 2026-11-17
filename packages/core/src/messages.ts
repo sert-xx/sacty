@@ -415,6 +415,9 @@ const PARAMS = {
   "review.notRereviewable": null,
   // 投稿の直前に PR の先頭を確かめられなかった（PBI-111）
   "review.headUnknown": null,
+  // 観点ごとの担当を 1 件も起動しなかった PR のレビュー（PBI-379）。採らずにやり直す・続いたので止める
+  "review.notDispatched": z.object({ attempt: z.number(), retries: z.number() }),
+  "review.notDispatchedPaused": z.object({ runs: z.number() }),
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string(), host: z.string() }),
   "github.accountUnavailable": z.object({ account: z.string(), host: z.string() }),
@@ -1384,6 +1387,10 @@ const ja: MessageDictionary = {
     "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
   "review.headUnknown":
     "投稿の前に、PR の先頭のコミットを確かめられませんでした（GitHub の応答にコミットがありません）。再開すると確かめ直します。",
+  "review.notDispatched": ({ attempt, retries }) =>
+    `レビューが、観点ごとの担当（サブエージェント）を 1 件も起動しませんでした。この結果は使わず、PR にも投稿しません。担当を起動するよう、レビューをやり直します（やり直し ${attempt}/${retries} 回目）。`,
+  "review.notDispatchedPaused": ({ runs }) =>
+    `担当（サブエージェント）を 1 件も起動しないレビューが、${runs} 回続きました。どの回の結果も使わず、PR にも投稿していません。レビューの工程のエージェントを変えるなどしてから、再開してください（再開すると、もう一度レビューします）。`,
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
   "github.accountRequired": ({ project, host }) =>
@@ -2243,6 +2250,10 @@ const en: MessageDictionary = {
   "review.notRereviewable": "Only a task that posted its review to the PR can be reviewed again.",
   "review.headUnknown":
     "Could not check the PR's head commit before posting (the GitHub response has no commit). Resuming checks again.",
+  "review.notDispatched": ({ attempt, retries }) =>
+    `The review did not start any per-viewpoint reviewer (subagent). Its result is not used and is not posted to the PR. The review is run again so that it starts the reviewers (retry ${attempt} of ${retries}).`,
+  "review.notDispatchedPaused": ({ runs }) =>
+    `${runs} reviews in a row did not start any per-viewpoint reviewer (subagent). None of their results is used or posted to the PR. Change the agent for the review step or fix the cause, then resume (resuming reviews again).`,
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
   "github.accountRequired": ({ project, host }) =>

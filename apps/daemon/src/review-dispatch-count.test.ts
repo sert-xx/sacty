@@ -1,0 +1,356 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { countReviewDispatch } from "./review-dispatch-count.js";
+import { TRUNCATED_EVENT } from "./session-logs.js";
+
+/** 実行の記録の形だけを写した、架空の内容のファイルで確かめる（PBI-379）。 */
+describe("PR のレビューが起動した担当の数を、実行の記録から数える（PBI-379）", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "sacty-dispatch-"));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const jsonl = (lines: unknown[]) => `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`;
+  const put = (rel: string, content: string) => {
+    const path = join(root, rel);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+    return path;
+  };
+  const agentDir = () => join(root, "agent");
+
+  // Claude Code の形
+  const toolUse = (id: string, name: string) => ({
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "tool_use", id, name, input: {} }] },
+  });
+  const said = (text: string) => ({
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "text", text }] },
+  });
+  const init = (tools: string[]) => jsonl([{ type: "system", subtype: "init", tools }]);
+  const claude = (parent: unknown[], tools: string[] | null = ["Task", "Bash"]) => {
+    put("agent/projects/-workspace/s1.jsonl", jsonl(parent));
+    return countReviewDispatch({
+      runtime: "claude-code",
+      agentDir: agentDir(),
+      eventsPath: tools ? put("run.jsonl", init(tools)) : undefined,
+    });
+  };
+
+  it("Claude Code：親のセッションの、担当を起動するツール（Agent・Task）の呼び出しを、ID で重複を除いて数える", async () => {
+    const counted = await claude([
+      toolUse("t1", "Skill"),
+      toolUse("t2", "Agent"),
+      toolUse("t3", "Task"),
+      // 同じ呼び出しが、もう一度記録されている
+      toolUse("t2", "Agent"),
+      toolUse("t4", "Bash"),
+    ]);
+    expect(counted).toEqual({ subagents: 2, canDispatch: true });
+  });
+
+  it("Claude Code：担当を起動せずに本文を書いた実行は 0 件。担当を起動するツールが使えたことは、実行の出力の最初の出来事で確かめる", async () => {
+    expect(await claude([toolUse("t1", "Skill"), toolUse("t2", "Bash"), said("総評")])).toEqual({
+      subagents: 0,
+      canDispatch: true,
+    });
+    // 「Agent」という語が本文にあるだけでは、数えない
+    expect(await claude([said('"tool_use" の Agent は使いませんでした')])).toEqual({
+      subagents: 0,
+      canDispatch: true,
+    });
+  });
+
+  it("Claude Code：使えるツールに担当を起動するツールが無い・最初の出来事が無い・出力が無いなら、手段があったとは確かめられない", async () => {
+    const parent = [toolUse("t1", "Bash")];
+    expect(await claude(parent, ["Bash", "Read"])).toEqual({ subagents: 0, canDispatch: false });
+    expect(await claude(parent, null)).toEqual({ subagents: 0, canDispatch: false });
+    put("agent/projects/-workspace/s1.jsonl", jsonl(parent));
+    const events = put("run.jsonl", jsonl([{ type: "assistant" }, { type: "result" }]));
+    expect(
+      await countReviewDispatch({
+        runtime: "claude-code",
+        agentDir: agentDir(),
+        eventsPath: events,
+      }),
+    ).toEqual({ subagents: 0, canDispatch: false });
+    // ツールの一覧が配列でない
+    const broken = put("run2.jsonl", jsonl([{ type: "system", subtype: "init", tools: "Task" }]));
+    expect(
+      await countReviewDispatch({
+        runtime: "claude-code",
+        agentDir: agentDir(),
+        eventsPath: broken,
+      }),
+    ).toEqual({ subagents: 0, canDispatch: false });
+  });
+
+  it("Claude Code：まとめて起動するツール（Workflow）で起動した担当も数える。親の呼び出しのツールの名前には頼らない", async () => {
+    // 担当のセッションは subagents/workflows/<実行>/ の下に残る。親には、Agent・Task の呼び出しが無い
+    for (const [run, n] of [
+      ["wf_a", 3],
+      ["wf_b", 2],
+    ] as const) {
+      for (let i = 0; i < n; i++) {
+        put(
+          `agent/projects/-workspace/s1/subagents/workflows/${run}/agent-${i}.jsonl`,
+          jsonl([said("x")]),
+        );
+      }
+      // 担当のセッションでない記録は数えない
+      put(
+        `agent/projects/-workspace/s1/subagents/workflows/${run}/journal.jsonl`,
+        jsonl([{ type: "started" }]),
+      );
+    }
+    expect(
+      await claude([toolUse("t1", "Skill"), toolUse("t2", "Workflow"), toolUse("t3", "Workflow")]),
+    ).toEqual({ subagents: 5, canDispatch: true });
+    // 1 件ずつ起動した担当と合わせて数える
+    put("agent/projects/-workspace/s1/subagents/agent-f1.jsonl", jsonl([said("y")]));
+    expect(await claude([toolUse("t2", "Workflow"), toolUse("t4", "Agent")])).toEqual({
+      subagents: 6,
+      canDispatch: true,
+    });
+    // 名前を知らない起動のツールでも、担当のセッションが残っていれば 0 件にしない
+    expect(await claude([toolUse("t5", "SomeNewLauncher")], ["SomeNewLauncher"])).toEqual({
+      subagents: 6,
+      canDispatch: false,
+    });
+  });
+
+  it("Claude Code：担当のセッションの名前の形（agent-<16進の ID>.jsonl）でないファイルは、担当として数えない", async () => {
+    // 担当ではない内部の記録が subagents/ の下に置かれても、担当を起動していない実行を 1 件以上と数えない
+    for (const name of [
+      "agent-acompact-0123abcd.jsonl",
+      "journal.jsonl",
+      "notes.jsonl",
+      "agent-.jsonl",
+      "agent-0123abcd.jsonl.bak",
+      "xagent-0123abcd.jsonl",
+    ]) {
+      put(`agent/projects/-workspace/s1/subagents/${name}`, jsonl([said("x")]));
+    }
+    put(
+      "agent/projects/-workspace/s1/subagents/workflows/wf_a/agent-side-1.jsonl",
+      jsonl([said("x")]),
+    );
+    expect(await claude([toolUse("t1", "Bash")])).toEqual({ subagents: 0, canDispatch: true });
+    // 名前の形が合うものだけを数える
+    put("agent/projects/-workspace/s1/subagents/agent-0123abcd.jsonl", jsonl([said("x")]));
+    expect(await claude([toolUse("t1", "Bash")])).toEqual({ subagents: 1, canDispatch: true });
+  });
+
+  it("Claude Code：親がまとめて起動するツール（Workflow）を呼んでいれば、担当のセッションのファイルが 1 つも無くても（形が変わっても）、0 件と数えない", async () => {
+    // 担当のセッションのファイルが、数える名前の形で残っていない
+    put(
+      "agent/projects/-workspace/s1/subagents/workflows/wf_a/session-1.jsonl",
+      jsonl([said("x")]),
+    );
+    expect(await claude([toolUse("t1", "Skill"), toolUse("t2", "Workflow")])).toEqual({
+      subagents: 1,
+      canDispatch: true,
+    });
+    // 同じ呼び出しの重複は 1 件。1 件ずつ起動するツールの呼び出しと合わせて数える
+    expect(
+      await claude([toolUse("t2", "Workflow"), toolUse("t2", "Workflow"), toolUse("t3", "Agent")]),
+    ).toEqual({ subagents: 2, canDispatch: true });
+  });
+
+  it("Claude Code：間を省いた親のセッションでも、担当のセッションのファイルがあれば数える（0 件のときだけ、分からない）", async () => {
+    put("agent/projects/-workspace/s1/subagents/agent-0a.jsonl", jsonl([said("x")]));
+    expect(
+      await claude([toolUse("t1", "Bash"), { type: TRUNCATED_EVENT, droppedBytes: 10 }]),
+    ).toEqual({ subagents: 1, canDispatch: true });
+  });
+
+  it("写せなかったファイルがある実行で 0 件なら、分からない（写せなかった所に起動があったかもしれない）。1 件以上なら数える", async () => {
+    put("agent/projects/-workspace/s1.jsonl", jsonl([toolUse("t1", "Bash")]));
+    const count = (filesSkipped: boolean) =>
+      countReviewDispatch({
+        runtime: "claude-code",
+        agentDir: agentDir(),
+        eventsPath: put("run.jsonl", init(["Task"])),
+        filesSkipped,
+      });
+    expect(await count(true)).toEqual({
+      subagents: undefined,
+      canDispatch: false,
+      unknown: "files_skipped",
+    });
+    expect(await count(false)).toEqual({ subagents: 0, canDispatch: true });
+    put("agent/projects/-workspace/s1.jsonl", jsonl([toolUse("t1", "Agent")]));
+    expect(await count(true)).toEqual({ subagents: 1, canDispatch: true });
+  });
+
+  it("Claude Code：使えるツールが Workflow だけでも、担当を起動する手段があったと確かめる", async () => {
+    expect(await claude([toolUse("t1", "Bash")], ["Workflow", "Bash"])).toEqual({
+      subagents: 0,
+      canDispatch: true,
+    });
+  });
+
+  it("Claude Code：担当ごとのセッションのファイルの数も数え、多い方を使う", async () => {
+    put("agent/projects/-workspace/s1/subagents/agent-a.jsonl", jsonl([said("x")]));
+    put("agent/projects/-workspace/s1/subagents/agent-b.jsonl", jsonl([said("y")]));
+    // 担当でないファイル（大きなツールの結果）は数えない
+    put("agent/projects/-workspace/s1/tool-results/r.jsonl", jsonl([said("z")]));
+    expect(await claude([toolUse("t1", "Bash")])).toEqual({ subagents: 2, canDispatch: true });
+  });
+
+  it("Claude Code：親のセッションが無い・読めない行だけ・間を省いたファイルで 0 件なら、分からない", async () => {
+    expect(
+      await countReviewDispatch({
+        runtime: "claude-code",
+        agentDir: agentDir(),
+        eventsPath: undefined,
+      }),
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "no_parent_session" });
+    // 間を省いた（上限を超えた）ファイルで 0 件：省いた所に呼び出しがあったかもしれない
+    expect(
+      await claude([toolUse("t1", "Bash"), { type: TRUNCATED_EVENT, droppedBytes: 10 }]),
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "truncated" });
+    // 目印の名前が、指示や差分の文字列の中にあるだけなら、間を省いたとは扱わない（0 件と数える）
+    expect(
+      await claude([toolUse("t1", "Bash"), said(`差分に ${TRUNCATED_EVENT} という文字列がある`)]),
+    ).toEqual({ subagents: 0, canDispatch: true });
+    // 間を省いていても、1 件でも見つかれば数える
+    expect(
+      await claude([toolUse("t1", "Agent"), { type: TRUNCATED_EVENT, droppedBytes: 10 }]),
+    ).toEqual({ subagents: 1, canDispatch: true });
+    // JSON として読めない行は飛ばす
+    put(
+      "agent/projects/-workspace/s1.jsonl",
+      `{"tool_use" こわれた行\n${jsonl([toolUse("t9", "Agent")])}`,
+    );
+    expect(
+      await countReviewDispatch({
+        runtime: "claude-code",
+        agentDir: agentDir(),
+        eventsPath: put("run.jsonl", init(["Agent"])),
+      }),
+    ).toEqual({ subagents: 1, canDispatch: true });
+  });
+
+  it("Claude Code：親のセッションがシンボリックリンクなら辿らない（分からない）", async () => {
+    const outside = put("outside.jsonl", jsonl([toolUse("t1", "Agent")]));
+    mkdirSync(join(agentDir(), "projects", "-workspace"), { recursive: true });
+    symlinkSync(outside, join(agentDir(), "projects", "-workspace", "s1.jsonl"));
+    expect(
+      await countReviewDispatch({
+        runtime: "claude-code",
+        agentDir: agentDir(),
+        eventsPath: undefined,
+      }),
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "no_parent_session" });
+  });
+
+  // Codex の形
+  const meta = (source: unknown) => ({ type: "session_meta", payload: { id: "th", source } });
+  const turn = (extra: Record<string, unknown> = { multi_agent_version: "v2" }) => ({
+    type: "turn_context",
+    payload: { cwd: "/workspace", ...extra },
+  });
+  const call = (name: string, id: string) => ({
+    type: "response_item",
+    payload: { type: "function_call", name, id, arguments: "{}" },
+  });
+  const rollout = (name: string, lines: unknown[]) =>
+    put(`agent/sessions/2026/01/02/rollout-2026-01-02T03-04-05-${name}.jsonl`, jsonl(lines));
+  const codex = () =>
+    countReviewDispatch({ runtime: "codex", agentDir: agentDir(), eventsPath: undefined });
+
+  it("Codex：先頭の session_meta の source が exec の rollout（親）の中の spawn_agent だけを数える", async () => {
+    rollout("parent", [
+      meta("exec"),
+      turn(),
+      call("spawn_agent", "c1"),
+      call("wait_agent", "c2"),
+      call("spawn_agent", "c3"),
+    ]);
+    // 担当の rollout は、親の履歴（spawn_agent）を引き継いでいても数えない
+    const child = { subagent: { thread_spawn: { parent_thread_id: "th", depth: 1 } } };
+    rollout("child-1", [meta(child), turn(), call("spawn_agent", "c1"), call("spawn_agent", "c3")]);
+    rollout("child-2", [meta(child), turn(), call("spawn_agent", "c1")]);
+    expect(await codex()).toEqual({ subagents: 2, canDispatch: true });
+  });
+
+  it("Codex：spawn_agent が無ければ 0 件。親の turn_context に multi_agent_version が無ければ、手段があったとは確かめられない", async () => {
+    rollout("parent", [meta("exec"), turn(), call("exec_command", "c1")]);
+    expect(await codex()).toEqual({ subagents: 0, canDispatch: true });
+    rollout("parent", [meta("exec"), turn({}), call("exec_command", "c1")]);
+    expect(await codex()).toEqual({ subagents: 0, canDispatch: false });
+  });
+
+  it("Codex：同じ ID の呼び出しは 1 件、ID の無い呼び出しは 1 件ずつ数える。archived_sessions の親も数える", async () => {
+    rollout("parent", [
+      meta("exec"),
+      turn(),
+      call("spawn_agent", "c1"),
+      // 同じ呼び出しが、もう一度記録されている
+      call("spawn_agent", "c1"),
+      {
+        type: "response_item",
+        payload: { type: "function_call", name: "spawn_agent", call_id: "k2" },
+      },
+      // ID の無い呼び出し
+      { type: "response_item", payload: { type: "function_call", name: "spawn_agent" } },
+      { type: "response_item", payload: { type: "function_call", name: "spawn_agent" } },
+      // 呼び出しでない記録（結果・本文）に名前があるだけでは、数えない
+      { type: "response_item", payload: { type: "function_call_output", name: "spawn_agent" } },
+      { type: "response_item", payload: { type: "message", text: 'the "spawn_agent" tool' } },
+    ]);
+    expect(await codex()).toEqual({ subagents: 4, canDispatch: true });
+    put(
+      "agent/archived_sessions/rollout-2026-01-01T00-00-00-old.jsonl",
+      jsonl([meta("exec"), turn(), call("spawn_agent", "a1")]),
+    );
+    expect(await codex()).toEqual({ subagents: 5, canDispatch: true });
+  });
+
+  it("Codex：間を省いた（上限を超えた）親の rollout で 0 件なら、分からない。1 件でも見つかれば数える", async () => {
+    const mark = { type: TRUNCATED_EVENT, droppedBytes: 10 };
+    rollout("parent", [meta("exec"), turn(), call("exec_command", "c1"), mark]);
+    expect(await codex()).toEqual({
+      subagents: undefined,
+      canDispatch: false,
+      unknown: "truncated",
+    });
+    rollout("parent", [meta("exec"), turn(), call("spawn_agent", "c1"), mark]);
+    expect(await codex()).toEqual({ subagents: 1, canDispatch: true });
+  });
+
+  it("Codex：親の rollout が無い（担当のものしか無い・rollout が無い）なら、分からない", async () => {
+    expect(await codex()).toEqual({
+      subagents: undefined,
+      canDispatch: false,
+      unknown: "no_parent_session",
+    });
+    rollout("child", [meta({ subagent: {} }), turn(), call("spawn_agent", "c1")]);
+    expect(await codex()).toEqual({
+      subagents: undefined,
+      canDispatch: false,
+      unknown: "no_parent_session",
+    });
+  });
+
+  it("知らない種類のエージェント・セッションのファイルの場所が無いときは、分からない", async () => {
+    put("agent/projects/-workspace/s1.jsonl", jsonl([toolUse("t1", "Bash")]));
+    expect(
+      await countReviewDispatch({ runtime: "stub", agentDir: agentDir(), eventsPath: undefined }),
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "unknown_runtime" });
+    expect(
+      await countReviewDispatch({
+        runtime: "claude-code",
+        agentDir: undefined,
+        eventsPath: undefined,
+      }),
+    ).toEqual({ subagents: undefined, canDispatch: false, unknown: "no_files_dir" });
+  });
+});

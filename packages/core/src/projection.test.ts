@@ -7461,3 +7461,97 @@ describe("レビューの子タスクの指摘ごとの戻し先から、差し�
     expect(reviewReworkTarget({ findings: [] }, [], "implement")).toBeUndefined();
   });
 });
+
+describe("担当を起動しなかったために採らなかったレビューの実行の数（PBI-379）", () => {
+  const reviewStarted = (runId: string) =>
+    ev("t1", {
+      type: "AgentRunStarted",
+      payload: { runId, step: "review", agentId: "a", authMode: "subscription" },
+    });
+  const failed = (runId: string, undispatched: boolean) =>
+    ev("t1", {
+      type: "AgentRunFailed",
+      payload: {
+        runId,
+        step: "review",
+        agentId: "a",
+        reason: "error",
+        message: "x",
+        ...(undispatched ? { reviewDispatch: { subagents: 0, runtime: "claude-code" } } : {}),
+      },
+    });
+  const reviewed = (runId: string, dispatch?: { subagents: number | null; model?: string }) =>
+    ev("t1", {
+      type: "AgentRunCompleted",
+      payload: {
+        runId,
+        step: "review",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output: "# レビュー",
+        ...(dispatch ? { reviewDispatch: dispatch } : {}),
+      },
+    });
+  const base = () => {
+    seq = 0;
+    return [created("t1"), ev("t1", { type: "StepsChosen", payload: { steps: ["review"] } })];
+  };
+
+  it("採らなかった実行だけを数える（ふつうの失敗は数えない）。人が再開すると、再開の後の数だけを 0 に戻す", () => {
+    const events = [
+      ...base(),
+      reviewStarted("r1"),
+      failed("r1", true),
+      reviewStarted("r2"),
+      failed("r2", true),
+    ];
+    expect(project(events).get("t1")?.reviewUndispatched).toEqual({ runs: 2, sinceResume: 2 });
+    expect(project(events).get("t1")?.status).toBe("queued");
+    // ふつうの失敗は、数えない（数は消えない）
+    const other = [...events, reviewStarted("r3"), failed("r3", false)];
+    expect(project(other).get("t1")?.reviewUndispatched).toEqual({ runs: 2, sinceResume: 2 });
+    // 一時停止して、人が再開する
+    const resumed = [
+      ...other,
+      ev("t1", { type: "TaskPaused", payload: { reason: "error" } }),
+      ev("t1", { type: "TaskResumed", payload: { retry: true } }, "person"),
+    ];
+    expect(project(resumed).get("t1")?.reviewUndispatched).toEqual({ runs: 2, sinceResume: 0 });
+    const again = [...resumed, reviewStarted("r4"), failed("r4", true)];
+    expect(project(again).get("t1")?.reviewUndispatched).toEqual({ runs: 3, sinceResume: 1 });
+  });
+
+  it("採らなかった実行が無いタスクの再開では、何も持たない", () => {
+    const events = [
+      ...base(),
+      reviewStarted("r1"),
+      failed("r1", false),
+      ev("t1", { type: "TaskPaused", payload: { reason: "error" } }),
+      ev("t1", { type: "TaskResumed", payload: { retry: true } }, "person"),
+    ];
+    expect(project(events).get("t1")?.reviewUndispatched).toBeUndefined();
+  });
+
+  it("レビューが採られると、数を消し、その実行のエージェントと担当の数を持つ。記録の無い実行（これより前の作業履歴）では、持たない", () => {
+    const events = [
+      ...base(),
+      reviewStarted("r1"),
+      failed("r1", true),
+      reviewStarted("r2"),
+      reviewed("r2", { subagents: 17, model: "m" }),
+    ];
+    const task = project(events).get("t1");
+    expect(task?.reviewUndispatched).toBeUndefined();
+    expect(task?.reviewDispatch).toEqual({ round: 1, agentId: "a", subagents: 17, model: "m" });
+    // 数えられなかった実行
+    const unknown = project([...base(), reviewStarted("r1"), reviewed("r1", { subagents: null })]);
+    expect(unknown.get("t1")?.reviewDispatch).toEqual({ round: 1, agentId: "a", subagents: null });
+    // 記録の無い実行
+    const legacy = project([...base(), reviewStarted("r1"), reviewed("r1")]);
+    expect(legacy.get("t1")?.reviewDispatch).toBeUndefined();
+    expect(legacy.get("t1")?.reviewUndispatched).toBeUndefined();
+  });
+});

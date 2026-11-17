@@ -20,6 +20,7 @@ sacty の処理（作業履歴）・各実行のエージェントの動き（�
 | `stop`（停止） | `TaskPaused`（理由が `manual` のものを除く）・`TaskEscalated` |
 | `check`（確認の不合格） | 通らなかった `TestsRun`・ベースブランチとの競合の目印が残った `BaseConflictsRemained`・実装が終わっていなかった `ImplementationIncomplete`・やり直しが PR を何も変えなかった `ImplementationUnchanged`・`failed` か `timed_out` の `PullRequestCiFinished`・人の承認を待つ実装の PR の CI の失敗 `PullRequestCiFailed`・`unhealthy` の `DeploymentChecked` |
 
+観点ごとの担当を起動しなかったために使わなかった PR のレビューの実行（`reviewDispatch` を持つ `AgentRunFailed`）も、`error` に入る（実行の失敗と分けない。理由の文言 `review.notDispatched`・`review.notDispatchedPaused` で分かる）。
 `DeploymentChecked` のうち、確認の実行そのものが失敗した記録（`failed` を持つか、`runResult` が `failed`）は `error` にする。
 エラーの分析の記録（`ErrorAnalysisRequested`・`ErrorAnalyzed`）は、分析が失敗してもエラーに数えない。
 

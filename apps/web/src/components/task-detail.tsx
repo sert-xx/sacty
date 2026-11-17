@@ -92,6 +92,7 @@ import {
 import { projectSettingsPath } from "@/lib/paths";
 import { pausedRemaining } from "@/lib/paused-remaining";
 import { repoLabels } from "@/lib/repo-label";
+import { pausedForUndispatchedReview } from "@/lib/review-dispatch";
 import { runLogId } from "@/lib/session-log";
 import { subtaskSummary } from "@/lib/subtasks";
 import type { TaskDetailData } from "@/lib/task-detail-data";
@@ -1978,6 +1979,28 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
               >
                 {task.reviewPost.url}
               </a>
+            </li>
+          )}
+          {/* どのエージェントで見たか・観点ごとの担当を何件起動したか（PBI-379） */}
+          {task.reviewDispatch && (
+            <li className="[overflow-wrap:anywhere]">
+              {/* 再レビューの実行中は、前の回の記録であることを示す */}
+              {task.reviewDispatch.round !== (task.reviewRound ?? 1) &&
+                m.reviewDispatchRound(task.reviewDispatch.round)}
+              {m.reviewAgent(task.reviewDispatch.agentId, task.reviewDispatch.model)}
+              {" · "}
+              {m.reviewSubagents(task.reviewDispatch.subagents)}
+              {task.reviewDispatch.configuredAgentId && (
+                <> · {m.reviewAgentSwitched(task.reviewDispatch.configuredAgentId)}</>
+              )}
+            </li>
+          )}
+          {task.reviewUndispatched && task.reviewUndispatched.runs > 0 && (
+            <li className="[overflow-wrap:anywhere]">
+              {m.reviewUndispatched(
+                task.reviewUndispatched.runs,
+                pausedForUndispatchedReview(task),
+              )}
             </li>
           )}
         </ul>

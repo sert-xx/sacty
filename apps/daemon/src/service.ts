@@ -125,6 +125,7 @@ import {
   pullRequestCiFailure,
   questionBlocked,
   queueOverSince,
+  REVIEW_UNDISPATCHED_RETRIES,
   RejectAuditProposalInput,
   type RemarkOrigin,
   type RemarkResponseStatus,
@@ -135,6 +136,7 @@ import {
   RerunTaskInput,
   ResumeAuditInput,
   ResumeTaskInput,
+  type ReviewDispatch,
   renderMessage,
   repoKey,
   responsibleProject,
@@ -443,6 +445,7 @@ import {
   remarkReplyMarkerOf,
 } from "./remark-reply.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import { countReviewDispatch } from "./review-dispatch-count.js";
 import {
   buildResolvedNotice,
   buildStopNotice,
@@ -10885,6 +10888,60 @@ export class TaskService {
     }
 
     const latest = this.mustGet(task.id);
+    // PR のレビューは、観点ごとの担当（サブエージェント）を何件起動したかを、実行の記録から数える（PBI-379）。担当を起動する
+    // 手段があったのに 1 件も起動しなかった実行は、判定を採らず、PR にも投稿せずに、やり直させる。やり直しても続くなら止める
+    const counted =
+      step === "review"
+        ? await this.countReviewDispatch(task.id, runId, agent, chosen.agent)
+        : undefined;
+    const reviewDispatch = counted?.record;
+    if (reviewDispatch && counted?.undispatched) {
+      const retried = latest.reviewUndispatched?.sinceResume ?? 0;
+      const retry = retried < REVIEW_UNDISPATCHED_RETRIES;
+      const text = retry
+        ? message("review.notDispatched", {
+            attempt: retried + 1,
+            retries: REVIEW_UNDISPATCHED_RETRIES,
+          })
+        : message("review.notDispatchedPaused", { runs: retried + 1 });
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunFailed",
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              reason: "error",
+              message: text,
+              usage: outcome.usage,
+              costUsd,
+              estimated,
+              ...unknownCost(executed),
+              reviewDispatch,
+            },
+          },
+        },
+        // 上限までは、止めずに実行待ちに戻す（次の実行が、担当を起動するよう指示を足してやり直す）
+        ...(retry
+          ? []
+          : [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "TaskPaused" as const,
+                  payload: {
+                    reason: this.stopReason(task.id, "error"),
+                    message: text,
+                  },
+                },
+              },
+            ]),
+      ]);
+      this.warnIfNeeded(this.mustGet(task.id));
+      return;
+    }
     // タスク分割は、子タスクの一覧を確かめて記録し、子タスクを作る（PBI-27）
     if (step === "split") {
       // 統合レビューの後に追加する修正の子タスクは、1件から作れる（PBI-31）
@@ -11120,6 +11177,8 @@ export class TaskService {
             // テストの仕組みが無いタスクで、実装がテストの仕組みを用意したときだけ、そのコマンドを使う（PBI-94）
             ...(step === "implement" && latest.noTestsReason && testCommand ? { testCommand } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
+            // どのエージェントで、観点ごとの担当を何件起動したか（PBI-379）
+            ...(reviewDispatch ? { reviewDispatch } : {}),
             ...(review?.verdict ? { reviewVerdict: review.verdict } : {}),
             // 判定が無い理由（PBI-378。レビューが付けなかったのか、付いていたのに読めなかったのか）
             ...(review?.verdictMissing ? { reviewVerdictMissing: review.verdictMissing } : {}),
@@ -11199,6 +11258,48 @@ export class TaskService {
     });
     this.append(task, events);
     this.checkBudget(this.mustGet(task.id));
+  }
+
+  /**
+   * PR のレビューの実行が起動した、観点ごとの担当の数を数えて、記録の形にする（PBI-379）。undispatched は、担当を起動する
+   * 手段があったのに 0 件だった（採らずにやり直す）実行。数えられなかったときは、理由をデーモンのログに出す（タスクと実行の ID と、
+   * 理由の種類だけ。写したファイルの場所が無いデーモンでは、出さない）。
+   */
+  private async countReviewDispatch(
+    taskId: string,
+    runId: string,
+    agent: AgentConfig,
+    configured: AgentConfig,
+  ): Promise<{ record: ReviewDispatch; undispatched: boolean }> {
+    const counted = await countReviewDispatch({
+      runtime: agent.runtime,
+      agentDir: this.deps.sessionLogs?.agentFilesDir(taskId, runId),
+      eventsPath: this.deps.sessionLogs?.path(taskId, runId, "events"),
+      // 写せなかったファイルがあった実行（写したファイルの記録の skipped）
+      filesSkipped: this.deps.activity
+        .forTask(taskId)
+        .some(
+          (e) =>
+            e.type === "AgentSessionArchived" &&
+            e.payload.runId === runId &&
+            e.payload.skipped.length > 0,
+        ),
+    });
+    if (counted.unknown && counted.unknown !== "no_files_dir") {
+      console.warn(
+        `[daemon] PR のレビューが起動した担当の数を、数えられませんでした（タスク ${taskId}・実行 ${runId}・種類 ${agent.runtime}・理由 ${counted.unknown}）。担当を起動したかを確かめずに、レビューを使います。`,
+      );
+    }
+    return {
+      record: {
+        subagents: counted.subagents ?? null,
+        runtime: agent.runtime,
+        ...(agent.model ? { model: agent.model } : {}),
+        // 設定のエージェントが使えず、切り替え先で動いた実行
+        ...(configured.id !== agent.id ? { configuredAgentId: configured.id } : {}),
+      },
+      undispatched: counted.subagents === 0 && counted.canDispatch,
+    };
   }
 
   /**

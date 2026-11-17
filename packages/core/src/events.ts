@@ -1296,6 +1296,28 @@ export const ImplementationCompletion = z.discriminatedUnion("status", [
 ]);
 export type ImplementationCompletion = z.infer<typeof ImplementationCompletion>;
 
+/**
+ * PR のレビューの実行が、観点ごとの担当（サブエージェント）を起動したかの記録（PBI-379）。sacty が、実行の後に、写した
+ * エージェントのセッションのファイルから数える。担当の中身や質は見ない。
+ */
+export const ReviewDispatch = z.object({
+  /**
+   * 起動した担当の数。null は、数えられなかった（セッションのファイルが無い・読めない、数え方を知らない種類のエージェント）。
+   * 完了の記録の 0 は、担当を起動する手段がその実行にあったことを、sacty が確かめられなかった回（スキルの逐次モードを通す）。
+   */
+  subagents: z.number().int().nonnegative().nullable(),
+  /** その実行のエージェントの種類（`claude-code`・`codex` など）。PR に投稿する本文には、設定の名前ではなく、これを出す。 */
+  runtime: z.string().optional(),
+  /** その実行のモデル（設定にあるときだけ）。 */
+  model: z.string().optional(),
+  /** 工程に設定されたエージェント。そのエージェントが使えず、切り替え先で動いた実行だけが持つ。 */
+  configuredAgentId: z.string().optional(),
+});
+export type ReviewDispatch = z.infer<typeof ReviewDispatch>;
+
+/** 担当を起動しなかった PR のレビューを、一時停止せずにやり直す回数の上限（PBI-379）。 */
+export const REVIEW_UNDISPATCHED_RETRIES = 3;
+
 const AgentRunCompleted = z.object({
   type: z.literal("AgentRunCompleted"),
   payload: z.object({
@@ -1328,6 +1350,10 @@ const AgentRunCompleted = z.object({
     reviewVerdict: ReviewVerdict.optional(),
     /** レビューの工程の判定が無い理由（PBI-378）。判定があるとき・これより前の作業履歴には無い。 */
     reviewVerdictMissing: ReviewVerdictMissing.optional(),
+    /**
+     * レビューの工程が、観点ごとの担当を何件起動したか（PBI-379）。これより前の作業履歴と、レビューでない工程には無い。
+     */
+    reviewDispatch: ReviewDispatch.optional(),
     /** PR のレビューの子タスクが示した、指摘の戻し先と原因（PBI-332）。読めなければ無い。 */
     reviewRework: ReviewRework.optional(),
     /** 再現の工程が申告した、不具合を再現するテスト（PBI-29）。 */
@@ -1375,6 +1401,11 @@ const AgentRunFailed = z.object({
     preparationFailed: z.literal(true).optional(),
     /** sacty の文言はコードと引数、エージェントや外から来た文はそのまま（PBI-11）。 */
     message: DaemonText,
+    /**
+     * 観点ごとの担当を 1 件も起動しなかったために、sacty が結果を採らなかった PR のレビューの実行だけが持つ（PBI-379。
+     * subagents は 0）。エージェントの実行そのものは完了している（費用は、この記録が持つ）。
+     */
+    reviewDispatch: ReviewDispatch.optional(),
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),

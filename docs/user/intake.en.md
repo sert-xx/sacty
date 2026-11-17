@@ -1,4 +1,4 @@
-<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/review-stop-notice.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts -->
+<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/review-stop-notice.ts, apps/daemon/src/review-dispatch-count.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts -->
 
 [日本語](intake.md) | **English**
 
@@ -158,6 +158,12 @@ It does not check the whole of the unchanged text.
 After the summary, the review body says in one line how the viewpoints were checked.
 It gives the number of viewpoints when they were split among per-viewpoint reviewers, or says so when the reviewers could not be started and the viewpoints were checked one at a time.
 
+At the end of the review, sacty writes in one line the kind of agent that reviewed (Claude Code or Codex), its model, and the number of per-viewpoint reviewers it started.
+The agent names you gave in `config.yaml` are not written to the PR.
+When the agent set for the review step was unavailable and its fallback agent ran the review, the line says so too ([Switching agents on failure](config.en.md#switching-agents-on-failure)).
+sacty counts the reviewers from the run's records. When it cannot count them, the line says that the number could not be checked.
+The review step of the task details shows the same information, together with the agent's name (the name you gave in `config.yaml`).
+
 For a review imported from a GitHub PR (a review request or a label), a "リスク評価" (risk assessment) section for the PR is added right after the verdict.
 It holds the level (low, medium, or high), the suggested review depth, the grounds, and the places to look at (the levels mean the same as in [PR risk assessment](tasks.en.md#pr-risk-assessment)).
 The assessment is separate from the findings and the verdict, and does not change the verdict.
@@ -220,6 +226,18 @@ Temporary failures are handled differently depending on their kind.
   - A failure that waiting does not fix, such as missing permission or a PR that cannot be found, stops it right away.
 - For a temporary failure of an agent run, such as a busy model, sacty does not retry on its own.
   If you write a fallback agent, sacty switches to it instead of stopping ([Switching agents on failure](config.en.md#switching-agents-on-failure)).
+
+sacty does not use a review that was written without starting any per-viewpoint reviewer.
+
+- sacty does not use that review's verdict and body, and does not post it to the PR.
+  It tells the agent to start the reviewers and runs the review again automatically (up to 3 times).
+  In the cost table of the task details, that run's result reads "Not used" (its cost is included in the task's cost).
+- If reviews that start no reviewer continue after the retries, the task stops, and sacty also tells the PR in a comment.
+  The reason reads "4 reviews in a row did not start any per-viewpoint reviewer (subagent)".
+- When it stops, change the agent for the review step or fix the cause, then resume ([Changing a step's agent](tasks.en.md#changing-a-steps-agent)).
+  Resuming reviews again.
+- sacty retries only a run where it confirmed that the agent had a way to start reviewers.
+  It does not retry a run where it could not confirm that, or a run whose reviewers it could not count, and uses that review.
 
 ### Do not import PRs you do not trust
 

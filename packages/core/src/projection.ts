@@ -21,6 +21,7 @@ import type {
   RemarkResponseStatus,
   RemarkSource,
   ReviewComment,
+  ReviewDispatch,
   ReviewRework,
   ReviewVerdict,
   ReviewVerdictMissing,
@@ -1077,6 +1078,17 @@ export type Task = {
     agentId?: string;
   }[];
   /**
+   * 最新のレビューの実行が、どのエージェントで、観点ごとの担当を何件起動したか（PBI-379）。round は、その実行の回。
+   * これより前の作業履歴の実行には無い。
+   */
+  reviewDispatch?: ReviewDispatch & { round: number; agentId: string };
+  /**
+   * 担当を 1 件も起動しなかったために、結果を採らなかったレビューの実行の数（PBI-379）。runs は、レビューが採られるまでの
+   * 続けた数（次の実行の指示で、前の回が担当を起動しなかったことを伝える）。sinceResume は、そのうち人が最後に再開した後の数
+   * （やり直しの上限を数える。人が再開すると 0 に戻り、もう一度上限まで試す）。レビューが採られると消える。
+   */
+  reviewUndispatched?: { runs: number; sinceResume: number };
+  /**
    * 前回投稿したレビュー（再レビューのとき。PBI-111）。前回の指摘（本文と行へのコメント）と、投稿の後の作者の返答を
    * 再レビューのプロンプトに渡すため。
    */
@@ -1653,6 +1665,13 @@ export function applyEvent(
       // 失敗した実行は、再開したときにやり直すので実行待ちに戻す
       task.status = event.type === "AgentRunCompleted" ? "idle" : "queued";
       task.currentRunId = undefined;
+      // 担当を起動しなかったために採らなかったレビューの実行を数える（PBI-379）
+      if (event.type === "AgentRunFailed" && event.payload.reviewDispatch) {
+        task.reviewUndispatched = {
+          runs: (task.reviewUndispatched?.runs ?? 0) + 1,
+          sinceResume: (task.reviewUndispatched?.sinceResume ?? 0) + 1,
+        };
+      }
       if (event.type === "AgentRunCompleted") {
         // 承認済みの成果物は凍結されている。変えるには、人間が差し戻して承認を取り消す必要がある
         if (task.approved[event.payload.step]) {
@@ -1663,6 +1682,12 @@ export function applyEvent(
           task.reviewComments = event.payload.reviewComments;
           // 回ごとの判定（PBI-88・PBI-111）。同じ回をやり直したら置き換える
           const round = task.reviewRound ?? 1;
+          // どのエージェントで、担当を何件起動したか（PBI-379）。記録の無い実行（これより前の作業履歴）では、前の実行の
+          // 記録を、今回のものとして残さない
+          task.reviewDispatch = event.payload.reviewDispatch
+            ? { ...event.payload.reviewDispatch, round, agentId: event.payload.agentId }
+            : undefined;
+          task.reviewUndispatched = undefined;
           task.reviewVerdicts = [
             ...(task.reviewVerdicts ?? []).filter((v) => v.round !== round),
             {
@@ -3806,6 +3831,10 @@ export function applyEvent(
         task.incompleteRuns = { runs: 0, ...(fingerprint ? { fingerprint } : {}) };
       }
       task.unreadableReviews = undefined;
+      // 担当を起動しないレビューのやり直しは、人が再開したら、もう一度上限まで試す（PBI-379）
+      if (task.reviewUndispatched) {
+        task.reviewUndispatched = { ...task.reviewUndispatched, sinceResume: 0 };
+      }
       // 中止された子タスクで止めた親を再開したら、その中止を認めたことにする（PBI-27）
       if (task.split && task.pausedCancelledChildren?.length) {
         task.split = {

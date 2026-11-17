@@ -20,6 +20,7 @@ Records that match none of them are not errors.
 | `stop` (stopped) | `TaskPaused` (except for the reason `manual`) and `TaskEscalated` |
 | `check` (check failed) | `TestsRun` that did not pass, `BaseConflictsRemained` (conflict markers with the base branch remained), `ImplementationIncomplete` (the implementation was unfinished), `ImplementationUnchanged` (the rework changed nothing in the PR), `PullRequestCiFinished` that is `failed` or `timed_out`, `PullRequestCiFailed` (a CI failure on an implementation PR that waits for a person's approval), and `DeploymentChecked` that is `unhealthy` |
 
+A PR review run that was not used because it started no per-viewpoint reviewer (an `AgentRunFailed` with `reviewDispatch`) is also an `error` (it is not separated from failed runs; the reason text `review.notDispatched` or `review.notDispatchedPaused` tells it apart).
 A `DeploymentChecked` record whose check run itself failed (it has `failed`, or its `runResult` is `failed`) is an `error`.
 The error-analysis records (`ErrorAnalysisRequested`, `ErrorAnalyzed`) are not counted as errors, even when the analysis failed.
 

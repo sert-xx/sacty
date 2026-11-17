@@ -50,8 +50,11 @@ export type CostRun = {
   estimated: boolean;
   /** 使った分の全体を読めなかった（時間切れなど）。costUsd は読めた分（下限）で、0 は費用が無かったのではなく不明（PBI-281）。 */
   costUnknown?: true;
-  /** running：開始の記録だけがある（実行中）。 */
-  result: "completed" | "failed" | "interrupted" | "running";
+  /**
+   * running：開始の記録だけがある（実行中）。notUsed：実行は完了したが、sacty が結果を使わなかった（観点ごとの担当を
+   * 1 件も起動しなかった PR のレビュー。PBI-379）。
+   */
+  result: "completed" | "failed" | "interrupted" | "running" | "notUsed";
 };
 
 export type CostRow = {
@@ -182,7 +185,13 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
       case "AgentRunFailed": {
         const p = event.payload;
         const run = started.get(p.runId);
-        const result = event.type === "AgentRunCompleted" ? "completed" : "failed";
+        // 担当を起動しなかったために使わなかったレビューの実行は、実行の失敗と分けて出す（PBI-379）
+        const result =
+          event.type === "AgentRunCompleted"
+            ? "completed"
+            : event.payload.reviewDispatch
+              ? "notUsed"
+              : "failed";
         if (!run) {
           // 開始の記録が無い実行も、費用を落とさない
           push(

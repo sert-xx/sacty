@@ -156,6 +156,7 @@ Code: `apps/daemon/src/session-logs.ts` (`SessionLogStore`, `SessionLog.snapshot
   3. Export, answers to questions, error analysis, deciding the step to redo, and the AI verdict in an earlier version (only when recorded)
 - Ticket reading and repository selection decided by a person, and `StepsChosen` from the era of fixed steps (no agent, cost, or usage), are not counted as runs.
 - The table's total cost and whether it is estimated are summed with `chargeBudget` in activity log order. So they match the task's cost (`budget.usedUsd`, `budget.estimated`).
+- The result in the per-run breakdown is one of Completed, Failed, Interrupted, Running, and Not used. "Not used" is a run where the agent finished but sacty did not use the result (a PR review that started no per-viewpoint reviewer; an `AgentRunFailed` with `reviewDispatch`; [PR-review-only tasks](tasks-and-steps.en.md#pr-review-only-tasks)). Its cost is counted like any other run.
 - A run with `costUnknown` shows "or more" when some part could be read and "unknown" when none could, in the per-run breakdown, the step rows, and the total. Below the table, a note gives the number of unknown runs (`unknownRuns`; the total is the same as `budget.unknownRuns`). The "Cost" in the right column of the task detail shows the number too.
 - The table's cells carry no mark for whether a cost is estimated (a converted estimate), to keep the table readable. The hint on the table's heading explains that converted values are not actual charges.
 

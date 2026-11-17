@@ -159,7 +159,9 @@ export function StepCosts({
                       </td>
                       <td
                         className={
-                          run.result === "failed" || run.result === "interrupted"
+                          run.result === "failed" ||
+                          run.result === "interrupted" ||
+                          run.result === "notUsed"
                             ? "py-2 pl-3 whitespace-nowrap text-warn"
                             : "py-2 pl-3 whitespace-nowrap text-muted-foreground"
                         }

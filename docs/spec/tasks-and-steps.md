@@ -1875,7 +1875,19 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   - 範囲の中のこと（子タスクの内容が実現すると書いたこと・受け入れ条件と、この PR の変更が原因で起きる不具合）は、今までどおり指摘させる。
   - 分割していないタスクの PR のレビューと、人が作った PR のレビュー（レビューだけのタスク）の指示には、足さない。範囲が不明な子タスク（記録が無く、分割のときの記録からも原文を確かめられない）の PR のレビューにも足さない。
 - 観点の見方：総評の後に、観点をどう見たか（観点ごとの担当に分けて見た観点の数、または逐次モードで見たこと）を1行で書かせる。
-  Codex の `codex exec --json` の出力には担当の起動が出ず、待機だけが出る（0.167.0 の実行のログで確かめた）ので、観点ごとのレビューが行われたかは本文のこの行で確かめる（PBI-349）。
+  Codex の `codex exec --json` の出力には担当の起動が出ず、待機だけが出る（0.167.0 の実行のログで確かめた）ので、PR を読む人は、観点ごとのレビューが行われたかを本文のこの行で確かめる（PBI-349）。sacty は、写したセッションのファイルから数える（次の項目）。
+- 担当の起動：指示で、進める順（スキルの `SKILL.md` の後に、流れの資料 `references/pr-review.md` と観点カタログ `references/viewpoints.md` を読む。起動表を作って、スキルの起動の規則が決めた担当を全部起動する。結果が揃ってから本文を書く）と、担当を起動する前に自分で指摘・総評を書き始めないこと、対象の大小・再レビューかどうかによらず起動を省かないことを伝える（`REVIEW_DISPATCH_LINES`。エージェントの種類によらず同じ文。PBI-379）。
+  - 実行の後に、sacty が、写したエージェントのセッションのファイルから、起動した担当の数を数える（`countReviewDispatch`）。
+    Claude Code は、担当ごとのセッションのファイル（`projects/<作業ディレクトリ>/<セッション>/subagents/` の下の、名前が `agent-<16進の ID>.jsonl` の形のファイル。深さによらない。まとめて起動するツールは `subagents/workflows/` の下に置く。ほかの名前のファイルは数えない）の数と、親のセッション（`projects/<作業ディレクトリ>/<セッション>.jsonl`）の `Agent`・`Task`・`Workflow` の呼び出し（呼び出しの ID で重複を除く）の数の、多い方。
+    Codex は、先頭の `session_meta` の `source` が `exec` の rollout（親）の中の `spawn_agent` の呼び出し（担当の rollout は親の履歴を引き継ぐので、数えない）。
+  - 数えられないとき（セッションのファイルを写していない・親のセッションが無い・上限で間を省いたファイルで 0 件・写せなかったファイルがある実行で 0 件・`claude-code` と `codex` のほかの種類のエージェント）は、分からないとして、そのまま進める。理由の種類を、タスクと実行の ID と合わせて、デーモンのログに出す（作業履歴には残さない）。
+    親のセッションが読めて、担当の起動が上のどちらの形でも残っていない実行は、0 件と数える（エージェントの版が変わって、両方の記録の形が変わったときも）。
+  - 担当を起動する手段がその実行にあったかも確かめる。Claude Code は、実行の出力の最初の出来事（`system`・`init`）の `tools` に `Agent`・`Task`・`Workflow` のどれかがあること。Codex は、親の `turn_context` に `multi_agent_version` があること。確かめられなければ、0 件でもそのまま進める（スキルの逐次モード）。
+  - 数は、`AgentRunCompleted` の `reviewDispatch` に残す（`subagents`。分からなければ `null`。`runtime` はエージェントの種類、`model` は実行のモデル、`configuredAgentId` は、設定のエージェントが使えず切り替え先で動いたときの、設定のエージェント）。タスクの `reviewDispatch` に、回と実行のエージェントと合わせて持つ。
+  - 手段があったのに 0 件の実行は、判定・本文を採らず、PR に投稿しない。`AgentRunFailed`（`reason` は `error`、`reviewDispatch` の `subagents` が 0、`review.notDispatched`）を記録して、止めずに実行待ちに戻す。次の実行の指示の先頭に、前の実行が担当を起動しなかったことを足す（`reviewUndispatchedLines`）。
+    この `AgentRunFailed` は、エージェントの実行は完了していて、sacty が結果を使わなかった記録。工程ごとの費用の表は、失敗と分けて「使わなかった」と出す（[作業履歴](event-log.md)）。エラーレポートの分類（`error`）と、監査のやり直しの数は、ほかの `AgentRunFailed` と同じに数える（理由の文言で見分ける）。
+  - やり直しは 3 回まで（`REVIEW_UNDISPATCHED_RETRIES`）。その次も 0 件なら、`AgentRunFailed` と `TaskPaused`（`reason` は `error`、`review.notDispatchedPaused`）を記録して止める。人が再開すると、回数を数え直して、もう一度レビューする（タスクの `reviewUndispatched` の `sinceResume`。`runs` は、レビューが採られるまで数え続け、指示に出す）。
+  - 担当の中身や質は確かめない。
 - 判定：エージェントに `sacty-review-verdict` の `verdict`（`changes_required`：修正が必要、`suggestions`：提案あり（マージは可）、`no_findings`：指摘なし）を付けさせる。
   sacty は、行についての指摘に `[要修正]` があれば `changes_required`、指摘があるのに `no_findings` なら `suggestions` に直す。
   行についての指摘があるだけでは `changes_required` にしない。
@@ -1891,7 +1903,8 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   判定のブロックは投稿する本文から取り除き、`AgentRunCompleted` の `reviewVerdict` に残す（回ごとに `reviewVerdicts`）。
   PR のレビューの子タスク（`reviewOf`）には、判定のブロックに指摘ごとの戻し先と原因（`rework`）も付けさせる（PBI-332。[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。読めたものは `AgentRunCompleted` の `reviewRework` に残す（回ごとの `reviewVerdicts` の `rework`）。
   PR のレビューを、その PR を作った元のタスクに届けるのは、`changes_required`・`suggestions` の回と、判定が無い回（レビューが判定を付けなかった回・判定を読めなかった回）（`no_findings` の回は届けない。取り込みの経路（ラベル・依頼・手動）は問わない。[承認と差し戻し](approval.md#pr-の指摘の取り込み)）。
-- 投稿する本文：目印、見出し「sacty のレビュー」、作者への @ メンションと判定の1行（作者が login の形でなければ @ を付けない。判定が無ければ、理由に応じて書く。レビューが判定を付けなかった回（`absent`）は「判定：付いていません（レビューが判定を付けませんでした。…）」、判定を読めなかった回（`invalid`・理由の記録が無い回）は「判定：読み取れませんでした（本文の指摘を確かめてください）」。`buildReviewBody`）、エージェントの本文、AI がレビューした旨の固定の文の順。
+- 投稿する本文：目印、見出し「sacty のレビュー」、作者への @ メンションと判定の1行（作者が login の形でなければ @ を付けない。判定が無ければ、理由に応じて書く。レビューが判定を付けなかった回（`absent`）は「判定：付いていません（レビューが判定を付けませんでした。…）」、判定を読めなかった回（`invalid`・理由の記録が無い回）は「判定：読み取れませんでした（本文の指摘を確かめてください）」。`buildReviewBody`）、エージェントの本文、AI がレビューした旨の固定の文、レビューしたエージェントと起動した担当の数の行の順。
+  最後の行は、今回の回の実行に `reviewDispatch` の記録があるときだけ書く。エージェントの種類（`claude-code` は Claude Code、`codex` は Codex。モデルがあれば、モデルも）、設定のエージェントが使えず切り替え先で実行したならそのこと、担当の数（分からなければ、確かめられなかったこと。0 件なら、担当を起動する手段があることを確かめられなかった実行であること）を書く（`reviewDispatchLines`。PBI-379）。利用者が付けた設定の名前（エージェントの ID。切り替え前のものも）は、本文に書かない（タスクの画面に出す）。
   GitHub の PR から取り込んだレビューのタスクでは、判定の行とエージェントの本文の間に、PR のリスク評価の節を載せる（PR のレビューの子タスクには載せない。[PR のリスク評価](risk-assessment.md#レビューの工程の評価)。`riskAssessmentLines`）。
   エージェントの本文は、Claude Code では判定の塊を含む最後の `result` から読む（最終の答えの後の通知への返答を投稿しない。[エージェントの実行](agent-execution.md#出力の扱い)）。
   sacty の設定の `reviewMentionSelf` が On なら、作者の代わりに、投稿するアカウント（プロジェクトでそのホストに選んだ gh のアカウント）に @ メンションする（login の形でなければ誰にもメンションしない。作者には付けない）。
@@ -1923,4 +1936,4 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   エージェントの本文と指摘の文は、対象のリポジトリの文章の決まり（スキル `writing` の順）に従わせ、決まりが無ければ日本語にする。
 - PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）、`packages/core/src/projection.ts`（`applyEvent` の `ReviewRestarted`・`EARLIER_REVIEWS_MAX`）
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`・`REVIEW_DISPATCH_LINES`・`reviewUndispatchedLines`・`reviewDispatchLines`）、`apps/daemon/src/review-dispatch-count.ts`（`countReviewDispatch`）、`packages/core/src/events.ts`（`ReviewVerdict`・`ReviewDispatch`・`REVIEW_UNDISPATCHED_RETRIES`）、`packages/core/src/projection.ts`（`applyEvent` の `ReviewRestarted`・`EARLIER_REVIEWS_MAX`）
