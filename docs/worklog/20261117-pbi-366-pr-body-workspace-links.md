@@ -29,10 +29,10 @@ sacty が作った PR の本文に、コンテナの作業領域のパスへの�
 
 レビューの1回目の指摘への対応の後のコードで実行し直した結果を書く。
 
-- `npx vitest run --no-file-parallelism`：250 ファイル・4785 件が通った（1 件は以前からの skip）。
+- `npx vitest run --no-file-parallelism`：250 ファイル・4786 件が通った（1 件は以前からの skip）。
 - `npm run typecheck`：通った。`npx biome check apps packages docs tests scripts`：指摘なし（`npm run lint` は、Git 管理外の `.claude/settings.local.json` の整形の指摘 1 件で落ちる。リポジトリのファイルの指摘は無い）。`npm run build`：通った。
-- 依存を足したので、まっさらな複製（`git clone` → `npm ci --ignore-scripts` → `tsc -b packages/core apps/daemon packages/cli`）でも確かめた。ビルドが通り、ビルドした `pr-body-links.js` が、`[手順](/workspace/docs/setup(ja).md)` を ``手順（`docs/setup(ja).md`）`` にし、`![&lt;!--](/workspace/a.png)` と後ろの `Closes #12` を変えずに返した。`npm ls` で、デーモンの依存に `mdast-util-from-markdown@2.1.0` が入っている。
-- 足したテスト：`pr-body-links.test.ts`（16 件。括弧・空白・バッククォートを含むパス、文字参照・バックスラッシュのリンク先、コードブロックとインラインコード、長くしないこと、新しいリンクができる本文・リンクのほかの構文（HTML のコメントとタグ・参照の定義・強調・箇条書き・見出し・引用・コードブロックの囲み）に変わる本文を変えないこと、表・箇条書き・引用・折りたたみの中のリンクを外すこと、対象の無い本文を解析しないこと）、`daemon-implement.test.ts`（実装の説明のリンクが、PR の本文と台帳の本文でリンクにならない・リンクを外した後に現れた秘密の値を伏せる・伏せると長さの上限を超えるときは、置き換えをやめる）。
+- 依存を足したので、まっさらな複製（`git clone` → `npm ci --ignore-scripts` → `tsc -b packages/core apps/daemon packages/cli`）でも確かめた。1回目の対応（型の依存の明示）の後のコードでも、`npm ci` とビルドが通った。次の実行の確かめは、1回目の対応の前のコードで行った：ビルドが通り、ビルドした `pr-body-links.js` が、`[手順](/workspace/docs/setup(ja).md)` を ``手順（`docs/setup(ja).md`）`` にし、`![&lt;!--](/workspace/a.png)` と後ろの `Closes #12` を変えずに返した。`npm ls` で、デーモンの依存に `mdast-util-from-markdown@2.1.0` が入っている。
+- 足したテスト：`pr-body-links.test.ts`（17 件。GitHub で別の働きをする文字を含むリンクを変えないこと、括弧・空白・バッククォートを含むパス、文字参照・バックスラッシュのリンク先、コードブロックとインラインコード、長くしないこと、新しいリンクができる本文・リンクのほかの構文（HTML のコメントとタグ・参照の定義・強調・箇条書き・見出し・引用・コードブロックの囲み）に変わる本文を変えないこと、表・箇条書き・引用・折りたたみの中のリンクを外すこと、対象の無い本文を解析しないこと）、`daemon-implement.test.ts`（実装の説明のリンクが、PR の本文と台帳の本文でリンクにならない・リンクを外した後に現れた秘密の値を伏せる・伏せると長さの上限を超えるときは、置き換えをやめる）。
 - 修正を戻すとテストが落ちること（main を取り込む前のコードで確かめた。その後、`pr-body-links.ts` と呼び出しは変えていない）：置き換えた結果の構文木の確かめを外すと `pr-body-links.test.ts` の 2 件が、伏せた後に上限を超えるときに置き換えをやめる分岐を外すと `daemon-implement.test.ts` の 1 件が落ちた。戻して通ることを確かめた。
 - 確かめていないこと：実際の GitHub での本文の見え方。
 
