@@ -253,6 +253,7 @@ const PARAMS = {
   "selfReview.depthNotLight": null,
   "selfReview.depthUnchanged": z.object({ depth: z.enum(["light", "normal"]) }),
   "selfReview.depthForcedNormal": z.object({ reason: z.string() }),
+  "selfReview.depthForcedNormalSplit": z.object({ reason: z.string() }),
   // タスクの題を人が変える（PBI-323）
   "title.unchanged": null,
   "title.pullRequestChanged": z.object({ number: z.number() }),
@@ -1218,6 +1219,8 @@ const ja: MessageDictionary = {
       : "セルフレビューは、すでにオーケストレーターの判定（軽い）のとおりです。",
   "selfReview.depthForcedNormal": ({ reason }) =>
     `セキュリティ対応のタスクは、依頼が軽いと判定しません。オーケストレーターは軽いと答えていました${reason ? `（理由：${reason}）` : ""}。`,
+  "selfReview.depthForcedNormalSplit": ({ reason }) =>
+    `子タスクに分けて進めるタスクは、依頼が軽いと判定しません。オーケストレーターは軽いと答えていました${reason ? `（理由：${reason}）` : ""}。`,
   "title.unchanged": "タスクの題は変わっていません。違う題を入力してください。",
   "title.pullRequestChanged": ({ number }) =>
     `題を変えると、このタスクが扱う PR（#${number}）が変わるため、変えられません。題の PR のリンクは、足したり消したり変えたりせずに、そのままにしてください。`,
@@ -2081,6 +2084,8 @@ const en: MessageDictionary = {
       : "The self-review already follows the Orchestrator's judgement (light).",
   "selfReview.depthForcedNormal": ({ reason }) =>
     `A security fix task is never judged light. The Orchestrator answered light${reason ? ` (reason: ${reason})` : ""}.`,
+  "selfReview.depthForcedNormalSplit": ({ reason }) =>
+    `A task that is split into child tasks is never judged light. The Orchestrator answered light${reason ? ` (reason: ${reason})` : ""}.`,
   "title.unchanged": "The task title hasn't changed. Enter a different title.",
   "title.pullRequestChanged": ({ number }) =>
     `The title can't be changed this way because it would change the PR this task works on (#${number}). Don't add, remove, or change a PR link in the title; keep it as it is.`,
