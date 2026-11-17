@@ -54,7 +54,7 @@ export function HumanAskNotice({ task }: { task: Task }) {
             data-testid="human-ask-confirm"
             className="flex flex-col [overflow-wrap:anywhere]"
           >
-            <span className="font-medium">{m.humanAsk.confirm(c.remarkIds.join("・"))}</span>
+            <span className="font-medium">{m.humanAsk.confirm(c.remarkIds)}</span>
             <span className="whitespace-pre-line">{c.text}</span>
           </li>
         ))}

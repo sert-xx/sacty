@@ -128,5 +128,12 @@ describe("人に確かめてほしいことの欄（PBI-301）", () => {
     expect(en.undecided("implement-1-1")).toContain(
       "The meaning of comment implement-1-1 was unclear",
     );
+    // まとめた確認は、複数形と「, 」区切りで出す（1 件のときは、これまでと同じ）（PBI-354）
+    expect(en.confirm(["implement-1-1"])).toBe(
+      "What the run wants you to check (comment implement-1-1)",
+    );
+    expect(en.confirm(["implement-1-1", "implement-2-1"])).toBe(
+      "What the run wants you to check (comments implement-1-1, implement-2-1)",
+    );
   });
 });
