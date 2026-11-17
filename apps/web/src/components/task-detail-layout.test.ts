@@ -72,6 +72,33 @@ describe("タスクの詳細の並び", () => {
     }
   });
 
+  it("後続に回すと決めた指摘の扱いの結果を、タスクの詳細に出す（PBI-384）", () => {
+    locale = "ja";
+    const task = newTask();
+    // 扱いのある決定が無ければ、出さない
+    expect(render(task)).not.toContain('data-testid="deferral-results"');
+    task.remarks = [
+      {
+        id: "implement-1-1",
+        step: "implement",
+        round: 1,
+        text: "境界の値を確かめていない",
+        voided: false,
+        deferral: {
+          proposedIn: 2,
+          reason: "範囲の外",
+          decision: "defer",
+          handling: "task",
+          handled: { taskId: "task-2" },
+        },
+      },
+    ] as unknown as Task["remarks"];
+    const html = render(task);
+    expect(html).toContain('data-testid="deferral-results"');
+    expect(html).toContain("後続に回した指摘の扱い（1件）");
+    expect(html).toContain('href="/tasks/task-2"');
+  });
+
   it("監査したタスクには、監査のタブを出す", () => {
     locale = "ja";
     const html = render(newTask(), { audit: null });
