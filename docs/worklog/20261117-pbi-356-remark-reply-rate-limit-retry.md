@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-356
-- PR: なし
+- PR: #400
 - ブランチ: feat/pbi-356-remark-reply-rate-limit-retry
 - 関係する ADR: [レート制限に当たった指摘への返信を、期限が明けてからやり直す](../adr/20261117-0110-retry-remark-replies-after-rate-limit.md)
 
