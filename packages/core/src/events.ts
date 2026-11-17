@@ -2553,8 +2553,8 @@ const IntegrationReviewed = z.object({
      */
     droppedHumanChecks: z.array(z.object({ check: z.string(), reason: z.string() })).optional(),
     /**
-     * 外す申告（答えの droppedHumanChecks）のうち、読み取れなかった・前の回の項目に当たらなかったもの（PBI-363）。項目は
-     * 外れずに残る。外したつもりの項目が残っていることに、人が気づけるように記録する。無ければ無い。
+     * 外す申告（答えの droppedHumanChecks）のうち、採らなかったもの（PBI-363・382）。形が違う・前の回の項目に当たらない・
+     * 同じ番号が、外す申告として読めなかった申告にも出てくる、のどれか。項目は外れずに残る。外したつもりの項目が残っていることに、人が気づけるように記録する。無ければ無い。
      */
     unreadDroppedHumanChecks: z.array(z.string()).optional(),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */

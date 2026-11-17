@@ -74,19 +74,19 @@ describe("統合レビューの人が確かめること（PBI-363）", () => {
     expect(en).not.toContain("外した理由");
   });
 
-  it("外す申告のうち読み取れなかったものがあれば出す。無ければ出さない", () => {
+  it("外す申告のうち採らなかったものがあれば出す。無ければ出さない", () => {
     const html = render(
       task(review({ humanChecks: [CHECK], unreadDroppedHumanChecks: ["確かめられたので外す"] })),
     );
     expect(html).toContain('data-testid="integration-unread-dropped-human-checks"');
-    expect(html).toContain("外す申告のうち、読み取れなかったもの");
+    expect(html).toContain("外す申告のうち、採らなかったもの");
     expect(html).toContain('<li class="break-words">確かめられたので外す</li>');
     expect(render(task(review({ humanChecks: [CHECK] })))).not.toContain(
       "integration-unread-dropped-human-checks",
     );
     expect(
       render(task(review({ unreadDroppedHumanChecks: ["確かめられたので外す"] })), "en"),
-    ).toContain("Removal requests that could not be read");
+    ).toContain("Removal requests that were not applied");
   });
 
   it("不合格の結果にも、足りないことと一緒に、人が確かめることを出す", () => {

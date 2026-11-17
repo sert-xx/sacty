@@ -148,7 +148,7 @@ describe("統合レビューの、人が確かめることを外す申告の読�
     }
   });
 
-  it("同じ番号に、外す申告と、外す申告として読めない申告の両方があるときは、外さない", () => {
+  it("同じ番号に、外す申告と、外す種類が決まった値でない申告の両方があるときは、外さない", () => {
     const DROP1 = { id: "H1", resolution: "verified", reason: "確かめられた" };
     const KEEP1 = { id: "h1", resolution: "keep", reason: "やはり確かめられない" };
     const DROP2 = { id: "H2", resolution: "obsolete", reason: "要らなくなった" };
@@ -164,6 +164,77 @@ describe("統合レビューの、人が確かめることを外す申告の読�
         JSON.stringify(DROP1),
       ]);
     }
+  });
+
+  it("外す申告として読めなかった申告に番号が出てくるときは、同じ番号の外す申告のオブジェクトがあっても、外さない", () => {
+    const DROP1 = { id: "H1", resolution: "verified", reason: "確かめた" };
+    const DROP3 = { id: "H3", resolution: "obsolete", reason: "要らなくなった" };
+    const others: unknown[] = [
+      // 文字列
+      "H1：まだ確かめられないので外さない",
+      "H1 - 外さない",
+      "H1: keep",
+      "H1: not verified yet",
+      "- Ｈ１：外せない",
+      "ｈ １ は、まだ",
+      "H2 は確かめた。H1 はまだ",
+      "[H1]",
+      // 番号を1つとして読めないオブジェクト
+      { id: "H1,H2", resolution: "keep", reason: "どちらもまだ" },
+      { id: "H1、H2", resolution: "verified", reason: "H2 は確かめられた。H1 はまだ" },
+      { id: "H1 は外さない", resolution: "keep", reason: "まだ" },
+      { id: `H1${" ".repeat(40)}`, resolution: "keep", reason: "長い番号" },
+      { id: ["H1"], resolution: "keep", reason: "配列の番号" },
+      // 番号が、ほかのキー・理由の文・入れ子の中にある
+      { number: "H1", resolution: "keep", reason: "まだ" },
+      { H1: "まだ確かめられない" },
+      { resolution: "keep", reason: "H1 は、まだ確かめられない" },
+      { keep: [{ ids: ["H2", "H1"] }] },
+      ["H1", "keep"],
+      // 入れ子が深すぎる申告は、すべての番号が出てきたものとして扱う
+      Array.from({ length: 40 }).reduce<unknown>((inner) => [inner], "まだ"),
+    ];
+    for (const other of others) {
+      for (const answered of [
+        [other, DROP1, DROP3],
+        [DROP1, DROP3, other],
+      ]) {
+        const review = read(CHECKS, answered);
+        const label = JSON.stringify(answered);
+        // H1 は外れない。H3 は、深すぎる申告のとき以外は、外れる
+        expect(review.humanChecks?.[0], label).toBe(CHECKS[0]);
+        expect(review.droppedHumanChecks?.map((d) => d.check) ?? [], label).not.toContain(
+          CHECKS[0],
+        );
+        expect(review.unreadDroppedHumanChecks, label).toContain(recorded(other));
+        expect(review.unreadDroppedHumanChecks, label).toContain(JSON.stringify(DROP1));
+        if (!Array.isArray(other) || other.length === 2) {
+          expect(review.droppedHumanChecks, label).toEqual([
+            { check: CHECKS[2], reason: "要らなくなった" },
+          ]);
+        } else {
+          expect(review.droppedHumanChecks, label).toBeUndefined();
+        }
+      }
+    }
+  });
+
+  it("外す申告として読めなかった申告に出てこない番号・前の回に無い番号は、外す申告を止めない", () => {
+    const DROP1 = { id: "H1", resolution: "verified", reason: "H2 と同じテストで確かめた" };
+    const review = read(CHECKS, [
+      DROP1,
+      "H12：無い番号",
+      "H0 と H1234567",
+      "確かめられたので外す",
+      { id: "H9", resolution: "keep", reason: "無い番号" },
+      { id: "1", resolution: "keep", reason: "番号の形でない" },
+    ]);
+    // 外す申告の理由の文の中の番号（H2）は、ほかの番号を止めない
+    expect(review.droppedHumanChecks).toEqual([
+      { check: CHECKS[0], reason: "H2 と同じテストで確かめた" },
+    ]);
+    expect(review.humanChecks).toEqual(CHECKS.slice(1));
+    expect(review.unreadDroppedHumanChecks).toHaveLength(5);
   });
 
   it("前の回の項目が無ければ、外す申告は何も外さず、読み取れなかったものとして記録する", () => {
@@ -190,11 +261,17 @@ describe("統合レビューの、人が確かめることを外す申告の読�
       `H1：${" \n".repeat(LONG / 2)}x`,
       { id: `H1${" ".repeat(LONG)}`, resolution: "verified", reason: "長い番号" },
       { id: "H2", resolution: `verified${" ".repeat(LONG)}`, reason: "長い外す種類" },
+      // 番号らしい並びを探す処理に、時間がかかりやすい形（H と空白・H と数字の繰り返し）
+      `${"H ".repeat(LONG / 2)}x`,
+      `H${" ".repeat(LONG)}1`,
+      `H${"1".repeat(LONG)}`,
+      "H1".repeat(LONG / 2),
+      { reason: `${"Ｈ　".repeat(LONG / 2)}１` },
     ];
     // 時間は比べない（環境で揺れる）。長さの2乗の時間がかかる読み方なら、この長さでは、テストの制限時間を超える
     const review = read(CHECKS, claims);
     expect(review.humanChecks).toEqual(CHECKS);
     expect(review.droppedHumanChecks).toBeUndefined();
-    expect(review.unreadDroppedHumanChecks).toHaveLength(4);
+    expect(review.unreadDroppedHumanChecks).toHaveLength(9);
   });
 });

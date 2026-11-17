@@ -4423,7 +4423,7 @@ function previousHumanCheckLines(previous: readonly string[]): string[] {
     JSON.stringify(previous.map((check, index) => ({ id: previousHumanCheckId(index), check }))),
     "- 今回も作業領域で確かめられない項目・外してよいか判断がつかない項目は、どこにも書かない（sacty が、今回の結果に引き継ぐ。humanChecks に書き直さない・言い換えて挙げ直さない。droppedHumanChecks にも書かない。外さない理由を伝えたいときは、判定の説明の文に書く）",
     '- 今回のコードとテストで確かめられた項目・要らなくなった項目だけを、droppedHumanChecks に、1項目ずつ {"id": "<番号>", "resolution": "<verified か obsolete>", "reason": "<外す理由>"} の形のオブジェクトで書いて外す。resolution は、今回のコードとテストで確かめられたなら verified、要らなくなったなら obsolete。1つのオブジェクトに、番号を1つ書く',
-    "- この形でないもの（文字列で書いたもの・resolution が verified でも obsolete でもないもの・理由の無いもの・番号が上のデータに無いもの）は、外れない（読み取れなかった申告として、人に渡る）",
+    "- この形でないもの（文字列で書いたもの・resolution が verified でも obsolete でもないもの・理由の無いもの・番号が上のデータに無いもの）は、外れない（採らなかった申告として、人に渡る）。同じ番号を、この形でない申告にも書いたときは、その番号は、この形の申告があっても外れない",
   ];
 }
 
@@ -4527,6 +4527,9 @@ const DROP_RESOLUTIONS: readonly string[] = ["verified", "obsolete"];
 /** 外す申告の番号・resolution の長さの上限（PBI-382）。これより長い値は、読まない（整える処理に、長い文字列を渡さない）。 */
 const DROP_FIELD_MAX = 32;
 
+/** 外す申告として読めなかった申告の中の番号を探すときの、入れ子の深さの上限（PBI-382）。 */
+const MENTION_MAX_DEPTH = 32;
+
 /** 外す申告の id を読む（PBI-382）。番号が1つだけのときに、前の回の項目の位置（0 から）を返す。全角・小文字・角括弧も読む。 */
 function droppedHumanCheckIndex(id: unknown): number | undefined {
   if (typeof id !== "string" || id.length > DROP_FIELD_MAX) return undefined;
@@ -4535,19 +4538,48 @@ function droppedHumanCheckIndex(id: unknown): number | undefined {
 }
 
 /**
+ * 外す申告として読めなかった申告に出てくる、番号らしい並び（H と数字。全角・小文字、間の空白も）が指す、前の回の項目の
+ * 位置（PBI-382）。その番号の外す申告を採らないためだけに使う（外す判定には使わない。誤って拾っても、外さない側に倒れる
+ * だけ）。文字列は文の中を、オブジェクト・配列は、中のキーと値の文字列をすべて見る。繰り返しの回数に上限のある照合
+ * だけを使い、長い入力でも、長さに比例する時間で終わる。入れ子が深すぎる申告は、中を見ずに、すべての番号が出てきた
+ * ものとして扱う。
+ */
+function mentionedHumanCheckIndexes(
+  claim: unknown,
+  count: number,
+  into: Set<number>,
+  depth = 0,
+): void {
+  if (depth > MENTION_MAX_DEPTH) {
+    for (let index = 0; index < count; index++) into.add(index);
+  } else if (typeof claim === "string") {
+    for (const match of claim.matchAll(/[HhＨｈ]\s{0,8}([0-9０-９]{1,6})(?![0-9０-９])/g)) {
+      const index = Number((match[1] ?? "").normalize("NFKC")) - 1;
+      if (index >= 0 && index < count) into.add(index);
+    }
+  } else if (typeof claim === "object" && claim !== null) {
+    for (const [key, value] of Object.entries(claim)) {
+      mentionedHumanCheckIndexes(key, count, into, depth + 1);
+      mentionedHumanCheckIndexes(value, count, into, depth + 1);
+    }
+  }
+}
+
+/**
  * 前の回の人が確かめることを外す申告（答えの droppedHumanChecks）を読む（PBI-363・382）。1項目は
  * `{"id": "<番号>", "resolution": "verified" か "obsolete", "reason": "<外す理由>"}`。外すかどうかを、理由の文の中身や
  * 区切りの記号では決めない（`H1：まだ確かめられないので外さない` のような文で、確かめていない項目を外さない）。
  * 外すのは、番号（1 から count まで）が1つ、resolution が決まった値、理由がある、のすべてがそろったオブジェクトだけ。
- * 文字列・ほかの形・番号が前の回の項目に当たらない申告は、unread に返す（外さずに、記録に残す）。同じ番号に、
- * 外す申告と、外す申告として読めない申告の両方があるときは、外さない（両方を unread に返す）。
+ * 文字列・ほかの形・番号が前の回の項目に当たらない申告は、unread に返す（外さずに、記録に残す）。外す申告として
+ * 読めなかった申告（文字列・番号を1つとして読めないオブジェクトを含む）に、ある番号が出てくるときは、その番号の
+ * 外す申告も採らない（両方を unread に返す。順序は問わない）。
  */
 function readDroppedHumanChecks(
   claims: readonly unknown[],
   count: number,
 ): { reasons: Map<number, string>; unread: string[] } {
   const accepted = new Map<number, { reason: string; text: string }>();
-  // 外す申告として読めなかったが、番号は読めた項目（同じ番号の外す申告を、採らない）
+  // 外す申告として読めなかった申告に出てくる番号（同じ番号の外す申告を、採らない）
   const held = new Set<number>();
   const unread: string[] = [];
   for (const claim of claims) {
@@ -4567,6 +4599,7 @@ function readDroppedHumanChecks(
       reason !== "";
     if (index === undefined || !drops) {
       if (index !== undefined) held.add(index);
+      mentionedHumanCheckIndexes(claim, count, held);
       if (text) unread.push(text);
     } else if (!accepted.has(index)) {
       accepted.set(index, { reason, text });
