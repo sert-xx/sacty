@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-376
-- PR: なし
+- PR: #412
 - ブランチ: feat/pbi-376-fixed-waits-steps
 - 関係する ADR: なし
 
