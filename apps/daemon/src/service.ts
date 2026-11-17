@@ -1109,9 +1109,17 @@ export const PR_CI_TIMEOUT_MS = 15_000;
 export const PR_CI_READ_INTERVAL_MS = 5 * 60_000;
 /**
  * 人の承認を待つ実装の PR の CI を、先頭のコミットごとに読む回数の上限（PBI-364）。読み続けない（GitHub への問い合わせの
- * 数を、先頭のコミットごとに決める）。間隔と合わせて、最初に読んでから1時間ほどで読むのをやめる。
+ * 数を、先頭のコミットごとに決める）。間隔と合わせて、続けて読めば、最初に読んでから1時間ほどで読むのをやめる
+ * （読み終わりを取り消した先頭は、残りの回を、その後に読む。PBI-381）。
  */
 export const PR_CI_READS_MAX = 12;
+/**
+ * 人の承認を待つ実装の PR の CI を、失敗が無くても「読み終わり」にしない間（PBI-381）。その先頭を最初に読んだ時刻と、sacty が
+ * ドラフトを外した時刻の、遅いほうから数える。ドラフトを外したことで始まる CI は、外した直後の一覧にはまだ載っていないことが
+ * あるので、前からある CI だけを見て読み終わりにしない。読み直しの間隔と同じ長さにして、間隔の後の読み取りで読み終わりに
+ * できるようにする（読む回数の上限は変えない）。
+ */
+export const PR_CI_SETTLE_MS = PR_CI_READ_INTERVAL_MS;
 
 /**
  * レビューを待つ実装の PR のドラフトを外す・戻す・先頭を読むときに、GitHub の答えを待つ上限（PBI-331）。GitHub が答えないまま
@@ -1212,12 +1220,18 @@ export class TaskService {
   private readonly pauseCounts = new Map<string, number>();
   /**
    * 人の承認を待つ実装の PR の CI を読んだ回数と、次に読む時刻（タスク → 読んだ先頭・回数・次に読む時刻。PBI-364）。
+   * since は、その先頭を最初に読んだ時刻、settled は、その先頭を読み終わりにしたか（PBI-381）。
    * デーモンのメモリーに持つ（再起動すると、数え直す）。
    */
   private readonly pullRequestCiReads = new Map<
     string,
-    { head: string; reads: number; nextAt: number }
+    { head: string; reads: number; nextAt: number; since: number; settled: boolean }
   >();
+  /**
+   * sacty が実装の PR のドラフトを外した時刻（タスク → 時刻。PBI-381）。ここから PR_CI_SETTLE_MS の間は、CI に失敗が無くても
+   * 読み終わりにしない。デーモンのメモリーに持つ（再起動の後は、その先頭を最初に読んだ時刻から数える）。
+   */
+  private readonly pullRequestCiUndrafted = new Map<string, number>();
   /** CI の読み取りの通信が、終わっていないか（PBI-364。終わるまで、次の読み取りを始めない）。 */
   private pullRequestCiReading = false;
   /** 最後に CI を読んだタスク（PBI-364。次の確認では、その次のタスクから探す）。 */
@@ -1605,7 +1619,11 @@ export class TaskService {
    * - 1回の PR の確認で読むのは、1件だけ（前の読み取りの通信が終わっていなければ、読まない）。候補は、前に読んだタスクの
    *   次から順に探す。
    * - 先頭のコミットごとに、PR_CI_READ_INTERVAL_MS の間隔で、PR_CI_READS_MAX 回まで読む。失敗の表示を出していなくて、
-   *   実行中のものが無く、失敗も無ければ、その先頭は読むのをやめる。
+   *   実行中のものが無く、失敗も無ければ、その先頭は読むのをやめる（読み終わり）。
+   * - 読み終わりにするのは、その先頭を最初に読んでからと、sacty がドラフトを外してからの、どちらも PR_CI_SETTLE_MS 以上
+   *   たった後の読み取りだけ（PBI-381）。ドラフトを外したことで始まる CI は、外した直後の一覧にまだ載っていないことがあり、
+   *   前からある CI だけを見て読み終わりにすると、その後の失敗が出ない。それより前の読み取りでは、間隔の後に読み直す
+   *   （回数の上限は同じ）。
    * - 失敗の記録は、先頭のコミットごとに1度だけ（PullRequestCiFailed）。記録した後も、同じ回数の上限の中で読み、通って
    *   いたら、表示を消して（PullRequestCiRecovered）、その先頭は読むのをやめる（PBI-375）。通ったとするのは、一覧を
    *   読み切れていて（CiSnapshot.truncated でない）、ciAllPassed を満たすときだけ。取り消し・空の一覧・読み切れなかった
@@ -1617,10 +1635,11 @@ export class TaskService {
     const ci = this.deps.ci;
     // 実装の PR が開いていないタスク（マージした・閉じた・中止した・消えた）の回数は、忘れる（常駐中に増え続けないため）。
     // その確認で候補に入らなかっただけ（PR の状態を一時的に読めなかったなど）では、忘れない（回数と間隔を数え直さない）
-    for (const id of [...this.pullRequestCiReads.keys()]) {
+    for (const id of [...this.pullRequestCiReads.keys(), ...this.pullRequestCiUndrafted.keys()]) {
       const task = this.tasks.get(id);
       if (!task || task.status === "cancelled" || task.pullRequestState !== "open") {
         this.pullRequestCiReads.delete(id);
+        this.pullRequestCiUndrafted.delete(id);
       }
     }
     if (!ci || this.pullRequestCiReading || candidates.length === 0) return;
@@ -1635,11 +1654,12 @@ export class TaskService {
       // GitHub の先頭を読めなかった（空）ときは、指摘なしにした先頭、無ければ提出のコミットの CI を読む
       const head = candidate.head?.trim() || task.pullRequest?.reviewedCommit || pr.commit;
       const known = this.pullRequestCiReads.get(taskId);
-      const entry = known?.head === head ? known : { head, reads: 0, nextAt: 0 };
-      if (entry.reads >= PR_CI_READS_MAX || now < entry.nextAt) continue;
+      const entry =
+        known?.head === head ? known : { head, reads: 0, nextAt: 0, since: now, settled: false };
+      if (entry.settled || entry.reads >= PR_CI_READS_MAX || now < entry.nextAt) continue;
       this.pullRequestCiLast = taskId;
       this.pullRequestCiReads.set(taskId, {
-        head,
+        ...entry,
         reads: entry.reads + 1,
         nextAt: now + PR_CI_READ_INTERVAL_MS,
       });
@@ -1671,8 +1691,15 @@ export class TaskService {
         seen.add(key);
         failed.push({ name, ...(url ? { url } : {}) });
       }
-      const done = () =>
-        this.pullRequestCiReads.set(taskId, { head, reads: PR_CI_READS_MAX, nextAt: 0 });
+      // 読み終わりにする。その先頭を最初に読んでから・sacty がドラフトを外してから PR_CI_SETTLE_MS たっていない読み取りでは、
+      // しない（ドラフトを外したことで始まる CI が、まだ一覧に載っていないことがある。間隔の後に読み直す。PBI-381）
+      const done = () => {
+        const current = this.pullRequestCiReads.get(taskId);
+        if (current?.head !== head) return;
+        const from = Math.max(current.since, this.pullRequestCiUndrafted.get(taskId) ?? 0);
+        if (now < from + PR_CI_SETTLE_MS) return;
+        this.pullRequestCiReads.set(taskId, { ...current, settled: true });
+      };
       // いま出している失敗の表示（今の提出の PR のもの）
       const shown = pullRequestCiFailure(latest);
       if (failed.length > 0) {
@@ -1690,7 +1717,8 @@ export class TaskService {
           },
         ]);
       } else if (shown) {
-        // 失敗の表示を出している：一覧を読み切れていて、すべて通っていたら、表示を消して、この先頭は読むのをやめる。
+        // 失敗の表示を出している：一覧を読み切れていて、すべて通っていたら、表示を消して、この先頭は読むのをやめる
+        // （読み終わりにしない間は、表示だけ消して、間隔の後に読み直す）。
         // 取り消し・空の一覧・読み切れなかった一覧・実行中では消さずに、間隔の後に読み直す（PBI-375）
         if (!snapshot.truncated && ciAllPassed(all)) {
           this.append(latest, [
@@ -1705,12 +1733,22 @@ export class TaskService {
           done();
         }
       } else if (all.length > 0 && all.every((c) => c.status === "completed")) {
-        // 失敗の表示が無く、終わっていて、失敗が無い：この先頭は、もう読まない
+        // 失敗の表示が無く、終わっていて、失敗が無い：この先頭は、もう読まない（読み終わりにしない間を除く）
         done();
       }
       // 実行中のものがある・CI がまだ1つも無いときは、間隔の後に読み直す（回数の上限まで）
       return;
     }
+  }
+
+  /**
+   * sacty が実装の PR のドラフトを外した（PBI-381）。外した時刻を覚え、読み終わりにしていた先頭は、読み終わりを取り消す
+   * （ドラフトを外したことで始まる CI を読むため。読んだ回数は数え直さないので、回数の上限は変わらない）。
+   */
+  private notePullRequestUndrafted(taskId: string): void {
+    this.pullRequestCiUndrafted.set(taskId, this.now());
+    const entry = this.pullRequestCiReads.get(taskId);
+    if (entry?.settled) this.pullRequestCiReads.set(taskId, { ...entry, settled: false });
   }
 
   /** CI の失敗を出す対象か（承認待ちの、開いている実装の PR で、レビューの子タスクの指摘なしを待っていないもの。PBI-364）。 */
@@ -9019,6 +9057,7 @@ export class TaskService {
           }
           throw error;
         }
+        this.notePullRequestUndrafted(task.id);
       }
       const latest = unchanged();
       if (!latest) {
@@ -13622,6 +13661,7 @@ export class TaskService {
           `[daemon] 指摘なしで外した PR #${number}（${repo}）がドラフトに戻っていたので外し直そうとしましたが、外せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
         );
       }
+      if (result && !result.draft) this.notePullRequestUndrafted(taskId);
       const current = result && unchanged();
       if (current && (await this.pullRequestHead(current, repo, number)) === target) {
         const latest = unchanged();
@@ -13730,6 +13770,7 @@ export class TaskService {
           warn("のドラフトが外れていません", "GitHub の答えがドラフトのまま");
           return;
         }
+        this.notePullRequestUndrafted(parent.id);
       } catch (error) {
         warn("のドラフトを外せませんでした", error);
         // 外す要求が後から届くかもしれないので、指摘なしで外すまで確認のたびに戻す

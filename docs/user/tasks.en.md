@@ -1150,6 +1150,7 @@ A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existi
 
 sacty reviews without waiting for the PR's CI to finish.
 So CI that was still running can fail after the child task that reviews the PR reported "no findings".
+CI that starts when the draft is removed (a workflow set up that way) can fail too.
 sacty watches CI for a while after that, and when it was failing, shows it in the task list and the task details.
 
 - The "Status" column of the task's row in the task list shows a "CI failed" mark.
@@ -1172,11 +1173,14 @@ This notice is the result at the time sacty looked at CI. Keep the following in 
   It does not disappear when CI passes after sacty stopped watching. In that case it disappears when the PR is updated, merged, or closed.
 - CI is not treated as passed while a cancelled CI item remains, while CI is running, when there is no CI at all, or when sacty could not read the CI list to the end. The notice stays.
 - When you add a commit to the PR, the notice disappears once all CI on the new head commit passes.
-- After the notice disappeared, a rerun of CI on the same commit that fails is not shown again.
+- After sacty stopped watching, a rerun of CI on the same commit that fails is not shown again.
+- Even when all CI finished without a failure, sacty does not stop watching on its first look, or on a look less than 5 minutes after it removed the draft. It looks once more about 5 minutes later.
+  CI that starts when the draft is removed may not be in GitHub's list yet right after that.
 - The status in the task list, "Needs you", and the header notifications does not change. You cannot filter the list by the "CI failed" mark.
 - The dashboard, the "Needs you" cards, and the header notifications show no mark. No Slack or desktop notification is sent either.
-- sacty looks at CI for each head commit of the PR every 5 minutes, only for about one hour after it first looked. CI that fails after that is not shown.
-  This time is not extended after a CI failure is shown. When the failure was found late, sacty may stop watching before it sees CI pass.
+- sacty looks at CI for each head commit of the PR at most 12 times, at least 5 minutes apart. It usually finishes about one hour after it first looked. CI that fails after it finished is not shown.
+  When sacty removes the draft again after it stopped watching partway, it looks the remaining times after that (this can be more than one hour after it first looked).
+  This count does not grow after a CI failure is shown. When the failure was found late, sacty may stop watching before it sees CI pass.
 - Even while CI is failing, if you merge the PR, sacty takes it as the approval and goes on.
 - It is not shown for requirements and design PRs, or for a PR before the review child task reports "no findings" (the review child task turns CI failures into findings).
 

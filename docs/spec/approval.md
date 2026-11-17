@@ -304,38 +304,43 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 ### 指摘なしの後の CI の失敗の表示
 
 sacty は PR の CI を待たずに、PR のレビューの子タスクの指摘なしでドラフトを外す（[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
-そのため、レビューの時点で実行中だった CI が後から落ちても、タスクは人の承認待ち（マージ待ち）のままになる。人が気づけるよう、人の承認を待つ実装の PR の先頭のコミットの CI を読み、失敗していたら、タスクの詳細と、タスクの一覧のそのタスクの行に出す（PBI-364・PBI-371）。CI を読んでいる間に通ったら、その表示を消す（PBI-375）。
+そのため、レビューの時点で実行中だった CI や、ドラフトを外したことで始まった CI が後から落ちても、タスクは人の承認待ち（マージ待ち）のままになる。人が気づけるよう、人の承認を待つ実装の PR の先頭のコミットの CI を読み、失敗していたら、タスクの詳細と、タスクの一覧のそのタスクの行に出す（PBI-364・PBI-371）。CI を読んでいる間に通ったら、その表示を消す（PBI-375）。
 出すだけで、実行・差し戻し・再レビュー・ドラフトへの変更・CI の再実行は始めない。仕組みを小さく保つため、CI を読み続けない。
 
 - 読むもの：PR の確認（60秒ごと。`checkPullRequests`）の最後に、PR の先頭のコミット（GitHub の今の先頭。読めなければ、指摘なしにした先頭 `reviewedCommit`、それも無ければ提出のコミット）の CI の状態（`CiStatusReader.snapshot`。ワークフローの実行・チェック・コミットの状態と、ワークフローの中のジョブ）。
   - 対象は、承認待ち（`awaiting_approval`）の、開いている実装の PR で、レビューの子タスクの指摘なしを待っていないもの（`watchesPullRequestCi`）。要求要件・設計の PR、PR の指摘の戻し先を判断している間、エスカレーション中は読まない。CI を読む口が無い（`ServiceDeps.ci`）ときも読まない。
   - 1回の PR の確認で読むのは、1件だけ。候補は、前に読んだタスクの次から順に探す。前の読み取りの通信が終わっていなければ、読まない。
-  - 先頭のコミットごとに、`PR_CI_READ_INTERVAL_MS`（5分）の間隔で、`PR_CI_READS_MAX`（12）回まで読む（最初に読んでから1時間ほど）。回数は、デーモンのメモリーに持つ（`pullRequestCiReads`。再起動すると、数え直す）。実装の PR が開いていなくなった（マージした・閉じた・中止した）タスクの回数は、忘れる。PR の状態を一時的に読めなかった確認があっても、数え直さない。
-  - 読むのをやめるのは、失敗の表示を出していなくて、CI が1つ以上あって、すべて終わっていて失敗が無いとき、失敗の表示を消したとき、回数の上限に達したとき。失敗を記録した後も、同じ回数の上限の中で、同じ間隔で読む（失敗を記録した回も、上限に数える）。読めない・`PR_CI_TIMEOUT_MS`（15秒）のうちに返らないときも、1回と数える（理由はデーモンのログに出す。トークンは伏せる）。
+  - 先頭のコミットごとに、`PR_CI_READ_INTERVAL_MS`（5分）の間隔で、`PR_CI_READS_MAX`（12）回まで読む（続けて読めば、最初に読んでから1時間ほど。読み終わりを取り消した先頭は、残りの回を、取り消した後に読むので、最初の読み取りから1時間より後になることがある）。回数は、デーモンのメモリーに持つ（`pullRequestCiReads`。再起動すると、数え直す）。実装の PR が開いていなくなった（マージした・閉じた・中止した）タスクの回数は、忘れる。PR の状態を一時的に読めなかった確認があっても、数え直さない。
+  - 読むのをやめるのは、失敗の表示を出していなくて、CI が1つ以上あって、すべて終わっていて失敗が無いとき、失敗の表示を消したとき（どちらも「読み終わり」）、回数の上限に達したとき。
+  - 読み終わりにするのは、その先頭を最初に読んでからと、sacty がその PR のドラフトを外してから（`notePullRequestUndrafted`。指摘なしで外した・外し直した・重ねた PR の付け替えで外した）の、どちらも `PR_CI_SETTLE_MS`（5分。読み直しの間隔と同じ）以上たった後の読み取りだけ（PBI-381）。ドラフトを外したことで始まる CI は、外した直後の一覧にまだ載っていないことがあるため。それより前の読み取りでは、失敗が無くても、間隔の後に読み直す（その読み取りも、回数の上限に数える）。
+    - 読み終わりにした先頭も、その後に sacty がドラフトを外したら、読み終わりを取り消して読み直す（外した後に人が足したコミットを、再レビューの間に読み終わりにしていたときのため）。読んだ回数は数え直さないので、回数の上限に達した先頭は、読まない。
+    - ドラフトを外した時刻は、デーモンのメモリーに持つ（`pullRequestCiUndrafted`）。再起動の後は、その先頭を最初に読んだ時刻から数える。
+  - 失敗を記録した後も、同じ回数の上限の中で、同じ間隔で読む（失敗を記録した回も、上限に数える）。読めない・`PR_CI_TIMEOUT_MS`（15秒）のうちに返らないときも、1回と数える（理由はデーモンのログに出す。トークンは伏せる）。
 - 記録：失敗があれば、actor `sacty` で `PullRequestCiFailed`（PR の番号・CI を読んだ先頭 `commit`・失敗したチェック `checks`）を、先頭のコミットごとに1度だけ記録する。`Task.pullRequestCiFailure`（PR の番号・そのときの提出のコミット・読んだ先頭 `head`・チェック・読んだ時刻）に持つ。
   - 失敗とみなすのは、[マージの後の監視](deployment-watch.md)と同じ結論（`isFailedCiCheck`）。チェックは名前とリンクで、同じ名前とリンクは1件にし、`PR_CI_FAILED_CHECKS_MAX`（10）件まで持ち、超えた分は件数（`more`）だけ持つ。名前は `PR_CI_CHECK_NAME_MAX`（200）文字まで。リンクは `http`・`https` のものだけを残す。
   - 読んでいる間に、状態・PR・コミットが変わったときは記録しない。
   - PR を作り直した・更新した（`PullRequestPublished`）、マージされた・閉じられた・開き直された（`PullRequestMerged`・`PullRequestClosed`・`PullRequestReopened`）ときは、記録を消す。
-- 消す：失敗の表示を出している間に読んだ CI が通っていたら、actor `sacty` で `PullRequestCiRecovered`（PR の番号・CI を読んだ先頭 `commit`）を記録し、`Task.pullRequestCiFailure` を消して、その先頭は読むのをやめる。
+    - 閉じられたことを記録した PR は、読んだ回数も忘れる。開き直されたら、同じ先頭でも、最初から読み直し、落ちていたら、記録し直す。
+- 消す：失敗の表示を出している間に読んだ CI が通っていたら、actor `sacty` で `PullRequestCiRecovered`（PR の番号・CI を読んだ先頭 `commit`）を記録し、`Task.pullRequestCiFailure` を消して、その先頭は読むのをやめる（読み終わりにしない間の読み取りでは、表示だけ消して、間隔の後に読み直す。その読み取りで落ちていたら、`PullRequestCiFailed` を記録し直す）。
   - 通ったとするのは、CI の一覧を読み切れていて（`CiSnapshot.truncated` でない）、一覧（ワークフローの実行・チェック・コミットの状態と、ジョブ）が `ciAllPassed` を満たすときだけ：空でなく、すべて終わっていて、結論が `success` か、`skipped`・`neutral`（コミットの状態は `success` だけ）で、`success` が1件以上ある。
   - 取り消し（`cancelled`）・古い結果（`stale`）・実行中・結論の無いものが1件でもある、一覧が空、一覧を読み切れなかった（ページの上限で打ち切った・続きのページをたどれなかった）ときは、消さない。回数の上限までは、間隔の後に読み直す。
   - 人が PR にコミットを足して先頭が変わったときは、新しい先頭の CI が通ったら、前の先頭の失敗の表示も消す（記録の `commit` は、通った先頭）。新しい先頭の CI も落ちていたら、その先頭で `PullRequestCiFailed` を記録し直す。
   - 同じ先頭の CI が落ちたままなら、記録し直さない。記録した失敗したチェックの一覧は、更新しない。
 - 出す場所（`pullRequestCiFailure`。承認待ちで、実装のゲートの PR が開いていて、記録の PR の番号とコミットが今の提出と同じで、戻し先を判断している間でなく、指摘なしを待っていないとき）：
-  - タスクの詳細の承認待ちの案内に、CI を読んだ先頭のコミットと時刻、今の結果を PR で確かめること、直すなら差し戻すか PR に指摘を書くことと、失敗していたチェックの一覧（リンクがあればリンク。超えた分は件数）を出す。案内の補足に、sacty が CI を読み直す間に通れば表示が消えること、読み直すのは最初に読んでから1時間ほどの間だけで、その後の結果は反映されないことを出す。
-  - タスクの一覧の、そのタスクの行の状態の列に、「CI 失敗」の印（アイコンと文字）を添える（`TaskRow.ciFailed`）。印の補足に、Sacty が CI を読んだ時点の結果であること、読み直す間に通れば消えること、読み直すのは最初に読んでから1時間ほどの間だけで、その後の結果は反映されないこと、失敗していたチェックはタスクの詳細に出ることを出す。状態の文言と種類（`statusText`・`statusTone`）は変えないので、一覧の絞り込み・並びは変わらない。
+  - タスクの詳細の承認待ちの案内に、CI を読んだ先頭のコミットと時刻、今の結果を PR で確かめること、直すなら差し戻すか PR に指摘を書くことと、失敗していたチェックの一覧（リンクがあればリンク。超えた分は件数）を出す。案内の補足に、sacty が CI を読み直す間に通れば表示が消えること、読み直すのは PR の先頭のコミットごとに12回まで（ふつうは、最初に読んでから1時間ほどの間）で、その後の結果は反映されないことを出す。
+  - タスクの一覧の、そのタスクの行の状態の列に、「CI 失敗」の印（アイコンと文字）を添える（`TaskRow.ciFailed`）。印の補足に、Sacty が CI を読んだ時点の結果であること、読み直す間に通れば消えること、読み直すのは PR の先頭のコミットごとに12回まで（ふつうは、最初に読んでから1時間ほどの間）で、その後の結果は反映されないこと、失敗していたチェックはタスクの詳細に出ることを出す。状態の文言と種類（`statusText`・`statusTone`）は変えないので、一覧の絞り込み・並びは変わらない。
   - 作業履歴に「PR #N の CI が失敗していた」を出す。エラーレポートでは、確認の不合格（`check`）に分類する（[エラーレポート](error-report.md)）。
   - 表示を消したときは、作業履歴に「PR #N の CI が通った。CI の失敗の表示を消した」を出す（エラーレポートでは、失敗に数えない）。
 - しないこと：
   - 読むのをやめた後の変化は、読まない・反映しない（回数の上限の後に、人が CI を再実行して通っても、詳細の表示と一覧の印は、PR を更新する・マージする・閉じるまで残る。詳細には読んだ時刻を出し、案内と一覧の印には補足を付けて、その時点の結果であることを示す）。読み直すのは、その先頭を最初に読んでからの期間の残りだけなので、最後の読み取りで失敗を見つけたときは、読み直さない。
   - 読む期間・回数は、失敗の表示を出していても延ばさない。デーモンを再起動すると、回数を数え直すので、表示を出している先頭も、もう一度、上限まで読む。
   - 状態の文言と種類（タスクの一覧・ダッシュボードの「あなたの出番」・ヘッダーのお知らせ）は変えない。一覧の印では絞り込めない。ダッシュボード・「あなたの出番」のカード・ヘッダーのお知らせには、印を出さない。通知（Slack・デスクトップ）も出さない。
-  - 最初に読んでから1時間ほどたっても終わらない CI、その後に始まった CI、通った後（表示を消した後を含む）に再実行されて落ちた CI は、拾わない。
-  - 閉じて開き直した PR では、同じ先頭の失敗を出し直さない（デーモンを再起動すると、読み直す）。
+  - 回数の上限まで読んでも（続けて読めば、最初に読んでから1時間ほど）終わらない CI、その後に始まった CI、読み終わりにした後（表示を消して読み終わりにした後を含む）に再実行されて落ちた CI は、拾わない（デーモンを再起動すると、読み直す）。
+  - ドラフトを外したことで始まる CI が、外してから `PR_CI_SETTLE_MS` たっても一覧に載らないときは、拾わない。人が GitHub でドラフトを外したことで始まる CI は、その先頭を読み終わりにした後に始まったものを、拾わない（sacty が外したときと違い、読み終わりを取り消さない）。
   - CI の一覧の取得が上限（`GitHubCiStatus` のページの上限。1つの一覧につき 1,000 件）で打ち切られたときの、読めなかった分は見ない。読めた分に失敗があれば記録するが、読めた分がすべて通っていても、表示は消さない。
   - 判定はマージの可否ではない。CI が失敗したまま人がマージしたときは、通常のマージとして承認する。
 
-コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readPullRequestCi`・`watchesPullRequestCi`・`pullRequestCiSnapshot`・`PR_CI_TIMEOUT_MS`・`PR_CI_READ_INTERVAL_MS`・`PR_CI_READS_MAX`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus.snapshot`・`CiSnapshot.truncated`）、`packages/core/src/events.ts`（`PullRequestCiFailed`・`PullRequestCiRecovered`・`PR_CI_FAILED_CHECKS_MAX`・`PR_CI_CHECK_NAME_MAX`・`isFailedCiCheck`・`ciAllPassed`）、`packages/core/src/projection.ts`（`pullRequestCiFailure`・`Task.pullRequestCiFailure`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/lib/task-list-data.ts`（`loadTaskList`・`TaskRow`）、`apps/web/src/components/task-list.tsx`（`LiveTaskList`）
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readPullRequestCi`・`watchesPullRequestCi`・`pullRequestCiSnapshot`・`notePullRequestUndrafted`・`PR_CI_TIMEOUT_MS`・`PR_CI_READ_INTERVAL_MS`・`PR_CI_READS_MAX`・`PR_CI_SETTLE_MS`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus.snapshot`・`CiSnapshot.truncated`）、`packages/core/src/events.ts`（`PullRequestCiFailed`・`PullRequestCiRecovered`・`PR_CI_FAILED_CHECKS_MAX`・`PR_CI_CHECK_NAME_MAX`・`isFailedCiCheck`・`ciAllPassed`）、`packages/core/src/projection.ts`（`pullRequestCiFailure`・`Task.pullRequestCiFailure`）、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/lib/task-list-data.ts`（`loadTaskList`・`TaskRow`）、`apps/web/src/components/task-list.tsx`（`LiveTaskList`）
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`reconcileReviewTasks`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 
