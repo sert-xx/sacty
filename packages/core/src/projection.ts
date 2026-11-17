@@ -1726,10 +1726,15 @@ export function applyEvent(
           // 後続に回したい案（PBI-370）。案は実装の工程だけ。人が決めた後の申告では、決定を変えない。決める前に「対応した」
           // と申告されたら、案を取り下げる
           const { deferral: proposed, ...rest } = r;
+          // 案にできるのは、実装の工程の、人がまだ決めていない指摘だけ。人が「この PR で直す」と決めて差し戻した指摘
+          // （fixOf）と、決定済みの指摘への「後続に回したい」は、指示に反した申告なので、申告が無いものとして扱う
+          // （人が決めたことを、もう一度、案にしない。PR にも「人に確認中」と返信しない）
+          const proposable =
+            step === "implement" && r.fixOf === undefined && proposed?.decision === undefined;
           const deferral =
             proposed?.decision !== undefined
               ? proposed
-              : step === "implement" && response.status === "deferred"
+              : proposable && response.status === "deferred"
                 ? { proposedIn: submission, reason: response.text }
                 : response.status === "addressed"
                   ? undefined
@@ -1739,9 +1744,7 @@ export function applyEvent(
             response: response.text,
             respondedIn: submission,
             confirm: response.confirm,
-            // 実装のほかの工程の「後続に回したい」は、申告が無いものとして扱う
-            status:
-              response.status === "deferred" && step !== "implement" ? undefined : response.status,
+            status: response.status === "deferred" && !proposable ? undefined : response.status,
             submittedIn: submission,
             ...(deferral ? { deferral } : {}),
           };
