@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-17（UTC）
 - タスク: PBI-377
-- PR: なし
+- PR: #409
 - ブランチ: feat/pbi-377-unknown-update-medium
 - 関係する ADR: [依存の版の更新の上げ幅を読み取れないときは、PR のリスク評価の段階を中にする](../adr/20261117-0455-unknown-dependency-update-is-medium.md)
 
