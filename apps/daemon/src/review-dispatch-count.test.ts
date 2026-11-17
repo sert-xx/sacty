@@ -91,6 +91,47 @@ describe("PR のレビューが起動した担当の数を、実行の記録か�
     ).toEqual({ subagents: 0, canDispatch: false });
   });
 
+  it("Claude Code：まとめて起動するツール（Workflow）で起動した担当も数える。親の呼び出しのツールの名前には頼らない", async () => {
+    // 担当のセッションは subagents/workflows/<実行>/ の下に残る。親には、Agent・Task の呼び出しが無い
+    for (const [run, n] of [
+      ["wf_a", 3],
+      ["wf_b", 2],
+    ] as const) {
+      for (let i = 0; i < n; i++) {
+        put(
+          `agent/projects/-workspace/s1/subagents/workflows/${run}/agent-${i}.jsonl`,
+          jsonl([said("x")]),
+        );
+      }
+      // 担当のセッションでない記録は数えない
+      put(
+        `agent/projects/-workspace/s1/subagents/workflows/${run}/journal.jsonl`,
+        jsonl([{ type: "started" }]),
+      );
+    }
+    expect(
+      await claude([toolUse("t1", "Skill"), toolUse("t2", "Workflow"), toolUse("t3", "Workflow")]),
+    ).toEqual({ subagents: 5, canDispatch: true });
+    // 1 件ずつ起動した担当と合わせて数える
+    put("agent/projects/-workspace/s1/subagents/agent-z.jsonl", jsonl([said("y")]));
+    expect(await claude([toolUse("t2", "Workflow"), toolUse("t4", "Agent")])).toEqual({
+      subagents: 6,
+      canDispatch: true,
+    });
+    // 名前を知らない起動のツールでも、担当のセッションが残っていれば 0 件にしない
+    expect(await claude([toolUse("t5", "SomeNewLauncher")], ["SomeNewLauncher"])).toEqual({
+      subagents: 6,
+      canDispatch: false,
+    });
+  });
+
+  it("Claude Code：使えるツールが Workflow だけでも、担当を起動する手段があったと確かめる", async () => {
+    expect(await claude([toolUse("t1", "Bash")], ["Workflow", "Bash"])).toEqual({
+      subagents: 0,
+      canDispatch: true,
+    });
+  });
+
   it("Claude Code：担当ごとのセッションのファイルの数も数え、多い方を使う", async () => {
     put("agent/projects/-workspace/s1/subagents/agent-a.jsonl", jsonl([said("x")]));
     put("agent/projects/-workspace/s1/subagents/agent-b.jsonl", jsonl([said("y")]));

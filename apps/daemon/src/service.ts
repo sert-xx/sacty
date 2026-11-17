@@ -10900,6 +10900,7 @@ export class TaskService {
         : undefined;
     const reviewDispatch: ReviewDispatch | undefined = dispatched && {
       subagents: dispatched.subagents ?? null,
+      runtime: agent.runtime,
       ...(agent.model ? { model: agent.model } : {}),
       // 設定のエージェントが使えず、切り替え先で動いた実行
       ...(chosen.agent.id !== agent.id ? { configuredAgentId: chosen.agent.id } : {}),

@@ -1306,6 +1306,8 @@ export const ReviewDispatch = z.object({
    * 完了の記録の 0 は、担当を起動する手段がその実行にあったことを、sacty が確かめられなかった回（スキルの逐次モードを通す）。
    */
   subagents: z.number().int().nonnegative().nullable(),
+  /** その実行のエージェントの種類（`claude-code`・`codex` など）。PR に投稿する本文には、設定の名前ではなく、これを出す。 */
+  runtime: z.string().optional(),
   /** その実行のモデル（設定にあるときだけ）。 */
   model: z.string().optional(),
   /** 工程に設定されたエージェント。そのエージェントが使えず、切り替え先で動いた実行だけが持つ。 */

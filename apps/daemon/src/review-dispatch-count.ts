@@ -8,19 +8,23 @@ import { TRUNCATED_EVENT } from "./session-logs.js";
  *
  * 数えるのは、実行の後に sacty が写した、エージェントのセッションのファイル（runs/<タスク>/<実行>/agent。PBI-66）。
  * エージェントの種類ごとに形が違う。
- * - Claude Code：親のセッション（projects/<作業ディレクトリ>/<セッション>.jsonl）の中の、担当を起動するツール
- *   （`Agent`・`Task`）の呼び出しを、呼び出しの ID で重複を除いて数える。担当ごとのセッション
- *   （…/<セッション>/subagents/*.jsonl）の数も数え、多い方を使う
+ * - Claude Code：担当ごとのセッションのファイル（projects/<作業ディレクトリ>/<セッション>/subagents/ の下。深さによらない）
+ *   の数。起動のツールの名前には頼らない（1 件ずつ起動するツールでも、まとめて起動するツールでも、担当のセッションは
+ *   この下に残る）。親のセッション（projects/<作業ディレクトリ>/<セッション>.jsonl）の中の `Agent`・`Task` の呼び出し
+ *   （呼び出しの ID で重複を除く）も数え、多い方を使う
  * - Codex：rollout のファイルのうち、先頭の `session_meta` の `source` が `exec` のものが親。親の中の `spawn_agent` の
  *   呼び出しを数える（担当ごとにも rollout ができ、親の履歴を引き継ぐので、全部のファイルで数えると重複する）
  *
  * 「起動が 0 件」をやり直しにするのは、担当を起動する手段がその実行にあったと確かめられたときだけ。
- * - Claude Code：実行の出力の最初の出来事（`system`・`init`）の `tools` に、`Agent` か `Task` がある
+ * - Claude Code：実行の出力の最初の出来事（`system`・`init`）の `tools` に、`Agent`・`Task`・`Workflow` のどれかがある
  * - Codex：親の `turn_context` に `multi_agent_version` がある
  * 確かめられなければ（手段が無い環境。スキルの逐次モードで見る）、0 件でもやり直しにしない。
  *
  * 数えられないとき（ファイルが無い・読めない・間を省いたファイルで 0 件・知らない種類のエージェント）は、subagents を
  * undefined（分からない）にする。担当の中身や質は見ない。
+ *
+ * エージェントの版が変わり、担当の起動が上の形で残らなくなると、親のセッションが読める限り、担当を起動した実行も 0 件と
+ * 数える（手段があったと確かめられれば、やり直しになり、続けば止まる）。「分からない」にはならない。
  */
 export type ReviewDispatchCount = {
   /** 起動した担当の数。数えられなければ undefined。 */
@@ -31,8 +35,10 @@ export type ReviewDispatchCount = {
 
 const UNKNOWN: ReviewDispatchCount = { subagents: undefined, canDispatch: false };
 
-/** Claude Code の、担当を起動するツールの名前（版によって `Task` か `Agent`）。 */
+/** Claude Code の、担当を 1 件ずつ起動するツールの名前（版によって `Task` か `Agent`）。親の呼び出しを数える。 */
 const CLAUDE_DISPATCH_TOOLS = new Set(["Agent", "Task"]);
+/** Claude Code の、担当を起動する手段になるツール（まとめて起動するツールを含む）。手段があったかの確かめに使う。 */
+const CLAUDE_DISPATCH_MEANS = new Set([...CLAUDE_DISPATCH_TOOLS, "Workflow"]);
 
 /** 実行の出力の先頭から、最初の出来事（init）を探す行数の上限。 */
 const INIT_LINES = 50;
@@ -101,11 +107,18 @@ async function countClaude(
   eventsPath: string | undefined,
 ): Promise<ReviewDispatchCount> {
   const files = listFiles(join(agentDir, "projects"));
-  // 親：projects/<作業ディレクトリ>/<セッション>.jsonl。担当：projects/<作業ディレクトリ>/<セッション>/subagents/*.jsonl
+  // 親：projects/<作業ディレクトリ>/<セッション>.jsonl
   const parents = files.filter((f) => f.split("/").length === 2 && f.endsWith(".jsonl"));
+  // 担当のセッションは、<セッション>/subagents/ の下に、深さによらず数える（起動のしかたによって、置かれる深さが違う。
+  // まとめて起動するツールは subagents/workflows/<実行>/ の下に置く）。担当のセッションでない記録（journal.jsonl）は除く
   const children = files.filter((f) => {
     const parts = f.split("/");
-    return parts.length === 4 && parts[2] === "subagents" && f.endsWith(".jsonl");
+    return (
+      parts.length >= 4 &&
+      parts[2] === "subagents" &&
+      f.endsWith(".jsonl") &&
+      parts[parts.length - 1] !== "journal.jsonl"
+    );
   });
   if (parents.length === 0) return UNKNOWN;
   const calls = new Set<string>();
@@ -146,7 +159,7 @@ async function claudeCanDispatch(eventsPath: string): Promise<boolean> {
     if (event?.type === "system" && event.subtype === "init") {
       can =
         Array.isArray(event.tools) &&
-        event.tools.some((t) => typeof t === "string" && CLAUDE_DISPATCH_TOOLS.has(t));
+        event.tools.some((t) => typeof t === "string" && CLAUDE_DISPATCH_MEANS.has(t));
       return false;
     }
     return read < INIT_LINES;

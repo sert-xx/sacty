@@ -425,11 +425,11 @@ const HEAD_CHECK_LINES = (head: string): string[] => [
 const REVIEW_DISPATCH_LINES = [
   "- このレビューは、観点ごとの担当（サブエージェント）を起動して行う。次の順に進める",
   "  1. スキル review-dispatch の SKILL.md を読んだら、対象を読み始める前に、続けて流れの資料 references/pr-review.md と観点カタログ references/viewpoints.md を開いて読む（SKILL.md だけで始めない）",
-  "  2. 起動表を作り、主対象の種類の必須観点と横断の観点の担当を、スキルの規則どおりに全部起動する",
+  "  2. 起動表を作り、スキルの起動の規則が決めた担当（必須観点、当てはまる条件付き観点、横断の観点、リポジトリの指示の担当）を、全部起動する",
   "  3. 担当の結果が揃ってから、集約して本文を書く",
   "- 担当を起動する前に、自分で差分やコードを読んで指摘・総評を書き始めない（親は、観点のレビューを自分ではしない）。この指示に差分が入っていても、対象が小さくても、再レビューでも、前回からの変更が文書だけでも、担当の起動は省かない。「担当に分けずに自分で見た」と本文に書いて済ませる進め方は、無い",
   "- sacty は、この実行が担当を何件起動したかを、実行の記録から数える。担当を起動する手段があるのに 1 件も起動しなかったレビューは、判定を使わず、PR にも投稿せずに、やり直させる",
-  "- サブエージェントを起動する手段（ツール）がこの実行に無いときだけ、スキルの逐次モードで見る",
+  "- サブエージェントを起動する手段（ツール）がこの実行に無いときだけ、スキルの逐次モードで見る。差分も作業領域も読めないなど、スキルの「完了できないとき」に当たるときは、スキルの決まりのとおりにする",
 ];
 
 /**
@@ -8789,18 +8789,27 @@ export function buildReviewBody(
   ].join("\n");
 }
 
+/** エージェントの種類の、製品の名前。 */
+const RUNTIME_NAME: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
+
 /**
  * 投稿するレビューの本文の末尾に書く、どのエージェントで見たか・観点ごとの担当を何件起動したか（PBI-379）。今回の回の実行の
  * 記録があるときだけ書く（これより前の作業履歴の実行には無い）。設定のエージェントが使えず、切り替え先で動いた回は、そう書く。
+ * PR は公開されうるので、利用者が付けた設定の名前（エージェントの ID。切り替え前のものも）は書かない。書くのは、エージェントの
+ * 種類（製品の名前）とモデルだけ。設定の名前は、sacty の画面に出す。
  */
 function reviewDispatchLines(task: Task, round: number): string[] {
-  // 設定の名前（エージェント・モデル）を、PR の本文で別の働きをしない形にする（改行とバッククォートを除き、長さを限る）
+  // モデルの名前（設定の値）を、PR の本文で別の働きをしない形にする（改行とバッククォートを除き、長さを限る）
   const nameCode = (name: string) => `\`${name.replace(/[`\r\n]/g, "").slice(0, 100)}\``;
   const d = task.reviewDispatch;
   if (!d || d.round !== round) return [];
-  const agent = `レビューしたエージェント：${nameCode(d.agentId)}${d.model ? `（${nameCode(d.model)}）` : ""}`;
+  const kind = d.runtime ? RUNTIME_NAME[d.runtime] : undefined;
+  const agent =
+    kind || d.model
+      ? `レビューしたエージェント：${[kind, d.model ? (kind ? `（${nameCode(d.model)}）` : nameCode(d.model)) : ""].join("")}。`
+      : "";
   const switched = d.configuredAgentId
-    ? `。設定のエージェント ${nameCode(d.configuredAgentId)} が使えなかったため、切り替え先で実行しました`
+    ? "工程に設定したエージェントが使えなかったため、切り替え先のエージェントで実行しました。"
     : "";
   const subagents =
     d.subagents === null
@@ -8808,7 +8817,7 @@ function reviewDispatchLines(task: Task, round: number): string[] {
       : d.subagents === 0
         ? "観点ごとの担当（サブエージェント）は起動していません（担当を起動する手段があることを、sacty が確かめられなかった実行です）"
         : `観点ごとの担当（サブエージェント）を ${d.subagents} 件起動しました`;
-  return [`${agent}${switched}。${subagents}。`];
+  return [`${agent}${switched}${subagents}。`];
 }
 
 /** PR の行へのコメントとして投稿するもの（目印を先頭に入れる）。 */

@@ -415,8 +415,10 @@ const ja = {
         : count === 0
           ? "観点ごとの担当：起動していません（担当を起動する手段があることを確かめられなかった実行です）"
           : `観点ごとの担当：${count}件を起動`,
-    reviewUndispatched: (runs: number) =>
-      `観点ごとの担当を起動しなかったため、使わなかったレビューの実行：${runs}回（担当を起動するよう、やり直します）`,
+    reviewDispatchRound: (round: number) =>
+      `${round}回目のレビューの記録（今の回は、まだ終わっていません）：`,
+    reviewUndispatched: (runs: number, paused: boolean) =>
+      `観点ごとの担当を起動しなかったため、使わなかったレビューの実行：${runs}回（${paused ? "続いたため、止めています。再開すると、もう一度レビューします" : "担当を起動するよう、やり直します"}）`,
     reviewComments: (n: number) => `行へのコメント（${n}件）`,
   },
   /** 提出の前のセルフレビューの深さ（依頼の大きさの判定と、人の上書き。PBI-369）。 */
@@ -1021,8 +1023,10 @@ const en: TaskMessages = {
         : count === 0
           ? "Per-viewpoint reviewers: none started (this run could not be confirmed to have a way to start them)"
           : `Per-viewpoint reviewers: ${count} started`,
-    reviewUndispatched: (runs) =>
-      `Review runs not used because they started no per-viewpoint reviewer: ${runs} (the review is run again so that it starts them)`,
+    reviewDispatchRound: (round) =>
+      `Record of review round ${round} (the current round has not finished): `,
+    reviewUndispatched: (runs, paused) =>
+      `Review runs not used because they started no per-viewpoint reviewer: ${runs} (${paused ? "this kept happening, so the task is paused; resuming reviews again" : "the review is run again so that it starts them"})`,
     reviewComments: (n) => `Line comments (${n})`,
   },
   selfReviewDepth: {
