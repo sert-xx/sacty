@@ -887,7 +887,7 @@ Besides the level and the suggested depth, the section holds the following.
 Keep the following in mind about the assessment.
 
 - When it could not be assessed (the budget cap has been reached, the AI run failed, or the answer could not be read), the section says "評価できませんでした" (could not be assessed) with the reason. Opening the PR is not stopped.
-- When the last assessment answer in the AI's output could not be read, sacty does not use an earlier answer even if there is one, and treats the PR as not assessed. The same applies when only the assessment heading is written after the assessment answer. When an earlier answer was not used, the reason says so.
+- When the last assessment answer in the AI's output could not be read, sacty does not use an earlier answer even if there is one, and treats the PR as not assessed. The same applies when the assessment heading is written in the form of a JSON key (with quotation marks and a colon) after the assessment answer. Text that merely mentions the heading name has no effect. When an earlier answer was not used, the reason says so.
 - When a PR is submitted again at the same commit, it is not assessed again if it was assessed successfully (even with the same diff, a different commit is assessed again). When it could not be assessed (the budget cap, a failed AI run, or an unreadable answer), it is assessed again the next time the PR is submitted. When the implementation is redone and the content changes, it is assessed again.
 - The result also appears in the "PR risk assessment" section of the task detail and in the activity.
 - A requirements or design PR does not carry a risk assessment.
