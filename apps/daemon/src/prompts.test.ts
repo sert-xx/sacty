@@ -6768,7 +6768,7 @@ describe("後続に回したい案（PBI-370）", () => {
     expect(prompt).not.toContain("指摘ごとの対応を次の形式で必ず付けてください");
     expect(prompt).toContain("--- 後続に回したい案にした指摘（この PR では直しません） ---");
     expect(prompt).toContain(
-      "- awaitingDecision は、人間に確認中の案（まだ決まっていない）。人間が決めるまで、直さない・取り下げない（sacty が、提出のときに、PR に、人間に確認中の案として返信する）",
+      "- awaitingDecision は、人間に確認中の案（まだ決まっていない）。人間が決めるまで、直さない・取り下げない（PR への返信は、sacty が扱う。自分では返信しない。返信済みかどうかを、前提にしない）",
     );
     expect(prompt).toContain(
       "- truncated が true の項目は、文が長いため、先頭の 600 文字だけを載せている（続きは載せていない）",

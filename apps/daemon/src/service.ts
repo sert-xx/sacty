@@ -18961,6 +18961,7 @@ function undecidedDeferrals(task: Task): boolean {
  * 対象は、その PR のコメントから取り込んだ（origin の PR の番号が同じ）、無効でない、対応のある、まだ返信していない指摘。
  * 承認待ちの工程の指摘は、今の提出で対応したものだけ。前の工程に戻した指摘（実装の PR の指摘を、設計で直したなど）は、
  * その工程の最新の対応を、PR を更新したこの提出で返信する。1件の指摘には、1回だけ返信する。
+ * 後続に回したい案（deferred）の対応は、人がまだ決めていない間だけ返信する（人が決めた後は、返信しない。PBI-383）。
  * 引き継いだ PR（人が作った PR を直すタスク）では、実装に渡した指摘（continuedResponses）のうち、今の提出で対応を書いた、
  * まだ返信していないものも対象にする。取り込んだ指摘として返信するもの（同じコメントが元の指摘）は、重ねない。
  */
@@ -18992,6 +18993,9 @@ export function awaitingRemarkReplies(task: Task):
     r.response !== undefined &&
     r.respondedIn !== undefined &&
     r.repliedIn === undefined &&
+    // 人が決めた後の案は、返信しない（返信は「案で、人に確認中」と書くので、決定と食い違う。決定は、決定のコメントで
+    // PR に残る。返信を待っている間に人が決めたときも、ここで外れる。PBI-383）
+    !(r.status === "deferred" && r.deferral?.decision !== undefined) &&
     (r.step !== gate.step || r.respondedIn === gate.submission)
       ? [
           {

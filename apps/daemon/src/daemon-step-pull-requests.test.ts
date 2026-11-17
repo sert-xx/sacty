@@ -5028,9 +5028,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               const prompt = promptOf(executor, before + 1);
               expect(prompt).not.toContain("- [implement-1-1]");
               expect(prompt).toContain('"awaitingDecision"');
-              expect(prompt).toContain(
-                "sacty が、提出のときに、PR に、人間に確認中の案として返信する",
-              );
+              expect(prompt).toContain("PR への返信は、sacty が扱う。自分では返信しない");
               expect(prompt).not.toContain("PR には、人間に確認中と返信してある");
               const task = taskOf(service, id);
               expect(task.status).toBe("awaiting_approval");
@@ -5205,6 +5203,124 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(task.reviewRejudge).toMatchObject({ commit: first, awaitsDecision: true });
               carried(task, 2);
               await repliesThenWaits(service, pulls, id, childId);
+              activity.close();
+            });
+
+            it("持ち越した案を、返信する前に人が決めたら、「人に確認中」の返信は投稿しない（前の版の記録を読み直したときと同じ状態）", async () => {
+              const made = await reviewed([deferredUnfinished(), implement("# 実装の説明 v2")]);
+              const { activity, service, executor, pulls, repos, id } = made;
+              repos.sameAsParent = false;
+              progress(executor, repos);
+              await settle(service, id);
+              const task = taskOf(service, id);
+              expect(task.status).toBe("awaiting_approval");
+              carried(task, 2);
+              // 返信の周期より先に、人が、後続に回すと決める
+              decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+              await decisionPosted(service, id);
+              expect(notices(pulls)).toHaveLength(1);
+              await service.runNext(id);
+              await service.checkPullRequests();
+              await service.runNext(id);
+              expect(replies(pulls)).toHaveLength(0);
+              expect(count(service, id, "RemarkRepliesPosted")).toBe(0);
+              expect(taskOf(service, id).remarks[0]?.repliedIn).toBeUndefined();
+              activity.close();
+            });
+
+            /** 先頭を変えて案を出した提出の返信が、GitHub のレート制限の待ちに入ったところまで進める。 */
+            async function replyLimited(outcomes: AgentOutcome[]) {
+              const pulls = new FakePulls();
+              const repos = new FakeRepos();
+              const clock = { now: later() };
+              const made = await start(
+                [implement(), verdictOut("changes_required"), deferred(), ...outcomes],
+                { ...options(pulls, repos, projectsWithAccount()), now: () => clock.now },
+              );
+              const { service, id } = made;
+              await settle(service, id);
+              const childId = childOf(service, id);
+              pulls.prInfo = {
+                ...pulls.prInfo,
+                number: 7,
+                url: "https://github.com/acme/app/pull/7",
+                headSha: commitOf(service, id),
+              };
+              await runReview(service, childId);
+              pulls.feedbackBy[7] = [posted(pulls, 0)];
+              await service.checkPullRequests();
+              await settle(service, id);
+              expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 2 });
+              pulls.rateLimited = true;
+              await service.runNext(id);
+              pulls.rateLimited = false;
+              expect(count(service, id, "RemarkRepliesDeferred")).toBe(1);
+              expect(replies(pulls)).toHaveLength(0);
+              return { ...made, pulls, repos, childId, clock };
+            }
+
+            it("案の返信が GitHub のレート制限の待ちに入っている間に人が決めたら、待ちが明けても、「人に確認中」の返信は投稿しない", async () => {
+              const made = await replyLimited([]);
+              const { activity, service, pulls, id, clock } = made;
+              decide(service, id, [{ remarkId: "implement-1-1", decision: "defer" }]);
+              await decisionPosted(service, id);
+              clock.now += 61_000;
+              await service.runNext(id);
+              await service.runNext(id);
+              expect(replies(pulls)).toHaveLength(0);
+              expect(count(service, id, "RemarkRepliesPosted")).toBe(0);
+              activity.close();
+            });
+
+            it("返信の待ちの間に、人が「この PR で直す」と決めたら、「人に確認中」の返信は投稿せず、直した対応だけを、元のコメントに返信する", async () => {
+              const made = await replyLimited([
+                responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+              ]);
+              const { activity, service, pulls, id, clock } = made;
+              decide(service, id, [{ remarkId: "implement-1-1", decision: "fix" }]);
+              await decisionPosted(service, id);
+              await settle(service, id);
+              expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 3 });
+              clock.now += 61_000;
+              await service.runNext(id);
+              const bodies = replies(pulls).map((r) => r.body);
+              expect(bodies).toHaveLength(1);
+              expect(bodies[0]).toContain("**対応しました。**");
+              expect(bodies[0]).not.toContain(NOTE);
+              activity.close();
+            });
+
+            it("提出した案の返信が、GitHub のレート制限の待ちの間に、次の指摘で作り直しになっても、次の提出のときに、案を 1 回だけ返信する", async () => {
+              const made = await replyLimited([
+                verdictOut("changes_required", "# 評価\n\n別の要修正"),
+                responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+              ]);
+              const { activity, service, pulls, id, childId, clock } = made;
+              // 返信できないまま、新しい先頭のレビューの指摘で、作り直す
+              pulls.prInfo = { ...pulls.prInfo, headSha: commitOf(service, id) };
+              await service.checkPullRequests();
+              await runReview(service, childId);
+              pulls.feedbackBy[7] = [posted(pulls, 0), posted(pulls, 1)];
+              await service.checkPullRequests();
+              expect(taskOf(service, id).status).toBe("queued");
+              await settle(service, id);
+              const task = taskOf(service, id);
+              expect(task.gate).toEqual({ step: "implement", submission: 3 });
+              // 案の理由を、3 回目の提出の対応として持ち越している
+              carried(task, 3);
+              clock.now += 61_000;
+              await service.runNext(id);
+              let bodies = replies(pulls).map((r) => r.body);
+              expect(bodies).toHaveLength(2);
+              expect(bodies.filter((b) => b.includes(NOTE) && b.includes(REASON))).toHaveLength(1);
+              expect(bodies.filter((b) => b.includes("**対応しました。**"))).toHaveLength(1);
+              // 繰り返しても、重ねない
+              await service.runNext(id);
+              await service.checkPullRequests();
+              await service.runNext(id);
+              bodies = replies(pulls).map((r) => r.body);
+              expect(bodies).toHaveLength(2);
+              expect(taskOf(service, id).remarks[0]?.repliedIn).toBe(3);
               activity.close();
             });
 
@@ -6049,6 +6165,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 issue(made.service, made.id);
                 await vi.waitFor(() => expect(handled(made.service, made.id)).toHaveLength(1));
                 const payload = handled(made.service, made.id)[0]?.payload as { failure?: unknown };
+                // 同じ台帳で繰り返すので、このタスクを中止しておく（決定済みで、返信するものが無い提出は、次の PR の確認で、
+                // 同じ PR 番号のレビューの子タスクに判定し直しを始めさせ、次の繰り返しの子タスクが作られなくなる）
+                await made.service.cancel(made.id);
                 made.activity.close();
                 return payload.failure as { code?: string } | string;
               };
