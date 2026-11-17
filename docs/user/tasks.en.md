@@ -747,24 +747,36 @@ There are three levels, and each level has a fixed suggested review depth.
 
 | Level | What kind of change | Suggested review depth |
 | --- | --- | --- |
-| High | At least one of the risk signals below applies | Check from the design and impact |
-| Medium | It changes behavior, but its reach is limited, reverting it undoes it, and the changed behavior has been verified | Read where the behavior changes |
-| Low | Only safe kinds of change, such as documents, comments, formatting, tests only, or refactoring that does not change behavior | A skim is enough |
+| High | At least one heavy signal applies. Or two or more light signals apply. Or a dependency version update is a major one, or its size could not be read | Check from the design and impact |
+| Medium | Exactly one light signal applies. Or no signal applies but it changes behavior (its reach is limited, reverting it undoes it, and the changed behavior has been verified) | Read where the behavior changes |
+| Low | Only safe kinds of change, such as documents, comments, formatting, tests only, or refactoring that does not change behavior. A change with only minor or patch dependency version updates is also low | A skim is enough |
 
-The risk signals are the following eight.
+The risk signals are the following seven. Some are heavy and some are light.
 
-- Security (related to authentication, permissions, secrets, input validation, and so on)
-- Hard-to-undo change (migrating or deleting data, changing a storage format, sending something externally, and so on)
-- Compatibility change (changing a public API, a setting, a file format, and so on incompatibly)
-- Structural or wide-reaching change
-- Performance or concurrency
-- Suspected defect
-- Large diff
-- Unverified behavior
+| Signal | Weight | What kind of change |
+| --- | --- | --- |
+| Security | Heavy | Changes security-related behavior, such as authentication, permissions, the handling of secrets, or input validation |
+| Hard-to-undo change | Heavy | Migrating or deleting data, changing a storage format, sending something externally, and so on |
+| Compatibility change | Heavy | Changing a public API, a setting, a file format, and so on incompatibly |
+| Structural or wide-reaching change | Light | Changes the structure substantially, or changes behavior across many places |
+| Performance or concurrency | Light | Affects performance, concurrency, or resource use |
+| Large diff | Light | The diff is large, so following the intent takes effort |
+| Unverified behavior | Light | The changed behavior has not been verified by tests or by running it |
+
+For a dependency version update (a change to the version of an external library or the like that is used), the size of the update decides the level.
+
+| Size | Level |
+| --- | --- |
+| Major | High |
+| Minor or patch | Low when nothing else changes (the same applies to an update that fixes a vulnerability) |
+| The size could not be read | High |
+
+When other code changes together with a dependency version update, the level is the higher of that code change's level and the update's level.
 
 Besides the level and the suggested depth, the section holds the following.
 
-- The risk signals that apply
+- The risk signals that apply (each name carries heavy or light)
+- The size of the dependency version update (when there is one)
 - The kind of change, the reach of the impact, the ease of undoing, and what was verified
 - The places to look at (file and lines, and the reason to look)
 
@@ -775,6 +787,7 @@ Keep the following in mind about the assessment.
 - The result also appears in the "PR risk assessment" section of the task detail and in the activity.
 - A requirements or design PR does not carry a risk assessment.
 - When the project's or repository's context has a skill or rules about RADAR (the idea of varying the review depth with the risk of a change), the AI puts that content before the criteria above when it assesses (the levels stay low, medium, and high).
+- A task assessed by an earlier version may show the signal "不具合の疑い" (suspected defect). This signal does not count toward the level.
 - For the detailed rules of the criteria, see the [specification](../spec/risk-assessment.en.md).
 
 ### The form of the commit message
