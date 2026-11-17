@@ -341,7 +341,12 @@ import {
   platformSummary,
   readOnlyPlatforms,
 } from "./platforms.js";
-import { unlinkedGeneratedBody, unlinkedMergedBody } from "./pr-body-links.js";
+import {
+  PARSE_TIMEOUT_MS,
+  type UnlinkedBody,
+  unlinkedGeneratedBody,
+  unlinkedMergedBody,
+} from "./pr-body-links.js";
 import {
   buildPullRequestBodyMergePrompt,
   extractMergedPullRequestBody,
@@ -1153,6 +1158,24 @@ function warnDraftUnknown(number: number, repo: string): void {
   console.warn(
     `[daemon] PR #${number}（${repo}）がドラフトかを GitHub の答えから読めなかったので、ドラフトを合わせませんでした（次の確認でやり直します）`,
   );
+}
+
+/**
+ * PR の本文から、コンテナの作業領域へのリンクを外した結果を受け取る（PBI-372）。外せなかった（解析が時間の上限までに
+ * 終わらない・失敗した）ときは、リンクを外さない本文を使い、そのことと原因をログに残す（PR の作成・更新は止めない。
+ * 本文の中身は、ログに出さない）。
+ */
+function linksUnlinked(result: UnlinkedBody, taskId: string, repo: string): string {
+  if (result.skipped) {
+    const reason =
+      result.skipped === "timeout"
+        ? `解析が ${PARSE_TIMEOUT_MS / 1000} 秒で終わりませんでした`
+        : `解析に失敗しました：${result.cause ?? "原因は不明"}`;
+    console.warn(
+      `[daemon] タスク ${taskId} の PR（${repo}）の本文から、作業領域へのリンクを外せませんでした（${reason}）。本文は、リンクを外さずに使います`,
+    );
+  }
+  return result.body;
 }
 
 /**
@@ -9020,6 +9043,7 @@ export class TaskService {
       };
       // 本文は、待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
       const { body } = await this.pullRequestBody(
+        task.id,
         pr.repo,
         token,
         usedSecrets,
@@ -12095,6 +12119,7 @@ export class TaskService {
         sameRepo,
       );
       const { body, template } = await this.pullRequestBody(
+        task.id,
         repo,
         token,
         usedSecrets,
@@ -12174,6 +12199,7 @@ export class TaskService {
    * 使うため。PBI-323）。
    */
   private async pullRequestBody(
+    taskId: string,
     repo: string,
     token: string,
     usedSecrets: readonly string[],
@@ -12224,8 +12250,9 @@ export class TaskService {
     // 長さの上限の後でよい（上限で省いた後の本文に、省けない部分が残る）。
     // 置き換えで文字がつながる・リンク先の文字参照が元の文字に戻ると、伏せたはずの秘密の値が現れうるので、置き換えの後にも
     // 伏せる。伏せた結果が上限を超える（伏せ字が値より長い）ときは、置き換えをやめて、上限の中の本文を使う
+    // 本文の解析は別スレッドで動かす（記号が長く続く本文でも、デーモンのほかの処理を待たせない。PBI-372）
     return {
-      body: unlinkedGeneratedBody(limited.body, usedSecrets),
+      body: linksUnlinked(await unlinkedGeneratedBody(limited.body, usedSecrets), taskId, repo),
       template: { ...template, ...(limited.truncated ? { truncated: true } : {}) },
     };
   }
@@ -12297,7 +12324,8 @@ export class TaskService {
       return { record: false };
     }
     if (merged.conflicts === 0 && merged.text.length <= PR_BODY_MAX) {
-      return { body: unlinkedMergedBody(merged.text, input.secrets), record: true };
+      const unlinked = await unlinkedMergedBody(merged.text, input.secrets);
+      return { body: linksUnlinked(unlinked, task.id, input.repo), record: true };
     }
     // 重なった箇所は、エージェントにまとめさせる
     const kept = (reason: DaemonText, cost: Record<string, unknown> = {}) => {
@@ -12376,7 +12404,8 @@ export class TaskService {
         },
       },
     ]);
-    return { body: unlinkedMergedBody(body, input.secrets), record: true };
+    const unlinked = await unlinkedMergedBody(body, input.secrets);
+    return { body: linksUnlinked(unlinked, task.id, input.repo), record: true };
   }
 
   /**
@@ -12729,6 +12758,7 @@ export class TaskService {
       task = this.mustGet(task.id);
       // 本文の「sacty のタスク「…」」は、待つ間に人が変えた題にする（テンプレートを読んだ後に作る。PBI-323）
       const { body, template } = await this.pullRequestBody(
+        task.id,
         prRepo,
         token,
         usedSecrets,

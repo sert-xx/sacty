@@ -39,7 +39,8 @@ import type { ConfigResult, SactyConfig } from "./config.js";
 import { AgentTimeoutError, MessageError } from "./errors.js";
 import type { PullRequestFeedback, PullRequestInfo, PullRequestStatus } from "./github.js";
 import { GitHubRateLimitStore } from "./github-rate-limits.js";
-import { withoutWorkspaceLinks } from "./pr-body-links.js";
+import { unlinkedGeneratedBody, unlinkedMergedBody } from "./pr-body-links.js";
+import { convertWorkspaceLinks } from "./pr-body-links-worker.js";
 import { BODY_BEGIN, BODY_END } from "./pr-body-merge.js";
 import { PR_BODY_MAX } from "./pr-template.js";
 import { MemoryProjectStore } from "./projects.js";
@@ -88,6 +89,30 @@ import {
 import { idleFor, loopTurn, waitFor } from "./testing/wait.js";
 
 useTempDir();
+
+// 作業領域へのリンクを外す処理は、ふだんは本物を動かす（別スレッドで解析する）。外せなかったとき（時間切れ・失敗）の
+// サービスの扱いは、テストごとに結果を差し替えて確かめる（PBI-372。本物で起こすと、時間やスタックの大きさに依存する）
+vi.mock("./pr-body-links.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pr-body-links.js")>();
+  return {
+    ...actual,
+    unlinkedGeneratedBody: vi.fn(actual.unlinkedGeneratedBody),
+    unlinkedMergedBody: vi.fn(actual.unlinkedMergedBody),
+  };
+});
+
+/** 変換の本体を、このスレッドで直接呼ぶ（外した後の本文）。変換の途中の例外が無かったことも、ここで確かめる。 */
+const withoutWorkspaceLinks = (body: string) => {
+  const converted = convertWorkspaceLinks(body, "/workspace");
+  expect(converted.failed).toBeUndefined();
+  return converted.body;
+};
+
+/** 警告のログのうち、作業領域へのリンクを外せなかったことの行。 */
+const linksKeptLogs = (warn: { mock: { calls: unknown[][] } }) =>
+  warn.mock.calls
+    .map((call) => String(call[0]))
+    .filter((line) => line.includes("作業領域へのリンクを外せませんでした"));
 
 describe("実装の工程と実装の PR（PBI-10a）", () => {
   const out = (text: string, usageOutput = 100): AgentOutcome => ({
@@ -5853,6 +5878,73 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     made.activity.close();
   });
 
+  it("本文の解析に失敗したら、リンクを外さずに PR を作り、外せなかったことと原因をログに残す（PBI-372）", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // 別スレッドがメモリの上限でエラーになった。sacty が組み立てた本文なので、秘密の値は伏せ直して返る
+      vi.mocked(unlinkedGeneratedBody).mockImplementationOnce(async (body) => ({
+        body,
+        skipped: "error",
+        cause: "別スレッドのエラー（ERR_WORKER_OUT_OF_MEMORY）",
+      }));
+      const made = await toImplement([
+        implement("[手順](/workspace/docs/setup.md) を直しました。"),
+      ]);
+      await drain(made.service);
+      // PR は作る。リンクは残る
+      expect(made.pulls.calls).toHaveLength(1);
+      expect(made.pulls.calls[0]?.body).toContain(
+        "[手順](/workspace/docs/setup.md) を直しました。",
+      );
+      // 本文の中身は、ログに出さない
+      expect(linksKeptLogs(warn)).toEqual([
+        `[daemon] タスク ${made.id} の PR（https://github.com/acme/app）の本文から、作業領域へのリンクを外せませんでした（解析に失敗しました：別スレッドのエラー（ERR_WORKER_OUT_OF_MEMORY））。本文は、リンクを外さずに使います`,
+      ]);
+      made.activity.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("本文の解析が時間の上限までに終わらなければ、リンクを外さずに PR を作り、打ち切ったことをログに残す（PBI-372）", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      vi.mocked(unlinkedGeneratedBody).mockImplementationOnce(async (body) => ({
+        body,
+        skipped: "timeout",
+      }));
+      const made = await toImplement([
+        implement("[手順](/workspace/docs/setup.md) を直しました。"),
+      ]);
+      await drain(made.service);
+      expect(made.pulls.calls).toHaveLength(1);
+      expect(made.pulls.calls[0]?.body).toContain(
+        "[手順](/workspace/docs/setup.md) を直しました。",
+      );
+      expect(linksKeptLogs(warn)).toEqual([
+        `[daemon] タスク ${made.id} の PR（https://github.com/acme/app）の本文から、作業領域へのリンクを外せませんでした（解析が 5 秒で終わりませんでした）。本文は、リンクを外さずに使います`,
+      ]);
+      made.activity.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("本文の解析ができたときは、外せなかったことのログを出さない（PBI-372）", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const made = await toImplement([
+        implement("[手順](/workspace/docs/setup.md) を直しました。"),
+      ]);
+      await drain(made.service);
+      expect(made.pulls.calls[0]?.body).toContain("手順（`docs/setup.md`） を直しました。");
+      expect(linksKeptLogs(warn)).toEqual([]);
+      made.activity.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("実装の工程が終わったら、ブランチにプッシュしてPRを作り、実装の承認待ちで止まる（PBI-10b・PBI-110）", async () => {
     const { activity, service, repos, pulls, id } = await toImplementGate();
     // コミットの日時は、実装の工程の実行が終わった日時（PBI-331）
@@ -8035,6 +8127,58 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         { actor: "orchestrator", payload: { number: 7, outcome: "resolved" } },
       ]);
       expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
+      activity.close();
+    });
+
+    it("人の直しとマージした本文の解析が時間の上限までに終わらなければ、マージした本文のまま更新し、ログに残す（PBI-372）", async () => {
+      const { activity, service, pulls, id } = await toImplementGate(rework());
+      const first = pulls.calls[0]?.body ?? "";
+      const note = "> 人のメモ：[手順](/workspace/docs/setup.md) に沿う。";
+      pulls.bodies[7] = `${note}\n\n${first}`;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        vi.mocked(unlinkedMergedBody).mockImplementationOnce(async (body) => ({
+          body,
+          skipped: "timeout",
+        }));
+        sendBack(service, id);
+        await drain(service);
+        // PR は更新する。人が書いたリンクは残り、sacty の更新も入る
+        const updated = pulls.calls[1]?.body ?? "";
+        expect(updated.startsWith(`${note}\n\n`)).toBe(true);
+        expect(updated).toContain("実装の説明 v2");
+        expect(linksKeptLogs(warn)).toEqual([
+          `[daemon] タスク ${id} の PR（https://github.com/acme/app）の本文から、作業領域へのリンクを外せませんでした（解析が 5 秒で終わりませんでした）。本文は、リンクを外さずに使います`,
+        ]);
+      } finally {
+        warn.mockRestore();
+      }
+      activity.close();
+    });
+
+    it("エージェントがまとめた本文の解析に失敗したら、まとめた本文のまま更新し、原因をログに残す（PBI-372）", async () => {
+      const merged = "## まとめた本文\n\n[手順](/workspace/docs/setup.md) のとおり。";
+      const { activity, service, pulls, id } = await toImplementGate([
+        ...rework(),
+        out(`まとめました\n${BODY_BEGIN}\n${merged}\n${BODY_END}`),
+      ]);
+      pulls.bodies[7] = "人が全部書き直した本文";
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        vi.mocked(unlinkedMergedBody).mockImplementationOnce(async (body) => ({
+          body,
+          skipped: "error",
+          cause: "別スレッドが答えずに終了（終了コード 1）",
+        }));
+        sendBack(service, id);
+        await drain(service);
+        expect(pulls.calls[1]?.body).toBe(merged);
+        expect(linksKeptLogs(warn)).toEqual([
+          `[daemon] タスク ${id} の PR（https://github.com/acme/app）の本文から、作業領域へのリンクを外せませんでした（解析に失敗しました：別スレッドが答えずに終了（終了コード 1））。本文は、リンクを外さずに使います`,
+        ]);
+      } finally {
+        warn.mockRestore();
+      }
       activity.close();
     });
 

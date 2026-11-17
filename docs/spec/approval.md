@@ -489,7 +489,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
     `Closes #123` があっても `Closes #12` が残ったとは見なさない。
 - 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。要約・短縮（結論の要約・表のテスト名や観点の題・人が確かめること・不合格のまま進めた記録の所見など）で切れた先頭が残らないよう、本文を作る前に、タスクのすべての文字列から伏せる（`PullRequestBodyStage.secrets`）。公開の直前の置換も残す。
   台帳に残す理由の文も伏せる。
-- コンテナの作業領域へのリンク（`withoutWorkspaceLinks`。PBI-366）：長さの上限と秘密の値の扱いの後の本文から、リンク先がコンテナの作業領域（`CONTAINER_WORKSPACE`。`/workspace` とその下）の Markdown のリンク・画像を、リンクでない表記にする（エージェントの説明に入ることがあり、GitHub では開けないため）。
+- コンテナの作業領域へのリンク（`convertWorkspaceLinks`。PBI-366）：長さの上限と秘密の値の扱いの後の本文から、リンク先がコンテナの作業領域（`CONTAINER_WORKSPACE`。`/workspace` とその下）の Markdown のリンク・画像を、リンクでない表記にする（エージェントの説明に入ることがあり、GitHub では開けないため）。
   - 表示の文字（リンクは元の書き方のまま。画像は代わりの文字）を残す。表示の文字にパス（`#`・`?` より後ろを除く）が出ていなければ、全角の括弧の中に、作業領域からのパス（リポジトリのルートからのパス）をインラインのコードで添える。表示の文字が空なら、パスのインラインのコードだけにする。作業領域そのものへのリンクは、表示の文字だけにする（表示の文字も空なら、変えない。外すと何も残らず、前後の文字が、空白を挟んでつながるため）。リンクの中にある作業領域への画像も外す。
   - どこがリンク・画像かは、Markdown のパーサー（`mdast-util-from-markdown`。CommonMark）で決め、その範囲だけを置き換える。パーサーがリンクと見なさないもの（コードブロックとインラインコードの中、打ち消した角括弧）と、ほかのリンク（URL・相対パス・`/workspace` で始まる別の名前のパス）は変えない。参照形式のリンク（と、その定義）と HTML のリンクは変えない。
   - 置き換えは、本文を長くしない（長さの上限の後に行うため）。パスにバッククォートが続いて、コードの書式の囲みが元のリンクより長くなるときは、パスを添えずに表示の文字だけにする。表示の文字も無ければ、そのリンクは変えない。
@@ -505,8 +505,14 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
     - パス（リンク先を読んだ後のもの）に縦棒があるリンク：表の中で、添えたパスの縦棒が列の区切りになり、行のセルが割れるため。
   - 確かめるのは、上の種類だけである。GitHub のほかの解釈が、外した後の文字のつながりで変わることは、確かめない：空白を挟んでつながる並び（`[Fix](/workspace/Fix)es #12` は `Fixes #12` になる）、コミットの SHA のリンク、絵文字（`:名前:`）、タスクリストのチェックボックス、表の中で、行が区切りの行の形になる・添えたパスのバッククォートが、同じセルの組になっていないバッククォートと組になること。
   - 作業領域へのリンクがありえない本文は、解析しない（`cannotLinkToWorkspace`）。`](` が無い本文と、作業領域のパス・バックスラッシュ・文字参照（`&#115;` など）のどれも無い本文。リンク先を自前で読んで決めず、パーサーが作業領域へのリンクと解釈しうる本文は、すべて解析する。
-  - 解析は、デーモンの中で同期に行う。本文の上限（65,000 文字）で、ふつうの本文は 0.1 秒ほど。解析に回る本文で、記号（`>`・`*`・`+` など）が上限いっぱいまで続くと、数秒〜数十秒かかり、その間、デーモンのほかの処理は待つ（PR の作成・更新のたびに1回。すでにある PR の更新で、人の直しとマージした本文・エージェントがまとめた本文を使うときは、その本文にも1回）。
-  - 解析に失敗したら、本文を変えずに使う（PR の作成・更新は止めない）。
+  - 解析と置き換えは、デーモンとは別のスレッドで行う（`convertOffThread`。PBI-372）。解析は同期で動き、途中で止められないので、デーモンのスレッドでは動かさない。解析を待つ間も、デーモンはほかの処理（HTTP の応答・停止の操作など）に応える。
+    別スレッドは、解析する本文ごとに1つ起動し、答えを受け取ったら止める（PR の作成・更新のたびに1回。すでにある PR の更新で、人の直しとマージした本文・エージェントがまとめた本文を使うときは、その本文にも1回）。作業領域へのリンクがありえない本文では、起動しない（順番も待たない）。
+  - 同時に動かす別スレッドは、1つ（`PARSE_CONCURRENCY`）。ほかの本文は、来た順に待つ（`inTurn`）。遅い本文が重なっても、解析に使う CPU とメモリは、1つ分になる。別スレッドのメモリ（古い世代のヒープ）には、上限を置く（`PARSE_MEMORY_MB`。128MB）。
+  - 解析を待つ時間に、上限を置く（`PARSE_TIMEOUT_MS`。5 秒）。上限は、順番が来て別スレッドを起動してから数える（順番を待つ時間は入れない。前に遅い本文があれば、その1つにつき最大 5 秒待つ）。
+    本文の上限（65,000 文字）で、ふつうの本文は、別スレッドの起動を含めて 0.1〜0.3 秒で終わる。解析に回る本文で、記号（`>`・`*`・`+` など）が上限いっぱいまで続くと、解析に数秒〜数十秒かかるので、上限で打ち切る（別スレッドを止める）。遅くなる本文を、解析の前に形で見分けることはしない。
+  - 解析を打ち切った・解析に失敗したときは、作業領域へのリンクを外さない本文を使う（PR の作成・更新は止めない。その本文では、作業領域へのリンクが残る）。sacty が組み立てた本文は、このときも秘密の値を伏せ直す。人の直しとマージした本文・エージェントがまとめた本文は、そのまま使う。
+    失敗は、解析・置き換えの途中の例外（深い入れ子でスタックがあふれた、など）、別スレッドのエラー（メモリの上限を超えた、など）、別スレッドを起動できない・別スレッドが答えずに終わった・答えが本文でない（元より長い）とき。
+    外せなかったことと理由を、タスクの ID・リポジトリと一緒に、デーモンのログに残す（`linksUnlinked`）。理由は、時間の上限か、失敗とその原因（例外の名前・エラーのコード・終了コード。`errorLabel`）。作業履歴には残さない。本文の中身と、例外のメッセージは、ログに出さない。
   - 置き換えの後に、秘密の値をもう一度伏せる（`unlinkedGeneratedBody`）。リンク先の文字参照が元の文字に戻る・外したリンクの前後の文字がつながると、伏せた後の本文に秘密の値が現れうるため。伏せた結果が長さの上限を超えるときは、置き換えをやめて、上限の中の本文を使う。
   - 要求要件・設計の PR と実装の PR の、作成と更新のどちらの本文にも行う。すでにある PR の更新で、人の直しとマージした本文・エージェントがまとめた本文にも行う（`unlinkedMergedBody`。[人が直した本文の更新](#人が直した本文の更新)）。台帳に残す本文（`PullRequestBodyWritten`）も、外した後のもの。PR に投稿するレビュー・コメントには行わない。
 - 台帳：`PullRequestPublished`・`StepPullRequestPublished` の `template` に、次を残す。
@@ -523,7 +529,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - パスは区切りごとに符号にし（括弧も符号にして、リンク先が途中で閉じないようにする）、リンクの文字はパスのインラインのコード（中にバッククォートがあれば、より長いバッククォートで囲む）。
   - PR の URL が `<リポジトリ>/pull/<番号>` の形でなければ、パスのインラインのコードと、全角の括弧の中に「PR：」と山括弧で囲んだ URL（自動リンク）にする。URL が無ければパスだけ。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/pr-body-links.ts`（`withoutWorkspaceLinks`・`cannotLinkToWorkspace`・`shapeOf`・`activeOutsideLink`・`ACTIVE_RUNS`・`joinedSpans`・`unlinkedGeneratedBody`・`unlinkedMergedBody`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/pr-body-links.ts`（`convertOffThread`・`convertInWorker`・`inTurn`・`errorLabel`・`PARSE_TIMEOUT_MS`・`PARSE_MEMORY_MB`・`PARSE_CONCURRENCY`・`unlinkedGeneratedBody`・`unlinkedMergedBody`）、`apps/daemon/src/pr-body-links-worker.ts`（`convertWorkspaceLinks`・`cannotLinkToWorkspace`・`shapeOf`・`activeOutsideLink`・`readLabel`・`ACTIVE_RUNS`・`activeRuns`・`joinedSpans`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`linksUnlinked`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ### 人が直した本文の更新
 
@@ -566,10 +572,11 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
      - まとめる間に人が本文をまた直した（`pr.bodyEditedDuringMerge`）・読み直せない（`pr.bodyRereadFailed`）
      - 重ねた PR の向き先の付け替え（`retargetPullRequest`）のとき。付け替えはタスクの実行の外なので、エージェントを実行しない（`pr.bodyMergeDeferred`）
      - マージに失敗した（`pr.bodyMergeError`）
-- 作業領域へのリンク：更新に使う本文（上の 4. のマージの結果・5. のまとめた本文）からも、コンテナの作業領域へのリンクを外す（`unlinkedMergedBody`。外し方は [長さ・秘密の値・台帳](#長さ秘密の値台帳) の `withoutWorkspaceLinks`）。
+- 作業領域へのリンク：更新に使う本文（上の 4. のマージの結果・5. のまとめた本文）からも、コンテナの作業領域へのリンクを外す（`unlinkedMergedBody`。外し方は [長さ・秘密の値・台帳](#長さ秘密の値台帳) の `convertWorkspaceLinks`）。
   - 人が書いた作業領域へのリンクも外れる。ほかのリンク・書き方は変えない。
   - 外すリンクが無ければ、本文をそのまま使う（秘密の値も伏せ直さない。人が書いた本文に、ほかの手を加えない）。sacty が組み立てた本文（`unlinkedGeneratedBody`）は、外すリンクが無くても伏せ直すので、ここだけが違う。
   - 外して本文が変わったときは、その PR の作成で使った秘密の値を伏せ直す（人が書いた文字も、値と同じなら伏せる）。伏せた結果が `PR_BODY_MAX` を超えるときは、外すのをやめて、外す前の本文を使う。
+  - 解析を打ち切った・解析に失敗したときは、本文をそのまま使い（秘密の値も伏せ直さない）、外せなかったことをログに残す。
   - 前回の版として記録するのは、新しく組み立てた本文のまま。
 - 費用：`PullRequestBodyResolved` の費用は、タスクの予算に入れる（`CHARGED_EVENT_TYPES`）。工程ごとの費用の表では、オーケストレーターの行に出す。
 - 作業履歴の表示：「PR #… の本文を書いた」、エージェントがまとめた・まとめられなかった（理由）を出す。

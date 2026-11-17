@@ -1,10 +1,19 @@
-import { describe, expect, it } from "vitest";
-import {
-  unlinkedGeneratedBody,
-  unlinkedMergedBody,
-  withoutWorkspaceLinks,
-} from "./pr-body-links.js";
+import { EventEmitter } from "node:events";
+import { describe, expect, it, vi } from "vitest";
+import { PARSE_TIMEOUT_MS, unlinkedGeneratedBody, unlinkedMergedBody } from "./pr-body-links.js";
+import { type ConvertJob, convertWorkspaceLinks } from "./pr-body-links-worker.js";
 import { PR_BODY_MAX } from "./pr-template.js";
+
+/**
+ * 変換の本体を、このスレッドで直接呼ぶ（外した後の本文）。デーモンは、別スレッドで呼ぶ（`unlinkedGeneratedBody` など）。
+ * 変換の途中の例外では、本体は渡した本文をそのまま返す。「外さない」ことを確かめるテストが、例外を見逃さないように、
+ * 例外が無かったことを、ここで確かめる。
+ */
+const withoutWorkspaceLinks = (body: string) => {
+  const converted = convertWorkspaceLinks(body, "/workspace");
+  expect(converted.failed).toBeUndefined();
+  return converted.body;
+};
 
 describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366）", () => {
   it("作業領域のパスへのリンクを外し、表示の文字を残す", () => {
@@ -520,47 +529,48 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
 });
 
 describe("すでにある PR の更新で、マージした本文・まとめた本文からも、作業領域へのリンクを外す（unlinkedMergedBody）", () => {
-  it("作業領域へのリンクを外す。ほかのリンク・書き方は変えない", () => {
+  it("作業領域へのリンクを外す。ほかのリンク・書き方は変えない", async () => {
     const human = [
       "> 人のメモ：[設計](https://example.com/design) と [相対](docs/a.md) を見ること。",
       "",
       "値は `ghp_secret` ではなく、[手順](/workspace/docs/setup.md) のとおりに入れる。  ",
       "<!-- 人のコメント -->",
     ].join("\n");
-    expect(unlinkedMergedBody(human, [])).toBe(
-      human.replace("[手順](/workspace/docs/setup.md)", "手順（`docs/setup.md`）"),
-    );
+    expect(await unlinkedMergedBody(human, [])).toEqual({
+      body: human.replace("[手順](/workspace/docs/setup.md)", "手順（`docs/setup.md`）"),
+    });
   });
 
-  it("外すリンクが無ければ、渡された本文をそのまま返す（秘密の値と同じ文字があっても、人の本文に手を加えない）", () => {
+  it("外すリンクが無ければ、渡された本文をそのまま返す（秘密の値と同じ文字があっても、人の本文に手を加えない）", async () => {
     const body = "人が書いた本文。[設計](https://example.com/design) の値は abc です。";
-    expect(unlinkedMergedBody(body, ["abc"])).toBe(body);
+    expect(await unlinkedMergedBody(body, ["abc"])).toEqual({ body });
     // sacty が組み立てた本文は、外すリンクが無くても、伏せ直す
-    expect(unlinkedGeneratedBody(body, ["abc"])).toBe(
-      "人が書いた本文。[設計](https://example.com/design) の値は [REDACTED] です。",
-    );
+    expect(await unlinkedGeneratedBody(body, ["abc"])).toEqual({
+      body: "人が書いた本文。[設計](https://example.com/design) の値は [REDACTED] です。",
+    });
     // 外せない（変えずに残す）リンクだけのときも、そのまま返す
     const kept = "ping [@](/workspace)octocat の値は abc です。";
-    expect(unlinkedMergedBody(kept, ["abc"])).toBe(kept);
+    expect(await unlinkedMergedBody(kept, ["abc"])).toEqual({ body: kept });
   });
 
-  it("外した後に現れる秘密の値を、伏せる（文字がつながる・リンク先の文字参照が元の文字に戻る）", () => {
+  it("外した後に現れる秘密の値を、伏せる（文字がつながる・リンク先の文字参照が元の文字に戻る）", async () => {
     const body = [
       "値は ghp_[s](/workspace)ecret です。",
       "[手順](/workspace/docs/ghp&#95;secret.md) を直しました。",
     ].join("\n\n");
-    expect(unlinkedMergedBody(body, ["ghp_secret"])).toBe(
-      ["値は [REDACTED] です。", "手順（`docs/[REDACTED].md`） を直しました。"].join("\n\n"),
-    );
+    expect(await unlinkedMergedBody(body, ["ghp_secret"])).toEqual({
+      body: ["値は [REDACTED] です。", "手順（`docs/[REDACTED].md`） を直しました。"].join("\n\n"),
+    });
   });
 
-  it("伏せた結果が長さの上限を超えるときは、外すのをやめて、渡された本文を返す（秘密の値は現れない・上限を超えない）", () => {
+  it("伏せた結果が長さの上限を超えるときは、外すのをやめて、渡された本文を返す（秘密の値は現れない・上限を超えない）", async () => {
     // 短い秘密の値（伏せ字より短い）が、リンク先の文字参照から何度も現れる。伏せると、外して縮んだ分より長くなる
     const secret = "ghx";
     const link = `[手順](/workspace/${"gh&#120;".repeat(1_000)})`;
     const body = `${link}\n\n${"説明。".repeat(30_000)}`.slice(0, PR_BODY_MAX);
     expect(body.length).toBe(PR_BODY_MAX);
-    const out = unlinkedMergedBody(body, [secret]);
+    const { body: out, skipped } = await unlinkedMergedBody(body, [secret]);
+    expect(skipped).toBeUndefined();
     expect(out).toBe(body);
     expect(out).not.toContain(secret);
     // 外していれば、伏せた後に上限を超えていた（この分岐を通ったことの確認）
@@ -569,8 +579,301 @@ describe("すでにある PR の更新で、マージした本文・まとめた
     expect(unlinked.length).toBeGreaterThan(PR_BODY_MAX);
     // 上限に余裕があれば、外して伏せる
     const short = `${link}\n\n説明。`;
-    expect(unlinkedMergedBody(short, [secret])).toBe(
-      `手順（\`${"[REDACTED]".repeat(1_000)}\`）\n\n説明。`,
+    expect(await unlinkedMergedBody(short, [secret])).toEqual({
+      body: `手順（\`${"[REDACTED]".repeat(1_000)}\`）\n\n説明。`,
+    });
+  });
+});
+
+describe("本文の解析の間も、デーモンがほかの処理に応える（PBI-372）", () => {
+  /** 先頭に作業領域へのリンクを置いて（解析に回る）、記号を長さ length まで続けた本文。 */
+  const heavy = (unit: string, length: number) => {
+    const head = "[a](/workspace/a.md)\n\n";
+    return head + unit.repeat(Math.floor((length - head.length) / unit.length));
+  };
+
+  /**
+   * work を待つ間に、このスレッドのほかの処理（先に予約したコールバック）が動いたか。解析をこのスレッドで同期に行うと、
+   * 解析が終わるまでコールバックは動かず、終わった後は、結果を待つ処理のほうが先に進む。時間は測らない。
+   */
+  const respondsWhile = async <T>(work: () => Promise<T>): Promise<{ result: T; ran: boolean }> => {
+    let ran = false;
+    const immediate = setImmediate(() => {
+      ran = true;
+    });
+    const result = await work();
+    const ranBefore = ran;
+    clearImmediate(immediate);
+    return { result, ran: ranBefore };
+  };
+
+  it("記号が上限近くまで続く本文は、時間の上限で解析を打ち切り、本文を変えずに返す。その間も、ほかの処理が動く", async () => {
+    // 同期の解析では、3〜50 秒かかる形（`>`・`*a`・`*_`・`1. `・`+ `）。上限を短くして、打ち切りを確かめる
+    for (const unit of [">", "*a", "*_", "1. ", "+ "]) {
+      const body = heavy(unit, PR_BODY_MAX);
+      expect(body.length).toBeGreaterThan(PR_BODY_MAX - 3);
+      const generated = await respondsWhile(() =>
+        unlinkedGeneratedBody(body, [], { timeoutMs: 20 }),
+      );
+      expect(generated).toEqual({ result: { body, skipped: "timeout" }, ran: true });
+      const merged = await respondsWhile(() => unlinkedMergedBody(body, [], { timeoutMs: 20 }));
+      expect(merged).toEqual({ result: { body, skipped: "timeout" }, ran: true });
+    }
+  });
+
+  it("打ち切った本文でも、sacty が組み立てた本文は、秘密の値を伏せ直す。人の直しを含む本文は、そのまま返す", async () => {
+    const body = `${heavy("*_", PR_BODY_MAX - 20)}\n\n値は abc`;
+    expect(await unlinkedGeneratedBody(body, ["abc"], { timeoutMs: 20 })).toEqual({
+      body: body.replace("値は abc", "値は [REDACTED]"),
+      skipped: "timeout",
+    });
+    expect(await unlinkedMergedBody(body, ["abc"], { timeoutMs: 20 })).toEqual({
+      body,
+      skipped: "timeout",
+    });
+  });
+
+  it("時間の上限の中で終わる解析は、同期の変換と同じ結果を返す。その間も、ほかの処理が動く", async () => {
+    // 同期の解析に時間がかかる形（4,000 文字の `*_` で、0.1 秒ほど。遅い実行環境でも、時間の上限に届かない長さ）。
+    // 結果は、リンクを外した本文になる
+    const slow = heavy("*_", 4_000);
+    const converted = await respondsWhile(() => unlinkedGeneratedBody(slow, []));
+    expect(converted).toEqual({ result: { body: withoutWorkspaceLinks(slow) }, ran: true });
+    expect(converted.result.body).toBe(slow.replace("[a](/workspace/a.md)", "a（`a.md`）"));
+    // ふつうの本文（上限いっぱいにリンクが並ぶ）は、これまでと同じ結果になる
+    const link = "[a.md](/workspace/a.md) ";
+    const many = link.repeat(Math.floor(PR_BODY_MAX / link.length));
+    expect(await unlinkedGeneratedBody(many, [])).toEqual({
+      body: "a.md ".repeat(Math.floor(PR_BODY_MAX / link.length)),
+    });
+    expect(await unlinkedMergedBody(many, [])).toEqual({
+      body: "a.md ".repeat(Math.floor(PR_BODY_MAX / link.length)),
+    });
+  });
+
+  it("変換の途中の例外では、本文を変えずに返し、例外の名前を添える", () => {
+    // 引用が深く入れ子になり、構文木をたどる途中でスタックがあふれる。このスレッドで直接呼ぶ（スタックの大きさに
+    // 依存するが、このスレッドでは 2,000 段であふれるので、その 10 倍の深さにする）。別スレッドでの失敗の扱いは、
+    // 別スレッドを差し替えて確かめる
+    const deep = heavy(">", 20_000);
+    expect(convertWorkspaceLinks(deep, "/workspace")).toEqual({ body: deep, failed: "RangeError" });
+  });
+
+  it("空の本文・作業領域へのリンクがありえない本文は、解析せずに、そのまま返す", async () => {
+    expect(await unlinkedGeneratedBody("", [])).toEqual({ body: "" });
+    expect(await unlinkedMergedBody("", [])).toEqual({ body: "" });
+    // 解析すれば時間の上限を超える形でも、解析しないので、打ち切りにならない
+    const unlinkable = `${"+ ".repeat(PR_BODY_MAX / 2 - 20)}[a](docs/a.md)`;
+    expect(await unlinkedGeneratedBody(unlinkable, [], { timeoutMs: 20 })).toEqual({
+      body: unlinkable,
+    });
+  });
+
+  it("同時に呼んでも、それぞれの結果を返す", async () => {
+    const bodies = Array.from({ length: 4 }, (_, i) => `[a${i}.md](/workspace/a${i}.md) を直した`);
+    const results = await Promise.all(bodies.map((body) => unlinkedMergedBody(body, [])));
+    expect(results).toEqual(bodies.map((_, i) => ({ body: `a${i}.md を直した` })));
+  });
+});
+
+describe("別スレッドの失敗・順番待ち（PBI-372。別スレッドを差し替えて確かめる）", () => {
+  const body = "[手順](/workspace/docs/setup.md) を直した。値は abc";
+
+  /** 差し替える別スレッド。テストから、答え・エラー・終了を起こす。 */
+  class FakeWorker extends EventEmitter {
+    terminated = 0;
+    constructor(readonly job: ConvertJob) {
+      super();
+    }
+    terminate(): Promise<number> {
+      this.terminated++;
+      return Promise.resolve(0);
+    }
+  }
+
+  /** 起動した別スレッドを覚えておく、差し替えの起動。 */
+  const fakes = () => {
+    const started: FakeWorker[] = [];
+    const startWorker = (job: ConvertJob) => {
+      const worker = new FakeWorker(job);
+      started.push(worker);
+      return worker;
+    };
+    return { started, startWorker };
+  };
+
+  /** 待っている処理（順番待ちの受け渡し・別スレッドの起動）を進める。 */
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+
+  it("別スレッドに、本文と作業領域のパスを渡し、答えの本文を使う。答えを受け取ったら、別スレッドを止める", async () => {
+    const { started, startWorker } = fakes();
+    const pending = unlinkedGeneratedBody(body, ["abc"], { startWorker });
+    await settle();
+    expect(started.map((w) => w.job)).toEqual([
+      { sactyPrBodyLinks: true, body, workspace: "/workspace" },
+    ]);
+    started[0]?.emit("message", { body: "手順 を直した。値は abc" });
+    // 答えの後の終了は、失敗にしない
+    started[0]?.emit("exit", 0);
+    expect(await pending).toEqual({ body: "手順 を直した。値は [REDACTED]" });
+    expect(started[0]?.terminated).toBe(1);
+  });
+
+  it("別スレッドを起動できないときは、本文を変えずに返す（原因は、例外のコードか名前。メッセージは出さない）", async () => {
+    const failing = (error: unknown) => () => {
+      throw error;
+    };
+    const missing = Object.assign(new Error(`Cannot find module ${body}`), {
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+    expect(await unlinkedMergedBody(body, ["abc"], { startWorker: failing(missing) })).toEqual({
+      body,
+      skipped: "error",
+      cause: "別スレッドを起動できない（ERR_MODULE_NOT_FOUND）",
+    });
+    expect(
+      await unlinkedMergedBody(body, [], { startWorker: failing(new TypeError(body)) }),
+    ).toEqual({ body, skipped: "error", cause: "別スレッドを起動できない（TypeError）" });
+    // 例外でないもの・名前が文字として使えないものは、中身を出さない
+    expect(await unlinkedMergedBody(body, [], { startWorker: failing(body) })).toEqual({
+      body,
+      skipped: "error",
+      cause: "別スレッドを起動できない（string）",
+    });
+    const named = Object.assign(new Error("x"), { name: `名前 ${body}` });
+    expect(await unlinkedMergedBody(body, [], { startWorker: failing(named) })).toEqual({
+      body,
+      skipped: "error",
+      cause: "別スレッドを起動できない（Error）",
+    });
+    // sacty が組み立てた本文は、外せなくても、秘密の値を伏せ直す
+    expect(await unlinkedGeneratedBody(body, ["abc"], { startWorker: failing(missing) })).toEqual({
+      body: body.replace("abc", "[REDACTED]"),
+      skipped: "error",
+      cause: "別スレッドを起動できない（ERR_MODULE_NOT_FOUND）",
+    });
+  });
+
+  it("別スレッドが、答える前に終わった・エラーになったときは、本文を変えずに返す", async () => {
+    const cases: [(worker: FakeWorker) => void, string][] = [
+      [(w) => w.emit("exit", 1), "別スレッドが答えずに終了（終了コード 1）"],
+      [(w) => w.emit("exit", 0), "別スレッドが答えずに終了（終了コード 0）"],
+      [
+        (w) =>
+          w.emit("error", Object.assign(new Error(body), { code: "ERR_WORKER_OUT_OF_MEMORY" })),
+        "別スレッドのエラー（ERR_WORKER_OUT_OF_MEMORY）",
+      ],
+      [(w) => w.emit("error", new SyntaxError(body)), "別スレッドのエラー（SyntaxError）"],
+    ];
+    for (const [fail, cause] of cases) {
+      const { started, startWorker } = fakes();
+      const pending = unlinkedMergedBody(body, [], { startWorker });
+      await settle();
+      const worker = started[0];
+      if (!worker) throw new Error("別スレッドが起動していない");
+      fail(worker);
+      // エラーの後の終了・遅れて届いた答えでは、結果は変わらない
+      worker.emit("exit", 1);
+      worker.emit("message", { body: "手順" });
+      expect(await pending).toEqual({ body, skipped: "error", cause });
+      expect(worker.terminated).toBe(1);
+    }
+  });
+
+  it("別スレッドの答えが、変換の例外・長くなった本文・本文でないものなら、使わずに、本文を変えずに返す", async () => {
+    const cases: [unknown, string][] = [
+      [{ body, failed: "RangeError" }, "変換の例外（RangeError）"],
+      // 例外の名前に、文字として使えないものが入っていても、そのままは出さない
+      [{ body, failed: `名前 ${body}` }, "変換の例外（Error）"],
+      // 置き換えは本文を長くしない。長くなった答えは、長さの上限を超えうるので、使わない
+      [{ body: `${body}。` }, "別スレッドの答えが不正"],
+      [{ body: 1 }, "別スレッドの答えが不正"],
+      [{}, "別スレッドの答えが不正"],
+      [null, "別スレッドの答えが不正"],
+      ["手順", "別スレッドの答えが不正"],
+    ];
+    for (const [answer, cause] of cases) {
+      const { started, startWorker } = fakes();
+      const pending = unlinkedGeneratedBody(body, [], { startWorker });
+      await settle();
+      started[0]?.emit("message", answer);
+      expect(await pending).toEqual({ body, skipped: "error", cause });
+    }
+    // 同じ長さ・短い答えは、使う
+    const { started, startWorker } = fakes();
+    const pending = unlinkedGeneratedBody(body, [], { startWorker });
+    await settle();
+    started[0]?.emit("message", { body: "x".repeat(body.length) });
+    expect(await pending).toEqual({ body: "x".repeat(body.length) });
+  });
+
+  it("別スレッドは1つずつ動かし、ほかは来た順に待つ。解析しない本文は、待たない", async () => {
+    const { started, startWorker } = fakes();
+    const bodies = [1, 2, 3].map((i) => `[a${i}](/workspace/a${i}.md)`);
+    const results: string[] = [];
+    const pending = bodies.map((b, i) =>
+      unlinkedMergedBody(b, [], { startWorker }).then((r) => {
+        results.push(`${i + 1}:${r.skipped ?? r.body}`);
+      }),
     );
+    await settle();
+    // 動いているのは、最初の1つだけ
+    expect(started.map((w) => w.job.body)).toEqual([bodies[0]]);
+    // 作業領域へのリンクがありえない本文は、順番を待たずに返る
+    expect(await unlinkedMergedBody("リンクの無い本文", [], { startWorker })).toEqual({
+      body: "リンクの無い本文",
+    });
+    expect(started).toHaveLength(1);
+    // 1つ目が終わると、2つ目が動く。失敗で終わっても、次に番を渡す
+    started[0]?.emit("message", { body: "a1" });
+    await settle();
+    expect(started.map((w) => w.job.body)).toEqual([bodies[0], bodies[1]]);
+    started[1]?.emit("exit", 1);
+    await settle();
+    expect(started.map((w) => w.job.body)).toEqual(bodies);
+    started[2]?.emit("message", { body: "a3" });
+    await Promise.all(pending);
+    expect(results).toEqual(["1:a1", "2:error", "3:a3"]);
+    // 番を返してあるので、次の本文は、すぐに動く
+    const next = unlinkedMergedBody(bodies[0] ?? "", [], { startWorker });
+    await settle();
+    expect(started).toHaveLength(4);
+    started[3]?.emit("message", { body: "a1" });
+    expect(await next).toEqual({ body: "a1" });
+  });
+
+  it("時間の上限は、別スレッドを起動してから数える（順番を待つ時間は入れない）。打ち切ったら、別スレッドを止めて、次に番を渡す", async () => {
+    vi.useFakeTimers();
+    try {
+      const { started, startWorker } = fakes();
+      const first = unlinkedMergedBody(body, [], { startWorker });
+      const second = unlinkedMergedBody(`${body}。`, [], { startWorker });
+      let secondDone = false;
+      void second.then(() => {
+        secondDone = true;
+      });
+      await settle();
+      expect(started).toHaveLength(1);
+      // 既定の上限（5 秒）の直前では、まだ打ち切らない
+      await vi.advanceTimersByTimeAsync(PARSE_TIMEOUT_MS - 1);
+      expect(started[0]?.terminated).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await first).toEqual({ body, skipped: "timeout" });
+      expect(started[0]?.terminated).toBe(1);
+      // 2つ目は、ここで起動する。待っていた 5 秒は数えないので、起動してから 5 秒の直前までは、打ち切らない
+      await settle();
+      expect(started).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(PARSE_TIMEOUT_MS - 1);
+      expect(secondDone).toBe(false);
+      started[1]?.emit("message", { body: "手順 を直した。値は abc。" });
+      expect(await second).toEqual({ body: "手順 を直した。値は abc。" });
+      // 答えた後は、時間の上限が来ても、何も起きない
+      await vi.advanceTimersByTimeAsync(PARSE_TIMEOUT_MS);
+      expect(started[1]?.terminated).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
