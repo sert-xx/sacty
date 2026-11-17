@@ -6919,16 +6919,26 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       types(service, id).filter((t) => t === "PullRequestCiFailed");
     /** 読むたびに、そのときの checks・jobs を返す偽の CI。読んだコミットを覚える。 */
     const fakeCi = () => {
-      const state: { checks: CiCheck[]; jobs: CiCheck[]; read: string[]; fail?: Error } = {
-        checks: [],
-        jobs: [],
-        read: [],
-      };
+      const state: {
+        checks: CiCheck[];
+        jobs: CiCheck[];
+        read: string[];
+        fail?: Error;
+        truncated?: true;
+        /** 読んでいる間に起こすこと（読み取りの途中で、タスクの状態を変える）。 */
+        during?: () => Promise<void>;
+      } = { checks: [], jobs: [], read: [] };
       const ci: CiStatusReader = {
         snapshot: async (input) => {
           state.read.push(input.commit);
           if (state.fail) throw state.fail;
-          return { checks: state.checks, jobs: state.jobs, failedRuns: [] };
+          await state.during?.();
+          return {
+            checks: state.checks,
+            jobs: state.jobs,
+            failedRuns: [],
+            ...(state.truncated ? { truncated: true as const } : {}),
+          };
         },
         failures: async () => [],
         rerunFailedJobs: async () => {},
@@ -6951,7 +6961,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       ...(url ? { url } : {}),
     });
 
-    it("レビューの時点で実行中だった CI が落ちたら、先頭のコミットごとに1度だけ記録する。実行も PR の更新も始めず、その後は読まない", async () => {
+    it("レビューの時点で実行中だった CI が落ちたら、先頭のコミットごとに1度だけ記録する。実行も PR の更新も始めない", async () => {
       const pulls = new FakePulls();
       const { ci, state } = fakeCi();
       let now = Date.parse("2026-11-17T00:00:00Z");
@@ -7004,24 +7014,244 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(repos.published).toHaveLength(1);
       expect(pulls.calls).toHaveLength(1);
 
-      // 記録した先頭は、もう読まない（再実行で通っても、記録は変えない）
+      // 記録した後も、間隔ごとに読む（PBI-375）。落ちたままなら、同じ先頭の失敗は記録し直さない
       const reads = state.read.length;
-      now += 24 * 60 * 60_000;
-      state.checks = [workflow("success")];
-      state.jobs = [];
-      await service.checkPullRequests();
       await service.checkPullRequests();
       expect(state.read).toHaveLength(reads);
+      now += PR_CI_READ_INTERVAL_MS;
+      await service.checkPullRequests();
+      expect(state.read).toHaveLength(reads + 1);
       expect(ciTypes(service, id)).toEqual(["PullRequestCiFailed"]);
-      const later = service.get(id)?.task;
-      expect(later && pullRequestCiFailure(later)).toBeDefined();
-      // 再起動しても、記録は残り、記録した先頭は読まない
+      // 再起動しても、記録は残る。読み直しても、同じ先頭の失敗は記録し直さない
       const { service: restarted } = makeService(activity, [], { pulls, ci, now: () => now });
       await restarted.checkPullRequests();
-      expect(state.read).toHaveLength(reads);
+      expect(state.read).toHaveLength(reads + 2);
+      expect(ciTypes(restarted, id)).toEqual(["PullRequestCiFailed"]);
       const replayed = restarted.get(id)?.task;
       expect(replayed && pullRequestCiFailure(replayed)).toMatchObject({ number: 7 });
       activity.close();
+    });
+
+    describe("失敗を出した後、読んでいる間に CI が通ったら、表示を消す（PBI-375）", () => {
+      const recoveryTypes = (service: TaskService, id: string) =>
+        types(service, id).filter((t) => t.startsWith("PullRequestCi"));
+      /** 人の承認を待つ実装の PR の CI を、最初の読み取りで失敗にして、失敗を記録させる。 */
+      const failedGate = async () => {
+        const pulls = new FakePulls();
+        const { ci, state } = fakeCi();
+        const clock = { now: Date.parse("2026-11-17T00:00:00Z") };
+        const made = await toImplementGate([], { pulls, ci, now: () => clock.now });
+        const commit = made.service.get(made.id)?.task.pullRequest?.commit ?? "";
+        pulls.state = { state: "open", headSha: commit };
+        state.checks = [workflow("failure")];
+        state.jobs = [job("test", "failure")];
+        await made.service.checkPullRequests();
+        expect(recoveryTypes(made.service, made.id)).toEqual(["PullRequestCiFailed"]);
+        return { ...made, pulls, ci, state, clock, commit };
+      };
+
+      it("同じ先頭の CI がすべて通ったら、表示を消して記録し、その先頭は読むのをやめる。実行も PR の更新も始めない", async () => {
+        const { activity, service, executor, repos, id, pulls, ci, state, clock, commit } =
+          await failedGate();
+        const runs = executor.calls.length;
+        const before = types(service, id);
+        // 再実行の途中（実行中）は、消さない
+        clock.now += PR_CI_READ_INTERVAL_MS;
+        state.checks = [workflow()];
+        state.jobs = [];
+        await service.checkPullRequests();
+        expect(recoveryTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+        // 通った（実行されなかったジョブ・中立のチェックは、妨げにしない）：表示を消して、記録する
+        clock.now += PR_CI_READ_INTERVAL_MS;
+        state.checks = [workflow("success"), job("codecov", "neutral")];
+        state.jobs = [job("test", "success"), job("deploy", "skipped")];
+        await service.checkPullRequests();
+        expect(recoveryTypes(service, id)).toEqual([
+          "PullRequestCiFailed",
+          "PullRequestCiRecovered",
+        ]);
+        const recovered = service
+          .get(id)
+          ?.activity.find((event) => event.type === "PullRequestCiRecovered");
+        expect(recovered).toMatchObject({ actor: "sacty", payload: { number: 7, commit } });
+        const task = service.get(id)?.task;
+        expect(task && pullRequestCiFailure(task)).toBeUndefined();
+        expect(task?.pullRequestCiFailure).toBeUndefined();
+        expect(task?.status).toBe("awaiting_approval");
+        // 何も始めない（実行も、PR の更新も無い）
+        expect(executor.calls).toHaveLength(runs);
+        expect(types(service, id).slice(before.length)).toEqual(["PullRequestCiRecovered"]);
+        expect(repos.published).toHaveLength(1);
+        expect(pulls.calls).toHaveLength(1);
+        // 消した先頭は、もう読まない（その後に落ちても、出し直さない）
+        const reads = state.read.length;
+        clock.now += 24 * 60 * 60_000;
+        state.checks = [workflow("failure")];
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        expect(state.read).toHaveLength(reads);
+        expect(recoveryTypes(service, id)).toHaveLength(2);
+        // 再起動しても、消えたまま
+        state.checks = [workflow("success")];
+        const { service: restarted } = makeService(activity, [], {
+          pulls,
+          ci,
+          now: () => clock.now,
+        });
+        await restarted.checkPullRequests();
+        expect(restarted.get(id)?.task.pullRequestCiFailure).toBeUndefined();
+        expect(recoveryTypes(restarted, id)).toHaveLength(2);
+        activity.close();
+      });
+
+      it.each<[string, { checks: CiCheck[]; jobs?: CiCheck[]; truncated?: true }]>([
+        ["取り消された CI だけ", { checks: [workflow("cancelled")] }],
+        [
+          "通ったものと取り消されたもの",
+          { checks: [workflow("success")], jobs: [job("e2e", "cancelled")] },
+        ],
+        ["CI の一覧が空", { checks: [] }],
+        [
+          "読み切れなかった一覧（読めた分は、すべて成功）",
+          { checks: [workflow("success")], truncated: true },
+        ],
+        ["実行中のものが残る", { checks: [workflow("success"), workflow()] }],
+        ["実行されなかったものだけ（成功が1件も無い）", { checks: [workflow("skipped")] }],
+        [
+          "古い結果（stale）がある",
+          { checks: [workflow("success")], jobs: [job("test", "stale")] },
+        ],
+        [
+          "コミットの状態が成功でない",
+          {
+            checks: [
+              workflow("success"),
+              { kind: "status", name: "ci/legacy", status: "completed", conclusion: "neutral" },
+            ],
+          },
+        ],
+        [
+          "結論の無い、終わったチェックがある",
+          { checks: [workflow("success"), { kind: "check", name: "x", status: "completed" }] },
+        ],
+      ])(
+        "%sでは、表示を消さず、回数の上限まで間隔ごとに読み直す。上限の後に通っても、消さない",
+        async (_name, read) => {
+          const { activity, service, id, state, clock } = await failedGate();
+          state.checks = read.checks;
+          state.jobs = read.jobs ?? [];
+          state.truncated = read.truncated;
+          for (let i = 0; i < PR_CI_READS_MAX + 5; i++) {
+            clock.now += PR_CI_READ_INTERVAL_MS;
+            await service.checkPullRequests();
+          }
+          // 読む回数は、失敗を見つけた回も含めて、先頭のコミットごとの上限のまま
+          expect(state.read).toHaveLength(PR_CI_READS_MAX);
+          expect(recoveryTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+          // 読むのをやめた後に通った CI は、拾わない（表示は残る）
+          state.checks = [workflow("success")];
+          state.jobs = [];
+          state.truncated = undefined;
+          clock.now += 24 * 60 * 60_000;
+          await service.checkPullRequests();
+          expect(state.read).toHaveLength(PR_CI_READS_MAX);
+          const task = service.get(id)?.task;
+          expect(task && pullRequestCiFailure(task)).toMatchObject({ number: 7 });
+          activity.close();
+        },
+      );
+
+      it("取り消し・空の一覧・読み切れなかった一覧の後でも、回数の上限の前にすべて通れば、表示を消す", async () => {
+        const { activity, service, id, state, clock } = await failedGate();
+        const steps: { checks: CiCheck[]; truncated?: true }[] = [
+          { checks: [workflow("cancelled")] },
+          { checks: [] },
+          { checks: [workflow("success")], truncated: true },
+        ];
+        state.jobs = [];
+        for (const step of steps) {
+          clock.now += PR_CI_READ_INTERVAL_MS;
+          state.checks = step.checks;
+          state.truncated = step.truncated;
+          await service.checkPullRequests();
+          expect(recoveryTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+        }
+        clock.now += PR_CI_READ_INTERVAL_MS;
+        state.checks = [workflow("success")];
+        state.truncated = undefined;
+        await service.checkPullRequests();
+        expect(recoveryTypes(service, id)).toEqual([
+          "PullRequestCiFailed",
+          "PullRequestCiRecovered",
+        ]);
+        activity.close();
+      });
+
+      it("回数の上限の最後の読み取りで失敗を見つけたら、その後は読まない（通っても、表示は残る）", async () => {
+        const pulls = new FakePulls();
+        const { ci, state } = fakeCi();
+        let now = Date.parse("2026-11-17T00:00:00Z");
+        const { activity, service, id } = await toImplementGate([], { pulls, ci, now: () => now });
+        pulls.state = { state: "open" };
+        state.checks = [workflow()];
+        for (let i = 0; i < PR_CI_READS_MAX - 1; i++) {
+          await service.checkPullRequests();
+          now += PR_CI_READ_INTERVAL_MS;
+        }
+        state.checks = [workflow("failure")];
+        await service.checkPullRequests();
+        expect(state.read).toHaveLength(PR_CI_READS_MAX);
+        expect(recoveryTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+        now += PR_CI_READ_INTERVAL_MS;
+        state.checks = [workflow("success")];
+        await service.checkPullRequests();
+        expect(state.read).toHaveLength(PR_CI_READS_MAX);
+        expect(recoveryTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+        activity.close();
+      });
+
+      it("人がコミットを足した新しい先頭の CI がすべて通ったら、前の先頭の失敗の表示を消す（通った先頭を記録する）", async () => {
+        const { activity, service, id, pulls, state, clock, commit } = await failedGate();
+        // 新しい先頭の CI が実行中の間は、前の先頭の失敗の表示を残す
+        pulls.state = { state: "open", headSha: "newhead123" };
+        state.checks = [workflow()];
+        state.jobs = [];
+        await service.checkPullRequests();
+        expect(state.read).toEqual([commit, "newhead123"]);
+        const waiting = service.get(id)?.task;
+        expect(waiting && pullRequestCiFailure(waiting)).toMatchObject({ head: commit });
+        // 新しい先頭の CI が通った：表示を消す
+        clock.now += PR_CI_READ_INTERVAL_MS;
+        state.checks = [workflow("success")];
+        await service.checkPullRequests();
+        expect(recoveryTypes(service, id)).toEqual([
+          "PullRequestCiFailed",
+          "PullRequestCiRecovered",
+        ]);
+        const recovered = service
+          .get(id)
+          ?.activity.find((event) => event.type === "PullRequestCiRecovered");
+        expect(recovered).toMatchObject({ payload: { number: 7, commit: "newhead123" } });
+        expect(service.get(id)?.task.pullRequestCiFailure).toBeUndefined();
+        activity.close();
+      });
+
+      it("読んでいる間に PR がマージされたら、通っていても、消したことを記録しない", async () => {
+        const { activity, service, id, pulls, state, clock, commit } = await failedGate();
+        clock.now += PR_CI_READ_INTERVAL_MS;
+        state.checks = [workflow("success")];
+        state.jobs = [];
+        // CI を読んでいる間に、人のマージを検出する
+        state.during = async () => {
+          state.during = undefined;
+          pulls.state = { state: "merged", mergedBy: "reviewer", headSha: commit };
+          await service.checkPullRequests();
+        };
+        await service.checkPullRequests();
+        expect(service.get(id)?.task.pullRequestState).toBe("merged");
+        expect(recoveryTypes(service, id)).toEqual(["PullRequestCiFailed"]);
+        activity.close();
+      });
     });
 
     it("失敗したチェックが多いときは、上限までと、残りの件数を持つ", async () => {

@@ -115,9 +115,15 @@ const ja = {
       `${step}からのやり直しが提案されています：${note}。戻し先を確かめて差し戻してください。`,
     prClosedHelp: "PR がマージされずに閉じられました。GitHub で開き直すか、中止してください。",
     prConflictHelp: "競合は自動では取り込みません。差し戻すか PR に指摘を書くと取り込みます。",
-    /** 人の承認（マージ）を待つ実装の PR の CI が、sacty が読んだ時点で失敗していた（PBI-364）。 */
+    /**
+     * 人の承認（マージ）を待つ実装の PR の CI が、sacty が読んだ時点で失敗していた（PBI-364）。sacty が CI を読み直す間に
+     * 通れば消える（PBI-375）。
+     */
     prCiFailedHelp: (commit: string, at: string) =>
-      `PR の先頭のコミット ${commit} の CI が、${at} に失敗していました。その後の結果は sacty には反映されないので PR で確かめ、直すなら差し戻すか PR に指摘を書いてください。`,
+      `PR の先頭のコミット ${commit} の CI が、${at} に失敗していました。今の結果を PR で確かめ、直すなら差し戻すか PR に指摘を書いてください。`,
+    /** CI の失敗の表示が、いつ消えるか（PBI-375）。 */
+    prCiFailedHint:
+      "sacty が CI を読み直す間に通れば、この表示は消えます。読み直すのは、最初に読んでから1時間ほどの間だけで、その後の結果は反映されません。",
     prCiFailedChecks: "失敗していたチェック",
     prCiFailedMore: (count: number) => `ほか${count}件`,
     prConflictContinuedHelp:
@@ -671,7 +677,9 @@ const en: TaskMessages = {
     prConflictHelp:
       "The conflict is not merged in automatically. Send the task back or comment on the PR to merge the base branch in.",
     prCiFailedHelp: (commit, at) =>
-      `CI on the PR's head commit ${commit} was failing at ${at}. Later results are not reflected in sacty, so check them on the PR, and to have it fixed, send the task back or comment on the PR.`,
+      `CI on the PR's head commit ${commit} was failing at ${at}. Check the current result on the PR, and to have it fixed, send the task back or comment on the PR.`,
+    prCiFailedHint:
+      "This notice clears if CI passes while sacty is still re-reading it. sacty re-reads for about an hour after its first read; later results are not reflected.",
     prCiFailedChecks: "Checks that were failing",
     prCiFailedMore: (count) => `and ${count} more`,
     prConflictContinuedHelp:

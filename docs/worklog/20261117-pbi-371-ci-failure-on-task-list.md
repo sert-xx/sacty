@@ -4,7 +4,7 @@
 - タスク: PBI-371
 - PR: #405
 - ブランチ: feat/pbi-371-ci-failure-on-task-list
-- 関係する ADR: [指摘なしの後の実装の PR の CI の失敗を、タスクの一覧の行にも印で出す](../adr/20261117-0406-show-ci-failure-on-task-list.md)
+- 関係する ADR: [指摘なしの後の実装の PR の CI の失敗を、タスクの一覧の行にも印で出す](../adr/20261117-0406-superseded-show-ci-failure-on-task-list.md)
 
 ## 目的
 

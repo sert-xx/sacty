@@ -500,6 +500,59 @@ describe("GitHub の CI/CD の状態（PBI-89）", () => {
     }
   });
 
+  it("一覧を読み切れなかった（ページの上限・たどれない続きのリンク）ときは、読み切れなかったことを返す（PBI-375）", async () => {
+    const run = (id: number) => ({
+      id,
+      workflow_id: id,
+      name: `CI ${id}`,
+      status: "completed",
+      conclusion: "success",
+    });
+    /** ワークフローの実行の一覧を、pages ページに分けて返す偽物。last は、最後のページに付ける続きのリンク。 */
+    const paged = (pages: number, last?: string) => {
+      const calls: string[] = [];
+      const fetchImpl = (async (input: string | URL | Request) => {
+        const url = String(input);
+        calls.push(url);
+        const json = (body: unknown, link?: string) =>
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: link ? { link: `<${link}>; rel="next"` } : {},
+          });
+        if (url.startsWith(`${api}/commits/${sha}/check-runs`)) return json({ check_runs: [] });
+        if (url.startsWith(`${api}/commits/${sha}/status`)) return json({ statuses: [] });
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        const next =
+          page < pages ? `${api}/actions/runs?head_sha=${sha}&per_page=100&page=${page + 1}` : last;
+        return json({ workflow_runs: [run(page)] }, next);
+      }) as typeof fetch;
+      return { fetchImpl, calls };
+    };
+    const read = (fetchImpl: typeof fetch) =>
+      new GitHubCiStatus(fetchImpl).snapshot({
+        repo: "https://github.com/acme/app",
+        token: "t",
+        commit: sha,
+      });
+    // 上限（10ページ）ちょうどで終わる一覧は、読み切れている
+    const whole = paged(10);
+    const all = await read(whole.fetchImpl);
+    expect(all.checks).toHaveLength(10);
+    expect(all.truncated).toBeUndefined();
+    // 11ページ目が残っている：上限までを返し、読み切れなかったことを伝える（11ページ目は読まない）
+    const cut = paged(11);
+    const partial = await read(cut.fetchImpl);
+    expect(partial.checks).toHaveLength(10);
+    expect(partial.truncated).toBe(true);
+    expect(cut.calls.filter((url) => url.includes("/actions/runs"))).toHaveLength(10);
+    // 続きのリンクが API の外を指している：たどらず、読み切れなかったことを伝える
+    const outside = paged(1, "https://evil.example.com/next");
+    const first = await read(outside.fetchImpl);
+    expect(first.checks).toHaveLength(1);
+    expect(first.truncated).toBe(true);
+    expect(outside.calls.some((url) => url.includes("evil.example.com"))).toBe(false);
+  });
+
   it("失敗したワークフローの、失敗したジョブとログの末尾（伏せた後）を読む", async () => {
     const calls: string[] = [];
     const ci = new GitHubCiStatus(

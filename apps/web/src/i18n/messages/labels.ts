@@ -484,6 +484,8 @@ const ja = {
     PullRequestConflictResolved: (number: number) => `PR #${number} の競合が解消された`,
     PullRequestCiFailed: (number: number, commit: string, checks: string[], more: number) =>
       `PR #${number} の CI が失敗していた（${commit}。${checks.join("、")}${more > 0 ? ` ほか${more}件` : ""}）。sacty は何も始めない`,
+    PullRequestCiRecovered: (number: number, commit: string) =>
+      `PR #${number} の CI が通った（${commit}）。CI の失敗の表示を消した`,
     IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
     IssueCommentFailed: (message: string) => `調査の結果を Issue に返せなかった：${message}`,
     GitHubCommentsPosted: (step: string, results: string[]) =>
@@ -1149,6 +1151,8 @@ const en: LabelMessages = {
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,
     PullRequestCiFailed: (number, commit, checks, more) =>
       `CI was failing on PR #${number} (${commit}: ${checks.join(", ")}${more > 0 ? ` and ${more} more` : ""}). sacty starts nothing`,
+    PullRequestCiRecovered: (number, commit) =>
+      `CI passed on PR #${number} (${commit}). The CI failure notice was cleared`,
     IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
     ReviewTargetResolved: (url, commit) => `Confirmed the PR to review (${url} · ${commit})`,
     ReviewGitHubRetried: (where, attempt, maxAttempts, seconds, message) =>

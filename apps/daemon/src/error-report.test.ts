@@ -119,6 +119,10 @@ describe("エラーとして扱う記録", () => {
         }),
       ),
     ).toBe("check");
+    // 読んでいる間に通って、表示を消した記録（PBI-375）は、失敗として数えない
+    expect(
+      failureKind(ev({ type: "PullRequestCiRecovered", payload: { number: 7, commit: "abc123" } })),
+    ).toBeUndefined();
     expect(
       failureKind(
         ev({

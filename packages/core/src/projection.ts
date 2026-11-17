@@ -905,8 +905,9 @@ export type Task = {
   pullRequestConflict?: { number: number; commit: string; at: string };
   /**
    * 人の承認（マージ）を待つ実装の PR の、先頭のコミットの CI が失敗していた（PullRequestCiFailed。PBI-364）。commit は、
-   * そのときの提出のコミット、head は CI を読んだ PR の先頭、at は読んだ時刻。sacty が読んだ時点の結果で、その後の変化は
-   * 反映しない。タスクの詳細と、タスクの一覧の行に出すだけで（PBI-371）、sacty は何も始めない。出すか（今の PR のものか）は
+   * そのときの提出のコミット、head は CI を読んだ PR の先頭、at は読んだ時刻。sacty が読んだ時点の結果で、CI を読んでいる
+   * 間に通ったら消す（PullRequestCiRecovered。PBI-375）。読むのをやめた後の変化は反映しない。タスクの詳細と、タスクの
+   * 一覧の行に出すだけで（PBI-371）、sacty は何も始めない。出すか（今の PR のものか）は
    * `pullRequestCiFailure` で決める。
    */
   pullRequestCiFailure?: {
@@ -2837,6 +2838,26 @@ export function applyEvent(
       break;
     }
 
+    case "PullRequestCiRecovered": {
+      // 出している CI の失敗の表示を消す（PBI-375）。失敗の記録と同じく、承認待ちで見守っている実装の PR だけ
+      const watched = gatePullRequest(task);
+      if (
+        watched?.step !== "implement" ||
+        watched.state !== "open" ||
+        task.status !== "awaiting_approval"
+      ) {
+        throw new ActivityIntegrityError(event, "the implementation pull request is not watched");
+      }
+      if (watched.number !== event.payload.number) {
+        throw new ActivityIntegrityError(event, "not the pull request of the task");
+      }
+      if (!task.pullRequestCiFailure) {
+        throw new ActivityIntegrityError(event, "no CI failure is recorded");
+      }
+      task.pullRequestCiFailure = undefined;
+      break;
+    }
+
     case "TaskBranchCreated":
       if (task.taskBranch) throw new ActivityIntegrityError(event, "the task branch exists");
       if (!task.repository) throw new ActivityIntegrityError(event, "no repository");
@@ -3914,8 +3935,8 @@ export function pullRequestConflict(
 
 /**
  * 人の承認（マージ）を待つ実装の PR の CI が失敗していたなら、その記録（タスクの詳細と、タスクの一覧の行に出す。PBI-364・PBI-371）。人の出番（承認待ち）で、
- * 今の提出の開いている PR のものだけ。PR を更新した・閉じた・マージした、PR の指摘の戻し先を判断している、PR のレビューの
- * 子タスクの指摘なしを待っている（レビューが CI を読んで指摘にする）間は無い。
+ * 今の提出の開いている PR のものだけ。PR を更新した・閉じた・マージした、CI を読んでいる間に通った（PBI-375）、PR の指摘の
+ * 戻し先を判断している、PR のレビューの子タスクの指摘なしを待っている（レビューが CI を読んで指摘にする）間は無い。
  */
 export function pullRequestCiFailure(
   task: Task,

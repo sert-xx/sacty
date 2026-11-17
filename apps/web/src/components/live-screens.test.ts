@@ -989,7 +989,11 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(container.querySelector("#gate")?.textContent).toContain("実装の PR のマージ待ち");
     expect(notice()?.textContent).toContain("9f8e7d6");
     expect(notice()?.textContent).toContain("に失敗していました");
-    expect(notice()?.textContent).toContain("その後の結果は sacty には反映されない");
+    expect(notice()?.textContent).toContain("今の結果を PR で確かめ");
+    // 消える条件（読み直す間に通れば消える。その後の結果は反映しない）は、補足に出す（PBI-375）
+    expect(notice()?.querySelector('[data-slot="hint"]')?.textContent).toContain(
+      "sacty が CI を読み直す間に通れば、この表示は消えます",
+    );
     const items = [...(notice()?.querySelectorAll("li") ?? [])].map((li) => li.textContent);
     expect(items).toEqual(["CI", "lint", "status", "ほか2件"]);
     const links = [...(notice()?.querySelectorAll("a") ?? [])].map((a) => a.getAttribute("href"));
