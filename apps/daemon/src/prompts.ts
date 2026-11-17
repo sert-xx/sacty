@@ -113,6 +113,7 @@ import {
   RISK_ASSESSMENT_HEADING,
   reviewRiskLines,
   riskAssessmentLines,
+  riskUnreadableReason,
   withoutRiskBlocks,
 } from "./risk-assessment.js";
 import {
@@ -8591,6 +8592,8 @@ export function extractReviewComments(
   rework?: ReviewRework;
   /** リスク評価の答えを読めたもの（PBI-362。答えが無い・形が違えば無い）。 */
   risk?: RiskAssessment;
+  /** リスクを評価させたレビューで、評価を読めなかった理由（PBI-386。評価を読めたとき・評価させていないときは無い）。 */
+  riskUnreadable?: DaemonText;
 } {
   const commentable = commentableLines(diff);
   let found: (ReviewComment & { severity?: Severity })[] | undefined;
@@ -8669,6 +8672,7 @@ export function extractReviewComments(
         }),
     ...(rework ? { rework } : {}),
     ...(risk ? { risk } : {}),
+    ...(options.risk && !risk ? { riskUnreadable: riskUnreadableReason(output) } : {}),
   };
 }
 

@@ -11204,7 +11204,7 @@ export class TaskService {
             ...(commit ? { commit } : {}),
             ...(review.risk
               ? { assessment: review.risk }
-              : { reason: message("pr.riskUnreadable") }),
+              : { reason: review.riskUnreadable ?? message("pr.riskUnreadable") }),
           },
         },
       });

@@ -19,6 +19,7 @@ import {
   RISK_LOADED_GUIDANCE_LINE,
   riskAssessmentLines,
   riskLevelFor,
+  riskUnreadableReason,
 } from "./risk-assessment.js";
 
 // PR のリスク評価（PBI-362）：PR の説明と、PR から取り込んだレビューのタスクのレビューのコメントに載せる
@@ -268,6 +269,10 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     expect(extractRiskAssessment(lowered)?.assessment.level).toBe("low");
   });
 
+  const fenced = (json: string) => `\`\`\`json\n${json}\n\`\`\``;
+  const KEY = `"${RISK_ASSESSMENT_HEADING}"`;
+  const broken = `{"level": "high", "signals": ["security"],}`;
+
   it.each([
     ["知らない合図が混ざる", answer({ ...medium, signals: ["security", "unknown"] })],
     ["合図が配列でない", answer({ ...medium, signals: "security" })],
@@ -275,21 +280,29 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     ["段階が決めた値でない", answer({ ...medium, level: "critical" })],
     ["根拠の項目が無い", answer({ ...medium, scope: undefined })],
     ["評価がオブジェクトでない", answer("medium")],
+    ["JSON として読めない（末尾のカンマ）", fenced(`{${KEY}: ${broken}}`)],
+    ["JSON として読めない（囲みが無く、途中で切れた）", `{${KEY}: {"level": "high", "signals": [`],
     [
-      "JSON として読めない（末尾のカンマ）",
-      `\`\`\`json\n{"${RISK_ASSESSMENT_HEADING}": {"level": "high", "signals": ["security"],}}\n\`\`\``,
+      "JSON として読めない（見出しが最初のキーでない）",
+      fenced(`{"note": "見直し", ${KEY}: ${broken}}`),
     ],
     [
-      "JSON として読めない（囲みが無く、途中で切れた）",
-      `{"${RISK_ASSESSMENT_HEADING}": {"level": "high", "signals": ["security"],`,
+      "ほかのオブジェクトの中に入れ子になっている",
+      fenced(
+        JSON.stringify({ result: { [RISK_ASSESSMENT_HEADING]: { ...medium, level: "high" } } }),
+      ),
     ],
+    ["入れ子で、JSON として読めない", fenced(`{"result": {${KEY}: ${broken}}}`)],
   ])(
     "最後の答えが読めない（%s）ときは、前に出た読める答えを使わず、読めないものとする（PBI-386）",
     (_name, last) => {
       const draft = answer({ ...medium, level: "low" });
       // 前の答えだけなら読める（前の答えにさかのぼると、低として載る）
       expect(extractRiskAssessment(draft)?.assessment.level).toBe("low");
-      expect(extractRiskAssessment(`${draft}\n\n見直しました。\n\n${last}`)).toBeUndefined();
+      const output = `${draft}\n\n見直しました。\n\n${last}`;
+      expect(extractRiskAssessment(output)).toBeUndefined();
+      // 評価できなかった理由は、前に出た答えを使わなかったことが分かるものにする
+      expect(riskUnreadableReason(output)).toEqual(message("pr.riskLastUnreadable"));
       // 読めない答えが前にあるだけなら、最後の読める答えを使う
       expect(extractRiskAssessment(`${last}\n\n直しました。\n\n${draft}`)?.assessment.level).toBe(
         "low",
@@ -297,12 +310,46 @@ describe("リスク評価の答えの読み取り（PBI-362）", () => {
     },
   );
 
-  it("評価の答えでない JSON・見出しの名前に触れているだけの本文が後ろにあっても、最後の評価の答えを使う", () => {
+  it("答えが3つあり、真ん中だけが読めないときは、最後の答えを使う", () => {
+    const output = [
+      answer({ ...medium, level: "low" }),
+      fenced(`{${KEY}: ${broken}}`),
+      answer({ ...medium, level: "high" }),
+    ].join("\n\n");
+    expect(extractRiskAssessment(output)?.assessment.level).toBe("high");
+  });
+
+  it("評価の答えでない JSON・見出しの名前だけに触れている本文が後ろにあっても、最後の評価の答えを使う", () => {
     const tail = [
-      '```json\n{"sacty-review-verdict": "no_findings"}\n```',
-      `答えは、見出し "${RISK_ASSESSMENT_HEADING}": の JSON で出しました。`,
+      fenced('{"sacty-review-verdict": "no_findings"}'),
+      `答えは、見出し ${RISK_ASSESSMENT_HEADING} の JSON で出しました。`,
+      // ほかの JSON の文字列の値の中に、評価の答えの形（壊れたもの）が書かれている
+      fenced(JSON.stringify({ note: `{${KEY}: {"level": "low",` })),
     ].join("\n\n");
     expect(extractRiskAssessment(`${answer(medium)}\n\n${tail}`)?.assessment).toEqual(medium);
+    // 評価の答えの文字列の値の中に書かれていても、その答えを使う
+    const quoting = { ...medium, change: `{${KEY}: {"level": "low",` };
+    expect(extractRiskAssessment(answer(quoting))?.assessment.level).toBe("medium");
+  });
+
+  it("最後の評価の答えの後ろで、本文が見出しをキーの形で書いているときは、読めないものとする（読める評価を捨てるほうへ倒す）", () => {
+    const output = `${answer(medium)}\n\n答えは、${KEY}: の形で出しました。`;
+    expect(extractRiskAssessment(output)).toBeUndefined();
+    // 前に書いているだけなら、最後の評価の答えを使う
+    expect(
+      extractRiskAssessment(`答えは、${KEY}: の形で出します。\n\n${answer(medium)}`)?.assessment,
+    ).toEqual(medium);
+  });
+
+  it("評価できなかった理由は、前に出た読める答えを使わなかったときだけ、そのことが分かるものにする", () => {
+    const unreadable = answer({ ...medium, level: "critical" });
+    // 答えが無い・1つだけの答えが読めない・どの答えも読めない
+    for (const output of ["", "分かりません", unreadable, `${unreadable}\n\n${unreadable}`]) {
+      expect(riskUnreadableReason(output), output).toEqual(message("pr.riskUnreadable"));
+    }
+    expect(riskUnreadableReason(`${answer(medium)}\n\n${unreadable}`)).toEqual(
+      message("pr.riskLastUnreadable"),
+    );
   });
 
   it("とくに見る箇所は、形の合うものだけを、上限の件数まで読む。無ければ空", () => {
@@ -373,7 +420,7 @@ describe("PR を作る前のリスク評価の実行（PBI-362）", () => {
     expect(result.payload).toEqual({
       via: "publish",
       commit: "c1",
-      reason: message("pr.riskUnreadable"),
+      reason: message("pr.riskLastUnreadable"),
       ...cost,
     });
   });
@@ -762,6 +809,7 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
     ].join("\n\n");
     const read = extractReviewComments(output, diff, { risk: true });
     expect(read.risk).toBeUndefined();
+    expect(read.riskUnreadable).toEqual(message("pr.riskLastUnreadable"));
     expect(read.output).not.toContain(RISK_ASSESSMENT_HEADING);
     expect(read.output.split("\n").filter(Boolean)).toEqual(["総評です。", "合図を足しました。"]);
   });

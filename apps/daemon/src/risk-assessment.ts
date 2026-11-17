@@ -11,7 +11,7 @@ import {
   renderMessage,
   type Task,
 } from "@sacty/core";
-import { headedObject, headingSpans, type JsonCandidate, jsonCandidates } from "./agent-json.js";
+import { headedObject, type JsonCandidate, jsonCandidates } from "./agent-json.js";
 import { redact } from "./agents/redact.js";
 import { headOf } from "./orchestrator-handoff.js";
 
@@ -274,7 +274,8 @@ function field(value: unknown, secrets: readonly string[], max: number): string 
 
 /**
  * リスク評価の答えを読む。最後に出た評価の答えだけを読む。最後の答えが読めなければ、前に出た答え（下書きなど）にはさかのぼらず、
- * 読めないものとする（前の答えは、合図・上げ幅を足す前のものでありうるため。PBI-386）。呼び出し側が、評価できなかったと記録する。
+ * 読めないものとする（前の答えは、合図・上げ幅を足す前のものでありうるため。PBI-386）。呼び出し側が、評価できなかったと記録する
+ * （理由は `riskUnreadableReason`）。
  * 段階が決めた値でない・根拠の項目が欠けているときは、読めないものとする。段階は、合図の重さと、依存の版の更新の上げ幅から
  * 決め直す（`riskLevelFor`。エージェントが合図を挙げながら違う段階を付けても、基準どおりにする）。合図が配列でない・知らない
  * 合図が混ざるとき、依存の版の更新の上げ幅が決めた値でないときも、読めないものとする（合図・上げ幅を読み落として、低い段階を
@@ -284,10 +285,43 @@ function field(value: unknown, secrets: readonly string[], max: number): string 
 export function extractRiskAssessment(
   output: string,
   secrets: readonly string[] = [],
-): { assessment: RiskAssessment; candidate: JsonCandidate } | undefined {
-  const last = lastRiskAnswer(output);
-  const assessment = last && readRiskAnswer(last.value, secrets);
-  return last && assessment ? { assessment, candidate: last } : undefined;
+): { assessment: RiskAssessment } | undefined {
+  const last = riskAnswers(output).last;
+  if (!last) return undefined;
+  const assessment = readRiskAnswer(last.value, secrets);
+  return assessment ? { assessment } : undefined;
+}
+
+/**
+ * 評価を読めなかった出力の、評価できなかった理由（PBI-386）。前に出た答えが読めるのに、最後の答えが読めないために使わなかった
+ * ときは、そのことが分かる理由にする（答えが無い・1つだけの答えが読めないときと、記録で見分けられるように）。
+ */
+export function riskUnreadableReason(output: string): DaemonText {
+  const { last, answers } = riskAnswers(output);
+  const earlier = last ? answers.slice(0, -1) : answers;
+  return earlier.some((answer) => readRiskAnswer(answer.value, []) !== undefined)
+    ? message("pr.riskLastUnreadable")
+    : message("pr.riskUnreadable");
+}
+
+/** 評価の見出しが、JSON のキーの形（`"sacty-risk-assessment":`）で書かれている箇所。 */
+const RISK_KEY_PATTERN = new RegExp(`"${RISK_ASSESSMENT_HEADING}"\\s*:`, "g");
+
+/**
+ * 出力の中の評価の答え。answers は、評価の見出しを最上位のキーに持つ、JSON として読めるオブジェクト（出てきた順）。last は、
+ * 最後に出た評価の答え（answers の最後）。ただし、出力の中で最後に出た見出しのキーが、answers の最後の中に無いときは、last は
+ * 無い。最後の答えが、JSON として読めない（末尾のカンマ・途中で切れたなど）・ほかのオブジェクトの中に入れ子になっている、と
+ * 見なす。本文が見出しをキーの形で書いているだけでも、同じに扱う（読める評価を捨てるほうへ倒す。低い段階を載せるより安全）。
+ * 見出しのキーは、出力を1回走査して最後のものだけを見る（出力の長さに比例する時間で済ませる）。
+ */
+function riskAnswers(output: string): { last?: JsonCandidate; answers: JsonCandidate[] } {
+  const answers = jsonCandidates(output).filter(
+    (candidate) => candidate.value[RISK_ASSESSMENT_HEADING] !== undefined,
+  );
+  let lastKey = -1;
+  for (const match of output.matchAll(RISK_KEY_PATTERN)) lastKey = match.index;
+  const last = answers.at(-1);
+  return last && last.start <= lastKey && lastKey < last.end ? { last, answers } : { answers };
 }
 
 /** 評価の答え（JSON のオブジェクト）を読む。形が合わなければ undefined。 */
@@ -332,25 +366,6 @@ function readRiskAnswer(
     focus,
   });
   return parsed.success ? parsed.data : undefined;
-}
-
-/**
- * 出力の中の、最後に出た評価の答え（評価の見出しをキーに持つ JSON のオブジェクト）。評価の答えが無いとき、最後に出た評価の
- * 答えが JSON として読めない（末尾のカンマ・途中で切れたなど）ときは undefined。JSON として読めない答えは、評価の見出しを
- * 最初のキーに持つ形（指示した答えの形）で見つける。本文が見出しの名前に触れているだけの箇所は、答えとして数えない。
- */
-function lastRiskAnswer(output: string): JsonCandidate | undefined {
-  const candidates = jsonCandidates(output);
-  const last = candidates.findLast((c) => c.value[RISK_ASSESSMENT_HEADING] !== undefined);
-  if (!last) return undefined;
-  // 読めた JSON の中（文字列の値の中など）にあるものは、別の答えとして数えない
-  const broken = headingSpans(output, RISK_ASSESSMENT_HEADING).some(
-    (span) =>
-      span.value === undefined &&
-      span.start > last.start &&
-      !candidates.some((c) => c.start <= span.start && span.start < c.end),
-  );
-  return broken ? undefined : last;
 }
 
 /** コードブロックの中身が、評価の答えの形で始まっているか（`{"sacty-risk-assessment":` で始まる。空白は許す）。 */
@@ -443,7 +458,7 @@ export async function assessPullRequestRisk(input: {
   return {
     payload: {
       ...base,
-      ...(read ? { assessment: read.assessment } : { reason: message("pr.riskUnreadable") }),
+      ...(read ? { assessment: read.assessment } : { reason: riskUnreadableReason(ran.output) }),
       ...ran.cost,
     } as RiskPayload,
   };
