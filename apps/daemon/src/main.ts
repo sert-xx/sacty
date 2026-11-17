@@ -232,6 +232,8 @@ const contextImageBuilder = new ContextImageBuilder({
         ).then((code) => ({ code, stdout }));
       },
       log: (line) => console.log(line),
+      // 消せなかったこと（失敗・打ち切り）は、警告として出す
+      warn: (line) => console.warn(line),
       state: buildCachePruneState,
     }),
   log: (line) => console.log(line),

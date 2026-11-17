@@ -271,6 +271,8 @@ When building, sacty works as follows.
 - At that time, sacty also removes build cache unused for more than 3 days (the build cache of the whole Docker is the target).
   sacty removes build cache in the first cleanup after it starts, and then once every 6 hours (when it could not be removed, sacty tries again on the next reread).
   The result (the last line of the docker output), and a failure to remove, appear in the log of the terminal where you started sacty.
+- While `config.yaml` or the context repository of any project cannot be read, sacty removes neither unused images nor build cache (and logs nothing about it).
+  Once they can be read, sacty removes them from the next reread. Until then, clean up with `npx sacty image build` or `docker builder prune`.
 - If fetching one project's context repository does not finish within 5 minutes, sacty stops it and treats it as unreadable (other projects go ahead).
 
 ### While images are being built

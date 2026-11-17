@@ -188,11 +188,14 @@ Images in `images.yaml` of context repositories ([Context composition](context.e
     The build cache cleanup does not run until 6 hours (`BUILD_CACHE_PRUNE_INTERVAL_MS`) have passed since it last succeeded.
     The time of the last success is kept in memory only (`BuildCachePruneState`), so the first cleanup after the daemon starts runs it.
     A failure or a cut-short cleanup does not advance that time; the next cleanup tries again.
+    If the clock went back and the current time is before the last success, it treats the interval as passed and runs.
     The build cache cleanup runs even when the image list could not be read or there is no image to remove.
     If the cleanup of images and build cache together does not finish within 2 minutes (`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`), it stops it and waits for the stopped docker to finish (up to `CONTEXT_IMAGE_ABANDON_MS`) before moving on.
     Even when the build cache cannot be removed (docker fails or the cleanup times out), builds and rereads continue.
     The daemon log shows the result without interpreting it. On success: that the cleanup ran, and the last line of the docker output (also when there was nothing to remove). On failure: the docker exit code and the last line of its output (or the reason when docker could not be started).
     While failures continue, each cleanup logs the failure line.
+    The success line goes to standard output (`console.log`); the failure and cut-short lines go out as warnings (`console.warn`).
+    While the condition for starting the whole cleanup (the configuration can be read and every project's current definitions were read) is not met, the build cache is not removed either, and nothing is logged.
     The wording of a cut-short cleanup depends on the reason (`PRUNE_ABORT_TIMEOUT`: the time limit; `PRUNE_ABORT_STOP`: the daemon stopping) and on whether the build cache cleanup had started.
     While removing, a reread does not check which images are present; it checks after the removal finishes.
     If images get queued during the removal, it builds them after the removal finishes.

@@ -791,7 +791,7 @@ export type BuildCachePruneState = {
  *
  * ビルドキャッシュの片付けは、前に成功してから BUILD_CACHE_PRUNE_INTERVAL_MS が経つまで走らせない（起動してから最初の
  * 片付けでは走らせる）。失敗・打ち切りでは時刻を進めず、次の片付けで試し直す。結果は、解釈せずに log に出す（成功なら
- * docker の出力の最後の行、失敗なら終了コードと最後の行）。
+ * docker の出力の最後の行、失敗なら終了コードと最後の行）。成功は log に、失敗と打ち切りは warn に出す。
  */
 export async function pruneContextImagesAndBuildCache(deps: {
   keep: readonly string[];
@@ -799,7 +799,10 @@ export async function pruneContextImagesAndBuildCache(deps: {
   signal: AbortSignal;
   /** docker を実行して、終了コードと出力を返す（テストでは差し替える）。 */
   run: (args: string[]) => Promise<{ code: number; stdout: string }>;
+  /** 消したこと・片付けを実行したことを出す。 */
   log: (line: string) => void;
+  /** 消せなかったこと（失敗・打ち切り）を出す。 */
+  warn: (line: string) => void;
   state: BuildCachePruneState;
   /** 今の時刻（ミリ秒）。無ければ Date.now。 */
   now?: () => number;
@@ -811,11 +814,11 @@ export async function pruneContextImagesAndBuildCache(deps: {
       ? "ビルドキャッシュの片付けを打ち切りました"
       : "ビルドキャッシュの片付けは始めていません";
     if (deps.signal.reason === PRUNE_ABORT_STOP) {
-      deps.log(`[daemon] デーモンを止めるので、${what}。`);
+      deps.warn(`[daemon] デーモンを止めるので、${what}。`);
     } else if (deps.signal.reason === PRUNE_ABORT_TIMEOUT) {
-      deps.log(`[daemon] 片付けが上限の時間を過ぎたので、${what}。次の読み直しで試し直します。`);
+      deps.warn(`[daemon] 片付けが上限の時間を過ぎたので、${what}。次の読み直しで試し直します。`);
     } else {
-      deps.log(`[daemon] 片付けを打ち切ったので、${what}。`);
+      deps.warn(`[daemon] 片付けを打ち切ったので、${what}。`);
     }
   };
   try {
@@ -827,7 +830,12 @@ export async function pruneContextImagesAndBuildCache(deps: {
     // イメージを消せなくても（docker を起動できないなど）、キャッシュの片付けは試み、その結果をログに出す
   }
   const { succeededAt } = deps.state;
-  if (succeededAt !== undefined && now() - succeededAt < BUILD_CACHE_PRUNE_INTERVAL_MS) return;
+  if (succeededAt !== undefined) {
+    const elapsed = now() - succeededAt;
+    // 時計が戻って、前に成功した時刻より前になっていたら（負）、間隔が過ぎたものとして走らせる（戻った分だけ、片付けが
+    // 止まらないように）
+    if (elapsed >= 0 && elapsed < BUILD_CACHE_PRUNE_INTERVAL_MS) return;
+  }
   if (deps.signal.aborted) {
     interrupted(false);
     return;
@@ -838,7 +846,7 @@ export async function pruneContextImagesAndBuildCache(deps: {
   } catch (error) {
     if (deps.signal.aborted) interrupted(true);
     else {
-      deps.log(
+      deps.warn(
         `[daemon] 使っていないビルドキャッシュを消せませんでした（docker を実行できません：${lastOutputLine(error instanceof Error ? error.message : String(error))}）。`,
       );
     }
@@ -850,7 +858,7 @@ export async function pruneContextImagesAndBuildCache(deps: {
   }
   const detail = lastOutputLine(cache.stdout);
   if (cache.code !== 0) {
-    deps.log(
+    deps.warn(
       `[daemon] 使っていないビルドキャッシュを消せませんでした（docker の終了コード ${cache.code}${detail ? `：${detail}` : ""}）。`,
     );
     return;

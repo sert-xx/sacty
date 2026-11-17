@@ -767,8 +767,9 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
   const images = [{ name: "node-pw", image: def("x"), from: "acme" }];
   const ran = (detail?: string) =>
     `[daemon] 3日使っていないビルドキャッシュの片付けを実行しました${detail ? `（docker の出力の最後の行：${detail}）` : ""}。`;
+  /** 警告（warn）に出た行は、頭に `warn: ` を付けて、出た順のまま logs に並べる。 */
   const failed = (detail: string) =>
-    `[daemon] 使っていないビルドキャッシュを消せませんでした（${detail}）。`;
+    `warn: [daemon] 使っていないビルドキャッシュを消せませんでした（${detail}）。`;
 
   /**
    * 偽物の docker。results は、コマンドの頭ごとの結果（無ければ成功・出力なし）。同じ偽物で続けて片付けると、同じ覚え
@@ -803,6 +804,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
             return { code: result?.code ?? 0, stdout: result?.stdout ?? "" };
           },
           log: (line) => logs.push(line),
+          warn: (line) => logs.push(`warn: ${line}`),
         }),
     };
   }
@@ -899,6 +901,62 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     expect(cacheCalls()).toBe(3);
   });
 
+  it("成功は log に、失敗と打ち切りは warn に出す", async () => {
+    const outputs = async (
+      results: Parameters<typeof docker>[0],
+      signal: AbortSignal = new AbortController().signal,
+    ) => {
+      const logged: string[] = [];
+      const warned: string[] = [];
+      await pruneContextImagesAndBuildCache({
+        keep: [],
+        prefix: "sacty-ctx-",
+        signal,
+        state: {},
+        run: async (args) => {
+          const result = results[args[0] ?? ""];
+          if (result?.error) throw result.error;
+          return { code: result?.code ?? 0, stdout: result?.stdout ?? "" };
+        },
+        log: (line) => logged.push(line),
+        warn: (line) => warned.push(line),
+      });
+      return { logged: logged.length, warned: warned.length };
+    };
+    // 成功（イメージを消したことと、ビルドキャッシュの片付けを実行したこと）
+    expect(await outputs({ image: { stdout: "sacty-ctx-p1-a:0\n" } })).toEqual({
+      logged: 2,
+      warned: 0,
+    });
+    // 失敗（終了コード・例外）
+    expect(await outputs({ builder: { code: 1 } })).toEqual({ logged: 0, warned: 1 });
+    expect(await outputs({ builder: { error: new Error("x") } })).toEqual({ logged: 0, warned: 1 });
+    // 打ち切り（時間切れ・停止・理由なし）
+    for (const reason of [PRUNE_ABORT_TIMEOUT, PRUNE_ABORT_STOP, undefined]) {
+      const controller = new AbortController();
+      controller.abort(reason);
+      expect(await outputs({}, controller.signal)).toEqual({ logged: 0, warned: 1 });
+    }
+  });
+
+  it("時計が戻って、前に成功した時刻より前になっても、片付けを止めない", async () => {
+    const { clock, state, cacheCalls, prune } = docker();
+    await prune();
+    expect(cacheCalls()).toBe(1);
+    // 時計が戻った（前に成功した時刻より前）：間隔が過ぎたものとして走らせ、時刻を今の時計で覚え直す
+    clock.now -= 3 * BUILD_CACHE_PRUNE_INTERVAL_MS;
+    await prune();
+    expect(cacheCalls()).toBe(2);
+    expect(state.succeededAt).toBe(clock.now);
+    // 覚え直した時刻からは、ふつうに間隔を数える
+    clock.now += BUILD_CACHE_PRUNE_INTERVAL_MS - 1;
+    await prune();
+    expect(cacheCalls()).toBe(2);
+    clock.now += 1;
+    await prune();
+    expect(cacheCalls()).toBe(3);
+  });
+
   it("失敗では時刻を進めず、次の片付けで試し直す（失敗の行は、そのたびに出す）", async () => {
     const results: Parameters<typeof docker>[0] = {
       "builder prune": { code: 1, stdout: "permission denied\n" },
@@ -957,13 +1015,16 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     const expected: [unknown, string][] = [
       [
         PRUNE_ABORT_TIMEOUT,
-        "[daemon] 片付けが上限の時間を過ぎたので、ビルドキャッシュの片付けは始めていません。次の読み直しで試し直します。",
+        "warn: [daemon] 片付けが上限の時間を過ぎたので、ビルドキャッシュの片付けは始めていません。次の読み直しで試し直します。",
       ],
       [
         PRUNE_ABORT_STOP,
-        "[daemon] デーモンを止めるので、ビルドキャッシュの片付けは始めていません。",
+        "warn: [daemon] デーモンを止めるので、ビルドキャッシュの片付けは始めていません。",
       ],
-      [undefined, "[daemon] 片付けを打ち切ったので、ビルドキャッシュの片付けは始めていません。"],
+      [
+        undefined,
+        "warn: [daemon] 片付けを打ち切ったので、ビルドキャッシュの片付けは始めていません。",
+      ],
     ];
     for (const [reason, line] of expected) {
       const controller = new AbortController();
@@ -1041,6 +1102,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
             });
           },
           log: (line) => logs.push(line),
+          warn: (line) => logs.push(`warn: ${line}`),
         }),
     });
     return {
@@ -1062,7 +1124,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     await builder.idle();
     expect(cacheCalls()).toBe(1);
     const timedOut =
-      "[daemon] 片付けが上限の時間を過ぎたので、ビルドキャッシュの片付けを打ち切りました。次の読み直しで試し直します。";
+      "warn: [daemon] 片付けが上限の時間を過ぎたので、ビルドキャッシュの片付けを打ち切りました。次の読み直しで試し直します。";
     expect(logs).toEqual([timedOut]);
     expect(state.succeededAt).toBeUndefined();
     // 止まった後も、読み直しは動き、次の片付けで試し直す（続けて時間切れになったことも、そのたびに出す）
@@ -1079,7 +1141,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     await vi.waitFor(() => expect(cacheCalls()).toBe(1));
     await builder.stop();
     expect(logs).toEqual([
-      "[daemon] デーモンを止めるので、ビルドキャッシュの片付けを打ち切りました。",
+      "warn: [daemon] デーモンを止めるので、ビルドキャッシュの片付けを打ち切りました。",
     ]);
     expect(state.succeededAt).toBeUndefined();
     // 止めた後は、片付けない
