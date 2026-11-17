@@ -87,6 +87,7 @@ import {
   usesTestCommand,
 } from "@/lib/labels";
 import { projectSettingsPath } from "@/lib/paths";
+import { pausedRemaining } from "@/lib/paused-remaining";
 import { repoLabels } from "@/lib/repo-label";
 import { runLogId } from "@/lib/session-log";
 import { subtaskSummary } from "@/lib/subtasks";
@@ -324,13 +325,21 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           noteRoom={resumeNoteRoom(task)}
           usedUsd={task.budget.usedUsd}
           capUsd={task.budget.capUsd}
-          lastFailure={(() => {
+          {...(() => {
+            // 実装が終わらないための一時停止は、残っていることを、理由の文から分けて箇条書きで出す（PBI-355）
+            const remaining = pausedRemaining(task, activity);
             const failure =
+              remaining?.message ??
               task.pausedMessage ??
               (task.pausedReason !== "budget" && lastFailure?.type === "AgentRunFailed"
                 ? lastFailure.payload.message
                 : undefined);
-            return failure === undefined ? undefined : messages.labels.text(failure);
+            return {
+              ...(failure === undefined ? {} : { lastFailure: messages.labels.text(failure) }),
+              ...(remaining
+                ? { remaining: { items: remaining.items, total: remaining.total } }
+                : {}),
+            };
           })()}
         />
       )}
