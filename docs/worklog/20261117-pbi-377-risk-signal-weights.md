@@ -4,7 +4,7 @@
 - タスク: PBI-377
 - PR: #408
 - ブランチ: feat/pbi-377-risk-signal-weights
-- 関係する ADR: [PR のリスク評価の段階を、合図の重さと、依存の版の更新の上げ幅で決める](../adr/20261117-0433-risk-level-by-signal-weight.md)
+- 関係する ADR: [PR のリスク評価の段階を、合図の重さと、依存の版の更新の上げ幅で決める](../adr/20261117-0433-superseded-risk-level-by-signal-weight.md)
 
 ## 目的
 

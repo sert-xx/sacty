@@ -213,7 +213,7 @@ const ja = {
       unknown: "上げ幅を読み取れない",
     },
     dependencyUpdateHint:
-      "メジャーの更新と、上げ幅を読み取れない更新は高です。マイナー・パッチの更新は、ほかの変更が無ければ低です。",
+      "メジャーの更新は高、上げ幅を読み取れない更新は中です。マイナー・パッチの更新は、ほかの変更が無ければ低です。",
     change: "変更の種類",
     scope: "影響の範囲",
     reversibility: "取り消しやすさ",
@@ -553,7 +553,7 @@ const en: PartsMessages = {
       unknown: "Size of the update could not be read",
     },
     dependencyUpdateHint:
-      "A major update, or an update whose size could not be read, is high. A minor or patch update is low when nothing else changes.",
+      "A major update is high, and an update whose size could not be read is medium. A minor or patch update is low when nothing else changes.",
     change: "Kind of change",
     scope: "Reach of the impact",
     reversibility: "Ease of undoing",
