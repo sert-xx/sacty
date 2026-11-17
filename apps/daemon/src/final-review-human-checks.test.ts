@@ -163,6 +163,26 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     expect(lines.some((l) => l.includes("不安定と判断したテストの失敗：ui（"))).toBe(true);
   });
 
+  it("質問への答えに渡す判定に、統合レビューの足りないことと人が確かめることを含める（PBI-363）", () => {
+    const lines = chatJudgementLines(
+      task({
+        integration: {
+          passed: false,
+          baseBranch: "main",
+          commit: "abcdef1234",
+          viewpoints: [],
+          remarks: [],
+          findings: ["画面から API を呼ぶ"],
+          humanChecks: ["実機で読み取れること"],
+          summary: "",
+          at: "2026-11-17T00:00:00.000Z",
+        },
+      } as Partial<Task>),
+    );
+    expect(lines).toContain("  - 足りないこと：画面から API を呼ぶ");
+    expect(lines).toContain("  - 人が確かめること：実機で読み取れること");
+  });
+
   it("質問への答えに渡す判定に、環境による失敗と人が確かめることを含める", () => {
     const lines = chatJudgementLines(task({ lastReview: review() } as Partial<Task>));
     expect(lines).toContain(`  - 環境によると判断したテストの失敗：${FAILURE}`);

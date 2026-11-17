@@ -667,7 +667,7 @@ const en: TaskMessages = {
     integrateHelp:
       "The combined result of the subtasks. Approve to complete; request changes to add subtasks that fix it.",
     integrateHumanChecksHelp: (count) =>
-      `The combined result of the subtasks has ${count === 1 ? "1 item" : `${count} items`} for a person to check. Check ${count === 1 ? "it" : "them"} and approve, or request changes to add subtasks that fix it.`,
+      `The combined result of the subtasks has ${count === 1 ? "1 item" : `${count} items`} for a person to check. Check ${count === 1 ? "it" : "them"} and approve, or request changes to add subtasks for what is not met.`,
     integrateFailedHelp: (count) =>
       `The integration review failed ${count} times in a row. Approve to complete as it is, or request changes to add subtasks that fix it.`,
     notReproducedHelp:

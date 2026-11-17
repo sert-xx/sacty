@@ -72,6 +72,22 @@ describe("統合レビューの人が確かめること（PBI-363）", () => {
     );
   });
 
+  it("不合格の結果にも、足りないことと一緒に、人が確かめることを出す", () => {
+    const html = render(
+      task(
+        review({
+          passed: false,
+          findings: ["画面の送信ボタンから決済の API を呼ぶ"],
+          humanChecks: [CHECK],
+        }),
+      ),
+    );
+    expect(html).toContain("不合格");
+    expect(html).toContain("画面の送信ボタンから決済の API を呼ぶ");
+    expect(html).toContain('data-testid="integration-human-checks"');
+    expect(html).toContain(`<li class="break-words">${CHECK}</li>`);
+  });
+
   it("英語の画面でも出す", () => {
     const html = render(task(review({ humanChecks: [CHECK] })), "en");
     expect(html).toContain("For a person to check");
