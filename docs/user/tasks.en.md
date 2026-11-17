@@ -1138,6 +1138,9 @@ sacty watches CI for a while after that, and when it was failing, shows it in th
 - The notice of the wait for approval in the task details shows the time sacty looked at CI and the names of the checks that were failing (as links to that run on GitHub when they have one).
 - The activity also shows that CI was failing.
 
+When all CI passes while sacty is still watching it, the mark in the list and the notice in the details disappear.
+The activity shows that they were cleared.
+
 sacty only shows it and does not fix it automatically. It does not rerun CI either.
 Do one of the following.
 
@@ -1147,10 +1150,15 @@ Do one of the following.
 
 This notice is the result at the time sacty looked at CI. Keep the following in mind.
 
-- The mark in the list and the notice in the details do not disappear when you rerun CI and it passes. They disappear when the PR is updated, merged, or closed.
+- The notice disappears when all CI passes while sacty is still watching it.
+  It does not disappear when CI passes after sacty stopped watching. In that case it disappears when the PR is updated, merged, or closed.
+- CI is not treated as passed while a cancelled CI item remains, while CI is running, when there is no CI at all, or when sacty could not read the CI list to the end. The notice stays.
+- When you add a commit to the PR, the notice disappears once all CI on the new head commit passes.
+- After the notice disappeared, a rerun of CI on the same commit that fails is not shown again.
 - The status in the task list, "Needs you", and the header notifications does not change. You cannot filter the list by the "CI failed" mark.
 - The dashboard, the "Needs you" cards, and the header notifications show no mark. No Slack or desktop notification is sent either.
-- sacty looks at CI every 5 minutes, for about one hour only. CI that fails after that is not shown.
+- sacty looks at CI for each head commit of the PR every 5 minutes, only for about one hour after it first looked. CI that fails after that is not shown.
+  This time is not extended after a CI failure is shown. When the failure was found late, sacty may stop watching before it sees CI pass.
 - Even while CI is failing, if you merge the PR, sacty takes it as the approval and goes on.
 - It is not shown for requirements and design PRs, or for a PR before the review child task reports "no findings" (the review child task turns CI failures into findings).
 

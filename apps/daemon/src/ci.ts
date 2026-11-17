@@ -15,6 +15,11 @@ export type CiSnapshot = {
   jobs?: CiCheck[];
   /** 失敗したワークフローの実行（ID と名前・URL）。 */
   failedRuns: { id: number; name: string; url?: string; conclusion: string }[];
+  /**
+   * 一覧を読み切れなかった（ページの上限で打ち切った・続きのページをたどれなかった。PBI-375）。読めなかった分に失敗や
+   * 実行中のものがありうるので、この一覧だけでは「すべて通った」と決めない。
+   */
+  truncated?: true;
 };
 
 /** CI/CD の状態を読む口（PBI-89）。テストでは偽物に差し替える。repo はリポジトリの URL。 */
@@ -508,9 +513,27 @@ export class GitHubCiStatus implements CiStatusReader {
     token: string,
     key: string,
   ): Promise<Record<string, unknown>[]> {
+    return (await this.listPages(api, first, token, key)).items;
+  }
+
+  /**
+   * 一覧（ページの続きも）を読み、key の配列をつなげて返す。truncated は、続きのページが残っているのに読むのをやめたか
+   * （ページの上限・たどれない続きのリンク。PBI-375）。
+   */
+  private async listPages(
+    api: string,
+    first: string,
+    token: string,
+    key: string,
+  ): Promise<{ items: Record<string, unknown>[]; truncated: boolean }> {
     const all: Record<string, unknown>[] = [];
     let url: string | undefined = first;
-    for (let page = 0; url && page < MAX_PAGES; page++) {
+    let more = false;
+    for (let page = 0; url; page++) {
+      if (page >= MAX_PAGES) {
+        more = true;
+        break;
+      }
       const res = await this.fetchImpl(url, { headers: this.headers(token) });
       const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) throw apiError("readChecks", res.status, json);
@@ -520,31 +543,37 @@ export class GitHubCiStatus implements CiStatusReader {
       all.push(...(items as Record<string, unknown>[]));
       const next = nextPage(res.headers.get("link"));
       url = next?.startsWith(`${api}/`) ? next : undefined;
+      // 続きのリンクが、この API の外を指している：たどらない（読み切れなかったものとして扱う）
+      if (next && !url) more = true;
     }
-    return all;
+    return { items: all, truncated: more };
   }
 
   async snapshot(input: Parameters<CiStatusReader["snapshot"]>[0]): Promise<CiSnapshot> {
     const { api, base } = repoApi(input.repo);
     const sha = encodeURIComponent(input.commit);
-    const runs = await this.list(
+    const runPages = await this.listPages(
       api,
       `${base}/actions/runs?head_sha=${sha}&per_page=100`,
       input.token,
       "workflow_runs",
     );
-    const checkRuns = await this.list(
+    const checkRunPages = await this.listPages(
       api,
       `${base}/commits/${sha}/check-runs?per_page=100`,
       input.token,
       "check_runs",
     );
-    const statuses = await this.list(
+    const statusPages = await this.listPages(
       api,
       `${base}/commits/${sha}/status?per_page=100`,
       input.token,
       "statuses",
     );
+    const runs = runPages.items;
+    const checkRuns = checkRunPages.items;
+    const statuses = statusPages.items;
+    const truncated = runPages.truncated || checkRunPages.truncated || statusPages.truncated;
     const str = (v: unknown) => (typeof v === "string" ? v : undefined);
     const checks: CiCheck[] = [];
     const jobs: CiCheck[] = [];
@@ -602,7 +631,7 @@ export class GitHubCiStatus implements CiStatusReader {
         ...(url ? { url } : {}),
       });
     }
-    return { checks, jobs, failedRuns };
+    return { checks, jobs, failedRuns, ...(truncated ? { truncated: true as const } : {}) };
   }
 
   async failures(input: Parameters<CiStatusReader["failures"]>[0]): Promise<CiFailure[]> {

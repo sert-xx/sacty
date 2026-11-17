@@ -625,6 +625,7 @@ function GateNotice({ task }: { task: Task }) {
           <div data-testid="gate-pr-ci-failed" className="flex flex-col gap-1 text-sm">
             <p>
               {m.gate.prCiFailedHelp(ciFailure.head.slice(0, 7), formatStamp(ciFailure.at, locale))}
+              <Hint text={m.gate.prCiFailedHint} className="size-4" />
             </p>
             <p>{m.gate.prCiFailedChecks}</p>
             <ul className="list-disc pl-5 [overflow-wrap:anywhere]">

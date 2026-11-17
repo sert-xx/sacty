@@ -40,6 +40,7 @@ import {
   canRerun,
   canRetryExport,
   changeRounds,
+  ciAllPassed,
   type DaemonMessage,
   type DaemonText,
   DashboardStats,
@@ -120,6 +121,7 @@ import {
   projectConflicts,
   proposalAccepted,
   pullRequestBodyKey,
+  pullRequestCiFailure,
   questionBlocked,
   queueOverSince,
   RejectAuditProposalInput,
@@ -1583,9 +1585,12 @@ export class TaskService {
    * 仕組みを小さく保つため、CI を読み続けない：
    * - 1回の PR の確認で読むのは、1件だけ（前の読み取りの通信が終わっていなければ、読まない）。候補は、前に読んだタスクの
    *   次から順に探す。
-   * - 先頭のコミットごとに、PR_CI_READ_INTERVAL_MS の間隔で、PR_CI_READS_MAX 回まで読む。失敗を見つけたら記録して、その
-   *   先頭は読むのをやめる。実行中のものが無く、失敗も無ければ、その先頭は読むのをやめる。
-   * - 記録は、先頭のコミットごとに1度だけ（PullRequestCiFailed）。その後の変化（再実行で通ったなど）は、読まない・記録しない。
+   * - 先頭のコミットごとに、PR_CI_READ_INTERVAL_MS の間隔で、PR_CI_READS_MAX 回まで読む。失敗の表示を出していなくて、
+   *   実行中のものが無く、失敗も無ければ、その先頭は読むのをやめる。
+   * - 失敗の記録は、先頭のコミットごとに1度だけ（PullRequestCiFailed）。記録した後も、同じ回数の上限の中で読み、通って
+   *   いたら、表示を消して（PullRequestCiRecovered）、その先頭は読むのをやめる（PBI-375）。通ったとするのは、一覧を
+   *   読み切れていて（CiSnapshot.truncated でない）、ciAllPassed を満たすときだけ。取り消し・空の一覧・読み切れなかった
+   *   一覧・実行中では消さずに、間隔の後に読み直す。回数の上限の後の変化は、読まない・記録しない。
    * - 出すだけで、実行・差し戻し・再レビュー・ドラフトへの変更・CI の再実行は始めない。
    * - 読めない・時間内に返らないときも、1回と数える（理由はデーモンのログに出す）。
    */
@@ -1610,15 +1615,6 @@ export class TaskService {
       if (!task || !this.watchesPullRequestCi(task, pr)) continue;
       // GitHub の先頭を読めなかった（空）ときは、指摘なしにした先頭、無ければ提出のコミットの CI を読む
       const head = candidate.head?.trim() || task.pullRequest?.reviewedCommit || pr.commit;
-      // この先頭の失敗を記録済みなら、読まない（先頭のコミットごとに1度だけ）
-      const recorded = task.pullRequestCiFailure;
-      if (
-        recorded?.number === pr.number &&
-        recorded.commit === pr.commit &&
-        recorded.head === head
-      ) {
-        continue;
-      }
       const known = this.pullRequestCiReads.get(taskId);
       const entry = known?.head === head ? known : { head, reads: 0, nextAt: 0 };
       if (entry.reads >= PR_CI_READS_MAX || now < entry.nextAt) continue;
@@ -1658,7 +1654,11 @@ export class TaskService {
       }
       const done = () =>
         this.pullRequestCiReads.set(taskId, { head, reads: PR_CI_READS_MAX, nextAt: 0 });
+      // いま出している失敗の表示（今の提出の PR のもの）
+      const shown = pullRequestCiFailure(latest);
       if (failed.length > 0) {
+        // 記録は、先頭のコミットごとに1度だけ。記録した後も、回数の上限までは読む（通ったら表示を消すため。PBI-375）
+        if (shown?.head === head) return;
         const checks = failed.slice(0, PR_CI_FAILED_CHECKS_MAX);
         const more = failed.length - checks.length;
         this.append(latest, [
@@ -1670,9 +1670,23 @@ export class TaskService {
             },
           },
         ]);
-        done();
+      } else if (shown) {
+        // 失敗の表示を出している：一覧を読み切れていて、すべて通っていたら、表示を消して、この先頭は読むのをやめる。
+        // 取り消し・空の一覧・読み切れなかった一覧・実行中では消さずに、間隔の後に読み直す（PBI-375）
+        if (!snapshot.truncated && ciAllPassed(all)) {
+          this.append(latest, [
+            {
+              actor: "sacty",
+              event: {
+                type: "PullRequestCiRecovered",
+                payload: { number: pr.number, commit: head },
+              },
+            },
+          ]);
+          done();
+        }
       } else if (all.length > 0 && all.every((c) => c.status === "completed")) {
-        // 終わっていて、失敗が無い：この先頭は、もう読まない
+        // 失敗の表示が無く、終わっていて、失敗が無い：この先頭は、もう読まない
         done();
       }
       // 実行中のものがある・CI がまだ1つも無いときは、間隔の後に読み直す（回数の上限まで）

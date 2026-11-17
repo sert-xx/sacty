@@ -3015,7 +3015,8 @@ export const PR_CI_CHECK_NAME_MAX = 200;
 /**
  * 人の承認（マージ）を待つ実装の PR の、先頭のコミットの CI が失敗していた（PBI-364）。sacty は PR の CI を待たずに、PR の
  * レビューの子タスクの指摘なしでドラフトを外すので、その後に CI が落ちたことを、タスクの詳細と一覧に出すために記録する。
- * sacty が CI を読んだ時点の結果で、先頭のコミットごとに1度だけ記録する。その後の変化（再実行で通ったなど）は記録しない。
+ * sacty が CI を読んだ時点の結果で、先頭のコミットごとに1度だけ記録する。CI を読んでいる間に通ったら、PullRequestCiRecovered
+ * で表示を消す（PBI-375）。読むのをやめた後の変化は記録しない。
  * 出すだけで、実行・差し戻し・再レビュー・CI の再実行は始めない。commit は、CI を読んだ PR の先頭（人が足したコミットを
  * 含む）。checks は失敗したチェックで、PR_CI_FAILED_CHECKS_MAX 件まで。超えた分は more に件数を持つ。
  */
@@ -3030,6 +3031,16 @@ const PullRequestCiFailed = z.object({
       .max(PR_CI_FAILED_CHECKS_MAX),
     more: z.number().int().positive().optional(),
   }),
+});
+
+/**
+ * 実装の PR の CI の失敗（PullRequestCiFailed）を出している間に、PR の先頭のコミットの CI が通った（PBI-375）。失敗の表示
+ * （タスクの詳細・一覧の印）を消す。commit は、CI を読んだ PR の先頭。通ったとするのは、CI の一覧を読み切れていて、
+ * `ciAllPassed` を満たすときだけ（取り消し・空の一覧・読み切れなかった一覧では、記録しない）。
+ */
+const PullRequestCiRecovered = z.object({
+  type: z.literal("PullRequestCiRecovered"),
+  payload: z.object({ number: z.number().int().positive(), commit: z.string().min(1) }),
 });
 
 /**
@@ -3518,6 +3529,25 @@ export function isFailedCiCheck(check: CiCheck): boolean {
   return check.kind === "status"
     ? FAILED_CI_STATES.has(check.conclusion)
     : FAILED_CI_CONCLUSIONS.has(check.conclusion);
+}
+
+/** 通ったとみなす結論（PBI-375）。実行されなかった（skipped）・中立（neutral）は、通ったものの妨げにしない。 */
+const PASSED_CI_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
+
+/**
+ * CI/CD の実行・チェック・コミットの状態の一覧が、通ったか（PBI-375。CI の失敗の表示を消してよいか）。一覧が空でなく、
+ * すべて終わっていて、結論が成功（success）か、実行されなかった・中立（skipped・neutral。コミットの状態は success だけ）で、
+ * 成功が1件以上あるときだけ。取り消し（cancelled）・古い結果（stale）・失敗・実行中・結論の無いものが1件でもあれば、
+ * 通っていない。一覧を読み切れたかは、呼び出し側が確かめる。
+ */
+export function ciAllPassed(checks: readonly CiCheck[]): boolean {
+  if (!checks.some((c) => c.status === "completed" && c.conclusion === "success")) return false;
+  return checks.every(
+    (c) =>
+      c.status === "completed" &&
+      c.conclusion !== undefined &&
+      (c.kind === "status" ? c.conclusion === "success" : PASSED_CI_CONCLUSIONS.has(c.conclusion)),
+  );
 }
 
 /** CI/CD の失敗の1件（PBI-89）。excerpt はログの抜粋（秘密情報を伏せてから切り詰めたもの）。 */
@@ -4031,6 +4061,7 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestConflicted,
   PullRequestConflictResolved,
   PullRequestCiFailed,
+  PullRequestCiRecovered,
   PullRequestReviewImported,
   PullRequestReviewDiscarded,
   ReworkJudged,

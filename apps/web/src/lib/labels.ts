@@ -871,6 +871,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.checks.map((c) => c.name),
         event.payload.more ?? 0,
       );
+    case "PullRequestCiRecovered":
+      return e.PullRequestCiRecovered(event.payload.number, event.payload.commit.slice(0, 7));
     case "IssueCommented":
       return e.IssueCommented(event.payload.url);
     case "IssueCommentFailed":

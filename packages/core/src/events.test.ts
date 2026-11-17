@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  type CiCheck,
   CreateTaskInput,
+  ciAllPassed,
   EventInput,
   RESUME_NOTE_MAX,
   RequestChangesInput,
@@ -159,5 +161,49 @@ describe("差し戻しの原因（PBI-268）", () => {
       "base_changed",
     );
     expect(RequestChangesInput.safeParse({ ...input, cause: "x" }).success).toBe(false);
+  });
+});
+
+describe("CI の一覧が通ったか（ciAllPassed。PBI-375）", () => {
+  const check = (conclusion?: string, kind: CiCheck["kind"] = "workflow"): CiCheck => ({
+    kind,
+    name: "CI",
+    status: conclusion === undefined ? "pending" : "completed",
+    ...(conclusion === undefined ? {} : { conclusion }),
+  });
+
+  it("空でなく、すべて終わっていて、成功（と、実行されなかった・中立）だけなら、通ったとする", () => {
+    expect(ciAllPassed([check("success")])).toBe(true);
+    expect(ciAllPassed([check("success"), check("success", "status")])).toBe(true);
+    expect(ciAllPassed([check("success"), check("skipped", "check"), check("neutral")])).toBe(true);
+  });
+
+  it.each<[string, CiCheck[]]>([
+    ["空の一覧", []],
+    ["取り消し", [check("success"), check("cancelled")]],
+    ["取り消しだけ", [check("cancelled")]],
+    ["失敗", [check("success"), check("failure")]],
+    ["時間切れ", [check("success"), check("timed_out")]],
+    ["古い結果", [check("success"), check("stale")]],
+    ["実行中", [check("success"), check()]],
+    ["実行されなかったものだけ", [check("skipped"), check("neutral")]],
+    [
+      "結論の無い終わったもの",
+      [check("success"), { kind: "check", name: "x", status: "completed" }],
+    ],
+    ["空の結論", [check("success"), check("")]],
+    ["コミットの状態の失敗", [check("success"), check("failure", "status")]],
+    ["コミットの状態のエラー", [check("success"), check("error", "status")]],
+    ["コミットの状態の成功以外", [check("success"), check("neutral", "status")]],
+    ["知らない結論", [check("success"), check("something_new")]],
+  ])("%sがあれば、通ったとしない", (_name, checks) => {
+    expect(ciAllPassed(checks)).toBe(false);
+  });
+
+  it("消したことの記録（PullRequestCiRecovered）は、PR の番号と先頭のコミットを持つ", () => {
+    const recovered = (payload: object) => ({ type: "PullRequestCiRecovered", payload });
+    expect(EventInput.safeParse(recovered({ number: 7, commit: "abc" })).success).toBe(true);
+    expect(EventInput.safeParse(recovered({ number: 7, commit: "" })).success).toBe(false);
+    expect(EventInput.safeParse(recovered({ number: 0, commit: "abc" })).success).toBe(false);
   });
 });

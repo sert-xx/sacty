@@ -790,6 +790,15 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
         } as never),
       ),
     ).toBe("PR #7 の CI が失敗していた（abcdef1。CI、test ほか2件）。sacty は何も始めない");
+    // 読んでいる間に通って、表示を消したこと（PBI-375）
+    expect(
+      describeEvent(
+        event({
+          type: "PullRequestCiRecovered",
+          payload: { number: 7, commit: "abcdef1234567" },
+        } as never),
+      ),
+    ).toBe("PR #7 の CI が通った（abcdef1）。CI の失敗の表示を消した");
     // 読んだ時点の結果で、その後の変化を反映しないので、一覧・「あなたの出番」の状態には出さない
     expect(
       statusText(
