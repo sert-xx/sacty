@@ -439,6 +439,16 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
     `Closes #123` があっても `Closes #12` が残ったとは見なさない。
 - 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。要約・短縮（結論の要約・表のテスト名や観点の題・人が確かめること・不合格のまま進めた記録の所見など）で切れた先頭が残らないよう、本文を作る前に、タスクのすべての文字列から伏せる（`PullRequestBodyStage.secrets`）。公開の直前の置換も残す。
   台帳に残す理由の文も伏せる。
+- コンテナの作業領域へのリンク（`withoutWorkspaceLinks`。PBI-366）：長さの上限と秘密の値の扱いの後の本文から、リンク先がコンテナの作業領域（`CONTAINER_WORKSPACE`。`/workspace` とその下）の Markdown のリンク・画像を、リンクでない表記にする（エージェントの説明に入ることがあり、GitHub では開けないため）。
+  - 表示の文字（リンクは元の書き方のまま。画像は代わりの文字）を残す。表示の文字にパス（`#`・`?` より後ろを除く）が出ていなければ、全角の括弧の中に、作業領域からのパス（リポジトリのルートからのパス）をインラインのコードで添える。表示の文字が空なら、パスのインラインのコードだけにする。作業領域そのものへのリンクは、表示の文字だけにする。リンクの中にある作業領域への画像も外す。
+  - どこがリンク・画像かは、Markdown のパーサー（`mdast-util-from-markdown`。CommonMark）で決め、その範囲だけを置き換える。パーサーがリンクと見なさないもの（コードブロックとインラインコードの中、打ち消した角括弧）と、ほかのリンク（URL・相対パス・`/workspace` で始まる別の名前のパス）は変えない。参照形式のリンク（と、その定義）と HTML のリンクは変えない。
+  - 置き換えは、本文を長くしない（長さの上限の後に行うため）。パスにバッククォートが続いて、コードの書式の囲みが元のリンクより長くなるときは、パスを添えずに表示の文字だけにする。表示の文字も無ければ、そのリンクは変えない。
+  - 置き換えた後の本文も解析し、その構文木が、元の構文木の「外したリンク・画像を、中身（と添えたパス）にしたもの」と同じであることを確かめる（`shapeOf`。位置を除いた、種類・値・子の全体を比べる）。同じでなければ、本文を変えずに使う（その本文では、作業領域へのリンクは残る）。表示の文字が周りの文字とつながって、新しいリンク・HTML のコメントやタグ・参照の定義・箇条書きなどの別の構文になる本文が、これに当たる。
+  - 作業領域へのリンクがありえない本文は、解析しない（`cannotLinkToWorkspace`）。`](` が無い本文と、作業領域のパス・バックスラッシュ・文字参照（`&#115;` など）のどれも無い本文。リンク先を自前で読んで決めず、パーサーが作業領域へのリンクと解釈しうる本文は、すべて解析する。
+  - 解析は、デーモンの中で同期に行う。本文の上限（65,000 文字）で、ふつうの本文は 0.1 秒ほど。解析に回る本文で、記号（`>`・`*`・`+` など）が上限いっぱいまで続くと、数秒〜数十秒かかり、その間、デーモンのほかの処理は待つ（PR の作成・更新のたびに1回）。
+  - 解析に失敗したら、本文を変えずに使う（PR の作成・更新は止めない）。
+  - 置き換えの後に、秘密の値をもう一度伏せる（`pullRequestBody`）。リンク先の文字参照が元の文字に戻る・外したリンクの前後の文字がつながると、伏せた後の本文に秘密の値が現れうるため。伏せた結果が長さの上限を超えるときは、置き換えをやめて、上限の中の本文を使う。
+  - 要求要件・設計の PR と実装の PR の、作成と更新のどちらの本文にも行う。台帳に残す本文（`PullRequestBodyWritten`）も、外した後のもの。PR に投稿するレビュー・コメントには行わない。
 - 台帳：`PullRequestPublished`・`StepPullRequestPublished` の `template` に、次を残す。
   - 使ったテンプレート（`repo`：テンプレートのあったリポジトリの URL、`path`）
   - または、決まった形にした理由（`fallback`：`none`・`unusable`、`message`：`pr.templateFailed`・`pr.templateTooLarge`・`pr.templateInvalid`・`pr.templateEmpty`・`pr.templateOrgPrivate` など）
@@ -453,7 +463,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - パスは区切りごとに符号にし（括弧も符号にして、リンク先が途中で閉じないようにする）、リンクの文字はパスのインラインのコード（中にバッククォートがあれば、より長いバッククォートで囲む）。
   - PR の URL が `<リポジトリ>/pull/<番号>` の形でなければ、パスのインラインのコードと、全角の括弧の中に「PR：」と山括弧で囲んだ URL（自動リンク）にする。URL が無ければパスだけ。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/pr-body-links.ts`（`withoutWorkspaceLinks`・`cannotLinkToWorkspace`・`shapeOf`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ### 人が直した本文の更新
 
