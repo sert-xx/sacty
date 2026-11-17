@@ -11,6 +11,8 @@ import {
   MAX_INCOMPLETE_CONTINUATIONS,
   MVP_STEPS,
   message,
+  RERUN_NOTE_HEADING,
+  RERUN_RECORD_HEADING,
   renderMessage,
   reviewedPullRequest,
   STEP_PLANS,
@@ -24,6 +26,7 @@ import { MessageError } from "./errors.js";
 import type { PullRequestFeedback } from "./github.js";
 import { PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
+import { buildOrchestratorPrompt, continuablePullRequest } from "./prompts.js";
 import { createApp } from "./server.js";
 import {
   InvalidOperationError,
@@ -6405,6 +6408,122 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               const followUp = service.list().find((t) => t.derivedFrom?.taskId === id);
               expect(followUp?.repo).toBe("https://github.com/acme/app");
               expect(handled(service, id)[0]?.payload).toMatchObject({ taskId: followUp?.id });
+              activity.close();
+            });
+
+            it("後続のタスクと、人が作った続きのタスクは、元のタスクの PR を引き継ぎの候補にしない。オーケストレーターが引き継ぐと答えても、工程を決めて進む（PBI-384）", async () => {
+              const made = await completedWithTask();
+              const { service, pulls, repos, projects, id } = made;
+              const followUpId = service.list().find((t) => t.derivedFrom?.taskId === id)?.id ?? "";
+              // 依頼には、元の（マージ済みの）PR の URL がある
+              expect(taskOf(service, followUpId).body).toContain(
+                "https://github.com/acme/app/pull/7",
+              );
+              // 人が、同じ完了したタスクから、続きのタスクを作る（sacty が、元のタスクの記録を説明の後に足す）
+              const personId = service.deriveTask(id, {
+                title: "関連する直し",
+                body: "一覧の並び順も直す",
+                repo: "https://github.com/acme/app",
+              }).id;
+              expect(taskOf(service, personId).derivedFrom?.record).toContain(
+                "https://github.com/acme/app/pull/7",
+              );
+              made.activity.close();
+              // 起動し直して、オーケストレーターが「タスクにある PR を引き継ぐ」と答える
+              const activity = new SqliteActivityStore(dbPath);
+              const again = makeService(activity, [], {
+                stepPullRequests: true,
+                ci: CI,
+                draftPullRequests: true,
+                reviewTasks: true,
+                now: later,
+                pulls,
+                repos,
+                projects,
+                planner: async () => ({
+                  steps: ["implement"],
+                  plan: "direct",
+                  reason: "指摘への対応",
+                  fallback: false,
+                  testCommand: "npm test",
+                  continuePullRequest: true,
+                  costUsd: 0,
+                  estimated: false,
+                }),
+              });
+              const looked = pulls.prInfoRequests.length;
+              await again.service.runNext(followUpId);
+              const followUp = taskOf(again.service, followUpId);
+              // 引き継がず（PR を確かめにも行かない）、工程を決めずに止まることなく、工程を決める
+              expect(followUp.steps.map((s) => s.key)).toEqual(["implement"]);
+              // （この後の実装の実行は、ここでは用意していないので、工程を決めた所までを確かめる）
+              expect(
+                again.service
+                  .get(followUpId)
+                  ?.activity.map((e) => e.type)
+                  .slice(0, 3),
+              ).toEqual(["TaskCreated", "RepositoryPrepared", "StepsChosen"]);
+              expect(followUp.continuedPullRequest).toBeUndefined();
+              expect(pulls.prInfoRequests).toHaveLength(looked);
+              // オーケストレーターへの指示にも、引き継ぐかを決めさせる項目を出さない
+              expect(continuablePullRequest(followUp)).toBeUndefined();
+              expect(buildOrchestratorPrompt(followUp)).not.toContain("continuePullRequest");
+              // 人が作った続きのタスクも、元のタスクの記録にある PR（元のタスクのマージ済みの PR）は、候補にしない
+              await again.service.runNext(personId);
+              const person = taskOf(again.service, personId);
+              expect(person.body).toContain("https://github.com/acme/app/pull/7");
+              expect(person.steps.map((s) => s.key)).toEqual(["implement"]);
+              expect(person.continuedPullRequest).toBeUndefined();
+              expect(pulls.prInfoRequests).toHaveLength(looked);
+              expect(continuablePullRequest(person)).toBeUndefined();
+              expect(buildOrchestratorPrompt(person)).not.toContain("continuePullRequest");
+              // 人が、題か依頼に PR のリンクを書いたときは、今までどおり候補にする（記録の中のリンクだけを除く）
+              const linked = {
+                ...person,
+                body: `https://github.com/acme/app/pull/12 の指摘を直す\n\n${person.derivedFrom?.record}`,
+              } as Task;
+              expect(continuablePullRequest(linked)).toEqual({
+                repo: "https://github.com/acme/app",
+                number: 12,
+              });
+              expect(buildOrchestratorPrompt(linked)).toContain("continuePullRequest");
+              // 記録だけの説明（人の依頼が空）でも、記録の中のリンクは候補にしない
+              expect(
+                continuablePullRequest({
+                  ...person,
+                  body: person.derivedFrom?.record ?? "",
+                } as Task),
+              ).toBeUndefined();
+              // 再実行のタスクの、前の試行の記録（中止で閉じた PR の URL が入る）の中のリンクも、候補にしない。
+              // 人が足した補足（記録の前にある）の中のリンクは、候補にする
+              const { derivedFrom: _derivedFrom, ...plain } = person;
+              const closed = "- 作った PR（中止で閉じた）：https://github.com/acme/app/pull/9";
+              const rerun = (body: string) =>
+                ({
+                  ...plain,
+                  rerun: { taskId: id },
+                  body: `${body}\n\n${RERUN_RECORD_HEADING}\n\n${closed}`,
+                }) as Task;
+              expect(continuablePullRequest(rerun("一覧の並び順も直す"))).toBeUndefined();
+              expect(
+                continuablePullRequest(
+                  rerun(
+                    `一覧の並び順も直す\n\n${RERUN_NOTE_HEADING}\n\nhttps://github.com/acme/app/pull/12 を直す`,
+                  ),
+                ),
+              ).toEqual({ repo: "https://github.com/acme/app", number: 12 });
+              // 再実行で作ったタスクでなければ、同じ見出しの後ろも、人が書いた説明として見る
+              const { rerun: _rerun, ...written } = rerun("一覧の並び順も直す");
+              expect(continuablePullRequest(written as Task)).toEqual({
+                repo: "https://github.com/acme/app",
+                number: 9,
+              });
+              // 後続のタスクは、sacty が決めた依頼にある PR も候補にしない（後続に回した指摘の記録が無ければ、候補になる文）
+              const unmarked = { ...followUp, derivedFrom: { taskId: id } } as Task;
+              expect(continuablePullRequest(unmarked)).toEqual({
+                repo: "https://github.com/acme/app",
+                number: 7,
+              });
               activity.close();
             });
 

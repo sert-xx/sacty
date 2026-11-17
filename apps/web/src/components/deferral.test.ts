@@ -20,6 +20,7 @@ vi.mock("next/link", () => ({
 
 const { DeferralNotice, deferralOriginUrl } = await import("./deferral");
 const { DeferralPendingNotice } = await import("./deferral-pending");
+const { DeferralHandledNotice } = await import("./deferral-handled");
 
 const remark = (id: string, patch: Record<string, unknown> = {}): Record<string, unknown> => ({
   id,
@@ -261,5 +262,142 @@ describe("タスクの詳細：決めていない案があることを出す（P
         '[data-testid="deferral-pending"]',
       ),
     ).toBeNull();
+  });
+});
+
+describe("タスクの詳細：後続に回すと決めた指摘の扱いの結果を出す（PBI-384）", () => {
+  const deferredWith = (id: string, deferral: Record<string, unknown>) =>
+    remark(id, { deferral: { proposedIn: 2, reason: "理由", decision: "defer", ...deferral } });
+  /** PR がマージされて、完了したタスク（承認ゲートは無い）。 */
+  const completed = (remarks: Record<string, unknown>[], patch: Record<string, unknown> = {}) =>
+    task({ status: "idle", gate: undefined, pullRequestState: "merged", remarks, ...patch });
+  const results = (t: Task, lang: "ja" | "en" = "ja") =>
+    render(h(DeferralHandledNotice, { task: t }), lang).querySelector(
+      '[data-testid="deferral-results"]',
+    );
+
+  it("完了したタスクで、作った後続のタスク・Issue へのリンクを、日英で出す（承認の画面の決定済みの記録は、完了すると出ない）", () => {
+    const done = completed([
+      deferredWith("implement-1-1", { handling: "task", handled: { taskId: "t2" } }),
+      deferredWith("implement-1-2", {
+        handling: "issue",
+        handled: { url: "https://github.com/acme/web/issues/901" },
+      }),
+    ]);
+    // 承認の画面の一覧は、実装の承認待ちの間だけ
+    expect(
+      render(h(DeferralNotice, { task: done })).querySelector('[data-testid="deferral"]'),
+    ).toBeNull();
+    const ja = results(done);
+    expect(ja?.querySelector("h2")?.textContent).toBe("後続に回した指摘の扱い（2件）");
+    const items = [...(ja?.querySelectorAll('[data-testid="deferral-result"]') ?? [])];
+    expect(items.map((i) => i.firstElementChild?.textContent)).toEqual([
+      "指摘 implement-1-1 ・ Sacty の後続のタスクを作る ・ 後続のタスクを開く",
+      "指摘 implement-1-2 ・ GitHub の Issue を作る ・ Issue を開く",
+    ]);
+    // どの指摘かを見分けられるように、指摘の文を添える
+    expect(
+      items.map((i) => i.querySelector('[data-testid="deferral-result-text"]')?.textContent),
+    ).toEqual(["指摘 implement-1-1 の文", "指摘 implement-1-2 の文"]);
+    expect(items[0]?.querySelector("a")?.getAttribute("href")).toBe("/tasks/t2");
+    expect(items[1]?.querySelector("a")?.getAttribute("href")).toBe(
+      "https://github.com/acme/web/issues/901",
+    );
+    // できなかった指摘が無ければ、注意の色にしない
+    expect(ja?.className).not.toContain("warn");
+    const en = results(done, "en");
+    expect(en?.querySelector("h2")?.textContent).toBe("Results for deferred findings (2)");
+    expect(
+      en?.querySelector('[data-testid="deferral-result"]')?.firstElementChild?.textContent,
+    ).toBe("Comment implement-1-1 ・ Create a Sacty follow-up task ・ Open the follow-up task");
+  });
+
+  it("後続のタスクを作れなかったら、理由を、注意の色で出す（作業履歴を開かなくても気づける）", () => {
+    const failed = completed([
+      deferredWith("implement-1-1", {
+        handling: "task",
+        handled: { failure: { code: "task.repositoryMissing" } },
+      }),
+    ]);
+    const ja = results(failed);
+    const reason = messagesFor("ja").labels.text({ code: "task.repositoryMissing" } as never);
+    expect(reason).not.toBe("");
+    expect(ja?.querySelector('[data-testid="deferral-failure"]')?.textContent).toBe(
+      `扱いを実行できませんでした。必要なら、手で作ってください：${reason}`,
+    );
+    expect(ja?.className).toContain("warn");
+    const en = results(failed, "en");
+    expect(en?.querySelector('[data-testid="deferral-failure"]')?.textContent).toContain(
+      "The handling could not be carried out. Create it by hand if you need it: ",
+    );
+  });
+
+  it("まだ作っていない間は、予定を出す。中止したタスクでは、結果のあるものだけを出す", () => {
+    const pending = [deferredWith("implement-1-1", { handling: "task" })];
+    // マージの後・完了の前（残りの工程の間）
+    expect(
+      results(completed(pending, { status: "running" }))?.querySelector(
+        '[data-testid="deferral-result"]',
+      )?.firstElementChild?.textContent,
+    ).toBe(
+      "指摘 implement-1-1 ・ Sacty の後続のタスクを作る ・ このタスクの完了後に、後続のタスクを作成",
+    );
+    // 実装の承認待ちの間も、タスクの詳細で読める
+    expect(results(task({ remarks: pending }))).not.toBeNull();
+    // 中止したタスクでは、後続のタスクを作らないので、予定を出さない。作った Issue は出す
+    expect(results(completed(pending, { status: "cancelled" }))).toBeNull();
+    const cancelled = results(
+      completed(
+        [
+          ...pending,
+          deferredWith("implement-1-2", {
+            handling: "issue",
+            handled: { url: "https://github.com/acme/web/issues/901" },
+          }),
+        ],
+        { status: "cancelled" },
+      ),
+    );
+    expect(cancelled?.querySelectorAll('[data-testid="deferral-result"]')).toHaveLength(1);
+    expect(cancelled?.textContent).toContain("指摘 implement-1-2");
+    // 中止したタスクでも、できなかった結果は、注意の色で出す
+    const cancelledFailure = results(
+      completed(
+        [
+          deferredWith("implement-1-1", {
+            handling: "issue",
+            handled: { failure: "403 forbidden" },
+          }),
+        ],
+        { status: "cancelled" },
+      ),
+    );
+    expect(cancelledFailure?.querySelector('[data-testid="deferral-failure"]')).not.toBeNull();
+    expect(cancelledFailure?.className).toContain("warn");
+  });
+
+  it("扱いの無い決定（何もしない）・この PR で直すと決めた指摘・無効にした指摘・決めていない案だけなら、出さない", () => {
+    expect(results(completed([]))).toBeNull();
+    expect(results(completed([deferredWith("implement-1-1", {})]))).toBeNull();
+    // 扱いに「何もしない」を持つ記録でも、出さない。承認の画面の決定済みの記録は「何もしない」だけを出す
+    const none = [deferredWith("implement-1-1", { handling: "none" })];
+    expect(results(completed(none))).toBeNull();
+    expect(
+      render(h(DeferralNotice, { task: task({ remarks: none }) })).querySelector(
+        '[data-testid="deferral-handled"]',
+      )?.textContent,
+    ).toBe("何もしない");
+    expect(results(completed([deferredWith("implement-1-1", { decision: "fix" })]))).toBeNull();
+    expect(
+      results(
+        completed([
+          {
+            ...deferredWith("implement-1-1", { handling: "task", handled: { taskId: "t2" } }),
+            voided: true,
+          },
+        ]),
+      ),
+    ).toBeNull();
+    expect(results(completed(proposals))).toBeNull();
   });
 });

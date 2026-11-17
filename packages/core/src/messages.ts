@@ -530,6 +530,8 @@ const PARAMS = {
   "pr.riskBudget": null,
   "pr.riskFailed": z.object({ detail: TextParam }),
   "pr.riskUnreadable": null,
+  "pr.riskLastUnreadable": null,
+  "pr.riskKeyOutsideAnswer": null,
   "pr.bodyMergeError": z.object({ detail: TextParam }),
   "pr.bodyEditedDuringMerge": null,
   "pr.bodyRereadFailed": null,
@@ -1528,6 +1530,10 @@ const ja: MessageDictionary = {
   "pr.riskFailed": ({ detail }, text) =>
     `エージェントがリスクを評価できませんでした：${text(detail)}`,
   "pr.riskUnreadable": "エージェントの出力から、リスク評価を読み取れませんでした。",
+  "pr.riskLastUnreadable":
+    "エージェントの出力の、最後に出たリスク評価の答えを読み取れませんでした。前に出た答えは、使っていません。",
+  "pr.riskKeyOutsideAnswer":
+    "エージェントの出力の、最後に出たリスク評価の見出しが、読み取れる答えの中にありませんでした（JSON として読めない答え・ほかの JSON の中の答え・本文の記述のどれかです）。前に出た答えは、使っていません。",
   "pr.bodyMergeError": ({ detail }, text) =>
     `人が直した PR の本文と、Sacty の新しい本文をマージできませんでした：${text(detail)}`,
   "pr.bodyMergeDeferred":
@@ -2397,6 +2403,10 @@ const en: MessageDictionary = {
   "pr.riskBudget": "The budget cap has been reached, so an agent did not assess the risk.",
   "pr.riskFailed": ({ detail }, text) => `An agent could not assess the risk: ${text(detail)}`,
   "pr.riskUnreadable": "Could not read the risk assessment from the agent's output.",
+  "pr.riskLastUnreadable":
+    "Could not read the last risk assessment answer in the agent's output. An earlier answer was not used.",
+  "pr.riskKeyOutsideAnswer":
+    "The last risk assessment heading in the agent's output was not inside a readable answer (an answer that cannot be parsed as JSON, an answer inside another JSON object, or a mention in the text). An earlier answer was not used.",
   "pr.bodyMergeError": ({ detail }, text) =>
     `Could not merge the person's edits to the PR body with Sacty's new body: ${text(detail)}`,
   "pr.bodyMergeDeferred":

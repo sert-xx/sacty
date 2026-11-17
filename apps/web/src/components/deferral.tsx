@@ -11,6 +11,7 @@ import {
 } from "@sacty/core";
 import { useActionState, useState } from "react";
 import { type DeferralState, deferralAction } from "@/app/actions";
+import { DeferralHandledLine } from "@/components/deferral-handled";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
@@ -46,7 +47,7 @@ export function deferralOriginUrl(
  * まま残る。「この PR で直す」を 1 件でも選ぶと、実装に差し戻す。決定済みの指摘は、下に記録として出す。
  */
 export function DeferralNotice({ task }: { task: Task }) {
-  const { task: m, labels } = useMessages();
+  const { task: m } = useMessages();
   const t = m.deferral;
   const handlingLabel: Record<DeferralHandling, string> = {
     none: t.handlingNone,
@@ -197,40 +198,14 @@ export function DeferralNotice({ task }: { task: Task }) {
                 <span className="max-h-32 overflow-y-auto whitespace-pre-line">{d.text}</span>
                 {/* 後続に回すと決めた指摘の扱いと、その結果 */}
                 {/* 扱いの無い決定は、何もしない（決定のコメントの「何もしません」と合わせる） */}
-                {d.decision === "defer" && !d.handling && (
+                {d.decision === "defer" && (!d.handling || d.handling === "none") && (
                   <span data-testid="deferral-handled" className="text-xs text-muted-foreground">
                     {handlingLabel.none}
                   </span>
                 )}
-                {d.decision === "defer" && d.handling && (
+                {d.decision === "defer" && d.handling && d.handling !== "none" && (
                   <span data-testid="deferral-handled" className="text-xs text-muted-foreground">
-                    {handlingLabel[d.handling]}
-                    {" ・ "}
-                    {d.handled?.failure !== undefined ? (
-                      <span className="text-warn">
-                        {t.handlingFailed(labels.text(d.handled.failure))}
-                      </span>
-                    ) : d.handled?.taskId ? (
-                      <a
-                        href={`/tasks/${d.handled.taskId}`}
-                        className="text-accent-foreground underline"
-                      >
-                        {t.handledTask}
-                      </a>
-                    ) : d.handled?.url ? (
-                      <a
-                        href={d.handled.url}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className="text-accent-foreground underline"
-                      >
-                        {t.handledIssue}
-                      </a>
-                    ) : d.handling === "task" ? (
-                      t.handlingPendingTask
-                    ) : (
-                      t.handlingPendingIssue
-                    )}
+                    <DeferralHandledLine handling={d.handling} handled={d.handled} />
                   </span>
                 )}
               </li>

@@ -53,6 +53,7 @@ import {
   ReworkCause,
   type RiskAssessment,
   renderMessage,
+  rerunEditableBody,
   resumeNoteSections,
   reviewFlakyFailures,
   SCOPE_VIEWPOINT,
@@ -110,7 +111,6 @@ import { WORKSPACE_SCRATCH_DIR, WORKSPACE_TOOLS_DIR, type WorkingTreeCopy } from
 import {
   assessesRiskInReview,
   extractRiskAssessment,
-  RISK_ASSESSMENT_HEADING,
   reviewRiskLines,
   riskAssessmentLines,
   withoutRiskBlocks,
@@ -2328,12 +2328,18 @@ export const CONTINUABLE_PLANS: readonly StepPlan[] = [
 /**
  * オーケストレーターが引き継ぐかを決められる、タスクにある既存の PR（タスクの対象リポジトリの PR のリンクが題か内容にある）。
  * PR から取り込んだタスク（PR のレビューだけのタスクを含む）・分割の子タスク・実装する組み合わせを選べないタスクでは無い。
+ * sacty が足したものの中のリンクは、候補にしない（PBI-384）。そこにある PR は、元のタスク・前の試行の PR で、マージ済みか
+ * 閉じていて、引き継げない（引き継ぐと判断すると、工程を決めずに止まる）。
+ * - 人が後続に回すと決めた指摘の後続のタスク：依頼は sacty が決めた文で、そこにある PR は元のタスクの PR。候補は無い。
+ * - 続きのタスクの元のタスクの記録・再実行のタスクの前の試行の記録（参考。PR の URL と、工程の成果の本文が入る）：
+ *   記録を除いた、人が書いた題と説明（再実行の補足を含む）の中のリンクだけを見る（rerunEditableBody）。
  */
 export function continuablePullRequest(task: Task): { repo: string; number: number } | undefined {
   if (task.source?.kind === "github_pull_request" || task.parent) return undefined;
+  if (task.derivedFrom?.deferredRemarkId) return undefined;
   if (isRepoless(task) || !task.repository) return undefined;
   if (!allowedPlans(task).some((plan) => CONTINUABLE_PLANS.includes(plan))) return undefined;
-  return pullRequestInText(task.repository.url, `${task.title}\n${task.body}`);
+  return pullRequestInText(task.repository.url, `${task.title}\n${rerunEditableBody(task)}`);
 }
 
 /** オーケストレーターに、タスクにある既存の PR を引き継いで直すかを決めさせる指示。 */
@@ -8591,6 +8597,8 @@ export function extractReviewComments(
   rework?: ReviewRework;
   /** リスク評価の答えを読めたもの（PBI-362。答えが無い・形が違えば無い）。 */
   risk?: RiskAssessment;
+  /** リスクを評価させたレビューで、評価を読めなかった理由（PBI-386。評価を読めたとき・評価させていないときは無い）。 */
+  riskUnreadable?: DaemonText;
 } {
   const commentable = commentableLines(diff);
   let found: (ReviewComment & { severity?: Severity })[] | undefined;
@@ -8636,14 +8644,9 @@ export function extractReviewComments(
   }
   // リスクを評価させたレビュー（PBI-362）は、評価の答えを、形が違っても本文から取り除く（投稿する本文に JSON を残さない）。
   // 評価させていないレビューの本文は、評価の見出しを含んでいても触らない（レビューの中のコード例を消さない）
-  if (options.risk) {
-    for (const candidate of jsonCandidates(output)) {
-      if (candidate.value[RISK_ASSESSMENT_HEADING] !== undefined) used.push(candidate);
-    }
-  }
-  const risk = options.risk
-    ? extractRiskAssessment(output, options.secrets)?.assessment
-    : undefined;
+  const riskRead = options.risk ? extractRiskAssessment(output, options.secrets) : undefined;
+  if (riskRead) used.push(...riskRead.answers);
+  const risk = riskRead?.assessment;
   // JSON として読めなかった評価（末尾のカンマなど）は候補にならないので、評価の答えの形で始まるコードブロックごと取り除く
   const stripped = withoutCandidates(output, used);
   const body = (options.risk ? withoutRiskBlocks(stripped) : stripped).trim();
@@ -8669,6 +8672,7 @@ export function extractReviewComments(
         }),
     ...(rework ? { rework } : {}),
     ...(risk ? { risk } : {}),
+    ...(riskRead?.reason ? { riskUnreadable: riskRead.reason } : {}),
   };
 }
 
