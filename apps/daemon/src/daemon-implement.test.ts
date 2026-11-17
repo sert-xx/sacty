@@ -8492,6 +8492,53 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
+      it("同じ文の確認が複数の指摘の対応に付いていたら、PR のコメントには1回だけ書き、付いていた指摘を並べる。文の違う確認は別に書く（PBI-354）", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            rework("implement", "実装の指摘"),
+            redone([
+              {
+                remarkId: "implement-1-1",
+                text: "直しました",
+                confirm: "CI を再実行し、結果を確認してください。",
+              },
+              {
+                remarkId: "implement-1-2",
+                text: "直しました",
+                confirm: " CI を再実行し、\n結果を確認してください。 ",
+              },
+              {
+                remarkId: "implement-1-3",
+                text: "直しました",
+                confirm:
+                  "CI を再実行し、結果を確認してください。確認しない場合、失敗を見落とします。",
+              },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [
+          item("comment:401", { body: "一つ目の指摘" }),
+          item("comment:402", { body: "二つ目の指摘" }),
+          item("comment:403", { body: "三つ目の指摘" }),
+        ];
+        await service.checkPullRequests();
+        await drain(service);
+        await settleAsks();
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        const posted = asks(pulls);
+        expect(posted).toHaveLength(1);
+        const body = posted[0]?.body ?? "";
+        expect(body).toContain(
+          "作り直しの実行が確かめたいこと（指摘 implement-1-1・implement-1-2）",
+        );
+        expect(body).toContain("作り直しの実行が確かめたいこと（指摘 implement-1-3）");
+        expect(body.split("作り直しの実行が確かめたいこと").length).toBe(3);
+        expect(body.split("> CI を再実行し、結果を確認してください。\n").length).toBe(2);
+        activity.close();
+      });
+
       it("返信の投稿（B2）と、人に確かめてほしいこと（C1）が同じ承認待ちで両方出るとき、別々のコメントを1回ずつ書き、どちらも人の指摘として取り込まない", async () => {
         const pulls = new FakePulls();
         const withReply = out(

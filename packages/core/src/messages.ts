@@ -1444,9 +1444,9 @@ const ja: MessageDictionary = {
       total > 0
         ? `残っていること：${text(remaining)}${total > 5 ? ` ほか、全${total}件` : ""}。`
         : ""
-    }再開すると、実装をやり直します。工程のエージェントを変えて再開することもできます。`,
+    }再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。`,
   "implement.unmappedViewpoints": ({ count, stalled, ids, total }, text) =>
-    `実装の工程が、テストの対応していないテスト観点を残して終わりました（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：${text(ids)}${total > 10 ? ` ほか、全${total}件` : ""}。再開すると、実装をやり直します。工程のエージェントを変えて再開することもできます。`,
+    `実装の工程が、テストの対応していないテスト観点を残して終わりました（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：${text(ids)}${total > 10 ? ` ほか、全${total}件` : ""}。再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。`,
   "implement.unchanged": ({ number }) =>
     `AI のレビューが指摘を残した PR #${number} を、やり直しの実装が何も変えませんでした。同じ内容は再レビューされないので、提出していません。再開すると、指摘を渡して実装をやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "merge.failed": ({ detail }, text) =>
@@ -2277,9 +2277,9 @@ const en: MessageDictionary = {
       total > 0
         ? `What remains: ${text(remaining)}${total > 5 ? ` and more, ${total} in total` : ""}. `
         : ""
-    }Resuming redoes the implementation. You can also change the agent of the step and then resume.`,
+    }Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.`,
   "implement.unmappedViewpoints": ({ count, stalled, ids, total }, text) =>
-    `The implementation step ended with test viewpoints that have no test mapped (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: ${text(ids)}${total > 10 ? ` and more, ${total} in total` : ""}. Resuming redoes the implementation. You can also change the agent of the step and then resume.`,
+    `The implementation step ended with test viewpoints that have no test mapped (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: ${text(ids)}${total > 10 ? ` and more, ${total} in total` : ""}. Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.`,
   "implement.unchanged": ({ number }) =>
     `The rework of the implementation changed nothing in PR #${number}, on which the AI review left findings. The same content is not reviewed again, so nothing was submitted. Resuming redoes the implementation with the findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "merge.failed": ({ detail }, text) =>
