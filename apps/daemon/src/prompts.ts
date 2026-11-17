@@ -11,6 +11,7 @@ import {
   DOCUMENT_PAGES_MAX,
   displayTestNames,
   ExportVia,
+  effectiveSelfReviewDepth,
   type FinalReview,
   type FlakyFailure,
   flakyFailureLine,
@@ -54,7 +55,9 @@ import {
   resumeNoteSections,
   reviewFlakyFailures,
   SCOPE_VIEWPOINT,
+  SELF_REVIEW_DEPTH_REASON_MAX,
   SelfReview,
+  SelfReviewDepth,
   StepKey,
   StepPlan,
   type StepPullRequestKey,
@@ -2370,6 +2373,8 @@ function selfReviewLines(
   deliverable: string,
   rework?: ReworkMode,
   fixCauses: readonly string[] = [],
+  /** 依頼が軽いと判定され、人が通常の深さに上書きしていない（PBI-369）。渡すと、観点を絞らせる。 */
+  light = false,
 ): string[] {
   const draftLine = `- ${deliverable}の下書きを一時ファイル（例：/tmp/sacty-self-review/draft.md）に書き、それをレビューの対象にする（作業領域の外に置き、リポジトリには書かない）`;
   return [
@@ -2405,6 +2410,7 @@ function selfReviewLines(
     "- 上限に達しても must が残るときは、残った指摘を報告して提出する。黙って提出しない",
     ...(rework === "partial" ? partialReworkReviewLines(deliverable) : []),
     ...fixRunReviewLines(fixCauses),
+    ...(light ? lightSelfReviewLines(fixCauses.length > 0) : []),
     "- スキルが成果の説明の末尾に書く「自己レビュー」の節は書かない。代わりに、結果を次の形式で必ず付ける（sacty が読み、成果物の本文からは取り除く）",
     "- このプロンプトが求めるほかの出力の形（ほかの JSON のブロック）は変えない",
     "```json",
@@ -2462,6 +2468,26 @@ function fixRunReviewLines(causes: readonly string[]): string[] {
 }
 
 /**
+ * 依頼が軽いと判定されたタスクの、セルフレビューの指示（PBI-369）。観点を、要件への適合と横断の 2 つ（とリポジトリの決まり・
+ * スキルの観点）に絞らせ、上位の段階の担当を 1 段下げさせ、横断の 2 回目を省かせる。規則の本体は既定のスキル review-dispatch に
+ * あるが、プロジェクトのコンテキストでスキルを差し替えていても分かるよう、要点はここにも書く。直しの実行（fixRun）では、
+ * 起動する観点は直しの実行の規則のまま（今回の指摘に関わる観点と X-1）にし、段階と再レビューの規則だけを当てる。
+ * PR のレビュー（レビューの工程）には付けない。
+ */
+function lightSelfReviewLines(fixRun: boolean): string[] {
+  return [
+    "- このタスクの依頼は、工程の選択で「軽い」と判定されている。このセルフレビューを、スキルの「軽い依頼の自己レビュー」の規則で行う（依頼の大きさに見合う費用と時間にするため）",
+    fixRun
+      ? "  - 最初のレビューで起動する観点は、上の直しの実行の規則のまま（今回の指摘に関わる観点と X-1 だけ）にする"
+      : "  - 最初のレビューで起動する観点は、要件への適合の観点（主対象の種類が design-doc なら D-1、code なら C-1、user-doc なら U-1）と、横断の X-1 だけにする。対象のリポジトリに、今回の変更に当てはまる開発向けの決まり・レビュー用のスキルがあれば、X-3・R も起動する。X-2 は、実行した検証が失敗・警告を出したときだけ起動する。ほかの必須観点・条件付き観点は起動しない",
+    "  - standard より上の段階の観点の担当は、1 段下の段階で起動する（既定の観点カタログでは、advanced の X-1・C-1・R を standard で起動する）。standard 以下の段階は変えない",
+    "  - 再レビュー（2 回目以降）は、前回の回で must を出した観点だけを起動する。X-1 も、前回の回で must を出したときだけ起動する（2 回目の X-1 を、常には起動しない）。起動する観点が無ければ、再レビューをせずに提出へ進む",
+    "  - 起動しなかった観点は、起動表に「起動しない」と理由（軽い依頼）を残し、報告の summary でも、起動した観点と起動しなかった観点が分かるように書く。報告の notReviewed には書かない（notReviewed は、起動したのに結果を得られなかった観点だけ）",
+    "  - 作業の途中で、この変更がセキュリティにかかわる（認証・認可・秘密情報・権限・入力の検証など）、または取り消しにくい（データの削除や移行・外部への作用など）と分かったら、軽い依頼として扱わず、通常の規則で観点を決め、そのことを summary に書く",
+  ];
+}
+
+/**
  * 実装・修正の工程のセルフレビュー。成果物が文書のファイルだけの依頼（documentsOnly。PBI-284 の判定を、そのまま使う）
  * では、主対象の種類を文書向け（user-doc）にして、コード向けの観点を起動させない（PBI-295）。それ以外は code。
  * 文書は作業領域のファイルを直接直すので、要求要件・設計の下書きのための指示（design-doc）は付けない。
@@ -2474,6 +2500,7 @@ function implementSelfReviewLines(
 ): string[] {
   // 指摘を受けた直しの実行（PBI-296）の指示は、主対象の種類にかかわらず渡す
   const fixCauses = fixRunCauses(task, "implement");
+  const light = effectiveSelfReviewDepth(task) === "light";
   return [
     // レビューの基準を、提出の前に自分で確かめさせる（PBI-315）
     ...implementReviewCriteriaLines({
@@ -2495,8 +2522,8 @@ function implementSelfReviewLines(
           task.documentsOnly === true ? `${verb}（文書）` : `${verb}（コードとテスト）`,
         )
       : task.documentsOnly === true
-        ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses)
-        : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses)),
+        ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses, light)
+        : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses, light)),
     ...implementVerificationRecordLines(runsTests(task), !pullRequestReview),
     // 実装し終えたかを申告させる（未完了の実行を提出にしない。PBI-347）
     ...implementCompletionLines(),
@@ -3031,6 +3058,7 @@ export function buildPrompt(
           "原稿",
           undefined,
           previous?.trim() ? fixRunCauses(task, "document") : [],
+          effectiveSelfReviewDepth(task) === "light",
         ),
       ].join("\n");
     case "operation":
@@ -3248,6 +3276,7 @@ export function buildPrompt(
                 "要求要件",
                 narrowed,
                 narrowed ? fixRunCauses(task, "requirements") : [],
+                effectiveSelfReviewDepth(task) === "light",
               )),
       );
       if (extra.inputDir) {
@@ -3333,6 +3362,7 @@ export function buildPrompt(
                 "設計とテスト観点",
                 narrowed,
                 narrowed ? fixRunCauses(task, "design") : [],
+                effectiveSelfReviewDepth(task) === "light",
               )),
       );
       if (extra.inputDir) {
@@ -6871,6 +6901,7 @@ export function buildOrchestratorPrompt(
     "  - testCommand に使うツールは、選べるイメージ（下の images）のうち、そのツールを持つものを優先して選ぶ。どのイメージにも入っていないときだけ、それでも testCommand は書き（空にしない）、imageReason に、そのツールを持つイメージが無いことを書く",
     "- noTests：実装する組み合わせを選ぶときは、testCommand か noTests のどちらかを必ず書く（両方を空にしない。PBI-94）。上の場所を調べても、テストの仕組み（テストのコード・テストを実行する設定やスクリプト・CI のテストの工程など）も上の検証のコマンドも見つからなければ、testCommand を書かずに、noTests にその根拠（どこを見て、何が無かったか）を書く。エージェントのスキル（SKILL.md など）を集めたリポジトリ・ドキュメントを置くだけのリポジトリのように、テストを書く種類でないリポジトリもこれに当たる。noTests のタスクは、sacty がテストを実行せず、PR のレビューの子タスクがタスクの目的から受け入れを確かめる。noTests には、テストの仕組みが無いことの根拠だけを書き、受け入れの確かめ方（「名前の存在を grep で確かめる」など）は書かない（確かめ方は、後の工程が依頼の受け入れ条件から決める。受け入れ条件より弱い手段に縮めない）。テストの仕組みが無いなら、不具合の修正（bugfix）は選ばない（再現をテストで確かめられないため）。sacty は、noTests と答えたリポジトリにテストのファイルらしいもの（tests のディレクトリの中・*.test.*・*_test.* など）があれば止めるので、見つけたテストは testCommand にする（文書だけの依頼（documentsOnly）は除く）",
     "- investigation：調査の工程の性質（PBI-43）。content（内容の調査：コードや仕組みを読んで説明する。開発のセットアップをしない）か、bug（不具合の調査：不具合の再現や原因の特定のために、動かして確かめる。セットアップをする）。不具合の修正（bugfix）や、不具合の原因を調べる調査は bug。迷う場合は content にする",
+    ...SELF_REVIEW_DEPTH_LINES,
     ...(continuable ? continuePullRequestLines(task, continuable) : []),
     ...(images.length > 0
       ? [
@@ -6927,7 +6958,7 @@ export function buildOrchestratorPrompt(
     ...planAnswerLines(),
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "image": "イメージの名前", "imageReason": "イメージを選んだ理由", "defaultReason": "images のどれも合わない理由"（default を使うときだけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${documentsOnlyAnswer}${continueAnswer}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${SELF_REVIEW_DEPTH_ANSWER}${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "image": "イメージの名前", "imageReason": "イメージを選んだ理由", "defaultReason": "images のどれも合わない理由"（default を使うときだけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${documentsOnlyAnswer}${continueAnswer}}}`,
     "```",
     "",
     "調べてもテストの仕組みが見つからないときは、testCommand を書かずに、代わりに noTests に根拠を書いてください（ほかの項目は上と同じ）。testCommand と noTests を両方書かないでください。実装する組み合わせでは、両方を空にしないでください（sacty が検証できずに止まります）。",
@@ -6936,7 +6967,7 @@ export function buildOrchestratorPrompt(
       .filter((plan) => plan !== "bugfix")
       .join(
         " または ",
-      )}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "noTests": "テストの仕組みが無いと判断した根拠（どこを見て、何が無かったか）", "investigation": "content または bug"${documentsOnlyAnswer}}}`,
+      )}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "noTests": "テストの仕組みが無いと判断した根拠（どこを見て、何が無かったか）", "investigation": "content または bug"${SELF_REVIEW_DEPTH_ANSWER}${documentsOnlyAnswer}}}`,
     "```",
   ].join("\n");
 }
@@ -7044,6 +7075,7 @@ function buildRepolessOrchestratorPrompt(
     "",
     "あわせて、次のことを決めてください。",
     "- investigation：調査の工程の性質（PBI-43）。リポジトリの無いタスクでは content にする",
+    ...SELF_REVIEW_DEPTH_LINES,
     OPERATION_SETTINGS_LINE,
     ...(images.length > 0
       ? [
@@ -7070,7 +7102,7 @@ function buildRepolessOrchestratorPrompt(
     "選んだ進め方を、次の形式で必ず出してください。",
     "operation の実行設定は operationの場合のみ。不足時は省略し、reasonに不足情報を書いてください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "operation": ${OPERATION_ANSWER}, "investigation": "content"${images.length > 0 ? ', "image": "イメージの名前"' : ""}${destinations.length > 0 ? ', "exports": {"document": {"to": "接続先の名前", "via": "platform または mcp", "location": "原稿の置き場所", "reason": "そこに書き出す理由"}, "requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "operation": ${OPERATION_ANSWER}, "investigation": "content"${SELF_REVIEW_DEPTH_ANSWER}${images.length > 0 ? ', "image": "イメージの名前"' : ""}${destinations.length > 0 ? ', "exports": {"document": {"to": "接続先の名前", "via": "platform または mcp", "location": "原稿の置き場所", "reason": "そこに書き出す理由"}, "requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
     "```",
   ].join("\n");
 }
@@ -7436,6 +7468,12 @@ export function extractStepPlan(
       noTests?: string;
       /** 成果物が文書のファイルだけの依頼（PBI-284）。 */
       documentsOnly?: true;
+      /**
+       * 依頼の大きさの判定と理由（PBI-369）。理由の無い light は、判定として使わない（理由を人に示せないため）。
+       * 組み合わせによって normal にするかは、呼び出し側が決める。
+       */
+      selfReviewDepth?: SelfReviewDepth;
+      selfReviewDepthReason?: string;
       investigation?: InvestigationKind;
       /** タスクのイメージの名前（PBI-318）。名前が images にあるかは、呼び出し側が確かめる。 */
       image?: string;
@@ -7498,6 +7536,11 @@ export function extractStepPlan(
       const continuePullRequest =
         v.continuePullRequest === true && CONTINUABLE_PLANS.includes(plan.data);
       const documentsOnly = v.documentsOnly === true;
+      // 依頼の大きさ（PBI-369）。決めた値のときだけ使う。理由の無い light は使わない（通常として扱う）
+      const depth = SelfReviewDepth.safeParse(v.selfReviewDepth);
+      const depthReason = headOf(text(v.selfReviewDepthReason), SELF_REVIEW_DEPTH_REASON_MAX);
+      const selfReviewDepth =
+        depth.success && (depth.data === "normal" || depthReason) ? depth.data : undefined;
       return {
         ...(repo ? { repo } : {}),
         ...(repoReason ? { repoReason } : {}),
@@ -7510,6 +7553,8 @@ export function extractStepPlan(
         ...(testCommand ? { testCommand } : {}),
         ...(noTests ? { noTests } : {}),
         ...(documentsOnly ? { documentsOnly: true as const } : {}),
+        ...(selfReviewDepth ? { selfReviewDepth } : {}),
+        ...(selfReviewDepth && depthReason ? { selfReviewDepthReason: depthReason } : {}),
         ...(investigation.success ? { investigation: investigation.data } : {}),
         ...(image ? { image } : {}),
         ...(imageReason ? { imageReason } : {}),
@@ -8646,6 +8691,22 @@ export function buildReviewComments(task: Task): ReviewComment[] {
  */
 const DETAILED_ACCEPTANCE_LINE =
   "依頼に、確かめられる受け入れ条件（入力と期待する結果・振る舞い・エラーのときの扱い・対象の範囲）がそろっていて、人に確かめることが無く（残るのは空白・上限・並び・列の位置のような細かい既定を決めることだけ）、設計の判断も要らないなら、局所的でなくてもdirectを選び、要求要件を省いてください（要求要件に決めることが残らないのに、費用の大半を使うため）。reasonには、省いた理由（どの受け入れ条件がそろっていて、人に確かめることが何も無いか）を書きます。細かい既定は実装が既存のコード・規約から決め、実装の説明の「既定で決めたこと」に書き、PRで人が確かめます。次のどれかに当たるときは、受け入れ条件が詳しく見えても要求要件を残し（skip-designかstandard）、reasonに当たったことを書きます：依頼が曖昧（目標や基準が無い・何をどこまでか決まらない）、依頼と文書・コード・既存の方針が食い違う（どちらに合わせるかで、作るもの〔振る舞い・方式・範囲〕が変わるもの）、依頼に書かれていない判断（互換・削除の仕方・対象の範囲など）を人に確かめたい、書き忘れていそうなことやほかのタスク・PRと同じ所を変える衝突が見える、既存の共有の状態・項目（フラグ・列・状態の種類）に新しい意味を載せる・状態を増やす（依頼が既存のフラグを使うよう指定していても、そのフラグに別の意味を載せるなら当たる。ほかのタスクが同じものを別の意味で使いうるため）、または受け入れ条件に書かれていない、外に公開している API・項目の名前や形の変更が要る・使う側との食い違いを人に確かめたい（ほかの機能や、使っている側と食い違いうる）。判断しきれないときは、要求要件を残します。ただし、外に公開している API・項目の変更は、受け入れ条件が変更後の名前・形・必須かどうか・エラーのときの扱いをはっきり書いていて（改名のように、既存の使う側がどうなるか（旧名を残すか・移行するか）が依頼から決まらないものは、はっきり書いたことにならない）、使う側との食い違いも人に確かめることが無い（集めた情報などに、使う側が変更で動かなくなりうるとあり、その扱いを受け入れ条件が決めていないときは、人に確かめることがある）ときに限り、「公開 API・項目の名前や形を変える」ことだけでは要求要件を残す理由にしません（変更そのものを依頼が決めているため）。このときも、上のほかの条件に当たるなら残します（共有の状態への新しい意味は、受け入れ条件がどれだけ詳しくても、人に確かめる）。細かい既定（空白・上限・並び・列や項目の位置・異常系のテストの中身・空の入力の扱いなど）が残ることも、要求要件を残す理由にしません（実装が決め、PRで人が確かめます）。次のものも、人に確かめることが無いので、それだけでは要求要件を残す理由にしません：作るもの（振る舞い・方式・範囲）が変わらない、リポジトリの文書どうし、または文書と受け入れ条件の食い違い（完了の条件に含めるコマンドの違い・文書を実装に合わせて直す要否など。受け入れ条件があるときは受け入れ条件に従い、文書は実装に合わせて直す）、受け入れ条件が決めた変更に伴う、既存の呼び出し側・テスト・文書の追従、集めた情報の「食い違い・未確定のこと」のうち、依頼と既存のコード・規約から実装が決められるもの（受け入れ条件が「条件にない機能を入れない」としているときは、機能を足さない側に決める）。要求要件を残す理由は、答えが複数あり、依頼からも既存のコード・文書からも決まらず、人に聞かないと決められないことだけを挙げ、reasonに1つずつ書きます（理由に挙げたことは、要求要件の工程が「確認したいこと」にします。挙げた理由が人に聞くことでなければ、そもそも理由にしません）。受け入れ条件が詳しくても設計の判断（新しい仕組み・層をまたぐ作りの選択）が要るならstandardです。";
+
+/**
+ * 依頼の大きさを、工程を選ぶ時点で判定させる指示（PBI-369）。軽い依頼では、後の工程の提出の前のセルフレビューの観点を絞る。
+ * セキュリティにかかわる変更・取り消しにくい変更を含む依頼は、軽いと判定させない。PR のレビューには使わない。
+ */
+const SELF_REVIEW_DEPTH_LINES = [
+  "- selfReviewDepth：依頼の大きさ。後の工程（要求要件・設計・実装・文書作成など）は、提出の前に成果物をセルフレビューする（観点ごとの担当を起動する）。依頼が軽いときは、その観点を絞る。light（軽い）か normal（通常）のどちらかを書き、selfReviewDepthReason に、そう判定した理由（依頼とコードのどこから、変更の大きさと性質をどう見たか）を書く。理由は、画面で人が読む",
+  "  - light にするのは、次のすべてに当たるときだけ：変更が小さく局所的である（文書に節を足す・文言や表記を直す・数行の変更など）、既存の振る舞い・外に公開している I/F・保存するデータの形を変えない、セキュリティにかかわる変更を含まない、取り消しにくい変更を含まない",
+  "  - セキュリティにかかわる変更は、認証・認可、秘密情報の扱い、権限、入力の検証、暗号、依存の追加・更新、外に公開する範囲に触れる変更",
+  "  - 取り消しにくい変更は、データの削除・移行・形式の変更、外部への作用（送信・公開・デプロイ・課金など）、リリースやデプロイの設定に触れる変更",
+  "  - これらを含む・含むか分からない・迷うときは normal にする。security-check・security-fix・operation を選ぶときも normal にする",
+  "  - 絞るのはセルフレビューだけで、PR のレビューには関係しない",
+];
+/** 工程の選択の答えの形に足す、依頼の大きさの項目（PBI-369）。 */
+const SELF_REVIEW_DEPTH_ANSWER =
+  ', "selfReviewDepth": "light または normal", "selfReviewDepthReason": "そう判定した理由"';
 
 /** 候補の順序や無条件の既定値ではなく、利用者の求める成果から比較する。 */
 const PLAN_SELECTION_LINES = [

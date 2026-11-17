@@ -34,6 +34,7 @@ import {
   CONTEXT_CHECK_PARAM,
   type ContextPreviewResult,
   cancelTask,
+  changeSelfReviewDepth,
   changeStepAgent,
   changeTaskImage,
   chooseTicketRepository,
@@ -460,6 +461,30 @@ export async function renameTaskAction(
   let result: Awaited<ReturnType<typeof renameTask>>;
   try {
     result = await renameTask(taskId, title);
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+export type ChangeSelfReviewDepthState = { message?: string };
+
+/**
+ * タスクの詳細で、提出の前のセルフレビューの深さを変える（PBI-369）。軽いと判定されていないタスクは、デーモンが理由を
+ * 示して断る。
+ */
+export async function changeSelfReviewDepthAction(
+  _prev: ChangeSelfReviewDepthState,
+  formData: FormData,
+): Promise<ChangeSelfReviewDepthState> {
+  const a = (await getMessages()).common.action;
+  const taskId = String(formData.get("taskId") ?? "");
+  const depth = formData.get("depth") === "light" ? "light" : "normal";
+  let result: Awaited<ReturnType<typeof changeSelfReviewDepth>>;
+  try {
+    result = await changeSelfReviewDepth(taskId, depth);
   } catch {
     return { message: a.daemonDown };
   }

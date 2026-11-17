@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { type ActivityEvent, type EventInput, EventInput as EventSchema } from "./events.js";
+import {
+  type ActivityEvent,
+  type EventInput,
+  EventInput as EventSchema,
+  RISK_SIGNAL_WEIGHT,
+  RiskSignal,
+} from "./events.js";
 import { message } from "./message-code.js";
 import { renderMessage } from "./messages.js";
 import { project } from "./projection.js";
@@ -98,6 +104,22 @@ describe("PR のリスク評価の記録（PBI-362）", () => {
     expect(parse({ level: "critical" })).toBe(false);
     expect(parse({ signals: ["unknown"] })).toBe(false);
     expect(parse({ change: "" })).toBe(false);
+    // 依存の版の更新の上げ幅（PBI-377）。更新が無い評価は、項目を持たない
+    for (const dependencyUpdate of ["patch", "minor", "major", "unknown"]) {
+      expect(parse({ dependencyUpdate })).toBe(true);
+    }
+    expect(parse({ dependencyUpdate: "none" })).toBe(false);
+    expect(parse({ dependencyUpdate: "huge" })).toBe(false);
+    // 外した合図（defect）のある以前の記録は、読める
+    expect(parse({ signals: ["defect", "security"] })).toBe(true);
+  });
+
+  it("合図の重さ：重い合図は3つ、軽い合図は4つ、外した合図は不具合の疑いだけ（PBI-377）", () => {
+    const of = (weight: string) =>
+      RiskSignal.options.filter((signal) => RISK_SIGNAL_WEIGHT[signal] === weight);
+    expect(of("heavy")).toEqual(["security", "irreversible", "compatibility"]);
+    expect(of("light")).toEqual(["structural", "performance", "large", "unverified"]);
+    expect(of("retired")).toEqual(["defect"]);
   });
 
   it("評価できなかった理由は、日本語と英語の両方で読める", () => {

@@ -655,6 +655,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       );
     case "TaskImageChanged":
       return e.TaskImageChanged(event.payload.from, event.payload.to, actor);
+    case "SelfReviewDepthChanged":
+      return e.SelfReviewDepthChanged(event.payload.to, actor);
     case "TaskRenamed":
       return e.TaskRenamed(event.payload.from, event.payload.to, actor);
     case "TaskResumed":

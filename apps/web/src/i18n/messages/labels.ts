@@ -343,6 +343,11 @@ const ja = {
       `${step}のイメージを ${from} から ${to} に変更（${actor}）`,
     TaskImageChanged: (from: string | undefined, to: string, actor: string) =>
       `タスクのイメージを ${from ?? "工程ごとのイメージ"} から ${to} に変更（${actor}）`,
+    /** 人が、セルフレビューの深さを変えた（PBI-369）。 */
+    SelfReviewDepthChanged: (to: "light" | "normal", actor: string) =>
+      to === "normal"
+        ? `セルフレビューを通常の深さに変更（${actor}）`
+        : `セルフレビューの深さを、オーケストレーターの判定（軽い）に戻した（${actor}）`,
     /** 人がタスクの題を変えた（PBI-323）。 */
     TaskRenamed: (from: string, to: string, actor: string) =>
       `タスクの題を「${from}」から「${to}」に変更（${actor}）`,
@@ -1055,6 +1060,10 @@ const en: LabelMessages = {
       `${step} image changed from ${from} to ${to} (${actor})`,
     TaskImageChanged: (from, to, actor) =>
       `Task image changed from ${from ?? "the per-step images"} to ${to} (${actor})`,
+    SelfReviewDepthChanged: (to, actor) =>
+      to === "normal"
+        ? `Self-review set to the normal depth (${actor})`
+        : `Self-review depth set back to the Orchestrator's judgement, light (${actor})`,
     TaskRenamed: (from, to, actor) => `Task renamed from "${from}" to "${to}" (${actor})`,
     TaskResumed: (actor) => `Resumed (${actor})`,
     TaskResumedWithNote: (text) => `${text}, with notes`,

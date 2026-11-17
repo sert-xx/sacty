@@ -27,6 +27,7 @@ import type {
   RiskAssessment,
   SecurityCategory,
   SelfReview,
+  SelfReviewDepth,
   StepKey,
   StepPlan,
   StepPullRequestKey,
@@ -1082,6 +1083,17 @@ export type Task = {
    */
   documentsOnly?: true;
   /**
+   * オーケストレーターが、工程を選ぶ時点で判定した依頼の大きさと理由（StepsChosen の selfReviewDepth。PBI-369）。
+   * judged が light のタスクは、提出の前のセルフレビューの観点を絞る（人が通常の深さに上書きしていなければ）。
+   * 工程の選択からやり直すと消える。
+   */
+  selfReviewDepth?: { judged: SelfReviewDepth; reason?: DaemonText };
+  /**
+   * 人が、セルフレビューを通常の深さでさせると決めた（SelfReviewDepthChanged。PBI-369）。あるタスクは、判定が軽くても
+   * 通常の観点でレビューする。人の決定なので、工程の選択からやり直しても残る。
+   */
+  selfReviewDepthOverride?: { depth: "normal"; at: string };
+  /**
    * テストのコマンドかテストなしの理由（noTestsReason）を、人が再開のときに決めた（TestsDecided）。無ければ
    * オーケストレーターが決めたもの。
    */
@@ -1544,6 +1556,14 @@ export function applyEvent(
         task.noTestsReason = event.payload.noTestsReason;
       }
       if (event.payload.documentsOnly) task.documentsOnly = true;
+      if (event.payload.selfReviewDepth) {
+        task.selfReviewDepth = {
+          judged: event.payload.selfReviewDepth,
+          ...(event.payload.selfReviewDepthReason !== undefined
+            ? { reason: event.payload.selfReviewDepthReason }
+            : {}),
+        };
+      }
       if (event.payload.steps.includes("operation")) task.operation = event.payload.operation;
       if (event.payload.investigation) task.investigation = event.payload.investigation;
       // タスクのイメージ（PBI-318）。作成時の人の指定は、デーモンが決めて image に入れている
@@ -3448,6 +3468,21 @@ export function applyEvent(
       break;
     }
 
+    // 人が、セルフレビューの深さを変えた（PBI-369）。通常の深さへの上書きは、軽いと判定されたタスクだけ。取り消しは、
+    // 上書きしたタスクだけ。工程の状態は問わず、セルフレビューをする工程の次の実行から使う
+    case "SelfReviewDepthChanged": {
+      const { from, to } = event.payload;
+      if (task.selfReviewDepth?.judged !== "light") {
+        throw new ActivityIntegrityError(event, "the request is not judged light");
+      }
+      if (from === to || effectiveSelfReviewDepth(task) !== from) {
+        throw new ActivityIntegrityError(event, `the self-review depth is not ${from}`);
+      }
+      task.selfReviewDepthOverride =
+        to === "normal" ? { depth: "normal", at: event.at } : undefined;
+      break;
+    }
+
     // 人がタスクの題を変えた（PBI-323）。中止したタスクのほかは状態を問わず、この後に題を使うもの（指示・コミット・通知など）から使う
     case "TaskRenamed":
       task.title = event.payload.to;
@@ -4617,6 +4652,18 @@ export function verificationImageOf(task: Pick<Task, "image" | "images">): strin
   return task.image ?? task.images?.implement ?? task.images?.reproduce;
 }
 
+/**
+ * 提出の前のセルフレビューを、どの深さでさせるか（PBI-369）。オーケストレーターが軽いと判定し、人が通常の深さに上書きして
+ * いないときだけ light。判定が無い・通常のタスクは normal。PR のレビューには使わない（セルフレビューだけ）。
+ */
+export function effectiveSelfReviewDepth(
+  task: Pick<Task, "selfReviewDepth" | "selfReviewDepthOverride">,
+): SelfReviewDepth {
+  return task.selfReviewDepth?.judged === "light" && task.selfReviewDepthOverride === undefined
+    ? "light"
+    : "normal";
+}
+
 /** 工程の選択（StepsChosen）で決めたものを消す（工程の選択からやり直す）。予算の上限は残す。 */
 function clearChosenSteps(task: Task): void {
   task.steps = [];
@@ -4625,6 +4672,8 @@ function clearChosenSteps(task: Task): void {
   task.testCommand = undefined;
   task.noTestsReason = undefined;
   task.documentsOnly = undefined;
+  // 依頼の大きさの判定は選び直す。人の上書き（selfReviewDepthOverride）は、人の決定なので残す
+  task.selfReviewDepth = undefined;
   task.testsDecidedBy = undefined;
   task.operation = undefined;
   task.investigation = undefined;

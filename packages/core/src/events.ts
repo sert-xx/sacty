@@ -1009,6 +1009,14 @@ export const ContinuedPullRequest = z.object({
 });
 export type ContinuedPullRequest = z.infer<typeof ContinuedPullRequest>;
 
+/**
+ * 提出の前のセルフレビューの深さ（PBI-369）。light は、依頼が軽いので観点を絞る。normal は、通常の観点で見る。
+ */
+export const SelfReviewDepth = z.enum(["light", "normal"]);
+export type SelfReviewDepth = z.infer<typeof SelfReviewDepth>;
+/** 依頼の大きさの判定の理由の長さの上限。 */
+export const SELF_REVIEW_DEPTH_REASON_MAX = 1000;
+
 const StepsChosen = z.object({
   type: z.literal("StepsChosen"),
   payload: z.object({
@@ -1037,6 +1045,15 @@ const StepsChosen = z.object({
      * 最終レビューをせずに止める。実装を含み、不具合の修正でない組み合わせのときだけ持つ。
      */
     documentsOnly: z.literal(true).optional(),
+    /**
+     * オーケストレーターが、工程を選ぶ時点で判定した依頼の大きさ（PBI-369）。light（軽い）のタスクは、提出の前の
+     * セルフレビューの観点を絞る（人が通常の深さに上書きしていなければ。SelfReviewDepthChanged）。normal は通常。
+     * 答えが無い・読めないとき、セルフレビューをする工程が無い組み合わせ（PR のレビューだけ・調査だけなど）では持たない
+     * （通常として扱う）。セキュリティ対応（security-fix）は、オーケストレーターが軽いと答えても normal にする。
+     */
+    selfReviewDepth: SelfReviewDepth.optional(),
+    /** 依頼の大きさをそう判定した理由（オーケストレーターの文。sacty が normal にしたときは sacty の文言）。 */
+    selfReviewDepthReason: DaemonText.optional(),
     /** 調査の工程の性質（PBI-43）。無ければ内容の調査として扱う（セットアップをしない側）。 */
     investigation: InvestigationKind.optional(),
     /**
@@ -1188,6 +1205,17 @@ const StepImageChanged = z.object({
 const TaskImageChanged = z.object({
   type: z.literal("TaskImageChanged"),
   payload: z.object({ from: z.string().min(1).optional(), to: z.string().min(1) }),
+});
+
+/**
+ * 人が、タスクの詳細で、提出の前のセルフレビューの深さを変えた（PBI-369）。to が normal は、オーケストレーターが軽いと
+ * 判定したタスクを、通常の深さでレビューさせる上書き。to が light は、その上書きの取り消し（オーケストレーターの判定に戻す）。
+ * 軽いと判定されていないタスクを、人が軽くすることはできない。工程の状態は問わず、セルフレビューをする工程の次の実行から使う
+ * （実行中の実行は変えない）。actor は person。
+ */
+const SelfReviewDepthChanged = z.object({
+  type: z.literal("SelfReviewDepthChanged"),
+  payload: z.object({ from: SelfReviewDepth, to: SelfReviewDepth }),
 });
 
 /**
@@ -1610,10 +1638,12 @@ export const RiskLevel = z.enum(["low", "medium", "high"]);
 export type RiskLevel = z.infer<typeof RiskLevel>;
 
 /**
- * PR のリスクの合図（PBI-362）。1つでも当たれば、段階は high。
- * security：セキュリティに関わる。irreversible：取り消しにくい。compatibility：互換性を変える。structural：構造を大きく変える・
- * 広い範囲に及ぶ。performance：性能・並行処理・資源の使い方に効く。defect：不具合・論理の誤りが見つかった。
+ * PR のリスクの合図（PBI-362）。合図には重さがある（`RISK_SIGNAL_WEIGHT`。PBI-377）。
+ * security：セキュリティにかかわる振る舞いを変える。irreversible：取り消しにくい。compatibility：互換性を変える。
+ * structural：構造を大きく変える・広い範囲に及ぶ。performance：性能・並行処理・資源の使い方に効く。
  * large：差分が大きく、読むのに手間がかかる。unverified：変えた振る舞いを確かめていない。
+ * defect：不具合・論理の誤りが見つかった。PBI-377 で合図から外した（レビューの判定が別に示すため）。以前の記録を読むためだけに
+ * 残していて、新しい評価には付かない。
  */
 export const RiskSignal = z.enum([
   "security",
@@ -1628,12 +1658,37 @@ export const RiskSignal = z.enum([
 export type RiskSignal = z.infer<typeof RiskSignal>;
 
 /**
+ * リスクの合図の重さ（PBI-377）。heavy：重い合図。1つでもあれば、段階は high。light：軽い合図。軽い合図だけなら、2つ以上で
+ * high、1つなら medium。retired：合図から外したもの（以前の記録にだけある。段階に数えない）。
+ */
+export const RISK_SIGNAL_WEIGHT: Record<RiskSignal, "heavy" | "light" | "retired"> = {
+  security: "heavy",
+  irreversible: "heavy",
+  compatibility: "heavy",
+  structural: "light",
+  performance: "light",
+  large: "light",
+  unverified: "light",
+  defect: "retired",
+};
+
+/**
+ * PR が含む、依存の版の更新の上げ幅（PBI-377）。none：依存の版の更新が無い。major：互換性の無い変更を含みうる上げ幅。
+ * minor：互換性を保つ機能の追加。patch：互換性を保つ修正だけ。unknown：上げ幅を読み取れない。複数の依存を更新するときは、
+ * いちばん大きい上げ幅。major と unknown は、段階を high にする。
+ */
+export const RiskDependencyUpdate = z.enum(["none", "patch", "minor", "major", "unknown"]);
+export type RiskDependencyUpdate = z.infer<typeof RiskDependencyUpdate>;
+
+/**
  * PR のリスク評価（PBI-362）。人が、PR をどの深さでレビューするかを決めるための目安。段階と、当たったリスクの合図、根拠
- * （変更の種類・影響の範囲・取り消しやすさ・確かめた範囲）、とくに見る箇所。
+ * （変更の種類・影響の範囲・取り消しやすさ・確かめた範囲）、とくに見る箇所。dependencyUpdate は、依存の版の更新があるときの
+ * 上げ幅（PBI-377。更新が無い評価・以前の記録には無い）。
  */
 export const RiskAssessment = z.object({
   level: RiskLevel,
   signals: z.array(RiskSignal).default([]),
+  dependencyUpdate: RiskDependencyUpdate.exclude(["none"]).optional(),
   change: z.string().min(1),
   scope: z.string().min(1),
   reversibility: z.string().min(1),
@@ -3896,6 +3951,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepsSkipped,
   StepImageChanged,
   TaskImageChanged,
+  SelfReviewDepthChanged,
   TaskRenamed,
   StepAgentChanged,
   ServicesStarted,
@@ -4310,6 +4366,10 @@ export const AskQuestionInput = z.object({
     .max(QUESTION_MAX, code("input.questionTooLong")),
 });
 export type AskQuestionInput = z.infer<typeof AskQuestionInput>;
+
+/** タスクの詳細で、提出の前のセルフレビューの深さを変える入力（PBI-369）。 */
+export const ChangeSelfReviewDepthInput = z.object({ depth: SelfReviewDepth });
+export type ChangeSelfReviewDepthInput = z.infer<typeof ChangeSelfReviewDepthInput>;
 
 /** タスクの詳細で、タスクのイメージを変える入力（PBI-318）。image は config.yaml の images の名前か default。 */
 export const ChangeTaskImageInput = z.object({
