@@ -13,9 +13,12 @@ mise を使う環境で、`npm run cli:install` の入れ方（入口を `mise l
 
 ## したこと
 
-- `scripts/cli-install.mjs`：mise に登録する処理（`useMise`・`miseToolDir`・`installWithMise`・`checkMise`）を消し、いつも `launcherDir` の場所に入口を置くようにした。
-  前の版が mise に登録した sacty を外す処理（`legacyMiseRoot`・`removeMiseRegistration`）を足した。入口を置いた後に行い、外せなければ注意を出して続ける。
-- `tests/scripts/cli-install.test.ts`：消した関数のテストを消し、外す処理のテストを足した。
+レビューの対応を終えた時点の差分で書いている（途中で書いて、後で直した内容は、「レビューの指摘と対応」にある）。
+
+- `scripts/cli-install.mjs`：mise に登録する処理（`useMise`・`miseToolDir`・`installWithMise`・`checkMise`）を消し、いつも `launcherDir` の場所に入口を置くようにした。`mise` は呼ばない。
+  前の版が mise に登録した入口があれば、置いた入口と同じ中身に書き直し（`legacyMiseRoot`・`refreshLegacyLaunchers`）、手で外す手順を注意に出す（`legacyNotice`）。
+  テストから偽のリポジトリで動かせるよう、`main` を `repo` を受け取る形にして公開した。
+- `tests/scripts/cli-install.test.ts`：消した関数のテストを消し、前の版の入口の書き直し・注意・`main` の流れのテストを足した。
 - 仕様書（`docs/spec/architecture.md` と英語の版）・ユーザードキュメント（`docs/user/getting-started.md` と英語の版）を、今の動きに合わせた。
 - ADR を足し、前の ADR を、一部の置き換えとして `superseded` にした（本文は書き換えていない）。名前の変更で切れるリンク（前の ADR を指す ADR と作業履歴）を直した。
 
@@ -25,17 +28,22 @@ mise を使う環境で、`npm run cli:install` の入れ方（入口を `mise l
 - `npm run lint`・`npm run typecheck`・`npx vitest run tests/docs`：通った。
 - `npm test`：5 ファイルの 8 件が失敗した（`apps/daemon/src/agent-sessions.test.ts`・`context-mcp.test.ts`・`host-mcp-processes.test.ts`、`apps/web/src/components/question-form.browser.test.ts`・`shell/menus.browser.test.ts`）。
   この変更を外した状態でも同じ 8 件が失敗した。確かめた環境の Node.js は 22.23.5 で、リポジトリが求める版（26.13.1）ではない。失敗の原因は調べていない。
-- 仮のホームと偽の `mise`（受けた引数を記録し、`where` で登録のリンクの場所を返すもの）で `node scripts/cli-install.mjs` を実行した。
-  - 前の版の入口のディレクトリがあるとき：`~/.local/bin/sacty` に入口が置かれ、`mise where sacty@<版>`・`mise unuse --global sacty` が呼ばれ、登録のリンクと前の版の入口のディレクトリが消えた。置いた入口の `sacty --version` は、別のディレクトリからでもリポジトリの版を出した。
-  - mise も前の版の入口も無いとき：`~/.local/bin/sacty` に入口が置かれ、`PATH` に無いことの注意が出た。
-- 確かめられなかったこと：実際の mise での動き（この環境に mise を入れられなかった。配布元への通信が通らない）。`mise unuse --global sacty` が `mise link` で登録した道具を外せるかは、確かめていない。
+- はじめの実装（`mise unuse` で外す）は、仮のホームと偽の `mise` で `node scripts/cli-install.mjs` を実行して確かめた。レビューの後の実装は、同じ流れを `tests/scripts/cli-install.test.ts` の `main` のテスト（偽のリポジトリ・仮のホーム・呼ばれたら記録する偽の `mise`）で確かめている。
+  - mise があるとき：`mise` は呼ばれず、`~/.local/bin/sacty` に入口が置かれ、入口の `--version` が版を出す。
+  - 前の版の入口があるとき：前の版の入口が、置いた入口と同じ中身になり、手で外す手順の注意が出て、終了コード 0 で終わる。
+- レビューの対応の後：`npx vitest run tests/scripts/cli-install.test.ts`（17 件）・`npm run lint`・`npm run typecheck`・`npx vitest run tests/docs` が通った。
+- 確かめられなかったこと：実際の mise での動き（この環境に mise を入れられなかった。配布元への通信が通らない）。登録が残っている間に mise がどちらの入口を先に見つけるか、文書に書いた手で外す手順で登録が外れるかは、確かめていない。
 
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
-| なし（レビューの前） | なし |
+| 前の版の登録が見つからなくても `mise unuse --global sacty` を実行し、ほかの方法で入れた sacty まで設定から外しうる | 自動で外すのをやめた（レビューの別案）。`mise` は呼ばず、前の版の入口を同じ中身に書き直して、手で外す手順を注意に出す。対象を版に限って `unuse` する直し方は、実際の mise で確かめられない操作が残るので採らなかった |
+| 後始末の `readdirSync`・`rmSync` の例外を捕まえておらず、`mise` の起動の失敗の原因も注意に出ない | 消す処理と `mise` の呼び出しが無くなった。書き直しの例外は捕まえて、書き直せなかった入口として注意に出す（テストあり） |
+| ユーザードキュメントで、前の版の登録の話が置き場所の箇条書きに混ざり、手で消す手順が無い | 置き場所の箇条書きから外し、前の版を mise で入れていた人への段落に、書き直すこと・手で外す手順・確かめ方を書いた（日英） |
+| テストが版1つの場合だけで、`main` の流れのテストが無い | 版が複数・目印の無いファイル・ディレクトリでない場合のテストと、`main` を別のプロセスで動かすテスト（mise を呼ばない・終了コード 0）を足した |
+| ADR が、確かめていない前提を事実として書き、登録を続ける案を比べていない | `PATH` の前提を未確認と書き、背景の弱い所が作者の推測であること・確かめ方を書き、登録を続ける案を比べた案に足した |
 
 ## 残したこと
 
-- 実際の mise で、前の登録が外れることを確かめる。
+- 実際の mise のある環境で、入れ直した後にどのディレクトリでも `sacty` が動くことと、文書の手順で前の登録が外れることを確かめる。

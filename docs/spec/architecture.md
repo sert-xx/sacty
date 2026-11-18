@@ -19,12 +19,11 @@ sacty は、5つのパッケージでできている。
 | `packages/cli` | `sacty` コマンド | `sacty up` などのコマンドと、エージェント実行用のイメージの Dockerfile（`packages/cli/docker/Dockerfile`） | `@sacty/core`・`@sacty/daemon`・`@sacty/web` |
 | `apps/desktop` | `@sacty/desktop` | macOS 向けのデスクトップ版（Electron）。`sacty` コマンドを別のプロセスで動かし、画面を表示する（[デスクトップ版](desktop.md)） | なし（作るときに cli・daemon・web の成果物を同梱する） |
 
-`npm run cli:install`（ルートの `package.json`。処理は `scripts/cli-install.mjs` の `launcherScript`・`launcherDir`・`writeLauncher`・`legacyMiseRoot`・`removeMiseRegistration`・`checkPath`・`findOnPath`・`globalPrefix`）は、ビルドの後に、`sacty` の起動の入口（シェルのスクリプト）を置く。
-- 置き場所は `SACTY_BIN_DIR`、無ければ `~/.local/bin`（Node.js の版に関係しない場所。mise などで版ごとに分かれる npm のグローバルの bin には置かない）。mise を使っていても、mise には登録しない。
-- 入口を置いた後に、前の版が mise に登録した sacty があれば外す（`removeMiseRegistration`）。前の版の入口のディレクトリ（`XDG_DATA_HOME`、無ければ `~/.local/share` の下の `sacty/mise`。中は版ごと）があるときだけ行う。
-  `mise unuse --global sacty` で mise の利用者全体の設定から外し、mise の登録（`mise where sacty@<版>` が返す場所）のうち、前の版の入口のディレクトリを指すリンクと、前の版の入口のディレクトリを消す。
-  `PATH` に `mise` が無い・`mise unuse` が失敗したら、何も消さずに、理由と手で消す手順を注意に出す（終了コードは 0）。
-  実際の mise では確かめていない（未確認。偽の `mise` で確かめた）。
+`npm run cli:install`（ルートの `package.json`。処理は `scripts/cli-install.mjs` の `launcherScript`・`launcherDir`・`writeLauncher`・`legacyMiseRoot`・`refreshLegacyLaunchers`・`legacyNotice`・`checkPath`・`findOnPath`・`globalPrefix`）は、ビルドの後に、`sacty` の起動の入口（シェルのスクリプト）を置く。
+- 置き場所は `SACTY_BIN_DIR`、無ければ `~/.local/bin`（Node.js の版に関係しない場所。mise などで版ごとに分かれる npm のグローバルの bin には置かない）。mise を使っていても、mise には登録せず、`mise` も呼ばない。
+- 前の版（mise に入口を登録していた版）の入口のディレクトリ（`XDG_DATA_HOME`、無ければ `~/.local/share` の下の `sacty/mise`。中は `<版>/bin/sacty`）があれば、入口を置いた後に、その中の入口（目印のあるもの）をすべて、置いた入口と同じ中身に書き直す（`refreshLegacyLaunchers`）。mise の登録は外さない。
+  終わりに、手で外す手順（mise の利用者全体の設定の `sacty` の行・mise の登録・前の版の入口のディレクトリ）と、書き直した入口・書き直せなかった入口を注意に出す（`legacyNotice`。終了コードは 0）。
+  目印の無いファイル・読めない・書けないものは書き直さず、注意に出して続ける。
 - 入口は、スクリプトを動かした Node.js（`process.execPath`。sacty のリポジトリで mise などが選んだ版）の絶対パスで、このリポジトリの `packages/cli/bin/sacty.js` を動かす。`PATH` の `node` は使わないので、ディレクトリごとに Node.js の版が違っても、sacty はこの Node.js で動く。
 - 入口の Node.js か `sacty.js` が無くなったら、入口は `npm run cli:install` のやり直しを知らせて終了コード 1 で終わる。
 - 置き場所に、入口の目印（`LAUNCHER_MARK`）の無いファイルかリンクがあれば、上書きせずに終了コード 1。ただし、このリポジトリの `packages/cli/bin/sacty.js` を指すリンク（前のやり方の `npm link` のもの。npm のグローバルの場所が `~/.local` だと置き場所と重なる）は置き換える。入口は隣に書いてから置き換える（`writeLauncher`）。

@@ -1,6 +1,7 @@
 // `npm run cli:install`（ビルドの後）から呼ぶ。どのディレクトリでも `sacty` を使えるように、Node.js の版に関係しない
 // ディレクトリ（既定は ~/.local/bin。SACTY_BIN_DIR で変えられる）に、起動の入口（シェルのスクリプト）を置く。
-// mise を使っていても、mise には登録しない（前の版が mise に登録した入口があれば、外す）。
+// mise を使っていても、mise には登録しない。mise も呼ばない（前の版が mise に登録した入口があれば、同じ中身に書き直し、
+// 手で外す手順を知らせる）。
 // 入口には、このスクリプトを動かした Node.js（sacty のリポジトリで mise などが選んだもの）の絶対パスを書く。mise などで
 // ディレクトリごとに Node.js の版が違っても、sacty はいつもこの Node.js で動く。
 // 入口はリポジトリの packages/cli を指すので、版を上げた後にビルドし直せば新しい版で動く。Node.js の版を変えたときは、
@@ -128,40 +129,48 @@ export function legacyMiseRoot({ env = process.env, home = homedir() } = {}) {
 }
 
 /**
- * 前の版が mise に登録した sacty（mise link sacty@<版> と mise use --global）を外す。残すと、mise が PATH の前の方に
- * 載せるので、いま置いた入口より先に見つかる。root（legacyMiseRoot）が無ければ何もしない（none）。
- * mise の利用者全体の設定から sacty を外し（mise unuse --global sacty）、mise の登録（root の版のディレクトリを指す
- * リンク）と root を消す（removed）。設定から外せなければ、設定が指す先を無くさないよう何も消さずに、理由を返す（failed）。
- * mise が無ければ（hasMise が false）、設定を直せないので何も消さない（failed）。
+ * 前の版が mise に登録した入口（root の <版>/bin/sacty。目印のあるもの）を、いまの入口と同じ中身（content）に書き直す。
+ * mise の登録は外さない（mise の設定を書き換えず、mise も呼ばない）ので、mise が PATH に載せて先に見つかっても、
+ * いま置いた入口と同じに動くようにする。root が無ければ何もしない（found が false）。
+ * 書き直した入口を updated、書き直せなかったもの（目印の無いファイル・読めない・書けない）を failed で返す。例外は投げない。
  */
-export function removeMiseRegistration({ root, hasMise, run, resolveReal = real }) {
-  if (!existsSync(root)) return { status: "none" };
-  if (!hasMise) return { status: "failed", error: "PATH に mise がありません" };
-  // mise の登録（mise where が返す場所）のうち、root の版のディレクトリを指すリンクだけを消す
-  const links = [];
-  for (const version of readdirSync(root)) {
-    const where = run("mise", ["where", `sacty@${version}`]);
-    const registered = where.status === 0 ? where.stdout?.trim() : "";
-    if (
-      registered &&
-      isSymlink(registered) &&
-      resolveReal(registered) === resolveReal(join(root, version))
-    ) {
-      links.push(registered);
+export function refreshLegacyLaunchers({ root, content, entry }) {
+  const updated = [];
+  const failed = [];
+  if (!existsSync(root) && !isSymlink(root)) return { found: false, updated, failed };
+  let versions;
+  try {
+    versions = readdirSync(root);
+  } catch (error) {
+    return { found: true, updated, failed: [{ path: root, error: error.message }] };
+  }
+  for (const version of versions) {
+    const launcher = join(root, version, "bin", "sacty");
+    if (!existsSync(launcher) && !isSymlink(launcher)) continue;
+    try {
+      if (writeLauncher(launcher, content, entry)) updated.push(launcher);
+      else failed.push({ path: launcher, error: "sacty の入口でないファイル（またはリンク）です" });
+    } catch (error) {
+      failed.push({ path: launcher, error: error.message });
     }
   }
-  const args = ["unuse", "--global", "sacty"];
-  const result = run("mise", args);
-  if (result.status !== 0) {
-    const detail = `${result.stderr ?? ""}${result.stdout ?? ""}`.trim();
-    return {
-      status: "failed",
-      error: `mise ${args.join(" ")} に失敗しました${detail ? `：${detail}` : ""}`,
-    };
+  return { found: true, updated, failed };
+}
+
+/** 前の版が mise に登録した sacty が残っているときの注意（手で外す手順）。root は legacyMiseRoot。 */
+export function legacyNotice({ root, updated, failed }) {
+  const lines = [
+    `前の版が mise に登録した sacty が残っています（${root}）。いまの版は mise に登録しません。次の順で、手で外してください：(1) mise の利用者全体の設定（~/.config/mise/config.toml）の [tools] から sacty の行を消す。(2) mise の登録（mise の既定では ~/.local/share/mise/installs/sacty）を消す。(3) ${root} を消す。`,
+  ];
+  if (updated.length > 0) {
+    lines.push(
+      `外すまでの間も同じに動くよう、前の版の入口を、いま置いた入口と同じ中身に書き直しました（${updated.join("、")}）。`,
+    );
   }
-  for (const link of links) rmSync(link, { force: true });
-  rmSync(root, { recursive: true, force: true });
-  return { status: "removed" };
+  for (const { path, error } of failed) {
+    lines.push(`前の版の入口（${path}）は書き直せませんでした：${error}`);
+  }
+  return lines;
 }
 
 /**
@@ -185,10 +194,10 @@ export function writeLauncher(launcher, content, entry) {
   return true;
 }
 
-function main() {
+/** repo（既定は、このスクリプトのあるリポジトリ）の sacty を入れる。 */
+export function main({ repo = resolve(dirname(fileURLToPath(import.meta.url)), "..") } = {}) {
   if (process.platform === "win32")
     fail("npm run cli:install は Windows では使えません（macOS・Linux だけ）。");
-  const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const cliDir = join(repo, "packages", "cli");
   const entry = realpathSync(join(cliDir, "bin", "sacty.js"));
   const version = JSON.parse(readFileSync(join(cliDir, "package.json"), "utf8")).version;
@@ -224,22 +233,9 @@ function main() {
     );
   }
 
-  // 前の版が mise に登録した sacty を外す（mise が PATH の前の方に載せて、いま置いた入口より先に見つかるのを防ぐ）
+  // 前の版が mise に登録した入口を、同じ中身に書き直す（mise が PATH に載せて先に見つかっても、同じに動くように）
   const legacyRoot = legacyMiseRoot();
-  const legacy = removeMiseRegistration({
-    root: legacyRoot,
-    hasMise: Boolean(findOnPath("mise")),
-    run,
-  });
-  if (legacy.status === "removed") {
-    console.log(
-      `[sacty] 前の版が mise に登録した sacty を外しました（mise unuse --global sacty、${legacyRoot}）。`,
-    );
-  } else if (legacy.status === "failed") {
-    console.warn(
-      `[sacty] 注意：前の版が mise に登録した sacty を外せませんでした（${legacy.error}）。mise の利用者全体の設定（~/.config/mise/config.toml）の [tools] から sacty の行を消し、${legacyRoot} を消してください。`,
-    );
-  }
+  const legacy = refreshLegacyLaunchers({ root: legacyRoot, content, entry });
 
   // 入口が、このリポジトリの版で動くか（ビルドの結果を読めるか）
   const shown = run(launcher, ["--version"]).stdout.trim();
@@ -250,6 +246,11 @@ function main() {
   }
   const { warnings } = checkPath({ launcher, onPath: findOnPath("sacty") });
   for (const line of warnings) console.warn(`[sacty] 注意：${line}`);
+  if (legacy.found) {
+    for (const line of legacyNotice({ root: legacyRoot, ...legacy })) {
+      console.warn(`[sacty] 注意：${line}`);
+    }
+  }
   console.log(
     `[sacty] sacty ${version} を入れました（${launcher} → ${cliDir}、Node.js ${process.version}：${node}）。`,
   );

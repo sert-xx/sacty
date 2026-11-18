@@ -62,8 +62,6 @@ Where the launcher is placed is decided as follows.
   Even if you use mise, it does not register it with mise.
 - If you specify the environment variable `SACTY_BIN_DIR`, it places it there.
 - When the location is not in your `PATH`, or another `sacty` is found earlier in your `PATH`, it tells you with `[sacty] 注意：`.
-- If an earlier version of sacty registered `sacty` with mise, it removes that registration.
-  If it cannot remove it, it tells you what to delete by hand with `[sacty] 注意：`.
 
 The launcher works as follows.
 
@@ -84,6 +82,18 @@ If another `sacty` is used first, check the following.
 - If you define `sacty` with a shell `alias`, that one is used first.
 
 To remove the launcher, delete `~/.local/bin/sacty` (or `sacty` in `SACTY_BIN_DIR` if you specified it).
+
+If you installed an earlier version of sacty with mise, remove the mise registration by hand.
+When you used mise, earlier versions registered the launcher with mise (it appears in `mise ls sacty`).
+
+- This command does not remove the mise registration.
+  While the registration remains, it tells you with `[sacty] 注意：` each time you run it.
+- So that it works the same until you remove it, it rewrites the earlier version's launcher to the same content as the new launcher.
+- To remove it, delete the following in this order.
+  1. Remove the `sacty` line from `[tools]` in mise's user-wide settings (`~/.config/mise/config.toml`).
+  2. Delete the mise registration (`~/.local/share/mise/installs/sacty` by mise's default).
+  3. Delete `~/.local/share/sacty/mise` (or `$XDG_DATA_HOME/sacty/mise` if you set `XDG_DATA_HOME`).
+- After removing it, run `npm run cli:install` again and check that the warning no longer appears.
 
 ## Start
 

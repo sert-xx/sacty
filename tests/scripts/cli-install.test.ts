@@ -21,7 +21,8 @@ import {
   launcherDir,
   launcherScript,
   legacyMiseRoot,
-  removeMiseRegistration,
+  legacyNotice,
+  refreshLegacyLaunchers,
   writeLauncher,
 } from "../../scripts/cli-install.mjs";
 
@@ -153,24 +154,25 @@ describe("globalPrefix", () => {
   });
 });
 
-describe("前の版が mise に登録した sacty を外す", () => {
+describe("前の版が mise に登録した入口", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  /** 前の版の入口（root/1.22.1/bin/sacty）と、それを指す mise の登録のリンク（installs/1.22.1）を作る。 */
-  function setup() {
+  const content = `#!/bin/sh\n${LAUNCHER_MARK}\n# new\n`;
+
+  /** 前の版の入口（root/<版>/bin/sacty）を、版ごとに作る。 */
+  function setup(versions: string[]) {
     const base = mkdtempSync(join(tmpdir(), "sacty-legacy-mise-"));
     dirs.push(base);
     const root = join(base, "sacty", "mise");
-    mkdirSync(join(root, "1.22.1", "bin"), { recursive: true });
-    writeFileSync(join(root, "1.22.1", "bin", "sacty"), `#!/bin/sh\n${LAUNCHER_MARK}\n`);
-    const installs = join(base, "installs");
-    mkdirSync(installs);
-    const link = join(installs, "1.22.1");
-    symlinkSync(join(root, "1.22.1"), link);
-    return { root, link };
+    mkdirSync(root, { recursive: true });
+    for (const version of versions) {
+      mkdirSync(join(root, version, "bin"), { recursive: true });
+      writeFileSync(join(root, version, "bin", "sacty"), `#!/bin/sh\n${LAUNCHER_MARK}\n# old\n`);
+    }
+    return { base, root, entry: join(base, "sacty.js") };
   }
 
   it("前の版の入口のディレクトリは、XDG_DATA_HOME、無ければ ~/.local/share の下の sacty/mise", () => {
@@ -180,78 +182,133 @@ describe("前の版が mise に登録した sacty を外す", () => {
     );
   });
 
-  it("前の版の入口が無ければ、mise を呼ばずに何もしない", () => {
-    const calls: string[][] = [];
-    const result = removeMiseRegistration({
-      root: join(tmpdir(), "sacty-legacy-mise-none", "sacty", "mise"),
-      hasMise: true,
-      run: (_command: string, args: string[]) => {
-        calls.push(args);
-        return { status: 0 };
-      },
+  it("前の版の入口のディレクトリが無ければ、何もしない", () => {
+    const { base, entry } = setup([]);
+    expect(refreshLegacyLaunchers({ root: join(base, "none"), content, entry })).toEqual({
+      found: false,
+      updated: [],
+      failed: [],
     });
-    expect(result).toEqual({ status: "none" });
-    expect(calls).toEqual([]);
   });
 
-  it("mise の設定から sacty を外し、入口を指す登録のリンクと、入口のディレクトリを消す", () => {
-    const { root, link } = setup();
-    const calls: string[][] = [];
-    const result = removeMiseRegistration({
-      root,
-      hasMise: true,
-      run: (_command: string, args: string[]) => {
-        calls.push(args);
-        return args[0] === "where" ? { status: 0, stdout: `${link}\n` } : { status: 0 };
-      },
-    });
-    expect(result).toEqual({ status: "removed" });
-    expect(calls).toEqual([
-      ["where", "sacty@1.22.1"],
-      ["unuse", "--global", "sacty"],
-    ]);
-    expect(existsSync(root)).toBe(false);
-    expect(() => lstatSync(link)).toThrow();
+  it("版が複数あれば、すべての入口を、いまの入口と同じ中身に書き直す（入口の無い版は飛ばす）", () => {
+    const { root, entry } = setup(["1.22.1", "1.26.0"]);
+    mkdirSync(join(root, "1.20.0"));
+    const result = refreshLegacyLaunchers({ root, content, entry });
+    const launchers = ["1.22.1", "1.26.0"].map((v) => join(root, v, "bin", "sacty"));
+    expect(result.found).toBe(true);
+    expect([...result.updated].sort()).toEqual(launchers);
+    expect(result.failed).toEqual([]);
+    for (const launcher of launchers) expect(readFileSync(launcher, "utf8")).toBe(content);
   });
 
-  it("mise の登録が入口でない場所（ほかの方法で入れた sacty）なら、その登録は消さない", () => {
-    const { root, link } = setup();
-    const other = join(root, "..", "other");
-    mkdirSync(other);
-    const result = removeMiseRegistration({
-      root,
-      hasMise: true,
-      run: (_command: string, args: string[]) =>
-        args[0] === "where" ? { status: 0, stdout: `${other}\n` } : { status: 0 },
-    });
-    expect(result).toEqual({ status: "removed" });
-    expect(existsSync(other)).toBe(true);
-    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+  it("目印の無いファイルは書き直さず、書き直せなかったものとして返す（ほかの版は書き直す）", () => {
+    const { root, entry } = setup(["1.22.1", "1.26.0"]);
+    const foreign = join(root, "1.22.1", "bin", "sacty");
+    writeFileSync(foreign, "#!/bin/sh\necho other\n");
+    const result = refreshLegacyLaunchers({ root, content, entry });
+    expect(result.updated).toEqual([join(root, "1.26.0", "bin", "sacty")]);
+    expect(result.failed.map((f: { path: string }) => f.path)).toEqual([foreign]);
+    expect(readFileSync(foreign, "utf8")).toContain("echo other");
   });
 
-  it("設定から外せない・mise が無いときは、何も消さずに理由を返す", () => {
-    const { root, link } = setup();
-    const failed = removeMiseRegistration({
-      root,
-      hasMise: true,
-      run: (_command: string, args: string[]) =>
-        args[0] === "where"
-          ? { status: 0, stdout: `${link}\n` }
-          : { status: 1, stderr: "no such tool" },
+  it("ディレクトリでない・版の中身が読めないときも、例外を投げずに、書き直せなかったものとして返す", () => {
+    const { base, root, entry } = setup(["1.26.0"]);
+    const file = join(base, "file");
+    writeFileSync(file, "");
+    const notDir = refreshLegacyLaunchers({ root: file, content, entry });
+    expect(notDir.found).toBe(true);
+    expect(notDir.failed.map((f: { path: string }) => f.path)).toEqual([file]);
+    // 入口の場所がディレクトリ（書き直せない）
+    const launcher = join(root, "1.26.0", "bin", "sacty");
+    rmSync(launcher);
+    mkdirSync(launcher);
+    const blocked = refreshLegacyLaunchers({ root, content, entry });
+    expect(blocked.updated).toEqual([]);
+    expect(blocked.failed.map((f: { path: string }) => f.path)).toEqual([launcher]);
+  });
+
+  it("注意は、手で外す手順（設定の行・mise の登録・入口のディレクトリ）と、書き直した・書き直せなかった入口を知らせる", () => {
+    const lines = legacyNotice({
+      root: "/d/sacty/mise",
+      updated: ["/d/sacty/mise/1.26.0/bin/sacty"],
+      failed: [{ path: "/d/sacty/mise/1.22.1/bin/sacty", error: "EACCES" }],
     });
-    expect(failed.status).toBe("failed");
-    expect(failed.error).toContain("mise unuse --global sacty");
-    expect(failed.error).toContain("no such tool");
-    const noMise = removeMiseRegistration({
-      root,
-      hasMise: false,
-      run: () => {
-        throw new Error("mise を呼ばない");
-      },
-    });
-    expect(noMise.status).toBe("failed");
-    expect(existsSync(join(root, "1.22.1", "bin", "sacty"))).toBe(true);
-    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(lines[0]).toContain("~/.config/mise/config.toml");
+    expect(lines[0]).toContain("~/.local/share/mise/installs/sacty");
+    expect(lines[0]).toContain("/d/sacty/mise を消す");
+    expect(lines[1]).toContain("/d/sacty/mise/1.26.0/bin/sacty");
+    expect(lines[2]).toContain("EACCES");
+    expect(legacyNotice({ root: "/d/sacty/mise", updated: [], failed: [] })).toHaveLength(1);
+  });
+});
+
+describe("main（入れる流れ）", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** 版を出すだけの偽のリポジトリ・仮のホーム・呼ばれたら記録する偽の mise を作り、main を別のプロセスで動かす。 */
+  function install({ legacy }: { legacy: boolean }) {
+    const base = mkdtempSync(join(tmpdir(), "sacty-cli-install-main-"));
+    dirs.push(base);
+    const repo = join(base, "repo");
+    mkdirSync(join(repo, "packages", "cli", "bin"), { recursive: true });
+    writeFileSync(join(repo, "packages", "cli", "package.json"), '{"version":"9.9.9"}');
+    writeFileSync(join(repo, "packages", "cli", "bin", "sacty.js"), 'console.log("9.9.9");\n');
+    const home = join(base, "home");
+    const bin = join(home, ".local", "bin");
+    mkdirSync(bin, { recursive: true });
+    const legacyLauncher = join(home, ".local", "share", "sacty", "mise", "1.26.0", "bin", "sacty");
+    if (legacy) {
+      mkdirSync(join(legacyLauncher, ".."), { recursive: true });
+      writeFileSync(legacyLauncher, `#!/bin/sh\n${LAUNCHER_MARK}\necho old\n`, { mode: 0o755 });
+    }
+    const fake = join(base, "fake");
+    mkdirSync(fake);
+    const miseCalls = join(base, "mise-calls");
+    writeFileSync(join(fake, "mise"), `#!/bin/sh\necho "$@" >> '${miseCalls}'\n`);
+    chmodSync(join(fake, "mise"), 0o755);
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      HOME: home,
+      PATH: [bin, fake, process.env.PATH ?? ""].join(delimiter),
+      npm_config_global_prefix: join(base, "npm-prefix"),
+    };
+    delete env.SACTY_BIN_DIR;
+    delete env.XDG_DATA_HOME;
+    const script = new URL("../../scripts/cli-install.mjs", import.meta.url).href;
+    const run = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `const { main } = await import(${JSON.stringify(script)}); main({ repo: ${JSON.stringify(repo)} });`,
+      ],
+      { encoding: "utf8", env },
+    );
+    return { run, launcher: join(bin, "sacty"), legacyLauncher, miseCalls, env };
+  }
+
+  it("mise があっても、mise を呼ばずに ~/.local/bin に入口を置く", () => {
+    const { run, launcher, miseCalls, env } = install({ legacy: false });
+    expect(run.status).toBe(0);
+    expect(run.stderr).not.toContain("注意");
+    expect(readFileSync(launcher, "utf8")).toContain(LAUNCHER_MARK);
+    expect(spawnSync(launcher, ["--version"], { encoding: "utf8", env }).stdout.trim()).toBe(
+      "9.9.9",
+    );
+    expect(existsSync(miseCalls)).toBe(false);
+  });
+
+  it("前の版が mise に登録した入口があれば、同じ中身に書き直し、手で外す手順を注意に出して、終了コード 0 で終わる", () => {
+    const { run, launcher, legacyLauncher, miseCalls } = install({ legacy: true });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("前の版が mise に登録した sacty が残っています");
+    expect(run.stderr).toContain(legacyLauncher);
+    expect(readFileSync(legacyLauncher, "utf8")).toBe(readFileSync(launcher, "utf8"));
+    expect(existsSync(miseCalls)).toBe(false);
   });
 });
 
