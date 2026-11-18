@@ -1046,6 +1046,11 @@ export type Task = {
   githubComments?: Partial<Record<StepKey, PayloadOf<"GitHubCommentsPosted"> & { at: string }>>;
   /** レビューの工程の対象の PR（PBI-19）。 */
   reviewTarget?: PayloadOf<"ReviewTargetResolved">;
+  /**
+   * レビューの対象の PR の元のブランチ（head）の名前（PBI-392）。対象を確かめたときに読めた、最後のもの。再レビューを
+   * 始めても消さない（reviewTarget は消える）ので、ブランチ名からレビューのタスクを探せる。
+   */
+  reviewBranch?: string;
   /** レビューの工程が書いた、PR の行へのコメント（PBI-19）。 */
   reviewComments: ReviewComment[];
   /** 再現の工程が申告した、再現のテスト（PBI-29）。 */
@@ -2765,6 +2770,8 @@ export function applyEvent(
       }
       if (task.reviewTarget) throw new ActivityIntegrityError(event, "already resolved");
       task.reviewTarget = event.payload;
+      // 読めなかった回は、前に読めた名前を残す（PR の元のブランチは変わらない。PBI-392）
+      if (event.payload.headBranch) task.reviewBranch = event.payload.headBranch;
       break;
 
     case "ReviewGitHubRetried":

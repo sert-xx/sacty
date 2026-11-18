@@ -32,7 +32,8 @@ import {
   removeDaemonFile,
 } from "./context-preview.js";
 import { launch, splitLaunchArgs } from "./launch.js";
-import { daemonEnv, startMessage, webAuthEnabled, webEnv } from "./up-env.js";
+import { daemonApi } from "./mcp.js";
+import { daemonEndpoint, daemonEnv, startMessage, webAuthEnabled, webEnv } from "./up-env.js";
 import { UpStopper } from "./up-stop.js";
 
 const require = createRequire(import.meta.url);
@@ -52,6 +53,9 @@ const USAGE = `Usage:
   sacty launch <プロジェクト> [--runtime claude-code|codex] [--cwd <dir>] [-- <AI の CLI に渡す引数>...]
       プロジェクトのコンテキストで、手元の Claude Code か Codex を対話で起動します（ログインは手元のものを使います）。
       起動中の sacty（sacty up）に問い合わせます。--cwd の既定は今のディレクトリです。作業履歴には記録しません。
+  sacty mcp
+      起動中の sacty（sacty up）を操作する MCP サーバーを、標準入出力（stdio）で動かします。Claude Code や Codex の
+      MCP サーバーとして登録して使います（タスクの一覧・検索・詳細と、PR のレビューのタスクの再レビュー）。
   sacty secret set <name>
       秘密情報（トークンやAPIキー）をmacOSのキーチェーンに保存します。値は入力を求められます。
   sacty image build [<名前>...]
@@ -249,6 +253,18 @@ async function launchCommand(
   });
 }
 
+/**
+ * 起動中の sacty を操作する MCP サーバーを、標準入出力で動かす（PBI-392）。sacty が起動していなくても始められる
+ * （ツールを呼んだときに、そのときの接続先を読む）。標準出力は MCP のやりとりに使うので、何も表示しない。
+ */
+async function mcpCommand(): Promise<void> {
+  // MCP の SDK は、使うときだけ読み込む（ほかのコマンドの起動を遅くしない）
+  const { serveTaskMcp } = await import("@sacty/daemon/task-mcp");
+  await serveTaskMcp(daemonApi(resolveHome()), {
+    version: (require("../package.json") as { version: string }).version,
+  });
+}
+
 async function waitForDaemon(url: string, token: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -329,7 +345,7 @@ async function up(webPort: number, daemonPort: number) {
   // CLI のコマンド（sacty context preview）が、起動中のデーモンに問い合わせるための接続先とトークン（PBI-76）。デーモンが
   // 応答してから書き（起動に失敗した sacty は書かない）、ほかの sacty が動いていれば上書きしない
   const home = resolveHome();
-  const endpoint = { url: daemonUrl, token };
+  const endpoint = daemonEndpoint({ daemonPort, daemonToken: token, webPort });
   if (await claimDaemonFile(home, endpoint)) {
     process.on("exit", () => removeDaemonFile(home, endpoint));
   } else {
@@ -391,6 +407,7 @@ async function main() {
     return contextPreview(arg, values.runtime, values.json, !values["no-content"]);
   }
   if (command === "launch") return launchCommand(sub, values.runtime, values.cwd, extra);
+  if (command === "mcp") return mcpCommand();
   if (command === "secret" && sub === "set") return secretSet(arg);
   if (command === "image" && sub === "build") return imageBuild(positionals.slice(2));
   if (command !== "up") {

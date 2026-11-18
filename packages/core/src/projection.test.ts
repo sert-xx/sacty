@@ -1764,6 +1764,39 @@ describe("レビューの工程（PBI-19）", () => {
     expect(task?.approved.review).toBeUndefined();
   });
 
+  it("PR の元のブランチの名前は、再レビューを始めても残す。読めなかった回は、前に読めた名前のまま（PBI-392）", () => {
+    // 記録に無ければ（それより前の版の記録・読めなかった回）、持たない
+    expect(project(run("t1")).get("t1")?.reviewBranch).toBeUndefined();
+    const events = run("t9");
+    const resolved = events[2] as Extract<ActivityEvent, { type: "ReviewTargetResolved" }>;
+    resolved.payload = { ...resolved.payload, headBranch: "feat/retry" };
+    const posted = ev("t9", { type: "PullRequestReviewPosted", payload: { url: "https://x/r1" } });
+    const restart = ev("t9", { type: "ReviewRestarted", payload: {} }, "person");
+    const restarted = project([...events, posted, restart]).get("t9");
+    expect(restarted?.reviewTarget).toBeUndefined();
+    expect(restarted?.reviewBranch).toBe("feat/retry");
+    // 次の回で読めなかった
+    const unread = project([
+      ...events,
+      posted,
+      restart,
+      ev("t9", { type: "ReviewTargetResolved", payload: target }),
+    ]).get("t9");
+    expect(unread?.reviewTarget?.headBranch).toBeUndefined();
+    expect(unread?.reviewBranch).toBe("feat/retry");
+    // 次の回で読めた名前に変わる
+    const renamed = project([
+      ...events,
+      posted,
+      restart,
+      ev("t9", {
+        type: "ReviewTargetResolved",
+        payload: { ...target, headBranch: "feat/retry-2" },
+      }),
+    ]).get("t9");
+    expect(renamed?.reviewBranch).toBe("feat/retry-2");
+  });
+
   it("判定を回ごとに残し、再レビューでは前回の指摘と投稿を前回のレビューとして残す（PBI-111）", () => {
     const events = run("t7");
     const completed = events[4] as Extract<ActivityEvent, { type: "AgentRunCompleted" }>;

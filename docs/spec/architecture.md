@@ -44,6 +44,8 @@ sacty は、5つのパッケージでできている。
   `127.0.0.1` だけで待ち受ける。
 - 画面は、Next.js のサーバー側でだけデーモンを呼ぶ（トークンをブラウザに渡さない）。
   接続先とトークンは、環境変数 `SACTY_DAEMON_URL`・`SACTY_DAEMON_TOKEN` からリクエストのたびに読む。
+- CLI のコマンド（`sacty context preview`・`sacty launch`・`sacty mcp`）は、`SACTY_HOME/daemon.json` から接続先とトークンを読んで、同じ API を呼ぶ。
+  `sacty mcp` は、手元の AI から起動中の sacty を操作する MCP サーバー（[MCP サーバー](mcp-server.md)）。
 - デーモンは誤りを次のように返す。
   どちらも文言のコードと引数で返し、画面が画面の言語の文言にする。
   - 入力の誤り（zod の検証）：400 で `invalid_input`
@@ -389,7 +391,7 @@ sacty は、5つのパッケージでできている。
 | `config.yaml` | sacty の設定（AI・認証・イメージ・ゲートウェイなど）。デーモンは使うたびに読み直す |
 | `sacty.db` | SQLite。作業履歴（イベント）・プロジェクト・スケジュールタスク・sacty の設定（画面の「sacty の設定」） |
 | `daemon.lock`・`daemon-owner.json` | 二重の起動の判定と表示（[デーモンの起動と終了](daemon-lifecycle.md)） |
-| `daemon.json` | `sacty context preview`・`sacty launch` が問い合わせる、起動中のデーモンの接続先とトークン |
+| `daemon.json` | `sacty context preview`・`sacty launch`・`sacty mcp` が問い合わせる、起動中のデーモンの接続先とトークン。画面の URL も持つ |
 | `workspaces/` | 作業領域。`<タスク ID>/repo`（対象リポジトリの clone）・`<タスク ID>/empty`（リポジトリの無いタスク）・`<タスク ID>/repos`（指定した複数リポジトリの clone）・`_git/<タスク ID>.git`（clone 直後の git のメタデータの退避。どのコンテナにもマウントしない）・実行ごとの `_code-copy/<実行 ID>`・`_snapshots/<実行 ID>`・`_review/<実行 ID>`・`_input/<実行 ID>`・`_repos/<実行 ID>`・`_export/<実行 ID>`・`_deployment/<実行 ID>`・`_handoff/<実行 ID>`・`_question-logs/<実行 ID>`・`_audit-logs/<実行 ID>`・`_audit-ledger/<実行 ID>`・`_shared-compose/<実行 ID>`（実行の終わりに消す。中断で残ったものは起動のときに消す。停止を確認できない実行の写しやマウント中の写しは、確認できるまで保持する。`_shared-compose` は起動のときにまとめて消す）・`_cache/`・`_task-cache/<タスク ID>`（タスクごとの依存のキャッシュ。[エージェントの実行](agent-execution.md#依存のキャッシュ)）。完了したタスクの `<タスク ID>` と `_git/<タスク ID>.git` と `_task-cache/<タスク ID>` は、もう使わなくなったら消す（[タスクと工程](tasks-and-steps.md#終わったタスクの作業領域の片付け)） |
 | `runs/` | エージェントの実行ごとのセッションログ |
 | `sessions/` | タスクごとのオーケストレーターのセッション（使い回しのためのキャッシュ） |
