@@ -36,6 +36,10 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
     await expect(api.listTasks()).rejects.toThrow("起動中の sacty が見つかりません");
     await expect(api.getTask("a")).rejects.toThrow("起動中の sacty が見つかりません");
     await expect(api.rereview("a")).rejects.toThrow("起動中の sacty が見つかりません");
+    await expect(api.listProjects()).rejects.toThrow("起動中の sacty が見つかりません");
+    await expect(api.createTask({ projectId: "p", title: "題", body: "" })).rejects.toThrow(
+      "起動中の sacty が見つかりません",
+    );
     expect(api.webUrl()).toBeUndefined();
     expect(calls).toEqual([]);
   });
@@ -243,5 +247,118 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
       token: "tok",
       web: "http://127.0.0.1:4700",
     });
+  });
+});
+
+describe("sacty mcp のタスクの作成（PBI-394）", () => {
+  const input = { projectId: "p1", title: "題", body: "説明" };
+
+  it("プロジェクトの一覧と作成は、画面と同じ API（GET /api/projects・POST /api/tasks）を、対象リポジトリ空欄・進め方なしで呼ぶ", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const { calls, fetcher } = fakeDaemon((_method, path) =>
+      path === "/api/projects"
+        ? Response.json({
+            projects: [
+              { id: "p1", name: "P", targets: [{ scope: "repo", target: "https://x/y" }] },
+            ],
+          })
+        : Response.json({ task: { id: "t1", title: "題" } }, { status: 201 }),
+    );
+    const api = daemonApi(home, fetcher);
+    expect(await api.listProjects()).toMatchObject([{ id: "p1", name: "P" }]);
+    expect(await api.createTask(input)).toMatchObject({ id: "t1" });
+    expect(calls.map((c) => `${c.method} ${new URL(c.url).pathname} ${c.token}`)).toEqual([
+      "GET /api/projects Bearer tok",
+      "POST /api/tasks Bearer tok",
+    ]);
+    expect(JSON.parse(calls[1]?.body ?? "")).toEqual({
+      projectId: "p1",
+      title: "題",
+      body: "説明",
+      repo: null,
+    });
+  });
+
+  it("断られたときは理由だけを返す（プロジェクトが無い・題が空・想定外の状態コード）", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const refuse = async (res: Response) => {
+      const { fetcher } = fakeDaemon(() => res);
+      return daemonApi(home, fetcher)
+        .createTask(input)
+        .then(
+          () => undefined,
+          (e: unknown) => e as Error,
+        );
+    };
+    const notFound = await refuse(
+      Response.json(
+        { error: "invalid_operation", messages: [{ code: "project.notFound" }] },
+        { status: 409 },
+      ),
+    );
+    expect(notFound?.message).toBe("プロジェクトが見つかりません。");
+    const empty = await refuse(
+      Response.json(
+        {
+          error: "invalid_input",
+          issues: [{ path: ["title"], message: { code: "input.titleRequired" } }],
+        },
+        { status: 400 },
+      ),
+    );
+    expect(empty?.message).toBe("タイトルを入力してください。");
+    // 前の版のデーモンが読めない入力（形の違い）でも、理由を返す（落ちない）
+    const old = await refuse(new Response("Not Found", { status: 404 }));
+    expect(old?.message).toBe("デーモンが 404 を返しました。");
+    // 断られたなら、作られていない（可能性を添えない）
+    for (const e of [notFound, empty, old]) expect(e?.message).not.toContain("作られている可能性");
+  });
+
+  it("作る要求を送った後に結果を受け取れなければ、作られている可能性と確かめてから呼び直すことを伝える。送る前の失敗は伝えない", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const hung: Fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    const failure = (fetcher: Fetch, at = home) =>
+      daemonApi(at, fetcher, 20)
+        .createTask(input)
+        .then(
+          () => undefined,
+          (e: unknown) => e as Error,
+        );
+    const uncertain = "タスクは作られている可能性があります";
+    const timedOut = await failure(hung);
+    expect(timedOut?.message).toContain("デーモンが時間内に応答しませんでした");
+    expect(timedOut?.message).toContain(uncertain);
+    expect(timedOut?.message).toContain("list_tasks");
+    const dropped = await failure(async () => {
+      throw new TypeError("fetch failed", { cause: new Error("socket hang up") });
+    });
+    expect(dropped?.message).toContain("デーモンにつながりません");
+    expect(dropped?.message).toContain(uncertain);
+    expect(dropped?.cause).toBeDefined();
+    const broken = await failure(async () => new Response("<html>", { status: 201 }));
+    expect(broken?.message).toContain("デーモンの応答を読めませんでした");
+    expect(broken?.message).toContain(uncertain);
+    // 5xx は、作られたかどうかが分からない
+    const server = await failure(async () => new Response("oops", { status: 500 }));
+    expect(server?.message).toContain("デーモンが 500 を返しました。");
+    expect(server?.message).toContain(uncertain);
+    // 認証できない・接続を断られた（要求が処理されていない）
+    const unauthorized = await failure(async () => new Response("no", { status: 401 }));
+    expect(unauthorized?.message).toContain("デーモンに認証できません");
+    expect(unauthorized?.message).not.toContain(uncertain);
+    const refused = await failure(async () => {
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+      });
+    });
+    expect(refused?.message).toContain("デーモンにつながりません");
+    expect(refused?.message).not.toContain(uncertain);
+    // 接続先が無い（送っていない）
+    const none = await failure(hung, mkdtempSync(join(tmpdir(), "sacty-mcp-none-")));
+    expect(none?.message).toContain("起動中の sacty が見つかりません");
+    expect(none?.message).not.toContain(uncertain);
   });
 });
