@@ -56,7 +56,7 @@ The answer to the AI comes back as soon as the re-review starts.
 A task you create is the same as one created with "Create task" in the web UI with no template, the target repository left blank, and the approach left at "Automatic", with the same title and description ([Create a task](tasks.en.md#create-a-task)).
 The answer contains the ID of the new task and its web UI URL, and comes back without waiting for the steps to finish.
 When the task cannot be created (the project does not exist, the title is empty, and so on), it returns the reason and creates nothing.
-When the result cannot be received after the request to create was sent, it answers "The task may have been created". Search for the title with `list_tasks` to check, and ask again only if it is not there (asking again without checking can create the same task twice).
+When the result cannot be received after the request to create was sent (a timeout, a dropped connection, an unreadable body, or a 5xx from the daemon), it answers "The task may have been created". Search for the title with `list_tasks` to check, and ask again only if it is not there (asking again without checking can create the same task twice).
 
 When sacty is not running, the tools answer that the running sacty was not found.
 Start it with `sacty up` and ask again.
