@@ -28,7 +28,7 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
 | --- | --- |
 | `list_tasks` | `GET /api/tasks`, `GET /api/projects` |
 | `get_task` | `GET /api/tasks/:id` |
-| `rereview_task` | `POST /api/tasks/:id/rereview` |
+| `rereview_task` | `GET /api/tasks/:id`, `POST /api/tasks/:id/rereview` |
 
 Code: `packages/cli/src/index.ts` (`mcpCommand`), `packages/cli/src/mcp.ts` (`daemonApi`), `apps/daemon/src/task-mcp.ts` (`serveTaskMcp`, `startTaskMcp`, `createTaskMcpServer`, `SactyApi`), `packages/cli/src/context-preview.ts` (`readDaemonFile`, `daemonRequest`), `packages/cli/src/up-env.ts` (`daemonEndpoint`)
 
@@ -87,6 +87,8 @@ Puts a PR review task into re-review. The argument is `task_id`.
 It calls the same API as "Re-review" in the web UI, so the result is the same (it records `ReviewRestarted` with actor `person`, reviews the latest commit of the PR again, and posts it. [Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks)).
 
 - Once started, it returns a message and the [task summary](#task-summary) after starting (it does not wait for the review to finish).
+- It first checks with `GET /api/tasks/:id` that the task exists. If it does not (including tasks of a deleted project), it answers that the task was not found and does not call the re-review API.
+- When the response of the re-review API times out, it answers that the re-review may have started and to check with `get_task` before calling again (the daemon may have recorded it before the response was delayed).
 - It works only for a task that posted its review to the PR and completed (`canRereview` in the summary is `true`).
   For a task that cannot be re-reviewed or does not exist, it returns the text of the reason the daemon refused and records nothing.
 - The tool annotations say it is not read-only (`readOnlyHint: false`) and writes outside sacty (`openWorldHint: true`).
@@ -94,7 +96,7 @@ It calls the same API as "Re-review" in the web UI, so the result is the same (i
 ### Handling failures
 
 A failure inside a tool is returned as a tool execution error (`isError: true` in the MCP result and the text of the reason; no `structuredContent`). The MCP server does not exit.
-The name of the failed tool and the reason (and the cause of a failed connection, if any) are written to standard error on one line.
+The name of the failed tool and the reason are written to standard error on one line. If a failed connection has a cause (the exception's `cause`), it is followed up to 5 levels and appended (`causeChain`).
 
 | Case | Text of the reason |
 | --- | --- |
@@ -108,7 +110,7 @@ The name of the failed tool and the reason (and the cause of a failed connection
 When the arguments do not match the types (a `limit` out of range, a missing `task_id`, and so on), the MCP SDK returns the same shape (`isError: true` and the text of the reason) without calling the tool.
 Calling an unknown tool and the like becomes a JSON-RPC error.
 
-Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`)
+Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_TIMEOUT_MESSAGE`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`)
 
 ## Task summary
 

@@ -54,7 +54,7 @@ The answer to the AI comes back as soon as the re-review starts.
 
 When sacty is not running, the tools answer that the running sacty was not found.
 Start it with `sacty up` and ask again.
-When sacty does not respond within 30 seconds, the tools also say so and return.
+When sacty does not respond within 30 seconds, the tools answer that the daemon did not respond in time (sacty is running; check how it is doing and ask again).
 
 ## Tools
 

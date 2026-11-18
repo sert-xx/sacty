@@ -64,12 +64,14 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
     // 消したプロジェクトのタスクは出さない
     expect(await api.listTasks()).toEqual([{ id: "a", projectId: "p1" }]);
     expect(await api.getTask("a/../b")).toEqual({ task: { id: "a" }, activity: [] });
+    // 再レビューは、先にタスクがあることを確かめてから頼む
     expect(await api.rereview("a b")).toEqual({ id: "a", status: "queued" });
     expect(api.webUrl()).toBe("http://127.0.0.1:4700");
     expect(calls).toEqual([
       { method: "GET", url: "http://127.0.0.1:4710/api/tasks", token: "Bearer tok" },
       { method: "GET", url: "http://127.0.0.1:4710/api/projects", token: "Bearer tok" },
       { method: "GET", url: "http://127.0.0.1:4710/api/tasks/a%2F..%2Fb", token: "Bearer tok" },
+      { method: "GET", url: "http://127.0.0.1:4710/api/tasks/a%20b", token: "Bearer tok" },
       {
         method: "POST",
         url: "http://127.0.0.1:4710/api/tasks/a%20b/rereview",
@@ -102,19 +104,46 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
 
   it("無いタスクの詳細は undefined。断られた再レビューは、理由の文にする", async () => {
     writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
-    const { fetcher } = fakeDaemon((method) =>
-      method === "POST"
-        ? Response.json(
-            { error: "invalid_operation", messages: [{ code: "review.notRereviewable" }] },
-            { status: 409 },
-          )
-        : Response.json({ error: "not_found" }, { status: 404 }),
-    );
+    const { calls, fetcher } = fakeDaemon((method, path) => {
+      if (method === "POST") {
+        return Response.json(
+          { error: "invalid_operation", messages: [{ code: "review.notRereviewable" }] },
+          { status: 409 },
+        );
+      }
+      return path === "/api/tasks/a"
+        ? Response.json({ task: { id: "a" }, activity: [] })
+        : Response.json({ error: "not_found" }, { status: 404 });
+    });
     const api = daemonApi(home, fetcher);
     expect(await api.getTask("none")).toBeUndefined();
     await expect(api.rereview("a")).rejects.toThrow(
       "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
     );
+    // 無いタスク（消したプロジェクトのタスクを含む。詳細の API が 404）は、再レビューの API を呼ばずに断る
+    calls.length = 0;
+    await expect(api.rereview("gone")).rejects.toThrow("タスクが見つかりません。");
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
+  });
+
+  it("再レビューを頼んだ後の時間切れは、始まっている可能性があると伝える。頼む前の時間切れは、ふつうの文", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const hung: Fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    const postHangs: Fetch = (url, init) =>
+      init.method === "POST"
+        ? hung(url, init)
+        : Promise.resolve(Response.json({ task: { id: "a" }, activity: [] }));
+    await expect(daemonApi(home, postHangs, 20).rereview("a")).rejects.toThrow(
+      "再レビューは始まっている可能性があります",
+    );
+    const error = await daemonApi(home, hung, 20)
+      .rereview("a")
+      .catch((e: unknown) => e as Error);
+    expect((error as Error).message).toContain("デーモンが時間内に応答しませんでした");
+    expect((error as Error).message).not.toContain("始まっている可能性");
   });
 
   it("つながらない・認証できない・想定外の応答は、理由の例外にする", async () => {

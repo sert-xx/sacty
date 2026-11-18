@@ -27,8 +27,11 @@ async function refusal(res: Response): Promise<Error> {
   return new Error(`デーモンが ${res.status} を返しました。`);
 }
 
+export const REREVIEW_TIMEOUT_MESSAGE =
+  "デーモンが時間内に応答しませんでした。再レビューは始まっている可能性があります。get_task で state と review.round を確かめてから、必要なら呼び直してください。";
+
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
-export const MCP_REQUEST_TIMEOUT_MS = 30_000;
+const MCP_REQUEST_TIMEOUT_MS = 30_000;
 
 export function daemonApi(
   home: string,
@@ -80,12 +83,23 @@ export function daemonApi(
       return read<{ task: Task; activity: ActivityEvent[] }>(res);
     },
     async rereview(id) {
-      const res = await request(endpoint(), `/api/tasks/${encodeURIComponent(id)}/rereview`, {
-        method: "POST",
-        body: {},
-      });
-      if (!res.ok) throw await refusal(res);
-      return (await read<{ task: Task }>(res)).task;
+      const at = endpoint();
+      const path = `/api/tasks/${encodeURIComponent(id)}`;
+      // 消したプロジェクトのタスクは、無いものとして断る（一覧・詳細と同じ。再レビューの API は、プロジェクトを確かめない）
+      const found = await request(at, path);
+      if (found.status === 404) throw new Error(renderMessage({ code: "task.notFound" }, "ja"));
+      if (!found.ok) throw await refusal(found);
+      try {
+        const res = await request(at, `${path}/rereview`, { method: "POST", body: {} });
+        if (!res.ok) throw await refusal(res);
+        return (await read<{ task: Task }>(res)).task;
+      } catch (error) {
+        // 頼んだ後の時間切れは、始まったかどうかが分からない（デーモンが記録した後に、応答が遅れたのかもしれない）
+        if (error instanceof Error && error.message === DAEMON_TIMEOUT_MESSAGE) {
+          throw new Error(REREVIEW_TIMEOUT_MESSAGE, { cause: error.cause });
+        }
+        throw error;
+      }
     },
     webUrl: () => readDaemonFile(home)?.web,
   };

@@ -10,6 +10,7 @@ import { createApp } from "./server.js";
 import type { TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
 import {
+  causeChain,
   describeTask,
   filterTasks,
   LIST_LIMIT_DEFAULT,
@@ -685,8 +686,27 @@ describe("タスクの PR・ブランチと絞り込み（PBI-392）", () => {
       activity: [],
     });
     expect(running.pausedReason).toBeUndefined();
+    // 止まっていた理由の記録が残っていても、一時停止でなければ出さない
+    expect(summarizeTask({ ...paused, status: "running" }).pausedReason).toBeUndefined();
     expect(running.pausedMessage).toBeUndefined();
     expect(running.reviewBody).toBe("あ".repeat(12_000));
+  });
+
+  it("例外の原因は、内側までたどって出す（5 段まで）", () => {
+    const inner = new Error("connect ECONNREFUSED 127.0.0.1:4710");
+    const fetchFailed = new TypeError("fetch failed", { cause: inner });
+    const outer = new Error("デーモンにつながりません。", { cause: fetchFailed });
+    expect(causeChain(outer)).toEqual([
+      "TypeError: fetch failed",
+      "Error: connect ECONNREFUSED 127.0.0.1:4710",
+    ]);
+    expect(causeChain(new Error("原因なし"))).toEqual([]);
+    expect(causeChain("文字列")).toEqual([]);
+    expect(causeChain(new Error("x", { cause: "文字列の原因" }))).toEqual(["文字列の原因"]);
+    // 自分を原因に持つ例外でも、止まる
+    const loop = new Error("loop");
+    loop.cause = loop;
+    expect(causeChain(loop)).toHaveLength(5);
   });
 
   it("詳細の長い説明は、切り詰める", () => {
