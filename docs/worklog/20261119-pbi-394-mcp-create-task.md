@@ -15,9 +15,9 @@
 
 - `apps/daemon/src/task-mcp.ts`：ツール `list_projects`（読み取りだけ。id・名前・対象）と `create_task`（`project_id`・`title`・`body`）を `TOOLS` に足した。`SactyApi` に `listProjects`・`createTask` を足した。
   サーバーの使い方の説明にも作成の流れを足した。
+  題・説明の長さの検査は、`create_task` の `run` の中で、前後の空白を除いてから `CreateTaskInput` の1か所で行う（引数の形は、`title`・`project_id` が空でないことだけ）。
 - `packages/cli/src/mcp.ts`：`GET /api/projects`・`POST /api/tasks`（`repo: null`）を呼ぶ。結果を受け取れなかったときは、作られた可能性（`CREATE_UNCERTAIN`）を添える。
   デーモンの `invalid_input`（400）の理由も文にする。
-  題・説明の長さの検査は、前後の空白を除いてから `CreateTaskInput` の1か所で行う（引数の形は、`title`・`project_id` が空でないことだけ）。
   「作られている可能性」の案内は、時間切れ・切断・読めない本文・5xx に付け、401・接続拒否・5xx 以外の断り・送る前の失敗は理由だけを返す。
 - `packages/cli/src/index.ts`：`sacty mcp` の使い方の表示に、プロジェクトの一覧とタスクの作成を足した。
 - 仕様書・ユーザードキュメント（日英）・ADR。
@@ -26,10 +26,11 @@
 
 - `apps/daemon/src/task-mcp.test.ts`：本物のサービスと API に対して、作る（画面と同じ要求で作ったタスクと同じ項目・同じ記録、返った ID での `get_task`）、
   プロジェクトの一覧（消したプロジェクトが出ない）、断られる（無い・消したプロジェクト、空の題、長すぎる題・説明で、何も作らない）、結果を受け取れない（標準エラーに題・説明を出さない）。
-- `packages/cli/src/mcp.test.ts`：送る要求（`repo: null`）、断られた理由、時間切れ・切断・読めない本文のときの作られた可能性、送る前の失敗。401・接続拒否（理由だけ）と 5xx（案内を付ける）。失敗の扱いのテストに `list_projects`・`create_task` を足した。上限ちょうどと、前後の空白で生の長さが上限を超える題・説明。
+  上限ちょうど（題 200 字・説明 10,000 字）と、前後の空白で生の長さが上限を超える題・説明で作れる。失敗の扱いのテストに `list_projects`・`create_task` を足した。
+- `packages/cli/src/mcp.test.ts`：送る要求（`repo: null`）、断られた理由、時間切れ・切断・読めない本文のときの作られた可能性、送る前の失敗。401・接続拒否（理由だけ）と 5xx（案内を付ける）。
 - 実行したコマンドと結果（この直しの後のコードで実行）：
   - `npm run lint`：通った。
-  - `npm run format`：通った。
+  - `npx biome format .`（書き換えずに整形を確かめる。`npm run format` は書き換えるコマンドなので、通ったかの確認には使っていない）：通った。
   - `npm run typecheck`：通った。
   - `npx vitest run --no-file-parallelism`：263 ファイル、5188 件が通り、14 件はスキップ。
   - `npm run build`：実行していない（CI にも無いコマンドのため）。
