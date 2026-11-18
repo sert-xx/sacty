@@ -80,7 +80,8 @@ USER root
 # ビルドのキャッシュ（BuildKit の cache マウント。イメージには残らない）。apt-get が取得した .deb と、draw.io・
 # セキュリティの道具の取得物を置き、層のキャッシュが外れたとき（元のイメージを上げた・言語ごとのイメージ）に
 # 取り直さない。ビルドキャッシュの片付け（docker builder prune -f。sacty image build の後と、デーモンの片付け）を
-# 挟むと、層のキャッシュに当たらなくなり、このマウントの記録も残らなかったので、取り直す（PBI-391）。
+# 挟むと、層のキャッシュに当たらなくなり、cache マウントの中身も消えるので、取り直す（PBI-391。マウントが消えることは、
+# 小さな Dockerfile の cache マウントで、片付けの前後を比べて確かめた。このマウントそのものでは比べていない）。
 # 中身は with-build-cache.sh を参照
 COPY --chmod=755 with-build-cache.sh /opt/sacty/lib/with-build-cache.sh
 
@@ -129,7 +130,8 @@ RUN --mount=type=cache,id=sacty-build-cache,target=/var/cache/sacty-build,sharin
 # 使えるように。中身は integrity で確かめる）。コマンドは /opt/sacty/bin に置き、node ユーザーの PATH から使えるようにする。
 # npm のレジストリと認証は、sacty が作った .npmrc をビルドのときだけ読ませる（イメージには残らない。PBI-33）
 # npm のキャッシュはビルドのキャッシュ（cache マウント）に置き、イメージには残さない（HOME の下に root の持ち物を残すと、
-# node ユーザーの npm が書けなくなるため）。CLI の版を上げても、変わらないパッケージは取り直さない。
+# node ユーザーの npm が書けなくなるため）。ビルドキャッシュの片付けを挟まないビルドの間は、CLI の版を上げても、
+# 変わらないパッケージは取り直さない。片付けの後は、上の cache マウントと同じく、中身が消えるので取り直す（PBI-391）。
 # イメージに入れる npm の版（config.yaml の image_build.npm_version。空なら元のイメージの npm。PBI-40）
 ARG NPM_VERSION=
 COPY agent-cli/package.json agent-cli/package-lock.json /opt/sacty/agent-cli/
