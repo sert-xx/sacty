@@ -1,5 +1,5 @@
 import { readSync } from "node:fs";
-import { redact } from "./agents/redact.js";
+import { REDACTED, redact } from "./agents/redact.js";
 
 /**
  * バイトの範囲の読み取り（PBI-395）。成果物の本文・セッションログを、UTF-8 のバイトの位置と量で区切って返す。
@@ -15,6 +15,11 @@ export type ByteSource = {
   total: number;
   /** [from, to) を読む。元がそれより短ければ、読めた分だけ。 */
   read(from: number, to: number): Buffer;
+  /**
+   * 記録が途切れている継ぎ目（バイトの位置）。値の続きが記録に無いので、値の一部が残りうる。
+   * end：その位置の前で、値の先頭の一部が終わりうる（先頭の終わり）。start：その位置の後で、値の後ろの一部が始まりうる（末尾の始まり）。
+   */
+  cuts?: { end: number[]; start: number[] };
 };
 
 export type ByteRange = {
@@ -54,6 +59,10 @@ export function fileSource(fd: number, size: number): ByteSource {
 export function concatSource(a: ByteSource, b: ByteSource): ByteSource {
   return {
     total: a.total + b.total,
+    cuts: {
+      end: [...(a.cuts?.end ?? []), ...(b.cuts?.end ?? []).map((p) => p + a.total)],
+      start: [...(a.cuts?.start ?? []), ...(b.cuts?.start ?? []).map((p) => p + a.total)],
+    },
     read(from, to) {
       const parts: Buffer[] = [];
       if (from < a.total) parts.push(a.read(from, Math.min(to, a.total)));
@@ -86,7 +95,59 @@ export function withoutPartialSecretTail(source: ByteSource, forms: readonly str
   }
   if (drop === 0) return source;
   const total = source.total - drop;
-  return { total, read: (a, b) => source.read(a, Math.min(b, total)) };
+  return {
+    total,
+    ...(source.cuts ? { cuts: source.cuts } : {}),
+    read: (a, b) => source.read(a, Math.min(b, total)),
+  };
+}
+
+/** buf の末尾の、いずれかの値の先頭の一部（値の全体より短い）になっている部分の長さ。 */
+export function partialAtEnd(buf: Buffer, needles: readonly Buffer[]): number {
+  let keep = 0;
+  for (const needle of needles) {
+    for (let k = Math.min(needle.length - 1, buf.length); k > keep; k--) {
+      if (buf.subarray(buf.length - k).equals(needle.subarray(0, k))) {
+        keep = k;
+        break;
+      }
+    }
+  }
+  return keep;
+}
+
+/** buf の先頭の、いずれかの値の後ろの一部（値の全体より短い）になっている部分の長さ。 */
+export function partialAtStart(buf: Buffer, needles: readonly Buffer[]): number {
+  let keep = 0;
+  for (const needle of needles) {
+    for (let k = Math.min(needle.length - 1, buf.length); k > keep; k--) {
+      if (buf.subarray(0, k).equals(needle.subarray(needle.length - k))) {
+        keep = k;
+        break;
+      }
+    }
+  }
+  return keep;
+}
+
+/**
+ * 継ぎ目（値の続きが記録に無い所）をはさむ3つのうち、先頭の分・末尾の分を、値の一部を伏せて返す
+ * （先頭の分は終わりの一部、末尾の分は始まりの一部を [REDACTED] にする。値の全体も伏せる）。
+ */
+export function redactSeamEnd(buf: Buffer, forms: readonly string[]): Buffer {
+  const needles = forms.filter((f) => f.length > 0).map((f) => Buffer.from(f, "utf8"));
+  const pad = needles.reduce((m, n) => Math.max(m, n.length), 0);
+  const k = partialAtEnd(buf.subarray(Math.max(0, buf.length - pad)), needles);
+  const body = redact(buf.subarray(0, buf.length - k).toString("utf8"), forms);
+  return Buffer.from(k > 0 ? `${body}${REDACTED}` : body);
+}
+
+export function redactSeamStart(buf: Buffer, forms: readonly string[]): Buffer {
+  const needles = forms.filter((f) => f.length > 0).map((f) => Buffer.from(f, "utf8"));
+  const pad = needles.reduce((m, n) => Math.max(m, n.length), 0);
+  const k = partialAtStart(buf.subarray(0, pad), needles);
+  const body = redact(buf.subarray(k).toString("utf8"), forms);
+  return Buffer.from(k > 0 ? `${REDACTED}${body}` : body);
 }
 
 const isContinuation = (byte: number | undefined) => ((byte ?? 0) & 0xc0) === 0x80;
@@ -133,6 +194,21 @@ export function readByteRange(
       spans.push([lo + i, lo + i + needle.length]);
     }
   }
+  // 継ぎ目の前後に残る、値の一部（値の続きが記録に無いので、全体の一致では見つからない）も、値と同じように外側へ広げて伏せる
+  const partial: [number, number][] = [];
+  for (const p of source.cuts?.end ?? []) {
+    if (p <= lo || p > lo + win.length) continue;
+    const before = win.subarray(Math.max(0, p - lo - (pad - 1)), p - lo);
+    const keep = partialAtEnd(before, needles);
+    if (keep > 0) partial.push([p - keep, p]);
+  }
+  for (const p of source.cuts?.start ?? []) {
+    if (p < lo || p >= lo + win.length) continue;
+    const after = win.subarray(p - lo, Math.min(win.length, p - lo + (pad - 1)));
+    const keep = partialAtStart(after, needles);
+    if (keep > 0) partial.push([p, p + keep]);
+  }
+  spans.push(...partial);
   const widen = () => {
     for (let changed = true; changed; ) {
       changed = false;
@@ -153,7 +229,15 @@ export function readByteRange(
   end = start + completeLength(win.subarray(start - lo, end - lo));
   if (end <= start) end = Math.min(total, start + charLength(at(start) ?? 0));
   widen();
-  const text = redact(win.subarray(start - lo, end - lo).toString("utf8"), forms);
+  const pieces: string[] = [];
+  let cursor = start;
+  for (const [a, b] of partial.sort((x, y) => x[0] - y[0])) {
+    if (a < cursor || b > end) continue;
+    pieces.push(redact(win.subarray(cursor - lo, a - lo).toString("utf8"), forms), REDACTED);
+    cursor = b;
+  }
+  pieces.push(redact(win.subarray(cursor - lo, end - lo).toString("utf8"), forms));
+  const text = pieces.join("");
   return {
     text,
     offset: start,

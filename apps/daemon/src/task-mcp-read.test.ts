@@ -773,6 +773,57 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
     w.activity.close();
   });
 
+  it("stderr の先頭の終わりと末尾の始まりに、途中で足した値がまたがるときは、実行中も閉じた後も値の一部を返さない", async () => {
+    const w = world({ events: { head: 300, tail: 400 }, stderr: { head: 20, tail: 30 } });
+    const id = w.task.id;
+    const { json } = await connect(mcpOver(w).api);
+    const read = (runId: string, extra: Record<string, unknown>) =>
+      json<Log>("get_run_log", { task_id: id, run_id: runId, file: "stderr", ...extra });
+    const seam = "a".repeat(12);
+    // 先頭は 20 バイト（…gh）で終わり、末尾は 30 バイト（RETVAL…）から始まる。値 ghp_SECRETVAL は間の省いた所にまたがる
+    // 実行中は、StreamRedactor が最後の 12 文字を持つので、その分だけ多く出す（閉じるときに出し切る）
+    const run = (runId: string, filler: number) => {
+      const h = w.store.open(info(id, runId), () => []);
+      h.stderr(`start\n${seam}ghp_`);
+      h.addSecrets(["ghp_SECRETVAL"]);
+      h.stderr(`SECRETVAL${"d".repeat(filler)}`);
+      return h;
+    };
+    const check = async (runId: string) => {
+      for (const extra of [{ from_end: true }, { offset: 0 }, { offset: 0, max_bytes: 40 }]) {
+        const r = await read(runId, extra);
+        expect(r.text).not.toContain("RETVAL");
+        expect(r.text).not.toContain("gh");
+        expect(r.text).not.toContain("ghp_");
+        expect(r.text).not.toContain("SEC");
+      }
+      const all = await read(runId, { offset: 0 });
+      expect(all.omittedMiddle).toBe(true);
+      expect(all.text).toContain("d".repeat(20)); // 末尾の頭の行（stderr は改行が無い）も返る
+      expect(all.text).toContain(`${seam}[REDACTED]\n[sacty] truncated`);
+    };
+    run("live", 36);
+    expect((await read("live", { offset: 0 })).running).toBe(true);
+    await check("live");
+    run("closed", 24).close(done);
+    // 閉じた後は、デーモンが値を持たない（伏せ直しが済んだ）が、ファイルの継ぎ目の前後も伏せてある
+    expect(readFileSync(w.store.path(id, "closed", "stderr") ?? "", "utf8")).not.toContain(
+      "RETVAL",
+    );
+    expect((await read("closed", { offset: 0 })).running).toBe(false);
+    await check("closed");
+
+    // 閉じた後に足した値（プロジェクトの設定など）が、継ぎ目にまたがって平文で残る実行も、読むときに外す
+    const plain = w.store.open(info(id, "plain"), () => []);
+    plain.stderr(`start\n${seam}ghp_`);
+    plain.stderr(`SECRETVAL${"d".repeat(24)}`);
+    plain.close(done);
+    expect(readFileSync(w.store.path(id, "plain", "stderr") ?? "", "utf8")).toContain("RETVAL");
+    const text = (await read("plain", { offset: 0 })).text;
+    expect(text).toContain("RETVAL"); // 値を知らなければ、そのまま返る（回帰の前提）
+    w.activity.close();
+  });
+
   it("ログのファイルを読めないときは、API は read_failed の 500、ツールは定型の理由を返し、パスと中身を出さない", async () => {
     const w = world();
     const id = w.task.id;

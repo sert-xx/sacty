@@ -29,8 +29,8 @@
 - 新しいテスト：`apps/daemon/src/byte-range.test.ts`、`apps/daemon/src/task-reads.test.ts`、`apps/daemon/src/task-mcp-read.test.ts`（本物のサービスと API・ストアに対して：一覧・上限・大きなログの読み取り量と応答の大きさ・実行中の末尾と、伏せる値の先頭の一部で終わる末尾・秘密情報・伏せ直せていない実行と終わりが記録されていない実行・`meta.json` を書けない場合・ログを読めない場合・伏せる値が境目をまたぐ場合・無いものと場所の外・シンボリックリンク）、`packages/cli/src/mcp.test.ts`（新しい API の呼び出し・前の版のデーモン・結果と標準エラーに秘密情報と中身を出さない・つながらない・本物の `daemonApi` と `createApp` をつないだ4つのツール）。
 - 既存のテストで変えたのは、ツールの一覧の名前・注釈の期待に新しい4つを足したことと、`SactyApi` のスタブに新しい4つのメソッドを足したことだけ（5つのツールの型・注釈・`reviewBody` の期待は起点のまま）。
 - 実行したコマンドと結果：
-  - `npm run lint`・`npm run format`・`npm run typecheck`：どれも通った（今回の直しの後に実行）。
-  - `npx vitest run --no-file-parallelism`：266 ファイル・5238 件（14 件はスキップ）。作業履歴の PR の書式を直した後の流し直しの後に、`tests/docs/docs.test.ts`（87 件）だけを流し直し、通った。
+  - `npm run format`・`npm run lint`・`npm run typecheck`：どれも通った（継ぎ目の直しの後に実行）。
+  - `npx vitest run --no-file-parallelism`：266 ファイル・5239 件のうち 5225 件が通り、14 件はスキップ（継ぎ目の直しの後に実行。失敗なし）。
   - `npm run build`：実行していない（CI に無く、Next のビルドを含み重いため）。
 - Claude Code・Codex の実物から4つのツールを呼ぶ確認は、人が行う（していない）。
 
@@ -42,6 +42,10 @@
 | 前の版の `meta.json`（終わりが無い実行）を伏せ直し済みとして返す（design-3-3） | `finishedAt` が無く値を持たない実行は 409 にした。見分けられない場合を ADR に書いた |
 | `close` で `meta.json` を書けないときも値を捨てる（design-3-4） | 書けたときだけ捨てる |
 | ログの読み取り失敗と JSON でない 5xx の扱い（design-3-5） | `read_failed` の 500 と、状態コードの理由にした |
+| stderr の先頭の終わり・省いた印の前後・末尾の始まりで、途中で足した値の一部が返る（implement-1-1・implement-1-2・人の指摘 1・2） | 値の続きが記録に無い継ぎ目の規則を1つにした（前後に残る値の一部を伏せ、境目を外へ広げる）。終わった実行の継ぎ目は `meta.json` の `seams` に残し、閉じるときの伏せ直しも継ぎ目で分けて伏せる。2つの継ぎ目に値がかかる回帰のテストを、実行中・閉じた後の両方で足した（処理を外すと落ちることを確かめた） |
+| 実行中の stderr の末尾の頭の行が返らない（implement-1-3・人の指摘 3） | 行の頭を探すのは events だけにした |
+| `CONTRIBUTING.md`・`mcp-server.md` の失敗の表（人の指摘 4） | `task-mcp-read.test.ts` の行を足し、標準エラーの1行の内容と、`error` が既知の形でない失敗の理由を表に合わせた |
+| `read_failed` のデーモンのログ・接続を断られた場合のテスト・`READ_TOOLS` などの整理（implement-1-4・implement-1-5） | 後続に回す（人の指摘） |
 | テスト・文書（人の指摘 5・6） | TV-20 のテストを平文が残る形にし、一時ディレクトリ名を戻し、本物の `daemonApi` と `createApp` のテストを足した。`event-log.md`・`CONTRIBUTING.md` を直した |
 
 ## 残したこと

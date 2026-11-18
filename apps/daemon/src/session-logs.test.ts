@@ -337,8 +337,12 @@ describe("セッションログの保存（PBI-62）", () => {
     expect(read?.stderr.startsWith(`${"e".repeat(30)}\n[sacty] truncated`)).toBe(true);
     expect(read?.stderr.endsWith("e最後のエラー\n")).toBe(true);
     expect(read?.meta.truncated).toEqual({
-      events: { droppedBytes: 90, droppedLines: 6 },
-      stderr: { droppedBytes: 100 + 19 - 30 - 20, droppedLines: 0 },
+      events: { droppedBytes: 90, droppedLines: 6, seams: { end: 45, start: expect.any(Number) } },
+      stderr: {
+        droppedBytes: 100 + 19 - 30 - 20,
+        droppedLines: 0,
+        seams: { end: 30, start: expect.any(Number) },
+      },
     });
   });
 

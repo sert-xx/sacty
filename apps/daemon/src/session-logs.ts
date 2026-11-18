@@ -30,6 +30,8 @@ import {
   fileSource,
   memorySource,
   readByteRange,
+  redactSeamEnd,
+  redactSeamStart,
   withoutPartialSecretTail,
 } from "./byte-range.js";
 
@@ -81,7 +83,17 @@ export type SessionLogMeta = {
   finishedAt?: string;
   outcome?: { kind: "completed" } | { kind: "failed"; reason: string; message: DaemonText };
   /** 上限で間を省いたファイルと、省いた大きさ（バイト）・行数（改行の数）。 */
-  truncated?: Partial<Record<SessionLogFile, { droppedBytes: number; droppedLines: number }>>;
+  truncated?: Partial<
+    Record<
+      SessionLogFile,
+      {
+        droppedBytes: number;
+        droppedLines: number;
+        /** 閉じた後のファイルの継ぎ目（バイト）。end：先頭の終わり、start：末尾の始まり。 */
+        seams?: { end: number; start: number };
+      }
+    >
+  >;
   limits: Record<SessionLogFile, HeadTail>;
   /**
    * 実行の途中で足した秘密情報を、閉じるときの伏せ直しでまだ伏せ終えていない（PBI-395）。真のあいだ、ファイルに値が
@@ -211,6 +223,13 @@ export class HeadTailFile {
   private lastEvicted: number | undefined;
   /** 閉じた後の、省いた大きさ・行数。 */
   dropped = { bytes: 0, lines: 0 };
+  /** ファイルに書いた大きさ（バイト）。 */
+  private fileSize = 0;
+  /**
+   * 閉じた後の、ファイルの継ぎ目（値の続きが記録に無い所）。end：先頭の終わり（省いた印の前）、start：末尾の始まり（省いた印の後）。
+   * 間を省いたときだけある。
+   */
+  seams: { end: number; start: number } | undefined;
 
   /** 末尾の前を省いている（閉じたときに、間に目印が入る）か。 */
   get truncating(): boolean {
@@ -295,7 +314,9 @@ export class HeadTailFile {
           lines: this.evictedLines + newlines(tail.subarray(0, start)),
         };
         const text = marker(this.dropped.bytes, this.dropped.lines);
+        const end = this.fileSize;
         this.raw(Buffer.from(`${this.endsWithNewline ? "" : "\n"}${text}`, "utf8"));
+        this.seams = { end, start: this.fileSize };
         this.raw(tail.subarray(start));
       }
     }
@@ -353,24 +374,28 @@ export class HeadTailFile {
   memoryPart(
     marker: (droppedBytes: number, droppedLines: number) => string,
     rest: Buffer,
-  ): { mem: Buffer; omittedMiddle: boolean } {
+  ): { mem: Buffer; omittedMiddle: boolean; tailAt?: number } {
     if (!this.headFull) return { mem: Buffer.concat([this.pending, rest]), omittedMiddle: false };
     let tail = Buffer.concat([...this.tail, rest]);
     if (this.evictedBytes === 0) return { mem: tail, omittedMiddle: false };
+    // 末尾の頭を探すのは close と同じ。lines（events）は行の頭から、そうでなければ文字の頭から始める
     let start = 0;
-    if (this.lastEvicted !== NEWLINE) {
-      const i = tail.indexOf(NEWLINE);
-      start = i < 0 ? tail.length : i + 1;
+    if (this.lines) {
+      if (this.lastEvicted !== NEWLINE) {
+        const i = tail.indexOf(NEWLINE);
+        start = i < 0 ? tail.length : i + 1;
+      }
+    } else {
+      while (start < tail.length && ((tail[start] ?? 0) & 0xc0) === 0x80) start++;
     }
     const text = marker(
       this.evictedBytes + start,
       this.evictedLines + newlines(tail.subarray(0, start)),
     );
     tail = tail.subarray(start);
-    return {
-      mem: Buffer.concat([Buffer.from(`${this.endsWithNewline ? "" : "\n"}${text}`, "utf8"), tail]),
-      omittedMiddle: true,
-    };
+    const lead = Buffer.from(`${this.endsWithNewline ? "" : "\n"}${text}`, "utf8");
+    // tailAt：mem の中で、末尾が始まる位置（省いた印の終わり）。mem の先頭は、先頭のファイルの終わりにつながる
+    return { mem: Buffer.concat([lead, tail]), omittedMiddle: true, tailAt: lead.length };
   }
 
   private toTail(buf: Buffer): void {
@@ -402,6 +427,7 @@ export class HeadTailFile {
     if (this.fd === undefined || buf.length === 0) return;
     try {
       writeSync(this.fd, buf);
+      this.fileSize += buf.length;
       this.endsWithNewline = buf[buf.length - 1] === NEWLINE;
     } catch (error) {
       this.onError(error);
@@ -490,11 +516,16 @@ export class SessionLog implements SessionLogSink {
    * 実行中のログの、範囲で読むための部品（PBI-395）。ファイルにある先頭と、メモリーにある分（省いた印・末尾を含む）。
    * ファイルの大きさはここでは見ない（呼ぶ側が、開いたファイルから読む）。
    */
-  rangeParts(file: SessionLogFile): { path: string; mem: Buffer; omittedMiddle: boolean } {
+  rangeParts(file: SessionLogFile): {
+    path: string;
+    mem: Buffer;
+    omittedMiddle: boolean;
+    tailAt?: number;
+  } {
     const markers = this.markers();
     // StreamRedactor が伏せる前に持っている分（peek）は含めない（伏せる値の先頭の一部でありうるため）
-    const { mem, omittedMiddle } = this.files[file].memoryPart(markers[file], Buffer.alloc(0));
-    return { path: this.files[file].path, mem, omittedMiddle };
+    const part = this.files[file].memoryPart(markers[file], Buffer.alloc(0));
+    return { path: this.files[file].path, ...part };
   }
 
   async archiveAgentFiles(
@@ -585,6 +616,18 @@ export class SessionLog implements SessionLogSink {
       for (const file of Object.values(this.files)) {
         try {
           if (!existsSync(file.path)) continue;
+          const seams = file.seams;
+          if (seams) {
+            // 継ぎ目（先頭の終わり・末尾の始まり）は、伏せ直しで位置が動くので、3つに分けて伏せ、新しい位置を残す
+            const buf = readFileSync(file.path);
+            const head = redactSeamEnd(buf.subarray(0, seams.end), forms);
+            const mark = buf.subarray(seams.end, seams.start);
+            const tail = redactSeamStart(buf.subarray(seams.start), forms);
+            const out = Buffer.concat([head, mark, tail]);
+            if (!out.equals(buf)) writeFileSync(file.path, out, { mode: 0o600 });
+            file.seams = { end: head.length, start: head.length + mark.length };
+            continue;
+          }
           const text = readFileSync(file.path, "utf8");
           const redacted = redact(text, forms);
           if (redacted !== text) writeFileSync(file.path, redacted, { mode: 0o600 });
@@ -599,7 +642,10 @@ export class SessionLog implements SessionLogSink {
     const truncated: NonNullable<SessionLogMeta["truncated"]> = {};
     for (const file of ["events", "stderr"] as const) {
       const { bytes, lines } = this.files[file].dropped;
-      if (bytes > 0) truncated[file] = { droppedBytes: bytes, droppedLines: lines };
+      if (bytes > 0) {
+        const seams = this.files[file].seams;
+        truncated[file] = { droppedBytes: bytes, droppedLines: lines, ...(seams ? { seams } : {}) };
+      }
     }
     this.meta.finishedAt = new Date().toISOString();
     this.meta.outcome =
@@ -928,6 +974,8 @@ export class SessionLogStore {
       }
       const head = fd === undefined ? memorySource(Buffer.alloc(0)) : fileSource(fd, size);
       if (!live) {
+        const seams = meta.truncated?.[request.file]?.seams;
+        if (seams && seams.start <= size) head.cuts = { end: [seams.end], start: [seams.start] };
         return {
           kind: "ok",
           running: false,
@@ -938,7 +986,10 @@ export class SessionLogStore {
       const parts = live.rangeParts(request.file);
       // 読める終わりが伏せる値の先頭の一部で終わるときは、その一部を外す（途中で足された値は、知る前に出た先頭が
       // StreamRedactor の持ち越しの外に出ているため）
-      const readable = withoutPartialSecretTail(concatSource(head, memorySource(parts.mem)), forms);
+      // 先頭のファイルの終わりと末尾の始まりも、値の続きが記録に無い継ぎ目なので、読む側に伝える
+      const mem = memorySource(parts.mem);
+      if (parts.tailAt !== undefined) mem.cuts = { end: [0], start: [parts.tailAt] };
+      const readable = withoutPartialSecretTail(concatSource(head, mem), forms);
       return {
         kind: "ok",
         running: true,
