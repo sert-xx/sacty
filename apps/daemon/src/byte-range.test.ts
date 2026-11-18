@@ -43,6 +43,31 @@ describe("バイトの範囲の読み取り（PBI-395）", () => {
     expect(over.text).toHaveLength(RANGE_MAX_BYTES);
   });
 
+  it("max が 1〜3 バイトでも、文字の途中の位置・末尾の文字より小さい量で、壊れた文字を返さず、読みが進み、末尾読みは空にならない", () => {
+    const text = "日😀😀";
+    const bytes = Buffer.byteLength(text);
+    for (const max of [1, 2, 3]) {
+      for (let offset = 0; offset < bytes; offset++) {
+        const r = readByteRange(memorySource(Buffer.from(text, "utf8")), { offset, max });
+        expect(r.text).not.toContain("�");
+        // 最後の文字の途中から読むと、残りは文字にならないので、終わりまで進む
+        if (r.offset === bytes) continue;
+        expect(r.text.length).toBeGreaterThan(0);
+        expect(r.next).toBeGreaterThan(r.offset);
+      }
+      const tail = readByteRange(memorySource(Buffer.from(text, "utf8")), { fromEnd: true, max });
+      expect(tail.text).toBe("😀");
+      expect(tail.next).toBe(bytes);
+    }
+    // 伏せる値を持つときも、読み足した窓で値を伏せる
+    const r = readByteRange(
+      memorySource(Buffer.from("日😀ghp_SECRETVAL", "utf8")),
+      { offset: 1, max: 1 },
+      ["ghp_SECRETVAL"],
+    );
+    expect(r.text).not.toContain("�");
+  });
+
   it("全体以上の位置は、0バイトと全体の大きさを返す", () => {
     for (const offset of [5, 15]) {
       expect(readByteRange(src("abcde"), { offset, max: 10 })).toEqual({
@@ -182,6 +207,26 @@ describe("バイトの範囲の読み取り（PBI-395）", () => {
       ]);
       expect(part.total).toBe(2);
     });
+
+    it("末尾の始まりに値の後ろの一部があり、終わりが同じ値の先頭の1文字で終わるときも、値の一部を返さない", () => {
+      const secret = "aSECRETTOKEN0123456789a";
+      const mark = Buffer.from("\n[cut]\n", "utf8");
+      const tail = Buffer.from("ETTOKEN0123456789a", "utf8");
+      const mem = {
+        ...memorySource(Buffer.concat([mark, tail])),
+        cuts: { end: [], start: [mark.length] },
+      };
+      const source = concatSource(
+        { ...memorySource(Buffer.from("head ", "utf8")), cuts: { end: [], start: [] } },
+        mem,
+      );
+      const readable = withoutPartialSecretTail(source, [secret]);
+      const r = readByteRange(readable, { fromEnd: true, max: 100 }, [secret]);
+      expect(r.text).not.toMatch(/ETTOKEN|0123/);
+      expect(readByteRange(readable, { offset: 0, max: 100 }, [secret]).text).not.toMatch(
+        /ETTOKEN|0123/,
+      );
+    });
   });
 
   it("乱数の入力（複数の値・重なる値・1文字が一致する値・複数バイトの文字・継ぎ目の位置と範囲）で、結果に値のどの一部も出ない", () => {
@@ -234,7 +279,11 @@ describe("バイトの範囲の読み取り（PBI-395）", () => {
       );
       // 実行中：読める終わりが、値の途中で終わる
       const live = Buffer.from(chars.slice(0, p).join(""), "utf8");
-      for (const source of [cut, withoutPartialSecretTail(memorySource(live), needles)]) {
+      for (const source of [
+        cut,
+        withoutPartialSecretTail(memorySource(live), needles),
+        withoutPartialSecretTail(cut, needles),
+      ]) {
         for (let i = 0; i < 6; i++) {
           const total = source.total;
           const request = rand(2)

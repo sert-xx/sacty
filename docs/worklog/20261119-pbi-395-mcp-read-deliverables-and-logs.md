@@ -29,8 +29,8 @@
 - 新しいテスト：`apps/daemon/src/byte-range.test.ts`、`apps/daemon/src/task-reads.test.ts`、`apps/daemon/src/task-mcp-read.test.ts`（本物のサービスと API・ストアに対して：一覧・上限・大きなログの読み取り量と応答の大きさ・実行中の末尾と、伏せる値の先頭の一部で終わる末尾・秘密情報・伏せ直せていない実行と終わりが記録されていない実行・`meta.json` を書けない場合・ログを読めない場合・伏せる値が境目をまたぐ場合・無いものと場所の外・シンボリックリンク）、`packages/cli/src/mcp.test.ts`（新しい API の呼び出し・前の版のデーモン・結果と標準エラーに秘密情報と中身を出さない・つながらない・本物の `daemonApi` と `createApp` をつないだ4つのツール）。
 - 既存のテストで変えたのは、ツールの一覧の名前・注釈の期待に新しい4つを足したことと、`SactyApi` のスタブに新しい4つのメソッドを足したことだけ（5つのツールの型・注釈・`reviewBody` の期待は起点のまま）。
 - 実行したコマンドと結果：
-  - `npm run format`・`npm run lint`・`npm run typecheck`：どれも通った（伏せる範囲の直しの後に実行）。
-  - `npx vitest run --no-file-parallelism`：266 ファイル・5246 件のうち 5232 件が通り、14 件はスキップ（伏せる範囲の直しの後に実行。失敗なし）。
+  - `npm run format`・`npm run lint`・`npm run typecheck`：どれも通った（最後の直しの後に実行）。
+  - `npx vitest run --no-file-parallelism`：266 ファイル・5248 件のうち 5234 件が通り、14 件はスキップ（最後の直しの後に実行。失敗なし）。
   - `npm run build`：実行していない（CI に無く、Next のビルドを含み重いため）。
 - Claude Code・Codex の実物から4つのツールを呼ぶ確認は、人が行う（していない）。
 
@@ -48,6 +48,9 @@
 | 継ぎ目の目印が無い `meta.json` の扱い（implement-2-3）・閉じるときのログの書き換え（implement-2-4・人の指摘 4） | 前者は後続に回す（人の指摘）。後者は、一時ファイルに書いて置き換える形にした |
 | 読むときだけの値のテスト・ADR の置き換え（implement-2-5・implement-2-6・人の指摘 2・5） | 読むときだけの値で継ぎ目を伏せるテストと、継ぎ目（`cuts`）を持つ元の単体テストを足した。前の ADR を、該当の部分だけ superseded にして相互にリンクした |
 | `CONTRIBUTING.md`・`mcp-server.md` の失敗の表（人の指摘 4） | `task-mcp-read.test.ts` の行を足し、標準エラーの1行の内容と、`error` が既知の形でない失敗の理由を表に合わせた |
+| 末尾の始まりにある値の後半が、実行中の読める終わりの決め方で返る（implement-3-1・implement-3-2・人の指摘 1・2） | `withoutPartialSecretTail` が継ぎ目（`cuts`。始まり・終わり）を区間の決め方に渡すようにした。伏せる範囲を決める関数の呼び出しは3か所（`redactBytes`・`withoutPartialSecretTail`・`readByteRange`）で、いずれも継ぎ目か端の情報を渡している。乱数のテストに継ぎ目付きの実行中の元を足し、レビューの例の単体テストを足した（渡さない形に戻すと落ちることを確かめた） |
+| `max_bytes` が 1〜3 のときに壊れた文字を返す・末尾読みが空になる（implement-3-3・人の指摘 3） | 文字の頭へ進めた結果が窓の外に出たときは読み足して伏せる値を探し直し、末尾読みは末尾の1文字を必ず返すようにした。テストを足した |
+| `mcp.md` の日英の食い違い・返す量の式（人の指摘 4） | 日本語版に「その実行の秘密情報を持っていなければ」を足し、仕様書（日英）の返す量を「＋4」と1文字の扱いに合わせた |
 | `read_failed` のデーモンのログ・接続を断られた場合のテスト・`READ_TOOLS` などの整理（implement-1-4・implement-1-5） | 後続に回す（人の指摘） |
 | テスト・文書（人の指摘 5・6） | TV-20 のテストを平文が残る形にし、一時ディレクトリ名を戻し、本物の `daemonApi` と `createApp` のテストを足した。`event-log.md`・`CONTRIBUTING.md` を直した |
 

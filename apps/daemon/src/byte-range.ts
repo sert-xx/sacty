@@ -216,7 +216,11 @@ export function withoutPartialSecretTail(source: ByteSource, forms: readonly str
     const tail = source.read(from, source.total);
     const fulls = fullSpans(tail, needles);
     if (partialBefore(tail, tail.length, needles, fulls) === 0) return source;
-    const spans = secretSpans(tail, needles, { end: [tail.length] });
+    // 末尾の始まり・先頭の終わりの継ぎ目も渡す（継ぎ目にある値の後ろの一部が、終わりの一部とつながるため）
+    const spans = secretSpans(tail, needles, {
+      end: [...(source.cuts?.end ?? []).map((p) => p - from), tail.length],
+      start: (source.cuts?.start ?? []).map((p) => p - from),
+    });
     const last = spans[spans.length - 1];
     if (!last || last[1] !== tail.length) return source;
     if (last[0] >= pad || from === 0) {
@@ -271,18 +275,33 @@ export function readByteRange(
   const total = source.total;
   const needles = toNeedles(forms);
   const pad = maxLength(needles);
-  let start = request.fromEnd ? Math.max(0, total - request.max) : (request.offset ?? 0);
+  let max = request.max;
+  if (request.fromEnd && total > 0) {
+    // 末尾の文字より max が小さいときは、その1文字は返す（0バイトにしない）
+    const last = source.read(Math.max(0, total - 4), total);
+    for (let j = last.length - 1; j >= 0; j--) {
+      if (isContinuation(last[j])) continue;
+      max = Math.max(max, last.length - j);
+      break;
+    }
+  }
+  let start = request.fromEnd ? Math.max(0, total - max) : (request.offset ?? 0);
   if (start >= total)
     return { text: "", offset: total, next: total, totalBytes: total, clipped: false };
-  let end = Math.min(total, start + request.max);
+  let end = Math.min(total, start + max);
   const lo = Math.max(0, start - pad);
-  const win = source.read(lo, Math.min(total, end + pad + 4));
-  const at = (position: number) => win[position - lo];
+  let win: Buffer = Buffer.alloc(0);
+  let spans: [number, number][] = [];
   // 値の全体の出現と、継ぎ目の前後に残る値の一部を、区間として1か所で決める（外側へ広げて伏せる）
-  const spans = secretSpans(win, needles, {
-    end: (source.cuts?.end ?? []).map((p) => p - lo),
-    start: (source.cuts?.start ?? []).map((p) => p - lo),
-  }).map(([a, b]): [number, number] => [lo + a, lo + b]);
+  const load = (to: number) => {
+    win = source.read(lo, Math.min(total, to));
+    spans = secretSpans(win, needles, {
+      end: (source.cuts?.end ?? []).map((p) => p - lo),
+      start: (source.cuts?.start ?? []).map((p) => p - lo),
+    }).map(([a, b]): [number, number] => [lo + a, lo + b]);
+  };
+  const at = (position: number) => win[position - lo];
+  load(end + pad + 4);
   const widen = () => {
     for (let changed = true; changed; ) {
       changed = false;
@@ -303,6 +322,11 @@ export function readByteRange(
   end = start + completeLength(win.subarray(start - lo, end - lo));
   if (end <= start) end = Math.min(total, start + charLength(at(start) ?? 0));
   widen();
+  // 文字の頭へ進めた結果、窓の外に出た分（max が小さいとき）は、読み足して伏せる値を探し直す
+  if (lo + win.length < Math.min(total, end + pad)) {
+    load(end + pad + 4);
+    widen();
+  }
   const text = replaceSpans(
     win,
     start - lo,
