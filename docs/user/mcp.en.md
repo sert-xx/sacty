@@ -8,8 +8,8 @@ You can operate the running sacty from Claude Code or Codex on the same computer
 For example, after fixing a PR, you can ask the AI to "re-review this PR with sacty" (the same as opening the web UI and pressing "Review again and post to the PR").
 
 sacty has an MCP server for this (`sacty mcp`; it supports the 2026-07-28 revision of the MCP specification and also works with clients of earlier revisions).
-It can look up tasks (list, search, details) and put a PR review task into re-review.
-It cannot create, approve, or cancel tasks (do those in the web UI).
+It can look up tasks (list, search, details), put a PR review task into re-review, and create a task in a project you specify.
+It cannot approve or cancel tasks (do those in the web UI).
 
 ## Connecting
 
@@ -47,10 +47,16 @@ The AI picks the tools below and calls them.
 - "Re-review PR #123 with sacty"
 - "How is the sacty task reviewing this branch's PR doing?"
 - "Tell me which sacty tasks are stopped"
+- "Create a task in the (project name) project of sacty titled 'Fix the login screen wording'"
 
 When you ask for a re-review, sacty reviews the latest commit of the PR again and posts the result to the PR ([Re-review](intake.en.md#re-review)).
 The review takes time to finish and costs money.
 The answer to the AI comes back as soon as the re-review starts.
+
+A task you create is the same as one created with "Create task" in the web UI with no template, the target repository left blank, and the approach left at "Automatic", with the same title and description ([Create a task](tasks.en.md#create-a-task)).
+The answer contains the ID of the new task and its web UI URL, and comes back without waiting for the steps to finish.
+When the task cannot be created (the project does not exist, the title is empty, and so on), it returns the reason and creates nothing.
+When the result cannot be received after the request to create was sent, it answers "The task may have been created". Search for the title with `list_tasks` to check, and ask again only if it is not there (asking again without checking can create the same task twice).
 
 When sacty is not running, the tools answer that the running sacty was not found.
 Start it with `sacty up` and ask again.
@@ -63,6 +69,8 @@ When sacty does not respond within 30 seconds, the tools answer that the daemon 
 | `list_tasks` | Lists tasks, newest first. Can filter by PR, branch name, repository, title, and so on |
 | `get_task` | Returns the details of a task (description, review body, why it is stopped, recent activity) |
 | `rereview_task` | Puts a PR review task into re-review |
+| `list_projects` | Lists the projects that have not been deleted, with their IDs, names, and target repositories |
+| `create_task` | Creates a task in a project you specify, from a title and a description (`project_id`, `title`, `body`; the description can be omitted) |
 
 The filters of `list_tasks` are as follows (all can be omitted; with several, only tasks matching all of them are returned).
 
@@ -91,8 +99,8 @@ If you ask for a task under review or a task that is not a PR review, it returns
 ## Things to keep in mind
 
 - Only the person running `sacty up` can use the MCP server (it uses the address sacty wrote to a file only that person can read).
-- The registered AI can start a re-review on your behalf.
-  In the AI CLI's permission prompt, you can choose to confirm `rereview_task` every time or to allow it.
+- The registered AI can start a re-review or create a task on your behalf. Creating a task starts its steps, which takes time and costs money.
+  In the AI CLI's permission prompt, you can choose to confirm `rereview_task` and `create_task` every time or to allow them.
 - Task descriptions and review bodies are passed to the AI.
   They can contain text from PRs and issues written by other people (do not let the AI treat it as instructions).
 
@@ -100,3 +108,4 @@ If you ask for a task under review or a task that is not a PR review, it returns
 
 - [CLI](cli.en.md#sacty-mcp): the `sacty mcp` command
 - [Intake of issues, PRs, and tickets](intake.en.md#re-review): what a re-review does
+- [Tasks](tasks.en.md#create-a-task): how to create a task in the web UI

@@ -5,7 +5,7 @@
  */
 import type { ActivityEvent, Task } from "@sacty/core";
 import { renderMessage } from "@sacty/core";
-import type { SactyApi } from "@sacty/daemon/task-mcp";
+import type { ProjectChoice, SactyApi } from "@sacty/daemon/task-mcp";
 import {
   DAEMON_TIMEOUT_MESSAGE,
   type DaemonEndpoint,
@@ -21,10 +21,18 @@ class DaemonRefusal extends Error {}
 /** デーモンが断った理由（{ error: "invalid_operation", messages }）を、文にする。読めなければ、状態コードを伝える。 */
 async function refusal(res: Response): Promise<DaemonRefusal> {
   const json = (await res.json().catch(() => undefined)) as
-    | { error?: unknown; messages?: unknown }
+    | { error?: unknown; messages?: unknown; issues?: unknown }
     | undefined;
   if (json?.error === "invalid_operation" && Array.isArray(json.messages)) {
     const text = json.messages.map((m) => renderMessage(m, "ja")).join("\n");
+    if (text) return new DaemonRefusal(text);
+  }
+  // 入力の誤り（題が空など）は、誤りごとの文言のコードで返る
+  if (json?.error === "invalid_input" && Array.isArray(json.issues)) {
+    const text = json.issues
+      .map((issue) => renderMessage((issue as { message?: unknown } | null)?.message, "ja"))
+      .filter(Boolean)
+      .join("\n");
     if (text) return new DaemonRefusal(text);
   }
   return new DaemonRefusal(`デーモンが ${res.status} を返しました。`);
@@ -33,6 +41,10 @@ async function refusal(res: Response): Promise<DaemonRefusal> {
 /** 再レビューを頼んだ後に、結果を受け取れなかったときの案内（始まったかどうかが分からない）。 */
 const REREVIEW_UNCERTAIN =
   "再レビューは始まっている可能性があります。get_task で state と review.round を確かめてから、必要なら呼び直してください。";
+
+/** タスクの作成を頼んだ後に、結果を受け取れなかったときの案内（作られたかどうかが分からない）。 */
+const CREATE_UNCERTAIN =
+  "タスクは作られている可能性があります。list_tasks（query に題）で確かめてから、まだ無ければ呼び直してください。";
 
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
@@ -104,6 +116,29 @@ export function daemonApi(
         // 分からない（デーモンが記録した後に、応答が届かなかったのかもしれない）
         const reason = error instanceof Error ? error.message : String(error);
         throw new Error(`${reason}${REREVIEW_UNCERTAIN}`, { cause: error });
+      }
+    },
+    async listProjects() {
+      const res = await request(endpoint(), "/api/projects");
+      if (!res.ok) throw await refusal(res);
+      return (await read<{ projects: ProjectChoice[] }>(res)).projects;
+    },
+    async createTask(input) {
+      const at = endpoint(); // 接続先が無いのは、頼む前の失敗（作られていない）
+      try {
+        // 画面と同じく、対象リポジトリを空欄（リポジトリを指定しない）にし、進め方は送らない（自動）
+        const res = await request(at, "/api/tasks", {
+          method: "POST",
+          body: { ...input, repo: null },
+        });
+        if (!res.ok) throw await refusal(res);
+        return (await read<{ task: Task }>(res)).task;
+      } catch (error) {
+        // デーモンが応答で断ったなら、作られていない。その理由をそのまま返す
+        if (error instanceof DaemonRefusal) throw error;
+        // 頼んだ後に結果を受け取れなかったときは、作られたかどうかが分からない
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`${reason}${CREATE_UNCERTAIN}`, { cause: error });
       }
     },
     webUrl: () => readDaemonFile(home)?.web,
