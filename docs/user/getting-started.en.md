@@ -92,7 +92,7 @@ You can check whether the registration remains with `mise ls sacty` (if it remai
 - So that it works the same until you remove it, it rewrites the earlier version's launcher to the same content as the new launcher.
 - To remove it, delete the following in this order.
   1. Remove the `sacty` line from `[tools]` in mise's user-wide settings (`~/.config/mise/config.toml`).
-  2. Delete the mise registration (`~/.local/share/mise/installs/sacty` by mise's default; if you set `MISE_DATA_DIR` or `XDG_DATA_HOME`, `installs/sacty` under it).
+  2. Delete the mise registration (`~/.local/share/mise/installs/sacty` by mise's default; `$MISE_DATA_DIR/installs/sacty` if you set `MISE_DATA_DIR`, or `$XDG_DATA_HOME/mise/installs/sacty` if you set `XDG_DATA_HOME`).
      If you use shims, then run `mise reshim`.
   3. Delete `~/.local/share/sacty/mise` (or `$XDG_DATA_HOME/sacty/mise` if you set `XDG_DATA_HOME`).
 - After removing it, check that `mise ls sacty` shows no `sacty` line, and that the warning no longer appears when you run `npm run cli:install` again.

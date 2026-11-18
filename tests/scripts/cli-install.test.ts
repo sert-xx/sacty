@@ -113,6 +113,21 @@ describe("checkPath", () => {
       checkPath({ launcher, onPath: legacy, sameAs: [legacy], resolveReal: (p: string) => p }),
     ).toEqual({ warnings: [] });
   });
+
+  it("前の版の入口のディレクトリがあり、PATH で先に別の sacty（mise のシムなど）が見つかるときは、前の版の登録なら外す、と知らせる", () => {
+    const shim = "/home/u/.local/share/mise/shims/sacty";
+    const { warnings } = checkPath({
+      launcher,
+      onPath: shim,
+      sameAs: ["/home/u/.local/share/sacty/mise/1.26.0/bin/sacty"],
+      legacy: true,
+      resolveReal: (p: string) => p,
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(shim);
+    expect(warnings[0]).toContain("前の版の mise の登録（mise のシムを含む）なら");
+    expect(warnings[0]).toContain("そうでなければ、そちらを消すか");
+  });
 });
 
 describe("findOnPath", () => {
@@ -267,11 +282,13 @@ describe("main（入れる流れ）", () => {
   function install({
     legacy = false,
     legacyFirst = false,
+    shimFirst = false,
     foreign = false,
     mismatch = false,
   }: {
     legacy?: boolean;
     legacyFirst?: boolean;
+    shimFirst?: boolean;
     foreign?: boolean;
     mismatch?: boolean;
   } = {}) {
@@ -298,11 +315,18 @@ describe("main（入れる流れ）", () => {
     const miseCalls = join(base, "mise-calls");
     writeFileSync(join(fake, "mise"), `#!/bin/sh\necho "$@" >> '${miseCalls}'\n`);
     chmodSync(join(fake, "mise"), 0o755);
+    // mise のシム（mise へのリンク）をまねる。PATH で、置いた入口より先に見つかる
+    const shims = join(base, "shims");
+    if (shimFirst) {
+      mkdirSync(shims);
+      symlinkSync(join(fake, "mise"), join(shims, "sacty"));
+    }
     const env: Record<string, string | undefined> = {
       ...process.env,
       HOME: home,
       PATH: [
         ...(legacyFirst ? [join(legacyLauncher, "..")] : []),
+        ...(shimFirst ? [shims] : []),
         bin,
         fake,
         process.env.PATH ?? "",
@@ -350,6 +374,13 @@ describe("main（入れる流れ）", () => {
     expect(run.stderr).not.toContain("そちらを消すか");
     expect(run.stderr).toContain("同じ中身なので、同じに動きます");
     expect(readFileSync(legacyLauncher, "utf8")).toBe(readFileSync(launcher, "utf8"));
+  });
+
+  it("mise のシムが PATH で先に見つかるときは、前の版の登録なら手順で外す、と知らせる（消すことだけを勧めない）", () => {
+    const { run } = install({ legacy: true, shimFirst: true });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("前の版の mise の登録（mise のシムを含む）なら");
+    expect(run.stderr).toContain("登録が残っていれば");
   });
 
   it("置き場所に sacty の入口でないファイルがあれば、上書きせずに終了コード 1 で終わる", () => {

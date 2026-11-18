@@ -92,7 +92,7 @@ npm run cli:install
 - 外すまでの間も同じように動くよう、前の版の入口を、新しい入口と同じ中身に書き直します。
 - 外すときは、次の順で消します。
   1. mise の利用者全体の設定（`~/.config/mise/config.toml`）の `[tools]` から `sacty` の行を消します。
-  2. mise の登録（mise の既定では `~/.local/share/mise/installs/sacty`。`MISE_DATA_DIR` か `XDG_DATA_HOME` を指定しているなら、その下の `installs/sacty`）を消します。
+  2. mise の登録（mise の既定では `~/.local/share/mise/installs/sacty`。`MISE_DATA_DIR` を指定しているなら `$MISE_DATA_DIR/installs/sacty`、`XDG_DATA_HOME` を指定しているなら `$XDG_DATA_HOME/mise/installs/sacty`）を消します。
      シムを使っているなら、続けて `mise reshim` を実行します。
   3. `~/.local/share/sacty/mise`（`XDG_DATA_HOME` を指定しているなら `$XDG_DATA_HOME/sacty/mise`）を消します。
 - 外した後に、`mise ls sacty` に `sacty` の行が出ないことと、もう一度 `npm run cli:install` を実行して注意が出ないことを確かめてください。

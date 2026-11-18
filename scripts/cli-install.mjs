@@ -88,9 +88,10 @@ export function findOnPath(name, pathValue = process.env.PATH ?? "") {
 /**
  * 入れた後の確かめ。onPath（PATH で最初に見つかる sacty）が launcher（置いた入口）か。止めるべき誤りは無く、
  * 知らせることを warnings で返す（PATH の順は利用者の環境なので止めない）。sameAs（入口と同じ中身に書き直した、前の版の
- * 入口）が先に見つかるときは、同じに動くので注意にしない（legacyNotice が知らせる）。
+ * 入口）が先に見つかるときは、同じに動くので注意にしない（legacyNotice が知らせる）。legacy（前の版の入口のディレクトリが
+ * ある）のときに、ほかの sacty が先に見つかったら、前の版の mise の登録（シムなど）かもしれないので、消すことだけを勧めない。
  */
-export function checkPath({ launcher, onPath, sameAs = [], resolveReal = real }) {
+export function checkPath({ launcher, onPath, sameAs = [], legacy = false, resolveReal = real }) {
   const warnings = [];
   if (!onPath) {
     warnings.push(
@@ -100,8 +101,11 @@ export function checkPath({ launcher, onPath, sameAs = [], resolveReal = real })
     resolveReal(onPath) !== resolveReal(launcher) &&
     !sameAs.some((same) => resolveReal(same) === resolveReal(onPath))
   ) {
+    const fix = `そちらを消すか、PATH の順を変えてください（${dirname(launcher)} を前に置く）。`;
     warnings.push(
-      `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。そちらを消すか、PATH の順を変えてください（${dirname(launcher)} を前に置く）。`,
+      legacy
+        ? `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。前の版の mise の登録（mise のシムを含む）なら、前の版の入口についての注意の手順で外すと、いま置いた入口が使われます。そうでなければ、${fix}`
+        : `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。${fix}`,
     );
   }
   return { warnings };
@@ -258,7 +262,12 @@ export function main({ repo = resolve(dirname(fileURLToPath(import.meta.url)), "
   const legacyRoot = legacyMiseRoot();
   const legacy = refreshLegacyLaunchers({ root: legacyRoot, content, entry });
   const onPath = findOnPath("sacty");
-  const { warnings } = checkPath({ launcher, onPath, sameAs: legacy.updated });
+  const { warnings } = checkPath({
+    launcher,
+    onPath,
+    sameAs: legacy.updated,
+    legacy: legacy.found,
+  });
   for (const line of warnings) console.warn(`[sacty] 注意：${line}`);
   if (legacy.found) {
     const first = legacy.updated.find((path) => onPath && real(path) === real(onPath));
