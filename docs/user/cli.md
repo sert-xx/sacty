@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/cli/src/index.ts（USAGE・main・parsePort）、scripts/cli-install.mjs、packages/cli/src/context-preview.ts、packages/cli/src/launch.ts、apps/daemon/src/local-launch.ts、apps/daemon/src/context-template.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE）、apps/daemon/src/image.ts（pruneOldImages・buildCachePruneArgs） -->
+<!-- 対応するコード: packages/cli/src/index.ts（USAGE・main・parsePort・mcpCommand）、packages/cli/src/mcp.ts、scripts/cli-install.mjs、packages/cli/src/context-preview.ts、packages/cli/src/launch.ts、apps/daemon/src/local-launch.ts、apps/daemon/src/context-template.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE）、apps/daemon/src/image.ts（pruneOldImages・buildCachePruneArgs） -->
 
 **日本語** | [English](cli.en.md)
 
@@ -18,6 +18,7 @@
 | [`sacty context init`](#sacty-context-init) | コンテキストリポジトリの雛形を作る |
 | [`sacty context preview`](#sacty-context-preview) | プロジェクトのコンテキストを合成した結果を表示する |
 | [`sacty launch`](#sacty-launch) | プロジェクトのコンテキストで、手元の Claude Code か Codex を対話で起動する |
+| [`sacty mcp`](#sacty-mcp) | 起動中の sacty を、手元の Claude Code や Codex から操作するための MCP サーバーを動かす |
 
 どのコマンドにも共通のことは、次のとおりです。
 
@@ -187,6 +188,18 @@ npx sacty launch <プロジェクト> [--runtime claude-code|codex] [--cwd <デ�
 - sacty の AI の定義が Bedrock か `providers` の接続先のときは、段階のサブエージェントを渡しません（そのモデルの名前が、手元のログインでは使えないことがあるため）。
 - コンテキストリポジトリの `agents/claude/` の `commands/` など、引数で渡せないファイルは渡しません。
 - Codex では、規則とスキルの一覧が大きすぎて引数で渡せないとき、起動せずに止まります。
+
+## sacty mcp
+
+起動中の sacty（`sacty up`）を、手元の Claude Code や Codex から操作するための MCP サーバーを、標準入出力（stdio）で動かします。
+自分で実行するコマンドではなく、AI の CLI に MCP サーバーとして登録して使います（[手元の AI から操作する](mcp.md)）。
+
+```sh
+sacty mcp
+```
+
+オプションはありません。
+sacty が起動していなくても始められ、ツールが呼ばれたときに、そのとき起動中の sacty に問い合わせます。
 
 ## 環境変数
 

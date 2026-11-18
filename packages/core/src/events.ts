@@ -3241,6 +3241,11 @@ const ReviewTargetResolved = z.object({
     baseCommit: z.string(),
     /** PR の作者の login（総評で @ を付けて知らせる。PBI-111）。読めなければ空。 */
     author: z.string().default(""),
+    /**
+     * PR の元のブランチ（head）の名前（PBI-392。ブランチ名からレビューのタスクを探すために記録する）。読めなかったとき・
+     * それより前の記録には無い。
+     */
+    headBranch: z.string().min(1).optional(),
   }),
 });
 

@@ -3737,6 +3737,8 @@ export class TaskService {
           headCommit: pr.headSha,
           baseCommit: pr.baseSha,
           author: pr.author,
+          // ブランチ名からレビューのタスクを探せるように記録する（PBI-392）
+          ...(pr.headRef ? { headBranch: pr.headRef } : {}),
         },
       };
     } catch (error) {

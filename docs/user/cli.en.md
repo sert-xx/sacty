@@ -1,4 +1,4 @@
-<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort), scripts/cli-install.mjs, packages/cli/src/context-preview.ts, packages/cli/src/launch.ts, apps/daemon/src/local-launch.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE), apps/daemon/src/image.ts (pruneOldImages, buildCachePruneArgs) -->
+<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort, mcpCommand), packages/cli/src/mcp.ts, scripts/cli-install.mjs, packages/cli/src/context-preview.ts, packages/cli/src/launch.ts, apps/daemon/src/local-launch.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE), apps/daemon/src/image.ts (pruneOldImages, buildCachePruneArgs) -->
 
 [日本語](cli.md) | **English**
 
@@ -17,6 +17,7 @@ The commands are as follows.
 | [`sacty context init`](#sacty-context-init) | Creates a template of a context repository |
 | [`sacty context preview`](#sacty-context-preview) | Shows the result of composing the context of a project |
 | [`sacty launch`](#sacty-launch) | Starts your local Claude Code or Codex interactively with the context of a project |
+| [`sacty mcp`](#sacty-mcp) | Runs the MCP server for operating the running sacty from your local Claude Code or Codex |
 
 The following applies to every command.
 
@@ -164,6 +165,18 @@ If something cannot be passed locally, it is shown with `[sacty] 注意：` befo
 - When sacty's AI definition uses Bedrock or a `providers` endpoint, tier subagents are not passed (their model names may not work with your local login).
 - Files that cannot be passed as arguments, such as `commands/` in `agents/claude/` of the context repository, are not passed.
 - With Codex, if the rules and the skill list are too large to pass as an argument, it stops without starting.
+
+## sacty mcp
+
+Runs, over standard input and output (stdio), the MCP server for operating the running sacty (`sacty up`) from your local Claude Code or Codex.
+It is not a command you run yourself; you register it as an MCP server in your AI CLI ([Operating sacty from your local AI](mcp.en.md)).
+
+```sh
+sacty mcp
+```
+
+It has no options.
+It can start even when sacty is not running, and when a tool is called, it queries the sacty running at that time.
 
 ## Environment variables
 

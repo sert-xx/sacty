@@ -9,7 +9,8 @@ import { contextLabel, renderMessage } from "@sacty/core";
  */
 export const DAEMON_FILE = "daemon.json";
 
-export type DaemonEndpoint = { url: string; token: string };
+/** web は、画面の URL（PBI-392。`sacty mcp` がタスクの画面の URL を返すために読む。それより前の版が書いたものには無い）。 */
+export type DaemonEndpoint = { url: string; token: string; web?: string };
 
 export function writeDaemonFile(home: string, endpoint: DaemonEndpoint): void {
   const path = join(home, DAEMON_FILE);
@@ -73,7 +74,11 @@ export function readDaemonFile(home: string): DaemonEndpoint | undefined {
   try {
     const json = JSON.parse(readFileSync(path, "utf8")) as Partial<DaemonEndpoint>;
     return typeof json.url === "string" && typeof json.token === "string"
-      ? { url: json.url, token: json.token }
+      ? {
+          url: json.url,
+          token: json.token,
+          ...(typeof json.web === "string" && json.web ? { web: json.web } : {}),
+        }
       : undefined;
   } catch {
     return undefined;

@@ -179,10 +179,12 @@ A re-review reviews the latest commit of the PR again and posts the result.
 It says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review; on a PR sacty created, the [replies to your comments](tasks.en.md#replies-to-your-comments) that sacty posted with the same GitHub account as the PR author are read as the author's replies too).
 When a previous `[要修正]` is not fixed but turns out, on checking again, to be of `[提案]` weight, it is not counted as must-fix, and the summary says that the weight was reconsidered. This finding stays in the body only in the review of the round in which the weight was reconsidered. When it turns out to be of must-fix weight in a later round, it is raised as must-fix. A finding that the acceptance criteria or requirements are not met does not have its weight reconsidered and stays must-fix.
 
-There are two ways to start a re-review.
+There are three ways to start a re-review.
 
 - From the web UI: when new commits are pushed, press "Review again and post to the PR" in the task details.
   sacty reruns the selected task.
+- Ask your local AI: if you connect sacty's MCP server to Claude Code or Codex, you can ask it to "re-review this PR" ([Operating sacty from your local AI](mcp.en.md)).
+  It is the same as starting from the web UI.
 - Re-request the review on GitHub (Re-request review): this works for a PR taken in by a review request.
   sacty finds the re-request at the next intake and creates a new review task in the same project.
 

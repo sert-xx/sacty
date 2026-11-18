@@ -34,6 +34,7 @@ Code: `packages/core/package.json`, `apps/daemon/package.json`, `apps/web/packag
 
 - The daemon's API (`/api/*`) requires the token that `sacty up` creates on every start, as `Authorization: Bearer` (compared with `timingSafeEqual`), and returns 401 (`unauthorized`) if it does not match. It listens only on `127.0.0.1`.
 - The web UI calls the daemon only from the Next.js server side (the token is not passed to the browser). It reads the address and token on every request from the environment variables `SACTY_DAEMON_URL` and `SACTY_DAEMON_TOKEN`.
+- The CLI commands (`sacty context preview`, `sacty launch`, `sacty mcp`) read the address and token from `SACTY_HOME/daemon.json` and call the same API. `sacty mcp` is an MCP server for operating the running sacty from a local AI ([MCP server](mcp-server.en.md)).
 - The daemon returns errors as follows. Both return a message code and arguments, and the web UI turns them into text in the UI language.
   - Input errors (zod validation): 400 with `invalid_input`
   - Operations not allowed in the current state: 409 with `invalid_operation`
@@ -309,7 +310,7 @@ Data is stored under `SACTY_HOME` (default `~/.sacty`).
 | `config.yaml` | sacty configuration (AI, authentication, images, gateway, and so on). The daemon rereads it every time it uses it |
 | `sacty.db` | SQLite. Activity log (events), projects, scheduled tasks, sacty settings ("sacty settings" on the web UI) |
 | `daemon.lock`, `daemon-owner.json` | Detecting and reporting a second start ([Daemon startup and shutdown](daemon-lifecycle.en.md)) |
-| `daemon.json` | The running daemon's address and token, queried by `sacty context preview` and `sacty launch` |
+| `daemon.json` | The running daemon's address and token, queried by `sacty context preview`, `sacty launch`, and `sacty mcp`. It also holds the web UI URL |
 | `workspaces/` | Workspaces. `<task-id>/repo` (clone of the target repository), `<task-id>/empty` (tasks without a repository), `<task-id>/repos` (clones of specified repositories), `_git/<task-id>.git` (git metadata set aside right after the clone; never mounted into any container), per-run `_code-copy/<run-id>`, `_snapshots/<run-id>`, `_review/<run-id>`, `_input/<run-id>`, `_repos/<run-id>`, `_export/<run-id>`, `_deployment/<run-id>`, `_handoff/<run-id>`, `_question-logs/<run-id>`, `_audit-logs/<run-id>`, `_audit-ledger/<run-id>`, `_shared-compose/<run-id>` (removed at the end of the run; ones left by an interruption are removed at startup; copies used by runs whose termination cannot be confirmed or still mounted are retained until they can be safely removed; all of `_shared-compose` is removed at startup), `_cache/`, and `_task-cache/<task-id>` (the per-task dependency cache; [Agent execution](agent-execution.en.md#dependency-cache)). A completed task's `<task-id>`, `_git/<task-id>.git`, and `_task-cache/<task-id>` are removed once they are no longer used ([Tasks and steps](tasks-and-steps.en.md#cleaning-up-the-workspaces-of-finished-tasks)) |
 | `runs/` | Session logs for each agent run |
 | `sessions/` | The Orchestrator's session for each task (a cache for reuse) |

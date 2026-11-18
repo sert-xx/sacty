@@ -30,6 +30,10 @@
     "./secrets": {
       "types": "./dist/secrets.d.ts",
       "default": "./dist/secrets.js"
+    },
+    "./task-mcp": {
+      "types": "./dist/task-mcp.d.ts",
+      "default": "./dist/task-mcp.js"
     }
   },
   "scripts": {
@@ -39,6 +43,7 @@
   "dependencies": {
     "@hono/node-server": "^2.1.8",
     "@modelcontextprotocol/sdk": "1.32.0",
+    "@modelcontextprotocol/server": "2.4.0",
     "@sacty/core": "1.27.0",
     "hono": "^4.13.18",
     "mdast-util-from-markdown": "2.1.0",

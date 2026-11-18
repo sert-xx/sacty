@@ -1,0 +1,65 @@
+# 起動中の sacty を手元の AI から操作する MCP サーバー（sacty mcp）を足す
+
+- 日付: 2026-11-18（UTC）
+- タスク: PBI-392
+- PR: なし
+- ブランチ: feat/pbi-392-mcp-server
+- 関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かし、MCP の 2026-07-28 版に合わせる](../adr/20261118-0936-task-mcp-server-over-stdio.md)
+
+## 目的
+
+PR の再レビューを、ブラウザで画面のボタンを押さずに、手元の Claude Code・Codex から頼めるようにする。
+そのために、起動中の sacty を操作する MCP サーバーを足す。最初の範囲は、タスクの取得（一覧・検索・詳細）と、PR のレビューのタスクの再レビュー。
+PR（番号・URL）とブランチ名から、レビューのタスクを特定できること。タスクの作成などは範囲外（後から足せる形にしておく）。
+途中で、インターフェースを最新の標準の仕様に合わせること・認証をどうするかを利用者に確かめることが、要望に加わった。
+
+## したこと
+
+- 進め方：はじめに、デーモンの既存の SDK（v1）で stdio・ツール3つの試作を作って動かした。その後、公式の仕様（2026-07-28）と
+  Claude Code・Codex の文書を確かめ、インターフェースの案と、つなぎ方・認証・仕様の版の選択肢を利用者に見せた。
+  利用者が「stdio・認証は足さない」「`sacty mcp` だけ新しい SDK」を選んだので、試作を SDK の v2 に載せ替え、結果の形
+  （`outputSchema`・`structuredContent`）を足した。
+
+- `sacty mcp`（`packages/cli/src/index.ts` の `mcpCommand`）：MCP サーバーを標準入出力で動かす。MCP の SDK は、このコマンドのときだけ読み込む。
+- `apps/daemon/src/task-mcp.ts`：ツールの定義（`TOOLS`：`list_tasks`・`get_task`・`rereview_task`）、タスクの要約（`summarizeTask`）・
+  結び付いた PR とブランチ（`taskPullRequests`・`taskBranches`）・絞り込み（`filterTasks`）・PR の指定の読み取り（`parsePullRequestQuery`）。
+  デーモンの API の呼び出しは `SactyApi` で受け取る。`@sacty/daemon/task-mcp` として公開した。
+- `packages/cli/src/mcp.ts`（`daemonApi`）：呼び出しのたびに `daemon.json` を読み、画面と同じ API（`GET /api/tasks`・`GET /api/projects`・
+  `GET /api/tasks/:id`・`POST /api/tasks/:id/rereview`）を呼ぶ。デーモンが断った理由（`invalid_operation`）は、日本語の文にする。
+  消したプロジェクトのタスクは、一覧から外す（自己レビューで見つけた。詳細の API が無いものとして返すタスクを、一覧で見せていた）。
+- 依存：デーモンのパッケージに `@modelcontextprotocol/server` 2.4.0、開発用に `@modelcontextprotocol/client` 2.4.0（テストのクライアント）。
+- `daemon.json` に画面の URL（`web`）を足した（`sacty up` が書く。前の版のファイルも読める）。
+- レビューの対象を確かめたときに、PR の元のブランチの名前を記録する（`ReviewTargetResolved` の `headBranch`、タスクの `reviewBranch`）。
+  sacty の外で作った PR のレビューのタスクを、ブランチ名から探すため。
+- 仕様書（`docs/spec/mcp-server.md` を足し、`architecture.md`・`daemon-lifecycle.md`・`tasks-and-steps.md` を直した）、
+  ユーザードキュメント（`docs/user/mcp.md` を足し、`cli.md`・`intake.md`・目次を直した）、ADR。どれも日英。
+
+決めたことと理由は ADR に書いた。
+
+## 確かめたこと
+
+- `npx vitest run apps/daemon/src/task-mcp.test.ts packages/cli/src/mcp.test.ts packages/core/src/projection.test.ts`：通った。
+  - MCP のクライアントをメモリー上のトランスポートでつなぎ、本物のサービスと API（`createApp`）に対して、PR の番号・URL・ブランチ名での特定、
+    再レビュー（`ReviewRestarted` の記録、2回目の投稿まで）、再レビューを始めた後の特定、断られたときに何も記録しないことを確かめた。
+  - 2026-07-28 に固定したクライアント（SDK の v2。合わなければ失敗する設定）と、`initialize` で始めるクライアント（SDK の v1）の両方で確かめた。
+  - 構造のある結果（`structuredContent`）が、文にした JSON と同じ内容であること。
+  - 境界：タスクが 0 件・1 件・上限を超える件数、同じ番号のほかのリポジトリの PR、ブランチ名を読めなかったタスク、決めた範囲の外の引数。
+  - 修正を戻して失敗することも確かめた（`headBranch` の記録を外すと、ブランチ名での特定のテストが落ちる）。
+- 実機：架空のデータの sacty（`scripts/docs-screenshots/seed.mjs`。ポート 4800・4810、一時の `SACTY_HOME`）を起動し、ビルドした `sacty mcp` を
+  stdio で起動して呼んだ。
+  - SDK の v2 のクライアント（2026-07-28 に固定・自動）は 2026-07-28 で、`initialize` で始めるクライアントは 2025-11-25 でつながり、ツールが3つ出た。
+  - 一覧・PR の指定での特定・親のブランチ名からのレビューの子タスクの特定・再レビュー（タスクが `queued` になり、作業履歴に `ReviewRestarted`）・
+    2回目の再レビューが理由付きで断られること（再レビューの確認は、試作の時点）。
+  - sacty を止めた後は、ツールが「起動中の sacty が見つかりません」を返すこと。標準入力を閉じると、`sacty mcp` が終了コード 0 で終わること。
+  - 握手なしの `server/discover` に、対応する版（`2026-07-28`）を返すこと。
+- 実物の Claude Code（2.1.322）：`--mcp-config` で `sacty mcp` を渡し、`list_tasks` を呼ばせて、PR の番号からタスクの ID と `canRereview` を答えさせた。
+- 実物の Codex（0.163.0）：`codex mcp list` に登録が出ることだけを確かめた。モデルを動かす確認は、アカウントの利用上限のため、できていない（未確認）。
+- 動いている sacty（1.27.0。この変更の前の版）に、読み取りだけの一覧を呼んだ。レビューのタスク 282 件で、プロセスの起動を含めて約 0.5 秒
+  （試作の時点。前の版のデーモンとも使えることの確認を兼ねる）。
+- `npm run lint`・`npm run typecheck`・`npx vitest run --no-file-parallelism`：結果は下の「全体の確認」。
+
+## 全体の確認
+
+- `npm run lint`：指摘なし。`npm run typecheck`：通った。
+- `npx vitest run --no-file-parallelism`：Test Files 263 passed (263)、Tests 5173 passed | 1 skipped (5174)。
+- まっさらな複製（`git clone` → `npm ci` → `npm run build` → `sacty mcp` に `server/discover` を送る）：結果は PR の本文に書く。
