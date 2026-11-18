@@ -28,7 +28,7 @@ sacty は、5つのパッケージでできている。
 - 入口の Node.js か `sacty.js` が無くなったら、入口は `npm run cli:install` のやり直しを知らせて終了コード 1 で終わる。
 - 置き場所に、入口の目印（`LAUNCHER_MARK`）の無いファイルかリンクがあれば、上書きせずに終了コード 1。ただし、このリポジトリの `packages/cli/bin/sacty.js` を指すリンク（前のやり方の `npm link` のもの。npm のグローバルの場所が `~/.local` だと置き場所と重なる）は置き換える。入口は隣に書いてから置き換える（`writeLauncher`）。
 - 入口を置く前に、前のやり方（`npm link`）で、いまの Node.js の npm のグローバルに入れた `@sacty/cli` がこのリポジトリを指していれば、`npm rm -g @sacty/cli` で外す（ほかのリポジトリのものは触らない。外すのは、下で求めた npm のグローバルの場所に対して）。npm のグローバルの場所は、`npm run` が渡す環境変数 `npm_config_global_prefix` から求める（npm は自分の出力の中の UUID の形の文字列を `***` に伏せるので、`npm prefix -g` の出力はパスに UUID があると使えない）。環境変数が無い（スクリプトを直接実行した）ときだけ `npm prefix -g` を使う。
-- 置いた後に、入口の `sacty --version`（`packages/cli/package.json` の版を出す）がこのリポジトリの版と同じことを確かめる（違えば終了コード 1）。`PATH` で最初に見つかる `sacty` が置いた入口でない・見つからないときは、注意を出す（終了コードは 0）。最初に見つかるのが、書き直した前の版の入口のときは、この注意を出さず、同じ中身で同じに動くことを知らせる。前の版の入口のディレクトリがあって、ほかの `sacty`（mise のシムなど）が最初に見つかるときは、前の版の mise の登録なら手順で外す、そうでなければ消すか `PATH` の順を変える、と知らせる。
+- 置いた後に、入口の `sacty --version`（`packages/cli/package.json` の版を出す）がこのリポジトリの版と同じことを確かめる（違えば終了コード 1）。`PATH` で最初に見つかる `sacty` が置いた入口でない・見つからないときは、注意を出す（終了コードは 0）。最初に見つかるのが、書き直した前の版の入口のときは、この注意を出さず、同じ中身で同じに動くことを知らせる。前の版の入口のディレクトリがあって、ほかの `sacty`（mise のシムなど）が最初に見つかるときは、前の版の mise の登録なら手順で外す、そうでなければ消すか `PATH` の順を変える、と知らせる。前の版の入口や登録が最初に見つかっていても、置き場所が `PATH` に無ければ（`dirOnPath`）、登録を外す前に `PATH` に足すよう知らせる。
 - Windows では使えない（終了コード 1）。
 
 コード: `packages/core/package.json`、`apps/daemon/package.json`、`apps/web/package.json`、`packages/cli/package.json`、`apps/desktop/package.json`、`packages/cli/src/index.ts`（`main`）

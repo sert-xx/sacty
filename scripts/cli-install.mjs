@@ -85,30 +85,62 @@ export function findOnPath(name, pathValue = process.env.PATH ?? "") {
   return undefined;
 }
 
+/** dir が PATH（pathValue）に入っているか（realpath で比べる）。 */
+export function dirOnPath(dir, pathValue = process.env.PATH ?? "", resolveReal = real) {
+  const target = resolveReal(dir) ?? dir;
+  return pathValue
+    .split(delimiter)
+    .some((entry) => entry && (resolveReal(entry) ?? entry) === target);
+}
+
 /**
  * 入れた後の確かめ。onPath（PATH で最初に見つかる sacty）が launcher（置いた入口）か。止めるべき誤りは無く、
- * 知らせることを warnings で返す（PATH の順は利用者の環境なので止めない）。sameAs（入口と同じ中身に書き直した、前の版の
- * 入口）が先に見つかるときは、同じに動くので注意にしない（legacyNotice が知らせる）。legacy（前の版の入口のディレクトリが
- * ある）のときに、ほかの sacty が先に見つかったら、前の版の mise の登録（シムなど）かもしれないので、消すことだけを勧めない。
+ * 知らせることを warnings で返す（PATH の順は利用者の環境なので止めない）。
+ * - sameAs（入口と同じ中身に書き直した、前の版の入口）が先に見つかるときは、同じに動くので注意にせず、その入口を first で
+ *   返す（legacyNotice が知らせる）。
+ * - legacy（前の版の入口のディレクトリがある）のときに、ほかの sacty が先に見つかったら、前の版の mise の登録（シムなど）
+ *   かもしれないので、消すことだけを勧めない。
+ * - 前の版の入口・登録が先に見つかっていても、置き場所が PATH に無ければ（dirInPath が false）、登録を外す前に PATH に
+ *   足すよう知らせる（外すと、sacty が見つからなくなるため）。
  */
-export function checkPath({ launcher, onPath, sameAs = [], legacy = false, resolveReal = real }) {
+export function checkPath({
+  launcher,
+  onPath,
+  sameAs = [],
+  legacy = false,
+  dirInPath = true,
+  resolveReal = real,
+}) {
   const warnings = [];
+  const dir = dirname(launcher);
   if (!onPath) {
     warnings.push(
-      `${dirname(launcher)} が PATH にありません。PATH に足すと、どのディレクトリでも sacty と打って使えます（SACTY_BIN_DIR で置き場所を変えられます）。`,
+      `${dir} が PATH にありません。PATH に足すと、どのディレクトリでも sacty と打って使えます（SACTY_BIN_DIR で置き場所を変えられます）。`,
     );
-  } else if (
-    resolveReal(onPath) !== resolveReal(launcher) &&
-    !sameAs.some((same) => resolveReal(same) === resolveReal(onPath))
-  ) {
-    const fix = `そちらを消すか、PATH の順を変えてください（${dirname(launcher)} を前に置く）。`;
+    return { warnings, first: undefined };
+  }
+  if (resolveReal(onPath) === resolveReal(launcher)) return { warnings, first: undefined };
+  const first = sameAs.find((same) => resolveReal(same) === resolveReal(onPath));
+  const fix = `そちらを消すか、PATH の順を変えてください（${dir} を前に置く）。`;
+  const head = `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。`;
+  if (first) {
+    if (!dirInPath) {
+      warnings.push(
+        `${dir} が PATH にありません。前の版の mise の登録を外すと、sacty が見つからなくなります。外す前に、PATH に足してください（SACTY_BIN_DIR で置き場所を変えられます）。`,
+      );
+    }
+  } else if (!legacy) {
+    warnings.push(`${head}${fix}`);
+  } else if (dirInPath) {
     warnings.push(
-      legacy
-        ? `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。前の版の mise の登録（mise のシムを含む）なら、前の版の入口についての注意の手順で外すと、いま置いた入口が使われます。そうでなければ、${fix}`
-        : `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。${fix}`,
+      `${head}前の版の mise の登録（mise のシムを含む）なら、前の版の入口についての注意の手順で外すと、いま置いた入口が使われます。そうでなければ、${fix}`,
+    );
+  } else {
+    warnings.push(
+      `${head}${dir} も PATH にありません。前の版の mise の登録（mise のシムを含む）なら、${dir} を PATH に足してから、前の版の入口についての注意の手順で外してください（足さずに外すと、sacty が見つからなくなります）。そうでなければ、${fix}`,
     );
   }
-  return { warnings };
+  return { warnings, first };
 }
 
 /**
@@ -261,16 +293,15 @@ export function main({ repo = resolve(dirname(fileURLToPath(import.meta.url)), "
   // 上の確かめを通った後に書き直す（動かない入口の中身を、前の版の入口に写さない）
   const legacyRoot = legacyMiseRoot();
   const legacy = refreshLegacyLaunchers({ root: legacyRoot, content, entry });
-  const onPath = findOnPath("sacty");
-  const { warnings } = checkPath({
+  const { warnings, first } = checkPath({
     launcher,
-    onPath,
+    onPath: findOnPath("sacty"),
     sameAs: legacy.updated,
     legacy: legacy.found,
+    dirInPath: dirOnPath(dirname(launcher)),
   });
   for (const line of warnings) console.warn(`[sacty] 注意：${line}`);
   if (legacy.found) {
-    const first = legacy.updated.find((path) => onPath && real(path) === real(onPath));
     for (const line of legacyNotice({ root: legacyRoot, ...legacy, first })) {
       console.warn(`[sacty] 注意：${line}`);
     }
