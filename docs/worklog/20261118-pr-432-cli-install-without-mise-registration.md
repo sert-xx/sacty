@@ -31,7 +31,7 @@ mise を使う環境で、`npm run cli:install` の入れ方（入口を `mise l
 - はじめの実装（`mise unuse` で外す）は、仮のホームと偽の `mise` で `node scripts/cli-install.mjs` を実行して確かめた。レビューの後の実装は、同じ流れを `tests/scripts/cli-install.test.ts` の `main` のテスト（偽のリポジトリ・仮のホーム・呼ばれたら記録する偽の `mise`）で確かめている。
   - mise があるとき：`mise` は呼ばれず、`~/.local/bin/sacty` に入口が置かれ、入口の `--version` が版を出す。
   - 前の版の入口があるとき：前の版の入口が、置いた入口と同じ中身になり、手で外す手順の注意が出て、終了コード 0 で終わる。
-- レビューの対応の後：`npx vitest run tests/scripts/cli-install.test.ts`（26 件）・`npm run lint`・`npm run typecheck`・`npx vitest run tests/docs` が通った。
+- レビューの対応の後：`npx vitest run tests/scripts/cli-install.test.ts`（27 件）・`npm run lint`・`npm run typecheck`・`npx vitest run tests/docs` が通った。
 - 確かめられなかったこと：実際の mise での動き（この環境に mise を入れられなかった。配布元への通信が通らない）。登録が残っている間に mise がどちらの入口を先に見つけるか、文書に書いた手で外す手順で登録が外れるかは、確かめていない。
 
 ## レビューの指摘と対応
@@ -62,6 +62,8 @@ mise を使う環境で、`npm run cli:install` の入れ方（入口を `mise l
 | （5回目）ADR の「置いた後の確かめ」が、コードの確かめ（版の一致・`PATH` に足す知らせ）と合っていない | 外したもの（mise 用の確かめ）と、残したもの・足したものを分けて書いた |
 | （6回目）置き場所が `PATH` に無いときの注意が、前の版の入口のディレクトリが無い人にも前の版の登録の話をする。先に別の `sacty` があるのに、足す位置を書いていない | 登録の話は、前の版の入口のディレクトリがあるときだけにし、「いま見つかる sacty より前に足す」と書いた（テストあり） |
 | （6回目）`PATH` への足し方の例が、`SACTY_BIN_DIR` を指定した場合を書いていない | 指定したなら、その場所を足す、と添えた（日英） |
+| （7回目）`dirOnPath` の、realpath で比べることを確かめるテストが無い | 実ディレクトリとリンクを作り、リンクだけを含む `PATH` で真になるテストを足した |
+| （7回目）ユーザードキュメントの先頭の「対応するコード」に `scripts/cli-install.mjs` が無い | 日英の両方に足した |
 
 ## 残したこと
 

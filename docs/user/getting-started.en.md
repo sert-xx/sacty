@@ -1,4 +1,4 @@
-<!-- Code: package.json, packages/cli/src/index.ts, apps/web/src/lib/paths.ts, apps/web/src/components/dashboard.tsx, apps/web/src/components/shell/rail.tsx, apps/daemon/src/config.ts (CONFIG_TEMPLATE, resolveHome), apps/daemon/src/instance-lock.ts -->
+<!-- Code: package.json, scripts/cli-install.mjs, packages/cli/src/index.ts, apps/web/src/lib/paths.ts, apps/web/src/components/dashboard.tsx, apps/web/src/components/shell/rail.tsx, apps/daemon/src/config.ts (CONFIG_TEMPLATE, resolveHome), apps/daemon/src/instance-lock.ts -->
 
 [日本語](getting-started.md) | **English**
 

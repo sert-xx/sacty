@@ -155,6 +155,20 @@ describe("checkPath", () => {
     expect(dirOnPath("/home/u/.local/bin", "/usr/bin::/opt/bin", same)).toBe(false);
   });
 
+  it("dirOnPath は、リンク経由で PATH に入っている置き場所も、入っているとする（realpath で比べる）", () => {
+    const root = mkdtempSync(join(tmpdir(), "sacty-dir-on-path-"));
+    try {
+      const dir = join(root, "bin");
+      mkdirSync(dir);
+      const link = join(root, "link");
+      symlinkSync(dir, link);
+      expect(dirOnPath(dir, ["/usr/bin", link].join(delimiter))).toBe(true);
+      expect(dirOnPath(dir, "/usr/bin")).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("前の版の入口のディレクトリがあり、PATH で先に別の sacty（mise のシムなど）が見つかるときは、前の版の登録なら外す、と知らせる", () => {
     const shim = "/home/u/.local/share/mise/shims/sacty";
     const { warnings } = checkPath({
