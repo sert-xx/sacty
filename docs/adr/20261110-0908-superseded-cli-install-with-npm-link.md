@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #334
 - 置き換え元: なし
-- 置き換え先: [sacty コマンドを、Node.js の版に関係しない場所の起動の入口で入れ、入れたときの Node.js で動かす](20261111-0054-cli-install-launcher-with-fixed-node.md)（npm link で入れる部分）
+- 置き換え先: [sacty コマンドを、Node.js の版に関係しない場所の起動の入口で入れ、入れたときの Node.js で動かす](20261111-0054-superseded-cli-install-launcher-with-fixed-node.md)（npm link で入れる部分）
 
 ## 背景
 

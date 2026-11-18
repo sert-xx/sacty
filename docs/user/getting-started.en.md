@@ -58,15 +58,12 @@ You can run it any number of times.
 
 Where the launcher is placed is decided as follows.
 
-- If you use mise, it registers the launcher with mise (`mise use --global sacty@<version>`; you can check it with `mise ls sacty`).
-  - If the same version is registered another way, it does not overwrite it.
-  - If it cannot register it, it tells you why and places it in `~/.local/bin/sacty`.
-  - After registering, it tells you if `sacty` is not found in your current shell.
-    With `mise activate`, you can use it from a new shell.
-    If you use shims, add mise's shims directory to your `PATH`.
-- If you do not use mise, it places it in `~/.local/bin/sacty`.
-- If you specify the environment variable `SACTY_BIN_DIR`, it places it there without using mise.
-- When it is placed without mise and the location is not in your `PATH`, or another `sacty` is found earlier in your `PATH`, it tells you with `[sacty] 注意：`.
+- It places it in `~/.local/bin/sacty`.
+  Even if you use mise, it does not register it with mise.
+- If you specify the environment variable `SACTY_BIN_DIR`, it places it there.
+- When the location is not in your `PATH`, or another `sacty` is found earlier in your `PATH`, it tells you with `[sacty] 注意：`.
+- If an earlier version of sacty registered `sacty` with mise, it removes that registration.
+  If it cannot remove it, it tells you what to delete by hand with `[sacty] 注意：`.
 
 The launcher works as follows.
 
@@ -86,10 +83,7 @@ If another `sacty` is used first, check the following.
   Run `npm rm -g @sacty/cli` with that version to remove it.
 - If you define `sacty` with a shell `alias`, that one is used first.
 
-To remove the launcher, delete the following, depending on how it was installed.
-
-- Installed with mise: remove the `sacty` line from `[tools]` in mise's user-wide settings (`~/.config/mise/config.toml`) and delete `~/.local/share/sacty/mise` (or `$XDG_DATA_HOME/sacty/mise` if you set `XDG_DATA_HOME`).
-- Installed without mise: delete `~/.local/bin/sacty` (or `sacty` in `SACTY_BIN_DIR` if you specified it).
+To remove the launcher, delete `~/.local/bin/sacty` (or `sacty` in `SACTY_BIN_DIR` if you specified it).
 
 ## Start
 

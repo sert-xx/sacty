@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #338
 - ブランチ: ccr-805f354d-tec1x2
-- 関係する ADR: [sacty コマンドを、Node.js の版に関係しない場所の起動の入口で入れ、入れたときの Node.js で動かす](../adr/20261111-0054-cli-install-launcher-with-fixed-node.md)
+- 関係する ADR: [sacty コマンドを、Node.js の版に関係しない場所の起動の入口で入れ、入れたときの Node.js で動かす](../adr/20261111-0054-superseded-cli-install-launcher-with-fixed-node.md)
 
 ## 目的
 

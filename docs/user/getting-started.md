@@ -58,15 +58,12 @@ npm run cli:install
 
 入口を置く場所は、次のように決まります。
 
-- mise を使っていれば、入口を mise に登録します（`mise use --global sacty@<版>`。`mise ls sacty` で確かめられます）。
-  - 同じ版がほかの方法で登録されているときは、上書きしません。
-  - 登録できなければ、理由を知らせて `~/.local/bin/sacty` に置きます。
-  - 登録の後、いまのシェルで `sacty` が見つからないときは知らせます。
-    `mise activate` を使っていれば、新しいシェルから使えます。
-    シムを使うなら、mise のシムのディレクトリを `PATH` に入れてください。
-- mise を使っていなければ、`~/.local/bin/sacty` に置きます。
-- 環境変数 `SACTY_BIN_DIR` を指定すると、mise を使わずに、その中に置きます。
-- mise を使わずに置いたとき、置き場所が `PATH` に無いか、`PATH` で先に別の `sacty` が見つかると、`[sacty] 注意：` で知らせます。
+- `~/.local/bin/sacty` に置きます。
+  mise を使っていても、mise には登録しません。
+- 環境変数 `SACTY_BIN_DIR` を指定すると、その中に置きます。
+- 置き場所が `PATH` に無いか、`PATH` で先に別の `sacty` が見つかると、`[sacty] 注意：` で知らせます。
+- 前の版の sacty が mise に登録した `sacty` があれば、外します。
+  外せなかったときは、`[sacty] 注意：` で、手で消すものを知らせます。
 
 入口は、次のように動きます。
 
@@ -86,10 +83,7 @@ npm run cli:install
   その版で `npm rm -g @sacty/cli` を実行して消してください。
 - シェルの `alias` で `sacty` を定義していると、そちらが先に使われます。
 
-入口を消すときは、入れ方に合わせて次のものを消します。
-
-- mise で入れたとき：mise の利用者全体の設定（`~/.config/mise/config.toml`）の `[tools]` から `sacty` の行を消し、`~/.local/share/sacty/mise`（`XDG_DATA_HOME` を指定しているなら `$XDG_DATA_HOME/sacty/mise`）を消します。
-- mise を使っていないとき：`~/.local/bin/sacty`（`SACTY_BIN_DIR` を指定したなら、その中の `sacty`）を消します。
+入口を消すときは、`~/.local/bin/sacty`（`SACTY_BIN_DIR` を指定したなら、その中の `sacty`）を消します。
 
 ## 起動する
 
