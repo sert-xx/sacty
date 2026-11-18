@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-18（UTC）
 - タスク: PBI-391
-- PR: なし
+- PR: #430
 - ブランチ: feat/pbi-391-build-cache-prune-rebuild-docs
 - 関係する ADR: [ビルドキャッシュの片付けの後はイメージを最初から作り直すと分かったうえで、期間の絞り込みの無い片付けを続ける](../adr/20261118-0820-keep-ageless-build-cache-prune-with-full-rebuild.md)
 
