@@ -1,5 +1,5 @@
 import { readSync } from "node:fs";
-import { REDACTED, redact } from "./agents/redact.js";
+import { REDACTED } from "./agents/redact.js";
 
 /**
  * バイトの範囲の読み取り（PBI-395）。成果物の本文・セッションログを、UTF-8 のバイトの位置と量で区切って返す。
@@ -72,83 +72,173 @@ export function concatSource(a: ByteSource, b: ByteSource): ByteSource {
   };
 }
 
+type Spans = [number, number][];
+
+/** 伏せる値の形を、空でない重複のないバイト列にする。 */
+export function toNeedles(forms: readonly string[]): Buffer[] {
+  return [...new Set(forms.filter((f) => f.length > 0))].map((f) => Buffer.from(f, "utf8"));
+}
+
+const maxLength = (needles: readonly Buffer[]) =>
+  needles.reduce((m, n) => Math.max(m, n.length), 0);
+
+/** 重なる区間・接する区間を1つにまとめる。 */
+function mergeSpans(spans: Spans): Spans {
+  const sorted = [...spans].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  const merged: Spans = [];
+  for (const span of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+    else merged.push([span[0], span[1]]);
+  }
+  return merged;
+}
+
+/** 値の全体の出現（重なる出現も含む）の区間。 */
+function fullSpans(buf: Buffer, needles: readonly Buffer[]): Spans {
+  const spans: Spans = [];
+  for (const needle of needles) {
+    for (let i = buf.indexOf(needle); i >= 0; i = buf.indexOf(needle, i + 1)) {
+      spans.push([i, i + needle.length]);
+    }
+  }
+  return spans;
+}
+
+const within = (a: number, b: number, fulls: Spans) => fulls.some(([x, y]) => x <= a && b <= y);
+
+/**
+ * [0, at) の末尾が、いずれかの値の先頭の一部（値の全体より短い）になっている長さ。
+ * 値の全体の出現に収まるバイトだけの一致は、一部とみなさない。
+ */
+function partialBefore(buf: Buffer, at: number, needles: readonly Buffer[], fulls: Spans): number {
+  let keep = 0;
+  for (const needle of needles) {
+    for (let k = Math.min(needle.length - 1, at); k > keep; k--) {
+      if (buf.subarray(at - k, at).equals(needle.subarray(0, k)) && !within(at - k, at, fulls)) {
+        keep = k;
+        break;
+      }
+    }
+  }
+  return keep;
+}
+
+/** [at, 終わり) の先頭が、いずれかの値の後ろの一部（値の全体より短い）になっている長さ。 */
+function partialAfter(buf: Buffer, at: number, needles: readonly Buffer[], fulls: Spans): number {
+  let keep = 0;
+  for (const needle of needles) {
+    for (let k = Math.min(needle.length - 1, buf.length - at); k > keep; k--) {
+      if (
+        buf.subarray(at, at + k).equals(needle.subarray(needle.length - k)) &&
+        !within(at, at + k, fulls)
+      ) {
+        keep = k;
+        break;
+      }
+    }
+  }
+  return keep;
+}
+
+/**
+ * 伏せる範囲を、バイトの区間として1か所で決める（読み取り・閉じるときの伏せ直し・実行中の終わりの3か所が使う）。
+ * 値の全体の出現と、継ぎ目で見つけた値の一部を区間にし、重なる・接する区間は1つにまとめる。
+ * 継ぎ目：cuts.end の位置の前で値の先頭の一部が終わりうる／cuts.start の位置の後で値の後ろの一部が始まりうる（値の続きが記録に無い）。
+ */
+function secretSpans(
+  buf: Buffer,
+  needles: readonly Buffer[],
+  cuts: { end?: readonly number[]; start?: readonly number[] } = {},
+): Spans {
+  if (needles.length === 0) return [];
+  const fulls = fullSpans(buf, needles);
+  const spans = [...fulls];
+  for (const p of cuts.end ?? []) {
+    if (p <= 0 || p > buf.length) continue;
+    const k = partialBefore(buf, p, needles, fulls);
+    if (k > 0) spans.push([p - k, p]);
+  }
+  for (const p of cuts.start ?? []) {
+    if (p < 0 || p >= buf.length) continue;
+    const k = partialAfter(buf, p, needles, fulls);
+    if (k > 0) spans.push([p, p + k]);
+  }
+  return mergeSpans(spans);
+}
+
+const REDACTED_BYTES = Buffer.from(REDACTED, "utf8");
+
+/** buf の [from, to) を、区間を [REDACTED] に置き換えて返す。区間は from..to の中に収まっているものとする。 */
+function replaceSpans(buf: Buffer, from: number, to: number, spans: Spans): Buffer {
+  const parts: Buffer[] = [];
+  let cursor = from;
+  for (const [a, b] of spans) {
+    if (b <= from || a >= to) continue;
+    parts.push(buf.subarray(cursor, Math.max(cursor, a)), REDACTED_BYTES);
+    cursor = Math.min(to, b);
+  }
+  parts.push(buf.subarray(cursor, to));
+  return Buffer.concat(parts);
+}
+
+/**
+ * ファイルの一部（継ぎ目の前の分・後の分・全体）を伏せる。edge.end：buf の終わりが継ぎ目（値の先頭の一部が終わりうる）、
+ * edge.start：buf の始まりが継ぎ目（値の後ろの一部が始まりうる）。
+ */
+export function redactBytes(
+  buf: Buffer,
+  forms: readonly string[],
+  edge: { start?: boolean; end?: boolean } = {},
+): Buffer {
+  const needles = toNeedles(forms);
+  const spans = secretSpans(buf, needles, {
+    end: edge.end ? [buf.length] : [],
+    start: edge.start ? [0] : [],
+  });
+  return spans.length === 0 ? buf : replaceSpans(buf, 0, buf.length, spans);
+}
+
 /**
  * 実行中のログの、読める終わりの決め方。終わりが、伏せる値の形のどれかの先頭の一部（値の全体より短い）で終わるときは、
- * その一部を終わりから外した元を返す（値の続きは、まだ届いていないかもしれないので、伏せられない）。
+ * その一部（と、つながる値の出現）を終わりから外した元を返す（値の続きは、まだ届いていないかもしれないので、伏せられない）。
  * totalBytes・next も、この終わりで数える。
  */
 export function withoutPartialSecretTail(source: ByteSource, forms: readonly string[]): ByteSource {
-  const needles = forms.filter((f) => f.length > 0).map((f) => Buffer.from(f, "utf8"));
-  const pad = needles.reduce((m, n) => Math.max(m, n.length), 0);
+  const needles = toNeedles(forms);
+  const pad = maxLength(needles);
   if (pad < 2 || source.total === 0) return source;
-  const from = Math.max(0, source.total - (pad - 1));
-  const tail = source.read(from, source.total);
-  let drop = 0;
-  for (const needle of needles) {
-    const most = Math.min(needle.length - 1, tail.length);
-    for (let k = most; k > drop; k--) {
-      if (tail.subarray(tail.length - k).equals(needle.subarray(0, k))) {
-        drop = k;
-        break;
-      }
+  // 外す所は、終わりにつながる区間の始まり。窓の始まりに近いと、窓の外から続く値を見落とすので、窓を広げて探し直す
+  let size = Math.min(source.total, 2 * pad);
+  let total: number | undefined;
+  for (;;) {
+    const from = source.total - size;
+    const tail = source.read(from, source.total);
+    const fulls = fullSpans(tail, needles);
+    if (partialBefore(tail, tail.length, needles, fulls) === 0) return source;
+    const spans = secretSpans(tail, needles, { end: [tail.length] });
+    const last = spans[spans.length - 1];
+    if (!last || last[1] !== tail.length) return source;
+    if (last[0] >= pad || from === 0) {
+      total = from + last[0];
+      break;
     }
+    if (size >= TAIL_SEARCH_MAX) {
+      total = 0; // 値が途切れなくつながる異常な並び。返せる所が決められないので、返さない
+      break;
+    }
+    size = Math.min(source.total, size * 2);
   }
-  if (drop === 0) return source;
-  const total = source.total - drop;
+  const readable = total;
   return {
-    total,
+    total: readable,
     ...(source.cuts ? { cuts: source.cuts } : {}),
-    read: (a, b) => source.read(a, Math.min(b, total)),
+    read: (a, b) => source.read(a, Math.min(b, readable)),
   };
 }
 
-/** buf の末尾の、いずれかの値の先頭の一部（値の全体より短い）になっている部分の長さ。 */
-export function partialAtEnd(buf: Buffer, needles: readonly Buffer[]): number {
-  let keep = 0;
-  for (const needle of needles) {
-    for (let k = Math.min(needle.length - 1, buf.length); k > keep; k--) {
-      if (buf.subarray(buf.length - k).equals(needle.subarray(0, k))) {
-        keep = k;
-        break;
-      }
-    }
-  }
-  return keep;
-}
-
-/** buf の先頭の、いずれかの値の後ろの一部（値の全体より短い）になっている部分の長さ。 */
-export function partialAtStart(buf: Buffer, needles: readonly Buffer[]): number {
-  let keep = 0;
-  for (const needle of needles) {
-    for (let k = Math.min(needle.length - 1, buf.length); k > keep; k--) {
-      if (buf.subarray(0, k).equals(needle.subarray(needle.length - k))) {
-        keep = k;
-        break;
-      }
-    }
-  }
-  return keep;
-}
-
-/**
- * 継ぎ目（値の続きが記録に無い所）をはさむ3つのうち、先頭の分・末尾の分を、値の一部を伏せて返す
- * （先頭の分は終わりの一部、末尾の分は始まりの一部を [REDACTED] にする。値の全体も伏せる）。
- */
-export function redactSeamEnd(buf: Buffer, forms: readonly string[]): Buffer {
-  const needles = forms.filter((f) => f.length > 0).map((f) => Buffer.from(f, "utf8"));
-  const pad = needles.reduce((m, n) => Math.max(m, n.length), 0);
-  const k = partialAtEnd(buf.subarray(Math.max(0, buf.length - pad)), needles);
-  const body = redact(buf.subarray(0, buf.length - k).toString("utf8"), forms);
-  return Buffer.from(k > 0 ? `${body}${REDACTED}` : body);
-}
-
-export function redactSeamStart(buf: Buffer, forms: readonly string[]): Buffer {
-  const needles = forms.filter((f) => f.length > 0).map((f) => Buffer.from(f, "utf8"));
-  const pad = needles.reduce((m, n) => Math.max(m, n.length), 0);
-  const k = partialAtStart(buf.subarray(0, pad), needles);
-  const body = redact(buf.subarray(k).toString("utf8"), forms);
-  return Buffer.from(k > 0 ? `${REDACTED}${body}` : body);
-}
+/** 読める終わりを探すときに、終わりから遡って読む量の上限（バイト）。 */
+const TAIL_SEARCH_MAX = 1 << 20;
 
 const isContinuation = (byte: number | undefined) => ((byte ?? 0) & 0xc0) === 0x80;
 
@@ -179,8 +269,8 @@ export function readByteRange(
   forms: readonly string[] = [],
 ): ByteRange {
   const total = source.total;
-  const needles = forms.filter((f) => f.length > 0).map((f) => Buffer.from(f, "utf8"));
-  const pad = needles.reduce((m, n) => Math.max(m, n.length), 0);
+  const needles = toNeedles(forms);
+  const pad = maxLength(needles);
   let start = request.fromEnd ? Math.max(0, total - request.max) : (request.offset ?? 0);
   if (start >= total)
     return { text: "", offset: total, next: total, totalBytes: total, clipped: false };
@@ -188,27 +278,11 @@ export function readByteRange(
   const lo = Math.max(0, start - pad);
   const win = source.read(lo, Math.min(total, end + pad + 4));
   const at = (position: number) => win[position - lo];
-  const spans: [number, number][] = [];
-  for (const needle of needles) {
-    for (let i = win.indexOf(needle); i >= 0; i = win.indexOf(needle, i + 1)) {
-      spans.push([lo + i, lo + i + needle.length]);
-    }
-  }
-  // 継ぎ目の前後に残る、値の一部（値の続きが記録に無いので、全体の一致では見つからない）も、値と同じように外側へ広げて伏せる
-  const partial: [number, number][] = [];
-  for (const p of source.cuts?.end ?? []) {
-    if (p <= lo || p > lo + win.length) continue;
-    const before = win.subarray(Math.max(0, p - lo - (pad - 1)), p - lo);
-    const keep = partialAtEnd(before, needles);
-    if (keep > 0) partial.push([p - keep, p]);
-  }
-  for (const p of source.cuts?.start ?? []) {
-    if (p < lo || p >= lo + win.length) continue;
-    const after = win.subarray(p - lo, Math.min(win.length, p - lo + (pad - 1)));
-    const keep = partialAtStart(after, needles);
-    if (keep > 0) partial.push([p, p + keep]);
-  }
-  spans.push(...partial);
+  // 値の全体の出現と、継ぎ目の前後に残る値の一部を、区間として1か所で決める（外側へ広げて伏せる）
+  const spans = secretSpans(win, needles, {
+    end: (source.cuts?.end ?? []).map((p) => p - lo),
+    start: (source.cuts?.start ?? []).map((p) => p - lo),
+  }).map(([a, b]): [number, number] => [lo + a, lo + b]);
   const widen = () => {
     for (let changed = true; changed; ) {
       changed = false;
@@ -229,15 +303,12 @@ export function readByteRange(
   end = start + completeLength(win.subarray(start - lo, end - lo));
   if (end <= start) end = Math.min(total, start + charLength(at(start) ?? 0));
   widen();
-  const pieces: string[] = [];
-  let cursor = start;
-  for (const [a, b] of partial.sort((x, y) => x[0] - y[0])) {
-    if (a < cursor || b > end) continue;
-    pieces.push(redact(win.subarray(cursor - lo, a - lo).toString("utf8"), forms), REDACTED);
-    cursor = b;
-  }
-  pieces.push(redact(win.subarray(cursor - lo, end - lo).toString("utf8"), forms));
-  const text = pieces.join("");
+  const text = replaceSpans(
+    win,
+    start - lo,
+    end - lo,
+    spans.map(([a, b]): [number, number] => [a - lo, b - lo]),
+  ).toString("utf8");
   return {
     text,
     offset: start,

@@ -9,6 +9,7 @@ import {
   readSync,
   realpathSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -30,8 +31,7 @@ import {
   fileSource,
   memorySource,
   readByteRange,
-  redactSeamEnd,
-  redactSeamStart,
+  redactBytes,
   withoutPartialSecretTail,
 } from "./byte-range.js";
 
@@ -447,6 +447,22 @@ function writeJsonAtomic(path: string, value: unknown): void {
   renameSync(temp, path);
 }
 
+/** 一時ファイルに書いて置き換える（途中で失敗しても、元のログが切れない）。 */
+function replaceFile(path: string, data: Buffer): void {
+  const temp = `${path}.tmp-${process.pid}`;
+  try {
+    writeFileSync(temp, data, { mode: 0o600 });
+    renameSync(temp, path);
+  } catch (error) {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // 一時ファイルが無ければ、そのまま
+    }
+    throw error;
+  }
+}
+
 /** 1回の実行のセッションログ。書き込みに失敗しても、実行は止めない（ログを残せなかったことをデーモンのログに出す）。 */
 export class SessionLog implements SessionLogSink {
   private readonly extra = new Set<string>();
@@ -620,17 +636,17 @@ export class SessionLog implements SessionLogSink {
           if (seams) {
             // 継ぎ目（先頭の終わり・末尾の始まり）は、伏せ直しで位置が動くので、3つに分けて伏せ、新しい位置を残す
             const buf = readFileSync(file.path);
-            const head = redactSeamEnd(buf.subarray(0, seams.end), forms);
+            const head = redactBytes(buf.subarray(0, seams.end), forms, { end: true });
             const mark = buf.subarray(seams.end, seams.start);
-            const tail = redactSeamStart(buf.subarray(seams.start), forms);
+            const tail = redactBytes(buf.subarray(seams.start), forms, { start: true });
             const out = Buffer.concat([head, mark, tail]);
-            if (!out.equals(buf)) writeFileSync(file.path, out, { mode: 0o600 });
+            if (!out.equals(buf)) replaceFile(file.path, out);
             file.seams = { end: head.length, start: head.length + mark.length };
             continue;
           }
-          const text = readFileSync(file.path, "utf8");
-          const redacted = redact(text, forms);
-          if (redacted !== text) writeFileSync(file.path, redacted, { mode: 0o600 });
+          const buf = readFileSync(file.path);
+          const out = redactBytes(buf, forms);
+          if (!out.equals(buf)) replaceFile(file.path, out);
         } catch (error) {
           rewritten = false;
           this.warn(error);

@@ -48,7 +48,8 @@ vi.mock("node:fs", async (original) => {
       return n;
     }) as typeof actual.readSync,
     writeFileSync: ((...args: Parameters<typeof actual.writeFileSync>) => {
-      if (probe.failWrite && String(args[0]).endsWith(".jsonl")) throw new Error("disk full");
+      if (probe.failWrite && /\.jsonl(\.tmp-\d+)?$/.test(String(args[0])))
+        throw new Error("disk full");
       if (probe.failMeta && String(args[0]).includes(".meta.json.tmp"))
         throw new Error("disk full");
       return actual.writeFileSync(...args);
@@ -608,6 +609,8 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
       warn.mockRestore();
     }
     expect(readFileSync(w.store.path(id, "failed", "events") ?? "", "utf8")).toContain(secret);
+    // 書き換えに失敗しても、元のログは切れず、一時ファイルも残らない
+    expect(readdirSync(join(w.runsDir, id)).filter((f) => f.includes(".tmp-"))).toEqual([]);
     expect(
       JSON.parse(readFileSync(w.store.metaPath(id, "failed") ?? "", "utf8")).redactPending,
     ).toBe(true);
@@ -821,6 +824,80 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
     expect(readFileSync(w.store.path(id, "plain", "stderr") ?? "", "utf8")).toContain("RETVAL");
     const text = (await read("plain", { offset: 0 })).text;
     expect(text).toContain("RETVAL"); // 値を知らなければ、そのまま返る（回帰の前提）
+    w.activity.close();
+  });
+
+  it("最初と最後の文字が同じ値・重なる2つの値・継ぎ目にちょうど接する値は、実行中も閉じた後も、読むときだけの値でも、値のどの一部も返さない", async () => {
+    const w = world({ events: { head: 300, tail: 400 }, stderr: { head: 40, tail: 60 } });
+    const id = w.task.id;
+    const { json } = await connect(mcpOver(w).api);
+    // A は最初と最後の文字が同じ（g）。C の先頭は A の末尾と重なる。B は末尾の始まりにちょうど接する
+    const A = "ghp_Q1w2E3r4T5y6U7i8g";
+    const C = "i8gXYZ";
+    const B = "g8i7U6y5T4r3E2w1Q_phg";
+    const values = [A, B, C];
+    const filler = "azedkm";
+    const pad = (n: number) =>
+      Array.from({ length: n }, (_, i) => filler[i % filler.length]).join("");
+    // 先頭の 40 バイトは「パディング19＋A」でちょうど A で終わる。続いて C の途中（i8gXY）を足してから省く
+    const write = (h: ReturnType<SessionLogStore["open"]>, add: boolean) => {
+      h.stderr(`${pad(17)}${A}XY`);
+      if (add) h.addSecrets(values);
+      h.stderr(pad(100));
+      h.stderr(`${B}${pad(60 - B.length)}`);
+    };
+    const check = async (runId: string, secrets?: string[]) => {
+      const read = async (extra: Record<string, unknown>) => {
+        if (!secrets) {
+          return (
+            await json<Log>("get_run_log", { task_id: id, run_id: runId, file: "stderr", ...extra })
+          ).text;
+        }
+        const r = w.store.readRange(id, runId, { file: "stderr", max: 32_000, ...extra }, secrets);
+        return r.kind === "ok" ? r.text : "";
+      };
+      for (const extra of [
+        { fromEnd: true, from_end: true },
+        { offset: 0 },
+        { offset: 0, max_bytes: 30, max: 30 },
+        { offset: 35, max_bytes: 12, max: 12 },
+        { fromEnd: true, from_end: true, max_bytes: 40, max: 40 },
+      ]) {
+        const text = (await read(extra)).replaceAll("[REDACTED]", "");
+        // 値の2文字以上の一部（先頭・末尾・途中）が1つでも出たら、値の一部が残っている
+        for (const value of values) {
+          for (let i = 0; i + 2 <= value.length; i++) {
+            expect(text, `${JSON.stringify(extra)} ${value.slice(i, i + 2)}`).not.toContain(
+              value.slice(i, i + 2),
+            );
+          }
+        }
+      }
+      // 値の全体も、どこにも出ない
+      const all = await read({ offset: 0 });
+      expect(all).toContain("[REDACTED]");
+    };
+    // 実行中（値を足した後）
+    const live = w.store.open(info(id, "live"), () => []);
+    write(live, true);
+    expect(
+      (await json<Log>("get_run_log", { task_id: id, run_id: "live", file: "stderr" })).running,
+    ).toBe(true);
+    await check("live");
+    // 閉じた後（デーモンは値を持たない。ファイルの継ぎ目も伏せ直してある）
+    const closed = w.store.open(info(id, "closed"), () => []);
+    write(closed, true);
+    closed.close(done);
+    expect(readFileSync(w.store.path(id, "closed", "stderr") ?? "", "utf8")).not.toMatch(
+      /ghp_|Q1w|XYZ|i8g|w1Q/,
+    );
+    await check("closed");
+    // 値を足さずに閉じた実行を、読むときだけの値（プロジェクトの設定など）で読む
+    const plain = w.store.open(info(id, "plain"), () => []);
+    write(plain, false);
+    plain.close(done);
+    expect(readFileSync(w.store.path(id, "plain", "stderr") ?? "", "utf8")).toContain("ghp_");
+    await check("plain", values);
     w.activity.close();
   });
 
