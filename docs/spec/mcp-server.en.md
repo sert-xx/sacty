@@ -7,7 +7,7 @@ It runs over standard input and output (stdio) and calls the same daemon API as 
 It follows the 2026-07-28 revision of the MCP specification and also accepts clients of earlier revisions (up to 2025-11-25) that open with `initialize`.
 It has five tools: listing and searching tasks (`list_tasks`), task details (`get_task`), re-reviewing a PR review task (`rereview_task`), listing projects (`list_projects`), and creating a task (`create_task`).
 
-Related ADRs: [The MCP server that operates the running sacty is run by the CLI over stdio](../adr/20261118-0936-task-mcp-server-over-stdio.md), [The CLI calls the running daemon's API through the connection file that sacty up writes](../adr/20261014-0701-cli-daemon-connection-file.md)
+Related ADRs: [The MCP server that operates the running sacty is run by the CLI over stdio](../adr/20261118-0936-task-mcp-server-over-stdio.md), [The CLI calls the running daemon's API through the connection file that sacty up writes](../adr/20261014-0701-cli-daemon-connection-file.md), [The MCP create-task tool sends the same request as the web UI's defaults and reports that a task may have been created when no result arrives](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)
 
 ## Startup and connection
 
@@ -120,7 +120,7 @@ Creates a task in a given project from a title and a description.
   The record (`TaskCreated`, with actor `person` and `start: "sacty"`) and how the steps start (the orchestrator chooses the approach) are the same as in the web UI.
 - Once created, it returns a message and the [task summary](#task-summary) of the new task (including its ID and the web UI URL). It does not wait for the steps to finish. The returned ID can be passed straight to `get_task`.
 - When it cannot create the task, it returns the reason and creates nothing.
-  - A title that is empty after trimming, a title that is too long, and a description that is too long are refused before the API is called, with the same check as the web UI (`CreateTaskInput`; lengths are counted after trimming, and the argument schema does not check lengths).
+  - A title that is empty after trimming, a title that is too long, and a description that is too long are refused before the API is called, with the same check as the web UI (`CreateTaskInput`; lengths are counted after trimming, and the argument schema only checks that `title` and `project_id` are non-empty; the upper limits and emptiness after trimming are checked by `CreateTaskInput`).
   - A missing or deleted project is refused by the daemon with `project.notFound` (409). The reason is "Project not found." (in Japanese).
   - For the daemon's `invalid_input` (400), it returns the messages in `issues` rendered in Japanese (the same applies when a daemon of an earlier version refuses the input).
 - When the result cannot be received after calling the create API (a timeout, a dropped connection, an unreadable body, or a 5xx from the daemon), it answers with that reason followed by a note that the task may have been created and to check with `list_tasks` (the title in `query`) before calling again (the daemon may have recorded it before the response failed to arrive; the create API has no mechanism to prevent a duplicate). When the daemon refuses in its response (`DaemonRefusal`, other than a 5xx), when authentication fails (401), when the connection is refused, and when it fails before calling (no `daemon.json`), nothing was processed, so only the reason is returned.
