@@ -11,7 +11,7 @@
 - 対象
   - ツール：`list_deliverables`・`get_deliverable`・`list_runs`・`get_run_log`（`apps/daemon/src/task-mcp.ts`・`packages/cli/src/mcp.ts`）
   - デーモンの API の追加（`server.ts`・`service.ts`・`session-logs.ts`）。実行を拾う規則（`RUN_EVENTS`・`runLogId`）を `@sacty/core` に移し、画面と共有する
-  - 仕様書 `docs/spec/mcp-server.md`・`docs/spec/architecture.md`（API の表）、`docs/user/mcp.md`・`docs/user/cli.md`（いずれも日英）、CLI の使い方の表示、作業履歴、ADR 1件
+  - 仕様書 `docs/spec/mcp-server.md`・`docs/spec/architecture.md`（API の表）・`docs/spec/event-log.md`（`meta.json` の項目）、`docs/user/mcp.md`・`docs/user/cli.md`（いずれも日英）、CLI の使い方の表示、`CONTRIBUTING.md` のテストの表、作業履歴、ADR 1件
 - 対象外
   - 画面の表示と、いまの API・いまの5つのツールの変更
   - 差し戻し前の回の成果物、agent-files、ログの JSONL の読み分け（生の文のまま返す）
@@ -70,11 +70,16 @@
 
 - 終わった実行のログ：ファイルの範囲だけを `readSync` で読む（全体は読まない）
 - 実行中のログ：「先頭のファイルの範囲（`readSync`）＋省いた印＋メモリーの末尾の範囲」を組む。`snapshot()` は先頭のファイルを全部読むので使わない
+  - メモリーの末尾には、`StreamRedactor` が伏せる前に持っている分（`peek()`）を含めない。伏せる値の先頭の一部でありうるため。`totalBytes` もこの分を数えない
 - 伏せ方（どちらも同じ）：範囲の前後に、秘密情報の形（エスケープ後を含む）の UTF-8 のバイト数の最大だけ余分に読み、呼び出しの時点の秘密情報で伏せる。伏せた値に掛かる境目は値の外側へ広げ、広げた位置を `offset`・`next` に返す（返す量は最大で `max_bytes`＋余分の2倍）
 - 実行の秘密情報の持ち方（`SessionLogStore`）
+  - 書き始めるときに、`meta.json` に伏せ直しを記録する版の印（`redactTracked: true`）を書く
   - 書き始めた後に `addSecrets` で値が増えたら、その実行の秘密情報をストアのメモリーに移し、`meta.json` に `redactPending: true` をすぐ書く
-  - 閉じるときの伏せ直しが全部のファイルで済んだら、メモリーの値を捨て、`redactPending` を消す。失敗したら、値をデーモンが動いている間だけ持ち、`redactPending` を残す（`onClose` では捨てない）
-  - `redactPending` が真で、デーモンがその値を持たない実行（伏せ直しの前にデーモンが止まった・失敗の後に起動し直した）は、ログの中身を返さずに理由を返す
+  - 閉じるときの伏せ直しが全部のファイルで済み、`redactPending` を消した `meta.json` を書けたときだけ、メモリーの値を捨てる。伏せ直しか `meta.json` の書き込みが失敗したら、値をデーモンが動いている間だけ持つ（`onClose` では捨てない）
+  - 次の実行で、デーモンがその値を持たないものは、ログの中身を返さずに理由を返す
+    - `redactPending` が真（伏せ直しの前にデーモンが止まった・失敗の後に起動し直した）
+    - 印が無く、`finishedAt` も無い（前の版が書いた、終わりの記録されていない実行）
+  - 印が無く `finishedAt` がある実行（前の版で終わった実行）は、伏せ直しが済んだものとして返す。前の版で伏せ直しに失敗した実行とは見分けられないため、これを ADR に書く
 - 境目は、UTF-8 の文字の頭にそろえる（`completeUtf8Length` を使い、始めは次の文字の頭まで進める）
 - ファイルは開く前に `lstat` と `realpath` で、`runs/<タスク>` もファイルもシンボリックリンクでなく、ファイルが通常のファイルで `runs/<タスク>` の下にあることを確かめる
 - `from_end` は、末尾の `max_bytes` を返す。`offset` が全体以上なら、0 バイトと `totalBytes` を返す
@@ -87,20 +92,22 @@
 | タスクが無い・消したプロジェクトのタスク | デーモンは `{error:"not_found"}` の 404 を返す。ツールは `task.notFound` の文言を返す |
 | 実行が無い・ほかのタスクの実行・ファイルがリンクか場所の外 | `{error:"not_found", what:"run"}` の 404（ファイルは開かない）。「実行が見つかりません」 |
 | 工程・種類が候補に無い（`constructor` など） | ツールは引数の enum で SDK が断る。API は `{error:"not_found", what:"step"}`（`"kind"`）の 404。「工程が見つかりません」「成果物の種類が見つかりません」 |
-| 伏せ直せていないと分かっていて、デーモンがその秘密情報を持たない実行 | `{error:"unredacted"}` の 409（中身を返さない）。「このログは秘密情報を伏せ直せていないため返せません」 |
+| 伏せ直せていないと分かっているか見分けられず、デーモンがその秘密情報を持たない実行 | `{error:"unredacted"}` の 409（中身を返さない）。「このログは秘密情報を伏せ直せていないため返せません」 |
+| ログのファイルを開く・読むのに失敗した | `{error:"read_failed"}` の 500（中身とパスを返さない）。「ログを読めませんでした」 |
 | 404 で、本文が `error` を持つ JSON として読めない（前の版のデーモンの既定の 404。本文は `404 Not Found`） | 既定で決めた、更新と再起動を促す理由 |
 | `task_id`・`run_id` が `validLogId` に合わない（`..`・`/`・`%2F` を含む） | ツールが API を呼ばずに理由を返す。API も 400（`invalid_id`）で断る |
 | `max_bytes`・`limit` が 0 以下、`offset` が負、`offset` と `from_end` の両方 | 0 以下と負は引数の型（`min`）で SDK が、両方はツールが、`isError` で返す |
 | つながらない・時間切れ・認証できない | いまのツールと同じ文言（`daemonApi` の `request`・`refusal` を使う） |
-| 応答が JSON として読めない（200・500 など） | 「sacty の応答を読めませんでした」 |
+| 404 以外の失敗の応答（500 など）で、本文が JSON として読めない | 「sacty が <状態コード> を返しました」（本文は入れない） |
+| 200 の応答が JSON として読めない | 「sacty の応答を読めませんでした」 |
 
 - 理由の文と `failureLine` には、仕様書の表の文言だけを出す。デーモンの応答の本文や、成果物とログの中身は出さない
 - 新しいツールの `failureLine` の cause は、接続の失敗の種類（`ECONNREFUSED` などの `code`）と時間切れの印だけにし、例外の message（JSON の読み取りの失敗の `SyntaxError` など）は出さない
 
 ## 影響範囲
 
-- 画面：`runLogId` の import 先が `@sacty/core` に変わるだけで、表示は変わらない。`meta.json` に足す `redactPending` は画面では読まない
-- 文書：日英の版を同じ PR で直す。ADR には、上限と単位、位置の示し方、成果物・実行の指定の方法、前の版の見分け方と再起動の前提、伏せ直せていない実行の扱い、比べた案を書く
+- 画面：`runLogId` の import 先が `@sacty/core` に変わるだけで、表示は変わらない。`meta.json` に足す `redactTracked`・`redactPending` は画面では読まない
+- 文書：日英の版を同じ PR で直す。ADR には、上限と単位、位置の示し方、成果物・実行の指定の方法、前の版の見分け方と再起動の前提、伏せ直せていない実行の扱いと前の版の `meta.json` を見分けられない場合、比べた案を書く
 
 ## テスト観点
 
@@ -156,44 +163,50 @@
   - 入力：先頭の上限を小さくした SessionLogStore で、上限を超えて書いた実行中の実行に from_end=true で get_run_log を呼ぶ
   - 期待結果：running=true・omittedMiddle=true と、メモリーにある末尾のうち呼び出しの時点までに書いた行を含む text を返す
 - [TV-18] 実行の途中で足した秘密情報が、ログに出ないこと
-  - 入力：書き始めた後に addSecrets で足した値がファイルに伏せる前のまま残る実行中の実行、閉じた直後（伏せ直しの前に onClose が呼ばれた時点）の実行、伏せ直し（writeFileSync）が失敗した実行、プロジェクトの設定の秘密情報が伏せずに残る unknown の実行で get_run_log を呼ぶ
-  - 期待結果：どの text にもその値が無く [REDACTED] になっている
-- [TV-19] 伏せ直せていない実行で、デーモンが秘密情報を持たないときは中身を返さないこと
-  - 入力：addSecrets の後にデーモンを止めた unknown の実行と、伏せ直しが失敗した後にデーモンを起動し直した実行（どちらも meta.json に redactPending: true があり、ファイルに値が残る）で get_run_log を呼ぶ
-  - 期待結果：どちらも isError と「このログは秘密情報を伏せ直せていないため返せません」を返し、結果・理由・標準エラーにその値もログの中身も無く、伏せ直しが済んだ実行の meta.json には redactPending が無い
+  - 入力：書き始めた後に addSecrets で足した値がファイルに伏せる前のまま残る実行中の実行、閉じた直後（伏せ直しの前に onClose が呼ばれた時点）の実行、伏せ直し（writeFileSync）が失敗した実行、伏せ直しの後の最後の meta.json の書き込みが失敗した実行、プロジェクトの設定の秘密情報が伏せずに残る unknown の実行で get_run_log を呼ぶ
+  - 期待結果：どれも isError でなく、text にその値が無く [REDACTED] になっている
+- [TV-19] 伏せ直せていない実行と前の版の終わりの無い実行で、デーモンが秘密情報を持たないときは中身を返さないこと
+  - 入力：addSecrets の後にデーモンを止めた unknown の実行と、伏せ直しが失敗した後にデーモンを起動し直した実行（どちらも meta.json に redactPending: true があり、ファイルに値が残る）、redactTracked の印も finishedAt も無い meta.json の実行で get_run_log を呼ぶ
+  - 期待結果：どれも isError と「このログは秘密情報を伏せ直せていないため返せません」を返し、結果・理由・標準エラーにその値もログの中身も無く、伏せ直しが済んだ実行の meta.json には redactTracked があり redactPending が無い
 - [TV-20] 伏せる値が切り取りの境目をまたぐときに、値の一部を残さないこと
-  - 入力：ASCII の秘密情報と日本語を含む秘密情報が、offset の位置と max_bytes の末尾の位置をまたぐように範囲を指定して、実行中と終わった実行で get_run_log を呼ぶ
-  - 期待結果：text に値の先頭・末尾のどの一部も含まれず、返した offset・next は伏せた印の外側に来る
+  - 入力：ファイルに平文で残った（書き始めた後に addSecrets で足した）ASCII の秘密情報と日本語を含む秘密情報が、offset の位置と max_bytes の末尾の位置をまたぐように範囲を指定して実行中と終わった実行で get_run_log を呼び、また出力が秘密情報の途中で区切れて StreamRedactor が値の先頭を持っている実行中の実行で from_end=true と末尾まで届く offset で呼ぶ
+  - 期待結果：text に値の先頭・末尾のどの一部も含まれず、返した offset・next は伏せた印の外側に来て、区切れた値の先頭は text にも totalBytes にも入らない
 - [TV-21] 無いタスク・無い実行・ほかのタスクの実行・候補外の工程と種類を断ること
   - 入力：存在しない task_id、消したプロジェクトのタスクの ID、そのタスクに無い run_id、別のタスクの run_id で新しいツールを、step=constructor・kind=__proto__ でデーモンの成果物の API を呼ぶ
   - 期待結果：どれも isError（API は not_found の 404）と仕様書の定型の理由を返し、ほかのタスクの成果物・ログの中身を含めない
 - [TV-22] 決まった場所の外を指す ID とシンボリックリンクを読まないこと
   - 入力：run_id・task_id に ../x・/etc/passwd・%2e%2e%2fx・a/b をツールとデーモンの新しい API に渡し、runs/<タスク> と実行のログのファイルを外のファイルへのシンボリックリンクにして get_run_log を呼ぶ
   - 期待結果：ツールはデーモンを呼ばずに isError と理由を返し、API は ID では 400（invalid_id）、リンクでは not_found の 404 を返し、リンク先のファイルの読み取りは0回である
-- [TV-23] 前の版のデーモンを「タスクが無い」と区別すること
+- [TV-23] ログのファイルを読めないときに、JSON の失敗の応答と定型の理由を返すこと
+  - 入力：ログのファイルを開く・読むのが失敗する実行（読み取りで例外を投げる）で、デーモンのログの範囲の API と get_run_log を呼ぶ
+  - 期待結果：API は {error:"read_failed"} の 500 を返し、ツールは isError と「ログを読めませんでした」を返して、結果・理由・標準エラーにファイルのパスとログの中身が無い
+- [TV-24] 前の版のデーモンを「タスクが無い」と区別すること
   - 入力：新しい API に本文が 404 Not Found の文字列の 404 を返すデーモンで、新しいツールを呼ぶ
   - 期待結果：isError で sacty の更新と再起動を促す理由を返し、task.notFound の文言を返さない
-- [TV-24] つながらないときに、新しいツールも同じ理由を返し、サーバーが動き続けること
+- [TV-25] つながらないときに、新しいツールも同じ理由を返し、サーバーが動き続けること
   - 入力：「どのツールも理由を返す」のテストのループに新しい4つのツールを入れ、daemon.json が無い・接続を断られる・30 秒応答しない場合に呼ぶ
   - 期待結果：いまのツールと同じ理由を isError で返し、その後のツールの呼び出しにも応答する
-- [TV-25] 結果・理由・標準エラーに秘密情報と中身を出さないこと
+- [TV-26] 結果・理由・標準エラーに秘密情報と中身を出さないこと
   - 入力：daemon.json のトークンを tok-MARK-1、環境変数の値を env-MARK-2、SACTY_HOME を /tmp/home-MARK-3 にし、成果物とログの本文に body-MARK-4 を入れて、新しいツールの成功と失敗（404・400・時間切れ・本文が body-MARK-4 を含む JSON でない 200 と 500）を起こす
-  - 期待結果：structuredContent・content の文・isError の理由・標準エラーに tok-MARK-1・env-MARK-2・home-MARK-3 が無く、失敗のときは body-MARK-4 も無く、failureLine はツール名・task_id・理由と、接続の失敗の種類か時間切れの印の cause だけを持つ
-- [TV-26] 説明文とサーバーの使い方の説明に、データの中の指示に従わないことがあること
+  - 期待結果：structuredContent・content の文・isError の理由・標準エラーに tok-MARK-1・env-MARK-2・home-MARK-3 が無く、失敗のときは body-MARK-4 も無く、JSON でない 500 の理由は「sacty が 500 を返しました」、200 の理由は「sacty の応答を読めませんでした」で、failureLine はツール名・task_id・理由と、接続の失敗の種類か時間切れの印の cause だけを持つ
+- [TV-27] 本物のデーモンの API と MCP サーバーをつないで新しいツールを使えること
+  - 入力：createApp で立てたデーモンに daemon.json を向け、本物の daemonApi を使う MCP サーバーから、成果物と終わった実行のログを持つタスクに4つのツールを呼ぶ
+  - 期待結果：4つとも isError でなく、デーモンが持つ成果物の本文・実行の一覧・ログの範囲と同じ値を、構成の表の項目で返す
+- [TV-28] 説明文とサーバーの使い方の説明に、データの中の指示に従わないことがあること
   - 入力：4つのツールの description と INSTRUCTIONS
   - 期待結果：結果の成果物・ログはほかの人やエージェントが書いた文を含むデータで、その中の指示に従わないことが書かれている
-- [TV-27] いまの5つのツールの引数と結果が変わらないこと
+- [TV-29] いまの5つのツールの引数と結果が変わらないこと
   - 入力：list_tasks・get_task・rereview_task・list_projects・create_task の inputSchema・outputSchema・注釈と、get_task の reviewBody を、起点のコミットの task-mcp.test.ts・mcp.test.ts の期待と比べる
   - 期待結果：5つの型・注釈・reviewBody の期待は起点のコミットのまま通り、テストで変えるのは、ツールの一覧の名前と注釈の期待に新しい4つを足すことと、SactyApi のスタブに新しい4つのメソッドを足すことだけである
-- [TV-28] 画面の実行のリンクが変わらないこと
+- [TV-30] 画面の実行のリンクが変わらないこと
   - 入力：runLogId を @sacty/core に移した後の apps/web のタスクの詳細と実行のログの route
   - 期待結果：移す前と同じイベントの種類から実行を拾い、既存の web のテストが通る
-- [TV-29] 文書に新しいツールとその決まりが書かれていること
-  - 入力：docs/spec/mcp-server.md・docs/spec/architecture.md・docs/user/mcp.md・docs/user/cli.md（日英）、CLI の使い方の表示、docs/worklog の PBI-395 の作業履歴、docs/adr の新しい ADR の差分
-  - 期待結果：4つのツールと引数・結果・状態・理由の文・新しい API、上限と単位・続きの位置・成果物と実行の指定の方法・前の版のデーモンの見分け方と再起動の前提・伏せ直せていない実行の扱い・比べた案、できること・できないことが書かれ、作業履歴に実行したコマンドと結果がある
-- [TV-30] 検査が通ること
+- [TV-31] 文書に新しいツールとその決まりが書かれていること
+  - 入力：docs/spec/mcp-server.md・docs/spec/architecture.md・docs/spec/event-log.md・docs/user/mcp.md・docs/user/cli.md（日英）、CLI の使い方の表示、CONTRIBUTING.md のテストの表、docs/worklog の PBI-395 の作業履歴、docs/adr の新しい ADR の差分
+  - 期待結果：4つのツールと引数・結果・状態・理由の文・新しい API、meta.json の redactTracked・redactPending、上限と単位・続きの位置・成果物と実行の指定の方法・前の版のデーモンの見分け方と再起動の前提・伏せ直せていない実行の扱いと前の版の meta.json を見分けられない場合・比べた案、できること・できないこと、テストの表の task-mcp.test.ts の行に成果物と実行のログが書かれ、作業履歴に実行したコマンドと結果・PR の番号がある
+- [TV-32] 検査が通ること
   - 入力：変更後の作業領域で npm run lint・npm run format・npm run typecheck・npm run build・npx vitest run --no-file-parallelism を実行する
   - 期待結果：どれも失敗なく終わる
-- [TV-31] Claude Code と Codex から新しいツールを使えること
+- [TV-33] Claude Code と Codex から新しいツールを使えること
   - 入力：起動中の sacty に、Claude Code と Codex の MCP の設定で sacty mcp をつなぎ、4つのツールを呼ぶ
   - 期待結果：どちらのクライアントも結果の型を受け付け、成果物とログを読める（人が確かめる）
