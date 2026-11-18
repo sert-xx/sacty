@@ -27,6 +27,12 @@
 - `apps/daemon/src/task-mcp.test.ts`：本物のサービスと API に対して、作る（画面と同じ要求で作ったタスクと同じ項目・同じ記録、返った ID での `get_task`）、
   プロジェクトの一覧（消したプロジェクトが出ない）、断られる（無い・消したプロジェクト、空の題、長すぎる題・説明で、何も作らない）、結果を受け取れない（標準エラーに題・説明を出さない）。
 - `packages/cli/src/mcp.test.ts`：送る要求（`repo: null`）、断られた理由、時間切れ・切断・読めない本文のときの作られた可能性、送る前の失敗。401・接続拒否（理由だけ）と 5xx（案内を付ける）。失敗の扱いのテストに `list_projects`・`create_task` を足した。上限ちょうどと、前後の空白で生の長さが上限を超える題・説明。
+- 実行したコマンドと結果（この直しの後のコードで実行）：
+  - `npm run lint`：通った。
+  - `npm run format`：通った。
+  - `npm run typecheck`：通った。
+  - `npx vitest run --no-file-parallelism`：263 ファイル、5188 件が通り、14 件はスキップ。
+  - `npm run build`：実行していない（CI にも無いコマンドのため）。
 - 実機の確認（`sacty up` と `sacty mcp`）と、Claude Code・Codex の実物での確認はしていない。
 
 ## レビューの指摘と対応
