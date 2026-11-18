@@ -6,7 +6,7 @@
 
 Agents run in containers created from a container image. Tests also run inside agent containers.
 
-First, build the image with `npx sacty image build` ([CLI](cli.en.md#sacty-image-build)). Agents run in the built image (`image` in `config.yaml`; default `sacty-agent:1.27.0`). After you update sacty, rebuild the images.
+First, build the image with `npx sacty image build` ([CLI](cli.en.md#sacty-image-build)). Agents run in the built image (`image` in `config.yaml`; default `sacty-agent:1.28.0`). After you update sacty, rebuild the images.
 
 You need additional settings in the following cases. If none of them applies to you, you do not need any additional settings.
 
@@ -101,7 +101,7 @@ In environments where Docker Hub or the public npm registry cannot be used, buil
 If you omit `image_build`, the image is built from `node:26-bookworm-slim` on Docker Hub and the public npm registry.
 
 ```yaml
-image: registry.example.com/sacty-agent:1.27.0
+image: registry.example.com/sacty-agent:1.28.0
 image_build:
   base_image: registry.example.com/library/node:26-bookworm-slim   # must have Node.js 18 or later and a node user
   npm_registry: https://npm.example.com/repository/npm/
@@ -170,7 +170,7 @@ npx sacty image build java17     # build by name (default is the default image)
 | (name) | Up to 40 characters of lowercase letters, digits, `_`, and `-`, starting with a lowercase letter or digit. `default` cannot be used | None |
 | `description` | The description the Orchestrator reads when choosing (up to 200 characters). Required | None |
 | `base_image` | The base image. Required | None |
-| `image` | The name of the image to build | `sacty-agent-<name>:1.27.0` |
+| `image` | The name of the image to build | `sacty-agent-<name>:1.28.0` |
 | `node_image` | The image to copy Node.js from (when the base image does not have Node.js 18 or later and npm) | `image_build.base_image`, or `node:26-bookworm-slim` if absent |
 | `env` | Environment variables for the agent containers | None |
 | `maven_mirror` | Where Maven and Gradle fetch from | None |
