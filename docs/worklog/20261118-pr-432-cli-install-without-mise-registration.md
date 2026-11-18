@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-18（UTC）
 - タスク: なし
-- PR: なし
+- PR: #432
 - ブランチ: claude/magical-meitner-j348hd
 - 関係する ADR: [sacty コマンドの入口を mise に登録するのをやめ、いつも ~/.local/bin などに置く](../adr/20261118-1322-cli-install-without-mise-registration.md)
 
