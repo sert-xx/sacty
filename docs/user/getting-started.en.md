@@ -90,15 +90,16 @@ You can check whether the registration remains with `mise ls sacty` (if it remai
 - This command does not remove the mise registration.
   While the earlier version's launcher directory (`~/.local/share/sacty/mise`) exists, it tells you with `[sacty] 注意：` each time you run it.
 - So that it works the same until you remove it, it rewrites the earlier version's launcher to the same content as the new launcher.
+- Before removing it, check that `~/.local/bin` (or the location if you specified `SACTY_BIN_DIR`) is in your `PATH` (you can check with `echo "$PATH"`).
+  If you remove it while it is not, `sacty` is no longer found (if it is not, it also tells you with `[sacty] 注意：`).
+  If it is not, add `export PATH="$HOME/.local/bin:$PATH"` to your shell's settings file (`~/.zshrc` for zsh) and open a new shell.
 - To remove it, delete the following in this order.
   1. Remove the `sacty` line from `[tools]` in mise's user-wide settings (`~/.config/mise/config.toml` by mise's default; if you keep the settings elsewhere, the file that has the `sacty` line).
   2. Delete the mise registration (`~/.local/share/mise/installs/sacty` by mise's default; `$MISE_DATA_DIR/installs/sacty` if you set `MISE_DATA_DIR`, or `$XDG_DATA_HOME/mise/installs/sacty` if you set `XDG_DATA_HOME`).
      If you use shims, then run `mise reshim`.
   3. Delete `~/.local/share/sacty/mise` (or `$XDG_DATA_HOME/sacty/mise` if you set `XDG_DATA_HOME`).
-- Before removing it, check that `~/.local/bin` (or the location if you specified `SACTY_BIN_DIR`) is in your `PATH`.
-  If you remove it while it is not, `sacty` is no longer found (if it is not, it tells you with `[sacty] 注意：`).
 - After removing it, check that `mise ls sacty` shows no `sacty` line, and that the warning no longer appears when you run `npm run cli:install` again.
-  If the `sacty` line remains, review steps 1 and 2; if the warning remains, review step 3.
+  If the `sacty` line remains, review steps 1 and 2. If the warning remains, follow what the warning says.
 
 ## Start
 

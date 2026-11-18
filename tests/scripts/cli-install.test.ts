@@ -119,32 +119,31 @@ describe("checkPath", () => {
     ).toEqual({ warnings: [], first: legacy });
   });
 
-  it("前の版の入口・登録が先に見つかっていても、置き場所が PATH に無ければ、外す前に PATH に足すよう知らせる", () => {
+  it("置いた入口が先に見つからず、置き場所が PATH に無ければ、先に何が見つかっていても、PATH に足すことだけを知らせる", () => {
     const legacy = "/home/u/.local/share/sacty/mise/1.26.0/bin/sacty";
     const resolveReal = (p: string) => p;
-    const rewritten = checkPath({
-      launcher,
-      onPath: legacy,
-      sameAs: [legacy],
-      legacy: true,
-      dirInPath: false,
-      resolveReal,
-    });
-    expect(rewritten.first).toBe(legacy);
-    expect(rewritten.warnings).toHaveLength(1);
-    expect(rewritten.warnings[0]).toContain("/home/u/.local/bin が PATH にありません");
-    expect(rewritten.warnings[0]).toContain("外す前に、PATH に足してください");
-    const shim = checkPath({
-      launcher,
-      onPath: "/home/u/.local/share/mise/shims/sacty",
-      sameAs: [legacy],
-      legacy: true,
-      dirInPath: false,
-      resolveReal,
-    });
-    expect(shim.warnings).toHaveLength(1);
-    expect(shim.warnings[0]).toContain("/home/u/.local/bin を PATH に足してから");
-    expect(shim.warnings[0]).not.toContain("外すと、いま置いた入口が使われます");
+    const cases = [
+      { onPath: legacy, legacy: true },
+      { onPath: "/home/u/.local/share/mise/shims/sacty", legacy: true },
+      { onPath: "/mise/installs/node/20/bin/sacty", legacy: false },
+    ];
+    for (const { onPath, legacy: hasLegacy } of cases) {
+      const { warnings, first } = checkPath({
+        launcher,
+        onPath,
+        sameAs: [legacy],
+        legacy: hasLegacy,
+        dirInPath: false,
+        resolveReal,
+      });
+      expect(first).toBe(onPath === legacy ? legacy : undefined);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("/home/u/.local/bin が PATH にありません");
+      expect(warnings[0]).toContain(onPath);
+      expect(warnings[0]).toContain("足す前に");
+      expect(warnings[0]).not.toContain("そちらを消すか");
+      expect(warnings[0]).not.toContain("いま置いた入口が使われます");
+    }
   });
 
   it("dirOnPath は、置き場所が PATH に入っているかを返す", () => {
@@ -289,7 +288,7 @@ describe("前の版が mise に登録した入口", () => {
     expect(blocked.failed.map((f: { path: string }) => f.path)).toEqual([launcher]);
   });
 
-  it("注意は、登録が残っていれば、という形で手で外す手順（設定の行・mise の登録とシム・入口のディレクトリ）と、書き直した・書き直せなかった入口を知らせる", () => {
+  it("注意は、登録が残っていれば、という形で手で外すもの（設定の行・mise の登録とシム・入口のディレクトリ）と文書の場所、書き直した・書き直せなかった入口を知らせる", () => {
     const lines = legacyNotice({
       root: "/d/sacty/mise",
       updated: ["/d/sacty/mise/1.26.0/bin/sacty"],
@@ -298,10 +297,11 @@ describe("前の版が mise に登録した入口", () => {
     });
     expect(lines[0]).toContain("登録が残っていれば");
     expect(lines[0]).toContain("mise ls sacty");
-    expect(lines[0]).toContain("~/.config/mise/config.toml");
-    expect(lines[0]).toContain("~/.local/share/mise/installs/sacty");
+    expect(lines[0]).toContain("[tools] の sacty の行");
+    expect(lines[0]).toContain("installs/sacty");
     expect(lines[0]).toContain("mise reshim");
-    expect(lines[0]).toContain("/d/sacty/mise を消す");
+    expect(lines[0]).toContain("/d/sacty/mise です");
+    expect(lines[0]).toContain("docs/user/getting-started.md");
     expect(lines[1]).toContain("/d/sacty/mise/1.26.0/bin/sacty");
     expect(lines[2]).toContain("同じ中身なので、同じに動きます");
     expect(lines[3]).toContain("EACCES");
@@ -417,10 +417,11 @@ describe("main（入れる流れ）", () => {
     expect(readFileSync(legacyLauncher, "utf8")).toBe(readFileSync(launcher, "utf8"));
   });
 
-  it("前の版の入口が先に見つかり、置き場所が PATH に無いときは、登録を外す前に PATH に足すよう知らせる", () => {
+  it("前の版の入口が先に見つかり、置き場所が PATH に無いときは、消す前に PATH に足すよう知らせる", () => {
     const { run } = install({ legacy: true, legacyFirst: true, binOnPath: false });
     expect(run.status).toBe(0);
-    expect(run.stderr).toContain("外す前に、PATH に足してください");
+    expect(run.stderr).toContain("が PATH にありません");
+    expect(run.stderr).toContain("足す前に");
     expect(run.stderr).toContain("同じ中身なので、同じに動きます");
   });
 

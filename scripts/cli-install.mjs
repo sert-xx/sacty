@@ -96,12 +96,12 @@ export function dirOnPath(dir, pathValue = process.env.PATH ?? "", resolveReal =
 /**
  * 入れた後の確かめ。onPath（PATH で最初に見つかる sacty）が launcher（置いた入口）か。止めるべき誤りは無く、
  * 知らせることを warnings で返す（PATH の順は利用者の環境なので止めない）。
- * - sameAs（入口と同じ中身に書き直した、前の版の入口）が先に見つかるときは、同じに動くので注意にせず、その入口を first で
- *   返す（legacyNotice が知らせる）。
- * - legacy（前の版の入口のディレクトリがある）のときに、ほかの sacty が先に見つかったら、前の版の mise の登録（シムなど）
- *   かもしれないので、消すことだけを勧めない。
- * - 前の版の入口・登録が先に見つかっていても、置き場所が PATH に無ければ（dirInPath が false）、登録を外す前に PATH に
- *   足すよう知らせる（外すと、sacty が見つからなくなるため）。
+ * - 置いた入口が先に見つからず、置き場所が PATH に無ければ（dirInPath が false）、先に何が見つかっていても、PATH に
+ *   足すことだけを知らせる（足す前に、先に見つかるものを消すと、sacty が見つからなくなるため）。
+ * - 置き場所が PATH にあって、sameAs（入口と同じ中身に書き直した、前の版の入口）が先に見つかるときは、同じに動くので注意に
+ *   しない。その入口は first で返す（legacyNotice が知らせる）。
+ * - 置き場所が PATH にあって、ほかの sacty が先に見つかるときは、消すか PATH の順を変えるよう知らせる。legacy（前の版の
+ *   入口のディレクトリがある）なら、前の版の mise の登録（シムなど）かもしれないので、消すことだけを勧めない。
  */
 export function checkPath({
   launcher,
@@ -111,36 +111,30 @@ export function checkPath({
   dirInPath = true,
   resolveReal = real,
 }) {
-  const warnings = [];
   const dir = dirname(launcher);
-  if (!onPath) {
-    warnings.push(
-      `${dir} が PATH にありません。PATH に足すと、どのディレクトリでも sacty と打って使えます（SACTY_BIN_DIR で置き場所を変えられます）。`,
-    );
-    return { warnings, first: undefined };
-  }
-  if (resolveReal(onPath) === resolveReal(launcher)) return { warnings, first: undefined };
+  const add = `PATH に足すと、どのディレクトリでも sacty と打って使えます（SACTY_BIN_DIR で置き場所を変えられます）。`;
+  if (!onPath) return { warnings: [`${dir} が PATH にありません。${add}`], first: undefined };
+  if (resolveReal(onPath) === resolveReal(launcher)) return { warnings: [], first: undefined };
   const first = sameAs.find((same) => resolveReal(same) === resolveReal(onPath));
-  const fix = `そちらを消すか、PATH の順を変えてください（${dir} を前に置く）。`;
-  const head = `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。`;
-  if (first) {
-    if (!dirInPath) {
-      warnings.push(
-        `${dir} が PATH にありません。前の版の mise の登録を外すと、sacty が見つからなくなります。外す前に、PATH に足してください（SACTY_BIN_DIR で置き場所を変えられます）。`,
-      );
-    }
-  } else if (!legacy) {
-    warnings.push(`${head}${fix}`);
-  } else if (dirInPath) {
-    warnings.push(
-      `${head}前の版の mise の登録（mise のシムを含む）なら、前の版の入口についての注意の手順で外すと、いま置いた入口が使われます。そうでなければ、${fix}`,
-    );
-  } else {
-    warnings.push(
-      `${head}${dir} も PATH にありません。前の版の mise の登録（mise のシムを含む）なら、${dir} を PATH に足してから、前の版の入口についての注意の手順で外してください（足さずに外すと、sacty が見つからなくなります）。そうでなければ、${fix}`,
-    );
+  if (!dirInPath) {
+    return {
+      warnings: [
+        `${dir} が PATH にありません（いま PATH で見つかる sacty は ${onPath} で、いま置いた入口ではありません）。${add}足す前に、いま見つかる sacty や前の版の mise の登録を消すと、sacty が見つからなくなります。`,
+      ],
+      first,
+    };
   }
-  return { warnings, first };
+  if (first) return { warnings: [], first };
+  const head = `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。`;
+  const fix = `そちらを消すか、PATH の順を変えてください（${dir} を前に置く）。`;
+  return {
+    warnings: [
+      legacy
+        ? `${head}前の版の mise の登録（mise のシムを含む）なら、前の版の入口についての注意に従って外すと、いま置いた入口が使われます。そうでなければ、${fix}`
+        : `${head}${fix}`,
+    ],
+    first,
+  };
 }
 
 /**
@@ -204,7 +198,7 @@ export function refreshLegacyLaunchers({ root, content, entry }) {
  */
 export function legacyNotice({ root, updated, failed, first }) {
   const lines = [
-    `前の版の入口のディレクトリ（${root}）があります。前の版は、mise を使っていると、入口を mise に登録していました（いまの版は登録しません）。登録が残っていれば（mise ls sacty に出ます）、次の順で、手で外してください：(1) mise の利用者全体の設定（~/.config/mise/config.toml）の [tools] から sacty の行を消す。(2) mise の登録（mise ls sacty で確かめる。mise の既定では ~/.local/share/mise/installs/sacty）を消す。シムを使っているなら、mise reshim を実行する。(3) ${root} を消す。`,
+    `前の版の入口のディレクトリ（${root}）があります。前の版は、mise を使っていると、入口を mise に登録していました（いまの版は登録しません）。登録が残っていれば（mise ls sacty に出ます）、手で外してください。外すものは、mise の利用者全体の設定の [tools] の sacty の行、mise の登録（installs/sacty。シムを使っているなら mise reshim も）、${root} です。場所と順は、sacty のリポジトリの docs/user/getting-started.md の「どのディレクトリでも sacty を使う」にあります。`,
   ];
   if (updated.length > 0) {
     lines.push(
