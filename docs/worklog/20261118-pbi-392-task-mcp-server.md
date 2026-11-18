@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-18（UTC）
 - タスク: PBI-392
-- PR: なし
+- PR: #431
 - ブランチ: feat/pbi-392-mcp-server
 - 関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かし、MCP の 2026-07-28 版に合わせる](../adr/20261118-0936-task-mcp-server-over-stdio.md)
 
@@ -62,4 +62,4 @@ PR（番号・URL）とブランチ名から、レビューのタスクを特定
 
 - `npm run lint`：指摘なし。`npm run typecheck`：通った。
 - `npx vitest run --no-file-parallelism`：Test Files 263 passed (263)、Tests 5173 passed | 1 skipped (5174)。
-- まっさらな複製（`git clone` → `npm ci` → `npm run build` → `sacty mcp` に `server/discover` を送る）：結果は PR の本文に書く。
+- まっさらな複製（`git clone` → `npm ci` → `npm run build` → `sacty mcp` に `server/discover` を送る）：`npm ci`・ビルドが通り、2026-07-28 の `server/discover` と、`initialize`（2025-11-25）の両方に答えた。
