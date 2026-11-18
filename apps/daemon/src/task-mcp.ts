@@ -488,16 +488,10 @@ const CreateTaskToolInput = z.object({
   project_id: z
     .string()
     .min(1)
-    .max(200)
     .describe("タスクを作るプロジェクトの ID（list_projects の結果の id）。"),
-  title: z
-    .string()
-    .min(1)
-    .max(TASK_TITLE_MAX)
-    .describe(`タスクの題（空にできない。最大 ${TASK_TITLE_MAX} 文字）。`),
+  title: z.string().min(1).describe(`タスクの題（空にできない。最大 ${TASK_TITLE_MAX} 文字）。`),
   body: z
     .string()
-    .max(TASK_BODY_MAX)
     .optional()
     .describe(`タスクの説明（してほしいこと。省略できる。最大 ${TASK_BODY_MAX} 文字）。`),
 });

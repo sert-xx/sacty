@@ -452,6 +452,14 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
         title: "説明なし",
       });
       expect(service.get(bare.task.id)?.task.body).toBe("");
+      // 上限ちょうど、前後の空白を除くと上限内の題・説明は、画面と同じく作れる
+      const edge = await json<{ task: TaskSummary }>("create_task", {
+        project_id: "default",
+        title: `  ${"あ".repeat(200)}\n`,
+        body: `${"い".repeat(10_000)}\n\n`,
+      });
+      expect(service.get(edge.task.id)?.task.title).toBe("あ".repeat(200));
+      expect(service.get(edge.task.id)?.task.body).toBe("い".repeat(10_000));
       activity.close();
     });
 
@@ -617,6 +625,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["list_tasks", {}],
       ["get_task", { task_id: "x" }],
       ["rereview_task", { task_id: "x" }],
+      ["list_projects", {}],
+      ["create_task", { project_id: "p", title: "題" }],
     ] as const) {
       expect(await call(name, args)).toEqual({
         isError: true,

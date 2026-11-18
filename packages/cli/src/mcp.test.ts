@@ -341,6 +341,21 @@ describe("sacty mcp のタスクの作成（PBI-394）", () => {
     const broken = await failure(async () => new Response("<html>", { status: 201 }));
     expect(broken?.message).toContain("デーモンの応答を読めませんでした");
     expect(broken?.message).toContain(uncertain);
+    // 5xx は、作られたかどうかが分からない
+    const server = await failure(async () => new Response("oops", { status: 500 }));
+    expect(server?.message).toContain("デーモンが 500 を返しました。");
+    expect(server?.message).toContain(uncertain);
+    // 認証できない・接続を断られた（要求が処理されていない）
+    const unauthorized = await failure(async () => new Response("no", { status: 401 }));
+    expect(unauthorized?.message).toContain("デーモンに認証できません");
+    expect(unauthorized?.message).not.toContain(uncertain);
+    const refused = await failure(async () => {
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+      });
+    });
+    expect(refused?.message).toContain("デーモンにつながりません");
+    expect(refused?.message).not.toContain(uncertain);
     // 接続先が無い（送っていない）
     const none = await failure(hung, mkdtempSync(join(tmpdir(), "sacty-mcp-none-")));
     expect(none?.message).toContain("起動中の sacty が見つかりません");

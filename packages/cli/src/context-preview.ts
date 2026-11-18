@@ -173,10 +173,12 @@ export async function daemonRequest(
     );
   }
   if (res.status === 401) {
-    throw new Error("デーモンに認証できません。`sacty up` で起動し直してください。");
+    throw new Error(DAEMON_AUTH_MESSAGE);
   }
   return res;
 }
+
+export const DAEMON_AUTH_MESSAGE = "デーモンに認証できません。`sacty up` で起動し直してください。";
 
 export const DAEMON_TIMEOUT_MESSAGE =
   "デーモンが時間内に応答しませんでした。`sacty up` の様子を確かめてから、もう一度試してください。";
