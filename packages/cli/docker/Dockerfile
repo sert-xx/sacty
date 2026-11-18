@@ -78,8 +78,10 @@ FROM base-${BASE_KIND}
 USER root
 
 # ビルドのキャッシュ（BuildKit の cache マウント。イメージには残らない）。apt-get が取得した .deb と、draw.io・
-# セキュリティの道具の取得物を置き、層のキャッシュが外れたとき（元のイメージを上げた・ビルドのキャッシュが消えた・
-# 言語ごとのイメージ）に取り直さない。中身は with-build-cache.sh を参照
+# セキュリティの道具の取得物を置き、層のキャッシュが外れたとき（元のイメージを上げた・言語ごとのイメージ）に
+# 取り直さない。ビルドキャッシュの片付け（docker builder prune -f。sacty image build の後と、デーモンの片付け）を
+# 挟むと、層のキャッシュに当たらなくなり、このマウントの記録も残らなかったので、取り直す（PBI-391）。
+# 中身は with-build-cache.sh を参照
 COPY --chmod=755 with-build-cache.sh /opt/sacty/lib/with-build-cache.sh
 
 # git が無ければ入れる（元のイメージに入っていれば、パッケージのミラーに届かない環境でも作れる）。

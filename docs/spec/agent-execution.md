@@ -303,6 +303,11 @@
     イメージの層はビルドキャッシュにも残るので、使っていないビルドキャッシュも `docker builder prune -f` で消す（`buildCachePruneArgs`）。
     期間（`--filter`）では絞らず、`--all` も付けない。
     対象は Docker 全体のビルドキャッシュで、sacty が作ったものに限らない。
+    この片付けの後のビルドは、層のキャッシュに1手順も当たらず、すべての手順を実行し直す。
+    いまあるイメージと共有している層の実体は残る（`docker system df` のビルドキャッシュの量は減らない）が、キャッシュとしては使われない。
+    片付けは、すべてのイメージを作り終えた後に1回走る（`imageBuild`）。そのため、`sacty image build` を続けて実行しても、毎回すべての手順を実行し直す。
+    片付けを挟まずに作ったビルドは、前のビルドの層のキャッシュに当たる。
+    キャッシュに当たる・当たらないは、Rancher Desktop・Docker 29.5.3・buildx v0.35.0・BuildKit v0.30.0 で確かめた動きで、ほかの版では未確認。
     デーモンも、使わなくなったコンテキストのイメージを片付けるときに、同じ引数で消す（[デーモンの起動と終了](daemon-lifecycle.md)の「コンテキストのイメージの作成」）。
     片付けに失敗しても、`sacty image build` は失敗にしない。
   - 元のイメージ（`BASE_IMAGE`）の既定は `node:26-bookworm-slim`。
@@ -324,12 +329,14 @@
   - secret の中身は BuildKit のキャッシュの判定に入らない。
     そのため、中身のハッシュ（`NPM_CONFIG_HASH`・`SACTY_SETUP_HASH`）を build-arg で渡し、変えたときに作り直されるようにする。
   - ビルドのキャッシュ
+    - 層のキャッシュと cache マウントが効くのは、ビルドキャッシュの片付け（`sacty image build` の後と、デーモンの片付け）を挟まないビルドの間だけ。片付けの後のビルドは、すべての手順を実行し直す（この節の、古い版を片付ける項）。
     - 手順は、変わりにくく重いものから並べる（git → 作業用の CLI → セキュリティの検査の道具 → draw.io → エージェントの CLI → npm の設定 → `drawio` の包むスクリプト → `packages`・`run` → `gh` の代わり → `maven_mirror`）。
     - build-arg（`NPM_VERSION`・`SACTY_DRAWIO`・`MAVEN_MIRROR`）は、使う手順の直前で宣言する。
       宣言より後の手順は、使わなくても値が変わると作り直されるため（`npm_version` を変えても、作業用の CLI・draw.io・セキュリティの道具は作り直さない）。
     - `drawio-shim.cjs` は、draw.io の本体を入れる手順と別に、エージェントの CLI の後・`packages`・`run` の前で写す（直しても draw.io とエージェントの CLI を入れ直さず、`run` から `drawio` を使える）。
     - 作業用の CLI・セキュリティの検査の道具・draw.io・git の手順は、BuildKit の cache マウント（`id=sacty-build-cache`、`/var/cache/sacty-build`、`sharing=locked`）を `packages/cli/docker/with-build-cache.sh` を通して使う。
       中身はイメージの層に残らず、元のイメージが違うイメージ（言語ごとのイメージ）の間でも共有する。
+      ビルドキャッシュの片付けの後に `docker buildx du --verbose` で見ると、cache マウントの記録（種類が `exec.cachemount`）は残っていなかった（上と同じ環境。片付けの前後を続けて比べてはいない）。
       - apt-get が取得した `.deb` を `/var/cache/sacty-build/apt` に置く（`APT_CONFIG` の `Dir::Cache::Archives`）。
         元のイメージが `APT_CONFIG` を設定していれば、そのファイルを `#include` で読み込んでから足す（プロキシなどの設定を引き継ぐ）。
         パッケージの一覧は置かず、毎回 `apt-get update` で取る。

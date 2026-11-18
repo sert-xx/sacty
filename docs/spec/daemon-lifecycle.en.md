@@ -187,6 +187,7 @@ Images in `images.yaml` of context repositories ([Context composition](context.e
     This cleanup runs on every reread (at startup, when project settings are saved, and every 5 minutes), even when there is nothing to build.
     It then removes unused build cache with `docker builder prune -f`, the same as the cleanup of `sacty image build` (`pruneContextImagesAndBuildCache`).
     It does not narrow by age (`--filter`) and does not add `--all`.
+    An image built after this cleanup does not hit the layer cache and runs every step again. Cache created after the cleanup is used by builds until the next cleanup (for the environment it was confirmed on and the details, see the `sacty image build` item in [Agent execution](agent-execution.en.md)).
     The build cache cleanup does not run until 6 hours (`BUILD_CACHE_PRUNE_INTERVAL_MS`) have passed since it last succeeded.
     The time of the last success is kept in memory only (`BuildCachePruneState`), so the first cleanup after the daemon starts runs it.
     A failure or a cut-short cleanup does not advance that time; the next cleanup tries again.

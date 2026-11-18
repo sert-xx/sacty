@@ -45,12 +45,10 @@ The commands in the table are installed as follows.
 
 ### Picking up OS security updates
 
-`npx sacty image build` uses Docker's build cache, so a rebuild alone may not fetch the packages again. To pick up OS security updates, do one of the following and then rebuild.
+You pick up OS security updates by rebuilding the image. What you need to do depends on what you want to update.
 
-- Use a newer base image. Update to a sacty version whose base image digest is updated, or write an updated base image in `image_build.base_image` (a tag such as `node:26-bookworm-slim`, or `<tag>@sha256:<digest>`). If the image in `image_build.base_image` is a tag only, fetch it again with `docker pull <base image>`. sacty pins the default base image by its digest, so `docker pull` does not change it.
-- Clear the build cache with `docker builder prune` (the packages sacty installs are fetched again, but the base image does not change)
-
-Commands that the base image already has are not reinstalled, so their updates come from the base image.
+- Updates to the commands sacty installs from OS packages come in when you rebuild with `npx sacty image build`. `npx sacty image build` cleans up the build cache every time it builds. So the next time you run it, it runs every step from the beginning and fetches the packages again at the versions current at that time ([CLI](cli.en.md#sacty-image-build)). A step shown as `CACHED` in the build log was not run again. In that case, clear the build cache with `docker builder prune` and rebuild once more.
+- Updates to commands that the base image already has come in when you switch to a newer base image and then rebuild (sacty does not reinstall commands that the base image has). Update to a sacty version whose base image digest is updated, or write an updated base image in `image_build.base_image` (a tag such as `node:26-bookworm-slim`, or `<tag>@sha256:<digest>`). If the image in `image_build.base_image` is a tag only, fetch it again with `docker pull <base image>`. sacty pins the default base image by its digest, so `docker pull` does not change it.
 
 ### RHEL-family base images
 
@@ -269,9 +267,10 @@ When building, sacty works as follows.
 - Context images that are no longer used (from old definitions or deleted projects) are removed after builds finish.
   Images that containers use, and images built by sacty for another `SACTY_HOME` on the same Docker, are kept.
 - At that time, sacty also removes unused build cache (the build cache of the whole Docker is the target, and it is not narrowed by how long it has been unused).
-  The first build after the cleanup rebuilds layers and downloads packages again, so it takes longer.
+  An image built after the cleanup does not use the build cache and runs every step from the beginning. It also downloads packages and the like again, so it takes longer.
+  Cache created after the cleanup is used by builds until the next cleanup.
+  Layers shared with images that exist now stay on disk, but builds after the cleanup do not use them. This behavior was confirmed on Rancher Desktop with Docker 29.5.3, buildx v0.35.0, and BuildKit v0.30.0, and has not been checked on other versions.
   Build cache of builds other than sacty that use the same Docker is removed too.
-  Layers shared with images that exist now are kept.
   sacty removes build cache in the first cleanup after it starts, and then once every 6 hours (when it could not be removed, sacty tries again on the next reread).
   The result (the last line of the docker output), and a failure to remove, appear in the log of the terminal where you started sacty.
 - While the context repository of any project cannot be read, sacty does not remove unused context images (it cannot decide which images to keep).

@@ -4,7 +4,7 @@
 - タスク: PBI-389
 - PR: #428
 - ブランチ: feat/pbi-389-prune-cache-when-unreadable
-- 関係する ADR: [どれかのプロジェクトのコンテキストを読めない間も、ビルドキャッシュの片付けは走らせる](../adr/20261117-2239-prune-build-cache-while-context-unreadable.md)、[ビルドキャッシュの片付けで、期間の絞り込みをやめ、使っていないものをすべて消す](../adr/20261117-2249-prune-build-cache-without-age-filter.md)
+- 関係する ADR: [どれかのプロジェクトのコンテキストを読めない間も、ビルドキャッシュの片付けは走らせる](../adr/20261117-2239-prune-build-cache-while-context-unreadable.md)、[ビルドキャッシュの片付けで、期間の絞り込みをやめ、使っていないものをすべて消す](../adr/20261117-2249-superseded-prune-build-cache-without-age-filter.md)
 
 ## 目的
 

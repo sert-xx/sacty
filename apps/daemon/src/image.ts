@@ -268,6 +268,10 @@ const KEPT_IMAGE_VERSIONS = 2;
  *
  * 期間（`--filter until=…`）では絞らない（PBI-389。期間で絞ると、1回の片付けで消えるのが鎖の端の1層だけで、残りが
  * 消えないまま残った）。`--all` も付けない。
+ *
+ * この片付けの後のビルドは、層のキャッシュに1手順も当たらない（PBI-391。いまあるイメージと共有している層の実体は
+ * 残るが、キャッシュとしては使われない。Docker 29.5.3・BuildKit v0.30.0 で確かめた）。`sacty image build` は作るたびに
+ * 片付けるので、毎回すべての手順を実行し直す。
  */
 export function buildCachePruneArgs(): string[] {
   return ["builder", "prune", "-f"];
