@@ -83,17 +83,19 @@ npm run cli:install
 
 入口を消すときは、`~/.local/bin/sacty`（`SACTY_BIN_DIR` を指定したなら、その中の `sacty`）を消します。
 
-前の版の sacty を mise で入れていた人は、mise の登録を手で外してください。
-前の版は、mise を使っていると、入口を mise に登録していました（`mise ls sacty` に出ます）。
+前の版の sacty を mise で入れていた人は、mise の登録が残っていれば、手で外してください。
+前の版は、mise を使っていると、入口を mise に登録していました。
+登録が残っているかは、`mise ls sacty` で確かめられます（残っていれば、`sacty` の行が出ます）。
 
 - このコマンドは、mise の登録を外しません。
-  登録が残っている間は、実行のたびに `[sacty] 注意：` で知らせます。
+  前の版の入口のディレクトリ（`~/.local/share/sacty/mise`）がある間は、実行のたびに `[sacty] 注意：` で知らせます。
 - 外すまでの間も同じように動くよう、前の版の入口を、新しい入口と同じ中身に書き直します。
 - 外すときは、次の順で消します。
   1. mise の利用者全体の設定（`~/.config/mise/config.toml`）の `[tools]` から `sacty` の行を消します。
-  2. mise の登録（mise の既定では `~/.local/share/mise/installs/sacty`）を消します。
+  2. mise の登録（mise の既定では `~/.local/share/mise/installs/sacty`。`MISE_DATA_DIR` か `XDG_DATA_HOME` を指定しているなら、その下の `installs/sacty`）を消します。
+     シムを使っているなら、続けて `mise reshim` を実行します。
   3. `~/.local/share/sacty/mise`（`XDG_DATA_HOME` を指定しているなら `$XDG_DATA_HOME/sacty/mise`）を消します。
-- 外した後に、もう一度 `npm run cli:install` を実行して、注意が出ないことを確かめてください。
+- 外した後に、`mise ls sacty` に `sacty` の行が出ないことと、もう一度 `npm run cli:install` を実行して注意が出ないことを確かめてください。
 
 ## 起動する
 

@@ -87,15 +87,19 @@ export function findOnPath(name, pathValue = process.env.PATH ?? "") {
 
 /**
  * 入れた後の確かめ。onPath（PATH で最初に見つかる sacty）が launcher（置いた入口）か。止めるべき誤りは無く、
- * 知らせることを warnings で返す（PATH の順は利用者の環境なので止めない）。
+ * 知らせることを warnings で返す（PATH の順は利用者の環境なので止めない）。sameAs（入口と同じ中身に書き直した、前の版の
+ * 入口）が先に見つかるときは、同じに動くので注意にしない（legacyNotice が知らせる）。
  */
-export function checkPath({ launcher, onPath, resolveReal = real }) {
+export function checkPath({ launcher, onPath, sameAs = [], resolveReal = real }) {
   const warnings = [];
   if (!onPath) {
     warnings.push(
       `${dirname(launcher)} が PATH にありません。PATH に足すと、どのディレクトリでも sacty と打って使えます（SACTY_BIN_DIR で置き場所を変えられます）。`,
     );
-  } else if (resolveReal(onPath) !== resolveReal(launcher)) {
+  } else if (
+    resolveReal(onPath) !== resolveReal(launcher) &&
+    !sameAs.some((same) => resolveReal(same) === resolveReal(onPath))
+  ) {
     warnings.push(
       `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。そちらを消すか、PATH の順を変えてください（${dirname(launcher)} を前に置く）。`,
     );
@@ -157,14 +161,23 @@ export function refreshLegacyLaunchers({ root, content, entry }) {
   return { found: true, updated, failed };
 }
 
-/** 前の版が mise に登録した sacty が残っているときの注意（手で外す手順）。root は legacyMiseRoot。 */
-export function legacyNotice({ root, updated, failed }) {
+/**
+ * 前の版の入口のディレクトリ（root。legacyMiseRoot）があるときの注意。mise の登録が残っているかは確かめない（mise を
+ * 呼ばない）ので、残っていれば、という形で手で外す手順を知らせる。first は、PATH で最初に見つかる sacty が、書き直した
+ * 前の版の入口のとき、その場所。
+ */
+export function legacyNotice({ root, updated, failed, first }) {
   const lines = [
-    `前の版が mise に登録した sacty が残っています（${root}）。いまの版は mise に登録しません。次の順で、手で外してください：(1) mise の利用者全体の設定（~/.config/mise/config.toml）の [tools] から sacty の行を消す。(2) mise の登録（mise の既定では ~/.local/share/mise/installs/sacty）を消す。(3) ${root} を消す。`,
+    `前の版の入口のディレクトリ（${root}）があります。前の版は、mise を使っていると、入口を mise に登録していました（いまの版は登録しません）。登録が残っていれば（mise ls sacty に出ます）、次の順で、手で外してください：(1) mise の利用者全体の設定（~/.config/mise/config.toml）の [tools] から sacty の行を消す。(2) mise の登録（mise ls sacty で確かめる。mise の既定では ~/.local/share/mise/installs/sacty）を消す。シムを使っているなら、mise reshim を実行する。(3) ${root} を消す。`,
   ];
   if (updated.length > 0) {
     lines.push(
       `外すまでの間も同じに動くよう、前の版の入口を、いま置いた入口と同じ中身に書き直しました（${updated.join("、")}）。`,
+    );
+  }
+  if (first) {
+    lines.push(
+      `いまは、PATH で先に、前の版の入口（${first}）が見つかります。いま置いた入口と同じ中身なので、同じに動きます。`,
     );
   }
   for (const { path, error } of failed) {
@@ -233,10 +246,6 @@ export function main({ repo = resolve(dirname(fileURLToPath(import.meta.url)), "
     );
   }
 
-  // 前の版が mise に登録した入口を、同じ中身に書き直す（mise が PATH に載せて先に見つかっても、同じに動くように）
-  const legacyRoot = legacyMiseRoot();
-  const legacy = refreshLegacyLaunchers({ root: legacyRoot, content, entry });
-
   // 入口が、このリポジトリの版で動くか（ビルドの結果を読めるか）
   const shown = run(launcher, ["--version"]).stdout.trim();
   if (shown !== version) {
@@ -244,10 +253,16 @@ export function main({ repo = resolve(dirname(fileURLToPath(import.meta.url)), "
       `入れた sacty の版（${shown || "表示されません"}）が、このリポジトリの版（${version}）と違います。npm run build を確かめてください。`,
     );
   }
-  const { warnings } = checkPath({ launcher, onPath: findOnPath("sacty") });
+  // 前の版が mise に登録した入口を、同じ中身に書き直す（mise が PATH に載せて先に見つかっても、同じに動くように）。
+  // 上の確かめを通った後に書き直す（動かない入口の中身を、前の版の入口に写さない）
+  const legacyRoot = legacyMiseRoot();
+  const legacy = refreshLegacyLaunchers({ root: legacyRoot, content, entry });
+  const onPath = findOnPath("sacty");
+  const { warnings } = checkPath({ launcher, onPath, sameAs: legacy.updated });
   for (const line of warnings) console.warn(`[sacty] 注意：${line}`);
   if (legacy.found) {
-    for (const line of legacyNotice({ root: legacyRoot, ...legacy })) {
+    const first = legacy.updated.find((path) => onPath && real(path) === real(onPath));
+    for (const line of legacyNotice({ root: legacyRoot, ...legacy, first })) {
       console.warn(`[sacty] 注意：${line}`);
     }
   }
