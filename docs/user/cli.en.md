@@ -91,9 +91,10 @@ Once everything is built, it cleans up old images and build cache.
 
 - It removes old image versions (`sacty-agent` and `sacty-agent-<name>` images with `X.Y.Z` tags), keeping the two newest versions of each name.
 - It also removes unused build cache (the build cache of the whole Docker is the target, and it is not narrowed by how long it has been unused).
-  The first build after the cleanup rebuilds layers and downloads packages again, so it takes longer.
+  A build after the cleanup does not use the build cache and runs every step from the beginning. It also downloads packages and the like again, so it takes longer.
+  `sacty image build` cleans up every time it builds, so even when you run it back to back, it rebuilds from the beginning every time.
+  Layers shared with images that exist now stay on disk, but builds after the cleanup do not use them. This behavior was confirmed on Rancher Desktop with Docker 29.5.3, buildx v0.35.0, and BuildKit v0.30.0, and has not been checked on other versions.
   Build cache of builds other than sacty that use the same Docker is removed too.
-  Layers shared with images that exist now are kept.
 - It does not remove the following images.
   - Images listed in `image` or `images`
   - Images with other tags or names

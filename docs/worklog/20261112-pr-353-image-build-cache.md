@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #353
 - ブランチ: claude/friendly-edison-g3io2v
-- 関係する ADR: [エージェントのイメージのビルドで、引数を使う直前で宣言し、取得物を BuildKit の cache マウントに置く](../adr/20261112-1526-image-build-cache.md)
+- 関係する ADR: [エージェントのイメージのビルドで、引数を使う直前で宣言し、取得物を BuildKit の cache マウントに置く](../adr/20261112-1526-superseded-image-build-cache.md)
 
 ## 目的
 

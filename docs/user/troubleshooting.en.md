@@ -77,6 +77,10 @@ A paused task's details show why it stopped and a "Resume" button.
 | Cannot connect to MySQL or similar with `localhost` | Write `127.0.0.1`, or connect by service name ([docker compose services](compose.en.md#reaching-services-via-localhost)) |
 | A task stopped with `ENOSPC` or `the volume holding /tmp is full` | Docker's virtual disk can be full even when your Mac has free space. Go through the following in order.<br>1. Check the usage with `docker system df`<br>2. Run `npx sacty image build` (it cleans up old image versions and unused build cache)<br>3. If that is not enough, free space by removing unused images and running `docker builder prune`<br>4. Resume the task<br>While sacty is running, it also automatically removes context images that are no longer used and unused build cache. However, it removes neither while `config.yaml` cannot be read. While the context repository of any project cannot be read, it does not remove context images (it still removes build cache) ([Context images](images.en.md#context-images)). |
 
+Step 2 in the `ENOSPC` row rebuilds the images from the beginning, so it takes time ([CLI](cli.en.md#sacty-image-build)).
+It cleans up after every image is built.
+If building an image stops with an error because there is not enough free space, free space with step 3 first, and then run step 2 once more.
+
 ### When a run stops at its time limit
 
 Resume a task that stopped with "Stopped the agent because it ran longer than N minutes" as follows.
