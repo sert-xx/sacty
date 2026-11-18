@@ -241,10 +241,10 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
     });
     expect(summary?.review?.postedUrl).toBeTruthy();
 
-    // 再レビューできるタスクだけ・終わっていないタスクだけ
-    expect((await json<Listed>("list_tasks", { open_only: true })).tasks.map((t) => t.id)).toEqual(
-      expect.not.arrayContaining([id]),
-    );
+    // 終わっていないタスクだけ（完了した id は外れ、まだのレビューのタスクと、関係の無いタスクが残る）
+    expect(
+      new Set((await json<Listed>("list_tasks", { open_only: true })).tasks.map((t) => t.id)),
+    ).toEqual(new Set([other?.id, plain.id]));
     expect(
       new Set((await json<Listed>("list_tasks", { review_only: true })).tasks.map((t) => t.id)),
     ).toEqual(new Set([id, other?.id]));
@@ -565,6 +565,128 @@ describe("タスクの PR・ブランチと絞り込み（PBI-392）", () => {
     ]) {
       expect(parsePullRequestQuery(bad), bad).toBeUndefined();
     }
+  });
+
+  it("http:// で書いた PR・リポジトリの指定も、同じリポジトリとして合う", () => {
+    const plain = base();
+    const sourced = at(plain, "sourced", "2026-11-18T00:00:02.000Z", {
+      source: { kind: "github_pull_request", repo: REPO, number: 31, url: `${REPO}/pull/31` },
+    });
+    const query = parsePullRequestQuery("http://github.com/acme/app/pull/31");
+    expect(query).toEqual({ number: 31, repo: REPO });
+    expect(filterTasks([sourced], { ...(query ? { pullRequest: query } : {}) })).toHaveLength(1);
+    expect(filterTasks([sourced], { repo: "http://github.com/acme/app" })).toHaveLength(1);
+    expect(filterTasks([sourced], { repo: "http://github.com/acme/other" })).toHaveLength(0);
+  });
+
+  it("レビューの判定と投稿は、今の回のものだけを要約に出す", () => {
+    const plain = base();
+    const review = at(plain, "review", "2026-11-18T00:00:01.000Z", {
+      source: {
+        kind: "github_pull_request",
+        repo: REPO,
+        number: 40,
+        url: `${REPO}/pull/40`,
+        review: "label",
+      },
+      reviewVerdicts: [
+        { round: 1, verdict: "changes_required" },
+        { round: 2, verdict: "suggestions" },
+      ],
+      reviewRound: 2,
+      reviewPost: { url: `${REPO}/pull/40#r2`, at: "2026-11-18T00:10:00.000Z" },
+    });
+    expect(summarizeTask(review).review).toEqual({
+      round: 2,
+      postedUrl: `${REPO}/pull/40#r2`,
+      verdict: "suggestions",
+    });
+    // 3回目を始めた後（まだ判定も投稿も無い）は、前の回の判定を出さない
+    const { reviewPost: _post, ...rest } = review;
+    expect(summarizeTask({ ...rest, reviewRound: 3 }).review).toEqual({ round: 3 });
+    // 回の記録が無い（1回目）
+    const { reviewRound: _round, ...first } = rest;
+    expect(
+      summarizeTask({ ...first, reviewVerdicts: [{ round: 1, verdict: "no_findings" }] }).review,
+    ).toEqual({
+      round: 1,
+      verdict: "no_findings",
+    });
+  });
+
+  it("詳細に、止まっている理由・前の回のレビュー・レビューする先頭を出す。長いレビューの本文と作業履歴は切り詰める", () => {
+    const plain = base();
+    const event = (seq: number): ActivityEvent =>
+      ({
+        seq,
+        id: `e${seq}`,
+        taskId: plain.id,
+        projectId: plain.projectId,
+        at: `2026-11-18T00:00:${String(seq % 60).padStart(2, "0")}.000Z`,
+        actor: "sacty",
+        type: "ReviewGitHubRetried",
+        payload: {},
+      }) as unknown as ActivityEvent;
+    const activity = Array.from({ length: 35 }, (_, i) => event(i + 1));
+    const paused: Task = {
+      ...plain,
+      status: "paused",
+      pausedReason: "auth",
+      pausedMessage: { code: "review.notRereviewable" },
+      outputs: { review: "あ".repeat(12_001) },
+      previousReview: {
+        round: 1,
+        url: `${REPO}/pull/40#r1`,
+        at: "2026-11-18T00:05:00.000Z",
+        headCommit: "h".repeat(40),
+        body: "前の回の本文",
+        comments: [],
+      },
+      reviewTarget: {
+        repo: REPO,
+        number: 40,
+        url: `${REPO}/pull/40`,
+        title: "PR 40",
+        body: "",
+        headCommit: "n".repeat(40),
+        baseCommit: "b".repeat(40),
+        author: "",
+      },
+    };
+    const detail = describeTask({ task: paused, activity });
+    expect(detail).toMatchObject({
+      state: "paused",
+      pausedReason: "auth",
+      pausedMessage: "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
+      previousReview: {
+        round: 1,
+        url: `${REPO}/pull/40#r1`,
+        at: "2026-11-18T00:05:00.000Z",
+        headCommit: "h".repeat(40),
+      },
+      reviewHeadCommit: "n".repeat(40),
+      activityCount: 35,
+    });
+    // 前の回の本文は入れない
+    expect(detail.previousReview).not.toHaveProperty("body");
+    expect(detail.reviewBody).toContain("（以下 1 文字を省略）");
+    expect(detail.reviewBody?.startsWith("あ".repeat(12_000))).toBe(true);
+    // 作業履歴は、最後の 30 件（種類だけ）
+    expect(detail.recentActivity).toHaveLength(30);
+    expect(detail.recentActivity[0]).toEqual({
+      at: "2026-11-18T00:00:06.000Z",
+      actor: "sacty",
+      type: "ReviewGitHubRetried",
+    });
+    expect(detail.recentActivity.at(-1)?.at).toBe("2026-11-18T00:00:35.000Z");
+    // 一時停止でなければ、止まっている理由は出さない。ちょうどの長さは切り詰めない
+    const running = describeTask({
+      task: { ...plain, outputs: { review: "あ".repeat(12_000) } },
+      activity: [],
+    });
+    expect(running.pausedReason).toBeUndefined();
+    expect(running.pausedMessage).toBeUndefined();
+    expect(running.reviewBody).toBe("あ".repeat(12_000));
   });
 
   it("詳細の長い説明は、切り詰める", () => {

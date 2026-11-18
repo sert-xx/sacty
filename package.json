@@ -28,7 +28,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@electron/packager": "20.3.0",
-    "@modelcontextprotocol/client": "2.4.0",
     "@types/mdast": "4.0.4",
     "@types/node": "^26.6.5",
     "electron": "45.1.0",

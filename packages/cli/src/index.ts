@@ -33,7 +33,7 @@ import {
 } from "./context-preview.js";
 import { launch, splitLaunchArgs } from "./launch.js";
 import { daemonApi } from "./mcp.js";
-import { daemonEnv, startMessage, webAuthEnabled, webEnv } from "./up-env.js";
+import { daemonEndpoint, daemonEnv, startMessage, webAuthEnabled, webEnv } from "./up-env.js";
 import { UpStopper } from "./up-stop.js";
 
 const require = createRequire(import.meta.url);
@@ -345,7 +345,7 @@ async function up(webPort: number, daemonPort: number) {
   // CLI のコマンド（sacty context preview）が、起動中のデーモンに問い合わせるための接続先とトークン（PBI-76）。デーモンが
   // 応答してから書き（起動に失敗した sacty は書かない）、ほかの sacty が動いていれば上書きしない
   const home = resolveHome();
-  const endpoint = { url: daemonUrl, token, web: `http://127.0.0.1:${webPort}` };
+  const endpoint = daemonEndpoint({ daemonPort, daemonToken: token, webPort });
   if (await claimDaemonFile(home, endpoint)) {
     process.on("exit", () => removeDaemonFile(home, endpoint));
   } else {

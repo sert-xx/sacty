@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { daemonEnv, signInUrl, startMessage, webAuthEnabled, webEnv } from "./up-env.js";
+import {
+  daemonEndpoint,
+  daemonEnv,
+  signInUrl,
+  startMessage,
+  webAuthEnabled,
+  webEnv,
+} from "./up-env.js";
 
 describe("sacty up が子プロセスに渡す環境変数（PBI-129）", () => {
   it("画面の秘密は、デーモンに渡さない（シェルに同じ名前の変数があっても取り除く）", () => {
@@ -13,6 +20,14 @@ describe("sacty up が子プロセスに渡す環境変数（PBI-129）", () => 
       SACTY_DAEMON_PORT: "4710",
       SACTY_DAEMON_TOKEN: "d",
       SACTY_WEB_URL: "http://127.0.0.1:4700",
+    });
+  });
+
+  it("接続先のファイルには、デーモンの接続先とトークンと、画面の URL を書く（PBI-392）", () => {
+    expect(daemonEndpoint({ daemonPort: 4810, daemonToken: "d", webPort: 4800 })).toEqual({
+      url: "http://127.0.0.1:4810",
+      token: "d",
+      web: "http://127.0.0.1:4800",
     });
   });
 

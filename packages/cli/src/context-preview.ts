@@ -142,15 +142,18 @@ export function withoutContent(result: PreviewResult): PreviewResult {
 
 export type Fetch = (
   url: string,
-  init: { headers: Record<string, string>; method?: string; body?: string },
+  init: { headers: Record<string, string>; method?: string; body?: string; signal?: AbortSignal },
 ) => Promise<Response>;
 
-/** デーモンの API を呼ぶ。つながらない・認証できないときは、その理由で例外にする。 */
+/**
+ * デーモンの API を呼ぶ。つながらない・認証できないときは、その理由で例外にする（元の例外は cause に持つ）。
+ * timeoutMs を渡すと、その時間で応答（本文の読み取りを含む）を打ち切り、応答しなかったという理由の例外にする。
+ */
 export async function daemonRequest(
   endpoint: DaemonEndpoint,
   path: string,
   fetcher: Fetch = fetch,
-  init: { method?: string; body?: unknown } = {},
+  init: { method?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<Response> {
   const headers: Record<string, string> = { authorization: `Bearer ${endpoint.token}` };
   if (init.body !== undefined) headers["content-type"] = "application/json";
@@ -160,16 +163,27 @@ export async function daemonRequest(
       headers,
       ...(init.method ? { method: init.method } : {}),
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+      ...(init.timeoutMs !== undefined ? { signal: AbortSignal.timeout(init.timeoutMs) } : {}),
     });
-  } catch {
+  } catch (error) {
+    if (isTimeout(error)) throw new Error(DAEMON_TIMEOUT_MESSAGE, { cause: error });
     throw new Error(
       "デーモンにつながりません。`sacty up` で起動しているか確かめてください（止めたままなら、起動し直してください）。",
+      { cause: error },
     );
   }
   if (res.status === 401) {
     throw new Error("デーモンに認証できません。`sacty up` で起動し直してください。");
   }
   return res;
+}
+
+export const DAEMON_TIMEOUT_MESSAGE =
+  "デーモンが時間内に応答しませんでした。`sacty up` の様子を確かめてから、もう一度試してください。";
+
+/** 時間切れ（AbortSignal.timeout）で打ち切られたか。 */
+export function isTimeout(error: unknown): boolean {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
 }
 
 /** プロジェクト（ID か名前）の ID。無い・名前が重なるときは、その理由で例外にする。 */

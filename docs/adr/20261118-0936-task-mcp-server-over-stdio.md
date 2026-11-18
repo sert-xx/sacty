@@ -72,7 +72,7 @@ PR を直しているのは手元の AI（Claude Code・Codex）なので、そ�
 
 ## 影響
 
-- デーモンのパッケージの依存に `@modelcontextprotocol/server`（v2）が増え、v1 と並ぶ。テストのために、リポジトリの開発用の依存に `@modelcontextprotocol/client`（v2）が増える。
+- デーモンのパッケージの依存に `@modelcontextprotocol/server`（v2）が増え、v1 と並ぶ。テストのために、デーモンのパッケージの開発用の依存に `@modelcontextprotocol/client`（v2）が増える。
 - 一覧（`list_tasks`）は、消したプロジェクトのタスクを出さない（詳細の API が無いものとして返すため）。
 - `sacty mcp` を登録した AI は、利用者に代わって再レビューを始められる（費用がかかり、PR に投稿する）。
   毎回確かめるかどうかは、AI の CLI の権限の確認に任せる。ツールの注釈で、読み取りだけでないことを示す。

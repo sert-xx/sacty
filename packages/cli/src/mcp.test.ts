@@ -131,6 +131,48 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
     await expect(broken.rereview("a")).rejects.toThrow("デーモンが 500 を返しました。");
   });
 
+  it("応答しないデーモンでは、決めた時間で打ち切って、応答しなかったという理由の例外にする", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    // 打ち切られるまで応答しないデーモン
+    const hung: Fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    const api = daemonApi(home, hung, 20);
+    for (const call of [() => api.listTasks(), () => api.getTask("a"), () => api.rereview("a")]) {
+      await expect(call()).rejects.toThrow("デーモンが時間内に応答しませんでした");
+    }
+    // 片方（プロジェクトの一覧）だけが応答しなくても、一覧は戻る
+    const half: Fetch = (url, init) =>
+      url.endsWith("/api/tasks") ? Promise.resolve(Response.json({ tasks: [] })) : hung(url, init);
+    await expect(daemonApi(home, half, 20).listTasks()).rejects.toThrow(
+      "デーモンが時間内に応答しませんでした",
+    );
+    // 本文の途中で打ち切られたときも、同じ理由にする
+    const stalledBody: Fetch = async (_url, init) =>
+      ({
+        ok: true,
+        status: 200,
+        json: () =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          }),
+      }) as unknown as Response;
+    await expect(daemonApi(home, stalledBody, 20).getTask("a")).rejects.toThrow(
+      "デーモンが時間内に応答しませんでした",
+    );
+  });
+
+  it("つながらなかった原因は、例外の cause に残す", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const refused = daemonApi(home, async () => {
+      throw new Error("ECONNREFUSED 127.0.0.1:4710");
+    });
+    const error = await refused.listTasks().catch((e: unknown) => e);
+    expect((error as Error).message).toContain("デーモンにつながりません");
+    expect(String((error as Error).cause)).toContain("ECONNREFUSED");
+  });
+
   it("接続先ファイルの画面の URL は、あるときだけ読む（前の版のファイルも読める）", () => {
     writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
     expect(readDaemonFile(home)).toEqual({ url: "http://127.0.0.1:4710", token: "tok" });

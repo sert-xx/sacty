@@ -7,9 +7,11 @@ import type { ActivityEvent, Task } from "@sacty/core";
 import { renderMessage } from "@sacty/core";
 import type { SactyApi } from "@sacty/daemon/task-mcp";
 import {
+  DAEMON_TIMEOUT_MESSAGE,
   type DaemonEndpoint,
   daemonRequest,
   type Fetch,
+  isTimeout,
   readDaemonFile,
 } from "./context-preview.js";
 
@@ -25,13 +27,16 @@ async function refusal(res: Response): Promise<Error> {
   return new Error(`デーモンが ${res.status} を返しました。`);
 }
 
+/** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
+export const MCP_REQUEST_TIMEOUT_MS = 30_000;
+
 export function daemonApi(
   home: string,
   fetcher: Fetch = fetch,
-  read: (home: string) => DaemonEndpoint | undefined = readDaemonFile,
+  timeoutMs: number = MCP_REQUEST_TIMEOUT_MS,
 ): SactyApi {
   const endpoint = (): DaemonEndpoint => {
-    const found = read(home);
+    const found = readDaemonFile(home);
     if (!found) {
       throw new Error(
         "起動中の sacty が見つかりません。`sacty up` で起動してから、もう一度呼んでください。",
@@ -39,37 +44,49 @@ export function daemonApi(
     }
     return found;
   };
+  const request = (
+    at: DaemonEndpoint,
+    path: string,
+    init: { method?: string; body?: unknown } = {},
+  ) => daemonRequest(at, path, fetcher, { ...init, timeoutMs });
+  /** 応答の本文を読む。読んでいる途中の時間切れも、応答しなかったという理由にする。 */
+  const read = async <T>(res: Response): Promise<T> => {
+    try {
+      return (await res.json()) as T;
+    } catch (error) {
+      if (isTimeout(error)) throw new Error(DAEMON_TIMEOUT_MESSAGE, { cause: error });
+      throw new Error("デーモンの応答を読めませんでした。", { cause: error });
+    }
+  };
   return {
     async listTasks() {
       const at = endpoint();
       const [res, projectsRes] = await Promise.all([
-        daemonRequest(at, "/api/tasks", fetcher),
-        daemonRequest(at, "/api/projects", fetcher),
+        request(at, "/api/tasks"),
+        request(at, "/api/projects"),
       ]);
       if (!res.ok) throw await refusal(res);
       if (!projectsRes.ok) throw await refusal(projectsRes);
-      const { tasks } = (await res.json()) as { tasks: Task[] };
-      const { projects } = (await projectsRes.json()) as { projects: { id: string }[] };
+      const { tasks } = await read<{ tasks: Task[] }>(res);
+      const { projects } = await read<{ projects: { id: string }[] }>(projectsRes);
       // 消したプロジェクトのタスクは出さない（画面と同じ。詳細の API は、無いものとして返す）
       const alive = new Set(projects.map((p) => p.id));
       return tasks.filter((task) => alive.has(task.projectId));
     },
     async getTask(id) {
-      const res = await daemonRequest(endpoint(), `/api/tasks/${encodeURIComponent(id)}`, fetcher);
+      const res = await request(endpoint(), `/api/tasks/${encodeURIComponent(id)}`);
       if (res.status === 404) return undefined;
       if (!res.ok) throw await refusal(res);
-      return (await res.json()) as { task: Task; activity: ActivityEvent[] };
+      return read<{ task: Task; activity: ActivityEvent[] }>(res);
     },
     async rereview(id) {
-      const res = await daemonRequest(
-        endpoint(),
-        `/api/tasks/${encodeURIComponent(id)}/rereview`,
-        fetcher,
-        { method: "POST", body: {} },
-      );
+      const res = await request(endpoint(), `/api/tasks/${encodeURIComponent(id)}/rereview`, {
+        method: "POST",
+        body: {},
+      });
       if (!res.ok) throw await refusal(res);
-      return ((await res.json()) as { task: Task }).task;
+      return (await read<{ task: Task }>(res)).task;
     },
-    webUrl: () => read(home)?.web,
+    webUrl: () => readDaemonFile(home)?.web,
   };
 }

@@ -41,6 +41,26 @@ export function daemonEnv(
   };
 }
 
+/**
+ * `sacty up` が接続先のファイル（daemon.json）に書く中身（PBI-76・PBI-392）。デーモンの接続先とトークンと、画面の URL
+ * （`sacty mcp` が、タスクの画面の URL を返すために読む）。
+ */
+export function daemonEndpoint(input: {
+  daemonPort: number;
+  daemonToken: string;
+  webPort: number;
+}): {
+  url: string;
+  token: string;
+  web: string;
+} {
+  return {
+    url: `http://127.0.0.1:${input.daemonPort}`,
+    token: input.daemonToken,
+    web: `http://127.0.0.1:${input.webPort}`,
+  };
+}
+
 /** webToken が無ければ、画面の認証を OFF にする（PBI-133）。 */
 export function webEnv(
   base: Env,
