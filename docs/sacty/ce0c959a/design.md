@@ -33,7 +33,7 @@
 
 - 成果物の種類は `output`（本文）・`test_viewpoints`（設計の工程のテスト観点の JSON）・`sacty_version`（人が直した版があるときの sacty の版）・`review_comments`（行へのコメントを `path:line` と本文で並べた文）の4つ
 - 状態の判定は「処理の流れ」の表のとおり。差し戻しの後は `changes_requested`、提出していない出力は `not_submitted`（`submission` は null）
-- ログは、実行中・終了後を問わず、呼び出しの時点の秘密情報（その実行が開いていればその秘密情報と、プロジェクトの設定・GitHub のトークンの値〔`auditSecretValues`〕）で伏せ直してから切る
+- ログは、実行中・終了後を問わず、呼び出しの時点の秘密情報（その実行の秘密情報をデーモンが持っていればその値と、プロジェクトの設定・GitHub のトークンの値〔`auditSecretValues`〕）で伏せ直してから切る
 - 実行の一覧は新しい順にし、`offset`・`limit`（既定 20）で区切る。`limit` が 100 を超えたら 100 に収める（`list_tasks` と違い断らない。R-26）
 - 前の版のデーモンへの理由の文は、「sacty を更新し、実行中のタスクが無いときに `sacty up` で起動し直してください」とする
 
@@ -50,16 +50,19 @@
 - `max_bytes` は省くと上限（32,000）。`offset` と `from_end` を両方渡すと理由を返し、どちらも無ければ `offset=0`
 - 注釈は4つとも `readOnlyHint: true`・`openWorldHint: false`。説明文には `UNTRUSTED_NOTE` に成果物・ログを足した注意を入れ、`INSTRUCTIONS` にも足す
 - `state` は running（デーモンが開いている）・succeeded・failed（`meta.json` の `outcome`。`meta.json` が無ければ作業履歴の `AgentRunCompleted`／`Failed`）・unknown（`meta.json` に `finishedAt` が無く開いていない、またはどちらの記録も無い）。`hasLog` は `meta.json` があるか
-- `fallback` は `{ from, to }`。失敗した実行は `AgentFellBack` から入れ、代わりに動いた実行は、その `AgentFellBack` の後に作業履歴に最初に現れた、`meta.json` の `role` が同じ別の実行に入れる
+- `role`・`agentId`・`startedAt` は `meta.json`、無ければ作業履歴（その runId の最初の行の `step`・イベントの種類から決まる役割・`agentId`・時刻）から取り、どちらにも無ければ `null`
+- `fallback` は `{ from, to }` か `null`。作業履歴の全件から、ページに切る前に決める。失敗した実行は `AgentFellBack` の `runId`、代わりに動いた実行は、その `AgentFellBack` の後に作業履歴に最初に現れた、作業履歴の役割が `AgentFellBack` の `role` と同じで `agentId` が `fallbackAgentId` の別の実行（`meta.json` は使わない）
 
 ## 処理の流れ
 
 - 成果物：デーモンが、メモリーにあるタスクから本文を取り、UTF-8 にして範囲だけを返す。`step`・`kind` は許可リストと照合し、`Object.hasOwn` で引く
+- 状態は、表の上の行から順に当て、最初に合った行にする
 
 | 状態 | 条件 | `submission` |
 | --- | --- | --- |
 | approved | `approved[step]` がある | `approved.submission` |
-| posted・not_submitted | review の工程。`reviewPost` があれば posted | `reviewRound`（無ければ 1） |
+| posted | review の工程で、`reviewPost` がある | `reviewRound`（無ければ 1） |
+| not_submitted | review の工程で、`reviewPost` が無い | null（`previousSubmission` に `reviewRound`−1。1 以下なら null） |
 | awaiting_approval | `gate.step` がその工程 | `gate.submission` |
 | not_submitted | その工程の最後の `AgentRunCompleted` が最後の `StepSubmitted` より後 | null（`previousSubmission` に `submissions[step]`） |
 | changes_requested | 上のどれでもなく `outputs[step]` がある | `submissions[step]` |
@@ -68,10 +71,14 @@
 - 終わった実行のログ：ファイルの範囲だけを `readSync` で読む（全体は読まない）
 - 実行中のログ：「先頭のファイルの範囲（`readSync`）＋省いた印＋メモリーの末尾の範囲」を組む。`snapshot()` は先頭のファイルを全部読むので使わない
 - 伏せ方（どちらも同じ）：範囲の前後に、秘密情報の形（エスケープ後を含む）の UTF-8 のバイト数の最大だけ余分に読み、呼び出しの時点の秘密情報で伏せる。伏せた値に掛かる境目は値の外側へ広げ、広げた位置を `offset`・`next` に返す（返す量は最大で `max_bytes`＋余分の2倍）
+- 実行の秘密情報の持ち方（`SessionLogStore`）
+  - 書き始めた後に `addSecrets` で値が増えたら、その実行の秘密情報をストアのメモリーに移し、`meta.json` に `redactPending: true` をすぐ書く
+  - 閉じるときの伏せ直しが全部のファイルで済んだら、メモリーの値を捨て、`redactPending` を消す。失敗したら、値をデーモンが動いている間だけ持ち、`redactPending` を残す（`onClose` では捨てない）
+  - `redactPending` が真で、デーモンがその値を持たない実行（伏せ直しの前にデーモンが止まった・失敗の後に起動し直した）は、ログの中身を返さずに理由を返す
 - 境目は、UTF-8 の文字の頭にそろえる（`completeUtf8Length` を使い、始めは次の文字の頭まで進める）
 - ファイルは開く前に `lstat` と `realpath` で、`runs/<タスク>` もファイルもシンボリックリンクでなく、ファイルが通常のファイルで `runs/<タスク>` の下にあることを確かめる
 - `from_end` は、末尾の `max_bytes` を返す。`offset` が全体以上なら、0 バイトと `totalBytes` を返す
-- 実行の一覧：メモリーの作業履歴から runId を拾って並べ、返す分（最大 100 件）だけ `meta.json` を読む
+- 実行の一覧：メモリーの作業履歴の全件から runId を拾って並べ、`role` 等と `fallback` を決めてから区切り、返す分（最大 100 件）だけ `meta.json` を読む（`meta.json` から取るのは `state`・`hasLog` と、作業履歴より優先する `role` 等だけ）
 
 ## エラー時の振る舞い
 
@@ -80,17 +87,20 @@
 | タスクが無い・消したプロジェクトのタスク | デーモンは `{error:"not_found"}` の 404 を返す。ツールは `task.notFound` の文言を返す |
 | 実行が無い・ほかのタスクの実行・ファイルがリンクか場所の外 | `{error:"not_found", what:"run"}` の 404（ファイルは開かない）。「実行が見つかりません」 |
 | 工程・種類が候補に無い（`constructor` など） | ツールは引数の enum で SDK が断る。API は `{error:"not_found", what:"step"}`（`"kind"`）の 404。「工程が見つかりません」「成果物の種類が見つかりません」 |
+| 伏せ直せていないと分かっていて、デーモンがその秘密情報を持たない実行 | `{error:"unredacted"}` の 409（中身を返さない）。「このログは秘密情報を伏せ直せていないため返せません」 |
 | 404 で、本文が `error` を持つ JSON として読めない（前の版のデーモンの既定の 404。本文は `404 Not Found`） | 既定で決めた、更新と再起動を促す理由 |
 | `task_id`・`run_id` が `validLogId` に合わない（`..`・`/`・`%2F` を含む） | ツールが API を呼ばずに理由を返す。API も 400（`invalid_id`）で断る |
 | `max_bytes`・`limit` が 0 以下、`offset` が負、`offset` と `from_end` の両方 | 0 以下と負は引数の型（`min`）で SDK が、両方はツールが、`isError` で返す |
 | つながらない・時間切れ・認証できない | いまのツールと同じ文言（`daemonApi` の `request`・`refusal` を使う） |
+| 応答が JSON として読めない（200・500 など） | 「sacty の応答を読めませんでした」 |
 
 - 理由の文と `failureLine` には、仕様書の表の文言だけを出す。デーモンの応答の本文や、成果物とログの中身は出さない
+- 新しいツールの `failureLine` の cause は、接続の失敗の種類（`ECONNREFUSED` などの `code`）と時間切れの印だけにし、例外の message（JSON の読み取りの失敗の `SyntaxError` など）は出さない
 
 ## 影響範囲
 
-- 画面：`runLogId` の import 先が `@sacty/core` に変わるだけで、表示は変わらない
-- 文書：日英の版を同じ PR で直す。ADR には、上限と単位、位置の示し方、成果物・実行の指定の方法、前の版の見分け方と再起動の前提、比べた案を書く
+- 画面：`runLogId` の import 先が `@sacty/core` に変わるだけで、表示は変わらない。`meta.json` に足す `redactPending` は画面では読まない
+- 文書：日英の版を同じ PR で直す。ADR には、上限と単位、位置の示し方、成果物・実行の指定の方法、前の版の見分け方と再起動の前提、伏せ直せていない実行の扱い、比べた案を書く
 
 ## テスト観点
 
@@ -100,9 +110,9 @@
 - [TV-2] 成果物が無いタスクの一覧が空で返ること
   - 入力：工程はあるが outputs・approved が空のタスクで list_deliverables を呼ぶ
   - 期待結果：isError でない、deliverables が0件の結果を返す
-- [TV-3] 成果物が1件のときの一覧の中身と、差し戻し後・投稿済みのレビューの状態
-  - 入力：requirements が承認待ち（gate が requirements の1回目）のタスク、requirements の1回目を差し戻して作り直しの実行が完了する前のタスク、レビューを投稿した（reviewPost がある・reviewRound=2）タスクで list_deliverables を呼ぶ
-  - 期待結果：1つ目は step=requirements・kind=output・submission=1・status=awaiting_approval・bytes が本文の UTF-8 のバイト数の1件を、2つ目は status=changes_requested・submission=1 を、3つ目は review の output と review_comments に status=posted・submission=2 を返す
+- [TV-3] 成果物が1件のときの一覧の中身と、差し戻し後・レビューの投稿前後の状態
+  - 入力：requirements が承認待ち（gate が requirements の1回目）のタスク、requirements の1回目を差し戻して作り直しの実行が完了する前のタスク、レビューを投稿した（reviewPost がある・reviewRound=2）タスク、レビューの本文があり reviewPost が無い（reviewRound=2）タスクで list_deliverables を呼ぶ
+  - 期待結果：1つ目は step=requirements・kind=output・submission=1・status=awaiting_approval・bytes が本文の UTF-8 のバイト数の1件を、2つ目は status=changes_requested・submission=1 を、3つ目は review の output と review_comments に status=posted・submission=2 を、4つ目は status=not_submitted・submission=null・previousSubmission=1 を返す
 - [TV-4] やり直した工程で、最新の版とその回が分かること
   - 入力：design を2回提出し、2回目が承認済みのタスクで get_deliverable（step=design・kind=output）を呼ぶ
   - 期待結果：2回目の本文と submission=2・status=approved を返す
@@ -128,11 +138,11 @@
   - 入力：日本語と絵文字の境目が上限の位置と offset の位置に来る本文とログで、get_deliverable と get_run_log を呼ぶ
   - 期待結果：text に置換文字（U+FFFD）や孤立したサロゲートが無く、next から読み直した text と続けると元の文と一致する
 - [TV-12] 実行の一覧に、工程でない実行と各実行の状態が載ること
-  - 入力：工程の成功・工程の失敗・orchestrator・guardian・export・audit の実行、デーモンが開いている実行、meta.json に finishedAt が無く開いていない実行、meta.json の無い実行、runId の無い AgentRunStarted を持つタスクで list_runs を呼ぶ
-  - 期待結果：runId のある実行だけがすべて新しい順に載り、それぞれ runId・role・agentId・startedAt と state（succeeded・failed・running・unknown）を持ち、meta.json の無い実行だけ hasLog=false になる
-- [TV-13] 別のエージェントに切り替えた実行が分かること
-  - 入力：AgentFellBack（agentId=claude・fallbackAgentId=codex）の後に codex で動いた実行を、レビューの工程と orchestrator の両方で持つタスクで list_runs を呼ぶ
-  - 期待結果：どちらの役割でも、失敗した実行と代わりに動いた実行の両方に fallback={from: claude, to: codex} が入り、ほかの実行には入らない
+  - 入力：工程の成功・工程の失敗・orchestrator・guardian・export・audit の実行、デーモンが開いている実行、meta.json に finishedAt が無く開いていない実行、meta.json の無い実行（作業履歴に agentId がある実行と無い実行）、runId の無い AgentRunStarted を持つタスクで list_runs を呼ぶ
+  - 期待結果：runId のある実行だけがすべて新しい順に載り、それぞれ state（succeeded・failed・running・unknown）を持ち、meta.json の無い実行だけ hasLog=false で、その role・agentId・startedAt は作業履歴の値、作業履歴にも無い項目は null になる
+- [TV-13] 別のエージェントに切り替えた実行が、ページの区切りによらず分かること
+  - 入力：AgentFellBack（agentId=claude・fallbackAgentId=codex）の後に codex で動いた実行を、レビューの工程と orchestrator の両方で持ち、間にほかの実行を挟んだタスクで、全件を1ページで、また失敗した実行と代わりの実行が別のページになる offset・limit で list_runs を呼ぶ
+  - 期待結果：どの区切りでも、失敗した実行と代わりに動いた実行の両方に fallback={from: claude, to: codex} が入り、ほかの実行は fallback=null で、同じ実行の fallback は区切りで変わらない
 - [TV-14] 実行の一覧を件数の上限で区切ること
   - 入力：実行が 101 件あるタスクで、limit を指定せずに、また limit=100・offset=100 で list_runs を呼ぶ
   - 期待結果：既定では 20 件と total=101・clipped=true・nextOffset=20 を返し、offset=100 では1件と clipped=false を返す
@@ -146,41 +156,44 @@
   - 入力：先頭の上限を小さくした SessionLogStore で、上限を超えて書いた実行中の実行に from_end=true で get_run_log を呼ぶ
   - 期待結果：running=true・omittedMiddle=true と、メモリーにある末尾のうち呼び出しの時点までに書いた行を含む text を返す
 - [TV-18] 実行の途中で足した秘密情報が、ログに出ないこと
-  - 入力：書き始めた後に addSecrets で足した値がファイルに伏せる前のまま残る実行中の実行、閉じた直後（伏せ直しの前に onClose が呼ばれた時点）の実行、伏せ直しが失敗した実行、プロジェクトの設定の秘密情報が伏せずに残る unknown の実行で get_run_log を呼ぶ
+  - 入力：書き始めた後に addSecrets で足した値がファイルに伏せる前のまま残る実行中の実行、閉じた直後（伏せ直しの前に onClose が呼ばれた時点）の実行、伏せ直し（writeFileSync）が失敗した実行、プロジェクトの設定の秘密情報が伏せずに残る unknown の実行で get_run_log を呼ぶ
   - 期待結果：どの text にもその値が無く [REDACTED] になっている
-- [TV-19] 伏せる値が切り取りの境目をまたぐときに、値の一部を残さないこと
+- [TV-19] 伏せ直せていない実行で、デーモンが秘密情報を持たないときは中身を返さないこと
+  - 入力：addSecrets の後にデーモンを止めた unknown の実行と、伏せ直しが失敗した後にデーモンを起動し直した実行（どちらも meta.json に redactPending: true があり、ファイルに値が残る）で get_run_log を呼ぶ
+  - 期待結果：どちらも isError と「このログは秘密情報を伏せ直せていないため返せません」を返し、結果・理由・標準エラーにその値もログの中身も無く、伏せ直しが済んだ実行の meta.json には redactPending が無い
+- [TV-20] 伏せる値が切り取りの境目をまたぐときに、値の一部を残さないこと
   - 入力：ASCII の秘密情報と日本語を含む秘密情報が、offset の位置と max_bytes の末尾の位置をまたぐように範囲を指定して、実行中と終わった実行で get_run_log を呼ぶ
   - 期待結果：text に値の先頭・末尾のどの一部も含まれず、返した offset・next は伏せた印の外側に来る
-- [TV-20] 無いタスク・無い実行・ほかのタスクの実行・候補外の工程と種類を断ること
+- [TV-21] 無いタスク・無い実行・ほかのタスクの実行・候補外の工程と種類を断ること
   - 入力：存在しない task_id、消したプロジェクトのタスクの ID、そのタスクに無い run_id、別のタスクの run_id で新しいツールを、step=constructor・kind=__proto__ でデーモンの成果物の API を呼ぶ
   - 期待結果：どれも isError（API は not_found の 404）と仕様書の定型の理由を返し、ほかのタスクの成果物・ログの中身を含めない
-- [TV-21] 決まった場所の外を指す ID とシンボリックリンクを読まないこと
+- [TV-22] 決まった場所の外を指す ID とシンボリックリンクを読まないこと
   - 入力：run_id・task_id に ../x・/etc/passwd・%2e%2e%2fx・a/b をツールとデーモンの新しい API に渡し、runs/<タスク> と実行のログのファイルを外のファイルへのシンボリックリンクにして get_run_log を呼ぶ
   - 期待結果：ツールはデーモンを呼ばずに isError と理由を返し、API は ID では 400（invalid_id）、リンクでは not_found の 404 を返し、リンク先のファイルの読み取りは0回である
-- [TV-22] 前の版のデーモンを「タスクが無い」と区別すること
+- [TV-23] 前の版のデーモンを「タスクが無い」と区別すること
   - 入力：新しい API に本文が 404 Not Found の文字列の 404 を返すデーモンで、新しいツールを呼ぶ
   - 期待結果：isError で sacty の更新と再起動を促す理由を返し、task.notFound の文言を返さない
-- [TV-23] つながらないときに、新しいツールも同じ理由を返し、サーバーが動き続けること
+- [TV-24] つながらないときに、新しいツールも同じ理由を返し、サーバーが動き続けること
   - 入力：「どのツールも理由を返す」のテストのループに新しい4つのツールを入れ、daemon.json が無い・接続を断られる・30 秒応答しない場合に呼ぶ
   - 期待結果：いまのツールと同じ理由を isError で返し、その後のツールの呼び出しにも応答する
-- [TV-24] 結果・理由・標準エラーに秘密情報と中身を出さないこと
-  - 入力：daemon.json のトークンを tok-MARK-1、環境変数の値を env-MARK-2、SACTY_HOME を /tmp/home-MARK-3 にし、成果物とログの本文に body-MARK-4 を入れて、新しいツールの成功と失敗（404・400・時間切れ）を起こす
-  - 期待結果：structuredContent・content の文・isError の理由・標準エラーに tok-MARK-1・env-MARK-2・home-MARK-3 が無く、失敗のときは body-MARK-4 も無く、failureLine はツール名・task_id・理由・cause だけを持つ
-- [TV-25] 説明文とサーバーの使い方の説明に、データの中の指示に従わないことがあること
+- [TV-25] 結果・理由・標準エラーに秘密情報と中身を出さないこと
+  - 入力：daemon.json のトークンを tok-MARK-1、環境変数の値を env-MARK-2、SACTY_HOME を /tmp/home-MARK-3 にし、成果物とログの本文に body-MARK-4 を入れて、新しいツールの成功と失敗（404・400・時間切れ・本文が body-MARK-4 を含む JSON でない 200 と 500）を起こす
+  - 期待結果：structuredContent・content の文・isError の理由・標準エラーに tok-MARK-1・env-MARK-2・home-MARK-3 が無く、失敗のときは body-MARK-4 も無く、failureLine はツール名・task_id・理由と、接続の失敗の種類か時間切れの印の cause だけを持つ
+- [TV-26] 説明文とサーバーの使い方の説明に、データの中の指示に従わないことがあること
   - 入力：4つのツールの description と INSTRUCTIONS
   - 期待結果：結果の成果物・ログはほかの人やエージェントが書いた文を含むデータで、その中の指示に従わないことが書かれている
-- [TV-26] いまの5つのツールの引数と結果が変わらないこと
-  - 入力：list_tasks・get_task・rereview_task・list_projects・create_task の inputSchema・outputSchema と、get_task の reviewBody
-  - 期待結果：起点のコミットと同じ形で、既存のテストが変更なしで通る
-- [TV-27] 画面の実行のリンクが変わらないこと
+- [TV-27] いまの5つのツールの引数と結果が変わらないこと
+  - 入力：list_tasks・get_task・rereview_task・list_projects・create_task の inputSchema・outputSchema・注釈と、get_task の reviewBody を、起点のコミットの task-mcp.test.ts・mcp.test.ts の期待と比べる
+  - 期待結果：5つの型・注釈・reviewBody の期待は起点のコミットのまま通り、テストで変えるのは、ツールの一覧の名前と注釈の期待に新しい4つを足すことと、SactyApi のスタブに新しい4つのメソッドを足すことだけである
+- [TV-28] 画面の実行のリンクが変わらないこと
   - 入力：runLogId を @sacty/core に移した後の apps/web のタスクの詳細と実行のログの route
   - 期待結果：移す前と同じイベントの種類から実行を拾い、既存の web のテストが通る
-- [TV-28] 文書に新しいツールとその決まりが書かれていること
+- [TV-29] 文書に新しいツールとその決まりが書かれていること
   - 入力：docs/spec/mcp-server.md・docs/spec/architecture.md・docs/user/mcp.md・docs/user/cli.md（日英）、CLI の使い方の表示、docs/worklog の PBI-395 の作業履歴、docs/adr の新しい ADR の差分
-  - 期待結果：4つのツールと引数・結果・状態・理由の文・新しい API、上限と単位・続きの位置・成果物と実行の指定の方法・前の版のデーモンの見分け方と再起動の前提・比べた案、できること・できないことが書かれ、作業履歴に実行したコマンドと結果がある
-- [TV-29] 検査が通ること
+  - 期待結果：4つのツールと引数・結果・状態・理由の文・新しい API、上限と単位・続きの位置・成果物と実行の指定の方法・前の版のデーモンの見分け方と再起動の前提・伏せ直せていない実行の扱い・比べた案、できること・できないことが書かれ、作業履歴に実行したコマンドと結果がある
+- [TV-30] 検査が通ること
   - 入力：変更後の作業領域で npm run lint・npm run format・npm run typecheck・npm run build・npx vitest run --no-file-parallelism を実行する
   - 期待結果：どれも失敗なく終わる
-- [TV-30] Claude Code と Codex から新しいツールを使えること
+- [TV-31] Claude Code と Codex から新しいツールを使えること
   - 入力：起動中の sacty に、Claude Code と Codex の MCP の設定で sacty mcp をつなぎ、4つのツールを呼ぶ
   - 期待結果：どちらのクライアントも結果の型を受け付け、成果物とログを読める（人が確かめる）
