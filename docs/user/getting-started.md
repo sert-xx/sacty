@@ -1,4 +1,4 @@
-<!-- 対応するコード: package.json、packages/cli/src/index.ts、apps/web/src/lib/paths.ts、apps/web/src/components/dashboard.tsx、apps/web/src/components/shell/rail.tsx、apps/daemon/src/config.ts（CONFIG_TEMPLATE・resolveHome）、apps/daemon/src/instance-lock.ts -->
+<!-- 対応するコード: package.json、scripts/cli-install.mjs、packages/cli/src/index.ts、apps/web/src/lib/paths.ts、apps/web/src/components/dashboard.tsx、apps/web/src/components/shell/rail.tsx、apps/daemon/src/config.ts（CONFIG_TEMPLATE・resolveHome）、apps/daemon/src/instance-lock.ts -->
 
 **日本語** | [English](getting-started.en.md)
 
@@ -58,15 +58,10 @@ npm run cli:install
 
 入口を置く場所は、次のように決まります。
 
-- mise を使っていれば、入口を mise に登録します（`mise use --global sacty@<版>`。`mise ls sacty` で確かめられます）。
-  - 同じ版がほかの方法で登録されているときは、上書きしません。
-  - 登録できなければ、理由を知らせて `~/.local/bin/sacty` に置きます。
-  - 登録の後、いまのシェルで `sacty` が見つからないときは知らせます。
-    `mise activate` を使っていれば、新しいシェルから使えます。
-    シムを使うなら、mise のシムのディレクトリを `PATH` に入れてください。
-- mise を使っていなければ、`~/.local/bin/sacty` に置きます。
-- 環境変数 `SACTY_BIN_DIR` を指定すると、mise を使わずに、その中に置きます。
-- mise を使わずに置いたとき、置き場所が `PATH` に無いか、`PATH` で先に別の `sacty` が見つかると、`[sacty] 注意：` で知らせます。
+- `~/.local/bin/sacty` に置きます。
+  mise を使っていても、mise には登録しません。
+- 環境変数 `SACTY_BIN_DIR` を指定すると、その中に置きます。
+- 置き場所が `PATH` に無いか、`PATH` で先に別の `sacty` が見つかると、`[sacty] 注意：` で知らせます。
 
 入口は、次のように動きます。
 
@@ -86,10 +81,25 @@ npm run cli:install
   その版で `npm rm -g @sacty/cli` を実行して消してください。
 - シェルの `alias` で `sacty` を定義していると、そちらが先に使われます。
 
-入口を消すときは、入れ方に合わせて次のものを消します。
+入口を消すときは、`~/.local/bin/sacty`（`SACTY_BIN_DIR` を指定したなら、その中の `sacty`）を消します。
 
-- mise で入れたとき：mise の利用者全体の設定（`~/.config/mise/config.toml`）の `[tools]` から `sacty` の行を消し、`~/.local/share/sacty/mise`（`XDG_DATA_HOME` を指定しているなら `$XDG_DATA_HOME/sacty/mise`）を消します。
-- mise を使っていないとき：`~/.local/bin/sacty`（`SACTY_BIN_DIR` を指定したなら、その中の `sacty`）を消します。
+前の版の sacty を mise で入れていた人は、mise の登録が残っていれば、手で外してください。
+前の版は、mise を使っていると、入口を mise に登録していました。
+登録が残っているかは、`mise ls sacty` で確かめられます（残っていれば、`sacty` の行が出ます）。
+
+- このコマンドは、mise の登録を外しません。
+  前の版の入口のディレクトリ（`~/.local/share/sacty/mise`）がある間は、実行のたびに `[sacty] 注意：` で知らせます。
+- 外すまでの間も同じように動くよう、前の版の入口を、新しい入口と同じ中身に書き直します。
+- 外す前に、`~/.local/bin`（`SACTY_BIN_DIR` を指定したなら、その場所）が `PATH` に入っていることを確かめてください（`echo "$PATH"` で確かめられます）。
+  入っていないまま外すと、`sacty` が見つからなくなります（入っていなければ、`[sacty] 注意：` でも知らせます）。
+  入っていなければ、シェルの設定のファイル（zsh なら `~/.zshrc`）に `export PATH="$HOME/.local/bin:$PATH"`（`SACTY_BIN_DIR` を指定したなら、`$HOME/.local/bin` の代わりにその場所）を足して、新しいシェルを開きます。
+- 外すときは、次の順で消します。
+  1. mise の利用者全体の設定（mise の既定では `~/.config/mise/config.toml`。設定をほかの場所に置いているなら、`sacty` の行があるファイル）の `[tools]` から `sacty` の行を消します。
+  2. mise の登録（mise の既定では `~/.local/share/mise/installs/sacty`。`MISE_DATA_DIR` を指定しているなら `$MISE_DATA_DIR/installs/sacty`、`XDG_DATA_HOME` を指定しているなら `$XDG_DATA_HOME/mise/installs/sacty`）を消します。
+     シムを使っているなら、続けて `mise reshim` を実行します。
+  3. `~/.local/share/sacty/mise`（`XDG_DATA_HOME` を指定しているなら `$XDG_DATA_HOME/sacty/mise`）を消します。
+- 外した後に、`mise ls sacty` に `sacty` の行が出ないことと、もう一度 `npm run cli:install` を実行して注意が出ないことを確かめてください。
+  `sacty` の行が残るなら、1 と 2 を見直してください。注意が残るなら、注意の本文に従ってください。
 
 ## 起動する
 

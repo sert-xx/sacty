@@ -1,5 +1,7 @@
 // `npm run cli:install`（ビルドの後）から呼ぶ。どのディレクトリでも `sacty` を使えるように、Node.js の版に関係しない
 // ディレクトリ（既定は ~/.local/bin。SACTY_BIN_DIR で変えられる）に、起動の入口（シェルのスクリプト）を置く。
+// mise を使っていても、mise には登録しない。mise も呼ばない（前の版が mise に登録した入口があれば、同じ中身に書き直し、
+// 手で外す手順を知らせる）。
 // 入口には、このスクリプトを動かした Node.js（sacty のリポジトリで mise などが選んだもの）の絶対パスを書く。mise などで
 // ディレクトリごとに Node.js の版が違っても、sacty はいつもこの Node.js で動く。
 // 入口はリポジトリの packages/cli を指すので、版を上げた後にビルドし直せば新しい版で動く。Node.js の版を変えたときは、
@@ -12,6 +14,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -82,22 +85,56 @@ export function findOnPath(name, pathValue = process.env.PATH ?? "") {
   return undefined;
 }
 
+/** dir が PATH（pathValue）に入っているか（realpath で比べる）。 */
+export function dirOnPath(dir, pathValue = process.env.PATH ?? "", resolveReal = real) {
+  const target = resolveReal(dir) ?? dir;
+  return pathValue
+    .split(delimiter)
+    .some((entry) => entry && (resolveReal(entry) ?? entry) === target);
+}
+
 /**
  * 入れた後の確かめ。onPath（PATH で最初に見つかる sacty）が launcher（置いた入口）か。止めるべき誤りは無く、
  * 知らせることを warnings で返す（PATH の順は利用者の環境なので止めない）。
+ * - 置いた入口が先に見つからず、置き場所が PATH に無ければ（dirInPath が false）、先に何が見つかっていても、PATH に
+ *   足すことだけを知らせる（足す前に、先に見つかるものを消すと、sacty が見つからなくなるため）。
+ * - 置き場所が PATH にあって、sameAs（入口と同じ中身に書き直した、前の版の入口）が先に見つかるときは、同じに動くので注意に
+ *   しない。その入口は first で返す（legacyNotice が知らせる）。
+ * - 置き場所が PATH にあって、ほかの sacty が先に見つかるときは、消すか PATH の順を変えるよう知らせる。legacy（前の版の
+ *   入口のディレクトリがある）なら、前の版の mise の登録（シムなど）かもしれないので、消すことだけを勧めない。
  */
-export function checkPath({ launcher, onPath, resolveReal = real }) {
-  const warnings = [];
-  if (!onPath) {
-    warnings.push(
-      `${dirname(launcher)} が PATH にありません。PATH に足すと、どのディレクトリでも sacty と打って使えます（SACTY_BIN_DIR で置き場所を変えられます）。`,
-    );
-  } else if (resolveReal(onPath) !== resolveReal(launcher)) {
-    warnings.push(
-      `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。そちらを消すか、PATH の順を変えてください（${dirname(launcher)} を前に置く）。`,
-    );
+export function checkPath({
+  launcher,
+  onPath,
+  sameAs = [],
+  legacy = false,
+  dirInPath = true,
+  resolveReal = real,
+}) {
+  const dir = dirname(launcher);
+  const add = `PATH に足すと、どのディレクトリでも sacty と打って使えます（SACTY_BIN_DIR で置き場所を変えられます）。`;
+  if (!onPath) return { warnings: [`${dir} が PATH にありません。${add}`], first: undefined };
+  if (resolveReal(onPath) === resolveReal(launcher)) return { warnings: [], first: undefined };
+  const first = sameAs.find((same) => resolveReal(same) === resolveReal(onPath));
+  if (!dirInPath) {
+    return {
+      warnings: [
+        `${dir} が PATH にありません（いま PATH で見つかる sacty は ${onPath} で、いま置いた入口ではありません）。PATH の、いま見つかる sacty より前に足してください（SACTY_BIN_DIR で置き場所を変えられます）。足す前に、いま見つかる sacty${legacy ? "や前の版の mise の登録" : ""}を消すと、sacty が見つからなくなります。`,
+      ],
+      first,
+    };
   }
-  return { warnings };
+  if (first) return { warnings: [], first };
+  const head = `PATH で先に見つかる sacty（${onPath}）は、いま置いた入口ではありません。`;
+  const fix = `そちらを消すか、PATH の順を変えてください（${dir} を前に置く）。`;
+  return {
+    warnings: [
+      legacy
+        ? `${head}前の版の mise の登録（mise のシムを含む）なら、前の版の入口についての注意に従って外すと、いま置いた入口が使われます。そうでなければ、${fix}`
+        : `${head}${fix}`,
+    ],
+    first,
+  };
 }
 
 /**
@@ -119,79 +156,64 @@ function fail(message) {
   process.exit(1);
 }
 
-/**
- * mise で入れた後の確かめ。found（mise which sacty の結果）が launcher（置いた入口）か、onPath（シェルの PATH で最初に
- * 見つかる sacty）が入口か mise のシム（miseBin へのリンク）か。mise が選べても、シェルに mise activate やシムの PATH の
- * 設定が無ければ実行できないので、両方を確かめる。注意を warnings で返す。
- */
-export function checkMise({ launcher, found, onPath, miseBin, resolveReal = real }) {
-  const warnings = [];
-  if (!found) {
-    warnings.push(
-      "mise が sacty を見つけられません。mise activate かシムの設定を確かめてください（mise ls sacty で、登録した版を確かめられます）。",
-    );
-  } else if (resolveReal(found) !== resolveReal(launcher)) {
-    warnings.push(
-      `mise が選ぶ sacty（${found}）は、いま置いた入口ではありません。mise.toml で sacty の版を指定していないか確かめてください。`,
-    );
-  }
-  const onPathReal = onPath ? resolveReal(onPath) : undefined;
-  if (!onPath) {
-    warnings.push(
-      "いまのシェルの PATH では sacty が見つかりません。mise activate を使っていれば、新しいシェル（次のプロンプト）から使えます。シムを使うなら、mise のシムのディレクトリ（mise の既定では ~/.local/share/mise/shims）を PATH に入れてください。",
-    );
-  } else if (
-    onPathReal !== resolveReal(launcher) &&
-    (!miseBin || onPathReal !== resolveReal(miseBin))
-  ) {
-    warnings.push(
-      `PATH で先に見つかる sacty（${onPath}）は、mise で入れたものではありません。そちらを消すか、PATH の順を変えてください。`,
-    );
-  }
-  return { warnings };
-}
-
-/** mise で入れるか（PATH に mise があり、SACTY_BIN_DIR で置き場所を指定していないとき）。 */
-export function useMise({ env = process.env, hasMise }) {
-  return !env.SACTY_BIN_DIR?.trim() && hasMise;
-}
-
-/** mise に登録する、版ごとの入口のディレクトリ（XDG_DATA_HOME、無ければ ~/.local/share の下）。中の bin/sacty が入口。 */
-export function miseToolDir({ version, env = process.env, home = homedir() }) {
+/** 前の版が、mise に登録する入口を置いたディレクトリ（XDG_DATA_HOME、無ければ ~/.local/share の下）。中は版ごと。 */
+export function legacyMiseRoot({ env = process.env, home = homedir() } = {}) {
   const data = env.XDG_DATA_HOME?.trim() || join(home, ".local", "share");
-  return join(data, "sacty", "mise", version);
+  return join(data, "sacty", "mise");
 }
 
 /**
- * mise に、dir を sacty の版 version として登録し（mise link）、利用者全体で使う版にする（mise use --global）。
- * 同じ版が既に登録されていれば（mise where）、その登録先が dir のときだけ置き換える（--force）。別のもの（ほかの方法で
- * 入れた sacty）なら、消さずに失敗を返す（mise link --force は、元の登録先を消してから作り直すため）。
- * 失敗したら、どのコマンドがどう失敗したかを返す。
+ * 前の版が mise に登録した入口（root の <版>/bin/sacty。目印のあるもの）を、いまの入口と同じ中身（content）に書き直す。
+ * mise の登録は外さない（mise の設定を書き換えず、mise も呼ばない）ので、mise が PATH に載せて先に見つかっても、
+ * いま置いた入口と同じに動くようにする。root が無ければ何もしない（found が false）。
+ * 書き直した入口を updated、書き直せなかったもの（目印の無いファイル・読めない・書けない）を failed で返す。例外は投げない。
  */
-export function installWithMise({ version, dir, run, resolveReal = real }) {
-  const tool = `sacty@${version}`;
-  const where = run("mise", ["where", tool]);
-  const registered = where.status === 0 ? where.stdout?.trim() : "";
-  if (registered && resolveReal(registered) !== resolveReal(dir)) {
-    return {
-      ok: false,
-      error: `mise に ${tool} が、ほかの場所（${registered}）で登録されているため、上書きしません`,
-    };
+export function refreshLegacyLaunchers({ root, content, entry }) {
+  const updated = [];
+  const failed = [];
+  if (!existsSync(root) && !isSymlink(root)) return { found: false, updated, failed };
+  let versions;
+  try {
+    versions = readdirSync(root);
+  } catch (error) {
+    return { found: true, updated, failed: [{ path: root, error: error.message }] };
   }
-  for (const args of [
-    ["link", ...(registered ? ["--force"] : []), tool, dir],
-    ["use", "--global", tool],
-  ]) {
-    const result = run("mise", args);
-    if (result.status !== 0) {
-      const detail = `${result.stderr ?? ""}${result.stdout ?? ""}`.trim();
-      return {
-        ok: false,
-        error: `mise ${args.join(" ")} に失敗しました${detail ? `：${detail}` : ""}`,
-      };
+  for (const version of versions) {
+    const launcher = join(root, version, "bin", "sacty");
+    if (!existsSync(launcher) && !isSymlink(launcher)) continue;
+    try {
+      if (writeLauncher(launcher, content, entry)) updated.push(launcher);
+      else failed.push({ path: launcher, error: "sacty の入口でないファイル（またはリンク）です" });
+    } catch (error) {
+      failed.push({ path: launcher, error: error.message });
     }
   }
-  return { ok: true };
+  return { found: true, updated, failed };
+}
+
+/**
+ * 前の版の入口のディレクトリ（root。legacyMiseRoot）があるときの注意。mise の登録が残っているかは確かめない（mise を
+ * 呼ばない）ので、残っていれば、という形で手で外す手順を知らせる。first は、PATH で最初に見つかる sacty が、書き直した
+ * 前の版の入口のとき、その場所。
+ */
+export function legacyNotice({ root, updated, failed, first }) {
+  const lines = [
+    `前の版の入口のディレクトリ（${root}）があります。前の版は、mise を使っていると、入口を mise に登録していました（いまの版は登録しません）。登録が残っていれば（mise ls sacty に出ます）、手で外してください。外すものは、mise の利用者全体の設定の [tools] の sacty の行、mise の登録（installs/sacty。シムを使っているなら mise reshim も）、${root} です。場所と順は、sacty のリポジトリの docs/user/getting-started.md の「どのディレクトリでも sacty を使う」にあります。`,
+  ];
+  if (updated.length > 0) {
+    lines.push(
+      `外すまでの間も同じに動くよう、前の版の入口を、いま置いた入口と同じ中身に書き直しました（${updated.join("、")}）。`,
+    );
+  }
+  if (first) {
+    lines.push(
+      `いまは、PATH で先に、前の版の入口（${first}）が見つかります。いま置いた入口と同じ中身なので、同じに動きます。`,
+    );
+  }
+  for (const { path, error } of failed) {
+    lines.push(`前の版の入口（${path}）は書き直せませんでした：${error}`);
+  }
+  return lines;
 }
 
 /**
@@ -215,17 +237,16 @@ export function writeLauncher(launcher, content, entry) {
   return true;
 }
 
-function main() {
+/** repo（既定は、このスクリプトのあるリポジトリ）の sacty を入れる。 */
+export function main({ repo = resolve(dirname(fileURLToPath(import.meta.url)), "..") } = {}) {
   if (process.platform === "win32")
     fail("npm run cli:install は Windows では使えません（macOS・Linux だけ）。");
-  const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const cliDir = join(repo, "packages", "cli");
   const entry = realpathSync(join(cliDir, "bin", "sacty.js"));
   const version = JSON.parse(readFileSync(join(cliDir, "package.json"), "utf8")).version;
   // このスクリプトを動かしている Node.js（リポジトリで mise などが選んだ版）
   const node = process.execPath;
   const content = launcherScript({ node, entry, repo });
-  const binLauncher = join(launcherDir(), "sacty");
 
   // 前のやり方（npm link）で、いまの Node.js のグローバルに入れたこのリポジトリの sacty があれば外す（PATH で先に
   // 見つかって、別の Node.js の版で動くのを防ぐ）。ほかのリポジトリ・ほかのパッケージのものは触らない。
@@ -248,36 +269,11 @@ function main() {
     }
   }
 
-  // mise があれば、版ごとのディレクトリに入口を置いて mise に登録する。登録できなければ、置き場所（~/.local/bin など）に置く
-  let launcher;
-  let via = "bin";
-  if (useMise({ hasMise: Boolean(findOnPath("mise")) })) {
-    const toolDir = miseToolDir({ version });
-    const miseLauncher = join(toolDir, "bin", "sacty");
-    if (!writeLauncher(miseLauncher, content, entry)) {
-      fail(
-        `${miseLauncher} に、sacty の入口でないファイル（またはリンク）があります。消してから、もう一度実行してください。`,
-      );
-    }
-    const installed = installWithMise({ version, dir: toolDir, run });
-    if (installed.ok) {
-      launcher = miseLauncher;
-      via = "mise";
-    } else {
-      console.warn(`[sacty] 注意：${installed.error}。mise を使わずに ${binLauncher} に置きます。`);
-    }
-  }
-  if (!launcher) {
-    if (!writeLauncher(binLauncher, content, entry)) {
-      fail(
-        `${binLauncher} に、sacty の入口でないファイル（またはリンク）があります。消すか、SACTY_BIN_DIR で別の置き場所を指定してから、もう一度実行してください。`,
-      );
-    }
-    launcher = binLauncher;
-  } else if (existsSync(binLauncher) && safeRead(binLauncher).includes(LAUNCHER_MARK)) {
-    // mise で入れたら、前に置き場所に置いた入口は消す（PATH で mise のものより先に見つかるのを防ぐ）
-    rmSync(binLauncher, { force: true });
-    console.log(`[sacty] 前に置いた入口（${binLauncher}）を消しました（mise で入れたため）。`);
+  const launcher = join(launcherDir(), "sacty");
+  if (!writeLauncher(launcher, content, entry)) {
+    fail(
+      `${launcher} に、sacty の入口でないファイル（またはリンク）があります。消すか、SACTY_BIN_DIR で別の置き場所を指定してから、もう一度実行してください。`,
+    );
   }
 
   // 入口が、このリポジトリの版で動くか（ビルドの結果を読めるか）
@@ -287,21 +283,25 @@ function main() {
       `入れた sacty の版（${shown || "表示されません"}）が、このリポジトリの版（${version}）と違います。npm run build を確かめてください。`,
     );
   }
-  // mise で入れたら、mise が選ぶ sacty が入口か（シムを使う設定では、PATH にはシムが見つかるため、mise に尋ねる）
-  const { warnings } =
-    via === "mise"
-      ? checkMise({
-          launcher,
-          found: run("mise", ["which", "sacty"]).stdout?.trim() || undefined,
-          onPath: findOnPath("sacty"),
-          miseBin: findOnPath("mise"),
-        })
-      : checkPath({ launcher, onPath: findOnPath("sacty") });
+  // 前の版が mise に登録した入口を、同じ中身に書き直す（mise が PATH に載せて先に見つかっても、同じに動くように）。
+  // 上の確かめを通った後に書き直す（動かない入口の中身を、前の版の入口に写さない）
+  const legacyRoot = legacyMiseRoot();
+  const legacy = refreshLegacyLaunchers({ root: legacyRoot, content, entry });
+  const { warnings, first } = checkPath({
+    launcher,
+    onPath: findOnPath("sacty"),
+    sameAs: legacy.updated,
+    legacy: legacy.found,
+    dirInPath: dirOnPath(dirname(launcher)),
+  });
   for (const line of warnings) console.warn(`[sacty] 注意：${line}`);
+  if (legacy.found) {
+    for (const line of legacyNotice({ root: legacyRoot, ...legacy, first })) {
+      console.warn(`[sacty] 注意：${line}`);
+    }
+  }
   console.log(
-    via === "mise"
-      ? `[sacty] sacty ${version} を mise で入れました（mise use --global sacty@${version}、${launcher} → ${cliDir}、Node.js ${process.version}：${node}）。`
-      : `[sacty] sacty ${version} を入れました（${launcher} → ${cliDir}、Node.js ${process.version}：${node}）。`,
+    `[sacty] sacty ${version} を入れました（${launcher} → ${cliDir}、Node.js ${process.version}：${node}）。`,
   );
   console.log(
     "[sacty] 動いている sacty up は前の版のままです。止めてから起動し直してください（シェルの alias で sacty を定義していれば、そちらが先に使われます）。",

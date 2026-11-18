@@ -1,4 +1,4 @@
-<!-- Code: package.json, packages/cli/src/index.ts, apps/web/src/lib/paths.ts, apps/web/src/components/dashboard.tsx, apps/web/src/components/shell/rail.tsx, apps/daemon/src/config.ts (CONFIG_TEMPLATE, resolveHome), apps/daemon/src/instance-lock.ts -->
+<!-- Code: package.json, scripts/cli-install.mjs, packages/cli/src/index.ts, apps/web/src/lib/paths.ts, apps/web/src/components/dashboard.tsx, apps/web/src/components/shell/rail.tsx, apps/daemon/src/config.ts (CONFIG_TEMPLATE, resolveHome), apps/daemon/src/instance-lock.ts -->
 
 [日本語](getting-started.md) | **English**
 
@@ -58,15 +58,10 @@ You can run it any number of times.
 
 Where the launcher is placed is decided as follows.
 
-- If you use mise, it registers the launcher with mise (`mise use --global sacty@<version>`; you can check it with `mise ls sacty`).
-  - If the same version is registered another way, it does not overwrite it.
-  - If it cannot register it, it tells you why and places it in `~/.local/bin/sacty`.
-  - After registering, it tells you if `sacty` is not found in your current shell.
-    With `mise activate`, you can use it from a new shell.
-    If you use shims, add mise's shims directory to your `PATH`.
-- If you do not use mise, it places it in `~/.local/bin/sacty`.
-- If you specify the environment variable `SACTY_BIN_DIR`, it places it there without using mise.
-- When it is placed without mise and the location is not in your `PATH`, or another `sacty` is found earlier in your `PATH`, it tells you with `[sacty] 注意：`.
+- It places it in `~/.local/bin/sacty`.
+  Even if you use mise, it does not register it with mise.
+- If you specify the environment variable `SACTY_BIN_DIR`, it places it there.
+- When the location is not in your `PATH`, or another `sacty` is found earlier in your `PATH`, it tells you with `[sacty] 注意：`.
 
 The launcher works as follows.
 
@@ -86,10 +81,25 @@ If another `sacty` is used first, check the following.
   Run `npm rm -g @sacty/cli` with that version to remove it.
 - If you define `sacty` with a shell `alias`, that one is used first.
 
-To remove the launcher, delete the following, depending on how it was installed.
+To remove the launcher, delete `~/.local/bin/sacty` (or `sacty` in `SACTY_BIN_DIR` if you specified it).
 
-- Installed with mise: remove the `sacty` line from `[tools]` in mise's user-wide settings (`~/.config/mise/config.toml`) and delete `~/.local/share/sacty/mise` (or `$XDG_DATA_HOME/sacty/mise` if you set `XDG_DATA_HOME`).
-- Installed without mise: delete `~/.local/bin/sacty` (or `sacty` in `SACTY_BIN_DIR` if you specified it).
+If you installed an earlier version of sacty with mise, remove the mise registration by hand if it remains.
+When you used mise, earlier versions registered the launcher with mise.
+You can check whether the registration remains with `mise ls sacty` (if it remains, a `sacty` line appears).
+
+- This command does not remove the mise registration.
+  While the earlier version's launcher directory (`~/.local/share/sacty/mise`) exists, it tells you with `[sacty] 注意：` each time you run it.
+- So that it works the same until you remove it, it rewrites the earlier version's launcher to the same content as the new launcher.
+- Before removing it, check that `~/.local/bin` (or the location if you specified `SACTY_BIN_DIR`) is in your `PATH` (you can check with `echo "$PATH"`).
+  If you remove it while it is not, `sacty` is no longer found (if it is not, it also tells you with `[sacty] 注意：`).
+  If it is not, add `export PATH="$HOME/.local/bin:$PATH"` (with the location in place of `$HOME/.local/bin` if you specified `SACTY_BIN_DIR`) to your shell's settings file (`~/.zshrc` for zsh) and open a new shell.
+- To remove it, delete the following in this order.
+  1. Remove the `sacty` line from `[tools]` in mise's user-wide settings (`~/.config/mise/config.toml` by mise's default; if you keep the settings elsewhere, the file that has the `sacty` line).
+  2. Delete the mise registration (`~/.local/share/mise/installs/sacty` by mise's default; `$MISE_DATA_DIR/installs/sacty` if you set `MISE_DATA_DIR`, or `$XDG_DATA_HOME/mise/installs/sacty` if you set `XDG_DATA_HOME`).
+     If you use shims, then run `mise reshim`.
+  3. Delete `~/.local/share/sacty/mise` (or `$XDG_DATA_HOME/sacty/mise` if you set `XDG_DATA_HOME`).
+- After removing it, check that `mise ls sacty` shows no `sacty` line, and that the warning no longer appears when you run `npm run cli:install` again.
+  If the `sacty` line remains, review steps 1 and 2. If the warning remains, follow what the warning says.
 
 ## Start
 
