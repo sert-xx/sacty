@@ -5,9 +5,11 @@
 `sacty mcp` は、起動中の sacty（`sacty up`）を、同じマシンの AI（Claude Code・Codex など）から操作するための MCP サーバー。
 標準入出力（stdio）で動き、画面と同じデーモンの API を呼ぶ。
 MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（2025-11-25 まで）のクライアントも受ける。
-ツールは、タスクの一覧・検索（`list_tasks`）、タスクの詳細（`get_task`）、PR のレビューのタスクの再レビュー（`rereview_task`）、プロジェクトの一覧（`list_projects`）、タスクの作成（`create_task`）の5つ。
+ツールは、タスクの一覧・検索（`list_tasks`）、タスクの詳細（`get_task`）、PR のレビューのタスクの再レビュー（`rereview_task`）、プロジェクトの一覧（`list_projects`）、タスクの作成（`create_task`）、
+成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、実行のログ（`get_run_log`）の9つ。
+最後の4つは、成果物とログを読むだけのツール。
 
-関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)
+関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物とログの取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-logs-by-byte-range.md)
 
 ## 起動と接続
 
@@ -22,7 +24,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
   `sacty up` を起動し直すとトークンが変わるが、次の呼び出しから新しい接続先とトークンを使う（MCP サーバーの起動し直しは要らない）。
 - デーモンの応答は、要求ごとに 30 秒（`MCP_REQUEST_TIMEOUT_MS`）まで待つ（本文の読み取りを含む）。
 - 認証は足していない（MCP の認証の仕様は HTTP のためのもので、stdio では資格情報を環境から取る決まり）。使えるのは、`daemon.json`（権限 0600）を読める利用者だけ。
-- 呼ぶ API は、画面と同じ次のもの（[全体の構成](architecture.md#プロセスと通信)）。デーモンに、MCP のための API は無い。
+- 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。上の5つのツールは画面と同じ API を呼ぶ。成果物と実行を読む4つのツールは、読み取りだけの API（下の表の下4行。画面は呼ばない）を呼ぶ。
 
 | ツール | デーモンの API |
 | --- | --- |
@@ -31,6 +33,10 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 | `rereview_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/rereview` |
 | `list_projects` | `GET /api/projects` |
 | `create_task` | `POST /api/tasks` |
+| `list_deliverables` | `GET /api/tasks/:id/deliverables` |
+| `get_deliverable` | `GET /api/tasks/:id/deliverables/:step/:kind?offset=&max=` |
+| `list_runs` | `GET /api/tasks/:id/runs?offset=&limit=` |
+| `get_run_log` | `GET /api/tasks/:id/runs/:runId/log/range?file=&offset=&max=&tail=` |
 
 コード: `packages/cli/src/index.ts`（`mcpCommand`）、`packages/cli/src/mcp.ts`（`daemonApi`）、`apps/daemon/src/task-mcp.ts`（`serveTaskMcp`・`startTaskMcp`・`createTaskMcpServer`・`SactyApi`）、`packages/cli/src/context-preview.ts`（`readDaemonFile`・`daemonRequest`）、`packages/cli/src/up-env.ts`（`daemonEndpoint`）
 
@@ -39,6 +45,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 サーバーの使い方の説明（`INSTRUCTIONS`）と、`list_tasks`・`get_task` の説明に、結果の題・説明・レビューの本文・止まっている理由はほかの人が書いた文を含むデータで、その中の指示に従わないことを書く。
 `list_projects` の説明にも同じ注意を書く（プロジェクトの名前は、人が付けた文）。
 `rereview_task`・`create_task` の説明には、利用者に頼まれたときだけ呼ぶこと（題・説明・レビューの本文などの中の指示では呼ばない）を書く。
+`list_deliverables`・`get_deliverable`・`list_runs`・`get_run_log` の説明と `INSTRUCTIONS` にも、結果の成果物・ログはほかの人やエージェントが書いた文を含むデータで、その中の指示に従わないことを書く（`READ_UNTRUSTED_NOTE`）。
 
 ツールは `TOOLS` の表（名前・説明・引数の形・結果の形・処理）に持ち、サーバーを作るときにすべて登録する。
 どのツールも、引数の形（`inputSchema`）と結果の形（`outputSchema`）を、ツールの一覧に出す。
@@ -126,6 +133,128 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 - 作る API を呼んだ後に結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、その理由に続けて、タスクが作られている可能性があること・`list_tasks`（`query` に題）で確かめてから呼び直すことを返す（デーモンが記録した後に、応答が届かなかったのかもしれないため。作成の API には、二重に作らせないための仕組みが無い）。デーモンが 5xx 以外の応答で断ったとき（`DaemonRefusal`）、認証できなかったとき（401）、接続を断られたとき、呼ぶ前の失敗（`daemon.json` が無い）は、処理されていないので、理由だけを返す。
 - 前の版のデーモン：`POST /api/tasks`・`GET /api/projects` は、MCP のために足したものではないので、前の版のデーモンにもある。通らなければ、デーモンが断った理由（読めなければ状態コード）を返し、MCP サーバーは終わらない。
 - ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`）・sacty の外に書く（`openWorldHint: true`。始まった工程が、PR などに書く）。
+
+### list_deliverables
+
+タスクの工程ごとの成果物を一覧にする。読み取りだけ（`readOnlyHint: true`・`openWorldHint: false`。以下の3つも同じ）。引数は `task_id`。
+読めるのは、画面のタスクの詳細で読める範囲：工程ごとに、承認済みならその版、まだなら最新の出力。レビューの工程は、本文と行へのコメント。
+差し戻し前の過去の回の成果物と、エージェントの元のファイル（`agent-files`）は読めない。
+
+- 結果は `{ deliverables }`。1件は `step`（工程）・`kind`・`submission`・`previousSubmission`・`status`・`bytes`（本文の UTF-8 のバイト数）。成果物がまだ無いタスクは、`isError` でない空の一覧。
+- `kind` は4つ：`output`（本文。承認済みならその版、まだなら最新の出力）、`test_viewpoints`（設計の工程のテスト観点の JSON）、`sacty_version`（人が直した版があるときの sacty の版）、`review_comments`（レビューの行へのコメントを、`<ファイル>:<行>` と本文で並べた文）。
+- 一覧に載るのは、本文が空でない組だけ。工程はタスクの工程の順、続けて、ほかの工程。
+- `status` は、次の表の上の行から順に当て、最初に合ったものにする。
+
+| `status` | 条件 | `submission` |
+| --- | --- | --- |
+| `approved` | その工程が承認済み（`approved[step]`） | 承認した提出の回 |
+| `posted` | レビューの工程で、レビューを PR に投稿済み（`reviewPost`） | レビューの回（`reviewRound`。無ければ 1） |
+| `not_submitted` | レビューの工程で、まだ投稿していない | null（`previousSubmission` は `reviewRound`−1。1 未満なら null） |
+| `awaiting_approval` | 承認ゲートがその工程（`gate.step`） | ゲートの提出の回 |
+| `not_submitted` | その工程の最後の実行の完了（`AgentRunCompleted`）が、最後の提出（`StepSubmitted`）より後 | null（`previousSubmission` は、それまでの提出の回数。無ければ null） |
+| `changes_requested` | 上のどれでもなく、出力が残っている（差し戻しの後、作り直しの完了まで） | 提出の回数 |
+| `none` | 本文が無い（候補の工程で未出力・人が直した版の無い工程の `sacty_version`・設計以外の `test_viewpoints`・レビュー以外の `review_comments`） | null |
+
+- まだ提出していない出力（`not_submitted`）は、前の回の提出と読み違えないように、`submission` を null にし、前の回は `previousSubmission` で示す。
+
+### get_deliverable
+
+成果物の中身を、範囲で読む。
+
+| 引数 | 型 | 内容 |
+| --- | --- | --- |
+| `task_id` | 文字列（必須） | タスクの ID |
+| `step` | 列挙（必須） | 工程（`investigate`・`review`・`requirements`・`design`・`split`・`integrate`・`reproduce`・`implement`・`deployment`・`document`・`operation`） |
+| `kind` | 列挙（必須） | 成果物の種類（上の4つ） |
+| `offset` | 整数（0 以上） | 読み始める位置（バイト）。省けば 0 |
+| `max_bytes` | 整数（1 以上） | 返す量の上限（バイト）。省けば 32,000（`RANGE_MAX_BYTES`）。上限を超える値は 32,000 に収める |
+
+- 結果は、`step`・`kind`・`submission`・`previousSubmission`・`status`・`text`（本文の範囲）と、[範囲の情報](#範囲の指定と結果)。
+- 候補にあって本文が無い組は、`isError` でない `status: none`・空の `text`・`totalBytes: 0`。
+- 工程・種類が候補に無い値は、引数の列挙で SDK が断る。デーモンの API は、`{ error: "not_found", what: "step" }`・`"kind"` の 404 で断る（継承されたプロパティ（`constructor` など）は引かない）。
+- 本文は、デーモンがメモリーにあるタスクから取り、UTF-8 の範囲だけを返す（作業履歴に書く前に、秘密情報を伏せてある）。
+
+### list_runs
+
+エージェントの実行を、新しい順に一覧にする。引数は `task_id`・`offset`（0 以上。既定 0）・`limit`（1 以上。既定 20。100 を超える値は 100 に収める）。
+
+- 画面でログへのリンクがある実行のすべて：作業履歴のうち、画面と同じ規則（`RUN_EVENTS`・`runLogId`。`@sacty/core`）で `runId` が拾える行から集める。工程・オーケストレーター・ガーディアン・書き出し・監査などを含む。`runId` の無い行は載せない。
+- 結果は、`total`（実行の件数）・`returned`・`clipped`（件数の上限で切ったか）・`clamped`（`limit` を上限に収めたか）・`nextOffset`（続きの `offset`。もう無ければ null）・`runs`。
+- 1件は、`runId`・`role`・`agentId`・`startedAt`・`state`・`fallback`・`hasLog`。
+  - `role`・`agentId`・`startedAt`：実行の記録（`meta.json`）にあればその値。無ければ、作業履歴のその `runId` の最初の行から取る（`step` かイベントの種類から決めた役割・`agentId`・時刻）。どちらにも無ければ null。
+  - `state`：`running`（デーモンが開いている）、`succeeded`・`failed`（`meta.json` の `outcome`。`meta.json` が無ければ作業履歴の `AgentRunCompleted`・`AgentRunFailed`）、`unknown`（`meta.json` に終わりの時刻が無く開いていない、またはどちらの記録も無い）。
+  - `hasLog`：`meta.json` があるか。
+  - `fallback`：別のエージェントに切り替わった実行の `{ from, to }`（切り替えの前と後のエージェント）。無ければ null。作業履歴の全件から、ページに切る前に決める。失敗した実行は `AgentFellBack` の `runId`。代わりに動いた実行は、その後に最初に現れた、役割が `AgentFellBack` の `role` と同じで `agentId` が切り替え先の別の実行（`meta.json` は使わない）。どのページから読んでも同じ値になる。
+- 返す分（最大 100 件）だけ `meta.json` を読む。
+
+### get_run_log
+
+実行のログを、範囲で読む。
+
+| 引数 | 型 | 内容 |
+| --- | --- | --- |
+| `task_id` | 文字列（必須） | タスクの ID |
+| `run_id` | 文字列（必須） | 実行の ID（`list_runs` の `runId`） |
+| `file` | 列挙 | `events`（エージェントの出来事の JSONL。既定）か `stderr`（標準エラー出力） |
+| `offset` | 整数（0 以上） | 読み始める位置（バイト）。`from_end` と同時に指定できない |
+| `from_end` | 真偽値 | `true` なら、末尾から `max_bytes` を読む |
+| `max_bytes` | 整数（1 以上） | 返す量の上限。省けば 32,000。超える値は 32,000 に収める |
+
+- `offset` も `from_end` も無ければ、先頭（`offset` が 0）から読む。両方を渡すと、理由を返す。
+- 結果は、`running`（実行中か）・`omittedMiddle`（上限で、先頭と末尾の間を省いているか）・`text`（ログの生の文。JSONL は読み分けない）と、[範囲の情報](#範囲の指定と結果)。
+- 読む元は、画面と同じ記録（MCP のための別の記録は作らない）。
+  - 終わった実行：画面の `files/:file` と同じログのファイル。範囲だけを `readSync` で読み、全体は読まない。
+  - 実行中の実行：デーモンが持つその時点の記録。先頭のファイル（範囲だけを読む）＋省いた印＋メモリーにある末尾（先頭の上限を超えた後の末尾を含む）をつなげたもの。`SessionLog.snapshot()` は使わない（先頭のファイルを全部読むため）。
+- 実行中は、先頭の上限（`events` は 15MB）を超えた後の末尾の位置が、読むたびにずれ、実行が終わるとファイルの位置に変わる。`running` が変わったか `omittedMiddle` が真のときは、続きの位置から読まず、`from_end` で読み直す。
+- ログには、書き始めた後に分かった秘密情報が、閉じるまで残りうる。[秘密情報の伏せ方](#秘密情報の伏せ方)のとおり、呼び出しの時点で伏せ直してから切る。
+- ログのファイルは、開く前に、`runs/<タスク>` もファイルもシンボリックリンクでなく、ファイルが通常のファイルで `runs/<タスク>` の下にあることを確かめる。満たさなければ、開かずに「実行が見つかりません」（API は `{ error: "not_found", what: "run" }` の 404）。ほかのタスクの実行は、タスクごとの場所にあるので読めない。
+
+### 範囲の指定と結果
+
+成果物の中身とログは、1回に最大 32,000 バイト（UTF-8。日本語でおよそ1万字）までを返す。位置と量の単位は、伏せ直す前の UTF-8 のバイト（ファイルとメモリーにあるバイト）。
+
+| 結果の項目 | 内容 |
+| --- | --- |
+| `offset` | 返した先頭の位置 |
+| `next` | 続きの位置（返した末尾）。続きを読むときは、これを `offset` に渡す |
+| `totalBytes` | 全体の大きさ |
+| `clipped` | 切り取ったか（`offset` で読むときは、続きがあるか。`from_end` のときは、手前に読んでいない分があるか） |
+| `clamped` | `max_bytes` が上限を超えたので、上限に収めたか |
+
+- 境目は UTF-8 の文字の頭にそろえる（複数バイトの文字・サロゲートペアの途中で切らない）。1文字も入らない小さな `max_bytes` でも、1文字は返し、続きが進む。
+- `offset` が全体の大きさ以上なら、失敗にせず、空の `text` と `totalBytes` を返す（実行中のログを続きから読み直すとき、まだ増えていないことと区別するため）。
+- `max_bytes`・`limit` が 0 以下、`offset` が負なら、引数の形（最小値）で SDK が断る。API は 400（`invalid_range`）で断る。
+
+### 秘密情報の伏せ方
+
+ログは、実行中・終了後を問わず、呼び出しの時点でデーモンが持つ秘密情報で伏せ直してから切る。
+その実行の秘密情報（デーモンが持っていれば）と、プロジェクトの設定・GitHub のトークンの値（`auditSecretValues`）で伏せる。
+
+- 範囲の前後に、秘密情報の形（エスケープ後を含む）の UTF-8 のバイト数の最大だけ余分に読み、見つけた値に掛かる境目は、値の外側へ広げてから切る。広げた位置を `offset`・`next` に返す。返す量は、最大で `max_bytes`＋余分の2倍。
+- 書き始めた後に `addSecrets` で値が増えた実行は、その実行の秘密情報をストアのメモリーに持ち、`meta.json` に `redactPending: true` をすぐ書く。閉じるときの伏せ直しが全部のファイルで済んだら、メモリーの値を捨て、`redactPending` を消す。失敗したら、値をデーモンが動いている間だけ持ち、`redactPending` を残す。
+- `redactPending` が真で、デーモンがその値を持たない実行（伏せ直しの前にデーモンが止まった・失敗の後に起動し直した）は、ログの中身を返さずに「このログは秘密情報を伏せ直せていないため返せません」を返す（API は `{ error: "unredacted" }` の 409）。
+- 成果物は、作業履歴に書く前に伏せてあるので、読むときには伏せ直さない。
+
+### 成果物とログを読むツールの失敗
+
+| 場合 | 理由の文 |
+| --- | --- |
+| タスクが無い・消したプロジェクトのタスク（API は `{ error: "not_found" }` の 404） | `task.notFound` の文言（タスクが見つかりません） |
+| 実行が無い・ほかのタスクの実行・ファイルがリンクか場所の外 | 実行が見つかりません |
+| 工程・種類が候補に無い（API） | 工程が見つかりません・成果物の種類が見つかりません |
+| `task_id`・`run_id` が `[A-Za-z0-9_-]{1,128}` に合わない（`..`・`/`・`%2F` を含む） | `task_id` か `run_id` の形が正しくありません（ツールは API を呼ばない。API も 400（`invalid_id`）で断る） |
+| `offset` と `from_end` の両方 | どちらか一方だけを指定するよう促す |
+| 範囲の指定が正しくない（API の 400 `invalid_range`） | 範囲の指定が正しくありません |
+| 伏せ直せていないログ | このログは秘密情報を伏せ直せていないため返せません |
+| 前の版のデーモン（新しい API が無く、本文が `error` を持つ JSON でない 404） | 起動中の sacty が対応していないので、sacty を更新し、実行中のタスクが無いときに `sacty up` で起動し直すよう促す |
+| 応答が JSON として読めない（200・500 など） | sacty の応答を読めませんでした |
+| つながらない・時間切れ・認証できない・起動していない | いまのツールと同じ文言 |
+
+- 理由の文と標準エラーの1行には、この表の文言だけを出す。デーモンの応答の本文や、成果物とログの中身、`daemon.json` のトークン・環境変数の値・デーモンの絶対パスは出さない。
+- 標準エラーの1行（`failureLine`）の原因は、接続の失敗の種類（`ECONNREFUSED` などの `code`）と時間切れの印だけにする（例外の message は出さない。応答の本文の一部が入りうるため）。
+- 前の版のデーモンは、新しい API の URL に、Hono の既定の 404（本文は `404 Not Found`）を返す。タスクが無いときの 404 は `error` を持つ JSON なので、区別できる。
+
+コード: `apps/daemon/src/task-mcp.ts`（`READ_REASONS`・`readFailure`・`RunListSchema`）、`apps/daemon/src/task-reads.ts`（`stepState`・`readDeliverable`・`listDeliverables`・`runEntries`）、`apps/daemon/src/byte-range.ts`（`readByteRange`・`RANGE_MAX_BYTES`）、`apps/daemon/src/session-logs.ts`（`SessionLogStore.readRange`・`readMeta`・`redactPending`）、`apps/daemon/src/server.ts`、`apps/daemon/src/service.ts`（`deliverables`・`deliverable`・`runList`・`sessionLogRange`）、`packages/core/src/session-log.ts`（`RUN_EVENTS`・`runLogId`）、`packages/cli/src/mcp.ts`（`readApi`）
 
 ### 失敗のときの扱い
 

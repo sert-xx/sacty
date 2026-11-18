@@ -5,7 +5,12 @@
  */
 import type { ActivityEvent, Task } from "@sacty/core";
 import { renderMessage } from "@sacty/core";
-import type { ProjectChoice, SactyApi } from "@sacty/daemon/task-mcp";
+import {
+  type ProjectChoice,
+  READ_REASONS,
+  readFailure,
+  type SactyApi,
+} from "@sacty/daemon/task-mcp";
 import {
   DAEMON_AUTH_MESSAGE,
   DAEMON_TIMEOUT_MESSAGE,
@@ -58,6 +63,69 @@ const CREATE_UNCERTAIN =
 
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
+
+type ReadApi = Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns" | "getRunLog">;
+
+/**
+ * 成果物・ログを読む API（PBI-395）の呼び出し。理由は、定型の文だけにする（デーモンの応答の本文・成果物・ログの中身を、
+ * 理由にも、例外の原因にも入れない）。タスクが無いときは undefined。前の版のデーモン（本文が error の JSON でない 404）は、
+ * 「タスクが無い」と区別して、更新を促す理由にする。
+ */
+function readApi(
+  endpoint: () => DaemonEndpoint,
+  request: (at: DaemonEndpoint, path: string) => Promise<Response>,
+): ReadApi {
+  /** 本文を JSON として読む。読めなければ undefined（時間切れだけは、時間切れの理由にする）。 */
+  const body = async (res: Response): Promise<Record<string, unknown> | undefined> => {
+    try {
+      const json = (await res.json()) as unknown;
+      return json && typeof json === "object" ? (json as Record<string, unknown>) : undefined;
+    } catch (error) {
+      if (isTimeout(error)) throw new Error(DAEMON_TIMEOUT_MESSAGE, { cause: error });
+      return undefined;
+    }
+  };
+  const call = async <T>(path: string): Promise<T | undefined> => {
+    const res = await request(endpoint(), path);
+    const json = await body(res);
+    if (res.ok) {
+      if (!json) throw new Error(READ_REASONS.unreadable);
+      return json as T;
+    }
+    const failure = readFailure(res.status, json);
+    if (failure === "task_not_found") return undefined;
+    throw failure;
+  };
+  const id = encodeURIComponent;
+  const query = (values: Record<string, string | number | undefined>) => {
+    const entries = Object.entries(values).filter(
+      (e): e is [string, string | number] => e[1] !== undefined,
+    );
+    return entries.length === 0
+      ? ""
+      : `?${entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&")}`;
+  };
+  return {
+    listDeliverables: (taskId) => call(`/api/tasks/${id(taskId)}/deliverables`),
+    getDeliverable: (taskId, input) =>
+      call(
+        `/api/tasks/${id(taskId)}/deliverables/${id(input.step)}/${id(input.kind)}${query({
+          offset: input.offset,
+          max: input.maxBytes,
+        })}`,
+      ),
+    listRuns: (taskId, input) =>
+      call(`/api/tasks/${id(taskId)}/runs${query({ offset: input.offset, limit: input.limit })}`),
+    getRunLog: (taskId, runId, input) =>
+      call(
+        `/api/tasks/${id(taskId)}/runs/${id(runId)}/log/range${query({
+          file: input.file,
+          ...(input.fromEnd ? { tail: 1 } : { offset: input.offset }),
+          max: input.maxBytes,
+        })}`,
+      ),
+  };
+}
 
 export function daemonApi(
   home: string,
@@ -158,6 +226,7 @@ export function daemonApi(
         throw new Error(`${reason}${CREATE_UNCERTAIN}`, { cause: error });
       }
     },
+    ...readApi(endpoint, request),
     webUrl: () => readDaemonFile(home)?.web,
   };
 }

@@ -504,6 +504,13 @@ import {
   sharedComposeRunDir,
 } from "./shared-compose.js";
 import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
+import {
+  type DeliverableKind,
+  listDeliverables,
+  type RunEntry,
+  readDeliverable,
+  runEntries,
+} from "./task-reads.js";
 import { templateTask } from "./task-templates.js";
 import { findTestFiles, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
@@ -1418,6 +1425,88 @@ export class TaskService {
   ): StoredSessionLog | undefined {
     if (!this.tasks.has(taskId)) return undefined;
     return this.deps.sessionLogs?.read(taskId, runId, from);
+  }
+
+  /**
+   * タスクの成果物の一覧（PBI-395。`sacty mcp` が読む）。タスクが無い（消したプロジェクトのタスクを含む）なら undefined。
+   */
+  deliverables(taskId: string): ReturnType<typeof listDeliverables> | undefined {
+    const found = this.visibleTask(taskId) ? this.get(taskId) : undefined;
+    return found ? listDeliverables(found.task, found.activity) : undefined;
+  }
+
+  /** 成果物1つ（工程・種類は許可リストの値であること）。タスクが無ければ undefined。 */
+  deliverable(
+    taskId: string,
+    step: StepKey,
+    kind: DeliverableKind,
+  ): ReturnType<typeof readDeliverable> | undefined {
+    const found = this.visibleTask(taskId) ? this.get(taskId) : undefined;
+    return found ? readDeliverable(found.task, found.activity, step, kind) : undefined;
+  }
+
+  /**
+   * タスクの実行の一覧（PBI-395。画面でログへのリンクがある実行のすべて。新しい順）。作業履歴の全件から実行・役割・
+   * 切り替えを決めてから区切り、返す分だけ meta.json を読む。タスクが無ければ undefined。
+   */
+  runList(
+    taskId: string,
+    offset: number,
+    limit: number,
+  ):
+    | {
+        total: number;
+        runs: (Omit<RunEntry, "historyState"> & {
+          state: "running" | "succeeded" | "failed" | "unknown";
+          hasLog: boolean;
+        })[];
+      }
+    | undefined {
+    const found = this.visibleTask(taskId) ? this.get(taskId) : undefined;
+    if (!found) return undefined;
+    const all = runEntries(found.activity);
+    const store = this.deps.sessionLogs;
+    const runs = all.slice(offset, offset + limit).map(({ historyState, ...entry }) => {
+      const meta = store?.readMeta(taskId, entry.runId);
+      const live = store?.isLive(taskId, entry.runId) ?? false;
+      let state: "running" | "succeeded" | "failed" | "unknown" = historyState;
+      if (live) state = "running";
+      else if (meta) {
+        state = !meta.finishedAt
+          ? "unknown"
+          : meta.outcome?.kind === "completed"
+            ? "succeeded"
+            : meta.outcome?.kind === "failed"
+              ? "failed"
+              : historyState;
+      }
+      return {
+        ...entry,
+        role: meta?.role || entry.role,
+        agentId: meta?.agentId || entry.agentId,
+        startedAt: meta?.startedAt || entry.startedAt,
+        state,
+        hasLog: meta !== undefined,
+      };
+    });
+    return { total: all.length, runs };
+  }
+
+  /**
+   * 実行のログの範囲（PBI-395）。呼び出しの時点でデーモンが持つ秘密情報（実行のもの・設定とプロジェクトの GitHub の
+   * トークン）で伏せてから切る。タスクが無ければ undefined。
+   */
+  async sessionLogRange(
+    taskId: string,
+    runId: string,
+    request: { file: SessionLogFile; offset?: number; fromEnd?: boolean; max: number },
+  ): Promise<ReturnType<SessionLogStore["readRange"]> | undefined> {
+    const task = this.visibleTask(taskId) ? this.tasks.get(taskId) : undefined;
+    const store = this.deps.sessionLogs;
+    if (!task) return undefined;
+    if (!store) return { kind: "not_found" };
+    const audit = await this.auditSecretValues(task.projectId).catch(() => [] as string[]);
+    return store.readRange(taskId, runId, request, audit);
   }
 
   /**

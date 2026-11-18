@@ -1,13 +1,15 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { READ_REASONS, startTaskMcp } from "@sacty/daemon/task-mcp";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type Fetch, readDaemonFile, writeDaemonFile } from "./context-preview.js";
 import { daemonApi } from "./mcp.js";
 
 let home: string;
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "sacty-mcp-"));
+  home = mkdtempSync(join(tmpdir(), "home-MARK-3-"));
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
@@ -360,5 +362,151 @@ describe("sacty mcp のタスクの作成（PBI-394）", () => {
     const none = await failure(hung, mkdtempSync(join(tmpdir(), "sacty-mcp-none-")));
     expect(none?.message).toContain("起動中の sacty が見つかりません");
     expect(none?.message).not.toContain(uncertain);
+  });
+});
+
+describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
+  const callAll = (api: ReturnType<typeof daemonApi>) => [
+    () => api.listDeliverables("t1"),
+    () => api.getDeliverable("t1", { step: "design", kind: "output" }),
+    () => api.listRuns("t1", {}),
+    () => api.getRunLog("t1", "r1", { file: "events" }),
+  ];
+
+  it("新しい4つの API を、画面と同じ接続先・トークンで、引数を URL に安全に入れて呼ぶ", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const { calls, fetcher } = fakeDaemon(() => Response.json({ deliverables: [] }));
+    const api = daemonApi(home, fetcher);
+    await api.listDeliverables("t 1");
+    await api.getDeliverable("t1", { step: "design", kind: "output", offset: 5, maxBytes: 10 });
+    await api.listRuns("t1", { offset: 2, limit: 3 });
+    await api.getRunLog("t1", "r/1", { file: "stderr", fromEnd: true, maxBytes: 7 });
+    await api.getRunLog("t1", "r1", { file: "events", offset: 9 });
+    expect(calls.map((c) => c.url.replace("http://127.0.0.1:4710", ""))).toEqual([
+      "/api/tasks/t%201/deliverables",
+      "/api/tasks/t1/deliverables/design/output?offset=5&max=10",
+      "/api/tasks/t1/runs?offset=2&limit=3",
+      "/api/tasks/t1/runs/r%2F1/log/range?file=stderr&tail=1&max=7",
+      "/api/tasks/t1/runs/r1/log/range?file=events&offset=9",
+    ]);
+    expect(new Set(calls.map((c) => c.token))).toEqual(new Set(["Bearer tok"]));
+  });
+
+  it("前の版のデーモン（本文が 404 Not Found の 404）は、タスクが無いのではなく、更新と再起動を促す理由にする", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const old = fakeDaemon(() => new Response("404 Not Found", { status: 404 }));
+    for (const call of callAll(daemonApi(home, old.fetcher))) {
+      await expect(call()).rejects.toThrow(READ_REASONS.oldDaemon);
+    }
+    expect(READ_REASONS.oldDaemon).toContain("sacty を更新");
+    expect(READ_REASONS.oldDaemon).toContain("sacty up");
+    // タスクが無いときの 404（error を持つ JSON）は、無いものとして返す
+    const none = fakeDaemon(() => Response.json({ error: "not_found" }, { status: 404 }));
+    for (const call of callAll(daemonApi(home, none.fetcher))) {
+      await expect(call()).resolves.toBeUndefined();
+    }
+  });
+
+  it("結果・理由・標準エラーに、トークン・環境変数の値・SACTY_HOME のパス・中身を出さない。失敗の原因は、接続の失敗の種類と時間切れの印だけ", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok-MARK-1" });
+    vi.stubEnv("SACTY_TEST_SECRET", "env-MARK-2");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const hung: Fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    const refused: Fetch = async () => {
+      throw new TypeError("fetch failed body-MARK-4", {
+        cause: Object.assign(new Error("connect ECONNREFUSED tok-MARK-1"), {
+          code: "ECONNREFUSED",
+        }),
+      });
+    };
+    const scenarios: [string, Fetch][] = [
+      ["404 run", async () => Response.json({ error: "not_found", what: "run" }, { status: 404 })],
+      [
+        "400",
+        async () => Response.json({ error: "invalid_range", note: "body-MARK-4" }, { status: 400 }),
+      ],
+      ["200 not json", async () => new Response("body-MARK-4 {", { status: 200 })],
+      ["500 not json", async () => new Response("body-MARK-4", { status: 500 })],
+      [
+        "500 json",
+        async () => Response.json({ error: "x", detail: "body-MARK-4" }, { status: 500 }),
+      ],
+      ["409", async () => Response.json({ error: "unredacted" }, { status: 409 })],
+      ["timeout", hung],
+      ["refused", refused],
+    ];
+    try {
+      for (const [, fetcher] of scenarios) {
+        const [a, b] = InMemoryTransport.createLinkedPair();
+        startTaskMcp(daemonApi(home, fetcher, 20), { version: "1", transport: a });
+        const client = new Client(
+          { name: "t", version: "1" },
+          { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+        );
+        await client.connect(b);
+        for (const [name, args] of [
+          ["list_deliverables", { task_id: "t1" }],
+          ["get_deliverable", { task_id: "t1", step: "design", kind: "output" }],
+          ["list_runs", { task_id: "t1" }],
+          ["get_run_log", { task_id: "t1", run_id: "r1" }],
+        ] as const) {
+          const result = await client.callTool({ name, arguments: args });
+          const text = JSON.stringify(result);
+          expect(result.isError).toBe(true);
+          for (const mark of ["tok-MARK-1", "env-MARK-2", "home-MARK-3", "body-MARK-4"]) {
+            expect(text).not.toContain(mark);
+          }
+        }
+        await client.close();
+      }
+      const lines = logged.mock.calls.map((c) => c.join(" "));
+      expect(lines.length).toBe(scenarios.length * 4);
+      for (const line of lines) {
+        for (const mark of ["tok-MARK-1", "env-MARK-2", "home-MARK-3", "body-MARK-4"]) {
+          expect(line).not.toContain(mark);
+        }
+        expect(line).toMatch(
+          /^\[sacty mcp\] (list_deliverables|get_deliverable|list_runs|get_run_log)\(task_id=t1\): /,
+        );
+      }
+      expect(lines.some((l) => l.includes("（原因：ECONNREFUSED）"))).toBe(true);
+      expect(lines.some((l) => l.includes("（原因：TimeoutError）"))).toBe(true);
+      expect(lines.some((l) => l.includes("sacty の応答を読めませんでした。"))).toBe(true);
+    } finally {
+      logged.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("つながらない・時間内に応答しない・起動していないときは、いまのツールと同じ理由を返し、サーバーは動き続ける", async () => {
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    // daemon.json が無い
+    startTaskMcp(
+      daemonApi(home, async () => Response.json({})),
+      { version: "1", transport: a },
+    );
+    const client = new Client(
+      { name: "t", version: "1" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    await client.connect(b);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const down = await client.callTool({ name: "list_runs", arguments: { task_id: "t1" } });
+      expect(down.isError).toBe(true);
+      expect(JSON.stringify(down)).toContain("起動中の sacty が見つかりません");
+      // そのあとのツールの呼び出しにも応答する
+      const again = await client.callTool({
+        name: "list_deliverables",
+        arguments: { task_id: "t1" },
+      });
+      expect(again.isError).toBe(true);
+    } finally {
+      logged.mockRestore();
+    }
+    await client.close();
   });
 });

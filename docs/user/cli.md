@@ -18,7 +18,7 @@
 | [`sacty context init`](#sacty-context-init) | コンテキストリポジトリの雛形を作る |
 | [`sacty context preview`](#sacty-context-preview) | プロジェクトのコンテキストを合成した結果を表示する |
 | [`sacty launch`](#sacty-launch) | プロジェクトのコンテキストで、手元の Claude Code か Codex を対話で起動する |
-| [`sacty mcp`](#sacty-mcp) | 起動中の sacty を、手元の Claude Code や Codex から操作するための MCP サーバーを動かす |
+| [`sacty mcp`](#sacty-mcp) | 起動中の sacty を、手元の Claude Code や Codex から操作する・成果物とログを読むための MCP サーバーを動かす |
 
 どのコマンドにも共通のことは、次のとおりです。
 
@@ -193,6 +193,7 @@ npx sacty launch <プロジェクト> [--runtime claude-code|codex] [--cwd <デ�
 
 起動中の sacty（`sacty up`）を、手元の Claude Code や Codex から操作するための MCP サーバーを、標準入出力（stdio）で動かします。
 自分で実行するコマンドではなく、AI の CLI に MCP サーバーとして登録して使います（[手元の AI から操作する](mcp.md)）。
+プロジェクトの一覧、タスクの作成・一覧・検索・詳細、PR のレビューのタスクの再レビューに加えて、タスクの工程ごとの成果物と、エージェントの実行の一覧・ログを読めます（成果物とログは読むだけです）。
 
 ```sh
 sacty mcp
