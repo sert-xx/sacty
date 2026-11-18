@@ -61,7 +61,7 @@ Every argument can be omitted. It returns the tasks that match all the given con
 - If `pull_request` cannot be read, it returns the reason (and no list).
 - The PR condition: one of the [PRs tied to the task](#prs-and-branches-tied-to-a-task) has the same number.
   When the repository is given (`owner/repo#123` or a URL), the repository must also be the same. With only a number, any repository matches.
-- The branch condition: either of the following holds.
+- The branch condition: either of the following holds. The repository is not checked (a task for a branch of the same name in another repository also matches; combine with the `repo` condition to narrow down).
   - The [branches tied to the task](#prs-and-branches-tied-to-a-task) include that name.
   - The PR the task reviews is the same as another task's PR on that branch (a PR that task created or took over, not one it reviews; a PR a task was imported from is not included, because no branch is recorded for it).
     This finds the review child task of a PR sacty created from the parent's branch name.
@@ -88,7 +88,7 @@ It calls the same API as "Re-review" in the web UI, so the result is the same (i
 
 - Once started, it returns a message and the [task summary](#task-summary) after starting (it does not wait for the review to finish).
 - It first checks with `GET /api/tasks/:id` that the task exists. If it does not (including tasks of a deleted project), it answers that the task was not found and does not call the re-review API.
-- When the response of the re-review API times out, it answers that the re-review may have started and to check with `get_task` before calling again (the daemon may have recorded it before the response was delayed).
+- When the result cannot be received after calling the re-review API (a timeout, a dropped connection, or an unreadable body), it answers with that reason followed by a note that the re-review may have started and to check with `get_task` before calling again (the daemon may have recorded it before the response failed to arrive). When the daemon refuses in its response (`DaemonRefusal`), only the reason for the refusal is returned.
 - It works only for a task that posted its review to the PR and completed (`canRereview` in the summary is `true`).
   For a task that cannot be re-reviewed or does not exist, it returns the text of the reason the daemon refused and records nothing.
 - The tool annotations say it is not read-only (`readOnlyHint: false`) and writes outside sacty (`openWorldHint: true`).
@@ -96,7 +96,7 @@ It calls the same API as "Re-review" in the web UI, so the result is the same (i
 ### Handling failures
 
 A failure inside a tool is returned as a tool execution error (`isError: true` in the MCP result and the text of the reason; no `structuredContent`). The MCP server does not exit.
-The name of the failed tool and the reason are written to standard error on one line. If a failed connection has a cause (the exception's `cause`), it is followed up to 5 levels and appended (`causeChain`).
+The name of the failed tool, the target task ID (`task_id` if present; no other arguments), and the reason are written to standard error on one line (`failureLine`). If a failed connection has a cause (the exception's `cause`), it is followed up to 5 levels and appended (`causeChain`).
 
 | Case | Text of the reason |
 | --- | --- |
@@ -110,7 +110,7 @@ The name of the failed tool and the reason are written to standard error on one 
 When the arguments do not match the types (a `limit` out of range, a missing `task_id`, and so on), the MCP SDK returns the same shape (`isError: true` and the text of the reason) without calling the tool.
 Calling an unknown tool and the like becomes a JSON-RPC error.
 
-Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_TIMEOUT_MESSAGE`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`)
+Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_UNCERTAIN`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`)
 
 ## Task summary
 

@@ -79,6 +79,8 @@ The filters of `list_tasks` are as follows (all can be omitted; with several, on
 Finding the task that reviews a PR by the PR number or URL is the reliable way.
 You can also search by branch name, but note the following.
 
+- Branches with the same name: searching by branch name alone also finds tasks for a branch of the same name in other repositories (`main`, `patch-1`, and so on).
+  Specify `repo` too, or search by the PR URL.
 - PRs sacty created: both the task that created the branch and the task that reviews the PR are found.
 - PRs created outside sacty: sacty records the branch name when it checks the PR before reviewing.
   Tasks reviewed before this feature was added are not found by branch name until they are re-reviewed once (search by the PR number).

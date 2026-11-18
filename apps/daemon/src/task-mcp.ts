@@ -409,7 +409,7 @@ const ListTasksInput = z.object({
     .max(300)
     .optional()
     .describe(
-      "ブランチ名で絞り込む（完全一致）。そのブランチを作ったタスク・そのブランチの PR をレビューするタスクが合う。",
+      "ブランチ名で絞り込む（完全一致）。そのブランチを作ったタスク・そのブランチの PR をレビューするタスクが合う。リポジトリは見ないので、同じ名前のブランチがほかのリポジトリにもあるときは repo も指定する。",
     ),
   repo: z
     .string()
@@ -485,7 +485,8 @@ const TOOLS: readonly ToolDefinition[] = [
     description: [
       "起動中の sacty のタスクを、新しい順に一覧にします。条件を指定すると、すべてに合うタスクだけに絞り込みます。",
       "PR をレビューするタスクを探すには、pull_request（番号か URL）か branch（PR の元のブランチ名）を指定します。",
-      "同じ番号の PR がほかのリポジトリにもあるときは、PR の URL か repo で絞ってください。",
+      "同じ番号の PR・同じ名前のブランチがほかのリポジトリにもあるときは、PR の URL か repo で絞ってください",
+      "（結果の pullRequests の repo で、頼まれた PR のリポジトリかを確かめてください）。",
       "ブランチ名で見つからないとき（sacty の外で作った PR で、ブランチ名の記録が無いもの）は、PR の番号で探してください。",
       "結果の各タスクには、id・題・state（completed：完了、cancelled：中止、ほかは進行中の状態）・工程・結び付いた PR とブランチ・",
       "canRereview（再レビューできるか）が入ります。",
@@ -591,6 +592,19 @@ export function causeChain(error: unknown): string[] {
   return found;
 }
 
+/**
+ * ツールの失敗を標準エラーに残す1行。ツールの名前・対象のタスクの ID（あれば。ほかの引数は出さない）・理由・原因。
+ */
+export function failureLine(tool: string, args: unknown, error: unknown): string {
+  const taskId =
+    args && typeof args === "object" && "task_id" in args && typeof args.task_id === "string"
+      ? `(task_id=${args.task_id})`
+      : "";
+  const reason = error instanceof Error ? error.message : String(error);
+  const causes = causeChain(error);
+  return `[sacty mcp] ${tool}${taskId}: ${reason}${causes.length > 0 ? `（原因：${causes.join(" ← ")}）` : ""}`;
+}
+
 /** ツールを登録した MCP サーバーを作る（トランスポートにはつながない）。 */
 function createTaskMcpServer(api: SactyApi, options: { version: string }): McpServer {
   const server = new McpServer(
@@ -619,10 +633,7 @@ function createTaskMcpServer(api: SactyApi, options: { version: string }): McpSe
           // どのツールが・なぜ失敗したかを、標準エラーに残す（標準出力は MCP のやりとりだけ）。元の原因
           // （つながらなかった理由など）があれば、それも出す
           const reason = error instanceof Error ? error.message : String(error);
-          const causes = causeChain(error);
-          console.error(
-            `[sacty mcp] ${tool.name}: ${reason}${causes.length > 0 ? `（原因：${causes.join(" ← ")}）` : ""}`,
-          );
+          console.error(failureLine(tool.name, args, error));
           // 理由は、ツールの実行のエラーとして返す（MCP サーバーは落とさない。呼び出し側の AI が読んで、次の手を決める）
           return {
             content: [{ type: "text", text: reason }],

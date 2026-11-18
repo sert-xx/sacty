@@ -61,7 +61,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 - `pull_request` を読めなければ、理由を返す（一覧は返さない）。
 - PR の条件：タスクに[結び付いた PR](#タスクに結び付いた-pr-とブランチ)のどれかが、同じ番号であること。
   リポジトリを付けた指定（`owner/repo#123`・URL）では、リポジトリも同じであること。番号だけなら、リポジトリを問わない。
-- ブランチの条件：次のどちらかに当たること。
+- ブランチの条件：次のどちらかに当たること。リポジトリは見ない（同じ名前のブランチがほかのリポジトリにあれば、そのタスクも合う。`repo` の条件と組み合わせて絞る）。
   - タスクに[結び付いたブランチ](#タスクに結び付いた-pr-とブランチ)に、その名前がある。
   - タスクがレビューする PR が、ほかのタスクの、そのブランチの PR（レビューの対象としてではなく、そのタスクが作った・引き継いだ PR。取り込み元の PR は、ブランチの記録が無いので含まない）と同じ。
     sacty が作った PR のレビューの子タスクが、親のブランチ名から見つかる。
@@ -88,7 +88,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 - 始めたら、文と、始めた後の[タスクの要約](#タスクの要約)を返す（レビューが終わるのは待たない）。
 - 先に `GET /api/tasks/:id` でタスクがあることを確かめる。無ければ（消したプロジェクトのタスクを含む）、タスクが見つからないと返し、再レビューの API を呼ばない。
-- 再レビューの API の応答が時間切れになったときは、再レビューが始まっている可能性があること・`get_task` で確かめてから呼び直すことを返す（デーモンが記録した後に、応答が遅れたのかもしれないため）。
+- 再レビューの API を呼んだ後に結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった）は、その理由に続けて、再レビューが始まっている可能性があること・`get_task` で確かめてから呼び直すことを返す（デーモンが記録した後に、応答が届かなかったのかもしれないため）。デーモンが応答で断ったとき（`DaemonRefusal`）は、断った理由だけを返す。
 - できるのは、レビューを PR に投稿して完了したタスクだけ（要約の `canRereview` が `true`）。
   できないタスク・無いタスクでは、デーモンが断った理由の文を返し、何も記録しない。
 - ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・sacty の外に書く（`openWorldHint: true`）。
@@ -96,7 +96,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 ### 失敗のときの扱い
 
 ツールの中の失敗は、ツールの実行のエラー（MCP の結果の `isError: true` と、理由の文。`structuredContent` は無い）として返す。MCP サーバーは終わらない。
-失敗したツールの名前と理由を、標準エラーに1行出す。つながらなかった原因（例外の `cause`）があれば、5 段までたどって続けて出す（`causeChain`）。
+失敗したツールの名前・対象のタスクの ID（`task_id` があれば。ほかの引数は出さない）・理由を、標準エラーに1行出す（`failureLine`）。つながらなかった原因（例外の `cause`）があれば、5 段までたどって続けて出す（`causeChain`）。
 
 | 場合 | 理由の文 |
 | --- | --- |
@@ -110,7 +110,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 引数が型に合わないとき（決めた範囲の外の `limit`・無い `task_id` など）は、MCP の SDK が、ツールを呼ばずに、同じ形（`isError: true` と理由の文）で返す。
 知らないツールの呼び出しなどは、JSON-RPC のエラーになる。
 
-コード: `apps/daemon/src/task-mcp.ts`（`TOOLS`・`defineTool`・`INSTRUCTIONS`・`filterTasks`・`parsePullRequestQuery`・`describeTask`）、`packages/cli/src/mcp.ts`（`daemonApi`・`MCP_REQUEST_TIMEOUT_MS`・`REREVIEW_TIMEOUT_MESSAGE`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/daemon/src/service.ts`（`rereview`）
+コード: `apps/daemon/src/task-mcp.ts`（`TOOLS`・`defineTool`・`INSTRUCTIONS`・`filterTasks`・`parsePullRequestQuery`・`describeTask`）、`packages/cli/src/mcp.ts`（`daemonApi`・`MCP_REQUEST_TIMEOUT_MS`・`REREVIEW_UNCERTAIN`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/daemon/src/service.ts`（`rereview`）
 
 ## タスクの要約
 

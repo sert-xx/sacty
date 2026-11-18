@@ -126,38 +126,66 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
     expect(calls.map((c) => c.method)).toEqual(["GET"]);
   });
 
-  it("再レビューを頼んだ後の時間切れは、始まっている可能性があると伝える。頼む前の時間切れは、ふつうの文", async () => {
+  it("再レビューを頼んだ後に結果を受け取れなければ、始まっている可能性があると伝える。頼む前の失敗と、断られたときは伝えない", async () => {
     writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
     const hung: Fetch = (_url, init) =>
       new Promise((_resolve, reject) => {
         init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
       });
-    const postHangs: Fetch = (url, init) =>
-      init.method === "POST"
-        ? hung(url, init)
-        : Promise.resolve(Response.json({ task: { id: "a" }, activity: [] }));
-    await expect(daemonApi(home, postHangs, 20).rereview("a")).rejects.toThrow(
-      "再レビューは始まっている可能性があります",
-    );
-    const error = await daemonApi(home, hung, 20)
-      .rereview("a")
-      .catch((e: unknown) => e as Error);
-    expect((error as Error).message).toContain("デーモンが時間内に応答しませんでした");
-    expect((error as Error).message).not.toContain("始まっている可能性");
-  });
+    const found = () => Promise.resolve(Response.json({ task: { id: "a" }, activity: [] }));
+    const after =
+      (post: Fetch): Fetch =>
+      (url, init) =>
+        init.method === "POST" ? post(url, init) : found();
+    const failure = (fetcher: Fetch) =>
+      daemonApi(home, fetcher, 20)
+        .rereview("a")
+        .then(
+          () => undefined,
+          (e: unknown) => e as Error,
+        );
+    const uncertain = "再レビューは始まっている可能性があります";
 
-  it("つながらない・認証できない・想定外の応答は、理由の例外にする", async () => {
-    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
-    const refused = daemonApi(home, async () => {
-      throw new Error("ECONNREFUSED");
-    });
-    await expect(refused.listTasks()).rejects.toThrow("デーモンにつながりません");
-    const unauthorized = daemonApi(home, async () => new Response("", { status: 401 }));
-    await expect(unauthorized.rereview("a")).rejects.toThrow("デーモンに認証できません");
-    const broken = daemonApi(home, async () => new Response("oops", { status: 500 }));
-    await expect(broken.listTasks()).rejects.toThrow("デーモンが 500 を返しました。");
-    await expect(broken.getTask("a")).rejects.toThrow("デーモンが 500 を返しました。");
-    await expect(broken.rereview("a")).rejects.toThrow("デーモンが 500 を返しました。");
+    // 頼んだ後の時間切れ（元の例外を cause に持つ）
+    const timedOut = await failure(after(hung));
+    expect(timedOut?.message).toContain("デーモンが時間内に応答しませんでした");
+    expect(timedOut?.message).toContain(uncertain);
+    expect(String(timedOut?.cause)).toContain("デーモンが時間内に応答しませんでした");
+    // 頼んだ後に接続が切れた
+    const dropped = await failure(
+      after(async () => {
+        throw new TypeError("fetch failed", { cause: new Error("socket hang up") });
+      }),
+    );
+    expect(dropped?.message).toContain("デーモンにつながりません");
+    expect(dropped?.message).toContain(uncertain);
+    // 応答の本文を読む途中の時間切れ・読めない本文
+    const stalled = await failure(
+      after(
+        async (_url, init) =>
+          ({
+            ok: true,
+            status: 200,
+            json: () =>
+              new Promise((_resolve, reject) => {
+                init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+              }),
+          }) as unknown as Response,
+      ),
+    );
+    expect(stalled?.message).toContain("デーモンが時間内に応答しませんでした");
+    expect(stalled?.message).toContain(uncertain);
+    const broken = await failure(after(async () => new Response("<html>", { status: 200 })));
+    expect(broken?.message).toContain("デーモンの応答を読めませんでした");
+    expect(broken?.message).toContain(uncertain);
+
+    // デーモンが応答で断ったなら、始まっていない（理由だけ）
+    const refused = await failure(after(async () => new Response("oops", { status: 500 })));
+    expect(refused?.message).toBe("デーモンが 500 を返しました。");
+    // 頼む前（タスクを確かめる段）の時間切れは、ふつうの文
+    const before = await failure(hung);
+    expect(before?.message).toContain("デーモンが時間内に応答しませんでした");
+    expect(before?.message).not.toContain(uncertain);
   });
 
   it("応答しないデーモンでは、決めた時間で打ち切って、応答しなかったという理由の例外にする", async () => {

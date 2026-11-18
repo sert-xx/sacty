@@ -3,7 +3,7 @@ import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.j
 import { InMemoryTransport as LegacyTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { ActivityEvent, Task } from "@sacty/core";
 import { renderMessage } from "@sacty/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { createApp } from "./server.js";
@@ -336,6 +336,32 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
     // その後も使える
     expect((await json<Listed>("list_tasks")).total).toBe(1);
     activity.close();
+  });
+
+  it("ツールの失敗を、標準エラーに1行残す（ツールの名前・タスクの ID・理由・内側までたどった原因）", async () => {
+    const down = (): never => {
+      throw new Error("デーモンにつながりません。", {
+        cause: new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED") }),
+      });
+    };
+    const { call } = await connect({
+      listTasks: async () => down(),
+      getTask: async () => down(),
+      rereview: async () => down(),
+      webUrl: () => undefined,
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await call("rereview_task", { task_id: "task-1" });
+      await call("list_tasks", { query: "秘密の題" });
+      expect(logged.mock.calls.map((c) => c.join(" "))).toEqual([
+        "[sacty mcp] rereview_task(task_id=task-1): デーモンにつながりません。（原因：TypeError: fetch failed ← Error: connect ECONNREFUSED）",
+        // タスクの ID のほかの引数は出さない
+        "[sacty mcp] list_tasks: デーモンにつながりません。（原因：TypeError: fetch failed ← Error: connect ECONNREFUSED）",
+      ]);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it("起動中の sacty につながらないときは、どのツールも理由を返す", async () => {
