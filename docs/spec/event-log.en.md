@@ -127,7 +127,7 @@ Code: `packages/core/src/cost.ts` (`PricePerMTok`, `computeCostUsd`, `budgetStat
   | --- | --- |
   | `<run ID>.jsonl` | The JSONL of the agent's standard output |
   | `<run ID>.stderr.log` | Standard error |
-  | `<run ID>.meta.json` | Role, AI, start and end times, result, and whether it was truncated |
+  | `<run ID>.meta.json` | Role, AI, start and end times, result, whether it was truncated, and `redactPending` (`true` while secrets that grew after writing began have not been hidden again across the file; removed once done; the screen does not read it) |
 
 - Per run, the first 15MB and the last 3MB of events, and the first 1MB and the last 1MB of standard error, are kept. The middle is omitted, with a marker for the omission (for JSONL, a `{"type":"sacty.truncated", …}` line).
 - Secrets are hidden before writing, including values that span chunk boundaries in the received output. Values learned later are hidden again across the whole file on close.

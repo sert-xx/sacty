@@ -222,11 +222,17 @@ export function createApp(
     if (offset === undefined || max === undefined || max < 1) {
       return c.json({ error: "invalid_range" }, 400);
     }
-    const found = await service.sessionLogRange(id, runId, {
-      file,
-      ...(tail ? { fromEnd: true } : { offset }),
-      max: Math.min(max, RANGE_MAX_BYTES),
-    });
+    let found: Awaited<ReturnType<typeof service.sessionLogRange>>;
+    try {
+      found = await service.sessionLogRange(id, runId, {
+        file,
+        ...(tail ? { fromEnd: true } : { offset }),
+        max: Math.min(max, RANGE_MAX_BYTES),
+      });
+    } catch {
+      // ログのファイルを開く・読むのに失敗した。中身とパスは返さない
+      return c.json({ error: "read_failed" }, 500);
+    }
     if (!found) return c.json({ error: "not_found" }, 404);
     if (found.kind === "not_found") return c.json({ error: "not_found", what: "run" }, 404);
     if (found.kind === "unredacted") return c.json({ error: "unredacted" }, 409);

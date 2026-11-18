@@ -231,8 +231,12 @@ A log is hidden again with the secrets the daemon holds at the time of the call,
 It hides with the run's own secrets (if the daemon holds them) and the values of the project's configuration and GitHub tokens (`auditSecretValues`).
 
 - Before and after the range, it reads extra bytes equal to the longest secret form (including escaped forms) in UTF-8, finds the values, and widens a boundary that falls inside a value to just outside it before cutting. The widened positions are returned as `offset` and `next`. The size returned is at most `max_bytes` plus twice the extra.
-- For a run whose secrets grew through `addSecrets` after writing began, the store keeps the run's secrets in memory and immediately writes `redactPending: true` to `meta.json`. When the re-hiding at close finishes for all files, the in-memory values are dropped and `redactPending` is removed. If it fails, the daemon keeps the values only while it runs and leaves `redactPending`.
-- A run with `redactPending` true whose values the daemon does not hold (the daemon stopped before re-hiding, or restarted after a failure) returns no log content and returns "This log cannot be returned because its secrets could not be hidden again" (the API returns 409 with `{ error: "unredacted" }`).
+- The readable end of a running log excludes what `StreamRedactor` still holds before hiding (`peek()`). If the end is also a leading part (shorter than the whole) of any secret form at the time of the call (including escaped forms), that part is removed from the end. A value added midway by `addSecrets` has its leading part already out of `peek()` from before it was known. `totalBytes` and `next` count to this end. The removed part is returned later, once the rest arrives and the whole value can be read (it is read with a delay).
+- For a run whose secrets grew through `addSecrets` after writing began, the store keeps the run's secrets in memory and immediately writes `redactPending: true` to `meta.json` (if the write fails, the values stay in memory). The in-memory values are dropped only when the re-hiding at close finished for all files and the `meta.json` without `redactPending` was written. If re-hiding or the `meta.json` write fails, the daemon keeps the values only while it runs.
+- A run that is not open in the daemon and whose values the daemon does not hold returns no log content and returns "This log cannot be returned because its secrets could not be hidden again" (the API returns 409 with `{ error: "unredacted" }`) when either of these holds:
+  - `redactPending` is true (the daemon stopped before re-hiding, or restarted after a failure)
+  - `finishedAt` is missing (the daemon stopped during the run; this includes runs written by a previous version and runs that stopped before `redactPending` could be written)
+- A run with `finishedAt` and without `redactPending` is returned as already re-hidden. It cannot be told apart from a run that ended in a previous version after failing to re-hide.
 - Deliverables were hidden before they were written to the activity log, so they are not hidden again when read.
 
 ### Failures of the deliverable and log tools
@@ -245,9 +249,11 @@ It hides with the run's own secrets (if the daemon holds them) and the values of
 | `task_id` or `run_id` does not match `[A-Za-z0-9_-]{1,128}` (including `..`, `/`, `%2F`) | The form of `task_id` or `run_id` is wrong (the tool does not call the API; the API also rejects with 400 (`invalid_id`)) |
 | Both `offset` and `from_end` | Asks to give only one of them |
 | The range is invalid (the API's 400 `invalid_range`) | The range is invalid |
-| A log that could not be hidden again | This log cannot be returned because its secrets could not be hidden again |
+| A log that could not be hidden again, or a log with no recorded end (the daemon does not hold the run's values) | This log cannot be returned because its secrets could not be hidden again |
+| Opening or reading the log file failed (the API returns 500 with `{ error: "read_failed" }`; no content or path is returned) | The log could not be read |
 | An earlier daemon version (no new API, and a 404 whose body is not JSON with `error`) | The running sacty does not support this; asks to update sacty and restart with `sacty up` when no task is running |
-| The response cannot be read as JSON (200, 500, and so on) | The response from sacty could not be read |
+| A 200 response cannot be read as JSON | The response from sacty could not be read |
+| A failure other than 404 (such as 500) whose body cannot be read as JSON | sacty returned <status code> (the body is not included) |
 | Cannot connect, timed out, cannot authenticate, or not running | The same text as the existing tools |
 
 - The reason text and the one line on standard error contain only the text in this table. They never contain the daemon's response body, the content of a deliverable or log, the token in `daemon.json`, the value of an environment variable, or an absolute path of the daemon.

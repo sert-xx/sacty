@@ -30,6 +30,7 @@ import {
   fileSource,
   memorySource,
   readByteRange,
+  withoutPartialSecretTail,
 } from "./byte-range.js";
 
 /**
@@ -491,10 +492,8 @@ export class SessionLog implements SessionLogSink {
    */
   rangeParts(file: SessionLogFile): { path: string; mem: Buffer; omittedMiddle: boolean } {
     const markers = this.markers();
-    const { mem, omittedMiddle } = this.files[file].memoryPart(
-      markers[file],
-      Buffer.from(this.redactors[file].peek(), "utf8"),
-    );
+    // StreamRedactor が伏せる前に持っている分（peek）は含めない（伏せる値の先頭の一部でありうるため）
+    const { mem, omittedMiddle } = this.files[file].memoryPart(markers[file], Buffer.alloc(0));
     return { path: this.files[file].path, mem, omittedMiddle };
   }
 
@@ -579,9 +578,10 @@ export class SessionLog implements SessionLogSink {
     this.files.stderr.close(markers.stderr);
     // 書き始めた後に分かった秘密情報（コンテナで更新されたトークンなど）は、書いたファイル全体から伏せ直す
     const all = this.allSecrets();
-    if (this.needsRewrite() || this.meta.redactPending) {
+    let rewritten = true;
+    const tracked = this.needsRewrite() || Boolean(this.meta.redactPending);
+    if (tracked) {
       const forms = secretForms(all);
-      let failed = false;
       for (const file of Object.values(this.files)) {
         try {
           if (!existsSync(file.path)) continue;
@@ -589,18 +589,12 @@ export class SessionLog implements SessionLogSink {
           const redacted = redact(text, forms);
           if (redacted !== text) writeFileSync(file.path, redacted, { mode: 0o600 });
         } catch (error) {
-          failed = true;
+          rewritten = false;
           this.warn(error);
         }
       }
-      if (failed) {
-        // 伏せ直せなかった。値をデーモンが動いている間だけ持ち、記録に残す（読み取りは、その値で伏せる）
-        this.meta.redactPending = true;
-        this.retain?.(all);
-      } else {
-        delete this.meta.redactPending;
-        this.retain?.(undefined);
-      }
+      if (rewritten) delete this.meta.redactPending;
+      else this.meta.redactPending = true;
     }
     const truncated: NonNullable<SessionLogMeta["truncated"]> = {};
     for (const file of ["events", "stderr"] as const) {
@@ -617,7 +611,12 @@ export class SessionLog implements SessionLogSink {
             message: redactText(outcome.message, secretForms(all)),
           };
     if (Object.keys(truncated).length > 0) this.meta.truncated = truncated;
-    this.writeMeta();
+    const metaWritten = this.writeMeta();
+    if (tracked) {
+      // 伏せ直しが全部済み、redactPending を消した meta.json を書けたときだけ、値を捨てる。
+      // そうでなければ、デーモンが動いている間だけ持つ（読み取りは、その値で伏せる）
+      this.retain?.(rewritten && metaWritten ? undefined : all);
+    }
   }
 
   /** 上限で間を省いたところに入れる目印（省いた大きさ・行数から作る）。 */
@@ -650,11 +649,14 @@ export class SessionLog implements SessionLogSink {
     return [...new Set([...this.secrets(), ...this.extra])].filter((s) => s.length > 0);
   }
 
-  private writeMeta(): void {
+  /** meta.json を書く。書けたか。 */
+  private writeMeta(): boolean {
     try {
       writeJsonAtomic(`${this.base}.meta.json`, this.meta);
+      return true;
     } catch (error) {
       this.warn(error);
+      return false;
     }
   }
 
@@ -909,7 +911,9 @@ export class SessionLogStore {
       secrets = [...live.currentSecrets(), ...extraSecrets];
     } else if (this.retained.has(key)) {
       secrets = [...(this.retained.get(key) ?? []), ...extraSecrets];
-    } else if (meta.redactPending) {
+    } else if (meta.redactPending || !meta.finishedAt) {
+      // 伏せ直せていない（redactPending）か、終わりが記録されていない（デーモンが止まった実行・前の版が書いた実行）実行は、
+      // デーモンがその実行の秘密情報を持たなければ、平文の値が残っていても見分けられないので、返さない
       return { kind: "unredacted" };
     } else {
       secrets = [...extraSecrets];
@@ -932,11 +936,14 @@ export class SessionLogStore {
         };
       }
       const parts = live.rangeParts(request.file);
+      // 読める終わりが伏せる値の先頭の一部で終わるときは、その一部を外す（途中で足された値は、知る前に出た先頭が
+      // StreamRedactor の持ち越しの外に出ているため）
+      const readable = withoutPartialSecretTail(concatSource(head, memorySource(parts.mem)), forms);
       return {
         kind: "ok",
         running: true,
         omittedMiddle: parts.omittedMiddle,
-        ...readByteRange(concatSource(head, memorySource(parts.mem)), request, forms),
+        ...readByteRange(readable, request, forms),
       };
     } finally {
       if (fd !== undefined) closeSync(fd);

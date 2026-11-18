@@ -63,8 +63,8 @@ When the result cannot be received after the request to create was sent (a timeo
 
 Deliverables and logs have a limit on how much one call can read (32,000 bytes in UTF-8; about 10,000 Japanese characters).
 When the content exceeds the limit, the result says it was cut and gives the total size and the position to continue from, and the AI reads on.
-A log can be read from the end, or from a position you specify, onward. The log of a run in progress is what exists at the time of reading (after the head limit is exceeded, only the tail remains; until the run finishes, the position to continue from can shift, so the AI reads again from the end).
-Secrets in a log are hidden, at the time of reading, with the ones sacty knows then. The log of a run known not to have had its secrets hidden again returns a reason and no content.
+A log can be read from the end, or from a position you specify, onward. The log of a run in progress is what exists at the time of reading (after the head limit is exceeded, only the tail remains; until the run finishes, the position to continue from can shift, so the AI reads again from the end). The last part of a running log is not returned while it could be the beginning of a value to hide; it can be read later, after the rest arrives.
+Secrets in a log are hidden, at the time of reading, with the ones sacty knows then. The log of a run whose secrets are known not to have been hidden again, or whose end was not recorded (for example, the daemon stopped), returns a reason and no content unless the running sacty holds that run's secrets.
 
 When sacty is not running, the tools answer that the running sacty was not found.
 Start it with `sacty up` and ask again.

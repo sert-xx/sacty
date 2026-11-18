@@ -4,12 +4,16 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { READ_REASONS, startTaskMcp } from "@sacty/daemon/task-mcp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SqliteActivityStore } from "../../../apps/daemon/src/activity.js";
+import { createApp } from "../../../apps/daemon/src/server.js";
+import { SessionLogStore } from "../../../apps/daemon/src/session-logs.js";
+import { dbPath, dir, makeService, useTempDir } from "../../../apps/daemon/src/testing/daemon.js";
 import { type Fetch, readDaemonFile, writeDaemonFile } from "./context-preview.js";
 import { daemonApi } from "./mcp.js";
 
 let home: string;
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "home-MARK-3-"));
+  home = mkdtempSync(join(tmpdir(), "sacty-mcp-"));
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
@@ -408,7 +412,9 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
   });
 
   it("結果・理由・標準エラーに、トークン・環境変数の値・SACTY_HOME のパス・中身を出さない。失敗の原因は、接続の失敗の種類と時間切れの印だけ", async () => {
-    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok-MARK-1" });
+    // SACTY_HOME のパスの印（home-MARK-3）は、このテストのためだけの置き場に付ける
+    const marked = mkdtempSync(join(tmpdir(), "home-MARK-3-"));
+    writeDaemonFile(marked, { url: "http://127.0.0.1:4710", token: "tok-MARK-1" });
     vi.stubEnv("SACTY_TEST_SECRET", "env-MARK-2");
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const hung: Fetch = (_url, init) =>
@@ -441,7 +447,7 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
     try {
       for (const [, fetcher] of scenarios) {
         const [a, b] = InMemoryTransport.createLinkedPair();
-        startTaskMcp(daemonApi(home, fetcher, 20), { version: "1", transport: a });
+        startTaskMcp(daemonApi(marked, fetcher, 20), { version: "1", transport: a });
         const client = new Client(
           { name: "t", version: "1" },
           { versionNegotiation: { mode: { pin: "2026-07-28" } } },
@@ -475,9 +481,12 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
       expect(lines.some((l) => l.includes("（原因：ECONNREFUSED）"))).toBe(true);
       expect(lines.some((l) => l.includes("（原因：TimeoutError）"))).toBe(true);
       expect(lines.some((l) => l.includes("sacty の応答を読めませんでした。"))).toBe(true);
+      // JSON でない 500・本文が JSON の 500 は、状態コードの理由（本文は入れない）
+      expect(lines.some((l) => l.includes("sacty が 500 を返しました。"))).toBe(true);
     } finally {
       logged.mockRestore();
       vi.unstubAllEnvs();
+      rmSync(marked, { recursive: true, force: true });
     }
   });
 
@@ -508,5 +517,112 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
       logged.mockRestore();
     }
     await client.close();
+  });
+});
+
+describe("本物のデーモンの API と、本物の daemonApi をつないだ成果物とログの取得（PBI-395）", () => {
+  useTempDir();
+
+  it("4つのツールが、デーモンが持つ成果物・実行の一覧・ログの範囲と同じ値を返す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const store = new SessionLogStore(join(dir, "runs"));
+    const { service } = makeService(activity, [], { sessionLogs: store });
+    const task = service.createTask({ projectId: "default", title: "題" });
+    const body = "要求要件の本文です。🎉";
+    Object.assign(service.get(task.id)?.task ?? {}, {
+      outputs: { requirements: body },
+      gate: { step: "requirements", submission: 1 },
+      submissions: { requirements: 1 },
+    });
+    activity.append({
+      taskId: task.id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunStarted",
+            payload: {
+              runId: "run1",
+              step: "requirements",
+              agentId: "claude",
+              authMode: "subscription",
+              model: "m",
+              reasoningEffort: "medium",
+              image: "img",
+            },
+          } as never,
+        },
+      ],
+    });
+    const handle = store.open(
+      {
+        taskId: task.id,
+        runId: "run1",
+        role: "requirements",
+        agentId: "claude",
+        runtime: "claude-code",
+        authMode: "subscription",
+      },
+      () => [],
+    );
+    handle.stdout("ログの1行目\n");
+    handle.close({
+      kind: "completed",
+      output: "",
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+    });
+
+    const token = "t".repeat(64);
+    const app = createApp(service, token);
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token });
+    const fetcher: Fetch = async (url, init) => {
+      const u = new URL(url);
+      return app.request(`${u.pathname}${u.search}`, init);
+    };
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    startTaskMcp(daemonApi(home, fetcher), { version: "1", transport: a });
+    const client = new Client(
+      { name: "t", version: "1" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    await client.connect(b);
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError).not.toBe(true);
+      return result.structuredContent as Record<string, unknown>;
+    };
+
+    const list = await call("list_deliverables", { task_id: task.id });
+    expect(list.deliverables).toEqual([
+      expect.objectContaining({
+        step: "requirements",
+        kind: "output",
+        submission: 1,
+        status: "awaiting_approval",
+        bytes: Buffer.byteLength(body),
+      }),
+    ]);
+    const one = await call("get_deliverable", {
+      task_id: task.id,
+      step: "requirements",
+      kind: "output",
+    });
+    expect(one).toMatchObject({ text: body, status: "awaiting_approval", clipped: false });
+    const runs = await call("list_runs", { task_id: task.id });
+    expect(runs).toMatchObject({ total: 1, returned: 1, clipped: false });
+    expect(runs.runs).toEqual([
+      expect.objectContaining({
+        runId: "run1",
+        role: "requirements",
+        agentId: "claude",
+        state: "succeeded",
+        hasLog: true,
+      }),
+    ]);
+    const log = await call("get_run_log", { task_id: task.id, run_id: "run1", file: "events" });
+    expect(log).toMatchObject({ running: false, text: "ログの1行目\n", clipped: false });
+    await client.close();
+    activity.close();
   });
 });

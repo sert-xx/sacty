@@ -78,6 +78,7 @@ export const READ_REASONS = {
   unredacted: "このログは秘密情報を伏せ直せていないため返せません",
   badRange: "範囲の指定が正しくありません。",
   unreadable: "sacty の応答を読めませんでした。",
+  readFailed: "ログを読めませんでした",
   oldDaemon:
     "起動中の sacty がこの機能に対応していません。sacty を更新し、実行中のタスクが無いときに `sacty up` で起動し直してください。",
 } as const;
@@ -92,7 +93,8 @@ export function readFailure(
   json: Record<string, unknown> | undefined,
 ): Error | "task_not_found" {
   if (!json) {
-    return new Error(status === 404 ? READ_REASONS.oldDaemon : READ_REASONS.unreadable);
+    // 本文は理由に入れない（状態コードだけ）
+    return new Error(status === 404 ? READ_REASONS.oldDaemon : `sacty が ${status} を返しました。`);
   }
   if (status === 404 && json.error === "not_found") {
     if (json.what === "run") return new Error(READ_REASONS.runNotFound);
@@ -102,10 +104,11 @@ export function readFailure(
   }
   if (status === 404) return new Error(READ_REASONS.oldDaemon);
   if (status === 409 && json.error === "unredacted") return new Error(READ_REASONS.unredacted);
+  if (status === 500 && json.error === "read_failed") return new Error(READ_REASONS.readFailed);
   if (status === 400) {
     return new Error(json.error === "invalid_id" ? READ_REASONS.invalidId : READ_REASONS.badRange);
   }
-  return new Error(`デーモンが ${status} を返しました。`);
+  return new Error(`sacty が ${status} を返しました。`);
 }
 
 const RangeInfo = {

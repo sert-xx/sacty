@@ -20,7 +20,13 @@ import { dbPath, dir, makeService, useTempDir } from "./testing/daemon.js";
 import { readApiOver } from "./testing/mcp-read.js";
 
 // ログのファイルの読み取り量を数え、伏せ直しの書き込みの失敗を起こす
-const probe = vi.hoisted(() => ({ read: 0, failWrite: false, logFds: new Set<number>() }));
+const probe = vi.hoisted(() => ({
+  read: 0,
+  failWrite: false,
+  failMeta: false,
+  failRead: false,
+  logFds: new Set<number>(),
+}));
 vi.mock("node:fs", async (original) => {
   const actual = await original<typeof import("node:fs")>();
   return {
@@ -36,12 +42,15 @@ vi.mock("node:fs", async (original) => {
     }) as typeof actual.closeSync,
     // ログのファイルの読み取り量だけを数える
     readSync: ((...args: Parameters<typeof actual.readSync>) => {
+      if (probe.failRead && probe.logFds.has(args[0] as number)) throw new Error("EIO");
       const n = (actual.readSync as (...a: unknown[]) => number)(...args);
       if (probe.logFds.has(args[0] as number)) probe.read += n;
       return n;
     }) as typeof actual.readSync,
     writeFileSync: ((...args: Parameters<typeof actual.writeFileSync>) => {
       if (probe.failWrite && String(args[0]).endsWith(".jsonl")) throw new Error("disk full");
+      if (probe.failMeta && String(args[0]).includes(".meta.json.tmp"))
+        throw new Error("disk full");
       return actual.writeFileSync(...args);
     }) as typeof actual.writeFileSync,
   };
@@ -605,17 +614,19 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
     expect(await read("failed")).not.toContain(secret);
     expect(await read("failed")).toContain("[REDACTED]");
 
-    // 設定の秘密情報（呼び出しの時点でデーモンが持つもの）が残る、終わりが記録されていない実行
+    // 終わった後にプロジェクトの設定へ足された値（呼び出しの時点でデーモンが持つもの）が、平文で残る終わった実行
     const project = "PROJECT-TOKEN-55";
-    new SessionLogStore(w.runsDir)
-      .open(info(id, "unknown"), () => [])
-      .stdout(`${project} ${"q".repeat(60)}\n`);
+    const finished = w.store.open(info(id, "finished"), () => []);
+    finished.stdout(`${project} ${"q".repeat(60)}\n`);
+    finished.close(done);
+    expect(readFileSync(w.store.path(id, "finished", "events") ?? "", "utf8")).toContain(project);
     vi.spyOn(w.service as never, "auditSecretValues" as never).mockResolvedValue([
       project,
     ] as never);
     const { json: j2 } = await connect(mcpOver(w).api);
-    const unknown = await j2<Log>("get_run_log", { task_id: id, run_id: "unknown", offset: 0 });
-    expect(unknown.text).not.toContain(project);
+    const after = await j2<Log>("get_run_log", { task_id: id, run_id: "finished", offset: 0 });
+    expect(after.text).not.toContain(project);
+    expect(after.text).toContain("[REDACTED]");
     w.activity.close();
   });
 
@@ -658,20 +669,178 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
     w.activity.close();
   });
 
-  it("伏せる値が境目をまたぐとき、実行中も終わった実行も、値の一部を残さない（ASCII・日本語）", async () => {
+  it("終わりが記録されていない実行（前の版が書いた実行・redactPending を書けないまま止まった実行）は、デーモンが値を持たなければ中身を返さない", async () => {
     const w = world();
     const id = w.task.id;
-    const ascii = "ASCII-SECRET-0123";
-    const ja = "秘密の合言葉🔑";
-    const text = `前置き ${ascii} と ${ja} の後ろ ${"w".repeat(50)}\n`;
-    const closed = w.store.open(info(id, "closed"), () => [ascii, ja]);
-    closed.stdout(text);
-    closed.close(done);
-    const live = w.store.open(info(id, "live"), () => [ascii, ja]);
-    live.stdout(`${text}${"w".repeat(40)}\n`);
+    const secret = "NOMARK-SECRET-31";
+    // 前の版が書いた実行：redactPending が無く、終わりも記録されていない（ファイルには値が平文で残る）
+    const legacy = new SessionLogStore(w.runsDir).open(info(id, "legacy"), () => []);
+    legacy.stdout(`${secret} ${"k".repeat(80)}\n`);
+    // redactPending を書けないまま止まった実行
+    const unmarked = new SessionLogStore(w.runsDir).open(info(id, "unmarked"), () => []);
+    unmarked.stdout(`${secret} ${"k".repeat(80)}\n`);
+    probe.failMeta = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      unmarked.addSecrets([secret]);
+    } finally {
+      probe.failMeta = false;
+      warn.mockRestore();
+    }
+    expect(
+      JSON.parse(readFileSync(w.store.metaPath(id, "unmarked") ?? "", "utf8")).redactPending,
+    ).toBeUndefined();
+    const { raw } = await connect(mcpOver(w).api);
+    for (const runId of ["legacy", "unmarked"]) {
+      const r = await raw("get_run_log", { task_id: id, run_id: runId });
+      expect(r.isError).toBe(true);
+      expect(r.text).toBe(READ_REASONS.unredacted);
+    }
+    w.activity.close();
+  });
+
+  it("redactPending を書けなくても、同じデーモンが動いている間は値を持って伏せる。閉じるときに meta.json を書けなかったときも、値を捨てない", async () => {
+    const w = world();
+    const id = w.task.id;
+    const secret = "KEEP-SECRET-58";
+    const body = `${secret} ${"k".repeat(80)}\n`;
     const { json } = await connect(mcpOver(w).api);
+    const read = async (runId: string) =>
+      (await json<Log>("get_run_log", { task_id: id, run_id: runId, offset: 0 })).text;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      // redactPending の書き込みが失敗した実行（実行中）
+      const live = w.store.open(info(id, "live"), () => []);
+      live.stdout(body);
+      probe.failMeta = true;
+      live.addSecrets([secret]);
+      probe.failMeta = false;
+      expect(await read("live")).not.toContain(secret);
+      expect(await read("live")).toContain("[REDACTED]");
+
+      // 伏せ直しは済んだが、最後の meta.json を書けなかった実行：redactPending が残るので、値を捨てずに持つ
+      const closing = w.store.open(info(id, "closing"), () => []);
+      closing.stdout(body);
+      closing.addSecrets([secret]);
+      probe.failMeta = true;
+      closing.close(done);
+      probe.failMeta = false;
+    } finally {
+      warn.mockRestore();
+    }
+    expect(readFileSync(w.store.path(id, "closing", "events") ?? "", "utf8")).not.toContain(secret);
+    expect(
+      JSON.parse(readFileSync(w.store.metaPath(id, "closing") ?? "", "utf8")).redactPending,
+    ).toBe(true);
+    const text = await read("closing");
+    expect(text).not.toContain(secret);
+    expect(text).toContain("[REDACTED]");
+    w.activity.close();
+  });
+
+  it("実行中のログの末尾が、伏せる値の先頭の一部で終わるときは、その一部を返さず、totalBytes にも入れない（値を知る前に出た先頭・StreamRedactor が持つ先頭）", async () => {
+    const w = world();
+    const id = w.task.id;
+    const { json } = await connect(mcpOver(w).api);
+    const tail = (runId: string, extra: Record<string, unknown> = { from_end: true }) =>
+      json<Log>("get_run_log", { task_id: id, run_id: runId, file: "stderr", ...extra });
+
+    // 値を知る前に先頭が出た実行：addSecrets で足した値の先頭（ghp_SEC）が、末尾に残っている
+    const added = w.store.open(info(id, "added"), () => []);
+    added.stderr("token is ghp_SEC");
+    added.addSecrets(["ghp_SECRETVAL"]);
+    const a1 = await tail("added");
+    expect(a1.text).toBe("token is ");
+    expect(a1.totalBytes).toBe(Buffer.byteLength("token is "));
+    expect((await tail("added", { offset: 0 })).next).toBe(Buffer.byteLength("token is "));
+    expect((await tail("added", { offset: 1000 })).text).toBe("");
+    added.stderr("RETVAL and then some more text follows\n");
+    const a2 = await tail("added");
+    expect(a2.text).toContain("token is [REDACTED] and then");
+    expect(a2.text).not.toContain("ghp_");
+
+    // 値を知っている実行：出力が値の途中で区切れ、StreamRedactor が先頭を持っている
+    const known = w.store.open(info(id, "known"), () => ["ghp_SECRETVAL"]);
+    known.stderr("token is ghp_SEC");
+    const k1 = await tail("known");
+    expect(k1.text).not.toContain("ghp");
+    expect(k1.totalBytes).toBeLessThan(Buffer.byteLength("token is ghp_SEC"));
+    expect(readFileSync(w.store.path(id, "known", "stderr") ?? "", "utf8")).not.toContain("ghp_");
+    known.stderr("RETVAL and then some more text follows\n");
+    const k2 = await tail("known");
+    expect(k2.text).toContain("token is [REDACTED] and then");
+    expect(k2.text).not.toContain("ghp_");
+    w.activity.close();
+  });
+
+  it("ログのファイルを読めないときは、API は read_failed の 500、ツールは定型の理由を返し、パスと中身を出さない", async () => {
+    const w = world();
+    const id = w.task.id;
+    const h = w.store.open(info(id, "broken"), () => []);
+    h.stdout(`ログの中身 SECRET-BODY-12 ${"b".repeat(40)}\n`);
+    h.close(done);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    probe.failRead = true;
+    try {
+      const res = await w.get(`/api/tasks/${id}/runs/broken/log/range?file=events`);
+      expect(res.status).toBe(500);
+      const body = JSON.stringify(await res.json());
+      expect(body).toBe('{"error":"read_failed"}');
+      const { raw } = await connect(mcpOver(w).api);
+      const r = await raw("get_run_log", { task_id: id, run_id: "broken" });
+      expect(r.isError).toBe(true);
+      expect(r.text).toBe(READ_REASONS.readFailed);
+      const lines = logged.mock.calls.map((c) => c.join(" ")).join("\n");
+      for (const text of [r.text, lines]) {
+        expect(text).not.toContain(w.runsDir);
+        expect(text).not.toContain("SECRET-BODY-12");
+      }
+    } finally {
+      probe.failRead = false;
+      logged.mockRestore();
+    }
+    // 読めるようになれば、続けて読める（失敗の後に状態が残らない）
+    const { raw } = await connect(mcpOver(w).api);
+    expect((await raw("get_run_log", { task_id: id, run_id: "broken" })).isError).toBe(false);
+    w.activity.close();
+  });
+
+  it("伏せる値が境目をまたぐとき、ファイルに平文が残る実行中も終わった実行も、値の一部を残さず、返す境目は値の外側にある（ASCII・日本語）", async () => {
+    const w = world();
+    const id = w.task.id;
+    const ascii = "ghp_SECRETVAL";
+    const ja = "秘密値ABC";
+    const text = `前置き ${ascii} と ${ja} の後ろ ${"w".repeat(50)}\n`;
+    // 書いた後に値を足した実行：ファイルに平文が残る。閉じる実行は、伏せ直しが失敗して平文が残る
+    const live = w.store.open(info(id, "live"), () => []);
+    live.stdout(`${text}${"w".repeat(40)}\n`);
+    live.addSecrets([ascii, ja]);
+    const closed = w.store.open(info(id, "closed"), () => []);
+    closed.stdout(text);
+    closed.addSecrets([ascii, ja]);
+    probe.failWrite = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      closed.close(done);
+    } finally {
+      probe.failWrite = false;
+      warn.mockRestore();
+    }
+    const { json } = await connect(mcpOver(w).api);
+    let widened = 0;
     for (const runId of ["closed", "live"]) {
-      for (let offset = 0; offset < 70; offset += 4) {
+      const file = readFileSync(w.store.path(id, runId, "events") ?? "");
+      expect(file.toString("utf8")).toContain(ascii);
+      expect(file.toString("utf8")).toContain(ja);
+      const spans = [ascii, ja].flatMap((value) => {
+        const needle = Buffer.from(value);
+        const found: [number, number][] = [];
+        for (let i = file.indexOf(needle); i >= 0; i = file.indexOf(needle, i + 1)) {
+          found.push([i, i + needle.length]);
+        }
+        return found;
+      });
+      for (let offset = 0; offset < 70; offset++) {
         for (const max of [6, 9, 17, 25]) {
           const r = await json<Log>("get_run_log", {
             task_id: id,
@@ -679,12 +848,20 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
             offset,
             max_bytes: max,
           });
-          for (const part of ["ASCII", "SECRET", "0123", "秘密", "合言葉", "🔑"]) {
+          for (const part of ["ghp_", "SECRET", "VAL", "秘密", "値", "ABC"]) {
             expect(r.text).not.toContain(part);
           }
+          // 返した offset・next は、値の内側に来ない
+          for (const [from, to] of spans) {
+            expect(from < r.offset && r.offset < to).toBe(false);
+            expect(from < r.next && r.next < to).toBe(false);
+          }
+          if (r.offset !== offset) widened++;
         }
       }
     }
+    // 境目を値の外側へ広げる処理を、実際に通した
+    expect(widened).toBeGreaterThan(0);
     w.activity.close();
   });
 

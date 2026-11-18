@@ -63,6 +63,32 @@ export function concatSource(a: ByteSource, b: ByteSource): ByteSource {
   };
 }
 
+/**
+ * 実行中のログの、読める終わりの決め方。終わりが、伏せる値の形のどれかの先頭の一部（値の全体より短い）で終わるときは、
+ * その一部を終わりから外した元を返す（値の続きは、まだ届いていないかもしれないので、伏せられない）。
+ * totalBytes・next も、この終わりで数える。
+ */
+export function withoutPartialSecretTail(source: ByteSource, forms: readonly string[]): ByteSource {
+  const needles = forms.filter((f) => f.length > 0).map((f) => Buffer.from(f, "utf8"));
+  const pad = needles.reduce((m, n) => Math.max(m, n.length), 0);
+  if (pad < 2 || source.total === 0) return source;
+  const from = Math.max(0, source.total - (pad - 1));
+  const tail = source.read(from, source.total);
+  let drop = 0;
+  for (const needle of needles) {
+    const most = Math.min(needle.length - 1, tail.length);
+    for (let k = most; k > drop; k--) {
+      if (tail.subarray(tail.length - k).equals(needle.subarray(0, k))) {
+        drop = k;
+        break;
+      }
+    }
+  }
+  if (drop === 0) return source;
+  const total = source.total - drop;
+  return { total, read: (a, b) => source.read(a, Math.min(b, total)) };
+}
+
 const isContinuation = (byte: number | undefined) => ((byte ?? 0) & 0xc0) === 0x80;
 
 function charLength(lead: number): number {
