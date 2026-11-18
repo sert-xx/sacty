@@ -140,7 +140,10 @@ describe("checkPath", () => {
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain("/home/u/.local/bin が PATH にありません");
       expect(warnings[0]).toContain(onPath);
+      expect(warnings[0]).toContain("より前に足してください");
       expect(warnings[0]).toContain("足す前に");
+      // 前の版の入口のディレクトリが無ければ、前の版の登録の話はしない
+      expect(warnings[0].includes("前の版の mise の登録")).toBe(hasLegacy);
       expect(warnings[0]).not.toContain("そちらを消すか");
       expect(warnings[0]).not.toContain("いま置いた入口が使われます");
     }

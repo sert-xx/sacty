@@ -92,7 +92,7 @@ npm run cli:install
 - 外すまでの間も同じように動くよう、前の版の入口を、新しい入口と同じ中身に書き直します。
 - 外す前に、`~/.local/bin`（`SACTY_BIN_DIR` を指定したなら、その場所）が `PATH` に入っていることを確かめてください（`echo "$PATH"` で確かめられます）。
   入っていないまま外すと、`sacty` が見つからなくなります（入っていなければ、`[sacty] 注意：` でも知らせます）。
-  入っていなければ、シェルの設定のファイル（zsh なら `~/.zshrc`）に `export PATH="$HOME/.local/bin:$PATH"` を足して、新しいシェルを開きます。
+  入っていなければ、シェルの設定のファイル（zsh なら `~/.zshrc`）に `export PATH="$HOME/.local/bin:$PATH"`（`SACTY_BIN_DIR` を指定したなら、`$HOME/.local/bin` の代わりにその場所）を足して、新しいシェルを開きます。
 - 外すときは、次の順で消します。
   1. mise の利用者全体の設定（mise の既定では `~/.config/mise/config.toml`。設定をほかの場所に置いているなら、`sacty` の行があるファイル）の `[tools]` から `sacty` の行を消します。
   2. mise の登録（mise の既定では `~/.local/share/mise/installs/sacty`。`MISE_DATA_DIR` を指定しているなら `$MISE_DATA_DIR/installs/sacty`、`XDG_DATA_HOME` を指定しているなら `$XDG_DATA_HOME/mise/installs/sacty`）を消します。

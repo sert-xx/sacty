@@ -119,7 +119,7 @@ export function checkPath({
   if (!dirInPath) {
     return {
       warnings: [
-        `${dir} が PATH にありません（いま PATH で見つかる sacty は ${onPath} で、いま置いた入口ではありません）。${add}足す前に、いま見つかる sacty や前の版の mise の登録を消すと、sacty が見つからなくなります。`,
+        `${dir} が PATH にありません（いま PATH で見つかる sacty は ${onPath} で、いま置いた入口ではありません）。PATH の、いま見つかる sacty より前に足してください（SACTY_BIN_DIR で置き場所を変えられます）。足す前に、いま見つかる sacty${legacy ? "や前の版の mise の登録" : ""}を消すと、sacty が見つからなくなります。`,
       ],
       first,
     };
