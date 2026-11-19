@@ -88,7 +88,7 @@ describe("本物のデーモンのサービスを通した、中止したタス�
   it("ツールの一覧。再実行の引数は task_id と note だけで、注釈は書き込み・非破壊・非冪等・openWorld", async () => {
     const t = await setup();
     const { tools } = await t.client.listTools();
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(19);
     const tool = tools.find((x) => x.name === "rerun_task");
     expect(tool?.annotations).toMatchObject({
       readOnlyHint: false,
@@ -247,7 +247,7 @@ describe("本物のデーモンのサービスを通した、中止したタス�
     const finished = await t.call("rerun_task", { task_id: done });
     expect(finished.isError).toBe(true);
     expect(finished.text).toContain("続きの作成（派生）");
-    expect(finished.text).toContain("画面で続きを作って");
+    expect(finished.text).toContain("derive_task で作れます");
     expect(t.count(done)).toBe(before);
     const fd = await t.detail(done);
     expect(fd.canRerun).toBe(false);

@@ -157,6 +157,25 @@ function rerunRepositoryForMcp(message: { code?: unknown; params?: unknown }): s
   return `${renderMessage(message, "ja")}画面の「再実行」で、作業するリポジトリを選び直して再実行できます（作られていません）。`;
 }
 
+/**
+ * 続きの作成（派生）を頼んだ後の案内（作られたかどうかが分からない）。派生は何度でも作れ、呼び直すと二重に作られうるので、
+ * 元のタスクの derivedTasks に、呼ぶ前に無かった ID が増えたかで、作られたかどうかを確かめる。
+ */
+const DERIVE_UNCERTAIN =
+  "続きのタスクが作られている可能性があります。自動でやり直さず（呼び直すと二重に作られます）、元のタスクを get_task で読み、derivedTasks に、呼ぶ前に無かった ID が増えていないかを確かめてください。増えていれば作られているので、その ID のタスクを見てください。増えていなければ作られていないので、呼び直してよいです。";
+const uncertainDerive = uncertainOf("続きの作成", DERIVE_UNCERTAIN);
+
+/** 題の変更を頼んだ後の案内（変わったかどうかが分からない）。同じ題での2回目は断られるだけなので、呼び直しても害は無い。 */
+const RENAME_UNCERTAIN =
+  "題が変わっている可能性があります。get_task の title を確かめてください。変わっていれば済んでいます。変わっていなければ、呼び直してよいです（同じ題での2回目は断られるだけです）。";
+const uncertainRename = uncertainOf("題の変更", RENAME_UNCERTAIN);
+
+/** 続きの作成の断りのうち、リポジトリがプロジェクトの対象でないもの（task.repositoryUnknown）は、画面で選び直せることを伝える。 */
+function deriveRepositoryForMcp(message: { code?: unknown; params?: unknown }): string | undefined {
+  if (message.code !== "task.repositoryUnknown") return undefined;
+  return `${renderMessage(message, "ja")}画面の「続きのタスクを作る」で、作業するリポジトリを選び直して作れます（作られていません）。`;
+}
+
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -403,6 +422,29 @@ export function daemonApi(
         body,
         uncertainRerun,
         rerunRepositoryForMcp,
+      );
+    },
+    // 消したプロジェクトのタスクの確かめと、続きを作れる状態かの確かめ・画面の既定値の組み立ては、ツールが先に getTask で行う。
+    // 送るのは title・body・repo だけ（plan は送らない＝自動）
+    async derive(id, input) {
+      const at = endpoint(); // 接続先が無いのは、頼む前の失敗（作られていない）
+      const body = { title: input.title, body: input.body, repo: input.repo };
+      return writeTask(
+        at,
+        `/api/tasks/${encodeURIComponent(id)}/derive`,
+        body,
+        uncertainDerive,
+        deriveRepositoryForMcp,
+      );
+    },
+    // 消したプロジェクトのタスクの確かめと、中止したタスクの確かめは、ツールが先に getTask で行う。送るのは title だけ
+    async rename(id, input) {
+      const at = endpoint(); // 接続先が無いのは、頼む前の失敗（変わっていない）
+      return writeTask(
+        at,
+        `/api/tasks/${encodeURIComponent(id)}/title`,
+        { title: input.title },
+        uncertainRename,
       );
     },
     async cleanupPlan(id) {

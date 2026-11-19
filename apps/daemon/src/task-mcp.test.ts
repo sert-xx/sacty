@@ -190,6 +190,26 @@ function apiOver(service: TaskService, webUrl?: string): SactyApi & { calls: str
       if (!res.ok) throw await refusal(res);
       return ((await res.json()) as { task: Task }).task;
     },
+    async derive(id, input) {
+      calls.push(`POST /api/tasks/${id}/derive`);
+      const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/derive`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) throw await refusal(res);
+      return ((await res.json()) as { task: Task }).task;
+    },
+    async rename(id, input) {
+      calls.push(`POST /api/tasks/${id}/title`);
+      const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/title`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) throw await refusal(res);
+      return ((await res.json()) as { task: Task }).task;
+    },
     async cleanupPlan(id) {
       calls.push(`GET /api/tasks/${id}/cleanup-plan`);
       const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/cleanup-plan`, {
@@ -281,6 +301,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "get_cancel_plan",
       "cancel_task",
       "rerun_task",
+      "derive_task",
+      "rename_task",
     ]);
     expect(tools.map((t) => t.annotations?.readOnlyHint)).toEqual([
       true,
@@ -298,6 +320,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       false,
       false,
       true,
+      false,
+      false,
       false,
       false,
     ]);
@@ -318,6 +342,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       false,
       true,
       false,
+      true,
+      true,
       true,
       true,
     ]);
@@ -367,6 +393,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       expect.arrayContaining(["canCancel", "willClose", "willDelete", "cancelArguments"]),
       expect.arrayContaining(["cancelled", "cleanup", "closedPullRequests", "failed"]),
       ["message", "rerun", "task"],
+      ["message", "derive", "task"],
+      ["message", "rename", "task"],
     ]);
     expect(client.getServerVersion()).toMatchObject({ name: "sacty", version: "9.9.9" });
     expect(client.getInstructions()).toContain("rereview_task");
@@ -402,6 +430,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "get_cancel_plan",
       "cancel_task",
       "rerun_task",
+      "derive_task",
+      "rename_task",
     ]);
     const found = await client.callTool({ name: "list_tasks", arguments: { pull_request: "9" } });
     expect((found.structuredContent as Listed).tasks.map((t) => t.id)).toEqual([id]);
@@ -2370,6 +2400,8 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         "get_cancel_plan",
         "cancel_task",
         "rerun_task",
+        "derive_task",
+        "rename_task",
       ]);
       const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
       expect(desc("get_task")).toContain("humanAsks");
@@ -2410,6 +2442,8 @@ function apiOverStub(approve: () => never): SactyApi {
     approve: async () => approve(),
     requestChanges: async () => none(),
     rerun: async () => none(),
+    derive: async () => none(),
+    rename: async () => none(),
     ...readStubs(none),
     webUrl: () => undefined,
   };

@@ -135,6 +135,8 @@ function worldApi(world: World): SactyApi {
     resume: unused,
     cancel: unused,
     rerun: unused,
+    derive: unused,
+    rename: unused,
     cleanupPlan: unused,
     webUrl: () => undefined,
   };

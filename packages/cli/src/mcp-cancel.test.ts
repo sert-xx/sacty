@@ -179,7 +179,7 @@ describe("本物のデーモンのサービスを通した、タスクの中止�
   it("ツールの一覧。中止は destructive・openWorld で読み取り専用でなく、読み取りは readOnly", async () => {
     const t = await setup();
     const { tools } = await t.client.listTools();
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(19);
     const cancel = tools.find((x) => x.name === "cancel_task");
     const plan = tools.find((x) => x.name === "get_cancel_plan");
     expect(cancel?.annotations).toMatchObject({

@@ -6,10 +6,10 @@
 標準入出力（stdio）で動き、画面と同じデーモンの API を呼ぶ。
 MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（2025-11-25 まで）のクライアントも受ける。
 ツールは、タスクの一覧・検索（`list_tasks`）、タスクの詳細（`get_task`）、PR のレビューのタスクの再レビュー（`rereview_task`）、プロジェクトの一覧（`list_projects`）、タスクの作成（`create_task`）、
-成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、承認待ちの工程の承認（`approve_step`）、承認待ちの工程の差し戻し（`request_changes`）、タスクの「人の出番」まで待つ（`wait_for_task`）、タスクの一時停止（`pause_task`）、一時停止中のタスクの再開（`resume_task`）、タスクの中止で片付けるものの確認（`get_cancel_plan`）、タスクの中止（`cancel_task`）、中止したタスクの再実行（`rerun_task`）、タスクのエラーレポートの読み取り（`get_error_report`）の17個。
+成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、承認待ちの工程の承認（`approve_step`）、承認待ちの工程の差し戻し（`request_changes`）、タスクの「人の出番」まで待つ（`wait_for_task`）、タスクの一時停止（`pause_task`）、一時停止中のタスクの再開（`resume_task`）、タスクの中止で片付けるものの確認（`get_cancel_plan`）、タスクの中止（`cancel_task`）、中止したタスクの再実行（`rerun_task`）、タスクのエラーレポートの読み取り（`get_error_report`）、完了したタスクからの続きの作成（`derive_task`）、タスクの題の変更（`rename_task`）の19個。
 `list_deliverables`・`get_deliverable`・`list_runs`・`get_error_report` は、成果物・実行・エラーレポートを読むだけのツール。実行のログを読むツールは、まだ無い（後続）。`wait_for_task` は、読むだけで何も変えない。
 
-関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)、[sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-mcp-request-changes-basic-stop-before-limit.md)、[sacty mcp の待つツールは、デーモンに待つ API を足さず MCP の層で取りに行き、人の出番だけで起こす](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)、[sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)、[sacty mcp の中止は、片付けの対象を読む専用のツールと、読んだ対象を引数で確かめる歯止めを付けて足す](../adr/20261119-0900-mcp-cancel-with-plan-and-confirmed-targets.md)、[sacty mcp の再実行は、画面の既定値のまま補足だけを足す最小の版にし、画面の既定値で送れないものは MCP の層で断る](../adr/20261119-1000-mcp-rerun-minimal-screen-defaults.md)、[sacty mcp のエラーレポートの読み取りは、閉じられなかった実行のログを必ず省き、省いた印と全体の指紋で確かめる](../adr/20261119-1500-mcp-error-report-always-omit-stale-logs.md)
+関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)、[sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-mcp-request-changes-basic-stop-before-limit.md)、[sacty mcp の待つツールは、デーモンに待つ API を足さず MCP の層で取りに行き、人の出番だけで起こす](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)、[sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)、[sacty mcp の中止は、片付けの対象を読む専用のツールと、読んだ対象を引数で確かめる歯止めを付けて足す](../adr/20261119-0900-mcp-cancel-with-plan-and-confirmed-targets.md)、[sacty mcp の再実行は、画面の既定値のまま補足だけを足す最小の版にし、画面の既定値で送れないものは MCP の層で断る](../adr/20261119-1000-mcp-rerun-minimal-screen-defaults.md)、[sacty mcp の続きの作成（派生）は、画面の既定値のまま題と内容だけを送り、題の変更は題だけを送る](../adr/20261120-0900-mcp-derive-and-rename-minimal.md)、[sacty mcp のエラーレポートの読み取りは、閉じられなかった実行のログを必ず省き、省いた印と全体の指紋で確かめる](../adr/20261119-1500-mcp-error-report-always-omit-stale-logs.md)
 
 ## 起動と接続
 
@@ -24,7 +24,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
   `sacty up` を起動し直すとトークンが変わるが、次の呼び出しから新しい接続先とトークンを使う（MCP サーバーの起動し直しは要らない）。
 - デーモンの応答は、要求ごとに 30 秒（`MCP_REQUEST_TIMEOUT_MS`）まで待つ（本文の読み取りを含む）。
 - 認証は足していない（MCP の認証の仕様は HTTP のためのもので、stdio では資格情報を環境から取る決まり）。使えるのは、`daemon.json`（権限 0600）を読める利用者だけ。
-- 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。`list_tasks`・`get_task`・`rereview_task`・`list_projects`・`create_task`・`approve_step`・`request_changes` は画面と同じ API を呼ぶ。`list_deliverables`・`get_deliverable`・`list_runs` は、読み取りだけの API（下の表のこの3つの行。画面は呼ばない）を呼ぶ。`get_error_report` は、画面のダウンロードと同じ `GET /api/tasks/:id/error-report` に、閉じられなかった実行のログを省く入力（`stale=omit`）を付けて呼ぶ。`wait_for_task` は、`get_task` と同じ `GET /api/tasks/:id` だけを呼ぶ（デーモンに待つ API は足さない）。`pause_task`・`resume_task`・`cancel_task`・`rerun_task` は、画面と同じ API を呼ぶ。`get_cancel_plan` は、画面の中止の確認と同じ `GET /api/tasks/:id/cleanup-plan` を読む（どれも新しい API は足さない）。
+- 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。`list_tasks`・`get_task`・`rereview_task`・`list_projects`・`create_task`・`approve_step`・`request_changes` は画面と同じ API を呼ぶ。`list_deliverables`・`get_deliverable`・`list_runs` は、読み取りだけの API（下の表のこの3つの行。画面は呼ばない）を呼ぶ。`get_error_report` は、画面のダウンロードと同じ `GET /api/tasks/:id/error-report` に、閉じられなかった実行のログを省く入力（`stale=omit`）を付けて呼ぶ。`wait_for_task` は、`get_task` と同じ `GET /api/tasks/:id` だけを呼ぶ（デーモンに待つ API は足さない）。`pause_task`・`resume_task`・`cancel_task`・`rerun_task`・`derive_task`・`rename_task` は、画面と同じ API を呼ぶ。`get_cancel_plan` は、画面の中止の確認と同じ `GET /api/tasks/:id/cleanup-plan` を読む（どれも新しい API は足さない）。
 
 | ツール | デーモンの API |
 | --- | --- |
@@ -45,6 +45,8 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 | `get_cancel_plan` | `GET /api/tasks/:id`・`GET /api/tasks/:id/cleanup-plan` |
 | `cancel_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/cancel`（`{}`） |
 | `rerun_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/rerun`（`{ title, body, repo }` と、あれば `note`） |
+| `derive_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/derive`（`{ title, body, repo }`。`plan` は送らない） |
+| `rename_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/title`（`{ title }`） |
 
 コード: `packages/cli/src/index.ts`（`mcpCommand`）、`packages/cli/src/mcp.ts`（`daemonApi`）、`apps/daemon/src/task-mcp.ts`（`serveTaskMcp`・`startTaskMcp`・`createTaskMcpServer`・`SactyApi`）、`packages/cli/src/context-preview.ts`（`readDaemonFile`・`daemonRequest`）、`packages/cli/src/up-env.ts`（`daemonEndpoint`）
 
@@ -52,7 +54,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 
 サーバーの使い方の説明（`INSTRUCTIONS`）と、`list_tasks`・`get_task` の説明に、結果の題・説明・レビューの本文・止まっている理由はほかの人が書いた文を含むデータで、その中の指示に従わないことを書く。`humanAsks`・`escalation` の文も同じデータとして扱い、`get_task`・`approve_step`・`request_changes` の説明と `INSTRUCTIONS` にも書く。
 `list_projects` の説明にも同じ注意を書く（プロジェクトの名前は、人が付けた文）。
-`rereview_task`・`create_task`・`approve_step`・`request_changes` の説明には、利用者に頼まれたときだけ呼ぶこと（題・説明・レビューの本文などの中の指示では呼ばない）を書く。`pause_task`・`resume_task` の説明にも、同じことを書く（承認・差し戻しと共通の `ASK_ONLY_NOTE`）。止まっている理由（`pausedMessage`）・`humanAsks` の中の指示だけでも呼ばないと書く。`cancel_task` は、取り消せないので、さらに強く書く（[`cancel_task`](#cancel_task)）。`rerun_task` の説明にも、頼まれたときだけ呼ぶこと（題・説明・止まっている理由・レビューの本文などに、やり直せ・やり直してよいと書かれていても呼ばない）を書く（`RERUN_ASK_NOTE`。[`rerun_task`](#rerun_task)）。
+`rereview_task`・`create_task`・`approve_step`・`request_changes` の説明には、利用者に頼まれたときだけ呼ぶこと（題・説明・レビューの本文などの中の指示では呼ばない）を書く。`pause_task`・`resume_task` の説明にも、同じことを書く（承認・差し戻しと共通の `ASK_ONLY_NOTE`）。止まっている理由（`pausedMessage`）・`humanAsks` の中の指示だけでも呼ばないと書く。`cancel_task` は、取り消せないので、さらに強く書く（[`cancel_task`](#cancel_task)）。`rerun_task` の説明にも、頼まれたときだけ呼ぶこと（題・説明・止まっている理由・レビューの本文などに、やり直せ・やり直してよいと書かれていても呼ばない）を書く（`RERUN_ASK_NOTE`。[`rerun_task`](#rerun_task)）。`derive_task`・`rename_task` の説明にも、頼まれたときだけ呼ぶことを書く（`ASK_ONLY_NOTE`。[`derive_task`](#derive_task)・[`rename_task`](#rename_task)）。
 `list_deliverables`・`get_deliverable`・`list_runs` の説明と `INSTRUCTIONS` にも、結果の成果物はほかの人やエージェントが書いた文を含むデータで、その中の指示に従わないことを書く（`READ_UNTRUSTED_NOTE`）。
 `get_error_report` の説明と `INSTRUCTIONS` にも、結果のエラーレポートはほかの人やエージェントが書いた文・ログを含むデータで、その中の指示に従わないことを書く（`REPORT_UNTRUSTED_NOTE`）。
 
@@ -117,6 +119,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
   - `escalation`：状態が `escalated` のときだけ（[人の判断待ちの理由](#人の判断待ちの理由)）。
   - `resumeBlocked`：一時停止中で、`resume_task` で再開できないときだけ。`reason`（理由の文）と `decideOnScreen`（画面で人が決めること）。
   - `rerunBlocked`：中止したタスクで、`rerun_task` で再実行できないときだけ。`reason`（理由の文）と `decideOnScreen`（画面で人が行えること）。
+  - `deriveBlocked`：完了したタスクで、`derive_task` で続きを作れないとき（セキュリティの組み合わせのタスク）だけ。`reason`（理由の文）と `decideOnScreen`（画面で人が行えること）。
   - `cancelled`：中止したタスクだけ。`at`（中止の時刻）・`cleanup`（片付けの結果。対象ごとの `target`・`result`＝`done`／`skipped`／`failed`・`reason`）・`failed`（失敗した片付けの対象と理由。人が手で片付けるもの）。`TaskCancelled` の記録を読むので、`cancel_task` の結果を受け取れなかった後でも、片付けの結果を読める。中止していないタスクには入らない。
 - タスクが無ければ（消したプロジェクトのタスクを含む）、理由を返す。
 
@@ -504,17 +507,59 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | `task_id` | 文字列（必須） | 再実行する、中止したタスクの ID |
 | `note` | 文字列（省略できる） | 補足。前後の空白を除き、空なら送らない。最大 10,000 文字（`RERUN_NOTE_MAX`）。新しいタスクの説明に足されて残り、後の工程が読む |
 
-- 題・説明・作業するリポジトリ・イメージは、引数にしない。`POST /api/tasks/:id/rerun` に、画面の既定値を送る：`title` は元の題、`body` は `rerunEditableBody(task)`（sacty が足した記録を除いた、人の説明）、`repo` は `task.source?.repo ?? task.repo ?? task.repository?.url`（無ければ `null`）、`note`（あるときだけ）。`image` は送らない（いつもどおり決まる）。題・説明を直す・リポジトリやイメージを変える再実行は、画面で行う。
+- 題・説明・作業するリポジトリ・イメージは、引数にしない。`POST /api/tasks/:id/rerun` に、画面の既定値を送る：`title` は元の題、`body` は `rerunEditableBody(task)`（sacty が足した記録を除いた、人の説明）、`repo` は `task.source?.repo ?? task.repo ?? task.repository?.url`（無ければ `null`）、`note`（あるときだけ）。`image` は送らない（いつもどおり決まる）。題・説明を直す・リポジトリやイメージを変える再実行は、画面で行う（再実行で作ったタスクの題は、[`rename_task`](#rename_task) で変えられる）。
 - 結果：文（新しいタスクの ID と、元のタスクがもう再実行できないこと）と、`rerun`（`originalTaskId`・`newTaskId`・`noteAdded`）・新しい[タスクの要約](#タスクの要約)（`rerunOf` が元のタスクの ID）。元のタスクの要約には `rerunBy` が付く。元のタスクの作業履歴には何も足されない。
-- 再実行できるのは、`get_task` の `canRerun` が真のタスク。次は、API に送らず、何も記録せず、理由を返す（`rerunBlock`。要約の `canRerun`・`get_task` の `rerunBlocked` も同じ関数）。順は、`task_id` の形・無い（消したプロジェクトのタスクを含む。先に `GET /api/tasks/:id` で確かめる）→ 中止していない（実行待ち・実行中・承認待ち・一時停止中など）→ 完了（`isFinished`。完了したタスクは、やり直しではなく続きの作成（派生）の対象で、このツールにはまだ無いので、画面で行うと返す）→ 再実行済み（`rerunBy`。やり直した先の ID を理由に入れる）→ 分割の子タスク（`parent`。親から進める）→ PR のレビューのタスク（`start` が `github_pull_request`。PR で依頼し直す。`canRerun`）→ チケットから取り込み（`ticket`）、作業するリポジトリが決まっていない（画面でリポジトリを選んで再実行する）→ 既定値が `RerunTaskInput` に通らない（人の説明が上限を超えるなど。画面で直して再実行する）。補足が 10,000 文字を超えるときも、送らずに断る（デーモンと同じ `RerunTaskInput` で、前後の空白を除いて数える。改行はそろえないので、`\r\n` は2文字）。中止していないタスクの断りには、やり直しを頼まれただけでは中止しない（中止は、利用者がそのタスクの中止をはっきり頼んだときだけ。迷ったら確かめる）ことも添える。
+- 再実行できるのは、`get_task` の `canRerun` が真のタスク。次は、API に送らず、何も記録せず、理由を返す（`rerunBlock`。要約の `canRerun`・`get_task` の `rerunBlocked` も同じ関数）。順は、`task_id` の形・無い（消したプロジェクトのタスクを含む。先に `GET /api/tasks/:id` で確かめる）→ 中止していない（実行待ち・実行中・承認待ち・一時停止中など）→ 完了（`isFinished`。完了したタスクは、やり直しではなく続きの作成（派生）の対象と返す。続きを作れるタスクには `derive_task` を、作れないタスク（セキュリティの組み合わせ）には画面を案内する。`deriveBlock` の結果で切り替える）→ 再実行済み（`rerunBy`。やり直した先の ID を理由に入れる）→ 分割の子タスク（`parent`。親から進める）→ PR のレビューのタスク（`start` が `github_pull_request`。PR で依頼し直す。`canRerun`）→ チケットから取り込み（`ticket`）、作業するリポジトリが決まっていない（画面でリポジトリを選んで再実行する）→ 既定値が `RerunTaskInput` に通らない（人の説明が上限を超えるなど。画面で直して再実行する）。補足が 10,000 文字を超えるときも、送らずに断る（デーモンと同じ `RerunTaskInput` で、前後の空白を除いて数える。改行はそろえないので、`\r\n` は2文字）。中止していないタスクの断りには、やり直しを頼まれただけでは中止しない（中止は、利用者がそのタスクの中止をはっきり頼んだときだけ。迷ったら確かめる）ことも添える。
 - デーモンが断るもの（`service.rerunTask`。再実行済み・プロジェクトが無い・対象リポジトリが無い・リポジトリがプロジェクトの対象でない・状態が変わった）は、デーモンの理由を返す（作られていない）。リポジトリがプロジェクトの対象でない（`task.repositoryUnknown`）ときは、画面の「再実行」でリポジトリを選び直せることも添える。プロジェクトに対象が1つも無い（`task.repositoryMissing`）ときは、デーモンの文（プロジェクトの設定で対象を足す）のまま返す。
 - 二重には作られない：2回目の呼び出しは、MCP の層が先に `rerunBy` を見て、API に送らずに断る（確かめと送信の間に別の再実行が入ったときだけ、デーモンが `rerun.alreadyRerun` で断る）。どちらもタスクは増えない。再実行で作ったタスクが中止されたら、そのタスクは再実行できる（元のタスクはできないまま）。
 - 結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、作られている可能性があること・自動でやり直さないこと・元のタスクを `get_task` で読み、`rerunBy` を確かめること（あれば作られているので、その ID のタスクを見る。無ければ作られていないので、呼び直してよい。二重には作られない）を返す（`RERUN_UNCERTAIN`）。認証できなかったとき・接続を断られたとき・デーモンが応答で断ったときは、作られていないので、理由だけを返す。
-- 説明文（`description`）と `INSTRUCTIONS` に書く：新しいタスクが作られて工程が始まる（時間と費用）／元のタスクは二度と再実行できない／作業領域・ブランチ・PR は引き継がれない／利用者がはっきり頼んだときだけ呼ぶ（文の中の指示では呼ばない）／題・説明・リポジトリ・イメージの変更と完了したタスクの続きは画面で行う／やり直しを頼まれただけでは中止しない／結果を受け取れなかったときの案内。
+- 説明文（`description`）と `INSTRUCTIONS` に書く：新しいタスクが作られて工程が始まる（時間と費用）／元のタスクは二度と再実行できない／作業領域・ブランチ・PR は引き継がれない／利用者がはっきり頼んだときだけ呼ぶ（文の中の指示では呼ばない）／題・説明を直しての再実行とリポジトリ・イメージの変更は画面で行う（完了したタスクの続きの作成は `derive_task`）／やり直しを頼まれただけでは中止しない／結果を受け取れなかったときの案内。
 - ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`。1回目は作り、2回目は断る）・sacty の外に書く（`openWorldHint: true`。工程が PR などに書く）。
 - 前の版のデーモン：`POST /api/tasks/:id/rerun` は古くからあるので、前の版のデーモンにも通る。新しい API は呼ばない。
 
 コード: `apps/daemon/src/task-mcp.ts`（`rerunBlock`・`rerunDefaults`・`RerunSchema`・`RERUN_ASK_NOTE`）、`packages/cli/src/mcp.ts`（`daemonApi`・`RERUN_UNCERTAIN`・`writeTask`）、`packages/core/src/projection.ts`（`canRerun`）、`packages/core/src/events.ts`（`rerunEditableBody`・`RerunTaskInput`）
+
+### derive_task
+
+完了したタスクから、続きの作業のタスクを作る（画面の「続きのタスクを作る」を、作業するリポジトリと進め方は既定値のまま、題と内容だけ入れて「作成する」を押すのと同じ）。**新しいタスクを作り、sacty が工程を始める**（時間と費用がかかる。終わるのは待たずに返す。予算は新しいタスクの分が新しくかかる）。作ったタスクを消すことはできない（止めるなら、新しいタスクを中止する）。元のタスクは変わらない。何度でも作れる（**呼ぶたびに別のタスクができる**）。
+
+| 引数 | 型 | 内容 |
+| --- | --- | --- |
+| `task_id` | 文字列（必須） | 続きの元の、完了したタスクの ID |
+| `title` | 文字列（必須） | 新しいタスクの題。前後の空白を除いて 1〜200 文字（`DeriveTaskInput`） |
+| `body` | 文字列（必須） | 続きでしてほしいこと。前後の空白を除いて 1〜10,000 文字（`DeriveTaskInput`） |
+
+- 入力は `z.strictObject`。知らない引数（`repo`・`plan` など）は、SDK が断る。題・内容の検査は、デーモンと同じ core の `DeriveTaskInput`（`title`・`body`）に任せ、断る文はスキーマの理由から作る（自前で文字数を数えない）。
+- 作業するリポジトリ・進め方は、引数にしない。`POST /api/tasks/:id/derive` に、画面の既定値を送る：`repo` は `task.source?.repo ?? task.repo ?? task.repository?.url`（無ければ `null`＝リポジトリを指定しない）、`plan` は送らない（オーケストレーターが選ぶ）。リポジトリ・進め方を選びたいときは、画面の「続きのタスクを作る」で行う。
+- 新しいタスクの説明は、渡した内容の後に、sacty が作る元のタスクの記録（見出し `## 元のタスクの記録（完了したタスク）`）を足したもの。`title`・`body` は残って後の工程が読むので、利用者の言葉だけを渡す。チケット・取り込み元は引き継がない。
+- 結果：文（新しいタスクの ID と、元のタスクが変わらないこと）と、`derive`（`originalTaskId`・`newTaskId`）・新しい[タスクの要約](#タスクの要約)（`derivedFrom` が元のタスクの ID）。元のタスクの要約には `derivedTasks`（作ったタスクの ID の並び）が付く。元のタスクの作業履歴には何も足されない。
+- 続きを作れるのは、`get_task` の `canDerive` が真のタスク。次は、API に送らず、何も記録せず、理由を返す（`deriveBlock`。要約の `canDerive`・`get_task` の `deriveBlocked` も同じ関数）。順は、`task_id` の形・無い（消したプロジェクトのタスクを含む。先に `GET /api/tasks/:id` で確かめる）→ 中止したタスク（続きは作れない。そのタスクが `rerun_task` で再実行できるとき（`rerunBlock` が無い）だけ、再実行を案内する）→ 完了していない（core の `canDerive` が偽：実行待ち・実行中・承認待ち・エスカレーション・一時停止中。完了してから作る）→ セキュリティの組み合わせのタスク（core の `isSecurityTask`。進め方がセキュリティ対応に決まり、記録にレポートが入るので、今回は断って画面の「続きのタスクを作る」へ。デーモンは断らず `security-fix` で作るが、MCP の層が先に断る）→ 題・内容が `DeriveTaskInput` に通らない（空・長すぎる）。`canDerive` は、題・内容の検査を含まない。
+- デーモンが断るもの（`service.deriveTask`。リポジトリがプロジェクトの対象でない・プロジェクトが無い・対象リポジトリが無い・送った後に状態が変わった）は、デーモンの理由を返す（作られていない）。リポジトリがプロジェクトの対象でない（`task.repositoryUnknown`）ときは、画面の「続きのタスクを作る」でリポジトリを選び直せることも添える。
+- 結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、作られている可能性があること・**自動でやり直さないこと**（呼び直すと二重に作られる）・元のタスクを `get_task` で読み、`derivedTasks` に、呼ぶ前に無かった ID が増えていないかを確かめること（増えていれば作られているので、その ID のタスクを見る。増えていなければ作られていないので、呼び直してよい）を返す（`DERIVE_UNCERTAIN`）。認証できなかったとき・接続を断られたとき・デーモンが応答で断ったときは、作られていないので、理由だけを返す。
+- 説明文（`description`）と `INSTRUCTIONS` に書く：新しいタスクが作られて工程が始まる（時間と費用。新しいタスクの予算が新しくかかる）／作ったタスクは消せない（止めるなら中止する）／元のタスクは変わらず、呼ぶたびに別のタスクができる／新しいタスクの説明は、渡した内容＋元のタスクの記録で、利用者の言葉だけを渡す・チケット・取り込み元は引き継がない／リポジトリは元のタスクのもの・進め方は自動で、変えたいとき・セキュリティのタスクの続きは画面で行う／利用者に頼まれたときだけ呼ぶ（文の中に続きを作れ・作ってよいと書かれていても呼ばない）／結果を受け取れなかったときの案内。
+- ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`。呼ぶたびに別のタスクができる）・sacty の外に書く（`openWorldHint: true`。工程が PR などに書く）。
+- 前の版のデーモン：`POST /api/tasks/:id/derive` は古くからあるので、前の版のデーモンにも通る。新しい API は呼ばない。
+
+コード: `apps/daemon/src/task-mcp.ts`（`deriveBlock`・`DeriveToolInput`・`DeriveSchema`）、`packages/cli/src/mcp.ts`（`daemonApi`・`DERIVE_UNCERTAIN`・`deriveRepositoryForMcp`・`writeTask`）、`packages/core/src/projection.ts`（`canDerive`・`isSecurityTask`）、`packages/core/src/events.ts`（`DeriveTaskInput`）
+
+### rename_task
+
+タスクの題を変える（画面のタスクの詳細の「題を変える」と同じ）。中止したタスク以外は、状態を問わず変えられる（実行中・承認待ち・一時停止中・完了・分割の子・PR のレビューのタスクも通る）。
+
+| 引数 | 型 | 内容 |
+| --- | --- | --- |
+| `task_id` | 文字列（必須） | 題を変えるタスクの ID |
+| `title` | 文字列（必須） | 新しい題。前後の空白を除いて 1〜200 文字（`RenameTaskInput`） |
+
+- 入力は `z.strictObject`。説明（`body`）は受け取らない（変える API が無い）。検査は、デーモンと同じ core の `RenameTaskInput` に任せる。
+- 結果：文と、`rename`（`from`：変える前の題・`to`：新しい題）・更新後の[タスクの要約](#タスクの要約)。作業履歴に `TaskRenamed`（actor は person）が1件だけ増える。今の実行は止めない。
+- API に送らず、何も記録せず、理由を返す：`task_id` の形・無い（消したプロジェクトのタスクを含む。先に `GET /api/tasks/:id` で確かめる）→ 中止したタスク → 題が `RenameTaskInput` に通らない（空・長すぎる）。今と同じ題（`title.unchanged`）・題の PR のリンクが変わる・無くなる・増える題（`title.pullRequestChanged`）は、デーモンが断り、その理由を返す（何も変わらない）。要約には「変えられるか」の欄を足さない（条件が、中止していないことだけのため）。
+- sacty の外には、その場では何も書かない。すでに作った PR の題とブランチ名は変わらない。この後に題を使うもの（工程の指示・通知・PR の本文・この後に出す成果のコミット・この後に作る PR の題）は、新しい題を使う。
+- 結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、変わっている可能性があること・`get_task` の `title` を確かめること（変わっていれば済んでいる。変わっていなければ、呼び直してよい。同じ題での2回目は断られるだけ）を返す（`RENAME_UNCERTAIN`）。送る前の失敗・デーモンが応答で断ったときは、変わっていないので、理由だけを返す。
+- 説明文（`description`）と `INSTRUCTIONS` に書く：今の実行は止めない・この後の工程の指示などから新しい題を使う・すでに作った PR の題とブランチ名は変わらない／題は後の工程の指示に入るので、利用者の言葉だけを渡す／題の PR のリンクの変更・中止したタスクの題・説明（body）は変えられない／利用者に頼まれたときだけ呼ぶ（文の中の指示では呼ばない）／結果を受け取れなかったときの案内。
+- ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`。前の題は作業履歴に残り、変え直せる）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`。同じ題での2回目は断られる）・sacty の外に書く（`openWorldHint: true`。その場では書かないが、この後に作る PR の題と本文・コミット・通知が新しい題になる）。
+
+コード: `apps/daemon/src/task-mcp.ts`（`RenameToolInput`・`RenameSchema`）、`packages/cli/src/mcp.ts`（`daemonApi`・`RENAME_UNCERTAIN`・`writeTask`）、`packages/core/src/events.ts`（`RenameTaskInput`）
 
 ### 失敗のときの扱い
 
@@ -534,11 +579,11 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 引数が型に合わないとき（決めた範囲の外の `limit`・無い `task_id`・`list_tasks` の知らない引数など）は、MCP の SDK が、ツールを呼ばずに、同じ形（`isError: true` と理由の文）で返す。
 知らないツールの呼び出しなどは、JSON-RPC のエラーになる。
 
-コード: `apps/daemon/src/task-mcp.ts`（`TOOLS`・`defineTool`・`INSTRUCTIONS`・`filterTasks`・`parsePullRequestQuery`・`describeTask`・`pauseBlock`・`resumeBlock`・`cancelBlock`・`rerunBlock`）、`packages/cli/src/mcp.ts`（`daemonApi`・`MCP_REQUEST_TIMEOUT_MS`・`REREVIEW_UNCERTAIN`・`CREATE_UNCERTAIN`・`APPROVE_UNCERTAIN`・`CHANGES_UNCERTAIN`・`PAUSE_UNCERTAIN`・`RESUME_UNCERTAIN`・`CANCEL_UNCERTAIN`・`RERUN_UNCERTAIN`・`writeTask`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/daemon/src/service.ts`（`rereview`・`createTask`）、`packages/core/src/events.ts`（`CreateTaskInput`）
+コード: `apps/daemon/src/task-mcp.ts`（`TOOLS`・`defineTool`・`INSTRUCTIONS`・`filterTasks`・`parsePullRequestQuery`・`describeTask`・`pauseBlock`・`resumeBlock`・`cancelBlock`・`rerunBlock`・`deriveBlock`）、`packages/cli/src/mcp.ts`（`daemonApi`・`MCP_REQUEST_TIMEOUT_MS`・`REREVIEW_UNCERTAIN`・`CREATE_UNCERTAIN`・`APPROVE_UNCERTAIN`・`CHANGES_UNCERTAIN`・`PAUSE_UNCERTAIN`・`RESUME_UNCERTAIN`・`CANCEL_UNCERTAIN`・`RERUN_UNCERTAIN`・`DERIVE_UNCERTAIN`・`RENAME_UNCERTAIN`・`writeTask`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/daemon/src/service.ts`（`rereview`・`createTask`）、`packages/core/src/events.ts`（`CreateTaskInput`）
 
 ## タスクの要約
 
-`list_tasks`・`rereview_task`・`create_task`・`approve_step`・`request_changes`・`pause_task`・`resume_task`・`cancel_task`・`rerun_task` の結果と、`get_task` の結果の土台。
+`list_tasks`・`rereview_task`・`create_task`・`approve_step`・`request_changes`・`pause_task`・`resume_task`・`cancel_task`・`rerun_task`・`derive_task`・`rename_task` の結果と、`get_task` の結果の土台。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -550,7 +595,10 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | `canPause` | `pause_task` で一時停止できるか（画面で一時停止のボタンが出る状態。`pauseBlock`） |
 | `canCancel` | `cancel_task` で中止できるか（完了・中止済み・PR のレビューの子タスク・分割の親と子は偽。`cancelBlock`。デーモンだけが知る断り（片付けの途中）は見ない。取り消せない操作なので、真でも、利用者がはっきり頼んだときだけ呼ぶ） |
 | `canResume` | `resume_task` で再開できるか（一時停止中で、予算の上限・テストの扱い・子タスクの中止・作業するリポジトリの選択の判断が要らない。`resumeBlock`。デーモンだけが知る断りは見ないので、真でも断られることがある） |
-| `canRerun` | `rerun_task` で再実行できるか（中止して未再実行の通常のタスク。完了・分割の子・PR のレビューのタスク・チケットから取り込み作業するリポジトリが決まっていないもの・既定値のままでは送れないものは偽。`rerunBlock`。デーモンだけが知る断り（リポジトリがプロジェクトの対象でない）は見ない。取り消せない操作なので、真でも、利用者がはっきり頼んだときだけ呼ぶ） |
+| `canRerun` | `rerun_task` で再実行できるか（中止して未再実行の通常のタスク。完了（続きの作成は `derive_task`）・分割の子・PR のレビューのタスク・チケットから取り込み作業するリポジトリが決まっていないもの・既定値のままでは送れないものは偽。`rerunBlock`。デーモンだけが知る断り（リポジトリがプロジェクトの対象でない）は見ない。取り消せない操作なので、真でも、利用者がはっきり頼んだときだけ呼ぶ） |
+| `canDerive` | `derive_task` で続きを作れるか（完了して、セキュリティの組み合わせではないタスク。中止・完了していない・セキュリティの組み合わせは偽。`deriveBlock`。デーモンだけが知る断り（リポジトリがプロジェクトの対象でない）は見ないので、真でも断られることがある。呼ぶたびに別のタスクができるので、真でも、利用者がはっきり頼んだときだけ呼ぶ） |
+| `derivedFrom` | 続きの元の、完了したタスクの ID（続きのタスクを作って作ったタスクにだけ。画面で作ったものも含む） |
+| `derivedTasks` | このタスクから作った、続きのタスクの ID の並び（作った元のタスクにだけ） |
 | `rerunBy` | 再実行で作った新しいタスクの ID（再実行済みの元のタスクにだけ） |
 | `rerunOf` | 再実行の元の、中止したタスクの ID（再実行で作ったタスクにだけ） |
 | `pullRequests` | [結び付いた PR](#タスクに結び付いた-pr-とブランチ) |
