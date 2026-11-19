@@ -12178,6 +12178,69 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
+      describe("対応を求めていないコメント（「承知しました」など）", () => {
+        const noAction = (positions: number[], target = "undecidable") =>
+          out(
+            `\`\`\`json\n${JSON.stringify({ "sacty-rework": { target, no_action: positions, reason: "先の返信を受け入れただけの応答" } })}\n\`\`\``,
+          );
+
+        it("残した指摘がすべて対応を求めていなければ、再開しても差し戻さず、止まった工程を走り直す", async () => {
+          const { activity, service, executor, pulls, id } = await pausedRework([
+            noAction([1]),
+            implement("# v2"),
+          ]);
+          pulls.feedbackList = [item("comment:ack", { body: "承知しました。" })];
+          await service.checkPullRequests();
+          const requested = types(service, id).filter((t) => t === "ChangesRequested").length;
+          service.resume(id, {});
+          const calls = executor.calls.length;
+          await drain(service);
+          // 判断の実行と、止まった実装の走り直しだけ（差し戻しは増えない）
+          expect(executor.calls.length).toBe(calls + 2);
+          expect(promptOf(executor, calls)).toContain("- [1] 承知しました。");
+          expect(promptOf(executor, calls + 1)).toContain("最初の指摘");
+          expect(promptOf(executor, calls + 1)).not.toContain("承知しました。");
+          expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(
+            requested,
+          );
+          const judged = (service.get(id)?.activity ?? []).findLast(
+            (e) => e.type === "ReworkJudged",
+          );
+          expect(judged?.payload).toMatchObject({ noAction: [0], noRework: true });
+          const task = service.get(id)?.task;
+          expect(task?.pendingReview).toBeUndefined();
+          expect(task?.importedFeedback).toContain("comment:ack");
+          expect(task?.remarks.map((r) => r.id)).toEqual(["requirements-1-1", "implement-1-1"]);
+          expect(task?.status).toBe("awaiting_approval");
+          expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+          activity.close();
+        });
+
+        it("対応を求める指摘と一緒に残していたら、再開のあと、求める指摘だけで差し戻す", async () => {
+          const { activity, service, pulls, id } = await pausedRework([
+            noAction([1], "implement"),
+            implement("# v2"),
+          ]);
+          pulls.feedbackList = [
+            item("comment:ack", { body: "承知しました。" }),
+            item("comment:ask", { body: "テストも足して" }),
+          ];
+          await service.checkPullRequests();
+          service.resume(id, {});
+          await service.runNext(id);
+          const sentBack = (service.get(id)?.activity ?? []).at(-1);
+          expect(sentBack).toMatchObject({
+            type: "ChangesRequested",
+            payload: { step: "implement", target: "implement", round: 2 },
+          });
+          const remarks = sentBack?.type === "ChangesRequested" ? sentBack.payload.remarks : [];
+          expect(remarks.map((r) => r.text)).toEqual(["テストも足して"]);
+          expect(remarks[0]?.origin).toMatchObject({ key: "comment:ask" });
+          expect(service.get(id)?.task.pendingReview).toBeUndefined();
+          activity.close();
+        });
+      });
+
       it("再開の直前に書かれた指摘（まだ確認が読んでいない）も、再開のあとに読んで反映する", async () => {
         const { activity, service, executor, pulls, id } = await pausedRework([
           rework("implement", "実装で直せる"),

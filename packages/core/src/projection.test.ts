@@ -6361,6 +6361,68 @@ describe("一時停止の間に届いた PR の指摘（PBI-279）", () => {
     );
   });
 
+  it("対応を求めていない指摘を除いたとき、AI のレビューの指摘の出どころ（aiReviewFrom）の位置も付け直す", () => {
+    seq = 0;
+    const before = stoppedAtReview("t");
+    const imported = ev(
+      "t",
+      {
+        type: "PullRequestReviewImported",
+        payload: {
+          number: 7,
+          items: [
+            { key: "comment:1", author: "reviewer", at: "2026-10-10T00:00:00.000Z" },
+            {
+              key: "review:2",
+              author: "me",
+              at: "2026-10-10T00:00:00.000Z",
+              source: "sacty_review",
+              review: "child-1:2",
+            },
+            { key: "comment:3", author: "reviewer", at: "2026-10-10T00:00:00.000Z" },
+            {
+              key: "review:4",
+              author: "me",
+              at: "2026-10-10T00:00:00.000Z",
+              source: "sacty_review",
+              review: "child-1:3",
+            },
+          ],
+          remarks: ["承知しました", "AI: 上限", "ありがとうございます", "AI: 戻り値"],
+          held: true,
+        },
+      },
+      "person",
+    );
+    const task = project([
+      ...before,
+      imported,
+      ev(
+        "t",
+        {
+          type: "ReworkJudged",
+          payload: {
+            target: "implement",
+            reason: "応答だけのコメントを除いた",
+            // 範囲の外の位置は読み捨てる
+            noAction: [0, 2, 9],
+            agentId: "a",
+            costUsd: 0,
+            estimated: false,
+          },
+        },
+        "agent",
+      ),
+    ]).get("t");
+    expect(task?.pendingReview).toEqual({
+      keys: ["review:2", "review:4"],
+      remarks: ["AI: 上限", "AI: 戻り値"],
+      aiReview: [0, 1],
+      aiReviewFrom: { "0": "child-1:2", "1": "child-1:3" },
+      judgement: { target: "implement", reason: "応答だけのコメントを除いた" },
+    });
+  });
+
   it("一時停止の間に届いた指摘は、未反映として残し、足していける。AI のレビューの指摘の位置も残す", () => {
     seq = 0;
     const task = project([

@@ -4070,11 +4070,6 @@ export function reworkingPullRequest(
 }
 
 /**
- * 一時停止の間（と、再開した直後の、止まった工程を走り直す前）に届いて、まだ反映していない実装の PR の指摘（PBI-279）。
- * 承認待ちで取り込んだ指摘（pendingReview）とは、承認ゲートが無いことで区別する。再開したあと、止まった工程を走り直す前に、
- * ゴールガーディアンに戻し先を判断させて、その工程に差し戻す。
- */
-/**
  * 取り込んだ指摘から、対応を求めていないと判断した指摘（`ReworkJudged` の noAction。位置は 0 始まり）を除く。AI のレビューの
  * 指摘の位置（aiReview・aiReviewFrom）は、除いた後の並びに合わせて付け直す。1 件も残らなければ undefined。
  */
@@ -4109,6 +4104,11 @@ function withoutNoAction(
   };
 }
 
+/**
+ * 一時停止の間（と、再開した直後の、止まった工程を走り直す前）に届いて、まだ反映していない実装の PR の指摘（PBI-279）。
+ * 承認待ちで取り込んだ指摘（pendingReview）とは、承認ゲートが無いことで区別する。再開したあと、止まった工程を走り直す前に、
+ * ゴールガーディアンに戻し先を判断させて、その工程に差し戻す。
+ */
 export function heldReview(task: Task): NonNullable<Task["pendingReview"]> | undefined {
   if (task.status !== "paused" && task.status !== "queued" && task.status !== "idle") {
     return undefined;

@@ -1525,6 +1525,7 @@ Decide on the PR, or cancel the task to stop it.
 If comments (reviews, line comments, or ordinary comments) arrive on the implementation PR while an implementation rework is paused, sacty keeps them and shows the number in the task details (whatever the reason for the pause: the budget, an error, a person's pause, and so on).
 When you resume, before redoing the step that stopped (the implementation or the PR update, for example), sacty reads the comments, judges where to send the task back, and sends it back to that step (the judgment is the same as for [PR comments while waiting for approval](#approval-in-prs-requirements-design-implement)).
 If no comments have arrived, the step that stopped is redone.
+When the comments that arrived all ask for nothing ("Understood", for example), the task is not sent back either, and the step that stopped is redone.
 
 - Comments you wrote just before resuming are read again after the resume and applied.
 - sacty's own AI review comments are kept in the same way. They are handled separately from people's comments, and if they are the only ones, they do not count toward the number of send-backs.
