@@ -520,7 +520,7 @@ The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, `req
 | `id`, `title`, `projectId` | The task ID, the title, and the project ID |
 | `state` | `cancelled` (cancelled), `completed` (stopped with all steps finished), otherwise the task status (`status`) as it is |
 | `steps` | Steps and their states (`<step>:<state>`, in order) |
-| `preparing` | Present only while `state` is still `queued` and the daemon is processing the task before its first step: the phase (`repository`, `gathering`, `triage`, `planning`, `review_target`, `starting`; [Display while processing before the first step](tasks-and-steps.en.md#display-while-processing-before-the-first-step)). A `queued` task that is only waiting for a slot and the like does not have it. `state` does not change |
+| `preparing` | Present only while `state` is still `queued` and the daemon is processing the task before its first step: the phase (`repository`, `gathering`, `triage`, `planning`, `review_target`, `starting`; [Display while processing before the first step](tasks-and-steps.en.md#display-while-processing-before-the-first-step)). A `queued` task that is only waiting for a slot and the like, and a task that has started a step run at least once (even while it is processed), do not have it. `state` does not change |
 | `reviewTask` | Whether it is a PR review task (imported as a PR review (`source.review` is set) or has the review step) |
 | `canRereview` | Whether it can be re-reviewed (`canRereview`) |
 | `canPause` | Whether `pause_task` can pause it (the states in which the web UI shows the pause button; `pauseBlock`) |

@@ -18,7 +18,7 @@
 - デーモン（`apps/daemon/src/service.ts`）
   - 処理の段階（`repository`・`gathering`・`triage`・`planning`・`review_target`）を、メモリーの表（`preparingPhases`）に持つ。
     `runNext`・`runNextInner` が、それぞれの処理を始める直前に付け、進め方の判定の後と、`runNext` の終わりに消す。
-  - `preparingOf` は、状態が `queued` で、ワーカーが処理している（`inflight`）ときだけ段階を返す。付けた段階が無ければ、工程の実行を1回も始めていないタスクに限り `starting` を返す（レビューの対応で足した）。
+  - `preparingOf` は、状態が `queued` で、ワーカーが処理していて（`inflight`）、工程の実行を1回も始めていないときだけ、付けた段階を返す。付けた段階が無ければ `starting` を返す（`starting` と、工程の実行を始めた後は返さないことは、レビューの対応で足した）。
   - `GET /api/tasks`（`listView`）・`GET /api/tasks/:id`（`view`）・`GET /api/schedules/:id` のタスクに、`preparing` を足す。作業履歴には記録しない。
 - core（`packages/core/src/projection.ts`）：`PREPARING_PHASES`・`PreparingPhase`・`Task.preparing`（画面に返すときだけ足す欄）。
 - 画面（`apps/web`）
@@ -68,6 +68,8 @@
 | 2回目（提案あり）：再レビューで対象の PR を確かめ直す間など、工程の実行を始めた後にも `preparing` が付くのに、文書と `sacty mcp` の説明は「最初の工程の前だけ」と書いている | 直した。`preparingOf` が、工程の実行を1回でも始めたタスクには、付けた段階も返さない（範囲を最初の工程の前にそろえた）。再レビューで返さないことのテストを足した。始めたかどうかは、始めた記録を書いたときに覚え、覚えが無ければ作業履歴から確かめる |
 | 2回目：作業履歴に `npm run build` の結果が無い | 書いた（通った） |
 | 2回目：`PREPARING_PHASES` が、状態の説明のコメントと型の間に入っている | `TaskStatus` の型の後ろへ移した |
+| 3回目（提案あり）：ユーザードキュメント（MCP）が、`preparing` の無い `queued` を「順番などを待っている」と言い切っている | 直した（日英）。最初の工程が始まる前に限り、始まった後は `preparing` が無くても処理中のことがあると書いた。仕様書（MCP サーバー）の `preparing` の行と、`Task.preparing`・`sacty mcp` の説明も、同じ限定にそろえた |
+| 3回目：作業履歴の「したこと」の `preparingOf` の説明が、直しの前のまま | 直した |
 
 ## 残したこと
 

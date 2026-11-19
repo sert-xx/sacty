@@ -520,7 +520,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | `id`・`title`・`projectId` | タスクの ID・題・プロジェクトの ID |
 | `state` | `cancelled`（中止）、`completed`（工程をすべて終えて止まっている）、ほかはタスクの状態（`status`）のまま |
 | `steps` | 工程と状態（`<工程>:<状態>`。進める順） |
-| `preparing` | `state` が `queued` のまま、最初の工程の前の処理をデーモンがいま進めているときだけ入る、その段階（`repository`・`gathering`・`triage`・`planning`・`review_target`・`starting`。[最初の工程が始まる前の処理の表示](tasks-and-steps.md#最初の工程が始まる前の処理の表示)）。枠などを待っているだけの `queued` には無い。`state` は変えない |
+| `preparing` | `state` が `queued` のまま、最初の工程の前の処理をデーモンがいま進めているときだけ入る、その段階（`repository`・`gathering`・`triage`・`planning`・`review_target`・`starting`。[最初の工程が始まる前の処理の表示](tasks-and-steps.md#最初の工程が始まる前の処理の表示)）。枠などを待っているだけの `queued` と、工程の実行を1回でも始めたタスク（処理していても）には無い。`state` は変えない |
 | `reviewTask` | PR のレビューのタスクか（PR のレビューの取り込み（`source.review` がある）か、レビューの工程がある） |
 | `canRereview` | 再レビューできるか（`canRereview`） |
 | `canPause` | `pause_task` で一時停止できるか（画面で一時停止のボタンが出る状態。`pauseBlock`） |
