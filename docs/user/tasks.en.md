@@ -616,6 +616,16 @@ Who judges the step to redo depends on where the comments come from.
 - When the comments are only from the child task that reviews the PR, sacty follows the step the child task gave for each finding (no run is made for the judgment, and it costs nothing).
 - When your comments are included, the agent of that PR's step judges.
 
+A comment that asks for nothing does not start a redo.
+
+- This is a comment that only accepts sacty's reply or explanation, such as "Understood" or "Thank you".
+  The agent of that PR's step tells them apart in the judgment made when your comments are included.
+- When there are only such comments, sacty does not send the task back and it stays awaiting approval.
+  The deliverable and the PR do not change, and sacty posts no reply on the PR.
+- When they arrive together with comments that ask for something, only the comments that ask for something are sent back.
+- A comment that contains any change, check, or question is treated as a change request.
+  The judgment and its reasons are kept in the activity.
+
 The judgment and its reasons are kept and passed to the redo as follows.
 
 - The judgment and its reasons are kept in the Activity and the PR section.

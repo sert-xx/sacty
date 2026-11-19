@@ -2752,8 +2752,15 @@ export function applyEvent(
       if (!task.pendingReview || task.pendingReview.judgement) {
         throw new ActivityIntegrityError(event, "no review is waiting for a judgement");
       }
+      // 対応を求めていない指摘（承知・お礼・同意だけのコメント）は、差し戻しに含めない。すべてがそうなら、差し戻さない
+      // （取り込み済みのまま、指摘を片付ける。承認待ち・再開の後の状態は変えない）
+      const actionable = withoutNoAction(task.pendingReview, event.payload.noAction ?? []);
+      if (!actionable) {
+        task.pendingReview = undefined;
+        break;
+      }
       task.pendingReview = {
-        ...task.pendingReview,
+        ...actionable,
         judgement: {
           ...(event.payload.target ? { target: event.payload.target } : {}),
           ...(event.payload.cause ? { cause: event.payload.cause } : {}),
@@ -4067,6 +4074,41 @@ export function reworkingPullRequest(
  * 承認待ちで取り込んだ指摘（pendingReview）とは、承認ゲートが無いことで区別する。再開したあと、止まった工程を走り直す前に、
  * ゴールガーディアンに戻し先を判断させて、その工程に差し戻す。
  */
+/**
+ * 取り込んだ指摘から、対応を求めていないと判断した指摘（`ReworkJudged` の noAction。位置は 0 始まり）を除く。AI のレビューの
+ * 指摘の位置（aiReview・aiReviewFrom）は、除いた後の並びに合わせて付け直す。1 件も残らなければ undefined。
+ */
+function withoutNoAction(
+  pending: NonNullable<Task["pendingReview"]>,
+  noAction: readonly number[],
+): NonNullable<Task["pendingReview"]> | undefined {
+  const dropped = new Set(noAction.filter((i) => i < pending.remarks.length));
+  if (dropped.size === 0) return pending;
+  const kept = pending.remarks.flatMap((_, i) => (dropped.has(i) ? [] : [i]));
+  if (kept.length === 0) return undefined;
+  const moved = new Map(kept.map((from, to) => [from, to]));
+  const aiReview = (pending.aiReview ?? []).flatMap((i) => {
+    const to = moved.get(i);
+    return to === undefined ? [] : [to];
+  });
+  const aiReviewFrom = Object.fromEntries(
+    Object.entries(pending.aiReviewFrom ?? {}).flatMap(([i, review]) => {
+      const to = moved.get(Number(i));
+      return to === undefined ? [] : [[String(to), review]];
+    }),
+  );
+  return {
+    // keys は remarks と同じ並び（1 件の投稿が 1 件の指摘）
+    keys:
+      pending.keys.length === pending.remarks.length
+        ? kept.map((i) => pending.keys[i] as string)
+        : pending.keys,
+    remarks: kept.map((i) => pending.remarks[i] as string),
+    ...(aiReview.length > 0 ? { aiReview } : {}),
+    ...(Object.keys(aiReviewFrom).length > 0 ? { aiReviewFrom } : {}),
+  };
+}
+
 export function heldReview(task: Task): NonNullable<Task["pendingReview"]> | undefined {
   if (task.status !== "paused" && task.status !== "queued" && task.status !== "idle") {
     return undefined;
