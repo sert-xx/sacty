@@ -83,7 +83,7 @@ For each item in the sacty settings, sacty searches the project's targets (an or
     - The time of the last request to the task's account (`review_requested` in the PR events)
   - If the account is still requested and the last request is after the previous post, sacty creates a review-only task with a new ID in the same project (`reviewRerequest` in `TaskCreated`; `restartRerequestedReviews`).
     - The original task's status, post, history, cost, and execution session stay unchanged. The new task does not resume the original session.
-    - Even if the original task is watching the PR for changes (or completed with no findings and following the head), nothing is recorded on the original task. From then on, only the newest task starts a re-review on changes of the PR, and the original task only ends its watch when the PR is merged or closed ([Watching the PR after posting](tasks-and-steps.en.md#watching-the-pr-after-posting)).
+    - Even if the original task is watching the PR for changes, nothing is recorded on the original task. From then on, only the newest task starts a re-review on changes of the PR, and the original task only ends its watch when the PR is merged or closed ([Watching the PR after posting](tasks-and-steps.en.md#watching-the-pr-after-posting)).
     - If the watch has already started a re-review of the same task (it is running), no new task is created. After that re-review is posted, the request is older than the post, so none is created.
     - sacty carries a snapshot of the previous review into `previousReview` of the new task.
     - `reviewRound` adds 1 to the previous round and continues the review count.

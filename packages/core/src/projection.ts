@@ -1093,9 +1093,10 @@ export type Task = {
    */
   reviewPost?: { url: string; at: string; latestCommit?: string };
   /**
-   * レビューを投稿した後の、PR の変化の見守り（PBI-411）。見守る版が投稿したレビュー（PullRequestReviewPosted の watch）で付き、
-   * 再レビューを始める・見守りを終える（ReviewWatchEnded）と消える。付いている間、その回の判定が指摘なしでなければ、タスクは
-   * 完了していない（reviewWatching）。指摘なしなら完了で、PR が開いている間は先頭の変化だけを追う。それより前の版が投稿したレビューには付かない。
+   * レビューを投稿した後の、PR の変化の見守り（PBI-411）。見守る版が投稿したレビュー（PullRequestReviewPosted の watch）の、
+   * その回の判定が指摘なしでないときに付き、再レビューを始める・見守りを終える（ReviewWatchEnded）と消える。付いている間、
+   * タスクは完了していない（reviewWatching）。判定が指摘なしの投稿・それより前の版が投稿したレビューには付かない（完了する。
+   * 完了したタスクは、PR の変化を見守らない）。
    * since は、その回のレビューの対象を確かめた時刻（これより後の作者の返信を、まだ読んでいない返信として数える）。
    */
   reviewWatch?: { since: string };
@@ -2832,7 +2833,8 @@ export function applyEvent(
 
     case "PullRequestReviewPosted": {
       // 書いたレビューを投稿すると、レビューの工程（人間の承認は無い）が終わる。見守る版の投稿（watch）は、判定が指摘なしで
-      // なければ、完了にせずに PR の変化を見守る（reviewWatching。PBI-411）。それより前の版の投稿は、判定に関係なく完了する。
+      // なければ、完了にせずに PR の変化を見守る（reviewWatching。PBI-411）。指摘なしなら完了し、見守らない（完了の後は、人が
+      // 「再レビュー」したときだけ）。それより前の版の投稿は、判定に関係なく完了する。
       // 行へのコメントだけのレビューもあるので、本文が空でも書き終えたものとして扱う
       if (
         activeStep(task) !== "review" ||
@@ -2851,9 +2853,10 @@ export function applyEvent(
         ...(event.payload.latestCommit ? { latestCommit: event.payload.latestCommit } : {}),
       };
       task.reviewWatchEnded = undefined;
-      task.reviewWatch = event.payload.watch
-        ? { since: task.reviewResolvedAt ?? event.at }
-        : undefined;
+      task.reviewWatch =
+        event.payload.watch && currentReviewVerdict(task) !== "no_findings"
+          ? { since: task.reviewResolvedAt ?? event.at }
+          : undefined;
       break;
     }
 
@@ -4762,7 +4765,7 @@ export function currentReviewVerdict(task: Task): ReviewVerdict | undefined {
 
 /**
  * レビューを投稿した後、PR の変化を見守っているか（PBI-411）。見守る版が投稿したレビューの、今の回の判定が指摘なしでない
- * （提案あり・修正が必要・判定が無い）間。待っているのは PR の作者の対応で、人の出番ではなく、実行の枠も使わない。PR の先頭が
+ * （提案あり・修正が必要・判定が無い）間（reviewWatch がある間）。待っているのは PR の作者の対応で、人の出番ではなく、実行の枠も使わない。PR の先頭が
  * 変わる・作者が返信すると再レビューを始め、PR がマージ・クローズされると見守りを終えて完了する。一時停止の間も真
  * （再開すると見守りに戻る）。それより前の版が投稿して完了したタスクは、判定に関係なく偽（完了のまま）。
  */
@@ -4771,8 +4774,7 @@ export function reviewWatching(task: Task): boolean {
     task.status !== "cancelled" &&
     task.reviewWatch !== undefined &&
     task.reviewPost !== undefined &&
-    isCompleted(task) &&
-    currentReviewVerdict(task) !== "no_findings"
+    isCompleted(task)
   );
 }
 

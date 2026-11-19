@@ -50,8 +50,8 @@ export function statusText(task: Task, l: LabelMessages): string {
     );
   }
   if (task.status === "idle" && isCompleted(task)) {
-    // 指摘なしにならないまま、PR のマージ・クローズなどで見守りを終えて完了した（PBI-411）
-    if (task.reviewWatchEnded && currentReviewVerdict(task) !== "no_findings") {
+    // 指摘なしにならないまま、PR のマージ・クローズで見守りを終えて完了した（PBI-411）
+    if (task.reviewWatchEnded) {
       return l.state.reviewWatchEnded(task.reviewWatchEnded.reason);
     }
     // 実装に変更が無く、PR を作らずに完了した（PBI-90）

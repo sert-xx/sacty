@@ -199,7 +199,7 @@ sacty handles changes of the PR as follows.
 - sacty's own posts (reviews and notices) and posts by bots are not treated as replies.
   This holds even when the PR author and sacty post from the same GitHub account.
 - When the verdict becomes "no findings", the task is done.
-  Even after that, a new commit pushed while the PR is open is re-reviewed (replies and comments alone after completion do not start it).
+  After that, nothing is re-reviewed automatically, whether a commit is pushed to the PR or the author replies. To review again after completion, use "Review again and post to the PR" (if the verdict of that round is not "no findings", the task is watched again).
 - A task whose PR was merged or closed before reaching "no findings" has the status "Done (PR merged)" or "Done (PR closed)".
 - There is no cap on the number of re-reviews.
   The task pauses when it reaches its budget cap, so raise the cap and resume it ([Pause, resume, and cancel](tasks.en.md#pause-resume-and-cancel)).
@@ -212,8 +212,6 @@ To stop the watch, pause or cancel the task in the task details.
 - While paused, no re-review starts when the PR changes, and the task is not marked done when the PR is merged or closed.
   On resume it goes back to watching and picks up the changes that happened while it was paused.
 - A cancelled task can no longer be re-reviewed.
-- A task that is done with the verdict "no findings" can be neither paused nor cancelled.
-  There is no way to stop the re-review on a push after completion before it starts (once the re-review has started, you can pause or cancel it).
 
 A task that posted its review and completed in an earlier version stays done even if its verdict is not "no findings" (neither the watch nor an automatic re-review starts).
 If you re-review such a task with "Review again and post to the PR", it is watched from that round on.
@@ -305,9 +303,9 @@ The PR's code can reach the same things as the agent.
 - Even in a bot's dependency update PR (such as `dependabot[bot]`), the install scripts of the new versions run.
 
 Commits pushed to the PR after it was imported run in the same way.
-This is because sacty keeps watching the PR for changes after posting its review and, while the PR is open, re-reviews automatically on every push ([After the review is posted](#after-the-review-is-posted)).
+This is because sacty keeps watching the PR for changes after posting its review until the verdict becomes "no findings" and, meanwhile, re-reviews automatically on every push ([After the review is posted](#after-the-review-is-posted)).
 It does not check who pushed or whether the push comes from a fork. If a PR you trusted at import can later receive a push you do not trust, pause or cancel the task to stop the watch.
-A task that is done with the verdict "no findings" cannot be stopped, so do not import a PR that can later receive a push you do not trust.
+A task that is done with the verdict "no findings" does not move when a commit is pushed to the PR.
 
 Intake does not filter by whether a PR comes from a fork or a bot.
 With settings that add labels automatically, or automatic review requests such as CODEOWNERS, PRs may be imported without a person deciding.

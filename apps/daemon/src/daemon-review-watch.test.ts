@@ -11,9 +11,6 @@ import { dbPath, dir, FakePulls, makeService, useTempDir } from "./testing/daemo
 
 useTempDir();
 
-/** 指摘なしで完了した後も、PR の先頭の変化を追っているか（完了していて、見守りの印が残っている）。 */
-const follows = (task: Task) => isDone(task) && task.reviewWatch !== undefined;
-
 type Verdict = "changes_required" | "suggestions" | "no_findings";
 
 const out = (text: string): AgentOutcome => ({
@@ -170,11 +167,11 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
     },
   );
 
-  it("判定が指摘なしなら、投稿で完了する", async () => {
+  it("判定が指摘なしなら、投稿で完了する。見守りの状態は持たない", async () => {
     const { activity, get } = await posted(["no_findings"]);
     expect(isDone(get())).toBe(true);
     expect(reviewWatching(get())).toBe(false);
-    expect(follows(get())).toBe(true);
+    expect(get().reviewWatch).toBeUndefined();
     activity.close();
   });
 
@@ -363,27 +360,38 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
     activity.close();
   });
 
-  it("指摘なしで完了した後に PR の先頭が変わったら、再レビューを始める。完了の後の返信だけでは始めない（条件 6）", async () => {
+  it("指摘なしで完了した後は、PR の先頭が変わっても、作者が返信しても、自動では何も始めない（PR を読みに行かない）。人が「再レビュー」した回が指摘なしでなければ、また見守る", async () => {
     const { activity, pulls, service, id, clock, get, tick, run } = await posted([
       "no_findings",
       "suggestions",
+      "suggestions",
     ]);
     expect(isDone(get())).toBe(true);
+    const before = service.get(id)?.activity.length;
+    const checked = pulls.checked.length;
+    const read = pulls.feedbackNumbers.length;
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
     pulls.feedbackList = [comment(clock, "comment:1", "me", "ありがとうございます", MINUTE)];
     await tick(MINUTE);
     await tick(FEEDBACK_QUIET_MS);
     await tick(FEEDBACK_QUIET_MS);
     expect(restarts(service, id)).toEqual([]);
     expect(isDone(get())).toBe(true);
-    // 返信だけでは、コメントも読みに行かない
-    expect(pulls.feedbackNumbers.filter((n) => n === 9)).toHaveLength(1);
-    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    expect(service.get(id)?.activity).toHaveLength(before ?? -1);
+    // 完了したタスクの PR は、状態もコメントも読みに行かない
+    expect(pulls.checked).toHaveLength(checked);
+    expect(pulls.feedbackNumbers).toHaveLength(read);
+    expect(service.queuedTaskIds()).not.toContain(id);
+    // 人が「再レビュー」して、その回の判定が指摘なしでなければ、また見守りに入り、PR の変化で再レビューする
+    pulls.feedbackList = [];
+    service.rereview(id);
+    await run();
+    expect(pulls.reviews.at(-1)?.commit).toBe(HEAD_B);
+    expect(reviewWatching(get())).toBe(true);
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_C };
     await tick();
     await tick(FEEDBACK_QUIET_MS);
-    expect(restarts(service, id)).toEqual([{ reason: "pushed", commit: HEAD_B }]);
-    expect(isFinished(get())).toBe(false);
-    await run();
-    expect(reviewWatching(get())).toBe(true);
+    expect(restarts(service, id).at(-1)).toEqual({ reason: "pushed", commit: HEAD_C });
     activity.close();
   });
 
@@ -412,13 +420,16 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
     },
   );
 
-  it("指摘なしで完了した後に PR がマージされたら、完了のまま、先頭を追うのをやめる", async () => {
+  it("指摘なしで完了した後に PR がマージ・クローズされても、完了のまま、何も記録しない", async () => {
     const { activity, pulls, get, events, tick } = await posted(["no_findings"]);
+    const checked = pulls.checked.length;
     pulls.state = { state: "merged" };
     await tick();
+    await tick();
     expect(isDone(get())).toBe(true);
-    expect(follows(get())).toBe(false);
-    expect(events("ReviewWatchEnded")).toHaveLength(1);
+    expect(events("ReviewWatchEnded")).toEqual([]);
+    expect(events("TaskCancelled")).toEqual([]);
+    expect(pulls.checked).toHaveLength(checked);
     activity.close();
   });
 
@@ -625,7 +636,7 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
   });
 
   it("消したプロジェクトのタスクは、見守らない（PR を読みに行かない）", async () => {
-    const { activity, pulls, projects, service, tick } = await posted(["no_findings"]);
+    const { activity, pulls, projects, service, tick } = await posted(["suggestions"]);
     projects.delete("default");
     const checked = pulls.checked.length;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -931,7 +942,7 @@ describe("更新の前に完了していたレビューのタスク（PBI-411 �
       const task = () => service.get(first.id)?.task as Task;
       expect(isDone(task())).toBe(true);
       expect(reviewWatching(task())).toBe(false);
-      expect(follows(task())).toBe(false);
+      expect(task().reviewWatch).toBeUndefined();
       const before = service.get(first.id)?.activity.length;
       const checked = first.pulls.checked.length;
       const tick = async (ms: number) => {
@@ -1030,7 +1041,7 @@ describe("依頼で取り込んだ PR の GitHub の再依頼と、見守り（P
 
   it("指摘なしで完了したタスクの PR に再依頼が来たら、新しいタスクを作り、元のタスクは完了のまま、先頭が変わっても再レビューを始めない", async () => {
     const { activity, pulls, service, id, get, clock } = await requestedAndPosted("no_findings");
-    expect(follows(get())).toBe(true);
+    expect(isDone(get())).toBe(true);
     const before = service.get(id);
     pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B, requestedReviewers: ["me"] };
     pulls.lastRequestAt = new Date(clock.now + MINUTE).toISOString();

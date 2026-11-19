@@ -1319,7 +1319,8 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
     task({
       steps: [{ key: "review", state: "done" }],
       reviewPost: posted,
-      reviewWatch: { since: "2026-11-19T23:50:00.000Z" },
+      // 見守りの状態は、判定が指摘なしでない投稿にだけ付く
+      ...(verdict === "no_findings" ? {} : { reviewWatch: { since: "2026-11-19T23:50:00.000Z" } }),
       reviewVerdicts: [{ round: 1, ...(verdict ? { verdict } : { missing: "absent" as const }) }],
       ...patch,
     });
@@ -1339,6 +1340,7 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
     }
     // 今の回の判定だけを見る（再レビューの後に、前の回の判定で見守りと出さない）
     const cleared = watching("suggestions", {
+      reviewWatch: undefined,
       reviewRound: 2,
       reviewVerdicts: [
         { round: 1, verdict: "suggestions" },
@@ -1362,7 +1364,7 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
   });
 
   it("指摘なしにならないまま見守りを終えて完了したタスクは、完了の理由（マージ・クローズ）を出す", () => {
-    const ended = (reason: "merged" | "closed", verdict: "suggestions" | "no_findings") =>
+    const ended = (reason: "merged" | "closed", verdict: "suggestions" | "changes_required") =>
       watching(verdict, {
         reviewWatch: undefined,
         reviewWatchEnded: { reason },
@@ -1371,8 +1373,6 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
     expect(statusText(ended("closed", "suggestions"))).toBe("完了（PR が閉じられた）");
     expect(statusTextIn(ended("merged", "suggestions"), labels.en)).toBe("Done (PR merged)");
     expect(statusTone(ended("merged", "suggestions"))).toBe("completed");
-    // 指摘なしで完了した後のマージは、ふつうの完了
-    expect(statusText(ended("merged", "no_findings"))).toBe("完了");
   });
 
   it("見守り中に一時停止したタスクは、一時停止（人の出番）と出す。中止したタスクは中止", () => {

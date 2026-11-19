@@ -95,7 +95,10 @@ describe("Slack の通知（PBI-38）", () => {
       task({
         steps: [{ key: "review", state: "done" }],
         reviewPost: { url: "https://x/r", at: "2026-11-20T00:00:00.000Z" },
-        reviewWatch: { since: "2026-11-19T23:50:00.000Z" },
+        // 見守りの状態は、判定が指摘なしでない投稿にだけ付く
+        ...(verdict === "no_findings"
+          ? {}
+          : { reviewWatch: { since: "2026-11-19T23:50:00.000Z" } }),
         reviewVerdicts: [{ round: 1, verdict }],
         ...patch,
       });
@@ -110,16 +113,6 @@ describe("Slack の通知（PBI-38）", () => {
     expect(notificationFor(posted("suggestions"), ended)).toBe("completed");
     // 指摘なしの投稿：完了
     expect(notificationFor(running, posted("no_findings"))).toBe("completed");
-    // 指摘なしで完了した後に、先頭を追うのをやめただけなら、もう一度は知らせない
-    expect(
-      notificationFor(
-        posted("no_findings"),
-        posted("no_findings", {
-          reviewWatch: undefined,
-          reviewWatchEnded: { reason: "merged" },
-        }),
-      ),
-    ).toBeUndefined();
     // 見守り中のタスクを中止しても、完了とは知らせない（工程は終わったままだが、中止）
     expect(
       notificationFor(posted("suggestions"), posted("suggestions", { status: "cancelled" })),
