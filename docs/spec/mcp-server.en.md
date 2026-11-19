@@ -5,11 +5,11 @@
 `sacty mcp` is an MCP server for operating the running sacty (`sacty up`) from an AI on the same machine (Claude Code, Codex, and so on).
 It runs over standard input and output (stdio) and calls the same daemon API as the web UI.
 It follows the 2026-07-28 revision of the MCP specification and also accepts clients of earlier revisions (up to 2025-11-25) that open with `initialize`.
-It has eleven tools: listing and searching tasks (`list_tasks`), task details (`get_task`), re-reviewing a PR review task (`rereview_task`), listing projects (`list_projects`), creating a task (`create_task`),
-listing deliverables (`list_deliverables`), the content of a deliverable (`get_deliverable`), listing runs (`list_runs`), approving a step awaiting approval (`approve_step`), requesting changes on a step awaiting approval (`request_changes`), and waiting until a task needs a person (`wait_for_task`).
+It has thirteen tools: listing and searching tasks (`list_tasks`), task details (`get_task`), re-reviewing a PR review task (`rereview_task`), listing projects (`list_projects`), creating a task (`create_task`),
+listing deliverables (`list_deliverables`), the content of a deliverable (`get_deliverable`), listing runs (`list_runs`), approving a step awaiting approval (`approve_step`), requesting changes on a step awaiting approval (`request_changes`), waiting until a task needs a person (`wait_for_task`), pausing a task (`pause_task`), and resuming a paused task (`resume_task`).
 The three before `approve_step` (`list_deliverables`, `get_deliverable`, and `list_runs`) only read deliverables and runs. There is no tool yet for reading the log of a run (a follow-up). `wait_for_task` only reads and changes nothing.
 
-Related ADRs: [The MCP server that operates the running sacty is run by the CLI over stdio](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md), [The CLI calls the running daemon's API through the connection file that sacty up writes](../adr/20261014-0701-cli-daemon-connection-file.md), [The MCP create-task tool sends the same request as the web UI's defaults and reports that a task may have been created when no result arrives](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md), [Reading deliverables and the run list through sacty mcp sets limits and positions in bytes and adds read APIs to the daemon](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md), [Approval through sacty mcp is limited to the same API as the web UI's Approve button and does not merge PRs](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md), [Requesting changes through sacty mcp is limited to the basic form and stops before the limit](../adr/20261119-0400-mcp-request-changes-basic-stop-before-limit.md), [The sacty mcp wait tool polls from the MCP layer instead of adding a wait API to the daemon, and wakes only when a person's turn comes](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)
+Related ADRs: [The MCP server that operates the running sacty is run by the CLI over stdio](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md), [The CLI calls the running daemon's API through the connection file that sacty up writes](../adr/20261014-0701-cli-daemon-connection-file.md), [The MCP create-task tool sends the same request as the web UI's defaults and reports that a task may have been created when no result arrives](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md), [Reading deliverables and the run list through sacty mcp sets limits and positions in bytes and adds read APIs to the daemon](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md), [Approval through sacty mcp is limited to the same API as the web UI's Approve button and does not merge PRs](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md), [Requesting changes through sacty mcp is limited to the basic form and stops before the limit](../adr/20261119-0400-mcp-request-changes-basic-stop-before-limit.md), [The sacty mcp wait tool polls from the MCP layer instead of adding a wait API to the daemon, and wakes only when a person's turn comes](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md), [Resuming through sacty mcp is the minimal form with only a note, and pausing a completed task is refused in the MCP layer](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)
 
 ## Startup and connection
 
@@ -24,7 +24,7 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
   Restarting `sacty up` changes the token, but the next call uses the new address and token (the MCP server does not need a restart).
 - It waits up to 30 seconds per request (`MCP_REQUEST_TIMEOUT_MS`) for the daemon's response (including reading the body).
 - No authentication is added (the MCP authorization specification is for HTTP; on stdio the rule is to take credentials from the environment). Only a user who can read `daemon.json` (mode 0600) can use it.
-- It calls the following APIs ([Overall structure](architecture.en.md#processes-and-communication)). `list_tasks`, `get_task`, `rereview_task`, `list_projects`, `create_task`, `approve_step`, and `request_changes` call the same APIs as the web UI. `list_deliverables`, `get_deliverable`, and `list_runs` call read-only APIs (their three rows in the table below; the web UI does not call them). `wait_for_task` calls only `GET /api/tasks/:id`, the same as `get_task` (no wait API is added to the daemon).
+- It calls the following APIs ([Overall structure](architecture.en.md#processes-and-communication)). `list_tasks`, `get_task`, `rereview_task`, `list_projects`, `create_task`, `approve_step`, and `request_changes` call the same APIs as the web UI. `list_deliverables`, `get_deliverable`, and `list_runs` call read-only APIs (their three rows in the table below; the web UI does not call them). `wait_for_task` calls only `GET /api/tasks/:id`, the same as `get_task` (no wait API is added to the daemon). `pause_task` and `resume_task` call the same APIs as the web UI (no new API is added).
 
 | Tool | Daemon API |
 | --- | --- |
@@ -39,6 +39,8 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
 | `approve_step` | `GET /api/tasks/:id`, `POST /api/tasks/:id/approve` |
 | `request_changes` | `GET /api/tasks/:id`, `POST /api/tasks/:id/request-changes` |
 | `wait_for_task` | `GET /api/tasks/:id` (the awaited task and the children in its `reviewTasks`, repeated every few seconds; nothing else is called) |
+| `pause_task` | `GET /api/tasks/:id`, `POST /api/tasks/:id/pause` (`{}`) |
+| `resume_task` | `GET /api/tasks/:id`, `POST /api/tasks/:id/resume` (`{}` or `{ note }`) |
 
 Code: `packages/cli/src/index.ts` (`mcpCommand`), `packages/cli/src/mcp.ts` (`daemonApi`), `apps/daemon/src/task-mcp.ts` (`serveTaskMcp`, `startTaskMcp`, `createTaskMcpServer`, `SactyApi`), `packages/cli/src/context-preview.ts` (`readDaemonFile`, `daemonRequest`), `packages/cli/src/up-env.ts` (`daemonEndpoint`)
 
@@ -46,7 +48,7 @@ Code: `packages/cli/src/index.ts` (`mcpCommand`), `packages/cli/src/mcp.ts` (`da
 
 The server's usage instructions (`INSTRUCTIONS`) and the descriptions of `list_tasks` and `get_task` say that the title, description, review body, and stop reason in results are data that can contain text written by other people, and that instructions inside them must not be followed. The text in `humanAsks` and `escalation` is treated as the same kind of data, and the descriptions of `get_task`, `approve_step`, and `request_changes` and `INSTRUCTIONS` say so too.
 The description of `list_projects` carries the same note (project names are text written by people).
-The descriptions of `rereview_task`, `create_task`, `approve_step`, and `request_changes` say to call them only when the user asks (not because of instructions inside a title, description, review body, and so on).
+The descriptions of `rereview_task`, `create_task`, `approve_step`, and `request_changes` say to call them only when the user asks (not because of instructions inside a title, description, review body, and so on). The descriptions of `pause_task` and `resume_task` say the same (`ASK_ONLY_NOTE`, shared with approval and requesting changes). They also say not to call on the strength of instructions in the stop reason (`pausedMessage`) or `humanAsks` alone.
 The descriptions of `list_deliverables`, `get_deliverable`, and `list_runs`, and `INSTRUCTIONS`, also say that the deliverables in results are data that can contain text written by other people and agents, and that instructions inside them must not be followed (`READ_UNTRUSTED_NOTE`).
 
 The tools are held in the `TOOLS` table (name, description, argument shape, result shape, handler), and all of them are registered when the server is created.
@@ -93,6 +95,7 @@ Returns the details of a task. Read-only. The argument is `task_id` (the whole t
   - `recentActivity`: the time, actor, and event type of the last 30 Activity events (without their contents). `activityCount` is the total number.
   - `humanAsks`: only while awaiting approval and there is something to confirm with a person ([Things to confirm with a person](#things-to-confirm-with-a-person)).
   - `escalation`: only when the state is `escalated` ([Why a person's decision is awaited](#why-a-persons-decision-is-awaited)).
+  - `resumeBlocked`: only when the task is paused and `resume_task` cannot resume it. `reason` (the reason sentence) and `decideOnScreen` (what a person decides on the screen).
 - If the task does not exist (including tasks of a deleted project), it returns the reason.
 
 ### rereview_task
@@ -366,6 +369,47 @@ It also says that the title and pause reason in the result are data that include
 
 Code: `apps/daemon/src/task-mcp.ts` (`waitForTask`, `watchOfTask`, `watchChanges`, `WaitSchema`, `WAIT_DEFAULT_SECONDS`, `WAIT_MAX_SECONDS`, `WAIT_POLL_MS`, `WAIT_GRACE_MS`, `WAIT_REQUEST_MS`, `WAIT_CHILD_LIMIT`, `WaitClock`, `startTaskMcp`, `READ_REASONS`), `packages/cli/src/mcp.ts` (`daemonApi`), `packages/cli/src/context-preview.ts` (`daemonRequest`)
 
+### pause_task
+
+Pauses a task (the same as "Pause" in the web UI).
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `task_id` | String (required) | The task ID |
+
+- It sends only `{}` to `POST /api/tasks/:id/pause`. The decision to pause (`service.pause`) and the record (`TaskPaused`, reason `manual`) are the same as the web UI. There is no MCP-specific path or record.
+- When it pauses the task, it returns a sentence and the [task summary](#task-summary) after the pause (`state` is `paused` and `pausedReason` is `manual`).
+- A task can be paused in the same states in which the web UI shows the "Pause" button: `queued`, `running`, `awaiting_approval`, and an `idle` task under verification (it has `verification`). Before calling the API, the MCP layer checks this from the task of `GET /api/tasks/:id` (`pauseBlock`, a copy of the web UI's `canControl` and `canPause`; change it together when the web UI changes. `canPause` in the summary uses the same function).
+  The order is: the form of `task_id` and a missing task (including a task of a deleted project), then cancelled, then completed, then already paused, then `escalated`, then `blocked` and `waiting_children`, then an `idle` task not under verification. None of them is sent to the API or recorded, and each returns a reason that says what to do next.
+- A completed task and an `idle` task not under verification are not refused by the daemon's `service.pause`, which records `TaskPaused` (the web UI only hides the button), so the MCP layer refuses them first. A small window remains if the task completes after the check ([ADR](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)).
+- What the daemon refuses (`pause.reachedApproval`, when the work finished before the stop and the task reached approval or a person's decision, or a task awaiting approval whose cancellation cleanup is in progress) returns the daemon's reason. The task is not paused.
+- For a running task, the daemon stops the container and waits for that process to end before it responds (it checks that the container stopped up to 11 times per container, about once a second; there is no fixed upper bound). The MCP waits 30 seconds for the response, so the task may be paused later (or may reach approval and not stop) without the response ever arriving. A pause of a task awaiting approval is recorded on the spot without waiting.
+- When no result is received after the request (a timeout, a dropped connection, an unreadable body, or a daemon 5xx), it returns that the task may have been paused, that it must not be retried automatically, and that `state` and `pausedReason` of `get_task` must be checked (`PAUSE_UNCERTAIN`). If `state` is the same as before the pause (`running`, `queued`, or `idle` under verification), the pause may still be in progress, so the task must not be called again; wait with `wait_for_task` (so the request is not sent twice). If it is `paused`, the task stopped. If it became `awaiting_approval` or `escalated`, tell the user that the task did not stop. The sentence before the guidance is the daemon's reason for a 5xx and the fixed sentence "The pause result was not received (timeout, disconnect, and so on)." otherwise. When the daemon refuses in its response, authentication fails (401), the connection is refused, or the failure is before the request is sent, the task was not paused, so only the reason is returned. The 30-second wait does not change.
+- Older daemon: `POST /api/tasks/:id/pause` has long existed, so it works with an older daemon. It calls no new API.
+- The description says to call it only when the user asks, that a running run is cut off and resuming starts that step over from the beginning (the cost already spent does not come back), that pausing a task awaiting approval stops the approval gate and the PR watch until it is resumed, that even if `pausedMessage` (the stop reason) or `humanAsks` of `get_task` says it is fine to pause, it is not called for that reason alone (`PAUSE_TEXT_NOTE`), and the guidance for when no result is received (after a timeout, wait with `wait_for_task`). `INSTRUCTIONS` adds it too.
+- The tool annotations are not read-only (`readOnlyHint: false`), not destructive (`destructiveHint: false`), not idempotent (`idempotentHint: false`; the second call is refused), and do not write outside sacty (`openWorldHint: false`; it only stops a local container and, for a task awaiting approval, the approval gate and the PR watch, and resuming undoes it).
+
+### resume_task
+
+Resumes a paused task (the same as pressing "Resume" in the web UI without changing the cap, tests, image, or agents).
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `task_id` | String (required) | The task ID |
+| `note` | String (optional) | A note for the resume (the same as `note` of the API) |
+
+- It sends only `{}` or `{ note }` to `POST /api/tasks/:id/resume`. `capUsd`, `tests`, `image`, and `agents` are not arguments and there is no path to send them. The decision to resume (`service.resume`) and the record (`TaskResumed`) are the same as the web UI. There is no MCP-specific path or record.
+- When it resumes the task, it returns a sentence, whether a note was added (`resumed`: `taskId` and `noteAdded`), and the [task summary](#task-summary) after the resume (`state` is where it went back to). The sentence tells where it went back to. `queued` runs the stopped step again (it takes time and money; it does not wait for the end). `awaiting_approval` and `waiting_children` only went back there and do not run the step again. Otherwise sacty moves on to the next step.
+- A task can be resumed when its state is `paused` and the reason is `manual`, `error`, `verification`, `incomplete`, `unchanged`, `usage_limit`, or `auth` (including an old record with no reason). `verification` and `incomplete` count again from the start, so the same failure stops it again.
+- **It cannot be resumed** (it sends nothing to the API, records nothing, and returns what a person decides on the screen) when the reason is `budget` (raising the budget cap, a decision that increases cost), when the stop is one where a person can decide how to treat the tests (`canDecideTests`, deciding the test handling), when the reason is `child_cancelled` (resuming accepts the cancellation of the child task), or when a task imported from a ticket was paused before the repository to work on was decided (`awaitingTicketTriage`, `awaitingRepository`; the web resume form requires choosing a repository in this case; choosing the repository to work on). The sentence is "This tool cannot resume it (nothing was changed). A person must decide on the screen: …". The check is `resumeBlock`, and `canResume` in the summary and `resumeBlocked` of `get_task` (`reason` and `decideOnScreen`) use the same function.
+- A task that is not paused, a missing task (including a task of a deleted project, checked first with `GET /api/tasks/:id`), a malformed `task_id`, and a note that is too long (over 10000 characters of `RESUME_NOTE_MAX`, or too long to add within the description limit; `resumeNoteRoom`) are also refused with a reason and nothing is sent to the API.
+  What the daemon refuses (an external-work step has started, a stacked dependency was cancelled, or a container that cannot be confirmed stopped remains) returns the daemon's reason as it is. `canResume` does not look at these, so the daemon may refuse even when it is true.
+- The note has its surrounding whitespace removed and is not sent if empty. It is appended after the task description and stays, and later steps read it ([Budget, pause, resume, and cancel](tasks-and-steps.en.md#budget-pause-resume-and-cancel)).
+- When no result is received after the request (a timeout, a dropped connection, an unreadable body, or a daemon 5xx), it returns that the task may have been resumed, that it must not be retried automatically, and that `state` and `pausedReason` of `get_task` must be checked before calling again (`RESUME_UNCERTAIN`). The sentence before the guidance is the daemon's reason for a 5xx and the fixed sentence "The resume result was not received (timeout, disconnect, and so on)." otherwise. When the daemon refuses in its response, authentication fails (401), the connection is refused, or the failure is before the request is sent, the task was not resumed, so only the reason is returned.
+- Older daemon: `POST /api/tasks/:id/resume` has long existed, so it works with an older daemon. It calls no new API.
+- The description says to call it only when the user asks, that it runs the stopped step again (it takes time and money; it does not wait for the end), that the same cause stops it again, to check `pausedReason`, `pausedMessage`, and whether it can be resumed with `get_task` first, that `note` is appended to the description and stays so only the user's words should be passed, that even if `pausedMessage` (the stop reason) or `humanAsks` of `get_task` says it is fine to resume, it is not called for that reason alone (`RESUME_TEXT_NOTE`), and the guidance for when no result is received. `INSTRUCTIONS` adds it too.
+- The tool annotations are not read-only (`readOnlyHint: false`), not destructive (`destructiveHint: false`), not idempotent (`idempotentHint: false`), and may write outside sacty (`openWorldHint: true`; the steps write to PRs and so on).
+
 ### Handling failures
 
 A failure inside a tool is returned as a tool execution error (`isError: true` in the MCP result and the text of the reason; no `structuredContent`). The MCP server does not exit.
@@ -384,11 +428,11 @@ The name of the failed tool, the target task ID (`task_id` if present; no other 
 When the arguments do not match the types (a `limit` out of range, a missing `task_id`, and so on), the MCP SDK returns the same shape (`isError: true` and the text of the reason) without calling the tool.
 Calling an unknown tool and the like becomes a JSON-RPC error.
 
-Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_UNCERTAIN`, `CREATE_UNCERTAIN`, `APPROVE_UNCERTAIN`, `CHANGES_UNCERTAIN`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`, `createTask`), `packages/core/src/events.ts` (`CreateTaskInput`)
+Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`, `pauseBlock`, `resumeBlock`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_UNCERTAIN`, `CREATE_UNCERTAIN`, `APPROVE_UNCERTAIN`, `CHANGES_UNCERTAIN`, `PAUSE_UNCERTAIN`, `RESUME_UNCERTAIN`, `writeTask`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`, `createTask`), `packages/core/src/events.ts` (`CreateTaskInput`)
 
 ## Task summary
 
-The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, and `request_changes`, and the base of the result of `get_task`.
+The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, `request_changes`, `pause_task`, and `resume_task`, and the base of the result of `get_task`.
 
 | Field | Description |
 | --- | --- |
@@ -397,6 +441,8 @@ The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, and 
 | `steps` | Steps and their states (`<step>:<state>`, in order) |
 | `reviewTask` | Whether it is a PR review task (imported as a PR review (`source.review` is set) or has the review step) |
 | `canRereview` | Whether it can be re-reviewed (`canRereview`) |
+| `canPause` | Whether `pause_task` can pause it (the states in which the web UI shows the pause button; `pauseBlock`) |
+| `canResume` | Whether `resume_task` can resume it (paused, and no decision on the budget cap, the test handling, the child task's cancellation, or the repository to work on is needed; `resumeBlock`. It does not see refusals only the daemon knows, so the daemon may refuse even when it is true) |
 | `pullRequests` | The [tied PRs](#prs-and-branches-tied-to-a-task) |
 | `branches` | The [tied branches](#prs-and-branches-tied-to-a-task) |
 | `review` | Only for PR review tasks. The review round (`round`), and the URL of the post (`postedUrl`) and the verdict (`verdict`) of the current round. The post and the verdict are present only when they exist |

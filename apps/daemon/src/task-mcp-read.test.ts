@@ -94,6 +94,8 @@ function mcpOver(w: ReturnType<typeof world>) {
       return w.task;
     },
     requestChanges: async () => w.task,
+    pause: async () => w.task,
+    resume: async () => w.task,
     listDeliverables: async (...a: Parameters<SactyApi["listDeliverables"]>) => {
       calls.push("deliverables");
       return read.listDeliverables(...a);

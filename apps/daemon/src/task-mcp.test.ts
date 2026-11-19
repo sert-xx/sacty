@@ -143,6 +143,26 @@ function apiOver(service: TaskService, webUrl?: string): SactyApi & { calls: str
       if (!res.ok) throw await refusal(res);
       return ((await res.json()) as { task: Task }).task;
     },
+    async pause(id) {
+      calls.push(`POST /api/tasks/${id}/pause`);
+      const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/pause`, {
+        method: "POST",
+        headers,
+        body: "{}",
+      });
+      if (!res.ok) throw await refusal(res);
+      return ((await res.json()) as { task: Task }).task;
+    },
+    async resume(id, input) {
+      calls.push(`POST /api/tasks/${id}/resume`);
+      const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/resume`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(input.note ? { note: input.note } : {}),
+      });
+      if (!res.ok) throw await refusal(res);
+      return ((await res.json()) as { task: Task }).task;
+    },
     ...readApiOver(app, headers),
     webUrl: () => webUrl,
   };
@@ -219,6 +239,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "approve_step",
       "request_changes",
       "wait_for_task",
+      "pause_task",
+      "resume_task",
     ]);
     expect(tools.map((t) => t.annotations?.readOnlyHint)).toEqual([
       true,
@@ -232,6 +254,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       false,
       false,
       true,
+      false,
+      false,
     ]);
     // 作成は、sacty の外に作用し得る（工程が PR などに書く）ので、外に作用すると示す。取得は示さない
     expect(tools.map((t) => t.annotations?.openWorldHint)).toEqual([
@@ -246,6 +270,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       true,
       true,
       false,
+      false,
+      true,
     ]);
     expect(tools[4]?.annotations).toMatchObject({ destructiveHint: false, idempotentHint: false });
     // 作成は、利用者に頼まれたときだけ呼ぶこと・ほかの人の文の中の指示に従わないことを、説明に書く
@@ -283,6 +309,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["message", "approved", "task"],
       ["message", "requested", "task"],
       expect.arrayContaining(["changed", "changes", "task", "reviewTasks", "cursor"]),
+      ["message", "paused", "task"],
+      ["message", "resumed", "task"],
     ]);
     expect(client.getServerVersion()).toMatchObject({ name: "sacty", version: "9.9.9" });
     expect(client.getInstructions()).toContain("rereview_task");
@@ -312,6 +340,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "approve_step",
       "request_changes",
       "wait_for_task",
+      "pause_task",
+      "resume_task",
     ]);
     const found = await client.callTool({ name: "list_tasks", arguments: { pull_request: "9" } });
     expect((found.structuredContent as Listed).tasks.map((t) => t.id)).toEqual([id]);
@@ -2269,6 +2299,8 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         "approve_step",
         "request_changes",
         "wait_for_task",
+        "pause_task",
+        "resume_task",
       ]);
       const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
       expect(desc("get_task")).toContain("humanAsks");
