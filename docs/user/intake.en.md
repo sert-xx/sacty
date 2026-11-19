@@ -204,6 +204,7 @@ sacty handles changes of the PR as follows.
 - There is no cap on the number of re-reviews.
   The task pauses when it reaches its budget cap, so raise the cap and resume it ([Pause, resume, and cancel](tasks.en.md#pause-resume-and-cancel)).
 - For a PR whose last post was a while ago, it takes longer to notice a change (up to 5 minutes after 1 hour, up to 30 minutes after 24 hours).
+- When 2 or more tasks review the same PR (for example, you also reviewed an imported PR with a review task you created), only the task created later re-reviews on changes of the PR.
 - When you review a PR sacty created with a review task you created yourself, it is not re-reviewed on changes of the PR (the child task re-reviews that PR). It is done when the PR is merged or closed.
 
 To stop the watch, pause or cancel the task in the task details.

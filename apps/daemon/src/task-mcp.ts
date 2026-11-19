@@ -2225,7 +2225,9 @@ export function watchChanges(
   const changes: string[] = [];
   const a = before.task;
   const b = now.task;
-  if (a.p !== b.p) changes.push(`state: ${a.p} → ${b.p}`);
+  // 見守りから、PR の変化で再レビューが始まっただけ（実行が始まった）では、起こさない。投稿されたときに起こす
+  const rereviewStarted = a.p === WATCHING_PHASE && b.p === "active";
+  if (a.p !== b.p && !rereviewStarted) changes.push(`state: ${a.p} → ${b.p}`);
   // このタスクのレビューが投稿された・判定が変わった（再レビューで、同じ区分に戻ったときも起こす。PBI-411）。前の版の
   // cursor（欄が無い）とは比べない
   if (a.w !== undefined && b.w !== undefined && a.w !== b.w && b.w !== "") {

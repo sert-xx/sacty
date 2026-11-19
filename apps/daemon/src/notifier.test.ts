@@ -120,6 +120,10 @@ describe("Slack の通知（PBI-38）", () => {
         }),
       ),
     ).toBeUndefined();
+    // 見守り中のタスクを中止しても、完了とは知らせない（工程は終わったままだが、中止）
+    expect(
+      notificationFor(posted("suggestions"), posted("suggestions", { status: "cancelled" })),
+    ).toBeUndefined();
     // 更新の前の版が投稿したレビュー（見守りの印が無い）は、判定に関係なく、投稿で完了
     expect(notificationFor(running, posted("suggestions", { reviewWatch: undefined }))).toBe(
       "completed",

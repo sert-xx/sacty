@@ -98,6 +98,8 @@ export interface PullRequests {
      * レビューの工程に渡す既存のレビューと、再レビューの作者の返答だけが含める。
      */
     includeSactyReplies?: boolean;
+    /** 中断できる（答えを待つのをやめた通信を残さない。PBI-411）。 */
+    signal?: AbortSignal;
   }): Promise<PullRequestFeedback[]>;
   /**
    * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
@@ -513,7 +515,8 @@ export class GitHubPullRequests implements PullRequests {
   }
 
   async feedback(input: Parameters<PullRequests["feedback"]>[0]): Promise<PullRequestFeedback[]> {
-    const get = (path: string) => this.list(input.repo, path, input.token, "getReviews");
+    const get = (path: string) =>
+      this.list(input.repo, path, input.token, "getReviews", input.signal);
     const user = (item: Record<string, unknown>) =>
       (item.user ?? {}) as { login?: unknown; type?: unknown };
     // bot（CI など）のコメントは、人間の指摘ではないので含めない

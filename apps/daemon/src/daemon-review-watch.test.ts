@@ -49,7 +49,12 @@ const MINUTE = 60_000;
  */
 async function posted(
   verdicts: (Verdict | undefined)[],
-  options: { author?: string; outputTokens?: number[]; runMs?: number } = {},
+  options: {
+    author?: string;
+    outputTokens?: number[];
+    runMs?: number;
+    draftTimeoutMs?: number;
+  } = {},
 ) {
   const clock = { now: Date.parse("2026-11-20T00:00:00.000Z") };
   const now = () => clock.now;
@@ -75,7 +80,21 @@ async function posted(
       ...review(`${i + 1}回目`, v),
       usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: options.outputTokens?.[i] ?? 1 },
     })),
-    { pulls, settings, projects, now },
+    {
+      pulls,
+      settings,
+      projects,
+      now,
+      // 人が作るタスク（取り込みを通さないもの）には、レビューの工程だけを選ぶ
+      planner: async () => ({
+        steps: ["review"],
+        plan: "review" as const,
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+      }),
+      ...(options.draftTimeoutMs ? { draftTimeoutMs: options.draftTimeoutMs } : {}),
+    },
   );
   const [task] = service.importIssues([pr(9)]);
   const id = task?.id ?? "";
@@ -553,6 +572,72 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
     activity.close();
   });
 
+  it("続けて読めない PR は、読めたときと同じ間隔を空けて読む（読めないままの PR を、毎分読んで警告を出し続けない）", async () => {
+    const { activity, pulls, service, clock, tick } = await posted(["suggestions"]);
+    const reads = () => pulls.checked.filter((c) => c.number === 9).length;
+    clock.now += 61 * MINUTE;
+    await service.checkPullRequests();
+    pulls.statusFail = "boom";
+    await tick(5 * MINUTE);
+    // 1 回目の失敗の次の確認では、読み直す。2 回続けて読めなければ、5 分の間隔を空ける
+    let before = reads();
+    await tick();
+    expect(reads()).toBe(before + 1);
+    before = reads();
+    for (let i = 0; i < 4; i++) await tick();
+    expect(reads()).toBe(before);
+    await tick();
+    expect(reads()).toBe(before + 1);
+    activity.close();
+  });
+
+  it("答えの返らない PR の状態・コメントの読み取りは、期限で打ち切って確認を終え、次の確認で読み直す。コメントの通信は中断する", async () => {
+    const { activity, pulls, service, id, clock, get, tick } = await posted(
+      ["changes_required", "suggestions"],
+      { draftTimeoutMs: 20 },
+    );
+    // PR の状態の答えが返らない
+    const status = vi.spyOn(pulls, "status").mockImplementation(() => new Promise(() => {}));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await tick();
+    expect(warn.mock.calls.flat().join("\n")).toContain(`レビューのタスク ${id} の PR #9`);
+    status.mockRestore();
+    // コメントの答えが返らない：期限で打ち切り、通信を中断する
+    pulls.feedbackList = [comment(clock, "comment:1", "me", "直しません", MINUTE)];
+    let signal: AbortSignal | undefined;
+    const feedback = vi
+      .spyOn(pulls, "feedback")
+      .mockImplementation((input: { signal?: AbortSignal }) => {
+        signal = input.signal;
+        return new Promise(() => {});
+      });
+    await tick(2 * MINUTE);
+    expect(signal?.aborted).toBe(true);
+    expect(warn.mock.calls.flat().join("\n")).toContain("見守りを進められませんでした");
+    feedback.mockRestore();
+    warn.mockRestore();
+    // 次の確認で読み直して、返信を拾う
+    await tick();
+    await tick(FEEDBACK_QUIET_MS);
+    expect(restarts(service, id)).toEqual([{ reason: "replied", commit: HEAD_A }]);
+    expect(reviewWatching(get())).toBe(false);
+    activity.close();
+  });
+
+  it("消したプロジェクトのタスクは、見守らない（PR を読みに行かない）", async () => {
+    const { activity, pulls, projects, service, tick } = await posted(["no_findings"]);
+    projects.delete("default");
+    const checked = pulls.checked.length;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await tick();
+    await tick();
+    expect(pulls.checked).toHaveLength(checked);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+    void service;
+    activity.close();
+  });
+
   it("再レビューを始めた後に別の先頭をレビューし、その後に元の先頭へ戻されたら、その先頭を再レビューする（古い歯止めで、レビューしないままにしない）", async () => {
     const { activity, pulls, service, id, get, tick, run } = await posted([
       "suggestions",
@@ -759,6 +844,38 @@ describe("取り込みを通さずに、人が作ったレビューのタスク�
     await tick();
     expect(isDone(get())).toBe(true);
     expect(get().reviewWatchEnded?.reason).toBe("merged");
+    activity.close();
+  });
+});
+
+describe("同じ PR を見守るレビューのタスクが 2 つあるとき（PBI-411）", () => {
+  it("取り込んだ PR を、人が作ったレビューのタスクでもレビューしたら、PR の変化では、後に作ったタスクだけが再レビューする。後のタスクを中止したら、前のタスクが再レビューする", async () => {
+    const base = await posted(["suggestions", "suggestions", "suggestions", "suggestions"]);
+    const { activity, pulls, service, id, clock, tick } = base;
+    // 後から、人が、同じ PR をレビューするタスクを作る（対象リポジトリの PR の URL を本文に書く）
+    clock.now += MINUTE;
+    const manual = service.createTask({
+      projectId: "default",
+      title: "PR 9 をもう一度見る",
+      body: "https://github.com/acme/app/pull/9 をレビューする",
+    });
+    for (let i = 0; i < 8 && !service.get(manual.id)?.task.reviewPost; i++) {
+      await service.runNext(manual.id);
+    }
+    const second = service.get(manual.id)?.task as Task;
+    expect(second.reviewPost).toBeDefined();
+    expect(reviewWatching(second)).toBe(true);
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    await tick();
+    await tick(FEEDBACK_QUIET_MS);
+    await tick(FEEDBACK_QUIET_MS);
+    expect(restarts(service, id)).toEqual([]);
+    expect(restarts(service, manual.id)).toEqual([{ reason: "pushed", commit: HEAD_B }]);
+    // 後のタスクを中止したら、前のタスクが引き継ぐ
+    await service.cancel(manual.id);
+    await tick();
+    await tick(FEEDBACK_QUIET_MS);
+    expect(restarts(service, id)).toEqual([{ reason: "pushed", commit: HEAD_B }]);
     activity.close();
   });
 });

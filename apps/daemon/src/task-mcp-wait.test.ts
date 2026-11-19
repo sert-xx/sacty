@@ -984,6 +984,10 @@ describe("タスクの状態が変わるまで待つ（PBI-399）", () => {
       expect(quiet.changed).toBe(false);
       // 再レビューが投稿されて、また見守りに戻ったときも起きる（区分が同じでも、回と判定が変わる）
       service.rereview(id);
+      // 再レビューが始まっただけ（実行が始まった）では、起きない
+      const started = await ok({ task_id: id, cursor: posted.cursor, timeout_seconds: 10 });
+      expect(started.changed).toBe(false);
+      expect(started.task.state).toBe("queued");
       await service.runNext(id);
       await service.runNext(id);
       const again = await ok({ task_id: id, cursor: posted.cursor });

@@ -1307,6 +1307,8 @@ export class TaskService {
   private readonly reviewWatchRead = new Map<string, string>();
   /** 見守っている PR の状態を、最後に読んだ時刻（PBI-411。投稿から時間がたった PR は、間を空けて読む）。 */
   private readonly reviewWatchChecked = new Map<string, number>();
+  /** 見守っている PR を、続けて読めなかった回数（PBI-411。読めたら消す）。 */
+  private readonly reviewWatchFailures = new Map<string, number>();
   /** 承認待ちの PR の、PR の確認で最後に読んだ head（タスク → PR の番号・提出したコミット・読んだ head。PR #304 のレビュー）。 */
   private readonly latestHeads = new Map<
     string,
@@ -2615,9 +2617,15 @@ export class TaskService {
    * - レビューを投稿して PR の変化を見守っているタスク（PBI-411）：watchReview が、見守りを終える・再レビューを始める
    */
   private async checkReviewPullRequests(): Promise<void> {
-    // 見守っているタスク。取り込みを通さずに人が作ったレビューのタスク（source が無い）も含む（対象の PR は reviewTarget）
+    // 見守っているタスク。取り込みを通さずに人が作ったレビューのタスク（source が無い）も含む（対象の PR は reviewTarget）。
+    // 消したプロジェクトのタスクは、見守らない（読むためのアカウントが無い）
     const watched = (t: Task) =>
-      t.status === "idle" && isCompleted(t) && t.reviewWatch && t.reviewPost && t.reviewTarget;
+      t.status === "idle" &&
+      isCompleted(t) &&
+      t.reviewWatch &&
+      t.reviewPost &&
+      t.reviewTarget &&
+      this.deps.projects.get(t.projectId) !== undefined;
     const unposted = (t: Task) =>
       t.source?.review !== undefined && t.source.kind === "github_pull_request" && !isCompleted(t);
     const open = [...this.tasks.values()].filter(
@@ -2630,6 +2638,7 @@ export class TaskService {
       this.reviewWatchReplies,
       this.reviewWatchRead,
       this.reviewWatchChecked,
+      this.reviewWatchFailures,
     ]) {
       for (const id of [...memo.keys()]) if (!watching.has(id)) memo.delete(id);
     }
@@ -2641,6 +2650,14 @@ export class TaskService {
       const usedSecrets: string[] = [];
       let status: PullRequestStatus;
       let token: string;
+      // 読めなかった PR は、間隔を待たずに、次の確認で 1 回読み直す。続けて読めなければ、読んだときと同じ間隔を空ける
+      // （読めないままの PR を、毎分読んで警告を出し続けない）
+      const unread = () => {
+        const failures = (this.reviewWatchFailures.get(task.id) ?? 0) + 1;
+        this.reviewWatchFailures.set(task.id, failures);
+        if (failures >= 2) this.reviewWatchChecked.set(task.id, this.now());
+        else this.reviewWatchChecked.delete(task.id);
+      };
       try {
         token = await this.githubToken(task, source.repo, usedSecrets);
         const pr = { repo: source.repo, token, number: source.number };
@@ -2650,14 +2667,17 @@ export class TaskService {
         console.warn(
           `[daemon] レビューのタスク ${task.id} の PR #${source.number}（${source.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
         );
+        if (watched(task)) unread();
         continue;
       }
       if (watched(task)) {
-        // 読めたときだけ、読んだ時刻を記録する（読めなかった PR は、間隔を待たずに、次の確認で読み直す）
-        this.reviewWatchChecked.set(task.id, this.now());
         try {
           await this.watchReview(task.id, status, token);
+          // PR の状態もコメントも読めたときだけ、読んだ時刻を記録する
+          this.reviewWatchFailures.delete(task.id);
+          this.reviewWatchChecked.set(task.id, this.now());
         } catch (error) {
+          unread();
           console.warn(
             `[daemon] レビューのタスク ${task.id} の PR #${source.number}（${source.repo}）の見守りを進められませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
           );
@@ -2689,7 +2709,7 @@ export class TaskService {
    * 変化は、投稿の後に、先頭と対象を確かめた時刻から拾う）。
    * sacty が作った PR のレビューの子タスクは、見守りの終わりだけを扱う。再レビューは、親の流れが決める（reconcileReviewTasks）。
    * sacty が作った PR を対象にする、子タスクでないレビューのタスク（人が作ったもの・以前の版で取り込んだもの）も同じ。
-   * GitHub の再依頼で別のタスクができた元のタスクも、見守りの終わりだけを扱う（supersededByRerequest）。
+   * GitHub の再依頼で別のタスクができた元のタスクも、見守りの終わりだけを扱う（supersededWatch）。
    */
   private async watchReview(
     taskId: string,
@@ -2732,9 +2752,10 @@ export class TaskService {
       forget();
       return;
     }
-    // GitHub の再依頼で作った、より新しいタスクがあれば、続きはそのタスクがレビューする（同じ PR を、2つのタスクで二重に
-    // 再レビューしない）。元のタスクには何も記録しない（docs/adr/20261019-0503-review-rerequest-new-task.md）
-    if (this.supersededByRerequest(task)) {
+    // 同じ PR を対象にする、より新しいレビューのタスク（GitHub の再依頼で作ったタスクなど）があれば、続きはそのタスクが
+    // レビューする（同じ PR を、2つのタスクで二重に再レビューしない）。再依頼の元のタスクには何も記録しない
+    // （docs/adr/20261019-0503-review-rerequest-new-task.md）
+    if (this.supersededWatch(task)) {
       forget();
       return;
     }
@@ -2787,6 +2808,8 @@ export class TaskService {
     const sactyReviews = (this.sactyReviewsOf(target.repo, target.number).sactyReviews ?? []).map(
       (r) => ({ ...r, allowed: false }),
     );
+    // 答えを待つ時間を限り、過ぎたら通信を中断する（答えの返らない通信を、確認のたびに重ねない）
+    const abort = new AbortController();
     const feedback = await withDeadline(
       this.deps.pulls.feedback({
         repo: target.repo,
@@ -2797,9 +2820,13 @@ export class TaskService {
         noticeAccounts: this.githubAccountsOnHost(target.repo),
         // ほかの sacty が作者のアカウントで投稿した、指摘への返信（対応しなかった理由）も、作者の返信として数える
         includeSactyReplies: true,
+        signal: abort.signal,
       }),
       this.draftTimeoutMs(),
-    );
+    ).catch((error: unknown) => {
+      abort.abort();
+      throw error;
+    });
     const since = Date.parse(task.reviewWatch?.since ?? "");
     const replies = feedback.filter(
       (item) =>
@@ -2818,7 +2845,7 @@ export class TaskService {
     // コメントを読む間に、GitHub の再依頼の取り込みが新しいタスクを作った・この PR を sacty のタスクが引き継いだなら、始めない
     // （元のタスクには何も記録されないので、ここで確かめ直す）
     if (
-      this.supersededByRerequest(latest) ||
+      this.supersededWatch(latest) ||
       this.sactyMadePullRequests().has(`${repoKey(target.repo)}#${target.number}`)
     ) {
       forget();
@@ -2864,22 +2891,31 @@ export class TaskService {
   }
 
   /**
-   * 依頼で取り込んだ PR のレビューのタスクに、同じ PR の、より後に作った依頼のタスク（GitHub の再依頼で作った別のタスク。
-   * PBI-143）があるか（PBI-411）。あれば、PR の変化での再レビューは、いちばん新しいタスクだけが始める。中止したタスクも
-   * 数える（再依頼の取り込みと同じ。中止した再依頼のタスクの代わりに、古いタスクが動き出さない）。
+   * 見守っているレビューのタスクに、同じ PR を対象にする、より後に作ったレビューのタスク（子タスクを除く）があるか
+   * （PBI-411）。あれば、PR の変化での再レビューは、いちばん新しいタスクだけが始める（同じ PR を、2 つのタスクで二重に
+   * 再レビューしない）。古いタスクは、見守りの終わりだけを扱う。
+   * - GitHub の再依頼で作った別のタスク（PBI-143）：元のタスクには何も記録しないので、ここで見分ける。中止したタスクも
+   *   数える（再依頼の取り込みと同じ。中止した再依頼のタスクの代わりに、古いタスクが動き出さない）
+   * - 取り込んだ PR を、人が作ったレビューのタスクでもレビューした、など：中止したタスクは数えない
    */
-  private supersededByRerequest(task: Task): boolean {
-    const source = task.source;
-    if (source?.review !== "requested") return false;
+  private supersededWatch(task: Task): boolean {
+    const pr = task.reviewTarget;
+    if (!pr) return false;
     const created = Date.parse(task.createdAt);
-    return [...this.tasks.values()].some(
-      (t) =>
-        t.id !== task.id &&
-        t.source?.review === "requested" &&
-        t.source.number === source.number &&
-        repoKey(t.source.repo) === repoKey(source.repo) &&
-        (Date.parse(t.createdAt) > created || t.reviewRerequest?.taskId === task.id),
-    );
+    return [...this.tasks.values()].some((t) => {
+      if (t.id === task.id || t.reviewOf) return false;
+      if (t.source?.review === undefined && !t.steps.some((step) => step.key === "review")) {
+        return false;
+      }
+      const ref = t.reviewTarget ?? referencedPullRequest(t);
+      if (!ref || ref.number !== pr.number || repoKey(ref.repo) !== repoKey(pr.repo)) return false;
+      const rerequest = task.source?.review === "requested" && t.source?.review === "requested";
+      if (t.status === "cancelled" && !rerequest) return false;
+      const at = Date.parse(t.createdAt);
+      return (
+        at > created || (at === created && t.id > task.id) || t.reviewRerequest?.taskId === task.id
+      );
+    });
   }
 
   /**
@@ -7271,7 +7307,7 @@ export class TaskService {
   }
 
   /**
-   * レビューの再依頼（PBI-143）。依頼の検索で見つかった PR のうち、依頼で取り込んでレビューを投稿して完了したタスク
+   * レビューの再依頼（PBI-143）。依頼の検索で見つかった PR のうち、依頼で取り込んでレビューを投稿した後のタスク
    * （「再レビュー」できるもの）がある PR を、PR の今の依頼先で確かめ、そのタスクのアカウントに依頼されていれば別タスクで再レビューする。
    * 依頼された人がレビューを投稿すると GitHub が依頼を外すので、投稿の後に依頼があれば、作者が再依頼したもの。
    * 検索の結果は反映が遅れる（投稿の直後に、外れた依頼が残る）ので、それだけでは再レビューしない。
@@ -16423,7 +16459,7 @@ export class TaskService {
   }
 
   /**
-   * 「再レビュー」（PBI-44）。レビューを PR に投稿して完了したタスクのレビューの工程をやり直し、PR の最新の
+   * 「再レビュー」（PBI-44）。レビューを PR に投稿した後のタスク（完了したか、PR の変化を見守っている）のレビューの工程をやり直し、PR の最新の
    * コミットに対してもう一度レビューして投稿する（対象の PR は実行の前に確かめ直す）。
    */
   rereview(id: string): Task {

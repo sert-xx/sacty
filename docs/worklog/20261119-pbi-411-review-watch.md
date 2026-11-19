@@ -17,14 +17,14 @@ PR のレビューのタスクは、判定に関係なく、レビューを投�
 - `packages/core/src/events.ts`
   - `PullRequestReviewPosted` に見守りの印 `watch` を足した。`ReviewRestarted` の `reason` に `pushed`・`replied` を足した。`ReviewWatchEnded`（`merged`・`closed`）を足した。
 - `packages/core/src/projection.ts`
-  - タスクに `reviewWatch`・`reviewWatchEnded`・`reviewResolvedAt`・`reviewReplyCommit` を足した。
-  - `reviewWatching`・`reviewFollowing`・`currentReviewVerdict`・`isDone` を足し、`isFinished` を「中止か `isDone`」にした。`isCompleted`（工程がすべて終わった）は変えていない。
+  - タスクに `reviewWatch`・`reviewWatchEnded`・`reviewResolvedAt`・`reviewReplyCommit`・`reviewReplySince` を足した。
+  - `reviewWatching`・`currentReviewVerdict`・`isDone` を足し、`isFinished` を「中止か `isDone`」にした。`isCompleted`（工程がすべて終わった）は変えていない。
 - `apps/daemon/src/service.ts`
   - レビューの投稿に `watch: true` を付ける（`composeReviewPost`）。
   - `checkReviewPullRequests` を、投稿の前のタスク（今までどおり、マージ・クローズで中止）と、見守っているタスク（`watchReview`）に分けた。
   - `watchReview`：マージ・クローズで `ReviewWatchEnded`、先頭の変化で `ReviewRestarted`（`pushed`）、作者の返信で `ReviewRestarted`（`replied`）。静かになるまで `FEEDBACK_QUIET_MS` 待つ。
   - `reviewWatchDue`・`REVIEW_WATCH_INTERVALS`：投稿から時間がたった PR は、間を空けて読む。
-  - `supersededByRerequest`：GitHub の再依頼で作った、より新しいタスクがある元のタスクは、PR の変化で再レビューを始めない。
+  - `supersededWatch`：同じ PR を対象にする、より後に作ったレビューのタスク（GitHub の再依頼で作ったタスクなど）がある古いタスクは、PR の変化で再レビューを始めない。
   - `reconcileReviewTasks`：親が中止されたら、見守り中の子タスクも中止する。
 - `apps/daemon/src/github.ts`：PR の状態の答えに `updatedAt` を足した（変わっていない PR のコメントを読み直さない）。
 - `apps/daemon/src/notifier.ts`：見守りの間は、完了の通知を出さない。
@@ -84,6 +84,17 @@ PR のレビューのタスクは、判定に関係なく、レビューを投�
 | 11. 作業履歴に、ひな形の節が無い | この節と「残したこと」を足した |
 | 12. 以前の版に戻すと起動できなくなることが、文書に無い | ADR の影響に書いた |
 | 13. 細かい指摘 | 使っていない `reviewFollowing` と `reviewWatchEnded.at` を消した。子タスクを毎回読むのは、そのままにした（親のマージ・クローズに遅れずに完了にするため。親が承認待ちの間だけ、同じ PR を親と子で読む）。`watchReview` の分割は、していない（残したこと） |
+
+2 回目（判定：提案あり。提案 6 件。前回の 13 件のうち 12 件は対応を確認、13 の保守性は未対応）。
+
+| 指摘 | 対応 |
+| --- | --- |
+| 1. 同じ PR を見守る、子タスクでないタスクが 2 つ以上あると、両方が再レビューする | 後に作ったタスクだけが始めるようにした（`supersededWatch`。再依頼の見分けを広げた）。テストを足した。自動で再レビューしないタスクにも画面が「自動で再レビューします」と出す件は、残したこと |
+| 2. 見守り中のタスクを中止すると「完了」の通知が出る | 完了の判定から中止を除いた。テストを足した |
+| 3. 読み取りの失敗の扱いが、種類ごとにそろっていない | コメントまで読めたときに読んだ時刻を記録する。コメントの読み取りも、期限で通信を中断する（`feedback` に `signal`）。続けて読めない PR は間隔を空ける。消したプロジェクトのタスクは見守らない。テストを足した |
+| 4. 見守り中のタスクがプロジェクトの削除を止めることが、文書に無い | ADR の影響と、ユーザードキュメント（プロジェクトの設定）に書いた |
+| 5. 再レビューが始まると `wait_for_task` が起きるが、説明に無い | 起こさないようにした（投稿されたときに起きる）。テストを足し、仕様書に書いた |
+| 6. テストと文書の小さな食い違い | 期限と警告のタスクの ID のテストを足した。この作業履歴の「したこと」を直した。古いコメントを直した |
 
 ## 残したこと
 
