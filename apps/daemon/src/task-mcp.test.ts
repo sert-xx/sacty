@@ -263,6 +263,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "resume_task",
       "get_cancel_plan",
       "cancel_task",
+      "rerun_task",
     ]);
     expect(tools.map((t) => t.annotations?.readOnlyHint)).toEqual([
       true,
@@ -279,6 +280,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       false,
       false,
       true,
+      false,
       false,
     ]);
     // 作成は、sacty の外に作用し得る（工程が PR などに書く）ので、外に作用すると示す。取得は示さない
@@ -297,6 +299,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       false,
       true,
       false,
+      true,
       true,
     ]);
     expect(tools[4]?.annotations).toMatchObject({ destructiveHint: false, idempotentHint: false });
@@ -339,6 +342,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["message", "resumed", "task"],
       expect.arrayContaining(["canCancel", "willClose", "willDelete", "cancelArguments"]),
       expect.arrayContaining(["cancelled", "cleanup", "closedPullRequests", "failed"]),
+      ["message", "rerun", "task"],
     ]);
     expect(client.getServerVersion()).toMatchObject({ name: "sacty", version: "9.9.9" });
     expect(client.getInstructions()).toContain("rereview_task");
@@ -372,6 +376,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "resume_task",
       "get_cancel_plan",
       "cancel_task",
+      "rerun_task",
     ]);
     const found = await client.callTool({ name: "list_tasks", arguments: { pull_request: "9" } });
     expect((found.structuredContent as Listed).tasks.map((t) => t.id)).toEqual([id]);
@@ -2335,6 +2340,7 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         "resume_task",
         "get_cancel_plan",
         "cancel_task",
+        "rerun_task",
       ]);
       const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
       expect(desc("get_task")).toContain("humanAsks");
