@@ -95,17 +95,15 @@ function uncertainNotice(done: string, check: string, retry: string): string {
   return `${done}いる可能性があります。自動でやり直さず、get_task で ${check} を確かめてから、${retry}呼び直してください。`;
 }
 
-/** 書き込みの結果を受け取れなかったときの文。理由があれば（5xx の状態コードなど）それに、なければ原因の種類だけに、案内を続ける。 */
-function uncertainText(subject: string, notice: string, reason?: string): string {
-  return `${reason ?? `${subject}の結果を受け取れませんでした（時間切れ・切断など）。`}${notice}`;
-}
-
-/** 書き込みごとの、結果を受け取れなかったときの文の作り方（reason は、あれば先頭に置く理由）。 */
+/**
+ * 書き込みごとの、結果を受け取れなかったときの文の作り方。理由があれば（5xx の状態コードなど）それに、なければ原因の種類
+ * だけに、案内を続ける。
+ */
 type Uncertain = (reason?: string) => string;
 const uncertainOf =
   (subject: string, notice: string): Uncertain =>
   (reason) =>
-    uncertainText(subject, notice, reason);
+    `${reason ?? `${subject}の結果を受け取れませんでした（時間切れ・切断など）。`}${notice}`;
 
 /** 承認を頼んだ後に、結果を受け取れなかったときの案内（承認されたかどうかが分からない）。 */
 const APPROVE_UNCERTAIN = uncertainNotice("承認されて", "state と approval", "まだ承認待ちなら");
@@ -119,11 +117,8 @@ const uncertainChanges = uncertainOf("差し戻し", CHANGES_UNCERTAIN);
  * 一時停止を頼んだ後の案内。一時停止は、コンテナを止めて処理の終わりを待ってから応答するので、時間切れの後で一時停止に
  * なる（または承認待ちに達して止まらない）ことがある。
  */
-const PAUSE_UNCERTAIN = uncertainNotice(
-  "一時停止されて",
-  "state と pausedReason",
-  "まだ止まっていなければ",
-);
+const PAUSE_UNCERTAIN =
+  "一時停止されている可能性があります。自動でやり直さず、get_task で state と pausedReason を確かめてください。state が running・queued のままなら、一時停止が続いている可能性があるので、呼び直さず wait_for_task で paused か awaiting_approval になるのを待ってください（awaiting_approval になったときは、止まらなかったことを利用者に伝えてください）。";
 const uncertainPause = uncertainOf("一時停止", PAUSE_UNCERTAIN);
 
 /** 再開を頼んだ後の案内（再開されたかどうかが分からない）。 */

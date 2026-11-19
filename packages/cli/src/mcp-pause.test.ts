@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { Task } from "@sacty/core";
-import { startTaskMcp, type TaskDetail } from "@sacty/daemon/task-mcp";
+import { startTaskMcp, summarizeTask, type TaskDetail } from "@sacty/daemon/task-mcp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "../../../apps/daemon/src/activity.js";
 import type { AgentOutcome } from "../../../apps/daemon/src/agents/parse.js";
@@ -92,12 +92,11 @@ async function setup(agent: AgentOutcome[] = [], inject?: Inject) {
 }
 
 /** 要求要件の承認待ち（PR を作らない。画面で承認する工程）のタスク。 */
-async function awaiting() {
-  const t = await setup([
-    plan,
-    out("# 要求要件\n\n- AGENTS.md を足す"),
-    out("# 実装の説明\n\n- AGENTS.md を足した"),
-  ]);
+async function awaiting(inject?: Inject) {
+  const t = await setup(
+    [plan, out("# 要求要件\n\n- AGENTS.md を足す"), out("# 実装の説明\n\n- AGENTS.md を足した")],
+    inject,
+  );
   const { id } = t.service.createTask({ template: "sacty-setup", projectId: "default" });
   await t.service.runNext(id);
   for (let i = 0; i < 12; i++) {
@@ -463,6 +462,11 @@ describe("頼んだ後に結果を受け取れなかったときの案内（一�
       expect(pause.text).toContain("一時停止されている可能性があります");
       expect(pause.text).toContain("自動でやり直さず");
       expect(pause.text).toContain("get_task");
+      // 時間切れの後も一時停止が続いていることがあるので、running・queued のままなら呼び直さず待つ
+      expect(pause.text).toContain("state が running・queued のままなら");
+      expect(pause.text).toContain("呼び直さず wait_for_task で");
+      expect(pause.text).toContain("止まらなかったことを利用者に伝えてください");
+      expect(pause.text).not.toContain("止まっていなければ");
       Object.assign(t.live(id), { status: "paused", pausedReason: "manual" });
       const resume = await t.call("resume_task", { task_id: id });
       expect(resume.isError).toBe(true);
@@ -528,5 +532,136 @@ describe("頼んだ後に結果を受け取れなかったときの案内（一�
     );
     t.activity.close();
     timedOut.activity.close();
+  });
+
+  it("共通化した後も、差し戻しの、結果を受け取れなかったときの文は、前と同じ全文（5xx・時間切れ）", async () => {
+    const changes = (id: string) => ({
+      task_id: id,
+      step: "requirements",
+      submission: 1,
+      comments: ["直す"],
+    });
+    const failed = await awaiting(async (m) =>
+      m === "POST" ? new Response("x", { status: 503 }) : undefined,
+    );
+    const r503 = await failed.call("request_changes", changes(failed.id));
+    expect(r503.text).toBe(
+      "デーモンが 503 を返しました。差し戻されている可能性があります。自動でやり直さず、get_task で state と approval を確かめてから、まだ承認待ちなら呼び直してください。",
+    );
+    const slow = await awaiting(async (m) => {
+      if (m === "POST") throw Object.assign(new Error("t"), { name: "TimeoutError" });
+      return undefined;
+    });
+    const timedOut = await slow.call("request_changes", changes(slow.id));
+    expect(timedOut.text).toBe(
+      "差し戻しの結果を受け取れませんでした（時間切れ・切断など）。差し戻されている可能性があります。自動でやり直さず、get_task で state と approval を確かめてから、まだ承認待ちなら呼び直してください。",
+    );
+    failed.activity.close();
+    slow.activity.close();
+  });
+});
+
+describe("読み取り側と画面の判定（PBI-400）", () => {
+  it("canPause は、画面の一時停止のボタンが出る状態と、全状態で一致する", async () => {
+    const t = await setup();
+    const { id } = t.service.createTask({ projectId: "default", title: "題" });
+    const base = t.live(id);
+    const statuses = [
+      "queued",
+      "running",
+      "awaiting_approval",
+      "idle",
+      "paused",
+      "escalated",
+      "blocked",
+      "waiting_children",
+      "cancelled",
+    ] as const;
+    const stepSets = [
+      [],
+      [{ key: "requirements", state: "done" }],
+      [{ key: "implement", state: "running" }],
+    ];
+    for (const status of statuses) {
+      for (const steps of stepSets) {
+        for (const verification of [undefined, "pending"] as const) {
+          const task = { ...base, status, steps, verification } as unknown as Task;
+          // 画面の判定（canControl && canPause）の写し。完了・中止には出さず、idle は検証中だけ出す
+          const finished =
+            status === "cancelled" ||
+            (status === "idle" && summarizeTask(task).state === "completed");
+          const screen =
+            !finished &&
+            (["queued", "running", "awaiting_approval"].includes(status) ||
+              (status === "idle" && verification !== undefined));
+          expect(
+            summarizeTask(task).canPause,
+            `${status} ${JSON.stringify(steps)} ${verification}`,
+          ).toBe(screen);
+        }
+      }
+    }
+    t.activity.close();
+  });
+
+  it("再開できない理由に、チケットから取り込み、作業するリポジトリを決める前に止まったタスクの、リポジトリの選択が入る", async () => {
+    const t = await setup();
+    const { id } = t.service.createTask({ projectId: "default", title: "題" });
+    Object.assign(t.live(id), {
+      status: "paused",
+      pausedReason: "manual",
+      steps: [],
+      ticket: { url: "https://example.com/t/1" },
+      repo: undefined,
+      repository: undefined,
+      rerun: undefined,
+    });
+    const postsBefore = t.posts().length;
+    const before = t.count(id);
+    const r = await t.call("resume_task", { task_id: id });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("作業するリポジトリの選択");
+    expect(r.text).toContain("画面で人が決めてください");
+    expect(t.posts()).toHaveLength(postsBefore);
+    expect(t.count(id)).toBe(before);
+    const d = await t.detail(id);
+    expect(d.canResume).toBe(false);
+    expect(d.resumeBlocked?.decideOnScreen).toContain("作業するリポジトリの選択");
+    t.activity.close();
+  });
+
+  it("一時停止中でないタスクの再開の断りに、get_task で state を確かめることが入る", async () => {
+    const t = await setup();
+    const { id } = t.service.createTask({ projectId: "default", title: "題" });
+    const r = await t.call("resume_task", { task_id: id });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("一時停止中のタスクではないため、再開できません");
+    expect(r.text).toContain("get_task で state を確かめてください");
+    t.activity.close();
+  });
+
+  it("wait_for_task の cursor は、一時停止・再開の欄を含まず、一時停止と再開は出番の変化として返る", async () => {
+    const t = await setup();
+    const { id } = t.service.createTask({ projectId: "default", title: "題" });
+    type Waited = { changed: boolean; cursor: string };
+    const wait = async (cursor?: string) =>
+      (
+        await t.call("wait_for_task", {
+          task_id: id,
+          timeout_seconds: 1,
+          ...(cursor ? { cursor } : {}),
+        })
+      ).data as Waited;
+    const first = await wait();
+    const decoded = (c: string) =>
+      JSON.parse(Buffer.from(c, "base64url").toString("utf8")) as { w: Record<string, unknown> };
+    expect(Object.keys(decoded(first.cursor).w).sort()).toEqual(["a", "k", "p", "q", "r"]);
+    await t.call("pause_task", { task_id: id });
+    const afterPause = await wait(first.cursor);
+    expect(afterPause.changed).toBe(true);
+    expect(Object.keys(decoded(afterPause.cursor).w).sort()).toEqual(["a", "k", "p", "q", "r"]);
+    await t.call("resume_task", { task_id: id });
+    expect((await wait(afterPause.cursor)).changed).toBe(true);
+    t.activity.close();
   });
 });

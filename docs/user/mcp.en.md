@@ -10,7 +10,7 @@ For example, after fixing a PR, you can ask the AI to "re-review this PR with sa
 sacty has an MCP server for this (`sacty mcp`; it supports the 2026-07-28 revision of the MCP specification and also works with clients of earlier revisions).
 It can look up tasks (list, search, details), put a PR review task into re-review, create a task in a project you specify,
 read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only), approve a step that is awaiting approval, request changes on a step that is awaiting approval, pause a task, resume a paused task (resuming with only a note), and wait until a task's progress changes (awaiting approval, awaiting a person's decision, paused, completed, cancelled, or a PR review verdict). The logs of runs cannot be read yet (read them in the web UI).
-It cannot cancel or redo tasks (do those in the web UI). Resuming that needs a budget-cap increase or a decision on the test handling is also done in the web UI. Requesting changes is also only the basic form (requesting changes over the limit, choosing where to send it back, and choosing a cause are done in the web UI). A step approved by merging a PR (implementation, requirements or design with a PR) cannot be approved from MCP either (merge the PR on GitHub). Deliverables can be used to check the content before you approve.
+It cannot cancel or redo tasks (do those in the web UI). Resuming that needs a budget-cap increase, a decision on the test handling, or accepting a child task's cancellation is also done in the web UI. Requesting changes is also only the basic form (requesting changes over the limit, choosing where to send it back, and choosing a cause are done in the web UI). A step approved by merging a PR (implementation, requirements or design with a PR) cannot be approved from MCP either (merge the PR on GitHub). Deliverables can be used to check the content before you approve.
 
 ## Connecting
 
@@ -167,7 +167,7 @@ The AI calls it only when you ask. It is safer to ask after it has checked `appr
 - A running run is cut off, and resuming starts that step over from the beginning (the cost already spent does not come back).
 - Pausing a task awaiting approval stops the approval gate and the PR watch until you resume it (while it is paused, you can neither approve nor request changes).
 - If the work finished before the stop and the task reached approval or similar, it does not stop it and says so.
-- To stop a running task, sacty stops the container and waits for the process to end, which can take time. Even if no response comes within 30 seconds, the task may be paused later (or may reach approval and not stop). In that case the AI returns "it may have been paused", does not retry automatically, and checks the state with `get_task`.
+- To stop a running task, sacty stops the container and waits for the process to end, which can take time. Even if no response comes within 30 seconds, the task may be paused later (or may reach approval and not stop). In that case the AI returns "it may have been paused", does not retry automatically, and checks the state with `get_task`. If `state` is still `running` or `queued`, the pause may still be in progress, so it does not call again and waits with `wait_for_task`.
 - Cancelling cannot be done from MCP (do it in the web UI).
 
 ## Resuming
@@ -182,6 +182,7 @@ It first checks with `get_task` why the task is stopped (`pausedReason` and `pau
   - A stop at the budget cap: whether to raise the cap (a decision that increases cost).
   - A stop where you can decide the test handling: deciding on a test command or no tests.
   - A stop because a child task was cancelled: whether to accept the child's cancellation and resume.
+  - A stop of a ticket task before the repository to work on was decided: choosing the repository to work on.
 - sacty refuses to resume when an external-work step has started, a stacked dependency was cancelled, or a container that cannot be confirmed stopped remains. It passes on that reason as it is (it may be refused even when `canResume` is `true`).
 - When no result is received (a timeout and so on), the task may have been resumed. The AI does not retry automatically and checks the state with `get_task`.
 
