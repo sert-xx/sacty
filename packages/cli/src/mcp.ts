@@ -159,11 +159,19 @@ function rerunRepositoryForMcp(message: { code?: unknown; params?: unknown }): s
 
 /**
  * 続きの作成（派生）を頼んだ後の案内（作られたかどうかが分からない）。派生は何度でも作れ、呼び直すと二重に作られうるので、
- * 元のタスクの derivedTasks に、呼ぶ前に無かった ID が増えたかで、作られたかどうかを確かめる。
+ * 元のタスクの derivedTasks に、呼ぶ前に無かった ID が増えたかで確かめる。基準（呼ぶ前の derivedTasks）と送った題を文に入れ、
+ * 増えた ID のタスクの題と derivedFrom が今回の依頼と合うかも見る（再実行・指摘の持ち越しでも derivedTasks は増える）。
+ * reason が無いとき（時間切れ・切断・本文を読めない）は、処理が遅れて続くことがあるので、少し待ってから確かめる。
  */
-const DERIVE_UNCERTAIN =
-  "続きのタスクが作られている可能性があります。自動でやり直さず（呼び直すと二重に作られます）、元のタスクを get_task で読み、derivedTasks に、呼ぶ前に無かった ID が増えていないかを確かめてください。増えていれば作られているので、その ID のタスクを見てください。増えていなければ作られていないので、呼び直してよいです。";
-const uncertainDerive = uncertainOf("続きの作成", DERIVE_UNCERTAIN);
+function uncertainDerive(before: string[], title: string): Uncertain {
+  const notice = `続きのタスクが作られている可能性があります。自動でやり直さず（呼び直すと二重に作られます）、元のタスクを get_task で読み、derivedTasks に、呼ぶ前の derivedTasks（${
+    before.length > 0 ? before.join("・") : "無し"
+  }）に無かった ID が増えていないかを確かめてください。送った題は「${title}」です。増えた ID のタスクの題と derivedFrom が今回の依頼（この題・この元のタスク）と合えば作られているので、そのタスクを見てください（再実行や指摘の持ち越しでも derivedTasks は増えるので、合わないものは今回のものではありません）。増えていなければ作られていないので、呼び直してよいです。`;
+  const waiting =
+    "処理が遅れて続くことがあるので、すぐには呼び直さず、少し待ってから確かめてください。";
+  const base = uncertainOf("続きの作成", notice);
+  return (reason) => (reason === undefined ? `${base()}${waiting}` : base(reason));
+}
 
 /** 題の変更を頼んだ後の案内（変わったかどうかが分からない）。同じ題での2回目は断られるだけなので、呼び直しても害は無い。 */
 const RENAME_UNCERTAIN =
@@ -428,12 +436,13 @@ export function daemonApi(
     // 送るのは title・body・repo だけ（plan は送らない＝自動）
     async derive(id, input) {
       const at = endpoint(); // 接続先が無いのは、頼む前の失敗（作られていない）
+      // derivedBefore は送らない（結果を受け取れなかったときの案内にだけ使う）
       const body = { title: input.title, body: input.body, repo: input.repo };
       return writeTask(
         at,
         `/api/tasks/${encodeURIComponent(id)}/derive`,
         body,
-        uncertainDerive,
+        uncertainDerive(input.derivedBefore, input.title),
         deriveRepositoryForMcp,
       );
     },

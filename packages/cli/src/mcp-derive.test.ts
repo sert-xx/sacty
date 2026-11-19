@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { DERIVE_RECORD_HEADING, type Task } from "@sacty/core";
 import { startTaskMcp, type TaskDetail, type TaskSummary } from "@sacty/daemon/task-mcp";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "../../../apps/daemon/src/activity.js";
 import { createApp } from "../../../apps/daemon/src/server.js";
 import {
@@ -305,15 +305,11 @@ describe("本物のデーモンのサービスを通した、完了したタス�
     t.activity.close();
   });
 
-  it("無いタスク・消したプロジェクトのタスクは、どちらのツールも無いものとして断り、何も送らない", async () => {
+  it("無いタスクは、どちらのツールも無いものとして断り、何も送らず、何も増えない", async () => {
     const t = await setup();
     const id = completed(t);
-    const gone = await setup(async (m, p) =>
-      m === "GET" && p.startsWith("/api/tasks/") && p !== "/api/tasks/"
-        ? new Response(JSON.stringify({ error: "not_found" }), { status: 404 })
-        : undefined,
-    );
-    const goneId = completed(gone);
+    const tasks = t.taskCount();
+    const before = t.count(id);
     for (const [name, extra] of [
       ["derive_task", { body: "内容" }],
       ["rename_task", {}],
@@ -321,14 +317,33 @@ describe("本物のデーモンのサービスを通した、完了したタス�
       const none = await t.call(name, { task_id: "nope", title: "続き", ...extra });
       expect(none.isError, name).toBe(true);
       expect(none.text, name).toContain("タスクが見つかりません");
+    }
+    expect(t.posts()).toEqual([]);
+    expect(t.count(id)).toBe(before);
+    expect(t.taskCount()).toBe(tasks);
+    t.activity.close();
+  });
+
+  it("消したプロジェクトのタスク（本物のサービスでプロジェクトを消す）は、どちらのツールも無いものとして断り、何も送らず、何も増えない", async () => {
+    // プロジェクトを消すと、そのタスクは残るが、詳細の API が無いものとして返す
+    const gone = await setup();
+    const goneId = completed(gone);
+    const goneTasks = gone.service.list().length;
+    const goneBefore = gone.count(goneId);
+    // 完了したタスクは、監査などの実行待ちに入っていると、プロジェクトを消せない。実行待ちの一覧だけを空にして、本物の削除を通す
+    vi.spyOn(gone.service, "queuedTaskIds").mockReturnValue([]);
+    gone.service.deleteProject("default");
+    for (const [name, extra] of [
+      ["derive_task", { body: "内容" }],
+      ["rename_task", {}],
+    ] as const) {
       const r = await gone.call(name, { task_id: goneId, title: "続き", ...extra });
       expect(r.isError, name).toBe(true);
       expect(r.text, name).toContain("タスクが見つかりません");
     }
     expect(gone.posts()).toEqual([]);
-    expect(t.posts()).toEqual([]);
-    expect(t.count(id)).toBe(t.count(id));
-    t.activity.close();
+    expect(gone.count(goneId)).toBe(goneBefore);
+    expect(gone.service.list().length).toBe(goneTasks);
     gone.activity.close();
   });
 
@@ -377,7 +392,7 @@ describe("本物のデーモンのサービスを通した、完了したタス�
 });
 
 describe("本物のデーモンのサービスを通した、タスクの題の変更（PBI-412）", () => {
-  it("実行待ち・承認待ち・一時停止中・完了のタスクで、題が変わり（前後の空白は除く）、TaskRenamed が1件だけ増え、結果に前の題・新しい題・要約が入る", async () => {
+  it("実行待ち・実行中・承認待ち・一時停止中・完了のタスクで、題が変わり（前後の空白は除く）。実行中のタスクも通る、TaskRenamed が1件だけ増え、結果に前の題・新しい題・要約が入る", async () => {
     const t = await setup();
     const mk = (title: string, patch: Record<string, unknown> = {}) => {
       const { id } = t.service.createTask({ projectId: "default", title });
@@ -386,6 +401,7 @@ describe("本物のデーモンのサービスを通した、タスクの題の�
     };
     const cases: [string, string][] = [
       [mk("実行待ち"), "実行待ち"],
+      [mk("実行中", { status: "running" }), "実行中"],
       [mk("承認待ち", { status: "awaiting_approval" }), "承認待ち"],
       [mk("一時停止中", { status: "paused", pausedReason: "manual" }), "一時停止中"],
       [mk("完了", DONE), "完了"],
@@ -436,7 +452,7 @@ describe("本物のデーモンのサービスを通した、タスクの題の�
       expect(t.count(id), label).toBe(before);
     }
     expect(t.live(id).title).toBe("レビュー https://github.com/acme/app/pull/5");
-    // 検査で断るものは、送らない
+    // 空・長すぎる題は検査で送らずに断る。今と同じ題・PR のリンクが変わる題は、デーモンの理由を返すために送る（3件）
     expect(t.posts().filter((p) => p.path.endsWith("/title"))).toHaveLength(3);
     const dead = await cancelledTask(t);
     const cb = t.count(dead);
@@ -488,6 +504,22 @@ describe("続きの作成・題の変更を頼んだ後に結果を受け取れ�
       expect(r.text).toContain("呼び直すと二重に作られます");
       expect(r.text).toContain("derivedTasks");
       expect(r.text).toContain("増えていなければ作られていない");
+      // 基準（呼ぶ前の derivedTasks。無ければ「無し」）と送った題が入り、増えた ID の題・derivedFrom を見る
+      expect(r.text).toContain("呼ぶ前の derivedTasks（無し）");
+      expect(r.text).toContain("送った題は「続き」");
+      expect(r.text).toContain("derivedFrom");
+      // 時間切れ・切断・本文を読めないときは、少し待ってから確かめる（5xx は理由がある）
+      if (label === "5xx") expect(r.text).not.toContain("少し待ってから");
+      else expect(r.text).toContain("少し待ってから確かめて");
+      t.activity.close();
+    });
+    it(`${label}：派生の案内に、呼ぶ前の derivedTasks の ID が入る`, async () => {
+      const t = await setup(inject);
+      const id = completed(t, { derivedTasks: ["earlier-1", "earlier-2"] });
+      const r = await t.call("derive_task", { task_id: id, title: "別の続き", body: "内容" });
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain("呼ぶ前の derivedTasks（earlier-1・earlier-2）");
+      expect(r.text).toContain("送った題は「別の続き」");
       t.activity.close();
     });
     it(`${label}：題の変更は、変わっているかどうかが分からないことと、get_task の title の確かめ方を伝える`, async () => {

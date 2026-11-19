@@ -18,7 +18,7 @@
   - 派生の断りを `deriveBlock`（`{ reason, decideOnScreen }`）にまとめ、ツールの断りと、要約の `canDerive`・`get_task` の `deriveBlocked` で共有した。中止したタスクの案内は、`rerunBlock` が無いときだけ再実行を案内する。セキュリティの組み合わせ（`isSecurityTask`）は、送らずに断って画面へ。
   - 題・内容の検査は core の `DeriveTaskInput`（`title`・`body`）、題の検査は `RenameTaskInput` に任せた。
   - 要約に `canDerive`・`derivedFrom`・`derivedTasks` を足した。`rerunBlock` の完了したタスクの案内・コメントと、`rerun_task`・`RerunToolInput`・`canRerun` の説明・`INSTRUCTIONS` の再実行の段落の「画面で行う」を直した。`INSTRUCTIONS` に2つの段落を足し、頼まれたときだけ呼ぶ列挙にも足した。
-- `packages/cli/src/mcp.ts`：`derive`・`rename` を `writeTask`＋`uncertainOf` で足した（`DERIVE_UNCERTAIN`・`RENAME_UNCERTAIN`・`deriveRepositoryForMcp`）。
+- `packages/cli/src/mcp.ts`：`derive`・`rename` を `writeTask`＋`uncertainOf` で足した（`uncertainDerive`・`RENAME_UNCERTAIN`・`deriveRepositoryForMcp`）。
 - `packages/cli/src/index.ts`：`sacty mcp` の使い方の表示に、続きの作成と題の変更を足した。
 - 文書：仕様書（`mcp-server.md`・`.en.md`）・ユーザードキュメント（`mcp.md`・`.en.md`）・`cli.md`・`cli.en.md`・各 README の行・`CONTRIBUTING.md` のテストの表・ADR を足した。
 - テスト：`packages/cli/src/mcp-derive.test.ts` を足した（本物のサービスと API と `daemonApi` をつなぐ）。ツールの数を 19 に、`task-mcp.test.ts` の名前・注釈・結果の形の配列を合わせ、`SactyApi` の偽物（`apiOver`・`apiOverStub`・`task-mcp-wait.test.ts`・`task-mcp-read.test.ts`）に2つのメソッドを足した。`mcp-rerun.test.ts` の完了したタスクの案内の期待を、`derive_task` を案内する文に合わせた。
@@ -30,17 +30,22 @@
 
 ## 確かめたこと
 
-- `npm run lint`：通った（708 ファイル、警告なし）。
+- `npm run lint`：通った（708 ファイル、警告なし。フォーマットの直しを入れた後）。
 - `npm run typecheck`：通った。
-- `npx vitest run --no-file-parallelism`：273 ファイル・5445 件が通った（14 件は skip）。1回目の全件では、`task-mcp.test.ts` の2件（ツールの名前・結果の形の配列が17個のまま）が落ち、19個に直して通した。
-- この作業履歴を書いた後に、docs の規則のテスト（`npx vitest run tests/docs`）を実行し直して通した。
+- `npx vitest run tests/docs`：93 件が通った（仕様書の「コード:」の参照名を直した後）。
+- `npx vitest run --no-file-parallelism`：273 ファイル・5455 件が通った（14 件は skip）。
+- `@sacty/daemon/task-mcp` は dist を読むので、`apps/daemon` で `npm run build` をしてから `packages/cli` のテストを実行した。
 - テストのファイルは typecheck の対象外のため、`SactyApi` の偽物の書き漏れは `rg` で一覧して手で足した。
 
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
-| なし | 提出の前なので、まだレビューを受けていない（受けたら、この表に書き足す） |
+| 指摘1：結果を受け取れなかった `derive_task` の案内に、比べる基準が無い | `derive_task` が送る直前に読んだ元のタスクの `derivedTasks`（無ければ「無し」）と、送った題を、失敗の文に入れた（`mcp.ts` の `uncertainDerive`。`SactyApi.derive` の入力に `derivedBefore` を足し、API には送らない）。増えた ID のタスクの題・`derivedFrom` が今回の依頼と合うかを見る案内にした。時間切れ・切断・本文を読めないときは、少し待ってから確かめる案内を足した。説明・`INSTRUCTIONS`・仕様書・ユーザードキュメント（日英）を合わせ、テストで文に基準と題が入ること・待つ案内が入ること（5xx では入らない）を確かめた |
+| 指摘2：題の PR のリンクの条件がコードと食い違う | 説明・`INSTRUCTIONS`・仕様書・ユーザードキュメント（日英）を、コードの条件（作業するリポジトリが決まっているタスクで、題と説明から決まる PR の番号が変わる題は断る。PR から取り込んだタスクは問わない）に合わせた |
+| 指摘3：検査エラーの文の写し | 今回は切り出さない（既存の `create_task` を変えないため）。`deriveBlock` と `rerunBlock` が互いを呼ぶことと、止まる条件を、両方のコメントに書いた |
+| 指摘4：`expect(t.count(id)).toBe(t.count(id))` | 呼ぶ前の件数を取り、断った後と比べる形にした（消したプロジェクトの側も。タスクの数も比べる） |
+| 指摘5：実行中のタスク・消したプロジェクト・コメント | `rename_task` の通るケースに実行中（running）を足した。消したプロジェクトのタスクは、本物のサービスで `deleteProject` を通して確かめる形にした（完了したタスクは監査などの実行待ちに入るため、実行待ちの一覧だけ空にしている。テストの中に書いた）。「検査で断るものは、送らない」のコメントを、実際（空・長すぎる題は送らず、今と同じ題・PR の変更はデーモンの理由を返すために送る）に合わせた |
 
 ## 残したこと
 
