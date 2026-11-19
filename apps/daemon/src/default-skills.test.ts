@@ -1781,12 +1781,21 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
     ]) {
       expect(text).toContain(point);
     }
-    expect(text).toMatch(
-      /^- `must`：層の分担・決まった経路から外れたことで、.*今回の変更で効かなくなる。外れる理由が書かれていても変わらない$/m,
+    // 指摘にするか・重要度は、「重要度の決め方」の 1 箇所で、順に当てはめて決める
+    const severity = text.slice(text.indexOf("## 重要度の決め方"), text.indexOf("## NG 例"));
+    expect(severity).toContain("次の順に当てはめ、最初に当たったもので決める");
+    expect(severity).toMatch(
+      /^1\. 外れたことで、決まった経路が担っている仕組み（.*）が、今回の変更で効かなくなる：`must`。外れる理由が書かれていても、承認済みの要求要件・設計がそのやり方を決めていても出す/m,
     );
-    expect(text).toMatch(/^- `should`：そろっている慣習.*から、理由なく外れている$/m);
-    expect(text).toMatch(
-      /^- 出さない：慣習としなかったもの（割れている・例が少ない）、理由が根拠かコードのコメントに書かれている外れ（`must` に当たるものを除く）$/m,
+    expect(severity).toMatch(
+      /^2\. 外れる理由を、根拠かコードのコメントが述べている。または、承認済みの要求要件・設計が、そのやり方を決めている：出さない$/m,
+    );
+    expect(severity).toMatch(
+      /^3\. 1・2 に当たらず、そろっている慣習.*から外れている：`should`。.*満たせないなら、外れる理由をコメントに書くことを求める/m,
+    );
+    expect(severity).toMatch(/^4\. 1・2 に当たらず、.*：`nit`$/m);
+    expect(severity).toContain(
+      "慣習としなかったもの（割れている・例が少ない）は、外れとして扱わない（出さない）",
     );
     // NG 例は複数の言語で書き、指摘にしない例（割れている・理由がある）も含める
     const langs = [...text.matchAll(/^### 例\d+（([^）]+)）/gm)].map((m) => m[1]);
@@ -1803,30 +1812,37 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
     expect(text).toMatch(
       /^1\. 規約の文書を読む（.*書かれていない回は、文書が定める決まり.*差分と照らす。.*$/m,
     );
-    // 効かなくなる仕組みの確認が、理由による例外より先にある
-    const bypass = text.indexOf(
-      "効かなくなる仕組みがあれば、外れる理由が書かれていても指摘にする（`must`）",
+    // 判定は「重要度の決め方」だけに書き、手順・見落としやすい所・例 6 はそこを指す
+    expect(text).toMatch(
+      /^8\. 外れている所ごとに、.*「重要度の決め方」の順で決める（判定はそこだけに書いてある）$/m,
     );
-    const reason = text.indexOf("効かなくなる仕組みが無い外れは、外れる理由があるかを確かめる");
-    expect(bypass).toBeGreaterThan(0);
-    expect(reason).toBeGreaterThan(bypass);
-    // 理由が書かれていない外れは、慣習の仕組みで要件を満たせなくても、理由を書くことを求める
-    expect(text).toContain(
-      "慣習の仕組みでは今回の要件を満たせないと分かるときでも、外れる理由をコメントに書くことを `should` で求める",
-    );
-    expect(text).not.toContain("のどちらかなら指摘にしない");
-    // 承認済みの設計が決めた外れも、仕組みが効かなくなるなら出す
-    expect(text).toContain(
-      "設計が決めていても `must` で出し、設計と食い違うことを `problem` に書く",
-    );
+    expect(text).toContain("承認済みの要求要件・設計が決めた外れは、「重要度の決め方」の 2 で扱う");
+    expect(text).toContain("「重要度の決め方」の 2 に当たり、指摘にしない");
+    for (const stale of [
+      "のどちらかなら指摘にしない",
+      "既存と違うやり方を決めているときは、指摘にしない",
+      "理由が書かれていても変わらない",
+    ]) {
+      expect(text, stale).not.toContain(stale);
+    }
     // 仕様書の日英も、規約を読む観点の例を C-18 にしている
-    for (const spec of ["context.md", "context.en.md"]) {
+    // 仕様書の日英は、それぞれの言語で、同じ判定の順を書いている
+    const specPhrases: Record<string, string[]> = {
+      "context.md": [
+        "効かなくなるものは `must`（外れる理由が書かれていても、承認済みの設計が決めていても出す）",
+        "承認済みの要求要件や設計が決めているものは、指摘にしない",
+        "どちらでもないものは `should`",
+      ],
+      "context.en.md": [
+        "stop working is `must` (reported even when a reason for departing is written, and even when an approved design decided it)",
+        "or that approved requirements or an approved design decided, is not reported",
+        "A departure that is neither is `should`",
+      ],
+    };
+    for (const [spec, phrases] of Object.entries(specPhrases)) {
       const body = readFileSync(join(import.meta.dirname, "../../../docs/spec", spec), "utf8");
       expect(body, spec).not.toMatch(/C-5 など|such as C-5/);
-      // 理由による例外は、仕組みが効かなくなる must に及ばない
-      expect(body, spec).toMatch(
-        /次の `must` に当たるものを除く|except what falls under the `must` that follows/,
-      );
+      for (const phrase of phrases) expect(body, `${spec}: ${phrase}`).toContain(phrase);
     }
   });
 });
