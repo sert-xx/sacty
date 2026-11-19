@@ -1097,12 +1097,16 @@ export type Task = {
    * その回の判定が指摘なしでないときに付き、再レビューを始める・見守りを終える（ReviewWatchEnded）と消える。付いている間、
    * タスクは完了していない（reviewWatching）。判定が指摘なしの投稿・それより前の版が投稿したレビューには付かない（完了する。
    * 完了したタスクは、PR の変化を見守らない）。
-   * since は、その回のレビューの対象を確かめた時刻（これより後の作者の返信を、まだ読んでいない返信として数える）。
+   * since は、その回のレビューの実行を始めた時刻（reviewResolvedAt。これより後の作者の返信を、まだ読んでいない返信として数える。
+   * レビューが PR のコメントを読むのは実行を始めた後なので、対象を確かめてから実行を始めるまでの返信を、二重に数えない）。
    */
   reviewWatch?: { since: string };
   /** 見守りを終えた理由（ReviewWatchEnded。PBI-411）。再レビューを始めると消える。 */
   reviewWatchEnded?: { reason: PayloadOf<"ReviewWatchEnded">["reason"] };
-  /** 今の回のレビューの対象を確かめた時刻（ReviewTargetResolved。PBI-411）。これより前の作業履歴の回には無い。 */
+  /**
+   * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。実行を始める前は、対象を確かめた時刻。PBI-411）。レビューが
+   * PR のコメントを読むのは、この後。作業履歴から作るので、以前の版の回にも付く。
+   */
   reviewResolvedAt?: string;
   /**
    * 作者の返信を読んで、同じ先頭を判定し直したときの、その先頭（ReviewRestarted の reason: replied。PBI-411）。同じ先頭の
@@ -1110,7 +1114,7 @@ export type Task = {
    */
   reviewReplyCommit?: string;
   /**
-   * 作者の返信で判定し直す回の、返信を数え始める時刻（前の回の対象を確かめた時刻。PBI-411）。その回のレビューに、これより後の
+   * 作者の返信で判定し直す回の、返信を数え始める時刻（前の回のレビューの実行を始めた時刻。PBI-411）。その回のレビューに、これより後の
    * 作者の返信を渡す。ほかの理由で再レビューを始めると消える。
    */
   reviewReplySince?: string;
@@ -1701,6 +1705,8 @@ export function applyEvent(
           throw new ActivityIntegrityError(event, "operation settings are missing");
         task.operationAttempted = true;
       }
+      // レビューが PR のコメントを読むのは、実行を始めた後（見守りで、これより後の作者の返信を数える。PBI-411）
+      if (event.payload.step === "review") task.reviewResolvedAt = event.at;
       task.status = "running";
       task.currentRunId = event.payload.runId;
       // 見直さずに工程を始めた（工程の見直しより前の作業履歴）なら、見直しは待たない

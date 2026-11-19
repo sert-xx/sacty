@@ -3294,8 +3294,9 @@ const PullRequestReviewPosted = z.object({
 });
 
 /**
- * レビューを投稿した後の、PR の変化の見守りを終えた（PBI-411）。見守っていたタスクは完了する。指摘なしで完了していたタスクは、
- * 完了のまま、PR の先頭を追うのをやめる。merged：PR がマージされた、closed：PR がマージされずに閉じられた。
+ * レビューを投稿した後の、PR の変化の見守りを終えた（PBI-411）。見守っていたタスクだけに記録し、そのタスクは完了する
+ * （指摘なしで完了したタスクは見守っていないので、記録しない）。merged：PR がマージされた、closed：PR がマージされずに
+ * 閉じられた。
  */
 const ReviewWatchEnded = z.object({
   type: z.literal("ReviewWatchEnded"),

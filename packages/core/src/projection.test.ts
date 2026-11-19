@@ -1999,10 +1999,34 @@ describe("レビューの工程（PBI-19）", () => {
         expect(canRereview(task)).toBe(true);
         // 工程は終わっているので、続きのタスク（指摘を直すタスクなど）は、今までどおり作れる
         expect(canDerive(task)).toBe(true);
-        // 見守りの起点は、その回の対象を確かめた時刻（これより後の作者の返信を、まだ読んでいない返信として数える）
+        // 見守りの起点は、その回のレビューの実行を始めた時刻（これより後の作者の返信を、まだ読んでいない返信として数える）
         expect(task.reviewWatch?.since).toBe(task.reviewResolvedAt);
       },
     );
+
+    it("返信を数え始めるのは、対象を確かめた時刻ではなく、レビューの実行を始めた時刻（レビューが PR のコメントを読むのは、その後）", () => {
+      const at = (event: ActivityEvent, time: string) => ({ ...event, at: time }) as ActivityEvent;
+      const times = [
+        "2026-10-10T00:00:00.000Z",
+        "2026-10-10T00:03:00.000Z",
+        "2026-10-10T00:10:00.000Z",
+      ];
+      const reviewed = (id: string) => [
+        ...start(id),
+        ...round(id, "suggestions").map((e, i) => at(e, times[i] ?? "")),
+        at(post(id, true), "2026-10-10T00:11:00.000Z"),
+      ];
+      expect(taskOf(reviewed("w12")).reviewWatch?.since).toBe("2026-10-10T00:03:00.000Z");
+      // 作者の返信で判定し直す回には、その時刻を引き継ぐ
+      const replied = taskOf([
+        ...reviewed("w13"),
+        ev("w13", {
+          type: "ReviewRestarted",
+          payload: { reason: "replied", commit: "h".repeat(40) },
+        }),
+      ]);
+      expect(replied.reviewReplySince).toBe("2026-10-10T00:03:00.000Z");
+    });
 
     it("判定が指摘なしなら完了する。見守りの状態は付かない（完了の後は、PR の変化を見守らない）", () => {
       const task = taskOf([...start("w2"), ...round("w2", "no_findings"), post("w2", true)]);
