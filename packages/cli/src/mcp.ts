@@ -6,6 +6,7 @@
 import type { ActivityEvent, Task } from "@sacty/core";
 import { renderMessage } from "@sacty/core";
 import {
+  type CleanupPlanItem,
   type ProjectChoice,
   READ_REASONS,
   readFailure,
@@ -88,7 +89,7 @@ const CREATE_UNCERTAIN =
   "タスクは作られている可能性があります。list_tasks（query に題）で確かめてから、まだ無ければ呼び直してください。";
 
 /**
- * 書き込み（承認・差し戻し・一時停止・再開）を頼んだ後に、結果を受け取れなかったときの案内（行われたかどうかが分からない）。
+ * 書き込み（承認・差し戻し・一時停止・再開・中止）を頼んだ後に、結果を受け取れなかったときの案内（行われたかどうかが分からない）。
  * done は「承認されて」のような、行われたことの言い方。check は get_task で確かめる欄、retry は呼び直してよい状態。
  */
 function uncertainNotice(done: string, check: string, retry: string): string {
@@ -120,6 +121,14 @@ const uncertainChanges = uncertainOf("差し戻し", CHANGES_UNCERTAIN);
 const PAUSE_UNCERTAIN =
   "一時停止されている可能性があります。自動でやり直さず、get_task で state と pausedReason を確かめてください。state が一時停止の前と同じ（running・queued・検証中の idle）なら、一時停止が続いている可能性があるので、呼び直さず wait_for_task で待ってください。paused なら止まっています。awaiting_approval・escalated になったときは、止まらなかったことを利用者に伝えてください。";
 const uncertainPause = uncertainOf("一時停止", PAUSE_UNCERTAIN);
+
+/**
+ * 中止を頼んだ後の案内。中止は、コンテナを止めて処理の終わりを待ち、PR を閉じ、ブランチを消してから応答するので、時間切れの後で
+ * 中止になる（片付けが続く）ことがある。
+ */
+const CANCEL_UNCERTAIN =
+  "中止されている（片付けが続いている）可能性があります。自動でやり直さず、get_task で state を確かめてください。まだ中止でない（cancelled でない）なら、中止の片付けが続いている可能性があるので、呼び直さず wait_for_task で待ってください。cancelled なら、中止されています（片付けの結果は、画面か、中止の後の get_task で確かめてください）。";
+const uncertainCancel = uncertainOf("中止", CANCEL_UNCERTAIN);
 
 /** 再開を頼んだ後の案内（再開されたかどうかが分からない）。 */
 const RESUME_UNCERTAIN = uncertainNotice(
@@ -216,7 +225,7 @@ export function daemonApi(
     }
   };
   /**
-   * 書き込みの POST を送り、更新後のタスクを返す（承認・差し戻し・一時停止・再開で共通）。失敗の振り分け：
+   * 書き込みの POST を送り、更新後のタスクを返す（承認・差し戻し・一時停止・再開・中止で共通）。失敗の振り分け：
    * 送る前の失敗（認証できない・接続を断られた）はそのまま、送った後に結果を受け取れなかった（時間切れ・切断・5xx・
    * 本文を読めない）ときは uncertain の案内、デーモンが応答で断った（4xx）ときは、その理由（行われていない）。
    */
@@ -329,6 +338,18 @@ export function daemonApi(
       const at = endpoint(); // 接続先が無いのは、頼む前の失敗（再開していない）
       const body = input.note ? { note: input.note } : {};
       return writeTask(at, `/api/tasks/${encodeURIComponent(id)}/resume`, body, uncertainResume);
+    },
+    // 消したプロジェクトのタスクの確かめと、中止できる状態かの確かめ・片付けの対象の確かめは、ツールが先に getTask で行う
+    // （完了したタスクをデーモンは断らない）。送るのは {} だけ
+    async cancel(id) {
+      const at = endpoint(); // 接続先が無いのは、頼む前の失敗（中止していない）
+      return writeTask(at, `/api/tasks/${encodeURIComponent(id)}/cancel`, {}, uncertainCancel);
+    },
+    async cleanupPlan(id) {
+      const res = await request(endpoint(), `/api/tasks/${encodeURIComponent(id)}/cleanup-plan`);
+      if (res.status === 404) return undefined;
+      if (!res.ok) throw await refusal(res);
+      return (await read<{ plan: CleanupPlanItem[] }>(res)).plan;
     },
     async listProjects() {
       const res = await request(endpoint(), "/api/projects");
