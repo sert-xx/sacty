@@ -155,6 +155,7 @@ Ask "Which sacty tasks are waiting for me?" and the AI calls `list_tasks` with `
 - When the result includes `nextOffset`, pass it as `offset` to get the rest. `nextOffset` is absent once everything has been returned.
 - When the wait times cannot be read, it fails with the reason instead of replacing them with `updatedAt`.
 - The web UI's status text and color, the link to where a person decides, and the PR conflict note are not shown. Use `state`, `approval`, `asks`, `pausedReason`, and `url`.
+- When a task whose `state` is `queued` has `preparing`, sacty is processing it right now before its first step starts (the value is `repository`, `gathering`, `triage`, `planning`, `review_target`, or `starting`; [Status before the first step starts](tasks.en.md#status-before-the-first-step-starts)). When a task whose first step has not started has no `preparing`, it is waiting for its turn and the like. After the first step has started, a task can be processed even without `preparing` (between steps, retrying a failed run, at the start of a re-review, and so on).
 - The list is read-only. Approving, requesting changes, resuming, and so on are done only when you ask.
 
 ## Approving

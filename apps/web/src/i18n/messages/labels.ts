@@ -6,6 +6,7 @@ import {
   type DaemonText,
   type OrchestratorSessionReason,
   type PauseReason,
+  type PreparingPhase,
   renderMessage,
   type SecurityCategory,
   type StepKey,
@@ -175,6 +176,15 @@ const ja = {
     changeUndecided: "変更の申し出の判断待ち",
     reworkConfirmation: "PR の指摘の戻し先の確認待ち",
     reworkJudging: "PR の指摘の戻し先を判断中",
+    /** 最初の工程が始まる前に、sacty が進めている処理の段階（PBI-410）。 */
+    preparing: {
+      repository: "対象リポジトリを用意中",
+      gathering: "情報を収集中",
+      triage: "チケットを確認中",
+      planning: "進め方を判定中",
+      review_target: "レビューする PR を確認中",
+      starting: "工程の開始を準備中",
+    } satisfies Record<PreparingPhase, string>,
     noChangesReview: (n: number) => `変更なしの実装の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
     stepPrAwaitingMerge: (step: string, n: number) =>
       `${step}の PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
@@ -951,6 +961,14 @@ const en: LabelMessages = {
     changeUndecided: "Change request needs you",
     reworkConfirmation: "Step to redo for PR comments needs you",
     reworkJudging: "Deciding the step to redo for PR comments",
+    preparing: {
+      repository: "Preparing the repository",
+      gathering: "Gathering information",
+      triage: "Reading the ticket",
+      planning: "Deciding how to proceed",
+      review_target: "Checking the PR to review",
+      starting: "Preparing to start the step",
+    },
     noChangesReview: (n) =>
       `Implement awaiting approval with no changes${n > 1 ? ` (submission ${n})` : ""}`,
     stepPrAwaitingMerge: (step, n) =>

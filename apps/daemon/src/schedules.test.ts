@@ -85,6 +85,26 @@ const daily = (task: Record<string, unknown> = { title: "依存の更新", repo:
 });
 
 describe("スケジュールタスク", () => {
+  it("スケジュールタスクの詳細のタスクにも、最初の工程の前の処理の段階を足す（一覧・詳細と同じ表示にする。PBI-410）", async () => {
+    const { activity, service, project, schedules, clock } = setup();
+    const created = schedules.create(project.id, daily());
+    clock.now = at(2026, 10, 20, 9, 0);
+    await schedules.tick();
+    const [task] = service.list();
+    // 処理していないタスクには無い
+    expect(schedules.get(created.id)?.tasks[0]).not.toHaveProperty("preparing");
+    // 処理しているタスク（デーモンが段階を返すタスク）には、タスクの一覧の API と同じ値が入る
+    const processing = vi
+      .spyOn(service, "preparingOf")
+      .mockImplementation((id) => (id === task?.id ? "gathering" : undefined));
+    expect(schedules.get(created.id)?.tasks.map((t) => [t.id, t.preparing])).toEqual([
+      [task?.id, "gathering"],
+    ]);
+    expect(service.listView().find((t) => t.id === task?.id)?.preparing).toBe("gathering");
+    processing.mockRestore();
+    activity.close();
+  });
+
   it("予定の時刻を過ぎたら、決めた内容のタスクを作り、そのスケジュールタスクの回として記録する", async () => {
     const { activity, service, project, schedules, clock } = setup();
     const created = schedules.create(project.id, daily({ title: "依存の更新", plan: "direct" }));

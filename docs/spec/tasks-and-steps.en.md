@@ -483,6 +483,45 @@ Code: `apps/daemon/src/service.ts` (`requestSecurityFix`, `createSecurityFixTask
 
 Code: `apps/daemon/src/security.ts` (`extractSecurityScope`, `securityScope`, `scopeViolation`, `pathInScope`, `SECURITY_FIX_MAX_CHANGED_LINES`, `MINIMAL_CHANGE_VIEWPOINT`), `apps/daemon/src/repository.ts` (`diffStats`, `parseNumstat`), `apps/daemon/src/service.ts` (`checkSecurityScope`, `rerunTask`), `apps/daemon/src/prompts.ts` (`approvedBasisLines`)
 
+## Display while processing before the first step
+
+A task's status stays `queued` from creation until the first step's run starts (`AgentRunStarted`).
+A task the daemon is actually processing during this time is shown in the web UI as in progress (`working`) with the text of its phase, not as "Queued".
+
+- The phases (`PreparingPhase`) and their texts are as follows.
+
+  | Phase | What is happening | Japanese text | English text |
+  | --- | --- | --- | --- |
+  | `repository` | Preparing the target repository (including matching the candidates of a task with several repositories) | 対象リポジトリを用意中 | Preparing the repository |
+  | `gathering` | [Information gathering](#information-gathering) | 情報を収集中 | Gathering information |
+  | `triage` | The ticket triage that is redone after information gathering | チケットを確認中 | Reading the ticket |
+  | `planning` | Deciding how to proceed (from choosing the steps until `StepsChosen` is recorded; includes checking the PR to continue and preparing the base branch) | 進め方を判定中 | Deciding how to proceed |
+  | `review_target` | Checking the target PR of the review step | レビューする PR を確認中 | Checking the PR to review |
+  | `starting` | Any other work until the first step starts (after the steps are chosen: matching the candidates, preparing an external operation, and so on) | 工程の開始を準備中 | Preparing to start the step |
+
+- The phase is kept only in the daemon's memory (`TaskService.preparingPhases`). It is not recorded in the activity log, and the meaning of `queued` does not change.
+  `runNext` (matching the candidates) and `runNextInner` (the other phases) set it right before each piece of work starts, and `runNext` always clears it when it ends.
+- It is returned to the web UI only when the status is `queued`, the worker is processing the task (`inflight`, the same mark as "running" in the dashboard's step queue), and the task has never started a step run (no `AgentRunStarted` in the activity log; `firstStepStarted`) (`preparingOf`).
+  - If a phase is set, that phase is returned.
+  - If no phase is set, `starting` is returned.
+    So until the first step starts, a task the queue counts as running always has a phase.
+  - `preparing` is added to the tasks of `GET /api/tasks` (`listView`), `GET /api/tasks/:id` (`view`), and `GET /api/schedules/:id` (`ScheduledTasks.get`).
+- The following tasks have no `preparing` and stay shown as "Queued" (`waiting`).
+  - A task waiting for a slot under the parallel limit.
+  - A task waiting for context images to be built.
+  - A task between the end of one piece of work and the worker starting the next (for example, after information gathering is recorded and before deciding how to proceed starts).
+  - A task not processed yet after the daemon restarts.
+- After the first step starts, or the task is paused or stops on a failure, the status is no longer `queued`, so it is not shown.
+  The web UI follows by reloading its data every 3 seconds.
+- A task that returned to `queued` after starting a step run at least once (between steps, retrying a failed run, checking the target PR again for a re-review, and so on) has no `preparing` even while it is processed, and is shown as "Queued" (this display covers only the time until the first step starts).
+- The web UI decides with `statusText` and `statusTone`. The task list, the dashboard, the task details, the rows of related tasks, and the scheduled task details use the same functions, and the status filter of the list uses the same kinds.
+- Before the steps are chosen, the steps column shows "Steps not chosen yet" (`parts.bits.choosing`).
+- The summary of `sacty mcp` carries the same `preparing` ([MCP server](mcp-server.en.md#task-summary)).
+
+Related ADR: [最初の工程が始まる前の処理の段階を、デーモンのメモリーから画面に返す](../adr/20261119-1612-show-preparing-phase-from-daemon-memory.md)
+
+Code: `apps/daemon/src/service.ts` (`preparingPhases`, `preparingOf`, `firstStepStarted`, `listView`, `view`, `runNext`, `runNextInner`), `apps/daemon/src/schedules.ts` (`ScheduledTasks.get`), `apps/daemon/src/server.ts` (`createApp`), `packages/core/src/projection.ts` (`PREPARING_PHASES`, `PreparingPhase`, `Task.preparing`), `apps/web/src/lib/labels.ts` (`statusText`, `statusTone`), `apps/web/src/i18n/messages/labels.ts` (`state.preparing`), `apps/web/src/components/task-bits.tsx` (`StepChipsView`)
+
 ## Information gathering
 
 At the start of a task (before choosing steps), the information gatherer runs once, collects the information related to the task, and summarizes only what is relevant (`InformationGathered`; the actor is `gatherer`). For a task taken in from a ticket, the same run also does ticket triage (deciding the repository to work in, the title, and the summary) ("Doubling as triage" below). It aligns the background, goals, and constraints that people take for granted before the Orchestrator chooses the plan. There is no approval gate; the summary is shown under "Gathered information" in the task details (collapsed once a step has started).

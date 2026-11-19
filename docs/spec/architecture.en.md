@@ -137,6 +137,7 @@ Each dashboard section contains the following.
   - The number of running tasks / the parallel limit, and the number of waiting tasks. The limit is the sacty setting `maxParallelTasks` (the default when it is not set or cannot be read).
   - Running means the tasks the worker is processing (`inflight`). This includes work while the status is `idle` (opening the implementation PR, exports, and so on).
   - Waiting means the tasks the worker will process next (`queuedTaskIds`, the same decision as the worker) that it is not processing yet.
+  - Among the tasks counted as running, those being processed before their first step are also shown as in progress in the status ([Display while processing before the first step](tasks-and-steps.en.md#display-while-processing-before-the-first-step)).
   - When more tasks than the limit have been waiting for 10 minutes (`QUEUE_OVER_MS`), the section is highlighted with a link to the sacty settings.
   - The daemon updates the start of "has persisted" (`overSince`) (`trackQueue`, `queueOverSince`; independent of the UI fetching). It updates it whenever it writes to the activity log, starts or finishes a run, or saves the sacty settings or a project. It keeps the value in memory only and counts again after a restart.
 - Intake

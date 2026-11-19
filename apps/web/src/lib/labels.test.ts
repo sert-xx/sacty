@@ -1,4 +1,4 @@
-import type { ActivityEvent, Task, TaskProposal } from "@sacty/core";
+import { type ActivityEvent, PREPARING_PHASES, type Task, type TaskProposal } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { labels } from "@/i18n/messages/labels";
 import { task as taskMessages } from "@/i18n/messages/task";
@@ -2099,6 +2099,46 @@ describe("状態の表示の種類（PBI-42）", () => {
     expect(statusText(task({ ...held, status: "queued", pendingReview: undefined }))).not.toBe(
       "PR の指摘の戻し先を判断中",
     );
+  });
+
+  it("最初の工程の前に sacty が処理している実行待ちは、段階の文で working。処理していない実行待ちは waiting のまま（PBI-410）", () => {
+    const texts = {
+      repository: ["対象リポジトリを用意中", "Preparing the repository"],
+      gathering: ["情報を収集中", "Gathering information"],
+      triage: ["チケットを確認中", "Reading the ticket"],
+      planning: ["進め方を判定中", "Deciding how to proceed"],
+      review_target: ["レビューする PR を確認中", "Checking the PR to review"],
+      starting: ["工程の開始を準備中", "Preparing to start the step"],
+    } as const;
+    // 段階の一覧（core）のすべてに、文がある
+    expect(Object.keys(texts).sort()).toEqual([...PREPARING_PHASES].sort());
+    for (const phase of PREPARING_PHASES) {
+      const processing = task({ status: "queued", preparing: phase });
+      expect(statusText(processing)).toBe(texts[phase][0]);
+      expect(statusTextIn(processing, labels.en)).toBe(texts[phase][1]);
+      expect(statusTone(processing)).toBe("working");
+      // 人の出番には数えない
+      expect(needsPerson(processing)).toBe(false);
+    }
+    // 段階の文は、互いに見分けられる
+    expect(new Set(Object.values(texts).map((t) => t[0])).size).toBe(PREPARING_PHASES.length);
+    // 枠・依存を待っているだけ（処理の段階が無い）なら、実行待ち・waiting のまま
+    const waiting = task({ status: "queued" });
+    expect(statusText(waiting)).toBe("実行待ち");
+    expect(statusTextIn(waiting, labels.en)).toBe("Queued");
+    expect(statusTone(waiting)).toBe("waiting");
+    expect(statusTone(task({ status: "blocked" }))).toBe("waiting");
+    // 実行待ちでなくなったタスクに段階が残っていても、その状態の表示にする（古い段階を出さない）
+    for (const status of ["running", "paused", "idle", "blocked", "cancelled"] as const) {
+      const moved = task({
+        status,
+        preparing: "gathering",
+        ...(status === "paused" ? { pausedReason: "manual" as const } : {}),
+      });
+      expect(statusText(moved), status).not.toBe("情報を収集中");
+      expect(statusText(moved), status).toBe(statusText({ ...moved, preparing: undefined }));
+      expect(statusTone(moved), status).toBe(statusTone({ ...moved, preparing: undefined }));
+    }
   });
 
   it("PR の指摘の戻し先を判断している間は、承認待ちでも working", () => {

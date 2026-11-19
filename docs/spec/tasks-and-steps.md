@@ -731,6 +731,45 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 
 コード: `apps/daemon/src/security.ts`（`extractSecurityScope`・`securityScope`・`scopeViolation`・`pathInScope`・`SECURITY_FIX_MAX_CHANGED_LINES`・`MINIMAL_CHANGE_VIEWPOINT`）、`apps/daemon/src/repository.ts`（`diffStats`・`parseNumstat`）、`apps/daemon/src/service.ts`（`checkSecurityScope`・`rerunTask`）、`apps/daemon/src/prompts.ts`（`approvedBasisLines`）
 
+## 最初の工程が始まる前の処理の表示
+
+タスクの状態は、作ってから最初の工程の実行が始まる（`AgentRunStarted`）まで `queued` のまま。
+この間にデーモンが実際に処理しているタスクは、画面で「実行待ち」ではなく、進行中（`working`）として、処理の段階の文で出す。
+
+- 段階（`PreparingPhase`）と、画面の文は次のとおり。
+
+  | 段階 | していること | 日本語の文 | 英語の文 |
+  | --- | --- | --- | --- |
+  | `repository` | 対象リポジトリの用意（複数のリポジトリを指定したタスクの、候補の照合を含む） | 対象リポジトリを用意中 | Preparing the repository |
+  | `gathering` | [情報収集](#情報収集) | 情報を収集中 | Gathering information |
+  | `triage` | 情報収集の後にやり直すチケットのトリアージ | チケットを確認中 | Reading the ticket |
+  | `planning` | 進め方の判定（工程の選択から `StepsChosen` の記録まで。引き継ぐ PR の確認・ベースブランチの用意を含む） | 進め方を判定中 | Deciding how to proceed |
+  | `review_target` | レビューの工程の、対象の PR の確認 | レビューする PR を確認中 | Checking the PR to review |
+  | `starting` | そのほかの、最初の工程を始めるまでの処理（工程を選んだ後の、候補の照合・外部作業の準備など） | 工程の開始を準備中 | Preparing to start the step |
+
+- 段階は、デーモンのメモリーにだけ持つ（`TaskService.preparingPhases`）。作業履歴には記録せず、`queued` の意味も変えない。
+  `runNext`（候補の照合）と `runNextInner`（そのほかの段階）が、それぞれの処理を始める直前に付け、`runNext` の終わりに必ず消す。
+- 画面に返すのは、状態が `queued` で、ワーカーがそのタスクを処理していて（`inflight`。ダッシュボードの待ち行列の「実行中」と同じ印）、工程の実行を1回も始めていない（作業履歴に `AgentRunStarted` が無い。`firstStepStarted`）ときだけ（`preparingOf`）。
+  - 付けた段階があれば、それを返す。
+  - 付けた段階が無ければ、`starting` を返す。
+    このため、最初の工程が始まるまでは、待ち行列が「実行中」に数えるタスクに、必ず段階が入る。
+  - `GET /api/tasks`（`listView`）・`GET /api/tasks/:id`（`view`）・`GET /api/schedules/:id`（`ScheduledTasks.get`）のタスクに `preparing` を足す。
+- 次のタスクには `preparing` が無く、「実行待ち」（`waiting`）のまま出す。
+  - 同時に実行する数の上限で、枠が空くのを待っているタスク。
+  - コンテキストのイメージの作成を待っているタスク。
+  - 1つの処理が終わってから、ワーカーが次の処理を始めるまでの間のタスク（情報収集を記録した後、進め方の判定が始まるまでなど）。
+  - デーモンを起動し直した後の、まだ処理していないタスク。
+- 最初の工程が始まった・一時停止した・失敗して止まった後は、状態が `queued` でなくなるので出さない。
+  画面は 3 秒ごとの取り直しで追従する。
+- 工程の実行を1回でも始めた後に `queued` へ戻ったタスク（工程と工程の間・失敗した実行のやり直し・再レビューで対象の PR を確かめ直す間など）は、処理していても `preparing` が無く、「実行待ち」と出す（この表示の対象は、最初の工程が始まるまで）。
+- 画面の判定は `statusText`・`statusTone`。タスクの一覧・ダッシュボード・タスクの詳細・関係するタスクの行・スケジュールタスクの詳細が同じ関数を使い、一覧の状態の絞り込みも同じ区分になる。
+- 工程が決まる前の工程の欄には「工程は未定」と出す（`parts.bits.choosing`）。
+- `sacty mcp` の要約にも同じ `preparing` が入る（[MCP サーバー](mcp-server.md#タスクの要約)）。
+
+関係する ADR: [最初の工程が始まる前の処理の段階を、デーモンのメモリーから画面に返す](../adr/20261119-1612-show-preparing-phase-from-daemon-memory.md)
+
+コード: `apps/daemon/src/service.ts`（`preparingPhases`・`preparingOf`・`firstStepStarted`・`listView`・`view`・`runNext`・`runNextInner`）、`apps/daemon/src/schedules.ts`（`ScheduledTasks.get`）、`apps/daemon/src/server.ts`（`createApp`）、`packages/core/src/projection.ts`（`PREPARING_PHASES`・`PreparingPhase`・`Task.preparing`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`）、`apps/web/src/i18n/messages/labels.ts`（`state.preparing`）、`apps/web/src/components/task-bits.tsx`（`StepChipsView`）
+
 ## 情報収集
 
 タスクの開始時（工程を選ぶ前）に1回、情報収集のエージェントがタスクに関係する情報を集め、関係するものだけに絞り込んでまとめる（`InformationGathered`。actor は `gatherer`）。

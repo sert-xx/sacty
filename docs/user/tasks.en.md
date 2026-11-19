@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx, apps/web/src/lib/labels.ts, apps/web/src/i18n/messages/labels.ts, apps/web/src/i18n/messages/parts.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -381,6 +381,27 @@ The AI it uses and its cost are as follows.
 
 - You can choose the AI with `step_agents.gather` in `config.yaml` (the Orchestrator's AI if omitted; [config.yaml settings](config.en.md#models-per-step)).
 - The cost is counted toward the task budget and shown in the "Information gathering" row of the per-step cost table.
+
+### Status before the first step starts
+
+From when a task is created until its first step starts, the task's status tells you what Sacty is doing.
+While Sacty is processing the task, the status has the in-progress color and shows one of the following texts.
+
+| Status text | What Sacty is doing |
+| --- | --- |
+| Preparing the repository | Fetching the repository to work in |
+| Gathering information | The information gatherer is collecting the information related to the task |
+| Reading the ticket | Reading the ticket to decide the repository to work in, the title, and the summary |
+| Deciding how to proceed | The Orchestrator is choosing the plan, such as the steps |
+| Checking the PR to review | In a PR review task, reading the target PR |
+| Preparing to start the step | After the steps are chosen, getting ready to start the first step |
+
+When a task whose first step has not started is shown as "Queued", it is not being processed yet.
+It is waiting for its turn under the limit on tasks run in parallel, or for its next piece of work to start.
+
+- The task list, the dashboard, the task details, and the scheduled task details show the same status.
+- In the status filter of the list, a task being processed falls under "In progress" and a "Queued" task under "Waiting" ([Find and filter tasks](#find-and-filter-tasks)).
+- Until the steps are chosen, the steps column shows "Steps not chosen yet".
 
 ## Self-review before submitting
 

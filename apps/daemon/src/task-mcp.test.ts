@@ -441,6 +441,49 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
     activity.close();
   });
 
+  it("実行待ちのまま最初の工程の前の処理をしているタスクは、list_tasks・get_task の要約で、その段階が読める。state は queued のまま（PBI-410）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const started = Promise.withResolvers<void>();
+    const go = Promise.withResolvers<void>();
+    const { service } = makeService(activity, [], {
+      gatherer: async () => {
+        started.resolve();
+        await go.promise;
+        return { brief: "集めたまとめ", sources: [] };
+      },
+    });
+    const processing = service.createTask({ projectId: "default", title: "処理中" });
+    const waiting = service.createTask({ projectId: "default", title: "枠を待つ" });
+    const { client, json } = await connect(apiOver(service));
+    const run = service.runNext(processing.id);
+    await started.promise;
+
+    const listed = await json<Listed>("list_tasks");
+    const summary = (id: string) => listed.tasks.find((t) => t.id === id);
+    expect(summary(processing.id)).toMatchObject({ state: "queued", preparing: "gathering" });
+    // 処理していない実行待ち（枠を待っているだけ）には、欄が無い
+    expect(summary(waiting.id)?.state).toBe("queued");
+    expect(summary(waiting.id)).not.toHaveProperty("preparing");
+    // state での絞り込みは、変わらない（どちらも queued）
+    const queued = await json<Listed>("list_tasks", { state: ["queued"] });
+    expect(new Set(queued.tasks.map((t) => t.id))).toEqual(new Set([processing.id, waiting.id]));
+
+    const detail = await json<TaskSummary>("get_task", { task_id: processing.id });
+    expect(detail).toMatchObject({ state: "queued", preparing: "gathering" });
+    expect(await json<TaskSummary>("get_task", { task_id: waiting.id })).not.toHaveProperty(
+      "preparing",
+    );
+
+    // 処理が終わると、欄が消える（いまある欄は、処理中と同じ）
+    go.resolve();
+    await run;
+    const after = await json<TaskSummary>("get_task", { task_id: processing.id });
+    expect(after).not.toHaveProperty("preparing");
+    expect(after.state).toBe("queued");
+    await client.close();
+    activity.close();
+  });
+
   it("PR の番号・URL・ブランチ名からレビューのタスクを特定し、再レビューにできる（画面の再レビューと同じ結果）", async () => {
     const { activity, pulls, service, id } = await reviewed();
     // ほかの PR のレビューのタスク（まだ始めていない）と、PR に関係の無いタスク

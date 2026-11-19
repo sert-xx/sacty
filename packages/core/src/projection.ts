@@ -303,6 +303,22 @@ export type TaskStatus =
   | "escalated"
   | "cancelled";
 
+/**
+ * 最初の工程が始まる前の、デーモンの処理の段階（PBI-410）。repository：対象リポジトリの用意、gathering：情報収集、
+ * triage：チケットのトリアージ、planning：進め方（工程・イメージなど）の判定、review_target：レビューの対象の PR の確認、
+ * starting：そのほかの、最初の工程を始めるまでの処理（工程を選んだ後の、開始の準備など）。工程の実行を1回でも始めた
+ * タスクには、どの段階も付かない。
+ */
+export const PREPARING_PHASES = [
+  "repository",
+  "gathering",
+  "triage",
+  "planning",
+  "review_target",
+  "starting",
+] as const;
+export type PreparingPhase = (typeof PREPARING_PHASES)[number];
+
 export type TaskRemark = {
   id: string;
   step: StepKey;
@@ -885,6 +901,13 @@ export type Task = {
    * しない。デーモンが画面に返すときだけ、まだ決めていない案があるタスクに足す（`TaskService.view`）。
    */
   deferralHandlingDefault?: DeferralHandling;
+  /**
+   * 最初の工程が始まる前に、デーモンがいま実際に進めている処理の段階（PBI-410）。作業履歴からは復元しない（デーモンの
+   * メモリーにだけ持つ）。デーモンが画面に返すときだけ、実行待ち（queued）で処理中の、工程の実行を1回も始めていない
+   * タスクに足す。枠・依存・イメージを待っているだけのタスク、デーモンを起動し直した後のタスク、工程の実行を1回でも
+   * 始めたタスク（処理していても）には無い。
+   */
+  preparing?: PreparingPhase;
   /** 人が、ゴールガーディアンの不合格のまま実装の承認へ進めた（VerificationOverridden）。submission はその提出回。 */
   verificationOverride?: { at: string; submission: number };
   /**

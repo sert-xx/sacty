@@ -167,6 +167,19 @@ describe("ダッシュボードの終わっていないタスク（PBI-114）", 
     expect(data.openTasks[1]?.status).toEqual({ text: "実行中", tone: "working" });
   });
 
+  it("最初の工程の前に処理している実行待ちは進行中、枠を待つ実行待ちは待ちのまま出す（PBI-410）", async () => {
+    listTasks.mockResolvedValue([
+      task({ id: "a", status: "queued", steps: [], preparing: "gathering" }),
+      task({ id: "b", status: "queued", steps: [] }),
+    ]);
+    const data = await loadDashboard();
+    const status = (id: string) => data.openTasks.find((t) => t.id === id)?.status;
+    expect(status("a")).toEqual({ text: "情報を収集中", tone: "working" });
+    expect(status("b")).toEqual({ text: "実行待ち", tone: "waiting" });
+    // あなたの出番には、どちらも出さない
+    expect(data.attention).toEqual([]);
+  });
+
   it("件数の上限は無い", async () => {
     listTasks.mockResolvedValue(Array.from({ length: 120 }, () => task()));
     expect((await loadDashboard()).openTasks).toHaveLength(120);
