@@ -2059,6 +2059,19 @@ class PollFailed extends Error {
   }
 }
 
+/**
+ * 利用者の言葉（題など）を AI に返す文には入れるが、標準エラーの1行（failureLine）には出さない失敗。
+ * message が AI に返す文、logMessage が標準エラーに出す文（利用者の言葉を除いたもの）。
+ */
+export class ToolFailure extends Error {
+  readonly logMessage: string;
+  constructor(message: string, logMessage: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ToolFailure";
+    this.logMessage = logMessage;
+  }
+}
+
 class WaitCancelled extends Error {
   constructor() {
     super("待つ呼び出しは取り消されました。");
@@ -3293,7 +3306,8 @@ const TOOLS: readonly ToolDefinition[] = [
       const from = found.task.title;
       const task = await api.rename(taskId, { title: checkedInput.data.title });
       return {
-        message: `題を変えました（「${from}」→「${task.title}」）。今の実行は止めていません。すでに作った PR の題とブランチ名は変わりません。`,
+        message:
+          "題を変えました（変える前と新しい題は rename に入っています）。今の実行は止めていません。すでに作った PR の題とブランチ名は変わりません。",
         rename: { from, to: task.title },
         task: summarizeTask(task, api.webUrl()),
       };
@@ -3378,7 +3392,12 @@ export function failureLine(tool: string, args: unknown, error: unknown): string
     args && typeof args === "object" && "task_id" in args && typeof args.task_id === "string"
       ? `(task_id=${args.task_id})`
       : "";
-  const reason = error instanceof Error ? error.message : String(error);
+  const reason =
+    error instanceof ToolFailure
+      ? error.logMessage
+      : error instanceof Error
+        ? error.message
+        : String(error);
   const causes = READ_TOOLS.has(tool) ? safeCauses(error) : causeChain(error);
   return `[sacty mcp] ${tool}${taskId}: ${reason}${causes.length > 0 ? `（原因：${causes.join(" ← ")}）` : ""}`;
 }

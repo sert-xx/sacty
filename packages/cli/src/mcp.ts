@@ -16,6 +16,7 @@ import {
   STALE_LOGS_OMITTED,
   STALE_LOGS_QUERY,
   staleChangesMessage,
+  ToolFailure,
 } from "@sacty/daemon/task-mcp";
 import {
   DAEMON_AUTH_MESSAGE,
@@ -104,7 +105,17 @@ function uncertainNotice(done: string, check: string, retry: string): string {
  * 書き込みごとの、結果を受け取れなかったときの文の作り方。理由があれば（5xx の状態コードなど）それに、なければ原因の種類
  * だけに、案内を続ける。
  */
-type Uncertain = (reason?: string) => string;
+type Uncertain = ((reason?: string) => string) & {
+  /** 標準エラーに出す文（利用者の言葉を除いたもの）。無ければ、AI に返す文と同じ。 */
+  forLog?: (reason?: string) => string;
+};
+/** 結果を受け取れなかった失敗を作る。標準エラー用の文があれば、分けて持たせる。 */
+function uncertainError(uncertain: Uncertain, reason: string | undefined, cause: unknown): Error {
+  const message = uncertain(reason);
+  return uncertain.forLog
+    ? new ToolFailure(message, uncertain.forLog(reason), { cause })
+    : new Error(message, { cause });
+}
 const uncertainOf =
   (subject: string, notice: string): Uncertain =>
   (reason) =>
@@ -164,13 +175,18 @@ function rerunRepositoryForMcp(message: { code?: unknown; params?: unknown }): s
  * reason が無いとき（時間切れ・切断・本文を読めない）は、処理が遅れて続くことがあるので、少し待ってから確かめる。
  */
 function uncertainDerive(before: string[], title: string): Uncertain {
-  const notice = `続きのタスクが作られている可能性があります。自動でやり直さず（呼び直すと二重に作られます）、元のタスクを get_task で読み、derivedTasks に、呼ぶ前の derivedTasks（${
-    before.length > 0 ? before.join("・") : "無し"
-  }）に無かった ID が増えていないかを確かめてください。送った題は「${title}」です。増えた ID のタスクの題と derivedFrom が今回の依頼（この題・この元のタスク）と合えば作られているので、そのタスクを見てください（再実行や指摘の持ち越しでも derivedTasks は増えるので、合わないものは今回のものではありません）。増えていなければ作られていないので、呼び直してよいです。`;
-  const waiting =
-    "処理が遅れて続くことがあるので、すぐには呼び直さず、少し待ってから確かめてください。";
-  const base = uncertainOf("続きの作成", notice);
-  return (reason) => (reason === undefined ? `${base()}${waiting}` : base(reason));
+  const build = (withTitle: boolean): ((reason?: string) => string) => {
+    const sent = withTitle ? `送った題は「${title}」です。` : "";
+    const notice = `続きのタスクが作られている可能性があります。自動でやり直さず（呼び直すと二重に作られます）、元のタスクを get_task で読み、derivedTasks に、呼ぶ前の derivedTasks（${
+      before.length > 0 ? before.join("・") : "無し"
+    }）に無かった ID が増えていないかを確かめてください。${sent}増えた ID のタスクの題と derivedFrom が今回の依頼（この題・この元のタスク）と合えば作られているので、そのタスクを見てください（再実行や指摘の持ち越しでも derivedTasks は増えるので、合わないものは今回のものではありません）。増えていなければ作られていないので、呼び直してよいです。`;
+    const waiting =
+      "処理が遅れて続くことがあるので、すぐには呼び直さず、少し待ってから確かめてください。";
+    const base = uncertainOf("続きの作成", notice);
+    return (reason) => (reason === undefined ? `${base()}${waiting}` : base(reason));
+  };
+  // AI に返す文には送った題を入れ、標準エラーの文には入れない
+  return Object.assign(build(true), { forLog: build(false) });
 }
 
 /** 題の変更を頼んだ後の案内（変わったかどうかが分からない）。同じ題での2回目は断られるだけなので、呼び直しても害は無い。 */
@@ -313,12 +329,12 @@ export function daemonApi(
       if (notSent(error)) throw error;
       // 頼んだ後に結果を受け取れなかった（時間切れ・切断）ときは、行われたかどうかが分からない
       // 元の文（「もう一度試してください」など）は案内と矛盾するので使わず、原因の種類だけを書く（元の例外は cause に残す）
-      throw new Error(uncertain(), { cause: error });
+      throw uncertainError(uncertain, undefined, error);
     }
     // 5xx は、処理の途中で失敗したのかもしれず、行われたかどうかが分からない（案内は 1 か所で付ける）
     if (res.status >= 500) {
       const failed = await refusal(res).catch(() => undefined);
-      throw new Error(uncertain(failed?.message), { cause: failed });
+      throw uncertainError(uncertain, failed?.message, failed);
     }
     // デーモンが応答で断ったなら、行われていない。その理由を返す
     if (!res.ok) throw await refusal(res, rewrite);
@@ -326,7 +342,7 @@ export function daemonApi(
       return (await read<{ task: Task }>(res)).task;
     } catch (error) {
       // 本文を読めなかったときも、行われたかどうかが分からない
-      throw new Error(uncertain(), { cause: error });
+      throw uncertainError(uncertain, undefined, error);
     }
   };
   return {

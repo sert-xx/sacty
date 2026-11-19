@@ -412,6 +412,9 @@ describe("本物のデーモンのサービスを通した、タスクの題の�
       expect(r.isError, label).toBe(false);
       const done = r.data as Rename;
       expect(done.rename, label).toEqual({ from: label, to: `新しい題（${label}）` });
+      // message は固定の文で、題（利用者・取り込み元の文）は入れない。題は rename で返す
+      expect(done.message, label).not.toContain(label);
+      expect(done.message, label).toContain("題を変えました");
       expect(done.task.title, label).toBe(`新しい題（${label}）`);
       expect(done.task.id, label).toBe(id);
       expect(t.live(id).title, label).toBe(`新しい題（${label}）`);
@@ -440,8 +443,8 @@ describe("本物のデーモンのサービスを通した、タスクの題の�
     });
     const before = t.count(id);
     for (const [title, expected, label] of [
-      ["   ", "題", "空"],
-      ["あ".repeat(201), "題", "長すぎる"],
+      ["   ", "入力してください。", "空"],
+      ["あ".repeat(201), "200文字以内で入力してください。", "長すぎる"],
       ["レビュー https://github.com/acme/app/pull/5", "変わっていません", "今と同じ"],
       ["レビュー", "PR", "PR のリンクを消す"],
       ["レビュー https://github.com/acme/app/pull/6", "PR", "PR のリンクを変える"],
@@ -520,6 +523,29 @@ describe("続きの作成・題の変更を頼んだ後に結果を受け取れ�
       expect(r.isError).toBe(true);
       expect(r.text).toContain("呼ぶ前の derivedTasks（earlier-1・earlier-2）");
       expect(r.text).toContain("送った題は「別の続き」");
+      t.activity.close();
+    });
+    it(`${label}：派生の標準エラーの1行には、送った題を出さない（AI に返す文には入る）`, async () => {
+      const t = await setup(inject);
+      const id = completed(t);
+      const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const r = await t.call("derive_task", {
+          task_id: id,
+          title: "秘密の題",
+          body: "秘密の内容",
+        });
+        expect(r.isError).toBe(true);
+        expect(r.text).toContain("送った題は「秘密の題」");
+        const lines = logged.mock.calls.map((c) => c.join(" "));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain(`[sacty mcp] derive_task(task_id=${id}):`);
+        expect(lines[0]).toContain("作られている可能性があります");
+        expect(lines[0]).not.toContain("秘密の題");
+        expect(lines[0]).not.toContain("秘密の内容");
+      } finally {
+        logged.mockRestore();
+      }
       t.activity.close();
     });
     it(`${label}：題の変更は、変わっているかどうかが分からないことと、get_task の title の確かめ方を伝える`, async () => {
