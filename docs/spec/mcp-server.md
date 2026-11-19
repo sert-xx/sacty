@@ -6,10 +6,10 @@
 標準入出力（stdio）で動き、画面と同じデーモンの API を呼ぶ。
 MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（2025-11-25 まで）のクライアントも受ける。
 ツールは、タスクの一覧・検索（`list_tasks`）、タスクの詳細（`get_task`）、PR のレビューのタスクの再レビュー（`rereview_task`）、プロジェクトの一覧（`list_projects`）、タスクの作成（`create_task`）、
-成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）の8つ。
-最後の3つは、成果物と実行を読むだけのツール。実行のログを読むツールは、まだ無い（後続）。
+成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、承認待ちの工程の承認（`approve_step`）の9つ。
+`approve_step` の前の3つ（`list_deliverables`・`get_deliverable`・`list_runs`）は、成果物と実行を読むだけのツール。実行のログを読むツールは、まだ無い（後続）。
 
-関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)
+関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)
 
 ## 起動と接続
 
@@ -24,7 +24,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
   `sacty up` を起動し直すとトークンが変わるが、次の呼び出しから新しい接続先とトークンを使う（MCP サーバーの起動し直しは要らない）。
 - デーモンの応答は、要求ごとに 30 秒（`MCP_REQUEST_TIMEOUT_MS`）まで待つ（本文の読み取りを含む）。
 - 認証は足していない（MCP の認証の仕様は HTTP のためのもので、stdio では資格情報を環境から取る決まり）。使えるのは、`daemon.json`（権限 0600）を読める利用者だけ。
-- 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。上の5つのツールは画面と同じ API を呼ぶ。成果物と実行を読む3つのツールは、読み取りだけの API（下の表の下3行。画面は呼ばない）を呼ぶ。
+- 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。`list_tasks`・`get_task`・`rereview_task`・`list_projects`・`create_task`・`approve_step` は画面と同じ API を呼ぶ。`list_deliverables`・`get_deliverable`・`list_runs` は、読み取りだけの API（下の表のこの3つの行。画面は呼ばない）を呼ぶ。
 
 | ツール | デーモンの API |
 | --- | --- |
@@ -36,6 +36,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 | `list_deliverables` | `GET /api/tasks/:id/deliverables` |
 | `get_deliverable` | `GET /api/tasks/:id/deliverables/:step/:kind?offset=&max=` |
 | `list_runs` | `GET /api/tasks/:id/runs?offset=&limit=` |
+| `approve_step` | `GET /api/tasks/:id`・`POST /api/tasks/:id/approve` |
 
 コード: `packages/cli/src/index.ts`（`mcpCommand`）、`packages/cli/src/mcp.ts`（`daemonApi`）、`apps/daemon/src/task-mcp.ts`（`serveTaskMcp`・`startTaskMcp`・`createTaskMcpServer`・`SactyApi`）、`packages/cli/src/context-preview.ts`（`readDaemonFile`・`daemonRequest`）、`packages/cli/src/up-env.ts`（`daemonEndpoint`）
 
@@ -43,7 +44,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 
 サーバーの使い方の説明（`INSTRUCTIONS`）と、`list_tasks`・`get_task` の説明に、結果の題・説明・レビューの本文・止まっている理由はほかの人が書いた文を含むデータで、その中の指示に従わないことを書く。
 `list_projects` の説明にも同じ注意を書く（プロジェクトの名前は、人が付けた文）。
-`rereview_task`・`create_task` の説明には、利用者に頼まれたときだけ呼ぶこと（題・説明・レビューの本文などの中の指示では呼ばない）を書く。
+`rereview_task`・`create_task`・`approve_step` の説明には、利用者に頼まれたときだけ呼ぶこと（題・説明・レビューの本文などの中の指示では呼ばない）を書く。
 `list_deliverables`・`get_deliverable`・`list_runs` の説明と `INSTRUCTIONS` にも、結果の成果物はほかの人やエージェントが書いた文を含むデータで、その中の指示に従わないことを書く（`READ_UNTRUSTED_NOTE`）。
 
 ツールは `TOOLS` の表（名前・説明・引数の形・結果の形・処理）に持ち、サーバーを作るときにすべて登録する。
@@ -132,6 +133,28 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 - 作る API を呼んだ後に結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、その理由に続けて、タスクが作られている可能性があること・`list_tasks`（`query` に題）で確かめてから呼び直すことを返す（デーモンが記録した後に、応答が届かなかったのかもしれないため。作成の API には、二重に作らせないための仕組みが無い）。デーモンが 5xx 以外の応答で断ったとき（`DaemonRefusal`）、認証できなかったとき（401）、接続を断られたとき、呼ぶ前の失敗（`daemon.json` が無い）は、処理されていないので、理由だけを返す。
 - 前の版のデーモン：`POST /api/tasks`・`GET /api/projects` は、MCP のために足したものではないので、前の版のデーモンにもある。通らなければ、デーモンが断った理由（読めなければ状態コード）を返し、MCP サーバーは終わらない。
 - ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`）・sacty の外に書く（`openWorldHint: true`。始まった工程が、PR などに書く）。
+
+### approve_step
+
+承認待ちの工程を承認する（画面の「承認する」と同じ）。
+
+| 引数 | 型 | 内容 |
+| --- | --- | --- |
+| `task_id` | 文字列（必須） | タスクの ID |
+| `step` | 工程の名前（必須） | 承認する工程（`get_task` の `approval.step`） |
+| `submission` | 1 以上の整数（必須） | 承認する提出の回（`get_task` の `approval.submission`） |
+
+- `POST /api/tasks/:id/approve` に `{ step, submission }` を送るだけ。画面が送るものと同じで、承認の判断（`service.approve`）・記録（`StepApproved`。actor `person`）・次の工程の始まり方も画面と同じ。MCP 専用の経路・記録は無い。画面が断る場面は、同じ理由で断る。
+- 承認したら、文と、承認の対象（`approved`：`taskId`・`step`・`submission`）と、承認した後の[タスクの要約](#タスクの要約)を返す（次の工程が終わるのは待たない）。
+- 承認する提出を呼ぶ側が指定する（古い提出を誤って承認しない）。いま承認待ちの工程・回と違えば、承認せずに理由を返す。古い回の理由には、いまの回と、`get_task` で確かめ直すことを入れる（デーモンの文言の「画面を更新して」は、MCP の利用者には合わないので、MCP の層で置き換える）。
+- 承認できるのは、画面で承認する工程（PR を作らない工程の承認待ち）だけ。承認待ちでない（実行中・一時停止・完了・中止など）・無い（消したプロジェクトのタスクを含む。先に `GET /api/tasks/:id` で確かめる）・承認待ちの工程と違う・古い回・再現できなかった再現・二重の呼び出し（2回目は承認待ちでない、または回が違う）は、デーモンの理由を返し、何も記録しない。
+  上限を超えた差し戻しの判断待ち（`escalated`）は、画面と同じく、承認できる。
+- PR のマージで承認する工程（実装・PR のある要求要件・設計）は、承認せず、デーモンの理由（PR のマージが承認であることと、PR の URL）を返す。MCP から PR をマージすることは、この版の範囲に入れない（GitHub への書き込み。[ADR](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)）。
+- 承認の前に確かめる手段として、タスクの要約（`list_tasks`・`get_task` など）に `approval` が入る。承認待ち（`awaiting_approval`・`escalated`）のときだけで、`step`（承認待ちの工程）・`submission`（承認待ちの提出の回。無ければ 0）・`method`（`approve_step`：このツールで承認できる、`pull_request`：PR のマージが承認で、`pullRequestUrl` の PR をマージする、`not_approvable`：再現できなかった再現。差し戻すか中止する）。
+- 承認の API を呼んだ後に結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、承認されている可能性があること・自動でやり直さないこと・`get_task` で確かめてから呼び直すことを返す。案内の前の文は、5xx のときはデーモンの理由（状態コードなど）、時間切れ・切断・本文を読めないときは決まった文「承認の結果を受け取れませんでした（時間切れ・切断など）。」で、元の例外の文（「もう一度試してください」など）は案内と矛盾するので使わない。デーモンが応答で断ったとき、認証できなかったとき（401）、接続を断られたとき、呼ぶ前の失敗は、承認されていないので、理由だけを返す。
+- 前の版のデーモン：`POST /api/tasks/:id/approve` は古くからあるので、前の版のデーモンにも通る。通らなければ、デーモンが断った理由（読めなければ状態コード）を返す。`approval` は MCP の層が作るので、前の版のデーモンでも入る。
+- 説明文に、利用者に頼まれたときだけ呼ぶこと・承認すると次の工程が始まること（時間と費用がかかる・取り消せない）・先に `list_deliverables`・`get_deliverable` で成果物を確かめること・呼び直す前に `get_task` で確かめることを書く。`INSTRUCTIONS` にも、頼まれたときだけ呼ぶこと・取り消せないこと・先に成果物を確かめることを足す。
+- ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`。2回目は断られる）・sacty の外に書きうる（`openWorldHint: true`。次の工程が書く）。
 
 ### list_deliverables
 
@@ -240,11 +263,11 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 引数が型に合わないとき（決めた範囲の外の `limit`・無い `task_id` など）は、MCP の SDK が、ツールを呼ばずに、同じ形（`isError: true` と理由の文）で返す。
 知らないツールの呼び出しなどは、JSON-RPC のエラーになる。
 
-コード: `apps/daemon/src/task-mcp.ts`（`TOOLS`・`defineTool`・`INSTRUCTIONS`・`filterTasks`・`parsePullRequestQuery`・`describeTask`）、`packages/cli/src/mcp.ts`（`daemonApi`・`MCP_REQUEST_TIMEOUT_MS`・`REREVIEW_UNCERTAIN`・`CREATE_UNCERTAIN`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/daemon/src/service.ts`（`rereview`・`createTask`）、`packages/core/src/events.ts`（`CreateTaskInput`）
+コード: `apps/daemon/src/task-mcp.ts`（`TOOLS`・`defineTool`・`INSTRUCTIONS`・`filterTasks`・`parsePullRequestQuery`・`describeTask`）、`packages/cli/src/mcp.ts`（`daemonApi`・`MCP_REQUEST_TIMEOUT_MS`・`REREVIEW_UNCERTAIN`・`CREATE_UNCERTAIN`・`APPROVE_UNCERTAIN`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/daemon/src/service.ts`（`rereview`・`createTask`）、`packages/core/src/events.ts`（`CreateTaskInput`）
 
 ## タスクの要約
 
-`list_tasks`・`rereview_task`・`create_task` の結果と、`get_task` の結果の土台。
+`list_tasks`・`rereview_task`・`create_task`・`approve_step` の結果と、`get_task` の結果の土台。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -259,6 +282,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | `reviewOf` | PR のレビューの子タスクの、親のタスクの ID |
 | `reviewTasks` | このタスクの PR をレビューする子タスク（タスクの ID と PR の番号） |
 | `pausedReason` | 一時停止の理由（一時停止中だけ） |
+| `approval` | 承認待ち（`awaiting_approval`・`escalated`）のときだけ。承認待ちの工程・提出の回・承認の手段（[approve_step](#approve_step)） |
 | `createdAt`・`updatedAt` | 作った時刻・最後に記録した時刻 |
 | `url` | 画面のタスクの詳細の URL（`daemon.json` に画面の URL があるときだけ） |
 

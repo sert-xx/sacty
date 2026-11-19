@@ -25,12 +25,17 @@ import {
 class DaemonRefusal extends Error {}
 
 /** デーモンが断った理由（{ error: "invalid_operation", messages }）を、文にする。読めなければ、状態コードを伝える。 */
-async function refusal(res: Response): Promise<DaemonRefusal> {
+async function refusal(
+  res: Response,
+  rewrite?: (message: { code?: unknown; params?: unknown }) => string | undefined,
+): Promise<DaemonRefusal> {
   const json = (await res.json().catch(() => undefined)) as
     | { error?: unknown; messages?: unknown; issues?: unknown }
     | undefined;
   if (json?.error === "invalid_operation" && Array.isArray(json.messages)) {
-    const text = json.messages.map((m) => renderMessage(m, "ja")).join("\n");
+    const text = json.messages
+      .map((m) => rewrite?.(m as { code?: unknown; params?: unknown }) ?? renderMessage(m, "ja"))
+      .join("\n");
     if (text) return new DaemonRefusal(text);
   }
   // 入力の誤り（題が空など）は、誤りごとの文言のコードで返る
@@ -42,6 +47,16 @@ async function refusal(res: Response): Promise<DaemonRefusal> {
     if (text) return new DaemonRefusal(text);
   }
   return new DaemonRefusal(`デーモンが ${res.status} を返しました。`);
+}
+
+/** 古い提出の断りは、画面の「画面を更新して」ではなく、MCP で次にすることを伝える。 */
+function staleForMcp(message: { code?: unknown; params?: unknown }): string | undefined {
+  if (message.code !== "gate.staleSubmission") return undefined;
+  const { submission, current } = (message.params ?? {}) as {
+    submission?: unknown;
+    current?: unknown;
+  };
+  return `指定した提出（${String(submission)}回目）は、いまの承認待ち（${String(current)}回目）と違うため、承認しませんでした。get_task の approval で最新の提出の回を確かめ、成果物（list_deliverables・get_deliverable）を確かめ直してから、submission を指定し直してください。`;
 }
 
 /** 要求が処理されなかったと分かる失敗（認証できない・接続を断られた）か。 */
@@ -60,6 +75,17 @@ const REREVIEW_UNCERTAIN =
 /** タスクの作成を頼んだ後に、結果を受け取れなかったときの案内（作られたかどうかが分からない）。 */
 const CREATE_UNCERTAIN =
   "タスクは作られている可能性があります。list_tasks（query に題）で確かめてから、まだ無ければ呼び直してください。";
+
+/** 承認を頼んだ後に、結果を受け取れなかったときの案内（承認されたかどうかが分からない）。 */
+const APPROVE_UNCERTAIN =
+  "承認されている可能性があります。自動でやり直さず、get_task で state と approval を確かめてから、まだ承認待ちなら呼び直してください。";
+
+/** 承認の結果を受け取れなかったときの文。理由があれば（5xx の状態コードなど）それに、なければ原因の種類だけに、案内を続ける。 */
+function uncertainApproval(
+  reason = "承認の結果を受け取れませんでした（時間切れ・切断など）。",
+): string {
+  return `${reason}${APPROVE_UNCERTAIN}`;
+}
 
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
@@ -186,6 +212,37 @@ export function daemonApi(
         // 分からない（デーモンが記録した後に、応答が届かなかったのかもしれない）
         const reason = error instanceof Error ? error.message : String(error);
         throw new Error(`${reason}${REREVIEW_UNCERTAIN}`, { cause: error });
+      }
+    },
+    async approve(id, input) {
+      const at = endpoint(); // 接続先が無いのは、頼む前の失敗（承認していない）
+      const path = `/api/tasks/${encodeURIComponent(id)}`;
+      // 消したプロジェクトのタスクは、無いものとして断る（承認の API は、プロジェクトを確かめない）
+      const found = await request(at, path);
+      if (found.status === 404) throw new Error(renderMessage({ code: "task.notFound" }, "ja"));
+      if (!found.ok) throw await refusal(found);
+      let res: Response;
+      try {
+        res = await request(at, `${path}/approve`, { method: "POST", body: input });
+      } catch (error) {
+        // 認証できない・接続を断られた（要求が処理されていない）ときは、承認していない
+        if (notSent(error)) throw error;
+        // 頼んだ後に結果を受け取れなかった（時間切れ・切断）ときは、承認されたかどうかが分からない
+        // 元の文（「もう一度試してください」など）は案内と矛盾するので使わず、原因の種類だけを書く（元の例外は cause に残す）
+        throw new Error(uncertainApproval(), { cause: error });
+      }
+      // 5xx は、処理の途中で失敗したのかもしれず、承認されたかどうかが分からない（案内は 1 か所で付ける）
+      if (res.status >= 500) {
+        const failed = await refusal(res).catch(() => undefined);
+        throw new Error(uncertainApproval(failed?.message), { cause: failed });
+      }
+      // デーモンが応答で断ったなら、承認していない。その理由を返す
+      if (!res.ok) throw await refusal(res, staleForMcp);
+      try {
+        return (await read<{ task: Task }>(res)).task;
+      } catch (error) {
+        // 本文を読めなかったときも、承認されたかどうかが分からない
+        throw new Error(uncertainApproval(), { cause: error });
       }
     },
     async listProjects() {

@@ -88,6 +88,11 @@ function mcpOver(w: ReturnType<typeof world>) {
     rereview: async () => w.task,
     listProjects: async () => [],
     createTask: async () => w.task,
+    approve: async (id: string) => {
+      // 本物の API と同じく、無いタスクは断る
+      if (id !== w.task.id) throw new Error("タスクが見つかりません。");
+      return w.task;
+    },
     listDeliverables: async (...a: Parameters<SactyApi["listDeliverables"]>) => {
       calls.push("deliverables");
       return read.listDeliverables(...a);
@@ -383,6 +388,11 @@ describe("sacty mcp の成果物と実行の取得（PBI-395）", () => {
         ["list_deliverables", { task_id: "nothing" }, "タスク"],
         ["list_runs", { task_id: "nothing" }, "タスク"],
       ];
+      // 承認のツールは読み取りではない（無いタスクは、承認せずに断る）
+      expect(
+        (await raw("approve_step", { task_id: "nothing", step: "requirements", submission: 1 }))
+          .isError,
+      ).toBe(true);
       for (const [name, args, reason] of cases) {
         const r = await raw(name, args);
         expect(r.isError).toBe(true);

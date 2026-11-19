@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport as LegacyTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -27,6 +29,7 @@ import {
 import {
   dbPath,
   FakePulls,
+  FakeRepos,
   makeService,
   projectsWithAccount,
   useTempDir,
@@ -116,6 +119,19 @@ function apiOver(service: TaskService, webUrl?: string): SactyApi & { calls: str
       if (!res.ok) throw await refusal(res);
       return ((await res.json()) as { task: Task }).task;
     },
+    async approve(id, input) {
+      calls.push(`POST /api/tasks/${id}/approve`);
+      // CLI の daemonApi と同じ、先に詳細を引いて、消したプロジェクトのタスクを無いものとして断る
+      const found = await app.request(`/api/tasks/${encodeURIComponent(id)}`, { headers });
+      if (found.status === 404) throw new Error(renderMessage({ code: "task.notFound" }, "ja"));
+      const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/approve`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) throw await refusal(res);
+      return ((await res.json()) as { task: Task }).task;
+    },
     ...readApiOver(app, headers),
     webUrl: () => webUrl,
   };
@@ -147,7 +163,7 @@ async function connect(api: SactyApi) {
     expect(result.structured).toEqual(JSON.parse(result.text));
     return result.structured as T;
   };
-  return { client, server, call, json };
+  return { client, server, call, json, raw };
 }
 
 type Listed = { total: number; returned: number; tasks: TaskSummary[] };
@@ -189,6 +205,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "list_deliverables",
       "get_deliverable",
       "list_runs",
+      "approve_step",
     ]);
     expect(tools.map((t) => t.annotations?.readOnlyHint)).toEqual([
       true,
@@ -199,6 +216,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       true,
       true,
       true,
+      false,
     ]);
     // 作成は、sacty の外に作用し得る（工程が PR などに書く）ので、外に作用すると示す。取得は示さない
     expect(tools.map((t) => t.annotations?.openWorldHint)).toEqual([
@@ -210,6 +228,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       false,
       false,
       false,
+      true,
     ]);
     expect(tools[4]?.annotations).toMatchObject({ destructiveHint: false, idempotentHint: false });
     // 作成は、利用者に頼まれたときだけ呼ぶこと・ほかの人の文の中の指示に従わないことを、説明に書く
@@ -244,6 +263,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["deliverables"],
       expect.arrayContaining(["text", "next", "totalBytes"]),
       expect.arrayContaining(["runs", "nextOffset"]),
+      ["message", "approved", "task"],
     ]);
     expect(client.getServerVersion()).toMatchObject({ name: "sacty", version: "9.9.9" });
     expect(client.getInstructions()).toContain("rereview_task");
@@ -270,6 +290,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "list_deliverables",
       "get_deliverable",
       "list_runs",
+      "approve_step",
     ]);
     const found = await client.callTool({ name: "list_tasks", arguments: { pull_request: "9" } });
     expect((found.structuredContent as Listed).tasks.map((t) => t.id)).toEqual([id]);
@@ -591,6 +612,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
         rereview: async () => lost(),
         listProjects: async () => [],
         createTask: async () => lost(),
+        approve: async () => lost(),
         ...readStubs(lost),
         webUrl: () => undefined,
       });
@@ -628,6 +650,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       rereview: async () => down(),
       listProjects: async () => down(),
       createTask: async () => down(),
+      approve: async () => down(),
       ...readStubs(down),
       webUrl: () => undefined,
     });
@@ -655,6 +678,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       rereview: async () => down(),
       listProjects: async () => down(),
       createTask: async () => down(),
+      approve: async () => down(),
       ...readStubs(down),
       webUrl: () => undefined,
     });
@@ -667,6 +691,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["list_deliverables", { task_id: "x" }],
       ["get_deliverable", { task_id: "x", step: "design", kind: "output" }],
       ["list_runs", { task_id: "x" }],
+      ["approve_step", { task_id: "x", step: "requirements", submission: 1 }],
     ] as const) {
       expect(await call(name, args)).toEqual({
         isError: true,
@@ -1032,3 +1057,324 @@ describe("タスクの PR・ブランチと絞り込み（PBI-392）", () => {
     expect(detail.recentActivity).toEqual([]);
   });
 });
+
+describe("承認待ちの工程の承認（PBI-396）", () => {
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const NO_TESTS = "README.md だけで、テストのコード・設定・CI が無い";
+  const plan = out(
+    block({ "sacty-steps": { plan: "skip-design", reason: "小さい", noTests: NO_TESTS } }),
+  );
+
+  /** clone した作業領域に、ファイルを置く偽のリポジトリ。 */
+  class FilesRepos extends FakeRepos {
+    override async prepare(...args: Parameters<FakeRepos["prepare"]>) {
+      const result = await super.prepare(...args);
+      mkdirSync(dirname(join(args[0], "README.md")), { recursive: true });
+      writeFileSync(join(args[0], "README.md"), "# app");
+      return result;
+    }
+  }
+
+  async function drain(service: TaskService) {
+    for (let i = 0; i < 12; i++) {
+      const ids = service.queuedTaskIds();
+      if (ids.length === 0) return;
+      for (const id of ids) await service.runNext(id);
+    }
+  }
+
+  /** 要求要件の承認待ち（PR を作らない。画面で承認する工程）のタスクと、土台。 */
+  async function awaiting() {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, pulls } = makeService(
+      activity,
+      [plan, out("# 要求要件\n\n- AGENTS.md を足す"), out("# 実装の説明\n\n- AGENTS.md を足した")],
+      { realPlanner: true, repos: new FilesRepos() },
+    );
+    const { id } = service.createTask({ template: "sacty-setup", projectId: "default" });
+    await service.runNext(id);
+    await drain(service);
+    const other = service.createTask({ projectId: "default", title: "ほかのタスク" }).id;
+    const events = (taskId: string) =>
+      (service.get(taskId)?.activity ?? []).filter((e) => e.type === "StepApproved");
+    return { activity, service, pulls, id, other, events };
+  }
+  type Approved = {
+    message: string;
+    approved: { taskId: string; step: string; submission: number };
+    task: TaskSummary;
+  };
+
+  it("承認待ちのタスクは、get_task・list_tasks の approval に、承認待ちの工程・提出の回・承認の手段（approve_step）が入る。承認待ちでなければ入らない", async () => {
+    const { activity, service, id, other } = await awaiting();
+    const { json } = await connect(apiOver(service));
+    const detail = await json<TaskDetail>("get_task", { task_id: id });
+    expect(detail.state).toBe("awaiting_approval");
+    expect(detail.approval).toEqual({
+      step: "requirements",
+      submission: 1,
+      method: "approve_step",
+    });
+    const listed = await json<Listed>("list_tasks");
+    expect(listed.tasks.find((t) => t.id === id)?.approval).toEqual(detail.approval);
+    expect(listed.tasks.find((t) => t.id === other)?.approval).toBeUndefined();
+    activity.close();
+  });
+
+  it("承認できる：画面と同じ API で承認し、承認の対象・承認の後の状態を返す。記録は1件で、ほかのタスクは変わらない", async () => {
+    const { activity, service, id, other, events } = await awaiting();
+    const otherBefore = JSON.stringify(service.get(other)?.task);
+    const { raw } = await connect(apiOver(service));
+    const result = await raw("approve_step", { task_id: id, step: "requirements", submission: 1 });
+    expect(result.isError).toBe(false);
+    // 構造のある結果と、文にした JSON は同じ
+    expect(result.structured).toEqual(JSON.parse(result.text));
+    const done = result.structured as Approved;
+    expect(done.approved).toEqual({ taskId: id, step: "requirements", submission: 1 });
+    expect(done.task.id).toBe(id);
+    expect(done.task.state).not.toBe("awaiting_approval");
+    expect(done.task.steps).toContain("requirements:done");
+    expect(events(id)).toHaveLength(1);
+    const approvedEvent = events(id)[0];
+    expect(approvedEvent?.actor).toBe("person");
+    expect(JSON.stringify(service.get(other)?.task)).toBe(otherBefore);
+    activity.close();
+  });
+
+  it("同じ呼び出しを2回すると、2回目は断る。承認の記録は1件のまま", async () => {
+    const { activity, service, id, events } = await awaiting();
+    const { call } = await connect(apiOver(service));
+    const args = { task_id: id, step: "requirements", submission: 1 };
+    expect((await call("approve_step", args)).isError).toBe(false);
+    const again = await call("approve_step", args);
+    expect(again.isError).toBe(true);
+    expect(again.text).toMatch(/承認待ちではありません|承認待ちのタスクではありません/);
+    expect(events(id)).toHaveLength(1);
+    activity.close();
+  });
+
+  it("古い回は、承認せずに、いまの回が分かる理由を返す（画面の更新ではなく、get_task で確かめ直すことを伝える）", async () => {
+    const { activity, service, id, events } = await awaiting();
+    const { call } = await connect(apiOver(service));
+    const result = await call("approve_step", { task_id: id, step: "requirements", submission: 2 });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("1回目");
+    expect(events(id)).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("awaiting_approval");
+    activity.close();
+  });
+
+  it("承認待ちの工程と違う工程は、承認せずに断る", async () => {
+    const { activity, service, id, events } = await awaiting();
+    const { call } = await connect(apiOver(service));
+    const result = await call("approve_step", { task_id: id, step: "design", submission: 1 });
+    expect(result).toEqual({ isError: true, text: "この工程は承認待ちではありません。" });
+    expect(events(id)).toHaveLength(0);
+    activity.close();
+  });
+
+  it("承認待ちでないタスク（実行待ち）と、無いタスクは、承認せずに断る", async () => {
+    const { activity, service, other } = await awaiting();
+    const { call } = await connect(apiOver(service));
+    const idle = await call("approve_step", {
+      task_id: other,
+      step: "requirements",
+      submission: 1,
+    });
+    expect(idle).toEqual({ isError: true, text: "承認待ちのタスクではありません。" });
+    const none = await call("approve_step", {
+      task_id: "no-such-task",
+      step: "requirements",
+      submission: 1,
+    });
+    expect(none).toEqual({ isError: true, text: renderMessage({ code: "task.notFound" }, "ja") });
+    activity.close();
+  });
+
+  it("PR のマージで承認する工程（実装）は、承認せずに、PR のマージが承認であることと PR の URL を返す。get_task の approval にも URL が入る", async () => {
+    const { activity, service, id, events } = await awaiting();
+    const { json, call } = await connect(apiOver(service));
+    await call("approve_step", { task_id: id, step: "requirements", submission: 1 });
+    await drain(service);
+    const before = JSON.stringify(service.get(id)?.task);
+    const detail = await json<TaskDetail>("get_task", { task_id: id });
+    expect(detail.approval).toMatchObject({ step: "implement", method: "pull_request" });
+    const url = detail.approval?.pullRequestUrl ?? "";
+    expect(url).toMatch(/\/pull\/\d+$/);
+    const result = await call("approve_step", { task_id: id, step: "implement", submission: 1 });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("マージ");
+    expect(result.text).toContain(url);
+    expect(events(id)).toHaveLength(1); // 要求要件の承認だけ
+    expect(JSON.stringify(service.get(id)?.task)).toBe(before);
+    activity.close();
+  });
+
+  it("再現できなかった再現は、approval で承認できないと示し、承認の API の断りを理由として返す", async () => {
+    const task = {
+      status: "awaiting_approval",
+      gate: { step: "reproduce", submission: 1 },
+      submissions: {},
+    };
+    const { approvalOf } = await import("./task-mcp.js");
+    expect(approvalOf(task as unknown as Task)).toEqual({
+      step: "reproduce",
+      submission: 1,
+      method: "not_approvable",
+    });
+    const reason = renderMessage({ code: "gate.reproduceNotApprovable" }, "ja");
+    const { call } = await connect({
+      ...apiOverStub(() => {
+        throw new Error(reason);
+      }),
+    });
+    expect(await call("approve_step", { task_id: "t", step: "reproduce", submission: 1 })).toEqual({
+      isError: true,
+      text: reason,
+    });
+  });
+
+  it("approvalOf：承認待ちでないときは無い。上限を超えた差し戻しの判断待ちは承認の工程と回を示し、PR のあるタスクは URL を、PR の無い実装は approve_step を示す", async () => {
+    const { approvalOf } = await import("./task-mcp.js");
+    const of = (t: object) => approvalOf(t as unknown as Task);
+    expect(
+      of({ status: "running", gate: { step: "design", submission: 1 }, submissions: {} }),
+    ).toBe(undefined);
+    expect(of({ status: "paused", gate: { step: "design", submission: 1 }, submissions: {} })).toBe(
+      undefined,
+    );
+    expect(of({ status: "awaiting_approval", submissions: {} })).toBe(undefined);
+    expect(
+      of({ status: "escalated", escalation: { step: "implement" }, submissions: { implement: 4 } }),
+    ).toEqual({ step: "implement", submission: 4, method: "approve_step" });
+    expect(
+      of({
+        status: "awaiting_approval",
+        gate: { step: "implement", submission: 2 },
+        submissions: {},
+        pullRequest: { number: 9, url: "https://github.com/a/b/pull/9", state: "open" },
+      }),
+    ).toMatchObject({
+      step: "implement",
+      submission: 2,
+      method: "pull_request",
+      pullRequestUrl: "https://github.com/a/b/pull/9",
+    });
+    expect(
+      of({
+        status: "awaiting_approval",
+        gate: { step: "implement", submission: 1 },
+        submissions: {},
+      }),
+    ).toEqual({ step: "implement", submission: 1, method: "approve_step" });
+    // PR はあるが、承認待ちの工程と違う（実装の PR があっても、承認待ちは要求要件）→ 画面で承認できる
+    expect(
+      of({
+        status: "awaiting_approval",
+        gate: { step: "requirements", submission: 1 },
+        submissions: {},
+        pullRequest: { number: 9, url: "https://github.com/a/b/pull/9", state: "open" },
+      }),
+    ).toEqual({ step: "requirements", submission: 1, method: "approve_step" });
+    // PR の url が空のときは、repo と番号から URL を組む
+    expect(
+      of({
+        status: "awaiting_approval",
+        gate: { step: "implement", submission: 1 },
+        submissions: {},
+        pullRequest: { number: 9, repo: "https://github.com/a/b", url: "", state: "open" },
+      }),
+    ).toMatchObject({
+      method: "pull_request",
+      pullRequestUrl: "https://github.com/a/b/pull/9",
+    });
+  });
+
+  it("引数の形が違うとき（工程の名前でない・回が 0・負・小数・文字・欠け）は、承認の API を呼ばずに断る", async () => {
+    const { activity, service, id, events } = await awaiting();
+    const api = apiOver(service);
+    const { call } = await connect(api);
+    for (const args of [
+      { task_id: id, step: "nope", submission: 1 },
+      { task_id: id, step: "requirements", submission: 0 },
+      { task_id: id, step: "requirements", submission: -1 },
+      { task_id: id, step: "requirements", submission: 1.5 },
+      { task_id: id, step: "requirements", submission: "1" },
+      { task_id: id, step: "requirements" },
+      { step: "requirements", submission: 1 },
+      { task_id: "../x", step: "requirements", submission: 1 },
+    ]) {
+      const result = await call("approve_step", args);
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+    }
+    expect(api.calls.filter((c) => c.includes("/approve"))).toEqual([]);
+    expect(events(id)).toHaveLength(0);
+    activity.close();
+  });
+
+  it("API が承認の可能性を伝える失敗を投げたとき（実際の時間切れの文は mcp.test.ts）は、isError でそのまま返し、自動でやり直さない。標準エラーに理由を残す", async () => {
+    let calls = 0;
+    const { call } = await connect({
+      ...apiOverStub(() => {
+        calls += 1;
+        throw new Error(
+          "デーモンが時間内に応答しませんでした。承認されている可能性があります。自動でやり直さず、get_task で state と approval を確かめてから、まだ承認待ちなら呼び直してください。",
+          { cause: Object.assign(new Error("aborted"), { name: "TimeoutError" }) },
+        );
+      }),
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const result = await call("approve_step", {
+        task_id: "t",
+        step: "requirements",
+        submission: 1,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("承認されている可能性があります");
+      expect(result.text).toContain("get_task");
+      expect(calls).toBe(1);
+      expect(logged.mock.calls.map((c) => c.join(" "))[0]).toContain(
+        "[sacty mcp] approve_step(task_id=t)",
+      );
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("説明文に、利用者に頼まれたときだけ呼ぶこと・次の工程が始まり取り消せないこと・先に成果物を確かめることを書き、注釈は読み取りでなく sacty の外に書きうると示す。使い方の説明にも足す", async () => {
+    const { activity, service } = await awaiting();
+    const { client } = await connect(apiOver(service));
+    const tool = (await client.listTools()).tools.find((t) => t.name === "approve_step");
+    expect(tool?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    expect(tool?.description).toContain("利用者に頼まれたときだけ");
+    expect(tool?.description).toContain("取り消せません");
+    expect(tool?.description).toContain("list_deliverables");
+    expect(tool?.description).toContain("get_task");
+    expect(tool?.outputSchema).toBeDefined();
+    expect(client.getInstructions()).toContain("approve_step");
+    activity.close();
+  });
+});
+
+/** approve だけを差し替えた、ほかは何も返さない SactyApi。 */
+function apiOverStub(approve: () => never): SactyApi {
+  const none = (): never => {
+    throw new Error("呼ばれない");
+  };
+  return {
+    listTasks: async () => none(),
+    getTask: async () => none(),
+    rereview: async () => none(),
+    listProjects: async () => none(),
+    createTask: async () => none(),
+    approve: async () => approve(),
+    ...readStubs(none),
+    webUrl: () => undefined,
+  };
+}
