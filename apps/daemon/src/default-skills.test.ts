@@ -1753,9 +1753,14 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
 
   it("C-18 は、差分の外の既存のコードから慣習を導き、慣習と言えないものを指摘にしない", () => {
     const text = c18();
-    expect(text).toContain("基準は、対象のリポジトリの既存のコードだけ");
+    expect(text).toContain("基準は、対象のリポジトリの既存のコード。");
     expect(text).toContain("差分の外から、同じ種類の既存のコードを選んで読む。あれば 3 つ以上読む");
     expect(text).toContain("今回の変更が足した・書き換えたコードは、慣習の根拠にしない");
+    // 変更前の版を読めないときは、差分に現れる行を根拠から除き、導けなければ limitations に書く
+    expect(text).toContain(
+      "読めないときは、差分に現れる行と、差分が新しく足したファイルを根拠から除き",
+    );
+    expect(text).toContain("導けなかったことと理由を `limitations` に書く");
     expect(text).toContain("迷うものは、リポジトリ全体を検索して数える");
     expect(text).toContain("割れている（2 通り以上が、理由なく並んでいる）：慣習としない");
     expect(text).toContain("例が 1〜2 件しか無い：慣習としない");
@@ -1777,16 +1782,38 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
       expect(text).toContain(point);
     }
     expect(text).toMatch(
-      /^- `must`：層の分担・決まった経路から外れたことで、.*今回の変更で効かなくなる$/m,
+      /^- `must`：層の分担・決まった経路から外れたことで、.*今回の変更で効かなくなる。外れる理由が書かれていても変わらない$/m,
     );
     expect(text).toMatch(/^- `should`：そろっている慣習.*から、理由なく外れている$/m);
     expect(text).toMatch(
-      /^- 出さない：慣習としなかったもの（割れている・例が少ない）、理由が書かれている外れ$/m,
+      /^- 出さない：慣習としなかったもの（割れている・例が少ない）、理由が書かれている外れ（`must` に当たるものを除く）$/m,
     );
     // NG 例は複数の言語で書き、指摘にしない例（割れている・理由がある）も含める
     const langs = [...text.matchAll(/^### 例\d+（([^）]+)）/gm)].map((m) => m[1]);
     expect(new Set(langs).size).toBeGreaterThanOrEqual(5);
     expect(text).toContain("割れているものは、慣習としない");
     expect(text).toContain("理由が書かれている外れは、指摘にしない");
+  });
+
+  it("C-18 は、X-3 を起動しない回は規約の文書も基準にし、仕組みが効かなくなる外れは理由があっても出す", () => {
+    const text = c18();
+    expect(text).toContain(
+      "依頼文の「見ないもの」に X-3 が書かれていない回は、リポジトリの規約の文書（CONTRIBUTING・コーディング規約・lint 設定など）も基準にする",
+    );
+    expect(text).toMatch(
+      /^1\. 規約の文書を読む（.*書かれていない回は、文書が定める決まり.*差分と照らす。.*$/m,
+    );
+    // 効かなくなる仕組みの確認が、理由による例外より先にある
+    const bypass = text.indexOf(
+      "効かなくなる仕組みがあれば、外れる理由が書かれていても指摘にする（`must`）",
+    );
+    const reason = text.indexOf("効かなくなる仕組みが無い外れは、外れる理由があるかを確かめる");
+    expect(bypass).toBeGreaterThan(0);
+    expect(reason).toBeGreaterThan(bypass);
+    // 仕様書の日英も、規約を読む観点の例を C-18 にしている
+    for (const spec of ["context.md", "context.en.md"]) {
+      const body = readFileSync(join(import.meta.dirname, "../../../docs/spec", spec), "utf8");
+      expect(body, spec).not.toMatch(/C-5 など|such as C-5/);
+    }
   });
 });
