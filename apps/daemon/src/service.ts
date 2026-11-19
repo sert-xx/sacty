@@ -128,6 +128,7 @@ import {
   questionBlocked,
   queueOverSince,
   REVIEW_UNDISPATCHED_RETRIES,
+  RecordedRequestChangesInput,
   RejectAuditProposalInput,
   type RemarkOrigin,
   type RemarkResponseStatus,
@@ -18225,16 +18226,16 @@ export class TaskService {
       /** 差し戻し（上限でのエスカレーション）と同じ追記で、その前に記録するもの（後続に回したい案への決定。PBI-370）。 */
       leading?: readonly ActivityItem[];
       /**
-       * comments が PR から取り込んだ指摘（PR の指摘の取り込みだけが渡す。PBI-413）。人の入力の上限（1 件 2000 文字）は
-       * 人が書く指摘のためのもので、取り込んだ指摘は、投稿の全文を切らずに渡す（その他の検査は同じに通す）。
+       * comments が記録済みの指摘（PR から取り込んだ指摘。PBI-413）。人の入力の上限（1 件 2000 文字）は、人が新しく書く
+       * 指摘のためのもので、記録済みの指摘は全文を渡す（その他の検査は同じに通す）。PR の指摘の取り込みと、後続に回したい案を
+       * 「この PR で直す」と決める経路が渡す。
        */
       imported?: boolean;
     } = {},
   ): Task {
-    const full = options.imported ? (raw as { comments: string[] }).comments : undefined;
-    const input = RequestChangesInput.parse(
-      full ? { ...(raw as object), comments: full.map((c) => c.slice(0, REMARK_INPUT_MAX)) } : raw,
-    );
+    const input = options.imported
+      ? RecordedRequestChangesInput.parse(raw)
+      : RequestChangesInput.parse(raw);
     const task = this.gateTask(id, input.step, input.submission);
     // やり直す工程は、ゲートの工程か、それより前の工程エージェントが作る工程。
     // 実装のゲートでは、省略すると実装をやり直す
@@ -18246,9 +18247,7 @@ export class TaskService {
     // 人が差し戻した回数（上限に数える）。AI のレビューの指摘だけの回は含めない（PBI-275）
     const rounds = changeRounds(task, target);
     const aiIndexes = new Set(options.aiReview ?? []);
-    const comments = input.comments.map((clipped, i) => {
-      // 取り込んだ指摘は、空にならないので、input.comments と full の位置は変わらない
-      const text = full?.[i] ?? clipped;
+    const comments = input.comments.map((text, i) => {
       const origin = options.origins?.[i];
       const fixOf = options.fixOf?.[i];
       return {
@@ -18454,6 +18453,7 @@ export class TaskService {
               origins: fixes.map((f) => f.origin),
               fixOf: fixes.map((f) => f.remarkId),
               leading: [decided],
+              imported: true,
             },
           )
         : this.append(task, [decided]);
@@ -18793,8 +18793,7 @@ function refusedByGitHub(failure: DaemonText): boolean {
   return typeof status === "number" && status >= 400 && status < 500;
 }
 
-/** 人が差し戻すときの、指摘の1件あたりの上限（差し戻しの入力と同じ）と、取り込む指摘の件数の上限。 */
-const REMARK_INPUT_MAX = 2_000;
+/** 取り込む指摘の件数の上限。 */
 const REMARKS_MAX = 50;
 
 /** PR へのフィードバックを取り込むまでに、最後のフィードバックから待つ時間（書き終わるのを待つ）。 */

@@ -4732,7 +4732,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
          * 実装の PR を作り、レビューの子タスクが指摘を残し、その指摘を取り込んで、やり直しの実装が始まる前まで進める。
          * やり直しは、作業領域を何も変えない。
          */
-        async function reviewed(outcomes: AgentOutcome[]) {
+        async function reviewed(outcomes: AgentOutcome[], longTail?: string) {
           const pulls = new FakePulls();
           const repos = new FakeRepos();
           const projects = projectsWithAccount();
@@ -4751,7 +4751,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             headSha: first,
           };
           await runReview(service, childId);
-          pulls.feedbackBy[7] = [posted(pulls, 0)];
+          const review = posted(pulls, 0);
+          pulls.feedbackBy[7] = [
+            longTail
+              ? { ...review, body: `${review.body}\n${"い".repeat(3_000)}${longTail}` }
+              : review,
+          ];
           await service.checkPullRequests();
           expect(taskOf(service, id).status).toBe("queued");
           repos.sameAsParent = true;
@@ -5775,6 +5780,30 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               "案を人が決めた後",
             );
             expect(renderMessage(task.pausedMessage as DaemonText, "en")).toContain("PR #7");
+            activity.close();
+          });
+
+          it("2000 文字を超える取り込み指摘も、「この PR で直す」と決められ、全文が実装に差し戻される（PBI-413）", async () => {
+            const tail = "【末尾 TAIL-FIX】";
+            const made = await reviewed(
+              [
+                deferred(),
+                responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+              ],
+              tail,
+            );
+            const { activity, service, executor, id } = made;
+            await settle(service, id);
+            expect(taskOf(service, id).remarks[0]?.text.length).toBeGreaterThan(3_000);
+            const before = executor.calls.length;
+            decide(service, id, [{ remarkId: "implement-1-1", decision: "fix" }]);
+            expect(count(service, id, "DeferralsDecided")).toBe(1);
+            const requested = service
+              .get(id)
+              ?.activity.findLast((e) => e.type === "ChangesRequested");
+            expect(JSON.stringify(requested?.payload)).toContain(tail);
+            await service.runNext(id);
+            expect(promptOf(executor, before)).toContain(tail);
             activity.close();
           });
 

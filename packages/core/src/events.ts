@@ -4445,6 +4445,13 @@ const Submission = z.number().int().positive();
 export const ApproveStepInput = z.object({ step: StepKey, submission: Submission });
 export type ApproveStepInput = z.infer<typeof ApproveStepInput>;
 
+/** 差し戻しの指摘の一覧（件数の上限と、空の指摘を除くのは、人が書く指摘も記録済みの指摘も同じ）。 */
+const remarkList = <T extends z.ZodType<string>>(item: T) =>
+  z
+    .array(item)
+    .max(50, code("input.tooManyRemarks"))
+    .transform((list) => list.filter((c) => c.length > 0));
+
 /** 承認ゲートで差し戻す入力。指摘は1行に1件。 */
 export const RequestChangesInput = z.object({
   step: StepKey,
@@ -4455,10 +4462,7 @@ export const RequestChangesInput = z.object({
   answer: ReworkAnswer.optional(),
   /** やり直す工程。省略すると承認ゲートの工程。 */
   target: StepKey.optional(),
-  comments: z
-    .array(z.string().trim().max(2_000, code("input.remarkTooLong")))
-    .max(50, code("input.tooManyRemarks"))
-    .transform((list) => list.filter((c) => c.length > 0)),
+  comments: remarkList(z.string().trim().max(2_000, code("input.remarkTooLong"))),
   /** エスカレーションの後、上限を超えて差し戻しを続けるか。 */
   continueOverLimit: z.boolean().default(false),
   /**
@@ -4469,6 +4473,14 @@ export const RequestChangesInput = z.object({
   agents: StepAgentMap.optional(),
 });
 export type RequestChangesInput = z.input<typeof RequestChangesInput>;
+
+/**
+ * 記録済みの指摘（PR から取り込んだ指摘。PBI-413）を差し戻しに入れ直す入力。1 件 2000 文字の上限は、人が新しく書く指摘
+ * のためのもので、記録済みの指摘には当てない（そのほかの検査は RequestChangesInput と同じ）。
+ */
+export const RecordedRequestChangesInput = RequestChangesInput.extend({
+  comments: remarkList(z.string().trim()),
+});
 
 /**
  * 承認の画面で、実装が「後続に回したい」とした指摘（案）を、1 件ずつ決める入力（PBI-370）。defer は後続に回す、fix は

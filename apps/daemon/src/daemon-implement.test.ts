@@ -12095,6 +12095,32 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
+      it("一時停止の間に届いた 2000 文字を超える指摘も、再開後のやり直しの指示に、末尾まで入る（PBI-413）", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, executor, id } = await toImplementGate(
+          [
+            { kind: "failed", reason: "error", message: "EACCES: permission denied" },
+            rework("implement", "実装で直せる"),
+            implement("# v3"),
+          ],
+          { pulls, now: later },
+        );
+        sendBack(service, id);
+        await service.runNext(id);
+        const tail = "【末尾 TAIL-HELD】";
+        const body = `${"い".repeat(4_000)}${tail}`;
+        pulls.feedbackList = [item("comment:long", { body })];
+        await service.checkPullRequests();
+        const calls = executor.calls.length;
+        service.resume(id, {});
+        await service.runNext(id);
+        const requested = service.get(id)?.activity.findLast((e) => e.type === "ChangesRequested");
+        expect(JSON.stringify(requested?.payload)).toContain(tail);
+        await drain(service);
+        expect(promptOf(executor, calls + 1)).toContain(tail);
+        activity.close();
+      });
+
       it("再開すると、止まった工程を走り直す前に、ゴールガーディアンが戻し先を判断し、指摘で実装を作り直す（S16。エラーで止まったタスク）", async () => {
         const pulls = new FakePulls();
         const { activity, service, executor, id } = await toImplementGate(
