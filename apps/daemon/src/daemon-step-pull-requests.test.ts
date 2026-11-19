@@ -786,25 +786,54 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
-    it("長い指摘でも、添える行の内容は切らない（指摘の文を短くして、上限に収める）", async () => {
+    it("長い指摘でも、指摘の文は切らず、添える行の内容もそのまま付く（PBI-413）。やり直しの指示に、本文の最後の指摘まで入る", async () => {
       const made = await start([
         out("# 要求要件 v1"),
         out(block({ "sacty-rework": { target: "requirements", reason: "要求要件で直せる" } })),
+        out("# 要求要件 v2"),
       ]);
-      const { activity, service, pulls, id } = made;
+      const { activity, service, executor, pulls, id } = made;
+      const tail = "【末尾の指摘 TAIL-LINE】";
       pulls.feedbackBy[7] = [
         item("review_comment:2", {
           kind: "review_comment",
           path: docOf(id, "requirements"),
           line: 3,
-          body: "あ".repeat(5_000),
+          body: `${"あ".repeat(5_000)}${tail}`,
           lineContext: { line: "| R-9 | 空を拒否する |", before: [] },
         }),
       ];
       await service.checkPullRequests();
       const text = taskOf(service, id).remarks[0]?.text ?? "";
-      expect(text.length).toBeLessThanOrEqual(2_000);
+      expect(text).toContain(tail);
+      expect(text.includes("…")).toBe(false);
       expect(text.endsWith("（コメントが付いた行の内容：「| R-9 | 空を拒否する |」）")).toBe(true);
+      await service.runNext(id);
+      expect(promptOf(executor, executor.calls.length - 1)).toContain(tail);
+      activity.close();
+    });
+  });
+
+  describe("PR のレビューの本文は、長さで切らずに実装のやり直しへ渡す（PBI-413）", () => {
+    it.each([
+      ["ちょうど 2000 文字", 2_000],
+      ["2001 文字", 2_001],
+      ["GitHub が許す 65,536 文字", 65_536],
+    ])("総評の本文が%sでも、末尾の指摘まで渡り、切ったしるしが付かない", async (_name, length) => {
+      const made = await start([
+        out("# 要求要件 v1"),
+        out(block({ "sacty-rework": { target: "requirements", reason: "要求要件で直せる" } })),
+        out("# 要求要件 v2"),
+      ]);
+      const { activity, service, executor, pulls, id } = made;
+      const tail = "【3件目 TAIL-REVIEW】";
+      const body = `${"い".repeat(length - tail.length)}${tail}`;
+      expect(body.length).toBe(length);
+      pulls.feedbackBy[7] = [item("review:5", { kind: "review", body })];
+      await service.checkPullRequests();
+      expect(taskOf(service, id).remarks.map((r) => r.text)).toEqual([body]);
+      await service.runNext(id);
+      expect(promptOf(executor, executor.calls.length - 1)).toContain(tail);
       activity.close();
     });
   });
@@ -4703,7 +4732,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
          * 実装の PR を作り、レビューの子タスクが指摘を残し、その指摘を取り込んで、やり直しの実装が始まる前まで進める。
          * やり直しは、作業領域を何も変えない。
          */
-        async function reviewed(outcomes: AgentOutcome[]) {
+        async function reviewed(outcomes: AgentOutcome[], longTail?: string) {
           const pulls = new FakePulls();
           const repos = new FakeRepos();
           const projects = projectsWithAccount();
@@ -4722,7 +4751,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             headSha: first,
           };
           await runReview(service, childId);
-          pulls.feedbackBy[7] = [posted(pulls, 0)];
+          const review = posted(pulls, 0);
+          pulls.feedbackBy[7] = [
+            longTail
+              ? { ...review, body: `${review.body}\n${"い".repeat(3_000)}${longTail}` }
+              : review,
+          ];
           await service.checkPullRequests();
           expect(taskOf(service, id).status).toBe("queued");
           repos.sameAsParent = true;
@@ -5746,6 +5780,30 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               "案を人が決めた後",
             );
             expect(renderMessage(task.pausedMessage as DaemonText, "en")).toContain("PR #7");
+            activity.close();
+          });
+
+          it("2000 文字を超える取り込み指摘も、「この PR で直す」と決められ、全文が実装に差し戻される（PBI-413）", async () => {
+            const tail = "【末尾 TAIL-FIX】";
+            const made = await reviewed(
+              [
+                deferred(),
+                responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+              ],
+              tail,
+            );
+            const { activity, service, executor, id } = made;
+            await settle(service, id);
+            expect(taskOf(service, id).remarks[0]?.text.length).toBeGreaterThan(3_000);
+            const before = executor.calls.length;
+            decide(service, id, [{ remarkId: "implement-1-1", decision: "fix" }]);
+            expect(count(service, id, "DeferralsDecided")).toBe(1);
+            const requested = service
+              .get(id)
+              ?.activity.findLast((e) => e.type === "ChangesRequested");
+            expect(JSON.stringify(requested?.payload)).toContain(tail);
+            await service.runNext(id);
+            expect(promptOf(executor, before)).toContain(tail);
             activity.close();
           });
 

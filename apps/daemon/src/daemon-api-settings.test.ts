@@ -478,6 +478,28 @@ describe("タスクの詳細で工程のエージェントを変える（PBI-121
       e.type === "AgentRunStarted" ? [`${e.payload.step}:${e.payload.agentId}`] : [],
     );
 
+  it("人が差し戻す指摘の上限は変えない：1 件 2000 文字は通り、2001 文字は入力の時点で断る（PBI-413）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [completed(100), completed(100)]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    expect(() =>
+      service.requestChanges(id, {
+        step: "requirements",
+        submission: 1,
+        comments: ["あ".repeat(2_001)],
+      }),
+    ).toThrow(/remarkTooLong/);
+    expect(service.get(id)?.activity.some((e) => e.type === "ChangesRequested")).toBe(false);
+    const ok = service.requestChanges(id, {
+      step: "requirements",
+      submission: 1,
+      comments: ["あ".repeat(2_000)],
+    });
+    expect(ok.remarks[0]?.text).toHaveLength(2_000);
+    activity.close();
+  });
+
   it("変えたことを作業履歴に残し、その工程の次の実行から使う（config.yaml の step_agents より優先）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     // 既定（default_agent）・工程の指定（step_agents）・人の選択を、別の名前にする（PR #131 レビュー指摘）
