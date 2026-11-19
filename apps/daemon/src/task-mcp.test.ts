@@ -12,6 +12,7 @@ import { createApp } from "./server.js";
 import type { TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
 import {
+  type CleanupPlanItem,
   causeChain,
   describeTask,
   filterTasks,
@@ -163,6 +164,25 @@ function apiOver(service: TaskService, webUrl?: string): SactyApi & { calls: str
       if (!res.ok) throw await refusal(res);
       return ((await res.json()) as { task: Task }).task;
     },
+    async cancel(id) {
+      calls.push(`POST /api/tasks/${id}/cancel`);
+      const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/cancel`, {
+        method: "POST",
+        headers,
+        body: "{}",
+      });
+      if (!res.ok) throw await refusal(res);
+      return ((await res.json()) as { task: Task }).task;
+    },
+    async cleanupPlan(id) {
+      calls.push(`GET /api/tasks/${id}/cleanup-plan`);
+      const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/cleanup-plan`, {
+        headers,
+      });
+      if (res.status === 404) return undefined;
+      if (!res.ok) throw await refusal(res);
+      return ((await res.json()) as { plan: CleanupPlanItem[] }).plan;
+    },
     ...readApiOver(app, headers),
     webUrl: () => webUrl,
   };
@@ -241,6 +261,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "wait_for_task",
       "pause_task",
       "resume_task",
+      "get_cancel_plan",
+      "cancel_task",
     ]);
     expect(tools.map((t) => t.annotations?.readOnlyHint)).toEqual([
       true,
@@ -256,6 +278,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       true,
       false,
       false,
+      true,
+      false,
     ]);
     // 作成は、sacty の外に作用し得る（工程が PR などに書く）ので、外に作用すると示す。取得は示さない
     expect(tools.map((t) => t.annotations?.openWorldHint)).toEqual([
@@ -270,6 +294,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       true,
       true,
       false,
+      false,
+      true,
       false,
       true,
     ]);
@@ -311,6 +337,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       expect.arrayContaining(["changed", "changes", "task", "reviewTasks", "cursor"]),
       ["message", "paused", "task"],
       ["message", "resumed", "task"],
+      expect.arrayContaining(["canCancel", "willClose", "willDelete", "cancelArguments"]),
+      expect.arrayContaining(["cancelled", "cleanup", "closedPullRequests", "failed"]),
     ]);
     expect(client.getServerVersion()).toMatchObject({ name: "sacty", version: "9.9.9" });
     expect(client.getInstructions()).toContain("rereview_task");
@@ -342,6 +370,8 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "wait_for_task",
       "pause_task",
       "resume_task",
+      "get_cancel_plan",
+      "cancel_task",
     ]);
     const found = await client.callTool({ name: "list_tasks", arguments: { pull_request: "9" } });
     expect((found.structuredContent as Listed).tasks.map((t) => t.id)).toEqual([id]);
@@ -2176,7 +2206,9 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       expect(detail.escalation?.canDoHere.join("")).toContain("approve_step");
       expect(detail.escalation?.decideOnScreen.join("")).toContain("上限を超えた差し戻し");
       expect(detail.escalation?.decideOnScreen.join("")).not.toContain("変更の申し出");
-      expect(detail.escalation?.decideOnScreen.join("")).toContain("中止");
+      expect(detail.escalation?.decideOnScreen.join("")).not.toContain("中止");
+      expect(detail.escalation?.canDoHere.join("")).toContain("cancel_task");
+      expect(detail.escalation?.canDoHere.join("")).toContain("get_cancel_plan");
       expect("humanAsks" in detail).toBe(false);
       // 要約には、理由の欄は入らない
       const listed = await raw("list_tasks");
@@ -2301,6 +2333,8 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         "wait_for_task",
         "pause_task",
         "resume_task",
+        "get_cancel_plan",
+        "cancel_task",
       ]);
       const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
       expect(desc("get_task")).toContain("humanAsks");

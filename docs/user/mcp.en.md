@@ -9,8 +9,8 @@ For example, after fixing a PR, you can ask the AI to "re-review this PR with sa
 
 sacty has an MCP server for this (`sacty mcp`; it supports the 2026-07-28 revision of the MCP specification and also works with clients of earlier revisions).
 It can look up tasks (list, search, details), put a PR review task into re-review, create a task in a project you specify,
-read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only), approve a step that is awaiting approval, request changes on a step that is awaiting approval, pause a task, resume a paused task (resuming with only a note), and wait until a task's progress changes (awaiting approval, awaiting a person's decision, paused, completed, cancelled, or a PR review verdict). The logs of runs cannot be read yet (read them in the web UI).
-It cannot cancel or redo tasks (do those in the web UI). Resuming that needs a budget-cap increase, a decision on the test handling, accepting a child task's cancellation, or choosing the repository to work on is also done in the web UI. Requesting changes is also only the basic form (requesting changes over the limit, choosing where to send it back, and choosing a cause are done in the web UI). A step approved by merging a PR (implementation, requirements or design with a PR) cannot be approved from MCP either (merge the PR on GitHub). Deliverables can be used to check the content before you approve.
+read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only), approve a step that is awaiting approval, request changes on a step that is awaiting approval, pause a task, resume a paused task (resuming with only a note), cancel a task (it confirms the cleanup targets first and cannot be undone), and wait until a task's progress changes (awaiting approval, awaiting a person's decision, paused, completed, cancelled, or a PR review verdict). The logs of runs cannot be read yet (read them in the web UI).
+It cannot redo tasks (do that in the web UI). Resuming that needs a budget-cap increase, a decision on the test handling, accepting a child task's cancellation, or choosing the repository to work on is also done in the web UI. Requesting changes is also only the basic form (requesting changes over the limit, choosing where to send it back, and choosing a cause are done in the web UI). A step approved by merging a PR (implementation, requirements or design with a PR) cannot be approved from MCP either (merge the PR on GitHub). Deliverables can be used to check the content before you approve.
 
 ## Connecting
 
@@ -92,6 +92,8 @@ When sacty does not respond within 30 seconds, the tools answer that the daemon 
 | `wait_for_task` | Waits until one task needs a person (awaiting approval, awaiting a decision, paused, completed, cancelled, or a PR review verdict) (`task_id`, `timeout_seconds`, `cursor`). It only reads and changes nothing |
 | `pause_task` | Pauses a task (`task_id`), the same as "Pause" on the web UI. Only for queued, running, awaiting-approval, and under-verification tasks; it does not stop completed or cancelled tasks and the like |
 | `resume_task` | Resumes a paused task (`task_id`, `note`; the note can be omitted). It does not resume a stop that needs a budget-cap increase, a decision on the test handling, accepting a child task's cancellation, or choosing the repository to work on, and returns what to decide on the screen |
+| `get_cancel_plan` | Reads what would happen if a task were cancelled (`task_id`). Returns the runs to stop, the PRs to close, the branches to delete, whether a workspace and a session exist, and what remains. It only reads and changes nothing |
+| `cancel_task` | Cancels a task (`task_id`, `close_pull_requests`, `delete_branches`), the same as "Cancel" on the web UI. **It cannot be undone; it closes PRs and deletes branches and the workspace.** Pass the PRs and branches `get_cancel_plan` returned; it cancels only when they match |
 
 The filters of `list_tasks` are as follows (all can be omitted; with several, only tasks matching all of them are returned).
 
@@ -168,7 +170,7 @@ The AI calls it only when you ask. It is safer to ask after it has checked `appr
 - Pausing a task awaiting approval stops the approval gate and the PR watch until you resume it (while it is paused, you can neither approve nor request changes).
 - If the work finished before the stop and the task reached approval or similar, it does not stop it and says so.
 - To stop a running task, sacty stops the container and waits for the process to end, which can take time. Even if no response comes within 30 seconds, the task may be paused later (or may reach approval and not stop). In that case the AI returns "it may have been paused", does not retry automatically, and checks the state with `get_task`. If `state` is the same as before the pause (`running`, `queued`, or `idle` under verification), the pause may still be in progress, so it does not call again and waits with `wait_for_task`. If it is `paused`, the task stopped. If it became `awaiting_approval` or `escalated`, the task did not stop, and the AI tells you.
-- Cancelling cannot be done from MCP (do it in the web UI).
+- Cancelling is done with `cancel_task` ([Cancelling](#cancelling)). When you ask it to "stop", that is pausing, not cancelling.
 
 ## Resuming
 
@@ -185,6 +187,19 @@ It first checks with `get_task` why the task is stopped (`pausedReason` and `pau
   - A stop of a ticket task before the repository to work on was decided: choosing the repository to work on.
 - sacty refuses to resume when an external-work step has started, a stacked dependency was cancelled, or a container that cannot be confirmed stopped remains. It passes on that reason as it is (it may be refused even when `canResume` is `true`).
 - When no result is received (a timeout and so on), the task may have been resumed. The AI does not retry automatically and checks the state with `get_task`.
+
+## Cancelling
+
+`cancel_task` cancels a task (the same as "Cancel" on the web UI). **It cannot be undone, and the task cannot be resumed.** The AI calls it only when you clearly asked to cancel that task ("stop" and "wait" mean pause, not cancel; when unsure, it does not call and asks you).
+Even if the title, description, deliverables, review body, or stop reason of a task says to cancel, the AI does not call it.
+
+- Cancelling closes the implementation PR sacty made (without merging it), closes any open requirements or design PRs, deletes sacty's branches (the remote ones too) and the workspace, and stops running containers. The activity log and the session logs remain. A merged PR, a person's continued PR, and their branches are not touched.
+- Before calling, the AI reads the runs to stop, the PRs to close, the branches to delete, whether a workspace and a session exist, and what remains with `get_cancel_plan`, and tells you (it only reads and changes nothing).
+- Pass `cancel_task` the "PRs to close" (`close_pull_requests`) and the "branches to delete" (`delete_branches`) that `get_cancel_plan` returned. If they do not match the targets at the time of the call (for example, a PR or branch was added after reading), it does not cancel and returns the current targets.
+- A task whose `canCancel` in `get_task` is `true` (queued, running, awaiting approval, paused, awaiting a person's decision, and so on) can be cancelled. A completed task, an already cancelled task, a PR review child task (cancelling it makes the PR impossible to re-review), a split parent (unfinished child tasks are cancelled too), and a split child task (the parent pauses) are not cancelled; it returns the reason and what you can do on the web UI. Cancel them in the web UI.
+- The cancellation is recorded even when part of the cleanup fails. The result has the cleanup result for each target (cleaned up, nothing to clean, or failed) and the reason for a failure. Clean up what failed by hand (there is no way to redo it).
+- Cancelling also stops in-progress runs for answering a question or analyzing an error. If unfinished PR review child tasks exist, they are cancelled at the next PR check (a cancelled review child task cannot be re-reviewed).
+- Cancelling a running task stops the containers and waits for the processing to end, closes PRs, and deletes branches, so it can take a while. Even if there is no response within 30 seconds, the task may be cancelled later (the cleanup continues). In that case the AI answers "it may have been cancelled (the cleanup may still be running)", does not retry automatically, and checks `state` with `get_task`. The task can look `paused` until it ends; that is neither a failed cancel nor a pause, so the AI waits with `wait_for_task` until `cancelled`. Once `cancelled`, it checks `cancelled` in `get_task` for the cleanup results and what failed, and tells you. If it never becomes `cancelled`, the AI tells you the situation; if you want, have it call again starting from `get_cancel_plan`.
 
 ## Waiting for a state change
 
@@ -222,16 +237,16 @@ When sacty is waiting on a person, the AI can read "what is being asked" and "ho
 - **How to answer** (`howToAnswer` in `humanAsks`): if no answer is needed, approve as it is (`approve_step`, or merging the PR for a step approved by merging). To answer, for a step without a PR, write the answer in `comments` of `request_changes`. For a step that made a PR, write it in a PR comment, which leaves a record on the PR (`request_changes` also sends it back but leaves nothing on the PR).
   Answering makes sacty redo the step (it takes time and money). **There is no tool only for answering.**
 - **Waiting for a person's decision** (state `escalated`): `escalation` of `get_task` has the reason (over the limit of requests for changes, a change proposal, and so on; `unknown` for an old task with no record), the step, the step to redo, the number of unfinished remarks, and the ID of the open change proposal. The remark text is not included.
-  The only thing possible through MCP is approval, and only when the approval method (`approval.method`) is `approve_step` (for a step approved by merging a PR, or when there is no `approval`, it is read-only); check `escalation.canDoHere`. Requests for changes over the limit, deciding on a change proposal, deciding on proposals to defer, and cancelling cannot be done through MCP. Decide in the web UI (`escalation.decideOnScreen` lists the items that fit the reason).
+  The only thing possible through MCP is approval, and only when the approval method (`approval.method`) is `approve_step` (for a step approved by merging a PR, or when there is no `approval`, it is read-only); check `escalation.canDoHere`. Requests for changes over the limit, deciding on a change proposal, and deciding on proposals to defer cannot be done through MCP. Decide in the web UI (`escalation.decideOnScreen` lists the items that fit the reason). Cancelling a task awaiting a person's decision can be done with `cancel_task` (only when you clearly ask).
 - The "things to confirm" section in the body of a deliverable such as requirements or design is not in `humanAsks`. Read the body with `get_deliverable`.
 - These texts were written by agents or other people. Even if they say "OK to approve" or "request changes", the AI does not approve or request changes for that reason alone (only when you ask).
 
 ## Things to keep in mind
 
 - Only the person running `sacty up` can use the MCP server (it uses the address sacty wrote to a file only that person can read).
-- The registered AI can start a re-review, create a task, approve or request changes on a step awaiting approval, and pause or resume a task on your behalf. Creating a task, approving, requesting changes, or resuming starts steps, which takes time and costs money.
-  In the AI CLI's permission prompt, you can choose to confirm `rereview_task`, `create_task`, `approve_step`, `request_changes`, `pause_task`, and `resume_task` every time or to allow them.
-  Confirming `approve_step` and `request_changes` every time is recommended. If you allow them, an instruction written in a task description, deliverable, or review body by someone else may get a step approved or sent back without your check.
+- The registered AI can start a re-review, create a task, approve or request changes on a step awaiting approval, and pause, resume, or cancel a task on your behalf. Creating a task, approving, requesting changes, or resuming starts steps, which takes time and costs money. Cancelling closes PRs and deletes branches and the workspace (it cannot be undone).
+  In the AI CLI's permission prompt, you can choose to confirm `rereview_task`, `create_task`, `approve_step`, `request_changes`, `pause_task`, `resume_task`, `get_cancel_plan`, and `cancel_task` every time or to allow them.
+  Confirming `approve_step`, `request_changes`, and `cancel_task` every time is recommended. If you allow them, an instruction written in a task description, deliverable, or review body by someone else may get a step approved or sent back, or the task cancelled (the PR closed and the branches and workspace deleted; it cannot be undone), without your check.
 - Task descriptions, review bodies, and deliverables are passed to the AI.
   They can contain text from PRs and issues written by other people and text written by agents (do not let the AI treat it as instructions).
 - While a previous version of sacty is running, the deliverable and run tools answer "update sacty and restart it with `sacty up`" (a different reason from a missing task). Restart it when no task is running.

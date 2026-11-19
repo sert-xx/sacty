@@ -154,6 +154,7 @@ npm run build       # すべてのパッケージのビルド
   | `task-mcp.test.ts` | 起動中の sacty を操作する MCP サーバー（`sacty mcp`）のツール（一覧・詳細・再レビュー・作成・承認・差し戻し・確かめたいこと）と、タスクの PR・ブランチ・絞り込み |
   | `task-mcp-wait.test.ts` | `sacty mcp` の `wait_for_task`（時計と待ちを差し替える。人の出番で起きる・動いているだけでは起きない・時間切れ・上限・応答しないとき・`cursor`・取り消しと後片付け・子のレビュー） |
   | `packages/cli/src/mcp-pause.test.ts` | `sacty mcp` の一時停止・再開（本物のサービスと API と `daemonApi` をつなぐ。断り・送る入力・結果を受け取れないとき・`canPause`・`canResume`） |
+  | `packages/cli/src/mcp-cancel.test.ts` | `sacty mcp` の中止と片付けの対象の読み取り（本物のサービスと API と `daemonApi` をつなぐ。読み取りと実際の片付けの一致・引数の確かめ・完了したタスクなどの断り・失敗の報告・結果を受け取れないとき） |
   | `task-mcp-read.test.ts` | `sacty mcp` の成果物・実行の一覧の読み取り（本物のサービスと API に対して。範囲・上限・複数バイトの境目・実行の状態と切り替え・件数の上限・無いものと場所の外の指定） |
   | `daemon-api-settings.test.ts` | HTTP の API、設定に関する注意（使えないエージェント・実行の上限・Docker とイメージ・新しい版の知らせ）、タスクの詳細で工程のエージェントを変えること |
 - 必須ではありませんが、レビューの観点・自己レビュー・最終レビューの指示（`apps/daemon/default-context/skills/review/`、`apps/daemon/src/prompts.ts` の `selfReviewLines`・`outOfScopeLines`）を人が手で変えるときは、実験で見つかった取りこぼしに近い例に実際の AI を当てて、効き目を測れます（手動の測定手順）。

@@ -61,7 +61,7 @@ Code: `<path>` (`<function name>`)
 - [Secrets](secrets.en.md): reference format, fetching all at startup, handling that keeps values out of output
 - [Services (docker compose)](services.en.md): starting and stopping, safety checks, localhost forwarding, shared compose
 - [Notifications](notifications.en.md): conditions, destinations, and message text for Slack notifications, and browser desktop notifications
-- [MCP server (sacty mcp)](mcp-server.en.md): tools for operating the running sacty from a local AI (task list, details, re-review, creation, project list, reading deliverables and the agent run list, approving a step, requesting changes on a step, waiting until a task needs a person, and pausing and resuming a task)
+- [MCP server (sacty mcp)](mcp-server.en.md): tools for operating the running sacty from a local AI (task list, details, re-review, creation, project list, reading deliverables and the agent run list, approving a step, requesting changes on a step, waiting until a task needs a person, and pausing, resuming, and cancelling a task)
 - [Ticket intake and GitHub](intake.en.md): GitHub issues and PRs, JIRA, comments on the source, GitHub accounts
 - [Export](export.en.md): exporting results, exporting and importing projects
 - [PR risk assessment](risk-assessment.en.md): when it is assessed, levels and criteria, reading the assessment, how it is shown in the PR description and the review comment
