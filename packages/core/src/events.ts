@@ -3277,17 +3277,34 @@ const ReviewGitHubRetried = z.object({
 });
 
 /**
- * レビューの結果を、対象の PR にレビュー（COMMENT）として投稿した。これでタスクは完了する（PBI-19）。
+ * レビューの結果を、対象の PR にレビュー（COMMENT）として投稿した。レビューの工程が終わる（PBI-19）。
  * latestCommit は、投稿の直前に確かめた PR の先頭が、レビューしたコミットと違ったときの、その先頭（PBI-111。レビューは、
  * レビューしたコミットに対して投稿し、その旨を本文に書く）。
+ * watch は、投稿の後に PR の変化を見守る版が投稿した印（PBI-411）。印のある投稿は、その回の判定が指摘なしでなければ、タスクを
+ * 完了にせず、PR の変化を見守る。印の無い投稿（それより前の版の作業履歴）は、判定に関係なく完了のまま（作業履歴を再生しても、
+ * 完了していたタスクが見守りに変わらない）。
  */
 const PullRequestReviewPosted = z.object({
   type: z.literal("PullRequestReviewPosted"),
-  payload: z.object({ url: z.string(), latestCommit: z.string().optional() }),
+  payload: z.object({
+    url: z.string(),
+    latestCommit: z.string().optional(),
+    watch: z.literal(true).optional(),
+  }),
 });
 
 /**
- * 人間が「再レビュー」を求めた（PBI-44）。レビューを投稿して完了したタスクのレビューの工程をやり直し、PR の最新の
+ * レビューを投稿した後の、PR の変化の見守りを終えた（PBI-411）。見守っていたタスクだけに記録し、そのタスクは完了する
+ * （指摘なしで完了したタスクは見守っていないので、記録しない）。merged：PR がマージされた、closed：PR がマージされずに
+ * 閉じられた。
+ */
+const ReviewWatchEnded = z.object({
+  type: z.literal("ReviewWatchEnded"),
+  payload: z.object({ reason: z.enum(["merged", "closed"]) }),
+});
+
+/**
+ * 人間が「再レビュー」を求めた（PBI-44）。レビューを投稿した後のタスク（完了したか、PR の変化を見守っている。PBI-411）のレビューの工程をやり直し、PR の最新の
  * コミットに対してもう一度レビューして投稿する（対象の PR は、実行の前に確かめ直す）。
  * reason が rerequested なら、PR の作者が GitHub でレビューを再依頼したのを、sacty が見つけて始めた（PBI-143）。
  */
@@ -3297,11 +3314,13 @@ const ReviewRestarted = z.object({
    * reason：rerequested は GitHub のレビューの再依頼、updated は親のタスクが PR を更新した（レビューの子タスク。PBI-330）。
    * declined は、親のタスクが、指摘のすべてを理由を付けて断り、何も変えなかった（同じ先頭を、断った理由を読んで判定し直す。
    * PBI-357）。
-   * commit は、updated のときの親の PR の先頭（同じ更新で再レビューを繰り返さないため）、declined のときの、判定し直す先頭
-   * （同じ先頭の判定のし直しを、1 回だけにするため）。
+   * pushed は、見守っていた PR の先頭が変わった。replied は、見守っていた PR に、先頭を変えずに作者が返信した（同じ先頭を、
+   * 返信を読んで判定し直す。PBI-411）。
+   * commit は、updated・pushed のときの PR の先頭（同じ先頭で再レビューを繰り返さないため）、declined・replied のときの、
+   * 判定し直す先頭（同じ先頭の判定のし直しを、1 回だけにするため）。
    */
   payload: z.object({
-    reason: z.enum(["rerequested", "updated", "declined"]).optional(),
+    reason: z.enum(["rerequested", "updated", "declined", "pushed", "replied"]).optional(),
     commit: z.string().min(1).optional(),
   }),
 });
@@ -4169,6 +4188,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReviewTargetResolved,
   ReviewGitHubRetried,
   PullRequestReviewPosted,
+  ReviewWatchEnded,
   ReviewRestarted,
   BranchPushed,
   GuardianMissed,

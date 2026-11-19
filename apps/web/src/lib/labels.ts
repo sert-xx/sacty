@@ -5,6 +5,7 @@ import {
   awaitingRepository,
   awaitingTicketTriage,
   contextLabel,
+  currentReviewVerdict,
   type DaemonText,
   deliveredWithoutChanges,
   type FlakyFailure,
@@ -17,6 +18,7 @@ import {
   MAX_FIX_CHAIN,
   openProposal,
   pullRequestConflict,
+  reviewWatching,
   type StepKey,
   stepAgentChangeable,
   stepRunning,
@@ -40,7 +42,22 @@ export function prConflictNote(task: Task, l: LabelMessages): string | undefined
 
 export function statusText(task: Task, l: LabelMessages): string {
   if (task.status === "paused" && task.pausedReason) return l.pause[task.pausedReason];
+  // レビューを投稿した後、PR の変化を見守っている（PBI-411）。完了ではない。今の回の判定を添える
+  if (task.status === "idle" && reviewWatching(task)) {
+    const verdict = currentReviewVerdict(task);
+    if (verdict === "changes_required" || verdict === "suggestions") {
+      return l.state.reviewWatching(verdict);
+    }
+    // 判定が無い回は、詳細の知らせと同じ言い方で、付いていない・読めないを分ける
+    const round = task.reviewRound ?? 1;
+    const missing = task.reviewVerdicts?.findLast((v) => v.round === round)?.missing;
+    return l.state.reviewWatching(missing === "absent" ? "absent" : "unreadable");
+  }
   if (task.status === "idle" && isCompleted(task)) {
+    // 指摘なしにならないまま、PR のマージ・クローズで見守りを終えて完了した（PBI-411）
+    if (task.reviewWatchEnded) {
+      return l.state.reviewWatchEnded(task.reviewWatchEnded.reason);
+    }
     // 実装に変更が無く、PR を作らずに完了した（PBI-90）
     return deliveredWithoutChanges(task) ? l.state.completedNoChanges : l.state.completed;
   }
@@ -115,6 +132,8 @@ export type StatusTone = "working" | "waiting" | "person" | "completed" | "cance
 
 export function statusTone(task: Task): StatusTone {
   if (task.status === "cancelled") return "cancelled";
+  // レビューを投稿した後の PR の見守りは、PR の作者の対応を待っている（人の出番でも、完了でもない。PBI-411）
+  if (task.status === "idle" && reviewWatching(task)) return "waiting";
   if (task.status === "idle" && isCompleted(task)) return "completed";
   // PR の指摘の戻し先を判断している間は、承認待ちでも AI が進めている
   if (task.status === "awaiting_approval" && task.pendingReview) return "working";
@@ -270,9 +289,12 @@ export function personLink(task: Task, l: LabelMessages): { href: string; extern
   return external ? { href, external } : { href };
 }
 
-/** 一時停止・中止の操作を出すか。中止したタスクと、完了したタスクには出さない。 */
+/**
+ * 一時停止・中止の操作を出すか。中止したタスクと、完了したタスクには出さない。レビューを投稿して PR の変化を見守っている
+ * タスク（PBI-411）には出す。
+ */
 export function canControl(task: Task): boolean {
-  return task.status !== "cancelled" && !isCompleted(task);
+  return task.status !== "cancelled" && (!isCompleted(task) || reviewWatching(task));
 }
 
 /** 人間の判断が必要な状態か（承認待ち・エスカレーション・一時停止）。 */
@@ -1110,7 +1132,13 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
           ? e.ReviewRestartedByUpdate((event.payload.commit ?? "").slice(0, 7))
           : event.payload.reason === "declined"
             ? e.ReviewRestartedByDecline((event.payload.commit ?? "").slice(0, 7))
-            : e.ReviewRestarted(actor);
+            : event.payload.reason === "pushed"
+              ? e.ReviewRestartedByPush((event.payload.commit ?? "").slice(0, 7))
+              : event.payload.reason === "replied"
+                ? e.ReviewRestartedByReply((event.payload.commit ?? "").slice(0, 7))
+                : e.ReviewRestarted(actor);
+    case "ReviewWatchEnded":
+      return e.ReviewWatchEnded(event.payload.reason);
     case "ContextResolved":
       // describeEventParts で分けて出す（ここには来ない）
       return describeEventParts(event, l).text;

@@ -9,6 +9,7 @@ import {
   type PauseReason,
   type Project,
   renderMessage,
+  reviewWatching,
   type SlackMention,
   type SlackNotification,
   type StepKey,
@@ -269,7 +270,11 @@ export function notificationFor(
   if (after.status === "paused" && before?.status !== "paused" && after.pausedReason !== "manual") {
     return "paused";
   }
-  if (isCompleted(after) && !(before && isCompleted(before))) return "completed";
+  // レビューを投稿して PR の変化を見守っている間は、完了ではない（見守りに入るたびに、完了と通知しない。PBI-411）
+  // 中止したタスクも、工程は終わったままなので、完了に数えない（見守り中のタスクの中止を、完了と通知しない）
+  const completed = (task: Task) =>
+    task.status !== "cancelled" && isCompleted(task) && !reviewWatching(task);
+  if (completed(after) && !(before && completed(before))) return "completed";
   return undefined;
 }
 

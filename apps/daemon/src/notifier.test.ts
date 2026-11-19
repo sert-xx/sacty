@@ -89,6 +89,40 @@ describe("Slack の通知（PBI-38）", () => {
     expect(notificationFor(undefined, task({ status: "queued" }))).toBeUndefined();
   });
 
+  it("レビューを投稿した後の PR の見守り（PBI-411）：見守りに入っても完了と知らせず、完了になったときだけ知らせる", () => {
+    const running = task({ status: "running", steps: [{ key: "review", state: "active" }] });
+    const posted = (verdict: "suggestions" | "no_findings", patch: Partial<Task> = {}) =>
+      task({
+        steps: [{ key: "review", state: "done" }],
+        reviewPost: { url: "https://x/r", at: "2026-11-20T00:00:00.000Z" },
+        // 見守りの状態は、判定が指摘なしでない投稿にだけ付く
+        ...(verdict === "no_findings"
+          ? {}
+          : { reviewWatch: { since: "2026-11-19T23:50:00.000Z" } }),
+        reviewVerdicts: [{ round: 1, verdict }],
+        ...patch,
+      });
+    // 指摘なしでない判定の投稿：見守りに入る（完了ではない。人の出番でもないので、何も知らせない）
+    expect(notificationFor(running, posted("suggestions"))).toBeUndefined();
+    expect(notificationFor(posted("suggestions"), posted("suggestions"))).toBeUndefined();
+    // PR のマージ・クローズで見守りを終えた：完了
+    const ended = posted("suggestions", {
+      reviewWatch: undefined,
+      reviewWatchEnded: { reason: "merged" },
+    });
+    expect(notificationFor(posted("suggestions"), ended)).toBe("completed");
+    // 指摘なしの投稿：完了
+    expect(notificationFor(running, posted("no_findings"))).toBe("completed");
+    // 見守り中のタスクを中止しても、完了とは知らせない（工程は終わったままだが、中止）
+    expect(
+      notificationFor(posted("suggestions"), posted("suggestions", { status: "cancelled" })),
+    ).toBeUndefined();
+    // 更新の前の版が投稿したレビュー（見守りの印が無い）は、判定に関係なく、投稿で完了
+    expect(notificationFor(running, posted("suggestions", { reviewWatch: undefined }))).toBe(
+      "completed",
+    );
+  });
+
   it("マージの後の監視の工程（PBI-116）：監視の間は完了を知らせず、終わったら知らせる。止まったら工程の名前を書く", () => {
     const watching = task({
       steps: [

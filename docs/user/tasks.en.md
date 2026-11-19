@@ -1528,7 +1528,7 @@ In the resume section, you can change the following along with the resume.
 ### Pausing a task
 
 To stop a task, press "Pause" in the task details.
-A task waiting for approval (waiting for a PR merge) can also be paused. A task in escalation cannot be paused.
+A task waiting for approval (waiting for a PR merge) can also be paused. A task in escalation cannot be paused. A task that watches the PR for changes after posting a review ("Waiting on the PR") can be paused too ([After the review is posted](intake.en.md#after-the-review-is-posted)).
 
 When you pause a task that is waiting for approval, the following applies.
 

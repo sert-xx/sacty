@@ -8,7 +8,7 @@ import { useMessages } from "@/i18n/client";
 
 const initial: TaskControlState = {};
 
-/** 再レビュー（PBI-44）。レビューを PR に投稿して完了したタスクで、PR の最新のコミットをもう一度レビューする。 */
+/** 再レビュー（PBI-44）。レビューを PR に投稿した後のタスク（完了したか、PR の変化を見守っている）で、PR の最新のコミットをもう一度レビューする。 */
 export function RereviewButton({ taskId }: { taskId: string }) {
   const t = useMessages().parts.control;
   const [state, action, pending] = useActionState(rereviewTaskAction, initial);

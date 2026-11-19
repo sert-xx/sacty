@@ -3,7 +3,7 @@ import {
   canDerive,
   canRequestSecurityFix,
   canRerun,
-  isFinished,
+  isAuditTarget,
   type SecurityFinding,
   type StepKey,
   type Task,
@@ -90,7 +90,9 @@ export async function loadTaskDetail(
   const found = await getTask(id);
   if (!found) return null;
   const { task, activity } = found;
-  const completed = isFinished(task) && task.status !== "cancelled";
+  // 監査の対象と同じ条件（工程がすべて終わった）。レビューを投稿して PR の変化を見守っている間も、監査は登録されている
+  // ので、監査の結果を読む（PBI-411）
+  const completed = isAuditTarget(task);
   const derivedIds = canDerive(task) ? (task.derivedTasks ?? []) : [];
   const [
     project,

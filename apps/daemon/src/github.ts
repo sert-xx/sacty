@@ -98,6 +98,8 @@ export interface PullRequests {
      * レビューの工程に渡す既存のレビューと、再レビューの作者の返答だけが含める。
      */
     includeSactyReplies?: boolean;
+    /** 中断できる（答えを待つのをやめた通信を残さない。PBI-411）。 */
+    signal?: AbortSignal;
   }): Promise<PullRequestFeedback[]>;
   /**
    * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
@@ -417,7 +419,14 @@ export function lineContextOf(diffHunk: unknown): PullRequestFeedback["lineConte
  * （マージ済みなら、マージされた内容。最新の提出がマージされたかを確かめるのに使う）。mergeCommit はマージのコミット
  * （取れれば。PBI-63）。
  */
-export type PullRequestStatus = { headSha?: string } & (
+export type PullRequestStatus = {
+  headSha?: string;
+  /**
+   * PR が最後に更新された時刻（GitHub の updated_at。コメント・レビューでも進む。PBI-411）。見守りで、変わっていない PR の
+   * コメントを読み直さないために使う。読めなければ無い。
+   */
+  updatedAt?: string;
+} & (
   | {
       state: "open";
       /**
@@ -506,7 +515,8 @@ export class GitHubPullRequests implements PullRequests {
   }
 
   async feedback(input: Parameters<PullRequests["feedback"]>[0]): Promise<PullRequestFeedback[]> {
-    const get = (path: string) => this.list(input.repo, path, input.token, "getReviews");
+    const get = (path: string) =>
+      this.list(input.repo, path, input.token, "getReviews", input.signal);
     const user = (item: Record<string, unknown>) =>
       (item.user ?? {}) as { login?: unknown; type?: unknown };
     // bot（CI など）のコメントは、人間の指摘ではないので含めない
@@ -1009,7 +1019,12 @@ export class GitHubPullRequests implements PullRequests {
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw apiError("getPr", res.status, json);
     const sha = (json.head as { sha?: unknown } | null)?.sha;
-    const head = typeof sha === "string" ? { headSha: sha } : {};
+    const head = {
+      ...(typeof sha === "string" ? { headSha: sha } : {}),
+      ...(typeof json.updated_at === "string" && json.updated_at
+        ? { updatedAt: json.updated_at }
+        : {}),
+    };
     if (json.merged === true) {
       const by = (json.merged_by as { login?: unknown } | null)?.login;
       const mergeCommit = json.merge_commit_sha;

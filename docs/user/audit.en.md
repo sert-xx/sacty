@@ -8,7 +8,7 @@ An audit examines the whole process of a completed task, from the step choices t
 
 ## How an audit runs
 
-When a task completes, sacty starts its audit automatically. No setup is needed.
+When a task completes, sacty starts its audit automatically. For a PR review task, it starts when the review is posted (even while the verdict is not "no findings" and the task is "Waiting on the PR"; [After the review is posted](intake.en.md#after-the-review-is-posted)). No setup is needed.
 
 An audit proceeds as follows.
 
@@ -68,7 +68,7 @@ Your text (the edit) is handled as follows.
 
 ## The Audit tab in task details
 
-Completed tasks have an "Audit" tab in their details (if not audited yet, it says so). The tab shows the following.
+Completed tasks (and PR review tasks that have posted their review) have an "Audit" tab in their details (if not audited yet, it says so). The tab shows the following.
 
 | Item | What it shows |
 | --- | --- |

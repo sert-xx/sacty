@@ -21,6 +21,7 @@ import {
   pullRequestConflict,
   rerunEditableBody,
   resumeNoteRoom,
+  reviewWatching,
   reworkingPullRequest,
   type StepKey,
   type Task,
@@ -59,6 +60,7 @@ import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { RerunDialog } from "@/components/rerun-dialog";
 import { ResumeForm, type ResumeStepSetting } from "@/components/resume-form";
+import { ReviewWatchNotice } from "@/components/review-watch-notice";
 import { RiskAssessmentCard } from "@/components/risk-assessment";
 import { SecurityFixesCard } from "@/components/security-fixes";
 import { SelfReviewNote } from "@/components/self-review";
@@ -196,7 +198,9 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
     task.status === "queued" ||
     task.status === "running" ||
     task.status === "awaiting_approval" ||
-    (task.status === "idle" && task.verification !== undefined);
+    (task.status === "idle" && task.verification !== undefined) ||
+    // レビューを投稿した後の PR の見守り（PBI-411）。止めている間は、PR の変化で再レビューを始めない
+    (task.status === "idle" && reviewWatching(task));
 
   const [tab, setTab] = useState<TabKey>("overview");
   const tabs: { key: TabKey; label: string; count?: number }[] = [
@@ -301,6 +305,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
       <DeferralPendingNotice task={task} />
       <DeferralHandledNotice task={task} />
       <AiReviewNotice task={task} />
+      <ReviewWatchNotice task={task} />
       <DiscardedReviewNotice task={task} />
       {task.status === "paused" && task.pausedReason && (
         <ResumeForm

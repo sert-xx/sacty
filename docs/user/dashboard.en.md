@@ -49,7 +49,7 @@ This section shows paused tasks counted by reason.
 
 ### Open tasks
 
-This section shows all tasks except completed and cancelled ones. With more than 5 tasks, the section scrolls inside.
+This section shows all tasks except completed and cancelled ones. Tasks that watch the PR for changes after posting a review ("Waiting on the PR"; [After the review is posted](intake.en.md#after-the-review-is-posted)) appear here too (not in "Needs you"). With more than 5 tasks, the section scrolls inside.
 
 ### Cost and budget
 
@@ -66,6 +66,7 @@ For issues, PR reviews, and tickets, this section shows the time of the last int
 ### Throughput
 
 This section shows completed and cancelled counts for the last 7 and 30 days, and the median time from creation to completion.
+A PR review task is counted as completed at the time its verdict became "no findings" or its PR was merged or closed (posting a review alone does not count; [After the review is posted](intake.en.md#after-the-review-is-posted)). Review tasks completed in an earlier version keep the time their review was posted.
 
 ### Quality signals
 

@@ -529,7 +529,7 @@ export function cancelTask(id: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/cancel`, {});
 }
 
-/** レビューを投稿して完了したタスクを、PR の最新のコミットでもう一度レビューする（PBI-44）。 */
+/** レビューを投稿した後のタスク（完了したか、PR の変化を見守っている）を、PR の最新のコミットでもう一度レビューする（PBI-44）。 */
 export function rereviewTask(id: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/rereview`, {});
 }

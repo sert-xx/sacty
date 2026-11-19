@@ -10,7 +10,7 @@ Related ADRs: [Build the audit screens first, on a mock backend](../adr/20261017
 
 ## When an audit starts, and what is audited
 
-- sacty adds `AuditQueued` (the audit ID and budget cap) in the same append that completes a task (makes `status` `idle` with every step done or skipped). The audit is not lost if the daemon stops between completion and registering the audit.
+- sacty adds `AuditQueued` (the audit ID and budget cap) in the same append that completes a task (makes `status` `idle` with every step done or skipped). The audit is not lost if the daemon stops between completion and registering the audit. For a PR review task, the append that posts the review is this one (even while the verdict is not no findings and the task watches the PR for changes, its steps are finished, so it is an audit target; [Watching the PR after posting](tasks-and-steps.en.md#watching-the-pr-after-posting)).
 - Cancelled tasks are not audited.
 - Tasks that completed before this feature (only folded from the activity log at startup) get no `AuditQueued` and are not audited.
 - A task waiting for its audit enters the worker's queue (it counts toward the limit on parallel runs). Tasks with nothing but the audit left are queued after other runs. Each run advances one agent run.

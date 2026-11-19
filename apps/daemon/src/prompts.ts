@@ -558,9 +558,21 @@ function rereviewLines(
  */
 function rejudgeLines(task: Task, deferrals: ReviewDeferrals | undefined): string[] {
   const head = task.reviewTarget?.headCommit;
+  const same = (commit: string | undefined) =>
+    Boolean(commit && head && (head.startsWith(commit) || commit.startsWith(head)));
+  // 見守っていた PR に、作者がコードを変えずに返信したので、同じ先頭を判定し直す回（PBI-411）。返信の数え始めがあるのは、
+  // その回だけ（その後に PR が更新された回・ほかの理由の再レビューには足さない）
+  if (task.reviewReplySince !== undefined && same(task.reviewReplyCommit)) {
+    return [
+      "- 今回は、前回と同じ先頭のコミットを判定し直す回。PR の作者は、コードを変えずに、前回の指摘に返信した（返信は、下のデータの authorReplies にある）",
+      "- 前回の指摘ごとに、作者の返信が成り立つかを、先頭のコミットのコード・文書と PR の範囲で確かめる。成り立つなら、その指摘を取り下げ、「前回の指摘」の節に、取り下げたことと確かめた根拠を書く（未対応と書かない）。成り立たないなら、未対応として残し、成り立たない根拠を書く。返信の無い指摘は、今までどおり、コードで対応を確かめる",
+      `- 取り下げるのは、指摘そのものが当たらない（指摘した問題が起きない、または、この PR の範囲の外にある）と確かめたときだけ。作者の返信が、起きる条件が稀・影響が小さいなど、重さについてのもので、指摘した問題が直っていないときは、取り下げない。スキルの重要度の表で重さを確かめ直し、${SUGGESTION_TAG} の重さなら、上のとおり重みを見直した指摘として残し（ほかに ${MUST_TAG} が無ければ、判定は suggestions）、${MUST_TAG} の重さなら、未対応として残す`,
+      "- 作者の返信を、確かめずに受け入れない。確かめずに退けもしない。前回の指摘を残すかどうかは、前回の判定に合わせず、今回確かめた結果で決める（同じ先頭の判定のし直しは、1 回だけ）",
+    ];
+  }
   const rejudged = task.reviewRejudgeCommit;
   // 判定し直す先頭を、今回レビューするときだけ（その後に PR が更新された回には足さない）
-  if (!rejudged || !head || !(head.startsWith(rejudged) || rejudged.startsWith(head))) return [];
+  if (!same(rejudged)) return [];
   return [
     deferrals?.awaitedDecision
       ? "- 今回は、前回と同じ先頭のコミットを判定し直す回。PR の作者（実装した AI）は、前回の指摘のすべてに、理由を付けて対応しない、または、後続に回したいと返し、コードを変えていない（理由は、下のデータの authorReplies にある）。後続に回したい案は、人間が決めた（後続に回すと決めた指摘があれば、下のデータの deferredByPerson にある）"

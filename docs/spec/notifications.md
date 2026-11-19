@@ -20,7 +20,9 @@
 | `escalation` | `escalated` になった |
 | `approval` | `awaiting_approval` になった、または承認待ちの工程か提出の回が変わった |
 | `paused` | `paused` になった（理由が `manual`、つまり人が止めたときは通知しない） |
-| `completed` | 完了した |
+| `completed` | 完了した（工程がすべて終わった。PR のレビューのタスクは、レビューを投稿して PR の変化を見守っている間を除く） |
+
+- PR のレビューのタスクが、指摘なしでない判定を投稿して PR の変化の見守りに入ったとき（[投稿の後の PR の見守り](tasks-and-steps.md#投稿の後の-pr-の見守り)）は、通知しない（完了ではなく、人の出番でもない）。判定が指摘なしになった・PR のマージやクローズで見守りを終えたときに、`completed` を通知する。
 
 コード: `apps/daemon/src/notifier.ts`（`notificationFor`）、`apps/daemon/src/service.ts`（`append`）、`packages/core/src/projects.ts`（`NotificationKind`）
 

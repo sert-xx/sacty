@@ -183,7 +183,7 @@ After deleting, the web UI moves to the project list. What is deleted and what i
 
 A project cannot be deleted while it has any of the following.
 
-- Unfinished tasks (other than completed and cancelled ones)
+- Unfinished tasks (other than completed and cancelled ones). A task that watches the PR for changes after posting a review ("Waiting on the PR") is also unfinished ([After the review is posted](intake.en.md#after-the-review-is-posted))
 - Work still running or queued (such as audits)
 - A question being answered
 

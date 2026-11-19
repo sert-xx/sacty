@@ -111,6 +111,22 @@ const ja = {
     decidedDefer: "後続に回すと決定",
     decidedFix: "この PR で直すと決定",
   },
+  /** レビューを投稿した後の、PR の変化の見守り（PBI-411）。 */
+  reviewWatch: {
+    title: "PR の変化を見守っています",
+    hint: "PR に新しいコミットが push されるか、PR の作者が返信すると、自動で再レビューします。判定が「指摘なし」になるか、PR がマージ・クローズされると、完了します。「再レビューして PR に投稿」で、今すぐレビューし直すこともできます。",
+    parentHint:
+      "PR を作ったタスクが PR を更新して承認待ちに戻ると、自動で再レビューします。判定が「指摘なし」になるか、PR がマージ・クローズされると、完了します。",
+    verdict: (round: number, verdict: string) => `${round}回目のレビューの判定：${verdict}`,
+    waiting: "PR の作者の対応を待っています。あなたの対応は要りません。",
+    waitingParent: "PR を作ったタスクの対応を待っています。あなたの対応は要りません。",
+    open: "投稿したレビューを開く",
+    endedTitle: "PR の見守りを終えました",
+    ended: {
+      merged: "PR がマージされたので、完了にしました。",
+      closed: "PR がマージされずに閉じられたので、完了にしました。",
+    } as Record<"merged" | "closed", string>,
+  },
   discardedReview: {
     title: (count: number) => `取り込んでいない AI のレビューの指摘が${count}件あります`,
     help: (number: number, head: string) =>
@@ -740,6 +756,21 @@ const en: TaskMessages = {
     decided: (count: number) => `Decided (${count})`,
     decidedDefer: "Decided to defer",
     decidedFix: "Decided to fix in this PR",
+  },
+  reviewWatch: {
+    title: "Watching the PR for changes",
+    hint: "When a new commit is pushed to the PR or the PR author replies, the re-review starts automatically. The task is done when the verdict becomes “no findings” or the PR is merged or closed. You can also use “Review again and post to the PR” to review again right now.",
+    parentHint:
+      "When the task that opened the PR updates it and returns to awaiting approval, the re-review starts automatically. The task is done when the verdict becomes “no findings” or the PR is merged or closed.",
+    verdict: (round: number, verdict: string) => `Verdict of review round ${round}: ${verdict}`,
+    waiting: "Waiting for the PR author to respond. Nothing is needed from you.",
+    waitingParent: "Waiting for the task that opened the PR. Nothing is needed from you.",
+    open: "Open the posted review",
+    endedTitle: "Stopped watching the PR",
+    ended: {
+      merged: "The PR was merged, so the task is done.",
+      closed: "The PR was closed without merging, so the task is done.",
+    },
   },
   discardedReview: {
     title: (count: number) =>

@@ -142,7 +142,8 @@ The status of a deliverable is as follows.
 
 Deliverables from before a rework (earlier rounds) and the agent's original files cannot be read (look at them in the web UI).
 
-Only a task that posted its review to the PR and completed can be re-reviewed (`canRereview` in the result of `list_tasks` is `true`).
+Only a task that has posted its review to the PR (done, or watching the PR for changes) can be re-reviewed (`canRereview` in the result of `list_tasks` is `true`).
+A PR review task is not done until the verdict becomes "no findings"; meanwhile `state` is `idle` and `review.watching` is `true` ([After the review is posted](intake.en.md#after-the-review-is-posted)).
 If you ask for a task under review or a task that is not a PR review, it returns the reason and changes nothing.
 
 ## Find the tasks waiting for a person
@@ -190,7 +191,7 @@ The AI calls it only when you ask. It is safer to ask after it has checked `appr
 
 `pause_task` pauses a task (the same as "Pause" in the web UI). The AI calls it only when you ask.
 
-- It can stop a queued, running, awaiting-approval, or under-verification task (the same states in which the web UI shows the "Pause" button; `canPause` of `get_task` is `true`).
+- It can stop a queued, running, awaiting-approval, or under-verification task, and a task that watches the PR for changes after posting a review (the same states in which the web UI shows the "Pause" button; `canPause` of `get_task` is `true`).
 - A completed or cancelled task, a task that is already paused, a task awaiting a person's decision (escalation), and a task waiting for another task or for its child tasks are not stopped; it returns the reason and changes nothing.
 - A running run is cut off, and resuming starts that step over from the beginning (the cost already spent does not come back).
 - Pausing a task awaiting approval stops the approval gate and the PR watch until you resume it (while it is paused, you can neither approve nor request changes).
@@ -281,6 +282,7 @@ An example of how to wait:
 
 - Changes that wake it: the task became awaiting approval (including a change to another step or another submission awaiting approval), became awaiting a person's decision, paused (including a changed reason), completed, or cancelled;
   it started moving again from those; the count of things to confirm with a person changed; a PR's state changed (merged, closed, and so on).
+  When you wait on a PR review task, it also wakes when the review is posted (if the verdict is not "no findings", the task is not done and enters the watch for changes of the PR; `changes` shows `review_watching` and the round and verdict).
   Changes in the child tasks that review the PR also wake it: a child was added, became a person's-turn state, had its review round changed (a re-review), had a review posted, or had a verdict appear or change.
   Even while the parent stays awaiting approval (waiting for the PR to be merged), a child's verdict alone wakes it.
 - Changes that do not wake it: a step advancing, a run starting or ending, and cost or the activity log growing do not wake it by themselves. Waiting for a previous task to complete (`blocked`) or for split children to complete (`waiting_children`) is not a person's turn either, and changes in split children do not wake it.
