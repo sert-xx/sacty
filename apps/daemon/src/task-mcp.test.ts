@@ -109,6 +109,11 @@ function apiOver(service: TaskService, webUrl?: string): SactyApi & { calls: str
       const res = await app.request("/api/projects", { headers });
       return ((await res.json()) as { projects: ProjectChoice[] }).projects;
     },
+    async waitingSince() {
+      calls.push("GET /api/dashboard");
+      const res = await app.request("/api/dashboard", { headers });
+      return ((await res.json()) as { waitingSince: Record<string, string> }).waitingSince;
+    },
     async createTask(input) {
       calls.push("POST /api/tasks");
       // CLI の daemonApi と同じ要求（画面と同じく、対象リポジトリは空欄）
@@ -332,12 +337,16 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "open_only",
       "review_only",
       "limit",
+      "offset",
+      "needs_person",
+      "state",
+      "project_id",
     ]);
     expect(list.pull_request?.description).toContain("PR の URL");
     expect(tools[2]?.inputSchema.required).toEqual(["task_id"]);
     // 結果の形（outputSchema）も、ツールの一覧に出る
     expect(tools.map((t) => Object.keys(t.outputSchema?.properties ?? {}))).toEqual([
-      ["total", "returned", "tasks"],
+      ["total", "returned", "order", "nextOffset", "excludedAiJudging", "tasks"],
       expect.arrayContaining(["id", "body", "recentActivity"]),
       ["message", "task"],
       ["projects"],
@@ -707,6 +716,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
         getTask: async () => undefined,
         rereview: async () => lost(),
         listProjects: async () => [],
+        waitingSince: async () => ({}),
         createTask: async () => lost(),
         approve: async () => lost(),
         ...readStubs(lost),
@@ -745,6 +755,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       getTask: async () => down(),
       rereview: async () => down(),
       listProjects: async () => down(),
+      waitingSince: async () => down(),
       createTask: async () => down(),
       approve: async () => down(),
       ...readStubs(down),
@@ -773,6 +784,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       getTask: async () => down(),
       rereview: async () => down(),
       listProjects: async () => down(),
+      waitingSince: async () => down(),
       createTask: async () => down(),
       approve: async () => down(),
       ...readStubs(down),
@@ -831,7 +843,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
     expect(times).toEqual([...times].sort().reverse());
     // タスクが無ければ空
     const none = await json<Listed>("list_tasks", { query: "無い題" });
-    expect(none).toEqual({ total: 0, returned: 0, tasks: [] });
+    expect(none).toEqual({ total: 0, returned: 0, order: "createdAt_desc", tasks: [] });
     activity.close();
   });
 });
@@ -2386,6 +2398,7 @@ function apiOverStub(approve: () => never): SactyApi {
     getTask: async () => none(),
     rereview: async () => none(),
     listProjects: async () => none(),
+    waitingSince: async () => none(),
     createTask: async () => none(),
     approve: async () => approve(),
     requestChanges: async () => none(),

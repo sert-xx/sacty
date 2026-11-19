@@ -123,6 +123,7 @@ function worldApi(world: World): SactyApi {
     },
     rereview: unused,
     listProjects: async () => [],
+    waitingSince: async () => ({}),
     createTask: unused,
     listDeliverables: unused,
     getDeliverable: unused,

@@ -28,7 +28,7 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
 
 | Tool | Daemon API |
 | --- | --- |
-| `list_tasks` | `GET /api/tasks`, `GET /api/projects` |
+| `list_tasks` | `GET /api/tasks`, `GET /api/projects` (and `GET /api/dashboard` only with `needs_person`) |
 | `get_task` | `GET /api/tasks/:id` |
 | `rereview_task` | `GET /api/tasks/:id`, `POST /api/tasks/:id/rereview` |
 | `list_projects` | `GET /api/projects` |
@@ -72,10 +72,24 @@ Every argument can be omitted. It returns the tasks that match all the given con
 | `open_only` | boolean | If `true`, only tasks that are not finished (neither completed nor cancelled) |
 | `review_only` | boolean | If `true`, only PR review tasks |
 | `limit` | integer | The maximum number to return. 1 to 100 (`LIST_LIMIT_MAX`). The default is 20 (`LIST_LIMIT_DEFAULT`) |
+| `offset` | integer | The position to start reading from (0 or more; default 0). Pass the `nextOffset` of the result to get the rest |
+| `needs_person` | boolean | If `true`, only tasks that need a person (see "Needs a person" below). Sorted by the longest wait first |
+| `state` | array of strings | Filter by state (one or more; matches any of them). The values are those of `state` in the summary (`blocked`, `waiting_children`, `queued`, `running`, `idle`, `paused`, `awaiting_approval`, `escalated`, `cancelled`, `completed`). An unknown value is rejected |
+| `project_id` | string | A project ID (the `id` of `list_projects`). The ID of a project that does not exist or was deleted is rejected with a reason |
 
 - Tasks of a deleted project are not listed (`get_task` also treats them as missing).
-- The result is `{ total, returned, tasks }`. `total` is the number of matching tasks, `returned` is the number returned, and `tasks` holds [task summaries](#task-summary).
+- The result is `{ total, returned, order, nextOffset, excludedAiJudging, tasks }`. `total` is the number of all matching tasks (before cutting by `offset` and `limit`), `returned` is the number returned, and `tasks` holds [task summaries](#task-summary) plus `projectName` (the project's name).
+- `order` tells the sort. `createdAt_desc`: by creation, newest first (when `needs_person` is not set). `waitingSince_asc`: the longest wait first (by ID when equal; with `needs_person`).
+- Continuing: when the result includes `nextOffset` (the next `offset`), there is more (`total` is more than `offset` + `returned`). It is absent once everything has been returned. An `offset` out of range returns an empty list without a reason (`returned` is 0, no `nextOffset`).
+- An unknown argument (for example `status` or `project`) is rejected, not ignored. The input schema does not accept unknown keys (`additionalProperties: false`), and the MCP SDK returns a reason that contains the argument's name without calling the tool (it also appears in the input schema of `tools/list`). This applies to `list_tasks` only; the inputs of the other tools are unchanged.
 - If `pull_request` cannot be read, it returns the reason (and no list).
+- Needs a person (`needs_person`): the same condition as "Your turn" on the web dashboard. Tasks whose state is `awaiting_approval`, `escalated`, or `paused`, minus those awaiting approval that have `pendingReview` (the AI is deciding where to send back the PR remarks). Queued, running, completed, and cancelled tasks, and tasks of a deleted project, are not included. The number excluded is `excludedAiJudging` (among those that match the other conditions). The header bell also counts the awaiting-approval tasks the AI is deciding on, so its count can differ.
+  - Each task gets `waitingSince` (when it started waiting) and `waitingSinceSource`. `dashboard`: the time from the daemon's aggregate (`waitingSince` of `GET /api/dashboard`). `updatedAt`: the aggregate has no record, so `updatedAt` stands in (the same as the web UI).
+  - `GET /api/dashboard` is read only with `needs_person`. When it cannot be read (it cannot connect, a 5xx, or an earlier version without the `waitingSince` field), it fails with the reason instead of replacing the time with `updatedAt`. A call without `needs_person` does not call this API and is not affected.
+  - When asked which tasks are waiting for a person, call it with `needs_person: true`. It combines with the other arguments such as `state` and `project_id` as "matches all".
+  - A task awaiting approval on which the AI is deciding is shown by `pendingReview` (`true`) in the summary (so a list filtered by `state` of `awaiting_approval` is not mistaken for tasks that need a person).
+- Differences from the web UI: the status text and color (`statusText`, `statusTone`), the link to where a person decides (`personLink`), and the PR conflict note (`prConflictNote`) are not shown (`state`, `approval`, `asks`, `pausedReason`, and `url` stand in). The check for needing a person is a copy of the web UI's functions (`needsPerson`, `statusTone`, `attentionRows`) kept in the MCP layer (`isPersonTurn`; it is not shared), so it must be updated when the web UI's check changes. The task list and the wait times are read from separate APIs, so a task whose state changed between them can get `updatedAt` as its time (the web UI is the same).
+- The list is read-only (the activity history, the number of tasks, and the states do not change). Acting on a task it finds (approving, requesting changes, resuming, and so on) is done only when the user asks.
 - The PR condition: one of the [PRs tied to the task](#prs-and-branches-tied-to-a-task) has the same number.
   When the repository is given (`owner/repo#123` or a URL), the repository must also be the same. With only a number, any repository matches.
 - The branch condition: either of the following holds. The repository is not checked (a task for a branch of the same name in another repository also matches; combine with the `repo` condition to narrow down).
@@ -492,7 +506,7 @@ The name of the failed tool, the target task ID (`task_id` if present; no other 
 | The daemon returned `invalid_input` (400) | The message for each error (rendered in Japanese) |
 | The daemon returned another failure | The status code |
 
-When the arguments do not match the types (a `limit` out of range, a missing `task_id`, and so on), the MCP SDK returns the same shape (`isError: true` and the text of the reason) without calling the tool.
+When the arguments do not match the types (a `limit` out of range, a missing `task_id`, an unknown argument of `list_tasks`, and so on), the MCP SDK returns the same shape (`isError: true` and the text of the reason) without calling the tool.
 Calling an unknown tool and the like becomes a JSON-RPC error.
 
 Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`, `pauseBlock`, `resumeBlock`, `cancelBlock`, `rerunBlock`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_UNCERTAIN`, `CREATE_UNCERTAIN`, `APPROVE_UNCERTAIN`, `CHANGES_UNCERTAIN`, `PAUSE_UNCERTAIN`, `RESUME_UNCERTAIN`, `CANCEL_UNCERTAIN`, `RERUN_UNCERTAIN`, `writeTask`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`, `createTask`), `packages/core/src/events.ts` (`CreateTaskInput`)
@@ -521,12 +535,13 @@ The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, `req
 | `reviewTasks` | The child tasks that review this task's PRs (task ID and PR number) |
 | `pausedReason` | The reason for the pause (only while paused) |
 | `approval` | Only while awaiting approval (`awaiting_approval`, `escalated`): the step and submission awaiting approval and how to approve ([approve_step](#approve_step)) |
+| `pendingReview` | `true` only for a task awaiting approval on which the AI is deciding where to send back the PR remarks (not a task that needs a person) |
 | `asks` | The number of things to confirm with a person (absent when 0). Counted the same way as the web UI; a small value only, no text (the text is in `humanAsks` of `get_task`) |
 | `createdAt`, `updatedAt` | The time it was created and the time of the last record |
 | `url` | The URL of the task details in the web UI (only when `daemon.json` has the web UI URL) |
 
 `asks` is counted from `humanAsks` in `@sacty/core` (the same as `HumanAskNotice` in the web UI).
-Code: `apps/daemon/src/task-mcp.ts` (`summarizeTask`, `isReviewTask`, `TaskSummarySchema`), `packages/core/src/projection.ts` (`canRereview`, `isFinished`)
+Code: `apps/daemon/src/task-mcp.ts` (`summarizeTask`, `isReviewTask`, `TaskSummarySchema`, `isPersonTurn`), `packages/core/src/projection.ts` (`canRereview`, `isFinished`)
 
 ## Things to confirm with a person
 
