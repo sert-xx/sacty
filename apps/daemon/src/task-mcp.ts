@@ -333,7 +333,7 @@ const HumanAsksSchema = z.object({
       reason: z.string().describe("指摘の意図を読み取れなかった理由（長ければ切り詰める）"),
     })
     .optional()
-    .describe("PR の指摘の戻し先を、ゴールガーディアンが判断できなかったこと"),
+    .describe("PR の指摘の戻し先の判断で、指摘の意図を読み取れなかったこと"),
   confirms: z
     .array(
       z.object({

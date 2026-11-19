@@ -3192,6 +3192,7 @@ const PullRequestReviewDiscarded = z.object({
  * 取り込んだ PR の指摘で、どの工程まで戻すかの判断（PBI-14b）。PBI-332 からは、AI のレビューの指摘だけなら PR のレビューの
  * 子タスクが示した戻し先から決め（reviewTaskId）、人の指摘を含めば PR の工程のエージェントが判断する（それより前はゴール
  * ガーディアン）。target が無ければ判断できなかった。判断した工程に、人間の確認を待たずに差し戻す。判断できなければ実装をやり直す（PBI-58）。
+ * 対応を求めていない人の指摘（noAction）は差し戻しに含めず、すべてがそうなら差し戻さない。
  * PBI-58 より前の作業履歴では、設計・要求要件まで戻す・判断できないときは人間が確かめた（rework_confirmation）。
  */
 const ReworkJudged = z.object({
@@ -3204,6 +3205,14 @@ const ReworkJudged = z.object({
     answer: ReworkAnswer.optional(),
     /** 判断した担い手が書いた理由。実行に失敗したときは sacty の文言。 */
     reason: DaemonText,
+    /**
+     * 対応を求めていないと判断した人の指摘（「承知しました」のような、返信や説明を受け入れただけの応答・お礼・同意）の位置
+     * （取り込んだ指摘の並びでの位置。0 始まり）。差し戻しに含めず、返信もしない。取り込んだ指摘がすべてこれなら、
+     * 差し戻さない（承認待ちのまま）。無ければ、すべての指摘を差し戻しに含める（以前の記録も）。
+     */
+    noAction: z.array(z.number().int().nonnegative()).optional(),
+    /** 取り込んだ指摘がすべて、対応を求めていないもの（noAction）だったので、差し戻さなかった。 */
+    noRework: z.literal(true).optional(),
     agentId: z.string(),
     /**
      * PR のレビューの子タスクが示した戻し先から決めたときの、その子タスク（PBI-332。実行はしないので費用は 0）。無ければ、

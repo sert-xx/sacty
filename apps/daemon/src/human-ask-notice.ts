@@ -5,7 +5,7 @@ import { withoutInternalPaths } from "./prompts.js";
 
 /*
  * 人に確かめてほしいことを、sacty が作った PR に知らせるコメント（PBI-301）。
- * 差し戻しや PR の指摘の作り直しで、ゴールガーディアンが指摘の意図を判断できなかったときの理由と、実行が指摘への対応と
+ * 差し戻しや PR の指摘の作り直しで、戻し先の判断が指摘の意図を読み取れなかったときの理由と、実行が指摘への対応と
  * 一緒に挙げた「人に確かめたいこと」（聞き返し・推測で決めたこと）を載せる。PR を見ている人は sacty の画面を開かないので、
  * 承認の画面にしか出ないと気づかれない。作り直した成果物が承認待ちになったときに、1 回の提出につき 1 件書く。
  */
@@ -46,7 +46,7 @@ export type HumanAskNoticeInput = {
   step: StepKey;
   stepName: string;
   submission: number;
-  /** ゴールガーディアンが指摘の意図を判断できなかったときの、指摘の ID と理由。 */
+  /** 戻し先の判断（PR の工程のエージェント）が指摘の意図を読み取れなかったときの、指摘の ID と理由。 */
   undecided?: { remarkIds: string[]; reason: string };
   /** 実行が挙げた、人に確かめたいこと。同じ文の確認は 1 件にまとまっていて、付いていた指摘を `remarkIds` に並べる（PBI-354）。 */
   confirms: { remarkIds: string[]; text: string }[];
@@ -67,7 +67,7 @@ export function buildHumanAskNotice(input: HumanAskNoticeInput): string | undefi
   if (input.undecided) {
     lines.push(
       "",
-      `**指摘（${input.undecided.remarkIds.join("・")}）の意図を、ゴールガーディアンが判断できませんでした。** 理由：`,
+      `**戻し先の判断で、指摘（${input.undecided.remarkIds.join("・")}）の意図を読み取れませんでした。** 理由：`,
       "",
       askQuote(input.undecided.reason, input.secrets),
       "",

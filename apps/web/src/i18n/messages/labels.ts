@@ -755,10 +755,19 @@ const ja = {
         : `修正の連鎖が上限（${max}段）に達したため、修正のタスクを作らなかった`,
     SecurityFixRequested: (category: string, title: string) =>
       `セキュリティ対応のタスクを作った（${category}）：${title}`,
-    ReworkJudged: (target: string | undefined, reason: string, tail: string, discarded: boolean) =>
+    ReworkJudged: (
+      target: string | undefined,
+      reason: string,
+      tail: string,
+      discarded: boolean,
+      /** 対応を求めていないと判断したコメントの件数と、取り込んだ指摘がすべてそれだったか（差し戻さなかった）。 */
+      noAction: { count: number; all: boolean },
+    ) =>
       discarded
         ? `戻し先の判断を採用しなかった（一時停止・中止などで。指摘は未判断のまま残し、再開したら判断し直す・${tail}）`
-        : `戻し先：${target ?? "判断できない"}（${reason}・${tail}）`,
+        : noAction.all
+          ? `対応を求めていないコメントと判断し、差し戻さなかった（${reason}・${tail}）`
+          : `戻し先：${target ?? "判断できない"}（${reason}・${noAction.count > 0 ? `対応を求めていないコメント${noAction.count}件は除いた・` : ""}${tail}）`,
     /** PR のレビューの子タスクが示した指摘ごとの戻し先から決めた（PBI-332。実行はしない）。 */
     reworkFromReviewTask: "PR のレビューの子タスクの答えから",
     // 完了したタスクの監査（PBI-125）
@@ -1379,10 +1388,12 @@ const en: LabelMessages = {
         : `Did not create a fix task because the chain reached the limit (${max})`,
     SecurityFixRequested: (category, title) =>
       `Created a security fix task (${category}): ${title}`,
-    ReworkJudged: (target, reason, tail, discarded) =>
+    ReworkJudged: (target, reason, tail, discarded, noAction) =>
       discarded
         ? `The judgment of the step to redo was not adopted (a pause, a cancel, or a change; the comments stay unjudged and are judged again on resume · ${tail})`
-        : `Step to redo: ${target ?? "undecided"} (${reason} · ${tail})`,
+        : noAction.all
+          ? `Judged that the comments ask for nothing, so nothing was sent back (${reason} · ${tail})`
+          : `Step to redo: ${target ?? "undecided"} (${reason} · ${noAction.count > 0 ? `left out ${noAction.count} comment${noAction.count === 1 ? "" : "s"} that ask${noAction.count === 1 ? "s" : ""} for nothing · ` : ""}${tail})`,
     reworkFromReviewTask: "from the answer of the PR review child task",
     AuditQueued: (cap) => `Waiting for the audit (budget ${cap})`,
     AuditSurveyed: (concerns, tail) =>
