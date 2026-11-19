@@ -212,6 +212,8 @@ To stop the watch, pause or cancel the task in the task details.
 - While paused, no re-review starts when the PR changes, and the task is not marked done when the PR is merged or closed.
   On resume it goes back to watching and picks up the changes that happened while it was paused.
 - A cancelled task can no longer be re-reviewed.
+- A task that is done with the verdict "no findings" can be neither paused nor cancelled.
+  There is no way to stop the re-review on a push after completion before it starts (once the re-review has started, you can pause or cancel it).
 
 A task that posted its review and completed in an earlier version stays done even if its verdict is not "no findings" (neither the watch nor an automatic re-review starts).
 If you re-review such a task with "Review again and post to the PR", it is watched from that round on.
@@ -305,6 +307,7 @@ The PR's code can reach the same things as the agent.
 Commits pushed to the PR after it was imported run in the same way.
 This is because sacty keeps watching the PR for changes after posting its review and, while the PR is open, re-reviews automatically on every push ([After the review is posted](#after-the-review-is-posted)).
 It does not check who pushed or whether the push comes from a fork. If a PR you trusted at import can later receive a push you do not trust, pause or cancel the task to stop the watch.
+A task that is done with the verdict "no findings" cannot be stopped, so do not import a PR that can later receive a push you do not trust.
 
 Intake does not filter by whether a PR comes from a fork or a bot.
 With settings that add labels automatically, or automatic review requests such as CODEOWNERS, PRs may be imported without a person deciding.

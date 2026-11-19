@@ -2746,16 +2746,9 @@ export class TaskService {
       return;
     }
     if (task.reviewOf) return;
-    // sacty が作った PR は、子タスクが再レビューする。人が作ったレビューのタスク・以前の版で取り込んだタスクは、見守りの
-    // 終わりだけを扱う（同じ PR を、子タスクと二重に再レビューしない。取り込み・再依頼と同じ扱い）
-    if (this.sactyMadePullRequests().has(`${repoKey(target.repo)}#${target.number}`)) {
-      forget();
-      return;
-    }
-    // 同じ PR を対象にする、より新しいレビューのタスク（GitHub の再依頼で作ったタスクなど）があれば、続きはそのタスクが
-    // レビューする（同じ PR を、2つのタスクで二重に再レビューしない）。再依頼の元のタスクには何も記録しない
-    // （docs/adr/20261019-0503-review-rerequest-new-task.md）
-    if (this.supersededWatch(task)) {
+    // 再レビューを、ほかのタスクに任せる PR（sacty が作った PR・より新しいレビューのタスクがある PR）は、見守りの終わり
+    // だけを扱う
+    if (this.watchHandedOver(task)) {
       forget();
       return;
     }
@@ -2844,10 +2837,7 @@ export class TaskService {
     if (!latest || latest.reviewPost?.at !== posted || !reviewWatching(latest)) return;
     // コメントを読む間に、GitHub の再依頼の取り込みが新しいタスクを作った・この PR を sacty のタスクが引き継いだなら、始めない
     // （元のタスクには何も記録されないので、ここで確かめ直す）
-    if (
-      this.supersededWatch(latest) ||
-      this.sactyMadePullRequests().has(`${repoKey(target.repo)}#${target.number}`)
-    ) {
+    if (this.watchHandedOver(latest)) {
       forget();
       return;
     }
@@ -2888,6 +2878,22 @@ export class TaskService {
     const age = now - Date.parse(task.reviewPost?.at ?? "");
     const every = REVIEW_WATCH_INTERVALS.find((i) => age >= i.afterMs)?.everyMs ?? 0;
     return now - last >= every;
+  }
+
+  /**
+   * 見守っている PR の再レビューを、ほかのタスクに任せるか（PBI-411）。任せるタスクは、見守りの終わりだけを扱う（同じ PR を
+   * 二重に再レビューしない）。
+   * - sacty が作った PR：子タスクが再レビューする。人が作ったレビューのタスク・以前の版で取り込んだタスクは始めない
+   *   （取り込み・再依頼と同じ扱い）
+   * - 同じ PR を対象にする、より新しいレビューのタスクがある（supersededWatch）
+   */
+  private watchHandedOver(task: Task): boolean {
+    const pr = task.reviewTarget;
+    if (!pr) return false;
+    return (
+      this.sactyMadePullRequests().has(`${repoKey(pr.repo)}#${pr.number}`) ||
+      this.supersededWatch(task)
+    );
   }
 
   /**
@@ -19093,7 +19099,7 @@ export const FEEDBACK_QUIET_MS = 2 * 60_000;
  * レビューを投稿した後の PR の見守り（PBI-411）で、PR の状態を読む間隔。最後の投稿から afterMs がたった PR は、everyMs ごとに
  * だけ読む（長い順。当てはまらない間は、PR の確認のたびに読む）。
  */
-export const REVIEW_WATCH_INTERVALS: readonly { afterMs: number; everyMs: number }[] = [
+const REVIEW_WATCH_INTERVALS: readonly { afterMs: number; everyMs: number }[] = [
   { afterMs: 24 * 60 * 60_000, everyMs: 30 * 60_000 },
   { afterMs: 60 * 60_000, everyMs: 5 * 60_000 },
 ];
