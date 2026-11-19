@@ -462,6 +462,52 @@ describe("タスクの状態が変わるまで待つ（PBI-399）", () => {
     });
   });
 
+  describe("最初に引けなかった子", () => {
+    it("最初に引けなかった子が、後で引けて、その後に判定が出たとき、起きる（時間切れで返した cursor でも取りこぼさない）", async () => {
+      const base = await baseTask();
+      const parent = {
+        ...base,
+        ...awaitingFields("implement", 1),
+        reviewTasks: [ref("child1", 9)],
+      } as Task;
+      const world = newWorld(parent, childTask(base, "child1"));
+      world.failFor.add("child1");
+      const clock = new FakeClock();
+      const { ok } = await connect(worldApi(world), clock);
+      // 最初の確かめでは引けず、7 秒後に引けるようになり、12 秒後に判定が出る
+      clock.at(7000, () => world.failFor.delete("child1"));
+      clock.at(12000, () =>
+        patch(world, "child1", { reviewVerdicts: [{ round: 1, verdict: "changes_required" }] }),
+      );
+      const result = await ok({ task_id: base.id, timeout_seconds: 20 });
+      expect(result.changed).toBe(true);
+      expect(result.changes.some((c) => c.startsWith("reviewTask child1 verdict"))).toBe(true);
+    });
+
+    it("cursor に引けなかった子が残っていても、引けた後の変化を、時間切れの cursor で取りこぼさない", async () => {
+      const base = await baseTask();
+      const parent = {
+        ...base,
+        ...awaitingFields("implement", 1),
+        reviewTasks: [ref("child1", 9)],
+      } as Task;
+      const world = newWorld(parent, childTask(base, "child1"));
+      world.failFor.add("child1");
+      const clock = new FakeClock();
+      const { ok } = await connect(worldApi(world), clock);
+      const first = await ok({ task_id: base.id, timeout_seconds: 1 });
+      expect(first.reviewTasks[0]?.available).toBe(false);
+      world.failFor.delete("child1");
+      const second = await ok({ task_id: base.id, timeout_seconds: 6, cursor: first.cursor });
+      expect(second.changed).toBe(false);
+      expect(second.reviewTasks[0]?.available).toBe(true);
+      patch(world, "child1", { reviewPost: { url: `${REPO}/pull/9#r` } });
+      const third = await ok({ task_id: base.id, timeout_seconds: 6, cursor: second.cursor });
+      expect(third.changed).toBe(true);
+      expect(third.changes).toContain("reviewTask child1 posted: なし → true");
+    });
+  });
+
   describe("動いているだけでは起きない・時間切れ", () => {
     it("工程の進み・queued・running・idle の行き来・blocked・waiting_children・費用・作業履歴・updatedAt だけでは起きず、時間切れは失敗にならない", async () => {
       const base = await baseTask();
@@ -541,7 +587,9 @@ describe("タスクの状態が変わるまで待つ（PBI-399）", () => {
       });
       const { wait } = await connect(worldApi(world), clock);
       const result = await wait({ task_id: base.id, timeout_seconds: WAIT_MAX_SECONDS });
-      expect(result).toMatchObject({ isError: true, text: READ_REASONS.waitLost });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain(READ_REASONS.waitLost);
+      expect(result.text).toContain("cursor：");
       expect(clock.t).toBeLessThanOrEqual(WAIT_MAX_SECONDS * 1000 + WAIT_GRACE_MS);
       expect(clock.t).toBeLessThan(60_000);
       expect(clock.pending).toBe(0);
@@ -556,12 +604,52 @@ describe("タスクの状態が変わるまで待つ（PBI-399）", () => {
         world.fail = new Error("起動中の sacty が見つかりません。");
       });
       const lost = await wait({ task_id: base.id });
-      expect(lost).toMatchObject({ isError: true, text: READ_REASONS.waitLost });
+      expect(lost.isError).toBe(true);
+      expect(lost.text).toContain(READ_REASONS.waitLost);
       expect(clock.t).toBeLessThan(WAIT_DEFAULT_SECONDS * 1000);
       world.fail = undefined;
       clock.at(clock.t + 7000, () => world.tasks.delete(base.id));
       const gone = await wait({ task_id: base.id });
       expect(gone).toMatchObject({ isError: true, text: READ_REASONS.waitVanished });
+    });
+
+    it("待っている途中の1回の失敗は、次の周期でやり直し、続けて成功すれば待ち続ける", async () => {
+      const base = await baseTask();
+      const world = newWorld({ ...base, status: "running" } as Task);
+      const clock = new FakeClock();
+      const { ok } = await connect(worldApi(world), clock);
+      // 5 秒の確かめだけ失敗し、その後に承認待ちになる
+      clock.at(4000, () => {
+        world.fail = new Error("つながりません");
+      });
+      clock.at(5500, () => {
+        world.fail = undefined;
+        patch(world, base.id, awaitingFields());
+      });
+      const result = await ok({ task_id: base.id });
+      expect(result.changed).toBe(true);
+      expect(result.task.state).toBe("awaiting_approval");
+    });
+
+    it("続けて失敗したときは、cursor を添えて返す。cursor を渡して呼び直すと、失敗の間の変化で起きる。応答のある失敗は元の理由", async () => {
+      const base = await baseTask();
+      const world = newWorld({ ...base, status: "running" } as Task);
+      const clock = new FakeClock();
+      const { ok, wait } = await connect(worldApi(world), clock);
+      clock.at(4000, () => {
+        world.fail = new Error("デーモンが 503 を返しました。");
+      });
+      const lost = await wait({ task_id: base.id });
+      expect(lost.isError).toBe(true);
+      expect(lost.text).toContain("デーモンが 503 を返しました。");
+      expect(lost.text).not.toContain(READ_REASONS.waitLost);
+      const cursor = /cursor：([A-Za-z0-9_-]+)/.exec(lost.text)?.[1] ?? "";
+      expect(cursor).not.toBe("");
+      world.fail = undefined;
+      patch(world, base.id, awaitingFields());
+      const again = await ok({ task_id: base.id, cursor });
+      expect(again.changed).toBe(true);
+      expect(again.changes).toContain("state: active → awaiting_approval");
     });
 
     it("最初からつながらない・無いタスク・task_id の形が正しくないときは、待たずに理由を返す", async () => {
@@ -716,6 +804,56 @@ describe("タスクの状態が変わるまで待つ（PBI-399）", () => {
       expect(second.task.state).toBe("awaiting_approval");
       expect(first.changed).toBe(false);
       expect(first.task.state).toBe("running");
+    });
+  });
+
+  describe("既定の時計（realClock）", () => {
+    async function realConnect(api: SactyApi) {
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      startTaskMcp(api, { version: "9.9.9", transport: a });
+      const client = new Client(
+        { name: "test", version: "1.0.0" },
+        { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+      );
+      await client.connect(b);
+      return client;
+    }
+
+    it("既定の時計で、cursor との違いがあれば待たずに返り、小数の時刻でも期限が失敗しない", async () => {
+      const base = await baseTask();
+      const world = newWorld({ ...base, status: "running" } as Task);
+      const client = await realConnect(worldApi(world));
+      const first = await client.callTool({
+        name: "wait_for_task",
+        arguments: { task_id: base.id, timeout_seconds: 1 },
+      });
+      expect(first.isError).not.toBe(true);
+      const cursor = (first.structuredContent as { cursor: string }).cursor;
+      patch(world, base.id, awaitingFields());
+      const second = await client.callTool({
+        name: "wait_for_task",
+        arguments: { task_id: base.id, cursor },
+      });
+      expect(second.structuredContent).toMatchObject({ changed: true });
+      await client.close();
+    });
+
+    it("既定の時計の待ちは、取り消すとすぐやめ、以後デーモンを呼ばない", async () => {
+      const base = await baseTask();
+      const world = newWorld({ ...base, status: "running" } as Task);
+      const client = await realConnect(worldApi(world));
+      const abort = new AbortController();
+      const pending = client.callTool(
+        { name: "wait_for_task", arguments: { task_id: base.id } },
+        { signal: abort.signal },
+      );
+      await settle();
+      const callsBefore = world.calls.length;
+      abort.abort();
+      await expect(pending).rejects.toBeDefined();
+      await settle();
+      expect(world.calls.length).toBe(callsBefore);
+      await client.close();
     });
   });
 

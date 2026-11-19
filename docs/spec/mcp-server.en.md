@@ -296,7 +296,8 @@ Its annotations are the same as the other read tools (`readOnlyHint: true`, `ope
 | Child | The review round changed (a re-review). A review was posted. A verdict appeared or changed |
 
 - A child's change wakes it even if the parent's state does not change (the parent stays `awaiting_approval` waiting for the PR to be merged and only the child's verdict appears).
-- A child that could not be fetched (`available: false`) is not compared with the previous value (it is not treated as a change between fetches).
+- A child that could not be fetched (`available: false`) is not compared with the previous value (it is not treated as a change between fetches). When a baseline child was unfetchable and is now fetched, its value becomes the baseline and later changes are compared with it.
+- The per-request deadline is rounded down to a positive whole number of milliseconds even when the remaining time is fractional.
 
 **Changes that do not wake it**: a step advancing (`steps`), a run starting or ending (moving among `queued`, `running`, and `idle`), cost (`costUsd`) or the activity log growing, and `updatedAt` changing do not wake it by themselves.
 `blocked` (waiting for another task to complete) and `waiting_children` (waiting for split children) need nothing from a person, so they count as the moving side (the same class as `queued`, `running`, and `idle`). In `changes`, this class is written `active` in `state:`.
@@ -353,7 +354,8 @@ The description, review body, text of things to confirm, and activity log are no
 | Cannot connect, sacty is not running, cannot authenticate, or no response, from the start | The same reasons as the existing tools (for no response: `sacty did not respond in time…`) |
 | `cursor` is malformed | `cursor が正しくありません…` (the cursor is not valid) |
 | `cursor` is from another task | `cursor は、別のタスクを待ったときの結果の値です…` (the cursor is from another task) |
-| The daemon became unreachable while waiting (cannot connect, no response, cannot authenticate) | `待っている途中で、sacty に届かなくなりました…` (it became unreachable while waiting). Check that sacty is running and call again with `cursor` |
+| The daemon became unreachable while waiting (cannot connect, no response) | A single failure is retried once on the next cycle if time remains before the deadline. After a second consecutive failure, it returns `待っている途中で、sacty に届かなくなりました…` (it became unreachable while waiting) plus a `cursor` to call again with. Check that sacty is running and call again with that `cursor` |
+| The daemon answered with a refusal while waiting (5xx, cannot authenticate) | Returns that reason as is, with the `cursor` to call again with |
 | The task became invisible while waiting | `待っている途中で、タスクが見えなくなりました…` (the task became invisible while waiting) |
 | Only a child cannot be fetched | Not a failure. That child is marked `available: false` |
 

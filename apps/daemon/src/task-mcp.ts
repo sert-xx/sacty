@@ -451,12 +451,12 @@ const WaitSchema = z.object({
   changes: z
     .array(z.string())
     .describe("何が変わったかの短い一覧（状態・工程・回・件数などの値だけ。文は入れない）"),
-  task: TaskSummarySchema.describe("いまの要約（get_task と同じ要約）"),
+  task: TaskSummarySchema.describe("いまの要約（list_tasks と同じ要約。詳細は get_task）"),
   costUsd: z.number().describe("いまの費用（USD。費用の変化では起こさない）"),
   reviewTasks: z
     .array(WaitChildSchema)
     .describe(
-      "このタスクの PR をレビューする子タスクの、状態・回・投稿・判定（新しい順の末尾から引いた分）",
+      "このタスクの PR をレビューする子タスクの、状態・回・投稿・判定（古い順に並んだ reviewTasks の末尾＝新しい方から引いた分。返す順も古い順）",
     ),
   reviewTasksOmitted: z
     .number()
@@ -1194,6 +1194,12 @@ function checked<T extends z.ZodObject>(schema: T, value: unknown): z.infer<T> {
 const READ_TOOLS = new Set(["list_deliverables", "get_deliverable", "list_runs", "wait_for_task"]);
 
 /** 待つ呼び出しが、取り消し（クライアントの取り消し・サーバーの終了）で止まったことを表す（結果は、取り消した側に読まれない）。 */
+class PollFailed extends Error {
+  constructor(readonly original: unknown) {
+    super("待っている途中の問い合わせに失敗しました。");
+  }
+}
+
 class WaitCancelled extends Error {
   constructor() {
     super("待つ呼び出しは取り消されました。");
@@ -1386,7 +1392,11 @@ async function waitForTask(
     call: (options: { timeoutMs: number; signal: AbortSignal }) => Promise<T>,
   ): Promise<T> => {
     if (signal.aborted) throw new WaitCancelled();
-    const timeoutMs = Math.max(1, Math.min(WAIT_REQUEST_MS, hardDeadline - clock.now()));
+    // 時計が小数を返しても、期限は正の整数のミリ秒にする（AbortSignal.timeout は整数だけを受ける）
+    const timeoutMs = Math.max(
+      1,
+      Math.floor(Math.min(WAIT_REQUEST_MS, hardDeadline - clock.now())),
+    );
     const request = new AbortController();
     const cleanup = new AbortController();
     let onAbort: (() => void) | undefined;
@@ -1423,7 +1433,7 @@ async function waitForTask(
       found = await guarded((options) => api.getTask(taskId, options));
     } catch (error) {
       if (error instanceof WaitCancelled || first) throw error;
-      throw new Error(READ_REASONS.waitLost, { cause: error });
+      throw new PollFailed(error);
     }
     if (!found) throw first ? taskNotFound() : new Error(READ_REASONS.waitVanished);
     const webUrl = api.webUrl();
@@ -1461,17 +1471,32 @@ async function waitForTask(
   };
 
   let snapshot = await poll(true);
-  const base = baseline
-    ? { task: baseline.w, children: baseline.c }
+  const base: { task: WatchTask; children: WatchChild[] } = baseline
+    ? { task: baseline.w, children: [...baseline.c] }
     : { task: watchOfTask(snapshot.task), children: snapshot.children.map(watchOfChild) };
 
-  const finish = (changes: string[]) => {
+  const cursorOf = () => {
     // 引けなかった子は、前に分かっていた値を cursor に残す（次に引けたとき、比べられる）
     const known = new Map(base.children.map((c) => [c.i, c]));
     const children = snapshot.children.map((c) => {
       const watch = watchOfChild(c);
       return watch.u ? (known.get(watch.i) ?? watch) : watch;
     });
+    return encodeCursor({ v: 1, t: taskId, w: watchOfTask(snapshot.task), c: children });
+  };
+
+  /** 途中の問い合わせが続けて失敗したときの理由。届かないときは待ちの途中で届かなくなった理由、応答のある失敗は元の理由。cursor を添える。 */
+  const lost = (failure: PollFailed): Error => {
+    const original = failure.original;
+    // デーモンの応答で断られた失敗（5xx・401 など）は、その理由のまま。届かなかった失敗（接続・時間切れ・応答なし）は、届かなくなった理由
+    const answered =
+      original instanceof Error &&
+      /^デーモンが \d{3} を返しました。|^デーモンに認証できません。/.test(original.message);
+    const reason = answered ? (original as Error).message : READ_REASONS.waitLost;
+    return new Error(`${reason}（呼び直すときの cursor：${cursorOf()}）`, { cause: original });
+  };
+
+  const finish = (changes: string[]) => {
     const waitedSeconds = Math.round(Math.max(0, clock.now() - started) / 100) / 10;
     return {
       changed: changes.length > 0,
@@ -1480,7 +1505,7 @@ async function waitForTask(
       costUsd: snapshot.costUsd,
       reviewTasks: snapshot.children,
       reviewTasksOmitted: snapshot.omitted,
-      cursor: encodeCursor({ v: 1, t: taskId, w: watchOfTask(snapshot.task), c: children }),
+      cursor: cursorOf(),
       waitedSeconds,
       timeoutSeconds,
       clamped: requested > WAIT_MAX_SECONDS,
@@ -1492,12 +1517,31 @@ async function waitForTask(
       task: watchOfTask(snapshot.task),
       children: snapshot.children.map(watchOfChild),
     });
+    // 最初に引けなかった子が引けたら、その値を基準にする（以後の変化を比べられる）
+    for (const [index, prev] of base.children.entries()) {
+      const now = snapshot.children.map(watchOfChild).find((c) => c.i === prev.i);
+      if (prev.u && now && !now.u) base.children[index] = now;
+    }
     if (changes.length > 0) return finish(changes);
     const remaining = deadline - clock.now();
     if (remaining <= 0) return finish([]);
     await clock.sleep(Math.min(WAIT_POLL_MS, remaining), signal);
     if (signal.aborted) throw new WaitCancelled();
-    snapshot = await poll(false);
+    try {
+      snapshot = await poll(false);
+    } catch (error) {
+      if (!(error instanceof PollFailed)) throw error;
+      // 1回の失敗は、締め切りまでの残りがあれば次の周期で1回やり直す。続けて失敗したら、cursor を添えて返す
+      if (deadline - clock.now() <= 0) throw lost(error);
+      await clock.sleep(Math.min(WAIT_POLL_MS, deadline - clock.now()), signal);
+      if (signal.aborted) throw new WaitCancelled();
+      try {
+        snapshot = await poll(false);
+      } catch (again) {
+        if (again instanceof PollFailed) throw lost(again);
+        throw again;
+      }
+    }
   }
 }
 
