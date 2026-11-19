@@ -616,6 +616,59 @@ describe("本物のデーモンの API と、本物の daemonApi をつないだ
   });
 });
 
+describe("本物のデーモンの API と、本物の daemonApi をつないだ差し戻し（PBI-397）", () => {
+  useTempDir();
+
+  it("差し戻しが通り、同じ呼び出しの2回目と古い回は断られて、記録は1件のまま", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, []);
+    const task = service.createTask({ projectId: "default", title: "題" });
+    Object.assign(service.get(task.id)?.task ?? {}, {
+      status: "awaiting_approval",
+      steps: [{ key: "requirements", state: "awaiting_approval" }],
+      outputs: { requirements: "本文" },
+      gate: { step: "requirements", submission: 1 },
+      submissions: { requirements: 1 },
+    });
+    const token = "t".repeat(64);
+    const app = createApp(service, token);
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token });
+    const fetcher: Fetch = async (url, init) => {
+      const u = new URL(url);
+      return app.request(`${u.pathname}${u.search}`, init);
+    };
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    startTaskMcp(daemonApi(home, fetcher), { version: "1", transport: a });
+    const client = new Client(
+      { name: "t", version: "1" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    await client.connect(b);
+    const call = (submission: number) =>
+      client.callTool({
+        name: "request_changes",
+        arguments: { task_id: task.id, step: "requirements", submission, comments: ["直す"] },
+      });
+    const changes = () =>
+      (service.get(task.id)?.activity ?? []).filter((e) => e.type === "ChangesRequested");
+
+    const stale = await call(2);
+    expect(stale.isError).toBe(true);
+    expect(changes()).toHaveLength(0);
+    const ok = await call(1);
+    expect(ok.isError, JSON.stringify(ok.content)).not.toBe(true);
+    expect(ok.structuredContent).toMatchObject({
+      requested: { taskId: task.id, step: "requirements", submission: 1, comments: 1 },
+    });
+    expect(changes()).toHaveLength(1);
+    const again = await call(1);
+    expect(again.isError).toBe(true);
+    expect(changes()).toHaveLength(1);
+    await client.close();
+    activity.close();
+  });
+});
+
 describe("sacty mcp の承認（PBI-396）", () => {
   const input = { step: "requirements", submission: 1 };
   const uncertain = "承認されている可能性があります";

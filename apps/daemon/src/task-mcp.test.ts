@@ -1557,7 +1557,7 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         submission: 4,
         comments: ["もう一度"],
         continueOverLimit: false,
-      } as never);
+      });
       expect(service.get(id)?.task.status).toBe("escalated");
       const before = JSON.stringify(service.get(id)?.activity);
       const result = await call("request_changes", args(id, { submission: 4 }));
@@ -1592,6 +1592,12 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       expect(check({ ...base, remarks: rounds("sacty_review") })()).toEqual({
         reworkStep: "requirements",
       });
+      // 混在：人 2 回＋AI 1 回は通り、人 3 回＋AI 1 回は断る
+      const ai = { ...rounds("sacty_review")[0], round: 4, id: "requirements-4-1" };
+      expect(check({ ...base, remarks: [...rounds(undefined).slice(0, 2), ai] })()).toEqual({
+        reworkStep: "requirements",
+      });
+      expect(check({ ...base, remarks: [...rounds(undefined), ai] })).toThrow("上限");
       // 実行した後の作業の結果は、やり直せる工程が無い
       expect(check({ ...base, remarks: [], operationAttempted: true })).toThrow(
         "この工程には差し戻せません",
@@ -1599,7 +1605,7 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
     });
 
     it("指摘が空・空白だけ・51件・2001文字のときは、差し戻さずに理由を返す。改行は1行1件に分ける。50件・2000文字は通る", async () => {
-      const { activity, service, id } = await awaiting(2);
+      const { activity, service, id } = await awaiting(3);
       const api = apiOver(service);
       const { call, json } = await connect(api);
       const refused = async (comments: string[]) => {
@@ -1616,15 +1622,27 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       expect(await refused(["あ".repeat(2001)])).toContain("2000 文字");
       expect(api.calls.some((c) => c.includes("request-changes"))).toBe(false);
       expect(changesOf(service, id)).toHaveLength(0);
+      // 50 件ちょうど（改行で分けた1文字列でも）は通る
+      const fifty = Array.from({ length: 50 }, (_, i) => `指摘 ${i}`);
+      const exact = await json<Requested>("request_changes", args(id, { comments: fifty }));
+      expect(exact.requested.comments).toBe(50);
+      expect(changesOf(service, id)).toHaveLength(1);
+      await drain(service);
+      const joined = await json<Requested>(
+        "request_changes",
+        args(id, { submission: 2, comments: [fifty.join("\n")] }),
+      );
+      expect(joined.requested.comments).toBe(50);
+      await drain(service);
       // 前後の空白を除いた長さで数える
       const ok = await json<Requested>("request_changes", {
         task_id: id,
         step: "requirements",
-        submission: 1,
+        submission: 3,
         comments: [`  ${"あ".repeat(2000)}  `, "上\n下\n\n  "],
       });
       expect(ok.requested.comments).toBe(3);
-      expect(changesOf(service, id)[0]?.payload.remarks.map((r) => r.text)).toEqual([
+      expect(changesOf(service, id)[2]?.payload.remarks.map((r) => r.text)).toEqual([
         "あ".repeat(2000),
         "上",
         "下",
