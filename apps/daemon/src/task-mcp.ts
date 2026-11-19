@@ -36,6 +36,7 @@ import {
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
   type Task,
+  type TaskStatus,
 } from "@sacty/core";
 import { z } from "zod";
 import { RANGE_MAX_BYTES } from "./byte-range.js";
@@ -850,7 +851,7 @@ export function taskBranches(task: Task): string[] {
   ];
 }
 
-function stateOf(task: Task): string {
+function stateOf(task: Task): TaskStatus | "completed" {
   if (task.status === "cancelled") return "cancelled";
   return isFinished(task) ? "completed" : task.status;
 }
@@ -1137,7 +1138,6 @@ function isPersonTurn(task: Task): boolean {
     (task.status === "awaiting_approval" ||
       task.status === "escalated" ||
       task.status === "paused") &&
-    !isFinished(task) &&
     !awaitingAiJudgement(task)
   );
 }
@@ -1154,7 +1154,7 @@ const STATE_VALUES = [
   "escalated",
   "cancelled",
   "completed",
-] as const;
+] as const satisfies readonly (TaskStatus | "completed")[];
 
 export function summarizeTask(task: Task, webUrl?: string): TaskSummary {
   const review = isReviewTask(task);

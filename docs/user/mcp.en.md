@@ -123,18 +123,6 @@ You can also search by branch name, but note the following.
 - PRs created outside sacty: sacty records the branch name when it checks the PR before reviewing.
   Tasks reviewed before this feature was added are not found by branch name until they are re-reviewed once (search by the PR number).
 
-## Find the tasks waiting for a person
-
-Ask "Which sacty tasks are waiting for me?" and the AI calls `list_tasks` with `needs_person: true`.
-
-- The condition is the same as "Your turn" on the web dashboard. Tasks that are awaiting approval, escalated, or paused, minus those awaiting approval while the AI is deciding where to send back the PR remarks.
-- The bell in the web header also counts the awaiting-approval tasks the AI is deciding on, so its count can differ. The number excluded is `excludedAiJudging` in the result.
-- They are sorted by the longest wait first (by ID when equal), and each task gets the time it started waiting (`waitingSince`). If `waitingSinceSource` is `dashboard`, it is the time from the daemon's aggregate; if `updatedAt`, there was no record, so `updatedAt` stands in.
-- When there are more than `limit`, pass the `nextOffset` of the result as `offset` to get the rest. `nextOffset` is absent once everything has been returned.
-- When the wait times cannot be read, it fails with the reason instead of replacing them with `updatedAt`.
-- The web UI's status text and color, the link to where a person decides, and the PR conflict note are not shown. Use `state`, `approval`, `asks`, `pausedReason`, and `url`.
-- The list is read-only. Approving, requesting changes, resuming, and so on are done only when you ask.
-
 The status of a deliverable is as follows.
 
 | Status | Meaning |
@@ -150,6 +138,18 @@ Deliverables from before a rework (earlier rounds) and the agent's original file
 
 Only a task that posted its review to the PR and completed can be re-reviewed (`canRereview` in the result of `list_tasks` is `true`).
 If you ask for a task under review or a task that is not a PR review, it returns the reason and changes nothing.
+
+## Find the tasks waiting for a person
+
+Ask "Which sacty tasks are waiting for me?" and the AI calls `list_tasks` with `needs_person: true`.
+
+- The condition is the same as "Your turn" on the web dashboard. Tasks that are awaiting approval, escalated, or paused, minus those awaiting approval while the AI is deciding where to send back the PR remarks.
+- The bell in the web header also counts the awaiting-approval tasks the AI is deciding on, so its count can differ. The number excluded is `excludedAiJudging` in the result.
+- They are sorted by the longest wait first (by ID when equal), and each task gets the time it started waiting (`waitingSince`). If `waitingSinceSource` is `dashboard`, it is the time from the daemon's aggregate; if `updatedAt`, there was no record, so `updatedAt` stands in.
+- When there are more than `limit`, pass the `nextOffset` of the result as `offset` to get the rest. `nextOffset` is absent once everything has been returned.
+- When the wait times cannot be read, it fails with the reason instead of replacing them with `updatedAt`.
+- The web UI's status text and color, the link to where a person decides, and the PR conflict note are not shown. Use `state`, `approval`, `asks`, `pausedReason`, and `url`.
+- The list is read-only. Approving, requesting changes, resuming, and so on are done only when you ask.
 
 ## Approving
 

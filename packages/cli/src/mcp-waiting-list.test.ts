@@ -164,11 +164,27 @@ describe("人の出番の絞り込み：画面のダッシュボードの「あ�
       await t.service.pause(id);
       await sleep(5);
     }
+    // 記録のあるエスカレーション（作成は最後、待ち始めは一時停止の後）も混ぜる
+    const e = t.make("E（エスカレーション）", { status: "awaiting_approval" });
+    await sleep(5);
+    (t.service as unknown as { append: (task: Task, events: unknown[]) => void }).append(
+      t.live(e),
+      [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskEscalated",
+            payload: { step: "implement", reason: "too_many_changes" },
+          },
+        },
+      ],
+    );
+    expect(t.live(e).status).toBe("escalated");
     // 記録の無い承認待ち（updatedAt で補う）も混ぜる
     const d = t.make("D（記録なし）", { status: "awaiting_approval" });
     const dashboard = t.service.dashboard().waitingSince;
-    expect(Object.keys(dashboard).sort()).toEqual([a, b, c].sort());
-    const expected = [a, b, c, d]
+    expect(Object.keys(dashboard).sort()).toEqual([a, b, c, e].sort());
+    const expected = [a, b, c, d, e]
       .map((id) => ({ id, since: dashboard[id] ?? t.live(id).updatedAt }))
       .sort((x, y) => x.since.localeCompare(y.since) || x.id.localeCompare(y.id));
     expect(expected.slice(0, 3).map((x) => x.id)).toEqual([c, a, b]);
@@ -249,6 +265,47 @@ describe("状態・プロジェクトの絞り込み、続き、プロジェク�
     });
   }
 
+  for (const n of [0, 1, 3, 4]) {
+    it(`needs_person でも offset で続きを取る：${n} 件・limit 3 で、待ち始めの順のまま重なりも抜けも無い`, async () => {
+      const t = await setup();
+      // 待ち始め（updatedAt）の順は、作成の順とばらばらにする
+      const order = [3, 1, 4, 2];
+      const ids: string[] = [];
+      for (let i = 0; i < n; i++) {
+        ids.push(
+          t.make(`P${i}`, {
+            status: "paused",
+            updatedAt: `2026-11-0${order[i]}T00:00:00.000Z`,
+          }),
+        );
+      }
+      // 対象外のタスクを混ぜる
+      t.make("実行待ち", { status: "queued" });
+      const expected = ids
+        .map((id) => ({ id, since: t.live(id).updatedAt }))
+        .sort((x, y) => x.since.localeCompare(y.since))
+        .map((x) => x.id);
+      const got: string[] = [];
+      let offset: number | undefined;
+      let pages = 0;
+      for (;;) {
+        const r = await t.call({
+          needs_person: true,
+          limit: 3,
+          ...(offset !== undefined ? { offset } : {}),
+        });
+        expect(r.data.total).toBe(n);
+        got.push(...r.data.tasks.map((x) => x.id));
+        pages++;
+        if (r.data.nextOffset === undefined) break;
+        offset = r.data.nextOffset;
+      }
+      expect(got).toEqual(expected);
+      expect(pages).toBe(n <= 3 ? 1 : 2);
+      t.activity.close();
+    });
+  }
+
   it("範囲の外の offset は、空の一覧（nextOffset なし・total はそのまま）", async () => {
     const t = await setup();
     t.make("1件");
@@ -265,7 +322,10 @@ describe("状態・プロジェクトの絞り込み、続き、プロジェク�
     const r = await t.call({});
     expect(r.data.order).toBe("createdAt_desc");
     expect(r.data.tasks[0]?.waitingSince).toBeUndefined();
-    expect(t.requests.map((x) => x.path)).not.toContain("/api/dashboard");
+    expect(r.data.nextOffset).toBeUndefined();
+    expect(r.data.excludedAiJudging).toBeUndefined();
+    const paths = t.requests.map((x) => x.path).sort();
+    expect(paths).toEqual(["/api/projects", "/api/projects", "/api/tasks"]);
     t.activity.close();
   });
 });
