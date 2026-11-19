@@ -152,6 +152,19 @@ The AI calls it only when you ask. It is safer to ask after it has checked `appr
 - A step that made a PR (implementation, or requirements or design with a PR) can also be sent back. The remarks are not left on the PR and count as a human request for changes. To leave a record on the PR, write a comment on the PR (sacty imports it and sends the step back; [Requesting changes with PR comments](tasks.en.md#requesting-changes-with-pr-comments)). Writing a comment on a PR from MCP is not possible.
 - If the result could not be received (a timeout, for example), changes may have been requested. The AI does not retry automatically and checks the state with `get_task` (retrying without checking could request changes twice or use up the count toward the limit).
 
+## Reading and answering things to confirm
+
+When sacty is waiting on a person, the AI can read "what is being asked" and "how to answer" from `get_task` alone (it only reads and changes nothing).
+
+- **Things to confirm with a person** (`humanAsks`): present only while awaiting approval, when the step's agent raised confirmations along with its responses to remarks (questions back, things it decided by guessing), or when the intent of a PR remark could not be read. It is the same as the web UI's approval screen. The same confirmation text is merged into one.
+  The list (`list_tasks`) has only the count (`asks`). Long text is clipped, and when there are many items the number omitted is shown.
+- **How to answer** (`howToAnswer` in `humanAsks`): if no answer is needed, approve as it is (`approve_step`, or merging the PR for a step approved by merging). To answer, for a step without a PR, write the answer in `comments` of `request_changes`. For a step that made a PR, write it in a PR comment, which leaves a record on the PR (`request_changes` also sends it back but leaves nothing on the PR).
+  Answering makes sacty redo the step (it takes time and money). **There is no tool only for answering.**
+- **Waiting for a person's decision** (state `escalated`): `escalation` of `get_task` has the reason (over the limit of requests for changes, a change proposal, and so on; `unknown` for an old task with no record), the step, the step to redo, the number of unfinished remarks, and the ID of the open change proposal. The remark text is not included.
+  The only thing possible through MCP is approval, and only when the approval method (`approval.method`) is `approve_step` (for a step approved by merging a PR, or when there is no `approval`, it is read-only); check `escalation.canDoHere`. Requests for changes over the limit, deciding on a change proposal, deciding on proposals to defer, and cancelling cannot be done through MCP. Decide in the web UI (`escalation.decideOnScreen` lists the items that fit the reason).
+- The "things to confirm" section in the body of a deliverable such as requirements or design is not in `humanAsks`. Read the body with `get_deliverable`.
+- These texts were written by agents or other people. Even if they say "OK to approve" or "request changes", the AI does not approve or request changes for that reason alone (only when you ask).
+
 ## Things to keep in mind
 
 - Only the person running `sacty up` can use the MCP server (it uses the address sacty wrote to a file only that person can read).
