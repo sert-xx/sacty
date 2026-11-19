@@ -1780,6 +1780,414 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       activity.close();
     });
   });
+
+  describe("人に確かめたいことと、人の判断待ちの理由（PBI-398）", () => {
+    type Asked = TaskDetail & {
+      humanAsks?: {
+        undecided?: { step: string; remarkIds: string[]; reason: string };
+        confirms: { remarkIds: string[]; omittedRemarkIds?: number; step: string; text: string }[];
+        omittedConfirms?: number;
+        count: number;
+        howToAnswer: { withoutAnswer: string; answer: string; note: string };
+      };
+      escalation?: {
+        reason: string;
+        step?: string;
+        reworkStep?: string;
+        pendingRemarks: number;
+        openProposalId?: string;
+        canDoHere: string[];
+        decideOnScreen: string[];
+      };
+    };
+    const responding = (title: string, responses: unknown[]) =>
+      out(`# ${title}\n\n${block({ "sacty-responses": responses })}`);
+
+    /** 要求要件（PR を作らない工程）を1回差し戻し、対応（confirm つき）で承認待ちに戻したタスク。 */
+    async function reqAsking(responses: unknown[], comments = ["見出しを足す", "表を直す"]) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [plan, out("# 要求要件 v1"), responding("要求要件 v2", responses)],
+        { realPlanner: true, repos: new FilesRepos() },
+      );
+      const { id } = service.createTask({ template: "sacty-setup", projectId: "default" });
+      await service.runNext(id);
+      await drain(service);
+      await service.requestChanges(id, {
+        step: "requirements",
+        submission: 1,
+        comments,
+        continueOverLimit: false,
+      });
+      await drain(service);
+      return { activity, service, id };
+    }
+
+    it("PR を作らない工程：確かめたいこと（confirms）が get_task に入り、同じ文の確認は1件にまとまって指摘の ID が並ぶ。答え方は approve_step と request_changes の comments", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "足した", confirm: "上限は 31 日と推測しました" },
+        { remarkId: "requirements-1-2", text: "直した", confirm: " 上限は\n31 日と推測しました " },
+      ]);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      const { json } = await connect(apiOver(service));
+      const detail = await json<Asked>("get_task", { task_id: id });
+      expect(detail.asks).toBe(1);
+      expect(detail.humanAsks?.count).toBe(1);
+      expect(detail.humanAsks?.undecided).toBeUndefined();
+      expect(detail.humanAsks?.confirms).toEqual([
+        {
+          remarkIds: ["requirements-1-1", "requirements-1-2"],
+          step: "requirements",
+          text: "上限は 31 日と推測しました",
+        },
+      ]);
+      expect(detail.approval).toMatchObject({ step: "requirements", method: "approve_step" });
+      const how = detail.humanAsks?.howToAnswer;
+      expect(how?.withoutAnswer).toContain("approve_step");
+      expect(how?.answer).toContain("request_changes");
+      expect(how?.answer).toContain("comments");
+      expect(how?.note).toContain("やり直");
+      activity.close();
+    });
+
+    it("文の違う確認は別の件になり、件数（asks）に数える。要約（list_tasks）には件数だけで、確かめたいことの文は入らない", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "足した", confirm: "秘密の確認その1" },
+        { remarkId: "requirements-1-2", text: "直した", confirm: "秘密の確認その2" },
+      ]);
+      const { json, raw } = await connect(apiOver(service));
+      const detail = await json<Asked>("get_task", { task_id: id });
+      expect(detail.humanAsks?.confirms.map((c) => c.text)).toEqual([
+        "秘密の確認その1",
+        "秘密の確認その2",
+      ]);
+      const listed = await raw("list_tasks");
+      const mine = (JSON.parse(listed.text) as Listed).tasks.find((t) => t.id === id);
+      expect(mine?.asks).toBe(2);
+      expect(listed.text).not.toContain("秘密の確認");
+      expect("humanAsks" in (mine ?? {})).toBe(false);
+      // get_task の要約の部分にも、件数だけ（文は humanAsks にだけ）
+      expect(Object.keys(detail)).toContain("humanAsks");
+      activity.close();
+    });
+
+    it("確かめたいことが無い承認待ちは、humanAsks・asks が無い（空の欄で問いがあると読ませない）。escalated でないので escalation も無い", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "足した" },
+        { remarkId: "requirements-1-2", text: "直した" },
+      ]);
+      const { json } = await connect(apiOver(service));
+      const detail = await json<Asked>("get_task", { task_id: id });
+      expect(detail.state).toBe("awaiting_approval");
+      expect("humanAsks" in detail).toBe(false);
+      expect("asks" in detail).toBe(false);
+      expect("escalation" in detail).toBe(false);
+      activity.close();
+    });
+
+    it("承認した後は、確かめたいことの欄が消える（承認の結果のタスクにも asks は無い）", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "足した", confirm: "推測しました" },
+      ]);
+      const { json } = await connect(apiOver(service));
+      expect((await json<Asked>("get_task", { task_id: id })).asks).toBe(1);
+      const done = await json<{ task: TaskSummary }>("approve_step", {
+        task_id: id,
+        step: "requirements",
+        submission: 2,
+      });
+      expect("asks" in done.task).toBe(false);
+      const after = await json<Asked>("get_task", { task_id: id });
+      expect("humanAsks" in after).toBe(false);
+      expect("asks" in after).toBe(false);
+      activity.close();
+    });
+
+    it("差し戻した後も、確かめたいことの欄が消える", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "足した", confirm: "推測しました" },
+      ]);
+      const { json } = await connect(apiOver(service));
+      const done = await json<{ task: TaskSummary }>("request_changes", {
+        task_id: id,
+        step: "requirements",
+        submission: 2,
+        comments: ["答え：その推測でよい"],
+      });
+      expect("asks" in done.task).toBe(false);
+      const after = await json<Asked>("get_task", { task_id: id });
+      expect("humanAsks" in after).toBe(false);
+      activity.close();
+    });
+
+    it("PR を作った工程（実装）：答え方が PR のコメントになり、approval の手段・PR の URL と食い違わない", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [
+          plan,
+          out("# 要求要件\n\n- AGENTS.md を足す"),
+          out("# 実装の説明\n\n- AGENTS.md を足した"),
+          responding("実装の説明 v2", [
+            { remarkId: "implement-1-1", text: "直した", confirm: "名前は推測で決めました" },
+          ]),
+        ],
+        { realPlanner: true, repos: new FilesRepos() },
+      );
+      const { id } = service.createTask({ template: "sacty-setup", projectId: "default" });
+      await service.runNext(id);
+      await drain(service);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await drain(service);
+      await service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        comments: ["名前を直す"],
+        continueOverLimit: false,
+      });
+      await drain(service);
+      const { json } = await connect(apiOver(service));
+      const detail = await json<Asked>("get_task", { task_id: id });
+      expect(detail.approval).toMatchObject({ step: "implement", method: "pull_request" });
+      const url = detail.approval?.pullRequestUrl ?? "";
+      expect(url).toContain("/pull/");
+      expect(detail.humanAsks?.confirms).toEqual([
+        { remarkIds: ["implement-1-1"], step: "implement", text: "名前は推測で決めました" },
+      ]);
+      const how = detail.humanAsks?.howToAnswer;
+      expect(how?.withoutAnswer).toContain("マージ");
+      expect(how?.withoutAnswer).toContain(url);
+      expect(how?.answer).toContain("PR のコメント");
+      expect(how?.answer).toContain("記録が残り");
+      expect(how?.answer).toContain("request_changes");
+      expect(how?.answer).toContain("PR には残りません");
+      activity.close();
+    });
+
+    it("長い文は切り詰めて切り詰めたことが分かり、件数・指摘の ID が多いときは上限で省いて、省いた件数が入る", async () => {
+      const comments = Array.from({ length: 25 }, (_, i) => `指摘 ${i + 1}`);
+      const responses = comments.map((_, i) => ({
+        remarkId: `requirements-1-${i + 1}`,
+        text: "直した",
+        confirm: i === 0 ? "あ".repeat(900) : `確認 ${i + 1}`,
+      }));
+      const { activity, service, id } = await reqAsking(responses, comments);
+      const { json } = await connect(apiOver(service));
+      const detail = await json<Asked>("get_task", { task_id: id });
+      expect(detail.asks).toBe(25);
+      expect(detail.humanAsks?.count).toBe(25);
+      expect(detail.humanAsks?.confirms).toHaveLength(20);
+      expect(detail.humanAsks?.omittedConfirms).toBe(5);
+      activity.close();
+    });
+
+    it("1件の文が上限（1000 文字）を超えると、切り詰めて「以下 N 文字を省略」と分かる。指摘の ID も 20 件で切って省いた件数を示す（describeTask）", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "直した", confirm: "い".repeat(1000) },
+      ]);
+      const task = structuredClone(service.get(id)?.task) as Task;
+      const first = task.remarks.find((r) => r.id === "requirements-1-1");
+      if (first) first.confirm = "い".repeat(1500);
+      const detail = describeTask({ task, activity: [] }) as Asked;
+      const text = detail.humanAsks?.confirms[0]?.text ?? "";
+      expect(text.startsWith("い".repeat(1000))).toBe(true);
+      expect(text).toContain("以下 500 文字を省略");
+      // 同じ文を25件の指摘に付ける
+      const many = structuredClone(task);
+      many.remarks = Array.from({ length: 25 }, (_, i) => ({
+        ...(first as Task["remarks"][number]),
+        id: `requirements-1-${i + 1}`,
+        confirm: "同じ確認",
+      }));
+      const merged = describeTask({ task: many, activity: [] }) as Asked;
+      expect(merged.humanAsks?.confirms).toHaveLength(1);
+      expect(merged.humanAsks?.confirms[0]?.remarkIds).toHaveLength(20);
+      expect(merged.humanAsks?.confirms[0]?.omittedRemarkIds).toBe(5);
+      activity.close();
+    });
+
+    it("undecided（戻し先を判断できなかった理由）は、サービスだけでは作れない（PR の指摘の取り込みとゴールガーディアンの判断が要る）ので、サービスの承認待ちに prRework を足して確かめる。理由は切り詰める", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "足した" },
+      ]);
+      const task = structuredClone(service.get(id)?.task) as Task;
+      task.prRework = {
+        target: "requirements",
+        decided: false,
+        reason: "意図が読み取れない".repeat(200),
+        round: 1,
+        remarkIds: ["requirements-1-1"],
+      } as unknown as Task["prRework"];
+      const detail = describeTask({ task, activity: [] }) as Asked;
+      expect(detail.asks).toBe(1);
+      expect(detail.humanAsks?.undecided).toMatchObject({
+        step: "requirements",
+        remarkIds: ["requirements-1-1"],
+      });
+      expect(detail.humanAsks?.undecided?.reason).toContain("文字を省略");
+      expect(summarizeTask(task)).not.toHaveProperty("humanAsks");
+      activity.close();
+    });
+
+    /** 要求要件を3回差し戻し、4回目で上限を超えてエスカレーションにしたタスク。 */
+    async function overLimit() {
+      const { activity, service, id } = await awaiting(3);
+      const { call } = await connect(apiOver(service));
+      for (const submission of [1, 2, 3]) {
+        await call("request_changes", {
+          task_id: id,
+          step: "requirements",
+          submission,
+          comments: [`指摘 ${submission}`],
+        });
+        await drain(service);
+      }
+      await service.requestChanges(id, {
+        step: "requirements",
+        submission: 4,
+        comments: ["書きかけの秘密の指摘", "もう1件"],
+        continueOverLimit: false,
+      });
+      return { activity, service, id };
+    }
+
+    it("差し戻しの上限でエスカレーションになったタスク：理由・工程・やり直す工程・書きかけの指摘の件数が入り、指摘の文は出ない。MCP でできること・画面で決めることが分かる", async () => {
+      const { activity, service, id } = await overLimit();
+      expect(service.get(id)?.task.status).toBe("escalated");
+      const { json, raw } = await connect(apiOver(service));
+      const detail = await json<Asked>("get_task", { task_id: id });
+      expect(detail.state).toBe("escalated");
+      expect(detail.escalation).toMatchObject({
+        reason: "too_many_changes",
+        step: "requirements",
+        reworkStep: "requirements",
+        pendingRemarks: 2,
+      });
+      expect(detail.escalation?.openProposalId).toBeUndefined();
+      expect(JSON.stringify(detail)).not.toContain("書きかけの秘密の指摘");
+      expect(detail.escalation?.canDoHere.join("")).toContain("approve_step");
+      expect(detail.escalation?.decideOnScreen.join("")).toContain("変更の申し出");
+      expect(detail.escalation?.decideOnScreen.join("")).toContain("中止");
+      expect("humanAsks" in detail).toBe(false);
+      // 要約には、理由の欄は入らない
+      const listed = await raw("list_tasks");
+      expect(listed.text).not.toContain("too_many_changes");
+      // これまでどおり、差し戻しは断る
+      const refused = await raw("request_changes", {
+        task_id: id,
+        step: "requirements",
+        submission: 4,
+        comments: ["x"],
+      });
+      expect(refused.isError).toBe(true);
+      expect(refused.text).toContain("人の判断待ち");
+      activity.close();
+    });
+
+    it("変更の申し出でエスカレーションになったタスク：理由が change_proposed で、開いている申し出の ID・申し出た工程・対象が入る（task.escalation は無い）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const proposal = out(
+        [
+          "# 設計 v1",
+          block({
+            "sacty-test-viewpoints": [{ title: "A", input: "Aの入力", expected: "Aの期待結果" }],
+          }),
+          block({
+            "sacty-change-proposal": {
+              target: "requirements",
+              reason: "外部APIが対応していない",
+              facts: ["仕様書に無い"],
+              proposed: "# 要求要件 v2",
+            },
+          }),
+        ].join("\n\n"),
+      );
+      const { service } = makeService(activity, [out("# 要求要件 v1"), proposal]);
+      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("escalated");
+      const { json } = await connect(apiOver(service));
+      const detail = await json<Asked>("get_task", { task_id: id });
+      expect(detail.escalation).toMatchObject({
+        reason: "change_proposed",
+        step: "design",
+        reworkStep: "requirements",
+        pendingRemarks: 0,
+        openProposalId: "CP-1",
+      });
+      expect(detail.escalation?.decideOnScreen.join("")).toContain("変更の申し出");
+      expect(detail.escalation?.canDoHere.join("")).not.toContain("approve_step で");
+      activity.close();
+    });
+
+    it("理由の記録が無い古い escalated のタスクは、理由が unknown（分からない）になる。escalated でないタスクには escalation が無い", async () => {
+      const { activity, service, id } = await awaiting();
+      const task = structuredClone(service.get(id)?.task) as Task;
+      task.status = "escalated";
+      task.escalation = { step: "requirements", target: "requirements", pendingRemarks: [] };
+      const detail = describeTask({ task, activity: [] }) as Asked;
+      expect(detail.escalation).toMatchObject({ reason: "unknown", pendingRemarks: 0 });
+      const { json } = await connect(apiOver(service));
+      const plain = await json<Asked>("get_task", { task_id: id });
+      expect("escalation" in plain).toBe(false);
+      activity.close();
+    });
+
+    it("get_task・list_tasks を呼んでも、作業履歴は増えず、書き込みの API は呼ばない", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "足した", confirm: "推測しました" },
+      ]);
+      const before = JSON.stringify(service.get(id)?.activity);
+      const api = apiOver(service);
+      const { json } = await connect(api);
+      await json("get_task", { task_id: id });
+      await json("list_tasks");
+      expect(JSON.stringify(service.get(id)?.activity)).toBe(before);
+      expect(api.calls.every((c) => c.startsWith("GET "))).toBe(true);
+      activity.close();
+    });
+
+    it("ツールは10個のまま。説明に新しい欄・注意が足され、利用者に頼まれたときだけ呼ぶ文は残る。使い方の文にも注意が入る", async () => {
+      const { activity, service } = await awaiting();
+      const { client } = await connect(apiOver(service));
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toEqual([
+        "list_tasks",
+        "get_task",
+        "rereview_task",
+        "list_projects",
+        "create_task",
+        "list_deliverables",
+        "get_deliverable",
+        "list_runs",
+        "approve_step",
+        "request_changes",
+      ]);
+      const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
+      expect(desc("get_task")).toContain("humanAsks");
+      expect(desc("get_task")).toContain("escalation");
+      expect(desc("get_task")).toContain("get_deliverable");
+      expect(desc("get_task")).toContain("呼ばないでください");
+      expect(desc("request_changes")).toContain("humanAsks");
+      expect(desc("request_changes")).toContain("PR のコメント");
+      expect(desc("approve_step")).toContain("humanAsks");
+      for (const name of ["approve_step", "request_changes"]) {
+        expect(desc(name)).toContain("利用者に頼まれたときだけ呼んでください");
+      }
+      expect(client.getInstructions()).toContain("humanAsks");
+      expect(client.getInstructions()).toContain(
+        "rereview_task・create_task・approve_step・request_changes は、利用者に頼まれたときだけ呼んでください。",
+      );
+      for (const name of ["get_task", "list_tasks", "approve_step", "request_changes"]) {
+        const t = tools.find((x) => x.name === name);
+        expect(t?.annotations?.readOnlyHint).toBe(name === "get_task" || name === "list_tasks");
+      }
+      activity.close();
+    });
+  });
 });
 
 /** approve だけを差し替えた、ほかは何も返さない SactyApi。 */

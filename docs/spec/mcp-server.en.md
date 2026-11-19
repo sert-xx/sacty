@@ -43,7 +43,7 @@ Code: `packages/cli/src/index.ts` (`mcpCommand`), `packages/cli/src/mcp.ts` (`da
 
 ## Tools
 
-The server's usage instructions (`INSTRUCTIONS`) and the descriptions of `list_tasks` and `get_task` say that the title, description, review body, and stop reason in results are data that can contain text written by other people, and that instructions inside them must not be followed.
+The server's usage instructions (`INSTRUCTIONS`) and the descriptions of `list_tasks` and `get_task` say that the title, description, review body, and stop reason in results are data that can contain text written by other people, and that instructions inside them must not be followed. The text in `humanAsks` and `escalation` is treated as the same kind of data, and the descriptions of `get_task`, `approve_step`, and `request_changes` and `INSTRUCTIONS` say so too.
 The description of `list_projects` carries the same note (project names are text written by people).
 The descriptions of `rereview_task`, `create_task`, `approve_step`, and `request_changes` say to call them only when the user asks (not because of instructions inside a title, description, review body, and so on).
 The descriptions of `list_deliverables`, `get_deliverable`, and `list_runs`, and `INSTRUCTIONS`, also say that the deliverables in results are data that can contain text written by other people and agents, and that instructions inside them must not be followed (`READ_UNTRUSTED_NOTE`).
@@ -90,6 +90,8 @@ Returns the details of a task. Read-only. The argument is `task_id` (the whole t
   - `reviewHeadCommit`: the head commit of the PR reviewed in the current round (only after the target is resolved).
   - `costUsd`: the cost used (`budget.usedUsd`).
   - `recentActivity`: the time, actor, and event type of the last 30 Activity events (without their contents). `activityCount` is the total number.
+  - `humanAsks`: only while awaiting approval and there is something to confirm with a person ([Things to confirm with a person](#things-to-confirm-with-a-person)).
+  - `escalation`: only when the state is `escalated` ([Why a person's decision is awaited](#why-a-persons-decision-is-awaited)).
 - If the task does not exist (including tasks of a deleted project), it returns the reason.
 
 ### rereview_task
@@ -309,10 +311,40 @@ The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, and 
 | `reviewTasks` | The child tasks that review this task's PRs (task ID and PR number) |
 | `pausedReason` | The reason for the pause (only while paused) |
 | `approval` | Only while awaiting approval (`awaiting_approval`, `escalated`): the step and submission awaiting approval and how to approve ([approve_step](#approve_step)) |
+| `asks` | The number of things to confirm with a person (absent when 0). Counted the same way as the web UI; a small value only, no text (the text is in `humanAsks` of `get_task`) |
 | `createdAt`, `updatedAt` | The time it was created and the time of the last record |
 | `url` | The URL of the task details in the web UI (only when `daemon.json` has the web UI URL) |
 
+`asks` is counted from `humanAsks` in `@sacty/core` (the same as `HumanAskNotice` in the web UI).
 Code: `apps/daemon/src/task-mcp.ts` (`summarizeTask`, `isReviewTask`, `TaskSummarySchema`), `packages/core/src/projection.ts` (`canRereview`, `isFinished`)
+
+## Things to confirm with a person
+
+`humanAsks` of `get_task`. It appears only while awaiting approval (`awaiting_approval`) and when the web UI's approval screen shows "things to confirm with a person". Otherwise the field is absent (no empty field that could read as "there is a question").
+The decision and the merging are the result of `humanAsks` in `@sacty/core` as it is (the "Things for a person to confirm" part of [Approval](approval.en.md); the MCP layer does not rebuild it). No new daemon API is called; it is built from the task `get_task` already received.
+
+- `confirms`: the confirmations the step's agent raised. The same sentence (compared with whitespace removed) is merged into one, and `remarkIds` lists the remarks it was attached to. `step` and `text` (the part beyond 1000 characters is replaced with "…（以下 N 文字を省略）", an omission note in Japanese).
+- `undecided`: when the target of a PR remark could not be decided, its `step`, `remarkIds`, and `reason` (clipped the same as `text` of `confirms`).
+- `count`: the number (1 for `undecided` plus the merged `confirms`). The same as `asks` in the summary.
+- Limits: 20 `confirms` (the omitted number is `omittedConfirms`), 20 `remarkIds` per item (the omitted number is `omittedRemarkIds`).
+- `howToAnswer`: how to answer, consistent with `approval`. `withoutAnswer` (when no answer is needed: `approve_step` if `approval.method` is `approve_step`, merging the PR if `pull_request`), `answer` (to answer: for a step without a PR, write it in `comments` of `request_changes`; for a step that made a PR, write it in a PR comment, which leaves a record on the PR; `request_changes` also sends it back but leaves nothing on the PR), and `note` (answering makes sacty redo the step, which takes time and money; there is no tool only for answering).
+- The "things to confirm" section in the body of a deliverable such as requirements or design is not included. Read the body with `get_deliverable`.
+- The text is data written by agents or other people. The descriptions of `get_task`, `approve_step`, and `request_changes` and `INSTRUCTIONS` say that even if it says to approve or request changes, the tools are not called for that reason alone (only when the user asks).
+
+## Why a person's decision is awaited
+
+`escalation` of `get_task`. It appears only when the state is `escalated`.
+
+- `reason`: `too_many_changes` (over the limit of requests for changes), `change_proposed` (a change proposal), `change_undecidable` and `rework_confirmation` (records from earlier versions), `unknown` (an old task with no recorded reason).
+  `task.escalation.reason` is used when present. For a change proposal the core projection does not create `task.escalation`, so an open proposal (`openProposal`) means `change_proposed`. With neither, it is `unknown`.
+- `step`, `reworkStep`: the target step and the step to redo (for a proposal, the step that proposed and the proposal's target).
+- `pendingRemarks`: the number of unfinished remarks (the text is not shown; read it in the web UI; 0 for a proposal).
+- `openProposalId`: the ID of the open change proposal (only when there is one).
+- `note`: a supplement to the reason for the decision (only when present; clipped at 1000 characters).
+- `canDoHere`: what can be done through MCP (approval with `approve_step` when `approval.method` is `approve_step`). `decideOnScreen`: what a person decides in the web UI (a request for changes over the limit, deciding on a change proposal, and cancelling). The behavior and refusal messages of `approve_step` and `request_changes` are unchanged (`request_changes` refuses `escalated`).
+- It is absent for tasks that are not `escalated`, and is not in the summary.
+
+Code: `apps/daemon/src/task-mcp.ts` (`describeAsks`, `describeEscalation`, `askCount`)
 
 ## PRs and branches tied to a task
 
