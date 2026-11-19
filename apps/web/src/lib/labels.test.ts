@@ -1328,7 +1328,15 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
   it("見守り中は「完了」と出さず、今の回の判定と、PR の対応を待っていることを出す。色は、待っている（人の出番でも完了でもない）", () => {
     expect(statusText(watching("changes_required"))).toBe("PR の対応待ち（修正が必要）");
     expect(statusText(watching("suggestions"))).toBe("PR の対応待ち（提案あり）");
-    expect(statusText(watching())).toBe("PR の対応待ち（判定なし）");
+    // 判定が無い回は、詳細の知らせと同じ言い方で分ける
+    expect(statusText(watching())).toBe("PR の対応待ち（判定が付いていない）");
+    expect(
+      statusText(watching(undefined, { reviewVerdicts: [{ round: 1, missing: "invalid" }] })),
+    ).toBe("PR の対応待ち（判定を読めない）");
+    expect(statusText(watching(undefined, { reviewVerdicts: [{ round: 1 }] }))).toBe(
+      "PR の対応待ち（判定を読めない）",
+    );
+    expect(statusTextIn(watching(), labels.en)).toBe("Waiting on the PR (no verdict given)");
     expect(statusTextIn(watching("suggestions"), labels.en)).toBe(
       "Waiting on the PR (suggestions)",
     );

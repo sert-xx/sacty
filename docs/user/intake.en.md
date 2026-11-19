@@ -180,7 +180,7 @@ The findings follow the writing rules of the repository (Japanese when there are
 A review task is not done until the verdict becomes "no findings".
 sacty watches the PR for changes and re-reviews automatically when the PR author responds.
 
-While it watches, the task status is "Waiting on the PR", with the current verdict (changes required, suggestions, or no verdict).
+While it watches, the task status is "Waiting on the PR", with the current verdict (changes required, suggestions, verdict unreadable, or no verdict given).
 It waits for the PR author to respond, so nothing is needed from you.
 It does not appear in "Needs you" or the bell in the header, and no completion notification is sent.
 

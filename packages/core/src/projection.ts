@@ -1104,8 +1104,9 @@ export type Task = {
   /** 見守りを終えた理由（ReviewWatchEnded。PBI-411）。再レビューを始めると消える。 */
   reviewWatchEnded?: { reason: PayloadOf<"ReviewWatchEnded">["reason"] };
   /**
-   * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。実行を始める前は、対象を確かめた時刻。PBI-411）。レビューが
-   * PR のコメントを読むのは、この後。作業履歴から作るので、以前の版の回にも付く。
+   * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。PBI-411）。名前は「対象を確かめた時刻」だが、実行を始める
+   * たびに上書きする（対象を確かめた時刻が入っているのは、実行を始める前だけ）。レビューが PR のコメントを読むのは、この後
+   * なので、見守りは、これより後の作者の返信を数える。作業履歴から作るので、以前の版の回にも付く。
    */
   reviewResolvedAt?: string;
   /**
@@ -2875,7 +2876,7 @@ export function applyEvent(
       break;
 
     case "ReviewRestarted":
-      // レビューを投稿して完了したタスクだけ。前回の対象・行へのコメント・投稿は持ち越さない（PBI-44）。前回の指摘は、
+      // レビューを投稿した後のタスク（完了したか、PR の変化を見守っている）だけ。前回の対象・行へのコメント・投稿は持ち越さない（PBI-44）。前回の指摘は、
       // 再レビューで対応を確かめるために残す（PBI-111）
       if (!canRereview(task)) throw new ActivityIntegrityError(event, "no posted review to redo");
       if (task.reviewPost && task.reviewTarget) {
@@ -2900,7 +2901,7 @@ export function applyEvent(
       task.reviewTarget = undefined;
       task.reviewComments = [];
       task.reviewPost = undefined;
-      // 作者の返信で判定し直す回には、前の回の返信の数え始め（対象を確かめた時刻）を引き継ぐ
+      // 作者の返信で判定し直す回には、前の回の返信の数え始め（レビューの実行を始めた時刻）を引き継ぐ
       task.reviewReplySince =
         event.payload.reason === "replied" ? task.reviewWatch?.since : undefined;
       task.reviewWatch = undefined;
@@ -4771,7 +4772,7 @@ export function currentReviewVerdict(task: Task): ReviewVerdict | undefined {
 
 /**
  * レビューを投稿した後、PR の変化を見守っているか（PBI-411）。見守る版が投稿したレビューの、今の回の判定が指摘なしでない
- * （提案あり・修正が必要・判定が無い）間（reviewWatch がある間）。待っているのは PR の作者の対応で、人の出番ではなく、実行の枠も使わない。PR の先頭が
+ * （提案あり・修正が必要・判定が無い）間（reviewWatch がある間）。待っているのは PR の作者の対応で、人の出番ではなく、見守りそのものは実行の枠を使わない（投稿で登録される監査は、ほかの完了したタスクの監査と同じく、枠を使う）。PR の先頭が
  * 変わる・作者が返信すると再レビューを始め、PR がマージ・クローズされると見守りを終えて完了する。一時停止の間も真
  * （再開すると見守りに戻る）。それより前の版が投稿して完了したタスクは、判定に関係なく偽（完了のまま）。
  */

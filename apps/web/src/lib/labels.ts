@@ -45,9 +45,13 @@ export function statusText(task: Task, l: LabelMessages): string {
   // レビューを投稿した後、PR の変化を見守っている（PBI-411）。完了ではない。今の回の判定を添える
   if (task.status === "idle" && reviewWatching(task)) {
     const verdict = currentReviewVerdict(task);
-    return l.state.reviewWatching(
-      verdict === "changes_required" || verdict === "suggestions" ? verdict : "none",
-    );
+    if (verdict === "changes_required" || verdict === "suggestions") {
+      return l.state.reviewWatching(verdict);
+    }
+    // 判定が無い回は、詳細の知らせと同じ言い方で、付いていない・読めないを分ける
+    const round = task.reviewRound ?? 1;
+    const missing = task.reviewVerdicts?.findLast((v) => v.round === round)?.missing;
+    return l.state.reviewWatching(missing === "absent" ? "absent" : "unreadable");
   }
   if (task.status === "idle" && isCompleted(task)) {
     // 指摘なしにならないまま、PR のマージ・クローズで見守りを終えて完了した（PBI-411）

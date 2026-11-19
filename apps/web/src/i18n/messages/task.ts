@@ -114,7 +114,7 @@ const ja = {
   /** レビューを投稿した後の、PR の変化の見守り（PBI-411）。 */
   reviewWatch: {
     title: "PR の変化を見守っています",
-    hint: "PR に新しいコミットが push されるか、PR の作者が返信すると、自動で再レビューします。判定が「指摘なし」になるか、PR がマージ・クローズされると、完了します。「再レビュー」で、今すぐレビューし直すこともできます。",
+    hint: "PR に新しいコミットが push されるか、PR の作者が返信すると、自動で再レビューします。判定が「指摘なし」になるか、PR がマージ・クローズされると、完了します。「再レビューして PR に投稿」で、今すぐレビューし直すこともできます。",
     parentHint:
       "PR を作ったタスクが PR を更新して承認待ちに戻ると、自動で再レビューします。判定が「指摘なし」になるか、PR がマージ・クローズされると、完了します。",
     verdict: (round: number, verdict: string) => `${round}回目のレビューの判定：${verdict}`,
@@ -759,7 +759,7 @@ const en: TaskMessages = {
   },
   reviewWatch: {
     title: "Watching the PR for changes",
-    hint: "When a new commit is pushed to the PR or the PR author replies, the re-review starts automatically. The task is done when the verdict becomes “no findings” or the PR is merged or closed. You can also use “Re-review” to review again right now.",
+    hint: "When a new commit is pushed to the PR or the PR author replies, the re-review starts automatically. The task is done when the verdict becomes “no findings” or the PR is merged or closed. You can also use “Review again and post to the PR” to review again right now.",
     parentHint:
       "When the task that opened the PR updates it and returns to awaiting approval, the re-review starts automatically. The task is done when the verdict becomes “no findings” or the PR is merged or closed.",
     verdict: (round: number, verdict: string) => `Verdict of review round ${round}: ${verdict}`,

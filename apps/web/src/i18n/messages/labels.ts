@@ -169,8 +169,8 @@ const ja = {
     completed: "完了",
     completedNoChanges: "完了（変更なし）",
     /** レビューを投稿した後、PR の変化を見守っている（PBI-411）。待っているのは PR の作者の対応。 */
-    reviewWatching: (verdict: "changes_required" | "suggestions" | "none") =>
-      `PR の対応待ち（${verdict === "changes_required" ? "修正が必要" : verdict === "suggestions" ? "提案あり" : "判定なし"}）`,
+    reviewWatching: (verdict: "changes_required" | "suggestions" | "unreadable" | "absent") =>
+      `PR の対応待ち（${{ changes_required: "修正が必要", suggestions: "提案あり", unreadable: "判定を読めない", absent: "判定が付いていない" }[verdict]}）`,
     /** 指摘なしにならないまま、PR の見守りを終えて完了した（PBI-411）。 */
     reviewWatchEnded: (reason: "merged" | "closed") =>
       `完了（${reason === "merged" ? "PR がマージされた" : "PR が閉じられた"}）`,
@@ -968,7 +968,7 @@ const en: LabelMessages = {
     completed: "Done",
     completedNoChanges: "Done (no changes)",
     reviewWatching: (verdict) =>
-      `Waiting on the PR (${verdict === "changes_required" ? "changes required" : verdict === "suggestions" ? "suggestions" : "no verdict"})`,
+      `Waiting on the PR (${{ changes_required: "changes required", suggestions: "suggestions", unreadable: "verdict unreadable", absent: "no verdict given" }[verdict]})`,
     reviewWatchEnded: (reason) => `Done (${reason === "merged" ? "PR merged" : "PR closed"})`,
     testsRunning: "Running tests",
     waitingPullRequestCi: "Waiting for the PR's CI",

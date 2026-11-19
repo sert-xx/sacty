@@ -2702,10 +2702,11 @@ export class TaskService {
    * レビューを投稿したタスクの、PR の変化の見守り（PBI-411）。PR の確認（60秒ごと）から、読んだ PR の状態を渡して呼ぶ。
    * - PR がマージされた・マージせずに閉じられた：見守りを終える（見守っていたタスクは完了する）
    * - PR の先頭が、レビューした先頭と違う：再レビューを始める（同じ先頭では 1 回だけ）
-   * - 先頭は同じで、対象を確かめた後に PR の作者が返信した：同じ先頭を判定し直す（同じ先頭では 1 回だけ）。sacty の投稿（目印で始まるレビュー・行へのコメント・知らせ）と Bot の投稿は、返信に数えない
+   * - 先頭は同じで、その回のレビューの実行を始めた後に PR の作者が返信した：同じ先頭を判定し直す（同じ先頭では 1 回だけ）。sacty の投稿（目印で始まるレビュー・行へのコメント・知らせ）と Bot の投稿は、返信に数えない
    * 続けての push・返信は、最後の変化から FEEDBACK_QUIET_MS たつまで待って、1 回にまとめる（初めて見た時刻は、メモリーだけに
    * 持つ。デーモンを起動し直すと、待ち直す）。再レビューの実行中・一時停止中・中止の途中のタスクは動かさない（実行中に来た
-   * 変化は、投稿の後に、先頭と対象を確かめた時刻から拾う）。
+   * 変化は、投稿の後に、先頭と、その回のレビューの実行を始めた時刻から拾う。ただし、その回の判定が指摘なしなら、完了して
+   * 見守らないので、拾わない。人が「再レビュー」で始める）。
    * sacty が作った PR のレビューの子タスクは、見守りの終わりだけを扱う。再レビューは、親の流れが決める（reconcileReviewTasks）。
    * sacty が作った PR を対象にする、子タスクでないレビューのタスク（人が作ったもの・以前の版で取り込んだもの）も同じ。
    * GitHub の再依頼で別のタスクができた元のタスクも、見守りの終わりだけを扱う（supersededWatch）。
@@ -2831,7 +2832,7 @@ export class TaskService {
         !isSactyGitHubComment(item.body),
     );
     const latest = current();
-    if (!latest || latest.reviewPost?.at !== posted || !reviewWatching(latest)) return;
+    if (!latest || latest.reviewPost?.at !== posted) return;
     // コメントを読む間に、GitHub の再依頼の取り込みが新しいタスクを作った・この PR を sacty のタスクが引き継いだなら、始めない
     // （元のタスクには何も記録されないので、ここで確かめ直す）
     if (this.watchHandedOver(latest)) {
@@ -4963,8 +4964,8 @@ export class TaskService {
     if (!previous) return { existing };
     const author = target.author.toLowerCase();
     if (!author) return { existing, replies: "unreadable" };
-    // 作者の返信で同じ先頭を判定し直す回（PBI-411）は、前回の対象を確かめた時刻より後の返信を渡す（対象を確かめた後・投稿の
-    // 前に書かれた返信が、判定し直すきっかけになる。前回の投稿より後だけを選ぶと、その返信が渡らない）
+    // 作者の返信で同じ先頭を判定し直す回（PBI-411）は、前回のレビューの実行を始めた時刻より後の返信を渡す（実行を始めた後・
+    // 投稿の前に書かれた返信が、判定し直すきっかけになる。前回の投稿より後だけを選ぶと、その返信が渡らない）
     const replied =
       task.reviewReplySince !== undefined &&
       task.reviewReplyCommit !== undefined &&
