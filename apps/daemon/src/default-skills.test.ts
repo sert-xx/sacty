@@ -1791,11 +1791,14 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
       /^2\. 外れる理由を、根拠かコードのコメントが述べている。または、承認済みの要求要件・設計が、そのやり方を決めている：出さない$/m,
     );
     expect(severity).toMatch(
-      /^3\. 1・2 に当たらず、そろっている慣習.*から外れている：`should`。.*満たせないなら、外れる理由をコメントに書くことを求める/m,
+      /^3\. 1・2 に当たらず、そろっている慣習の表記の細部（.*）だけが外れている：`nit`$/m,
     );
-    expect(severity).toMatch(/^4\. 1・2 に当たらず、.*：`nit`$/m);
+    expect(severity).toMatch(
+      /^4\. 1〜3 に当たらず、そろっている慣習.*から外れている：`should`。.*満たせないなら、外れる理由をコメントに書くことを求める/m,
+    );
+    expect(severity).toContain("慣習と言えるかは、手順 6 だけで決める");
     expect(severity).toContain(
-      "慣習としなかったもの（割れている・例が少ない）は、外れとして扱わない（出さない）",
+      "手順 6 で慣習としなかったもの（割れている・例が少ない）は、外れとして扱わない（出さない）",
     );
     // NG 例は複数の言語で書き、指摘にしない例（割れている・理由がある）も含める
     const langs = [...text.matchAll(/^### 例\d+（([^）]+)）/gm)].map((m) => m[1]);
@@ -1816,7 +1819,9 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
     expect(text).toMatch(
       /^8\. 外れている所ごとに、.*「重要度の決め方」の順で決める（判定はそこだけに書いてある）$/m,
     );
-    expect(text).toContain("承認済みの要求要件・設計が決めた外れは、「重要度の決め方」の 2 で扱う");
+    expect(text).toContain(
+      "承認済みの要求要件・設計が決めた外れも、「重要度の決め方」の順（1 → 2）で扱う",
+    );
     expect(text).toContain("「重要度の決め方」の 2 に当たり、指摘にしない");
     for (const stale of [
       "のどちらかなら指摘にしない",
@@ -1825,24 +1830,16 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
     ]) {
       expect(text, stale).not.toContain(stale);
     }
-    // 仕様書の日英も、規約を読む観点の例を C-18 にしている
-    // 仕様書の日英は、それぞれの言語で、同じ判定の順を書いている
-    const specPhrases: Record<string, string[]> = {
-      "context.md": [
-        "効かなくなるものは `must`（外れる理由が書かれていても、承認済みの設計が決めていても出す）",
-        "承認済みの要求要件や設計が決めているものは、指摘にしない",
-        "どちらでもないものは `should`",
-      ],
-      "context.en.md": [
-        "stop working is `must` (reported even when a reason for departing is written, and even when an approved design decided it)",
-        "or that approved requirements or an approved design decided, is not reported",
-        "A departure that is neither is `should`",
-      ],
+    // 仕様書の日英は、規約を読む観点の例を C-18 にし、判定を言い直さずに正本を指す
+    const specPointers: Record<string, string> = {
+      "context.md": "`C-18.md` の「重要度の決め方」が決める（判定の正本。ここでは言い直さない）",
+      "context.en.md":
+        'is decided by "How to decide severity" in `C-18.md` (the authoritative text; it is not restated here)',
     };
-    for (const [spec, phrases] of Object.entries(specPhrases)) {
+    for (const [spec, pointer] of Object.entries(specPointers)) {
       const body = readFileSync(join(import.meta.dirname, "../../../docs/spec", spec), "utf8");
       expect(body, spec).not.toMatch(/C-5 など|such as C-5/);
-      for (const phrase of phrases) expect(body, `${spec}: ${phrase}`).toContain(phrase);
+      expect(body, spec).toContain(pointer);
     }
   });
 });
