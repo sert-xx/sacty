@@ -2206,7 +2206,9 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       expect(detail.escalation?.canDoHere.join("")).toContain("approve_step");
       expect(detail.escalation?.decideOnScreen.join("")).toContain("上限を超えた差し戻し");
       expect(detail.escalation?.decideOnScreen.join("")).not.toContain("変更の申し出");
-      expect(detail.escalation?.decideOnScreen.join("")).toContain("中止");
+      expect(detail.escalation?.decideOnScreen.join("")).not.toContain("中止");
+      expect(detail.escalation?.canDoHere.join("")).toContain("cancel_task");
+      expect(detail.escalation?.canDoHere.join("")).toContain("get_cancel_plan");
       expect("humanAsks" in detail).toBe(false);
       // 要約には、理由の欄は入らない
       const listed = await raw("list_tasks");

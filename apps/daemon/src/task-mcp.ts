@@ -382,7 +382,7 @@ const TaskSummarySchema = z.object({
   canResume: z
     .boolean()
     .describe(
-      "resume_task で再開できるか（一時停止中で、予算の上限・テストの扱い・子タスクの中止・作業するリポジトリの選択の判断が要らない）。true でも、デーモンが断ることはある",
+      "resume_task で再開できるか（一時停止中で、予算の上限・テストの扱い・子タスクの中止・作業するリポジトリの選択の判断が要らない）。true でも、デーモンが断ることはある。中止を頼んだ直後は、中止の途中でも paused に見えるので、再開する前に get_task で state を確かめ、cancelled になるまで待つ",
     ),
   canCancel: z
     .boolean()
@@ -1260,14 +1260,16 @@ function describeEscalation(task: Task): z.infer<typeof EscalationSchema> | unde
   const reworkStep = esc?.target ?? proposal?.target;
   const approval = approvalOf(task);
   // 画面（`GateNotice`・`personAction`）と同じく、理由と承認の手段で、できること・画面で決めることを分ける。
-  const canDoHere =
-    approval?.method === "approve_step"
+  const canDoHere = [
+    ...(approval?.method === "approve_step"
       ? ["approve_step で、承認待ちの工程を承認できます（利用者に頼まれたときだけ）。"]
       : approval?.method === "pull_request"
         ? [
-            `PR${approval.pullRequestUrl ? `（${approval.pullRequestUrl}）` : ""} をマージすると承認になります（このツールでは承認できません。操作はできず、読むだけです）。`,
+            `PR${approval.pullRequestUrl ? `（${approval.pullRequestUrl}）` : ""} をマージすると承認になります（このツールでは承認できません）。`,
           ]
-        : ["読むだけです（このツールでできる操作はありません）。"];
+        : ["承認・差し戻しは、このツールではできません。"]),
+    "タスクの中止は cancel_task でできます（利用者がそのタスクの中止をはっきり頼んだときだけ。先に get_cancel_plan で片付けの対象を確かめ、利用者に伝えます）。",
+  ];
   const proposalReason = reason === "change_proposed" || reason === "change_undecidable";
   const overLimit = reason === "too_many_changes";
   const decideOnScreen = [
@@ -1275,7 +1277,6 @@ function describeEscalation(task: Task): z.infer<typeof EscalationSchema> | unde
       ? ["上限を超えた差し戻し（request_changes は、escalated のタスクを差し戻しません）"]
       : []),
     ...(proposalReason || !overLimit ? ["変更の申し出を認めるか・認めないかの決定"] : []),
-    "タスクの中止",
   ];
   return {
     reason,
@@ -1456,7 +1457,7 @@ export function checkRequestChanges(
   const reworkStep = reworkTargets(task, input.step as StepKey)[0];
   if (!reworkStep) {
     throw new Error(
-      `${renderMessage({ code: "gate.invalidTarget" }, "ja")}このタスクは差し戻さず、画面で確かめるか、中止・やり直しを判断してもらってください。`,
+      `${renderMessage({ code: "gate.invalidTarget" }, "ja")}このタスクは差し戻さず、画面で確かめるか、やり直しを判断してもらってください（中止は、利用者がそのタスクの中止をはっきり頼んだときだけ cancel_task で行えます）。`,
     );
   }
   if (remarks.length === 0) {
@@ -2384,6 +2385,7 @@ const TOOLS: readonly ToolDefinition[] = [
       "同じ原因なら、また止まります（検証・不完全の停止は、回数を数え直します）。",
       "先に get_task で、止まっている理由（pausedReason・pausedMessage）と、再開できるか（canResume。できないときは resumeBlocked に、画面で人が決めること）を確かめてください。",
       "予算の上限の引き上げが要る停止（budget）・テストの扱いを人が決められる停止・子タスクの中止を認めることになる停止（child_cancelled）・チケットから取り込み、作業するリポジトリを決める前の停止は、再開せずに理由を返します（画面で人が決めます）。何も変えません。",
+      "中止を頼んだ直後は、中止の途中でも paused に見えます。再開せず、get_task で state を確かめ、wait_for_task で cancelled になるまで待ってください。",
       "一時停止中でないタスクも、再開せずに理由を返します。外部作業が始まっている・依存先が中止された・止まったと確かめられないコンテナが残っているなど、デーモンが断るときも、その理由を返します。",
       `note は、再開の補足です（任意。最大 ${RESUME_NOTE_MAX} 文字。足すとタスクの説明の上限を超えるときは、再開せずに理由を返します）。タスクの説明の後に足されて残り、後の工程が読むので、利用者の言葉だけを渡してください。`,
       uncertainDescription("再開されている"),
@@ -2469,7 +2471,7 @@ const TOOLS: readonly ToolDefinition[] = [
         ? (item("container")?.detail ?? "").split(", ").filter((d) => d !== "")
         : [];
       const notes: string[] = [];
-      if (task.reviewTasks && task.reviewTasks.length > 0) {
+      if (!blocked && task.reviewTasks && task.reviewTasks.length > 0) {
         notes.push(
           "このタスクの PR をレビューする子タスクのうち、終わっていないものがあれば、次の PR の確認（60秒ごと）で中止されます。中止したレビューの子タスクは、再レビューできません。",
         );

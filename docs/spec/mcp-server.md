@@ -9,7 +9,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、承認待ちの工程の承認（`approve_step`）、承認待ちの工程の差し戻し（`request_changes`）、タスクの「人の出番」まで待つ（`wait_for_task`）、タスクの一時停止（`pause_task`）、一時停止中のタスクの再開（`resume_task`）、タスクの中止で片付けるものの確認（`get_cancel_plan`）、タスクの中止（`cancel_task`）の15個。
 `approve_step` の前の3つ（`list_deliverables`・`get_deliverable`・`list_runs`）は、成果物と実行を読むだけのツール。実行のログを読むツールは、まだ無い（後続）。`wait_for_task` は、読むだけで何も変えない。
 
-関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)、[sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-mcp-request-changes-basic-stop-before-limit.md)、[sacty mcp の待つツールは、デーモンに待つ API を足さず MCP の層で取りに行き、人の出番だけで起こす](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)、[sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)
+関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)、[sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-mcp-request-changes-basic-stop-before-limit.md)、[sacty mcp の待つツールは、デーモンに待つ API を足さず MCP の層で取りに行き、人の出番だけで起こす](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)、[sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)、[sacty mcp の中止は、片付けの対象を読む専用のツールと、読んだ対象を引数で確かめる歯止めを付けて足す](../adr/20261119-0900-mcp-cancel-with-plan-and-confirmed-targets.md)
 
 ## 起動と接続
 
@@ -26,23 +26,23 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 - 認証は足していない（MCP の認証の仕様は HTTP のためのもので、stdio では資格情報を環境から取る決まり）。使えるのは、`daemon.json`（権限 0600）を読める利用者だけ。
 - 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。`list_tasks`・`get_task`・`rereview_task`・`list_projects`・`create_task`・`approve_step`・`request_changes` は画面と同じ API を呼ぶ。`list_deliverables`・`get_deliverable`・`list_runs` は、読み取りだけの API（下の表のこの3つの行。画面は呼ばない）を呼ぶ。`wait_for_task` は、`get_task` と同じ `GET /api/tasks/:id` だけを呼ぶ（デーモンに待つ API は足さない）。`pause_task`・`resume_task`・`cancel_task` は、画面と同じ API を呼ぶ。`get_cancel_plan` は、画面の中止の確認と同じ `GET /api/tasks/:id/cleanup-plan` を読む（どれも新しい API は足さない）。
 
-| ツール | デーモンの API |
-| --- | --- |
-| `list_tasks` | `GET /api/tasks`・`GET /api/projects` |
-| `get_task` | `GET /api/tasks/:id` |
-| `rereview_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/rereview` |
-| `list_projects` | `GET /api/projects` |
-| `create_task` | `POST /api/tasks` |
-| `list_deliverables` | `GET /api/tasks/:id/deliverables` |
-| `get_deliverable` | `GET /api/tasks/:id/deliverables/:step/:kind?offset=&max=` |
-| `list_runs` | `GET /api/tasks/:id/runs?offset=&limit=` |
-| `approve_step` | `GET /api/tasks/:id`・`POST /api/tasks/:id/approve` |
-| `request_changes` | `GET /api/tasks/:id`・`POST /api/tasks/:id/request-changes` |
-| `wait_for_task` | `GET /api/tasks/:id`（待つタスクと、その `reviewTasks` の子。数秒おきに繰り返す。ほかは呼ばない） |
-| `pause_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/pause`（`{}`） |
-| `resume_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/resume`（`{}` か `{ note }`） |
-| `get_cancel_plan` | `GET /api/tasks/:id`・`GET /api/tasks/:id/cleanup-plan` |
-| `cancel_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/cancel`（`{}`） |
+| ツール              | デーモンの API                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------- |
+| `list_tasks`        | `GET /api/tasks`・`GET /api/projects`                                                             |
+| `get_task`          | `GET /api/tasks/:id`                                                                              |
+| `rereview_task`     | `GET /api/tasks/:id`・`POST /api/tasks/:id/rereview`                                              |
+| `list_projects`     | `GET /api/projects`                                                                               |
+| `create_task`       | `POST /api/tasks`                                                                                 |
+| `list_deliverables` | `GET /api/tasks/:id/deliverables`                                                                 |
+| `get_deliverable`   | `GET /api/tasks/:id/deliverables/:step/:kind?offset=&max=`                                        |
+| `list_runs`         | `GET /api/tasks/:id/runs?offset=&limit=`                                                          |
+| `approve_step`      | `GET /api/tasks/:id`・`POST /api/tasks/:id/approve`                                               |
+| `request_changes`   | `GET /api/tasks/:id`・`POST /api/tasks/:id/request-changes`                                       |
+| `wait_for_task`     | `GET /api/tasks/:id`（待つタスクと、その `reviewTasks` の子。数秒おきに繰り返す。ほかは呼ばない） |
+| `pause_task`        | `GET /api/tasks/:id`・`POST /api/tasks/:id/pause`（`{}`）                                         |
+| `resume_task`       | `GET /api/tasks/:id`・`POST /api/tasks/:id/resume`（`{}` か `{ note }`）                          |
+| `get_cancel_plan`   | `GET /api/tasks/:id`・`GET /api/tasks/:id/cleanup-plan`                                           |
+| `cancel_task`       | `GET /api/tasks/:id`・`POST /api/tasks/:id/cancel`（`{}`）                                        |
 
 コード: `packages/cli/src/index.ts`（`mcpCommand`）、`packages/cli/src/mcp.ts`（`daemonApi`）、`apps/daemon/src/task-mcp.ts`（`serveTaskMcp`・`startTaskMcp`・`createTaskMcpServer`・`SactyApi`）、`packages/cli/src/context-preview.ts`（`readDaemonFile`・`daemonRequest`）、`packages/cli/src/up-env.ts`（`daemonEndpoint`）
 
@@ -62,15 +62,15 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 タスクを絞り込んで、新しい順（`createdAt` の降順）に、要約の一覧で返す。読み取りだけ（`readOnlyHint`）。
 引数はどれも省ける。指定した条件のすべてに合うタスクを返す（条件が無ければ、すべて）。
 
-| 引数 | 型 | 内容 |
-| --- | --- | --- |
+| 引数           | 型     | 内容                                                                                                                                                                           |
+| -------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pull_request` | 文字列 | PR。番号（`123`・`#123`）、`owner/repo#123`、PR の URL（`https://<ホスト>/<owner>/<repo>/pull/123`。後ろにパスなどが付いてもよい。`http://` は `https://` として読む）のどれか |
-| `branch` | 文字列 | ブランチ名（完全一致。先頭の `refs/heads/` は取り除く） |
-| `repo` | 文字列 | リポジトリ。`owner/repo`（ホストを問わない）か、リポジトリの URL |
-| `query` | 文字列 | 題に含まれる文字列か、タスクの ID の先頭（大文字・小文字を区別しない） |
-| `open_only` | 真偽値 | `true` なら、終わっていない（完了・中止でない）タスクだけ |
-| `review_only` | 真偽値 | `true` なら、PR のレビューのタスクだけ |
-| `limit` | 整数 | 返す件数の上限。1〜100（`LIST_LIMIT_MAX`）。既定は 20（`LIST_LIMIT_DEFAULT`） |
+| `branch`       | 文字列 | ブランチ名（完全一致。先頭の `refs/heads/` は取り除く）                                                                                                                        |
+| `repo`         | 文字列 | リポジトリ。`owner/repo`（ホストを問わない）か、リポジトリの URL                                                                                                               |
+| `query`        | 文字列 | 題に含まれる文字列か、タスクの ID の先頭（大文字・小文字を区別しない）                                                                                                         |
+| `open_only`    | 真偽値 | `true` なら、終わっていない（完了・中止でない）タスクだけ                                                                                                                      |
+| `review_only`  | 真偽値 | `true` なら、PR のレビューのタスクだけ                                                                                                                                         |
+| `limit`        | 整数   | 返す件数の上限。1〜100（`LIST_LIMIT_MAX`）。既定は 20（`LIST_LIMIT_DEFAULT`）                                                                                                  |
 
 - 消したプロジェクトのタスクは、一覧に出さない（`get_task` でも無いものとして扱う）。
 - 結果は `{ total, returned, tasks }`。`total` は条件に合った件数、`returned` は返した件数、`tasks` は[タスクの要約](#タスクの要約)。
@@ -126,11 +126,11 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 プロジェクトを指定して、題と説明でタスクを作る。
 
-| 引数 | 型 | 内容 |
-| --- | --- | --- |
-| `project_id` | 文字列（必須） | タスクを作るプロジェクトの ID（`list_projects` の `id`） |
-| `title` | 文字列（必須） | 題。前後の空白を除いて 1〜200 文字（`TASK_TITLE_MAX`） |
-| `body` | 文字列 | 説明。前後の空白を除いて 10000 文字まで（`TASK_BODY_MAX`）。省けば空 |
+| 引数         | 型             | 内容                                                                 |
+| ------------ | -------------- | -------------------------------------------------------------------- |
+| `project_id` | 文字列（必須） | タスクを作るプロジェクトの ID（`list_projects` の `id`）             |
+| `title`      | 文字列（必須） | 題。前後の空白を除いて 1〜200 文字（`TASK_TITLE_MAX`）               |
+| `body`       | 文字列         | 説明。前後の空白を除いて 10000 文字まで（`TASK_BODY_MAX`）。省けば空 |
 
 - 画面の「タスクを作成」で、テンプレートなし・対象リポジトリ空欄・進め方「自動」のままにして作るのと同じ。
   `POST /api/tasks` に `{ projectId, title, body, repo: null }` を送る（`repo: null` は、対象がリポジトリ1つだけのプロジェクトでも、リポジトリを指定しない。画面の空欄と同じ）。進め方・テンプレート・工程ごとの設定は送らない。
@@ -148,10 +148,10 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 承認待ちの工程を承認する（画面の「承認する」と同じ）。
 
-| 引数 | 型 | 内容 |
-| --- | --- | --- |
-| `task_id` | 文字列（必須） | タスクの ID |
-| `step` | 工程の名前（必須） | 承認する工程（`get_task` の `approval.step`） |
+| 引数         | 型                   | 内容                                                    |
+| ------------ | -------------------- | ------------------------------------------------------- |
+| `task_id`    | 文字列（必須）       | タスクの ID                                             |
+| `step`       | 工程の名前（必須）   | 承認する工程（`get_task` の `approval.step`）           |
 | `submission` | 1 以上の整数（必須） | 承認する提出の回（`get_task` の `approval.submission`） |
 
 - `POST /api/tasks/:id/approve` に `{ step, submission }` を送るだけ。画面が送るものと同じで、承認の判断（`service.approve`）・記録（`StepApproved`。actor `person`）・次の工程の始まり方も画面と同じ。MCP 専用の経路・記録は無い。画面が断る場面は、同じ理由で断る。
@@ -170,12 +170,12 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 承認待ちの工程を差し戻す（画面の承認の画面で、戻し先・原因を選ばずに指摘だけを書いて「差し戻す」を押すのと同じ）。
 
-| 引数 | 型 | 内容 |
-| --- | --- | --- |
-| `task_id` | 文字列（必須） | タスクの ID |
-| `step` | 工程の名前（必須） | 差し戻す工程（`get_task` の `approval.step`） |
-| `submission` | 1 以上の整数（必須） | 差し戻す提出の回（`get_task` の `approval.submission`） |
-| `comments` | 文字列の配列（必須。1件以上） | 直してほしいことの指摘 |
+| 引数         | 型                            | 内容                                                    |
+| ------------ | ----------------------------- | ------------------------------------------------------- |
+| `task_id`    | 文字列（必須）                | タスクの ID                                             |
+| `step`       | 工程の名前（必須）            | 差し戻す工程（`get_task` の `approval.step`）           |
+| `submission` | 1 以上の整数（必須）          | 差し戻す提出の回（`get_task` の `approval.submission`） |
+| `comments`   | 文字列の配列（必須。1件以上） | 直してほしいことの指摘                                  |
 
 - `POST /api/tasks/:id/request-changes` に `{ step, submission, comments }` だけを送る。差し戻しの判断（`service.requestChanges`）・記録（`ChangesRequested`。actor `person`。`cause` なし・`overLimit` false）・やり直しの始まり方は画面と同じ。MCP 専用の経路・記録は無い。`target`・`cause`・`answer`・`image`・`agents`・`continueOverLimit` は引数に無く、送らない（戻し先は既定の、承認待ちの工程に最も近い、やり直せる工程。ふつうは承認待ちの工程そのもので、統合レビューならタスク分割）。
 - 差し戻したら、文と、差し戻しの対象（`requested`：`taskId`・`step`・`submission`・やり直す工程 `reworkStep`・指摘の件数 `comments`）と、差し戻した後の[タスクの要約](#タスクの要約)を返す（やり直しが終わるのは待たない）。
@@ -202,15 +202,15 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 - 一覧に載るのは、本文が空でない組だけ。工程はタスクの工程の順、続けて、ほかの工程。
 - `status` は、次の表の上の行から順に当て、最初に合ったものにする。
 
-| `status` | 条件 | `submission` |
-| --- | --- | --- |
-| `approved` | その工程が承認済み（`approved[step]`） | 承認した提出の回 |
-| `posted` | レビューの工程で、レビューを PR に投稿済み（`reviewPost`） | レビューの回（`reviewRound`。無ければ 1） |
-| `not_submitted` | レビューの工程で、まだ投稿していない | null（`previousSubmission` は `reviewRound`−1。1 未満なら null） |
-| `awaiting_approval` | 承認ゲートがその工程（`gate.step`） | ゲートの提出の回 |
-| `not_submitted` | その工程の最後の実行の完了（`AgentRunCompleted`）が、最後の提出（`StepSubmitted`）より後 | null（`previousSubmission` は、それまでの提出の回数。無ければ null） |
-| `changes_requested` | 上のどれでもなく、出力が残っている（差し戻しの後、作り直しの完了まで） | 提出の回数 |
-| `none` | 本文が無い（候補の工程で未出力・人が直した版の無い工程の `sacty_version`・設計以外の `test_viewpoints`・レビュー以外の `review_comments`） | null |
+| `status`            | 条件                                                                                                                                       | `submission`                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `approved`          | その工程が承認済み（`approved[step]`）                                                                                                     | 承認した提出の回                                                     |
+| `posted`            | レビューの工程で、レビューを PR に投稿済み（`reviewPost`）                                                                                 | レビューの回（`reviewRound`。無ければ 1）                            |
+| `not_submitted`     | レビューの工程で、まだ投稿していない                                                                                                       | null（`previousSubmission` は `reviewRound`−1。1 未満なら null）     |
+| `awaiting_approval` | 承認ゲートがその工程（`gate.step`）                                                                                                        | ゲートの提出の回                                                     |
+| `not_submitted`     | その工程の最後の実行の完了（`AgentRunCompleted`）が、最後の提出（`StepSubmitted`）より後                                                   | null（`previousSubmission` は、それまでの提出の回数。無ければ null） |
+| `changes_requested` | 上のどれでもなく、出力が残っている（差し戻しの後、作り直しの完了まで）                                                                     | 提出の回数                                                           |
+| `none`              | 本文が無い（候補の工程で未出力・人が直した版の無い工程の `sacty_version`・設計以外の `test_viewpoints`・レビュー以外の `review_comments`） | null                                                                 |
 
 - まだ提出していない出力（`not_submitted`）は、前の回の提出と読み違えないように、`submission` を null にし、前の回は `previousSubmission` で示す。
 
@@ -218,13 +218,13 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 成果物の中身を、範囲で読む。
 
-| 引数 | 型 | 内容 |
-| --- | --- | --- |
-| `task_id` | 文字列（必須） | タスクの ID |
-| `step` | 列挙（必須） | 工程（`investigate`・`review`・`requirements`・`design`・`split`・`integrate`・`reproduce`・`implement`・`deployment`・`document`・`operation`） |
-| `kind` | 列挙（必須） | 成果物の種類（上の4つ） |
-| `offset` | 整数（0 以上） | 読み始める位置（バイト）。省けば 0 |
-| `max_bytes` | 整数（1 以上） | 返す量の上限（バイト）。省けば 32,000（`RANGE_MAX_BYTES`）。上限を超える値は 32,000 に収める |
+| 引数        | 型             | 内容                                                                                                                                             |
+| ----------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `task_id`   | 文字列（必須） | タスクの ID                                                                                                                                      |
+| `step`      | 列挙（必須）   | 工程（`investigate`・`review`・`requirements`・`design`・`split`・`integrate`・`reproduce`・`implement`・`deployment`・`document`・`operation`） |
+| `kind`      | 列挙（必須）   | 成果物の種類（上の4つ）                                                                                                                          |
+| `offset`    | 整数（0 以上） | 読み始める位置（バイト）。省けば 0                                                                                                               |
+| `max_bytes` | 整数（1 以上） | 返す量の上限（バイト）。省けば 32,000（`RANGE_MAX_BYTES`）。上限を超える値は 32,000 に収める                                                     |
 
 - 結果は、`step`・`kind`・`submission`・`previousSubmission`・`status`・`text`（本文の範囲）と、[範囲の情報](#範囲の指定と結果)。
 - 候補にあって本文が無い組は、`isError` でない `status: none`・空の `text`・`totalBytes: 0`。
@@ -248,13 +248,13 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 成果物の中身は、1回に最大 32,000 バイト（UTF-8。日本語でおよそ1万字）までを返す。位置と量の単位は、本文の UTF-8 のバイト。
 
-| 結果の項目 | 内容 |
-| --- | --- |
-| `offset` | 返した先頭の位置 |
-| `next` | 続きの位置（返した末尾）。続きを読むときは、これを `offset` に渡す |
-| `totalBytes` | 全体の大きさ |
-| `clipped` | 切り取ったか（続きがあるか） |
-| `clamped` | `max_bytes` が上限を超えたので、上限に収めたか |
+| 結果の項目   | 内容                                                               |
+| ------------ | ------------------------------------------------------------------ |
+| `offset`     | 返した先頭の位置                                                   |
+| `next`       | 続きの位置（返した末尾）。続きを読むときは、これを `offset` に渡す |
+| `totalBytes` | 全体の大きさ                                                       |
+| `clipped`    | 切り取ったか（続きがあるか）                                       |
+| `clamped`    | `max_bytes` が上限を超えたので、上限に収めたか                     |
 
 - 境目は UTF-8 の文字の頭にそろえる（複数バイトの文字・サロゲートペアの途中で切らない）。1文字も入らない小さな `max_bytes` でも、1文字は返し、続きが進む。
 - `offset` が全体の大きさ以上なら、失敗にせず、空の `text` と `totalBytes` を返す（続きを読み直すとき、まだ増えていないことと区別するため）。
@@ -262,17 +262,17 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 ### 成果物と実行を読むツールの失敗
 
-| 場合 | 理由の文 |
-| --- | --- |
-| タスクが無い・消したプロジェクトのタスク（API は `{ error: "not_found" }` の 404） | `task.notFound` の文言（タスクが見つかりません） |
-| 工程・種類が候補に無い（API） | 工程が見つかりません・成果物の種類が見つかりません |
-| `task_id` が `[A-Za-z0-9_-]{1,128}` に合わない（`..`・`/`・`%2F` を含む） | `task_id` の形が正しくありません（ツールは API を呼ばない。API も 400（`invalid_id`）で断る） |
-| 範囲の指定が正しくない（API の 400 `invalid_range`） | 範囲の指定が正しくありません |
-| 前の版のデーモン（新しい API が無く、本文が `error` を持つ JSON でない 404） | 起動中の sacty が対応していないので、sacty を更新し、実行中のタスクが無いときに `sacty up` で起動し直すよう促す |
-| 200 の応答が JSON として読めない | sacty の応答を読めませんでした |
-| 404 以外の失敗の応答（500 など）で、本文が JSON として読めない | sacty が <状態コード> を返しました（本文は入れない） |
-| 本文は JSON だが、`error` が上のどの形にも当たらない（400 以外） | sacty が <状態コード> を返しました（`error` の値も本文も入れない） |
-| つながらない・時間切れ・認証できない・起動していない | いまのツールと同じ文言 |
+| 場合                                                                               | 理由の文                                                                                                        |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| タスクが無い・消したプロジェクトのタスク（API は `{ error: "not_found" }` の 404） | `task.notFound` の文言（タスクが見つかりません）                                                                |
+| 工程・種類が候補に無い（API）                                                      | 工程が見つかりません・成果物の種類が見つかりません                                                              |
+| `task_id` が `[A-Za-z0-9_-]{1,128}` に合わない（`..`・`/`・`%2F` を含む）          | `task_id` の形が正しくありません（ツールは API を呼ばない。API も 400（`invalid_id`）で断る）                   |
+| 範囲の指定が正しくない（API の 400 `invalid_range`）                               | 範囲の指定が正しくありません                                                                                    |
+| 前の版のデーモン（新しい API が無く、本文が `error` を持つ JSON でない 404）       | 起動中の sacty が対応していないので、sacty を更新し、実行中のタスクが無いときに `sacty up` で起動し直すよう促す |
+| 200 の応答が JSON として読めない                                                   | sacty の応答を読めませんでした                                                                                  |
+| 404 以外の失敗の応答（500 など）で、本文が JSON として読めない                     | sacty が <状態コード> を返しました（本文は入れない）                                                            |
+| 本文は JSON だが、`error` が上のどの形にも当たらない（400 以外）                   | sacty が <状態コード> を返しました（`error` の値も本文も入れない）                                              |
+| つながらない・時間切れ・認証できない・起動していない                               | いまのツールと同じ文言                                                                                          |
 
 - 理由の文は、この表の文言だけにする。標準エラーの1行には、ツールの名前・`task_id`（あれば）・この理由・原因（下）を出す。どちらにも、デーモンの応答の本文や、成果物の中身、`daemon.json` のトークン・環境変数の値・デーモンの絶対パスは出さない。
 - 標準エラーの1行（`failureLine`）の原因は、接続の失敗の種類（`ECONNREFUSED` などの `code`）と時間切れの印だけにする（例外の message は出さない。応答の本文の一部が入りうるため）。
@@ -291,15 +291,15 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 **起きる変化**（待ちをやめて、`changed: true`・`changes`・いまの要約を返す）
 
-| 対象 | 変化 |
-| --- | --- |
-| タスク | 承認待ち（`awaiting_approval`）になった。承認待ちの工程か提出の回が変わった（承認待ちのままでも） |
-| タスク | 人の判断待ち（`escalated`）・一時停止（`paused`）・完了・中止になった。一時停止の理由が変わった |
-| タスク | 承認待ち・一時停止・人の判断待ちから動き出した |
+| 対象   | 変化                                                                                                               |
+| ------ | ------------------------------------------------------------------------------------------------------------------ |
+| タスク | 承認待ち（`awaiting_approval`）になった。承認待ちの工程か提出の回が変わった（承認待ちのままでも）                  |
+| タスク | 人の判断待ち（`escalated`）・一時停止（`paused`）・完了・中止になった。一時停止の理由が変わった                    |
+| タスク | 承認待ち・一時停止・人の判断待ちから動き出した                                                                     |
 | タスク | 人に確かめたいこと（`asks`）の件数が変わった。PR の状態（`pullRequests[].state`）が変わった（マージ・閉じた など） |
-| 子 | 子（`reviewTasks`）が増えた |
-| 子 | 子の状態が、上の「人の出番」の状態（承認待ち・人の判断待ち・一時停止・完了・中止）になった・そこから動き出した |
-| 子 | レビューの回（再レビュー）が変わった。レビューが投稿された。判定が出た・変わった |
+| 子     | 子（`reviewTasks`）が増えた                                                                                        |
+| 子     | 子の状態が、上の「人の出番」の状態（承認待ち・人の判断待ち・一時停止・完了・中止）になった・そこから動き出した     |
+| 子     | レビューの回（再レビュー）が変わった。レビューが投稿された。判定が出た・変わった                                   |
 
 - 子の変化は、親の状態が変わらなくても起きる（親が PR のマージ待ち `awaiting_approval` のまま、子の判定だけが出る場合）。
 - 引けなかった子（`available: false`）は、前の値と比べない（引けた回との間の変化とみなさない）。基準の子が引けなかった子で、いま引けたときは、その値を基準に取り込み、以後の変化と比べる。
@@ -310,29 +310,29 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 **結果**
 
-| 項目 | 内容 |
-| --- | --- |
-| `changed` | 人の出番の変化があったか。`false` は時間切れ（失敗ではない） |
-| `changes` | 何が変わったかの短い一覧（`state: active → awaiting_approval`・`approval: requirements#1 → design#1`・`asks: 0 → 2`・`reviewTask <ID> verdict: なし → suggestions` など。状態・工程・回・件数の値だけで、文は入れない） |
-| `task` | いまの要約（`list_tasks` と同じ。題・止まっている理由は、ほかの人が書いた文を含むデータ） |
-| `costUsd` | いまの費用（USD） |
-| `reviewTasks` | 子ごとに `taskId`・`number`（PR の番号）・`available`（引けたか）・`state`・`round`・`postedUrl`・`verdict`・`costUsd`。文（レビューの本文）は入れない。本文は、子の `task_id` で `get_task` を呼んで読む |
-| `reviewTasksOmitted` | 1回に引く子の上限（5 件。新しい方から）を超えて、省いた子の数 |
-| `cursor` | 次の呼び出しに渡す値（この結果を返した時点が基準になる） |
-| `waitedSeconds` | 待った秒数 |
-| `timeoutSeconds`・`clamped` | 実際に使った上限（秒）と、`timeout_seconds` が最大を超えたので収めたか |
+| 項目                        | 内容                                                                                                                                                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `changed`                   | 人の出番の変化があったか。`false` は時間切れ（失敗ではない）                                                                                                                                                            |
+| `changes`                   | 何が変わったかの短い一覧（`state: active → awaiting_approval`・`approval: requirements#1 → design#1`・`asks: 0 → 2`・`reviewTask <ID> verdict: なし → suggestions` など。状態・工程・回・件数の値だけで、文は入れない） |
+| `task`                      | いまの要約（`list_tasks` と同じ。題・止まっている理由は、ほかの人が書いた文を含むデータ）                                                                                                                               |
+| `costUsd`                   | いまの費用（USD）                                                                                                                                                                                                       |
+| `reviewTasks`               | 子ごとに `taskId`・`number`（PR の番号）・`available`（引けたか）・`state`・`round`・`postedUrl`・`verdict`・`costUsd`。文（レビューの本文）は入れない。本文は、子の `task_id` で `get_task` を呼んで読む               |
+| `reviewTasksOmitted`        | 1回に引く子の上限（5 件。新しい方から）を超えて、省いた子の数                                                                                                                                                           |
+| `cursor`                    | 次の呼び出しに渡す値（この結果を返した時点が基準になる）                                                                                                                                                                |
+| `waitedSeconds`             | 待った秒数                                                                                                                                                                                                              |
+| `timeoutSeconds`・`clamped` | 実際に使った上限（秒）と、`timeout_seconds` が最大を超えたので収めたか                                                                                                                                                  |
 
 説明・レビューの本文・人に確かめたいことの文・作業履歴は入れない（`get_task`）。
 
 **時間**（`WAIT_DEFAULT_SECONDS`・`WAIT_MAX_SECONDS`・`WAIT_POLL_MS`・`WAIT_GRACE_MS`・`WAIT_REQUEST_MS`・`WAIT_CHILD_LIMIT`）
 
-| 値 | 内容 | 根拠 |
-| --- | --- | --- |
+| 値                     | 内容                                                            | 根拠                                                                                                                                                                                               |
+| ---------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 既定 30 秒・最大 50 秒 | 待つ時間の上限。最大を超える指定は 50 秒に収め、`clamped: true` | クライアントが1回の呼び出しを打ち切る既定は、Codex（`tool_timeout_sec`）・公式の SDK のクライアントが 60 秒。それより十分に短くする。Claude Code は、主の会話の呼び出しが 2 分を超えると背景に回る |
-| 5 秒 | 確かめる間隔 | 画面の取得（`LIVE_INTERVAL_MS`、3 秒）より短くしない。`GET /api/tasks/:id` は作業履歴を毎回全件返し（長いタスクで 0.8 MB ほど）、子も引くので、画面より長くした |
-| 指定した時間＋5 秒 | ツールが必ず返る上限。最大の指定でも 55 秒で、60 秒を超えない | デーモンが応答しなくても、間際の1回で延びないようにする |
-| 10 秒 | 1回の問い合わせを待つ上限（残りがこれより短ければ、残り） | 既存のツールの 30 秒（`MCP_REQUEST_TIMEOUT_MS`）は変えない |
-| 5 件 | 1回に引く子の数の上限 | 子は、ふつうは PR ごとに1つ（PR を作り直すと増える）。引くたびに作業履歴を全件返すので、増やさない |
+| 5 秒                   | 確かめる間隔                                                    | 画面の取得（`LIVE_INTERVAL_MS`、3 秒）より短くしない。`GET /api/tasks/:id` は作業履歴を毎回全件返し（長いタスクで 0.8 MB ほど）、子も引くので、画面より長くした                                    |
+| 指定した時間＋5 秒     | ツールが必ず返る上限。最大の指定でも 55 秒で、60 秒を超えない   | デーモンが応答しなくても、間際の1回で延びないようにする                                                                                                                                            |
+| 10 秒                  | 1回の問い合わせを待つ上限（残りがこれより短ければ、残り）       | 既存のツールの 30 秒（`MCP_REQUEST_TIMEOUT_MS`）は変えない                                                                                                                                         |
+| 5 件                   | 1回に引く子の数の上限                                           | 子は、ふつうは PR ごとに1つ（PR を作り直すと増える）。引くたびに作業履歴を全件返すので、増やさない                                                                                                 |
 
 - 時間切れは失敗ではない。上限まで変わらなければ、`changed: false`・いまの要約・`cursor` を返す。続けて待つには、`cursor` を渡して呼び直す。クライアントの打ち切りの時間を延ばす設定は要らない。
 - 時刻は、締め切りの判定だけに使い、結果の `waitedSeconds` に出す（テストは、時計と待ちを差し替える。`startTaskMcp` の `clock`）。
@@ -354,16 +354,16 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 **失敗**
 
-| 場合 | 理由の文 |
-| --- | --- |
-| `task_id` の形が正しくない・タスクが無い（最初の問い合わせ） | `list_deliverables` などと同じ理由（待たずに返す） |
-| 最初から、つながらない・起動していない・認証できない・応答しない | いまのツールと同じ理由（応答しないときは、`sacty が時間内に応答しませんでした…`） |
-| `cursor` が壊れている | `cursor が正しくありません…` |
-| `cursor` が別のタスクのもの | `cursor は、別のタスクを待ったときの結果の値です…` |
+| 場合                                                                   | 理由の文                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `task_id` の形が正しくない・タスクが無い（最初の問い合わせ）           | `list_deliverables` などと同じ理由（待たずに返す）                                                                                                                                                                 |
+| 最初から、つながらない・起動していない・認証できない・応答しない       | いまのツールと同じ理由（応答しないときは、`sacty が時間内に応答しませんでした…`）                                                                                                                                  |
+| `cursor` が壊れている                                                  | `cursor が正しくありません…`                                                                                                                                                                                       |
+| `cursor` が別のタスクのもの                                            | `cursor は、別のタスクを待ったときの結果の値です…`                                                                                                                                                                 |
 | 待っている途中で、デーモンに届かなくなった（つながらない・応答しない） | 1回の失敗は、締め切りまでの残りがあれば次の周期で1回やり直す。続けて失敗したら、`待っている途中で、sacty に届かなくなりました…` と、呼び直すときの `cursor` を返す。起動を確かめて、その `cursor` を渡して呼び直す |
-| 待っている途中で、デーモンが応答で断った（5xx・認証できない） | その理由のまま、呼び直すときの `cursor` を添えて返す |
-| 待っている途中で、タスクが見えなくなった | `待っている途中で、タスクが見えなくなりました…` |
-| 子だけ引けない | 失敗にしない。その子を `available: false` にする |
+| 待っている途中で、デーモンが応答で断った（5xx・認証できない）          | その理由のまま、呼び直すときの `cursor` を添えて返す                                                                                                                                                               |
+| 待っている途中で、タスクが見えなくなった                               | `待っている途中で、タスクが見えなくなりました…`                                                                                                                                                                    |
+| 子だけ引けない                                                         | 失敗にしない。その子を `available: false` にする                                                                                                                                                                   |
 
 - 標準エラーの1行（`failureLine`）の原因は、`list_deliverables` などと同じく、接続の失敗の種類と時間切れの印だけ。理由・標準エラー・`cursor` に、`daemon.json` のトークン・内部の絶対パスを出さない。
 
@@ -376,8 +376,8 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 タスクを一時停止する（画面の「一時停止」と同じ）。
 
-| 引数 | 型 | 内容 |
-| --- | --- | --- |
+| 引数      | 型             | 内容        |
+| --------- | -------------- | ----------- |
 | `task_id` | 文字列（必須） | タスクの ID |
 
 - `POST /api/tasks/:id/pause` に `{}` だけを送る。一時停止の判断（`service.pause`）・記録（`TaskPaused`。理由 `manual`）は画面と同じ。MCP 専用の経路・記録は無い。
@@ -396,10 +396,10 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 一時停止中のタスクを再開する（画面の「再開」を、上限・テスト・イメージ・エージェントを変えずに押すのと同じ）。
 
-| 引数 | 型 | 内容 |
-| --- | --- | --- |
-| `task_id` | 文字列（必須） | タスクの ID |
-| `note` | 文字列（省略できる） | 再開の補足（API の `note` と同じ） |
+| 引数      | 型                   | 内容                               |
+| --------- | -------------------- | ---------------------------------- |
+| `task_id` | 文字列（必須）       | タスクの ID                        |
+| `note`    | 文字列（省略できる） | 再開の補足（API の `note` と同じ） |
 
 - `POST /api/tasks/:id/resume` に、`{}` か `{ note }` だけを送る。`capUsd`・`tests`・`image`・`agents` は引数に無く、送る経路も無い。再開の判断（`service.resume`）・記録（`TaskResumed`）は画面と同じ。MCP 専用の経路・記録は無い。
 - 再開したら、文と、補足を足したか（`resumed`：`taskId`・`noteAdded`）と、再開した後の[タスクの要約](#タスクの要約)（戻った先の `state`）を返す。文で、戻った先が分かる。`queued` は、止まった工程を実行し直す（時間と費用がかかる。終わるのは待たない）。`awaiting_approval`・`waiting_children` は、そこへ戻っただけで、工程は実行し直さない。ほかは、sacty が次へ進める。
@@ -417,8 +417,8 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 タスクを中止したら何が起きるかを読む（読むだけ。作業履歴は増えない）。`cancel_task` の前に呼び、結果を利用者に伝える。
 
-| 引数 | 型 | 内容 |
-| --- | --- | --- |
+| 引数      | 型             | 内容        |
+| --------- | -------------- | ----------- |
 | `task_id` | 文字列（必須） | タスクの ID |
 
 - `GET /api/tasks/:id` と、中止できるときだけ `GET /api/tasks/:id/cleanup-plan` を呼ぶ。後者は、コンテナ・作業領域・セッションの有無を読むためだけに使う。`cleanup-plan` の `pull_request`・`branch` は、実際の片付けと合わない（マージ済み・引き継いだ人の PR も「ある」と出す）ので使わず、PR とブランチは、タスクから MCP の層で作る（`cancelTargets`。`service.cancel` の PR を閉じる条件・`sactyBranches`・`openStepPullRequests` の写しで、そちらが変わったら、これも合わせる）。
@@ -435,11 +435,11 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 タスクを中止する（画面の「中止」と同じ）。**取り消せず、再開もできない。** sacty の外（GitHub の PR・リモートのブランチ）に書く。
 
-| 引数 | 型 | 内容 |
-| --- | --- | --- |
-| `task_id` | 文字列（必須） | タスクの ID |
+| 引数                  | 型                   | 内容                                                                                               |
+| --------------------- | -------------------- | -------------------------------------------------------------------------------------------------- |
+| `task_id`             | 文字列（必須）       | タスクの ID                                                                                        |
 | `close_pull_requests` | 文字列の配列（必須） | 閉じる PR の URL。`get_cancel_plan` の `willClose.pullRequests` をそのまま渡す（無ければ空の配列） |
-| `delete_branches` | 文字列の配列（必須） | 消すブランチ。`get_cancel_plan` の `willDelete.branches` をそのまま渡す（無ければ空の配列） |
+| `delete_branches`     | 文字列の配列（必須） | 消すブランチ。`get_cancel_plan` の `willDelete.branches` をそのまま渡す（無ければ空の配列）        |
 
 - 呼んだ時点のタスクから対象を作り直し（`cancelTargets`）、2つの配列が、順番・重複・前後の空白を除いて一致したときだけ、`POST /api/tasks/:id/cancel` に `{}` だけを送る。一致しないとき（足りない・多い・読んだ後に PR やブランチが増えた）は、中止せず、API にも送らず、何も記録せずに、`cancelled: false` と、いまの対象（`currentTargets`）を返す。呼ぶ側が、片付けの対象を読んだこと・読んだ後に増えていないことを確かめる歯止め（承認の `submission` と同じ考え方）。
 - 中止したら、文と、`cancelled: true`・片付けの結果（`cleanup`：対象ごとの `target`・`result`（`done`・`skipped`・`failed`）・`reason`）・`closedPullRequests`・`deletedBranches`・`failed`（失敗した対象と理由）・中止した後の[タスクの要約](#タスクの要約)を返す。片付けの結果は、`TaskCancelled` の `cleanup`（タスクの `cancelled.cleanup`）を、文言のコードを日本語にして返す。片付けの一部が失敗しても中止は記録される（`failed` と理由が残り、やり直す道は無い）ので、短い文にも失敗した対象と理由を入れ、人が手で片付けるものが分かるようにする。
@@ -459,15 +459,15 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 ツールの中の失敗は、ツールの実行のエラー（MCP の結果の `isError: true` と、理由の文。`structuredContent` は無い）として返す。MCP サーバーは終わらない。
 失敗したツールの名前・対象のタスクの ID（`task_id` があれば。ほかの引数は出さない）・理由を、標準エラーに1行出す（`failureLine`）。つながらなかった原因（例外の `cause`）があれば、5 段までたどって続けて出す（`causeChain`）。
 
-| 場合 | 理由の文 |
-| --- | --- |
-| `daemon.json` が無い・読めない | 起動中の sacty が見つからない（`sacty up` で起動する） |
-| デーモンにつながらない | デーモンにつながらない |
-| デーモンが 30 秒のうちに応答しない | デーモンが時間内に応答しなかった |
-| デーモンが 401 を返した | デーモンに認証できない |
-| デーモンが `invalid_operation`（409）を返した | デーモンの文言（日本語にしたもの） |
-| デーモンが `invalid_input`（400）を返した | 誤りごとの文言（日本語にしたもの） |
-| デーモンがほかの失敗を返した | 状態コード |
+| 場合                                          | 理由の文                                               |
+| --------------------------------------------- | ------------------------------------------------------ |
+| `daemon.json` が無い・読めない                | 起動中の sacty が見つからない（`sacty up` で起動する） |
+| デーモンにつながらない                        | デーモンにつながらない                                 |
+| デーモンが 30 秒のうちに応答しない            | デーモンが時間内に応答しなかった                       |
+| デーモンが 401 を返した                       | デーモンに認証できない                                 |
+| デーモンが `invalid_operation`（409）を返した | デーモンの文言（日本語にしたもの）                     |
+| デーモンが `invalid_input`（400）を返した     | 誤りごとの文言（日本語にしたもの）                     |
+| デーモンがほかの失敗を返した                  | 状態コード                                             |
 
 引数が型に合わないとき（決めた範囲の外の `limit`・無い `task_id` など）は、MCP の SDK が、ツールを呼ばずに、同じ形（`isError: true` と理由の文）で返す。
 知らないツールの呼び出しなどは、JSON-RPC のエラーになる。
@@ -478,26 +478,26 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 `list_tasks`・`rereview_task`・`create_task`・`approve_step`・`request_changes`・`pause_task`・`resume_task`・`cancel_task` の結果と、`get_task` の結果の土台。
 
-| 項目 | 内容 |
-| --- | --- |
-| `id`・`title`・`projectId` | タスクの ID・題・プロジェクトの ID |
-| `state` | `cancelled`（中止）、`completed`（工程をすべて終えて止まっている）、ほかはタスクの状態（`status`）のまま |
-| `steps` | 工程と状態（`<工程>:<状態>`。進める順） |
-| `reviewTask` | PR のレビューのタスクか（PR のレビューの取り込み（`source.review` がある）か、レビューの工程がある） |
-| `canRereview` | 再レビューできるか（`canRereview`） |
-| `canPause` | `pause_task` で一時停止できるか（画面で一時停止のボタンが出る状態。`pauseBlock`） |
-| `canCancel` | `cancel_task` で中止できるか（完了・中止済み・PR のレビューの子タスク・分割の親と子は偽。`cancelBlock`。デーモンだけが知る断り（片付けの途中）は見ない。取り消せない操作なので、真でも、利用者がはっきり頼んだときだけ呼ぶ） |
-| `canResume` | `resume_task` で再開できるか（一時停止中で、予算の上限・テストの扱い・子タスクの中止・作業するリポジトリの選択の判断が要らない。`resumeBlock`。デーモンだけが知る断りは見ないので、真でも断られることがある） |
-| `pullRequests` | [結び付いた PR](#タスクに結び付いた-pr-とブランチ) |
-| `branches` | [結び付いたブランチ](#タスクに結び付いた-pr-とブランチ) |
-| `review` | PR のレビューのタスクだけ。レビューの回（`round`）と、今の回の投稿の URL（`postedUrl`）・判定（`verdict`）。投稿・判定は、あるときだけ |
-| `reviewOf` | PR のレビューの子タスクの、親のタスクの ID |
-| `reviewTasks` | このタスクの PR をレビューする子タスク（タスクの ID と PR の番号） |
-| `pausedReason` | 一時停止の理由（一時停止中だけ） |
-| `approval` | 承認待ち（`awaiting_approval`・`escalated`）のときだけ。承認待ちの工程・提出の回・承認の手段（[approve_step](#approve_step)） |
-| `asks` | 人に確かめたいことの件数（0件のときは無い）。画面と同じ数え方で、小さな値だけ。文は入れない（`get_task` の `humanAsks`） |
-| `createdAt`・`updatedAt` | 作った時刻・最後に記録した時刻 |
-| `url` | 画面のタスクの詳細の URL（`daemon.json` に画面の URL があるときだけ） |
+| 項目                       | 内容                                                                                                                                                                                                                         |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`・`title`・`projectId` | タスクの ID・題・プロジェクトの ID                                                                                                                                                                                           |
+| `state`                    | `cancelled`（中止）、`completed`（工程をすべて終えて止まっている）、ほかはタスクの状態（`status`）のまま                                                                                                                     |
+| `steps`                    | 工程と状態（`<工程>:<状態>`。進める順）                                                                                                                                                                                      |
+| `reviewTask`               | PR のレビューのタスクか（PR のレビューの取り込み（`source.review` がある）か、レビューの工程がある）                                                                                                                         |
+| `canRereview`              | 再レビューできるか（`canRereview`）                                                                                                                                                                                          |
+| `canPause`                 | `pause_task` で一時停止できるか（画面で一時停止のボタンが出る状態。`pauseBlock`）                                                                                                                                            |
+| `canCancel`                | `cancel_task` で中止できるか（完了・中止済み・PR のレビューの子タスク・分割の親と子は偽。`cancelBlock`。デーモンだけが知る断り（片付けの途中）は見ない。取り消せない操作なので、真でも、利用者がはっきり頼んだときだけ呼ぶ） |
+| `canResume`                | `resume_task` で再開できるか（一時停止中で、予算の上限・テストの扱い・子タスクの中止・作業するリポジトリの選択の判断が要らない。`resumeBlock`。デーモンだけが知る断りは見ないので、真でも断られることがある）                |
+| `pullRequests`             | [結び付いた PR](#タスクに結び付いた-pr-とブランチ)                                                                                                                                                                           |
+| `branches`                 | [結び付いたブランチ](#タスクに結び付いた-pr-とブランチ)                                                                                                                                                                      |
+| `review`                   | PR のレビューのタスクだけ。レビューの回（`round`）と、今の回の投稿の URL（`postedUrl`）・判定（`verdict`）。投稿・判定は、あるときだけ                                                                                       |
+| `reviewOf`                 | PR のレビューの子タスクの、親のタスクの ID                                                                                                                                                                                   |
+| `reviewTasks`              | このタスクの PR をレビューする子タスク（タスクの ID と PR の番号）                                                                                                                                                           |
+| `pausedReason`             | 一時停止の理由（一時停止中だけ）                                                                                                                                                                                             |
+| `approval`                 | 承認待ち（`awaiting_approval`・`escalated`）のときだけ。承認待ちの工程・提出の回・承認の手段（[approve_step](#approve_step)）                                                                                                |
+| `asks`                     | 人に確かめたいことの件数（0件のときは無い）。画面と同じ数え方で、小さな値だけ。文は入れない（`get_task` の `humanAsks`）                                                                                                     |
+| `createdAt`・`updatedAt`   | 作った時刻・最後に記録した時刻                                                                                                                                                                                               |
+| `url`                      | 画面のタスクの詳細の URL（`daemon.json` に画面の URL があるときだけ）                                                                                                                                                        |
 
 `asks` は、`@sacty/core` の `humanAsks` から数える（画面の `HumanAskNotice` と同じ）。
 コード: `apps/daemon/src/task-mcp.ts`（`summarizeTask`・`isReviewTask`・`TaskSummarySchema`）、`packages/core/src/projection.ts`（`canRereview`・`isFinished`）
@@ -525,7 +525,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 - `pendingRemarks`：書きかけの指摘の件数（文は出さない。画面で読む。申し出では 0）。
 - `openProposalId`：開いている変更の申し出の ID（あるときだけ）。
 - `note`：判断の理由の補足（あるときだけ。1000 文字で切り詰める）。
-- `canDoHere`：MCP でできること（`approval.method` が `approve_step` なら `approve_step` での承認。`pull_request` なら PR のマージが承認で、このツールでは承認できない。ほかは読むだけ）。`decideOnScreen`：画面（`GateNotice`）と同じく理由で分けた、画面で人が決めること（`too_many_changes` は上限を超えた差し戻し・中止、変更の申し出の理由は申し出への決定・中止、`unknown` などは3つとも）。`approve_step`・`request_changes` の動き・断りの文は変えない（`request_changes` は `escalated` を断る）。
+- `canDoHere`：MCP でできること（`approval.method` が `approve_step` なら `approve_step` での承認。`pull_request` なら PR のマージが承認で、このツールでは承認できない。ほかは承認・差し戻しができない）。どの場合も、末尾にタスクの中止（`cancel_task`。利用者がはっきり頼んだときだけ・先に `get_cancel_plan`）を足す。`decideOnScreen`：画面（`GateNotice`）と同じく理由で分けた、画面で人が決めること（`too_many_changes` は上限を超えた差し戻し、変更の申し出の理由は申し出への決定、`unknown` などは2つとも。中止は `cancel_task` でできるので入れない）。`approve_step`・`request_changes` の動き・断りの文は変えない（`request_changes` は `escalated` を断る）。
 - `escalated` でないタスクには入らない。要約には入れない。
 
 コード: `apps/daemon/src/task-mcp.ts`（`describeAsks`・`describeEscalation`・`askCount`）
@@ -534,13 +534,13 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 PR は、役割（`role`）ごとに次から集める。リポジトリ・番号・URL と、分かればブランチ（`branch`）・状態（`state`）を持つ。
 
-| `role` | 元 | ブランチ |
-| --- | --- | --- |
-| `review` | PR のレビューのタスクがレビューする PR。対象を確かめた記録（`reviewTarget`）。無ければ（確かめる前・再レビューを始めた後）、取り込み元の PR（`source`）か、題・説明にある対象リポジトリの PR（`referencedPullRequest`） | `reviewBranch`（下） |
-| `source` | 取り込み元の PR（PR のレビューのタスクでないとき） | なし |
-| `implement` | このタスクが作った実装の PR（`pullRequest`。番号があるときだけ） | `pullRequest.branch` |
-| `requirements`・`design` | このタスクが作った、工程の成果の PR（`stepPullRequests`） | その PR のブランチ |
-| `continued` | このタスクが引き継いだ既存の PR（`continuedPullRequest`） | その PR の元のブランチ |
+| `role`                   | 元                                                                                                                                                                                                                      | ブランチ               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `review`                 | PR のレビューのタスクがレビューする PR。対象を確かめた記録（`reviewTarget`）。無ければ（確かめる前・再レビューを始めた後）、取り込み元の PR（`source`）か、題・説明にある対象リポジトリの PR（`referencedPullRequest`） | `reviewBranch`（下）   |
+| `source`                 | 取り込み元の PR（PR のレビューのタスクでないとき）                                                                                                                                                                      | なし                   |
+| `implement`              | このタスクが作った実装の PR（`pullRequest`。番号があるときだけ）                                                                                                                                                        | `pullRequest.branch`   |
+| `requirements`・`design` | このタスクが作った、工程の成果の PR（`stepPullRequests`）                                                                                                                                                               | その PR のブランチ     |
+| `continued`              | このタスクが引き継いだ既存の PR（`continuedPullRequest`）                                                                                                                                                               | その PR の元のブランチ |
 
 ブランチは、タスクブランチ（`taskBranch`）、工程のブランチ（`stepBranches`・`stepPullRequests`）、プッシュしたブランチ（`pushedBranch`）、実装の PR のブランチ、引き継いだ PR の元のブランチ、レビューの対象の PR の元のブランチ（`reviewBranch`）を、重なりを除いて集める。
 

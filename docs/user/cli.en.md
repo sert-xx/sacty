@@ -8,16 +8,16 @@ Run it as `npx sacty <command>` (inside the sacty repository). If you install it
 
 The commands are as follows.
 
-| Command | What it does |
-| --- | --- |
-| [`sacty up`](#sacty-up) | Starts the daemon and the web UI |
-| [`sacty config init`](#sacty-config-init) | Creates a template of the configuration file |
-| [`sacty secret set`](#sacty-secret-set) | Saves a secret in the macOS Keychain |
-| [`sacty image build`](#sacty-image-build) | Builds the container images for running agents |
-| [`sacty context init`](#sacty-context-init) | Creates a template of a context repository |
-| [`sacty context preview`](#sacty-context-preview) | Shows the result of composing the context of a project |
-| [`sacty launch`](#sacty-launch) | Starts your local Claude Code or Codex interactively with the context of a project |
-| [`sacty mcp`](#sacty-mcp) | Runs the MCP server for operating the running sacty from your local Claude Code or Codex, reading deliverables and the run list, approving a step awaiting approval, requesting changes on one, waiting until a task needs a person, and pausing and resuming a task |
+| Command                                           | What it does                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`sacty up`](#sacty-up)                           | Starts the daemon and the web UI                                                                                                                                                                                                                                                                                                                  |
+| [`sacty config init`](#sacty-config-init)         | Creates a template of the configuration file                                                                                                                                                                                                                                                                                                      |
+| [`sacty secret set`](#sacty-secret-set)           | Saves a secret in the macOS Keychain                                                                                                                                                                                                                                                                                                              |
+| [`sacty image build`](#sacty-image-build)         | Builds the container images for running agents                                                                                                                                                                                                                                                                                                    |
+| [`sacty context init`](#sacty-context-init)       | Creates a template of a context repository                                                                                                                                                                                                                                                                                                        |
+| [`sacty context preview`](#sacty-context-preview) | Shows the result of composing the context of a project                                                                                                                                                                                                                                                                                            |
+| [`sacty launch`](#sacty-launch)                   | Starts your local Claude Code or Codex interactively with the context of a project                                                                                                                                                                                                                                                                |
+| [`sacty mcp`](#sacty-mcp)                         | Runs the MCP server for operating the running sacty from your local Claude Code or Codex, reading deliverables and the run list, approving a step awaiting approval, requesting changes on one, waiting until a task needs a person, pausing and resuming a task, and cancelling a task (it cannot be undone; it reads the cleanup targets first) |
 
 The following applies to every command.
 
@@ -33,10 +33,10 @@ This command starts the daemon and the web UI (Next.js) and prints the web UI si
 npx sacty up [--port <web-ui-port>] [--daemon-port <daemon-port>]
 ```
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `--port` | `4700` | Port of the web UI |
-| `--daemon-port` | `4710` | Port of the daemon |
+| Option          | Default | Description        |
+| --------------- | ------- | ------------------ |
+| `--port`        | `4700`  | Port of the web UI |
+| `--daemon-port` | `4710`  | Port of the daemon |
 
 Ports must be between 1 and 65535, and `--port` and `--daemon-port` must be different numbers. You cannot start it twice with the same `SACTY_HOME` ([Getting started](getting-started.en.md#where-data-is-stored)).
 
@@ -119,11 +119,11 @@ This command shows the result of composing the context of a project (by ID or na
 npx sacty context preview <project> [--runtime claude-code|codex] [--json] [--no-content]
 ```
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `--runtime` | `claude-code` | Which AI's format to show (`claude-code` or `codex`) |
-| `--json` | None | Output the API result as is (JSON) |
-| `--no-content` | None | Omit file contents |
+| Option         | Default       | Description                                          |
+| -------------- | ------------- | ---------------------------------------------------- |
+| `--runtime`    | `claude-code` | Which AI's format to show (`claude-code` or `codex`) |
+| `--json`       | None          | Output the API result as is (JSON)                   |
+| `--no-content` | None          | Omit file contents                                   |
 
 It shows secrets only as reference names. However, it shows values written in the context repository as is, such as the contents of layer settings and string values in `mcp.yaml`.
 
@@ -137,10 +137,10 @@ This command starts your local Claude Code or Codex interactively with the conte
 npx sacty launch <project> [--runtime claude-code|codex] [--cwd <directory>] [-- <arguments for the AI CLI>...]
 ```
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `--runtime` | `claude-code` | Which AI to start (`claude-code` or `codex`) |
-| `--cwd` | Current directory | The directory the AI works in |
+| Option      | Default           | Description                                  |
+| ----------- | ----------------- | -------------------------------------------- |
+| `--runtime` | `claude-code`     | Which AI to start (`claude-code` or `codex`) |
+| `--cwd`     | Current directory | The directory the AI works in                |
 
 What the started AI uses and how sacty treats it are as follows.
 
@@ -181,8 +181,8 @@ It can start even when sacty is not running, and when a tool is called, it queri
 
 ## Environment variables
 
-| Name | Description | Default |
-| --- | --- | --- |
+| Name         | Description                                           | Default    |
+| ------------ | ----------------------------------------------------- | ---------- |
 | `SACTY_HOME` | Where data (Activity, settings, workspaces) is stored | `~/.sacty` |
 
 ## Related pages

@@ -599,6 +599,20 @@ describe("本物のデーモンのサービスを通した、タスクの中止�
     t.activity.close();
   });
 
+  it("レビューの子の注意書きは、中止できるタスクにだけ出る（中止済みのタスクには出ない）", async () => {
+    const t = await setup();
+    const review = [{ taskId: "r1", step: "implement", number: 3, round: 1 }];
+    const open = make(t, "中止できる親", { reviewTasks: review });
+    const done = make(t, "中止済みの親", { reviewTasks: review, status: "cancelled" });
+    const a = (await t.planOf(open)) as Plan & { notes: string[] };
+    expect(a.canCancel).toBe(true);
+    expect(a.notes.join("")).toContain("レビューする子タスク");
+    const b = (await t.planOf(done)) as Plan & { notes: string[] };
+    expect(b.canCancel).toBe(false);
+    expect(b.notes.join("")).not.toContain("レビューする子タスク");
+    t.activity.close();
+  });
+
   it("PR のレビューの子タスク・分割の親・分割の子タスクは、API を呼ばずに、理由と画面で人が行えることを返して断り、作業履歴は増えない", async () => {
     const t = await setup();
     const review = make(t, "レビュー", { reviewOf: { taskId: "parent", step: "implement" } });
