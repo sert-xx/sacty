@@ -97,6 +97,7 @@ function mcpOver(w: ReturnType<typeof world>) {
     pause: async () => w.task,
     resume: async () => w.task,
     cancel: async () => w.task,
+    rerun: async () => w.task,
     cleanupPlan: async () => [],
     listDeliverables: async (...a: Parameters<SactyApi["listDeliverables"]>) => {
       calls.push("deliverables");

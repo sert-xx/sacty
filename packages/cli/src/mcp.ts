@@ -138,6 +138,21 @@ const RESUME_UNCERTAIN = uncertainNotice(
 );
 const uncertainResume = uncertainOf("再開", RESUME_UNCERTAIN);
 
+/**
+ * 再実行を頼んだ後の案内（作られたかどうかが分からない）。再実行は1度だけで、2回目は断られる（MCP の層が先に rerunBy を見て送らずに断る。確かめと送信の間に
+ * 別の再実行が入ったときだけ、デーモンが rerun.alreadyRerun で断る。どちらもタスクは増えない）ので、
+ * 元のタスクの rerunBy で、作られたかどうかを確かめられる。
+ */
+const RERUN_UNCERTAIN =
+  "新しいタスクが作られている可能性があります。自動でやり直さず、元のタスクを get_task で読み、rerunBy を確かめてください。あれば作られているので、その ID のタスクを見てください。無ければ作られていないので、呼び直してよいです（二重には作られません）。";
+const uncertainRerun = uncertainOf("再実行", RERUN_UNCERTAIN);
+
+/** 再実行の断りのうち、リポジトリがプロジェクトの対象でないもの（task.repositoryUnknown）は、画面で選び直せることを伝える。対象が1つも無いもの（task.repositoryMissing）は、デーモンの文（プロジェクトの設定で対象を足す）のままにする。 */
+function rerunRepositoryForMcp(message: { code?: unknown; params?: unknown }): string | undefined {
+  if (message.code !== "task.repositoryUnknown") return undefined;
+  return `${renderMessage(message, "ja")}画面の「再実行」で、作業するリポジトリを選び直して再実行できます（作られていません）。`;
+}
+
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -344,6 +359,24 @@ export function daemonApi(
     async cancel(id) {
       const at = endpoint(); // 接続先が無いのは、頼む前の失敗（中止していない）
       return writeTask(at, `/api/tasks/${encodeURIComponent(id)}/cancel`, {}, uncertainCancel);
+    },
+    // 消したプロジェクトのタスクの確かめと、再実行できる状態かの確かめ・画面の既定値の組み立ては、ツールが先に getTask で行う。
+    // 送るのは title・body・repo と、あれば note だけ（image は送らない）
+    async rerun(id, input) {
+      const at = endpoint(); // 接続先が無いのは、頼む前の失敗（作られていない）
+      const body = {
+        title: input.title,
+        body: input.body,
+        repo: input.repo,
+        ...(input.note ? { note: input.note } : {}),
+      };
+      return writeTask(
+        at,
+        `/api/tasks/${encodeURIComponent(id)}/rerun`,
+        body,
+        uncertainRerun,
+        rerunRepositoryForMcp,
+      );
     },
     async cleanupPlan(id) {
       const res = await request(endpoint(), `/api/tasks/${encodeURIComponent(id)}/cleanup-plan`);
