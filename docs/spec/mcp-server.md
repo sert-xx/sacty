@@ -80,7 +80,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 - 消したプロジェクトのタスクは、一覧に出さない（`get_task` でも無いものとして扱う）。
 - 結果は `{ total, returned, order, nextOffset, excludedAiJudging, tasks }`。`total` は条件に合った全件の数（`offset`・`limit` で切る前）、`returned` は返した件数、`tasks` は[タスクの要約](#タスクの要約)に `projectName`（プロジェクトの名前）を足したもの。
 - 並びは `order` で分かる。`createdAt_desc`：作った順（新しい順。`needs_person` でないとき）。`waitingSince_asc`：待ち始めの古い順（同じなら ID の順。`needs_person` のとき）。
-- 続き：`total` が `offset` + `returned` より多いとき、`nextOffset`（次の `offset`）が入る。最後まで返したら入らない。範囲の外の `offset` は、理由なしで空の一覧（`returned` は 0、`nextOffset` なし）を返す。
+- 続き：結果に `nextOffset`（次の `offset`）が入っているときは、続きがある（`total` が `offset` + `returned` より多いとき）。最後まで返したら入らない。範囲の外の `offset` は、理由なしで空の一覧（`returned` は 0、`nextOffset` なし）を返す。
 - 知らない引数（例：`status`・`project`）は、無視せずに断る。入力のスキーマが知らないキーを受け取らない形（`additionalProperties: false`）で、MCP の SDK がツールを呼ばずに、引数の名前を入れた理由を返す（`tools/list` の入力のスキーマにも出る）。この断りは `list_tasks` だけ。ほかのツールの入力は変えていない。
 - `pull_request` を読めなければ、理由を返す（一覧は返さない）。
 - 人の出番（`needs_person`）：画面のダッシュボードの「あなたの出番」と同じ条件。状態が `awaiting_approval`・`escalated`・`paused` のタスクから、承認待ちで `pendingReview` があるもの（AI が PR の指摘の戻し先を判断している）を除く。実行待ち・実行中・完了・中止のタスクと、消したプロジェクトのタスクは入らない。除いた件数は `excludedAiJudging`（ほかの条件に合うもののうち）。ヘッダーのベルは、AI が判断中の承認待ちも数えるので、件数が違うことがある。

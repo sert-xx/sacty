@@ -108,7 +108,7 @@ The filters of `list_tasks` are as follows (all can be omitted; with several, on
 | `review_only` | If `true`, only PR review tasks |
 | `limit` | The maximum number to return (default 20, maximum 100) |
 | `offset` | The position to start reading from (default 0). Pass the `nextOffset` of the result to get the rest |
-| `needs_person` | If `true`, only tasks that need a person (see "Find the tasks waiting for a person" below) |
+| `needs_person` | If `true`, only tasks that need a person ([Find the tasks waiting for a person](#find-the-tasks-waiting-for-a-person)) |
 | `state` | Filter by state (one or more). The values are those of `state` in the result. An unknown value is rejected |
 | `project_id` | Filter by project (the `id` of `list_projects`). A project that does not exist or was deleted is rejected |
 
@@ -146,7 +146,7 @@ Ask "Which sacty tasks are waiting for me?" and the AI calls `list_tasks` with `
 - The condition is the same as "Your turn" on the web dashboard. Tasks that are awaiting approval, escalated, or paused, minus those awaiting approval while the AI is deciding where to send back the PR remarks.
 - The bell in the web header also counts the awaiting-approval tasks the AI is deciding on, so its count can differ. The number excluded is `excludedAiJudging` in the result.
 - They are sorted by the longest wait first (by ID when equal), and each task gets the time it started waiting (`waitingSince`). If `waitingSinceSource` is `dashboard`, it is the time from the daemon's aggregate; if `updatedAt`, there was no record, so `updatedAt` stands in.
-- When there are more than `limit`, pass the `nextOffset` of the result as `offset` to get the rest. `nextOffset` is absent once everything has been returned.
+- When the result includes `nextOffset`, pass it as `offset` to get the rest. `nextOffset` is absent once everything has been returned.
 - When the wait times cannot be read, it fails with the reason instead of replacing them with `updatedAt`.
 - The web UI's status text and color, the link to where a person decides, and the PR conflict note are not shown. Use `state`, `approval`, `asks`, `pausedReason`, and `url`.
 - The list is read-only. Approving, requesting changes, resuming, and so on are done only when you ask.

@@ -316,6 +316,19 @@ describe("状態・プロジェクトの絞り込み、続き、プロジェク�
     t.activity.close();
   });
 
+  it("offset が負・小数のときは、ツールのエラーで断られ、API は呼ばれない", async () => {
+    const t = await setup();
+    t.make("1件");
+    const before = t.requests.length;
+    for (const offset of [-1, 1.5]) {
+      const r = await t.call({ offset });
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain("offset");
+    }
+    expect(t.requests).toHaveLength(before);
+    t.activity.close();
+  });
+
   it("いまある引数だけの呼び出しは、API の呼び出しが増えるのは GET /api/projects の 1 回だけで、ダッシュボードは読まない", async () => {
     const t = await setup();
     t.make("1件");
@@ -365,6 +378,14 @@ describe("知らない引数・待ち始めを読めないとき・読むだけ�
         async (_m, path) =>
           path === "/api/dashboard"
             ? new Response(JSON.stringify({ stats: {} }), { status: 200 })
+            : undefined,
+        "waitingSince",
+      ],
+      [
+        "値が文字列でない",
+        async (_m, path) =>
+          path === "/api/dashboard"
+            ? new Response(JSON.stringify({ waitingSince: { x: 5 } }), { status: 200 })
             : undefined,
         "waitingSince",
       ],

@@ -2211,13 +2211,13 @@ const TOOLS: readonly ToolDefinition[] = [
     name: "list_tasks",
     title: "タスクの一覧・検索",
     description: [
-      "起動中の sacty のタスクを、新しい順に一覧にします。条件を指定すると、すべてに合うタスクだけに絞り込みます。",
+      "起動中の sacty のタスクを一覧にします（既定は新しい順）。条件を指定すると、すべてに合うタスクだけに絞り込みます。",
       "人の対応を待っているタスク（利用者が「止まっているタスク」「自分の出番」などを聞いたとき）は、needs_person: true で呼びます。",
       "画面のダッシュボードの「あなたの出番」と同じ条件（承認待ち・エスカレーション・一時停止。AI が PR の指摘の戻し先を判断中の承認待ちは入らず、excludedAiJudging に件数が出る）で、",
       "待ち始めの古い順（同じなら id の順）に並び、各タスクに waitingSince（waitingSinceSource：デーモンの集計の時刻か、記録が無いときの updatedAt）が入ります。",
       "ヘッダーのベルは AI が判断中の承認待ちも数えるので、件数が違うことがあります。",
       "state（1つ以上）・project_id（list_projects の id）でも絞り込めます。知らない引数は無視せずに断ります。",
-      "結果の order が並び（needs_person のときは waitingSince_asc、ほかは createdAt_desc）です。total が returned より多いとき、nextOffset を offset に渡して呼ぶと続きが返ります（最後まで返したら nextOffset は入りません。範囲の外の offset は空の一覧です）。",
+      "結果の order が並び（needs_person のときは waitingSince_asc、ほかは createdAt_desc）です。結果に nextOffset が入っているとき、それを offset に渡して呼ぶと続きが返ります（最後まで返したら nextOffset は入りません。範囲の外の offset は空の一覧です）。",
       "一覧は読むだけです。見つけたタスクの承認・差し戻し・再開などは、利用者に頼まれたときだけ行ってください。",
       "PR をレビューするタスクを探すには、pull_request（番号か URL）か branch（PR の元のブランチ名）を指定します。",
       "同じ番号の PR・同じ名前のブランチがほかのリポジトリにもあるときは、PR の URL か repo で絞ってください",
@@ -2260,11 +2260,12 @@ const TOOLS: readonly ToolDefinition[] = [
       });
       // 待ち始めは、人の出番に絞るときだけ読む（読めなければ、updatedAt に置き換えず、理由を返して失敗にする）
       const waiting = args.needs_person ? await api.waitingSince() : undefined;
-      const turns = args.needs_person ? filtered.filter((t) => isPersonTurn(t)) : filtered;
       const since = (t: Task) => waiting?.[t.id] ?? t.updatedAt;
       const matched = waiting
-        ? [...turns].sort((a, b) => since(a).localeCompare(since(b)) || a.id.localeCompare(b.id))
-        : turns;
+        ? filtered
+            .filter(isPersonTurn)
+            .sort((a, b) => since(a).localeCompare(since(b)) || a.id.localeCompare(b.id))
+        : filtered;
       const limit = args.limit ?? LIST_LIMIT_DEFAULT;
       const offset = args.offset ?? 0;
       const page = matched.slice(offset, offset + limit);
@@ -2954,7 +2955,7 @@ const TOOLS: readonly ToolDefinition[] = [
 const INSTRUCTIONS = [
   "このマシンで起動中の sacty（sacty up）のタスクを、調べて操作します。",
   "タスクの作成を頼まれたら、list_projects でプロジェクトを特定し、create_task で題と説明を指定して作ります。",
-  "人の対応を待っているタスク（「止まっているタスク」「自分の出番」など）を聞かれたら、list_tasks を needs_person: true で呼びます（画面のダッシュボードの「あなたの出番」と同じ条件：承認待ち・エスカレーション・一時停止。AI が PR の指摘を判断中の承認待ちは入らず、excludedAiJudging に件数が出ます。ヘッダーのベルは判断中の承認待ちも数えるので、件数が違うことがあります）。待ち始めの古い順で、各タスクに waitingSince が入ります。total が returned より多いときは、nextOffset を offset に渡して続きを取ります。state・project_id でも絞れ、知らない引数は断られます。一覧は読むだけで、見つけたタスクの承認・差し戻し・再開などは、利用者に頼まれたときだけ行います。",
+  "人の対応を待っているタスク（「止まっているタスク」「自分の出番」など）を聞かれたら、list_tasks を needs_person: true で呼びます（画面のダッシュボードの「あなたの出番」と同じ条件：承認待ち・エスカレーション・一時停止。AI が PR の指摘を判断中の承認待ちは入らず、excludedAiJudging に件数が出ます。ヘッダーのベルは判断中の承認待ちも数えるので、件数が違うことがあります）。待ち始めの古い順で、各タスクに waitingSince が入ります。nextOffset が入っているときは、それを offset に渡して続きを取ります。state・project_id でも絞れ、知らない引数は断られます。一覧は読むだけで、見つけたタスクの承認・差し戻し・再開などは、利用者に頼まれたときだけ行います。",
   "PR の再レビューを頼まれたら、list_tasks（pull_request か branch）でその PR をレビューするタスクを特定し、",
   "canRereview が true なら rereview_task を呼びます。sacty が起動していなければ、ツールが理由を返します。",
   "承認を頼まれたら、get_task の approval（承認待ちの工程・提出の回・承認の手段）と、list_deliverables・get_deliverable の成果物を確かめてから、",

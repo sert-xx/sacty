@@ -393,7 +393,12 @@ export function daemonApi(
       const res = await request(endpoint(), "/api/dashboard");
       if (!res.ok) throw await refusal(res);
       const { waitingSince } = await read<{ waitingSince?: unknown }>(res);
-      if (!waitingSince || typeof waitingSince !== "object" || Array.isArray(waitingSince)) {
+      if (
+        !waitingSince ||
+        typeof waitingSince !== "object" ||
+        Array.isArray(waitingSince) ||
+        Object.values(waitingSince).some((at) => typeof at !== "string")
+      ) {
         throw new Error(
           "デーモンの応答に、待ち始めの時刻（waitingSince）がありません。起動中の sacty が前の版かもしれません。sacty を更新して起動し直してください。",
         );
