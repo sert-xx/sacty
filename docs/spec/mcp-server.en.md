@@ -26,23 +26,23 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
 - No authentication is added (the MCP authorization specification is for HTTP; on stdio the rule is to take credentials from the environment). Only a user who can read `daemon.json` (mode 0600) can use it.
 - It calls the following APIs ([Overall structure](architecture.en.md#processes-and-communication)). `list_tasks`, `get_task`, `rereview_task`, `list_projects`, `create_task`, `approve_step`, and `request_changes` call the same APIs as the web UI. `list_deliverables`, `get_deliverable`, and `list_runs` call read-only APIs (their three rows in the table below; the web UI does not call them). `wait_for_task` calls only `GET /api/tasks/:id`, the same as `get_task` (no wait API is added to the daemon). `pause_task`, `resume_task`, and `cancel_task` call the same APIs as the web UI. `get_cancel_plan` reads the same `GET /api/tasks/:id/cleanup-plan` as the web UI's cancel confirmation (no new API is added).
 
-| Tool                | Daemon API                                                                                                                        |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `list_tasks`        | `GET /api/tasks`, `GET /api/projects`                                                                                             |
-| `get_task`          | `GET /api/tasks/:id`                                                                                                              |
-| `rereview_task`     | `GET /api/tasks/:id`, `POST /api/tasks/:id/rereview`                                                                              |
-| `list_projects`     | `GET /api/projects`                                                                                                               |
-| `create_task`       | `POST /api/tasks`                                                                                                                 |
-| `list_deliverables` | `GET /api/tasks/:id/deliverables`                                                                                                 |
-| `get_deliverable`   | `GET /api/tasks/:id/deliverables/:step/:kind?offset=&max=`                                                                        |
-| `list_runs`         | `GET /api/tasks/:id/runs?offset=&limit=`                                                                                          |
-| `approve_step`      | `GET /api/tasks/:id`, `POST /api/tasks/:id/approve`                                                                               |
-| `request_changes`   | `GET /api/tasks/:id`, `POST /api/tasks/:id/request-changes`                                                                       |
-| `wait_for_task`     | `GET /api/tasks/:id` (the awaited task and the children in its `reviewTasks`, repeated every few seconds; nothing else is called) |
-| `pause_task`        | `GET /api/tasks/:id`, `POST /api/tasks/:id/pause` (`{}`)                                                                          |
-| `resume_task`       | `GET /api/tasks/:id`, `POST /api/tasks/:id/resume` (`{}` or `{ note }`)                                                           |
-| `get_cancel_plan`   | `GET /api/tasks/:id`, `GET /api/tasks/:id/cleanup-plan`                                                                           |
-| `cancel_task`       | `GET /api/tasks/:id`, `POST /api/tasks/:id/cancel` (`{}`)                                                                         |
+| Tool | Daemon API |
+| --- | --- |
+| `list_tasks` | `GET /api/tasks`, `GET /api/projects` |
+| `get_task` | `GET /api/tasks/:id` |
+| `rereview_task` | `GET /api/tasks/:id`, `POST /api/tasks/:id/rereview` |
+| `list_projects` | `GET /api/projects` |
+| `create_task` | `POST /api/tasks` |
+| `list_deliverables` | `GET /api/tasks/:id/deliverables` |
+| `get_deliverable` | `GET /api/tasks/:id/deliverables/:step/:kind?offset=&max=` |
+| `list_runs` | `GET /api/tasks/:id/runs?offset=&limit=` |
+| `approve_step` | `GET /api/tasks/:id`, `POST /api/tasks/:id/approve` |
+| `request_changes` | `GET /api/tasks/:id`, `POST /api/tasks/:id/request-changes` |
+| `wait_for_task` | `GET /api/tasks/:id` (the awaited task and the children in its `reviewTasks`, repeated every few seconds; nothing else is called) |
+| `pause_task` | `GET /api/tasks/:id`, `POST /api/tasks/:id/pause` (`{}`) |
+| `resume_task` | `GET /api/tasks/:id`, `POST /api/tasks/:id/resume` (`{}` or `{ note }`) |
+| `get_cancel_plan` | `GET /api/tasks/:id`, `GET /api/tasks/:id/cleanup-plan` |
+| `cancel_task` | `GET /api/tasks/:id`, `POST /api/tasks/:id/cancel` (`{}`) |
 
 Code: `packages/cli/src/index.ts` (`mcpCommand`), `packages/cli/src/mcp.ts` (`daemonApi`), `apps/daemon/src/task-mcp.ts` (`serveTaskMcp`, `startTaskMcp`, `createTaskMcpServer`, `SactyApi`), `packages/cli/src/context-preview.ts` (`readDaemonFile`, `daemonRequest`), `packages/cli/src/up-env.ts` (`daemonEndpoint`)
 
@@ -62,15 +62,15 @@ A result is returned as structured content (`structuredContent`) and one text it
 Filters tasks and returns a list of summaries, newest first (descending `createdAt`). Read-only (`readOnlyHint`).
 Every argument can be omitted. It returns the tasks that match all the given conditions (all tasks when there is no condition).
 
-| Argument       | Type    | Description                                                                                                                                                                               |
-| -------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pull_request` | string  | A PR. One of a number (`123`, `#123`), `owner/repo#123`, or a PR URL (`https://<host>/<owner>/<repo>/pull/123`; a trailing path and the like is allowed; `http://` is read as `https://`) |
-| `branch`       | string  | A branch name (exact match; a leading `refs/heads/` is removed)                                                                                                                           |
-| `repo`         | string  | A repository. `owner/repo` (any host) or a repository URL                                                                                                                                 |
-| `query`        | string  | A string contained in the title, or the beginning of the task ID (case-insensitive)                                                                                                       |
-| `open_only`    | boolean | If `true`, only tasks that are not finished (neither completed nor cancelled)                                                                                                             |
-| `review_only`  | boolean | If `true`, only PR review tasks                                                                                                                                                           |
-| `limit`        | integer | The maximum number to return. 1 to 100 (`LIST_LIMIT_MAX`). The default is 20 (`LIST_LIMIT_DEFAULT`)                                                                                       |
+| Argument | Type | Description |
+| --- | --- | --- |
+| `pull_request` | string | A PR. One of a number (`123`, `#123`), `owner/repo#123`, or a PR URL (`https://<host>/<owner>/<repo>/pull/123`; a trailing path and the like is allowed; `http://` is read as `https://`) |
+| `branch` | string | A branch name (exact match; a leading `refs/heads/` is removed) |
+| `repo` | string | A repository. `owner/repo` (any host) or a repository URL |
+| `query` | string | A string contained in the title, or the beginning of the task ID (case-insensitive) |
+| `open_only` | boolean | If `true`, only tasks that are not finished (neither completed nor cancelled) |
+| `review_only` | boolean | If `true`, only PR review tasks |
+| `limit` | integer | The maximum number to return. 1 to 100 (`LIST_LIMIT_MAX`). The default is 20 (`LIST_LIMIT_DEFAULT`) |
 
 - Tasks of a deleted project are not listed (`get_task` also treats them as missing).
 - The result is `{ total, returned, tasks }`. `total` is the number of matching tasks, `returned` is the number returned, and `tasks` holds [task summaries](#task-summary).
@@ -126,11 +126,11 @@ It is used to specify which project `create_task` creates the task in.
 
 Creates a task in a given project from a title and a description.
 
-| Argument     | Type              | Description                                                                                |
-| ------------ | ----------------- | ------------------------------------------------------------------------------------------ |
-| `project_id` | string (required) | The ID of the project to create the task in (`id` from `list_projects`)                    |
-| `title`      | string (required) | The title. 1 to 200 characters after trimming (`TASK_TITLE_MAX`)                           |
-| `body`       | string            | The description. Up to 10000 characters after trimming (`TASK_BODY_MAX`). Empty if omitted |
+| Argument | Type | Description |
+| --- | --- | --- |
+| `project_id` | string (required) | The ID of the project to create the task in (`id` from `list_projects`) |
+| `title` | string (required) | The title. 1 to 200 characters after trimming (`TASK_TITLE_MAX`) |
+| `body` | string | The description. Up to 10000 characters after trimming (`TASK_BODY_MAX`). Empty if omitted |
 
 - It is the same as "Create task" in the web UI with no template, the target repository left blank, and the approach left at "Automatic".
   It sends `{ projectId, title, body, repo: null }` to `POST /api/tasks` (`repo: null` means no repository, even for a project with exactly one repository target, like a blank field in the web UI). It does not send an approach, a template, or per-step settings.
@@ -148,10 +148,10 @@ Creates a task in a given project from a title and a description.
 
 Approves a step that is awaiting approval (the same as "Approve" on the web UI's approval screen).
 
-| Argument     | Type                          | Meaning                                                                  |
-| ------------ | ----------------------------- | ------------------------------------------------------------------------ |
-| `task_id`    | string (required)             | The task ID                                                              |
-| `step`       | step name (required)          | The step to approve (`approval.step` from `get_task`)                    |
+| Argument | Type | Meaning |
+| --- | --- | --- |
+| `task_id` | string (required) | The task ID |
+| `step` | step name (required) | The step to approve (`approval.step` from `get_task`) |
 | `submission` | integer, 1 or more (required) | The submission number to approve (`approval.submission` from `get_task`) |
 
 - It only sends `{ step, submission }` to `POST /api/tasks/:id/approve`, the same request the web UI sends. The decision (`service.approve`), the record (`StepApproved`, actor `person`), and how the next step starts are the same as in the web UI. There is no MCP-only route or record. Wherever the web UI refuses, it refuses for the same reason.
@@ -170,12 +170,12 @@ Approves a step that is awaiting approval (the same as "Approve" on the web UI's
 
 Requests changes on a step awaiting approval (the same as writing only remarks, without choosing where to send it back or a cause, and pressing "Request changes" on the approval screen).
 
-| Argument     | Type                                   | Meaning                                                                    |
-| ------------ | -------------------------------------- | -------------------------------------------------------------------------- |
-| `task_id`    | string (required)                      | The task ID                                                                |
-| `step`       | step name (required)                   | The step to send back (`approval.step` from `get_task`)                    |
-| `submission` | integer, 1 or more (required)          | The submission number to send back (`approval.submission` from `get_task`) |
-| `comments`   | array of strings (required; 1 or more) | Remarks on what to fix                                                     |
+| Argument | Type | Meaning |
+| --- | --- | --- |
+| `task_id` | string (required) | The task ID |
+| `step` | step name (required) | The step to send back (`approval.step` from `get_task`) |
+| `submission` | integer, 1 or more (required) | The submission number to send back (`approval.submission` from `get_task`) |
+| `comments` | array of strings (required; 1 or more) | Remarks on what to fix |
 
 - It sends only `{ step, submission, comments }` to `POST /api/tasks/:id/request-changes`. The decision (`service.requestChanges`), the record (`ChangesRequested`, actor `person`, no `cause`, `overLimit` false), and how the rework starts are the same as in the web UI. There is no MCP-only path or record. `target`, `cause`, `answer`, `image`, `agents`, and `continueOverLimit` are not arguments and are not sent (the step to redo is the default: the redoable step closest to the step awaiting approval, usually the step awaiting approval itself, or task splitting for an integration review).
 - On success it returns a message, the target of the request (`requested`: `taskId`, `step`, `submission`, the step that will be redone `reworkStep`, and the number of remarks `comments`), and the [task summary](#task-summary) after the request (it does not wait for the rework to finish).
@@ -202,15 +202,15 @@ Deliverables from before a rework (earlier rounds) and the agent's original file
 - Only pairs with a non-empty body are listed. Steps come in the task's step order, then the other steps.
 - `status` is decided from the top row of the table below down, using the first row that matches.
 
-| `status`            | Condition                                                                                                                                                             | `submission`                                                                  |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `approved`          | The step is approved (`approved[step]`)                                                                                                                               | The approved submission number                                                |
-| `posted`            | Review step, and the review is posted to the PR (`reviewPost`)                                                                                                        | The review round (`reviewRound`; 1 if absent)                                 |
-| `not_submitted`     | Review step, and not posted yet                                                                                                                                       | null (`previousSubmission` is `reviewRound` − 1; null if below 1)             |
-| `awaiting_approval` | The approval gate is at the step (`gate.step`)                                                                                                                        | The gate's submission number                                                  |
-| `not_submitted`     | The step's last run completion (`AgentRunCompleted`) is after its last submission (`StepSubmitted`)                                                                   | null (`previousSubmission` is the number of submissions so far; null if none) |
-| `changes_requested` | None of the above, and an output remains (after a rework request, until the redo completes)                                                                           | The number of submissions                                                     |
-| `none`              | No body (a candidate step with no output, `sacty_version` of a step with no human-edited version, `test_viewpoints` outside design, `review_comments` outside review) | null                                                                          |
+| `status` | Condition | `submission` |
+| --- | --- | --- |
+| `approved` | The step is approved (`approved[step]`) | The approved submission number |
+| `posted` | Review step, and the review is posted to the PR (`reviewPost`) | The review round (`reviewRound`; 1 if absent) |
+| `not_submitted` | Review step, and not posted yet | null (`previousSubmission` is `reviewRound` − 1; null if below 1) |
+| `awaiting_approval` | The approval gate is at the step (`gate.step`) | The gate's submission number |
+| `not_submitted` | The step's last run completion (`AgentRunCompleted`) is after its last submission (`StepSubmitted`) | null (`previousSubmission` is the number of submissions so far; null if none) |
+| `changes_requested` | None of the above, and an output remains (after a rework request, until the redo completes) | The number of submissions |
+| `none` | No body (a candidate step with no output, `sacty_version` of a step with no human-edited version, `test_viewpoints` outside design, `review_comments` outside review) | null |
 
 - An output that is not submitted yet (`not_submitted`) has a null `submission`, and the earlier round is shown in `previousSubmission`, so it is not mistaken for the earlier submission.
 
@@ -218,13 +218,13 @@ Deliverables from before a rework (earlier rounds) and the agent's original file
 
 Reads the content of a deliverable by range.
 
-| Argument    | Type                | Meaning                                                                                                                                             |
-| ----------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `task_id`   | string (required)   | The task ID                                                                                                                                         |
-| `step`      | enum (required)     | The step (`investigate`, `review`, `requirements`, `design`, `split`, `integrate`, `reproduce`, `implement`, `deployment`, `document`, `operation`) |
-| `kind`      | enum (required)     | The kind of deliverable (the four above)                                                                                                            |
-| `offset`    | integer (0 or more) | The position to start reading (bytes). 0 if omitted                                                                                                 |
-| `max_bytes` | integer (1 or more) | The most to return (bytes). 32,000 if omitted (`RANGE_MAX_BYTES`). A larger value is clamped to 32,000                                              |
+| Argument | Type | Meaning |
+| --- | --- | --- |
+| `task_id` | string (required) | The task ID |
+| `step` | enum (required) | The step (`investigate`, `review`, `requirements`, `design`, `split`, `integrate`, `reproduce`, `implement`, `deployment`, `document`, `operation`) |
+| `kind` | enum (required) | The kind of deliverable (the four above) |
+| `offset` | integer (0 or more) | The position to start reading (bytes). 0 if omitted |
+| `max_bytes` | integer (1 or more) | The most to return (bytes). 32,000 if omitted (`RANGE_MAX_BYTES`). A larger value is clamped to 32,000 |
 
 - The result has `step`, `kind`, `submission`, `previousSubmission`, `status`, `text` (the range of the body), and the [range fields](#ranges-and-results).
 - A pair that is a candidate but has no body returns `status: none`, an empty `text`, and `totalBytes: 0`, not an `isError`.
@@ -248,13 +248,13 @@ Lists the agent runs, newest first. The arguments are `task_id`, `offset` (0 or 
 
 The content of a deliverable returns at most 32,000 bytes (UTF-8; about 10,000 Japanese characters) per call. Positions and sizes are UTF-8 bytes of the body.
 
-| Result field | Meaning                                                                                      |
-| ------------ | -------------------------------------------------------------------------------------------- |
-| `offset`     | The position of the start of what was returned                                               |
-| `next`       | The position to continue from (the end of what was returned). Pass it as `offset` to read on |
-| `totalBytes` | The total size                                                                               |
-| `clipped`    | Whether it was cut (whether more remains)                                                    |
-| `clamped`    | Whether `max_bytes` exceeded the limit and was clamped to it                                 |
+| Result field | Meaning |
+| --- | --- |
+| `offset` | The position of the start of what was returned |
+| `next` | The position to continue from (the end of what was returned). Pass it as `offset` to read on |
+| `totalBytes` | The total size |
+| `clipped` | Whether it was cut (whether more remains) |
+| `clamped` | Whether `max_bytes` exceeded the limit and was clamped to it |
 
 - Boundaries are aligned to the start of a UTF-8 character (a multi-byte character or a surrogate pair is not split). Even a `max_bytes` too small for one character returns one character, so the next position advances.
 - An `offset` at or beyond the total size is not a failure; it returns an empty `text` and `totalBytes` (so that, when re-reading from a position, "has not grown yet" is told apart from a failure).
@@ -262,17 +262,17 @@ The content of a deliverable returns at most 32,000 bytes (UTF-8; about 10,000 J
 
 ### Failures of the deliverable and run tools
 
-| Case                                                                                                         | Text of the reason                                                                                                |
-| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| The task does not exist, or belongs to a deleted project (the API returns a 404 of `{ error: "not_found" }`) | The `task.notFound` message (task not found)                                                                      |
-| The step or kind is not a candidate (API)                                                                    | Step not found, deliverable kind not found                                                                        |
-| `task_id` does not match `[A-Za-z0-9_-]{1,128}` (including `..`, `/`, `%2F`)                                 | The form of `task_id` is wrong (the tool does not call the API; the API also rejects with 400 (`invalid_id`))     |
-| The range is invalid (the API's 400 `invalid_range`)                                                         | The range is invalid                                                                                              |
-| An earlier daemon version (no new API, and a 404 whose body is not JSON with `error`)                        | The running sacty does not support this; asks to update sacty and restart with `sacty up` when no task is running |
-| A 200 response cannot be read as JSON                                                                        | The response from sacty could not be read                                                                         |
-| A failure other than 404 (such as 500) whose body cannot be read as JSON                                     | sacty returned <status code> (the body is not included)                                                           |
-| The body is JSON but `error` matches none of the forms above (other than 400)                                | sacty returned <status code> (neither the `error` value nor the body is included)                                 |
-| Cannot connect, timed out, cannot authenticate, or not running                                               | The same text as the existing tools                                                                               |
+| Case | Text of the reason |
+| --- | --- |
+| The task does not exist, or belongs to a deleted project (the API returns a 404 of `{ error: "not_found" }`) | The `task.notFound` message (task not found) |
+| The step or kind is not a candidate (API) | Step not found, deliverable kind not found |
+| `task_id` does not match `[A-Za-z0-9_-]{1,128}` (including `..`, `/`, `%2F`) | The form of `task_id` is wrong (the tool does not call the API; the API also rejects with 400 (`invalid_id`)) |
+| The range is invalid (the API's 400 `invalid_range`) | The range is invalid |
+| An earlier daemon version (no new API, and a 404 whose body is not JSON with `error`) | The running sacty does not support this; asks to update sacty and restart with `sacty up` when no task is running |
+| A 200 response cannot be read as JSON | The response from sacty could not be read |
+| A failure other than 404 (such as 500) whose body cannot be read as JSON | sacty returned <status code> (the body is not included) |
+| The body is JSON but `error` matches none of the forms above (other than 400) | sacty returned <status code> (neither the `error` value nor the body is included) |
+| Cannot connect, timed out, cannot authenticate, or not running | The same text as the existing tools |
 
 - The reason text is limited to the text in this table. The one line on standard error carries the tool name, `task_id` (if any), this reason, and the cause (below). Neither ever contains the daemon's response body, the content of a deliverable, the token in `daemon.json`, the value of an environment variable, or an absolute path of the daemon.
 - The cause on the one line of standard error (`failureLine`) is limited to the kind of connection failure (a `code` such as `ECONNREFUSED`) and a timeout mark (an exception message is not shown, because it can contain part of a response body).
@@ -291,15 +291,15 @@ Its annotations are the same as the other read tools (`readOnlyHint: true`, `ope
 
 **Changes that wake it** (it stops waiting and returns `changed: true`, `changes`, and the current summary)
 
-| Target | Change                                                                                                                                                        |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Task   | It became awaiting approval (`awaiting_approval`). The step or submission awaiting approval changed (even while staying awaiting approval)                    |
-| Task   | It became awaiting a person's decision (`escalated`), paused (`paused`), completed, or cancelled. The pause reason changed                                    |
-| Task   | It started moving again from awaiting approval, paused, or awaiting a person's decision                                                                       |
-| Task   | The count of things to confirm with a person (`asks`) changed. A PR's state (`pullRequests[].state`) changed (merged, closed, and so on)                      |
-| Child  | A child (`reviewTasks`) was added                                                                                                                             |
-| Child  | A child's state became one of the "person's turn" states above (awaiting approval, awaiting a decision, paused, completed, cancelled), or it moved out of one |
-| Child  | The review round changed (a re-review). A review was posted. A verdict appeared or changed                                                                    |
+| Target | Change |
+| --- | --- |
+| Task | It became awaiting approval (`awaiting_approval`). The step or submission awaiting approval changed (even while staying awaiting approval) |
+| Task | It became awaiting a person's decision (`escalated`), paused (`paused`), completed, or cancelled. The pause reason changed |
+| Task | It started moving again from awaiting approval, paused, or awaiting a person's decision |
+| Task | The count of things to confirm with a person (`asks`) changed. A PR's state (`pullRequests[].state`) changed (merged, closed, and so on) |
+| Child | A child (`reviewTasks`) was added |
+| Child | A child's state became one of the "person's turn" states above (awaiting approval, awaiting a decision, paused, completed, cancelled), or it moved out of one |
+| Child | The review round changed (a re-review). A review was posted. A verdict appeared or changed |
 
 - A child's change wakes it even if the parent's state does not change (the parent stays `awaiting_approval` waiting for the PR to be merged and only the child's verdict appears).
 - A child that could not be fetched (`available: false`) is not compared with the previous value (it is not treated as a change between fetches). When a baseline child was unfetchable and is now fetched, its value becomes the baseline and later changes are compared with it.
@@ -310,29 +310,29 @@ Its annotations are the same as the other read tools (`readOnlyHint: true`, `ope
 
 **Result**
 
-| Field                       | Content                                                                                                                                                                                                                                                 |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `changed`                   | Whether a "person's turn" change happened. `false` means the wait timed out (not a failure)                                                                                                                                                             |
-| `changes`                   | A short list of what changed (`state: active → awaiting_approval`, `approval: requirements#1 → design#1`, `asks: 0 → 2`, `reviewTask <ID> verdict: なし → suggestions`, and so on; only values such as states, steps, rounds, and counts, no sentences) |
-| `task`                      | The current summary (same as `list_tasks`; the title and pause reason are data that include text written by other people)                                                                                                                               |
-| `costUsd`                   | The current cost (USD)                                                                                                                                                                                                                                  |
-| `reviewTasks`               | For each child: `taskId`, `number` (the PR number), `available` (whether it was fetched), `state`, `round`, `postedUrl`, `verdict`, and `costUsd`. No sentences (not the review body); read the body with `get_task` on the child's `task_id`           |
-| `reviewTasksOmitted`        | The number of children left out because of the per-call limit (5, newest first)                                                                                                                                                                         |
-| `cursor`                    | The value to pass to the next call (the moment this result was returned becomes the baseline)                                                                                                                                                           |
-| `waitedSeconds`             | Seconds waited                                                                                                                                                                                                                                          |
-| `timeoutSeconds`, `clamped` | The limit actually used (seconds), and whether `timeout_seconds` exceeded the maximum and was clamped                                                                                                                                                   |
+| Field | Content |
+| --- | --- |
+| `changed` | Whether a "person's turn" change happened. `false` means the wait timed out (not a failure) |
+| `changes` | A short list of what changed (`state: active → awaiting_approval`, `approval: requirements#1 → design#1`, `asks: 0 → 2`, `reviewTask <ID> verdict: なし → suggestions`, and so on; only values such as states, steps, rounds, and counts, no sentences) |
+| `task` | The current summary (same as `list_tasks`; the title and pause reason are data that include text written by other people) |
+| `costUsd` | The current cost (USD) |
+| `reviewTasks` | For each child: `taskId`, `number` (the PR number), `available` (whether it was fetched), `state`, `round`, `postedUrl`, `verdict`, and `costUsd`. No sentences (not the review body); read the body with `get_task` on the child's `task_id` |
+| `reviewTasksOmitted` | The number of children left out because of the per-call limit (5, newest first) |
+| `cursor` | The value to pass to the next call (the moment this result was returned becomes the baseline) |
+| `waitedSeconds` | Seconds waited |
+| `timeoutSeconds`, `clamped` | The limit actually used (seconds), and whether `timeout_seconds` exceeded the maximum and was clamped |
 
 The description, review body, text of things to confirm, and activity log are not included (use `get_task`).
 
 **Time** (`WAIT_DEFAULT_SECONDS`, `WAIT_MAX_SECONDS`, `WAIT_POLL_MS`, `WAIT_GRACE_MS`, `WAIT_REQUEST_MS`, `WAIT_CHILD_LIMIT`)
 
-| Value                      | Meaning                                                                                             | Reason                                                                                                                                                                                                                                |
-| -------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Default 30 s, maximum 50 s | The limit on how long to wait. A larger value is clamped to 50 s and the result has `clamped: true` | Clients cancel a single tool call after 60 s by default (Codex's `tool_timeout_sec` and the official SDK client); the limit is well below that. Claude Code moves a call to the background after 2 minutes in the main conversation   |
-| 5 s                        | The interval between checks                                                                         | Not shorter than the web UI's fetch interval (`LIVE_INTERVAL_MS`, 3 s). `GET /api/tasks/:id` returns the whole activity log every time (about 0.8 MB for a long task) and children are fetched too, so it is longer than the web UI's |
-| Specified time + 5 s       | The bound by which the tool always returns. Even for the maximum it is 55 s, never over 60 s        | So that one last request near the limit cannot extend the call when the daemon does not respond                                                                                                                                       |
-| 10 s                       | How long to wait for a single request (the time remaining, if shorter)                              | The 30 s of the existing tools (`MCP_REQUEST_TIMEOUT_MS`) is unchanged                                                                                                                                                                |
-| 5                          | The most children fetched per call                                                                  | A child is normally one per PR (re-creating a PR adds one). Each fetch returns the whole activity log, so it is not raised                                                                                                            |
+| Value | Meaning | Reason |
+| --- | --- | --- |
+| Default 30 s, maximum 50 s | The limit on how long to wait. A larger value is clamped to 50 s and the result has `clamped: true` | Clients cancel a single tool call after 60 s by default (Codex's `tool_timeout_sec` and the official SDK client); the limit is well below that. Claude Code moves a call to the background after 2 minutes in the main conversation |
+| 5 s | The interval between checks | Not shorter than the web UI's fetch interval (`LIVE_INTERVAL_MS`, 3 s). `GET /api/tasks/:id` returns the whole activity log every time (about 0.8 MB for a long task) and children are fetched too, so it is longer than the web UI's |
+| Specified time + 5 s | The bound by which the tool always returns. Even for the maximum it is 55 s, never over 60 s | So that one last request near the limit cannot extend the call when the daemon does not respond |
+| 10 s | How long to wait for a single request (the time remaining, if shorter) | The 30 s of the existing tools (`MCP_REQUEST_TIMEOUT_MS`) is unchanged |
+| 5 | The most children fetched per call | A child is normally one per PR (re-creating a PR adds one). Each fetch returns the whole activity log, so it is not raised |
 
 - A timeout is not a failure. If nothing changes up to the limit, it returns `changed: false`, the current summary, and `cursor`. To keep waiting, call again with `cursor`. No setting to lengthen a client's cancel time is needed.
 - The clock is used only to judge the deadline and to report `waitedSeconds` (tests replace the clock and the waiting; `clock` of `startTaskMcp`).
@@ -354,16 +354,16 @@ The description, review body, text of things to confirm, and activity log are no
 
 **Failures**
 
-| Case                                                                                      | Reason                                                                                                                                                                                                                                                                                                                         |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `task_id` has the wrong form, or there is no such task (the first request)                | The same reasons as `list_deliverables` and others (returned without waiting)                                                                                                                                                                                                                                                  |
-| Cannot connect, sacty is not running, cannot authenticate, or no response, from the start | The same reasons as the existing tools (for no response: `sacty did not respond in time…`)                                                                                                                                                                                                                                     |
-| `cursor` is malformed                                                                     | `cursor が正しくありません…` (the cursor is not valid)                                                                                                                                                                                                                                                                         |
-| `cursor` is from another task                                                             | `cursor は、別のタスクを待ったときの結果の値です…` (the cursor is from another task)                                                                                                                                                                                                                                           |
-| The daemon became unreachable while waiting (cannot connect, no response)                 | A single failure is retried once on the next cycle if time remains before the deadline. After a second consecutive failure, it returns `待っている途中で、sacty に届かなくなりました…` (it became unreachable while waiting) plus a `cursor` to call again with. Check that sacty is running and call again with that `cursor` |
-| The daemon answered with a refusal while waiting (5xx, cannot authenticate)               | Returns that reason as is, with the `cursor` to call again with                                                                                                                                                                                                                                                                |
-| The task became invisible while waiting                                                   | `待っている途中で、タスクが見えなくなりました…` (the task became invisible while waiting)                                                                                                                                                                                                                                      |
-| Only a child cannot be fetched                                                            | Not a failure. That child is marked `available: false`                                                                                                                                                                                                                                                                         |
+| Case | Reason |
+| --- | --- |
+| `task_id` has the wrong form, or there is no such task (the first request) | The same reasons as `list_deliverables` and others (returned without waiting) |
+| Cannot connect, sacty is not running, cannot authenticate, or no response, from the start | The same reasons as the existing tools (for no response: `sacty did not respond in time…`) |
+| `cursor` is malformed | `cursor が正しくありません…` (the cursor is not valid) |
+| `cursor` is from another task | `cursor は、別のタスクを待ったときの結果の値です…` (the cursor is from another task) |
+| The daemon became unreachable while waiting (cannot connect, no response) | A single failure is retried once on the next cycle if time remains before the deadline. After a second consecutive failure, it returns `待っている途中で、sacty に届かなくなりました…` (it became unreachable while waiting) plus a `cursor` to call again with. Check that sacty is running and call again with that `cursor` |
+| The daemon answered with a refusal while waiting (5xx, cannot authenticate) | Returns that reason as is, with the `cursor` to call again with |
+| The task became invisible while waiting | `待っている途中で、タスクが見えなくなりました…` (the task became invisible while waiting) |
+| Only a child cannot be fetched | Not a failure. That child is marked `available: false` |
 
 - The cause in the one stderr line (`failureLine`) is the same as for `list_deliverables` and others: only the kind of connection failure and a timeout marker. The reason, stderr, and `cursor` never contain the `daemon.json` token or an internal absolute path.
 
@@ -376,8 +376,8 @@ Code: `apps/daemon/src/task-mcp.ts` (`waitForTask`, `watchOfTask`, `watchChanges
 
 Pauses a task (the same as "Pause" in the web UI).
 
-| Argument  | Type              | Description |
-| --------- | ----------------- | ----------- |
+| Argument | Type | Description |
+| --- | --- | --- |
 | `task_id` | String (required) | The task ID |
 
 - It sends only `{}` to `POST /api/tasks/:id/pause`. The decision to pause (`service.pause`) and the record (`TaskPaused`, reason `manual`) are the same as the web UI. There is no MCP-specific path or record.
@@ -396,10 +396,10 @@ Pauses a task (the same as "Pause" in the web UI).
 
 Resumes a paused task (the same as pressing "Resume" in the web UI without changing the cap, tests, image, or agents).
 
-| Argument  | Type              | Description                                           |
-| --------- | ----------------- | ----------------------------------------------------- |
-| `task_id` | String (required) | The task ID                                           |
-| `note`    | String (optional) | A note for the resume (the same as `note` of the API) |
+| Argument | Type | Description |
+| --- | --- | --- |
+| `task_id` | String (required) | The task ID |
+| `note` | String (optional) | A note for the resume (the same as `note` of the API) |
 
 - It sends only `{}` or `{ note }` to `POST /api/tasks/:id/resume`. `capUsd`, `tests`, `image`, and `agents` are not arguments and there is no path to send them. The decision to resume (`service.resume`) and the record (`TaskResumed`) are the same as the web UI. There is no MCP-specific path or record.
 - When it resumes the task, it returns a sentence, whether a note was added (`resumed`: `taskId` and `noteAdded`), and the [task summary](#task-summary) after the resume (`state` is where it went back to). The sentence tells where it went back to. `queued` runs the stopped step again (it takes time and money; it does not wait for the end). `awaiting_approval` and `waiting_children` only went back there and do not run the step again. Otherwise sacty moves on to the next step.
@@ -417,8 +417,8 @@ Resumes a paused task (the same as pressing "Resume" in the web UI without chang
 
 Reads what would happen if the task were cancelled (read-only; the activity log does not grow). Call it before `cancel_task` and tell the user the result.
 
-| Argument  | Type              | Meaning     |
-| --------- | ----------------- | ----------- |
+| Argument | Type | Meaning |
+| --- | --- | --- |
 | `task_id` | string (required) | The task ID |
 
 - It calls `GET /api/tasks/:id` and, only when the task can be cancelled, `GET /api/tasks/:id/cleanup-plan`. The latter is used only to read whether a container, a workspace, and a session exist. The `pull_request` and `branch` items of `cleanup-plan` do not match the real cleanup (they report a merged PR or a person's continued PR as present), so they are not used. The PRs and branches are built from the task in the MCP layer (`cancelTargets`, a copy of the PR-closing condition in `service.cancel`, `sactyBranches`, and `openStepPullRequests`; change it together when they change).
@@ -435,11 +435,11 @@ Code: `apps/daemon/src/task-mcp.ts` (`cancelTargets`, `cancelBlock`, `CancelPlan
 
 Cancels a task (the same as "Cancel" on the screen). **It cannot be undone and the task cannot be resumed.** It writes outside sacty (GitHub PRs and remote branches).
 
-| Argument              | Type                        | Meaning                                                                                                        |
-| --------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `task_id`             | string (required)           | The task ID                                                                                                    |
+| Argument | Type | Meaning |
+| --- | --- | --- |
+| `task_id` | string (required) | The task ID |
 | `close_pull_requests` | array of strings (required) | URLs of the PRs to close. Pass `willClose.pullRequests` of `get_cancel_plan` as it is (an empty array if none) |
-| `delete_branches`     | array of strings (required) | The branches to delete. Pass `willDelete.branches` of `get_cancel_plan` as it is (an empty array if none)      |
+| `delete_branches` | array of strings (required) | The branches to delete. Pass `willDelete.branches` of `get_cancel_plan` as it is (an empty array if none) |
 
 - It rebuilds the targets from the task at the time of the call (`cancelTargets`) and sends only `{}` to `POST /api/tasks/:id/cancel` when the two arrays match, ignoring order, duplicates, and surrounding whitespace. When they do not match (missing, extra, or a PR or branch added after reading), it does not cancel, does not call the API, records nothing, and returns `cancelled: false` and the current targets (`currentTargets`). This guard makes the caller confirm that it read the cleanup targets and that none were added since (the same idea as `submission` in approval).
 - When it cancels, it returns a sentence and `cancelled: true`, the cleanup result (`cleanup`: `target`, `result` (`done`, `skipped`, `failed`), and `reason` for each target), `closedPullRequests`, `deletedBranches`, `failed` (the failed targets and reasons), and the [task summary](#task-summary) after cancelling. The cleanup result is the `cleanup` of `TaskCancelled` (the task's `cancelled.cleanup`) with message codes rendered in Japanese. The cancellation is recorded even when part of the cleanup fails (`failed` and the reason remain, and there is no way to redo it), so the short sentence also names the failed targets and reasons so a person knows what to clean up by hand.
@@ -459,15 +459,15 @@ Code: `apps/daemon/src/task-mcp.ts` (`cancelTargets`, `cancelBlock`, `CancelSche
 A failure inside a tool is returned as a tool execution error (`isError: true` in the MCP result and the text of the reason; no `structuredContent`). The MCP server does not exit.
 The name of the failed tool, the target task ID (`task_id` if present; no other arguments), and the reason are written to standard error on one line (`failureLine`). If a failed connection has a cause (the exception's `cause`), it is followed up to 5 levels and appended (`causeChain`).
 
-| Case                                          | Text of the reason                                         |
-| --------------------------------------------- | ---------------------------------------------------------- |
-| `daemon.json` is missing or unreadable        | The running sacty was not found (start it with `sacty up`) |
-| Cannot connect to the daemon                  | Cannot connect to the daemon                               |
-| The daemon does not respond within 30 seconds | The daemon did not respond in time                         |
-| The daemon returned 401                       | Cannot authenticate to the daemon                          |
-| The daemon returned `invalid_operation` (409) | The daemon's message (rendered in Japanese)                |
-| The daemon returned `invalid_input` (400)     | The message for each error (rendered in Japanese)          |
-| The daemon returned another failure           | The status code                                            |
+| Case | Text of the reason |
+| --- | --- |
+| `daemon.json` is missing or unreadable | The running sacty was not found (start it with `sacty up`) |
+| Cannot connect to the daemon | Cannot connect to the daemon |
+| The daemon does not respond within 30 seconds | The daemon did not respond in time |
+| The daemon returned 401 | Cannot authenticate to the daemon |
+| The daemon returned `invalid_operation` (409) | The daemon's message (rendered in Japanese) |
+| The daemon returned `invalid_input` (400) | The message for each error (rendered in Japanese) |
+| The daemon returned another failure | The status code |
 
 When the arguments do not match the types (a `limit` out of range, a missing `task_id`, and so on), the MCP SDK returns the same shape (`isError: true` and the text of the reason) without calling the tool.
 Calling an unknown tool and the like becomes a JSON-RPC error.
@@ -478,26 +478,26 @@ Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `fil
 
 The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, `request_changes`, `pause_task`, `resume_task`, and `cancel_task`, and the base of the result of `get_task`.
 
-| Field                      | Description                                                                                                                                                                                                                                                                                                                         |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`, `title`, `projectId` | The task ID, the title, and the project ID                                                                                                                                                                                                                                                                                          |
-| `state`                    | `cancelled` (cancelled), `completed` (stopped with all steps finished), otherwise the task status (`status`) as it is                                                                                                                                                                                                               |
-| `steps`                    | Steps and their states (`<step>:<state>`, in order)                                                                                                                                                                                                                                                                                 |
-| `reviewTask`               | Whether it is a PR review task (imported as a PR review (`source.review` is set) or has the review step)                                                                                                                                                                                                                            |
-| `canRereview`              | Whether it can be re-reviewed (`canRereview`)                                                                                                                                                                                                                                                                                       |
-| `canPause`                 | Whether `pause_task` can pause it (the states in which the web UI shows the pause button; `pauseBlock`)                                                                                                                                                                                                                             |
-| `canCancel`                | Whether `cancel_task` can cancel it (false for a completed task, an already cancelled task, a PR review child task, and a split parent or child; `cancelBlock`. It does not see refusals only the daemon knows (a cleanup in progress). Because it cannot be undone, call it only when the user clearly asks, even when it is true) |
-| `canResume`                | Whether `resume_task` can resume it (paused, and no decision on the budget cap, the test handling, the child task's cancellation, or the repository to work on is needed; `resumeBlock`. It does not see refusals only the daemon knows, so the daemon may refuse even when it is true)                                             |
-| `pullRequests`             | The [tied PRs](#prs-and-branches-tied-to-a-task)                                                                                                                                                                                                                                                                                    |
-| `branches`                 | The [tied branches](#prs-and-branches-tied-to-a-task)                                                                                                                                                                                                                                                                               |
-| `review`                   | Only for PR review tasks. The review round (`round`), and the URL of the post (`postedUrl`) and the verdict (`verdict`) of the current round. The post and the verdict are present only when they exist                                                                                                                             |
-| `reviewOf`                 | For a PR review child task, the ID of the parent task                                                                                                                                                                                                                                                                               |
-| `reviewTasks`              | The child tasks that review this task's PRs (task ID and PR number)                                                                                                                                                                                                                                                                 |
-| `pausedReason`             | The reason for the pause (only while paused)                                                                                                                                                                                                                                                                                        |
-| `approval`                 | Only while awaiting approval (`awaiting_approval`, `escalated`): the step and submission awaiting approval and how to approve ([approve_step](#approve_step))                                                                                                                                                                       |
-| `asks`                     | The number of things to confirm with a person (absent when 0). Counted the same way as the web UI; a small value only, no text (the text is in `humanAsks` of `get_task`)                                                                                                                                                           |
-| `createdAt`, `updatedAt`   | The time it was created and the time of the last record                                                                                                                                                                                                                                                                             |
-| `url`                      | The URL of the task details in the web UI (only when `daemon.json` has the web UI URL)                                                                                                                                                                                                                                              |
+| Field | Description |
+| --- | --- |
+| `id`, `title`, `projectId` | The task ID, the title, and the project ID |
+| `state` | `cancelled` (cancelled), `completed` (stopped with all steps finished), otherwise the task status (`status`) as it is |
+| `steps` | Steps and their states (`<step>:<state>`, in order) |
+| `reviewTask` | Whether it is a PR review task (imported as a PR review (`source.review` is set) or has the review step) |
+| `canRereview` | Whether it can be re-reviewed (`canRereview`) |
+| `canPause` | Whether `pause_task` can pause it (the states in which the web UI shows the pause button; `pauseBlock`) |
+| `canCancel` | Whether `cancel_task` can cancel it (false for a completed task, an already cancelled task, a PR review child task, and a split parent or child; `cancelBlock`. It does not see refusals only the daemon knows (a cleanup in progress). Because it cannot be undone, call it only when the user clearly asks, even when it is true) |
+| `canResume` | Whether `resume_task` can resume it (paused, and no decision on the budget cap, the test handling, the child task's cancellation, or the repository to work on is needed; `resumeBlock`. It does not see refusals only the daemon knows, so the daemon may refuse even when it is true) |
+| `pullRequests` | The [tied PRs](#prs-and-branches-tied-to-a-task) |
+| `branches` | The [tied branches](#prs-and-branches-tied-to-a-task) |
+| `review` | Only for PR review tasks. The review round (`round`), and the URL of the post (`postedUrl`) and the verdict (`verdict`) of the current round. The post and the verdict are present only when they exist |
+| `reviewOf` | For a PR review child task, the ID of the parent task |
+| `reviewTasks` | The child tasks that review this task's PRs (task ID and PR number) |
+| `pausedReason` | The reason for the pause (only while paused) |
+| `approval` | Only while awaiting approval (`awaiting_approval`, `escalated`): the step and submission awaiting approval and how to approve ([approve_step](#approve_step)) |
+| `asks` | The number of things to confirm with a person (absent when 0). Counted the same way as the web UI; a small value only, no text (the text is in `humanAsks` of `get_task`) |
+| `createdAt`, `updatedAt` | The time it was created and the time of the last record |
+| `url` | The URL of the task details in the web UI (only when `daemon.json` has the web UI URL) |
 
 `asks` is counted from `humanAsks` in `@sacty/core` (the same as `HumanAskNotice` in the web UI).
 Code: `apps/daemon/src/task-mcp.ts` (`summarizeTask`, `isReviewTask`, `TaskSummarySchema`), `packages/core/src/projection.ts` (`canRereview`, `isFinished`)
@@ -534,13 +534,13 @@ Code: `apps/daemon/src/task-mcp.ts` (`describeAsks`, `describeEscalation`, `askC
 
 PRs are collected from the following, per role (`role`). Each has the repository, number, and URL, and the branch (`branch`) and state (`state`) when known.
 
-| `role`                   | Source                                                                                                                                                                                                                                                                          | Branch                     |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `review`                 | The PR a PR review task reviews. The record of the resolved target (`reviewTarget`). Without it (before resolving, or after a re-review started), the PR it was imported from (`source`) or a PR of the target repository in the title or description (`referencedPullRequest`) | `reviewBranch` (below)     |
-| `source`                 | The PR it was imported from (when it is not a PR review task)                                                                                                                                                                                                                   | None                       |
-| `implement`              | The implementation PR this task created (`pullRequest`; only when it has a number)                                                                                                                                                                                              | `pullRequest.branch`       |
-| `requirements`, `design` | The PR of a step output this task created (`stepPullRequests`)                                                                                                                                                                                                                  | The branch of that PR      |
-| `continued`              | The existing PR this task took over (`continuedPullRequest`)                                                                                                                                                                                                                    | The head branch of that PR |
+| `role` | Source | Branch |
+| --- | --- | --- |
+| `review` | The PR a PR review task reviews. The record of the resolved target (`reviewTarget`). Without it (before resolving, or after a re-review started), the PR it was imported from (`source`) or a PR of the target repository in the title or description (`referencedPullRequest`) | `reviewBranch` (below) |
+| `source` | The PR it was imported from (when it is not a PR review task) | None |
+| `implement` | The implementation PR this task created (`pullRequest`; only when it has a number) | `pullRequest.branch` |
+| `requirements`, `design` | The PR of a step output this task created (`stepPullRequests`) | The branch of that PR |
+| `continued` | The existing PR this task took over (`continuedPullRequest`) | The head branch of that PR |
 
 Branches are collected, without duplicates, from the task branch (`taskBranch`), the step branches (`stepBranches`, `stepPullRequests`), the pushed branch (`pushedBranch`), the branch of the implementation PR, the head branch of the PR taken over, and the head branch of the PR under review (`reviewBranch`).
 
