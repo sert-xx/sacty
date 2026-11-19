@@ -157,6 +157,7 @@ npm run build       # すべてのパッケージのビルド
   | `packages/cli/src/mcp-cancel.test.ts` | `sacty mcp` の中止と片付けの対象の読み取り（本物のサービスと API と `daemonApi` をつなぐ。読み取りと実際の片付けの一致・引数の確かめ・完了したタスクなどの断り・失敗の報告・結果を受け取れないとき） |
   | `packages/cli/src/mcp-rerun.test.ts` | `sacty mcp` の中止したタスクの再実行（本物のサービスと API と `daemonApi` をつなぐ。作られるタスクの題・説明・リポジトリ、元の要約への `rerunBy`、2回目の断り、送らずに断るもの、デーモンの断り、結果を受け取れないときの案内） |
   | `packages/cli/src/mcp-waiting-list.test.ts` | `sacty mcp` の `list_tasks` の人の出番・状態・プロジェクトの絞り込みと続き（本物のサービスと API と `daemonApi` をつなぐ。画面の判定の場合分け・`dashboard()` の `waitingSince` との一致・知らない引数の断り・待ち始めを読めないとき・読むだけ） |
+  | `packages/cli/src/mcp-error-report.test.ts` | `sacty mcp` の `get_error_report`（本物のサービスと API と `daemonApi` をつなぐ。閉じられなかった実行のログを省くこと・省いた印・前の版のデーモンの断り・分け方と指紋・断り方・読むだけ）と、`get_task` の `errorReportWorthReading` |
   | `task-mcp-read.test.ts` | `sacty mcp` の成果物・実行の一覧の読み取り（本物のサービスと API に対して。範囲・上限・複数バイトの境目・実行の状態と切り替え・件数の上限・無いものと場所の外の指定） |
   | `daemon-api-settings.test.ts` | HTTP の API、設定に関する注意（使えないエージェント・実行の上限・Docker とイメージ・新しい版の知らせ）、タスクの詳細で工程のエージェントを変えること |
 - 必須ではありませんが、レビューの観点・自己レビュー・最終レビューの指示（`apps/daemon/default-context/skills/review/`、`apps/daemon/src/prompts.ts` の `selfReviewLines`・`outOfScopeLines`）を人が手で変えるときは、実験で見つかった取りこぼしに近い例に実際の AI を当てて、効き目を測れます（手動の測定手順）。

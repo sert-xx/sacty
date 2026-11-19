@@ -11,6 +11,10 @@ import {
   READ_REASONS,
   readFailure,
   type SactyApi,
+  STALE_LOGS_HEADER,
+  STALE_LOGS_OMIT,
+  STALE_LOGS_OMITTED,
+  STALE_LOGS_QUERY,
   staleChangesMessage,
 } from "@sacty/daemon/task-mcp";
 import {
@@ -156,7 +160,10 @@ function rerunRepositoryForMcp(message: { code?: unknown; params?: unknown }): s
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
 
-type ReadApi = Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns">;
+type ReadApi = Pick<
+  SactyApi,
+  "listDeliverables" | "getDeliverable" | "listRuns" | "getErrorReport"
+>;
 
 /**
  * 成果物・実行を読む API（PBI-395）の呼び出し。理由は、定型の文だけにする（デーモンの応答の本文・成果物の中身を、
@@ -206,6 +213,26 @@ function readApi(
           max: input.maxBytes,
         })}`,
       ),
+    // エラーレポートは Markdown の本文で返る。省いたことを示す印（応答のヘッダー）も読む。失敗の理由には、本文を入れない
+    getErrorReport: async (taskId, input) => {
+      const res = await request(
+        endpoint(),
+        `/api/tasks/${id(taskId)}/error-report${query({ lang: input.lang, [STALE_LOGS_QUERY]: STALE_LOGS_OMIT })}`,
+      );
+      if (!res.ok) {
+        const failure = readFailure(res.status, await body(res));
+        if (failure === "task_not_found") return undefined;
+        throw failure;
+      }
+      // 印が無い（前の版のデーモン）ときは、本文を読まない（省いていないレポートを持ち回らない）
+      if (res.headers.get(STALE_LOGS_HEADER) !== STALE_LOGS_OMITTED) return { omitted: false };
+      try {
+        return { omitted: true, text: await res.text() };
+      } catch (error) {
+        if (isTimeout(error)) throw new Error(DAEMON_TIMEOUT_MESSAGE, { cause: error });
+        throw new Error(READ_REASONS.unreadable);
+      }
+    },
     listRuns: (taskId, input) =>
       call(`/api/tasks/${id(taskId)}/runs${query({ offset: input.offset, limit: input.limit })}`),
   };

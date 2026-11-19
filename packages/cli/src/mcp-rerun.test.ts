@@ -85,10 +85,10 @@ async function cancelled(t: Setup, patch: Record<string, unknown> = {}, body = "
 }
 
 describe("本物のデーモンのサービスを通した、中止したタスクの再実行（PBI-402）", () => {
-  it("ツールは16個。再実行の引数は task_id と note だけで、注釈は書き込み・非破壊・非冪等・openWorld", async () => {
+  it("ツールの一覧。再実行の引数は task_id と note だけで、注釈は書き込み・非破壊・非冪等・openWorld", async () => {
     const t = await setup();
     const { tools } = await t.client.listTools();
-    expect(tools).toHaveLength(16);
+    expect(tools).toHaveLength(17);
     const tool = tools.find((x) => x.name === "rerun_task");
     expect(tool?.annotations).toMatchObject({
       readOnlyHint: false,

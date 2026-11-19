@@ -128,6 +128,7 @@ function worldApi(world: World): SactyApi {
     listDeliverables: unused,
     getDeliverable: unused,
     listRuns: unused,
+    getErrorReport: unused,
     approve: unused,
     requestChanges: unused,
     pause: unused,

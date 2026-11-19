@@ -32,6 +32,7 @@ Code: `packages/core/src/error-report.ts` (`failureKind`, `hasFailures`)
 With `?lang=en` the headings are in English; otherwise they are in Japanese.
 Message codes in the activity are rendered as text in that language.
 A report can be made for a cancelled task too.
+With `?stale=omit`, it returns the report with the log contents of runs that were not closed (`omitStaleLogs` below) omitted, and adds the response header `x-sacty-stale-logs: omitted` to show that (`get_error_report` of `sacty mcp` always sends it; [MCP server](mcp-server.en.md#get_error_report)). Without the input (the screen download), the body, status code, and `content-type` are unchanged and the header is not added. Any value other than `omit` is treated as no input (nothing is omitted and the header is not added).
 
 The sections are in this order.
 
