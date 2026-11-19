@@ -184,8 +184,8 @@ export function daemonApi(
   const request = (
     at: DaemonEndpoint,
     path: string,
-    init: { method?: string; body?: unknown } = {},
-  ) => daemonRequest(at, path, fetcher, { ...init, timeoutMs });
+    init: { method?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal } = {},
+  ) => daemonRequest(at, path, fetcher, { timeoutMs, ...init });
   /** 応答の本文を読む。読んでいる途中の時間切れも、応答しなかったという理由にする。 */
   const read = async <T>(res: Response): Promise<T> => {
     try {
@@ -210,8 +210,12 @@ export function daemonApi(
       const alive = new Set(projects.map((p) => p.id));
       return tasks.filter((task) => alive.has(task.projectId));
     },
-    async getTask(id) {
-      const res = await request(endpoint(), `/api/tasks/${encodeURIComponent(id)}`);
+    async getTask(id, options) {
+      // 期限・取り消しを渡されたとき（wait_for_task）だけ、既定の時間（30 秒）の代わりに使う。ほかの呼び出しは変わらない
+      const res = await request(endpoint(), `/api/tasks/${encodeURIComponent(id)}`, {
+        ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options?.signal ? { signal: options.signal } : {}),
+      });
       if (res.status === 404) return undefined;
       if (!res.ok) throw await refusal(res);
       return read<{ task: Task; activity: ActivityEvent[] }>(res);
