@@ -174,6 +174,16 @@ function apiOver(service: TaskService, webUrl?: string): SactyApi & { calls: str
       if (!res.ok) throw await refusal(res);
       return ((await res.json()) as { task: Task }).task;
     },
+    async rerun(id, input) {
+      calls.push(`POST /api/tasks/${id}/rerun`);
+      const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/rerun`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) throw await refusal(res);
+      return ((await res.json()) as { task: Task }).task;
+    },
     async cleanupPlan(id) {
       calls.push(`GET /api/tasks/${id}/cleanup-plan`);
       const res = await app.request(`/api/tasks/${encodeURIComponent(id)}/cleanup-plan`, {
@@ -2379,6 +2389,7 @@ function apiOverStub(approve: () => never): SactyApi {
     createTask: async () => none(),
     approve: async () => approve(),
     requestChanges: async () => none(),
+    rerun: async () => none(),
     ...readStubs(none),
     webUrl: () => undefined,
   };

@@ -374,6 +374,98 @@ describe("本物のデーモンのサービスを通した、中止したタス�
     t.activity.close();
   });
 
+  it("デーモンが断るとき（プロジェクトに対象が1つも無い）は、デーモンの文のまま返し、画面で選び直せるとは添えない。タスクは増えない", async () => {
+    const t = await setup();
+    const id = await cancelled(t, { repo: "https://github.com/acme/app" });
+    const project = (
+      t.service as unknown as {
+        deps: { projects: { get(id: string): { targets: unknown[] } | undefined } };
+      }
+    ).deps.projects.get("default");
+    project?.targets.splice(0);
+    const tasks = t.taskCount();
+    const r = await t.call("rerun_task", { task_id: id });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("プロジェクトの設定で対象を追加してから");
+    expect(r.text).not.toContain("選び直して");
+    expect(t.posts()).toHaveLength(1);
+    expect(t.taskCount()).toBe(tasks);
+    expect(t.live(id).rerunBy).toBeUndefined();
+    t.activity.close();
+  });
+
+  it("送るリポジトリは source.repo を優先し、無ければ repo、それも無ければ repository.url。チケット由来でもリポジトリが決まっていれば再実行できる", async () => {
+    const ticket = {
+      platform: "jira",
+      service: "jira-cloud",
+      key: "ABC-2",
+      url: "https://example.test/ABC-2",
+    };
+    const t = await setup();
+    const bySource = await cancelled(t, {
+      repo: "https://github.com/acme/other",
+      source: { repo: "https://github.com/acme/app" },
+    });
+    const byRepo = await cancelled(t, { repo: "https://github.com/acme/app" });
+    const byUrl = await cancelled(t, {
+      repo: undefined,
+      repository: { url: "https://github.com/acme/app" },
+    });
+    const fromTicket = await cancelled(t, {
+      start: "jira",
+      ticket,
+      repo: "https://github.com/acme/app",
+    });
+    for (const id of [bySource, byRepo, byUrl, fromTicket]) {
+      expect((await t.detail(id)).canRerun, id).toBe(true);
+      const r = await t.call("rerun_task", { task_id: id });
+      expect(r.isError, id).toBe(false);
+    }
+    expect(t.posts().map((p) => JSON.parse(p.body ?? "{}").repo)).toEqual([
+      "https://github.com/acme/app",
+      "https://github.com/acme/app",
+      "https://github.com/acme/app",
+      "https://github.com/acme/app",
+    ]);
+    t.activity.close();
+  });
+
+  it("補足の長さはデーモンと同じ検査で数える：CRLF を含み、改行をそろえると上限以下でも、元の長さが上限を超えれば送らずに断る", async () => {
+    const t = await setup();
+    const id = await cancelled(t);
+    const tasks = t.taskCount();
+    // n 行を CRLF でつなぐ（元の長さは 3n-2 文字、改行をそろえると 2n-1 文字）
+    const lines = (n: number) => Array.from({ length: n }, () => "x").join("\r\n");
+    expect(lines(3334).length).toBe(10_000);
+    expect(lines(3335).length).toBe(10_003);
+    const r = await t.call("rerun_task", { task_id: id, note: lines(3335) });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("補足は 10000 文字まで");
+    expect(t.posts()).toEqual([]);
+    expect(t.taskCount()).toBe(tasks);
+    const ok = await t.call("rerun_task", { task_id: id, note: lines(3334) });
+    expect(ok.isError).toBe(false);
+    expect(t.taskCount()).toBe(tasks + 1);
+    t.activity.close();
+  });
+
+  it("やり直しを頼まれただけでは中止しない：中止していないタスクの断りの理由・ツールの説明・サーバーの使い方の文に、中止は中止をはっきり頼まれたときだけと書かれている", async () => {
+    const t = await setup();
+    const { id } = t.service.createTask({ projectId: "default", title: "実行待ち" });
+    const r = await t.call("rerun_task", { task_id: id });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("やり直しを頼まれただけでは、中止しません");
+    expect(r.text).toContain("中止をはっきり頼んだときだけ");
+    expect(r.text).toContain("利用者に確かめてください");
+    const { tools } = await t.client.listTools();
+    const text = tools.find((x) => x.name === "rerun_task")?.description ?? "";
+    expect(text).toContain("やり直しを頼まれただけでは中止しません");
+    expect(text).toContain("中止をはっきり頼んだときだけ");
+    const instructions = t.client.getInstructions() ?? "";
+    expect(instructions).toContain("やり直しを頼まれただけでは中止せず");
+    t.activity.close();
+  });
+
   it("ツールの説明とサーバーの使い方の文に、新しいタスク・費用・元は二度と再実行できない・引き継がない・頼まれたときだけ・画面で行うことが書かれ、cancel_task に再実行の案内がある", async () => {
     const t = await setup();
     const { tools } = await t.client.listTools();

@@ -146,11 +146,9 @@ const RERUN_UNCERTAIN =
   "新しいタスクが作られている可能性があります。自動でやり直さず、元のタスクを get_task で読み、rerunBy を確かめてください。あれば作られているので、その ID のタスクを見てください。無ければ作られていないので、呼び直してよいです（二重には作られません）。";
 const uncertainRerun = uncertainOf("再実行", RERUN_UNCERTAIN);
 
-/** 再実行の断りのうち、作業するリポジトリが原因のものは、画面で選び直せることを伝える。 */
+/** 再実行の断りのうち、リポジトリがプロジェクトの対象でないもの（task.repositoryUnknown）は、画面で選び直せることを伝える。対象が1つも無いもの（task.repositoryMissing）は、デーモンの文（プロジェクトの設定で対象を足す）のままにする。 */
 function rerunRepositoryForMcp(message: { code?: unknown; params?: unknown }): string | undefined {
-  if (message.code !== "task.repositoryUnknown" && message.code !== "task.repositoryMissing") {
-    return undefined;
-  }
+  if (message.code !== "task.repositoryUnknown") return undefined;
   return `${renderMessage(message, "ja")}画面の「再実行」で、作業するリポジトリを選び直して再実行できます（作られていません）。`;
 }
 
