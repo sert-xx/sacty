@@ -6,7 +6,7 @@ import { type Context, Hono } from "hono";
 import { ZodError, z } from "zod";
 import { safeRelativePath } from "./agent-sessions.js";
 import { type AuditService, NoAuditService } from "./audits.js";
-import { memorySource, RANGE_MAX_BYTES, readByteRange } from "./byte-range.js";
+import { RANGE_MAX_BYTES, readByteRange } from "./byte-range.js";
 import { MemoryScheduleStore, ScheduledTasks } from "./schedules.js";
 import {
   InvalidOperationError,
@@ -181,7 +181,7 @@ export function createApp(
     const found = service.deliverable(id, step, kind);
     if (!found) return c.json({ error: "not_found" }, 404);
     const { text, ...state } = found;
-    const range = readByteRange(memorySource(Buffer.from(text, "utf8")), {
+    const range = readByteRange(Buffer.from(text, "utf8"), {
       offset,
       max: Math.min(max, RANGE_MAX_BYTES),
     });
@@ -208,36 +208,6 @@ export function createApp(
       nextOffset: next < found.total ? next : null,
       runs: found.runs,
     });
-  });
-
-  app.get("/api/tasks/:id/runs/:runId/log/range", async (c) => {
-    const { id, runId } = c.req.param();
-    const file = c.req.query("file");
-    if (!validLogId(id) || !validLogId(runId) || (file !== "events" && file !== "stderr")) {
-      return c.json({ error: "invalid_id" }, 400);
-    }
-    const offset = intQuery(c.req.query("offset"), 0);
-    const max = intQuery(c.req.query("max"), RANGE_MAX_BYTES);
-    const tail = c.req.query("tail") === "1";
-    if (offset === undefined || max === undefined || max < 1) {
-      return c.json({ error: "invalid_range" }, 400);
-    }
-    let found: Awaited<ReturnType<typeof service.sessionLogRange>>;
-    try {
-      found = await service.sessionLogRange(id, runId, {
-        file,
-        ...(tail ? { fromEnd: true } : { offset }),
-        max: Math.min(max, RANGE_MAX_BYTES),
-      });
-    } catch {
-      // ログのファイルを開く・読むのに失敗した。中身とパスは返さない
-      return c.json({ error: "read_failed" }, 500);
-    }
-    if (!found) return c.json({ error: "not_found" }, 404);
-    if (found.kind === "not_found") return c.json({ error: "not_found", what: "run" }, 404);
-    if (found.kind === "unredacted") return c.json({ error: "unredacted" }, 409);
-    const { kind: _kind, ...range } = found;
-    return c.json({ ...range, clamped: max > RANGE_MAX_BYTES });
   });
 
   // エージェントの実行のセッションログ（PBI-62）。タスクごとの場所から読むので、ほかのタスクの実行は読めない

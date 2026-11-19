@@ -72,7 +72,7 @@
 - [秘密情報](secrets.md)：参照の形、起動のときのまとめての取り出し、値を出さないための扱い
 - [サービス（docker compose）](services.md)：起動と停止、安全の検査、localhost の転送、共用の compose
 - [通知](notifications.md)：Slack への通知の条件・送り先・本文と、ブラウザのデスクトップ通知
-- [MCP サーバー（sacty mcp）](mcp-server.md)：起動中の sacty を手元の AI から操作するツール（タスクの一覧・詳細・再レビュー・作成、プロジェクトの一覧、成果物とエージェントの実行・ログの読み取り）
+- [MCP サーバー（sacty mcp）](mcp-server.md)：起動中の sacty を手元の AI から操作するツール（タスクの一覧・詳細・再レビュー・作成、プロジェクトの一覧、成果物とエージェントの実行の一覧の読み取り）
 - [チケットの取り込みと GitHub](intake.md)：GitHub の Issue・PR、JIRA、取り込み元へのコメント、GitHub のアカウント
 - [書き出し](export.md)：成果の書き出し、プロジェクトのエクスポート・インポート
 - [PR のリスク評価](risk-assessment.md)：評価する場面、段階と基準、評価の読み取り、PR の説明とレビューのコメントへの載せ方

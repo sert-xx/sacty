@@ -1458,7 +1458,6 @@ export class TaskService {
         total: number;
         runs: (Omit<RunEntry, "historyState"> & {
           state: "running" | "succeeded" | "failed" | "unknown";
-          hasLog: boolean;
         })[];
       }
     | undefined {
@@ -1486,27 +1485,9 @@ export class TaskService {
         agentId: meta?.agentId || entry.agentId,
         startedAt: meta?.startedAt || entry.startedAt,
         state,
-        hasLog: meta !== undefined,
       };
     });
     return { total: all.length, runs };
-  }
-
-  /**
-   * 実行のログの範囲（PBI-395）。呼び出しの時点でデーモンが持つ秘密情報（実行のもの・設定とプロジェクトの GitHub の
-   * トークン）で伏せてから切る。タスクが無ければ undefined。
-   */
-  async sessionLogRange(
-    taskId: string,
-    runId: string,
-    request: { file: SessionLogFile; offset?: number; fromEnd?: boolean; max: number },
-  ): Promise<ReturnType<SessionLogStore["readRange"]> | undefined> {
-    const task = this.visibleTask(taskId) ? this.tasks.get(taskId) : undefined;
-    const store = this.deps.sessionLogs;
-    if (!task) return undefined;
-    if (!store) return { kind: "not_found" };
-    const audit = await this.auditSecretValues(task.projectId).catch(() => [] as string[]);
-    return store.readRange(taskId, runId, request, audit);
   }
 
   /**

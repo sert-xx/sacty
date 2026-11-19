@@ -1,4 +1,4 @@
-<!-- Code: packages/cli/src/index.ts (mcpCommand), packages/cli/src/mcp.ts, apps/daemon/src/task-mcp.ts (TOOLS, INSTRUCTIONS), apps/daemon/src/task-reads.ts, apps/daemon/src/byte-range.ts, apps/daemon/src/session-logs.ts (readRange) -->
+<!-- Code: packages/cli/src/index.ts (mcpCommand), packages/cli/src/mcp.ts, apps/daemon/src/task-mcp.ts (TOOLS, INSTRUCTIONS), apps/daemon/src/task-reads.ts, apps/daemon/src/byte-range.ts, apps/daemon/src/session-logs.ts (readMeta) -->
 
 [日本語](mcp.md) | **English**
 
@@ -9,8 +9,8 @@ For example, after fixing a PR, you can ask the AI to "re-review this PR with sa
 
 sacty has an MCP server for this (`sacty mcp`; it supports the 2026-07-28 revision of the MCP specification and also works with clients of earlier revisions).
 It can look up tasks (list, search, details), put a PR review task into re-review, create a task in a project you specify,
-and read the deliverables of each step of a task and the logs of agent runs (deliverables and logs are read-only).
-It cannot approve, request changes to, or cancel tasks (do those in the web UI). Deliverables and logs can be used to check the content before you approve.
+and read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only). The logs of runs cannot be read yet (read them in the web UI).
+It cannot approve, request changes to, or cancel tasks (do those in the web UI). Deliverables can be used to check the content before you approve.
 
 ## Connecting
 
@@ -50,7 +50,7 @@ The AI picks the tools below and calls them.
 - "Tell me which sacty tasks are stopped"
 - "Create a task in the (project name) project of sacty titled 'Fix the login screen wording'"
 - "Read the design of this sacty task"
-- "Show me the end of the log of the run that is running now in this sacty task"
+- "Show me the agent runs of this sacty task, newest first"
 
 When you ask for a re-review, sacty reviews the latest commit of the PR again and posts the result to the PR ([Re-review](intake.en.md#re-review)).
 The review takes time to finish and costs money.
@@ -61,10 +61,10 @@ The answer contains the ID of the new task and its web UI URL, and comes back wi
 When the task cannot be created (the project does not exist, the title is empty, and so on), it returns the reason and creates nothing.
 When the result cannot be received after the request to create was sent (a timeout, a dropped connection, an unreadable body, or a 5xx from the daemon), it answers "The task may have been created". Search for the title with `list_tasks` to check, and ask again only if it is not there (asking again without checking can create the same task twice).
 
-Deliverables and logs have a limit on how much one call can read (32,000 bytes in UTF-8; about 10,000 Japanese characters).
+Deliverables have a limit on how much one call can read (32,000 bytes in UTF-8; about 10,000 Japanese characters).
 When the content exceeds the limit, the result says it was cut and gives the total size and the position to continue from, and the AI reads on.
-A log can be read from the end, or from a position you specify, onward. The log of a run in progress is what exists at the time of reading (after the head limit is exceeded, only the tail remains; until the run finishes, the position to continue from can shift, so the AI reads again from the end). The last part of a running log is not returned while it could be the beginning of a value to hide; it can be read later, after the rest arrives.
-Secrets in a log are hidden, at the time of reading, with the ones sacty knows then. The log of a run whose secrets are known not to have been hidden again, or whose end was not recorded (for example, the daemon stopped), returns a reason and no content unless the running sacty holds that run's secrets.
+The content of a deliverable comes from the same source as the web UI's task detail and is hidden the same way as there (nothing is hidden again for MCP).
+The run list also limits how many entries one call returns (20 by default, 100 at most). If runs are added while you fetch the rest, the same run can be returned twice, so the AI drops duplicates by run ID.
 
 When sacty is not running, the tools answer that the running sacty was not found.
 Start it with `sacty up` and ask again.
@@ -82,7 +82,6 @@ When sacty does not respond within 30 seconds, the tools answer that the daemon 
 | `list_deliverables` | Lists the deliverables of each step of a task (step, which submission, kind, size, status) |
 | `get_deliverable` | Reads the content of a deliverable by step and kind (the approved version if there is one, otherwise the latest output; for a review, the body and the comments on lines) |
 | `list_runs` | Lists agent runs, newest first (steps, the orchestrator, and so on; the agent used, time, running / succeeded / failed / no end recorded, and a switch to another agent) |
-| `get_run_log` | Reads the log of a run (from the end, or onward from a position; a run in progress can be read too) |
 
 The filters of `list_tasks` are as follows (all can be omitted; with several, only tasks matching all of them are returned).
 
@@ -126,9 +125,9 @@ If you ask for a task under review or a task that is not a PR review, it returns
 - Only the person running `sacty up` can use the MCP server (it uses the address sacty wrote to a file only that person can read).
 - The registered AI can start a re-review or create a task on your behalf. Creating a task starts its steps, which takes time and costs money.
   In the AI CLI's permission prompt, you can choose to confirm `rereview_task` and `create_task` every time or to allow them.
-- Task descriptions, review bodies, deliverables, and logs are passed to the AI.
+- Task descriptions, review bodies, and deliverables are passed to the AI.
   They can contain text from PRs and issues written by other people and text written by agents (do not let the AI treat it as instructions).
-- While a previous version of sacty is running, the deliverable and log tools answer "update sacty and restart it with `sacty up`" (a different reason from a missing task). Restart it when no task is running.
+- While a previous version of sacty is running, the deliverable and run tools answer "update sacty and restart it with `sacty up`" (a different reason from a missing task). Restart it when no task is running.
 
 ## Related pages
 

@@ -52,15 +52,14 @@ const pr = (number: number, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-/** 成果物・ログを読む4つのメソッドを、同じ失敗にするスタブ（PBI-395）。 */
+/** 成果物・実行を読む3つのメソッドを、同じ失敗にするスタブ（PBI-395）。 */
 function readStubs(
   fail: () => never,
-): Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns" | "getRunLog"> {
+): Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns"> {
   return {
     listDeliverables: async () => fail(),
     getDeliverable: async () => fail(),
     listRuns: async () => fail(),
-    getRunLog: async () => fail(),
   };
 }
 
@@ -177,7 +176,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
     return { activity, pulls, service, id };
   }
 
-  it("ツールは、一覧・詳細・再レビュー・プロジェクトの一覧・タスクの作成と、成果物・実行の読み取り4つ。取得のツールは読み取りだけと示す", async () => {
+  it("ツールは、一覧・詳細・再レビュー・プロジェクトの一覧・タスクの作成と、成果物・実行の読み取り3つ。取得のツールは読み取りだけと示す", async () => {
     const { activity, service } = await reviewed();
     const { client } = await connect(apiOver(service));
     const { tools } = await client.listTools();
@@ -190,7 +189,6 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "list_deliverables",
       "get_deliverable",
       "list_runs",
-      "get_run_log",
     ]);
     expect(tools.map((t) => t.annotations?.readOnlyHint)).toEqual([
       true,
@@ -198,7 +196,6 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       false,
       true,
       false,
-      true,
       true,
       true,
       true,
@@ -210,7 +207,6 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       true,
       false,
       true,
-      false,
       false,
       false,
       false,
@@ -248,7 +244,6 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["deliverables"],
       expect.arrayContaining(["text", "next", "totalBytes"]),
       expect.arrayContaining(["runs", "nextOffset"]),
-      expect.arrayContaining(["text", "running", "omittedMiddle"]),
     ]);
     expect(client.getServerVersion()).toMatchObject({ name: "sacty", version: "9.9.9" });
     expect(client.getInstructions()).toContain("rereview_task");
@@ -275,7 +270,6 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "list_deliverables",
       "get_deliverable",
       "list_runs",
-      "get_run_log",
     ]);
     const found = await client.callTool({ name: "list_tasks", arguments: { pull_request: "9" } });
     expect((found.structuredContent as Listed).tasks.map((t) => t.id)).toEqual([id]);
@@ -673,7 +667,6 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["list_deliverables", { task_id: "x" }],
       ["get_deliverable", { task_id: "x", step: "design", kind: "output" }],
       ["list_runs", { task_id: "x" }],
-      ["get_run_log", { task_id: "x", run_id: "r" }],
     ] as const) {
       expect(await call(name, args)).toEqual({
         isError: true,

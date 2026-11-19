@@ -7,13 +7,11 @@ import {
   openSync,
   readFileSync,
   readSync,
-  realpathSync,
   renameSync,
-  unlinkSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { basename, join, sep } from "node:path";
+import { join } from "node:path";
 import type { DaemonText } from "@sacty/core";
 import {
   AGENT_FILES_DIR,
@@ -25,15 +23,6 @@ import {
 } from "./agent-sessions.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
-import {
-  type ByteRange,
-  concatSource,
-  fileSource,
-  memorySource,
-  readByteRange,
-  redactBytes,
-  withoutPartialSecretTail,
-} from "./byte-range.js";
 
 /**
  * エージェントの実行ごとのセッションログ（PBI-62）。途中の出来事（エージェントの標準出力の JSONL）と標準エラー出力を、
@@ -83,23 +72,8 @@ export type SessionLogMeta = {
   finishedAt?: string;
   outcome?: { kind: "completed" } | { kind: "failed"; reason: string; message: DaemonText };
   /** 上限で間を省いたファイルと、省いた大きさ（バイト）・行数（改行の数）。 */
-  truncated?: Partial<
-    Record<
-      SessionLogFile,
-      {
-        droppedBytes: number;
-        droppedLines: number;
-        /** 閉じた後のファイルの継ぎ目（バイト）。end：先頭の終わり、start：末尾の始まり。 */
-        seams?: { end: number; start: number };
-      }
-    >
-  >;
+  truncated?: Partial<Record<SessionLogFile, { droppedBytes: number; droppedLines: number }>>;
   limits: Record<SessionLogFile, HeadTail>;
-  /**
-   * 実行の途中で足した秘密情報を、閉じるときの伏せ直しでまだ伏せ終えていない（PBI-395）。真のあいだ、ファイルに値が
-   * 残りうるので、デーモンがその値を持っていなければ、ログの中身は返さない。伏せ直しが済んだら消す。
-   */
-  redactPending?: true;
 };
 
 /** 実行器が、出力を受け取るたびに渡す先。 */
@@ -223,13 +197,6 @@ export class HeadTailFile {
   private lastEvicted: number | undefined;
   /** 閉じた後の、省いた大きさ・行数。 */
   dropped = { bytes: 0, lines: 0 };
-  /** ファイルに書いた大きさ（バイト）。 */
-  private fileSize = 0;
-  /**
-   * 閉じた後の、ファイルの継ぎ目（値の続きが記録に無い所）。end：先頭の終わり（省いた印の前）、start：末尾の始まり（省いた印の後）。
-   * 間を省いたときだけある。
-   */
-  seams: { end: number; start: number } | undefined;
 
   /** 末尾の前を省いている（閉じたときに、間に目印が入る）か。 */
   get truncating(): boolean {
@@ -314,9 +281,7 @@ export class HeadTailFile {
           lines: this.evictedLines + newlines(tail.subarray(0, start)),
         };
         const text = marker(this.dropped.bytes, this.dropped.lines);
-        const end = this.fileSize;
         this.raw(Buffer.from(`${this.endsWithNewline ? "" : "\n"}${text}`, "utf8"));
-        this.seams = { end, start: this.fileSize };
         this.raw(tail.subarray(start));
       }
     }
@@ -367,37 +332,6 @@ export class HeadTailFile {
     return Buffer.concat([...parts, tail]);
   }
 
-  /**
-   * 実行中のいまの中身のうち、ファイルに無い分（PBI-395）。ファイルの中身（先頭）のあとに続く。先頭の書きかけの行と rest、
-   * または、省いた印と末尾と rest。snapshot と同じ並びで、ファイルは読まない。
-   */
-  memoryPart(
-    marker: (droppedBytes: number, droppedLines: number) => string,
-    rest: Buffer,
-  ): { mem: Buffer; omittedMiddle: boolean; tailAt?: number } {
-    if (!this.headFull) return { mem: Buffer.concat([this.pending, rest]), omittedMiddle: false };
-    let tail = Buffer.concat([...this.tail, rest]);
-    if (this.evictedBytes === 0) return { mem: tail, omittedMiddle: false };
-    // 末尾の頭を探すのは close と同じ。lines（events）は行の頭から、そうでなければ文字の頭から始める
-    let start = 0;
-    if (this.lines) {
-      if (this.lastEvicted !== NEWLINE) {
-        const i = tail.indexOf(NEWLINE);
-        start = i < 0 ? tail.length : i + 1;
-      }
-    } else {
-      while (start < tail.length && ((tail[start] ?? 0) & 0xc0) === 0x80) start++;
-    }
-    const text = marker(
-      this.evictedBytes + start,
-      this.evictedLines + newlines(tail.subarray(0, start)),
-    );
-    tail = tail.subarray(start);
-    const lead = Buffer.from(`${this.endsWithNewline ? "" : "\n"}${text}`, "utf8");
-    // tailAt：mem の中で、末尾が始まる位置（省いた印の終わり）。mem の先頭は、先頭のファイルの終わりにつながる
-    return { mem: Buffer.concat([lead, tail]), omittedMiddle: true, tailAt: lead.length };
-  }
-
   private toTail(buf: Buffer): void {
     if (buf.length === 0) return;
     this.tail.push(Buffer.from(buf));
@@ -427,7 +361,6 @@ export class HeadTailFile {
     if (this.fd === undefined || buf.length === 0) return;
     try {
       writeSync(this.fd, buf);
-      this.fileSize += buf.length;
       this.endsWithNewline = buf[buf.length - 1] === NEWLINE;
     } catch (error) {
       this.onError(error);
@@ -445,22 +378,6 @@ function writeJsonAtomic(path: string, value: unknown): void {
   const temp = `${path}.tmp-${process.pid}`;
   writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   renameSync(temp, path);
-}
-
-/** 一時ファイルに書いて置き換える（途中で失敗しても、元のログが切れない）。 */
-function replaceFile(path: string, data: Buffer): void {
-  const temp = `${path}.tmp-${process.pid}`;
-  try {
-    writeFileSync(temp, data, { mode: 0o600 });
-    renameSync(temp, path);
-  } catch (error) {
-    try {
-      unlinkSync(temp);
-    } catch {
-      // 一時ファイルが無ければ、そのまま
-    }
-    throw error;
-  }
 }
 
 /** 1回の実行のセッションログ。書き込みに失敗しても、実行は止めない（ログを残せなかったことをデーモンのログに出す）。 */
@@ -483,10 +400,6 @@ export class SessionLog implements SessionLogSink {
     private readonly agentLimit: number = AGENT_FILES_LIMIT,
     /** 閉じたとき（実行中のログの一覧から外すため）。 */
     private readonly onClose?: () => void,
-    /**
-     * 伏せ直せていない実行の秘密情報を、デーモンが動いている間だけ持つ先（PBI-395）。値を渡すと持ち、undefined で捨てる。
-     */
-    private readonly retain?: (values: string[] | undefined) => void,
   ) {
     const onError = (error: unknown) => this.warn(error);
     this.files = {
@@ -508,40 +421,6 @@ export class SessionLog implements SessionLogSink {
 
   addSecrets(values: readonly string[]): void {
     for (const value of values) if (value) this.extra.add(value);
-    // 書き始めた後に値が増えた実行は、閉じるときの伏せ直しまで、ファイルに値が残りうる。その値をデーモンが持ち、記録に残す
-    if (!this.closed && this.needsRewrite() && !this.meta.redactPending) {
-      this.meta.redactPending = true;
-      this.writeMeta();
-    }
-    if (!this.closed && this.meta.redactPending) this.retain?.(this.allSecrets());
-  }
-
-  /** 書き始めた後に秘密情報が増えた（閉じるときに全体の伏せ直しが要る）か。 */
-  private needsRewrite(): boolean {
-    return (
-      this.secretsAtFirstWrite !== undefined && this.allSecrets().length > this.secretsAtFirstWrite
-    );
-  }
-
-  /** 呼び出しの時点の、この実行の秘密情報（読み取りの伏せに使う）。 */
-  currentSecrets(): string[] {
-    return this.allSecrets();
-  }
-
-  /**
-   * 実行中のログの、範囲で読むための部品（PBI-395）。ファイルにある先頭と、メモリーにある分（省いた印・末尾を含む）。
-   * ファイルの大きさはここでは見ない（呼ぶ側が、開いたファイルから読む）。
-   */
-  rangeParts(file: SessionLogFile): {
-    path: string;
-    mem: Buffer;
-    omittedMiddle: boolean;
-    tailAt?: number;
-  } {
-    const markers = this.markers();
-    // StreamRedactor が伏せる前に持っている分（peek）は含めない（伏せる値の先頭の一部でありうるため）
-    const part = this.files[file].memoryPart(markers[file], Buffer.alloc(0));
-    return { path: this.files[file].path, ...part };
   }
 
   async archiveAgentFiles(
@@ -625,43 +504,23 @@ export class SessionLog implements SessionLogSink {
     this.files.stderr.close(markers.stderr);
     // 書き始めた後に分かった秘密情報（コンテナで更新されたトークンなど）は、書いたファイル全体から伏せ直す
     const all = this.allSecrets();
-    let rewritten = true;
-    const tracked = this.needsRewrite() || Boolean(this.meta.redactPending);
-    if (tracked) {
+    if (this.secretsAtFirstWrite !== undefined && all.length > this.secretsAtFirstWrite) {
       const forms = secretForms(all);
       for (const file of Object.values(this.files)) {
         try {
           if (!existsSync(file.path)) continue;
-          const seams = file.seams;
-          if (seams) {
-            // 継ぎ目（先頭の終わり・末尾の始まり）は、伏せ直しで位置が動くので、3つに分けて伏せ、新しい位置を残す
-            const buf = readFileSync(file.path);
-            const head = redactBytes(buf.subarray(0, seams.end), forms, { end: true });
-            const mark = buf.subarray(seams.end, seams.start);
-            const tail = redactBytes(buf.subarray(seams.start), forms, { start: true });
-            const out = Buffer.concat([head, mark, tail]);
-            if (!out.equals(buf)) replaceFile(file.path, out);
-            file.seams = { end: head.length, start: head.length + mark.length };
-            continue;
-          }
-          const buf = readFileSync(file.path);
-          const out = redactBytes(buf, forms);
-          if (!out.equals(buf)) replaceFile(file.path, out);
+          const text = readFileSync(file.path, "utf8");
+          const redacted = redact(text, forms);
+          if (redacted !== text) writeFileSync(file.path, redacted, { mode: 0o600 });
         } catch (error) {
-          rewritten = false;
           this.warn(error);
         }
       }
-      if (rewritten) delete this.meta.redactPending;
-      else this.meta.redactPending = true;
     }
     const truncated: NonNullable<SessionLogMeta["truncated"]> = {};
     for (const file of ["events", "stderr"] as const) {
       const { bytes, lines } = this.files[file].dropped;
-      if (bytes > 0) {
-        const seams = this.files[file].seams;
-        truncated[file] = { droppedBytes: bytes, droppedLines: lines, ...(seams ? { seams } : {}) };
-      }
+      if (bytes > 0) truncated[file] = { droppedBytes: bytes, droppedLines: lines };
     }
     this.meta.finishedAt = new Date().toISOString();
     this.meta.outcome =
@@ -673,12 +532,7 @@ export class SessionLog implements SessionLogSink {
             message: redactText(outcome.message, secretForms(all)),
           };
     if (Object.keys(truncated).length > 0) this.meta.truncated = truncated;
-    const metaWritten = this.writeMeta();
-    if (tracked) {
-      // 伏せ直しが全部済み、redactPending を消した meta.json を書けたときだけ、値を捨てる。
-      // そうでなければ、デーモンが動いている間だけ持つ（読み取りは、その値で伏せる）
-      this.retain?.(rewritten && metaWritten ? undefined : all);
-    }
+    this.writeMeta();
   }
 
   /** 上限で間を省いたところに入れる目印（省いた大きさ・行数から作る）。 */
@@ -711,14 +565,11 @@ export class SessionLog implements SessionLogSink {
     return [...new Set([...this.secrets(), ...this.extra])].filter((s) => s.length > 0);
   }
 
-  /** meta.json を書く。書けたか。 */
-  private writeMeta(): boolean {
+  private writeMeta(): void {
     try {
       writeJsonAtomic(`${this.base}.meta.json`, this.meta);
-      return true;
     } catch (error) {
       this.warn(error);
-      return false;
     }
   }
 
@@ -789,11 +640,6 @@ export function completeUtf8Length(buf: Uint8Array): number {
 export class SessionLogStore {
   /** このデーモンで開いていて、まだ閉じていない実行のログ（<タスク>/<実行>）。 */
   private readonly live = new Map<string, SessionLog>();
-  /**
-   * 閉じるときに伏せ直せていない実行の秘密情報（<タスク>/<実行>。PBI-395）。デーモンが動いている間だけ持つ。ファイルに残った
-   * 値を、読み取りのときに伏せるため。
-   */
-  private readonly retained = new Map<string, string[]>();
 
   constructor(
     private readonly root: string,
@@ -827,10 +673,6 @@ export class SessionLogStore {
       this.agentLimit,
       () => {
         if (this.live.get(key) === log) this.live.delete(key);
-      },
-      (values) => {
-        if (values) this.retained.set(key, values);
-        else this.retained.delete(key);
       },
     );
     this.live.set(key, log);
@@ -871,6 +713,26 @@ export class SessionLogStore {
   path(taskId: string, runId: string, file: SessionLogFile): string | undefined {
     if (!validLogId(taskId) || !validLogId(runId)) return undefined;
     return join(this.root, taskId, `${runId}${EXTENSIONS[file]}`);
+  }
+
+  /**
+   * 実行の記録（meta.json）だけを読む（PBI-395。実行の一覧が、役割・エージェント・状態を取る）。記録が無い・読めない・
+   * リンクなら undefined。ログの中身は読まない。
+   */
+  readMeta(taskId: string, runId: string): SessionLogMeta | undefined {
+    const metaPath = this.metaPath(taskId, runId);
+    if (!metaPath) return undefined;
+    try {
+      if (!lstatSync(metaPath).isFile()) return undefined;
+      return JSON.parse(readFileSync(metaPath, "utf8")) as SessionLogMeta;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** このデーモンで開いていて、まだ閉じていない実行か。 */
+  isLive(taskId: string, runId: string): boolean {
+    return this.live.has(`${taskId}/${runId}`);
   }
 
   /**
@@ -921,122 +783,5 @@ export class SessionLogStore {
         stderr: { from: stderr.from, next: stderr.next },
       },
     };
-  }
-
-  /**
-   * 実行の記録（meta.json）。実行が無い・記録が無い・リンクや決まった場所の外のファイルなら undefined（PBI-395）。
-   * ログを持つ実行かどうかの判定に使う。
-   */
-  readMeta(taskId: string, runId: string): SessionLogMeta | undefined {
-    const metaPath = this.metaPath(taskId, runId);
-    const dir = this.taskDir(taskId);
-    if (!metaPath || !dir || this.checkFile(dir, metaPath) !== "ok") return undefined;
-    try {
-      return JSON.parse(readFileSync(metaPath, "utf8")) as SessionLogMeta;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** このデーモンで開いていて、まだ閉じていない実行か。 */
-  isLive(taskId: string, runId: string): boolean {
-    return this.live.has(`${taskId}/${runId}`);
-  }
-
-  /**
-   * ログの範囲（PBI-395）。画面と同じ記録から、返す範囲だけを読む（MCP のための別の記録は作らない）。終わった実行は
-   * ファイル、実行中の実行は、先頭のファイルとメモリーにある末尾（省いた印を含む）をつなげた記録から読む。
-   * 呼び出しの時点の秘密情報（実行のもの・extraSecrets）で伏せてから切る。
-   * 実行が無い・ファイルがリンクか runs/<タスク> の外なら not_found（ファイルは開かない）。伏せ直せていないと分かっていて、
-   * デーモンがその実行の秘密情報を持たないなら unredacted（中身を読まない）。
-   */
-  readRange(
-    taskId: string,
-    runId: string,
-    request: { file: SessionLogFile; offset?: number; fromEnd?: boolean; max: number },
-    extraSecrets: readonly string[] = [],
-  ):
-    | ({ kind: "ok"; running: boolean; omittedMiddle: boolean } & ByteRange)
-    | {
-        kind: "not_found" | "unredacted";
-      } {
-    const meta = this.readMeta(taskId, runId);
-    const dir = this.taskDir(taskId);
-    const logPath = this.path(taskId, runId, request.file);
-    if (!meta || !dir || !logPath) return { kind: "not_found" };
-    const key = `${taskId}/${runId}`;
-    const live = this.live.get(key);
-    const state = this.checkFile(dir, logPath);
-    if (state === "unsafe") return { kind: "not_found" };
-    let secrets: string[];
-    if (live) {
-      secrets = [...live.currentSecrets(), ...extraSecrets];
-    } else if (this.retained.has(key)) {
-      secrets = [...(this.retained.get(key) ?? []), ...extraSecrets];
-    } else if (meta.redactPending || !meta.finishedAt) {
-      // 伏せ直せていない（redactPending）か、終わりが記録されていない（デーモンが止まった実行・前の版が書いた実行）実行は、
-      // デーモンがその実行の秘密情報を持たなければ、平文の値が残っていても見分けられないので、返さない
-      return { kind: "unredacted" };
-    } else {
-      secrets = [...extraSecrets];
-    }
-    const forms = secretForms(secrets);
-    let fd: number | undefined;
-    try {
-      let size = 0;
-      if (state === "ok") {
-        fd = openSync(logPath, "r");
-        size = fstatSync(fd).size;
-      }
-      const head = fd === undefined ? memorySource(Buffer.alloc(0)) : fileSource(fd, size);
-      if (!live) {
-        const seams = meta.truncated?.[request.file]?.seams;
-        if (seams && seams.start <= size) head.cuts = { end: [seams.end], start: [seams.start] };
-        return {
-          kind: "ok",
-          running: false,
-          omittedMiddle: Boolean(meta.truncated?.[request.file]),
-          ...readByteRange(head, request, forms),
-        };
-      }
-      const parts = live.rangeParts(request.file);
-      // 読める終わりが伏せる値の先頭の一部で終わるときは、その一部を外す（途中で足された値は、知る前に出た先頭が
-      // StreamRedactor の持ち越しの外に出ているため）
-      // 先頭のファイルの終わりと末尾の始まりも、値の続きが記録に無い継ぎ目なので、読む側に伝える
-      const mem = memorySource(parts.mem);
-      if (parts.tailAt !== undefined) mem.cuts = { end: [0], start: [parts.tailAt] };
-      const readable = withoutPartialSecretTail(concatSource(head, mem), forms);
-      return {
-        kind: "ok",
-        running: true,
-        omittedMiddle: parts.omittedMiddle,
-        ...readByteRange(readable, request, forms),
-      };
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-    }
-  }
-
-  /**
-   * runs/<タスク> の下の通常のファイルか。ok：ある、missing：まだ無い、unsafe：リンク・通常のファイルでない・場所の外
-   * （開かない。PBI-395）。runs/<タスク> がリンクでも unsafe。
-   */
-  private checkFile(dir: string, path: string): "ok" | "missing" | "unsafe" {
-    try {
-      const dirStat = lstatSync(dir);
-      if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) return "unsafe";
-      let stat: ReturnType<typeof lstatSync>;
-      try {
-        stat = lstatSync(path);
-      } catch (error) {
-        return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unsafe";
-      }
-      if (stat.isSymbolicLink() || !stat.isFile()) return "unsafe";
-      const realDir = realpathSync(dir);
-      if (realDir !== join(realpathSync(this.root), basename(dir))) return "unsafe";
-      return realpathSync(path).startsWith(`${realDir}${sep}`) ? "ok" : "unsafe";
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unsafe";
-    }
   }
 }

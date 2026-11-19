@@ -369,29 +369,24 @@ describe("sacty mcp のタスクの作成（PBI-394）", () => {
   });
 });
 
-describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
+describe("sacty mcp の成果物と実行の取得（PBI-395）", () => {
   const callAll = (api: ReturnType<typeof daemonApi>) => [
     () => api.listDeliverables("t1"),
     () => api.getDeliverable("t1", { step: "design", kind: "output" }),
     () => api.listRuns("t1", {}),
-    () => api.getRunLog("t1", "r1", { file: "events" }),
   ];
 
-  it("新しい4つの API を、画面と同じ接続先・トークンで、引数を URL に安全に入れて呼ぶ", async () => {
+  it("新しい3つの API を、画面と同じ接続先・トークンで、引数を URL に安全に入れて呼ぶ", async () => {
     writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
     const { calls, fetcher } = fakeDaemon(() => Response.json({ deliverables: [] }));
     const api = daemonApi(home, fetcher);
     await api.listDeliverables("t 1");
     await api.getDeliverable("t1", { step: "design", kind: "output", offset: 5, maxBytes: 10 });
     await api.listRuns("t1", { offset: 2, limit: 3 });
-    await api.getRunLog("t1", "r/1", { file: "stderr", fromEnd: true, maxBytes: 7 });
-    await api.getRunLog("t1", "r1", { file: "events", offset: 9 });
     expect(calls.map((c) => c.url.replace("http://127.0.0.1:4710", ""))).toEqual([
       "/api/tasks/t%201/deliverables",
       "/api/tasks/t1/deliverables/design/output?offset=5&max=10",
       "/api/tasks/t1/runs?offset=2&limit=3",
-      "/api/tasks/t1/runs/r%2F1/log/range?file=stderr&tail=1&max=7",
-      "/api/tasks/t1/runs/r1/log/range?file=events&offset=9",
     ]);
     expect(new Set(calls.map((c) => c.token))).toEqual(new Set(["Bearer tok"]));
   });
@@ -429,7 +424,6 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
       });
     };
     const scenarios: [string, Fetch][] = [
-      ["404 run", async () => Response.json({ error: "not_found", what: "run" }, { status: 404 })],
       [
         "400",
         async () => Response.json({ error: "invalid_range", note: "body-MARK-4" }, { status: 400 }),
@@ -457,7 +451,6 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
           ["list_deliverables", { task_id: "t1" }],
           ["get_deliverable", { task_id: "t1", step: "design", kind: "output" }],
           ["list_runs", { task_id: "t1" }],
-          ["get_run_log", { task_id: "t1", run_id: "r1" }],
         ] as const) {
           const result = await client.callTool({ name, arguments: args });
           const text = JSON.stringify(result);
@@ -469,13 +462,13 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
         await client.close();
       }
       const lines = logged.mock.calls.map((c) => c.join(" "));
-      expect(lines.length).toBe(scenarios.length * 4);
+      expect(lines.length).toBe(scenarios.length * 3);
       for (const line of lines) {
         for (const mark of ["tok-MARK-1", "env-MARK-2", "home-MARK-3", "body-MARK-4"]) {
           expect(line).not.toContain(mark);
         }
         expect(line).toMatch(
-          /^\[sacty mcp\] (list_deliverables|get_deliverable|list_runs|get_run_log)\(task_id=t1\): /,
+          /^\[sacty mcp\] (list_deliverables|get_deliverable|list_runs)\(task_id=t1\): /,
         );
       }
       expect(lines.some((l) => l.includes("（原因：ECONNREFUSED）"))).toBe(true);
@@ -520,10 +513,10 @@ describe("sacty mcp の成果物とログの取得（PBI-395）", () => {
   });
 });
 
-describe("本物のデーモンの API と、本物の daemonApi をつないだ成果物とログの取得（PBI-395）", () => {
+describe("本物のデーモンの API と、本物の daemonApi をつないだ成果物と実行の取得（PBI-395）", () => {
   useTempDir();
 
-  it("4つのツールが、デーモンが持つ成果物・実行の一覧・ログの範囲と同じ値を返す", async () => {
+  it("3つのツールが、デーモンが持つ成果物・実行の一覧と同じ値を返す", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const store = new SessionLogStore(join(dir, "runs"));
     const { service } = makeService(activity, [], { sessionLogs: store });
@@ -566,7 +559,6 @@ describe("本物のデーモンの API と、本物の daemonApi をつないだ
       },
       () => [],
     );
-    handle.stdout("ログの1行目\n");
     handle.close({
       kind: "completed",
       output: "",
@@ -617,11 +609,8 @@ describe("本物のデーモンの API と、本物の daemonApi をつないだ
         role: "requirements",
         agentId: "claude",
         state: "succeeded",
-        hasLog: true,
       }),
     ]);
-    const log = await call("get_run_log", { task_id: task.id, run_id: "run1", file: "events" });
-    expect(log).toMatchObject({ running: false, text: "ログの1行目\n", clipped: false });
     await client.close();
     activity.close();
   });

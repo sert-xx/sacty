@@ -64,10 +64,10 @@ const CREATE_UNCERTAIN =
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
 
-type ReadApi = Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns" | "getRunLog">;
+type ReadApi = Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns">;
 
 /**
- * 成果物・ログを読む API（PBI-395）の呼び出し。理由は、定型の文だけにする（デーモンの応答の本文・成果物・ログの中身を、
+ * 成果物・実行を読む API（PBI-395）の呼び出し。理由は、定型の文だけにする（デーモンの応答の本文・成果物の中身を、
  * 理由にも、例外の原因にも入れない）。タスクが無いときは undefined。前の版のデーモン（本文が error の JSON でない 404）は、
  * 「タスクが無い」と区別して、更新を促す理由にする。
  */
@@ -116,14 +116,6 @@ function readApi(
       ),
     listRuns: (taskId, input) =>
       call(`/api/tasks/${id(taskId)}/runs${query({ offset: input.offset, limit: input.limit })}`),
-    getRunLog: (taskId, runId, input) =>
-      call(
-        `/api/tasks/${id(taskId)}/runs/${id(runId)}/log/range${query({
-          file: input.file,
-          ...(input.fromEnd ? { tail: 1 } : { offset: input.offset }),
-          max: input.maxBytes,
-        })}`,
-      ),
   };
 }
 

@@ -1,10 +1,10 @@
 import { readFailure, type SactyApi } from "../task-mcp.js";
 
-/** 成果物・ログを読む API（PBI-395）を、CLI の daemonApi と同じ要求で呼ぶ。 */
+/** 成果物・実行を読む API（PBI-395）を、CLI の daemonApi と同じ要求で呼ぶ。 */
 export function readApiOver(
   app: { request: (path: string, init?: RequestInit) => Response | Promise<Response> },
   headers: Record<string, string>,
-): Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns" | "getRunLog"> {
+): Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns"> {
   const get = async (path: string) => {
     const res = await app.request(path, { headers });
     const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
@@ -27,9 +27,5 @@ export function readApiOver(
       )) as never,
     listRuns: async (id, i) =>
       (await get(`/api/tasks/${e(id)}/runs${q({ offset: i.offset, limit: i.limit })}`)) as never,
-    getRunLog: async (id, runId, i) =>
-      (await get(
-        `/api/tasks/${e(id)}/runs/${e(runId)}/log/range${q({ file: i.file, ...(i.fromEnd ? { tail: 1 } : { offset: i.offset }), max: i.maxBytes })}`,
-      )) as never,
   };
 }
