@@ -48,9 +48,13 @@
 | 「approve_step の前の3つ」・呼ぶ API の段落が古い（指摘 3） | 日英とも、名前で書き直し、`get_error_report` を呼ぶ API の段落に足した |
 | JSDoc が別の定数に付いている（指摘 4） | `READ_UNTRUSTED_NOTE` の上に戻し、`REPORT_UNTRUSTED_NOTE` には新しい説明を付けた |
 | テストの題が「16個」のまま（指摘 5） | `mcp-cancel.test.ts`・`mcp-rerun.test.ts` の題から件数を外した |
-| クエリの値・ヘッダーの名前と値を共有（人間の指摘 4） | `task-mcp.ts` の定数（`STALE_LOGS_*`）を、`server.ts`・`mcp.ts`・`testing/mcp-read.ts` が使う。作成時刻の行の正規表現は共有せず、「時間が進んでも指紋が同じ」を日本語・英語の両方で確かめる |
+| クエリの値・ヘッダーの名前と値を共有（人間の指摘 4） | 定数（`STALE_LOGS_*`）を `stale-logs.ts` に置き（2回目の直しで `task-mcp.ts` から移した）、`server.ts`・`mcp.ts`・`testing/mcp-read.ts` が使う。作成時刻の行の正規表現は共有せず、「時間が進んでも指紋が同じ」を日本語・英語の両方で確かめる |
 | 印が無いとき本文を読まない（追加 A） | `getErrorReport` は、印が無ければ `res.text()` を呼ばず `{ omitted: false }` だけを返す。テストの写しも同じ形 |
 | 変わり続けるレポートの案内（追加 B） | ツールの説明・仕様書・ユーザードキュメント（日英）に足した。動きは変えていない |
+| ADR の `fingerprint` の説明が逆（2回目の指摘 1） | 仕様書と同じ言い方（付けなければ続きは読めるが、前に読んだ部分とつながらないことがある）に直した |
+| 作成時刻の行の説明のコメントの位置（2回目の指摘 2） | `REPORT_CREATED_LINE` の直前に移した |
+| ユーザー文書の「前の版の sacty が起動しているとき」の行（前回の指摘 3 の残り） | `mcp.md`・`mcp.en.md` に、`get_error_report` も更新を促して断ることを足した |
+| `server.ts` が `task-mcp.js` を読み込む（人間の気づき） | 4つの定数を、ほかに依存しない `apps/daemon/src/stale-logs.ts` に置いた。`server.ts` はそこから読み、`task-mcp.ts` はそこから読んで外へ出す（CLI・テストの読み込み元は変えない）。`server.ts` に `task-mcp.js` の読み込みが無いことは grep で確かめた |
 
 ## 残したこと
 

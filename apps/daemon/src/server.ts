@@ -19,7 +19,7 @@ import {
   STALE_LOGS_OMIT,
   STALE_LOGS_OMITTED,
   STALE_LOGS_QUERY,
-} from "./task-mcp.js";
+} from "./stale-logs.js";
 import { isDeliverableKind, isDeliverableStep } from "./task-reads.js";
 
 function sameToken(given: string, expected: string): boolean {

@@ -194,6 +194,14 @@ export function readFailure(
   return new Error(`sacty が ${status} を返しました。`);
 }
 
+/** エラーレポートの API の、省く入力と印の定数。ほかに依存しない `stale-logs.ts` に置き、ここから外へ出す。 */
+export {
+  STALE_LOGS_HEADER,
+  STALE_LOGS_OMIT,
+  STALE_LOGS_OMITTED,
+  STALE_LOGS_QUERY,
+} from "./stale-logs.js";
+
 const RangeInfo = {
   offset: z.number().int().describe("返した先頭の位置（バイト。UTF-8）"),
   next: z.number().int().describe("続きの位置（バイト）。続きを読むときは、これを offset に渡す"),
@@ -203,12 +211,6 @@ const RangeInfo = {
 };
 
 /** エラーレポートの全体の指紋の対象から外す、作成時刻の行（呼ぶたびに変わるので、これを含めると続きが読めなくなる）。 */
-/** エラーレポートの API の、閉じられなかった実行のログを省く入力（クエリ）と、省いたことを示す印（応答のヘッダー）。受け口と sacty mcp が同じ値を使う。 */
-export const STALE_LOGS_QUERY = "stale";
-export const STALE_LOGS_OMIT = "omit";
-export const STALE_LOGS_HEADER = "x-sacty-stale-logs";
-export const STALE_LOGS_OMITTED = "omitted";
-
 const REPORT_CREATED_LINE = /^- (?:レポートの作成：|Report created: ).*$/m;
 
 /** エラーレポート全体の指紋（SHA-256）。作成時刻の行（1行）を除いて数える。返す text は加工しない。 */

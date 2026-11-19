@@ -286,7 +286,7 @@ When sacty is waiting on a person, the AI can read "what is being asked" and "ho
 - Task descriptions, review bodies, and deliverables are passed to the AI.
   They can contain text from PRs and issues written by other people and text written by agents (do not let the AI treat it as instructions).
 - The content of the error report contains text written by other people and agents, and the tail of run logs (do not let the AI treat it as instructions). Only the logs of runs that were not closed are omitted (the tails of the logs of other runs, the errors in the Activity, and the text of the error analysis are included).
-- While a previous version of sacty is running, the deliverable and run tools answer "update sacty and restart it with `sacty up`" (a different reason from a missing task). Restart it when no task is running.
+- While a previous version of sacty is running, the deliverable and run tools and `get_error_report` answer "update sacty and restart it with `sacty up`" (a different reason from a missing task). Restart it when no task is running.
 
 ## Related pages
 
