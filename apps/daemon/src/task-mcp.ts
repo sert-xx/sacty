@@ -101,9 +101,7 @@ const RangeInfo = {
   offset: z.number().int().describe("返した先頭の位置（バイト。UTF-8）"),
   next: z.number().int().describe("続きの位置（バイト）。続きを読むときは、これを offset に渡す"),
   totalBytes: z.number().int().describe("全体の大きさ（バイト）"),
-  clipped: z
-    .boolean()
-    .describe("上限で切り取ったか（from_end のときは、手前に読んでいない分があるか）"),
+  clipped: z.boolean().describe("上限で切り取ったか（続きがあるか）"),
   clamped: z.boolean().describe("max_bytes が上限を超えたので、上限に収めたか"),
 };
 

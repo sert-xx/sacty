@@ -24,7 +24,7 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
   Restarting `sacty up` changes the token, but the next call uses the new address and token (the MCP server does not need a restart).
 - It waits up to 30 seconds per request (`MCP_REQUEST_TIMEOUT_MS`) for the daemon's response (including reading the body).
 - No authentication is added (the MCP authorization specification is for HTTP; on stdio the rule is to take credentials from the environment). Only a user who can read `daemon.json` (mode 0600) can use it.
-- It calls the following APIs ([Overall structure](architecture.en.md#processes-and-communication)). The first five tools call the same APIs as the web UI. The four tools that read deliverables and runs call read-only APIs (the last four rows of the table below; the web UI does not call them).
+- It calls the following APIs ([Overall structure](architecture.en.md#processes-and-communication)). The first five tools call the same APIs as the web UI. The three tools that read deliverables and runs call read-only APIs (the last three rows of the table below; the web UI does not call them).
 
 | Tool | Daemon API |
 | --- | --- |
