@@ -2629,6 +2629,39 @@ describe("最初の工程が始まる前の処理の段階（PBI-410）", () => 
     activity.close();
   });
 
+  it("複数のリポジトリを指定したタスクは、候補の照合の間、対象リポジトリの用意の段階を返す。指定が対象に無く一時停止したら返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const started = Promise.withResolvers<void>();
+    const go = Promise.withResolvers<void>();
+    class SlowPulls extends FakePulls {
+      override async repositories(input: { org: string; token: string }) {
+        started.resolve();
+        await go.promise;
+        return super.repositories(input);
+      }
+    }
+    const pulls = new SlowPulls();
+    const api = "https://github.com/acme/api";
+    const web = "https://github.com/acme/web";
+    // 指定した web が、組織のリポジトリの一覧に無い
+    pulls.ownerRepos = { "https://github.com/acme": [api] };
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const { service } = makeService(activity, [], { pulls, projects });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [api, web] });
+    const run = service.runNext(id);
+    await started.promise;
+    expect(await shown(service, id)).toEqual({ status: "queued", preparing: "repository" });
+    go.resolve();
+    await run;
+    expect(await shown(service, id)).toEqual({ status: "paused", preparing: undefined });
+    activity.close();
+  });
+
   it("対象リポジトリを用意できずに一時停止したら、処理の段階を返さない", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const repos = new FakeRepos();
