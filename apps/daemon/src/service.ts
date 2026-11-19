@@ -2615,13 +2615,13 @@ export class TaskService {
    * - レビューを投稿して PR の変化を見守っているタスク（PBI-411）：watchReview が、見守りを終える・再レビューを始める
    */
   private async checkReviewPullRequests(): Promise<void> {
-    const watched = (t: Task) => t.status === "idle" && isCompleted(t) && t.reviewWatch;
+    // 見守っているタスク。取り込みを通さずに人が作ったレビューのタスク（source が無い）も含む（対象の PR は reviewTarget）
+    const watched = (t: Task) =>
+      t.status === "idle" && isCompleted(t) && t.reviewWatch && t.reviewPost && t.reviewTarget;
+    const unposted = (t: Task) =>
+      t.source?.review !== undefined && t.source.kind === "github_pull_request" && !isCompleted(t);
     const open = [...this.tasks.values()].filter(
-      (t) =>
-        t.source?.review !== undefined &&
-        t.source.kind === "github_pull_request" &&
-        t.status !== "cancelled" &&
-        (!isCompleted(t) || watched(t)),
+      (t) => t.status !== "cancelled" && (unposted(t) || watched(t)),
     );
     // 見守りから外れたタスク（再レビューを始めた・見守りを終えた・一時停止・中止）の、初めて見た時刻は忘れる
     const watching = new Set(open.filter(watched).map((t) => t.id));
@@ -2634,7 +2634,7 @@ export class TaskService {
       for (const id of [...memo.keys()]) if (!watching.has(id)) memo.delete(id);
     }
     for (const task of open) {
-      const source = task.source;
+      const source = watched(task) ? task.reviewTarget : task.source;
       if (!source) continue;
       // 投稿から時間がたった PR の見守りは、間を空けて読む（開いたままの PR が増えても、GitHub への問い合わせを増やし続けない）
       if (watched(task)) {
@@ -2687,6 +2687,7 @@ export class TaskService {
    * 持つ。デーモンを起動し直すと、待ち直す）。再レビューの実行中・一時停止中・中止の途中のタスクは動かさない（実行中に来た
    * 変化は、投稿の後に、先頭と対象を確かめた時刻から拾う）。
    * sacty が作った PR のレビューの子タスクは、見守りの終わりだけを扱う。再レビューは、親の流れが決める（reconcileReviewTasks）。
+   * sacty が作った PR を対象にする、子タスクでないレビューのタスク（人が作ったもの・以前の版で取り込んだもの）も同じ。
    * GitHub の再依頼で別のタスクができた元のタスクも、見守りの終わりだけを扱う（supersededByRerequest）。
    */
   private async watchReview(
@@ -2724,6 +2725,12 @@ export class TaskService {
       return;
     }
     if (task.reviewOf) return;
+    // sacty が作った PR は、子タスクが再レビューする。人が作ったレビューのタスク・以前の版で取り込んだタスクは、見守りの
+    // 終わりだけを扱う（同じ PR を、子タスクと二重に再レビューしない。取り込み・再依頼と同じ扱い）
+    if (this.sactyMadePullRequests().has(`${repoKey(target.repo)}#${target.number}`)) {
+      forget();
+      return;
+    }
     // GitHub の再依頼で作った、より新しいタスクがあれば、続きはそのタスクがレビューする（同じ PR を、2つのタスクで二重に
     // 再レビューしない）。元のタスクには何も記録しない（docs/adr/20261019-0503-review-rerequest-new-task.md）
     if (this.supersededByRerequest(task)) {

@@ -544,6 +544,77 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
   });
 });
 
+describe("取り込みを通さずに、人が作ったレビューのタスク（本文に PR の URL。source 無し）の見守り（PBI-411）", () => {
+  /** 人の PR 9 をレビューするタスクを人が作り、判定 verdicts[0] で投稿するところまで進める。 */
+  async function manual(verdicts: Verdict[]) {
+    const clock = { now: Date.parse("2026-11-20T00:00:00.000Z") };
+    const activity = new SqliteActivityStore(dbPath, () => new Date(clock.now));
+    const pulls = new FakePulls();
+    pulls.prInfo = {
+      ...pulls.prInfo,
+      number: 9,
+      url: "https://github.com/acme/app/pull/9",
+      headSha: HEAD_A,
+      author: "alice",
+    };
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const { service } = makeService(
+      activity,
+      verdicts.map((v, i) => review(`${i + 1}回目`, v)),
+      {
+        pulls,
+        projects,
+        now: () => clock.now,
+        planner: async () => ({
+          steps: ["review"],
+          plan: "review" as const,
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+        }),
+      },
+    );
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "PR 9 のレビュー",
+      body: "https://github.com/acme/app/pull/9 をレビューする",
+    });
+    for (let i = 0; i < 6 && !service.get(id)?.task.reviewPost; i++) await service.runNext(id);
+    const get = () => service.get(id)?.task as Task;
+    expect(get().source).toBeUndefined();
+    expect(get().reviewPost).toBeDefined();
+    const tick = async (ms = MINUTE) => {
+      clock.now += ms;
+      await service.checkPullRequests();
+    };
+    return { activity, pulls, service, id, get, tick };
+  }
+
+  it("指摘なしでなければ見守り、PR の先頭が変われば再レビューを始め、PR がマージされたら完了する（見守りのまま残らない）", async () => {
+    const { activity, pulls, service, id, get, tick } = await manual([
+      "suggestions",
+      "suggestions",
+    ]);
+    expect(reviewWatching(get())).toBe(true);
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    await tick();
+    await tick(FEEDBACK_QUIET_MS);
+    expect(restarts(service, id)).toEqual([{ reason: "pushed", commit: HEAD_B }]);
+    for (let i = 0; i < 4 && !get().reviewPost; i++) await service.runNext(id);
+    expect(reviewWatching(get())).toBe(true);
+    pulls.state = { state: "merged" };
+    await tick();
+    expect(isDone(get())).toBe(true);
+    expect(get().reviewWatchEnded?.reason).toBe("merged");
+    activity.close();
+  });
+});
+
 describe("更新の前に完了していたレビューのタスク（PBI-411 条件 10）", () => {
   it.each([["changes_required" as const], ["suggestions" as const], [undefined]])(
     "更新の前の版が判定 %s で投稿して完了したタスクは、更新の後も完了のまま。PR の先頭が変わっても、作者が返信しても、PR が閉じられても、再レビューも記録も始まらず、PR を読みにも行かない",

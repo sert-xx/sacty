@@ -7636,6 +7636,40 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         }
       });
 
+      it("sacty が作った PR をレビューする、人が作ったレビューのタスクは、見守り中に PR の先頭が変わっても再レビューを始めない。PR がマージされたら完了する（PBI-411）", async () => {
+        const pulls = new FakePulls();
+        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+        const clock = { offset: 0 };
+        const made = await start([out("# 要求要件 v1"), out(verdictOf("suggestions"))], {
+          pulls,
+          planner,
+          now: () => later() + clock.offset,
+        });
+        const { activity, service, id } = made;
+        const manual = service.createTask({
+          projectId: "default",
+          title: MANUAL,
+          body: "https://github.com/acme/app/pull/7 をレビューする",
+        });
+        await service.runNext(manual.id);
+        await service.runNext(manual.id);
+        expect(reviewWatching(taskOf(service, manual.id))).toBe(true);
+        // sacty が作った PR の先頭が変わった（PR を作ったタスクの側の更新）
+        pulls.prInfo = { ...pulls.prInfo, headSha: "n".repeat(40) };
+        for (let i = 0; i < 3; i++) {
+          clock.offset += FEEDBACK_QUIET_MS;
+          await service.checkPullRequests();
+        }
+        expect(types(service, manual.id)).not.toContain("ReviewRestarted");
+        expect(reviewWatching(taskOf(service, manual.id))).toBe(true);
+        // PR がマージされたら、見守りを終えて完了する
+        pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+        await service.checkPullRequests();
+        expect(isDone(taskOf(service, manual.id))).toBe(true);
+        expect(taskOf(service, manual.id).reviewWatchEnded?.reason).toBe("merged");
+        activity.close();
+      });
+
       it("判定の記録が無い回（PR を参照するだけで、レビューの工程を持たないタスク）は取り込まない", async () => {
         const pulls = new FakePulls();
         pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
