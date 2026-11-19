@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import type { Task } from "@sacty/core";
+import { resumeNoteRoom, TASK_BODY_MAX, type Task } from "@sacty/core";
 import { startTaskMcp, summarizeTask, type TaskDetail } from "@sacty/daemon/task-mcp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "../../../apps/daemon/src/activity.js";
@@ -398,6 +398,57 @@ describe("本物のデーモンのサービスを通した、一時停止と再�
     t.activity.close();
   });
 
+  it("補足の長さは、足せる文字数（resumeNoteRoom）ちょうどなら足され、1文字超えると送らずに断る", async () => {
+    const t = await setup();
+    const { id } = t.service.createTask({
+      projectId: "default",
+      title: "題",
+      body: "あ".repeat(TASK_BODY_MAX - 300),
+    });
+    await t.call("pause_task", { task_id: id });
+    const room = resumeNoteRoom(t.live(id));
+    expect(room).toBeGreaterThan(0);
+    expect(room).toBeLessThan(300);
+    const postsBefore = t.posts().length;
+    const before = t.count(id);
+    const over = await t.call("resume_task", { task_id: id, note: "い".repeat(room + 1) });
+    expect(over.isError).toBe(true);
+    expect(over.text).toContain(`足せるのは ${room} 文字まで`);
+    expect(t.posts()).toHaveLength(postsBefore);
+    expect(t.count(id)).toBe(before);
+    expect((await t.detail(id)).state).toBe("paused");
+    const ok = await t.call("resume_task", { task_id: id, note: "い".repeat(room) });
+    expect(ok.isError).toBe(false);
+    expect(t.posts().at(-1)?.body).toBe(JSON.stringify({ note: "い".repeat(room) }));
+    expect(t.live(id).body).toContain("い".repeat(room));
+    t.activity.close();
+  });
+
+  it("再開の後の文は、子タスク待ちに戻ったとき・ほかの state（idle）に戻ったときで分かれる", async () => {
+    const t = await setup();
+    const make = (title: string, patch: Record<string, unknown>) => {
+      const { id } = t.service.createTask({ projectId: "default", title });
+      Object.assign(t.live(id), { status: "paused", pausedReason: "manual", ...patch });
+      return id;
+    };
+    const children = make("子待ち", { resumeTo: "waiting_children" });
+    const a = await t.call("resume_task", { task_id: children });
+    expect(a.isError).toBe(false);
+    const aDone = a.data as Done;
+    expect(aDone.task.state).toBe("waiting_children");
+    expect(aDone.message).toContain("子タスクの完了待ちに戻りました");
+    expect(aDone.message).toContain("実行し直しません");
+    const idle = make("idle", { resumeTo: "idle" });
+    const b = await t.call("resume_task", { task_id: idle });
+    expect(b.isError).toBe(false);
+    const bDone = b.data as Done;
+    expect(bDone.task.state).toBe("idle");
+    expect(bDone.message).toContain("sacty が次へ進めます");
+    expect(bDone.message).toContain("state は idle");
+    expect(bDone.message).not.toContain("実行し直します");
+    t.activity.close();
+  });
+
   it("デーモンが再開を断ったときは、デーモンの理由をそのまま返し、何も記録しない（外部作業が始まっている）", async () => {
     const t = await setup();
     const { id } = t.service.createTask({ projectId: "default", title: "題" });
@@ -463,9 +514,14 @@ describe("頼んだ後に結果を受け取れなかったときの案内（一�
       expect(pause.text).toContain("自動でやり直さず");
       expect(pause.text).toContain("get_task");
       // 時間切れの後も一時停止が続いていることがあるので、running・queued のままなら呼び直さず待つ
-      expect(pause.text).toContain("state が running・queued のままなら");
+      expect(pause.text).toContain(
+        "state が一時停止の前と同じ（running・queued・検証中の idle）なら",
+      );
       expect(pause.text).toContain("呼び直さず wait_for_task で");
-      expect(pause.text).toContain("止まらなかったことを利用者に伝えてください");
+      expect(pause.text).toContain("paused なら止まっています");
+      expect(pause.text).toContain(
+        "awaiting_approval・escalated になったときは、止まらなかったことを利用者に伝えてください",
+      );
       expect(pause.text).not.toContain("止まっていなければ");
       Object.assign(t.live(id), { status: "paused", pausedReason: "manual" });
       const resume = await t.call("resume_task", { task_id: id });
@@ -586,7 +642,7 @@ describe("読み取り側と画面の判定（PBI-400）", () => {
       for (const steps of stepSets) {
         for (const verification of [undefined, "pending"] as const) {
           const task = { ...base, status, steps, verification } as unknown as Task;
-          // 画面の判定（canControl && canPause）の写し。完了・中止には出さず、idle は検証中だけ出す
+          // 画面の判定（apps/web の canControl && canPause）の式の写し（web は import できないので、式を写して比べる。画面の式を変えたら、ここも直す）。完了・中止には出さず、idle は検証中だけ出す
           const finished =
             status === "cancelled" ||
             (status === "idle" && summarizeTask(task).state === "completed");

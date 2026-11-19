@@ -118,7 +118,7 @@ const uncertainChanges = uncertainOf("差し戻し", CHANGES_UNCERTAIN);
  * なる（または承認待ちに達して止まらない）ことがある。
  */
 const PAUSE_UNCERTAIN =
-  "一時停止されている可能性があります。自動でやり直さず、get_task で state と pausedReason を確かめてください。state が running・queued のままなら、一時停止が続いている可能性があるので、呼び直さず wait_for_task で paused か awaiting_approval になるのを待ってください（awaiting_approval になったときは、止まらなかったことを利用者に伝えてください）。";
+  "一時停止されている可能性があります。自動でやり直さず、get_task で state と pausedReason を確かめてください。state が一時停止の前と同じ（running・queued・検証中の idle）なら、一時停止が続いている可能性があるので、呼び直さず wait_for_task で待ってください。paused なら止まっています。awaiting_approval・escalated になったときは、止まらなかったことを利用者に伝えてください。";
 const uncertainPause = uncertainOf("一時停止", PAUSE_UNCERTAIN);
 
 /** 再開を頼んだ後の案内（再開されたかどうかが分からない）。 */

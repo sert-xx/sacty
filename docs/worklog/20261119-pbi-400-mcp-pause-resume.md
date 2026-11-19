@@ -17,7 +17,7 @@
   一時停止できるかの判定（`pauseBlock`。画面の `canControl`・`canPause` の写し）と、このツールで再開できるかの判定（`resumeBlock`。予算・テストの扱い・`child_cancelled` は画面で決める）を1か所に置き、ツールの断りと、要約の `canPause`・`canResume`、`get_task` の `resumeBlocked` が同じ関数を使う。
   完了したタスクと検証中でない `idle` は、デーモンが断らないので、API に送らずに断る。補足は前後の空白を除き、空なら送らず、`RESUME_NOTE_MAX`・`resumeNoteRoom` を超えるときは送らずに断る。
   「利用者に頼まれたときだけ」の文（`ASK_ONLY_NOTE`）と、結果を受け取れなかったときの説明の文（`uncertainDescription`）を、承認・差し戻しと共通にした。文面は変えていない。`INSTRUCTIONS` には足すだけ。
-- `packages/cli/src/mcp.ts`：`pause`・`resume` を足した。結果を受け取れなかったときの案内の組み立て（`uncertainNotice`・`uncertainText`）と、送る前の失敗・5xx・本文を読めないの振り分け（`writeTask`）を、承認・差し戻し・一時停止・再開で共通にした。承認・差し戻しの文と動きは変えていない。
+- `packages/cli/src/mcp.ts`：`pause`・`resume` を足した。結果を受け取れなかったときの案内の組み立て（`uncertainNotice`・`uncertainOf`）と、送る前の失敗・5xx・本文を読めないの振り分け（`writeTask`）を、承認・差し戻し・一時停止・再開で共通にした。承認・差し戻しの文と動きは変えていない。
 - 仕様書・ユーザードキュメント（日英）、ADR、この作業履歴、`sacty mcp` の使い方の文と CLI・README の文書。
 - 新しいテスト：`packages/cli/src/mcp-pause.test.ts`（本物のサービスと `createApp`・本物の `daemonApi` をつなぐ）。既存のツール一覧のテストは、最初の11個はそのままで、後ろに2つを足した。
 
