@@ -141,11 +141,89 @@ function partialAfter(buf: Buffer, at: number, needles: readonly Buffer[], fulls
   return keep;
 }
 
+const REDACTED_BYTES = Buffer.from(REDACTED, "utf8");
+
+/**
+ * 前の回に伏せた印（[REDACTED]）の前後。印の前（starts）で値の先頭の一部が終わりうる／印の後（ends）で値の後ろの一部が始まりうる
+ * （印は、その時点で知っていた別の値で置き換えた跡で、その値と重なる値の一部が印の外側に残る）。窓の端で切れた印も数える。
+ */
+function markerBounds(buf: Buffer): { starts: number[]; ends: number[] } {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  const size = REDACTED_BYTES.length;
+  for (let i = buf.indexOf(REDACTED_BYTES); i >= 0; i = buf.indexOf(REDACTED_BYTES, i + 1)) {
+    starts.push(i);
+    ends.push(i + size);
+  }
+  for (let k = Math.min(size - 1, buf.length); k > 0; k--) {
+    if (buf.subarray(0, k).equals(REDACTED_BYTES.subarray(size - k))) {
+      ends.push(k);
+      break;
+    }
+  }
+  for (let k = Math.min(size - 1, buf.length); k > 0; k--) {
+    if (buf.subarray(buf.length - k).equals(REDACTED_BYTES.subarray(0, k))) {
+      starts.push(buf.length - k);
+      break;
+    }
+  }
+  return { starts, ends };
+}
+
 /**
  * 伏せる範囲を、バイトの区間として1か所で決める（読み取り・閉じるときの伏せ直し・実行中の終わりの3か所が使う）。
- * 値の全体の出現と、継ぎ目で見つけた値の一部を区間にし、重なる・接する区間は1つにまとめる。
- * 継ぎ目：cuts.end の位置の前で値の先頭の一部が終わりうる／cuts.start の位置の後で値の後ろの一部が始まりうる（値の続きが記録に無い）。
+ * 値の全体の出現と、値の続きが記録に無い所（継ぎ目・前の回に伏せた印の前後）で見つけた値の一部を区間にし、
+ * 重なる・接する区間は1つにまとめる。伏せる時点（書くとき・閉じるとき・読むとき）で知っている値の集まりが違っても、
+ * 前の回の印は、その外側に値の一部が残る手がかりとして働く。
+ * 継ぎ目：cuts.end の位置の前で値の先頭の一部が終わりうる／cuts.start の位置の後で値の後ろの一部が始まりうる。
+ * 印と印・継ぎ目に挟まれた短い区間が、値の途中の一部になっているときも伏せる。
  */
+/** 値の一部が始まりうる所（afters）と、値の一部が終わりうる所（befores）。継ぎ目と、前の回に伏せた印（切れたものを含む）の前後。 */
+function boundaries(
+  buf: Buffer,
+  cuts: { end?: readonly number[]; start?: readonly number[] },
+): { befores: number[]; afters: number[] } {
+  const marks = markerBounds(buf);
+  const cutEnds = (cuts.end ?? []).filter((p) => p > 0 && p <= buf.length);
+  const cutStarts = (cuts.start ?? []).filter((p) => p >= 0 && p < buf.length);
+  // 継ぎ目で切られた印（先頭の終わりが「[REDA」で終わる・末尾の始まりが「CTED]」から始まる）も、印の前後として数える
+  const size = REDACTED_BYTES.length;
+  for (const p of cutEnds) {
+    for (let k = Math.min(size - 1, p); k > 0; k--) {
+      if (buf.subarray(p - k, p).equals(REDACTED_BYTES.subarray(0, k))) {
+        marks.starts.push(p - k);
+        break;
+      }
+    }
+  }
+  for (const p of cutStarts) {
+    for (let k = Math.min(size - 1, buf.length - p); k > 0; k--) {
+      if (buf.subarray(p, p + k).equals(REDACTED_BYTES.subarray(size - k))) {
+        marks.ends.push(p + k);
+        break;
+      }
+    }
+  }
+  return {
+    befores: [...cutEnds, ...marks.starts].sort((a, b) => a - b),
+    afters: [...cutStarts, ...marks.ends.filter((p) => p < buf.length)],
+  };
+}
+
+/** 値の一部が始まりうる所 p から次の終わりうる所 q までの短い区間が、値の途中の一部になっているか。 */
+function middlePiece(
+  buf: Buffer,
+  p: number,
+  befores: readonly number[],
+  needles: readonly Buffer[],
+  fulls: Spans,
+): number | undefined {
+  const q = befores.find((b) => b > p);
+  if (q === undefined || q - p >= maxLength(needles)) return undefined;
+  const piece = buf.subarray(p, q);
+  return needles.some((n) => n.indexOf(piece) >= 0) && !within(p, q, fulls) ? q : undefined;
+}
+
 function secretSpans(
   buf: Buffer,
   needles: readonly Buffer[],
@@ -154,20 +232,34 @@ function secretSpans(
   if (needles.length === 0) return [];
   const fulls = fullSpans(buf, needles);
   const spans = [...fulls];
-  for (const p of cuts.end ?? []) {
-    if (p <= 0 || p > buf.length) continue;
+  const { befores, afters } = boundaries(buf, cuts);
+  for (const p of befores) {
     const k = partialBefore(buf, p, needles, fulls);
     if (k > 0) spans.push([p - k, p]);
   }
-  for (const p of cuts.start ?? []) {
-    if (p < 0 || p >= buf.length) continue;
+  for (const p of afters) {
     const k = partialAfter(buf, p, needles, fulls);
     if (k > 0) spans.push([p, p + k]);
+    // 次の「値の先頭の一部が終わりうる所」までの短い区間が、値の途中の一部になっているとき
+    const q = middlePiece(buf, p, befores, needles, fulls);
+    if (q !== undefined) spans.push([p, q]);
   }
   return mergeSpans(spans);
 }
 
-const REDACTED_BYTES = Buffer.from(REDACTED, "utf8");
+/**
+ * 終わり（まだ続きが届くかもしれない所）の直前が、継ぎ目・前の回の印の後から続く、値の途中の一部になっているか。
+ * 値の全体の出現に収まる分は数えない。
+ */
+function openPieceAtEnd(
+  buf: Buffer,
+  needles: readonly Buffer[],
+  cuts: { end?: readonly number[]; start?: readonly number[] },
+): boolean {
+  const fulls = fullSpans(buf, needles);
+  const { afters } = boundaries(buf, cuts);
+  return afters.some((p) => middlePiece(buf, p, [buf.length], needles, fulls) !== undefined);
+}
 
 /** buf の [from, to) を、区間を [REDACTED] に置き換えて返す。区間は from..to の中に収まっているものとする。 */
 function replaceSpans(buf: Buffer, from: number, to: number, spans: Spans): Buffer {
@@ -215,12 +307,19 @@ export function withoutPartialSecretTail(source: ByteSource, forms: readonly str
     const from = source.total - size;
     const tail = source.read(from, source.total);
     const fulls = fullSpans(tail, needles);
-    if (partialBefore(tail, tail.length, needles, fulls) === 0) return source;
     // 末尾の始まり・先頭の終わりの継ぎ目も渡す（継ぎ目にある値の後ろの一部が、終わりの一部とつながるため）
-    const spans = secretSpans(tail, needles, {
+    const cuts = {
       end: [...(source.cuts?.end ?? []).map((p) => p - from), tail.length],
       start: (source.cuts?.start ?? []).map((p) => p - from),
-    });
+    };
+    // 終わりが、値の先頭の一部で終わっているか、前の回の印・継ぎ目の後から続く値の途中の一部で終わっているとき
+    if (
+      partialBefore(tail, tail.length, needles, fulls) === 0 &&
+      !openPieceAtEnd(tail, needles, cuts)
+    ) {
+      return source;
+    }
+    const spans = secretSpans(tail, needles, cuts);
     const last = spans[spans.length - 1];
     if (!last || last[1] !== tail.length) return source;
     if (last[0] >= pad || from === 0) {

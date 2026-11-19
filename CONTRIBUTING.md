@@ -153,6 +153,7 @@ npm run build       # すべてのパッケージのビルド
   | `daemon-audit-memory.test.ts` | 完了したタスクの監査、メモリー |
   | `task-mcp.test.ts` | 起動中の sacty を操作する MCP サーバー（`sacty mcp`）のツール（一覧・詳細・再レビュー・作成）と、タスクの PR・ブランチ・絞り込み |
   | `task-mcp-read.test.ts` | `sacty mcp` の成果物・実行の一覧・実行のログの読み取り（本物のサービス・API・ログのストアに対して。範囲・上限・伏せる値が境目や継ぎ目をまたぐ場合・伏せ直せていない実行・場所の外の指定） |
+  | `session-logs-redaction.test.ts` | セッションログの範囲の読み取りで、書くとき・閉じるとき・読むときに知っている秘密情報の集まりが違っても、継ぎ目と前の回に伏せた印の前後に値の一部が残らないこと（乱数の入力を含む） |
   | `daemon-api-settings.test.ts` | HTTP の API、設定に関する注意（使えないエージェント・実行の上限・Docker とイメージ・新しい版の知らせ）、タスクの詳細で工程のエージェントを変えること |
 - 必須ではありませんが、レビューの観点・自己レビュー・最終レビューの指示（`apps/daemon/default-context/skills/review/`、`apps/daemon/src/prompts.ts` の `selfReviewLines`・`outOfScopeLines`）を人が手で変えるときは、実験で見つかった取りこぼしに近い例に実際の AI を当てて、効き目を測れます（手動の測定手順）。
   AI を呼ぶので時間と費用がかかり、判定も揺れます。変更の前後で同じ例を複数回流して比べます（Claude Code の `claude` コマンドが要ります）。

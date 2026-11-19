@@ -68,6 +68,16 @@ describe("バイトの範囲の読み取り（PBI-395）", () => {
     expect(r.text).not.toContain("�");
   });
 
+  it("max が小さく、文字の頭へ進めた結果が窓の外に出るときは、読み足して値を探し直し、値の外側まで進む", () => {
+    // offset=3 は 😀 の途中。次の文字の頭（5）へ進めると、窓の外に出る。読み足さないと、値の途中（next=10）で終わる
+    const r = readByteRange(
+      memorySource(Buffer.from("g😀😀g密秘h秘秘密h", "utf8")),
+      { offset: 3, max: 1 },
+      ["g密秘h", "😀g"],
+    );
+    expect(r).toEqual({ text: "[REDACTED]", offset: 5, next: 17, totalBytes: 27, clipped: true });
+  });
+
   it("全体以上の位置は、0バイトと全体の大きさを返す", () => {
     for (const offset of [5, 15]) {
       expect(readByteRange(src("abcde"), { offset, max: 10 })).toEqual({
@@ -206,6 +216,54 @@ describe("バイトの範囲の読み取り（PBI-395）", () => {
         secret,
       ]);
       expect(part.total).toBe(2);
+    });
+
+    describe("前の回に伏せた印（[REDACTED]）の前後", () => {
+      const secret = "ghp_NEWTOKEN1234567890abcdef";
+      it("印の後ろに値の後ろの一部、印の前に値の先頭の一部が残っていても、継ぎ目が無くても伏せる", () => {
+        const after = readByteRange(src(`x [REDACTED]${secret.slice(1)} y`), { max: 100 }, [
+          secret,
+        ]);
+        expect(after.text).toBe("x [REDACTED][REDACTED] y");
+        const before = readByteRange(src(`x ${secret.slice(0, -1)}[REDACTED] y`), { max: 100 }, [
+          secret,
+        ]);
+        expect(before.text).toBe("x [REDACTED][REDACTED] y");
+      });
+
+      it("2つの印に挟まれた値の途中の一部も伏せ、値にならない短い区間は残す", () => {
+        expect(
+          readByteRange(src("x [REDACTED]TOKEN[REDACTED] y"), { max: 100 }, [secret]).text,
+        ).toBe("x [REDACTED][REDACTED][REDACTED] y");
+        expect(
+          readByteRange(src("x [REDACTED]zzzz[REDACTED] y"), { max: 100 }, [secret]).text,
+        ).toBe("x [REDACTED]zzzz[REDACTED] y");
+      });
+
+      it("継ぎ目で切られた印の残り（CTED]）の後ろの値の一部も伏せる", () => {
+        const mark = Buffer.from("\n[cut]\n", "utf8");
+        const mem = {
+          ...memorySource(Buffer.concat([mark, Buffer.from(`CTED]${secret.slice(1)}`, "utf8")])),
+          cuts: { end: [], start: [mark.length] },
+        };
+        const source = concatSource(
+          { ...memorySource(Buffer.from("head ", "utf8")), cuts: { end: [], start: [] } },
+          mem,
+        );
+        expect(readByteRange(source, { offset: 0, max: 200 }, [secret]).text).not.toContain(
+          "hp_NEW",
+        );
+      });
+
+      it("読める終わりが、印の後から続く値の途中の一部で終わるときは、その一部を外す", () => {
+        const long = "ZZ密Q秘W"; // 「密Q」は先頭の一部でも後ろの一部でもなく、途中の一部
+        const readable = withoutPartialSecretTail(src("x [REDACTED]密Q"), [long]);
+        expect(readable.total).toBe(Buffer.byteLength("x [REDACTED]"));
+        // 値と関係の無い文字で終わるときは、そのまま
+        expect(withoutPartialSecretTail(src("x [REDACTED]abc"), [long]).total).toBe(
+          Buffer.byteLength("x [REDACTED]abc"),
+        );
+      });
     });
 
     it("末尾の始まりに値の後ろの一部があり、終わりが同じ値の先頭の1文字で終わるときも、値の一部を返さない", () => {
