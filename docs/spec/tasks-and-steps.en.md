@@ -500,7 +500,7 @@ A task the daemon is actually processing during this time is shown in the web UI
   | `starting` | Any other work until the first step starts (after the steps are chosen: matching the candidates, preparing an external operation, and so on) | 工程の開始を準備中 | Preparing to start the step |
 
 - The phase is kept only in the daemon's memory (`TaskService.preparingPhases`). It is not recorded in the activity log, and the meaning of `queued` does not change.
-  `runNext` sets it right before each piece of work starts and always clears it when the processing (`runNext`) ends.
+  `runNext` (matching the candidates) and `runNextInner` (the other phases) set it right before each piece of work starts, and `runNext` always clears it when it ends.
 - It is returned to the web UI only when the status is `queued`, the worker is processing the task (`inflight`, the same mark as "running" in the dashboard's step queue), and the task has never started a step run (no `AgentRunStarted` in the activity log; `firstStepStarted`) (`preparingOf`).
   - If a phase is set, that phase is returned.
   - If no phase is set, `starting` is returned.

@@ -748,7 +748,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   | `starting` | そのほかの、最初の工程を始めるまでの処理（工程を選んだ後の、候補の照合・外部作業の準備など） | 工程の開始を準備中 | Preparing to start the step |
 
 - 段階は、デーモンのメモリーにだけ持つ（`TaskService.preparingPhases`）。作業履歴には記録せず、`queued` の意味も変えない。
-  `runNext` が、それぞれの処理を始める直前に付け、処理（`runNext`）の終わりに必ず消す。
+  `runNext`（候補の照合）と `runNextInner`（そのほかの段階）が、それぞれの処理を始める直前に付け、`runNext` の終わりに必ず消す。
 - 画面に返すのは、状態が `queued` で、ワーカーがそのタスクを処理していて（`inflight`。ダッシュボードの待ち行列の「実行中」と同じ印）、工程の実行を1回も始めていない（作業履歴に `AgentRunStarted` が無い。`firstStepStarted`）ときだけ（`preparingOf`）。
   - 付けた段階があれば、それを返す。
   - 付けた段階が無ければ、`starting` を返す。
