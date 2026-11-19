@@ -293,7 +293,7 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
     activity.close();
   });
 
-  it("sacty 自身の投稿・知らせ、Bot の投稿、作者でない人の投稿、対象を確かめる前の投稿では、判定し直さない（条件 4）", async () => {
+  it("sacty 自身の投稿・知らせ、作者でない人の投稿、対象を確かめる前の投稿では、判定し直さない（条件 4。Bot の投稿は、PR の読み取りが除く）", async () => {
     const { activity, pulls, service, id, clock, get, tick } = await posted(["changes_required"]);
     const round1 = `<!-- sacty-review:${id} -->`;
     pulls.feedbackList = [
