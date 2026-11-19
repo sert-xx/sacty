@@ -9,8 +9,8 @@ For example, after fixing a PR, you can ask the AI to "re-review this PR with sa
 
 sacty has an MCP server for this (`sacty mcp`; it supports the 2026-07-28 revision of the MCP specification and also works with clients of earlier revisions).
 It can look up tasks (list, search, details), put a PR review task into re-review, create a task in a project you specify,
-read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only), and approve a step that is awaiting approval. The logs of runs cannot be read yet (read them in the web UI).
-It cannot request changes to or cancel tasks (do those in the web UI). A step approved by merging a PR (implementation, requirements or design with a PR) cannot be approved from MCP either (merge the PR on GitHub). Deliverables can be used to check the content before you approve.
+read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only), approve a step that is awaiting approval, and request changes on a step that is awaiting approval. The logs of runs cannot be read yet (read them in the web UI).
+It cannot cancel or redo tasks (do those in the web UI). Requesting changes is also only the basic form (requesting changes over the limit, choosing where to send it back, and choosing a cause are done in the web UI). A step approved by merging a PR (implementation, requirements or design with a PR) cannot be approved from MCP either (merge the PR on GitHub). Deliverables can be used to check the content before you approve.
 
 ## Connecting
 
@@ -52,6 +52,7 @@ The AI picks the tools below and calls them.
 - "Read the design of this sacty task"
 - "Show me the agent runs of this sacty task, newest first"
 - "Check the investigation result of this sacty task, and approve it if it looks good"
+- "Read the design of this sacty task and send it back, pointing out that it should add an error message"
 
 When you ask for a re-review, sacty reviews the latest commit of the PR again and posts the result to the PR ([Re-review](intake.en.md#re-review)).
 The review takes time to finish and costs money.
@@ -84,6 +85,7 @@ When sacty does not respond within 30 seconds, the tools answer that the daemon 
 | `get_deliverable` | Reads the content of a deliverable by step and kind (the approved version if there is one, otherwise the latest output; for a review, the body and the comments on lines) |
 | `list_runs` | Lists agent runs, newest first (steps, the orchestrator, and so on; the agent used, time, running / succeeded / failed / no end recorded, and a switch to another agent) |
 | `approve_step` | Approves a step awaiting approval (`task_id`, `step`, `submission`), the same as "Approve" on the web UI. A step approved by merging a PR cannot be approved here; the PR URL is returned |
+| `request_changes` | Requests changes on a step awaiting approval (`task_id`, `step`, `submission`, `comments`), the same as writing only remarks and pressing "Request changes" on the web UI without choosing where to send it back or a cause. It does not request changes if human requests for changes to the step have reached the limit (3) |
 
 The filters of `list_tasks` are as follows (all can be omitted; with several, only tasks matching all of them are returned).
 
@@ -134,12 +136,28 @@ The AI calls it only when you ask. It is safer to check the deliverables (`list_
 - A step approved by merging a PR (implementation, requirements or design with a PR) cannot be approved from MCP. `method` in `approval` is `pull_request`; review and merge the PR at `pullRequestUrl` on GitHub (the merge is the approval).
 - When no result arrives (a timeout and so on), the step may have been approved. The AI does not retry automatically and checks the state with `get_task`.
 
+## Requesting changes
+
+`request_changes` requests changes on a step that is awaiting approval (the same as writing only remarks, without choosing where to send it back or a cause, and pressing "Request changes" on the web UI's approval screen). Requesting changes makes sacty redo the step (it takes time and costs money, and cannot be undone).
+The AI calls it only when you ask. It is safer to ask after it has checked `approval` from `get_task` and the deliverables (`list_deliverables`, `get_deliverable`).
+
+- You specify the task, the step (`step`), the submission number (`submission`), and the remarks (`comments`; 1 or more). The step and submission are the values of `approval`, as with approval. If they differ from the step or submission now awaiting approval (a stale submission), nothing is sent back and the AI is told the current submission.
+- Each line becomes one remark (the same as the web UI's field). Surrounding whitespace and empty lines are removed. You can send up to 50 remarks of 2,000 characters each at a time. If only empty remarks are given or the limits are exceeded, nothing is sent back and the reason is returned.
+- The step that is redone is the redoable step closest to the step awaiting approval (usually the step awaiting approval itself; task splitting for an integration review). The result's `reworkStep` says which step is redone.
+- You cannot specify the cause, the step to send it back to, or a change of the task's image or agents (do those in the web UI).
+- Human requests for changes to the same step are limited to 3. If the limit has been reached, nothing is sent back and nothing changes; the AI is told the limit has been reached. Because costs grow, you decide on the web UI whether to continue.
+  Requesting changes over the limit cannot be done from MCP.
+- A task whose status is "escalated" (waiting for a decision on the limit or on a change proposal) cannot be sent back from MCP. Decide on the web UI.
+- When it cannot send back (not awaiting approval, no such task, a step other than the one awaiting approval, a stale submission, already sent back, no redoable step), it returns the reason and changes nothing.
+- A step that made a PR (implementation, or requirements or design with a PR) can also be sent back. The remarks are not left on the PR and count as a human request for changes. To leave a record on the PR, write a comment on the PR (sacty imports it and sends the step back; [Requesting changes with PR comments](tasks.en.md#requesting-changes-with-pr-comments)). Writing a comment on a PR from MCP is not possible.
+- If the result could not be received (a timeout, for example), changes may have been requested. The AI does not retry automatically and checks the state with `get_task` (retrying without checking could request changes twice or use up the count toward the limit).
+
 ## Things to keep in mind
 
 - Only the person running `sacty up` can use the MCP server (it uses the address sacty wrote to a file only that person can read).
-- The registered AI can start a re-review, create a task, or approve a step awaiting approval on your behalf. Creating a task or approving starts steps, which takes time and costs money.
-  In the AI CLI's permission prompt, you can choose to confirm `rereview_task`, `create_task`, and `approve_step` every time or to allow them.
-  Confirming `approve_step` every time is recommended. If you allow it, an instruction written in a task description, deliverable, or review body by someone else may get a step approved without your check.
+- The registered AI can start a re-review, create a task, approve or request changes on a step awaiting approval on your behalf. Creating a task, approving, or requesting changes starts steps, which takes time and costs money.
+  In the AI CLI's permission prompt, you can choose to confirm `rereview_task`, `create_task`, `approve_step`, and `request_changes` every time or to allow them.
+  Confirming `approve_step` and `request_changes` every time is recommended. If you allow them, an instruction written in a task description, deliverable, or review body by someone else may get a step approved or sent back without your check.
 - Task descriptions, review bodies, and deliverables are passed to the AI.
   They can contain text from PRs and issues written by other people and text written by agents (do not let the AI treat it as instructions).
 - While a previous version of sacty is running, the deliverable and run tools answer "update sacty and restart it with `sacty up`" (a different reason from a missing task). Restart it when no task is running.

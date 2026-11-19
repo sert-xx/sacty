@@ -17,7 +17,7 @@ The commands are as follows.
 | [`sacty context init`](#sacty-context-init) | Creates a template of a context repository |
 | [`sacty context preview`](#sacty-context-preview) | Shows the result of composing the context of a project |
 | [`sacty launch`](#sacty-launch) | Starts your local Claude Code or Codex interactively with the context of a project |
-| [`sacty mcp`](#sacty-mcp) | Runs the MCP server for operating the running sacty from your local Claude Code or Codex, reading deliverables and the run list, and approving a step awaiting approval |
+| [`sacty mcp`](#sacty-mcp) | Runs the MCP server for operating the running sacty from your local Claude Code or Codex, reading deliverables and the run list, approving a step awaiting approval, and requesting changes on one |
 
 The following applies to every command.
 
@@ -170,7 +170,7 @@ If something cannot be passed locally, it is shown with `[sacty] 注意：` befo
 
 Runs, over standard input and output (stdio), the MCP server for operating the running sacty (`sacty up`) from your local Claude Code or Codex.
 It is not a command you run yourself; you register it as an MCP server in your AI CLI ([Operating sacty from your local AI](mcp.en.md)).
-Besides listing projects, creating, listing, searching, and showing tasks, and re-reviewing a PR review task, it can read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only; the logs of runs cannot be read yet). It can also approve a step awaiting approval (a step approved by merging a PR cannot be approved this way).
+Besides listing projects, creating, listing, searching, and showing tasks, and re-reviewing a PR review task, it can read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only; the logs of runs cannot be read yet). It can also approve a step awaiting approval (a step approved by merging a PR cannot be approved this way) and request changes on one (only the basic form: requesting changes over the limit and choosing where to send it back or a cause are not possible).
 
 ```sh
 sacty mcp

@@ -747,3 +747,105 @@ describe("sacty mcp の承認（PBI-396）", () => {
     expect(old?.message).toBe("デーモンが 404 を返しました。");
   });
 });
+
+describe("sacty mcp の差し戻し（PBI-397）", () => {
+  const input = { step: "requirements", submission: 1, comments: ["ここを直す", "あれも直す"] };
+  const uncertain = "差し戻されている可能性があります";
+  const hung: Fetch = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    });
+  const failure = (fetcher: Fetch, at = home) =>
+    daemonApi(at, fetcher, 20)
+      .requestChanges("t1", input)
+      .then(
+        () => undefined,
+        (e: unknown) => e as Error,
+      );
+  const taskBody = { task: { id: "t1" } };
+
+  it("画面と同じ API（POST /api/tasks/:id/request-changes）に、step・submission・comments だけを、接続先のトークンで送る", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const { calls, fetcher } = fakeDaemon(() => Response.json(taskBody));
+    const task = await daemonApi(home, fetcher).requestChanges("a/b", input);
+    expect(task).toEqual({ id: "t1" });
+    expect(calls.map((c) => `${c.method} ${new URL(c.url).pathname}`)).toEqual([
+      "POST /api/tasks/a%2Fb/request-changes",
+    ]);
+    expect(calls[0]?.token).toBe("Bearer tok");
+    const body = JSON.parse(calls[0]?.body ?? "") as Record<string, unknown>;
+    expect(body).toEqual(input);
+    for (const key of ["continueOverLimit", "target", "cause", "answer", "image", "agents"]) {
+      expect(key in body).toBe(false);
+    }
+  });
+
+  it("デーモンが断った理由は文にする。古い提出は、差し戻しの文（承認ではない）で、get_task で確かめ直すことを伝える", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const stale = await failure(async () =>
+      Response.json(
+        {
+          error: "invalid_operation",
+          messages: [{ code: "gate.staleSubmission", params: { submission: 1, current: 3 } }],
+        },
+        { status: 409 },
+      ),
+    );
+    expect(stale?.message).toContain("1回目");
+    expect(stale?.message).toContain("3回目");
+    expect(stale?.message).toContain("差し戻しませんでした");
+    expect(stale?.message).not.toContain("承認しませんでした");
+    expect(stale?.message).not.toContain(uncertain);
+    const over = await failure(async () =>
+      Response.json(
+        {
+          error: "invalid_operation",
+          messages: [{ code: "gate.overLimit", params: { limit: 3 } }],
+        },
+        { status: 409 },
+      ),
+    );
+    expect(over?.message).toContain("上限");
+    expect(over?.message).not.toContain(uncertain);
+  });
+
+  it("差し戻しを送った後に結果を受け取れなければ（時間切れ・切断・本文を読めない・5xx）、差し戻されている可能性と get_task で確かめることを伝える", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const timedOut = await failure(hung);
+    expect(timedOut?.message).toContain("時間切れ");
+    expect(timedOut?.message).toContain(uncertain);
+    expect(timedOut?.message).not.toContain("もう一度試してください");
+    expect(timedOut?.message).toContain("get_task");
+    const dropped = await failure(async () => {
+      throw new TypeError("fetch failed", { cause: new Error("socket hang up") });
+    });
+    expect(dropped?.message).toContain(uncertain);
+    const broken = await failure(async () => new Response("<html>", { status: 200 }));
+    expect(broken?.message).toContain("差し戻しの結果を受け取れませんでした");
+    expect(broken?.message).toContain(uncertain);
+    const server = await failure(async () => new Response("oops", { status: 500 }));
+    expect(server?.message).toContain("デーモンが 500 を返しました。");
+    expect(server?.message).toContain(uncertain);
+    // 指摘の文は、理由に写さない
+    expect(server?.message).not.toContain("ここを直す");
+  });
+
+  it("認証できない・接続を断られた・起動中の sacty が無い・前の版のデーモン（想定外の 404）は、差し戻していないので、可能性を伝えない", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const unauthorized = await failure(async () => new Response("no", { status: 401 }));
+    expect(unauthorized?.message).toContain("デーモンに認証できません");
+    expect(unauthorized?.message).not.toContain(uncertain);
+    const refused = await failure(async () => {
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+      });
+    });
+    expect(refused?.message).toContain("デーモンにつながりません");
+    expect(refused?.message).not.toContain(uncertain);
+    const none = await failure(hung, mkdtempSync(join(tmpdir(), "sacty-mcp-none-")));
+    expect(none?.message).toContain("起動中の sacty が見つかりません");
+    expect(none?.message).not.toContain(uncertain);
+    const old = await failure(async () => new Response("Not Found", { status: 404 }));
+    expect(old?.message).toBe("デーモンが 404 を返しました。");
+  });
+});
