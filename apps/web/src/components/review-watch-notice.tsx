@@ -50,7 +50,11 @@ export function ReviewWatchNotice({ task }: { task: Task }) {
       </section>
     );
   }
-  const ended = task.status !== "cancelled" ? task.reviewWatchEnded : undefined;
+  // 指摘なしで完了した後のマージ・クローズ（先頭を追うのをやめただけ）には出さない。完了の理由は、指摘なし（状態の表示と同じ）
+  const ended =
+    task.status !== "cancelled" && currentReviewVerdict(task) !== "no_findings"
+      ? task.reviewWatchEnded
+      : undefined;
   if (!ended) return null;
   return (
     <section

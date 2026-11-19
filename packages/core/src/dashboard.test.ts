@@ -216,7 +216,7 @@ describe("ダッシュボードの集計：流量（PBI-118）", () => {
       posted("suggestions"),
       posted("suggestions", {
         reviewWatch: undefined,
-        reviewWatchEnded: { reason: "merged", at: new Date(TODAY - HOUR).toISOString() },
+        reviewWatchEnded: { reason: "merged" },
       }),
     );
     expect(summarize(stats).flow.days7).toEqual({

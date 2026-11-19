@@ -2637,28 +2637,29 @@ export class TaskService {
       const source = watched(task) ? task.reviewTarget : task.source;
       if (!source) continue;
       // 投稿から時間がたった PR の見守りは、間を空けて読む（開いたままの PR が増えても、GitHub への問い合わせを増やし続けない）
-      if (watched(task)) {
-        if (!this.reviewWatchDue(task)) continue;
-        this.reviewWatchChecked.set(task.id, this.now());
-      }
+      if (watched(task) && !this.reviewWatchDue(task)) continue;
       const usedSecrets: string[] = [];
       let status: PullRequestStatus;
       let token: string;
       try {
         token = await this.githubToken(task, source.repo, usedSecrets);
-        status = await this.deps.pulls.status({ repo: source.repo, token, number: source.number });
+        const pr = { repo: source.repo, token, number: source.number };
+        // 見守りの読み取りは、答えを待つ時間を限る（答えの返らない PR が 1 件あっても、後ろのタスクと確認の残りを止めない）
+        status = watched(task) ? await this.statusWithin(pr) : await this.deps.pulls.status(pr);
       } catch (error) {
         console.warn(
-          `[daemon] PR #${source.number}（${source.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          `[daemon] レビューのタスク ${task.id} の PR #${source.number}（${source.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
         );
         continue;
       }
       if (watched(task)) {
+        // 読めたときだけ、読んだ時刻を記録する（読めなかった PR は、間隔を待たずに、次の確認で読み直す）
+        this.reviewWatchChecked.set(task.id, this.now());
         try {
           await this.watchReview(task.id, status, token);
         } catch (error) {
           console.warn(
-            `[daemon] PR #${source.number}（${source.repo}）の見守りを進められませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+            `[daemon] レビューのタスク ${task.id} の PR #${source.number}（${source.repo}）の見守りを進められませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
           );
         }
         continue;
@@ -2743,8 +2744,13 @@ export class TaskService {
     const now = this.now();
     if (!sameCommit(target.headCommit, head)) {
       this.reviewWatchReplies.delete(taskId);
-      // 同じ先頭の再レビューは 1 回だけ（対象の先頭を読み違えても、繰り返さない）
-      if (task.reviewRestartCommit && sameCommit(task.reviewRestartCommit, head)) return;
+      // 同じ先頭の再レビューは 1 回だけ（対象の先頭を読み違えても、繰り返さない）。ただし、その再レビューが別の先頭を
+      // レビューした後（始めた後に push があり、その後に元の先頭へ戻された）は、歯止めにしない（その先頭は、まだレビュー
+      // していない）。レビューした先頭が前の回から進んでいなければ、読み違えとして止める
+      const moved =
+        task.previousReview !== undefined &&
+        !sameCommit(task.previousReview.headCommit, target.headCommit);
+      if (task.reviewRestartCommit && sameCommit(task.reviewRestartCommit, head) && !moved) return;
       // 続けての push は、最後に先頭が変わってから待つ
       const seen = this.reviewWatchHeads.get(taskId);
       if (!seen || seen.head !== head) {
@@ -2781,16 +2787,19 @@ export class TaskService {
     const sactyReviews = (this.sactyReviewsOf(target.repo, target.number).sactyReviews ?? []).map(
       (r) => ({ ...r, allowed: false }),
     );
-    const feedback = await this.deps.pulls.feedback({
-      repo: target.repo,
-      token,
-      number: target.number,
-      ...(account ? { account } : {}),
-      ...(sactyReviews.length > 0 ? { sactyReviews } : {}),
-      noticeAccounts: this.githubAccountsOnHost(target.repo),
-      // ほかの sacty が作者のアカウントで投稿した、指摘への返信（対応しなかった理由）も、作者の返信として数える
-      includeSactyReplies: true,
-    });
+    const feedback = await withDeadline(
+      this.deps.pulls.feedback({
+        repo: target.repo,
+        token,
+        number: target.number,
+        ...(account ? { account } : {}),
+        ...(sactyReviews.length > 0 ? { sactyReviews } : {}),
+        noticeAccounts: this.githubAccountsOnHost(target.repo),
+        // ほかの sacty が作者のアカウントで投稿した、指摘への返信（対応しなかった理由）も、作者の返信として数える
+        includeSactyReplies: true,
+      }),
+      this.draftTimeoutMs(),
+    );
     const since = Date.parse(task.reviewWatch?.since ?? "");
     const replies = feedback.filter(
       (item) =>
@@ -2806,6 +2815,15 @@ export class TaskService {
     );
     const latest = current();
     if (!latest || latest.reviewPost?.at !== posted || !reviewWatching(latest)) return;
+    // コメントを読む間に、GitHub の再依頼の取り込みが新しいタスクを作った・この PR を sacty のタスクが引き継いだなら、始めない
+    // （元のタスクには何も記録されないので、ここで確かめ直す）
+    if (
+      this.supersededByRerequest(latest) ||
+      this.sactyMadePullRequests().has(`${repoKey(target.repo)}#${target.number}`)
+    ) {
+      forget();
+      return;
+    }
     if (stamp !== undefined) this.reviewWatchRead.set(taskId, stamp);
     if (replies.length === 0) {
       this.reviewWatchReplies.delete(taskId);
@@ -4906,7 +4924,18 @@ export class TaskService {
     if (!previous) return { existing };
     const author = target.author.toLowerCase();
     if (!author) return { existing, replies: "unreadable" };
-    const since = Date.parse(previous.at);
+    // 作者の返信で同じ先頭を判定し直す回（PBI-411）は、前回の対象を確かめた時刻より後の返信を渡す（対象を確かめた後・投稿の
+    // 前に書かれた返信が、判定し直すきっかけになる。前回の投稿より後だけを選ぶと、その返信が渡らない）
+    const replied =
+      task.reviewReplySince !== undefined &&
+      task.reviewReplyCommit !== undefined &&
+      sameCommit(task.reviewReplyCommit, target.headCommit);
+    const since = Math.min(
+      Date.parse(previous.at),
+      replied
+        ? Date.parse(task.reviewReplySince ?? "") || Number.POSITIVE_INFINITY
+        : Number.POSITIVE_INFINITY,
+    );
     const replies = existing.filter(
       (item) =>
         item.author.toLowerCase() === author &&

@@ -74,11 +74,18 @@ describe("ReviewWatchNotice", () => {
     const ended = (reason: "merged" | "closed") =>
       render({
         reviewVerdicts: [{ round: 1, verdict: "suggestions" }],
-        reviewWatchEnded: { reason, at: "2026-11-20T01:00:00Z" },
+        reviewWatchEnded: { reason },
       });
     expect(ended("merged")).toContain('data-state="merged"');
     expect(ended("merged")).toContain("PR がマージされたので、完了にしました。");
     expect(ended("closed")).toContain("PR がマージされずに閉じられたので、完了にしました。");
+    // 指摘なしで完了した後にマージされたタスクには、出さない（完了の理由は、指摘なし。状態の表示も「完了」のまま）
+    expect(
+      render({
+        reviewVerdicts: [{ round: 1, verdict: "no_findings" }],
+        reviewWatchEnded: { reason: "merged" },
+      }),
+    ).toBe("");
   });
 
   it("指摘なしで完了したタスク・更新の前の版が投稿して完了したタスク・一時停止中・中止したタスクには、何も出さない", () => {
@@ -98,7 +105,7 @@ describe("ReviewWatchNotice", () => {
       render({
         status: "cancelled",
         reviewVerdicts: [{ round: 1, verdict: "suggestions" }],
-        reviewWatchEnded: { reason: "merged", at: "2026-11-20T01:00:00Z" },
+        reviewWatchEnded: { reason: "merged" },
       }),
     ).toBe("");
   });

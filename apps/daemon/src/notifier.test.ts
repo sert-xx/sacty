@@ -105,7 +105,7 @@ describe("Slack の通知（PBI-38）", () => {
     // PR のマージ・クローズで見守りを終えた：完了
     const ended = posted("suggestions", {
       reviewWatch: undefined,
-      reviewWatchEnded: { reason: "merged", at: "2026-11-20T01:00:00.000Z" },
+      reviewWatchEnded: { reason: "merged" },
     });
     expect(notificationFor(posted("suggestions"), ended)).toBe("completed");
     // 指摘なしの投稿：完了
@@ -116,7 +116,7 @@ describe("Slack の通知（PBI-38）", () => {
         posted("no_findings"),
         posted("no_findings", {
           reviewWatch: undefined,
-          reviewWatchEnded: { reason: "merged", at: "2026-11-20T01:00:00.000Z" },
+          reviewWatchEnded: { reason: "merged" },
         }),
       ),
     ).toBeUndefined();

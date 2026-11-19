@@ -61,7 +61,6 @@ import {
   questionBlocked,
   resumeNoteRoom,
   reviewedPullRequest,
-  reviewFollowing,
   reviewReworkTarget,
   reviewWatching,
   reworkingPullRequest,
@@ -1723,6 +1722,9 @@ describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別
   });
 });
 
+/** 指摘なしで完了した後も、PR の先頭の変化を追っているか（完了していて、見守りの印が残っている）。 */
+const follows = (task: Task) => isDone(task) && task.reviewWatch !== undefined;
+
 describe("レビューの工程（PBI-19）", () => {
   const target = {
     repo: "https://github.com/acme/app",
@@ -1994,7 +1996,7 @@ describe("レビューの工程（PBI-19）", () => {
         expect(task.steps).toEqual([{ key: "review", state: "done" }]);
         expect(task.status).toBe("idle");
         expect(reviewWatching(task)).toBe(true);
-        expect(reviewFollowing(task)).toBe(false);
+        expect(follows(task)).toBe(false);
         expect(isDone(task)).toBe(false);
         expect(isFinished(task)).toBe(false);
         // 人の「再レビュー」は、見守り中でも使える
@@ -2009,7 +2011,7 @@ describe("レビューの工程（PBI-19）", () => {
     it("判定が指摘なしなら完了する。完了の後も、PR の先頭の変化は追う", () => {
       const task = taskOf([...start("w2"), ...round("w2", "no_findings"), post("w2", true)]);
       expect(reviewWatching(task)).toBe(false);
-      expect(reviewFollowing(task)).toBe(true);
+      expect(follows(task)).toBe(true);
       expect(isDone(task)).toBe(true);
       expect(isFinished(task)).toBe(true);
       expect(canRereview(task)).toBe(true);
@@ -2022,7 +2024,7 @@ describe("レビューの工程（PBI-19）", () => {
         const task = taskOf([...start("w3"), ...round("w3", verdict), post("w3", false)]);
         expect(task.reviewWatch).toBeUndefined();
         expect(reviewWatching(task)).toBe(false);
-        expect(reviewFollowing(task)).toBe(false);
+        expect(follows(task)).toBe(false);
         expect(isDone(task)).toBe(true);
         expect(isFinished(task)).toBe(true);
         expect(canRereview(task)).toBe(true);
@@ -2047,7 +2049,7 @@ describe("レビューの工程（PBI-19）", () => {
       ]);
       expect(task.reviewRound).toBe(3);
       expect(reviewWatching(task)).toBe(false);
-      expect(reviewFollowing(task)).toBe(false);
+      expect(follows(task)).toBe(false);
       expect(isDone(task)).toBe(true);
     });
 
@@ -2072,7 +2074,7 @@ describe("レビューの工程（PBI-19）", () => {
         ]);
         expect(reviewWatching(ended)).toBe(false);
         expect(isDone(ended)).toBe(true);
-        expect(ended.reviewWatchEnded).toEqual({ reason, at: ended.updatedAt });
+        expect(ended.reviewWatchEnded).toEqual({ reason });
         // 終えた後も、人は再レビューできる
         expect(canRereview(ended)).toBe(true);
       }
@@ -2141,7 +2143,7 @@ describe("レビューの工程（PBI-19）", () => {
         post("w10", true),
       ]);
       expect(isDone(cleared)).toBe(true);
-      expect(reviewFollowing(cleared)).toBe(true);
+      expect(follows(cleared)).toBe(true);
     });
 
     it("見守り中に一時停止して再開すると、見守りに戻る（実行待ちにならない）。中止すると見守りではない", () => {

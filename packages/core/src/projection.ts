@@ -1095,12 +1095,12 @@ export type Task = {
   /**
    * レビューを投稿した後の、PR の変化の見守り（PBI-411）。見守る版が投稿したレビュー（PullRequestReviewPosted の watch）で付き、
    * 再レビューを始める・見守りを終える（ReviewWatchEnded）と消える。付いている間、その回の判定が指摘なしでなければ、タスクは
-   * 完了していない（reviewWatching）。指摘なしなら完了で、PR の先頭だけを追う。それより前の版が投稿したレビューには付かない。
+   * 完了していない（reviewWatching）。指摘なしなら完了で、PR が開いている間は先頭の変化だけを追う。それより前の版が投稿したレビューには付かない。
    * since は、その回のレビューの対象を確かめた時刻（これより後の作者の返信を、まだ読んでいない返信として数える）。
    */
   reviewWatch?: { since: string };
-  /** 見守りを終えた理由と時刻（ReviewWatchEnded。PBI-411）。再レビューを始めると消える。 */
-  reviewWatchEnded?: { reason: PayloadOf<"ReviewWatchEnded">["reason"]; at: string };
+  /** 見守りを終えた理由（ReviewWatchEnded。PBI-411）。再レビューを始めると消える。 */
+  reviewWatchEnded?: { reason: PayloadOf<"ReviewWatchEnded">["reason"] };
   /** 今の回のレビューの対象を確かめた時刻（ReviewTargetResolved。PBI-411）。これより前の作業履歴の回には無い。 */
   reviewResolvedAt?: string;
   /**
@@ -1108,6 +1108,11 @@ export type Task = {
    * 返信による判定のし直しは、1 回だけ。
    */
   reviewReplyCommit?: string;
+  /**
+   * 作者の返信で判定し直す回の、返信を数え始める時刻（前の回の対象を確かめた時刻。PBI-411）。その回のレビューに、これより後の
+   * 作者の返信を渡す。ほかの理由で再レビューを始めると消える。
+   */
+  reviewReplySince?: string;
   /**
    * レビューの工程の、回ごとの判定（PBI-88・PBI-111）。verdict が無い回は、判定が無い。missing は、その理由（PBI-378。
    * これより前の作業履歴の回には無い）。
@@ -2857,7 +2862,7 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the review is not watched");
       }
       task.reviewWatch = undefined;
-      task.reviewWatchEnded = { reason: event.payload.reason, at: event.at };
+      task.reviewWatchEnded = { reason: event.payload.reason };
       break;
 
     case "ReviewRestarted":
@@ -2886,6 +2891,9 @@ export function applyEvent(
       task.reviewTarget = undefined;
       task.reviewComments = [];
       task.reviewPost = undefined;
+      // 作者の返信で判定し直す回には、前の回の返信の数え始め（対象を確かめた時刻）を引き継ぐ
+      task.reviewReplySince =
+        event.payload.reason === "replied" ? task.reviewWatch?.since : undefined;
       task.reviewWatch = undefined;
       task.reviewWatchEnded = undefined;
       task.reviewResolvedAt = undefined;
@@ -4765,19 +4773,6 @@ export function reviewWatching(task: Task): boolean {
     task.reviewPost !== undefined &&
     isCompleted(task) &&
     currentReviewVerdict(task) !== "no_findings"
-  );
-}
-
-/**
- * 指摘なしで完了した後も、PR の先頭の変化を追っているか（PBI-411）。PR が開いている間に先頭が変わると、再レビューを始める。
- */
-export function reviewFollowing(task: Task): boolean {
-  return (
-    task.status !== "cancelled" &&
-    task.reviewWatch !== undefined &&
-    task.reviewPost !== undefined &&
-    isCompleted(task) &&
-    currentReviewVerdict(task) === "no_findings"
   );
 }
 

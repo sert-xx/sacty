@@ -204,6 +204,7 @@ sacty handles changes of the PR as follows.
 - There is no cap on the number of re-reviews.
   The task pauses when it reaches its budget cap, so raise the cap and resume it ([Pause, resume, and cancel](tasks.en.md#pause-resume-and-cancel)).
 - For a PR whose last post was a while ago, it takes longer to notice a change (up to 5 minutes after 1 hour, up to 30 minutes after 24 hours).
+- When you review a PR sacty created with a review task you created yourself, it is not re-reviewed on changes of the PR (the child task re-reviews that PR). It is done when the PR is merged or closed.
 
 To stop the watch, pause or cancel the task in the task details.
 
@@ -242,7 +243,8 @@ A re-request on GitHub is handled as follows.
 - A new task is created only for requests made after the review was posted (after the task is done, or while it watches the PR).
   A request made during a review is not queued for another round.
   If you re-requested during a review, re-request again after the post or use "Review again and post to the PR" in the task details.
-- For PRs taken in by the label and PRs sacty created, a re-request does not create a new task (the same task re-reviews automatically on changes of the PR).
+- For PRs taken in by the label, a re-request does not create a new task (the same task re-reviews automatically on changes of the PR).
+- For PRs sacty created, a re-request does not create a new task either. A PR sacty created is re-reviewed by its child task ([Review of PRs sacty created](#the-review-child-task)).
 - If the re-request cannot be checked, no automatic re-review starts; the intake result shows the reason, and sacty checks again next time.
   You can also start it manually with "Review again and post to the PR".
 
@@ -298,6 +300,10 @@ The PR's code can reach the same things as the agent.
   The rewrite is written back to the host's `auth_file` after the run and stays.
 - During the run, through the gateway, it can read GitHub with the GitHub account chosen in the project and use the MCP servers given to the agent.
 - Even in a bot's dependency update PR (such as `dependabot[bot]`), the install scripts of the new versions run.
+
+Commits pushed to the PR after it was imported run in the same way.
+This is because sacty keeps watching the PR for changes after posting its review and, while the PR is open, re-reviews automatically on every push ([After the review is posted](#after-the-review-is-posted)).
+It does not check who pushed or whether the push comes from a fork. If a PR you trusted at import can later receive a push you do not trust, pause or cancel the task to stop the watch.
 
 Intake does not filter by whether a PR comes from a fork or a bot.
 With settings that add labels automatically, or automatic review requests such as CODEOWNERS, PRs may be imported without a person deciding.

@@ -1365,7 +1365,7 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
     const ended = (reason: "merged" | "closed", verdict: "suggestions" | "no_findings") =>
       watching(verdict, {
         reviewWatch: undefined,
-        reviewWatchEnded: { reason, at: "2026-11-20T01:00:00.000Z" },
+        reviewWatchEnded: { reason },
       });
     expect(statusText(ended("merged", "suggestions"))).toBe("完了（PR がマージされた）");
     expect(statusText(ended("closed", "suggestions"))).toBe("完了（PR が閉じられた）");
