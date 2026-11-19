@@ -27,7 +27,7 @@ The pages are grouped by purpose and listed in reading order.
 - [Working with tasks](tasks.en.md): creating tasks, reading the screens, approving and requesting changes in PRs, asking the orchestrator, pausing and canceling
 - [Dashboard](dashboard.en.md): see your turn, stopped tasks, and costs across all projects on one screen
 - [Intake of issues, PRs, and tickets](intake.en.md): create tasks automatically from GitHub issues and PRs and JIRA tickets. PR reviews and running tasks in parallel
-- [Operating sacty from your local AI (MCP)](mcp.en.md): look up tasks and ask for a PR re-review, to create a task, or to approve a step, and read deliverables and the agent run list from Claude Code or Codex. How to connect and the available tools
+- [Operating sacty from your local AI (MCP)](mcp.en.md): look up tasks and ask for a PR re-review, to create a task, to approve or request changes on a step, and read deliverables and the agent run list from Claude Code or Codex. How to connect and the available tools
 - [Scheduled tasks](scheduled-tasks.en.md): create tasks automatically on a schedule. What happens when the computer was off, editing and deleting
 - [After-merge watch](deployment-watch.en.md): check CI/CD and the deployed app after the implementation PR is merged. Placing the skill and registering fix tasks automatically
 - [Audits](audit.en.md): audits of completed tasks, adopting and rejecting proposals, the audit page, reports

@@ -93,6 +93,7 @@ function mcpOver(w: ReturnType<typeof world>) {
       if (id !== w.task.id) throw new Error("タスクが見つかりません。");
       return w.task;
     },
+    requestChanges: async () => w.task,
     listDeliverables: async (...a: Parameters<SactyApi["listDeliverables"]>) => {
       calls.push("deliverables");
       return read.listDeliverables(...a);

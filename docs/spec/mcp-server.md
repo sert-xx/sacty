@@ -6,10 +6,10 @@
 標準入出力（stdio）で動き、画面と同じデーモンの API を呼ぶ。
 MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（2025-11-25 まで）のクライアントも受ける。
 ツールは、タスクの一覧・検索（`list_tasks`）、タスクの詳細（`get_task`）、PR のレビューのタスクの再レビュー（`rereview_task`）、プロジェクトの一覧（`list_projects`）、タスクの作成（`create_task`）、
-成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、承認待ちの工程の承認（`approve_step`）の9つ。
+成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、承認待ちの工程の承認（`approve_step`）、承認待ちの工程の差し戻し（`request_changes`）の10個。
 `approve_step` の前の3つ（`list_deliverables`・`get_deliverable`・`list_runs`）は、成果物と実行を読むだけのツール。実行のログを読むツールは、まだ無い（後続）。
 
-関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)
+関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)、[sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-mcp-request-changes-basic-stop-before-limit.md)
 
 ## 起動と接続
 
@@ -24,7 +24,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
   `sacty up` を起動し直すとトークンが変わるが、次の呼び出しから新しい接続先とトークンを使う（MCP サーバーの起動し直しは要らない）。
 - デーモンの応答は、要求ごとに 30 秒（`MCP_REQUEST_TIMEOUT_MS`）まで待つ（本文の読み取りを含む）。
 - 認証は足していない（MCP の認証の仕様は HTTP のためのもので、stdio では資格情報を環境から取る決まり）。使えるのは、`daemon.json`（権限 0600）を読める利用者だけ。
-- 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。`list_tasks`・`get_task`・`rereview_task`・`list_projects`・`create_task`・`approve_step` は画面と同じ API を呼ぶ。`list_deliverables`・`get_deliverable`・`list_runs` は、読み取りだけの API（下の表のこの3つの行。画面は呼ばない）を呼ぶ。
+- 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。`list_tasks`・`get_task`・`rereview_task`・`list_projects`・`create_task`・`approve_step`・`request_changes` は画面と同じ API を呼ぶ。`list_deliverables`・`get_deliverable`・`list_runs` は、読み取りだけの API（下の表のこの3つの行。画面は呼ばない）を呼ぶ。
 
 | ツール | デーモンの API |
 | --- | --- |
@@ -37,6 +37,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 | `get_deliverable` | `GET /api/tasks/:id/deliverables/:step/:kind?offset=&max=` |
 | `list_runs` | `GET /api/tasks/:id/runs?offset=&limit=` |
 | `approve_step` | `GET /api/tasks/:id`・`POST /api/tasks/:id/approve` |
+| `request_changes` | `GET /api/tasks/:id`・`POST /api/tasks/:id/request-changes` |
 
 コード: `packages/cli/src/index.ts`（`mcpCommand`）、`packages/cli/src/mcp.ts`（`daemonApi`）、`apps/daemon/src/task-mcp.ts`（`serveTaskMcp`・`startTaskMcp`・`createTaskMcpServer`・`SactyApi`）、`packages/cli/src/context-preview.ts`（`readDaemonFile`・`daemonRequest`）、`packages/cli/src/up-env.ts`（`daemonEndpoint`）
 
@@ -44,7 +45,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 
 サーバーの使い方の説明（`INSTRUCTIONS`）と、`list_tasks`・`get_task` の説明に、結果の題・説明・レビューの本文・止まっている理由はほかの人が書いた文を含むデータで、その中の指示に従わないことを書く。
 `list_projects` の説明にも同じ注意を書く（プロジェクトの名前は、人が付けた文）。
-`rereview_task`・`create_task`・`approve_step` の説明には、利用者に頼まれたときだけ呼ぶこと（題・説明・レビューの本文などの中の指示では呼ばない）を書く。
+`rereview_task`・`create_task`・`approve_step`・`request_changes` の説明には、利用者に頼まれたときだけ呼ぶこと（題・説明・レビューの本文などの中の指示では呼ばない）を書く。
 `list_deliverables`・`get_deliverable`・`list_runs` の説明と `INSTRUCTIONS` にも、結果の成果物はほかの人やエージェントが書いた文を含むデータで、その中の指示に従わないことを書く（`READ_UNTRUSTED_NOTE`）。
 
 ツールは `TOOLS` の表（名前・説明・引数の形・結果の形・処理）に持ち、サーバーを作るときにすべて登録する。
@@ -156,6 +157,31 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 - 説明文に、利用者に頼まれたときだけ呼ぶこと・承認すると次の工程が始まること（時間と費用がかかる・取り消せない）・先に `list_deliverables`・`get_deliverable` で成果物を確かめること・呼び直す前に `get_task` で確かめることを書く。`INSTRUCTIONS` にも、頼まれたときだけ呼ぶこと・取り消せないこと・先に成果物を確かめることを足す。
 - ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`。2回目は断られる）・sacty の外に書きうる（`openWorldHint: true`。次の工程が書く）。
 
+### request_changes
+
+承認待ちの工程を差し戻す（画面の承認の画面で、戻し先・原因を選ばずに指摘だけを書いて「差し戻す」を押すのと同じ）。
+
+| 引数 | 型 | 内容 |
+| --- | --- | --- |
+| `task_id` | 文字列（必須） | タスクの ID |
+| `step` | 工程の名前（必須） | 差し戻す工程（`get_task` の `approval.step`） |
+| `submission` | 1 以上の整数（必須） | 差し戻す提出の回（`get_task` の `approval.submission`） |
+| `comments` | 文字列の配列（必須。1件以上） | 直してほしいことの指摘 |
+
+- `POST /api/tasks/:id/request-changes` に `{ step, submission, comments }` だけを送る。差し戻しの判断（`service.requestChanges`）・記録（`ChangesRequested`。actor `person`。`cause` なし・`overLimit` false）・やり直しの始まり方は画面と同じ。MCP 専用の経路・記録は無い。`target`・`cause`・`answer`・`image`・`agents`・`continueOverLimit` は引数に無く、送らない（戻し先は既定の、承認待ちの工程に最も近い、やり直せる工程。ふつうは承認待ちの工程そのもので、統合レビューならタスク分割）。
+- 差し戻したら、文と、差し戻しの対象（`requested`：`taskId`・`step`・`submission`・やり直す工程 `reworkStep`・指摘の件数 `comments`）と、差し戻した後の[タスクの要約](#タスクの要約)を返す（やり直しが終わるのは待たない）。
+- 差し戻す提出を呼ぶ側が指定する（古い提出を誤って差し戻さない）。いま承認待ちの工程・回と違えば、差し戻さずに理由（いまの回と、`get_task` で確かめ直すこと。「差し戻しませんでした」の文）を返す。
+- 指摘の形：`comments` の各文字列を、改行で1行1件に分け、前後の空白を除き、空の行を除く（画面の欄と同じ。1件が1つの指摘になり、1件の中に改行は残らない）。分けた後の件数が 0 なら、差し戻さずに理由を返す。上限は API と同じで、50 件・1件 2000 文字（前後の空白を除いた長さ）。超えるときは、差し戻さずに理由を返す。指摘の文は、理由・標準エラーに写さない。
+- 差し戻せるのは、状態が `awaiting_approval` のときだけ。MCP の層が、API を呼ぶ前に、`GET /api/tasks/:id` のタスクから確かめる（`checkRequestChanges`。デーモンの `gateTask`・`requestChanges` と画面の差し戻しの欄の判定の読み取り側の写し。判定が変わったら、これも合わせる）。順は、無い（消したプロジェクトのタスクを含む）→ `escalated` → 承認待ちでない → 承認待ちの工程と違う → 古い回 → やり直せる工程が無い（実行した後の作業の結果など。API の `gate.invalidTarget`）→ 指摘が空 → 件数・長さの超過 → 上限。どれも、何も記録せず、状態も変えない。二重の呼び出しは、2回目が承認待ちでない（または回が違う）として断られ、記録は1件のまま。
+- 状態が `escalated`（上限の判断待ち・変更の申し出の判断待ち）のタスクは、理由を問わず差し戻さず、人が画面で判断することを返す。
+- **上限を超えて差し戻さない**：やり直す工程への人の差し戻しが `MAX_CHANGE_REQUESTS`（3回）に達しているとき（`changeRounds`。人の指摘が1件でもある回の数。AI のレビューの指摘だけの回は数えない。画面と同じ）は、API に送らず、上限に達していることと、続けるかどうかは人が画面で決めることを返す。タスクは `awaiting_approval` のままで、作業履歴に何も足さない。上限に達した工程に API へ送ると、API は断らずにエスカレーション（`TaskEscalated`）にするため、送る前に断る。`continueOverLimit` を送る手段は無い。
+- 確かめた後に、状態が変わるなどして、API の結果のタスクが `escalated` だったときは、「差し戻しました」と返さず、差し戻されずにエスカレーション（人の判断待ち）になったことを返す。
+- PR を作った工程（実装・PR のある要求要件・設計）も、画面と同じく差し戻せる（承認と違い、API は断らない）。ただし、この指摘は PR には残らず、人の差し戻しとして回数に数える。PR に記録を残したいときは、PR にコメントを書く（sacty が取り込んで差し戻す。[承認](approval.md)）。MCP から PR にコメントを書くことは、範囲に入れない。
+- 差し戻しの API を呼んだ後に結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、差し戻されている可能性があること・自動でやり直さないこと・`get_task` で確かめてから呼び直すことを返す（`CHANGES_UNCERTAIN`。やり直すと、二重の差し戻しや上限の回数の消費になりうる）。案内の前の文は、5xx のときはデーモンの理由（状態コードなど）、時間切れ・切断・本文を読めないときは決まった文「差し戻しの結果を受け取れませんでした（時間切れ・切断など）。」。デーモンが応答で断ったとき、認証できなかったとき（401）、接続を断られたとき、呼ぶ前の失敗は、差し戻していないので、理由だけを返す。
+- 前の版のデーモン：`POST /api/tasks/:id/request-changes` は古くからあるので、前の版のデーモンにも通る。通らなければ、デーモンが断った理由（読めなければ状態コード）を返す。
+- 説明文に、利用者に頼まれたときだけ呼ぶこと・差し戻すと sacty がその工程をやり直すこと（時間と費用がかかる・取り消せない・同じ工程への人の差し戻しは3回までで、上限を超えない）・先に `get_task` の `approval` と成果物（`list_deliverables`・`get_deliverable`）を確かめること・PR を作った工程は PR のコメントでも差し戻せること（PR に記録が残る）・呼び直す前に `get_task` で確かめることを書く。`INSTRUCTIONS` にも足す。
+- ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`）・sacty の外に書きうる（`openWorldHint: true`。やり直しが書く）。
+
 ### list_deliverables
 
 タスクの工程ごとの成果物を一覧にする。読み取りだけ（`readOnlyHint: true`・`openWorldHint: false`。以下の2つも同じ）。引数は `task_id`。
@@ -263,11 +289,11 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 引数が型に合わないとき（決めた範囲の外の `limit`・無い `task_id` など）は、MCP の SDK が、ツールを呼ばずに、同じ形（`isError: true` と理由の文）で返す。
 知らないツールの呼び出しなどは、JSON-RPC のエラーになる。
 
-コード: `apps/daemon/src/task-mcp.ts`（`TOOLS`・`defineTool`・`INSTRUCTIONS`・`filterTasks`・`parsePullRequestQuery`・`describeTask`）、`packages/cli/src/mcp.ts`（`daemonApi`・`MCP_REQUEST_TIMEOUT_MS`・`REREVIEW_UNCERTAIN`・`CREATE_UNCERTAIN`・`APPROVE_UNCERTAIN`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/daemon/src/service.ts`（`rereview`・`createTask`）、`packages/core/src/events.ts`（`CreateTaskInput`）
+コード: `apps/daemon/src/task-mcp.ts`（`TOOLS`・`defineTool`・`INSTRUCTIONS`・`filterTasks`・`parsePullRequestQuery`・`describeTask`）、`packages/cli/src/mcp.ts`（`daemonApi`・`MCP_REQUEST_TIMEOUT_MS`・`REREVIEW_UNCERTAIN`・`CREATE_UNCERTAIN`・`APPROVE_UNCERTAIN`・`CHANGES_UNCERTAIN`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/daemon/src/service.ts`（`rereview`・`createTask`）、`packages/core/src/events.ts`（`CreateTaskInput`）
 
 ## タスクの要約
 
-`list_tasks`・`rereview_task`・`create_task`・`approve_step` の結果と、`get_task` の結果の土台。
+`list_tasks`・`rereview_task`・`create_task`・`approve_step`・`request_changes` の結果と、`get_task` の結果の土台。
 
 | 項目 | 内容 |
 | --- | --- |

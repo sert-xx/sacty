@@ -5,11 +5,11 @@
 `sacty mcp` is an MCP server for operating the running sacty (`sacty up`) from an AI on the same machine (Claude Code, Codex, and so on).
 It runs over standard input and output (stdio) and calls the same daemon API as the web UI.
 It follows the 2026-07-28 revision of the MCP specification and also accepts clients of earlier revisions (up to 2025-11-25) that open with `initialize`.
-It has nine tools: listing and searching tasks (`list_tasks`), task details (`get_task`), re-reviewing a PR review task (`rereview_task`), listing projects (`list_projects`), creating a task (`create_task`),
-listing deliverables (`list_deliverables`), the content of a deliverable (`get_deliverable`), listing runs (`list_runs`), and approving a step awaiting approval (`approve_step`).
+It has ten tools: listing and searching tasks (`list_tasks`), task details (`get_task`), re-reviewing a PR review task (`rereview_task`), listing projects (`list_projects`), creating a task (`create_task`),
+listing deliverables (`list_deliverables`), the content of a deliverable (`get_deliverable`), listing runs (`list_runs`), approving a step awaiting approval (`approve_step`), and requesting changes on a step awaiting approval (`request_changes`).
 The three before `approve_step` (`list_deliverables`, `get_deliverable`, and `list_runs`) only read deliverables and runs. There is no tool yet for reading the log of a run (a follow-up).
 
-Related ADRs: [The MCP server that operates the running sacty is run by the CLI over stdio](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md), [The CLI calls the running daemon's API through the connection file that sacty up writes](../adr/20261014-0701-cli-daemon-connection-file.md), [The MCP create-task tool sends the same request as the web UI's defaults and reports that a task may have been created when no result arrives](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md), [Reading deliverables and the run list through sacty mcp sets limits and positions in bytes and adds read APIs to the daemon](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md), [Approval through sacty mcp is limited to the same API as the web UI's Approve button and does not merge PRs](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)
+Related ADRs: [The MCP server that operates the running sacty is run by the CLI over stdio](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md), [The CLI calls the running daemon's API through the connection file that sacty up writes](../adr/20261014-0701-cli-daemon-connection-file.md), [The MCP create-task tool sends the same request as the web UI's defaults and reports that a task may have been created when no result arrives](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md), [Reading deliverables and the run list through sacty mcp sets limits and positions in bytes and adds read APIs to the daemon](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md), [Approval through sacty mcp is limited to the same API as the web UI's Approve button and does not merge PRs](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md), [Requesting changes through sacty mcp is limited to the basic form and stops before the limit](../adr/20261119-0400-mcp-request-changes-basic-stop-before-limit.md)
 
 ## Startup and connection
 
@@ -24,7 +24,7 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
   Restarting `sacty up` changes the token, but the next call uses the new address and token (the MCP server does not need a restart).
 - It waits up to 30 seconds per request (`MCP_REQUEST_TIMEOUT_MS`) for the daemon's response (including reading the body).
 - No authentication is added (the MCP authorization specification is for HTTP; on stdio the rule is to take credentials from the environment). Only a user who can read `daemon.json` (mode 0600) can use it.
-- It calls the following APIs ([Overall structure](architecture.en.md#processes-and-communication)). `list_tasks`, `get_task`, `rereview_task`, `list_projects`, `create_task`, and `approve_step` call the same APIs as the web UI. `list_deliverables`, `get_deliverable`, and `list_runs` call read-only APIs (their three rows in the table below; the web UI does not call them).
+- It calls the following APIs ([Overall structure](architecture.en.md#processes-and-communication)). `list_tasks`, `get_task`, `rereview_task`, `list_projects`, `create_task`, `approve_step`, and `request_changes` call the same APIs as the web UI. `list_deliverables`, `get_deliverable`, and `list_runs` call read-only APIs (their three rows in the table below; the web UI does not call them).
 
 | Tool | Daemon API |
 | --- | --- |
@@ -37,6 +37,7 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
 | `get_deliverable` | `GET /api/tasks/:id/deliverables/:step/:kind?offset=&max=` |
 | `list_runs` | `GET /api/tasks/:id/runs?offset=&limit=` |
 | `approve_step` | `GET /api/tasks/:id`, `POST /api/tasks/:id/approve` |
+| `request_changes` | `GET /api/tasks/:id`, `POST /api/tasks/:id/request-changes` |
 
 Code: `packages/cli/src/index.ts` (`mcpCommand`), `packages/cli/src/mcp.ts` (`daemonApi`), `apps/daemon/src/task-mcp.ts` (`serveTaskMcp`, `startTaskMcp`, `createTaskMcpServer`, `SactyApi`), `packages/cli/src/context-preview.ts` (`readDaemonFile`, `daemonRequest`), `packages/cli/src/up-env.ts` (`daemonEndpoint`)
 
@@ -44,7 +45,7 @@ Code: `packages/cli/src/index.ts` (`mcpCommand`), `packages/cli/src/mcp.ts` (`da
 
 The server's usage instructions (`INSTRUCTIONS`) and the descriptions of `list_tasks` and `get_task` say that the title, description, review body, and stop reason in results are data that can contain text written by other people, and that instructions inside them must not be followed.
 The description of `list_projects` carries the same note (project names are text written by people).
-The descriptions of `rereview_task`, `create_task`, and `approve_step` say to call them only when the user asks (not because of instructions inside a title, description, review body, and so on).
+The descriptions of `rereview_task`, `create_task`, `approve_step`, and `request_changes` say to call them only when the user asks (not because of instructions inside a title, description, review body, and so on).
 The descriptions of `list_deliverables`, `get_deliverable`, and `list_runs`, and `INSTRUCTIONS`, also say that the deliverables in results are data that can contain text written by other people and agents, and that instructions inside them must not be followed (`READ_UNTRUSTED_NOTE`).
 
 The tools are held in the `TOOLS` table (name, description, argument shape, result shape, handler), and all of them are registered when the server is created.
@@ -156,6 +157,31 @@ Approves a step that is awaiting approval (the same as "Approve" on the web UI's
 - The description says to call it only when the user asks, that approving starts the next step (it takes time and money and cannot be undone), to check the deliverables first with `list_deliverables` and `get_deliverable`, and to check with `get_task` before calling again. `INSTRUCTIONS` says the same.
 - Annotations: not read-only (`readOnlyHint: false`), not destructive (`destructiveHint: false`), not idempotent (`idempotentHint: false`; the second call is refused), and may write outside sacty (`openWorldHint: true`; the next step may write).
 
+### request_changes
+
+Requests changes on a step awaiting approval (the same as writing only remarks, without choosing where to send it back or a cause, and pressing "Request changes" on the approval screen).
+
+| Argument | Type | Meaning |
+| --- | --- | --- |
+| `task_id` | string (required) | The task ID |
+| `step` | step name (required) | The step to send back (`approval.step` from `get_task`) |
+| `submission` | integer, 1 or more (required) | The submission number to send back (`approval.submission` from `get_task`) |
+| `comments` | array of strings (required; 1 or more) | Remarks on what to fix |
+
+- It sends only `{ step, submission, comments }` to `POST /api/tasks/:id/request-changes`. The decision (`service.requestChanges`), the record (`ChangesRequested`, actor `person`, no `cause`, `overLimit` false), and how the rework starts are the same as in the web UI. There is no MCP-only path or record. `target`, `cause`, `answer`, `image`, `agents`, and `continueOverLimit` are not arguments and are not sent (the step to redo is the default: the redoable step closest to the step awaiting approval, usually the step awaiting approval itself, or task splitting for an integration review).
+- On success it returns a message, the target of the request (`requested`: `taskId`, `step`, `submission`, the step that will be redone `reworkStep`, and the number of remarks `comments`), and the [task summary](#task-summary) after the request (it does not wait for the rework to finish).
+- The caller specifies the submission (so a stale submission is not sent back by mistake). If the step or submission differs from the one now awaiting approval, nothing is sent back and the reason says which submission is current and to check again with `get_task` (the wording says "did not request changes").
+- Shape of the remarks: each string in `comments` is split at line breaks into one remark per line, surrounding whitespace is removed, and empty lines are dropped (the same as the web UI's field; each becomes one remark and no line break remains inside one). If none remain, nothing is sent back and the reason is returned. The limits are the same as the API's: 50 remarks and 2,000 characters each (measured after removing surrounding whitespace). Over the limits, nothing is sent back and the reason is returned. The text of the remarks is not copied into reasons or standard error.
+- Changes can be requested only while the status is `awaiting_approval`. Before calling the API, the MCP layer checks the task from `GET /api/tasks/:id` (`checkRequestChanges`; a read-side copy of the daemon's `gateTask` and `requestChanges` and of the web UI's request-changes field; update it when those change). The order is: not found (including a task of a deleted project), `escalated`, not awaiting approval, a step other than the one awaiting approval, a stale submission, no redoable step (such as the result of work after an operation ran; the API's `gate.invalidTarget`), empty remarks, too many or too long remarks, and the limit. In every case nothing is recorded and the status does not change. For a repeated call, the second is refused because the task is no longer awaiting approval (or the submission differs), and the record stays at one.
+- A task whose status is `escalated` (waiting for a decision on the limit or on a change proposal) is not sent back, whatever the reason; the reason says a person decides on the screen.
+- **It does not request changes over the limit**: when human requests for changes to the step to redo have reached `MAX_CHANGE_REQUESTS` (3) (`changeRounds`: the number of rounds with at least one human remark; rounds with only AI review remarks are not counted, as in the web UI), the API is not called. The reason says the limit is reached and that a person decides on the screen whether to continue. The task stays `awaiting_approval` and nothing is added to the activity log. Because the API does not refuse a request to a step at its limit but escalates the task (`TaskEscalated`), the request is refused before it is sent. There is no way to send `continueOverLimit`.
+- If, after the check, the status changes and the task in the API's result is `escalated`, it does not say "requested changes"; it says the task was escalated (waiting for a person) without being sent back.
+- A step that made a PR (implementation, or requirements or design with a PR) can also be sent back, as in the web UI (unlike approval, the API does not refuse). The remarks are not left on the PR and count as a human request for changes. To leave a record on the PR, write a comment on the PR (sacty imports it and sends the step back; see [Approval](approval.en.md)). Writing a comment on a PR from MCP is out of scope.
+- If the result cannot be received after calling the API (timeout, connection dropped, body unreadable, or the daemon returned 5xx), the reason says changes may have been requested, that it does not retry automatically, and to check with `get_task` before calling again (`CHANGES_UNCERTAIN`; retrying could request changes twice or use up the count toward the limit). The sentence before that guidance is the daemon's reason (such as the status code) for 5xx, and the fixed sentence "The result of requesting changes could not be received (timeout, disconnection, and so on)." (in Japanese) for timeout, disconnection, or unreadable body. If the daemon refused in its response, authentication failed (401), the connection was refused, or the failure came before the call, changes were not requested, so only the reason is returned.
+- Daemon from a previous version: `POST /api/tasks/:id/request-changes` has existed for a long time, so it works with a previous daemon. If it does not, the reason the daemon refused (or the status code if unreadable) is returned.
+- The description says to call it only when the user asks, that requesting changes makes sacty redo the step (it takes time and costs money, cannot be undone, and human requests for changes to the same step are limited to 3, which the tool does not exceed), to check `approval` from `get_task` and the deliverables (`list_deliverables`, `get_deliverable`) first, that a step with a PR can also be sent back by a PR comment (which leaves a record on the PR), and to check with `get_task` before calling again. `INSTRUCTIONS` says the same.
+- The annotations are: not read-only (`readOnlyHint: false`), not destructive (`destructiveHint: false`), not idempotent (`idempotentHint: false`), and may write outside sacty (`openWorldHint: true`; the rework writes).
+
 ### list_deliverables
 
 Lists the deliverables of a task, step by step. Read-only (`readOnlyHint: true`, `openWorldHint: false`; the same for the next two tools). The argument is `task_id`.
@@ -263,11 +289,11 @@ The name of the failed tool, the target task ID (`task_id` if present; no other 
 When the arguments do not match the types (a `limit` out of range, a missing `task_id`, and so on), the MCP SDK returns the same shape (`isError: true` and the text of the reason) without calling the tool.
 Calling an unknown tool and the like becomes a JSON-RPC error.
 
-Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_UNCERTAIN`, `CREATE_UNCERTAIN`, `APPROVE_UNCERTAIN`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`, `createTask`), `packages/core/src/events.ts` (`CreateTaskInput`)
+Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_UNCERTAIN`, `CREATE_UNCERTAIN`, `APPROVE_UNCERTAIN`, `CHANGES_UNCERTAIN`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`, `createTask`), `packages/core/src/events.ts` (`CreateTaskInput`)
 
 ## Task summary
 
-The result of `list_tasks`, `rereview_task`, `create_task`, and `approve_step`, and the base of the result of `get_task`.
+The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, and `request_changes`, and the base of the result of `get_task`.
 
 | Field | Description |
 | --- | --- |

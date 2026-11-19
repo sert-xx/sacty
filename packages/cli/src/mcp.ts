@@ -10,6 +10,7 @@ import {
   READ_REASONS,
   readFailure,
   type SactyApi,
+  staleChangesMessage,
 } from "@sacty/daemon/task-mcp";
 import {
   DAEMON_AUTH_MESSAGE,
@@ -59,6 +60,16 @@ function staleForMcp(message: { code?: unknown; params?: unknown }): string | un
   return `指定した提出（${String(submission)}回目）は、いまの承認待ち（${String(current)}回目）と違うため、承認しませんでした。get_task の approval で最新の提出の回を確かめ、成果物（list_deliverables・get_deliverable）を確かめ直してから、submission を指定し直してください。`;
 }
 
+/** 古い提出の差し戻しの断りは、承認と同じく、MCP で次にすることを伝える（差し戻しの文）。 */
+function staleChangesForMcp(message: { code?: unknown; params?: unknown }): string | undefined {
+  if (message.code !== "gate.staleSubmission") return undefined;
+  const { submission, current } = (message.params ?? {}) as {
+    submission?: unknown;
+    current?: unknown;
+  };
+  return staleChangesMessage(submission, current);
+}
+
 /** 要求が処理されなかったと分かる失敗（認証できない・接続を断られた）か。 */
 function notSent(error: unknown): boolean {
   if (error instanceof Error && error.message === DAEMON_AUTH_MESSAGE) return true;
@@ -85,6 +96,17 @@ function uncertainApproval(
   reason = "承認の結果を受け取れませんでした（時間切れ・切断など）。",
 ): string {
   return `${reason}${APPROVE_UNCERTAIN}`;
+}
+
+/** 差し戻しを頼んだ後に、結果を受け取れなかったときの案内（差し戻されたかどうかが分からない）。 */
+const CHANGES_UNCERTAIN =
+  "差し戻されている可能性があります。自動でやり直さず、get_task で state と approval を確かめてから、まだ承認待ちなら呼び直してください。";
+
+/** 差し戻しの結果を受け取れなかったときの文（理由があればそれに、なければ原因の種類だけに、案内を続ける）。 */
+function uncertainChanges(
+  reason = "差し戻しの結果を受け取れませんでした（時間切れ・切断など）。",
+): string {
+  return `${reason}${CHANGES_UNCERTAIN}`;
 }
 
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
@@ -243,6 +265,34 @@ export function daemonApi(
       } catch (error) {
         // 本文を読めなかったときも、承認されたかどうかが分からない
         throw new Error(uncertainApproval(), { cause: error });
+      }
+    },
+    async requestChanges(id, input) {
+      // 消したプロジェクトのタスクの確かめと、差し戻せる状態かの確かめは、ツールが先に getTask で行う
+      const at = endpoint(); // 接続先が無いのは、頼む前の失敗（差し戻していない）
+      // 送るのは step・submission・comments だけ（target・cause・image・agents・continueOverLimit は送らない）
+      const body = { step: input.step, submission: input.submission, comments: input.comments };
+      let res: Response;
+      try {
+        res = await request(at, `/api/tasks/${encodeURIComponent(id)}/request-changes`, {
+          method: "POST",
+          body,
+        });
+      } catch (error) {
+        // 認証できない・接続を断られた（要求が処理されていない）ときは、差し戻していない
+        if (notSent(error)) throw error;
+        throw new Error(uncertainChanges(), { cause: error });
+      }
+      // 5xx は、処理の途中で失敗したのかもしれず、差し戻されたかどうかが分からない
+      if (res.status >= 500) {
+        const failed = await refusal(res).catch(() => undefined);
+        throw new Error(uncertainChanges(failed?.message), { cause: failed });
+      }
+      if (!res.ok) throw await refusal(res, staleChangesForMcp);
+      try {
+        return (await read<{ task: Task }>(res)).task;
+      } catch (error) {
+        throw new Error(uncertainChanges(), { cause: error });
       }
     },
     async listProjects() {
