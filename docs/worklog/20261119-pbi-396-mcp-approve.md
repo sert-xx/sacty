@@ -21,7 +21,7 @@
 
 ## 確かめたこと
 
-- `npx vitest run --no-file-parallelism`（全件）・`npm run lint`・`npm run typecheck`・`npm run build`・`npx biome format .`。結果（レビューの指摘を直した後に実行）：`npx vitest run --no-file-parallelism` は 266 ファイル・5230 件が成功（14 件は既存の skip）、lint・typecheck・build・format は通った。
+- `npx vitest run --no-file-parallelism`（全件）・`npm run lint`・`npm run typecheck`・`npm run build`・`npx biome format .`。結果（2回目のレビューの指摘を直した後に実行）：`npx vitest run --no-file-parallelism` は 266 ファイル・5230 件が成功（14 件は既存の skip）、lint・typecheck・build・format は通った。
 - `apps/daemon/src/task-mcp.test.ts`：本物のサービスと `createApp` で、承認できる（記録1件）・2回目は断る・古い回・違う工程・承認待ちでない・無いタスク・PR のマージで承認する工程（URL・何も変わらない）・引数の形の違い・結果を受け取れない・ツールの一覧。
 - `packages/cli/src/mcp.test.ts`：呼ぶ API・消したプロジェクトのタスク・理由の文・時間切れ／切断／5xx の案内・401／接続拒否／前の版のデーモン。
 
@@ -42,3 +42,6 @@
 - 結果を受け取れなかったときの案内は、元の例外の文（「もう一度試してください」など）を使わず、原因の種類だけを書いて、自動でやり直さない案内に続けるようにした。
 - `approvalOf` の二重呼び出しをやめ、デーモンの判定の読み取り側の写しであることをコメントに書いた。
 - テストを足した：`approvalOf` の分岐、先の詳細の確認（GET）の失敗、承認のツールの読み取りでない扱い。
+- 2回目のレビュー：仕様書の「その理由に続けて」を、5xx（デーモンの理由に続ける）と時間切れ・切断・本文を読めない（決まった文に続ける）の場合分けに直した（日英）。ユーザー文書に、`approve_step` を許可すると他人の指示で承認されうるので毎回確かめる設定をすすめることを足した（日英）。
+- `approve` の「結果を受け取れなかった」案内を、`uncertainApproval` 1 か所にまとめた（5xx・時間切れ・切断・本文を読めない）。
+- テスト：`approvalOf` に、承認待ちの工程と違う PR・url が空で repo から組む場合を足した。`task-mcp-read.test.ts` の偽の API に `approve` を足した。

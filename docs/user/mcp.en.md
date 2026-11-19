@@ -139,6 +139,7 @@ The AI calls it only when you ask. It is safer to check the deliverables (`list_
 - Only the person running `sacty up` can use the MCP server (it uses the address sacty wrote to a file only that person can read).
 - The registered AI can start a re-review, create a task, or approve a step awaiting approval on your behalf. Creating a task or approving starts steps, which takes time and costs money.
   In the AI CLI's permission prompt, you can choose to confirm `rereview_task`, `create_task`, and `approve_step` every time or to allow them.
+  Confirming `approve_step` every time is recommended. If you allow it, an instruction written in a task description, deliverable, or review body by someone else may get a step approved without your check.
 - Task descriptions, review bodies, and deliverables are passed to the AI.
   They can contain text from PRs and issues written by other people and text written by agents (do not let the AI treat it as instructions).
 - While a previous version of sacty is running, the deliverable and run tools answer "update sacty and restart it with `sacty up`" (a different reason from a missing task). Restart it when no task is running.

@@ -88,6 +88,11 @@ function mcpOver(w: ReturnType<typeof world>) {
     rereview: async () => w.task,
     listProjects: async () => [],
     createTask: async () => w.task,
+    approve: async (id: string) => {
+      // 本物の API と同じく、無いタスクは断る
+      if (id !== w.task.id) throw new Error("タスクが見つかりません。");
+      return w.task;
+    },
     listDeliverables: async (...a: Parameters<SactyApi["listDeliverables"]>) => {
       calls.push("deliverables");
       return read.listDeliverables(...a);

@@ -80,6 +80,13 @@ const CREATE_UNCERTAIN =
 const APPROVE_UNCERTAIN =
   "承認されている可能性があります。自動でやり直さず、get_task で state と approval を確かめてから、まだ承認待ちなら呼び直してください。";
 
+/** 承認の結果を受け取れなかったときの文。理由があれば（5xx の状態コードなど）それに、なければ原因の種類だけに、案内を続ける。 */
+function uncertainApproval(
+  reason = "承認の結果を受け取れませんでした（時間切れ・切断など）。",
+): string {
+  return `${reason}${APPROVE_UNCERTAIN}`;
+}
+
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -214,30 +221,28 @@ export function daemonApi(
       const found = await request(at, path);
       if (found.status === 404) throw new Error(renderMessage({ code: "task.notFound" }, "ja"));
       if (!found.ok) throw await refusal(found);
+      let res: Response;
       try {
-        const res = await request(at, `${path}/approve`, { method: "POST", body: input });
-        // 5xx は、処理の途中で失敗したのかもしれず、承認されたかどうかが分からない
-        if (!res.ok && res.status >= 500) {
-          const failed = await refusal(res);
-          throw new Error(`${failed.message}${APPROVE_UNCERTAIN}`, { cause: failed });
-        }
-        if (!res.ok) throw await refusal(res, staleForMcp);
+        res = await request(at, `${path}/approve`, { method: "POST", body: input });
+      } catch (error) {
+        // 認証できない・接続を断られた（要求が処理されていない）ときは、承認していない
+        if (notSent(error)) throw error;
+        // 頼んだ後に結果を受け取れなかった（時間切れ・切断）ときは、承認されたかどうかが分からない
+        // 元の文（「もう一度試してください」など）は案内と矛盾するので使わず、原因の種類だけを書く（元の例外は cause に残す）
+        throw new Error(uncertainApproval(), { cause: error });
+      }
+      // 5xx は、処理の途中で失敗したのかもしれず、承認されたかどうかが分からない（案内は 1 か所で付ける）
+      if (res.status >= 500) {
+        const failed = await refusal(res).catch(() => undefined);
+        throw new Error(uncertainApproval(failed?.message), { cause: failed });
+      }
+      // デーモンが応答で断ったなら、承認していない。その理由を返す
+      if (!res.ok) throw await refusal(res, staleForMcp);
+      try {
         return (await read<{ task: Task }>(res)).task;
       } catch (error) {
-        // デーモンが応答で断ったなら、承認していない。その理由をそのまま返す
-        if (error instanceof DaemonRefusal) throw error;
-        // 認証できない・接続を断られた（要求が処理されていない）ときも、承認していない
-        if (notSent(error)) throw error;
-        // 5xx は、上で案内を付けて投げ直したもの（そのまま返す）
-        if (error instanceof Error && error.cause instanceof DaemonRefusal) throw error;
-        // 頼んだ後に結果を受け取れなかったときは、承認されたかどうかが分からない
-        // 元の文（「もう一度試してください」など）は案内と矛盾するので使わず、原因の種類だけを書く（元の例外は cause に残す）
-        throw new Error(
-          `承認の結果を受け取れませんでした（時間切れ・切断など）。${APPROVE_UNCERTAIN}`,
-          {
-            cause: error,
-          },
-        );
+        // 本文を読めなかったときも、承認されたかどうかが分からない
+        throw new Error(uncertainApproval(), { cause: error });
       }
     },
     async listProjects() {

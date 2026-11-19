@@ -1267,6 +1267,27 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         submissions: {},
       }),
     ).toEqual({ step: "implement", submission: 1, method: "approve_step" });
+    // PR はあるが、承認待ちの工程と違う（実装の PR があっても、承認待ちは要求要件）→ 画面で承認できる
+    expect(
+      of({
+        status: "awaiting_approval",
+        gate: { step: "requirements", submission: 1 },
+        submissions: {},
+        pullRequest: { number: 9, url: "https://github.com/a/b/pull/9", state: "open" },
+      }),
+    ).toEqual({ step: "requirements", submission: 1, method: "approve_step" });
+    // PR の url が空のときは、repo と番号から URL を組む
+    expect(
+      of({
+        status: "awaiting_approval",
+        gate: { step: "implement", submission: 1 },
+        submissions: {},
+        pullRequest: { number: 9, repo: "https://github.com/a/b", url: "", state: "open" },
+      }),
+    ).toMatchObject({
+      method: "pull_request",
+      pullRequestUrl: "https://github.com/a/b/pull/9",
+    });
   });
 
   it("引数の形が違うとき（工程の名前でない・回が 0・負・小数・文字・欠け）は、承認の API を呼ばずに断る", async () => {
