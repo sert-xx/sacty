@@ -156,7 +156,10 @@ function rerunRepositoryForMcp(message: { code?: unknown; params?: unknown }): s
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
 
-type ReadApi = Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns">;
+type ReadApi = Pick<
+  SactyApi,
+  "listDeliverables" | "getDeliverable" | "listRuns" | "getErrorReport"
+>;
 
 /**
  * 成果物・実行を読む API（PBI-395）の呼び出し。理由は、定型の文だけにする（デーモンの応答の本文・成果物の中身を、
@@ -206,6 +209,26 @@ function readApi(
           max: input.maxBytes,
         })}`,
       ),
+    // エラーレポートは Markdown の本文で返る。省いたことを示す印（応答のヘッダー）も読む。失敗の理由には、本文を入れない
+    getErrorReport: async (taskId, input) => {
+      const res = await request(
+        endpoint(),
+        `/api/tasks/${id(taskId)}/error-report${query({ lang: input.lang, stale: "omit" })}`,
+      );
+      if (!res.ok) {
+        const failure = readFailure(res.status, await body(res));
+        if (failure === "task_not_found") return undefined;
+        throw failure;
+      }
+      let text: string;
+      try {
+        text = await res.text();
+      } catch (error) {
+        if (isTimeout(error)) throw new Error(DAEMON_TIMEOUT_MESSAGE, { cause: error });
+        throw new Error(READ_REASONS.unreadable);
+      }
+      return { text, omitted: res.headers.get("x-sacty-stale-logs") === "omitted" };
+    },
     listRuns: (taskId, input) =>
       call(`/api/tasks/${id(taskId)}/runs${query({ offset: input.offset, limit: input.limit })}`),
   };

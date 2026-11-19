@@ -16265,7 +16265,11 @@ export class TaskService {
    * タスクのエラーレポート（Markdown）。sacty の処理（作業履歴）・各実行のエージェントの動き（セッションログ）・エラーの詳細と、
    * あればオーケストレーターの分析をまとめる。タスクが無ければ undefined。
    */
-  errorReport(id: string, locale: ReportLocale): string | undefined {
+  errorReport(
+    id: string,
+    locale: ReportLocale,
+    options: { omitStaleLogs?: boolean } = {},
+  ): string | undefined {
     const task = this.tasks.get(id);
     if (!task) return undefined;
     return buildErrorReport({
@@ -16275,6 +16279,7 @@ export class TaskService {
       ...(this.deps.sessionLogs ? { logs: this.deps.sessionLogs } : {}),
       generatedAt: new Date().toISOString(),
       locale,
+      ...(options.omitStaleLogs ? { omitStaleLogs: true } : {}),
     });
   }
 

@@ -59,8 +59,9 @@ const pr = (number: number, extra: Record<string, unknown> = {}) => ({
 /** 成果物・実行を読む3つのメソッドを、同じ失敗にするスタブ（PBI-395）。 */
 function readStubs(
   fail: () => never,
-): Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns"> {
+): Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns" | "getErrorReport"> {
   return {
+    getErrorReport: async () => fail(),
     listDeliverables: async () => fail(),
     getDeliverable: async () => fail(),
     listRuns: async () => fail(),
@@ -271,6 +272,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "list_deliverables",
       "get_deliverable",
       "list_runs",
+      "get_error_report",
       "approve_step",
       "request_changes",
       "wait_for_task",
@@ -286,6 +288,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       false,
       true,
       false,
+      true,
       true,
       true,
       true,
@@ -305,6 +308,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       true,
       false,
       true,
+      false,
       false,
       false,
       false,
@@ -354,6 +358,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["deliverables"],
       expect.arrayContaining(["text", "next", "totalBytes"]),
       expect.arrayContaining(["runs", "nextOffset"]),
+      expect.arrayContaining(["text", "next", "totalBytes", "fingerprint"]),
       ["message", "approved", "task"],
       ["message", "requested", "task"],
       expect.arrayContaining(["changed", "changes", "task", "reviewTasks", "cursor"]),
@@ -388,6 +393,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "list_deliverables",
       "get_deliverable",
       "list_runs",
+      "get_error_report",
       "approve_step",
       "request_changes",
       "wait_for_task",
@@ -2355,6 +2361,7 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         "list_deliverables",
         "get_deliverable",
         "list_runs",
+        "get_error_report",
         "approve_step",
         "request_changes",
         "wait_for_task",
