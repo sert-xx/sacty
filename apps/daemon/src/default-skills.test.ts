@@ -1765,7 +1765,7 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
     expect(text).toContain("割れている（2 通り以上が、理由なく並んでいる）：慣習としない");
     expect(text).toContain("例が 1〜2 件しか無い：慣習としない");
     expect(text).toContain(
-      "既存の例（ファイルと行）を 2 つ以上か、数えた件数を書けない指摘は出さない",
+      "既存の例（ファイルと行）を 2 つ以上か、数えた件数を書く。書けない指摘は出さない",
     );
     expect(text).toContain("`checked` に、慣習としたもの");
   });
