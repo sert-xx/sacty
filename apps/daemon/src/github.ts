@@ -417,7 +417,14 @@ export function lineContextOf(diffHunk: unknown): PullRequestFeedback["lineConte
  * （マージ済みなら、マージされた内容。最新の提出がマージされたかを確かめるのに使う）。mergeCommit はマージのコミット
  * （取れれば。PBI-63）。
  */
-export type PullRequestStatus = { headSha?: string } & (
+export type PullRequestStatus = {
+  headSha?: string;
+  /**
+   * PR が最後に更新された時刻（GitHub の updated_at。コメント・レビューでも進む。PBI-411）。見守りで、変わっていない PR の
+   * コメントを読み直さないために使う。読めなければ無い。
+   */
+  updatedAt?: string;
+} & (
   | {
       state: "open";
       /**
@@ -1009,7 +1016,12 @@ export class GitHubPullRequests implements PullRequests {
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw apiError("getPr", res.status, json);
     const sha = (json.head as { sha?: unknown } | null)?.sha;
-    const head = typeof sha === "string" ? { headSha: sha } : {};
+    const head = {
+      ...(typeof sha === "string" ? { headSha: sha } : {}),
+      ...(typeof json.updated_at === "string" && json.updated_at
+        ? { updatedAt: json.updated_at }
+        : {}),
+    };
     if (json.merged === true) {
       const by = (json.merged_by as { login?: unknown } | null)?.login;
       const mergeCommit = json.merge_commit_sha;

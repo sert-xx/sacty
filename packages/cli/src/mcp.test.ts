@@ -128,7 +128,7 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
     const api = daemonApi(home, fetcher);
     expect(await api.getTask("none")).toBeUndefined();
     await expect(api.rereview("a")).rejects.toThrow(
-      "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
+      "再レビューできるのは、レビューを PR に投稿した後のタスク（完了したか、PR の変化を見守っている）だけです。",
     );
     // 無いタスク（消したプロジェクトのタスクを含む。詳細の API が 404）は、再レビューの API を呼ばずに断る
     calls.length = 0;

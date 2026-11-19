@@ -5058,7 +5058,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
       pulls.feedbackSactyRounds = [];
       await service.checkPullRequests().catch(() => undefined);
-      expect(pulls.feedbackSactyRounds.at(-1)).toContainEqual(
+      // 指摘の取り込みの読み取り（レビューのタスクの見守りの読み取りは、どの回も指摘に含めない。PBI-411）
+      expect(pulls.feedbackSactyRounds.flat()).toContainEqual(
         expect.objectContaining({ key: reviewId, allowed: true }),
       );
       activity.close();

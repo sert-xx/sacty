@@ -146,6 +146,7 @@ import {
   resumeNoteRoom,
   reviewedPullRequest,
   reviewReworkTarget,
+  reviewWatching,
   reworkingPullRequest,
   reworkTargets,
   SactySettings,
@@ -288,6 +289,10 @@ import {
   type FoundIssue,
   githubRetryAfterMs,
   githubStatus,
+  isDeferralNotice,
+  isHumanAskNotice,
+  isReviewStopNotice,
+  isSactyGitHubComment,
   isTransientGitHubFailure,
   type PullRequestFeedback,
   type PullRequestStatus,
@@ -1291,6 +1296,17 @@ export class TaskService {
   private pullRequestCiReading = false;
   /** 最後に CI を読んだタスク（PBI-364。次の確認では、その次のタスクから探す）。 */
   private pullRequestCiLast: string | undefined;
+  /**
+   * 見守っている PR の、レビューした先頭と違う先頭を初めて見た時刻（PBI-411。続けての push を、静かになるまで待つ）。メモリー
+   * だけに持つ（デーモンを起動し直すと、待ち直す）。
+   */
+  private readonly reviewWatchHeads = new Map<string, { head: string; at: number }>();
+  /** 見守っている PR の、作者の返信を初めて見た時刻（返信の key ごと。PBI-411）。 */
+  private readonly reviewWatchReplies = new Map<string, Map<string, number>>();
+  /** 見守っている PR のコメントを最後に読んだときの、投稿の時刻と PR の更新の時刻（変わっていなければ読み直さない。PBI-411）。 */
+  private readonly reviewWatchRead = new Map<string, string>();
+  /** 見守っている PR の状態を、最後に読んだ時刻（PBI-411。投稿から時間がたった PR は、間を空けて読む）。 */
+  private readonly reviewWatchChecked = new Map<string, number>();
   /** 承認待ちの PR の、PR の確認で最後に読んだ head（タスク → PR の番号・提出したコミット・読んだ head。PR #304 のレビュー）。 */
   private readonly latestHeads = new Map<
     string,
@@ -2592,30 +2608,59 @@ export class TaskService {
   }
 
   /**
-   * PR のレビューの取り込みのタスク（PBI-44）のうち、終わっていないものの PR の状態を確かめ、マージされた・
-   * マージせずに閉じられたら中止する（もうレビューする必要が無いため）。PR は、プロジェクトの gh のアカウントで
-   * 確かめる。確かめられないタスクは、次の確認でやり直す。
+   * PR のレビューのタスク（PBI-44）の PR の状態を確かめる。PR は、プロジェクトの gh のアカウントで確かめる。確かめられない
+   * タスクは、次の確認でやり直す。
+   * - レビューをまだ投稿していない（実行待ち・実行中・投稿の前の一時停止など）タスク：PR がマージされた・マージせずに
+   *   閉じられたら中止する（もうレビューする必要が無いため。実行中の実行を止める）
+   * - レビューを投稿して PR の変化を見守っているタスク（PBI-411）：watchReview が、見守りを終える・再レビューを始める
    */
   private async checkReviewPullRequests(): Promise<void> {
+    const watched = (t: Task) => t.status === "idle" && isCompleted(t) && t.reviewWatch;
     const open = [...this.tasks.values()].filter(
       (t) =>
         t.source?.review !== undefined &&
         t.source.kind === "github_pull_request" &&
         t.status !== "cancelled" &&
-        !isCompleted(t),
+        (!isCompleted(t) || watched(t)),
     );
+    // 見守りから外れたタスク（再レビューを始めた・見守りを終えた・一時停止・中止）の、初めて見た時刻は忘れる
+    const watching = new Set(open.filter(watched).map((t) => t.id));
+    for (const memo of [
+      this.reviewWatchHeads,
+      this.reviewWatchReplies,
+      this.reviewWatchRead,
+      this.reviewWatchChecked,
+    ]) {
+      for (const id of [...memo.keys()]) if (!watching.has(id)) memo.delete(id);
+    }
     for (const task of open) {
       const source = task.source;
       if (!source) continue;
+      // 投稿から時間がたった PR の見守りは、間を空けて読む（開いたままの PR が増えても、GitHub への問い合わせを増やし続けない）
+      if (watched(task)) {
+        if (!this.reviewWatchDue(task)) continue;
+        this.reviewWatchChecked.set(task.id, this.now());
+      }
       const usedSecrets: string[] = [];
       let status: PullRequestStatus;
+      let token: string;
       try {
-        const token = await this.githubToken(task, source.repo, usedSecrets);
+        token = await this.githubToken(task, source.repo, usedSecrets);
         status = await this.deps.pulls.status({ repo: source.repo, token, number: source.number });
       } catch (error) {
         console.warn(
           `[daemon] PR #${source.number}（${source.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
         );
+        continue;
+      }
+      if (watched(task)) {
+        try {
+          await this.watchReview(task.id, status, token);
+        } catch (error) {
+          console.warn(
+            `[daemon] PR #${source.number}（${source.repo}）の見守りを進められませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          );
+        }
         continue;
       }
       if (status.state === "open") continue;
@@ -2630,6 +2675,186 @@ export class TaskService {
         console.warn(`[daemon] レビューのタスク ${task.id} を中止できませんでした：`, error);
       });
     }
+  }
+
+  /**
+   * レビューを投稿したタスクの、PR の変化の見守り（PBI-411）。PR の確認（60秒ごと）から、読んだ PR の状態を渡して呼ぶ。
+   * - PR がマージされた・マージせずに閉じられた：見守りを終える（見守っていたタスクは完了する）
+   * - PR の先頭が、レビューした先頭と違う：再レビューを始める（指摘なしで完了した後も。同じ先頭では 1 回だけ）
+   * - 先頭は同じで、対象を確かめた後に PR の作者が返信した：同じ先頭を判定し直す（判定が指摘なしでない間だけ。同じ先頭では
+   *   1 回だけ）。sacty の投稿（目印で始まるレビュー・行へのコメント・知らせ）と Bot の投稿は、返信に数えない
+   * 続けての push・返信は、最後の変化から FEEDBACK_QUIET_MS たつまで待って、1 回にまとめる（初めて見た時刻は、メモリーだけに
+   * 持つ。デーモンを起動し直すと、待ち直す）。再レビューの実行中・一時停止中・中止の途中のタスクは動かさない（実行中に来た
+   * 変化は、投稿の後に、先頭と対象を確かめた時刻から拾う）。
+   * sacty が作った PR のレビューの子タスクは、見守りの終わりだけを扱う。再レビューは、親の流れが決める（reconcileReviewTasks）。
+   * GitHub の再依頼で別のタスクができた元のタスクも、見守りの終わりだけを扱う（supersededByRerequest）。
+   */
+  private async watchReview(
+    taskId: string,
+    status: PullRequestStatus,
+    token: string,
+  ): Promise<void> {
+    const forget = () => {
+      this.reviewWatchHeads.delete(taskId);
+      this.reviewWatchReplies.delete(taskId);
+      this.reviewWatchRead.delete(taskId);
+    };
+    // PR の状態を読む間に、人が再レビュー・一時停止・中止したら、動かさない
+    const current = () => {
+      const latest = this.tasks.get(taskId);
+      if (latest?.status !== "idle" || !isCompleted(latest)) return undefined;
+      if (!latest.reviewWatch || !latest.reviewPost || !latest.reviewTarget) return undefined;
+      if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return undefined;
+      if (this.inflight.has(taskId)) return undefined;
+      return latest;
+    };
+    const task = current();
+    if (!task) return;
+    const posted = task.reviewPost?.at;
+    const target = task.reviewTarget;
+    if (!target) return;
+    if (status.state !== "open") {
+      forget();
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: { type: "ReviewWatchEnded", payload: { reason: status.state } },
+        },
+      ]);
+      return;
+    }
+    if (task.reviewOf) return;
+    // GitHub の再依頼で作った、より新しいタスクがあれば、続きはそのタスクがレビューする（同じ PR を、2つのタスクで二重に
+    // 再レビューしない）。元のタスクには何も記録しない（docs/adr/20261019-0503-review-rerequest-new-task.md）
+    if (this.supersededByRerequest(task)) {
+      forget();
+      return;
+    }
+    const head = status.headSha?.trim() ?? "";
+    // 先頭を読めない応答では、何も決めない（次の確認でやり直す）
+    if (!/^[0-9A-Za-z]{7,64}$/.test(head)) return;
+    const now = this.now();
+    if (!sameCommit(target.headCommit, head)) {
+      this.reviewWatchReplies.delete(taskId);
+      // 同じ先頭の再レビューは 1 回だけ（対象の先頭を読み違えても、繰り返さない）
+      if (task.reviewRestartCommit && sameCommit(task.reviewRestartCommit, head)) return;
+      // 続けての push は、最後に先頭が変わってから待つ
+      const seen = this.reviewWatchHeads.get(taskId);
+      if (!seen || seen.head !== head) {
+        this.reviewWatchHeads.set(taskId, { head, at: now });
+        return;
+      }
+      if (now - seen.at < FEEDBACK_QUIET_MS) return;
+      forget();
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: { type: "ReviewRestarted", payload: { reason: "pushed", commit: head } },
+        },
+      ]);
+      return;
+    }
+    this.reviewWatchHeads.delete(taskId);
+    // 指摘なしで完了した後は、先頭の変化だけを追う（返信・コメントだけでは始めない）
+    if (!reviewWatching(task)) return;
+    if (task.reviewReplyCommit && sameCommit(task.reviewReplyCommit, head)) return;
+    const author = target.author.trim().toLowerCase();
+    if (!author) return;
+    // 前に読んでから PR が更新されていなければ、コメントを読み直さない（待っている返信があるときは、読んで確かめる）
+    const stamp = status.updatedAt ? `${posted}:${status.updatedAt}` : undefined;
+    if (
+      stamp !== undefined &&
+      this.reviewWatchRead.get(taskId) === stamp &&
+      !this.reviewWatchReplies.has(taskId)
+    ) {
+      return;
+    }
+    const account = this.githubAccountOf(task, target.repo).account;
+    // この PR をレビューした sacty のタスクの投稿（どの回も）は、返信ではない
+    const sactyReviews = (this.sactyReviewsOf(target.repo, target.number).sactyReviews ?? []).map(
+      (r) => ({ ...r, allowed: false }),
+    );
+    const feedback = await this.deps.pulls.feedback({
+      repo: target.repo,
+      token,
+      number: target.number,
+      ...(account ? { account } : {}),
+      ...(sactyReviews.length > 0 ? { sactyReviews } : {}),
+      noticeAccounts: this.githubAccountsOnHost(target.repo),
+      // ほかの sacty が作者のアカウントで投稿した、指摘への返信（対応しなかった理由）も、作者の返信として数える
+      includeSactyReplies: true,
+    });
+    const since = Date.parse(task.reviewWatch?.since ?? "");
+    const replies = feedback.filter(
+      (item) =>
+        item.author.toLowerCase() === author &&
+        Date.parse(item.at) > since &&
+        item.source !== "sacty_review" &&
+        // sacty の目印で始まる投稿は、アカウントが分からなくても返信に数えない（自分の投稿で再レビューを始めない）
+        sactyReviewTask(item.body) === undefined &&
+        !isReviewStopNotice(item.body) &&
+        !isHumanAskNotice(item.body) &&
+        !isDeferralNotice(item.body) &&
+        !isSactyGitHubComment(item.body),
+    );
+    const latest = current();
+    if (!latest || latest.reviewPost?.at !== posted || !reviewWatching(latest)) return;
+    if (stamp !== undefined) this.reviewWatchRead.set(taskId, stamp);
+    if (replies.length === 0) {
+      this.reviewWatchReplies.delete(taskId);
+      return;
+    }
+    // 返信は何件かに分けて書かれるので、最後のものから一定の時間たつまで待つ。GitHub の時刻がこの機械の時計より先に
+    // 進んでいても待ち続けないよう、初めて見た時刻より後には数えない（importFeedback と同じ）
+    const previouslySeen = this.reviewWatchReplies.get(taskId);
+    const seenAt = new Map(replies.map((item) => [item.key, previouslySeen?.get(item.key) ?? now]));
+    this.reviewWatchReplies.set(taskId, seenAt);
+    const newest = Math.max(
+      ...replies.map((item) => Math.min(Date.parse(item.at) || 0, seenAt.get(item.key) ?? now)),
+    );
+    if (now - newest < FEEDBACK_QUIET_MS) return;
+    forget();
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: { type: "ReviewRestarted", payload: { reason: "replied", commit: head } },
+      },
+    ]);
+  }
+
+  /**
+   * 見守っている PR の状態を、今回の PR の確認で読むか（PBI-411）。最後の投稿から REVIEW_WATCH_INTERVALS の時間がたった PR は、
+   * その間隔でだけ読む。静かになるのを待っている変化（先頭・返信）があるときと、sacty が作った PR のレビューの子タスク（親の
+   * マージ・クローズに、遅れずに続く）は、毎回読む。最後に読んだ時刻は、メモリーだけに持つ（起動の後の最初の確認では読む）。
+   */
+  private reviewWatchDue(task: Task): boolean {
+    if (task.reviewOf) return true;
+    if (this.reviewWatchHeads.has(task.id) || this.reviewWatchReplies.has(task.id)) return true;
+    const last = this.reviewWatchChecked.get(task.id);
+    if (last === undefined) return true;
+    const now = this.now();
+    const age = now - Date.parse(task.reviewPost?.at ?? "");
+    const every = REVIEW_WATCH_INTERVALS.find((i) => age >= i.afterMs)?.everyMs ?? 0;
+    return now - last >= every;
+  }
+
+  /**
+   * 依頼で取り込んだ PR のレビューのタスクに、同じ PR の、より後に作った依頼のタスク（GitHub の再依頼で作った別のタスク。
+   * PBI-143）があるか（PBI-411）。あれば、PR の変化での再レビューは、いちばん新しいタスクだけが始める。中止したタスクも
+   * 数える（再依頼の取り込みと同じ。中止した再依頼のタスクの代わりに、古いタスクが動き出さない）。
+   */
+  private supersededByRerequest(task: Task): boolean {
+    const source = task.source;
+    if (source?.review !== "requested") return false;
+    const created = Date.parse(task.createdAt);
+    return [...this.tasks.values()].some(
+      (t) =>
+        t.id !== task.id &&
+        t.source?.review === "requested" &&
+        t.source.number === source.number &&
+        repoKey(t.source.repo) === repoKey(source.repo) &&
+        (Date.parse(t.createdAt) > created || t.reviewRerequest?.taskId === task.id),
+    );
   }
 
   /**
@@ -4829,7 +5054,8 @@ export class TaskService {
       }));
     return {
       type: "PullRequestReviewPosted",
-      payload: { url, ...(latestCommit ? { latestCommit } : {}) },
+      // 投稿の後、PR の変化を見守る（判定が指摘なしでなければ、完了にしない。PBI-411）
+      payload: { url, ...(latestCommit ? { latestCommit } : {}), watch: true },
     };
   }
 
@@ -13289,7 +13515,9 @@ export class TaskService {
     if (this.deps.reviewTasks !== true) return;
     // 親が中止されたら、終わっていないレビューの子タスクも中止する（中止の片付けで PR を閉じなかったときも、レビューを続けない）
     for (const child of [...this.tasks.values()]) {
-      if (!child.reviewOf || child.status === "cancelled" || isCompleted(child)) continue;
+      // レビューを投稿して PR の変化を見守っている子タスク（PBI-411）も、終わっていないので中止する
+      if (!child.reviewOf || child.status === "cancelled") continue;
+      if (isCompleted(child) && !reviewWatching(child)) continue;
       if (this.cancelling.has(child.id)) continue;
       if (this.tasks.get(child.reviewOf.taskId)?.status !== "cancelled") continue;
       await this.cancel(child.id, "parent_cancelled").catch((error: unknown) => {
@@ -18788,6 +19016,15 @@ const REMARKS_MAX = 50;
 
 /** PR へのフィードバックを取り込むまでに、最後のフィードバックから待つ時間（書き終わるのを待つ）。 */
 export const FEEDBACK_QUIET_MS = 2 * 60_000;
+
+/**
+ * レビューを投稿した後の PR の見守り（PBI-411）で、PR の状態を読む間隔。最後の投稿から afterMs がたった PR は、everyMs ごとに
+ * だけ読む（長い順。当てはまらない間は、PR の確認のたびに読む）。
+ */
+export const REVIEW_WATCH_INTERVALS: readonly { afterMs: number; everyMs: number }[] = [
+  { afterMs: 24 * 60 * 60_000, everyMs: 30 * 60_000 },
+  { afterMs: 60 * 60_000, everyMs: 5 * 60_000 },
+];
 
 /**
  * PR へのフィードバックを、指摘の文にする（PBI-14b）。1件のフィードバックを1件の指摘にする（取り込み済みに

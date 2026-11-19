@@ -49,7 +49,7 @@ It does no implementation or PR creation.
 This section covers the following, in this order.
 
 - What is imported and how to set it up: [Which PRs are imported](#which-prs-are-imported) and [Set up PR review intake](#set-up-pr-review-intake)
-- After the import: [How a review proceeds](#how-a-review-proceeds), [The posted review](#the-posted-review), [Re-review](#re-review), and [When a review stops](#when-a-review-stops)
+- After the import: [How a review proceeds](#how-a-review-proceeds), [The posted review](#the-posted-review), [After the review is posted](#after-the-review-is-posted), [Re-review](#re-review), and [When a review stops](#when-a-review-stops)
 - Caution: [Do not import PRs you do not trust](#do-not-import-prs-you-do-not-trust)
 
 ### Which PRs are imported
@@ -94,6 +94,7 @@ The task proceeds in this order.
 1. The agent fetches dependencies for the code at the PR's head commit and runs verification such as tests and type checks.
 2. The agent reviews the PR.
 3. sacty posts the review to the PR ([The posted review](#the-posted-review)).
+4. If the verdict is "no findings", the task is done. Otherwise it is not done, and sacty watches the PR for changes ([After the review is posted](#after-the-review-is-posted)).
 
 When `images` is configured and no image is decided (not specified by the project's target, at creation, or on rerun), the Orchestrator chooses just the task image.
 This is because the review runs the project's verification such as tests (see [Container images](images.en.md#which-image-a-task-runs-in)).
@@ -126,7 +127,8 @@ The agent reads the reviews and comments already on the PR and does not repeat t
 If the PR changes before the review finishes, sacty behaves as follows.
 
 - If the PR is pushed to while it is being reviewed, sacty posts the review against the reviewed commit and says in the review body which commit was reviewed.
-- When the PR is merged or closed, review tasks that have not finished are cancelled.
+- When the PR is merged or closed before the review is posted (also during a re-review run), the review task is cancelled.
+  After the review is posted, the task is done instead of cancelled ([After the review is posted](#after-the-review-is-posted)).
 
 ### The posted review
 
@@ -173,16 +175,56 @@ A [review of a PR that sacty created](#reviewing-prs-that-sacty-created) does no
 The heading, verdict, and prefixes added by sacty are in Japanese.
 The findings follow the writing rules of the repository (Japanese when there are none).
 
+### After the review is posted
+
+A review task is not done until the verdict becomes "no findings".
+sacty watches the PR for changes and re-reviews automatically when the PR author responds.
+
+While it watches, the task status is "Waiting on the PR", with the current verdict (changes required, suggestions, or no verdict).
+It waits for the PR author to respond, so nothing is needed from you.
+It does not appear in "Needs you" or the bell in the header, and no completion notification is sent.
+
+sacty handles changes of the PR as follows.
+
+| What happened on the PR | What sacty does |
+| --- | --- |
+| A new commit was pushed | Re-reviews the latest commit |
+| The PR author replied without adding a commit (an objection, "won't fix", and so on) | Reads the reply and judges the same commit again |
+| It was merged, or closed without merging | Ends the watch and marks the task done |
+
+- Consecutive pushes and replies are re-reviewed once, after things go quiet (2 minutes after the last change).
+- A commit is re-reviewed only once, whether by a push or by a reply.
+  If replies to the same commit continue after it was judged again, nothing starts automatically (use "Review again and post to the PR").
+- Changes that happen during a re-review run are picked up after that review is posted.
+- sacty's own posts (reviews and notices) and posts by bots are not treated as replies.
+  This holds even when the PR author and sacty post from the same GitHub account.
+- When the verdict becomes "no findings", the task is done.
+  Even after that, a new commit pushed while the PR is open is re-reviewed (replies and comments alone after completion do not start it).
+- A task whose PR was merged or closed before reaching "no findings" has the status "Done (PR merged)" or "Done (PR closed)".
+- There is no cap on the number of re-reviews.
+  The task pauses when it reaches its budget cap, so raise the cap and resume it ([Pause, resume, and cancel](tasks.en.md#pause-resume-and-cancel)).
+- For a PR whose last post was a while ago, it takes longer to notice a change (up to 5 minutes after 1 hour, up to 30 minutes after 24 hours).
+
+To stop the watch, pause or cancel the task in the task details.
+
+- While paused, no re-review starts when the PR changes, and the task is not marked done when the PR is merged or closed.
+  On resume it goes back to watching and picks up the changes that happened while it was paused.
+- A cancelled task can no longer be re-reviewed.
+
+A task that posted its review and completed in an earlier version stays done even if its verdict is not "no findings" (neither the watch nor an automatic re-review starts).
+If you re-review such a task with "Review again and post to the PR", it is watched from that round on.
+
 ### Re-review
 
 A re-review reviews the latest commit of the PR again and posts the result.
 It says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review; on a PR sacty created, the [replies to your comments](tasks.en.md#replies-to-your-comments) that sacty posted with the same GitHub account as the PR author are read as the author's replies too).
 When a previous `[要修正]` is not fixed but turns out, on checking again, to be of `[提案]` weight, it is not counted as must-fix, and the summary says that the weight was reconsidered. This finding stays in the body only in the review of the round in which the weight was reconsidered. When it turns out to be of must-fix weight in a later round, it is raised as must-fix. A finding that the acceptance criteria or requirements are not met does not have its weight reconsidered and stays must-fix.
 
-There are three ways to start a re-review.
+There are four ways to start a re-review.
 
-- From the web UI: when new commits are pushed, press "Review again and post to the PR" in the task details.
-  sacty reruns the selected task.
+- Do nothing: after posting the review, sacty watches the PR for changes and starts one automatically ([After the review is posted](#after-the-review-is-posted)).
+- From the web UI: when you want it reviewed again right away, press "Review again and post to the PR" in the task details.
+  sacty reruns the selected task. It works while the task is watching and after it is done.
 - Ask your local AI: if you connect sacty's MCP server to Claude Code or Codex, you can ask it to "re-review this PR" ([Operating sacty from your local AI](mcp.en.md)).
   It is the same as starting from the web UI.
 - Re-request the review on GitHub (Re-request review): this works for a PR taken in by a review request.
@@ -190,15 +232,17 @@ There are three ways to start a re-review.
 
 A re-request on GitHub is handled as follows.
 
-- The original completed task keeps its status, post, activity, and cost.
+- The original task keeps its status, post, activity, and cost.
   The new task reviews in a new execution session.
+- If the original task was watching the PR, only the new task re-reviews on later changes of the PR (the same PR is not re-reviewed twice).
+  The original task stays "Waiting on the PR" and is done when the PR is merged or closed.
 - Each re-request creates one new task.
   Repeated intake of the same request and restarts do not add duplicates.
   A re-request after the new task completes creates another separate task.
-- Automatic re-review applies only to requests made after the review was posted and the task completed.
+- A new task is created only for requests made after the review was posted (after the task is done, or while it watches the PR).
   A request made during a review is not queued for another round.
-  If you re-requested during a review, re-request again after completion or use "Review again and post to the PR" in the task details.
-- PRs taken in by the label and PRs sacty created are not re-reviewed by a re-request (use "Review again and post to the PR").
+  If you re-requested during a review, re-request again after the post or use "Review again and post to the PR" in the task details.
+- For PRs taken in by the label and PRs sacty created, a re-request does not create a new task (the same task re-reviews automatically on changes of the PR).
 - If the re-request cannot be checked, no automatic re-review starts; the intake result shows the reason, and sacty checks again next time.
   You can also start it manually with "Review again and post to the PR".
 
@@ -288,17 +332,22 @@ The child task appears on the screen as follows.
 - The child task is a "PR review only" task titled "[PR #number] title of the original task" (the same whatever the screen language).
 - In "Related tasks" of the task detail, links to each other appear.
   They appear as "PR review" on the original task and "Reviews the PR of" on the child task.
-- The links on the original task also show the child task's status (queued, cancelled, and so on), so you can tell them apart when a reopened PR has several child tasks.
+- The links on the original task also show the child task's status (queued, waiting on the PR, cancelled, and so on), so you can tell them apart when a reopened PR has several child tasks.
 - Its cost counts toward the child task's budget.
+- A child task, too, is not done until the verdict becomes "no findings", and shows "Waiting on the PR".
+  What the child task waits for is the original task. Its re-review starts when, for example, the original task updates the PR and goes back to waiting for approval ([How findings reach the original task](#how-findings-reach-the-original-task)).
+  Approving and merging the original task are not blocked while the child task is "Waiting on the PR".
 
 ### When the child task is cancelled
 
 The child task is cancelled in these cases.
 
-- You merge or close the PR before the child task finishes
+- You merge or close the PR before the child task posts its review (also during a re-review run)
 - You cancel the original task
 
-If you reopen a closed PR, sacty creates a new child task and reviews it again (a child task you cancelled is not recreated).
+If you merge or close the PR after the review is posted, the child task is done instead of cancelled.
+
+If you reopen the PR of a child task that was cancelled by the close, sacty creates a new child task and reviews it again (a child task you cancelled is not recreated).
 
 ### How findings reach the original task
 

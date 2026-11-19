@@ -1093,6 +1093,22 @@ export type Task = {
    */
   reviewPost?: { url: string; at: string; latestCommit?: string };
   /**
+   * レビューを投稿した後の、PR の変化の見守り（PBI-411）。見守る版が投稿したレビュー（PullRequestReviewPosted の watch）で付き、
+   * 再レビューを始める・見守りを終える（ReviewWatchEnded）と消える。付いている間、その回の判定が指摘なしでなければ、タスクは
+   * 完了していない（reviewWatching）。指摘なしなら完了で、PR の先頭だけを追う。それより前の版が投稿したレビューには付かない。
+   * since は、その回のレビューの対象を確かめた時刻（これより後の作者の返信を、まだ読んでいない返信として数える）。
+   */
+  reviewWatch?: { since: string };
+  /** 見守りを終えた理由と時刻（ReviewWatchEnded。PBI-411）。再レビューを始めると消える。 */
+  reviewWatchEnded?: { reason: PayloadOf<"ReviewWatchEnded">["reason"]; at: string };
+  /** 今の回のレビューの対象を確かめた時刻（ReviewTargetResolved。PBI-411）。これより前の作業履歴の回には無い。 */
+  reviewResolvedAt?: string;
+  /**
+   * 作者の返信を読んで、同じ先頭を判定し直したときの、その先頭（ReviewRestarted の reason: replied。PBI-411）。同じ先頭の
+   * 返信による判定のし直しは、1 回だけ。
+   */
+  reviewReplyCommit?: string;
+  /**
    * レビューの工程の、回ごとの判定（PBI-88・PBI-111）。verdict が無い回は、判定が無い。missing は、その理由（PBI-378。
    * これより前の作業履歴の回には無い）。
    */
@@ -2800,6 +2816,7 @@ export function applyEvent(
       }
       if (task.reviewTarget) throw new ActivityIntegrityError(event, "already resolved");
       task.reviewTarget = event.payload;
+      task.reviewResolvedAt = event.at;
       // 読めなかった回は、前に読めた名前を残す（PR の元のブランチは変わらない。PBI-392）
       if (event.payload.headBranch) task.reviewBranch = event.payload.headBranch;
       break;
@@ -2809,7 +2826,8 @@ export function applyEvent(
       break;
 
     case "PullRequestReviewPosted": {
-      // 書いたレビューを投稿すると、レビューの工程（人間の承認は無い）が終わり、タスクは完了する。
+      // 書いたレビューを投稿すると、レビューの工程（人間の承認は無い）が終わる。見守る版の投稿（watch）は、判定が指摘なしで
+      // なければ、完了にせずに PR の変化を見守る（reviewWatching。PBI-411）。それより前の版の投稿は、判定に関係なく完了する。
       // 行へのコメントだけのレビューもあるので、本文が空でも書き終えたものとして扱う
       if (
         activeStep(task) !== "review" ||
@@ -2827,8 +2845,20 @@ export function applyEvent(
         at: event.at,
         ...(event.payload.latestCommit ? { latestCommit: event.payload.latestCommit } : {}),
       };
+      task.reviewWatchEnded = undefined;
+      task.reviewWatch = event.payload.watch
+        ? { since: task.reviewResolvedAt ?? event.at }
+        : undefined;
       break;
     }
+
+    case "ReviewWatchEnded":
+      if (task.status === "cancelled" || !task.reviewWatch || !task.reviewPost) {
+        throw new ActivityIntegrityError(event, "the review is not watched");
+      }
+      task.reviewWatch = undefined;
+      task.reviewWatchEnded = { reason: event.payload.reason, at: event.at };
+      break;
 
     case "ReviewRestarted":
       // レビューを投稿して完了したタスクだけ。前回の対象・行へのコメント・投稿は持ち越さない（PBI-44）。前回の指摘は、
@@ -2856,6 +2886,9 @@ export function applyEvent(
       task.reviewTarget = undefined;
       task.reviewComments = [];
       task.reviewPost = undefined;
+      task.reviewWatch = undefined;
+      task.reviewWatchEnded = undefined;
+      task.reviewResolvedAt = undefined;
       task.outputs = Object.fromEntries(
         Object.entries(task.outputs).filter(([key]) => key !== "review"),
       );
@@ -2864,6 +2897,10 @@ export function applyEvent(
       // 断った理由を読んで、同じ先頭を判定し直す（同じ先頭には 1 回だけ。PBI-357）
       if (event.payload.reason === "declined" && event.payload.commit) {
         task.reviewRejudgeCommit = event.payload.commit;
+      }
+      // 作者の返信を読んで、同じ先頭を判定し直す（同じ先頭には 1 回だけ。PBI-411）
+      if (event.payload.reason === "replied" && event.payload.commit) {
+        task.reviewReplyCommit = event.payload.commit;
       }
       break;
 
@@ -4599,8 +4636,10 @@ export function investigationIsGoal(task: Task): boolean {
   return task.steps.at(-1)?.key === "investigate";
 }
 
-/** すべての工程が終わったか。 */
-/** 「再レビュー」できるか（レビューを PR に投稿して完了したタスク。PBI-44）。 */
+/**
+ * 「再レビュー」できるか（レビューを PR に投稿して、次の回を始めていないタスク。PBI-44）。完了したタスクと、PR の変化を
+ * 見守っているタスク（PBI-411）。
+ */
 export function canRereview(task: Task): boolean {
   return (
     task.status !== "cancelled" &&
@@ -4699,16 +4738,62 @@ export function canRequestSecurityFix(task: Task): boolean {
   );
 }
 
+/**
+ * すべての工程が終わったか。レビューを投稿して PR の変化を見守っているタスク（reviewWatching。PBI-411）も、工程は終わって
+ * いるので真。タスクが完了したかは isDone で見る。
+ */
 export function isCompleted(task: Task): boolean {
   return task.steps.length > 0 && task.steps.every((s) => s.state === "done" || s.state === "skip");
 }
 
+/** レビューのタスクの、今の回の判定（PBI-411）。今の回の実行がまだ無い・判定が無い回は undefined。 */
+export function currentReviewVerdict(task: Task): ReviewVerdict | undefined {
+  const round = task.reviewRound ?? 1;
+  return task.reviewVerdicts?.findLast((v) => v.round === round)?.verdict;
+}
+
 /**
- * 終わったタスクか（中止したか、工程をすべて終えて止まっている。PBI-114）。画面の状態の「完了」「中止」と同じ。承認待ち・
- * 一時停止・エスカレーション・テストや最終レビューの途中は、終わっていない。
+ * レビューを投稿した後、PR の変化を見守っているか（PBI-411）。見守る版が投稿したレビューの、今の回の判定が指摘なしでない
+ * （提案あり・修正が必要・判定が無い）間。待っているのは PR の作者の対応で、人の出番ではなく、実行の枠も使わない。PR の先頭が
+ * 変わる・作者が返信すると再レビューを始め、PR がマージ・クローズされると見守りを終えて完了する。一時停止の間も真
+ * （再開すると見守りに戻る）。それより前の版が投稿して完了したタスクは、判定に関係なく偽（完了のまま）。
+ */
+export function reviewWatching(task: Task): boolean {
+  return (
+    task.status !== "cancelled" &&
+    task.reviewWatch !== undefined &&
+    task.reviewPost !== undefined &&
+    isCompleted(task) &&
+    currentReviewVerdict(task) !== "no_findings"
+  );
+}
+
+/**
+ * 指摘なしで完了した後も、PR の先頭の変化を追っているか（PBI-411）。PR が開いている間に先頭が変わると、再レビューを始める。
+ */
+export function reviewFollowing(task: Task): boolean {
+  return (
+    task.status !== "cancelled" &&
+    task.reviewWatch !== undefined &&
+    task.reviewPost !== undefined &&
+    isCompleted(task) &&
+    currentReviewVerdict(task) === "no_findings"
+  );
+}
+
+/**
+ * 完了したタスクか（工程をすべて終えて止まっていて、PR の変化を見守っていない。中止は含めない）。画面の状態の「完了」と同じ。
+ */
+export function isDone(task: Task): boolean {
+  return task.status === "idle" && isCompleted(task) && !reviewWatching(task);
+}
+
+/**
+ * 終わったタスクか（中止したか、完了した。PBI-114）。画面の状態の「完了」「中止」と同じ。承認待ち・一時停止・
+ * エスカレーション・テストや最終レビューの途中・レビューを投稿した後の PR の見守り（PBI-411）は、終わっていない。
  */
 export function isFinished(task: Task): boolean {
-  return task.status === "cancelled" || (task.status === "idle" && isCompleted(task));
+  return task.status === "cancelled" || isDone(task);
 }
 
 /**
@@ -4950,7 +5035,7 @@ export function rerunnableKind(task: Pick<Task, "parent" | "start">): boolean {
 
 /**
  * 完了したタスクから、続きの作業のタスクを作れるか（派生）。工程をすべて終えて止まっている（中止していない）タスクだけ。
- * 何度でも作れる。
+ * 何度でも作れる。レビューを投稿して PR の変化を見守っているタスク（PBI-411）からも、作れる（指摘を直すタスクなど）。
  */
 export function canDerive(task: Task): boolean {
   return task.status === "idle" && isCompleted(task);

@@ -18,7 +18,9 @@ Each time the Activity is appended to, sacty compares the task before and after 
 | `escalation` | Became `escalated` |
 | `approval` | Became `awaiting_approval`, or the step awaiting approval or the submission number changed |
 | `paused` | Became `paused` (no notification when the reason is `manual`, that is, when a person paused it) |
-| `completed` | Completed |
+| `completed` | Completed (every step finished; for a PR review task, except while it watches the PR for changes after posting its review) |
+
+- When a PR review task posts a verdict other than no findings and enters the watch for changes of the PR ([Watching the PR after posting](tasks-and-steps.en.md#watching-the-pr-after-posting)), nothing is notified (it is neither complete nor the person's turn). `completed` is notified when the verdict becomes no findings or the watch ends by a merge or close of the PR.
 
 Code: `apps/daemon/src/notifier.ts` (`notificationFor`), `apps/daemon/src/service.ts` (`append`), `packages/core/src/projects.ts` (`NotificationKind`)
 

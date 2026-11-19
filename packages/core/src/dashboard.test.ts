@@ -184,6 +184,56 @@ describe("ダッシュボードの集計：流量（PBI-118）", () => {
     expect(s.flow.days7).toEqual({ completed: 2, cancelled: 1, medianLeadMs: 5 * DAY });
   });
 
+  it("レビューを投稿して PR の変化を見守っている間は、完了に数えない。見守りを終えた・指摘なしになった時刻で数える（PBI-411）", () => {
+    const stats = new DashboardStats();
+    const created = new Date(TODAY - 3 * DAY).toISOString();
+    const posted = (verdict: "suggestions" | "no_findings", patch: Partial<Task> = {}) =>
+      task({
+        id: "r",
+        createdAt: created,
+        status: "idle",
+        steps: [{ key: "review", state: "done" }],
+        reviewPost: { url: "https://x/r", at: created },
+        reviewWatch: { since: created },
+        reviewVerdicts: [{ round: 1, verdict }],
+        ...patch,
+      });
+    const running = task({
+      id: "r",
+      createdAt: created,
+      steps: [{ key: "review", state: "active" }],
+    });
+    // 提案ありの投稿：見守りに入る（完了に数えない）
+    stats.add(
+      event("PullRequestReviewPosted", TODAY - 2 * DAY, {}, { taskId: "r" }),
+      running,
+      posted("suggestions"),
+    );
+    expect(summarize(stats).flow.days7.completed).toBe(0);
+    // PR のマージで見守りを終えた：その時刻で完了に数える
+    stats.add(
+      event("ReviewWatchEnded", TODAY - HOUR, { reason: "merged" }, { taskId: "r" }),
+      posted("suggestions"),
+      posted("suggestions", {
+        reviewWatch: undefined,
+        reviewWatchEnded: { reason: "merged", at: new Date(TODAY - HOUR).toISOString() },
+      }),
+    );
+    expect(summarize(stats).flow.days7).toEqual({
+      completed: 1,
+      cancelled: 0,
+      medianLeadMs: 3 * DAY - HOUR,
+    });
+    // 更新の前の版が投稿したレビュー（見守りの印が無い）は、判定に関係なく、投稿の時刻で完了に数える
+    const before = new DashboardStats();
+    before.add(
+      event("PullRequestReviewPosted", TODAY - 2 * DAY, {}, { taskId: "r" }),
+      running,
+      posted("suggestions", { reviewWatch: undefined }),
+    );
+    expect(summarize(before).flow.days7.completed).toBe(1);
+  });
+
   it("直近7日の境の前の分は直近30日だけに入り、30日の境の前は入らない", () => {
     const stats = new DashboardStats();
     const finish = (id: string, at: number) =>

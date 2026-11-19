@@ -257,7 +257,12 @@ type Listed = { total: number; returned: number; tasks: TaskSummary[] };
 
 describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () => {
   /** PR 9 のレビューを投稿して完了したタスクと、その土台。 */
-  async function reviewed(headRef: string | null = "feat/retry") {
+  /** 判定つきのレビューの答え。 */
+  const verdictBlock = (verdict: string) =>
+    `\`\`\`json\n${JSON.stringify({ "sacty-review-verdict": { verdict } })}\n\`\`\``;
+
+  /** PR 9 のレビューを、判定 first（既定は指摘なし）で投稿するところまで進める。 */
+  async function reviewed(headRef: string | null = "feat/retry", first = "no_findings") {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();
     pulls.prInfo = {
@@ -267,10 +272,11 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ...(headRef ? { headRef } : {}),
     };
     const settings = new MemorySettingsStore({ reviewLabel: "sacty-review" });
-    const { service } = makeService(activity, [out("# 1回目"), out("# 2回目")], {
-      pulls,
-      settings,
-    });
+    const { service } = makeService(
+      activity,
+      [out(`# 1回目\n\n${verdictBlock(first)}`), out(`# 2回目\n\n${verdictBlock("no_findings")}`)],
+      { pulls, settings },
+    );
     const [task] = service.importIssues([pr(9)]);
     const id = task?.id ?? "";
     await service.runNext(id);
@@ -278,6 +284,59 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
     expect(pulls.reviews).toHaveLength(1);
     return { activity, pulls, service, id };
   }
+
+  it("レビューを投稿しても、判定が指摘なしでなければ completed にならない。要約で、見守り中であること・判定・見守りを終えた理由が分かる（PBI-411）", async () => {
+    const { activity, pulls, service, id } = await reviewed("feat/retry", "suggestions");
+    const api = apiOver(service, "http://127.0.0.1:4700/");
+    const { client, call, json } = await connect(api);
+    const watching = await json<TaskSummary>("get_task", { task_id: id });
+    expect(watching).toMatchObject({
+      state: "idle",
+      steps: ["review:done"],
+      canRereview: true,
+      canPause: true,
+      canCancel: true,
+      // 工程は終わっているので、続き（指摘を直すタスクなど）は、今までどおり作れる
+      canDerive: true,
+      review: { round: 1, verdict: "suggestions", watching: true },
+    });
+    expect(watching.review?.postedUrl).toBeTruthy();
+    expect(watching.review).not.toHaveProperty("watchEnded");
+    // 終わっていないタスクに入り、人の出番（needs_person）には入らない
+    expect((await json<Listed>("list_tasks", { open_only: true })).tasks.map((t) => t.id)).toEqual([
+      id,
+    ]);
+    expect((await json<Listed>("list_tasks", { needs_person: true })).total).toBe(0);
+    expect((await json<Listed>("list_tasks", { state: ["completed"] })).total).toBe(0);
+    expect((await json<Listed>("list_tasks", { state: ["idle"] })).tasks.map((t) => t.id)).toEqual([
+      id,
+    ]);
+    // 見守り中も、一時停止と再開ができる（再開すると、見守りに戻る）
+    expect((await call("pause_task", { task_id: id })).isError).toBeFalsy();
+    const paused = await json<TaskSummary>("get_task", { task_id: id });
+    expect(paused).toMatchObject({ state: "paused", pausedReason: "manual", canRereview: true });
+    expect(paused.review).not.toHaveProperty("watching");
+    expect((await json<Listed>("list_tasks", { needs_person: true })).total).toBe(1);
+    expect((await call("resume_task", { task_id: id })).isError).toBeFalsy();
+    expect(await json<TaskSummary>("get_task", { task_id: id })).toMatchObject({
+      state: "idle",
+      review: { watching: true },
+    });
+    // PR がマージされると、見守りを終えて完了する（理由が要約に出る）
+    pulls.state = { state: "merged" };
+    await service.checkPullRequests();
+    const done = await json<TaskSummary>("get_task", { task_id: id });
+    expect(done).toMatchObject({
+      state: "completed",
+      canRereview: true,
+      canPause: false,
+      review: { round: 1, verdict: "suggestions", watchEnded: "merged" },
+    });
+    expect(done.review).not.toHaveProperty("watching");
+    expect((await json<Listed>("list_tasks", { open_only: true })).total).toBe(0);
+    await client.close();
+    activity.close();
+  });
 
   it("ツールは、一覧・詳細・再レビュー・プロジェクトの一覧・タスクの作成と、成果物・実行の読み取り3つ。取得のツールは読み取りだけと示す", async () => {
     const { activity, service } = await reviewed();
@@ -536,7 +595,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
         { role: "review", repo: REPO, number: 9, url: `${REPO}/pull/9`, branch: "feat/retry" },
       ],
       branches: ["feat/retry"],
-      review: { round: 1 },
+      review: { round: 1, verdict: "no_findings" },
       url: `http://127.0.0.1:4700/tasks/${id}`,
     });
     expect(summary?.review?.postedUrl).toBeTruthy();
@@ -597,7 +656,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
     const again = await call("rereview_task", { task_id: id });
     expect(again).toEqual({
       isError: true,
-      text: "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
+      text: "再レビューできるのは、レビューを PR に投稿した後のタスク（完了したか、PR の変化を見守っている）だけです。",
     });
     expect(service.get(id)?.activity.length).toBe(before);
 
@@ -1190,7 +1249,8 @@ describe("タスクの PR・ブランチと絞り込み（PBI-392）", () => {
     expect(detail).toMatchObject({
       state: "paused",
       pausedReason: "auth",
-      pausedMessage: "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
+      pausedMessage:
+        "再レビューできるのは、レビューを PR に投稿した後のタスク（完了したか、PR の変化を見守っている）だけです。",
       previousReview: {
         round: 1,
         url: `${REPO}/pull/40#r1`,

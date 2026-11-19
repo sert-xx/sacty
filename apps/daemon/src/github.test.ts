@@ -627,6 +627,27 @@ describe("承認待ちの PR のベースブランチとの競合（mergeable）
   });
 });
 
+describe("PR の更新の時刻（PBI-411）", () => {
+  it("PR の状態の答えに、updated_at が文字列のときだけ、更新の時刻を含める（どの状態でも。追加の問い合わせはしない）", async () => {
+    const at = "2026-11-20T00:10:00Z";
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: { state: "open", merged: false, updated_at: at, head: { sha: "abc" } } },
+      { status: 200, json: { state: "closed", merged: false, updated_at: at } },
+      { status: 200, json: { state: "closed", merged: true, updated_at: at } },
+      { status: 200, json: { state: "open", merged: false, updated_at: 5 } },
+      { status: 200, json: { state: "open", merged: false, updated_at: "" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
+    expect(await client.status(pr)).toEqual({ state: "open", headSha: "abc", updatedAt: at });
+    expect(await client.status(pr)).toEqual({ state: "closed", updatedAt: at });
+    expect(await client.status(pr)).toEqual({ state: "merged", updatedAt: at });
+    expect(await client.status(pr)).toEqual({ state: "open" });
+    expect(await client.status(pr)).toEqual({ state: "open" });
+    expect(calls).toHaveLength(5);
+  });
+});
+
 describe("承認待ちの PR のドラフト（PBI-331）", () => {
   it("開いている PR の draft を、真偽値のときだけ答えに含める（閉じた PR には含めない。PR #348 9回目のレビュー指摘）", async () => {
     const { impl } = fakeFetch([

@@ -6,6 +6,8 @@ import {
   deferProposals,
   exportDue,
   isCompleted,
+  isDone,
+  isFinished,
   isSecurityTask,
   MAX_CHANGE_REQUESTS,
   MAX_INCOMPLETE_CONTINUATIONS,
@@ -15,6 +17,7 @@ import {
   RERUN_RECORD_HEADING,
   renderMessage,
   reviewedPullRequest,
+  reviewWatching,
   STEP_PLANS,
 } from "@sacty/core";
 import { describe, expect, it, vi } from "vitest";
@@ -29,6 +32,7 @@ import { MemoryProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, continuablePullRequest } from "./prompts.js";
 import { createApp } from "./server.js";
 import {
+  FEEDBACK_QUIET_MS,
   InvalidOperationError,
   PR_CI_READ_INTERVAL_MS,
   PR_CI_READS_MAX,
@@ -2067,6 +2071,122 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(types(service, id)).not.toContain("PullRequestCiRerunRequested");
         expect(taskOf(service, id).status).toBe("awaiting_approval");
         activity.close();
+      });
+
+      describe("子タスクは、指摘なしになるまで完了にせずに PR を見守る。親の流れは変えない（PBI-411 条件 11）", () => {
+        /** 時計を進められる形で、実装の PR を作って承認待ちになるまで進める。 */
+        async function watched(outcomes: AgentOutcome[]) {
+          const clock = { offset: 0 };
+          const pulls = new FakePulls();
+          const made = await start([implement(), ...outcomes], {
+            pulls,
+            steps: ["implement"],
+            reviewTasks: true,
+            ci: failingCi(),
+            now: () => later() + clock.offset,
+          });
+          const { service, id } = made;
+          for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+            await service.runNext(id);
+          }
+          /** 静かになるまでの待ちが明ける時間を進めながら、PR の確認を繰り返す。 */
+          const settle = async () => {
+            for (let i = 0; i < 3; i++) {
+              clock.offset += FEEDBACK_QUIET_MS;
+              await service.checkPullRequests();
+            }
+          };
+          const restartsOf = (taskId: string) =>
+            (service.get(taskId)?.activity ?? []).flatMap((e) =>
+              e.type === "ReviewRestarted" ? [e.payload] : [],
+            );
+          return { ...made, pulls, settle, restartsOf };
+        }
+
+        it("子タスクが見守り中でも、親は指摘を取り込んで直し、子は親の更新で 1 回だけ再レビューする（見守りが重ねて始めない）。指摘なしでドラフトを外し、マージで親も子も完了する", async () => {
+          const made = await watched([
+            verdictOut("changes_required"),
+            implement("# 実装の説明 v2"),
+            verdictOut("no_findings", "# 評価\n\nマージしてよい"),
+          ]);
+          const { activity, service, pulls, id, settle, restartsOf } = made;
+          const childId = childOf(service, id);
+          const first = commitOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first, author: "me" };
+          await runReview(service, childId);
+          // 子は、修正が必要の判定を投稿して、完了にならずに見守る（実行待ちにも出ない）
+          expect(reviewWatching(taskOf(service, childId))).toBe(true);
+          expect(isFinished(taskOf(service, childId))).toBe(false);
+          expect(service.queuedTaskIds()).not.toContain(childId);
+          // 見守りの間、親は承認待ちのまま。子は、同じ先頭を勝手に再レビューしない
+          await settle();
+          expect(taskOf(service, id).status).toBe("awaiting_approval");
+          expect(taskOf(service, id).pullRequest?.draft).toBe(true);
+          expect(restartsOf(childId)).toEqual([]);
+          // 親が、子の指摘を取り込んで直し、PR を更新する
+          pulls.feedbackBy[7] = [posted(pulls, 0)];
+          await service.checkPullRequests();
+          expect(taskOf(service, id).status).toBe("queued");
+          for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+            await service.runNext(id);
+          }
+          const second = commitOf(service, id);
+          expect(second).not.toBe(first);
+          pulls.prInfo = { ...pulls.prInfo, headSha: second };
+          // 子の再レビューは、親の更新によるもの 1 回だけ（見守りの「先頭が変わった」「作者が返信した」では始めない）
+          await settle();
+          expect(restartsOf(childId)).toEqual([{ reason: "updated", commit: second }]);
+          await runReview(service, childId);
+          await settle();
+          expect(restartsOf(childId)).toHaveLength(1);
+          // 指摘なしで子は完了し、親の PR のドラフトが外れる
+          expect(isDone(taskOf(service, childId))).toBe(true);
+          expect(taskOf(service, id).pullRequest?.draft).toBeUndefined();
+          expect(pulls.draftChanges).toEqual([{ number: 7, draft: false }]);
+          // 人がマージすると、親は完了する。子は完了のまま、中止にならない
+          pulls.states[7] = { state: "merged", headSha: second };
+          await service.checkPullRequests();
+          expect(isCompleted(taskOf(service, id))).toBe(true);
+          expect(taskOf(service, childId).status).toBe("idle");
+          expect(isDone(taskOf(service, childId))).toBe(true);
+          expect(types(service, childId)).not.toContain("TaskCancelled");
+          activity.close();
+        });
+
+        it("子タスクが見守り中（指摘が残ったまま）に、人が PR をマージしたら、親は承認として進み、子は中止ではなく完了になる", async () => {
+          const made = await watched([verdictOut("suggestions")]);
+          const { activity, service, pulls, id } = made;
+          const childId = childOf(service, id);
+          const first = commitOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+          await runReview(service, childId);
+          expect(reviewWatching(taskOf(service, childId))).toBe(true);
+          pulls.states[7] = { state: "merged", headSha: first };
+          await service.checkPullRequests();
+          expect(taskOf(service, id).pullRequestState).toBe("merged");
+          const child = taskOf(service, childId);
+          expect(child.status).toBe("idle");
+          expect(isDone(child)).toBe(true);
+          expect(child.reviewWatchEnded?.reason).toBe("merged");
+          expect(types(service, childId)).not.toContain("TaskCancelled");
+          activity.close();
+        });
+
+        it("親が中止されたら、見守り中の子タスクも中止する（PR を閉じられなかったときも、見守りを続けない）", async () => {
+          const made = await watched([verdictOut("changes_required")]);
+          const { activity, service, pulls, id } = made;
+          const childId = childOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+          await runReview(service, childId);
+          expect(reviewWatching(taskOf(service, childId))).toBe(true);
+          pulls.closeFail = "boom";
+          await service.cancel(id);
+          await service.checkPullRequests();
+          const child = taskOf(service, childId);
+          expect(child.status).toBe("cancelled");
+          expect(child.cancelled?.reason).toBe("parent_cancelled");
+          activity.close();
+        });
       });
 
       it("子タスクが CI の結果を読んでレビューし、指摘を親が直したら再レビューし、指摘なしでドラフトを外して人の承認を待つ（受け入れ条件 2・3）", async () => {

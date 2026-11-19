@@ -1313,6 +1313,108 @@ describe("レビューの工程（PBI-19）", () => {
   });
 });
 
+describe("レビューを投稿した後の、PR の変化の見守りの表示（PBI-411）", () => {
+  const posted = { url: "https://x/pull/12#r", at: "2026-11-20T00:00:00.000Z" };
+  const watching = (verdict?: "changes_required" | "suggestions" | "no_findings", patch = {}) =>
+    task({
+      steps: [{ key: "review", state: "done" }],
+      reviewPost: posted,
+      reviewWatch: { since: "2026-11-19T23:50:00.000Z" },
+      reviewVerdicts: [{ round: 1, ...(verdict ? { verdict } : { missing: "absent" as const }) }],
+      ...patch,
+    });
+
+  it("見守り中は「完了」と出さず、今の回の判定と、PR の対応を待っていることを出す。色は、待っている（人の出番でも完了でもない）", () => {
+    expect(statusText(watching("changes_required"))).toBe("PR の対応待ち（修正が必要）");
+    expect(statusText(watching("suggestions"))).toBe("PR の対応待ち（提案あり）");
+    expect(statusText(watching())).toBe("PR の対応待ち（判定なし）");
+    expect(statusTextIn(watching("suggestions"), labels.en)).toBe(
+      "Waiting on the PR (suggestions)",
+    );
+    for (const t of [watching("changes_required"), watching("suggestions"), watching()]) {
+      expect(statusTone(t)).toBe("waiting");
+      expect(needsPerson(t)).toBe(false);
+      // 見守り中も、一時停止・中止の操作を出す
+      expect(canControl(t)).toBe(true);
+    }
+    // 今の回の判定だけを見る（再レビューの後に、前の回の判定で見守りと出さない）
+    const cleared = watching("suggestions", {
+      reviewRound: 2,
+      reviewVerdicts: [
+        { round: 1, verdict: "suggestions" },
+        { round: 2, verdict: "no_findings" },
+      ],
+    });
+    expect(statusText(cleared)).toBe("完了");
+    expect(statusTone(cleared)).toBe("completed");
+  });
+
+  it("判定が指摘なしなら「完了」。更新の前の版が投稿したタスクは、判定に関係なく「完了」のまま", () => {
+    expect(statusText(watching("no_findings"))).toBe("完了");
+    expect(statusTone(watching("no_findings"))).toBe("completed");
+    expect(canControl(watching("no_findings"))).toBe(false);
+    for (const verdict of ["changes_required", "suggestions", undefined] as const) {
+      const before = watching(verdict, { reviewWatch: undefined });
+      expect(statusText(before)).toBe("完了");
+      expect(statusTone(before)).toBe("completed");
+      expect(canControl(before)).toBe(false);
+    }
+  });
+
+  it("指摘なしにならないまま見守りを終えて完了したタスクは、完了の理由（マージ・クローズ）を出す", () => {
+    const ended = (reason: "merged" | "closed", verdict: "suggestions" | "no_findings") =>
+      watching(verdict, {
+        reviewWatch: undefined,
+        reviewWatchEnded: { reason, at: "2026-11-20T01:00:00.000Z" },
+      });
+    expect(statusText(ended("merged", "suggestions"))).toBe("完了（PR がマージされた）");
+    expect(statusText(ended("closed", "suggestions"))).toBe("完了（PR が閉じられた）");
+    expect(statusTextIn(ended("merged", "suggestions"), labels.en)).toBe("Done (PR merged)");
+    expect(statusTone(ended("merged", "suggestions"))).toBe("completed");
+    // 指摘なしで完了した後のマージは、ふつうの完了
+    expect(statusText(ended("merged", "no_findings"))).toBe("完了");
+  });
+
+  it("見守り中に一時停止したタスクは、一時停止（人の出番）と出す。中止したタスクは中止", () => {
+    const paused = watching("suggestions", { status: "paused", pausedReason: "manual" });
+    expect(statusText(paused)).toBe(labels.ja.pause.manual);
+    expect(statusTone(paused)).toBe("person");
+    const cancelled = watching("suggestions", { status: "cancelled" });
+    expect(statusTone(cancelled)).toBe("cancelled");
+    expect(canControl(cancelled)).toBe(false);
+  });
+
+  it("作業履歴に、見守りによる再レビューの理由と、見守りの終わりの理由を表示する", () => {
+    const ev = (type: string, payload: unknown): ActivityEvent =>
+      ({
+        type,
+        payload,
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-11-20T00:00:00.000Z",
+        actor: "sacty",
+      }) as ActivityEvent;
+    const commit = "abcdef1234".padEnd(40, "0");
+    expect(describeEvent(ev("ReviewRestarted", { reason: "pushed", commit }))).toBe(
+      "見守っていた PR の先頭が変わったので、最新のコミットの再レビューを始めた（abcdef1。同じコミットには 1 回だけ）",
+    );
+    expect(describeEvent(ev("ReviewRestarted", { reason: "replied", commit }))).toBe(
+      "見守っていた PR に作者が返信したので、同じコミットを判定し直す再レビューを始めた（abcdef1。同じコミットには 1 回だけ）",
+    );
+    expect(describeEvent(ev("ReviewWatchEnded", { reason: "merged" }))).toBe(
+      "PR がマージされたので、PR の見守りを終えた",
+    );
+    expect(describeEvent(ev("ReviewWatchEnded", { reason: "closed" }))).toBe(
+      "PR がマージされずに閉じられたので、PR の見守りを終えた",
+    );
+    expect(describeIn(ev("ReviewWatchEnded", { reason: "merged" }), labels.en)).toBe(
+      "The PR was merged, so stopped watching the PR",
+    );
+  });
+});
+
 describe("テストのコマンドの表示（PBI-28）", () => {
   const withSteps = (...keys: Task["steps"][number]["key"][]) =>
     ({ steps: keys.map((key) => ({ key, state: "todo" })) }) as unknown as Task;

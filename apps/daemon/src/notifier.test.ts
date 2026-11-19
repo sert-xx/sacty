@@ -89,6 +89,43 @@ describe("Slack の通知（PBI-38）", () => {
     expect(notificationFor(undefined, task({ status: "queued" }))).toBeUndefined();
   });
 
+  it("レビューを投稿した後の PR の見守り（PBI-411）：見守りに入っても完了と知らせず、完了になったときだけ知らせる", () => {
+    const running = task({ status: "running", steps: [{ key: "review", state: "active" }] });
+    const posted = (verdict: "suggestions" | "no_findings", patch: Partial<Task> = {}) =>
+      task({
+        steps: [{ key: "review", state: "done" }],
+        reviewPost: { url: "https://x/r", at: "2026-11-20T00:00:00.000Z" },
+        reviewWatch: { since: "2026-11-19T23:50:00.000Z" },
+        reviewVerdicts: [{ round: 1, verdict }],
+        ...patch,
+      });
+    // 指摘なしでない判定の投稿：見守りに入る（完了ではない。人の出番でもないので、何も知らせない）
+    expect(notificationFor(running, posted("suggestions"))).toBeUndefined();
+    expect(notificationFor(posted("suggestions"), posted("suggestions"))).toBeUndefined();
+    // PR のマージ・クローズで見守りを終えた：完了
+    const ended = posted("suggestions", {
+      reviewWatch: undefined,
+      reviewWatchEnded: { reason: "merged", at: "2026-11-20T01:00:00.000Z" },
+    });
+    expect(notificationFor(posted("suggestions"), ended)).toBe("completed");
+    // 指摘なしの投稿：完了
+    expect(notificationFor(running, posted("no_findings"))).toBe("completed");
+    // 指摘なしで完了した後に、先頭を追うのをやめただけなら、もう一度は知らせない
+    expect(
+      notificationFor(
+        posted("no_findings"),
+        posted("no_findings", {
+          reviewWatch: undefined,
+          reviewWatchEnded: { reason: "merged", at: "2026-11-20T01:00:00.000Z" },
+        }),
+      ),
+    ).toBeUndefined();
+    // 更新の前の版が投稿したレビュー（見守りの印が無い）は、判定に関係なく、投稿で完了
+    expect(notificationFor(running, posted("suggestions", { reviewWatch: undefined }))).toBe(
+      "completed",
+    );
+  });
+
   it("マージの後の監視の工程（PBI-116）：監視の間は完了を知らせず、終わったら知らせる。止まったら工程の名前を書く", () => {
     const watching = task({
       steps: [

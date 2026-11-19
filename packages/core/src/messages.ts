@@ -1389,7 +1389,7 @@ const ja: MessageDictionary = {
   "review.reviewOnlyImageChosen": ({ via }) =>
     `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "Sacty がほかのタスクで作った" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは、レビューの工程のイメージだけを選びます）。`,
   "review.notRereviewable":
-    "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
+    "再レビューできるのは、レビューを PR に投稿した後のタスク（完了したか、PR の変化を見守っている）だけです。",
   "review.headUnknown":
     "投稿の前に、PR の先頭のコミットを確かめられませんでした（GitHub の応答にコミットがありません）。再開すると確かめ直します。",
   "review.notDispatched": ({ attempt, retries }) =>
@@ -2258,7 +2258,8 @@ const en: MessageDictionary = {
     `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by Sacty in another task" : "has the review label"}, so Sacty only reviews it (the Orchestrator is not used).`,
   "review.reviewOnlyImageChosen": ({ via }) =>
     `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by Sacty in another task" : "has the review label"}, so Sacty only reviews it (the Orchestrator only chooses the image for the review step).`,
-  "review.notRereviewable": "Only a task that posted its review to the PR can be reviewed again.",
+  "review.notRereviewable":
+    "Only a task that has posted its review to the PR (done, or watching the PR for changes) can be reviewed again.",
   "review.headUnknown":
     "Could not check the PR's head commit before posting (the GitHub response has no commit). Resuming checks again.",
   "review.notDispatched": ({ attempt, retries }) =>

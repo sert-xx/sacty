@@ -873,6 +873,10 @@ describe("タスクの状態が変わるまで待つ（PBI-399）", () => {
       usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
     });
 
+    /** 判定つきのレビューの答え。 */
+    const verdictBlock = (verdict: string) =>
+      `\`\`\`json\n${JSON.stringify({ "sacty-review-verdict": { verdict } })}\n\`\`\``;
+
     function serviceApi(service: TaskService): SactyApi & { calls: string[] } {
       const token = "t".repeat(64);
       const app = createApp(service, token);
@@ -896,10 +900,11 @@ describe("タスクの状態が変わるまで待つ（PBI-399）", () => {
       const pulls = new FakePulls();
       pulls.prInfo = { ...pulls.prInfo, number: 9, url: `${REPO}/pull/9` };
       const settings = new MemorySettingsStore({ reviewLabel: "sacty-review" });
-      const { service } = makeService(activity, [out("# 1回目"), out("# 2回目")], {
-        pulls,
-        settings,
-      });
+      const { service } = makeService(
+        activity,
+        [out(`# 1回目\n\n${verdictBlock("no_findings")}`), out("# 2回目")],
+        { pulls, settings },
+      );
       const [task] = service.importIssues([
         {
           repo: REPO,
@@ -929,6 +934,71 @@ describe("タスクの状態が変わるまで待つ（PBI-399）", () => {
       expect(service.get(id)?.activity.length).toBe(after);
       expect(after).toBeGreaterThan(activityBefore ?? 0);
       expect(new Set(api.calls)).toEqual(new Set([`GET /api/tasks/${id}`]));
+      activity.close();
+    });
+
+    it("PR をレビューするタスクが、指摘なしでない判定を投稿して見守りに入ったときも、待ちが起きる。再レビューの投稿でも起き、見守りの間は起きない（PBI-411）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 9, url: `${REPO}/pull/9` };
+      const settings = new MemorySettingsStore({ reviewLabel: "sacty-review" });
+      const { service } = makeService(
+        activity,
+        [
+          out(`# 1回目\n\n${verdictBlock("changes_required")}`),
+          out(`# 2回目\n\n${verdictBlock("suggestions")}`),
+          out(`# 3回目\n\n${verdictBlock("no_findings")}`),
+        ],
+        { pulls, settings },
+      );
+      const [task] = service.importIssues([
+        {
+          repo: REPO,
+          number: 9,
+          title: "PR 9",
+          body: "本文",
+          url: `${REPO}/pull/9`,
+          labels: ["sacty-review"],
+          pullRequest: true,
+        },
+      ]);
+      const id = task?.id ?? "";
+      await service.runNext(id);
+      const api = serviceApi(service);
+      const clock = new FakeClock();
+      const { ok } = await connect(api, clock);
+      clock.at(7000, () => service.runNext(id));
+      const posted = await ok({ task_id: id });
+      expect(posted.changed).toBe(true);
+      // 完了ではない（state は idle のまま、見守り中）
+      expect(posted.task.state).toBe("idle");
+      expect(posted.task.review).toMatchObject({
+        round: 1,
+        verdict: "changes_required",
+        watching: true,
+      });
+      expect(posted.changes).toContain("state: active → review_watching");
+      expect(posted.changes).toContain("review: なし → 1=changes_required");
+      // 見守りの間は、起きない
+      const quiet = await ok({ task_id: id, cursor: posted.cursor, timeout_seconds: 10 });
+      expect(quiet.changed).toBe(false);
+      // 再レビューが投稿されて、また見守りに戻ったときも起きる（区分が同じでも、回と判定が変わる）
+      service.rereview(id);
+      await service.runNext(id);
+      await service.runNext(id);
+      const again = await ok({ task_id: id, cursor: posted.cursor });
+      expect(again.changed).toBe(true);
+      expect(again.changes).toEqual(["review: 1=changes_required → 2=suggestions"]);
+      // 指摘なしになると、完了として起きる
+      service.rereview(id);
+      await service.runNext(id);
+      await service.runNext(id);
+      const done = await ok({ task_id: id, cursor: again.cursor });
+      expect(done.task.state).toBe("completed");
+      expect(done.changes).toEqual([
+        "state: review_watching → completed",
+        "review: 2=suggestions → 3=no_findings",
+      ]);
       activity.close();
     });
 

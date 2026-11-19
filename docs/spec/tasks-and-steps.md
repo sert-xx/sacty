@@ -56,6 +56,7 @@
 - 予算の上限の初期値は `budget.default_per_task_usd`（既定 1 米ドル）。
 - 状態の値は [作業履歴](event-log.md) の「投影」の表。
   完了という状態は無く、すべての工程が `done` か `skip` なら完了（`isCompleted`）とする。
+  ただし、PR のレビューのタスクは、すべての工程が終わっていても、レビューを投稿した後に PR の変化を見守っている間（`reviewWatching`）は完了ではない（`isDone`・`isFinished`。[投稿の後の PR の見守り](#投稿の後の-pr-の見守り)）。
 
 コード: `packages/core/src/events.ts`（`TaskCreated`・`TaskSource`）、`packages/core/src/projection.ts`（`isCompleted`・`isRepoless`）、`apps/daemon/src/service.ts`（`createTask`）、`apps/web/src/components/new-task.tsx`（`NewTask`・`NewTaskPlaceholder`）、`apps/web/src/components/new-task-dialog.tsx`（`NewTaskDialog`・`CandidatesStatus`）、`apps/web/src/lib/repository-candidates.ts`（`candidatesLoader`・`fetchRepositoryCandidates`）、`apps/web/src/app/projects/[id]/repositories/route.ts`（`GET`）
 
@@ -1959,11 +1960,11 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   投稿の後・記録の前に止まっていたら、投稿したレビューの本文の目印から先頭を記録し直す。
 - 結果は、人の承認を待たずに PR にレビュー（`COMMENT`）として投稿する。
   行へのコメントが 422 で拒否されたら、本文に入れて投稿し直す。
-  投稿できたら完了。
-- 再レビュー：投稿して完了したタスクは、`review` を実行待ちに戻して、最新のコミットをもう一度レビューできる（`ReviewRestarted`）。
-  これは人が画面の「再レビュー」を押したときの動作。
+  投稿できたら、レビューの工程が終わる（`PullRequestReviewPosted`）。その回の判定が指摘なし（`no_findings`）なら完了し、そうでなければ完了にせずに PR の変化を見守る（[投稿の後の PR の見守り](#投稿の後の-pr-の見守り)）。
+- 再レビュー：投稿した後のタスク（完了したタスクと、PR の変化を見守っているタスク。`canRereview`）は、`review` を実行待ちに戻して、最新のコミットをもう一度レビューできる（`ReviewRestarted`）。
+  人が画面の「再レビュー」を押したときと、sacty が見守っている PR の変化を見つけたとき（`reason: pushed`・`replied`。[投稿の後の PR の見守り](#投稿の後の-pr-の見守り)）の動作。
   レビューの子タスクは、親が PR を更新して承認待ちに戻ったときにも、sacty が同じように戻す（`reason: updated`。[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
-  GitHub のレビュー再依頼では、完了タスクを戻さず、別のレビュー専用タスクを作る（[取り込み](intake.md)）。
+  GitHub のレビュー再依頼では、元のタスクを戻さず、別のレビュー専用タスクを作る（[取り込み](intake.md)）。
   どちらも、前回の本文・行へのコメント・レビューしたコミット・投稿の時刻を `previousReview` に残す。
   「再レビュー」で `previousReview` を置き換えるときは、置き換える前のものを `earlierReviews` に古い順に積む（新しい 5 件まで。GitHub の再依頼で作った別のタスクには無い。PBI-342）。3回目以降の指示には、前々回以前のレビュー（本文は 1 件 5000 文字まで）もデータに入れ、前回までの要修正と原因を照らすのに使わせる（対応を確かめるのは前回の指摘だけ）。
   指示には、前回の指摘と、前回の投稿の後の PR の作者の返答を、指示とは分けた JSON のデータとして入れる。
@@ -1979,6 +1980,47 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   返答を読めなければ（作者が分からないときも）、そう書いて続け、理由をタスクと PR を添えてデーモンのログに出す（秘密の値は伏せる）。
 - 言語：sacty が付ける見出し・判定・注記・固定の文と、指摘の頭は日本語で固定する。
   エージェントの本文と指摘の文は、対象のリポジトリの文章の決まり（スキル `writing` の順）に従わせ、決まりが無ければ日本語にする。
-- PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
+- PR の確認（60秒ごと）で、レビューをまだ投稿していない（実行待ち・実行中・投稿の前の一時停止など）レビューのタスクの PR がマージ・クローズされていたら、タスクを中止する（実行中の実行を止める。`TaskCancelled` の `reason: pull_request_merged`・`pull_request_closed`）。
+  再レビューの実行中のタスクも同じ（前の回のレビューを投稿していても、中止になる）。レビューを投稿した後のタスクは、中止せずに完了にする（[投稿の後の PR の見守り](#投稿の後の-pr-の見守り)）。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`・`REVIEW_DISPATCH_LINES`・`reviewUndispatchedLines`・`reviewDispatchLines`）、`apps/daemon/src/review-dispatch-count.ts`（`countReviewDispatch`）、`packages/core/src/events.ts`（`ReviewVerdict`・`ReviewDispatch`・`REVIEW_UNDISPATCHED_RETRIES`）、`packages/core/src/projection.ts`（`applyEvent` の `ReviewRestarted`・`EARLIER_REVIEWS_MAX`）
+### 投稿の後の PR の見守り
+
+関係する ADR: [レビューのタスクは、判定が指摘なしになるまで完了にせず、PR の変化を見守って自動で再レビューする](../adr/20261119-1925-review-task-watches-pr-until-no-findings.md)
+
+レビューを投稿したタスクは、判定が指摘なしになるまで完了にせず、PR の変化を見守って、変化があれば自動で再レビューする。
+ラベルで取り込んだ PR・依頼で取り込んだ PR・sacty が作った PR のレビューの子タスクのどれも同じ。
+
+- 状態：投稿の記録（`PullRequestReviewPosted`）に見守りの印（`watch: true`）があると、タスクに `reviewWatch`（`since` は、その回のレビューの対象を確かめた時刻）が付く。
+  - 今の回の判定（`currentReviewVerdict`）が指摘なしでない（修正が必要・提案あり・判定が無い `absent`・`invalid`）間は、見守り中（`reviewWatching`）。工程はすべて `done` だが、完了ではない（`isDone`・`isFinished` が偽）。状態（`status`）は `idle` のまま。
+  - 今の回の判定が指摘なしなら、完了。完了の後も、PR が開いている間は先頭の変化だけを追う（`reviewFollowing`）。
+  - `reviewWatch` は、再レビューを始める（`ReviewRestarted`）・見守りを終える（`ReviewWatchEnded`）と消える。
+- 見守りの印の無い投稿（この仕組みより前の版の作業履歴）は、判定に関係なく完了のまま。`reviewWatch` が付かないので、作業履歴を再生しても見守りに変わらず、PR の確認の対象にもならない（PR を読みに行かない・再レビューを始めない）。
+  そのタスクも、人が「再レビュー」して新しく投稿した回からは見守る。
+- 見守り中は、人の出番ではない（待っているのは PR の作者の対応）。実行待ちに出ない（実行の枠を使わない）。画面は「PR の対応待ち」と今の回の判定を出し、タスクの詳細に何を待っているかを出す。
+  画面の「あなたの出番」・ヘッダーのベル・`list_tasks` の `needs_person` には入らない。完了の通知は、完了になったときだけ出し、見守りに入ったことは通知しない（[通知](notifications.md)）。
+- PR の確認（60秒ごと。`checkReviewPullRequests` → `watchReview`）で、`reviewWatch` のあるタスクのうち、状態が `idle` のもの（見守り中と、指摘なしで完了したもの）の PR の状態を読み、次を行う。
+  - PR がマージされた・マージせずに閉じられた：`ReviewWatchEnded`（`reason: merged`・`closed`。actor `sacty`）を記録する。見守っていたタスクは完了になり（中止ではない）、理由を `reviewWatchEnded` に持つ。指摘なしで完了していたタスクは、完了のまま、先頭を追うのをやめる。
+    見守りを終えた後に PR が開き直されても、見守りは再開しない（人が「再レビュー」した回から、また見守る。子タスクは、親の流れが再レビューする）。
+  - PR の先頭が、レビューした先頭（`reviewTarget.headCommit`）と違う：再レビューを始める（`ReviewRestarted`、`reason: pushed`、`commit` に今の先頭。actor `sacty`）。指摘なしで完了した後も同じ。
+    レビューの実行中に push された（投稿のときの `latestCommit`）先頭も、投稿の後の確認で、ここで拾う。
+    同じ先頭では 1 回だけ始める（`Task.reviewRestartCommit`。レビューした先頭を読み違えても、繰り返さない）。
+  - 先頭は同じで、見守り中（判定が指摘なしでない）に、PR の作者が返信した：同じ先頭を判定し直す再レビューを始める（`ReviewRestarted`、`reason: replied`、`commit` にその先頭。actor `sacty`）。
+    - 返信は、PR のレビュー・行へのコメント・通常のコメントのうち、作者（`reviewTarget.author`）の login のもので、その回の対象を確かめた時刻（`reviewWatch.since`）より後のもの。実行中に書かれた返信も、ここで拾う。作者を読めなかった回（`reviewTarget.author` が空）は、返信を見ない。
+    - sacty の投稿は返信に数えない：この PR をレビューした sacty のタスクのレビューと行へのコメント（どの回も）、sacty の目印で始まる投稿（ほかの sacty のレビュー・レビューが止まった知らせ・人に確かめてほしいことの知らせ・後続に回したい案の決定・頼みで投稿したコメント）。PR の作者と sacty の投稿が同じアカウントでも、目印で見分ける。Bot の投稿も数えない。
+      ほかの sacty が作者のアカウントで投稿した、指摘への返信（`sacty-reply` の目印。対応しなかった理由）は、作者の返信として数える。
+    - 同じ先頭では 1 回だけ始める（`Task.reviewReplyCommit`）。判定し直した後に同じ先頭への返信が続いても、始めない（人が「再レビュー」できる）。
+    - 指摘なしで完了した後は、返信・コメントだけでは始めない（コメントも読まない）。
+    - PR の更新の時刻（GitHub の `updated_at`）が前に読んだときと同じで、待っている返信も無ければ、コメントを読み直さない。
+  - 続けての push・返信は、静かになるまで待って 1 回にまとめる：デーモンが新しい先頭・返信を初めて見てから（返信は、書かれた時刻と初めて見た時刻の早い方から）`FEEDBACK_QUIET_MS`（2分）たつまで始めない。待つ間に先頭がまた変われば、待ち直す。
+    初めて見た時刻はメモリーだけに持つので、デーモンを起動し直すと待ち直す（見守りそのものは、作業履歴から続く）。
+  - 先頭を読めない・PR の状態を読めない確認では、何も決めず、次の確認でやり直す。
+- 動かさないタスク：再レビューの実行待ち・実行中（投稿の前）、一時停止中、一時停止・中止を求められているタスク。
+  - 見守り中のタスクは、画面と `pause_task` で一時停止でき、中止もできる。一時停止の間は、PR が変わっても・マージ・クローズされても、何も記録しない。再開すると見守り（`idle`）に戻り、次の確認で、止めていた間の変化を拾う。
+  - 予算の上限に達したタスクは、ほかのタスクと同じく一時停止する（`reason: budget`）。人が上限を上げて再開すると、見守りに戻る。再レビューの回数に上限は無い。
+- sacty が作った PR のレビューの子タスク（`reviewOf`）は、見守りの終わり（マージ・クローズ）だけをここで扱う。再レビューは、親の流れが決める（親が PR を更新して承認待ちに戻った・人がコミットを足した・親が指摘をすべて断った。[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
+- 依頼で取り込んだ PR に、GitHub の再依頼で作った、より新しいタスクがあるとき（`supersededByRerequest`。[取り込み](intake.md)）：元のタスクは、見守りの終わりだけを扱い、PR の変化では再レビューを始めない（続きは、いちばん新しいタスクがレビューする。同じ PR を 2 つのタスクで二重に再レビューしない）。元のタスクには何も記録しないので、PR がマージ・クローズされるまで、見守り中のまま残る。より新しいタスクが中止されていても、元のタスクは始めない。
+- PR の状態を読む間隔：最後の投稿から 1 時間までは PR の確認のたび、1 時間を過ぎたら 5 分ごと、24 時間を過ぎたら 30 分ごと（`REVIEW_WATCH_INTERVALS`。開いたままの PR が増えても、GitHub への問い合わせを増やし続けない）。静かになるのを待っている変化があるときと、レビューの子タスクは、毎回読む。最後に読んだ時刻はメモリーだけに持つ（起動の後の最初の確認では読む）。
+- ドラフトの PR でも、同じように再レビューを始める。
+- 見守り中も、作業領域の片付け（[終わったタスクの作業領域の片付け](#終わったタスクの作業領域の片付け)）・完了したタスクの監査（[監査](audit.md)）・続きのタスクの作成（[派生](#完了したタスクから続きのタスクを作る派生)）は、工程がすべて終わったタスクとして、投稿の後に行える（`isCompleted` で決める）。
+
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`composeReviewPost`・`rereview`・`checkReviewPullRequests`・`watchReview`・`reviewWatchDue`・`supersededByRerequest`・`FEEDBACK_QUIET_MS`・`REVIEW_WATCH_INTERVALS`）、`apps/daemon/src/github.ts`（`PullRequestStatus`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`・`REVIEW_DISPATCH_LINES`・`reviewUndispatchedLines`・`reviewDispatchLines`）、`apps/daemon/src/review-dispatch-count.ts`（`countReviewDispatch`）、`packages/core/src/events.ts`（`ReviewVerdict`・`ReviewDispatch`・`REVIEW_UNDISPATCHED_RETRIES`）、`packages/core/src/projection.ts`（`applyEvent`・`PullRequestReviewPosted`・`ReviewWatchEnded`・`ReviewRestarted`・`EARLIER_REVIEWS_MAX`・`reviewWatching`・`reviewFollowing`・`currentReviewVerdict`・`isDone`・`isFinished`・`canRereview`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`・`canControl`）、`apps/web/src/components/review-watch-notice.tsx`

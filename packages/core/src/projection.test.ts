@@ -29,6 +29,7 @@ import {
   canDerive,
   canOverrideVerification,
   canRechooseSteps,
+  canRereview,
   canRerun,
   canRetryExport,
   changeRounds,
@@ -47,6 +48,7 @@ import {
   implementationMerged,
   implementViewpoints,
   isCompleted,
+  isDone,
   isFinished,
   isRepoless,
   lastChangeRound,
@@ -59,7 +61,9 @@ import {
   questionBlocked,
   resumeNoteRoom,
   reviewedPullRequest,
+  reviewFollowing,
   reviewReworkTarget,
+  reviewWatching,
   reworkingPullRequest,
   reworkTargets,
   skippableSteps,
@@ -1937,6 +1941,232 @@ describe("レビューの工程（PBI-19）", () => {
     ]).get("t6");
     expect(task?.steps).toEqual([{ key: "review", state: "done" }]);
     expect(task?.reviewComments).toHaveLength(1);
+  });
+
+  describe("投稿の後の PR の見守り（PBI-411）", () => {
+    /** 判定つきのレビューの 1 回分（対象の確認から、レビューの実行の完了まで）。 */
+    const round = (
+      taskId: string,
+      verdict: "changes_required" | "suggestions" | "no_findings" | "absent" | "invalid",
+      n = 1,
+    ) => [
+      ev(taskId, { type: "ReviewTargetResolved", payload: target }),
+      ev(taskId, {
+        type: "AgentRunStarted",
+        payload: { runId: `r${n}`, step: "review", agentId: "a", authMode: "subscription" },
+      }),
+      ev(taskId, {
+        type: "AgentRunCompleted",
+        payload: {
+          runId: `r${n}`,
+          step: "review",
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: false,
+          output: "# 評価",
+          ...(verdict === "absent" || verdict === "invalid"
+            ? { reviewVerdictMissing: verdict }
+            : { reviewVerdict: verdict }),
+        },
+      }),
+    ];
+    const start = (taskId: string) => [
+      created(taskId),
+      ev(taskId, { type: "StepsChosen", payload: { steps: ["review"] } }),
+    ];
+    const post = (taskId: string, watch: boolean, url = "https://x/r") =>
+      ev(taskId, {
+        type: "PullRequestReviewPosted",
+        payload: { url, ...(watch ? { watch: true as const } : {}) },
+      });
+    const taskOf = (events: ActivityEvent[]) => {
+      const task = project(events).get(events[0]?.taskId ?? "");
+      if (!task) throw new Error("no task");
+      return task;
+    };
+
+    it.each(["changes_required", "suggestions", "absent", "invalid"] as const)(
+      "見守る版が投稿した回の判定が %s なら、完了にならず、PR の変化を見守る",
+      (verdict) => {
+        const task = taskOf([...start("w1"), ...round("w1", verdict), post("w1", true)]);
+        expect(task.steps).toEqual([{ key: "review", state: "done" }]);
+        expect(task.status).toBe("idle");
+        expect(reviewWatching(task)).toBe(true);
+        expect(reviewFollowing(task)).toBe(false);
+        expect(isDone(task)).toBe(false);
+        expect(isFinished(task)).toBe(false);
+        // 人の「再レビュー」は、見守り中でも使える
+        expect(canRereview(task)).toBe(true);
+        // 工程は終わっているので、続きのタスク（指摘を直すタスクなど）は、今までどおり作れる
+        expect(canDerive(task)).toBe(true);
+        // 見守りの起点は、その回の対象を確かめた時刻（これより後の作者の返信を、まだ読んでいない返信として数える）
+        expect(task.reviewWatch?.since).toBe(task.reviewResolvedAt);
+      },
+    );
+
+    it("判定が指摘なしなら完了する。完了の後も、PR の先頭の変化は追う", () => {
+      const task = taskOf([...start("w2"), ...round("w2", "no_findings"), post("w2", true)]);
+      expect(reviewWatching(task)).toBe(false);
+      expect(reviewFollowing(task)).toBe(true);
+      expect(isDone(task)).toBe(true);
+      expect(isFinished(task)).toBe(true);
+      expect(canRereview(task)).toBe(true);
+    });
+
+    it.each(["changes_required", "suggestions", "no_findings", "absent", "invalid"] as const)(
+      "更新の前の版が投稿して完了したタスク（判定 %s）は、作業履歴を再生しても完了のまま。見守りにも、先頭を追う対象にもならない",
+      (verdict) => {
+        // 更新の前の版の作業履歴：投稿の記録に、見守りの印（watch）が無い
+        const task = taskOf([...start("w3"), ...round("w3", verdict), post("w3", false)]);
+        expect(task.reviewWatch).toBeUndefined();
+        expect(reviewWatching(task)).toBe(false);
+        expect(reviewFollowing(task)).toBe(false);
+        expect(isDone(task)).toBe(true);
+        expect(isFinished(task)).toBe(true);
+        expect(canRereview(task)).toBe(true);
+        expect(canDerive(task)).toBe(true);
+      },
+    );
+
+    it("更新の前の版で、再レビューを重ねて完了したタスクも、完了のまま（回ごとの判定が指摘なしでなくても）", () => {
+      const task = taskOf([
+        ...start("w4"),
+        ...round("w4", "changes_required", 1),
+        post("w4", false, "https://x/r1"),
+        ev("w4", { type: "ReviewRestarted", payload: {} }, "person"),
+        ...round("w4", "suggestions", 2),
+        post("w4", false, "https://x/r2"),
+        ev("w4", {
+          type: "ReviewRestarted",
+          payload: { reason: "updated", commit: "n".repeat(40) },
+        }),
+        ...round("w4", "suggestions", 3),
+        post("w4", false, "https://x/r3"),
+      ]);
+      expect(task.reviewRound).toBe(3);
+      expect(reviewWatching(task)).toBe(false);
+      expect(reviewFollowing(task)).toBe(false);
+      expect(isDone(task)).toBe(true);
+    });
+
+    it("更新の前に完了したタスクも、更新の後に再レビューして投稿した回からは見守る", () => {
+      const task = taskOf([
+        ...start("w5"),
+        ...round("w5", "suggestions", 1),
+        post("w5", false),
+        ev("w5", { type: "ReviewRestarted", payload: {} }, "person"),
+        ...round("w5", "suggestions", 2),
+        post("w5", true),
+      ]);
+      expect(reviewWatching(task)).toBe(true);
+    });
+
+    it("見守りを終えると完了になり、理由が残る。再レビューを始めると理由は消える", () => {
+      const watching = [...start("w6"), ...round("w6", "suggestions"), post("w6", true)];
+      for (const reason of ["merged", "closed"] as const) {
+        const ended = taskOf([
+          ...watching,
+          ev("w6", { type: "ReviewWatchEnded", payload: { reason } }),
+        ]);
+        expect(reviewWatching(ended)).toBe(false);
+        expect(isDone(ended)).toBe(true);
+        expect(ended.reviewWatchEnded).toEqual({ reason, at: ended.updatedAt });
+        // 終えた後も、人は再レビューできる
+        expect(canRereview(ended)).toBe(true);
+      }
+      const restarted = taskOf([
+        ...watching,
+        ev("w6", { type: "ReviewWatchEnded", payload: { reason: "merged" } }),
+        ev("w6", { type: "ReviewRestarted", payload: {} }, "person"),
+      ]);
+      expect(restarted.reviewWatchEnded).toBeUndefined();
+      expect(restarted.reviewWatch).toBeUndefined();
+      expect(restarted.status).toBe("queued");
+      expect(isDone(restarted)).toBe(false);
+    });
+
+    it("見守っていないタスク（更新の前の版の投稿・投稿の前・終えた後）には、見守りの終わりを記録できない", () => {
+      const end = (id: string) =>
+        ev(id, { type: "ReviewWatchEnded", payload: { reason: "merged" } });
+      expect(() =>
+        project([...start("w7"), ...round("w7", "suggestions"), post("w7", false), end("w7")]),
+      ).toThrow(/not watched/);
+      expect(() => project([...start("w8"), ...round("w8", "suggestions"), end("w8")])).toThrow(
+        /not watched/,
+      );
+      expect(() =>
+        project([
+          ...start("w9"),
+          ...round("w9", "suggestions"),
+          post("w9", true),
+          end("w9"),
+          end("w9"),
+        ]),
+      ).toThrow(/not watched/);
+    });
+
+    it("先頭の変化・作者の返信で始めた再レビューは、その先頭を持つ（同じ先頭では 1 回だけにするため）", () => {
+      const watching = [...start("w10"), ...round("w10", "changes_required"), post("w10", true)];
+      const pushed = taskOf([
+        ...watching,
+        ev("w10", {
+          type: "ReviewRestarted",
+          payload: { reason: "pushed", commit: "n".repeat(40) },
+        }),
+      ]);
+      expect(pushed.status).toBe("queued");
+      expect(pushed.reviewRound).toBe(2);
+      expect(pushed.reviewRestartCommit).toBe("n".repeat(40));
+      expect(pushed.reviewReplyCommit).toBeUndefined();
+      expect(pushed.reviewWatch).toBeUndefined();
+      expect(reviewWatching(pushed)).toBe(false);
+      const replied = taskOf([
+        ...watching,
+        ev("w10", {
+          type: "ReviewRestarted",
+          payload: { reason: "replied", commit: "h".repeat(40) },
+        }),
+      ]);
+      expect(replied.reviewReplyCommit).toBe("h".repeat(40));
+      // 再レビューの回が指摘なしなら、完了する
+      const cleared = taskOf([
+        ...watching,
+        ev("w10", {
+          type: "ReviewRestarted",
+          payload: { reason: "pushed", commit: "n".repeat(40) },
+        }),
+        ...round("w10", "no_findings", 2),
+        post("w10", true),
+      ]);
+      expect(isDone(cleared)).toBe(true);
+      expect(reviewFollowing(cleared)).toBe(true);
+    });
+
+    it("見守り中に一時停止して再開すると、見守りに戻る（実行待ちにならない）。中止すると見守りではない", () => {
+      const watching = [...start("w11"), ...round("w11", "suggestions"), post("w11", true)];
+      const paused = taskOf([
+        ...watching,
+        ev("w11", { type: "TaskPaused", payload: { reason: "manual" } }, "person"),
+      ]);
+      expect(paused.status).toBe("paused");
+      expect(isFinished(paused)).toBe(false);
+      const resumed = taskOf([
+        ...watching,
+        ev("w11", { type: "TaskPaused", payload: { reason: "manual" } }, "person"),
+        ev("w11", { type: "TaskResumed", payload: { retry: false } }, "person"),
+      ]);
+      expect(resumed.status).toBe("idle");
+      expect(reviewWatching(resumed)).toBe(true);
+      const cancelled = taskOf([
+        ...watching,
+        ev("w11", { type: "TaskCancelled", payload: { cleanup: [] } }, "person"),
+      ]);
+      expect(reviewWatching(cancelled)).toBe(false);
+      expect(isDone(cancelled)).toBe(false);
+      expect(isFinished(cancelled)).toBe(true);
+    });
   });
 
   it("レビューを書く前・二度目の投稿・二度目の対象の記録は、作業履歴の不整合にする", () => {

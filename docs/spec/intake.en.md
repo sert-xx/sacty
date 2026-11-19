@@ -78,15 +78,17 @@ For each item in the sacty settings, sacty searches the project's targets (an or
   - Only requests made to you as an individual are taken in; requests to teams are not included. sacty takes in only requests to the account chosen for that host in the responsible project.
   - Even if a PR matches both the review label and a request, there is one review task.
 - Review re-requests
-  - When the request search finds the PR of a task taken in by a request (`source.review: requested`) that can be reviewed again (`canRereview`), sacty reads two things:
+  - When the request search finds the PR of a task taken in by a request (`source.review: requested`) that can be reviewed again (`canRereview`; it has posted its review and is complete or watching the PR for changes), sacty reads two things:
     - The PR's current requested reviewers (`requested_reviewers`)
     - The time of the last request to the task's account (`review_requested` in the PR events)
   - If the account is still requested and the last request is after the previous post, sacty creates a review-only task with a new ID in the same project (`reviewRerequest` in `TaskCreated`; `restartRerequestedReviews`).
-    - The original task's completion status, post, history, cost, and execution session stay unchanged. The new task does not resume the original session.
+    - The original task's status, post, history, cost, and execution session stay unchanged. The new task does not resume the original session.
+    - Even if the original task is watching the PR for changes (or completed with no findings and following the head), nothing is recorded on the original task. From then on, only the newest task starts a re-review on changes of the PR, and the original task only ends its watch when the PR is merged or closed ([Watching the PR after posting](tasks-and-steps.en.md#watching-the-pr-after-posting)).
+    - If the watch has already started a re-review of the same task (it is running), no new task is created. After that re-review is posted, the request is older than the post, so none is created.
     - sacty carries a snapshot of the previous review into `previousReview` of the new task.
     - `reviewRound` adds 1 to the previous round and continues the review count.
   - GitHub removes a request when the requested person posts a review, so a post normally clears it. Search results lag (a removed request can remain right after the post), so they alone never start a re-review. If a post did not clear the request (for example, the account changed after intake), the last request is older than the post, so it does not repeat after every post.
-  - The most recently created task for the same PR is the predecessor only if it has posted and completed; an older completed task is never used as a fallback. sacty saves the request time, account, and predecessor task in the event, so repeated polling of the same request, concurrent processing, and daemon restarts create no duplicates. A later request after the new task has posted and completed creates another separate task.
+  - The most recently created task for the same PR is the predecessor only if it has posted (it is complete, or watching the PR for changes); an older task is never used as a fallback. sacty saves the request time, account, and predecessor task in the event, so repeated polling of the same request, concurrent processing, and daemon restarts create no duplicates. A later request after the new task has posted and completed creates another separate task.
   - Tasks that are running, not yet posted, or cancelled, and tasks taken in by the label are excluded. Nothing is checked while `reviewRequested` is Off.
     PRs sacty created (the item below) are excluded even if an older version took them in by a request (the review child task of the task that created the PR reviews them).
   - If the current requested reviewers or the request time cannot be read, sacty starts no re-review, records `intake.rerequestUnchecked`, and does not advance that search's read position. The same PR is found again at the next intake. Each PR is checked once per intake.

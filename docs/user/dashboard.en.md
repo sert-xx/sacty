@@ -49,7 +49,7 @@ This section shows paused tasks counted by reason.
 
 ### Open tasks
 
-This section shows all tasks except completed and cancelled ones. With more than 5 tasks, the section scrolls inside.
+This section shows all tasks except completed and cancelled ones. Tasks that watch the PR for changes after posting a review ("Waiting on the PR"; [After the review is posted](intake.en.md#after-the-review-is-posted)) appear here too (not in "Needs you"). With more than 5 tasks, the section scrolls inside.
 
 ### Cost and budget
 

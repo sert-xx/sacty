@@ -168,6 +168,12 @@ const ja = {
   state: {
     completed: "完了",
     completedNoChanges: "完了（変更なし）",
+    /** レビューを投稿した後、PR の変化を見守っている（PBI-411）。待っているのは PR の作者の対応。 */
+    reviewWatching: (verdict: "changes_required" | "suggestions" | "none") =>
+      `PR の対応待ち（${verdict === "changes_required" ? "修正が必要" : verdict === "suggestions" ? "提案あり" : "判定なし"}）`,
+    /** 指摘なしにならないまま、PR の見守りを終えて完了した（PBI-411）。 */
+    reviewWatchEnded: (reason: "merged" | "closed") =>
+      `完了（${reason === "merged" ? "PR がマージされた" : "PR が閉じられた"}）`,
     testsRunning: "テストを実行中",
     waitingPullRequestCi: "PR の CI を待っている",
     watchingCi: "マージの後の監視・CI/CD 待ち",
@@ -555,6 +561,14 @@ const ja = {
       `PR を作ったタスクが、指摘をすべて理由を付けて断ったので、同じコミットを判定し直す再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
     ReviewRestartedByRequest: (actor: string) =>
       `PR でレビューが再依頼されたので、再レビューを始めた（${actor}）`,
+    ReviewRestartedByPush: (commit: string) =>
+      `見守っていた PR の先頭が変わったので、最新のコミットの再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
+    ReviewRestartedByReply: (commit: string) =>
+      `見守っていた PR に作者が返信したので、同じコミットを判定し直す再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
+    ReviewWatchEnded: (reason: "merged" | "closed"): string =>
+      reason === "merged"
+        ? "PR がマージされたので、PR の見守りを終えた"
+        : "PR がマージされずに閉じられたので、PR の見守りを終えた",
     cancelledBecause: (
       text: string,
       reason: "pull_request_merged" | "pull_request_closed" | "parent_cancelled",
@@ -953,6 +967,9 @@ const en: LabelMessages = {
   state: {
     completed: "Done",
     completedNoChanges: "Done (no changes)",
+    reviewWatching: (verdict) =>
+      `Waiting on the PR (${verdict === "changes_required" ? "changes required" : verdict === "suggestions" ? "suggestions" : "no verdict"})`,
+    reviewWatchEnded: (reason) => `Done (${reason === "merged" ? "PR merged" : "PR closed"})`,
     testsRunning: "Running tests",
     waitingPullRequestCi: "Waiting for the PR's CI",
     watchingCi: "After-merge watch · waiting for CI/CD",
@@ -1234,6 +1251,14 @@ const en: LabelMessages = {
       `The task that opened the PR declined every finding with a reason, so started a re-review that judges the same commit again (${commit}; once per commit)`,
     ReviewRestartedByRequest: (actor) =>
       `Started a re-review because a review was re-requested on the PR (${actor})`,
+    ReviewRestartedByPush: (commit) =>
+      `The head of the watched PR changed, so started a re-review of the latest commit (${commit}; once per commit)`,
+    ReviewRestartedByReply: (commit) =>
+      `The author replied on the watched PR, so started a re-review that judges the same commit again (${commit}; once per commit)`,
+    ReviewWatchEnded: (reason) =>
+      reason === "merged"
+        ? "The PR was merged, so stopped watching the PR"
+        : "The PR was closed without merging, so stopped watching the PR",
     cancelledBecause: (text, reason) =>
       `${text} (${reason === "pull_request_merged" ? "the PR was merged" : reason === "pull_request_closed" ? "the PR was closed" : "the task whose PR it reviews was cancelled"})`,
     IssueCommentFailed: (message) =>
