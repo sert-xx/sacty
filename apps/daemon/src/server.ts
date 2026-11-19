@@ -138,7 +138,7 @@ export function createApp(
   // 送らない。PBI-114）
   app.get("/api/tasks", (c) => {
     // sacty が PR に書いた本文の記録（PBI-334）は、画面では使わないので送らない（PR ごとに本文の全文があり大きい）
-    const tasks = service.list().map(({ pullRequestBodies: _bodies, ...task }) => task);
+    const tasks = service.listView().map(({ pullRequestBodies: _bodies, ...task }) => task);
     return c.json({
       tasks: c.req.query("open") === "1" ? tasks.filter((t) => !isFinished(t)) : tasks,
     });

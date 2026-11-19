@@ -23,6 +23,7 @@ import {
   issueMessage,
   MAX_CHANGE_REQUESTS,
   openProposal,
+  PREPARING_PHASES,
   parseRepoUrl,
   RERUN_NOTE_MAX,
   RESUME_NOTE_MAX,
@@ -391,6 +392,12 @@ const TaskSummarySchema = z.object({
       "completed：完了、cancelled：中止。ほかは、タスクの状態（queued・running・paused・awaiting_approval など）",
     ),
   steps: z.array(z.string()).describe("工程と、その状態（<工程>:<状態>。進める順）"),
+  preparing: z
+    .enum(PREPARING_PHASES)
+    .optional()
+    .describe(
+      "state が queued のまま、最初の工程の前の処理を sacty がいま進めているときだけ入る、その段階（repository：対象リポジトリの用意、gathering：情報収集、triage：チケットの確認、planning：進め方の判定、review_target：レビューする PR の確認）。画面はこの間を進行中と出す。無い queued は、実行の枠・コンテキストのイメージなどを待っている",
+    ),
   reviewTask: z.boolean().describe("PR のレビューのタスクか"),
   canRereview: z.boolean().describe("再レビューできるか（レビューを PR に投稿して完了している）"),
   canPause: z
@@ -1169,6 +1176,7 @@ export function summarizeTask(task: Task, webUrl?: string): TaskSummary {
     projectId: task.projectId,
     state: stateOf(task),
     steps: task.steps.map((s) => `${s.key}:${s.state}`),
+    ...(task.status === "queued" && task.preparing ? { preparing: task.preparing } : {}),
     reviewTask: review,
     canRereview: canRereview(task),
     canPause: pauseBlock(task) === undefined,

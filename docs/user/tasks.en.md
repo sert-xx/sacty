@@ -382,6 +382,26 @@ The AI it uses and its cost are as follows.
 - You can choose the AI with `step_agents.gather` in `config.yaml` (the Orchestrator's AI if omitted; [config.yaml settings](config.en.md#models-per-step)).
 - The cost is counted toward the task budget and shown in the "Information gathering" row of the per-step cost table.
 
+### Status before the first step starts
+
+From when a task is created until its first step starts, the task's status tells you what Sacty is doing.
+While Sacty is processing the task, the status has the in-progress color and shows one of the following texts.
+
+| Status text | What Sacty is doing |
+| --- | --- |
+| Preparing the repository | Fetching the repository to work in |
+| Gathering information | The information gatherer is collecting the information related to the task |
+| Reading the ticket | Reading the ticket to decide the repository to work in, the title, and the summary |
+| Deciding how to proceed | The Orchestrator is choosing the plan, such as the steps |
+| Checking the PR to review | In a PR review task, reading the target PR |
+
+A task shown as "Queued" is not being processed yet.
+It is waiting for its turn under the limit on tasks run in parallel, or for its next piece of work to start.
+
+- The task list, the dashboard, and the task details show the same status.
+- In the status filter of the list, a task being processed falls under "In progress" and a "Queued" task under "Waiting" ([Find and filter tasks](#find-and-filter-tasks)).
+- Until the steps are chosen, the steps column shows "Steps not chosen yet".
+
 ## Self-review before submitting
 
 In the Requirements, Design, Implementation, and Document steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting.

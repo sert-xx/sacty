@@ -7,7 +7,7 @@ import type { FlakyFailure } from "@sacty/core";
 const ja = {
   bits: {
     steps: "工程",
-    choosing: "オーケストレーターが工程を選びます",
+    choosing: "工程は未定",
     cost: "費用",
     costMeter: "予算に対する費用",
     estimated: "概算",
@@ -354,7 +354,7 @@ export type PartsMessages = typeof ja;
 const en: PartsMessages = {
   bits: {
     steps: "Steps",
-    choosing: "The Orchestrator will choose the steps",
+    choosing: "Steps not chosen yet",
     cost: "Cost",
     costMeter: "Cost against budget",
     estimated: "Estimate",

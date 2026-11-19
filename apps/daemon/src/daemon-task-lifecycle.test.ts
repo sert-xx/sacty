@@ -46,6 +46,7 @@ import {
   FakeTickets,
   fakeGateway,
   foundTicket,
+  HOLD,
   ja,
   jiraPlatform,
   makeService,
@@ -2451,4 +2452,308 @@ describe("タスクごとの依存のキャッシュ（PBI-319）", () => {
       warn.mockRestore();
     }
   });
+});
+
+describe("最初の工程が始まる前の処理の段階（PBI-410）", () => {
+  const token = "test-token";
+  const auth = { authorization: `Bearer ${token}` };
+  const gathered = { brief: "集めたまとめ", sources: [] };
+  const plan = {
+    steps: ["requirements" as const],
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  };
+
+  /** 画面が読む API（一覧と詳細）が返す、タスクの状態と処理の段階。 */
+  async function shown(service: TaskService, id: string) {
+    const app = createApp(service, token);
+    const list = (await (await app.request("/api/tasks", { headers: auth })).json()) as {
+      tasks: Task[];
+    };
+    const open = (await (await app.request("/api/tasks?open=1", { headers: auth })).json()) as {
+      tasks: Task[];
+    };
+    const detail = (await (await app.request(`/api/tasks/${id}`, { headers: auth })).json()) as {
+      task: Task;
+    };
+    const pick = (task: Task | undefined) => ({
+      status: task?.status,
+      preparing: task?.preparing,
+    });
+    const fromList = pick(list.tasks.find((t) => t.id === id));
+    // 一覧・終わっていないタスクの一覧・詳細で、同じ値を返す
+    expect(pick(open.tasks.find((t) => t.id === id))).toEqual(fromList);
+    expect(pick(detail.task)).toEqual(fromList);
+    return fromList;
+  }
+
+  it("リポジトリの用意・情報収集・進め方の判定の間だけ、実行待ちのまま、その段階を返す。最初の工程が始まると返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const repos = new FakeRepos();
+    const prepare = Promise.withResolvers<void>();
+    repos.prepareGate = prepare.promise;
+    const gathering = { started: Promise.withResolvers<void>(), go: Promise.withResolvers<void>() };
+    const planning = { started: Promise.withResolvers<void>(), go: Promise.withResolvers<void>() };
+    const { service, executor } = makeService(activity, [HOLD], {
+      repos,
+      gatherer: async () => {
+        gathering.started.resolve();
+        await gathering.go.promise;
+        return gathered;
+      },
+      planner: async () => {
+        planning.started.resolve();
+        await planning.go.promise;
+        return plan;
+      },
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    // 作っただけ（ワーカーがまだ処理していない）なら、実行待ち
+    expect(await shown(service, task.id)).toEqual({ status: "queued", preparing: undefined });
+
+    const first = service.runNext(task.id);
+    await repos.prepareStarted.promise;
+    expect(await shown(service, task.id)).toEqual({ status: "queued", preparing: "repository" });
+    // ダッシュボードの待ち行列の「実行中」と食い違わない
+    expect(service.dashboard().queue).toMatchObject({ running: 1, queued: 0 });
+
+    prepare.resolve();
+    await gathering.started.promise;
+    expect(await shown(service, task.id)).toEqual({ status: "queued", preparing: "gathering" });
+
+    // 情報収集を記録して処理が終わると、次の処理が始まるまでは、待っているだけ（進行中と出さない）
+    gathering.go.resolve();
+    await first;
+    expect(await shown(service, task.id)).toEqual({ status: "queued", preparing: undefined });
+    expect(service.dashboard().queue).toMatchObject({ running: 0, queued: 1 });
+
+    const second = service.runNext(task.id);
+    await planning.started.promise;
+    expect(await shown(service, task.id)).toEqual({ status: "queued", preparing: "planning" });
+
+    // 最初の工程が始まったら、実行中。処理の段階は返さない
+    planning.go.resolve();
+    const runId = await executor.started.promise;
+    expect(await shown(service, task.id)).toEqual({ status: "running", preparing: undefined });
+
+    executor.finishHeld(runId, completed(1_000));
+    await second;
+    expect((await shown(service, task.id)).preparing).toBeUndefined();
+    // 表示のための記録を、作業履歴に増やさない（受け入れ条件 9）
+    expect(service.get(task.id)?.activity.map((e) => e.type)).toEqual([
+      "TaskCreated",
+      "RepositoryPrepared",
+      "InformationGathered",
+      "StepsChosen",
+      "AgentRunStarted",
+      "RunCostRecorded",
+      "AgentRunCompleted",
+      "StepSubmitted",
+    ]);
+    activity.close();
+  });
+
+  it("チケットの確認の間は、その段階を返す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
+    });
+    const { service, executor } = makeService(activity, [HOLD], {
+      config: configOf(agent(), 1, [jiraPlatform()]),
+      secrets: { "claude-oauth-token": "oauth-secret", "jira-token": "jira-secret" },
+      gateway: fakeGateway(),
+      projects,
+      settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+      tickets: new FakeTickets(),
+    });
+    const [task] = service.importTickets([foundTicket("PAY-1")]);
+    const id = task?.id ?? "";
+    const run = service.runNext(id);
+    const runId = await executor.started.promise;
+    expect(await shown(service, id)).toEqual({ status: "queued", preparing: "triage" });
+    executor.finishHeld(
+      runId,
+      triageOut({
+        repo: "https://github.com/acme/app",
+        title: "PAY-1 決済の再送",
+        summary: "再送で二重に請求される",
+        reason: "決済のコードがある",
+      }),
+    );
+    await run;
+    expect(await shown(service, id)).toEqual({ status: "queued", preparing: undefined });
+    activity.close();
+  });
+
+  it("レビューする PR の確認の間は、その段階を返す。確かめられずに一時停止したら返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const started = Promise.withResolvers<void>();
+    const go = Promise.withResolvers<void>();
+    class SlowPulls extends FakePulls {
+      override async pullRequest(input: { repo: string; token: string; number: number }) {
+        started.resolve();
+        await go.promise;
+        return super.pullRequest(input);
+      }
+    }
+    const pulls = new SlowPulls();
+    pulls.prInfoFail = "PR を読めない";
+    const { service } = makeService(activity, [], {
+      pulls,
+      // GitHub の一時的な失敗のやり直しを待たない
+      reviewRetryDelaysMs: [],
+    });
+    const [task] = service.importIssues([
+      {
+        repo: "https://github.com/acme/app",
+        number: 9,
+        title: "PR 9",
+        body: "",
+        url: "https://github.com/acme/app/pull/9",
+        labels: ["sacty-review"],
+        pullRequest: true,
+      },
+    ]);
+    const id = task?.id ?? "";
+    const run = service.runNext(id);
+    await started.promise;
+    expect(await shown(service, id)).toEqual({ status: "queued", preparing: "review_target" });
+    go.resolve();
+    await run;
+    expect(await shown(service, id)).toEqual({ status: "paused", preparing: undefined });
+    activity.close();
+  });
+
+  it("対象リポジトリを用意できずに一時停止したら、処理の段階を返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const repos = new FakeRepos();
+    repos.fail = "clone に失敗";
+    const { service } = makeService(activity, [], { repos });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    expect(await shown(service, task.id)).toEqual({ status: "paused", preparing: undefined });
+    activity.close();
+  });
+
+  it("処理が例外で終わったら、実行待ちに残っても、処理の段階を返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const started = Promise.withResolvers<void>();
+    const go = Promise.withResolvers<void>();
+    const { service } = makeService(activity, [], {
+      gatherer: async () => {
+        started.resolve();
+        await go.promise;
+        throw new Error("集められない");
+      },
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    const run = service.runNext(task.id);
+    await started.promise;
+    expect(await shown(service, task.id)).toEqual({ status: "queued", preparing: "gathering" });
+    go.resolve();
+    await expect(run).rejects.toThrow("集められない");
+    expect(await shown(service, task.id)).toEqual({ status: "queued", preparing: undefined });
+    activity.close();
+  });
+
+  it("人が一時停止したら、処理の段階を返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const started = Promise.withResolvers<void>();
+    const go = Promise.withResolvers<void>();
+    const { service } = makeService(activity, [], {
+      gatherer: async () => {
+        started.resolve();
+        await go.promise;
+        return gathered;
+      },
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    const run = service.runNext(task.id);
+    await started.promise;
+    const pausing = service.pause(task.id);
+    go.resolve();
+    await Promise.all([run, pausing]);
+    expect(await shown(service, task.id)).toEqual({ status: "paused", preparing: undefined });
+    activity.close();
+  });
+
+  it("デーモンを起動し直した後は、処理していないタスクに、処理の段階を返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const started = Promise.withResolvers<void>();
+    const go = Promise.withResolvers<void>();
+    const { service } = makeService(activity, [], {
+      gatherer: async () => {
+        started.resolve();
+        await go.promise;
+        return gathered;
+      },
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    const run = service.runNext(task.id);
+    await started.promise;
+    expect(await shown(service, task.id)).toEqual({ status: "queued", preparing: "gathering" });
+    // 同じ台帳から起動し直したデーモン（処理の途中で止まった後）
+    const restarted = makeService(activity).service;
+    restarted.recoverInterrupted();
+    expect(await shown(restarted, task.id)).toEqual({ status: "queued", preparing: undefined });
+    go.resolve();
+    await run;
+    activity.close();
+  });
+
+  it.each([
+    { max: 1, tasks: 1, processing: 1 },
+    { max: 1, tasks: 2, processing: 1 },
+    { max: 2, tasks: 3, processing: 2 },
+    { max: 3, tasks: 3, processing: 3 },
+  ])(
+    "同時に実行する数の上限 $max で $tasks 件あるとき、処理中の $processing 件だけに段階を返し、枠を待つタスクは実行待ちのまま",
+    async ({ max, tasks, processing }) => {
+      const { Worker } = await import("./worker.js");
+      const activity = new SqliteActivityStore(dbPath);
+      let startedCount = 0;
+      const go = Promise.withResolvers<void>();
+      const { service } = makeService(activity, [], {
+        settings: new MemorySettingsStore({ maxParallelTasks: max }),
+        gatherer: async () => {
+          startedCount += 1;
+          await go.promise;
+          return gathered;
+        },
+      });
+      const ids: string[] = [];
+      for (let i = 0; i < tasks; i += 1) {
+        // 作った順（古い順）に処理されるよう、作成の時刻をずらす
+        vi.useFakeTimers({ now: Date.parse("2026-11-20T00:00:00Z") + i * 1000, toFake: ["Date"] });
+        ids.push(service.createTask({ projectId: "default", title: `T${i}` }).id);
+        vi.useRealTimers();
+      }
+      // ワーカーが処理を始める前（処理中が 0 件）は、どれも実行待ち
+      for (const id of ids) {
+        expect(await shown(service, id)).toEqual({ status: "queued", preparing: undefined });
+      }
+      const worker = new Worker(service, 60_000);
+      void worker.tick();
+      await vi.waitFor(() => expect(startedCount).toBe(processing));
+      const states = await Promise.all(ids.map((id) => shown(service, id)));
+      expect(states).toEqual(
+        ids.map((_, i) => ({
+          status: "queued",
+          preparing: i < processing ? "gathering" : undefined,
+        })),
+      );
+      expect(service.dashboard().queue).toMatchObject({
+        running: processing,
+        queued: tasks - processing,
+      });
+      go.resolve();
+      await worker.drain();
+      activity.close();
+    },
+  );
 });

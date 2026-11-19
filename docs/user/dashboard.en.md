@@ -57,7 +57,7 @@ This section shows the cost for today and the last 7 days, as an estimate. "Task
 
 ### Step queue
 
-This section shows the number of running tasks against the parallel limit, and the number of tasks waiting to run. When more tasks than the limit have been waiting for 10 minutes, it is highlighted with a link to the Sacty settings.
+This section shows the number of running tasks against the parallel limit, and the number of tasks waiting to run. A task being processed before its first step starts (preparing the repository, gathering information, and so on) is counted as running too ([Status before the first step starts](tasks.en.md#status-before-the-first-step-starts)). When more tasks than the limit have been waiting for 10 minutes, it is highlighted with a link to the Sacty settings.
 
 ### Intake
 

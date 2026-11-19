@@ -66,6 +66,8 @@ export function statusText(task: Task, l: LabelMessages): string {
   if ((task.status === "queued" || task.status === "idle") && heldReview(task)) {
     return l.state.reworkJudging;
   }
+  // 最初の工程が始まる前に、sacty が実際に処理している（PBI-410）。枠・依存を待っているだけのタスクには preparing が無い
+  if (task.status === "queued" && task.preparing) return l.state.preparing[task.preparing];
   if (task.status === "awaiting_approval" && task.gate?.step === "implement") {
     // 実装に変更が無く、PR を作らなかった（PBI-90）。画面で、変更なしで完了にするかを判断する
     if (deliveredWithoutChanges(task)) return l.state.noChangesReview(task.gate.submission);
@@ -117,6 +119,8 @@ export function statusTone(task: Task): StatusTone {
   // PR の指摘の戻し先を判断している間は、承認待ちでも AI が進めている
   if (task.status === "awaiting_approval" && task.pendingReview) return "working";
   if ((task.status === "queued" || task.status === "idle") && heldReview(task)) return "working";
+  // 実行待ちのまま、最初の工程の前の処理（リポジトリの用意・情報収集・進め方の判定など）を sacty が進めている（PBI-410）
+  if (task.status === "queued" && task.preparing) return "working";
   if (needsPerson(task)) return "person";
   if (task.status === "queued" || task.status === "blocked") return "waiting";
   // 実行中・子タスクの進行中に加え、テスト・最終レビュー・判定など、完了していない idle も sacty が進めている

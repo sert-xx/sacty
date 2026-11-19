@@ -108,6 +108,7 @@ import {
   type PauseReason,
   PR_CI_CHECK_NAME_MAX,
   PR_CI_FAILED_CHECKS_MAX,
+  type PreparingPhase,
   type Project,
   ProjectDefinition,
   ProjectExport,
@@ -1246,6 +1247,12 @@ export class TaskService {
     string,
     { runIds: Set<string>; done: Promise<void>; abort: AbortController }
   >();
+  /**
+   * 最初の工程が始まる前に、いま進めている処理の段階（PBI-410）。画面と sacty mcp に、実行待ち（queued）のまま処理している
+   * ことを伝えるためだけに持つ（作業履歴には記録しない）。runNext の中でだけ付け、runNext の終わりに必ず消す。メモリーに
+   * だけ持つので、デーモンを起動し直すと残らない。
+   */
+  private readonly preparingPhases = new Map<string, PreparingPhase>();
   /** コンテキストのイメージを作り終えるのを待っているタスクと、待ち始めた時刻（PBI-325）。 */
   private readonly contextImageWaits = new Map<string, number>();
   /**
@@ -1388,9 +1395,27 @@ export class TaskService {
     return seen.head;
   }
 
+  /**
+   * 最初の工程が始まる前の、いま進めている処理の段階（PBI-410）。実行待ち（queued）で、ワーカーが処理していて（inflight）、
+   * 段階を付けたタスクにだけある。枠・依存・コンテキストのイメージを待っているだけのタスクは、処理していないので無い。
+   */
+  preparingOf(id: string): PreparingPhase | undefined {
+    if (!this.inflight.has(id) || this.tasks.get(id)?.status !== "queued") return undefined;
+    return this.preparingPhases.get(id);
+  }
+
+  /** 画面に返すタスクの一覧。処理の段階（preparingOf）を足す。 */
+  listView(): Task[] {
+    return this.list().map((task) => {
+      const preparing = this.preparingOf(task.id);
+      return preparing ? { ...task, preparing } : task;
+    });
+  }
+
   view(id: string): { task: Task; activity: ActivityEvent[] } | undefined {
     const found = this.get(id);
     if (!found) return undefined;
+    const preparing = this.preparingOf(id);
     const aiReview = aiReviewOfHead(
       found.task,
       this.tasks.values(),
@@ -1402,13 +1427,14 @@ export class TaskService {
       deferProposals(found.task).length > 0
         ? (this.deps.projects.get(found.task.projectId)?.deferralHandling ?? "none")
         : undefined;
-    return aiReview || deferralHandlingDefault
+    return aiReview || deferralHandlingDefault || preparing
       ? {
           ...found,
           task: {
             ...found.task,
             ...(aiReview ? { aiReview } : {}),
             ...(deferralHandlingDefault ? { deferralHandlingDefault } : {}),
+            ...(preparing ? { preparing } : {}),
           },
         }
       : found;
@@ -9667,7 +9693,11 @@ export class TaskService {
               task.steps.length === 0 ||
               (step !== undefined && REPOSITORY_COPY_STEPS.includes(step))
             ) {
+              // 最初の工程の前（情報収集・工程の選択の前）の照合は、対象リポジトリの用意として見せる（PBI-410）
+              if (gathering || task.steps.length === 0)
+                this.preparingPhases.set(taskId, "repository");
               const candidates = await this.taskRepositoryCandidates(task);
+              this.preparingPhases.delete(taskId);
               if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
               if ("repositories" in candidates) {
                 try {
@@ -9861,6 +9891,8 @@ export class TaskService {
       await entry.done;
     } finally {
       this.inflight.delete(taskId);
+      // 処理の段階は、処理の終わりに必ず消す（止まった・失敗した後に、進行中と見せ続けない。PBI-410）
+      this.preparingPhases.delete(taskId);
       this.trackQueue();
       // 完了・監査の終わりを記録した実行なら、作業領域を消す（PBI-157）
       void this.retireWorkspace(taskId);
@@ -10006,6 +10038,7 @@ export class TaskService {
     if (!initial.repository && !isRepoless(initial) && !awaitingTicketTriage(initial)) {
       let ready: Awaited<ReturnType<TaskService["prepareRepository"]>>;
       let preparationException = false;
+      this.preparingPhases.set(taskId, "repository");
       try {
         ready = await this.prepareRepository(initial, config.config);
       } catch (error) {
@@ -10112,20 +10145,23 @@ export class TaskService {
 
     // タスクの開始時に、まず情報収集のエージェントがタスクに関係する情報を集めて絞り込む。まとめは、チケットのトリアージ・
     // オーケストレーター・すべての工程・ゴールガーディアンに渡す（分割の子タスクは親のまとめを内容に持つので集めない）
-    if (
-      awaitingGathering(initial) &&
-      (await this.gatherInformation(this.mustGet(taskId), config.config))
-    ) {
-      return;
+    if (awaitingGathering(initial)) {
+      this.preparingPhases.set(taskId, "gathering");
+      if (await this.gatherInformation(this.mustGet(taskId), config.config)) return;
     }
 
     // チケットから取り込んだタスクは、まずオーケストレーターがチケットを読んで、作業するリポジトリ・題・概要を決める
     // （PBI-52。1段目）。リポジトリを用意した後に、いつもどおり工程を選ぶ（2段目）
     // 人がリポジトリを選んだ後も、そのリポジトリで題と概要を書くために、もう一度チケットを読む
-    if (awaitingTicketTriage(initial)) return this.triageTicket(initial, config.config);
+    if (awaitingTicketTriage(initial)) {
+      this.preparingPhases.set(taskId, "triage");
+      return this.triageTicket(initial, config.config);
+    }
 
     // 工程がまだ決まっていなければ、オーケストレーターがタスクの内容とリポジトリを読んで選ぶ（PBI-17）
     if (this.mustGet(taskId).steps.length === 0) {
+      // 工程を記録する（StepsChosen）まで、進め方の判定として見せる（引き継ぐ PR の確認・ベースブランチの用意を含む。PBI-410）
+      this.preparingPhases.set(taskId, "planning");
       if (budgetState(this.mustGet(taskId).budget) === "exceeded") {
         this.append(this.mustGet(taskId), [
           { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
@@ -10358,6 +10394,8 @@ export class TaskService {
       });
       this.append(latest, events);
     }
+    // ここから先は、最初の工程の前の処理ではない（レビューの対象の PR の確認だけ、下で付け直す。PBI-410）
+    this.preparingPhases.delete(taskId);
     // 工程が終わったら、次の工程を実行する前に、オーケストレーターが残りの工程を見直し、要らない工程を飛ばす（工程の見直し）
     const reviewing = this.mustGet(taskId);
     if (reviewing.status === "queued" && reviewing.stepReview) {
@@ -10388,7 +10426,9 @@ export class TaskService {
 
     // レビューの工程は、エージェントを実行する（費用をかける）前に、対象の PR を確かめて記録する（PBI-19）
     if (step === "review" && !task.reviewTarget) {
+      this.preparingPhases.set(taskId, "review_target");
       const resolved = await this.resolveReviewTarget(task);
+      this.preparingPhases.delete(taskId);
       if (!resolved.ok && resolved.abandoned) return;
       const latest = this.mustGet(task.id);
       if (latest.status !== "queued" || this.pauseRequested.has(task.id)) return;
