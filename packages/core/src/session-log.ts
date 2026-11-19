@@ -1,3 +1,5 @@
+import type { ActivityEvent } from "./events.js";
+
 /**
  * エージェントの実行のセッションログ（PBI-62）を、出来事の列にする。Claude Code（stream-json）と
  * Codex（exec --json）の主な出来事を読み、知らない形の行・JSON でない行は、そのまま生の行として出す。
@@ -267,4 +269,40 @@ export function parseSessionLog(text: string): LogEntry[] {
     else entries.push({ line, kind: "raw", text: raw });
   });
   return entries;
+}
+
+/** 作業履歴のうち、エージェントの実行の行（ログを見られる行）。 */
+export const RUN_EVENTS = new Set<ActivityEvent["type"]>([
+  "AgentRunStarted",
+  "AgentRunCompleted",
+  "AgentRunFailed",
+  "StepsChosen",
+  "StepsSkipped",
+  "OrchestratorFailed",
+  "InformationGathered",
+  "TicketTriaged",
+  "RepositoryChosen",
+  "ChangeJudged",
+  "ReworkJudged",
+  "FinalReviewed",
+  "FinalReviewFailed",
+  "QuestionAnswered",
+  "ErrorAnalyzed",
+  "ExportStarted",
+  "OutputExported",
+  "AgentSessionArchived",
+  "OrchestratorSessionUsed",
+  // エージェントの発言に通知の形の文面があった実行（ログで、その発言と担当の結果を確かめる。PBI-368）
+  "SubagentNoticeImitated",
+  // 完了したタスクの監査の実行（PBI-125）
+  "AuditSurveyed",
+  "AuditDeepDived",
+  "AuditFailed",
+]);
+
+/** 作業履歴の行から、ログを見られる実行の ID。実行の行でない・ID の無い古い行なら undefined。 */
+export function runLogId(event: ActivityEvent): string | undefined {
+  if (!RUN_EVENTS.has(event.type)) return undefined;
+  const runId = (event.payload as { runId?: unknown }).runId;
+  return typeof runId === "string" && runId ? runId : undefined;
 }

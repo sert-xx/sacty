@@ -17,7 +17,7 @@ The commands are as follows.
 | [`sacty context init`](#sacty-context-init) | Creates a template of a context repository |
 | [`sacty context preview`](#sacty-context-preview) | Shows the result of composing the context of a project |
 | [`sacty launch`](#sacty-launch) | Starts your local Claude Code or Codex interactively with the context of a project |
-| [`sacty mcp`](#sacty-mcp) | Runs the MCP server for operating the running sacty from your local Claude Code or Codex |
+| [`sacty mcp`](#sacty-mcp) | Runs the MCP server for operating the running sacty from your local Claude Code or Codex and for reading deliverables and the run list |
 
 The following applies to every command.
 
@@ -170,6 +170,7 @@ If something cannot be passed locally, it is shown with `[sacty] 注意：` befo
 
 Runs, over standard input and output (stdio), the MCP server for operating the running sacty (`sacty up`) from your local Claude Code or Codex.
 It is not a command you run yourself; you register it as an MCP server in your AI CLI ([Operating sacty from your local AI](mcp.en.md)).
+Besides listing projects, creating, listing, searching, and showing tasks, and re-reviewing a PR review task, it can read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only; the logs of runs cannot be read yet).
 
 ```sh
 sacty mcp

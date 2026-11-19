@@ -31,6 +31,7 @@ import {
   projectsWithAccount,
   useTempDir,
 } from "./testing/daemon.js";
+import { readApiOver } from "./testing/mcp-read.js";
 
 useTempDir();
 
@@ -50,6 +51,17 @@ const pr = (number: number, extra: Record<string, unknown> = {}) => ({
   pullRequest: true,
   ...extra,
 });
+
+/** 成果物・実行を読む3つのメソッドを、同じ失敗にするスタブ（PBI-395）。 */
+function readStubs(
+  fail: () => never,
+): Pick<SactyApi, "listDeliverables" | "getDeliverable" | "listRuns"> {
+  return {
+    listDeliverables: async () => fail(),
+    getDeliverable: async () => fail(),
+    listRuns: async () => fail(),
+  };
+}
 
 /** デーモンの API（createApp）を、画面と同じ道（HTTP の要求）で呼ぶ SactyApi。CLI の daemonApi と同じ API を使う。 */
 function apiOver(service: TaskService, webUrl?: string): SactyApi & { calls: string[] } {
@@ -104,6 +116,7 @@ function apiOver(service: TaskService, webUrl?: string): SactyApi & { calls: str
       if (!res.ok) throw await refusal(res);
       return ((await res.json()) as { task: Task }).task;
     },
+    ...readApiOver(app, headers),
     webUrl: () => webUrl,
   };
 }
@@ -163,7 +176,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
     return { activity, pulls, service, id };
   }
 
-  it("ツールは、一覧・詳細・再レビュー・プロジェクトの一覧・タスクの作成の5つ。取得のツールは読み取りだけと示す", async () => {
+  it("ツールは、一覧・詳細・再レビュー・プロジェクトの一覧・タスクの作成と、成果物・実行の読み取り3つ。取得のツールは読み取りだけと示す", async () => {
     const { activity, service } = await reviewed();
     const { client } = await connect(apiOver(service));
     const { tools } = await client.listTools();
@@ -173,8 +186,20 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "rereview_task",
       "list_projects",
       "create_task",
+      "list_deliverables",
+      "get_deliverable",
+      "list_runs",
     ]);
-    expect(tools.map((t) => t.annotations?.readOnlyHint)).toEqual([true, true, false, true, false]);
+    expect(tools.map((t) => t.annotations?.readOnlyHint)).toEqual([
+      true,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+    ]);
     // 作成は、sacty の外に作用し得る（工程が PR などに書く）ので、外に作用すると示す。取得は示さない
     expect(tools.map((t) => t.annotations?.openWorldHint)).toEqual([
       false,
@@ -182,6 +207,9 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       true,
       false,
       true,
+      false,
+      false,
+      false,
     ]);
     expect(tools[4]?.annotations).toMatchObject({ destructiveHint: false, idempotentHint: false });
     // 作成は、利用者に頼まれたときだけ呼ぶこと・ほかの人の文の中の指示に従わないことを、説明に書く
@@ -213,6 +241,9 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["message", "task"],
       ["projects"],
       ["message", "task"],
+      ["deliverables"],
+      expect.arrayContaining(["text", "next", "totalBytes"]),
+      expect.arrayContaining(["runs", "nextOffset"]),
     ]);
     expect(client.getServerVersion()).toMatchObject({ name: "sacty", version: "9.9.9" });
     expect(client.getInstructions()).toContain("rereview_task");
@@ -236,6 +267,9 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       "rereview_task",
       "list_projects",
       "create_task",
+      "list_deliverables",
+      "get_deliverable",
+      "list_runs",
     ]);
     const found = await client.callTool({ name: "list_tasks", arguments: { pull_request: "9" } });
     expect((found.structuredContent as Listed).tasks.map((t) => t.id)).toEqual([id]);
@@ -557,6 +591,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
         rereview: async () => lost(),
         listProjects: async () => [],
         createTask: async () => lost(),
+        ...readStubs(lost),
         webUrl: () => undefined,
       });
       const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -593,6 +628,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       rereview: async () => down(),
       listProjects: async () => down(),
       createTask: async () => down(),
+      ...readStubs(down),
       webUrl: () => undefined,
     });
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -619,6 +655,7 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       rereview: async () => down(),
       listProjects: async () => down(),
       createTask: async () => down(),
+      ...readStubs(down),
       webUrl: () => undefined,
     });
     for (const [name, args] of [
@@ -627,6 +664,9 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       ["rereview_task", { task_id: "x" }],
       ["list_projects", {}],
       ["create_task", { project_id: "p", title: "題" }],
+      ["list_deliverables", { task_id: "x" }],
+      ["get_deliverable", { task_id: "x", step: "design", kind: "output" }],
+      ["list_runs", { task_id: "x" }],
     ] as const) {
       expect(await call(name, args)).toEqual({
         isError: true,

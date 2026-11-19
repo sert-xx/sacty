@@ -6,6 +6,7 @@ import { type Context, Hono } from "hono";
 import { ZodError, z } from "zod";
 import { safeRelativePath } from "./agent-sessions.js";
 import { type AuditService, NoAuditService } from "./audits.js";
+import { RANGE_MAX_BYTES, readByteRange } from "./byte-range.js";
 import { MemoryScheduleStore, ScheduledTasks } from "./schedules.js";
 import {
   InvalidOperationError,
@@ -13,6 +14,7 @@ import {
   type TaskService,
 } from "./service.js";
 import { validLogId } from "./session-logs.js";
+import { isDeliverableKind, isDeliverableStep } from "./task-reads.js";
 
 function sameToken(given: string, expected: string): boolean {
   const a = Buffer.from(given);
@@ -147,6 +149,65 @@ export function createApp(
     const id = c.req.param("id");
     const found = service.visibleTask(id) ? service.view(id) : undefined;
     return found ? c.json(found) : c.json({ error: "not_found" }, 404);
+  });
+
+  // --- sacty mcp が読む、成果物と実行の読み取り（PBI-395）。どれも読むだけで、記録は変えない ---
+
+  /** 数字だけの整数の引数。無ければ fallback、読めなければ undefined。 */
+  const intQuery = (value: string | undefined, fallback: number): number | undefined => {
+    if (value === undefined || value === "") return fallback;
+    if (!/^\d{1,15}$/.test(value)) return undefined;
+    return Number(value);
+  };
+
+  app.get("/api/tasks/:id/deliverables", (c) => {
+    const id = c.req.param("id");
+    if (!validLogId(id)) return c.json({ error: "invalid_id" }, 400);
+    const found = service.deliverables(id);
+    return found ? c.json({ deliverables: found }) : c.json({ error: "not_found" }, 404);
+  });
+
+  app.get("/api/tasks/:id/deliverables/:step/:kind", (c) => {
+    const { id, step, kind } = c.req.param();
+    if (!validLogId(id)) return c.json({ error: "invalid_id" }, 400);
+    if (!service.visibleTask(id)) return c.json({ error: "not_found" }, 404);
+    if (!isDeliverableStep(step)) return c.json({ error: "not_found", what: "step" }, 404);
+    if (!isDeliverableKind(kind)) return c.json({ error: "not_found", what: "kind" }, 404);
+    const offset = intQuery(c.req.query("offset"), 0);
+    const max = intQuery(c.req.query("max"), RANGE_MAX_BYTES);
+    if (offset === undefined || max === undefined || max < 1) {
+      return c.json({ error: "invalid_range" }, 400);
+    }
+    const found = service.deliverable(id, step, kind);
+    if (!found) return c.json({ error: "not_found" }, 404);
+    const { text, ...state } = found;
+    const range = readByteRange(Buffer.from(text, "utf8"), {
+      offset,
+      max: Math.min(max, RANGE_MAX_BYTES),
+    });
+    return c.json({ step, kind, ...state, ...range, clamped: max > RANGE_MAX_BYTES });
+  });
+
+  app.get("/api/tasks/:id/runs", (c) => {
+    const id = c.req.param("id");
+    if (!validLogId(id)) return c.json({ error: "invalid_id" }, 400);
+    const offset = intQuery(c.req.query("offset"), 0);
+    const limit = intQuery(c.req.query("limit"), 20);
+    if (offset === undefined || limit === undefined || limit < 1) {
+      return c.json({ error: "invalid_range" }, 400);
+    }
+    const found = service.runList(id, offset, Math.min(limit, 100));
+    if (!found) return c.json({ error: "not_found" }, 404);
+    const returned = found.runs.length;
+    const next = offset + returned;
+    return c.json({
+      total: found.total,
+      returned,
+      clipped: next < found.total,
+      clamped: limit > 100,
+      nextOffset: next < found.total ? next : null,
+      runs: found.runs,
+    });
   });
 
   // エージェントの実行のセッションログ（PBI-62）。タスクごとの場所から読むので、ほかのタスクの実行は読めない

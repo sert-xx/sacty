@@ -4,7 +4,7 @@
 - タスク: PBI-392
 - PR: #431
 - ブランチ: feat/pbi-392-mcp-server
-- 関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かし、MCP の 2026-07-28 版に合わせる](../adr/20261118-0936-task-mcp-server-over-stdio.md)
+- 関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かし、MCP の 2026-07-28 版に合わせる](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)
 
 ## 目的
 

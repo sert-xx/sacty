@@ -2,6 +2,7 @@ import {
   closeSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -712,6 +713,26 @@ export class SessionLogStore {
   path(taskId: string, runId: string, file: SessionLogFile): string | undefined {
     if (!validLogId(taskId) || !validLogId(runId)) return undefined;
     return join(this.root, taskId, `${runId}${EXTENSIONS[file]}`);
+  }
+
+  /**
+   * 実行の記録（meta.json）だけを読む（PBI-395。実行の一覧が、役割・エージェント・状態を取る）。記録が無い・読めない・
+   * リンクなら undefined。ログの中身は読まない。
+   */
+  readMeta(taskId: string, runId: string): SessionLogMeta | undefined {
+    const metaPath = this.metaPath(taskId, runId);
+    if (!metaPath) return undefined;
+    try {
+      if (!lstatSync(metaPath).isFile()) return undefined;
+      return JSON.parse(readFileSync(metaPath, "utf8")) as SessionLogMeta;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** このデーモンで開いていて、まだ閉じていない実行か。 */
+  isLive(taskId: string, runId: string): boolean {
+    return this.live.has(`${taskId}/${runId}`);
   }
 
   /**
