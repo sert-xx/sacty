@@ -222,7 +222,11 @@ const ApprovalSchema = z.object({
 });
 export type Approval = z.infer<typeof ApprovalSchema>;
 
-/** 承認待ち（上限を超えた差し戻しの判断待ちを含む。画面で「承認する」を出す状態）の、承認の対象と手段。 */
+/**
+ * 承認待ち（上限を超えた差し戻しの判断待ちを含む。画面で「承認する」を出す状態）の、承認の対象と手段。
+ * デーモンの承認の判定（`gateTask`・画面の `gate-form`）の読み取り側の写しで、見せるだけ。承認できるかどうかを決めるのは、
+ * 承認の API（デーモン）。判定が変わったら、これも合わせる。
+ */
 export function approvalOf(task: Task): Approval | undefined {
   if (task.status !== "awaiting_approval" && task.status !== "escalated") return undefined;
   const step = task.gate?.step ?? task.escalation?.step;
@@ -442,6 +446,7 @@ function stateOf(task: Task): string {
 
 export function summarizeTask(task: Task, webUrl?: string): TaskSummary {
   const review = isReviewTask(task);
+  const approval = approvalOf(task);
   const round = task.reviewRound ?? 1;
   // 今の回の判定だけ（再レビューを始めた後に、前の回の判定を今の回のものとして見せない）
   const verdict = task.reviewVerdicts?.findLast((v) => v.round === round)?.verdict;
@@ -469,7 +474,7 @@ export function summarizeTask(task: Task, webUrl?: string): TaskSummary {
       ? { reviewTasks: task.reviewTasks.map((r) => ({ taskId: r.taskId, number: r.number })) }
       : {}),
     ...(task.status === "paused" && task.pausedReason ? { pausedReason: task.pausedReason } : {}),
-    ...(approvalOf(task) ? { approval: approvalOf(task) } : {}),
+    ...(approval ? { approval } : {}),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     ...(webUrl ? { url: `${webUrl.replace(/\/$/, "")}/tasks/${encodeURIComponent(task.id)}` } : {}),

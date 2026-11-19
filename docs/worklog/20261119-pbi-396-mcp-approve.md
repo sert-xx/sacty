@@ -3,7 +3,7 @@
 - 日付: 2026-11-19（UTC）
 - タスク: PBI-396
 - PR: なし
-- ブランチ: sacty/task-<タスク ID の先頭8文字>
+- ブランチ: なし
 - 関係する ADR: [sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)
 
 ## 目的
@@ -21,7 +21,7 @@
 
 ## 確かめたこと
 
-- `npx vitest run --no-file-parallelism`（全件）・`npm run lint`・`npm run typecheck`・`npm run build`・`npx biome format .`。結果は PR の本文に書いた。
+- `npx vitest run --no-file-parallelism`（全件）・`npm run lint`・`npm run typecheck`・`npm run build`・`npx biome format .`。結果（レビューの指摘を直した後に実行）：`npx vitest run --no-file-parallelism` は 266 ファイル・5230 件が成功（14 件は既存の skip）、lint・typecheck・build・format は通った。
 - `apps/daemon/src/task-mcp.test.ts`：本物のサービスと `createApp` で、承認できる（記録1件）・2回目は断る・古い回・違う工程・承認待ちでない・無いタスク・PR のマージで承認する工程（URL・何も変わらない）・引数の形の違い・結果を受け取れない・ツールの一覧。
 - `packages/cli/src/mcp.test.ts`：呼ぶ API・消したプロジェクトのタスク・理由の文・時間切れ／切断／5xx の案内・401／接続拒否／前の版のデーモン。
 
@@ -35,3 +35,10 @@
 
 - PR のマージ（GitHub への書き込み）。入れるかは人が決める。
 - 差し戻し・変更の申し出への決定・質問への回答・一時停止／再開／中止・待つこと・ログの取得は、後続。
+
+## レビューの指摘と対応
+
+- 仕様書・ユーザー文書・README に承認の追加の反映漏れ（「最後の3つ」「下3行」・ツールの表・cli の節・README）を直し、日英をそろえた。
+- 結果を受け取れなかったときの案内は、元の例外の文（「もう一度試してください」など）を使わず、原因の種類だけを書いて、自動でやり直さない案内に続けるようにした。
+- `approvalOf` の二重呼び出しをやめ、デーモンの判定の読み取り側の写しであることをコメントに書いた。
+- テストを足した：`approvalOf` の分岐、先の詳細の確認（GET）の失敗、承認のツールの読み取りでない扱い。

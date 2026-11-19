@@ -383,6 +383,11 @@ describe("sacty mcp の成果物と実行の取得（PBI-395）", () => {
         ["list_deliverables", { task_id: "nothing" }, "タスク"],
         ["list_runs", { task_id: "nothing" }, "タスク"],
       ];
+      // 承認のツールは読み取りではない（無いタスクは、承認せずに断る）
+      expect(
+        (await raw("approve_step", { task_id: "nothing", step: "requirements", submission: 1 }))
+          .isError,
+      ).toBe(true);
       for (const [name, args, reason] of cases) {
         const r = await raw(name, args);
         expect(r.isError).toBe(true);

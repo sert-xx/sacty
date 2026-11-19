@@ -7,7 +7,7 @@ It runs over standard input and output (stdio) and calls the same daemon API as 
 It follows the 2026-07-28 revision of the MCP specification and also accepts clients of earlier revisions (up to 2025-11-25) that open with `initialize`.
 It has nine tools: listing and searching tasks (`list_tasks`), task details (`get_task`), re-reviewing a PR review task (`rereview_task`), listing projects (`list_projects`), creating a task (`create_task`),
 listing deliverables (`list_deliverables`), the content of a deliverable (`get_deliverable`), listing runs (`list_runs`), and approving a step awaiting approval (`approve_step`).
-The three before `approve_step` only read deliverables and runs. There is no tool yet for reading the log of a run (a follow-up).
+The three before `approve_step` (`list_deliverables`, `get_deliverable`, and `list_runs`) only read deliverables and runs. There is no tool yet for reading the log of a run (a follow-up).
 
 Related ADRs: [The MCP server that operates the running sacty is run by the CLI over stdio](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md), [The CLI calls the running daemon's API through the connection file that sacty up writes](../adr/20261014-0701-cli-daemon-connection-file.md), [The MCP create-task tool sends the same request as the web UI's defaults and reports that a task may have been created when no result arrives](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md), [Reading deliverables and the run list through sacty mcp sets limits and positions in bytes and adds read APIs to the daemon](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md), [Approval through sacty mcp is limited to the same API as the web UI's Approve button and does not merge PRs](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)
 
@@ -24,7 +24,7 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
   Restarting `sacty up` changes the token, but the next call uses the new address and token (the MCP server does not need a restart).
 - It waits up to 30 seconds per request (`MCP_REQUEST_TIMEOUT_MS`) for the daemon's response (including reading the body).
 - No authentication is added (the MCP authorization specification is for HTTP; on stdio the rule is to take credentials from the environment). Only a user who can read `daemon.json` (mode 0600) can use it.
-- It calls the following APIs ([Overall structure](architecture.en.md#processes-and-communication)). The first five tools call the same APIs as the web UI. The three tools that read deliverables and runs call read-only APIs (the last three rows of the table below; the web UI does not call them).
+- It calls the following APIs ([Overall structure](architecture.en.md#processes-and-communication)). `list_tasks`, `get_task`, `rereview_task`, `list_projects`, `create_task`, and `approve_step` call the same APIs as the web UI. `list_deliverables`, `get_deliverable`, and `list_runs` call read-only APIs (their three rows in the table below; the web UI does not call them).
 
 | Tool | Daemon API |
 | --- | --- |

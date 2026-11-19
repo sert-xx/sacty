@@ -219,7 +219,7 @@ export function daemonApi(
         // 5xx は、処理の途中で失敗したのかもしれず、承認されたかどうかが分からない
         if (!res.ok && res.status >= 500) {
           const failed = await refusal(res);
-          throw new Error(failed.message, { cause: failed });
+          throw new Error(`${failed.message}${APPROVE_UNCERTAIN}`, { cause: failed });
         }
         if (!res.ok) throw await refusal(res, staleForMcp);
         return (await read<{ task: Task }>(res)).task;
@@ -228,9 +228,16 @@ export function daemonApi(
         if (error instanceof DaemonRefusal) throw error;
         // 認証できない・接続を断られた（要求が処理されていない）ときも、承認していない
         if (notSent(error)) throw error;
+        // 5xx は、上で案内を付けて投げ直したもの（そのまま返す）
+        if (error instanceof Error && error.cause instanceof DaemonRefusal) throw error;
         // 頼んだ後に結果を受け取れなかったときは、承認されたかどうかが分からない
-        const reason = error instanceof Error ? error.message : String(error);
-        throw new Error(`${reason}${APPROVE_UNCERTAIN}`, { cause: error });
+        // 元の文（「もう一度試してください」など）は案内と矛盾するので使わず、原因の種類だけを書く（元の例外は cause に残す）
+        throw new Error(
+          `承認の結果を受け取れませんでした（時間切れ・切断など）。${APPROVE_UNCERTAIN}`,
+          {
+            cause: error,
+          },
+        );
       }
     },
     async listProjects() {

@@ -688,8 +688,10 @@ describe("sacty mcp の承認（PBI-396）", () => {
       (url, init) =>
         init.method === "POST" ? post(url, init) : Promise.resolve(Response.json(taskBody));
     const timedOut = await failure(afterGet(hung));
-    expect(timedOut?.message).toContain("デーモンが時間内に応答しませんでした");
+    expect(timedOut?.message).toContain("時間切れ");
     expect(timedOut?.message).toContain(uncertain);
+    // 元の文（「もう一度試してください」）は、自動でやり直さない案内と矛盾するので使わない
+    expect(timedOut?.message).not.toContain("もう一度試してください");
     expect(timedOut?.message).toContain("get_task");
     const dropped = await failure(
       afterGet(async () => {
@@ -697,12 +699,31 @@ describe("sacty mcp の承認（PBI-396）", () => {
       }),
     );
     expect(dropped?.message).toContain(uncertain);
+    expect(dropped?.message).not.toContain("起動し直してください");
     const broken = await failure(afterGet(async () => new Response("<html>", { status: 200 })));
-    expect(broken?.message).toContain("デーモンの応答を読めませんでした");
+    expect(broken?.message).toContain("承認の結果を受け取れませんでした");
     expect(broken?.message).toContain(uncertain);
     const server = await failure(afterGet(async () => new Response("oops", { status: 500 })));
     expect(server?.message).toContain("デーモンが 500 を返しました。");
     expect(server?.message).toContain(uncertain);
+  });
+
+  it("先の詳細の確認（GET）で失敗したときは、承認を送っていないので、可能性を伝えず、承認の API を呼ばない", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const seen: string[] = [];
+    const get500 = await failure(async (_url, init) => {
+      seen.push(init.method ?? "GET");
+      return new Response("oops", { status: 500 });
+    });
+    expect(get500?.message).toContain("500");
+    expect(get500?.message).not.toContain(uncertain);
+    const getHung = await failure((url, init) => {
+      seen.push(init.method ?? "GET");
+      return hung(url, init);
+    });
+    expect(getHung).toBeDefined();
+    expect(getHung?.message).not.toContain(uncertain);
+    expect(seen).not.toContain("POST");
   });
 
   it("認証できない・接続を断られた・起動中の sacty が無い・前の版のデーモン（想定外の 404）は、承認されていないので、可能性を伝えない", async () => {

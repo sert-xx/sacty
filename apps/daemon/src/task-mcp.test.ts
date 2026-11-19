@@ -1234,6 +1234,41 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
     });
   });
 
+  it("approvalOf：承認待ちでないときは無い。上限を超えた差し戻しの判断待ちは承認の工程と回を示し、PR のあるタスクは URL を、PR の無い実装は approve_step を示す", async () => {
+    const { approvalOf } = await import("./task-mcp.js");
+    const of = (t: object) => approvalOf(t as unknown as Task);
+    expect(
+      of({ status: "running", gate: { step: "design", submission: 1 }, submissions: {} }),
+    ).toBe(undefined);
+    expect(of({ status: "paused", gate: { step: "design", submission: 1 }, submissions: {} })).toBe(
+      undefined,
+    );
+    expect(of({ status: "awaiting_approval", submissions: {} })).toBe(undefined);
+    expect(
+      of({ status: "escalated", escalation: { step: "implement" }, submissions: { implement: 4 } }),
+    ).toEqual({ step: "implement", submission: 4, method: "approve_step" });
+    expect(
+      of({
+        status: "awaiting_approval",
+        gate: { step: "implement", submission: 2 },
+        submissions: {},
+        pullRequest: { number: 9, url: "https://github.com/a/b/pull/9", state: "open" },
+      }),
+    ).toMatchObject({
+      step: "implement",
+      submission: 2,
+      method: "pull_request",
+      pullRequestUrl: "https://github.com/a/b/pull/9",
+    });
+    expect(
+      of({
+        status: "awaiting_approval",
+        gate: { step: "implement", submission: 1 },
+        submissions: {},
+      }),
+    ).toEqual({ step: "implement", submission: 1, method: "approve_step" });
+  });
+
   it("引数の形が違うとき（工程の名前でない・回が 0・負・小数・文字・欠け）は、承認の API を呼ばずに断る", async () => {
     const { activity, service, id, events } = await awaiting();
     const api = apiOver(service);
@@ -1256,7 +1291,7 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
     activity.close();
   });
 
-  it("結果を受け取れなかったとき（時間切れ）は、承認されている可能性と get_task で確かめることを返し、自動でやり直さない。標準エラーに理由を残す", async () => {
+  it("API が承認の可能性を伝える失敗を投げたとき（実際の時間切れの文は mcp.test.ts）は、isError でそのまま返し、自動でやり直さない。標準エラーに理由を残す", async () => {
     let calls = 0;
     const { call } = await connect({
       ...apiOverStub(() => {

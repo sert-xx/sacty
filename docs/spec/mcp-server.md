@@ -7,7 +7,7 @@
 MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（2025-11-25 まで）のクライアントも受ける。
 ツールは、タスクの一覧・検索（`list_tasks`）、タスクの詳細（`get_task`）、PR のレビューのタスクの再レビュー（`rereview_task`）、プロジェクトの一覧（`list_projects`）、タスクの作成（`create_task`）、
 成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、承認待ちの工程の承認（`approve_step`）の9つ。
-最後の3つは、成果物と実行を読むだけのツール。実行のログを読むツールは、まだ無い（後続）。
+`approve_step` の前の3つ（`list_deliverables`・`get_deliverable`・`list_runs`）は、成果物と実行を読むだけのツール。実行のログを読むツールは、まだ無い（後続）。
 
 関係する ADR: [起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)
 
@@ -24,7 +24,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
   `sacty up` を起動し直すとトークンが変わるが、次の呼び出しから新しい接続先とトークンを使う（MCP サーバーの起動し直しは要らない）。
 - デーモンの応答は、要求ごとに 30 秒（`MCP_REQUEST_TIMEOUT_MS`）まで待つ（本文の読み取りを含む）。
 - 認証は足していない（MCP の認証の仕様は HTTP のためのもので、stdio では資格情報を環境から取る決まり）。使えるのは、`daemon.json`（権限 0600）を読める利用者だけ。
-- 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。上の5つと `approve_step` は画面と同じ API を呼ぶ。成果物と実行を読む3つのツールは、読み取りだけの API（下の表の下3行。画面は呼ばない）を呼ぶ。
+- 呼ぶ API は、次のもの（[全体の構成](architecture.md#プロセスと通信)）。`list_tasks`・`get_task`・`rereview_task`・`list_projects`・`create_task`・`approve_step` は画面と同じ API を呼ぶ。`list_deliverables`・`get_deliverable`・`list_runs` は、読み取りだけの API（下の表のこの3つの行。画面は呼ばない）を呼ぶ。
 
 | ツール | デーモンの API |
 | --- | --- |
@@ -136,7 +136,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 ### approve_step
 
-承認待ちの工程を承認する（画面の承認の画面の「承認する」と同じ）。
+承認待ちの工程を承認する（画面の「承認する」と同じ）。
 
 | 引数 | 型 | 内容 |
 | --- | --- | --- |
@@ -153,7 +153,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 - 承認の前に確かめる手段として、タスクの要約（`list_tasks`・`get_task` など）に `approval` が入る。承認待ち（`awaiting_approval`・`escalated`）のときだけで、`step`（承認待ちの工程）・`submission`（承認待ちの提出の回。無ければ 0）・`method`（`approve_step`：このツールで承認できる、`pull_request`：PR のマージが承認で、`pullRequestUrl` の PR をマージする、`not_approvable`：再現できなかった再現。差し戻すか中止する）。
 - 承認の API を呼んだ後に結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、その理由に続けて、承認されている可能性があること・自動でやり直さないこと・`get_task` で確かめてから呼び直すことを返す。デーモンが応答で断ったとき、認証できなかったとき（401）、接続を断られたとき、呼ぶ前の失敗は、承認されていないので、理由だけを返す。
 - 前の版のデーモン：`POST /api/tasks/:id/approve` は古くからあるので、前の版のデーモンにも通る。通らなければ、デーモンが断った理由（読めなければ状態コード）を返す。`approval` は MCP の層が作るので、前の版のデーモンでも入る。
-- 説明文に、利用者に頼まれたときだけ呼ぶこと・承認すると次の工程が始まること（時間と費用がかかる・取り消せない）・先に `list_deliverables`・`get_deliverable` で成果物を確かめること・呼び直す前に `get_task` で確かめることを書く。`INSTRUCTIONS` にも足す。
+- 説明文に、利用者に頼まれたときだけ呼ぶこと・承認すると次の工程が始まること（時間と費用がかかる・取り消せない）・先に `list_deliverables`・`get_deliverable` で成果物を確かめること・呼び直す前に `get_task` で確かめることを書く。`INSTRUCTIONS` にも、頼まれたときだけ呼ぶこと・取り消せないこと・先に成果物を確かめることを足す。
 - ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`。2回目は断られる）・sacty の外に書きうる（`openWorldHint: true`。次の工程が書く）。
 
 ### list_deliverables

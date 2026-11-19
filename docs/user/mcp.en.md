@@ -83,6 +83,7 @@ When sacty does not respond within 30 seconds, the tools answer that the daemon 
 | `list_deliverables` | Lists the deliverables of each step of a task (step, which submission, kind, size, status) |
 | `get_deliverable` | Reads the content of a deliverable by step and kind (the approved version if there is one, otherwise the latest output; for a review, the body and the comments on lines) |
 | `list_runs` | Lists agent runs, newest first (steps, the orchestrator, and so on; the agent used, time, running / succeeded / failed / no end recorded, and a switch to another agent) |
+| `approve_step` | Approves a step awaiting approval (`task_id`, `step`, `submission`), the same as "Approve" on the web UI. A step approved by merging a PR cannot be approved here; the PR URL is returned |
 
 The filters of `list_tasks` are as follows (all can be omitted; with several, only tasks matching all of them are returned).
 
