@@ -87,27 +87,52 @@ const REREVIEW_UNCERTAIN =
 const CREATE_UNCERTAIN =
   "タスクは作られている可能性があります。list_tasks（query に題）で確かめてから、まだ無ければ呼び直してください。";
 
-/** 承認を頼んだ後に、結果を受け取れなかったときの案内（承認されたかどうかが分からない）。 */
-const APPROVE_UNCERTAIN =
-  "承認されている可能性があります。自動でやり直さず、get_task で state と approval を確かめてから、まだ承認待ちなら呼び直してください。";
-
-/** 承認の結果を受け取れなかったときの文。理由があれば（5xx の状態コードなど）それに、なければ原因の種類だけに、案内を続ける。 */
-function uncertainApproval(
-  reason = "承認の結果を受け取れませんでした（時間切れ・切断など）。",
-): string {
-  return `${reason}${APPROVE_UNCERTAIN}`;
+/**
+ * 書き込み（承認・差し戻し・一時停止・再開）を頼んだ後に、結果を受け取れなかったときの案内（行われたかどうかが分からない）。
+ * done は「承認されて」のような、行われたことの言い方。check は get_task で確かめる欄、retry は呼び直してよい状態。
+ */
+function uncertainNotice(done: string, check: string, retry: string): string {
+  return `${done}いる可能性があります。自動でやり直さず、get_task で ${check} を確かめてから、${retry}呼び直してください。`;
 }
+
+/** 書き込みの結果を受け取れなかったときの文。理由があれば（5xx の状態コードなど）それに、なければ原因の種類だけに、案内を続ける。 */
+function uncertainText(subject: string, notice: string, reason?: string): string {
+  return `${reason ?? `${subject}の結果を受け取れませんでした（時間切れ・切断など）。`}${notice}`;
+}
+
+/** 書き込みごとの、結果を受け取れなかったときの文の作り方（reason は、あれば先頭に置く理由）。 */
+type Uncertain = (reason?: string) => string;
+const uncertainOf =
+  (subject: string, notice: string): Uncertain =>
+  (reason) =>
+    uncertainText(subject, notice, reason);
+
+/** 承認を頼んだ後に、結果を受け取れなかったときの案内（承認されたかどうかが分からない）。 */
+const APPROVE_UNCERTAIN = uncertainNotice("承認されて", "state と approval", "まだ承認待ちなら");
+const uncertainApproval = uncertainOf("承認", APPROVE_UNCERTAIN);
 
 /** 差し戻しを頼んだ後に、結果を受け取れなかったときの案内（差し戻されたかどうかが分からない）。 */
-const CHANGES_UNCERTAIN =
-  "差し戻されている可能性があります。自動でやり直さず、get_task で state と approval を確かめてから、まだ承認待ちなら呼び直してください。";
+const CHANGES_UNCERTAIN = uncertainNotice("差し戻されて", "state と approval", "まだ承認待ちなら");
+const uncertainChanges = uncertainOf("差し戻し", CHANGES_UNCERTAIN);
 
-/** 差し戻しの結果を受け取れなかったときの文（理由があればそれに、なければ原因の種類だけに、案内を続ける）。 */
-function uncertainChanges(
-  reason = "差し戻しの結果を受け取れませんでした（時間切れ・切断など）。",
-): string {
-  return `${reason}${CHANGES_UNCERTAIN}`;
-}
+/**
+ * 一時停止を頼んだ後の案内。一時停止は、コンテナを止めて処理の終わりを待ってから応答するので、時間切れの後で一時停止に
+ * なる（または承認待ちに達して止まらない）ことがある。
+ */
+const PAUSE_UNCERTAIN = uncertainNotice(
+  "一時停止されて",
+  "state と pausedReason",
+  "まだ止まっていなければ",
+);
+const uncertainPause = uncertainOf("一時停止", PAUSE_UNCERTAIN);
+
+/** 再開を頼んだ後の案内（再開されたかどうかが分からない）。 */
+const RESUME_UNCERTAIN = uncertainNotice(
+  "再開されて",
+  "state と pausedReason",
+  "まだ一時停止中なら",
+);
+const uncertainResume = uncertainOf("再開", RESUME_UNCERTAIN);
 
 /** デーモンの応答を待つ時間（ミリ秒）。応答しないデーモンで、ツールが戻らなくならないようにする。 */
 const MCP_REQUEST_TIMEOUT_MS = 30_000;
@@ -195,6 +220,42 @@ export function daemonApi(
       throw new Error("デーモンの応答を読めませんでした。", { cause: error });
     }
   };
+  /**
+   * 書き込みの POST を送り、更新後のタスクを返す（承認・差し戻し・一時停止・再開で共通）。失敗の振り分け：
+   * 送る前の失敗（認証できない・接続を断られた）はそのまま、送った後に結果を受け取れなかった（時間切れ・切断・5xx・
+   * 本文を読めない）ときは uncertain の案内、デーモンが応答で断った（4xx）ときは、その理由（行われていない）。
+   */
+  const writeTask = async (
+    at: DaemonEndpoint,
+    path: string,
+    body: unknown,
+    uncertain: Uncertain,
+    rewrite?: (message: { code?: unknown; params?: unknown }) => string | undefined,
+  ): Promise<Task> => {
+    let res: Response;
+    try {
+      res = await request(at, path, { method: "POST", body });
+    } catch (error) {
+      // 認証できない・接続を断られた（要求が処理されていない）ときは、行われていない
+      if (notSent(error)) throw error;
+      // 頼んだ後に結果を受け取れなかった（時間切れ・切断）ときは、行われたかどうかが分からない
+      // 元の文（「もう一度試してください」など）は案内と矛盾するので使わず、原因の種類だけを書く（元の例外は cause に残す）
+      throw new Error(uncertain(), { cause: error });
+    }
+    // 5xx は、処理の途中で失敗したのかもしれず、行われたかどうかが分からない（案内は 1 か所で付ける）
+    if (res.status >= 500) {
+      const failed = await refusal(res).catch(() => undefined);
+      throw new Error(uncertain(failed?.message), { cause: failed });
+    }
+    // デーモンが応答で断ったなら、行われていない。その理由を返す
+    if (!res.ok) throw await refusal(res, rewrite);
+    try {
+      return (await read<{ task: Task }>(res)).task;
+    } catch (error) {
+      // 本文を読めなかったときも、行われたかどうかが分からない
+      throw new Error(uncertain(), { cause: error });
+    }
+  };
   return {
     async listTasks() {
       const at = endpoint();
@@ -247,57 +308,32 @@ export function daemonApi(
       const found = await request(at, path);
       if (found.status === 404) throw new Error(renderMessage({ code: "task.notFound" }, "ja"));
       if (!found.ok) throw await refusal(found);
-      let res: Response;
-      try {
-        res = await request(at, `${path}/approve`, { method: "POST", body: input });
-      } catch (error) {
-        // 認証できない・接続を断られた（要求が処理されていない）ときは、承認していない
-        if (notSent(error)) throw error;
-        // 頼んだ後に結果を受け取れなかった（時間切れ・切断）ときは、承認されたかどうかが分からない
-        // 元の文（「もう一度試してください」など）は案内と矛盾するので使わず、原因の種類だけを書く（元の例外は cause に残す）
-        throw new Error(uncertainApproval(), { cause: error });
-      }
-      // 5xx は、処理の途中で失敗したのかもしれず、承認されたかどうかが分からない（案内は 1 か所で付ける）
-      if (res.status >= 500) {
-        const failed = await refusal(res).catch(() => undefined);
-        throw new Error(uncertainApproval(failed?.message), { cause: failed });
-      }
-      // デーモンが応答で断ったなら、承認していない。その理由を返す
-      if (!res.ok) throw await refusal(res, staleForMcp);
-      try {
-        return (await read<{ task: Task }>(res)).task;
-      } catch (error) {
-        // 本文を読めなかったときも、承認されたかどうかが分からない
-        throw new Error(uncertainApproval(), { cause: error });
-      }
+      return writeTask(at, `${path}/approve`, input, uncertainApproval, staleForMcp);
     },
     async requestChanges(id, input) {
       // 消したプロジェクトのタスクの確かめと、差し戻せる状態かの確かめは、ツールが先に getTask で行う
       const at = endpoint(); // 接続先が無いのは、頼む前の失敗（差し戻していない）
       // 送るのは step・submission・comments だけ（target・cause・image・agents・continueOverLimit は送らない）
       const body = { step: input.step, submission: input.submission, comments: input.comments };
-      let res: Response;
-      try {
-        res = await request(at, `/api/tasks/${encodeURIComponent(id)}/request-changes`, {
-          method: "POST",
-          body,
-        });
-      } catch (error) {
-        // 認証できない・接続を断られた（要求が処理されていない）ときは、差し戻していない
-        if (notSent(error)) throw error;
-        throw new Error(uncertainChanges(), { cause: error });
-      }
-      // 5xx は、処理の途中で失敗したのかもしれず、差し戻されたかどうかが分からない
-      if (res.status >= 500) {
-        const failed = await refusal(res).catch(() => undefined);
-        throw new Error(uncertainChanges(failed?.message), { cause: failed });
-      }
-      if (!res.ok) throw await refusal(res, staleChangesForMcp);
-      try {
-        return (await read<{ task: Task }>(res)).task;
-      } catch (error) {
-        throw new Error(uncertainChanges(), { cause: error });
-      }
+      return writeTask(
+        at,
+        `/api/tasks/${encodeURIComponent(id)}/request-changes`,
+        body,
+        uncertainChanges,
+        staleChangesForMcp,
+      );
+    },
+    // 消したプロジェクトのタスクの確かめと、一時停止できる状態かの確かめは、ツールが先に getTask で行う（完了したタスクを
+    // デーモンは断らないので、先に断る）。送るのは {} だけ
+    async pause(id) {
+      const at = endpoint(); // 接続先が無いのは、頼む前の失敗（一時停止していない）
+      return writeTask(at, `/api/tasks/${encodeURIComponent(id)}/pause`, {}, uncertainPause);
+    },
+    // 送るのは {} か { note } だけ（capUsd・tests・image・agents は送らない）
+    async resume(id, input) {
+      const at = endpoint(); // 接続先が無いのは、頼む前の失敗（再開していない）
+      const body = input.note ? { note: input.note } : {};
+      return writeTask(at, `/api/tasks/${encodeURIComponent(id)}/resume`, body, uncertainResume);
     },
     async listProjects() {
       const res = await request(endpoint(), "/api/projects");
