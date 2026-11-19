@@ -97,7 +97,7 @@ describe("既定の review スキルの、段階のサブエージェント（PB
     const expected: Record<string, string[]> = {
       advanced: ["C-1", "C-3", "C-7", "C-9", "C-17", "D-2", "X-1", "R"],
       standard: [
-        ...["C-2", "C-4", "C-6", "C-8", "C-10", "C-11", "C-12", "C-16"],
+        ...["C-2", "C-4", "C-6", "C-8", "C-10", "C-11", "C-12", "C-16", "C-18"],
         ...["D-1", "D-3", "D-5", "D-7", "D-8", "D-9", "D-10", "U-1", "U-2", "U-5"],
       ],
       entry: ["C-5", "C-13", "C-14", "C-15", "D-4", "D-6", "U-3", "U-6", "X-2", "X-3"],
@@ -1177,15 +1177,15 @@ describe("既定の review スキルの、対象のリポジトリの指示（�
     expect(skill()).toContain("- リポジトリの指示（X-3・R のとき）：");
   });
 
-  it("X-3 は、成果物から確かめられる明文の決まりだけを見て、C-5 と境界を分ける", () => {
+  it("X-3 は、成果物から確かめられる明文の決まりだけを見て、C-18 と境界を分ける", () => {
     const x3 = read("skills/review/review-execution/references/X-3.md");
     expect(x3).toContain("守ったかを成果物から確かめられる決まりだけを見る");
     expect(x3).toContain("成果物からは確かめられない");
     expect(x3).toContain("基準は、依頼文に挙げられた指示の文面だけ");
     expect(catalog()).toMatch(
-      /^\| C-5 \| .*リポジトリの指示が明文で定める決まりとの照合（X-3。X-3 を起動したレビューで、依頼文に写す。.*） \|$/m,
+      /^\| C-18 \| .*リポジトリの指示が明文で定める決まりとの照合（X-3。X-3 を起動したレビューで、依頼文に写す。.*） \|$/m,
     );
-    expect(read("skills/review/review-execution/references/C-5.md")).toContain(
+    expect(read("skills/review/review-execution/references/C-18.md")).toContain(
       "書かれていなければ、規約の文書との整合もこの観点で見る",
     );
     expect(guidance()).toContain("初回に X-3 を起動しなかったレビューでは、この句を写さない");
@@ -1296,7 +1296,7 @@ describe("既定の review スキルの、方針の妥当性と指摘の出し�
   it("コードの必須観点に方針の妥当性を見る C-17 があり、advanced で起動し、隣の観点と境界を分ける", () => {
     const required = catalog().split("### 条件付き")[0] ?? "";
     expect(required).toMatch(
-      /^\| C-17 \| 方針の妥当性 \| .*もっと単純で確実な方針.* \| 方針の中の個々の欠陥（C-1・C-2・C-3 など）、要らないコード（C-15）、責務の分け方・命名（C-5） \|$/m,
+      /^\| C-17 \| 方針の妥当性 \| .*もっと単純で確実な方針.* \| 方針の中の個々の欠陥（C-1・C-2・C-3 など）、要らないコード（C-15）、責務の分け方・命名（C-5）、既存のコードの慣習に合っているか（C-18） \|$/m,
     );
     expect(catalog()).toMatch(/^\| C-5 \| .*方針の選び方そのもの（C-17）.* \|$/m);
     expect(catalog()).toMatch(/^\| C-15 \| .*方針の選び方そのもの（C-17） \|$/m);
@@ -1316,7 +1316,7 @@ describe("既定の review スキルの、方針の妥当性と指摘の出し�
     expect(c17).toContain(
       "承認済みの要求要件・設計が方針を決めているときは、方針を変える `must` にしない",
     );
-    expect(read("skills/review/review-execution/SKILL.md")).toContain("C-1〜C-17");
+    expect(read("skills/review/review-execution/SKILL.md")).toContain("C-1〜C-18");
   });
 
   it("担当は同じ原因のほかの現れを探して1件にまとめ、親は観点をまたいでまとめる", () => {
@@ -1694,5 +1694,99 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
     expect(section).not.toMatch(/sacty|GitHub|npm|TypeScript|Node\.js/i);
     const weight = aggregation().split("## 重みの確認")[1]?.split("## 指摘の統合")[0] ?? "";
     expect(weight).not.toMatch(/sacty|GitHub|npm|TypeScript|Node\.js/i);
+  });
+});
+
+describe("既定の review スキルの、既存の実装との調和（PBI-405）", () => {
+  const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
+  const c18 = () => read("skills/review/review-execution/references/C-18.md");
+
+  it("コードの必須観点に、既存のコードの慣習との整合を見る C-18 があり、standard で起動する", () => {
+    const required = catalog().split("### 条件付き")[0] ?? "";
+    expect(required).toMatch(
+      /^\| C-18 \| 既存の実装との調和 \| 文書に書かれていないが、既存のコードを読めば分かる慣習に、変更が合っているか。.*命名の方針.*置き場所と構成.*層の分担.*業務のロジックの置き場所.*技術の使い方の方針.*データアクセス.* \|$/m,
+    );
+    expect(catalog()).toMatch(/^\| `standard` \| .*C-18、.*`entry` には置かない \|$/m);
+    expect(c18()).toMatch(/^# C-18 既存の実装との調和$/m);
+    for (const heading of [
+      "## 確かめる手順",
+      "## チェックポイント",
+      "## 重要度の決め方",
+      "## NG 例",
+      "## 見落としやすい所",
+    ]) {
+      expect(c18()).toContain(heading);
+    }
+  });
+
+  it("C-5 は既存のコードの慣習との整合を C-18 に任せ、隣の観点は C-18 と境界を分ける", () => {
+    const row = (id: string) => catalog().match(new RegExp(`^\\| ${id} \\| .*$`, "m"))?.[0] ?? "";
+    expect(row("C-5")).not.toContain("既存の規約・構成との整合");
+    expect(row("C-5")).toContain(
+      "リポジトリの既存のコードの慣習との整合（命名の方針・置き場所・層の分担・技術の使い方。C-18）",
+    );
+    // 明文の決まりとの照合を X-3 に任せる句は、C-5 から C-18 に移した
+    expect(row("C-5")).not.toContain("X-3");
+    expect(row("C-15")).toContain("既存のコードの慣習との整合（C-18）");
+    expect(row("X-3")).toContain("既存のコードから読み取る明文化されていない慣習との整合（C-18）");
+    for (const neighbor of ["（C-5）", "（C-17）", "（C-13）", "（C-14）", "（X-3。"]) {
+      expect(row("C-18"), neighbor).toContain(neighbor);
+    }
+    const c5 = read("skills/review/review-execution/references/C-5.md");
+    expect(c5).not.toContain("既存の規約との不一致");
+    expect(c5).toContain("既存の書き方に合っているものを指摘しない");
+    // 資料の「見ないもの」も、カタログと同じ境界にする
+    expect(c5).toMatch(/^見ないもの：.*（命名の方針・置き場所・層の分担・技術の使い方。C-18）。$/m);
+    expect(read("skills/review/review-execution/references/C-15.md")).toMatch(
+      /^見ないもの：.*既存のコードの慣習との整合（C-18）/m,
+    );
+    expect(read("skills/review/review-execution/references/C-17.md")).toMatch(
+      /^見ないもの：.*既存のコードの慣習に合っているか（C-18）。$/m,
+    );
+    expect(read("skills/review/review-execution/references/X-3.md")).toMatch(
+      /^見ないもの：.*明文化されていない慣習との整合（C-18）/m,
+    );
+    const guidance = read("skills/review/review-dispatch/references/repo-guidance.md");
+    expect(guidance).toContain("C-18 の依頼文の「見ないもの」に");
+    expect(guidance).not.toMatch(/C-5/);
+  });
+
+  it("C-18 は、差分の外の既存のコードから慣習を導き、慣習と言えないものを指摘にしない", () => {
+    const text = c18();
+    expect(text).toContain("基準は、対象のリポジトリの既存のコードだけ");
+    expect(text).toContain("差分の外から、同じ種類の既存のコードを選んで読む。あれば 3 つ以上読む");
+    expect(text).toContain("今回の変更が足した・書き換えたコードは、慣習の根拠にしない");
+    expect(text).toContain("迷うものは、リポジトリ全体を検索して数える");
+    expect(text).toContain("割れている（2 通り以上が、理由なく並んでいる）：慣習としない");
+    expect(text).toContain("例が 1〜2 件しか無い：慣習としない");
+    expect(text).toContain(
+      "既存の例（ファイルと行）を 2 つ以上か、数えた件数を書けない指摘は出さない",
+    );
+    expect(text).toContain("`checked` に、慣習としたもの");
+  });
+
+  it("C-18 は、命名の方針・技術の使い方・業務のロジックの置き場所を見て、重要度を分ける", () => {
+    const text = c18();
+    for (const point of [
+      "- 命名の方針：",
+      "- 業務のロジックの置き場所：",
+      "- 層の飛び越し：",
+      "- データアクセスの方法：",
+      "- 共通の仕組みの迂回：",
+    ]) {
+      expect(text).toContain(point);
+    }
+    expect(text).toMatch(
+      /^- `must`：層の分担・決まった経路から外れたことで、.*今回の変更で効かなくなる$/m,
+    );
+    expect(text).toMatch(/^- `should`：そろっている慣習.*から、理由なく外れている$/m);
+    expect(text).toMatch(
+      /^- 出さない：慣習としなかったもの（割れている・例が少ない）、理由が書かれている外れ$/m,
+    );
+    // NG 例は複数の言語で書き、指摘にしない例（割れている・理由がある）も含める
+    const langs = [...text.matchAll(/^### 例\d+（([^）]+)）/gm)].map((m) => m[1]);
+    expect(new Set(langs).size).toBeGreaterThanOrEqual(5);
+    expect(text).toContain("割れているものは、慣習としない");
+    expect(text).toContain("理由が書かれている外れは、指摘にしない");
   });
 });
