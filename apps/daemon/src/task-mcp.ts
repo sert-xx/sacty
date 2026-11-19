@@ -63,6 +63,11 @@ export type SactyApi = {
   /** 消していないプロジェクト（画面と同じ API）。 */
   listProjects(): Promise<ProjectChoice[]>;
   /**
+   * 人の判断を待ち始めた時刻（`GET /api/dashboard` の waitingSince。タスクの ID → ISO の時刻）。list_tasks が needs_person で絞るときだけ読む。
+   * 読めないとき（接続できない・5xx・欄が無い古い版）は、理由を文にした例外。
+   */
+  waitingSince(): Promise<Record<string, string>>;
+  /**
    * タスクを作る（画面の「タスクを作成」の、テンプレートなし・対象リポジトリ空欄・進め方「自動」と同じ）。作ったタスクを返す。
    * 断られたときは理由を文にした例外。送った後に結果を受け取れなかったときは、作られている可能性を添えた例外。
    */
@@ -441,6 +446,12 @@ const TaskSummarySchema = z.object({
     .describe(
       "人に確かめたいことの件数（画面と同じ数え方。0件のときは無い）。中身は get_task の humanAsks",
     ),
+  pendingReview: z
+    .boolean()
+    .optional()
+    .describe(
+      "true：承認待ちで、AI が PR の指摘の戻し先を判断している（人の出番ではない。画面の「あなたの出番」にも出ない。無ければ無い）",
+    ),
   createdAt: z.string(),
   updatedAt: z.string(),
   url: z.string().optional().describe("画面のタスクの詳細の URL"),
@@ -449,9 +460,37 @@ export type TaskSummary = z.infer<typeof TaskSummarySchema>;
 
 /** list_tasks の結果。 */
 const TaskListSchema = z.object({
-  total: z.number().int().describe("条件に合ったタスクの件数"),
+  total: z.number().int().describe("条件に合ったタスクの件数（offset・limit で切る前の全件）"),
   returned: z.number().int().describe("返した件数"),
-  tasks: z.array(TaskSummarySchema),
+  order: z
+    .enum(["createdAt_desc", "waitingSince_asc"])
+    .describe(
+      "tasks の並び。createdAt_desc：作った順（新しい順）。waitingSince_asc：needs_person のとき。待ち始めの古い順（同じなら id の順）",
+    ),
+  nextOffset: z
+    .number()
+    .int()
+    .optional()
+    .describe("続きがあるときの、次の offset（最後まで返したら無い）"),
+  excludedAiJudging: z
+    .number()
+    .int()
+    .optional()
+    .describe(
+      "needs_person のとき、他の条件に合うが、AI が PR の指摘を判断中の承認待ちなので除いた件数",
+    ),
+  tasks: z.array(
+    TaskSummarySchema.extend({
+      projectName: z.string().describe("プロジェクトの名前"),
+      waitingSince: z.string().optional().describe("needs_person のとき、人の判断を待ち始めた時刻"),
+      waitingSinceSource: z
+        .enum(["dashboard", "updatedAt"])
+        .optional()
+        .describe(
+          "waitingSince の出どころ。dashboard：デーモンの集計の時刻、updatedAt：集計に記録が無いので updatedAt で補った値",
+        ),
+    }),
+  ),
 });
 
 const CleanupResultSchema = z.object({
@@ -1083,6 +1122,40 @@ function cleanupResults(task: Task): z.infer<typeof CleanupResultSchema>[] {
   });
 }
 
+/** 承認待ちで、AI が PR の指摘の戻し先を判断している（画面の `statusTone` が working にする場合）。 */
+function awaitingAiJudgement(task: Task): boolean {
+  return task.status === "awaiting_approval" && task.pendingReview !== undefined;
+}
+
+/**
+ * 「人の出番」（画面のダッシュボードの「あなたの出番」と同じ）：承認待ち・エスカレーション・一時停止のうち、承認待ちで AI が
+ * PR の指摘を判断中のものを除く。画面の `needsPerson`・`statusTone`・`attentionRows`（apps/web）の読み取り側の写しで、
+ * 画面の判定が変わったら、これも合わせる。終わったタスク（cancelled・完了）は、この 3 つの状態にならない。
+ */
+function isPersonTurn(task: Task): boolean {
+  return (
+    (task.status === "awaiting_approval" ||
+      task.status === "escalated" ||
+      task.status === "paused") &&
+    !isFinished(task) &&
+    !awaitingAiJudgement(task)
+  );
+}
+
+/** state 引数の値（要約の state と同じ語彙）。 */
+const STATE_VALUES = [
+  "blocked",
+  "waiting_children",
+  "queued",
+  "running",
+  "idle",
+  "paused",
+  "awaiting_approval",
+  "escalated",
+  "cancelled",
+  "completed",
+] as const;
+
 export function summarizeTask(task: Task, webUrl?: string): TaskSummary {
   const review = isReviewTask(task);
   const approval = approvalOf(task);
@@ -1122,6 +1195,7 @@ export function summarizeTask(task: Task, webUrl?: string): TaskSummary {
     ...(task.status === "paused" && task.pausedReason ? { pausedReason: task.pausedReason } : {}),
     ...(approval ? { approval } : {}),
     ...(asks > 0 ? { asks } : {}),
+    ...(awaitingAiJudgement(task) ? { pendingReview: true } : {}),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     ...(webUrl ? { url: `${webUrl.replace(/\/$/, "")}/tasks/${encodeURIComponent(task.id)}` } : {}),
@@ -1178,6 +1252,8 @@ type TaskFilter = {
   repo?: string;
   query?: string;
   openOnly?: boolean;
+  states?: readonly string[];
+  projectId?: string;
   reviewOnly?: boolean;
 };
 
@@ -1224,6 +1300,8 @@ export function filterTasks(tasks: readonly Task[], filter: TaskFilter): Task[] 
         }
       }
       if (filter.openOnly && isFinished(task)) return false;
+      if (filter.states && !filter.states.includes(stateOf(task))) return false;
+      if (filter.projectId !== undefined && task.projectId !== filter.projectId) return false;
       if (filter.reviewOnly && !isReviewTask(task)) return false;
       return true;
     })
@@ -1416,7 +1494,8 @@ function describeEscalation(task: Task): z.infer<typeof EscalationSchema> | unde
   };
 }
 
-const ListTasksInput = z.object({
+// 知らない引数は、無視せずに SDK が断る（理由に引数の名前が入る）
+const ListTasksInput = z.strictObject({
   pull_request: z
     .string()
     .max(500)
@@ -1453,6 +1532,35 @@ const ListTasksInput = z.object({
     .max(LIST_LIMIT_MAX)
     .optional()
     .describe(`返す件数の上限（既定 ${LIST_LIMIT_DEFAULT}・最大 ${LIST_LIMIT_MAX}）。`),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "読み始める位置（既定 0）。結果の nextOffset を渡すと続きが返る。範囲の外の位置は、空の一覧（理由なしの成功）を返す。",
+    ),
+  needs_person: z
+    .boolean()
+    .optional()
+    .describe(
+      "true なら、人の出番のタスクだけ（画面のダッシュボードの「あなたの出番」と同じ：承認待ち・エスカレーション・一時停止。AI が PR の指摘を判断中の承認待ちは除く）。待ち始めの古い順に並べ、各タスクに waitingSince が入る。",
+    ),
+  state: z
+    .array(z.enum(STATE_VALUES))
+    .min(1)
+    .optional()
+    .describe(
+      `状態で絞り込む（1つ以上。どれかに合うもの）。値は結果の state と同じ：${STATE_VALUES.join("・")}。`,
+    ),
+  project_id: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "プロジェクトで絞り込む（list_projects の id）。無い・消したプロジェクトの id は断る。",
+    ),
 });
 
 const TaskIdInput = z.object({
@@ -2104,6 +2212,13 @@ const TOOLS: readonly ToolDefinition[] = [
     title: "タスクの一覧・検索",
     description: [
       "起動中の sacty のタスクを、新しい順に一覧にします。条件を指定すると、すべてに合うタスクだけに絞り込みます。",
+      "人の対応を待っているタスク（利用者が「止まっているタスク」「自分の出番」などを聞いたとき）は、needs_person: true で呼びます。",
+      "画面のダッシュボードの「あなたの出番」と同じ条件（承認待ち・エスカレーション・一時停止。AI が PR の指摘の戻し先を判断中の承認待ちは入らず、excludedAiJudging に件数が出る）で、",
+      "待ち始めの古い順（同じなら id の順）に並び、各タスクに waitingSince（waitingSinceSource：デーモンの集計の時刻か、記録が無いときの updatedAt）が入ります。",
+      "ヘッダーのベルは AI が判断中の承認待ちも数えるので、件数が違うことがあります。",
+      "state（1つ以上）・project_id（list_projects の id）でも絞り込めます。知らない引数は無視せずに断ります。",
+      "結果の order が並び（needs_person のときは waitingSince_asc、ほかは createdAt_desc）です。total が returned より多いとき、nextOffset を offset に渡して呼ぶと続きが返ります（最後まで返したら nextOffset は入りません。範囲の外の offset は空の一覧です）。",
+      "一覧は読むだけです。見つけたタスクの承認・差し戻し・再開などは、利用者に頼まれたときだけ行ってください。",
       "PR をレビューするタスクを探すには、pull_request（番号か URL）か branch（PR の元のブランチ名）を指定します。",
       "同じ番号の PR・同じ名前のブランチがほかのリポジトリにもあるときは、PR の URL か repo で絞ってください",
       "（結果の pullRequests の repo で、頼まれた PR のリポジトリかを確かめてください）。",
@@ -2125,20 +2240,57 @@ const TOOLS: readonly ToolDefinition[] = [
           );
         }
       }
-      const matched = filterTasks(await api.listTasks(), {
+      const tasks = await api.listTasks();
+      const projects = await api.listProjects();
+      if (args.project_id !== undefined && !projects.some((p) => p.id === args.project_id)) {
+        throw new Error(
+          `project_id ${args.project_id} のプロジェクトが見つかりません（無いか、消したプロジェクトです）。list_projects の id を指定してください。`,
+        );
+      }
+      const names = new Map(projects.map((p) => [p.id, p.name]));
+      const filtered = filterTasks(tasks, {
         ...(pullRequest ? { pullRequest } : {}),
         ...(args.branch !== undefined ? { branch: args.branch } : {}),
         ...(args.repo !== undefined ? { repo: args.repo } : {}),
         ...(args.query !== undefined ? { query: args.query } : {}),
         ...(args.open_only ? { openOnly: true } : {}),
         ...(args.review_only ? { reviewOnly: true } : {}),
+        ...(args.state ? { states: args.state } : {}),
+        ...(args.project_id !== undefined ? { projectId: args.project_id } : {}),
       });
+      // 待ち始めは、人の出番に絞るときだけ読む（読めなければ、updatedAt に置き換えず、理由を返して失敗にする）
+      const waiting = args.needs_person ? await api.waitingSince() : undefined;
+      const turns = args.needs_person ? filtered.filter((t) => isPersonTurn(t)) : filtered;
+      const since = (t: Task) => waiting?.[t.id] ?? t.updatedAt;
+      const matched = waiting
+        ? [...turns].sort((a, b) => since(a).localeCompare(since(b)) || a.id.localeCompare(b.id))
+        : turns;
       const limit = args.limit ?? LIST_LIMIT_DEFAULT;
+      const offset = args.offset ?? 0;
+      const page = matched.slice(offset, offset + limit);
       const webUrl = api.webUrl();
       return {
         total: matched.length,
-        returned: Math.min(matched.length, limit),
-        tasks: matched.slice(0, limit).map((task) => summarizeTask(task, webUrl)),
+        returned: page.length,
+        order: waiting ? ("waitingSince_asc" as const) : ("createdAt_desc" as const),
+        ...(offset + page.length < matched.length ? { nextOffset: offset + page.length } : {}),
+        ...(waiting
+          ? {
+              excludedAiJudging: filtered.filter((t) => !isPersonTurn(t) && awaitingAiJudgement(t))
+                .length,
+            }
+          : {}),
+        tasks: page.map((task) => ({
+          ...summarizeTask(task, webUrl),
+          projectName: names.get(task.projectId) ?? task.projectId,
+          ...(waiting
+            ? {
+                waitingSince: since(task),
+                waitingSinceSource:
+                  waiting[task.id] !== undefined ? ("dashboard" as const) : ("updatedAt" as const),
+              }
+            : {}),
+        })),
       };
     },
   }),
@@ -2802,6 +2954,7 @@ const TOOLS: readonly ToolDefinition[] = [
 const INSTRUCTIONS = [
   "このマシンで起動中の sacty（sacty up）のタスクを、調べて操作します。",
   "タスクの作成を頼まれたら、list_projects でプロジェクトを特定し、create_task で題と説明を指定して作ります。",
+  "人の対応を待っているタスク（「止まっているタスク」「自分の出番」など）を聞かれたら、list_tasks を needs_person: true で呼びます（画面のダッシュボードの「あなたの出番」と同じ条件：承認待ち・エスカレーション・一時停止。AI が PR の指摘を判断中の承認待ちは入らず、excludedAiJudging に件数が出ます。ヘッダーのベルは判断中の承認待ちも数えるので、件数が違うことがあります）。待ち始めの古い順で、各タスクに waitingSince が入ります。total が returned より多いときは、nextOffset を offset に渡して続きを取ります。state・project_id でも絞れ、知らない引数は断られます。一覧は読むだけで、見つけたタスクの承認・差し戻し・再開などは、利用者に頼まれたときだけ行います。",
   "PR の再レビューを頼まれたら、list_tasks（pull_request か branch）でその PR をレビューするタスクを特定し、",
   "canRereview が true なら rereview_task を呼びます。sacty が起動していなければ、ツールが理由を返します。",
   "承認を頼まれたら、get_task の approval（承認待ちの工程・提出の回・承認の手段）と、list_deliverables・get_deliverable の成果物を確かめてから、",

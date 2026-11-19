@@ -28,7 +28,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 
 | ツール | デーモンの API |
 | --- | --- |
-| `list_tasks` | `GET /api/tasks`・`GET /api/projects` |
+| `list_tasks` | `GET /api/tasks`・`GET /api/projects`（`needs_person` のときだけ `GET /api/dashboard`） |
 | `get_task` | `GET /api/tasks/:id` |
 | `rereview_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/rereview` |
 | `list_projects` | `GET /api/projects` |
@@ -72,10 +72,24 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 | `open_only` | 真偽値 | `true` なら、終わっていない（完了・中止でない）タスクだけ |
 | `review_only` | 真偽値 | `true` なら、PR のレビューのタスクだけ |
 | `limit` | 整数 | 返す件数の上限。1〜100（`LIST_LIMIT_MAX`）。既定は 20（`LIST_LIMIT_DEFAULT`） |
+| `offset` | 整数 | 読み始める位置（0 以上。既定は 0）。結果の `nextOffset` を渡すと続きが返る |
+| `needs_person` | 真偽値 | `true` なら、人の出番のタスクだけ（下の「人の出番」）。並びは待ち始めの古い順 |
+| `state` | 文字列の配列 | 状態で絞る（1つ以上。どれかに合うもの）。値は要約の `state` と同じ（`blocked`・`waiting_children`・`queued`・`running`・`idle`・`paused`・`awaiting_approval`・`escalated`・`cancelled`・`completed`）。知らない値は断る |
+| `project_id` | 文字列 | プロジェクトの ID（`list_projects` の `id`）。無い・消したプロジェクトの ID は、理由を返して断る |
 
 - 消したプロジェクトのタスクは、一覧に出さない（`get_task` でも無いものとして扱う）。
-- 結果は `{ total, returned, tasks }`。`total` は条件に合った件数、`returned` は返した件数、`tasks` は[タスクの要約](#タスクの要約)。
+- 結果は `{ total, returned, order, nextOffset, excludedAiJudging, tasks }`。`total` は条件に合った全件の数（`offset`・`limit` で切る前）、`returned` は返した件数、`tasks` は[タスクの要約](#タスクの要約)に `projectName`（プロジェクトの名前）を足したもの。
+- 並びは `order` で分かる。`createdAt_desc`：作った順（新しい順。`needs_person` でないとき）。`waitingSince_asc`：待ち始めの古い順（同じなら ID の順。`needs_person` のとき）。
+- 続き：`total` が `offset` + `returned` より多いとき、`nextOffset`（次の `offset`）が入る。最後まで返したら入らない。範囲の外の `offset` は、理由なしで空の一覧（`returned` は 0、`nextOffset` なし）を返す。
+- 知らない引数（例：`status`・`project`）は、無視せずに断る。入力のスキーマが知らないキーを受け取らない形（`additionalProperties: false`）で、MCP の SDK がツールを呼ばずに、引数の名前を入れた理由を返す（`tools/list` の入力のスキーマにも出る）。この断りは `list_tasks` だけ。ほかのツールの入力は変えていない。
 - `pull_request` を読めなければ、理由を返す（一覧は返さない）。
+- 人の出番（`needs_person`）：画面のダッシュボードの「あなたの出番」と同じ条件。状態が `awaiting_approval`・`escalated`・`paused` のタスクから、承認待ちで `pendingReview` があるもの（AI が PR の指摘の戻し先を判断している）を除く。実行待ち・実行中・完了・中止のタスクと、消したプロジェクトのタスクは入らない。除いた件数は `excludedAiJudging`（ほかの条件に合うもののうち）。ヘッダーのベルは、AI が判断中の承認待ちも数えるので、件数が違うことがある。
+  - 各タスクに `waitingSince`（待ち始めた時刻）と `waitingSinceSource` が入る。`dashboard`：デーモンの集計（`GET /api/dashboard` の `waitingSince`）の時刻。`updatedAt`：集計に記録が無いので `updatedAt` で補った値（画面と同じ）。
+  - `GET /api/dashboard` は、`needs_person` のときだけ読む。読めなかったとき（接続できない・5xx・`waitingSince` の欄が無い前の版）は、`updatedAt` に置き換えず、理由を返して失敗にする。`needs_person` でない呼び出しは、この API を呼ばず、影響を受けない。
+  - 人の対応を待っているタスクを聞かれたら、`needs_person: true` で呼ぶ。`state`・`project_id` など、ほかの引数とも「すべてに合うもの」で組み合わせられる。
+  - 承認待ちで AI が判断中のタスクは、要約の `pendingReview`（`true`）で分かる（`state` で `awaiting_approval` を絞った一覧で、人の出番と取り違えないように）。
+- 画面と違うところ：画面の状態の文と色（`statusText`・`statusTone`）・人が判断する場所へのリンク（`personLink`）・PR の競合の案内（`prConflictNote`）は出さない（`state`・`approval`・`asks`・`pausedReason`・`url` で代える）。人の出番の判定は、画面の関数（`needsPerson`・`statusTone`・`attentionRows`）の写しを MCP の層（`isPersonTurn`）に持つ（共有していない）ので、画面の判定が変わったら合わせる。タスクの一覧と待ち始めの時刻は別々の API の読み取りなので、その間に状態が変わったタスクは、時刻が `updatedAt` になることがある（画面も同じ）。
+- 一覧は読むだけ（作業履歴・タスクの数・状態は変わらない）。見つけたタスクへの操作（承認・差し戻し・再開など）は、利用者に頼まれたときだけ行う。
 - PR の条件：タスクに[結び付いた PR](#タスクに結び付いた-pr-とブランチ)のどれかが、同じ番号であること。
   リポジトリを付けた指定（`owner/repo#123`・URL）では、リポジトリも同じであること。番号だけなら、リポジトリを問わない。
 - ブランチの条件：次のどちらかに当たること。リポジトリは見ない（同じ名前のブランチがほかのリポジトリにあれば、そのタスクも合う。`repo` の条件と組み合わせて絞る）。
@@ -492,7 +506,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | デーモンが `invalid_input`（400）を返した | 誤りごとの文言（日本語にしたもの） |
 | デーモンがほかの失敗を返した | 状態コード |
 
-引数が型に合わないとき（決めた範囲の外の `limit`・無い `task_id` など）は、MCP の SDK が、ツールを呼ばずに、同じ形（`isError: true` と理由の文）で返す。
+引数が型に合わないとき（決めた範囲の外の `limit`・無い `task_id`・`list_tasks` の知らない引数など）は、MCP の SDK が、ツールを呼ばずに、同じ形（`isError: true` と理由の文）で返す。
 知らないツールの呼び出しなどは、JSON-RPC のエラーになる。
 
 コード: `apps/daemon/src/task-mcp.ts`（`TOOLS`・`defineTool`・`INSTRUCTIONS`・`filterTasks`・`parsePullRequestQuery`・`describeTask`・`pauseBlock`・`resumeBlock`・`cancelBlock`・`rerunBlock`）、`packages/cli/src/mcp.ts`（`daemonApi`・`MCP_REQUEST_TIMEOUT_MS`・`REREVIEW_UNCERTAIN`・`CREATE_UNCERTAIN`・`APPROVE_UNCERTAIN`・`CHANGES_UNCERTAIN`・`PAUSE_UNCERTAIN`・`RESUME_UNCERTAIN`・`CANCEL_UNCERTAIN`・`RERUN_UNCERTAIN`・`writeTask`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/daemon/src/service.ts`（`rereview`・`createTask`）、`packages/core/src/events.ts`（`CreateTaskInput`）
@@ -521,12 +535,13 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | `reviewTasks` | このタスクの PR をレビューする子タスク（タスクの ID と PR の番号） |
 | `pausedReason` | 一時停止の理由（一時停止中だけ） |
 | `approval` | 承認待ち（`awaiting_approval`・`escalated`）のときだけ。承認待ちの工程・提出の回・承認の手段（[approve_step](#approve_step)） |
+| `pendingReview` | 承認待ちで、AI が PR の指摘の戻し先を判断しているときだけ `true`（人の出番ではない） |
 | `asks` | 人に確かめたいことの件数（0件のときは無い）。画面と同じ数え方で、小さな値だけ。文は入れない（`get_task` の `humanAsks`） |
 | `createdAt`・`updatedAt` | 作った時刻・最後に記録した時刻 |
 | `url` | 画面のタスクの詳細の URL（`daemon.json` に画面の URL があるときだけ） |
 
 `asks` は、`@sacty/core` の `humanAsks` から数える（画面の `HumanAskNotice` と同じ）。
-コード: `apps/daemon/src/task-mcp.ts`（`summarizeTask`・`isReviewTask`・`TaskSummarySchema`）、`packages/core/src/projection.ts`（`canRereview`・`isFinished`）
+コード: `apps/daemon/src/task-mcp.ts`（`summarizeTask`・`isReviewTask`・`TaskSummarySchema`・`isPersonTurn`）、`packages/core/src/projection.ts`（`canRereview`・`isFinished`）
 
 ## 人に確かめたいこと
 

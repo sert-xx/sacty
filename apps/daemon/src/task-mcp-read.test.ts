@@ -87,6 +87,7 @@ function mcpOver(w: ReturnType<typeof world>) {
     getTask: async () => undefined,
     rereview: async () => w.task,
     listProjects: async () => [],
+    waitingSince: async () => ({}),
     createTask: async () => w.task,
     approve: async (id: string) => {
       // 本物の API と同じく、無いタスクは断る

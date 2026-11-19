@@ -389,6 +389,17 @@ export function daemonApi(
       if (!res.ok) throw await refusal(res);
       return (await read<{ projects: ProjectChoice[] }>(res)).projects;
     },
+    async waitingSince() {
+      const res = await request(endpoint(), "/api/dashboard");
+      if (!res.ok) throw await refusal(res);
+      const { waitingSince } = await read<{ waitingSince?: unknown }>(res);
+      if (!waitingSince || typeof waitingSince !== "object" || Array.isArray(waitingSince)) {
+        throw new Error(
+          "デーモンの応答に、待ち始めの時刻（waitingSince）がありません。起動中の sacty が前の版かもしれません。sacty を更新して起動し直してください。",
+        );
+      }
+      return waitingSince as Record<string, string>;
+    },
     async createTask(input) {
       const at = endpoint(); // 接続先が無いのは、頼む前の失敗（作られていない）
       try {
