@@ -1786,7 +1786,7 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
     );
     expect(text).toMatch(/^- `should`：そろっている慣習.*から、理由なく外れている$/m);
     expect(text).toMatch(
-      /^- 出さない：慣習としなかったもの（割れている・例が少ない）、理由が書かれている外れ（`must` に当たるものを除く）$/m,
+      /^- 出さない：慣習としなかったもの（割れている・例が少ない）、理由が根拠かコードのコメントに書かれている外れ（`must` に当たるものを除く）$/m,
     );
     // NG 例は複数の言語で書き、指摘にしない例（割れている・理由がある）も含める
     const langs = [...text.matchAll(/^### 例\d+（([^）]+)）/gm)].map((m) => m[1]);
@@ -1810,10 +1810,23 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
     const reason = text.indexOf("効かなくなる仕組みが無い外れは、外れる理由があるかを確かめる");
     expect(bypass).toBeGreaterThan(0);
     expect(reason).toBeGreaterThan(bypass);
+    // 理由が書かれていない外れは、慣習の仕組みで要件を満たせなくても、理由を書くことを求める
+    expect(text).toContain(
+      "慣習の仕組みでは今回の要件を満たせないと分かるときでも、外れる理由をコメントに書くことを `should` で求める",
+    );
+    expect(text).not.toContain("のどちらかなら指摘にしない");
+    // 承認済みの設計が決めた外れも、仕組みが効かなくなるなら出す
+    expect(text).toContain(
+      "設計が決めていても `must` で出し、設計と食い違うことを `problem` に書く",
+    );
     // 仕様書の日英も、規約を読む観点の例を C-18 にしている
     for (const spec of ["context.md", "context.en.md"]) {
       const body = readFileSync(join(import.meta.dirname, "../../../docs/spec", spec), "utf8");
       expect(body, spec).not.toMatch(/C-5 など|such as C-5/);
+      // 理由による例外は、仕組みが効かなくなる must に及ばない
+      expect(body, spec).toMatch(
+        /次の `must` に当たるものを除く|except what falls under the `must` that follows/,
+      );
     }
   });
 });
