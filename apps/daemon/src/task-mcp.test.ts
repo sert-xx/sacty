@@ -1784,7 +1784,12 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
   describe("人に確かめたいことと、人の判断待ちの理由（PBI-398）", () => {
     type Asked = TaskDetail & {
       humanAsks?: {
-        undecided?: { step: string; remarkIds: string[]; reason: string };
+        undecided?: {
+          step: string;
+          remarkIds: string[];
+          omittedRemarkIds?: number;
+          reason: string;
+        };
         confirms: { remarkIds: string[]; omittedRemarkIds?: number; step: string; text: string }[];
         omittedConfirms?: number;
         count: number;
@@ -1970,7 +1975,7 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       const responses = comments.map((_, i) => ({
         remarkId: `requirements-1-${i + 1}`,
         text: "直した",
-        confirm: i === 0 ? "あ".repeat(900) : `確認 ${i + 1}`,
+        confirm: `確認 ${i + 1}`,
       }));
       const { activity, service, id } = await reqAsking(responses, comments);
       const { json } = await connect(apiOver(service));
@@ -2004,6 +2009,72 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       expect(merged.humanAsks?.confirms).toHaveLength(1);
       expect(merged.humanAsks?.confirms[0]?.remarkIds).toHaveLength(20);
       expect(merged.humanAsks?.confirms[0]?.omittedRemarkIds).toBe(5);
+      activity.close();
+    });
+
+    it("文の長さの境界：1000 文字はそのまま、1001 文字は切り詰める。undecided の指摘の ID の上限（20 件）も同じ", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "直した", confirm: "う".repeat(1000) },
+      ]);
+      const task = structuredClone(service.get(id)?.task) as Task;
+      const at = describeTask({ task, activity: [] }) as Asked;
+      expect(at.humanAsks?.confirms[0]?.text).toBe("う".repeat(1000));
+      const first = task.remarks.find((r) => r.id === "requirements-1-1");
+      if (first) first.confirm = "う".repeat(1001);
+      const over = describeTask({ task, activity: [] }) as Asked;
+      expect(over.humanAsks?.confirms[0]?.text).toContain("以下 1 文字を省略");
+      // undecided の ID：20 件はそのまま、21 件は省いた件数が入る
+      const ids = (n: number) => Array.from({ length: n }, (_, i) => `requirements-1-${i + 1}`);
+      const withUndecided = (n: number) => {
+        const t = structuredClone(task);
+        const seed = t.remarks[0] as Task["remarks"][number];
+        t.remarks = ids(n).map((rid) => ({ ...seed, id: rid }));
+        t.prRework = {
+          target: "requirements",
+          decided: false,
+          reason: "読み取れない",
+          round: 1,
+          remarkIds: ids(n),
+        } as unknown as Task["prRework"];
+        return describeTask({ task: t, activity: [] }) as Asked;
+      };
+      const twenty = withUndecided(20).humanAsks?.undecided;
+      expect(twenty?.remarkIds).toHaveLength(20);
+      expect(twenty?.omittedRemarkIds).toBeUndefined();
+      const twentyOne = withUndecided(21).humanAsks?.undecided;
+      expect(twentyOne?.remarkIds).toHaveLength(20);
+      expect(twentyOne?.omittedRemarkIds).toBe(1);
+      activity.close();
+    });
+
+    it("答え方：再現（not_approvable）も request_changes で答えられる。同じ工程への人の差し戻しが上限に達した後は、答えても断られる・判断待ちになると案内する", async () => {
+      const { activity, service, id } = await reqAsking([
+        { remarkId: "requirements-1-1", text: "足した", confirm: "推測しました" },
+      ]);
+      const task = structuredClone(service.get(id)?.task) as Task;
+      const base = describeTask({ task, activity: [] }) as Asked;
+      expect(base.humanAsks?.howToAnswer.answer).toContain("request_changes");
+      expect(base.humanAsks?.howToAnswer.answer).not.toContain("上限");
+      // 上限に達した後の承認待ち：同じ工程への人の差し戻しの回が3回
+      const limited = structuredClone(task);
+      const mine = limited.remarks.filter((r) => r.step === "requirements");
+      const seed = mine[0] as Task["remarks"][number];
+      limited.remarks = [
+        ...limited.remarks,
+        ...[2, 3].map((round) => ({ ...seed, id: `requirements-${round}-1`, round })),
+      ];
+      const atLimit = describeTask({ task: limited, activity: [] }) as Asked;
+      expect(atLimit.humanAsks?.howToAnswer.answer).toContain("上限");
+      expect(atLimit.humanAsks?.howToAnswer.answer).toContain("画面");
+      // 再現（not_approvable）：承認はできないが、request_changes で答えられる
+      const repro = structuredClone(task);
+      if (repro.gate) repro.gate.step = "reproduce";
+      repro.remarks = repro.remarks.map((r) => ({ ...r, step: "reproduce" }) as typeof r);
+      const asked = describeTask({ task: repro, activity: [] }) as Asked;
+      if (asked.humanAsks) {
+        expect(asked.humanAsks.howToAnswer.withoutAnswer).toContain("承認できません");
+        expect(asked.humanAsks.howToAnswer.answer).not.toContain("画面で差し戻す");
+      }
       activity.close();
     });
 
@@ -2067,7 +2138,8 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       expect(detail.escalation?.openProposalId).toBeUndefined();
       expect(JSON.stringify(detail)).not.toContain("書きかけの秘密の指摘");
       expect(detail.escalation?.canDoHere.join("")).toContain("approve_step");
-      expect(detail.escalation?.decideOnScreen.join("")).toContain("変更の申し出");
+      expect(detail.escalation?.decideOnScreen.join("")).toContain("上限を超えた差し戻し");
+      expect(detail.escalation?.decideOnScreen.join("")).not.toContain("変更の申し出");
       expect(detail.escalation?.decideOnScreen.join("")).toContain("中止");
       expect("humanAsks" in detail).toBe(false);
       // 要約には、理由の欄は入らない
@@ -2119,6 +2191,7 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         openProposalId: "CP-1",
       });
       expect(detail.escalation?.decideOnScreen.join("")).toContain("変更の申し出");
+      expect(detail.escalation?.decideOnScreen.join("")).not.toContain("上限を超えた差し戻し");
       expect(detail.escalation?.canDoHere.join("")).not.toContain("approve_step で");
       activity.close();
     });
@@ -2133,6 +2206,30 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       const { json } = await connect(apiOver(service));
       const plain = await json<Asked>("get_task", { task_id: id });
       expect("escalation" in plain).toBe(false);
+      activity.close();
+    });
+
+    it("判定できなかった変更の申し出（judgement が undecidable）は、理由が change_undecidable になる", async () => {
+      const { activity, service, id } = await awaiting();
+      const task = structuredClone(service.get(id)?.task) as Task;
+      task.status = "escalated";
+      task.escalation = undefined;
+      task.proposals = [
+        {
+          id: "CP-1",
+          fromStep: "design",
+          target: "requirements",
+          reason: "r",
+          facts: [],
+          proposed: "p",
+          judgement: { verdict: "undecidable", reason: "x", at: "2026-11-19T00:00:00Z" },
+        },
+      ] as unknown as Task["proposals"];
+      const detail = describeTask({ task, activity: [] }) as Asked;
+      expect(detail.escalation).toMatchObject({
+        reason: "change_undecidable",
+        openProposalId: "CP-1",
+      });
       activity.close();
     });
 

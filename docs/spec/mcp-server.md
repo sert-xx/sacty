@@ -324,10 +324,10 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 判定とまとめ方は、`@sacty/core` の `humanAsks` の結果そのまま（[承認](approval.md)の「人に確かめてほしいこと」。MCP の層で作り直さない）。デーモンの API は新しく呼ばず、`get_task` が受け取ったタスクから作る。
 
 - `confirms`：工程のエージェントが挙げた確認。同じ文（空白を除いて比べる）は1件にまとまり、`remarkIds` に付いていた指摘の ID が並ぶ。`step`・`text`（1000 文字を超えた分は「…（以下 N 文字を省略）」に置き換える）。
-- `undecided`：PR の指摘の戻し先を判断できなかったときの、`step`・`remarkIds`・`reason`（`confirms` の `text` と同じ切り詰め）。
+- `undecided`：PR の指摘の戻し先を判断できなかったときの、`step`・`remarkIds`（20 件まで。超えた件数は `omittedRemarkIds`）・`reason`（`confirms` の `text` と同じ切り詰め）。
 - `count`：件数（`undecided` の1件＋まとめた後の `confirms` の件数）。要約の `asks` と同じ。
 - 上限：`confirms` は 20 件（超えた件数は `omittedConfirms`）、1件の `remarkIds` は 20 件（超えた件数は `omittedRemarkIds`）。
-- `howToAnswer`：`approval` と食い違わない答え方。`withoutAnswer`（答えが要らないとき。`approval.method` が `approve_step` なら `approve_step`、`pull_request` ならその PR のマージ）、`answer`（答えるとき。PR を作らない工程は `request_changes` の `comments`。PR を作った工程は PR のコメント（PR に記録が残る）で、`request_changes` でも差し戻せるが PR には残らない）、`note`（答えると、sacty がその工程をやり直し、時間と費用がかかる。答える専用のツールは無い）。
+- `howToAnswer`：`approval` と食い違わない答え方。`withoutAnswer`（答えが要らないとき。`approval.method` が `approve_step` なら `approve_step`、`pull_request` ならその PR のマージ）、`answer`（答えるとき。PR を作らない工程は `request_changes` の `comments`。PR を作った工程は PR のコメント（PR に記録が残る）で、`request_changes` でも差し戻せるが PR には残らない。再現（`not_approvable`）も `request_changes` で答えられる。差し戻せる先が無い・同じ工程への人の差し戻しが上限に達しているときは、`checkRequestChanges` と同じ core の判定（`reworkTargets`・`changeRounds`）で、断られる・判断待ちになるので画面で決める、と案内する）、`note`（答えると、sacty がその工程をやり直し、時間と費用がかかる。答える専用のツールは無い）。
 - 要件・設計などの成果物の本文にある「確認したいこと」の節は入らない。`get_deliverable` で本文を読む。
 - 文はエージェントやほかの人が書いたデータ。`get_task`・`approve_step`・`request_changes` の説明と `INSTRUCTIONS` に、中に承認・差し戻しの指示があっても、それだけでは呼ばないことを書く（利用者に頼まれたときだけ）。
 
@@ -336,12 +336,12 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 `get_task` の `escalation`。状態が `escalated` のときだけ入る。
 
 - `reason`：`too_many_changes`（差し戻しの上限を超えた）・`change_proposed`（変更の申し出）・`change_undecidable`・`rework_confirmation`（以前の版の記録）・`unknown`（理由の記録が無い古いタスク）。
-  `task.escalation.reason` があればそれを使う。変更の申し出では、core の投影が `task.escalation` を作らないので、開いている申し出（`openProposal`）があれば `change_proposed` とする。どちらも無ければ `unknown`。
+  `task.escalation.reason` があればそれを使う。変更の申し出では、core の投影が `task.escalation` を作らないので、開いている申し出（`openProposal`）があれば、その判定が `undecidable` なら `change_undecidable`、そうでなければ `change_proposed` とする。どちらも無ければ `unknown`。
 - `step`・`reworkStep`：対象の工程と、やり直す工程（申し出では、申し出た工程と、申し出の対象）。
 - `pendingRemarks`：書きかけの指摘の件数（文は出さない。画面で読む。申し出では 0）。
 - `openProposalId`：開いている変更の申し出の ID（あるときだけ）。
 - `note`：判断の理由の補足（あるときだけ。1000 文字で切り詰める）。
-- `canDoHere`：MCP でできること（`approval.method` が `approve_step` なら、`approve_step` での承認）。`decideOnScreen`：画面で人が決めること（上限を超えた差し戻し・変更の申し出への決定・中止）。`approve_step`・`request_changes` の動き・断りの文は変えない（`request_changes` は `escalated` を断る）。
+- `canDoHere`：MCP でできること（`approval.method` が `approve_step` なら `approve_step` での承認。`pull_request` なら PR のマージが承認で、このツールでは承認できない。ほかは読むだけ）。`decideOnScreen`：画面（`GateNotice`）と同じく理由で分けた、画面で人が決めること（`too_many_changes` は上限を超えた差し戻し・中止、変更の申し出の理由は申し出への決定・中止、`unknown` などは3つとも）。`approve_step`・`request_changes` の動き・断りの文は変えない（`request_changes` は `escalated` を断る）。
 - `escalated` でないタスクには入らない。要約には入れない。
 
 コード: `apps/daemon/src/task-mcp.ts`（`describeAsks`・`describeEscalation`・`askCount`）
