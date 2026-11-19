@@ -902,3 +902,227 @@ describe("sacty mcp の差し戻し（PBI-397）", () => {
     expect(old?.message).toBe("デーモンが 404 を返しました。");
   });
 });
+
+describe("sacty mcp の、タスクの状態が変わるまで待つ（PBI-399）の、デーモンの呼び出し", () => {
+  it("getTask は、期限・取り消しを渡されたときだけ、それで打ち切る。渡さなければ、これまでと同じ既定の時間", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    let seen: AbortSignal | undefined;
+    const hung: Fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        seen = init.signal;
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    // 取り消し（signal）で、待っている要求を打ち切る
+    const controller = new AbortController();
+    const pending = daemonApi(home, hung).getTask("a", { signal: controller.signal });
+    const rejected = expect(pending).rejects.toThrow();
+    expect(seen?.aborted).toBe(false);
+    controller.abort();
+    await rejected;
+    expect(seen?.aborted).toBe(true);
+    // 期限（timeoutMs）は、デーモンの API の既定の時間（ここでは長い）の代わりに使う
+    await expect(daemonApi(home, hung, 60_000).getTask("a", { timeoutMs: 20 })).rejects.toThrow(
+      "デーモンが時間内に応答しませんでした",
+    );
+    // 渡さない呼び出しは、これまでどおり、既定の時間の signal を付ける（取り消しは付かない）
+    void daemonApi(home, hung, 60_000)
+      .getTask("a")
+      .catch(() => undefined);
+    await new Promise((r) => setImmediate(r));
+    expect(seen?.aborted).toBe(false);
+  });
+});
+
+describe("本物のデーモンの API と、本物の daemonApi をつないだ待つツール（PBI-399）", () => {
+  useTempDir();
+
+  it("cursor を渡すと、合間の承認待ちへの変化ですぐ返る。待つ間に呼ぶのは GET /api/tasks/:id だけで、作業履歴は増えない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, []);
+    const task = service.createTask({ projectId: "default", title: "題" });
+    const token = "t".repeat(64);
+    const app = createApp(service, token);
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token });
+    const requests: string[] = [];
+    const fetcher: Fetch = async (url, init) => {
+      const u = new URL(url);
+      requests.push(`${init.method ?? "GET"} ${u.pathname}`);
+      return app.request(`${u.pathname}${u.search}`, init);
+    };
+    // 待ちを、実際の時間の経過なしに進める時計（待っているタイマーを、呼び出しが終わるまで順に起こす）
+    let now = 0;
+    const timers: { at: number; fire: () => void }[] = [];
+    const clock = {
+      now: () => now,
+      sleep: (ms: number, signal?: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          const timer = { at: now + ms, fire: resolve };
+          timers.push(timer);
+          signal?.addEventListener(
+            "abort",
+            () => {
+              const at = timers.indexOf(timer);
+              if (at >= 0) timers.splice(at, 1);
+              resolve();
+            },
+            { once: true },
+          );
+        }),
+    };
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    startTaskMcp(daemonApi(home, fetcher), { version: "1", transport: a, clock });
+    const client = new Client(
+      { name: "t", version: "1" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    await client.connect(b);
+    const advance = async <T>(promise: Promise<T>): Promise<T> => {
+      let done = false;
+      promise.then(
+        () => {
+          done = true;
+        },
+        () => {
+          done = true;
+        },
+      );
+      for (let i = 0; i < 1000 && !done; i++) {
+        for (let k = 0; k < 30; k++) await new Promise((r) => setImmediate(r));
+        if (done) break;
+        timers.sort((x, y) => x.at - y.at);
+        const next = timers.shift();
+        if (next) {
+          now = Math.max(now, next.at);
+          next.fire();
+        }
+      }
+      return promise;
+    };
+    const wait = async (args: Record<string, unknown>) =>
+      (await advance(client.callTool({ name: "wait_for_task", arguments: args })))
+        .structuredContent as { changed: boolean; changes: string[]; cursor: string };
+    const first = await wait({ task_id: task.id, timeout_seconds: 7 });
+    expect(first.changed).toBe(false);
+    const activityBefore = service.get(task.id)?.activity.length;
+    Object.assign(service.get(task.id)?.task ?? {}, {
+      status: "awaiting_approval",
+      steps: [{ key: "requirements", state: "awaiting_approval" }],
+      gate: { step: "requirements", submission: 1 },
+      submissions: { requirements: 1 },
+    });
+    const second = await wait({ task_id: task.id, cursor: first.cursor });
+    expect(second.changed).toBe(true);
+    expect(second.changes).toContain("state: active → awaiting_approval");
+    expect(service.get(task.id)?.activity.length).toBe(activityBefore);
+    expect(new Set(requests)).toEqual(new Set([`GET /api/tasks/${task.id}`]));
+    // 無いタスクは、待たずに、いまの読み取りと同じ理由
+    const missing = await client.callTool({
+      name: "wait_for_task",
+      arguments: { task_id: "none" },
+    });
+    expect(missing.isError).toBe(true);
+    expect(now).toBe(7000);
+    await client.close();
+    activity.close();
+  });
+
+  /** 時計が小数の時刻を返しても、本物の daemonApi（本物の AbortSignal.timeout を通る経路）で待ちが失敗しない。 */
+  async function fractionalWait(timeoutSeconds: number | undefined, change: boolean) {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, []);
+    const task = service.createTask({ projectId: "default", title: "題" });
+    const token = "t".repeat(64);
+    const app = createApp(service, token);
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token });
+    const fetcher: Fetch = async (url, init) => {
+      const u = new URL(url);
+      return app.request(`${u.pathname}${u.search}`, init);
+    };
+    let now = 0.37;
+    const timers: { at: number; fire: () => void }[] = [];
+    const clock = {
+      now: () => now,
+      sleep: (ms: number, signal?: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          const timer = { at: now + ms, fire: resolve };
+          timers.push(timer);
+          signal?.addEventListener(
+            "abort",
+            () => {
+              const at = timers.indexOf(timer);
+              if (at >= 0) timers.splice(at, 1);
+              resolve();
+            },
+            { once: true },
+          );
+        }),
+    };
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    startTaskMcp(daemonApi(home, fetcher), { version: "1", transport: a, clock });
+    const client = new Client(
+      { name: "t", version: "1" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    await client.connect(b);
+    const promise = client.callTool({
+      name: "wait_for_task",
+      arguments: {
+        task_id: task.id,
+        ...(timeoutSeconds !== undefined ? { timeout_seconds: timeoutSeconds } : {}),
+      },
+    });
+    let done = false;
+    promise.then(
+      () => {
+        done = true;
+      },
+      () => {
+        done = true;
+      },
+    );
+    let fired = 0;
+    for (let i = 0; i < 1000 && !done; i++) {
+      for (let k = 0; k < 30; k++) await new Promise((r) => setImmediate(r));
+      if (done) break;
+      timers.sort((x, y) => x.at - y.at);
+      const next = timers.shift();
+      if (next) {
+        // 時刻は、小数のまま進める（秒の途中の時刻）
+        now = Math.max(now, next.at) + 0.61;
+        fired += 1;
+        // 3 回目の確かめの前に、変化を起こす
+        if (change && fired === 2) {
+          Object.assign(service.get(task.id)?.task ?? {}, {
+            status: "awaiting_approval",
+            steps: [{ key: "requirements", state: "awaiting_approval" }],
+            gate: { step: "requirements", submission: 1 },
+            submissions: { requirements: 1 },
+          });
+        }
+        next.fire();
+      }
+    }
+    const result = await promise;
+    await client.close();
+    activity.close();
+    return result;
+  }
+
+  it("時計が小数の時刻を返しても、締め切りまでの残りが 10 秒を切る回の問い合わせが失敗せず、時間切れで changed: false を返す", async () => {
+    const result = await fractionalWait(undefined, false);
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ changed: false, timeoutSeconds: 30 });
+  });
+
+  it("timeout_seconds が 5 未満の最初の問い合わせも、小数の時刻で失敗しない", async () => {
+    const result = await fractionalWait(4, false);
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ changed: false, timeoutSeconds: 4 });
+  });
+
+  it("小数の時刻でも、残りが 10 秒を切る回に起きた変化で起きる", async () => {
+    const result = await fractionalWait(undefined, true);
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ changed: true });
+  });
+});

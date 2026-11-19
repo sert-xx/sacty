@@ -148,12 +148,13 @@ export type Fetch = (
 /**
  * デーモンの API を呼ぶ。つながらない・認証できないときは、その理由で例外にする（元の例外は cause に持つ）。
  * timeoutMs を渡すと、その時間で応答（本文の読み取りを含む）を打ち切り、応答しなかったという理由の例外にする。
+ * signal を渡すと、それが中止されたときにも打ち切る（呼び出し側の取り消し。待つツールが使う）。
  */
 export async function daemonRequest(
   endpoint: DaemonEndpoint,
   path: string,
   fetcher: Fetch = fetch,
-  init: { method?: string; body?: unknown; timeoutMs?: number } = {},
+  init: { method?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<Response> {
   const headers: Record<string, string> = { authorization: `Bearer ${endpoint.token}` };
   if (init.body !== undefined) headers["content-type"] = "application/json";
@@ -163,7 +164,7 @@ export async function daemonRequest(
       headers,
       ...(init.method ? { method: init.method } : {}),
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
-      ...(init.timeoutMs !== undefined ? { signal: AbortSignal.timeout(init.timeoutMs) } : {}),
+      ...requestSignal(init),
     });
   } catch (error) {
     if (isTimeout(error)) throw new Error(DAEMON_TIMEOUT_MESSAGE, { cause: error });
@@ -176,6 +177,16 @@ export async function daemonRequest(
     throw new Error(DAEMON_AUTH_MESSAGE);
   }
   return res;
+}
+
+/** 時間切れ（timeoutMs）と、呼び出し側からの取り消し（signal）のどちらでも、要求を打ち切る signal（どちらも無ければ渡さない）。 */
+function requestSignal(init: { timeoutMs?: number; signal?: AbortSignal }): {
+  signal?: AbortSignal;
+} {
+  const timeout = init.timeoutMs !== undefined ? AbortSignal.timeout(init.timeoutMs) : undefined;
+  if (timeout && init.signal) return { signal: AbortSignal.any([timeout, init.signal]) };
+  const only = timeout ?? init.signal;
+  return only ? { signal: only } : {};
 }
 
 export const DAEMON_AUTH_MESSAGE = "デーモンに認証できません。`sacty up` で起動し直してください。";
