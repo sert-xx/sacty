@@ -1569,6 +1569,31 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     ).not.toContain("費用不明");
   });
 
+  it("対応を求めていないコメントだけなら差し戻さなかったことを、一部なら除いた件数を出す", () => {
+    const all = describeEvent(
+      event("ReworkJudged", {
+        reason: "先の返信を受け入れただけの応答",
+        noAction: [0],
+        noRework: true,
+        costUsd: 0,
+        estimated: true,
+      }),
+    );
+    expect(all).toContain("対応を求めていないコメントと判断し、差し戻さなかった");
+    expect(all).not.toContain("判断できない");
+    const some = describeEvent(
+      event("ReworkJudged", {
+        target: "implement",
+        reason: "決定を変えない",
+        noAction: [0, 2],
+        costUsd: 0,
+        estimated: true,
+      }),
+    );
+    expect(some).toContain("戻し先：");
+    expect(some).toContain("対応を求めていないコメント2件は除いた");
+  });
+
   it("レビューの子タスクの答えから決めた戻し先は、費用ではなく答えから決めたことを出す（PBI-332）", () => {
     const text = describeEvent(
       event("ReworkJudged", {

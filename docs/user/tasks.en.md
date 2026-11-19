@@ -616,6 +616,16 @@ Who judges the step to redo depends on where the comments come from.
 - When the comments are only from the child task that reviews the PR, sacty follows the step the child task gave for each finding (no run is made for the judgment, and it costs nothing).
 - When your comments are included, the agent of that PR's step judges.
 
+A comment that asks for nothing does not start a redo.
+
+- This is a comment that only accepts sacty's reply or explanation, such as "Understood" or "Thank you".
+  The agent of that PR's step tells them apart in the judgment made when your comments are included.
+- When there are only such comments, sacty does not send the task back and it stays awaiting approval.
+  The deliverable and the PR do not change, and sacty posts no reply on the PR.
+- When they arrive together with comments that ask for something, only the comments that ask for something are sent back.
+- A comment that contains any change, check, or question is treated as a change request.
+  The judgment and its reasons are kept in the activity.
+
 The judgment and its reasons are kept and passed to the redo as follows.
 
 - The judgment and its reasons are kept in the Activity and the PR section.
@@ -1515,6 +1525,7 @@ Decide on the PR, or cancel the task to stop it.
 If comments (reviews, line comments, or ordinary comments) arrive on the implementation PR while an implementation rework is paused, sacty keeps them and shows the number in the task details (whatever the reason for the pause: the budget, an error, a person's pause, and so on).
 When you resume, before redoing the step that stopped (the implementation or the PR update, for example), sacty reads the comments, judges where to send the task back, and sends it back to that step (the judgment is the same as for [PR comments while waiting for approval](#approval-in-prs-requirements-design-implement)).
 If no comments have arrived, the step that stopped is redone.
+When the comments that arrived all ask for nothing ("Understood", for example), the task is not sent back either, and the step that stopped is redone.
 
 - Comments you wrote just before resuming are read again after the resume and applied.
 - sacty's own AI review comments are kept in the same way. They are handled separately from people's comments, and if they are the only ones, they do not count toward the number of send-backs.

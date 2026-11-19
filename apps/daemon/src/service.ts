@@ -2131,11 +2131,20 @@ export class TaskService {
         }
         return true;
       }
-      this.warnIfNeeded(
-        this.append(latest, [
-          { actor: reworkActor(judged), event: { type: "ReworkJudged", payload: judged } },
-        ]),
-      );
+      const recorded = this.append(latest, [
+        { actor: reworkActor(judged), event: { type: "ReworkJudged", payload: judged } },
+      ]);
+      this.warnIfNeeded(recorded);
+      // 残した指摘がすべて、対応を求めていないもの（「承知しました」など）だった：差し戻さず、止まった工程を走り直す
+      // （中止・作り直しの停止・一時停止の途中なら、走り直さない。それぞれの処理に任せる）
+      if (!recorded.pendingReview) {
+        return (
+          this.cancelling.has(taskId) ||
+          this.mergeStopping.has(taskId) ||
+          this.pauseRequested.has(taskId) ||
+          (recorded.status !== "queued" && recorded.status !== "idle")
+        );
+      }
       // 判断の間（実行は長い）に、PR がマージされたかもしれない。差し戻す前に読み直し、マージ済みなら反映しない
       // （戻し先が設計・要求要件だと、作り直しの停止の対象外になり、マージ済みなのに前の工程を実行してしまうため）
       if (pr.repo) {
@@ -3200,7 +3209,7 @@ export class TaskService {
         },
       ]);
     }
-    const pending = current.pendingReview;
+    let pending = current.pendingReview;
     if (!pending) return;
     if (!pending.judgement) {
       const config = this.deps.config();
@@ -3243,6 +3252,11 @@ export class TaskService {
       current = this.append(latest, [
         { actor: reworkActor(judged), event: { type: "ReworkJudged", payload: judged } },
       ]);
+      // 対応を求めていない指摘（「承知しました」など）は、判断の記録で差し戻しから除かれる。1 件も残らなければ、差し戻さない
+      // （承認待ちのまま。作り直しも、返信も、レビューのやり直しもしない）
+      const actionable = current.pendingReview;
+      if (!actionable) return;
+      pending = actionable;
     }
     // 判断の間（エージェントの実行は長い）に、人が PR をマージした・閉じたかもしれない。差し戻す前に PR の状態を読み直し、
     // 開いたままでなければ差し戻さない（マージは承認。承認した成果を差し戻して、マージ済みのタスクが動き出さないように）。
@@ -6254,7 +6268,7 @@ export class TaskService {
       );
     const judgement =
       outcome.kind === "completed"
-        ? extractRework(outcome.output, targets)
+        ? extractRework(outcome.output, targets, { remarks: remarks.length, aiReview })
         : { reason: message("rework.runFailed", { detail: outcome.message }) };
     return {
       ...judgement,

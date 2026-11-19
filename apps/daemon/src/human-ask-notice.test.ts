@@ -14,7 +14,7 @@ const base = {
 };
 
 describe("人に確かめてほしいことの PR のコメント（PBI-301）", () => {
-  it("ゴールガーディアンが判断できなかった理由と、作り直しの実行が確かめたいことを、目印・タスクの画面へのリンクつきで書く", () => {
+  it("戻し先の判断で読み取れなかった理由と、作り直しの実行が確かめたいことを、目印・タスクの画面へのリンクつきで書く", () => {
     const body = buildHumanAskNotice({
       ...base,
       undecided: {
@@ -25,9 +25,7 @@ describe("人に確かめてほしいことの PR のコメント（PBI-301）",
     });
     expect(body?.startsWith(humanAskMarker(TASK, "implement", 2))).toBe(true);
     expect(body).toContain("人に確かめてほしいことがあります");
-    expect(body).toContain(
-      "指摘（implement-1-1）の意図を、ゴールガーディアンが判断できませんでした",
-    );
+    expect(body).toContain("戻し先の判断で、指摘（implement-1-1）の意図を読み取れませんでした");
     expect(body).toContain("> 「前と言ってること」が何を指すか読み取れない");
     expect(body).toContain("作り直しの実行が確かめたいこと（指摘 implement-1-1）");
     expect(body).toContain("> 上限の値は 31 日と推測しました");

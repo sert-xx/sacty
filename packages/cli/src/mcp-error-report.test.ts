@@ -204,7 +204,7 @@ describe("get_error_report：本物のサービス・本物の API・本物の d
     const first = (await raw("get_error_report", { task_id: w.task.id, max_bytes: 300 }))
       .structured as Report;
     expect(first.fingerprint).toMatch(/^[0-9a-f]{64}$/);
-    // 時間が進んで作成時刻が変わっても、中身が同じなら指紋は同じ（続きが読める）
+    // 時間が進んで作成時刻が変わっても、中身が同じなら指紋は同じ（続きが読める）。日本語・英語の両方で確かめる
     await new Promise((r) => setTimeout(r, 5));
     const same = await raw("get_error_report", {
       task_id: w.task.id,
@@ -214,6 +214,19 @@ describe("get_error_report：本物のサービス・本物の API・本物の d
     });
     expect(same.isError).toBe(false);
     expect((same.structured as Report).fingerprint).toBe(first.fingerprint);
+    const firstEn = (
+      await raw("get_error_report", { task_id: w.task.id, lang: "en", max_bytes: 300 })
+    ).structured as Report;
+    await new Promise((r) => setTimeout(r, 5));
+    const sameEn = await raw("get_error_report", {
+      task_id: w.task.id,
+      lang: "en",
+      max_bytes: 300,
+      offset: firstEn.next,
+      fingerprint: firstEn.fingerprint,
+    });
+    expect(sameEn.isError).toBe(false);
+    expect((sameEn.structured as Report).fingerprint).toBe(firstEn.fingerprint);
 
     w.append("PullRequestCiFailed", ciFailed(2));
     const changed = await raw("get_error_report", {
@@ -280,7 +293,7 @@ describe("get_error_report：前の版のデーモン・断り方", () => {
     w.activity.close();
   });
 
-  it("前の版の断りの標準エラーにも、本文は出ない", async () => {
+  it("前の版の断りの標準エラーにも、本文は出ない（標準エラーへの出力は1回以上ある）", async () => {
     const w = world();
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const writes: string[] = [];
@@ -291,11 +304,47 @@ describe("get_error_report：前の版のデーモン・断り方", () => {
     const fetcher: Fetch = async (url) =>
       w.app.request(new URL(url).pathname, { headers: { authorization: `Bearer ${TOKEN}` } });
     const { client, raw } = await connect(fetcher);
-    await raw("get_error_report", { task_id: w.task.id });
+    const r = await raw("get_error_report", { task_id: w.task.id });
+    const logged = err.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+    const loggedCalls = err.mock.calls.length;
     spy.mockRestore();
     err.mockRestore();
+    expect(r.isError).toBe(true);
+    // 失敗は標準エラーに出る（出ていなければ、下の確かめは何も捕まえない）
+    expect(loggedCalls).toBeGreaterThanOrEqual(1);
+    expect(logged).toContain(READ_REASONS.reportNotOmitted);
+    expect(logged).not.toContain(MARKER);
     expect(writes.join("")).not.toContain(MARKER);
     await client.close();
+    w.activity.close();
+  });
+
+  it("印付きの 200 のあとに本文の読み取りが失敗しても、理由に本文は入らない（時間切れはそれと分かる）", async () => {
+    const w = world();
+    const reply = (error: Error) => async (): Promise<Response> => {
+      const res = new Response("x", {
+        status: 200,
+        headers: { "x-sacty-stale-logs": "omitted", "content-type": "text/markdown" },
+      });
+      res.text = async () => {
+        throw error;
+      };
+      return res;
+    };
+    const failing = async (error: Error) => {
+      const c = await connect(reply(error));
+      const r = await c.raw("get_error_report", { task_id: w.task.id });
+      await c.client.close();
+      return r;
+    };
+    const broken = await failing(new Error(`read ${MARKER}`));
+    expect(broken.isError).toBe(true);
+    expect(broken.text).toBe(READ_REASONS.unreadable);
+    expect(broken.text).not.toContain(MARKER);
+    const timeout = await failing(Object.assign(new Error(MARKER), { name: "TimeoutError" }));
+    expect(timeout.isError).toBe(true);
+    expect(timeout.text).toContain("時間内に応答しませんでした");
+    expect(timeout.text).not.toContain(MARKER);
     w.activity.close();
   });
 
@@ -359,6 +408,13 @@ describe("get_task の errorReportWorthReading（画面がエラーレポート�
     expect(worth(task, [event("PullRequestCiRecovered", { number: 1, commit: "abc" })])).toBe(
       false,
     );
+    // 分析の依頼・結果だけの作業履歴（task.errorAnalyses は空）も false
+    expect(
+      worth(task, [
+        event("ErrorAnalysisRequested", { analysisId: "A-1" }),
+        event("ErrorAnalyzed", { analysisId: "A-1", analysis: "分析" }),
+      ]),
+    ).toBe(false);
     // 作業履歴にエラーの記録がある
     expect(worth(task, [event("PullRequestCiFailed", ciFailed(1))])).toBe(true);
     // 分析の記録だけある（作業履歴にエラーは無い）

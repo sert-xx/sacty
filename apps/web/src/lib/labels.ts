@@ -1178,6 +1178,10 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
           ? e.reworkFromReviewTask
           : withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
         event.payload.runResult === "interrupted",
+        {
+          count: event.payload.noAction?.length ?? 0,
+          all: event.payload.noRework === true,
+        },
       );
     // マージの後の監視（PBI-89）
     case "DeploymentWatchStarted":

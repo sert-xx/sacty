@@ -14,6 +14,12 @@ import {
   type TaskService,
 } from "./service.js";
 import { validLogId } from "./session-logs.js";
+import {
+  STALE_LOGS_HEADER,
+  STALE_LOGS_OMIT,
+  STALE_LOGS_OMITTED,
+  STALE_LOGS_QUERY,
+} from "./task-mcp.js";
 import { isDeliverableKind, isDeliverableStep } from "./task-reads.js";
 
 function sameToken(given: string, expected: string): boolean {
@@ -697,16 +703,16 @@ export function createApp(
   app.get("/api/tasks/:id/error-report", (c) => {
     const id = c.req.param("id");
     if (!service.visibleTask(id)) return c.json({ error: "not_found" }, 404);
-    // ?stale=omit：閉じられなかった実行のログの中身を省く（sacty mcp が付ける）。省いたレポートには印のヘッダーを付ける。
+    // ?stale=omit（STALE_LOGS_QUERY）：閉じられなかった実行のログの中身を省く（sacty mcp が付ける）。省いたレポートには印のヘッダーを付ける。
     // 値が omit でないときは、入力が無いものとして扱う（省かないので、印も付けない）
-    const omitStale = c.req.query("stale") === "omit";
+    const omitStale = c.req.query(STALE_LOGS_QUERY) === STALE_LOGS_OMIT;
     const report = service.errorReport(id, c.req.query("lang") === "en" ? "en" : "ja", {
       omitStaleLogs: omitStale,
     });
     if (report === undefined) return c.json({ error: "not_found" }, 404);
     return c.body(report, 200, {
       "content-type": "text/markdown; charset=utf-8",
-      ...(omitStale ? { "x-sacty-stale-logs": "omitted" } : {}),
+      ...(omitStale ? { [STALE_LOGS_HEADER]: STALE_LOGS_OMITTED } : {}),
     });
   });
 

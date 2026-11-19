@@ -176,7 +176,7 @@ function make(
 }
 
 describe("本物のデーモンのサービスを通した、タスクの中止の読み取りと中止（PBI-401）", () => {
-  it("ツールは16個。中止は destructive・openWorld で読み取り専用でなく、読み取りは readOnly", async () => {
+  it("ツールの一覧。中止は destructive・openWorld で読み取り専用でなく、読み取りは readOnly", async () => {
     const t = await setup();
     const { tools } = await t.client.listTools();
     expect(tools).toHaveLength(17);

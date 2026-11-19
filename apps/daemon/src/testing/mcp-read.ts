@@ -1,4 +1,11 @@
-import { readFailure, type SactyApi } from "../task-mcp.js";
+import {
+  readFailure,
+  type SactyApi,
+  STALE_LOGS_HEADER,
+  STALE_LOGS_OMIT,
+  STALE_LOGS_OMITTED,
+  STALE_LOGS_QUERY,
+} from "../task-mcp.js";
 
 /** 成果物・実行を読む API（PBI-395）を、CLI の daemonApi と同じ要求で呼ぶ。 */
 export function readApiOver(
@@ -15,7 +22,7 @@ export function readApiOver(
   };
   const report: SactyApi["getErrorReport"] = async (id, i) => {
     const res = await app.request(
-      `/api/tasks/${encodeURIComponent(id)}/error-report?lang=${i.lang}&stale=omit`,
+      `/api/tasks/${encodeURIComponent(id)}/error-report?lang=${i.lang}&${STALE_LOGS_QUERY}=${STALE_LOGS_OMIT}`,
       {
         headers,
       },
@@ -26,7 +33,8 @@ export function readApiOver(
       if (failure === "task_not_found") return undefined;
       throw failure;
     }
-    return { text: await res.text(), omitted: res.headers.get("x-sacty-stale-logs") === "omitted" };
+    if (res.headers.get(STALE_LOGS_HEADER) !== STALE_LOGS_OMITTED) return { omitted: false };
+    return { omitted: true, text: await res.text() };
   };
   const q = (v: Record<string, string | number | undefined>) =>
     `?${Object.entries(v)

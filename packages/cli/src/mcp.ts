@@ -11,6 +11,10 @@ import {
   READ_REASONS,
   readFailure,
   type SactyApi,
+  STALE_LOGS_HEADER,
+  STALE_LOGS_OMIT,
+  STALE_LOGS_OMITTED,
+  STALE_LOGS_QUERY,
   staleChangesMessage,
 } from "@sacty/daemon/task-mcp";
 import {
@@ -213,21 +217,21 @@ function readApi(
     getErrorReport: async (taskId, input) => {
       const res = await request(
         endpoint(),
-        `/api/tasks/${id(taskId)}/error-report${query({ lang: input.lang, stale: "omit" })}`,
+        `/api/tasks/${id(taskId)}/error-report${query({ lang: input.lang, [STALE_LOGS_QUERY]: STALE_LOGS_OMIT })}`,
       );
       if (!res.ok) {
         const failure = readFailure(res.status, await body(res));
         if (failure === "task_not_found") return undefined;
         throw failure;
       }
-      let text: string;
+      // 印が無い（前の版のデーモン）ときは、本文を読まない（省いていないレポートを持ち回らない）
+      if (res.headers.get(STALE_LOGS_HEADER) !== STALE_LOGS_OMITTED) return { omitted: false };
       try {
-        text = await res.text();
+        return { omitted: true, text: await res.text() };
       } catch (error) {
         if (isTimeout(error)) throw new Error(DAEMON_TIMEOUT_MESSAGE, { cause: error });
         throw new Error(READ_REASONS.unreadable);
       }
-      return { text, omitted: res.headers.get("x-sacty-stale-logs") === "omitted" };
     },
     listRuns: (taskId, input) =>
       call(`/api/tasks/${id(taskId)}/runs${query({ offset: input.offset, limit: input.limit })}`),
