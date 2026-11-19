@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-19（UTC）
 - タスク: PBI-410
-- PR: #PRNUM
+- PR: #450
 - ブランチ: feat/issue-410-preparing-status
 - 関係する ADR: [最初の工程が始まる前の処理の段階を、デーモンのメモリーから画面に返す](../adr/20261119-1612-show-preparing-phase-from-daemon-memory.md)
 
