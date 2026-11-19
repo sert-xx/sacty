@@ -3480,6 +3480,7 @@ export class TaskService {
       {
         aiReview: pending.aiReview ?? [],
         origins: remarkOrigins(pending, gatePullRequest(task)?.number),
+        imported: true,
         // 断った理由を読んで判定し直したレビューにも指摘が残った：差し戻しと同じ追記で一時停止して、人が判断する（AI どうしの
         // 往復を続けない。再開すると、残った指摘を渡してやり直す。PBI-357）
         ...(this.rejudgeLeftFindings(task) && pr?.number
@@ -18223,9 +18224,17 @@ export class TaskService {
       fixOf?: readonly (string | undefined)[];
       /** 差し戻し（上限でのエスカレーション）と同じ追記で、その前に記録するもの（後続に回したい案への決定。PBI-370）。 */
       leading?: readonly ActivityItem[];
+      /**
+       * comments が PR から取り込んだ指摘（PR の指摘の取り込みだけが渡す。PBI-413）。人の入力の上限（1 件 2000 文字）は
+       * 人が書く指摘のためのもので、取り込んだ指摘は、投稿の全文を切らずに渡す（その他の検査は同じに通す）。
+       */
+      imported?: boolean;
     } = {},
   ): Task {
-    const input = RequestChangesInput.parse(raw);
+    const full = options.imported ? (raw as { comments: string[] }).comments : undefined;
+    const input = RequestChangesInput.parse(
+      full ? { ...(raw as object), comments: full.map((c) => c.slice(0, REMARK_INPUT_MAX)) } : raw,
+    );
     const task = this.gateTask(id, input.step, input.submission);
     // やり直す工程は、ゲートの工程か、それより前の工程エージェントが作る工程。
     // 実装のゲートでは、省略すると実装をやり直す
@@ -18237,7 +18246,9 @@ export class TaskService {
     // 人が差し戻した回数（上限に数える）。AI のレビューの指摘だけの回は含めない（PBI-275）
     const rounds = changeRounds(task, target);
     const aiIndexes = new Set(options.aiReview ?? []);
-    const comments = input.comments.map((text, i) => {
+    const comments = input.comments.map((clipped, i) => {
+      // 取り込んだ指摘は、空にならないので、input.comments と full の位置は変わらない
+      const text = full?.[i] ?? clipped;
       const origin = options.origins?.[i];
       const fixOf = options.fixOf?.[i];
       return {
@@ -18782,8 +18793,8 @@ function refusedByGitHub(failure: DaemonText): boolean {
   return typeof status === "number" && status >= 400 && status < 500;
 }
 
-/** 指摘の1件あたりの上限（差し戻しの入力と同じ）と、件数の上限。 */
-const REMARK_MAX = 2_000;
+/** 人が差し戻すときの、指摘の1件あたりの上限（差し戻しの入力と同じ）と、取り込む指摘の件数の上限。 */
+const REMARK_INPUT_MAX = 2_000;
 const REMARKS_MAX = 50;
 
 /** PR へのフィードバックを取り込むまでに、最後のフィードバックから待つ時間（書き終わるのを待つ）。 */
@@ -18795,20 +18806,15 @@ export const FEEDBACK_QUIET_MS = 2 * 60_000;
  * 本文の無い Request changes は、変更を求められたことを1件にする。
  */
 function feedbackRemarks(items: PullRequestFeedback[]): string[] {
-  const cut = (text: string) =>
-    text.length > REMARK_MAX ? `${text.slice(0, REMARK_MAX - 1)}…` : text;
+  // 投稿の本文は切らない（後ろの指摘が、やり直しに渡らなくなるため。PBI-413）
   return items.map((item) => {
     const body = item.body.trim();
     if (item.kind === "review_comment") {
-      // コメントが付いた行の内容と直前の行を添える（行番号だけに頼って 1 行ずれて読まないため。PBI-302 B3）。添える分は
-      // 切らない（指摘の文を、その分だけ短くして上限に収める）
+      // コメントが付いた行の内容と直前の行を、指摘の文の後ろに添える（行番号だけに頼って 1 行ずれて読まないため。PBI-302 B3）
       const context = item.lineContext ? `\n${lineContextText(item.lineContext)}` : "";
-      const text = `${item.path}${item.line ? `:${item.line}` : ""}：${body}`;
-      return context
-        ? `${text.length + context.length > REMARK_MAX ? `${text.slice(0, Math.max(0, REMARK_MAX - context.length - 1))}…` : text}${context}`
-        : cut(text);
+      return `${item.path}${item.line ? `:${item.line}` : ""}：${body}${context}`;
     }
-    return cut(body || `${item.author} が PR の変更を求めました（コメントなし）。`);
+    return body || `${item.author} が PR の変更を求めました（コメントなし）。`;
   });
 }
 
