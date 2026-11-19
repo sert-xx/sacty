@@ -18,7 +18,7 @@
 | [`sacty context init`](#sacty-context-init) | コンテキストリポジトリの雛形を作る |
 | [`sacty context preview`](#sacty-context-preview) | プロジェクトのコンテキストを合成した結果を表示する |
 | [`sacty launch`](#sacty-launch) | プロジェクトのコンテキストで、手元の Claude Code か Codex を対話で起動する |
-| [`sacty mcp`](#sacty-mcp) | 起動中の sacty を、手元の Claude Code や Codex から操作する・成果物と実行の一覧を読むための MCP サーバーを動かす |
+| [`sacty mcp`](#sacty-mcp) | 起動中の sacty を、手元の Claude Code や Codex から操作する・成果物と実行の一覧を読む・承認待ちの工程を承認するための MCP サーバーを動かす |
 
 どのコマンドにも共通のことは、次のとおりです。
 

@@ -615,3 +615,114 @@ describe("本物のデーモンの API と、本物の daemonApi をつないだ
     activity.close();
   });
 });
+
+describe("sacty mcp の承認（PBI-396）", () => {
+  const input = { step: "requirements", submission: 1 };
+  const uncertain = "承認されている可能性があります";
+  const hung: Fetch = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    });
+  const failure = (fetcher: Fetch, at = home) =>
+    daemonApi(at, fetcher, 20)
+      .approve("t1", input)
+      .then(
+        () => undefined,
+        (e: unknown) => e as Error,
+      );
+  const taskBody = { task: { id: "t1" } };
+
+  it("画面と同じ API（GET /api/tasks/:id で確かめてから POST /api/tasks/:id/approve に { step, submission }）を、接続先のトークンで呼ぶ", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const { calls, fetcher } = fakeDaemon(() => Response.json(taskBody));
+    const task = await daemonApi(home, fetcher).approve("a/b", input);
+    expect(task).toEqual({ id: "t1" });
+    expect(calls.map((c) => `${c.method} ${new URL(c.url).pathname}`)).toEqual([
+      "GET /api/tasks/a%2Fb",
+      "POST /api/tasks/a%2Fb/approve",
+    ]);
+    expect(calls.every((c) => c.token === "Bearer tok")).toBe(true);
+    expect(JSON.parse(calls[1]?.body ?? "")).toEqual(input);
+  });
+
+  it("消したプロジェクトのタスク（詳細が 404）は、承認の API を呼ばずに、無いタスクとして断る", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const { calls, fetcher } = fakeDaemon(() =>
+      Response.json({ error: "not_found" }, { status: 404 }),
+    );
+    const error = await failure(fetcher);
+    expect(error?.message).toBe("タスクが見つかりません。");
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
+  });
+
+  it("デーモンが断った理由は文にする。古い提出は、画面の更新ではなく get_task で確かめ直すことを伝える。承認の可能性は伝えない", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const refuse = (messages: unknown[]) =>
+      failure(async (_url, init) =>
+        init.method === "POST"
+          ? Response.json({ error: "invalid_operation", messages }, { status: 409 })
+          : Response.json(taskBody),
+      );
+    const stale = await refuse([
+      { code: "gate.staleSubmission", params: { submission: 1, current: 3 } },
+    ]);
+    expect(stale?.message).toContain("1回目");
+    expect(stale?.message).toContain("3回目");
+    expect(stale?.message).toContain("get_task");
+    expect(stale?.message).not.toContain("画面を更新");
+    expect(stale?.message).not.toContain(uncertain);
+    const onPr = await refuse([
+      { code: "gate.approveOnPullRequest", params: { url: "https://github.com/a/b/pull/7" } },
+    ]);
+    expect(onPr?.message).toContain("マージ");
+    expect(onPr?.message).toContain("https://github.com/a/b/pull/7");
+    const repro = await refuse([{ code: "gate.reproduceNotApprovable" }]);
+    expect(repro?.message).toContain("再現できなかった");
+    expect(repro?.message).not.toContain(uncertain);
+  });
+
+  it("承認を送った後に結果を受け取れなければ（時間切れ・切断・本文を読めない・5xx）、承認されている可能性と get_task で確かめることを伝える", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const afterGet =
+      (post: Fetch): Fetch =>
+      (url, init) =>
+        init.method === "POST" ? post(url, init) : Promise.resolve(Response.json(taskBody));
+    const timedOut = await failure(afterGet(hung));
+    expect(timedOut?.message).toContain("デーモンが時間内に応答しませんでした");
+    expect(timedOut?.message).toContain(uncertain);
+    expect(timedOut?.message).toContain("get_task");
+    const dropped = await failure(
+      afterGet(async () => {
+        throw new TypeError("fetch failed", { cause: new Error("socket hang up") });
+      }),
+    );
+    expect(dropped?.message).toContain(uncertain);
+    const broken = await failure(afterGet(async () => new Response("<html>", { status: 200 })));
+    expect(broken?.message).toContain("デーモンの応答を読めませんでした");
+    expect(broken?.message).toContain(uncertain);
+    const server = await failure(afterGet(async () => new Response("oops", { status: 500 })));
+    expect(server?.message).toContain("デーモンが 500 を返しました。");
+    expect(server?.message).toContain(uncertain);
+  });
+
+  it("認証できない・接続を断られた・起動中の sacty が無い・前の版のデーモン（想定外の 404）は、承認されていないので、可能性を伝えない", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const unauthorized = await failure(async () => new Response("no", { status: 401 }));
+    expect(unauthorized?.message).toContain("デーモンに認証できません");
+    expect(unauthorized?.message).not.toContain(uncertain);
+    const refused = await failure(async () => {
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+      });
+    });
+    expect(refused?.message).toContain("デーモンにつながりません");
+    expect(refused?.message).not.toContain(uncertain);
+    const none = await failure(hung, mkdtempSync(join(tmpdir(), "sacty-mcp-none-")));
+    expect(none?.message).toContain("起動中の sacty が見つかりません");
+    expect(none?.message).not.toContain(uncertain);
+    const old = await failure(async (_url, init) =>
+      init.method === "POST" ? new Response("Not Found", { status: 404 }) : Response.json(taskBody),
+    );
+    expect(old?.message).toBe("デーモンが 404 を返しました。");
+  });
+});

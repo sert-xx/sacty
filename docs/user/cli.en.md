@@ -17,7 +17,7 @@ The commands are as follows.
 | [`sacty context init`](#sacty-context-init) | Creates a template of a context repository |
 | [`sacty context preview`](#sacty-context-preview) | Shows the result of composing the context of a project |
 | [`sacty launch`](#sacty-launch) | Starts your local Claude Code or Codex interactively with the context of a project |
-| [`sacty mcp`](#sacty-mcp) | Runs the MCP server for operating the running sacty from your local Claude Code or Codex and for reading deliverables and the run list |
+| [`sacty mcp`](#sacty-mcp) | Runs the MCP server for operating the running sacty from your local Claude Code or Codex, reading deliverables and the run list, and approving a step awaiting approval |
 
 The following applies to every command.
 

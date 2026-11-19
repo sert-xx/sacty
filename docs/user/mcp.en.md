@@ -9,8 +9,8 @@ For example, after fixing a PR, you can ask the AI to "re-review this PR with sa
 
 sacty has an MCP server for this (`sacty mcp`; it supports the 2026-07-28 revision of the MCP specification and also works with clients of earlier revisions).
 It can look up tasks (list, search, details), put a PR review task into re-review, create a task in a project you specify,
-and read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only). The logs of runs cannot be read yet (read them in the web UI).
-It cannot approve, request changes to, or cancel tasks (do those in the web UI). Deliverables can be used to check the content before you approve.
+read the deliverables of each step of a task and the list of agent runs (deliverables and the run list are read-only), and approve a step that is awaiting approval. The logs of runs cannot be read yet (read them in the web UI).
+It cannot request changes to or cancel tasks (do those in the web UI). A step approved by merging a PR (implementation, requirements or design with a PR) cannot be approved from MCP either (merge the PR on GitHub). Deliverables can be used to check the content before you approve.
 
 ## Connecting
 
@@ -51,6 +51,7 @@ The AI picks the tools below and calls them.
 - "Create a task in the (project name) project of sacty titled 'Fix the login screen wording'"
 - "Read the design of this sacty task"
 - "Show me the agent runs of this sacty task, newest first"
+- "Check the investigation result of this sacty task, and approve it if it looks good"
 
 When you ask for a re-review, sacty reviews the latest commit of the PR again and posts the result to the PR ([Re-review](intake.en.md#re-review)).
 The review takes time to finish and costs money.
@@ -120,11 +121,23 @@ Deliverables from before a rework (earlier rounds) and the agent's original file
 Only a task that posted its review to the PR and completed can be re-reviewed (`canRereview` in the result of `list_tasks` is `true`).
 If you ask for a task under review or a task that is not a PR review, it returns the reason and changes nothing.
 
+## Approving
+
+`approve_step` approves a step that is awaiting approval (the same as "Approve" on the web UI's approval screen). Approving makes sacty start the next step (it takes time and costs money, and cannot be undone).
+The AI calls it only when you ask. It is safer to check the deliverables (`list_deliverables`, `get_deliverable`) before you ask.
+
+- Before approving, `approval` in `get_task` (and in each task of `list_tasks`) shows the step awaiting approval (`step`), the submission number (`submission`), and how to approve (`method`).
+  The AI approves with the step and number it checked. If they differ from what is awaiting approval now (an old submission), it does not approve and tells you the current number.
+- What it can approve is a step awaiting approval without a PR (an investigation result, an integration result, an implementation with no changes, requirements or design without a PR, and so on; the steps where you press "Approve" in the web UI).
+- When it cannot (not awaiting approval, no such task, a step other than the one awaiting approval, an old number, already approved, a reproduction that could not reproduce), it returns the reason and changes nothing.
+- A step approved by merging a PR (implementation, requirements or design with a PR) cannot be approved from MCP. `method` in `approval` is `pull_request`; review and merge the PR at `pullRequestUrl` on GitHub (the merge is the approval).
+- When no result arrives (a timeout and so on), the step may have been approved. The AI does not retry automatically and checks the state with `get_task`.
+
 ## Things to keep in mind
 
 - Only the person running `sacty up` can use the MCP server (it uses the address sacty wrote to a file only that person can read).
-- The registered AI can start a re-review or create a task on your behalf. Creating a task starts its steps, which takes time and costs money.
-  In the AI CLI's permission prompt, you can choose to confirm `rereview_task` and `create_task` every time or to allow them.
+- The registered AI can start a re-review, create a task, or approve a step awaiting approval on your behalf. Creating a task or approving starts steps, which takes time and costs money.
+  In the AI CLI's permission prompt, you can choose to confirm `rereview_task`, `create_task`, and `approve_step` every time or to allow them.
 - Task descriptions, review bodies, and deliverables are passed to the AI.
   They can contain text from PRs and issues written by other people and text written by agents (do not let the AI treat it as instructions).
 - While a previous version of sacty is running, the deliverable and run tools answer "update sacty and restart it with `sacty up`" (a different reason from a missing task). Restart it when no task is running.

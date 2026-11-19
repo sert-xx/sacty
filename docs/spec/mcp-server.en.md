@@ -5,11 +5,11 @@
 `sacty mcp` is an MCP server for operating the running sacty (`sacty up`) from an AI on the same machine (Claude Code, Codex, and so on).
 It runs over standard input and output (stdio) and calls the same daemon API as the web UI.
 It follows the 2026-07-28 revision of the MCP specification and also accepts clients of earlier revisions (up to 2025-11-25) that open with `initialize`.
-It has eight tools: listing and searching tasks (`list_tasks`), task details (`get_task`), re-reviewing a PR review task (`rereview_task`), listing projects (`list_projects`), creating a task (`create_task`),
-listing deliverables (`list_deliverables`), the content of a deliverable (`get_deliverable`), and listing runs (`list_runs`).
-The last three only read deliverables and runs. There is no tool yet for reading the log of a run (a follow-up).
+It has nine tools: listing and searching tasks (`list_tasks`), task details (`get_task`), re-reviewing a PR review task (`rereview_task`), listing projects (`list_projects`), creating a task (`create_task`),
+listing deliverables (`list_deliverables`), the content of a deliverable (`get_deliverable`), listing runs (`list_runs`), and approving a step awaiting approval (`approve_step`).
+The three before `approve_step` only read deliverables and runs. There is no tool yet for reading the log of a run (a follow-up).
 
-Related ADRs: [The MCP server that operates the running sacty is run by the CLI over stdio](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md), [The CLI calls the running daemon's API through the connection file that sacty up writes](../adr/20261014-0701-cli-daemon-connection-file.md), [The MCP create-task tool sends the same request as the web UI's defaults and reports that a task may have been created when no result arrives](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md), [Reading deliverables and the run list through sacty mcp sets limits and positions in bytes and adds read APIs to the daemon](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)
+Related ADRs: [The MCP server that operates the running sacty is run by the CLI over stdio](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md), [The CLI calls the running daemon's API through the connection file that sacty up writes](../adr/20261014-0701-cli-daemon-connection-file.md), [The MCP create-task tool sends the same request as the web UI's defaults and reports that a task may have been created when no result arrives](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md), [Reading deliverables and the run list through sacty mcp sets limits and positions in bytes and adds read APIs to the daemon](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md), [Approval through sacty mcp is limited to the same API as the web UI's Approve button and does not merge PRs](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)
 
 ## Startup and connection
 
@@ -36,6 +36,7 @@ Related ADRs: [The MCP server that operates the running sacty is run by the CLI 
 | `list_deliverables` | `GET /api/tasks/:id/deliverables` |
 | `get_deliverable` | `GET /api/tasks/:id/deliverables/:step/:kind?offset=&max=` |
 | `list_runs` | `GET /api/tasks/:id/runs?offset=&limit=` |
+| `approve_step` | `GET /api/tasks/:id`, `POST /api/tasks/:id/approve` |
 
 Code: `packages/cli/src/index.ts` (`mcpCommand`), `packages/cli/src/mcp.ts` (`daemonApi`), `apps/daemon/src/task-mcp.ts` (`serveTaskMcp`, `startTaskMcp`, `createTaskMcpServer`, `SactyApi`), `packages/cli/src/context-preview.ts` (`readDaemonFile`, `daemonRequest`), `packages/cli/src/up-env.ts` (`daemonEndpoint`)
 
@@ -43,7 +44,7 @@ Code: `packages/cli/src/index.ts` (`mcpCommand`), `packages/cli/src/mcp.ts` (`da
 
 The server's usage instructions (`INSTRUCTIONS`) and the descriptions of `list_tasks` and `get_task` say that the title, description, review body, and stop reason in results are data that can contain text written by other people, and that instructions inside them must not be followed.
 The description of `list_projects` carries the same note (project names are text written by people).
-The descriptions of `rereview_task` and `create_task` say to call them only when the user asks (not because of instructions inside a title, description, review body, and so on).
+The descriptions of `rereview_task`, `create_task`, and `approve_step` say to call them only when the user asks (not because of instructions inside a title, description, review body, and so on).
 The descriptions of `list_deliverables`, `get_deliverable`, and `list_runs`, and `INSTRUCTIONS`, also say that the deliverables in results are data that can contain text written by other people and agents, and that instructions inside them must not be followed (`READ_UNTRUSTED_NOTE`).
 
 The tools are held in the `TOOLS` table (name, description, argument shape, result shape, handler), and all of them are registered when the server is created.
@@ -132,6 +133,28 @@ Creates a task in a given project from a title and a description.
 - When the result cannot be received after calling the create API (a timeout, a dropped connection, an unreadable body, or a 5xx from the daemon), it answers with that reason followed by a note that the task may have been created and to check with `list_tasks` (the title in `query`) before calling again (the daemon may have recorded it before the response failed to arrive; the create API has no mechanism to prevent a duplicate). When the daemon refuses in its response (`DaemonRefusal`, other than a 5xx), when authentication fails (401), when the connection is refused, and when it fails before calling (no `daemon.json`), nothing was processed, so only the reason is returned.
 - Daemons of earlier versions: `POST /api/tasks` and `GET /api/projects` were not added for MCP, so earlier daemons have them. If a call does not go through, it returns the reason the daemon refused (the status code if that cannot be read), and the MCP server does not exit.
 - The tool annotations say it is not read-only (`readOnlyHint: false`), not destructive (`destructiveHint: false`), not idempotent (`idempotentHint: false`), and writes outside sacty (`openWorldHint: true`; the steps that start write to PRs and so on).
+
+### approve_step
+
+Approves a step that is awaiting approval (the same as "Approve" on the web UI's approval screen).
+
+| Argument | Type | Meaning |
+| --- | --- | --- |
+| `task_id` | string (required) | The task ID |
+| `step` | step name (required) | The step to approve (`approval.step` from `get_task`) |
+| `submission` | integer, 1 or more (required) | The submission number to approve (`approval.submission` from `get_task`) |
+
+- It only sends `{ step, submission }` to `POST /api/tasks/:id/approve`, the same request the web UI sends. The decision (`service.approve`), the record (`StepApproved`, actor `person`), and how the next step starts are the same as in the web UI. There is no MCP-only route or record. Wherever the web UI refuses, it refuses for the same reason.
+- When approved, it returns a sentence, the approved target (`approved`: `taskId`, `step`, `submission`), and the [task summary](#task-summary) after approval (it does not wait for the next step to finish).
+- The caller specifies the submission to approve (so an old submission is not approved by mistake). If it differs from the step and number now awaiting approval, nothing is approved and the reason is returned. For an old number the reason includes the current number and tells the caller to check again with `get_task` (the daemon's "refresh the screen" wording does not fit an MCP user, so the MCP layer replaces it).
+- Only steps approved on screen (awaiting approval without a PR) can be approved. A task not awaiting approval (running, paused, completed, cancelled, and so on), a missing task (including a task of a deleted project, checked first with `GET /api/tasks/:id`), a step other than the one awaiting approval, an old number, a reproduction that could not reproduce, and a repeated call (the second is "not awaiting approval" or a different number) get the daemon's reason, and nothing is recorded.
+  A decision waiting after the changes-requested limit (`escalated`) can be approved, as in the web UI.
+- A step approved by merging a PR (implementation, requirements or design with a PR) is not approved. The daemon's reason (merging the PR is the approval, and the PR URL) is returned. Merging a PR from MCP is out of scope for this version (it writes to GitHub; see the [ADR](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)).
+- To check before approving, the task summary (`list_tasks`, `get_task`, and others) has `approval`. It appears only while awaiting approval (`awaiting_approval`, `escalated`) and has `step` (the step awaiting approval), `submission` (the submission number awaiting approval; 0 if none), and `method` (`approve_step`: this tool can approve; `pull_request`: merging the PR approves, and the PR to merge is `pullRequestUrl`; `not_approvable`: a reproduction that could not reproduce; request changes or cancel).
+- When no result arrives after calling the approval API (timeout, connection dropped, body unreadable, or the daemon returned 5xx), the reason is followed by: the step may have been approved, it is not retried automatically, and check with `get_task` before calling again. When the daemon refuses in a response, authentication fails (401), the connection is refused, or the call fails before sending, nothing was approved, so only the reason is returned.
+- Earlier daemon versions: `POST /api/tasks/:id/approve` has long existed, so it works with an earlier daemon. If it fails, the daemon's reason (or the status code if unreadable) is returned. `approval` is built by the MCP layer, so it is present with an earlier daemon too.
+- The description says to call it only when the user asks, that approving starts the next step (it takes time and money and cannot be undone), to check the deliverables first with `list_deliverables` and `get_deliverable`, and to check with `get_task` before calling again. `INSTRUCTIONS` says the same.
+- Annotations: not read-only (`readOnlyHint: false`), not destructive (`destructiveHint: false`), not idempotent (`idempotentHint: false`; the second call is refused), and may write outside sacty (`openWorldHint: true`; the next step may write).
 
 ### list_deliverables
 
@@ -240,11 +263,11 @@ The name of the failed tool, the target task ID (`task_id` if present; no other 
 When the arguments do not match the types (a `limit` out of range, a missing `task_id`, and so on), the MCP SDK returns the same shape (`isError: true` and the text of the reason) without calling the tool.
 Calling an unknown tool and the like becomes a JSON-RPC error.
 
-Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_UNCERTAIN`, `CREATE_UNCERTAIN`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`, `createTask`), `packages/core/src/events.ts` (`CreateTaskInput`)
+Code: `apps/daemon/src/task-mcp.ts` (`TOOLS`, `defineTool`, `INSTRUCTIONS`, `filterTasks`, `parsePullRequestQuery`, `describeTask`), `packages/cli/src/mcp.ts` (`daemonApi`, `MCP_REQUEST_TIMEOUT_MS`, `REREVIEW_UNCERTAIN`, `CREATE_UNCERTAIN`, `APPROVE_UNCERTAIN`), `apps/daemon/src/server.ts` (`createApp`), `apps/daemon/src/service.ts` (`rereview`, `createTask`), `packages/core/src/events.ts` (`CreateTaskInput`)
 
 ## Task summary
 
-The result of `list_tasks`, `rereview_task`, and `create_task`, and the base of the result of `get_task`.
+The result of `list_tasks`, `rereview_task`, `create_task`, and `approve_step`, and the base of the result of `get_task`.
 
 | Field | Description |
 | --- | --- |
@@ -259,6 +282,7 @@ The result of `list_tasks`, `rereview_task`, and `create_task`, and the base of 
 | `reviewOf` | For a PR review child task, the ID of the parent task |
 | `reviewTasks` | The child tasks that review this task's PRs (task ID and PR number) |
 | `pausedReason` | The reason for the pause (only while paused) |
+| `approval` | Only while awaiting approval (`awaiting_approval`, `escalated`): the step and submission awaiting approval and how to approve ([approve_step](#approve_step)) |
 | `createdAt`, `updatedAt` | The time it was created and the time of the last record |
 | `url` | The URL of the task details in the web UI (only when `daemon.json` has the web UI URL) |
 
