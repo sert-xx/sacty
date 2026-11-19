@@ -501,9 +501,9 @@ A task the daemon is actually processing during this time is shown in the web UI
 
 - The phase is kept only in the daemon's memory (`TaskService.preparingPhases`). It is not recorded in the activity log, and the meaning of `queued` does not change.
   `runNext` sets it right before each piece of work starts and always clears it when the processing (`runNext`) ends.
-- It is returned to the web UI only when the status is `queued` and the worker is processing the task (`inflight`, the same mark as "running" in the dashboard's step queue) (`preparingOf`).
+- It is returned to the web UI only when the status is `queued`, the worker is processing the task (`inflight`, the same mark as "running" in the dashboard's step queue), and the task has never started a step run (no `AgentRunStarted` in the activity log; `firstStepStarted`) (`preparingOf`).
   - If a phase is set, that phase is returned.
-  - If no phase is set, `starting` is returned, but only for a task that has never started a step run (no `AgentRunStarted` in the activity log; `firstStepStarted`).
+  - If no phase is set, `starting` is returned.
     So until the first step starts, a task the queue counts as running always has a phase.
   - `preparing` is added to the tasks of `GET /api/tasks` (`listView`), `GET /api/tasks/:id` (`view`), and `GET /api/schedules/:id` (`ScheduledTasks.get`).
 - The following tasks have no `preparing` and stay shown as "Queued" (`waiting`).
@@ -513,7 +513,7 @@ A task the daemon is actually processing during this time is shown in the web UI
   - A task not processed yet after the daemon restarts.
 - After the first step starts, or the task is paused or stops on a failure, the status is no longer `queued`, so it is not shown.
   The web UI follows by reloading its data every 3 seconds.
-- A task that returned to `queued` after starting a step run at least once (between steps, retrying a failed run, and so on) has no `preparing` unless a phase is set, even while it is processed, and is shown as "Queued" (this display covers only the time until the first step starts).
+- A task that returned to `queued` after starting a step run at least once (between steps, retrying a failed run, checking the target PR again for a re-review, and so on) has no `preparing` even while it is processed, and is shown as "Queued" (this display covers only the time until the first step starts).
 - The web UI decides with `statusText` and `statusTone`. The task list, the dashboard, the task details, the rows of related tasks, and the scheduled task details use the same functions, and the status filter of the list uses the same kinds.
 - Before the steps are chosen, the steps column shows "Steps not chosen yet" (`parts.bits.choosing`).
 - The summary of `sacty mcp` carries the same `preparing` ([MCP server](mcp-server.en.md#task-summary)).

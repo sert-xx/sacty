@@ -277,21 +277,6 @@ export type StepState = "todo" | "active" | "done" | "skip";
  * waiting_children：タスク分割の後、子タスクの完了を待っている（PBI-27）
  */
 /**
- * 最初の工程が始まる前の、デーモンの処理の段階（PBI-410）。repository：対象リポジトリの用意、gathering：情報収集、
- * triage：チケットのトリアージ、planning：進め方（工程・イメージなど）の判定、review_target：レビューの対象の PR の確認、
- * starting：そのほかの、最初の工程を始めるまでの処理（工程を選んだ後の、開始の準備など）。
- */
-export const PREPARING_PHASES = [
-  "repository",
-  "gathering",
-  "triage",
-  "planning",
-  "review_target",
-  "starting",
-] as const;
-export type PreparingPhase = (typeof PREPARING_PHASES)[number];
-
-/**
  * 承認待ちの PR の今の head に、sacty 自身の AI のレビュー（sacty のレビューのタスクの投稿）が付いているか（PBI-302 D1）。
  * none：付いていない、reviewing：レビューのタスクが今の head をレビューしている、attached：今の head のレビューが投稿された。
  * 承認やマージは止めない。作業履歴から復元する状態ではなく、デーモンが画面と PR の本文のために、ほかのタスクを見て計算する。
@@ -317,6 +302,22 @@ export type TaskStatus =
   | "awaiting_approval"
   | "escalated"
   | "cancelled";
+
+/**
+ * 最初の工程が始まる前の、デーモンの処理の段階（PBI-410）。repository：対象リポジトリの用意、gathering：情報収集、
+ * triage：チケットのトリアージ、planning：進め方（工程・イメージなど）の判定、review_target：レビューの対象の PR の確認、
+ * starting：そのほかの、最初の工程を始めるまでの処理（工程を選んだ後の、開始の準備など）。工程の実行を1回でも始めた
+ * タスクには、どの段階も付かない。
+ */
+export const PREPARING_PHASES = [
+  "repository",
+  "gathering",
+  "triage",
+  "planning",
+  "review_target",
+  "starting",
+] as const;
+export type PreparingPhase = (typeof PREPARING_PHASES)[number];
 
 export type TaskRemark = {
   id: string;

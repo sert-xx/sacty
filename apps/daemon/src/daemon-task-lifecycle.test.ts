@@ -2734,6 +2734,65 @@ describe("最初の工程が始まる前の処理の段階（PBI-410）", () => 
     activity.close();
   });
 
+  it("再レビューで対象の PR を確かめ直す間は、処理の段階を返さない（工程の実行を1回でも始めたタスクには付かない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    // 対象の PR を読むたびに、そのときに画面へ返す値を控える
+    const seen: { status?: string; preparing?: string; round?: number }[] = [];
+    let observe: (() => void) | undefined;
+    class WatchedPulls extends FakePulls {
+      override async pullRequest(input: { repo: string; token: string; number: number }) {
+        observe?.();
+        return super.pullRequest(input);
+      }
+    }
+    const pulls = new WatchedPulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
+    const review = (text: string): AgentOutcome => ({
+      kind: "completed",
+      output: text,
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+    });
+    const { service } = makeService(activity, [review("# 1回目"), review("# 2回目")], { pulls });
+    const [task] = service.importIssues([
+      {
+        repo: "https://github.com/acme/app",
+        number: 9,
+        title: "PR 9",
+        body: "",
+        url: "https://github.com/acme/app/pull/9",
+        labels: ["sacty-review"],
+        pullRequest: true,
+      },
+    ]);
+    const id = task?.id ?? "";
+    observe = () => {
+      const shownTask = service.view(id)?.task;
+      seen.push({
+        status: shownTask?.status,
+        ...(shownTask?.preparing ? { preparing: shownTask.preparing } : {}),
+        round: shownTask?.reviewRound ?? 1,
+      });
+    };
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(1);
+    // 1回目：最初の工程（レビュー）を始める前の確認は、段階を返す
+    expect(seen.filter((s) => s.status === "queued")).toEqual([
+      { status: "queued", preparing: "review_target", round: 1 },
+    ]);
+
+    seen.length = 0;
+    // デーモンを起動し直した後と同じく、始めたことの覚えが無くても、作業履歴から確かめる
+    (service as unknown as { stepStarted: Map<string, boolean> }).stepStarted.clear();
+    service.rereview(id);
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(2);
+    // 2回目：実行待ちのまま対象の PR を確かめ直すが、工程の実行を始めた後なので、段階は返さない
+    expect(seen.filter((s) => s.status === "queued")).toEqual([{ status: "queued", round: 2 }]);
+    activity.close();
+  });
+
   it("チケットの確認で決められずに一時停止したら、処理の段階を返さない", async () => {
     const { activity, service, executor, id } = ticketTask();
     const run = service.runNext(id);

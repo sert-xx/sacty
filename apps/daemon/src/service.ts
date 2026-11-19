@@ -1253,8 +1253,11 @@ export class TaskService {
    * だけ持つので、デーモンを起動し直すと残らない。
    */
   private readonly preparingPhases = new Map<string, PreparingPhase>();
-  /** 工程の実行を1回でも始めた（AgentRunStarted がある）と分かったタスク（firstStepStarted が、作業履歴を読み直さないため）。 */
-  private readonly startedOnce = new Set<string>();
+  /**
+   * 工程の実行を1回でも始めた（AgentRunStarted がある）かを、確かめたタスク（firstStepStarted が、画面の取り直しのたびに
+   * 作業履歴を読み直さないため）。始めた記録を書いたとき（append）に、真にする。
+   */
+  private readonly stepStarted = new Map<string, boolean>();
   /** コンテキストのイメージを作り終えるのを待っているタスクと、待ち始めた時刻（PBI-325）。 */
   private readonly contextImageWaits = new Map<string, number>();
   /**
@@ -1398,21 +1401,25 @@ export class TaskService {
   }
 
   /**
-   * 最初の工程が始まる前の、いま進めている処理の段階（PBI-410）。実行待ち（queued）で、ワーカーが処理している（inflight。
-   * ダッシュボードの待ち行列の「実行中」と同じ印）タスクにだけある。枠・依存・コンテキストのイメージを待っているだけの
-   * タスクは、処理していないので無い。段階を付けていない処理（工程を選んだ後の、最初の工程の開始の準備など）は、工程の
-   * 実行をまだ1回も始めていないタスクに限り、starting を返す（処理しているのに「実行待ち」と出る区間を残さない）。
+   * 最初の工程が始まる前の、いま進めている処理の段階（PBI-410）。実行待ち（queued）で、ワーカーが処理していて（inflight。
+   * ダッシュボードの待ち行列の「実行中」と同じ印）、工程の実行をまだ1回も始めていないタスクにだけある。枠・依存・
+   * コンテキストのイメージを待っているだけのタスクは、処理していないので無い。段階を付けていない処理（工程を選んだ後の、
+   * 最初の工程の開始の準備など）は、starting を返す（処理しているのに「実行待ち」と出る区間を残さない）。工程の実行を
+   * 1回でも始めたタスク（再レビューで対象の PR を確かめ直す間など）には、段階を付けていても返さない。
    */
   preparingOf(id: string): PreparingPhase | undefined {
     if (!this.inflight.has(id) || this.tasks.get(id)?.status !== "queued") return undefined;
-    return this.preparingPhases.get(id) ?? (this.firstStepStarted(id) ? undefined : "starting");
+    if (this.firstStepStarted(id)) return undefined;
+    return this.preparingPhases.get(id) ?? "starting";
   }
 
   /** 工程の実行を、1回でも始めたか（準備で失敗した実行の記録を含む）。 */
   private firstStepStarted(id: string): boolean {
-    if (this.startedOnce.has(id)) return true;
-    const started = this.deps.activity.forTask(id).some((e) => e.type === "AgentRunStarted");
-    if (started) this.startedOnce.add(id);
+    let started = this.stepStarted.get(id);
+    if (started === undefined) {
+      started = this.deps.activity.forTask(id).some((e) => e.type === "AgentRunStarted");
+      this.stepStarted.set(id, started);
+    }
     return started;
   }
 
@@ -7741,6 +7748,8 @@ export class TaskService {
       this.tasks = applyEvent(this.tasks, event);
       const applied = this.tasks.get(event.taskId);
       if (applied) this.dashboardStats.add(event, previous, applied);
+      // 工程の実行を始めたことを覚える（最初の工程の前の処理の段階を、これより後は返さない。PBI-410）
+      if (event.type === "AgentRunStarted") this.stepStarted.set(event.taskId, true);
     }
     const updated = this.tasks.get(task.id);
     if (!updated) throw new Error("task is missing from the projection");
