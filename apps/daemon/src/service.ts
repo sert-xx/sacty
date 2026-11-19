@@ -1253,6 +1253,8 @@ export class TaskService {
    * だけ持つので、デーモンを起動し直すと残らない。
    */
   private readonly preparingPhases = new Map<string, PreparingPhase>();
+  /** 工程の実行を1回でも始めた（AgentRunStarted がある）と分かったタスク（firstStepStarted が、作業履歴を読み直さないため）。 */
+  private readonly startedOnce = new Set<string>();
   /** コンテキストのイメージを作り終えるのを待っているタスクと、待ち始めた時刻（PBI-325）。 */
   private readonly contextImageWaits = new Map<string, number>();
   /**
@@ -1396,12 +1398,22 @@ export class TaskService {
   }
 
   /**
-   * 最初の工程が始まる前の、いま進めている処理の段階（PBI-410）。実行待ち（queued）で、ワーカーが処理していて（inflight）、
-   * 段階を付けたタスクにだけある。枠・依存・コンテキストのイメージを待っているだけのタスクは、処理していないので無い。
+   * 最初の工程が始まる前の、いま進めている処理の段階（PBI-410）。実行待ち（queued）で、ワーカーが処理している（inflight。
+   * ダッシュボードの待ち行列の「実行中」と同じ印）タスクにだけある。枠・依存・コンテキストのイメージを待っているだけの
+   * タスクは、処理していないので無い。段階を付けていない処理（工程を選んだ後の、最初の工程の開始の準備など）は、工程の
+   * 実行をまだ1回も始めていないタスクに限り、starting を返す（処理しているのに「実行待ち」と出る区間を残さない）。
    */
   preparingOf(id: string): PreparingPhase | undefined {
     if (!this.inflight.has(id) || this.tasks.get(id)?.status !== "queued") return undefined;
-    return this.preparingPhases.get(id);
+    return this.preparingPhases.get(id) ?? (this.firstStepStarted(id) ? undefined : "starting");
+  }
+
+  /** 工程の実行を、1回でも始めたか（準備で失敗した実行の記録を含む）。 */
+  private firstStepStarted(id: string): boolean {
+    if (this.startedOnce.has(id)) return true;
+    const started = this.deps.activity.forTask(id).some((e) => e.type === "AgentRunStarted");
+    if (started) this.startedOnce.add(id);
+    return started;
   }
 
   /** 画面に返すタスクの一覧。処理の段階（preparingOf）を足す。 */
@@ -9688,14 +9700,11 @@ export class TaskService {
           if (task?.repos && task.status === "queued") {
             const step = activeStep(task);
             const gathering = awaitingGathering(task);
-            if (
-              gathering ||
-              task.steps.length === 0 ||
-              (step !== undefined && REPOSITORY_COPY_STEPS.includes(step))
-            ) {
-              // 最初の工程の前（情報収集・工程の選択の前）の照合は、対象リポジトリの用意として見せる（PBI-410）
-              if (gathering || task.steps.length === 0)
-                this.preparingPhases.set(taskId, "repository");
+            // 情報収集・工程の選択の前か
+            const beforeSteps = gathering || task.steps.length === 0;
+            if (beforeSteps || (step !== undefined && REPOSITORY_COPY_STEPS.includes(step))) {
+              // 情報収集・工程の選択の前の照合は、対象リポジトリの用意として見せる（PBI-410）
+              if (beforeSteps) this.preparingPhases.set(taskId, "repository");
               const candidates = await this.taskRepositoryCandidates(task);
               this.preparingPhases.delete(taskId);
               if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
@@ -10394,7 +10403,8 @@ export class TaskService {
       });
       this.append(latest, events);
     }
-    // ここから先は、最初の工程の前の処理ではない（レビューの対象の PR の確認だけ、下で付け直す。PBI-410）
+    // ここから先に、名前を付けた段階は無い（レビューの対象の PR の確認だけ、下で付け直す）。最初の工程を始めるまでの
+    // 残りの処理は、preparingOf が starting として返す（PBI-410）
     this.preparingPhases.delete(taskId);
     // 工程が終わったら、次の工程を実行する前に、オーケストレーターが残りの工程を見直し、要らない工程を飛ばす（工程の見直し）
     const reviewing = this.mustGet(taskId);

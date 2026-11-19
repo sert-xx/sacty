@@ -396,7 +396,7 @@ const TaskSummarySchema = z.object({
     .enum(PREPARING_PHASES)
     .optional()
     .describe(
-      "state が queued のまま、最初の工程の前の処理を sacty がいま進めているときだけ入る、その段階（repository：対象リポジトリの用意、gathering：情報収集、triage：チケットの確認、planning：進め方の判定、review_target：レビューする PR の確認）。画面はこの間を進行中と出す。無い queued は、実行の枠・コンテキストのイメージなどを待っている",
+      "state が queued のまま、最初の工程の前の処理を sacty がいま進めているときだけ入る、その段階（repository：対象リポジトリの用意、gathering：情報収集、triage：チケットの確認、planning：進め方の判定、review_target：レビューする PR の確認、starting：そのほかの、最初の工程を始めるまでの処理）。画面はこの間を進行中と出す。最初の工程を始める前で、これが無い queued は、実行の枠・コンテキストのイメージなどを待っている",
     ),
   reviewTask: z.boolean().describe("PR のレビューのタスクか"),
   canRereview: z.boolean().describe("再レビューできるか（レビューを PR に投稿して完了している）"),

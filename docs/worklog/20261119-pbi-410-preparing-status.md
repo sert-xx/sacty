@@ -18,8 +18,8 @@
 - デーモン（`apps/daemon/src/service.ts`）
   - 処理の段階（`repository`・`gathering`・`triage`・`planning`・`review_target`）を、メモリーの表（`preparingPhases`）に持つ。
     `runNext`・`runNextInner` が、それぞれの処理を始める直前に付け、進め方の判定の後と、`runNext` の終わりに消す。
-  - `preparingOf` は、状態が `queued` で、ワーカーが処理していて（`inflight`）、段階が付いているときだけ段階を返す。
-  - `GET /api/tasks`（`listView`）と `GET /api/tasks/:id`（`view`）のタスクに、`preparing` を足す。作業履歴には記録しない。
+  - `preparingOf` は、状態が `queued` で、ワーカーが処理している（`inflight`）ときだけ段階を返す。付けた段階が無ければ、工程の実行を1回も始めていないタスクに限り `starting` を返す（レビューの対応で足した）。
+  - `GET /api/tasks`（`listView`）・`GET /api/tasks/:id`（`view`）・`GET /api/schedules/:id` のタスクに、`preparing` を足す。作業履歴には記録しない。
 - core（`packages/core/src/projection.ts`）：`PREPARING_PHASES`・`PreparingPhase`・`Task.preparing`（画面に返すときだけ足す欄）。
 - 画面（`apps/web`）
   - `statusText`・`statusTone` が、`queued` で `preparing` があるタスクを、段階の文と `working` にする。
@@ -34,7 +34,7 @@
 ## 確かめたこと
 
 - `npm run format`・`npm run lint`・`npm run typecheck`：問題なし。
-- `npx vitest run --no-file-parallelism`：272 ファイル・5443 件が通った（1 件は元からの skip）。
+- `npx vitest run --no-file-parallelism`：272 ファイル・5449 件が通った（レビューの対応の後）（1 件は元からの skip）。
 - `npx vitest run tests/docs`：93 件が通った。
 - 足したテスト
   - `apps/daemon/src/daemon-task-lifecycle.test.ts`：段階ごとに API（一覧・終わっていないタスクの一覧・詳細）が返す値、最初の工程が始まった後・一時停止・例外・起動し直しの後に返さないこと、作業履歴に記録が増えないこと、同時に実行する数の上限と件数の境界（処理中が 0 件・1 件・複数件）。
@@ -46,7 +46,7 @@
   - 処理の終わりに段階を消さず、状態も見ない：5 件が落ちた。
   - 段階を付けない：8 件が落ちた。
   - 進め方の判定の後に段階を消さない：1 件が落ちた。
-- 実機（ビルドした版を、一時的な `SACTY_HOME` とポート 4800/4810 で起動。docker・gh は代わりのスクリプトで、エージェントの実行は 25 秒かかってから失敗する。同時に実行する数は 1）
+- 実機（ビルドした版を、一時的な `SACTY_HOME` とポート 4800/4810 で起動。docker・gh は代わりのスクリプトで、エージェントの実行は 45 秒かかってから失敗する。同時に実行する数は 1）
   - 画面でタスクを2つ作ると、先のタスクは「情報を収集中」（進行中の色）、後のタスクは「実行待ち」と出た。待ち行列は実行中 1・実行待ち 1。
   - 状態の絞り込みの「進行中」には先のタスクだけ、「待ち」には後のタスクだけが出た。
   - 詳細は、先のタスクが「情報を収集中」と「工程は未定」、後のタスクが「実行待ち」。
@@ -54,11 +54,16 @@
   - 先のタスクの作業履歴は `TaskCreated`・`ContextResolved`・`RunCostRecorded`・`OrchestratorFailed`・`TaskPaused` だけで、表示のための記録は無い。
 - 確かめられなかったこと：実際の AI・GitHub・Docker を使った実行での表示（代わりのスクリプトで確かめた）。対象リポジトリの用意・チケットの確認・進め方の判定・レビューする PR の確認の段階は、実機では見ておらず、テストで確かめた。
 
+- レビューの対応の後
+  - 足した直しを戻すと落ちること：`starting` を返さない（1 件）、最初の工程が始まったかを見ない（1 件）、スケジュールの詳細を `list` に戻す（1 件）。
+
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
-| （まだ無い） | — |
+| 1回目（提案あり）：工程を選んだ後〜最初の工程を始めるまで（複数リポジトリの候補の照合・外部作業の準備など）は、処理中なのに段階が付かず、「実行待ち」と出る。文書の「食い違いが無くなる」「まだ処理されていません」とも合わない | 直した。`preparingOf` が、付けた段階の無い処理中のタスクに、工程の実行を1回も始めていない間に限り `starting`（「工程の開始を準備中」）を返す。最初の工程が始まるまでは、待ち行列の「実行中」と同じ印だけで進行中と決まる。仕様書・ユーザードキュメント・ADR の言い切りを実装に合わせた。照合の条件の二重書きは `beforeSteps` にまとめた |
+| 1回目：スケジュールタスクの詳細（`GET /api/schedules/:id`）のタスクに `preparing` が付かない | 直した。`ScheduledTasks.get` が `listView` を使う |
+| 1回目：工程を選んだ後の区間と、チケットの確認・レビューする PR の確認の失敗・一時停止の経路に、テストが届いていない | 足した。工程を選んだ後の照合の時点で画面へ返す値、チケットの確認の失敗・人の一時停止、レビューする PR の確認の人の一時停止 |
 
 ## 残したこと
 

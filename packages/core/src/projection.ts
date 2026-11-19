@@ -278,7 +278,8 @@ export type StepState = "todo" | "active" | "done" | "skip";
  */
 /**
  * 最初の工程が始まる前の、デーモンの処理の段階（PBI-410）。repository：対象リポジトリの用意、gathering：情報収集、
- * triage：チケットのトリアージ、planning：進め方（工程・イメージなど）の判定、review_target：レビューの対象の PR の確認。
+ * triage：チケットのトリアージ、planning：進め方（工程・イメージなど）の判定、review_target：レビューの対象の PR の確認、
+ * starting：そのほかの、最初の工程を始めるまでの処理（工程を選んだ後の、開始の準備など）。
  */
 export const PREPARING_PHASES = [
   "repository",
@@ -286,6 +287,7 @@ export const PREPARING_PHASES = [
   "triage",
   "planning",
   "review_target",
+  "starting",
 ] as const;
 export type PreparingPhase = (typeof PREPARING_PHASES)[number];
 

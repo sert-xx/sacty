@@ -2554,7 +2554,8 @@ describe("最初の工程が始まる前の処理の段階（PBI-410）", () => 
     activity.close();
   });
 
-  it("チケットの確認の間は、その段階を返す", async () => {
+  /** チケットから取り込んだタスク（情報収集は差し替えて集めないので、チケットの確認が動く。その実行は止めておく）。 */
+  function ticketTask() {
     const activity = new SqliteActivityStore(dbPath);
     const projects = new MemoryProjectStore();
     projects.put("default", {
@@ -2563,7 +2564,7 @@ describe("最初の工程が始まる前の処理の段階（PBI-410）", () => 
       githubAccounts: { "github.com": "me" },
       tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
     });
-    const { service, executor } = makeService(activity, [HOLD], {
+    const made = makeService(activity, [HOLD], {
       config: configOf(agent(), 1, [jiraPlatform()]),
       secrets: { "claude-oauth-token": "oauth-secret", "jira-token": "jira-secret" },
       gateway: fakeGateway(),
@@ -2571,8 +2572,45 @@ describe("最初の工程が始まる前の処理の段階（PBI-410）", () => 
       settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
       tickets: new FakeTickets(),
     });
-    const [task] = service.importTickets([foundTicket("PAY-1")]);
-    const id = task?.id ?? "";
+    const [task] = made.service.importTickets([foundTicket("PAY-1")]);
+    return { activity, ...made, id: task?.id ?? "" };
+  }
+
+  /** PR のレビューのタスク。対象の PR の読み取りは、go を解決するまで止まる。 */
+  function reviewTask(options: { fail?: string } = {}) {
+    const activity = new SqliteActivityStore(dbPath);
+    const started = Promise.withResolvers<void>();
+    const go = Promise.withResolvers<void>();
+    class SlowPulls extends FakePulls {
+      override async pullRequest(input: { repo: string; token: string; number: number }) {
+        started.resolve();
+        await go.promise;
+        return super.pullRequest(input);
+      }
+    }
+    const pulls = new SlowPulls();
+    if (options.fail) pulls.prInfoFail = options.fail;
+    const made = makeService(activity, [], {
+      pulls,
+      // GitHub の一時的な失敗のやり直しを待たない
+      reviewRetryDelaysMs: [],
+    });
+    const [task] = made.service.importIssues([
+      {
+        repo: "https://github.com/acme/app",
+        number: 9,
+        title: "PR 9",
+        body: "",
+        url: "https://github.com/acme/app/pull/9",
+        labels: ["sacty-review"],
+        pullRequest: true,
+      },
+    ]);
+    return { activity, ...made, id: task?.id ?? "", started, go };
+  }
+
+  it("チケットの確認の間は、その段階を返す", async () => {
+    const { activity, service, executor, id } = ticketTask();
     const run = service.runNext(id);
     const runId = await executor.started.promise;
     expect(await shown(service, id)).toEqual({ status: "queued", preparing: "triage" });
@@ -2591,35 +2629,7 @@ describe("最初の工程が始まる前の処理の段階（PBI-410）", () => 
   });
 
   it("レビューする PR の確認の間は、その段階を返す。確かめられずに一時停止したら返さない", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const started = Promise.withResolvers<void>();
-    const go = Promise.withResolvers<void>();
-    class SlowPulls extends FakePulls {
-      override async pullRequest(input: { repo: string; token: string; number: number }) {
-        started.resolve();
-        await go.promise;
-        return super.pullRequest(input);
-      }
-    }
-    const pulls = new SlowPulls();
-    pulls.prInfoFail = "PR を読めない";
-    const { service } = makeService(activity, [], {
-      pulls,
-      // GitHub の一時的な失敗のやり直しを待たない
-      reviewRetryDelaysMs: [],
-    });
-    const [task] = service.importIssues([
-      {
-        repo: "https://github.com/acme/app",
-        number: 9,
-        title: "PR 9",
-        body: "",
-        url: "https://github.com/acme/app/pull/9",
-        labels: ["sacty-review"],
-        pullRequest: true,
-      },
-    ]);
-    const id = task?.id ?? "";
+    const { activity, service, id, started, go } = reviewTask({ fail: "PR を読めない" });
     const run = service.runNext(id);
     await started.promise;
     expect(await shown(service, id)).toEqual({ status: "queued", preparing: "review_target" });
@@ -2658,6 +2668,102 @@ describe("最初の工程が始まる前の処理の段階（PBI-410）", () => 
     expect(await shown(service, id)).toEqual({ status: "queued", preparing: "repository" });
     go.resolve();
     await run;
+    expect(await shown(service, id)).toEqual({ status: "paused", preparing: undefined });
+    activity.close();
+  });
+
+  it("工程を選んだ後、最初の工程を始めるまでの処理の間は、開始の準備の段階を返す（処理しているのに実行待ちと出さない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    // 組織のリポジトリの一覧を読む（候補の照合）たびに、そのときに画面へ返す値を控える
+    const seen: { steps: number; status?: string; preparing?: string; running: number }[] = [];
+    let observe: (() => void) | undefined;
+    class WatchedPulls extends FakePulls {
+      override async repositories(input: { org: string; token: string }) {
+        observe?.();
+        return super.repositories(input);
+      }
+    }
+    const pulls = new WatchedPulls();
+    const api = "https://github.com/acme/api";
+    const web = "https://github.com/acme/web";
+    pulls.ownerRepos = { "https://github.com/acme": [api, web] };
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const { service, executor } = makeService(activity, [HOLD], {
+      pulls,
+      projects,
+      gateway: fakeGateway(),
+      planner: async () => plan,
+    });
+    const { id } = service.createTask({ projectId: "default", title: "複数", repos: [api, web] });
+    observe = () => {
+      const task = service.view(id)?.task;
+      seen.push({
+        steps: task?.steps.length ?? 0,
+        status: task?.status,
+        ...(task?.preparing ? { preparing: task.preparing } : {}),
+        running: service.dashboard().queue.running,
+      });
+    };
+    const run = service.runNext(id);
+    const runId = await executor.started.promise;
+    // 情報収集・工程の選択の前の照合は、対象リポジトリの用意
+    expect(seen[0]).toEqual({ steps: 0, status: "queued", preparing: "repository", running: 1 });
+    // 工程を選んだ（StepsChosen）後、最初の工程を始める前の照合は、開始の準備
+    const afterChosen = seen.filter((s) => s.steps > 0);
+    expect(afterChosen.length).toBeGreaterThan(0);
+    for (const s of afterChosen) {
+      expect(s).toEqual({ steps: 1, status: "queued", preparing: "starting", running: 1 });
+    }
+    // 待ち行列の「実行中」に数えている間は、いつも、何かの段階を返している（実行待ちと出さない）
+    expect(seen.every((s) => s.preparing !== undefined)).toBe(true);
+    expect(await shown(service, id)).toEqual({ status: "running", preparing: undefined });
+    // 最初の工程の実行が失敗して実行待ちに戻った後は、処理していても、開始の準備の段階を返さない（範囲は、最初の工程が始まるまで）
+    seen.length = 0;
+    executor.finishHeld(runId, { kind: "failed", reason: "error", message: "失敗" });
+    await run;
+    service.resume(id, {});
+    const again = service.runNext(id);
+    await again.catch(() => {});
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((s) => s.preparing === undefined)).toBe(true);
+    activity.close();
+  });
+
+  it("チケットの確認で決められずに一時停止したら、処理の段階を返さない", async () => {
+    const { activity, service, executor, id } = ticketTask();
+    const run = service.runNext(id);
+    const runId = await executor.started.promise;
+    expect(await shown(service, id)).toEqual({ status: "queued", preparing: "triage" });
+    executor.finishHeld(runId, triageOut({ repo: "", reason: "どのリポジトリか分からない" }));
+    await run;
+    expect(await shown(service, id)).toEqual({ status: "paused", preparing: undefined });
+    activity.close();
+  });
+
+  it("チケットの確認の間に人が一時停止したら、処理の段階を返さない", async () => {
+    const { activity, service, executor, id } = ticketTask();
+    const run = service.runNext(id);
+    await executor.started.promise;
+    expect(await shown(service, id)).toEqual({ status: "queued", preparing: "triage" });
+    // 一時停止は、実行中のコンテナを止めて、処理の終わりを待つ
+    await Promise.all([run, service.pause(id)]);
+    expect(await shown(service, id)).toEqual({ status: "paused", preparing: undefined });
+    activity.close();
+  });
+
+  it("レビューする PR の確認の間に人が一時停止したら、処理の段階を返さない", async () => {
+    const { activity, service, id, started, go } = reviewTask();
+    const run = service.runNext(id);
+    await started.promise;
+    expect(await shown(service, id)).toEqual({ status: "queued", preparing: "review_target" });
+    const pausing = service.pause(id);
+    go.resolve();
+    await Promise.all([run, pausing]);
     expect(await shown(service, id)).toEqual({ status: "paused", preparing: undefined });
     activity.close();
   });

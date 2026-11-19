@@ -123,7 +123,7 @@ type Tasks = Pick<
   | "checkScheduledTask"
   | "createScheduledTask"
   | "scheduledTask"
-  | "list"
+  | "listView"
   | "listProjects"
   | "visibleTask"
 >;
@@ -182,8 +182,9 @@ export class ScheduledTasks {
   get(id: string): { schedule: ScheduleView; tasks: Task[] } | undefined {
     const schedule = this.deps.store.get(id);
     if (!schedule || !this.project(schedule.projectId)) return undefined;
+    // 画面に返すタスクなので、処理の段階（preparing）を足したものを使う（一覧・詳細と同じ表示にする。PBI-410）
     const tasks = this.deps.tasks
-      .list()
+      .listView()
       .filter((t) => t.schedule?.id === id && this.deps.tasks.visibleTask(t.id));
     return { schedule: this.view(schedule), tasks };
   }

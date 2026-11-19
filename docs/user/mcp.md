@@ -149,7 +149,7 @@ PR をレビューするタスクは、PR の番号か URL で探すのが確実
 - 結果に `nextOffset` が入っているときは、それを `offset` に渡すと続きが返ります。最後まで返すと `nextOffset` は入りません。
 - 待ち始めの時刻を読めないときは、`updatedAt` に置き換えず、理由を返して失敗にします。
 - 画面の状態の文と色・人が判断する場所へのリンク・PR の競合の案内は出ません。`state`・`approval`・`asks`・`pausedReason`・`url` を使ってください。
-- `state` が `queued` のタスクに `preparing` があるときは、最初の工程が始まる前の処理を sacty がいま進めています（値は `repository`・`gathering`・`triage`・`planning`・`review_target`。[工程が始まる前の状態の表示](tasks.md#工程が始まる前の状態の表示)）。無いときは、順番などを待っています。
+- `state` が `queued` のタスクに `preparing` があるときは、最初の工程が始まる前の処理を sacty がいま進めています（値は `repository`・`gathering`・`triage`・`planning`・`review_target`・`starting`。[工程が始まる前の状態の表示](tasks.md#工程が始まる前の状態の表示)）。無いときは、順番などを待っています。
 - 一覧は読むだけです。見つけたタスクの承認・差し戻し・再開などは、頼んだときだけ行います。
 
 ## 承認する

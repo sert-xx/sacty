@@ -2108,6 +2108,7 @@ describe("状態の表示の種類（PBI-42）", () => {
       triage: ["チケットを確認中", "Reading the ticket"],
       planning: ["進め方を判定中", "Deciding how to proceed"],
       review_target: ["レビューする PR を確認中", "Checking the PR to review"],
+      starting: ["工程の開始を準備中", "Preparing to start the step"],
     } as const;
     // 段階の一覧（core）のすべてに、文がある
     expect(Object.keys(texts).sort()).toEqual([...PREPARING_PHASES].sort());

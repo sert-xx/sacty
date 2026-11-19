@@ -394,11 +394,12 @@ While Sacty is processing the task, the status has the in-progress color and sho
 | Reading the ticket | Reading the ticket to decide the repository to work in, the title, and the summary |
 | Deciding how to proceed | The Orchestrator is choosing the plan, such as the steps |
 | Checking the PR to review | In a PR review task, reading the target PR |
+| Preparing to start the step | After the steps are chosen, getting ready to start the first step |
 
-A task shown as "Queued" is not being processed yet.
+When a task whose first step has not started is shown as "Queued", it is not being processed yet.
 It is waiting for its turn under the limit on tasks run in parallel, or for its next piece of work to start.
 
-- The task list, the dashboard, and the task details show the same status.
+- The task list, the dashboard, the task details, and the scheduled task details show the same status.
 - In the status filter of the list, a task being processed falls under "In progress" and a "Queued" task under "Waiting" ([Find and filter tasks](#find-and-filter-tasks)).
 - Until the steps are chosen, the steps column shows "Steps not chosen yet".
 

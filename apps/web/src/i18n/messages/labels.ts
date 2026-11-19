@@ -183,6 +183,7 @@ const ja = {
       triage: "チケットを確認中",
       planning: "進め方を判定中",
       review_target: "レビューする PR を確認中",
+      starting: "工程の開始を準備中",
     } satisfies Record<PreparingPhase, string>,
     noChangesReview: (n: number) => `変更なしの実装の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
     stepPrAwaitingMerge: (step: string, n: number) =>
@@ -966,6 +967,7 @@ const en: LabelMessages = {
       triage: "Reading the ticket",
       planning: "Deciding how to proceed",
       review_target: "Checking the PR to review",
+      starting: "Preparing to start the step",
     },
     noChangesReview: (n) =>
       `Implement awaiting approval with no changes${n > 1 ? ` (submission ${n})` : ""}`,

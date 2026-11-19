@@ -745,11 +745,15 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   | `triage` | 情報収集の後にやり直すチケットのトリアージ | チケットを確認中 | Reading the ticket |
   | `planning` | 進め方の判定（工程の選択から `StepsChosen` の記録まで。引き継ぐ PR の確認・ベースブランチの用意を含む） | 進め方を判定中 | Deciding how to proceed |
   | `review_target` | レビューの工程の、対象の PR の確認 | レビューする PR を確認中 | Checking the PR to review |
+  | `starting` | そのほかの、最初の工程を始めるまでの処理（工程を選んだ後の、候補の照合・外部作業の準備など） | 工程の開始を準備中 | Preparing to start the step |
 
 - 段階は、デーモンのメモリーにだけ持つ（`TaskService.preparingPhases`）。作業履歴には記録せず、`queued` の意味も変えない。
   `runNext` が、それぞれの処理を始める直前に付け、処理（`runNext`）の終わりに必ず消す。
-- 画面に返すのは、状態が `queued` で、ワーカーがそのタスクを処理していて（`inflight`）、段階が付いているときだけ（`preparingOf`）。
-  `GET /api/tasks`（`listView`）と `GET /api/tasks/:id`（`view`）のタスクに `preparing` を足す。
+- 画面に返すのは、状態が `queued` で、ワーカーがそのタスクを処理している（`inflight`。ダッシュボードの待ち行列の「実行中」と同じ印）ときだけ（`preparingOf`）。
+  - 付けた段階があれば、それを返す。
+  - 付けた段階が無ければ、工程の実行を1回も始めていない（作業履歴に `AgentRunStarted` が無い。`firstStepStarted`）タスクに限り、`starting` を返す。
+    このため、最初の工程が始まるまでは、待ち行列が「実行中」に数えるタスクに、必ず段階が入る。
+  - `GET /api/tasks`（`listView`）・`GET /api/tasks/:id`（`view`）・`GET /api/schedules/:id`（`ScheduledTasks.get`）のタスクに `preparing` を足す。
 - 次のタスクには `preparing` が無く、「実行待ち」（`waiting`）のまま出す。
   - 同時に実行する数の上限で、枠が空くのを待っているタスク。
   - コンテキストのイメージの作成を待っているタスク。
@@ -757,13 +761,14 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   - デーモンを起動し直した後の、まだ処理していないタスク。
 - 最初の工程が始まった・一時停止した・失敗して止まった後は、状態が `queued` でなくなるので出さない。
   画面は 3 秒ごとの取り直しで追従する。
-- 画面の判定は `statusText`・`statusTone`。タスクの一覧・ダッシュボード・タスクの詳細・関係するタスクの行が同じ関数を使い、一覧の状態の絞り込みも同じ区分になる。
+- 工程の実行を1回でも始めた後に `queued` へ戻ったタスク（工程と工程の間・失敗した実行のやり直しなど）は、処理していても、付けた段階が無ければ `preparing` が無く、「実行待ち」と出す（この表示の対象は、最初の工程が始まるまで）。
+- 画面の判定は `statusText`・`statusTone`。タスクの一覧・ダッシュボード・タスクの詳細・関係するタスクの行・スケジュールタスクの詳細が同じ関数を使い、一覧の状態の絞り込みも同じ区分になる。
 - 工程が決まる前の工程の欄には「工程は未定」と出す（`parts.bits.choosing`）。
 - `sacty mcp` の要約にも同じ `preparing` が入る（[MCP サーバー](mcp-server.md#タスクの要約)）。
 
 関係する ADR: [最初の工程が始まる前の処理の段階を、デーモンのメモリーから画面に返す](../adr/20261119-1612-show-preparing-phase-from-daemon-memory.md)
 
-コード: `apps/daemon/src/service.ts`（`preparingPhases`・`preparingOf`・`listView`・`view`・`runNext`・`runNextInner`）、`apps/daemon/src/server.ts`（`createApp`）、`packages/core/src/projection.ts`（`PREPARING_PHASES`・`PreparingPhase`・`Task.preparing`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`）、`apps/web/src/i18n/messages/labels.ts`（`state.preparing`）、`apps/web/src/components/task-bits.tsx`（`StepChipsView`）
+コード: `apps/daemon/src/service.ts`（`preparingPhases`・`preparingOf`・`firstStepStarted`・`listView`・`view`・`runNext`・`runNextInner`）、`apps/daemon/src/schedules.ts`（`ScheduledTasks.get`）、`apps/daemon/src/server.ts`（`createApp`）、`packages/core/src/projection.ts`（`PREPARING_PHASES`・`PreparingPhase`・`Task.preparing`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`）、`apps/web/src/i18n/messages/labels.ts`（`state.preparing`）、`apps/web/src/components/task-bits.tsx`（`StepChipsView`）
 
 ## 情報収集
 
