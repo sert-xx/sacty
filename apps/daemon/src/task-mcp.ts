@@ -428,6 +428,14 @@ const TaskListSchema = z.object({
   tasks: z.array(TaskSummarySchema),
 });
 
+const CleanupResultSchema = z.object({
+  target: z.string().describe("container・workspace・session・branch・pull_request"),
+  result: z
+    .enum(["done", "skipped", "failed"])
+    .describe("done：片付けた、skipped：対象が無かった、failed：失敗した"),
+  reason: z.string().optional().describe("失敗の理由・片付けたものの名前（PR の URL・ブランチ名）"),
+});
+
 /** get_task の結果（要約に、説明・レビューの本文・止まっている理由・直近の作業履歴を足す）。 */
 const TaskDetailSchema = TaskSummarySchema.extend({
   body: z.string().describe("説明（長ければ切り詰める）"),
@@ -448,6 +456,16 @@ const TaskDetailSchema = TaskSummarySchema.extend({
   escalation: EscalationSchema.optional().describe(
     "状態が escalated（人の判断待ち）のときだけ入る、判断待ちの理由と、MCP でできること・画面で決めること",
   ),
+  cancelled: z
+    .object({
+      at: z.string(),
+      cleanup: z.array(CleanupResultSchema),
+      failed: z
+        .array(z.object({ target: z.string(), reason: z.string() }))
+        .describe("失敗した片付け。人が手で片付けるもの"),
+    })
+    .optional()
+    .describe("中止したタスクだけ入る、片付けの結果（対象ごと）と、失敗したもの"),
   resumeBlocked: z
     .object({
       reason: z.string().describe("このツールで再開できない理由の文"),
@@ -626,14 +644,6 @@ const CancelPlanSchema = z.object({
     })
     .describe("cancel_task にそのまま渡す値（利用者に伝え、中止を頼まれたときだけ使う）"),
   task: TaskSummarySchema,
-});
-
-const CleanupResultSchema = z.object({
-  target: z.string().describe("container・workspace・session・branch・pull_request"),
-  result: z
-    .enum(["done", "skipped", "failed"])
-    .describe("done：片付けた、skipped：対象が無かった、failed：失敗した"),
-  reason: z.string().optional().describe("失敗の理由・片付けたものの名前（PR の URL・ブランチ名）"),
 });
 
 /** cancel_task の結果。 */
@@ -880,7 +890,7 @@ function cancelBlock(task: Task): { reason: string; decideOnScreen: string[] } |
  * （閉じる直前に GitHub で開いていなければ、デーモンは閉じずに飛ばす）。ブランチは、プッシュしたブランチ（無ければ実装の
  * PR のブランチ）・タスクブランチ・要求要件と設計のブランチで、引き継いだ PR のブランチは消さない。
  */
-export function cancelTargets(task: Task): {
+function cancelTargets(task: Task): {
   closePullRequests: string[];
   deleteBranches: string[];
   untouchedPullRequests: { url: string; reason: string }[];
@@ -1145,6 +1155,19 @@ export function describeTask(
     ...(humanAskDetail ? { humanAsks: humanAskDetail } : {}),
     ...(escalation ? { escalation } : {}),
     ...(resumeBlocked ? { resumeBlocked } : {}),
+    ...(task.cancelled ? { cancelled: describeCancelled(task) } : {}),
+  };
+}
+
+/** 中止したタスクの、片付けの結果と、失敗したもの。 */
+function describeCancelled(task: Task): NonNullable<TaskDetail["cancelled"]> {
+  const cleanup = cleanupResults(task);
+  return {
+    at: task.cancelled?.at ?? task.updatedAt,
+    cleanup,
+    failed: cleanup
+      .filter((c) => c.result === "failed")
+      .map((c) => ({ target: c.target, reason: c.reason ?? "理由は記録されていません" })),
   };
 }
 
@@ -1985,6 +2008,7 @@ const TOOLS: readonly ToolDefinition[] = [
       "タスクの詳細を返します。要約（list_tasks と同じ）に加えて、説明・レビューの本文（投稿済みなら）・止まっている理由・直近の作業履歴の種類が入ります。",
       "承認待ちで、人に確かめたいこと（工程のエージェントが聞き返し・推測で決めたこと）があるときは humanAsks に、中身（指摘の ID・工程・文）と答え方（承認・request_changes の comments・PR のコメント）が入ります（無いときは入りません。要約の asks は件数）。",
       "状態が escalated（人の判断待ち）のときは escalation に、理由・対象の工程・やり直す工程・書きかけの指摘の件数・開いている変更の申し出の ID と、MCP でできること・画面で決めることが入ります。",
+      "中止したタスクは cancelled に、片付けの結果（対象ごとの done・skipped・failed と理由）と、失敗した片付け（人が手で片付けるもの）が入ります（中止していないタスクには入りません）。",
       "要件・設計などの成果物の本文にある「確認したいこと」の節は、humanAsks には出ません。get_deliverable で本文を読んでください。",
       UNTRUSTED_NOTE,
       ASKS_NOTE,
@@ -2447,11 +2471,16 @@ const TOOLS: readonly ToolDefinition[] = [
       const notes: string[] = [];
       if (task.reviewTasks && task.reviewTasks.length > 0) {
         notes.push(
-          "このタスクの PR をレビューする子タスクも、次の PR の確認（60秒ごと）で中止されます。中止したレビューの子タスクは、再レビューできません。",
+          "このタスクの PR をレビューする子タスクのうち、終わっていないものがあれば、次の PR の確認（60秒ごと）で中止されます。中止したレビューの子タスクは、再レビューできません。",
         );
       }
       if (containers.length > 0) {
         notes.push("実行中の実行は打ち切られます（かけた費用は戻りません）。");
+      }
+      if (!blocked) {
+        notes.push(
+          "質問への答え・エラーの分析の実行中の実行も、止められます（対象には数えません）。",
+        );
       }
       return {
         taskId: task.id,
@@ -2498,7 +2527,9 @@ const TOOLS: readonly ToolDefinition[] = [
       "結果には、片付けの結果（cleanup。対象ごとに done：片付けた・skipped：対象が無かった・failed：失敗した）・閉じた PR・消したブランチを返します。",
       "片付けの一部が失敗しても、中止は記録されます（失敗の理由は failed と短い文に出ます。sacty の外に残ったものは、人が手で片付けます）。",
       "実行中のタスクは、コンテナを止めて処理の終わりを待ち、PR を閉じ、ブランチを消すので、応答に時間がかかります。時間切れで結果を受け取れなくても、後で中止になる（片付けが続く）ことがあります。",
-      "結果を受け取れなかったときは、中止されている・片付けが続いている可能性があります。自動でやり直さず、get_task で state を確かめてください。まだ中止でない（cancelled でない）なら、呼び直さず wait_for_task で待ってください。cancelled なら、片付けの結果を get_task の作業履歴・画面で確かめてください。",
+      "結果を受け取れなかったときは、中止されている・片付けが続いている可能性があります。自動でやり直さず、get_task で state を確かめてください。",
+      "実行中のタスクの中止は、終わるまで paused に見えることがあります。そのときは、中止に失敗した・一時停止になったとも、再開できるとも利用者に伝えず、呼び直さず wait_for_task で cancelled になるまで待ってください。",
+      "cancelled になったら、get_task の cancelled（片付けの結果と、失敗したもの）を確かめて利用者に伝えます。待っても cancelled にならない（中止が進んでいない）ときは、状況を利用者に伝え、利用者が望めば get_cancel_plan から呼び直してください（片付けの途中なら、デーモンが断ります）。",
       UNTRUSTED_NOTE,
     ].join(""),
     input: CancelToolInput,
@@ -2585,7 +2616,8 @@ const INSTRUCTIONS = [
   "一時停止を頼まれたら、get_task の canPause が true のタスクに pause_task を呼びます（実行中の実行は打ち切られ、再開すると工程を最初からやり直します。承認待ちを止めると、承認ゲートと PR の見守りが止まります）。",
   "再開を頼まれたら、get_task の pausedReason・pausedMessage・canResume を確かめてから、resume_task を呼びます（止まった工程を実行し直し、時間と費用がかかります。同じ原因ならまた止まります）。",
   "予算の上限の引き上げ・テストの扱い・子タスクの中止を認める判断・作業するリポジトリの選択など、画面で人が決める判断が要る停止は、resume_task で再開できません（get_task の resumeBlocked の、画面で人が決めることを利用者に伝えます）。",
-  "中止を頼まれたときだけ、get_cancel_plan で片付けの対象（閉じる PR・消すブランチ・作業領域）を読み、利用者に伝えてから、cancel_task を呼びます。中止は取り消せず、再開もできません（PR を閉じ、sacty のブランチと作業領域を消します。作業履歴とセッションログは残ります）。",
+  "中止を頼まれたときだけ、get_cancel_plan で片付けの対象（閉じる PR・消すブランチ・作業領域）を読み、利用者に伝えてから、cancel_task を呼びます。中止は取り消せず、再開もできません（PR を閉じ、sacty のブランチと作業領域を消します。作業履歴とセッションログは残ります。質問への答え・エラーの分析の実行中の実行も止めます）。",
+  "実行中のタスクの中止は、時間切れで結果を受け取れなくても続くことがあり、終わるまで paused に見えます。そのときは、失敗や再開と伝えず、wait_for_task で cancelled まで待ち、get_task の cancelled で片付けの結果を確かめて伝えます。待っても cancelled にならなければ、利用者に伝え、望まれれば get_cancel_plan から呼び直します。",
   "「止めて」「待って」は一時停止（pause_task）で、中止ではありません。迷ったら、呼ばずに利用者に確かめます。完了したタスク・PR のレビューの子タスク・分割の親と子は、cancel_task で中止できません（理由と、画面で人が行えることを伝えます）。",
   "タスクの工程ごとの成果物は list_deliverables・get_deliverable、エージェントの実行の一覧は list_runs で読みます（成果物と実行は読むだけで、ログの取得はできません）。",
   "承認・差し戻しを頼まれたときは、get_task の humanAsks（人に確かめたいこと）と escalation（人の判断待ちの理由）があれば確かめ、利用者に伝えてから進めます（答える専用のツールは無く、答えは request_changes の comments か PR のコメントで書きます）。",

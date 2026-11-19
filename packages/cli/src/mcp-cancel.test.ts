@@ -316,6 +316,95 @@ describe("本物のデーモンのサービスを通した、タスクの中止�
     t.activity.close();
   });
 
+  it("記録では開いているが GitHub では閉じ済みの要求要件・設計の PR は、読み取りには出るが、中止では閉じず、結果の閉じた PR にも出ない", async () => {
+    const t = await withPullRequest();
+    t.live(t.id).stepPullRequests = [
+      {
+        step: "requirements",
+        repo: "https://github.com/acme/app",
+        number: 8,
+        url: "https://github.com/acme/app/pull/8",
+        branch: "sacty/req-8",
+        state: "open",
+        submission: 1,
+      },
+    ] as unknown as Task["stepPullRequests"];
+    t.live(t.id).stepBranches = ["sacty/req-8"];
+    t.pulls.states[8] = { state: "closed" };
+    const planned = await t.planOf(t.id);
+    expect(planned.willClose.pullRequests).toContain("https://github.com/acme/app/pull/8");
+    const r = await t.call("cancel_task", { task_id: t.id, ...planned.cancelArguments });
+    expect(r.isError).toBe(false);
+    expect(t.pulls.closed.map((c) => c.number)).toEqual([7]);
+    expect((r.data as Cancelled).closedPullRequests).toEqual([
+      "https://github.com/acme/app/pull/7",
+    ]);
+    expect(t.repos.deleted).toEqual(planned.willDelete.branches);
+    t.activity.close();
+  });
+
+  it("消すブランチ：プッシュしたブランチが PR のブランチと違うときは、PR のブランチを数えず、重複は1つにして、読み取りと実際の削除が一致する", async () => {
+    const t = await withPullRequest();
+    const task = t.live(t.id);
+    const taskBranch = "sacty/tb";
+    Object.assign(task, {
+      pushedBranch: { ...(task.pushedBranch ?? {}), branch: "sacty/pushed-x" },
+      taskBranch: { ...(task.taskBranch ?? {}), branch: taskBranch },
+      stepBranches: ["sacty/pushed-x", taskBranch, "sacty/req-8"],
+    });
+    const planned = await t.planOf(t.id);
+    expect(planned.willDelete.branches).toEqual(["sacty/pushed-x", taskBranch, "sacty/req-8"]);
+    const r = await t.call("cancel_task", { task_id: t.id, ...planned.cancelArguments });
+    expect(r.isError).toBe(false);
+    expect(t.repos.deleted).toEqual(planned.willDelete.branches);
+    expect((r.data as Cancelled).deletedBranches).toEqual(planned.willDelete.branches);
+    t.activity.close();
+  });
+
+  it("実装の PR の番号が無いときは、閉じる PR に出ず、実際にも閉じない", async () => {
+    const t = await withPullRequest();
+    Object.assign(t.live(t.id), { pullRequest: undefined });
+    const planned = await t.planOf(t.id);
+    expect(planned.willClose.pullRequests).toEqual([]);
+    const r = await t.call("cancel_task", { task_id: t.id, ...planned.cancelArguments });
+    expect(r.isError).toBe(false);
+    expect(t.pulls.closed).toEqual([]);
+    t.activity.close();
+  });
+
+  it("デーモンが cancelled でないタスクを返したときは、中止していないと伝える", async () => {
+    let live: (id: string) => Task = () => undefined as unknown as Task;
+    const t = await setup([], async (m, path) => {
+      if (m === "POST" && path.endsWith("/cancel")) {
+        const id = path.split("/")[3] as string;
+        return new Response(JSON.stringify({ task: live(id) }), { status: 200 });
+      }
+      return undefined;
+    });
+    live = t.live;
+    const id = make(t, "題");
+    const r = await t.cancel(id);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("中止しませんでした");
+    t.activity.close();
+  });
+
+  it("get_task は、中止したタスクにだけ、片付けの結果と失敗したもの（理由つき）を出す（結果を受け取れなかった後でも読める）", async () => {
+    const t = await withPullRequest();
+    expect((await t.detail(t.id)).cancelled).toBeUndefined();
+    t.pulls.closeFail = "GitHub が 403 を返しました";
+    const r = await t.cancel(t.id);
+    expect(r.isError).toBe(false);
+    const d = (await t.detail(t.id)).cancelled;
+    expect(d?.cleanup.map((c) => `${c.target}:${c.result}`)).toEqual(
+      expect.arrayContaining(["pull_request:failed", "branch:done"]),
+    );
+    expect(d?.failed).toHaveLength(1);
+    expect(d?.failed[0]?.target).toBe("pull_request");
+    expect(d?.failed[0]?.reason).toContain("403");
+    t.activity.close();
+  });
+
   it("引数が対象と一致しない（足りない・多い・読んだ後に増えた）ときは、中止せずにいまの対象を返し、API に送らず、作業履歴は増えない", async () => {
     const t = await withPullRequest();
     const planned = await t.planOf(t.id);
@@ -670,7 +759,9 @@ describe("中止を頼んだ後に結果を受け取れなかったときの案�
       expect(r.text).toContain("中止されている（片付けが続いている）可能性があります");
       expect(r.text).toContain("自動でやり直さず");
       expect(r.text).toContain("get_task で state");
-      expect(r.text).toContain("呼び直さず wait_for_task で待って");
+      expect(r.text).toContain("呼び直さず wait_for_task で cancelled になるまで待って");
+      expect(r.text).toContain("paused に見えることがあります");
+      expect(r.text).toContain("get_cancel_plan から呼び直して");
       t.activity.close();
     });
   }
@@ -684,16 +775,22 @@ describe("中止を頼んだ後に結果を受け取れなかったときの案�
       }
       return undefined;
     });
-    const a = await refused.cancel(make(refused, "題"));
+    const aid = make(refused, "題");
+    const a = await refused.cancel(aid);
     expect(a.isError).toBe(true);
     expect(a.text).not.toContain("可能性があります");
+    expect(a.text).toContain("デーモンにつながりません");
+    expect(refused.live(aid).cancelled).toBeUndefined();
     const unauthorized = await setup([], async (m) =>
       m === "POST"
         ? new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })
         : undefined,
     );
-    const b = await unauthorized.cancel(make(unauthorized, "題"));
+    const bid = make(unauthorized, "題");
+    const b = await unauthorized.cancel(bid);
     expect(b.isError).toBe(true);
+    expect(b.text).toContain("認証できません");
+    expect(unauthorized.live(bid).cancelled).toBeUndefined();
     expect(b.text).not.toContain("中止されている");
     refused.activity.close();
     unauthorized.activity.close();

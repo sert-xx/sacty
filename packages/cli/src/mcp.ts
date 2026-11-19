@@ -127,7 +127,7 @@ const uncertainPause = uncertainOf("一時停止", PAUSE_UNCERTAIN);
  * 中止になる（片付けが続く）ことがある。
  */
 const CANCEL_UNCERTAIN =
-  "中止されている（片付けが続いている）可能性があります。自動でやり直さず、get_task で state を確かめてください。まだ中止でない（cancelled でない）なら、中止の片付けが続いている可能性があるので、呼び直さず wait_for_task で待ってください。cancelled なら、中止されています（片付けの結果は、画面か、中止の後の get_task で確かめてください）。";
+  "中止されている（片付けが続いている）可能性があります。自動でやり直さず、get_task で state を確かめてください。実行中のタスクの中止は、終わるまで paused に見えることがあります。そのときは、中止に失敗した・一時停止になったとも、再開できるとも利用者に伝えず、呼び直さず wait_for_task で cancelled になるまで待ってください。cancelled になったら、get_task の cancelled（片付けの結果と、失敗したもの）を確かめて、利用者に伝えてください。待っても cancelled にならない（中止が進んでいない）ときは、状況を利用者に伝え、利用者が望めば get_cancel_plan から呼び直してください（片付けの途中なら、デーモンが断ります）。";
 const uncertainCancel = uncertainOf("中止", CANCEL_UNCERTAIN);
 
 /** 再開を頼んだ後の案内（再開されたかどうかが分からない）。 */
