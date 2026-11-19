@@ -466,6 +466,24 @@ describe("本物のデーモンのサービスを通した、中止したタス�
     t.activity.close();
   });
 
+  it("resume_task の断り：中止したタスクには rerun_task への案内を返し、中止の歯止めの文は付けない。実行待ちなどは元の文のまま", async () => {
+    const t = await setup();
+    const id = await cancelled(t);
+    const tasks = t.taskCount();
+    const r = await t.call("resume_task", { task_id: id });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("中止したタスクは再開できません");
+    expect(r.text).toContain("利用者に頼まれたときだけ rerun_task で再実行します");
+    expect(r.text).not.toContain("やり直しを頼まれただけでは、中止しません");
+    const queued = t.service.createTask({ projectId: "default", title: "実行待ち" });
+    const q = await t.call("resume_task", { task_id: queued.id });
+    expect(q.isError).toBe(true);
+    expect(q.text).toContain("一時停止中のタスクではないため、再開できません");
+    expect(q.text).not.toContain("中止しません");
+    expect(t.taskCount()).toBe(tasks + 1);
+    t.activity.close();
+  });
+
   it("ツールの説明とサーバーの使い方の文に、新しいタスク・費用・元は二度と再実行できない・引き継がない・頼まれたときだけ・画面で行うことが書かれ、cancel_task に再実行の案内がある", async () => {
     const t = await setup();
     const { tools } = await t.client.listTools();

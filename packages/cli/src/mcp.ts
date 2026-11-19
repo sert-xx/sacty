@@ -139,7 +139,8 @@ const RESUME_UNCERTAIN = uncertainNotice(
 const uncertainResume = uncertainOf("再開", RESUME_UNCERTAIN);
 
 /**
- * 再実行を頼んだ後の案内（作られたかどうかが分からない）。再実行は1度だけで、2回目はデーモンが断る（二重には作られない）ので、
+ * 再実行を頼んだ後の案内（作られたかどうかが分からない）。再実行は1度だけで、2回目は断られる（MCP の層が先に rerunBy を見て送らずに断る。確かめと送信の間に
+ * 別の再実行が入ったときだけ、デーモンが rerun.alreadyRerun で断る。どちらもタスクは増えない）ので、
  * 元のタスクの rerunBy で、作られたかどうかを確かめられる。
  */
 const RERUN_UNCERTAIN =
