@@ -1,6 +1,6 @@
 import type { Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { fillTemplate, limitBody, PR_BODY_MAX } from "./pr-template.js";
+import { fillTemplate, limitBody, PR_BODY_MAX, TRUNCATED_NOTE } from "./pr-template.js";
 import { buildStepPullRequestBodyParts, buildStepPullRequestBodyText } from "./prompts.js";
 import { readStepQuestions, STEP_QUESTIONS_MAX } from "./step-questions.js";
 
@@ -281,25 +281,76 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
     }
   });
 
+  it("件数と答え方の行が省かれる位置に来るほど短い上限でも、keep があれば残り、keep が無ければ消える", () => {
+    const remarks = [
+      {
+        id: "r-1",
+        step: "design",
+        text: "指摘".padEnd(3000, "あ"),
+        response: "対応した",
+        voided: false,
+      },
+    ];
+    const t = task(FORM_A, { remarks } as unknown as Partial<Task>);
+    const plain = buildStepPullRequestBodyText(t, "design", PATH);
+    const filled = fillTemplate(
+      "## 目的\n\n## 変更\n",
+      buildStepPullRequestBodyParts(t, "design", PATH),
+    );
+    for (const body of [plain, filled]) {
+      // 切れ目が、本文の冒頭（件数の行より前）に来る上限
+      const max = body.footer.length + TRUNCATED_NOTE.length + 64 + 100;
+      const without = limitBody(body.main, body.footer, max, []);
+      expect(without.truncated).toBe(true);
+      expect(without.body, without.body).not.toContain(ANSWER_MERGE);
+      const kept = limitBody(
+        body.main,
+        body.footer,
+        max + body.keep.join("").length + 2,
+        body.keep,
+      ).body.split("\n");
+      expect(kept).toContain(ANSWER_COMMENT);
+      expect(kept).toContain(ANSWER_MERGE);
+    }
+  });
+
   it("@ メンション・閉じるキーワードを無効にし、使った秘密の値は切れ目にまたがっても先頭を残さない", () => {
     const secret = "sk-secret-value-1234567890";
-    const filler = "あ".repeat(STEP_QUESTIONS_MAX - 10);
+    const head = [
+      "### must",
+      "なし",
+      "### should",
+      "- @sert-xx に聞く。closes #1 と Fixes #2（推奨：はい）",
+      "- ",
+    ].join("\n");
+    // 写す中身（見出しの次の行から）の、切れ目（6,000 文字）の 10 文字手前から秘密が始まるようにする
+    const filler = "あ".repeat(STEP_QUESTIONS_MAX - 10 - head.length - 3);
+    const output = `## 確認したいこと\n${head}${filler}${secret}${"い".repeat(300)}`;
+    expect(readStepQuestions(output)).toMatchObject({ kind: "counted", should: 2 });
+    const body = text(output, [secret]).main;
+    expect(body).toContain("@\u200bsert-xx");
+    expect(body).toContain("closes \u200b#1");
+    expect(body).toContain("Fixes \u200b#2");
+    expect(body).not.toMatch(/@sert/);
+    expect(body).not.toMatch(/closes #1|Fixes #2/);
+    expect(body).not.toContain("sk-s");
+    expect(body).toContain("長いので省きました");
+  });
+
+  it("文字参照・URL 形式の閉じるキーワードも無効にする", () => {
     const output = [
       "## 確認したいこと",
       "### must",
       "なし",
       "### should",
-      "- @sert-xx に聞く。closes #1 と Fixes #2（推奨：はい）",
-      `- ${filler}${secret}`,
+      "- &#64;user と closes &#35;1（推奨：a）",
+      "- closes:https://example.com/x と closes <https://example.com/y>（推奨：b）",
     ].join("\n");
-    const body = text(output, [secret]).main;
-    expect(body).toContain("@​sert-xx");
-    expect(body).toContain("closes ​#1");
-    expect(body).toContain("Fixes ​#2");
-    expect(body).not.toMatch(/@sert/);
-    expect(body).not.toMatch(/closes #1|Fixes #2/);
-    expect(body).not.toContain("sk-secret");
-    expect(body).not.toContain("sk-s");
+    const body = mainOf(output);
+    expect(body).toContain("&amp;#64;user");
+    expect(body).toContain("&amp;#35;1");
+    expect(body).toContain("closes:\u200bhttps://example.com/x");
+    expect(body).toContain("closes &lt;\u200bhttps://example.com/y>");
   });
 
   it("閉じていないコードブロックを閉じて空行を入れ、続く確かめる所が見出しのまま出る", () => {
@@ -318,5 +369,101 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       provenances: { design: { items: [], unclassified: [] } },
     } as Partial<Task>).main;
     expect(body).toMatch(/\| 1 \| 2 \|\n```\n\n## 確かめる所/);
+  });
+
+  it("書き方の小さな違い：確認しないと決めたこと：本文（1行）・字下げした「なし」・**must**：なし を読み取る", () => {
+    const inline = [
+      "## 確認したいこと",
+      "- must：なし",
+      "- should",
+      "  1. A（推奨：a）",
+      "  2. B（推奨：b）",
+      "- 確認しないと決めたこと：税率は固定",
+      "- 余り",
+    ].join("\n");
+    expect(readStepQuestions(inline)).toMatchObject({ kind: "counted", must: 0, should: 2 });
+    expect(mainOf(inline)).not.toContain("税率は固定");
+    const indentedNone = [
+      "## 確認したいこと",
+      "- must",
+      "  - なし",
+      "- should",
+      "  1. A（推奨：a）",
+    ].join("\n");
+    expect(readStepQuestions(indentedNone)).toMatchObject({ kind: "counted", must: 0, should: 1 });
+    const boldRest = ["## 確認したいこと", "**must**：なし", "**should**：A（推奨：a）"].join("\n");
+    expect(readStepQuestions(boldRest)).toMatchObject({ kind: "counted", must: 0, should: 1 });
+    const boldNone = ["## 確認したいこと", "**must**：なし", "**should**：なし"].join("\n");
+    expect(readStepQuestions(boldNone)).toEqual({ kind: "none" });
+  });
+
+  it("改行が CRLF の成果物も読み取る", () => {
+    const crlf = FORM_A.replace(/\n/g, "\r\n");
+    expect(readStepQuestions(crlf)).toMatchObject({ kind: "counted", must: 1, should: 2 });
+    expect(mainOf(crlf)).not.toContain("\r");
+  });
+
+  it("長い 1 行があっても、時間がかからない", () => {
+    const start = Date.now();
+    const output = [
+      `# ${"\t#".repeat(40_000)}`,
+      "## 確認したいこと",
+      "### must",
+      "なし",
+      "### should",
+      `- ${"close.".repeat(100_000)}`,
+    ].join("\n");
+    expect(readStepQuestions(output)).toMatchObject({ kind: "counted", should: 1 });
+    mainOf(output);
+    expect(Date.now() - start).toBeLessThan(2_000);
+  });
+
+  it("インラインコード・コードブロックの中の <!--・<details> を数えず、コードの外の生の HTML は無効にする。閉じ行で終わっても後ろが巻き込まれない", () => {
+    const output = [
+      "## 確認したいこと",
+      "### must",
+      "なし",
+      "### should",
+      "- `<!--` と `<details>` を書く（推奨：a）",
+      "- <details open>と<DETAILS>と<!-- 閉じない（推奨：b）",
+      "  ```html",
+      "  <!-- x",
+      "  ```",
+    ].join("\n");
+    const body = text(output, undefined, {
+      provenances: { design: { items: [], unclassified: [] } },
+    } as Partial<Task>).main;
+    expect(body).toContain("`<!--` と `<details>`");
+    expect(body).not.toMatch(/<details open>|<DETAILS>/);
+    expect(body).toContain("&lt;details open>");
+    expect(body).toContain("&lt;!-- 閉じない");
+    expect(body).toContain("  <!-- x\n  ```\n");
+    expect(body).not.toMatch(/```\s*-->/);
+    expect(body).toMatch(/```\n\n## 確かめる所/);
+  });
+
+  it("切れ目が絵文字の途中・コードブロックの中でも、壊れた文字を残さず、コードブロックを閉じる", () => {
+    const emoji = [
+      "## 確認したいこと",
+      "### must",
+      "なし",
+      "### should",
+      `- ${"あ".repeat(STEP_QUESTIONS_MAX - 12)}😀😀😀`,
+    ].join("\n");
+    expect(mainOf(emoji)).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    const inFence = [
+      "## 確認したいこと",
+      "### must",
+      "なし",
+      "### should",
+      "- A（推奨：a）",
+      "```",
+      `<!-- ${"x".repeat(STEP_QUESTIONS_MAX)}`,
+    ].join("\n");
+    const body = text(inFence, undefined, {
+      provenances: { design: { items: [], unclassified: [] } },
+    } as Partial<Task>).main;
+    expect(body).toMatch(/\n```\n\n…（長いので省きました/);
+    expect(body).toMatch(/## 確かめる所/);
   });
 });

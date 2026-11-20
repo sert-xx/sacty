@@ -9,13 +9,16 @@ import { type CodeFence, closesFence, openingFence } from "@sacty/core";
 /** 写す中身の上限（文字）。 */
 export const STEP_QUESTIONS_MAX = 6_000;
 
-export type StepQuestions =
+type StepQuestions =
   | { kind: "empty" }
   | { kind: "missing" }
   | { kind: "none" }
   | { kind: "counted"; must: number; should: number; content: string }
   | { kind: "uncounted"; content: string };
 
+/** 見出し・札として読む行の長さの上限（これより長い行は読まない。正規表現が長い行で遅くならないようにする）。 */
+const LINE_MAX = 2_000;
+// HEADING_LINE・BOLD_LABEL_LINE は prompts.ts の同名の定数と同じ（prompts.ts を import すると循環になるので写した）
 const HEADING_LINE = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t#]*$/;
 const BOLD_LABEL_LINE = /^ {0,3}\*\*(.+?)\*\*[ \t]*[：:]?[ \t]*$/;
 const LIST_HEAD = /^(\s*)(?:[-*+]|\d+[.)])[ \t]+(.*)$/;
@@ -50,6 +53,7 @@ const plain = (text: string) =>
 
 /** 見出し・太字の札の行の、深さ（太字の札は 7）と名前。 */
 function headingOf(line: string): { level: number; name: string } | undefined {
+  if (line.length > LINE_MAX) return undefined;
   const heading = HEADING_LINE.exec(line);
   if (heading) return { level: (heading[1] as string).length, name: plain(heading[2] as string) };
   const label = BOLD_LABEL_LINE.exec(line);
@@ -57,14 +61,24 @@ function headingOf(line: string): { level: number; name: string } | undefined {
   return undefined;
 }
 
-/** 行の頭の記号・太字を除いた文が「なし」だけか。 */
+/** 行の先頭の空白・箇条書きの記号・太字を除いた「素の文」。 */
+function bare(line: string): string {
+  return line
+    .trim()
+    .replace(/^(?:[-*+]|\d+[.)])[ \t]+/, "")
+    .replace(/\*\*|__|`/g, "")
+    .trim();
+}
+
+/** 素の文が「なし」だけか。 */
 function isNone(text: string): boolean {
-  return /^なし[。.]?$/.test(
-    text
-      .replace(/\*\*|__/g, "")
-      .replace(/^(?:[-*+]|\d+[.)])[ \t]+/, "")
-      .trim(),
-  );
+  return /^なし[。.]?$/.test(bare(text));
+}
+
+/** 素の文が「確認しないと決めたこと」で始まり、後ろが ：・:・行末のいずれかか。 */
+function isDecidedLine(line: string): boolean {
+  if (line.length > LINE_MAX) return false;
+  return /^確認しないと決めたこと(?:[：:]|$)/.test(bare(line));
 }
 
 function sectionBody(output: string): string[] | undefined {
@@ -90,11 +104,7 @@ function sectionBody(output: string): string[] | undefined {
       if (head && head.level <= level && !(level === 7 && MUST_SHOULD.test(head.name))) break;
       // 「確認しないと決めたこと」から後ろは写さない（見出し・札・見出しでない行）
       if (head && DECIDED_NAME.test(head.name)) break;
-      if (
-        !head &&
-        /^確認しないと決めたこと[：:]?$/.test(plain(entry.line.replace(LIST_HEAD, "$2")))
-      )
-        break;
+      if (!head && isDecidedLine(entry.line)) break;
     }
     body.push(entry);
   }
@@ -104,9 +114,17 @@ function sectionBody(output: string): string[] | undefined {
 type Label = { kind: "must" | "should"; at: number; rest: string };
 
 function labelOf(line: string): { kind: "must" | "should"; rest: string } | undefined {
+  if (line.length > LINE_MAX) return undefined;
   const head = headingOf(line);
   const list = head ? undefined : LIST_HEAD.exec(line);
-  const text = head ? head.name : list ? plain(list[2] as string) : undefined;
+  // 見出し・箇条書きの頭・太字で始まる行（`**must**：なし` など）だけを札として読む
+  const text = head
+    ? head.name
+    : list
+      ? plain(list[2] as string)
+      : /^\s*\*\*/.test(line)
+        ? bare(line)
+        : undefined;
   if (text === undefined) return undefined;
   const hit = MUST_SHOULD.exec(text);
   if (!hit) return undefined;
@@ -136,7 +154,7 @@ function countQuestions(body: string[]): { must: number; should: number } | unde
       return item ? [(item[1] as string).replace(/\t/g, "    ").length] : [];
     });
     if (label.rest && isNone(label.rest)) counts[label.kind] = 0;
-    else if (!label.rest && range.length > 0 && isNone(range.map((e) => e.line).join(" ")))
+    else if (!label.rest && range.length > 0 && range.every((e) => isNone(e.line)))
       counts[label.kind] = 0;
     else if (items.length > 0) {
       const top = Math.min(...items);
@@ -151,7 +169,7 @@ function countQuestions(body: string[]): { must: number; should: number } | unde
 /** 成果物（内部のパスの置き換えと秘密の伏せを済ませたもの）から、「確認したいこと」の節を読み取る。 */
 export function readStepQuestions(output: string | undefined): StepQuestions {
   if (!output?.trim()) return { kind: "empty" };
-  const body = sectionBody(output);
+  const body = sectionBody(output.replace(/\r\n?/g, "\n"));
   if (!body) return { kind: "missing" };
   const text = body.join("\n").trim();
   if (!text) return { kind: "missing" };
@@ -167,30 +185,50 @@ function withoutMentions(text: string): string {
   return text.replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b");
 }
 
-/** 閉じるキーワード（closes #1 など）と # の間に見えない文字を挟み、Issue の自動クローズを防ぐ。 */
+/** 閉じるキーワード（closes #1 など）と # の間・URL の前に見えない文字を挟み、Issue の自動クローズを防ぐ。 */
 function withoutClosing(text: string): string {
   const keyword = "\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\b";
   return text
-    .replace(new RegExp(`(${keyword}:?[ \\t]*(?:[\\w.-]+/[\\w.-]+)?)#(?=\\d)`, "gi"), "$1\u200b#")
-    .replace(new RegExp(`(${keyword}:?[ \\t]+)(?=https?://)`, "gi"), "$1\u200b");
+    .replace(
+      new RegExp(`(${keyword}:?[ \\t]*(?:[\\w.-]{1,100}/[\\w.-]{1,100})?)#(?=\\d)`, "gi"),
+      "$1\u200b#",
+    )
+    .replace(new RegExp(`(${keyword}:?[ \\t]*(?:&lt;|[<\\[(])?)(?=https?://)`, "gi"), "$1\u200b");
 }
 
-/** 上限で切る（サロゲートペアの間では切らない）。閉じていないコードブロック・コメント・折りたたみは閉じる。 */
-function limitContent(content: string, path: string, max: number): string {
-  const safe = withoutClosing(withoutMentions(content));
-  let text = safe;
+/**
+ * コードの外の文の、文字参照（&#64; など）と生の HTML（<!--・<details> など）を無効にする。
+ * コードブロック・インラインコードの中は、そのまま写す。
+ */
+function withoutMarkup(text: string): string {
+  return scan(text)
+    .map(({ line, fenced }) => {
+      if (fenced) return line;
+      return line
+        .split(/(`+[^`]*`+)/)
+        .map((part, i) =>
+          i % 2 === 1
+            ? part
+            : part.replace(/&(?=#|[A-Za-z]+;)/g, "&amp;").replace(/<(?=[!/?A-Za-z])/g, "&lt;"),
+        )
+        .join("");
+    })
+    .join("\n");
+}
+
+/** 上限で切る（サロゲートペアの間では切らない。`human-ask-notice.ts` の cutAtMax と同じ切り方）。閉じていないコードブロックは閉じる。 */
+function limitContent(content: string, path: string): string {
+  let text = withoutClosing(withoutMarkup(withoutMentions(content)));
   let cut = false;
-  if (text.length > max) {
-    const end = /[\uDC00-\uDFFF]/.test(text[max] ?? "") ? max - 1 : max;
+  if (text.length > STEP_QUESTIONS_MAX) {
+    const end = /[\uDC00-\uDFFF]/.test(text[STEP_QUESTIONS_MAX] ?? "")
+      ? STEP_QUESTIONS_MAX - 1
+      : STEP_QUESTIONS_MAX;
     text = text.slice(0, end);
     cut = true;
   }
   const open = openFence(text);
   if (open) text += `\n${open}`;
-  if (/<!--(?![\s\S]*?-->)/.test(text)) text += " -->";
-  const opened = (text.match(/<details>/g) ?? []).length;
-  const closed = (text.match(/<\/details>/g) ?? []).length;
-  text += "\n</details>".repeat(Math.max(0, opened - closed));
   if (cut)
     text += `\n\n…（長いので省きました。続きは成果のファイル \`${path}\` の「確認したいこと」の節で確かめてください）`;
   return text;
@@ -207,13 +245,13 @@ function openFence(text: string): string | undefined {
   return fence ? fence.char.repeat(Math.max(3, fence.size)) : undefined;
 }
 
-export const QUESTIONS_NONE_LINE = "確認したいこと：なし（must・should とも問いはありません）";
+const QUESTIONS_NONE_LINE = "確認したいこと：なし（must・should とも問いはありません）";
 const answerLines = [
   "- 答えるには、この PR にコメントしてください。sacty が取り込み、答えを成果物に反映します。",
   "- 答えずにマージすると、推奨の答えで次の工程に進みます（must も同じです）。",
 ];
 
-export type StepQuestionsSection = {
+type StepQuestionsSection = {
   /** 本文に置く行（無ければ空）。 */
   lines: string[];
   /** 長さの上限でも省かない、行のまとまり（無ければ undefined）。 */
@@ -228,7 +266,6 @@ export function stepQuestionsLines(
   read: StepQuestions,
   path: string,
   form: "text" | "template",
-  max = STEP_QUESTIONS_MAX,
 ): StepQuestionsSection {
   if (read.kind === "empty") return { lines: [] };
   if (read.kind === "none") return { lines: [QUESTIONS_NONE_LINE], keep: QUESTIONS_NONE_LINE };
@@ -249,7 +286,7 @@ export function stepQuestionsLines(
       "",
       block,
       "",
-      limitContent(read.content, path, max),
+      limitContent(read.content, path),
     ],
     keep: block,
   };

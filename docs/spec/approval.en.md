@@ -443,7 +443,7 @@ A template is judged absent or unusable as follows.
   - A note that sacty created the PR and the task's ID (`sacty task <ID>`)
   - Guidance that merging means approval of that step, and how to give comments (the implementation PR, and the requirements and design PRs)
 
-### The "確認したいこと" section in the requirements and design PR body (PBI-439)
+### The "確認したいこと" section in the requirements and design PR body
 
 sacty reads the 確認したいこと section at the top of the requirements or design output (`readStepQuestions` in `step-questions.ts`) and puts a section in the PR body.
 The result of reading is not recorded in the task; the body is rebuilt from the output at that time on every submission.
@@ -455,18 +455,22 @@ A question that was answered and left the section also disappears from the body 
   - It starts at the first heading (ATX) or bold label outside code blocks whose name begins with 確認したいこと.
     It ends at a heading of the same or a shallower level (a bold label counts as level 7). The phrase in body text, in a code block, or in 確認しないと決めたこと does not start it.
   - Counts are given only when both a `must` label and a `should` label are found (heading, bold label, or the head of a bullet; case-insensitive).
-    The count is the number of items of the shallowest bullet or numbered list under the label. "なし" is 0.
-    Everything from 確認しないと決めたこと to the end of the section is not copied.
+    The count is the number of items of the shallowest bullet or numbered list under the label. "なし" is 0. When a sentence follows the label and there is no list, it counts as 1.
+    When the same label appears twice, no counts are given.
+    Each line is judged after removing its leading spaces, bullet mark, and bold (an indented "なし" and `**must**：なし` are read too).
+    Everything from 確認しないと決めたこと (including a line where it is followed by `：`, `:`, or the end of the line) to the end of the section is not copied.
+    CRLF line breaks are read. A line longer than 2,000 characters is not read as a heading or label.
 - Lines in the body
   - With questions: a heading (`## 確認したいこと`, or `**確認したいこと**` in the template form), a first line (the counts, with the meaning of must when there is one), two lines on how to answer (comment on the PR; merging without answering moves on with the recommended answers), and the copied contents.
   - When the counts cannot be given (no must/should distinction, and so on): no counts are written; it says that there are questions for a person to decide, and shows the two answer lines and the contents.
   - When the section is only "なし", or must and should are both "なし": one line, "確認したいこと：なし（must・should とも問いはありません）".
-  - When the section is not found (such as an English output): one line that does not say "0件" or "なし" and points to the top of the result file.
+  - When the section is not found (such as an English output; also when the section exists but its contents are empty): one line that does not say "0件" or "なし" and points to the top of the result file.
   - When the output is empty: nothing is added.
 - Copied contents
   - Taken from the output after secret values are hidden and internal paths are replaced, and cut at 6,000 characters. When cut, a sentence says so and points to the section in the result file.
-  - An unclosed code block, HTML comment, or `<details>` is closed, and a blank line follows.
-  - U+200B is put after `@` and between a closing keyword (`closes`, `fixes`, `resolves`, and so on) and `#`, so no notification is sent and no Issue is closed.
+  - Raw HTML outside code (`<!--`, `<details>`, and so on) is disabled by turning `<` into `&lt;`, and character references (such as `&#64;`) by turning `&` into `&amp;`. Inside code blocks and inline code, the text is copied as it is.
+  - An unclosed code block is closed, and a blank line follows.
+  - U+200B is put after `@` and between a closing keyword (`closes`, `fixes`, `resolves`, and so on) and `#`, so no notification is sent and no Issue is closed. For the URL form (`closes https://…`, `closes <https://…>`), it is put before the URL.
 - Lines that are not omitted: the counts line and the two answer lines (and the one line for none or not found) stay even when the length limit omits the body (`keep`; `fillTemplate` adds `BodyParts.keep`).
 - Right after the "確かめる所" heading, one line is added: it says that this is a check of sources (quotes, derivations, inferences) and that the questions a person should decide appear in 確認したいこと (PR body only; the words "確かめる項目" and the screen are unchanged).
 - How merging is treated does not change (a remaining must does not stop the merge; merging without answering moves on with the recommended answers).

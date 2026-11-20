@@ -991,6 +991,7 @@ In more detail, each section holds the following.
     - must: if the answer later turns out different, the work done until then is wasted (no limit on the number).
     - should: if the answer later turns out different, extra work is needed (up to 5).
   - Each has a recommended answer, its reason, and the concern if the work goes ahead with the recommended answer unconfirmed.
+  - They run from what you most want to decide (what bears on the purpose of your request).
   - The PR body also has a 確認したいこと section near the top (before 確かめる所).
     It shows the number of must and should questions, and each question with its recommended answer.
     When there are no questions, it shows one line, "確認したいこと：なし".
@@ -999,7 +1000,6 @@ In more detail, each section holds the following.
   - To answer, comment on that PR. sacty takes the comment in and reflects the answer in the output.
   - If you merge without answering, work goes on to the next step with the recommended answers. This is the same when a must question is left unanswered.
   - 確かめる所 is a check of sources; the questions a person should decide appear in 確認したいこと. Even when it says "確かめる項目：0件", there may be questions in 確認したいこと.
-  - They run from what you most want to decide (what bears on the purpose of your request).
 - 既定で決めたこと
   - A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと.
 
