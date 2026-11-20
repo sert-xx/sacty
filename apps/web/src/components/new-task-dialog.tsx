@@ -95,27 +95,28 @@ export function NewTaskDialog({
   // （Esc・外側のクリック・閉じる・× のどれで閉じても失わない）。この部品は提案ごと・プロジェクトごとに別なので、混ざらない。
   // 作成に成功したら空に戻す
   const [draft, setDraft] = useState({ title: prefill?.title ?? "", body: prefill?.body ?? "" });
+  const messages = useMessages();
+  const t = messages.forms.task;
+  const clearDraft = () => setDraft({ title: "", body: "" });
   const [state, formAction, pending] = useActionState(
     async (prev: CreateTaskState, formData: FormData): Promise<CreateTaskState> => {
-      let next: CreateTaskState | undefined;
       try {
-        next = await createTaskAction(prev, formData);
+        // createTaskAction は、成功すると必ず redirect し（例外で移る）、値を返すのは失敗のときだけ
+        return await createTaskAction(prev, formData);
       } catch (error) {
-        // 成功すると、作ったタスクの詳細へ移る（redirect は例外で移る）
-        if (
-          String((error as { digest?: unknown } | null)?.digest ?? "").startsWith("NEXT_REDIRECT")
-        ) {
-          setDraft({ title: "", body: "" });
+        // redirect の例外は digest の接頭辞でしか見分けられない（Next.js が公開する判定の関数は、サーバー側のものだけ）
+        const digest = String((error as { digest?: unknown } | null)?.digest ?? "");
+        if (digest.startsWith("NEXT_REDIRECT")) {
+          clearDraft();
+          throw error;
         }
-        throw error;
+        // それ以外の例外（サーバーの停止・古い action など）は、投げ直すとエラー画面でこの部品ごと外れ、書きかけを失う。
+        // 理由を返して、入力を残す
+        return { message: t.createFailed };
       }
-      if (!next?.message && !next?.fieldErrors) setDraft({ title: "", body: "" });
-      return next ?? initial;
     },
     initial,
   );
-  const messages = useMessages();
-  const t = messages.forms.task;
   // 作成先は、ダイアログを開いたときのプロジェクトに固定し、閉じるまで変えない
   // （入力中に画面が自動で更新され、別のタブで切り替えたプロジェクトが props で渡されても、
   // 書いている途中のタスクの作成先は変えないため）
@@ -181,7 +182,7 @@ export function NewTaskDialog({
       <DialogTrigger render={<Button size={prefill ? "default" : "lg"} />}>
         {prefill?.label ?? t.create}
       </DialogTrigger>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[min(48rem,calc(100%-2rem))]">
         <form action={formAction} className="flex flex-col gap-4">
           <input type="hidden" name="projectId" value={target.id} />
           {prefill && <input type="hidden" name="flakyFixTest" value={prefill.flakyFixTest} />}
@@ -228,7 +229,7 @@ export function NewTaskDialog({
               bodyDefault={draft.body}
               onTitleChange={(title) => setDraft((prev) => ({ ...prev, title }))}
               onBodyChange={(body) => setDraft((prev) => ({ ...prev, body }))}
-              bodyClassName="min-h-[calc(12lh+1rem)] max-h-[60dvh] resize-y"
+              bodyClassName="min-h-[calc(12lh+1rem+2px)] max-h-[60dvh] resize-y"
               titleError={state.fieldErrors?.title?.[0]}
               bodyError={state.fieldErrors?.body?.[0]}
               autoFocus

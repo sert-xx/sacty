@@ -86,6 +86,8 @@ const ja = {
       "対象のリポジトリがありません。プロジェクトの設定で対象（Org・リポジトリ）を追加してください。",
     projectSettings: "プロジェクトの設定を開く",
     close: "閉じる",
+    createFailed:
+      "作成できませんでした。入力は残してあります。画面を更新するか、しばらくしてからもう一度試してください。",
     creating: "作成中…",
     submit: "作成する",
   },
@@ -182,6 +184,8 @@ const en: FormsMessages = {
       "No target repository. Add targets (orgs or repositories) in the project settings.",
     projectSettings: "Open project settings",
     close: "Close",
+    createFailed:
+      "Could not create the task. Your input is kept. Reload the page or try again later.",
     creating: "Creating…",
     submit: "Create",
   },

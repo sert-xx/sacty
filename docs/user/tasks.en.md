@@ -38,7 +38,7 @@ Fill in the dialog as follows.
 3. Enter the "Title" and the "Description".
 4. Press "Create".
 
-A draft Title and Description survive closing the dialog with Esc, a click outside, "Close", or the × at the top right, and come back when you reopen it. They are cleared after a task is created successfully, and are lost when you reload the page or close the browser.
+A draft Title and Description survive closing the dialog with Esc, a click outside, "Close", or the × at the top right, and come back when you reopen it. They are cleared after a task is created successfully, and are kept when creating fails. They are lost when you reload the page, close the browser, or leave this task list screen (for example by going to another project or to a task's details).
 
 If you choose a "Template", you can create a task just by choosing the repository ([Sacty setup](#template-sacty-setup), [Docs setup](#template-docs-setup), [Security check](#security-check)).
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement as h } from "react";
+import { act, Component, createElement as h, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { messagesFor } from "@/i18n";
@@ -7,10 +7,15 @@ import { messagesFor } from "@/i18n";
 const createTask = vi.fn();
 vi.mock("@/lib/daemon", () => ({ createTask, CONTEXT_CHECK_PARAM: "contextCheck" }));
 vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor("ja") }));
-vi.mock("@/i18n/server", () => ({ getMessages: async () => messagesFor("ja") }));
+const getMessages = vi.fn(async () => messagesFor("ja"));
+vi.mock("@/i18n/server", () => ({ getMessages }));
 vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 vi.mock("next/cache", () => ({ refresh: vi.fn(), revalidatePath: vi.fn() }));
-vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+// 本物の redirect と同じく、例外を投げて移る
+const redirect = vi.fn((url: string) => {
+  throw Object.assign(new Error("NEXT_REDIRECT"), { digest: `NEXT_REDIRECT;push;${url};307;` });
+});
+vi.mock("next/navigation", () => ({ redirect }));
 vi.mock("@/lib/repository-candidates", () => ({
   candidatesLoader: () => Object.assign(() => {}, { cancel: () => {} }),
 }));
@@ -77,6 +82,8 @@ const closers: Record<string, () => Promise<void>> = {
 };
 
 beforeEach(() => {
+  redirect.mockClear();
+  getMessages.mockClear();
   createTask.mockReset().mockResolvedValue({ ok: false, message: "failed" });
   container = document.createElement("div");
   document.body.append(container);
@@ -114,31 +121,50 @@ describe("タスク作成の書きかけ", () => {
     });
   });
 
-  it("空なら、開き直しても空のまま（確認なしですぐ閉じる）", async () => {
-    await act(async () => root.render(h(NewTaskDialog, props)));
-    await open();
-    await closers["フッターの閉じる"]?.();
-    await settle();
-    expect(isOpen()).toBe(false);
-    await open();
-    expect(fieldOf("title")?.value).toBe("");
-    expect(fieldOf("body")?.value).toBe("");
-  });
+  it.each(Object.keys(closers))(
+    "空（空白だけも含む）なら、%s で確認なしにすぐ閉じ、開き直しても空",
+    async (how) => {
+      await act(async () => root.render(h(NewTaskDialog, props)));
+      await open();
+      await type("title", "  ");
+      await type("body", "\n ");
+      await closers[how]?.();
+      await settle();
+      expect(isOpen()).toBe(false);
+      await open();
+      expect(fieldOf("title")?.value).toBe("  ");
+      expect(fieldOf("body")?.value).toBe("\n ");
+    },
+  );
 
-  it("作成に成功した後に開き直すと、題と内容は空", async () => {
+  it("作成に成功すると redirect の例外がそのまま届く（移る先の画面に任せる。失敗の理由は出さない）", async () => {
     createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
-    await act(async () => root.render(h(NewTaskDialog, props)));
+    const caught: unknown[] = [];
+    class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+      state = { failed: false };
+      static getDerivedStateFromError() {
+        return { failed: true };
+      }
+      componentDidCatch(error: unknown) {
+        caught.push(error);
+      }
+      render() {
+        return this.state.failed ? h("p", { id: "moved" }, "moved") : this.props.children;
+      }
+    }
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await act(async () => root.render(h(Boundary, null, h(NewTaskDialog, props))));
     await open();
     await type("title", "作る");
     await type("body", "本文");
     await act(async () => document.querySelector("form")?.requestSubmit());
     await settle();
+    spy.mockRestore();
     expect(createTask).toHaveBeenCalledTimes(1);
-    await closers["フッターの閉じる"]?.();
-    await settle();
-    await open();
-    expect(fieldOf("title")?.value).toBe("");
-    expect(fieldOf("body")?.value).toBe("");
+    expect(redirect).toHaveBeenCalledWith("/tasks/t1");
+    expect(caught).toHaveLength(1);
+    expect((caught[0] as { digest: string }).digest).toMatch(/^NEXT_REDIRECT/);
+    expect(document.querySelector("[role=alert]")).toBeNull();
   });
 
   it("作成に失敗したら、入力が残り、閉じて開き直しても残る", async () => {
@@ -158,6 +184,64 @@ describe("タスク作成の書きかけ", () => {
     expect(fieldOf("body")?.value).toBe("失敗する本文");
   });
 
+  it("作成の処理が例外で失敗しても、部品は外れず、理由が出て、入力が残る", async () => {
+    // action 自体が reject する（サーバーの停止・古い action の ID など）
+    getMessages.mockRejectedValueOnce(new Error("Failed to fetch"));
+    await act(async () => root.render(h(NewTaskDialog, props)));
+    await open();
+    await type("title", "例外の題");
+    await type("body", "例外の本文");
+    await act(async () => document.querySelector("form")?.requestSubmit());
+    await settle();
+    expect(isOpen()).toBe(true);
+    expect(document.querySelector("[role=alert]")?.textContent).toBe(t.createFailed);
+    expect(fieldOf("title")?.value).toBe("例外の題");
+    await closers.Esc?.();
+    await settle();
+    await open();
+    expect(fieldOf("title")?.value).toBe("例外の題");
+    expect(fieldOf("body")?.value).toBe("例外の本文");
+  });
+
+  it("画面の自動の更新（同じ key で props が変わる）でも、書きかけが残る", async () => {
+    const render = (name: string) =>
+      act(async () => root.render(h(NewTaskDialog, { ...props, projectName: name, key: "p" })));
+    await render("P");
+    await open();
+    await type("title", "更新中の題");
+    await type("body", "更新中の本文");
+    await render("P2");
+    expect(fieldOf("title")?.value).toBe("更新中の題");
+    await closers.Esc?.();
+    await settle();
+    await render("P3");
+    await open();
+    expect(fieldOf("title")?.value).toBe("更新中の題");
+    expect(fieldOf("body")?.value).toBe("更新中の本文");
+  });
+
+  it("「工程ごとに設定」へ行って戻っても、題と内容が残る", async () => {
+    await act(async () => root.render(h(NewTaskDialog, props)));
+    await open();
+    await type("title", "往復の題");
+    await type("body", "往復の本文");
+    const plan = document.querySelector<HTMLSelectElement>("select[name=plan]");
+    if (!plan) throw new Error("plan missing");
+    await act(async () => {
+      plan.value = "standard";
+      plan.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const click = (id: string) => {
+      const el = document.querySelector<HTMLButtonElement>(`[data-testid=${id}]`);
+      if (!el) throw new Error(`${id} missing`);
+      return act(async () => el.click());
+    };
+    await click("step-settings-open");
+    await click("step-settings-done");
+    expect(fieldOf("title")?.value).toBe("往復の題");
+    expect(fieldOf("body")?.value).toBe("往復の本文");
+  });
+
   it("提案から開くダイアログは提案の内容で始まり、ふつうのダイアログの書きかけと混ざらない", async () => {
     const prefill = {
       label: "提案から作る",
@@ -171,7 +255,7 @@ describe("タスク作成の書きかけ", () => {
     );
     await act(async () => trigger().click());
     await type("title", "ふつうの書きかけ");
-    await closers["フッターの閉じる"]?.();
+    await closers.フッターの閉じる?.();
     await settle();
     const suggestion = Array.from(container.querySelectorAll("button")).find(
       (b) => b.textContent === "提案から作る",
@@ -180,7 +264,7 @@ describe("タスク作成の書きかけ", () => {
     expect(fieldOf("title")?.value).toBe("提案の題");
     expect(fieldOf("body")?.value).toBe("提案の内容");
     await type("title", "提案を直した");
-    await closers["フッターの閉じる"]?.();
+    await closers.フッターの閉じる?.();
     await settle();
     await open();
     expect(fieldOf("title")?.value).toBe("ふつうの書きかけ");
@@ -193,7 +277,7 @@ describe("タスク作成の書きかけ", () => {
     await render("a");
     await open();
     await type("title", "Aの書きかけ");
-    await closers["フッターの閉じる"]?.();
+    await closers.フッターの閉じる?.();
     await settle();
     await render("b");
     await open();
