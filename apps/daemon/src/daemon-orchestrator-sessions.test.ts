@@ -2282,6 +2282,183 @@ describe("時間切れで止めた実行の再開（PBI-280）", () => {
       expect(continuedOf(service, id)).toEqual([]);
       activity.close();
     });
+
+    describe("続きは、直前の実行のエージェントから始める（PBI-417）", () => {
+      const backup = agent({
+        id: "claude-api",
+        auth: { mode: "api-key", secret: "anthropic-key" },
+      });
+      const main = agent({ fallback: ["claude-api"] });
+      const both = (): ConfigResult => {
+        const base = configOf(main)();
+        return base.ok
+          ? {
+              ok: true,
+              config: {
+                ...base.config,
+                agents: { [main.id]: main, [backup.id]: backup },
+                fallbackCooldownMs: 60_000,
+              },
+            }
+          : base;
+      };
+      const onlyMain = (): ConfigResult => {
+        const base = configOf(agent())();
+        return base.ok
+          ? {
+              ok: true,
+              config: { ...base.config, agents: { [main.id]: { ...main, fallback: [] } } },
+            }
+          : base;
+      };
+      const secrets = { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" };
+      const limited: AgentOutcome = {
+        kind: "failed",
+        reason: "usage_limit",
+        message: "You've hit your session limit",
+      };
+      const started = (service: TaskService, id: string) =>
+        (service.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "AgentRunStarted" ? [e.payload] : [],
+        );
+      const agentsOf = (service: TaskService, id: string) =>
+        started(service, id).map((p) => p.agentId);
+      /** 実行の開始が n 件になるまで進める（タスクの開始の処理を挟むので、runNext の回数ではなく開始の件数で数える）。 */
+      const runTo = async (service: TaskService, id: string, n: number) => {
+        for (let i = 0; i < 12 && started(service, id).length < n; i++) await service.runNext(id);
+        expect(started(service, id)).toHaveLength(n);
+      };
+      const T0 = Date.parse("2026-11-19T00:00:00Z");
+
+      it("既定が利用制限で代わりが未完了で終わったら、期限が切れても続きは代わりで、セッションの続きから進む（条件 1・2・7）", async () => {
+        let now = T0;
+        let cfg = both;
+        const { activity, service, executor, repos, id } = begin(
+          [limited, unfinished(["docs の更新"]), finished()],
+          { config: () => cfg(), secrets, now: () => now },
+        );
+        emulateClaude(executor);
+        progress(executor, repos);
+        await runTo(service, id, 2); // 既定：利用制限（代わりへ）→ 代わり：未完了
+        now += 2 * 60_000; // 利用制限の期限が切れる
+        await runTo(service, id, 3); // 続き
+        await settle(service, id);
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        expect(agentsOf(service, id)).toEqual(["claude-subscription", "claude-api", "claude-api"]);
+        // 間に、既定のエージェントの失敗は挟まらない
+        expect(count(service, id, "AgentRunFailed")).toBe(1);
+        const [, second, third] = runIds(service, id);
+        expect(continuedOf(service, id)).toMatchObject([
+          { runId: third, agentId: "claude-api", mode: "resumed", stoppedRunId: second },
+        ]);
+        expect(argAfter(executor.calls[2], "--resume")).toBe(`session-${second}`);
+        // 工程に選ばれたエージェントと違うので、記録で分かる。それ以外の実行には付かない
+        expect(started(service, id).map((p) => p.chosenAgentId)).toEqual([
+          undefined,
+          undefined,
+          "claude-subscription",
+        ]);
+        cfg = both;
+        activity.close();
+      });
+
+      it("人が一時停止の後に再開したときも、続きは直前の実行のエージェントで始める。再開で人が別のエージェントを選んでいたら、そちら（条件 3）", async () => {
+        const { activity, service, executor, id } = begin(
+          [unfinished(["a"]), unfinished(["a"]), unfinished(["a"]), unfinished(["a"]), finished()],
+          { config: both, secrets },
+        );
+        emulateClaude(executor);
+        // 作業領域の内容の目印は変えない：続けても何も変わらず、止まる
+        await settle(service, id);
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(agentsOf(service, id)).toEqual(["claude-subscription", "claude-subscription"]);
+        // 人が再開（エージェントは変えない）：直前の実行のエージェントで、セッションの続き
+        service.resume(id, {});
+        await runTo(service, id, 3);
+        expect(agentsOf(service, id).at(-1)).toBe("claude-subscription");
+        expect(continuedOf(service, id).at(-1)).toMatchObject({ mode: "resumed" });
+        await settle(service, id);
+        expect(service.get(id)?.task.status).toBe("paused");
+        // 人が実装のエージェントを変えて再開：人が選んだほうで、最初から
+        service.resume(id, { agents: { implement: "claude-api" } });
+        await runTo(service, id, 4);
+        expect(agentsOf(service, id).at(-1)).toBe("claude-api");
+        expect(continuedOf(service, id).at(-1)).toMatchObject({
+          agentId: "claude-api",
+          mode: "restarted",
+          reason: "agent_changed",
+        });
+        expect(started(service, id).at(-1)?.chosenAgentId).toBeUndefined();
+        activity.close();
+      });
+
+      it("直前の実行のエージェントが使えないときは、今までどおり工程に選ばれたエージェントで、最初から（条件 4・5）", async () => {
+        let now = T0;
+        let cfg = both;
+        const { activity, service, executor, id } = begin(
+          [limited, unfinished(["a"]), finished()],
+          { config: () => cfg(), secrets, now: () => now },
+        );
+        emulateClaude(executor);
+        await runTo(service, id, 2);
+        now += 2 * 60_000;
+        cfg = onlyMain; // 直前のエージェントが、設定から消えた
+        await runTo(service, id, 3);
+        expect(agentsOf(service, id)).toEqual([
+          "claude-subscription",
+          "claude-api",
+          "claude-subscription",
+        ]);
+        expect(continuedOf(service, id)).toMatchObject([
+          { agentId: "claude-subscription", mode: "restarted", reason: "agent_changed" },
+        ]);
+        expect(started(service, id).every((p) => p.chosenAgentId === undefined)).toBe(true);
+        activity.close();
+      });
+
+      it("続きの実行が失敗したときの扱い（代わりへの切り替え）は、今までどおり（条件 5）", async () => {
+        const { activity, service, executor, id } = begin(
+          [unfinished(["a"]), limited, finished()],
+          { config: both, secrets },
+        );
+        emulateClaude(executor);
+        await runTo(service, id, 3);
+        // 続きは直前の実行のエージェントで始まり、利用制限で失敗して、代わりに切り替わる
+        expect(agentsOf(service, id)).toEqual([
+          "claude-subscription",
+          "claude-subscription",
+          "claude-api",
+        ]);
+        expect(count(service, id, "AgentFellBack")).toBe(1);
+        expect(continuedOf(service, id).map((c) => [c.agentId, c.mode])).toEqual([
+          ["claude-subscription", "resumed"],
+        ]);
+        activity.close();
+      });
+
+      it("未完了でない次の実行（差し戻しのやり直し）は、直前の実行のエージェントを引き継がない（条件 6）", async () => {
+        let now = T0;
+        const { activity, service, executor, repos, id } = begin(
+          [limited, finished(), finished("# v2")],
+          { config: both, secrets, now: () => now },
+        );
+        emulateClaude(executor);
+        progress(executor, repos);
+        await settle(service, id);
+        expect(agentsOf(service, id)).toEqual(["claude-subscription", "claude-api"]);
+        now += 2 * 60_000;
+        service.requestChanges(id, {
+          step: "implement",
+          submission: 1,
+          target: "implement",
+          comments: ["境界のテストを足す"],
+        });
+        await settle(service, id);
+        expect(agentsOf(service, id).at(-1)).toBe("claude-subscription");
+        expect(started(service, id).every((p) => p.chosenAgentId === undefined)).toBe(true);
+        activity.close();
+      });
+    });
   });
 });
 

@@ -193,6 +193,7 @@
   ほかのタスクは、元のエージェントで実行する。
 - どちらもデーモンのメモリーだけに持つ。
   起動し直すと、元のエージェントから試す。
+  ただし、未完了で終わった実装の続きは、直前の実行のエージェントから始める（[セッションの保存と使い回し](#セッションの保存と使い回し)）。
 - 失敗かどうかは、終了コードとエージェントの出力（Claude Code の `result` の `is_error`・Codex の `turn.failed`・`error`）で決める。
   標準エラー出力の文では決めず、失敗の文と理由の分類に使うだけ。
   そのため、理由の分類を誤っても、代わりに切り替えるかどうかは変わらない。
@@ -282,6 +283,14 @@
     - 次の実行は、失敗の記録が後にあるので続きにせず、新しいセッションで、指示の全文から実行し直す。
     - 時間切れの続きと扱いが違うのは、未完了の続きが、人の再開を待たずに自動で進むためである（止めると、人が再開するまで進まない）。
     - 人が止めた・中止した実行は、今までどおり止める。
+  - 続きの実行のエージェントは、直前の未完了で終わった実装の実行を動かしたエージェントにする（PBI-417。`incompleteAgentToContinue`）。
+    工程に選ばれたエージェントと違っていても、利用制限の期限が切れて既定に戻れるときでも、同じ。
+    - 直前の実行のエージェントは、作業履歴（`incompleteRunBefore` が返す実行の記録）から決める。デーモンのメモリーには頼らないので、起動し直しても同じになる。
+    - 未完了の記録より後に、人が実装のエージェントを変えていた（`StepAgentChanged`）ときは、人が選んだエージェント（と、その代わり）を使う。別のエージェントなので、最初から実行する。
+    - 直前の実行のエージェントが使えない（設定から消えた・利用制限中・このタスクで失敗して使わない期限の中）ときは、今までどおり、工程に選ばれたエージェントと、その代わりにする。
+    - 時間切れで止めた実行の再開と、未完了でない次の実行（差し戻しのやり直し・提出の後の直しなど）の選び方は変えない。
+    - 直前の実行のエージェントを優先して、工程に選ばれていたエージェントと違うときは、`AgentRunStarted` の `chosenAgentId` に、工程に選ばれていたエージェントを残す。
+    - 優先したエージェントの続きが失敗したときは、今までどおり、代わりのエージェントに切り替える。
 
 コード: `apps/daemon/src/agent-sessions.ts`（`SOURCES`・`selectAgentSessionFiles`・`AGENT_FILES_LIMIT`）、`apps/daemon/src/orchestrator-sessions.ts`（`OrchestratorSessionStore`・`plan`・`save`）、`apps/daemon/src/orchestrator-handoff.ts`（`sessionTranscript`・`stageHandoff`）、`apps/daemon/src/timeout-resume.ts`（`timedOutRunBefore`・`incompleteRunBefore`・`planContinuation`・`timeoutResumeLines`・`incompleteResumeLines`）、`apps/daemon/src/service.ts`（`resumeRejected`・`RESUME_REJECTED`・`executeWithSession`・`executeResumable`）
 

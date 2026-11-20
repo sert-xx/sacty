@@ -1882,6 +1882,7 @@ When the implementation does not finish, the task proceeds as follows.
 2. sacty makes the agent continue the implementation, passing along what remains.
    If the agent declared what remains, the activity line shows how many items remain. Open "Details" to read them one by one.
    When the declaration is missing or unreadable, neither the count nor "Details" appears. When a test viewpoint has no test mapped, the line shows the viewpoint IDs.
+   The continuing run starts with the agent that ran the previous run (if sacty had switched to a fallback because of a usage limit, that fallback).
    A continuation does not start over; it goes on from the same conversation (the agent session) as the run that ended unfinished.
    The activity shows "Continued the session (the session ID) of the Implement run that ended unfinished".
    When the conversation cannot be continued, for example after you change the agent, the step runs again from the start.

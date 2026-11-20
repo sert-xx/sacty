@@ -1269,6 +1269,11 @@ const AgentRunStarted = z.object({
      */
     image: TaskImageName.optional(),
     preparationFailed: z.literal(true).optional(),
+    /**
+     * 未完了で終わった実装の続きを、直前の実行のエージェントで始めたとき（PBI-417）、工程に選ばれていたエージェント
+     * （利用制限などの代わりを含む）。agentId と違うときだけ付く。
+     */
+    chosenAgentId: z.string().optional(),
   }),
 });
 
