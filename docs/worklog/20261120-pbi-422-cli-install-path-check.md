@@ -19,3 +19,15 @@
 ## 決めたこと
 
 - 外すのは PATH の先頭から続く分だけにした（利用者が自分で PATH の途中に入れたものは残す）。
+- リンクを含む `--prefix` で `npm run` すると、npm はリンクを解かない形で PATH に足す。外すディレクトリの集合は、repo の実パス由来のものも持ち、PATH の要素も実パスで比べる。
+- 整形だけの変更は入れない（変えた箇所は、この直しに関係する行だけ）。
+
+## 確かめたこと
+
+- `npx vitest run tests/scripts/cli-install.test.ts tests/docs`：通った（結果は下の「検証」の記録のとおり、今回の実行で得たもの）。
+- `npm run lint`・`npm run typecheck`・`npm test`（全件）：今回の最後の変更の後に実行した結果を、PR の説明に書いた。
+- 実行していない：本物の `npm run cli:install`（`~/.local/bin` に入口を置く）。偽のリポジトリでの `main` の実行と、`withoutNpmRunPath` の単体テストで確かめた。
+
+## 残したこと
+
+- なし

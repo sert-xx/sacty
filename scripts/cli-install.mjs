@@ -95,13 +95,16 @@ export function withoutNpmRunPath(pathValue, { env = process.env, repo } = {}) {
   const added = new Set();
   for (let dir = resolve(repo); ; dir = dirname(dir)) {
     added.add(join(dir, "node_modules", ".bin"));
+    const realDir = real(dir);
+    if (realDir) added.add(join(realDir, "node_modules", ".bin"));
     if (dirname(dir) === dir) break;
   }
   const entries = pathValue.split(delimiter);
   let i = 0;
   while (i < entries.length) {
     const entry = entries[i];
-    if (entry && !added.has(resolve(entry)) && basename(entry) !== "node-gyp-bin") break;
+    const known = added.has(resolve(entry)) || added.has(real(entry) ?? resolve(entry));
+    if (entry && !known && basename(entry) !== "node-gyp-bin") break;
     i++;
   }
   return entries.slice(i).join(delimiter);
@@ -135,11 +138,7 @@ export function checkPath({
 }) {
   const dir = dirname(launcher);
   const add = `PATH に足すと、どのディレクトリでも sacty と打って使えます（SACTY_BIN_DIR で置き場所を変えられます）。`;
-  if (!onPath)
-    return {
-      warnings: [`${dir} が PATH にありません。${add}`],
-      first: undefined,
-    };
+  if (!onPath) return { warnings: [`${dir} が PATH にありません。${add}`], first: undefined };
   if (resolveReal(onPath) === resolveReal(launcher)) return { warnings: [], first: undefined };
   const first = sameAs.find((same) => resolveReal(same) === resolveReal(onPath));
   if (!dirInPath) {
@@ -202,22 +201,14 @@ export function refreshLegacyLaunchers({ root, content, entry }) {
   try {
     versions = readdirSync(root);
   } catch (error) {
-    return {
-      found: true,
-      updated,
-      failed: [{ path: root, error: error.message }],
-    };
+    return { found: true, updated, failed: [{ path: root, error: error.message }] };
   }
   for (const version of versions) {
     const launcher = join(root, version, "bin", "sacty");
     if (!existsSync(launcher) && !isSymlink(launcher)) continue;
     try {
       if (writeLauncher(launcher, content, entry)) updated.push(launcher);
-      else
-        failed.push({
-          path: launcher,
-          error: "sacty の入口でないファイル（またはリンク）です",
-        });
+      else failed.push({ path: launcher, error: "sacty の入口でないファイル（またはリンク）です" });
     } catch (error) {
       failed.push({ path: launcher, error: error.message });
     }
@@ -286,9 +277,7 @@ export function main({ repo = resolve(dirname(fileURLToPath(import.meta.url)), "
   // 見つかって、別の Node.js の版で動くのを防ぐ）。ほかのリポジトリ・ほかのパッケージのものは触らない。
   // 入口を書く前に外す（npm のグローバルの場所が ~/.local だと、前のリンクが入口の置き場所と重なるため）
   const npm = "npm";
-  const prefix = globalPrefix({
-    npmPrefix: () => run(npm, ["prefix", "-g"]).stdout.trim(),
-  });
+  const prefix = globalPrefix({ npmPrefix: () => run(npm, ["prefix", "-g"]).stdout.trim() });
   const linkedCli = join(prefix, "lib", "node_modules", "@sacty", "cli");
   if (isSymlink(linkedCli) && real(linkedCli) === real(cliDir)) {
     // 確かめた場所（prefix）に対して外す（npm が自分で決める場所と違うことがあっても、確かめた場所のリンクを外す）
