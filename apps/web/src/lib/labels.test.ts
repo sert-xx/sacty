@@ -1860,6 +1860,24 @@ describe("終わっていない実装の記録の表示（PBI-347・PBI-348・PB
     );
   });
 
+  it("申告だけを求める実行を足した記録は、その旨を作業履歴に出す（PBI-416）", () => {
+    const asked = event("ImplementationIncomplete", {
+      remaining: ["TV-2 キーなし"],
+      unmapped: ["TV-2"],
+      declarationOnly: true,
+    });
+    expect(describeEventParts(asked, ja).text).toBe(
+      "作業領域が変わらず、申告だけが欠けているため、コードを変えずに申告だけを求める実行を足す（TV-2）",
+    );
+    expect(describeIn(asked, labels.en)).toContain("asks only for the declaration");
+    const unreadable = event("ImplementationIncomplete", {
+      remaining: [],
+      undeclared: true,
+      declarationOnly: true,
+    });
+    expect(describeEventParts(unreadable, ja).text).toContain("完了の申告が無いか読めない");
+  });
+
   it("変更の無いやり直しは、PR の番号と先頭のコミットを出す", () => {
     const unchanged = event("ImplementationUnchanged", {
       repo: "https://github.com/acme/app",

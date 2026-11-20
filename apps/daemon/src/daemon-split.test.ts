@@ -556,16 +556,17 @@ describe("分割の子タスクに、親の設計のテスト観点を割り当�
       splitOutput(assigned, integration),
       partial(),
       partial(),
+      partial(),
     ]);
     const [a] = ids();
     await settle(service, a ?? "");
     const task = taskOf(service, a ?? "");
     expect(task.status).toBe("paused");
     expect(task.pausedReason).toBe("incomplete");
-    // やり直しても作業領域が変わらなかったので、2回目で止まる
+    // やり直しても作業領域が変わらなかったので、申告だけを求める実行（PBI-416）を1回足してから、止まる
     expect(task.pausedMessage).toEqual({
       code: "implement.unmappedViewpoints",
-      params: { count: 2, stalled: true, ids: "TV-2", total: 1 },
+      params: { count: 3, stalled: true, declarationAsked: true, ids: "TV-2", total: 1 },
     });
     expect(renderMessage(task.pausedMessage as DaemonText, "ja")).toContain(
       "テストが対応していない観点：TV-2",

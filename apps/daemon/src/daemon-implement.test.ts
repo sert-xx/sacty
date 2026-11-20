@@ -34,6 +34,7 @@ import { SqliteActivityStore } from "./activity.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { CiStatusReader } from "./ci.js";
+import { COMPLETION_FENCE } from "./completion.js";
 import type { ConfigResult, SactyConfig } from "./config.js";
 import { AgentTimeoutError, MessageError } from "./errors.js";
 import type { PullRequestFeedback, PullRequestInfo, PullRequestStatus } from "./github.js";
@@ -292,6 +293,218 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         ],
         { pulls },
       );
+      await drain(service);
+      expect(types(service, id)).not.toContain("ImplementationIncomplete");
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+  });
+
+  describe("申告だけが欠けて進まないときは、止める前に申告だけを求める実行を1回足す（PBI-416）", () => {
+    const TV1 = { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] };
+    const TV2 = { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] };
+    const declare = (value: unknown) =>
+      `\`\`\`${COMPLETION_FENCE}\n${JSON.stringify(value)}\n\`\`\``;
+    const withDeclaration = (map: (typeof TV1)[]) =>
+      out([implement("# 実装", map).output, declare({ status: "complete" })].join("\n\n"));
+    /** 完了と申告したが、観点とテストの対応に TV-2 が欠けた実行。 */
+    const missingMap = () => withDeclaration([TV1]);
+    /** 完了と申告し、すべての観点を対応させた実行。 */
+    const fullMap = () => withDeclaration([TV1, TV2]);
+    /** 完了の申告が無い実行。 */
+    const noDeclaration = () =>
+      out(["# 実装", `\`\`\`${COMPLETION_FENCE}\n{"status": "complete",}\n\`\`\``].join("\n\n"));
+    const incompleteRun = () =>
+      out(["# 実装", declare({ status: "incomplete", remaining: ["docs の更新"] })].join("\n\n"));
+    const declarationRuns = (svc: TaskService, id: string) =>
+      (svc.get(id)?.activity ?? []).filter(
+        (e) =>
+          e.type === "ImplementationIncomplete" &&
+          (e.payload as { declarationOnly?: boolean }).declarationOnly,
+      );
+    /** 実行のたびに作業領域の内容の目印を決める（足りない分は最後のまま）。 */
+    const treeByRun = (executor: FakeExecutor, repos: FakeRepos, trees: string[]) => {
+      let n = 0;
+      executor.logLines = () => {
+        repos.tree = (trees[Math.min(n, trees.length - 1)] ?? "t").padEnd(40, "0");
+        n += 1;
+        return undefined;
+      };
+    };
+
+    it("完了と申告したが観点が欠け、作業領域が変わらないとき、止めずに、欠けた観点を伝える申告だけの実行を1回行い、そろえば提出に進む（受け入れ条件 6〜8）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplement(
+        [missingMap(), missingMap(), fullMap()],
+        { pulls },
+      );
+      await drain(service);
+      const recorded = types(service, id);
+      expect(recorded).not.toContain("TaskPaused");
+      expect(recorded.filter((t) => t === "ImplementationIncomplete")).toHaveLength(2);
+      expect(declarationRuns(service, id)).toHaveLength(1);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("申告だけが欠けています");
+      expect(prompt).toContain("コードは変えなくてよい");
+      expect(prompt).toContain("- TV-2");
+      expect(prompt).toContain("すべてのテスト観点の対応");
+      expect(prompt).toContain("未完了と申告する");
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(pulls.calls).toHaveLength(1);
+      activity.close();
+    });
+
+    it("完了の申告が無い・読めないときも、同じ条件で、申告が読めなかったことを伝える申告だけの実行を1回行う（受け入れ条件 6・7）", async () => {
+      const { activity, service, executor, id } = await toImplement([
+        noDeclaration(),
+        noDeclaration(),
+        fullMap(),
+      ]);
+      await drain(service);
+      expect(types(service, id)).not.toContain("TaskPaused");
+      expect(declarationRuns(service, id)).toHaveLength(1);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("完了の申告が無いか、決まった形どおりに読めませんでした");
+      expect(prompt).toContain("コードは変えなくてよい");
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+
+    it("申告だけを求めても申告がそろわず作業領域も変わらなければ、2回目は行わずに一時停止し、文言で申告だけを求めたことが分かる（受け入れ条件 9・12）", async () => {
+      const { activity, service, id } = await toImplement([
+        missingMap(),
+        missingMap(),
+        missingMap(),
+        fullMap(),
+      ]);
+      await drain(service);
+      expect(declarationRuns(service, id)).toHaveLength(1);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedReason).toBe("incomplete");
+      expect(task?.pausedMessage).toMatchObject({
+        code: "implement.unmappedViewpoints",
+        params: { count: 3, stalled: true, declarationAsked: true },
+      });
+      expect(ja(task?.pausedMessage as never)).toContain("申告だけを求めても");
+      activity.close();
+    });
+
+    it("申告だけを求める実行で作業領域が変わったときは、今までどおり続ける（一時停止しない。受け入れ条件 9）", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, executor, id } = await toImplement(
+        [missingMap(), missingMap(), missingMap(), fullMap()],
+        { repos },
+      );
+      treeByRun(executor, repos, ["a", "a", "b", "c"]);
+      await drain(service);
+      expect(types(service, id)).not.toContain("TaskPaused");
+      expect(declarationRuns(service, id)).toHaveLength(1);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+
+    it("未完了と申告した実行が続いて作業領域が変わらないときは、今までどおり、申告だけを求めずにすぐ一時停止する（受け入れ条件 10）", async () => {
+      const { activity, service, id } = await toImplement([
+        incompleteRun(),
+        incompleteRun(),
+        fullMap(),
+      ]);
+      await drain(service);
+      expect(declarationRuns(service, id)).toHaveLength(0);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(types(service, id).filter((t) => t === "ImplementationIncomplete")).toHaveLength(2);
+      expect(task?.pausedMessage).toMatchObject({
+        code: "implement.incomplete",
+        params: { stalled: true },
+      });
+      expect(task?.pausedMessage?.params).not.toHaveProperty("declarationAsked");
+      expect(ja(task?.pausedMessage as never)).not.toContain("申告だけを求めても");
+      activity.close();
+    });
+
+    it("申告だけを求める実行も未完了の1回に数え、上限（10 回）は変えない（受け入れ条件 11）", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, executor, id } = await toImplement(
+        Array.from({ length: 14 }, () => missingMap()),
+        { repos },
+      );
+      // 1・2回目は同じ目印（2回目で申告だけを求める）、3回目からは毎回変わる
+      treeByRun(executor, repos, ["a", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"]);
+      await drain(service, 40);
+      expect(declarationRuns(service, id)).toHaveLength(1);
+      const task = service.get(id)?.task;
+      expect(types(service, id).filter((t) => t === "ImplementationIncomplete")).toHaveLength(11);
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedMessage).toMatchObject({ params: { count: 11, stalled: false } });
+      activity.close();
+    });
+
+    it("申告だけを求めたことは台帳の記録（ImplementationIncomplete）から決まり、投影に残る（受け入れ条件 13）", async () => {
+      const { activity, service, id } = await toImplement([missingMap(), missingMap()]);
+      for (let i = 0; i < 8 && !service.get(id)?.task.incompleteRuns?.declarationAsked; i++) {
+        await service.runNext(id);
+      }
+      expect(service.get(id)?.task.incompleteRuns).toMatchObject({
+        runs: 2,
+        stalled: true,
+        declarationAsked: true,
+      });
+      expect(service.get(id)?.task.verifyFeedback).toMatchObject({
+        kind: "incomplete",
+        declarationOnly: true,
+      });
+      expect(service.get(id)?.task.status).toBe("queued");
+      activity.close();
+    });
+
+    it("実装の指示は、テストで確かめようがない観点を、tests を空にした untested（理由と確かめ方）で申告すると伝え、テストを書ける観点の抜け道にしない（受け入れ条件 1・3）", async () => {
+      const { activity, service, executor } = await toImplement([implement("# 実装", [TV1, TV2])]);
+      await drain(service);
+      const prompt = executor.calls
+        .map((_, i) => promptOf(executor, i))
+        .find((p) => p.includes("--- テスト観点（承認済み・すべてにテストを対応させる） ---"));
+      expect(prompt).toContain(
+        "テストで確かめようがない観点（検査の実行そのもの・人が確かめること など）",
+      );
+      expect(prompt).toContain("どう確かめたか（または誰が確かめるか）");
+      expect(prompt).toContain("テストを書ける観点（実行される振る舞いを変えるもの）には使わない");
+      expect(prompt).toContain(
+        "実行される振る舞い（コード・設定の値・スクリプトなど）を変える観点は、untested にせず、テストを書く",
+      );
+      activity.close();
+    });
+
+    it("観点が欠けたときのやり直しの指示も、テストで確かめようがない観点の untested の申告を伝える（受け入れ条件 2）", async () => {
+      const { activity, service, executor, id } = await toImplement([missingMap(), fullMap()]);
+      await drain(service);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("--- 前回の実行：テストが対応していないテスト観点がありました ---");
+      expect(prompt).toContain(
+        "テストで確かめようがない観点（検査の実行そのもの・人が確かめること など）",
+      );
+      expect(prompt).toContain("テストを書ける観点は、untested にしない");
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+
+    it("検査の実行そのものの観点を、理由つきの untested で申告すれば、欠けと見なさず提出に進む（受け入れ条件 4）", async () => {
+      const { activity, service, id } = await toImplement([
+        out(
+          [
+            implement("# 実装", [
+              TV1,
+              {
+                viewpointId: "TV-2",
+                tests: [],
+                untested: "検査の実行そのもの。検査を実行して通ったことを説明に書いた",
+              },
+            ]).output,
+            declare({ status: "complete" }),
+          ].join("\n\n"),
+        ),
+      ]);
       await drain(service);
       expect(types(service, id)).not.toContain("ImplementationIncomplete");
       expect(service.get(id)?.task.status).toBe("awaiting_approval");

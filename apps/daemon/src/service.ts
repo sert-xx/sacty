@@ -13833,7 +13833,17 @@ export class TaskService {
     // 変わらなければ（同じエージェントで続けても進まない）、実装を止めて人間に判断してもらう（PBI-350）。未完了の記録と一時停止は、同じ追記で記録する（間でデーモンが止まると、
     // 止めるはずの実装を、再起動の後にもう一度実行してしまうため）
     const runs = nextIncompleteRuns(latest.incompleteRuns, fingerprint);
-    const stop = runs.runs > MAX_INCOMPLETE_CONTINUATIONS || runs.stalled === true;
+    // 欠けているのが申告だけ（完了と申告して観点が欠けた・申告が無い）で、作業領域が変わらないときは、止める前に、申告だけを
+    // 求める実行を1回足す（PBI-416）。足したか・その後に変わったかは、投影の incompleteRuns（記録）から決まる。未完了と申告した
+    // 実行・足した後の実行は、今までどおり止める
+    const declarationOnly =
+      runs.stalled === true &&
+      runs.runs <= MAX_INCOMPLETE_CONTINUATIONS &&
+      latest.incompleteRuns?.declarationAsked !== true &&
+      (undeclared || unmapped.length > 0);
+    const stop =
+      runs.runs > MAX_INCOMPLETE_CONTINUATIONS || (runs.stalled === true && !declarationOnly);
+    const declarationAsked = latest.incompleteRuns?.declarationAsked === true;
     this.append(latest, [
       {
         actor: "sacty",
@@ -13844,6 +13854,7 @@ export class TaskService {
             ...(undeclared ? { undeclared: true as const } : {}),
             ...(unmapped.length > 0 ? { unmapped } : {}),
             ...(fingerprint ? { fingerprint } : {}),
+            ...(declarationOnly ? { declarationOnly: true as const } : {}),
           },
         },
       },
@@ -13860,12 +13871,18 @@ export class TaskService {
                       ? message("implement.unmappedViewpoints", {
                           count: runs.runs,
                           stalled: runs.stalled === true,
+                          ...(declarationAsked && runs.stalled === true
+                            ? { declarationAsked: true }
+                            : {}),
                           ids: unmapped.slice(0, 10).join(", "),
                           total: unmapped.length,
                         })
                       : message("implement.incomplete", {
                           count: runs.runs,
                           stalled: runs.stalled === true,
+                          ...(declarationAsked && runs.stalled === true
+                            ? { declarationAsked: true }
+                            : {}),
                           declared: !undeclared,
                           remaining: remaining.slice(0, 5).join(" / "),
                           total: remaining.length,

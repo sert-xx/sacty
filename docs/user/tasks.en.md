@@ -1888,6 +1888,10 @@ When the implementation does not finish, the task proceeds as follows.
    If the agent does not accept resuming the conversation, that run stays in the activity as a failure, but the task does not stop, and the next run starts again from the start.
 3. sacty repeats the continuation while the workspace keeps changing. If the implementation is still unfinished after 10 continuations, the task becomes "Paused: the implementation keeps ending unfinished".
    If continuing changed nothing in the workspace, the task stops without waiting for 10 continuations.
+   However, when the implementation is finished and only the declaration (the completion declaration or the viewpoint-to-test mapping) is missing, sacty adds one run that asks only for the declaration, without changing code, before stopping.
+   The activity shows this. When the declaration is complete, the task goes on to the submission. If the declaration is still not complete and the workspace still does not change, the task stops, and the reason says that asking only for the declaration changed nothing.
+   When runs that the agent declared unfinished keep changing nothing, the task stops at once without asking only for the declaration.
+   For a viewpoint that cannot be verified by a test, such as running the checks themselves or something a person confirms, the agent maps it with the reason no test is written and how it was checked (or who checks it).
 4. If the agent declared what remains, it appears item by item under "What remains", below the reason the task stopped (up to 5 items; when there are more, the total is shown too). Check it, then resume.
    When the task stopped with the declaration missing or unreadable, what remains is not shown.
    When the task stopped because a test viewpoint has no test mapped, the reason shows those viewpoints.

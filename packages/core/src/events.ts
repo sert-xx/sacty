@@ -2740,6 +2740,11 @@ const ImplementationIncomplete = z.object({
      * 回数を待たずに止める。作業領域を読めなかったときは無い。
      */
     fingerprint: z.string().min(1).max(100).optional(),
+    /**
+     * 欠けているのが申告だけ（完了の申告が無い・読めない、または観点とテストの対応に欠け）で、作業領域が変わらなかったので、
+     * 一時停止せずに、申告だけを求める実行を1回足す（PBI-416）。
+     */
+    declarationOnly: z.literal(true).optional(),
   }),
 });
 

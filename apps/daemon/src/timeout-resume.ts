@@ -218,8 +218,27 @@ export async function planContinuation(
  * 渡していない指摘を「渡した」と記録したり、再開できずに別のセッションで始まった実行が、範囲を知らないまま完了と申告したりする。
  */
 export function incompleteResumeLines(
-  feedback: { undeclared?: boolean; unmapped?: readonly string[] } | undefined,
+  feedback:
+    | { undeclared?: boolean; unmapped?: readonly string[]; declarationOnly?: boolean }
+    | undefined,
 ): string[] {
+  if (feedback?.declarationOnly) {
+    // 実装は作業領域にあり、申告だけが欠けている（PBI-416）。続きの実装ではなく、申告の出し直しを伝える
+    const missing =
+      (feedback.unmapped?.length ?? 0) > 0
+        ? `観点とテストの対応に、テストの対応していないテスト観点がありました（${feedback.unmapped?.join("・")}）`
+        : "完了の申告が無いか、決まった形どおりに読めませんでした";
+    return [
+      `【申告の出し直し】この実行は、直前の実装の実行のセッションの続きです。直前の実行は、申告がそろわないまま終わりました：${missing}。sacty は提出していません（PR は、作っていません・更新していません）。`,
+      "実装は作業領域にあります。コードは変えなくてよい。申告だけを、決まった形どおりに出し直してください。",
+      "- 出し直すもの：実装の説明、すべてのテスト観点の対応（欠けた観点だけでなく、すべて）、完了の申告",
+      "- テストで確かめようがない観点・実行される振る舞いの無い変更だけの観点は、tests を空にして、テストで確かめない理由と、どう確かめたか（または誰が確かめるか）を untested に書く",
+      "- 実装が実は終わっていないと分かったときは、未完了と申告してよい",
+      "- 最後のメッセージは、下の指示が求める出力のすべてを、省かずに出し直す。直前の実行の最後のメッセージは、提出されていない",
+      "次の指示は、直前の実行と同じ内容に、直前の実行の状況を含めたものです。",
+      "",
+    ];
+  }
   const why =
     (feedback?.unmapped?.length ?? 0) > 0
       ? "完了と申告しましたが、観点とテストの対応に、テストの対応していないテスト観点がありました"
