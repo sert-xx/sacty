@@ -24,6 +24,7 @@ import {
   legacyMiseRoot,
   legacyNotice,
   refreshLegacyLaunchers,
+  withoutNpmRunPath,
   writeLauncher,
 } from "../../scripts/cli-install.mjs";
 
@@ -207,6 +208,62 @@ describe("findOnPath", () => {
   });
 });
 
+describe("withoutNpmRunPath", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+  const env = { npm_lifecycle_event: "cli:install" };
+  const join2 = (...p: string[]) => p.join(delimiter);
+
+  it("npm run 経由のとき、先頭から続く repo とその祖先の node_modules/.bin と node-gyp-bin を外す", () => {
+    const path = join2(
+      "/w/repo/node_modules/.bin",
+      "/w/node_modules/.bin",
+      "/npm/node_modules/node-gyp/bin/node-gyp-bin",
+      "/home/u/.local/bin",
+      "/usr/bin",
+    );
+    expect(withoutNpmRunPath(path, { env, repo: "/w/repo" })).toBe(
+      join2("/home/u/.local/bin", "/usr/bin"),
+    );
+  });
+
+  it("PATH の途中にある node_modules/.bin は残す", () => {
+    const path = join2("/w/repo/node_modules/.bin", "/usr/bin", "/w/node_modules/.bin");
+    expect(withoutNpmRunPath(path, { env, repo: "/w/repo" })).toBe(
+      join2("/usr/bin", "/w/node_modules/.bin"),
+    );
+  });
+
+  it("先頭の空の要素は飛ばして外す", () => {
+    const path = join2("", "/w/repo/node_modules/.bin", "/usr/bin");
+    expect(withoutNpmRunPath(path, { env, repo: "/w/repo" })).toBe("/usr/bin");
+  });
+
+  it("repo の祖先でない node_modules/.bin は外さない", () => {
+    const path = join2("/elsewhere/node_modules/.bin", "/usr/bin");
+    expect(withoutNpmRunPath(path, { env, repo: "/w/repo" })).toBe(path);
+  });
+
+  it("npm run 経由でない（npm_lifecycle_event が無い）ときは、そのまま返す", () => {
+    const path = join2("/w/repo/node_modules/.bin", "/usr/bin");
+    expect(withoutNpmRunPath(path, { env: {}, repo: "/w/repo" })).toBe(path);
+  });
+
+  it("リンクを含む --prefix で足された node_modules/.bin（リンクを解かない形）も外す", () => {
+    const base = mkdtempSync(join(tmpdir(), "sacty-cli-install-link-"));
+    dirs.push(base);
+    const realRepo = join(base, "real", "repo");
+    mkdirSync(join(realRepo, "node_modules", ".bin"), { recursive: true });
+    const linked = join(base, "link");
+    symlinkSync(join(base, "real"), linked);
+    // npm は --prefix のパスをそのまま使う。repo は実パス
+    const path = join2(join(linked, "repo", "node_modules", ".bin"), "/usr/bin");
+    expect(withoutNpmRunPath(path, { env, repo: realRepo })).toBe("/usr/bin");
+  });
+});
+
 describe("globalPrefix", () => {
   const withUuid = "/tmp/3f2b8c1e-9d4a-4b7e-8f0c-1a2b3c4d5e6f/npm-prefix";
 
@@ -342,6 +399,9 @@ describe("main（入れる流れ）", () => {
     binOnPath = true,
     foreign = false,
     mismatch = false,
+    npmRun = false,
+    npmRunForeign = false,
+    npmRunNoEvent = false,
   }: {
     legacy?: boolean;
     legacyFirst?: boolean;
@@ -349,6 +409,9 @@ describe("main（入れる流れ）", () => {
     binOnPath?: boolean;
     foreign?: boolean;
     mismatch?: boolean;
+    npmRun?: boolean;
+    npmRunForeign?: boolean;
+    npmRunNoEvent?: boolean;
   } = {}) {
     const base = mkdtempSync(join(tmpdir(), "sacty-cli-install-main-"));
     dirs.push(base);
@@ -379,19 +442,41 @@ describe("main（入れる流れ）", () => {
       mkdirSync(shims);
       symlinkSync(join(fake, "mise"), join(shims, "sacty"));
     }
+    // npm run が足す PATH の形：先頭に、repo とその親の node_modules/.bin（中に sacty）が並ぶ
+    const npmBins = [join(repo, "node_modules", ".bin"), join(base, "node_modules", ".bin")];
+    if (npmRun) {
+      for (const dir of npmBins) {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "sacty"), "#!/bin/sh\necho npm\n", { mode: 0o755 });
+      }
+    }
+    const other = join(base, "other");
+    if (npmRunForeign) {
+      mkdirSync(other);
+      writeFileSync(join(other, "sacty"), "#!/bin/sh\necho other\n", { mode: 0o755 });
+    }
     const env: Record<string, string | undefined> = {
       ...process.env,
       HOME: home,
+      ...(npmRun ? { npm_lifecycle_event: "cli:install" } : {}),
       PATH: [
+        ...(npmRun ? npmBins : []),
+        ...(npmRunForeign ? [other] : []),
         ...(legacyFirst ? [join(legacyLauncher, "..")] : []),
         ...(shimFirst ? [shims] : []),
         ...(binOnPath ? [bin] : []),
         fake,
-        process.env.PATH ?? "",
+        // テストを npm test で動かすと、親の PATH にこのリポジトリの node_modules/.bin（sacty 入り）があるので、
+        // npm run の形を確かめるときは外す
+        (process.env.PATH ?? "")
+          .split(delimiter)
+          .filter((dir) => !(npmRun && dir.endsWith(join("node_modules", ".bin"))))
+          .join(delimiter),
       ].join(delimiter),
       npm_config_global_prefix: join(base, "npm-prefix"),
     };
     delete env.SACTY_BIN_DIR;
+    if (npmRunNoEvent) delete env.npm_lifecycle_event;
     delete env.XDG_DATA_HOME;
     const script = new URL("../../scripts/cli-install.mjs", import.meta.url).href;
     const run = spawnSync(
@@ -405,6 +490,32 @@ describe("main（入れる流れ）", () => {
     );
     return { run, launcher: join(bin, "sacty"), legacyLauncher, miseCalls, env };
   }
+
+  it("npm run の PATH（先頭に node_modules/.bin が並ぶ）でも、置いた入口が利用者の PATH で先なら、注意を出さない", () => {
+    const { run } = install({ npmRun: true });
+    expect(run.status).toBe(0);
+    expect(run.stderr).not.toContain("注意");
+  });
+
+  it("npm run の PATH でも、利用者の PATH で別の sacty が先なら、注意の文はその sacty を指す", () => {
+    const { run } = install({ npmRun: true, npmRunForeign: true });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("PATH で先に見つかる sacty");
+    expect(run.stderr).toContain(join("other", "sacty"));
+    expect(run.stderr).not.toContain("node_modules");
+  });
+
+  it("npm run の PATH でも、置き場所が利用者の PATH に無ければ、PATH に足すよう知らせ、node_modules/.bin/sacty を挙げない", () => {
+    const { run } = install({ npmRun: true, binOnPath: false });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("PATH にありません");
+    expect(run.stderr).not.toContain("node_modules");
+  });
+
+  it("npm run を通さずに動かすと、PATH の node_modules/.bin の sacty も確かめの対象になる", () => {
+    const { run } = install({ npmRun: true, npmRunNoEvent: true });
+    expect(run.stderr).toContain("PATH で先に見つかる sacty");
+  });
 
   it("mise があっても、mise を呼ばずに ~/.local/bin に入口を置く", () => {
     const { run, launcher, miseCalls, env } = install();

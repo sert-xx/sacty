@@ -22,7 +22,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** 入口に書く目印。この目印の無いファイルは、sacty のものではないので上書きしない。 */
@@ -83,6 +83,31 @@ export function findOnPath(name, pathValue = process.env.PATH ?? "") {
     }
   }
   return undefined;
+}
+
+/**
+ * npm run が PATH の先頭に足したディレクトリ（repo とその祖先の node_modules/.bin、npm の node-gyp-bin）を外した PATH。
+ * 利用者のシェルで sacty と打ったときに見つかるものを調べるため（node_modules/.bin/sacty は、いつも先に見つかる）。
+ * npm run 経由（npm_lifecycle_event がある）のときだけ、PATH の先頭から続く分を外す。直接実行したときは、そのまま返す。
+ */
+export function withoutNpmRunPath(pathValue, { env = process.env, repo } = {}) {
+  if (!env.npm_lifecycle_event) return pathValue;
+  const added = new Set();
+  for (let dir = resolve(repo); ; dir = dirname(dir)) {
+    added.add(join(dir, "node_modules", ".bin"));
+    const realDir = real(dir);
+    if (realDir) added.add(join(realDir, "node_modules", ".bin"));
+    if (dirname(dir) === dir) break;
+  }
+  const entries = pathValue.split(delimiter);
+  let i = 0;
+  while (i < entries.length) {
+    const entry = entries[i];
+    const known = added.has(resolve(entry)) || added.has(real(entry) ?? resolve(entry));
+    if (entry && !known && basename(entry) !== "node-gyp-bin") break;
+    i++;
+  }
+  return entries.slice(i).join(delimiter);
 }
 
 /** dir が PATH（pathValue）に入っているか（realpath で比べる）。 */
@@ -287,12 +312,13 @@ export function main({ repo = resolve(dirname(fileURLToPath(import.meta.url)), "
   // 上の確かめを通った後に書き直す（動かない入口の中身を、前の版の入口に写さない）
   const legacyRoot = legacyMiseRoot();
   const legacy = refreshLegacyLaunchers({ root: legacyRoot, content, entry });
+  const userPath = withoutNpmRunPath(process.env.PATH ?? "", { repo });
   const { warnings, first } = checkPath({
     launcher,
-    onPath: findOnPath("sacty"),
+    onPath: findOnPath("sacty", userPath),
     sameAs: legacy.updated,
     legacy: legacy.found,
-    dirInPath: dirOnPath(dirname(launcher)),
+    dirInPath: dirOnPath(dirname(launcher), userPath),
   });
   for (const line of warnings) console.warn(`[sacty] 注意：${line}`);
   if (legacy.found) {
