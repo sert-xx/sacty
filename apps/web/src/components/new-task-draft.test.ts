@@ -11,18 +11,13 @@ const getMessages = vi.fn(async () => messagesFor("ja"));
 vi.mock("@/i18n/server", () => ({ getMessages }));
 vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 vi.mock("next/cache", () => ({ refresh: vi.fn(), revalidatePath: vi.fn() }));
-// 本物の redirect と同じく、例外を投げて移る
-const redirect = vi.fn((url: string) => {
-  throw Object.assign(new Error("NEXT_REDIRECT"), { digest: `NEXT_REDIRECT;push;${url};307;` });
+// 本物の redirect と unstable_rethrow を使い、redirect は呼ばれた URL を確かめる spy にとどめる
+const redirect = vi.fn();
+vi.mock("next/navigation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/navigation")>();
+  redirect.mockImplementation(actual.redirect);
+  return { ...actual, redirect };
 });
-vi.mock("next/navigation", () => ({
-  redirect,
-  // 本物と同じく、移動の例外だけを投げ直す
-  unstable_rethrow: (error: unknown) => {
-    if (String((error as { digest?: unknown } | null)?.digest ?? "").startsWith("NEXT_REDIRECT"))
-      throw error;
-  },
-}));
 vi.mock("@/lib/repository-candidates", () => ({
   candidatesLoader: () => Object.assign(() => {}, { cancel: () => {} }),
 }));
