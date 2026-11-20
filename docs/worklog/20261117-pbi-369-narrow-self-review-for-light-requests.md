@@ -4,7 +4,7 @@
 - タスク: PBI-369
 - PR: #407
 - ブランチ: feat/pbi-369-self-review-cost
-- 関係する ADR: [依頼が軽いときは、自己レビューの観点を絞る](../adr/20261117-0359-narrow-self-review-for-light-requests.md)
+- 関係する ADR: [依頼が軽いときは、自己レビューの観点を絞る](../adr/20261117-0359-superseded-narrow-self-review-for-light-requests.md)
 
 ## 目的
 

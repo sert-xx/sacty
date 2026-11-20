@@ -514,7 +514,17 @@ export class FakeRepos implements RepositoryWorkspace {
   /** ファイルの問題ではない失敗（git を実行できないなど）。 */
   readError?: string;
   readCalls: { gitDir: string; commit: string; path: string }[] = [];
-  async readFile(gitDir: string, commit: string, path: string) {
+  /** true なら、実際の git と同じく、anyName でない読み取りは ASCII の英数字と ._/- だけのパスしか受け付けない。 */
+  strictNames = false;
+  async readFile(
+    gitDir: string,
+    commit: string,
+    path: string,
+    options: { anyName?: boolean } = {},
+  ) {
+    if (this.strictNames && options.anyName !== true && !/^[A-Za-z0-9._/-]+$/.test(path)) {
+      throw new MessageError(message("git.invalidPath"));
+    }
     // コミットメッセージの形の定めを探す読み取り（PBI-301 A8）は、成果のファイルの読み取りの記録に入れない
     if (!COMMIT_CONVENTION_FILES.includes(path)) this.readCalls.push({ gitDir, commit, path });
     if (this.readFail) throw new MessageError(message("git.fileNotText", { path }));

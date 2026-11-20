@@ -12935,6 +12935,8 @@ export class TaskService {
     gitDir: string,
     from: string,
     to: string,
+    taskId: string,
+    secrets: readonly string[] = [],
   ): Promise<string[] | undefined> {
     try {
       if (from === to) return undefined;
@@ -12955,13 +12957,14 @@ export class TaskService {
           gitDir,
           to,
           dir ? `${dir}/SKILL.md` : "SKILL.md",
+          { anyName: true },
         );
         if (skill !== undefined) return undefined;
       }
       return paths;
     } catch (error) {
       console.warn(
-        `[daemon] 前回（${from.slice(0, 7)}）から ${to.slice(0, 7)} までの差分が文書だけかを確かめられませんでした。文書だけとは見なしません：${errorText(error)}`,
+        `[daemon] タスク ${taskId} で、前回（${from.slice(0, 7)}）から ${to.slice(0, 7)} までの差分が文書だけかを確かめられませんでした。文書だけとは見なしません：${renderMessage(redactText(errorText(error), [...secrets]), "ja")}`,
       );
       return undefined;
     }
@@ -13015,7 +13018,13 @@ export class TaskService {
     try {
       // 前回の先頭と前回の起点は、今回の取得とは別に取る（取れなくても、レビューは止めない）
       await this.deps.repos.fetchCommits(gitDir, [previous.headCommit, previous.baseCommit], auth);
-      const paths = await this.documentsOnlySince(gitDir, previous.headCommit, target.headCommit);
+      const paths = await this.documentsOnlySince(
+        gitDir,
+        previous.headCommit,
+        target.headCommit,
+        task.id,
+        Object.values(auth ?? {}),
+      );
       // 変わったパスの一覧が指示に載せきれないときは、親が残りを開けないので絞らない
       if (!paths || paths.length > REREVIEW_DOCS_ONLY_PATHS_MAX) return undefined;
       const before = await this.deps.repos.mergeBaseOf(
@@ -13028,7 +13037,7 @@ export class TaskService {
       return { previousCommit: previous.headCommit, paths };
     } catch (error) {
       console.warn(
-        `[daemon] レビューのタスク ${task.id} で、前回の先頭からの差分が文書だけかを確かめられませんでした。絞らずにレビューします：${errorText(error)}`,
+        `[daemon] レビューのタスク ${task.id} で、前回の先頭からの差分が文書だけかを確かめられませんでした。絞らずにレビューします：${renderMessage(redactText(errorText(error), Object.values(auth ?? {})), "ja")}`,
       );
       return undefined;
     }
@@ -13058,7 +13067,13 @@ export class TaskService {
       known.commit &&
       known.base !== undefined &&
       known.base === code.base &&
-      (await this.documentsOnlySince(this.trustedGitDir(latest), known.commit, code.commit))
+      (await this.documentsOnlySince(
+        this.trustedGitDir(latest),
+        known.commit,
+        code.commit,
+        latest.id,
+        usedSecrets,
+      ))
     ) {
       this.append(this.mustGet(task.id), [
         {

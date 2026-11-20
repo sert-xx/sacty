@@ -260,6 +260,36 @@ describe("前回以降が文書だけの再レビュー（PBI-421）", () => {
     expect(repos.fetchedCommits.length).toBeGreaterThan(0);
   });
 
+  it("日本語・空白を含むディレクトリの下の文書だけの変更でも、SKILL.md の確認が失敗せず、絞る", async () => {
+    const { prompt } = await rereviewPrompt({
+      changed: ["docs/設計/a.md", "docs/my notes/b.md"],
+      repos: (repos) => {
+        repos.strictNames = true;
+      },
+    });
+    expect(prompt).toContain(NARROW);
+    expect(prompt).toContain("docs/設計/a.md");
+    expect(prompt).not.toContain(KEEP_DISPATCH);
+  });
+
+  it("GitHub の再依頼で作ったタスク（前回の回の判定を持たない）の再レビューは、絞らない", async () => {
+    const { service, id } = await rereviewPrompt();
+    const task = service.get(id)?.task as Task;
+    const target = task.reviewTarget as NonNullable<Task["reviewTarget"]>;
+    const call = (t: Task) =>
+      (
+        service as unknown as {
+          rereviewDocsOnlyOf: (...args: unknown[]) => Promise<unknown>;
+        }
+      ).rereviewDocsOnlyOf(t, target, "git-dir", SRC_DIFF, undefined);
+    const previous = task.previousReview as NonNullable<Task["previousReview"]>;
+    const verdicts = [{ round: previous.round, verdict: "changes_required" }];
+    // 判定があれば絞れる前提の記録で、再依頼のタスクと同じく判定を持たないときだけ、絞らない
+    expect(await call({ ...task, reviewVerdicts: verdicts } as unknown as Task)).toBeDefined();
+    expect(await call({ ...task, reviewVerdicts: [] } as unknown as Task)).toBeUndefined();
+    expect(await call({ ...task, reviewVerdicts: undefined } as unknown as Task)).toBeUndefined();
+  });
+
   it("前回以降に文書でないファイルがあれば、絞らない", async () => {
     notNarrowed((await rereviewPrompt({ changed: ["docs/a.md", "src/y.ts"] })).prompt);
   });

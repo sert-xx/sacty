@@ -422,6 +422,27 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(await workspace.mergeBaseOf(gitDir, "--evil", second)).toBeUndefined();
   });
 
+  it("readFile は anyName で、日本語・空白を含むディレクトリの SKILL.md の有無を、実際の git で確かめられる（PBI-421）", async () => {
+    const origin = makeOrigin();
+    mkdirSync(join(origin, "docs", "設計"), { recursive: true });
+    mkdirSync(join(origin, "my notes"), { recursive: true });
+    writeFileSync(join(origin, "docs", "設計", "a.md"), "a\n");
+    writeFileSync(join(origin, "my notes", "SKILL.md"), "skill\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "a");
+    const head = git(origin, "rev-parse", "HEAD");
+    const workspace = new GitRepositoryWorkspace();
+    const gitDir = join(origin, ".git");
+
+    await expect(workspace.readFile(gitDir, head, "docs/設計/SKILL.md")).rejects.toThrow();
+    expect(
+      await workspace.readFile(gitDir, head, "docs/設計/SKILL.md", { anyName: true }),
+    ).toBeUndefined();
+    expect(await workspace.readFile(gitDir, head, "my notes/SKILL.md", { anyName: true })).toBe(
+      "skill\n",
+    );
+  });
+
   it("PR の差分は既定で切り詰め、full なら切り詰めない（レビューの差分の全体をファイルで渡すため。PBI-65）", async () => {
     const origin = makeOrigin();
     const base = git(origin, "rev-parse", "HEAD");

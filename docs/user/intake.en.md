@@ -101,7 +101,7 @@ This is because the review runs the project's verification such as tests (see [C
 
 Verification runs as follows.
 
-- In a re-review, the agent runs it again on the new commit.
+- In a re-review, the agent runs it again on the new commit. However, in a re-review of a PR whose main target is code, when the changes since the previous review are documents only, only the checks that apply to documents are run (the code tests are not run; see [Re-review](#re-review)).
 - For verification it could not run (such as checks that need services like a DB, or secrets), the agent writes the command and the reason in the review body.
 - When the PR's main target is a document (a design document, requirements, an ADR, or user documentation) and it has no code changes, the agent runs only the checks that apply to the changed documents.
   - Those are the checks the repository has, such as a document formatter, a markdown lint, and a link check.
