@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CiCheck, DaemonText, StepKey, Task } from "@sacty/core";
+import type { CiCheck, DaemonText, Remark, StepKey, Task } from "@sacty/core";
 import {
   activeStep,
   budgetState,
@@ -4864,9 +4864,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           repo: "https://github.com/acme/app",
           number: 12,
         });
-        expect(replies(pulls)[0]?.body).toContain(
+        // 出どころの記録が無いので、出どころを言わない（断定しない）。書き出しの行を、そのまま比べる
+        expect((replies(pulls)[0]?.body ?? "").split("\n").slice(1, 4)).toEqual([
           "レビューの本文（[このレビュー](https://github.com/acme/app/pull/12#pullrequestreview-21)）への返信です。",
-        );
+          "",
+          "**対応していません。** 理由：",
+        ]);
         expect(replies(pulls)[0]?.body).toContain(
           "**対応していません。** 理由：\n\nログの追加は、この PR の目的の外です",
         );
@@ -9711,7 +9714,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         );
         // 申告が読めない（知らない値）なら、対応の文だけ。@名前では通知を飛ばさない
         expect(onComment).toContain(
-          `人が書いた通常のコメント（[このコメント](${pr}#issuecomment-401)）への返信です。\n> 「再開のフォームの候補も直して」\n`,
+          `人が書いた通常のコメント（[このコメント](${pr}#issuecomment-401)）への返信です。\n> 「\`再開のフォームの候補も直して\`」\n`,
         );
         expect(onComment).not.toContain("**対応");
         expect(onComment).toContain("候補を直しました @​alice");
@@ -9846,7 +9849,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         );
         expect(first2(onHuman ?? "")).toEqual([
           `人が書いた通常のコメント（[このコメント](${pr}#issuecomment-401)）への返信です。`,
-          "> 「再開のフォームの候補も直して」",
+          "> 「`再開のフォームの候補も直して`」",
         ]);
         expect(first2(onAi ?? "")).not.toEqual(first2(onHuman ?? ""));
         // 引用のあるなしにかかわらず、先頭は目印、末尾は署名のまま
@@ -9899,7 +9902,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           `人が書いた行へのコメント（[この行へのコメント](${pr}#discussion_r501)）への返信です。`,
           "**対応しました。**",
         ]);
-        expect(first2(onComment ?? "")[1]).toBe("> 「再開のフォームの候補も直して」");
+        expect(first2(onComment ?? "")[1]).toBe("> 「`再開のフォームの候補も直して`」");
         warn.mockRestore();
       });
 
@@ -10445,6 +10448,26 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
             },
           ],
         });
+        // AI のレビューから出た案を、人が「この PR で直す」と決めた指摘（fixOf 付き）は、元の指摘の出どころ（sacty のレビュー）を引き継ぐ
+        const first = task.remarks.find((r) => r.id === "implement-1-1") as Remark;
+        const withFix = {
+          ...task,
+          remarks: [
+            { ...first, id: "orig-ai", source: "sacty_review" as const, repliedIn: 2 },
+            { ...first, id: "fix-of-ai", fixOf: "orig-ai" },
+          ],
+        } as Task;
+        expect(awaitingRemarkReplies(withFix)?.replies).toMatchObject([
+          { id: "fix-of-ai", source: "sacty_review" },
+        ]);
+        const humanFix = {
+          ...withFix,
+          remarks: [
+            { ...first, id: "orig-human", repliedIn: 2 },
+            { ...first, id: "fix-of-human", fixOf: "orig-human" },
+          ],
+        } as Task;
+        expect(awaitingRemarkReplies(humanFix)?.replies[0]?.source).toBeUndefined();
         expect(awaitingRemarkReplies({ ...task, pullRequestState: "closed" })).toBeUndefined();
         expect(awaitingRemarkReplies({ ...task, status: "paused" })).toBeUndefined();
         expect(

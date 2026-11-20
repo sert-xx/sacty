@@ -1,6 +1,7 @@
 import type { RemarkResponseStatus } from "@sacty/core";
 import { redact } from "./agents/redact.js";
 import { REMARK_REPLY_MARKER_PREFIX } from "./github.js";
+import { cutAtMax, withoutMentions } from "./human-ask-notice.js";
 import { withoutInternalPaths } from "./prompts.js";
 
 /*
@@ -66,22 +67,18 @@ const ORIGIN_KIND: Record<RemarkOriginRef["kind"], string> = {
 /** 通常のコメントへの返信に添える、元のコメントの引用の長さの上限（文字数）。 */
 export const REPLY_QUOTE_MAX = 100;
 
-/** 上限で切る。文字の途中（サロゲートペアの間）で切らない。返信の文章と引用に共通の処理。 */
-function cutAt(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const end = /[\uDC00-\uDFFF]/.test(text[max] ?? "") ? max - 1 : max;
-  return `${text.slice(0, end)}…`;
-}
-
-/** @ の直後に見えない文字を挟み、@名前で知らない人に通知が飛ばないようにする。 */
-function noMentions(text: string): string {
-  return text.replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b");
+/** インラインコードにする。本文にバッククォートがあれば、それより長いバッククォートで囲む。 */
+function inlineCode(text: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
+  const fence = "`".repeat(longest + 1);
+  return longest > 0 ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`;
 }
 
 /**
- * 元のコメントの冒頭を、1行の引用にする。秘密情報を伏せてから、HTML のコメント（目印）を除き、空白を1つにまとめて、
- * 切る（切り口にかかった秘密情報の前半が残らない）。HTML・Markdown が返信の形を壊さないよう、`<` と「`」を無害にし、
- * 「 」で囲んで、行頭が見出し・リストなどにならないようにする。本文が空なら undefined。
+ * 元のコメントの冒頭を、1行の引用にする。秘密情報を伏せ、内部のパスを置き換えてから、HTML のコメント（目印）を除き、
+ * 空白を1つにまとめて、切る（伏せる前に切ると、切り口にかかった秘密情報の前半が残る）。そのあとは文字を置き換えず、
+ * インラインコードに入れる（`#123` の参照・画像・リンク・文字参照・強調が効かない）。「 」の外の `> ` で、返信の形を保つ。
+ * 本文が空なら undefined。
  */
 export function remarkQuote(text: string, secrets: readonly string[]): string | undefined {
   const flat = withoutInternalPaths(redact(text, secrets))
@@ -89,8 +86,28 @@ export function remarkQuote(text: string, secrets: readonly string[]): string | 
     .replace(/\s+/g, " ")
     .trim();
   if (!flat) return undefined;
-  const cut = noMentions(cutAt(flat, REPLY_QUOTE_MAX)).replace(/</g, "&lt;").replace(/`/g, "'");
-  return `> 「${cut}」`;
+  return `> 「${inlineCode(withoutMentions(cutAtMax(flat, REPLY_QUOTE_MAX)))}」`;
+}
+
+/**
+ * 返信の書き出しに渡す、元の投稿の情報。出どころ（author）は、取り込んだ指摘の `source`、それが無い指摘（人が「この PR で
+ * 直す」と決めた案の指摘）は、元の指摘（fixOf）の `source` で決める。引き継いだ PR の指摘は、記録が無いので言わない。
+ */
+export function remarkReplyOrigin(
+  due: { continued?: true; source?: "sacty_review"; originText?: string },
+  ref: RemarkOriginRef,
+  pullRequestUrl: string,
+): NonNullable<RemarkReplyInput["origin"]> {
+  return {
+    ref,
+    url: remarkOriginUrl(pullRequestUrl, ref),
+    ...(due.continued
+      ? {}
+      : {
+          author: due.source ? ("sacty_review" as const) : ("human" as const),
+          ...(due.originText !== undefined ? { quote: due.originText } : {}),
+        }),
+  };
 }
 
 /** 書き出しの文。元の投稿の種類と、出どころ（sacty の AI のレビューか、人の投稿か。分からなければ言わない）を読めるようにする。 */
@@ -148,7 +165,7 @@ export type RemarkReplyInput = {
 export function buildRemarkReply(input: RemarkReplyInput): string {
   const hidden = withoutInternalPaths(redact(input.text, input.secrets)).trim();
   // 文字の途中（サロゲートペアの間）で切らない
-  const text = noMentions(cutAt(hidden, REPLY_TEXT_MAX));
+  const text = withoutMentions(cutAtMax(hidden, REPLY_TEXT_MAX));
   const quote =
     input.origin?.ref.kind === "comment" && input.origin.quote !== undefined
       ? remarkQuote(input.origin.quote, input.secrets)

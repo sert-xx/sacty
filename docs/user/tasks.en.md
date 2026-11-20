@@ -321,7 +321,7 @@ When the state is fetched again, the screen behaves as follows.
 
 - The screen is not reloaded; only the parts that changed are shown again. Questions, comments, and form values you are writing, what you selected, open dialogs and sections, focus, and the scroll position stay as they are.
 - While the browser tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
-- While the daemon cannot be reached, the screen stays as it is and shows "The daemon cannot be reached" (the header shows "Updates paused"). What is shown is what was last fetched. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
+- While the daemon cannot be reached, the screen stays as it is and shows "The daemon cannot be reached" (the header shows "Updates paused"). What is shown is what was last fetched. Check that `sacty up` is running. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
 
 Updates on the other screens work as follows.
 
@@ -742,7 +742,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   Its opening sentence shows the kind of the original post (a review body, a regular comment, or a line comment), whether the sacty AI or a person wrote it, and a link to the original.
   A reply to a regular comment quotes the start of the original comment on one line right after the opening (up to 100 characters; secrets are hidden).
   Even when several replies are posted together, the first few lines show which post each one replies to.
-  A finding of a taken-over PR shows neither the source nor a quotation.
+  A reply to a finding handed to the implementation of a taken-over PR shows neither the source nor a quotation. A reply to a finding taken in after the implementation started shows them.
 - The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
   When it was not addressed, the reason (for example, out of this task's scope) follows.
   For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).

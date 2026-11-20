@@ -9,6 +9,7 @@ import {
   remarkQuote,
   remarkReplyMarker,
   remarkReplyMarkerOf,
+  remarkReplyOrigin,
 } from "./remark-reply.js";
 
 describe("指摘への対応の、PR への返信の本文（PBI-352）", () => {
@@ -104,7 +105,7 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
         author: "human",
         quote: "再開の\nフォームの   候補も\n\n直して",
       });
-      expect(lines[2]).toBe("> 「再開の フォームの 候補も 直して」");
+      expect(lines[2]).toBe("> 「`再開の フォームの 候補も 直して`」");
       expect(lines[3]).toBe("");
       expect(lines[4]).toBe("**対応しました。**");
       expect(open("review", 601, { author: "human", quote: "全体に" })).not.toContain(
@@ -113,7 +114,7 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
       expect(open("comment", 402, { author: "human", quote: " \n " })[2]).toBe("");
       // 長ければ上限で切る
       const long = open("comment", 403, { author: "human", quote: "あ".repeat(500) })[2] ?? "";
-      expect(long).toBe(`> 「${"あ".repeat(REPLY_QUOTE_MAX)}…」`);
+      expect(long).toBe(`> 「\`${"あ".repeat(REPLY_QUOTE_MAX)}…\`」`);
     });
 
     it("引用は、秘密情報を伏せてから切る（切り口をまたぐ秘密情報の前半を残さない）。サロゲートペアの間で切らない", () => {
@@ -130,9 +131,9 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
       });
       expect(secretReply).not.toContain("zk-live");
       expect(secretReply).not.toContain(secret.slice(0, 6));
-      expect(secretReply).toContain("…」");
+      expect(secretReply).toContain("…`」");
       const emoji = remarkQuote(`${"a".repeat(REPLY_QUOTE_MAX - 1)}😀の後ろ`, []) ?? "";
-      expect(emoji).toBe(`> 「${"a".repeat(REPLY_QUOTE_MAX - 1)}…」`);
+      expect(emoji).toBe(`> 「\`${"a".repeat(REPLY_QUOTE_MAX - 1)}…\`」`);
       expect(emoji.isWellFormed()).toBe(true);
     });
 
@@ -145,8 +146,11 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
       expect(quoted).toContain("@\u200balice");
       expect(quoted).not.toContain("/sacty-input");
       expect(quoted).toContain("タスクの依頼");
-      expect(quoted).not.toContain("<");
-      expect(quoted).not.toContain("`");
+      // 文字は置き換えず、インラインコードに入れる（バッククォートは、より長い囲みで包む）
+      expect(quoted).toContain("<script>x</script>");
+      expect(quoted).toMatch(/^> 「``+ .* ``+」$/);
+      const refs = remarkQuote("#123 ![](http://x/y.png) [a](http://b) &#64;bob **強**", []) ?? "";
+      expect(refs).toBe("> 「`#123 ![](http://x/y.png) [a](http://b) &#64;bob **強**`」");
       expect(quoted).not.toContain("\n");
       expect(quoted.startsWith("> 「")).toBe(true);
       // 返信全体：先頭は目印のまま、目印は1つだけ、見出し・コードの囲み・HTML のコメントが行頭に来ない
@@ -166,6 +170,24 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
       for (const line of reply.split("\n").slice(1)) {
         expect(line).not.toMatch(/^(#|```|<)/);
       }
+    });
+
+    it("書き出しの出どころと引用の組み立て：取り込んだ指摘は source で決まり、引き継いだ PR の指摘は出どころを言わず引用も付けない", () => {
+      const ref = { kind: "comment", id: 401 } as const;
+      const url = "https://github.com/acme/app/pull/7";
+      const openOf = (due: Parameters<typeof remarkReplyOrigin>[0]) =>
+        buildRemarkReply({ ...base, origin: remarkReplyOrigin(due, ref, url) }).split("\n");
+      expect(openOf({ originText: "直して" }).slice(1, 3)).toEqual([
+        `人が書いた通常のコメント（[このコメント](${url}#issuecomment-401)）への返信です。`,
+        "> 「`直して`」",
+      ]);
+      expect(openOf({ source: "sacty_review", originText: "直して" })[1]).toBe(
+        `sacty の AI が書いた通常のコメント（[このコメント](${url}#issuecomment-401)）への返信です。`,
+      );
+      expect(openOf({ continued: true, originText: "直して" }).slice(1, 3)).toEqual([
+        `通常のコメント（[このコメント](${url}#issuecomment-401)）への返信です。`,
+        "",
+      ]);
     });
 
     it("同じ回の、sacty のレビューの本文への返信と、人が書いた通常のコメントへの返信は、目印の行を除く最初の2行（空行を数えない）が違い、宛先の種類が読める", () => {
@@ -205,7 +227,7 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
       expect(onReview[0]).not.toBe(onComment[0]);
       expect(onReview[0]).toContain("sacty の AI が書いたレビューの本文");
       expect(onComment[0]).toContain("人が書いた通常のコメント");
-      expect(onComment[1]).toBe("> 「再開のフォームの候補も直して」");
+      expect(onComment[1]).toBe("> 「`再開のフォームの候補も直して`」");
     });
   });
 

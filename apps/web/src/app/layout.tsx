@@ -15,6 +15,7 @@ import { AppHeader, HeaderFallback } from "@/components/shell/header";
 import { Localized } from "@/components/shell/localized";
 import { ProjectGate, RailGate } from "@/components/shell/project-gate";
 import { RailNav } from "@/components/shell/rail";
+import { MAIN_ID, SkipLink } from "@/components/shell/skip-link";
 import { UpdateNotice } from "@/components/shell/update-notice";
 import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
@@ -35,6 +36,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="flex min-h-full flex-col">
         {/* ブラウザのデスクトップ通知（このブラウザで On にしたときだけ。画面には何も描かない） */}
         <DesktopNotifications />
+        {/* 本文へ飛ぶリンク（最初の Tab で見える。フォーカスが無い間は見えない） */}
+        <Suspense fallback={null}>
+          <Localized>
+            <SkipLink />
+          </Localized>
+        </Suspense>
         {/* 画面の言語は cookie とリクエストから決まるので、どこも Suspense の中で決める */}
         <Suspense fallback={<HeaderFallback />}>
           <Localized>
@@ -48,7 +55,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <RailGate />
             </Localized>
           </Suspense>
-          <main className="min-w-0 flex-1 px-4 py-7 sm:px-8">
+          <main
+            id={MAIN_ID}
+            tabIndex={-1}
+            className="min-w-0 flex-1 px-4 py-7 outline-none sm:px-8"
+          >
             <div className="mx-auto flex max-w-6xl flex-col gap-6">
               {/* Docker を使えない・エージェントのイメージが無い（PBI-148）。タスクを実行できないので、どの画面でも中身の上に出す */}
               <Suspense fallback={null}>

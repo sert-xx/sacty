@@ -461,6 +461,7 @@ import {
   remarkOriginRef,
   remarkOriginUrl,
   remarkReplyMarkerOf,
+  remarkReplyOrigin,
 } from "./remark-reply.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
@@ -5034,24 +5035,7 @@ export class TaskService {
               ...where,
               body: buildRemarkReply({
                 ...reply,
-                ...(ref
-                  ? {
-                      origin: {
-                        ref,
-                        url: remarkOriginUrl(due.url, ref),
-                        ...(remark.continued
-                          ? {}
-                          : {
-                              author: remark.source
-                                ? ("sacty_review" as const)
-                                : ("human" as const),
-                              ...(remark.originText !== undefined
-                                ? { quote: remark.originText }
-                                : {}),
-                            }),
-                      },
-                    }
-                  : {}),
+                ...(ref ? { origin: remarkReplyOrigin(remark, ref, due.url) } : {}),
               }),
               signal,
             }),
@@ -20170,7 +20154,10 @@ export function awaitingRemarkReplies(task: Task):
             response: r.response,
             ...(r.status ? { status: r.status } : {}),
             respondedIn: r.respondedIn,
-            ...(r.source ? { source: r.source } : {}),
+            // 人が「この PR で直す」と決めた案の指摘（fixOf）は、元の指摘の出どころを引き継ぐ
+            ...((r.source ?? task.remarks.find((o) => o.id === r.fixOf)?.source)
+              ? { source: "sacty_review" as const }
+              : {}),
             originText: r.text,
           },
         ]

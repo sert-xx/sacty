@@ -71,6 +71,10 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 | `/tasks/<ID>/error-report` | Downloading the error report ([Error report](error-report.en.md)) |
 | `/settings` | The sacty settings |
 
+- Missing pages, render errors, and skip to main content (`apps/web/src/app/`, `components/shell/skip-link.tsx`)
+  - An unknown URL, and a page that calls `notFound()` (a missing task or project, and so on), shows "Page not found" in the Sacty screen with the header, through `not-found.tsx`, with a link to `/dashboard`. The text and the title follow the screen language. The HTTP status is unchanged (404 for an unknown URL).
+  - An exception during rendering shows "Could not display this page" and a reload action, through `error.tsx`. The exception message, paths, and stack are never shown. `global-error.tsx` replaces the whole layout and cannot determine the language, so it is fixed to Japanese.
+  - On every screen, the first Tab shows "Skip to main content" (`SkipLink`), and Enter moves focus to `<main id="main-content" tabindex="-1">`. It is not visible while it has no focus.
 - The web UI builds its links and destinations in `apps/web/src/lib/paths.ts` (project IDs are encoded).
   - After creating or importing a project, the UI moves to that project's settings (`/projects/<ID>/settings`).
   - "Tasks" (the breadcrumb) on the task details goes back to the task list of the task's project. Before the task is read and while the daemon is unreachable, it goes back to `/projects/current/tasks`.
