@@ -2006,6 +2006,15 @@ describe("既定のスキル：再レビューの範囲と観点の絞り（PBI-
     expect(r).not.toContain("起動しなかった必須観点は、起動表に");
   });
 
+  it("採用した must は差分の中か外かによらず「修正が必要」にし、範囲の値と必須観点の決まりに規則 11 を書く", () => {
+    const m = "差分の中か外かによらず、採用した `must` が 1 件でもあれば「修正が必要」にする";
+    expect(rule(11)).toContain(m);
+    expect(pr()).toContain(m);
+    expect(skill()).toContain(
+      "規則 11 で絞った再レビューの範囲（前回の指摘の確認と前回以降の差分）",
+    );
+  });
+
   it("旧い規則 10 の意味（絞った再レビュー＝文書に効く検証だけ）が残らず、親の手順 3 が規則 11 の明示を確かめさせる", () => {
     const text = pr();
     expect(text).not.toContain("（絞った再レビューは、文書に効く検証だけ）");
@@ -2050,7 +2059,7 @@ describe("既定のスキル：再レビューの範囲と観点の絞り（PBI-
     ].join("\n");
     expect(all.length).toBeGreaterThan(1000);
     expect(all).not.toMatch(
-      /sacty|\.sacty-tools|\/tmp\/|\/sacty-|npm |vitest|biome|TypeScript|\.ts\b/,
+      /sacty|デーモン|\.sacty-tools|\/tmp\/|\/sacty-|npm |vitest|biome|TypeScript|\.ts\b/,
     );
   });
 });

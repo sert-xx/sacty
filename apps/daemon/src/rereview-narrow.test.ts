@@ -266,6 +266,10 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     expect(prompt).toContain("「再レビューの範囲の絞り」の節で決める（PR 全体の差分では決めない）");
     expect(prompt).not.toContain("担当に渡す範囲は、PR の差分で決める");
     expect(prompt).not.toContain("差分だけを見て終えない");
+    // 親が絞らないと決めたときは、範囲・担当に渡す範囲の行を含め、絞りの文をすべて当てはめず PR 全体に戻す
+    expect(prompt).toContain("範囲は PR 全体、観点は規則 1〜7 で決め、この節の範囲・観点の絞りと");
+    expect(prompt).toContain("この行は当てはめず、範囲は PR 全体にする");
+    expect(prompt).toContain("この行は当てはめず、PR の差分で決める");
   });
 
   it("前回以降の差分が長いときは、先頭だけを載せ、全体を置いたファイルを示す", async () => {
