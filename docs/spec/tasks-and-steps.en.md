@@ -568,7 +568,7 @@ The overview of the task details shows one line right above the deliverables abo
   - "View the error report": only when the error report is shown (`showErrorReport`). It moves to `#error-report` (the right column drops below on a narrow width).
   - "View the log of the stopped run": only when `stoppedRunId` returns the run that caused this pause. `TaskPaused` has no run ID, so the order decides: it walks back the activity from the last `TaskPaused`.
     - Failures it takes: a failure of a run whose log can be opened and whose kind is an error (`AgentRunFailed`, `OrchestratorFailed`, `FinalReviewFailed`, and so on; `runLogId` returns an ID and `failureKind` is `error`).
-    - Where it stops: it does not link when it reaches another run's row (a start, a completion, a non-error failure, and so on), a resume (`TaskResumed`), or a pause recorded by a person (`manual`). It does not link when a person paused the task (`manual`).
+    - Where it stops: it does not link when it reaches another run's row (a start, a completion, a non-error failure, and so on), a resume (`TaskResumed`), or a `TaskPaused` record with reason `manual` found while walking back. It also does not link when the task's own pause reason is `manual`.
     - It walks past `TaskPaused` records that follow (a second one after a merge, for example), and skips records that belong to no run.
 - While paused, the note beside the Implementation heading is "Paused", not "In progress". The deliverables of other steps do not show "Writing…" while paused (only while running).
 - The screen follows a run starting, ending, or pausing with its refetch every 3 seconds.
