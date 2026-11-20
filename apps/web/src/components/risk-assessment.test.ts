@@ -129,8 +129,18 @@ describe("PR を作ったタスクの詳細に、レビューの子タスクの�
   });
   const parent = (over: Record<string, unknown> = {}) =>
     ({ pullRequest: { number: 7, commit: HEAD }, ...over }) as unknown as CardTask;
-  const child = (riskAssessment: unknown, step = "implement", number = 7) =>
-    ({ step, number, task: { riskAssessment } }) as never;
+  // 子タスクが最後にレビューした先頭（reviewTarget）は、既定では評価した先頭と同じ
+  const child = (
+    riskAssessment: unknown,
+    step = "implement",
+    number = 7,
+    reviewed: string | undefined = (riskAssessment as { commit?: string }).commit,
+  ) =>
+    ({
+      step,
+      number,
+      task: { riskAssessment, ...(reviewed ? { reviewTarget: { headCommit: reviewed } } : {}) },
+    }) as never;
   const view = (task: CardTask, reviewTasks: unknown[]) =>
     renderToStaticMarkup(h(RiskAssessmentCard, { task, reviewTasks: reviewTasks as never }));
 
@@ -147,10 +157,28 @@ describe("PR を作ったタスクの詳細に、レビューの子タスクの�
 
   it("PR の先頭が評価の後に進んでいたら、今の先頭の評価として見せない（日本語・英語）", () => {
     const moved = parent({ pullRequest: { number: 7, commit: NEW_HEAD } });
-    expect(view(moved, [child(risk(HEAD))])).toContain('data-testid="risk-stale"');
-    expect(view(moved, [child(risk(HEAD))])).toContain("今の先頭の評価ではありません");
+    const advanced = child(risk(HEAD), "implement", 7, NEW_HEAD);
+    expect(view(moved, [advanced])).toContain('data-testid="risk-stale"');
+    expect(view(moved, [advanced])).toContain("今の先頭の評価ではありません");
     locale = "en";
-    expect(view(moved, [child(risk(HEAD))])).toContain("It is not for the current head");
+    expect(view(moved, [advanced])).toContain("It is not for the current head");
+  });
+
+  it("先頭が進み、その回が指摘あり・判定なしで終わっても（評価は更新されない）、前の先頭の評価を今のものとして見せない", () => {
+    // 再レビューを始めた直後（対象を解決する前）と、対象を解決した後
+    const restarted = {
+      step: "implement",
+      number: 7,
+      task: { riskAssessment: risk(HEAD), reviewRestartCommit: NEW_HEAD },
+    } as never;
+    expect(view(parent(), [restarted])).toContain('data-testid="risk-stale"');
+    expect(view(parent(), [child(risk(HEAD), "implement", 7, NEW_HEAD)])).toContain(
+      'data-testid="risk-stale"',
+    );
+    // 比べる先頭が無ければ、今のものとは見せない
+    expect(riskAssessmentToShow(parent(), [child(risk(HEAD), "implement", 7, "")])?.current).toBe(
+      false,
+    );
   });
 
   it("人が足したコミットで進んだ先頭（指摘なしにした先頭 reviewedCommit）の評価は、今の先頭のものとして出す", () => {
@@ -197,11 +225,20 @@ describe("PR を作ったタスクの詳細に、レビューの子タスクの�
     expect(html).not.toContain('data-testid="risk-stale"');
   });
 
-  it("レビューのタスク自身の評価は、今までどおりそのまま出す", () => {
-    const own = { riskAssessment: risk(HEAD), reviewOf: { taskId: "p", step: "implement" } };
-    const html = view(own as unknown as CardTask, []);
-    expect(html).toContain(">高<");
-    expect(html).not.toContain('data-testid="risk-stale"');
+  it("レビューのタスク自身の評価は出る。最後にレビューした先頭と同じなら今のもの、先頭が進んでいれば今のものとして見せない", () => {
+    const own = (over: Record<string, unknown>) =>
+      ({
+        riskAssessment: risk(HEAD),
+        reviewOf: { taskId: "p", step: "implement" },
+        ...over,
+      }) as unknown as CardTask;
+    const same = view(own({ reviewTarget: { headCommit: HEAD } }), []);
+    expect(same).toContain(">高<");
+    expect(same).not.toContain('data-testid="risk-stale"');
+    const advanced = view(own({ reviewTarget: { headCommit: NEW_HEAD } }), []);
+    expect(advanced).toContain(">高<");
+    expect(advanced).toContain('data-testid="risk-stale"');
+    expect(view(own({ reviewRestartCommit: NEW_HEAD }), [])).toContain('data-testid="risk-stale"');
   });
 });
 

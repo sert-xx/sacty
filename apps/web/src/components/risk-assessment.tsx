@@ -4,15 +4,23 @@ import { RISK_SIGNAL_WEIGHT, type Task } from "@sacty/core";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
-type RiskSource = Pick<Task, "riskAssessment" | "pullRequest">;
-type ReviewTaskLink = { step: string; number: number; task?: Pick<Task, "riskAssessment"> };
+type RiskSource = Pick<
+  Task,
+  "riskAssessment" | "pullRequest" | "reviewTarget" | "reviewRestartCommit"
+>;
+type ReviewedHead = Pick<Task, "riskAssessment" | "reviewTarget" | "reviewRestartCommit">;
+type ReviewTaskLink = { step: string; number: number; task?: ReviewedHead };
+
+/** レビューのタスクが最後にレビューした（している）先頭。回が進んで対象を解決する前は、再レビューを始めた先頭。 */
+const lastReviewedHead = (t: ReviewedHead) => t.reviewTarget?.headCommit ?? t.reviewRestartCommit;
 
 /**
  * 画面に出すリスク評価と、それが今の PR の先頭の評価か（PBI-429）。
- * - レビューのタスク自身の評価（via: review）は、そのまま出す。
+ * - レビューのタスク自身の評価（via: review）は、そのタスクが最後にレビューした先頭と比べる。評価は指摘なしの回にしか
+ *   記録されないので、先頭が進んで指摘のある回になっても、前の先頭の評価が残る（その評価を、今の先頭のものとして見せない）。
  * - PR を作ったタスクは、その実装の PR のレビューの子タスクが指摘なしの回に出した評価を、子タスクを開かずに出す
- *   （子タスクの評価があれば、それを先に出す）。評価した先頭が、PR の今の先頭（提出した先頭か、指摘なしにした先頭）と違えば、
- *   今の先頭の評価として見せない（current が偽）。
+ *   （子タスクの評価があれば、それを先に出す）。評価した先頭が、子タスクが最後にレビューした先頭と違えば、
+ *   今の先頭の評価として見せない（current が偽。比べる先頭が無いときも偽）。
  * - 版を上げる前の記録（via: publish）は、評価した先頭と今の先頭を比べて、同じように出す。
  * 評価が無ければ undefined（何も出さない）。
  */
@@ -21,7 +29,14 @@ export function riskAssessmentToShow(
   reviewTasks: readonly ReviewTaskLink[] = [],
 ): { risk: NonNullable<Task["riskAssessment"]>; current: boolean } | undefined {
   const own = task.riskAssessment;
-  if (own?.via === "review") return { risk: own, current: true };
+  const judgeReview = (risk: NonNullable<Task["riskAssessment"]>, reviewer: ReviewedHead) => {
+    const head = lastReviewedHead(reviewer);
+    return {
+      risk,
+      current: risk.commit !== undefined && head !== undefined && risk.commit === head,
+    };
+  };
+  if (own?.via === "review") return judgeReview(own, task);
   const pr = task.pullRequest;
   const heads = [pr?.commit, pr?.reviewedCommit].filter((h): h is string => !!h);
   const judge = (risk: NonNullable<Task["riskAssessment"]>) => ({
@@ -31,8 +46,8 @@ export function riskAssessmentToShow(
   const child = reviewTasks.findLast(
     (r) =>
       r.step === "implement" && r.number === pr?.number && r.task?.riskAssessment?.via === "review",
-  )?.task?.riskAssessment;
-  if (child) return judge(child);
+  )?.task;
+  if (child?.riskAssessment) return judgeReview(child.riskAssessment, child);
   return own ? judge(own) : undefined;
 }
 

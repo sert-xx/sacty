@@ -244,7 +244,7 @@ const service = new TaskService({
   // 完了したタスクを監査する（PBI-125）
   audit: !auditMock,
   reviewTasks: true,
-  // PR を作る前に、PR の内容のリスクを評価する（PBI-362）
+  // レビューの工程で、指摘なしの回に、PR のリスクを評価する（PBI-362・PBI-429。sacty の実装の PR の子タスクで評価するかを決める）
   riskAssessment: true,
   config,
   secrets,

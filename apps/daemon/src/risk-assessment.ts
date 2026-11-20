@@ -202,7 +202,7 @@ export function assessesRiskInReview(task: Task, parentContinued = false): boole
 }
 
 /** レビューの工程の指示に足す、リスク評価の指示（`assessesRiskInReview` のタスクだけ）。指摘なしと判定するときだけ出させる。 */
-export function reviewRiskLines(task: Task, enabled = assessesRiskInReview(task)): string[] {
+export function reviewRiskLines(_task: Task, enabled: boolean): string[] {
   if (!enabled) return [];
   return [
     "",
@@ -366,9 +366,6 @@ export function withoutRiskBlocks(body: string): string {
   return removed ? kept.join("\n").replace(/\n{3,}/g, "\n\n") : body;
 }
 
-/** PR の説明・レビューのコメントの中の、見出しの形。`##`・`###` は見出し、bold は太字の行（テンプレートに沿わせる本文）。 */
-export type RiskHeadingStyle = "##" | "###" | "bold";
-
 /** リスク評価の節の題。 */
 export const RISK_SECTION_TITLE = "リスク評価";
 
@@ -387,12 +384,9 @@ function signalLabel(signal: RiskSignal): string {
  * PR の説明・レビューのコメントに載せる、リスク評価の節（PBI-362）。評価が無ければ（まだ評価していない）、何も出さない。
  * 評価できなかったときは、評価できなかったことと理由を書く。
  */
-export function riskAssessmentLines(
-  risk: Task["riskAssessment"],
-  style: RiskHeadingStyle,
-): string[] {
+export function riskAssessmentLines(risk: Task["riskAssessment"]): string[] {
   if (!risk) return [];
-  const heading = style === "bold" ? `**${RISK_SECTION_TITLE}**` : `${style} ${RISK_SECTION_TITLE}`;
+  const heading = `### ${RISK_SECTION_TITLE}`;
   const note =
     "AI による目安です。レビューの深さを決める参考にしてください（この評価で、レビューやテストが省かれることはありません）。";
   const a = risk.assessment;

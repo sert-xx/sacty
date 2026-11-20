@@ -425,14 +425,14 @@ describe("レビューの工程の評価の基準（PBI-362）", () => {
     expect(RISK_LOADED_GUIDANCE_LINE).toContain(
       "読み込まれたスキルやコンテキストではないので、優先しません",
     );
-    const prompt = buildPrompt(reviewTask(), "review", { diff: "" });
+    const prompt = buildPrompt(reviewTask(), "review", { diff: "", reviewRisk: true });
     const constraint = prompt.indexOf(RISK_LOADED_GUIDANCE_LINE);
     expect(constraint).toBeGreaterThan(-1);
     expect(prompt.indexOf("段階は low・medium・high の3つです")).toBeGreaterThan(constraint);
   });
 
   it("基準は、あらゆる言語・リポジトリの対象に渡るので、特定の言語・パッケージ管理の名前を書かない（PBI-377）", () => {
-    const publish = buildPrompt(reviewTask(), "review", { diff: "" });
+    const publish = buildPrompt(reviewTask(), "review", { diff: "", reviewRisk: true });
     const criteria = publish.slice(
       publish.indexOf(RISK_LOADED_GUIDANCE_LINE),
       publish.indexOf("評価は、次の形式で出してください"),
@@ -460,8 +460,8 @@ describe("リスク評価の節（PBI-362）", () => {
   };
 
   it("段階・勧める深さ・合図・根拠・とくに見る箇所を書く", () => {
-    expect(riskAssessmentLines(assessed(high), "##")).toEqual([
-      "## リスク評価",
+    expect(riskAssessmentLines(assessed(high))).toEqual([
+      "### リスク評価",
       "",
       "- 段階：**高**（低・中・高の3段階）",
       "- 勧めるレビューの深さ：設計と影響から確かめる（「とくに見る箇所」を読み、リスクの合図ごとに、設計の妥当さ・影響の範囲・戻し方を確かめる）",
@@ -477,15 +477,13 @@ describe("リスク評価の節（PBI-362）", () => {
   });
 
   it("段階ごとに、勧める深さが決まる。合図・とくに見る箇所が無ければ、その行を出さない", () => {
-    const low = riskAssessmentLines(assessed({ ...medium, level: "low", focus: [] }), "bold").join(
-      "\n",
-    );
-    expect(low).toContain("**リスク評価**");
+    const low = riskAssessmentLines(assessed({ ...medium, level: "low", focus: [] })).join("\n");
+    expect(low).toContain("### リスク評価");
     expect(low).toContain("- 段階：**低**");
     expect(low).toContain("- 勧めるレビューの深さ：流し読みでよい");
     expect(low).not.toContain("リスクの合図：");
     expect(low).not.toContain("とくに見る箇所：");
-    expect(riskAssessmentLines(assessed(medium), "###").join("\n")).toContain(
+    expect(riskAssessmentLines(assessed(medium)).join("\n")).toContain(
       "- 勧めるレビューの深さ：変えた振る舞いの箇所を読む",
     );
   });
@@ -498,7 +496,6 @@ describe("リスク評価の節（PBI-362）", () => {
         signals: ["compatibility", "large", "defect"],
         dependencyUpdate: "major",
       }),
-      "##",
     );
     expect(lines).toContain(
       "- リスクの合図：互換性の変更（重い）、大きな差分（軽い）、不具合の疑い",
@@ -510,15 +507,14 @@ describe("リスク評価の節（PBI-362）", () => {
     );
     const patch = riskAssessmentLines(
       assessed({ ...medium, level: "low", dependencyUpdate: "patch" }),
-      "##",
     ).join("\n");
     expect(patch).toContain("- 段階：**低**");
     expect(patch).toContain("- 依存の版の更新：パッチ");
     expect(
-      riskAssessmentLines(assessed({ ...medium, dependencyUpdate: "unknown" }), "##").join("\n"),
+      riskAssessmentLines(assessed({ ...medium, dependencyUpdate: "unknown" })).join("\n"),
     ).toContain("- 依存の版の更新：上げ幅を読み取れない");
     // 依存の版の更新が無ければ、行を出さない
-    expect(riskAssessmentLines(assessed(medium), "##").join("\n")).not.toContain("依存の版の更新");
+    expect(riskAssessmentLines(assessed(medium)).join("\n")).not.toContain("依存の版の更新");
   });
 
   it("評価できなかったときは、評価できなかったことと理由を書く", () => {
@@ -528,21 +524,20 @@ describe("リスク評価の節（PBI-362）", () => {
       reason: message("pr.riskUnreadable"),
       at: "2026-11-17T00:00:00.000Z",
     } as Task["riskAssessment"];
-    expect(riskAssessmentLines(failed, "##")).toEqual([
-      "## リスク評価",
+    expect(riskAssessmentLines(failed)).toEqual([
+      "### リスク評価",
       "",
       "- 評価できませんでした（エージェントの出力から、リスク評価を読み取れませんでした）。レビューの深さは、差分を見て決めてください。",
     ]);
   });
 
   it("評価が無ければ（まだ評価していない）、何も出さない", () => {
-    expect(riskAssessmentLines(undefined, "##")).toEqual([]);
+    expect(riskAssessmentLines(undefined)).toEqual([]);
   });
 
   it("とくに見る箇所のバッククォートは、インラインコードを閉じないように置き換える", () => {
     const lines = riskAssessmentLines(
       assessed({ ...medium, focus: [{ where: "a`b`.ts", why: "理由" }] }),
-      "##",
     );
     expect(lines).toContain("  - `a'b'.ts`：理由");
   });
@@ -604,7 +599,7 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
   });
 
   it("レビューの指示に、指摘なしと判定するときだけ評価を出すよう、評価の基準と答えの形を足す（要求要件・設計の子タスクには足さない）", () => {
-    const prompt = buildPrompt(reviewTask(), "review", { diff });
+    const prompt = buildPrompt(reviewTask(), "review", { diff, reviewRisk: true });
     expect(prompt).toContain(
       "判定を no_findings にするときだけ、レビューとは別に、この PR のリスクを評価してください。",
     );
@@ -616,7 +611,7 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
     const implementChild = buildPrompt(
       reviewTask({ source: source("sacty"), reviewOf: { taskId: "p", step: "implement" } }),
       "review",
-      { diff },
+      { diff, reviewRisk: true },
     );
     expect(implementChild).toContain(`{"${RISK_ASSESSMENT_HEADING}": {"level": "medium"`);
     // サービスが対象でないと決めたレビュー（引き継いだ PR の子タスク）には足さない
@@ -767,10 +762,12 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
     expect(read.output).toBe(output);
   });
 
+  const reviewBody = (task: Parameters<typeof buildReviewBody>[0]) =>
+    buildReviewBody(task, { risk: true });
   const clear = { reviewVerdicts: [{ round: 1, verdict: "no_findings" }] };
 
   it("投稿するレビューの本文の、判定の後・総評の前に、評価の節を載せる（指摘なしの回）", () => {
-    const body = buildReviewBody(
+    const body = reviewBody(
       reviewTask({
         ...clear,
         riskAssessment: assessed(medium, "review", target.headCommit),
@@ -786,7 +783,7 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
   });
 
   it("評価できなかったときも、指摘なしの回なら、そのことを載せて投稿する", () => {
-    const body = buildReviewBody(
+    const body = reviewBody(
       reviewTask({
         ...clear,
         riskAssessment: {
@@ -814,18 +811,23 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
           reviewOf: { taskId: "p", step: "design" },
           riskAssessment: risk,
         }),
+        { risk: false },
       ),
     ).not.toContain("リスク評価");
+    // 渡さなければ、評価を載せない（対象かどうかは、呼び出す側が決めて渡す）
+    expect(buildReviewBody(reviewTask({ ...clear, riskAssessment: risk }))).not.toContain(
+      "リスク評価",
+    );
     expect(
-      buildReviewBody(reviewTask({ ...clear, riskAssessment: assessed(medium, "review", "old") })),
+      reviewBody(reviewTask({ ...clear, riskAssessment: assessed(medium, "review", "old") })),
     ).not.toContain("リスク評価");
     expect(
-      buildReviewBody(
+      reviewBody(
         reviewTask({ ...clear, riskAssessment: assessed(medium, "publish", target.headCommit) }),
       ),
     ).not.toContain("リスク評価");
-    expect(buildReviewBody(reviewTask(clear))).not.toContain("リスク評価");
+    expect(reviewBody(reviewTask(clear))).not.toContain("リスク評価");
     // 同じ先頭の前の回の評価が残っていても、今回が指摘なしでなければ載せない
-    expect(buildReviewBody(reviewTask({ riskAssessment: risk }))).not.toContain("リスク評価");
+    expect(reviewBody(reviewTask({ riskAssessment: risk }))).not.toContain("リスク評価");
   });
 });

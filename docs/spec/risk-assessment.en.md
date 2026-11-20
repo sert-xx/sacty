@@ -198,7 +198,7 @@ Code: `apps/daemon/src/risk-assessment.ts` (`riskAssessmentLines`), `apps/daemon
 - The UI shows a "PR risk assessment" section.
   - The detail of a review task (a child task or an imported PR review) shows that task's own assessment.
   - The detail of the task that opened the PR (including a task waiting for approval) shows the assessment given by the review child task of that implementation PR, without opening the child task. An assessment of a child task comes before an old `publish` assessment from before the version upgrade.
-  - It shows which head (commit) was assessed. When the assessed head differs from the PR's current head (the head that was submitted, or the head that was judged to have no findings), it says so.
+  - It shows which head (commit) was assessed. The "current head" is the head the review child task last reviewed (or is reviewing): `reviewTarget.headCommit`, or `reviewRestartCommit` before the target is resolved. When the assessed head differs, it says it is not for the current head (an assessment is recorded only in a round with no findings, so after the head advances into a round with findings, the earlier head's assessment remains). With no head to compare, it is not shown as the current head. The detail of the review task itself uses the same comparison. A pre-upgrade `publish` assessment is compared with the PR's submitted head and the head judged to have no findings.
   - When there is no assessment yet (no round with no findings yet), nothing is shown.
 - The activity shows the occasion and the level (the reason, if it could not be assessed) in one row. A record of a carried-over assessment (from before the version upgrade) shows which commit's assessment was carried over to which commit in one row.
 

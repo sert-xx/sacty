@@ -146,13 +146,17 @@ describe("PR を作る・更新する時点では、リスクを評価しない�
 
 describe("レビューの工程の評価：対象 × 判定 × 評価の答え（PBI-429）", () => {
   /** 実装の PR（または要求要件の PR）のレビューの子タスクを、レビューを投稿するまで進める。 */
-  async function childReview(step: "implement" | "requirements", outcome: AgentOutcome) {
+  async function childReview(
+    step: "implement" | "requirements",
+    outcome: AgentOutcome,
+    options: { riskAssessment?: boolean; parentContinued?: boolean } = {},
+  ) {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();
     const { service, executor } = makeService(activity, [implementOutcome(), outcome], {
       pulls,
       reviewTasks: true,
-      riskAssessment: true,
+      riskAssessment: options.riskAssessment ?? true,
       stepPullRequests: step === "requirements",
       planner: async () => ({
         steps: [step],
@@ -170,6 +174,16 @@ describe("レビューの工程の評価：対象 × 判定 × 評価の答え�
     const link = parent.reviewTasks?.[0];
     expect(link?.step).toBe(step);
     const childId = link?.taskId ?? "";
+    if (options.parentContinued) {
+      // 親が既存の PR を引き継いだタスクの子タスク（引き継いだ PR は、作る・更新する時点でも評価していない）。
+      // 引き継ぎは工程の選びで決まるので、記録の読み込み後の状態を直接書き換えて、サービスの判定の配線を確かめる
+      const held = (service as unknown as { tasks: Map<string, Task> }).tasks.get(id);
+      if (held)
+        held.continuedPullRequest = {
+          number: 12,
+          url: "https://github.com/acme/app/pull/12",
+        } as never;
+    }
     const commit =
       parent.pullRequest?.commit ?? parent.stepPullRequests.findLast(() => true)?.commit ?? HEAD;
     pulls.prInfo = { ...pulls.prInfo, number: link?.number ?? PR_NUMBER, headSha: commit };
@@ -227,6 +241,16 @@ describe("レビューの工程の評価：対象 × 判定 × 評価の答え�
       name: "実装の PR の子タスク",
       evaluated: true,
       run: (o: AgentOutcome) => childReview("implement", o),
+    },
+    {
+      name: "評価を無効にしたデーモンの実装の PR の子タスク",
+      evaluated: false,
+      run: (o: AgentOutcome) => childReview("implement", o, { riskAssessment: false }),
+    },
+    {
+      name: "親が既存の PR を引き継いだ実装の子タスク",
+      evaluated: false,
+      run: (o: AgentOutcome) => childReview("implement", o, { parentContinued: true }),
     },
     { name: "取り込んだ PR のレビュー", evaluated: true, run: importedReview },
     {

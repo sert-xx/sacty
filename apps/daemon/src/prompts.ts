@@ -110,7 +110,6 @@ import {
 } from "./question-logs.js";
 import { WORKSPACE_SCRATCH_DIR, WORKSPACE_TOOLS_DIR, type WorkingTreeCopy } from "./repository.js";
 import {
-  assessesRiskInReview,
   extractRiskAssessment,
   reviewRiskLines,
   riskAssessmentLines,
@@ -3286,7 +3285,7 @@ export function buildPrompt(
     rereviewDocsOnly?: RereviewDocsOnly;
     /**
      * レビューの工程で、指摘なしと判定するときにリスク評価を出させるか（PBI-429）。service が、対象のタスクか（子タスクの
-     * 範囲を含む）で決めて渡す。渡さなければ、タスクだけから決める（`assessesRiskInReview`）。
+     * 範囲を含む）で決めて渡す。渡さなければ、評価を出させない。
      */
     reviewRisk?: boolean;
     /**
@@ -3475,7 +3474,7 @@ export function buildPrompt(
         "```",
         ...reviewReworkLines(extra.reviewRework),
         // 評価の対象のレビューは、指摘なしと判定するときだけ、PR のリスクも評価させる（PBI-362・PBI-429）
-        ...reviewRiskLines(task, extra.reviewRisk),
+        ...reviewRiskLines(task, extra.reviewRisk === true),
         // レビューする PR が分割の子タスクの PR なら、その範囲（PBI-351）
         ...reviewChildScopeLines(extra.reviewRework),
         // レビューする PR が、実装の前の文書の PR のとき、方針と抜けだけを見させる（PBI-419）
@@ -9081,11 +9080,11 @@ export function buildReviewBody(
   const reviewed = task.reviewTarget?.headCommit ?? "";
   // 今回レビューした先頭の評価だけを、指摘なしの回にだけ載せる（前の回の評価・指摘のある回に、前の評価を載せない。PBI-429）
   const risk =
-    (options.risk ?? assessesRiskInReview(task)) &&
+    options.risk === true &&
     verdict === "no_findings" &&
     task.riskAssessment?.via === "review" &&
     task.riskAssessment.commit === task.reviewTarget?.headCommit
-      ? riskAssessmentLines(task.riskAssessment, "###")
+      ? riskAssessmentLines(task.riskAssessment)
       : [];
   const stale =
     options.latestCommit && reviewed && options.latestCommit !== reviewed
