@@ -1350,6 +1350,77 @@ describe("工程の実行と費用", () => {
       activity.close();
     });
 
+    it("明ける時刻を読めたら、cooldown_minutes より長くても短くても、その時刻まで代わりを使い、AgentFellBack の until も合う", async () => {
+      for (const [cooldownMin, resetIso] of [
+        [30, "2026-10-20T05:00:00.000Z"],
+        [120, "2026-10-20T01:00:00.000Z"],
+      ] as const) {
+        const activity = new SqliteActivityStore(`${dbPath}-${cooldownMin}`);
+        let now = Date.parse("2026-10-20T00:00:00Z");
+        const resetAt = Date.parse(resetIso);
+        const readable: AgentOutcome = {
+          kind: "failed",
+          reason: "usage_limit",
+          message: `You've hit your weekly limit · resets ${resetIso === "2026-10-20T05:00:00.000Z" ? "2:00pm" : "10:00am"} (Asia/Tokyo)`,
+        };
+        const { service, executor } = makeService(
+          activity,
+          [readable, completed(1_000), completed(1_000), completed(1_000)],
+          { config: withFallback(cooldownMin * 60_000), secrets, now: () => now },
+        );
+        const task = service.createTask({ projectId: "default", title: "A" });
+        await service.runNext(task.id);
+        expect(fellBack(service, task.id).map((p) => p.until)).toEqual([resetIso]);
+        await service.runNext(task.id);
+        now = resetAt - 1;
+        const during = service.createTask({ projectId: "default", title: "B" });
+        await service.runNext(during.id);
+        expect(executor.calls[2]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+        now = resetAt;
+        const after = service.createTask({ projectId: "default", title: "C" });
+        await service.runNext(after.id);
+        expect(executor.calls[3]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+        activity.close();
+      }
+    });
+
+    it("明ける時刻を読めないとき・一時的な混雑のときは、cooldown_minutes で戻る", async () => {
+      for (const message of [
+        "You've hit your session limit · resets 3:45pm",
+        "429 Too Many Requests, retry at 3:45pm (Asia/Tokyo)",
+        "session limit · resets 13:00pm (Asia/Tokyo)",
+      ]) {
+        const activity = new SqliteActivityStore(`${dbPath}-u`);
+        let now = Date.parse("2026-10-20T00:00:00Z");
+        const { service, executor } = makeService(
+          activity,
+          [
+            { kind: "failed", reason: "usage_limit", message },
+            completed(1_000),
+            completed(1_000),
+            completed(1_000),
+          ],
+          { config: withFallback(30 * 60_000), secrets, now: () => now },
+        );
+        const task = service.createTask({ projectId: "default", title: "A" });
+        await service.runNext(task.id);
+        expect(fellBack(service, task.id).map((p) => p.until)).toEqual([
+          "2026-10-20T00:30:00.000Z",
+        ]);
+        await service.runNext(task.id);
+        now += 30 * 60_000 - 1;
+        const during = service.createTask({ projectId: "default", title: "B" });
+        await service.runNext(during.id);
+        expect(executor.calls[2]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+        now += 1;
+        const after = service.createTask({ projectId: "default", title: "C" });
+        await service.runNext(after.id);
+        expect(executor.calls[3]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+        activity.close();
+        rmSync(`${dbPath}-u`, { force: true });
+      }
+    });
+
     it("代わりのエージェントも利用制限なら、これまでどおり止める", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(activity, [limited, limited], {

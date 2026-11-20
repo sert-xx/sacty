@@ -196,6 +196,7 @@ import {
   CONTAINER_CODEX_HOME,
   type OrchestratorSessionResume,
 } from "./agents/invocation.js";
+import { parseLimitReset } from "./agents/limit-reset.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactEscaped, redactText } from "./agents/redact.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
@@ -8981,10 +8982,13 @@ export class TaskService {
     );
   }
 
-  /** 利用制限で失敗したエージェントを、期限（config.yaml の agent_fallback.cooldown_minutes）まで使わない。 */
+  /** 利用制限で失敗したエージェントを、失敗の文から読んだ明ける時刻まで（読めなければ agent_fallback.cooldown_minutes）使わない。 */
   private markLimited(agent: AgentConfig, outcome: AgentOutcome): void {
     if (outcome.kind !== "failed" || outcome.reason !== "usage_limit") return;
-    this.limitedAgents.set(agent.id, this.now() + this.fallbackCooldownMs());
+    const now = this.now();
+    // 失敗の文から明ける時刻を確かに読み取れたときは、その時刻まで。読めないときは cooldown_minutes
+    const until = parseLimitReset(String(outcome.message), now) ?? now + this.fallbackCooldownMs();
+    this.limitedAgents.set(agent.id, until);
   }
 
   /**

@@ -27,7 +27,7 @@
 | `default_agent` | `config/agents.yaml` の `default_agent` のうち、使える最初のもの | 既定の AI。エージェントの名前 |
 | `guardian_agent` | なし | 使わない。書いてあっても誤りにせず、読み捨てて警告する（`config.guardianAgentIgnored`。画面の警告に出る） |
 | `audit_agent` | `default_agent` | 完了したタスクの監査の AI（[監査](audit.md)） |
-| `agent_fallback.cooldown_minutes` | `60`（`DEFAULT_FALLBACK_COOLDOWN_MINUTES`） | 失敗したエージェントを使わない時間（分。1〜1440 の整数）。利用制限（`usage_limit`）ならすべてのタスクで、ほかの失敗ならそのタスクで、その間は `agents` の `fallback` を使う（[エージェントの実行](agent-execution.md#失敗したときの代わりのエージェント)） |
+| `agent_fallback.cooldown_minutes` | `60`（`DEFAULT_FALLBACK_COOLDOWN_MINUTES`） | 失敗したエージェントを使わない時間（分。1〜1440 の整数）。利用制限（`usage_limit`）ならすべてのタスクで（失敗の文から明ける時刻を読み取れたときは、この時間でなくその時刻まで）、ほかの失敗ならそのタスクで、その間は `agents` の `fallback` を使う（[エージェントの実行](agent-execution.md#失敗したときの代わりのエージェント)） |
 | `step_agents` | `{}` | 工程（`StepKey`。`deployment` はマージの後の監視の工程の確認）と `orchestrator`・`gather`（タスクの開始時の情報収集）ごとの AI。書かなければ `default_agent`（統合レビュー（`integrate`）も）、情報収集（`gather`）は `orchestrator` の AI |
 | `agents` | `{}` | エージェントの既定の上書きと追加（下の「エージェントの既定と上書き」） |
 | `budget.default_per_task_usd` | `1`（`DEFAULT_BUDGET_USD`） | 1タスクあたりの予算（米ドル。正の数） |

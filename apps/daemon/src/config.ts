@@ -1241,7 +1241,7 @@ providers:
 
 # 実行が失敗したら（利用制限・認証エラーなど、理由は問わない）、代わりのエージェントに切り替えて続ける。agents のエージェントに fallback を書く
 # （例 Claude Code をメインにし、失敗したら Codex にする：agents の claude_standard に fallback: codex_standard。並べると上から順に試す）。
-# cooldown_minutes は、失敗したエージェントを使わず、代わりを使う時間（分。1〜1440。利用制限ならすべてのタスクで、ほかの失敗ならそのタスクで）
+# cooldown_minutes は、失敗したエージェントを使わず、代わりを使う時間（分。1〜1440。利用制限ならすべてのタスクで（失敗の文から明ける時刻を読めたときは、その時刻まで）、ほかの失敗ならそのタスクで）
 # agent_fallback:
 #   cooldown_minutes: 60
 
