@@ -1,6 +1,7 @@
 "use client";
 
 import { type PauseReason, RESUME_NOTE_MAX } from "@sacty/core";
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import { type ResumeState, resumeTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,8 @@ export type ResumeStepSetting = StepChoiceSetting;
 export function ResumeForm({
   taskId,
   reason,
+  errorReport = false,
+  stoppedRunId,
   usedUsd,
   capUsd,
   lastFailure,
@@ -39,6 +42,10 @@ export function ResumeForm({
 }: {
   taskId: string;
   reason: PauseReason;
+  /** エラーレポートが画面に出ている（「エラーレポートを見る」を出す。レポートは右の列で、狭い幅では下に回る）。 */
+  errorReport?: boolean;
+  /** 今回の一時停止の原因になった実行（ログを開ける ID。無ければ「止まった実行のログを見る」を出さない）。 */
+  stoppedRunId?: string;
   usedUsd: number;
   capUsd: number;
   lastFailure?: string;
@@ -114,6 +121,23 @@ export function ResumeForm({
             </>
           )}
         </div>
+      )}
+      {(errorReport || stoppedRunId) && (
+        <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm" data-testid="paused-links">
+          {errorReport && (
+            <a href="#error-report" className="text-accent-foreground underline">
+              {r.viewErrorReport}
+            </a>
+          )}
+          {stoppedRunId && (
+            <Link
+              href={`/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(stoppedRunId)}`}
+              className="text-accent-foreground underline"
+            >
+              {r.viewStoppedRun}
+            </Link>
+          )}
+        </p>
       )}
       <form action={formAction} className="flex flex-wrap items-end gap-3">
         <input type="hidden" name="taskId" value={taskId} />

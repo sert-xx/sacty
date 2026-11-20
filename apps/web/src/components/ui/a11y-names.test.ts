@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
-import { createElement as h, type ReactElement } from "react";
+import { act, createElement as h, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { act } from "react-dom/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { messagesFor } from "@/i18n";
 import type { Locale } from "@/i18n/locale";

@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useMessages } from "@/i18n/client";
 
 /**
@@ -12,13 +13,9 @@ export default function ErrorPage({ retry }: { error: unknown; retry: () => void
     <div role="alert" className="flex flex-col items-start gap-3">
       <h1 className="text-2xl font-bold">{t.title}</h1>
       <p className="text-sm leading-6 text-muted-foreground">{t.note}</p>
-      <button
-        type="button"
-        onClick={() => retry()}
-        className="rounded-md border border-border px-3 py-1.5 text-sm font-medium"
-      >
+      <Button type="button" variant="outline" onClick={() => retry()}>
         {t.retry}
-      </button>
+      </Button>
     </div>
   );
 }

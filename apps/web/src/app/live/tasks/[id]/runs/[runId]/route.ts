@@ -2,7 +2,7 @@ import { getRunLog, getTask, type RunLog } from "@/lib/daemon";
 import { withDaemonSignal } from "@/lib/daemon-signal";
 import { LIVE_VERSION_HEADER } from "@/lib/live";
 import { liveVersion } from "@/lib/live-server";
-import { loadAgentFiles } from "@/lib/run-log-data";
+import { loadAgentFiles, runningThis } from "@/lib/run-log-data";
 import { runLogId } from "@/lib/session-log";
 
 /** 足された分（from から next の手前まで。バイト）。from が 0 なら全体。 */
@@ -53,7 +53,9 @@ async function reply(request: Request, id: string, runId: string): Promise<Respo
   const finished = Boolean(meta?.finishedAt);
   const files = finished ? await loadAgentFiles(id, runId) : undefined;
   const filesFailed = files !== undefined && "failed" in files;
+  const running = runningThis(found.task, runId);
   const version = liveVersion({
+    running,
     rows,
     meta,
     events: [events.from, events.next],
@@ -65,6 +67,7 @@ async function reply(request: Request, id: string, runId: string): Promise<Respo
     data: {
       taskTitle: found.task.title,
       projectId: found.task.projectId,
+      running,
       rows,
       meta,
       events,

@@ -12,7 +12,8 @@ import { useMessages } from "@/i18n/client";
  * 開かなくてもスクリーンリーダーで読める（ポータルの補足は、初めて開くまで DOM に無いため）。
  * 長い補足は高さを、配置した側の空き（Positioner の --available-height）に収め、中をスクロールする。印に止まったまま矢印キー・PageUp/PageDown でもスクロールできる
  * （補足はポータルに出るので、Tab では中に移れない。PR #127 レビュー指摘）。
- * 押せる大きさは 24×24px 以上（size-6）。まわりの行の高さ・並びは、負の余白（-m-0.5）で 20px の印のときと同じにする。
+ * 押せる大きさは 24×24px 以上。見た目の箱（size-5。className で変えられる）はそのままにし、押せる範囲だけ擬似要素（after:size-6）で広げる。
+ * 箱の大きさを変えないので、まわりの行の高さ・並びは変わらない。
  * 補足が無ければ何も出さない。本文に要る情報（操作・エラー・注意）は補足に入れない（docs/spec/ui-wording.md）。
  */
 export function Hint({
@@ -58,7 +59,7 @@ export function Hint({
           popup.current.scrollBy({ top: by });
         }}
         className={cn(
-          "-m-0.5 inline-flex size-6 shrink-0 cursor-help items-center justify-center rounded-full align-[-0.2em] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:text-foreground",
+          "relative inline-flex size-5 shrink-0 cursor-help items-center justify-center rounded-full align-[-0.2em] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:text-foreground after:absolute after:top-1/2 after:left-1/2 after:size-6 after:-translate-1/2 after:content-['']",
           className,
         )}
       >

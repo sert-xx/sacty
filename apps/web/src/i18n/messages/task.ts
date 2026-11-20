@@ -605,6 +605,19 @@ const ja = {
     origin: " ・ 元のタスク：",
     fixDepth: (depth: number) => `（${depth}段目の修正）`,
   },
+  /** 概要の「いま実行している工程」の行（実行中・最初の工程の前）。 */
+  runStatus: {
+    running: (step: string) => `${step}を実行中`,
+    runningUnknown: "工程を実行中",
+    elapsedLabel: "経過：",
+    separator: "・",
+    elapsed: {
+      underMinute: "1分未満",
+      minutes: (n: number) => `${n}分`,
+      hours: (h: number) => `${h}時間`,
+      hoursMinutes: (h: number, min: number) => `${h}時間${min}分`,
+    },
+  },
   layout: {
     tabs: "タスクの詳細の表示",
     overview: "概要",
@@ -1222,6 +1235,18 @@ const en: TaskMessages = {
     },
     origin: " · Original task: ",
     fixDepth: (depth) => `(fix, level ${depth})`,
+  },
+  runStatus: {
+    running: (step) => `Running ${step}`,
+    runningUnknown: "Running a step",
+    elapsedLabel: "Elapsed: ",
+    separator: "·",
+    elapsed: {
+      underMinute: "under a minute",
+      minutes: (n) => `${n} min`,
+      hours: (h) => `${h} h`,
+      hoursMinutes: (h, min) => `${h} h ${min} min`,
+    },
   },
   layout: {
     tabs: "Task detail views",

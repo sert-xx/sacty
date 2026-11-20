@@ -25,6 +25,7 @@ createRoot(document.getElementById('root')).render(
     h('main', { id: MAIN_ID, tabIndex: -1, className: 'outline-none' },
       h('button', { id: 'first-in-main', type: 'button' }, 'First'),
       h('p', { id: 'new-row', className: 'text-sm leading-6' }, 'Label ', h(Hint, { text: 'Body', label: 'Label' }), ' after'),
+      h('p', { id: 'small-row', className: 'text-sm leading-6' }, 'Small ', h(Hint, { text: 'Body', label: 'Small', className: 'size-4' }), ' after'),
       h('p', { id: 'old-row', className: 'text-sm leading-6' }, 'Label ', oldMark, ' after'),
     ),
   ),
@@ -135,8 +136,16 @@ it("補足の印は 24×24px 以上で押せ、まわりの行の高さ・印の
         iconSize: icon?.width,
       };
     });
-    expect(m.w).toBeGreaterThanOrEqual(24);
-    expect(m.h).toBeGreaterThanOrEqual(24);
+    // 押せる範囲：印（className で size-4 にしたものも）の擬似要素が、印の中心に 24×24px で広がる
+    const hits = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-slot="hint"]')].map((el) => {
+        const r = el.getBoundingClientRect();
+        const a = getComputedStyle(el, "::after");
+        return { box: r.width, w: a.width, h: a.height, pos: a.position };
+      }),
+    );
+    expect(hits.map((x) => x.box)).toEqual([20, 16]);
+    for (const x of hits) expect([x.w, x.h, x.pos]).toEqual(["24px", "24px", "absolute"]);
     expect(m.iconSize).toBe(14);
     expect(m.newRow).toBe(m.oldRow);
     expect(m.iconDx).toBeCloseTo(m.oldDx, 1);

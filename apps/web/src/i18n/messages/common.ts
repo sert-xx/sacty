@@ -27,7 +27,7 @@ const ja = {
   /** 取り直しで更新できない間に出す（PR #119 レビュー指摘）。 */
   live: {
     stale:
-      "デーモンに届きません。表示は最後に取得した内容です。`sacty up` が動いているか確認してください。",
+      "デーモンに届きません。`sacty up` が動いているか確認してください（表示は最後に取得した内容）。",
     staleShort: "更新が止まっています",
     /** 画面の認証が無い（sacty を起動し直した。PBI-129）。 */
     signedOut: "Sacty が起動し直されました。端末に表示された新しい URL を開いてください。",
@@ -98,7 +98,7 @@ const en: CommonMessages = {
   },
   live: {
     stale:
-      "The daemon cannot be reached. This shows what was last fetched. Check that `sacty up` is running.",
+      "The daemon cannot be reached. Check that `sacty up` is running (showing the last data).",
     staleShort: "Updates paused",
     signedOut: "Sacty was restarted. Open the new URL printed in the terminal.",
     signedOutShort: "Sign in again",
