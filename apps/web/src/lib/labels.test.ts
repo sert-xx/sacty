@@ -1084,7 +1084,15 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       at: "2026-10-11T00:00:00.000Z",
       actor: "orchestrator",
     } as ActivityEvent;
-    expect(describeEvent(event)).toBe("工程を決定：要求要件 → 実装（小さな変更）");
+    // 行は選んだ結果の名前だけ。理由は詳細に、見出しを付けて出す（PBI-431）
+    expect(describeEventParts(event, ja)).toEqual({
+      text: "工程を決定：要求要件 → 実装",
+      detail: "工程を選んだ理由：小さな変更",
+    });
+    expect(describeEventParts(event, labels.en)).toEqual({
+      text: "Steps chosen: Requirements → Implement",
+      detail: "Why these steps: 小さな変更",
+    });
   });
 
   it("工程ごとのイメージと、決めたのが誰か（理由）も表示する（PBI-41）", () => {
@@ -1107,22 +1115,25 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
         actor: "orchestrator",
       }) as ActivityEvent;
     expect(
-      describeEvent(
+      describeEventParts(
         chosen({
           images: { implement: "java17" },
           imageSource: "orchestrator",
           imageReason: "pom.xml が Java 17",
         }),
+        ja,
       ),
-    ).toBe(
-      "工程を決定：要求要件 → 実装（小さな変更） / イメージ：実装＝java17（オーケストレーター：pom.xml が Java 17）",
-    );
+    ).toEqual({
+      text: "工程を決定：要求要件 → 実装 / イメージ：実装＝java17",
+      detail:
+        "工程を選んだ理由：小さな変更\nイメージを選んだ理由（オーケストレーター）：pom.xml が Java 17",
+    });
     expect(
       describeIn(chosen({ images: { implement: "py" }, imageSource: "project" }), labels.en),
     ).toContain("images: Implement=py (set on the project target)");
     // sacty が作ったレビューの子タスクが、親のタスクのイメージを使ったとき（PBI-425）
-    expect(describeEvent(chosen({ image: "java17", imageSource: "parent" }))).toBe(
-      "工程を決定：要求要件 → 実装（小さな変更） / イメージ：java17（親のタスクのイメージ）",
+    expect(describeEventParts(chosen({ image: "java17", imageSource: "parent" }), ja).text).toBe(
+      "工程を決定：要求要件 → 実装 / イメージ：java17（親のタスクのイメージ）",
     );
     expect(describeIn(chosen({ image: "py", imageSource: "parent" }), labels.en)).toContain(
       "images: py (the parent task's image)",
@@ -1134,15 +1145,21 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       defaultImageReasons: { requirements: "文書だけ" },
       imagesUnexplained: ["investigate"],
     });
-    expect(describeEvent(defaults)).toContain(
-      " / 既定のイメージ：要求要件＝文書だけ / 理由なく既定のイメージ：調査",
+    expect(describeEventParts(defaults, ja).text).toContain(
+      " / 既定のイメージ：要求要件 / 理由なく既定のイメージ：調査",
     );
-    expect(describeIn(defaults, labels.en)).toContain(
-      " / Default image: Requirements: 文書だけ / Default image without a reason: Investigate",
+    expect(describeEventParts(defaults, ja).detail).toContain(
+      "既定のイメージで動かす理由（要求要件）：文書だけ",
+    );
+    expect(describeEventParts(defaults, labels.en).text).toContain(
+      " / Default image: Requirements / Default image without a reason: Investigate",
+    );
+    expect(describeEventParts(defaults, labels.en).detail).toContain(
+      "Why the default image (Requirements): 文書だけ",
     );
     // イメージを1つも書かなかったときも出す
-    expect(describeEvent(chosen({ imagesUnexplained: ["implement"] }))).toBe(
-      "工程を決定：要求要件 → 実装（小さな変更） / 理由なく既定のイメージ：実装",
+    expect(describeEventParts(chosen({ imagesUnexplained: ["implement"] }), ja).text).toBe(
+      "工程を決定：要求要件 → 実装 / 理由なく既定のイメージ：実装",
     );
   });
 
@@ -1183,7 +1200,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
         actor: "orchestrator",
       }) as ActivityEvent;
     // 共用の compose を設定していない・判断の理由も無いなら、これまでどおり
-    expect(describeEvent(chosen({}))).toBe("工程を決定：実装（小さな変更）");
+    expect(describeEventParts(chosen({}), ja).text).toBe("工程を決定：実装");
     // 共用の compose を使う
     const shared = chosen({
       sharedComposes: ["infra", "kafka"],
@@ -1195,24 +1212,32 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       },
       servicesReason: "結合テストが Redis を使う",
     });
-    expect(describeEvent(shared)).toBe(
-      "工程を決定：実装（小さな変更） / サービス：redis（共用の compose「infra」の compose/redis.yml（https://github.com/acme/test-infra#main）。実装で使う）：結合テストが Redis を使う",
+    expect(describeEventParts(shared, ja)).toEqual({
+      text: "工程を決定：実装 / サービス：redis（共用の compose「infra」の compose/redis.yml（https://github.com/acme/test-infra#main）。実装で使う）",
+      detail: "工程を選んだ理由：小さな変更\nサービスを決めた理由：結合テストが Redis を使う",
+    });
+    expect(describeEventParts(shared, labels.en).text).toContain(
+      'Services: redis (compose/redis.yml of the shared compose "infra" (https://github.com/acme/test-infra#main); used in Implement)',
     );
-    expect(describeIn(shared, labels.en)).toContain(
-      'Services: redis (compose/redis.yml of the shared compose "infra" (https://github.com/acme/test-infra#main); used in Implement): 結合テストが Redis を使う',
+    expect(describeEventParts(shared, labels.en).detail).toContain(
+      "Why these services: 結合テストが Redis を使う",
     );
     // 対象リポジトリの compose（names が空ならすべて）
     expect(
-      describeEvent(
+      describeEventParts(
         chosen({ services: { file: "compose.yaml", names: [], steps: ["implement"] } }),
-      ),
-    ).toBe("工程を決定：実装（小さな変更） / サービス：すべて（compose.yaml。実装で使う）");
+        ja,
+      ).text,
+    ).toBe("工程を決定：実装 / サービス：すべて（compose.yaml。実装で使う）");
     // 共用の compose を使わない（理由あり・なし）
-    expect(
-      describeEvent(chosen({ sharedComposes: ["infra"], servicesReason: "単体テストだけ" })),
-    ).toBe("工程を決定：実装（小さな変更） / 共用の compose（infra）：使わない（単体テストだけ）");
-    expect(describeEvent(chosen({ sharedComposes: ["infra", "kafka"] }))).toBe(
-      "工程を決定：実装（小さな変更） / 共用の compose（infra、kafka）：使わない",
+    const noServices = describeEventParts(
+      chosen({ sharedComposes: ["infra"], servicesReason: "単体テストだけ" }),
+      ja,
+    );
+    expect(noServices.text).toBe("工程を決定：実装 / 共用の compose（infra）：使わない");
+    expect(noServices.detail).toContain("サービスを決めた理由：単体テストだけ");
+    expect(describeEventParts(chosen({ sharedComposes: ["infra", "kafka"] }), ja).text).toBe(
+      "工程を決定：実装 / 共用の compose（infra、kafka）：使わない",
     );
     expect(describeIn(chosen({ sharedComposes: ["infra"] }), labels.en)).toContain(
       "Shared compose (infra): not used",
@@ -1671,10 +1696,14 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
   it("成功の記録も、先の実行の使用量が不明なら、不明と出す（再開を断られた後に成功したときなど）", () => {
     const base = { costUsd: 0, estimated: true, costUnknown: true };
     const steps = event("StepsChosen", { steps: ["requirements"], ...base });
-    expect(describeEvent(steps)).toMatch(/（費用不明）$/);
-    expect(describeIn(steps, labels.en)).toMatch(/ \(cost unknown\)$/);
+    // 理由は詳細に移っても、費用不明の印は行の末尾に残る（PBI-431）
+    expect(describeEventParts(steps, ja).text).toMatch(/（費用不明）$/);
+    expect(describeEventParts(steps, labels.en).text).toMatch(/ \(cost unknown\)$/);
     expect(
-      describeEvent(event("StepsChosen", { steps: ["requirements"], ...base, costUsd: 0.3 })),
+      describeEventParts(
+        event("StepsChosen", { steps: ["requirements"], ...base, costUsd: 0.3 }),
+        ja,
+      ).text,
     ).toMatch(/（\$0\.3000以上・概算）$/);
     expect(describeEvent(event("InformationGathered", { sources: [], ...base }))).toMatch(
       /（費用不明）$/,
@@ -1682,9 +1711,9 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     expect(describeEvent(event("TicketTriaged", { repo: "a/b", reason: "r", ...base }))).toMatch(
       /（費用不明）$/,
     );
-    expect(describeEvent(event("RepositoryChosen", { repo: "a/b", reason: "r", ...base }))).toMatch(
-      /（費用不明）$/,
-    );
+    expect(
+      describeEventParts(event("RepositoryChosen", { repo: "a/b", reason: "r", ...base }), ja).text,
+    ).toMatch(/（費用不明）$/);
     expect(
       describeEvent(
         event("AgentRunCompleted", { step: "implement", output: "", responses: [], ...base }),
@@ -2440,9 +2469,11 @@ describe("成果の書き出しの作業履歴（PBI-56）", () => {
         },
       },
     } as Pick<ActivityEvent, "type" | "payload" | "actor">);
-    expect(describeEvent(chosen)).toBe(
-      "工程を決定：要求要件 → 設計 → 実装 / 書き出し：要求要件＝confluence：DEV（規約）、設計＝書き出さない（オーケストレーターが書き出し先を決めなかったため、書き出しません。）",
-    );
+    expect(describeEventParts(chosen, ja)).toEqual({
+      text: "工程を決定：要求要件 → 設計 → 実装 / 書き出し：要求要件＝confluence：DEV、設計＝書き出さない",
+      detail:
+        "書き出し先の理由（要求要件）：規約\n書き出し先の理由（設計）：オーケストレーターが書き出し先を決めなかったため、書き出しません。",
+    });
   });
 
   it("書き出した URL・書き出せなかった理由・中断と費用を出す", () => {
@@ -2584,10 +2615,14 @@ describe("テストの仕組みが無いタスクの作業履歴（PBI-94）", (
       ...at,
       actor: "orchestrator",
     } as ActivityEvent;
-    expect(describeEvent(chosen)).toBe(
-      "工程を決定：実装（小さな変更） / テストの仕組みが無い：README だけ",
+    expect(describeEventParts(chosen, ja)).toEqual({
+      text: "工程を決定：実装 / テストの仕組みが無い",
+      detail: "工程を選んだ理由：小さな変更\nテストの仕組みが無いと判断した根拠：README だけ",
+    });
+    expect(describeEventParts(chosen, labels.en).text).toContain(" / No tests in the repository");
+    expect(describeEventParts(chosen, labels.en).detail).toContain(
+      "Why the repository has no tests: README だけ",
     );
-    expect(describeIn(chosen, labels.en)).toContain(" / No tests in the repository: README だけ");
     const skipped = { type: "TestsSkipped", payload: {}, ...at, actor: "sacty" } as ActivityEvent;
     expect(describeEvent(skipped)).toBe(
       "テストのコマンドが無いため、テストを飛ばして最終レビューへ",
@@ -3101,7 +3136,7 @@ describe("マージの後の監視の工程の表示（PBI-116）", () => {
 
   it("工程を決めた記録に、監視をするか（スキル）・飛ばす理由を出す", () => {
     const chosen = (deployment: unknown) =>
-      describeEvent(
+      describeEventParts(
         event({
           type: "StepsChosen",
           payload: {
@@ -3112,16 +3147,19 @@ describe("マージの後の監視の工程の表示（PBI-116）", () => {
             deployment,
           },
         } as Pick<ActivityEvent, "type" | "payload">),
+        ja,
       );
-    expect(chosen({ skill: ".agents/skills/deployment-observer/SKILL.md" })).toBe(
-      "工程を決定：実装 → マージの後の監視 / マージの後の監視：する（スキル .agents/skills/deployment-observer/SKILL.md）",
+    expect(chosen({ skill: ".agents/skills/deployment-observer/SKILL.md" })).toEqual({
+      text: "工程を決定：実装 → マージの後の監視 / マージの後の監視：する（スキル .agents/skills/deployment-observer/SKILL.md）",
+    });
+    const skippedChoice = chosen({
+      skipped: { code: "deploy.stepSkipped", params: { detail: { code: "deploy.noSkill" } } },
+    });
+    expect(skippedChoice.text).toBe(
+      "工程を決定：実装 → マージの後の監視 / マージの後の監視：飛ばす",
     );
-    expect(
-      chosen({
-        skipped: { code: "deploy.stepSkipped", params: { detail: { code: "deploy.noSkill" } } },
-      }),
-    ).toContain(
-      "マージの後の監視：飛ばす（マージの後の監視の工程を飛ばします（CI/CD も見ません）。",
+    expect(skippedChoice.detail).toContain(
+      "マージの後の監視を飛ばした理由：マージの後の監視の工程を飛ばします（CI/CD も見ません）。",
     );
   });
 
@@ -3329,4 +3367,105 @@ describe("差し戻しの上限が無い（PBI-414）", () => {
     }
     expect(called).toBeGreaterThan(0);
   });
+});
+
+describe("作業履歴の「工程を決定」「作業するリポジトリを選んだ」は、行に名前だけを出し、理由を詳細に出す（PBI-431）", () => {
+  const long = "あ".repeat(1500);
+  const at = {
+    seq: 1,
+    id: "e1",
+    taskId: "t1",
+    projectId: "default",
+    at: "2026-11-20T00:00:00.000Z",
+  };
+  const chosen = (payload: Record<string, unknown>) =>
+    ({
+      type: "StepsChosen",
+      payload: {
+        steps: ["design", "implement", "deployment"],
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+        ...payload,
+      },
+      ...at,
+      actor: "orchestrator",
+    }) as ActivityEvent;
+  const repo = (actor: string, payload: Record<string, unknown> = {}) =>
+    ({
+      type: "RepositoryChosen",
+      payload: { repo: "acme/web", reason: "", costUsd: 0, estimated: false, ...payload },
+      ...at,
+      actor,
+    }) as ActivityEvent;
+  const withReasons = {
+    reason: long,
+    image: "node26-playwright",
+    imageSource: "orchestrator",
+    imageReason: long,
+    exports: { design: { to: { via: "platform", name: "wiki", location: "" }, reason: long } },
+    services: { file: "compose.yaml", names: ["db"], steps: ["implement"] },
+    servicesReason: long,
+    noTestsReason: long,
+    deployment: { skipped: long },
+  };
+
+  for (const [name, l] of [
+    ["日本語", labels.ja],
+    ["英語", labels.en],
+  ] as const) {
+    it(`${name}：理由が千字を超えても、行の長さは理由に依らず、理由は 1 件ずつ見出し付きで詳細に出る`, () => {
+      const parts = describeEventParts(chosen(withReasons), l);
+      // 行は、理由の長さを含まない（理由が空でも千字でも同じ文）
+      expect(parts.text.length).toBeLessThan(300);
+      expect(parts.text).not.toContain(long);
+      expect(parts.text).toContain("node26-playwright");
+      const lines = (parts.detail ?? "").split("\n");
+      expect(lines).toHaveLength(6);
+      for (const line of lines) expect(line).toContain(long);
+      expect(lines.every((line) => line.indexOf(long) > 0)).toBe(true);
+    });
+
+    it(`${name}：理由が無い古い記録は、詳細を出さない（飛ばす工程・イメージ・書き出し先の名前は行に残る）`, () => {
+      const parts = describeEventParts(
+        chosen({
+          image: "node26-playwright",
+          deployment: { skipped: "" },
+          exports: { design: { to: { via: "platform", name: "wiki", location: "" } } },
+        }),
+        l,
+      );
+      expect(parts.detail).toBeUndefined();
+      expect(parts.text).toContain("node26-playwright");
+      expect(parts.text).toContain("wiki");
+      expect(describeEventParts(chosen({}), l).detail).toBeUndefined();
+    });
+
+    it(`${name}：リポジトリを選んだ行は、リポジトリ（と人が選んだか）だけを出し、理由は詳細に出す`, () => {
+      const orchestrator = describeEventParts(repo("orchestrator", { reason: long }), l);
+      expect(orchestrator.text).toContain("acme/web");
+      expect(orchestrator.text).not.toContain(long);
+      expect(orchestrator.detail).toContain(long);
+      const person = describeEventParts(repo("person", { reason: long }), l);
+      expect(person.text).toContain("acme/web");
+      expect(person.text).toBe(
+        l === labels.ja
+          ? "作業するリポジトリを選んだ：acme/web（人間）"
+          : "Chose the repository: acme/web (person)",
+      );
+      expect(person.detail).toBeUndefined();
+      // 理由が無い古い記録
+      expect(describeEventParts(repo("orchestrator"), l).detail).toBeUndefined();
+    });
+
+    it(`${name}：費用不明の印は、行の末尾に残る`, () => {
+      const unknown = { costUnknown: true, costUsd: 0, estimated: true };
+      expect(describeEventParts(chosen({ ...unknown, reason: long }), l).text).toMatch(
+        l === labels.ja ? /（費用不明）$/ : / \(cost unknown\)$/,
+      );
+      expect(
+        describeEventParts(repo("orchestrator", { ...unknown, reason: long }), l).text,
+      ).toMatch(l === labels.ja ? /（費用不明）$/ : / \(cost unknown\)$/);
+    });
+  }
 });
