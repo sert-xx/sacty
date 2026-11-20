@@ -337,6 +337,10 @@ sacty creates one child task per PR.
 - Updating the PR does not create a new child task.
 - When the PR is recreated (it becomes a PR with a new number), a child task is created for the new PR.
 
+For a requirements or design PR whose original task still has an implementation step, the child task looks only at direction and gaps (the implementation PR is reviewed separately later).
+Implementation details (internal structure, names, procedures) and the values and granularity of test viewpoints are checked in the implementation PR review. If a written approach or test viewpoint misleads the direction or misses an acceptance criterion, it is still raised on the requirements or design PR.
+Implementation PRs and PRs of tasks with no remaining implementation (design-only, task split) are reviewed in the same scope as before.
+
 The child task appears on the screen as follows.
 
 - The child task is a "PR review only" task titled "[PR #number] title of the original task" (the same whatever the screen language).

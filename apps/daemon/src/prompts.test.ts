@@ -7252,3 +7252,89 @@ describe("後続に回したい案（PBI-370）", () => {
     ]);
   });
 });
+
+describe("実装の前の文書の PR のレビューは、方針と抜けだけを見る（PBI-419）", () => {
+  const MARK = "--- この PR のレビューの範囲（実装の前の文書） ---";
+  const authorOf = (steps: { key: string; state: string }[]) =>
+    ({ id: "p1", title: "親", steps, approved: {} }) as unknown as Task;
+  const reviewTask = {
+    id: "r1",
+    title: "レビュー",
+    body: "",
+    steps: [{ key: "review", state: "active" }],
+    approved: {},
+    remarks: [],
+    outputs: {},
+    reviewTarget: {
+      repo: "https://github.com/acme/app",
+      number: 12,
+      url: "https://github.com/acme/app/pull/12",
+      title: "t",
+      body: "",
+      headCommit: "h".repeat(40),
+      baseCommit: "b".repeat(40),
+      author: "alice",
+    },
+  } as unknown as Task;
+  const review = (gateStep: StepKey, parent: Task | undefined) =>
+    buildPrompt(reviewTask, "review", {
+      diff: "diff",
+      reviewRework: parent ? { gateStep, targets: [gateStep], parent } : undefined,
+    });
+  const standard = [
+    { key: "requirements", state: "done" },
+    { key: "design", state: "done" },
+    { key: "implement", state: "todo" },
+    { key: "deployment", state: "todo" },
+  ];
+
+  it("要求要件の PR・設計の PR で、実装が残っているとき、明示と、見る範囲・任せる範囲・絞る観点が入る", () => {
+    for (const gate of ["requirements", "design"] as const) {
+      const p = review(gate, authorOf(standard));
+      expect(p).toContain(MARK);
+      expect(p).toContain("実装の PR は、後で別にレビューされる");
+      expect(p).toContain("方針と抜けだけを見る");
+      expect(p).toContain("指摘にしてよいもの（方針と抜け）");
+      expect(p).toContain("指摘にしないもの（実装のレビューに任せる）");
+      expect(p).toContain("観点がまるごと抜けている");
+      expect(p).toContain("D-1・D-2・D-5・D-10 と、X-1");
+    }
+    // 実装を飛ばす前の、skip-design の要求要件の PR でも入る
+    const skipDesign = [
+      { key: "requirements", state: "active" },
+      { key: "implement", state: "todo" },
+    ];
+    expect(review("requirements", authorOf(skipDesign))).toContain(MARK);
+  });
+
+  it("実装の PR・実装が残らないタスクの文書の PR・取り込んだ PR・実装を飛ばしたタスクには入らない", () => {
+    // 実装の PR
+    expect(review("implement", authorOf(standard))).not.toContain(MARK);
+    // 設計だけ・分割（親に implement が無い）
+    const designOnly = [
+      { key: "requirements", state: "done" },
+      { key: "design", state: "done" },
+    ];
+    expect(review("design", authorOf(designOnly))).not.toContain(MARK);
+    const split = [
+      ...designOnly,
+      { key: "split", state: "todo" },
+      { key: "integrate", state: "todo" },
+    ];
+    expect(review("design", authorOf(split))).not.toContain(MARK);
+    // 実装を飛ばした
+    const skipped = standard.map((s) => (s.key === "implement" ? { ...s, state: "skip" } : s));
+    expect(review("design", authorOf(skipped))).not.toContain(MARK);
+    // 文書作成の工程
+    expect(review("document", authorOf([{ key: "document", state: "done" }]))).not.toContain(MARK);
+    // PR から取り込んだ PR（PR を作ったタスクが無い）
+    expect(review("design", undefined)).not.toContain(MARK);
+  });
+
+  it("判定と重みと戻し先の書き方は、そのまま残る", () => {
+    const p = review("design", authorOf(standard));
+    expect(p).toContain("--- 指摘の戻し先 ---");
+    expect(p).toContain("changes_required");
+    expect(p).toContain("スキルの重要度の表（影響の大きさと起きやすさ）で決める");
+  });
+});
