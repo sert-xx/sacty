@@ -4,7 +4,7 @@
 - タスク: PBI-425
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: [20261121-0100-review-roundtrip-immediate-and-parent-image.md](../adr/20261121-0100-review-roundtrip-immediate-and-parent-image.md)
+- 関係する ADR: [レビューの往復の待ちを削る（即時の取り込み・再レビューと、親のイメージ）](../adr/20261121-0100-review-roundtrip-immediate-and-parent-image.md)
 
 ## 目的
 
@@ -16,7 +16,9 @@
 - 子タスクが投稿を記録した直後に、親の取り込みを始めた（`importFeedbackSoon`）。親ごとに直列で流し、記録の直前に、取り込み済みの key を除く。
 - `reconcileReviewTasks` の親ごとの処理を `reconcileReviewTask` に切り出し、`publish`・`publishStepPullRequest` の直後に呼ぶ。await の後と記録の直前に、親と子を読み直す。
 - `chooseReviewSteps` で、sacty の子タスクは親のイメージを使う。`imageSource` に `parent` を足し、画面の文言（日英）を足した。
-- 仕様書・利用者向け文書（日英）と ADR を直した。
+- 引き継いだ PR の提出（`publishContinued`）の直後にも、再レビューを始める。即時の経路は、子の実行の文脈から切り離して起こし、停止時に終わりを待つ。
+- 親と子が今も対象かの判定を1つにまとめ、すべての await の後と記録の直前で同じものを呼ぶ。
+- 仕様書・利用者向け文書（日英。`images`・`tasks` を含む）と ADR を直した。
 
 ## 確かめたこと
 

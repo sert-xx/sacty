@@ -416,6 +416,7 @@ const shutdown = async () => {
     {
       実行中のタスク: worker.drain(),
       エラーの分析: service.analysesSettled(),
+      "提出・投稿の直後の処理": service.immediateSettled(),
       取り込み: intake.stop(),
       "PR の確認": prWatcher.stop(),
       スケジュールタスクの確認: scheduleRunner.stop(),

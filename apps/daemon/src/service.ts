@@ -3536,28 +3536,46 @@ export class TaskService {
       return parent;
     };
     if (!ready()) return;
-    void (async () => {
-      const usedSecrets: string[] = [];
-      try {
-        const parent = ready();
-        const gate = parent && gatePullRequest(parent);
-        if (!parent || !gate?.repo) return;
-        const token = await this.githubToken(parent, gate.repo, usedSecrets);
-        await this.serialized(`feedback-import:${parentId}`, async () => {
-          const latest = ready();
-          if (latest) await this.importFeedbackNow(latest, token);
-        });
-      } catch (error) {
-        console.warn(
-          `[daemon] PR #${number}（${repo}）のレビューをすぐには取り込めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-        );
-      }
-    })();
+    // 子タスクの実行の文脈（費用・停止の確認の記録先）を引き継がず、親の取り込みとして動かす
+    this.trackImmediate(() =>
+      this.runningTask.exit(async () => {
+        const usedSecrets: string[] = [];
+        try {
+          const parent = ready();
+          const gate = parent && gatePullRequest(parent);
+          if (!parent || !gate?.repo) return;
+          const token = await this.githubToken(parent, gate.repo, usedSecrets);
+          await this.serialized(`feedback-import:${parentId}`, async () => {
+            const latest = ready();
+            // 読み出しの間に親が変わったら（取り込めない状態・中止・一時停止の要求）、記録しない
+            if (latest) await this.importFeedbackNow(latest, token, () => ready() !== undefined);
+          });
+        } catch (error) {
+          console.warn(
+            `[daemon] PR #${number}（${repo}）のレビューをすぐには取り込めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          );
+        }
+      }),
+    );
+  }
+
+  /** 投稿・提出の直後の経路で動いている処理（デーモンを止めるとき、終わりを待つ）。 */
+  private readonly immediate = new Set<Promise<unknown>>();
+
+  private trackImmediate(run: () => Promise<unknown>): void {
+    const promise: Promise<unknown> = run().finally(() => this.immediate.delete(promise));
+    this.immediate.add(promise);
+  }
+
+  /** 投稿・提出の直後の経路の処理の終わり（デーモンを止めるときに、作業履歴を閉じる前に待つ）。 */
+  immediateSettled(): Promise<void> {
+    return Promise.allSettled([...this.immediate]).then(() => {});
   }
 
   private async importFeedbackNow(
     task: Task,
     token: string,
+    stillReady?: () => boolean,
   ): Promise<"pull_request_changed" | undefined> {
     // 実装の PR と、要求要件・設計の PR（PBI-57）の指摘
     const pr = gatePullRequest(task);
@@ -3606,6 +3624,7 @@ export class TaskService {
       // 一度に取り込むのは、指摘の件数の上限まで（古い順）。残りは取り込み済みにせず、次の取り込みに残す
       const latest = this.tasks.get(task.id);
       if (latest?.status !== "awaiting_approval" || latest.pendingReview) return;
+      if (stillReady && !stillReady()) return;
       // 取り込みは親ごとに直列で流す（即時の取り込みと PR の確認が重なっても、記録の直前に、先に記録されたものを除く）
       const batch = fresh
         .filter((item) => !latest.importedFeedback.includes(item.key))
@@ -13761,6 +13780,10 @@ export class TaskService {
         this.implementSubmitted(task),
       ]);
       this.checkBudget(submitted);
+      // 引き継いだ PR の、すでにある子タスクの再レビューも、提出の直後に始める（60 秒ごとの確認を待たない。子タスクは作らない）
+      if (submitted.reviewTasks?.some((x) => x.number === continued.number)) {
+        this.reconcileReviewTaskSoon(submitted.id, commit);
+      }
     } catch (error) {
       // 実装が起点（PR の先頭）から何も変えていなかった（PBI-90）。まだ積んでいなければ、実装の承認で人間に確かめてもらう
       if (error instanceof NothingToCommitError && !task.pullRequest) {
@@ -13933,11 +13956,13 @@ export class TaskService {
    */
   private reconcileReviewTaskSoon(parentId: string, submittedCommit: string): void {
     if (this.deps.reviewTasks !== true) return;
-    void this.reconcileReviewTask(parentId, { submittedCommit }).catch((error: unknown) => {
-      console.warn(
-        `[daemon] 提出の直後に、レビューの子タスクを整えられませんでした：${renderMessage(errorText(error), "ja")}`,
-      );
-    });
+    this.trackImmediate(() =>
+      this.reconcileReviewTask(parentId, { submittedCommit }).catch((error: unknown) => {
+        console.warn(
+          `[daemon] 提出の直後に、レビューの子タスクを整えられませんでした：${renderMessage(errorText(error), "ja")}`,
+        );
+      }),
+    );
   }
 
   /**
@@ -13960,121 +13985,113 @@ export class TaskService {
     options: { heads?: Map<string, string | undefined>; submittedCommit?: string },
   ): Promise<void> {
     const { heads, submittedCommit } = options;
-    {
-      let parent = this.tasks.get(parentId);
-      if (!parent) return;
-      if (parent.status !== "awaiting_approval" || this.cancelling.has(parent.id)) return;
-      if (this.pauseRequested.has(parent.id)) return;
+    // 親と子が、今も再レビューの対象か（すべての await の後と記録の直前で、同じ判定で読み直す）。expected：始めに読んだ PR の提出
+    // （番号とコミット）。変わっていれば（差し戻し・別の提出）、古い値で判断しない
+    const resolve = (expected?: { number: number; commit: string }) => {
+      const parent = this.tasks.get(parentId);
+      if (parent?.status !== "awaiting_approval") return;
+      if (this.cancelling.has(parent.id) || this.pauseRequested.has(parent.id)) return;
       const gate = gatePullRequest(parent);
       if (gate?.state !== "open" || !gate.repo) return;
-      if (gate.step !== "requirements" && gate.step !== "design" && gate.step !== "implement") {
-        return;
-      }
+      const step = gate.step;
+      if (step !== "requirements" && step !== "design" && step !== "implement") return;
       if (submittedCommit !== undefined && gate.commit !== submittedCommit) return;
-      this.ensureReviewTask(parent, gate.step, gate.repo, gate.number, gate.url);
-      const childOf = (task: Task | undefined) => {
-        const record = (task?.reviewTasks ?? []).findLast(
-          (x) => x.number === gate.number && gate.repo !== undefined && sameRepo(x.repo, gate.repo),
-        );
-        return record && this.tasks.get(record.taskId);
-      };
-      let child = childOf(this.tasks.get(parent.id));
-      if (!child) return;
-      // 子タスクの指摘なしでドラフトを外す実装の PR（PBI-331）は、GitHub の今の先頭をレビューの対象にする（レビューの間に
-      // 人がコミットを足しても、レビューしていない先頭のドラフトを外さない）。読めなければ、次の確認でやり直す
-      const awaiting = gate.step === "implement" && parent.pullRequest?.awaitingReview === true;
-      // 指摘なしでドラフトを外した後は、指摘なしにした先頭（人が足したコミットを含む）と比べる（同じ先頭を再レビューしない）
-      const reviewed =
-        gate.step === "implement" && parent.pullRequest?.number === gate.number
-          ? parent.pullRequest.reviewedCommit
-          : undefined;
-      // 指摘なしで外した後に、人がコミットを足した（PR の確認で読んだ GitHub の先頭）なら、ドラフトかにかかわらず、その先頭を
-      // 再レビューさせる（指摘なしになるまで、ドラフトにする。settleDraft）
-      const seen = this.latestHeads.get(parent.id);
-      const draftedAhead =
-        !awaiting &&
-        reviewed !== undefined &&
-        seen?.number === gate.number &&
-        seen.commit === gate.commit &&
-        seen.head !== reviewed
-          ? seen.head
-          : undefined;
-      const key = `${parent.id}:${gate.number}`;
-      const target = awaiting
-        ? heads?.has(key)
-          ? heads.get(key)
-          : await this.pullRequestHead(parent, gate.repo, gate.number)
-        : (draftedAhead ?? reviewed ?? gate.commit);
-      if (!target) return;
-      // 提出の直後の経路は、GitHub の先頭が提出したコミットと同じときだけ進める
-      if (awaiting && submittedCommit !== undefined && target !== submittedCommit) return;
-      // 先頭を読む間に、親が変わった（差し戻し・中止・別の提出）かもしれない。今の記録で、始めからやり直して判断する
-      const reread = this.tasks.get(parent.id);
-      if (
-        reread?.status !== "awaiting_approval" ||
-        this.cancelling.has(reread.id) ||
-        this.pauseRequested.has(reread.id)
-      ) {
-        return;
-      }
-      const regate = gatePullRequest(reread);
-      if (regate?.number !== gate.number || regate.commit !== gate.commit) return;
-      parent = reread;
-      child = childOf(parent);
-      if (!child) return;
-      const cleared = child.reviewTarget?.headCommit === target && reviewCleared(child);
-      // 提出のときにドラフトに戻せなかった PR は、指摘なしになるまで、確認のたびにドラフトに戻す（レビューの途中も。レビュー
-      // していないコミットをマージできるままにしない。PBI-331）
-      if (awaiting && !cleared) {
-        await this.redraftAwaiting(parent, gate.repo, gate.number);
-        parent = this.tasks.get(parent.id) ?? parent;
-        child = childOf(parent) ?? child;
-      }
-      // 記録の直前に、親と子を読み直した状態で判断する
-      child = this.tasks.get(child.id) ?? child;
-      if (parent.status !== "awaiting_approval" || this.cancelling.has(parent.id)) return;
-      if (this.pauseRequested.has(parent.id)) return;
-      if (!canRereview(child) || child.status === "paused") return;
-      if (this.cancelling.has(child.id) || this.pauseRequested.has(child.id)) return;
-      if (child.reviewTarget?.headCommit === target) {
-        // 今の先頭を指摘なしにしたら、ドラフトを外す（PBI-331）
-        if (awaiting && cleared) await this.markReady(parent, child, target);
-        // 親が、その先頭の指摘のすべてを断って提出した：断った理由の返信が済んだら、同じ先頭を 1 回だけ判定し直す（PBI-357）
-        else if (awaiting && this.rejudgeDue(parent, child, target)) {
-          try {
-            this.append(child, [
-              {
-                actor: "sacty",
-                event: {
-                  type: "ReviewRestarted",
-                  payload: { reason: "declined", commit: target },
-                },
+      if (expected && (gate.number !== expected.number || gate.commit !== expected.commit)) return;
+      const repo = gate.repo;
+      const record = (parent.reviewTasks ?? []).findLast(
+        (x) => x.number === gate.number && sameRepo(x.repo, repo),
+      );
+      const child = record && this.tasks.get(record.taskId);
+      return { parent, gate, repo, step, child };
+    };
+    const first = resolve();
+    if (!first) return;
+    this.ensureReviewTask(first.parent, first.step, first.repo, first.gate.number, first.gate.url);
+    const expected = { number: first.gate.number, commit: first.gate.commit };
+    let now = resolve(expected);
+    if (!now?.child) return;
+    const { parent: initial, gate, repo } = now;
+    // 子タスクの指摘なしでドラフトを外す実装の PR（PBI-331）は、GitHub の今の先頭をレビューの対象にする（レビューの間に
+    // 人がコミットを足しても、レビューしていない先頭のドラフトを外さない）。読めなければ、次の確認でやり直す
+    const awaiting = gate.step === "implement" && initial.pullRequest?.awaitingReview === true;
+    // 指摘なしでドラフトを外した後は、指摘なしにした先頭（人が足したコミットを含む）と比べる（同じ先頭を再レビューしない）
+    const reviewed =
+      gate.step === "implement" && initial.pullRequest?.number === gate.number
+        ? initial.pullRequest.reviewedCommit
+        : undefined;
+    // 指摘なしで外した後に、人がコミットを足した（PR の確認で読んだ GitHub の先頭）なら、ドラフトかにかかわらず、その先頭を
+    // 再レビューさせる（指摘なしになるまで、ドラフトにする。settleDraft）
+    const seen = this.latestHeads.get(initial.id);
+    const draftedAhead =
+      !awaiting &&
+      reviewed !== undefined &&
+      seen?.number === gate.number &&
+      seen.commit === gate.commit &&
+      seen.head !== reviewed
+        ? seen.head
+        : undefined;
+    const key = `${initial.id}:${gate.number}`;
+    const target = awaiting
+      ? heads?.has(key)
+        ? heads.get(key)
+        : await this.pullRequestHead(initial, repo, gate.number)
+      : (draftedAhead ?? reviewed ?? gate.commit);
+    if (!target) return;
+    // 提出の直後の経路は、GitHub の先頭が提出したコミットと同じときだけ進める
+    if (awaiting && submittedCommit !== undefined && target !== submittedCommit) return;
+    // 先頭を読む間に、親が変わったかもしれない。今の記録で判断する
+    now = resolve(expected);
+    if (!now?.child) return;
+    const cleared = now.child.reviewTarget?.headCommit === target && reviewCleared(now.child);
+    // 提出のときにドラフトに戻せなかった PR は、指摘なしになるまで、確認のたびにドラフトに戻す（レビューの途中も。レビュー
+    // していないコミットをマージできるままにしない。PBI-331）
+    if (awaiting && !cleared) {
+      await this.redraftAwaiting(now.parent, repo, gate.number);
+      now = resolve(expected);
+      if (!now?.child) return;
+    }
+    // 記録の直前に、親と子を読み直した状態で判断する
+    const { parent, child } = now;
+    if (!canRereview(child) || child.status === "paused") return;
+    if (this.cancelling.has(child.id) || this.pauseRequested.has(child.id)) return;
+    if (child.reviewTarget?.headCommit === target) {
+      // 今の先頭を指摘なしにしたら、ドラフトを外す（PBI-331）
+      if (awaiting && cleared) await this.markReady(parent, child, target);
+      // 親が、その先頭の指摘のすべてを断って提出した：断った理由の返信が済んだら、同じ先頭を 1 回だけ判定し直す（PBI-357）
+      else if (awaiting && this.rejudgeDue(parent, child, target)) {
+        try {
+          this.append(child, [
+            {
+              actor: "sacty",
+              event: {
+                type: "ReviewRestarted",
+                payload: { reason: "declined", commit: target },
               },
-            ]);
-          } catch (error) {
-            console.warn(
-              `[daemon] レビューの子タスク ${child.id} に、同じ先頭を判定し直させられませんでした：${renderMessage(errorText(error), "ja")}`,
-            );
-          }
-        }
-        return;
-      }
-      if (child.reviewRestartCommit === target) return;
-      try {
-        this.append(child, [
-          {
-            actor: "sacty",
-            event: {
-              type: "ReviewRestarted",
-              payload: { reason: "updated", commit: target },
             },
-          },
-        ]);
-      } catch (error) {
-        console.warn(
-          `[daemon] レビューの子タスク ${child.id} を再レビューにできませんでした：${renderMessage(errorText(error), "ja")}`,
-        );
+          ]);
+        } catch (error) {
+          console.warn(
+            `[daemon] レビューの子タスク ${child.id} に、同じ先頭を判定し直させられませんでした：${renderMessage(errorText(error), "ja")}`,
+          );
+        }
       }
+      return;
+    }
+    if (child.reviewRestartCommit === target) return;
+    try {
+      this.append(child, [
+        {
+          actor: "sacty",
+          event: {
+            type: "ReviewRestarted",
+            payload: { reason: "updated", commit: target },
+          },
+        },
+      ]);
+    } catch (error) {
+      console.warn(
+        `[daemon] レビューの子タスク ${child.id} を再レビューにできませんでした：${renderMessage(errorText(error), "ja")}`,
+      );
     }
   }
 

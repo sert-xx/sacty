@@ -628,7 +628,7 @@ No human check comes in between.
 
 The comments are taken in as follows.
 
-- sacty checks every minute and takes them in 2 minutes after the last comment.
+- sacty checks every minute and takes them in 2 minutes after the last comment. Posts by sacty's review child task are taken in without waiting the 2 minutes.
 - It excludes bots and sacty's own posts, but includes posts by the sacty review task that imported that PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
 
 The step to redo depends on whether the comment changes a decision already approved in the requirements or design (acceptance criteria, behavior, screens, the shape of APIs and data, and so on).

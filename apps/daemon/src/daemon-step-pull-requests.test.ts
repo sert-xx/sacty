@@ -52,6 +52,7 @@ import {
   FakePulls,
   FakeRepos,
   fakeGateway,
+  HOLD,
   ja,
   makeService,
   noticesSettled,
@@ -1840,6 +1841,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
         const reads = {
           parent: 0,
+          /** 親の取り込みの読み取りに、いつも足す人の指摘。 */
+          human: [] as PullRequestFeedback[],
           fail: undefined as undefined | "throw" | "empty",
           gate: undefined as Promise<void> | undefined,
         };
@@ -1852,18 +1855,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await reads.gate;
           }
           // 本物と同じく、レビューの投稿には、レビューした先頭のコミットを添える
-          pulls.feedbackBy[7] =
-            pulls.reviews.length > 0 ? [{ ...posted(pulls, 0), commit: first }] : [];
+          pulls.feedbackBy[7] = [
+            ...(input.includeSactyReplies ? [] : reads.human),
+            ...(pulls.reviews.length > 0 ? [{ ...posted(pulls, 0), commit: first }] : []),
+          ];
           return feedback(input);
         });
         /** 親の先頭の読み取りを、releaseHandlers で解放するまで止める。 */
         const holdHeadReads = () => {
           const releases: (() => void)[] = [];
           gateHeadRead = async (release) => {
-            await new Promise<void>((resolve) => {
-              releases.push(resolve);
-              release();
-            });
+            releases.push(release);
           };
           return releases;
         };
@@ -2063,6 +2065,60 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         }
       });
 
+      it("先頭を読む間に、親が一時停止・中止された（または子が中止された）なら、提出の直後の再レビューは子に記録しない", async () => {
+        for (const stop of ["parent-paused", "parent-cancelled", "child-cancelled"] as const) {
+          const made = await implementedPr([
+            verdictOut("changes_required"),
+            implement("# 実装 v2"),
+          ]);
+          const { activity, service, childId, holdHeadReads, statusCalls, id } = made;
+          await runReview(service, childId);
+          await made.parentSettled();
+          const releases = holdHeadReads();
+          const before = statusCalls.fromHeadRead;
+          await made.resubmit();
+          await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBe(before + 1));
+          if (stop === "parent-paused") await service.pause(id);
+          else if (stop === "parent-cancelled") await service.cancel(id);
+          else await service.cancel(childId);
+          releases[0]?.();
+          await flush();
+          await flush();
+          expect(
+            restartsOf(service, childId).filter((r) => r.reason === "updated"),
+            stop,
+          ).toEqual([]);
+          activity.close();
+          rmSync(dbPath, { force: true });
+        }
+      });
+
+      it("親が指摘の判断の途中（pendingReview があり、承認待ち）なら、投稿の直後の取り込みは親の指摘を読まず、何も記録しない", async () => {
+        const made = await implementedPr([
+          HOLD as unknown as AgentOutcome,
+          verdictOut("changes_required"),
+        ]);
+        const { activity, service, reads, executor, childId, id } = made;
+        // 人の指摘（2 分より古い）を PR の確認が取り込み、その判断の実行が止まっている（親は承認待ちで、pendingReview がある）
+        reads.human = [item("comment:human-1", { author: "alice", at: "2020-01-01T00:00:00Z" })];
+        const check = service.checkPullRequests();
+        await vi.waitFor(() => expect(taskOf(service, id).pendingReview).toBeDefined());
+        // 判断の実行が始まって、止まっている
+        await vi.waitFor(() => expect(reads.parent).toBeGreaterThan(0));
+        await flush();
+        expect(taskOf(service, id).status).toBe("awaiting_approval");
+        const before = reads.parent;
+        await runReview(service, childId);
+        expect(types(service, childId)).toContain("PullRequestReviewPosted");
+        await flush();
+        expect(reads.parent).toBe(before);
+        expect(importedOf(service, id)).toHaveLength(1);
+        executor.kill(await executor.started);
+        void check.catch(() => {});
+        await flush();
+        activity.close();
+      });
+
       it("要求要件・設計の PR の直しを提出すると、提出の直後に、子の再レビュー（updated）が始まる", async () => {
         const pulls = new FakePulls();
         const made = await start(
@@ -2117,6 +2173,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await vi.waitFor(() => expect(reads.parent).toBe(1));
             const check = service.checkPullRequests();
             await flushUntil(() => reads.parent >= 2);
+            // 直列に流すので、先の取り込みが答えを待つ間、PR の確認の取り込みは GitHub を読み始めない
+            expect(reads.parent, order).toBe(1);
             gate.resolve();
             await check;
           } else {
@@ -2125,6 +2183,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await vi.waitFor(() => expect(reads.parent).toBe(1));
             await runReview(service, childId);
             await flushUntil(() => reads.parent >= 2);
+            expect(reads.parent, order).toBe(1);
             gate.resolve();
             await check;
           }
@@ -2161,7 +2220,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             immediate?.();
             checked?.();
           } else {
+            // PR の確認の答えが先に届いても、提出の直後の経路が整え終えるまで、PR の確認の整え直しは記録しない（直列）
             checked?.();
+            await flush();
+            await flush();
+            expect(restartsOf(service, childId), order).toEqual([]);
             immediate?.();
           }
           await check;
