@@ -161,6 +161,13 @@ A PR review (the `pr-review` flow) and posting to a PR with the default `git` sk
   - The parent does not repeat a problem already raised at the same place, even for `must`. It dismisses the finding with the reason "already raised in an existing review" and does not count it in the verdict.
   - It writes briefly in the summary how many were left out.
   - Existing findings are not given to the viewpoint agents; their count is kept in `existing_reviews` of the aggregation record.
+- Out of the PR's purpose (aggregation of `pr-review`)
+  - After the weight is set by the table, the parent checks whether each finding asks for something outside the PR's purpose (the PR description, the request, acceptance criteria, requirements or design it points to, and the purpose the diff states). A request outside it (adding a feature the change does not need, reworking an unrelated place, expanding docs or tests beyond the purpose) is dismissed with the reason "outside the PR's purpose", is not posted, and is not counted in the verdict. In `dismissed` it reads differently from "out of scope (pre-existing problem)".
+  - `must` is never dropped, and the weight is not lowered in order to drop it.
+  - When the purpose cannot be read, or it is unclear whether a finding is inside, it is not dropped. A finding on a place the PR changed or added is inside the scope.
+  - When one or more are dropped, the summary says the count in one line (not the content; nothing when zero).
+  - The same applies to a re-review. Withdrawing a finding the previous round raised is written on its line in the previous-findings list with the reason (never as "unaddressed").
+  - Not applied to `self-review`: it returns only `must` to fixing, and posts `should`·`nit` nowhere, so dropping would not save a round trip.
 - Documents shown in the PR description or the request (such as a design written outside Git)
   - The parent sorts each into a review target or evidence from the title, description, and diff.
   - The parent fetches both in full and keeps copies outside the workspace.

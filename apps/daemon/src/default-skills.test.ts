@@ -1910,3 +1910,28 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     );
   });
 });
+
+describe("既定のスキル review-dispatch の、PR の目的の範囲の外の指摘（PBI-426）", () => {
+  const dir = "skills/review/review-dispatch/references/";
+
+  it("目的の範囲の外を不採用にし、must と迷うときは落とさず、件数を総評に書く", () => {
+    const agg = read(`${dir}aggregation.md`);
+    expect(agg).toContain("## PR の目的の範囲の外");
+    expect(agg).toContain(
+      "指摘箇所が差分の中にあっても不採用にする。理由は「PR の目的の範囲の外」",
+    );
+    expect(agg).toContain("落とすために重みを下げない");
+    expect(agg).toContain("範囲の中か外か迷うときは、不採用にしない（採用する）");
+    expect(agg).toContain(
+      "変えた・足した箇所そのものの正しさ・分かりやすさ・テストへの指摘は、範囲の中である",
+    );
+    expect(agg).toContain("落とした件数が1件以上なら、総評に1行で書く");
+    expect(agg).toContain("PR の目的の範囲の外として不採用にしたものも、判定の根拠にしない");
+    expect(agg).toContain("自己レビューには当てない");
+    const pr = read(`${dir}pr-review.md`);
+    expect(pr).toContain(
+      "既存の指摘の件数とは別に1行で書く（内容・本文は書かない。0件なら書かない）",
+    );
+    expect(pr).toContain("取り下げたことと理由を書く（「未対応」と書かない）");
+  });
+});
