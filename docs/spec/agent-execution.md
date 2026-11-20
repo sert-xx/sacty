@@ -188,7 +188,16 @@
 
 ## 失敗したときの代わりのエージェント
 
-- 実行が `usage_limit` で失敗したら、そのエージェントを `agent_fallback.cooldown_minutes`（既定 60 分）の間、すべてのタスクで利用制限中として覚える（`markLimited`）。
+- 実行が `usage_limit` で失敗したら、そのエージェントを、すべてのタスクで利用制限中として覚える（`markLimited`）。
+  期限は、失敗の文から上限が明ける時刻を確かに読み取れたとき（`parseLimitReset`）はその時刻、読み取れないときは `agent_fallback.cooldown_minutes`（既定 60 分）の後。
+  `AgentFellBack` の `until` と画面の表示は、この期限。
+- 読み取る形は、時間帯の名前つきの Claude Code の `· resets 3:45pm (Asia/Tokyo)`（曜日つきを含む）と、古い形の `Claude AI usage limit reached|<エポックからの秒>` だけ。
+  時間帯の名前の無い形（`resets 3:45pm`、Codex の `try again at …`）は、動いた環境の時間帯を知る手段が無いので、読み取れない扱い。
+  日付の無い時刻は、失敗の時刻より後の、いちばん近いその時刻（曜日つきはその曜日）と読む。
+  失敗の時刻の 30 分前までに当たる時刻（日付の無い時刻は、30 分より前に当たるなら翌日・翌週と読む）、過去のエポック、8 日より先の時刻、不正な時刻と知らない時間帯は、読み取れない扱い。
+  文は、CLI 自身の失敗の出力（`is_error` の `result`・stderr・`errors`・Codex の `turn.failed`／`error`）からだけ読み、エージェントの発言（`assistantText`・`is_error` でない `result`）からは読まない（`AgentOutcome.cliText`）。
+  同じエージェントに先に付いた期限が後の期限より遠いときは、遠いほうを残す。
+  一時的な混雑の文（`rate limit`・`429` など）と、上の形に当たらない文は読まない。文は先頭の 2000 文字までを読む。
 - 実行がそれ以外の理由（`auth`・`error`）で失敗し、`fallBack` に渡ったら、そのエージェントを同じ時間、そのタスクでだけ使わないものとして覚える。
   ほかのタスクは、元のエージェントで実行する。
 - どちらもデーモンのメモリーだけに持つ。
@@ -229,7 +238,7 @@
 - 書き出し・マージの後の監視・監査・質問への答えは、失敗をこれまでどおり扱い、次の実行から代わりのエージェントを使う（利用制限のときだけ）。
 - 代わりのエージェントの秘密情報も、起動のときにまとめて取り出す（`secretUses`）。
 
-コード: `apps/daemon/src/service.ts`（`usableAgent`・`agentUnusable`・`markLimited`・`notConfirmed`・`fallBack`・`pauseOrFallBack`・`runGuardianWithFallback`）、`apps/daemon/src/config.ts`（`fallbackAgentFor`）、`apps/daemon/src/secret-uses.ts`（`secretUses`）
+コード: `apps/daemon/src/agents/limit-reset.ts`（`parseLimitReset`）、`apps/daemon/src/service.ts`（`usableAgent`・`agentUnusable`・`markLimited`・`notConfirmed`・`fallBack`・`pauseOrFallBack`・`runGuardianWithFallback`）、`apps/daemon/src/config.ts`（`fallbackAgentFor`）、`apps/daemon/src/secret-uses.ts`（`secretUses`）
 
 ## セッションの保存と使い回し
 

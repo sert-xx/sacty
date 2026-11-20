@@ -17,7 +17,7 @@ You can write the following settings in config.yaml. Where a setting has a detai
 | `providers` | The connection (authentication) per tool and the prices of the models you can use ([Connections and prices](#connections-and-prices-providers)). Only `codex` and `claude` | None |
 | `default_agent` | The AI that runs the steps (an agent name; [Default agents](#default-agents)) | `codex_standard` (`claude_standard` if it cannot be used) |
 | `audit_agent` | The AI used for audits of completed tasks ([Audits](audit.en.md)) | `default_agent` |
-| `agent_fallback.cooldown_minutes` | How long an agent that failed is not used and the fallback agent is used instead (minutes; an integer from 1 to 1440; [Switching agents on failure](#switching-agents-on-failure)) | `60` |
+| `agent_fallback.cooldown_minutes` | How long an agent that failed is not used and the fallback agent is used instead (minutes; an integer from 1 to 1440; until the reset time instead, at a usage limit whose reset time sacty could read; [Switching agents on failure](#switching-agents-on-failure)) | `60` |
 | `step_agents` | The AI to use for each step (including the after-merge watch), the Orchestrator and information gathering ([Models per step](#models-per-step)) | `default_agent` if omitted (also for Integration review; the Orchestrator's AI for information gathering) |
 | `agents` | Overrides of and additions to sacty's default agents ([Overriding agents](#overriding-agents)). Optional | None (sacty's defaults are used) |
 | `budget.default_per_task_usd` | Budget per task (US dollars. A number greater than 0) | `1` |
@@ -288,10 +288,10 @@ sacty records the switch in the activity log with the reason (shown as "reached 
 
 After a switch, sacty behaves as follows.
 
-- For `cooldown_minutes`, the failed agent is not used and the fallback agent is used instead. Where the fallback is used depends on the reason for the failure.
+- For `cooldown_minutes`, the failed agent is not used and the fallback agent is used instead. At a usage limit, when the failure message gives the reset time and sacty can read it with certainty, the fallback is used until that time instead of for `cooldown_minutes`. sacty reads only Claude Code's `resets 3:45pm (Asia/Tokyo)` form with a time zone name and the old epoch-seconds form. Forms without a time zone name (such as Codex's `try again at …`) and messages without a time cannot be read, so sacty tries the original agent every `cooldown_minutes`. Where the fallback is used depends on the reason for the failure.
   - Usage limit: the fallback is used for other tasks too.
   - Other failures: the fallback is used only for that task (other tasks run with the original agent).
-- After `cooldown_minutes`, the original agent is used again. When sacty restarts, the original agent is tried first as well. The exception is the continuation after an implementation ended unfinished: it starts with the agent that ran the previous run (even after the period, so that it continues the same conversation). If that agent is not usable, sacty uses the agent chosen for the step, and its fallbacks.
+- After the deadline (`cooldown_minutes`, or the reset time when sacty read one), the original agent is used again. When sacty restarts, the original agent is tried first as well. The exception is the continuation after an implementation ended unfinished: it starts with the agent that ran the previous run (even after the period, so that it continues the same conversation). If that agent is not usable, sacty uses the agent chosen for the step, and its fallbacks.
 - When the Orchestrator switches to a fallback agent (a different tool), sacty passes the conversation of the previous agent's session read-only so the new agent can take over. This is because a different tool cannot resume the session itself. The same handover happens when it switches back to the original agent.
 
 The task is paused in the following cases.

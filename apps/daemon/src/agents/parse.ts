@@ -38,6 +38,11 @@ export type AgentOutcome =
        * 止まった実行。usage があれば、読めた分（下限）で、無ければ何も読めなかった。
        */
       costUnknown?: true;
+      /**
+       * message が CLI 自身の失敗の出力（is_error の result・errors・stderr・Codex の turn.failed／error）から来た（PBI-428）。
+       * エージェントの発言から来た文は持たない。明ける時刻は、この文からだけ読む。
+       */
+      cliText?: true;
     } & CostReport &
       ImitationReport);
 
@@ -412,6 +417,7 @@ export class ClaudeOutcomeReader extends OutcomeReader {
       const message = (stderr || this.assistantText || raw || `exit code ${exitCode}`)
         .trim()
         .slice(0, 2000);
+      const cliText = stderr.trim() !== "";
       // 出来事が届いていたのに result が無い（時間切れ・強制終了など）なら、使った分の全体は分からない。読めた分は残す
       // （PBI-281）。出来事が1つも届かなかった（起動できなかった）なら、何も使っていない
       const usage = this.unsettledUsage();
@@ -419,6 +425,7 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         kind: "failed",
         reason: classifyFailure(message),
         message,
+        ...(cliText ? { cliText: true as const } : {}),
         ...(usage ? { usage } : {}),
         ...(this.objects > 0 ? { costUnknown: true as const } : {}),
       };
@@ -442,6 +449,8 @@ export class ClaudeOutcomeReader extends OutcomeReader {
       const message = (result || errors || stderr || subtype || `exit code ${exitCode}`)
         .trim()
         .slice(0, 2000);
+      // result が is_error でないとき（終了コードだけが 0 でない）の result は、エージェントの発言
+      const cliText = json.is_error === true || result === "";
       // 最後の result の後に始まった番があれば（その後に強制終了・時間切れなど）、その分は result の usage に入っていない。
       // 読めた分を足し、全体は不明にする（PBI-281）
       const after = this.unsettledUsage();
@@ -450,6 +459,7 @@ export class ClaudeOutcomeReader extends OutcomeReader {
           kind: "failed",
           reason: classifyFailure(message),
           message,
+          ...(cliText ? { cliText: true as const } : {}),
           ...report,
           ...(after ? { unreportedUsage: after } : {}),
           usage: after
@@ -463,7 +473,14 @@ export class ClaudeOutcomeReader extends OutcomeReader {
           costUnknown: true,
         };
       }
-      return { kind: "failed", reason: classifyFailure(message), message, usage, ...report };
+      return {
+        kind: "failed",
+        reason: classifyFailure(message),
+        message,
+        ...(cliText ? { cliText: true as const } : {}),
+        usage,
+        ...report,
+      };
     }
     // 最後の result が空なら、その前の中身のある result を使う（PBI-290）。json の形（result が1つ）では、前の result は無い
     const usedEarlier = result.trim() === "" && json === this.result && this.content !== undefined;
@@ -646,6 +663,7 @@ export class CodexOutcomeReader extends OutcomeReader {
         kind: "failed",
         reason: classifyFailure(message),
         message,
+        cliText: true as const,
         // 読めた使用量が無いのに 0 を入れない（不明を 0 と見せない）
         ...(unfinished && this.turnsCompleted === 0 ? {} : { usage: this.usage }),
         ...(unfinished ? { costUnknown: true as const } : {}),
