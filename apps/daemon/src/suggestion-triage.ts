@@ -50,7 +50,30 @@ const INLINE = /^[^\s：]+(?::\d+)?：[ \t]*\n?[ \t]*(?:\*\*)?\[(提案|要修�
  * 提案を読む節の見出し：「指摘」だけ（許可リスト）。ほかの節（総評・前回の指摘・レビューの範囲など、見出しの名前を問わない）の
  * 文中の頭は、1 件として数えない。レビューの指示が、指摘の節の見出しを「指摘」と決めている。
  */
-const FINDINGS_HEADING = /^\s*指摘\s*$/;
+export const FINDINGS_HEADING_TEXT = "指摘";
+const FINDINGS_HEADING = new RegExp(`^\\s*${FINDINGS_HEADING_TEXT}\\s*$`);
+
+/**
+ * sacty が、差分の外の行へのコメントを本文の末尾に足す節の見出し。この節の頭付きの行は、提案の単位として読まない（本文の「指摘」の節
+ * ではない）ので、あれば、その本文は、選り分けの判断が無いまま差し戻しから外さない（直す側に倒す）。
+ */
+const OUT_OF_DIFF_HEADING = /行についての指摘/;
+
+/** 本文の、「指摘」の節の外（差分の外の行へのコメントの節）にある、頭付きの行があるか。 */
+export function hasHeadedLinesOutsideFindings(text: string): boolean {
+  let outside = false;
+  for (const line of withoutHtmlComments(text).split("\n")) {
+    const start = UNIT_START.test(line);
+    const heading = /^\s*#{1,6}\s+(.*)$/.exec(line);
+    if (!start && heading) {
+      outside = OUT_OF_DIFF_HEADING.test((heading[1] ?? "").replace(/\*+/g, ""));
+      continue;
+    }
+    // 節の中の行は、頭が行頭に来ない（`- `パス:行` [提案] …`）ので、行のどこにあっても数える
+    if (outside && (start || /\[(?:提案|要修正)\]/.test(line))) return true;
+  }
+  return false;
+}
 
 /**
  * 1 件の指摘（取り込んだ指摘の 1 件）の中の、提案・要修正の単位を求める。
@@ -90,25 +113,38 @@ export function suggestionUnitsOf(text: string): { kind: "suggestion" | "must"; 
 
 /**
  * 取り込んだ AI のレビューの指摘（aiReview の位置）から、提案・要修正の単位を、ID を付けて並べる。
- * レビューの本文から単位を 1 件も読み取れず、その回の判定が提案あり（要修正なし）のときは、本文の全体を 1 件の提案にする
- * （見出しの形が違っても、選り分けが空振りしない。判断の材料に、前の回の指摘と対応が渡る）。判定が修正が必要の回の、
+ * レビューの本文から単位を 1 件も読み取れず、その回の判定が提案あり（要修正なし）で、同じ回に単位を読めた指摘（行へのコメント）も
+ * 無いときは、本文の全体を 1 件の提案にする（見出しの形が違っても、選り分けが空振りしない。判断の材料に、前の回の指摘と対応が渡る）。
+ * 同じ回に行へのコメントの提案があるときは、総評だけの本文を単独で選り分けず、その回の提案の判断に合わせる（droppedRemarks）。判定が修正が必要の回の、
  * 単位を読み取れない本文は、今までどおり選り分けず、必ず直す。行へのコメントは、頭が無ければ単位にしない。
  */
 export function splitSuggestions(
   remarks: readonly string[],
   aiReview: readonly number[],
   suggestionsRound?: (remark: number) => boolean,
+  roundOf?: (remark: number) => number | undefined,
 ): SuggestionUnit[] {
   const ai = new Set(aiReview);
+  const read = remarks.map((text, remark) => ({
+    remark,
+    units: ai.has(remark) ? suggestionUnitsOf(text) : [],
+    plain: withoutHtmlComments(text).trim(),
+  }));
+  // 同じ回に、単位を読めた指摘（行へのコメントなど）があれば、総評だけの本文を単独の提案にしない（その回の提案の判断に合わせる）
+  const roundsWithUnits = new Set(
+    read.flatMap((r) => (r.units.length > 0 ? [roundOf?.(r.remark) ?? -1] : [])),
+  );
   let n = 0;
-  return remarks.flatMap((text, remark) => {
+  return read.flatMap(({ remark, units, plain }) => {
     if (!ai.has(remark)) return [];
-    const units = suggestionUnitsOf(text);
-    const plain = withoutHtmlComments(text).trim();
-    const list =
-      units.length === 0 && plain !== "" && !LINE_COMMENT.test(plain) && suggestionsRound?.(remark)
-        ? [{ kind: "suggestion" as const, text: plain }]
-        : units;
+    const round = roundOf?.(remark);
+    const whole =
+      units.length === 0 &&
+      plain !== "" &&
+      !LINE_COMMENT.test(plain) &&
+      suggestionsRound?.(remark) === true &&
+      !(round !== undefined && roundsWithUnits.has(round));
+    const list = whole ? [{ kind: "suggestion" as const, text: plain }] : units;
     return list.map((u) => ({ id: `S${++n}`, remark, text: u.text, kind: u.kind }));
   });
 }
@@ -234,7 +270,8 @@ export function countSuggestionRounds(
 /**
  * 提案のすべてを対応しないとした指摘の位置（差し戻しから外す指摘）。要修正がなく、その指摘の提案のすべてが対応しないもの。
  * 本文は、判定が提案ありの回のものだけ外す（要修正を、書式の読み違いで落とさない。行へのコメントは、指摘ごとに頭が付いている）。
- * 単位が 0 件の本文は、判定が提案ありの回なら全体が 1 件の提案になっているので、同じに扱う。
+ * 単位が 0 件の本文は、同じ回に提案の単位が無ければ全体が 1 件の提案になっているので同じに扱い、あれば、その回の提案がすべて対応しないとき外す。
+ * 本文の「指摘」の節の外に頭付きの提案（差分の外の行へのコメントの節）があるときは、本文を外さない（直す側に倒す）。
  */
 export function droppedRemarks(input: {
   remarks: readonly string[];
@@ -244,13 +281,31 @@ export function droppedRemarks(input: {
   verdictOf: (round: number) => Verdict | undefined;
 }): number[] {
   const { remarks, units, items, aiReviewFrom, verdictOf } = input;
+  const roundOfRemark = (index: number) => reviewRoundOf(aiReviewFrom, index);
+  const isSuggestionsRound = (index: number) => {
+    const r = roundOfRemark(index);
+    return r !== undefined && verdictOf(r) === "suggestions";
+  };
+  const declinedAll = (list: readonly SuggestionUnit[]) =>
+    list.every((u) => u.kind === "suggestion") &&
+    list.every((u) =>
+      items.filter((i) => i.remark === u.remark).every((i) => i.decision === "decline"),
+    );
   return remarks.flatMap((text, index) => {
     const mine = units.filter((u) => u.remark === index);
-    if (mine.length === 0) return [];
+    if (mine.length === 0) {
+      // 単位が 0 件の本文（総評だけ）：判定が提案ありの回で、同じ回の提案（行へのコメント）があり、そのすべてが対応しないなら外す
+      const round = roundOfRemark(index);
+      const plain = withoutHtmlComments(text).trim();
+      if (round === undefined || !isSuggestionsRound(index) || plain === "") return [];
+      if (LINE_COMMENT.test(plain) || hasHeadedLinesOutsideFindings(text)) return [];
+      const sameRound = units.filter((u) => roundOfRemark(u.remark) === round);
+      return sameRound.length > 0 && declinedAll(sameRound) ? [index] : [];
+    }
     const inline = mine.length === 1 && mine[0]?.text === withoutHtmlComments(text).trim();
-    const fromRound = reviewRoundOf(aiReviewFrom, index);
-    const suggestionsRound = fromRound !== undefined && verdictOf(fromRound) === "suggestions";
-    return (inline || suggestionsRound) &&
+    // 本文の「指摘」の節の外（差分の外の行へのコメントの節）に頭付きの提案があるときは、判断が無いので外さない
+    if (!inline && hasHeadedLinesOutsideFindings(text)) return [];
+    return (inline || isSuggestionsRound(index)) &&
       mine.every((u) => u.kind === "suggestion") &&
       items.filter((i) => i.remark === index).every((i) => i.decision === "decline")
       ? [index]

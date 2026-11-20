@@ -151,37 +151,47 @@ describe("提案のすべてを対応しない指摘の位置（PBI-436）", () 
     kind: "suggestion" as const,
   });
   const verdictOf = () => "suggestions" as const;
-  it("提案ありの回の、総評だけの本文は全体が 1 件の提案になり、行へのコメントの提案とともにすべて対応しないなら外す", () => {
+  it("提案ありの回で、同じ回に行へのコメントの提案があるとき、総評だけの本文は単独で選り分けず、その回の提案がすべて対応しないなら外す。1 件でも対応するなら外さない", () => {
     const remarks = ["## 総評\nだけ", "a.ts:1：\n[提案] x"];
     const aiReviewFrom = { "0": "k:1", "1": "k:1" };
-    const units = splitSuggestions(remarks, [0, 1], () => true);
-    expect(units.map((u) => [u.remark, u.kind])).toEqual([
-      [0, "suggestion"],
-      [1, "suggestion"],
-    ]);
-    expect(
+    const roundOf = (i: number) => (aiReviewFrom as Record<string, string>)[String(i)] && 1;
+    const units = splitSuggestions(remarks, [0, 1], () => true, roundOf);
+    expect(units.map((u) => [u.remark, u.kind])).toEqual([[1, "suggestion"]]);
+    const dropOf = (decision: "decline" | "address") =>
       droppedRemarks({
         remarks,
         units,
-        items: [
-          { remark: 0, decision: "decline" },
-          { remark: 1, decision: "decline" },
-        ],
+        items: [{ remark: 1, decision }],
         aiReviewFrom,
         verdictOf,
-      }),
-    ).toEqual([0, 1]);
+      });
+    expect(dropOf("decline")).toEqual([0, 1]);
+    // 総評の 1 件だけが address になって、直しに入ることはない。行へのコメントが対応する側なら、本文も外さない
+    expect(dropOf("address")).toEqual([]);
+  });
+  it("別の回の行へのコメントは、総評だけの本文を単独の提案にすることを妨げない", () => {
+    const remarks = ["## 総評\nだけ", "a.ts:1：\n[提案] x"];
+    const roundOf = (i: number) => (i === 0 ? 2 : 1);
+    const units = splitSuggestions(remarks, [0, 1], () => true, roundOf);
+    expect(units.map((u) => u.remark)).toEqual([0, 1]);
+  });
+  it("本文の「指摘」の節の単位がすべて対応しなくても、節の外（行についての指摘）に頭付きの提案があれば、本文を外さない", () => {
+    const body =
+      "## 総評\nx\n\n## 指摘\n\n**[提案] 題**（a.ts:1）\n- 問題：y\n\n### 行についての指摘\n\n- a.ts:9 [提案] 外の提案";
+    const units = splitSuggestions([body], [0], () => true);
+    expect(units).toHaveLength(1);
+    const input = {
+      remarks: [body],
+      units,
+      items: [{ remark: 0, decision: "decline" as const }],
+      aiReviewFrom: { "0": "k:1" },
+      verdictOf,
+    };
+    expect(droppedRemarks(input)).toEqual([]);
+    // 節の外に頭付きの行が無ければ、今までどおり外す
+    const plain = body.split("\n\n### 行についての指摘")[0] as string;
     expect(
-      droppedRemarks({
-        remarks,
-        units,
-        items: [
-          { remark: 0, decision: "decline" },
-          { remark: 1, decision: "address" },
-        ],
-        aiReviewFrom,
-        verdictOf,
-      }),
+      droppedRemarks({ ...input, remarks: [plain], units: splitSuggestions([plain], [0]) }),
     ).toEqual([0]);
   });
   it("要修正の回の、単位 0 件の本文は提案にせず、選り分けない（必ず直す）", () => {
@@ -454,7 +464,12 @@ describe("再レビューの指示への、対応しないとした提案の渡�
     expect(triaged).toContain(
       "[提案] の重み（should・nit）の新しい指摘は、本文にも行へのコメントにも出さず",
     );
-    expect(triaged).toContain("判定は no_findings（指摘なし）にする");
+    // 判定は、重みを見直した前回の指摘の決まりと食い違わない（no_findings に言い切らない）
+    expect(triaged).toContain("前回の指摘の扱い");
+    expect(triaged).toContain(
+      "前回の指摘も上の行のとおり残らないときだけ、no_findings（指摘なし）にする",
+    );
+    expect(triaged).not.toContain("新しい [要修正] が無ければ、判定は no_findings");
     // 再レビューの範囲を絞る回でも、絞らない回でも効く
     const narrowed = rereviewLines(
       rejudged,

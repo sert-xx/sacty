@@ -406,7 +406,7 @@ export function RemarkItem({
           </span>
         )}
       </span>
-      {!remark.voided && (
+      {!remark.voided && !remark.triaged && (
         <form action={voidRemarkAction} className="col-start-2 flex items-center gap-1">
           <input type="hidden" name="taskId" value={taskId} />
           <input type="hidden" name="remarkId" value={remark.id} />

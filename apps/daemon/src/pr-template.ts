@@ -461,7 +461,10 @@ export function fillTemplate(template: string, parts: BodyParts): BodyText {
       .trim(),
     footer: `${issue}${parts.footer.trim()}`,
     // 見出しに入れた関係する Issue（Closes）は、長さの上限で省いても残す（PR #99 レビュー指摘）
-    keep: used.has("issue") && parts.issue?.trim() ? [parts.issue.trim()] : [],
+    keep: [
+      ...(used.has("issue") && parts.issue?.trim() ? [parts.issue.trim()] : []),
+      ...(parts.keep ?? []),
+    ],
   };
 }
 

@@ -2918,7 +2918,7 @@ export function applyEvent(
         .map((index, n) => {
           const key =
             pending.keys.length === pending.remarks.length ? pending.keys[index] : undefined;
-          // 提案の単位が無い本文（総評だけで、提案は行へのコメントにある形）への返信には、同じ回の対応しない提案を載せる
+          // 提案の単位が無い本文（総評だけで、提案は行へのコメントにある形。同じ回の提案がすべて対応しないとき外れる）への返信には、同じ回の対応しない提案を載せる
           const own = parts.get(index);
           const list =
             own && own.length > 0 ? own : declined.map((d) => ({ text: d.text, reason: d.reason }));

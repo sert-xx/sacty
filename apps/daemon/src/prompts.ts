@@ -127,7 +127,8 @@ import {
   securityScope,
 } from "./security.js";
 import { localForwards, type StartedService } from "./services.js";
-import { type SuggestionUnit, TRIAGE_HEADING } from "./suggestion-triage.js";
+import { readStepQuestions, stepQuestionsLines } from "./step-questions.js";
+import { FINDINGS_HEADING_TEXT, type SuggestionUnit, TRIAGE_HEADING } from "./suggestion-triage.js";
 import { CHANGE_DOCUMENT_EXTENSION_LIST } from "./test-files.js";
 import { DECLARATION_ONLY_LINES } from "./timeout-resume.js";
 import {
@@ -432,7 +433,7 @@ const EARLIER_REVIEW_IN_PROMPT = 5_000;
 const HEAD_CHECK_LINES = (head: string): string[] => [
   `- 前の指摘（前回の指摘・PR にある既存の指摘）が直っているかは、今回レビューする先頭のコミット（${head}）の、コード・文書のファイルを開いて確かめる。前回のレビューの本文・前のコミットの内容・指摘が書かれた時点の記述・作者の返答だけを根拠にしない。直っていることを確かめたものを、未対応と書かない`,
   "- 未対応と書く指摘には、先頭のコミットのどのファイルのどの箇所を読んで、まだ直っていないと判断したか（その箇所に何が書かれていて、何が足りないか）を1行で添える。箇所を示せない（読んでいない・確かめていない）ものは、未対応と書かない",
-  `- 本文の指摘の節の見出しは「指摘」にする（Markdown の見出し行で、見出しの文字は「指摘」だけ）。指摘ごとに、行頭を ${MUST_TAG} か ${SUGGESTION_TAG} で始める（太字の見出しでもよい）。sacty は、この節の指摘だけを、直しに入る前の提案の選り分けの対象にする。総評・前回の指摘などの別の節には、指摘の頭を付けた行を書かない`,
+  `- 本文の指摘の節の見出しは「${FINDINGS_HEADING_TEXT}」にする（Markdown の見出し行で、見出しの文字は「${FINDINGS_HEADING_TEXT}」だけ）。指摘ごとに、行頭を ${MUST_TAG} か ${SUGGESTION_TAG} で始める（太字の見出しでもよい）。sacty は、この節の指摘だけを、直しに入る前の提案の選り分けの対象にする。総評・前回の指摘などの別の節には、指摘の頭を付けた行を書かない`,
   `- 判定 changes_required は、先頭のコミットで成り立つ ${MUST_TAG} の指摘が1件以上あるときだけにする（今回新しく見つけたもの、または上のとおり今回のコードで未対応と確かめた前回・既存の ${MUST_TAG}。再レビューで、重みを見直して ${SUGGESTION_TAG} として扱う前回の指摘は、数えない）。本文で「未対応」と書いたことと、行へのコメントの重さ・判定が食い違わないようにする（${MUST_TAG} の根拠が本文にも行へのコメントにも無いのに、changes_required にしない）`,
 ];
 
@@ -783,7 +784,7 @@ function rejudgeLines(task: Task, deferrals: ReviewDeferrals | undefined): strin
  */
 function triagedRejudgeLines(): string[] {
   return [
-    `- この回で、新しい指摘として出してよいのは、${MUST_TAG} の重みのものだけ。${SUGGESTION_TAG} の重み（should・nit）の新しい指摘は、本文にも行へのコメントにも出さず、判定の根拠にしない（観点の担当が挙げても、集約で採用しない）。同じ先頭は前回の回が見ている。新しい ${MUST_TAG} が無ければ、判定は no_findings（指摘なし）にする`,
+    `- この回で、新しい指摘として出してよいのは、${MUST_TAG} の重みのものだけ。${SUGGESTION_TAG} の重み（should・nit）の新しい指摘は、本文にも行へのコメントにも出さず、判定の根拠にしない（観点の担当が挙げても、集約で採用しない）。同じ先頭は前回の回が見ている。判定は、新しい ${MUST_TAG} と、前回の指摘の扱い（未対応の ${MUST_TAG}・重みを見直して ${SUGGESTION_TAG} として扱う指摘。上の行のとおり）で、これまでと同じに決める。新しい ${MUST_TAG} が無く、前回の指摘も上の行のとおり残らないときだけ、no_findings（指摘なし）にする`,
   ];
 }
 
@@ -5193,6 +5194,8 @@ export type BodyParts = {
   issue?: string;
   record?: string;
   footer: string;
+  /** 長さの上限でも省かない行のまとまり（要求要件・設計の PR の「確認したいこと」の件数と答え方。PBI-439）。 */
+  keep?: string[];
 };
 
 /** PR の本文の、観点 → テスト → 実行結果の表とテストの結果（PBI-10b）。 */
@@ -6136,8 +6139,11 @@ export function buildStepPullRequestBodyText(
   step: StepPullRequestKey,
   path: string,
   aiReview?: AiReviewOfHead,
+  secrets?: readonly string[],
 ): BodyText {
-  const task = withoutInternalPathsDeep(rawTask);
+  // 写す文は、使った秘密の値を伏せてから切る（切れ目にかかった値の先頭が残らないように）
+  const task = withoutInternalPathsDeep(hideSecrets(rawTask, secrets));
+  const questions = stepQuestionsLines(readStepQuestions(task.outputs[step]), path, "text");
   const name = STEP_NAME[step];
   const responded = respondedLines(task, step);
   const earlier = earlierStepLines(task, step);
@@ -6151,7 +6157,10 @@ export function buildStepPullRequestBodyText(
       `成果のファイル：\`${path}\``,
       "",
       approval,
-      ...(guide.length > 0 ? ["", "## 確かめる所", "", ...guide] : []),
+      ...(questions.lines.length > 0 ? ["", ...questions.lines] : []),
+      ...(guide.length > 0
+        ? ["", "## 確かめる所", "", PROVENANCE_NOT_QUESTIONS_LINE, "", ...guide]
+        : []),
       ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
       ...(responded.length > 0 ? ["", "## 指摘への対応", "", ...responded] : []),
     ].join("\n"),
@@ -6160,9 +6169,13 @@ export function buildStepPullRequestBodyText(
       "---\nこの PR は sacty が作成しました。",
     ].join("\n"),
     // タスクの ID と、マージが承認になることの案内は、省いても残す
-    keep: [intro, approval],
+    keep: [intro, approval, ...(questions.keep ? [questions.keep] : [])],
   };
 }
+
+/** 要求要件・設計の PR の本文の「確かめる所」に足す、問いとの区別の1行（PBI-439）。 */
+const PROVENANCE_NOT_QUESTIONS_LINE =
+  "出典（引用・導出・推論）の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。";
 
 /** 要求要件・設計の PR の、承認の仕方と指摘の伝え方（PBI-57・PBI-63）。 */
 /**
@@ -6217,8 +6230,10 @@ export function buildStepPullRequestBodyParts(
   step: StepPullRequestKey,
   path: string,
   aiReview?: AiReviewOfHead,
+  secrets?: readonly string[],
 ): BodyParts {
-  const task = withoutInternalPathsDeep(rawTask);
+  const task = withoutInternalPathsDeep(hideSecrets(rawTask, secrets));
+  const questions = stepQuestionsLines(readStepQuestions(task.outputs[step]), path, "template");
   const name = STEP_NAME[step];
   const responded = respondedLines(task, step);
   const earlier = earlierStepLines(task, step);
@@ -6227,7 +6242,10 @@ export function buildStepPullRequestBodyParts(
     summary: [
       `sacty のタスク「${task.title}」の${name}です。マージすると${name}の承認になります。`,
       ...(aiReviewBodyLine(aiReview) ? ["", aiReviewBodyLine(aiReview) as string] : []),
-      ...(guide.length > 0 ? ["", "**確かめる所**", "", ...guide] : []),
+      ...(questions.lines.length > 0 ? ["", ...questions.lines] : []),
+      ...(guide.length > 0
+        ? ["", "**確かめる所**", "", PROVENANCE_NOT_QUESTIONS_LINE, "", ...guide]
+        : []),
       ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
     ].join("\n"),
     changes: [
@@ -6238,6 +6256,7 @@ export function buildStepPullRequestBodyParts(
       ? { issue: `#${task.source.number}（このタスクの取り込み元。実装の PR のマージで閉じます）` }
       : {}),
     footer: [sactyFooter(task, name), "", ...stepApprovalLines(step)].join("\n"),
+    ...(questions.keep ? { keep: [questions.keep] } : {}),
   };
 }
 

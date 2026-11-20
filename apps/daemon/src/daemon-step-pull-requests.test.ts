@@ -578,6 +578,45 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       );
     const answered = (outcomes: AgentOutcome[]) => start([out(v1), ...outcomes]);
 
+    it("PR を作ったときの本文に、確認したいことの件数・答え方・項目が出て、答えを取り込んだ再提出の本文からは外れた問いが消える（PBI-439）", async () => {
+      const asked = [
+        "# 設計 v1",
+        "",
+        "## 確認したいこと",
+        "",
+        "### must",
+        "",
+        "なし",
+        "",
+        "### should",
+        "",
+        "1. 国名の表示は要るか（推奨：要らない）",
+        "2. 通貨の表示は要るか（推奨：要る）",
+      ].join("\n");
+      const answeredOutput =
+        "# 設計 v2\n\n## 確認したいこと\n\n### must\n\nなし\n\n### should\n\nなし";
+      const made = await start([out(asked), answerJudged("as_recommended"), out(answeredOutput)], {
+        steps: ["requirements"],
+      });
+      const { activity, service, pulls, id } = made;
+      const first = pulls.calls[0]?.body ?? "";
+      expect(first).toContain("## 確認したいこと");
+      expect(first).toContain("should 2件（must はありません）。");
+      expect(first).toContain("答えるには、この PR にコメントしてください");
+      expect(first).toContain("答えずにマージすると、推奨の答えで次の工程に進みます");
+      expect(first).toContain("国名の表示は要るか（推奨：要らない）");
+      expect(first).toContain("通貨の表示は要るか（推奨：要る）");
+      pulls.feedbackBy[7] = [item("comment:1", { body: "推奨どおりでお願いします" })];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      const updated = pulls.calls[1]?.body ?? "";
+      expect(pulls.calls[1]?.number).toBe(7);
+      expect(updated).toContain("確認したいこと：なし（must・should とも問いはありません）");
+      expect(updated).not.toContain("国名の表示は要るか");
+      expect(updated).not.toContain("should 2件");
+      activity.close();
+    });
+
     it("推奨どおりの答えだけなら、原因を質問への答えとして記録し、成果物の作り直しとセルフレビューを走らせない答えの反映だけの直しにする", async () => {
       const made = await answered([answerJudged("as_recommended"), out("# 要求要件 v2")]);
       const { activity, service, executor, pulls, id } = made;

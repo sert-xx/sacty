@@ -3915,10 +3915,15 @@ export class TaskService {
     const child = record && this.tasks.get(record.taskId);
     if (!child) return undefined;
     const verdictOf = (r: number) => child.reviewVerdicts?.find((v) => v.round === r)?.verdict;
-    const units = splitSuggestions(pending.remarks, pending.aiReview ?? [], (remark) => {
-      const from = reviewRoundOf(pending.aiReviewFrom, remark);
-      return from !== undefined && verdictOf(from) === "suggestions";
-    });
+    const units = splitSuggestions(
+      pending.remarks,
+      pending.aiReview ?? [],
+      (remark) => {
+        const from = reviewRoundOf(pending.aiReviewFrom, remark);
+        return from !== undefined && verdictOf(from) === "suggestions";
+      },
+      (remark) => reviewRoundOf(pending.aiReviewFrom, remark),
+    );
     const suggestions = units.filter((u) => u.kind === "suggestion");
     if (suggestions.length === 0) return undefined;
     // 実装が指摘のすべてを断った後の判定し直し（PBI-357・370。reason が triaged でない）の回は、選り分けない（今までどおり）
@@ -13023,8 +13028,22 @@ export class TaskService {
         token,
         usedSecrets,
         // 待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
-        () => buildStepPullRequestBodyText(this.latestTitled(current), step, path, aiReview),
-        () => buildStepPullRequestBodyParts(this.latestTitled(current), step, path, aiReview),
+        () =>
+          buildStepPullRequestBodyText(
+            this.latestTitled(current),
+            step,
+            path,
+            aiReview,
+            usedSecrets,
+          ),
+        () =>
+          buildStepPullRequestBodyParts(
+            this.latestTitled(current),
+            step,
+            path,
+            aiReview,
+            usedSecrets,
+          ),
       );
       // 同じ PR を更新するときは、人が直した本文を3方向でマージして残す（PBI-334）
       const sent = reuse
