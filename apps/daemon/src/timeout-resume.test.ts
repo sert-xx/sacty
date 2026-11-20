@@ -454,7 +454,7 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
       expect(lines).toContain("コードは変えなくてよい");
       expect(lines).toContain("TV-2");
       expect(lines).toContain("すべてのテスト観点の対応");
-      expect(lines).toContain("未完了と申告してよい");
+      expect(lines).toContain("未完了と申告する");
       expect(
         incompleteResumeLines({ undeclared: true, declarationOnly: true }).join("\n"),
       ).toContain("完了の申告が無いか、決まった形どおりに読めませんでした");

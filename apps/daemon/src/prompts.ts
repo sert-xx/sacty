@@ -127,6 +127,7 @@ import {
 } from "./security.js";
 import { localForwards, type StartedService } from "./services.js";
 import { CHANGE_DOCUMENT_EXTENSION_LIST } from "./test-files.js";
+import { DECLARATION_ONLY_LINES } from "./timeout-resume.js";
 import {
   extractVerificationRecord,
   implementVerificationRecordLines,
@@ -359,16 +360,12 @@ const OUTPUT_LANGUAGE_LINE =
  * 実装の指示の、テストを書かずに差分で確かめる観点の決まり（テストの仕組みがあるタスク）。文書・コメント・文言だけの観点に、ファイルが
  * ある・読める・文字列を含むことを確かめるだけの形のテストを書かせないため。
  */
-const UNTESTABLE_VIEWPOINT_LINES = [
-  `- テストで確かめようがない観点（検査の実行そのもの・人が確かめること など）も、観点とテストの対応で tests を空にし、untested に、テストで確かめない理由と、どう確かめたか（または誰が確かめるか）を書く（例：{"viewpointId": "観点の ID", "tests": [], "untested": "検査の実行そのものの観点で、テストでは確かめられない。検査のコマンドを実行して通ったことを実装の説明に書いた"}）。テストを書ける観点（実行される振る舞いを変えるもの）には使わない`,
-];
-
 const UNTESTED_LINES = [
   `- 観点のうち、実行される振る舞いの無い変更（文書・コメント・文言・設定の説明など、ファイルの内容を読んで確かめるもの）だけのものは、テストを書かずに、観点とテストの対応で tests を空にし、untested に理由を1文で書く（例：{"viewpointId": "観点の ID", "tests": [], "untested": "README の手順の文言だけを直したため"}）。PR のレビューの子タスクが差分で確かめる`,
   `- ${AGENT_INSTRUCTIONS}も、実行される振る舞いの無い変更として扱う（エージェントを起動して確かめるテストは書かない）。スキルに含めるスクリプトなど、実行されるコードはコードとして扱う`,
   "- ファイルがある・読める・特定の文字列を含むことだけを確かめるテストは書かない（振る舞いを検証しない形だけのテストになる）。sacty が置く要求要件・設計のファイルも、テストの対象にしない",
   "- 実行される振る舞い（コード・設定の値・スクリプトなど）を変える観点は、untested にせず、テストを書く",
-  ...UNTESTABLE_VIEWPOINT_LINES,
+  `- テストで確かめようがない観点（検査の実行そのもの・人が確かめること など）も、観点とテストの対応で tests を空にし、untested に、テストで確かめない理由と、どう確かめたか（または誰が確かめるか）を書く（例：{"viewpointId": "観点の ID", "tests": [], "untested": "検査の実行そのものの観点で、テストでは確かめられない。検査のコマンドを実行して通ったことを実装の説明に書いた"}）。テストを書ける観点（実行される振る舞いを変えるもの）には使わない`,
 ];
 
 /**
@@ -1065,9 +1062,7 @@ function feedbackLines(task: Task): string[] {
             ...feedback.unmapped.map((id) => `- ${id}`),
           ]
         : ["欠けているもの：完了の申告が無いか、決まった形どおりに読めませんでした。"]),
-      "- 出し直すもの：実装の説明、すべてのテスト観点の対応（欠けた観点だけでなく、すべて。テストの対応と、テストを書かない理由 untested）、完了の申告を、決まった形どおりに、最後の出力に1つずつ書く",
-      "- テストで確かめようがない観点（検査の実行そのもの・人が確かめること など）と、実行される振る舞いの無い変更だけの観点は、tests を空にして、テストで確かめない理由と、どう確かめたか（または誰が確かめるか）を untested に書く",
-      "- 実装が実は終わっていないと分かったときは、続きを実装せずに、未完了と申告する（remaining に、残っていることを書く）",
+      ...DECLARATION_ONLY_LINES,
     ];
   }
   if (feedback.kind === "incomplete" && feedback.unmapped?.length) {

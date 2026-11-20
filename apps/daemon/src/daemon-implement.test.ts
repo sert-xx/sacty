@@ -459,6 +459,104 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    it("申告だけを求める実行で作業領域が変わると declarationAsked は消え、後の別の止まりでは、もう1回求める（受け入れ条件 9・13）", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, executor, id } = await toImplement(
+        [missingMap(), missingMap(), missingMap(), missingMap(), fullMap()],
+        { repos },
+      );
+      treeByRun(executor, repos, ["a", "a", "b", "b", "c"]);
+      const count = () => types(service, id).filter((t) => t === "ImplementationIncomplete").length;
+      for (let i = 0; i < 30 && count() < 2; i++) await service.runNext(id);
+      expect(service.get(id)?.task.incompleteRuns?.declarationAsked).toBe(true);
+      for (let i = 0; i < 30 && count() < 3; i++) await service.runNext(id);
+      // 3回目で作業領域が変わった：記録は消え、止まらない
+      expect(service.get(id)?.task.incompleteRuns?.declarationAsked).toBeFalsy();
+      expect(service.get(id)?.task.status).toBe("queued");
+      await drain(service);
+      expect(declarationRuns(service, id)).toHaveLength(2);
+      expect(types(service, id)).not.toContain("TaskPaused");
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+
+    it("人が再開すると declarationAsked も数え直し、再開の後に同じ条件になれば、もう1回求める（受け入れ条件 9）", async () => {
+      const { activity, service, id } = await toImplement([
+        missingMap(),
+        missingMap(),
+        missingMap(),
+        missingMap(),
+        fullMap(),
+      ]);
+      for (let i = 0; i < 30 && service.get(id)?.task.status !== "paused"; i++) {
+        await service.runNext(id);
+      }
+      expect(service.get(id)?.task.pausedReason).toBe("incomplete");
+      service.resume(id, {});
+      expect(service.get(id)?.task.incompleteRuns?.declarationAsked).toBeFalsy();
+      await drain(service);
+      expect(declarationRuns(service, id)).toHaveLength(2);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+
+    it("申告が無いまま申告だけを求めても変わらなければ、implement.incomplete の文言（日英）で申告だけを求めたことが分かる（受け入れ条件 12）", async () => {
+      const { activity, service, id } = await toImplement([
+        noDeclaration(),
+        noDeclaration(),
+        noDeclaration(),
+      ]);
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedMessage).toMatchObject({
+        code: "implement.incomplete",
+        params: { stalled: true, declarationAsked: true },
+      });
+      expect(ja(task?.pausedMessage as never)).toContain("申告だけを求めても");
+      expect(renderMessage(task?.pausedMessage, "en")).toContain(
+        "asking only for the declaration changed nothing",
+      );
+      activity.close();
+    });
+
+    it("上限の11回目は、作業領域の目印が前と同じでも、申告だけを求めずに止まる（受け入れ条件 11）", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, executor, id } = await toImplement(
+        Array.from({ length: 14 }, () => missingMap()),
+        { repos },
+      );
+      // 1〜10回目は毎回変わり、11回目は10回目と同じ目印
+      treeByRun(executor, repos, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "j"]);
+      await drain(service, 40);
+      expect(declarationRuns(service, id)).toHaveLength(0);
+      const task = service.get(id)?.task;
+      expect(types(service, id).filter((t) => t === "ImplementationIncomplete")).toHaveLength(11);
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedMessage).toMatchObject({ params: { count: 11, stalled: true } });
+      activity.close();
+    });
+
+    it("デーモンを再起動して台帳から作り直しても、申告だけを求めたことが残り、2回目は行わず、続きは行う（受け入れ条件 13）", async () => {
+      const { activity, service, id } = await toImplement([missingMap(), missingMap()]);
+      for (let i = 0; i < 8 && !service.get(id)?.task.incompleteRuns?.declarationAsked; i++) {
+        await service.runNext(id);
+      }
+      const again = new SqliteActivityStore(dbPath);
+      const restarted = makeService(again, [missingMap()]);
+      expect(restarted.service.get(id)?.task.incompleteRuns).toMatchObject({
+        runs: 2,
+        stalled: true,
+        declarationAsked: true,
+      });
+      // 申告だけを求める実行の続きが、再起動の後に1回行われる。それでもそろわなければ、2回目は行わずに止まる
+      await drain(restarted.service);
+      expect(declarationRuns(restarted.service, id)).toHaveLength(1);
+      expect(restarted.service.get(id)?.task.status).toBe("paused");
+      again.close();
+      activity.close();
+    });
+
     it("実装の指示は、テストで確かめようがない観点を、tests を空にした untested（理由と確かめ方）で申告すると伝え、テストを書ける観点の抜け道にしない（受け入れ条件 1・3）", async () => {
       const { activity, service, executor } = await toImplement([implement("# 実装", [TV1, TV2])]);
       await drain(service);

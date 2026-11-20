@@ -436,7 +436,7 @@ const ja = {
     remainingItem: (text: string) => `・${text}`,
     /** ids：欠けた観点の ID（申告が読めなかったときは空）。 */
     ImplementationDeclarationOnly: (ids: string) =>
-      `作業領域が変わらず、申告だけが欠けているため、コードを変えずに申告だけを求める実行を足す${ids ? `（${ids}）` : "（完了の申告が無いか読めない）"}`,
+      `申告だけを求める実行を足す${ids ? `（${ids}）` : ""}`,
     ImplementationUnmapped: (ids: string) =>
       `テストの対応していないテスト観点があるため、提出せずに実装を続ける（${ids}）`,
     ImplementationUnchanged: (number: number, commit: string) =>
@@ -1174,7 +1174,7 @@ const en: LabelMessages = {
       `${undeclared ? "The declaration of whether the implementation finished is missing or unreadable" : "The implementation is unfinished"}, so it is continued without being submitted${remaining > 0 ? ` (${remaining} remaining)` : ""}`,
     remainingItem: (text) => `- ${text}`,
     ImplementationDeclarationOnly: (ids) =>
-      `The workspace did not change and only the declaration is missing, so one more run is added that asks only for the declaration, without changing code${ids ? ` (${ids})` : " (the completion declaration is missing or unreadable)"}`,
+      `Add a run that asks only for the declaration${ids ? ` (${ids})` : ""}`,
     ImplementationUnmapped: (ids) =>
       `Some test viewpoints have no test mapped, so the implementation is continued without being submitted (${ids})`,
     ImplementationUnchanged: (number, commit) =>
