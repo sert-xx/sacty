@@ -962,13 +962,19 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - PR のレビューだけのタスクは、工程をオーケストレーターに選ばせずに `review` の組み合わせにする（`chooseReviewSteps`・`reviewOnlySteps`）。
   - `images` を設定していて、再実行・作成時の人の指定・プロジェクトの対象でイメージを決めていないときだけ（`pinnedImage`）、オーケストレーターにタスクのイメージだけを選ばせる（`buildReviewImagePrompt`。答えは `sacty-review-image` の `image`・`reason`・`defaultReason`、`extractReviewImage`）。
     指示では、PR が触るコードの言語・版と、検証コマンドに要るもの（ブラウザのテスト・DB のクライアントなど）から選ばせ、既定のイメージは最後の手段にする。
+  - sacty が自分の PR のために作ったレビューの子タスク（`via` が `sacty`）は、イメージを決めていなくても、オーケストレーターを実行しない。
+    レビューの工程のイメージは、PR を作ったタスク（親）のイメージ（`stepImageOf(親, reviewOf.step)`。人が `TaskImageChanged` で変えた後なら変えた後のもの）にする（`parentImageOf`）。
+    親のイメージが `images` にあるときだけ使い、`StepsChosen` は sacty の記録にする（`imageSource: parent`・費用 0。理由の文は `review.reviewOnly`）。
+    優先は、再実行・作成時の人の指定・プロジェクトの対象、親のイメージ、今の決め方（`images` が無ければ既定のイメージ、`images` があればオーケストレーター）の順。
+    親のイメージを決められない（記録が無い・その名前が `images` から消えた）ときだけ、今の決め方に戻る。
+    GitHub から取り込んだ PR のレビューのタスク（`requested`・`label`）の決め方は、この節のほかの項目のとおりで変えない。
   - 選んだら `StepsChosen` をオーケストレーターの記録にし（`imageSource: orchestrator`・`imageReason`・実行の費用）、既定のイメージなら上と同じく `defaultImageReason` か `imageUnexplained` を記録する。
     理由の文は `review.reviewOnlyImageChosen`。
   - 実行に失敗した・答えを読めない・`images` に無い名前なら、工程の選択と同じく `OrchestratorFailed` を記録して止める（代わりのエージェントがあれば、それで選び直す）。
   - それ以外（`images` が無い・イメージを決めている）は、オーケストレーターを使わない（`StepsChosen` は sacty の記録で、費用は 0）。
 - オーケストレーターのセッションの使い回しは [エージェントの実行](agent-execution.md) の「セッションの保存と使い回し」。
 
-コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`pinnedImage`・`legacyAllRequested`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`chooseReviewSteps`・`runOrchestrator`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`・`planAnswerLines`・`PLAN_SKILL`・`buildReviewImagePrompt`・`extractReviewImage`）、`apps/daemon/default-context/skills/plan-steps/SKILL.md`、`packages/core/src/events.ts`（`StepsChosen`）
+コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`pinnedImage`・`legacyAllRequested`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`chooseReviewSteps`・`parentImageOf`・`runOrchestrator`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`・`planAnswerLines`・`PLAN_SKILL`・`buildReviewImagePrompt`・`extractReviewImage`）、`apps/daemon/default-context/skills/plan-steps/SKILL.md`、`packages/core/src/events.ts`（`StepsChosen`）
 
 ## 工程の見直し
 

@@ -1347,6 +1347,8 @@ export type ImageSource =
   | { by: "rerun" }
   /** 作成時に、人が指定した。 */
   | { by: "request" }
+  /** 親のタスク（PR を作ったタスク）のイメージ。sacty が作ったレビューの子タスク。 */
+  | { by: "parent" }
   /** default は、既定のイメージにした理由（PBI-105）。unexplained は、理由が無いまま既定のイメージにした。 */
   | { by: "orchestrator"; default?: string; unexplained?: true }
   | { by: "none" };

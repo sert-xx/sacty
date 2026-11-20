@@ -1776,6 +1776,575 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const posted = (pulls: FakePulls, n: number, author = "me") =>
       item(`review:${50 + n}`, { kind: "review", author, body: pulls.reviews[n]?.body ?? "" });
 
+    describe("レビューの往復の待ちを削る：投稿の直後の取り込みと、提出の直後の再レビュー（PBI-425）", () => {
+      const CI0 = {
+        snapshot: async () => ({ checks: [], jobs: [], failedRuns: [] }),
+      } as unknown as ServiceDeps["ci"];
+      /** 待っているものが無くなるまで、続きの処理（偽の GitHub の答え）を流す。固定の時間は待たない。 */
+      const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+      /**
+       * 条件が成り立つか、続きの処理がこれ以上進まなくなる（流し続けても変わらない）まで、続きの処理を流す。時間ではなく
+       * 回数で区切るので、2 つの経路が重なる場合は重なった時点で、直列に流す場合は先の経路が答えを待ったまま止まった時点で戻る。
+       */
+      const flushUntil = async (done: () => boolean) => {
+        for (let i = 0; i < 100 && !done(); i++) await flush();
+      };
+      const restartsOf = (svc: TaskService, childId: string) =>
+        (svc.get(childId)?.activity ?? []).flatMap((e) =>
+          e.type === "ReviewRestarted" ? [e.payload] : [],
+        );
+      const importedOf = (svc: TaskService, id: string) =>
+        (svc.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "PullRequestReviewImported" ? [e] : [],
+        );
+      type FeedbackInput = Parameters<FakePulls["feedback"]>[0];
+
+      /**
+       * 実装の PR（指摘なしを待つ）を作って承認待ちまで進める。偽の GitHub は、PR の先頭に親の提出したコミットを返し、
+       * 親の取り込みの読み取りには、子が投稿したレビューを返す（投稿の前は何も返さない）。
+       */
+      async function implementedPr(outcomes: AgentOutcome[]) {
+        const pulls = new FakePulls();
+        const made = await start([implement(), ...outcomes], {
+          pulls,
+          steps: ["implement"],
+          reviewTasks: true,
+          ci: CI0,
+        });
+        const { service, id } = made;
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        const childId = childOf(service, id);
+        const first = commitOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+        const head: { override?: string; staleAfterPost?: string; fail: boolean } = { fail: false };
+        const status = pulls.status.bind(pulls);
+        const statusCalls = { fromHeadRead: 0 };
+        let gateHeadRead: ((release: () => void) => Promise<void>) | undefined;
+        vi.spyOn(pulls, "status").mockImplementation(async (input) => {
+          const fromHeadRead = new Error().stack?.includes("pullRequestHead") === true;
+          if (fromHeadRead) {
+            statusCalls.fromHeadRead += 1;
+            if (head.fail && commitOf(service, id) !== first) throw new Error("502");
+            if (gateHeadRead) await new Promise<void>((release) => gateHeadRead?.(release));
+          }
+          const result = await status(input);
+          return {
+            ...result,
+            headSha:
+              (head.staleAfterPost && pulls.reviews.length > 0 ? head.staleAfterPost : undefined) ??
+              head.override ??
+              commitOf(service, id),
+          };
+        });
+        const reads = {
+          parent: 0,
+          fail: undefined as undefined | "throw" | "empty",
+          gate: undefined as Promise<void> | undefined,
+        };
+        const feedback = pulls.feedback.bind(pulls);
+        vi.spyOn(pulls, "feedback").mockImplementation(async (input: FeedbackInput) => {
+          if (!input.includeSactyReplies) {
+            reads.parent += 1;
+            if (reads.fail === "throw") throw new Error("502");
+            if (reads.fail === "empty") return [];
+            await reads.gate;
+          }
+          // 本物と同じく、レビューの投稿には、レビューした先頭のコミットを添える
+          pulls.feedbackBy[7] =
+            pulls.reviews.length > 0 ? [{ ...posted(pulls, 0), commit: first }] : [];
+          return feedback(input);
+        });
+        /** 親の先頭の読み取りを、releaseHandlers で解放するまで止める。 */
+        const holdHeadReads = () => {
+          const releases: (() => void)[] = [];
+          gateHeadRead = async (release) => {
+            await new Promise<void>((resolve) => {
+              releases.push(resolve);
+              release();
+            });
+          };
+          return releases;
+        };
+        const parentSettled = async () => {
+          await vi.waitFor(() => expect(taskOf(service, id).status).toBe("queued"));
+        };
+        const resubmit = async () => {
+          for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+            await service.runNext(id);
+          }
+        };
+        return {
+          ...made,
+          pulls,
+          childId,
+          first,
+          head,
+          reads,
+          statusCalls,
+          holdHeadReads,
+          parentSettled,
+          resubmit,
+        };
+      }
+
+      it("子が投稿を記録したら、60 秒ごとの確認を待たずに、親が GitHub から読んで取り込む（静かな時間も待たない）", async () => {
+        const made = await implementedPr([verdictOut("changes_required")]);
+        const { activity, service, pulls, childId, id } = made;
+        await runReview(service, childId);
+        expect(types(service, childId)).toContain("PullRequestReviewPosted");
+        // checkPullRequests は呼ばない。取り込みの記録を待つ
+        await vi.waitFor(() => expect(importedOf(service, id)).toHaveLength(1));
+        const [event] = importedOf(service, id);
+        expect(event?.actor).toBe("sacty");
+        expect(event?.payload.items).toHaveLength(1);
+        expect(event?.payload.items[0]).toMatchObject({ source: "sacty_review" });
+        expect(pulls.reviews).toHaveLength(1);
+        await made.parentSettled();
+        activity.close();
+      });
+
+      it("投稿の直後に取り込めなくても（読み取りの失敗・まだ返らない）、子と親は止まらず、60 秒ごとの確認が取り込む", async () => {
+        const made = await implementedPr([
+          verdictOut("changes_required"),
+          verdictOut("changes_required"),
+        ]);
+        const { activity, service, reads, childId, id } = made;
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        // 1. 読み取りが例外を投げる
+        reads.fail = "throw";
+        await runReview(service, childId);
+        await vi.waitFor(() =>
+          expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining("すぐには取り込めませんでした"),
+          ),
+        );
+        expect(types(service, childId)).toContain("PullRequestReviewPosted");
+        expect(taskOf(service, childId).status).not.toBe("paused");
+        expect(importedOf(service, id)).toHaveLength(0);
+        expect(taskOf(service, id).status).toBe("awaiting_approval");
+        // 2. 読み取りが投稿をまだ返さない（空）。同じ子に、再レビューの投稿をさせる
+        reads.fail = "empty";
+        const before = reads.parent;
+        service.rereview(childId);
+        await runReview(service, childId);
+        await vi.waitFor(() => expect(reads.parent).toBeGreaterThan(before));
+        await flush();
+        expect(importedOf(service, id)).toHaveLength(0);
+        // 60 秒ごとの確認が取り込む
+        reads.fail = undefined;
+        await service.checkPullRequests();
+        expect(importedOf(service, id)).toHaveLength(1);
+        warn.mockRestore();
+        await made.parentSettled();
+        activity.close();
+      });
+
+      it("即時の取り込みでも、レビューした先頭が PR の今の先頭と違えば、取り込まずに捨てる（stale_head）", async () => {
+        const made = await implementedPr([verdictOut("changes_required")]);
+        const { activity, service, head, childId, id } = made;
+        // 投稿の後に、PR の先頭が進んだ
+        head.staleAfterPost = "z".repeat(40);
+        await runReview(service, childId);
+        await vi.waitFor(() => expect(types(service, id)).toContain("PullRequestReviewDiscarded"));
+        const discarded = service
+          .get(id)
+          ?.activity.find((e) => e.type === "PullRequestReviewDiscarded");
+        expect(discarded?.payload).toMatchObject({ reason: "stale_head" });
+        await flush();
+        expect(importedOf(service, id)).toHaveLength(0);
+        activity.close();
+      });
+
+      it("親が取り込める状態でなければ（承認待ちでない）、即時の取り込みは親の指摘を読まず、何も記録しない", async () => {
+        const made = await implementedPr([verdictOut("changes_required")]);
+        const { activity, service, reads, childId, id } = made;
+        service.requestChanges(id, {
+          step: "implement",
+          submission: taskOf(service, id).gate?.submission ?? 0,
+          comments: ["人の指摘"],
+        });
+        expect(taskOf(service, id).status).not.toBe("awaiting_approval");
+        await runReview(service, childId);
+        expect(types(service, childId)).toContain("PullRequestReviewPosted");
+        await flush();
+        expect(reads.parent).toBe(0);
+        expect(importedOf(service, id)).toHaveLength(0);
+        activity.close();
+      });
+
+      it("実装の PR の直しを提出すると、60 秒ごとの確認を待たずに、子の再レビュー（updated・提出したコミット）が始まる", async () => {
+        const made = await implementedPr([verdictOut("changes_required"), implement("# 実装 v2")]);
+        const { activity, service, childId, first, id } = made;
+        await runReview(service, childId);
+        await vi.waitFor(() => expect(importedOf(service, id)).toHaveLength(1));
+        await made.parentSettled();
+        expect(restartsOf(service, childId)).toEqual([]);
+        await made.resubmit();
+        const second = commitOf(service, id);
+        expect(second).not.toBe(first);
+        // checkPullRequests は呼ばない
+        await vi.waitFor(() =>
+          expect(restartsOf(service, childId)).toEqual([{ reason: "updated", commit: second }]),
+        );
+        // 続けて確認しても、同じ先頭では 1 回だけ
+        await service.checkPullRequests();
+        expect(restartsOf(service, childId)).toHaveLength(1);
+        activity.close();
+      });
+
+      it("指摘なしを待つ実装の PR は、GitHub の今の先頭を対象にする。提出したコミットと違えば、提出の直後は始めず、60 秒ごとの確認が始める", async () => {
+        const made = await implementedPr([verdictOut("changes_required"), implement("# 実装 v2")]);
+        const { activity, service, childId, head, statusCalls, id } = made;
+        await runReview(service, childId);
+        await made.parentSettled();
+        // GitHub の先頭が、提出したコミットとまだ違う（反映の遅れ）
+        head.override = "y".repeat(40);
+        const before = statusCalls.fromHeadRead;
+        await made.resubmit();
+        const second = commitOf(service, id);
+        await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
+        await flush();
+        expect(restartsOf(service, childId)).toEqual([]);
+        // 反映された後の確認が始める
+        head.override = undefined;
+        await service.checkPullRequests();
+        expect(restartsOf(service, childId)).toEqual([{ reason: "updated", commit: second }]);
+        activity.close();
+      });
+
+      it("提出の直後に先頭を読めなくても、提出は成功して承認待ちになり、子には何も記録せず、60 秒ごとの確認が始める", async () => {
+        const made = await implementedPr([verdictOut("changes_required"), implement("# 実装 v2")]);
+        const { activity, service, childId, head, statusCalls, id } = made;
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        await runReview(service, childId);
+        await made.parentSettled();
+        head.fail = true;
+        const before = statusCalls.fromHeadRead;
+        await made.resubmit();
+        const second = commitOf(service, id);
+        expect(taskOf(service, id).status).toBe("awaiting_approval");
+        expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 2 });
+        await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
+        await flush();
+        expect(restartsOf(service, childId)).toEqual([]);
+        head.fail = false;
+        await service.checkPullRequests();
+        expect(restartsOf(service, childId)).toEqual([{ reason: "updated", commit: second }]);
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("子が一時停止している・再レビューできない状態（実行待ち）なら、提出の直後も、子に再レビューを始めさせない", async () => {
+        for (const state of ["paused", "queued"] as const) {
+          const made = await implementedPr([
+            verdictOut("changes_required"),
+            implement("# 実装 v2"),
+            verdictOut("suggestions"),
+          ]);
+          const { activity, service, childId, statusCalls } = made;
+          await runReview(service, childId);
+          await made.parentSettled();
+          if (state === "paused") await service.pause(childId);
+          else service.rereview(childId);
+          const restartsBefore = restartsOf(service, childId).length;
+          const before = statusCalls.fromHeadRead;
+          await made.resubmit();
+          await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
+          await flush();
+          expect(restartsOf(service, childId), state).toHaveLength(restartsBefore);
+          expect(
+            restartsOf(service, childId).some((r) => r.reason === "updated"),
+            state,
+          ).toBe(false);
+          activity.close();
+          rmSync(dbPath, { force: true });
+        }
+      });
+
+      it("要求要件・設計の PR の直しを提出すると、提出の直後に、子の再レビュー（updated）が始まる", async () => {
+        const pulls = new FakePulls();
+        const made = await start(
+          [
+            out("# 要求要件 v1"),
+            out("# 設計 v1"),
+            verdictOut("changes_required"),
+            out("# 設計 v2"),
+          ],
+          { pulls, steps: ["requirements", "design"], reviewTasks: true },
+        );
+        await merge({ ...made, pulls }, "requirements");
+        const { service, id, activity } = made;
+        for (let i = 0; i < 4 && taskOf(service, id).gate?.step !== "design"; i++) {
+          await service.runNext(id);
+        }
+        const pr = taskOf(service, id).stepPullRequests.findLast((x) => x.step === "design");
+        const number = pr?.number ?? 0;
+        pulls.prInfo = { ...pulls.prInfo, number, headSha: pr?.commit ?? "" };
+        const childId = childOf(service, id, number);
+        await runReview(service, childId);
+        pulls.feedbackBy[number] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "queued"; i++) {
+          await flush();
+        }
+        const submission = taskOf(service, id).submissions.design ?? 0;
+        for (
+          let i = 0;
+          i < 4 && (taskOf(service, id).submissions.design ?? 0) === submission;
+          i++
+        ) {
+          await service.runNext(id);
+        }
+        const second = commitOf(service, id, number);
+        expect(second).not.toBe(pr?.commit);
+        await vi.waitFor(() =>
+          expect(restartsOf(service, childId)).toEqual([{ reason: "updated", commit: second }]),
+        );
+        activity.close();
+      });
+
+      it("PR の確認と投稿の直後の取り込みが重なっても（どちらが先でも）、同じ指摘を二度取り込まない", async () => {
+        for (const order of ["immediate-first", "check-first"] as const) {
+          const made = await implementedPr([verdictOut("changes_required")]);
+          const { activity, service, reads, childId, id } = made;
+          const gate = Promise.withResolvers<void>();
+          reads.gate = gate.promise;
+          if (order === "immediate-first") {
+            // 投稿の直後の取り込みが、読み取りの答えを待っている間に、PR の確認が始まる
+            await runReview(service, childId);
+            await vi.waitFor(() => expect(reads.parent).toBe(1));
+            const check = service.checkPullRequests();
+            await flushUntil(() => reads.parent >= 2);
+            gate.resolve();
+            await check;
+          } else {
+            // PR の確認の取り込みが読み取りの答えを待っている間に、子が投稿する
+            const check = service.checkPullRequests();
+            await vi.waitFor(() => expect(reads.parent).toBe(1));
+            await runReview(service, childId);
+            await flushUntil(() => reads.parent >= 2);
+            gate.resolve();
+            await check;
+          }
+          await made.parentSettled();
+          await flush();
+          const events = importedOf(service, id);
+          expect(events, order).toHaveLength(1);
+          const keys = events.flatMap((e) => e.payload.items.map((i) => i.key));
+          expect(new Set(keys).size, order).toBe(keys.length);
+          activity.close();
+          rmSync(dbPath, { force: true });
+        }
+      });
+
+      it("提出の直後の再レビューと PR の確認の整え直しが重なっても（どちらの答えが先でも）、同じ先頭の再レビューを 1 回だけ記録し、子を重ねて作らない", async () => {
+        for (const order of ["immediate-first", "check-first"] as const) {
+          const made = await implementedPr([
+            verdictOut("changes_required"),
+            implement("# 実装 v2"),
+          ]);
+          const { activity, service, childId, holdHeadReads, statusCalls, id } = made;
+          await runReview(service, childId);
+          await made.parentSettled();
+          const releases = holdHeadReads();
+          const before = statusCalls.fromHeadRead;
+          await made.resubmit();
+          const second = commitOf(service, id);
+          // 提出の直後の経路が、先頭の読み取りの答えを待っている間に、PR の確認も先頭を読み始める
+          await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBe(before + 1));
+          const check = service.checkPullRequests();
+          await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBe(before + 2));
+          const [immediate, checked] = releases;
+          if (order === "immediate-first") {
+            immediate?.();
+            checked?.();
+          } else {
+            checked?.();
+            immediate?.();
+          }
+          await check;
+          await flush();
+          expect(restartsOf(service, childId), order).toEqual([
+            { reason: "updated", commit: second },
+          ]);
+          expect(
+            types(service, id).filter((t) => t === "ReviewTaskCreated"),
+            order,
+          ).toHaveLength(1);
+          expect(
+            service.list().filter((t) => t.reviewOf?.taskId === id),
+            order,
+          ).toHaveLength(1);
+          activity.close();
+          rmSync(dbPath, { force: true });
+        }
+      });
+    });
+
+    describe("sacty が作ったレビューの子タスクは、イメージを選ぶためのオーケストレーターを実行せず、親のタスクのイメージで動く（PBI-425）", () => {
+      const CI0 = {
+        snapshot: async () => ({ checks: [], jobs: [], failedRuns: [] }),
+      } as unknown as ServiceDeps["ci"];
+      const imageDef = (name: string) => ({
+        name,
+        image: `sacty-agent-${name}:test`,
+        description: `${name} の環境`,
+        baseImage: name,
+        env: {},
+      });
+      const answer = (body: Record<string, unknown>) => out(block({ "sacty-review-image": body }));
+      const pickerPrompt = "レビューの工程で使う実行のイメージを選んでください";
+
+      /** images の候補（names）と、親のタスクのイメージ（parentImage）を決めて、子タスクが工程を選ぶ前まで進める。 */
+      async function withParent(options: {
+        outcomes: AgentOutcome[];
+        parentImage?: string;
+        projectImage?: string;
+      }) {
+        const base = configOf(agent())() as Extract<ConfigResult, { ok: true }>;
+        const names = { current: ["java", "rust"] };
+        const config = (): ConfigResult => ({
+          ok: true,
+          config: {
+            ...base.config,
+            images: Object.fromEntries(names.current.map((n) => [n, imageDef(n)])),
+          },
+        });
+        const projects = projectsWithAccount();
+        if (options.projectImage) {
+          projects.put("default", {
+            name: "デフォルト",
+            targets: [
+              {
+                scope: "repo",
+                target: "https://github.com/acme/app",
+                image: options.projectImage,
+              },
+            ],
+            githubAccounts: { "github.com": "me" },
+          });
+        }
+        const pulls = new FakePulls();
+        const made = await start([implement(), ...options.outcomes], {
+          pulls,
+          steps: ["implement"],
+          reviewTasks: true,
+          ci: CI0,
+          config,
+          projects,
+        });
+        const { service, id } = made;
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        if (options.parentImage) service.changeTaskImage(id, { image: options.parentImage });
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        const chosen = service.get(childId)?.activity.find((e) => e.type === "StepsChosen");
+        const picked = made.executor.calls.filter((c) =>
+          c.command.join(" ").includes(pickerPrompt),
+        );
+        return { ...made, names, childId, chosen, picked };
+      }
+
+      it("親のタスクのイメージが images にあれば、そのイメージで、オーケストレーターを実行せずにレビューする（imageSource は parent、記録は sacty）", async () => {
+        const { activity, executor, chosen, picked, service, childId } = await withParent({
+          parentImage: "java",
+          outcomes: [verdictOut("suggestions")],
+        });
+        expect(picked).toHaveLength(0);
+        expect(chosen?.actor).toBe("sacty");
+        expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+          steps: ["review"],
+          image: "java",
+          imageSource: "parent",
+          costUsd: 0,
+        });
+        expect(taskOf(service, childId).image).toBe("java");
+        expect(executor.images.at(-1)).toEqual({ image: "sacty-agent-java:test" });
+        expect(types(service, childId)).toContain("PullRequestReviewPosted");
+        activity.close();
+      });
+
+      it("親のイメージの記録が無い、または、親のイメージの名前が images から消えたら、オーケストレーターが選ぶ（止まらない）", async () => {
+        const none = await withParent({
+          outcomes: [
+            answer({ image: "rust", reason: "Cargo.toml がある" }),
+            verdictOut("suggestions"),
+          ],
+        });
+        expect(none.picked).toHaveLength(1);
+        expect(none.chosen?.actor).toBe("orchestrator");
+        expect(none.chosen?.type === "StepsChosen" && none.chosen.payload).toMatchObject({
+          image: "rust",
+          imageSource: "orchestrator",
+        });
+        none.activity.close();
+        rmSync(dbPath, { force: true });
+
+        // 親のイメージ（java）は、その後 images から消えた
+        const base = configOf(agent())() as Extract<ConfigResult, { ok: true }>;
+        let names = ["java", "rust"];
+        const pulls = new FakePulls();
+        const made = await start(
+          [
+            implement(),
+            answer({ image: "rust", reason: "Cargo.toml がある" }),
+            verdictOut("suggestions"),
+          ],
+          {
+            pulls,
+            steps: ["implement"],
+            reviewTasks: true,
+            ci: CI0,
+            config: () => ({
+              ok: true,
+              config: {
+                ...base.config,
+                images: Object.fromEntries(names.map((n) => [n, imageDef(n)])),
+              },
+            }),
+          },
+        );
+        const { service, id } = made;
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        service.changeTaskImage(id, { image: "java" });
+        names = ["rust"];
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        const chosen = service.get(childId)?.activity.find((e) => e.type === "StepsChosen");
+        expect(
+          made.executor.calls.filter((c) => c.command.join(" ").includes(pickerPrompt)),
+        ).toHaveLength(1);
+        expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+          image: "rust",
+          imageSource: "orchestrator",
+        });
+        expect(types(service, childId)).not.toContain("OrchestratorFailed");
+        made.activity.close();
+      });
+
+      it("プロジェクトの対象で決めたイメージは、親のタスクのイメージより優先する（imageSource は project）", async () => {
+        const { activity, chosen, picked } = await withParent({
+          parentImage: "java",
+          projectImage: "rust",
+          outcomes: [verdictOut("suggestions")],
+        });
+        expect(picked).toHaveLength(0);
+        expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+          image: "rust",
+          imageSource: "project",
+        });
+        activity.close();
+      });
+    });
+
     describe("PR の指摘の戻し先を、ゴールガーディアンではなくレビューの子タスクが示す（PBI-332）", () => {
       const reworkOut = (verdict: string, rework?: unknown) =>
         out(
@@ -6399,6 +6968,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(handled(service, id)[0]?.payload).toMatchObject({
                 failure: { code: "deferral.noAccount" },
               });
+              // 次のタスクが同じ PR 番号の子タスクを作れるよう、このタスクと子タスクを中止しておく（提出の直後に、子タスクが
+              // 判定し直しを始めている）
+              await service.cancel(id);
+              await service.checkPullRequests();
               activity.close();
 
               // セキュリティ対応のタスク
@@ -6557,9 +7130,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 issue(made.service, made.id);
                 await vi.waitFor(() => expect(handled(made.service, made.id)).toHaveLength(1));
                 const payload = handled(made.service, made.id)[0]?.payload as { failure?: unknown };
-                // 同じ台帳で繰り返すので、このタスクを中止しておく（決定済みで、返信するものが無い提出は、次の PR の確認で、
-                // 同じ PR 番号のレビューの子タスクに判定し直しを始めさせ、次の繰り返しの子タスクが作られなくなる）
+                // 同じ台帳で繰り返すので、このタスクを中止しておく（決定済みで、返信するものが無い提出は、提出の直後に、
+                // 同じ PR 番号のレビューの子タスクに判定し直しを始めさせ、次の繰り返しの子タスクが作られなくなる。
+                // 親の中止は、PR の確認が子タスクにも伝える）
                 await made.service.cancel(made.id);
+                await made.service.checkPullRequests();
                 made.activity.close();
                 return payload.failure as { code?: string } | string;
               };
@@ -7089,8 +7664,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       });
       service.rereview(childId);
       await runReview(service, childId);
-      expect(pulls.feedbackAccounts.at(-1)).toBe("other");
-      expect(pulls.feedbackNoticeAccounts.at(-1)).toEqual(["other", "me"]);
+      // 子のレビューの読み取り（投稿の直後の親の取り込みは、親の返信のアカウントで読むので、除く）
+      const read = pulls.feedbackIncludeSactyReplies.lastIndexOf(true);
+      expect(pulls.feedbackAccounts[read]).toBe("other");
+      expect(pulls.feedbackNoticeAccounts[read]).toEqual(["other", "me"]);
       activity.close();
     });
 

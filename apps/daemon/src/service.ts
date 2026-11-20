@@ -646,7 +646,7 @@ export type ContextPreviewView = Omit<ContextPreview, "platforms"> & {
 };
 
 /** すべての工程で使うと決まっているイメージ（再実行で人が指定した・プロジェクトの対象で指定した。PBI-41）。 */
-type PinnedImage = { name: string; source: "project" | "rerun" | "request" };
+type PinnedImage = { name: string; source: "project" | "rerun" | "request" | "parent" };
 
 /**
  * 工程の選択で記録する、依頼の大きさの判定と理由（PBI-369）。セルフレビューをする工程（SELF_REVIEW_STEPS）が無い
@@ -3511,7 +3511,51 @@ export class TaskService {
    * 差し戻す直前に PR の状態を読み直し、開いたままでなければ（判断の間にマージされた・閉じられた）差し戻さず
    * `"pull_request_changed"` を返す（呼び出し元が、マージ・クローズとして確かめ直す）。
    */
-  private async importFeedback(
+  private importFeedback(task: Task, token: string): Promise<"pull_request_changed" | undefined> {
+    // 親ごとに直列で流す（PR の確認と、レビューの投稿の直後の取り込みが重なっても、二重に取り込まない）。後に流れた方は、
+    // 先の方が記録した後の台帳で判断する
+    return this.serialized(`feedback-import:${task.id}`, () =>
+      this.importFeedbackNow(this.tasks.get(task.id) ?? task, token),
+    );
+  }
+
+  /**
+   * sacty のレビューの子タスクが投稿を記録した直後に、PR を作ったタスクの指摘の取り込みを始める。60 秒ごとの確認を待たない。
+   * 取り込みは GitHub から読む（投稿の内容は渡さない）。親が取り込める状態でなければ（承認待ちでない・レビューを処理中・
+   * PR が開いていない・子の PR と違う・中止を求められた）何もしない。失敗しても警告だけで、子・親には何も記録しない
+   * （取りこぼした分は、PR の確認が取り込む）。
+   */
+  private importFeedbackSoon(parentId: string, repo: string, number: number): void {
+    const ready = (): Task | undefined => {
+      const parent = this.tasks.get(parentId);
+      const gate = parent && gatePullRequest(parent);
+      if (!parent || !gate?.repo || gate.state !== "open" || gate.number !== number) return;
+      if (!sameRepo(gate.repo, repo)) return;
+      if (parent.status !== "awaiting_approval" || parent.pendingReview) return;
+      if (this.cancelling.has(parent.id) || this.pauseRequested.has(parent.id)) return;
+      return parent;
+    };
+    if (!ready()) return;
+    void (async () => {
+      const usedSecrets: string[] = [];
+      try {
+        const parent = ready();
+        const gate = parent && gatePullRequest(parent);
+        if (!parent || !gate?.repo) return;
+        const token = await this.githubToken(parent, gate.repo, usedSecrets);
+        await this.serialized(`feedback-import:${parentId}`, async () => {
+          const latest = ready();
+          if (latest) await this.importFeedbackNow(latest, token);
+        });
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${number}（${repo}）のレビューをすぐには取り込めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    })();
+  }
+
+  private async importFeedbackNow(
     task: Task,
     token: string,
   ): Promise<"pull_request_changed" | undefined> {
@@ -3550,14 +3594,23 @@ export class TaskService {
       const previouslySeen = this.feedbackSeenAt.get(task.id);
       const seenAt = new Map(fresh.map((item) => [item.key, previouslySeen?.get(item.key) ?? now]));
       this.feedbackSeenAt.set(task.id, seenAt);
-      const newest = Math.max(
-        ...fresh.map((item) => Math.min(Date.parse(item.at) || 0, seenAt.get(item.key) ?? now)),
-      );
-      if (now - newest < FEEDBACK_QUIET_MS) return;
+      // 静かな時間は、人の指摘のいちばん新しいものから数える。sacty のレビューの投稿は、本文と行へのコメントを1回で書くので、
+      // 書き終わりを待たず、静かな時間を延ばさない（人の指摘が混ざる回は、sacty のレビューも一緒に待つ）
+      const people = fresh.filter((item) => item.source !== "sacty_review");
+      if (people.length > 0) {
+        const newest = Math.max(
+          ...people.map((item) => Math.min(Date.parse(item.at) || 0, seenAt.get(item.key) ?? now)),
+        );
+        if (now - newest < FEEDBACK_QUIET_MS) return;
+      }
       // 一度に取り込むのは、指摘の件数の上限まで（古い順）。残りは取り込み済みにせず、次の取り込みに残す
-      const batch = fresh.slice(0, REMARKS_MAX);
       const latest = this.tasks.get(task.id);
       if (latest?.status !== "awaiting_approval" || latest.pendingReview) return;
+      // 取り込みは親ごとに直列で流す（即時の取り込みと PR の確認が重なっても、記録の直前に、先に記録されたものを除く）
+      const batch = fresh
+        .filter((item) => !latest.importedFeedback.includes(item.key))
+        .slice(0, REMARKS_MAX);
+      if (batch.length === 0) return;
       current = this.append(latest, [
         {
           // レビューは人間の判断なので、人間の操作として記録する。AI のレビュー（sacty のレビューのタスクの投稿）だけの
@@ -5105,6 +5158,10 @@ export class TaskService {
     const latest = this.tasks.get(task.id);
     if (!latest || !awaitingReviewPost(latest) || this.pauseRequested.has(task.id)) return;
     this.append(latest, [{ actor: "sacty", event }]);
+    // 投稿の直後に、PR を作ったタスクの指摘の取り込みを始める（60 秒ごとの確認を待たない）
+    if (event.type === "PullRequestReviewPosted" && latest.reviewOf) {
+      this.importFeedbackSoon(latest.reviewOf.taskId, target.repo, target.number);
+    }
     // 前に止まったときの、PR の知らせの投稿を解消済みにする（PBI-292）
     if (event.type === "PullRequestReviewPosted") {
       await this.resolveReviewStops(
@@ -6331,6 +6388,13 @@ export class TaskService {
     return { output: outcome.output, cost };
   }
 
+  /** sacty が作ったレビューの子タスクが使う、PR を作ったタスク（親）のイメージ。決められなければ undefined。 */
+  private parentImageOf(child: Task): string | undefined {
+    if (!child.reviewOf) return undefined;
+    const parent = this.tasks.get(child.reviewOf.taskId);
+    return parent ? stepImageOf(parent, child.reviewOf.step) : undefined;
+  }
+
   /**
    * PR のレビューだけのタスク（PBI-44）の工程。工程はレビューだけに決め、オーケストレーターには選ばせない。プロジェクトの
    * 対象・再実行でイメージを決めておらず、images があるときだけ、レビューの工程のイメージをオーケストレーターに選ばせる
@@ -6351,6 +6415,12 @@ export class TaskService {
     }));
     if (pinned || candidates.length === 0) {
       return this.withImages(reviewOnlySteps(via), config, pinned);
+    }
+    // sacty が自分の PR のために作ったレビューの子タスクは、オーケストレーターに選ばせず、PR を作ったタスクのイメージを使う。
+    // 親のイメージを決められない（記録が無い・その名前が images から消えた）ときだけ、下のオーケストレーターの選択に戻る
+    const parentImage = via === "sacty" ? this.parentImageOf(task) : undefined;
+    if (parentImage && imageDefined(config, parentImage)) {
+      return this.withImages(reviewOnlySteps(via), config, { name: parentImage, source: "parent" });
     }
     const ran = await this.runOrchestrator(task, config, (platforms) =>
       [buildReviewImagePrompt(task, candidates), ...platformPromptLines(platforms)].join("\n"),
@@ -12704,6 +12774,8 @@ export class TaskService {
       this.warnIfNeeded(submitted);
       // PR をレビューする子タスクを作る（同じ PR を更新したときは、もう作らない。PBI-330）
       this.ensureReviewTask(submitted, step, repo, pr.number, pr.url);
+      // すでにある子タスクの再レビューも、提出の直後に始める（60 秒ごとの確認を待たない）
+      this.reconcileReviewTaskSoon(submitted.id, commit);
     } catch (error) {
       fail(message("pr.failed", { detail: errorText(error) }));
     }
@@ -13560,6 +13632,8 @@ export class TaskService {
       this.checkBudget(submitted);
       // PR をレビューする子タスクを作る（作れなくても PR の作成は失敗にしない。PBI-330）
       this.ensureReviewTask(submitted, "implement", prRepo, pr.number, pr.url);
+      // すでにある子タスクの再レビューも、提出の直後に始める（60 秒ごとの確認を待たない）
+      this.reconcileReviewTaskSoon(submitted.id, commit);
       return "published";
     } catch (error) {
       // 実装が起点から何も変えていなかった（PBI-90）。まだ PR を作っていなければ、PR を作らずに実装の承認で人間に
@@ -13847,19 +13921,65 @@ export class TaskService {
       );
     });
     for (const parent of [...this.tasks.values()]) {
-      if (parent.status !== "awaiting_approval" || this.cancelling.has(parent.id)) continue;
-      if (this.pauseRequested.has(parent.id)) continue;
-      const gate = gatePullRequest(parent);
-      if (gate?.state !== "open" || !gate.repo) continue;
-      if (gate.step !== "requirements" && gate.step !== "design" && gate.step !== "implement") {
-        continue;
-      }
-      this.ensureReviewTask(parent, gate.step, gate.repo, gate.number, gate.url);
-      const record = (this.tasks.get(parent.id)?.reviewTasks ?? []).findLast(
-        (x) => x.number === gate.number && gate.repo !== undefined && sameRepo(x.repo, gate.repo),
+      await this.reconcileReviewTask(parent.id, { heads }).catch((error: unknown) => {
+        console.warn(`[daemon] レビューの子タスクを整えられませんでした（${parent.id}）：`, error);
+      });
+    }
+  }
+
+  /**
+   * 提出の直後に、親のレビューの子タスクを整える（再レビューを始める）。60 秒ごとの確認を待たない。失敗しても警告だけで、
+   * 提出は失敗にしない（確認が整える）。
+   */
+  private reconcileReviewTaskSoon(parentId: string, submittedCommit: string): void {
+    if (this.deps.reviewTasks !== true) return;
+    void this.reconcileReviewTask(parentId, { submittedCommit }).catch((error: unknown) => {
+      console.warn(
+        `[daemon] 提出の直後に、レビューの子タスクを整えられませんでした：${renderMessage(errorText(error), "ja")}`,
       );
-      const child = record && this.tasks.get(record.taskId);
-      if (!child) continue;
+    });
+  }
+
+  /**
+   * 1つの親のレビューの子タスクを整える（reconcileReviewTasks の親ごとの処理）。PR の確認と提出の直後の経路が重なっても、
+   * 二重に作る・記録することがないよう、親ごとに直列で流し、await の後と記録の直前に、親と子を読み直して判断する。
+   * submittedCommit：提出の直後の経路。指摘なしを待つ実装の PR は、GitHub の今の先頭が提出したコミットと違えば（GitHub の
+   * 反映の遅れかもしれない）何もしない（確認に任せる）。
+   */
+  private reconcileReviewTask(
+    parentId: string,
+    options: { heads?: Map<string, string | undefined>; submittedCommit?: string } = {},
+  ): Promise<void> {
+    return this.serialized(`review-reconcile:${parentId}`, () =>
+      this.reconcileReviewTaskNow(parentId, options),
+    );
+  }
+
+  private async reconcileReviewTaskNow(
+    parentId: string,
+    options: { heads?: Map<string, string | undefined>; submittedCommit?: string },
+  ): Promise<void> {
+    const { heads, submittedCommit } = options;
+    {
+      let parent = this.tasks.get(parentId);
+      if (!parent) return;
+      if (parent.status !== "awaiting_approval" || this.cancelling.has(parent.id)) return;
+      if (this.pauseRequested.has(parent.id)) return;
+      const gate = gatePullRequest(parent);
+      if (gate?.state !== "open" || !gate.repo) return;
+      if (gate.step !== "requirements" && gate.step !== "design" && gate.step !== "implement") {
+        return;
+      }
+      if (submittedCommit !== undefined && gate.commit !== submittedCommit) return;
+      this.ensureReviewTask(parent, gate.step, gate.repo, gate.number, gate.url);
+      const childOf = (task: Task | undefined) => {
+        const record = (task?.reviewTasks ?? []).findLast(
+          (x) => x.number === gate.number && gate.repo !== undefined && sameRepo(x.repo, gate.repo),
+        );
+        return record && this.tasks.get(record.taskId);
+      };
+      let child = childOf(this.tasks.get(parent.id));
+      if (!child) return;
       // 子タスクの指摘なしでドラフトを外す実装の PR（PBI-331）は、GitHub の今の先頭をレビューの対象にする（レビューの間に
       // 人がコミットを足しても、レビューしていない先頭のドラフトを外さない）。読めなければ、次の確認でやり直す
       const awaiting = gate.step === "implement" && parent.pullRequest?.awaitingReview === true;
@@ -13881,17 +14001,41 @@ export class TaskService {
           : undefined;
       const key = `${parent.id}:${gate.number}`;
       const target = awaiting
-        ? heads.has(key)
+        ? heads?.has(key)
           ? heads.get(key)
           : await this.pullRequestHead(parent, gate.repo, gate.number)
         : (draftedAhead ?? reviewed ?? gate.commit);
-      if (!target) continue;
+      if (!target) return;
+      // 提出の直後の経路は、GitHub の先頭が提出したコミットと同じときだけ進める
+      if (awaiting && submittedCommit !== undefined && target !== submittedCommit) return;
+      // 先頭を読む間に、親が変わった（差し戻し・中止・別の提出）かもしれない。今の記録で、始めからやり直して判断する
+      const reread = this.tasks.get(parent.id);
+      if (
+        reread?.status !== "awaiting_approval" ||
+        this.cancelling.has(reread.id) ||
+        this.pauseRequested.has(reread.id)
+      ) {
+        return;
+      }
+      const regate = gatePullRequest(reread);
+      if (regate?.number !== gate.number || regate.commit !== gate.commit) return;
+      parent = reread;
+      child = childOf(parent);
+      if (!child) return;
       const cleared = child.reviewTarget?.headCommit === target && reviewCleared(child);
       // 提出のときにドラフトに戻せなかった PR は、指摘なしになるまで、確認のたびにドラフトに戻す（レビューの途中も。レビュー
       // していないコミットをマージできるままにしない。PBI-331）
-      if (awaiting && !cleared) await this.redraftAwaiting(parent, gate.repo, gate.number);
-      if (!canRereview(child) || child.status === "paused") continue;
-      if (this.cancelling.has(child.id) || this.pauseRequested.has(child.id)) continue;
+      if (awaiting && !cleared) {
+        await this.redraftAwaiting(parent, gate.repo, gate.number);
+        parent = this.tasks.get(parent.id) ?? parent;
+        child = childOf(parent) ?? child;
+      }
+      // 記録の直前に、親と子を読み直した状態で判断する
+      child = this.tasks.get(child.id) ?? child;
+      if (parent.status !== "awaiting_approval" || this.cancelling.has(parent.id)) return;
+      if (this.pauseRequested.has(parent.id)) return;
+      if (!canRereview(child) || child.status === "paused") return;
+      if (this.cancelling.has(child.id) || this.pauseRequested.has(child.id)) return;
       if (child.reviewTarget?.headCommit === target) {
         // 今の先頭を指摘なしにしたら、ドラフトを外す（PBI-331）
         if (awaiting && cleared) await this.markReady(parent, child, target);
@@ -13913,9 +14057,9 @@ export class TaskService {
             );
           }
         }
-        continue;
+        return;
       }
-      if (child.reviewRestartCommit === target) continue;
+      if (child.reviewRestartCommit === target) return;
       try {
         this.append(child, [
           {

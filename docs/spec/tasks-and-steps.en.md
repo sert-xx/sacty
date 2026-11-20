@@ -658,12 +658,18 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 - For a task taken in from a ticket, before choosing steps, information gathering reads the ticket and decides the repository, title, and summary (`TicketTriaged`; "Doubling as triage" above).
 - A PR-review-only task uses the `review` plan without asking the Orchestrator to choose steps (`chooseReviewSteps`, `reviewOnlySteps`).
   - Only when `images` is configured and none of a rerun, a person's choice at creation, and the project's target decides the image (`pinnedImage`), the Orchestrator chooses just the task image (`buildReviewImagePrompt`; the answer is `image`, `reason`, and `defaultReason` under `sacty-review-image`, read by `extractReviewImage`). The prompt asks it to choose from the language and version of the code the PR touches and from what the verification commands need (browser tests, DB clients, and so on), with the default image as the last resort.
+  - A review child task that sacty created for its own PR (`via` is `sacty`) does not run the Orchestrator even when no image is decided.
+    The image of the review step is the image of the task that made the PR (the parent), `stepImageOf(parent, reviewOf.step)` (after a person changed it with `TaskImageChanged`, the changed one) (`parentImageOf`).
+    It is used only when that image is in `images`, and `StepsChosen` is recorded as sacty's (`imageSource: parent`, cost 0; the reason text is `review.reviewOnly`).
+    The order of precedence is: a rerun, a person's choice at creation, the project's target; then the parent's image; then the existing way (the default image without `images`, the Orchestrator with `images`).
+    Only when the parent's image cannot be decided (no record, or the name is gone from `images`) does it return to the existing way.
+    How a task that reviews a PR imported from GitHub (`requested`, `label`) decides the image is unchanged, as in the other items of this section.
   - When it chooses, `StepsChosen` is recorded as the Orchestrator's (`imageSource: orchestrator`, `imageReason`, and the cost of the run), and for the default image `defaultImageReason` or `imageUnexplained` is recorded as above. The reason text is `review.reviewOnlyImageChosen`.
   - When the run fails, the answer cannot be read, or the name is not in `images`, `OrchestratorFailed` is recorded and the task stops, as for choosing steps (if there is a fallback agent, it chooses again with that agent).
   - Otherwise (no `images`, or the image is decided), the Orchestrator is not used (`StepsChosen` is recorded by sacty, and the cost is 0).
 - Reuse of Orchestrator sessions is described in "Saving and reusing sessions" in [Agent execution](agent-execution.en.md).
 
-Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `pinnedImage`, `legacyAllRequested`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `chooseReviewSteps`, `runOrchestrator`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`, `planAnswerLines`, `PLAN_SKILL`, `buildReviewImagePrompt`, `extractReviewImage`), `apps/daemon/default-context/skills/plan-steps/SKILL.md`, `packages/core/src/events.ts` (`StepsChosen`)
+Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `pinnedImage`, `legacyAllRequested`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `chooseReviewSteps`, `parentImageOf`, `runOrchestrator`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`, `planAnswerLines`, `PLAN_SKILL`, `buildReviewImagePrompt`, `extractReviewImage`), `apps/daemon/default-context/skills/plan-steps/SKILL.md`, `packages/core/src/events.ts` (`StepsChosen`)
 
 ## Step review
 

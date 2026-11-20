@@ -49,6 +49,7 @@ import { isOpenStopNotice } from "./review-stop-notice.js";
 import { createApp } from "./server.js";
 import {
   awaitingRemarkReplies,
+  FEEDBACK_QUIET_MS,
   InvalidOperationError,
   PR_CI_READ_INTERVAL_MS,
   PR_CI_READS_MAX,
@@ -11508,6 +11509,81 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(last?.type === "ChangesRequested" && last.payload.overLimit).toBe(false);
       expect(types(service, id)).not.toContain("TaskEscalated");
       activity.close();
+    });
+
+    describe("静かな時間は、人の指摘のいちばん新しいものから数える。sacty のレビューの投稿は待たない（PBI-425）", () => {
+      const aiAt = (clock: { now: number }, key: string, agoMs: number, pulls: FakePulls) =>
+        item(key, {
+          kind: "review",
+          author: "me",
+          body: "AI: 戻り値の確認が無い",
+          at: new Date(clock.now - agoMs).toISOString(),
+          source: "sacty_review",
+          commit: pulls.prInfo.headSha,
+        });
+      const humanAt = (clock: { now: number }, key: string, agoMs: number) =>
+        item(key, { at: new Date(clock.now - agoMs).toISOString() });
+      const imported = (service: TaskService, id: string) =>
+        (service.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "PullRequestReviewImported" ? [e] : [],
+        );
+      async function gate() {
+        const clock = { now: Date.parse(at) };
+        const pulls = new FakePulls();
+        const made = await toImplementGate([rework("implement", "実装で直せる"), implement()], {
+          pulls,
+          now: () => clock.now,
+        });
+        return { ...made, pulls, clock };
+      }
+
+      it("まだ取り込んでいないものが sacty のレビューの投稿だけなら、10 秒前の投稿でも、その確認で取り込む（actor は sacty）", async () => {
+        const { activity, service, pulls, clock, id } = await gate();
+        pulls.feedbackList = [aiAt(clock, "review:1", 10_000, pulls)];
+        await service.checkPullRequests();
+        const events = imported(service, id);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.actor).toBe("sacty");
+        expect(events[0]?.payload.items.map((i) => i.key)).toEqual(["review:1"]);
+        activity.close();
+      });
+
+      it("人の指摘が混ざっていて、そのいちばん新しいものから 2 分たっていなければ、sacty のレビューも一緒に待ち、2 分を過ぎた確認で 1 件にまとめて取り込む", async () => {
+        const { activity, service, pulls, clock, id } = await gate();
+        const start = clock.now;
+        pulls.feedbackList = [
+          humanAt(clock, "comment:1", 30_000),
+          aiAt(clock, "review:1", 10_000, pulls),
+        ];
+        await service.checkPullRequests();
+        expect(imported(service, id)).toHaveLength(0);
+        // 人のコメントから 2 分たつ手前
+        clock.now = start + FEEDBACK_QUIET_MS - 30_000 - 1;
+        await service.checkPullRequests();
+        expect(imported(service, id)).toHaveLength(0);
+        // 2 分を過ぎた
+        clock.now = start + FEEDBACK_QUIET_MS - 30_000 + 1;
+        await service.checkPullRequests();
+        const events = imported(service, id);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.actor).toBe("person");
+        expect(events[0]?.payload.items.map((i) => i.key)).toEqual(["comment:1", "review:1"]);
+        activity.close();
+      });
+
+      it("人の指摘が 2 分より古く、sacty のレビューだけが新しいときは、待たずに両方を 1 件で取り込む（actor は person）", async () => {
+        const { activity, service, pulls, clock, id } = await gate();
+        pulls.feedbackList = [
+          humanAt(clock, "comment:1", 3 * 60_000),
+          aiAt(clock, "review:1", 10_000, pulls),
+        ];
+        await service.checkPullRequests();
+        const events = imported(service, id);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.actor).toBe("person");
+        expect(events[0]?.payload.items.map((i) => i.key)).toEqual(["comment:1", "review:1"]);
+        activity.close();
+      });
     });
 
     describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別（PBI-275）", () => {

@@ -131,6 +131,10 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   - その PR のレビューのタスク（以前の版でレビュー用のラベルから取り込んだものなど）が、終わらずにある（二重にレビューしない）。
   - デーモンの依存で無効にしている（`reviewTasks`。テストで工程の流れだけを確かめるため。デーモンの起動では有効）。
 - 作れなくても、PR の作成・承認待ちは失敗にしない（デーモンのログに残し、次の PR の確認で作り直す）。
+- 提出の直後の再レビュー：親が直しを提出して承認待ちに戻った直後（`publish`・`publishStepPullRequest`）に、60 秒ごとの確認を待たずに、下の整え方を、その親の分だけ行う（`reconcileReviewTask`）。
+  指摘なしを待つ実装の PR は、提出の直後に GitHub から読んだ先頭が提出したコミットと違えば（GitHub の反映の遅れかもしれない）、何もしない。
+  先頭を読めない・記録できないなど始められなかったときは、警告を出すだけで、提出は失敗にしない。60 秒ごとの確認が始める。
+  この経路と 60 秒ごとの確認は、親ごとに直列に流し（キー `review-reconcile:<親の ID>`）、後に流れた方は、先の方が記録した後の親と子で判断する（同じ先頭の `ReviewRestarted` を二度記録しない。子タスクを重ねて作らない）。
 - PR の確認（60秒ごと）で、承認待ち（`awaiting_approval`）の今の提出の PR（`gatePullRequest`）が開いていれば、次を行う（`reconcileReviewTasks`）。
   一時停止・中止を求められた親は除く。
   - 子タスクの記録が無ければ作る（公開を記録した後、作る前に止まった（停止・クラッシュ）とき）。
@@ -167,7 +171,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   PR の確認は、子タスクの中止（片付けと記録）を待ってから終わる。
 - 以前の版の記録（PR の公開の記録の `label`・`intakeLabel`、`PullRequestLabeled`・`PullRequestLabelFailed`）は読み込めるが、ラベルを付ける予定としては扱わない（台帳は書き換えない）。
 
-コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`rejudgeDue`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`・`reviewSecurityLines`・`rejudgeLines`）、`apps/daemon/src/service.ts`（`REVIEW_CI_TIMEOUT_MS`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
+コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`rejudgeDue`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`reconcileReviewTask`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`・`reviewSecurityLines`・`rejudgeLines`）、`apps/daemon/src/service.ts`（`REVIEW_CI_TIMEOUT_MS`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
 
 ## PR の確認
 
@@ -590,10 +594,18 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
 
 - PR が開いていて承認待ちのとき、PR のレビュー・行へのコメント・通常のコメントを指摘として取り込む（`PullRequestReviewImported`、actor `person`。sacty 自身の AI のレビューの指摘だけの回は actor `sacty`）。
   - 最後のフィードバックから2分（`FEEDBACK_QUIET_MS`）待ってから取り込む。
+    起点にするのは、まだ取り込んでいないフィードバックのうち、人の指摘（`source` が `sacty_review` でないもの）のいちばん新しいもの。
+    sacty のレビューの投稿は、本文と行へのコメントを 1 回で投稿するので、待たず、静かな時間を延ばさない。
+    取り込んでいないものが sacty のレビューの投稿だけなら、待たずに、その確認で取り込む。
+    人の指摘が混ざっていて、そのいちばん新しいものから2分たっていなければ、sacty のレビューも一緒に待つ（別々に取り込まない）。
     各フィードバックの時刻は、GitHub の時刻と、デーモンが初めて見た時刻（メモリーだけ。`feedbackSeenAt`）の早い方にする。
     GitHub の時刻がこの機械の時計より先に進んでいても、初めて見てから2分で取り込む（GitHub の時刻まで待ち続けない）。
     GitHub の時刻が遅れているときは、見た時点で2分たっていれば待たない。
     指摘を取り込む対象から外れたタスク（承認待ちでなくなった・中止など）の分は、次の確認で忘れる。
+  - 投稿の直後の取り込み：レビューの子タスクが `PullRequestReviewPosted` を記録した直後に、親の取り込みを、60 秒ごとの確認を待たずに始める（`importFeedbackSoon`）。
+    親が承認待ちで、PR が開いていて（子の PR と親の PR が同じ）、レビューを処理中でなく、中止・一時停止を求められていないときだけ。
+    投稿の内容は子から渡さず、GitHub から読む。GitHub がまだ投稿を返さない・読めないなどで取り込めなかったときは、警告を出すだけで、子にも親にも何も記録しない。60 秒ごとの確認が取り込む。
+  - 取り込みは、親ごとに直列に流す（キー `feedback-import:<親の ID>`）。後に流れた方は、先の方が記録した後の台帳で、取り込み済みの key を除いてから記録する（同じ key を二度取り込まない）。
   - 古い順に最大50件（`REMARKS_MAX`）まで。投稿の本文（総評・人のレビュー・PR のコメント・行へのコメント）は、長さで切らずに指摘の文にする（GitHub が 1 件に許す 65,536 文字まで。PBI-413）。人が画面・API で差し戻すときの 1 件 2000 文字の上限は、人が書く指摘のためのもので、取り込んだ指摘には当てはめない（承認待ちの取り込みと、後続に回したい案を「この PR で直す」と決める `decideDeferrals` は、差し戻しの呼び出しに取り込んだ指摘だと伝えて、この上限の検査を除く）。
   - 行へのコメントの指摘には、そのコメントが付いた行の内容と直前の2行を、指摘の文の後ろに添える（PBI-302 B3）。
     - 内容は、GitHub が返すコメントの diff の抜粋（`diff_hunk`。コメントが付いた行が最後）から取る（`lineContextOf`）。ハンクの見出しと差分の先頭の印（`+`・`-`・空白）は除く。引用する行を選ぶ前に、抜粋の全体を一度に伏せる（複数行の PEM の秘密鍵の本文を見つけるため。開始の行が抜粋の外にあり終了の行だけがあるときは、抜粋の頭から終了の行まで伏せる）。ここでは切り詰めない。
@@ -718,7 +730,7 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
 - 表示：作業履歴の差し戻し・取り込みの行に、AI のレビューの指摘を分けて出し（「指摘3件（AI のレビュー）」「人間1件・AI のレビュー2件」）、承認の画面の指摘に「AI のレビュー」の印を付ける。作業履歴の差し戻しを展開した詳細にも、AI のレビューの指摘に印を付ける。承認の画面で「差し戻しの回数に数えない」と添えるのは、その回に人の指摘が無いときだけ。
   ダッシュボードの品質の信号は「AI のレビューの差し戻し」、監査の根拠の件数は「AI のレビューの指摘」（`aiReviewRemark`）として、人の差し戻し・PR の指摘と別に数える（[アーキテクチャ](architecture.md)・[監査](audit.md)）。
 
-コード: `apps/daemon/src/service.ts`（`importFeedback`・`withoutStaleReviews`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`rejudgeLeftFindings`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`・`remarkSections`・`guardianJudgmentLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）、`packages/core/src/projection.ts`（`changeRounds`・`lastChangeRound`・`isAiReviewRemark`）
+コード: `apps/daemon/src/service.ts`（`importFeedback`・`importFeedbackSoon`・`withoutStaleReviews`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`rejudgeLeftFindings`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`・`remarkSections`・`guardianJudgmentLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）、`packages/core/src/projection.ts`（`changeRounds`・`lastChangeRound`・`isAiReviewRemark`）
 
 ### 人に確かめてほしいこと
 
