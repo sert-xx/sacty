@@ -1,6 +1,11 @@
 "use client";
 
-import { carriesPendingRemarks, GATED_STEPS, type StepKey } from "@sacty/core";
+import {
+  carriesPendingRemarks,
+  carriesPendingRemarksToAnyStep,
+  GATED_STEPS,
+  type StepKey,
+} from "@sacty/core";
 import { useActionState, useState } from "react";
 import { type GateState, gateAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -173,7 +178,7 @@ export function GateForm({
             {t.pendingTitle}
           </h3>
           <p className="text-muted-foreground">
-            {escalationReason === "rework_confirmation" || !escalationTarget
+            {carriesPendingRemarksToAnyStep(escalationInfo) || !escalationTarget
               ? t.pendingHelpAny
               : `${t.pendingHelp(stepLabel[escalationTarget])} ${t.pendingOther}`}
           </p>

@@ -4576,6 +4576,12 @@ export function isAiReviewRemark(remark: { source?: RemarkSource }): boolean {
  * 以前の版で止まったタスク（エスカレーション中）を差し戻すとき、残った指摘を引き継ぐ戻し先か。止まった工程へ戻すときと、
  * PR の指摘の戻し先の確認（rework_confirmation）のときは、どの工程でも引き継ぐ。デーモンと画面が同じ判定を使う（PBI-414）。
  */
+export function carriesPendingRemarksToAnyStep(
+  escalation: { reason?: string | undefined; target: StepKey } | undefined,
+): boolean {
+  return escalation !== undefined && escalation.reason === "rework_confirmation";
+}
+
 export function carriesPendingRemarks(
   escalation: { reason?: string | undefined; target: StepKey } | undefined,
   target: StepKey,

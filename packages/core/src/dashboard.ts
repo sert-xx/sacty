@@ -180,8 +180,8 @@ export class DashboardStats {
         break;
       case "ChangesRequested": {
         // 差し戻しは、実際に差し戻した記録（ChangesRequested）を1回として数える。PR の指摘で戻し先の判断が戻したものは、
-        // 投影がこの記録の時刻で prRework に残す（PBI-58）。判断（ReworkJudged）だけで差し戻されなかった（上限で
-        // エスカレーションした）ものは数えない
+        // 投影がこの記録の時刻で prRework に残す（PBI-58）。判断（ReworkJudged）だけで差し戻されなかった
+        // （以前の版の記録では、上限でエスカレーションした）ものは数えない
         const remarks = event.payload.remarks ?? [];
         const aiOnly = remarks.length > 0 && remarks.every((r) => r.source === "sacty_review");
         this.quality.push({

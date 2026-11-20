@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-20（UTC）
 - タスク: PBI-414
-- PR: なし
+- PR: #455
 - ブランチ: sacty/task-eaf687c5
 - 関係する ADR: [人の差し戻しの回数の上限を無くす](../adr/20261120-0100-no-limit-on-human-change-requests.md)
 
@@ -26,7 +26,7 @@
 
 ## 確かめたこと
 
-- `npm run lint`、`npm run typecheck`、`npx vitest run --no-file-parallelism`：最後の変更の後に実行した結果は、実装の説明に書いた。
+- `npm run lint`：通過（713 ファイル）。`npm run typecheck`：通過。`npx vitest run --no-file-parallelism`：277 ファイル・5580 件が通過（14 件はスキップ。`tests/docs` を含む）。
 - 新しいテスト：`apps/daemon/src/daemon-no-change-limit.test.ts`（合成した以前の版の作業履歴で、引き継ぎ・別の工程・補足の検査・指定の無視を確かめる）、`apps/web/src/components/gate-form-submit.test.ts`（残った指摘の表示と承認のボタン）、`apps/web/src/lib/labels.test.ts`・`packages/core/src/messages.test.ts`（以前の版の記録の文言と、上限の文言が無いこと）。
 - 既存のテストのうち、人の指摘で上限に当たってエスカレーションになると期待していたものは、要求要件に合わせて期待を変えた（同じ工程への 4 回目の差し戻しが `ChangesRequested` になる）。AI のレビューの指摘だけの回と `change_proposed` のテストは変えていない。
 - 人が確かめること：以前の版で止まったタスクを画面で開き、残った指摘と補足の欄を見て差し戻す。その後、GitHub の PR で元のコメントに返信が付く。
@@ -36,3 +36,4 @@
 | 指摘 | 対応 |
 | --- | --- |
 | 要求要件に対する AI のレビュー（引き継ぐ項目に `fixOf` が無い・承認の決まり・補足 0 件の断りなど） | 要求要件が承認済みなので、実装では `id` 以外の項目（`fixOf` を含む）を引き継ぎ、PR を作った工程は承認なし、補足も残った指摘も無ければ `gate.remarksRequired`、取り込みの仕様書も直した |
+| 2 回目の AI のレビュー（ユーザードキュメント・CLI のヘルプ・コメントに残った上限の記述、案内文の引き継ぎ判定、作業履歴の欄） | 該当 5 か所と `dashboard.ts` のコメントを直し、案内文の判定を core の関数に寄せ、作業履歴の PR と結果を書いた |
