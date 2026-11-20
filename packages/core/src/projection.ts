@@ -271,7 +271,7 @@ export type StepState = "todo" | "active" | "done" | "skip";
  * idle：実行が終わり、次の操作を待っている
  * paused：一時停止中（理由は pausedReason）
  * awaiting_approval：人間の承認待ち（gate の工程）
- * escalated：差し戻しが上限を超えたため、人間の判断待ち
+ * escalated：人間の判断待ち（以前の版では、差し戻しが上限を超えたときも、この状態になった）
  * cancelled：中止した（以降の操作は受け付けない。作業履歴は残る）
  * blocked：分割で作った子タスクが、依存先の子タスクの完了を待っている（PBI-27）
  * waiting_children：タスク分割の後、子タスクの完了を待っている（PBI-27）
@@ -3503,7 +3503,7 @@ export function applyEvent(
         reason: event.payload.reason,
         ...(event.payload.note ? { note: event.payload.note } : {}),
       };
-      // PR の指摘は、エスカレーションの書きかけの指摘として引き継ぐ（戻し先の確認・上限）
+      // PR の指摘は、エスカレーションの書きかけの指摘として引き継ぐ（戻し先の確認。以前の版では、上限も）
       task.pendingReview = undefined;
       break;
 
@@ -4570,6 +4570,20 @@ export function activeStep(task: Task): StepKey | undefined {
 /** AI のレビュー（sacty のレビューのタスクの投稿）の指摘か（PBI-275）。 */
 export function isAiReviewRemark(remark: { source?: RemarkSource }): boolean {
   return remark.source === "sacty_review";
+}
+
+/**
+ * 以前の版で止まったタスク（エスカレーション中）を差し戻すとき、残った指摘を引き継ぐ戻し先か。止まった工程へ戻すときと、
+ * PR の指摘の戻し先の確認（rework_confirmation）のときは、どの工程でも引き継ぐ。デーモンと画面が同じ判定を使う（PBI-414）。
+ */
+export function carriesPendingRemarks(
+  escalation: { reason?: string | undefined; target: StepKey } | undefined,
+  target: StepKey,
+): boolean {
+  return (
+    escalation !== undefined &&
+    (escalation.reason === "rework_confirmation" || escalation.target === target)
+  );
 }
 
 /** その工程で、人が差し戻した回数。AI のレビューの指摘だけの回は数えない（人の指摘が1件でもあれば数える。PBI-275）。 */

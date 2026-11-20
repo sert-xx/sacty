@@ -167,7 +167,8 @@ const en: ReviewMessages = {
     pendingHelp: (step) =>
       `Requesting changes to ${step} passes the remaining comments as written, plus your notes.`,
     pendingOther: "Requesting changes to another step passes only your notes.",
-    pendingHelpAny: "どの工程へ差し戻しても、残った指摘を元の文のまま渡し、補足を足します。",
+    pendingHelpAny:
+      "Requesting changes to any step passes the remaining comments as written, plus your notes.",
     targetLegend: "Step to redo",
     redo: (step) => `Redo ${step}`,
     redoFrom: (step) => `Redo from ${step}`,

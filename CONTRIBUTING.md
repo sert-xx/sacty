@@ -161,6 +161,7 @@ npm run build       # すべてのパッケージのビルド
   | `packages/cli/src/mcp-waiting-list.test.ts` | `sacty mcp` の `list_tasks` の人の出番・状態・プロジェクトの絞り込みと続き（本物のサービスと API と `daemonApi` をつなぐ。画面の判定の場合分け・`dashboard()` の `waitingSince` との一致・知らない引数の断り・待ち始めを読めないとき・読むだけ） |
   | `packages/cli/src/mcp-error-report.test.ts` | `sacty mcp` の `get_error_report`（本物のサービスと API と `daemonApi` をつなぐ。閉じられなかった実行のログを省くこと・省いた印・前の版のデーモンの断り・分け方と指紋・断り方・読むだけ）と、`get_task` の `errorReportWorthReading` |
   | `task-mcp-read.test.ts` | `sacty mcp` の成果物・実行の一覧の読み取り（本物のサービスと API に対して。範囲・上限・複数バイトの境目・実行の状態と切り替え・件数の上限・無いものと場所の外の指定） |
+  | `daemon-no-change-limit.test.ts` | 人の差し戻しの回数に上限が無いこと（4 回目以降の差し戻し）と、以前の版で上限のために止まったタスク（残った指摘の引き継ぎ・補足の検査・読み込み） |
   | `daemon-api-settings.test.ts` | HTTP の API、設定に関する注意（使えないエージェント・実行の上限・Docker とイメージ・新しい版の知らせ）、タスクの詳細で工程のエージェントを変えること |
 - 必須ではありませんが、レビューの観点・自己レビュー・最終レビューの指示（`apps/daemon/default-context/skills/review/`、`apps/daemon/src/prompts.ts` の `selfReviewLines`・`outOfScopeLines`）を人が手で変えるときは、実験で見つかった取りこぼしに近い例に実際の AI を当てて、効き目を測れます（手動の測定手順）。
   AI を呼ぶので時間と費用がかかり、判定も揺れます。変更の前後で同じ例を複数回流して比べます（Claude Code の `claude` コマンドが要ります）。

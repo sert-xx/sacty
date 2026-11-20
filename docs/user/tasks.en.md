@@ -667,11 +667,11 @@ There is no limit on the number of requests for changes to the same step. Whatev
 A request for changes made only of comments from sacty's own AI review is not counted in the number of requests for changes by you ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
 
 **Tasks from earlier versions**: a task that an earlier version stopped (escalated) because requests for changes to the same step reached the limit shows the remaining comments one by one, as written, on the approval screen.
-You add notes in a separate field, and choose between requesting changes and approving.
+You add notes in a separate field, and choose between requesting changes and approving (for a step that made a PR, you approve by merging the PR, so the screen has no approve button).
 - When you request changes to the step that escalated, the remaining comments are passed with your notes added. A long comment is not cut.
 - When you request changes to another step, only your notes are passed.
 - Your notes are one per line, up to 50 comments of 2,000 characters each. The remaining comments are not subject to this.
-- The replies about the remaining comments go to the original PR comments.
+- The replies about the remaining comments go to the original PR comments (only when the remaining comments were passed on; comments not passed on because you requested changes to another step get no reply).
 
 ### Things for a person to check
 

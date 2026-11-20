@@ -253,9 +253,7 @@ describe("実装の PR がベースブランチと競合しているとき", () 
 
 describe("以前の版で上限のために止まったタスクの差し戻し（PBI-414）", () => {
   const pending = ["1 行目\n2 行目", "PR のコメント", "AI の指摘", "この PR で直す", "最後"];
-  const renderEscalated = (
-    patch: { pullRequest?: boolean; pendingTarget?: "design" | undefined } = {},
-  ) =>
+  const renderEscalated = (patch: { pullRequest?: boolean; pendingTarget?: never } = {}) =>
     act(() =>
       root.render(
         h(GateForm, {
@@ -266,7 +264,8 @@ describe("以前の版で上限のために止まったタスクの差し戻し�
           defaultTarget: "implement",
           escalated: true,
           pendingRemarks: pending,
-          pendingTarget: "design",
+          escalationTarget: "design",
+          escalationReason: "too_many_changes",
           ...(patch.pullRequest
             ? {
                 pullRequest: {

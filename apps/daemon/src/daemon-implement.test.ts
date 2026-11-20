@@ -9838,6 +9838,16 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
                       text: "ここは null を返すべき",
                       origin: { key: "review_comment:501", number: 7 },
                     },
+                    {
+                      id: "implement-4-2",
+                      text: "2 行目\nここも直す",
+                      origin: { key: "review_comment:502", number: 7 },
+                    },
+                    {
+                      id: "implement-4-3",
+                      text: "3 件目",
+                      origin: { key: "review_comment:503", number: 7 },
+                    },
                   ],
                 },
               },
@@ -9849,7 +9859,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           [
             redone([
               { remarkId: "implement-1-1", status: "addressed", text: "ログを足した" },
-              { remarkId: "implement-1-2", status: "addressed", text: "テストも足した" },
+              { remarkId: "implement-1-2", status: "addressed", text: "二つ目も直した" },
+              { remarkId: "implement-1-3", status: "addressed", text: "三つ目も直した" },
+              { remarkId: "implement-1-4", status: "addressed", text: "テストも足した" },
             ]),
           ],
           { pulls, now: later },
@@ -9865,11 +9877,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           ?.task.remarks.filter((r) => r.step === "implement");
         expect(implementRemarks?.map((r) => [r.id, r.text, r.origin?.key])).toEqual([
           ["implement-1-1", "ここは null を返すべき", "review_comment:501"],
-          ["implement-1-2", "補足も直す", undefined],
+          ["implement-1-2", "2 行目\nここも直す", "review_comment:502"],
+          ["implement-1-3", "3 件目", "review_comment:503"],
+          ["implement-1-4", "補足も直す", undefined],
         ]);
         await drain(service);
-        // 元のコメントを持つ指摘だけ、そのコメントに返信する（補足は返信しない）
-        expect(pulls.reviewReplies.map((r) => r.commentId)).toEqual([501]);
+        // 元のコメントを持つ指摘の全部が、それぞれのコメントに返信する（補足は返信しない）
+        expect(pulls.reviewReplies.map((r) => r.commentId).sort()).toEqual([501, 502, 503]);
         activity.close();
       });
 

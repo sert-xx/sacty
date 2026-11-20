@@ -274,11 +274,8 @@ export function ReviewView({ task }: { task: Task }) {
             defaultTarget={task.escalation?.target ?? targets[0] ?? step}
             escalated={task.status === "escalated"}
             pendingRemarks={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
-            pendingTarget={
-              task.status === "escalated" && task.escalation?.reason === "too_many_changes"
-                ? task.escalation.target
-                : undefined
-            }
+            escalationTarget={task.escalation?.target}
+            escalationReason={task.escalation?.reason}
             notReproduced={step === "reproduce"}
             noChanges={step === "implement" && deliveredWithoutChanges(task)}
             steps={task.steps

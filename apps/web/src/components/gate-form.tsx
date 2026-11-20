@@ -1,6 +1,6 @@
 "use client";
 
-import { GATED_STEPS, type StepKey } from "@sacty/core";
+import { carriesPendingRemarks, GATED_STEPS, type StepKey } from "@sacty/core";
 import { useActionState, useState } from "react";
 import { type GateState, gateAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,8 @@ export function GateForm({
   defaultTarget,
   escalated,
   pendingRemarks,
-  pendingTarget,
+  escalationTarget,
+  escalationReason,
   pullRequest,
   rework,
   notReproduced = false,
@@ -52,8 +53,9 @@ export function GateForm({
   escalated: boolean;
   /** 以前の版で止まったタスクの、残った指摘（元の文のまま。差し戻すと、補足の前に渡す）。 */
   pendingRemarks: string[];
-  /** 残った指摘を引き継ぐ工程（上限で止まった工程。無ければ、どの工程へ差し戻しても引き継ぐ）。 */
-  pendingTarget?: StepKey | undefined;
+  /** 止まったときの工程と理由（残った指摘を、選んだ戻し先に引き継ぐかの判定に使う）。 */
+  escalationTarget?: StepKey | undefined;
+  escalationReason?: string | undefined;
   /** PR を作った工程（実装・要求要件・設計）。PR のマージで承認するので、承認のボタンは出さない（PBI-14a）。 */
   pullRequest?: {
     number: number;
@@ -83,6 +85,10 @@ export function GateForm({
   // 選んでいるやり直す工程（工程の設定に出す工程を決める。ラジオは非制御のまま、選び直しを追う）
   const [picked, setPicked] = useState<StepKey>();
   const target = picked ?? state.target ?? defaultTarget;
+  const escalationInfo = escalationTarget
+    ? { reason: escalationReason, target: escalationTarget }
+    : undefined;
+  const carries = carriesPendingRemarks(escalationInfo, target);
 
   return (
     <form action={formAction} className="flex flex-col gap-3">
@@ -167,9 +173,9 @@ export function GateForm({
             {t.pendingTitle}
           </h3>
           <p className="text-muted-foreground">
-            {pendingTarget
-              ? `${t.pendingHelp(stepLabel[pendingTarget])} ${t.pendingOther}`
-              : t.pendingHelpAny}
+            {escalationReason === "rework_confirmation" || !escalationTarget
+              ? t.pendingHelpAny
+              : `${t.pendingHelp(stepLabel[escalationTarget])} ${t.pendingOther}`}
           </p>
           <ol className="flex list-decimal flex-col gap-1.5 pl-5">
             {pendingRemarks.map((text, i) => (
@@ -238,7 +244,9 @@ export function GateForm({
         <>
           <span className="flex items-center gap-1">
             <Label htmlFor="gate-comments">
-              {escalated && pendingRemarks.length > 0 ? t.commentsLabelPending : t.commentsLabel}
+              {escalated && pendingRemarks.length > 0 && carries
+                ? t.commentsLabelPending
+                : t.commentsLabel}
             </Label>
             <Hint text={t.commentsHint} />
           </span>

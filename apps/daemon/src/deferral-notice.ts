@@ -34,11 +34,6 @@ export type DeferralNoticeInput = {
   items: readonly DeferralNoticeItem[];
   /** タスクの画面の URL。 */
   taskUrl: string;
-  /**
-   * 「この PR で直す」の差し戻しが、上限でエスカレーションになった（まだ差し戻していない。人が、上限を超えて差し戻すかを
-   * 決める）。
-   */
-  escalated?: boolean;
   secrets: readonly string[];
 };
 
@@ -197,11 +192,7 @@ export function buildDeferralNotice(input: DeferralNoticeInput): string | undefi
     ];
   };
   const fixes = input.items.some((item) => item.decision === "fix");
-  const fixNote = !fixes
-    ? ""
-    : input.escalated
-      ? "この PR で直すと決めた指摘は、差し戻しが上限に達しているため、まだ差し戻していません（タスクの画面で、上限を超えて差し戻すかを決めます）。"
-      : "この PR で直すと決めた指摘は、実装をやり直して直します。";
+  const fixNote = fixes ? "この PR で直すと決めた指摘は、実装をやり直して直します。" : "";
   return [
     deferralNoticeMarker(input.taskId, input.decision),
     "## Sacty：後続に回したい案を、人が決めました",

@@ -184,7 +184,7 @@ The AI calls it only when you ask. It is safer to ask after it has checked `appr
 - A task whose status is "escalated" (waiting for a decision on the limit of an earlier version or on a change proposal) cannot be sent back from MCP. Decide on the web UI.
 - When it cannot send back (not awaiting approval, no such task, a step other than the one awaiting approval, a stale submission, already sent back, no redoable step), it returns the reason and changes nothing.
 - A step that made a PR (implementation, or requirements or design with a PR) can also be sent back. The remarks are not left on the PR and count as a human request for changes. To leave a record on the PR, write a comment on the PR (sacty imports it and sends the step back; [Requesting changes with PR comments](tasks.en.md#requesting-changes-with-pr-comments)). Writing a comment on a PR from MCP is not possible.
-- If the result could not be received (a timeout, for example), changes may have been requested. The AI does not retry automatically and checks the state with `get_task` (retrying without checking could request changes twice or use up the count toward the limit).
+- If the result could not be received (a timeout, for example), changes may have been requested. The AI does not retry automatically and checks the state with `get_task` (retrying without checking could request changes twice).
 
 ## Pausing
 

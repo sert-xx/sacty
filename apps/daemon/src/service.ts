@@ -39,6 +39,7 @@ import {
   canRereview,
   canRerun,
   canRetryExport,
+  carriesPendingRemarks,
   ciAllPassed,
   type DaemonMessage,
   type DaemonText,
@@ -18585,8 +18586,7 @@ export class TaskService {
     if (task.status === "escalated") {
       // 残った指摘は、エスカレーションしたときと同じ工程に戻す場合だけ引き継ぐ。
       // PR の指摘の戻し先の確認（PBI-58 より前の作業履歴）では、人間がどの工程を選んでも引き継ぐ（指摘は人間のレビューなので）
-      const rework = task.escalation?.reason === "rework_confirmation";
-      if (task.escalation && (rework || task.escalation.target === target)) {
+      if (task.escalation && carriesPendingRemarks(task.escalation, target)) {
         remarks = toRemarks([...task.escalation.pendingRemarks, ...comments]);
       }
       if (remarks.length === 0) {
@@ -18894,7 +18894,6 @@ export class TaskService {
             };
           }),
           taskUrl: `${base}/tasks/${task.id}`,
-          ...(task.status === "escalated" ? { escalated: true } : {}),
           secrets: usedSecrets,
         });
         if (!body) return;

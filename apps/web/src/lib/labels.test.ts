@@ -3248,22 +3248,21 @@ describe("差し戻しの上限が無い（PBI-414）", () => {
       "上限を超えて差し戻す",
       "3回まで",
       "beyond the limit",
-      "hanges requested reached the limit",
+      "Changes requested reached the limit",
       "the maximum 3 time",
     ];
+    // 呼んだ文言の数。例外は握りつぶさず（呼べない文言があれば、テストが失敗する）、検査から外れた文言が無いようにする
+    let called = 0;
     const texts = (value: unknown): string[] =>
       typeof value === "string"
         ? [value]
         : typeof value === "function"
           ? // 引数を取る文言は、数・文字列のどちらでも呼んで、出る文を集める
             [1, "x"].flatMap((arg) => {
-              try {
-                return texts(
-                  (value as (a: unknown, b: unknown, c: unknown) => unknown)(arg, arg, arg),
-                );
-              } catch {
-                return [];
-              }
+              called += 1;
+              return texts(
+                (value as (a: unknown, b: unknown, c: unknown) => unknown)(arg, arg, arg),
+              );
             })
           : value && typeof value === "object"
             ? Object.values(value).flatMap(texts)
@@ -3276,5 +3275,6 @@ describe("差し戻しの上限が無い（PBI-414）", () => {
         }
       }
     }
+    expect(called).toBeGreaterThan(0);
   });
 });

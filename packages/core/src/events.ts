@@ -2796,8 +2796,7 @@ export type DeferralHandling = z.infer<typeof DeferralHandling>;
 
 /**
  * 実装が「後続に回したい」と申告した指摘（案）について、人が、承認の画面で、1 件ずつ決めた（PBI-370）。defer は後続に回す、
- * fix はこの PR で直す。fix が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す（ChangesRequested。上限に達していれば
- * TaskEscalated）。決定と指摘の一覧は、sacty が PR のコメントに残す（DeferralDecisionsPosted）。
+ * fix はこの PR で直す。fix が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す（ChangesRequested。差し戻しの回数に上限は無い）。決定と指摘の一覧は、sacty が PR のコメントに残す（DeferralDecisionsPosted）。
  */
 const DeferralsDecided = z.object({
   type: z.literal("DeferralsDecided"),

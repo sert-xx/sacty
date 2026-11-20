@@ -810,7 +810,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
 - 一覧（`deferProposals`）：実装の承認待ちのとき、まだ決めていない案を、承認の画面に出す（`DeferralNotice`）。案ごとに、指摘の文・理由・AI のレビューの指摘か・元のコメントへのリンクと、決定の選択肢（まだ決めない・後続に回す・この PR で直す）を出す。決定済みの案は、その下に記録として出す。タスクの詳細には、件数と、承認の画面へのリンクを出す（`DeferralPendingNotice`）。作り直している間・一時停止中・エスカレーションの間は、出さない。
 - 決定（`decideDeferrals`。API は `POST /api/tasks/:id/deferrals/decide`）：選んだ指摘だけを決め、`DeferralsDecided`（actor `person`。工程・提出回・指摘ごとの `defer` か `fix`）を記録する。選んでいない案は、決めないまま残る。
   - 決められるのは、実装の承認待ちの今の提出の、まだ決めていない案だけ。決定が 0 件（`deferral.none`）・案でない指摘や決定済みの指摘（`deferral.notOpen`）・古い提出（`gate.staleSubmission`）は断り、何も記録しない。
-  - `fix`（この PR で直す）が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す（`ChangesRequested`。指摘の文は元の指摘の文で、元のコメント `origin` と、元の指摘の ID `fixOf` を持つ）。人の差し戻しとして、回数に数える（上限に達していれば、エスカレーションになる。[差し戻し](#差し戻し)）。
+  - `fix`（この PR で直す）が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す（`ChangesRequested`。指摘の文は元の指摘の文で、元のコメント `origin` と、元の指摘の ID `fixOf` を持つ）。人の差し戻しとして、回数に数える（回数の上限は無い。[差し戻し](#差し戻し)）。
   - `defer`（後続に回す）だけなら、承認待ちのまま。
 - 後続に回すと決めた指摘の扱い（`DeferralHandling`）：決定ごとに、`task`（sacty の後続のタスクを作る）・`issue`（GitHub の Issue を作る）・`none`（何もしない）から選ぶ（`DeferralsDecided` の `decisions[].handling`）。
   - 選ばなければ、プロジェクトの既定（`ProjectDefinition.deferralHandling`。無ければ `none`）を使う。承認の画面の選択肢の初めの値も、この既定（`Task.deferralHandlingDefault`。画面に返すときだけ、決めていない案があるタスクに足す）。`fix` の指摘に扱いを渡すと断る（`deferral.handlingOnFix`）。
