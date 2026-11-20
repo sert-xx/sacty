@@ -517,6 +517,7 @@ import {
   countSuggestionRounds,
   droppedRemarks,
   extractTriage,
+  reviewRoundOf,
   settleTriage,
   splitSuggestions,
 } from "./suggestion-triage.js";
@@ -545,7 +546,7 @@ import {
   timeoutMinutes,
   timeoutResumeLines,
 } from "./timeout-resume.js";
-import { triagedReplyText, withDeclinedParts } from "./triage-reply.js";
+import { triageReplyTextOf } from "./triage-reply.js";
 import type { UpdateStatus } from "./update-check.js";
 import {
   CODE_COPY_DIR,
@@ -3913,7 +3914,11 @@ export class TaskService {
     );
     const child = record && this.tasks.get(record.taskId);
     if (!child) return undefined;
-    const units = splitSuggestions(pending.remarks, pending.aiReview ?? []);
+    const verdictOf = (r: number) => child.reviewVerdicts?.find((v) => v.round === r)?.verdict;
+    const units = splitSuggestions(pending.remarks, pending.aiReview ?? [], (remark) => {
+      const from = reviewRoundOf(pending.aiReviewFrom, remark);
+      return from !== undefined && verdictOf(from) === "suggestions";
+    });
     const suggestions = units.filter((u) => u.kind === "suggestion");
     if (suggestions.length === 0) return undefined;
     // 実装が指摘のすべてを断った後の判定し直し（PBI-357・370。reason が triaged でない）の回は、選り分けない（今までどおり）
@@ -3927,7 +3932,6 @@ export class TaskService {
     const musts = units.filter((u) => u.kind === "must");
     // 提案だけの回が、今回を含めて何回続いているか（今回の回から数える）
     const round = child.reviewRound ?? 1;
-    const verdictOf = (r: number) => child.reviewVerdicts?.find((v) => v.round === r)?.verdict;
     const suggestionRounds = countSuggestionRounds(round, verdictOf);
     const chosen = stepAgentFor(config, "implement", task.agents?.implement);
     if (!chosen.ok) {
@@ -5154,7 +5158,7 @@ export class TaskService {
           remarkId: remark.id,
           ...(remark.continued ? { continued: true as const } : {}),
           submission: remark.respondedIn,
-          text: remark.response,
+          text: triageReplyTextOf(remark, usedSecrets),
           ...(remark.status ? { status: remark.status } : {}),
           secrets: usedSecrets,
         };
@@ -20338,6 +20342,10 @@ export type RemarkReplyDue = {
   /** 対応を書いた工程。 */
   step: StepKey;
   response: string;
+  /** 直しに入る前に選り分けて、提案のすべてを対応しないとした指摘（返信は、対応しない提案と理由だけ。PBI-436）。 */
+  triaged?: true;
+  /** 選り分けで対応しないとした提案と理由（返信の対応の後ろに足す。秘密情報の伏せと長さの上限は、返信を組み立てるときに行う）。 */
+  declinedParts?: { text: string; reason: string }[];
   status?: RemarkResponseStatus;
   respondedIn: number;
   /** 引き継いだ PR の指摘（指摘の ID を、人に見せない）。出どころ・元の本文の記録が無い。 */
@@ -20404,9 +20412,11 @@ export function awaitingRemarkReplies(task: Task):
             id: r.id,
             key: r.origin.key,
             step: r.step,
-            response: r.triaged
-              ? triagedReplyText(r.declinedParts ?? [])
-              : withDeclinedParts(r.response, r.declinedParts),
+            response: r.response,
+            ...(r.triaged ? { triaged: true as const } : {}),
+            ...(r.declinedParts && r.declinedParts.length > 0
+              ? { declinedParts: r.declinedParts }
+              : {}),
             ...(r.status ? { status: r.status } : {}),
             respondedIn: r.respondedIn,
             // 人が「この PR で直す」と決めた案の指摘（fixOf）は、元の指摘の出どころを引き継ぐ

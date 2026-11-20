@@ -21,8 +21,24 @@ export type SuggestionUnit = {
   kind: "suggestion" | "must";
 };
 
-/** 投稿の先頭の目印・本文の中の HTML のコメントを除く（指摘の頭を探す前に）。 */
-const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+/**
+ * 投稿の先頭の目印・本文の中の HTML のコメントを除く（指摘の頭を探す前に。返信・指示・再レビューのデータに載せる文にも使う）。
+ * 入れ子の形（`<!-<!-- x -->-`）は、除いた後にまた `<!--` ができるので、できなくなるまで繰り返す。閉じていない `<!--` も除く
+ * （sacty の投稿の目印に見える文字列を、文に残さない）。
+ */
+export function withoutHtmlComments(text: string): string {
+  let s = text;
+  for (;;) {
+    const next = s.replace(/<!--[\s\S]*?-->/g, "");
+    if (next === s) break;
+    s = next;
+  }
+  while (s.includes("<!--")) s = s.replaceAll("<!--", "");
+  return s;
+}
+
+/** 行へのコメントの指摘の文の頭：`<パス>:<行>：`（頭が付いていなくても、行へのコメントだと分かる）。 */
+const LINE_COMMENT = /^[^\s：<]+(?::\d+)?：/;
 
 /** 指摘の頭の行：行頭（箇条書き・見出し・太字の飾りを許す）の `[提案]`・`[要修正]`。 */
 const UNIT_START = /^\s*(?:(?:[-*+]|\d+[.)])\s+)?(?:#{1,6}\s+)?(?:\*\*)?\s*\[(提案|要修正)\]/;
@@ -43,7 +59,7 @@ const FINDINGS_HEADING = /^\s*指摘\s*$/;
  *   総評・「前回の指摘」の節の文中に出る頭は数えない。
  */
 export function suggestionUnitsOf(text: string): { kind: "suggestion" | "must"; text: string }[] {
-  const plain = text.replace(HTML_COMMENT, "").trim();
+  const plain = withoutHtmlComments(text).trim();
   const inline = plain.match(INLINE);
   if (inline) return [{ kind: inline[1] === MUST ? "must" : "suggestion", text: plain }];
   const units: { kind: "suggestion" | "must"; lines: string[] }[] = [];
@@ -72,23 +88,38 @@ export function suggestionUnitsOf(text: string): { kind: "suggestion" | "must"; 
   return units.map((u) => ({ kind: u.kind, text: u.lines.join("\n").trim() }));
 }
 
-/** 取り込んだ AI のレビューの指摘（aiReview の位置）から、提案・要修正の単位を、ID を付けて並べる。 */
+/**
+ * 取り込んだ AI のレビューの指摘（aiReview の位置）から、提案・要修正の単位を、ID を付けて並べる。
+ * レビューの本文から単位を 1 件も読み取れず、その回の判定が提案あり（要修正なし）のときは、本文の全体を 1 件の提案にする
+ * （見出しの形が違っても、選り分けが空振りしない。判断の材料に、前の回の指摘と対応が渡る）。判定が修正が必要の回の、
+ * 単位を読み取れない本文は、今までどおり選り分けず、必ず直す。行へのコメントは、頭が無ければ単位にしない。
+ */
 export function splitSuggestions(
   remarks: readonly string[],
   aiReview: readonly number[],
+  suggestionsRound?: (remark: number) => boolean,
 ): SuggestionUnit[] {
   const ai = new Set(aiReview);
   let n = 0;
-  return remarks.flatMap((text, remark) =>
-    ai.has(remark)
-      ? suggestionUnitsOf(text).map((u) => ({
-          id: `S${++n}`,
-          remark,
-          text: u.text,
-          kind: u.kind,
-        }))
-      : [],
-  );
+  return remarks.flatMap((text, remark) => {
+    if (!ai.has(remark)) return [];
+    const units = suggestionUnitsOf(text);
+    const plain = withoutHtmlComments(text).trim();
+    const list =
+      units.length === 0 && plain !== "" && !LINE_COMMENT.test(plain) && suggestionsRound?.(remark)
+        ? [{ kind: "suggestion" as const, text: plain }]
+        : units;
+    return list.map((u) => ({ id: `S${++n}`, remark, text: u.text, kind: u.kind }));
+  });
+}
+
+/** 取り込んだ指摘の元の AI のレビューの回（`<タスク ID>:<回>`）。分からなければ undefined。 */
+export function reviewRoundOf(
+  aiReviewFrom: Readonly<Record<string, string>> | undefined,
+  index: number,
+): number | undefined {
+  const from = aiReviewFrom?.[String(index)];
+  return from ? Number(from.match(/:(\d+)$/)?.[1] ?? 1) : undefined;
 }
 
 /** 選り分けの答えの 1 件。 */
@@ -128,7 +159,7 @@ export function extractTriage(
       list.push({
         id,
         decision,
-        reason: str(r.reason),
+        reason: withoutHtmlComments(str(r.reason)).trim(),
         ...(sameAs && known.has(sameAs) && sameAs !== id ? { sameAs } : {}),
       });
     }
@@ -203,8 +234,7 @@ export function countSuggestionRounds(
 /**
  * 提案のすべてを対応しないとした指摘の位置（差し戻しから外す指摘）。要修正がなく、その指摘の提案のすべてが対応しないもの。
  * 本文は、判定が提案ありの回のものだけ外す（要修正を、書式の読み違いで落とさない。行へのコメントは、指摘ごとに頭が付いている）。
- * 提案の単位が 0 件の本文（総評だけで、提案は行へのコメントにある形）は、判定が提案ありの回のもので、同じ回の提案がすべて
- * 対応しないときに外す（残すと、直し・push・再レビューが起きる）。
+ * 単位が 0 件の本文は、判定が提案ありの回なら全体が 1 件の提案になっているので、同じに扱う。
  */
 export function droppedRemarks(input: {
   remarks: readonly string[];
@@ -214,17 +244,12 @@ export function droppedRemarks(input: {
   verdictOf: (round: number) => Verdict | undefined;
 }): number[] {
   const { remarks, units, items, aiReviewFrom, verdictOf } = input;
-  const noMust = units.every((u) => u.kind === "suggestion");
-  const allDeclined = items.every((i) => i.decision === "decline");
   return remarks.flatMap((text, index) => {
     const mine = units.filter((u) => u.remark === index);
-    const inline = mine.length === 1 && mine[0]?.text === text.replace(HTML_COMMENT, "").trim();
-    const from = aiReviewFrom?.[String(index)];
-    const fromRound = from ? Number(from.match(/:(\d+)$/)?.[1] ?? 1) : undefined;
+    if (mine.length === 0) return [];
+    const inline = mine.length === 1 && mine[0]?.text === withoutHtmlComments(text).trim();
+    const fromRound = reviewRoundOf(aiReviewFrom, index);
     const suggestionsRound = fromRound !== undefined && verdictOf(fromRound) === "suggestions";
-    if (mine.length === 0) {
-      return suggestionsRound && noMust && allDeclined ? [index] : [];
-    }
     return (inline || suggestionsRound) &&
       mine.every((u) => u.kind === "suggestion") &&
       items.filter((i) => i.remark === index).every((i) => i.decision === "decline")

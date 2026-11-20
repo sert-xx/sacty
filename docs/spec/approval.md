@@ -760,8 +760,10 @@ sacty が作った実装の PR に、PR のレビューの子タスクの提案�
   - 一時停止の間に届いて持っている指摘（[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。
   - 戻し先をもう判断した（`pendingReview.judgement`）・選り分けが済んだ（`pendingReview.triage`）指摘。済んでいれば、デーモンを起動し直しても、実行し直さない。
 - 選り分けないもの：要修正（`[要修正]`）・頭の無い文は、必ず直す（直す側に倒す）。人の指摘は、選り分けず、今までどおり戻し先の判断で扱う。人の指摘と AI の提案が混ざる回は、AI の提案だけを選り分け、人の指摘は落とさない。
+- 提案の文・理由に載せる HTML のコメントは、入れ子の形（`<!-<!-- x -->-`）も含め、`<!--` が残らなくなるまで除く（`withoutHtmlComments`）。sacty の投稿の目印（`sacty-reply`・`sacty-review`・`sacty-human-ask`）に見える文字列が、返信・指示・再レビューのデータに載らない。
+- 返信に載せる、対応しない提案の文と理由（`triageReplyTextOf`）は、HTML のコメントを除き、秘密情報を伏せ、内部のパスを置き換えてから、1 件ずつ切る（文字の途中では切らない。切り口をまたぐ秘密情報の前半を残さない）。
 - 提案の単位（`splitSuggestions`・`suggestionUnitsOf`）：デーモンが、AI のレビューの指摘を 1 件ずつに分け、`S1` から ID を付ける。
-  - レビューの本文：行頭の `[提案]`・`[要修正]`（箇条書き・見出し・太字の見出し `**[提案] 題**（場所）` の形を許す）ごとに 1 件。次の頭・見出し・区切りの線までが 1 件。読むのは、見出しの文字が「指摘」だけの節（許可リスト。レビューの指示が、この見出しと頭の付け方を決めている）。総評・「前回の指摘」・「レビューの範囲」など、ほかの節の文中の頭は、見出しの名前を問わず数えない。「指摘」の節が無い本文は、単位なし。
+  - レビューの本文：行頭の `[提案]`・`[要修正]`（箇条書き・見出し・太字の見出し `**[提案] 題**（場所）` の形を許す）ごとに 1 件。次の頭・見出し・区切りの線までが 1 件。読むのは、見出しの文字が「指摘」だけの節（許可リスト。レビューの指示が、この見出しと頭の付け方を決めている）。総評・「前回の指摘」・「レビューの範囲」など、ほかの節の文中の頭は、見出しの名前を問わず数えない。「指摘」の節が無いなど、単位を 1 件も読み取れない本文は、その回の判定が提案あり（要修正なし）なら、本文の全体（HTML のコメントを除いた文）を 1 件の提案として選り分ける（見出しの形が違っても、選り分けが空振りして往復が続かない。判断の材料に、前の回の指摘と対応が渡る）。判定が修正が必要の回の、単位を読み取れない本文は、選り分けず、必ず直す。頭の無い行へのコメントは、単位にしない。
   - 行へのコメント：`<パス>:<行>：` の後に頭が続けば、コメントの全体が 1 件。
   - 提案が 1 件も無ければ、選り分けの実行をしない。
 - 担い手：PR の工程（実装）のエージェント（人が選んだもの。無ければ `step_agents` か `default_agent`）が、新しいセッションで、実装後のコードの読み取り専用の写しを読んで判断する（役割 `triage`。[コードの写しで動かす実行](tasks-and-steps.md#コードの写しで動かす実行)）。実行に失敗したら、代わりのエージェント（`fallback`）でやり直す。人が選んだエージェントが設定から消えていれば、選り分けずに一時停止する（`agent.chosenMissing`。指摘は選り分け前のまま残す）。
@@ -781,8 +783,8 @@ sacty が作った実装の PR に、PR のレビューの子タスクの提案�
   - 対応しないとした提案は、`Task.declinedSuggestions`（文・理由・元のコメントの URL・回）に、消さずに積む。
 - 直しの指示（`remarkLines`・`triageDeclinedLines`）：対応する指摘だけを対応の対象に渡す。一部だけ対応しない指摘の、対応しない提案は、節「この PR では直さない提案（直しに入る前に選り分けた）」に、指示とは分けた JSON のデータで渡し、直させず、対応も書かせない（人が後続に回すと決めた指摘の渡し方 `ownerDeferralLines` と同じ形）。
 - 返信：[指摘への対応の返信](#指摘への対応の返信)の形に乗せる（形は変えない）。
-  - 外した指摘は、提出を経ないので、次の承認待ちのときに、提出の回によらず返信する。本文は、「直しに入る前に AI が判断し、この PR では対応しません。直させたいときは、PR に要対応とコメントしてください。」と、対応しない提案ごとの文と理由（`triagedReplyText`）。
-  - 一部だけ対応しない指摘への返信は、実装の対応の後ろに、同じ注記と、対応しない提案・理由を足す（1 通のまま。`withDeclinedParts`）。
+  - 外した指摘は、提出を経ないので、次の承認待ちのときに、提出の回によらず返信する。本文は、「直しに入る前に AI が判断し、この PR では対応しません。直させたいときは、PR に要対応とコメントしてください。」と、対応しない提案ごとの文と理由（`triageReplyTextOf`）。
+  - 一部だけ対応しない指摘への返信は、実装の対応の後ろに、同じ注記と、対応しない提案・理由を足す（1 通のまま。`triageReplyTextOf`）。
 - 直しに入らないとき：差し戻す指摘が残らない（対応する提案が無く、要修正も人の指摘も無い）ときは、実装の実行・コミット・push をしない。`SuggestionsTriaged` と `ReviewRejudgeRequested`（`reason: triaged`）を同じ追記で記録する。
   - 返信が済んだ後、PR のレビューの子タスクが、同じ先頭を 1 回だけ判定し直す（`ReviewRestarted` の `reason: declined`。`rejudgeDue`。[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
   - その回が指摘なしなら、ドラフトを外して人の承認を待つ。リスク評価は、その回に出る。
@@ -793,7 +795,7 @@ sacty が作った実装の PR に、PR のレビューの子タスクの提案�
 - 記録と表示：`SuggestionsTriaged`（actor `agent`。[作業履歴](event-log.md#費用)）。費用はタスクの予算に入り、工程ごとの費用の表の「提案の選り分け」の行に出る。画面の作業履歴の行には「提案 N 件のうち M 件をこの PR で対応しない」と費用を出し、提案ごとの判断と理由は、行の詳細に出す（`describeEventParts`）。判断できずに対応する側にした提案があれば、行と詳細にそう添える。採用しなかった実行は、そのことを行に出す。概要の「最近の履歴」は、どの行も 2 行までで省略し、詳細は出さない。
 - 変えないもの：実装が直しの中で申告する `declined`・`deferred` と、人の決定（[後続に回したい案と、人の決定](#後続に回したい案と人の決定)）、自己レビュー、要求要件・設計の PR のレビュー、GitHub から取り込んだ PR のレビューだけのタスク、返信の組み立て（`remark-reply.ts`）。
 
-コード: `apps/daemon/src/service.ts`（`triageSuggestions`・`importFeedbackNow`・`settleReview`・`awaitingRemarkReplies`・`triageStopDue`・`rejudgeDue`）、`apps/daemon/src/suggestion-triage.ts`（`splitSuggestions`・`suggestionUnitsOf`・`extractTriage`・`settleTriage`・`TRIAGE_HEADING`）、`apps/daemon/src/triage-reply.ts`（`triagedReplyText`・`withDeclinedParts`・`TRIAGE_REPLY_NOTE`）、`apps/daemon/src/prompts.ts`（`buildTriagePrompt`・`remarkLines`・`triageDeclinedLines`）、`packages/core/src/events.ts`（`SuggestionsTriaged`・`ReviewRejudgeRequested`・`Remark`）、`packages/core/src/projection.ts`（`applyEvent`・`declinedSuggestions`・`triageStop`）、`packages/core/src/messages.ts`（`triage.left`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/lib/step-costs.ts`（`stepCosts`）
+コード: `apps/daemon/src/service.ts`（`triageSuggestions`・`importFeedbackNow`・`settleReview`・`awaitingRemarkReplies`・`triageStopDue`・`rejudgeDue`）、`apps/daemon/src/suggestion-triage.ts`（`splitSuggestions`・`suggestionUnitsOf`・`extractTriage`・`settleTriage`・`TRIAGE_HEADING`）、`apps/daemon/src/triage-reply.ts`（`triageReplyTextOf`・`TRIAGE_REPLY_NOTE`）、`apps/daemon/src/prompts.ts`（`buildTriagePrompt`・`remarkLines`・`triageDeclinedLines`）、`packages/core/src/events.ts`（`SuggestionsTriaged`・`ReviewRejudgeRequested`・`Remark`）、`packages/core/src/projection.ts`（`applyEvent`・`declinedSuggestions`・`triageStop`）、`packages/core/src/messages.ts`（`triage.left`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/lib/step-costs.ts`（`stepCosts`）
 
 ### 人に確かめてほしいこと
 
@@ -872,9 +874,9 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - 提出の後にその PR から取り込んだ指摘（差し戻しの指摘）は、取り込んだ指摘として返信する。同じコメントが実装に渡した指摘にもあるときは、重ねて返信しない。
   - 目印と記録の指摘の ID は、キー（`review_comment:<ID>` など）にする。返信の末尾には、指摘の ID を書かない。
 - 指摘のすべてを断って、何も変えなかったとき：PR のレビューの子タスクが指摘を残した先頭を、やり直しの実装が変えず、その指摘のすべてを、理由を付けて断ったときも、提出にして、同じ形・同じ条件で返信する（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。返信の後、子タスクが同じ先頭を 1 回だけ判定し直し、返信は作者の返答として渡る（[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
-- 直しに入る前に、提案のすべてを対応しないとして差し戻しから外した指摘（`Task.remarks[].triaged`）は、提出を経ないので、承認ゲートの今の提出の対応でなくても、次の承認待ちで返信する（申告は `declined` なので、書き出しは「対応していません。理由：」）。載せる文は、AI が直しに入る前に判断したことと、直させたいときは PR に要対応とコメントすることの注記と、対応しない提案ごとの文と理由（`triagedReplyText`）。一部の提案だけを対応しない指摘への返信は、実装の対応の後ろに、同じ注記と、対応しない提案・理由を足す（1 通のまま。`withDeclinedParts`）。目印・署名・伏せ・長さの上限・`@名前` と内部のパスの扱いは、ほかの返信と同じ（[直しに入る前の提案の選り分け](#直しに入る前の提案の選り分け)）。
+- 直しに入る前に、提案のすべてを対応しないとして差し戻しから外した指摘（`Task.remarks[].triaged`）は、提出を経ないので、承認ゲートの今の提出の対応でなくても、次の承認待ちで返信する（申告は `declined` なので、書き出しは「対応していません。理由：」）。載せる文は、AI が直しに入る前に判断したことと、直させたいときは PR に要対応とコメントすることの注記と、対応しない提案ごとの文と理由（`triageReplyTextOf`）。一部の提案だけを対応しない指摘への返信は、実装の対応の後ろに、同じ注記と、対応しない提案・理由を足す（1 通のまま。`triageReplyTextOf`）。目印・署名・伏せ・長さの上限・`@名前` と内部のパスの扱いは、ほかの返信と同じ（[直しに入る前の提案の選り分け](#直しに入る前の提案の選り分け)）。
 
-コード: `apps/daemon/src/triage-reply.ts`（`triagedReplyText`・`withDeclinedParts`）、`apps/daemon/src/service.ts`（`awaitingRemarkReplies`・`remarkRepliesDue`・`postRemarkReplies`・`remarkReplyPost`・`noteRemarkReplyLimited`・`remarkRepliesSettled`・`remarkRepliesReady`・`replyRejected`・`rateLimited`・`remarkReplyAccountsOn`・`remarkOrigins`・`settleReview`・`settleHeldReview`・`requestChanges`・`reviewFeedback`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`・`remarkOriginRef`・`remarkOriginUrl`・`remarkReplyMarker`・`REPLY_TEXT_MAX`）、`apps/daemon/src/github.ts`（`replyToReviewComment`・`listReviewComments`・`listIssueComments`・`isSactyRemarkReply`・`GitHubPullRequests.feedback`）、`apps/daemon/src/prompts.ts`（`statusLines`・`continuedResponseLines`・`continuedPullRequestLines`・`extractBlocks`）、`packages/core/src/events.ts`（`RemarkOrigin`・`RemarkResponseStatus`・`RemarkRepliesStarted`・`RemarkRepliesPosted`・`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`
+コード: `apps/daemon/src/triage-reply.ts`（`triageReplyTextOf`）、`apps/daemon/src/service.ts`（`awaitingRemarkReplies`・`remarkRepliesDue`・`postRemarkReplies`・`remarkReplyPost`・`noteRemarkReplyLimited`・`remarkRepliesSettled`・`remarkRepliesReady`・`replyRejected`・`rateLimited`・`remarkReplyAccountsOn`・`remarkOrigins`・`settleReview`・`settleHeldReview`・`requestChanges`・`reviewFeedback`）、`apps/daemon/src/remark-reply.ts`（`buildRemarkReply`・`remarkOriginRef`・`remarkOriginUrl`・`remarkReplyMarker`・`REPLY_TEXT_MAX`）、`apps/daemon/src/github.ts`（`replyToReviewComment`・`listReviewComments`・`listIssueComments`・`isSactyRemarkReply`・`GitHubPullRequests.feedback`）、`apps/daemon/src/prompts.ts`（`statusLines`・`continuedResponseLines`・`continuedPullRequestLines`・`extractBlocks`）、`packages/core/src/events.ts`（`RemarkOrigin`・`RemarkResponseStatus`・`RemarkRepliesStarted`・`RemarkRepliesPosted`・`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`
 
 ### 後続に回したい案と、人の決定
 

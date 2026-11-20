@@ -8,6 +8,7 @@ import {
   settleTriage,
   splitSuggestions,
   suggestionUnitsOf,
+  withoutHtmlComments,
 } from "./suggestion-triage.js";
 
 const MARKER = "<!-- sacty-review:abc -->";
@@ -81,6 +82,45 @@ describe("AI のレビューの提案の単位の分け方（PBI-436）", () => 
   });
 });
 
+describe("頭の付いた指摘が 1 件も無い本文と、入れ子の HTML のコメント（PBI-436）", () => {
+  const noUnits = [
+    "<!-- sacty-review:abc -->",
+    "## sacty のレビュー",
+    "判定：提案あり",
+    "## 総評",
+    "前回の [提案]（画像の撮り直し）は未対応のままです。",
+  ].join("\n");
+  it("判定が提案ありの回で、単位を読み取れない本文は、全体を 1 件の提案にする", () => {
+    const units = splitSuggestions([noUnits], [0], () => true);
+    expect(units).toHaveLength(1);
+    expect(units[0]).toMatchObject({ id: "S1", remark: 0, kind: "suggestion" });
+    expect(units[0]?.text).toContain("画像の撮り直し");
+    expect(units[0]?.text).not.toContain("sacty-review");
+  });
+  it("判定が修正が必要の回・判定の分からない回は、提案にしない（必ず直す）", () => {
+    expect(splitSuggestions([noUnits], [0], () => false)).toEqual([]);
+    expect(splitSuggestions([noUnits], [0])).toEqual([]);
+  });
+  it("頭の無い行へのコメント・人の指摘は、提案にしない", () => {
+    expect(splitSuggestions(["a.ts:3：\nここは直す"], [0], () => true)).toEqual([]);
+    expect(splitSuggestions([noUnits], [], () => true)).toEqual([]);
+  });
+  it("入れ子の HTML のコメントを除いた後に、`<!--` が残らない", () => {
+    for (const nested of [
+      "<!-<!-- x -->-",
+      "<!<!--<!-- a -->-- b -->-",
+      "<!-- sacty-reply:t:r:1 -->後ろ",
+      "前<!-- 閉じていない",
+    ]) {
+      expect(withoutHtmlComments(nested)).not.toContain("<!--");
+    }
+    expect(withoutHtmlComments("a<!-- x -->b")).toBe("ab");
+    expect(
+      suggestionUnitsOf("<!-<!-- x -->-\n## 指摘\n**[提案] 題**\n本文")[0]?.text,
+    ).not.toContain("<!--");
+  });
+});
+
 describe("提案の単位の読み取りは「指摘」の節だけ（PBI-436）", () => {
   it("別の名前の節（前回までの指摘・太字の札・表）の頭は、新しい提案として数えない", () => {
     const body = [
@@ -111,15 +151,22 @@ describe("提案のすべてを対応しない指摘の位置（PBI-436）", () 
     kind: "suggestion" as const,
   });
   const verdictOf = () => "suggestions" as const;
-  it("提案ありの回の、総評だけの本文（単位 0 件）は、行へのコメントの提案がすべて対応しないなら外す", () => {
+  it("提案ありの回の、総評だけの本文は全体が 1 件の提案になり、行へのコメントの提案とともにすべて対応しないなら外す", () => {
     const remarks = ["## 総評\nだけ", "a.ts:1：\n[提案] x"];
-    const units = [sug(1, "S1")];
     const aiReviewFrom = { "0": "k:1", "1": "k:1" };
+    const units = splitSuggestions(remarks, [0, 1], () => true);
+    expect(units.map((u) => [u.remark, u.kind])).toEqual([
+      [0, "suggestion"],
+      [1, "suggestion"],
+    ]);
     expect(
       droppedRemarks({
         remarks,
         units,
-        items: [{ remark: 1, decision: "decline" }],
+        items: [
+          { remark: 0, decision: "decline" },
+          { remark: 1, decision: "decline" },
+        ],
         aiReviewFrom,
         verdictOf,
       }),
@@ -128,13 +175,17 @@ describe("提案のすべてを対応しない指摘の位置（PBI-436）", () 
       droppedRemarks({
         remarks,
         units,
-        items: [{ remark: 1, decision: "address" }],
+        items: [
+          { remark: 0, decision: "decline" },
+          { remark: 1, decision: "address" },
+        ],
         aiReviewFrom,
         verdictOf,
       }),
-    ).toEqual([]);
+    ).toEqual([0]);
   });
-  it("要修正の回の、単位 0 件の本文は外さない", () => {
+  it("要修正の回の、単位 0 件の本文は提案にせず、選り分けない（必ず直す）", () => {
+    expect(splitSuggestions(["本文", "a.ts:1：\n[提案] x"], [0, 1], () => false)).toHaveLength(1);
     expect(
       droppedRemarks({
         remarks: ["本文", "a.ts:1：\n[提案] x"],
