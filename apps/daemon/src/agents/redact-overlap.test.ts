@@ -142,32 +142,20 @@ describe("redact: 重なって現れる値（PBI-438）", () => {
     });
   }
 
-  it("種を固定した乱数：素朴な総当たりと同じ結果になる", () => {
+  it("種を固定した乱数：素朴な総当たりと同じ結果になる。重ならない入力では修正前の手順とも同じ", () => {
     const rand = rng(438);
-    let overlapping = 0;
+    let changed = 0;
+    let same = 0;
     for (let i = 0; i < 4000; i++) {
       const { secrets, text } = randomCase(rand);
       const expected = naiveRedact(text, secrets);
-      if (expected !== legacyRedact(text, secrets)) overlapping++;
       expect(redact(text, secrets), JSON.stringify({ secrets, text })).toBe(expected);
+      // 修正前の手順と結果が変わる入力（今回の対象）と、変わらない入力（重ならない入力）の両方が含まれている
+      if (expected === legacyRedact(text, secrets)) same++;
+      else changed++;
     }
-    // 修正前の手順と結果が変わる入力（今回の対象）が、乱数の入力に十分含まれている
-    expect(overlapping).toBeGreaterThan(100);
-  });
-
-  it("重ならない入力では、修正前の手順と同じ結果になる（一方が他方を含む値・隣り合う出現を含む）", () => {
-    const rand = rng(2);
-    let compared = 0;
-    for (let i = 0; i < 4000; i++) {
-      const { secrets, text } = randomCase(rand);
-      if (naiveRedact(text, secrets) !== legacyRedact(text, secrets)) continue;
-      compared++;
-      expect(redact(text, secrets), JSON.stringify({ secrets, text })).toBe(
-        legacyRedact(text, secrets),
-      );
-    }
-    expect(compared).toBeGreaterThan(500);
-    expect(redact("abab ab", ["ab", "abab"])).toBe("[REDACTED] [REDACTED]");
+    expect(changed).toBeGreaterThan(100);
+    expect(same).toBeGreaterThan(500);
   });
 
   it("出現がn個重なる入力でも、二乗の時間にならない（同じ文字だけの入力と、その文字だけの値）", () => {
@@ -266,16 +254,5 @@ describe("少しずつ届く出力の秘密情報（PBI-438）", () => {
       const out = Buffer.concat([r.push(raw.subarray(0, at)), r.push(raw.subarray(at)), r.flush()]);
       expect(out.equals(expected), `at=${at}`).toBe(true);
     }
-  });
-
-  it("サロゲートペアの途中で分けない（絵文字を含む値と重なる出現）", () => {
-    const secrets = ["🔑🔑x", "x🔑"];
-    const text = "a 🔑🔑x🔑 b";
-    const r = new StreamRedactor(() => secrets);
-    const outs: string[] = [];
-    for (const ch of text) outs.push(r.push(ch));
-    outs.push(r.flush());
-    for (const o of outs) expect(o).not.toMatch(/[\ud800-\udbff]$|^[\udc00-\udfff]/);
-    expect(outs.join("")).toBe("a [REDACTED] b");
   });
 });

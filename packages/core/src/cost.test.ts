@@ -26,6 +26,18 @@ describe("タスクの予算に入れる費用を持つイベント（PBI-86）"
     expect(addUsd(0.1, 0.2)).toBe(0.3);
   });
 
+  it("提案の選り分け（PBI-436）の費用は、中断した実行の分も、タスクの予算に足す", () => {
+    const budget = { usedUsd: 0.1, capUsd: 5, warned: false, estimated: false };
+    const triaged = (runResult: string, costUsd: number) =>
+      ({
+        type: "SuggestionsTriaged",
+        payload: { items: [], dropped: [], runResult, costUsd, estimated: false },
+      }) as unknown as ActivityEvent;
+    const done = chargeBudget(budget, triaged("completed", 0.3));
+    expect(done.usedUsd).toBe(0.4);
+    expect(chargeBudget(done, triaged("interrupted", 0.05)).usedUsd).toBe(0.45);
+  });
+
   it("使った分の全体を読めなかった実行（PBI-281）は、読めた分を足し、回数を数える。読めた実行は数えない", () => {
     const budget = { usedUsd: 0.1, capUsd: 5, warned: false, estimated: false };
     const event = (payload: Record<string, unknown>) =>

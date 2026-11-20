@@ -477,6 +477,22 @@ export function describeEventParts(
     const { full } = summarizeDecision(l.text(event.payload.reason));
     return { text: describeEventText(event, l), ...(full ? { detail: full } : {}) };
   }
+  if (event.type === "SuggestionsTriaged" && event.payload.items.length > 0) {
+    // 提案ごとの判断と理由は、詳細に出す（PBI-436。行には件数だけ）
+    return {
+      text: describeEventText(event, l),
+      detail: event.payload.items
+        .map((i) =>
+          l.event.suggestionDecision(
+            i.id,
+            i.decision === "address",
+            (typeof i.reason === "string" ? i.reason : l.text(i.reason)) || i.text,
+            i.defaulted === true,
+          ),
+        )
+        .join("\n"),
+    };
+  }
   if (
     event.type === "ImplementationIncomplete" &&
     !event.payload.unmapped?.length &&
@@ -837,6 +853,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.number,
         event.payload.commit.slice(0, 7),
         event.payload.awaitsDecision === true,
+        event.payload.reason === "triaged",
       );
     case "DeferralsDecided":
       return e.DeferralsDecided(
@@ -1229,6 +1246,14 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.questionId,
         event.payload.failed === undefined ? undefined : l.text(event.payload.failed),
         cost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
+      );
+    case "SuggestionsTriaged":
+      return e.SuggestionsTriaged(
+        event.payload.items.length,
+        event.payload.items.filter((i) => i.decision === "decline").length,
+        withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
+        event.payload.runResult === "interrupted",
+        event.payload.items.some((i) => i.defaulted),
       );
     case "ReworkJudged":
       return e.ReworkJudged(

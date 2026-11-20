@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx, apps/web/src/lib/labels.ts, apps/web/src/i18n/messages/labels.ts, apps/web/src/i18n/messages/parts.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx, apps/web/src/lib/labels.ts, apps/web/src/i18n/messages/labels.ts, apps/web/src/i18n/messages/parts.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts, packages/core/src/messages.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -18,7 +18,7 @@ This page is long, so pick the sections to read by what you want to do.
 | --- | --- |
 | Create tasks, find them, and see how they are going | [Create a task](#create-a-task), [Task list](#task-list), [Reading the task details](#reading-the-task-details), [Hints on the screen](#hints-on-the-screen), [Automatic updates on the screen](#automatic-updates-on-the-screen) |
 | Learn what sacty does on its own | [Information gathering at the start of a task](#information-gathering-at-the-start-of-a-task), [Self-review before submitting](#self-review-before-submitting), [Self-review for a light request](#self-review-for-a-light-request) |
-| Check results, then approve or request changes | [Approval in PRs (Requirements, Design, Implement)](#approval-in-prs-requirements-design-implement), [Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral), [Reading requirements and designs](#reading-requirements-and-designs), [Items to check (provenance)](#items-to-check-provenance), [Review of the implementation PR](#review-of-the-implementation-pr), [How the agent revises after you request changes](#how-the-agent-revises-after-you-request-changes), [Cause of a request for changes](#cause-of-a-request-for-changes), [Change requests](#change-requests), [Comments on PRs and issues](#comments-on-prs-and-issues), [Checking the result of the Integration review](#checking-the-result-of-the-integration-review) |
+| Check results, then approve or request changes | [Approval in PRs (Requirements, Design, Implement)](#approval-in-prs-requirements-design-implement), [Sorting AI review suggestions](#sorting-ai-review-suggestions), [Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral), [Reading requirements and designs](#reading-requirements-and-designs), [Items to check (provenance)](#items-to-check-provenance), [Review of the implementation PR](#review-of-the-implementation-pr), [How the agent revises after you request changes](#how-the-agent-revises-after-you-request-changes), [Cause of a request for changes](#cause-of-a-request-for-changes), [Change requests](#change-requests), [Comments on PRs and issues](#comments-on-prs-and-issues), [Checking the result of the Integration review](#checking-the-result-of-the-integration-review) |
 | Change a task that is under way | [Ask the Orchestrator](#ask-the-orchestrator), [Renaming a task](#renaming-a-task), [Changing the task image](#changing-the-task-image), [Changing a step's agent](#changing-a-steps-agent), [Pause, resume, and cancel](#pause-resume-and-cancel), [Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task) |
 | Learn how each kind of request proceeds | [Documents and one-off external work](#documents-and-one-off-external-work), [Fixing an existing PR](#fixing-an-existing-pr), [Security checks and fixes](#security-checks-and-fixes), [Repositories without tests](#repositories-without-tests), [When the implementation has no changes](#when-the-implementation-has-no-changes), [When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing) |
 | Handle tasks created with an earlier version | [Tasks from earlier versions (with the Open PR step)](#tasks-from-earlier-versions-with-the-open-pr-step), [Tasks from earlier versions (with the final review)](#tasks-from-earlier-versions-with-the-final-review) |
@@ -650,6 +650,7 @@ The step to redo depends on whether the comment changes a decision already appro
 Who judges the step to redo depends on where the comments come from.
 
 - When the comments are only from the child task that reviews the PR, sacty follows the step the child task gave for each finding (no run is made for the judgment, and it costs nothing).
+  When an implementation PR has suggestions (`[提案]`), an AI first sorts out whether to handle each one ([Sorting AI review suggestions](#sorting-ai-review-suggestions)).
 - When your comments are included, the agent of that PR's step judges.
 
 A comment that asks for nothing does not start a redo.
@@ -746,6 +747,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
 - The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
   When it was not addressed, the reason (for example, out of this task's scope) follows.
   For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
+  For a suggestion the AI decided before fixing not to handle in this PR, the reply says that the AI decided it, gives the reason for each suggestion it does not handle, and says how to have it fixed ([Sorting AI review suggestions](#sorting-ai-review-suggestions)).
   When the AI declared neither, only the explanation of the response is shown.
 - The end of the reply says which sacty task's AI wrote it.
 - Secret values are hidden and long text is cut.
@@ -780,10 +782,61 @@ It does not reply in the following cases either (you can read the responses on t
 - A project with no GitHub account chosen
 - Security check and security fix tasks
 
+### Sorting AI review suggestions
+
+When suggestions (`[提案]`) from the child task that reviews the PR reach an implementation PR that sacty opened, an AI decides, before fixing and with the scope of the PR in mind, whether this PR handles each suggestion or not. This keeps sacty from repeating fixes, PR updates, and re-reviews for suggestions it does not handle. The AI makes the decision not to handle a suggestion, and there is no step where you decide each one. If you want a suggestion fixed, you can override the decision with a comment on the PR.
+
+What is sorted and what is not:
+
+- Sorted: AI review suggestions (`[提案]`) that reach an implementation PR sacty opened.
+- Not sorted (these are fixed without sorting):
+  - Must-fix findings (`[要修正]`). They are always fixed.
+  - Comments you wrote. Even when they arrive together with AI suggestions, your comments are fixed without sorting.
+  - Findings on Requirements and Design PRs, and findings in security check and security fix tasks.
+
+The AI decides by these criteria.
+
+| Decision | What falls under it |
+| --- | --- |
+| Handle in this PR | A suggestion inside the scope of the PR's purpose that, if not fixed, causes harm such as wrong behavior, text that misleads readers, or a gap in verification, or causes rework later |
+| Do not handle in this PR | A suggestion outside the scope of the purpose; preferences, formatting, and wording; a new suggestion about details of text added by a fix; another occurrence of the same cause that keeps coming; something answered in an earlier round as not fixable; raising again something already declined |
+
+- The later the review round, the stricter the bar for handling. When reviews with suggestions only come twice or more in a row, the AI does not handle them in principle.
+- When the AI is unsure, it decides to handle the suggestion if reviews with suggestions only have not come in a row, and not to handle it if they have.
+- A suggestion the AI could not judge (the run failed, the answer could not be read, and so on) is set to be handled and is fixed.
+
+What happens after the sorting:
+
+- When there are suggestions to handle, sacty fixes only those suggestions, the must-fix findings, and your comments.
+- For suggestions it does not handle, sacty replies on the PR with the reason. The reply starts with "対応していません。理由：" (not handled; reason:), followed by "直しに入る前に AI が判断し、この PR では対応しません。直させたいときは、PR に要対応とコメントしてください。" (the AI decided before fixing and this PR does not handle it; to have it fixed, comment on the PR that it needs a fix) and the reason for each suggestion. When one review mixes suggestions to handle and suggestions not to handle, the suggestions not handled and their reasons are added after the reply about what was fixed (it is still one reply).
+- When every suggestion is declined and nothing is left to fix, sacty neither fixes nor updates the PR. After the replies, the child task reviews the same commit once more.
+  - With no findings, sacty removes the draft and waits for your approval.
+  - When a must-fix or a suggestion to handle comes up, sacty goes on to fix it.
+  - When only suggestions remain and all of them are declined too, sacty pauses the task after the replies. The pause area says that suggestions remained and what you can choose next. This keeps the two AIs from going back and forth.
+- A re-review does not count the declined suggestions as unaddressed and does not raise them again. However, when a fresh check shows one has must-fix weight (a bug, security, data corruption, and so on), the review raises it as a must-fix and sacty fixes it.
+
+You can read the declined suggestions and their reasons in two places:
+
+- The replies on the PR
+- The Activity in the task details. The row shows "M of N suggestions will not be handled in this PR", and opening "Details" shows the decision and reason for each suggestion. The cost of the sorting shows in the "Sorting the suggestions" row of the per-step cost table.
+
+To have a declined suggestion fixed, do one of the following:
+
+- Comment on the PR asking for that suggestion to be fixed (write it so that it is clear a fix is needed). It is imported as your comment and fixed without sorting.
+- Write the suggestion as a comment on the sacty screen and request changes.
+
+In either case, when the Activity shows a request for changes with your comment, the fix has started.
+
+When the task paused because suggestions remained, choose one of these:
+
+- Press "Resume": the task goes back to waiting for approval. It does not stop again for the same reason.
+- Comment on the PR with the suggestion you want fixed.
+- Check the PR, then approve (merge) or request changes.
+
 ### Deciding the findings proposed for deferral
 
 The Implementation agent sometimes declares that it would rather not fix a comment in this PR and defer it.
-This is a proposal. You decide, one by one before the merge, whether to defer it.
+This is a proposal. You decide, one by one before the merge, whether to defer it. A suggestion the AI decided before fixing not to handle in this PR is not such a proposal and does not appear in the list you decide on ([Sorting AI review suggestions](#sorting-ai-review-suggestions)).
 
 1. When the task details show "N findings the implementation proposes to defer", press "Decide on the approval screen".
 2. In the list on the approval screen, read each comment and the reason for the proposal.
@@ -1542,6 +1595,7 @@ Resume the task as follows, depending on why it stopped.
 | An AI usage limit, an authentication error, an error, and so on | Check the cause, then press "Resume" |
 | The implementation does not finish, or a rework changed nothing | Check the reason, change the step's agent if needed, then press "Resume" ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)) |
 | The chosen agent can no longer be used | Choose the agent again, then resume ([Changing a step's agent](#changing-a-steps-agent)) |
+| AI review suggestions remained | Check the PR and the reasons for the declined suggestions. Pressing "Resume" returns the task to waiting for approval. Comment on the PR for a suggestion you want fixed ([Sorting AI review suggestions](#sorting-ai-review-suggestions)) |
 
 What to check for each reason is also in [Troubleshooting](troubleshooting.en.md#tasks-stop-or-do-not-progress).
 

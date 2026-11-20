@@ -23,6 +23,7 @@ export const RUN_TIMEOUT_ROLES = [
   "guardian",
   "final-review",
   "rework",
+  "triage",
   "orchestrator",
   "gather",
   "chat",

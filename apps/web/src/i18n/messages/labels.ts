@@ -154,6 +154,7 @@ const ja = {
     guardian: "以前の版の AI の判定",
     "final-review": "最終レビュー",
     rework: "差し戻しの判断",
+    triage: "提案の選り分け",
     orchestrator: "オーケストレーター",
     gather: "情報収集",
     chat: "質問への答え",
@@ -452,10 +453,17 @@ const ja = {
       `テストの対応していないテスト観点があるため、提出せずに実装を続ける（${ids}）`,
     ImplementationUnchanged: (number: number, commit: string) =>
       `やり直しの実装が、AI のレビューの指摘が残る PR #${number}（${commit}）を何も変えなかったため、提出しない`,
-    ReviewRejudgeRequested: (number: number, commit: string, awaitsDecision: boolean) =>
-      awaitsDecision
-        ? `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘を、断るか、後続に回したい案にして、何も変えなかった。理由を PR に返信し、案を人が決めた後、AI のレビューに同じ内容を 1 回だけ判定し直させる`
-        : `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘をすべて、理由を付けて断り、何も変えなかった。断った理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる`,
+    ReviewRejudgeRequested: (
+      number: number,
+      commit: string,
+      awaitsDecision: boolean,
+      triaged: boolean,
+    ) =>
+      triaged
+        ? `直しに入る前の選り分けで、PR #${number}（${commit}）の AI のレビューの提案をすべて「この PR では対応しない」とした（実装は実行しない）。理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる`
+        : awaitsDecision
+          ? `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘を、断るか、後続に回したい案にして、何も変えなかった。理由を PR に返信し、案を人が決めた後、AI のレビューに同じ内容を 1 回だけ判定し直させる`
+          : `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘をすべて、理由を付けて断り、何も変えなかった。断った理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる`,
     DeferralsDecided: (defer: number, fix: number) =>
       `後続に回したい指摘を決定（後続に回す ${defer}件・この PR で直す ${fix}件）`,
     /** 決定の 1 件（詳細の 1 行）。 */
@@ -809,6 +817,19 @@ const ja = {
           : `戻し先：${target ?? "判断できない"}（${reason}・${noAction.count > 0 ? `対応を求めていないコメント${noAction.count}件は除いた・` : ""}${tail}）`,
     /** PR のレビューの子タスクが示した指摘ごとの戻し先から決めた（PBI-332。実行はしない）。 */
     reworkFromReviewTask: "PR のレビューの子タスクの答えから",
+    /** 直しに入る前の、AI のレビューの提案の選り分け（PBI-436）。 */
+    SuggestionsTriaged: (
+      total: number,
+      declined: number,
+      tail: string,
+      discarded: boolean,
+      failed: boolean,
+    ) =>
+      discarded
+        ? `提案の選り分けを採用しなかった（一時停止・中止などで。指摘は選り分け前のまま残し、再開したら選り分け直す・${tail}）`
+        : `提案 ${total}件のうち ${declined}件をこの PR で対応しない${failed ? "（判断できなかった提案は、対応する側にした）" : ""}（${tail}）`,
+    suggestionDecision: (id: string, address: boolean, reason: string, defaulted: boolean) =>
+      `${id}：${address ? "対応する" : "対応しない"}${defaulted ? "（判断が無いので、対応する側にした）" : ""}：${reason}`,
     // 完了したタスクの監査（PBI-125）
     AuditQueued: (cap: string) => `監査を待つ（予算 ${cap}）`,
     AuditSurveyed: (concerns: number, tail: string) =>
@@ -968,6 +989,7 @@ const en: LabelMessages = {
     guardian: "AI verdict in an earlier version",
     "final-review": "final review",
     rework: "rework judgment",
+    triage: "suggestion sorting",
     orchestrator: "Orchestrator",
     gather: "information gathering",
     chat: "answer to a question",
@@ -1203,10 +1225,12 @@ const en: LabelMessages = {
       `Some test viewpoints have no test mapped, so the implementation is continued without being submitted (${ids})`,
     ImplementationUnchanged: (number, commit) =>
       `The rework changed nothing in PR #${number} (${commit}), on which the AI review left findings, so it is not submitted`,
-    ReviewRejudgeRequested: (number, commit, awaitsDecision) =>
-      awaitsDecision
-        ? `The rework declined the findings of the AI review on PR #${number} (${commit}) or proposed to defer them, and changed nothing. Sacty replies on the PR with the reasons and, after a person decides the proposals, has the AI review judge the same content once more`
-        : `The rework declined every finding of the AI review on PR #${number} (${commit}) with a reason and changed nothing. sacty replies on the PR with the reasons and has the AI review judge the same content once more`,
+    ReviewRejudgeRequested: (number, commit, awaitsDecision, triaged) =>
+      triaged
+        ? `Before reworking, the sorting declined every suggestion of the AI review on PR #${number} (${commit}) for this PR (no implementation run). sacty replies on the PR with the reasons and has the AI review judge the same content once more`
+        : awaitsDecision
+          ? `The rework declined the findings of the AI review on PR #${number} (${commit}) or proposed to defer them, and changed nothing. Sacty replies on the PR with the reasons and, after a person decides the proposals, has the AI review judge the same content once more`
+          : `The rework declined every finding of the AI review on PR #${number} (${commit}) with a reason and changed nothing. sacty replies on the PR with the reasons and has the AI review judge the same content once more`,
     DeferralsDecided: (defer, fix) =>
       `Decided the findings proposed to defer (defer ${defer}, fix in this PR ${fix})`,
     deferralItem: (remarkId, fix, handling) =>
@@ -1468,6 +1492,12 @@ const en: LabelMessages = {
           ? `Judged that the comments ask for nothing, so nothing was sent back (${reason} · ${tail})`
           : `Step to redo: ${target ?? "undecided"} (${reason} · ${noAction.count > 0 ? `left out ${noAction.count} comment${noAction.count === 1 ? "" : "s"} that ask${noAction.count === 1 ? "s" : ""} for nothing · ` : ""}${tail})`,
     reworkFromReviewTask: "from the answer of the PR review child task",
+    SuggestionsTriaged: (total, declined, tail, discarded, failed) =>
+      discarded
+        ? `The sorting of the suggestions was not adopted (a pause, a cancel, or a change; the comments stay unsorted and are sorted again on resume · ${tail})`
+        : `${declined} of ${total} suggestion${total === 1 ? "" : "s"} will not be handled in this PR${failed ? " (suggestions it could not judge were set to be handled)" : ""} (${tail})`,
+    suggestionDecision: (id, address, reason, defaulted) =>
+      `${id}: ${address ? "handle" : "do not handle"}${defaulted ? " (no judgment, so set to be handled)" : ""}: ${reason}`,
     AuditQueued: (cap) => `Waiting for the audit (budget ${cap})`,
     AuditSurveyed: (concerns, tail) =>
       `Finished the survey (${concerns} step${concerns === 1 ? "" : "s"} of concern · ${tail})`,

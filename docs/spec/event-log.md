@@ -12,7 +12,7 @@
 
 - 書くときの形は `{ type, payload }`。
   `type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。
-  種類は123（タスクの作成・分割、重ねた子タスクの依存先のマージ、工程の進行、エージェントの実行、予算・一時停止・再開・中止、タスクの題・イメージの変更、変更の申し出と判断、検証、終わっていない実装と変更の無いやり直し、git・PR、PR のドラフトの解除・向き先の付け替え・CI のやり直しの依頼、人が PR に足したコミットの取り込み、PR の本文の記録と人が直した本文のまとめ、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、PR のレビューの子タスクの作成、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
+  種類は134（タスクの作成・分割、重ねた子タスクの依存先のマージ、工程の進行、エージェントの実行、予算・一時停止・再開・中止、タスクの題・イメージの変更、変更の申し出と判断、検証、終わっていない実装と変更の無いやり直し、git・PR、PR のドラフトの解除・向き先の付け替え・CI のやり直しの依頼、人が PR に足したコミットの取り込み、PR の本文の記録と人が直した本文のまとめ、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、PR のレビューの子タスクの作成、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
 - 記録した後の形（`ActivityEvent`）は、書くときの形に次を足したもの。
   - `seq`（作業履歴全体で単調に増える）
   - `id`（UUID）
@@ -58,7 +58,12 @@
 - 適用できないイベント（二重の作成・知らないタスク・中止したタスクへのイベント・状態や実行の ID の食い違いなど）は、投影が例外にする。
   ただし中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` と、監査が登録したメモリーの削除 `AuditMemoryDeleted` は受け付ける。
 - 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`SubagentNoticeImitated`・`RunCostRecorded`・`ReviewGitHubRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`AgentRunTimedOut`・`AgentRunContinued`・`WorkspaceFilesSkipped`・`PullRequestBodyResolved`。費用を持つものは、下のとおり予算に足す）。
-- 費用を持つイベント（[費用](#費用)の18種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
+- 直しに入る前の提案の選り分け（PBI-436。[直しに入る前の提案の選り分け](approval.md#直しに入る前の提案の選り分け)）の記録は次のとおり。
+  - `SuggestionsTriaged`（actor `agent`）：`items[]`（提案ごとの `id`・取り込んだ指摘の位置 `remark`・提案の文 `text`・判断 `decision`（`address` か `decline`）・理由 `reason`・判断が無く対応する側にした印 `defaulted`・元のコメントの URL `url`）、`dropped[]`（提案のすべてを対応しないとして差し戻しから外した指摘の位置）、`round`・`suggestionRounds`（判断の材料にした、レビューの回と、提案だけの回が続いた数）、`stop`（判定し直した回の提案もすべて対応しないので、返信の後に一時停止する）、実行の記録（`agentId`・`runResult`・`usage`・`costUsd` など）。
+  - 投影は、選り分けが済んだことを `pendingReview.triage` に持ち（起動し直しても実行し直さない）、`dropped` の指摘を `pendingReview` から外して `Task.remarks` に足す（`triaged: true`・`status: declined`・`round: 0`・`origin`。直しの回・直しの指示・提出での対応の書き直しの対象に数えない）。一部だけ対応しない指摘は `pendingReview` に残し、`pendingReview.triage.declined` に対応しない提案の文と理由を持つ（差し戻しの `remarks[].declinedParts` に引き継ぐ）。対応しないとした提案は `Task.declinedSuggestions`（文・理由・URL・回）に消さずに積む。`stop` は `Task.triageStop` に持ち、一時停止で消える。
+  - `runResult` が `interrupted` のもの（判断を採用しなかった）は、費用だけを数え、状態を変えない。
+  - `ReviewRejudgeRequested` の `reason: triaged`：選り分けで、差し戻す指摘が残らなかったので、実装を実行せずに判定し直しを求めた。承認待ちの実装の PR について、`SuggestionsTriaged` と同じ追記で記録する（`Task.reviewRejudge.reason`）。`reason` が無いものは、実装の提出の記録（PBI-357）。
+- 費用を持つイベント（[費用](#費用)の19種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
   `estimated` が1件でもあれば、`budget.estimated` を立てる。
 - `Task` の主な項目
   - `status`
@@ -95,7 +100,7 @@
 - 実行の費用は、CLI が報告した額（Claude Code の `total_cost_usd`）があればそれ、無ければモデルごとの使用量をそのモデルの単価で換算した額（単価が設定に無いモデルは、工程のエージェントの単価）にする
   （[エージェントの実行](agent-execution.md#出力の扱い)）。
   CLI の報告を使った実行と、モデルごとに換算した実行は、どちらにしたかを `RunCostRecorded`（`reported`・`converted`。設定の単価で換算した額も持つ）に記録する。予算には、実行の結果のイベントの `costUsd` だけを足す。
-- タスクの予算に入れる費用を持つイベントは、次の18種類（`CHARGED_EVENT_TYPES`）。
+- タスクの予算に入れる費用を持つイベントは、次の19種類（`CHARGED_EVENT_TYPES`）。
   `costUsd` を持つイベントはこれですべて。
   統合レビューの `IntegrationReviewed` は費用を持たず、続く `AgentRunCompleted` に記録する。
 
@@ -113,12 +118,13 @@
   | `ErrorAnalyzed` | エラーの分析（`errorAnalysis`。[エラーレポート](error-report.md)） |
   | `DeploymentChecked` | マージの後の監視の工程（`deployment`。[マージの後の監視](deployment-watch.md)） |
   | `ReworkJudged`（actor が `agent`。PBI-332） | 戻し先の判断（`rework`）。actor が `sacty`（`reviewTaskId` があり、PR のレビューの子タスクの答えから決めた）のものは実行していないので、行にしない |
+  | `SuggestionsTriaged`（PBI-436） | 提案の選り分け（`suggestions`。直しに入る前に、AI のレビューの提案を選り分けた実行。採用しなかった実行（`runResult: interrupted`）も、費用を数えて行に出す。[直しに入る前の提案の選り分け](approval.md#直しに入る前の提案の選り分け)） |
   | `ChangeJudged`・`ReworkJudged`（actor が `guardian`。以前の版）・`FinalReviewed`・`FinalReviewFailed` | 以前の版の AI の判定（`guardian`。最終レビューもこの行） |
 
 - 投影と工程ごとの費用の表は、どちらも同じ規則（`chargeBudget`）で費用を足す。
   一覧に無い種類が `costUsd` を持つと、型の検査で typecheck が通らない。
 - 時間切れなどで使った分の全体を読めなかった実行は、読めた分（下限）を `costUsd` に足し、イベントに `costUnknown` を付ける（PBI-281）。
-  - 付けるのは、実行の失敗を記録しうる `AgentRunFailed`・`OrchestratorFailed`・`StepsSkipped`・`ChangeJudged`・`ReworkJudged`・`FinalReviewFailed`・`QuestionAnswered`・`ErrorAnalyzed`・`OutputExported`・`DeploymentChecked`・`PullRequestBodyResolved`・`PullRequestRiskAssessed`。
+  - 付けるのは、実行の失敗を記録しうる `AgentRunFailed`・`OrchestratorFailed`・`StepsSkipped`・`ChangeJudged`・`ReworkJudged`・`SuggestionsTriaged`・`FinalReviewFailed`・`QuestionAnswered`・`ErrorAnalyzed`・`OutputExported`・`DeploymentChecked`・`PullRequestBodyResolved`・`PullRequestRiskAssessed`。
   - 読めなければ `costUsd` は 0 のままで、この 0 は費用が無かったのではなく不明を意味する。拾い方は[エージェントの実行](agent-execution.md)の出力の扱い。
   - 失敗して代わりのエージェントで判定し直した判定や、再開を断られて新しいセッションで始め直した実行は、先の実行が不明なら合計も不明にする。そのため、成功を記録するイベント（`AgentRunCompleted`・`StepsChosen`・`TicketTriaged`・`RepositoryChosen`・`InformationGathered`・`FinalReviewed`）も `costUnknown` を持てる。
   - `chargeBudget` は、印のあるイベントの回数を `budget.unknownRuns` に数える（無ければ持たない）。読めた分は予算の判定に入る。
@@ -177,7 +183,7 @@
      - 工程の一覧に無い工程の記録も出す。
      - デプロイの確認は、マージの後の監視の工程の行に入れる。
        実行中も出す。
-  3. 書き出し・質問への答え・エラーの分析・戻し先の判断・以前の版の AI の判定（記録があるときだけ）
+  3. 書き出し・質問への答え・エラーの分析・戻し先の判断・提案の選り分け・以前の版の AI の判定（記録があるときだけ）
 - 人が決めたチケットの読み取り・リポジトリの選択と、工程を固定していた頃の `StepsChosen`（エージェント・費用・使用量が無い）は、実行に数えない。
 - 表の合計の費用と推定かどうかは、作業履歴の順に `chargeBudget` で足す。
   そのため、タスクの費用（`budget.usedUsd`・`budget.estimated`）と一致する。

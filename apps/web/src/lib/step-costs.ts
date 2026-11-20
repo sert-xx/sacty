@@ -28,11 +28,19 @@ export type CostRole =
   | "errorAnalysis"
   | "export"
   | "rework"
+  | "suggestions"
   | "guardian";
 
 /** 工程の外の行（表に出す順）。 */
 const OUTSIDE_BEFORE = ["gather", "triage", "repository", "orchestrator"] as const;
-const OUTSIDE_AFTER = ["export", "chat", "errorAnalysis", "rework", "guardian"] as const;
+const OUTSIDE_AFTER = [
+  "export",
+  "chat",
+  "errorAnalysis",
+  "rework",
+  "suggestions",
+  "guardian",
+] as const;
 const OUTSIDE: readonly CostRole[] = [...OUTSIDE_BEFORE, ...OUTSIDE_AFTER];
 
 /** 1回の実行。作業履歴に記録が無い項目（PBI-46 より前のモデル・エフォートなど）は持たない。 */
@@ -219,6 +227,10 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
           event.actor === "guardian" ? "guardian" : "rework",
           runOf(event, event.payload, guardianRunResult(event.payload)),
         );
+        return;
+      case "SuggestionsTriaged":
+        // 提案の選り分け（PBI-436）。実行に失敗・中断したときも、記録が残る
+        push("suggestions", runOf(event, event.payload, event.payload.runResult ?? "completed"));
         return;
       case "ChangeJudged":
         // 実行に失敗・中断したときも、判定の記録として残る。実行の結果で分ける

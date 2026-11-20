@@ -427,6 +427,14 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
     },
     "guardian",
   );
+  // 提案の選り分け（PBI-436）。採用しなかった実行も、費用は数える
+  add(
+    {
+      type: "SuggestionsTriaged",
+      payload: { items: [], dropped: [], runResult: "interrupted", ...charged() },
+    },
+    "agent",
+  );
   return events;
 }
 

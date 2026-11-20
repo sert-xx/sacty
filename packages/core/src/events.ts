@@ -291,6 +291,11 @@ export const Remark = z.object({
    * 実装は、この指摘を、もう一度、後続に回したい案にしない。
    */
   fixOf: z.string().min(1).optional(),
+  /**
+   * AI のレビューの 1 つの投稿の中で、直しに入る前に AI が「この PR では対応しない」と選り分けた提案（PBI-436。`SuggestionsTriaged`）。
+   * 指摘の残りの部分（対応する提案・要修正）だけを直す。選り分けた提案は、直さず、対応も書かせず、返信の後ろに理由を足す。
+   */
+  declinedParts: z.array(z.object({ text: z.string(), reason: z.string() })).optional(),
 });
 export type Remark = z.infer<typeof Remark>;
 
@@ -2811,6 +2816,59 @@ const ReviewRejudgeRequested = z.object({
      * （人が回すと決めた指摘を、レビューが未対応に数えないように）。
      */
     awaitsDecision: z.literal(true).optional(),
+    /**
+     * triaged：直しに入る前の選り分け（`SuggestionsTriaged`）で、残った提案のすべてを対応しないとしたので、実装を実行せずに
+     * 判定し直しを求めた（PBI-436）。承認待ちの PR について、選り分けの記録と同じ追記で記録する。無ければ、実装の提出の記録。
+     */
+    reason: z.literal("triaged").optional(),
+  }),
+});
+
+/**
+ * AI のレビューの提案を、直しに入る前に、AI が PR の範囲で 1 件ずつ選り分けた（PBI-436）。items は選り分けの対象にした提案
+ * （本文の `[提案]` の 1 件・行へのコメントの 1 件）。decision は、address がこの PR で対応する、decline が対応しない。
+ * defaulted は、判断が無かった（実行の失敗・答えを読めない・その提案の判断が無い）ので、対応する側にした。
+ * 実行に失敗したときも記録する（費用と、判断できなかったことを残す）。runResult が interrupted のものは、費用だけを数える。
+ */
+const SuggestionsTriaged = z.object({
+  type: z.literal("SuggestionsTriaged"),
+  payload: z.object({
+    items: z.array(
+      z.object({
+        id: z.string().min(1),
+        /** 取り込んだ指摘の並びでの位置（0 始まり）。 */
+        remark: z.number().int().nonnegative(),
+        /** 提案の文。 */
+        text: z.string(),
+        decision: z.enum(["address", "decline"]),
+        /** 対応しない理由は文字列。判断できなかったときの理由（defaulted）は、画面の言語で出せるコード。 */
+        reason: DaemonText,
+        defaulted: z.literal(true).optional(),
+        /** 元の PR のコメントの URL（再レビューに渡す）。 */
+        url: z.string().optional(),
+      }),
+    ),
+    /**
+     * 提案のすべてを対応しないとしたので、差し戻しの指摘から外す指摘の位置（取り込んだ指摘の並びでの位置。0 始まり）。
+     * 外した指摘は、直さず、理由を PR に返信する。一部だけ対応しない指摘は、ここに入れず、残りだけを直す。
+     */
+    dropped: z.array(z.number().int().nonnegative()).default([]),
+    /** 選り分けに使った、レビューの回と、提案だけの回が続いた数（判断の材料）。 */
+    round: z.number().int().nonnegative().optional(),
+    suggestionRounds: z.number().int().nonnegative().optional(),
+    /**
+     * 残った提案のすべてを対応しないとしたが、同じ先頭を判定し直した回の指摘だった：判定し直しは 1 回だけなので、返信の後に、
+     * 一時停止して人が選ぶ。
+     */
+    stop: z.literal(true).optional(),
+    agentId: z.string(),
+    runResult: GuardianRunResult.optional(),
+    ...AgentSetting,
+    ...RunRef,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -4211,6 +4269,7 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestReviewImported,
   PullRequestReviewDiscarded,
   ReworkJudged,
+  SuggestionsTriaged,
   IssueCommented,
   IssueCommentFailed,
   GitHubCommentsPosted,

@@ -8,7 +8,7 @@
 
 ## 背景
 
-[実装の最終レビュー（テストの実行）と PR の CI の待ちをやめた](20261112-0714-superseded-review-child-task-replaces-final-review-and-ci-wait.md)・[PR の指摘の戻し先をレビューの子タスクと工程のエージェントが決めるようにした](20261112-0748-review-child-task-decides-rework-target.md)後も、ゴールガーディアンには次の役割が残っていた。
+[実装の最終レビュー（テストの実行）と PR の CI の待ちをやめた](20261112-0714-superseded-review-child-task-replaces-final-review-and-ci-wait.md)・[PR の指摘の戻し先をレビューの子タスクと工程のエージェントが決めるようにした](20261112-0748-superseded-review-child-task-decides-rework-target.md)後も、ゴールガーディアンには次の役割が残っていた。
 
 - 承認済みの要求要件・設計の変更の申し出（`CP-<番号>`）の判定
 - タスク分割の親の統合レビュー（`step_agents.integrate` が無いとき、`guardian_agent` の AI で行う）
