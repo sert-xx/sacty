@@ -92,7 +92,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
   | `RepositoryChosen` | Repository selection (`repository`) |
   | `StepsChosen`, `StepsSkipped`, `OrchestratorFailed` (except those whose actor is `gatherer`) | Orchestrator (`orchestrator`) |
   | `PullRequestBodyResolved` (PBI-334) | Orchestrator (`orchestrator`; a run that reconciled a person's edits to the PR body. One that ran no agent (no `agentId`) gets no row; [Updating a body a person edited](approval.en.md#updating-a-body-a-person-edited)) |
-  | `PullRequestRiskAssessed` (PBI-362) | Orchestrator (`orchestrator`; the run of the risk assessment before a PR is opened. One that ran no agent (no `agentId`: not assessed because of the budget cap, or read from the review step's answer) gets no row; [PR risk assessment](risk-assessment.en.md)) |
+  | `PullRequestRiskAssessed` (PBI-362) | Orchestrator (`orchestrator`; the run of the risk assessment before a PR is opened. One that ran no agent (no `agentId`: not assessed because of the budget cap, read from the review step's answer, or carried over from the previous assessment (`inheritedFrom`; PBI-421)) gets no row; [PR risk assessment](risk-assessment.en.md)) |
   | `AgentRunCompleted`, `AgentRunFailed` | That step |
   | `OutputExported` | Export (`export`) |
   | `QuestionAnswered` | Answers to questions (`chat`) |

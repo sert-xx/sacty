@@ -404,7 +404,13 @@ const ja = {
       via: "publish" | "review",
       level: "low" | "medium" | "high" | undefined,
       reason: string,
+      inheritedFrom = "",
+      commit = "",
     ) => {
+      // 前回の評価を、エージェントを実行せずに引き継いだ（PBI-421）
+      if (inheritedFrom && level) {
+        return `PR を出す前に、${inheritedFrom} の評価を${commit ? ` ${commit} に` : ""}引き継いだ（文書だけの変更のため評価し直さず、前回と同じ：${{ low: "低", medium: "中", high: "高" }[level]}）`;
+      }
       const when = via === "publish" ? "PR を出す前に" : "レビューの工程で";
       return level
         ? `${when}、PR のリスクを評価した：${{ low: "低", medium: "中", high: "高" }[level]}`
@@ -1151,7 +1157,10 @@ const en: LabelMessages = {
         ? `Merged the commits a person added to the PR branch ${branch} (${commit}) into the workspace: ${conflicts} file(s) conflict (${files})`
         : `Merged the commits a person added to the PR branch ${branch} (${commit}) into the workspace (no conflicts)`,
     PullRequestBodyWritten: (number) => `Wrote the body of PR #${number}`,
-    PullRequestRiskAssessed: (via, level, reason) => {
+    PullRequestRiskAssessed: (via, level, reason, inheritedFrom = "", commit = "") => {
+      if (inheritedFrom && level) {
+        return `Before opening the PR, carried the assessment of ${inheritedFrom} over${commit ? ` to ${commit}` : ""} (documents-only change, so it was not reassessed; same as before: ${level})`;
+      }
       const when = via === "publish" ? "before opening the PR" : "in the review step";
       return level
         ? `Assessed the PR's risk ${when}: ${level}`

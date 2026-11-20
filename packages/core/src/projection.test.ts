@@ -1883,6 +1883,8 @@ describe("レビューの工程（PBI-19）", () => {
       headCommit: "h".repeat(40),
       body: "# 評価",
       comments: [{ path: "src/retry.ts", line: 2, body: "[要修正] 上限が無い" }],
+      // PR の差分の起点が前回と同じかを、再レビューが確かめるために、その回の向き先を残す（PBI-421）
+      baseCommit: "b".repeat(40),
     });
     expect(restarted?.reviewRound).toBe(2);
     expect(restarted?.reviewPost).toBeUndefined();

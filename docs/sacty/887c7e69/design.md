@@ -1,0 +1,139 @@
+<!-- sacty task 887c7e69-7adb-4df7-93cc-078a4ab55272 の設計。sacty が作成しました。 -->
+
+# 設計：文書だけを直した後の再レビューとリスク評価を軽くする（PBI-421）
+
+## スコープ
+
+前回のレビュー・評価から先頭までの差分が文書だけのとき、PR の再レビューは観点と検証を絞り、PR を更新する前のリスク評価は前回の評価を引き継ぐ。
+「文書だけ」は、デーモンの同じ判定で A と B が見分ける。
+
+- 対象
+  - デーモンの判定（文書だけか）と、再レビューの指示の分かれ
+  - 既定のスキル `review-dispatch` に、絞る規則（規則 10）を足す
+  - `assessRisk` での引き継ぎと、`PullRequestRiskAssessed` に足す項目、投影、作業履歴の1行
+  - docs/spec・docs/user（日英）、ADR、worklog
+- 対象外
+  - 主対象が文書の PR（要求要件・設計の PR など）の再レビュー：いまの規則（`scope: docs`・規則 9）のまま
+  - 文書だけでない差分（テストだけの直しなど）の絞り、レビューの投稿の直接の受け渡し、「提案だけ」で人を待つこと（依頼の範囲の外）
+
+## 確認したいこと
+
+なし
+
+## 既定で決めたこと
+
+- 差分が空（木が同じで、コミットだけ違う）は「文書だけ」にしない（`isDocumentsOnly` の「空は false」に合わせる）。
+- `base` を持たない過去の記録（この変更の前のレビュー・評価）は、絞らない・引き継がずに 1 回評価し直す。
+- 絞りは、主対象が `code` の PR（PR の差分に文書でないものがある）の再レビューに限る。主対象が文書の PR は、すでに `scope: docs` でテストを実行せず、規則 9 を変えない（A-6）ため。
+- 判定はデーモン（拡張子＋指示の名前）と親（規則 10。主対象の種類の考え方で開いて見直す）の二段にする。スキルは拡張子だけで決められず（A-7）、規則 8・9 と同じく依頼した側が明示する形にするため。
+- 引き継ぎの記録は、新しいイベントにせず `PullRequestRiskAssessed` に項目を足し、エージェントを実行しない写しにする。投影の「最後の評価だけを持つ」と PR の説明の読み方を、そのまま使えるため。
+
+## 構成
+
+| 場所 | 変更 |
+| --- | --- |
+| `apps/daemon/src/test-files.ts` | `isChangeDocumentsOnly(paths)`：`isDocumentsOnly` が true で、エージェントへの指示（名前が `AGENTS.md`・`CLAUDE.md`・`GEMINI.md`〔大文字・小文字を問わない〕のもの、`.` で始まるディレクトリの下のもの）を含まないとき true |
+| `apps/daemon/src/repository.ts` | `isAncestor` を `RepositoryWorkspace` の公開のメソッドにする。2 つのコミットの merge-base を返す `mergeBaseOf(gitDir, a, b)` を足す（取れなければ undefined。どちらもテストの偽物にも足す） |
+| `apps/daemon/src/service.ts` | `documentsOnlySince(gitDir, from, to)`：`from` が `to` の祖先＋`changedPaths(from, to)`＋上の判定＋変わったパスの上のディレクトリに `to` の木で `SKILL.md` が無いこと（`readFile` で読む）。どこかで失敗すれば false。A と B で使う |
+| `apps/daemon/src/service.ts`（レビューの準備） | 前回の先頭と前回の `baseCommit` は、いまの `fetchCommits(head, base)` と別の呼び出しで取る。失敗しても止めず、絞らない |
+| `apps/daemon/src/prompts.ts` | `rereviewDocsOnlyLines`（明示の指示）。規則 9 の指示と同じく、規則 10 の要点（起動する観点・起動表に残す理由・`scope: docs` と `skipped` の記録・絞らない条件）も書く。当たる回だけ、`REVIEW_DISPATCH_LINES` の「文書だけでも省かない」、`reviewVerificationLines` の「差分にコードの変更があれば全部の検証を実行する」、再レビューの「検証は実行し直す」の行を、規則 10 に従う文に差し替える |
+| `review-dispatch` の SKILL.md・references | SKILL.md に規則 10 と起動表の例。規則 1・5、viewpoints.md の冒頭、pr-review.md の「再レビュー」「レビューの範囲」、verification-run.md の 0 と「再レビュー」に例外を足す |
+| `packages/core` の events・projection | `ReviewTargetResolved` と `task.reviewTarget` に `baseBranch?`（GitHub の `base.ref`。`resolveReviewTarget` が読む `baseRef`）を足す。`PreviousReviewSnapshot` と `task.previousReview` に `baseCommit?`・`baseBranch?`（その回の `reviewTarget` の値）を足す。`PullRequestRiskAssessed` の payload と `task.riskAssessment` に `base?`・`inheritedFrom?` を足す |
+| `apps/web` の labels・i18n | 引き継いだ評価の作業履歴の1行（`abc1234` の評価を `def5678` に引き継いだ） |
+
+## 処理の流れ
+
+- A（再レビューの準備。`service.ts` 11026 行付近）：次を全部満たすときだけ、`rereviewDocsOnlyLines` を足す
+  - `previousReview` があり、先頭が前回と違い、`baseBranch` が前回と今回の両方にあって同じ
+  - 前回の回に判定が付いている（`reviewVerdicts` の前回の回が `verdict` を持つ）
+  - 前回の先頭を取得でき、今回の先頭の祖先で、`documentsOnlySince` が true
+  - PR の差分の起点が前回と同じ：前回の `baseCommit` を取得でき、`mergeBaseOf(前回の先頭, 前回の baseCommit)` と `mergeBaseOf(今回の先頭, 今回の baseCommit)` が、どちらも取れて同じ
+    - ベースブランチが進んでも、PR が取り込んでいなければ同じになる。取り込んだ・向き先を替えた・履歴を書き換えたときは、起点か `baseBranch` が変わるか、取り込んだ変更が前回以降の差分に入るので絞らない
+  - PR の差分（`pr.diff`。`base...head` で merge-base から）のパスに、文書でないものがある
+  - 実装の前の文書の PR の範囲の節（規則 9、`reviewDocBeforeImplementLines`）が入らない回である
+  - 前回の行へのコメントに、`[要修正]` で文書でないパスのものが無い
+- A（規則 10。明示されたときに限る）
+  - 親は、変わったファイルを開き、「主対象の種類」の考え方で見直す。次のどれかなら、絞らずに規則 1〜7 で決める
+    - 文書でない・迷う・エージェントへの指示・コードやテストが読み込む文書がある
+    - 前回の本文の `must` が文書でないものに及ぶ
+    - 前回の本文に、見られなかった観点・止まった検証がある
+  - 起動するのは、前回の指摘に関わる観点、変えた文書の種類の正確さと安全性の観点（`user-doc` は U-1・U-5、`design-doc` は D-2・D-5）、X-1（直しと PR のほかの箇所の食い違いを依頼文に書く）。条件付き観点は変えた文書で判定し、X-2・X-3・R はいまの規則で決める
+  - ほかの必須観点は、起動表に「起動しない」と理由（前回以降の差分が文書だけ）を残す
+  - 検証は `scope: docs`。コードのテストは `summary.json` に `skipped` で、`note` に同じ理由を書く
+  - 本文の「レビューの範囲」に、前回の先頭からの差分が文書だけなので絞ったことと、起動しなかった観点を1行で書く
+  - 判定・重み・「前回の指摘」の節は変えない
+- B（`assessRisk`）
+  1. 同じコミットを評価済みなら、いまのとおり何もしない
+  2. 前回が `via: publish` で評価があり、`base` が今回と同じで、`documentsOnlySince(前回の commit, 今回)` が true なら、エージェントを実行せず、`PullRequestRiskAssessed` に `{via: publish, commit, base, assessment: 前回の写し, inheritedFrom: 前回の inheritedFrom ?? 前回の commit, costUsd: 0}` を `sacty` として足す
+  3. それ以外は評価し直し、`base` も記録する
+  - `base` は `workBaseCommit`（タスクの起点か、取り込んだベースの先頭）。ベースブランチが進むだけでは変わらず、ベースを取り込むと変わるので、A と同じ考え方になる
+  - 比べる起点は前回の記録の `commit` なので、何回か引き継いだ後でも、文書でない変更が入れば評価し直す（B-4）。`inheritedFrom` は、評価した元のコミットを指す
+
+## 影響範囲
+
+- 仕様書（日英）：tasks-and-steps.md「PR のレビューだけのタスク」（`ReviewTargetResolved`・`previousReview` に足す項目を含む）、context.md「既定のレビュー用スキル」の「`pr-review` の再レビューの規則は変えない」、risk-assessment.md「PR を作る前の評価」「記録と画面」、event-log.md の `PullRequestRiskAssessed` の行
+- ユーザードキュメント（日英）：tasks.md「PR のリスク評価」の「コミットが変われば評価し直します」に引き継ぎの例外、intake.md の検証の「再レビューでも、新しいコミットで実行し直します」と「再レビュー」に絞りの例外
+- ADR を 1 件足す（PR の再レビューを、条件を限って絞る。20261117-0359 の「PR のレビューは対象外」を、この条件で変える）。worklog を足す
+
+## テスト観点
+
+- [TV-1] 文書だけの判定が文書の拡張子のファイルだけで true になる
+  - 入力：isChangeDocumentsOnly に ["docs/a.md", "guide/b.rst"] を渡す
+  - 期待結果：true を返す
+- [TV-2] 文書でないファイル・判定できないファイル・空の差分は文書だけにしない
+  - 入力：isChangeDocumentsOnly に ["docs/a.md", "src/x.ts"]、["notes.txt"]、[] をそれぞれ渡す
+  - 期待結果：どれも false を返す
+- [TV-3] エージェントへの指示のファイルは文書だけにしない
+  - 入力：isChangeDocumentsOnly に ["AGENTS.md"]、["sub/claude.md"]、["GEMINI.md"]、[".claude/rules/a.md"] をそれぞれ渡し、documentsOnlySince に、先頭のコミットで SKILL.md を持つディレクトリの下の references/x.md だけを変えた差分を渡す
+  - 期待結果：どれも false を返す
+- [TV-4] 主対象が code の PR で前回以降が文書だけの再レビューに、絞る指示が入る
+  - 入力：PR の差分（pr.diff）に src/x.ts があり、前回の回に判定があり、baseBranch が前回と同じで、ベースブランチは前回のレビューの後に進んで baseCommit は前回と違うが mergeBaseOf の結果は前回と今回で同じで、前回の先頭が今回の先頭の祖先で、その間の変更が docs/a.md だけで、前回の行へのコメントに [要修正] で文書でないパスのものが無い再レビューを準備する
+  - 期待結果：レビューの指示に、前回と今回の先頭のコミットと変わったパスを示して規則 10 で行うことと、その要点（起動する観点・起動表の理由・scope: docs と skipped・絞らない条件）を書いた節が入り、「前回からの変更が文書だけでも、担当の起動は省かない」「差分にコードの変更があれば、主対象が文書でも全部の検証を実行する」「検証は今回のコードで実行し直す」の行が入らない
+- [TV-5] 前回以降に文書でないファイルがあれば絞らない
+  - 入力：上の再レビューで、前回以降の変更に docs/a.md と src/y.ts がある
+  - 期待結果：絞る指示の節が入らず、REVIEW_DISPATCH_LINES・reviewVerificationLines・再レビューの行がいまと同じ文になる
+- [TV-6] 前回以降の差分を確かめられなければ絞らない
+  - 入力：上の再レビューで、前回の先頭の取得（fetchCommits）が失敗する場合、前回の baseCommit の取得が失敗する場合、mergeBaseOf が undefined を返す場合、前回の先頭が今回の先頭の祖先でない（force push）場合
+  - 期待結果：どれも絞る指示の節が入らず、今回の先頭と base は取得され、レビューは止まらずにいまの指示で始まる
+- [TV-7] 前回の回の記録・PR の起点が条件に合わなければ絞らない
+  - 入力：上の再レビューで、前回の回の判定が無い（reviewVerdicts が missing）場合、previousReview の baseBranch が今回と違う（向き先を替えた）場合、mergeBaseOf の結果が前回と今回で違う場合、previousReview が baseCommit・baseBranch を持たない場合
+  - 期待結果：どれも絞る指示の節が入らない
+- [TV-8] 文書でないパスへの前回の要修正が残れば絞らない
+  - 入力：上の再レビューで、前回の行へのコメントに path が src/x.ts で本文が [要修正] で始まるものがある
+  - 期待結果：絞る指示の節が入らない
+- [TV-9] 主対象が文書の PR・規則 9 の回・初回のレビューは絞らない
+  - 入力：PR の差分が docs/a.md だけの再レビュー（ベースブランチが分岐の後に src/z.ts のコミットで進み、changedPaths(base, head) には src/z.ts が入る場合を含む）、実装の前の設計の PR の再レビューで前回以降が文書だけの場合、previousReview の無い初回のレビュー
+  - 期待結果：どれも絞る指示の節が入らず、実装の前の文書の PR の範囲の節（規則 9）の有無もいまと同じになる
+- [TV-10] 規則 10 の起動する観点・残す記録が書かれている
+  - 入力：SKILL.md の規則 10 と pr-review.md の新しい節
+  - 期待結果：依頼した側が明示したときに限ること、前回の指摘に関わる観点・変えた文書の種類の U-1 と U-5 か D-2 と D-5・X-1（直しと PR のほかの箇所の食い違い）を起動すること、ほかの必須観点を起動表に「起動しない」と理由付きで残すこと、本文の「レビューの範囲」に絞ったことと起動しなかった観点を書くこと、判定・重み・前回の指摘の書き方を変えないことが書かれている
+- [TV-11] 規則 10 の絞らない条件が書かれている
+  - 入力：SKILL.md の規則 10
+  - 期待結果：変わったファイルを開いて主対象の種類の考え方で見直し（拡張子だけで決めない）、文書でないもの・エージェントへの指示・コードやテストが読み込む文書・迷うファイルがあるとき、文書でないものに及ぶ未対応の must が本文に残るとき、前回の本文に見られなかった観点・止まった検証があるときは、絞らずに規則 1〜7 で決めることが、特定のディレクトリ名・言語・道具を挙げずに書かれている
+- [TV-12] 既存の規則の例外の書き方が規則 10 に合っている
+  - 入力：SKILL.md の規則 1・5、viewpoints.md の冒頭、pr-review.md の「再レビュー」と「レビューの範囲」の行
+  - 期待結果：どれも、pr-review の再レビューは初回と同じ規則で決め直すことに、規則 10 の例外が書かれ、規則 8・9・self-review の再レビューの文は変わっていない
+- [TV-13] 絞った再レビューの検証の決まりが書かれている
+  - 入力：verification-run.md の 0 と「再レビュー」
+  - 期待結果：規則 10 の再レビューは scope を docs にし、文書に効く検証だけを実行し、実行しないコードのテストを summary.json に skipped と note の理由（前回以降の差分が文書だけ）で残すことが書かれている
+- [TV-14] 前回の評価以降が文書だけなら引き継ぐ
+  - 入力：via publish で評価があり base が B の記録がある PR を、base B のまま、前回のコミットの子で docs/a.md だけを変えたコミットで更新する
+  - 期待結果：リスク評価のエージェントを実行せず、PullRequestRiskAssessed に commit が今回、inheritedFrom が前回のコミット、assessment が前回と同じ、costUsd が 0 の記録が足され、PR の説明に前回と同じ評価が載り、作業履歴に引き継ぎ元と先のコミットの1行が出る
+- [TV-15] 評価し直す条件では引き継がない
+  - 入力：前回以降に src/x.ts がある、前回が reason だけの記録、前回の記録が base を持たない、base が前回と違う、前回のコミットが今回の祖先でない、の各場合で PR を更新する
+  - 期待結果：どの場合もエージェントを実行して評価し直し、新しい記録に今回の base が入る
+- [TV-16] 何回か引き継いだ後でも元の評価を指し、文書でない変更で評価し直す
+  - 入力：C1 を評価し、文書だけの C2・C3 で引き継いだ後に、src/x.ts を変えた C4 で更新する
+  - 期待結果：C2・C3 の記録の inheritedFrom はどちらも C1 で、C4 ではエージェントを実行し、task.riskAssessment が C4 の新しい評価（inheritedFrom 無し）になる
+- [TV-17] 同じコミットの再試行と via review は変わらない
+  - 入力：評価済みのコミットのまま publish を再試行する場合と、PR から取り込んだレビューのタスクがレビューの工程で評価を答える場合
+  - 期待結果：前者はエージェントを実行せず記録も足さず、後者の記録に inheritedFrom が無く、いまと同じ記録になる
+- [TV-18] 仕様書が変えた振る舞いに合っている
+  - 入力：docs/spec の tasks-and-steps・context・risk-assessment・event-log の日英の版
+  - 期待結果：絞る条件と絞らない条件（向き先と PR の差分の起点が前回と同じであることを含む）、起動する観点と検証、引き継ぐ条件と評価し直す条件、base・inheritedFrom・reviewTarget と previousReview の baseBranch・previousReview の baseCommit の項目、作業履歴の1行が書かれ、「pr-review の再レビューの規則は変えない」「再レビューでも今回のコードで検証を実行し直させる」の記述が例外付きに直り、コードの場所が付いている
+- [TV-19] ユーザードキュメントが変えた振る舞いに合っている
+  - 入力：docs/user の tasks.md「PR のリスク評価」と intake.md の検証・「再レビュー」の日英の版
+  - 期待結果：前回の評価以降が文書だけなら評価し直さずに引き継ぐこと（作業履歴に出ること）と、主対象がコードの PR で前回のレビュー以降が文書だけの再レビューは観点を絞りコードのテストを実行しないことが、絞らない・評価し直す条件と合わせて書かれている
+- [TV-20] フォーマッター・リンター・全テストが通る
+  - 入力：変更後のリポジトリで npm run lint・npm run typecheck・npm test を実行する
+  - 期待結果：どれも終了コード 0 で終わる

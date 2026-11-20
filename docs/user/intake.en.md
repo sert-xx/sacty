@@ -101,7 +101,7 @@ This is because the review runs the project's verification such as tests (see [C
 
 Verification runs as follows.
 
-- In a re-review, the agent runs it again on the new commit.
+- In a re-review, the agent runs it again on the new commit. However, in a re-review of a PR whose main target is code, when the changes since the previous review are documents only, only the checks that apply to documents are run (the code tests are not run; see [Re-review](#re-review)).
 - For verification it could not run (such as checks that need services like a DB, or secrets), the agent writes the command and the reason in the review body.
 - When the PR's main target is a document (a design document, requirements, an ADR, or user documentation) and it has no code changes, the agent runs only the checks that apply to the changed documents.
   - Those are the checks the repository has, such as a document formatter, a markdown lint, and a link check.
@@ -222,6 +222,10 @@ If you re-review such a task with "Review again and post to the PR", it is watch
 A re-review reviews the latest commit of the PR again and posts the result.
 It says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review; on a PR sacty created, the [replies to your comments](tasks.en.md#replies-to-your-comments) that sacty posted with the same GitHub account as the PR author are read as the author's replies too).
 When a previous `[要修正]` is not fixed but turns out, on checking again, to be of `[提案]` weight, it is not counted as must-fix, and the summary says that the weight was reconsidered. This finding stays in the body only in the review of the round in which the weight was reconsidered. When it turns out to be of must-fix weight in a later round, it is raised as must-fix. A finding that the acceptance criteria or requirements are not met does not have its weight reconsidered and stays must-fix.
+
+When the changes from the head commit reviewed last time to the current head commit are documents only (documents such as `.md` files, not including instructions to agents, files under a directory that starts with `.`, or files under a skill's directory) and the PR's main target is code, the re-review narrows the viewpoints it starts and the verification it runs.
+It starts only the viewpoints concerning the previous findings, the accuracy and safety of the changed documents, and the mismatch between the fix and the rest of the PR, and runs only the checks that apply to documents. The viewpoints that were not started and the code tests that were not run are written in the "scope of the review" line of the review body.
+When even one file that is not a document is included, when the difference from last time or the start of the PR diff (the target branch and the point where the PR branched from it) cannot be confirmed, when there is no previous verdict, when a previous `[要修正]` reaches a file that is not a document, or when there is a file that is unclear as to whether it is a document, the re-review is not narrowed and uses all the viewpoints and checks. How the verdict and the weight of findings are decided does not change. Even a narrowed re-review gives "changes required" when it finds a `[要修正]`.
 
 There are four ways to start a re-review.
 

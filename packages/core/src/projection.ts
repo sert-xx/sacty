@@ -845,6 +845,10 @@ export type Task = {
   riskAssessment?: {
     via: "publish" | "review";
     commit?: string;
+    /** 評価したときの PR の差分の起点（PBI-421）。 */
+    base?: string;
+    /** 前回の評価を引き継いだとき、評価した元のコミット（PBI-421）。 */
+    inheritedFrom?: string;
     assessment?: RiskAssessment;
     reason?: DaemonText;
     at: string;
@@ -2231,6 +2235,8 @@ export function applyEvent(
       task.riskAssessment = {
         via: event.payload.via,
         ...(event.payload.commit ? { commit: event.payload.commit } : {}),
+        ...(event.payload.base ? { base: event.payload.base } : {}),
+        ...(event.payload.inheritedFrom ? { inheritedFrom: event.payload.inheritedFrom } : {}),
         ...(event.payload.assessment ? { assessment: event.payload.assessment } : {}),
         ...(event.payload.reason ? { reason: event.payload.reason } : {}),
         at: event.at,
@@ -2904,6 +2910,8 @@ export function applyEvent(
           headCommit: task.reviewTarget.headCommit,
           body: task.outputs.review ?? "",
           comments: task.reviewComments,
+          ...(task.reviewTarget.baseCommit ? { baseCommit: task.reviewTarget.baseCommit } : {}),
+          ...(task.reviewTarget.baseBranch ? { baseBranch: task.reviewTarget.baseBranch } : {}),
         };
       }
       task.steps = task.steps.map((s) =>

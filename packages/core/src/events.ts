@@ -724,6 +724,12 @@ const PreviousReviewSnapshot = z.object({
   headCommit: z.string(),
   body: z.string(),
   comments: z.array(ReviewComment),
+  /**
+   * その回の PR の向き先のコミット（reviewTarget.baseCommit）と向き先のブランチ（reviewTarget.baseBranch。PBI-421）。再レビューが、
+   * 前回から PR の差分の起点が変わっていないことを確かめるために持つ。無い記録（それより前の版）は、確かめられないので絞らない。
+   */
+  baseCommit: z.string().min(1).optional(),
+  baseBranch: z.string().min(1).optional(),
 });
 
 const TaskCreated = z.object({
@@ -1766,6 +1772,16 @@ const PullRequestRiskAssessed = z.object({
   payload: z.object({
     via: z.enum(["publish", "review"]),
     commit: z.string().min(1).optional(),
+    /**
+     * 評価したときの PR の差分の起点（workBaseCommit。タスクの起点か、取り込んだベースの先頭。PBI-421）。前回の評価を引き継げるかを、
+     * 起点が同じかで見分けるために持つ（publish だけ。無い記録は引き継がない）。
+     */
+    base: z.string().min(1).optional(),
+    /**
+     * 前回の評価を、エージェントを実行せずに引き継いだ記録の、評価した元のコミット（PBI-421）。assessment は、このコミットで
+     * 評価したものの写し。引き継ぎを重ねても、評価した元のコミットを指す。費用は 0。
+     */
+    inheritedFrom: z.string().min(1).optional(),
     assessment: RiskAssessment.optional(),
     reason: DaemonText.optional(),
     agentId: z.string().optional(),
@@ -3266,6 +3282,11 @@ const ReviewTargetResolved = z.object({
      * それより前の記録には無い。
      */
     headBranch: z.string().min(1).optional(),
+    /**
+     * PR の向き先のブランチ（base.ref の名前。PBI-421）。再レビューが、向き先を替えていないことを確かめるために記録する。読めなかった
+     * とき・それより前の記録には無い。
+     */
+    baseBranch: z.string().min(1).optional(),
   }),
 });
 

@@ -752,6 +752,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.via,
         event.payload.assessment?.level,
         event.payload.reason ? l.text(event.payload.reason) : "",
+        event.payload.inheritedFrom?.slice(0, 7) ?? "",
+        event.payload.commit?.slice(0, 7) ?? "",
       );
     case "TestsRun":
       return e.TestsRun(

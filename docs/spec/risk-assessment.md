@@ -152,6 +152,12 @@ sacty は、PR の内容のリスクを AI に評価させ、段階・根拠・�
 
 - オーケストレーターのエージェントを、実装後のコードの使い捨ての写しで実行する。指示には、差分の読み方（起点のコミットと出すコミット）、段階の基準、タスクの題と内容、承認済みの要求要件、実装のエージェントの説明を入れる（`buildRiskAssessmentPrompt`）。
 - 同じコミットを評価済みなら、評価し直さない（再開・同じ提出の再試行）。評価できなかったコミットは、次の機会に評価し直す。
+- 前回の評価（`via` が `publish` で、評価できたもの）のコミットから今回のコミットまでの差分が文書だけ（`.` で始まるディレクトリの下・エージェントへの指示・名前が `SKILL.md` のもの・今回の木で `SKILL.md` があるディレクトリの下は文書に数えない。変わったパスの上のディレクトリが 200 件を超えるときも、確かめられないものとして評価し直す）で、PR の差分の起点（`base`）が前回と同じなら、エージェントを実行せず、前回の評価を引き継ぐ（PBI-421）。
+  - 「文書だけ」は、再レビューの絞りと同じ判定（`documentsOnlySince`。前回のコミットが今回の祖先で、変わったパスの拡張子が文書で、エージェントへの指示（`AGENTS.md`・`CLAUDE.md`・`GEMINI.md`・`SKILL.md` の名前のもの、`.` で始まるディレクトリの下のもの）・今回の木で `SKILL.md` があるディレクトリの下のものを含まない。差分が空のとき、パスに制御文字があるときは文書だけにしない）。
+  - `base` は、評価したときのタスクの起点か、取り込んだベースブランチの先頭（`workBaseCommit`）。ベースブランチが進むだけでは変わらず、ベースを取り込むと変わる。
+  - 引き継ぐと、`PullRequestRiskAssessed` に、今回のコミット・今回の `base`・前回の評価の写し・評価した元のコミット（`inheritedFrom`。引き継ぎを重ねても、評価した元のコミット）を、費用 0 で記録する。PR の説明には、前回の評価がそのまま載る。
+  - 次のどれかなら、今までどおり評価し直す：差分に文書でないものがある、前回の評価が無い・評価できなかった（理由だけの記録）、前回の記録に `base` が無い、`base` が前回と違う、差分を確かめられない（前回のコミットが今回の祖先でない・読めないなど）。前回のコミットとの比較なので、引き継ぎを重ねた後でも、文書でない変更が入った提出では、必ず評価し直す。
+  - 評価の段階は、人がレビューする深さの目安で、引き継ぎはその実行を省くだけ（レビューの省略・自動のマージ・工程の変更には使わない）。エージェントへの指示と判定した名前に当たらない指示の文書・コードやテストが読み込む文書は、引き継ぎに入ることがある。
 - 評価できなくても、PR の作成・更新は止めない。評価できなかった理由を記録し、本文にもそう書く。評価できないのは次のとき。
   - 予算の上限に達している（エージェントを実行しない。`pr.riskBudget`）
   - エージェントの実行に失敗した（`pr.riskFailed`）
@@ -160,7 +166,7 @@ sacty は、PR の内容のリスクを AI に評価させ、段階・根拠・�
 - 評価は、デーモンの起動のときに有効にする（`ServiceDeps` の `riskAssessment`）。有効にしていないサービス（テスト）は評価しない。
 - 結果は `PullRequestRiskAssessed` に記録する。費用は、オーケストレーターの行に数える（[作業履歴](event-log.md#費用)）。
 
-コード: `apps/daemon/src/service.ts`（`assessRisk`・`publish`）、`apps/daemon/src/risk-assessment.ts`（`assessPullRequestRisk`・`buildRiskAssessmentPrompt`）、`apps/daemon/src/main.ts`
+コード: `apps/daemon/src/service.ts`（`assessRisk`・`documentsOnlySince`・`publish`）、`apps/daemon/src/test-files.ts`（`isChangeDocumentsOnly`）、`apps/daemon/src/risk-assessment.ts`（`assessPullRequestRisk`・`buildRiskAssessmentPrompt`）、`apps/daemon/src/main.ts`
 
 ## レビューの工程の評価
 
@@ -195,8 +201,8 @@ PR の説明と、レビューのコメントには、同じ形の節「リス�
 
 ## 記録と画面
 
-- `PullRequestRiskAssessed` は、評価した場面（`via`）、評価したコミット（`commit`）、評価（`assessment`）か評価できなかった理由（`reason`）を持つ。
+- `PullRequestRiskAssessed` は、評価した場面（`via`）、評価したコミット（`commit`）、評価（`assessment`）か評価できなかった理由（`reason`）を持つ。`via` が `publish` の記録は、評価したときの PR の差分の起点（`base`）も持つ。前回の評価を引き継いだ記録は、評価した元のコミット（`inheritedFrom`）も持つ（エージェントも費用も無い）。
 - タスクは、最後の評価だけを持つ（`Task.riskAssessment`）。評価できなかった記録は、前の評価を残さない。
-- 画面は、タスクの詳細の概要に「PR のリスク評価」の欄を出す（評価の記録があるタスクだけ）。合図の名前には重さを添え、依存の版の更新があれば上げ幅を出す。作業履歴には、評価した場面と段階（評価できなければ理由）を1行で出す。
+- 画面は、タスクの詳細の概要に「PR のリスク評価」の欄を出す（評価の記録があるタスクだけ）。合図の名前には重さを添え、依存の版の更新があれば上げ幅を出す。作業履歴には、評価した場面と段階（評価できなければ理由）を1行で出す。引き継いだ評価は、どのコミットの評価をどのコミットに引き継いだかを1行で出す。
 
 コード: `packages/core/src/projection.ts`（`applyEvent`）、`apps/web/src/components/risk-assessment.tsx`（`RiskAssessmentCard`）
