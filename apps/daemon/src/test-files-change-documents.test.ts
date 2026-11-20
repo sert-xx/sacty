@@ -19,6 +19,9 @@ describe("isChangeDocumentsOnly", () => {
     expect(isChangeDocumentsOnly(["sub/claude.md"])).toBe(false);
     expect(isChangeDocumentsOnly(["GEMINI.md"])).toBe(false);
     expect(isChangeDocumentsOnly([".claude/rules/a.md"])).toBe(false);
+    // スキルの本体は、消すだけの差分でも指示の変更として扱う
+    expect(isChangeDocumentsOnly(["skills/x/SKILL.md"])).toBe(false);
+    expect(isChangeDocumentsOnly(["skills/x/skill.md", "docs/a.md"])).toBe(false);
     // 名前の一部に含むだけのものは、指示ではない
     expect(isChangeDocumentsOnly(["docs/agents-guide.md"])).toBe(true);
   });

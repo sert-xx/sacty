@@ -433,6 +433,7 @@ import {
   pullRequestInText,
   type RawExportPlan,
   type RawServices,
+  REREVIEW_DOCS_ONLY_PATHS_MAX,
   type RereviewDocsOnly,
   type ReviewCi,
   type ReviewDeferrals,
@@ -558,6 +559,15 @@ const REVIEW_DIFF_FILE = "pr.diff";
 
 /** 前回からの差分が文書だけかを確かめるとき、見るディレクトリの数の上限（PBI-421）。 */
 const DOCUMENTS_ONLY_DIRS_MAX = 200;
+
+/** 制御文字（改行・タブなど）を含むか。 */
+function hasControlCharacter(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
 
 /**
  * PR の差分（git diff の出力）の、変わったファイルのパス（PBI-421）。名前の変更は変更元と変更先の両方。名前を引用符で囲んだ
@@ -7461,6 +7471,10 @@ export class TaskService {
                     url: latest.reviewPost.url,
                     at: latest.reviewPost.at,
                     headCommit: latest.reviewTarget.headCommit,
+                    baseCommit: latest.reviewTarget.baseCommit,
+                    ...(latest.reviewTarget.baseBranch
+                      ? { baseBranch: latest.reviewTarget.baseBranch }
+                      : {}),
                     body: latest.outputs.review ?? "",
                     comments: latest.reviewComments,
                   },
@@ -12927,6 +12941,8 @@ export class TaskService {
       if (!(await this.deps.repos.isAncestor(gitDir, from, to))) return undefined;
       const paths = await this.deps.repos.changedPaths(gitDir, from, to);
       if (!isChangeDocumentsOnly(paths)) return undefined;
+      // 改行などの制御文字を含む名前は、指示の文や記録に紛れ込ませられるので、確かめられないものとして扱う
+      if (paths.some(hasControlCharacter)) return undefined;
       // スキルのディレクトリの下の文書（references など）は、スキルの振る舞いを変える
       const dirs = new Set<string>([""]);
       for (const path of paths) {
@@ -12943,7 +12959,10 @@ export class TaskService {
         if (skill !== undefined) return undefined;
       }
       return paths;
-    } catch {
+    } catch (error) {
+      console.warn(
+        `[daemon] 前回（${from.slice(0, 7)}）から ${to.slice(0, 7)} までの差分が文書だけかを確かめられませんでした。文書だけとは見なしません：${errorText(error)}`,
+      );
       return undefined;
     }
   }
@@ -12978,13 +12997,27 @@ export class TaskService {
     if (previous.comments.some((c) => c.body.startsWith(MUST_TAG) && !isDocumentsOnly([c.path]))) {
       return undefined;
     }
+    // 前回が修正が必要だったときは、それより前の回の行へのコメントの要修正も見る（未対応の指摘は、本文だけに持ち越される）
+    const verdictOfPrevious = task.reviewVerdicts?.find((v) => v.round === previous.round)?.verdict;
+    if (
+      verdictOfPrevious === "changes_required" &&
+      (task.earlierReviews ?? []).some((r) =>
+        r.comments.some((c) => c.body.startsWith(MUST_TAG) && !isDocumentsOnly([c.path])),
+      )
+    ) {
+      return undefined;
+    }
+    // 主対象が code の PR に限る。文書の種類が決められない（読めないパス・文書でない拡張子）ときも、文書だけの PR とは区別できないので絞らない
     const prPaths = diffPaths(prDiff);
-    if (prPaths.length === 0 || isDocumentsOnly(prPaths)) return undefined;
+    if (prPaths.length === 0 || prPaths.includes("unreadable-path") || isDocumentsOnly(prPaths)) {
+      return undefined;
+    }
     try {
       // 前回の先頭と前回の起点は、今回の取得とは別に取る（取れなくても、レビューは止めない）
       await this.deps.repos.fetchCommits(gitDir, [previous.headCommit, previous.baseCommit], auth);
       const paths = await this.documentsOnlySince(gitDir, previous.headCommit, target.headCommit);
-      if (!paths) return undefined;
+      // 変わったパスの一覧が指示に載せきれないときは、親が残りを開けないので絞らない
+      if (!paths || paths.length > REREVIEW_DOCS_ONLY_PATHS_MAX) return undefined;
       const before = await this.deps.repos.mergeBaseOf(
         gitDir,
         previous.headCommit,
@@ -12993,7 +13026,10 @@ export class TaskService {
       const now = await this.deps.repos.mergeBaseOf(gitDir, target.headCommit, target.baseCommit);
       if (!before || !now || before !== now) return undefined;
       return { previousCommit: previous.headCommit, paths };
-    } catch {
+    } catch (error) {
+      console.warn(
+        `[daemon] レビューのタスク ${task.id} で、前回の先頭からの差分が文書だけかを確かめられませんでした。絞らずにレビューします：${errorText(error)}`,
+      );
       return undefined;
     }
   }

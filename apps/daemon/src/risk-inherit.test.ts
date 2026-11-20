@@ -217,6 +217,28 @@ describe("前回の評価の引き継ぎ（PBI-421）", () => {
         },
       },
       {
+        name: "スキルを消すだけの差分（名前が SKILL.md）",
+        prepare: (s) => {
+          s.repos.changedBetween[`${C1}..${C2}`] = [
+            "skills/x/SKILL.md",
+            "skills/x/references/a.md",
+          ];
+        },
+      },
+      {
+        name: "パスに改行がある",
+        prepare: (s) => {
+          s.repos.changedBetween[`${C1}..${C2}`] = ["docs/a\n- 省く.md"];
+        },
+      },
+      {
+        name: "祖先かどうかを確かめられない（例外）",
+        prepare: (s) => {
+          s.repos.changedBetween[`${C1}..${C2}`] = ["docs/a.md"];
+          s.repos.ancestorFail = "unreachable";
+        },
+      },
+      {
         name: "差分が空",
         prepare: (s) => {
           s.repos.changedBetween[`${C1}..${C2}`] = [];
@@ -295,6 +317,39 @@ describe("前回の評価の引き継ぎ（PBI-421）", () => {
     expect(all[3]?.inheritedFrom).toBeUndefined();
     expect(latest().riskAssessment).toMatchObject({ commit: C4, assessment: { level: "low" } });
     expect(latest().riskAssessment?.inheritedFrom).toBeUndefined();
+  });
+
+  it("PR から取り込んだレビューのタスクの評価（via が review）は、引き継ぎの対象にせず、評価し直す", async () => {
+    const { executor, repos, assess, latest, risks, append } = setup([completed(answer("medium"))]);
+    append(latest(), [
+      {
+        actor: "agent",
+        event: {
+          type: "PullRequestRiskAssessed",
+          payload: {
+            via: "review",
+            commit: C1,
+            assessment: {
+              level: "low",
+              signals: [],
+              change: "変更",
+              scope: "範囲",
+              reversibility: "戻せる",
+              verification: "テスト",
+              focus: [],
+            },
+          },
+        },
+      },
+    ]);
+    repos.changedBetween[`${C1}..${C2}`] = ["docs/a.md"];
+    await assess(C2);
+    expect(executor.prompts).toHaveLength(1);
+    const [review, publish] = payloads(risks());
+    expect(review?.inheritedFrom).toBeUndefined();
+    expect(review?.base).toBeUndefined();
+    expect(publish).toMatchObject({ commit: C2, agentId: "stub" });
+    expect(publish?.inheritedFrom).toBeUndefined();
   });
 
   it("同じコミットの再試行は、評価も記録もしない", async () => {

@@ -47,11 +47,11 @@ export function isDocumentsOnly(paths: readonly string[]): boolean {
 }
 
 /** エージェントへの指示のファイルの名前（大文字・小文字は問わない）。 */
-const AGENT_INSTRUCTION_NAMES = new Set(["agents.md", "claude.md", "gemini.md"]);
+const AGENT_INSTRUCTION_NAMES = new Set(["agents.md", "claude.md", "gemini.md", "skill.md"]);
 
 /**
  * 前回の評価・レビュー以降の差分が、文書だけか（PBI-421）。再レビューの絞りと、リスク評価の引き継ぎの判定。`isDocumentsOnly` が
- * true で、エージェントへの指示（名前が AGENTS.md・CLAUDE.md・GEMINI.md のもの、`.` で始まるディレクトリの下のもの）を含まないとき
+ * true で、エージェントへの指示（名前が AGENTS.md・CLAUDE.md・GEMINI.md・SKILL.md のもの、`.` で始まるディレクトリの下のもの）を含まないとき
  * だけ true。指示の文書は、拡張子では文書でも、エージェントの振る舞いを変えるため。差分が空のときも false。
  */
 export function isChangeDocumentsOnly(paths: readonly string[]): boolean {
