@@ -11,7 +11,19 @@ import { useMessages } from "@/i18n/client";
 export function AiReviewNotice({ task }: { task: Task }) {
   const { task: m } = useMessages();
   const state = task.aiReview;
-  if (!state) return null;
+  if (!state) {
+    if (!task.pullRequest?.suggestionsLeft) return null;
+    return (
+      <section
+        data-testid="ai-review-suggestions-left"
+        className="flex flex-col gap-1.5 rounded-xl border border-accent-line px-5 py-4"
+      >
+        <p role="status" className="text-sm">
+          <WithHint hint={m.aiReview.suggestionsLeftHint}>{m.aiReview.suggestionsLeft}</WithHint>
+        </p>
+      </section>
+    );
+  }
   const head = state.head.slice(0, 7);
   const url = state.url && /^https:\/\/[^\s"'<>]+$/.test(state.url) ? state.url : undefined;
   return (
@@ -30,6 +42,11 @@ export function AiReviewNotice({ task }: { task: Task }) {
       <p role="status" className="text-sm">
         {m.aiReview[state.status](head)}
       </p>
+      {task.pullRequest?.suggestionsLeft && (
+        <p data-testid="ai-review-suggestions-left" className="text-sm">
+          <WithHint hint={m.aiReview.suggestionsLeftHint}>{m.aiReview.suggestionsLeft}</WithHint>
+        </p>
+      )}
       {state.status !== "attached" && (
         <p className="text-xs text-muted-foreground">{m.aiReview.help}</p>
       )}

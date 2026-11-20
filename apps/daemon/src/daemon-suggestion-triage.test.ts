@@ -592,40 +592,146 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     activity.close();
   });
 
-  it("判定し直しの回が提案を残し、それもすべて対応しない：理由を返信し、2 回目の判定し直しは始めず、提案が残った旨で一時停止する", async () => {
+  /** 判定し直しの回が提案を残し、それもすべて対応しないとして、返信の直前まで進める。 */
+  async function leftSuggestions() {
     const made = await declinedAll([
       verdictOut("suggestions", body(finding("提案", "別の提案"))),
       triage(["S1", "decline", "同じ原因の別の現れ"]),
     ]);
-    const { activity, service, pulls, id, childId } = made;
+    const { service, pulls, childId } = made;
     await service.checkPullRequests();
     await service.checkPullRequests();
     expect(restarts(service, childId)).toHaveLength(1);
     await runReview(service, childId);
     pulls.feedbackBy[7] = [...(pulls.feedbackBy[7] ?? []), posted(pulls, 1)];
     await service.checkPullRequests();
+    return made;
+  }
+
+  it("判定し直しの回が提案を残し、それもすべて対応しない：理由を返信し、一時停止せずにドラフトを外し、判定し直しも選り分けも増やさない", async () => {
+    const made = await leftSuggestions();
+    const { activity, service, pulls, id, childId } = made;
     // 2 回目の選り分け：すべて対応しない。判定し直しは求めず、stop を記録する
     expect(triaged(service, id)).toHaveLength(2);
     expect(triaged(service, id)[1]?.payload.stop).toBe(true);
     expect(count(service, id, "ReviewRejudgeRequested")).toBe(1);
-    // 返信が先（承認待ちのまま）。返信の後に、一時停止する
+    // 返信が済むまでは、ドラフトを外さない
     expect(taskOf(service, id).status).toBe("awaiting_approval");
+    await service.checkPullRequests();
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(0);
+    expect(pulls.drafts[7]).toBe(true);
     await service.runNext(id);
     expect(replies(pulls)).toHaveLength(2);
     expect(replies(pulls)[1]?.body).toContain("同じ原因の別の現れ");
     await service.checkPullRequests();
+    await service.checkPullRequests();
+    // 一時停止せず、ドラフトを外して人の承認待ち。判定は「提案あり」のまま
     const task = taskOf(service, id);
-    expect(task.status).toBe("paused");
-    expect(task.pausedMessage).toEqual({ code: "triage.left", params: { number: 7 } });
-    expect(renderMessage(task.pausedMessage as never, "ja")).toContain("提案が残り");
-    // 往復は続かない：判定し直しは 1 回のまま。再開して確認しても、もう一度は止めない・始めない
-    service.resume(id, {});
+    expect(task.status).toBe("awaiting_approval");
+    expect(task.pausedReason).toBeUndefined();
+    expect(count(service, id, "TaskPaused")).toBe(0);
+    expect(pulls.drafts[7]).toBe(false);
+    expect(task.pullRequest?.draft).toBeUndefined();
+    expect(task.pullRequest?.suggestionsLeft).toBe(true);
+    expect(task.triageStop).toBeUndefined();
+    const ready = service.get(id)?.activity.filter((e) => e.type === "PullRequestMarkedReady");
+    expect(ready).toHaveLength(1);
+    expect(ready?.[0]?.payload).toMatchObject({ number: 7, reason: "suggestions_declined" });
+    expect(taskOf(service, childId).reviewVerdicts?.at(-1)?.verdict).toBe("suggestions");
+    expect(taskOf(service, childId).riskAssessment).toBeUndefined();
+    // 往復は続かない：判定し直しも選り分けも増えず、ドラフトに戻さない
+    const changes = pulls.draftChanges.length;
     await service.checkPullRequests();
     await service.checkPullRequests();
     expect(restarts(service, childId)).toHaveLength(1);
-    expect(taskOf(service, id).status).toBe("awaiting_approval");
+    expect(count(service, id, "SuggestionsTriaged")).toBe(2);
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(1);
+    expect(pulls.draftChanges).toHaveLength(changes);
     expect(count(service, id, "ChangesRequested")).toBe(0);
     activity.close();
+  });
+
+  it("提案が残ったままドラフトを外した後に、人が要対応とコメントすると、人の指摘として取り込まれ、直しに入る", async () => {
+    const made = await leftSuggestions();
+    const { activity, service, pulls, id } = made;
+    await service.runNext(id);
+    await service.checkPullRequests();
+    expect(pulls.drafts[7]).toBe(false);
+    pulls.feedbackBy[7] = [
+      ...(pulls.feedbackBy[7] ?? []),
+      item("comment:9", { body: "別の提案も直してください（要対応）" }),
+    ];
+    await service.checkPullRequests();
+    expect(count(service, id, "ChangesRequested")).toBe(1);
+    expect(taskOf(service, id).status).toBe("queued");
+    expect(count(service, id, "SuggestionsTriaged")).toBe(2);
+    activity.close();
+  });
+
+  it("提案が残ったままドラフトを外した後に、PR の先頭が進むと、今までどおり再レビューが始まり、ドラフトに戻る", async () => {
+    const made = await leftSuggestions();
+    const { activity, service, pulls, id, childId } = made;
+    await service.runNext(id);
+    await service.checkPullRequests();
+    expect(pulls.drafts[7]).toBe(false);
+    const head = "n".repeat(40);
+    pulls.prInfo = { ...pulls.prInfo, headSha: head };
+    pulls.states[7] = { state: "open", headSha: head, draft: false };
+    await service.checkPullRequests();
+    const updated = service
+      .get(childId)
+      ?.activity.filter((e) => e.type === "ReviewRestarted" && e.payload.reason === "updated");
+    expect(updated).toHaveLength(1);
+    expect(pulls.drafts[7]).toBe(true);
+    activity.close();
+  });
+
+  it("以前の版が提案が残った旨で一時停止させたタスク（stop のある記録と triage.left の一時停止）は、再開すると承認待ちに戻り、ドラフトが外れる（もう一度止めない）", async () => {
+    const made = await leftSuggestions();
+    const { activity, service, pulls, id, childId } = made;
+    await service.runNext(id);
+    // 以前の版の動き：返信の後に、triage.left で一時停止した
+    await service.pause(id);
+    expect(taskOf(service, id).status).toBe("paused");
+    expect(taskOf(service, id).triageStop).toMatchObject({ number: 7 });
+    expect(renderMessage({ code: "triage.left", params: { number: 7 } }, "ja")).toContain(
+      "提案が残り",
+    );
+    await service.checkPullRequests();
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(0);
+    service.resume(id, {});
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    expect(taskOf(service, id).status).toBe("awaiting_approval");
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(1);
+    expect(pulls.drafts[7]).toBe(false);
+    expect(restarts(service, childId)).toHaveLength(1);
+    expect(count(service, id, "ChangesRequested")).toBe(0);
+    activity.close();
+  });
+
+  it("デーモンを起動し直しても、提案が残ったままドラフトを外す動きは、重ならず・抜けずに続く（返信の後・ドラフトを外す前を含む）", async () => {
+    const made = await leftSuggestions();
+    const { pulls, repos, projects, id, childId } = made;
+    await made.service.runNext(id);
+    made.activity.close();
+    // 返信の後・ドラフトを外す前：外す
+    const again = make([], { pulls, repos, projects });
+    await again.service.checkPullRequests();
+    await again.service.checkPullRequests();
+    expect(count(again.service, id, "PullRequestMarkedReady")).toBe(1);
+    expect(pulls.drafts[7]).toBe(false);
+    again.activity.close();
+    // ドラフトを外した後：重ねて外さず、戻さず、判定し直しも始めない
+    const changes = pulls.draftChanges.length;
+    const third = make([], { pulls, repos, projects });
+    await third.service.checkPullRequests();
+    await third.service.checkPullRequests();
+    expect(count(third.service, id, "PullRequestMarkedReady")).toBe(1);
+    expect(pulls.draftChanges).toHaveLength(changes);
+    expect(restarts(third.service, childId)).toHaveLength(1);
+    expect(taskOf(third.service, id).status).toBe("awaiting_approval");
+    third.activity.close();
   });
 
   it("デーモンを起動し直しても、選り分けの実行・返信・判定し直しは、重ならず・抜けずに続く", async () => {

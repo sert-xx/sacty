@@ -14387,7 +14387,13 @@ export class TaskService {
     const cleared = now.child.reviewTarget?.headCommit === target && reviewCleared(now.child);
     // 提出のときにドラフトに戻せなかった PR は、指摘なしになるまで、確認のたびにドラフトに戻す（レビューの途中も。レビュー
     // していないコミットをマージできるままにしない。PBI-331）
-    if (awaiting && !cleared) {
+    // （判定し直した回の提案がすべて対応しないとされ、ドラフトを外す先頭は、戻さずに外す。PBI-440）
+    const leftDue =
+      awaiting &&
+      !cleared &&
+      now.child.reviewTarget?.headCommit === target &&
+      this.triageStopDue(now.parent);
+    if (awaiting && !cleared && !leftDue) {
       await this.redraftAwaiting(now.parent, repo, gate.number);
       now = resolve(expected);
       if (!now?.child) return;
@@ -14401,19 +14407,9 @@ export class TaskService {
       if (awaiting && cleared) await this.markReady(parent, child, target);
       // 親が、その先頭の指摘のすべてを断って提出した：断った理由の返信が済んだら、同じ先頭を 1 回だけ判定し直す（PBI-357）
       else if (awaiting && this.triageStopDue(parent)) {
-        // 判定し直した回の提案もすべて対応しないとした：理由の返信が済んだので、AI どうしの往復を続けずに止める（PBI-436）
-        const number = gatePullRequest(parent)?.number;
-        if (number !== undefined) {
-          this.append(parent, [
-            {
-              actor: "sacty",
-              event: {
-                type: "TaskPaused",
-                payload: { reason: "unchanged", message: message("triage.left", { number }) },
-              },
-            },
-          ]);
-        }
+        // 判定し直した回の提案もすべて対応しないとした：理由の返信が済んだので、一時停止せずに、判定は「提案あり」のまま
+        // ドラフトを外して人の承認を待つ（PBI-440。AI どうしの往復は、ここで止まる）
+        await this.markReady(parent, child, target, "suggestions_declined");
       } else if (awaiting && this.rejudgeDue(parent, child, target)) {
         try {
           this.append(child, [
@@ -14724,7 +14720,7 @@ export class TaskService {
 
   /**
    * 直しに入る前の選り分けが、判定し直した回の提案のすべてを対応しないとして、返信を済ませたか（PBI-436）。返信が済んでから、
-   * 一時停止して人が選ぶ（同じ先頭の判定のし直しは 1 回だけなので、ほかに往復を止める所が無い）。
+   * 一時停止せずにドラフトを外して人の承認を待つ（PBI-440。同じ先頭の判定のし直しは 1 回だけなので、ほかに往復を止める所が無い）。
    */
   private triageStopDue(parent: Task): boolean {
     const stop = parent.triageStop;
@@ -14906,6 +14902,8 @@ export class TaskService {
     if (pr.awaitingReview) return task.stack ? undefined : true;
     if (pr.reviewedCommit === undefined || !head) return undefined;
     const child = this.reviewerOf(task, repo, pr.number);
+    // 提案が残ったまま外した先頭は、ドラフトに戻さない（PBI-440）
+    if (pr.suggestionsLeft && child?.reviewTarget?.headCommit === head) return false;
     return !(child && child.reviewTarget?.headCommit === head && reviewCleared(child));
   }
 
@@ -15105,7 +15103,12 @@ export class TaskService {
    * - 外す要求の答えを受け取れなかった（GitHub では外れているかもしれない。時間切れも。外す要求が後から届くかもしれないので、
    *   指摘なしで外すまで確認のたびに戻す）
    */
-  private async markReady(parent: Task, child: Task, commit: string): Promise<void> {
+  private async markReady(
+    parent: Task,
+    child: Task,
+    commit: string,
+    reason?: "suggestions_declined",
+  ): Promise<void> {
     const pr = parent.pullRequest;
     if (
       parent.status !== "awaiting_approval" ||
@@ -15193,7 +15196,10 @@ export class TaskService {
         reviewer.reviewTarget?.headCommit !== commit ||
         reviewer.reviewRound !== child.reviewRound ||
         reviewer.reviewVerdicts?.length !== child.reviewVerdicts?.length ||
-        !reviewCleared(reviewer)
+        (reason === "suggestions_declined"
+          ? reviewer.reviewVerdicts?.at(-1)?.verdict !== "suggestions" ||
+            !this.triageStopDue(current)
+          : !reviewCleared(reviewer))
       ) {
         await redraft();
         return;
@@ -15203,7 +15209,7 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "PullRequestMarkedReady",
-            payload: { number, commit, reviewTaskId: child.id },
+            payload: { number, commit, reviewTaskId: child.id, ...(reason ? { reason } : {}) },
           },
         },
       ]);

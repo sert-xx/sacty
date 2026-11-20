@@ -4,7 +4,7 @@
 - タスク: PBI-436
 - PR: なし
 - ブランチ: sacty/task-（タスク ID の先頭 8 文字）
-- 関係する ADR: [AI のレビューの提案に対応するかどうかは、直しに入る前に AI が PR の範囲で判断し、対応しない判断は AI で終える](../adr/20261120-2109-triage-ai-review-suggestions-before-rework.md)
+- 関係する ADR: [AI のレビューの提案に対応するかどうかは、直しに入る前に AI が PR の範囲で判断し、対応しない判断は AI で終える](../adr/20261120-2109-superseded-triage-ai-review-suggestions-before-rework.md)
 
 ## 目的
 
@@ -32,7 +32,7 @@ sacty が作った実装の PR で、AI のレビューの提案だけの往復�
   - `docs/user/intake.md`：「指摘が元のタスクに届く流れ」に、提案は直す前に AI が選り分けること、対応しない提案は理由を返信すること、直させたいときは PR にコメントすることを足した。
   - 両方のページの先頭の HTML コメントに、`apps/daemon/src/suggestion-triage.ts`・`apps/daemon/src/triage-reply.ts` を足した（`tasks.md` には、文言 `triage.left` のある `packages/core/src/messages.ts` も）。
 - ADR
-  - `docs/adr/20261120-2109-triage-ai-review-suggestions-before-rework.md` を足した。
+  - `docs/adr/20261120-2109-superseded-triage-ai-review-suggestions-before-rework.md` を足した。
   - `docs/adr/20261112-0748-review-child-task-decides-rework-target.md` を、AI のレビューの指摘だけなら実行せずに戻し先を決めて直しに入る部分を置き換えたので、`git mv` で `20261112-0748-superseded-review-child-task-decides-rework-target.md` に変え、ステータスと置き換え先を直した。古い名前へのリンク（ADR 3 件・作業履歴 1 件・仕様書 2 件）を直した。
   - `docs/adr/20261117-0415-superseded-defer-proposals-decided-by-person.md` の置き換え先に、新しい ADR を足した（AI のレビューの提案について、最終決定を人がする部分）。
 

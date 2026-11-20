@@ -499,6 +499,8 @@ const ja = {
     FinalReviewSkipped: "最終レビューと CI の待ちをせず、実装の PR を作る準備をした",
     PullRequestMarkedReady: (number: number) =>
       `PR のレビューの子タスクが指摘なしにしたので、PR #${number} のドラフトを外して人の承認待ちにした`,
+    PullRequestMarkedReadyWithSuggestions: (number: number) =>
+      `残った提案をすべて対応しないとしたので、PR #${number} のドラフトを外して人の承認待ちにした（判定は「提案あり」のまま。リスク評価は無い）`,
     ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
     WorkspaceFilesSkipped: (count: number) =>
       `読めないファイルが${count}件あり、作業領域の写しには入れなかった（権限など。エージェントが入れたツールの可能性）`,
@@ -1262,6 +1264,8 @@ const en: LabelMessages = {
       "Got ready to open the implementation PR without the final review or CI wait",
     PullRequestMarkedReady: (number) =>
       `The PR's review child task found nothing, so PR #${number} was marked ready (waiting for a person's approval)`,
+    PullRequestMarkedReadyWithSuggestions: (number) =>
+      `All remaining suggestions were declined, so PR #${number} was marked ready (waiting for a person's approval). The verdict stays "suggestions" and there is no risk assessment`,
     ContinuedFeedbackPassed: (count) =>
       `Passed the feedback on the taken-over PR to the implementation (${count})`,
     WorkspaceFilesSkipped: (count) =>
