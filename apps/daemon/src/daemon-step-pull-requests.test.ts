@@ -2488,6 +2488,39 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
+      it("要求要件・設計の PR の AI のレビューの提案は、直しに入る前の選り分けをせず、今までどおり子タスクの答えから戻し先を決めて差し戻す（PBI-436）", async () => {
+        const made = await designed([
+          reworkOut("suggestions", {
+            findings: [
+              { finding: "見出しの誤字", target: "design", reason: "決定を変えない：表記だけ" },
+            ],
+            cause: "base_changed",
+          }),
+        ]);
+        const { activity, service, pulls, executor, id, number, childId } = made;
+        await runReview(service, childId);
+        // 本文に、実装の PR と同じ形の [提案] がある
+        pulls.reviews[0] = {
+          ...pulls.reviews[0],
+          body: `${pulls.reviews[0]?.body ?? ""}\n\n**[提案] 見出しの誤字**（docs）\n直したほうがよい。`,
+        } as never;
+        const calls = executor.calls.length;
+        pulls.feedbackBy[number] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
+        // 選り分けの実行も記録も無い。戻し先は、子タスクの答えから決める（実行しない）
+        expect(types(service, id)).not.toContain("SuggestionsTriaged");
+        expect(
+          executor.calls.slice(calls).some((c) => c.command.join(" ").includes("sacty-triage")),
+        ).toBe(false);
+        expect(judged(service, id)[0]).toMatchObject({
+          actor: "sacty",
+          payload: { target: "design", reviewTaskId: childId },
+        });
+        expect(taskOf(service, id).remarks.some((r) => r.triaged)).toBe(false);
+        activity.close();
+      });
+
       it("戻し先が読めない・知らない値・無いなら、その PR の工程で直す（受け入れ条件 1）", async () => {
         const made = await designed([
           reworkOut("changes_required", {

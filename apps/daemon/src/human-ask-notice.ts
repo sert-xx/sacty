@@ -36,9 +36,19 @@ export function askQuote(text: string, secrets: readonly string[], max = ASK_TEX
 export function publicText(text: string, secrets: readonly string[], max: number): string {
   // 作業領域の内部のパスは、人が辿れないので、人が辿れる呼び方に置き換える（PBI-301 A7）
   const hidden = withoutInternalPaths(redact(text, secrets)).trim();
-  const end = hidden.length > max && /[\uDC00-\uDFFF]/.test(hidden[max] ?? "") ? max - 1 : max;
-  const cut = hidden.length > max ? `${hidden.slice(0, end)}…` : hidden;
-  return cut.replace(/@(?=[A-Za-z0-9_-])/g, "@​");
+  return withoutMentions(cutAtMax(hidden, max));
+}
+
+/** 上限で切る（切ったら末尾に … を付ける）。文字の途中（サロゲートペアの間）では切らない。 */
+export function cutAtMax(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const end = /[\uDC00-\uDFFF]/.test(text[max] ?? "") ? max - 1 : max;
+  return `${text.slice(0, end)}…`;
+}
+
+/** @ の直後に見えない文字を挟み、@名前で知らない人に通知が飛ばないようにする。 */
+export function withoutMentions(text: string): string {
+  return text.replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b");
 }
 
 export type HumanAskNoticeInput = {

@@ -39,6 +39,7 @@ export function StepCosts({
     role === "chat" ||
     role === "errorAnalysis" ||
     role === "rework" ||
+    role === "suggestions" ||
     role === "export" ||
     role === "gather" ||
     role === "triage" ||

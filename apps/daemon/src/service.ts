@@ -398,6 +398,7 @@ import {
   buildTicketInvestigationComment,
   buildTicketPullRequestComment,
   buildTicketTriagePrompt,
+  buildTriagePrompt,
   type ChatLogs,
   changeableSteps,
   checkProvenance,
@@ -461,6 +462,7 @@ import {
   remarkOriginRef,
   remarkOriginUrl,
   remarkReplyMarkerOf,
+  remarkReplyOrigin,
 } from "./remark-reply.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
@@ -511,6 +513,7 @@ import {
   type SharedComposeFetcher,
   sharedComposeRunDir,
 } from "./shared-compose.js";
+import { extractTriage, settleTriage, splitSuggestions } from "./suggestion-triage.js";
 import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
 import {
   type DeliverableKind,
@@ -536,6 +539,7 @@ import {
   timeoutMinutes,
   timeoutResumeLines,
 } from "./timeout-resume.js";
+import { triagedReplyText, withDeclinedParts } from "./triage-reply.js";
 import type { UpdateStatus } from "./update-check.js";
 import {
   CODE_COPY_DIR,
@@ -3687,6 +3691,20 @@ export class TaskService {
     }
     let pending = current.pendingReview;
     if (!pending) return;
+    // AI のレビューの提案は、直しに入る前に、AI が PR の範囲で「対応する／対応しない」に選り分ける（PBI-436）。済んでいれば
+    // （pending.triage）、起動し直しても実行し直さない
+    if (!pending.judgement && !pending.triage) {
+      const config = this.deps.config();
+      if (!config.ok) return;
+      const triaged = await this.triageSuggestions(current, pr, pending, config.config);
+      if (triaged === "stopped") return;
+      if (triaged) {
+        current = triaged;
+        // 提案のすべてを対応しないとして、差し戻す指摘が残らなかった（直しに入らない。返信と判定し直しは、この後の処理が行う）
+        if (!current.pendingReview) return;
+        pending = current.pendingReview;
+      }
+    }
     if (!pending.judgement) {
       const config = this.deps.config();
       if (!config.ok) return;
@@ -3868,6 +3886,177 @@ export class TaskService {
   }
 
   /**
+   * 取り込んだ AI のレビューの提案を、直しに入る前に、PR の範囲で「この PR で対応する／対応しない」に選り分ける（PBI-436）。
+   * 対象は、sacty が作った実装の PR の、AI のレビューの本文の `[提案]`・行へのコメントの `[提案]`（要修正・頭の無い文・人の指摘は
+   * 選り分けない）。PR の工程のエージェントが、実装後のコードを読み取り専用で読んで判断する。
+   * 判断できなかった（実行の失敗・答えを読めない・その提案の判断が無い）提案は、対応する側にする（直しに入る）。
+   * 提案のすべてを対応しないとした指摘は差し戻しから外し、差し戻す指摘が残らなければ、同じ追記で、同じ先頭の判定のし直しを
+   * 求める（実装は実行しない）。ただし、判定し直した回の提案なら、判定し直しは 1 回だけなので、返信の後に止める（stop）。
+   * 戻り値：選り分けの対象が無ければ undefined。選り分けを記録したら、記録後のタスク。止めた（エージェントが無い・実行を止めた・
+   * 指摘や状態が変わった）なら "stopped"。
+   */
+  private async triageSuggestions(
+    task: Task,
+    pr: NonNullable<ReturnType<typeof gatePullRequest>>,
+    pending: NonNullable<Task["pendingReview"]>,
+    config: SactyConfig,
+  ): Promise<Task | "stopped" | undefined> {
+    if (pr.step !== "implement" || !pr.number || isSecurityTask(task)) return undefined;
+    const record = (task.reviewTasks ?? []).findLast(
+      (r) => r.step === "implement" && r.number === pr.number,
+    );
+    const child = record && this.tasks.get(record.taskId);
+    if (!child) return undefined;
+    const units = splitSuggestions(pending.remarks, pending.aiReview ?? []);
+    const suggestions = units.filter((u) => u.kind === "suggestion");
+    if (suggestions.length === 0) return undefined;
+    const musts = units.filter((u) => u.kind === "must");
+    // 提案だけの回が、今回を含めて何回続いているか（今回の回から数える）
+    const round = child.reviewRound ?? 1;
+    const verdictOf = (r: number) => child.reviewVerdicts?.find((v) => v.round === r)?.verdict;
+    let suggestionRounds = 0;
+    while (suggestionRounds < round && verdictOf(round - suggestionRounds) === "suggestions") {
+      suggestionRounds++;
+    }
+    const chosen = stepAgentFor(config, "implement", task.agents?.implement);
+    if (!chosen.ok) {
+      this.pauseForMissingAgent(task, pr.step, chosen.missing, { awaiting: true });
+      return "stopped";
+    }
+    const { outcome, costUsd, estimated, costUnknown, runId, agent } =
+      await this.runGuardianWithFallback(
+        task,
+        {
+          agent: chosen.agent,
+          image: config.image,
+          prompt: buildTriagePrompt(task, {
+            suggestions,
+            musts,
+            round,
+            suggestionRounds,
+            pullRequestBody: task.pullRequestBodies?.[pullRequestBodyKey(pr.repo ?? "", pr.number)],
+          }),
+          role: "triage",
+        },
+        "implemented",
+        config,
+      );
+    const answer =
+      outcome.kind === "completed" ? extractTriage(outcome.output, suggestions) : undefined;
+    const items = settleTriage(
+      suggestions,
+      answer,
+      outcome.kind === "completed"
+        ? "選り分けの判断が読めなかったので、この PR で対応する側にしました。"
+        : "選り分けの実行が失敗したので、この PR で対応する側にしました。",
+    );
+    const url = (index: number): string | undefined => {
+      const key = pending.keys.length === pending.remarks.length ? pending.keys[index] : undefined;
+      const ref = key ? remarkOriginRef(key) : undefined;
+      return ref && pr.number
+        ? remarkOriginUrl(pr.url ?? `${(pr.repo ?? "").replace(/\/+$/, "")}/pull/${pr.number}`, ref)
+        : undefined;
+    };
+    const cost = {
+      agentId: agent.id,
+      ...agentSetting(agent),
+      runId,
+      usage: outcome.usage,
+      costUsd,
+      estimated,
+      ...unknownCost({ costUnknown }),
+    };
+    const latest = this.tasks.get(task.id);
+    // 選り分けの間に、人間が差し戻した・中止した・指摘が変わったなら、記録しない。使った費用だけを残す
+    // （デーモンを止める・中止するために止めた実行も、判断として採用しない。指摘は選り分け前のまま残し、次の確認で選り分け直す）
+    const unchanged =
+      latest !== undefined &&
+      latest.status === "awaiting_approval" &&
+      !this.cancelling.has(task.id) &&
+      latest.pendingReview !== undefined &&
+      !latest.pendingReview.judgement &&
+      !latest.pendingReview.triage &&
+      latest.pendingReview.keys.join() === pending.keys.join();
+    if (
+      !unchanged ||
+      ((this.stopping || this.cancelling.has(task.id)) && outcome.kind !== "completed")
+    ) {
+      if (latest) {
+        this.append(latest, [
+          {
+            actor: "agent",
+            event: {
+              type: "SuggestionsTriaged",
+              payload: {
+                items: [],
+                dropped: [],
+                ...cost,
+                runResult: "interrupted",
+              },
+            },
+          },
+        ]);
+      }
+      return "stopped";
+    }
+    // 提案のすべてを対応しないとした指摘（要修正がなく、すべての提案が対応しない）は、差し戻しから外す。本文は、判定が提案ありの
+    // 回のものだけ外す（要修正を、書式の読み違いで落とさない。行へのコメントは、指摘ごとに頭が付いている）
+    const dropped = pending.remarks.flatMap((text, index) => {
+      const mine = units.filter((u) => u.remark === index);
+      const inline =
+        mine.length === 1 && mine[0]?.text === text.replace(/<!--[\s\S]*?-->/g, "").trim();
+      const from = pending.aiReviewFrom?.[String(index)];
+      const fromRound = from ? Number(from.match(/:(\d+)$/)?.[1] ?? 1) : undefined;
+      const whole = inline || (fromRound !== undefined && verdictOf(fromRound) === "suggestions");
+      return mine.length > 0 &&
+        whole &&
+        mine.every((u) => u.kind === "suggestion") &&
+        items.filter((i) => i.remark === index).every((i) => i.decision === "decline")
+        ? [index]
+        : [];
+    });
+    const all = dropped.length === pending.remarks.length;
+    // 判定し直した回の提案もすべて対応しない：判定し直しは 1 回だけなので、返信の後に止める
+    const stop = all && this.rejudgeLeftFindings(latest);
+    const rejudge =
+      all && !stop && pr.commit && pr.repo
+        ? [
+            {
+              actor: "sacty" as const,
+              event: {
+                type: "ReviewRejudgeRequested" as const,
+                payload: {
+                  repo: pr.repo,
+                  number: pr.number,
+                  commit: pr.commit,
+                  reviewTaskId: child.id,
+                  reason: "triaged" as const,
+                },
+              },
+            },
+          ]
+        : [];
+    return this.append(latest, [
+      {
+        actor: "agent",
+        event: {
+          type: "SuggestionsTriaged",
+          payload: {
+            items: items.map((i) => ({ ...i, ...(url(i.remark) ? { url: url(i.remark) } : {}) })),
+            dropped,
+            round,
+            suggestionRounds,
+            ...(stop ? { stop: true as const } : {}),
+            ...cost,
+            runResult: outcome.kind === "completed" ? "completed" : "failed",
+          },
+        },
+      },
+      ...rejudge,
+    ]);
+  }
+
+  /**
    * ゴールガーディアンの判断に従って、取り込んだ PR の指摘を、判断した工程に差し戻す（人間の確認は待たない。
    * 設計・要求要件に戻したら、作り直した成果をいつもどおり人間が承認する）。判断できなければ実装をやり直す
    * （判断できなかったことと理由は ReworkJudged に残る）。
@@ -3911,10 +4100,14 @@ export class TaskService {
       {
         aiReview: pending.aiReview ?? [],
         origins: remarkOrigins(pending, gatePullRequest(task)?.number),
+        // 直しに入る前に、この PR では対応しないと選り分けた提案（直さず、対応も書かせず、返信の後ろに理由を足す。PBI-436）
+        declined: pending.remarks.map((_, i) => pending.triage?.declined?.[String(i)]),
         imported: true,
         // 断った理由を読んで判定し直したレビューにも指摘が残った：差し戻しと同じ追記で一時停止して、人が判断する（AI どうしの
         // 往復を続けない。再開すると、残った指摘を渡してやり直す。PBI-357）
-        ...(this.rejudgeLeftFindings(task) && pr?.number
+        // 直しに入る前の選り分けで求めた判定し直し（reason: triaged）の回は、止めずに直しに入る（要修正が出た・対応する提案が
+        // あった。提案のすべてを対応しないときは、返信の後に止める。PBI-436）
+        ...(this.rejudgeLeftFindings(task) && pr?.number && task.reviewRejudge?.reason !== "triaged"
           ? {
               pause: message(
                 task.reviewRejudge?.awaitsDecision
@@ -5034,7 +5227,7 @@ export class TaskService {
               ...where,
               body: buildRemarkReply({
                 ...reply,
-                ...(ref ? { origin: { ref, url: remarkOriginUrl(due.url, ref) } } : {}),
+                ...(ref ? { origin: remarkReplyOrigin(remark, ref, due.url) } : {}),
               }),
               signal,
             }),
@@ -11271,6 +11464,16 @@ export class TaskService {
                       ...(ref ? { url: remarkOriginUrl(reviewTarget.url, ref) } : {}),
                     };
                   }),
+                // 直しに入る前に、PR を作ったタスクが対応しないと判断した提案（前々回以前のものも、毎回渡す。PBI-436）
+                ...((parent.declinedSuggestions ?? []).length > 0
+                  ? {
+                      declinedByAuthor: (parent.declinedSuggestions ?? []).map((d) => ({
+                        text: d.text,
+                        reason: d.reason,
+                        ...(d.url ? { url: d.url } : {}),
+                      })),
+                    }
+                  : {}),
                 ...(asked?.awaitsDecision &&
                 asked.number === reviewTarget.number &&
                 sameCommit(asked.commit, reviewTarget.headCommit)
@@ -11744,7 +11947,9 @@ export class TaskService {
       this.checkBudget(split);
       return this.settleSplit(this.mustGet(task.id));
     }
-    const remarkIds = latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id);
+    const remarkIds = latest.remarks
+      .filter((r) => r.step === step && !r.voided && !r.triaged)
+      .map((r) => r.id);
     const extracted = extractBlocks(
       outcome.output,
       // 引き継いだ PR の指摘への対応は、渡した指摘のキーを ID として読む（PBI-352）
@@ -14164,7 +14369,21 @@ export class TaskService {
       // 今の先頭を指摘なしにしたら、ドラフトを外す（PBI-331）
       if (awaiting && cleared) await this.markReady(parent, child, target);
       // 親が、その先頭の指摘のすべてを断って提出した：断った理由の返信が済んだら、同じ先頭を 1 回だけ判定し直す（PBI-357）
-      else if (awaiting && this.rejudgeDue(parent, child, target)) {
+      else if (awaiting && this.triageStopDue(parent)) {
+        // 判定し直した回の提案もすべて対応しないとした：理由の返信が済んだので、AI どうしの往復を続けずに止める（PBI-436）
+        const number = gatePullRequest(parent)?.number;
+        if (number !== undefined) {
+          this.append(parent, [
+            {
+              actor: "sacty",
+              event: {
+                type: "TaskPaused",
+                payload: { reason: "unchanged", message: message("triage.left", { number }) },
+              },
+            },
+          ]);
+        }
+      } else if (awaiting && this.rejudgeDue(parent, child, target)) {
         try {
           this.append(child, [
             {
@@ -14452,7 +14671,7 @@ export class TaskService {
     if (asked && asked.number === pr.number && sameCommit(asked.commit, commit)) return false;
     const round = lastChangeRound(task, "implement");
     const remarks = task.remarks.filter(
-      (r) => r.step === "implement" && r.round === round && !r.voided,
+      (r) => r.step === "implement" && r.round === round && !r.voided && !r.triaged,
     );
     const submission = (task.submissions.implement ?? 0) + 1;
     const all =
@@ -14470,6 +14689,20 @@ export class TaskService {
     if (!all) return false;
     // 人がまだ決めていない案が 1 件でもあれば（前の提出の案・前の回の指摘の案も）、判定し直しは、その決定を待つ（PBI-383）
     return undecidedDeferrals(task) ? "awaits_decision" : "declined";
+  }
+
+  /**
+   * 直しに入る前の選り分けが、判定し直した回の提案のすべてを対応しないとして、返信を済ませたか（PBI-436）。返信が済んでから、
+   * 一時停止して人が選ぶ（同じ先頭の判定のし直しは 1 回だけなので、ほかに往復を止める所が無い）。
+   */
+  private triageStopDue(parent: Task): boolean {
+    return (
+      parent.triageStop === true &&
+      parent.status === "awaiting_approval" &&
+      !parent.pendingReview &&
+      this.remarkRepliesDue(parent) === undefined &&
+      !this.remarkRepliesHeld(parent.id)
+    );
   }
 
   /**
@@ -18951,6 +19184,8 @@ export class TaskService {
     });
     // 人が再開したら、代わりのエージェントを試し終えたことを忘れる（もう一度、選んだエージェントから順に試す）
     this.fallbackTried.delete(id);
+    // 失敗して使わないと覚えたエージェントも、このタスクの分だけ忘れる（ほかのタスクと、利用上限の覚えは変えない）
+    this.failedAgents.delete(id);
     const resumed = this.append(task, events);
     // 実装の作り直しの途中で止まっていたなら、走り直す前に、PR に届いた指摘をもう一度読む（PBI-279）
     if (reworkingPullRequest(resumed)) this.heldRecheck.add(id);
@@ -19042,6 +19277,8 @@ export class TaskService {
       pause?: DaemonText;
       /** comments と同じ位置の、人が「この PR で直す」と決めた、後続に回したい案の元の指摘の ID（PBI-370）。 */
       fixOf?: readonly (string | undefined)[];
+      /** comments と同じ位置の、直しに入る前に、この PR では対応しないと選り分けた提案（PBI-436）。 */
+      declined?: readonly ({ text: string; reason: string }[] | undefined)[];
       /** 差し戻しと同じ追記で、その前に記録するもの（後続に回したい案への決定。PBI-370）。 */
       leading?: readonly ActivityItem[];
       /**
@@ -19067,11 +19304,13 @@ export class TaskService {
     const comments = input.comments.map((text, i) => {
       const origin = options.origins?.[i];
       const fixOf = options.fixOf?.[i];
+      const declinedParts = options.declined?.[i];
       return {
         text,
         ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
         ...(origin ? { origin } : {}),
         ...(fixOf ? { fixOf } : {}),
+        ...(declinedParts && declinedParts.length > 0 ? { declinedParts } : {}),
       };
     });
     if (task.status === "awaiting_approval" && input.comments.length === 0) {
@@ -19084,14 +19323,21 @@ export class TaskService {
     const round = lastChangeRound(task, target) + 1;
     // 指摘の元の PR のコメント（origin）は、エスカレーションで人が出し直しても失わない（PBI-352）
     const toRemarks = (
-      list: { text: string; source?: "sacty_review"; origin?: RemarkOrigin; fixOf?: string }[],
+      list: {
+        text: string;
+        source?: "sacty_review";
+        origin?: RemarkOrigin;
+        fixOf?: string;
+        declinedParts?: { text: string; reason: string }[];
+      }[],
     ) =>
-      list.map(({ text, source, origin, fixOf }, i) => ({
+      list.map(({ text, source, origin, fixOf, declinedParts }, i) => ({
         id: `${target}-${round}-${i + 1}`,
         text,
         ...(source ? { source } : {}),
         ...(origin ? { origin } : {}),
         ...(fixOf ? { fixOf } : {}),
+        ...(declinedParts ? { declinedParts } : {}),
       }));
     const leading = options.leading ?? [];
 
@@ -20087,8 +20333,12 @@ export type RemarkReplyDue = {
   response: string;
   status?: RemarkResponseStatus;
   respondedIn: number;
-  /** 引き継いだ PR の指摘（指摘の ID を、人に見せない）。 */
+  /** 引き継いだ PR の指摘（指摘の ID を、人に見せない）。出どころ・元の本文の記録が無い。 */
   continued?: true;
+  /** 元の投稿が sacty のレビュー（AI のレビュー）か（取り込んだ指摘の出どころ）。無ければ人の投稿。 */
+  source?: "sacty_review";
+  /** 取り込んだ指摘の文（通常のコメントでは、コメントの本文。返信の引用に使う）。 */
+  originText?: string;
 };
 
 /** 実装の指摘に、人がまだ決めていない、後続に回したい案があるか（無効にした指摘は除く。PBI-370・PBI-383）。 */
@@ -20140,15 +20390,23 @@ export function awaitingRemarkReplies(task: Task):
     // 人が決めた後の案は、返信しない（返信は「案で、人に確認中」と書くので、決定と食い違う。決定は、決定のコメントで
     // PR に残る。返信を待っている間に人が決めたときも、ここで外れる。PBI-383）
     !(r.status === "deferred" && r.deferral?.decision !== undefined) &&
-    (r.step !== gate.step || r.respondedIn === gate.submission)
+    // 直しに入る前に選り分けて対応しないとした指摘（triaged）は、提出を経ないので、次の承認待ちで返信する（PBI-436）
+    (r.triaged || r.step !== gate.step || r.respondedIn === gate.submission)
       ? [
           {
             id: r.id,
             key: r.origin.key,
             step: r.step,
-            response: r.response,
+            response: r.triaged
+              ? triagedReplyText(r.declinedParts ?? [])
+              : withDeclinedParts(r.response, r.declinedParts),
             ...(r.status ? { status: r.status } : {}),
             respondedIn: r.respondedIn,
+            // 人が「この PR で直す」と決めた案の指摘（fixOf）は、元の指摘の出どころを引き継ぐ
+            ...((r.source ?? task.remarks.find((o) => o.id === r.fixOf)?.source)
+              ? { source: "sacty_review" as const }
+              : {}),
+            originText: r.text,
           },
         ]
       : [],

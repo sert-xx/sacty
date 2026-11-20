@@ -348,6 +348,13 @@ export type TaskRemark = {
    * 今回の差し戻しと区別するのに使う。
    */
   submittedIn?: number;
+  /**
+   * 直しに入る前に AI が「この PR では対応しない」と選り分けて、直さずに返信だけした指摘（SuggestionsTriaged。PBI-436）。
+   * 直しの対象に数えない（差し戻しの回・直しの指示・提出での対応の書き直しの対象にならない）。
+   */
+  triaged?: true;
+  /** 1 つの投稿の中で、AI が「この PR では対応しない」と選り分けた提案（PBI-436）。 */
+  declinedParts?: { text: string; reason: string }[];
   /** 前提が変わったなどの理由で、人間が無効にした指摘。エージェントには渡さない。 */
   voided: boolean;
   /**
@@ -718,7 +725,19 @@ export type Task = {
     reviewTaskId: string;
     /** 後続に回したい案がある。判定し直しは、その案のすべてを人が決めてから始める（PBI-370）。 */
     awaitsDecision?: true;
+    /** 直しに入る前の選り分けで、すべて対応しないとしたので求めた（PBI-436）。 */
+    reason?: "triaged";
   };
+  /**
+   * 直しに入る前に AI が「この PR では対応しない」と選り分けた提案（古い順。SuggestionsTriaged。PBI-436）。消さずに積む。
+   * 再レビューの指示に、毎回、データとして渡す（レビューが、未対応に数えず、蒸し返さないように）。
+   */
+  declinedSuggestions?: { text: string; reason: string; url?: string; round: number }[];
+  /**
+   * 判定し直した回の提案もすべて対応しないとしたので、返信の後に一時停止する（SuggestionsTriaged の stop。PBI-436）。
+   * 一時停止すると消える。
+   */
+  triageStop?: true;
   /** 後続に回したい案を、人が決めた回数（DeferralsDecided の数。PR のコメントの目印に使う。PBI-370）。 */
   deferralDecisions?: number;
   /**
@@ -1292,6 +1311,11 @@ export type Task = {
      * review）。無い位置の指摘は、出どころの回が分からない。
      */
     aiReviewFrom?: Record<string, string>;
+    /**
+     * 提案の選り分けが済んでいる（SuggestionsTriaged。PBI-436。起動し直しても、選り分けを実行し直さない）。declined は、
+     * 指摘の位置（文字列）ごとの、その指摘の中で対応しないとした提案（直しの指示と返信に使う）。
+     */
+    triage?: { declined?: Record<string, { text: string; reason: string }[]> };
   };
   /**
    * 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58）。decided が false なら、
@@ -1837,7 +1861,8 @@ export function applyEvent(
         const submission = (task.submissions[step] ?? 0) + 1;
         const responses = new Map(event.payload.responses.map((r) => [r.remarkId, r]));
         task.remarks = task.remarks.map((r) => {
-          if (r.step !== step || r.voided) return r;
+          // 直しに入る前に選り分けて対応しないとした指摘は、提出の対応を書き直さない（PBI-436）
+          if (r.step !== step || r.voided || r.triaged) return r;
           const response = responses.get(r.id);
           if (response === undefined) {
             // 人がまだ決めておらず、PR にまだ返信していない、後続に回したい案（PBI-383）は、案の理由を、今回の提出の対応として
@@ -2057,6 +2082,9 @@ export function applyEvent(
           ...(r.source ? { source: r.source } : {}),
           ...(r.origin ? { origin: r.origin } : {}),
           ...(r.fixOf ? { fixOf: r.fixOf } : {}),
+          ...(r.declinedParts && r.declinedParts.length > 0
+            ? { declinedParts: r.declinedParts }
+            : {}),
           voided: false,
         })),
       ];
@@ -2591,6 +2619,17 @@ export function applyEvent(
       break;
 
     case "ReviewRejudgeRequested":
+      // 直しに入る前の選り分けで、残った提案のすべてを対応しないとした（実装は実行しない。PBI-436）：承認待ちの実装の PR について記録する
+      if (event.payload.reason === "triaged") {
+        if (task.status !== "awaiting_approval" || task.gate?.step !== "implement") {
+          throw new ActivityIntegrityError(event, "the implementation is not awaiting approval");
+        }
+        if (gatePullRequest(task)?.number !== event.payload.number) {
+          throw new ActivityIntegrityError(event, "not the pull request of the task");
+        }
+        task.reviewRejudge = { ...event.payload };
+        break;
+      }
       // 指摘のすべてを断って何も変えなかった実装を、提出にする前に記録する（続けて、PR の公開と提出を記録する。PBI-357）
       if (activeStep(task) !== "implement" || !task.publishPending) {
         throw new ActivityIntegrityError(
@@ -2839,6 +2878,86 @@ export function applyEvent(
           ...(event.payload.answer ? { answer: event.payload.answer } : {}),
           reason: event.payload.reason,
         },
+      };
+      break;
+    }
+
+    case "SuggestionsTriaged": {
+      // 実行を採用しなかった（止めた・指摘や状態が変わった）：費用だけを残す（費用は下で足す）
+      if (event.payload.runResult === "interrupted") break;
+      const pending = task.pendingReview;
+      const gate = task.gate;
+      if (!pending || pending.judgement || pending.triage) {
+        throw new ActivityIntegrityError(event, "no review is waiting for triage");
+      }
+      const watched = gatePullRequest(task);
+      if (task.status !== "awaiting_approval" || !gate || !watched) {
+        throw new ActivityIntegrityError(event, "the deliverable review is not open");
+      }
+      const p = event.payload;
+      const dropped = new Set(p.dropped.filter((i) => i < pending.remarks.length));
+      const declined = p.items.filter((i) => i.decision === "decline");
+      // 指摘ごとの、対応しないとした提案（元の並びの位置で持つ。外した指摘の後に、位置を付け直す）
+      const parts = new Map<number, { text: string; reason: string }[]>();
+      for (const item of declined) {
+        if (item.remark >= pending.remarks.length) continue;
+        parts.set(item.remark, [
+          ...(parts.get(item.remark) ?? []),
+          { text: item.text, reason: item.reason },
+        ]);
+      }
+      // 提案のすべてを対応しない指摘は、直さずに、PR への返信を待つ指摘として足す（直しの回・直しの指示の対象にしない）
+      const seq = task.remarks.filter((r) => r.triaged).length;
+      const added = [...dropped]
+        .sort((a, b) => a - b)
+        .map((index, n) => {
+          const key =
+            pending.keys.length === pending.remarks.length ? pending.keys[index] : undefined;
+          const list = parts.get(index) ?? [];
+          return {
+            id: `${gate.step}-triaged-${seq + n + 1}`,
+            step: gate.step,
+            round: 0,
+            text: pending.remarks[index] as string,
+            source: "sacty_review" as const,
+            response: list.map((d) => `${d.text}：${d.reason}`).join("\n"),
+            respondedIn: gate.submission,
+            status: "declined" as const,
+            ...(key && key.length <= 200 ? { origin: { key, number: watched.number } } : {}),
+            triaged: true as const,
+            declinedParts: list,
+            voided: false,
+          };
+        });
+      task.remarks = [...task.remarks, ...added];
+      if (declined.length > 0) {
+        task.declinedSuggestions = [
+          ...(task.declinedSuggestions ?? []),
+          ...declined.map((d) => ({
+            text: d.text,
+            reason: d.reason,
+            ...(d.url ? { url: d.url } : {}),
+            round: p.round ?? 0,
+          })),
+        ];
+      }
+      if (p.stop) task.triageStop = true;
+      const kept = withoutNoAction(pending, [...dropped]);
+      if (!kept) {
+        task.pendingReview = undefined;
+        break;
+      }
+      // 残った指摘の位置は、外した指摘の分だけ前に詰まる
+      const keptIndexes = pending.remarks.flatMap((_, i) => (dropped.has(i) ? [] : [i]));
+      const declinedKept = Object.fromEntries(
+        keptIndexes.flatMap((from, to) => {
+          const list = parts.get(from);
+          return list ? [[String(to), list]] : [];
+        }),
+      );
+      task.pendingReview = {
+        ...kept,
+        triage: Object.keys(declinedKept).length > 0 ? { declined: declinedKept } : {},
       };
       break;
     }
@@ -3554,6 +3673,8 @@ export function applyEvent(
       }
       task.resumeTo = task.status;
       task.status = "paused";
+      // 提案が残った旨の一時停止は、止めた時点で役目を終える（再開してもう一度止めない。PBI-436）
+      task.triageStop = undefined;
       task.pausedReason = event.payload.reason;
       task.pausedMessage = event.payload.message;
       task.unstoppedRuns = event.payload.unstoppedRuns;
@@ -4193,6 +4314,13 @@ function withoutNoAction(
       return to === undefined ? [] : [[String(to), review]];
     }),
   );
+  // 選り分けで対応しないとした提案（PBI-436）は、残した指摘の位置に付け直す
+  const declinedAt = Object.fromEntries(
+    Object.entries(pending.triage?.declined ?? {}).flatMap(([i, parts]) => {
+      const to = moved.get(Number(i));
+      return to === undefined ? [] : [[String(to), parts]];
+    }),
+  );
   return {
     // keys は remarks と同じ並び（1 件の投稿が 1 件の指摘）
     keys:
@@ -4202,6 +4330,9 @@ function withoutNoAction(
     remarks: kept.map((i) => pending.remarks[i] as string),
     ...(aiReview.length > 0 ? { aiReview } : {}),
     ...(Object.keys(aiReviewFrom).length > 0 ? { aiReviewFrom } : {}),
+    ...(pending.triage
+      ? { triage: Object.keys(declinedAt).length > 0 ? { declined: declinedAt } : {} }
+      : {}),
   };
 }
 
@@ -4229,6 +4360,7 @@ export function unreflectedImplementRemarks(task: Task): TaskRemark[] {
     (r) =>
       r.step === "implement" &&
       !r.voided &&
+      !r.triaged &&
       r.round === latest &&
       (r.submittedIn === undefined || r.submittedIn > submitted),
   );

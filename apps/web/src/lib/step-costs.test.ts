@@ -426,6 +426,28 @@ describe("工程ごとの費用（PBI-46）", () => {
     ]);
   });
 
+  it("提案の選り分けは、「提案の選り分け」の行に数える。中断した実行の費用も数える（PBI-436）", () => {
+    seq = 0;
+    const triaged = (runResult: "completed" | "failed" | "interrupted", costUsd: number) =>
+      ev(
+        {
+          type: "SuggestionsTriaged",
+          payload: { items: [], dropped: [], agentId: "a", runResult, costUsd, estimated: false },
+        } as EventInput,
+        "agent",
+      );
+    const task = { id: "t1", steps: [] as Task["steps"] } as Task;
+    const { rows, total } = stepCosts(task, [
+      triaged("completed", 0.3),
+      triaged("failed", 0.1),
+      triaged("interrupted", 0.05),
+    ]);
+    expect(rows.map((r) => [r.role, r.runs.map((x) => x.result)])).toEqual([
+      ["suggestions", ["completed", "failed", "interrupted"]],
+    ]);
+    expect(total.costUsd).toBeCloseTo(0.45, 5);
+  });
+
   it("開始の記録が無い実行も、費用を落とさない", () => {
     seq = 0;
     const done = ev({

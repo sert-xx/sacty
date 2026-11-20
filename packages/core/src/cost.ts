@@ -53,6 +53,7 @@ export const CHARGED_EVENT_TYPES = [
   "AgentRunFailed",
   "ChangeJudged",
   "ReworkJudged",
+  "SuggestionsTriaged",
   "FinalReviewed",
   "FinalReviewFailed",
   "QuestionAnswered",

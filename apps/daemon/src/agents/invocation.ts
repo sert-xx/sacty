@@ -17,6 +17,7 @@ export type AgentRole =
   | "guardian"
   | "final-review"
   | "rework"
+  | "triage"
   | "orchestrator"
   | "gather"
   | "chat"
@@ -391,7 +392,7 @@ export async function buildInvocation(
                     ? stub.guardian
                     : role === "final-review"
                       ? stub.final_review
-                      : role === "rework"
+                      : role === "rework" || role === "triage"
                         ? stub.rework
                         : role === "orchestrator"
                           ? stub.orchestrator

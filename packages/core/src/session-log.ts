@@ -284,6 +284,7 @@ export const RUN_EVENTS = new Set<ActivityEvent["type"]>([
   "RepositoryChosen",
   "ChangeJudged",
   "ReworkJudged",
+  "SuggestionsTriaged",
   "FinalReviewed",
   "FinalReviewFailed",
   "QuestionAnswered",

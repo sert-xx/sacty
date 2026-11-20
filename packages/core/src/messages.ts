@@ -516,6 +516,7 @@ const PARAMS = {
   "implement.unchanged": z.object({ number: z.number() }),
   "implement.declinedAgain": z.object({ number: z.number() }),
   "implement.deferredAgain": z.object({ number: z.number() }),
+  "triage.left": z.object({ number: z.number() }),
   "merge.failed": z.object({ detail: TextParam }),
   "pr.unavailable": z.object({ detail: TextParam }),
   "pr.workspaceMissing": null,
@@ -1513,6 +1514,8 @@ const ja: MessageDictionary = {
     `やり直しの実装が、PR #${number} の AI のレビューの指摘をすべて、理由を付けて断り、何も変えませんでした。断った理由を PR に返信し、AI のレビューに同じ内容を判定し直させましたが、指摘が残りました。AI どうしの往復を続けないよう、ここで止めています。再開すると、残った指摘を渡してやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "implement.deferredAgain": ({ number }) =>
     `やり直しの実装が、PR #${number} の AI のレビューの指摘を、断るか、後続に回したい案にして、何も変えませんでした。案を人が決めた後、AI のレビューに同じ内容を判定し直させましたが、指摘が残りました。AI どうしの往復を続けないよう、ここで止めています。再開すると、残った指摘を渡してやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
+  "triage.left": ({ number }) =>
+    `PR #${number} の AI のレビューの提案を、直しに入る前に AI が選り分け、すべて「この PR では対応しない」として理由を PR に返信しました。AI のレビューに同じ内容を判定し直させましたが、提案が残り、それもすべて対応しないとしました。AI どうしの往復を続けないよう、ここで止めています。再開すると、承認の待ちに戻ります。直させたい提案があれば、PR に要対応とコメントするか、sacty の画面から差し戻してください。提案が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "merge.failed": ({ detail }, text) =>
     `ベースブランチの最新を作業領域に取り込めませんでした：${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
@@ -2389,6 +2392,8 @@ const en: MessageDictionary = {
     `The rework of the implementation declined every finding of the AI review on PR #${number} with a reason and changed nothing. sacty replied on the PR with the reasons and had the AI review judge the same content once more, but findings remained. sacty stops here so that the two AIs do not keep going back and forth. Resuming redoes the work with the remaining findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "implement.deferredAgain": ({ number }) =>
     `The rework of the implementation declined the findings of the AI review on PR #${number} or proposed to defer them, and changed nothing. After a person decided the proposals, sacty had the AI review judge the same content once more, but findings remained. sacty stops here so that the two AIs do not keep going back and forth. Resuming redoes the work with the remaining findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
+  "triage.left": ({ number }) =>
+    `Before reworking, the AI sorted the suggestions of the AI review on PR #${number}, declined all of them for this PR, and replied on the PR with the reasons. The AI review judged the same content once more, but suggestions remained, and all of them were declined as well. sacty stops here so that the two AIs do not keep going back and forth. Resuming returns the task to waiting for approval. If you want a suggestion fixed, comment on the PR that it needs a fix, or send the task back from the sacty screen. If you think the suggestions do not apply, check the PR and decide.`,
   "merge.failed": ({ detail }, text) =>
     `Could not merge the latest base branch into the workspace: ${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,

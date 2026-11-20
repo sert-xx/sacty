@@ -149,6 +149,7 @@ npm run build       # すべてのパッケージのビルド
   | `daemon-projects-intake.test.ts` | プロジェクト（対象・エクスポート・削除）、sacty の設定、Issue・PR・JIRA のチケットの取り込みとトリアージ、レビューの再依頼、Slack の通知先 |
   | `daemon-risk-assessment.test.ts` | PR のリスク評価（PR を作る・更新するときは評価しないこと、レビューの工程での評価・記録・コメントへの掲載・答えからの JSON の取り除き） |
   | `daemon-review-watch.test.ts` | レビューを投稿した後の PR の見守り（先頭の変化・作者の返信での再レビュー、マージ・クローズでの完了、以前の版で完了したタスク、GitHub の再依頼との両立） |
+  | `daemon-suggestion-triage.test.ts` | AI のレビューの提案の、直しに入る前の選り分け（直しに入らないときの返信と判定し直し、一部だけ対応、要修正・人の指摘との混在、失敗時、判定し直しの回の止め方、起動し直し） |
   | `daemon-context.test.ts` | コンテキスト（リポジトリ・取得の認証・MCP サーバー・外部 PF・プレビュー・イメージ）、秘密情報をまとめて取り出すこと、タスクの作成時のイメージとエージェントの指定 |
   | `daemon-orchestrator-sessions.test.ts` | オーケストレーターへの質問、エラーレポート、セッションログと元のセッションのファイル、時間切れで止めた実行の再開、オーケストレーターのセッションの使い回し、サブエージェント |
   | `daemon-deployment-security.test.ts` | マージの後の CI/CD とデプロイの監視、セキュリティチェックとセキュリティ対応 |

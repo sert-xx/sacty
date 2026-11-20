@@ -809,6 +809,19 @@ const ja = {
           : `戻し先：${target ?? "判断できない"}（${reason}・${noAction.count > 0 ? `対応を求めていないコメント${noAction.count}件は除いた・` : ""}${tail}）`,
     /** PR のレビューの子タスクが示した指摘ごとの戻し先から決めた（PBI-332。実行はしない）。 */
     reworkFromReviewTask: "PR のレビューの子タスクの答えから",
+    /** 直しに入る前の、AI のレビューの提案の選り分け（PBI-436）。 */
+    SuggestionsTriaged: (
+      total: number,
+      declined: number,
+      tail: string,
+      discarded: boolean,
+      failed: boolean,
+    ) =>
+      discarded
+        ? `提案の選り分けを採用しなかった（一時停止・中止などで。指摘は選り分け前のまま残し、再開したら選り分け直す・${tail}）`
+        : `提案 ${total}件のうち ${declined}件をこの PR で対応しない${failed ? "（判断できなかった提案は、対応する側にした）" : ""}（${tail}）`,
+    suggestionDecision: (id: string, address: boolean, reason: string, defaulted: boolean) =>
+      `${id}：${address ? "対応する" : "対応しない"}${defaulted ? "（判断が無いので、対応する側にした）" : ""}：${reason}`,
     // 完了したタスクの監査（PBI-125）
     AuditQueued: (cap: string) => `監査を待つ（予算 ${cap}）`,
     AuditSurveyed: (concerns: number, tail: string) =>
@@ -1468,6 +1481,12 @@ const en: LabelMessages = {
           ? `Judged that the comments ask for nothing, so nothing was sent back (${reason} · ${tail})`
           : `Step to redo: ${target ?? "undecided"} (${reason} · ${noAction.count > 0 ? `left out ${noAction.count} comment${noAction.count === 1 ? "" : "s"} that ask${noAction.count === 1 ? "s" : ""} for nothing · ` : ""}${tail})`,
     reworkFromReviewTask: "from the answer of the PR review child task",
+    SuggestionsTriaged: (total, declined, tail, discarded, failed) =>
+      discarded
+        ? `The sorting of the suggestions was not adopted (a pause, a cancel, or a change; the comments stay unsorted and are sorted again on resume · ${tail})`
+        : `${declined} of ${total} suggestion${total === 1 ? "" : "s"} will not be handled in this PR${failed ? " (suggestions it could not judge were set to be handled)" : ""} (${tail})`,
+    suggestionDecision: (id, address, reason, defaulted) =>
+      `${id}: ${address ? "handle" : "do not handle"}${defaulted ? " (no judgment, so set to be handled)" : ""}: ${reason}`,
     AuditQueued: (cap) => `Waiting for the audit (budget ${cap})`,
     AuditSurveyed: (concerns, tail) =>
       `Finished the survey (${concerns} step${concerns === 1 ? "" : "s"} of concern · ${tail})`,
