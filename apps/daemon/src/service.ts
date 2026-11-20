@@ -12807,8 +12807,22 @@ export class TaskService {
         token,
         usedSecrets,
         // 待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
-        () => buildStepPullRequestBodyText(this.latestTitled(current), step, path, aiReview),
-        () => buildStepPullRequestBodyParts(this.latestTitled(current), step, path, aiReview),
+        () =>
+          buildStepPullRequestBodyText(
+            this.latestTitled(current),
+            step,
+            path,
+            aiReview,
+            usedSecrets,
+          ),
+        () =>
+          buildStepPullRequestBodyParts(
+            this.latestTitled(current),
+            step,
+            path,
+            aiReview,
+            usedSecrets,
+          ),
       );
       // 同じ PR を更新するときは、人が直した本文を3方向でマージして残す（PBI-334）
       const sent = reuse
