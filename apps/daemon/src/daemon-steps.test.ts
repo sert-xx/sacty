@@ -1663,6 +1663,7 @@ describe("工程の実行と費用", () => {
       service.resume(task.id, {});
       await service.runNext(task.id); // 代わり（元は利用制限の覚え）：利用制限
       expect(executor.calls).toHaveLength(3);
+      expect(executor.calls[2]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
       expect(service.get(task.id)?.task.status).toBe("paused");
       expect(service.get(task.id)?.task.pausedReason).toBe("usage_limit");
       activity.close();
@@ -1674,20 +1675,24 @@ describe("工程の実行と費用", () => {
       const error: AgentOutcome = { kind: "failed", reason: "error", message: "boom" };
       const { service, executor } = makeService(
         activity,
-        [error, error, error, completed(1_000), completed(1_000)],
+        [error, completed(1_000), error, error, completed(1_000), completed(1_000)],
         { config: withFallback(60 * 60_000), secrets, now: () => now },
       );
-      const t1 = service.createTask({ projectId: "default", title: "A" });
       const t2 = service.createTask({ projectId: "default", title: "B" });
-      await service.runNext(t1.id); // t1：元が error（代わりへ）
       await service.runNext(t2.id); // t2：元が error（代わりへ）
+      await service.runNext(t2.id); // t2：代わりが成功（試した記録は忘れ、承認待ち）
+      expect(service.get(t2.id)?.task.status).toBe("awaiting_approval");
+      const t1 = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(t1.id); // t1：元が error（代わりへ）
       await service.runNext(t1.id); // t1：代わりが error（止まる）
       expect(service.get(t1.id)?.task.status).toBe("paused");
       service.resume(t1.id, {});
       await service.runNext(t1.id); // t1：元に戻る
-      expect(executor.calls[3]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
-      await service.runNext(t2.id); // t2：元は使わないまま、代わり
-      expect(executor.calls[4]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      expect(executor.calls[4]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+      // t2 は試した記録が無く、使わない覚えだけが元を飛ばさせる
+      service.requestChanges(t2.id, { step: "requirements", submission: 1, comments: ["直して"] });
+      await service.runNext(t2.id);
+      expect(executor.calls[5]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
       activity.close();
     });
 

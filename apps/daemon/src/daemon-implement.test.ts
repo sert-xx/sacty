@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CiCheck, DaemonText, StepKey, Task } from "@sacty/core";
+import type { CiCheck, DaemonText, Remark, StepKey, Task } from "@sacty/core";
 import {
   activeStep,
   budgetState,
@@ -4864,9 +4864,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           repo: "https://github.com/acme/app",
           number: 12,
         });
-        expect(replies(pulls)[0]?.body).toContain(
-          "[このレビュー](https://github.com/acme/app/pull/12#pullrequestreview-21)への返信です。",
-        );
+        // 出どころの記録が無いので、出どころを言わない（断定しない）。書き出しの行を、そのまま比べる
+        expect((replies(pulls)[0]?.body ?? "").split("\n").slice(1, 4)).toEqual([
+          "レビューの本文（[このレビュー](https://github.com/acme/app/pull/12#pullrequestreview-21)）への返信です。",
+          "",
+          "**対応していません。** 理由：",
+        ]);
         expect(replies(pulls)[0]?.body).toContain(
           "**対応していません。** 理由：\n\nログの追加は、この PR の目的の外です",
         );
@@ -9703,12 +9706,16 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           number: 7,
         });
         expect(onReview).toContain(`<!-- sacty-reply:${id}:implement-1-2:2 -->`);
-        expect(onReview).toContain(`[このレビュー](${pr}#pullrequestreview-601)への返信です。`);
+        expect(onReview).toContain(
+          `人が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-601)）への返信です。`,
+        );
         expect(onReview).toContain(
           "**対応していません。** 理由：\n\nログの追加は、このタスクの範囲の外です",
         );
         // 申告が読めない（知らない値）なら、対応の文だけ。@名前では通知を飛ばさない
-        expect(onComment).toContain(`[このコメント](${pr}#issuecomment-401)への返信です。`);
+        expect(onComment).toContain(
+          `人が書いた通常のコメント（[このコメント](${pr}#issuecomment-401)）への返信です。\n> 「\`再開のフォームの候補も直して\`」\n`,
+        );
         expect(onComment).not.toContain("**対応");
         expect(onComment).toContain("候補を直しました @​alice");
         expect(task?.remarks.slice(-3).map((r) => [r.status, r.repliedIn])).toEqual([
@@ -9767,7 +9774,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(pulls.reviewReplies).toHaveLength(0);
         expect(prComments(pulls)).toHaveLength(1);
         expect(prComments(pulls)[0]?.body).toContain(
-          `[この行へのコメント](${pr}#discussion_r777)への返信です。`,
+          `人が書いた行へのコメント（[この行へのコメント](${pr}#discussion_r777)）への返信です。`,
         );
         expect(posted(service, id)[0]?.results).toEqual([
           {
@@ -9781,6 +9788,122 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         );
         warn.mockRestore();
         activity.close();
+      });
+
+      const first2 = (body: string) =>
+        body
+          .split("\n")
+          .slice(1)
+          .filter((l) => l.trim() !== "")
+          .slice(0, 2);
+      const aiReview = (pulls: FakePulls, id = 602) =>
+        item(`review:${id}`, {
+          commit: pulls.prInfo.headSha,
+          kind: "review",
+          author: "me",
+          source: "sacty_review",
+          body: "## sacty のレビュー\n@me 判定：要修正\n戻り値の確認が無い",
+        });
+
+      it("指摘が1件（レビューの本文だけ）：PR のコメントを1通だけ、種類と出どころと元へのリンクを書き出しに書いて投稿する。レビューの本文は引用しない", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [decided(), redone([{ remarkId: "implement-1-1", status: "addressed", text: "直した" }])],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [review()];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(0);
+        expect(prComments(pulls)).toHaveLength(1);
+        const lines = (prComments(pulls)[0]?.body ?? "").split("\n");
+        expect(lines[0]).toBe(`<!-- sacty-reply:${id}:implement-1-1:2 -->`);
+        expect(lines[1]).toBe(
+          `人が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-601)）への返信です。`,
+        );
+        expect(lines[2]).toBe("");
+        expect(lines[3]).toBe("**対応しました。**");
+        activity.close();
+      });
+
+      it("sacty のレビューの指摘と、人の通常のコメントが混ざる：2通の、目印の行を除く最初の2行が違い、それぞれの種類と出どころが読める。投稿の数と宛先は変わらない", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            decided(),
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "確認を足しました" },
+              { remarkId: "implement-1-2", status: "addressed", text: "候補も直しました" },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [aiReview(pulls), comment()];
+        await service.checkPullRequests();
+        await drain(service);
+        expect(pulls.reviewReplies).toHaveLength(0);
+        const [onAi, onHuman] = prComments(pulls).map((c) => c.body);
+        expect(prComments(pulls)).toHaveLength(2);
+        expect(first2(onAi ?? "")[0]).toBe(
+          `sacty の AI が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-602)）への返信です。`,
+        );
+        expect(first2(onHuman ?? "")).toEqual([
+          `人が書いた通常のコメント（[このコメント](${pr}#issuecomment-401)）への返信です。`,
+          "> 「`再開のフォームの候補も直して`」",
+        ]);
+        expect(first2(onAi ?? "")).not.toEqual(first2(onHuman ?? ""));
+        // 引用のあるなしにかかわらず、先頭は目印、末尾は署名のまま
+        for (const [n, body] of [onAi, onHuman].entries()) {
+          expect(body?.startsWith(`<!-- sacty-reply:${id}:implement-1-${n + 1}:2 -->\n`)).toBe(
+            true,
+          );
+          expect(body).toContain("AI が書きました（指摘 implement-1-");
+        }
+        expect(posted(service, id)[0]?.results.map((r) => r.remarkId)).toEqual([
+          "implement-1-1",
+          "implement-1-2",
+        ]);
+        activity.close();
+      });
+
+      it("行へのコメントと通常のコメントが混ざる：行へのコメントにはスレッドへの返信（書き出しなし）、通常のコメントには引用つきの PR のコメント。行への返信を断られたときは、行へのコメントへの返信として書き出しを付けた PR のコメントに回る", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const run = async (rejected: boolean) => {
+          const pulls = new FakePulls();
+          if (rejected) pulls.replyRejected = 404;
+          const made = await toImplementGate(
+            [
+              decided(),
+              redone([
+                { remarkId: "implement-1-1", status: "addressed", text: "直した" },
+                { remarkId: "implement-1-2", status: "addressed", text: "候補も直した" },
+              ]),
+            ],
+            { pulls, now: later },
+          );
+          pulls.feedbackList = [inline(), comment()];
+          await made.service.checkPullRequests();
+          await drain(made.service);
+          made.activity.close();
+          return pulls;
+        };
+        const threaded = await run(false);
+        expect(threaded.reviewReplies).toHaveLength(1);
+        expect(threaded.reviewReplies[0]?.body).not.toContain("への返信です");
+        expect(prComments(threaded)).toHaveLength(1);
+        expect(first2(prComments(threaded)[0]?.body ?? "")[0]).toContain(
+          "人が書いた通常のコメント",
+        );
+        const rejected = await run(true);
+        expect(rejected.reviewReplies).toHaveLength(0);
+        const [onLine, onComment] = prComments(rejected).map((c) => c.body);
+        expect(prComments(rejected)).toHaveLength(2);
+        expect(first2(onLine ?? "")).toEqual([
+          `人が書いた行へのコメント（[この行へのコメント](${pr}#discussion_r501)）への返信です。`,
+          "**対応しました。**",
+        ]);
+        expect(first2(onComment ?? "")[1]).toBe("> 「`再開のフォームの候補も直して`」");
+        warn.mockRestore();
       });
 
       it("行への返信の答えを受け取れなかっただけなら、投稿済みの返信を見つけて使い、PR のコメントを重ねない", async () => {
@@ -10325,6 +10448,26 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
             },
           ],
         });
+        // AI のレビューから出た案を、人が「この PR で直す」と決めた指摘（fixOf 付き）は、元の指摘の出どころ（sacty のレビュー）を引き継ぐ
+        const first = task.remarks.find((r) => r.id === "implement-1-1") as Remark;
+        const withFix = {
+          ...task,
+          remarks: [
+            { ...first, id: "orig-ai", source: "sacty_review" as const, repliedIn: 2 },
+            { ...first, id: "fix-of-ai", fixOf: "orig-ai" },
+          ],
+        } as Task;
+        expect(awaitingRemarkReplies(withFix)?.replies).toMatchObject([
+          { id: "fix-of-ai", source: "sacty_review" },
+        ]);
+        const humanFix = {
+          ...withFix,
+          remarks: [
+            { ...first, id: "orig-human", repliedIn: 2 },
+            { ...first, id: "fix-of-human", fixOf: "orig-human" },
+          ],
+        } as Task;
+        expect(awaitingRemarkReplies(humanFix)?.replies[0]?.source).toBeUndefined();
         expect(awaitingRemarkReplies({ ...task, pullRequestState: "closed" })).toBeUndefined();
         expect(awaitingRemarkReplies({ ...task, status: "paused" })).toBeUndefined();
         expect(
