@@ -4194,7 +4194,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       it("解消が期限を超えて知らせを待てなかったとき、投稿の最中の知らせの通信も止め、その後に止まったときの知らせは書ける", async () => {
         const activity = new SqliteActivityStore(dbPath);
         const release = Promise.withResolvers<void>();
-        const posts: { signal?: AbortSignal; at: number; body: string }[] = [];
+        const posts: { signal?: AbortSignal; body: string }[] = [];
         class HangingFirstTwo extends FakePulls {
           override async commentIssue(input: {
             repo: string;
@@ -4205,7 +4205,6 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           }) {
             posts.push({
               ...(input.signal ? { signal: input.signal } : {}),
-              at: performance.now(),
               body: input.body,
             });
             // 最初の2件の通信は終わらない（解放されるまで）。3件目からは普通に投稿できる
@@ -4253,7 +4252,10 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const second = posts[1];
         expect(second?.body).toContain("disk full");
         expect(second?.signal?.aborted).toBe(true);
-        expect(performance.now() - (second?.at ?? 0)).toBeLessThan(timeoutMs - 200);
+        // 止めた合図の理由で見分ける（時間の差には頼らない）。知らせ自身の期限なら TimeoutError、
+        // 解消が期限を超えて止めたときは、理由の無い abort() の AbortError になる
+        expect((second?.signal?.reason as DOMException | undefined)?.name).toBe("AbortError");
+        expect((posts[0]?.signal?.reason as DOMException | undefined)?.name).toBe("TimeoutError");
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("解消済みにできませんでした"));
         // 通信を後から放しても、止めた知らせは投稿されない。その後に止まった知らせ3は書かれる
         release.resolve();
