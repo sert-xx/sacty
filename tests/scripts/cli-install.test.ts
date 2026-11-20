@@ -45,14 +45,19 @@ describe("launcherScript", () => {
     const entry = join(odd, "sacty.js");
     writeFileSync(entry, "");
     const launcher = join(root, "sacty");
-    writeFileSync(launcher, launcherScript({ node, entry, repo: odd }), { mode: 0o755 });
+    writeFileSync(launcher, launcherScript({ node, entry, repo: odd }), {
+      mode: 0o755,
+    });
     const wrongNode = join(root, "path-bin");
     mkdirSync(wrongNode);
     writeFileSync(join(wrongNode, "node"), "#!/bin/sh\necho wrong-node\nexit 42\n");
     chmodSync(join(wrongNode, "node"), 0o755);
     const run = spawnSync(launcher, ["launch", "acme", "--", "a b"], {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${wrongNode}${delimiter}${process.env.PATH ?? ""}` },
+      env: {
+        ...process.env,
+        PATH: `${wrongNode}${delimiter}${process.env.PATH ?? ""}`,
+      },
     });
     expect(run.status).toBe(0);
     expect(run.stdout.split("\n").filter(Boolean)).toEqual([
@@ -72,7 +77,11 @@ describe("launcherScript", () => {
     const launcher = join(root, "sacty");
     writeFileSync(
       launcher,
-      launcherScript({ node: join(root, "gone"), entry: join(root, "x.js"), repo: root }),
+      launcherScript({
+        node: join(root, "gone"),
+        entry: join(root, "x.js"),
+        repo: root,
+      }),
       { mode: 0o755 },
     );
     const run = spawnSync(launcher, ["--version"], { encoding: "utf8" });
@@ -99,7 +108,11 @@ describe("checkPath", () => {
   });
 
   it("PATH に無い・PATH で先に別の sacty（前のやり方の npm link など）が見つかるときは、注意にする", () => {
-    const missing = checkPath({ launcher, onPath: undefined, resolveReal: (p: string) => p });
+    const missing = checkPath({
+      launcher,
+      onPath: undefined,
+      resolveReal: (p: string) => p,
+    });
     expect(missing.warnings[0]).toContain("PATH にありません");
     const shadowed = checkPath({
       launcher,
@@ -115,7 +128,12 @@ describe("checkPath", () => {
   it("PATH で先に見つかるのが、入口と同じ中身に書き直した前の版の入口なら、注意は無い", () => {
     const legacy = "/home/u/.local/share/sacty/mise/1.26.0/bin/sacty";
     expect(
-      checkPath({ launcher, onPath: legacy, sameAs: [legacy], resolveReal: (p: string) => p }),
+      checkPath({
+        launcher,
+        onPath: legacy,
+        sameAs: [legacy],
+        resolveReal: (p: string) => p,
+      }),
     ).toEqual({ warnings: [], first: legacy });
   });
 
@@ -226,7 +244,10 @@ describe("globalPrefix", () => {
   it("環境変数が無い・空のとき（直接実行）は npm prefix -g に戻る", () => {
     expect(globalPrefix({ env: {}, npmPrefix: () => "/usr/local" })).toBe("/usr/local");
     expect(
-      globalPrefix({ env: { npm_config_global_prefix: "  " }, npmPrefix: () => "/usr/local" }),
+      globalPrefix({
+        env: { npm_config_global_prefix: "  " },
+        npmPrefix: () => "/usr/local",
+      }),
     ).toBe("/usr/local");
   });
 });
@@ -323,7 +344,12 @@ describe("前の版が mise に登録した入口", () => {
     expect(lines[2]).toContain("同じ中身なので、同じに動きます");
     expect(lines[3]).toContain("EACCES");
     expect(
-      legacyNotice({ root: "/d/sacty/mise", updated: [], failed: [], first: undefined }),
+      legacyNotice({
+        root: "/d/sacty/mise",
+        updated: [],
+        failed: [],
+        first: undefined,
+      }),
     ).toHaveLength(1);
   });
 });
@@ -342,6 +368,9 @@ describe("main（入れる流れ）", () => {
     binOnPath = true,
     foreign = false,
     mismatch = false,
+    npmRun = false,
+    npmRunForeign = false,
+    npmRunNoEvent = false,
   }: {
     legacy?: boolean;
     legacyFirst?: boolean;
@@ -349,6 +378,9 @@ describe("main（入れる流れ）", () => {
     binOnPath?: boolean;
     foreign?: boolean;
     mismatch?: boolean;
+    npmRun?: boolean;
+    npmRunForeign?: boolean;
+    npmRunNoEvent?: boolean;
   } = {}) {
     const base = mkdtempSync(join(tmpdir(), "sacty-cli-install-main-"));
     dirs.push(base);
@@ -365,9 +397,14 @@ describe("main（入れる流れ）", () => {
     const legacyLauncher = join(home, ".local", "share", "sacty", "mise", "1.26.0", "bin", "sacty");
     if (legacy) {
       mkdirSync(join(legacyLauncher, ".."), { recursive: true });
-      writeFileSync(legacyLauncher, `#!/bin/sh\n${LAUNCHER_MARK}\necho old\n`, { mode: 0o755 });
+      writeFileSync(legacyLauncher, `#!/bin/sh\n${LAUNCHER_MARK}\necho old\n`, {
+        mode: 0o755,
+      });
     }
-    if (foreign) writeFileSync(join(bin, "sacty"), "#!/bin/sh\necho other\n", { mode: 0o755 });
+    if (foreign)
+      writeFileSync(join(bin, "sacty"), "#!/bin/sh\necho other\n", {
+        mode: 0o755,
+      });
     const fake = join(base, "fake");
     mkdirSync(fake);
     const miseCalls = join(base, "mise-calls");
@@ -379,19 +416,45 @@ describe("main（入れる流れ）", () => {
       mkdirSync(shims);
       symlinkSync(join(fake, "mise"), join(shims, "sacty"));
     }
+    // npm run が足す PATH の形：先頭に、repo とその親の node_modules/.bin（中に sacty）が並ぶ
+    const npmBins = [join(repo, "node_modules", ".bin"), join(base, "node_modules", ".bin")];
+    if (npmRun) {
+      for (const dir of npmBins) {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "sacty"), "#!/bin/sh\necho npm\n", {
+          mode: 0o755,
+        });
+      }
+    }
+    const other = join(base, "other");
+    if (npmRunForeign) {
+      mkdirSync(other);
+      writeFileSync(join(other, "sacty"), "#!/bin/sh\necho other\n", {
+        mode: 0o755,
+      });
+    }
     const env: Record<string, string | undefined> = {
       ...process.env,
       HOME: home,
+      ...(npmRun ? { npm_lifecycle_event: "cli:install" } : {}),
       PATH: [
+        ...(npmRun ? npmBins : []),
+        ...(npmRunForeign ? [other] : []),
         ...(legacyFirst ? [join(legacyLauncher, "..")] : []),
         ...(shimFirst ? [shims] : []),
         ...(binOnPath ? [bin] : []),
         fake,
-        process.env.PATH ?? "",
+        // テストを npm test で動かすと、親の PATH にこのリポジトリの node_modules/.bin（sacty 入り）があるので、
+        // npm run の形を確かめるときは外す
+        (process.env.PATH ?? "")
+          .split(delimiter)
+          .filter((dir) => !(npmRun && dir.endsWith(join("node_modules", ".bin"))))
+          .join(delimiter),
       ].join(delimiter),
       npm_config_global_prefix: join(base, "npm-prefix"),
     };
     delete env.SACTY_BIN_DIR;
+    if (npmRunNoEvent) delete env.npm_lifecycle_event;
     delete env.XDG_DATA_HOME;
     const script = new URL("../../scripts/cli-install.mjs", import.meta.url).href;
     const run = spawnSync(
@@ -403,22 +466,59 @@ describe("main（入れる流れ）", () => {
       ],
       { encoding: "utf8", env },
     );
-    return { run, launcher: join(bin, "sacty"), legacyLauncher, miseCalls, env };
+    return {
+      run,
+      launcher: join(bin, "sacty"),
+      legacyLauncher,
+      miseCalls,
+      env,
+    };
   }
+
+  it("npm run の PATH（先頭に node_modules/.bin が並ぶ）でも、置いた入口が利用者の PATH で先なら、注意を出さない", () => {
+    const { run } = install({ npmRun: true });
+    expect(run.status).toBe(0);
+    expect(run.stderr).not.toContain("注意");
+  });
+
+  it("npm run の PATH でも、利用者の PATH で別の sacty が先なら、注意の文はその sacty を指す", () => {
+    const { run } = install({ npmRun: true, npmRunForeign: true });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("PATH で先に見つかる sacty");
+    expect(run.stderr).toContain(join("other", "sacty"));
+    expect(run.stderr).not.toContain("node_modules");
+  });
+
+  it("npm run の PATH でも、置き場所が利用者の PATH に無ければ、PATH に足すよう知らせ、node_modules/.bin/sacty を挙げない", () => {
+    const { run } = install({ npmRun: true, binOnPath: false });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("PATH にありません");
+    expect(run.stderr).not.toContain("node_modules");
+  });
+
+  it("npm run を通さずに動かすと、PATH の node_modules/.bin の sacty も確かめの対象になる", () => {
+    const { run } = install({ npmRun: true, npmRunNoEvent: true });
+    expect(run.stderr).toContain("PATH で先に見つかる sacty");
+  });
 
   it("mise があっても、mise を呼ばずに ~/.local/bin に入口を置く", () => {
     const { run, launcher, miseCalls, env } = install();
     expect(run.status).toBe(0);
     expect(run.stderr).not.toContain("注意");
     expect(readFileSync(launcher, "utf8")).toContain(LAUNCHER_MARK);
-    expect(spawnSync(launcher, ["--version"], { encoding: "utf8", env }).stdout.trim()).toBe(
-      "9.9.9",
-    );
+    expect(
+      spawnSync(launcher, ["--version"], {
+        encoding: "utf8",
+        env,
+      }).stdout.trim(),
+    ).toBe("9.9.9");
     expect(existsSync(miseCalls)).toBe(false);
   });
 
   it("前の版が mise に登録した入口があれば、同じ中身に書き直し、手で外す手順を注意に出して、終了コード 0 で終わる", () => {
-    const { run, launcher, legacyLauncher, miseCalls } = install({ legacy: true });
+    const { run, launcher, legacyLauncher, miseCalls } = install({
+      legacy: true,
+    });
     expect(run.status).toBe(0);
     expect(run.stderr).toContain("登録が残っていれば");
     expect(run.stderr).toContain(legacyLauncher);
@@ -427,7 +527,10 @@ describe("main（入れる流れ）", () => {
   });
 
   it("前の版の入口が PATH で先に見つかるときは、消すようには勧めず、同じ中身で同じに動くと知らせる", () => {
-    const { run, launcher, legacyLauncher } = install({ legacy: true, legacyFirst: true });
+    const { run, launcher, legacyLauncher } = install({
+      legacy: true,
+      legacyFirst: true,
+    });
     expect(run.status).toBe(0);
     expect(run.stderr).not.toContain("そちらを消すか");
     expect(run.stderr).toContain("同じ中身なので、同じに動きます");
@@ -435,7 +538,11 @@ describe("main（入れる流れ）", () => {
   });
 
   it("前の版の入口が先に見つかり、置き場所が PATH に無いときは、消す前に PATH に足すよう知らせる", () => {
-    const { run } = install({ legacy: true, legacyFirst: true, binOnPath: false });
+    const { run } = install({
+      legacy: true,
+      legacyFirst: true,
+      binOnPath: false,
+    });
     expect(run.status).toBe(0);
     expect(run.stderr).toContain("が PATH にありません");
     expect(run.stderr).toContain("足す前に");
