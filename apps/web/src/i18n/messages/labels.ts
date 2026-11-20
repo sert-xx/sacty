@@ -274,7 +274,7 @@ const ja = {
       images: string,
       source: "project" | "orchestrator" | "rerun" | "request" | "parent",
     ) =>
-      ` / イメージ：${images}${source === "project" ? "（プロジェクトの対象の指定）" : source === "rerun" ? "（再実行で人が指定）" : source === "request" ? "（作成時に人が指定）" : source === "parent" ? "（親のタスクのイメージ）" : ""}`,
+      ` / イメージ：${images}${source === "project" ? "（プロジェクトの対象の指定）" : source === "rerun" ? "（再実行で人が指定）" : source === "request" ? "（作成時に人が指定）" : source === "parent" ? "（親のタスクのイメージ）" : "（オーケストレーター）"}`,
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     /** 既定のイメージで動かす工程と、images のどれも合わない理由（PBI-105）。 */
     stepsDefaultImage: " / 既定のイメージ",
@@ -1071,7 +1071,7 @@ const en: LabelMessages = {
     createdAgents: (agents) => ` / agents set: ${agents}`,
     StepsChosen: (steps) => `Steps chosen: ${steps}`,
     stepsImages: (images, source) =>
-      ` / images: ${images}${source === "project" ? " (set on the project target)" : source === "rerun" ? " (set by a person on rerun)" : source === "request" ? " (set by a person at creation)" : source === "parent" ? " (the parent task's image)" : ""}`,
+      ` / images: ${images}${source === "project" ? " (set on the project target)" : source === "rerun" ? " (set by a person on rerun)" : source === "request" ? " (set by a person at creation)" : source === "parent" ? " (the parent task's image)" : " (orchestrator)"}`,
     stepImage: (step, image) => `${step}=${image}`,
     stepsDefaultImage: " / Default image",
     stepsDefaultImages: (steps) => ` / Default image: ${steps}`,

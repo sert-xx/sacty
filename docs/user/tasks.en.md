@@ -295,7 +295,7 @@ Of these, the PR, the base branch, the tests, the ticket, related tasks, and the
 
 For a task with error records, "Error report" appears below "Properties" ([Getting an error report](troubleshooting.en.md#getting-an-error-report)).
 Below it, the recent Activity (5 entries) is shown.
-Each line is cut at 2 lines. Read the full text, and the "Details" that open the reasons, in the Activity tab from "View all".
+Each line is cut at 2 lines. Read the full text, and the "Details" that open the reasons, in the Activity tab from "Show all (n)", which appears when there are more than 5 entries (or open the Activity tab directly).
 
 ## Hints on the screen
 

@@ -1095,6 +1095,49 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     });
   });
 
+  it("イメージの決めた元は行に残り、理由は元がオーケストレーターのときだけ詳細に出る（PBI-431）", () => {
+    const chosen = (payload: Record<string, unknown>) =>
+      ({
+        type: "StepsChosen",
+        payload: {
+          steps: ["implement"],
+          reason: "",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+          ...payload,
+        },
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-10-11T00:00:00.000Z",
+        actor: "orchestrator",
+      }) as ActivityEvent;
+    // 理由が無いオーケストレーターの記録でも、元が行に出る。詳細は出ない
+    const noReason = chosen({ image: "java17", imageSource: "orchestrator" });
+    expect(describeEventParts(noReason, ja)).toEqual({
+      text: "工程を決定：実装 / イメージ：java17（オーケストレーター）",
+    });
+    expect(describeEventParts(noReason, labels.en)).toEqual({
+      text: "Steps chosen: Implement / images: java17 (orchestrator)",
+    });
+    // 元がプロジェクトの対象の指定なら、imageReason があっても詳細に出さない
+    const project = chosen({ image: "java17", imageSource: "project", imageReason: "理由" });
+    expect(describeEventParts(project, ja).detail).toBeUndefined();
+    expect(describeEventParts(project, labels.en).detail).toBeUndefined();
+    // 既定のイメージにした理由（単数）は詳細に出て、行には印だけが出る
+    const dflt = chosen({ defaultImageReason: "文書だけ" });
+    expect(describeEventParts(dflt, ja)).toEqual({
+      text: "工程を決定：実装 / 既定のイメージ",
+      detail: "既定のイメージで動かす理由：文書だけ",
+    });
+    expect(describeEventParts(dflt, labels.en).text).toBe(
+      "Steps chosen: Implement / Default image",
+    );
+    expect(describeEventParts(dflt, labels.en).detail).toContain("文書だけ");
+  });
+
   it("工程ごとのイメージと、決めたのが誰か（理由）も表示する（PBI-41）", () => {
     const chosen = (payload: Record<string, unknown>) =>
       ({
@@ -1124,7 +1167,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
         ja,
       ),
     ).toEqual({
-      text: "工程を決定：要求要件 → 実装 / イメージ：実装＝java17",
+      text: "工程を決定：要求要件 → 実装 / イメージ：実装＝java17（オーケストレーター）",
       detail:
         "工程を選んだ理由：小さな変更\nイメージを選んだ理由（オーケストレーター）：pom.xml が Java 17",
     });

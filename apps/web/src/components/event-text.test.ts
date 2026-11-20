@@ -56,7 +56,9 @@ describe("作業履歴の行（EventText。PBI-431）", () => {
       expect(summary).toContain("node26-playwright");
       expect(summary).toContain(more);
       expect(summary).not.toContain(long);
-      expect(summary.length).toBeLessThan(400);
+      // 行は理由の長さに依らない（短い理由の同じ記録と同じ）
+      const shortSummary = render(stepsChosen("短い")).match(/<summary[^>]*>(.*?)<\/summary>/)?.[1];
+      expect(summary).toBe(shortSummary);
       // キーボードで止まる summary（tabindex を外していない）。開閉は <details> の標準の動き
       expect(html).toMatch(/<details/);
       expect(html).not.toContain("tabindex");
