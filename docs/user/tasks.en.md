@@ -38,6 +38,8 @@ Fill in the dialog as follows.
 3. Enter the "Title" and the "Description".
 4. Press "Create".
 
+A draft Title and Description survive closing the dialog with Esc, a click outside, "Close", or the × at the top right, and come back when you reopen it. They are cleared after a task is created successfully, and are kept when creating fails. They are always lost when you reload the page or close the browser. They may still be there when you go to another screen and come back, but that is not guaranteed, so copy a long request before you leave.
+
 If you choose a "Template", you can create a task just by choosing the repository ([Sacty setup](#template-sacty-setup), [Docs setup](#template-docs-setup), [Security check](#security-check)).
 
 The repository suggestions appear as follows.
@@ -862,8 +864,7 @@ When sacty uses its own format, the implementation PR body looks as follows.
 
 - The "結論" (conclusion) section at the top holds a summary of the change and sacty's review (the child task that reviews the PR reviews it and posts the review).
 - The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging.
-- Right after the conclusion comes a "リスク評価" (risk assessment) section ([PR risk assessment](#pr-risk-assessment)).
-  When the body follows the template's headings, it is at the end of the body.
+- The risk assessment is not put in the body ([PR risk assessment](#pr-risk-assessment)).
 - The PR of a child task of a split has a "この PR の範囲（分割の子タスク）" (scope of this PR) section ([Scope of the PR of a child task of a split](#scope-of-the-pr-of-a-child-task-of-a-split)).
 - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated).
   When the implementation's description itself starts with a heading such as "## 変更内容", no empty "変更" heading is put in front of it.
@@ -892,8 +893,9 @@ For a task that had a final review in an earlier version, the body shows that re
 
 ### PR risk assessment
 
-Before opening or updating an implementation PR, sacty has an AI assess the risk of the PR's content and puts it in the "リスク評価" (risk assessment) section of the PR body.
-Use it as a guide when you decide how deeply to review the PR.
+When the child task that reviews an implementation PR finds no findings, sacty has an AI assess the risk of the PR's content and shows it in the "リスク評価" (risk assessment) section of the review comment and in the "PR risk assessment" section of the task detail.
+Nothing is assessed when a PR is opened or updated, so no wait for an assessment is added, and the PR body does not carry it either.
+Use it as a guide when you decide how deeply to review the PR at the final judgment.
 The assessment is a guide. sacty does not skip a review or a test, or merge automatically, because of it.
 
 There are three levels, and each level has a fixed suggested review depth.
@@ -935,11 +937,13 @@ Besides the level and the suggested depth, the section holds the following.
 
 Keep the following in mind about the assessment.
 
-- When it could not be assessed (the budget cap has been reached, the AI run failed, or the answer could not be read), the section says "評価できませんでした" (could not be assessed) with the reason. Opening the PR is not stopped.
+- An assessment is given only in a review round with no findings. It is not given in a round where suggestions remain, a round that requires fixes, or a round with no verdict (even if the answer says no findings, a line comment makes it "suggestions", so none is given).
+- When it could not be assessed in a round with no findings (the AI's answer had no assessment, or it could not be read), the section says "評価できませんでした" (could not be assessed) with the reason. Posting the review and waiting for approval are not stopped.
 - When the last assessment answer in the AI's output could not be read, sacty does not use an earlier answer even if there is one, and treats the PR as not assessed. The same applies when the assessment heading is written in the form of a JSON key (with quotation marks and a colon) after the assessment answer. Text that merely mentions the heading name has no effect. When an earlier answer was not used, the reason says so.
-- When a PR is submitted again at the same commit, it is not assessed again if it was assessed successfully. When the commit has changed, it is assessed again. However, if the changes from the previous assessment (one that succeeded) to now are documents only (documents such as `.md` files, not including instructions to agents, files under a directory that starts with `.`, or files under a skill's directory) and the start of the PR diff (the task's start, or the head of the base branch that was merged in) is the same as last time, it is not assessed again and the previous assessment is carried over. The PR body shows the previous assessment as it was, and the activity shows which commit's assessment was carried over to which commit. When even one file that is not a document has changed, when there was no previous assessment, when the start has changed, or when the changes could not be confirmed, it is assessed again. When it could not be assessed (the budget cap, a failed AI run, or an unreadable answer), it is assessed again the next time the PR is submitted. When the implementation is redone and the content changes, it is assessed again.
-- The result also appears in the "PR risk assessment" section of the task detail and in the activity.
-- A requirements or design PR does not carry a risk assessment.
+- The comment carries only the assessment of the head commit reviewed in this round. An assessment from an earlier round is not shown as this round's.
+- The result appears in the "PR risk assessment" section of the detail of the task that opened the PR (including the screen waiting for approval), without opening the child task. It shows which commit was assessed, and says so when the PR's head has moved on since then and the assessment is not for the current head. Until a round with no findings exists, the section is not shown. The result also appears in the detail of the review child task and in the activity.
+- A requirements or design PR, and a PR of a task that continues an existing PR, do not carry a risk assessment (neither the section nor the "PR risk assessment" section appears for them). A PR that a person merged without ever reaching no findings does not carry one either.
+- For a task that was assessed before a PR was opened in an earlier version, that assessment may appear in the "PR risk assessment" section with the assessed commit. It is not put in the PR body.
 - When the project's or repository's context has a skill or rules about RADAR (the idea of varying the review depth with the risk of a change), the AI puts that content before the criteria above when it assesses (the levels stay low, medium, and high).
 - The signal "不具合の疑い" (suspected defect) may be shown. This signal does not count toward the level.
 - For the detailed rules of the criteria, see the [specification](../spec/risk-assessment.en.md).

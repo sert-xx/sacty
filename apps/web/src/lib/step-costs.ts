@@ -278,8 +278,8 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
           );
         }
         return;
-      // PR を出す前のリスク評価（PBI-362。オーケストレーターのエージェントで行う）。レビューの工程の答えから読んだ評価は、
-      // 実行していない（費用は工程の実行に数える）
+      // 以前の版が PR を出す前にオーケストレーターのエージェントで行ったリスク評価（PBI-362）の記録を読む分岐。今の版は
+      // 実行しない。レビューの工程の答えから読んだ評価は、実行していない（費用は工程の実行に数える）
       case "PullRequestRiskAssessed":
         if (event.payload.agentId) {
           push(

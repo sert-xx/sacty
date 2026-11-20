@@ -4,7 +4,7 @@
 - タスク: PBI-421
 - PR: #465
 - ブランチ: sacty/task-887c7e69
-- 関係する ADR: [文書だけを直した後の再レビューは観点と検証を絞り、リスク評価は引き継ぐ](../adr/20261120-2200-narrow-rereview-and-risk-for-documents-only.md)
+- 関係する ADR: [文書だけを直した後の再レビューは観点と検証を絞り、リスク評価は引き継ぐ](../adr/20261120-2200-superseded-narrow-rereview-and-risk-for-documents-only.md)
 
 ## 目的
 

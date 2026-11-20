@@ -2,6 +2,7 @@
 
 import { STEP_PLANS, type StepKey, type StepPlan, type TaskTemplate } from "@sacty/core";
 import Link from "next/link";
+import { unstable_rethrow } from "next/navigation";
 import { type Ref, useActionState, useEffect, useRef, useState } from "react";
 import { type CreateTaskState, createTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -91,9 +92,28 @@ export function NewTaskDialog({
     flakyFixTest: string;
   };
 }) {
-  const [state, formAction, pending] = useActionState(createTaskAction, initial);
+  // 書きかけの題・内容。ダイアログを閉じると中身（欄）は外れるので、ここに持ち、開き直したら欄の初期値に戻す
+  // （Esc・外側のクリック・閉じる・× のどれで閉じても失わない）。この部品は提案ごと・プロジェクトごとに別なので、混ざらない。
+  // 作成に成功すると画面が移って部品が作り直されるので、空に戻る
+  const [draft, setDraft] = useState({ title: prefill?.title ?? "", body: prefill?.body ?? "" });
   const messages = useMessages();
   const t = messages.forms.task;
+  const [state, formAction, pending] = useActionState(
+    async (prev: CreateTaskState, formData: FormData): Promise<CreateTaskState> => {
+      try {
+        // createTaskAction は、成功すると必ず redirect し（例外で移る）、値を返すのは失敗のときだけ
+        return await createTaskAction(prev, formData);
+      } catch (error) {
+        // redirect など Next.js が移動に使う例外は、そのまま投げ直す（成功すると画面が移り、この部品は作り直される。
+        // 書きかけは部品の状態なので、そのとき空に戻る）
+        unstable_rethrow(error);
+        // それ以外の例外（サーバーの停止・古い action など）は、投げ直すとエラー画面でこの部品ごと外れ、書きかけを失う。
+        // 理由を返して、入力を残す
+        return { message: t.createFailed };
+      }
+    },
+    initial,
+  );
   // 作成先は、ダイアログを開いたときのプロジェクトに固定し、閉じるまで変えない
   // （入力中に画面が自動で更新され、別のタブで切り替えたプロジェクトが props で渡されても、
   // 書いている途中のタスクの作成先は変えないため）
@@ -159,7 +179,7 @@ export function NewTaskDialog({
       <DialogTrigger render={<Button size={prefill ? "default" : "lg"} />}>
         {prefill?.label ?? t.create}
       </DialogTrigger>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[min(48rem,calc(100%-2rem))]">
         <form action={formAction} className="flex flex-col gap-4">
           <input type="hidden" name="projectId" value={target.id} />
           {prefill && <input type="hidden" name="flakyFixTest" value={prefill.flakyFixTest} />}
@@ -202,8 +222,11 @@ export function NewTaskDialog({
               }}
               // 候補が1つなら入れておく
               repoDefault={prefill?.repo ?? (repositories.length === 1 ? repositories[0] : "")}
-              titleDefault={state.values?.title ?? prefill?.title}
-              bodyDefault={state.values?.body ?? prefill?.body}
+              titleDefault={draft.title}
+              bodyDefault={draft.body}
+              onTitleChange={(title) => setDraft((prev) => ({ ...prev, title }))}
+              onBodyChange={(body) => setDraft((prev) => ({ ...prev, body }))}
+              bodyClassName="min-h-[calc(12lh+1rem+2px)] max-h-[60dvh] resize-y"
               titleError={state.fieldErrors?.title?.[0]}
               bodyError={state.fieldErrors?.body?.[0]}
               autoFocus
@@ -263,6 +286,9 @@ export function TaskFields({
   repoDefault,
   titleDefault,
   bodyDefault,
+  onTitleChange,
+  onBodyChange,
+  bodyClassName = "max-h-72",
   titleError,
   bodyError,
   autoFocus,
@@ -288,6 +314,11 @@ export function TaskFields({
   repoDefault?: string;
   titleDefault?: string;
   bodyDefault?: string;
+  /** 題・内容の入力を、呼び出し側が持つとき（書きかけを残すため）。 */
+  onTitleChange?: (value: string) => void;
+  onBodyChange?: (value: string) => void;
+  /** 内容の欄の高さの指定（既定は最大 288px まで伸びる）。 */
+  bodyClassName?: string;
   titleError?: string;
   bodyError?: string;
   autoFocus?: boolean;
@@ -536,6 +567,7 @@ export function TaskFields({
               id={`${idPrefix}-title`}
               name="title"
               defaultValue={titleDefault}
+              onChange={onTitleChange && ((event) => onTitleChange(event.target.value))}
               aria-invalid={Boolean(titleError)}
               aria-describedby={titleError ? `${idPrefix}-title-error` : undefined}
               autoFocus={autoFocus}
@@ -552,8 +584,9 @@ export function TaskFields({
               id={`${idPrefix}-body`}
               name="body"
               rows={6}
-              className="max-h-72 overflow-y-auto"
+              className={`${bodyClassName} overflow-y-auto`}
               defaultValue={bodyDefault}
+              onChange={onBodyChange && ((event) => onBodyChange(event.target.value))}
               placeholder={t.bodyPlaceholder}
               aria-invalid={Boolean(bodyError)}
               aria-describedby={bodyError ? `${idPrefix}-body-error` : undefined}

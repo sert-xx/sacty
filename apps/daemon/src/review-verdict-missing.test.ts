@@ -85,8 +85,8 @@ describe("PR のレビューの判定が無い理由（PBI-378）", () => {
     const result = read(rereviewWithoutVerdict);
     expect(result.verdict).toBeUndefined();
     expect(result.verdictMissing).toBe("absent");
-    // リスク評価は読め、本文に JSON は残らない
-    expect(result.risk?.level).toBe("high");
+    // 判定が無い回は指摘なしではないので、リスク評価は使わず（PBI-429）、本文に JSON は残らない
+    expect(result.risk).toBeUndefined();
     expect(result.output).not.toContain("```");
     expect(result.output).toContain("## 指摘\n\nなし。");
   });

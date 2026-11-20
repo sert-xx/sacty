@@ -1508,6 +1508,8 @@ export function makeService(
     audit?: boolean;
     /** sacty が作った PR をレビューする子タスクを作る（PBI-330）。既定は作らない。 */
     reviewTasks?: boolean;
+    /** リスク評価を有効にする（PBI-429。実装の PR のレビューの子タスクが、指摘なしの回に評価する）。既定は無効。 */
+    riskAssessment?: boolean;
     /** レビューの子タスクが CI を読むのを待つ上限（ミリ秒。PBI-331）。 */
     reviewCiTimeoutMs?: number;
     /** ドラフトを外す・戻す・先頭を読む答えを待つ上限（ミリ秒。PBI-331）。 */
@@ -1594,6 +1596,7 @@ export function makeService(
     ...(options.ci ? { ci: options.ci } : {}),
     ...(options.audit ? { audit: true } : {}),
     ...(options.reviewTasks ? { reviewTasks: true } : {}),
+    ...(options.riskAssessment ? { riskAssessment: true } : {}),
     ...(options.reviewCiTimeoutMs ? { reviewCiTimeoutMs: options.reviewCiTimeoutMs } : {}),
     ...(options.draftTimeoutMs ? { draftTimeoutMs: options.draftTimeoutMs } : {}),
     ...(options.memory ? { memoryRoot: join(dir, "memory") } : {}),
