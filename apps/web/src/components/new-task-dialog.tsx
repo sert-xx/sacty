@@ -91,7 +91,29 @@ export function NewTaskDialog({
     flakyFixTest: string;
   };
 }) {
-  const [state, formAction, pending] = useActionState(createTaskAction, initial);
+  // 書きかけの題・内容。ダイアログを閉じると中身（欄）は外れるので、ここに持ち、開き直したら欄の初期値に戻す
+  // （Esc・外側のクリック・閉じる・× のどれで閉じても失わない）。この部品は提案ごと・プロジェクトごとに別なので、混ざらない。
+  // 作成に成功したら空に戻す
+  const [draft, setDraft] = useState({ title: prefill?.title ?? "", body: prefill?.body ?? "" });
+  const [state, formAction, pending] = useActionState(
+    async (prev: CreateTaskState, formData: FormData): Promise<CreateTaskState> => {
+      let next: CreateTaskState | undefined;
+      try {
+        next = await createTaskAction(prev, formData);
+      } catch (error) {
+        // 成功すると、作ったタスクの詳細へ移る（redirect は例外で移る）
+        if (
+          String((error as { digest?: unknown } | null)?.digest ?? "").startsWith("NEXT_REDIRECT")
+        ) {
+          setDraft({ title: "", body: "" });
+        }
+        throw error;
+      }
+      if (!next?.message && !next?.fieldErrors) setDraft({ title: "", body: "" });
+      return next ?? initial;
+    },
+    initial,
+  );
   const messages = useMessages();
   const t = messages.forms.task;
   // 作成先は、ダイアログを開いたときのプロジェクトに固定し、閉じるまで変えない
@@ -159,7 +181,7 @@ export function NewTaskDialog({
       <DialogTrigger render={<Button size={prefill ? "default" : "lg"} />}>
         {prefill?.label ?? t.create}
       </DialogTrigger>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl">
         <form action={formAction} className="flex flex-col gap-4">
           <input type="hidden" name="projectId" value={target.id} />
           {prefill && <input type="hidden" name="flakyFixTest" value={prefill.flakyFixTest} />}
@@ -202,8 +224,11 @@ export function NewTaskDialog({
               }}
               // 候補が1つなら入れておく
               repoDefault={prefill?.repo ?? (repositories.length === 1 ? repositories[0] : "")}
-              titleDefault={state.values?.title ?? prefill?.title}
-              bodyDefault={state.values?.body ?? prefill?.body}
+              titleDefault={draft.title}
+              bodyDefault={draft.body}
+              onTitleChange={(title) => setDraft((prev) => ({ ...prev, title }))}
+              onBodyChange={(body) => setDraft((prev) => ({ ...prev, body }))}
+              bodyClassName="min-h-[calc(12lh+1rem)] max-h-[60dvh] resize-y"
               titleError={state.fieldErrors?.title?.[0]}
               bodyError={state.fieldErrors?.body?.[0]}
               autoFocus
@@ -263,6 +288,9 @@ export function TaskFields({
   repoDefault,
   titleDefault,
   bodyDefault,
+  onTitleChange,
+  onBodyChange,
+  bodyClassName = "max-h-72",
   titleError,
   bodyError,
   autoFocus,
@@ -288,6 +316,11 @@ export function TaskFields({
   repoDefault?: string;
   titleDefault?: string;
   bodyDefault?: string;
+  /** 題・内容の入力を、呼び出し側が持つとき（書きかけを残すため）。 */
+  onTitleChange?: (value: string) => void;
+  onBodyChange?: (value: string) => void;
+  /** 内容の欄の高さの指定（既定は最大 288px まで伸びる）。 */
+  bodyClassName?: string;
   titleError?: string;
   bodyError?: string;
   autoFocus?: boolean;
@@ -536,6 +569,7 @@ export function TaskFields({
               id={`${idPrefix}-title`}
               name="title"
               defaultValue={titleDefault}
+              onChange={onTitleChange && ((event) => onTitleChange(event.target.value))}
               aria-invalid={Boolean(titleError)}
               aria-describedby={titleError ? `${idPrefix}-title-error` : undefined}
               autoFocus={autoFocus}
@@ -552,8 +586,9 @@ export function TaskFields({
               id={`${idPrefix}-body`}
               name="body"
               rows={6}
-              className="max-h-72 overflow-y-auto"
+              className={`${bodyClassName} overflow-y-auto`}
               defaultValue={bodyDefault}
+              onChange={onBodyChange && ((event) => onBodyChange(event.target.value))}
               placeholder={t.bodyPlaceholder}
               aria-invalid={Boolean(bodyError)}
               aria-describedby={bodyError ? `${idPrefix}-body-error` : undefined}

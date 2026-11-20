@@ -38,6 +38,8 @@ Fill in the dialog as follows.
 3. Enter the "Title" and the "Description".
 4. Press "Create".
 
+A draft Title and Description survive closing the dialog with Esc, a click outside, "Close", or the × at the top right, and come back when you reopen it. They are cleared after a task is created successfully, and are lost when you reload the page or close the browser.
+
 If you choose a "Template", you can create a task just by choosing the repository ([Sacty setup](#template-sacty-setup), [Docs setup](#template-docs-setup), [Security check](#security-check)).
 
 The repository suggestions appear as follows.
