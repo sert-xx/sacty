@@ -376,7 +376,7 @@ sacty tells the findings of the child task's review apart, as "AI review comment
 The review is posted with the same GitHub account as yours, but sacty recognizes it by the marker (`sacty-review:`) put in the post.
 
 - The Activity, the approval screen, the dashboard, and the audit show them separately as "AI review".
-- A request for changes made only of AI review comments is not counted in the number of requests for changes by you, or in the limit on requests for changes to the same step (3).
+- A request for changes made only of AI review comments is not counted in the number of requests for changes by you.
 - They are passed to agents separately from your comments.
   "The previous comment" and similar words in your comments are treated as pointing to your comments.
 

@@ -18,7 +18,6 @@ import {
   canDerive,
   canRereview,
   canRerun,
-  changeRounds,
   DeriveTaskInput,
   gatePullRequest,
   hasFailures,
@@ -26,7 +25,6 @@ import {
   isFinished,
   isSecurityTask,
   issueMessage,
-  MAX_CHANGE_REQUESTS,
   openProposal,
   PREPARING_PHASES,
   parseRepoUrl,
@@ -112,7 +110,7 @@ export type SactyApi = {
   /**
    * 承認待ちの工程を差し戻す（画面の「差し戻す」を、戻し先・原因を選ばずに押したときと同じ API。PBI-397）。差し戻した後のタスクを返す。
    * 断られたときは理由を文にした例外。送った後に結果を受け取れなかったときは、差し戻されている可能性を添えた例外。
-   * 送るのは step・submission・comments だけ（target・cause・image・agents・continueOverLimit は送らない）。
+   * 送るのは step・submission・comments だけ（target・cause・image・agents は送らない）。
    */
   requestChanges(
     taskId: string,
@@ -360,7 +358,7 @@ const ApprovalSchema = z.object({
 export type Approval = z.infer<typeof ApprovalSchema>;
 
 /**
- * 承認待ち（上限を超えた差し戻しの判断待ちを含む。画面で「承認する」を出す状態）の、承認の対象と手段。
+ * 承認待ち（以前の版で差し戻しの上限のために止まった判断待ちを含む。画面で「承認する」を出す状態）の、承認の対象と手段。
  * デーモンの承認の判定（`gateTask`・画面の `gate-form`）の読み取り側の写しで、見せるだけ。承認できるかどうかを決めるのは、
  * 承認の API（デーモン）。判定が変わったら、これも合わせる。
  */
@@ -424,7 +422,7 @@ const EscalationSchema = z.object({
       "unknown",
     ])
     .describe(
-      "too_many_changes：差し戻しの上限を超えた、change_proposed：変更の申し出、change_undecidable・rework_confirmation：以前の版の記録、unknown：記録が無い（古いタスク）",
+      "too_many_changes：以前の版の記録（差し戻しの上限で止まった。いまは上限が無く、記録しない）、change_proposed：変更の申し出、change_undecidable・rework_confirmation：以前の版の記録、unknown：記録が無い（古いタスク）",
     ),
   step: z
     .enum(StepKey.options)
@@ -1602,17 +1600,14 @@ function describeAsks(task: Task): z.infer<typeof HumanAsksSchema> | undefined {
       : pr
         ? `答えが要らなければ、そのまま PR${approval?.pullRequestUrl ? `（${approval.pullRequestUrl}）` : ""} をマージして承認します（このツールでは承認できません）。`
         : "この工程は、このツールでは承認できません（画面で判断します）。";
-  // 差し戻せるかは、`checkRequestChanges` と同じ core の判定（reworkTargets・changeRounds）で決める。
+  // 差し戻せるかは、`checkRequestChanges` と同じ core の判定（reworkTargets）で決める。
   const reworkStep = step ? reworkTargets(task, step as StepKey)[0] : undefined;
-  const atLimit = reworkStep !== undefined && changeRounds(task, reworkStep) >= MAX_CHANGE_REQUESTS;
   const viaRequestChanges = `request_changes の comments に答えを書き（step は ${step}、submission は approval の値）、${reworkStep ?? step} を差し戻します。`;
   const answer = !reworkStep
     ? "この工程は、request_changes・PR のコメントでは差し戻せません。答えるときは、画面で確かめてください。"
-    : atLimit
-      ? `${reworkStep} への人の差し戻しが上限（${MAX_CHANGE_REQUESTS}回）に達しています。request_changes は断られ、PR のコメントで答えても上限を超えた差し戻しの判断待ちになります。答えるときは、画面で人に決めてもらってください。`
-      : pr
-        ? `答えるときは、PR のコメントに書きます（PR に記録が残り、sacty が取り込んで ${reworkStep} をやり直します）。request_changes の comments でも差し戻せますが、PR には残りません。`
-        : `答えるときは、${viaRequestChanges}`;
+    : pr
+      ? `答えるときは、PR のコメントに書きます（PR に記録が残り、sacty が取り込んで ${reworkStep} をやり直します）。request_changes の comments でも差し戻せますが、PR には残りません。`
+      : `答えるときは、${viaRequestChanges}`;
   return {
     ...(asks.undecided
       ? {
@@ -1670,12 +1665,12 @@ function describeEscalation(task: Task): z.infer<typeof EscalationSchema> | unde
     "タスクの中止は cancel_task でできます（利用者がそのタスクの中止をはっきり頼んだときだけ。先に get_cancel_plan で片付けの対象を確かめ、利用者に伝えます）。",
   ];
   const proposalReason = reason === "change_proposed" || reason === "change_undecidable";
-  const overLimit = reason === "too_many_changes";
+  const legacyLimit = reason === "too_many_changes";
   const decideOnScreen = [
-    ...(overLimit || !proposalReason
-      ? ["上限を超えた差し戻し（request_changes は、escalated のタスクを差し戻しません）"]
+    ...(legacyLimit || !proposalReason
+      ? ["差し戻し（request_changes は、escalated のタスクを差し戻しません）"]
       : []),
-    ...(proposalReason || !overLimit ? ["変更の申し出を認めるか・認めないかの決定"] : []),
+    ...(proposalReason || !legacyLimit ? ["変更の申し出を認めるか・認めないかの決定"] : []),
   ];
   return {
     reason,
@@ -1890,8 +1885,7 @@ export function remarkLines(comments: readonly string[]): string[] {
 }
 
 /**
- * 差し戻せるかを、タスクから確かめる（差し戻す API を呼ぶ前。断るなら理由の例外）。差し戻す前に断るのは、上限に達した
- * 工程に API へ送ると、API は断らずにエスカレーション（状態が変わる）にするため。デーモンの判定（`gateTask`・
+ * 差し戻せるかを、タスクから確かめる（差し戻す API を呼ぶ前。断るなら理由の例外）。デーモンの判定（`gateTask`・
  * `requestChanges`・画面の差し戻しの欄）の読み取り側の写しで、判定が変わったら、これも合わせる。やり直す工程を返す。
  */
 export function checkRequestChanges(
@@ -1901,7 +1895,7 @@ export function checkRequestChanges(
 ): { reworkStep: StepKey } {
   if (task.status === "escalated") {
     throw new Error(
-      "このタスクは、人の判断待ち（差し戻しの上限・変更の申し出など）です。このツールでは差し戻せません。画面で判断してもらってください。",
+      "このタスクは、人の判断待ち（変更の申し出・以前の版の記録など）です。このツールでは差し戻せません。画面で判断してもらってください。",
     );
   }
   if (task.status !== "awaiting_approval") {
@@ -1934,11 +1928,6 @@ export function checkRequestChanges(
   }
   if (remarks.some((r) => r.length > REMARK_MAX_LENGTH)) {
     throw new Error(`指摘は1件 ${REMARK_MAX_LENGTH} 文字までです。短くまとめてください。`);
-  }
-  if (changeRounds(task, reworkStep) >= MAX_CHANGE_REQUESTS) {
-    throw new Error(
-      `${reworkStep} への人の差し戻しが上限（${MAX_CHANGE_REQUESTS}回）に達しているため、差し戻しませんでした（何も変えていません）。このツールは上限を超えて差し戻せません。続けるかどうかは、画面で人に決めてもらってください。`,
-    );
   }
   return { reworkStep };
 }
@@ -2855,7 +2844,6 @@ const TOOLS: readonly ToolDefinition[] = [
       "承認待ちのタスクの工程を差し戻します（画面の承認の画面で、戻し先・原因を選ばずに指摘だけを書いて「差し戻す」を押すのと同じ）。",
       "差し戻すと、sacty がその工程（承認待ちの工程に最も近い、やり直せる工程。結果の reworkStep）をやり直します",
       "（時間と費用がかかります。取り消せません。終わるのは待たずに返します）。",
-      "同じ工程への人の差し戻しは3回までで、このツールは上限を超えて差し戻しません（上限に達していたら、差し戻さず、何も変えずに理由を返します。続けるかは画面で人が決めます）。",
       "戻し先・原因の指定、タスクのイメージ・エージェントの変更はできません。状態が escalated（人の判断待ち）のタスク・承認待ちでないタスクも、差し戻さずに理由を返します。",
       "先に get_task の approval で、承認待ちの工程（step）・提出の回（submission）を確かめ、list_deliverables・get_deliverable で成果物を確かめてください。",
       "step と submission は、確かめたものをそのまま渡します。いま承認待ちの工程・回と違うとき（古い提出など）は、差し戻さずに理由（いまの回）を返します。同じ差し戻しを2回呼ぶと、2回目は断られます。",
@@ -3382,7 +3370,7 @@ const INSTRUCTIONS = [
   "承認を頼まれたら、get_task の approval（承認待ちの工程・提出の回・承認の手段）と、list_deliverables・get_deliverable の成果物を確かめてから、",
   "method が approve_step なら approve_step を呼びます（承認すると次の工程が始まり、取り消せません。PR のマージで承認する工程は、承認できません）。",
   "差し戻しを頼まれたら、同じく get_task の approval と成果物を確かめてから、request_changes で step・submission・指摘（comments）を指定して呼びます",
-  "（sacty が工程をやり直し、時間と費用がかかります。同じ工程への人の差し戻しは3回までで、上限を超えては差し戻せません。PR を作った工程は、PR のコメントでも差し戻せます）。",
+  "（sacty が工程をやり直し、時間と費用がかかります。PR を作った工程は、PR のコメントでも差し戻せます）。",
   "一時停止を頼まれたら、get_task の canPause が true のタスクに pause_task を呼びます（実行中の実行は打ち切られ、再開すると工程を最初からやり直します。承認待ちを止めると、承認ゲートと PR の見守りが止まります）。",
   "再開を頼まれたら、get_task の pausedReason・pausedMessage・canResume を確かめてから、resume_task を呼びます（止まった工程を実行し直し、時間と費用がかかります。同じ原因ならまた止まります）。",
   "予算の上限の引き上げ・テストの扱い・子タスクの中止を認める判断・作業するリポジトリの選択など、画面で人が決める判断が要る停止は、resume_task で再開できません（get_task の resumeBlocked の、画面で人が決めることを利用者に伝えます）。",

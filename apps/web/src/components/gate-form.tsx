@@ -30,8 +30,8 @@ export function GateForm({
   targets,
   defaultTarget,
   escalated,
-  maxChanges,
-  pendingComments,
+  pendingRemarks,
+  pendingTarget,
   pullRequest,
   rework,
   notReproduced = false,
@@ -50,8 +50,10 @@ export function GateForm({
   targets: StepKey[];
   defaultTarget: StepKey;
   escalated: boolean;
-  maxChanges: number;
-  pendingComments: string[];
+  /** 以前の版で止まったタスクの、残った指摘（元の文のまま。差し戻すと、補足の前に渡す）。 */
+  pendingRemarks: string[];
+  /** 残った指摘を引き継ぐ工程（上限で止まった工程。無ければ、どの工程へ差し戻しても引き継ぐ）。 */
+  pendingTarget?: StepKey | undefined;
   /** PR を作った工程（実装・要求要件・設計）。PR のマージで承認するので、承認のボタンは出さない（PBI-14a）。 */
   pullRequest?: {
     number: number;
@@ -152,8 +154,33 @@ export function GateForm({
       )}
       {targets.length > 0 && escalated && !rework && (
         <p className="rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">
-          {t.escalated(maxChanges)}
+          {t.escalated}
         </p>
+      )}
+      {targets.length > 0 && escalated && pendingRemarks.length > 0 && (
+        <section
+          data-testid="pending-remarks"
+          aria-labelledby="pending-remarks-title"
+          className="flex flex-col gap-1.5 rounded-md border border-border bg-muted p-3 text-sm leading-6"
+        >
+          <h3 id="pending-remarks-title" className="font-semibold">
+            {t.pendingTitle}
+          </h3>
+          <p className="text-muted-foreground">
+            {pendingTarget
+              ? `${t.pendingHelp(stepLabel[pendingTarget])} ${t.pendingOther}`
+              : t.pendingHelpAny}
+          </p>
+          <ol className="flex list-decimal flex-col gap-1.5 pl-5">
+            {pendingRemarks.map((text, i) => (
+              // 残った指摘は並びが決まっていて、増減しない
+              // biome-ignore lint/suspicious/noArrayIndexKey: 固定の一覧
+              <li key={i} className="whitespace-pre-wrap break-words">
+                {text}
+              </li>
+            ))}
+          </ol>
+        </section>
       )}
       {targets.length > 1 && (
         <fieldset className="flex flex-col gap-1.5">
@@ -211,9 +238,9 @@ export function GateForm({
         <>
           <span className="flex items-center gap-1">
             <Label htmlFor="gate-comments">
-              {rework ? t.commentsLabelRework : t.commentsLabel}
+              {escalated && pendingRemarks.length > 0 ? t.commentsLabelPending : t.commentsLabel}
             </Label>
-            <Hint text={t.commentsHint(maxChanges)} />
+            <Hint text={t.commentsHint} />
           </span>
           <Textarea
             id="gate-comments"
@@ -221,7 +248,7 @@ export function GateForm({
             rows={5}
             className="max-h-72 overflow-y-auto bg-card"
             placeholder={t.commentsPlaceholder}
-            defaultValue={state.comments ?? pendingComments.join("\n")}
+            defaultValue={state.comments ?? ""}
             aria-invalid={Boolean(state.message)}
             aria-describedby={state.message ? "gate-error" : undefined}
           />
@@ -253,12 +280,12 @@ export function GateForm({
           <Button
             type="submit"
             name="decision"
-            value={escalated && !rework ? "continue" : "request"}
+            value="request"
             variant="outline"
             disabled={pending}
             className="min-h-11 flex-1 border-warn-line text-warn"
           >
-            {escalated && !rework ? t.requestOverLimit : t.request}
+            {t.request}
           </Button>
         )}
         {!pullRequest && !notReproduced && (

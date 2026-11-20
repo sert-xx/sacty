@@ -155,3 +155,32 @@ describe("オーケストレーターを実行できなかった理由（PBI-34�
     );
   });
 });
+
+describe("差し戻しの回数の上限（PBI-414）", () => {
+  it("デーモンの文言（日英）に、差し戻しの回数の上限を前提にした文は無く、上限の断り gate.overLimit も無い", () => {
+    const banned = [
+      "上限を超えて差し戻す",
+      "差し戻しが上限",
+      "3回まで",
+      "beyond the limit",
+      "Change requests reached the limit",
+    ];
+    expect(isMessageCode("gate.overLimit")).toBe(false);
+    for (const locale of ["ja", "en"] as const) {
+      for (const [code, text] of Object.entries(DAEMON_MESSAGES[locale])) {
+        const call = (arg: unknown) => {
+          try {
+            return (text as (...a: unknown[]) => string)(
+              new Proxy({}, { get: () => arg }),
+              (v: unknown) => String(v),
+            );
+          } catch {
+            return "";
+          }
+        };
+        const rendered = typeof text === "function" ? `${call(1)}${call("x")}` : text;
+        for (const phrase of banned) expect(`${code}: ${rendered}`).not.toContain(phrase);
+      }
+    }
+  });
+});

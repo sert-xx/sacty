@@ -1356,6 +1356,47 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       (service.get(taskId)?.activity ?? []).filter((e) => e.type === "StepApproved");
     return { activity, service, pulls, id, other, events };
   }
+  /** 要求要件を3回差し戻した後、以前の版の記録（上限のエスカレーション。残った指摘 2 件）を足して読み込み直したタスク。 */
+  async function overLimit() {
+    const { activity, service, id } = await awaiting(3);
+    const { call } = await connect(apiOver(service));
+    for (const submission of [1, 2, 3]) {
+      await call("request_changes", {
+        task_id: id,
+        step: "requirements",
+        submission,
+        comments: [`指摘 ${submission}`],
+      });
+      await drain(service);
+    }
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskEscalated",
+            payload: {
+              step: "requirements",
+              target: "requirements",
+              reason: "too_many_changes",
+              pendingRemarks: [
+                { id: "requirements-4-1", text: "書きかけの秘密の指摘" },
+                { id: "requirements-4-2", text: "もう1件" },
+              ],
+            },
+          },
+        },
+      ],
+    });
+    const { service: restarted } = makeService(activity, [], {
+      realPlanner: true,
+      repos: new FilesRepos(),
+    });
+    return { activity, service: restarted, id };
+  }
+
   type Approved = {
     message: string;
     approved: { taskId: string; step: string; submission: number };
@@ -1752,55 +1793,43 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       activity.close();
     });
 
-    it("上限（3回）に達しているとき、4回目は API に送らずに断る。状態は承認待ちのまま、TaskEscalated も記録されず、続けるかは人が画面で決めると返す", async () => {
-      const { activity, service, id } = await awaiting(3);
+    it("同じ工程への差し戻しが 3 回に達した後も、4 回目を API に送って差し戻す。エスカレーションにならず、overLimit は偽で記録する（PBI-414）", async () => {
+      const { activity, service, id } = await awaiting(4);
       const api = apiOver(service);
       const { call } = await connect(api);
-      for (const submission of [1, 2, 3]) {
+      for (const submission of [1, 2, 3, 4]) {
         const ok = await call("request_changes", args(id, { submission }));
         expect(ok.isError, ok.text).toBe(false);
         await drain(service);
         expect(service.get(id)?.task.status).toBe("awaiting_approval");
       }
-      expect(changesOf(service, id)).toHaveLength(3);
-      const posts = api.calls.filter((c) => c.includes("request-changes")).length;
-      const before = JSON.stringify(service.get(id)?.activity);
-      const fourth = await call("request_changes", args(id, { submission: 4 }));
-      expect(fourth.isError).toBe(true);
-      expect(fourth.text).toContain("上限");
-      expect(fourth.text).toContain("画面");
-      expect(api.calls.filter((c) => c.includes("request-changes")).length).toBe(posts);
-      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(changesOf(service, id)).toHaveLength(4);
+      expect(changesOf(service, id).map((e) => e.payload.overLimit)).toEqual([
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(api.calls.filter((c) => c.includes("request-changes"))).toHaveLength(4);
       expect(typesOf(service, id)).not.toContain("TaskEscalated");
-      expect(JSON.stringify(service.get(id)?.activity)).toBe(before);
       activity.close();
     });
 
-    it("状態が escalated のタスク（上限に達した後の差し戻しで人の判断待ち）は、理由を問わず差し戻さず、何も変えない", async () => {
-      const { activity, service, id } = await awaiting(3);
-      const { call } = await connect(apiOver(service));
-      for (const submission of [1, 2, 3]) {
-        await call("request_changes", args(id, { submission }));
-        await drain(service);
-      }
-      // 画面と同じ API に、上限を超えて送ると、エスカレーションになる（このツールは送らない）
-      await service.requestChanges(id, {
-        step: "requirements",
-        submission: 4,
-        comments: ["もう一度"],
-        continueOverLimit: false,
-      });
+    it("状態が escalated のタスク（以前の版で上限のために止まった判断待ち）は、理由を問わず差し戻さず、何も変えない", async () => {
+      const { activity, service, id } = await overLimit();
       expect(service.get(id)?.task.status).toBe("escalated");
+      const { call } = await connect(apiOver(service));
       const before = JSON.stringify(service.get(id)?.activity);
       const result = await call("request_changes", args(id, { submission: 4 }));
       expect(result.isError).toBe(true);
       expect(result.text).toContain("人の判断待ち");
       expect(result.text).toContain("画面");
+      expect(result.text).not.toContain("上限");
       expect(JSON.stringify(service.get(id)?.activity)).toBe(before);
       activity.close();
     });
 
-    it("上限の数え方は、画面と同じ：人の指摘がある回だけを数え、AI のレビューの指摘だけの回は数えない。やり直せる工程が無いときは断る", async () => {
+    it("差し戻せるかの確かめは、同じ工程への人の差し戻しの回数によらない。やり直せる工程が無いときは断る", async () => {
       const { checkRequestChanges } = await import("./task-mcp.js");
       const base = {
         steps: [{ key: "requirements", state: "awaiting_approval" }],
@@ -1808,8 +1837,8 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         gate: { step: "requirements", submission: 4 },
         submissions: { requirements: 4 },
       };
-      const rounds = (source: string | undefined) =>
-        [1, 2, 3].map((round) => ({
+      const rounds = (source: string | undefined, count = 3) =>
+        Array.from({ length: count }, (_, i) => i + 1).map((round) => ({
           step: "requirements",
           round,
           id: `requirements-${round}-1`,
@@ -1818,18 +1847,16 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         }));
       const input = { step: "requirements", submission: 4 };
       const check = (t: object) => () => checkRequestChanges(t as unknown as Task, input, ["直す"]);
-      // 人の指摘の3回は、上限
-      expect(check({ ...base, remarks: rounds(undefined) })).toThrow("上限");
-      // AI のレビューの指摘だけの3回は、数えない
+      // 人の指摘の回が何回あっても、通る
+      for (const count of [3, 4, 10]) {
+        expect(check({ ...base, remarks: rounds(undefined, count) })()).toEqual({
+          reworkStep: "requirements",
+        });
+      }
+      // AI のレビューの指摘だけの回も、通る
       expect(check({ ...base, remarks: rounds("sacty_review") })()).toEqual({
         reworkStep: "requirements",
       });
-      // 混在：人 2 回＋AI 1 回は通り、人 3 回＋AI 1 回は断る
-      const ai = { ...rounds("sacty_review")[0], round: 4, id: "requirements-4-1" };
-      expect(check({ ...base, remarks: [...rounds(undefined).slice(0, 2), ai] })()).toEqual({
-        reworkStep: "requirements",
-      });
-      expect(check({ ...base, remarks: [...rounds(undefined), ai] })).toThrow("上限");
       // 実行した後の作業の結果は、やり直せる工程が無い
       expect(check({ ...base, remarks: [], operationAttempted: true })).toThrow(
         "この工程には差し戻せません",
@@ -1982,12 +2009,15 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         "利用者に頼まれたときだけ",
         "やり直",
         "取り消せません",
-        "3回まで",
         "list_deliverables",
         "get_task",
         "PR にコメントを書いてください",
       ]) {
         expect(tool?.description, text).toContain(text);
+      }
+      // 同じ工程への差し戻しの回数に上限は無い（PBI-414）
+      for (const text of ["3回まで", "上限を超えて", "上限に達"]) {
+        expect(tool?.description, text).not.toContain(text);
       }
       expect(Object.keys(tool?.inputSchema.properties ?? {}).sort()).toEqual([
         "comments",
@@ -2279,7 +2309,7 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       activity.close();
     });
 
-    it("答え方：再現（not_approvable）も request_changes で答えられる。同じ工程への人の差し戻しが上限に達した後は、答えても断られる・判断待ちになると案内する", async () => {
+    it("答え方：再現（not_approvable）も request_changes で答えられる。同じ工程への人の差し戻しが 3 回に達した後も、同じ案内（上限の文は無い）", async () => {
       const { activity, service, id } = await reqAsking([
         { remarkId: "requirements-1-1", text: "足した", confirm: "推測しました" },
       ]);
@@ -2287,7 +2317,7 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       const base = describeTask({ task, activity: [] }) as Asked;
       expect(base.humanAsks?.howToAnswer.answer).toContain("request_changes");
       expect(base.humanAsks?.howToAnswer.answer).not.toContain("上限");
-      // 上限に達した後の承認待ち：同じ工程への人の差し戻しの回が3回
+      // 同じ工程への人の差し戻しの回が3回
       const limited = structuredClone(task);
       const mine = limited.remarks.filter((r) => r.step === "requirements");
       const seed = mine[0] as Task["remarks"][number];
@@ -2296,8 +2326,9 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
         ...[2, 3].map((round) => ({ ...seed, id: `requirements-${round}-1`, round })),
       ];
       const atLimit = describeTask({ task: limited, activity: [] }) as Asked;
-      expect(atLimit.humanAsks?.howToAnswer.answer).toContain("上限");
-      expect(atLimit.humanAsks?.howToAnswer.answer).toContain("画面");
+      expect(atLimit.humanAsks?.howToAnswer.answer).toBe(base.humanAsks?.howToAnswer.answer);
+      expect(atLimit.humanAsks?.howToAnswer.answer).toContain("request_changes");
+      expect(atLimit.humanAsks?.howToAnswer.answer).not.toContain("上限");
       // 再現（not_approvable）：承認はできないが、request_changes で答えられる
       const repro = structuredClone(task);
       if (repro.gate) repro.gate.step = "reproduce";
@@ -2333,32 +2364,10 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       activity.close();
     });
 
-    /** 要求要件を3回差し戻し、4回目で上限を超えてエスカレーションにしたタスク。 */
-    async function overLimit() {
-      const { activity, service, id } = await awaiting(3);
-      const { call } = await connect(apiOver(service));
-      for (const submission of [1, 2, 3]) {
-        await call("request_changes", {
-          task_id: id,
-          step: "requirements",
-          submission,
-          comments: [`指摘 ${submission}`],
-        });
-        await drain(service);
-      }
-      await service.requestChanges(id, {
-        step: "requirements",
-        submission: 4,
-        comments: ["書きかけの秘密の指摘", "もう1件"],
-        continueOverLimit: false,
-      });
-      return { activity, service, id };
-    }
-
-    it("差し戻しの上限でエスカレーションになったタスク：理由・工程・やり直す工程・書きかけの指摘の件数が入り、指摘の文は出ない。MCP でできること・画面で決めることが分かる", async () => {
+    it("以前の版で差し戻しの上限のためにエスカレーションになったタスク：理由・工程・やり直す工程・書きかけの指摘の件数が入り、指摘の文は出ない。MCP でできること・画面で決めることが分かる", async () => {
       const { activity, service, id } = await overLimit();
       expect(service.get(id)?.task.status).toBe("escalated");
-      const { json, raw } = await connect(apiOver(service));
+      const { client, json, raw } = await connect(apiOver(service));
       const detail = await json<Asked>("get_task", { task_id: id });
       expect(detail.state).toBe("escalated");
       expect(detail.escalation).toMatchObject({
@@ -2369,8 +2378,16 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       });
       expect(detail.escalation?.openProposalId).toBeUndefined();
       expect(JSON.stringify(detail)).not.toContain("書きかけの秘密の指摘");
+      // 理由の説明は、上限の止まりを以前の版の記録と示し、上限を前提にした文は含まない
+      const getTask = (await client.listTools()).tools.find((t) => t.name === "get_task");
+      const schema = JSON.stringify(getTask?.outputSchema);
+      expect(schema).toContain("以前の版の記録（差し戻しの上限で止まった");
+      for (const text of ["上限を超えて差し戻す", "上限に達", "3回まで"]) {
+        expect(schema).not.toContain(text);
+      }
       expect(detail.escalation?.canDoHere.join("")).toContain("approve_step");
-      expect(detail.escalation?.decideOnScreen.join("")).toContain("上限を超えた差し戻し");
+      expect(detail.escalation?.decideOnScreen.join("")).toContain("差し戻し");
+      expect(detail.escalation?.decideOnScreen.join("")).not.toContain("上限");
       expect(detail.escalation?.decideOnScreen.join("")).not.toContain("変更の申し出");
       expect(detail.escalation?.decideOnScreen.join("")).not.toContain("中止");
       expect(detail.escalation?.canDoHere.join("")).toContain("cancel_task");

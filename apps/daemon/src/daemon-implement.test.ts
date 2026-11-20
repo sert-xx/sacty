@@ -13,7 +13,6 @@ import {
   isCompleted,
   lastChangeRound,
   MAX_BASE_CONFLICTS,
-  MAX_CHANGE_REQUESTS,
   MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   message,
@@ -1384,27 +1383,25 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
-    it("差し戻しが上限でエスカレーションになるときも、設定をその前に記録する（誤っていれば何も記録しない）", async () => {
+    it("差し戻しが 4 回目でも、設定を差し戻しの前に記録する（誤っていれば何も記録しない）", async () => {
       const activity = new SqliteActivityStore(dbPath);
-      const outputs = Array.from({ length: MAX_CHANGE_REQUESTS + 1 }, (_, i) =>
-        out(`# 要求要件 v${i + 1}`),
-      );
+      const outputs = Array.from({ length: 5 }, (_, i) => out(`# 要求要件 v${i + 1}`));
       const { service } = makeService(activity, outputs, {
         config: withImages(),
         planner: plan(),
       });
       const { id } = service.createTask({ projectId: "default", title: "決済API" });
       await service.runNext(id);
-      for (let i = 1; i <= MAX_CHANGE_REQUESTS; i++) {
+      for (let i = 1; i <= 3; i++) {
         service.requestChanges(id, { step: "requirements", submission: i, comments: [`指摘${i}`] });
         await service.runNext(id);
       }
       const request = {
         step: "requirements",
-        submission: MAX_CHANGE_REQUESTS + 1,
+        submission: 4,
         comments: ["まだ"],
       };
-      // 誤った設定なら、設定の変更もエスカレーションも記録しない
+      // 誤った設定なら、設定の変更も差し戻しも記録しない
       const before = service.get(id);
       expect(() =>
         service.requestChanges(id, {
@@ -1422,15 +1419,15 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
 
       service.requestChanges(id, { ...request, image: "playwright" });
       const after = service.get(id);
-      expect(after?.task.status).toBe("escalated");
-      expect(after?.task.escalation).toMatchObject({ reason: "too_many_changes" });
+      expect(after?.task.status).toBe("queued");
+      expect(after?.task.escalation).toBeUndefined();
       expect(
         after?.activity
           .slice(before?.activity.length)
           .map((e) => ({ type: e.type, actor: e.actor })),
       ).toEqual([
         { type: "TaskImageChanged", actor: "person" },
-        { type: "TaskEscalated", actor: "sacty" },
+        { type: "ChangesRequested", actor: "person" },
       ]);
       expect(after?.task.image).toBe("playwright");
       activity.close();
@@ -9786,7 +9783,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
-      it("上限でエスカレーションした PR の指摘を、人が続けて差し戻しても、元のコメントを失わず、対応を返信する", async () => {
+      it("3 回差し戻した後に取り込んだ PR の指摘も、4 回目の差し戻しとして、元のコメントを失わず、対応を返信する", async () => {
         const pulls = new FakePulls();
         const round = (n: number) => [implement(`# 実装の説明 v${n + 1}`)];
         const { activity, service, id } = await toImplementGate(
@@ -9809,24 +9806,69 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         }
         pulls.feedbackList = [inline()];
         await service.checkPullRequests();
-        expect(service.get(id)?.task.escalation?.pendingRemarks).toEqual([
-          {
-            id: "implement-4-1",
-            text: expect.stringContaining("ここは null を返すべき"),
-            origin: { key: "review_comment:501", number: 7 },
-          },
-        ]);
-        service.requestChanges(id, {
-          step: "implement",
-          submission: 4,
-          comments: [],
-          continueOverLimit: true,
-        });
+        expect(service.get(id)?.task.escalation).toBeUndefined();
         expect(service.get(id)?.task.remarks.at(-1)).toMatchObject({
           id: "implement-4-1",
+          text: expect.stringContaining("ここは null を返すべき"),
           origin: { key: "review_comment:501", number: 7 },
         });
         await drain(service);
+        expect(pulls.reviewReplies.map((r) => r.commentId)).toEqual([501]);
+        activity.close();
+      });
+
+      it("以前の版で上限のために止まったタスクの残った指摘も、元の形のまま補足と一緒に差し戻すと、元のコメントへの返信が PR に付く（PBI-414）", async () => {
+        const pulls = new FakePulls();
+        const { activity, id } = await toImplementGate([], { pulls, now: later });
+        activity.append({
+          taskId: id,
+          projectId: "default",
+          events: [
+            {
+              actor: "sacty",
+              event: {
+                type: "TaskEscalated",
+                payload: {
+                  step: "implement",
+                  target: "implement",
+                  reason: "too_many_changes",
+                  pendingRemarks: [
+                    {
+                      id: "implement-4-1",
+                      text: "ここは null を返すべき",
+                      origin: { key: "review_comment:501", number: 7 },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+        const { service } = makeService(
+          activity,
+          [
+            redone([
+              { remarkId: "implement-1-1", status: "addressed", text: "ログを足した" },
+              { remarkId: "implement-1-2", status: "addressed", text: "テストも足した" },
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        expect(service.get(id)?.task.status).toBe("escalated");
+        service.requestChanges(id, {
+          step: "implement",
+          submission: 1,
+          comments: ["補足も直す"],
+        });
+        const implementRemarks = service
+          .get(id)
+          ?.task.remarks.filter((r) => r.step === "implement");
+        expect(implementRemarks?.map((r) => [r.id, r.text, r.origin?.key])).toEqual([
+          ["implement-1-1", "ここは null を返すべき", "review_comment:501"],
+          ["implement-1-2", "補足も直す", undefined],
+        ]);
+        await drain(service);
+        // 元のコメントを持つ指摘だけ、そのコメントに返信する（補足は返信しない）
         expect(pulls.reviewReplies.map((r) => r.commentId)).toEqual([501]);
         activity.close();
       });
@@ -11103,7 +11145,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
-    it("差し戻しの回数が上限を超えるなら、PR の指摘でもエスカレーションにする（PBI-58）", async () => {
+    it("差し戻しが 4 回目でも、PR の指摘を取り込んで差し戻す。エスカレーションにしない（PBI-414）", async () => {
       const pulls = new FakePulls();
       const round = (n: number) => [implement(`# 実装の説明 v${n + 1}`)];
       const { activity, service, id } = await toImplementGate(
@@ -11122,16 +11164,17 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       pulls.feedbackList = [item("comment:401")];
       await service.checkPullRequests();
       const task = service.get(id)?.task;
-      expect(task?.status).toBe("escalated");
-      expect(task?.escalation).toMatchObject({ reason: "too_many_changes", target: "implement" });
-      expect(task?.escalation?.pendingRemarks).toEqual([
-        {
-          id: "implement-4-1",
-          text: "全体として、失敗時のログが足りない",
-          // 元の PR のコメント（対応を、その場所に返信する。PBI-352）
-          origin: { key: "comment:401", number: 7 },
-        },
-      ]);
+      expect(task?.status).toBe("queued");
+      expect(task?.escalation).toBeUndefined();
+      expect(task?.remarks.at(-1)).toMatchObject({
+        id: "implement-4-1",
+        text: "全体として、失敗時のログが足りない",
+        // 元の PR のコメント（対応を、その場所に返信する。PBI-352）
+        origin: { key: "comment:401", number: 7 },
+      });
+      const last = service.get(id)?.activity.findLast((e) => e.type === "ChangesRequested");
+      expect(last?.type === "ChangesRequested" && last.payload.overLimit).toBe(false);
+      expect(types(service, id)).not.toContain("TaskEscalated");
       activity.close();
     });
 
@@ -11151,7 +11194,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           ...patch,
         });
 
-      it("AI のレビューの指摘は、人の指摘と分けて取り込み・差し戻し、人の差し戻しの回数と上限に数えない。人の差し戻しの上限は、これまでどおり効く", async () => {
+      it("AI のレビューの指摘は、人の指摘と分けて取り込み・差し戻し、人の差し戻しの回数に数えない。人の指摘は、何回目でも差し戻す", async () => {
         const pulls = new FakePulls();
         const ids: string[] = [];
         const cycle = () => {
@@ -11173,7 +11216,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
             ...humanCycle(),
             ...humanCycle(),
             ...humanCycle(),
-            // 4 回目の人の指摘は、上限を超えるので判断だけして、エスカレーションになる
+            // 4 回目の人の指摘は、判断して差し戻す（エスカレーションにならない）
             rework("implement", "実装で直せる"),
           ],
           { pulls, now: later },
@@ -11210,7 +11253,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         );
         expect(changes.map((e) => e.actor)).toEqual(["sacty", "sacty", "sacty", "sacty"]);
         // AI のレビューの指摘だけの回は、ゴールガーディアンの見逃しの数え方には影響しない（原因を決めなければ数えない）
-        // 人の差し戻しは、これまでどおり数える。AI のレビューの回が間に入っても、上限は人の回数で決まる
+        // 人の差し戻しは、これまでどおり数える。AI のレビューの回が間に入っても、人の回数は人の指摘の回だけを数える
         for (let n = 1; n <= 3; n++) {
           service.requestChanges(id, {
             step: "implement",
@@ -11227,24 +11270,25 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(
           task.remarks.filter((r) => !r.source && r.step === "implement").map((r) => r.id),
         ).toEqual(["implement-5-1", "implement-6-1", "implement-7-1"]);
-        // 人の指摘が上限を超えれば、エスカレーションになる（回の番号は AI のレビューの回の続き）
+        // 4 回目の人の指摘も、エスカレーションにならず差し戻す（回の番号は AI のレビューの回の続き。PBI-414）
         pulls.feedbackList = [...pulls.feedbackList, item("comment:900")];
         await service.checkPullRequests();
         task = service.get(id)?.task;
-        expect(task?.status).toBe("escalated");
-        expect(task?.escalation?.pendingRemarks).toEqual([
-          {
-            id: "implement-8-1",
-            text: "全体として、失敗時のログが足りない",
-            // 元の PR のコメント（対応を、その場所に返信する。PBI-352）
-            origin: { key: "comment:900", number: 7 },
-          },
-        ]);
+        expect(task?.status).toBe("queued");
+        expect(task?.escalation).toBeUndefined();
+        expect(task?.remarks.at(-1)).toMatchObject({
+          id: "implement-8-1",
+          text: "全体として、失敗時のログが足りない",
+          // 元の PR のコメント（対応を、その場所に返信する。PBI-352）
+          origin: { key: "comment:900", number: 7 },
+        });
+        expect(types(service, id)).not.toContain("TaskEscalated");
+        expect(changeRounds(task as Task, "implement")).toBe(4);
         expect(executor.calls.length).toBeGreaterThan(0);
         activity.close();
       });
 
-      it("人の差し戻しが上限（3回）に達した後も、AI のレビューの指摘だけなら取り込み、人の回数は増えない。続く人の指摘では上限が効く", async () => {
+      it("人の差し戻しが 3 回に達した後も、AI のレビューの指摘だけなら取り込み、人の回数は増えない。続く人の指摘も差し戻す", async () => {
         const pulls = new FakePulls();
         const ids: string[] = [];
         const humanCycle = () => {
@@ -11260,7 +11304,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
             // AI のレビューの指摘だけの差し戻し 1 回
             rework("implement", "実装で直せる"),
             ...humanCycle(),
-            // そのあとの人の指摘は、上限を超えるので判断だけして、エスカレーションになる
+            // そのあとの人の指摘も、判断して差し戻す
             rework("implement", "実装で直せる"),
           ],
           { pulls, now: later },
@@ -11277,7 +11321,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         let task = service.get(id)?.task;
         if (!task) throw new Error("no task");
         expect(changeRounds(task, "implement")).toBe(3);
-        // 上限に達していても、AI のレビューの指摘だけならエスカレーションにならず、取り込んで作り直す
+        // 3 回に達していても、AI のレビューの指摘だけなら、取り込んで作り直す
         pulls.feedbackList = [aiItem(pulls, "review:1")];
         await service.checkPullRequests();
         expect(service.get(id)?.task.status).toBe("queued");
@@ -11290,20 +11334,18 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(changeRounds(task, "implement")).toBe(3);
         expect(lastChangeRound(task, "implement")).toBe(4);
         expect(task.remarks.find((r) => r.id === "implement-4-1")?.source).toBe("sacty_review");
-        // 続く人の指摘では、上限が効く
+        // 続く人の指摘も、エスカレーションにならず差し戻す
         pulls.feedbackList = [...pulls.feedbackList, item("comment:901")];
         await service.checkPullRequests();
         task = service.get(id)?.task;
-        expect(task?.status).toBe("escalated");
-        expect(task?.escalation).toMatchObject({ reason: "too_many_changes", target: "implement" });
-        expect(task?.escalation?.pendingRemarks).toEqual([
-          {
-            id: "implement-5-1",
-            text: "全体として、失敗時のログが足りない",
-            // 元の PR のコメント（対応を、その場所に返信する。PBI-352）
-            origin: { key: "comment:901", number: 7 },
-          },
-        ]);
+        expect(task?.status).toBe("queued");
+        expect(task?.escalation).toBeUndefined();
+        expect(task?.remarks.at(-1)).toMatchObject({
+          id: "implement-5-1",
+          text: "全体として、失敗時のログが足りない",
+          // 元の PR のコメント（対応を、その場所に返信する。PBI-352）
+          origin: { key: "comment:901", number: 7 },
+        });
         activity.close();
       });
 
@@ -12990,7 +13032,40 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
-      it("人の差し戻しが上限（3回）に達していても、人の再開を続ける判断として反映し、エスカレーションにしない", async () => {
+      it("承認待ちで一時停止したタスクは、3 回の差し戻しの後でも、再開のあと、届いた指摘を 4 回目の差し戻しとして取り込む（エスカレーションにしない）", async () => {
+        const pulls = new FakePulls();
+        const cycle = () => [implement("# 実装")];
+        const { activity, service, id } = await toImplementGate(
+          [...cycle(), ...cycle(), ...cycle(), rework("implement", "実装で直せる")],
+          { pulls, now: later },
+        );
+        for (const text of ["指摘 a", "指摘 b", "指摘 c"]) {
+          service.requestChanges(id, {
+            step: "implement",
+            submission: service.get(id)?.task.gate?.submission ?? 0,
+            comments: [text],
+          });
+          await drain(service);
+        }
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        expect(changeRounds(service.get(id)?.task as Task, "implement")).toBe(3);
+        await service.pause(id);
+        pulls.feedbackList = [item("comment:held")];
+        await service.checkPullRequests();
+        service.resume(id, {});
+        await drain(service);
+        // 承認待ちに戻ると、通常の取り込みが、残した指摘を差し戻しにする
+        await service.checkPullRequests();
+        await drain(service);
+        const events = service.get(id)?.activity ?? [];
+        const last = events.findLast((e) => e.type === "ChangesRequested");
+        expect(last?.payload).toMatchObject({ round: 4, overLimit: false });
+        expect(types(service, id)).not.toContain("TaskEscalated");
+        expect(service.get(id)?.task.escalation).toBeUndefined();
+        activity.close();
+      });
+
+      it("人の差し戻しが 3 回に達していても、再開のあと、届いた指摘を 4 回目の差し戻しとして反映し、エスカレーションにしない", async () => {
         const pulls = new FakePulls();
         const ids: string[] = [];
         const cycle = () => {
@@ -13028,7 +13103,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         await service.runNext(id);
         const events = service.get(id)?.activity ?? [];
         expect(events.at(-1)).toMatchObject({ type: "ChangesRequested", actor: "person" });
-        expect(events.at(-1)?.payload).toMatchObject({ round: 4, overLimit: true });
+        expect(events.at(-1)?.payload).toMatchObject({ round: 4, overLimit: false });
         expect(types(service, id)).not.toContain("TaskEscalated");
         expect(service.get(id)?.task.status).toBe("queued");
         activity.close();

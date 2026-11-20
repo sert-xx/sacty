@@ -496,7 +496,6 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
       step: "requirements",
       submission: 1,
       comments: ["直す", "足りない"],
-      continueOverLimit: false,
       image: "java",
       agents: { design: "strong" },
     });

@@ -663,9 +663,15 @@ When the task goes back to an earlier step, the merged PR is not reverted; a new
 When the fix is merged, the PRs of the later steps are recreated.
 The previous open PRs are closed (the implementation PR is updated in place).
 
-If requests for changes to the same step exceed the limit, it becomes an Escalation.
-What counts toward the limit is the requests for changes by you.
-A request for changes made only of comments from sacty's own AI review is not counted ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
+There is no limit on the number of requests for changes to the same step. Whatever the number, the task takes the request and redoes the work.
+A request for changes made only of comments from sacty's own AI review is not counted in the number of requests for changes by you ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
+
+**Tasks from earlier versions**: a task that an earlier version stopped (escalated) because requests for changes to the same step reached the limit shows the remaining comments one by one, as written, on the approval screen.
+You add notes in a separate field, and choose between requesting changes and approving.
+- When you request changes to the step that escalated, the remaining comments are passed with your notes added. A long comment is not cut.
+- When you request changes to another step, only your notes are passed.
+- Your notes are one per line, up to 50 comments of 2,000 characters each. The remaining comments are not subject to this.
+- The replies about the remaining comments go to the original PR comments.
 
 ### Things for a person to check
 
@@ -817,7 +823,7 @@ In a task that fixes an existing PR, no proposal is made for the PR comments pas
 In the following cases, you are taken to the sacty approval screen instead of the GitHub PR.
 You open it from "Review" or "Decide" in the task details and the task list, and from a task title without ↗ on the dashboard and in the notifications.
 
-- When the task is escalated (for example, when requests for changes on the same step exceed the limit; for tasks from earlier versions, also when a person chooses the step to redo for PR comments).
+- When the task is escalated (for tasks from earlier versions, when requests for changes on the same step reached the limit, or when a person chooses the step to redo for PR comments).
   A change request that is waiting for your decision takes you to the "Change requests" section of the task details instead of the approval screen ([Change requests](#change-requests)).
 - When the PR was closed without merging, or does not exist yet.
 
@@ -1550,7 +1556,7 @@ When the comments that arrived all ask for nothing ("Understood", for example), 
 
 - Comments you wrote just before resuming are read again after the resume and applied.
 - sacty's own AI review comments are kept in the same way. They are handled separately from people's comments, and if they are the only ones, they do not count toward the number of send-backs.
-- Even if the limit on send-backs to the same step has been reached, the resume is treated as the decision to continue and does not escalate.
+- Whatever the number of requests for changes to the same step, the comments that were applied are sent back (the task does not escalate).
 - A task that was paused while Requirements or Design was being redone is not covered. Its comments are imported once the task waits for approval of Implement.
 - If the implementation PR is merged while the task is paused, the kept comments are discarded and the merge is taken as the approval (it stays in the Activity).
 

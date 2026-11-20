@@ -4,7 +4,7 @@
 - タスク: PBI-279
 - PR: #283
 - ブランチ: feat/issue-279-paused-comments
-- 関係する ADR: [一時停止の間に届いた PR の指摘を、再開のときに取り込む](../adr/20261102-1900-hold-pr-comments-while-paused.md)
+- 関係する ADR: [一時停止の間に届いた PR の指摘を、再開のときに取り込む](../adr/20261102-1900-superseded-hold-pr-comments-while-paused.md)
 
 ## 目的
 

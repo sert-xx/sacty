@@ -4,7 +4,7 @@
 - タスク: PBI-397
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: [sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-mcp-request-changes-basic-stop-before-limit.md)
+- 関係する ADR: [sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-superseded-mcp-request-changes-basic-stop-before-limit.md)
 
 ## 目的
 

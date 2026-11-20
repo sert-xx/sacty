@@ -651,7 +651,7 @@ const ja = {
     changesTarget: (where: string, target: string, revoke: boolean) =>
       `${where}、${target}からやり直し${revoke ? `（${target}の承認を取り消し）` : ""}`,
     changesTail: (count: number, overLimit: boolean, actor: string) =>
-      `：指摘${count}件${overLimit ? "（上限を超えて）" : ""}（${actor}）`,
+      `：指摘${count}件${overLimit ? "（以前の版の記録：上限を超えて）" : ""}（${actor}）`,
     /** 差し戻しの詳細（展開）に出す、指摘の1件。 */
     /** 差し戻しの指摘がすべて AI のレビュー（sacty のレビューのタスクの投稿）のときの、誰の指摘か（PBI-275）。 */
     aiReviewActor: "AI のレビュー",
@@ -688,7 +688,8 @@ const ja = {
     /** 以前の版で、AI が変更の申し出を判定できなかった（PBI-333 より前の作業履歴）。 */
     escalatedUndecidable: (id: string | undefined) =>
       `エスカレーション：${id ?? "変更の申し出"}を判定できなかった（以前の版の AI の判定）`,
-    escalatedTooMany: (step: string) => `エスカレーション：${step}への差し戻しが上限`,
+    escalatedTooMany: (step: string) =>
+      `エスカレーション（以前の版の記録）：${step}への差し戻しの上限`,
     escalatedRework: (step: string) => `エスカレーション：PR の指摘で${step}まで戻すかの確認`,
     PullRequestReviewImported: (
       number: number,
@@ -1337,7 +1338,7 @@ const en: LabelMessages = {
     changesTarget: (where, target, revoke) =>
       `${where}; redo from ${target}${revoke ? ` (${target} approval revoked)` : ""}`,
     changesTail: (count, overLimit, actor) =>
-      `: ${count} comment${count === 1 ? "" : "s"}${overLimit ? " (over the limit)" : ""} (${actor})`,
+      `: ${count} comment${count === 1 ? "" : "s"}${overLimit ? " (earlier-version record: over the limit)" : ""} (${actor})`,
     aiReviewActor: "AI review",
     humanAndAiRemarks: (human, ai) => `${human} from a person, ${ai} from AI review`,
     changesRemark: (id, text) => `${id}: ${text}`,
@@ -1360,7 +1361,7 @@ const en: LabelMessages = {
     escalatedProposed: (id) => `Escalated: ${id ?? "the change request"} needs your decision`,
     escalatedUndecidable: (id) =>
       `Escalated: the AI in an earlier version could not decide ${id ?? "the change request"}`,
-    escalatedTooMany: (step) => `Escalated: changes to ${step} reached the limit`,
+    escalatedTooMany: (step) => `Escalated (earlier-version record): limit on changes to ${step}`,
     escalatedRework: (step) =>
       `Escalated: confirm whether to redo from ${step} for the PR comments`,
     PullRequestReviewImported: (number, authors, count, ai, held) =>

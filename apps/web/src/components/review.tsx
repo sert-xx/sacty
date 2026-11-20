@@ -7,7 +7,6 @@ import {
   gatePullRequest,
   isAiReviewRemark,
   lastChangeRound,
-  MAX_CHANGE_REQUESTS,
   pullRequestConflict,
   reworkTargets,
   stepAgentChangeable,
@@ -274,8 +273,12 @@ export function ReviewView({ task }: { task: Task }) {
             targets={targets}
             defaultTarget={task.escalation?.target ?? targets[0] ?? step}
             escalated={task.status === "escalated"}
-            maxChanges={MAX_CHANGE_REQUESTS}
-            pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
+            pendingRemarks={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
+            pendingTarget={
+              task.status === "escalated" && task.escalation?.reason === "too_many_changes"
+                ? task.escalation.target
+                : undefined
+            }
             notReproduced={step === "reproduce"}
             noChanges={step === "implement" && deliveredWithoutChanges(task)}
             steps={task.steps

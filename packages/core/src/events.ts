@@ -199,9 +199,6 @@ export function isDocumentsDir(value: string): boolean {
   return parts.every((p) => p !== "" && p !== "." && p !== ".." && p.toLowerCase() !== ".git");
 }
 
-/** 同じ工程への差し戻しがこの回数を超えると、エスカレーションになる。 */
-export const MAX_CHANGE_REQUESTS = 3;
-
 /** 予算の既定値（1タスクあたり、米ドル）。 */
 export const DEFAULT_BUDGET_USD = 1;
 
@@ -3570,7 +3567,7 @@ const ChangesRequested = z.object({
     /** やり直す工程への、何回目の差し戻しか。 */
     round: z.number().int().positive(),
     remarks: z.array(Remark).min(1),
-    /** エスカレーションの後、上限を超えて差し戻したか。 */
+    /** 以前の版の記録：エスカレーションの後、上限を超えて差し戻したか（いまは上限が無く、常に false を記録する）。 */
     overLimit: z.boolean().default(false),
   }),
 });
@@ -3584,10 +3581,10 @@ const TaskEscalated = z.object({
   type: z.literal("TaskEscalated"),
   payload: z.object({
     step: StepKey,
-    /** 差し戻しが上限を超えた工程（やり直す工程）。PBI-7までの作業履歴には無いので、step で補う。 */
+    /** エスカレーションした工程（やり直す工程）。PBI-7までの作業履歴には無いので、step で補う。 */
     target: StepKey.optional(),
     /**
-     * too_many_changes：差し戻しが上限を超えた
+     * too_many_changes：以前の版で、同じ工程への差し戻しが上限を超えた（PBI-414 から記録しない。過去の作業履歴を読むために残す）
      * change_proposed：工程のエージェントが変更の申し出をしたので、人が判断する（PBI-333。AI の判定を挟まない）
      * change_undecidable：以前の版で、AI（ゴールガーディアン）が変更の申し出を判定できなかった。PBI-333 から記録しない
      *   （過去の作業履歴を読むために残す）
@@ -3604,7 +3601,7 @@ const TaskEscalated = z.object({
     note: DaemonText.optional(),
     /** 人が判断する申し出（change_proposed・change_undecidable のとき）。 */
     proposalId: z.string().optional(),
-    /** 上限に達したときに人間が書いていた指摘。差し戻しを続ける場合に使う。 */
+    /** 以前の版で、上限に達したときに人間が書いていた残った指摘。差し戻しに、元の形のまま引き継ぐ。 */
     pendingRemarks: z.array(Remark).default([]),
   }),
 });
@@ -4483,8 +4480,6 @@ export const RequestChangesInput = z.object({
   /** やり直す工程。省略すると承認ゲートの工程。 */
   target: StepKey.optional(),
   comments: remarkList(z.string().trim().max(2_000, code("input.remarkTooLong"))),
-  /** エスカレーションの後、上限を超えて差し戻しを続けるか。 */
-  continueOverLimit: z.boolean().default(false),
   /**
    * 差し戻しと一緒に変えるタスクのイメージ（PBI-318）と工程のエージェント（タスクの詳細で変えるのと同じ。TaskImageChanged・
    * StepAgentChanged）。エージェントは選んだ工程だけを指定でき、今と同じ名前は変えない。

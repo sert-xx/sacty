@@ -4572,10 +4572,7 @@ export function isAiReviewRemark(remark: { source?: RemarkSource }): boolean {
   return remark.source === "sacty_review";
 }
 
-/**
- * その工程で、人が差し戻した回数（同じ工程への差し戻しの上限 MAX_CHANGE_REQUESTS に数える回数）。AI のレビューの指摘だけの
- * 回は数えない（人の指摘が1件でもあれば数える。PBI-275）。
- */
+/** その工程で、人が差し戻した回数。AI のレビューの指摘だけの回は数えない（人の指摘が1件でもあれば数える。PBI-275）。 */
 export function changeRounds(task: Task, step: StepKey): number {
   const rounds = new Set<number>();
   for (const r of task.remarks) {

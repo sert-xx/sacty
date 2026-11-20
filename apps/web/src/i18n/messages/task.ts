@@ -147,9 +147,9 @@ const ja = {
   },
   gate: {
     undecidable: "変更の申し出の判断待ち",
-    tooMany: "差し戻しが上限に達しました",
+    tooMany: "以前の版の記録で止まっています",
     undecidableHelp: "申し出の理由と根拠を見て、変更を認めるかを決めてください。",
-    tooManyHelp: "このまま承認するか、上限を超えて差し戻すかを決めてください。",
+    tooManyHelp: "残った指摘を確かめて、差し戻すか承認するかを決めてください。",
     reviewHelp: "成果物を確かめて、承認するか差し戻してください。",
     noChangesHelp:
       "実装に変更が無く、PR はありません。変更なしで完了にするなら承認、変更が要るなら差し戻してください。",
@@ -793,10 +793,10 @@ const en: TaskMessages = {
   },
   gate: {
     undecidable: "Change request needs your decision",
-    tooMany: "Changes requested reached the limit",
+    tooMany: "Stopped by an earlier version",
     undecidableHelp:
       "Read the reason and supporting facts, then decide whether to accept the change.",
-    tooManyHelp: "Approve as is, or request changes beyond the limit.",
+    tooManyHelp: "Check the remaining comments, then request changes or approve.",
     reviewHelp: "Check the deliverable, then approve it or request changes.",
     noChangesHelp:
       "The implementation changed nothing and there is no PR. Approve to finish without changes, or request changes.",

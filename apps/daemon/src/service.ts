@@ -39,7 +39,6 @@ import {
   canRereview,
   canRerun,
   canRetryExport,
-  changeRounds,
   ciAllPassed,
   type DaemonMessage,
   type DaemonText,
@@ -88,7 +87,6 @@ import {
   lastChangeRound,
   latestStepPullRequest,
   MAX_BASE_CONFLICTS,
-  MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_INCOMPLETE_CONTINUATIONS,
   MAX_INTEGRATION_ATTEMPTS,
@@ -2101,7 +2099,7 @@ export class TaskService {
    * PR の指摘と同じ判断。PBI-58・PBI-265）、その工程に差し戻す。差し戻したか、反映を待つ（設定の問題・一時停止の求め）なら
    * true を返し、呼び出し元は止まった工程を走り直さない。指摘が無ければ false（今までどおり止まった工程を走り直す）。
    * 判断の途中で止まっても、次の実行で残りから続ける（指摘と判断は作業履歴にある）。
-   * 人の差し戻しの上限は、人の再開を、続ける判断として扱い、止めない（承認ゲートが無く、エスカレーションを置く場所が無い）。
+   * 人の差し戻しの回数に上限は無く、何回目でも差し戻す（PBI-414）。
    */
   private async reworkHeldReview(task: Task): Promise<boolean> {
     const taskId = task.id;
@@ -2298,7 +2296,7 @@ export class TaskService {
             target,
             round,
             remarks,
-            overLimit: !onlyAiReview && changeRounds(task, target) >= MAX_CHANGE_REQUESTS,
+            overLimit: false,
             ...(judgement.cause ? { cause: judgement.cause } : {}),
           },
         },
@@ -3730,7 +3728,7 @@ export class TaskService {
   /**
    * ゴールガーディアンの判断に従って、取り込んだ PR の指摘を、判断した工程に差し戻す（人間の確認は待たない。
    * 設計・要求要件に戻したら、作り直した成果をいつもどおり人間が承認する）。判断できなければ実装をやり直す
-   * （判断できなかったことと理由は ReworkJudged に残る）。上限を超えるならエスカレーションになる（PBI-58）。
+   * （判断できなかったことと理由は ReworkJudged に残る）。
    */
   private settleReview(task: Task): void {
     const pending = task.pendingReview;
@@ -18508,10 +18506,11 @@ export class TaskService {
    * 差し戻す。指摘は作業履歴に累積し、工程を実行し直す。
    * やり直す工程には、承認ゲートの工程か、それより前の承認ゲートのある工程を選べる。
    * 前の工程に戻すと、その工程から先の承認は取り消され、人間の再承認が必要になる。
-   * 同じ工程への差し戻しが上限を超える場合はエスカレーションにし、人間に続けるかを判断してもらう。
+   * 同じ工程への差し戻しの回数に上限は無い（何回目でもやり直す）。以前の版で上限のためにエスカレーションしたタスクは、残った
+   * 指摘を元の形のまま引き継ぎ、comments（人の補足）をその後ろに足して差し戻す。
    * options.aiReview は、comments のうち、AI のレビュー（sacty のレビューのタスクが PR に投稿したもの）の指摘の位置
-   * （PR の指摘の取り込みだけが渡す。PBI-275）。AI のレビューの指摘だけの差し戻しは、人の差し戻しの回数と上限に数えない
-   * （人の指摘が1件でも混ざれば数える）。
+   * （PR の指摘の取り込みだけが渡す。PBI-275）。AI のレビューの指摘だけの差し戻しは、人の操作にしない
+   * （人の指摘が1件でも混ざれば人の差し戻し）。
    */
   requestChanges(
     id: string,
@@ -18527,7 +18526,7 @@ export class TaskService {
       pause?: DaemonText;
       /** comments と同じ位置の、人が「この PR で直す」と決めた、後続に回したい案の元の指摘の ID（PBI-370）。 */
       fixOf?: readonly (string | undefined)[];
-      /** 差し戻し（上限でのエスカレーション）と同じ追記で、その前に記録するもの（後続に回したい案への決定。PBI-370）。 */
+      /** 差し戻しと同じ追記で、その前に記録するもの（後続に回したい案への決定。PBI-370）。 */
       leading?: readonly ActivityItem[];
       /**
        * comments が記録済みの指摘（PR から取り込んだ指摘。PBI-413）。人の入力の上限（1 件 2000 文字）は、人が新しく書く
@@ -18548,8 +18547,6 @@ export class TaskService {
     if (!target || !targets.includes(target)) {
       throw new InvalidOperationError(message("gate.invalidTarget"));
     }
-    // 人が差し戻した回数（上限に数える）。AI のレビューの指摘だけの回は含めない（PBI-275）
-    const rounds = changeRounds(task, target);
     const aiIndexes = new Set(options.aiReview ?? []);
     const comments = input.comments.map((text, i) => {
       const origin = options.origins?.[i];
@@ -18561,13 +18558,11 @@ export class TaskService {
         ...(fixOf ? { fixOf } : {}),
       };
     });
-    const onlyAiReview = comments.length > 0 && comments.every((c) => c.source === "sacty_review");
-
     if (task.status === "awaiting_approval" && input.comments.length === 0) {
       throw new InvalidOperationError(message("gate.remarksRequired"));
     }
     // 差し戻しと一緒に、タスクのイメージ・工程のエージェントを変える（タスクの詳細で変えるのと同じ）。差し戻しの前に同じ書き込みで
-    // 記録し、やり直す工程から使う。上限でエスカレーションするときも記録する（人の指定を黙って失わないため）
+    // 記録し、やり直す工程から使う
     const settings = this.stepSettingChanges(task, input);
     // 回の番号と指摘の ID は、AI のレビューだけの回も含めて続ける（人の差し戻しの回数とは別）
     const round = lastChangeRound(task, target) + 1;
@@ -18584,41 +18579,15 @@ export class TaskService {
       }));
     const leading = options.leading ?? [];
 
-    if (task.status === "awaiting_approval" && !onlyAiReview && rounds >= MAX_CHANGE_REQUESTS) {
-      return this.append(task, [
-        ...leading,
-        ...settings,
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskEscalated",
-            payload: {
-              step: input.step,
-              target,
-              reason: "too_many_changes",
-              pendingRemarks: toRemarks(comments),
-            },
-          },
-        },
-      ]);
-    }
-
+    // 差し戻しの回数に上限は無い（何回目でもやり直す。PBI-414）。上限で止まっていたタスク（以前の版）は、残った指摘を
+    // 元の形のまま引き継ぎ、人の補足（comments）をその後ろに足す
     let remarks = toRemarks(comments);
-    // エスカレーションの後でも、上限に達していない別の工程に戻すのは通常の差し戻し
-    const overLimit = task.status === "escalated" && rounds >= MAX_CHANGE_REQUESTS;
-    if (overLimit && !input.continueOverLimit) {
-      throw new InvalidOperationError(message("gate.overLimit", { limit: MAX_CHANGE_REQUESTS }));
-    }
     if (task.status === "escalated") {
-      // 書きかけの指摘は、エスカレーションしたときと同じ工程に戻す場合だけ引き継ぐ。
+      // 残った指摘は、エスカレーションしたときと同じ工程に戻す場合だけ引き継ぐ。
       // PR の指摘の戻し先の確認（PBI-58 より前の作業履歴）では、人間がどの工程を選んでも引き継ぐ（指摘は人間のレビューなので）
       const rework = task.escalation?.reason === "rework_confirmation";
-      if (
-        remarks.length === 0 &&
-        task.escalation &&
-        (rework || task.escalation.target === target)
-      ) {
-        remarks = toRemarks(task.escalation.pendingRemarks);
+      if (task.escalation && (rework || task.escalation.target === target)) {
+        remarks = toRemarks([...task.escalation.pendingRemarks, ...comments]);
       }
       if (remarks.length === 0) {
         throw new InvalidOperationError(message("gate.remarksRequired"));
@@ -18664,7 +18633,7 @@ export class TaskService {
             target,
             round,
             remarks,
-            overLimit,
+            overLimit: false,
             ...(input.cause ? { cause: input.cause } : {}),
             ...(input.cause === "question_answer" && input.answer ? { answer: input.answer } : {}),
           },
@@ -18688,7 +18657,7 @@ export class TaskService {
   /**
    * 実装が「後続に回したい」と申告した指摘（案）を、人が 1 件ずつ決める（PBI-370）。defer は後続に回す、fix はこの PR で直す。
    * 決められるのは、実装の承認待ちの、まだ決めていない案だけ。fix が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す
-   * （文は元の指摘の文。人の差し戻しとして、回数に数える。上限に達していれば、エスカレーションになる）。決定と指摘の一覧は、
+   * （文は元の指摘の文。人の差し戻し）。決定と指摘の一覧は、
    * PR のコメントに残す（送るのは待たない）。
    */
   decideDeferrals(id: string, raw: unknown): Task {
