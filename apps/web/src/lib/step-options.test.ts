@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PLAN_ORDER } from "../components/new-task-dialog";
 import {
   agentField,
   agentFromField,
@@ -127,5 +128,14 @@ describe("タスクの作成で指定するタスクのイメージと、工程�
     resolve({ status: "failed", message: "古い" });
     await Promise.resolve();
     expect(set).not.toHaveBeenCalled();
+  });
+});
+
+describe("新しいタスクの進め方の選択肢（PBI-420）", () => {
+  it("skip-requirements を、skip-design と direct の間に出す", () => {
+    const i = PLAN_ORDER.indexOf("skip-requirements");
+    expect(i).toBeGreaterThan(-1);
+    expect(PLAN_ORDER[i - 1]).toBe("skip-design");
+    expect(PLAN_ORDER[i + 1]).toBe("direct");
   });
 });

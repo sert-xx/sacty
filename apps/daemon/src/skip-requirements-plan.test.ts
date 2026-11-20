@@ -80,7 +80,10 @@ describe("選び方の指示（R-2〜R-5）", () => {
     expect(prompt).toContain(
       "依頼が曖昧・受け入れ条件がそろっていない・依頼と文書やコードや方針が食い違い作るものが変わる・判断しきれない、のどれかなら、設計の判断が要っても要求要件を残します",
     );
-    expect(prompt).toContain("上の2つにともに当たるときは、要求要件を残す側を優先します");
+    expect(prompt).toContain("両方に当たるときは、要求要件を残す側を優先します");
+    // 設計の判断が要る場面の「残す」候補は、設計を持つ standard だけ
+    expect(prompt).toContain("設計の判断が要っても要求要件を残します（standard）");
+    expect(prompt).not.toContain("設計の判断が要っても要求要件を残します（skip-designかstandard）");
     expect(prompt).toContain(
       "衝突は、ほかのタスクやPRとの衝突。食い違いは、依頼と文書・コード・方針の間のもの",
     );
@@ -178,6 +181,12 @@ describe("実装の指示（R-11）", () => {
     expect(prompt).not.toContain("人間が承認した要求要件");
   });
 
+  it("集めた情報の節は、タスクの内容と重ねずに 1 回だけ入る", () => {
+    const prompt = buildPrompt(designed(), "implement");
+    const count = (text: string) => prompt.split(text).length - 1;
+    expect(count("--- タスクの開始時に集めた情報 ---")).toBe(1);
+  });
+
   it("テストの仕組みが無いときも、承認済みの要求要件を前提にしない", () => {
     const prompt = buildPrompt(designed({ noTestsReason: "テストの仕組みが無い" }), "implement");
     expect(prompt).toContain(
@@ -241,5 +250,62 @@ describe("引き継ぎとリポジトリの判定（R-8）", () => {
     expect(REPO_PLANS).toContain("skip-requirements");
     expect(CONTINUABLE_PLANS).toContain("standard");
     expect(REPO_PLANS).toContain("standard");
+  });
+});
+
+describe("PR のレビューの子タスクの基準（R-12）", () => {
+  const reviewTask = {
+    ...base({
+      title: "PR のレビュー",
+      body: "",
+      gathered: undefined as never,
+      steps: [{ key: "review", state: "active" }] as never,
+      stepsChoice: undefined,
+    }),
+    reviewTarget: {
+      repo: "https://github.com/acme/app",
+      number: 12,
+      url: "https://github.com/acme/app/pull/12",
+      title: "t",
+      body: "",
+      headCommit: "h".repeat(40),
+      baseCommit: "b".repeat(40),
+      author: "alice",
+    },
+  } as unknown as Task;
+
+  it("設計の PR・実装の PR のレビューに、親の依頼（タスクの内容）を基準として渡す", () => {
+    const design = buildPrompt(reviewTask, "review", {
+      diff: "diff",
+      reviewRework: { gateStep: "design", targets: ["design"], parent: base() },
+    });
+    expect(design).toContain("国コードは2文字");
+    expect(design).toContain("これが依頼の基準");
+    const impl = buildPrompt(reviewTask, "review", {
+      diff: "diff",
+      reviewRework: { gateStep: "implement", targets: ["implement", "design"], parent: designed() },
+    });
+    expect(impl).toContain("国コードは2文字");
+    expect(impl).toContain("国コードを orders.ts に足す");
+  });
+
+  it("標準の組み合わせの親には、依頼の本文を足さない", () => {
+    const parent = designed({
+      stepsChoice: { plan: "standard", reason: "r", fallback: false },
+      steps: [
+        { key: "requirements", state: "done" },
+        { key: "design", state: "done" },
+        { key: "implement", state: "active" },
+      ] as never,
+      approved: {
+        requirements: { output: "# 要求要件\n\nR-1" },
+        design: { output: "# 設計", testViewpoints: [] },
+      } as never,
+    });
+    const prompt = buildPrompt(reviewTask, "review", {
+      diff: "diff",
+      reviewRework: { gateStep: "implement", targets: ["implement", "design"], parent },
+    });
+    expect(prompt).not.toContain("国コードは2文字");
   });
 });

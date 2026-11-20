@@ -3339,6 +3339,34 @@ describe("組み合わせ skip-requirements（設計 → 実装。PBI-420）", (
     activity.close();
   });
 
+  it("人が指定したタスクは、オーケストレーターが別の組み合わせ（standard）を答えても選び直さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(
+      activity,
+      [
+        out(
+          block({
+            "sacty-steps": { plan: "standard", reason: "標準にする", testCommand: "npm test" },
+          }),
+        ),
+        design,
+      ],
+      { realPlanner: true },
+    );
+    const task = service.createTask({
+      projectId: "default",
+      title: "国コード",
+      body: "国コードを足す",
+      plan: "skip-requirements",
+    });
+    await service.runNext(task.id);
+    // 答えは採用されず、standard（要求要件を持つ組み合わせ）の工程にはならない
+    const got = service.get(task.id)?.task;
+    expect(got?.stepsChoice?.plan).not.toBe("standard");
+    expect(got?.steps.some((s) => s.key === "requirements")).toBe(false);
+    activity.close();
+  });
+
   it("オーケストレーターが選んだタスクの最初の設計の実行に、選んだ理由を渡す", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [design], {
