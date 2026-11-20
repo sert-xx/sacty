@@ -580,14 +580,16 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
       replies: [],
     });
     expect(rereview).toContain(
-      "方針の観点が方針を変える指摘を出したかどうかに関わらず、総評か、その指摘の本文の読み手が分かる場所に、同じ原因が続いていること・原因（1文）・同じ原因の [要修正] が何回目か・前回までの現れの一覧（回と現れを短く）を書く",
+      "方針の観点が方針を変える指摘を出したかどうかに関わらず、総評か、その指摘の本文の読み手が分かる場所に、同じ原因が続いていること・原因（1文）・同じ原因の [要修正] が何回目か（前回までの回が分からないときは「少なくとも N 回目」）・前回までの現れの一覧（回と現れを短く）を書く",
     );
     expect(rereview).toContain(
-      "2回目の時点から、その指摘の直し方の案を、今回の現れを塞ぐ手当てだけにしない",
+      "2回目の時点から、その指摘の直し方の案を、今回の現れを塞ぐ手当てだけにせず",
     );
     expect(rereview).toContain("原因を1か所で断つ直し");
     expect(rereview).toContain("確かめた組み合わせと、確かめていない組み合わせを分ける");
-    expect(rereview).toContain("利用者や呼び出し側が実際に使う入口に当てることを書く");
+    expect(rereview).toContain("主対象がコードのときは、さらに、性質で確かめるテスト");
+    expect(rereview).toContain("利用者や呼び出し側が実際に使う入口に当てること");
+    expect(rereview).toContain("設計書・利用者向け文書の PR では、性質のテストは求めない");
     // 止める仕組みは足さない
     expect(rereview).toContain(
       "レビューの判定・重さ・再レビューの範囲・方針の観点の起動の規則は変えない",
@@ -603,6 +605,15 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     });
     expect(first).not.toContain("原因を1か所で断つ直し");
     expect(first).not.toContain("同じ原因が続いていること・原因（1文）");
+    // テストを書かないタスクの再レビューには、性質のテストを求めない
+    const noTests = buildPrompt(
+      reviewTask({ reviewRound: 2, previousReview, noTestsReason: "テストの仕組みが無い" }),
+      "review",
+      { diff, replies: [] },
+    );
+    expect(noTests).toContain("原因を1か所で断つ直し");
+    expect(noTests).toContain("このタスクはテストを書かない場面なので、性質のテストは求めない");
+    expect(noTests).not.toContain("主対象がコードのときは、さらに");
   });
 
   it("再レビューでは、前回の指摘と作者の返答をデータとして渡し、前回の指摘ごとに対応を確かめさせる", () => {
@@ -7428,8 +7439,45 @@ describe("実装のやり直しの指示の、同じ原因の現れの探索（P
       "指摘が「同じ原因が続いている」と書いているときは、指摘された現れだけを塞ぐ直しで終えず、指摘が求めた性質のテスト",
     );
     expect(prompt).toContain(
-      "文書だけの指摘と、欠陥でない指摘（[提案]・文言・好みの指摘）には、この探索と対応の text への記載を求めない",
+      "文書だけの指摘と、欠陥でない指摘（[提案]・文言・好みの指摘）には、この探索と対応の text への記載、性質のテストを求めない",
     );
+    expect(prompt).not.toContain("性質のテストは足さない");
+  });
+
+  it("テストを書かないタスク（テストなし・文書だけ）には、性質のテストを足す求めを出さず、原因を1か所で断つ求めだけにする", () => {
+    for (const extra of [{ noTestsReason: "テストの仕組みが無い" }, { documentsOnly: true }]) {
+      const t = {
+        ...task(
+          [
+            remark(
+              "implement-1-1",
+              "implement",
+              "[要修正] 切れ目で値が割れると残る",
+              "sacty_review",
+            ),
+          ],
+          ["implement"],
+        ),
+        ...extra,
+      } as Task;
+      const prompt = buildPrompt(t, "implement");
+      expect(prompt).toContain(LINE);
+      expect(prompt).toContain("原因を1か所で断つ。このタスクはテストを書かない");
+      expect(prompt).not.toContain("指摘が求めた性質のテスト");
+    }
+  });
+
+  it("指摘が全部取り下げ・後続に回す案だけのときは、探索の節を出さない", () => {
+    const voided = {
+      ...remark("implement-1-1", "implement", "[要修正] x", "sacty_review"),
+      voided: true,
+    };
+    expect(buildPrompt(task([voided as never], ["implement"]), "implement")).not.toContain(LINE);
+    const deferred = {
+      ...remark("implement-1-2", "implement", "[要修正] y", "sacty_review"),
+      deferral: { reason: "後続" },
+    };
+    expect(buildPrompt(task([deferred as never], ["implement"]), "implement")).not.toContain(LINE);
   });
 
   it("指摘が無い実装の指示と、実装でない工程の指示には入らない", () => {
@@ -7448,5 +7496,16 @@ describe("実装のやり直しの指示の、同じ原因の現れの探索（P
       "2回目以降のレビューで、今回の must が前回までの must と同じ原因の別の現れなら、方針の観点が方針を変える指摘を出したかどうかに関わらず",
     );
     expect(prompt).toContain("回数で止める・止めない決まりは足さない");
+    expect(prompt).toContain("さらに、性質で確かめるテスト");
+  });
+
+  it("文書だけ・テストなしの実装のセルフレビューには、性質のテストを求めず、明示と原因を断つ求めは残す", () => {
+    for (const extra of [{ documentsOnly: true }, { noTestsReason: "テストの仕組みが無い" }]) {
+      const prompt = buildPrompt({ ...task([], ["implement"]), ...extra } as Task, "implement");
+      expect(prompt).toContain("同じ原因が続いていること・原因（1文）");
+      expect(prompt).toContain("原因を1か所で断つ直し");
+      expect(prompt).toContain("この場面はテストを書かない");
+      expect(prompt).not.toContain("さらに、性質で確かめるテスト");
+    }
   });
 });

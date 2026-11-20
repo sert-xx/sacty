@@ -1870,7 +1870,12 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     expect(text).toContain(
       "方針の観点が方針を変える指摘を出したかどうかに関わらず、今回の `must` が前回までの `must` と同じ原因の別の現れなら、同じ原因が続いていることを本文に明示する",
     );
-    expect(text).toContain("同じ原因の `must` が何回目か、前回までの現れの一覧（回と現れを短く）");
+    expect(text).toContain(
+      "同じ原因の `must` が何回目か（前回までの回が分からないときは「少なくとも N 回目」）、前回までの現れの一覧（回と現れを短く）",
+    );
+    expect(text).toContain(
+      "テストを書く場面（主対象が `code` で、文書だけの変更でも、テストなしのタスクでもない）にだけ求める",
+    );
     expect(text).toContain("2回目の時点から（方針を変える指摘が出ないときも）");
     expect(text).toContain("原因を1か所で断つ直し（同じ原因のどの現れにも効くもの）");
     expect(text).toContain("切れ目の種類 × 処理する時点 × 値どうしの関係");
@@ -1883,14 +1888,13 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     );
   });
 
-  it("pr-review.md・self-review.md・C-17 が同じ決まりを指す", () => {
+  it("pr-review.md・self-review.md・C-17 が、本文を再掲せず aggregation.md の決まりを指す", () => {
     expect(read(`${dir}pr-review.md`)).toContain(
-      "総評か、その指摘の本文の、人が読んで分かる場所に、同じ原因が続いていること・原因（1文）・何回目か・前回までの現れの一覧",
+      "[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」のとおりに書く（総評か、その指摘の本文の、人が読んで分かる場所に書く。性質のテストの求めは、主対象が `code` でテストを書く場面だけ）",
     );
     const self = read(`${dir}self-review.md`);
-    expect(self).toContain(
-      "記録と返す結果に、同じ原因が続いていること・原因（1文）・何回目か・前回までの現れの一覧を書き",
-    );
+    expect(self).toContain("本文への明示（記録と返す結果に書く）と、直し方の案の中身を");
+    expect(self).toContain("`user-doc`・`design-doc`・テストなしでは求めない");
     expect(self).toContain("- 同じ原因が続いた指摘：（あるときだけ）");
     expect(read("skills/review/review-execution/references/C-17.md")).toContain(
       "方針を変える指摘を出さないと決めたときも、同じ原因が続いている（手順 5）なら",
