@@ -268,29 +268,37 @@ const ja = {
     /** 作成時に人が指定したタスクのイメージ（古い版の作業履歴では工程ごと）・工程ごとのエージェント。 */
     createdImages: (images: string) => ` / イメージの指定：${images}`,
     createdAgents: (agents: string) => ` / エージェントの指定：${agents}`,
-    StepsChosen: (steps: string, reason?: string) =>
-      `工程を決定：${steps}${reason ? `（${reason}）` : ""}`,
+    StepsChosen: (steps: string) => `工程を決定：${steps}`,
     stepsJoin: " → ",
     stepsImages: (
       images: string,
       source: "project" | "orchestrator" | "rerun" | "request" | "parent",
-      reason?: string,
     ) =>
-      ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : source === "rerun" ? "再実行で人が指定" : source === "request" ? "作成時に人が指定" : source === "parent" ? "親のタスクのイメージ" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
+      ` / イメージ：${images}${source === "project" ? "（プロジェクトの対象の指定）" : source === "rerun" ? "（再実行で人が指定）" : source === "request" ? "（作成時に人が指定）" : source === "parent" ? "（親のタスクのイメージ）" : "（オーケストレーター）"}`,
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     /** 既定のイメージで動かす工程と、images のどれも合わない理由（PBI-105）。 */
-    stepsDefaultImages: (reasons: string) => ` / 既定のイメージ：${reasons}`,
-    stepDefaultImage: (step: string, reason: string) => `${step}＝${reason}`,
+    stepsDefaultImage: " / 既定のイメージ",
+    stepsDefaultImages: (steps: string) => ` / 既定のイメージ：${steps}`,
     /** images の候補があるのに、理由が無いまま既定のイメージで動かす工程（PBI-105。古い版の作業履歴）。 */
     stepsImagesUnexplained: (steps: string) => ` / 理由なく既定のイメージ：${steps}`,
     /** images の候補があるのに、理由が無いまま既定のイメージで動かす（PBI-318）。 */
     imageUnexplained: " / 理由なく既定のイメージ",
     imagesJoin: "、",
     stepsExports: (exports: string) => ` / 書き出し：${exports}`,
-    /** テストの仕組みが無いと判断した根拠（PBI-94）。 */
-    stepsNoTests: (reason: string) => ` / テストの仕組みが無い：${reason}`,
+    /** テストの仕組みが無いと判断した（根拠は詳細に出す。PBI-94）。 */
+    stepsNoTests: " / テストの仕組みが無い",
     stepsDeployment: (skill: string) => ` / マージの後の監視：する（スキル ${skill}）`,
-    stepsDeploymentSkipped: (reason: string) => ` / マージの後の監視：飛ばす（${reason}）`,
+    stepsDeploymentSkipped: " / マージの後の監視：飛ばす",
+    /** 工程の決定・リポジトリの選択の理由。行には出さず、詳細に 1 件ずつ出す（PBI-431）。 */
+    reasonSteps: (reason: string) => `工程を選んだ理由：${reason}`,
+    reasonImage: (reason: string) => `イメージを選んだ理由（オーケストレーター）：${reason}`,
+    reasonDefaultImage: (reason: string, step?: string) =>
+      `既定のイメージで動かす理由${step ? `（${step}）` : ""}：${reason}`,
+    reasonExport: (step: string, reason: string) => `書き出し先の理由（${step}）：${reason}`,
+    reasonServices: (reason: string) => `サービスを決めた理由：${reason}`,
+    reasonNoTests: (reason: string) => `テストの仕組みが無いと判断した根拠：${reason}`,
+    reasonDeploymentSkipped: (reason: string) => `マージの後の監視を飛ばした理由：${reason}`,
+    reasonRepository: (reason: string) => `リポジトリを選んだ理由：${reason}`,
     /** 工程の見直しで、要らない工程を飛ばした（steps が空なら、飛ばさずに進める）。 */
     StepsSkipped: (after: string, steps: string, reason: string, unknownCost?: string) =>
       (steps
@@ -298,20 +306,16 @@ const ja = {
         : `「${after}」の後に工程を見直し、飛ばさずに進める（${reason}）`) +
       (unknownCost ? `（${unknownCost}）` : ""),
     /** オーケストレーターが決めたサービス（PBI-47・PBI-70）。 */
-    stepsServices: (names: string, source: string, steps: string, reason?: string) =>
-      ` / サービス：${names || "すべて"}（${source}。${steps}で使う）${reason ? `：${reason}` : ""}`,
+    stepsServices: (names: string, source: string, steps: string) =>
+      ` / サービス：${names || "すべて"}（${source}。${steps}で使う）`,
     /** サービスを使わないと判断した（PBI-70）。shared は選ばせた共用の compose の名前。 */
-    stepsNoServices: (shared: string, reason?: string) =>
-      ` / ${shared ? `共用の compose（${shared}）` : "サービス"}：使わない${reason ? `（${reason}）` : ""}`,
+    stepsNoServices: (shared: string) =>
+      ` / ${shared ? `共用の compose（${shared}）` : "サービス"}：使わない`,
     /** 共用の compose の compose ファイル（PBI-70）。 */
     sharedComposeFile: (name: string, file: string, where?: string) =>
       `共用の compose「${name}」の ${file}${where ? `（${where}）` : ""}`,
-    stepExport: (
-      step: string,
-      to: { name: string; location: string } | undefined,
-      reason: string,
-    ) =>
-      `${step}＝${to ? `${to.name}${to.location ? `：${to.location}` : ""}` : "書き出さない"}${reason ? `（${reason}）` : ""}`,
+    stepExport: (step: string, to: { name: string; location: string } | undefined) =>
+      `${step}＝${to ? `${to.name}${to.location ? `：${to.location}` : ""}` : "書き出さない"}`,
     InformationGathered: (sources: number) =>
       `タスクに関係する情報を集めて、まとめた（情報源 ${sources} 件）`,
     GatheredInherited: (sources: number) =>
@@ -320,10 +324,10 @@ const ja = {
       byPerson
         ? `作業するリポジトリを選んだ：${repo}（人間）`
         : `チケットを読んで、作業するリポジトリを決めた：${repo}（${reason}）`,
-    RepositoryChosen: (repo: string, reason: string, byPerson: boolean) =>
+    RepositoryChosen: (repo: string, byPerson: boolean) =>
       byPerson
         ? `作業するリポジトリを選んだ：${repo}（人間）`
-        : `プロジェクトの対象から、作業するリポジトリを選んだ：${repo}（${reason}）`,
+        : `プロジェクトの対象から、作業するリポジトリを選んだ：${repo}`,
     TicketPullRequestCommented: (url?: string) =>
       url
         ? `PR の URL をチケットにコメントした（${url}）`
@@ -1065,32 +1069,41 @@ const en: LabelMessages = {
       `Task created (${actor}${template ? ` · template: ${template}` : ""}${rerun ? " · rerun of a cancelled task" : ""}${derived ? " · follow-up of a completed task" : ""})`,
     createdImages: (images) => ` / images set: ${images}`,
     createdAgents: (agents) => ` / agents set: ${agents}`,
-    StepsChosen: (steps, reason) => `Steps chosen: ${steps}${reason ? ` (${reason})` : ""}`,
-    stepsImages: (images, source, reason) =>
-      ` / images: ${images} (${source === "project" ? "set on the project target" : source === "rerun" ? "set by a person on rerun" : source === "request" ? "set by a person at creation" : source === "parent" ? "the parent task's image" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
+    StepsChosen: (steps) => `Steps chosen: ${steps}`,
+    stepsImages: (images, source) =>
+      ` / images: ${images}${source === "project" ? " (set on the project target)" : source === "rerun" ? " (set by a person on rerun)" : source === "request" ? " (set by a person at creation)" : source === "parent" ? " (the parent task's image)" : " (orchestrator)"}`,
     stepImage: (step, image) => `${step}=${image}`,
-    stepsDefaultImages: (reasons) => ` / Default image: ${reasons}`,
-    stepDefaultImage: (step, reason) => `${step}: ${reason}`,
+    stepsDefaultImage: " / Default image",
+    stepsDefaultImages: (steps) => ` / Default image: ${steps}`,
     stepsImagesUnexplained: (steps) => ` / Default image without a reason: ${steps}`,
     imageUnexplained: " / Default image without a reason",
     imagesJoin: ", ",
     stepsExports: (exports) => ` / Export: ${exports}`,
-    stepsNoTests: (reason) => ` / No tests in the repository: ${reason}`,
+    stepsNoTests: " / No tests in the repository",
     stepsDeployment: (skill) => ` / After-merge watch: yes (skill ${skill})`,
-    stepsDeploymentSkipped: (reason) => ` / After-merge watch: skipped (${reason})`,
+    stepsDeploymentSkipped: " / After-merge watch: skipped",
+    reasonSteps: (reason) => `Why these steps: ${reason}`,
+    reasonImage: (reason) => `Why this image (Orchestrator): ${reason}`,
+    reasonDefaultImage: (reason, step) =>
+      `Why the default image${step ? ` (${step})` : ""}: ${reason}`,
+    reasonExport: (step, reason) => `Why this export (${step}): ${reason}`,
+    reasonServices: (reason) => `Why these services: ${reason}`,
+    reasonNoTests: (reason) => `Why the repository has no tests: ${reason}`,
+    reasonDeploymentSkipped: (reason) => `Why the after-merge watch is skipped: ${reason}`,
+    reasonRepository: (reason) => `Why this repository: ${reason}`,
     StepsSkipped: (after, steps, reason, unknownCost) =>
       (steps
         ? `Steps reviewed after "${after}", skipped: ${steps} (${reason})`
         : `Steps reviewed after "${after}", none skipped (${reason})`) +
       (unknownCost ? ` (${unknownCost})` : ""),
-    stepsServices: (names, source, steps, reason) =>
-      ` / Services: ${names || "all"} (${source}; used in ${steps})${reason ? `: ${reason}` : ""}`,
-    stepsNoServices: (shared, reason) =>
-      ` / ${shared ? `Shared compose (${shared})` : "Services"}: not used${reason ? ` (${reason})` : ""}`,
+    stepsServices: (names, source, steps) =>
+      ` / Services: ${names || "all"} (${source}; used in ${steps})`,
+    stepsNoServices: (shared) =>
+      ` / ${shared ? `Shared compose (${shared})` : "Services"}: not used`,
     sharedComposeFile: (name, file, where) =>
       `${file} of the shared compose "${name}"${where ? ` (${where})` : ""}`,
-    stepExport: (step, to, reason) =>
-      `${step}=${to ? `${to.name}${to.location ? `: ${to.location}` : ""}` : "not exported"}${reason ? ` (${reason})` : ""}`,
+    stepExport: (step, to) =>
+      `${step}=${to ? `${to.name}${to.location ? `: ${to.location}` : ""}` : "not exported"}`,
     InformationGathered: (sources) =>
       `Gathered and summarized the information related to the task (${sources} sources)`,
     GatheredInherited: (sources) =>
@@ -1099,10 +1112,10 @@ const en: LabelMessages = {
       byPerson
         ? `Chose the repository: ${repo} (person)`
         : `Read the ticket and decided the repository: ${repo} (${reason})`,
-    RepositoryChosen: (repo, reason, byPerson) =>
+    RepositoryChosen: (repo, byPerson) =>
       byPerson
         ? `Chose the repository: ${repo} (person)`
-        : `Chose the repository from the project's targets: ${repo} (${reason})`,
+        : `Chose the repository from the project's targets: ${repo}`,
     TicketPullRequestCommented: (url) =>
       url
         ? `Commented the PR URL on the ticket (${url})`
