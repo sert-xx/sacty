@@ -87,7 +87,7 @@ const ja = {
     projectSettings: "プロジェクトの設定を開く",
     close: "閉じる",
     createFailed:
-      "作成できませんでした。入力は残してあります。画面を更新するか、しばらくしてからもう一度試してください。",
+      "作成できませんでした。入力は残してあります。もう一度試し、直らないときは、入力を写してから画面を更新してください。",
     creating: "作成中…",
     submit: "作成する",
   },
@@ -185,7 +185,7 @@ const en: FormsMessages = {
     projectSettings: "Open project settings",
     close: "Close",
     createFailed:
-      "Could not create the task. Your input is kept. Reload the page or try again later.",
+      "Could not create the task. Your input is kept. Try again; if it still fails, copy your input, then reload the page.",
     creating: "Creating…",
     submit: "Create",
   },
