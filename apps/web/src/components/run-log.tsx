@@ -46,6 +46,7 @@ type Chunk = { from: number; text: string; next: number };
 type RunLogReply = {
   taskTitle: string;
   projectId: string;
+  running: boolean;
   rows: RunLogData["rows"];
   meta: RunLogMeta | null;
   events: Chunk;
@@ -166,6 +167,7 @@ export function LiveRunLog({
           taskId,
           taskTitle: "",
           projectId: "",
+          running: false,
           rows: [],
           log: null,
           agentFiles: null,
@@ -174,6 +176,7 @@ export function LiveRunLog({
           ...base,
           taskTitle: reply.taskTitle,
           projectId: reply.projectId,
+          running: reply.running,
           rows: reply.rows,
           log: reply.meta
             ? {
@@ -272,6 +275,7 @@ function RunLogView({ runId, data }: { runId: string; data: RunLogData }) {
           <Summary
             meta={data.log.meta}
             roleKey={runRoleKey(data.log.meta.role, data.rows)}
+            running={data.running}
             messages={messages}
           />
           <section
@@ -317,9 +321,12 @@ function RunLogView({ runId, data }: { runId: string; data: RunLogData }) {
 function Summary({
   meta,
   roleKey,
+  running,
   messages,
 }: {
   meta: RunLogMeta;
+  /** タスクがこの実行を、いま実行中か。 */
+  running: boolean;
   /** 役割の表示の名前を引くキー（runRoleKey。エラーの分析は作業履歴から読み替える）。 */
   roleKey: string;
   messages: Messages;
@@ -349,7 +356,13 @@ function Summary({
         <dt className="text-muted-foreground">{m.started}</dt>
         <dd>{formatStamp(meta.startedAt, messages.locale)}</dd>
         <dt className="text-muted-foreground">{m.finished}</dt>
-        <dd>{meta.finishedAt ? formatStamp(meta.finishedAt, messages.locale) : m.unfinished}</dd>
+        <dd>
+          {meta.finishedAt
+            ? formatStamp(meta.finishedAt, messages.locale)
+            : running
+              ? m.running
+              : m.unfinished}
+        </dd>
         {outcome && (
           <>
             <dt className="text-muted-foreground">{m.outcome}</dt>

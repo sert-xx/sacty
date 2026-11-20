@@ -123,7 +123,7 @@ export function Implementation({ task }: { task: Task }) {
     <CardSection
       id="deliverable-implement"
       title={m.title}
-      note={step?.state === "done" ? m.passed : m.working}
+      note={step?.state === "done" ? m.passed : task.status === "paused" ? m.paused : m.working}
       // 承認された（タスクが完了した）実装は折りたたむ
       collapsed={isCompleted(task)}
     >
