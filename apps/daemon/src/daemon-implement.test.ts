@@ -237,6 +237,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    it("実装の工程の実行には、完了の申告のコードブロックを含む最後の result を答えにする目印を渡す（PBI-415）", async () => {
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")]);
+      await service.runNext(id);
+      expect(executor.calls.at(-1)?.preferResult).toBe("sacty-completion");
+      activity.close();
+    });
+
     it("設計のある実装の指示は、観点の対応が欠けると提出されないことと、変更が要らないときも対応させることを伝える", async () => {
       const { activity, service, executor } = await toImplement([implement("# 実装", [TV1, TV2])]);
       await drain(service);

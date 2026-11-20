@@ -1,4 +1,6 @@
 import { type DaemonText, message, type TokenUsage } from "@sacty/core";
+import { takeFences } from "../agent-json.js";
+import { COMPLETION_FENCE } from "../completion.js";
 
 export type FailureReason = "usage_limit" | "auth" | "error";
 
@@ -253,6 +255,17 @@ export class ClaudeOutcomeReader extends OutcomeReader {
   private readonly prefer: string | undefined;
   private readonly resumed: boolean;
 
+  /**
+   * result が目印を含むか。目印が完了の申告の言語の名前（実装の工程。PBI-415）なら、文字列に触れただけでなく、
+   * 申告のコードブロック（閉じたもの。字下げ・`~~~` も含め extractCompletion と同じ見分け方）があるか。
+   */
+  private hasPreferred(text: string, prefer: string): boolean {
+    if (prefer === COMPLETION_FENCE) {
+      return takeFences(text, COMPLETION_FENCE).fences.some((f) => f.closed);
+    }
+    return text.includes(prefer);
+  }
+
   constructor(maxLine = MAX_LINE, options: { prefer?: string; resumed?: boolean } = {}) {
     super(maxLine);
     this.prefer = options.prefer;
@@ -291,7 +304,11 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         cacheWrite: this.summed.cacheWrite + u.cacheWrite,
         output: this.summed.output + u.output,
       };
-      if (this.prefer && typeof event.result === "string" && event.result.includes(this.prefer)) {
+      if (
+        this.prefer &&
+        typeof event.result === "string" &&
+        this.hasPreferred(event.result, this.prefer)
+      ) {
         this.preferred = event.result;
       }
       if (
@@ -412,7 +429,7 @@ export class ClaudeOutcomeReader extends OutcomeReader {
     // CLI が報告した費用とモデルごとの使用量（PBI-301）。セッションを再開・複製した実行は、前の実行の分も入るので使わない
     const report: CostReport = this.resumed ? {} : costReport(json);
     if (this.prefer && this.preferred === undefined && this.results >= 2) {
-      this.noticeText = `result が ${this.results} 回出ましたが、${this.prefer} を含むものが無いので、最後の result を答えにしました（使用量：${total ? "modelUsage" : "各 result の usage の合計"}）`;
+      this.noticeText = `result が ${this.results} 回出ましたが、${this.prefer === COMPLETION_FENCE ? `閉じた申告のコードブロック（${COMPLETION_FENCE}）` : this.prefer} を含むものが無いので、最後の result を答えにしました（使用量：${total ? "modelUsage" : "各 result の usage の合計"}）`;
     }
     const result = typeof json.result === "string" ? json.result : "";
     if (json.is_error === true || exitCode !== 0) {

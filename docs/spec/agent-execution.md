@@ -128,7 +128,7 @@
 - Claude Code の出力（stream-json）は、最後の `type: "result"` を答えにする。
   バックグラウンドの処理（サブエージェント・バックグラウンドのコマンド）の通知が来るたびに番が進み、`result` は何回も出る。
   答えに決まった見出しの塊を必ず含める役割は、その塊のキー（引用符で囲んだ見出し）を含む最後の `result` を答えにする（含むものが無ければ最後の `result`）。最終の答えの後の通知への返答を、答えや投稿の本文にしないためである（`preferResult`）。
-  対象は、レビュー（`"sacty-review-verdict"`）・再現（`"sacty-reproduction"`）・分割（`"sacty-split"`）・統合レビュー（`"sacty-integration-review"`）・情報収集（`"sacty-gathered"`）（`answerMarker`）。
+  対象は、実装（完了の申告のコードブロック。言語の名前が `sacty-completion`。素の文字列でなく、閉じたコードブロックがあるかで見分ける）・レビュー（`"sacty-review-verdict"`）・最終レビュー（`"sacty-final-review"`。以前の版の役割で、今は実行しない）・再現（`"sacty-reproduction"`）・分割（`"sacty-split"`）・統合レビュー（`"sacty-integration-review"`）・情報収集（`"sacty-gathered"`）（`answerMarker`）。
   目印に当たらず、`result` が2つ以上あったときは、`result` の数と使用量の出どころを、デーモンのログとセッションログ（標準エラー）に1行残す。
   トークン数は、最後の `result` の `modelUsage`（実行の全体。サブエージェントの分も含む）の、モデルごとの `inputTokens`・`cacheReadInputTokens`・`cacheCreationInputTokens`・`outputTokens` の合計にする。
   項目ごとに、各 `result` の `usage` の合計と大きいほうを取る。読める項目を持つモデルが無い `modelUsage` は使わない。

@@ -728,6 +728,27 @@ echo '{"type":"result","is_error":false,"result":"後の返答","usage":{"output
     );
   });
 
+  it("Claude Code：実装の工程は、完了の申告を含む報告の後に通知への返事が続いても、報告を答えにする（PBI-415）", async () => {
+    fakeDocker(`printf '%s\\n' '{"type":"result","is_error":false,"result":"報告\\n\\n\`\`\`sacty-completion\\n{\\"status\\":\\"complete\\"}\\n\`\`\`","usage":{"output_tokens":2}}'
+printf '%s\\n' '{"type":"result","is_error":false,"result":"通知への返事","usage":{"output_tokens":3}}'
+`);
+    const invocation = await buildInvocation(
+      { ...base, id: "c", runtime: "claude-code", auth: { mode: "subscription", secret: "t" } },
+      "prompt",
+      new MemorySecretStore({ t: "token" }),
+    );
+    invocation.preferResult = "sacty-completion";
+    const outcome = await new DockerExecutor().run({
+      runId: "run-1",
+      image: "img",
+      workspaceDir: dir,
+      invocation,
+    });
+    expect(outcome).toMatchObject({ kind: "completed" });
+    expect((outcome as { output: string }).output).toContain('{"status":"complete"}');
+    expect((outcome as { output: string }).output).not.toContain("通知への返事");
+  });
+
   it("Codex：コンテナで更新された auth.json は写さず、その値も伏せる。失敗した実行も写す", async () => {
     const hostAuth = join(dir, "host-auth.json");
     writeFileSync(hostAuth, '{"tokens":{"access_token":"old-access-token-0000"}}');

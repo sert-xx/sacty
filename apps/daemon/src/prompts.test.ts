@@ -6122,7 +6122,8 @@ describe("答えにする result の目印（PBI-154・PR #213 レビュー指�
     expect(answerMarker("split")).toBe('"sacty-split"');
     expect(answerMarker("integrate")).toBe('"sacty-integration-review"');
     expect(answerMarker("gather")).toBe('"sacty-gathered"');
-    for (const role of ["implement", "investigate", "orchestrator", "chat", "toString"]) {
+    expect(answerMarker("implement")).toBe("sacty-completion");
+    for (const role of ["investigate", "orchestrator", "chat", "toString"]) {
       expect(answerMarker(role)).toBeUndefined();
     }
   });

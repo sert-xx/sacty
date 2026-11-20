@@ -806,6 +806,63 @@ describe("出力の読み取り", () => {
   });
 });
 
+describe("実装の工程の答えの選び方（PBI-415）", () => {
+  const turn = (result: string, usage: number) =>
+    JSON.stringify({
+      type: "result",
+      is_error: false,
+      result,
+      usage: { input_tokens: usage, output_tokens: usage },
+    });
+  const report = (label: string) =>
+    `${label}\n\n\`\`\`sacty-completion\n{"status":"complete"}\n\`\`\``;
+  const read = (results: string[], options: { resumed?: boolean } = {}) => {
+    const reader = new ClaudeOutcomeReader(undefined, { prefer: "sacty-completion", ...options });
+    reader.push(results.map((r, i) => turn(r, i + 1)).join("\n"));
+    return { outcome: reader.finish(0), notice: reader.notice };
+  };
+
+  it("申告を含む報告の後に、申告の無い短い result が続いても、報告を答えにする", () => {
+    const { outcome, notice } = read([
+      report("実装の説明"),
+      "この通知は時間切れ、というものです。",
+    ]);
+    expect(outcome).toMatchObject({ kind: "completed", output: report("実装の説明") });
+    expect(notice).toBeUndefined();
+  });
+
+  it("申告を含む result が複数あれば、最後のものを答えにする", () => {
+    const { outcome } = read([report("最初"), "通知への返事", report("出し直し"), "また通知"]);
+    expect(outcome).toMatchObject({ output: report("出し直し") });
+  });
+
+  it("申告を含む result が無ければ、最後の result を答えにし、知らせを残す。文中で名前に触れただけの result は当たらない", () => {
+    const { outcome, notice } = read(["途中", "申告は sacty-completion に書きます。"]);
+    expect(outcome).toMatchObject({ output: "申告は sacty-completion に書きます。" });
+    expect(notice).toContain("result が 2 回出ました");
+    expect(notice).toContain("閉じた申告のコードブロック");
+  });
+
+  it("result が1回だけ、最後の result が申告を含む実行は、今までと同じ", () => {
+    expect(read([report("一回")]).outcome).toMatchObject({ output: report("一回") });
+    expect(read(["途中", report("最後")]).outcome).toMatchObject({ output: report("最後") });
+  });
+
+  it("閉じていない申告は数えず、直前の閉じた報告を答えにする。外側のコードブロックに引用しただけの申告も数えない", () => {
+    const unclosed = '続き\n```sacty-completion\n{"status":"complete"}';
+    expect(read([report("報告"), unclosed]).outcome).toMatchObject({ output: report("報告") });
+    const quoted = '例：\n````md\n```sacty-completion\n{"status":"complete"}\n```\n````';
+    expect(read([report("報告"), quoted]).outcome).toMatchObject({ output: report("報告") });
+  });
+
+  it("~~~ や字下げの申告のコードブロックも、申告として数える。再開した実行でも同じ", () => {
+    const tilde = '説明\n~~~sacty-completion\n{"status":"complete"}\n~~~';
+    const indented = '説明\n  ```sacty-completion\n{"status":"complete"}\n  ```';
+    expect(read([tilde, "返事"], { resumed: true }).outcome).toMatchObject({ output: tilde });
+    expect(read([indented, "返事"], { resumed: true }).outcome).toMatchObject({ output: indented });
+  });
+});
+
 describe("設定ファイル", () => {
   let dir: string;
   afterEach(() => {
