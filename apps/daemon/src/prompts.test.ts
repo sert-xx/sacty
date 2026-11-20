@@ -7302,6 +7302,7 @@ describe("実装の前の文書の PR のレビューは、方針と抜けだけ
       );
       expect(p).toContain("D-3・D-4 を起動しない代わりに");
       expect(p).toContain("見られなかった観点には数えない");
+      expect(p).toContain("主対象が design-doc 以外のときは、通常の規則で決める");
     }
     // 実装を飛ばす前の、skip-design の要求要件の PR でも入る
     const skipDesign = [

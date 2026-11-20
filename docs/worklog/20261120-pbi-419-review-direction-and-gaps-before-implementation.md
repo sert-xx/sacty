@@ -24,7 +24,7 @@ PBI-395 で、要求要件・設計の PR のレビューが、実装の PR と�
 
 ## 確かめたこと
 
-- `npm run lint`・`npm run typecheck`・`npm run build`・`npx vitest run --no-file-parallelism`（`prompts.test.ts`・`default-skills.test.ts`・`tests/docs` を含む全件）を、レビューの指摘の直しを入れた後のコードで実行し、すべて通った。
+- `npm run lint`・`npm run typecheck`・`npm run build` は通った。`npx vitest run --no-file-parallelism` は全件を、最後の変更の後に1回実行し、5629 件が通った（14 件はスキップ）。
 
 ## レビューの指摘と対応
 
@@ -35,6 +35,9 @@ PBI-395 で、要求要件・設計の PR のレビューが、実装の PR と�
 | 作業履歴に結果と節が無い | 結果と、2つの節を足した |
 | `reviewDocBeforeImplementLines` の不要な export | 外した |
 | `intake` の「今までどおりの範囲で」 | 範囲を直接書く形にした（日英） |
+| 手当て（担当の割り当て・D-2 の「見ないもの」・指摘にしないものの扱い）がスキルに無い | `pr-review.md` に書き、`default-skills.test.ts` で確かめた。指示は要点のままにした |
+| 規則 1 の除外が主対象の種類を限っていない | 括弧を `design-doc` のときに限り、指示にも「ほかの種類は通常の規則」を足した |
+| 仕様書の「横断に絞る」が条件付き観点を書いていない | 日英で「X-1 に絞る（条件付き観点・X-2・X-3・R は通常の規則）」にした |
 
 ## 残したこと
 
