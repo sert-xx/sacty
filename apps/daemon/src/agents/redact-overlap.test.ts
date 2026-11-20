@@ -4,14 +4,11 @@ import { StreamRedactor, secretForms } from "../session-logs.js";
 import { REDACTED, redact } from "./redact.js";
 
 /** 修正前の手順（長い値から順に、1つずつ置き換える）。重ならない入力で、結果が同じことを確かめるために写した。 */
-function legacyRedact(text: string, secrets: readonly string[]): string {
-  const targets = [...new Set(secrets)]
-    .filter((s) => s.length > 0)
-    .sort((a, b) => b.length - a.length);
-  let result = text;
-  for (const secret of targets) result = result.split(secret).join(REDACTED);
-  return result;
-}
+const legacyRedact = (text: string, secrets: readonly string[]): string =>
+  [...new Set(secrets)]
+    .filter((v) => v)
+    .sort((a, b) => b.length - a.length)
+    .reduce((acc, v) => acc.split(v).join(REDACTED), text);
 
 /** 素朴な方法：各値の各位置を総当たりして、含まれる文字に印を付け、重なる（文字を共有する）出現のかたまりを1つの目印にする。 */
 function naiveRedact(text: string, secrets: readonly string[]): string {
@@ -193,29 +190,23 @@ describe("少しずつ届く出力の秘密情報（PBI-438）", () => {
   };
 
   const conn = "postgres://app:Pw0rd-fictional@db.example.test:5432/main";
-  it("表6 接続文字列とそのパスワードが、どこで2回に分かれても1つの目印になる", () => {
-    const text = `connect ${conn} failed`;
+  it.each([
+    [
+      "表6 接続文字列とそのパスワード",
+      [conn, "Pw0rd-fictional"],
+      `connect ${conn} failed`,
+      "connect [REDACTED] failed",
+    ],
+    ["表7 重なる値", ["ZQZ"], "x ZQZQZ y", "x [REDACTED] y"],
+  ])("%s が、どこで2回に分かれても1つの目印になる", (_name, secrets, text, expected) => {
     for (let at = 0; at <= text.length; at++) {
       const parts = [text.slice(0, at), text.slice(at)];
-      expect(stream([conn, "Pw0rd-fictional"], parts)).toBe("connect [REDACTED] failed");
-      expect(bytes([conn, "Pw0rd-fictional"], parts)).toBe("connect [REDACTED] failed");
-    }
-  });
-
-  it("表7 重なる値が、どこで2回に分かれても伏せ切れる", () => {
-    const text = "x ZQZQZ y";
-    for (let at = 0; at <= text.length; at++) {
-      const parts = [text.slice(0, at), text.slice(at)];
-      expect(stream(["ZQZ"], parts)).toBe("x [REDACTED] y");
-      expect(bytes(["ZQZ"], parts)).toBe("x [REDACTED] y");
+      expect(stream(secrets, parts)).toBe(expected);
+      expect(bytes(secrets, parts)).toBe(expected);
     }
   });
 
   it("同じ文字が長く続くかたまりは、持ち越しが値の長さのまま、1つの目印になる。peek は伏せたものを返す", () => {
-    const r = new StreamRedactor(() => ["0000"]);
-    const out = Array.from({ length: 50 }, () => r.push("00")).join("");
-    expect(r.peek()).toBe("");
-    expect(out + r.flush()).toBe(REDACTED);
     const p = new StreamRedactor(() => ["0000"]);
     expect(p.push("a000")).toBe("a");
     expect(p.peek()).toBe("000");

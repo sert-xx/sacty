@@ -11,12 +11,8 @@ const MIN_GUESSED_LENGTH = 8;
 /** 値の全体の出現を探す木（Aho-Corasick）。値の集合が同じ間は、使い回せる。 */
 export type SecretMatcher = {
   targets: string[];
-  /** 節 n の、最初の子と次の兄弟（子を順に辿るため）、その節に入る文字 */
-  first: number[];
-  sibling: number[];
-  label: number[];
-  /** 節 n と文字から、子の節（節 * 65536 + 文字 → 子）。UTF-16 の1単位は 65536 未満 */
-  edges: Map<number, number>;
+  /** 節ごとの、文字（UTF-16 の1単位）から子の節への対応（節 0 が根） */
+  children: Map<number, number>[];
   fail: number[];
   /** 節 n までの文字列の末尾に一致する、いちばん長い値の長さ（無ければ 0） */
   best: number[];
@@ -28,59 +24,36 @@ function uniqueTargets(secrets: readonly string[]): string[] {
 
 export function compileSecrets(secrets: readonly string[]): SecretMatcher {
   const targets = uniqueTargets(secrets);
-  const first: number[] = [-1];
-  const sibling: number[] = [-1];
-  const label: number[] = [0];
+  const children: Map<number, number>[] = [new Map()];
   const best: number[] = [0];
-  const edges = new Map<number, number>();
   for (const secret of targets) {
     let node = 0;
     for (let i = 0; i < secret.length; i++) {
       const code = secret.charCodeAt(i);
-      let found = edges.get(node * 65536 + code);
+      let found = (children[node] as Map<number, number>).get(code);
       if (found === undefined) {
-        found = first.length;
-        first.push(-1);
-        sibling.push(first[node] as number);
-        first[node] = found;
-        label.push(code);
+        found = children.length;
+        children.push(new Map());
         best.push(0);
-        edges.set(node * 65536 + code, found);
+        (children[node] as Map<number, number>).set(code, found);
       }
       node = found;
     }
     best[node] = secret.length;
   }
-  const fail: number[] = new Array(first.length).fill(0);
-  const queue: number[] = [];
-  for (let c = first[0] as number; c !== -1; c = sibling[c] as number) queue.push(c);
+  const fail: number[] = new Array(children.length).fill(0);
+  const queue: number[] = [...(children[0] as Map<number, number>).values()];
   for (let head = 0; head < queue.length; head++) {
     const node = queue[head] as number;
-    for (let c = first[node] as number; c !== -1; c = sibling[c] as number) {
-      const code = label[c] as number;
+    for (const [code, c] of children[node] as Map<number, number>) {
       let f = fail[node] as number;
-      while (f !== 0 && !edges.has(f * 65536 + code)) f = fail[f] as number;
-      fail[c] = edges.get(f * 65536 + code) ?? 0;
+      while (f !== 0 && !(children[f] as Map<number, number>).has(code)) f = fail[f] as number;
+      fail[c] = (children[f] as Map<number, number>).get(code) ?? 0;
       best[c] = Math.max(best[c] as number, best[fail[c] as number] as number);
       queue.push(c);
     }
   }
-  return { targets, first, sibling, label, edges, fail, best };
-}
-
-/** 前回と同じ値の集合なら、前回の木を返す（細かく届く出力で、毎回木を作り直さないため）。 */
-export function reuseMatcher(
-  previous: { secrets: readonly string[]; matcher: SecretMatcher } | undefined,
-  secrets: readonly string[],
-): { secrets: readonly string[]; matcher: SecretMatcher } {
-  if (
-    previous &&
-    previous.secrets.length === secrets.length &&
-    previous.secrets.every((s, i) => s === secrets[i])
-  ) {
-    return previous;
-  }
-  return { secrets, matcher: compileSecrets(secrets) };
+  return { targets, children, fail, best };
 }
 
 type Cluster = { start: number; end: number; emitted: boolean };
@@ -93,8 +66,9 @@ function findClusters(text: string, m: SecretMatcher, covered: number): Cluster[
   let state = 0;
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
-    while (state !== 0 && !m.edges.has(state * 65536 + code)) state = m.fail[state] as number;
-    state = m.edges.get(state * 65536 + code) ?? 0;
+    while (state !== 0 && !(m.children[state] as Map<number, number>).has(code))
+      state = m.fail[state] as number;
+    state = (m.children[state] as Map<number, number>).get(code) ?? 0;
     const length = m.best[state] as number;
     if (length === 0) continue;
     const start = i + 1 - length;

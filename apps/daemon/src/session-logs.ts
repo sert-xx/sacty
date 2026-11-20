@@ -23,10 +23,10 @@ import {
 } from "./agent-sessions.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import {
+  compileSecrets,
   redact,
   redactPartial,
   redactText,
-  reuseMatcher,
   type SecretMatcher,
 } from "./agents/redact.js";
 
@@ -149,7 +149,13 @@ export class StreamRedactor {
   constructor(private readonly secrets: () => readonly string[]) {}
 
   private matcherFor(forms: readonly string[]): SecretMatcher {
-    this.compiled = reuseMatcher(this.compiled, forms);
+    const previous = this.compiled;
+    if (
+      previous?.secrets.length === forms.length &&
+      previous.secrets.every((s, i) => s === forms[i])
+    )
+      return previous.matcher;
+    this.compiled = { secrets: forms, matcher: compileSecrets(forms) };
     return this.compiled.matcher;
   }
 
