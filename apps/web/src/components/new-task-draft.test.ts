@@ -80,7 +80,7 @@ const closers: Record<string, () => Promise<void>> = {
       backdrop.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     }),
   フッターの閉じる: () => act(async () => dialogButton(t.close).click()),
-  "右上の ×": () => act(async () => dialogButton("Close").click()),
+  "右上の ×": () => act(async () => dialogButton("閉じる").click()),
 };
 
 beforeEach(() => {

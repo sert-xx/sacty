@@ -45,7 +45,7 @@ export function CardSection({
       {hint && (
         <>
           {" "}
-          <Hint text={hint} />
+          <Hint text={hint} label={typeof title === "string" ? title : undefined} />
         </>
       )}
     </h2>
