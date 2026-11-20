@@ -35,6 +35,9 @@ const ja = {
       `${n}回目（差し戻しの回数に数えない）${current ? " ・ 今回" : ""}`,
     round: (n: number, current: boolean) => `${n}回目の差し戻し${current ? " ・ 今回" : ""}`,
     voided: "無効",
+    /** 直しに入る前に AI が「この PR では対応しない」と選り分けた提案（PBI-436）。 */
+    triagedLabel: "直しに入る前に AI が、この PR では対応しないと判断",
+    triagedRound: "直しの対象外",
     /** 後続に回したい案（PBI-370）の印。 */
     deferProposed: "後続に回したい案",
     deferDecided: "後続に回すと決定",
@@ -150,6 +153,8 @@ const en: ReviewMessages = {
       `Round ${n} (not counted as changes requested)${current ? " · this round" : ""}`,
     round: (n, current) => `Changes requested, round ${n}${current ? " · this round" : ""}`,
     voided: "Voided",
+    triagedLabel: "Declined for this PR by the AI before reworking",
+    triagedRound: "Not a rework item",
     deferProposed: "Proposed to defer",
     deferDecided: "Decided to defer",
     fixDecided: "Decided to fix in this PR",

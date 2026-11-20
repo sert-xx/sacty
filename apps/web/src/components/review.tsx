@@ -334,7 +334,7 @@ export function RemarkItem({
     <li
       className={cn(
         "grid grid-cols-[64px_minmax(0,1fr)] gap-x-3 gap-y-1.5 rounded-lg border p-3.5 text-sm leading-6",
-        current ? "border-2 border-back-line" : "border-border",
+        current && !remark.triaged ? "border-2 border-back-line" : "border-border",
         remark.voided && "opacity-60",
       )}
     >
@@ -346,18 +346,28 @@ export function RemarkItem({
         <span
           className={cn(
             "rounded-full border px-2 py-0.5 text-xs",
-            current
+            current && !remark.triaged
               ? "border-back-line bg-back-soft font-semibold text-back"
               : "border-input text-muted-foreground",
           )}
         >
-          {isAiReviewRemark(remark) && !mixedRound
-            ? t.aiRound(remark.round, current)
-            : t.round(remark.round, current)}
+          {remark.triaged
+            ? t.triagedRound
+            : isAiReviewRemark(remark) && !mixedRound
+              ? t.aiRound(remark.round, current)
+              : t.round(remark.round, current)}
         </span>
         {remark.voided && (
           <span className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground">
             {t.voided}
+          </span>
+        )}
+        {remark.triaged && (
+          <span
+            data-testid="remark-triaged"
+            className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground"
+          >
+            {t.triagedLabel}
           </span>
         )}
         {/* 後続に回したい案と、人の決定（PBI-370） */}
@@ -390,13 +400,13 @@ export function RemarkItem({
           : remark.response
             ? remark.response
             : t.noResponse(submission)}
-        {remark.response && remark.respondedIn && !remark.voided && (
+        {remark.response && remark.respondedIn && !remark.voided && !remark.triaged && (
           <span className="ml-2 text-xs text-muted-foreground">
             {t.respondedIn(remark.respondedIn)}
           </span>
         )}
       </span>
-      {!remark.voided && (
+      {!remark.voided && !remark.triaged && (
         <form action={voidRemarkAction} className="col-start-2 flex items-center gap-1">
           <input type="hidden" name="taskId" value={taskId} />
           <input type="hidden" name="remarkId" value={remark.id} />

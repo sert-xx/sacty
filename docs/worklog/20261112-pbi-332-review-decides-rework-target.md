@@ -4,7 +4,7 @@
 - タスク: PBI-332
 - PR: #350
 - ブランチ: feat/issue-332-review-decides-rework-target
-- 関係する ADR: [PR の指摘の戻し先を、ゴールガーディアンではなく、AI のレビューの指摘はレビューの子タスクが、人の指摘は PR の工程のエージェントが決める](../adr/20261112-0748-review-child-task-decides-rework-target.md)
+- 関係する ADR: [PR の指摘の戻し先を、ゴールガーディアンではなく、AI のレビューの指摘はレビューの子タスクが、人の指摘は PR の工程のエージェントが決める](../adr/20261112-0748-superseded-review-child-task-decides-rework-target.md)
 
 ## 目的
 

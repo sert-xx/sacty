@@ -381,6 +381,22 @@ describe("B2 前の指摘の対応を、レビューする head の内容で確�
     // 特定の言語・ツール・リポジトリに寄せない
     expect(skill).not.toMatch(/sacty|\.sacty-tools|npm|TypeScript/);
   });
+
+  it("既定のスキル（pr-review）は、PR を作った側が対応しないと判断した提案を、未対応に数えず・再指摘せず、must の重さと確かめたときだけ根拠付きで must にする（PBI-436）", () => {
+    const skill = read("skills/review/review-dispatch/references/pr-review.md");
+    expect(skill).toContain(
+      "PR を作った側が、直しに入る前に、PR の範囲を考えて対応しないと判断した提案",
+    );
+    expect(skill).toContain(
+      "未対応に数えず、もう一度指摘せず（同じ原因の別の現れとしても出さない）",
+    );
+    expect(skill).toContain("PR を作った側が対応しないと判断したと書く（「未対応」と書かない");
+    expect(skill).toContain(
+      "`must` の重さ（不具合・セキュリティ・データの破損・要件の不適合・互換性の破壊）に当たると分かったとき",
+    );
+    expect(skill).toContain("根拠（起きる条件と影響）と一緒に、新しい `must` として採用する");
+    expect(skill).not.toMatch(/sacty|\.sacty-tools|npm|TypeScript/);
+  });
 });
 
 describe("B3 行へのコメントの指摘に、その行の内容を添える", () => {

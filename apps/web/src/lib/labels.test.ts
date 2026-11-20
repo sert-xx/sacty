@@ -1813,6 +1813,59 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     expect(some).toContain("対応を求めていないコメント2件は除いた");
   });
 
+  it("提案の選り分けの行は、件数と費用を出し、詳細に提案ごとの判断と理由を出す（PBI-436）", () => {
+    const triaged = event("SuggestionsTriaged", {
+      items: [
+        { id: "S1", remark: 0, text: "提案1", decision: "decline", reason: "好みの範囲" },
+        { id: "S2", remark: 0, text: "提案2", decision: "decline", reason: "範囲の外" },
+        { id: "S3", remark: 0, text: "提案3", decision: "decline", reason: "言い回し" },
+        { id: "S4", remark: 1, text: "提案4", decision: "address", reason: "直さないと害が出る" },
+      ],
+      dropped: [],
+      agentId: "a",
+      runResult: "completed",
+      costUsd: 0.3,
+      estimated: false,
+    });
+    const parts = describeEventParts(triaged, ja);
+    expect(parts.text).toContain("提案 4件のうち 3件をこの PR で対応しない");
+    expect(parts.text).toContain("$0.3000");
+    expect(parts.detail).toBe(
+      [
+        "S1：対応しない：好みの範囲",
+        "S2：対応しない：範囲の外",
+        "S3：対応しない：言い回し",
+        "S4：対応する：直さないと害が出る",
+      ].join("\n"),
+    );
+    expect(describeEventParts(triaged, labels.en).text).toContain(
+      "3 of 4 suggestions will not be handled in this PR",
+    );
+    // 判断できず、対応する側にした提案は、そう出す。採用しなかった実行は、そう出す
+    const defaulted = event("SuggestionsTriaged", {
+      items: [
+        { id: "S1", remark: 0, text: "提案1", decision: "address", reason: "x", defaulted: true },
+      ],
+      dropped: [],
+      agentId: "a",
+      costUsd: 0,
+      estimated: false,
+    });
+    expect(describeEventParts(defaulted, ja).text).toContain(
+      "判断できなかった提案は、対応する側にした",
+    );
+    expect(describeEventParts(defaulted, ja).detail).toContain("判断が無いので、対応する側にした");
+    const interrupted = event("SuggestionsTriaged", {
+      items: [],
+      dropped: [],
+      agentId: "a",
+      runResult: "interrupted",
+      costUsd: 0.1,
+      estimated: false,
+    });
+    expect(describeEventParts(interrupted, ja).text).toContain("提案の選り分けを採用しなかった");
+  });
+
   it("レビューの子タスクの答えから決めた戻し先は、費用ではなく答えから決めたことを出す（PBI-332）", () => {
     const text = describeEvent(
       event("ReworkJudged", {

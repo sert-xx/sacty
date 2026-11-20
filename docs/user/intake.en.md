@@ -1,4 +1,4 @@
-<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/review-stop-notice.ts, apps/daemon/src/review-dispatch-count.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts -->
+<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/review-stop-notice.ts, apps/daemon/src/review-dispatch-count.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts -->
 
 [日本語](intake.md) | **English**
 
@@ -391,8 +391,11 @@ The findings of the child task's review reach the original task as follows.
 2. If its verdict is changes required or suggestions only (OK to merge), the review reaches the original task as PR findings right after it is posted.
    When your own comments arrive at the same time, sacty waits for you to finish writing, so they reach the task together after about 2 minutes.
    The original task fixes them in the step the child task gave for each finding ([Approval in PRs](tasks.en.md#approval-in-prs-requirements-design-implement)).
+   For suggestions (`[提案]`) on an implementation PR, an AI decides, before fixing and with the scope of the PR in mind, whether this PR handles each one. Suggestions it does not handle are not fixed, and sacty replies on the PR with the reason. To have one fixed, comment on the PR asking for that suggestion to be fixed ([Sorting AI review suggestions](tasks.en.md#sorting-ai-review-suggestions)).
+   Must-fix findings (`[要修正]`) are always fixed.
 3. When the original task fixes them, updates the PR, and goes back to waiting for approval, the child task reviews the latest commit again right away.
 4. Steps 2 and 3 repeat until there are "no findings" (there is no limit on the number of rounds; the cost of repetition stops at each task's budget).
+   When every suggestion is declined and nothing is left to fix, the original task does not update the PR, and the child task reviews the same commit once more.
    A review with no findings is not delivered and does not request changes (the task waits for the PR to be merged).
 
 The child task reviews with the same image as the original task. No agent run is needed to choose the image.

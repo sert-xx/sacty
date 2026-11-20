@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/daemon/src/review-stop-notice.ts、apps/daemon/src/review-dispatch-count.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts -->
+<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/daemon/src/review-stop-notice.ts、apps/daemon/src/review-dispatch-count.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts、apps/daemon/src/suggestion-triage.ts、apps/daemon/src/triage-reply.ts -->
 
 **日本語** | [English](intake.en.md)
 
@@ -392,8 +392,13 @@ sacty は、子タスクを、1つの PR に1つ作ります。
 2. 判定が「修正が必要」か「提案あり（マージは可）」なら、レビューは、投稿の直後に、元のタスクに PR の指摘として届きます。
    あなたの指摘が同時に届いているときは、あなたが書き終わるのを待つため、2 分ほど待ってから、まとめて届きます。
    元のタスクは、子タスクが指摘ごとに示した戻し先で直します（[PR での承認](tasks.md#pr-での承認要求要件設計実装)）。
+   実装の PR の提案（`[提案]`）は、直す前に、AI が PR の範囲を考えて、この PR で対応するかを提案ごとに決めます。
+   対応しないとした提案は直さず、理由を PR に返信します。
+   直させたいときは、PR に、その提案を直してほしいとコメントしてください（[AI のレビューの提案の選り分け](tasks.md#ai-のレビューの提案の選り分け)）。
+   要修正（`[要修正]`）は、必ず直します。
 3. 元のタスクが直して PR を更新し、承認待ちに戻ると、すぐに、子タスクが最新のコミットをもう一度レビューします。
 4. 2 と 3 を、「指摘なし」になるまで繰り返します（回数の上限はなく、繰り返しの費用はそれぞれのタスクの予算で止まります）。
+   提案をすべて対応しないとして直すものが無いときは、元のタスクは PR を更新せず、子タスクが同じコミットを 1 回だけレビューし直します。
    「指摘なし」のレビューは届けず、差し戻しません（PR のマージを待ちます）。
 
 子タスクは、元のタスクと同じイメージでレビューします。イメージを選ぶためのエージェントの実行はありません。
