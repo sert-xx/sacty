@@ -1843,3 +1843,21 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
     }
   });
 });
+
+describe("既定のスキル：実装の前の文書の PR のレビューの手当て（PBI-419）", () => {
+  const pr = () => read("skills/review/review-dispatch/references/pr-review.md");
+  const skill = () => read("skills/review/review-dispatch/SKILL.md");
+
+  it("D-3・D-4 を起動しない代わりの割り当てと、D-2 の「見ないもの」の扱いと、指摘にしないものの扱いを書く", () => {
+    const text = pr();
+    expect(text).toContain("受け入れ条件の抜けと矛盾は D-1");
+    expect(text).toContain("保存するデータの形・移行・外に公開する I/F は D-2");
+    expect(text).toContain("セキュリティは D-5");
+    expect(text).toContain("D-2 の「見ないもの」からは、上の抜け");
+    expect(text).toContain("集約で不採用にする");
+  });
+
+  it("規則 1 の除外は、主対象が design-doc のときに限る", () => {
+    expect(skill()).toContain("`pr-review` の、主対象が `design-doc` のときも除く。規則 9");
+  });
+});
