@@ -18951,6 +18951,8 @@ export class TaskService {
     });
     // 人が再開したら、代わりのエージェントを試し終えたことを忘れる（もう一度、選んだエージェントから順に試す）
     this.fallbackTried.delete(id);
+    // 失敗して使わないと覚えたエージェントも、このタスクの分だけ忘れる（ほかのタスクと、利用上限の覚えは変えない）
+    this.failedAgents.delete(id);
     const resumed = this.append(task, events);
     // 実装の作り直しの途中で止まっていたなら、走り直す前に、PR に届いた指摘をもう一度読む（PBI-279）
     if (reworkingPullRequest(resumed)) this.heldRecheck.add(id);

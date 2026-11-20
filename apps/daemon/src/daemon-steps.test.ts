@@ -1605,6 +1605,92 @@ describe("工程の実行と費用", () => {
       activity.close();
     });
 
+    it("代わりが利用制限でない失敗で止まったタスクを期限の内に再開したら、利用制限の元を飛ばして代わりをもう一度試す", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const now = Date.parse("2026-10-20T00:00:00Z");
+      const error: AgentOutcome = { kind: "failed", reason: "error", message: "boom" };
+      const { service, executor } = makeService(activity, [limited, error, completed(1_000)], {
+        config: withFallback(60 * 60_000),
+        secrets,
+        now: () => now,
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id); // 元：利用制限（代わりへ）
+      await service.runNext(task.id); // 代わり：error（止まる）
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      service.resume(task.id, {}); // 期限の内
+      await service.runNext(task.id);
+      // 元（利用制限の覚えが残る）を飛ばして、代わりが実行される
+      expect(executor.calls).toHaveLength(3);
+      expect(executor.calls[2]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      activity.close();
+    });
+
+    it("再開の後、利用制限の覚えが無ければ、元が利用制限で失敗してから代わりへ切り替わる", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const now = Date.parse("2026-10-20T00:00:00Z");
+      const error: AgentOutcome = { kind: "failed", reason: "error", message: "boom" };
+      const { service, executor } = makeService(
+        activity,
+        [error, error, limited, completed(1_000)],
+        { config: withFallback(60 * 60_000), secrets, now: () => now },
+      );
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id); // 元：error（代わりへ）
+      await service.runNext(task.id); // 代わり：error（止まる）
+      service.resume(task.id, {});
+      await service.runNext(task.id); // 元：利用制限
+      await service.runNext(task.id); // 代わり
+      expect(executor.calls).toHaveLength(4);
+      expect(executor.calls[2]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+      expect(executor.calls[3]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      expect(fellBack(service, task.id)).toHaveLength(2);
+      activity.close();
+    });
+
+    it("再開の後に元も代わりも利用制限で失敗したら、止めて理由は usage_limit", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const now = Date.parse("2026-10-20T00:00:00Z");
+      const error: AgentOutcome = { kind: "failed", reason: "error", message: "boom" };
+      const { service, executor } = makeService(activity, [limited, error, limited], {
+        config: withFallback(60 * 60_000),
+        secrets,
+        now: () => now,
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      await service.runNext(task.id);
+      service.resume(task.id, {});
+      await service.runNext(task.id); // 代わり（元は利用制限の覚え）：利用制限
+      expect(executor.calls).toHaveLength(3);
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(service.get(task.id)?.task.pausedReason).toBe("usage_limit");
+      activity.close();
+    });
+
+    it("再開で忘れるのは再開したタスクの分だけで、ほかのタスクの使わない覚えは残る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const now = Date.parse("2026-10-20T00:00:00Z");
+      const error: AgentOutcome = { kind: "failed", reason: "error", message: "boom" };
+      const { service, executor } = makeService(
+        activity,
+        [error, error, error, completed(1_000), completed(1_000)],
+        { config: withFallback(60 * 60_000), secrets, now: () => now },
+      );
+      const t1 = service.createTask({ projectId: "default", title: "A" });
+      const t2 = service.createTask({ projectId: "default", title: "B" });
+      await service.runNext(t1.id); // t1：元が error（代わりへ）
+      await service.runNext(t2.id); // t2：元が error（代わりへ）
+      await service.runNext(t1.id); // t1：代わりが error（止まる）
+      expect(service.get(t1.id)?.task.status).toBe("paused");
+      service.resume(t1.id, {});
+      await service.runNext(t1.id); // t1：元に戻る
+      expect(executor.calls[3]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+      await service.runNext(t2.id); // t2：元は使わないまま、代わり
+      expect(executor.calls[4]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      activity.close();
+    });
+
     it("切り替えの間に同じタスクの質問に答えても、期限が過ぎても、試し終えたら止める", async () => {
       const activity = new SqliteActivityStore(dbPath);
       let now = Date.parse("2026-10-20T00:00:00Z");
