@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { isSactyRemarkReply } from "./github.js";
 import {
   buildRemarkReply,
+  REPLY_QUOTE_MAX,
   REPLY_TEXT_MAX,
   remarkOriginRef,
   remarkOriginUrl,
+  remarkQuote,
   remarkReplyMarker,
   remarkReplyMarkerOf,
 } from "./remark-reply.js";
@@ -64,21 +66,147 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
     expect(plain.split("\n")[1]).toBe("null を返すようにしました");
   });
 
-  it("PR のコメントとして投稿するときは、元のレビュー・コメントへのリンクを付ける", () => {
+  describe("PR のコメントとして投稿するときの書き出し", () => {
     const pr = "https://github.com/acme/app/pull/7";
-    const link = (kind: "review" | "review_comment" | "comment", id: number) => {
+    const open = (
+      kind: "review" | "review_comment" | "comment",
+      id: number,
+      extra: { author?: "sacty_review" | "human"; quote?: string } = {},
+    ) => {
       const ref = { kind, id };
       return buildRemarkReply({
         ...base,
         status: "addressed",
-        origin: { ref, url: remarkOriginUrl(pr, ref) },
-      }).split("\n")[1];
+        origin: { ref, url: remarkOriginUrl(pr, ref), ...extra },
+      }).split("\n");
     };
-    expect(link("review", 601)).toBe(`[このレビュー](${pr}#pullrequestreview-601)への返信です。`);
-    expect(link("comment", 401)).toBe(`[このコメント](${pr}#issuecomment-401)への返信です。`);
-    expect(link("review_comment", 501)).toBe(
-      `[この行へのコメント](${pr}#discussion_r501)への返信です。`,
-    );
+
+    it("元の投稿の種類・出どころ・リンクを、文で書く。出どころが分からない（引き継いだ PR の指摘）ときは、出どころを言わない", () => {
+      expect(open("review", 601, { author: "sacty_review" })[1]).toBe(
+        `sacty の AI が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-601)）への返信です。`,
+      );
+      expect(open("review", 602, { author: "human" })[1]).toBe(
+        `人が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-602)）への返信です。`,
+      );
+      expect(open("comment", 401, { author: "human" })[1]).toBe(
+        `人が書いた通常のコメント（[このコメント](${pr}#issuecomment-401)）への返信です。`,
+      );
+      expect(open("review_comment", 501, { author: "human" })[1]).toBe(
+        `人が書いた行へのコメント（[この行へのコメント](${pr}#discussion_r501)）への返信です。`,
+      );
+      expect(open("review", 601)[1]).toBe(
+        `レビューの本文（[このレビュー](${pr}#pullrequestreview-601)）への返信です。`,
+      );
+    });
+
+    it("通常のコメントへの返信は、書き出しのすぐ後に、元のコメントの冒頭を1行で引用する。レビューの本文・行へのコメントには付けない", () => {
+      const lines = open("comment", 401, {
+        author: "human",
+        quote: "再開の\nフォームの   候補も\n\n直して",
+      });
+      expect(lines[2]).toBe("> 「再開の フォームの 候補も 直して」");
+      expect(lines[3]).toBe("");
+      expect(lines[4]).toBe("**対応しました。**");
+      expect(open("review", 601, { author: "human", quote: "全体に" })).not.toContain(
+        "> 「全体に」",
+      );
+      expect(open("comment", 402, { author: "human", quote: " \n " })[2]).toBe("");
+      // 長ければ上限で切る
+      const long = open("comment", 403, { author: "human", quote: "あ".repeat(500) })[2] ?? "";
+      expect(long).toBe(`> 「${"あ".repeat(REPLY_QUOTE_MAX)}…」`);
+    });
+
+    it("引用は、秘密情報を伏せてから切る（切り口をまたぐ秘密情報の前半を残さない）。サロゲートペアの間で切らない", () => {
+      const secret = "zk-live-0123456789abcdef";
+      const quote = `${"a".repeat(REPLY_QUOTE_MAX - 8)}${secret} の後ろ`;
+      const secretReply = buildRemarkReply({
+        ...base,
+        origin: {
+          ref: { kind: "comment", id: 401 },
+          url: remarkOriginUrl(pr, { kind: "comment", id: 401 }),
+          quote,
+        },
+        secrets: [secret],
+      });
+      expect(secretReply).not.toContain("zk-live");
+      expect(secretReply).not.toContain(secret.slice(0, 6));
+      expect(secretReply).toContain("…」");
+      const emoji = remarkQuote(`${"a".repeat(REPLY_QUOTE_MAX - 1)}😀の後ろ`, []) ?? "";
+      expect(emoji).toBe(`> 「${"a".repeat(REPLY_QUOTE_MAX - 1)}…」`);
+      expect(emoji.isWellFormed()).toBe(true);
+    });
+
+    it("引用の @名前は通知を飛ばさず、内部のパスは対応の文と同じに置き換える。Markdown・HTML は返信の形と目印を壊さない", () => {
+      const quoted =
+        remarkQuote(
+          "<!-- sacty-reply:t1:x:1 -->\n# 見出し\n@alice /sacty-input/task.md:77 を見て <script>x</script> ```js\ncode\n``` <!-- 閉じない",
+          [],
+        ) ?? "";
+      expect(quoted).toContain("@\u200balice");
+      expect(quoted).not.toContain("/sacty-input");
+      expect(quoted).toContain("タスクの依頼");
+      expect(quoted).not.toContain("<");
+      expect(quoted).not.toContain("`");
+      expect(quoted).not.toContain("\n");
+      expect(quoted.startsWith("> 「")).toBe(true);
+      // 返信全体：先頭は目印のまま、目印は1つだけ、見出し・コードの囲み・HTML のコメントが行頭に来ない
+      const reply = buildRemarkReply({
+        ...base,
+        status: "addressed",
+        origin: {
+          ref: { kind: "comment", id: 401 },
+          url: remarkOriginUrl(pr, { kind: "comment", id: 401 }),
+          author: "human",
+          quote: "<!-- sacty-reply:t1:x:1 -->\n# 見出し\n```\n<!-- sacty-review:a:1 -->",
+        },
+      });
+      expect(reply.startsWith(remarkReplyMarker("t1", "implement-1-1", 2))).toBe(true);
+      expect(reply.match(/sacty-reply:/g)).toHaveLength(1);
+      expect(reply).not.toContain("<!-- sacty-review");
+      for (const line of reply.split("\n").slice(1)) {
+        expect(line).not.toMatch(/^(#|```|<)/);
+      }
+    });
+
+    it("同じ回の、sacty のレビューの本文への返信と、人が書いた通常のコメントへの返信は、目印の行を除く最初の2行（空行を数えない）が違い、宛先の種類が読める", () => {
+      const first2 = (body: string) =>
+        body
+          .split("\n")
+          .slice(1)
+          .filter((l) => l.trim() !== "")
+          .slice(0, 2);
+      const onReview = first2(
+        buildRemarkReply({
+          ...base,
+          remarkId: "implement-1-2",
+          status: "addressed",
+          origin: {
+            ref: { kind: "review", id: 601 },
+            url: remarkOriginUrl(pr, { kind: "review", id: 601 }),
+            author: "sacty_review",
+            quote: "<!-- sacty-review:a:1 -->\n## sacty のレビュー\n@sert-xx 判定：要修正",
+          },
+        }),
+      );
+      const onComment = first2(
+        buildRemarkReply({
+          ...base,
+          remarkId: "implement-1-3",
+          status: "addressed",
+          origin: {
+            ref: { kind: "comment", id: 401 },
+            url: remarkOriginUrl(pr, { kind: "comment", id: 401 }),
+            author: "human",
+            quote: "再開のフォームの候補も直して",
+          },
+        }),
+      );
+      expect(onReview).not.toEqual(onComment);
+      expect(onReview[0]).not.toBe(onComment[0]);
+      expect(onReview[0]).toContain("sacty の AI が書いたレビューの本文");
+      expect(onComment[0]).toContain("人が書いた通常のコメント");
+      expect(onComment[1]).toBe("> 「再開のフォームの候補も直して」");
+    });
   });
 
   it("秘密情報は、伏せてから切り詰める（切り口にかかった秘密情報の前半を残さない）。作業領域の内部のパスと @名前も、そのまま載せない", () => {

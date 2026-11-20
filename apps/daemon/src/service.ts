@@ -5034,7 +5034,24 @@ export class TaskService {
               ...where,
               body: buildRemarkReply({
                 ...reply,
-                ...(ref ? { origin: { ref, url: remarkOriginUrl(due.url, ref) } } : {}),
+                ...(ref
+                  ? {
+                      origin: {
+                        ref,
+                        url: remarkOriginUrl(due.url, ref),
+                        ...(remark.continued
+                          ? {}
+                          : {
+                              author: remark.source
+                                ? ("sacty_review" as const)
+                                : ("human" as const),
+                              ...(remark.originText !== undefined
+                                ? { quote: remark.originText }
+                                : {}),
+                            }),
+                      },
+                    }
+                  : {}),
               }),
               signal,
             }),
@@ -20087,8 +20104,12 @@ export type RemarkReplyDue = {
   response: string;
   status?: RemarkResponseStatus;
   respondedIn: number;
-  /** 引き継いだ PR の指摘（指摘の ID を、人に見せない）。 */
+  /** 引き継いだ PR の指摘（指摘の ID を、人に見せない）。出どころ・元の本文の記録が無い。 */
   continued?: true;
+  /** 元の投稿が sacty のレビュー（AI のレビュー）か（取り込んだ指摘の出どころ）。無ければ人の投稿。 */
+  source?: "sacty_review";
+  /** 取り込んだ指摘の文（通常のコメントでは、コメントの本文。返信の引用に使う）。 */
+  originText?: string;
 };
 
 /** 実装の指摘に、人がまだ決めていない、後続に回したい案があるか（無効にした指摘は除く。PBI-370・PBI-383）。 */
@@ -20149,6 +20170,8 @@ export function awaitingRemarkReplies(task: Task):
             response: r.response,
             ...(r.status ? { status: r.status } : {}),
             respondedIn: r.respondedIn,
+            ...(r.source ? { source: r.source } : {}),
+            originText: r.text,
           },
         ]
       : [],

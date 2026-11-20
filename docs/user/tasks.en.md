@@ -739,7 +739,10 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   When permission is missing, it does not turn the reply into a PR comment and records in the Activity that it could not reply.
   When GitHub's posting limit is hit, it does not turn the reply into a PR comment either, and retries after waiting.
 - For a review body and a regular comment, it posts a PR comment.
-  It starts with a link to the original, so that it is clear which review or comment it replies to.
+  Its opening sentence shows the kind of the original post (a review body, a regular comment, or a line comment), whether the sacty AI or a person wrote it, and a link to the original.
+  A reply to a regular comment quotes the start of the original comment on one line right after the opening (up to 100 characters; secrets are hidden).
+  Even when several replies are posted together, the first few lines show which post each one replies to.
+  A finding of a taken-over PR shows neither the source nor a quotation.
 - The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
   When it was not addressed, the reason (for example, out of this task's scope) follows.
   For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
