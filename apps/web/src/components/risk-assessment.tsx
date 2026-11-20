@@ -20,7 +20,8 @@ const lastReviewedHead = (t: ReviewedHead) => t.reviewTarget?.headCommit ?? t.re
  *   記録されないので、先頭が進んで指摘のある回になっても、前の先頭の評価が残る（その評価を、今の先頭のものとして見せない）。
  * - PR を作ったタスクは、その実装の PR のレビューの子タスクが指摘なしの回に出した評価を、子タスクを開かずに出す
  *   （子タスクの評価があれば、それを先に出す）。評価した先頭が、子タスクが最後にレビューした先頭と違えば、
- *   今の先頭の評価として見せない（current が偽。比べる先頭が無いときも偽）。
+ *   今の先頭の評価として見せない（current が偽。比べる先頭が無いときも偽）。親の PR の先頭
+ *   （pullRequest.commit・reviewedCommit）のどちらとも違うときも偽。
  * - 版を上げる前の記録（via: publish）は、評価した先頭と今の先頭を比べて、同じように出す。
  * 評価が無ければ undefined（何も出さない）。
  */
@@ -47,7 +48,12 @@ export function riskAssessmentToShow(
     (r) =>
       r.step === "implement" && r.number === pr?.number && r.task?.riskAssessment?.via === "review",
   )?.task;
-  if (child?.riskAssessment) return judgeReview(child.riskAssessment, child);
+  if (child?.riskAssessment) {
+    // 子タスクが最後にレビューした先頭と、親が知っている PR の先頭の、どちらとも合うときだけ今の先頭の評価にする
+    // （親が push した後、子タスクの再レビューが記録される前の間も、前の先頭の評価を今のものに見せない）。
+    const judged = judgeReview(child.riskAssessment, child);
+    return { risk: judged.risk, current: judged.current && judge(child.riskAssessment).current };
+  }
   return own ? judge(own) : undefined;
 }
 

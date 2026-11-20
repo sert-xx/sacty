@@ -201,8 +201,8 @@ export function assessesRiskInReview(task: Task, parentContinued = false): boole
   return task.source.review === "sacty" && task.reviewOf.step === "implement" && !parentContinued;
 }
 
-/** レビューの工程の指示に足す、リスク評価の指示（`assessesRiskInReview` のタスクだけ）。指摘なしと判定するときだけ出させる。 */
-export function reviewRiskLines(_task: Task, enabled: boolean): string[] {
+/** レビューの工程の指示に足す、リスク評価の指示（`enabled` が真のときだけ。対象かの判定は呼び出し側）。指摘なしと判定するときだけ出させる。 */
+export function reviewRiskLines(enabled: boolean): string[] {
   if (!enabled) return [];
   return [
     "",

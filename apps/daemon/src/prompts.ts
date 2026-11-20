@@ -3474,7 +3474,7 @@ export function buildPrompt(
         "```",
         ...reviewReworkLines(extra.reviewRework),
         // 評価の対象のレビューは、指摘なしと判定するときだけ、PR のリスクも評価させる（PBI-362・PBI-429）
-        ...reviewRiskLines(task, extra.reviewRisk === true),
+        ...reviewRiskLines(extra.reviewRisk === true),
         // レビューする PR が分割の子タスクの PR なら、その範囲（PBI-351）
         ...reviewChildScopeLines(extra.reviewRework),
         // レビューする PR が、実装の前の文書の PR のとき、方針と抜けだけを見させる（PBI-419）
@@ -9059,7 +9059,7 @@ export function buildReviewBody(
     foldComments?: boolean;
     latestCommit?: string;
     mentionSelf?: string;
-    /** 評価の対象のレビューか（PBI-429。子タスクの範囲は service が決める）。渡さなければ、タスクだけから決める。 */
+    /** 評価の対象のレビューか（PBI-429。子タスクの範囲は service が決める）。渡さなければ、評価を載せない。 */
     risk?: boolean;
   } = {},
 ): string {

@@ -164,6 +164,14 @@ describe("PR を作ったタスクの詳細に、レビューの子タスクの�
     expect(view(moved, [advanced])).toContain("It is not for the current head");
   });
 
+  it("子タスクの再レビューが記録される前に親の PR の先頭が進んでいたら、子タスクの評価を今の先頭のものとして見せない", () => {
+    // 子の reviewTarget は A（評価した先頭）、親の pullRequest.commit は B
+    const ahead = parent({ pullRequest: { number: 7, commit: NEW_HEAD } });
+    const html = view(ahead, [child(risk(HEAD))]);
+    expect(html).toContain('data-testid="risk-stale"');
+    expect(riskAssessmentToShow(ahead, [child(risk(HEAD))])?.current).toBe(false);
+  });
+
   it("先頭が進み、その回が指摘あり・判定なしで終わっても（評価は更新されない）、前の先頭の評価を今のものとして見せない", () => {
     // 再レビューを始めた直後（対象を解決する前）と、対象を解決した後
     const restarted = {
