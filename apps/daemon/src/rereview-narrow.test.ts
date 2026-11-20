@@ -85,6 +85,8 @@ type Options = {
   repos?: (repos: FakeRepos) => void;
   /** 実装の前の文書の PR の範囲の節が入る回にする。 */
   docBeforeImplement?: boolean;
+  /** PR にほかの人のレビューとコメントがある。 */
+  others?: boolean;
   /** 初回のレビューのまま（前回が無い）にする。 */
   firstOnly?: boolean;
   /** 先頭を進めず、declined の再開（同じ先頭の判定し直し）で再レビューを始める。 */
@@ -112,6 +114,25 @@ async function rereviewPrompt(options: Options = {}) {
     targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
     githubAccounts: { "github.com": "me" },
   });
+  if (options.others) {
+    pulls.feedbackList = [
+      {
+        key: "r1",
+        kind: "review",
+        author: "alice",
+        at: "2026-11-01T00:00:00Z",
+        body: "他の人のレビュー本文 OTHER-REVIEW",
+        requestChanges: true,
+      },
+      {
+        key: "c1",
+        kind: "comment",
+        author: "bob",
+        at: "2026-11-01T01:00:00Z",
+        body: "他の人のコメント OTHER-COMMENT",
+      },
+    ];
+  }
   const repos = new FakeRepos();
   repos.prDiff = options.diff ?? SRC_DIFF;
   if (options.since !== undefined) repos.diffBetween[`${HEAD_A}..${HEAD_B}`] = options.since;
@@ -268,8 +289,15 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     expect(prompt).not.toContain("差分だけを見て終えない");
     // 親が絞らないと決めたときは、範囲・担当に渡す範囲の行を含め、絞りの文をすべて当てはめず PR 全体に戻す
     expect(prompt).toContain("範囲は PR 全体、観点は規則 1〜7 で決め、この節の範囲・観点の絞りと");
-    expect(prompt).toContain("この行は当てはめず、範囲は PR 全体にする");
-    expect(prompt).toContain("この行は当てはめず、PR の差分で決める");
+    expect(prompt).toContain(
+      "これらの行にある「親が絞らない条件に当たるときは当てはめない」は、この文に従う",
+    );
+    // 例外の文は、「親が絞らない条件」の 1 か所だけに置く（各行に散らさない）
+    expect(prompt).not.toContain("この行は当てはめず");
+    // 規則 9 の D-3・D-4・D-6 を起動しない決まりは、絞らなくても残る
+    expect(prompt).toContain(
+      "D-3・D-4・D-6 を起動しない決まりと「指摘にしないもの」は、絞らなくても変わらない",
+    );
   });
 
   it("前回以降の差分が長いときは、先頭だけを載せ、全体を置いたファイルを示す", async () => {
@@ -306,7 +334,10 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
   });
 
   it("初回（前回の自分の投稿の記録が無い）は絞らず、PR 全体を見る（ほかの人のレビューが PR にあっても）", async () => {
-    const first = await rereviewPrompt({ firstOnly: true, diff: PR_20 });
+    const first = await rereviewPrompt({ firstOnly: true, diff: PR_20, others: true });
+    // ほかの人のレビュー・コメントは、他のレビュアーの指摘として渡る（前回の自分の投稿とは見なされない）
+    expect(first.prompt).toContain("OTHER-REVIEW");
+    expect(first.prompt).toContain("OTHER-COMMENT");
     expect(first.prompt).not.toContain(NARROW);
     expect(first.prompt).not.toContain("--- 再レビュー ---");
     // 準備の判定も、前回の記録が無ければ絞らない（記録の無いタスクに、ほかのレビューがあっても）
@@ -669,7 +700,13 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     expect(prompt).toContain("--- この PR のレビューの範囲（実装の前の文書） ---");
     expect(prompt).toContain("D-3・D-4・D-6");
     // 規則 9 の節の観点の一覧は、絞る回では絞りの節に譲る（起動する観点が 2 通りに読めない）
-    expect(prompt).toContain("この節の D-1・D-2・D-5・D-10 と X-1 の一覧は、絞らない回のもの");
+    expect(prompt).toContain("絞る回は、その節の観点だけを起動する");
+    // 親が絞らないと決めたときの観点（規則 9 の一覧）は、この節に直接書く（無い一覧を指さない）
+    expect(prompt).toContain(
+      "親が絞らないと決めたときの観点は、方針と抜けに当たるもの（主対象が design-doc なら D-1・D-2・D-5・D-10 と X-1",
+    );
+    expect(prompt).not.toContain("下の絞らない回の観点");
+    expect(prompt).not.toContain("この行は当てはめず");
     expect(prompt).not.toContain("主対象が design-doc なら D-1・D-2・D-5・D-10 と、X-1。");
     // 絞らない再レビューは、一覧のまま
     const whole = await rereviewPrompt({ diff: PR_20, docBeforeImplement: true, changed: [] });
