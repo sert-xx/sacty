@@ -171,11 +171,10 @@ When the agent set for the review step was unavailable and its fallback agent ra
 sacty counts the reviewers from the run's records. When it cannot count them, the line says that the number could not be checked.
 The review step of the task details shows the same information, together with the agent's name (the name you gave in `config.yaml`).
 
-For a review imported from a GitHub PR (a review request or a label), a "リスク評価" (risk assessment) section for the PR is added right after the verdict.
+For a review imported from a GitHub PR (a review request or a label), a "リスク評価" (risk assessment) section for the PR is added right after the verdict, only in a round whose verdict is no findings. It is not added in a round with suggestions, required fixes, or no verdict.
 It holds the level (low, medium, or high), the suggested review depth, the grounds, and the places to look at (the levels mean the same as in [PR risk assessment](tasks.en.md#pr-risk-assessment)).
 The assessment is separate from the findings and the verdict, and does not change the verdict.
-When it could not be assessed, the section says so, and the review is posted as usual.
-A [review of a PR that sacty created](#reviewing-prs-that-sacty-created) does not get this section (that PR's body carries the risk assessment).
+When it could not be assessed in a round with no findings, that is written and the review is posted as it is. A [review of a PR that sacty created](#reviewing-prs-that-sacty-created) gets this section in a round with no findings too, if it is a review of an implementation PR (not for a requirements or design PR).
 
 The heading, verdict, and prefixes added by sacty are in Japanese.
 The findings follow the writing rules of the repository (Japanese when there are none).

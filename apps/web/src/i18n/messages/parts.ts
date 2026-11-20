@@ -220,7 +220,11 @@ const ja = {
     verification: "確かめた範囲",
     focus: "とくに見る箇所",
     commit: (commit: string) => `評価したコミット ${commit}`,
-    via: { publish: "PR を出す前に評価", review: "レビューの工程で評価" },
+    via: {
+      publish: "PR を出す前に評価（以前の版）",
+      review: "レビューの工程で、指摘なしの回に評価",
+    },
+    stale: "PR の先頭は、この評価の後に進んでいます。今の先頭の評価ではありません。",
     failed: "評価できませんでした。レビューの深さは、差分を見て決めてください。",
   },
   resume: {
@@ -560,7 +564,11 @@ const en: PartsMessages = {
     verification: "What was verified",
     focus: "Places to look at",
     commit: (commit) => `Assessed commit ${commit}`,
-    via: { publish: "Assessed before opening the PR", review: "Assessed in the review step" },
+    via: {
+      publish: "Assessed before opening the PR (earlier version)",
+      review: "Assessed in the review step, in a round with no findings",
+    },
+    stale: "The PR's head has moved on since this assessment. It is not for the current head.",
     failed: "Could not be assessed. Decide the review depth from the diff.",
   },
   resume: {

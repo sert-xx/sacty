@@ -4,15 +4,54 @@ import { RISK_SIGNAL_WEIGHT, type Task } from "@sacty/core";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
+type RiskSource = Pick<Task, "riskAssessment" | "pullRequest">;
+type ReviewTaskLink = { step: string; number: number; task?: Pick<Task, "riskAssessment"> };
+
+/**
+ * 画面に出すリスク評価と、それが今の PR の先頭の評価か（PBI-429）。
+ * - レビューのタスク自身の評価（via: review）は、そのまま出す。
+ * - PR を作ったタスクは、その実装の PR のレビューの子タスクが指摘なしの回に出した評価を、子タスクを開かずに出す
+ *   （子タスクの評価があれば、それを先に出す）。評価した先頭が、PR の今の先頭（提出した先頭か、指摘なしにした先頭）と違えば、
+ *   今の先頭の評価として見せない（current が偽）。
+ * - 版を上げる前の記録（via: publish）は、評価した先頭と今の先頭を比べて、同じように出す。
+ * 評価が無ければ undefined（何も出さない）。
+ */
+export function riskAssessmentToShow(
+  task: RiskSource,
+  reviewTasks: readonly ReviewTaskLink[] = [],
+): { risk: NonNullable<Task["riskAssessment"]>; current: boolean } | undefined {
+  const own = task.riskAssessment;
+  if (own?.via === "review") return { risk: own, current: true };
+  const pr = task.pullRequest;
+  const heads = [pr?.commit, pr?.reviewedCommit].filter((h): h is string => !!h);
+  const judge = (risk: NonNullable<Task["riskAssessment"]>) => ({
+    risk,
+    current: risk.commit !== undefined && heads.includes(risk.commit),
+  });
+  const child = reviewTasks.findLast(
+    (r) =>
+      r.step === "implement" && r.number === pr?.number && r.task?.riskAssessment?.via === "review",
+  )?.task?.riskAssessment;
+  if (child) return judge(child);
+  return own ? judge(own) : undefined;
+}
+
 /**
  * PR のリスク評価（PBI-362）。人が PR をどの深さでレビューするかを決めるための目安。合図には重さを添え、依存の版の更新が
- * あれば上げ幅を出す（PBI-377）。sacty が PR を出す前の評価と、PR から
- * 取り込んだレビューのタスクの評価の、最後のもの。評価が無ければ何も出さない。評価できなかったときは、その理由を出す。
+ * あれば上げ幅を出す（PBI-377）。レビューの工程の、指摘なしの回の評価（PBI-429）。PR を作ったタスクでは、その PR の
+ * レビューの子タスクの評価を出す。評価が無ければ何も出さない。評価できなかったときは、その理由を出す。
  */
-export function RiskAssessmentCard({ task }: { task: Pick<Task, "riskAssessment"> }) {
+export function RiskAssessmentCard({
+  task,
+  reviewTasks,
+}: {
+  task: RiskSource;
+  reviewTasks?: readonly ReviewTaskLink[];
+}) {
   const messages = useMessages();
-  const risk = task.riskAssessment;
-  if (!risk) return null;
+  const shown = riskAssessmentToShow(task, reviewTasks);
+  if (!shown) return null;
+  const { risk, current } = shown;
   const m = messages.parts.riskAssessment;
   const a = risk.assessment;
   const term = "pt-0.5 text-xs text-muted-foreground";
@@ -102,6 +141,11 @@ export function RiskAssessmentCard({ task }: { task: Pick<Task, "riskAssessment"
         {m.via[risk.via]}
         {risk.commit ? ` · ${m.commit(risk.commit.slice(0, 7))}` : ""}
       </p>
+      {!current && (
+        <p data-testid="risk-stale" className="text-xs text-warn">
+          {m.stale}
+        </p>
+      )}
     </section>
   );
 }

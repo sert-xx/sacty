@@ -472,11 +472,7 @@ import {
   stopMarkerOfTask,
   stopSummary,
 } from "./review-stop-notice.js";
-import {
-  assessesRiskInReview,
-  assessPullRequestRisk,
-  buildRiskAssessmentPrompt,
-} from "./risk-assessment.js";
+import { assessesRiskInReview } from "./risk-assessment.js";
 import { agentTimeoutMs } from "./run-timeouts.js";
 import {
   contextSecretUses,
@@ -5231,6 +5227,7 @@ export class TaskService {
         ...pr,
         commit: target.headCommit,
         body: buildReviewBody(task, {
+          risk: this.assessesReviewRisk(task),
           foldComments,
           ...(latestCommit ? { latestCommit } : {}),
           ...(mentionSelf !== undefined ? { mentionSelf } : {}),
@@ -11398,6 +11395,10 @@ export class TaskService {
               ...(reviewSecurity ? { reviewSecurity } : {}),
               ...(reviewDeferrals ? { reviewDeferrals } : {}),
               ...(rereviewDocsOnly ? { rereviewDocsOnly } : {}),
+              // 指摘なしと判定するときにリスク評価を出させる対象か（PBI-429）
+              ...(step === "review"
+                ? { reviewRisk: this.assessesReviewRisk(this.mustGet(task.id)) }
+                : {}),
               // PR のレビューの子タスクに、指摘ごとの戻し先を示させる（PBI-332）
               ...this.reviewReworkContext(task),
               // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
@@ -11737,8 +11738,9 @@ export class TaskService {
     const review =
       step === "review"
         ? extractReviewComments(extracted.output, reviewDiff ?? "", {
-            // PR から取り込んだレビューのタスクだけ、リスク評価の答えを読む（PBI-362）
-            risk: assessesRiskInReview(latest),
+            // 評価の対象のレビュー（取り込んだ PR・実装の PR の子タスク）だけ、リスク評価の答えを読む。使うのは指摘なしの回だけ
+            // （PBI-362・PBI-429）
+            risk: this.assessesReviewRisk(latest),
           })
         : undefined;
     // 再現の工程は、申告された再現のテストを取り出す（PBI-29）
@@ -11833,9 +11835,9 @@ export class TaskService {
         },
       },
     ];
-    // PR から取り込んだレビューのタスクは、レビューの答えと一緒に出させた PR のリスク評価を記録する（PBI-362）。
-    // 答えが無い・形が違うときは、評価できなかったと記録する（レビューの投稿は止めない）
-    if (review && assessesRiskInReview(latest)) {
+    // 評価の対象のレビューは、指摘なしの回だけ、レビューの答えと一緒に出させた PR のリスク評価を記録する（PBI-362・PBI-429）。
+    // 答えが無い・形が違うときは、評価できなかったと記録する（レビューの投稿は止めない）。指摘なしでない回は記録しない
+    if (review?.verdict === "no_findings" && this.assessesReviewRisk(latest)) {
       const commit = latest.reviewTarget?.headCommit;
       events.push({
         actor: review.risk ? "agent" : "sacty",
@@ -13135,99 +13137,15 @@ export class TaskService {
   }
 
   /**
-   * sacty が PR を作る・更新する前に、PR の内容のリスクを評価して記録する（PullRequestRiskAssessed。PBI-362）。オーケストレーターの
-   * エージェントに、実装後のコードと差分を読ませる。評価できなくても（予算の上限・実行の失敗・答えを読めない）、理由を記録して
-   * 進める（PR の作成は止めない）。同じコミットを評価済みなら、評価し直さない（再開・同じ提出の再試行）。
-   * stopped：止まったことを確かめられなかった実行があったので、一時停止にした。
+   * レビューの工程で、リスク評価を出させる・記録する対象か（PBI-429）。取り込んだ PR のレビューのタスクと、sacty が自分の
+   * 実装の PR のために作った子タスク。子タスクは、親が既存の PR を引き継いだタスクなら対象にしない（PR を作る時点で評価していた
+   * 範囲に合わせる）。子タスクの評価は、リスク評価を有効にしたデーモン（ServiceDeps の riskAssessment）だけ。
    */
-  private async assessRisk(
-    task: Task,
-    config: SactyConfig,
-    code: { base: string; commit: string },
-    usedSecrets: readonly string[],
-  ): Promise<"done" | "stopped"> {
-    if (this.deps.riskAssessment !== true) return "done";
-    const latest = this.mustGet(task.id);
-    const known = latest.riskAssessment;
-    if (known?.via === "publish" && known.commit === code.commit && known.assessment) return "done";
-    // 前回の評価（評価できたもの）から、PR の差分の起点が同じで、差分が文書だけなら、エージェントを実行せずに引き継ぐ（PBI-421）。
-    // 文書でないものが入る・起点が変わった・確かめられないときは、評価し直す
-    if (
-      known?.via === "publish" &&
-      known.assessment &&
-      known.commit &&
-      known.base !== undefined &&
-      known.base === code.base &&
-      (await this.documentsOnlySince(
-        this.trustedGitDir(latest),
-        known.commit,
-        code.commit,
-        latest.id,
-        usedSecrets,
-      ))
-    ) {
-      this.append(this.mustGet(task.id), [
-        {
-          actor: "sacty",
-          event: {
-            type: "PullRequestRiskAssessed",
-            payload: {
-              via: "publish",
-              commit: code.commit,
-              base: code.base,
-              assessment: known.assessment,
-              inheritedFrom: known.inheritedFrom ?? known.commit,
-              costUsd: 0,
-              estimated: false,
-            },
-          },
-        },
-      ]);
-      return "done";
-    }
-    const assessed = await assessPullRequestRisk({
-      commit: code.commit,
-      budgetExceeded: budgetState(latest.budget) === "exceeded",
-      secrets: usedSecrets,
-      run: () =>
-        this.runOrchestrator(
-          latest,
-          config,
-          (platforms) =>
-            [buildRiskAssessmentPrompt(latest, code), ...platformPromptLines(platforms)].join("\n"),
-          "orchestrator",
-          "implemented",
-        ),
-    });
-    const runId = assessed.failure?.runId;
-    const unconfirmed = runId !== undefined && this.unconfirmedRuns.delete(runId);
-    this.append(this.mustGet(task.id), [
-      {
-        actor: assessed.payload.assessment ? "orchestrator" : "sacty",
-        event: {
-          type: "PullRequestRiskAssessed",
-          payload: { ...assessed.payload, base: code.base },
-        },
-      },
-      ...(unconfirmed && assessed.failure && runId
-        ? [
-            {
-              actor: "sacty" as const,
-              event: {
-                type: "TaskPaused" as const,
-                // 止まったことを確かめられなかった実行を記録する（再開・中止の前に、残ったコンテナを確かめ直す）
-                payload: {
-                  reason: assessed.failure.reason,
-                  message: assessed.failure.message,
-                  unstoppedRuns: [runId],
-                },
-              },
-            },
-          ]
-        : []),
-    ]);
-    this.warnIfNeeded(this.mustGet(task.id));
-    return unconfirmed ? "stopped" : "done";
+  private assessesReviewRisk(task: Task): boolean {
+    if (!task.reviewOf) return assessesRiskInReview(task);
+    if (this.deps.riskAssessment !== true) return false;
+    const parent = this.tasks.get(task.reviewOf.taskId);
+    return assessesRiskInReview(task, parent?.continuedPullRequest !== undefined);
   }
 
   /**
@@ -13506,19 +13424,8 @@ export class TaskService {
       const stacked = this.recordsPullRequestBase(task);
       // PR のレビューの子タスクが指摘なしにするまでドラフトにする（PBI-331）
       const awaitsReview = this.awaitsReview(task);
-      // PR を作る・更新する前に、PR の内容のリスクを評価して、本文に載せる（PBI-362）。評価できなくても、PR の作成は止めない
-      // （止まったことを確かめられなかった実行だけは、ほかの実行と重ならないように止める）
-      if (
-        (await this.assessRisk(
-          task,
-          config,
-          { base: workBaseCommit(repositoryNow, task.baseMerge), commit },
-          usedSecrets,
-        )) === "stopped" ||
-        this.stopRequested(task.id)
-      ) {
-        return "stopped";
-      }
+      // PR を作る・更新する時点では、リスクを評価しない（PBI-429。評価は、レビューの子タスクが指摘なしと判定した回だけ）
+      if (this.stopRequested(task.id)) return "stopped";
       task = this.mustGet(task.id);
       // 本文の「sacty のタスク「…」」は、待つ間に人が変えた題にする（テンプレートを読んだ後に作る。PBI-323）
       const { body, template } = await this.pullRequestBody(

@@ -684,7 +684,7 @@ function Overview({ data }: { data: TaskDetailData }) {
       <TaskContent task={task} />
       <Deliverables data={data} />
       <PullRequestCard task={task} />
-      <RiskAssessmentCard task={task} />
+      <RiskAssessmentCard task={task} reviewTasks={data.reviewTasks ?? []} />
       {/* 承認したセキュリティチェックのレポートの区分ごとの対応のタスク */}
       {data.securityFindings !== undefined && (
         <SecurityFixesCard task={task} findings={data.securityFindings} />
