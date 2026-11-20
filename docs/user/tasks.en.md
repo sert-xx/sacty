@@ -321,7 +321,7 @@ When the state is fetched again, the screen behaves as follows.
 
 - The screen is not reloaded; only the parts that changed are shown again. Questions, comments, and form values you are writing, what you selected, open dialogs and sections, focus, and the scroll position stay as they are.
 - While the browser tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
-- While the daemon cannot be reached, the screen stays as it is and shows "The daemon cannot be reached" (the header shows "Updates paused"). What is shown is what was last fetched. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
+- While the daemon cannot be reached, the screen stays as it is and shows "The daemon cannot be reached" (the header shows "Updates paused"). What is shown is what was last fetched. Check that `sacty up` is running. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
 
 Updates on the other screens work as follows.
 
