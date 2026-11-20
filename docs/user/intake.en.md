@@ -126,7 +126,7 @@ The agent reads the reviews and comments already on the PR and does not repeat t
 
 Requests outside the PR's purpose (the PR description, or the request, acceptance criteria or design it points to), such as adding a feature the change does not need or reworking an unrelated place, are not posted.
 Only when some were dropped, the summary says the count in one line (not the content).
-`[要修正]` findings are never dropped, and neither are findings when the purpose cannot be read or it is unclear whether they are inside.
+`[要修正]` findings are never dropped on the ground of being outside the purpose, and neither are findings when the purpose cannot be read or it is unclear whether they are inside.
 In a re-review, when a previous finding is withdrawn as outside the purpose, its line in the previous-findings list says it was withdrawn and why.
 
 If the PR changes before the review finishes, sacty behaves as follows.
