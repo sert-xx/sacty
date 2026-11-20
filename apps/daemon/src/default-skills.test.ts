@@ -1920,12 +1920,16 @@ describe("既定のスキル review-dispatch の、PR の目的の範囲の外�
     expect(agg).toContain(
       "指摘箇所が差分の中にあっても不採用にする。理由は「PR の目的の範囲の外」",
     );
+    expect(agg).toContain("は、目的の範囲を理由に不採用にしない。既存の問題の `must`");
     expect(agg).toContain("落とすために重みを下げない");
-    expect(agg).toContain("範囲の中か外か迷うときは、不採用にしない（採用する）");
+    expect(agg).toContain("目的を読み取れないとき（PR の説明が無い・目的が書かれていないなど）");
+    expect(agg).toContain(
+      "この理由（PR の目的の範囲の外）では不採用にしない。ほかの不採用の理由は、そのまま当てる",
+    );
+    expect(agg).toContain("そちらの理由で不採用にし、この規則の件数には数えない");
     expect(agg).toContain(
       "変えた・足した箇所そのものの正しさ・分かりやすさ・テストへの指摘は、範囲の中である",
     );
-    expect(agg).toContain("落とした件数が1件以上なら、総評に1行で書く");
     expect(agg).toContain("PR の目的の範囲の外として不採用にしたものも、判定の根拠にしない");
     expect(agg).toContain("自己レビューには当てない");
     const pr = read(`${dir}pr-review.md`);
