@@ -2006,6 +2006,18 @@ describe("既定のスキル：再レビューの範囲と観点の絞り（PBI-
     expect(r).not.toContain("起動しなかった必須観点は、起動表に");
   });
 
+  it("旧い規則 10 の意味（絞った再レビュー＝文書に効く検証だけ）が残らず、親の手順 3 が規則 11 の明示を確かめさせる", () => {
+    const text = pr();
+    expect(text).not.toContain("（絞った再レビューは、文書に効く検証だけ）");
+    expect(text).toContain("（前回以降が文書だけの再レビュー（規則 10）は、文書に効く検証だけ）");
+    const step3 =
+      skill()
+        .split("\n")
+        .find((line) => line.startsWith("3. 初回か再レビューか")) ?? "";
+    expect(step3).toContain("絞った再レビューと明示しているかを確かめ（規則 11）");
+    expect(step3).toContain("文書だけと明示しているかも確かめる（規則 10）");
+  });
+
   it("pr-review.md は、初回か再レビューかの判断だけでは絞らないことと、絞った再レビューの節を決め、再レビューの範囲を PR 全体のままにする", () => {
     const text = pr();
     expect(text).toContain("## 絞った再レビュー");

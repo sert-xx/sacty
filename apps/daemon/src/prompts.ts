@@ -557,7 +557,11 @@ function rereviewNarrowLines(task: Task, narrow: RereviewNarrow | undefined): st
                     ? `全体は、作業領域の外のファイル ${narrow.diffFile} にある（sacty が置いた読み取り専用のファイルで、PR の一部ではない）`
                     : "残りは作業領域のコードを読む"
                 }`
-              : "全体を載せている"
+              : `全体を載せている${
+                  narrow.diffFile
+                    ? `（同じ内容が、作業領域の外のファイル ${narrow.diffFile} にもある。sacty が置いた読み取り専用のファイルで、PR の一部ではない。担当には、依頼文に写さず、このファイルの場所を伝える）`
+                    : ""
+                }`
           }`,
           "```json",
           JSON.stringify({
@@ -3353,7 +3357,7 @@ export function buildPrompt(
     reviewRework?: ReviewReworkContext;
     /**
      * 再レビューで、前回レビューした先頭のコミットからの差分が文書だけと、sacty が確かめたときの、前回の先頭と変わったパス
-     * （PBI-421）。渡すと、スキル review-dispatch の規則 10 で、起動する観点と検証を絞らせる。
+     * （PBI-421）。渡すと、スキル review-dispatch の規則 10 で、検証を絞らせる（観点の絞りは rereviewNarrow・規則 11）。
      */
     rereviewDocsOnly?: RereviewDocsOnly;
     /**

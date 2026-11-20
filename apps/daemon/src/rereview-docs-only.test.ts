@@ -9,7 +9,7 @@ import { dir, FakePulls, FakeRepos, makeService, useTempDir } from "./testing/da
 
 useTempDir();
 
-// 前回のレビュー以降の差分が文書だけの再レビューで、観点と検証を絞る指示が入るかを、準備の判定（rereviewDocsOnlyOf）から
+// 前回のレビュー以降の差分が文書だけの再レビューで、検証を絞る指示（観点は規則 11）が入るかを、準備の判定（rereviewDocsOnlyOf）から
 // 指示の文までを通して確かめる（PBI-421）。
 
 const out = (text: string): AgentOutcome => ({

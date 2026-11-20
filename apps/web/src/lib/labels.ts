@@ -326,12 +326,43 @@ function servicesChoice(
       services.names.join(e.imagesJoin),
       source,
       services.steps.map((s) => l.step[s]).join(e.imagesJoin),
-      payload.servicesReason,
     );
   }
   const shared = payload.sharedComposes ?? [];
   if (shared.length === 0 && !payload.servicesReason) return "";
-  return e.stepsNoServices(shared.join(e.imagesJoin), payload.servicesReason);
+  return e.stepsNoServices(shared.join(e.imagesJoin));
+}
+
+/** 工程の決定の行に出さなかった理由（見出し付き。1 件 1 行。行の文と同じ順）。 */
+function stepsChosenReasons(
+  payload: Extract<ActivityEvent, { type: "StepsChosen" }>["payload"],
+  l: LabelMessages,
+): string[] {
+  const e = l.event;
+  const out: string[] = [];
+  if (payload.reason) out.push(e.reasonSteps(l.text(payload.reason)));
+  const hasImage = payload.image || Object.keys(payload.images ?? {}).length > 0;
+  if (
+    hasImage &&
+    (payload.imageSource ?? "orchestrator") === "orchestrator" &&
+    payload.imageReason
+  ) {
+    out.push(e.reasonImage(payload.imageReason));
+  }
+  if (payload.defaultImageReason) out.push(e.reasonDefaultImage(payload.defaultImageReason));
+  for (const [step, reason] of Object.entries(payload.defaultImageReasons ?? {})) {
+    if (reason) out.push(e.reasonDefaultImage(reason, l.step[step as StepKey]));
+  }
+  for (const [step, plan] of Object.entries(payload.exports ?? {})) {
+    if (plan?.reason) out.push(e.reasonExport(l.step[step as StepKey], l.text(plan.reason)));
+  }
+  if (payload.servicesReason) out.push(e.reasonServices(payload.servicesReason));
+  if (payload.noTestsReason) out.push(e.reasonNoTests(payload.noTestsReason));
+  if (payload.deployment && "skipped" in payload.deployment) {
+    const reason = l.text(payload.deployment.skipped);
+    if (reason) out.push(e.reasonDeploymentSkipped(reason));
+  }
+  return out;
 }
 
 /** 工程ごとの名前（イメージ・エージェント）を「工程＝名前」で並べる。 */
@@ -353,14 +384,10 @@ function defaultImagesChoice(
   const reasons = Object.entries(payload.defaultImageReasons ?? {});
   const unexplained = payload.imagesUnexplained ?? [];
   return (
-    (payload.defaultImageReason ? e.stepsDefaultImages(payload.defaultImageReason) : "") +
+    (payload.defaultImageReason ? e.stepsDefaultImage : "") +
     (payload.imageUnexplained ? e.imageUnexplained : "") +
     (reasons.length > 0
-      ? e.stepsDefaultImages(
-          reasons
-            .map(([step, reason]) => e.stepDefaultImage(l.step[step as StepKey], reason ?? ""))
-            .join(e.imagesJoin),
-        )
+      ? e.stepsDefaultImages(reasons.map(([step]) => l.step[step as StepKey]).join(e.imagesJoin))
       : "") +
     (unexplained.length > 0
       ? e.stepsImagesUnexplained(unexplained.map((s) => l.step[s]).join(e.imagesJoin))
@@ -468,6 +495,17 @@ export function describeEventParts(
       detail: event.payload.note,
     };
   }
+  if (event.type === "StepsChosen" || event.type === "RepositoryChosen") {
+    // 行には選んだ結果の名前だけを出し、理由は 1 件ずつ詳細に出す（PBI-431。理由の長さが行の長さに響かない）
+    const detail = (
+      event.type === "StepsChosen"
+        ? stepsChosenReasons(event.payload, l)
+        : event.actor === "person" || !event.payload.reason
+          ? []
+          : [l.event.reasonRepository(l.text(event.payload.reason))]
+    ).join("\n");
+    return { text: describeEventText(event, l), ...(detail ? { detail } : {}) };
+  }
   if (event.type === "SubagentNoticeImitated") {
     // 本文は、起きたことと次にすることだけ。仕組みと理由は、開いて読む詳細に分ける（PBI-368）
     return { text: describeEventText(event, l), detail: l.event.SubagentNoticeImitatedHint };
@@ -540,10 +578,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         (event.payload.agents ? e.createdAgents(stepNames(event.payload.agents, l)) : "")
       );
     case "StepsChosen": {
-      const chosen = e.StepsChosen(
-        event.payload.steps.map((s) => l.step[s]).join(e.stepsJoin),
-        event.payload.reason === undefined ? undefined : l.text(event.payload.reason),
-      );
+      const chosen = e.StepsChosen(event.payload.steps.map((s) => l.step[s]).join(e.stepsJoin));
       // タスクのイメージ（PBI-318）か、古い版の作業履歴の工程ごとのイメージ（PBI-41）。無ければ既定のイメージ
       const images = Object.entries(event.payload.images ?? {});
       const image = event.payload.image;
@@ -551,40 +586,31 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       const exports = Object.entries(event.payload.exports ?? {});
       return (
         chosen +
-        (image
-          ? e.stepsImages(
-              image,
-              event.payload.imageSource ?? "orchestrator",
-              event.payload.imageReason,
-            )
-          : "") +
+        (image ? e.stepsImages(image, event.payload.imageSource ?? "orchestrator") : "") +
         (images.length > 0
           ? e.stepsImages(
               images
                 .map(([step, image]) => e.stepImage(l.step[step as StepKey], image))
                 .join(e.imagesJoin),
               event.payload.imageSource ?? "orchestrator",
-              event.payload.imageReason,
             )
           : "") +
         defaultImagesChoice(event.payload, l) +
         (exports.length > 0
           ? e.stepsExports(
               exports
-                .map(([step, plan]) =>
-                  e.stepExport(l.step[step as StepKey], plan?.to, plan ? l.text(plan.reason) : ""),
-                )
+                .map(([step, plan]) => e.stepExport(l.step[step as StepKey], plan?.to))
                 .join(e.imagesJoin),
             )
           : "") +
         servicesChoice(event.payload, l) +
         // テストの仕組みが無いと判断した根拠（PBI-94）
-        (event.payload.noTestsReason ? e.stepsNoTests(event.payload.noTestsReason) : "") +
+        (event.payload.noTestsReason ? e.stepsNoTests : "") +
         // マージの後の監視の工程をするか（PBI-116）
         (event.payload.deployment
           ? "skill" in event.payload.deployment
             ? e.stepsDeployment(event.payload.deployment.skill)
-            : e.stepsDeploymentSkipped(l.text(event.payload.deployment.skipped))
+            : e.stepsDeploymentSkipped
           : "")
       );
     }
@@ -608,11 +634,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.actor === "person",
       );
     case "RepositoryChosen":
-      return e.RepositoryChosen(
-        event.payload.repo,
-        l.text(event.payload.reason),
-        event.actor === "person",
-      );
+      return e.RepositoryChosen(event.payload.repo, event.actor === "person");
     case "TicketPullRequestCommented":
       return e.TicketPullRequestCommented(event.payload.url);
     case "ServicesStarted":

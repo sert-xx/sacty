@@ -11211,7 +11211,7 @@ export class TaskService {
               reviewTarget.headCommit,
               { full: true },
             );
-            // 前回の先頭からの差分が文書だけなら、起動する観点と検証を絞らせる（PBI-421）。確かめられなければ絞らない
+            // 前回の先頭からの差分が文書だけなら、検証を絞らせる（観点は規則 11）（PBI-421）。確かめられなければ絞らない
             rereviewDocsOnly = await this.rereviewDocsOnlyOf(
               latest,
               reviewTarget,
@@ -13126,7 +13126,7 @@ export class TaskService {
   }
 
   /**
-   * 再レビューの起動する観点と検証を絞れるか（PBI-421。スキル review-dispatch の規則 10）。次を全部満たすときだけ、前回の先頭と
+   * 再レビューの検証を絞れるか（観点は規則 11）（PBI-421。スキル review-dispatch の規則 10）。次を全部満たすときだけ、前回の先頭と
    * 変わったパスを返す。確かめられない・迷うときは、絞らない（undefined）。
    * - 前回の回があり、先頭が前回と違い、向き先のブランチが前回と今回の両方にあって同じ
    * - 前回の回に判定が付いている
@@ -13208,7 +13208,7 @@ export class TaskService {
    * - 前回の回に判定が無い（GitHub の再依頼で作ったタスクは、前回の回の判定を持たないので絞らない。判定は写さない）
    * - 前回の回が、担当を起動できたか確かめられなかった回（reviewDispatch の担当の数が 0）
    * - 前回以降に変わった行数が、今回の PR 全体の差分の行数の半分を超える
-   * - 前回以降に変わったファイルの半分を超え（3 つ以上）が、前回の時点の PR の差分に無い
+   * - 前回の時点の PR の差分に無いファイルが 3 つ以上あり、かつ変わったファイルの半分を超える
    * - 前回以降の差分が空・大きすぎる・読めないパス（制御文字・引用符）がある
    * - PR を作ったタスクが、前の工程へ戻って作り直した後の提出（前回の指摘の戻し先が、その PR の工程より前）
    * 同じ先頭を判定し直す回（親がすべて断った・作者が push 無しで返信した）は、前回以降の差分が無いので、差分の条件を見ず、
@@ -13229,14 +13229,16 @@ export class TaskService {
       );
       return undefined;
     };
-    const sameCommit = (a: string | undefined, b: string) =>
-      Boolean(a && (a.startsWith(b) || b.startsWith(a)));
     const sameHead = previous.headCommit === target.headCommit;
-    if (
-      sameHead &&
-      !sameCommit(task.reviewRejudgeCommit, target.headCommit) &&
-      !sameCommit(task.reviewReplyCommit, target.headCommit)
-    ) {
+    // 同じ先頭の判定のし直し：いまの回が declined・replied の再開で始まり、その先頭の記録がある回だけ（手動の再レビューは含めない）
+    const rejudging =
+      (task.reviewRestartReason === "declined" &&
+        task.reviewRejudgeCommit !== undefined &&
+        sameCommit(task.reviewRejudgeCommit, target.headCommit)) ||
+      (task.reviewRestartReason === "replied" &&
+        task.reviewReplyCommit !== undefined &&
+        sameCommit(task.reviewReplyCommit, target.headCommit));
+    if (sameHead && !rejudging) {
       return skip("前回と同じ先頭で、判定し直す回ではありません");
     }
     if (!previous.baseCommit || !previous.baseBranch) {
@@ -13291,7 +13293,10 @@ export class TaskService {
         await this.deps.repos.changedPaths(gitDir, before, previous.headCommit),
       );
       const added = sincePaths.filter((path) => !earlier.has(path)).length;
-      if (added >= REREVIEW_NARROW_NEW_FILES_MIN && added * 2 > sincePaths.length) {
+      if (
+        added >= REREVIEW_NARROW_NEW_FILES_MIN &&
+        added * REREVIEW_NARROW_LINES_DEN > sincePaths.length * REREVIEW_NARROW_LINES_NUM
+      ) {
         return skip("前回以降に変わったファイルの多くが、前回の時点の PR の差分に無いものです");
       }
       return { previousCommit: previous.headCommit, diff: since, sameHead: false };

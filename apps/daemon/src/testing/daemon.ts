@@ -1214,6 +1214,8 @@ export class FakeExecutor implements AgentExecutor {
   /** 実行ごとに、作業領域にあったファイル（実行の後に消されるので、実行の間に読んでおく）。 */
   workspaceFiles: string[][] = [];
   reviewDiffFiles: (string | undefined)[] = [];
+  /** 実行ごとに、PR の差分と並べて置かれた、前回以降の差分のファイル（再レビューの絞り。PBI-432）。無ければ undefined。 */
+  reviewSinceFiles: (string | undefined)[] = [];
   /** 実行ごとのイメージと、イメージの環境変数（PBI-41）。 */
   images: { image: string; env?: Record<string, string> }[] = [];
   /** 実行ごとにつないだネットワーク（PBI-47）。 */
@@ -1268,6 +1270,11 @@ export class FakeExecutor implements AgentExecutor {
     const reviewMount = invocation.mounts?.find((m) => m.containerPath === "/sacty-review");
     this.reviewDiffFiles.push(
       reviewMount ? readFileSync(join(reviewMount.hostPath, "pr.diff"), "utf8") : undefined,
+    );
+    this.reviewSinceFiles.push(
+      reviewMount && existsSync(join(reviewMount.hostPath, "since.diff"))
+        ? readFileSync(join(reviewMount.hostPath, "since.diff"), "utf8")
+        : undefined,
     );
     // 渡されたコンテキスト（実行の後に消されるので、実行の間に読んでおく）
     const seed = invocation.stage?.seedDir;

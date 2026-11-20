@@ -157,7 +157,13 @@ async function rereviewPrompt(options: Options = {}) {
   await service.runNext(id);
   await service.runNext(id);
   if (options.firstOnly) {
-    return { prompt: executor.calls.at(-1)?.command.join(" ") ?? "", repos, pulls, activity };
+    return {
+      prompt: executor.calls.at(-1)?.command.join(" ") ?? "",
+      repos,
+      pulls,
+      activity,
+      executor,
+    };
   }
   // 先頭を進めて、再レビューを始める
   pulls.prInfo = {
@@ -179,6 +185,7 @@ async function rereviewPrompt(options: Options = {}) {
     activity,
     service,
     id,
+    executor,
   };
 }
 
@@ -249,9 +256,27 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     const since = diffOf(10_000, "src/long.ts");
     const { prompt } = await rereviewPrompt({ diff: diffOf(30_000), since });
     expect(prompt).toContain(NARROW);
-    expect(prompt).toContain('"truncated":true');
     expect(prompt).toContain("/sacty-review/since.diff");
-    expect(prompt).not.toContain(`line 9999\n`);
+    // 指示の JSON を取り出して、切り詰めた長さと末尾を確かめる
+    const json = prompt.match(/\{"sincePreviousReview":.*?\}(?=\s*```)/s)?.[0] ?? "";
+    const parsed = JSON.parse(json) as {
+      sincePreviousReview: { diff: string; truncated?: boolean };
+    };
+    expect(parsed.sincePreviousReview.truncated).toBe(true);
+    expect(parsed.sincePreviousReview.diff.length).toBe(60_000);
+    expect(parsed.sincePreviousReview.diff).not.toContain("line 9999");
+    expect(parsed.sincePreviousReview.diff.length).toBeLessThan(since.length);
+  });
+
+  it("前回以降の差分は、短いときも置き場所を指示に書き、全体を since.diff に置く。同じ先頭の判定し直しでは置かない", async () => {
+    const since = diffOf(2, "src/fix.ts");
+    const { prompt, executor } = await rereviewPrompt({ diff: PR_20, since });
+    expect(prompt).not.toContain('"truncated"');
+    expect(prompt).toContain("/sacty-review/since.diff");
+    // 2 回目の実行（再レビュー）に置かれたファイルは、前回以降の差分と一致する
+    expect(executor?.reviewSinceFiles.at(-1)).toBe(since);
+    // 初回の実行には置かない
+    expect(executor?.reviewSinceFiles[0]).toBeUndefined();
   });
 
   it("初回（前回の自分の投稿の記録が無い）は絞らず、PR 全体を見る（ほかの人のレビューが PR にあっても）", async () => {
@@ -357,10 +382,23 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
         ["src/n3.ts", "src/n4.ts", "src/n5.ts", "src/n6.ts"],
         true,
       ],
+      // ちょうど半分（6 件中 3 件）は絞る。1 つ上（5 件中 3 件）は絞らない
+      [
+        "新しいファイルがちょうど半分（6 件中 3 件）なら絞る",
+        3,
+        ["src/n3.ts", "src/n4.ts", "src/n5.ts"],
+        true,
+      ],
+      [
+        "新しいファイルが半分を 1 つ超える（5 件中 3 件）なら絞らない",
+        3,
+        ["src/n3.ts", "src/n4.ts"],
+        false,
+      ],
     ];
     for (const [name, count, earlier, expected] of rows) {
-      const total = count + (earlier.length > 0 ? 4 : 0);
-      const since = earlier.length > 0 ? files(total) : files(count);
+      const total = count + earlier.length;
+      const since = files(total);
       const { call, task } = await narrowCall({
         diff: diffOf(100),
         since,
@@ -387,17 +425,41 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     };
     const run = (t: Task) =>
       svc.rereviewNarrowOf(t, t.reviewTarget, "git-dir", PR_20, undefined) as ReturnType<Call>;
-    expect(await run(same(rejudged.task, { reviewRejudgeCommit: previous.headCommit }))).toEqual({
+    expect(
+      await run(
+        same(rejudged.task, {
+          reviewRejudgeCommit: previous.headCommit,
+          reviewRestartReason: "declined",
+        }),
+      ),
+    ).toEqual({
       previousCommit: previous.headCommit,
       diff: "",
       sameHead: true,
     });
     expect(
       await run(
-        same(rejudged.task, { reviewReplyCommit: previous.headCommit, reviewReplySince: "x" }),
+        same(rejudged.task, {
+          reviewReplyCommit: previous.headCommit,
+          reviewReplySince: "x",
+          reviewRestartReason: "replied",
+        }),
       ),
     ).toMatchObject({ sameHead: true });
     expect(await run(same(rejudged.task, {}))).toBeUndefined();
+    // 判定し直した後、同じ先頭で人が手動で再レビューを始めた回（reason: rerequested・updated・pushed）は、絞らない
+    for (const reason of ["rerequested", "updated", "pushed"]) {
+      expect(
+        await run(
+          same(rejudged.task, {
+            reviewRejudgeCommit: previous.headCommit,
+            reviewReplyCommit: previous.headCommit,
+            reviewRestartReason: reason,
+          }),
+        ),
+        reason,
+      ).toBeUndefined();
+    }
   });
 
   it("同じ先頭の判定のし直しの指示は、前回の指摘の確認だけ（前回以降の差分は載せない）", async () => {

@@ -700,6 +700,8 @@ export type Task = {
   reviewTasks?: PayloadOf<"ReviewTaskCreated">[];
   /** 親の PR の更新で再レビューを始めたときの、親の PR の先頭（同じ更新で繰り返さない。PBI-330）。 */
   reviewRestartCommit?: string;
+  /** いまの回を始めた ReviewRestarted の reason（回ごとに上書きする。同じ先頭の判定のし直しの回かを見分ける。PBI-432）。 */
+  reviewRestartReason?: string;
   /**
    * 親が指摘のすべてを断ったために、同じ先頭を判定し直したときの、その先頭（ReviewRestarted の reason: declined。PBI-357）。
    * 同じ先頭の判定のし直しは、1 回だけ。
@@ -2932,6 +2934,7 @@ export function applyEvent(
       );
       task.reviewRound = (task.reviewRound ?? 1) + 1;
       if (event.payload.commit) task.reviewRestartCommit = event.payload.commit;
+      task.reviewRestartReason = event.payload.reason;
       // 断った理由を読んで、同じ先頭を判定し直す（同じ先頭には 1 回だけ。PBI-357）
       if (event.payload.reason === "declined" && event.payload.commit) {
         task.reviewRejudgeCommit = event.payload.commit;
