@@ -51,6 +51,7 @@ async function posted(
     outputTokens?: number[];
     runMs?: number;
     draftTimeoutMs?: number;
+    failPost?: string;
   } = {},
 ) {
   const clock = { now: Date.parse("2026-11-20T00:00:00.000Z") };
@@ -93,13 +94,14 @@ async function posted(
       ...(options.draftTimeoutMs ? { draftTimeoutMs: options.draftTimeoutMs } : {}),
     },
   );
+  if (options.failPost) pulls.reviewFail = options.failPost;
   const [task] = service.importIssues([pr(9)]);
   const id = task?.id ?? "";
   await service.runNext(id);
   // レビューの実行にかかった時間（対象を確かめてから、投稿するまで）
   clock.now += options.runMs ?? 0;
   await service.runNext(id);
-  expect(pulls.reviews).toHaveLength(1);
+  expect(pulls.reviews).toHaveLength(options.failPost ? 0 : 1);
   const get = () => service.get(id)?.task as Task;
   const events = (type: string) => (service.get(id)?.activity ?? []).filter((e) => e.type === type);
   /** 時計を進めて、PR の確認（60秒ごとの見回り）を 1 回行う。 */
@@ -681,39 +683,110 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
     activity.close();
   });
 
-  it("予算の上限に達した再レビューは一時停止し、人が上限を上げて再開すると、投稿して見守りに戻る。回数の上限は無い（条件 8）", async () => {
-    // 2 回目のレビュー（自動の再レビュー）で、予算（1 ドル）を超える
+  it("予算の上限を超える実行で終えたレビューも、止まらずに投稿する。次の再レビューは実行の前に予算で止まり、上限を上げて再開するとその時点の先頭をレビューする。回数の上限は無い（PBI-418 条件 1・2・3）", async () => {
+    // 1 回目のレビューが、その実行で初めて予算（1 ドル）を超える
     const { activity, pulls, service, id, get, tick } = await posted(
       ["changes_required", "suggestions", "suggestions"],
-      { outputTokens: [1, 70_000, 1] },
+      { outputTokens: [70_000, 1, 1] },
     );
+    // 投稿された。一時停止せず、PR の変化を見守る
+    expect(pulls.reviews).toHaveLength(1);
+    expect(get().reviewPost).toBeDefined();
+    expect(get().status).toBe("idle");
+    expect(reviewWatching(get())).toBe(true);
+    // PR が変わると再レビューを始めるが、実行の前に予算で止まる（レビューしない）
     pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
     await tick();
     await tick(FEEDBACK_QUIET_MS);
     expect(restarts(service, id)).toEqual([{ reason: "pushed", commit: HEAD_B }]);
     await service.runNext(id);
-    await service.runNext(id);
-    // 予算の上限で一時停止する（人の出番）。止まっている間は、PR が変わっても始めない
     expect(get().status).toBe("paused");
     expect(get().pausedReason).toBe("budget");
+    expect(pulls.reviews).toHaveLength(1);
+    // 止まっている間は、PR が変わっても始めない
     pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_C };
     await tick();
     await tick(FEEDBACK_QUIET_MS);
     expect(restarts(service, id)).toHaveLength(1);
-    // 上限を上げずには再開できない。上げて再開すると、続きを進めて、見守りに戻る
+    // 上限を上げずには再開できない。上げて再開すると、その時点の先頭（C）をレビューして投稿し、見守りに戻る
     expect(() => service.resume(id, {})).toThrow(/新しい上限が必要/);
     service.resume(id, { capUsd: 5 });
-    for (let i = 0; i < 4 && !get().reviewPost; i++) await service.runNext(id);
+    for (let i = 0; i < 4 && pulls.reviews.length < 2; i++) await service.runNext(id);
     expect(pulls.reviews).toHaveLength(2);
     expect(get().status).toBe("idle");
     expect(reviewWatching(get())).toBe(true);
-    // 止めていた間の push を拾って、また再レビューを始める（回数の上限は無い）
-    await tick();
-    await tick(FEEDBACK_QUIET_MS);
-    expect(restarts(service, id)).toEqual([
-      { reason: "pushed", commit: HEAD_B },
-      { reason: "pushed", commit: HEAD_C },
+    expect(get().reviewTarget?.headCommit).toBe(HEAD_C);
+    activity.close();
+  });
+
+  it("予算の上限を超える実行で終えたレビューの判定が指摘なしなら、投稿して完了する（PBI-418 条件 2）", async () => {
+    const { activity, pulls, get } = await posted(["no_findings"], { outputTokens: [70_000] });
+    expect(pulls.reviews).toHaveLength(1);
+    expect(isDone(get())).toBe(true);
+    expect(reviewWatching(get())).toBe(false);
+    activity.close();
+  });
+
+  it("予算の上限を超える実行の後の投稿に失敗したら、理由つきで止まり、上限を上げずに再開すると、レビューをやり直さず投稿からやり直す（PBI-418 条件 4）", async () => {
+    const { activity, pulls, service, executor, id, get } = await posted(["changes_required"], {
+      outputTokens: [70_000],
+      failPost: "GitHub に届かない",
+    });
+    expect(get().status).toBe("paused");
+    expect(get().pausedReason).toBe("error");
+    expect(
+      (service.get(id)?.activity ?? []).some((e) =>
+        JSON.stringify(e).includes("GitHub に届かない"),
+      ),
+    ).toBe(true);
+    const runs = executor.calls.length;
+    pulls.reviewFail = undefined;
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(1);
+    expect(executor.calls.length).toBe(runs);
+    expect(get().reviewPost).toBeDefined();
+    activity.close();
+  });
+
+  it("この版より前に、投稿の前に予算で止まったタスクは、上限を上げて再開すると、レビューをやり直さず投稿する（PBI-418 条件 6）", async () => {
+    const { activity, pulls, service, executor, id, get } = await posted(["changes_required"], {
+      outputTokens: [70_000],
+      failPost: "GitHub に届かない",
+    });
+    // 投稿の前（未投稿）に、予算で一時停止した状態にする
+    pulls.reviewFail = undefined;
+    service.resume(id, {});
+    (service as unknown as { append: (t: unknown, e: unknown[]) => void }).append(get(), [
+      { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
     ]);
+    expect(get().status).toBe("paused");
+    expect(get().pausedReason).toBe("budget");
+    expect(get().reviewPost).toBeUndefined();
+    const runs = executor.calls.length;
+    expect(() => service.resume(id, {})).toThrow(/新しい上限が必要/);
+    service.resume(id, { capUsd: 5 });
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(1);
+    expect(get().reviewPost).toBeDefined();
+    expect(executor.calls.length).toBe(runs);
+    activity.close();
+  });
+
+  it("上限を超える実行の途中で人が一時停止を頼んだら、投稿しない（PBI-418 条件 5）", async () => {
+    const { activity, pulls, service, executor, id, get } = await posted(["changes_required"], {
+      outputTokens: [70_000],
+      failPost: "GitHub に届かない",
+    });
+    pulls.reviewFail = undefined;
+    service.resume(id, {});
+    const runs = executor.calls.length;
+    const paused = service.pause(id);
+    await service.runNext(id);
+    await paused;
+    expect(pulls.reviews).toHaveLength(0);
+    expect(get().reviewPost).toBeUndefined();
+    expect(executor.calls.length).toBe(runs);
     activity.close();
   });
 
