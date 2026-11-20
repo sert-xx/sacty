@@ -145,8 +145,8 @@ export function incompleteRunBefore(
 
 /**
  * 未完了で終わった実装の実行の続きを、どのエージェントで始めるか（PBI-417）。直前の実装の実行が未完了で終わっていて
- * （時間切れの続きではなく）、その後に人が実装のエージェントを変えていなければ、その実行を動かしたエージェントの ID。
- * 作業履歴だけから決める（デーモンを再起動しても同じ）。
+ * （時間切れの続きではなく）、その実行の開始より後に人が実装のエージェントを変えていなければ、その実行を動かした
+ * エージェントの ID。作業履歴だけから決める（デーモンを再起動しても同じ）。
  */
 export function incompleteAgentToContinue(events: readonly ActivityEvent[]): string | undefined {
   if (timedOutRunBefore(events)) return undefined;
@@ -154,7 +154,7 @@ export function incompleteAgentToContinue(events: readonly ActivityEvent[]): str
   if (!stopped) return undefined;
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
-    if (event?.type === "ImplementationIncomplete") break;
+    if (event?.type === "AgentRunStarted" && event.payload.runId === stopped.runId) break;
     if (event?.type === "StepAgentChanged" && event.payload.step === "implement") return undefined;
   }
   return stopped.agentId;

@@ -286,10 +286,10 @@
   - 続きの実行のエージェントは、直前の未完了で終わった実装の実行を動かしたエージェントにする（PBI-417。`incompleteAgentToContinue`）。
     工程に選ばれたエージェントと違っていても、利用制限の期限が切れて既定に戻れるときでも、同じ。
     - 直前の実行のエージェントは、作業履歴（`incompleteRunBefore` が返す実行の記録）から決める。デーモンのメモリーには頼らないので、起動し直しても同じになる。
-    - 未完了の記録より後に、人が実装のエージェントを変えていた（`StepAgentChanged`）ときは、人が選んだエージェント（と、その代わり）を使う。別のエージェントなので、最初から実行する。
+    - 未完了で終わった実行の開始より後に、人が実装のエージェントを変えていた（`StepAgentChanged`。実行の途中で変えたときも含む）ときは、人が選んだエージェント（と、その代わり）を使う。直前の実行と同じエージェントなら、セッションの続きから進む。別のエージェントなら、最初から実行する。
     - 直前の実行のエージェントが使えない（設定から消えた・利用制限中・このタスクで失敗して使わない期限の中）ときは、今までどおり、工程に選ばれたエージェントと、その代わりにする。
     - 時間切れで止めた実行の再開と、未完了でない次の実行（差し戻しのやり直し・提出の後の直しなど）の選び方は変えない。
-    - 直前の実行のエージェントを優先して、工程に選ばれていたエージェントと違うときは、`AgentRunStarted` の `chosenAgentId` に、工程に選ばれていたエージェントを残す。
+    - 直前の実行のエージェントを優先して、`usableAgent` が返した、工程に選ばれたエージェント（利用制限などの代わりを含む）と違うときは、`AgentRunStarted` の `chosenAgentId` に、そのエージェントを残す。
     - 優先したエージェントの続きが失敗したときは、今までどおり、代わりのエージェントに切り替える。
 
 コード: `apps/daemon/src/agent-sessions.ts`（`SOURCES`・`selectAgentSessionFiles`・`AGENT_FILES_LIMIT`）、`apps/daemon/src/orchestrator-sessions.ts`（`OrchestratorSessionStore`・`plan`・`save`）、`apps/daemon/src/orchestrator-handoff.ts`（`sessionTranscript`・`stageHandoff`）、`apps/daemon/src/timeout-resume.ts`（`timedOutRunBefore`・`incompleteRunBefore`・`planContinuation`・`timeoutResumeLines`・`incompleteResumeLines`）、`apps/daemon/src/service.ts`（`resumeRejected`・`RESUME_REJECTED`・`executeWithSession`・`executeResumable`）

@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { type ActivityEvent, message } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  incompleteAgentToContinue,
   incompleteResumeLines,
   KEEPS_WORKSPACE_ROLES,
   planContinuation,
@@ -421,6 +422,77 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
           reason: "files_broken",
         });
       });
+    });
+  });
+
+  describe("incompleteAgentToContinue：未完了の続きを始めるエージェント（PBI-417）", () => {
+    const started = (runId: string, agentId = "b") =>
+      ev("AgentRunStarted", { runId, step: "implement", agentId });
+    const completed = (runId: string, agentId = "b") =>
+      ev("AgentRunCompleted", { runId, step: "implement", agentId, output: "" });
+    const archived = (runId: string) =>
+      ev("AgentSessionArchived", {
+        runId,
+        role: "implement",
+        agentId: "b",
+        runtime: "claude-code",
+        sessionId: "s",
+      });
+    const incomplete = () => ev("ImplementationIncomplete", { remaining: ["docs"] });
+    const changed = (step: string, to: string) => ev("StepAgentChanged", { step, from: "a", to });
+    const unfinished = (runId: string, agentId = "b") => [
+      started(runId, agentId),
+      archived(runId),
+      completed(runId, agentId),
+      incomplete(),
+    ];
+
+    it("直前の実装の実行が未完了で終わっていれば、その実行のエージェント", () => {
+      expect(incompleteAgentToContinue(unfinished("r1", "b"))).toBe("b");
+    });
+
+    it("未完了の記録が無ければ無し（完了で終わった実行・実行が無い）", () => {
+      expect(incompleteAgentToContinue([])).toBeUndefined();
+      expect(
+        incompleteAgentToContinue([started("r1"), archived("r1"), completed("r1")]),
+      ).toBeUndefined();
+    });
+
+    it("未完了の後に別の実行が始まっていたら無し", () => {
+      expect(incompleteAgentToContinue([...unfinished("r1"), started("r2", "a")])).toBeUndefined();
+    });
+
+    it("時間切れで止めた実行の続きは対象外（未完了の記録があっても無し）", () => {
+      expect(
+        incompleteAgentToContinue([...unfinished("r1"), started("r2"), timedOut("r2")]),
+      ).toBeUndefined();
+    });
+
+    it("未完了の後に人が実装のエージェントを変えていたら無し", () => {
+      expect(
+        incompleteAgentToContinue([...unfinished("r1"), changed("implement", "c")]),
+      ).toBeUndefined();
+    });
+
+    it("未完了で終わった実行の途中で人が変えていても無し（変更前のエージェントを使わない）", () => {
+      expect(
+        incompleteAgentToContinue([
+          started("r1", "a"),
+          changed("implement", "c"),
+          archived("r1"),
+          completed("r1", "a"),
+          incomplete(),
+        ]),
+      ).toBeUndefined();
+    });
+
+    it("未完了で終わった実行より前の変更と、ほかの工程の変更は、見ない", () => {
+      expect(incompleteAgentToContinue([changed("implement", "c"), ...unfinished("r1", "b")])).toBe(
+        "b",
+      );
+      expect(incompleteAgentToContinue([...unfinished("r1", "b"), changed("review", "c")])).toBe(
+        "b",
+      );
     });
   });
 

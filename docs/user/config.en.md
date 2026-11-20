@@ -291,7 +291,7 @@ After a switch, sacty behaves as follows.
 - For `cooldown_minutes`, the failed agent is not used and the fallback agent is used instead. Where the fallback is used depends on the reason for the failure.
   - Usage limit: the fallback is used for other tasks too.
   - Other failures: the fallback is used only for that task (other tasks run with the original agent).
-- After `cooldown_minutes`, the original agent is used again. When sacty restarts, the original agent is tried first as well. The exception is the continuation after an implementation ended unfinished: it starts with the agent that ran the previous run (even after the period, so that it continues the same conversation). If that agent is not usable, the choice is the same as before.
+- After `cooldown_minutes`, the original agent is used again. When sacty restarts, the original agent is tried first as well. The exception is the continuation after an implementation ended unfinished: it starts with the agent that ran the previous run (even after the period, so that it continues the same conversation). If that agent is not usable, sacty uses the agent chosen for the step, and its fallbacks.
 - When the Orchestrator switches to a fallback agent (a different tool), sacty passes the conversation of the previous agent's session read-only so the new agent can take over. This is because a different tool cannot resume the session itself. The same handover happens when it switches back to the original agent.
 
 The task is paused in the following cases.

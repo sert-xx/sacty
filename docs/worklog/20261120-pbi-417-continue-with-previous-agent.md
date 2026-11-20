@@ -4,7 +4,7 @@
 - タスク: PBI-417
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: なし（[未完了の実装を同じセッションで続ける](../adr/20261115-2254-continue-incomplete-implementation-in-same-session.md)の続きの選び方を、仕様書に足した）
+- 関係する ADR: [未完了で終わった実装の続きは、直前の実行のエージェントから始める](../adr/20261120-1500-continue-incomplete-implementation-with-previous-agent.md)
 
 ## 目的
 
@@ -12,7 +12,7 @@
 
 ## したこと
 
-- `apps/daemon/src/timeout-resume.ts`：未完了の続きのエージェントを作業履歴から決める `incompleteAgentToContinue` を足した（時間切れの続きは対象外。未完了の記録より後に、人が実装のエージェントを変えていれば無し）。
+- `apps/daemon/src/timeout-resume.ts`：未完了の続きのエージェントを作業履歴から決める `incompleteAgentToContinue` を足した（時間切れの続きは対象外。未完了で終わった実行の開始より後に、人が実装のエージェントを変えていれば無し）。
 - `apps/daemon/src/service.ts`：実装の実行のエージェントを選ぶとき、直前の実行のエージェントが設定にあり、使えるなら、それを使う。
 - `packages/core/src/events.ts`：直前の実行のエージェントを優先して、工程に選ばれたものと違うとき、`AgentRunStarted` の `chosenAgentId` に残す。
 - 仕様書・ユーザードキュメント（日英）を直した。
@@ -24,4 +24,20 @@
 
 ## 確かめたこと
 
-- `daemon-orchestrator-sessions.test.ts` の PBI-417 の節：代わりで未完了 → 期限切れでも代わりで `resumed`・失敗が挟まらない・`chosenAgentId`／人の再開（変えない・変える）／直前のエージェントが設定から消えた／続きが失敗したときの切り替え／差し戻しのやり直し。`service.ts` の変更を戻すと、最初のテストが失敗する。
+- `npm run lint`：通った。`npm run typecheck`：通った。
+- `npx vitest run`：277 ファイル、5620 件が通った（14 件は skip）。
+- テストは `daemon-orchestrator-sessions.test.ts` の PBI-417 の節（8 件）と `timeout-resume.test.ts` の `incompleteAgentToContinue`。
+- 修正を外すと失敗することを、3 通りで確かめた：優先の分岐を外す・`agentUnusable` の判定を外す・人の変更の判定を外す。
+
+## レビューの指摘と対応
+
+| 指摘 | 対応 |
+| --- | --- |
+| 条件 3・4・6 のテストが、修正を戻しても通る | 修正の前後で結果が分かれる入力に書き直した（人が変えた・代わりが利用制限中・続きが失敗・時間切れ）。`incompleteAgentToContinue` の単体テストを足した |
+| 実装の実行中に人が変えたエージェントを無視する | 探す境目を、未完了で終わった実行の開始にした。仕様書も合わせた |
+| ADR・作業履歴のひな形 | ADR を足し、作業履歴に節を足した（ブランチと PR は、PR を作った後に入れる） |
+| `chosenAgentId`・「最初から実行する」・「今までどおり」の記述 | 仕様書とユーザードキュメントを、実装に合わせて直した |
+
+## 残したこと
+
+なし
