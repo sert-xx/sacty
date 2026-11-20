@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-369
 - 置き換え元: なし
-- 置き換え先: [文書だけを直した後の再レビューは観点と検証を絞り、リスク評価は引き継ぐ](20261120-2200-narrow-rereview-and-risk-for-documents-only.md)（PR のレビューを対象外とした部分）
+- 置き換え先: [文書だけを直した後の再レビューは観点と検証を絞り、リスク評価は引き継ぐ](20261120-2200-superseded-narrow-rereview-and-risk-for-documents-only.md)（PR のレビューを対象外とした部分）
 
 ## 背景
 

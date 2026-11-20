@@ -110,7 +110,6 @@ import {
 } from "./question-logs.js";
 import { WORKSPACE_SCRATCH_DIR, WORKSPACE_TOOLS_DIR, type WorkingTreeCopy } from "./repository.js";
 import {
-  assessesRiskInReview,
   extractRiskAssessment,
   reviewRiskLines,
   riskAssessmentLines,
@@ -3285,6 +3284,11 @@ export function buildPrompt(
      */
     rereviewDocsOnly?: RereviewDocsOnly;
     /**
+     * レビューの工程で、指摘なしと判定するときにリスク評価を出させるか（PBI-429）。service が、対象のタスクか（子タスクの
+     * 範囲を含む）で決めて渡す。渡さなければ、評価を出させない。
+     */
+    reviewRisk?: boolean;
+    /**
      * この工程の提出が sacty の作る PR になり、PR のレビューの子タスクがレビューする（PBI-346）。要求要件・設計・実装の工程で
      * 渡す。渡すと、提出の前のセルフレビューをさせない（同じ成果物を二重にレビューしない）。提出の前の検証はさせる。
      */
@@ -3469,8 +3473,8 @@ export function buildPrompt(
         `{"${REVIEW_VERDICT_HEADING}": {"verdict": "changes_required"}}`,
         "```",
         ...reviewReworkLines(extra.reviewRework),
-        // PR から取り込んだレビューのタスクは、PR のリスクも評価させる（PBI-362）
-        ...reviewRiskLines(task),
+        // 評価の対象のレビューは、指摘なしと判定するときだけ、PR のリスクも評価させる（PBI-362・PBI-429）
+        ...reviewRiskLines(extra.reviewRisk === true),
         // レビューする PR が分割の子タスクの PR なら、その範囲（PBI-351）
         ...reviewChildScopeLines(extra.reviewRework),
         // レビューする PR が、実装の前の文書の PR のとき、方針と抜けだけを見させる（PBI-419）
@@ -5751,11 +5755,6 @@ export function joinBodyText(text: BodyText): string {
   return text.footer ? `${text.main}\n\n${text.footer}` : text.main;
 }
 
-/** PR の説明に載せるリスク評価（PBI-362）。PR を作る・更新する前の評価だけ（レビューの工程の評価は、レビューのコメントに載せる）。 */
-function publishedRisk(task: Task): Task["riskAssessment"] {
-  return task.riskAssessment?.via === "publish" ? task.riskAssessment : undefined;
-}
-
 /**
  * テンプレートを使わない実装の PR の本文（PBI-87。つなぐと `buildPullRequestBody` と同じ）。結論（変更の要約・レビューの案内・
  * 人が確かめること）を冒頭に置き、承認済みの要求要件・設計は全文を載せずに要点とリンクにする（PBI-264）。
@@ -5784,8 +5783,6 @@ export function buildPullRequestBodyText(
   const human = humanCheckBodyLines(task).join("\n").trim();
   const stacked = stackedBodyLines(stage).join("\n");
   const scope = childScopeBodyLines(task, "##");
-  // リスク評価（PBI-362）は、人がレビューの深さを決める目安なので、結論のすぐ後に置き、長さの上限でも省かない
-  const risk = riskAssessmentLines(publishedRisk(task), "##").join("\n");
   const main = [
     intro,
     "",
@@ -5798,7 +5795,6 @@ export function buildPullRequestBodyText(
     `- ${REVIEW_BODY_LINE}`,
     ...(aiReviewBodyLine(stage.aiReview) ? [`- ${aiReviewBodyLine(stage.aiReview)}`] : []),
     "",
-    ...(risk ? [risk, ""] : []),
     ...(override ? [override, ""] : []),
     ...(human ? [human, ""] : []),
     // 分割の子タスクの PR は、この PR の範囲を、要求要件より前に置く（PBI-351）
@@ -5824,7 +5820,6 @@ export function buildPullRequestBodyText(
       intro,
       ...(stacked ? [stacked] : []),
       ...closesLines(task),
-      ...(risk ? [risk] : []),
       ...(override ? [override] : []),
       ...(human ? [human] : []),
     ],
@@ -5848,7 +5843,6 @@ export function buildPullRequestBodyParts(
     .join("\n\n");
   const humanCount = humanCheckItems(task).length;
   const scope = childScopeBodyLines(task, "bold");
-  const risk = riskAssessmentLines(publishedRisk(task), "bold");
   const record = [
     ...(exportedUrls(task).length > 0 ? ["**書き出した成果**", "", ...exportedUrls(task), ""] : []),
   ];
@@ -5872,8 +5866,6 @@ export function buildPullRequestBodyParts(
     ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
     record: record.join("\n"),
     footer: [
-      // リスク評価（PBI-362）は、テンプレートの見出しに入らなくても省かれないよう、footer の先頭に置く
-      ...(risk.length > 0 ? [...risk, ""] : []),
       ...overrideBodyLines(task),
       ...humanCheckBodyLines(task),
       sactyFooter(task, "成果物"),
@@ -8971,7 +8963,7 @@ export function extractReviewComments(
   // 評価させていないレビューの本文は、評価の見出しを含んでいても触らない（レビューの中のコード例を消さない）
   const riskRead = options.risk ? extractRiskAssessment(output, options.secrets) : undefined;
   if (riskRead) used.push(...riskRead.answers);
-  const risk = riskRead?.assessment;
+  // 評価は、sacty が指摘なしと読み取った回だけ使う（PBI-429）。それ以外の回は、答えに評価があっても、本文から取り除くだけにする
   // JSON として読めなかった評価（末尾のカンマなど）は候補にならないので、評価の答えの形で始まるコードブロックごと取り除く
   const stripped = withoutCandidates(output, used);
   const body = (options.risk ? withoutRiskBlocks(stripped) : stripped).trim();
@@ -8981,6 +8973,8 @@ export function extractReviewComments(
     : judgedVerdict === "no_findings" && comments.length > 0
       ? "suggestions"
       : judgedVerdict;
+  const risk = verdict === "no_findings" ? riskRead?.assessment : undefined;
+  const riskUnreadable = verdict === "no_findings" ? riskRead?.reason : undefined;
   return {
     output:
       outside.length > 0
@@ -8997,7 +8991,7 @@ export function extractReviewComments(
         }),
     ...(rework ? { rework } : {}),
     ...(risk ? { risk } : {}),
-    ...(riskRead?.reason ? { riskUnreadable: riskRead.reason } : {}),
+    ...(riskUnreadable ? { riskUnreadable } : {}),
   };
 }
 
@@ -9061,7 +9055,13 @@ function mentionOf(login: string | undefined): string | undefined {
  */
 export function buildReviewBody(
   task: Task,
-  options: { foldComments?: boolean; latestCommit?: string; mentionSelf?: string } = {},
+  options: {
+    foldComments?: boolean;
+    latestCommit?: string;
+    mentionSelf?: string;
+    /** 評価の対象のレビューか（PBI-429。子タスクの範囲は service が決める）。渡さなければ、評価を載せない。 */
+    risk?: boolean;
+  } = {},
 ): string {
   const folded =
     options.foldComments && task.reviewComments.length > 0
@@ -9078,12 +9078,13 @@ export function buildReviewBody(
   // 自分にメンションするときは、自分の login が読めなくても作者には知らせない
   const mention = mentionOf(options.mentionSelf ?? task.reviewTarget?.author);
   const reviewed = task.reviewTarget?.headCommit ?? "";
-  // 今回レビューした先頭の評価だけを載せる（前の回の評価を、今回のものとして載せない）
+  // 今回レビューした先頭の評価だけを、指摘なしの回にだけ載せる（前の回の評価・指摘のある回に、前の評価を載せない。PBI-429）
   const risk =
-    assessesRiskInReview(task) &&
+    options.risk === true &&
+    verdict === "no_findings" &&
     task.riskAssessment?.via === "review" &&
     task.riskAssessment.commit === task.reviewTarget?.headCommit
-      ? riskAssessmentLines(task.riskAssessment, "###")
+      ? riskAssessmentLines(task.riskAssessment)
       : [];
   const stale =
     options.latestCommit && reviewed && options.latestCommit !== reviewed

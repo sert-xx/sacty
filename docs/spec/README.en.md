@@ -64,7 +64,7 @@ Code: `<path>` (`<function name>`)
 - [MCP server (sacty mcp)](mcp-server.en.md): tools for operating the running sacty from a local AI (task list, details, re-review, creation, project list, reading deliverables and the agent run list, approving a step, requesting changes on a step, waiting until a task needs a person, pausing, resuming, and cancelling a task, rerunning a cancelled task, creating a follow-up task from a completed task, and renaming a task)
 - [Ticket intake and GitHub](intake.en.md): GitHub issues and PRs, JIRA, comments on the source, GitHub accounts
 - [Export](export.en.md): exporting results, exporting and importing projects
-- [PR risk assessment](risk-assessment.en.md): when it is assessed, levels and criteria, reading the assessment, how it is shown in the PR description and the review comment
+- [PR risk assessment](risk-assessment.en.md): when it is assessed (only in a review round with no findings), levels and criteria, reading the assessment, how it is shown in the review comment
 - [Error report](error-report.en.md): records treated as errors, the report's contents and size limits, the Orchestrator's analysis, UI
 - [Screen wording and hints](ui-wording.en.md): how body text and hints (tooltips) are split, the hint component, checks on the dictionaries
 - [Scheduled tasks](scheduled-tasks.en.md): how schedules are defined, missed times (only the latest one), when offline, the contents of the task, API, web UI

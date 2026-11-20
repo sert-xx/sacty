@@ -2,26 +2,31 @@
 
 # PR risk assessment
 
-sacty has an AI assess the risk of a PR's content, and puts the level, the grounds, the suggested review depth, and the places to look at into the PR description and the PR review comment.
-The assessment is a guide for a person deciding how deeply to review the PR.
+sacty has an AI assess the risk of a PR's content, and puts the level, the grounds, the suggested review depth, and the places to look at into the PR review comment and the UI.
+The assessment is a guide for a person deciding how deeply to review the PR, and it is given only when a person makes the final judgment (when the review has no findings).
+It is not made when a PR is opened or updated, and it is not put in the PR description.
 sacty does not skip a review, merge automatically, or change the steps because of the assessment.
 
-Related ADR: [Produce a PR risk assessment (not used to skip reviews or to merge automatically)](../adr/20261116-1632-superseded-pr-risk-assessment.md), [Decide the PR risk level by the weight of the signals and the size of a dependency version update](../adr/20261117-0433-superseded-risk-level-by-signal-weight.md), [When the size of a dependency version update cannot be read, make the PR risk level medium](../adr/20261117-0455-unknown-dependency-update-is-medium.md), [The PR risk assessment reads only the last answer and does not fall back to an earlier one when it cannot be read](../adr/20261117-1245-risk-assessment-reads-only-last-answer.md)
+Related ADR: [Produce a PR risk assessment (not used to skip reviews or to merge automatically)](../adr/20261116-1632-superseded-pr-risk-assessment.md), [Decide the PR risk level by the weight of the signals and the size of a dependency version update](../adr/20261117-0433-superseded-risk-level-by-signal-weight.md), [When the size of a dependency version update cannot be read, make the PR risk level medium](../adr/20261117-0455-unknown-dependency-update-is-medium.md), [The PR risk assessment reads only the last answer and does not fall back to an earlier one when it cannot be read](../adr/20261117-1245-risk-assessment-reads-only-last-answer.md), [Assess the PR risk only in a round where the review has no findings](../adr/20261121-0300-risk-assessment-only-when-review-has-no-findings.md)
 
 ## When it is assessed
 
-It is assessed only on the following two occasions.
+It is assessed only in a round of the PR review step where the head of this round was judged to have no findings (`via` is `review`).
+The review step's agent assesses it, giving the assessment with its review answer.
 
-| Occasion | Who assesses | Where it is put |
-| --- | --- | --- |
-| Before sacty opens or updates an implementation PR (`via` is `publish`) | The Orchestrator's agent. It reads the implemented code and the diff | The PR description |
-| The review step of a review task imported from a GitHub PR (`via` is `review`) | The review step's agent. It gives the assessment with its review answer | The review comment that is posted |
+| Review step | Assessed? |
+| --- | --- |
+| A review child task that sacty created for its own **implementation PR** (`reviewOf.step` is `implement`) | Yes |
+| A review task imported from a GitHub PR (a review request or a label) | Yes |
+| A child task of a requirements or design PR | No |
+| A child task of a task that took over an existing PR | No |
 
-- A requirements or design PR, and an existing PR that was taken over (whose title and body are not changed), are not assessed.
-- The review comment of a review child task that sacty created for its own PR (it has `reviewOf`, or it was imported as `sacty`) does not carry an assessment (`assessesRiskInReview`).
-  That PR's description carries the assessment made before the PR was opened.
+- Nothing is assessed when sacty opens or updates a PR (no agent is run for it, and no wait is added).
+- The range of PRs that a child task assesses is the same as the range that was assessed before a PR was opened or updated (a requirements or design PR and a taken-over existing PR are not assessed).
+- Only a daemon that enabled the risk assessment (`riskAssessment` of `ServiceDeps`, enabled when the daemon starts) assesses in a child task of an implementation PR. A review imported from a PR does not depend on this setting, as before.
+- "No findings" means a round where sacty read the verdict of that round as no findings (`no_findings`). Even if the verdict block says no findings, a round turned into suggestions because of a line comment, a round that requires fixes, and a round with no verdict are not rounds with no findings.
 
-Code: `apps/daemon/src/risk-assessment.ts` (`assessesRiskInReview`), `apps/daemon/src/service.ts` (`assessRisk`)
+Code: `apps/daemon/src/risk-assessment.ts` (`assessesRiskInReview`), `apps/daemon/src/service.ts` (`assessesReviewRisk`)
 
 ## Levels and criteria
 
@@ -146,63 +151,55 @@ The agent answers with the assessment as `sacty-risk-assessment` JSON.
 
 Code: `apps/daemon/src/risk-assessment.ts` (`extractRiskAssessment`), `packages/core/src/events.ts` (`RiskAssessment`)
 
-## Assessment before opening a PR
+## When a PR is opened or updated
 
-When an implementation PR is opened or updated, the assessment runs after the commit is pushed and before the body is built.
+sacty does not assess the risk when it opens or updates an implementation PR (PBI-429).
+No wait for an assessment is added between pushing the commit and opening or updating the PR.
 
-- The Orchestrator's agent runs on a throwaway copy of the implemented code. The prompt contains how to read the diff (the base commit and the commit to publish), the criteria for the levels, the task's title and content, the approved requirements, and the implementation agent's description (`buildRiskAssessmentPrompt`).
-- If the same commit has already been assessed, it is not assessed again (a resume, or a retry of the same submission). A commit that could not be assessed is assessed again at the next opportunity.
-- When the diff from the commit of the previous assessment (one with `via` of `publish` that could be assessed) to the current commit is documents only (files under a directory that starts with `.`, instructions to agents, files named `SKILL.md`, and files under a directory that has `SKILL.md` in the current tree do not count as documents; when the directories above the changed paths number more than 200, that is treated as unconfirmable and it is assessed again) and the start of the PR diff (`base`) is the same as last time, no agent is run and the previous assessment is carried over (PBI-421).
-  - "Documents only" is the same judgment as the narrowing of a re-review (`documentsOnlySince`: the previous commit is an ancestor of the current one, the changed paths have a document extension, and none is an instruction to agents (named `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` or `SKILL.md`, or under a directory that starts with `.`) or under a directory that has `SKILL.md` in the current tree. An empty diff, or a path with a control character, is not documents only).
-  - `base` is the task's start at the time of the assessment, or the head of the base branch that was merged in (`workBaseCommit`). It does not change when the base branch only moves ahead, and changes when the base is merged in.
-  - When it is carried over, `PullRequestRiskAssessed` records the current commit, the current `base`, a copy of the previous assessment, and the commit it was originally assessed at (`inheritedFrom`; even after several carry-overs, the commit that was actually assessed), with a cost of 0. The PR body shows the previous assessment as it was.
-  - In any of the following cases it is assessed again as before: the diff has something that is not a document, there is no previous assessment or it could not be assessed (a record with only a reason), the previous record has no `base`, `base` differs from last time, or the diff cannot be confirmed (the previous commit is not an ancestor of the current one, cannot be read, and so on). Because the comparison is with the commit of the previous record, a submission that includes a change that is not a document is always assessed again, even after several carry-overs.
-  - The level is a guide to how deeply a person reviews, and carrying it over only skips running it (it is not used to skip a review, to merge automatically, or to change a step). An instruction document that the judged names do not match, or a document that code or tests read, can be carried over.
-- Even when the assessment fails, opening or updating the PR is not stopped. The reason is recorded and the body says so. The assessment fails in these cases.
-  - The budget cap has been reached (no agent is run; `pr.riskBudget`)
-  - The agent's run failed (`pr.riskFailed`)
-  - The answer could not be read (`pr.riskUnreadable`, `pr.riskLastUnreadable`, `pr.riskKeyOutsideAnswer`; see [Content of the assessment and how it is read](#content-of-the-assessment-and-how-it-is-read))
-- Only when a run could not be confirmed to have stopped does sacty pause without opening the PR, so that it does not overlap another run (the same as reconciling a conflict in [Updating a body a person edited](approval.en.md#updating-a-body-a-person-edited)).
-- The assessment is enabled when the daemon starts (`riskAssessment` of `ServiceDeps`). A service that does not enable it (a test) does not assess.
-- The result is recorded in `PullRequestRiskAssessed`. The cost is counted on the Orchestrator's row ([Activity](event-log.en.md#cost)).
+- A `PullRequestRiskAssessed` with `via` of `publish` is no longer recorded. A record that carries over a previous assessment (`inheritedFrom`) is not made either.
+- No pause is caused by an assessment run that could not be confirmed to have stopped.
+- The PR description does not carry the assessment (neither in sacty's fixed format nor in the format that follows the template). A task with a record from before the version upgrade with `via` of `publish` does not get the old assessment in the body when it updates the PR either.
+- The body of a PR with no submission is not rewritten (the bodies of PRs opened in the past are not corrected retroactively).
+- The judgment of whether the span from the previous head to the current head is documents only (`documentsOnlySince`) remains, for narrowing a re-review ([Tasks and steps](tasks-and-steps.en.md)).
 
-Code: `apps/daemon/src/service.ts` (`assessRisk`, `documentsOnlySince`, `publish`), `apps/daemon/src/test-files.ts` (`isChangeDocumentsOnly`), `apps/daemon/src/risk-assessment.ts` (`assessPullRequestRisk`, `buildRiskAssessmentPrompt`), `apps/daemon/src/main.ts`
+Code: `apps/daemon/src/service.ts` (`publish`, `documentsOnlySince`)
 
 ## Assessment in the review step
 
-For a review task imported from a GitHub PR (a review request or a label), the criteria and the answer shape are added to the review prompt (`reviewRiskLines`).
+The criteria and the answer shape are added to the prompt of a review that is assessed ([When it is assessed](#when-it-is-assessed)) (`reviewRiskLines`).
 
-- The agent is told to give the assessment separately from the findings and the verdict, and not to let the assessment change the weight of a finding, the verdict, or what the review looks at.
-- The assessment JSON is removed from the posted body even when its shape is wrong (`extractReviewComments`). One that cannot be parsed as JSON (a trailing comma, and so on) is also removed, together with the code block whose content starts in the shape of the assessment answer (`withoutRiskBlocks`). A code example that merely contains the assessment heading stays. An unparseable assessment that is not in a code block stays, because its extent cannot be determined.
-- The body of a review that was not asked to assess (a PR review child task) is not touched.
-- If the answer could be read, the assessment is recorded in `PullRequestRiskAssessed` together with the completion of the step's run; if not, the fact that it could not be assessed (with the same reasons as the assessment before opening a PR) is recorded. The cost is counted on the step's run, so this record carries no cost.
-- Even when the assessment fails, posting the review is not stopped.
+- The prompt tells the agent to give the assessment only when it judges no findings. When the verdict is changes required or suggestions, or no verdict is given, it does not give one (it does not read the code in depth for the assessment). The assessment goes in the same answer, before the verdict JSON.
+- The agent is told to give the assessment separately from the findings and the verdict, and not to let it change the weight of a finding, the verdict, the reviewers started, what the review looks at, whether the draft is lifted, the merge, or the steps.
+- After deciding the verdict, sacty uses the assessment only in a round with no findings (`extractReviewComments`). In a round that is not a no-findings round (findings, or no verdict), the assessment is not recorded and not put in the posted comment (not even "could not be assessed").
+- In a review that is assessed, the assessment JSON is removed from the posted body even when it is in the answer of a round that is not a no-findings round or its shape is wrong. One that cannot be parsed as JSON (a trailing comma, and so on) is also removed, together with the code block whose content starts in the shape of an assessment answer (`withoutRiskBlocks`). A code example that merely contains the assessment heading string is kept. An assessment that is not in a code block and cannot be parsed as JSON remains, because its range cannot be decided.
+- The body of a review that is not assessed (a child task of a requirements or design PR, of a continued PR, or of a daemon with risk assessment disabled) is not touched.
+- In a round with no findings, if the answer could be read, the assessment is recorded in `PullRequestRiskAssessed` together with the completion of the step's run; if not, the fact that it could not be assessed (the reason is `pr.riskUnreadable`, `pr.riskLastUnreadable`, or `pr.riskKeyOutsideAnswer`; see [Content of the assessment and how it is read](#content-of-the-assessment-and-how-it-is-read)) is recorded. No extra run is made for the assessment. The cost is counted in the step's run, so this record holds no cost.
+- Even when the assessment fails, posting the review, lifting the draft, and waiting for approval are not stopped.
 
-Code: `apps/daemon/src/risk-assessment.ts` (`reviewRiskLines`, `withoutRiskBlocks`), `apps/daemon/src/prompts.ts` (`extractReviewComments`), `apps/daemon/src/service.ts` (`assessesRiskInReview`)
+Code: `apps/daemon/src/risk-assessment.ts` (`reviewRiskLines`, `withoutRiskBlocks`), `apps/daemon/src/prompts.ts` (`extractReviewComments`), `apps/daemon/src/service.ts` (`assessesReviewRisk`)
 
 ## How it is shown
 
-The PR description and the review comment carry a section of the same shape, "リスク評価" (`riskAssessmentLines`).
+The review comment carries the section "リスク評価" (`riskAssessmentLines`). The PR description does not.
 
-- It lists, in order: the level (low, medium, or high), the suggested review depth, the risk signals that apply (if any; each name carries its weight as "（重い）" (heavy) or "（軽い）" (light)), the size of the dependency version update (if any), the kind of change, the reach of the impact, the ease of undoing, what was verified, the places to look at (if any), and a note that it is an AI-made guide.
+- It lists, in order: the level (low, medium, or high), the suggested review depth, the risk signals that apply (if any; each name carries its weight as "（重い）" (heavy) or "（軽い）" (light)), the size of the dependency version update (if any), the kind of change, the reach of the impact, the ease of undoing it, what was verified, the places to look at (if any), and a note that it is an AI-made guide.
 - When the assessment failed, it says so with the reason, and says to decide the review depth from the diff.
-- A task with no assessment record gets no section.
+- Only the assessment of the head commit reviewed in this round, in a round with no findings, is shown. An assessment of an earlier round or an earlier head, and one left over in a round without findings, are not shown as this round's. A round that judged the same head again (with no findings) shows that round's assessment.
 - The heading, the field names, and the depth text are in Japanese, like sacty's other fixed text. The grounds are shown in the language the agent wrote them in.
+- It is placed after the verdict line and before the agent's body.
 
-It is placed as follows.
-
-| Where it is put | Place |
-| --- | --- |
-| The PR description (sacty's fixed format) | Right after "結論" (Conclusion). Not dropped even at the body length limit |
-| The PR description (the format that follows the PR template) | At the start of sacty's notes at the end (the footer). Not dropped |
-| The review comment | After the verdict line and before the agent's body. Only the assessment of the head commit reviewed this time is shown |
-
-Code: `apps/daemon/src/risk-assessment.ts` (`riskAssessmentLines`), `apps/daemon/src/prompts.ts` (`buildPullRequestBodyText`, `buildPullRequestBodyParts`, `buildReviewBody`)
+Code: `apps/daemon/src/risk-assessment.ts` (`riskAssessmentLines`), `apps/daemon/src/prompts.ts` (`buildReviewBody`)
 
 ## Record and UI
 
-- `PullRequestRiskAssessed` holds the occasion (`via`), the commit assessed (`commit`), and the assessment (`assessment`) or the reason it could not be assessed (`reason`). A record with `via` of `publish` also holds the start of the PR diff at the time of the assessment (`base`). A record that carried over the previous assessment also holds the commit it was originally assessed at (`inheritedFrom`), and has no agent and no cost.
+- `PullRequestRiskAssessed` holds the occasion (`via`), the commit assessed (`commit`), and the assessment (`assessment`) or the reason it could not be assessed (`reason`). Only a record with `via` of `review` (a round with no findings) is newly recorded.
+- Records from before the version upgrade can still be read. A record with `via` of `publish` (including those with `base`, the start of the PR diff at the time of the assessment, and `inheritedFrom`, the commit carried over from), and a record with `via` of `review` that was made in a round with findings, are loaded as they are. The task detail, the activity row, and the cost totals do not change (a record with no `agentId` gets no cost row).
 - A task holds only the last assessment (`Task.riskAssessment`). A record of a failed assessment does not keep the earlier assessment.
-- The UI shows a "PR risk assessment" section in the overview of the task detail (only for a task with an assessment record). Each signal name carries its weight, and the size of the dependency version update is shown when there is one. The activity shows the occasion and the level (or the reason, if it could not be assessed) in one line. A carried-over assessment is shown in one line saying which commit's assessment was carried over to which commit.
+- The UI shows a "PR risk assessment" section.
+  - The detail of a review task (a child task or an imported PR review) shows that task's own assessment.
+  - The detail of the task that opened the PR (including a task waiting for approval) shows the assessment given by the review child task of that implementation PR, without opening the child task. An assessment of a child task comes before an old `publish` assessment from before the version upgrade.
+  - It shows which head (commit) was assessed. The "current head" is the head the review child task last reviewed (or is reviewing): `reviewTarget.headCommit`, or `reviewRestartCommit` before the target is resolved. When the assessed head differs, it says it is not for the current head (an assessment is recorded only in a round with no findings, so after the head advances into a round with findings, the earlier head's assessment remains). With no head to compare, it is not shown as the current head. The detail of the review task itself uses the same comparison. A pre-upgrade `publish` assessment is compared with the PR's submitted head and the head judged to have no findings.
+  - When there is no assessment yet (no round with no findings yet), nothing is shown.
+- The activity shows the occasion and the level (the reason, if it could not be assessed) in one row. A record of a carried-over assessment (from before the version upgrade) shows which commit's assessment was carried over to which commit in one row.
 
-Code: `packages/core/src/projection.ts` (`applyEvent`), `apps/web/src/components/risk-assessment.tsx` (`RiskAssessmentCard`)
+Code: `packages/core/src/projection.ts` (`applyEvent`), `apps/web/src/components/risk-assessment.tsx` (`RiskAssessmentCard`, `riskAssessmentToShow`)
