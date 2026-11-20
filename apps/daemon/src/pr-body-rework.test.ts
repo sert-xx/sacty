@@ -237,6 +237,32 @@ describe("直しの実行の指示（PBI-299）", () => {
     }
   });
 
+  it("最初の実行と直しの実行のどちらの指示にも、最初の段落が PR 全体の変更の要約で、対応の件数と検査の報告を書かないと入る（PBI-423）", () => {
+    const variants = [
+      {},
+      { noTestsReason: "テストの仕組みが無い" },
+      { approved: { requirements: { output: "# 要求要件", submission: 1 } } },
+    ];
+    for (const v of variants) {
+      for (const t of [task({ ...v, outputs: {} }), task(v)]) {
+        const prompt = buildPrompt(t, "implement");
+        expect(prompt).toContain("この PR 全体で何を変えたかの要約だけにする");
+        expect(prompt).toContain(
+          "対応の件数・経過や、検査（テスト・リンター・ビルドなど）の実行の結果は、最初の段落に書かない",
+        );
+      }
+      // 直しの実行だけ：全体の変更が変わったら反映し、対応の報告は最後の直しの節に書く
+      const rework = buildPrompt(task(v), "implement");
+      expect(rework).toContain("今回の直しで PR 全体の変更が変わったときは、その変更を反映する");
+      expect(rework).toContain(
+        "指摘への対応の件数や検査の実行の報告は、最初の段落に書かず、この節に書く",
+      );
+      expect(buildPrompt(task({ ...v, outputs: {} }), "implement")).not.toContain(
+        "今回の直しで PR 全体の変更が変わったとき",
+      );
+    }
+  });
+
   it("直しの実行だけに、検証を直しの後のコードで実行し直し、今回の結果だけを書くことを指示する（PBI-365）", () => {
     // 最初の実行（前の実装の説明が無い）には足さない
     for (const first of [
