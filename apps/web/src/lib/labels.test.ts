@@ -1036,6 +1036,35 @@ describe("PR の指摘の取り込み（PBI-14b）", () => {
   });
 });
 
+describe("組み合わせ skip-requirements の表示（PBI-420）", () => {
+  it("組み合わせの名前を、日本語は「要求要件を省く」、英語は「Skip requirements」で出す", () => {
+    expect(labels.ja.plan["skip-requirements"]).toBe("要求要件を省く");
+    expect(labels.en.plan["skip-requirements"]).toBe("Skip requirements");
+  });
+
+  it("作業履歴に、設計 → 実装の工程の並びを出す", () => {
+    const event = {
+      type: "StepsChosen",
+      payload: {
+        steps: ["design", "implement", "deployment"],
+        plan: "skip-requirements",
+        reason: "設計の判断が要る",
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+      },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-11-20T00:00:00.000Z",
+      actor: "orchestrator",
+    } as ActivityEvent;
+    expect(describeEvent(event)).toContain("設計 → 実装");
+    expect(describeEvent(event)).not.toContain("要求要件 →");
+  });
+});
+
 describe("オーケストレーターが選んだ工程（PBI-17）", () => {
   it("作業履歴に、選んだ工程と理由を表示する", () => {
     const event = {

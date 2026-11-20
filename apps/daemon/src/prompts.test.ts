@@ -1140,7 +1140,11 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     }
     expect(prompt).toContain("受け入れ条件が詳しく見えても要求要件を残し（skip-designかstandard）");
     expect(prompt).toContain("判断しきれないときは、要求要件を残します");
+    // 設計の判断が要るときは、要求要件を省く組み合わせ（PBI-420）。「詳しくても standard」の文は無い
     expect(prompt).toContain(
+      "設計の判断（新しい仕組み・層をまたぐ作りの選択）が要るなら、skip-requirementsを選び",
+    );
+    expect(prompt).not.toContain(
       "設計の判断（新しい仕組み・層をまたぐ作りの選択）が要るならstandardです",
     );
   });
@@ -2311,6 +2315,7 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       "operation",
       "standard",
       "skip-design",
+      "skip-requirements",
       "direct",
       "investigate",
       "design-only",

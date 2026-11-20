@@ -42,6 +42,7 @@ const ja = {
   plan: {
     standard: "標準",
     "skip-design": "設計を省く",
+    "skip-requirements": "要求要件を省く",
     direct: "直接実装",
     bugfix: "不具合の修正",
     split: "分割",
@@ -851,6 +852,7 @@ const en: LabelMessages = {
   plan: {
     standard: "Standard",
     "skip-design": "Skip design",
+    "skip-requirements": "Skip requirements",
     direct: "Implement directly",
     bugfix: "Bug fix",
     split: "Split",

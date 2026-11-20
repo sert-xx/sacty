@@ -259,6 +259,62 @@ describe("project", () => {
     expect(project([created("t2", 2), steps("t2")]).get("t2")?.budget.capUsd).toBe(2);
   });
 
+  it("組み合わせの追加の前に書いた作成・工程の選択の記録は、変更の前と同じ組み合わせ・工程で読める（PBI-420）", () => {
+    seq = 0;
+    for (const [plan, plannedSteps] of [
+      ["standard", ["requirements", "design", "implement", "deployment"]],
+      ["skip-design", ["requirements", "implement", "deployment"]],
+      ["direct", ["implement", "deployment"]],
+      ["bugfix", ["reproduce", "implement", "deployment"]],
+      ["design-only", ["requirements", "design"]],
+    ] as const) {
+      const id = `t-${plan}`;
+      const tasks = project([
+        ev(
+          id,
+          { type: "TaskCreated", payload: { title: "A", body: "B", start: "sacty", plan } },
+          "person",
+        ),
+        ev(id, {
+          type: "StepsChosen",
+          payload: { steps: [...plannedSteps], plan, reason: "理由", fallback: false },
+        }),
+      ]);
+      const task = tasks.get(id);
+      expect(task?.requestedPlan).toBe(plan);
+      expect(task?.stepsChoice?.plan).toBe(plan);
+      expect(task?.steps.map((s) => s.key)).toEqual(plannedSteps);
+    }
+  });
+
+  it("組み合わせ skip-requirements の作成・工程の選択の記録を読める。工程は設計 → 実装 → マージの後の監視（PBI-420）", () => {
+    seq = 0;
+    const tasks = project([
+      ev(
+        "t1",
+        {
+          type: "TaskCreated",
+          payload: { title: "A", body: "B", start: "sacty", plan: "skip-requirements" },
+        },
+        "person",
+      ),
+      ev("t1", {
+        type: "StepsChosen",
+        payload: {
+          steps: ["design", "implement", "deployment"],
+          plan: "skip-requirements",
+          reason: "理由",
+          fallback: false,
+        },
+      }),
+    ]);
+    const task = tasks.get("t1");
+    expect(task?.requestedPlan).toBe("skip-requirements");
+    expect(task?.stepsChoice?.plan).toBe("skip-requirements");
+    expect(task?.steps.map((s) => s.key)).toEqual(["design", "implement", "deployment"]);
+    expect(task?.steps.some((s) => s.key === "requirements")).toBe(false);
+  });
+
   it("人が上限を上げたら、上げたことを持つ", () => {
     seq = 0;
     const task = project([

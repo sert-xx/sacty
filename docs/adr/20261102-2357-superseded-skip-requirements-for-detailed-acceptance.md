@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-283
 - 置き換え元: なし
-- 置き換え先: [受け入れ条件が明示した API の変更では、「公開 API の形を変える」を要求要件を残す理由にしない](20261103-0530-api-change-in-acceptance-keeps-no-requirements.md)（要求要件を残す条件のうち、公開している API・項目の名前や形を変える部分）
+- 置き換え先: [受け入れ条件が明示した API の変更では、「公開 API の形を変える」を要求要件を残す理由にしない](20261103-0530-superseded-api-change-in-acceptance-keeps-no-requirements.md)（要求要件を残す条件のうち、公開している API・項目の名前や形を変える部分）、[受け入れ条件がそろい設計の判断が要る依頼は、要求要件を省き、設計 → 実装で進める](20261120-0735-skip-requirements-for-design-decision.md)（設計の判断が要るときに `standard` にすること）
 
 ## 背景
 

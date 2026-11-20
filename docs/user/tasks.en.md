@@ -72,6 +72,7 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 | Automatic | The Orchestrator chooses | Default |
 | Standard | Requirements → Design → Implement → After-merge watch | Changes with several behaviors or a wide impact |
 | Skip design | Requirements → Implement → After-merge watch | Small, local changes |
+| Skip requirements | Design → Implement → After-merge watch | Changes with verifiable acceptance criteria in place that need a design decision |
 | Implement directly | Implement → After-merge watch | Changes whose request is itself the acceptance criteria (including requests with verifiable acceptance criteria in place and nothing for you to confirm) |
 | Bug fix | Reproduce → Implement → After-merge watch | Bugs that tests can reproduce |
 | Split | Requirements → Design → Task split → Integration review | Changes that do not fit in one PR |
@@ -198,12 +199,15 @@ In any of the following cases, the Orchestrator keeps Requirements even if the a
 - The request is ambiguous.
 - The request conflicts with a document or the code.
 - The request has something you should confirm.
-- The request needs a design decision.
 - The request puts a new meaning on an existing shared state or field (or adds a state).
 - The request needs a change to a published API or field that the acceptance criteria do not state.
 - A possible conflict with the code that uses the API or field needs to be confirmed with you.
 
 When the acceptance criteria clearly state the change to a published API or field (the new name, shape, whether it is required, how errors are handled) and there is nothing to confirm about the code that uses it, that alone is not a reason to keep Requirements. However, a change such as a rename, where it is not settled what happens to the existing code that uses the API or field, does not count as clearly stated.
+
+When the acceptance criteria are in place and a design decision (a new mechanism, or a choice of structure across layers) is needed, the Orchestrator skips Requirements and chooses "Skip requirements".
+Even when you have something to confirm, Requirements is not kept; the Design asks it under "Questions to confirm".
+However, when the request is ambiguous, conflicts with a document or the code in a way that changes what is built, or cannot be decided, Requirements is kept even if a design decision is needed.
 
 The following are not reasons to keep Requirements, because there is nothing for you to confirm.
 
