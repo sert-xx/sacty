@@ -299,7 +299,7 @@ The task is paused in the following cases.
 - An agent without `fallback` fails.
 - The fallback agent also fails (all agents in the list have been tried).
   - An agent already tried is not used again even after `cooldown_minutes`.
-  - Resuming tries again from the chosen agent in order.
+  - Resuming tries again from the chosen agent in order. Agents that this task had stopped using after a failure are tried again too (other tasks' marks and usage-limit marks are unchanged).
 - The agent's container could not be confirmed as stopped (sacty does not switch). This is because the original container may still be running.
 
 Whether a run failed is judged as follows.
