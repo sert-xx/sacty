@@ -843,6 +843,37 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
       activity.close();
     });
 
+    it("レビューを依頼された PR のレビューのタスクも、オーケストレーターがイメージを選ぶ（親のイメージの決め方は使わない）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 41, url: "https://github.com/acme/app/pull/41" };
+      const made = makeService(
+        activity,
+        [answer({ image: "java", reason: "pom.xml が Java 17" }), out("# 評価")],
+        {
+          pulls,
+          settings: new MemorySettingsStore({ reviewRequested: true }),
+          config: withImages(),
+        },
+      );
+      const [task] = made.service.importIssues([
+        { ...pr(41, []), review: "requested" as const, requestedFor: "me" },
+      ]);
+      const id = task?.id ?? "";
+      expect(made.service.get(id)?.task.source?.review).toBe("requested");
+      await made.service.runNext(id);
+      const chosen = made.service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(made.executor.calls[0]?.command.join(" ")).toContain(
+        "レビューの工程で使う実行のイメージを選んでください",
+      );
+      expect(chosen?.actor).toBe("orchestrator");
+      expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+        image: "java",
+        imageSource: "orchestrator",
+      });
+      activity.close();
+    });
+
     it("既定のイメージを選んだら、合わない理由か、理由が無いことを記録する（PBI-105）", async () => {
       const first = await run([
         answer({ image: "default", reason: "r", defaultReason: "Rust で、合うものが無い" }),

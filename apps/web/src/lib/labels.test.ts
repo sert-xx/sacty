@@ -1120,6 +1120,13 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     expect(
       describeIn(chosen({ images: { implement: "py" }, imageSource: "project" }), labels.en),
     ).toContain("images: Implement=py (set on the project target)");
+    // sacty が作ったレビューの子タスクが、親のタスクのイメージを使ったとき（PBI-425）
+    expect(describeEvent(chosen({ image: "java17", imageSource: "parent" }))).toBe(
+      "工程を決定：要求要件 → 実装（小さな変更） / イメージ：java17（親のタスクのイメージ）",
+    );
+    expect(describeIn(chosen({ image: "py", imageSource: "parent" }), labels.en)).toContain(
+      "images: py (the parent task's image)",
+    );
     // 既定のイメージで動かす工程の、images のどれも合わない理由と、理由が無い工程（PBI-105）
     const defaults = chosen({
       images: { implement: "java17" },

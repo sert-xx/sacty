@@ -1233,7 +1233,7 @@ export type Task = {
    * 工程を選んだときにイメージを決めたのが、再実行で人が指定したものか、作成時に人が指定したもの（request）か、
    * プロジェクトの対象の指定か、オーケストレーターか（PBI-41・PBI-318）。
    */
-  imageSource?: "project" | "orchestrator" | "rerun" | "request";
+  imageSource?: "project" | "orchestrator" | "rerun" | "request" | "parent";
   /** オーケストレーターが既定のイメージにした、images のどれも合わない理由（PBI-318）。 */
   defaultImageReason?: string;
   /** images の候補を見せたのに、理由が無いまま既定のイメージにした（PBI-318）。 */

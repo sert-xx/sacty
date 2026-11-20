@@ -273,10 +273,10 @@ const ja = {
     stepsJoin: " → ",
     stepsImages: (
       images: string,
-      source: "project" | "orchestrator" | "rerun" | "request",
+      source: "project" | "orchestrator" | "rerun" | "request" | "parent",
       reason?: string,
     ) =>
-      ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : source === "rerun" ? "再実行で人が指定" : source === "request" ? "作成時に人が指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
+      ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : source === "rerun" ? "再実行で人が指定" : source === "request" ? "作成時に人が指定" : source === "parent" ? "親のタスクのイメージ" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     /** 既定のイメージで動かす工程と、images のどれも合わない理由（PBI-105）。 */
     stepsDefaultImages: (reasons: string) => ` / 既定のイメージ：${reasons}`,
@@ -1067,7 +1067,7 @@ const en: LabelMessages = {
     createdAgents: (agents) => ` / agents set: ${agents}`,
     StepsChosen: (steps, reason) => `Steps chosen: ${steps}${reason ? ` (${reason})` : ""}`,
     stepsImages: (images, source, reason) =>
-      ` / images: ${images} (${source === "project" ? "set on the project target" : source === "rerun" ? "set by a person on rerun" : source === "request" ? "set by a person at creation" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
+      ` / images: ${images} (${source === "project" ? "set on the project target" : source === "rerun" ? "set by a person on rerun" : source === "request" ? "set by a person at creation" : source === "parent" ? "the parent task's image" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
     stepImage: (step, image) => `${step}=${image}`,
     stepsDefaultImages: (reasons) => ` / Default image: ${reasons}`,
     stepDefaultImage: (step, reason) => `${step}: ${reason}`,

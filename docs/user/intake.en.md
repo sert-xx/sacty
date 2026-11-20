@@ -372,11 +372,15 @@ If you reopen the PR of a child task that was cancelled by the close, sacty crea
 The findings of the child task's review reach the original task as follows.
 
 1. sacty posts the child task's review to the PR.
-2. If its verdict is changes required or suggestions only (OK to merge), the review reaches the original task as PR findings.
+2. If its verdict is changes required or suggestions only (OK to merge), the review reaches the original task as PR findings right after it is posted.
+   When your own comments arrive at the same time, sacty waits for you to finish writing, so they reach the task together after about 2 minutes.
    The original task fixes them in the step the child task gave for each finding ([Approval in PRs](tasks.en.md#approval-in-prs-requirements-design-implement)).
-3. When the original task fixes them, updates the PR, and goes back to waiting for approval, the child task reviews the latest commit again.
+3. When the original task fixes them, updates the PR, and goes back to waiting for approval, the child task reviews the latest commit again right away.
 4. Steps 2 and 3 repeat until there are "no findings" (there is no limit on the number of rounds; the cost of repetition stops at each task's budget).
    A review with no findings is not delivered and does not request changes (the task waits for the PR to be merged).
+
+The child task reviews with the same image as the original task. No agent run is needed to choose the image.
+Only when the original task's image cannot be determined, an agent chooses the image.
 
 ### How AI review comments are handled
 

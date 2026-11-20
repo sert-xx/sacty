@@ -344,7 +344,8 @@ When the Orchestrator chooses the steps, it picks one image for the task from `i
 
 - To choose, it reads the repository (`pom.xml`, `go.mod`, `pyproject.toml`, `package.json`, and so on; in a monorepo, the directories the work touches).
 - Tests also run in the task image (the agent of the implementation step runs them; for bug fixes, the reproduce agent runs them too). So the Orchestrator is asked to choose the image from the test command and the repository's dependencies (browser tests such as Playwright, DB clients, and so on). An image that has the tools of the test command is preferred. Only when no image has them does the Orchestrator write the test command anyway and note that in the reason for its image choice.
-- For a PR-review-only task ([Intake](intake.en.md)) too, if no image is specified, the Orchestrator chooses the task image from `images`. The review runs the project's verification such as tests and lint, so the Orchestrator is asked to choose an image that has those tools. If `images` is not configured, the review runs in the default image without the Orchestrator.
+- For a PR-review-only task that was imported from GitHub ([Intake](intake.en.md)) too, if no image is specified, the Orchestrator chooses the task image from `images`. The review runs the project's verification such as tests and lint, so the Orchestrator is asked to choose an image that has those tools. If `images` is not configured, the review runs in the default image without the Orchestrator.
+- The review child task of a PR that sacty created does not use the Orchestrator. It reviews in the image of the task that created the PR (only when that image is in `images`; otherwise it is chosen as described above).
 
 ### The default image
 

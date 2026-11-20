@@ -116,6 +116,10 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
   - A review task for that PR (such as one taken in from the review label by an older version) exists and has not finished (no double review).
   - It is disabled in the daemon's dependencies (`reviewTasks`; for tests that check only the step flow. Enabled when the daemon starts).
 - Failing to create it does not make opening the PR or waiting for approval fail (it is logged by the daemon and retried at the next PR check).
+- Re-review right after a submission: right after the parent submits a fix and returns to waiting for approval (`publish`, `publishStepPullRequest`), the steps below are done for that parent alone, without waiting for the 60-second check (`reconcileReviewTask`).
+  For an implementation PR waiting for no findings, if the head read from GitHub right after the submission differs from the submitted commit (GitHub may not have caught up), nothing is done.
+  When it could not start (the head cannot be read, recording fails, and so on), only a warning is logged and the submission does not fail. The 60-second check starts it.
+  This path and the 60-second check run one after the other per parent (key `review-reconcile:<parent ID>`), and the later one decides from the parent and child as recorded by the earlier one (a `ReviewRestarted` for the same head is never recorded twice, and a child task is never created twice).
 - In the PR check (every 60 seconds), if the PR of the current submission (`gatePullRequest`) of a task waiting for approval (`awaiting_approval`) is open, the following is done (`reconcileReviewTasks`).
   Parents for which pause or cancel was requested are excluded.
   - If there is no record of a child task, one is created (when it stopped (shutdown or crash) after the publish was recorded but before creating it).
@@ -152,7 +156,7 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
   The PR check finishes only after the child tasks' cancellation (cleanup and records) finishes.
 - Records from older versions (`label` and `intakeLabel` in the PR publish records, `PullRequestLabeled` and `PullRequestLabelFailed`) can still be read but are not treated as a plan to attach a label (the ledger is not rewritten).
 
-Code: `apps/daemon/src/service.ts` (`ensureReviewTask`, `needsReviewTask`, `reconcileReviewTasks`, `rejudgeDue`, `reviewTaskTitle`, `retargetPullRequest`, `publishStepPullRequest`, `publish`, `markReady`, `redraftAwaiting`, `pullRequestHead`, `reviewCiOf`), `apps/daemon/src/prompts.ts` (`reviewCiLines`, `REVIEW_CI_MAX`, `reviewSecurityLines`, `rejudgeLines`), `apps/daemon/src/service.ts` (`REVIEW_CI_TIMEOUT_MS`), `packages/core/src/events.ts` (`ReviewTaskCreated`, `TaskCreated`, `ReviewRestarted`), `packages/core/src/projection.ts` (`reviewTasks`, `reviewOf`, `reviewRestartCommit`), `apps/web/src/components/task-detail.tsx` (`Properties`)
+Code: `apps/daemon/src/service.ts` (`ensureReviewTask`, `needsReviewTask`, `reconcileReviewTasks`, `rejudgeDue`, `reviewTaskTitle`, `retargetPullRequest`, `publishStepPullRequest`, `publish`, `reconcileReviewTask`, `markReady`, `redraftAwaiting`, `pullRequestHead`, `reviewCiOf`), `apps/daemon/src/prompts.ts` (`reviewCiLines`, `REVIEW_CI_MAX`, `reviewSecurityLines`, `rejudgeLines`), `apps/daemon/src/service.ts` (`REVIEW_CI_TIMEOUT_MS`), `packages/core/src/events.ts` (`ReviewTaskCreated`, `TaskCreated`, `ReviewRestarted`), `packages/core/src/projection.ts` (`reviewTasks`, `reviewOf`, `reviewRestartCommit`), `apps/web/src/components/task-detail.tsx` (`Properties`)
 
 ## The PR check
 
@@ -543,10 +547,18 @@ Code: `apps/daemon/src/service.ts` (`reconcilePullRequestBody`, `recordPullReque
 
 - While a PR is open and waiting for approval, its reviews, line comments, and ordinary comments are imported as comments (`PullRequestReviewImported`, actor `person`; actor `sacty` for a round of sacty's own AI review comments only).
   - They are imported after waiting 2 minutes from the last feedback (`FEEDBACK_QUIET_MS`).
+    The wait is counted from the newest not-yet-imported feedback that is a person's comment (one whose `source` is not `sacty_review`).
+    A post by sacty's own review is written in one go (body and line comments), so it is not waited for and does not extend the wait.
+    When the only not-yet-imported items are posts by sacty's review, they are imported by that check without waiting.
+    When a person's comment is mixed in and 2 minutes have not passed since the newest one, sacty's review waits with it (they are not imported separately).
     The time of each feedback is the earlier of its GitHub time and the time the daemon first saw it (memory only; `feedbackSeenAt`).
     Even if GitHub's time is ahead of this machine's clock, the feedback is imported 2 minutes after it was first seen (it does not keep waiting for GitHub's time).
     If GitHub's time is behind, there is no wait when 2 minutes have already passed by the time it is seen.
     The times for tasks that are no longer in scope for import (no longer awaiting approval, cancelled, and so on) are dropped at the next check.
+  - Import right after a post: right after a review child task records `PullRequestReviewPosted`, the parent's import starts without waiting for the 60-second check (`importFeedbackSoon`).
+    Only when the parent is waiting for approval, the PR is open (the child's PR and the parent's PR are the same), a review is not being processed, and no cancel or pause is requested.
+    The content of the post is not passed from the child; it is read from GitHub. When it could not be imported (GitHub does not return the post yet, or it cannot be read), only a warning is logged and nothing is recorded on the child or the parent. The 60-second check imports it.
+  - Imports run one after the other per parent (key `feedback-import:<parent ID>`). The later one removes the already-imported keys from the ledger recorded by the earlier one before recording (the same key is never imported twice).
   - Up to 50 (`REMARKS_MAX`) are imported, oldest first. The body of a post (a summary, a person's review, a PR comment, a line comment) becomes the comment text without being cut by length (up to the 65,536 characters GitHub allows in one post; PBI-413). The 2000-character limit for a person sending changes back on the screen or API is for comments a person writes and is not applied to imported ones (the import while waiting for approval and `decideDeferrals`, which decides to fix a deferral candidate in this PR, tell the send-back call that the comments are imported, which skips this check).
   - A line comment gets the content of the line it was left on and the two lines before it, after the comment text (PBI-302 B3).
     - The content comes from the diff excerpt GitHub returns with the comment (`diff_hunk`; the commented line is last) (`lineContextOf`). The hunk header and the leading diff marks (`+`, `-`, a space) are dropped. Before the quoted lines are chosen, the whole excerpt is hidden at once (to find the body of a multi-line PEM private key; when the begin line is outside the excerpt and only the end line is there, everything from the start of the excerpt to the end line is hidden). Lines are not cut here.
@@ -650,7 +662,7 @@ They are, however, told apart from a person's comments.
 - Display: the request-for-changes and import rows in the Activity show AI review comments separately ("3 comments (AI review)", "1 from a person, 2 from AI review"), and the comments on the approval screen carry an "AI review" mark. The expanded details of a request for changes in the Activity also mark the AI review comments. The approval screen adds "not counted" only when the round has no person's comment.
   The dashboard's quality signals count "Rework from AI review", and the audit's evidence counts "AI review remarks" (`aiReviewRemark`), separately from changes requested by a person and PR remarks ([Architecture](architecture.en.md), [Audit](audit.en.md)).
 
-Code: `apps/daemon/src/service.ts` (`importFeedback`, `withoutStaleReviews`, `sactyReviewsOf`, `feedbackRemarks`, `FEEDBACK_QUIET_MS`, `feedbackSeenAt`, `settleReview`, `rejudgeLeftFindings`, `judgeRework`), `apps/daemon/src/prompts.ts` (`buildReworkPrompt`, `reworkDecisionLines`, `remarkSections`, `guardianJudgmentLines`), `apps/daemon/src/github.ts` (`GitHubPullRequests.feedback`), `packages/core/src/projection.ts` (`changeRounds`, `lastChangeRound`, `isAiReviewRemark`)
+Code: `apps/daemon/src/service.ts` (`importFeedback`, `importFeedbackSoon`, `withoutStaleReviews`, `sactyReviewsOf`, `feedbackRemarks`, `FEEDBACK_QUIET_MS`, `feedbackSeenAt`, `settleReview`, `rejudgeLeftFindings`, `judgeRework`), `apps/daemon/src/prompts.ts` (`buildReworkPrompt`, `reworkDecisionLines`, `remarkSections`, `guardianJudgmentLines`), `apps/daemon/src/github.ts` (`GitHubPullRequests.feedback`), `packages/core/src/projection.ts` (`changeRounds`, `lastChangeRound`, `isAiReviewRemark`)
 
 ### Things for a person to check
 

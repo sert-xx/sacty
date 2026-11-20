@@ -1579,13 +1579,15 @@ function ImageSourceText({ source }: { source: ImageSource }) {
             ? m.byRerun
             : source.by === "request"
               ? m.byRequest
-              : source.by === "orchestrator"
-                ? source.default
-                  ? m.byOrchestratorDefault(source.default)
-                  : source.unexplained
-                    ? m.byOrchestratorUnexplained
-                    : m.byOrchestrator
-                : m.none}
+              : source.by === "parent"
+                ? m.byParent
+                : source.by === "orchestrator"
+                  ? source.default
+                    ? m.byOrchestratorDefault(source.default)
+                    : source.unexplained
+                      ? m.byOrchestratorUnexplained
+                      : m.byOrchestrator
+                  : m.none}
     </>
   );
 }

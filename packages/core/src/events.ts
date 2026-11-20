@@ -1097,7 +1097,7 @@ const StepsChosen = z.object({
      * イメージを決めたのが、再実行で人が指定したものか、作成時に人が指定したもの（request。PBI-318）か、プロジェクトの
      * 対象の指定か、オーケストレーターか。
      */
-    imageSource: z.enum(["project", "orchestrator", "rerun", "request"]).optional(),
+    imageSource: z.enum(["project", "orchestrator", "rerun", "request", "parent"]).optional(),
     /** オーケストレーターがイメージを選んだ理由。 */
     imageReason: z.string().max(1000).optional(),
     /**
