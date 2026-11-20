@@ -1,3 +1,4 @@
+import type { DaemonText } from "@sacty/core";
 import { headedObject, lastJsonAnswer } from "./agent-json.js";
 
 /*
@@ -29,31 +30,30 @@ const UNIT_START = /^\s*(?:(?:[-*+]|\d+[.)])\s+)?(?:#{1,6}\s+)?(?:\*\*)?\s*\[(�
 /** 行へのコメントの指摘の文：`<パス>:<行>：` の後（目印の後の改行を挟んでよい）に、頭が続く。 */
 const INLINE = /^[^\s：]+(?::\d+)?：[ \t]*\n?[ \t]*(?:\*\*)?\[(提案|要修正)\]/;
 
-/** 指摘ではない節（総評・前回の指摘・レビューの範囲）の見出し。この節の文中の頭は、1 件として数えない。 */
-const NOT_FINDINGS = /総評|前回の指摘|レビューの範囲/;
+/**
+ * 提案を読む節の見出し：「指摘」だけ（許可リスト）。ほかの節（総評・前回の指摘・レビューの範囲など、見出しの名前を問わない）の
+ * 文中の頭は、1 件として数えない。レビューの指示が、指摘の節の見出しを「指摘」と決めている。
+ */
+const FINDINGS_HEADING = /^\s*指摘\s*$/;
 
 /**
  * 1 件の指摘（取り込んだ指摘の 1 件）の中の、提案・要修正の単位を求める。
  * - 行へのコメント：頭が付いていれば、指摘の全体が 1 件（頭が付いていなければ、単位なし）。
- * - レビューの本文：「指摘」の節の、行頭の頭（`**[提案] 題**（場所）` など）ごとに 1 件。次の頭・見出し・区切りの線までが 1 件。
+ * - レビューの本文：見出しが「指摘」の節（許可リスト）の、行頭の頭（`**[提案] 題**（場所）` など）ごとに 1 件。次の頭・見出し・区切りの線までが 1 件。
  *   総評・「前回の指摘」の節の文中に出る頭は数えない。
  */
-export function suggestionUnitsOf(
-  text: string,
-  remark: number,
-): { kind: "suggestion" | "must"; text: string }[] {
+export function suggestionUnitsOf(text: string): { kind: "suggestion" | "must"; text: string }[] {
   const plain = text.replace(HTML_COMMENT, "").trim();
   const inline = plain.match(INLINE);
   if (inline) return [{ kind: inline[1] === MUST ? "must" : "suggestion", text: plain }];
-  void remark;
   const units: { kind: "suggestion" | "must"; lines: string[] }[] = [];
   let current: (typeof units)[number] | undefined;
-  let skipping = false;
+  let reading = false;
   for (const line of plain.split("\n")) {
     const start = line.match(UNIT_START);
     const heading = /^\s*#{1,6}\s+(.*)$/.exec(line);
     if (!start && heading) {
-      skipping = NOT_FINDINGS.test(heading[1] ?? "");
+      reading = FINDINGS_HEADING.test((heading[1] ?? "").replace(/\*+/g, ""));
       current = undefined;
       continue;
     }
@@ -61,7 +61,7 @@ export function suggestionUnitsOf(
       current = undefined;
       continue;
     }
-    if (skipping) continue;
+    if (!reading) continue;
     if (start) {
       current = { kind: start[1] === MUST ? "must" : "suggestion", lines: [line] };
       units.push(current);
@@ -81,7 +81,7 @@ export function splitSuggestions(
   let n = 0;
   return remarks.flatMap((text, remark) =>
     ai.has(remark)
-      ? suggestionUnitsOf(text, remark).map((u) => ({
+      ? suggestionUnitsOf(text).map((u) => ({
           id: `S${++n}`,
           remark,
           text: u.text,
@@ -124,7 +124,7 @@ export function extractTriage(
       if (!known.has(id) || seen.has(id)) continue;
       if (decision !== "address" && decision !== "decline") continue;
       seen.add(id);
-      const sameAs = str(r.sameAs ?? r.same_as);
+      const sameAs = str(r.sameAs);
       list.push({
         id,
         decision,
@@ -143,7 +143,7 @@ export type TriagedItem = {
   remark: number;
   text: string;
   decision: "address" | "decline";
-  reason: string;
+  reason: DaemonText;
   defaulted?: true;
 };
 
@@ -155,7 +155,7 @@ export type TriagedItem = {
 export function settleTriage(
   suggestions: readonly SuggestionUnit[],
   answer: readonly TriageDecision[] | undefined,
-  defaultReason: string,
+  defaultReason: DaemonText,
 ): TriagedItem[] {
   const by = new Map((answer ?? []).map((d) => [d.id, d]));
   const items: TriagedItem[] = suggestions.map((u) => {
@@ -186,4 +186,49 @@ export function settleTriage(
     }
   }
   return items;
+}
+
+type Verdict = "changes_required" | "suggestions" | "no_findings";
+
+/** 提案だけの回が、今回（round）を含めて何回続いているか（今回の回から数える）。 */
+export function countSuggestionRounds(
+  round: number,
+  verdictOf: (round: number) => Verdict | undefined,
+): number {
+  let n = 0;
+  while (n < round && verdictOf(round - n) === "suggestions") n++;
+  return n;
+}
+
+/**
+ * 提案のすべてを対応しないとした指摘の位置（差し戻しから外す指摘）。要修正がなく、その指摘の提案のすべてが対応しないもの。
+ * 本文は、判定が提案ありの回のものだけ外す（要修正を、書式の読み違いで落とさない。行へのコメントは、指摘ごとに頭が付いている）。
+ * 提案の単位が 0 件の本文（総評だけで、提案は行へのコメントにある形）は、判定が提案ありの回のもので、同じ回の提案がすべて
+ * 対応しないときに外す（残すと、直し・push・再レビューが起きる）。
+ */
+export function droppedRemarks(input: {
+  remarks: readonly string[];
+  units: readonly SuggestionUnit[];
+  items: readonly Pick<TriagedItem, "remark" | "decision">[];
+  aiReviewFrom: Readonly<Record<string, string>> | undefined;
+  verdictOf: (round: number) => Verdict | undefined;
+}): number[] {
+  const { remarks, units, items, aiReviewFrom, verdictOf } = input;
+  const noMust = units.every((u) => u.kind === "suggestion");
+  const allDeclined = items.every((i) => i.decision === "decline");
+  return remarks.flatMap((text, index) => {
+    const mine = units.filter((u) => u.remark === index);
+    const inline = mine.length === 1 && mine[0]?.text === text.replace(HTML_COMMENT, "").trim();
+    const from = aiReviewFrom?.[String(index)];
+    const fromRound = from ? Number(from.match(/:(\d+)$/)?.[1] ?? 1) : undefined;
+    const suggestionsRound = fromRound !== undefined && verdictOf(fromRound) === "suggestions";
+    if (mine.length === 0) {
+      return suggestionsRound && noMust && allDeclined ? [index] : [];
+    }
+    return (inline || suggestionsRound) &&
+      mine.every((u) => u.kind === "suggestion") &&
+      items.filter((i) => i.remark === index).every((i) => i.decision === "decline")
+      ? [index]
+      : [];
+  });
 }

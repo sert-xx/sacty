@@ -486,7 +486,7 @@ export function describeEventParts(
           l.event.suggestionDecision(
             i.id,
             i.decision === "address",
-            i.reason || i.text,
+            (typeof i.reason === "string" ? i.reason : l.text(i.reason)) || i.text,
             i.defaulted === true,
           ),
         )
@@ -853,6 +853,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.number,
         event.payload.commit.slice(0, 7),
         event.payload.awaitsDecision === true,
+        event.payload.reason === "triaged",
       );
     case "DeferralsDecided":
       return e.DeferralsDecided(

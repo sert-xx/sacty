@@ -364,6 +364,8 @@ const PARAMS = {
   "rework.unreadable": null,
   "rework.runFailed": z.object({ detail: TextParam }),
   "rework.reviewTaskUnreadable": null,
+  "triage.unreadable": null,
+  "triage.runFailed": null,
   "orchestrator.fallback": z.object({ detail: TextParam }),
   "orchestrator.unreadable": null,
   "orchestrator.testCommandUnknown": null,
@@ -1315,6 +1317,8 @@ const ja: MessageDictionary = {
   "guardian.reworkUnreadable": "以前の版の AI の出力から、戻し先の判断を読み取れませんでした。",
   "rework.unreadable": "出力から、戻し先の判断を読み取れませんでした。",
   "rework.runFailed": ({ detail }, text) => `戻し先の判断の実行に失敗しました：${text(detail)}`,
+  "triage.unreadable": "選り分けの判断が読めなかったので、この PR で対応する側にしました。",
+  "triage.runFailed": "選り分けの実行が失敗したので、この PR で対応する側にしました。",
   "rework.reviewTaskUnreadable":
     "PR のレビューの子タスクの答えから、指摘の戻し先を読み取れませんでした。この PR の工程で直します。",
   "orchestrator.fallback": ({ detail }, text) =>
@@ -2188,6 +2192,10 @@ const en: MessageDictionary = {
   "rework.unreadable": "Could not read the step to redo from the output.",
   "rework.runFailed": ({ detail }, text) =>
     `The run to decide the step to redo failed: ${text(detail)}`,
+  "triage.unreadable":
+    "Could not read the sorting answer, so this suggestion is treated as one to address in this PR.",
+  "triage.runFailed":
+    "The sorting run failed, so this suggestion is treated as one to address in this PR.",
   "rework.reviewTaskUnreadable":
     "Could not read the step to redo for each finding from the answer of the PR review child task. The step of this PR redoes the work.",
   "orchestrator.fallback": ({ detail }, text) =>

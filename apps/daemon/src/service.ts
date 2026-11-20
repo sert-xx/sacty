@@ -513,7 +513,13 @@ import {
   type SharedComposeFetcher,
   sharedComposeRunDir,
 } from "./shared-compose.js";
-import { extractTriage, settleTriage, splitSuggestions } from "./suggestion-triage.js";
+import {
+  countSuggestionRounds,
+  droppedRemarks,
+  extractTriage,
+  settleTriage,
+  splitSuggestions,
+} from "./suggestion-triage.js";
 import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
 import {
   type DeliverableKind,
@@ -3910,14 +3916,19 @@ export class TaskService {
     const units = splitSuggestions(pending.remarks, pending.aiReview ?? []);
     const suggestions = units.filter((u) => u.kind === "suggestion");
     if (suggestions.length === 0) return undefined;
+    // 実装が指摘のすべてを断った後の判定し直し（PBI-357・370。reason が triaged でない）の回は、選り分けない（今までどおり）
+    if (
+      task.reviewRejudge &&
+      task.reviewRejudge.reason !== "triaged" &&
+      this.rejudgeLeftFindings(task)
+    ) {
+      return undefined;
+    }
     const musts = units.filter((u) => u.kind === "must");
     // 提案だけの回が、今回を含めて何回続いているか（今回の回から数える）
     const round = child.reviewRound ?? 1;
     const verdictOf = (r: number) => child.reviewVerdicts?.find((v) => v.round === r)?.verdict;
-    let suggestionRounds = 0;
-    while (suggestionRounds < round && verdictOf(round - suggestionRounds) === "suggestions") {
-      suggestionRounds++;
-    }
+    const suggestionRounds = countSuggestionRounds(round, verdictOf);
     const chosen = stepAgentFor(config, "implement", task.agents?.implement);
     if (!chosen.ok) {
       this.pauseForMissingAgent(task, pr.step, chosen.missing, { awaiting: true });
@@ -3946,9 +3957,7 @@ export class TaskService {
     const items = settleTriage(
       suggestions,
       answer,
-      outcome.kind === "completed"
-        ? "選り分けの判断が読めなかったので、この PR で対応する側にしました。"
-        : "選り分けの実行が失敗したので、この PR で対応する側にしました。",
+      outcome.kind === "completed" ? message("triage.unreadable") : message("triage.runFailed"),
     );
     const url = (index: number): string | undefined => {
       const key = pending.keys.length === pending.remarks.length ? pending.keys[index] : undefined;
@@ -3999,25 +4008,19 @@ export class TaskService {
       }
       return "stopped";
     }
-    // 提案のすべてを対応しないとした指摘（要修正がなく、すべての提案が対応しない）は、差し戻しから外す。本文は、判定が提案ありの
-    // 回のものだけ外す（要修正を、書式の読み違いで落とさない。行へのコメントは、指摘ごとに頭が付いている）
-    const dropped = pending.remarks.flatMap((text, index) => {
-      const mine = units.filter((u) => u.remark === index);
-      const inline =
-        mine.length === 1 && mine[0]?.text === text.replace(/<!--[\s\S]*?-->/g, "").trim();
-      const from = pending.aiReviewFrom?.[String(index)];
-      const fromRound = from ? Number(from.match(/:(\d+)$/)?.[1] ?? 1) : undefined;
-      const whole = inline || (fromRound !== undefined && verdictOf(fromRound) === "suggestions");
-      return mine.length > 0 &&
-        whole &&
-        mine.every((u) => u.kind === "suggestion") &&
-        items.filter((i) => i.remark === index).every((i) => i.decision === "decline")
-        ? [index]
-        : [];
+    // 提案のすべてを対応しないとした指摘は、差し戻しから外す
+    const dropped = droppedRemarks({
+      remarks: pending.remarks,
+      units,
+      items,
+      aiReviewFrom: pending.aiReviewFrom,
+      verdictOf,
     });
     const all = dropped.length === pending.remarks.length;
     // 判定し直した回の提案もすべて対応しない：判定し直しは 1 回だけなので、返信の後に止める
-    const stop = all && this.rejudgeLeftFindings(latest);
+    // （選り分けで求めた判定し直し（reason: triaged）の回だけ。実装が断った後の判定し直し（PBI-357・370）は、上で選り分けない）
+    const stop =
+      all && this.rejudgeLeftFindings(latest) && latest.reviewRejudge?.reason === "triaged";
     const rejudge =
       all && !stop && pr.commit && pr.repo
         ? [
@@ -14696,8 +14699,12 @@ export class TaskService {
    * 一時停止して人が選ぶ（同じ先頭の判定のし直しは 1 回だけなので、ほかに往復を止める所が無い）。
    */
   private triageStopDue(parent: Task): boolean {
+    const stop = parent.triageStop;
+    const pr = gatePullRequest(parent);
     return (
-      parent.triageStop === true &&
+      stop !== undefined &&
+      pr?.number === stop.number &&
+      (!stop.commit || (pr.commit !== undefined && sameCommit(stop.commit, pr.commit))) &&
       parent.status === "awaiting_approval" &&
       !parent.pendingReview &&
       this.remarkRepliesDue(parent) === undefined &&

@@ -2841,7 +2841,8 @@ const SuggestionsTriaged = z.object({
         /** 提案の文。 */
         text: z.string(),
         decision: z.enum(["address", "decline"]),
-        reason: z.string(),
+        /** 対応しない理由は文字列。判断できなかったときの理由（defaulted）は、画面の言語で出せるコード。 */
+        reason: DaemonText,
         defaulted: z.literal(true).optional(),
         /** 元の PR のコメントの URL（再レビューに渡す）。 */
         url: z.string().optional(),

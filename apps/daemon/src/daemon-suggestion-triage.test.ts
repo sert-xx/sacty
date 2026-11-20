@@ -416,6 +416,30 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     activity.close();
   });
 
+  it("この PR のレビューの子タスクの投稿ではないレビュー（GitHub から取り込んだ PR のレビューなど）の [提案] は、選り分けず、今までどおり直しに入る（PBI-436）", async () => {
+    const made = await reviewed(
+      "suggestions",
+      body(finding("提案", "名前の付け方")),
+      [
+        reworkOut,
+        responded([{ remarkId: "implement-1-1", status: "addressed", text: "直しました" }]),
+      ],
+      { importNow: false },
+    );
+    const { activity, service, pulls, executor, id } = made;
+    const foreign = (pulls.reviews[0]?.body ?? "").replace(
+      /<!-- sacty-review:[^>]*-->/,
+      "<!-- sacty-review:00000000-0000-0000-0000-000000000000 -->",
+    );
+    pulls.feedbackBy[7] = [item("review:50", { kind: "review", author: "someone", body: foreign })];
+    await service.checkPullRequests();
+    expect(types(service, id)).not.toContain("SuggestionsTriaged");
+    expect(executor.calls.some((c) => c.command.join(" ").includes("sacty-triage"))).toBe(false);
+    expect(count(service, id, "ChangesRequested")).toBe(1);
+    expect(taskOf(service, id).remarks.some((r) => r.triaged)).toBe(false);
+    activity.close();
+  });
+
   it("人が PR に要対応とコメントすると、人の指摘として取り込まれ、選り分けを通らずに直しに入る", async () => {
     const made = await declinedAll([
       reworkOut,

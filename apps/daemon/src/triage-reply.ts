@@ -3,6 +3,8 @@
  * 返信の書き出し・目印・署名・伏せ・長さの上限は、今までの返信（remark-reply.ts）のまま。ここは、載せる文だけを作る。
  */
 
+import { cutAtMax } from "./human-ask-notice.js";
+
 /** 返信に添える、AI の判断であることと、人が直させる方法。 */
 export const TRIAGE_REPLY_NOTE =
   "直しに入る前に AI が判断し、この PR では対応しません。直させたいときは、PR に要対応とコメントしてください。";
@@ -11,10 +13,7 @@ export const TRIAGE_REPLY_NOTE =
 const ITEM_TEXT_MAX = 200;
 const ITEM_REASON_MAX = 400;
 
-const oneLine = (v: string, max: number) => {
-  const flat = v.replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
-};
+const oneLine = (v: string, max: number) => cutAtMax(v.replace(/\s+/g, " ").trim(), max);
 
 /** 対応しない提案と理由の一覧（1 件 1 行）。 */
 function declinedList(parts: readonly { text: string; reason: string }[]): string {

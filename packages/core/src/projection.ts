@@ -737,7 +737,7 @@ export type Task = {
    * 判定し直した回の提案もすべて対応しないとしたので、返信の後に一時停止する（SuggestionsTriaged の stop。PBI-436）。
    * 一時停止すると消える。
    */
-  triageStop?: true;
+  triageStop?: { number: number; commit?: string };
   /** 後続に回したい案を、人が決めた回数（DeferralsDecided の数。PR のコメントの目印に使う。PBI-370）。 */
   deferralDecisions?: number;
   /**
@@ -2896,7 +2896,12 @@ export function applyEvent(
       }
       const p = event.payload;
       const dropped = new Set(p.dropped.filter((i) => i < pending.remarks.length));
-      const declined = p.items.filter((i) => i.decision === "decline");
+      // 対応しない提案の理由は、答えから読んだ文字列（コードの理由は、判断できなかったときの「対応する」側だけ）
+      const declined = p.items.flatMap((i) =>
+        i.decision === "decline" && typeof i.reason === "string"
+          ? [{ ...i, reason: i.reason }]
+          : [],
+      );
       // 指摘ごとの、対応しないとした提案（元の並びの位置で持つ。外した指摘の後に、位置を付け直す）
       const parts = new Map<number, { text: string; reason: string }[]>();
       for (const item of declined) {
@@ -2913,7 +2918,10 @@ export function applyEvent(
         .map((index, n) => {
           const key =
             pending.keys.length === pending.remarks.length ? pending.keys[index] : undefined;
-          const list = parts.get(index) ?? [];
+          // 提案の単位が無い本文（総評だけで、提案は行へのコメントにある形）への返信には、同じ回の対応しない提案を載せる
+          const own = parts.get(index);
+          const list =
+            own && own.length > 0 ? own : declined.map((d) => ({ text: d.text, reason: d.reason }));
           return {
             id: `${gate.step}-triaged-${seq + n + 1}`,
             step: gate.step,
@@ -2941,7 +2949,11 @@ export function applyEvent(
           })),
         ];
       }
-      if (p.stop) task.triageStop = true;
+      if (p.stop)
+        task.triageStop = {
+          number: watched.number,
+          ...(watched.commit ? { commit: watched.commit } : {}),
+        };
       const kept = withoutNoAction(pending, [...dropped]);
       if (!kept) {
         task.pendingReview = undefined;

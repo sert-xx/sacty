@@ -2,6 +2,8 @@ import type { Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { buildTriagePrompt, type ReviewDeferrals, rereviewLines } from "./prompts.js";
 import {
+  countSuggestionRounds,
+  droppedRemarks,
   extractTriage,
   settleTriage,
   splitSuggestions,
@@ -73,10 +75,79 @@ describe("AI のレビューの提案の単位の分け方（PBI-436）", () => 
   it("行頭の素の [提案] も、箇条書き・見出しの形の頭も、1 件として数える", () => {
     expect(
       suggestionUnitsOf(
-        "[提案] 素の頭\n説明\n\n- [提案] 箇条書き\n\n### [提案] 見出し\n詳細",
-        0,
+        "## 指摘\n[提案] 素の頭\n説明\n\n- [提案] 箇条書き\n\n### [提案] 見出し\n詳細",
       ).map((u) => u.kind),
     ).toEqual(["suggestion", "suggestion", "suggestion"]);
+  });
+});
+
+describe("提案の単位の読み取りは「指摘」の節だけ（PBI-436）", () => {
+  it("別の名前の節（前回までの指摘・太字の札・表）の頭は、新しい提案として数えない", () => {
+    const body = [
+      MARKER,
+      "### 前回までの指摘",
+      "- [提案] 前回の提案：対応を確認した",
+      "**総評**",
+      "[提案] 太字の札の下の文",
+      "| 重さ | 内容 |",
+      "| [提案] | 表の中 |",
+      "### 指摘",
+      finding("提案", "本物"),
+    ].join("\n");
+    expect(suggestionUnitsOf(body).map((u) => u.text)).toEqual([
+      "**[提案] 本物**（src/pay.ts）\n本物の説明。",
+    ]);
+  });
+  it("「指摘」の節が無い本文は、単位なし（選り分けない。今までどおり直す）", () => {
+    expect(suggestionUnitsOf("[提案] 節の無い頭")).toEqual([]);
+  });
+});
+
+describe("提案のすべてを対応しない指摘の位置（PBI-436）", () => {
+  const sug = (remark: number, id: string) => ({
+    id,
+    remark,
+    text: `[提案] ${id}`,
+    kind: "suggestion" as const,
+  });
+  const verdictOf = () => "suggestions" as const;
+  it("提案ありの回の、総評だけの本文（単位 0 件）は、行へのコメントの提案がすべて対応しないなら外す", () => {
+    const remarks = ["## 総評\nだけ", "a.ts:1：\n[提案] x"];
+    const units = [sug(1, "S1")];
+    const aiReviewFrom = { "0": "k:1", "1": "k:1" };
+    expect(
+      droppedRemarks({
+        remarks,
+        units,
+        items: [{ remark: 1, decision: "decline" }],
+        aiReviewFrom,
+        verdictOf,
+      }),
+    ).toEqual([0, 1]);
+    expect(
+      droppedRemarks({
+        remarks,
+        units,
+        items: [{ remark: 1, decision: "address" }],
+        aiReviewFrom,
+        verdictOf,
+      }),
+    ).toEqual([]);
+  });
+  it("要修正の回の、単位 0 件の本文は外さない", () => {
+    expect(
+      droppedRemarks({
+        remarks: ["本文", "a.ts:1：\n[提案] x"],
+        units: [sug(1, "S1")],
+        items: [{ remark: 1, decision: "decline" }],
+        aiReviewFrom: { "0": "k:1", "1": "k:1" },
+        verdictOf: () => "changes_required",
+      }),
+    ).toEqual([]);
+  });
+  it("提案だけの回の続いた数を、今回から数える", () => {
+    const v = { 1: "changes_required", 2: "suggestions", 3: "suggestions" } as const;
+    expect(countSuggestionRounds(3, (r) => v[r as 1 | 2 | 3])).toBe(2);
   });
 });
 

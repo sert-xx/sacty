@@ -432,6 +432,7 @@ const EARLIER_REVIEW_IN_PROMPT = 5_000;
 const HEAD_CHECK_LINES = (head: string): string[] => [
   `- 前の指摘（前回の指摘・PR にある既存の指摘）が直っているかは、今回レビューする先頭のコミット（${head}）の、コード・文書のファイルを開いて確かめる。前回のレビューの本文・前のコミットの内容・指摘が書かれた時点の記述・作者の返答だけを根拠にしない。直っていることを確かめたものを、未対応と書かない`,
   "- 未対応と書く指摘には、先頭のコミットのどのファイルのどの箇所を読んで、まだ直っていないと判断したか（その箇所に何が書かれていて、何が足りないか）を1行で添える。箇所を示せない（読んでいない・確かめていない）ものは、未対応と書かない",
+  `- 本文の指摘の節の見出しは「指摘」にする（Markdown の見出し行で、見出しの文字は「指摘」だけ）。指摘ごとに、行頭を ${MUST_TAG} か ${SUGGESTION_TAG} で始める（太字の見出しでもよい）。sacty は、この節の指摘だけを、直しに入る前の提案の選り分けの対象にする。総評・前回の指摘などの別の節には、指摘の頭を付けた行を書かない`,
   `- 判定 changes_required は、先頭のコミットで成り立つ ${MUST_TAG} の指摘が1件以上あるときだけにする（今回新しく見つけたもの、または上のとおり今回のコードで未対応と確かめた前回・既存の ${MUST_TAG}。再レビューで、重みを見直して ${SUGGESTION_TAG} として扱う前回の指摘は、数えない）。本文で「未対応」と書いたことと、行へのコメントの重さ・判定が食い違わないようにする（${MUST_TAG} の根拠が本文にも行へのコメントにも無いのに、changes_required にしない）`,
 ];
 
@@ -1026,7 +1027,7 @@ function viewpointLines(viewpoints: readonly TestViewpoint[]): string[] {
  * 指摘がある（`source`。PBI-275）。エージェントに渡すときは remarkSections で分ける。
  */
 export function humanRemarks(task: Task) {
-  return task.remarks.filter((r) => !r.voided);
+  return task.remarks.filter((r) => !r.voided && !r.triaged);
 }
 
 /**
@@ -6760,6 +6761,7 @@ const RUN_ROLE_NAME: Record<string, string> = {
   guardian: "以前の版の AI の判定（ゴールガーディアン）",
   "final-review": "最終レビュー",
   rework: "差し戻し先の判断",
+  triage: "提案の選り分け",
   chat: "質問への答え（オーケストレーター）",
   "error-analysis": "エラーの分析（オーケストレーター）",
   export: "成果の書き出し",

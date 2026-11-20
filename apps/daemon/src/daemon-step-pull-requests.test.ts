@@ -5619,6 +5619,39 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           activity.close();
         });
 
+        it("実装が断った後の判定し直しが [提案] だけを残しても、選り分けず、今までどおりの文言（implement.declinedAgain）で一時停止する（PBI-436）", async () => {
+          const made = await reviewed([
+            declined(),
+            verdictOut(
+              "suggestions",
+              "# 評価\n\n## 指摘\n\n**[提案] 別の提案**（src/pay.ts）\n別の提案の説明。",
+            ),
+          ]);
+          const { pulls, id, childId } = made;
+          await settle(made.service, id);
+          await made.service.runNext(id);
+          await made.service.checkPullRequests();
+          expect(restarts(made.service, childId)).toHaveLength(1);
+          await runReview(made.service, childId);
+          pulls.feedbackBy[7] = [posted(pulls, 0), posted(pulls, 1)];
+          const before = made.executor.calls.length;
+          await made.service.checkPullRequests();
+          expect(types(made.service, id)).not.toContain("SuggestionsTriaged");
+          expect(
+            made.executor.calls
+              .slice(before)
+              .some((c) => c.command.join(" ").includes("sacty-triage")),
+          ).toBe(false);
+          const task = taskOf(made.service, id);
+          expect(task.status).toBe("paused");
+          expect(task.pausedMessage).toEqual({
+            code: "implement.declinedAgain",
+            params: { number: 7 },
+          });
+          expect(task.remarks.some((r) => r.triaged)).toBe(false);
+          made.activity.close();
+        });
+
         it("判定し直しても指摘が残れば、差し戻しと同じ追記で一時停止する。再開して、また何も変えなければ、今までどおり止まり、同じ先頭は二度と判定し直さない（デーモンの再起動・再開をまたいでも。受け入れ条件 4）", async () => {
           const made = await reviewed([
             declined(),
