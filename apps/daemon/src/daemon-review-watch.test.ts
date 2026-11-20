@@ -749,6 +749,47 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
     activity.close();
   });
 
+  it("この版より前に、投稿の前に予算で止まったタスクは、上限を上げて再開すると、レビューをやり直さず投稿する（PBI-418 条件 6）", async () => {
+    const { activity, pulls, service, executor, id, get } = await posted(["changes_required"], {
+      outputTokens: [70_000],
+      failPost: "GitHub に届かない",
+    });
+    // 投稿の前（未投稿）に、予算で一時停止した状態にする
+    pulls.reviewFail = undefined;
+    service.resume(id, {});
+    (service as unknown as { append: (t: unknown, e: unknown[]) => void }).append(get(), [
+      { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+    ]);
+    expect(get().status).toBe("paused");
+    expect(get().pausedReason).toBe("budget");
+    expect(get().reviewPost).toBeUndefined();
+    const runs = executor.calls.length;
+    expect(() => service.resume(id, {})).toThrow(/新しい上限が必要/);
+    service.resume(id, { capUsd: 5 });
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(1);
+    expect(get().reviewPost).toBeDefined();
+    expect(executor.calls.length).toBe(runs);
+    activity.close();
+  });
+
+  it("上限を超える実行の途中で人が一時停止を頼んだら、投稿しない（PBI-418 条件 5）", async () => {
+    const { activity, pulls, service, executor, id, get } = await posted(["changes_required"], {
+      outputTokens: [70_000],
+      failPost: "GitHub に届かない",
+    });
+    pulls.reviewFail = undefined;
+    service.resume(id, {});
+    const runs = executor.calls.length;
+    const paused = service.pause(id);
+    await service.runNext(id);
+    await paused;
+    expect(pulls.reviews).toHaveLength(0);
+    expect(get().reviewPost).toBeUndefined();
+    expect(executor.calls.length).toBe(runs);
+    activity.close();
+  });
+
   it("作者の返信で判定し直す回には、対象を確かめた後・投稿の前に書かれた返信も作者の返答として渡し、判定し直す回であることを伝える", async () => {
     const { activity, pulls, service, executor, id, tick } = await posted(
       ["changes_required", "suggestions", "suggestions"],
