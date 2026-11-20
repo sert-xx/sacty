@@ -11481,6 +11481,11 @@ export class TaskService {
                       })),
                     }
                   : {}),
+                ...(asked?.reason === "triaged" &&
+                asked.number === reviewTarget.number &&
+                sameCommit(asked.commit, reviewTarget.headCommit)
+                  ? { triagedRejudge: true as const }
+                  : {}),
                 ...(asked?.awaitsDecision &&
                 asked.number === reviewTarget.number &&
                 sameCommit(asked.commit, reviewTarget.headCommit)

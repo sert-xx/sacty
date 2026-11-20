@@ -442,4 +442,39 @@ describe("再レビューの指示への、対応しないとした提案の渡�
     const old = rereviewLines(reviewTask({ reviewRejudgeCommit: HEAD }), [], { deferred: [] });
     for (const line of declinedLine(old)) expect(line).not.toContain("declinedByAuthor");
   });
+  it("選り分けで始めた判定し直しの回（triaged）だけ、新しい指摘を要修正の重みのものだけにさせる。実装が断った後の判定し直し・通常の再レビューには入れない", () => {
+    const rule = "新しい指摘として出してよいのは、[要修正] の重みのものだけ";
+    const rejudged = reviewTask({ reviewRejudgeCommit: HEAD });
+    const triaged = rereviewLines(rejudged, [], {
+      deferred: [],
+      declinedByAuthor: declined(2),
+      triagedRejudge: true,
+    }).join("\n");
+    expect(triaged).toContain(rule);
+    expect(triaged).toContain(
+      "[提案] の重み（should・nit）の新しい指摘は、本文にも行へのコメントにも出さず",
+    );
+    expect(triaged).toContain("判定は no_findings（指摘なし）にする");
+    // 再レビューの範囲を絞る回でも、絞らない回でも効く
+    const narrowed = rereviewLines(
+      rejudged,
+      [],
+      { deferred: [], declinedByAuthor: declined(2), triagedRejudge: true },
+      { narrowed: true },
+    ).join("\n");
+    expect(narrowed).toContain(rule);
+    // 実装が断った後の判定し直し（対応しないとした提案が過去にあっても）には入れない
+    const declinedRound = rereviewLines(rejudged, [], {
+      deferred: [],
+      declinedByAuthor: declined(2),
+    }).join("\n");
+    expect(declinedRound).not.toContain(rule);
+    // 通常の再レビュー（判定し直しの先頭でない回）にも入れない
+    const normal = rereviewLines(reviewTask(), [], {
+      deferred: [],
+      declinedByAuthor: declined(2),
+      triagedRejudge: true,
+    }).join("\n");
+    expect(normal).not.toContain(rule);
+  });
 });

@@ -234,6 +234,8 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     expect(prompt).toContain("名前の付け方");
     expect(prompt).toContain("未対応に数えず");
     expect(prompt).toContain("PR を作った側が対応しないと判断した");
+    // 選り分けで始めた回は、新しい指摘を [要修正] の重みのものだけにさせる
+    expect(prompt).toContain("新しい指摘として出してよいのは、[要修正] の重みのものだけ");
     // 指摘なし：ドラフトを外して人の承認を待つ。判定し直しは繰り返さない
     await service.checkPullRequests();
     await service.checkPullRequests();
