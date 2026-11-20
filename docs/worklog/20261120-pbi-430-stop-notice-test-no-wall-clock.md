@@ -21,7 +21,7 @@
 - `npx biome check --error-on-warnings .`：通った。
 - `npm run typecheck`：通った。
 - `npx vitest run --no-file-parallelism`：通った。
-- 本体の、解消が期限を超えたときに知らせの通信を止める処理（`service.ts` の `pending?.abort()`）を外すと、このテストが落ちる。理由の検査で落ちる（`expected undefined to be 'AbortError'`）。確かめた後は元に戻した。
+- 本体の、解消が期限を超えたときに知らせの通信を止める処理（`service.ts` の `pending?.abort()`）を外すと、このテストが落ちる。落ちるのは、理由の検査より前にある `aborted` の検査（`expected false to be true`）である。理由の検査（`AbortError`）が捕まえるのは、知らせ2が解消の止める合図ではなく自分の期限で先に止まる場合である。確かめた後は元に戻した。
 - 30 回の繰り返し：`npx vitest run --no-file-parallelism apps/daemon/src/daemon-implement.test.ts -t "解消が期限を超えて知らせを待てなかったとき"` を 30 回実行し、失敗は 0 件だった。
 - CPU 負荷のもと：6 コアの機械で、CPU を使い切るプロセスを 5 つ動かしたまま、同じコマンドを 30 回実行し、失敗は 0 件だった。
 
