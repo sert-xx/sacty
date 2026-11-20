@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-421
 - 置き換え元: [依頼が軽いときは、自己レビューの観点を絞る](20261117-0359-superseded-narrow-self-review-for-light-requests.md)（PR のレビューを対象外とした部分）
-- 置き換え先: [PR のリスク評価は、レビューが指摘なしになった回だけにする](20261121-0300-risk-assessment-only-when-review-has-no-findings.md)（リスク評価の引き継ぎ。再レビューの絞りは、そのまま）
+- 置き換え先: [PR のリスク評価は、レビューが指摘なしになった回だけにする](20261121-0300-risk-assessment-only-when-review-has-no-findings.md)（リスク評価の引き継ぎ）、[再レビューは、前回の指摘の確認と前回以降の差分に絞る](20261121-0400-rereview-narrowed-to-previous-findings-and-changes.md)（観点の絞り。検証の絞りは、そのまま）
 
 ## 背景
 

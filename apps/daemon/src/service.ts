@@ -436,6 +436,7 @@ import {
   type RawServices,
   REREVIEW_DOCS_ONLY_PATHS_MAX,
   type RereviewDocsOnly,
+  type RereviewNarrow,
   type ReviewCi,
   type ReviewDeferrals,
   type ReviewReworkContext,
@@ -553,6 +554,37 @@ import {
  * 読み取り専用で別にマウントする。作業領域の写しは PR 由来のリンクやファイルを含むので、その中には書かない。
  */
 const REVIEW_DIFF_FILE = "pr.diff";
+/** 再レビューを絞る回の、前回以降の差分の全体を置くファイル（PBI-432）。 */
+const REREVIEW_DIFF_FILE = "since.diff";
+/**
+ * 再レビューの範囲を絞る条件の数（PBI-432）。前回以降に変わった行数が、今回の PR 全体の差分の行数の半分を超えたら絞らない
+ * （PR の大半を作り直した再レビューは、PR 全体を見る）。前回の時点の PR の差分に無かったファイルが、前回以降に変わったファイルの
+ * 半分を超え、かつ 3 つ以上あるときも絞らない（前回までに見ていない所を広く触っている）。前回以降の差分が文字数の上限を超える
+ * ときは、レビューの実行に渡せないので絞らない。
+ */
+const REREVIEW_NARROW_HALF_NUM = 1;
+const REREVIEW_NARROW_HALF_DEN = 2;
+const REREVIEW_NARROW_NEW_FILES_MIN = 3;
+const REREVIEW_SINCE_DIFF_MAX = 1_000_000;
+
+/** 差分の、追加・削除した行の数（ファイルの見出しの `---`・`+++` は数えない）。 */
+function countChangedLines(diff: string): number {
+  let count = 0;
+  let inHeader = false;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      inHeader = true;
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      inHeader = false;
+      continue;
+    }
+    if (inHeader) continue;
+    if (line.startsWith("+") || line.startsWith("-")) count++;
+  }
+  return count;
+}
 
 /** 前回からの差分が文書だけかを確かめるとき、見るディレクトリの数の上限（PBI-421）。 */
 const DOCUMENTS_ONLY_DIRS_MAX = 200;
@@ -569,14 +601,17 @@ function hasControlCharacter(text: string): boolean {
 /**
  * PR の差分（git diff の出力）の、変わったファイルのパス（PBI-421）。名前の変更は変更元と変更先の両方。名前を引用符で囲んだ
  * （特殊な文字を含む）ファイルは、読み取れないので、拡張子の無い印の名前で入れる（文書とは見なさない）。
+ * newNamesOnly のときは、名前の変更を変更先の 1 件だけで数える（前回以降のファイルの数を数える PBI-432 の条件用）。
  */
-function diffPaths(diff: string): string[] {
+function diffPaths(diff: string, newNamesOnly = false): string[] {
   const paths: string[] = [];
   for (const line of diff.split("\n")) {
     if (!line.startsWith("diff --git ")) continue;
     const named = line.match(/^diff --git a\/(.+) b\/(.+)$/);
-    if (named?.[1] && named[2]) paths.push(named[1], named[2]);
-    else paths.push("unreadable-path");
+    if (named?.[1] && named[2]) {
+      if (newNamesOnly) paths.push(named[2]);
+      else paths.push(named[1], named[2]);
+    } else paths.push("unreadable-path");
   }
   return paths;
 }
@@ -11107,6 +11142,8 @@ export class TaskService {
     let reviewDiff: string | undefined;
     // 再レビューで、前回の先頭からの差分が文書だけと確かめたときの、前回の先頭と変わったパス（PBI-421）
     let rereviewDocsOnly: RereviewDocsOnly | undefined;
+    // 再レビューで、範囲と観点を前回の指摘の確認と前回以降の差分に絞るときの、前回の先頭と前回以降の差分（PBI-432）
+    let rereviewNarrow: RereviewNarrow | undefined;
     // 再レビューで、前回の投稿の後の PR の作者の返答（PBI-111）
     let reviewReplies: PullRequestFeedback[] | "unreadable" | undefined;
     // PR にすでにあるレビュー・コメント（他のレビュアーの指摘と作者の返答。PBI-144）
@@ -11177,8 +11214,16 @@ export class TaskService {
               reviewTarget.headCommit,
               { full: true },
             );
-            // 前回の先頭からの差分が文書だけなら、起動する観点と検証を絞らせる（PBI-421）。確かめられなければ絞らない
+            // 前回の先頭からの差分が文書だけなら、検証を絞らせる（観点は規則 11）（PBI-421）。確かめられなければ絞らない
             rereviewDocsOnly = await this.rereviewDocsOnlyOf(
+              latest,
+              reviewTarget,
+              gitDir,
+              reviewDiff,
+              reviewAuth,
+            );
+            // 前回の自分の投稿の記録がある回だけ、範囲と観点を絞れるか確かめる（PBI-432）。確かめられなければ絞らない
+            rereviewNarrow = await this.rereviewNarrowOf(
               latest,
               reviewTarget,
               gitDir,
@@ -11247,6 +11292,17 @@ export class TaskService {
           if (reviewDiff !== undefined && reviewDiffDir) {
             mkdirSync(reviewDiffDir, { recursive: true });
             writeFileSync(join(reviewDiffDir, REVIEW_DIFF_FILE), reviewDiff);
+            if (rereviewNarrow && !rereviewNarrow.sameHead) {
+              // 補助のファイル。書けなければ、絞らずに PR 全体を見る側へ倒す（実行を失敗にしない）
+              try {
+                writeFileSync(join(reviewDiffDir, REREVIEW_DIFF_FILE), rereviewNarrow.diff);
+              } catch (error) {
+                console.warn(
+                  `[daemon] レビューのタスク ${task.id} で、前回以降の差分のファイルを書けなかったので、再レビューの範囲を絞りません（PR 全体を見ます）：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+                );
+                rereviewNarrow = undefined;
+              }
+            }
           }
         } catch (error) {
           if (multiRepoStep) copyFailed = true;
@@ -11402,6 +11458,16 @@ export class TaskService {
               ...(reviewSecurity ? { reviewSecurity } : {}),
               ...(reviewDeferrals ? { reviewDeferrals } : {}),
               ...(rereviewDocsOnly ? { rereviewDocsOnly } : {}),
+              ...(rereviewNarrow
+                ? {
+                    rereviewNarrow: {
+                      ...rereviewNarrow,
+                      ...(reviewDiffDir && !rereviewNarrow.sameHead
+                        ? { diffFile: `${CONTAINER_REVIEW_DIR}/${REREVIEW_DIFF_FILE}` }
+                        : {}),
+                    },
+                  }
+                : {}),
               // 指摘なしと判定するときにリスク評価を出させる対象か（PBI-429）
               ...(step === "review"
                 ? { reviewRisk: this.assessesReviewRisk(this.mustGet(task.id)) }
@@ -13071,7 +13137,7 @@ export class TaskService {
   }
 
   /**
-   * 再レビューの起動する観点と検証を絞れるか（PBI-421。スキル review-dispatch の規則 10）。次を全部満たすときだけ、前回の先頭と
+   * 再レビューの検証を絞れるか（観点は規則 11）（PBI-421。スキル review-dispatch の規則 10）。次を全部満たすときだけ、前回の先頭と
    * 変わったパスを返す。確かめられない・迷うときは、絞らない（undefined）。
    * - 前回の回があり、先頭が前回と違い、向き先のブランチが前回と今回の両方にあって同じ
    * - 前回の回に判定が付いている
@@ -13141,6 +13207,132 @@ export class TaskService {
       );
       return undefined;
     }
+  }
+
+  /**
+   * 再レビューの範囲と起動する観点を、前回の指摘の確認と前回以降の差分に絞れるか（PBI-432。スキル review-dispatch の規則 11）。
+   * このレビューのタスクに、前回の自分の投稿の記録（previousReview）がある回だけが対象（記録の無い回は初回で、PR にほかの人・
+   * ほかの sacty のレビューがあっても絞らない）。次のどれかに当たる・確かめられない・迷うときは、絞らない（undefined。理由を
+   * ログに 1 行残す）。
+   * - 前回の先頭を取得できない・今回の先頭の祖先でない（履歴の書き換え）
+   * - 前回の起点・向き先のブランチが無い、または PR の差分の起点（merge-base）・向き先が前回と変わった
+   * - 前回の回に判定が無い（GitHub の再依頼で作ったタスクは、前回の回の判定を持たないので絞らない。判定は写さない）
+   * - 前回の回が、担当を 1 件も起動しなかった回（reviewDispatch の担当の数が 0 件と数えた回。数えられなかった null・記録が無い回は、起動できなかった証拠が無いので絞る側に倒す。PBI-379 は、数えられなかった実行をやり直さず使う）
+   * - 前回以降に変わった行数が、今回の PR 全体の差分の行数の半分を超える
+   * - 前回の時点の PR の差分に無いファイルが 3 つ以上あり、かつ変わったファイルの半分を超える
+   * - 前回以降の差分が空・大きすぎる・読めないパス（制御文字・引用符）がある
+   * - PR を作ったタスクが、前の工程へ戻って作り直した後の提出（前回の指摘の戻し先が、その PR の工程より前）
+   * 同じ先頭を判定し直す回（親がすべて断った・作者が push 無しで返信した）は、前回以降の差分が無いので、差分の条件を見ず、
+   * 前回の指摘の確認だけにする。
+   */
+  private async rereviewNarrowOf(
+    task: Task,
+    target: NonNullable<Task["reviewTarget"]>,
+    gitDir: string,
+    prDiff: string,
+    auth: Record<string, string> | undefined,
+  ): Promise<RereviewNarrow | undefined> {
+    const previous = task.previousReview;
+    if (!previous) return undefined;
+    const skip = (reason: string): undefined => {
+      console.warn(
+        `[daemon] レビューのタスク ${task.id} で、再レビューの範囲を絞りませんでした（PR 全体を見ます）：${reason}`,
+      );
+      return undefined;
+    };
+    const sameHead = previous.headCommit === target.headCommit;
+    // 同じ先頭の判定のし直し：いまの回が declined・replied の再開で始まり、その先頭の記録がある回だけ（手動の再レビューは含めない）
+    const rejudging =
+      (task.reviewRestartReason === "declined" &&
+        task.reviewRejudgeCommit !== undefined &&
+        sameCommit(task.reviewRejudgeCommit, target.headCommit)) ||
+      (task.reviewRestartReason === "replied" &&
+        task.reviewReplyCommit !== undefined &&
+        sameCommit(task.reviewReplyCommit, target.headCommit));
+    if (sameHead && !rejudging) {
+      return skip("前回と同じ先頭で、判定し直す回ではありません");
+    }
+    if (!previous.baseCommit || !previous.baseBranch) {
+      return skip("前回の起点・向き先の記録がありません");
+    }
+    if (previous.baseBranch !== target.baseBranch) return skip("PR の向き先が前回と変わりました");
+    if (!task.reviewVerdicts?.some((v) => v.round === previous.round && v.verdict)) {
+      return skip("前回の回に判定の記録がありません");
+    }
+    if (task.reviewDispatch?.round === previous.round && task.reviewDispatch.subagents === 0) {
+      return skip("前回の回は、観点ごとの担当を 1 件も起動していません（担当が 0 件と数えた）");
+    }
+    if (this.reworkedFromEarlierStep(task, previous.round)) {
+      return skip("PR を作ったタスクが、前の工程へ戻って作り直した後の提出です");
+    }
+    const secrets = Object.values(auth ?? {});
+    try {
+      await this.deps.repos.fetchCommits(gitDir, [previous.headCommit, previous.baseCommit], auth);
+      const before = await this.deps.repos.mergeBaseOf(
+        gitDir,
+        previous.headCommit,
+        previous.baseCommit,
+      );
+      const now = await this.deps.repos.mergeBaseOf(gitDir, target.headCommit, target.baseCommit);
+      if (!before || !now || before !== now) return skip("PR の差分の起点が前回と変わりました");
+      if (sameHead) return { previousCommit: previous.headCommit, diff: "", sameHead: true };
+      if (!(await this.deps.repos.isAncestor(gitDir, previous.headCommit, target.headCommit))) {
+        return skip("前回の先頭が今回の先頭の祖先ではありません（履歴の書き換え）");
+      }
+      const since = await this.deps.repos.diffCommits(
+        gitDir,
+        previous.headCommit,
+        target.headCommit,
+        {
+          full: true,
+        },
+      );
+      if (since.trim() === "") return skip("前回以降の差分が空です");
+      if (since.length > REREVIEW_SINCE_DIFF_MAX)
+        return skip("前回以降の差分が大きすぎて渡せません");
+      const sincePaths = [...new Set(diffPaths(since))];
+      if (sincePaths.includes("unreadable-path") || sincePaths.some(hasControlCharacter)) {
+        return skip("前回以降の差分に、読めないパス（制御文字・引用符を含む名前）があります");
+      }
+      if (
+        countChangedLines(since) * REREVIEW_NARROW_HALF_DEN >
+        countChangedLines(prDiff) * REREVIEW_NARROW_HALF_NUM
+      ) {
+        return skip("前回以降に変わった行数が、PR 全体の差分の半分を超えています");
+      }
+      const earlier = new Set(
+        await this.deps.repos.changedPaths(gitDir, before, previous.headCommit),
+      );
+      // 名前の変更は 1 ファイルとして数える（変更先の名前だけ。earlier は名前の変更を検出しない取り方なので、旧名と新名を両方
+      // 数えると、PR の外のファイルの名前だけの変更が 2 件になり、条件が早く当たる）
+      const sinceFiles = [...new Set(diffPaths(since, true))];
+      const added = sinceFiles.filter((path) => !earlier.has(path)).length;
+      if (
+        added >= REREVIEW_NARROW_NEW_FILES_MIN &&
+        added * REREVIEW_NARROW_HALF_DEN > sinceFiles.length * REREVIEW_NARROW_HALF_NUM
+      ) {
+        return skip("前回以降に変わったファイルの多くが、前回の時点の PR の差分に無いものです");
+      }
+      return { previousCommit: previous.headCommit, diff: since, sameHead: false };
+    } catch (error) {
+      return skip(
+        `前回以降の差分を確かめられませんでした：${renderMessage(redactText(errorText(error), secrets), "ja")}`,
+      );
+    }
+  }
+
+  /**
+   * PR を作ったタスクが、前の工程へ戻って作り直した後の提出か（PBI-432）。PR のレビューの子タスクで、前回の回に示した指摘の
+   * 戻し先が、その PR の工程より前の工程だったときに当たる。記録が無い（取り込んだ PR・戻し先の記録が無い）ときは false。
+   */
+  private reworkedFromEarlierStep(task: Task, round: number): boolean {
+    const of = task.reviewOf;
+    const parent = of && this.tasks.get(of.taskId);
+    if (!of || !parent) return false;
+    const rework = task.reviewVerdicts?.find((v) => v.round === round)?.rework;
+    if (!rework) return false;
+    const target = reviewReworkTarget(rework, reworkTargets(parent, of.step), of.step);
+    return target !== undefined && target !== of.step;
   }
 
   /**
