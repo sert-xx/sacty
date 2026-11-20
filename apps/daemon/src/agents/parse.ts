@@ -429,7 +429,7 @@ export class ClaudeOutcomeReader extends OutcomeReader {
     // CLI が報告した費用とモデルごとの使用量（PBI-301）。セッションを再開・複製した実行は、前の実行の分も入るので使わない
     const report: CostReport = this.resumed ? {} : costReport(json);
     if (this.prefer && this.preferred === undefined && this.results >= 2) {
-      this.noticeText = `result が ${this.results} 回出ましたが、${this.prefer} を含むものが無いので、最後の result を答えにしました（使用量：${total ? "modelUsage" : "各 result の usage の合計"}）`;
+      this.noticeText = `result が ${this.results} 回出ましたが、${this.prefer === COMPLETION_FENCE ? "閉じた申告のコードブロック（" + COMPLETION_FENCE + "）" : this.prefer} を含むものが無いので、最後の result を答えにしました（使用量：${total ? "modelUsage" : "各 result の usage の合計"}）`;
     }
     const result = typeof json.result === "string" ? json.result : "";
     if (json.is_error === true || exitCode !== 0) {

@@ -80,6 +80,7 @@ export type Invocation = {
   /**
    * claude-json で、本文にする result の目印（レビューの工程の判定の塊の、引用符で囲んだ見出し。名前に触れただけの文で当たらないように。PBI-154）。result が何回も出たら、この文字列を
    * 含む最後の result を本文にする（含むものが無ければ、最後の result）。
+   * 例外：実装の工程は引用符なしの申告の言語の名前（sacty-completion）で、閉じた申告のコードブロックの有無で見分ける（PBI-415）。
    */
   preferResult?: string;
   /**

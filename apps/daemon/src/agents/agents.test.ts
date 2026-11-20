@@ -840,6 +840,7 @@ describe("実装の工程の答えの選び方（PBI-415）", () => {
     const { outcome, notice } = read(["途中", "申告は sacty-completion に書きます。"]);
     expect(outcome).toMatchObject({ output: "申告は sacty-completion に書きます。" });
     expect(notice).toContain("result が 2 回出ました");
+    expect(notice).toContain("閉じた申告のコードブロック");
   });
 
   it("result が1回だけ、最後の result が申告を含む実行は、今までと同じ", () => {
