@@ -1351,9 +1351,9 @@ describe("工程の実行と費用", () => {
     });
 
     it("明ける時刻を読めたら、cooldown_minutes より長くても短くても、その時刻まで代わりを使い、AgentFellBack の until も合う", async () => {
-      for (const [cooldownMin, resetIso] of [
-        [30, "2026-10-20T05:00:00.000Z"],
-        [120, "2026-10-20T01:00:00.000Z"],
+      for (const [cooldownMin, resetIso, wall] of [
+        [30, "2026-10-20T05:00:00.000Z", "2:00pm"],
+        [120, "2026-10-20T01:00:00.000Z", "10:00am"],
       ] as const) {
         const activity = new SqliteActivityStore(`${dbPath}-${cooldownMin}`);
         let now = Date.parse("2026-10-20T00:00:00Z");
@@ -1361,7 +1361,8 @@ describe("工程の実行と費用", () => {
         const readable: AgentOutcome = {
           kind: "failed",
           reason: "usage_limit",
-          message: `You've hit your weekly limit · resets ${resetIso === "2026-10-20T05:00:00.000Z" ? "2:00pm" : "10:00am"} (Asia/Tokyo)`,
+          message: `You've hit your weekly limit · resets ${wall} (Asia/Tokyo)`,
+          cliText: true,
         };
         const { service, executor } = makeService(
           activity,
@@ -1381,7 +1382,75 @@ describe("工程の実行と費用", () => {
         await service.runNext(after.id);
         expect(executor.calls[3]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
         activity.close();
+        rmSync(`${dbPath}-${cooldownMin}`, { force: true });
       }
+    });
+
+    it("エージェント自身の発言（cliText の無い文）の時刻は読まず、cooldown_minutes で戻る", async () => {
+      const activity = new SqliteActivityStore(`${dbPath}-speech`);
+      const now = Date.parse("2026-10-20T00:00:00Z");
+      const { service } = makeService(
+        activity,
+        [
+          {
+            kind: "failed",
+            reason: "usage_limit",
+            message: "weekly limit · resets Fri 12:00am (UTC)",
+          },
+          completed(1_000),
+        ],
+        { config: withFallback(30 * 60_000), secrets, now: () => now },
+      );
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      expect(fellBack(service, task.id).map((p) => p.until)).toEqual(["2026-10-20T00:30:00.000Z"]);
+      activity.close();
+      rmSync(`${dbPath}-speech`, { force: true });
+    });
+
+    it("読めた長い期限を、後から来た読めない失敗で短くしない", async () => {
+      const activity = new SqliteActivityStore(`${dbPath}-max`);
+      const now = Date.parse("2026-10-20T00:00:00Z");
+      const { service } = makeService(activity, [completed(1_000)], {
+        config: withFallback(30 * 60_000),
+        secrets,
+        now: () => now,
+      });
+      const internals = service as unknown as {
+        markLimited(agent: { id: string }, outcome: AgentOutcome): void;
+        limitedAgents: Map<string, number>;
+      };
+      const agent = { id: "a" };
+      internals.markLimited(agent, {
+        kind: "failed",
+        reason: "usage_limit",
+        message: "weekly limit · resets 2:00pm (Asia/Tokyo)",
+        cliText: true,
+      });
+      internals.markLimited(agent, {
+        kind: "failed",
+        reason: "usage_limit",
+        message: "429",
+        cliText: true,
+      });
+      expect(internals.limitedAgents.get("a")).toBe(Date.parse("2026-10-20T05:00:00Z"));
+      // 先が読めない（短い）ときは、後の読めた期限になる
+      internals.markLimited(
+        { id: "b" },
+        { kind: "failed", reason: "usage_limit", message: "429", cliText: true },
+      );
+      internals.markLimited(
+        { id: "b" },
+        {
+          kind: "failed",
+          reason: "usage_limit",
+          message: "weekly limit · resets 2:00pm (Asia/Tokyo)",
+          cliText: true,
+        },
+      );
+      expect(internals.limitedAgents.get("b")).toBe(Date.parse("2026-10-20T05:00:00Z"));
+      activity.close();
+      rmSync(`${dbPath}-max`, { force: true });
     });
 
     it("明ける時刻を読めないとき・一時的な混雑のときは、cooldown_minutes で戻る", async () => {
@@ -1395,7 +1464,7 @@ describe("工程の実行と費用", () => {
         const { service, executor } = makeService(
           activity,
           [
-            { kind: "failed", reason: "usage_limit", message },
+            { kind: "failed", reason: "usage_limit", message, cliText: true },
             completed(1_000),
             completed(1_000),
             completed(1_000),

@@ -8986,9 +8986,12 @@ export class TaskService {
   private markLimited(agent: AgentConfig, outcome: AgentOutcome): void {
     if (outcome.kind !== "failed" || outcome.reason !== "usage_limit") return;
     const now = this.now();
-    // 失敗の文から明ける時刻を確かに読み取れたときは、その時刻まで。読めないときは cooldown_minutes
-    const until = parseLimitReset(String(outcome.message), now) ?? now + this.fallbackCooldownMs();
-    this.limitedAgents.set(agent.id, until);
+    // CLI 自身の失敗の文から明ける時刻を確かに読み取れたときは、その時刻まで。読めないときは cooldown_minutes
+    const text = outcome.cliText && typeof outcome.message === "string" ? outcome.message : "";
+    const until = parseLimitReset(text, now) ?? now + this.fallbackCooldownMs();
+    // 同じエージェントの別の実行が先に読んだ長い期限を、後の読めない失敗で短くしない
+    const current = this.limitedAgents.get(agent.id);
+    this.limitedAgents.set(agent.id, current !== undefined && current > until ? current : until);
   }
 
   /**

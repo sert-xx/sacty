@@ -2,7 +2,7 @@
  * 利用上限で失敗した文から、上限が明ける時刻を読み取る（PBI-428）。確かめた形だけを読み、時間帯を推測しない。
  *
  * 読む形：
- * - Claude Code：`… session|weekly|Opus|Sonnet limit · resets [Mon ]3:45pm (Asia/Tokyo)`（時間帯の名前つき）
+ * - Claude Code：`… session|weekly limit · resets [Mon ]3:45pm (Asia/Tokyo)`（時間帯の名前つき）
  * - Claude Code の古い形：`Claude AI usage limit reached|1760000000`（エポックからの秒）
  *
  * 読まない形（時間帯を確かに知る手段が無い）：時間帯の名前の無い Claude Code の `resets 3:45pm`、Codex の `try again at …`。
@@ -12,7 +12,7 @@
 /** 読む文の長さの上限（外から来た文なので、これより後ろは読まない）。 */
 const MESSAGE_MAX = 2000;
 /** 失敗の時刻のすぐ前（時計のずれ）と見なす幅。この中の時刻は、翌日・翌週とは読まず、読み取れない扱いにする。 */
-export const LIMIT_RESET_PAST_GRACE_MS = 30 * 60_000;
+const LIMIT_RESET_PAST_GRACE_MS = 30 * 60_000;
 /** 失敗の時刻から、これより先の時刻は読まない（週の上限が収まる長さ）。 */
 export const LIMIT_RESET_MAX_AHEAD_MS = 8 * 24 * 60 * 60_000;
 
@@ -21,7 +21,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // 量指定は、すべて上限つきで、入れ子にしない（処理時間が文の長さに比例する形だけ）
 const CLAUDE_RESET =
-  /(?:session|weekly|Opus|Sonnet) limit · resets (?:(Sun|Mon|Tue|Wed|Thu|Fri|Sat) )?(\d{1,2})(?::(\d{2}))?(am|pm) \(([A-Za-z0-9_+/-]{1,40})\)/;
+  /(?:session|weekly) limit · resets (?:(Sun|Mon|Tue|Wed|Thu|Fri|Sat) )?(\d{1,2})(?::(\d{2}))?(am|pm) \(([A-Za-z0-9_+/-]{1,40})\)/;
 const EPOCH_RESET = /Claude AI usage limit reached\|(\d{10})(?!\d)/;
 
 function formatterFor(zone: string): Intl.DateTimeFormat | undefined {
@@ -35,7 +35,6 @@ function formatterFor(zone: string): Intl.DateTimeFormat | undefined {
       hour: "numeric",
       minute: "numeric",
       second: "numeric",
-      weekday: "short",
     });
   } catch {
     return undefined;
@@ -45,7 +44,6 @@ function formatterFor(zone: string): Intl.DateTimeFormat | undefined {
 interface ZoneParts {
   /** その時間帯の壁時計を、UTC として表したミリ秒。 */
   wallMs: number;
-  weekday: number;
 }
 
 function zoneParts(fmt: Intl.DateTimeFormat, ms: number): ZoneParts {
@@ -59,7 +57,7 @@ function zoneParts(fmt: Intl.DateTimeFormat, ms: number): ZoneParts {
     Number(get.minute),
     Number(get.second),
   );
-  return { wallMs, weekday: WEEKDAYS.indexOf(get.weekday ?? "") };
+  return { wallMs };
 }
 
 /** 時間帯の壁時計（UTC として表したミリ秒）を、エポックからのミリ秒にする。 */
