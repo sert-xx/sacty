@@ -96,7 +96,8 @@ Code: `apps/daemon/src/service.ts` (`prefetchSecrets`, `prefetchProjectSecrets`,
 
 - Before recording to the Activity, sacty replaces the values used in that run with `[REDACTED]` in the agent's result text and output.
   - Target values: retrieved secrets, the gateway token, MCP header values, the gh token, and strings of 16 or more characters in auth files
-  - It replaces the longest values first, regardless of length.
+  - Regardless of length, no character of a whole occurrence of a value is left. Occurrences that overlap other values or themselves, or where one value contains another, become a single `[REDACTED]` (occurrences that are merely adjacent stay separate `[REDACTED]`s).
+  - For output that arrives in pieces, the tail of the received text (one character shorter than the longest value) is carried over unredacted and matched together with the next piece.
   - It does not change message codes and arguments with fixed values; it replaces only free text.
 - sacty also replaces JSON strings (`"…"`) in the output that contain a value once their escapes (such as `\u0073`) are decoded with redacted strings. This is because sacty decodes the output's JSON for review comments, audits, reproduction tests, and so on.
   - A string may start at any `"` in the output (except escaped `"`). Each position is read once, so the time is proportional to the output length.
@@ -109,4 +110,4 @@ Code: `apps/daemon/src/service.ts` (`prefetchSecrets`, `prefetchProjectSecrets`,
 - sacty passes npm tokens for building images only as BuildKit secrets. Auth values cannot be written in `images.<name>.env` or `image_build.npm_config` ([Configuration](configuration.en.md)).
 - sacty retrieves gh tokens each time it uses them with `gh auth token --hostname <host> --user <account>`, and does not store them.
 
-Code: `apps/daemon/src/agents/redact.ts` (`redact`, `redactEscaped`, `redactText`, `secretStringsInJson`, `REDACTED`), `apps/daemon/src/session-logs.ts` (`secretForms`), `apps/daemon/src/platforms.ts` (`hideSecret`), `apps/daemon/src/gh.ts` (`GhCliAuth`)
+Code: `apps/daemon/src/agents/redact.ts` (`redact`, `redactEscaped`, `redactPartial`, `redactText`, `secretStringsInJson`, `REDACTED`), `apps/daemon/src/session-logs.ts` (`secretForms`, `StreamRedactor`), `apps/daemon/src/agent-sessions.ts` (`ByteRedactor`), `apps/daemon/src/platforms.ts` (`hideSecret`), `apps/daemon/src/gh.ts` (`GhCliAuth`)

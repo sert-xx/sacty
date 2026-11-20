@@ -22,7 +22,13 @@ import {
   guessSessionId,
 } from "./agent-sessions.js";
 import type { AgentOutcome } from "./agents/parse.js";
-import { redact, redactText } from "./agents/redact.js";
+import {
+  compileSecrets,
+  redact,
+  redactPartial,
+  redactText,
+  type SecretMatcher,
+} from "./agents/redact.js";
 
 /**
  * エージェントの実行ごとのセッションログ（PBI-62）。途中の出来事（エージェントの標準出力の JSONL）と標準エラー出力を、
@@ -133,30 +139,54 @@ function isHighSurrogate(code: number): boolean {
  * 次に届いた分とつなげてから伏せる（値が、届いた分・行・JSON の出来事の境目をまたいでも伏せるため）。
  */
 export class StreamRedactor {
+  /** まだ渡していない分（伏せる前のもの。値の一部が伏せられて、残りが届いても一致しなくなるのを避けるため）。 */
   private pending = "";
+  /** pending の先頭の、すでに `[REDACTED]` を渡したかたまりの中の文字数。 */
+  private covered = 0;
+  /** 前回の値の集合と木（値が変わらない間は、木を使い回す）。 */
+  private compiled: { secrets: readonly string[]; matcher: SecretMatcher } | undefined;
 
   constructor(private readonly secrets: () => readonly string[]) {}
+
+  private matcherFor(forms: readonly string[]): SecretMatcher {
+    const previous = this.compiled;
+    if (
+      previous?.secrets.length === forms.length &&
+      previous.secrets.every((s, i) => s === forms[i])
+    )
+      return previous.matcher;
+    this.compiled = { secrets: forms, matcher: compileSecrets(forms) };
+    return this.compiled.matcher;
+  }
 
   push(text: string): string {
     const forms = secretForms(this.secrets());
     const longest = forms[0]?.length ?? 0;
-    const redacted = redact(this.pending + text, forms);
-    let cut = redacted.length - Math.min(redacted.length, Math.max(0, longest - 1));
+    const buf = this.pending + text;
+    let cut = buf.length - Math.min(buf.length, Math.max(0, longest - 1));
     // サロゲートペア（絵文字・補助漢字）の途中で分けない（分けると、UTF-8 にするときに文字が壊れる）。
     // 持っておく分を1つ増やすので、持っておく長さは足りたまま
-    if (cut > 0 && isHighSurrogate(redacted.charCodeAt(cut - 1))) cut--;
-    this.pending = redacted.slice(cut);
-    return redacted.slice(0, cut);
+    if (cut > 0 && isHighSurrogate(buf.charCodeAt(cut - 1))) cut--;
+    const result = redactPartial(buf, this.matcherFor(forms), this.covered, cut);
+    this.pending = result.rest;
+    this.covered = result.covered;
+    return result.out;
   }
 
-  /** まだ渡していない分（伏せた後のもの。次に届いた分とつなげるために持っている）。 */
+  /** まだ渡していない分（伏せたもの。すでに伏せて渡したかたまりの分は除く。次に届いた分とつなげるために持っている）。 */
   peek(): string {
-    return this.pending;
+    return redactPartial(
+      this.pending,
+      this.matcherFor(secretForms(this.secrets())),
+      this.covered,
+      this.pending.length,
+    ).out;
   }
 
   flush(): string {
-    const rest = redact(this.pending, secretForms(this.secrets()));
+    const rest = this.peek();
     this.pending = "";
+    this.covered = 0;
     return rest;
   }
 }

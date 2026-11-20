@@ -136,10 +136,10 @@ Code: `packages/core/src/cost.ts` (`PricePerMTok`, `computeCostUsd`, `budgetStat
   | `<run ID>.meta.json` | Role, AI, start and end times, result, and whether it was truncated |
 
 - Per run, the first 15MB and the last 3MB of events, and the first 1MB and the last 1MB of standard error, are kept. The middle is omitted, with a marker for the omission (for JSONL, a `{"type":"sacty.truncated", …}` line).
-- Secrets are hidden before writing, including values that span chunk boundaries in the received output. Values learned later are hidden again across the whole file on close.
+- Secrets are hidden before writing, including values that span chunk boundaries in the received output (the carried-over tail is matched before it is redacted). Values learned later are hidden again across the whole file on close.
 - A write failure does not stop the run (a warning is emitted once).
 - Snapshot of a running run: the daemon remembers the logs it has opened and not yet closed, and on request returns a snapshot of their current contents (`snapshot`). Answers to questions use it ([Tasks and steps](tasks-and-steps.en.md#asking-the-orchestrator)).
-  - A snapshot joins what was written to the file and what is held in memory (the unfinished line of the head, the tail, and what is held back for redaction).
+  - A snapshot joins what was written to the file and what is held in memory (the unfinished line of the head, the tail, and what is held back for values spanning chunk boundaries, redacted before use).
   - It hides secrets again with the secrets known at that time (including values learned later), and is cut at the last newline.
   - If the part before the tail was omitted, the same marker as on close is inserted.
   - The files themselves are not changed.

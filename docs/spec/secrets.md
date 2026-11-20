@@ -111,7 +111,8 @@ sacty は取り出しを始めるたびに世代を進め、全体（設定フ�
 
 - 作業履歴に記録する前に、エージェントの結果の文と出力から、その実行で使った値を `[REDACTED]` に置き換える。
   - 対象の値：取り出した秘密情報・ゲートウェイのトークン・MCP のヘッダーの値・gh のトークン・認証ファイルの中の 16 文字以上の文字列
-  - 長い値から順に、長さにかかわらず置き換える。
+  - 長さにかかわらず、値の全体の出現に含まれる文字を1文字も残さない。ほかの値や自分自身と重なる出現・一方が他方を含む出現は、まとめて1つの `[REDACTED]` にする（隣り合うだけの出現は、別々の `[REDACTED]` のまま）。
+  - 少しずつ届く出力は、届いた分の末尾（いちばん長い値より1文字短い分）を、伏せる前の文字列のまま持ち越し、次の分とつなげてから照合する。
   - 文言のコードと決まった値の引数は変えず、自由な文だけを置き換える。
 - 出力の JSON の文字列（`"…"`）のうち、エスケープ（`\u0073` など）を戻すと値を含むものも、伏せた文字列に置き換える。
   sacty は出力の JSON をデコードして、レビューのコメント・監査・再現のテストなどに使うためである。
@@ -127,4 +128,4 @@ sacty は取り出しを始めるたびに世代を進め、全体（設定フ�
   `images.<名前>.env`・`image_build.npm_config` には認証の値を書けない（[設定](configuration.md)）。
 - gh のトークンは使うたびに `gh auth token --hostname <ホスト> --user <アカウント>` で取り出し、保存しない。
 
-コード: `apps/daemon/src/agents/redact.ts`（`redact`・`redactEscaped`・`redactText`・`secretStringsInJson`・`REDACTED`）、`apps/daemon/src/session-logs.ts`（`secretForms`）、`apps/daemon/src/platforms.ts`（`hideSecret`）、`apps/daemon/src/gh.ts`（`GhCliAuth`）
+コード: `apps/daemon/src/agents/redact.ts`（`redact`・`redactEscaped`・`redactPartial`・`redactText`・`secretStringsInJson`・`REDACTED`）、`apps/daemon/src/session-logs.ts`（`secretForms`・`StreamRedactor`）、`apps/daemon/src/agent-sessions.ts`（`ByteRedactor`）、`apps/daemon/src/platforms.ts`（`hideSecret`）、`apps/daemon/src/gh.ts`（`GhCliAuth`）
