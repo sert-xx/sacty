@@ -3261,3 +3261,133 @@ describe("タスクの並行実行（PBI-30）", () => {
     activity.close();
   });
 });
+
+describe("組み合わせ skip-requirements（設計 → 実装。PBI-420）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const design = out(
+    [
+      "# 設計",
+      block({
+        "sacty-test-viewpoints": [{ title: "A", input: "Aの入力", expected: "Aの期待結果" }],
+      }),
+    ].join("\n\n"),
+  );
+  const implement = out(
+    [
+      "# 実装の説明",
+      block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["a.test.ts › A"] }] }),
+    ].join("\n\n"),
+  );
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  it("組み合わせの工程は、設計 → 実装 → マージの後の監視で、要求要件の工程を持たない", () => {
+    expect(STEP_PLANS["skip-requirements"]).toEqual(["design", "implement", "deployment"]);
+  });
+
+  it("人が指定したタスクは、オーケストレーターに組み合わせを選び直させず、設計 → 設計の承認 → 実装の順に進む", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [
+        out(
+          block({
+            "sacty-steps": { plan: "skip-requirements", reason: "指定", testCommand: "npm test" },
+          }),
+        ),
+        design,
+        implement,
+      ],
+      { realPlanner: true },
+    );
+    const task = service.createTask({
+      projectId: "default",
+      title: "国コード",
+      body: "国コードを足す",
+      plan: "skip-requirements",
+    });
+    await service.runNext(task.id);
+    // オーケストレーターの候補は、人が指定した組み合わせだけ
+    expect(promptOf(executor, 0)).toContain('"plan": "skip-requirements"');
+    expect(promptOf(executor, 0)).not.toContain('"plan": "standard');
+    expect(service.get(task.id)?.task.steps.map((s) => s.key)).toEqual([
+      "design",
+      "implement",
+      "deployment",
+    ]);
+    // 最初の実行は設計。人が指定したので、「オーケストレーターの判断で」とは書かない
+    expect(executor.calls).toHaveLength(2);
+    expect(promptOf(executor, 1)).toContain("設計とテスト観点を作ってください");
+    expect(promptOf(executor, 1)).not.toContain("オーケストレーターの判断で");
+    expect(service.get(task.id)?.task.gate).toEqual({ step: "design", submission: 1 });
+    // 設計の承認の後に、実装に進む（要求要件の工程は無い）
+    service.approve(task.id, { step: "design", submission: 1 });
+    await service.runNext(task.id);
+    expect(executor.calls).toHaveLength(3);
+    expect(promptOf(executor, 2)).toContain(
+      "依頼（下のタスクの内容）と、人間が承認した設計に従って実装し",
+    );
+    expect(promptOf(executor, 2)).toContain("国コードを足す");
+    const steps = (service.get(task.id)?.activity ?? [])
+      .filter((e) => e.type === "AgentRunStarted")
+      .map((e) => (e.type === "AgentRunStarted" ? e.payload.step : ""));
+    expect(steps).toEqual(["design", "implement"]);
+    activity.close();
+  });
+
+  it("オーケストレーターが選んだタスクの最初の設計の実行に、選んだ理由を渡す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [design], {
+      planner: async () => ({
+        steps: [...STEP_PLANS["skip-requirements"]],
+        plan: "skip-requirements",
+        reason: "要求要件を省く。確かめたい点：(1) 既存のフラグの意味",
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+      }),
+    });
+    const task = service.createTask({ projectId: "default", title: "国コード", body: "足す" });
+    await service.runNext(task.id);
+    expect(promptOf(executor, 0)).toContain(
+      '{"orchestratorReason":"要求要件を省く。確かめたい点：(1) 既存のフラグの意味"}',
+    );
+    expect(promptOf(executor, 0)).toContain(
+      "オーケストレーターの判断で、要求要件の工程を省きました",
+    );
+    activity.close();
+  });
+
+  it("組み合わせごとの予算（budget.per_plan_usd）のキーに受ける", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [design], {
+      planner: async () => ({
+        steps: [...STEP_PLANS["skip-requirements"]],
+        plan: "skip-requirements",
+        reason: "r",
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+      }),
+      config: () => {
+        const base = configOf(agent())();
+        return base.ok
+          ? {
+              ok: true,
+              config: { ...base.config, budgetPerPlanUsd: { "skip-requirements": 7 } },
+            }
+          : base;
+      },
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.budget.capUsd).toBe(7);
+    activity.close();
+  });
+});

@@ -327,7 +327,7 @@ budget:
 
 The following rules apply to `budget.per_plan_usd`.
 
-- The plan names are `standard`, `skip-design`, `direct`, `bugfix`, `investigate`, `design-only`, `review`, `split`, `document`, `operation`, `security-check`, and `security-fix`. Any other name is a configuration error.
+- The plan names are `standard`, `skip-design`, `skip-requirements`, `direct`, `bugfix`, `investigate`, `design-only`, `review`, `split`, `document`, `operation`, `security-check`, and `security-fix`. Any other name is a configuration error.
 - When the Orchestrator chooses that plan, sacty sets the task's budget cap to that amount.
 - Plans not listed keep `budget.default_per_task_usd`.
 - If you raised the cap when resuming before the steps were chosen, the raised cap is kept.

@@ -367,7 +367,7 @@ budget:
 
 `budget.per_plan_usd` の決まりは、次のとおりです。
 
-- 組み合わせの名前は `standard`・`skip-design`・`direct`・`bugfix`・`investigate`・`design-only`・`review`・`split`・`document`・`operation`・`security-check`・`security-fix` です。
+- 組み合わせの名前は `standard`・`skip-design`・`skip-requirements`・`direct`・`bugfix`・`investigate`・`design-only`・`review`・`split`・`document`・`operation`・`security-check`・`security-fix` です。
   ほかの名前を書くと、設定の誤りになります。
 - オーケストレーターがその組み合わせを選んだときに、sacty はタスクの予算の上限をその金額にします。
 - 書いていない組み合わせは `budget.default_per_task_usd` のままです。

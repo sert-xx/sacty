@@ -52,7 +52,7 @@ When sacty chooses the task's steps, it checks whether the repository has the sk
 
 The conditions and notes for using it are as follows.
 
-- It is used in the plans that include Implement (Standard, Skip design, Implement directly, Bug fix, and Security fix). For a task whose plan is "Split", sacty watches the Implementation PR of each subtask.
+- It is used in the plans that include Implement (Standard, Skip design, Skip requirements, Implement directly, Bug fix, and Security fix). For a task whose plan is "Split", sacty watches the Implementation PR of each subtask.
 - The project's GitHub account needs permission to read Actions and checks in the target repository.
 - If you add the skill after the task has started, that task does not watch (later tasks do). If the Implementation PR removes the skill, sacty watches only CI/CD.
 - You do not need to turn it on or off in the project settings (there is no such setting).

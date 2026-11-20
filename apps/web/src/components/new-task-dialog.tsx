@@ -49,6 +49,7 @@ export const SELECT =
 export const PLAN_ORDER: readonly StepPlan[] = [
   "standard",
   "skip-design",
+  "skip-requirements",
   "direct",
   "bugfix",
   "split",

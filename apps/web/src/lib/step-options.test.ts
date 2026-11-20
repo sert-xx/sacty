@@ -23,6 +23,14 @@ describe("タスクの作成で指定するタスクのイメージと、工程�
     ]);
   });
 
+  it("進め方「要求要件を省く」の工程は、設計 → 実装（要求要件の工程は無い）", () => {
+    expect(planStepSettings("skip-requirements")).toEqual([
+      { step: "design", agent: true },
+      { step: "implement", agent: true },
+      { step: "deployment", agent: true },
+    ]);
+  });
+
   it("進め方を選び直してもエージェントの指定は残し、今の進め方の工程の分だけを送る", () => {
     const agents = { implement: "strong", integrate: "strong", investigate: "fast" };
     expect(chosenForPlan("standard", agents)).toEqual({ implement: "strong" });

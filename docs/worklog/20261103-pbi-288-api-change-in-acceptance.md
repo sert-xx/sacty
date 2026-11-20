@@ -4,7 +4,7 @@
 - タスク: PBI-288
 - PR: #289
 - ブランチ: feat/issue-288-pbi-288
-- 関係する ADR: [受け入れ条件が明示した API の変更では、「公開 API の形を変える」を要求要件を残す理由にしない](../adr/20261103-0530-api-change-in-acceptance-keeps-no-requirements.md)（[PBI-283 の ADR](../adr/20261102-2357-superseded-skip-requirements-for-detailed-acceptance.md)の一部を置き換えた）
+- 関係する ADR: [受け入れ条件が明示した API の変更では、「公開 API の形を変える」を要求要件を残す理由にしない](../adr/20261103-0530-superseded-api-change-in-acceptance-keeps-no-requirements.md)（[PBI-283 の ADR](../adr/20261102-2357-superseded-skip-requirements-for-detailed-acceptance.md)の一部を置き換えた）
 
 ## 目的
 
