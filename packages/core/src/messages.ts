@@ -498,6 +498,8 @@ const PARAMS = {
     count: Count,
     /** やり直しても、作業領域の内容が変わらなかった（回数を待たずに止めた）。 */
     stalled: z.boolean(),
+    /** 申告だけを求める実行を足したが、それでも申告がそろわず、作業領域も変わらなかった（PBI-416）。 */
+    declarationAsked: z.boolean().optional(),
     /** 未完了と申告した（false は、完了の申告が無い・読めなかった）。 */
     declared: z.boolean(),
     remaining: TextParam,
@@ -507,6 +509,7 @@ const PARAMS = {
     count: Count,
     /** やり直しても、作業領域の内容が変わらなかった（回数を待たずに止めた）。 */
     stalled: z.boolean(),
+    declarationAsked: z.boolean().optional(),
     ids: TextParam,
     total: Count,
   }),
@@ -1489,18 +1492,21 @@ const ja: MessageDictionary = {
     `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。再開すると実装をやり直します。PR を確かめて人が判断するなら、レビューへ進められます。`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
     `ベースブランチとの競合の目印が、${count}回続けて作業領域に残りました（${text(files)}${total > 5 ? ` ほか、全${total}件` : ""}）。目印を消して提出し直す必要があります。再開すると、目印の残るファイルを渡して実装をやり直します（レビューへは進められません）。`,
-  "implement.incomplete": ({ count, stalled, declared, remaining, total }, text) =>
+  "implement.incomplete": (
+    { count, stalled, declarationAsked, declared, remaining, total },
+    text,
+  ) =>
     `${
       declared
         ? "実装の工程が、範囲を実装し終える前に終わりました"
         : "実装の工程が、実装し終えたかの申告が無いか読めないまま終わりました"
-    }（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。${
+    }（${stalled ? `${declarationAsked ? "申告だけを求めても、" : "やり直しても、"}作業領域が何も変わりませんでした` : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。${
       total > 0
         ? `残っていること：${text(remaining)}${total > 5 ? ` ほか、全${total}件` : ""}。`
         : ""
     }再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。`,
-  "implement.unmappedViewpoints": ({ count, stalled, ids, total }, text) =>
-    `実装の工程が、テストの対応していないテスト観点を残して終わりました（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：${text(ids)}${total > 10 ? ` ほか、全${total}件` : ""}。再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。`,
+  "implement.unmappedViewpoints": ({ count, stalled, declarationAsked, ids, total }, text) =>
+    `実装の工程が、テストの対応していないテスト観点を残して終わりました（${stalled ? `${declarationAsked ? "申告だけを求めても、" : "やり直しても、"}作業領域が何も変わりませんでした` : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：${text(ids)}${total > 10 ? ` ほか、全${total}件` : ""}。再開すると、同じエージェントなら、前の実行の続きから実装を続けます（続きから進められないときは、最初から実行し直します）。工程のエージェントを変えて再開すると、最初から実行し直します。`,
   "implement.unchanged": ({ number }) =>
     `AI のレビューが指摘を残した PR #${number} を、やり直しの実装が何も変えませんでした。同じ内容は再レビューされないので、提出していません。再開すると、指摘を渡して実装をやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "implement.declinedAgain": ({ number }) =>
@@ -2362,18 +2368,21 @@ const en: MessageDictionary = {
     `Verification of the implementation (tests and final review) failed ${count} times in a row. Resuming redoes the implementation. If a person checks the PR and decides, the task can be moved to review.`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
     `Conflict markers with the base branch stayed in the workspace ${count} times in a row (${text(files)}${total > 5 ? ` and more, ${total} in total` : ""}). The markers must be removed before the implementation can be submitted. Resuming redoes the implementation with the files that still have markers (the task cannot be moved to review).`,
-  "implement.incomplete": ({ count, stalled, declared, remaining, total }, text) =>
+  "implement.incomplete": (
+    { count, stalled, declarationAsked, declared, remaining, total },
+    text,
+  ) =>
     `${
       declared
         ? "The implementation step ended before it finished its scope"
         : "The implementation step ended with its declaration of whether it finished missing or unreadable"
-    } (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). ${
+    } (${stalled ? `${declarationAsked ? "asking only for the declaration" : "redoing it"} changed nothing in the workspace` : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). ${
       total > 0
         ? `What remains: ${text(remaining)}${total > 5 ? ` and more, ${total} in total` : ""}. `
         : ""
     }Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.`,
-  "implement.unmappedViewpoints": ({ count, stalled, ids, total }, text) =>
-    `The implementation step ended with test viewpoints that have no test mapped (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: ${text(ids)}${total > 10 ? ` and more, ${total} in total` : ""}. Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.`,
+  "implement.unmappedViewpoints": ({ count, stalled, declarationAsked, ids, total }, text) =>
+    `The implementation step ended with test viewpoints that have no test mapped (${stalled ? `${declarationAsked ? "asking only for the declaration" : "redoing it"} changed nothing in the workspace` : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: ${text(ids)}${total > 10 ? ` and more, ${total} in total` : ""}. Resuming with the same agent continues the implementation from where the previous run left off (when it cannot be continued, the implementation starts over). If you change the agent of the step and then resume, the implementation starts over.`,
   "implement.unchanged": ({ number }) =>
     `The rework of the implementation changed nothing in PR #${number}, on which the AI review left findings. The same content is not reviewed again, so nothing was submitted. Resuming redoes the implementation with the findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "implement.declinedAgain": ({ number }) =>

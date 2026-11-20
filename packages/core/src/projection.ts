@@ -1036,6 +1036,8 @@ export type Task = {
         undeclared?: true;
         /** 完了と申告したが、テストが対応していなかったテスト観点の ID（PBI-348）。 */
         unmapped?: string[];
+        /** 申告だけを求める実行を足す（PBI-416）。コードは変えなくてよい。 */
+        declarationOnly?: true;
       }
     /** AI のレビューの指摘が残る PR を、やり直しの実装が何も変えなかった（ImplementationUnchanged。PBI-347）。 */
     | { kind: "unchanged"; number: number };
@@ -1047,9 +1049,15 @@ export type Task = {
   /**
    * 続けて終わらなかった実装の実行（ImplementationIncomplete。PBI-347）。runs は続いた回数、fingerprint はそのときの作業領域の
    * 内容の目印、stalled は、やり直しても作業領域が変わらなかった（回数を待たずに止める）。提出に進む・前の工程からやり直すと消える。
-   * 人が再開すると、回数は数え直すが、目印は残す（再開の後も何も進まなければ、回数に関係なく止める）。
+   * 人が再開すると、回数は数え直すが、目印は残す（再開の後も何も進まなければ、回数に関係なく次の実行で止める。ただし欠けているのが申告だけなら、申告だけを求める実行を1回足してから止める）。
    */
-  incompleteRuns?: { runs: number; fingerprint?: string; stalled?: true };
+  incompleteRuns?: {
+    runs: number;
+    fingerprint?: string;
+    stalled?: true;
+    /** 申告だけを求める実行を、この止まりの中で足した（PBI-416）。作業領域が変わる・再開すると消える。 */
+    declarationAsked?: true;
+  };
   /** エスカレーションの内容（差し戻しを続ける場合に使う、やり直す工程と書きかけの指摘）。 */
   escalation?: {
     step: StepKey;
@@ -2548,8 +2556,12 @@ export function applyEvent(
         remaining: event.payload.remaining,
         ...(event.payload.undeclared ? { undeclared: true as const } : {}),
         ...(event.payload.unmapped ? { unmapped: event.payload.unmapped } : {}),
+        ...(event.payload.declarationOnly ? { declarationOnly: true as const } : {}),
       };
-      task.incompleteRuns = nextIncompleteRuns(task.incompleteRuns, event.payload.fingerprint);
+      task.incompleteRuns = {
+        ...nextIncompleteRuns(task.incompleteRuns, event.payload.fingerprint),
+        ...(event.payload.declarationOnly ? { declarationAsked: true as const } : {}),
+      };
       task.status = "queued";
       break;
     }

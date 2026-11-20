@@ -448,6 +448,18 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
       expect(lines.endsWith("\n")).toBe(true);
     });
 
+    it("申告だけを求める実行は、コードを変えなくてよいこと・欠けているもの・出し直すものを伝える（PBI-416）", () => {
+      const lines = incompleteResumeLines({ unmapped: ["TV-2"], declarationOnly: true }).join("\n");
+      expect(lines).toContain("【申告の出し直し】");
+      expect(lines).toContain("コードは変えなくてよい");
+      expect(lines).toContain("TV-2");
+      expect(lines).toContain("すべてのテスト観点の対応");
+      expect(lines).toContain("未完了と申告する");
+      expect(
+        incompleteResumeLines({ undeclared: true, declarationOnly: true }).join("\n"),
+      ).toContain("完了の申告が無いか、決まった形どおりに読めませんでした");
+    });
+
     it("申告が無かった・観点の対応が欠けていたときは、その理由を伝える", () => {
       expect(incompleteResumeLines({ undeclared: true }).join("\n")).toContain(
         "完了の申告が無いか、決まった形どおりに読めないまま終わりました",

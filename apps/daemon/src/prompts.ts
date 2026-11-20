@@ -127,6 +127,7 @@ import {
 } from "./security.js";
 import { localForwards, type StartedService } from "./services.js";
 import { CHANGE_DOCUMENT_EXTENSION_LIST } from "./test-files.js";
+import { DECLARATION_ONLY_LINES } from "./timeout-resume.js";
 import {
   extractVerificationRecord,
   implementVerificationRecordLines,
@@ -364,6 +365,7 @@ const UNTESTED_LINES = [
   `- ${AGENT_INSTRUCTIONS}も、実行される振る舞いの無い変更として扱う（エージェントを起動して確かめるテストは書かない）。スキルに含めるスクリプトなど、実行されるコードはコードとして扱う`,
   "- ファイルがある・読める・特定の文字列を含むことだけを確かめるテストは書かない（振る舞いを検証しない形だけのテストになる）。sacty が置く要求要件・設計のファイルも、テストの対象にしない",
   "- 実行される振る舞い（コード・設定の値・スクリプトなど）を変える観点は、untested にせず、テストを書く",
+  `- テストで確かめようがない観点（検査の実行そのもの・人が確かめること など）も、観点とテストの対応で tests を空にし、untested に、テストで確かめない理由と、どう確かめたか（または誰が確かめるか）を書く（例：{"viewpointId": "観点の ID", "tests": [], "untested": "検査の実行そのものの観点で、テストでは確かめられない。検査のコマンドを実行して通ったことを実装の説明に書いた"}）。テストを書ける観点（実行される振る舞いを変えるもの）には使わない`,
 ];
 
 /**
@@ -1048,6 +1050,21 @@ function feedbackLines(task: Task): string[] {
       ...feedback.files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
     ];
   }
+  if (feedback.kind === "incomplete" && feedback.declarationOnly) {
+    // 実装は作業領域にあり、申告だけが欠けている（PBI-416）。コードを変えずに、申告を出し直させる
+    return [
+      "",
+      "--- 前回の実行：申告だけが欠けています（申告だけを出し直してください） ---",
+      "前回までの実装の実行は、提出に必要な申告がそろわないまま終わり、作業領域も変わりませんでした。sacty は提出していません（PR は、作っていません・更新していません）。実装は作業領域にあるので、コードは変えなくてよい。",
+      ...(feedback.unmapped?.length
+        ? [
+            "欠けているもの：観点とテストの対応に、次のテスト観点がありません。",
+            ...feedback.unmapped.map((id) => `- ${id}`),
+          ]
+        : ["欠けているもの：完了の申告が無いか、決まった形どおりに読めませんでした。"]),
+      ...DECLARATION_ONLY_LINES,
+    ];
+  }
   if (feedback.kind === "incomplete" && feedback.unmapped?.length) {
     // 前の実行が、完了と申告したが、テストの対応していないテスト観点があった（PBI-348）
     const titles = new Map(implementViewpoints(task).map((v) => [v.id, v.title]));
@@ -1057,7 +1074,7 @@ function feedbackLines(task: Task): string[] {
       "前回の実装の実行は、完了と申告しましたが、観点とテストの対応に、次のテスト観点が欠けていました。sacty は提出していません（PR は、作っていません・更新していません）。",
       ...feedback.unmapped.map((id) => `- [${id}] ${titles.get(id) ?? ""}`.trimEnd()),
       "作業領域には、前回までの変更が残っています。差分を読んで、どこまで実装されているかを確かめてから続けてください。",
-      "- 欠けている観点ごとに、実装とテストを足し、観点とテストの対応に、その観点を入れる。実行される振る舞いの無い変更だけの観点は、テストを書かない理由（untested）を書く",
+      "- 欠けている観点ごとに、実装とテストを足し、観点とテストの対応に、その観点を入れる。実行される振る舞いの無い変更だけの観点と、テストで確かめようがない観点（検査の実行そのもの・人が確かめること など）は、テストを書かずに、tests を空にして、テストで確かめない理由と、どう確かめたか（または誰が確かめるか）を untested に書く。テストを書ける観点は、untested にしない",
       "- 観点とテストの対応は、欠けていた観点だけでなく、すべての観点を入れて出し直す",
     ];
   }

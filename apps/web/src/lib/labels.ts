@@ -791,6 +791,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "NoChangesFound":
       return e.NoChangesFound;
     case "ImplementationIncomplete":
+      // 作業領域が変わらず、欠けているのが申告だけなので、申告だけを求める実行を足す（PBI-416）
+      if (event.payload.declarationOnly) {
+        return e.ImplementationDeclarationOnly(
+          event.payload.unmapped?.slice(0, 5).join("・") ?? "",
+        );
+      }
       // 完了と申告したが、テストの対応していないテスト観点があった（PBI-348）
       if (event.payload.unmapped?.length) {
         return e.ImplementationUnmapped(event.payload.unmapped.slice(0, 5).join("・"));
