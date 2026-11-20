@@ -1006,7 +1006,7 @@ A run that ended after implementing only part of its scope, and a run that chang
   The record holds what remains, that nothing was declared (`undeclared`), and a mark of the workspace content (`fingerprint`).
   - The declaration is checked before the conflict checks (merging the commits a person added to the PR, and checking for conflict markers; `headSyncedBeforePublish`, `conflictsResolved`).
     An unfinished run is recorded as unfinished even when conflict markers remain, and what remains is passed to the next instruction. Conflicts are checked on a run that declared it is complete (the conflicting files stay in the implementation instruction until they are resolved).
-  - The next Implementation run continues the same agent session as the run that ended unfinished (the continuation of an Implementation run that ended unfinished, in [Agent execution](agent-execution.en.md)).
+  - The next Implementation run continues the same agent session as the run that ended unfinished (the continuation of an Implementation run that ended unfinished, in [Agent execution](agent-execution.en.md)). It starts with the agent that ran the previous run (or the agent a person chose for Implementation after it).
     Running again from the start would discard the conversation of the previous run and begin by reading the full instruction.
     When the session cannot be continued (the agent was changed, the copied session is missing or broken, or the AI does not accept the resume), sacty runs the step again from the start.
   - Both the continuation instruction and the instruction of a run from the start tell the agent that the previous run was unfinished (or declared nothing) and what remains (`feedbackLines`; `incomplete` of `Task.verifyFeedback`).

@@ -523,6 +523,7 @@ import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.
 import {
   type ContinueCause,
   type ContinuePlan,
+  incompleteAgentToContinue,
   incompleteResumeLines,
   planContinuation,
   timeoutMinutes,
@@ -10799,7 +10800,17 @@ export class TaskService {
       return;
     }
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で実行する
-    const agent = this.usableAgent(config.config, chosen.agent, task.id, step);
+    let agent = this.usableAgent(config.config, chosen.agent, task.id, step);
+    // 未完了で終わった実装の続きは、直前の実行のエージェントから始める（PBI-417）。使えなければ、今までどおり
+    let preferredOver: string | undefined;
+    if (step === "implement") {
+      const previousId = incompleteAgentToContinue(this.deps.activity.forTask(task.id));
+      const previous = previousId ? definedAgent(config.config, previousId) : undefined;
+      if (previous && previous.id !== agent.id && !this.agentUnusable(task.id, previous.id)) {
+        preferredOver = agent.id;
+        agent = previous;
+      }
+    }
     const runId = randomUUID();
     // 工程のイメージは、実行を始めたときのものに決める。実行の間に人が変えても、この実行は変えない（次の実行から。PBI-106・
     // PBI-318）。使う名前を実行の記録に残す（画面が、どのイメージで動いたかを出す）
@@ -10815,6 +10826,7 @@ export class TaskService {
             agentId: agent.id,
             ...agentSetting(agent),
             image: runImageName ?? DEFAULT_IMAGE_NAME,
+            ...(preferredOver ? { chosenAgentId: preferredOver } : {}),
           },
         },
       },
