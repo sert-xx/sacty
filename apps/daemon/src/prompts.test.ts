@@ -566,6 +566,45 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     ).not.toContain(LINE);
   });
 
+  it("再レビューの指示に、同じ原因が続くときの本文への明示と、原因を断つ直しの求めが入り、初回には入らない（PBI-424）", () => {
+    const previousReview = {
+      round: 1,
+      url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+      at: "2026-10-16T01:00:00.000Z",
+      headCommit: "p".repeat(40),
+      body: "前回の総評",
+      comments: [],
+    };
+    const rereview = buildPrompt(reviewTask({ reviewRound: 2, previousReview }), "review", {
+      diff,
+      replies: [],
+    });
+    expect(rereview).toContain(
+      "方針の観点が方針を変える指摘を出したかどうかに関わらず、総評か、その指摘の本文の読み手が分かる場所に、同じ原因が続いていること・原因（1文）・同じ原因の [要修正] が何回目か・前回までの現れの一覧（回と現れを短く）を書く",
+    );
+    expect(rereview).toContain(
+      "2回目の時点から、その指摘の直し方の案を、今回の現れを塞ぐ手当てだけにしない",
+    );
+    expect(rereview).toContain("原因を1か所で断つ直し");
+    expect(rereview).toContain("確かめた組み合わせと、確かめていない組み合わせを分ける");
+    expect(rereview).toContain("利用者や呼び出し側が実際に使う入口に当てることを書く");
+    // 止める仕組みは足さない
+    expect(rereview).toContain(
+      "レビューの判定・重さ・再レビューの範囲・方針の観点の起動の規則は変えない",
+    );
+    // 既存の決まりは変わらない
+    expect(rereview).toContain(
+      "出なければ、または方針の指摘が [提案] なら、現れを [要修正] のまま残す",
+    );
+    // 初回のレビューには入らない
+    const first = buildPrompt(reviewTask({ reviewRound: 1, previousReview: undefined }), "review", {
+      diff,
+      replies: [],
+    });
+    expect(first).not.toContain("原因を1か所で断つ直し");
+    expect(first).not.toContain("同じ原因が続いていること・原因（1文）");
+  });
+
   it("再レビューでは、前回の指摘と作者の返答をデータとして渡し、前回の指摘ごとに対応を確かめさせる", () => {
     const task = reviewTask({
       reviewRound: 2,
@@ -7346,5 +7385,68 @@ describe("実装の前の文書の PR のレビューは、方針と抜けだけ
     expect(p).toContain("--- 指摘の戻し先 ---");
     expect(p).toContain("changes_required");
     expect(p).toContain("スキルの重要度の表（影響の大きさと起きやすさ）で決める");
+  });
+});
+
+describe("実装のやり直しの指示の、同じ原因の現れの探索（PBI-424）", () => {
+  const remark = (id: string, step: string, text: string, source?: "sacty_review") => ({
+    id,
+    step,
+    round: 1,
+    text,
+    voided: false,
+    ...(source ? { source } : {}),
+  });
+  const task = (remarks: ReturnType<typeof remark>[], steps: Task["steps"][number]["key"][]) =>
+    ({
+      id: "t-1",
+      title: "切れ目の処理",
+      body: "",
+      steps: steps.map((key) => ({ key, state: "todo" })),
+      remarks,
+      outputs: {},
+      approved: {},
+      reproductionTests: [],
+    }) as unknown as Task;
+  const LINE =
+    "欠陥の指摘（AI のレビューの [要修正]、人の指摘のうち不具合・誤動作を言うもの）を直すときは、指摘された入力・箇所だけでなく、同じ原因のほかの現れ（入力の形の違い・別の呼び出し元・別の時点）を自分で探して、まとめて直す";
+
+  it("指摘のある実装の指示に、同じ原因の探索・探した範囲の返答・性質のテストが入り、文書だけ・提案には求めないと書く", () => {
+    const prompt = buildPrompt(
+      task(
+        [remark("implement-1-1", "implement", "[要修正] 切れ目で値が割れると残る", "sacty_review")],
+        ["implement"],
+      ),
+      "implement",
+    );
+    expect(prompt).toContain("--- 欠陥の指摘を直すとき ---");
+    expect(prompt).toContain(LINE);
+    expect(prompt).toContain(
+      "探した範囲（何を見て、何が見つかり、何は見つからなかったか）を、その指摘への対応の text に書く",
+    );
+    expect(prompt).toContain(
+      "指摘が「同じ原因が続いている」と書いているときは、指摘された現れだけを塞ぐ直しで終えず、指摘が求めた性質のテスト",
+    );
+    expect(prompt).toContain(
+      "文書だけの指摘と、欠陥でない指摘（[提案]・文言・好みの指摘）には、この探索と対応の text への記載を求めない",
+    );
+  });
+
+  it("指摘が無い実装の指示と、実装でない工程の指示には入らない", () => {
+    expect(buildPrompt(task([], ["implement"]), "implement")).not.toContain(LINE);
+    const design = buildPrompt(
+      task([remark("design-1-1", "design", "もっと簡単に")], ["requirements", "design"]),
+      "design",
+    );
+    expect(design).toContain("- [design-1-1] もっと簡単に");
+    expect(design).not.toContain(LINE);
+  });
+
+  it("セルフレビューの指示に、2回目以降で同じ原因が続くときの明示を入れる", () => {
+    const prompt = buildPrompt(task([], ["implement"]), "implement");
+    expect(prompt).toContain(
+      "2回目以降のレビューで、今回の must が前回までの must と同じ原因の別の現れなら、方針の観点が方針を変える指摘を出したかどうかに関わらず",
+    );
+    expect(prompt).toContain("回数で止める・止めない決まりは足さない");
   });
 });
