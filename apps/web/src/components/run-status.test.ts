@@ -237,9 +237,9 @@ describe("一時停止のカードのリンク", () => {
       const box = links(html);
       expect(box).toMatch(new RegExp(`href="#error-report"[^>]*>${r.viewErrorReport}<`));
       expect(box).toMatch(new RegExp(`href="/tasks/t1/runs/run-3"[^>]*>${r.viewStoppedRun}<`));
-      // 飛び先は右の列のエラーレポート（固定の見出しに隠れない）
+      // 飛び先（id を持つ見出し）に、固定の見出しに隠れない余白が付く
       expect(html).toMatch(
-        /<section[^>]*scroll-mt-60[^>]*aria-labelledby="error-report"|<section[^>]*aria-labelledby="error-report"[^>]*scroll-mt-60/,
+        /<h2[^>]*scroll-mt-60[^>]*id="error-report"|<h2[^>]*id="error-report"[^>]*scroll-mt-60/,
       );
       expect(html).toContain('id="error-report"');
     }
@@ -306,6 +306,93 @@ describe("stoppedRunId", () => {
     ];
     const task = { ...taskOf(activity), status: "paused", pausedReason: "budget" } as Task;
     expect(stoppedRunId(task, activity)).toBeUndefined();
+  });
+
+  // 履歴は作業履歴の並びの確かめ用（記録の整合は問わない）なので、タスクは正しい履歴で作る
+  const taskPaused = (_activity: ActivityEvent[], reason = "error") =>
+    ({
+      ...taskOf([...base(), started("x"), failed("x"), paused(reason)]),
+      status: "paused",
+      pausedReason: reason,
+    }) as Task;
+
+  it("失敗の直後の一時停止なら、その実行を返す", () => {
+    const activity = [...base(), started("r"), failed("r"), paused("error")];
+    expect(stoppedRunId(taskPaused(activity), activity)).toBe("r");
+  });
+
+  it("オーケストレーターの失敗（OrchestratorFailed）の直後の一時停止も、その実行を返す", () => {
+    const activity = [
+      ...base(),
+      event(minutesAfter(1), {
+        type: "OrchestratorFailed",
+        payload: { reason: "error", message: "bad", agentId: "a", runId: "orc-1" },
+      }),
+      paused("error"),
+    ];
+    expect(stoppedRunId(taskPaused(activity), activity)).toBe("orc-1");
+  });
+
+  it("失敗の後に別の実行の開始があれば、その前の失敗へはつながない", () => {
+    const activity = [...base(), started("a"), failed("a"), started("b"), paused("error")];
+    expect(stoppedRunId(taskPaused(activity), activity)).toBeUndefined();
+  });
+
+  it("失敗の後に再開があれば、つながない", () => {
+    const activity = [
+      ...base(),
+      started("a"),
+      failed("a"),
+      event(minutesAfter(2), { type: "TaskResumed", actor: "person", payload: { retry: true } }),
+      paused("error", minutesAfter(3)),
+    ];
+    expect(stoppedRunId(taskPaused(activity), activity)).toBeUndefined();
+  });
+
+  it("失敗の後に別の実行の完了があれば、つながない", () => {
+    const completed = event(minutesAfter(2), {
+      type: "AgentRunCompleted",
+      payload: {
+        runId: "b",
+        step: "design",
+        agentId: "a",
+        authMode: "subscription",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        costUsd: 0,
+        estimated: true,
+        output: "done",
+      },
+    });
+    const activity = [
+      ...base(),
+      started("a"),
+      failed("a"),
+      completed,
+      paused("error", minutesAfter(3)),
+    ];
+    expect(stoppedRunId(taskPaused(activity), activity)).toBeUndefined();
+  });
+
+  it("失敗の後に、人が手で止めた一時停止があれば、つながない", () => {
+    const activity = [
+      ...base(),
+      started("a"),
+      failed("a"),
+      paused("manual", minutesAfter(2)),
+      paused("error", minutesAfter(3)),
+    ];
+    expect(stoppedRunId(taskPaused(activity), activity)).toBeUndefined();
+  });
+
+  it("一時停止の記録が続いて並んでいても（マージの後の2つ目など）、手でない限り失敗の実行を返す", () => {
+    const activity = [
+      ...base(),
+      started("a"),
+      failed("a"),
+      paused("error", minutesAfter(2)),
+      paused("error", minutesAfter(3)),
+    ];
+    expect(stoppedRunId(taskPaused(activity), activity)).toBe("a");
   });
 
   it("一時停止していないタスクでは返さない", () => {

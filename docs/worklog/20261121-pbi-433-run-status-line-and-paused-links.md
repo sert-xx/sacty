@@ -12,8 +12,8 @@
 
 ## したこと
 
-- `apps/web/src/components/run-status.tsx`・`apps/web/src/lib/run-status.ts`：概要の成果物のすぐ上に、実行中の工程の名前・経過・「ログを見る」の 1 行を出す。最初の工程の前は、していることの名前だけ。経過は 60 秒ごとの画面の時計で進め、`aria-live` に入れない。
-- `apps/web/src/components/resume-form.tsx`・`error-report.tsx`：一時停止のカードに「エラーレポートを見る」（`#error-report`。固定の見出しに隠れない余白を付けた）と「止まった実行のログを見る」を足した。
+- `apps/web/src/components/run-status.tsx`・`apps/web/src/lib/run-status.ts`：概要の成果物のすぐ上に、実行中の工程の名前・経過・「ログを見る」の 1 行を出す。最初の工程の前は、していることの名前だけ。経過は、実行の開始から数えた分の境目で進む画面の時計（`lib/use-clock.ts`。ダッシュボードの時計と共通）で進め、`aria-live` に入れない。
+- `apps/web/src/components/resume-form.tsx`・`error-report.tsx`：一時停止のカードに「エラーレポートを見る」（`#error-report`。固定の見出しに隠れない余白は、移動先の見出し（`id="error-report"`）に付けた）と「止まった実行のログを見る」を足した。
 - `apps/web/src/components/run-log.tsx`・`lib/run-log-data.ts`・live のルート：ログの画面の「終了」に、タスクがその実行を今も実行中なら「実行中」を出す（`running` を、画面のデータ・取り直しの応答・版に足した）。
 - `apps/web/src/components/implementation.tsx`：一時停止中の実装の欄の見出しの横を「一時停止中」にした。
 - 文言は日英（`task.ts`・`parts.ts`・`run-log.ts`）。`docs/spec/tasks-and-steps`・`docs/user/tasks`（日英）を直した。
@@ -21,10 +21,27 @@
 ## 決めたこと
 
 - 経過の書式は、ダッシュボードの `durationText`（単位が 1 つ）とは別の関数にした（「1時間5分」を出すため。ダッシュボードの表示は変えない）。
-- 止まった実行は、最後の `TaskPaused` の直前の `AgentRunFailed` だけをつなぐ。人が手で止めたとき（`manual`）は、止めた実行へもつながない。
+- 止まった実行は、最後の `TaskPaused` からさかのぼって、ログを開ける実行のエラーの失敗（`AgentRunFailed`・`OrchestratorFailed` など）だけをつなぐ。別の実行の行・再開・手での一時停止に当たったら止める。人が手で止めたとき（`manual`）は、止めた実行へもつながない。
 - 最初の工程の前は、開始の時刻・実行の ID が画面に無いので、名前だけにした（デーモンの API は変えていない）。
 
 ## 確かめたこと
 
 - `apps/web/src/components/run-status.test.ts`・`live-other-screens.test.ts`：実行中（経過あり・開始の時刻なし）・最初の工程の前・実行待ち・承認待ち・一時停止・完了などの行の出し分け、経過の書式の境界、一時停止のリンクの出し分け、ログの画面の「終了」の 3 通り。
 - スクリーンショット（`docs/user/images/`）は、この環境にブラウザが無く、撮り直していない。配色・375px の幅での見え方は、実画面で確かめていない（行は折り返す flex で、枠の中に収めている）。
+
+## レビューの指摘と対応
+
+| 指摘 | 対応 |
+| --- | --- |
+| エラーレポートへの移動先の余白が、`id` を持たない `section` に付いていた | 余白を `id="error-report"` の見出しに移し、テストもその要素を確かめる形にした |
+| ログの画面のテストが、実行環境のタイムゾーンに依存する | 時刻を正午 UTC にして、日付が変わらないようにした |
+| 止まった実行の探し方が `AgentRunFailed` だけ | `runLogId` と `failureKind` で探す形にし、`OrchestratorFailed` も拾う。続く一時停止の記録は越える |
+| 打ち切りの分岐・`loadRunLog` の `running`・時計のテストが無い | 分岐ごとの履歴・`runningThis`/`loadRunLog`・`useClock`（進む・分の境目・止まる）のテストを足した |
+| 時計がダッシュボードと重なり、分の境目と揃わない | `useClock` を共通にし、起点を渡すと分の境目で進める |
+| 区切りと「経過：」が直書き | 日英の辞書に持たせた |
+| 文書の「これまでの文」 | 実際に出る文を書いた |
+
+## 残したこと
+
+- スクリーンショット（`task-detail.png`・`task-paused.png`・`task-budget-paused.png` と英語版）の撮り直し：この環境にブラウザが無い。撮れる環境で撮り直す。
+- 明暗の配色・375px の幅での実画面の確認（カードのリンクの折り返し・固定の見出しとの位置）：同上。

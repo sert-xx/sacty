@@ -1,4 +1,10 @@
-import type { ActivityEvent, PreparingPhase, StepKey, Task } from "@sacty/core";
+import {
+  type ActivityEvent,
+  failureKind,
+  type PreparingPhase,
+  type StepKey,
+  type Task,
+} from "@sacty/core";
 import { runLogId } from "@/lib/session-log";
 
 /** いま実行している工程のエージェントの実行（タスクの概要の行。経過の起点は、その実行の開始の記録の時刻）。 */
@@ -56,8 +62,9 @@ export function elapsedText(
 
 /**
  * 一時停止の原因になった実行（止まった実行のログへの道。実行の ID）。いまの一時停止（最後の TaskPaused）の直前の失敗だけを
- * 採る：TaskPaused から作業履歴をさかのぼり、別の実行の開始・完了・再開に当たる前に見つかった失敗の実行。
- * 人が手で止めた（manual）ときと、実行の失敗が原因でない一時停止は、過去の失敗へつながない。
+ * 採る：TaskPaused から作業履歴をさかのぼり、ログを開ける実行の失敗（エラーの種類。AgentRunFailed・OrchestratorFailed など）
+ * を採る。別の実行の開始・完了などの実行の行・再開・人が手で止めた一時停止に当たったら、そこで止める（過去の失敗へつながない）。
+ * 一時停止の記録が続いて並ぶとき（マージの後の2つ目など）は、それも越えてさかのぼる。
  */
 export function stoppedRunId(task: Task, activity: readonly ActivityEvent[]): string | undefined {
   if (task.status !== "paused" || task.pausedReason === "manual") return undefined;
@@ -66,17 +73,14 @@ export function stoppedRunId(task: Task, activity: readonly ActivityEvent[]): st
   for (let i = paused - 1; i >= 0; i--) {
     const e = activity[i];
     if (!e) continue;
-    if (e.type === "AgentRunFailed") {
-      return runLogId(e);
+    if (e.type === "TaskResumed") return undefined;
+    if (e.type === "TaskPaused") {
+      if (e.payload.reason === "manual") return undefined;
+      continue;
     }
-    if (
-      e.type === "AgentRunStarted" ||
-      e.type === "AgentRunCompleted" ||
-      e.type === "TaskResumed" ||
-      e.type === "TaskPaused"
-    ) {
-      return undefined;
-    }
+    const runId = runLogId(e);
+    if (runId === undefined) continue;
+    return failureKind(e) === "error" ? runId : undefined;
   }
   return undefined;
 }

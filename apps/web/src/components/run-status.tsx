@@ -1,23 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { useMessages } from "@/i18n/client";
 import { elapsedText, preparingNow, runningNow } from "@/lib/run-status";
 import type { TaskDetailData } from "@/lib/task-detail-data";
-
-/** 経過を進める間隔（ミリ秒）。経過は分までなので、1分ごとでよい。 */
-export const RUN_STATUS_TICK_MS = 60_000;
-
-/** 画面の時計。データに「今」を入れると取り直しのたびに版が変わるので、画面で持つ。 */
-function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), RUN_STATUS_TICK_MS);
-    return () => clearInterval(id);
-  }, []);
-  return now;
-}
+import { useClock } from "@/lib/use-clock";
 
 /**
  * 概要の「いま実行していること」の1行。工程のエージェントを実行中なら「工程の名前・経過・ログを見る」、最初の工程の前なら、
@@ -28,8 +15,8 @@ export function RunStatusLine({ data }: { data: TaskDetailData }) {
   const { task, activity } = data;
   const messages = useMessages();
   const m = messages.task.runStatus;
-  const now = useNow();
   const run = runningNow(task, activity);
+  const now = useClock(run?.startedAtMs);
   const phase = preparingNow(task);
   if (!run && !phase) return null;
   const text = run
@@ -45,16 +32,16 @@ export function RunStatusLine({ data }: { data: TaskDetailData }) {
       <span className="font-medium">{text}</span>
       {run?.startedAtMs !== undefined && (
         <>
-          <span aria-hidden="true">・</span>
+          <span aria-hidden="true">{m.separator}</span>
           <span suppressHydrationWarning className="tabular-nums">
-            <span className="sr-only">{m.elapsedLabel}：</span>
+            <span className="sr-only">{m.elapsedLabel}</span>
             {elapsedText(now - run.startedAtMs, m.elapsed)}
           </span>
         </>
       )}
       {run && (
         <>
-          <span aria-hidden="true">・</span>
+          <span aria-hidden="true">{m.separator}</span>
           <Link
             href={`/tasks/${encodeURIComponent(task.id)}/runs/${encodeURIComponent(run.runId)}`}
             className="text-accent-foreground underline"

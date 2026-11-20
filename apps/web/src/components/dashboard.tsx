@@ -3,7 +3,7 @@
 import { auditAdoptionRate } from "@sacty/core";
 import { cn } from "cn";
 import Link from "next/link";
-import { Fragment, type ReactNode, useEffect, useState } from "react";
+import { Fragment, type ReactNode } from "react";
 import { ActionLink } from "@/components/action-link";
 import { MockBadge } from "@/components/audit";
 import { DaemonError } from "@/components/daemon-error";
@@ -18,6 +18,7 @@ import type { DashboardData } from "@/lib/dashboard-data";
 import { FIX_ONCE_REASONS, REWORK_STEPS } from "@/lib/dashboard-rules";
 import { usd } from "@/lib/labels";
 import { projectAuditPath, taskPath } from "@/lib/paths";
+import { useClock } from "@/lib/use-clock";
 import { useLiveData } from "@/lib/use-live-data";
 
 /** 1行に切り詰め、行にフォーカスがある間は折り返して全文を出す。 */
@@ -26,9 +27,6 @@ const FULL_ON_FOCUS =
 
 /** ダッシュボードのデータを取り直す先（PBI-114）。 */
 export const DASHBOARD_LIVE_URL = "/live/dashboard";
-
-/** 画面の時計を進める間隔（待っている時間の表示。PBI-118）。 */
-export const CLOCK_INTERVAL_MS = 60_000;
 
 /** 実行待ちが上限より多い状態が、これだけ続いたら目立たせる（PBI-118）。 */
 export const QUEUE_OVER_MS = 10 * 60_000;
@@ -43,19 +41,6 @@ export function durationText(ms: number, d: DashboardMessages["duration"]): stri
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return d.hours(hours);
   return d.days(Math.floor(hours / 24));
-}
-
-/**
- * 画面の時計（1分ごとに進む）。待っている時間と、待ち行列の「続いている」の判定に使う。データに「今」を入れると取り直しの
- * たびに版が変わるので、画面で持つ。
- */
-function useClock(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), CLOCK_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, []);
-  return now;
 }
 
 /**

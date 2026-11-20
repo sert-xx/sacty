@@ -266,10 +266,10 @@ describe("実行のログ：実行中は、足された行だけを取って後�
       "終わりの記録がありません。実行中か、デーモンが途中で止まりました。",
     );
     const done = initial();
-    if (done.log) done.log.meta.finishedAt = "2026-10-15T00:01:00.000Z";
+    if (done.log) done.log.meta.finishedAt = "2026-10-15T12:01:00.000Z";
     // 終わりの記録があれば、実行中のフラグが残っていても、終了の時刻
     show("done", { ...done, running: true });
-    expect(finishedCell()).toMatch(/10\/15 /);
+    expect(finishedCell()).toMatch(/10\/1[56] /);
   });
 
   it("画面を読み直さなくても、実行の開始・終了で「終了」の文が切り替わる（別の実行を実行中のときは「実行中」にしない）", async () => {

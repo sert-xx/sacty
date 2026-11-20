@@ -609,7 +609,8 @@ const ja = {
   runStatus: {
     running: (step: string) => `${step}を実行中`,
     runningUnknown: "工程を実行中",
-    elapsedLabel: "経過",
+    elapsedLabel: "経過：",
+    separator: "・",
     elapsed: {
       underMinute: "1分未満",
       minutes: (n: number) => `${n}分`,
@@ -1238,7 +1239,8 @@ const en: TaskMessages = {
   runStatus: {
     running: (step) => `Running ${step}`,
     runningUnknown: "Running a step",
-    elapsedLabel: "Elapsed",
+    elapsedLabel: "Elapsed: ",
+    separator: "·",
     elapsed: {
       underMinute: "under a minute",
       minutes: (n) => `${n} min`,
