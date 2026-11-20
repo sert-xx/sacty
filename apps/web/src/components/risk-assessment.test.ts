@@ -142,4 +142,19 @@ describe("作業履歴のリスク評価の行（PBI-362）", () => {
       "Could not assess the PR's risk in the review step: Could not read the risk assessment from the agent's output.",
     );
   });
+
+  it("引き継いだ評価は、どのコミットの評価をどのコミットに引き継いだかを書く（PBI-421）", () => {
+    const inherited = event({
+      via: "publish",
+      assessment,
+      commit: "def5678".padEnd(40, "0"),
+      inheritedFrom: "abc1234".padEnd(40, "0"),
+    });
+    const ja = describeEvent(inherited, messagesFor("ja").labels);
+    expect(ja).toContain("abc1234 の評価を def5678 に引き継いだ");
+    expect(ja).toContain("高");
+    expect(describeEvent(inherited, messagesFor("en").labels)).toContain(
+      "carried the assessment of abc1234 over to def5678",
+    );
+  });
 });

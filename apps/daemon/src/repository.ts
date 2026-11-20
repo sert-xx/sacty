@@ -261,6 +261,10 @@ export interface RepositoryWorkspace {
    * ベースブランチをマージした）が無いかを、実装を積む前に確かめるために使う。どちらのコミットも取得済みであること。
    */
   changedPaths(gitDir: string, from: string, to: string): Promise<string[]>;
+  /** commit が ancestorOf の履歴に含まれるか（同じコミットも含む。PBI-421）。どちらも取得済みであること。 */
+  isAncestor(gitDir: string, commit: string, ancestorOf: string): Promise<boolean>;
+  /** 2つのコミットの分岐点（merge-base。PBI-421）。取れなければ（共通の祖先が無い・コミットが無い）undefined。 */
+  mergeBaseOf(gitDir: string, a: string, b: string): Promise<string | undefined>;
   /**
    * コミットにあるファイルの本文を、退避したメタデータから読む（人が PR の中で直してマージした、要求要件・設計の成果の
    * ファイル。PBI-63）。作業領域・利用者の git の設定は使わない。ファイルが無ければ undefined。通常のファイルでない・
@@ -904,7 +908,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
   }
 
   /** commit が ancestorOf の履歴に含まれるか（同じコミットも含む）。どちらも取得済みであること。 */
-  private async isAncestor(gitDir: string, commit: string, ancestorOf: string): Promise<boolean> {
+  async isAncestor(gitDir: string, commit: string, ancestorOf: string): Promise<boolean> {
     if (!COMMIT_RE.test(commit) || !COMMIT_RE.test(ancestorOf)) {
       throw new MessageError(message("git.invalidParentCommit"));
     }
@@ -918,6 +922,16 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     throw new MessageError(
       message("git.failed", { command: "merge-base", detail: result.err || `exit ${result.code}` }),
     );
+  }
+
+  async mergeBaseOf(gitDir: string, a: string, b: string) {
+    if (!COMMIT_RE.test(a) || !COMMIT_RE.test(b)) return undefined;
+    const result = await gitResult(
+      ["--git-dir", gitDir, ...SAFE_CONFIG, "merge-base", a, b],
+      isolatedEnv("/dev/null"),
+    );
+    const out = result.code === 0 ? result.out.trim() : "";
+    return COMMIT_RE.test(out) ? out : undefined;
   }
 
   async mergeBase(input: Parameters<RepositoryWorkspace["mergeBase"]>[0]) {

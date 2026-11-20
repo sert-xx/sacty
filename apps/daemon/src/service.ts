@@ -422,7 +422,9 @@ import {
   extractTicketTriage,
   integrationViewpointIds,
   investigationMarker,
+  isDocBeforeImplement,
   lineContextText,
+  MUST_TAG,
   operationSucceeded,
   passedContinuedFeedback,
   postedLatestCommit,
@@ -431,6 +433,7 @@ import {
   pullRequestInText,
   type RawExportPlan,
   type RawServices,
+  type RereviewDocsOnly,
   type ReviewCi,
   type ReviewDeferrals,
   type ReviewReworkContext,
@@ -518,7 +521,12 @@ import {
   runEntries,
 } from "./task-reads.js";
 import { templateTask } from "./task-templates.js";
-import { findTestFiles, noTestsStop } from "./test-files.js";
+import {
+  findTestFiles,
+  isChangeDocumentsOnly,
+  isDocumentsOnly,
+  noTestsStop,
+} from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 import {
   type ContinueCause,
@@ -547,6 +555,24 @@ import {
  * 読み取り専用で別にマウントする。作業領域の写しは PR 由来のリンクやファイルを含むので、その中には書かない。
  */
 const REVIEW_DIFF_FILE = "pr.diff";
+
+/** 前回からの差分が文書だけかを確かめるとき、見るディレクトリの数の上限（PBI-421）。 */
+const DOCUMENTS_ONLY_DIRS_MAX = 200;
+
+/**
+ * PR の差分（git diff の出力）の、変わったファイルのパス（PBI-421）。名前の変更は変更元と変更先の両方。名前を引用符で囲んだ
+ * （特殊な文字を含む）ファイルは、読み取れないので、拡張子の無い印の名前で入れる（文書とは見なさない）。
+ */
+function diffPaths(diff: string): string[] {
+  const paths: string[] = [];
+  for (const line of diff.split("\n")) {
+    if (!line.startsWith("diff --git ")) continue;
+    const named = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+    if (named?.[1] && named[2]) paths.push(named[1], named[2]);
+    else paths.push("unreadable-path");
+  }
+  return paths;
+}
 
 /** 共用の compose の取得の失敗の理由（git の出力）の上限（PBI-70）。 */
 const SHARED_FETCH_DETAIL_MAX = 2000;
@@ -4160,6 +4186,8 @@ export class TaskService {
           author: pr.author,
           // ブランチ名からレビューのタスクを探せるように記録する（PBI-392）
           ...(pr.headRef ? { headBranch: pr.headRef } : {}),
+          // 再レビューが、向き先を替えていないことを確かめるために記録する（PBI-421）
+          ...(pr.baseRef ? { baseBranch: pr.baseRef } : {}),
         },
       };
     } catch (error) {
@@ -10970,6 +10998,8 @@ export class TaskService {
     // レビューの工程は、起点ではなく PR の先頭のコミットのコードを読ませ、PR の差分を渡す（PBI-19）
     const reviewTarget = step === "review" ? this.mustGet(task.id).reviewTarget : undefined;
     let reviewDiff: string | undefined;
+    // 再レビューで、前回の先頭からの差分が文書だけと確かめたときの、前回の先頭と変わったパス（PBI-421）
+    let rereviewDocsOnly: RereviewDocsOnly | undefined;
     // 再レビューで、前回の投稿の後の PR の作者の返答（PBI-111）
     let reviewReplies: PullRequestFeedback[] | "unreadable" | undefined;
     // PR にすでにあるレビュー・コメント（他のレビュアーの指摘と作者の返答。PBI-144）
@@ -11023,10 +11053,15 @@ export class TaskService {
         try {
           if (reviewTarget) {
             const gitDir = this.trustedGitDir(latest);
+            const reviewAuth = await this.gitAuth(
+              latest,
+              latest.repository?.url ?? "",
+              usedSecrets,
+            );
             await this.deps.repos.fetchCommits(
               gitDir,
               [reviewTarget.headCommit, reviewTarget.baseCommit],
-              await this.gitAuth(latest, latest.repository?.url ?? "", usedSecrets),
+              reviewAuth,
             );
             // 切り詰めずに取る（プロンプトでは切り詰めるが、ファイルには全体を置く）
             reviewDiff = await this.deps.repos.diffCommits(
@@ -11034,6 +11069,14 @@ export class TaskService {
               reviewTarget.baseCommit,
               reviewTarget.headCommit,
               { full: true },
+            );
+            // 前回の先頭からの差分が文書だけなら、起動する観点と検証を絞らせる（PBI-421）。確かめられなければ絞らない
+            rereviewDocsOnly = await this.rereviewDocsOnlyOf(
+              latest,
+              reviewTarget,
+              gitDir,
+              reviewDiff,
+              reviewAuth,
             );
             // PR にすでにあるレビュー・コメント（PBI-144）と、再レビューでの作者の返答（PBI-111）を読む。
             // 読めなくてもレビューは止めない（読めなかったことをプロンプトに書く）
@@ -11251,6 +11294,7 @@ export class TaskService {
               ...(reviewCi ? { reviewCi } : {}),
               ...(reviewSecurity ? { reviewSecurity } : {}),
               ...(reviewDeferrals ? { reviewDeferrals } : {}),
+              ...(rereviewDocsOnly ? { rereviewDocsOnly } : {}),
               // PR のレビューの子タスクに、指摘ごとの戻し先を示させる（PBI-332）
               ...this.reviewReworkContext(task),
               // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
@@ -12869,6 +12913,92 @@ export class TaskService {
   }
 
   /**
+   * 前回の先頭から今回の先頭までの差分が、文書だけか（PBI-421。再レビューの絞りと、リスク評価の引き継ぎで共有する）。前回が
+   * 今回の祖先で、変わったパスが文書だけ（`isChangeDocumentsOnly`）で、変わったパスの上のディレクトリに、今回の木で SKILL.md が
+   * 無いときだけ、変わったパスを返す。確かめられない（取得できない・読めない・履歴が書き換わった）ときは undefined。
+   */
+  private async documentsOnlySince(
+    gitDir: string,
+    from: string,
+    to: string,
+  ): Promise<string[] | undefined> {
+    try {
+      if (from === to) return undefined;
+      if (!(await this.deps.repos.isAncestor(gitDir, from, to))) return undefined;
+      const paths = await this.deps.repos.changedPaths(gitDir, from, to);
+      if (!isChangeDocumentsOnly(paths)) return undefined;
+      // スキルのディレクトリの下の文書（references など）は、スキルの振る舞いを変える
+      const dirs = new Set<string>([""]);
+      for (const path of paths) {
+        const parts = path.split("/");
+        for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
+      }
+      if (dirs.size > DOCUMENTS_ONLY_DIRS_MAX) return undefined;
+      for (const dir of dirs) {
+        const skill = await this.deps.repos.readFile(
+          gitDir,
+          to,
+          dir ? `${dir}/SKILL.md` : "SKILL.md",
+        );
+        if (skill !== undefined) return undefined;
+      }
+      return paths;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 再レビューの起動する観点と検証を絞れるか（PBI-421。スキル review-dispatch の規則 10）。次を全部満たすときだけ、前回の先頭と
+   * 変わったパスを返す。確かめられない・迷うときは、絞らない（undefined）。
+   * - 前回の回があり、先頭が前回と違い、向き先のブランチが前回と今回の両方にあって同じ
+   * - 前回の回に判定が付いている
+   * - PR の差分の起点（merge-base）が前回と同じ（取得できる）。ベースを取り込んだ・向き先を替えた・履歴を書き換えたときは変わる
+   * - PR の差分に、文書でないものがある（文書だけの PR は、すでに文書に効く検証に絞る。実装の前の文書の PR の規則も変えない）
+   * - 実装の前の文書の PR の範囲の節が入る回ではない
+   * - 前回の行へのコメントに、文書でないパスの要修正が無い
+   * - 前回の先頭から今回の先頭までの差分が文書だけ（documentsOnlySince）
+   */
+  private async rereviewDocsOnlyOf(
+    task: Task,
+    target: NonNullable<Task["reviewTarget"]>,
+    gitDir: string,
+    prDiff: string,
+    auth: Record<string, string> | undefined,
+  ): Promise<RereviewDocsOnly | undefined> {
+    const previous = task.previousReview;
+    if (!previous || previous.headCommit === target.headCommit) return undefined;
+    if (!previous.baseCommit || !previous.baseBranch || previous.baseBranch !== target.baseBranch) {
+      return undefined;
+    }
+    if (!task.reviewVerdicts?.some((v) => v.round === previous.round && v.verdict)) {
+      return undefined;
+    }
+    if (isDocBeforeImplement(this.reviewReworkContext(task).reviewRework)) return undefined;
+    if (previous.comments.some((c) => c.body.startsWith(MUST_TAG) && !isDocumentsOnly([c.path]))) {
+      return undefined;
+    }
+    const prPaths = diffPaths(prDiff);
+    if (prPaths.length === 0 || isDocumentsOnly(prPaths)) return undefined;
+    try {
+      // 前回の先頭と前回の起点は、今回の取得とは別に取る（取れなくても、レビューは止めない）
+      await this.deps.repos.fetchCommits(gitDir, [previous.headCommit, previous.baseCommit], auth);
+      const paths = await this.documentsOnlySince(gitDir, previous.headCommit, target.headCommit);
+      if (!paths) return undefined;
+      const before = await this.deps.repos.mergeBaseOf(
+        gitDir,
+        previous.headCommit,
+        previous.baseCommit,
+      );
+      const now = await this.deps.repos.mergeBaseOf(gitDir, target.headCommit, target.baseCommit);
+      if (!before || !now || before !== now) return undefined;
+      return { previousCommit: previous.headCommit, paths };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * sacty が PR を作る・更新する前に、PR の内容のリスクを評価して記録する（PullRequestRiskAssessed。PBI-362）。オーケストレーターの
    * エージェントに、実装後のコードと差分を読ませる。評価できなくても（予算の上限・実行の失敗・答えを読めない）、理由を記録して
    * 進める（PR の作成は止めない）。同じコミットを評価済みなら、評価し直さない（再開・同じ提出の再試行）。
@@ -12884,6 +13014,35 @@ export class TaskService {
     const latest = this.mustGet(task.id);
     const known = latest.riskAssessment;
     if (known?.via === "publish" && known.commit === code.commit && known.assessment) return "done";
+    // 前回の評価（評価できたもの）から、PR の差分の起点が同じで、差分が文書だけなら、エージェントを実行せずに引き継ぐ（PBI-421）。
+    // 文書でないものが入る・起点が変わった・確かめられないときは、評価し直す
+    if (
+      known?.via === "publish" &&
+      known.assessment &&
+      known.commit &&
+      known.base !== undefined &&
+      known.base === code.base &&
+      (await this.documentsOnlySince(this.trustedGitDir(latest), known.commit, code.commit))
+    ) {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestRiskAssessed",
+            payload: {
+              via: "publish",
+              commit: code.commit,
+              base: code.base,
+              assessment: known.assessment,
+              inheritedFrom: known.inheritedFrom ?? known.commit,
+              costUsd: 0,
+              estimated: false,
+            },
+          },
+        },
+      ]);
+      return "done";
+    }
     const assessed = await assessPullRequestRisk({
       commit: code.commit,
       budgetExceeded: budgetState(latest.budget) === "exceeded",
@@ -12903,7 +13062,10 @@ export class TaskService {
     this.append(this.mustGet(task.id), [
       {
         actor: assessed.payload.assessment ? "orchestrator" : "sacty",
-        event: { type: "PullRequestRiskAssessed", payload: assessed.payload },
+        event: {
+          type: "PullRequestRiskAssessed",
+          payload: { ...assessed.payload, base: code.base },
+        },
       },
       ...(unconfirmed && assessed.failure && runId
         ? [

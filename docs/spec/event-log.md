@@ -106,7 +106,7 @@
   | `RepositoryChosen` | リポジトリの選択（`repository`） |
   | `StepsChosen`・`StepsSkipped`・`OrchestratorFailed`（actor が `gatherer` のものを除く） | オーケストレーター（`orchestrator`） |
   | `PullRequestBodyResolved`（PBI-334） | オーケストレーター（`orchestrator`。人が直した PR の本文との競合をまとめた実行。エージェントを実行しなかった（`agentId` が無い）ものは、行にしない。[人が直した本文の更新](approval.md#人が直した本文の更新)） |
-  | `PullRequestRiskAssessed`（PBI-362） | オーケストレーター（`orchestrator`。PR を作る前のリスク評価の実行。エージェントを実行しなかった（`agentId` が無い。予算の上限で評価しなかったもの・レビューの工程の答えから読んだもの）は、行にしない。[PR のリスク評価](risk-assessment.md)） |
+  | `PullRequestRiskAssessed`（PBI-362） | オーケストレーター（`orchestrator`。PR を作る前のリスク評価の実行。エージェントを実行しなかった（`agentId` が無い。予算の上限で評価しなかったもの・レビューの工程の答えから読んだもの・前回の評価を引き継いだもの（`inheritedFrom`。PBI-421））は、行にしない。[PR のリスク評価](risk-assessment.md)） |
   | `AgentRunCompleted`・`AgentRunFailed` | その工程 |
   | `OutputExported` | 書き出し（`export`） |
   | `QuestionAnswered` | 質問への答え（`chat`） |

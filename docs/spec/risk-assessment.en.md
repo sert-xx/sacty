@@ -152,6 +152,12 @@ When an implementation PR is opened or updated, the assessment runs after the co
 
 - The Orchestrator's agent runs on a throwaway copy of the implemented code. The prompt contains how to read the diff (the base commit and the commit to publish), the criteria for the levels, the task's title and content, the approved requirements, and the implementation agent's description (`buildRiskAssessmentPrompt`).
 - If the same commit has already been assessed, it is not assessed again (a resume, or a retry of the same submission). A commit that could not be assessed is assessed again at the next opportunity.
+- When the diff from the commit of the previous assessment (one with `via` of `publish` that could be assessed) to the current commit is documents only and the start of the PR diff (`base`) is the same as last time, no agent is run and the previous assessment is carried over (PBI-421).
+  - "Documents only" is the same judgment as the narrowing of a re-review (`documentsOnlySince`: the previous commit is an ancestor of the current one, the changed paths have a document extension, and none is an instruction to agents or under a directory that has `SKILL.md` in the current tree. An empty diff is not documents only).
+  - `base` is the task's start at the time of the assessment, or the head of the base branch that was merged in (`workBaseCommit`). It does not change when the base branch only moves ahead, and changes when the base is merged in.
+  - When it is carried over, `PullRequestRiskAssessed` records the current commit, the current `base`, a copy of the previous assessment, and the commit it was originally assessed at (`inheritedFrom`; even after several carry-overs, the commit that was actually assessed), with a cost of 0. The PR body shows the previous assessment as it was.
+  - In any of the following cases it is assessed again as before: the diff has something that is not a document, there is no previous assessment or it could not be assessed (a record with only a reason), the previous record has no `base`, `base` differs from last time, or the diff cannot be confirmed (the previous commit is not an ancestor of the current one, cannot be read, and so on). Because the comparison is with the commit of the previous record, a submission that includes a change that is not a document is always assessed again, even after several carry-overs.
+  - The level is a guide to how deeply a person reviews, and carrying it over only skips running it (it is not used to skip a review, to merge automatically, or to change a step). An instruction document that the judged names do not match, or a document that code or tests read, can be carried over.
 - Even when the assessment fails, opening or updating the PR is not stopped. The reason is recorded and the body says so. The assessment fails in these cases.
   - The budget cap has been reached (no agent is run; `pr.riskBudget`)
   - The agent's run failed (`pr.riskFailed`)
@@ -160,7 +166,7 @@ When an implementation PR is opened or updated, the assessment runs after the co
 - The assessment is enabled when the daemon starts (`riskAssessment` of `ServiceDeps`). A service that does not enable it (a test) does not assess.
 - The result is recorded in `PullRequestRiskAssessed`. The cost is counted on the Orchestrator's row ([Activity](event-log.en.md#cost)).
 
-Code: `apps/daemon/src/service.ts` (`assessRisk`, `publish`), `apps/daemon/src/risk-assessment.ts` (`assessPullRequestRisk`, `buildRiskAssessmentPrompt`), `apps/daemon/src/main.ts`
+Code: `apps/daemon/src/service.ts` (`assessRisk`, `documentsOnlySince`, `publish`), `apps/daemon/src/test-files.ts` (`isChangeDocumentsOnly`), `apps/daemon/src/risk-assessment.ts` (`assessPullRequestRisk`, `buildRiskAssessmentPrompt`), `apps/daemon/src/main.ts`
 
 ## Assessment in the review step
 
@@ -195,8 +201,8 @@ Code: `apps/daemon/src/risk-assessment.ts` (`riskAssessmentLines`), `apps/daemon
 
 ## Record and UI
 
-- `PullRequestRiskAssessed` holds the occasion (`via`), the commit assessed (`commit`), and the assessment (`assessment`) or the reason it could not be assessed (`reason`).
+- `PullRequestRiskAssessed` holds the occasion (`via`), the commit assessed (`commit`), and the assessment (`assessment`) or the reason it could not be assessed (`reason`). A record with `via` of `publish` also holds the start of the PR diff at the time of the assessment (`base`). A record that carried over the previous assessment also holds the commit it was originally assessed at (`inheritedFrom`), and has no agent and no cost.
 - A task holds only the last assessment (`Task.riskAssessment`). A record of a failed assessment does not keep the earlier assessment.
-- The UI shows a "PR risk assessment" section in the overview of the task detail (only for a task with an assessment record). Each signal name carries its weight, and the size of the dependency version update is shown when there is one. The activity shows the occasion and the level (or the reason, if it could not be assessed) in one line.
+- The UI shows a "PR risk assessment" section in the overview of the task detail (only for a task with an assessment record). Each signal name carries its weight, and the size of the dependency version update is shown when there is one. The activity shows the occasion and the level (or the reason, if it could not be assessed) in one line. A carried-over assessment is shown in one line saying which commit's assessment was carried over to which commit.
 
 Code: `packages/core/src/projection.ts` (`applyEvent`), `apps/web/src/components/risk-assessment.tsx` (`RiskAssessmentCard`)

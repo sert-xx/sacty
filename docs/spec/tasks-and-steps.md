@@ -1960,9 +1960,19 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   - 指摘にしてよいのは、目的・範囲、依頼・上位の要求との食い違い、要求・受け入れ条件の抜けと矛盾、方式の選択とその理由、人が決めるべきことが「確認したいこと」に出ているか、取り返しにくい決定（外に公開する I/F・保存するデータの形・セキュリティ・移行）の誤りと抜け。実装の手段の細部、テスト観点の値・粒度・境界値の並べ方、言い回しは、実装の PR のレビューに任せる。ただし、書かれた手段やテスト観点が方針を誤らせる、または受け入れ条件を取りこぼす（観点がまるごと抜けている）ときは、指摘にしてよい。
   - 起動する観点は、主対象が `design-doc` なら D-1・D-2・D-5・D-10 と X-1 に絞る（条件付き観点・X-2・X-3・R は通常の規則）。D-3・D-4・D-6 は起動表に理由つきで残す。
   - 実装の PR、取り込んだ PR（PR を作ったタスクが無い）、実装の工程が残らないタスク（設計だけ・分割・文書作成など）や実装を飛ばしたタスクの文書の PR には、何も足さず、観点も絞らない。判定・重み・戻し先・再レビューの規則は変えない。規則の本体は既定のスキル `review-dispatch` にある。
+- 前回以降が文書だけの再レビューの絞り（PBI-421）：再レビューで、前回レビューした先頭のコミットから今回の先頭のコミットまでの変更が文書だけで、主対象が `code` の PR のとき、指示に、変わったパスを示して、スキル `review-dispatch` の規則 10 で行うこと（起動する観点と検証を絞る）を明示する（`rereviewDocsOnlyLines`）。デーモンが次を全部確かめたときだけ足す（`rereviewDocsOnlyOf`）。確かめられなければ絞らず、レビューは止めない。
+  - 前回の回があり、先頭が前回と違う。PR の向き先のブランチ（`reviewTarget.baseBranch`）が、前回と今回の両方にあって同じ。前回の回に判定がある。
+  - 前回の先頭と前回の向き先のコミットを、今回の先頭と向き先の取得とは別に取得できる。前回の先頭が今回の先頭の祖先で、間の変更が文書だけ（`documentsOnlySince`。判定は `isChangeDocumentsOnly`）。
+  - PR の差分の起点（前回と今回の、先頭と向き先のコミットの merge-base。`mergeBaseOf`）が、どちらも取れて同じ。ベースブランチが進んでも、PR がそれを取り込んでいなければ同じ。取り込んだ・向き先を替えた・履歴を書き換えたときは、起点か向き先が変わるか、取り込んだ変更が前回以降の差分に入るので、絞らない。
+  - PR の差分（`pr.diff`）に、文書でないものがある（文書だけの PR は、すでに文書に効く検証に絞る）。実装の前の文書の PR の範囲の節が入る回ではない。前回の行へのコメントに、`[要修正]` で文書でないパスのものが無い。
+  - 「文書だけ」は、拡張子が文書のもの（`isDocumentsOnly`）のうち、エージェントへの指示（名前が `AGENTS.md`・`CLAUDE.md`・`GEMINI.md` のもの。大文字・小文字は問わない。`.` で始まるディレクトリの下のもの）と、今回の木で `SKILL.md` があるディレクトリの下のものを除く。差分が空のときは、文書だけにしない。
+  - 当たる回は、「文書だけでも担当の起動は省かない」「差分にコードの変更があれば全部の検証を実行する」「検証は今回のコードで実行し直す」の行を、規則 10 に従う文に差し替える。規則 10 の要点（起動する観点・起動表に残す理由・`scope: docs` と `skipped` の記録・絞らない条件）も指示に書く。
+  - 親は、変わったファイルを開き、「主対象の種類」の考え方で見直す。文書でない・迷う・エージェントへの指示・コードやテストが読み込む文書、前回の本文の `must` が文書でないものに及ぶ、前回の本文に見られなかった観点・止まった検証がある、のどれかなら、絞らずに規則 1〜7 で決める。
+  - 絞るときに起動するのは、前回の指摘に関わる観点、変えた文書の種類の正確さと安全性の観点（`user-doc` は U-1・U-5、`design-doc` は D-2・D-5）、X-1。検証は `scope: docs` で、コードのテストは `skipped` と理由を残す。本文の「レビューの範囲」に絞ったことを書く。判定・重み・「前回の指摘」の節は変えない。
+  - 初回のレビュー・`self-review`・規則 8・規則 9 は変えない。
 - 観点の見方：総評の後に、観点をどう見たか（観点ごとの担当に分けて見た観点の数、または逐次モードで見たこと）を1行で書かせる。
   Codex の `codex exec --json` の出力には担当の起動が出ず、待機だけが出る（0.167.0 の実行のログで確かめた）ので、PR を読む人は、観点ごとのレビューが行われたかを本文のこの行で確かめる（PBI-349）。sacty は、写したセッションのファイルから数える（次の項目）。
-- 担当の起動：指示で、進める順（スキルの `SKILL.md` の後に、流れの資料 `references/pr-review.md` と観点カタログ `references/viewpoints.md` を読む。起動表を作って、スキルの起動の規則が決めた担当を全部起動する。結果が揃ってから本文を書く）と、担当を起動する前に自分で指摘・総評を書き始めないこと、対象の大小・再レビューかどうかによらず起動を省かないことを伝える（`REVIEW_DISPATCH_LINES`。エージェントの種類によらず同じ文。PBI-379）。
+- 担当の起動：指示で、進める順（スキルの `SKILL.md` の後に、流れの資料 `references/pr-review.md` と観点カタログ `references/viewpoints.md` を読む。起動表を作って、スキルの起動の規則が決めた担当を全部起動する。結果が揃ってから本文を書く）と、担当を起動する前に自分で指摘・総評を書き始めないこと、対象の大小・再レビューかどうかによらず起動を省かないことを伝える（`reviewDispatchInstructionLines`。エージェントの種類によらず同じ文。PBI-379）。
   - 実行の後に、sacty が、写したエージェントのセッションのファイルから、起動した担当の数を数える（`countReviewDispatch`）。
     Claude Code は、担当ごとのセッションのファイル（`projects/<作業ディレクトリ>/<セッション>/subagents/` の下の、名前が `agent-<16進の ID>.jsonl` の形のファイル。深さによらない。まとめて起動するツールは `subagents/workflows/` の下に置く。ほかの名前のファイルは数えない）の数と、親のセッション（`projects/<作業ディレクトリ>/<セッション>.jsonl`）の `Agent`・`Task`・`Workflow` の呼び出し（呼び出しの ID で重複を除く）の数の、多い方。
     Codex は、先頭の `session_meta` の `source` が `exec` の rollout（親）の中の `spawn_agent` の呼び出し（担当の rollout は親の履歴を引き継ぐので、数えない）。
@@ -2006,7 +2016,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   人が画面の「再レビュー」を押したときと、sacty が見守っている PR の変化を見つけたとき（`reason: pushed`・`replied`。[投稿の後の PR の見守り](#投稿の後の-pr-の見守り)）の動作。
   レビューの子タスクは、親が PR を更新して承認待ちに戻ったときにも、sacty が同じように戻す（`reason: updated`。[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
   GitHub のレビュー再依頼では、元のタスクを戻さず、別のレビュー専用タスクを作る（[取り込み](intake.md)）。
-  どちらも、前回の本文・行へのコメント・レビューしたコミット・投稿の時刻を `previousReview` に残す。
+  どちらも、前回の本文・行へのコメント・レビューしたコミット・投稿の時刻を `previousReview` に残す。レビューの対象（`ReviewTargetResolved`・`reviewTarget`）には、PR の向き先のブランチ（`baseBranch`。GitHub の `base.ref`）を持たせ、`previousReview` には、その回の向き先のコミット（`baseCommit`）と向き先のブランチ（`baseBranch`）を持たせる（前回以降が文書だけの再レビューが、PR の差分の起点が前回と同じかを確かめるため。これらを持たない記録は、絞らない。PBI-421）。
   「再レビュー」で `previousReview` を置き換えるときは、置き換える前のものを `earlierReviews` に古い順に積む（新しい 5 件まで。GitHub の再依頼で作った別のタスクには無い。PBI-342）。3回目以降の指示には、前々回以前のレビュー（本文は 1 件 5000 文字まで）もデータに入れ、前回までの要修正と原因を照らすのに使わせる（対応を確かめるのは前回の指摘だけ）。
   指示には、前回の指摘と、前回の投稿の後の PR の作者の返答を、指示とは分けた JSON のデータとして入れる。
   作者の返答は、PR のレビュー・行へのコメント・通常のコメントのうち、作者の login のもの（sacty のレビューの目印で始まるものを除く。新しい 30 件、1件 2000 文字まで）。sacty が作った PR では、sacty が作者のアカウントで投稿した指摘への返信（[指摘への対応の返信](approval.md#指摘への対応の返信)）も、作者の返答に入る（`includeSactyReplies`）。
@@ -2017,7 +2027,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   重みを見直した指摘は、指摘箇所が前回以降の差分の外でも、その回は残させる。残させるのは見直した回の 1 回だけ。前回のレビューの「前回の指摘」の節の、同じ箇所・同じ問題の行に、重みを見直したと書かれている指摘は、先頭のコミットが進んだ回には、節にも総評にも挙げさせず、判定の根拠にもさせない（指摘箇所が前回以降の差分に含まれるときだけ、ほかの提案と同じに扱わせる）。そう書かれているかを読めなければ、今回の見直しとして扱わせる。その指摘が、今回の表で要修正の重さに当たると分かったときは、要修正として採用させる。前回と同じ先頭のコミットを判定し直す回は、見直した回の続きとして扱わせ、前回のレビューが重みを見直したと書いた指摘も残させる。
   未対応の前回の要修正が、重みを見直した指摘だけで、ほかに要修正の指摘が無ければ、判定は `changes_required` にさせず、`suggestions` にさせる。
   後続に回したい案の扱いを渡した回では、その扱いで未対応に数えない指摘（人が後続に回すと決めた指摘、人に確認中で提案の重みの指摘）は、判定ではその扱いを優先させる。前回の要修正で、人に確認中の指摘を、今回提案の重みとしたときは、その指摘の行に、人に確認中と書くのに加えて、重みを下げたことと根拠を書かせる（[後続に回したい案と、人の決定](approval.md#後続に回したい案と人の決定)）。
-  再レビューでも、スキル `review-dispatch` でレビューし、今回のコードで検証を実行し直させる。
+  再レビューでも、スキル `review-dispatch` でレビューし、今回のコードで検証を実行し直させる（前回以降が文書だけの再レビューは、次の項目で絞る）。
   返答を読めなければ（作者が分からないときも）、そう書いて続け、理由をタスクと PR を添えてデーモンのログに出す（秘密の値は伏せる）。
 - 言語：sacty が付ける見出し・判定・注記・固定の文と、指摘の頭は日本語で固定する。
   エージェントの本文と指摘の文は、対象のリポジトリの文章の決まり（スキル `writing` の順）に従わせ、決まりが無ければ日本語にする。
@@ -2072,4 +2082,4 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
 - ドラフトの PR でも、同じように再レビューを始める。
 - 見守り中も、作業領域の片付け（[終わったタスクの作業領域の片付け](#終わったタスクの作業領域の片付け)）・完了したタスクの監査（[監査](audit.md)）・続きのタスクの作成（[派生](#完了したタスクから続きのタスクを作る派生)）は、工程がすべて終わったタスクとして、投稿の後に行える（`isCompleted` で決める）。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`composeReviewPost`・`rereview`・`checkReviewPullRequests`・`watchReview`・`reviewWatchDue`・`supersededWatch`・`sactyMadePullRequests`・`statusWithin`・`FEEDBACK_QUIET_MS`・`REVIEW_WATCH_INTERVALS`）、`apps/daemon/src/github.ts`（`PullRequestStatus`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`rejudgeLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`・`REVIEW_DISPATCH_LINES`・`reviewUndispatchedLines`・`reviewDispatchLines`）、`apps/daemon/src/review-dispatch-count.ts`（`countReviewDispatch`）、`packages/core/src/events.ts`（`ReviewVerdict`・`ReviewDispatch`・`REVIEW_UNDISPATCHED_RETRIES`）、`packages/core/src/projection.ts`（`applyEvent`・`PullRequestReviewPosted`・`ReviewWatchEnded`・`ReviewRestarted`・`EARLIER_REVIEWS_MAX`・`reviewWatching`・`currentReviewVerdict`・`isDone`・`isFinished`・`canRereview`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`・`canControl`）、`apps/web/src/components/review-watch-notice.tsx`
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`rereviewDocsOnlyOf`・`documentsOnlySince`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`composeReviewPost`・`rereview`・`checkReviewPullRequests`・`watchReview`・`reviewWatchDue`・`supersededWatch`・`sactyMadePullRequests`・`statusWithin`・`FEEDBACK_QUIET_MS`・`REVIEW_WATCH_INTERVALS`）、`apps/daemon/src/github.ts`（`PullRequestStatus`）、`apps/daemon/src/test-files.ts`（`isChangeDocumentsOnly`）、`apps/daemon/src/repository.ts`（`mergeBaseOf`）、`apps/daemon/src/prompts.ts`（`rereviewDocsOnlyLines`・`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`rejudgeLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`・`reviewDispatchInstructionLines`・`reviewUndispatchedLines`・`reviewDispatchLines`）、`apps/daemon/src/review-dispatch-count.ts`（`countReviewDispatch`）、`packages/core/src/events.ts`（`ReviewVerdict`・`ReviewDispatch`・`REVIEW_UNDISPATCHED_RETRIES`）、`packages/core/src/projection.ts`（`applyEvent`・`PullRequestReviewPosted`・`ReviewWatchEnded`・`ReviewRestarted`・`EARLIER_REVIEWS_MAX`・`reviewWatching`・`currentReviewVerdict`・`isDone`・`isFinished`・`canRereview`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`・`canControl`）、`apps/web/src/components/review-watch-notice.tsx`

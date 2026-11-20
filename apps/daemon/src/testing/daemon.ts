@@ -417,8 +417,11 @@ export class FakeRepos implements RepositoryWorkspace {
   /** レビューの対象の PR のコミットの取得と、PR の差分（PBI-19）。 */
   fetchedCommits: { gitDir: string; commits: string[]; authEnv?: Record<string, string> }[] = [];
   fetchFail?: string;
+  /** これを含む取得だけ失敗にする（前回の先頭・前回の起点が取得できない場合。PBI-421）。 */
+  fetchFailFor: string[] = [];
   async fetchCommits(gitDir: string, commits: string[], authEnv?: Record<string, string>) {
     if (this.fetchFail) throw new Error(this.fetchFail);
+    if (commits.some((c) => this.fetchFailFor.includes(c))) throw new Error("fetch failed");
     this.fetchedCommits.push({ gitDir, commits, ...(authEnv ? { authEnv } : {}) });
   }
   /** ベースブランチの最新の取得（統合レビュー。PBI-31）。 */
@@ -440,9 +443,24 @@ export class FakeRepos implements RepositoryWorkspace {
   /** タスクブランチの、sacty が積んだ後の変更（PBI-57）。テストで、人が直接積んだ変更を表す。 */
   changed: string[] = [];
   changedCalls: { from: string; to: string }[] = [];
+  /** 2つのコミットの組（`from..to`）ごとの変更のパス。無ければ changed（PBI-421）。 */
+  changedBetween: Record<string, string[]> = {};
   async changedPaths(_gitDir: string, from: string, to: string) {
     this.changedCalls.push({ from, to });
-    return this.changed;
+    return this.changedBetween[`${from}..${to}`] ?? this.changed;
+  }
+  /** isAncestor の結果（PBI-421）。ancestorFail があれば失敗にする。 */
+  notAncestor = false;
+  ancestorFail?: string;
+  async isAncestor(_gitDir: string, _commit: string, _ancestorOf: string) {
+    if (this.ancestorFail) throw new Error(this.ancestorFail);
+    return !this.notAncestor;
+  }
+  /** mergeBaseOf の結果（PBI-421）。commit の組（`a..b`）ごとに決める。無ければ、すべて同じ値（起点が変わらない）。 */
+  mergeBases: Record<string, string | undefined> = {};
+  async mergeBaseOf(_gitDir: string, a: string, b: string) {
+    const key = `${a}..${b}`;
+    return key in this.mergeBases ? this.mergeBases[key] : "m".repeat(40);
   }
   /** リモートのブランチの先頭（タスクブランチ・工程のブランチ。PBI-57）。PR のマージは、テストで書き換える。 */
   remote: Record<string, string> = {};

@@ -42,6 +42,43 @@ const assessment = {
 };
 
 describe("PR のリスク評価の記録（PBI-362）", () => {
+  it("引き継いだ評価は、評価した元のコミットと起点を持ち、費用は 0 で、予算に足さない（PBI-421）", () => {
+    seq = 0;
+    const task = project([
+      created("t1"),
+      ev("t1", {
+        type: "PullRequestRiskAssessed",
+        payload: {
+          via: "publish",
+          commit: "c1",
+          base: "b0",
+          assessment,
+          agentId: "a",
+          costUsd: 0.25,
+        },
+      }),
+      ev("t1", {
+        type: "PullRequestRiskAssessed",
+        payload: {
+          via: "publish",
+          commit: "c2",
+          base: "b0",
+          assessment,
+          inheritedFrom: "c1",
+          costUsd: 0,
+        },
+      }),
+    ]).get("t1");
+    expect(task?.riskAssessment).toMatchObject({
+      via: "publish",
+      commit: "c2",
+      base: "b0",
+      inheritedFrom: "c1",
+      assessment: { level: "medium" },
+    });
+    expect(task?.budget.usedUsd).toBeCloseTo(0.25);
+  });
+
   it("最後の評価だけを持ち、費用を予算に足す", () => {
     seq = 0;
     const task = project([
