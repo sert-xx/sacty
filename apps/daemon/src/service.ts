@@ -16464,7 +16464,12 @@ export class TaskService {
   private checkBudget(task: Task) {
     const warned = this.warnIfNeeded(task);
     // 承認待ちのタスクは、すでに人間の判断で止まっている。予算超過は次の実行の前に判定する。
-    if (warned.status === "idle" && budgetState(warned.budget) === "exceeded") {
+    // 書き終えたレビューの投稿は費用がかからないので、上限に達していても止めずに投稿する（止めるのは次の再レビューの前）。
+    if (
+      warned.status === "idle" &&
+      !awaitingReviewPost(warned) &&
+      budgetState(warned.budget) === "exceeded"
+    ) {
       this.append(warned, [
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
       ]);
