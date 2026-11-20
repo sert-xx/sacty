@@ -1861,3 +1861,52 @@ describe("既定のスキル：実装の前の文書の PR のレビューの手
     expect(skill()).toContain("`pr-review` の、主対象が `design-doc` のときも除く。規則 9");
   });
 });
+
+describe("既定の review スキルの、同じ原因が続くときの明示と原因を断つ直し（PBI-424）", () => {
+  const dir = "skills/review/review-dispatch/references/";
+
+  it("aggregation.md が、本文への明示と、直し方の案の3つの中身と、止める仕組みを足さないことを決める", () => {
+    const text = read(`${dir}aggregation.md`);
+    expect(text).toContain(
+      "方針の観点が方針を変える指摘を出したかどうかに関わらず、今回の `must` が前回までの `must` と同じ原因の別の現れなら、同じ原因が続いていることを本文に明示する",
+    );
+    expect(text).toContain(
+      "同じ原因の `must` が何回目か（前回までの回が分からないときは「少なくとも N 回目」）、前回までの現れの一覧（回と現れを短く）",
+    );
+    expect(text).toContain(
+      "テストを書く場面（主対象が `code` で、文書だけの変更でも、テストなしのタスクでもない）にだけ求める",
+    );
+    expect(text).toContain("2回目の時点から（方針を変える指摘が出ないときも）");
+    expect(text).toContain("原因を1か所で断つ直し（同じ原因のどの現れにも効くもの）");
+    expect(text).toContain("切れ目の種類 × 処理する時点 × 値どうしの関係");
+    expect(text).toContain("確かめた組み合わせと、確かめていない組み合わせを分けて書く");
+    expect(text).toContain("外から見える入口（利用者や呼び出し側が実際に使う経路）に当てること");
+    expect(text).toContain("自動で止めたり、通知したり、機械で読める欄を足したりしない");
+    // 既存の決まりは残る
+    expect(text).toContain(
+      "出さなければ（今の方針のままで原因を直せると判断した）、現れをふつうの `must` として採用する",
+    );
+  });
+
+  it("pr-review.md・self-review.md・C-17 が、本文を再掲せず aggregation.md の決まりを指す", () => {
+    expect(read(`${dir}pr-review.md`)).toContain(
+      "[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」のとおりに書く（総評か、その指摘の本文の、人が読んで分かる場所に書く。性質のテストの求めは、主対象が `code` でテストを書く場面だけ）",
+    );
+    const self = read(`${dir}self-review.md`);
+    expect(self).toContain("本文への明示（記録と返す結果に書く）と、直し方の案の中身を");
+    expect(self).toContain("`user-doc`・`design-doc`・テストなしでは求めない");
+    expect(self).toContain("- 同じ原因が続いた指摘：（あるときだけ）");
+    expect(read("skills/review/review-execution/references/C-17.md")).toContain(
+      "方針を変える指摘を出さないと決めたときも、同じ原因が続いている（手順 5）なら",
+    );
+  });
+
+  it("設計書の観点 D-3 が、取り消せない害を防ぐ処理の境目の数え上げを見て、重さは表で決める", () => {
+    const d3 = read("skills/review/review-execution/references/D-3.md");
+    expect(d3).toContain("取り消せない害を防ぐ処理（秘密情報を伏せる・データの破損を防ぐ検査など");
+    expect(d3).toContain("入力が分かれる所・処理する時点の違い・失敗したときの経路");
+    expect(d3).toContain(
+      "数え上げが無ければ指摘する。重さは、重要度の表（影響の大きさと起きやすさ）で決める",
+    );
+  });
+});

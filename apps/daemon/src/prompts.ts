@@ -506,6 +506,18 @@ function rereviewDocsOnlyLines(task: Task, narrowed: RereviewDocsOnly | undefine
 }
 
 /**
+ * 同じ原因の `must` が続くときに、本文へ明示させる項目と、直し方の案に含めさせる項目（PBI-424）。レビューの指示と
+ * セルフレビューの指示で、同じ文を共有する（規則の本体は既定のスキル review-dispatch の集約の規則）。
+ * 性質のテストの求めは、テストを書く場面（主対象がコードで、文書だけの依頼でも、テストなしのタスクでもない）にだけ出す。
+ */
+const causeContinuesItems = (must: string): string =>
+  `同じ原因が続いていること・原因（1文）・同じ原因の ${must} が何回目か（前回までの回が分からないときは「少なくとも N 回目」）・前回までの現れの一覧（回と現れを短く）`;
+const CAUSE_CUT_ITEMS =
+  "原因を1か所で断つ直し（同じ原因のどの現れにも効くもの）と、残りうる現れの、軸（例：切れ目の種類 × 処理する時点 × 値どうしの関係）による数え上げ（確かめた組み合わせと、確かめていない組み合わせを分ける）";
+const CAUSE_PROPERTY_TEST_ITEM =
+  "性質で確かめるテスト（決まった例ではなく、乱数や網羅で作った入力に対して「どの入力でも〜にならない」を確かめるもの）を、内側の関数ではなく、利用者や呼び出し側が実際に使う入口に当てること";
+
+/**
  * 再レビュー（PBI-44）の指示（PBI-111）。前回の sacty のレビューの指摘と、それ以降の PR の作者の返答を、指示とは分けた JSON の
  * データとして渡し、前回の指摘ごとに対応を確かめたか・未対応かを書かせる。前回のレビューが無ければ（最初のレビュー）何も足さない。
  * 前回の要修正が直っていなくても、スキルの重要度の表で提案の重さに当たると分かったものは、未対応の要修正に数えさせない
@@ -576,6 +588,8 @@ function rereviewLines(
     `これは ${task.reviewRound ?? 2} 回目のレビューです。前回（${previous.round} 回目）は ${previous.headCommit.slice(0, 7)} のコードをレビューして投稿しました。今回は ${head ? head.slice(0, 7) : "PR の最新"} のコードです。`,
     "- 範囲は PR 全体にする（前回の後の変更だけを見ない）。PR 全体は PR の差分で決まる範囲で、変えていない既存の本文の全体ではない。前回のレビューに、変えていない箇所を見ていないと書かれていても、範囲を広げない",
     `- 今回の ${MUST_TAG} が、前回までの ${MUST_TAG} と同じ原因の別の現れなら、スキルの集約の規則（「回をまたいで同じ原因が続くとき」）どおりに扱う。方針の観点（コードは C-17、設計書は D-1）に方針を見直させ、方針を変える ${MUST_TAG} が出ればその指摘にまとめる。出なければ、または方針の指摘が ${SUGGESTION_TAG} なら、現れを ${MUST_TAG} のまま残す。利用者向け文書のレビューには当てはめない`,
+    // 同じ原因が続くとき、方針の観点の判断にかかわらず、本文に明示し、原因を断つ直しと性質のテストを求める（PBI-424）
+    `- 今回の ${MUST_TAG} が、前回までの ${MUST_TAG} と同じ原因の別の現れなら、方針の観点が方針を変える指摘を出したかどうかに関わらず、総評か、その指摘の本文の読み手が分かる場所に、${causeContinuesItems(MUST_TAG)}を書く。2回目の時点から、その指摘の直し方の案を、今回の現れを塞ぐ手当てだけにせず、${CAUSE_CUT_ITEMS}を含める。${task.noTestsReason || task.documentsOnly === true ? "このタスクはテストを書かない場面なので、性質のテストは求めない" : `主対象がコードのときは、さらに、${CAUSE_PROPERTY_TEST_ITEM}を求める（設計書・利用者向け文書の PR では、性質のテストは求めない）`}。これは文面を足すだけで、同じ原因が続いても、レビューの判定・重さ・再レビューの範囲・方針の観点の起動の規則は変えない。利用者向け文書のレビューには当てはめない`,
     docsOnly
       ? "- 再レビューでも、スキル review-dispatch（流れは pr-review）でレビューする。検証は、下の「再レビューの範囲（前回以降が文書だけ）」の節のとおり、文書に効く検証だけを今回のコードで実行する（前回の結果や CI の結果だけで済ませない）"
       : "- 再レビューでも、スキル review-dispatch（流れは pr-review）でレビューし、検証は今回のコードで実行し直す（前回の結果や CI の結果だけで済ませない）",
@@ -2019,6 +2033,25 @@ function guardianJudgmentLines(task: Task, step: StepKey): string[] {
   ];
 }
 
+/**
+ * 実装のやり直しで、欠陥の指摘を、同じ原因のほかの現れまでまとめて直させる指示（PBI-424）。文書だけの指摘・欠陥でない指摘
+ * （提案・文言）には求めない（やり直しを重くしない）。
+ */
+function causeSearchLines(task: Task): string[] {
+  // テストを書かないタスク（文書だけの依頼・テストの仕組みが無いタスク）には、性質のテストを求めない
+  const writesTests = !task.noTestsReason && task.documentsOnly !== true;
+  return [
+    "",
+    "--- 欠陥の指摘を直すとき ---",
+    `- 欠陥の指摘（AI のレビューの ${MUST_TAG}、人の指摘のうち不具合・誤動作を言うもの）を直すときは、指摘された入力・箇所だけでなく、同じ原因のほかの現れ（入力の形の違い・別の呼び出し元・別の時点）を自分で探して、まとめて直す`,
+    "- 探した範囲（何を見て、何が見つかり、何は見つからなかったか）を、その指摘への対応の text に書く",
+    writesTests
+      ? `- 指摘が「同じ原因が続いている」と書いているときは、指摘された現れだけを塞ぐ直しで終えず、指摘が求めた性質のテスト（乱数や網羅で作った入力に対して、どの入力でも欠陥にならないことを確かめるもの。利用者や呼び出し側が実際に使う入口に当てる）を足す。ただし、指摘が文書だけ・${SUGGESTION_TAG}・文言のものには足さない`
+      : "- 指摘が「同じ原因が続いている」と書いているときは、指摘された現れだけを塞ぐ直しで終えず、原因を1か所で断つ。このタスクはテストを書かない（文書だけの依頼、またはテストの仕組みが無い）ので、性質のテストは足さない",
+    `- 文書だけの指摘と、欠陥でない指摘（${SUGGESTION_TAG}・文言・好みの指摘）には、この探索と対応の text への記載、性質のテストを求めない`,
+  ];
+}
+
 function remarkLines(task: Task, step: StepKey, label: string): string[] {
   // 前の提出・前の実行で、後続に回したい案（PBI-370）にした指摘は、対応させる指摘から外す（提出に至らなかった実行の案も。
   // 案の理由は、投影が次の実行の対応として持ち越し、提出のときに PR に返信する。PBI-383）。人に確認中の案は、人が決めるまで
@@ -2044,6 +2077,7 @@ function remarkLines(task: Task, step: StepKey, label: string): string[] {
           `- [${r.id}] ${remarks.find((x) => x.id === r.id)?.fixOf ? FIX_DECIDED_MARK : ""}${r.text}`,
       },
     ),
+    ...(step === "implement" ? causeSearchLines(task) : []),
     ...guardianJudgmentLines(task, step),
     ...deferred,
     "",
@@ -2589,6 +2623,8 @@ function selfReviewLines(
   fixCauses: readonly string[] = [],
   /** 依頼が軽いと判定され、人が通常の深さに上書きしていない（PBI-369）。渡すと、観点を絞らせる。 */
   light = false,
+  /** 性質のテストを求めるか。テストを書く場面（主対象が code で、文書だけでも、テストなしでもない）だけ true（PBI-424）。 */
+  propertyTests = kind === "code",
 ): string[] {
   const draftLine = `- ${deliverable}の下書きを一時ファイル（例：/tmp/sacty-self-review/draft.md）に書き、それをレビューの対象にする（作業領域の外に置き、リポジトリには書かない）`;
   return [
@@ -2621,6 +2657,8 @@ function selfReviewLines(
       ? `- ${deliverable}はリポジトリのファイルにしないので、スキルの検証（references/verification-run.md）は実行しない。担当には、検証は実行していないと伝える`
       : "- 検証の実行は、スキルの references/verification-run.md の手順の全体（0〜5）に従う。見出しや一部の行を読んだだけで進めない。実行する範囲の決め方（0）は、主対象の種類で決まる",
     "- must の指摘が無くなる（パスする）まで、修正と再レビューを繰り返す。回数の上限はスキルの規則（初回を含めて最大 5 回）",
+    // 2回目以降で同じ原因が続くとき、記録・返す結果（summary）に明示させる（PBI-424）
+    `- 2回目以降のレビューで、今回の must が前回までの must と同じ原因の別の現れなら、方針の観点が方針を変える指摘を出したかどうかに関わらず、報告の summary と自己レビューの記録に、${causeContinuesItems("must")}を書く。2回目の時点から、直しは今回の現れを塞ぐだけにせず、${CAUSE_CUT_ITEMS}を直しの案と記録に含める。${propertyTests ? `さらに、${CAUSE_PROPERTY_TEST_ITEM}を足す` : "この場面はテストを書かない（文書・設計書・原稿・テストなし）ので、性質のテストは求めない"}。回数で止める・止めない決まりは足さない`,
     "- 上限に達しても must が残るときは、残った指摘を報告して提出する。黙って提出しない",
     ...(rework === "partial" ? partialReworkReviewLines(deliverable) : []),
     ...fixRunReviewLines(fixCauses),
@@ -2739,7 +2777,14 @@ function implementSelfReviewLines(
         )
       : task.documentsOnly === true
         ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses, light)
-        : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses, light)),
+        : selfReviewLines(
+            "code",
+            `${verb}（コードとテスト）`,
+            undefined,
+            fixCauses,
+            light,
+            !task.noTestsReason,
+          )),
     ...implementVerificationRecordLines(runsTests(task), !pullRequestReview),
     // 実装し終えたかを申告させる（未完了の実行を提出にしない。PBI-347）
     ...implementCompletionLines(),
