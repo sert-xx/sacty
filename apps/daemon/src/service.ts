@@ -562,13 +562,13 @@ const REREVIEW_DIFF_FILE = "since.diff";
  * 半分を超え、かつ 3 つ以上あるときも絞らない（前回までに見ていない所を広く触っている）。前回以降の差分が文字数の上限を超える
  * ときは、レビューの実行に渡せないので絞らない。
  */
-const REREVIEW_NARROW_LINES_NUM = 1;
-const REREVIEW_NARROW_LINES_DEN = 2;
+const REREVIEW_NARROW_HALF_NUM = 1;
+const REREVIEW_NARROW_HALF_DEN = 2;
 const REREVIEW_NARROW_NEW_FILES_MIN = 3;
 const REREVIEW_SINCE_DIFF_MAX = 1_000_000;
 
 /** 差分の、追加・削除した行の数（ファイルの見出しの `---`・`+++` は数えない）。 */
-export function countChangedLines(diff: string): number {
+function countChangedLines(diff: string): number {
   let count = 0;
   let inHeader = false;
   for (const line of diff.split("\n")) {
@@ -13206,7 +13206,7 @@ export class TaskService {
    * - 前回の先頭を取得できない・今回の先頭の祖先でない（履歴の書き換え）
    * - 前回の起点・向き先のブランチが無い、または PR の差分の起点（merge-base）・向き先が前回と変わった
    * - 前回の回に判定が無い（GitHub の再依頼で作ったタスクは、前回の回の判定を持たないので絞らない。判定は写さない）
-   * - 前回の回が、担当を起動できたか確かめられなかった回（reviewDispatch の担当の数が 0）
+   * - 前回の回が、担当を 1 件も起動しなかった回（reviewDispatch の担当の数が 0 件と数えた回。数えられなかった null・記録が無い回は、起動できなかった証拠が無いので絞る側に倒す。PBI-379 は、数えられなかった実行をやり直さず使う）
    * - 前回以降に変わった行数が、今回の PR 全体の差分の行数の半分を超える
    * - 前回の時点の PR の差分に無いファイルが 3 つ以上あり、かつ変わったファイルの半分を超える
    * - 前回以降の差分が空・大きすぎる・読めないパス（制御文字・引用符）がある
@@ -13249,7 +13249,7 @@ export class TaskService {
       return skip("前回の回に判定の記録がありません");
     }
     if (task.reviewDispatch?.round === previous.round && task.reviewDispatch.subagents === 0) {
-      return skip("前回の回は、観点ごとの担当を起動できたか確かめられませんでした");
+      return skip("前回の回は、観点ごとの担当を 1 件も起動していません（担当が 0 件と数えた）");
     }
     if (this.reworkedFromEarlierStep(task, previous.round)) {
       return skip("PR を作ったタスクが、前の工程へ戻って作り直した後の提出です");
@@ -13284,8 +13284,8 @@ export class TaskService {
         return skip("前回以降の差分に、読めないパス（制御文字・引用符を含む名前）があります");
       }
       if (
-        countChangedLines(since) * REREVIEW_NARROW_LINES_DEN >
-        countChangedLines(prDiff) * REREVIEW_NARROW_LINES_NUM
+        countChangedLines(since) * REREVIEW_NARROW_HALF_DEN >
+        countChangedLines(prDiff) * REREVIEW_NARROW_HALF_NUM
       ) {
         return skip("前回以降に変わった行数が、PR 全体の差分の半分を超えています");
       }
@@ -13295,7 +13295,7 @@ export class TaskService {
       const added = sincePaths.filter((path) => !earlier.has(path)).length;
       if (
         added >= REREVIEW_NARROW_NEW_FILES_MIN &&
-        added * REREVIEW_NARROW_LINES_DEN > sincePaths.length * REREVIEW_NARROW_LINES_NUM
+        added * REREVIEW_NARROW_HALF_DEN > sincePaths.length * REREVIEW_NARROW_HALF_NUM
       ) {
         return skip("前回以降に変わったファイルの多くが、前回の時点の PR の差分に無いものです");
       }

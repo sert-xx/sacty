@@ -248,8 +248,12 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     }
     // 範囲の行は、絞る節と矛盾しない文になり、「PR 全体にする」の行は残らない
     expect(prompt).not.toContain(WHOLE);
-    expect(prompt).toContain("下の「再レビューの範囲の絞り」の節のとおり");
+    expect(prompt).toContain("上の「再レビューの範囲の絞り」の節のとおり");
     expect(prompt).not.toContain(KEEP_DISPATCH);
+    // 担当に渡す範囲も、PR 全体の差分では決めない（範囲が 2 通りに読めない）
+    expect(prompt).toContain("「再レビューの範囲の絞り」の節で決める（PR 全体の差分では決めない）");
+    expect(prompt).not.toContain("担当に渡す範囲は、PR の差分で決める");
+    expect(prompt).not.toContain("差分だけを見て終えない");
   });
 
   it("前回以降の差分が長いときは、先頭だけを載せ、全体を置いたファイルを示す", async () => {
@@ -266,6 +270,12 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     expect(parsed.sincePreviousReview.diff.length).toBe(60_000);
     expect(parsed.sincePreviousReview.diff).not.toContain("line 9999");
     expect(parsed.sincePreviousReview.diff.length).toBeLessThan(since.length);
+  });
+
+  it("前回以降の差分が長いときも、全体を since.diff に置く（切り詰めた版だけを置かない）", async () => {
+    const since = diffOf(10_000, "src/long.ts");
+    const { executor } = await rereviewPrompt({ diff: diffOf(30_000), since });
+    expect(executor?.reviewSinceFiles.at(-1)).toBe(since);
   });
 
   it("前回以降の差分は、短いときも置き場所を指示に書き、全体を since.diff に置く。同じ先頭の判定し直しでは置かない", async () => {
@@ -335,7 +345,26 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
         (t) => ({ ...t, reviewDispatch: { round: 1, agentId: "a", subagents: null } }) as Task,
         true,
       ],
+      [
+        "別の回の担当の記録だけがある（前回の回の記録は見ない）",
+        {},
+        (t) => ({ ...t, reviewDispatch: { round: 5, agentId: "a", subagents: null } }) as Task,
+        true,
+      ],
     ];
+    // 絞らない理由（ログに含まれる文）。ある条件の検査を外すと、別の条件が当たっても通らないようにする
+    const reasons: Record<string, string> = {
+      向き先が前回と変わった: "PR の向き先が前回と変わりました",
+      前回の記録が向き先を持たない: "前回の起点・向き先の記録がありません",
+      前回の回に判定が無い: "前回の回に判定の記録がありません",
+      前回の先頭を取得できない: "前回以降の差分を確かめられませんでした",
+      前回の先頭が今回の祖先でない: "祖先ではありません",
+      "PR の差分の起点が前回と変わった": "差分の起点が前回と変わりました",
+      前回以降の差分が空: "前回以降の差分が空です",
+      "前回以降の差分に、読めないパス（引用符）": "読めないパス",
+      "前回以降の差分が、渡せない大きさ": "大きすぎて渡せません",
+      "前回の回の担当の起動を確かめられなかった（担当の数 0）": "担当を 1 件も起動していません",
+    };
     for (const [name, options, edit, expected] of cases) {
       const spy = warned();
       const { call, task } = await narrowCall(options);
@@ -343,10 +372,9 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
       const result = await call(edit ? edit(task) : task);
       expect(result !== undefined, name).toBe(expected);
       if (!expected) {
-        expect(
-          spy.mock.calls.filter((c) => String(c[0]).includes("範囲を絞りませんでした")).length,
-          name,
-        ).toBe(1);
+        const lines = spy.mock.calls.filter((c) => String(c[0]).includes("範囲を絞りませんでした"));
+        expect(lines.length, name).toBe(1);
+        expect(String(lines[0]?.[0]), name).toContain(reasons[name] ?? "(理由の文が未登録)");
       }
       spy.mockRestore();
     }
