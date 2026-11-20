@@ -7297,7 +7297,11 @@ describe("実装の前の文書の PR のレビューは、方針と抜けだけ
       expect(p).toContain("指摘にしてよいもの（方針と抜け）");
       expect(p).toContain("指摘にしないもの（実装のレビューに任せる）");
       expect(p).toContain("観点がまるごと抜けている");
-      expect(p).toContain("D-1・D-2・D-5・D-10 と、X-1");
+      expect(p).toContain(
+        "D-1・D-2・D-5・D-10 と、X-1。条件付き観点・X-2・X-3・R は通常の規則で決める",
+      );
+      expect(p).toContain("D-3・D-4 を起動しない代わりに");
+      expect(p).toContain("見られなかった観点には数えない");
     }
     // 実装を飛ばす前の、skip-design の要求要件の PR でも入る
     const skipDesign = [

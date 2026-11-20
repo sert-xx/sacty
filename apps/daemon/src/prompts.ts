@@ -7629,10 +7629,10 @@ function reviewChildScopeLines(context: ReviewReworkContext | undefined): string
  * レビューする PR が、実装の前の文書（要求要件・設計）の PR で、PR を作ったタスクに実装の工程が残っている（飛ばしていない）
  * ときだけ、方針と抜けだけを見させる指示（PBI-419）。実装の PR は後で別にレビューされるので、実装の細部とテスト観点の細部は
  * そちらに任せる。規則の本体は既定のスキル review-dispatch（pr-review の「実装の前の文書の PR」）にあるが、プロジェクトが
- * スキルを差し替えていても分かるよう、要点はここにも書く。実装の PR・実装の工程が残らないタスク（設計だけ・分割など）の
+ * スキルを差し替えていても分かるよう、要点はここにも書く（スキルの規則 9 を変えたら、ここも直す）。実装の PR・実装の工程が残らないタスク（設計だけ・分割など）の
  * 文書の PR・取り込んだ PR（reviewRework が無い）には、何も足さない。
  */
-export function reviewDocBeforeImplementLines(context: ReviewReworkContext | undefined): string[] {
+function reviewDocBeforeImplementLines(context: ReviewReworkContext | undefined): string[] {
   if (!context) return [];
   if (context.gateStep !== "requirements" && context.gateStep !== "design") return [];
   const implement = context.parent.steps.find((s) => s.key === "implement");
@@ -7644,7 +7644,8 @@ export function reviewDocBeforeImplementLines(context: ReviewReworkContext | und
     "- 指摘にしてよいもの（方針と抜け）：目的・範囲（やること・やらないこと）、依頼・上位の要求との食い違い、要求・受け入れ条件の抜けと矛盾、方式の選択とその理由（成り立たない方針・既存と矛盾する方針）、人が決めるべきことが「確認したいこと」に出ているか、後の工程で取り返しにくい決定（外に公開する I/F・保存するデータの形・セキュリティ・移行）の誤りや抜け",
     "- 指摘にしないもの（実装のレビューに任せる）：実装の手段の細部（内部の構造・名前・処理の細かい手順・測り方）、テスト観点の値・粒度・境界値の並べ方、言い回し",
     "  - ただし、書かれた手段やテスト観点が、方針を誤らせるとき、または受け入れ条件を取りこぼすとき（観点がまるごと抜けている）は、方針・抜けの指摘として出してよい",
-    "- 起動する観点は、方針と抜けに当たるものに絞る（主対象が design-doc なら D-1・D-2・D-5・D-10 と、X-1。条件付き観点は通常どおり判定する）。起動しなかった観点は、起動表に「起動しない」と理由（実装の前の文書）を残し、報告の notReviewed には書かない",
+    "- 起動する観点は、方針と抜けに当たるものに絞る（主対象が design-doc なら D-1・D-2・D-5・D-10 と、X-1。条件付き観点・X-2・X-3・R は通常の規則で決める）。D-3・D-4・D-6 は、起動表に「起動しない」と理由（実装の前の文書）を残し、見られなかった観点には数えない",
+    "  - 取り返しにくい決定（保存するデータの形・移行）と、受け入れ条件の抜けは、起動した D-1・D-2・D-5 の担当にも見させる（D-3・D-4 を起動しない代わりに、担当への依頼文に書く。この抜けは、D-2 の「見ないもの」から外す）",
     "- 判定・指摘の重さの決め方・指摘の戻し先の書き方は、ほかの PR のレビューと同じ",
     "",
   ];

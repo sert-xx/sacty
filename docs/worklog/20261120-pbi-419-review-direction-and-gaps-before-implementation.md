@@ -24,4 +24,18 @@ PBI-395 で、要求要件・設計の PR のレビューが、実装の PR と�
 
 ## 確かめたこと
 
-- `npx vitest run apps/daemon/src/prompts.test.ts apps/daemon/src/default-skills.test.ts`、`tests/docs`、全件。
+- `npm run lint`・`npm run typecheck`・`npm run build`・`npx vitest run --no-file-parallelism`（`prompts.test.ts`・`default-skills.test.ts`・`tests/docs` を含む全件）を、レビューの指摘の直しを入れた後のコードで実行し、すべて通った。
+
+## レビューの指摘と対応
+
+| 指摘 | 対応 |
+| --- | --- |
+| 指示の観点の行が、条件付き観点・X-2・X-3・R の扱いと、D-3・D-4 の代わりの手当てを書かず、`notReviewed` に触れている | 指示の行をスキルと同じにし、手当ての行を足した。`notReviewed` は「見られなかった観点には数えない」にし、スキルの規則 9・テストも合わせた |
+| ADR が D-3・D-4 を外す理由と割り当て、採らなかった案を書いていない | 割り当て（D-1・D-2・D-5）、採らなかった案、見直す基準を足した |
+| 作業履歴に結果と節が無い | 結果と、2つの節を足した |
+| `reviewDocBeforeImplementLines` の不要な export | 外した |
+| `intake` の「今までどおりの範囲で」 | 範囲を直接書く形にした（日英） |
+
+## 残したこと
+
+なし
