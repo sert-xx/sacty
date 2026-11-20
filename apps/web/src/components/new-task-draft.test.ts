@@ -15,7 +15,14 @@ vi.mock("next/cache", () => ({ refresh: vi.fn(), revalidatePath: vi.fn() }));
 const redirect = vi.fn((url: string) => {
   throw Object.assign(new Error("NEXT_REDIRECT"), { digest: `NEXT_REDIRECT;push;${url};307;` });
 });
-vi.mock("next/navigation", () => ({ redirect }));
+vi.mock("next/navigation", () => ({
+  redirect,
+  // 本物と同じく、移動の例外だけを投げ直す
+  unstable_rethrow: (error: unknown) => {
+    if (String((error as { digest?: unknown } | null)?.digest ?? "").startsWith("NEXT_REDIRECT"))
+      throw error;
+  },
+}));
 vi.mock("@/lib/repository-candidates", () => ({
   candidatesLoader: () => Object.assign(() => {}, { cancel: () => {} }),
 }));
@@ -137,19 +144,21 @@ describe("タスク作成の書きかけ", () => {
     },
   );
 
-  it("作成に成功すると redirect の例外がそのまま届く（移る先の画面に任せる。失敗の理由は出さない）", async () => {
+  it("作成に成功すると redirect の例外が届き、部品が作り直されて、開き直すと空。失敗の理由は出ない", async () => {
     createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
     const caught: unknown[] = [];
-    class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-      state = { failed: false };
+    // 本物の redirect を受ける境界と同じく、例外を受けて子を作り直す
+    class Boundary extends Component<{ children: ReactNode }, { generation: number }> {
+      state = { generation: 0 };
       static getDerivedStateFromError() {
-        return { failed: true };
+        return null;
       }
       componentDidCatch(error: unknown) {
         caught.push(error);
+        this.setState((prev) => ({ generation: prev.generation + 1 }));
       }
       render() {
-        return this.state.failed ? h("p", { id: "moved" }, "moved") : this.props.children;
+        return h("div", { key: this.state.generation }, this.props.children);
       }
     }
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -165,6 +174,29 @@ describe("タスク作成の書きかけ", () => {
     expect(caught).toHaveLength(1);
     expect((caught[0] as { digest: string }).digest).toMatch(/^NEXT_REDIRECT/);
     expect(document.querySelector("[role=alert]")).toBeNull();
+    await open();
+    expect(fieldOf("title")?.value).toBe("");
+    expect(fieldOf("body")?.value).toBe("");
+  });
+
+  it.each([
+    ["Error", new Error("Failed to fetch")],
+    ["文字列", "boom"],
+    ["null", null],
+    ["undefined", undefined],
+    ["digest の無いオブジェクト", { code: 500 }],
+  ])("作成の処理が %s を投げても、部品は外れず、理由が出て、入力が残る", async (_name, thrown) => {
+    getMessages.mockRejectedValueOnce(thrown);
+    await act(async () => root.render(h(NewTaskDialog, props)));
+    await open();
+    await type("title", "投げられた題");
+    await type("body", "投げられた本文");
+    await act(async () => document.querySelector("form")?.requestSubmit());
+    await settle();
+    expect(isOpen()).toBe(true);
+    expect(document.querySelector("[role=alert]")?.textContent).toBe(t.createFailed);
+    expect(fieldOf("title")?.value).toBe("投げられた題");
+    expect(fieldOf("body")?.value).toBe("投げられた本文");
   });
 
   it("作成に失敗したら、入力が残り、閉じて開き直しても残る", async () => {

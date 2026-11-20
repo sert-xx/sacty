@@ -734,6 +734,7 @@ describe("出力の読み取り", () => {
       kind: "failed",
       reason: "error",
       message: "API Error: 500",
+      cliText: true,
       usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
       modelUsages: [{ model: "m", usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 } }],
     });

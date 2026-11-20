@@ -2,6 +2,7 @@
 
 import { STEP_PLANS, type StepKey, type StepPlan, type TaskTemplate } from "@sacty/core";
 import Link from "next/link";
+import { unstable_rethrow } from "next/navigation";
 import { type Ref, useActionState, useEffect, useRef, useState } from "react";
 import { type CreateTaskState, createTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -93,23 +94,19 @@ export function NewTaskDialog({
 }) {
   // 書きかけの題・内容。ダイアログを閉じると中身（欄）は外れるので、ここに持ち、開き直したら欄の初期値に戻す
   // （Esc・外側のクリック・閉じる・× のどれで閉じても失わない）。この部品は提案ごと・プロジェクトごとに別なので、混ざらない。
-  // 作成に成功したら空に戻す
+  // 作成に成功すると画面が移って部品が作り直されるので、空に戻る
   const [draft, setDraft] = useState({ title: prefill?.title ?? "", body: prefill?.body ?? "" });
   const messages = useMessages();
   const t = messages.forms.task;
-  const clearDraft = () => setDraft({ title: "", body: "" });
   const [state, formAction, pending] = useActionState(
     async (prev: CreateTaskState, formData: FormData): Promise<CreateTaskState> => {
       try {
         // createTaskAction は、成功すると必ず redirect し（例外で移る）、値を返すのは失敗のときだけ
         return await createTaskAction(prev, formData);
       } catch (error) {
-        // redirect の例外は digest の接頭辞でしか見分けられない（Next.js が公開する判定の関数は、サーバー側のものだけ）
-        const digest = String((error as { digest?: unknown } | null)?.digest ?? "");
-        if (digest.startsWith("NEXT_REDIRECT")) {
-          clearDraft();
-          throw error;
-        }
+        // redirect など Next.js が移動に使う例外は、そのまま投げ直す（成功すると画面が移り、この部品は作り直される。
+        // 書きかけは部品の状態なので、そのとき空に戻る）
+        unstable_rethrow(error);
         // それ以外の例外（サーバーの停止・古い action など）は、投げ直すとエラー画面でこの部品ごと外れ、書きかけを失う。
         // 理由を返して、入力を残す
         return { message: t.createFailed };
