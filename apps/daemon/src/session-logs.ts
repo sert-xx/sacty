@@ -22,7 +22,13 @@ import {
   guessSessionId,
 } from "./agent-sessions.js";
 import type { AgentOutcome } from "./agents/parse.js";
-import { redact, redactPartial, redactText } from "./agents/redact.js";
+import {
+  redact,
+  redactPartial,
+  redactText,
+  reuseMatcher,
+  type SecretMatcher,
+} from "./agents/redact.js";
 
 /**
  * エージェントの実行ごとのセッションログ（PBI-62）。途中の出来事（エージェントの標準出力の JSONL）と標準エラー出力を、
@@ -137,8 +143,15 @@ export class StreamRedactor {
   private pending = "";
   /** pending の先頭の、すでに `[REDACTED]` を渡したかたまりの中の文字数。 */
   private covered = 0;
+  /** 前回の値の集合と木（値が変わらない間は、木を使い回す）。 */
+  private compiled: { secrets: readonly string[]; matcher: SecretMatcher } | undefined;
 
   constructor(private readonly secrets: () => readonly string[]) {}
+
+  private matcherFor(forms: readonly string[]): SecretMatcher {
+    this.compiled = reuseMatcher(this.compiled, forms);
+    return this.compiled.matcher;
+  }
 
   push(text: string): string {
     const forms = secretForms(this.secrets());
@@ -148,24 +161,24 @@ export class StreamRedactor {
     // サロゲートペア（絵文字・補助漢字）の途中で分けない（分けると、UTF-8 にするときに文字が壊れる）。
     // 持っておく分を1つ増やすので、持っておく長さは足りたまま
     if (cut > 0 && isHighSurrogate(buf.charCodeAt(cut - 1))) cut--;
-    const result = redactPartial(buf, forms, this.covered, cut);
+    const result = redactPartial(buf, this.matcherFor(forms), this.covered, cut);
     this.pending = result.rest;
     this.covered = result.covered;
     return result.out;
   }
 
-  /** まだ渡していない分（伏せる前のもの。すでに伏せて渡したかたまりの分は除く。次に届いた分とつなげるために持っている）。 */
+  /** まだ渡していない分（伏せたもの。すでに伏せて渡したかたまりの分は除く。次に届いた分とつなげるために持っている）。 */
   peek(): string {
-    return this.pending.slice(this.covered);
-  }
-
-  flush(): string {
-    const rest = redactPartial(
+    return redactPartial(
       this.pending,
-      secretForms(this.secrets()),
+      this.matcherFor(secretForms(this.secrets())),
       this.covered,
       this.pending.length,
     ).out;
+  }
+
+  flush(): string {
+    const rest = this.peek();
     this.pending = "";
     this.covered = 0;
     return rest;

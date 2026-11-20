@@ -14,7 +14,7 @@ import {
 import { type FileHandle, open } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { ArchivedAgentFile } from "@sacty/core";
-import { redactPartial } from "./agents/redact.js";
+import { compileSecrets, redactPartial, type SecretMatcher } from "./agents/redact.js";
 import { HeadTailFile, secretForms, TRUNCATED_EVENT } from "./session-logs.js";
 
 /**
@@ -182,30 +182,31 @@ export function fileCaps(sizes: readonly number[], limit: number): number[] {
  * （一番長い秘密情報より1バイト短い分）は持っておき、次の分とつなげてから伏せる（値が読んだ分の境目をまたいでも伏せる）。
  */
 export class ByteRedactor {
-  private readonly forms: string[];
+  private readonly matcher: SecretMatcher;
   private readonly keep: number;
   private pending = "";
   private covered = 0;
 
   constructor(secrets: readonly string[]) {
     // 秘密情報（と JSON でエスケープされた形）を、UTF-8 のバイト列にしてから1バイト1文字にする
-    this.forms = secretForms(secrets)
+    const forms = secretForms(secrets)
       .map((form) => Buffer.from(form, "utf8").toString("latin1"))
       .sort((a, b) => b.length - a.length);
-    this.keep = Math.max(0, (this.forms[0]?.length ?? 0) - 1);
+    this.matcher = compileSecrets(forms);
+    this.keep = Math.max(0, (forms[0]?.length ?? 0) - 1);
   }
 
   push(chunk: Buffer): Buffer {
     const buf = this.pending + chunk.toString("latin1");
     const cut = buf.length - Math.min(buf.length, this.keep);
-    const result = redactPartial(buf, this.forms, this.covered, cut);
+    const result = redactPartial(buf, this.matcher, this.covered, cut);
     this.pending = result.rest;
     this.covered = result.covered;
     return Buffer.from(result.out, "latin1");
   }
 
   flush(): Buffer {
-    const rest = redactPartial(this.pending, this.forms, this.covered, this.pending.length).out;
+    const rest = redactPartial(this.pending, this.matcher, this.covered, this.pending.length).out;
     this.pending = "";
     this.covered = 0;
     return Buffer.from(rest, "latin1");

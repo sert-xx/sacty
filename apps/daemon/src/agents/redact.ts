@@ -8,76 +8,100 @@ export const REDACTED = "[REDACTED]";
  */
 const MIN_GUESSED_LENGTH = 8;
 
-/** 値の全体の出現を、1回の走査で探す（Aho-Corasick）。値の数・入力の長さに対して、時間は線形。 */
-function findClusters(
-  text: string,
-  targets: readonly string[],
-  covered: number,
-): { start: number; end: number; marked: boolean }[] {
-  // 木（子は、最初の子と次の兄弟の連結リスト。根だけ Map）と失敗の辺。best[n] は、その節までの文字列の末尾に一致する、いちばん長い値の長さ
+/** 値の全体の出現を探す木（Aho-Corasick）。値の集合が同じ間は、使い回せる。 */
+export type SecretMatcher = {
+  targets: string[];
+  /** 節 n の、最初の子と次の兄弟（子を順に辿るため）、その節に入る文字 */
+  first: number[];
+  sibling: number[];
+  label: number[];
+  /** 節 n と文字から、子の節（節 * 65536 + 文字 → 子）。UTF-16 の1単位は 65536 未満 */
+  edges: Map<number, number>;
+  fail: number[];
+  /** 節 n までの文字列の末尾に一致する、いちばん長い値の長さ（無ければ 0） */
+  best: number[];
+};
+
+function uniqueTargets(secrets: readonly string[]): string[] {
+  return [...new Set(secrets)].filter((s) => s.length > 0);
+}
+
+export function compileSecrets(secrets: readonly string[]): SecretMatcher {
+  const targets = uniqueTargets(secrets);
   const first: number[] = [-1];
   const sibling: number[] = [-1];
   const label: number[] = [0];
   const best: number[] = [0];
-  const rootNext = new Map<number, number>();
-  const child = (node: number, code: number): number | undefined => {
-    if (node === 0) return rootNext.get(code);
-    for (let c = first[node] as number; c !== -1; c = sibling[c] as number) {
-      if (label[c] === code) return c;
-    }
-    return undefined;
-  };
+  const edges = new Map<number, number>();
   for (const secret of targets) {
     let node = 0;
     for (let i = 0; i < secret.length; i++) {
       const code = secret.charCodeAt(i);
-      let found = child(node, code);
+      let found = edges.get(node * 65536 + code);
       if (found === undefined) {
         found = first.length;
         first.push(-1);
+        sibling.push(first[node] as number);
+        first[node] = found;
         label.push(code);
         best.push(0);
-        if (node === 0) {
-          sibling.push(-1);
-          rootNext.set(code, found);
-        } else {
-          sibling.push(first[node] as number);
-          first[node] = found;
-        }
+        edges.set(node * 65536 + code, found);
       }
       node = found;
     }
     best[node] = secret.length;
   }
-  const next = (node: number, code: number): number | undefined => child(node, code);
   const fail: number[] = new Array(first.length).fill(0);
-  const queue: number[] = [...rootNext.values()];
+  const queue: number[] = [];
+  for (let c = first[0] as number; c !== -1; c = sibling[c] as number) queue.push(c);
   for (let head = 0; head < queue.length; head++) {
     const node = queue[head] as number;
     for (let c = first[node] as number; c !== -1; c = sibling[c] as number) {
       const code = label[c] as number;
       let f = fail[node] as number;
-      while (f !== 0 && next(f, code) === undefined) f = fail[f] as number;
-      fail[c] = next(f, code) ?? 0;
+      while (f !== 0 && !edges.has(f * 65536 + code)) f = fail[f] as number;
+      fail[c] = edges.get(f * 65536 + code) ?? 0;
       best[c] = Math.max(best[c] as number, best[fail[c] as number] as number);
       queue.push(c);
     }
   }
+  return { targets, first, sibling, label, edges, fail, best };
+}
+
+/** 前回と同じ値の集合なら、前回の木を返す（細かく届く出力で、毎回木を作り直さないため）。 */
+export function reuseMatcher(
+  previous: { secrets: readonly string[]; matcher: SecretMatcher } | undefined,
+  secrets: readonly string[],
+): { secrets: readonly string[]; matcher: SecretMatcher } {
+  if (
+    previous &&
+    previous.secrets.length === secrets.length &&
+    previous.secrets.every((s, i) => s === secrets[i])
+  ) {
+    return previous;
+  }
+  return { secrets, matcher: compileSecrets(secrets) };
+}
+
+type Cluster = { start: number; end: number; emitted: boolean };
+
+/** text の中の値の全体の出現を、1回の走査で探し、重なる出現を束ねたかたまりにして返す（開始の昇順）。 */
+function findClusters(text: string, m: SecretMatcher, covered: number): Cluster[] {
   // 各末尾の位置で、いちばん長く一致する出現（開始が最も前）だけで、和集合は変わらない。末尾の昇順に、重なるかたまりを束ねる
-  const stack: { start: number; end: number; marked: boolean }[] = [];
-  if (covered > 0) stack.push({ start: 0, end: covered, marked: true });
+  const stack: Cluster[] = [];
+  if (covered > 0) stack.push({ start: 0, end: covered, emitted: true });
   let state = 0;
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
-    while (state !== 0 && next(state, code) === undefined) state = fail[state] as number;
-    state = next(state, code) ?? 0;
-    const length = best[state] as number;
+    while (state !== 0 && !m.edges.has(state * 65536 + code)) state = m.fail[state] as number;
+    state = m.edges.get(state * 65536 + code) ?? 0;
+    const length = m.best[state] as number;
     if (length === 0) continue;
     const start = i + 1 - length;
     const end = i + 1;
     const top = stack[stack.length - 1];
     if (!top || top.end <= start) {
-      stack.push({ start, end, marked: false });
+      stack.push({ start, end, emitted: false });
       continue;
     }
     // 重なる：直前のかたまりを延ばし、さらに前のかたまりに届いたら束ねる（出現ごとに作り直さない）
@@ -90,18 +114,14 @@ function findClusters(
     ) {
       prev.start = Math.min(prev.start, top.start);
       prev.end = Math.max(prev.end, top.end);
-      prev.marked = prev.marked || top.marked;
+      prev.emitted = prev.emitted || top.emitted;
       stack.pop();
       top.start = prev.start;
       top.end = prev.end;
-      top.marked = prev.marked;
+      top.emitted = prev.emitted;
     }
   }
   return stack;
-}
-
-function uniqueTargets(secrets: readonly string[]): string[] {
-  return [...new Set(secrets)].filter((s) => s.length > 0);
 }
 
 /**
@@ -111,25 +131,28 @@ function uniqueTargets(secrets: readonly string[]): string[] {
  */
 export function redactPartial(
   text: string,
-  secrets: readonly string[],
+  matcher: SecretMatcher,
   covered: number,
   cut: number,
 ): { out: string; rest: string; covered: number } {
-  const targets = uniqueTargets(secrets);
-  const clusters = targets.length === 0 ? [] : findClusters(text, targets, covered);
+  // どの値も含まなければ、走査せずに切るだけ（持ち越しは伏せる前の文字列なので、これでよい）
+  if (covered === 0 && !matcher.targets.some((s) => text.includes(s))) {
+    return { out: text.slice(0, cut), rest: text.slice(cut), covered: 0 };
+  }
+  const clusters = findClusters(text, matcher, covered);
   let out = "";
   let done = 0;
   let restCovered = 0;
   for (const cluster of clusters) {
     if (cluster.end > cut) {
-      if (cluster.start < cut || cluster.marked) {
-        out += text.slice(done, cluster.start) + (cluster.marked ? "" : REDACTED);
+      if (cluster.start < cut || cluster.emitted) {
+        out += text.slice(done, cluster.start) + (cluster.emitted ? "" : REDACTED);
         done = cut;
         restCovered = cluster.end - cut;
       }
       break;
     }
-    out += text.slice(done, cluster.start) + (cluster.marked ? "" : REDACTED);
+    out += text.slice(done, cluster.start) + (cluster.emitted ? "" : REDACTED);
     done = cluster.end;
   }
   if (done < cut) out += text.slice(done, cut);
@@ -142,10 +165,9 @@ export function redactPartial(
  * 値の全体の出現（ほかの値や自分自身と重なる出現を含む）に含まれる文字は、1文字も残さない。重なる出現は、1つの `[REDACTED]` にする。
  */
 export function redact(text: string, secrets: readonly string[]): string {
-  const targets = uniqueTargets(secrets);
-  // 一致が無い入力（ほとんどの入力）は、走査せずに返す
-  if (!targets.some((s) => text.includes(s))) return text;
-  return redactPartial(text, targets, 0, text.length).out;
+  // 一致が無い入力（ほとんどの入力）は、木を作らずに返す
+  if (!secrets.some((s) => s.length > 0 && text.includes(s))) return text;
+  return redactPartial(text, compileSecrets(secrets), 0, text.length).out;
 }
 
 /**

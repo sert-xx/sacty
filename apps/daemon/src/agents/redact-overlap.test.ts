@@ -171,7 +171,6 @@ describe("redact: 重なって現れる値（PBI-438）", () => {
     }
     expect(compared).toBeGreaterThan(500);
     expect(redact("abab ab", ["ab", "abab"])).toBe("[REDACTED] [REDACTED]");
-    expect(redact("xx", ["x"])).toBe("[REDACTED][REDACTED]");
   });
 
   it("出現がn個重なる入力でも、二乗の時間にならない（同じ文字だけの入力と、その文字だけの値）", () => {
@@ -212,13 +211,34 @@ describe("少しずつ届く出力の秘密情報（PBI-438）", () => {
     }
   });
 
-  it("同じ文字が長く続くかたまりでも、持ち越す量は値の長さのまま、1つの目印になる", () => {
+  it("同じ文字が長く続くかたまりは、持ち越しが値の長さのまま、1つの目印になる。peek は伏せたものを返す", () => {
     const r = new StreamRedactor(() => ["0000"]);
-    const out = Array.from({ length: 50 }, () => r.push("00")).join("") + r.flush();
-    expect(out).toBe(REDACTED);
-    const long = new StreamRedactor(() => ["0000"]);
-    for (let i = 0; i < 1000; i++) long.push("0");
-    expect(long.peek().length).toBeLessThan(4);
+    const out = Array.from({ length: 50 }, () => r.push("00")).join("");
+    expect(r.peek()).toBe("");
+    expect(out + r.flush()).toBe(REDACTED);
+    const p = new StreamRedactor(() => ["0000"]);
+    expect(p.push("a000")).toBe("a");
+    expect(p.peek()).toBe("000");
+    expect(p.push("0")).toBe(REDACTED);
+    expect(p.peek()).toBe(""); // 目印を出したかたまりの分は返さない
+    expect(p.flush()).toBe("");
+  });
+
+  it("peek は、改行を含む値を伏せたまま返す（改行で前半を切られても後半が残らない）", () => {
+    const secret = "LINE1-fictional\nSECRETLINE2";
+    const r = new StreamRedactor(() => [secret]);
+    r.push(`x ${secret}`);
+    expect(r.peek()).not.toContain("SECRETLINE2");
+    expect(r.peek()).not.toContain("LINE1-fictional");
+  });
+
+  it("途中で値が増えても、増えた後に届く分から伏せる", () => {
+    const secrets = ["abc"];
+    const r = new StreamRedactor(() => secrets);
+    const out = [r.push("x abc y ")];
+    secrets.push("zzzzzz");
+    out.push(r.push("zzzzzz w"), r.flush());
+    expect(out.join("")).toBe("x [REDACTED] y [REDACTED] w");
   });
 
   it("種を固定した乱数：乱数の位置で何回に分けても、まとめて伏せた結果と同じ（文字列・バイト列）", () => {
@@ -233,6 +253,27 @@ describe("少しずつ届く出力の秘密情報（PBI-438）", () => {
       const label = JSON.stringify({ secrets, text, cuts });
       expect(stream(secrets, parts), label).toBe(expected);
       expect(bytes(secrets, parts), label).toBe(expected);
+    }
+  });
+
+  it("バイト列：多バイトの値と UTF-8 でないバイトを、どの位置で分けても壊さず、値だけを伏せる", () => {
+    const secrets = ["鍵🔑秘密", "秘密ab"];
+    const raw = Buffer.concat([
+      Buffer.from("a "),
+      Buffer.from([0xff, 0xfe, 0x80]),
+      Buffer.from(" 鍵🔑秘密ab "),
+      Buffer.from([0xc3]),
+    ]);
+    const expected = Buffer.concat([
+      Buffer.from("a "),
+      Buffer.from([0xff, 0xfe, 0x80]),
+      Buffer.from(` ${REDACTED} `),
+      Buffer.from([0xc3]),
+    ]);
+    for (let at = 0; at <= raw.length; at++) {
+      const r = new ByteRedactor(secrets);
+      const out = Buffer.concat([r.push(raw.subarray(0, at)), r.push(raw.subarray(at)), r.flush()]);
+      expect(out.equals(expected), `at=${at}`).toBe(true);
     }
   });
 

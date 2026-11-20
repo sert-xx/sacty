@@ -128,4 +128,4 @@ sacty は取り出しを始めるたびに世代を進め、全体（設定フ�
   `images.<名前>.env`・`image_build.npm_config` には認証の値を書けない（[設定](configuration.md)）。
 - gh のトークンは使うたびに `gh auth token --hostname <ホスト> --user <アカウント>` で取り出し、保存しない。
 
-コード: `apps/daemon/src/agents/redact.ts`（`redact`・`redactEscaped`・`redactText`・`secretStringsInJson`・`REDACTED`）、`apps/daemon/src/session-logs.ts`（`secretForms`）、`apps/daemon/src/platforms.ts`（`hideSecret`）、`apps/daemon/src/gh.ts`（`GhCliAuth`）
+コード: `apps/daemon/src/agents/redact.ts`（`redact`・`redactEscaped`・`redactPartial`・`redactText`・`secretStringsInJson`・`REDACTED`）、`apps/daemon/src/session-logs.ts`（`secretForms`・`StreamRedactor`）、`apps/daemon/src/agent-sessions.ts`（`ByteRedactor`）、`apps/daemon/src/platforms.ts`（`hideSecret`）、`apps/daemon/src/gh.ts`（`GhCliAuth`）

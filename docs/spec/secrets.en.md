@@ -110,4 +110,4 @@ Code: `apps/daemon/src/service.ts` (`prefetchSecrets`, `prefetchProjectSecrets`,
 - sacty passes npm tokens for building images only as BuildKit secrets. Auth values cannot be written in `images.<name>.env` or `image_build.npm_config` ([Configuration](configuration.en.md)).
 - sacty retrieves gh tokens each time it uses them with `gh auth token --hostname <host> --user <account>`, and does not store them.
 
-Code: `apps/daemon/src/agents/redact.ts` (`redact`, `redactEscaped`, `redactText`, `secretStringsInJson`, `REDACTED`), `apps/daemon/src/session-logs.ts` (`secretForms`), `apps/daemon/src/platforms.ts` (`hideSecret`), `apps/daemon/src/gh.ts` (`GhCliAuth`)
+Code: `apps/daemon/src/agents/redact.ts` (`redact`, `redactEscaped`, `redactPartial`, `redactText`, `secretStringsInJson`, `REDACTED`), `apps/daemon/src/session-logs.ts` (`secretForms`, `StreamRedactor`), `apps/daemon/src/agent-sessions.ts` (`ByteRedactor`), `apps/daemon/src/platforms.ts` (`hideSecret`), `apps/daemon/src/gh.ts` (`GhCliAuth`)
