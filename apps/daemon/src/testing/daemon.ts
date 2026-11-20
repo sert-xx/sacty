@@ -547,6 +547,8 @@ export class FakeRepos implements RepositoryWorkspace {
     "+export const retry = 3;",
     " export const once = 1;",
   ].join("\n");
+  /** 前回の先頭から今回の先頭までなど、組（`base..head`）ごとの差分。無ければ prDiff。 */
+  diffBetween: Record<string, string> = {};
   diffedCommits: { baseCommit: string; headCommit: string }[] = [];
   diffFull: boolean[] = [];
   async diffCommits(
@@ -557,7 +559,7 @@ export class FakeRepos implements RepositoryWorkspace {
   ) {
     this.diffedCommits.push({ baseCommit, headCommit });
     this.diffFull.push(options?.full === true);
-    return this.prDiff;
+    return this.diffBetween[`${baseCommit}..${headCommit}`] ?? this.prDiff;
   }
   /** ベースブランチの取り込み（mergeBase）の結果と、呼び出しの記録。 */
   mergeResult: { status: "unchanged" | "merged" | "conflicted"; conflicts: string[] } = {

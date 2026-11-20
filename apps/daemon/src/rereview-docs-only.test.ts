@@ -176,13 +176,11 @@ const narrowed = (prompt: string) => {
   expect(prompt).toContain(HEAD_B.slice(0, 7));
   expect(prompt).toContain("docs/a.md");
   expect(prompt).toContain("規則 10");
-  expect(prompt).toContain("U-1・U-5");
-  expect(prompt).toContain("D-2・D-5");
-  expect(prompt).toContain("起動しない");
   expect(prompt).toContain("scope: docs");
   expect(prompt).toContain("skipped");
-  expect(prompt).toContain("絞らずに、規則 1〜7 で観点を決め");
-  expect(prompt).not.toContain(KEEP_DISPATCH);
+  // 観点の絞りは、この節ではなく、再レビューの範囲の絞りの節に任せる（この節は検証だけを絞る）
+  expect(prompt).toContain("この節が絞るのは検証だけで、起動する観点は絞らない");
+  expect(prompt).not.toContain("U-1・U-5");
   expect(prompt).not.toContain(KEEP_VERIFY);
   expect(prompt).not.toContain(KEEP_RERUN);
   // 判定・重みの決め方・前回の指摘の節は、絞らない再レビューと同じ
@@ -269,7 +267,6 @@ describe("前回以降が文書だけの再レビュー（PBI-421）", () => {
     });
     expect(prompt).toContain(NARROW);
     expect(prompt).toContain("docs/設計/a.md");
-    expect(prompt).not.toContain(KEEP_DISPATCH);
   });
 
   it("GitHub の再依頼で作ったタスク（前回の回の判定を持たない）の再レビューは、絞らない", async () => {

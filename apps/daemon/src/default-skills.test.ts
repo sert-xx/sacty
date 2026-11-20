@@ -1943,3 +1943,102 @@ describe("既定のスキル review-dispatch の、PR の目的の範囲の外�
     expect(pr).toContain("取り下げたことと理由を書く（「未対応」と書かない）");
   });
 });
+
+describe("既定のスキル：再レビューの範囲と観点の絞り（PBI-432）", () => {
+  const dir = "skills/review/review-dispatch/";
+  const skill = () => read(`${dir}SKILL.md`);
+  const pr = () => read(`${dir}references/pr-review.md`);
+  const rule = (n: number) => {
+    const text = skill();
+    const start = text.indexOf(`\n${n}. `, text.indexOf("## 観点の起動の規則"));
+    const end = text.indexOf(`\n${n + 1}. `, start + 1);
+    return text.slice(start, end > start ? end : text.indexOf("\n起動表は次の形", start));
+  };
+
+  it("規則 11 は、依頼した側が明示している場合に限る形で、初回・明示の無い再レビューには当てはめない", () => {
+    const r = rule(11);
+    expect(r).toContain("**明示している場合に限り**");
+    expect(r).toContain(
+      "PR のコメント・レビューを読んで、自分の前回の投稿があると判断したことだけでは、範囲も観点も絞らない",
+    );
+    expect(r).toContain(
+      "明示が無い `pr-review`（初回・明示の無い再レビュー・取り込んだ PR など）と `self-review` には、この規則を当てはめない",
+    );
+    expect(r).toContain("範囲は PR 全体で、観点は初回の規則で決める");
+    // 規則 1・5 より優先すること、必須観点を起動しないときの記録の残し方
+    expect(r).toContain("この規則は、規則 1・5 より優先する");
+    expect(r).toContain(
+      "起動表に「起動しない」と理由（再レビューの絞り）を残す。見られなかった観点には数えない",
+    );
+    // 起動する観点
+    for (const key of ["X-1", "C-3", "D-5", "U-5", "U-1・D-2", "X-2", "X-3・R"]) {
+      expect(r, key).toContain(key);
+    }
+    // 親が絞らない条件と、前回までの must と同じ原因のときの方針の観点
+    expect(r).toContain("見られなかった観点・止まった検証・判定が無いことが書かれている");
+    expect(r).toContain("作り直しになっている");
+    expect(r).toContain(
+      "方針の観点（`code` は C-17、`design-doc` は D-1）を起動し、本文に明示する",
+    );
+  });
+
+  it("規則 1・5 の「全部起動する」「初回と同じ規則」は、規則 11 を例外として書く（規則どうしの優先が一意に読める）", () => {
+    const text = skill();
+    expect(rule(1)).toContain(
+      "依頼した側が絞った再レビューと明示した `pr-review` の再レビューも除く。規則 11",
+    );
+    expect(rule(1)).toContain("規則 10 は検証だけを絞り、必須観点は絞らない");
+    expect(rule(5)).toContain("依頼した側が絞った再レビューと明示した回だけは、規則 11 で絞る");
+    expect(rule(5)).toContain("PR から自分の前回の投稿が読めたことだけでは、絞らない");
+    expect(rule(9)).toContain("規則 11 を重ねる");
+    expect(text).toContain("絞った再レビューは規則 11");
+  });
+
+  it("規則 10 は検証だけを絞り、観点の絞りを規則 11 に任せる（scope: docs・skipped の決まりは残す）", () => {
+    const r = rule(10);
+    expect(r).toContain("検証を絞る**");
+    expect(r).toContain("観点の絞りは、この規則では行わない（規則 11）");
+    expect(r).toContain("`scope` を `docs` にして、文書に効く検証だけを実行する");
+    expect(r).toContain("`summary.json` に `skipped` と理由");
+    expect(r).toContain("エージェントへの指示");
+    expect(r).toContain("コードやテストが、データとして読み込む文書");
+    expect(r).not.toContain("U-1・U-5");
+    expect(r).not.toContain("起動しなかった必須観点は、起動表に");
+  });
+
+  it("pr-review.md は、初回か再レビューかの判断だけでは絞らないことと、絞った再レビューの節を決め、再レビューの範囲を PR 全体のままにする", () => {
+    const text = pr();
+    expect(text).toContain("## 絞った再レビュー");
+    expect(text).toContain("明示しているときに限り");
+    expect(text).toContain("PR から自分の前回の投稿が読めたことだけでは、範囲も観点も絞らない");
+    expect(text).toContain(
+      "ほかの人（ほかの人が起動した同じ形のレビューを含む）の投稿を、自分の前回の投稿と見なして絞らない",
+    );
+    expect(text).toContain("初回（前回の自分の投稿の記録が無い回）には、この規則を当てはめない");
+    const rereview = text.split("\n## 再レビュー\n")[1] ?? "";
+    expect(rereview).toContain(
+      "範囲は **PR 全体**（依頼した側が、上の「絞った再レビュー」と明示した回を除く）",
+    );
+    expect(rereview).toContain("検証は、新しい先頭コミットで実行し直す");
+    // 採用の規則：must は差分の外でも採用し、should・nit は前回以降の差分の中だけ
+    expect(rereview).toContain("`must` は、指摘箇所が前回以降に変わっていなくても採用する");
+    expect(read(`${dir}references/aggregation.md`)).toContain(
+      "`must` は、差分の外でも不採用にしない",
+    );
+  });
+
+  it("規則 10・11 と「絞った再レビュー」は、あらゆる言語・リポジトリに配る汎用の書き方で、特定の道具・作業領域の内部の名前を書かない", () => {
+    const sectionOf = (text: string, heading: string) =>
+      text.split(heading)[1]?.split("\n## ")[0] ?? "";
+    const all = [
+      rule(10),
+      rule(11),
+      sectionOf(pr(), "## 絞った再レビュー"),
+      sectionOf(pr(), "## 前回以降が文書だけの再レビュー"),
+    ].join("\n");
+    expect(all.length).toBeGreaterThan(1000);
+    expect(all).not.toMatch(
+      /sacty|\.sacty-tools|\/tmp\/|\/sacty-|npm |vitest|biome|TypeScript|\.ts\b/,
+    );
+  });
+});
