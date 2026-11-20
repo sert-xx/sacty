@@ -800,6 +800,27 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 
 コード: `apps/daemon/src/service.ts`（`preparingPhases`・`preparingOf`・`firstStepStarted`・`listView`・`view`・`runNext`・`runNextInner`）、`apps/daemon/src/schedules.ts`（`ScheduledTasks.get`）、`apps/daemon/src/server.ts`（`createApp`）、`packages/core/src/projection.ts`（`PREPARING_PHASES`・`PreparingPhase`・`Task.preparing`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`）、`apps/web/src/i18n/messages/labels.ts`（`state.preparing`）、`apps/web/src/components/task-bits.tsx`（`StepChipsView`）
 
+## 概要の「いま実行していること」の行
+
+タスクの詳細の概要は、成果物の欄のすぐ上に、いま実行していることを 1 行で出す（`RunStatusLine`）。
+
+- 工程のエージェントを実行中（状態が `running` で、`currentRunId` がある）なら、「<工程の名前>を実行中」・経過・「ログを見る」を出す。どの工程でも出す。
+  - 工程の名前は、`currentRunId` と同じ `runId` の `AgentRunStarted` の `step`。その記録が作業履歴に無いときは、実行中の工程の名前。
+  - 経過は、その `AgentRunStarted` の `at` から今まで。開始の記録が無い・時刻が読めないときは、経過を出さず、名前とログへのリンクだけにする。
+  - 経過の書き方（`elapsedText`）は、1 分未満は「1分未満」、1 時間未満は「N分」、1 時間以上は「N時間」（分が 0 のとき）か「N時間M分」。
+  - 経過は画面の時計（60 秒ごと）で進め、データの取り直しには入れない。経過は `aria-live` の領域に入れない（読み上げで進むたびに読まれない）。
+  - 「ログを見る」は `/tasks/<タスク>/runs/<実行>`。
+- 最初の工程が始まる前（`queued` で、`preparing` がある）は、状態の文（`labels.state.preparing`）と同じ語だけを出す。始まった時刻と実行の ID が画面に渡らないので、経過とログへのリンクは出さない。
+- ほかの状態（実行待ち・承認待ち・判断待ち・一時停止・完了・中止）では出さない。工程の実行ではない処理（PR を作る前の確認・再現のテスト・マージの後の監視）は、`currentRunId` が無いので、この行は出さない。
+- 実行のログの画面の概要の「終了」は、終わりの記録（`finishedAt`）があれば終了の時刻。無いときは、タスクがその実行を今も実行中（状態が `running` で、`currentRunId` がその実行）なら「実行中」、そうでなければ「終わりの記録がありません。…」。この「実行中か」は、ログの画面のデータとその取り直し（`/live/tasks/<タスク>/runs/<実行>`。版にも入る）が `running` として運ぶ。
+- 一時停止の欄には、次のリンクを出す。
+  - 「エラーレポートを見る」：エラーレポートが出ているとき（`showErrorReport`）だけ。`#error-report` へ移る（右の列は狭い幅では下に回る）。
+  - 「止まった実行のログを見る」：`stoppedRunId` が、今回の一時停止の原因の実行を返したときだけ。最後の `TaskPaused` から作業履歴をさかのぼり、別の実行の開始・完了・再開に当たる前に見つかった `AgentRunFailed` の実行。`TaskPaused` は実行の ID を持たないので、並びで決める。人が手で一時停止したとき（`manual`）は、つなげない。
+- 一時停止中の実装の欄の見出しの横は「作業中」ではなく「一時停止中」。ほかの工程の成果物の欄は、一時停止中に「作成中…」を出さない（実行中だけ）。
+- 画面は 3 秒ごとの取り直しで、実行の開始・終了・一時停止に追従する。
+
+コード: `apps/web/src/components/run-status.tsx`（`RunStatusLine`）、`apps/web/src/lib/run-status.ts`（`runningNow`・`preparingNow`・`elapsedText`・`stoppedRunId`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/components/run-log.tsx`、`apps/web/src/lib/run-log-data.ts`（`runningThis`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/i18n/messages/task.ts`（`runStatus`）
+
 ## 情報収集
 
 タスクの開始時（工程を選ぶ前）に1回、情報収集のエージェントがタスクに関係する情報を集め、関係するものだけに絞り込んでまとめる（`InformationGathered`。actor は `gatherer`）。

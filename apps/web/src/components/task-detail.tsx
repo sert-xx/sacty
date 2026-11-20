@@ -62,6 +62,7 @@ import { RerunDialog } from "@/components/rerun-dialog";
 import { ResumeForm, type ResumeStepSetting } from "@/components/resume-form";
 import { ReviewWatchNotice } from "@/components/review-watch-notice";
 import { RiskAssessmentCard } from "@/components/risk-assessment";
+import { RunStatusLine } from "@/components/run-status";
 import { SecurityFixesCard } from "@/components/security-fixes";
 import { SelfReviewNote } from "@/components/self-review";
 import { SelfReviewDepthNote } from "@/components/self-review-depth";
@@ -96,6 +97,7 @@ import { projectSettingsPath } from "@/lib/paths";
 import { pausedRemaining } from "@/lib/paused-remaining";
 import { repoLabels } from "@/lib/repo-label";
 import { pausedForUndispatchedReview } from "@/lib/review-dispatch";
+import { stoppedRunId } from "@/lib/run-status";
 import { runLogId } from "@/lib/session-log";
 import { subtaskSummary } from "@/lib/subtasks";
 import type { TaskDetailData } from "@/lib/task-detail-data";
@@ -330,6 +332,8 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               }
             : {})}
           reason={task.pausedReason}
+          errorReport={showErrorReport(task, activity)}
+          stoppedRunId={stoppedRunId(task, activity)}
           steps={resumeStepSettings(task, data)}
           {...(task.steps.some((s) => s.state !== "done" && s.state !== "skip")
             ? { image: resumeTaskImage(task, data, m.images.defaultDescription) }
@@ -682,6 +686,7 @@ function Overview({ data }: { data: TaskDetailData }) {
     <>
       {task.status === "cancelled" && task.cancelled && <CancelledCard data={data} />}
       <TaskContent task={task} />
+      <RunStatusLine data={data} />
       <Deliverables data={data} />
       <PullRequestCard task={task} />
       <RiskAssessmentCard task={task} reviewTasks={data.reviewTasks ?? []} />

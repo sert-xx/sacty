@@ -46,7 +46,7 @@ export function ErrorReportCard({
   return (
     <section
       aria-labelledby="error-report"
-      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4"
+      className="flex scroll-mt-60 flex-col gap-3 rounded-xl border border-border bg-card p-4"
     >
       <h2 id="error-report" className="text-sm font-semibold">
         {m.title}{" "}

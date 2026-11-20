@@ -23,6 +23,7 @@ const ja = {
     title: "実装",
     passed: "完了",
     working: "作業中",
+    paused: "一時停止中",
     repository: (url: string, branch: string) => `対象リポジトリ：${url} ・ ${branch} @ `,
     running: "実装中…",
     notYet: "まだ実装されていません。",
@@ -228,6 +229,8 @@ const ja = {
     failed: "評価できませんでした。レビューの深さは、差分を見て決めてください。",
   },
   resume: {
+    viewErrorReport: "エラーレポートを見る",
+    viewStoppedRun: "止まった実行のログを見る",
     newCap: (used: string) => `新しい上限（${used} より大きく）`,
     resuming: "再開中…",
     resumeWithCap: "上限を変えて再開",
@@ -374,6 +377,7 @@ const en: PartsMessages = {
     title: "Implement",
     passed: "Done",
     working: "In progress",
+    paused: "Paused",
     repository: (url, branch) => `Target repository: ${url} · ${branch} @ `,
     running: "Implementing…",
     notYet: "Not implemented yet.",
@@ -572,6 +576,8 @@ const en: PartsMessages = {
     failed: "Could not be assessed. Decide the review depth from the diff.",
   },
   resume: {
+    viewErrorReport: "View the error report",
+    viewStoppedRun: "View the log of the stopped run",
     newCap: (used) => `New cap (more than ${used})`,
     resuming: "Resuming…",
     resumeWithCap: "Change cap and resume",

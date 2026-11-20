@@ -551,6 +551,27 @@ Related ADR: [最初の工程が始まる前の処理の段階を、デーモン
 
 Code: `apps/daemon/src/service.ts` (`preparingPhases`, `preparingOf`, `firstStepStarted`, `listView`, `view`, `runNext`, `runNextInner`), `apps/daemon/src/schedules.ts` (`ScheduledTasks.get`), `apps/daemon/src/server.ts` (`createApp`), `packages/core/src/projection.ts` (`PREPARING_PHASES`, `PreparingPhase`, `Task.preparing`), `apps/web/src/lib/labels.ts` (`statusText`, `statusTone`), `apps/web/src/i18n/messages/labels.ts` (`state.preparing`), `apps/web/src/components/task-bits.tsx` (`StepChipsView`)
 
+## The "what is running now" line in the overview
+
+The overview of the task details shows one line right above the deliverables about what is running now (`RunStatusLine`).
+
+- While a step's agent is running (the status is `running` and `currentRunId` is set), it shows "Running <step name>", the elapsed time, and "View log". It shows for every step.
+  - The step name is the `step` of the `AgentRunStarted` with the same `runId` as `currentRunId`. If the activity has no such record, it is the name of the running step.
+  - The elapsed time is from the `at` of that `AgentRunStarted` to now. When there is no start record, or its time cannot be read, the elapsed time is not shown, only the name and the log link.
+  - The elapsed time (`elapsedText`) reads "under a minute" below 1 minute, "N min" below 1 hour, and from 1 hour "N h" (when the minutes are 0) or "N h M min".
+  - The elapsed time advances with a clock kept on the screen (every 60 seconds), not with a refetch of the data. It is not placed in an `aria-live` region (a screen reader does not read each advance).
+  - "View log" is `/tasks/<task>/runs/<run>`.
+- Before the first step starts (`queued` with `preparing`), it shows only the same words as the status text (`labels.state.preparing`). The start time and the run ID are not passed to the screen, so the elapsed time and the log link are not shown.
+- In other states (queued, awaiting approval, awaiting a decision, paused, completed, cancelled) it is not shown. Work that is not a step run (the check before making a PR, the reproduction tests, the watch after the merge) has no `currentRunId`, so the line is not shown.
+- In the overview of the run log screen, "Finished" is the finish time when the end record (`finishedAt`) exists. Without it, it is "Running" when the task is still running that run (the status is `running` and `currentRunId` is that run), and otherwise "No end recorded. …". The "is it running" part travels as `running` in the run log screen's data and in its refetch (`/live/tasks/<task>/runs/<run>`; it is also part of the version).
+- The paused section shows these links.
+  - "View the error report": only when the error report is shown (`showErrorReport`). It moves to `#error-report` (the right column drops below on a narrow width).
+  - "View the log of the stopped run": only when `stoppedRunId` returns the run that caused this pause. It walks back the activity from the last `TaskPaused` and takes the run of the `AgentRunFailed` found before reaching the start, completion, or resume of another run. `TaskPaused` has no run ID, so the order decides. It does not link when a person paused the task (`manual`).
+- While paused, the note beside the Implementation heading is "Paused", not "In progress". The deliverables of other steps do not show "Writing…" while paused (only while running).
+- The screen follows a run starting, ending, or pausing with its refetch every 3 seconds.
+
+Code: `apps/web/src/components/run-status.tsx` (`RunStatusLine`), `apps/web/src/lib/run-status.ts` (`runningNow`, `preparingNow`, `elapsedText`, `stoppedRunId`), `apps/web/src/components/resume-form.tsx`, `apps/web/src/components/run-log.tsx`, `apps/web/src/lib/run-log-data.ts` (`runningThis`), `apps/web/src/components/implementation.tsx`, `apps/web/src/i18n/messages/task.ts` (`runStatus`)
+
 ## Information gathering
 
 At the start of a task (before choosing steps), the information gatherer runs once, collects the information related to the task, and summarizes only what is relevant (`InformationGathered`; the actor is `gatherer`). For a task taken in from a ticket, the same run also does ticket triage (deciding the repository to work in, the title, and the summary) ("Doubling as triage" below). It aligns the background, goals, and constraints that people take for granted before the Orchestrator chooses the plan. There is no approval gate; the summary is shown under "Gathered information" in the task details (collapsed once a step has started).

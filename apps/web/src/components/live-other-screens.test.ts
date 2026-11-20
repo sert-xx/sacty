@@ -32,6 +32,9 @@ vi.mock("@/app/actions", () => {
 const daemon = vi.hoisted(() => ({
   events: "",
   finishedAt: undefined as string | undefined,
+  /** タスクの状態と、いま実行中の実行の ID（実行のログの「終了」の出し分け）。 */
+  status: "idle",
+  currentRunId: undefined as string | undefined,
   filesFail: false,
   down: false,
   /** タスクが無い（プロジェクトを削除した）。 */
@@ -46,7 +49,16 @@ vi.mock("@/lib/daemon", () => ({
   getTask: async () => {
     if (daemon.down) throw new Error("unreachable");
     if (daemon.gone) return null;
-    return { task: { id: "t1", title: "認証の設計", projectId: "p1" }, activity: [] };
+    return {
+      task: {
+        id: "t1",
+        title: "認証の設計",
+        projectId: "p1",
+        status: daemon.status,
+        ...(daemon.currentRunId ? { currentRunId: daemon.currentRunId } : {}),
+      },
+      activity: [],
+    };
   },
   getRunLog: async (_id: string, _run: string, from: { events?: number } = {}) => {
     if (daemon.down) throw new Error("unreachable");
@@ -175,6 +187,7 @@ describe("実行のログ：実行中は、足された行だけを取って後�
       taskId: "t1",
       taskTitle: "認証の設計",
       projectId: "p1",
+      running: false,
       rows: [],
       log: {
         meta: {
@@ -200,6 +213,8 @@ describe("実行のログ：実行中は、足された行だけを取って後�
   beforeEach(() => {
     daemon.events = say("始めます") + tool("ls");
     daemon.finishedAt = undefined;
+    daemon.status = "idle";
+    daemon.currentRunId = undefined;
     daemon.filesFail = false;
     daemon.down = false;
     daemon.gone = false;
@@ -234,6 +249,44 @@ describe("実行のログ：実行中は、足された行だけを取って後�
     expect(container.querySelector("details")).toBe(details);
     expect(details.open).toBe(true);
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  /** 概要の「終了」の欄の文。 */
+  const finishedCell = () =>
+    [...container.querySelectorAll("dt")].find((dt) => dt.textContent === "終了")
+      ?.nextElementSibling?.textContent;
+
+  it("「終了」は、タスクがこの実行を今も実行中なら「実行中」、終わりの記録が無く実行中でもなければ今の文、記録があれば終了の時刻を出す", () => {
+    const show = (key: string, data: RunLogData) =>
+      render(h(LiveRunLog, { key, taskId: "t1", runId: "r1", initial: data }));
+    show("running", { ...initial(), running: true });
+    expect(finishedCell()).toBe("実行中");
+    show("no-end", { ...initial(), running: false });
+    expect(finishedCell()).toBe(
+      "終わりの記録がありません。実行中か、デーモンが途中で止まりました。",
+    );
+    const done = initial();
+    if (done.log) done.log.meta.finishedAt = "2026-10-15T00:01:00.000Z";
+    // 終わりの記録があれば、実行中のフラグが残っていても、終了の時刻
+    show("done", { ...done, running: true });
+    expect(finishedCell()).toMatch(/10\/15 /);
+  });
+
+  it("画面を読み直さなくても、実行の開始・終了で「終了」の文が切り替わる（別の実行を実行中のときは「実行中」にしない）", async () => {
+    render(h(LiveRunLog, { taskId: "t1", runId: "r1", initial: initial() }));
+    expect(finishedCell()).toContain("終わりの記録がありません");
+    daemon.status = "running";
+    daemon.currentRunId = "other";
+    daemon.events += say("1行目");
+    await wait();
+    expect(finishedCell()).toContain("終わりの記録がありません");
+    daemon.currentRunId = "r1";
+    await wait();
+    expect(finishedCell()).toBe("実行中");
+    daemon.status = "queued";
+    daemon.currentRunId = undefined;
+    await wait();
+    expect(finishedCell()).toContain("終わりの記録がありません");
   });
 
   it("読んでいる途中（一番下でない）ならスクロールの位置を動かさず、一番下を見ているときだけ新しい行についていく", async () => {

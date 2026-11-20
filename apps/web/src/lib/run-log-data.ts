@@ -7,6 +7,8 @@ export type RunLogData = {
   taskId: string;
   taskTitle: string;
   projectId: string;
+  /** タスクがこの実行を、いま実行中か（終わりの記録が無いときに「実行中」と出すかを決める）。 */
+  running: boolean;
   /** この実行の作業履歴の行（開始・完了・失敗など）。 */
   rows: ActivityEvent[];
   /** ログ（まだ無い・読めないときは null）。 */
@@ -31,6 +33,14 @@ export async function loadAgentFiles(
   }
 }
 
+/** タスクがこの実行を、いま実行中か。 */
+export function runningThis(
+  task: { status: string; currentRunId?: string },
+  runId: string,
+): boolean {
+  return task.status === "running" && task.currentRunId === runId;
+}
+
 /** 実行のログの画面のデータ。タスクが無ければ null。デーモンに届かなければ例外。 */
 export async function loadRunLog(id: string, runId: string): Promise<RunLogData | null> {
   const found = await getTask(id);
@@ -40,6 +50,7 @@ export async function loadRunLog(id: string, runId: string): Promise<RunLogData 
     taskId: found.task.id,
     taskTitle: found.task.title,
     projectId: found.task.projectId,
+    running: runningThis(found.task, runId),
     rows: found.activity.filter((e) => runLogId(e) === runId),
     log,
     ...("failed" in files ? { agentFiles: null, agentFilesFailed: true } : files),

@@ -293,6 +293,12 @@ Switch the view with the tabs.
 
 Of these, the PR, the base branch, the tests, the ticket, related tasks, and the rerun task are shown only when the task has them.
 
+While a step's agent is running, one line above the deliverables in the overview shows the running step, the time since that run started, and "View log" (for example, "Running Design · 12 min · View log").
+The elapsed time advances every minute and is written as "under a minute", "12 min", or "1 h 5 min".
+"View log" opens the log screen of that run.
+Before the first step starts (preparing the repository, gathering information, reading the ticket, deciding how to proceed, and so on), only the name of what is being done is shown (the start time and the run are not known, so the elapsed time and the log link are not shown).
+While the task is queued, awaiting approval, awaiting a decision, paused, completed, or cancelled, this line is not shown.
+
 For a task with error records, "Error report" appears below "Properties" ([Getting an error report](troubleshooting.en.md#getting-an-error-report)).
 Below it, the recent Activity (5 entries) is shown.
 Each line is cut at 2 lines. Read the full text, and the "Details" that open the reasons, in the Activity tab from "Show all (n)", which appears when there are more than 5 entries (or open the Activity tab directly).
@@ -307,7 +313,9 @@ In the Activity of the task details, press "Details" on a request-for-changes li
 
 ## Automatic updates on the screen
 
-While they are open, the dashboard, the task list, the task details, and the header notifications fetch the latest state every 3 seconds and show it. They do this whatever the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed). As a result, tasks added by intake, approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
+While they are open, the dashboard, the task list, the task details, and the header notifications fetch the latest state every 3 seconds and show it. They do this whatever the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed). The running line in the overview and the paused section also follow a run starting, ending, or pausing without any action.
+In the run log screen, "Finished" shows "Running" while the task is still running that run; when no end is recorded and the task is not running it, the screen shows the same text as before.
+As a result, tasks added by intake, approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
 
 When the state is fetched again, the screen behaves as follows.
 
@@ -1525,6 +1533,12 @@ Resume the task as follows, depending on why it stopped.
 | The chosen agent can no longer be used | Choose the agent again, then resume ([Changing a step's agent](#changing-a-steps-agent)) |
 
 What to check for each reason is also in [Troubleshooting](troubleshooting.en.md#tasks-stop-or-do-not-progress).
+
+The paused section has links for investigating the cause.
+- "View the error report": shown only when the error report is shown on the screen. It moves you to the error report (which sits below on a narrow width).
+- "View the log of the stopped run": shown only when there is a run that caused this pause. When you paused the task yourself, or the pause was not caused by a failed run, it does not link to an earlier failed run.
+
+While the task is paused, the deliverables do not show an in-progress word such as "In progress" or "Writing…" (the note beside the Implementation heading reads "Paused").
 
 The details of a task stopped by the budget limit show a field for the new cumulative limit and "Change cap and resume".
 
