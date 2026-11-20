@@ -237,13 +237,43 @@ describe("直しの実行の指示（PBI-299）", () => {
     }
   });
 
-  it("最初の実行と直しの実行のどちらの指示にも、最初の段落が PR 全体の変更の要約で、対応の件数と検査の報告を書かないと入る（PBI-423）", () => {
-    const variants = [
-      {},
-      { noTestsReason: "テストの仕組みが無い" },
-      { approved: { requirements: { output: "# 要求要件", submission: 1 } } },
-    ];
-    for (const v of variants) {
+  const leadVariants = [
+    {},
+    { noTestsReason: "テストの仕組みが無い" },
+    { approved: { requirements: { output: "# 要求要件", submission: 1 } } },
+    {
+      steps: [
+        { key: "reproduce", state: "done" },
+        { key: "implement", state: "active" },
+      ],
+    },
+    {
+      steps: [
+        { key: "requirements", state: "done" },
+        { key: "design", state: "done" },
+        { key: "implement", state: "active" },
+      ],
+      approved: {
+        requirements: { output: "# 要求要件", submission: 1 },
+        design: { output: "# 設計", submission: 1 },
+      },
+    },
+    {
+      steps: [
+        { key: "requirements", state: "done" },
+        { key: "design", state: "done" },
+        { key: "implement", state: "active" },
+      ],
+      approved: {
+        requirements: { output: "# 要求要件", submission: 1 },
+        design: { output: "# 設計", submission: 1 },
+      },
+      noTestsReason: "テストの仕組みが無い",
+    },
+  ];
+
+  it("最初の実行と直しの実行のどちらの指示にも、最初の段落が PR 全体の変更の要約で、対応の件数と検査の結果を書かないと入る（PBI-423）", () => {
+    for (const v of leadVariants) {
       for (const t of [task({ ...v, outputs: {} }), task(v)]) {
         const prompt = buildPrompt(t, "implement");
         expect(prompt).toContain("この PR 全体で何を変えたかの要約だけにする");
@@ -251,11 +281,16 @@ describe("直しの実行の指示（PBI-299）", () => {
           "対応の件数・経過や、検査（テスト・リンター・ビルドなど）の実行の結果は、最初の段落に書かない",
         );
       }
-      // 直しの実行だけ：全体の変更が変わったら反映し、対応の報告は最後の直しの節に書く
+    }
+  });
+
+  it("直しの実行だけに、全体の変更が変わったら要約に反映し、対応は最後の直しの節、検査の結果は全体の「どう確かめたか」に書くと入る（PBI-423）", () => {
+    for (const v of leadVariants) {
       const rework = buildPrompt(task(v), "implement");
       expect(rework).toContain("今回の直しで PR 全体の変更が変わったときは、その変更を反映する");
+      expect(rework).toContain("指摘への対応の件数・経過は、最後の直しの節に書く");
       expect(rework).toContain(
-        "指摘への対応の件数や検査の実行の報告は、最初の段落に書かず、この節に書く",
+        "検査の結果は、全体の説明の「どう確かめたか」に今回の結果で書く（最初の段落には書かない）",
       );
       expect(buildPrompt(task({ ...v, outputs: {} }), "implement")).not.toContain(
         "今回の直しで PR 全体の変更が変わったとき",
