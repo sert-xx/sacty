@@ -13,6 +13,7 @@
 ## したこと
 
 - `apps/daemon/src/prompts.ts`：`answerMarker("implement")` が `sacty-completion` を返す（PBI-154 の `preferResult` を実装の工程にも使う）。
+- `docs/spec/tasks-and-steps`（日英）の完了の申告の節に、出し直しの指示の項目を足した。
 - `apps/daemon/src/agents/parse.ts`：目印が `sacty-completion` のとき、`ClaudeOutcomeReader` は文字列に触れただけでなく、閉じた申告のコードブロックがある `result` を答えにする（`takeFences`。`extractCompletion` と同じ見分け方で、`~~~` と字下げも含む）。
 - 仕様書 `agent-execution` の「出力の扱い」の対象の役割に、実装と最終レビュー（以前の版の役割）を足した。
 - テスト：出力の読み取りの単体テスト（`agents.test.ts`）、デーモンの実装の工程が目印を渡すこと（`daemon-implement.test.ts`）。
@@ -23,7 +24,12 @@
 
 ## 確かめたこと
 
-- `npm run lint`・`npm run typecheck`・`npm test`（全件）・`npx vitest run tests/docs` を、最後の変更の後に実行した。結果は実装の説明に書いた。
+最後の変更の後に実行した。
+
+- `npm run lint`：成功（info・警告なし）。
+- `npm run typecheck`：成功。
+- `npx vitest run tests/docs`：成功（3 ファイル、93 件）。
+- `npm test`（全件）：成功（5588 件が通り、14 件がスキップ）。
 - `npm run build` は実行していない。
 
 ## レビューの指摘と対応
@@ -34,6 +40,8 @@
 | 閉じていない申告・引用の入れ子・出力の読み取りまで通すテストが無い | 単体テストと、`DockerExecutor` を通すテストを足した |
 | 作業履歴にひな形の節が無い | 節を足した |
 | `answerMarker` の説明が例外に触れていない | 説明に足し、`hasPreferred` の引数に `prefer` を渡す形にした |
+| 出し直しの指示が `tasks-and-steps` の仕様書に無い | 日英の完了の申告の節に足した |
+| 作業履歴の「確かめたこと」に結果が無い | コマンドごとの結果を書いた |
 
 ## 残したこと
 
