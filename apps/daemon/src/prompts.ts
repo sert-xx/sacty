@@ -126,6 +126,7 @@ import {
   securityScope,
 } from "./security.js";
 import { localForwards, type StartedService } from "./services.js";
+import { readStepQuestions, stepQuestionsLines } from "./step-questions.js";
 import { CHANGE_DOCUMENT_EXTENSION_LIST } from "./test-files.js";
 import { DECLARATION_ONLY_LINES } from "./timeout-resume.js";
 import {
@@ -5094,6 +5095,8 @@ export type BodyParts = {
   issue?: string;
   record?: string;
   footer: string;
+  /** 長さの上限でも省かない行のまとまり（要求要件・設計の PR の「確認したいこと」の件数と答え方。PBI-439）。 */
+  keep?: string[];
 };
 
 /** PR の本文の、観点 → テスト → 実行結果の表とテストの結果（PBI-10b）。 */
@@ -6037,8 +6040,11 @@ export function buildStepPullRequestBodyText(
   step: StepPullRequestKey,
   path: string,
   aiReview?: AiReviewOfHead,
+  secrets?: readonly string[],
 ): BodyText {
-  const task = withoutInternalPathsDeep(rawTask);
+  // 写す文は、使った秘密の値を伏せてから切る（切れ目にかかった値の先頭が残らないように）
+  const task = withoutInternalPathsDeep(hideSecrets(rawTask, secrets));
+  const questions = stepQuestionsLines(readStepQuestions(task.outputs[step]), path, "text");
   const name = STEP_NAME[step];
   const responded = respondedLines(task, step);
   const earlier = earlierStepLines(task, step);
@@ -6052,7 +6058,10 @@ export function buildStepPullRequestBodyText(
       `成果のファイル：\`${path}\``,
       "",
       approval,
-      ...(guide.length > 0 ? ["", "## 確かめる所", "", ...guide] : []),
+      ...(questions.lines.length > 0 ? ["", ...questions.lines] : []),
+      ...(guide.length > 0
+        ? ["", "## 確かめる所", "", PROVENANCE_NOT_QUESTIONS_LINE, "", ...guide]
+        : []),
       ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
       ...(responded.length > 0 ? ["", "## 指摘への対応", "", ...responded] : []),
     ].join("\n"),
@@ -6061,9 +6070,13 @@ export function buildStepPullRequestBodyText(
       "---\nこの PR は sacty が作成しました。",
     ].join("\n"),
     // タスクの ID と、マージが承認になることの案内は、省いても残す
-    keep: [intro, approval],
+    keep: [intro, approval, ...(questions.keep ? [questions.keep] : [])],
   };
 }
+
+/** 要求要件・設計の PR の本文の「確かめる所」に足す、問いとの区別の1行（PBI-439）。 */
+const PROVENANCE_NOT_QUESTIONS_LINE =
+  "出典（引用・導出・推論）の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。";
 
 /** 要求要件・設計の PR の、承認の仕方と指摘の伝え方（PBI-57・PBI-63）。 */
 /**
@@ -6118,8 +6131,10 @@ export function buildStepPullRequestBodyParts(
   step: StepPullRequestKey,
   path: string,
   aiReview?: AiReviewOfHead,
+  secrets?: readonly string[],
 ): BodyParts {
-  const task = withoutInternalPathsDeep(rawTask);
+  const task = withoutInternalPathsDeep(hideSecrets(rawTask, secrets));
+  const questions = stepQuestionsLines(readStepQuestions(task.outputs[step]), path, "template");
   const name = STEP_NAME[step];
   const responded = respondedLines(task, step);
   const earlier = earlierStepLines(task, step);
@@ -6128,7 +6143,10 @@ export function buildStepPullRequestBodyParts(
     summary: [
       `sacty のタスク「${task.title}」の${name}です。マージすると${name}の承認になります。`,
       ...(aiReviewBodyLine(aiReview) ? ["", aiReviewBodyLine(aiReview) as string] : []),
-      ...(guide.length > 0 ? ["", "**確かめる所**", "", ...guide] : []),
+      ...(questions.lines.length > 0 ? ["", ...questions.lines] : []),
+      ...(guide.length > 0
+        ? ["", "**確かめる所**", "", PROVENANCE_NOT_QUESTIONS_LINE, "", ...guide]
+        : []),
       ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
     ].join("\n"),
     changes: [
@@ -6139,6 +6157,7 @@ export function buildStepPullRequestBodyParts(
       ? { issue: `#${task.source.number}（このタスクの取り込み元。実装の PR のマージで閉じます）` }
       : {}),
     footer: [sactyFooter(task, name), "", ...stepApprovalLines(step)].join("\n"),
+    ...(questions.keep ? { keep: [questions.keep] } : {}),
   };
 }
 

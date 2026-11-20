@@ -384,13 +384,14 @@ describe("セッションログの保存（PBI-62）", () => {
 
   it("実行中の写しで、末尾を省いていて、持ち越しに改行を含む値があっても、値の前半も後半も残らない（PBI-438）", () => {
     const secret = "LINE1-fictional\nSECRETLINE2";
+    // 長い別の値があり、持ち越しが改行を含む値の全体より長い
     const store = new SessionLogStore(join(dir, "runs"), {
       events: { head: 0, tail: 20 },
       stderr: { head: 0, tail: 20 },
     });
-    const log = store.open(info, () => [secret]);
-    log.stderr(`${"e".repeat(100)}\n`);
-    log.stderr(`x ${secret}`);
+    const log = store.open(info, () => [secret, "Q".repeat(60)]);
+    log.stderr("e".repeat(100));
+    log.stderr(`x ${secret}\nz`);
     const stderr = store.snapshot("task-1", "run-1")?.stderr ?? "";
     expect(stderr).not.toContain("SECRETLINE2");
     expect(stderr).not.toContain("LINE1-fictional");
