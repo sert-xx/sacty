@@ -16,7 +16,7 @@
 - `docs/spec/tasks-and-steps`（日英）の完了の申告の節に、出し直しの指示の項目を足した。
 - `apps/daemon/src/agents/parse.ts`：目印が `sacty-completion` のとき、`ClaudeOutcomeReader` は文字列に触れただけでなく、閉じた申告のコードブロックがある `result` を答えにする（`takeFences`。`extractCompletion` と同じ見分け方で、`~~~` と字下げも含む）。
 - 仕様書 `agent-execution` の「出力の扱い」の対象の役割に、実装と最終レビュー（以前の版の役割）を足した。
-- テスト：出力の読み取りの単体テスト（`agents.test.ts`）、デーモンの実装の工程が目印を渡すこと（`daemon-implement.test.ts`）。
+- テスト：出力の読み取りの単体テスト（`agents.test.ts`）、`DockerExecutor` を通して報告のほうが答えになること（`agent-sessions.test.ts`）、デーモンの実装の工程が目印を渡すこと（`daemon-implement.test.ts`）、`answerMarker` の更新（`prompts.test.ts`）。`daemon-steps.test.ts` は注記の言い方だけを直した。
 
 ## 決めたこと
 
