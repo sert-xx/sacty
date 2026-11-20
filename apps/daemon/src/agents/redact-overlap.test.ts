@@ -1,0 +1,249 @@
+import { describe, expect, it } from "vitest";
+import { ByteRedactor } from "../agent-sessions.js";
+import { StreamRedactor, secretForms } from "../session-logs.js";
+import { REDACTED, redact } from "./redact.js";
+
+/** 修正前の手順（長い値から順に、1つずつ置き換える）。重ならない入力で、結果が同じことを確かめるために写した。 */
+function legacyRedact(text: string, secrets: readonly string[]): string {
+  const targets = [...new Set(secrets)]
+    .filter((s) => s.length > 0)
+    .sort((a, b) => b.length - a.length);
+  let result = text;
+  for (const secret of targets) result = result.split(secret).join(REDACTED);
+  return result;
+}
+
+/** 素朴な方法：各値の各位置を総当たりして、含まれる文字に印を付け、重なる（文字を共有する）出現のかたまりを1つの目印にする。 */
+function naiveRedact(text: string, secrets: readonly string[]): string {
+  const mark = new Array<number>(text.length).fill(0); // 0=印なし。出現ごとに番号を振り、重なったら束ねる
+  const parent: number[] = [0];
+  const find = (x: number): number => {
+    let r = x;
+    while (parent[r] !== r) r = parent[r] as number;
+    return r;
+  };
+  for (const secret of new Set(secrets)) {
+    if (!secret) continue;
+    for (let at = 0; at + secret.length <= text.length; at++) {
+      if (text.slice(at, at + secret.length) !== secret) continue;
+      const id = parent.length;
+      parent.push(id);
+      for (let i = at; i < at + secret.length; i++) {
+        const prev = mark[i] as number;
+        if (prev === 0) mark[i] = id;
+        else parent[find(id)] = find(prev);
+      }
+    }
+  }
+  // 隣り合う出現は、別のかたまり（番号が違う）として2つの目印にする
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const m = mark[i] as number;
+    if (m === 0) out += text[i];
+    else if (i === 0 || mark[i - 1] === 0 || find(mark[i - 1] as number) !== find(m))
+      out += REDACTED;
+  }
+  return out;
+}
+
+/** 種を固定した乱数（mulberry32）。 */
+function rng(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 重なる値・自分自身と重なる値・接頭辞や接尾辞を共有する値・一方が他方を含む値・1文字の値を含む集合と、その値を重ねて・続けて・地の文に挟んだ入力。 */
+function randomCase(rand: () => number): { secrets: string[]; text: string } {
+  const pick = (n: number) => Math.floor(rand() * n);
+  const alphabet = "ab-";
+  const word = (min: number, max: number) =>
+    Array.from({ length: min + pick(max - min + 1) }, () => alphabet[pick(alphabet.length)]).join(
+      "",
+    );
+  const secrets: string[] = [];
+  for (let n = 1 + pick(4); n > 0; n--) {
+    const base =
+      secrets.length > 0 && rand() < 0.5 ? (secrets[pick(secrets.length)] as string) : word(1, 5);
+    const style = pick(5);
+    if (style === 0)
+      secrets.push(base.repeat(2)); // 自分自身と重なる
+    else if (style === 1)
+      secrets.push(base + word(1, 3)); // 接頭辞を共有する・含む
+    else if (style === 2)
+      secrets.push(word(1, 3) + base); // 接尾辞を共有する・含む
+    else if (style === 3)
+      secrets.push(base.slice(0, 1)); // 1文字
+    else secrets.push(base);
+  }
+  let text = "";
+  for (let n = 2 + pick(6); n > 0; n--) {
+    const kind = pick(4);
+    const s = secrets[pick(secrets.length)] as string;
+    if (kind === 0)
+      text += s; // 続けて
+    else if (kind === 1)
+      text += `${s.slice(0, 1 + pick(s.length))}${s}`.slice(0, s.length + pick(3)); // 重ねる
+    else if (kind === 2)
+      text += ` ${word(0, 4)} `; // 地の文
+    else text += word(0, 6);
+  }
+  return { secrets, text };
+}
+
+function splitAt(text: string, cuts: number[]): string[] {
+  const points = [0, ...[...cuts].sort((x, y) => x - y), text.length];
+  return points.slice(0, -1).map((p, i) => text.slice(p, points[i + 1]));
+}
+
+describe("redact: 重なって現れる値（PBI-438）", () => {
+  const cases: { name: string; secrets: string[]; text: string; expected: string }[] = [
+    {
+      name: "表2 同じ文字が続く値",
+      secrets: ["00000000"],
+      text: "id=000000000000",
+      expected: "id=[REDACTED]",
+    },
+    {
+      name: "表3 繰り返しのある値",
+      secrets: ["abcabcabc"],
+      text: "abcabcabcabc",
+      expected: "[REDACTED]",
+    },
+    {
+      name: "表4 一方の末尾が他方の先頭",
+      secrets: ["sk-AAAA-BBBB", "BBBB-CCCC"],
+      text: "key=sk-AAAA-BBBB-CCCC",
+      expected: "key=[REDACTED]",
+    },
+    {
+      name: "表5 一方が他方を含む値をまとめて",
+      secrets: ["postgres://app:Pw0rd-fictional@db.example.test:5432/main", "Pw0rd-fictional"],
+      text: "connect postgres://app:Pw0rd-fictional@db.example.test:5432/main failed",
+      expected: "connect [REDACTED] failed",
+    },
+    {
+      name: "表8 目印の中の文字に別の値が一致しない",
+      secrets: ["sk-live-12345", "ACT"],
+      text: "token sk-live-12345 ACT",
+      expected: "token [REDACTED] [REDACTED]",
+    },
+    {
+      name: "隣り合う出現は2つのまま",
+      secrets: ["abc"],
+      text: "x abcabc y",
+      expected: "x [REDACTED][REDACTED] y",
+    },
+  ];
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(redact(c.text, c.secrets)).toBe(c.expected);
+    });
+  }
+
+  it("種を固定した乱数：素朴な総当たりと同じ結果になる", () => {
+    const rand = rng(438);
+    let overlapping = 0;
+    for (let i = 0; i < 4000; i++) {
+      const { secrets, text } = randomCase(rand);
+      const expected = naiveRedact(text, secrets);
+      if (expected !== legacyRedact(text, secrets)) overlapping++;
+      expect(redact(text, secrets), JSON.stringify({ secrets, text })).toBe(expected);
+    }
+    // 修正前の手順と結果が変わる入力（今回の対象）が、乱数の入力に十分含まれている
+    expect(overlapping).toBeGreaterThan(100);
+  });
+
+  it("重ならない入力では、修正前の手順と同じ結果になる（一方が他方を含む値・隣り合う出現を含む）", () => {
+    const rand = rng(2);
+    let compared = 0;
+    for (let i = 0; i < 4000; i++) {
+      const { secrets, text } = randomCase(rand);
+      if (naiveRedact(text, secrets) !== legacyRedact(text, secrets)) continue;
+      compared++;
+      expect(redact(text, secrets), JSON.stringify({ secrets, text })).toBe(
+        legacyRedact(text, secrets),
+      );
+    }
+    expect(compared).toBeGreaterThan(500);
+    expect(redact("abab ab", ["ab", "abab"])).toBe("[REDACTED] [REDACTED]");
+    expect(redact("xx", ["x"])).toBe("[REDACTED][REDACTED]");
+  });
+
+  it("出現がn個重なる入力でも、二乗の時間にならない（同じ文字だけの入力と、その文字だけの値）", () => {
+    const text = "z".repeat(200_000);
+    const secrets = Array.from({ length: 300 }, (_, i) => "z".repeat(i + 1));
+    expect(redact(text, secrets)).toBe(REDACTED);
+  });
+});
+
+describe("少しずつ届く出力の秘密情報（PBI-438）", () => {
+  const stream = (secrets: string[], parts: string[]): string => {
+    const r = new StreamRedactor(() => secrets);
+    return parts.map((p) => r.push(p)).join("") + r.flush();
+  };
+  const bytes = (secrets: string[], parts: string[]): string => {
+    const r = new ByteRedactor(secrets);
+    return Buffer.concat([...parts.map((p) => r.push(Buffer.from(p, "utf8"))), r.flush()]).toString(
+      "utf8",
+    );
+  };
+
+  const conn = "postgres://app:Pw0rd-fictional@db.example.test:5432/main";
+  it("表6 接続文字列とそのパスワードが、どこで2回に分かれても1つの目印になる", () => {
+    const text = `connect ${conn} failed`;
+    for (let at = 0; at <= text.length; at++) {
+      const parts = [text.slice(0, at), text.slice(at)];
+      expect(stream([conn, "Pw0rd-fictional"], parts)).toBe("connect [REDACTED] failed");
+      expect(bytes([conn, "Pw0rd-fictional"], parts)).toBe("connect [REDACTED] failed");
+    }
+  });
+
+  it("表7 重なる値が、どこで2回に分かれても伏せ切れる", () => {
+    const text = "x ZQZQZ y";
+    for (let at = 0; at <= text.length; at++) {
+      const parts = [text.slice(0, at), text.slice(at)];
+      expect(stream(["ZQZ"], parts)).toBe("x [REDACTED] y");
+      expect(bytes(["ZQZ"], parts)).toBe("x [REDACTED] y");
+    }
+  });
+
+  it("同じ文字が長く続くかたまりでも、持ち越す量は値の長さのまま、1つの目印になる", () => {
+    const r = new StreamRedactor(() => ["0000"]);
+    const out = Array.from({ length: 50 }, () => r.push("00")).join("") + r.flush();
+    expect(out).toBe(REDACTED);
+    const long = new StreamRedactor(() => ["0000"]);
+    for (let i = 0; i < 1000; i++) long.push("0");
+    expect(long.peek().length).toBeLessThan(4);
+  });
+
+  it("種を固定した乱数：乱数の位置で何回に分けても、まとめて伏せた結果と同じ（文字列・バイト列）", () => {
+    const rand = rng(3);
+    for (let i = 0; i < 3000; i++) {
+      const { secrets, text } = randomCase(rand);
+      const cuts = Array.from({ length: Math.floor(rand() * 6) }, () =>
+        Math.floor(rand() * (text.length + 1)),
+      );
+      const parts = splitAt(text, cuts);
+      const expected = redact(text, secretForms(secrets));
+      const label = JSON.stringify({ secrets, text, cuts });
+      expect(stream(secrets, parts), label).toBe(expected);
+      expect(bytes(secrets, parts), label).toBe(expected);
+    }
+  });
+
+  it("サロゲートペアの途中で分けない（絵文字を含む値と重なる出現）", () => {
+    const secrets = ["🔑🔑x", "x🔑"];
+    const text = "a 🔑🔑x🔑 b";
+    const r = new StreamRedactor(() => secrets);
+    const outs: string[] = [];
+    for (const ch of text) outs.push(r.push(ch));
+    outs.push(r.flush());
+    for (const o of outs) expect(o).not.toMatch(/[\ud800-\udbff]$|^[\udc00-\udfff]/);
+    expect(outs.join("")).toBe("a [REDACTED] b");
+  });
+});
