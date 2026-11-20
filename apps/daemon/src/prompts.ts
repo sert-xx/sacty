@@ -8992,6 +8992,8 @@ export function operationSucceeded(output: string): boolean {
  * 答えに必ず決まった見出しの塊を含める役割の、その見出し（引用符で囲んだキーの形。名前に触れただけの文で当たらないように）。
  * Claude Code の result が何回も出たら、これを含む最後の result を答えにする（最終の答えの後の通知への返答を、答えにしない。
  * PBI-154）。塊の形の決まっていない役割は undefined（最後の result を答えにする）。
+ * 例外：実装の工程は、引用符なしの申告の言語の名前（COMPLETION_FENCE）を返す。読み取り側（ClaudeOutcomeReader）は、この名前
+ * のときだけ、文字列が含まれるかではなく、閉じた申告のコードブロックがあるかで見分ける（PBI-415）。
  */
 export function answerMarker(role: string): string | undefined {
   const heading: Record<string, string> = {

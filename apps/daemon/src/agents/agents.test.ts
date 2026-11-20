@@ -847,6 +847,13 @@ describe("実装の工程の答えの選び方（PBI-415）", () => {
     expect(read(["途中", report("最後")]).outcome).toMatchObject({ output: report("最後") });
   });
 
+  it("閉じていない申告は数えず、直前の閉じた報告を答えにする。外側のコードブロックに引用しただけの申告も数えない", () => {
+    const unclosed = '続き\n```sacty-completion\n{"status":"complete"}';
+    expect(read([report("報告"), unclosed]).outcome).toMatchObject({ output: report("報告") });
+    const quoted = '例：\n````md\n```sacty-completion\n{"status":"complete"}\n```\n````';
+    expect(read([report("報告"), quoted]).outcome).toMatchObject({ output: report("報告") });
+  });
+
   it("~~~ や字下げの申告のコードブロックも、申告として数える。再開した実行でも同じ", () => {
     const tilde = '説明\n~~~sacty-completion\n{"status":"complete"}\n~~~';
     const indented = '説明\n  ```sacty-completion\n{"status":"complete"}\n  ```';
