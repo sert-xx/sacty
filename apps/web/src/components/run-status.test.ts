@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { messagesFor } from "@/i18n";
 import type { Locale } from "@/i18n/locale";
-import { elapsedText, runningNow, stoppedRunId } from "@/lib/run-status";
+import { elapsedText, preparingNow, runningNow, stoppedRunId } from "@/lib/run-status";
 
 /*
  * タスクの概要の「いま実行していること」の行と、一時停止のカードのリンク。作業履歴からタスクを作り、タスクの詳細を描いて確かめる。
@@ -20,6 +20,7 @@ vi.mock("@/app/actions", () => ({
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 const { TaskDetailView } = await import("./task-detail");
+const { ResumeForm } = await import("./resume-form");
 
 const START = Date.parse("2026-11-20T00:00:00.000Z");
 const minutesAfter = (n: number) => new Date(START + n * 60_000).toISOString();
@@ -395,10 +396,91 @@ describe("stoppedRunId", () => {
     expect(stoppedRunId(taskPaused(activity), activity)).toBe("a");
   });
 
+  it("失敗と一時停止の間に、実行を持たない記録が挟まっても、失敗の実行を返す", () => {
+    const [created] = base();
+    if (!created) throw new Error("missing");
+    const activity = [
+      ...base(),
+      started("a"),
+      failed("a"),
+      { ...created, id: "x", seq: 999, at: minutesAfter(2) } as ActivityEvent,
+      paused("error", minutesAfter(3)),
+    ];
+    expect(stoppedRunId(taskPaused(activity), activity)).toBe("a");
+  });
+
   it("一時停止していないタスクでは返さない", () => {
     const activity = [...base(), started("r"), failed("r"), paused("error")];
     const task = { ...taskOf(activity), status: "queued" } as Task;
     expect(stoppedRunId(task, activity)).toBeUndefined();
+  });
+});
+
+describe("runningNow と preparingNow の条件", () => {
+  it("running 以外のタスクは、currentRunId が残っていても実行中にしない", () => {
+    const activity = [...base(), started("r1")];
+    const task = { ...taskOf(activity), status: "queued" } as Task;
+    expect(task.currentRunId).toBe("r1");
+    expect(runningNow(task, activity)).toBeUndefined();
+  });
+
+  it("開始の時刻は、いまの実行の ID の開始の記録から取る（別の実行の開始ではない）", () => {
+    const activity = [
+      ...base(),
+      started("old", "design", minutesAfter(-3)),
+      started("cur", "design", minutesAfter(5)),
+    ];
+    const task = { ...taskOf([...base(), started("old", "design", minutesAfter(-3))]) } as Task;
+    expect(runningNow(task, activity)?.startedAtMs).toBe(START - 3 * 60_000);
+    expect(runningNow({ ...task, currentRunId: "cur" } as Task, activity)?.startedAtMs).toBe(
+      START + 5 * 60_000,
+    );
+  });
+
+  it("同じ ID の開始の記録が複数あれば、最後のものを採る", () => {
+    const activity = [
+      ...base(),
+      started("same", "design", minutesAfter(-3)),
+      started("same", "design", minutesAfter(4)),
+    ];
+    const task = taskOf([...base(), started("same", "design", minutesAfter(-3))]);
+    expect(runningNow(task, activity)?.startedAtMs).toBe(START + 4 * 60_000);
+  });
+
+  it("実行待ちのときだけ、準備の段階を返す", () => {
+    const task = { ...taskOf(base()), preparing: "triage" } as Task;
+    expect(preparingNow(task)).toBe("triage");
+    expect(preparingNow({ ...task, status: "running" } as Task)).toBeUndefined();
+    expect(preparingNow({ ...task, status: "paused" } as Task)).toBeUndefined();
+  });
+});
+
+describe("一時停止のカードのリンクの出し分け（カード単体）", () => {
+  const card = (props: { errorReport?: boolean; stoppedRunId?: string }) =>
+    renderToStaticMarkup(
+      createElement(ResumeForm, {
+        taskId: "t1",
+        reason: "error",
+        usedUsd: 0,
+        capUsd: 10,
+        ...props,
+      }),
+    );
+  const box = (html: string) =>
+    html.match(/<p[^>]*data-testid="paused-links"[\s\S]*?<\/p>/)?.[0] ?? "";
+
+  it("エラーレポートが無く、止まった実行だけあれば、ログのリンクだけを出す", () => {
+    locale = "ja";
+    const html = box(card({ errorReport: false, stoppedRunId: "r9" }));
+    expect(html).toContain('href="/tasks/t1/runs/r9"');
+    expect(html).not.toContain("#error-report");
+  });
+
+  it("エラーレポートだけあれば、そのリンクだけを出す", () => {
+    locale = "ja";
+    const html = box(card({ errorReport: true }));
+    expect(html).toContain('href="#error-report"');
+    expect(html).not.toContain("/runs/");
   });
 });
 

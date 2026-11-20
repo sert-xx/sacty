@@ -313,9 +313,9 @@ In the Activity of the task details, press "Details" on a request-for-changes li
 
 ## Automatic updates on the screen
 
-While they are open, the dashboard, the task list, the task details, and the header notifications fetch the latest state every 3 seconds and show it. They do this whatever the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed). The running line in the overview and the paused section also follow a run starting, ending, or pausing without any action.
+While they are open, the dashboard, the task list, the task details, and the header notifications fetch the latest state every 3 seconds and show it. They do this whatever the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed).
+As a result, tasks added by intake, approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action. The running line in the overview and the paused section also follow a run starting, ending, or pausing without any action.
 In the run log screen, "Finished" shows "Running" while the task is still running that run; when no end is recorded and the task is not running it, the screen shows "No end recorded. Still running, or the daemon stopped midway."
-As a result, tasks added by intake, approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
 
 When the state is fetched again, the screen behaves as follows.
 

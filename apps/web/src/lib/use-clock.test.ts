@@ -59,4 +59,22 @@ describe("useClock", () => {
     expect(seen.length).toBe(count);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("起点なしで 60 秒進めた後にアンマウントすると、時計が残らない", async () => {
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(h(Probe, {})));
+    await act(async () => vi.advanceTimersByTime(60_000));
+    expect(vi.getTimerCount()).toBe(1);
+    await act(async () => root.unmount());
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("起点ありで最初の待ちの後（定期の時計が動いた後）にアンマウントしても、時計が残らない", async () => {
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(h(Probe, { anchor: T0 - 30_000 })));
+    await act(async () => vi.advanceTimersByTime(30_000 + 60_000));
+    expect(vi.getTimerCount()).toBe(1);
+    await act(async () => root.unmount());
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
