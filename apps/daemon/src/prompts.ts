@@ -9002,5 +9002,8 @@ export function answerMarker(role: string): string | undefined {
     integrate: INTEGRATION_HEADING,
     gather: GATHER_HEADING,
   };
+  // 実装の工程は、見出しの塊ではなく完了の申告のコードブロックを必ず含める（PBI-347・PBI-415）。
+  // 読み取り側は、この名前なら申告のコードブロックの有無で見分ける
+  if (role === "implement") return COMPLETION_FENCE;
   return Object.hasOwn(heading, role) ? `"${heading[role]}"` : undefined;
 }

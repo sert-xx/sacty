@@ -683,7 +683,7 @@ describe("工程の実行と費用", () => {
     for (const call of executor.calls) {
       expect(JSON.stringify(call.env)).not.toContain("tool-secret-value");
       expect(call.hostGateway).toBe(true);
-      // 本文にする result の目印は、レビューの工程だけ（PBI-154）
+      // 本文にする result の目印は、決まった塊を含める役割だけ（PBI-154）。このテストの工程には無い
       expect(call.preferResult).toBeUndefined();
     }
     const servers = JSON.parse(executor.mcpConfigs[0] ?? "{}").mcpServers;
