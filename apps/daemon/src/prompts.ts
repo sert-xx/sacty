@@ -600,8 +600,7 @@ function rereviewLines(
   task: Task,
   replies: readonly PullRequestFeedback[] | "unreadable" | undefined,
   deferrals: ReviewDeferrals | undefined,
-  docsOnly = false,
-  narrowed = false,
+  { docsOnly = false, narrowed = false }: { docsOnly?: boolean; narrowed?: boolean } = {},
 ): string[] {
   const previous = task.previousReview;
   if (!previous) return [];
@@ -3513,7 +3512,7 @@ export function buildPrompt(
         `- PR の説明で示された文書（Git の外に書いた設計書など）は、スキルの手順で、レビューの対象か根拠かを分ける。対象にした文書もレビューする${extra.rereviewNarrow ? "（範囲は、下の「再レビューの範囲の絞り」の節で決める）" : "（差分だけを見て終えない）"}`,
         // 変えていない長い本文の全体を担当に渡すと、担当が見きれずに failed を返し、レビューを完了できなくなる（PBI-349）
         extra.rereviewNarrow
-          ? "- 担当に渡す範囲は、「再レビューの範囲の絞り」の節で決める（PR 全体の差分では決めない）。対象にした文書も、その節の範囲（前回の指摘の確認と、前回以降の差分で変えた・足した記述と、その変更で正しさが変わりうる記述）だけを見させる（変えていない既存の本文の全体を照合させない）。文書の全体を範囲にするのは、差分がその文書を新しく足した・全面的に書き直したときだけ。担当の結果や前回のレビューに、変えていない箇所を見ていないと書かれていても、範囲を広げない"
+          ? "- 担当に渡す範囲は、「再レビューの範囲の絞り」の節で決める（PR 全体の差分では決めない）。対象にした文書も、その節の範囲（前回の指摘の確認と、前回以降の差分で変えた・足した記述と、その変更で正しさが変わりうる記述）だけを見させる（変えていない既存の本文の全体を照合させない）。文書の全体を範囲にするのは、差分に入っていない文書（Git の外の設計書など）を対象にしたとき（範囲は、スキルの linked-docs の再レビューの規則で決める。前回以降の差分には、その文書の変更が入らない）と、差分がその文書を新しく足した・全面的に書き直したときだけ。担当の結果や前回のレビューに、変えていない箇所を見ていないと書かれていても、範囲を広げない"
           : "- 担当に渡す範囲は、PR の差分で決める。差分に入っている文書は、PR の説明に挙げられていても、差分で変えた・足した記述と、その変更で正しさが変わりうる記述だけを見させる（変えていない既存の本文の全体を照合させない）。文書の全体を範囲にするのは、差分に入っていない文書を対象にしたときと、差分がその文書を新しく足した・全面的に書き直したときだけ。担当の結果や前回のレビューに、変えていない箇所を見ていないと書かれていても、範囲を広げない",
         "- 投稿は sacty がする。あなたは投稿しない（gh や GitHub の API で、PR にレビュー・コメント・返信を書かない）",
         "- スキルとこのプロンプトが食い違うときは、このプロンプトの出力の形を優先する（スキルにある GitHub への投稿の手順は使わない）",
@@ -3562,16 +3561,13 @@ export function buildPrompt(
         // レビューする PR が分割の子タスクの PR なら、その範囲（PBI-351）
         ...reviewChildScopeLines(extra.reviewRework),
         // レビューする PR が、実装の前の文書の PR のとき、方針と抜けだけを見させる（PBI-419）
-        ...reviewDocBeforeImplementLines(extra.reviewRework),
+        ...reviewDocBeforeImplementLines(extra.reviewRework, extra.rereviewNarrow !== undefined),
         ...rereviewNarrowLines(task, extra.rereviewNarrow),
         ...rereviewDocsOnlyLines(task, extra.rereviewDocsOnly),
-        ...rereviewLines(
-          task,
-          extra.replies,
-          extra.reviewDeferrals,
-          extra.rereviewDocsOnly !== undefined,
-          extra.rereviewNarrow !== undefined,
-        ),
+        ...rereviewLines(task, extra.replies, extra.reviewDeferrals, {
+          docsOnly: extra.rereviewDocsOnly !== undefined,
+          narrowed: extra.rereviewNarrow !== undefined,
+        }),
         ...existingReviewLines(extra.existing, task.previousReview !== undefined),
         "",
         ...(target
@@ -7902,7 +7898,10 @@ export function isDocBeforeImplement(context: ReviewReworkContext | undefined): 
   return implement !== undefined && implement.state !== "skip";
 }
 
-function reviewDocBeforeImplementLines(context: ReviewReworkContext | undefined): string[] {
+function reviewDocBeforeImplementLines(
+  context: ReviewReworkContext | undefined,
+  narrowed = false,
+): string[] {
   if (!context || !isDocBeforeImplement(context)) return [];
   const gateStep = context.gateStep;
   return [
@@ -7912,7 +7911,9 @@ function reviewDocBeforeImplementLines(context: ReviewReworkContext | undefined)
     "- 指摘にしてよいもの（方針と抜け）：目的・範囲（やること・やらないこと）、依頼・上位の要求との食い違い、要求・受け入れ条件の抜けと矛盾、方式の選択とその理由（成り立たない方針・既存と矛盾する方針）、人が決めるべきことが「確認したいこと」に出ているか、後の工程で取り返しにくい決定（外に公開する I/F・保存するデータの形・セキュリティ・移行）の誤りや抜け",
     "- 指摘にしないもの（実装のレビューに任せる）：実装の手段の細部（内部の構造・名前・処理の細かい手順・測り方）、テスト観点の値・粒度・境界値の並べ方、言い回し",
     "  - ただし、書かれた手段やテスト観点が、方針を誤らせるとき、または受け入れ条件を取りこぼすとき（観点がまるごと抜けている）は、方針・抜けの指摘として出してよい",
-    "- 起動する観点は、方針と抜けに当たるものに絞る（主対象が design-doc なら D-1・D-2・D-5・D-10 と、X-1。条件付き観点・X-2・X-3・R は通常の規則で決める）。D-3・D-4・D-6 は、起動表に「起動しない」と理由（実装の前の文書）を残し、見られなかった観点には数えない",
+    narrowed
+      ? "- 起動する観点は、下の「再レビューの範囲の絞り」の節で決める（この節の D-1・D-2・D-5・D-10 と X-1 の一覧は、絞らない回のもの。絞る回は、その節の観点だけを起動する）。D-3・D-4・D-6 は、起動表に「起動しない」と理由（実装の前の文書）を残し、見られなかった観点には数えない"
+      : "- 起動する観点は、方針と抜けに当たるものに絞る（主対象が design-doc なら D-1・D-2・D-5・D-10 と、X-1。条件付き観点・X-2・X-3・R は通常の規則で決める）。D-3・D-4・D-6 は、起動表に「起動しない」と理由（実装の前の文書）を残し、見られなかった観点には数えない",
     "  - 主対象が design-doc 以外のときは、通常の規則で決める",
     "  - 取り返しにくい決定（保存するデータの形・移行）と、受け入れ条件の抜けは、起動した D-1・D-2・D-5 の担当にも見させる（D-3・D-4 を起動しない代わりに、担当への依頼文に書く。この抜けは、D-2 の「見ないもの」から外す）",
     "- 判定・指摘の重さの決め方・指摘の戻し先の書き方は、ほかの PR のレビューと同じ",

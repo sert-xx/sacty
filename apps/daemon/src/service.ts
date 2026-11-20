@@ -601,14 +601,17 @@ function hasControlCharacter(text: string): boolean {
 /**
  * PR の差分（git diff の出力）の、変わったファイルのパス（PBI-421）。名前の変更は変更元と変更先の両方。名前を引用符で囲んだ
  * （特殊な文字を含む）ファイルは、読み取れないので、拡張子の無い印の名前で入れる（文書とは見なさない）。
+ * newNamesOnly のときは、名前の変更を変更先の 1 件だけで数える（前回以降のファイルの数を数える PBI-432 の条件用）。
  */
-function diffPaths(diff: string): string[] {
+function diffPaths(diff: string, newNamesOnly = false): string[] {
   const paths: string[] = [];
   for (const line of diff.split("\n")) {
     if (!line.startsWith("diff --git ")) continue;
     const named = line.match(/^diff --git a\/(.+) b\/(.+)$/);
-    if (named?.[1] && named[2]) paths.push(named[1], named[2]);
-    else paths.push("unreadable-path");
+    if (named?.[1] && named[2]) {
+      if (newNamesOnly) paths.push(named[2]);
+      else paths.push(named[1], named[2]);
+    } else paths.push("unreadable-path");
   }
   return paths;
 }
@@ -11290,7 +11293,15 @@ export class TaskService {
             mkdirSync(reviewDiffDir, { recursive: true });
             writeFileSync(join(reviewDiffDir, REVIEW_DIFF_FILE), reviewDiff);
             if (rereviewNarrow && !rereviewNarrow.sameHead) {
-              writeFileSync(join(reviewDiffDir, REREVIEW_DIFF_FILE), rereviewNarrow.diff);
+              // 補助のファイル。書けなければ、絞らずに PR 全体を見る側へ倒す（実行を失敗にしない）
+              try {
+                writeFileSync(join(reviewDiffDir, REREVIEW_DIFF_FILE), rereviewNarrow.diff);
+              } catch (error) {
+                console.warn(
+                  `[daemon] レビューのタスク ${task.id} で、前回以降の差分のファイルを書けなかったので、再レビューの範囲を絞りません（PR 全体を見ます）：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+                );
+                rereviewNarrow = undefined;
+              }
             }
           }
         } catch (error) {
@@ -13292,10 +13303,13 @@ export class TaskService {
       const earlier = new Set(
         await this.deps.repos.changedPaths(gitDir, before, previous.headCommit),
       );
-      const added = sincePaths.filter((path) => !earlier.has(path)).length;
+      // 名前の変更は 1 ファイルとして数える（変更先の名前だけ。earlier は名前の変更を検出しない取り方なので、旧名と新名を両方
+      // 数えると、PR の外のファイルの名前だけの変更が 2 件になり、条件が早く当たる）
+      const sinceFiles = [...new Set(diffPaths(since, true))];
+      const added = sinceFiles.filter((path) => !earlier.has(path)).length;
       if (
         added >= REREVIEW_NARROW_NEW_FILES_MIN &&
-        added * REREVIEW_NARROW_HALF_DEN > sincePaths.length * REREVIEW_NARROW_HALF_NUM
+        added * REREVIEW_NARROW_HALF_DEN > sinceFiles.length * REREVIEW_NARROW_HALF_NUM
       ) {
         return skip("前回以降に変わったファイルの多くが、前回の時点の PR の差分に無いものです");
       }

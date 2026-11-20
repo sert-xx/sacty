@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { mkdirSync, symlinkSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { Task } from "@sacty/core";
 import { describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
@@ -86,6 +87,8 @@ type Options = {
   docBeforeImplement?: boolean;
   /** 初回のレビューのまま（前回が無い）にする。 */
   firstOnly?: boolean;
+  /** 先頭を進めず、declined の再開（同じ先頭の判定し直し）で再レビューを始める。 */
+  rejudge?: boolean;
 };
 
 /** PR 9 を取り込んで 1 回レビューして投稿し、先頭を進めて再レビューを始める。再レビューの指示と、repos を返す。 */
@@ -168,13 +171,22 @@ async function rereviewPrompt(options: Options = {}) {
   // 先頭を進めて、再レビューを始める
   pulls.prInfo = {
     ...pulls.prInfo,
-    headSha: HEAD_B,
+    headSha: options.rejudge ? HEAD_A : HEAD_B,
     baseSha: options.baseMoved ? BASE_B : BASE_A,
     baseRef: options.baseRef ?? "main",
   };
   options.repos?.(repos);
   repos.fetchedCommits.length = 0;
   service.rereview(id);
+  if (options.rejudge) {
+    const raw = service as unknown as { tasks: Map<string, Task> };
+    const current = raw.tasks.get(id) as Task;
+    raw.tasks.set(id, {
+      ...current,
+      reviewRestartReason: "declined",
+      reviewRejudgeCommit: HEAD_A,
+    });
+  }
   await service.runNext(id);
   const task2 = service.get(id)?.task as Task;
   expect(task2.previousReview?.headCommit).toBe(HEAD_A);
@@ -438,6 +450,70 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     }
   });
 
+  it("名前を変えたファイルは 1 つに数える（変更先の名前だけ。旧名と新名の 2 件にして、早く絞らなくならない）", async () => {
+    const renamed = (i: number) =>
+      [
+        `diff --git a/src/old${i}.ts b/src/new${i}.ts`,
+        "similarity index 90%",
+        `rename from src/old${i}.ts`,
+        `rename to src/new${i}.ts`,
+        `--- a/src/old${i}.ts`,
+        `+++ b/src/new${i}.ts`,
+        "@@ -1,1 +1,2 @@",
+        " keep",
+        "+x",
+      ].join("\n");
+    // 名前の変更 3 件（新しいファイル 3 つ）＋前回の時点の PR にあった変更 3 件：新しいファイルはちょうど半分（6 件中 3 件）で絞る。
+    // 旧名と新名を両方数えると 9 件中 6 件になり、絞らなくなる
+    const since = [0, 1, 2].map(renamed).concat([3, 4, 5].map((i) => diffOf(1, `src/m${i}.ts`)));
+    const { call, task } = await narrowCall({
+      diff: diffOf(100),
+      since: since.join("\n"),
+      repos: (r) => {
+        r.changedBetween[`${MERGE_BASE_OF_A}..${HEAD_A}`] = ["src/m3.ts", "src/m4.ts", "src/m5.ts"];
+      },
+    });
+    expect(await call(task)).toMatchObject({ sameHead: false });
+  });
+
+  it("前回以降の差分のファイルを書けなかったときは、実行を失敗にせず、絞らずに PR 全体を見る", async () => {
+    const warn = warned();
+    const { prompt, executor } = await rereviewPrompt({
+      diff: PR_20,
+      since: diffOf(2),
+      repos: (r) => {
+        const original = r.snapshot.bind(r);
+        r.snapshot = async (gitDir: string, baseCommit: string, outDir: string) => {
+          await original(gitDir, baseCommit, outDir);
+          // since.diff の書き出し先を、書けない場所（存在しないディレクトリへのリンク）にしておく
+          const dirOfReview = join(dirname(dirname(outDir)), "_review", basename(outDir));
+          mkdirSync(dirOfReview, { recursive: true });
+          symlinkSync(join(dirOfReview, "missing", "x"), join(dirOfReview, "since.diff"));
+        };
+      },
+    });
+    expect(prompt).not.toContain(NARROW);
+    expect(prompt).toContain(WHOLE);
+    expect(executor?.reviewSinceFiles.at(-1)).toBeUndefined();
+    expect(
+      warn.mock.calls.some((c) => String(c[0]).includes("前回以降の差分のファイルを書けなかった")),
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("同じ先頭の判定し直しの回（declined）を実行すると、since.diff を置かず、指示に前回以降の差分を載せない", async () => {
+    const { prompt, executor } = await rereviewPrompt({
+      diff: PR_20,
+      since: diffOf(2),
+      rejudge: true,
+    });
+    expect(prompt).toContain(NARROW);
+    expect(prompt).toContain("前回と同じ先頭");
+    expect(prompt).not.toContain("sincePreviousReview");
+    expect(prompt).not.toContain("/sacty-review/since.diff");
+    expect(executor?.reviewSinceFiles.at(-1)).toBeUndefined();
+  });
+
   it("同じ先頭を判定し直す回は、前回以降の差分が無く、前回の指摘の確認だけに絞る。判定し直す回でなければ絞らない", async () => {
     // 親がすべて断って同じ先頭を判定し直す回／作者が push 無しで返信した回
     const rejudged = await narrowCall();
@@ -588,5 +664,11 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     expect(prompt).toContain(NARROW);
     expect(prompt).toContain("--- この PR のレビューの範囲（実装の前の文書） ---");
     expect(prompt).toContain("D-3・D-4・D-6");
+    // 規則 9 の節の観点の一覧は、絞る回では絞りの節に譲る（起動する観点が 2 通りに読めない）
+    expect(prompt).toContain("この節の D-1・D-2・D-5・D-10 と X-1 の一覧は、絞らない回のもの");
+    expect(prompt).not.toContain("主対象が design-doc なら D-1・D-2・D-5・D-10 と、X-1。");
+    // 絞らない再レビューは、一覧のまま
+    const whole = await rereviewPrompt({ diff: PR_20, docBeforeImplement: true, changed: [] });
+    expect(whole.prompt).toContain("主対象が design-doc なら D-1・D-2・D-5・D-10 と、X-1。");
   });
 });
