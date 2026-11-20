@@ -240,7 +240,7 @@ describe("一時停止のカードのリンク", () => {
       expect(box).toMatch(new RegExp(`href="/tasks/t1/runs/run-3"[^>]*>${r.viewStoppedRun}<`));
       // 飛び先（id を持つ見出し）に、固定の見出しに隠れない余白が付く
       expect(html).toMatch(
-        /<h2[^>]*scroll-mt-60[^>]*id="error-report"|<h2[^>]*id="error-report"[^>]*scroll-mt-60/,
+        /<h2[^>]*scroll-mt-\[calc\(var\(--sticky-offset[^>]*id="error-report"|<h2[^>]*id="error-report"[^>]*scroll-mt-\[calc\(var\(--sticky-offset/,
       );
       expect(html).toContain('id="error-report"');
     }
@@ -504,4 +504,64 @@ describe("一時停止中の実装の成果物の欄", () => {
       expect(html).not.toContain(p.running);
     }
   });
+});
+
+describe("stoppedRunId：完了した実行が原因の一時停止（incomplete・unchanged）", () => {
+  const completed = (runId: string, at: string) =>
+    event(at, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId,
+        step: "implement",
+        agentId: "a",
+        authMode: "subscription",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        costUsd: 0,
+        estimated: true,
+        output: "done",
+      },
+    });
+  const taskWith = (reason: string, activity: ActivityEvent[]) =>
+    ({
+      ...taskOf([...base(), started("x"), failed("x"), paused("error")]),
+      status: "paused",
+      pausedReason: reason,
+      id: "t1",
+      activity,
+    }) as Task;
+
+  for (const reason of ["incomplete", "unchanged"]) {
+    it(`${reason}：直前に完了した実装の実行へつなぐ`, () => {
+      const activity = [
+        ...base(),
+        started("impl-1", "implement"),
+        completed("impl-1", minutesAfter(2)),
+        paused(reason, minutesAfter(3)),
+      ];
+      expect(stoppedRunId(taskWith(reason, activity), activity)).toBe("impl-1");
+    });
+
+    it(`${reason}：再開をまたいだ完了の実行へはつながない`, () => {
+      const activity = [
+        ...base(),
+        started("impl-1", "implement"),
+        completed("impl-1", minutesAfter(2)),
+        event(minutesAfter(3), { type: "TaskResumed", actor: "person", payload: { retry: true } }),
+        paused(reason, minutesAfter(4)),
+      ];
+      expect(stoppedRunId(taskWith(reason, activity), activity)).toBeUndefined();
+    });
+  }
+
+  for (const reason of ["budget", "child_cancelled", "verification"]) {
+    it(`${reason}：完了した実行へはつながない`, () => {
+      const activity = [
+        ...base(),
+        started("impl-1", "implement"),
+        completed("impl-1", minutesAfter(2)),
+        paused(reason, minutesAfter(3)),
+      ];
+      expect(stoppedRunId(taskWith(reason, activity), activity)).toBeUndefined();
+    });
+  }
 });

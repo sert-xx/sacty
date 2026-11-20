@@ -48,7 +48,10 @@ export function ErrorReportCard({
       aria-labelledby="error-report"
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4"
     >
-      <h2 id="error-report" className="scroll-mt-60 text-sm font-semibold">
+      <h2
+        id="error-report"
+        className="scroll-mt-[calc(var(--sticky-offset,15rem))] text-sm font-semibold"
+      >
         {m.title}{" "}
         {count > 0 && (
           <span className="text-xs font-normal text-muted-foreground">{m.note(count)}</span>

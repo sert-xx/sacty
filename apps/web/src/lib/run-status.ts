@@ -64,6 +64,7 @@ export function elapsedText(
  * 一時停止の原因になった実行（止まった実行のログへの道。実行の ID）。いまの一時停止（最後の TaskPaused）の直前の失敗だけを
  * 採る：TaskPaused から作業履歴をさかのぼり、ログを開ける実行の失敗（エラーの種類。AgentRunFailed・OrchestratorFailed など）
  * を採る。別の実行の開始・完了などの実行の行・再開・人が手で止めた一時停止に当たったら、そこで止める（過去の失敗へつながない）。
+ * 理由が incomplete・unchanged のときだけは、直前に完了した実行（AgentRunCompleted）も採る（原因が、完了した実装の実行のため）。
  * 一時停止の記録が続いて並ぶとき（マージの後の2つ目など）は、それも越えてさかのぼる。
  */
 export function stoppedRunId(task: Task, activity: readonly ActivityEvent[]): string | undefined {
@@ -80,7 +81,10 @@ export function stoppedRunId(task: Task, activity: readonly ActivityEvent[]): st
     }
     const runId = runLogId(e);
     if (runId === undefined) continue;
-    return failureKind(e) === "error" ? runId : undefined;
+    if (failureKind(e) === "error") return runId;
+    // 実装が終わらない（incomplete）・やり直しが何も変えなかった（unchanged）の原因は、直前に完了した実装の実行
+    const completedCause = task.pausedReason === "incomplete" || task.pausedReason === "unchanged";
+    return completedCause && e.type === "AgentRunCompleted" ? runId : undefined;
   }
   return undefined;
 }

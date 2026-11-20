@@ -102,6 +102,7 @@ import { runLogId } from "@/lib/session-log";
 import { subtaskSummary } from "@/lib/subtasks";
 import type { TaskDetailData } from "@/lib/task-detail-data";
 import { useLiveData } from "@/lib/use-live-data";
+import { useStickyOffset } from "@/lib/use-sticky-offset";
 
 /** リポジトリの候補を取れなかったときに、求め直すまでの間（PR #119 レビュー指摘）。 */
 export const REPOSITORIES_RETRY_MS = 30_000;
@@ -204,6 +205,8 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
     // レビューを投稿した後の PR の見守り（PBI-411）。止めている間は、PR の変化で再レビューを始めない
     (task.status === "idle" && reviewWatching(task));
 
+  const stickyRef = useRef<HTMLDivElement>(null);
+  useStickyOffset(stickyRef);
   const [tab, setTab] = useState<TabKey>("overview");
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: "overview", label: l.overview },
@@ -239,7 +242,10 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
   return (
     <>
       {/* 題・状態・工程・操作・タブは、スクロールしても見えるよう上に固定する */}
-      <div className="sticky top-16 z-20 -mx-4 flex flex-col gap-3 border-b border-border bg-background/95 px-4 pt-4 backdrop-blur sm:-mx-8 sm:px-8">
+      <div
+        ref={stickyRef}
+        className="sticky top-16 z-20 -mx-4 flex flex-col gap-3 border-b border-border bg-background/95 px-4 pt-4 backdrop-blur sm:-mx-8 sm:px-8"
+      >
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-col gap-2">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

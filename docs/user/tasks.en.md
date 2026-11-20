@@ -1536,7 +1536,7 @@ What to check for each reason is also in [Troubleshooting](troubleshooting.en.md
 
 The paused section has links for investigating the cause.
 - "View the error report": shown only when the error report is shown on the screen. It moves you to the error report (which sits below on a narrow width).
-- "View the log of the stopped run": shown only when there is a run that caused this pause. When you paused the task yourself, or the pause was not caused by a failed run, it does not link to an earlier failed run.
+- "View the log of the stopped run": shown only when there is a run that caused this pause. When you paused the task yourself, or the pause was not caused by a failed run, it does not link to an earlier failed run. When it stopped because the implementation did not finish, or the rework changed nothing, it links to the implementation run that completed just before.
 
 While the task is paused, the deliverables do not show an in-progress word such as "In progress" or "Writing…" (the note beside the Implementation heading reads "Paused").
 
