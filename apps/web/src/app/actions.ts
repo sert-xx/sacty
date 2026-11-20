@@ -342,7 +342,7 @@ export type GateState = {
   agents?: StepChoices;
 };
 
-/** 承認ゲートでの判断（承認・差し戻し・上限を超えた差し戻し）。どれを押したかは decision で受け取る。 */
+/** 承認ゲートでの判断（承認・差し戻し）。どれを押したかは decision で受け取る。 */
 export async function gateAction(_prev: GateState, formData: FormData): Promise<GateState> {
   const a = (await getMessages()).common.action;
   const taskId = String(formData.get("taskId") ?? "");
@@ -379,7 +379,6 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
         target,
         ...(cause ? { cause } : {}),
         comments: lines,
-        continueOverLimit: decision === "continue",
         ...(image ? { image } : {}),
         agents,
       });

@@ -9,7 +9,6 @@ import {
   isDone,
   isFinished,
   isSecurityTask,
-  MAX_CHANGE_REQUESTS,
   MAX_INCOMPLETE_CONTINUATIONS,
   MVP_STEPS,
   message,
@@ -1087,7 +1086,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     activity.close();
   });
 
-  it("差し戻しが上限を超えたら、PR の指摘でもエスカレーションになる", async () => {
+  it("差し戻しが 4 回目でも、PR の指摘を取り込んで差し戻す（エスカレーションにしない）", async () => {
     const made = await start([
       out("# 要求要件 v1"),
       out("# v2"),
@@ -1096,7 +1095,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       rework("requirements", "まだ曖昧"),
     ]);
     const { activity, service, pulls, id } = made;
-    for (let i = 1; i <= MAX_CHANGE_REQUESTS; i++) {
+    for (let i = 1; i <= 3; i++) {
       service.requestChanges(id, { step: "requirements", submission: i, comments: [`指摘${i}`] });
       await service.runNext(id);
     }
@@ -1104,8 +1103,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     pulls.feedbackBy[7] = [item("comment:40")];
     await service.checkPullRequests();
     const task = taskOf(service, id);
-    expect(task.status).toBe("escalated");
-    expect(task.escalation).toMatchObject({ reason: "too_many_changes", target: "requirements" });
+    expect(task.status).toBe("queued");
+    expect(task.escalation).toBeUndefined();
+    expect(task.remarks.at(-1)).toMatchObject({ step: "requirements", round: 4 });
+    expect(types(service, id)).not.toContain("TaskEscalated");
     activity.close();
   });
 

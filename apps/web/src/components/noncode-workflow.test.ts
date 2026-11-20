@@ -96,8 +96,7 @@ describe("非コード工程の承認後の表示", () => {
           targets: [],
           defaultTarget: "operation",
           escalated: false,
-          maxChanges: 3,
-          pendingComments: [],
+          pendingRemarks: [],
         }),
       );
       expect(html).toContain('value="approve"');

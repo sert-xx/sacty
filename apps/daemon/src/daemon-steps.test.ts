@@ -2010,59 +2010,61 @@ describe("承認ゲート（PBI-7）", () => {
     activity.close();
   });
 
-  it("差し戻しが上限（3回）を超えるとエスカレーションになり、続けるか承認するかを選べる", async () => {
+  it("同じ工程への差し戻しに回数の上限は無い。4 回目も 5 回目も、エスカレーションにせず差し戻し、overLimit は偽で記録する（PBI-414）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(
       activity,
-      Array.from({ length: 5 }, (_, i) => draft(`# v${i + 1}`)),
+      Array.from({ length: 6 }, (_, i) => draft(`# v${i + 1}`)),
     );
     const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
-    for (let i = 1; i <= 3; i++) {
-      service.requestChanges(task.id, {
+    for (let i = 1; i <= 5; i++) {
+      const after = service.requestChanges(task.id, {
         step: "requirements",
         submission: current(service, task.id),
         comments: [`指摘${i}`],
       });
+      expect(after.status).toBe("queued");
+      expect(after.remarks.at(-1)).toMatchObject({ id: `requirements-${i}-1`, text: `指摘${i}` });
       await service.runNext(task.id);
     }
-    const escalated = service.requestChanges(task.id, {
-      step: "requirements",
-      submission: current(service, task.id),
-      comments: ["指摘4"],
-    });
-    expect(escalated.status).toBe("escalated");
-    expect(escalated.escalation?.pendingRemarks.map((r) => r.text)).toEqual(["指摘4"]);
+    const events = service.get(task.id)?.activity ?? [];
+    expect(events.map((e) => e.type)).not.toContain("TaskEscalated");
+    const changes = events.filter((e) => e.type === "ChangesRequested");
+    expect(changes).toHaveLength(5);
+    expect(changes.every((e) => e.type === "ChangesRequested" && !e.payload.overLimit)).toBe(true);
+    activity.close();
+  });
 
-    expect(() =>
-      service.requestChanges(task.id, {
-        step: "requirements",
-        submission: current(service, task.id),
-        comments: [],
-      }),
-    ).toThrow(/上限（3回）/);
-    const continued = service.requestChanges(task.id, {
-      step: "requirements",
-      submission: current(service, task.id),
-      comments: [],
-      continueOverLimit: true,
-    });
-    expect(continued.status).toBe("queued");
-    expect(continued.remarks.at(-1)).toMatchObject({ id: "requirements-4-1", text: "指摘4" });
-    const last = service.get(task.id)?.activity.at(-1);
-    expect(last?.type === "ChangesRequested" && last.payload.overLimit).toBe(true);
-
+  it("差し戻しの入力に、以前の版の「上限を超えて差し戻す」の指定があっても、断らずに無視し、指定が無いときと同じ記録にする（PBI-414）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(
+      activity,
+      Array.from({ length: 3 }, (_, i) => draft(`# v${i + 1}`)),
+    );
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     service.requestChanges(task.id, {
       step: "requirements",
-      submission: current(service, task.id),
-      comments: ["指摘5"],
+      submission: 1,
+      comments: ["指摘1"],
+      continueOverLimit: true,
     });
-    expect(service.get(task.id)?.task.status).toBe("escalated");
-    expect(
-      service.approve(task.id, { step: "requirements", submission: current(service, task.id) })
-        .status,
-    ).toBe("queued");
+    await service.runNext(task.id);
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: 2,
+      comments: ["指摘2"],
+    });
+    const [first, second] = (service.get(task.id)?.activity ?? []).filter(
+      (e) => e.type === "ChangesRequested",
+    );
+    expect(first?.payload).toMatchObject({ overLimit: false, remarks: [{ text: "指摘1" }] });
+    expect({ ...first?.payload, round: 0, remarks: [] }).toEqual({
+      ...second?.payload,
+      round: 0,
+      remarks: [],
+    });
     activity.close();
   });
 
@@ -2246,20 +2248,18 @@ describe("設計の工程（PBI-8）", () => {
     activity.close();
   });
 
-  it("要求要件への差し戻しも上限を数え、エスカレーション後は同じ工程の書きかけの指摘を引き継ぐ", async () => {
+  it("設計から要求要件への差し戻しも、4 回目を差し戻す（エスカレーションにしない。PBI-414）", async () => {
     const outcomes: AgentOutcome[] = [draft("# 設計 v1", [viewpoints("A")])];
-    for (let i = 2; i <= 4; i++) {
+    for (let i = 2; i <= 5; i++) {
       outcomes.push(draft(`# 要求要件 v${i}`), draft(`# 設計 v${i}`, [viewpoints("A")]));
     }
-    outcomes.push(draft("# 要求要件 v5"));
     const { activity, service, id } = await toDesignGate(outcomes);
-    const back = (comments: string[], extra: Record<string, unknown> = {}) =>
+    const back = (comments: string[]) =>
       service.requestChanges(id, {
         step: "design",
         submission: current(service, id),
         target: "requirements",
         comments,
-        ...extra,
       });
     for (let i = 1; i <= 3; i++) {
       back([`指摘${i}`]);
@@ -2267,23 +2267,11 @@ describe("設計の工程（PBI-8）", () => {
       gate(service, id, "requirements");
       await service.runNext(id);
     }
-    const escalated = back(["指摘4"]);
-    expect(escalated.status).toBe("escalated");
-    expect(escalated.escalation).toMatchObject({ step: "design", target: "requirements" });
-
-    // 上限に達していない設計へは、通常の差し戻しとして戻せる（書きかけの指摘は引き継がない）
-    expect(() =>
-      service.requestChanges(id, {
-        step: "design",
-        submission: current(service, id),
-        target: "design",
-        comments: [],
-      }),
-    ).toThrow(/1件以上/);
-
-    const continued = back([], { continueOverLimit: true });
-    expect(continued.remarks.at(-1)).toMatchObject({ id: "requirements-4-1", text: "指摘4" });
-    expect(continued.steps[0]?.state).toBe("active");
+    const fourth = back(["指摘4"]);
+    expect(fourth.status).toBe("queued");
+    expect(fourth.escalation).toBeUndefined();
+    expect(fourth.remarks.at(-1)).toMatchObject({ id: "requirements-4-1", text: "指摘4" });
+    expect(fourth.steps[0]?.state).toBe("active");
     activity.close();
   });
 

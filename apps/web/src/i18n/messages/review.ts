@@ -47,8 +47,13 @@ const ja = {
     voidHint: "前提が変わった指摘を無効にすると、以降はエージェントに渡しません。",
   },
   gate: {
-    escalated: (max: number) =>
-      `差し戻しが上限の${max}回に達しました。承認するか、上限を超えて差し戻すかを決めてください。`,
+    escalated:
+      "以前の版で、差し戻しの上限のために止まったタスクです。残った指摘を確かめて決めてください。",
+    pendingTitle: "残った指摘",
+    pendingHelp: (step: string) =>
+      `${step}へ差し戻すと、残った指摘を元の文のまま渡し、補足を足します。`,
+    pendingOther: "ほかの工程へ差し戻すと、補足だけを渡します。",
+    pendingHelpAny: "どの工程へ差し戻しても、残った指摘を元の文のまま渡し、補足を足します。",
     targetLegend: "やり直す工程",
     redo: (step: string) => `${step}をやり直す`,
     redoFrom: (step: string) => `${step}からやり直す`,
@@ -61,9 +66,9 @@ const ja = {
     causeNewRequest: "新しい要望・方針の変更（承認した内容に無かったこと）",
     causeBaseChanged: "ベースブランチの変化による競合（先の PR のマージなど）",
     commentsLabel: "指摘（差し戻すときは必須）",
-    commentsLabelRework: "指摘（空なら取り込んだ指摘のまま）",
-    commentsHint: (max: number) =>
-      `指摘はタスクに累積し、再提出のたびにすべてエージェントに渡します。同じ工程への差し戻しが${max}回を超えるとエスカレーションです。`,
+    commentsLabelPending: "補足（空でもよい）",
+    commentsHint:
+      "指摘はタスクに累積し、再提出のたびにすべてエージェントに渡します。1 行が 1 件で、最大 50 件・1 件 2000 文字です。",
     commentsPlaceholder: "1 行に 1 件。例：受け入れ条件に、エラー時の振る舞いがない",
     stepsTitle: "タスクのイメージ・工程のエージェントを変える",
     stepsHint:
@@ -71,7 +76,6 @@ const ja = {
     stepsLoading: "候補を読み込み中…",
     stepsFailed: (reason: string) =>
       `候補を読めませんでした：${reason}。工程の設定は変えずに差し戻せます。`,
-    requestOverLimit: "上限を超えて差し戻す",
     request: "差し戻す",
     approve: "承認する",
     operationExecutedHelp:
@@ -105,7 +109,7 @@ const ja = {
     reworkTitle: "PR の指摘の戻し先を確かめてください",
     reworkSuggestion: (step: string, note: string) => `提案：${step}からやり直す（${note}）`,
     reworkHelp: "戻し先を選んで差し戻してください。PR の指摘は取り込み済みです。",
-    reworkHint: "指摘を空にすると、取り込んだ指摘をそのまま使います。",
+    reworkHint: "取り込んだ指摘は元の文のまま渡し、補足は別の欄で足します。",
     prMergedOutdated:
       "PR は Sacty の提出と別の内容でマージされました。次の確認で、その内容を承認として進めます。",
   },
@@ -157,8 +161,14 @@ const en: ReviewMessages = {
     voidHint: "Void a comment whose premise changed; it is no longer passed to the agent.",
   },
   gate: {
-    escalated: (max) =>
-      `Changes have been requested the maximum ${max} time${max === 1 ? "" : "s"}. Approve as is, or request changes beyond the limit.`,
+    escalated:
+      "An earlier version stopped this task at a change limit. Check the remaining comments, then decide.",
+    pendingTitle: "Remaining comments",
+    pendingHelp: (step) =>
+      `Requesting changes to ${step} passes the remaining comments as written, plus your notes.`,
+    pendingOther: "Requesting changes to another step passes only your notes.",
+    pendingHelpAny:
+      "Requesting changes to any step passes the remaining comments as written, plus your notes.",
     targetLegend: "Step to redo",
     redo: (step) => `Redo ${step}`,
     redoFrom: (step) => `Redo from ${step}`,
@@ -171,9 +181,9 @@ const en: ReviewMessages = {
     causeNewRequest: "A new request or change of direction (not in what was approved)",
     causeBaseChanged: "A conflict from changes to the base branch (e.g. an earlier PR merged)",
     commentsLabel: "Comments (required to request changes)",
-    commentsLabelRework: "Comments (empty keeps the imported ones)",
-    commentsHint: (max) =>
-      `Comments accumulate on the task and are all passed to the agent on every resubmission. Requesting changes on the same step more than ${max} time${max === 1 ? "" : "s"} escalates the task.`,
+    commentsLabelPending: "Notes (may be empty)",
+    commentsHint:
+      "Comments accumulate on the task and are all passed to the agent on every resubmission. One per line, up to 50 comments of 2000 characters each.",
     commentsPlaceholder: "One per line, e.g. The acceptance criteria don't cover error behavior",
     stepsTitle: "Change the task image and step agents",
     stepsHint:
@@ -181,7 +191,6 @@ const en: ReviewMessages = {
     stepsLoading: "Loading choices…",
     stepsFailed: (reason) =>
       `Could not load the choices: ${reason}. You can still request changes without changing the steps.`,
-    requestOverLimit: "Request changes beyond the limit",
     request: "Request changes",
     approve: "Approve",
     operationExecutedHelp:
@@ -215,7 +224,8 @@ const en: ReviewMessages = {
     reworkTitle: "Confirm the step to redo for the PR comments",
     reworkSuggestion: (step, note) => `Suggestion: redo from ${step} (${note})`,
     reworkHelp: "Choose the step to redo, then request changes. The PR comments are imported.",
-    reworkHint: "Leave the comments empty to use the imported comments as they are.",
+    reworkHint:
+      "The imported comments are passed as written. You can add notes in the separate field.",
     prMergedOutdated:
       "The PR was merged with content different from Sacty's submission. On the next check, that content is approved and the task moves on.",
   },

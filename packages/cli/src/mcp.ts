@@ -402,7 +402,7 @@ export function daemonApi(
     async requestChanges(id, input) {
       // 消したプロジェクトのタスクの確かめと、差し戻せる状態かの確かめは、ツールが先に getTask で行う
       const at = endpoint(); // 接続先が無いのは、頼む前の失敗（差し戻していない）
-      // 送るのは step・submission・comments だけ（target・cause・image・agents・continueOverLimit は送らない）
+      // 送るのは step・submission・comments だけ（target・cause・image・agents は送らない）
       const body = { step: input.step, submission: input.submission, comments: input.comments };
       return writeTask(
         at,

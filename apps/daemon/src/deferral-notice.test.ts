@@ -69,16 +69,12 @@ describe("後続に回したい案への、人の決定を PR に残すコメン
     expect(buildDeferralNotice({ ...base, items: [] })).toBeUndefined();
   });
 
-  it("「この PR で直す」の差し戻しが、上限でエスカレーションになったときは、まだ差し戻していないことを書く", () => {
-    const body = buildDeferralNotice({ ...base, escalated: true, items: [fix] }) ?? "";
-    expect(body).toContain(
-      "差し戻しが上限に達しているため、まだ差し戻していません（タスクの画面で、上限を超えて差し戻すかを決めます）。",
-    );
-    expect(body).not.toContain("実装をやり直して直します");
-    // 後続に回す決定だけなら、エスカレーションでも、差し戻しの案内は出さない
-    expect(buildDeferralNotice({ ...base, escalated: true, items: [defer] })).not.toContain(
-      "差し戻しが上限",
-    );
+  it("R-4：PR に書く本文に、差し戻しの回数の上限を前提にした文は無く、「この PR で直す」は、やり直して直すと書く", () => {
+    const body = buildDeferralNotice({ ...base, items: [defer, fix] }) ?? "";
+    expect(body).toContain("実装をやり直して直します");
+    for (const phrase of ["上限に達", "上限を超えて差し戻す", "まだ差し戻していません"]) {
+      expect(body).not.toContain(phrase);
+    }
   });
 
   it("指摘の文と理由は、秘密情報を伏せてから切り詰める（切り口をまたぐ秘密の値の前半を残さない）。@名前で通知を飛ばさず、複数行も引用のままにする", () => {

@@ -155,3 +155,49 @@ describe("オーケストレーターを実行できなかった理由（PBI-34�
     );
   });
 });
+
+describe("差し戻しの回数の上限（PBI-414）", () => {
+  it("デーモンの文言（日英）に、差し戻しの回数の上限を前提にした文は無く、上限の断り gate.overLimit も無い", () => {
+    const banned = [
+      "上限を超えて差し戻す",
+      "差し戻しが上限",
+      "3回まで",
+      "beyond the limit",
+      "Change requests reached the limit",
+    ];
+    expect(isMessageCode("gate.overLimit")).toBe(false);
+    const skipped: string[] = [];
+    // 出力の修理の文言（種類ごとの表を引くため、決まった引数でないと呼べない。差し戻しの回数に関わらない）
+    const SKIPPED = [
+      "en:integrate.outputRepaired",
+      "en:review.outputRepaired",
+      "ja:integrate.outputRepaired",
+      "ja:review.outputRepaired",
+    ];
+    for (const locale of ["ja", "en"] as const) {
+      for (const [code, text] of Object.entries(DAEMON_MESSAGES[locale])) {
+        // 引数の形が分からない文言は、どの項目を読まれても・関数として呼ばれても答える引数で呼ぶ
+        const call = (arg: unknown) => {
+          const any: unknown = new Proxy(() => arg, {
+            get: (_t, key) => (key === Symbol.toPrimitive ? () => String(arg) : any),
+            apply: () => arg,
+          });
+          return (text as (...a: unknown[]) => string)(any, (v: unknown) => String(v ?? arg), any);
+        };
+        let rendered: string;
+        if (typeof text === "function") {
+          try {
+            rendered = `${call(1)}${call("x")}`;
+          } catch {
+            // 引数の形が決まっていて呼べない文言は、検査から外れる。外れたものは下で一覧と照らす
+            skipped.push(`${locale}:${code}`);
+            continue;
+          }
+        } else rendered = text;
+        for (const phrase of banned) expect(`${code}: ${rendered}`).not.toContain(phrase);
+      }
+    }
+    // 検査から外れた文言を、一覧で明示する（増えたら、上限の文が紛れていないか確かめてから一覧に足す）
+    expect(skipped.sort()).toEqual(SKIPPED);
+  });
+});

@@ -4,7 +4,7 @@
 - タスク: PBI-275
 - PR: #279
 - ブランチ: feat/issue-275-ai-review-feedback
-- 関係する ADR: [sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-distinguish-ai-review-remarks.md)
+- 関係する ADR: [sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-superseded-distinguish-ai-review-remarks.md)
 
 ## 目的
 

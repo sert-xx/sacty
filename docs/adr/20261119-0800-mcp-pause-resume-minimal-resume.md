@@ -8,7 +8,7 @@
 
 ## 背景
 
-`sacty mcp` は、承認（[承認の ADR](20261119-0300-mcp-approve-with-screen-api-not-merge.md)）・差し戻し（[差し戻しの ADR](20261119-0400-mcp-request-changes-basic-stop-before-limit.md)）・待つツール（[待つツールの ADR](20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)）までできる。
+`sacty mcp` は、承認（[承認の ADR](20261119-0300-mcp-approve-with-screen-api-not-merge.md)）・差し戻し（[差し戻しの ADR](20261119-0400-superseded-mcp-request-changes-basic-stop-before-limit.md)）・待つツール（[待つツールの ADR](20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)）までできる。
 機能を1つずつ足す流れの7回目の前半として、タスクの一時停止と再開を足す（中止は取り消せないので、次に分ける）。
 画面の再開には、予算の上限の引き上げ・テストの扱いの決定・イメージとエージェントの変更という選択がある。このマシンの作業履歴では、再開の大半は補足だけか、上限の引き上げだった。
 デーモンの一時停止（`service.pause`）は、完了したタスク（`idle` で工程がすべて終わった）や、検証中でない `idle` を断らず、`TaskPaused` を記録する。画面は、ボタンを出さないだけである。

@@ -66,8 +66,7 @@ function renderForm(withSteps: GateStepSetting[] = steps, image: string | null =
         targets: ["design", "requirements"],
         defaultTarget: "design",
         escalated: false,
-        maxChanges: 3,
-        pendingComments: [],
+        pendingRemarks: [],
         steps: withSteps,
         ...(image ? { image } : {}),
       }),
@@ -219,8 +218,7 @@ describe("実装の PR がベースブランチと競合しているとき", () 
           targets: ["implement"],
           defaultTarget: "implement",
           escalated: false,
-          maxChanges: 3,
-          pendingComments: [],
+          pendingRemarks: [],
           pullRequest: {
             number: 12,
             url: "https://github.com/acme/app/pull/12",
@@ -250,5 +248,62 @@ describe("実装の PR がベースブランチと競合しているとき", () 
     expect(notice()?.textContent).toContain("引き継いだ PR なので、ベースブランチは取り込みません");
     expect(notice()?.textContent).toContain("GitHub で競合を解消してください");
     expect(notice()?.textContent).not.toContain("PR に指摘を書くと取り込みます");
+  });
+});
+
+describe("以前の版で上限のために止まったタスクの差し戻し（PBI-414）", () => {
+  const pending = ["1 行目\n2 行目", "PR のコメント", "AI の指摘", "この PR で直す", "最後"];
+  const renderEscalated = (patch: { pullRequest?: boolean; pendingTarget?: never } = {}) =>
+    act(() =>
+      root.render(
+        h(GateForm, {
+          taskId: "t1",
+          step: "implement",
+          submission: 3,
+          targets: ["implement", "design"],
+          defaultTarget: "implement",
+          escalated: true,
+          pendingRemarks: pending,
+          escalationTarget: "design",
+          escalationReason: "too_many_changes",
+          ...(patch.pullRequest
+            ? {
+                pullRequest: {
+                  number: 7,
+                  url: "https://github.com/acme/app/pull/7",
+                  closed: false,
+                  mergedOutdated: false,
+                },
+              }
+            : {}),
+        }),
+      ),
+    );
+
+  it("R-12：残った指摘を 1 件ずつ元の文のまま出し、補足の欄は空で別に出す。差し戻しと承認を選べ、「上限を超えて差し戻す」は出さない", () => {
+    renderEscalated();
+    const items = [...container.querySelectorAll('[data-testid="pending-remarks"] li')];
+    expect(items.map((li) => li.textContent)).toEqual(pending);
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea[name="comments"]');
+    expect(textarea?.value).toBe("");
+    expect(container.querySelector('button[value="request"]')?.textContent).toBe("差し戻す");
+    expect(container.querySelector('button[value="approve"]')).not.toBeNull();
+    expect(container.querySelector('button[value="continue"]')).toBeNull();
+    expect(container.textContent).not.toContain("上限を超えて差し戻す");
+  });
+
+  it("R-12：PR を作った工程では、承認のボタンを出さない（今の決まりのまま）", () => {
+    renderEscalated({ pullRequest: true });
+    expect(container.querySelectorAll('[data-testid="pending-remarks"] li')).toHaveLength(5);
+    expect(container.querySelector('button[value="approve"]')).toBeNull();
+    expect(container.querySelector('button[value="request"]')).not.toBeNull();
+  });
+
+  it("差し戻すと、フォームには補足だけが入る（残った指摘は欄に入れない）", async () => {
+    renderEscalated();
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea[name="comments"]');
+    const data = await submit();
+    expect(textarea?.value).toBe("");
+    expect(data?.comments).toBe("");
   });
 });

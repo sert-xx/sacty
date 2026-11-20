@@ -5,10 +5,10 @@
 承認ゲートのある工程は、人間が承認すると次の工程へ進む。
 人間は、sacty の画面か、対象のリポジトリへの PR のマージで承認する（承認＝マージ）。
 差し戻すと、選んだ工程からやり直す。
-同じ工程への差し戻しが上限を超えると、エスカレーション（人間の判断待ち）になる。
-上限に数えるのは人が差し戻した回数で、sacty 自身の AI のレビューの指摘だけの差し戻しは数えない（[AI のレビューの指摘](#ai-のレビューの指摘)）。
+同じ工程への人の差し戻しに、回数の上限は無い。何回目でも、差し戻しを記録してやり直す。
+以前の版で上限のために止まったタスクの扱いは、[以前の版で上限のために止まったタスク](#以前の版で上限のために止まったタスク)にまとめる。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-distinguish-ai-review-remarks.md)、[sacty が作る PR のレビューを、PR を作ったタスクの子タスクにし、指摘なしになるまで繰り返す](../adr/20261112-0609-review-sacty-pull-requests-in-child-tasks.md)、[PR の指摘の戻し先を、ゴールガーディアンではなく、AI のレビューの指摘はレビューの子タスクが、人の指摘は PR の工程のエージェントが決める](../adr/20261112-0748-review-child-task-decides-rework-target.md)、[対応を求めていない PR のコメントは、差し戻さない](../adr/20261119-1428-skip-rework-for-comments-that-ask-for-nothing.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-superseded-distinguish-ai-review-remarks.md)、[sacty が作る PR のレビューを、PR を作ったタスクの子タスクにし、指摘なしになるまで繰り返す](../adr/20261112-0609-review-sacty-pull-requests-in-child-tasks.md)、[PR の指摘の戻し先を、ゴールガーディアンではなく、AI のレビューの指摘はレビューの子タスクが、人の指摘は PR の工程のエージェントが決める](../adr/20261112-0748-review-child-task-decides-rework-target.md)、[対応を求めていない PR のコメントは、差し戻さない](../adr/20261119-1428-skip-rework-for-comments-that-ask-for-nothing.md)
 
 ## 画面での承認
 
@@ -229,7 +229,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 
 ### 一時停止の間に届いた指摘
 
-関係する ADR: [一時停止の間に届いた PR の指摘を、再開のときに取り込む](../adr/20261102-1900-hold-pr-comments-while-paused.md)
+関係する ADR: [一時停止の間に届いた PR の指摘を、再開のときに取り込む](../adr/20261102-1900-superseded-hold-pr-comments-while-paused.md)
 
 実装の作り直しを一時停止している間（予算の上限・AI の利用上限・認証エラー・エラー・人が止めた、のどれでも）に、実装の PR に人が指摘を書いたときは、その指摘を未反映として残し、再開したあと、止まった工程を走り直す前に反映する。
 承認待ちではないので、上の「PR の指摘の取り込み」は動かない。反映の判断は同じ（戻し先の判断は、下の「PR の指摘の取り込み」の担い手が決める）。
@@ -251,7 +251,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   3. PR がマージ済みなら、反映しない（判断も差し戻しもしない）。止まった工程も走らせず、その場で[作り直しの停止](#実装の作り直しの間のマージ)と同じ記録（`ReworkStoppedByMerge`・`PullRequestMerged`・`StepApproved`。残した指摘は捨てる）で、マージを承認として進める（`endHeldByMerge`）。別の作り直しの停止が進行中（`mergeStopping`）なら、そちらに任せる。
   4. 予算の上限に達していれば、判断を実行せず、予算による一時停止にする（工程の実行の前の確認と同じ。判断は費用がかかる）。そうでなければ、戻し先と原因を判断する（`ReworkJudged`。[PR の指摘の取り込み](#pr-の指摘の取り込み)と同じ判断と指示。実装後のコードを読む）。判断を採用できないとき（一時停止・作り直しの停止（PR のマージ）・デーモンの停止のために実行を止めた・中止された・指摘や状態が変わった）は、判断を残さず、使った実行の費用・使用量だけを `runResult: interrupted` の `ReworkJudged` に記録する（指摘は未判断のまま。再開したら判断し直す）。判断できなければ実装をやり直す。残した指摘がすべて対応を求めていないもの（`noRework`）なら、差し戻さず、止まった工程を今までどおり走り直す。判断を記録した後、差し戻す直前に PR の状態を読み直し、マージ済みなら差し戻さず、その場でマージを承認として進める（戻し先が設計・要求要件だと、作り直しの停止の対象外になり、マージ済みなのに前の工程を実行してしまうため）。読み直せなければ、そのまま差し戻す。差し戻す直前には（判断を保存して再開した場合も）、中止・作り直しの停止（PR のマージ）の進行・一時停止の求めを確かめ、あれば古い応答（開いたまま）で差し戻さず、反映を見送る（停止が、残した指摘を捨てて承認として進める）。
   5. 判断した工程に差し戻す（`ChangesRequested`。`settleHeldReview`）。actor は、すべて AI のレビューの指摘なら `sacty`、そうでなければ `person`。回の番号と指摘の ID は、承認待ちの差し戻しと同じ規則で続ける。止まった工程の途中経過（検証・PR の更新の待ち・工程の見直しの待ち）は持ち越さない。以降の実行は、通常の差し戻しの後と同じ（指摘を渡して実装をやり直す、または前の工程からやり直す）。
-- 人の差し戻しの上限：承認ゲートが無く、エスカレーションを置く場所が無いので、上限（`MAX_CHANGE_REQUESTS`）に達していても止めない。人の再開を、続ける判断として扱い、`overLimit: true` で記録する。AI のレビューの指摘だけの回は、これまでどおり人の回数に数えない。
+- 人の差し戻しの回数：回数によらず差し戻しを記録する（`overLimit` は偽）。
 - 見逃し（`GuardianMissed`）は記録しない。止まった工程の実装は、合格の判定（以前の版の最終レビュー）を経ていないため。差し戻しの原因（`cause`）は、判断のとおり記録する。
 - 一時停止の間に PR がマージされたら、[作り直しの停止](#実装の作り直しの間のマージ)が、残した指摘（`pendingReview`）を捨て、`ReworkStoppedByMerge` の `discardedReview` に件数を残す。
 
@@ -270,7 +270,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - 再開：`TaskResumed` が承認待ちに戻す（承認ゲートは残っているので、承認の画面がそのまま使える）。エージェントは動かさない。
   止めていた間に起きたことは、再開のあとの PR の確認（60秒ごと）が取り込む。
   - マージされていれば、承認として進める（[PR の確認](#pr-の確認)）。
-  - 残した指摘（実装の PR）は、そのまま承認待ちの取り込みが引き継ぐ。戻し先を判断して差し戻す。止めている間に書かれた指摘も、同じ確認で取り込む。
+  - 残した指摘（実装の PR）は、そのまま承認待ちの取り込みが引き継ぐ。戻し先を判断して、何回目の差し戻しでも差し戻す（エスカレーションにしない）。止めている間に書かれた指摘も、同じ確認で取り込む。
 - 通知：人が止めたので、Slack には送らない。再開して同じ承認ゲートに戻ったときも、承認待ちの通知はし直さない（`notificationFor`）。
 
 コード: `apps/daemon/src/service.ts`（`pause`）、`apps/daemon/src/notifier.ts`（`notificationFor`）、`packages/core/src/projection.ts`（`TaskPaused`・`TaskResumed`・`resumeTo`・`reworkingPullRequest`）、`apps/web/src/components/task-detail.tsx`（`canPause`）
@@ -671,7 +671,7 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
 
 ### AI のレビューの指摘
 
-関係する ADR: [sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-distinguish-ai-review-remarks.md)
+関係する ADR: [sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-superseded-distinguish-ai-review-remarks.md)
 
 sacty のレビューのタスクが PR に投稿したレビュー・行へのコメント・通常のコメントは、元のタスクに今までどおり届ける。
 ただし、人の指摘とは区別する。
@@ -684,10 +684,9 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
   差し戻し（`ChangesRequested`）の指摘（`remarks[].source`、`Task.remarks[].source`）に引き継ぐ。
   - 取り込みが AI のレビューの指摘だけなら、actor は `sacty`（人の操作にしない）。人の指摘が1件でも混ざれば `person`。
   - 差し戻しも同じで、指摘がすべて AI のレビューのものなら actor は `sacty`。
-- 回数と上限：AI のレビューの指摘だけの差し戻しは、人が差し戻した回数と、同じ工程への差し戻しの上限（`MAX_CHANGE_REQUESTS`）に数えない。
-  - 人の回数（`changeRounds`）は、人の指摘が1件でもある回の数。AI のレビューだけの回は数えない。
+- 回数：AI のレビューの指摘だけの差し戻しは、人が差し戻した回数に数えない。差し戻しの回数に上限は無い。
+  - 人の回数（`changeRounds`）は、人の指摘が1件でもある回の数。AI のレビューだけの回は数えない（承認の画面の表示に使う）。
   - 回の番号と指摘の ID（`<工程>-<回>-<番号>`）は、AI のレビューの回も含めて続ける（`lastChangeRound`）。
-  - AI のレビューの指摘だけの差し戻しは、上限に達していてもエスカレーションにしない。
   - 費用の上限は、今までどおり効く。
 - 古い head へのレビュー：レビューが対象にした PR の head（レビューのコミット。行へのコメントは、後の push で今の head に付け替わる `commit_id` ではなく、親レビューの `commit_id`（無ければ `original_commit_id`）。`PullRequestFeedback.commit`）が、取り込むときの PR の今の head（`status` の `headSha`）と違えば、取り込まずに捨てる。
   - 捨てたものは `PullRequestReviewDiscarded`（actor `sacty`。`reason: stale_head`・今の head・捨てた指摘と対象のコミット）に残し、取り込み済み（`importedFeedback`）にする。差し戻さず、戻し先も判断しない。以降も取り込み直さない。
@@ -747,7 +746,7 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
 
 PR のレビュー・コメントから取り込んだ指摘を受けて工程をやり直し、PR を更新したら、指摘ごとに、対応を PR に返信する。指摘した人・AI が、指摘の場所で、対応されたか・断られたかを読めるようにする。
 
-- 指摘の元のコメント：PR の指摘の取り込みで差し戻すとき、指摘ごとに、元のコメント（`origin`。取り込みのキー `review:<ID>`・`review_comment:<ID>`・`comment:<ID>` と、PR の番号）を持たせる（`remarkOrigins`。`ChangesRequested` の `remarks[].origin`・`Task.remarks[].origin`）。一時停止の間に届いた指摘と、上限でエスカレーションした後に人が続けた差し戻し（`pendingRemarks`）でも失わない。画面から書いた指摘と、以前の作業履歴の指摘には無い。
+- 指摘の元のコメント：PR の指摘の取り込みで差し戻すとき、指摘ごとに、元のコメント（`origin`。取り込みのキー `review:<ID>`・`review_comment:<ID>`・`comment:<ID>` と、PR の番号）を持たせる（`remarkOrigins`。`ChangesRequested` の `remarks[].origin`・`Task.remarks[].origin`）。一時停止の間に届いた指摘と、以前の版で上限のためにエスカレーションしたタスクの残った指摘（`pendingRemarks`）を人が差し戻すときも、元の形のまま引き継ぐので失わない。画面から書いた指摘と、以前の作業履歴の指摘には無い。
 - 申告：工程のエージェントに、指摘への対応（`sacty-responses`）ごとに、`status` を書かせる（`statusLines`）。指摘に対応したなら `addressed`、理由があって対応しなかった（範囲の外・指摘が当たらない・すでに満たしている、など）なら `declined` で、理由は対応の文（`text`）に書かせる。知らない値・無い申告は、無いものとして扱う（対応は捨てない）。`RemarkResponse.status` に残し、`Task.remarks[].status` に、対応と同じ提出回のものだけ持つ。
   実装の工程の、差し戻しの指摘への対応では、`deferred`（この PR では直さず、後続に回したいという案）も書ける（[後続に回したい案と、人の決定](#後続に回したい案と人の決定)）。
 - 返信する条件（`awaitingRemarkReplies`）：状態が承認待ちで、承認ゲートの工程の PR が開いているとき。レビューの工程・セキュリティの組み合わせのタスク・GitHub のアカウントを選んでいないプロジェクト（`remarkRepliesDue`）では返信しない（人に確かめてほしいことのコメントと同じ条件）。作り直している間・一時停止中・中止したタスクでも返信しない。
@@ -796,7 +795,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
 
 ### 後続に回したい案と、人の決定
 
-関係する ADR: [後続に回すかどうかは人が決め、実装は案と理由までを出す](../adr/20261117-0415-defer-proposals-decided-by-person.md)、[後続に回すと決めた指摘の扱いを、人が指摘ごとに選ぶ](../adr/20261117-0504-choose-handling-of-deferred-findings.md)、[返信していない後続に回したい案は、理由を次の提出に持ち越して返信する](../adr/20261117-0822-carry-unreplied-defer-proposals.md)
+関係する ADR: [後続に回すかどうかは人が決め、実装は案と理由までを出す](../adr/20261117-0415-superseded-defer-proposals-decided-by-person.md)、[後続に回すと決めた指摘の扱いを、人が指摘ごとに選ぶ](../adr/20261117-0504-choose-handling-of-deferred-findings.md)、[返信していない後続に回したい案は、理由を次の提出に持ち越して返信する](../adr/20261117-0822-carry-unreplied-defer-proposals.md)
 
 実装は、指摘を、この PR では直さず後続に回したいと申告できる。これは案で、後続に回すかどうかは、人が承認の画面で 1 件ずつ決める。
 
@@ -811,7 +810,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
 - 一覧（`deferProposals`）：実装の承認待ちのとき、まだ決めていない案を、承認の画面に出す（`DeferralNotice`）。案ごとに、指摘の文・理由・AI のレビューの指摘か・元のコメントへのリンクと、決定の選択肢（まだ決めない・後続に回す・この PR で直す）を出す。決定済みの案は、その下に記録として出す。タスクの詳細には、件数と、承認の画面へのリンクを出す（`DeferralPendingNotice`）。作り直している間・一時停止中・エスカレーションの間は、出さない。
 - 決定（`decideDeferrals`。API は `POST /api/tasks/:id/deferrals/decide`）：選んだ指摘だけを決め、`DeferralsDecided`（actor `person`。工程・提出回・指摘ごとの `defer` か `fix`）を記録する。選んでいない案は、決めないまま残る。
   - 決められるのは、実装の承認待ちの今の提出の、まだ決めていない案だけ。決定が 0 件（`deferral.none`）・案でない指摘や決定済みの指摘（`deferral.notOpen`）・古い提出（`gate.staleSubmission`）は断り、何も記録しない。
-  - `fix`（この PR で直す）が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す（`ChangesRequested`。指摘の文は元の指摘の文で、元のコメント `origin` と、元の指摘の ID `fixOf` を持つ）。人の差し戻しとして、回数に数える（上限に達していれば、エスカレーションになる。[差し戻し](#差し戻し)）。
+  - `fix`（この PR で直す）が 1 件でもあれば、同じ追記で、その指摘を実装に差し戻す（`ChangesRequested`。指摘の文は元の指摘の文で、元のコメント `origin` と、元の指摘の ID `fixOf` を持つ）。人の差し戻しとして、回数に数える（回数の上限は無い。[差し戻し](#差し戻し)）。
   - `defer`（後続に回す）だけなら、承認待ちのまま。
 - 後続に回すと決めた指摘の扱い（`DeferralHandling`）：決定ごとに、`task`（sacty の後続のタスクを作る）・`issue`（GitHub の Issue を作る）・`none`（何もしない）から選ぶ（`DeferralsDecided` の `decisions[].handling`）。
   - 選ばなければ、プロジェクトの既定（`ProjectDefinition.deferralHandling`。無ければ `none`）を使う。承認の画面の選択肢の初めの値も、この既定（`Task.deferralHandlingDefault`。画面に返すときだけ、決めていない案があるタスクに足す）。`fix` の指摘に扱いを渡すと断る（`deferral.handlingOnFix`）。
@@ -823,7 +822,6 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
   - タスクの詳細にも、後続のタスクか Issue を作る扱いの指摘の一覧と、その結果を、タスクの状態によらず出す（`DeferralHandledNotice`・`handledDeferrals`）。後続のタスクの結果（後続のタスクへのリンク・作れなかった理由）は、元のタスクの完了の後に記録するので、ここで読む。できなかった指摘があれば、注意の色にする。中止したタスクでは、結果の記録がある指摘だけを出す。
 - PR のコメント（`announceDeferralDecisions`・`buildDeferralNotice`）：決定のたびに、決定と、その指摘の一覧を、実装の PR に 1 件コメントする。
   - その PR のコメントから取り込んだ指摘は、指摘の文・理由・元のコメントへのリンクを載せる。sacty の画面から書いた指摘は、指摘の ID と決定だけを載せる（画面で書いた文と、それへの対応は、PR に載せない）。
-  - 「この PR で直す」の差し戻しが、上限でエスカレーションになったときは、まだ差し戻していないことを書く。
   - 後続に回すと決めた指摘には、扱い（作った Issue の URL・Issue を作れなかったこと・タスクの完了の後に後続のタスクを作ること・何もしないこと）を書く。
   - 先頭に目印（`<!-- sacty-deferral:<タスク ID>:<何回目の決定か> -->`）を置く。指摘の文と理由は外から来た文なので、秘密情報を伏せてから 600 文字で切り、`@` の後ろに幅の無い空白を挟み、引用にして載せる（`askQuote`）。
   - 結果は `DeferralDecisionsPosted`（PR の番号・何回目の決定か・コメントの URL か、残せなかった理由）に記録する。残せなくても、決定とタスクの状態は変えず、やり直さない。セキュリティの組み合わせのタスク・PR が開いていない・GitHub のアカウントを選んでいないプロジェクトでは、コメントせず、その理由を記録する。PR を作っていない実装（変更なし）では、何も記録しない。
@@ -856,14 +854,13 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
 - 承認待ちでの差し戻しには、指摘が1件以上要る（`gate.remarksRequired`）。
   人は指摘を無効にでき、無効にした指摘はエージェントに渡さない。
 - 指摘には出どころがある（`remarks[].source`）。sacty 自身の AI のレビューの指摘は `sacty_review`、無ければ人の指摘（[AI のレビューの指摘](#ai-のレビューの指摘)）。
-  上限の回数（`changeRounds`）は、人の指摘が1件でもある回の数。回の番号と指摘の ID は AI のレビューの回も含めて続ける（`lastChangeRound`）。
+  人の回数（`changeRounds`）は、人の指摘が1件でもある回の数。回の番号と指摘の ID は AI のレビューの回も含めて続ける（`lastChangeRound`）。
 - 前の工程に戻すと、その工程から後の承認を取り消し、検証の結果と失敗の回数を戻す。
   PR で承認したタスクでは、マージ済みの PR は戻さない。
 - 差し戻しには、原因（`ReworkCause`。`ChangesRequested` の `cause`）を付けられる。省略すると、原因を決めない差し戻しとして記録し、集計では「原因が分からない」差し戻しに数える。
   - 人は、承認の画面の「差し戻しの原因」で選ぶ（初めは「選ばない」）。人が承認の画面（API の `request-changes`）で差し戻す流れは、戻し先を人が選ぶので戻し先の判断（`judgeRework`）を通らない。選ばなければ原因を判断させず、原因が分からない差し戻しになる（判断のためだけに実行を増やさない）。
   - PR の指摘の差し戻しは、戻し先と一緒に判断した原因を使う（`settleReview`）。
   - 原因は、作業履歴の差し戻しの行と、PR の欄の戻し先（PR の指摘のとき。`prRework` の `cause`）に出す。
-  - 上限でエスカレーションになる差し戻し（`TaskEscalated`）には、原因を残さない。上限を超えて差し戻すときに、あらためて選ぶ。
 - 見逃し（`GuardianMissed`）を記録するのは、原因が `guardian_missed` で、差し戻した成果物が以前の版の最終レビュー（実装の承認待ち）・統合レビュー（統合レビューの承認待ち）に合格していたときだけ（今の版で作った実装は最終レビューを経ないので、実装の差し戻しでは記録しない）。
   - 原因が `new_request`・`question_answer`・`base_changed` のとき、原因を決めないときは記録しない（原因を決めない差し戻しは、見逃しかどうか分からないものとして、集計の「原因が分からない」に出す。見逃しの数の横で見られる）。
   - 同じレビューの見逃しは1回だけ記録する。
@@ -877,7 +874,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
 | `base_changed` | ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物そのものの不備ではない |
 
 - 人は差し戻しと一緒に、タスクのイメージ・工程のエージェントを変えられる（`RequestChangesInput` の `image`・`agents`）。
-  タスクの詳細で変えるとき（`changeTaskImage`・`changeStepAgent`）と同じ確かめをして、`TaskImageChanged`・`StepAgentChanged` を差し戻し（`ChangesRequested`）・上限でのエスカレーション（`TaskEscalated`）の前に同じ書き込みで記録する（今と同じ名前は記録しない）。
+  タスクの詳細で変えるとき（`changeTaskImage`・`changeStepAgent`）と同じ確かめをして、`TaskImageChanged`・`StepAgentChanged` を差し戻し（`ChangesRequested`）の前に同じ書き込みで記録する（今と同じ名前は記録しない）。
   1つでも誤っていれば、差し戻しも含めて何も記録せずに断る。
   画面は、タスクのイメージと、やり直す工程とそれより後の工程（飛ばした工程を除く）のエージェントを出し、折りたたみを開いたときに候補を読む（`/step-options`）。人が変えたものだけを送る（`changedStepChoices`）。
 - 差し戻しの指摘の本文は、承認待ちでなくても、タスクの詳細の作業履歴の差し戻しの行の「詳細」で読める（[画面の文言と補足](ui-wording.md)）。
@@ -888,9 +885,23 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
 
 | 理由 | いつ |
 | --- | --- |
-| `too_many_changes` | 同じ工程への人の差し戻しが `MAX_CHANGE_REQUESTS`（3）回に達した後の差し戻し（AI のレビューの指摘だけの回は数えない）。書きかけの指摘は残す。上限を超えて続けるには、明示して差し戻す（`overLimit`） |
+| `too_many_changes` | 以前の版の記録（いまは記録しない）。同じ工程への人の差し戻しが上限に達した後の差し戻しで止まった。残った指摘を持つ（[以前の版で上限のために止まったタスク](#以前の版で上限のために止まったタスク)） |
 | `change_proposed` | 工程のエージェントが変更の申し出をした。AI の判定を挟まずに人が判断する（`ChangeDecided`。[変更の申し出](tasks-and-steps.md#変更の申し出)） |
 | `change_undecidable` | 以前の版の記録（AI が変更の申し出を判定できなかった）。いまは、以前の版で判定できなかった判定（`ChangeJudged`）を記録した後、後始末を記録する前に止まったタスクを進めるとき（`resumeSettlement`）だけ記録する。人が判断する（`ChangeDecided`） |
 | `rework_confirmation` | 以前の版の記録（いまは記録しない） |
 
-コード: `apps/daemon/src/service.ts`（`requestChanges`・`decideChange`）、`packages/core/src/events.ts`（`TaskEscalated`・`MAX_CHANGE_REQUESTS`）、`packages/core/src/projection.ts`（`changeRounds`）
+### 以前の版で上限のために止まったタスク
+
+以前の版は、同じ工程への人の差し戻しが上限（3回）に達した後の差し戻しを、`TaskEscalated`（`too_many_changes`。残った指摘は `pendingRemarks`）にして止め、人が承認するか「上限を超えて差し戻す」かを選ばせた。いまは上限が無く、新しく記録しない。その記録を持つタスクは、次のとおり進められる。
+
+- 読み込み：`ChangesRequested` の `overLimit: true` と `TaskEscalated` の `too_many_changes`・`pendingRemarks` は、そのまま読める。新しく記録する `ChangesRequested` の `overLimit` は常に偽。作業履歴の表示・`get_task`・画面は、これらを「以前の版の記録」と分かる文で出す。
+- 画面：`too_many_changes`・`rework_confirmation` で止まったタスクの承認の画面は、残った指摘を 1 件ずつ元の文のまま出し、人の補足の欄を別に出す。差し戻しと承認を選べる（PR を作った工程は、今の決まりどおり画面から承認しない）。
+- 差し戻し：`requestChanges` は、エスカレーション中の差し戻しで、残った指摘を元の形のまま（文・`source`・`origin`・`fixOf`。`id` は付け直す）並べ、その後ろに人の補足（`comments`。1 行 1 件）を並べて `remarks` にする。
+  - 引き継ぐのは、エスカレーションした工程へ差し戻すとき。`rework_confirmation` は、戻し先を問わず引き継ぐ。`too_many_changes` で別の工程へ差し戻すときは、人の補足だけにする。
+  - 長さと件数の検査（1 件 2,000 文字・50 件）は人の補足だけに当てる。残った指摘は、長くても断らない。
+  - 残った指摘も補足も無ければ `gate.remarksRequired` で断り、何も記録しない。
+  - 以前の版の画面・呼び出しが送る「上限を超えて差し戻す」の指定（`continueOverLimit`）は、断らずに無視する。
+  - `origin` を持つ指摘への対応は、今の PR の指摘と同じ時点（その PR の工程の承認待ち）に、元のコメントへの返信として PR に投稿する（[指摘への対応の返信](#指摘への対応の返信)）。
+- `sacty mcp` の `request_changes` は、エスカレーション中のタスクを差し戻さない（[MCP サーバー](mcp-server.md)）。
+
+コード: `apps/daemon/src/service.ts`（`requestChanges`・`decideChange`）、`packages/core/src/events.ts`（`TaskEscalated`・`ChangesRequested`・`RequestChangesInput`）、`packages/core/src/projection.ts`（`changeRounds`）、`apps/web/src/components/gate-form.tsx`（`GateForm`）

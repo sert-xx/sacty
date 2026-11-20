@@ -4,7 +4,7 @@
 - タスク: PBI-8
 - PR: #4
 - ブランチ: feat/issue-8-design-step
-- 関係する ADR: [承認済みの要求要件から設計とテスト観点を作り、差し戻し先を選べるようにし、承認した成果物は凍結する](../adr/20261010-0749-design-step-and-freeze.md)
+- 関係する ADR: [承認済みの要求要件から設計とテスト観点を作り、差し戻し先を選べるようにし、承認した成果物は凍結する](../adr/20261010-0749-superseded-design-step-and-freeze.md)
 
 ## 目的
 

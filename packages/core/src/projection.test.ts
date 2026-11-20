@@ -7950,3 +7950,16 @@ describe("担当を起動しなかったために採らなかったレビュー�
     expect(legacy.get("t1")?.reviewUndispatched).toBeUndefined();
   });
 });
+
+describe("残った指摘を引き継ぐ戻し先（PBI-414）", () => {
+  it("止まった工程へ戻すときと、PR の指摘の戻し先の確認（どの工程でも）のときだけ引き継ぐ。止まっていなければ引き継がない", async () => {
+    const { carriesPendingRemarks } = await import("./projection.js");
+    const tooMany = { reason: "too_many_changes", target: "implement" } as const;
+    expect(carriesPendingRemarks(tooMany, "implement")).toBe(true);
+    expect(carriesPendingRemarks(tooMany, "design")).toBe(false);
+    const rework = { reason: "rework_confirmation", target: "implement" } as const;
+    expect(carriesPendingRemarks(rework, "design")).toBe(true);
+    expect(carriesPendingRemarks({ target: "implement" }, "design")).toBe(false);
+    expect(carriesPendingRemarks(undefined, "implement")).toBe(false);
+  });
+});

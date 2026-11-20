@@ -1,6 +1,7 @@
 import { type ActivityEvent, PREPARING_PHASES, type Task, type TaskProposal } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { labels } from "@/i18n/messages/labels";
+import { review as reviewMessages } from "@/i18n/messages/review";
 import { task as taskMessages } from "@/i18n/messages/task";
 import {
   addedTestsResult,
@@ -3203,5 +3204,77 @@ describe("タスクの題の変更の作業履歴（PBI-323）", () => {
     expect(describeIn(renamed, labels.en)).toBe(
       'Task renamed from "決済API" to "返金API" (person)',
     );
+  });
+});
+
+describe("差し戻しの上限が無い（PBI-414）", () => {
+  const recorded = (overLimit: boolean) =>
+    ({
+      type: "ChangesRequested",
+      actor: "person",
+      at: "2026-11-01T00:00:00.000Z",
+      seq: 1,
+      payload: {
+        step: "requirements",
+        round: 4,
+        remarks: [{ id: "requirements-4-1", text: "直して" }],
+        overLimit,
+      },
+    }) as unknown as ActivityEvent;
+  const escalated = {
+    type: "TaskEscalated",
+    actor: "sacty",
+    at: "2026-11-01T00:00:00.000Z",
+    seq: 2,
+    payload: { step: "requirements", reason: "too_many_changes", pendingRemarks: [] },
+  } as unknown as ActivityEvent;
+
+  it("R-3：overLimit: true の差し戻しと too_many_changes のエスカレーションは、以前の版の記録と分かる文で出す（日英）。新しい記録は上限に触れない", () => {
+    for (const language of ["ja", "en"] as const) {
+      const l = labels[language];
+      expect(describeIn(recorded(true), l)).toContain(
+        language === "ja" ? "以前の版の記録" : "earlier-version",
+      );
+      expect(describeIn(escalated, l)).toContain(
+        language === "ja" ? "以前の版の記録" : "earlier-version",
+      );
+      expect(describeIn(recorded(false), l)).not.toMatch(/上限|limit/);
+    }
+  });
+
+  it("R-4：画面の文言（日英）に、差し戻しの回数の上限を前提にした文は無い", () => {
+    const banned = [
+      "上限に達",
+      "上限を超えて差し戻す",
+      "3回まで",
+      "beyond the limit",
+      "Changes requested reached the limit",
+      "the maximum 3 time",
+    ];
+    // 呼んだ文言の数。例外は握りつぶさず（呼べない文言があれば、テストが失敗する）、検査から外れた文言が無いようにする
+    let called = 0;
+    const texts = (value: unknown): string[] =>
+      typeof value === "string"
+        ? [value]
+        : typeof value === "function"
+          ? // 引数を取る文言は、数・文字列のどちらでも呼んで、出る文を集める
+            [1, "x"].flatMap((arg) => {
+              called += 1;
+              return texts(
+                (value as (a: unknown, b: unknown, c: unknown) => unknown)(arg, arg, arg),
+              );
+            })
+          : value && typeof value === "object"
+            ? Object.values(value).flatMap(texts)
+            : [];
+    for (const language of ["ja", "en"] as const) {
+      // 承認の画面の文言すべてと、タスクの詳細の判断待ちの案内
+      for (const catalog of [reviewMessages[language], taskMessages[language].gate]) {
+        for (const text of texts(catalog)) {
+          for (const phrase of banned) expect(text).not.toContain(phrase);
+        }
+      }
+    }
+    expect(called).toBeGreaterThan(0);
   });
 });

@@ -111,7 +111,6 @@ const PARAMS = {
   "reproduce.notChecked": null,
   "reproduce.runFailed": z.object({ detail: TextParam }),
   "gate.remarksRequired": null,
-  "gate.overLimit": z.object({ limit: Count }),
   "remark.notFound": null,
   "deferral.notAwaitingImplement": null,
   "deferral.notOpen": z.object({ remarkId: z.string() }),
@@ -977,8 +976,6 @@ const ja: MessageDictionary = {
     "再現のエージェントが、書いたテストが不具合のために失敗することを確かめたと申告しませんでした（再現できなかった）。",
   "reproduce.runFailed": ({ detail }, text) =>
     `再現のテストを実行できませんでした（${text(detail)}）。再現できたかは確かめていません。原因を確かめてから再開すると、テストを実行し直します。`,
-  "gate.overLimit": ({ limit }) =>
-    `差し戻しが上限（${limit}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
   "remark.notFound": "指摘が見つかりません。",
   "deferral.notAwaitingImplement":
     "後続に回すかどうかは、実装の承認待ちのときに決められます。画面を開き直してください。",
@@ -1842,8 +1839,6 @@ const en: MessageDictionary = {
     "The reproduce agent did not report that it ran its test and saw it fail because of the bug (not reproduced).",
   "reproduce.runFailed": ({ detail }, text) =>
     `Could not run the reproduction test (${text(detail)}), so the reproduction is not confirmed. Check the cause, then resume to run the test again.`,
-  "gate.overLimit": ({ limit }) =>
-    `Change requests reached the limit (${limit}). To continue, choose to request changes over the limit.`,
   "remark.notFound": "Comment not found.",
   "deferral.notAwaitingImplement":
     "You can decide whether to defer a finding while the implementation is awaiting approval. Reload the page.",

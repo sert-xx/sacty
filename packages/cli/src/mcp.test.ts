@@ -849,17 +849,6 @@ describe("sacty mcp の差し戻し（PBI-397）", () => {
     expect(stale?.message).toContain("差し戻しませんでした");
     expect(stale?.message).not.toContain("承認しませんでした");
     expect(stale?.message).not.toContain(uncertain);
-    const over = await failure(async () =>
-      Response.json(
-        {
-          error: "invalid_operation",
-          messages: [{ code: "gate.overLimit", params: { limit: 3 } }],
-        },
-        { status: 409 },
-      ),
-    );
-    expect(over?.message).toContain("上限");
-    expect(over?.message).not.toContain(uncertain);
   });
 
   it("差し戻しを送った後に結果を受け取れなければ（時間切れ・切断・本文を読めない・5xx）、差し戻されている可能性と get_task で確かめることを伝える", async () => {
