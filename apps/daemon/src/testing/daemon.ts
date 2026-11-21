@@ -1037,6 +1037,7 @@ export class FakePulls implements PullRequests {
     headSha: "h".repeat(40),
     baseSha: "b".repeat(40),
     author: "alice",
+    headRepo: "https://github.com/acme/app",
     /** 今レビューを依頼されている人（PBI-143）。 */
     requestedReviewers: [] as string[],
   };
@@ -1064,6 +1065,24 @@ export class FakePulls implements PullRequests {
     });
     if (this.lastRequestFail) throw new Error(this.lastRequestFail);
     return this.lastRequestAt;
+  }
+  /** 最後にレビューを依頼した人（PBI-461）。 */
+  lastRequester?: string;
+  async lastReviewRequester(_input: {
+    repo: string;
+    token: string;
+    number: number;
+    reviewer: string;
+  }) {
+    if (this.lastRequestFail) throw new Error(this.lastRequestFail);
+    return this.lastRequester;
+  }
+  /** 書き込みの権限を持つ人（PBI-461）。 */
+  writers: string[] = [];
+  permissionFail?: string;
+  async canWrite(input: { repo: string; token: string; login: string }) {
+    if (this.permissionFail) throw new Error(this.permissionFail);
+    return this.writers.some((w) => w.toLowerCase() === input.login.toLowerCase());
   }
   reviews: {
     repo: string;

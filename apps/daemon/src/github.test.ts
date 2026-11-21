@@ -1309,6 +1309,78 @@ describe("PR のレビュー（PBI-19）", () => {
     ).toMatchObject({ code: "github.failed", params: { action: "listEvents", status: 404 } });
   });
 
+  it("最後の依頼をした人（actor）を返す。人が分からなければ undefined（PBI-461）", async () => {
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          {
+            event: "review_requested",
+            requested_reviewer: { login: "me" },
+            actor: { login: "old" },
+            created_at: "2026-10-19T01:00:00Z",
+          },
+          {
+            event: "review_requested",
+            requested_reviewer: { login: "Me" },
+            actor: { login: "mallory" },
+            created_at: "2026-10-19T03:00:00Z",
+          },
+          {
+            event: "review_requested",
+            requested_reviewer: { login: "other" },
+            actor: { login: "x" },
+            created_at: "2026-10-19T05:00:00Z",
+          },
+        ],
+      },
+      {
+        status: 200,
+        json: [
+          {
+            event: "review_requested",
+            requested_reviewer: { login: "me" },
+            created_at: "2026-10-19T03:00:00Z",
+          },
+        ],
+      },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    expect(await client.lastReviewRequester({ ...target, reviewer: "me" })).toBe("mallory");
+    expect(await client.lastReviewRequester({ ...target, reviewer: "me" })).toBeUndefined();
+  });
+
+  it.each([
+    ["write", { permission: "write", role_name: "write" }, true],
+    ["maintain", { permission: "write", role_name: "maintain" }, true],
+    ["admin", { permission: "admin", role_name: "admin" }, true],
+    ["triage", { permission: "read", role_name: "triage" }, false],
+    ["read", { permission: "read", role_name: "read" }, false],
+    ["none", { permission: "none" }, false],
+  ])("書き込みの権限を読む：%s（PBI-461）", async (_n, json, expected) => {
+    const { impl, calls } = fakeFetch([{ status: 200, json }]);
+    const result = await new GitHubPullRequests(impl).canWrite({
+      repo: "https://github.com/acme/app",
+      token: "t",
+      login: "someone",
+    });
+    expect(result).toBe(expected);
+    expect(calls[0]?.url).toBe(
+      "https://api.github.com/repos/acme/app/collaborators/someone/permission",
+    );
+  });
+
+  it("権限を読めないときは、権限が無いとは扱わず、失敗にする（PBI-461）", async () => {
+    const { impl } = fakeFetch([{ status: 403, json: { message: "Forbidden" } }]);
+    const error = await new GitHubPullRequests(impl)
+      .canWrite({ repo: "https://github.com/acme/app", token: "t", login: "someone" })
+      .catch((e: unknown) => e);
+    expect(errorText(error)).toMatchObject({
+      code: "github.failed",
+      params: { action: "getPermission", status: 403 },
+    });
+  });
+
   it.each([50, 51])(
     "依頼のできごとが%dページなら、上限内の完了と未完了を区別する",
     async (pages) => {

@@ -214,6 +214,21 @@ export interface PullRequests {
     reviewer: string;
   }): Promise<string | undefined>;
   /**
+   * PR で reviewer に最後にレビューを依頼した人の login（PBI-461。lastReviewRequest と同じ依頼の、できごとの actor）。
+   * 依頼が無いか、依頼した人が分からなければ undefined。フォークの PR の再依頼を、人の操作とみなせるかを確かめるため。
+   */
+  lastReviewRequester(input: {
+    repo: string;
+    token: string;
+    number: number;
+    reviewer: string;
+  }): Promise<string | undefined>;
+  /**
+   * login が、リポジトリへの書き込みの権限（write・maintain・admin）を持つか（PBI-461）。読めなければ失敗する
+   * （持たないとは扱わない。呼び出し側は、読めないときも、みなさない側に倒す）。
+   */
+  canWrite(input: { repo: string; token: string; login: string }): Promise<boolean>;
+  /**
    * account が投稿した PR のレビューのうち、本文が marker で始まるものを探す
    * （同じレビューを二度投稿しないため。PBI-19）。
    */
@@ -1048,13 +1063,24 @@ export class GitHubPullRequests implements PullRequests {
   }
 
   async lastReviewRequest(input: Parameters<PullRequests["lastReviewRequest"]>[0]) {
+    return (await this.lastRequestEvent(input))?.at;
+  }
+
+  async lastReviewRequester(input: Parameters<PullRequests["lastReviewRequester"]>[0]) {
+    return (await this.lastRequestEvent(input))?.actor;
+  }
+
+  /** reviewer への、最後の review_requested のできごと（日時と、依頼した人の login。人が分からなければ actor は無い）。 */
+  private async lastRequestEvent(
+    input: Parameters<PullRequests["lastReviewRequest"]>[0],
+  ): Promise<{ at: string; actor?: string } | undefined> {
     const events = await this.list(
       input.repo,
       `/issues/${input.number}/events?per_page=100`,
       input.token,
       "listEvents",
     );
-    let last: string | undefined;
+    let last: { at: string; actor?: string } | undefined;
     for (const e of events) {
       const login = (e.requested_reviewer as { login?: unknown } | null | undefined)?.login;
       if (
@@ -1062,12 +1088,32 @@ export class GitHubPullRequests implements PullRequests {
         typeof login === "string" &&
         login.toLowerCase() === input.reviewer.toLowerCase() &&
         typeof e.created_at === "string" &&
-        (last === undefined || Date.parse(e.created_at) > Date.parse(last))
+        (last === undefined || Date.parse(e.created_at) > Date.parse(last.at))
       ) {
-        last = e.created_at;
+        const actor = (e.actor as { login?: unknown } | null | undefined)?.login;
+        last = { at: e.created_at, ...(typeof actor === "string" && actor ? { actor } : {}) };
       }
     }
     return last;
+  }
+
+  async canWrite(input: Parameters<PullRequests["canWrite"]>[0]) {
+    const res = await this.fetchImpl(
+      `${repoApi(input.repo).base}/collaborators/${encodeURIComponent(input.login)}/permission`,
+      {
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${input.token}`,
+          "x-github-api-version": "2022-11-28",
+        },
+      },
+    );
+    const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+    if (!res.ok) throw apiError("getPermission", res.status, json ?? {});
+    // 答えの形が違うときは、権限があるとは扱わない（権限を読めないのと同じに、失敗にする）
+    if (!json || typeof json !== "object") throw apiError("getPermission", res.status, {});
+    const role = typeof json.role_name === "string" ? json.role_name : json.permission;
+    return role === "admin" || role === "maintain" || role === "write";
   }
 
   async findReview(input: Parameters<PullRequests["findReview"]>[0]) {
@@ -1373,6 +1419,7 @@ export function apiError(
     | "readChecks"
     | "rerunChecks"
     | "listEvents"
+    | "getPermission"
     | "getLabel"
     | "createLabel"
     | "addLabel"

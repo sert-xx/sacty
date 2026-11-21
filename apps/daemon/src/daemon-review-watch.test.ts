@@ -1074,12 +1074,26 @@ describe("依頼で取り込んだ PR の GitHub の再依頼と、見守り（P
     return { ...base, id, get };
   }
 
-  it("フォークの PR でも、GitHub の再依頼は、今までどおり新しいタスクを作ってレビューする（PBI-461 条件 3）", async () => {
-    const { activity, pulls, service, id, clock } = await requestedAndPosted("changes_required");
-    pulls.state = { state: "open", fork: true };
-    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B, requestedReviewers: ["me"] };
-    pulls.lastRequestAt = new Date(clock.now + MINUTE).toISOString();
-    clock.now += 2 * MINUTE;
+  /** フォークの PR（head が別のリポジトリ）で、先頭 HEAD_B が出たあとに、頼んだ人が再依頼した状態にする。 */
+  async function forkRequested() {
+    const ctx = await requestedAndPosted("changes_required");
+    ctx.pulls.state = { state: "open", fork: true };
+    ctx.pulls.prInfo = {
+      ...ctx.pulls.prInfo,
+      headSha: HEAD_B,
+      headRepo: "https://github.com/mallory/app",
+      author: "mallory",
+      requestedReviewers: ["me"],
+    };
+    ctx.pulls.lastRequestAt = new Date(ctx.clock.now + MINUTE).toISOString();
+    ctx.clock.now += 2 * MINUTE;
+    return ctx;
+  }
+
+  it("フォークの PR の再依頼は、書き込みの権限がある人（PR の作者でない）が頼んだときだけ、新しいタスクを作ってレビューする（PBI-461）", async () => {
+    const { activity, pulls, service, id } = await forkRequested();
+    pulls.lastRequester = "maintainer";
+    pulls.writers = ["maintainer"];
     const { restarted } = await service.restartRerequestedReviews([requested(10)]);
     expect(restarted).toHaveLength(1);
     const next = restarted[0]?.id ?? "";
@@ -1089,6 +1103,41 @@ describe("依頼で取り込んだ PR の GitHub の再依頼と、見守り（P
     expect(pulls.reviews.at(-1)?.commit).toBe(HEAD_B);
     activity.close();
   });
+
+  it.each([
+    [
+      "作者が自分で頼んだ（書き込みの権限があっても）",
+      { lastRequester: "mallory", writers: ["mallory"] },
+    ],
+    ["権限の無い人が頼んだ", { lastRequester: "stranger", writers: [] as string[] }],
+    ["頼んだ人が分からない", { lastRequester: undefined, writers: ["maintainer"] }],
+    [
+      "権限を読めない",
+      { lastRequester: "maintainer", writers: ["maintainer"], permissionFail: "403" },
+    ],
+  ])(
+    "フォークの PR の再依頼は、%sときは始めない。保留と同じに、新しい先頭を画面・MCP に出し、PR に 1 回だけ知らせる",
+    async (_n, set) => {
+      const { activity, pulls, service, id, get } = await forkRequested();
+      Object.assign(pulls, set);
+      const reviewed = pulls.reviews.length;
+      for (let i = 0; i < 2; i++) {
+        expect(await service.restartRerequestedReviews([requested(10)])).toEqual({
+          restarted: [],
+          failed: [],
+        });
+      }
+      expect(get().reviewHold?.commit).toBe(HEAD_B);
+      expect(
+        (service.get(id)?.activity ?? []).filter((e) => e.type === "ReviewRestartHeld"),
+      ).toHaveLength(1);
+      expect(pulls.issueComments.filter((c) => c.body.includes(HEAD_B.slice(0, 7)))).toHaveLength(
+        1,
+      );
+      expect(pulls.reviews).toHaveLength(reviewed);
+      activity.close();
+    },
+  );
 
   it("見守り中のタスクの PR に再依頼が来たら、新しいタスクを作り、元のタスクには何も記録しない。PR の変化では、新しいタスクだけが再レビューする（二重にしない）", async () => {
     const { activity, pulls, service, id, get, clock } =

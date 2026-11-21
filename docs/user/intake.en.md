@@ -221,7 +221,9 @@ A PR from a fork (a PR whose head repository differs from the repository it targ
 The re-review verification runs the PR's code in the container, so it must not run without a person's decision.
 When a new commit is pushed, the task details and `review.heldCommit` of `get_task` show that it is not reviewed until a person presses "Review again and post to the PR", and show the new commit.
 sacty comments once on the PR that the new commit is not reviewed automatically (it does not repeat as more commits arrive). If posting fails, it tries again at the next check.
-When a person asks for it with "Review again and post to the PR", `rereview_task`, or a GitHub re-request of the review (only for PRs taken in by a review request), it re-reviews as it does for a same-repository PR.
+When a person asks for it with "Review again and post to the PR" or `rereview_task`, it re-reviews as it does for a same-repository PR.
+A GitHub re-request (only for PRs taken in by a review request) counts as a person's action only when the requester is not the PR's author and has write access to the repository.
+When the PR's author re-requests by themselves, or the requester or the permission cannot be read, it does not re-review and shows the new commit as above (the notice on the PR stays once). To re-review after the author's re-request, have a person with write access re-request, or press "Review again and post to the PR" in the UI.
 Ending the watch when the PR is merged or closed is the same as for a same-repository PR.
 
 - Consecutive pushes and replies are re-reviewed once, after things go quiet (2 minutes after the last change).
@@ -293,6 +295,7 @@ A re-request on GitHub is handled as follows.
 - A new task is created only for requests made after the review was posted (after the task is done, or while it watches the PR).
   A request made during a review is not queued for another round.
   If you re-requested during a review, re-request again after the post or use "Review again and post to the PR" in the task details.
+- For a PR from a fork, a new task is created only when the requester is not the PR's author and has write access to the repository (not when it cannot be read; see "Re-review" above).
 - For PRs taken in by the label, a re-request does not create a new task.
   While the task is watching, the same task re-reviews automatically on changes of the PR (except for PRs from a fork). After it is done with "no findings", use "Review again and post to the PR" in the task details.
 - For PRs sacty created, a re-request does not create a new task either. A PR sacty created is re-reviewed by its child task ([Review of PRs sacty created](#the-review-child-task)).

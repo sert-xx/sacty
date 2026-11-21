@@ -8289,6 +8289,8 @@ export class TaskService {
       const round = task.reviewRound;
       let requestedAt: string | undefined;
       let requested: boolean;
+      // フォークの PR で、人の操作とみなせない再依頼：始めずに、新しい先頭を待ちとして記録する（PBI-461）
+      let held: { head: string; token: string } | undefined;
       try {
         const token = await this.githubToken(task, issue.repo, usedSecrets);
         const ref = { repo: issue.repo, number: issue.number, token };
@@ -8299,6 +8301,20 @@ export class TaskService {
         requestedAt =
           (await this.deps.pulls.lastReviewRequest({ ...ref, reviewer: account })) ?? undefined;
         requested = Date.parse(requestedAt ?? "") > posted;
+        // フォークの PR（head のリポジトリが読めないときも）の再依頼は、頼んだ人が PR の作者でなく、リポジトリへの
+        // 書き込みの権限を持つときだけ、人の操作とみなす（作者の再依頼で、フォークのコードが人の判断なしに動かないように）。
+        // 頼んだ人・権限を読めないときは、みなさない側に倒す
+        if (requested && (!pr.headRepo || !sameRepo(pr.headRepo, issue.repo))) {
+          const trusted = await this.deps.pulls
+            .lastReviewRequester({ ...ref, reviewer: account })
+            .then(async (requester) =>
+              requester !== undefined && requester.toLowerCase() !== pr.author.toLowerCase()
+                ? await this.deps.pulls.canWrite({ repo: issue.repo, token, login: requester })
+                : false,
+            )
+            .catch(() => false);
+          if (!trusted) held = { head: pr.headSha, token };
+        }
       } catch (error) {
         failed.push({
           issue,
@@ -8340,6 +8356,12 @@ export class TaskService {
       )
         continue;
       if (!latest.reviewTarget || !latest.reviewPost || !latest.source) continue;
+      if (held) {
+        // 見守り中なら、自動の再レビューの見送りと同じに、画面・MCP に出して PR に知らせる。見守っていなければ、待つ先が無い
+        if (latest.reviewWatch && held.head)
+          await this.holdForkRestart(latest, held.head, held.token);
+        continue;
+      }
       const config = this.deps.config();
       restarted.push(
         this.append({ id: randomUUID(), projectId: latest.projectId }, [
