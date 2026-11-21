@@ -1,7 +1,9 @@
 import type { DeferralDecision, DeferralHandling } from "@sacty/core";
+import { redactUrlCredentials } from "./ci.js";
 import { DEFERRAL_NOTICE_MARKER_PREFIX } from "./github.js";
 import { askQuote, publicText } from "./human-ask-notice.js";
-import { clip } from "./prompts.js";
+import { clip, withoutInternalPaths } from "./prompts.js";
+import { taskLinkNote } from "./task-link.js";
 
 /*
  * 後続に回したい案（実装が、この PR では直さず後続に回したいと申告した指摘）への、人の決定を、PR に残すコメント（PBI-370）。
@@ -26,6 +28,8 @@ export type DeferralNoticeItem = {
   handling?: DeferralHandling;
   /** 扱いが issue のとき：作った Issue の URL。作れなければ無い。 */
   issueUrl?: string;
+  /** 扱いが issue で作れなかったとき：失敗の理由（伏せ済みの 1 行）。 */
+  issueFailure?: string;
 };
 
 export type DeferralNoticeInput = {
@@ -34,15 +38,29 @@ export type DeferralNoticeInput = {
   items: readonly DeferralNoticeItem[];
   /** タスクの画面の URL。 */
   taskUrl: string;
+  /** 画面の URL が依頼した人のマシンでだけ開けるか（注釈を添える）。 */
+  localOnly?: boolean;
   secrets: readonly string[];
 };
+
+/** Issue を作れなかった理由の長さの上限（文字数）。 */
+export const ISSUE_FAILURE_MAX = 500;
+
+/**
+ * Issue を作れなかった理由を、知らせに書く 1 行にする。伏せ済みの理由から、URL の資格情報と内部のパスも伏せ、1 行にしてから切る
+ * （切ってから伏せると、切り口にかかった値の前半が残る）。@名前で通知が飛ばないよう、@ の直後に見えない文字を挟む。
+ */
+export function issueFailureLine(text: string): string {
+  const oneLine = withoutInternalPaths(redactUrlCredentials(text)).replace(/\s+/g, " ").trim();
+  return publicText(oneLine, [], ISSUE_FAILURE_MAX).replaceAll("`", "'");
+}
 
 /** 後続に回すと決めた指摘の、扱いの行。 */
 function handlingLine(item: DeferralNoticeItem): string {
   if (item.handling === "issue") {
     return item.issueUrl
       ? `扱い：GitHub の Issue を作りました（${item.issueUrl}）。`
-      : "扱い：GitHub の Issue を作ると決めましたが、作れませんでした（理由は、タスクの画面の作業履歴にあります）。";
+      : `扱い：GitHub の Issue を作ると決めましたが、作れませんでした。${item.issueFailure ? `理由：${item.issueFailure}` : ""}`;
   }
   if (item.handling === "task") {
     return "扱い：このタスクが完了した後に、Sacty が後続のタスクを作ります。";
@@ -202,6 +220,6 @@ export function buildDeferralNotice(input: DeferralNoticeInput): string | undefi
     ...section("fix", "この PR で直す"),
     "",
     "---",
-    `${fixNote}後続に回すと決めた指摘は、この PR では直しません。決定は、[タスクの画面](${input.taskUrl})で行われました。`,
+    `${fixNote}後続に回すと決めた指摘は、この PR では直しません。決定は、[タスクの画面](${input.taskUrl})で行われました。${taskLinkNote(input.localOnly).join("")}`,
   ].join("\n");
 }

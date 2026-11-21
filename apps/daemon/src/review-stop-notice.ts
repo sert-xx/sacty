@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { type DaemonText, type PauseReason, renderMessage } from "@sacty/core";
 import { redact, redactText } from "./agents/redact.js";
 import { REVIEW_STOP_MARKER_PREFIX } from "./github.js";
+import { taskLinkNote } from "./task-link.js";
 
 /*
  * Sacty のレビューが止まったことを、レビューを頼んだ PR で分かるようにする投稿（PBI-292）。
@@ -70,6 +71,8 @@ export function buildStopNotice(input: {
   summary: string;
   /** タスクの画面の URL。 */
   taskUrl: string;
+  /** 画面の URL が依頼した人のマシンでだけ開けるか（注釈を添える）。 */
+  localOnly?: boolean;
 }): string {
   const key = stopKey(input.reason, input.summary);
   // 外から来た文は、コードにして載せる（本文の @名前 で、知らない人に通知が飛ばないように）
@@ -80,7 +83,7 @@ export function buildStopNotice(input: {
     "このレビューは、止まったため、まだ投稿されていません。",
     "",
     `- 理由：${REASON[input.reason] ?? "エラー"}${input.summary ? `（\`${input.summary.replaceAll("`", "'")}\`）` : ""}`,
-    `- 再開のしかた：[タスクの画面](${input.taskUrl})を開いて、再開してください。止まった処理から続けます（レビューの実行で止まっていれば実行し直し、投稿で止まっていれば書いたレビューを投稿し直します）。`,
+    `- 再開のしかた：[タスクの画面](${input.taskUrl})を開いて、再開してください。止まった処理から続けます（レビューの実行で止まっていれば実行し直し、投稿で止まっていれば書いたレビューを投稿し直します）。${taskLinkNote(input.localOnly).join("")}`,
     "",
     "再開してレビューを投稿すると、この投稿は解消済みに変わります。",
   ].join("\n");

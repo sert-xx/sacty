@@ -150,6 +150,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       mergeBase?: boolean;
       /** 今の時刻（無ければ、PR の指摘を書き終わるのを待つ時間がたった時刻）。 */
       now?: () => number;
+      /** 知らせのタスクの画面の URL（SACTY_WEB_URL）。 */
+      webUrl?: string;
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -157,6 +159,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const repos = options.repos ?? new FakeRepos();
     const made = makeService(activity, outcomes, {
       ...(options.settings ? { settings: options.settings } : {}),
+      ...(options.webUrl !== undefined ? { webUrl: options.webUrl } : {}),
       ...(options.github ? { github: options.github } : {}),
       stepPullRequests: true,
       ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
@@ -2792,7 +2795,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(pulls.drafts[7]).toBe(true);
         expect(pulls.draftChanges).toEqual([]);
         expect(task.pullRequestCi).toBeUndefined();
-        expect(pulls.calls[0]?.body).toContain("sacty のレビュー：（sacty のレビューの子タスクが");
+        expect(pulls.calls[0]?.body).toContain(
+          "- Sacty のレビューの子タスクが、この PR をレビューして投稿します。",
+        );
         expect(pulls.calls[0]?.body).not.toContain("最終レビュー：");
         // ドラフトのまま、レビューの子タスクを作る
         expect(taskOf(service, id).reviewTasks?.map((r) => [r.number, r.step])).toEqual([
@@ -5518,7 +5523,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             ?.activity.filter(
               (e) => e.type === "ReviewRestarted" && e.payload.reason === "declined",
             ) ?? [];
-        const options = (pulls: FakePulls, repos: FakeRepos, projects: MemoryProjectStore) => ({
+        const options = (
+          pulls: FakePulls,
+          repos: FakeRepos,
+          projects: MemoryProjectStore,
+          webUrl?: string,
+        ) => ({
+          ...(webUrl !== undefined ? { webUrl } : {}),
           pulls,
           repos,
           steps: ["implement"] as StepKey[],
@@ -5557,13 +5568,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
          * 実装の PR を作り、レビューの子タスクが指摘を残し、その指摘を取り込んで、やり直しの実装が始まる前まで進める。
          * やり直しは、作業領域を何も変えない。
          */
-        async function reviewed(outcomes: AgentOutcome[], longTail?: string) {
+        async function reviewed(outcomes: AgentOutcome[], longTail?: string, webUrl?: string) {
           const pulls = new FakePulls();
           const repos = new FakeRepos();
           const projects = projectsWithAccount();
           const made = await start(
             [implement(), verdictOut("changes_required"), ...outcomes],
-            options(pulls, repos, projects),
+            options(pulls, repos, projects, webUrl),
           );
           const { service, id } = made;
           await settle(service, id);
@@ -6952,6 +6963,60 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 "扱い：GitHub の Issue を作ると決めましたが、作れませんでした",
               );
               expect(taskOf(service, id).remarks[0]?.deferral?.decision).toBe("defer");
+              activity.close();
+            });
+
+            it.each([
+              ["http://127.0.0.1:4700", true],
+              ["http://localhost:4700", true],
+              ["http://[::1]:4700", true],
+              ["https://sacty.example.com", false],
+              ["画面の URL ではない文字列", true],
+            ])(
+              "知らせの画面へのリンクの注釈は、サービスに渡した画面の URL（%s）で決まる（注釈あり：%s）",
+              async (webUrl, note) => {
+                const made = await reviewed([deferred()], undefined, webUrl);
+                const { activity, service, pulls, id } = made;
+                await settle(service, id);
+                decideWith(service, id, "none");
+                await noticesSettled(service);
+                const body = notices(pulls)[0]?.body ?? "";
+                expect(body).toContain("[タスクの画面](");
+                expect(body.includes("タスクの画面は、依頼した人のマシンでだけ開けます。")).toBe(
+                  note,
+                );
+                activity.close();
+              },
+            );
+
+            it("Issue を作れなかった理由は、決定のコメントに 1 行で書く（秘密の値・URL の資格情報・内部のパスは伏せ、500 文字まで）。「作業履歴にあります」とは書かない", async () => {
+              const made = await reviewed([deferred()]);
+              const { activity, service, pulls, id } = made;
+              await settle(service, id);
+              pulls.issueFail = `410 Issues are disabled ghp_secret\nhttps://user:token123@example.com/x\n/sacty-input/task.md:12 ${"あ".repeat(800)}`;
+              decideWith(service, id, "issue");
+              await noticesSettled(service);
+              const line =
+                notices(pulls)[0]
+                  ?.body.split("\n")
+                  .find((l) => l.startsWith("扱い：GitHub の Issue を作ると決めましたが")) ?? "";
+              expect(line).toContain("作れませんでした。理由：");
+              expect(line).toContain("410 Issues are disabled");
+              expect(line).not.toContain("ghp_secret");
+              expect(line).not.toContain("token123");
+              expect(line).not.toContain("/sacty-input");
+              expect(line).not.toContain("作業履歴");
+              const reason = line.slice(line.indexOf("理由：")).replaceAll("\u200b", "");
+              expect(reason.length).toBeLessThanOrEqual("理由：".length + 500 + 1);
+              expect(notices(pulls)[0]?.body).not.toContain("作業履歴にあります");
+              // 知らせの本文の全体にも、伏せた値が 1 つも残らない（改行の後ろの行・バッククォートや @ を含む）
+              const whole = notices(pulls)[0]?.body ?? "";
+              for (const leaked of ["ghp_secret", "token123", "user:token", "/sacty-input"]) {
+                expect(whole).not.toContain(leaked);
+              }
+              expect(
+                whole.split("\n").filter((l) => l.includes("作れませんでした。理由：")),
+              ).toHaveLength(1);
               activity.close();
             });
 
