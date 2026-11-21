@@ -24,7 +24,7 @@ const row = (id, group, hours, text) => ({
   status: { text, tone: 'person' }, href: '/tasks/' + id, waitingSince: since(hours),
 });
 const attention = [
-  row('d1', 'decision', 1, '実装の修正の PR のマージ待ち・AI のレビュー中'),
+  row('d1', 'decision', 1, '実装の修正の PR のマージ待ち（コンフリクトの解消も必要）・AI のレビュー中'),
   row('d2', 'decision', 2, '設計の承認待ち'),
   ...Array.from({ length: 8 }, (_, i) => row('p' + i, 'paused', 100 + i, '利用上限で一時停止')),
 ];
@@ -187,8 +187,12 @@ it("幅 375px で、「レビュー中」を添えた行の状態の文と待っ
       );
       const right = (e: Element | null | undefined) =>
         e?.getBoundingClientRect().right ?? Number.NaN;
+      const left = (e: Element | null | undefined) => e?.getBoundingClientRect().left ?? Number.NaN;
       return {
         listRight: list ? list.getBoundingClientRect().left + list.clientWidth : Number.NaN,
+        listLeft: list ? list.getBoundingClientRect().left : Number.NaN,
+        statusLeft: left(status),
+        waitLeft: left(wait),
         statusRight: right(status),
         waitRight: right(wait),
         statusScroll: status ? status.scrollWidth - status.clientWidth : Number.NaN,
@@ -196,7 +200,8 @@ it("幅 375px で、「レビュー中」を添えた行の状態の文と待っ
       };
     });
     expect(m.statusRight).toBeLessThanOrEqual(m.listRight);
-    expect(m.statusRight).toBeLessThanOrEqual(m.listRight);
+    expect(m.statusLeft).toBeGreaterThanOrEqual(m.listLeft);
+    expect(m.waitLeft).toBeGreaterThanOrEqual(m.listLeft);
     expect(m.waitRight).toBeLessThanOrEqual(m.listRight);
     expect(m.statusScroll).toBeLessThanOrEqual(0);
     expect(m.pageOverflow).toBeLessThanOrEqual(0);
