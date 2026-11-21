@@ -127,6 +127,7 @@ When you open the web UI, it shows the dashboard first.
 | Task details | `/tasks/<ID>` | The task's progress, approvals, and run logs |
 
 You move between screens with the header and the side menu.
+When the screen is narrower than 640px, the side menu appears in a row at the bottom of the screen instead of as a left column.
 
 - In the header's project switcher, choosing "All projects" moves to the dashboard, and choosing a project moves to that project's task list.
   The header shows the project of the open screen ("All projects" on the dashboard and similar screens).

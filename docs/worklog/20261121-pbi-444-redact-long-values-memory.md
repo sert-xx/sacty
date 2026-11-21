@@ -4,7 +4,7 @@
 - タスク: PBI-444
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: [20261121-1300-redact-tree-compact-nodes-for-long-values.md](../adr/20261121-1300-redact-tree-compact-nodes-for-long-values.md)
+- 関係する ADR: [20261121-1700-redact-tree-compact-nodes-for-long-values.md](../adr/20261121-1700-redact-tree-compact-nodes-for-long-values.md)
 
 ## 目的
 
@@ -25,7 +25,7 @@ JSON でない大きな認証ファイルなど、とても長い値を伏せる
 - `npm run typecheck`：通った。
 - `npx vitest run --no-file-parallelism`（全件）：6301 件通過・14 件スキップ。
 - 回帰：`docker.ts` の「上限超えで写さない」の分岐と「停止の結果を優先する」の分岐を外すと、`agents.test.ts` の追加の 2 件（更新後のトークンがログ・写しに残らないこと、停止を確かめられないときの失敗）が落ちた。戻すと通った。
-- 上限を 256MiB にすると、`agents.test.ts` の 5 件（ホストの認証ファイルの上限ちょうど・+1 と、「大きすぎる認証ファイル」の 4 件）と `redact-long.test.ts` の 1 件（上限の値）の計 6 件が落ちることを確かめた。戻すと通る。
+- 上限を 256MiB にすると、`agents.test.ts` の 5 件（ホストの認証ファイルの上限ちょうど・+1 の 1 件と、「大きすぎる認証ファイル」の 4 件）と `redact-long.test.ts` の 1 件（上限の値）の計 6 件が落ちることを確かめた。戻すと通る。
 - `HeadTailFile.discard` の呼び出しを外すと、`redact-long.test.ts` の 1 件が落ちる。戻すと通る。`readStagedFile` の増えるファイルの扱いは、読んでいる間に増える競合を作れないので、テストでは確かめていない。
 
 ## レビューの指摘と対応

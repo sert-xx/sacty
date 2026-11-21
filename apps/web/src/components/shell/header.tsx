@@ -10,7 +10,7 @@ import { SactyMark } from "./sacty-mark";
 
 function Frame({ children }: { children?: React.ReactNode }) {
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-chrome px-2.5 sm:gap-3 sm:px-4">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-chrome pr-[max(0.625rem,env(safe-area-inset-right))] pl-[max(0.625rem,env(safe-area-inset-left))] sm:gap-3 sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pl-[max(1rem,env(safe-area-inset-left))]">
       <Link
         href={DASHBOARD_PATH}
         className="flex items-center gap-2 text-xl font-bold tracking-wide text-foreground"
