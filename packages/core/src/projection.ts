@@ -8,6 +8,8 @@ import type {
   ContinuedPullRequest,
   DeferralDecision,
   DeferralHandling,
+  DesignEditItem,
+  DesignEditRejected,
   ExportPlan,
   ImplementationCompletion,
   InvestigationKind,
@@ -1307,6 +1309,8 @@ export type Task = {
       cause?: ReworkCause;
       answer?: ReworkAnswer;
       reason: DaemonText;
+      /** 重さで分ける基準（PBI-446）の版が出した判断。設計に戻したときの知らせを、この判断だけに出す。 */
+      weighed?: true;
     };
     /** remarks のうち、AI のレビュー（sacty のレビューのタスクの投稿）の指摘の位置（PBI-275）。無ければすべて人の指摘。 */
     aiReview?: number[];
@@ -1342,6 +1346,20 @@ export type Task = {
     round: number;
     remarkIds: string[];
   };
+  /**
+   * 実装の工程が出した設計の局所の直しの記録（DesignEdited。PBI-446）。committed は、反映した直しを、実装の PR のコミットに
+   * 入れ終えたか（実装のブランチをプッシュしたら真にする）。
+   */
+  designEdits?: {
+    runId: string;
+    round: number;
+    at: string;
+    applied: DesignEditItem[];
+    rejected: DesignEditRejected[];
+    unreadable?: boolean;
+    withProposal?: boolean;
+    committed: boolean;
+  }[];
   createdAt: string;
   updatedAt: string;
 };
@@ -2218,6 +2236,38 @@ export function applyEvent(
       break;
     }
 
+    case "DesignEdited": {
+      const approved = task.approved.design;
+      if (!approved) throw new ActivityIntegrityError(event, "the design is not approved");
+      const p = event.payload;
+      // 同じ実行の2つ目は記録しない（投影では読み捨てる）
+      if (task.designEdits?.some((e) => e.runId === p.runId)) break;
+      task.designEdits = [
+        ...(task.designEdits ?? []),
+        {
+          runId: p.runId,
+          round: p.round,
+          at: event.at,
+          applied: p.applied,
+          rejected: p.rejected,
+          ...(p.unreadable ? { unreadable: true } : {}),
+          ...(p.withProposal ? { withProposal: true } : {}),
+          committed: false,
+        },
+      ];
+      if (p.applied.length > 0) {
+        // 承認の時刻・implementHistory・implementBase は変えない（同じ実装の PR の続き）
+        task.approved = {
+          ...task.approved,
+          design: { ...approved, output: p.output, testViewpoints: p.testViewpoints },
+        };
+        task.outputs = { ...task.outputs, design: p.output };
+        task.testViewpoints = p.testViewpoints;
+        voidSubmissionChecks(task, "design");
+      }
+      break;
+    }
+
     case "RepositoryPrepared":
       task.repository = event.payload;
       // ベースブランチを選び直して用意し直した作業領域は、新しい起点のコードのまま（取り込みは無い）
@@ -2889,6 +2939,7 @@ export function applyEvent(
           ...(event.payload.cause ? { cause: event.payload.cause } : {}),
           ...(event.payload.answer ? { answer: event.payload.answer } : {}),
           reason: event.payload.reason,
+          ...(event.payload.weighed ? { weighed: true as const } : {}),
         },
       };
       break;
@@ -3372,6 +3423,10 @@ export function applyEvent(
         );
       }
       task.pushedBranch = event.payload;
+      // 実装のブランチにプッシュした内容に、それまでに反映した設計の直しが入った（PBI-446）
+      if (task.designEdits?.some((e) => !e.committed)) {
+        task.designEdits = task.designEdits.map((e) => ({ ...e, committed: true }));
+      }
       break;
 
     case "AiRequestsRetried":

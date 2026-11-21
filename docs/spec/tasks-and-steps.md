@@ -1714,6 +1714,9 @@ AI の判定は挟まず、人が判断する。
   認めなかったら、申し出た工程の成果を提出する（`settleEvents`・`submitEvents`）。
 - 以前の版で、AI の判定の途中で止まった申し出（判定も人の判断も無いもの）は、起動のときに `change_proposed` で人の判断待ちにする（`recoverInterrupted`）。
   以前の版の AI の判定の記録（`ChangeJudged`）と、判定できなかったときのエスカレーション（理由 `change_undecidable`）は、古い作業履歴を読むためだけに残す（判定できなかった申し出は、今の申し出と同じく人が判断する）。
+- 局所の設計書の直し（文言・表や一覧の1行・既定値・行の追加）は、変更の申し出にしない。実装の PR の指摘を実装で直す回に、実装が設計の直し（`sacty-design-edit`）を出し、sacty が承認済みの設計に反映して、同じ実装の PR に入れる（イベント `DesignEdited`。承認は実装の PR のマージで兼ねる）。方針の変更（方式・構成の選び直し、範囲・受け入れ条件の変更など）は、設計の直しでは出さず、この変更の申し出で出す。
+  - 使い分け：局所は設計の直し、方針は変更の申し出。
+  - `DesignEdited` は、反映した設計の全文とテスト観点・反映した直し・反映しなかった直しと理由を持つ。投影は、承認済みの設計と設計の出力・テスト観点を置き換える。変更の申し出の適用（`ChangeApplied`）と違い、観点の ID と実装の履歴は変えない。出し方・検査・反映の詳細は [承認と差し戻し](approval.md#設計の直しsacty-design-edit)。
 
 コード: `apps/daemon/src/service.ts`（`runNextInner`・`settleEvents`・`submitEvents`・`decideChange`・`recoverInterrupted`）、`packages/core/src/projection.ts`（`openProposal`）、`packages/core/src/events.ts`（`TaskEscalated`）
 

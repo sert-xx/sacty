@@ -2307,7 +2307,7 @@ describe("要求要件・設計の PR（PBI-57）", () => {
         expect(p).toContain("決定の反映漏れです");
         expect(p).toContain("決定そのものを変える指摘");
         expect(p).toContain("その決定を持つ工程に戻します");
-        expect(p).toContain("- design（設計）：解消するには、承認済みの設計の決定");
+        expect(p).toContain("- design（設計）：解消するには、承認済みの設計の方針の変更");
         expect(p).toContain("- requirements（要求要件）：解消するには、承認済みの要求要件の決定");
       }
       // 指摘の例と、承認済みの成果物が渡る
@@ -2318,11 +2318,19 @@ describe("要求要件・設計の PR（PBI-57）", () => {
 
     it("理由の先頭に、どの決定を変える・変えないかを書かせる（出力の形式の例にも入れる）", () => {
       const step = buildReworkPrompt(task, [s8], ["design", "requirements"], "design");
-      for (const p of [...prompts, step]) {
+      // 要求要件・設計の PR は、起点と同じ書式のまま
+      expect(step).toContain(
+        "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
+      );
+      expect(step).toContain("決定を変えない／変える：承認済みの○○の△△（判断の理由）");
+      // 実装の PR は、決定を変えるときに、局所の変更か方針の変更かも書かせる（PBI-446）
+      for (const p of prompts) {
         expect(p).toContain(
-          "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
+          "理由の先頭に、指摘が決定を変えないか、変えるか（変えるときは、局所の変更か方針の変更か）",
         );
-        expect(p).toContain("決定を変えない／変える：承認済みの○○の△△（判断の理由）");
+        expect(p).toContain(
+          "決定を変えない／変える（局所）／変える（方針）：承認済みの○○の△△（判断の理由）",
+        );
       }
     });
 

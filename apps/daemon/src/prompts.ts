@@ -160,6 +160,10 @@ export const EXECUTABLE_STEPS: readonly StepKey[] = [
 const RESPONSES_HEADING = "sacty-responses";
 const VIEWPOINTS_HEADING = "sacty-test-viewpoints";
 const PROPOSAL_HEADING = "sacty-change-proposal";
+/** 実装の工程が出す、承認済みの設計の局所の直しの見出し（PBI-446）。 */
+export const DESIGN_EDIT_HEADING = "sacty-design-edit";
+/** 設計の直しで、テスト観点の文言を直せる欄の名前。 */
+export const DESIGN_EDIT_FIELDS = ["title", "input", "expected"] as const;
 const REWORK_HEADING = "sacty-rework";
 const PLAN_HEADING = "sacty-steps";
 /** PR のレビューだけのタスクで、レビューの工程のイメージを選ぶ答えの見出し（PBI-44 の続き）。 */
@@ -2072,6 +2076,50 @@ function designReasonLines(task: Task): string[] {
   ];
 }
 
+/**
+ * 実装の工程が設計の局所の直し（sacty-design-edit。PBI-446）を出せる回の、対応する指摘の ID。出せるのは、設計が承認済みで、
+ * 今回の実行が PR の指摘（戻し先の判断が実装）で始まった回だけ。出せない回（最初の実装・人が画面から差し戻した回・設計の
+ * 工程が無いタスク）は空。選り分けで対応しないとした提案・無効にした指摘は含めない。
+ */
+export function designEditRemarkIds(task: Task): string[] {
+  if (!task.approved.design) return [];
+  const rework = task.prRework;
+  if (rework?.target !== "implement") return [];
+  // その差し戻しの回の指摘のうち、まだ提出に渡していないもの（提出した後の回・人が画面から差し戻した回は含めない）
+  return task.remarks
+    .filter(
+      (r) =>
+        r.step === "implement" &&
+        !r.voided &&
+        !r.triaged &&
+        r.submittedIn === undefined &&
+        r.round === rework.round &&
+        rework.remarkIds.includes(r.id),
+    )
+    .map((r) => r.id);
+}
+
+/** 実装の工程に、設計の局所の直しの出し方を伝える（PBI-446）。出せない回は何も足さない（designEditRemarkIds）。 */
+function designEditLines(task: Task): string[] {
+  const ids = designEditRemarkIds(task);
+  if (ids.length === 0) return [];
+  return [
+    "",
+    "--- 承認済みの設計の局所の直し ---",
+    "今回の指摘が、承認済みの設計の局所の決定（文言・表や一覧の1行・既定値・行の追加）に触れるときは、実装と同じ PR で、承認済みの設計も合わせて直します（設計の工程には戻しません。人の承認は、この PR のマージで兼ねます）。",
+    "承認済みの設計は、あなたの作業領域には無く、書き換えられません。次の形式のブロックで、置き換え（before を after にする）の形で、直す所だけを出します（全文は出さない）。sacty が検査して、承認済みの設計と PR の設計のファイルに反映します。",
+    "```json",
+    `{"${DESIGN_EDIT_HEADING}": {"edits": [{"remarks": ["指摘の ID"], "viewpoint": "TV-n（観点の文言の直しのときだけ）", "field": "title・input・expected のどれか（観点の文言の直しのときだけ）", "before": "承認済みの原文", "after": "直した後", "reason": "理由", "sensitive": false}]}}`,
+    "```",
+    `- remarks には、今回の指摘の ID（${ids.join("・")}）のうち、その直しを求めたものを書く。指摘が求めていない直しは出さない（反映されません）`,
+    "- before は、承認済みの設計（観点の直しは、その観点のその欄）に、1か所だけある原文。2か所以上にあるときは、前後を足して1か所にする。1回の出力に10件まで、before・after は各 2,000 文字まで。見出しの行は足さず・消さず・変えない",
+    "- 本文は、「スコープ」「確認したいこと」「既定で決めたこと」「テスト観点」の節は直せません。テスト観点は、viewpoint と field で、文言だけを直せます（入力・期待結果の中身を変える・観点を足す・消すのは、設計の工程の仕事です）",
+    '- セキュリティ・認可・保存するデータの形・移行に触れる直しには、"sensitive": true を付ける（反映せず、人に見せます）。それ以外は false にする',
+    `- 方針の変更（方式・構成の選び直し、範囲・受け入れ条件の変更、外に公開するインターフェースや保存するデータの形、移行など）は、この形式では出さず、変更の申し出（${PROPOSAL_HEADING}）で出す。同じ出力に申し出と設計の直しの両方があるときは、設計の直しを反映せず、申し出だけを扱う`,
+    "- 秘密情報の値と、作業領域の内部のパスは、直しに書かない（書いた直しは反映されません）。設計の直しが無ければ、このブロックは付けない",
+  ];
+}
+
 /** 承認済みの成果物の変更を申し出る方法。申し出られる工程が無ければ何も足さない。 */
 function proposalLines(task: Task, step: StepKey): string[] {
   const targets = changeableSteps(task, step);
@@ -3354,6 +3402,7 @@ function directImplementLines(
     ...feedbackLines(task),
     ...remarkLines(task, step, "観点ごとのテストの対応"),
     ...proposalLines(task, step),
+    ...designEditLines(task),
     ...implementSelfReviewLines(task, "実装", pullRequestReview),
   );
   return lines;
@@ -4131,6 +4180,7 @@ export function buildPrompt(
         ...remarkLines(task, step, "観点ごとのテストの対応"),
         ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         ...proposalLines(task, step),
+        ...designEditLines(task),
         ...implementSelfReviewLines(task, "実装", skipSelfReview),
       );
       return lines.join("\n");
@@ -4163,6 +4213,11 @@ export type Extracted = {
   viewpointPositions: (string | undefined)[];
   /** 承認済みの成果物への変更の申し出（1件まで）。 */
   proposal?: ExtractedProposal;
+  /**
+   * 設計の直し（見出し sacty-design-edit の値。最初のもの。PBI-446）。読ませていない・無ければ undefined。中身はまだ確かめていない
+   * （design-edit.ts の readDesignEditBlock で読む）。見出しはあるが JSON として読めないときは、unreadable。
+   */
+  designEdit?: { value: unknown } | { unreadable: true };
   /** 実装の工程が申告した、観点とテストの対応。 */
   testMap: TestMapping[];
   /** 実装の工程が、テストの仕組みを用意して申告したテストのコマンド（PBI-94。1〜1000 文字）。 */
@@ -4285,6 +4340,8 @@ export function extractBlocks(
      * する。ほかの工程の成果物（要求要件・設計など）に同じ名前のコードブロックが書かれていても、申告として扱わず、本文のまま残す。
      */
     completion?: boolean;
+    /** 設計の直し（sacty-design-edit。PBI-446）を読み、本文から取り除くか。PR の指摘で実装に戻した回の実装の工程だけ true にする。 */
+    designEdit?: boolean;
   } = {},
 ): Extracted {
   let responses: RemarkResponse[] | undefined;
@@ -4292,6 +4349,7 @@ export function extractBlocks(
   let viewpointPositions: (string | undefined)[] | undefined;
   let proposal: ExtractedProposal | undefined;
   let proposalSeen = false;
+  let designEdit: Extracted["designEdit"];
   let testMap: TestMapping[] | undefined;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
   const declared = options.testCommand ? extractTestCommandFences(output) : { output };
@@ -4317,6 +4375,7 @@ export function extractBlocks(
     const list = record[RESPONSES_HEADING];
     const viewpoints = record[VIEWPOINTS_HEADING];
     const proposed = record[PROPOSAL_HEADING];
+    const edited = options.designEdit ? record[DESIGN_EDIT_HEADING] : undefined;
     const map = record[TEST_MAP_HEADING];
     const reviewed = record[SELF_REVIEW_HEADING];
     let read = false;
@@ -4343,6 +4402,11 @@ export function extractBlocks(
           };
         })
         .filter((m) => m.viewpointId && (m.tests.length > 0 || m.untested));
+    }
+    if (edited !== undefined) {
+      read = true;
+      // 最初のものを使う（候補は後ろから見るので、最後に当たったものが最初のブロック）
+      designEdit = { value: edited };
     }
     if (proposed && typeof proposed === "object" && !Array.isArray(proposed)) {
       read = true;
@@ -4399,6 +4463,10 @@ export function extractBlocks(
   const testCommandInvalid = "invalid" in declared ? declared.invalid : undefined;
   // 検証の記録（PBI-305）。最後のものだけを使い、どの記録も本文からは取り除く
   const verification = extractVerificationRecord(body);
+  // 見出しはあるが JSON として読めない直しは、読めなかったものとして扱う（本文には残る）
+  if (options.designEdit && !designEdit && body.includes(`"${DESIGN_EDIT_HEADING}"`)) {
+    designEdit = { unreadable: true };
+  }
   const removed = [...used, ...reports, ...classified, ...verification.spans];
   return {
     output: options.keepIndent
@@ -4408,6 +4476,7 @@ export function extractBlocks(
     testViewpoints: testViewpoints ?? [],
     viewpointPositions: viewpointPositions ?? [],
     proposal,
+    ...(designEdit ? { designEdit } : {}),
     testMap: testMap ?? [],
     ...(selfReview ? { selfReview } : {}),
     ...(verification.record ? { verificationRecord: verification.record } : {}),
@@ -5988,6 +6057,7 @@ export function buildPullRequestBodyText(
     // 実装のエージェントの説明（テンプレートに沿わせるときの「変更」と同じ中身。人が変更の中身を PR で読めるように）
     ...(changeRest ? [...changeHeading, changeRest, ""] : []),
     ...(fixRest ? [`## ${LAST_FIX_HEADING}`, "", fixRest, ""] : []),
+    ...(designEditBodyLines(task, "##").length > 0 ? [...designEditBodyLines(task, "##"), ""] : []),
     // 書き出した成果（要求要件・設計など）の URL（PBI-56）
     ...(exportedUrls(task).length > 0 ? ["## 書き出した成果", "", ...exportedUrls(task), ""] : []),
     "## 観点 → テスト → 実行結果",
@@ -6028,6 +6098,9 @@ export function buildPullRequestBodyParts(
   const humanCount = humanCheckItems(task).length;
   const scope = childScopeBodyLines(task, "bold");
   const record = [
+    ...(designEditBodyLines(task, "bold").length > 0
+      ? [...designEditBodyLines(task, "bold"), ""]
+      : []),
     ...(exportedUrls(task).length > 0 ? ["**書き出した成果**", "", ...exportedUrls(task), ""] : []),
   ];
   return {
@@ -6058,6 +6131,81 @@ export function buildPullRequestBodyParts(
     ].join("\n"),
   };
 }
+
+/** PR の本文に載せる、設計の直しの 1 件の前・後の長さの上限（文字数）。 */
+const DESIGN_EDIT_BODY_TEXT_MAX = 1_000;
+
+/**
+ * 実装の PR の本文の「設計の直し」（PBI-446）。実装の工程が出した、承認済みの設計の局所の直しを、反映した直し・反映しなかった
+ * 直しに分けて、直しごとの前・後・指摘・理由で載せる。人は、この PR のマージで、設計の直しも承認する。現在の承認済みの設計に
+ * 対する記録（その承認より前の記録は含めない）だけを載せる。無ければ空。載せる文は、@ の通知を無効にする
+ * （秘密情報の伏せ・内部のパスの置き換えは、本文の全体にかかる）。
+ */
+export function designEditBodyLines(task: Task, style: "##" | "bold"): string[] {
+  const since = task.approved.design?.at ?? "";
+  const records = (task.designEdits ?? []).filter(
+    (e) =>
+      e.at >= since &&
+      (e.applied.length > 0 || e.rejected.length > 0 || e.unreadable || e.withProposal),
+  );
+  if (records.length === 0) return [];
+  const quiet = (t: string) => t.replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b");
+  const clipText = (t: string) => {
+    const cut =
+      t.length > DESIGN_EDIT_BODY_TEXT_MAX ? `${t.slice(0, DESIGN_EDIT_BODY_TEXT_MAX)}…` : t;
+    return quiet(cut)
+      .split(/\r?\n/)
+      .map((l) => `    > ${l}`)
+      .join("\n");
+  };
+  const where = (e: { remarks: string[]; viewpoint?: string; field?: string }) =>
+    `指摘 ${e.remarks.join("・") || INVALID_REMARK}${e.viewpoint ? `（観点 ${e.viewpoint}${e.field ? `の ${e.field}` : ""}）` : ""}`;
+  const applied = records.flatMap((r) => r.applied);
+  const rejected = records.flatMap((r) => r.rejected);
+  const sub = (t: string) => (style === "##" ? `### ${t}` : `**${t}**`);
+  const lines: string[] = [
+    ...(style === "##" ? ["## 設計の直し"] : ["**設計の直し**"]),
+    "",
+    "この PR の指摘が承認済みの設計の局所の決定に触れたので、実装と同じこの PR で、承認済みの設計も直しました（設計の PR は出していません）。この PR のマージが、設計の直しの承認を兼ねます。反映した直しは、この PR の設計のファイルにも入っています。",
+  ];
+  if (applied.length > 0) {
+    lines.push("", sub(`反映した直し（${applied.length} 件）`), "");
+    for (const e of applied) {
+      lines.push(
+        `- ${where(e)}：${quiet(e.reason)}`,
+        "  - 前：",
+        clipText(e.before),
+        "  - 後：",
+        clipText(e.after),
+      );
+    }
+  }
+  if (rejected.length > 0) {
+    lines.push("", sub(`反映しなかった直し（${rejected.length} 件）`), "");
+    for (const e of rejected) {
+      const why = typeof e.rejection === "string" ? e.rejection : "";
+      lines.push(
+        `- ${where(e)}：${quiet(why)}`,
+        "  - 前：",
+        clipText(e.before),
+        "  - 後：",
+        clipText(e.after),
+      );
+    }
+  }
+  for (const r of records) {
+    if (r.unreadable)
+      lines.push("", "設計の直しのブロックを読めなかったので、直しは反映していません（0 件）。");
+    if (r.withProposal)
+      lines.push(
+        "",
+        "同じ出力に変更の申し出もあったので、設計の直しは反映していません（申し出だけを扱います）。",
+      );
+  }
+  return lines;
+}
+
+const INVALID_REMARK = "（なし）";
 
 /** マージで承認した、要求要件・設計の PR の一覧（工程ごとに1行。PBI-57）。 */
 function mergedStepPullRequests(task: Task): string[] {
@@ -6391,7 +6539,9 @@ function reviewReworkLines(context: ReviewReworkContext | undefined): string[] {
   const describe = (step: StepKey) =>
     step === gateStep
       ? `- ${step}（${STEP_NAME[step]}）：この PR の${name}を直せば解消できる（承認済みの前の工程の決定を変えない）`
-      : `- ${step}（${STEP_NAME[step]}）：解消するには、承認済みの${STEP_NAME[step]}の決定を変える必要がある`;
+      : gateStep === "implement" && step === "design"
+        ? `- ${step}（${STEP_NAME[step]}）：解消するには、承認済みの設計の方針の変更が必要（局所の変更は、この PR の実装で直す）`
+        : `- ${step}（${STEP_NAME[step]}）：解消するには、承認済みの${STEP_NAME[step]}の決定を変える必要がある`;
   const approved = (["requirements", "design"] as const)
     .filter((step) => step !== gateStep && targets.includes(step) && parent.approved[step])
     .flatMap((step) => [
@@ -6406,7 +6556,7 @@ function reviewReworkLines(context: ReviewReworkContext | undefined): string[] {
     `この PR は、sacty のタスクが作った${name}の PR で、あなたの指摘（${MUST_TAG}・${SUGGESTION_TAG}）は、そのタスクが直します。指摘ごとに、どの工程で直すかを判定のブロックの rework に書いてください。sacty はそれに従って差し戻します。`,
     ...targets.map(describe),
     "前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認するので、費用も手間も大きくなります。",
-    ...reworkDecisionLines(name),
+    ...reworkDecisionLines(name, gateStep),
     ...approved,
     // 組み合わせ skip-requirements は、承認済みの要求要件が無く、依頼が基準なので、PR を作ったタスクの依頼を渡す
     ...(isSkipRequirementsPlan(parent) ? requestLines(parent) : []),
@@ -6427,10 +6577,14 @@ function reviewReworkLines(context: ReviewReworkContext | undefined): string[] {
     "",
     "判定のブロックは、次の形にしてください（findings は指摘ごとに1件。指摘が無ければ空）。target は上の候補のどれかです。",
     "```json",
-    `{"${REVIEW_VERDICT_HEADING}": {"verdict": "changes_required", "rework": {"findings": [{"finding": "指摘の要約（1行）", "target": "${targets.join(" または ")}", "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}], "cause": "guardian_missed または base_changed または undecidable"}}}`,
+    `{"${REVIEW_VERDICT_HEADING}": {"verdict": "changes_required", "rework": {"findings": [{"finding": "指摘の要約（1行）", "target": "${targets.join(" または ")}", "reason": "${gateStep === "implement" ? REASON_FORMAT_WEIGHT : REASON_FORMAT}承認済みの○○の△△（判断の理由）"}], "cause": "guardian_missed または base_changed または undecidable"}}}`,
     "```",
   ];
 }
+
+/** 判断の理由の先頭の書式。実装の PR は、決定を変えるときに、局所の変更か方針の変更かも書かせる（PBI-446）。 */
+const REASON_FORMAT = "決定を変えない／変える：";
+const REASON_FORMAT_WEIGHT = "決定を変えない／変える（局所）／変える（方針）：";
 
 /**
  * 要求要件・設計の PR のとき（質問への答えがありうる）は、原因 question_answer と、その答えの扱い（answer）も答えさせる
@@ -6438,7 +6592,7 @@ function reviewReworkLines(context: ReviewReworkContext | undefined): string[] {
  */
 const REWORK_ANSWER_FORMAT = (targets: readonly StepKey[], gateStep: StepKey = "implement") =>
   gateStep === "implement"
-    ? `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "cause": "guardian_missed または new_request または base_changed または undecidable", "no_action": [対応を求めていない人間の指摘の番号], "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}}`
+    ? `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "cause": "guardian_missed または new_request または base_changed または undecidable", "no_action": [対応を求めていない人間の指摘の番号], "reason": "${REASON_FORMAT_WEIGHT}承認済みの○○の△△（判断の理由）"}}`
     : `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "cause": "guardian_missed または new_request または question_answer または base_changed または undecidable", "answer": "as_recommended または changes_decision（cause が question_answer のときだけ）", "no_action": [対応を求めていない人間の指摘の番号], "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}}`;
 
 /**
@@ -6460,7 +6614,7 @@ function requestLines(task: Task): string[] {
  * 戻し先の判断の基準（PBI-266）。指摘が承認済みの前の工程の決定を変えるかで決め、変えないなら、その PR の工程
  * （own）で直す。理由の先頭に、どの決定を変える・変えないかを短く書かせる。
  */
-function reworkDecisionLines(own: string): string[] {
+function reworkDecisionLines(own: string, gateStep?: StepKey): string[] {
   return [
     "",
     "戻し先は、指摘が承認済みの前の工程の決定（受け入れ条件・振る舞い・画面・API やデータの形・テスト観点・確認して決めたこと）を変えるかで決めてください。",
@@ -6469,8 +6623,32 @@ function reworkDecisionLines(own: string): string[] {
     "- 決定そのものを変える指摘（決まった振る舞い・画面・API やデータの形を別のものにする、決まっていないことを新しく決める、など）だけ、その決定を持つ工程に戻します。",
     "- 複数の指摘のうち1つでも決定を変えるなら、その決定を持つ工程に戻します（複数の工程にまたがるなら、前の工程）。",
     "- 承認済みの成果物を読み、指摘が求める内容がすでに決まっているかを確かめてから選んでください。",
-    "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
-    "（例：「決定を変えない：確認して決めた○○は承認済みの要求要件にあり、文書に書くだけ」「決定を変える：設計が決めた△△の画面を、別の見せ方に変える」）。",
+    ...(gateStep === "implement" ? designWeightLines() : []),
+    ...(gateStep === "implement"
+      ? [
+          "理由の先頭に、指摘が決定を変えないか、変えるか（変えるときは、局所の変更か方針の変更か）と、どの決定かを短く書いてください",
+          "（例：「決定を変えない：確認して決めた○○は承認済みの要求要件にあり、文書に書くだけ」「決定を変える（局所）：設計の表の1行の文言を直すだけで、ほかの決定に波及しない」「決定を変える（方針）：設計が決めた△△の構成を、別の方式に選び直す」）。",
+        ]
+      : [
+          "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
+          "（例：「決定を変えない：確認して決めた○○は承認済みの要求要件にあり、文書に書くだけ」「決定を変える：設計が決めた△△の画面を、別の見せ方に変える」）。",
+        ]),
+  ];
+}
+
+/**
+ * 実装の PR の指摘が承認済みの設計の決定を変えるときの、重さの基準（PBI-446）。設計の工程に戻すのは方針の変更だけで、局所の変更は
+ * 実装の工程で直す（設計書も同じ PR で合わせる）。要求要件の決定を変える指摘の戻し先は、上の基準のままにする。
+ */
+function designWeightLines(): string[] {
+  return [
+    "- 承認済みの設計の決定を変える指摘は、決定の重さで分けます（承認済みの要求要件の決定を変える指摘は、上のとおり、要求要件に戻します）。",
+    "  - 方針の変更（方式・構成の選び直し、範囲・受け入れ条件の変更、外に公開するインターフェースや保存するデータの形の変更、セキュリティ・認可、移行など、取り返しにくい決定）だけ、design（設計）に戻します。",
+    "  - 局所の変更（文言、表や一覧の1行、既定値、行の追加など、ほかの決定に波及しない決定）は、implement（実装）で直します。実装の工程が、承認済みの設計の該当箇所の直しも出し、設計書は同じ PR で合わせます（人の承認は、この PR のマージで兼ねます）。",
+    "  - 局所の変更と方針の変更が1回の指摘に混ざるとき（1つでも方針の変更があるとき）は、全部を design に戻します。",
+    "  - どちらとも言い切れないときは、implement に倒します。ただし、セキュリティ・認可・保存するデータの形・移行に触れる指摘は、迷えば design に戻します。",
+    "  - テスト観点は、文言だけの変更（何を確かめるか＝入力・期待結果の中身を変えないもの）は implement で直します。入力・期待結果の中身を変える指摘、観点を足す・消す指摘は、design に戻します。",
+    "- 人の指摘が、戻し先を明示しているとき（「設計に戻す」「実装の工程で直す」など）は、上の基準よりそれに従います（セキュリティ・認可・保存するデータの形・移行に触れる指摘でも同じです）。",
   ];
 }
 
@@ -6611,12 +6789,12 @@ export function buildReworkPrompt(
     ...guardianCodeLines(task, "implemented"),
     "",
     "- implement（実装）：承認済みの要求要件・設計の決定を変えずに、実装（文書への追記を含む）を直せば解消できる",
-    "- design（設計）：解消するには、承認済みの設計の決定（振る舞い・画面・API やデータの形・テスト観点）を変える必要がある",
+    "- design（設計）：解消するには、承認済みの設計の方針の変更（局所の変更は implement で直す）が必要である",
     "- requirements（要求要件）：解消するには、承認済みの要求要件の決定（受け入れ条件・範囲・確認して決めたこと）を変える必要がある",
     "- undecidable（判断できない）：指摘の意図が読み取れず、戻し先を決められない（実装をやり直します）",
     "",
     "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認するので、費用も手間も大きくなります。",
-    ...reworkDecisionLines("実装"),
+    ...reworkDecisionLines("実装", "implement"),
     ...approved,
     ...requestLines(task),
     ...resumeNoteJudgeLines(task),

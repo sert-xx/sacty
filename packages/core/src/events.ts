@@ -1606,6 +1606,56 @@ const ChangeApplied = z.object({
   payload: z.object({ proposalId: z.string() }),
 });
 
+/** 設計の直し（DesignEdited）の1件の欄の名前（テスト観点の文言の直しのとき）。 */
+export const DesignEditField = z.enum(["title", "input", "expected"]);
+export type DesignEditField = z.infer<typeof DesignEditField>;
+
+/**
+ * 実装の工程が出した設計の直し（局所の変更。PBI-446）の1件。置き換え（before を after にする）の形。載せる文は、秘密情報の
+ * 伏せ・内部のパスの置き換え・@ の無効化をした後のもの。remarks・viewpoint・field は、形に合う値だけを載せる（合わない値は
+ * 「（不正な値）」）。
+ */
+export const DesignEditItem = z.object({
+  remarks: z.array(z.string()).max(50),
+  viewpoint: z.string().optional(),
+  field: z.string().optional(),
+  before: z.string(),
+  after: z.string(),
+  reason: z.string(),
+});
+export type DesignEditItem = z.infer<typeof DesignEditItem>;
+
+/** 反映しなかった設計の直し（理由を添える）。 */
+export const DesignEditRejected = DesignEditItem.extend({ rejection: DaemonText });
+export type DesignEditRejected = z.infer<typeof DesignEditRejected>;
+
+/**
+ * 実装の PR の指摘を実装の工程で直した回に、実装が出した設計の局所の直しを、sacty が検査して承認済みの設計に反映した
+ * （PBI-446）。反映後の全文とテスト観点を持つので、投影は置き換えるだけで、再生が同じ設計になる。承認済みの設計の承認の時刻・
+ * テスト観点の ID・前の実装の説明とテストの対応は変えない（同じ実装の PR の続きなので）。設計のセルフレビュー・出典の
+ * 分類は記録なしにする。同じ実行の2つ目は記録しない。反映しなかった直し・読めなかったことだけでも記録する
+ * （applied が空なら、設計は変わらない）。
+ */
+const DesignEdited = z.object({
+  type: z.literal("DesignEdited"),
+  payload: z.object({
+    /** 直しを出した実装の実行。 */
+    runId: z.string(),
+    /** 実装の何回目の提出か（直す前の提出の数 + 1）。 */
+    round: z.number().int().positive(),
+    /** 反映後の承認済みの設計の全文。 */
+    output: z.string(),
+    /** 反映後のテスト観点（ID・数は変わらない）。 */
+    testViewpoints: z.array(TestViewpoint),
+    applied: z.array(DesignEditItem).max(10),
+    rejected: z.array(DesignEditRejected).max(50),
+    /** 直しのブロックを読めなかった（直しは 0 件）。 */
+    unreadable: z.boolean().optional(),
+    /** 同じ出力に変更の申し出もあったので、直しを反映しなかった。 */
+    withProposal: z.boolean().optional(),
+  }),
+});
+
 /** 実装の対象リポジトリを、タスクの作業領域に用意した。 */
 const RepositoryPrepared = z.object({
   type: z.literal("RepositoryPrepared"),
@@ -3308,6 +3358,8 @@ const ReworkJudged = z.object({
     noAction: z.array(z.number().int().nonnegative()).optional(),
     /** 取り込んだ指摘がすべて、対応を求めていないもの（noAction）だったので、差し戻さなかった。 */
     noRework: z.literal(true).optional(),
+    /** 重さで分ける基準（PBI-446）の版が出した判断。以前の記録には無い。設計に戻したときの知らせを、この判断だけに出す。 */
+    weighed: z.literal(true).optional(),
     agentId: z.string(),
     /**
      * PR のレビューの子タスクが示した戻し先から決めたときの、その子タスク（PBI-332。実行はしないので費用は 0）。無ければ、
@@ -4230,6 +4282,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ChangeJudged,
   ChangeDecided,
   ChangeApplied,
+  DesignEdited,
   RepositoryPrepared,
   BaseBranchMerged,
   BaseConflictsRemained,

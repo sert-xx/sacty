@@ -55,6 +55,8 @@ import {
   DecideChangeInput,
   DecideDeferralsInput,
   DeriveTaskInput,
+  type DesignEditItem,
+  type DesignEditRejected,
   decidedDeferrals,
   deferProposals,
   deferralTasksDue,
@@ -278,6 +280,13 @@ import {
   extractDeploymentCheck,
   findDeploymentSkill,
 } from "./deployment.js";
+import {
+  applyDesignEdits,
+  applyEditsToFile,
+  designFilePath,
+  pendingDesignEdits,
+  readDesignEditBlock,
+} from "./design-edit.js";
 import { buildErrorReport, type ReportLocale } from "./error-report.js";
 import { AgentTimeoutError, errorText, MessageError } from "./errors.js";
 import type { AiGateway, ContextMcpRoute, GatewayStats } from "./gateway.js";
@@ -295,6 +304,7 @@ import {
   isDeferralNotice,
   isHumanAskNotice,
   isReviewStopNotice,
+  isReworkNotice,
   isSactyGitHubComment,
   isTransientGitHubFailure,
   type PullRequestFeedback,
@@ -407,10 +417,12 @@ import {
   continuablePullRequest,
   deriveBody,
   deriveRecord,
+  designEditRemarkIds,
   ERROR_REPORT_FILE,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
   type ExportDestination,
+  type Extracted,
   extractBlocks,
   extractDocumentPages,
   extractExport,
@@ -478,6 +490,7 @@ import {
   stopMarkerOfTask,
   stopSummary,
 } from "./review-stop-notice.js";
+import { buildReworkNotice, reworkNoticeMarker } from "./rework-notice.js";
 import {
   assessesRiskInReview,
   assessPullRequestRisk,
@@ -2283,7 +2296,10 @@ export class TaskService {
         return true;
       }
       const recorded = this.append(latest, [
-        { actor: reworkActor(judged), event: { type: "ReworkJudged", payload: judged } },
+        {
+          actor: reworkActor(judged),
+          event: { type: "ReworkJudged", payload: { ...judged, weighed: true as const } },
+        },
       ]);
       this.warnIfNeeded(recorded);
       // 残した指摘がすべて、対応を求めていないもの（「承知しました」など）だった：差し戻さず、止まった工程を走り直す
@@ -2391,6 +2407,16 @@ export class TaskService {
         },
       },
     ]);
+    // 設計に戻したことを、実装の PR に知らせる（PBI-446）
+    const held = reworkingPullRequest(task);
+    if (target === "design" && judgement.weighed && held?.repo) {
+      this.announceReworkNotice(task, {
+        repo: held.repo,
+        number: held.number,
+        round,
+        reason: judgement.reason,
+      });
+    }
   }
 
   /**
@@ -2916,6 +2942,7 @@ export class TaskService {
         sactyReviewTask(item.body) === undefined &&
         !isReviewStopNotice(item.body) &&
         !isHumanAskNotice(item.body) &&
+        !isReworkNotice(item.body) &&
         !isDeferralNotice(item.body) &&
         !isSactyGitHubComment(item.body),
     );
@@ -3759,7 +3786,10 @@ export class TaskService {
         return;
       }
       current = this.append(latest, [
-        { actor: reworkActor(judged), event: { type: "ReworkJudged", payload: judged } },
+        {
+          actor: reworkActor(judged),
+          event: { type: "ReworkJudged", payload: { ...judged, weighed: true as const } },
+        },
       ]);
       // 対応を求めていない指摘（「承知しました」など）は、判断の記録で差し戻しから除かれる。1 件も残らなければ、差し戻さない
       // （承認待ちのまま。作り直しも、返信も、レビューのやり直しもしない）
@@ -4094,6 +4124,8 @@ export class TaskService {
       judgement.target && targets.includes(judgement.target)
         ? judgement.target
         : (targets[0] ?? gate.step);
+    // 設計に戻したことを、実装の PR に知らせる（PBI-446）。差し戻しの回は、requestChanges が数える回と同じ
+    const noticeRound = lastChangeRound(task, target) + 1;
     this.requestChanges(
       task.id,
       {
@@ -4139,6 +4171,14 @@ export class TaskService {
           : {}),
       },
     );
+    if (gate.step === "implement" && target === "design" && judgement.weighed && pr.repo) {
+      this.announceReworkNotice(task, {
+        repo: pr.repo,
+        number: pr.number,
+        round: noticeRound,
+        reason: judgement.reason,
+      });
+    }
   }
 
   /**
@@ -8487,6 +8527,151 @@ export class TaskService {
   }
 
   /**
+   * 設計の PR が置いたタスクブランチの設計のファイルの内容（まだコミットに入れていない直しを当てた後。PBI-446）。設計の PR が
+   * 無いタスク（画面で承認した）・タスクブランチにファイルが無いタスクは none。読めなければ failed。
+   */
+  private async designFileContent(
+    task: Task,
+  ): Promise<{ kind: "none" } | { kind: "file"; content: string } | { kind: "failed" }> {
+    const path = designFilePath(task);
+    const taskBranch = task.taskBranch;
+    const repository = task.repository;
+    if (!path || !taskBranch || !repository) return { kind: "none" };
+    try {
+      const gitDir = this.trustedGitDir(task);
+      const authEnv = await this.gitAuth(task, repository.url, []);
+      const head = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+      const content = await this.deps.repos.readFile(gitDir, head, path);
+      if (content === undefined) return { kind: "none" };
+      return { kind: "file", content: applyEditsToFile(content, pendingDesignEdits(task)) };
+    } catch {
+      return { kind: "failed" };
+    }
+  }
+
+  /**
+   * 実装の出力の設計の直し（sacty-design-edit）を検査して、DesignEdited の記録にする（PBI-446）。直しが無ければ undefined。
+   * 同じ実行の記録がすでにあれば、検査をやり直さず記録しない。反映しない直しは理由を残し、実装の提出は続ける。
+   */
+  private async designEditedEvent(
+    task: Task,
+    runId: string,
+    extracted: Extracted,
+    withProposal: boolean,
+    secrets: readonly string[],
+  ): Promise<ActivityItem | undefined> {
+    const remarkIds = designEditRemarkIds(task);
+    const approved = task.approved.design;
+    const read = extracted.designEdit;
+    if (remarkIds.length === 0 || !approved || !read) return undefined;
+    if (
+      this.deps.activity
+        .forTask(task.id)
+        .some((e) => e.type === "DesignEdited" && e.payload.runId === runId)
+    ) {
+      return undefined;
+    }
+    const output = approved.output;
+    const viewpoints = approved.testViewpoints ?? [];
+    const record = (payload: {
+      output: string;
+      testViewpoints: typeof viewpoints;
+      applied: DesignEditItem[];
+      rejected: DesignEditRejected[];
+      unreadable?: true;
+      withProposal?: true;
+    }): ActivityItem => ({
+      actor: "sacty",
+      event: {
+        type: "DesignEdited",
+        payload: { runId, round: (task.submissions.implement ?? 0) + 1, ...payload },
+      },
+    });
+    const block =
+      "unreadable" in read ? ({ kind: "unreadable" } as const) : readDesignEditBlock(read.value);
+    if (block.kind === "unreadable") {
+      return record({
+        output,
+        testViewpoints: viewpoints,
+        applied: [],
+        rejected: [],
+        unreadable: true,
+      });
+    }
+    if (block.edits.length === 0) return undefined;
+    const file = withProposal ? ({ kind: "none" } as const) : await this.designFileContent(task);
+    const result = applyDesignEdits(block.edits, {
+      remarkIds: new Set(remarkIds),
+      output,
+      viewpoints,
+      ...(file.kind === "file" ? { file: file.content } : {}),
+      secrets,
+      ...(withProposal
+        ? {
+            rejectAll:
+              "同じ出力に変更の申し出もあるため、設計の直しは反映しません（申し出だけを扱います）。",
+          }
+        : file.kind === "failed"
+          ? { rejectAll: "設計のファイルを読めなかったため、設計の直しは反映しません。" }
+          : {}),
+    });
+    return record({
+      output: result.output,
+      testViewpoints: result.viewpoints,
+      applied: result.applied,
+      rejected: result.rejected,
+      ...(withProposal ? { withProposal: true as const } : {}),
+    });
+  }
+
+  /**
+   * 実装の PR の指摘を設計の工程に戻したことを、その PR にコメントする（PBI-446）。1 回の差し戻しにつき 1 通（目印で見つけた
+   * ものがあれば書かない）。GitHub のアカウントを選んでいないプロジェクト・セキュリティの組み合わせのタスクには書かない
+   * （画面には出る）。投稿できなくても、タスクは変えない（例外は投げない）。送るのは待たない。
+   */
+  private announceReworkNotice(
+    task: Task,
+    target: { repo: string; number: number; round: number; reason: DaemonText },
+  ): void {
+    // セキュリティのタスクは、判断の理由（脆弱性や修正の範囲の詳細を含みうる）を公開の PR に書かない
+    if (isSecurityTask(task)) return;
+    const { repo, number, round } = target;
+    const project = this.deps.projects.get(task.projectId);
+    if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
+    const usedSecrets: string[] = [];
+    const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+    const reason = renderMessage(target.reason, "ja");
+    void this.serialized(`rework-notice:${task.id}:${round}`, async () => {
+      const signal = this.stopNoticeDeadline();
+      try {
+        const token = await untilAborted(
+          signal,
+          this.githubToken(task, repo, usedSecrets, project),
+        );
+        const body = buildReworkNotice({
+          taskId: task.id,
+          round,
+          reason,
+          stepName: STEP_NAME.design,
+          taskUrl: `${base}/tasks/${task.id}`,
+          secrets: usedSecrets,
+        });
+        const pr = { repo, token, number };
+        const existing = await untilAborted(
+          signal,
+          this.deps.pulls.findIssueComment({ ...pr, marker: reworkNoticeMarker(task.id, round) }),
+        );
+        if (existing) return;
+        await untilAborted(signal, this.deps.pulls.commentIssue({ ...pr, body, signal }));
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} の、設計に戻したことを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    });
+  }
+
+  /**
    * 人に確かめてほしいこと（`humanAsks`）を、承認待ちの成果物の PR にコメントする（PBI-301）。PR を見ている人は sacty の
    * 画面を開かないので、承認の画面に出すだけでは気づかれない。1 回の提出につき 1 件（目印で見つけたものがあれば書かない）。
    * GitHub のアカウントを選んでいないプロジェクト・PR が無い成果物には書かない（画面には出る）。投稿できなくても、タスクは
@@ -11986,6 +12171,8 @@ export class TaskService {
         keepIndent: step === "implement",
         // 完了の申告を読むのは、実装の工程だけ（PBI-347）
         completion: step === "implement",
+        // 設計の局所の直しを読むのは、PR の指摘で実装に戻した回の実装の工程だけ（PBI-446）
+        designEdit: step === "implement" && designEditRemarkIds(latest).length > 0,
       },
     );
     const { testViewpoints, proposal, testMap, testCommand } = extracted;
@@ -12138,6 +12325,17 @@ export class TaskService {
         },
       },
     ];
+    // 設計の局所の直しは、検査して、反映した内容を実装の提出の記録より前に記録する（PBI-446）
+    if (step === "implement") {
+      const edited = await this.designEditedEvent(
+        latest,
+        runId,
+        extracted,
+        proposal !== undefined,
+        [...contextSecrets],
+      );
+      if (edited) events.push(edited);
+    }
     // 評価の対象のレビューは、指摘なしの回だけ、レビューの答えと一緒に出させた PR のリスク評価を記録する（PBI-362・PBI-429）。
     // 答えが無い・形が違うときは、評価できなかったと記録する（レビューの投稿は止めない）。指摘なしでない回は記録しない
     if (review?.verdict === "no_findings" && this.assessesReviewRisk(latest)) {
@@ -13736,12 +13934,24 @@ export class TaskService {
         task.pullRequest?.commit ??
         repositoryNow.baseCommit;
       let keep: { commit: string; paths: string[] } | undefined;
+      let designOverrides: Record<string, string> | undefined;
       if (taskBranch) {
         // タスクブランチの最新（マージした要求要件・設計の PR を含む）に積む。要求要件・設計のファイルは実装の作業領域に
         // 無いので、タスクブランチのものを引き継ぐ
         parent = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
         const paths = [...new Set(task.stepPullRequests.map((p) => p.path))];
         if (paths.length > 0) keep = { commit: parent, paths };
+        // 実装の工程が出した設計の局所の直し（反映済みで、まだコミットに入れていないもの）を、タスクブランチの設計のファイルに
+        // 当てる（人が直した内容・テスト観点の節は、直しの箇所のほかは残る。PBI-446）
+        const designPath = designFilePath(task);
+        const pendingEdits = pendingDesignEdits(task);
+        if (designPath && pendingEdits.length > 0) {
+          const file = await this.deps.repos.readFile(gitDir, parent, designPath);
+          if (file !== undefined) {
+            const next = applyEditsToFile(file, pendingEdits);
+            if (next !== file) designOverrides = { [designPath]: next };
+          }
+        }
         // 実装の作業領域は起点のコミットのままなので、sacty が最後に積んだコミット（無ければ起点）の後にタスクブランチへ
         // 積まれた変更（人が直接積んだ・ベースブランチをマージした）は、実装のコミットで消えてしまう。要求要件・設計の
         // ファイルのほかに変更があれば、消さないように公開を止める（人が判断する）
@@ -13789,6 +13999,7 @@ export class TaskService {
         date,
         authEnv,
         ...(keep ? { keep } : {}),
+        ...(designOverrides ? { overrides: designOverrides } : {}),
       });
       // PRの作成の前に、プッシュしたブランチを記録する（PRの作成に失敗しても、中止で片付けられるように）
       if (task.pushedBranch?.commit !== commit || task.pushedBranch.branch !== branch) {

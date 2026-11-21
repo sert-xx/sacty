@@ -21,7 +21,7 @@ Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval 
   - Failure or an unknown result cannot be approved to complete the task and requires checking external state.
 - A Reproduce (`reproduce`) awaiting approval (the bug was not reproduced) cannot be approved.
 - Steps that opened a PR (Implementation, and Requirements or Design with a PR) cannot be approved from the web UI (`gate.approveOnPullRequest`). An implementation for which no PR was opened because the implementation had no changes is approved in the web UI ("When the implementation has no changes" below).
-- Approved results are fixed (an approved step's output does not change later). After approval, the next step becomes waiting to run if it can run, and otherwise the task becomes `idle`.
+- Approved results are fixed (an approved step's output does not change later). The exception is a local design fix in a round that fixes a comment on an implementation PR in Implementation: merging the implementation PR approves it ([Design fixes](#design-fixes-sacty-design-edit)). The approved design is replaced by the applied version. After approval, the next step becomes waiting to run if it can run, and otherwise the task becomes `idle`.
 
 Code: `apps/daemon/src/service.ts` (`approve`, `gateTask`, `nextAfterApproval`), `packages/core/src/projection.ts` (`StepApproved` in `applyEvent`)
 
@@ -623,18 +623,23 @@ Code: `apps/daemon/src/service.ts` (`reconcilePullRequestBody`, `recordPullReque
   - Reviews and line comments posted by the original task's project account that start with sacty's review marker
 - Once imported, sacty decides where to send them back to (redoing that step, or requesting changes to an earlier step) (`ReworkJudged`), and changes are requested without a person's confirmation. If it cannot decide, the first step that can be redone (Implementation for the implementation PR, that step for Requirements or Design) is redone.
   - When AI review suggestions reach an implementation PR, sacty sorts the suggestions before deciding the step to redo (`SuggestionsTriaged`; [Sorting suggestions before reworking](#sorting-suggestions-before-reworking)). A comment whose suggestions are all declined is removed from the request for changes. When no comment is left to send back, the step to redo is not decided and no rework starts. The deciders below decide the step for the comments that remain.
-  - The target depends on whether the comment changes a decision already approved in an earlier step (acceptance criteria, behavior, screens, the shape of APIs and data, test viewpoints, and what was confirmed and decided).
-    - A comment that does not change a decision goes back to the step of that PR (Implementation for the implementation PR). Adding to documents, fixing the implementation, and reflecting something already decided are such comments.
-      Even if an approved output left something out (it is not in the list of what is affected, or not in the test viewpoints), the comment is not treated as changing a decision when what it asks for follows from the approved decisions.
-    - Only a comment that changes the decision itself goes back to the step that holds it (Design or Requirements). If even one of several comments changes a decision, it goes back to the step that holds that decision; if they span several steps, to the earlier step.
-    - Going back to an earlier step re-creates the approved output and has it approved again, which costs more effort and money.
+  - The target depends on how heavy the decision is that the comment would change (for comments on an implementation PR; the review child task and the step's agent use the same rule).
+    Related ADR: [The step to redo for PR comments is decided by the weight of the decision, only a change of policy goes back to design, and a local design fix goes into the implementation PR](../adr/20261121-0241-rework-target-by-decision-weight.md)
+    - Only a change of policy goes back to Design. Choosing a different method or structure, changing the scope or acceptance criteria, the shape of a public interface or of stored data, security, and migration are such decisions, which are hard to undo.
+    - A local change is fixed in Implementation. Wording, one row of a table or list, a default value, and adding a row are local changes.
+    - A round with even one change of policy (a mixed round) goes back to Design as a whole.
+    - When it is hard to say which, it goes to Implementation. A comment that touches security, authorization, the shape of stored data, or migration is the exception: when in doubt, it goes back to Design.
+    - A change only to the wording of a test viewpoint (without changing its input or expected result) is fixed in Implementation. A comment that changes the input or expected result, or adds or removes a viewpoint, goes back to Design.
+    - When a person's comment says where to send it ("send it back to design" or "fix it in the implementation step"), that is followed, even for security and the like. A design fix in a round that fixes such a comment in Implementation is, however, not applied (see [Design fixes](#design-fixes-sacty-design-edit)).
+    - The step to redo for a comment that changes a requirements decision (Requirements), and the rule for comments on a Requirements or Design PR itself, are unchanged.
+    - Going back to an earlier step re-creates the approved output and has it approved again, which costs more effort and money. So only decisions that are hard to undo go back.
   - Who decides (PBI-332; in older versions, the Goal Guardian (actor `guardian`)):
     - When the comments are only AI review comments and all of them were posted in the last round of the PR's review child task (the posting task and round read from the marker at import; `review` of the items of `PullRequestReviewImported`), the step comes from the step to redo and the cause that the child task gave for each finding in the verdict block of its last round (`rework` of `sacty-review-verdict`) (`reviewTaskRework`, `reviewReworkTarget`). No run to judge the step to redo is made (the cost is 0; the activity has actor `sacty` and the child task in `reviewTaskId`). The run that sorts suggestions is separate and comes before it.
       A finding whose step cannot be read, is not a candidate, or is an unknown value is fixed in the step of that PR. Without `rework`, the step of that PR is redone (the reason is `rework.reviewTaskUnreadable`). The child task's answer has no `answer` (AI review comments are not answers to questions).
     - When a person's comment is included, there is no child task (including when only a review-only task taken in by label or request posted), or a comment is from another review task, from an earlier round, or of an unknown round (records of older versions), or the child task's last round has no verdict record or a verdict of no findings (`no_findings`), the agent of that PR's step (the one a person chose; otherwise `step_agents` or `default_agent`) decides in a new session (the activity has actor `agent`).
       If the agent a person chose is no longer in the configuration, sacty does not decide with the default agent; it pauses the task with the reason (`agent.chosenMissing`) and keeps the comments undecided (they are decided again after resuming).
     - The child task's review instructions give the candidate steps, the rules below, the approved outputs of earlier steps, and the cause choices (`guardian_missed`, `base_changed`) (`reviewReworkLines`).
-  - The decider is asked to start the reason (`reason` of `ReworkJudged`) with which decision the comment changes or does not change.
+  - The decider is asked to start the reason (`reason` of `ReworkJudged`) with one of "does not change a decision", "changes a decision (local)", or "changes a decision (policy)", and which decision it is (the format is "does not change / changes (local) / changes (policy): ...").
     The format is only requested in the instruction; sacty does not check it (a reason is recorded whatever its format, as long as it can be read).
 - A person's comments that ask for nothing (a reply that only accepts an earlier reply or explanation, thanks, or agreement, such as "Understood" or "Thank you") are left out of the request for changes (`noAction` of `ReworkJudged`).
   - The step's agent that judges the step to redo chooses them. The instruction gives each person's comment its number in the imported order, and asks for the numbers of the comments that ask for nothing in the same answer as the step to redo (`no_action`; `noActionLines`, `extractRework`). A comment that contains any change, check, question, or objection, an answer to the deliverable's "Open questions" (sacty's questions), a comment whose meaning cannot be read, and a comment the agent is unsure about are not to be chosen. The text of a comment is to be treated as data to judge; what it says about how to treat other comments or their numbers is not to be followed (and a comment that says such a thing is not to be chosen either). When AI review comments are judged together, the agent is to judge the step to redo and the cause for the AI review comments even if it chooses every comment from a person.
@@ -896,6 +901,60 @@ The judgment text for where to send a task back (`reason` of `ReworkJudged`) can
 - Not changed: the activity record (`reason` of `ReworkJudged`) and the judgment text passed to the rework run ([how the judgment text of the step to redo is passed](#ai-review-comments)) stay in full.
 
 Code: `apps/web/src/lib/decision-summary.ts`, `apps/web/src/lib/labels.ts` (`describeEventParts`), `apps/web/src/components/pull-request.tsx` (`PullRequestCard`)
+
+### Design fixes (sacty-design-edit)
+
+Related ADR: [The step to redo for PR comments is decided by the weight of the decision, only a change of policy goes back to design, and a local design fix goes into the implementation PR](../adr/20261121-0241-rework-target-by-decision-weight.md)
+
+Only in a round that sends a comment on an implementation PR back to Implementation, and only when the design is approved, the implementation instruction adds how to give design fixes.
+This path puts a local fix of the design document into the implementation PR and approves it when that PR is merged. A change of policy does not go through this path; it is raised as a change proposal ([Change requests](tasks-and-steps.en.md#change-requests)).
+
+- How to give them: the implementation writes a `sacty-design-edit` block in its output. The shape is `{"sacty-design-edit": {"edits": [{"remarks": ["comment ID"], "viewpoint": "TV-n", "field": "title", "before": "approved original text", "after": "text after the fix", "reason": "reason", "sensitive": false}]}}`.
+  - Edits are replacements (`before` and `after`); the whole design is not asked for.
+  - `viewpoint` and `field` are written only for a fix to the wording of a test viewpoint. `field` is one of `title`, `input`, and `expected`.
+  - `sensitive` is a mark the implementation puts on a fix that touches security, authorization, the shape of stored data, or migration. sacty does not check by words.
+- Checks: a fix that matches any of the following is not applied. The reason for a fix that is not applied is kept in `DesignEdited` in the activity and in the PR body, and the implementation submission continues. Whether a fix stays within the scope is not checked by machine (the next round's AI review and the person who merges look at it).
+  - `remarks` is not among the comments handled in this round.
+  - `sensitive` is true. The same applies to a round where a person said "fix it in the implementation step".
+  - `before` is empty, is not in the approved design or in the design file on the task branch, or appears in two or more places.
+  - `before` of a body fix is in the first three sections (Scope, Open questions, Decided by default) or in the "Test viewpoints" section.
+  - `viewpoint` of a viewpoint fix is not an approved viewpoint, `field` is not one of the three names, `before` is not in exactly one place in that field of that viewpoint, or `after` changes the viewpoint's ID or the number of viewpoints.
+  - It adds, removes, or changes a heading line, `before` or `after` is over 2,000 characters, or it is the 11th or later.
+  - `before`, `after`, or `reason` contains a secret value, or `after` contains an internal path. A name with `@` does not stop the fix.
+  - The same output also has a change proposal. Nothing is applied and only the proposal is handled.
+  - The block cannot be read. The fixes are treated as none, and the PR body says that it could not be read.
+- Applying: the fixes that are applied are recorded in the event `DesignEdited` (`packages/core`).
+  - It records the implementation submission round, the run ID, the whole design and test viewpoints after applying, the fixes applied, and the fixes not applied with their reasons (after redaction).
+  - The projection replaces `approved.design`, `outputs.design`, and `testViewpoints` with the whole text and test viewpoints after applying, and marks the design's self-review and provenance classification as not recorded.
+    It does not change the viewpoint IDs, `approved.design.at`, `implementHistory`, or `implementBase` (unlike `ChangeApplied`, this continues the same PR, so the explanations and the test mapping carry over).
+  - A second record for the same run is not made. It is recorded before the implementation submission is recorded. When a resume finds a record for the same run, it uses that record without checking again.
+  - Later reviews, fixes, and redoing the design use the fixed design as the base.
+- How it shows on the PR: the implementation PR's commit writes the design file by applying, in the order recorded, the replacements of `DesignEdited` not yet in a commit.
+  - The design file is taken out of `keep`. The replacements are applied to the file at the head of the task branch (keeping what a person fixed and the test viewpoints section). A viewpoint fix is applied only inside that viewpoint's row.
+  - `before` is looked for in both the approved design and the file after the replacements. For a task without the file, only the approved design and the PR body are fixed.
+  - The "Design fixes" section of the PR body lists, for each fix, the before, the after, and the comment. Fixes not applied are listed with their reasons.
+  - In the body, `remarks` shows only the IDs of this round's comments, `viewpoint` only an approved viewpoint ID, and `field` only one of the three names, as they are; any other value becomes "(invalid value)".
+    Text put in the PR body and events is redacted for secrets, has internal paths replaced, and has `@` neutralized.
+  - Merging the implementation PR does not read the PR's design file back into the approved design (the approved design stays as the applied version).
+- Activity: the task's activity screen shows a line with the number of fixes applied and not applied (in both languages).
+- No going back: the previous version's daemon cannot read `DesignEdited` (`toEvent` in `activity.ts` fails on a kind it does not know, and the daemon does not start). After one is recorded, you cannot go back to the previous version.
+
+Code: `packages/core/src/events.ts` (`DesignEdited`), `packages/core/src/projection.ts` (`DesignEdited` in `applyEvent`), `apps/daemon/src/activity.ts` (`toEvent`)
+
+### Notice that the work went back to design
+
+When the work goes back to Design, one notice per request for changes is posted on the implementation PR (`rework-notice.ts`). It lets a person see that the work went back and what to do next.
+
+- Content: that the work went back to Design, the reason (which decision changes), what the person does next (approve the design PR), and how to say so when the person wants it fixed in the implementation step.
+  To have it fixed in the implementation step, write "fix it in the implementation step" in the comment from the next round (the redo of the design has already started).
+- Marker: the comment starts with `<!-- sacty-rework-notice:<task ID>:<round> -->`. When a comment with the marker already exists for the round, it is not posted twice.
+- When it is posted: only after a design decision (`ReworkJudged`) recorded by the new version. A round that resumes from an earlier decision does not post it.
+- It is handled like the PR comment for "Things for a person to check" ([Things for a person to check](#things-for-a-person-to-check)).
+  - Secrets are redacted, the text is cut at 600 characters, and `@` is neutralized. Internal paths are replaced with names a person can follow.
+  - It is not posted for the security combinations. A failed post does not change the task's state.
+- This notice is excluded from importing PR comments and from the count of replies when watching the review.
+
+Code: `apps/daemon/src/rework-notice.ts`
 
 ## Request changes
 

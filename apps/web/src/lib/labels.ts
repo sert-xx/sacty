@@ -756,6 +756,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       return e.ChangeDecided(event.payload.proposalId, event.payload.accept, actor);
     case "ChangeApplied":
       return e.ChangeApplied(event.payload.proposalId);
+    case "DesignEdited":
+      return e.DesignEdited(
+        event.payload.applied.length,
+        event.payload.rejected.length,
+        event.payload.unreadable === true,
+      );
     case "RepositoryPrepared":
       return e.RepositoryPrepared(
         event.payload.url,
