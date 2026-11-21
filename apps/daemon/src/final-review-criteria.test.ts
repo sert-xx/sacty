@@ -197,16 +197,13 @@ describe("実装・直しの指示に、指示を作った時刻を入れる（P
   });
 
   it.each([
-    ["設計あり", designed()],
-    ["テストの仕組みが無い", direct({ noTestsReason: "無い", testCommand: undefined })],
-    ["PR のレビューの子タスクが見る提出", designed()],
+    ["設計あり", designed(), {}],
+    ["テストの仕組みが無い", direct({ noTestsReason: "無い", testCommand: undefined }), {}],
+    ["PR のレビューの子タスクが見る提出", designed(), { pullRequestReview: true }],
   ])(
     "%sの実装の指示の基準に、未来の記録の日時を直させる行が、比べ方と対象とともに入る",
-    (name, t) => {
-      const prompt = buildPrompt(t, "implement", {
-        now,
-        ...(name.startsWith("PR") ? { pullRequestReview: true } : {}),
-      });
+    (_name, t, options) => {
+      const prompt = buildPrompt(t, "implement", { now, ...options });
       const line = prompt.split("\n").find((l) => l.includes(FUTURE_TIMESTAMP)) ?? "";
       expect(line).toContain("リポジトリの決まりのタイムゾーンに直して比べ、決まりが無ければ UTC");
       expect(line).toContain("期限・予定日など、記録の日時ではない日時は、未来でも直さない");

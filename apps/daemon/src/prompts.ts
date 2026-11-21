@@ -3519,7 +3519,7 @@ function directImplementLines(
   previous: string | undefined,
   remarks: ReturnType<typeof humanRemarks>,
   pullRequestReview = false,
-  now: number = Date.now(),
+  now: number,
 ): string[] {
   const step: StepKey = "implement";
   const noTests = task.noTestsReason;
@@ -8019,7 +8019,7 @@ const WORKSPACE_TOOL_LINES_BASE = [
 ];
 
 /** 指示の時刻の形（秒まで・UTC。例：2026-11-21T10:30:00Z）。 */
-export function promptTimestamp(now: number): string {
+function promptTimestamp(now: number): string {
   return new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
@@ -8027,7 +8027,7 @@ export function promptTimestamp(now: number): string {
  * 実装・直しの指示に入れる、指示を作った時刻の行（PBI-469）。ADR・作業の記録などの日時を、推測で書かせない。
  * 特定のリポジトリの決まり（名前の形・タイムゾーン）には寄せない。
  */
-export function timestampLine(now: number): string {
+function timestampLine(now: number): string {
   return `- この指示を作った時刻は ${promptTimestamp(now)}（UTC）です。ファイル名・本文に日時を書くとき（記録・決定・作業の履歴など）は、日時を推測で決めず、書く直前にコンテナで今の時刻を確かめる（date -u など）。日時の形とタイムゾーンは、リポジトリの決まりに従う`;
 }
 

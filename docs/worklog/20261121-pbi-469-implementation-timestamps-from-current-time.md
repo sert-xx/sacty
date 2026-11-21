@@ -19,7 +19,10 @@
 
 ## 確かめたこと
 
-- 指示・基準・service・既定のコンテキストを確かめるテストを足し、tests/docs と全テストを実行した。
+- 指示・基準・service・既定のコンテキストを確かめるテストを足した。
+- `npx biome check --error-on-warnings .`：成功（806 ファイル）
+- `npm run typecheck`：成功
+- `npx vitest run`：338 ファイル・6,806 件成功、14 件スキップ
 
 ## 残したこと
 
