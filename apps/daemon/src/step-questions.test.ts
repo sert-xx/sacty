@@ -492,3 +492,51 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
     expect(body).toMatch(/## 確かめる所/);
   });
 });
+
+describe("問いごとの文（PBI-475）", () => {
+  it("must・should の札の下の箇条書きを、いちばん浅い1項目ずつ（入れ子・続きの行を含む）切り出し、件数は items の数と同じ", () => {
+    const read = readStepQuestions(
+      [
+        "# 設計",
+        "",
+        "## 確認したいこと",
+        "",
+        "**must**",
+        "",
+        "- 決済の通貨を決めるか",
+        "- 返金の期限を決めるか",
+        "  - 推奨：30日",
+        "  - 理由：規約に合わせる",
+        "",
+        "**should**",
+        "",
+        "- 画面の文言を直すか",
+        "",
+        "## 次",
+      ].join("\n"),
+    );
+    expect(read.kind).toBe("counted");
+    if (read.kind !== "counted") return;
+    expect(read.must).toBe(2);
+    expect(read.should).toBe(1);
+    expect(read.items.map((i) => i.kind)).toEqual(["must", "must", "should"]);
+    expect(read.items[0]?.text).toBe("決済の通貨を決めるか");
+    expect(read.items[1]?.text).toContain("返金の期限を決めるか");
+    expect(read.items[1]?.text).toContain("  - 推奨：30日");
+    expect(read.items[1]?.text).toContain("  - 理由：規約に合わせる");
+    expect(read.items[2]?.text).toContain("画面の文言を直すか");
+  });
+
+  it("札の後に文があり並びが無い問いは、1件として切り出す（should が「なし」なら must だけ）", () => {
+    const read = readStepQuestions(
+      ["## 確認したいこと", "", "**must**：通貨を決めるか", "**should**：なし"].join("\n"),
+    );
+    expect(read.kind).toBe("counted");
+    if (read.kind !== "counted") return;
+    expect(read.must).toBe(1);
+    expect(read.should).toBe(0);
+    expect(read.items).toHaveLength(1);
+    expect(read.items[0]?.kind).toBe("must");
+    expect(read.items[0]?.text).toContain("通貨を決めるか");
+  });
+});

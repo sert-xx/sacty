@@ -87,10 +87,10 @@ function completed(t: Setup, patch: Record<string, unknown> = {}, title = "決�
 }
 
 describe("本物のデーモンのサービスを通した、完了したタスクからの続きの作成（PBI-412）", () => {
-  it("ツールの一覧は19個。derive_task の引数は task_id・title・body だけ、rename_task は task_id・title だけで、注釈は書き込み・非破壊・非冪等・openWorld", async () => {
+  it("ツールの一覧は20個。derive_task の引数は task_id・title・body だけ、rename_task は task_id・title だけで、注釈は書き込み・非破壊・非冪等・openWorld", async () => {
     const t = await setup();
     const { tools } = await t.client.listTools();
-    expect(tools).toHaveLength(19);
+    expect(tools).toHaveLength(20);
     for (const [name, keys] of [
       ["derive_task", ["task_id", "title", "body"]],
       ["rename_task", ["task_id", "title"]],
