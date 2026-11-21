@@ -1911,7 +1911,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
 
 関係する ADR: [完了したタスクから、元のタスクを指す続きのタスクを何度でも作れるようにする（派生）](../adr/20261028-0054-derive-follow-up-task.md)
 
-- 完了したタスク（工程をすべて終えて止まった、中止していないタスク。`canDerive`）は、詳細の「続きのタスク」から、続きの作業のタスクを作れる（`POST /api/tasks/:id/derive`）。
+- 完了したタスク（工程をすべて終えて止まった、中止していないタスク。`canDerive`）は、詳細の上の操作の並びの「続きのタスクを作る」から、続きの作業のタスクを作れる（`POST /api/tasks/:id/derive`）。
   元のタスクは変えず、元のタスクを指す新しいタスクを作る（`TaskCreated` の `derivedFrom`。元のタスクの ID と、説明に足した元のタスクの記録の本文 `record`）。
   元のタスクには、作業履歴の復元で作ったタスクを作った順に記録する（`derivedTasks`）。
   1つのタスクから、いくつでも作れる。
@@ -1939,7 +1939,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   一覧を取れなければ、ID で出す（詳細は出す）。
   セキュリティの組み合わせのタスクでは、進め方の選択肢をセキュリティの組み合わせだけにする。
 
-コード: `apps/daemon/src/service.ts`（`deriveTask`）、`apps/daemon/src/prompts.ts`（`deriveRecord`・`deriveBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/derive`）、`packages/core/src/events.ts`（`DeriveTaskInput`・`DERIVE_RECORD_HEADING`）、`packages/core/src/projection.ts`（`canDerive`・`applyEvent`）、`apps/web/src/components/derive-dialog.tsx`（`DerivedTasksCard`）、`apps/web/src/lib/task-detail-data.ts`
+コード: `apps/daemon/src/service.ts`（`deriveTask`）、`apps/daemon/src/prompts.ts`（`deriveRecord`・`deriveBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/derive`）、`packages/core/src/events.ts`（`DeriveTaskInput`・`DERIVE_RECORD_HEADING`）、`packages/core/src/projection.ts`（`canDerive`・`applyEvent`）、`apps/web/src/components/derive-dialog.tsx`（`DeriveButton`・`DerivedTasksCard`）、`apps/web/src/lib/task-detail-data.ts`
 
 ## オーケストレーターに質問
 
