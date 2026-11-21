@@ -252,6 +252,18 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    it("実装の工程の指示に、時計の時刻を入れる（PBI-469）", async () => {
+      const { activity, service, executor } = await toImplement([implement("# 実装", [TV1, TV2])], {
+        now: () => Date.UTC(2026, 10, 21, 10, 30, 0),
+      });
+      await drain(service);
+      const prompt = executor.calls
+        .map((_, i) => promptOf(executor, i))
+        .find((p) => p.includes("--- テスト観点（承認済み・すべてにテストを対応させる） ---"));
+      expect(prompt).toContain("2026-11-21T10:30:00Z");
+      activity.close();
+    });
+
     it("設計のある実装の指示は、観点の対応が欠けると提出されないことと、変更が要らないときも対応させることを伝える", async () => {
       const { activity, service, executor } = await toImplement([implement("# 実装", [TV1, TV2])]);
       await drain(service);

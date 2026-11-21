@@ -900,6 +900,10 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       return event.payload.reason === "suggestions_declined"
         ? e.PullRequestMarkedReadyWithSuggestions(event.payload.number)
         : e.PullRequestMarkedReady(event.payload.number);
+    case "PullRequestUndraftNoted":
+      return e.PullRequestUndraftNoted(event.payload.number);
+    case "PullRequestRedraftSkipped":
+      return e.PullRequestRedraftSkipped(event.payload.number, event.payload.reason);
     case "ContinuedFeedbackPassed":
       return e.ContinuedFeedbackPassed(event.payload.keys.length);
     case "WorkspaceFilesSkipped":

@@ -679,10 +679,16 @@ export const AuditAdoptNote = z.object({
 export type AuditAdoptNote = z.infer<typeof AuditAdoptNote>;
 
 /** 監査の改修の提案から作ったタスクの、元の提案（PBI-125）。 */
-const AuditFixLink = z.object({ taskId: z.string().min(1), proposalId: z.string().min(1) });
+const AuditFixLink = z.object({
+  taskId: z.string().min(1),
+  proposalId: z.string().min(1),
+});
 
 /** 不安定なテストの台帳の提案から作ったタスクが直すテスト（リポジトリはタスクのもの。PBI-312）。 */
-const FlakyFixLink = z.object({ name: z.string().min(1), file: z.string().min(1) });
+const FlakyFixLink = z.object({
+  name: z.string().min(1),
+  file: z.string().min(1),
+});
 
 /**
  * セキュリティチェックの指摘の区分。dependency：依存の脆弱性、supply-chain：サプライチェーン（CI・取得元・固定の仕方）、
@@ -769,14 +775,24 @@ export const ReviewRecord = z.object({
   mode: z.enum(["subagents", "sequential"]).optional(),
   viewpoints: z
     .array(
-      z.object({ id: z.string(), status: ReviewViewpointStatus, reason: z.string().optional() }),
+      z.object({
+        id: z.string(),
+        status: ReviewViewpointStatus,
+        reason: z.string().optional(),
+      }),
     )
     .max(REVIEW_RECORD_LIST_MAX),
   notReviewed: z
     .array(z.object({ id: z.string(), reason: z.string() }))
     .max(REVIEW_RECORD_LIST_MAX),
   dismissed: z
-    .array(z.object({ title: z.string(), viewpoint: z.string().optional(), reason: z.string() }))
+    .array(
+      z.object({
+        title: z.string(),
+        viewpoint: z.string().optional(),
+        reason: z.string(),
+      }),
+    )
     .max(REVIEW_RECORD_LIST_MAX),
   /** 落とした指摘の件数。must は、そのうち要修正の重さだった数。 */
   dropped: z
@@ -928,7 +944,10 @@ const TaskCreated = z.object({
      * タスクのやり直しでも、作業するリポジトリは人が決めたもの（チケットを読み直してリポジトリを選ばない）。
      */
     rerun: z
-      .object({ taskId: z.string().min(1), image: z.string().min(1).max(100).optional() })
+      .object({
+        taskId: z.string().min(1),
+        image: z.string().min(1).max(100).optional(),
+      })
       .optional(),
     /**
      * 完了したタスクから、人がその続きの作業のために作った（派生）。元の（完了した）タスクと、sacty が説明の後に足した
@@ -1014,7 +1033,12 @@ const TaskSplit = z.object({
      * 子タスクだけでは確かめきれない理由。
      */
     integrationViewpoints: z
-      .array(z.object({ id: z.string().min(1), reason: z.string().min(1).max(2000) }))
+      .array(
+        z.object({
+          id: z.string().min(1),
+          reason: z.string().min(1).max(2000),
+        }),
+      )
       .min(1)
       .optional(),
   }),
@@ -1302,7 +1326,11 @@ const StepsSkipped = z.object({
  */
 const StepImageChanged = z.object({
   type: z.literal("StepImageChanged"),
-  payload: z.object({ step: StepKey, from: z.string().min(1), to: z.string().min(1) }),
+  payload: z.object({
+    step: StepKey,
+    from: z.string().min(1),
+    to: z.string().min(1),
+  }),
 });
 
 /**
@@ -1313,7 +1341,10 @@ const StepImageChanged = z.object({
  */
 const TaskImageChanged = z.object({
   type: z.literal("TaskImageChanged"),
-  payload: z.object({ from: z.string().min(1).optional(), to: z.string().min(1) }),
+  payload: z.object({
+    from: z.string().min(1).optional(),
+    to: z.string().min(1),
+  }),
 });
 
 /**
@@ -1344,7 +1375,11 @@ const TaskRenamed = z.object({
  */
 const StepAgentChanged = z.object({
   type: z.literal("StepAgentChanged"),
-  payload: z.object({ step: StepKey, from: z.string().min(1), to: z.string().min(1) }),
+  payload: z.object({
+    step: StepKey,
+    from: z.string().min(1),
+    to: z.string().min(1),
+  }),
 });
 
 const AgentRunStarted = z.object({
@@ -1714,7 +1749,9 @@ export const DesignEditItem = z.object({
 export type DesignEditItem = z.infer<typeof DesignEditItem>;
 
 /** 反映しなかった設計の直し（理由を添える）。 */
-export const DesignEditRejected = DesignEditItem.extend({ rejection: DaemonText });
+export const DesignEditRejected = DesignEditItem.extend({
+  rejection: DaemonText,
+});
 export type DesignEditRejected = z.infer<typeof DesignEditRejected>;
 
 /**
@@ -2380,7 +2417,11 @@ const OrchestratorSessionUsed = z.object({
      * セッションのやり取りを書き出して、読み取り専用で渡した。
      */
     handoffFrom: z
-      .object({ agentId: z.string(), sessionId: z.string(), truncated: z.boolean() })
+      .object({
+        agentId: z.string(),
+        sessionId: z.string(),
+        truncated: z.boolean(),
+      })
       .optional(),
   }),
 });
@@ -2522,7 +2563,10 @@ const RepositoryChosen = z.object({
 /** チケットに PR の URL をコメントした・できなかった（PBI-52）。PR を作ったら1回だけ。 */
 const TicketPullRequestCommented = z.object({
   type: z.literal("TicketPullRequestCommented"),
-  payload: z.object({ url: z.string().optional(), failed: DaemonText.optional() }),
+  payload: z.object({
+    url: z.string().optional(),
+    failed: DaemonText.optional(),
+  }),
 });
 
 /** 質問・答えの文字数の上限（PBI-54）。 */
@@ -2609,7 +2653,11 @@ const ErrorAnalyzed = z.object({
  */
 const ExportStarted = z.object({
   type: z.literal("ExportStarted"),
-  payload: z.object({ step: StepKey, runId: z.string(), approvedAt: z.string() }),
+  payload: z.object({
+    step: StepKey,
+    runId: z.string(),
+    approvedAt: z.string(),
+  }),
 });
 
 /**
@@ -2739,7 +2787,13 @@ const IntegrationReviewed = z.object({
      * baseBranch・commit は空になる。
      */
     repositories: z
-      .array(z.object({ repo: z.string(), baseBranch: z.string(), commit: z.string() }))
+      .array(
+        z.object({
+          repo: z.string(),
+          baseBranch: z.string(),
+          commit: z.string(),
+        }),
+      )
       .optional(),
     viewpoints: z.array(ViewpointReview),
     remarks: z.array(RemarkReview),
@@ -2831,6 +2885,8 @@ const PullRequestRetargeted = z.object({
     number: z.number().int().positive(),
     baseBranch: z.string().min(1),
     ready: z.literal(true).optional(),
+    /** 外しの切り替えを PullRequestUndraftNoted で覚える版が書いた（PBI-468）。無い記録は、前の版が外した。 */
+    undraftTracked: z.literal(true).optional(),
   }),
 });
 
@@ -2885,6 +2941,36 @@ const PullRequestMarkedReady = z.object({
      * 判定は「提案あり」のまま外した（PBI-440。再レビューはせず、リスク評価だけを 1 回行ってから外す）。
      */
     reason: z.literal("suggestions_declined").optional(),
+    /** 外しの切り替えを PullRequestUndraftNoted で覚える版が書いた（PBI-468）。無い記録は、前の版が外した。 */
+    undraftTracked: z.literal(true).optional(),
+  }),
+});
+
+/**
+ * sacty が実装の PR のドラフトを外した（PBI-468）。外した切り替えを GitHub のタイムラインの ReadyForReviewEvent の ID で覚え、
+ * 人が外した切り替えと見分ける（GitHub の actor は、人も sacty も同じアカウントなので使えない）。eventId が無いのは、外す要求の
+ * 答えから今回の外しの ID を決められなかったとき（答えを受け取れなかった・要求の前の最後の外しを読めなかった・反映の遅れで
+ * 前の外しの ID が返った）。この後の最後の外しが sacty のものか決められないので、sacty は PR をドラフトへ戻さない。
+ */
+const PullRequestUndraftNoted = z.object({
+  type: z.literal("PullRequestUndraftNoted"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    eventId: z.string().min(1).optional(),
+  }),
+});
+
+/**
+ * sacty が、実装の PR をドラフトへ戻さなかった（PBI-468）。person は、最後の切り替えが人の「ドラフトを外す」だった
+ * （eventId はその外し。1回につき1件）。unreadable は、切り替えの履歴を GitHub から読めなかった（読めない状態が続く間に1件）。
+ * undetermined は、最後の切り替えが sacty のものか決められなかった（その PR につき1件）。一時停止に伴う戻しは対象外。
+ */
+const PullRequestRedraftSkipped = z.object({
+  type: z.literal("PullRequestRedraftSkipped"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    reason: z.enum(["person", "unreadable", "undetermined"]),
+    eventId: z.string().min(1).optional(),
   }),
 });
 
@@ -3351,7 +3437,12 @@ const PullRequestCiFailed = z.object({
     number: z.number().int().positive(),
     commit: z.string().min(1),
     checks: z
-      .array(z.object({ name: z.string().max(PR_CI_CHECK_NAME_MAX), url: z.string().optional() }))
+      .array(
+        z.object({
+          name: z.string().max(PR_CI_CHECK_NAME_MAX),
+          url: z.string().optional(),
+        }),
+      )
       .min(1)
       .max(PR_CI_FAILED_CHECKS_MAX),
     more: z.number().int().positive().optional(),
@@ -3365,7 +3456,10 @@ const PullRequestCiFailed = z.object({
  */
 const PullRequestCiRecovered = z.object({
   type: z.literal("PullRequestCiRecovered"),
-  payload: z.object({ number: z.number().int().positive(), commit: z.string().min(1) }),
+  payload: z.object({
+    number: z.number().int().positive(),
+    commit: z.string().min(1),
+  }),
 });
 
 /**
@@ -3589,7 +3683,9 @@ const PullRequestReviewPosted = z.object({
  */
 const ReviewWatchEnded = z.object({
   type: z.literal("ReviewWatchEnded"),
-  payload: z.object({ reason: z.enum(["merged", "closed", "parent_completed"]) }),
+  payload: z.object({
+    reason: z.enum(["merged", "closed", "parent_completed"]),
+  }),
 });
 
 /**
@@ -4022,7 +4118,14 @@ const PullRequestCiRerunRequested = z.object({
   type: z.literal("PullRequestCiRerunRequested"),
   payload: z.object({
     commit: z.string().min(1),
-    runs: z.array(z.object({ id: z.number().int(), attempt: z.number().int().optional() })).min(1),
+    runs: z
+      .array(
+        z.object({
+          id: z.number().int(),
+          attempt: z.number().int().optional(),
+        }),
+      )
+      .min(1),
     failures: z.array(CiFailure).default([]),
   }),
 });
@@ -4119,7 +4222,10 @@ const DeploymentChecked = z.object({
 /** デプロイの確認を実行せずに飛ばした（PBI-89。予算の上限に達していた）。 */
 const DeploymentWatchSkipped = z.object({
   type: z.literal("DeploymentWatchSkipped"),
-  payload: z.object({ reason: z.enum(["budget"]), detail: DaemonText.optional() }),
+  payload: z.object({
+    reason: z.enum(["budget"]),
+    detail: DaemonText.optional(),
+  }),
 });
 
 /**
@@ -4267,15 +4373,26 @@ export type MemoryDeleteReason = (typeof MEMORY_DELETE_REASONS)[number];
 
 /** メモリーを移した先の階層（PBI-128）。project ならそのプロジェクト、repository ならそのリポジトリ。 */
 export const MemoryMove = z.discriminatedUnion("scope", [
-  z.object({ id: z.string().min(1), scope: z.literal("project"), projectId: z.string().min(1) }),
-  z.object({ id: z.string().min(1), scope: z.literal("repository"), repo: z.string().min(1) }),
+  z.object({
+    id: z.string().min(1),
+    scope: z.literal("project"),
+    projectId: z.string().min(1),
+  }),
+  z.object({
+    id: z.string().min(1),
+    scope: z.literal("repository"),
+    repo: z.string().min(1),
+  }),
 ]);
 export type MemoryMove = z.infer<typeof MemoryMove>;
 
 /** 監査を待つ（タスクが完了した）。capUsd は監査の予算の上限。 */
 const AuditQueued = z.object({
   type: z.literal("AuditQueued"),
-  payload: z.object({ auditId: z.string().min(1), capUsd: z.number().positive() }),
+  payload: z.object({
+    auditId: z.string().min(1),
+    capUsd: z.number().positive(),
+  }),
 });
 
 /** 大まかな監査の結果。counts は sacty が作業履歴とセッションログから数えた件数。concerns は深掘りする工程。 */
@@ -4374,7 +4491,10 @@ const AuditBudgetPaused = z.object({
 /** 人が監査の予算の上限を上げて再開した（累計）。 */
 const AuditCapRaised = z.object({
   type: z.literal("AuditCapRaised"),
-  payload: z.object({ auditId: z.string().min(1), capUsd: z.number().positive() }),
+  payload: z.object({
+    auditId: z.string().min(1),
+    capUsd: z.number().positive(),
+  }),
 });
 
 /**
@@ -4406,7 +4526,10 @@ const AuditProposalRejected = z.object({
 /** 監査が登録したメモリーを消した（PBI-126）。メモリーを登録したタスクの作業履歴に記録する。 */
 const AuditMemoryDeleted = z.object({
   type: z.literal("AuditMemoryDeleted"),
-  payload: z.object({ memoryId: z.string().min(1), reason: z.enum(MEMORY_DELETE_REASONS) }),
+  payload: z.object({
+    memoryId: z.string().min(1),
+    reason: z.enum(MEMORY_DELETE_REASONS),
+  }),
 });
 
 /** 作業履歴に書けるイベント（追加する前の形）。 */
@@ -4482,6 +4605,8 @@ export const EventInput = z.discriminatedUnion("type", [
   VerificationOverridden,
   FinalReviewSkipped,
   PullRequestMarkedReady,
+  PullRequestUndraftNoted,
+  PullRequestRedraftSkipped,
   NoChangesFound,
   ImplementationIncomplete,
   ImplementationUnchanged,
@@ -4717,7 +4842,11 @@ export function rerunEditableBody(task: {
 }
 
 /** 再開の補足を足す・取り出すときに見るタスクの項目。 */
-type ResumeNoteTask = { body: string; rerun?: unknown; derivedFrom?: { record?: string } };
+type ResumeNoteTask = {
+  body: string;
+  rerun?: unknown;
+  derivedFrom?: { record?: string };
+};
 
 /**
  * 説明の中で、sacty が足した記録（派生の元のタスクの記録・再実行の前の試行の記録）が始まる位置（無ければ -1）。
@@ -4796,7 +4925,10 @@ export type ResumeTaskInput = z.infer<typeof ResumeTaskInput>;
 /** 画面が表示していた提出回。現在のゲートと一致しなければ拒否する（古い成果物を見たまま判断させないため）。 */
 const Submission = z.number().int().positive();
 
-export const ApproveStepInput = z.object({ step: StepKey, submission: Submission });
+export const ApproveStepInput = z.object({
+  step: StepKey,
+  submission: Submission,
+});
 export type ApproveStepInput = z.infer<typeof ApproveStepInput>;
 
 /** 差し戻しの指摘の一覧（件数の上限と、空の指摘を除くのは、人が書く指摘も記録済みの指摘も同じ）。 */

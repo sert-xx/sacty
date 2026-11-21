@@ -59,7 +59,10 @@ export function splitLastFix(text: string): { whole: string; fix?: string } {
     (state === "in" ? body : rest).push(line);
   }
   if (state === "before") return { whole: text };
-  return { whole: trimBlankLines(rest.join("\n")), fix: body.join("\n").trim() };
+  return {
+    whole: trimBlankLines(rest.join("\n")),
+    fix: body.join("\n").trim(),
+  };
 }
 
 /**

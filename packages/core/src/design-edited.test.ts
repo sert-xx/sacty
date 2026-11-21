@@ -61,7 +61,9 @@ function approvedTask(): Map<string, Task> {
   task.testViewpoints = VIEWPOINTS;
   task.implementHistory = ["前の実装の説明"];
   task.implementBase = "土台";
-  task.selfReviews = { design: { passed: true } } as unknown as Task["selfReviews"];
+  task.selfReviews = {
+    design: { passed: true },
+  } as unknown as Task["selfReviews"];
   task.provenances = { design: [] } as unknown as Task["provenances"];
   return tasks;
 }
@@ -72,7 +74,10 @@ describe("DesignEdited の投影（PBI-446）", () => {
       approvedTask(),
       edited("r1", "# 設計\n\n新しい文言", [
         VIEWPOINTS[0] as (typeof VIEWPOINTS)[number],
-        { ...(VIEWPOINTS[1] as (typeof VIEWPOINTS)[number]), expected: "決済エラーの文言" },
+        {
+          ...(VIEWPOINTS[1] as (typeof VIEWPOINTS)[number]),
+          expected: "決済エラーの文言",
+        },
       ]),
     ).get("t1") as Task;
     expect(after.approved.design?.output).toBe("# 設計\n\n新しい文言");
@@ -86,7 +91,11 @@ describe("DesignEdited の投影（PBI-446）", () => {
     expect(after.selfReviews?.design).toBeNull();
     expect(after.provenances?.design).toBeNull();
     expect(after.designEdits).toHaveLength(1);
-    expect(after.designEdits?.[0]).toMatchObject({ runId: "r1", round: 2, committed: false });
+    expect(after.designEdits?.[0]).toMatchObject({
+      runId: "r1",
+      round: 2,
+      committed: false,
+    });
   });
 
   it("反映した直しが無い記録（反映しなかった直しだけ）は、設計を変えない", () => {
@@ -109,7 +118,10 @@ describe("DesignEdited の投影（PBI-446）", () => {
 
   it("設計が承認済みでなければ、作業履歴の矛盾として拒む", () => {
     const tasks = project([
-      ev({ type: "TaskCreated", payload: { title: "決済", body: "本文", start: "sacty" } }),
+      ev({
+        type: "TaskCreated",
+        payload: { title: "決済", body: "本文", start: "sacty" },
+      }),
     ]);
     expect(() => applyEvent(tasks, edited("r1", "# 設計"))).toThrow(/not approved/);
   });

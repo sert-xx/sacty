@@ -67,8 +67,15 @@ const PARAMS = {
   "project.notFound": null,
   "project.changedElsewhere": null,
   "project.targetDuplicated": z.object({ scope: Scope, target: z.string() }),
-  "project.targetTaken": z.object({ scope: Scope, target: z.string(), project: z.string() }),
-  "project.ticketKeyDuplicated": z.object({ platform: z.string(), key: z.string() }),
+  "project.targetTaken": z.object({
+    scope: Scope,
+    target: z.string(),
+    project: z.string(),
+  }),
+  "project.ticketKeyDuplicated": z.object({
+    platform: z.string(),
+    key: z.string(),
+  }),
   "project.ticketKeyTaken": z.object({
     platform: z.string(),
     key: z.string(),
@@ -217,8 +224,14 @@ const PARAMS = {
   "input.tooLong": z.object({ maximum: Count }),
   "input.tooFew": z.object({ minimum: Count }),
   "input.tooMany": z.object({ maximum: Count }),
-  "input.numberTooSmall": z.object({ minimum: z.number(), inclusive: z.boolean() }),
-  "input.numberTooLarge": z.object({ maximum: z.number(), inclusive: z.boolean() }),
+  "input.numberTooSmall": z.object({
+    minimum: z.number(),
+    inclusive: z.boolean(),
+  }),
+  "input.numberTooLarge": z.object({
+    maximum: z.number(),
+    inclusive: z.boolean(),
+  }),
   "input.invalidType": null,
   "input.invalidFormat": null,
   "input.invalidValue": null,
@@ -263,10 +276,22 @@ const PARAMS = {
   "services.failed": z.object({ file: z.string(), detail: z.string() }),
   // 共用の compose（PBI-70）
   "services.sharedUnknown": z.object({ name: z.string() }),
-  "services.sharedFetchFailed": z.object({ name: z.string(), repo: z.string(), detail: TextParam }),
+  "services.sharedFetchFailed": z.object({
+    name: z.string(),
+    repo: z.string(),
+    detail: TextParam,
+  }),
   "services.sharedMissing": z.object({ name: z.string(), file: z.string() }),
-  "services.sharedUnsafe": z.object({ name: z.string(), file: z.string(), detail: z.string() }),
-  "services.sharedFailed": z.object({ name: z.string(), file: z.string(), detail: z.string() }),
+  "services.sharedUnsafe": z.object({
+    name: z.string(),
+    file: z.string(),
+    detail: z.string(),
+  }),
+  "services.sharedFailed": z.object({
+    name: z.string(),
+    file: z.string(),
+    detail: z.string(),
+  }),
   "input.channelRequired": null,
   // Slack の通知のメンション（PBI-69）
   "input.slackMention": null,
@@ -279,7 +304,11 @@ const PARAMS = {
   "input.ticketKey": null,
   // チケットの取り込み（PBI-52）
   "ticket.platformMissing": z.object({ platform: z.string() }),
-  "ticket.notAllowed": z.object({ platform: z.string(), method: z.string(), path: z.string() }),
+  "ticket.notAllowed": z.object({
+    platform: z.string(),
+    method: z.string(),
+    path: z.string(),
+  }),
   "ticket.requestFailed": z.object({
     platform: z.string(),
     status: z.number(),
@@ -299,7 +328,10 @@ const PARAMS = {
   "repo.notChosen": null,
   "repo.notCandidate": z.object({ repo: z.string() }),
   "repo.notSpecified": z.object({ repo: z.string() }),
-  "repo.noLongerTarget": z.object({ repo: z.string(), detail: TextParam.optional() }),
+  "repo.noLongerTarget": z.object({
+    repo: z.string(),
+    detail: TextParam.optional(),
+  }),
   "repo.prepareFailed": z.object({ repo: z.string(), detail: TextParam }),
   "repo.chosenByPerson": null,
   "repo.notChoosable": null,
@@ -331,11 +363,24 @@ const PARAMS = {
   }),
   // コンテキストリポジトリの images.yaml のイメージ（PBI-325）。デーモンが起動した後に作る
   "contextImage.building": z.object({ project: z.string(), name: z.string() }),
-  "contextImage.failed": z.object({ project: z.string(), name: z.string(), detail: TextParam }),
+  "contextImage.failed": z.object({
+    project: z.string(),
+    name: z.string(),
+    detail: TextParam,
+  }),
   "contextImage.buildFailed": z.object({ detail: z.string() }),
-  "contextImage.waitTimedOut": z.object({ project: z.string(), minutes: z.number() }),
-  "contextImage.loadFailed": z.object({ project: z.string(), detail: TextParam }),
-  "contextImage.configOverride": z.object({ project: z.string(), name: z.string() }),
+  "contextImage.waitTimedOut": z.object({
+    project: z.string(),
+    minutes: z.number(),
+  }),
+  "contextImage.loadFailed": z.object({
+    project: z.string(),
+    detail: TextParam,
+  }),
+  "contextImage.configOverride": z.object({
+    project: z.string(),
+    name: z.string(),
+  }),
   "contextImage.notFailed": z.object({ name: z.string() }),
   "contextImage.notFound": z.object({ name: z.string() }),
   "contextImage.buildTimedOut": z.object({ minutes: z.number() }),
@@ -352,10 +397,19 @@ const PARAMS = {
   // 起動時にまとめて取り出す（PBI-48）
   "secret.prefetchFailed": z.object({ where: z.string(), detail: TextParam }),
   // プロジェクトのコンテキストの秘密情報も、まとめて取り出す（PBI-107）
-  "secret.savePrefetchFailed": z.object({ where: z.string(), detail: TextParam }),
+  "secret.savePrefetchFailed": z.object({
+    where: z.string(),
+    detail: TextParam,
+  }),
   // sacty の設定（通知先）を保存したときの取り出し（PBI-115）
-  "secret.settingsSavePrefetchFailed": z.object({ where: z.string(), detail: TextParam }),
-  "secret.contextUnavailable": z.object({ project: z.string(), detail: TextParam }),
+  "secret.settingsSavePrefetchFailed": z.object({
+    where: z.string(),
+    detail: TextParam,
+  }),
+  "secret.contextUnavailable": z.object({
+    project: z.string(),
+    detail: TextParam,
+  }),
   "secret.contextTimedOut": z.object({ seconds: z.number() }),
   "run.repositoryNotConfigured": null,
   "guardian.verdictUnreadable": null,
@@ -369,7 +423,10 @@ const PARAMS = {
   "orchestrator.fallback": z.object({ detail: TextParam }),
   "orchestrator.unreadable": null,
   "orchestrator.testCommandUnknown": null,
-  "orchestrator.noTestsContradicted": z.object({ reason: z.string(), files: z.string() }),
+  "orchestrator.noTestsContradicted": z.object({
+    reason: z.string(),
+    files: z.string(),
+  }),
   "orchestrator.noTestsUncertain": z.object({ reason: z.string() }),
   "orchestrator.noTestsUnreadable": z.object({
     reason: z.string(),
@@ -379,7 +436,10 @@ const PARAMS = {
   "orchestrator.bugfixNeedsTests": z.object({ reason: z.string() }),
   "implement.testCommandInvalid": null,
   "orchestrator.failed": z.object({ detail: TextParam }),
-  "orchestrator.baseBranchUnavailable": z.object({ branch: z.string(), detail: TextParam }),
+  "orchestrator.baseBranchUnavailable": z.object({
+    branch: z.string(),
+    detail: TextParam,
+  }),
   // 既存の PR の引き継ぎ：オーケストレーターが引き継ぐと判断した PR を、引き継げなかった
   "continue.unavailable": z.object({ number: z.number(), detail: TextParam }),
   "continue.notOpen": z.object({ state: z.enum(["merged", "closed"]) }),
@@ -391,7 +451,10 @@ const PARAMS = {
   "split.unreadable": null,
   "split.childCount": z.object({ min: Count, max: Count, count: Count }),
   "split.duplicateKey": z.object({ key: z.string() }),
-  "split.unknownDependency": z.object({ key: z.string(), dependsOn: z.string() }),
+  "split.unknownDependency": z.object({
+    key: z.string(),
+    dependsOn: z.string(),
+  }),
   "split.cycle": z.object({ keys: z.string() }),
   "split.unknownViewpoint": z.object({ key: z.string(), id: z.string() }),
   "split.unknownIntegrationViewpoint": z.object({ id: z.string() }),
@@ -404,25 +467,38 @@ const PARAMS = {
   "split.repoNotCandidate": z.object({ key: z.string(), repo: z.string() }),
   "split.repoNotSpecified": z.object({ key: z.string(), repo: z.string() }),
   // 統合レビュー（PBI-31）
-  "integrate.baseUnavailable": z.object({ branch: z.string(), detail: TextParam }),
+  "integrate.baseUnavailable": z.object({
+    branch: z.string(),
+    detail: TextParam,
+  }),
   "integrate.unreadable": null,
   "integrate.unreadableAt": UnreadableAt,
   "integrate.unreadableShape": z.object({ heading: z.string() }),
   "integrate.outputRepaired": OutputRepaired,
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   // PR のレビューだけを行う取り込み（PBI-44）
-  "review.reviewOnly": z.object({ via: z.enum(["requested", "label", "sacty"]) }),
+  "review.reviewOnly": z.object({
+    via: z.enum(["requested", "label", "sacty"]),
+  }),
   // レビューだけのタスクで、レビューの工程のイメージだけをオーケストレーターが選んだ（PBI-44 の続き）
-  "review.reviewOnlyImageChosen": z.object({ via: z.enum(["requested", "label", "sacty"]) }),
+  "review.reviewOnlyImageChosen": z.object({
+    via: z.enum(["requested", "label", "sacty"]),
+  }),
   "review.notRereviewable": null,
   // 投稿の直前に PR の先頭を確かめられなかった（PBI-111）
   "review.headUnknown": null,
   // 観点ごとの担当を 1 件も起動しなかった PR のレビュー（PBI-379）。採らずにやり直す・続いたので止める
-  "review.notDispatched": z.object({ attempt: z.number(), retries: z.number() }),
+  "review.notDispatched": z.object({
+    attempt: z.number(),
+    retries: z.number(),
+  }),
   "review.notDispatchedPaused": z.object({ runs: z.number() }),
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string(), host: z.string() }),
-  "github.accountUnavailable": z.object({ account: z.string(), host: z.string() }),
+  "github.accountUnavailable": z.object({
+    account: z.string(),
+    host: z.string(),
+  }),
   "github.ghFailed": z.object({ detail: z.string() }),
   // 工程の出力で頼まれた、PR・Issue へのコメント（sacty-github-comments）
   "githubComments.unreadable": null,
@@ -431,7 +507,10 @@ const PARAMS = {
   "githubComments.targetInvalid": null,
   "githubComments.targetNotAllowed": null,
   "review.verdictMissing": null,
-  "review.verdictIdMismatch": z.object({ expected: z.string(), answered: z.string() }),
+  "review.verdictIdMismatch": z.object({
+    expected: z.string(),
+    answered: z.string(),
+  }),
   "review.unreadable": null,
   "review.unreadableAt": UnreadableAt,
   "review.unreadableShape": z.object({ heading: z.string() }),
@@ -440,8 +519,16 @@ const PARAMS = {
   "review.outOfScope": z.object({ items: z.array(z.string()).min(1) }),
   "review.flakyUnreadable": null,
   "review.flakyIncomplete": z.object({ name: z.string().optional() }),
-  "review.flakyTooFewRuns": z.object({ name: z.string(), min: z.number(), runs: z.number() }),
-  "review.flakyBadPasses": z.object({ name: z.string(), runs: z.number(), passes: z.number() }),
+  "review.flakyTooFewRuns": z.object({
+    name: z.string(),
+    min: z.number(),
+    runs: z.number(),
+  }),
+  "review.flakyBadPasses": z.object({
+    name: z.string(),
+    runs: z.number(),
+    passes: z.number(),
+  }),
   "review.flakyNoDiff": z.object({ name: z.string() }),
   "review.flakyBadPath": z.object({ name: z.string(), file: z.string() }),
   "review.flakyInDiff": z.object({ name: z.string(), file: z.string() }),
@@ -528,8 +615,15 @@ const PARAMS = {
   "merge.failed": z.object({ detail: TextParam }),
   "pr.unavailable": z.object({ detail: TextParam }),
   "pr.workspaceMissing": null,
-  "pr.taskBranchChanged": z.object({ branch: TextParam, paths: TextParam, count: z.number() }),
-  "pr.continuedBranchMoved": z.object({ branch: TextParam, number: z.number() }),
+  "pr.taskBranchChanged": z.object({
+    branch: TextParam,
+    paths: TextParam,
+    count: z.number(),
+  }),
+  "pr.continuedBranchMoved": z.object({
+    branch: TextParam,
+    number: z.number(),
+  }),
   "pr.continuedNotOpen": z.object({ number: z.number() }),
   "pr.failed": z.object({ detail: TextParam }),
   "pr.mergedDocumentUnreadable": null,
@@ -553,8 +647,16 @@ const PARAMS = {
   "pr.stackDraftFailed": z.object({ detail: TextParam }),
   "pr.notDraft": z.object({ number: z.number() }),
   // PR テンプレート（PBI-87）。status が 0 なら、HTTP の応答が無かった（通信の失敗・時間切れ）
-  "pr.templateFailed": z.object({ path: z.string(), status: z.number(), detail: TextParam }),
-  "pr.templateTooLarge": z.object({ path: z.string(), size: Count, limit: Count }),
+  "pr.templateFailed": z.object({
+    path: z.string(),
+    status: z.number(),
+    detail: TextParam,
+  }),
+  "pr.templateTooLarge": z.object({
+    path: z.string(),
+    size: Count,
+    limit: Count,
+  }),
   "pr.templateInvalid": z.object({ path: z.string() }),
   "pr.templateEmpty": z.object({ path: z.string() }),
   "pr.templateOrgPrivate": z.object({ repo: z.string() }),
@@ -564,7 +666,10 @@ const PARAMS = {
   "git.unavailable": z.object({ detail: z.string() }),
   "git.failed": z.object({ command: z.string(), detail: z.string() }),
   "git.interrupted": z.object({ command: z.string(), timeout: z.boolean() }),
-  "git.exitCode": z.object({ command: z.string(), code: z.number().nullable() }),
+  "git.exitCode": z.object({
+    command: z.string(),
+    code: z.number().nullable(),
+  }),
   // 上限の時間を過ぎて、git を止めた（PBI-107）
   "git.aborted": null,
   "git.invalidBaseCommit": null,
@@ -572,7 +677,10 @@ const PARAMS = {
   "git.mergeTreeUnsupported": null,
   "git.tooManyConflicts": z.object({ count: z.number(), limit: z.number() }),
   "git.conflictWithoutFiles": null,
-  "git.conflictWithoutMarkers": z.object({ paths: TextParam, count: z.number() }),
+  "git.conflictWithoutMarkers": z.object({
+    paths: TextParam,
+    count: z.number(),
+  }),
   "git.invalidParentCommit": null,
   "git.invalidBranch": null,
   "git.invalidPath": null,
@@ -622,19 +730,33 @@ const PARAMS = {
   "context.cycle": z.object({ key: z.string() }),
   "context.tooDeep": z.object({ max: Count }),
   "context.fetchFailed": z.object({ key: z.string(), detail: TextParam }),
-  "context.fileUnreadable": z.object({ key: z.string(), file: z.string(), detail: z.string() }),
+  "context.fileUnreadable": z.object({
+    key: z.string(),
+    file: z.string(),
+    detail: z.string(),
+  }),
   "context.fileInvalid": z.object({
     key: z.string(),
     file: z.string(),
     path: z.string(),
     detail: TextParam,
   }),
-  "context.notPlainFile": z.object({ key: z.string(), path: z.string(), symlink: z.boolean() }),
+  "context.notPlainFile": z.object({
+    key: z.string(),
+    path: z.string(),
+    symlink: z.boolean(),
+  }),
   "context.pathMissing": z.object({ key: z.string(), path: z.string() }),
   "context.copyAborted": z.object({ key: z.string() }),
-  "context.submoduleNotCheckedOut": z.object({ key: z.string(), path: z.string() }),
+  "context.submoduleNotCheckedOut": z.object({
+    key: z.string(),
+    path: z.string(),
+  }),
   "context.extendsOutside": z.object({ key: z.string(), value: z.string() }),
-  "context.localExtendsFromRemote": z.object({ key: z.string(), value: z.string() }),
+  "context.localExtendsFromRemote": z.object({
+    key: z.string(),
+    value: z.string(),
+  }),
   "context.lockedOverride": z.object({
     from: z.string(),
     kind: z.enum(["skills", "mcp", "platforms", "images"]),
@@ -647,7 +769,11 @@ const PARAMS = {
     name: z.string(),
     lockedBy: z.string(),
   }),
-  "context.reservedSetting": z.object({ from: z.string(), file: z.string(), key: z.string() }),
+  "context.reservedSetting": z.object({
+    from: z.string(),
+    file: z.string(),
+    key: z.string(),
+  }),
   "context.hostPlatform": z.object({ from: z.string(), name: z.string() }),
   "context.hostMcpOverride": z.object({ from: z.string(), name: z.string() }),
   // project はどのプロジェクトのものか（PBI-92。それより前の記録には無い）
@@ -697,13 +823,23 @@ const PARAMS = {
   // エージェントの既定と接続先（PBI-134）
   "config.providerLegacyName": z.object({ name: z.string() }),
   "config.agentLegacyKey": z.object({ key: z.string() }),
-  "config.defaultsUnreadable": z.object({ path: z.string(), detail: z.string() }),
-  "config.agentUnavailable": z.object({ key: z.string(), id: z.string(), reason: TextParam }),
+  "config.defaultsUnreadable": z.object({
+    path: z.string(),
+    detail: z.string(),
+  }),
+  "config.agentUnavailable": z.object({
+    key: z.string(),
+    id: z.string(),
+    reason: TextParam,
+  }),
   "config.noDefaultAgent": null,
   "config.agentRuntimeRequired": null,
   "config.agentModelRequired": null,
   "config.guardianAgentIgnored": null,
-  "config.agentProviderMissing": z.object({ id: z.string(), provider: z.string() }),
+  "config.agentProviderMissing": z.object({
+    id: z.string(),
+    provider: z.string(),
+  }),
   "config.modelPriceMissing": z.object({
     provider: z.string(),
     model: z.string(),
@@ -714,9 +850,15 @@ const PARAMS = {
   "config.platformTokenQuery": null,
   "config.platformTokenUrlSecret": null,
   "config.platformTokenBody": null,
-  "gateway.platformUnavailable": z.object({ name: z.string(), detail: TextParam }),
+  "gateway.platformUnavailable": z.object({
+    name: z.string(),
+    detail: TextParam,
+  }),
   "gateway.mcpUnavailable": z.object({ name: z.string(), detail: TextParam }),
-  "gateway.mcpReadyTimeout": z.object({ name: z.string(), seconds: z.number() }),
+  "gateway.mcpReadyTimeout": z.object({
+    name: z.string(),
+    seconds: z.number(),
+  }),
   "gateway.unavailable": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
   // 利用制限のときの代わりのエージェント
@@ -754,7 +896,11 @@ const PARAMS = {
   "audit.interrupted": null,
   "audit.notAdoptable": null,
   // エージェントの段階（PBI-119）
-  "config.tierRuntime": z.object({ id: z.string(), runtime: z.string(), expected: z.string() }),
+  "config.tierRuntime": z.object({
+    id: z.string(),
+    runtime: z.string(),
+    expected: z.string(),
+  }),
   "agents.tierConnectionDiffers": z.object({
     tier: z.string(),
     id: z.string(),
@@ -2749,7 +2895,10 @@ export function issueMessage(issue: z.core.$ZodIssue): DaemonMessage {
     case "invalid_element":
       return { code: "input.invalidValue" };
     case "unrecognized_keys":
-      return { code: "input.unknownKeys", params: { keys: issue.keys.join(", ") } };
+      return {
+        code: "input.unknownKeys",
+        params: { keys: issue.keys.join(", ") },
+      };
     default:
       return { code: "input.invalid" };
   }

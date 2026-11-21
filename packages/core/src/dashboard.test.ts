@@ -48,13 +48,19 @@ function task(patch: Partial<Task> = {}): Task {
 }
 
 const completed = (patch: Partial<Task> = {}) =>
-  task({ status: "idle", steps: [{ key: "implement", state: "done" }], ...patch });
+  task({
+    status: "idle",
+    steps: [{ key: "implement", state: "done" }],
+    ...patch,
+  });
 const cancelled = (patch: Partial<Task> = {}) => task({ status: "cancelled", ...patch });
 
 type Input = Parameters<DashboardStats["summary"]>[0];
 function summarize(
   stats: DashboardStats,
-  input: Partial<Omit<Input, "queue">> & { queue?: Partial<Input["queue"]> } = {},
+  input: Partial<Omit<Input, "queue">> & {
+    queue?: Partial<Input["queue"]>;
+  } = {},
 ) {
   return stats.summary({
     now: NOW,
@@ -151,8 +157,16 @@ describe("ダッシュボードの集計：費用（PBI-118）", () => {
 describe("ダッシュボードの集計：流量（PBI-118）", () => {
   it("何も無ければ 0 件で中央値は null", () => {
     const s = summarize(new DashboardStats());
-    expect(s.flow.days7).toEqual({ completed: 0, cancelled: 0, medianLeadMs: null });
-    expect(s.flow.days30).toEqual({ completed: 0, cancelled: 0, medianLeadMs: null });
+    expect(s.flow.days7).toEqual({
+      completed: 0,
+      cancelled: 0,
+      medianLeadMs: null,
+    });
+    expect(s.flow.days30).toEqual({
+      completed: 0,
+      cancelled: 0,
+      medianLeadMs: null,
+    });
     expect(s.flow.since.days30).toBe(new Date(day(29)).toISOString());
   });
 
@@ -167,7 +181,11 @@ describe("ダッシュボードの集計：流量（PBI-118）", () => {
       completed({ id: "a", createdAt: createdA }),
     );
     let s = summarize(stats);
-    expect(s.flow.days7).toEqual({ completed: 1, cancelled: 0, medianLeadMs: 8 * DAY });
+    expect(s.flow.days7).toEqual({
+      completed: 1,
+      cancelled: 0,
+      medianLeadMs: 8 * DAY,
+    });
     // 複数件：中止と、もう1件の完了（作成から 2 日）。中央値は完了の 2 件の平均
     stats.add(
       event("TaskCancelled", TODAY - HOUR, {}, { taskId: "b" }),
@@ -181,7 +199,11 @@ describe("ダッシュボードの集計：流量（PBI-118）", () => {
       completed({ id: "c", createdAt: createdC }),
     );
     s = summarize(stats);
-    expect(s.flow.days7).toEqual({ completed: 2, cancelled: 1, medianLeadMs: 5 * DAY });
+    expect(s.flow.days7).toEqual({
+      completed: 2,
+      cancelled: 1,
+      medianLeadMs: 5 * DAY,
+    });
   });
 
   it("レビューを投稿して PR の変化を見守っている間は、完了に数えない。見守りを終えた・指摘なしになった時刻で数える（PBI-411）", () => {
@@ -303,7 +325,11 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     const t = task();
     const add = (type: ActivityEvent["type"], payload: Record<string, unknown>, at = NOW) =>
       stats.add(event(type, at, payload), t, t);
-    add("ChangesRequested", { step: "requirements", target: "requirements", round: 1 });
+    add("ChangesRequested", {
+      step: "requirements",
+      target: "requirements",
+      round: 1,
+    });
     add("ChangesRequested", { step: "implement", target: "design", round: 1 });
     add("GuardianMissed", { reviewAt: "", remarkIds: [] });
     add("IntegrationReviewed", { passed: false });
@@ -336,7 +362,10 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     add([human]);
     add([ai, human]);
     const s = summarize(stats);
-    expect(s.quality.counts).toMatchObject({ changesRequested: 2, aiReviewRework: 2 });
+    expect(s.quality.counts).toMatchObject({
+      changesRequested: 2,
+      aiReviewRework: 2,
+    });
     expect(s.quality.reworkBySteps).toEqual({ implement: 4 });
   });
 
@@ -413,7 +442,11 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     } as Partial<Task>);
     stats.add(
       {
-        ...event("ChangesRequested", NOW, { step: "implement", target: "design", round: 1 }),
+        ...event("ChangesRequested", NOW, {
+          step: "implement",
+          target: "design",
+          round: 1,
+        }),
         at: reworkAt,
       },
       t,
@@ -445,7 +478,10 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
       reworked,
     );
     s = summarize(stats);
-    expect(s.quality.counts).toMatchObject({ pullRequestRework: 1, changesRequested: 1 });
+    expect(s.quality.counts).toMatchObject({
+      pullRequestRework: 1,
+      changesRequested: 1,
+    });
     expect(s.quality.reworkBySteps).toEqual({ implement: 2 });
   });
 
@@ -539,7 +575,11 @@ describe("ダッシュボードの集計：対応待ちの時刻と待ち行列�
         task({ id: "d", status: "idle" }),
         task({ id: "e", status: "queued", projectId: "gone" }),
       ],
-      queue: { running: ["a", "b"], waiting: ["c", "d", "e", "missing"], max: 2 },
+      queue: {
+        running: ["a", "b"],
+        waiting: ["c", "d", "e", "missing"],
+        max: 2,
+      },
     });
     expect(s.queue).toEqual({ running: 2, queued: 2, max: 2 });
   });

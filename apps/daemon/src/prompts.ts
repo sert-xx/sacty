@@ -3519,6 +3519,7 @@ function directImplementLines(
   previous: string | undefined,
   remarks: ReturnType<typeof humanRemarks>,
   pullRequestReview = false,
+  now: number,
 ): string[] {
   const step: StepKey = "implement";
   const noTests = task.noTestsReason;
@@ -3557,7 +3558,7 @@ function directImplementLines(
           IMPLEMENT_REPORT_LINE,
           SHARED_MECHANISM_IMPLEMENT_LINE,
           ...implementReworkLines(previous),
-          ...WORKSPACE_TOOL_LINES,
+          ...workspaceToolLines(now),
           "- 実装の説明をMarkdownで書く。テストの仕組みを用意したときだけ、そのあとに次の形式でテストのコマンドを付け、書いたテストがあれば観点との対応も付ける",
           `\`\`\`${TEST_COMMAND_FENCE}`,
           '{"command": "テストのコマンド"}',
@@ -3577,7 +3578,7 @@ function directImplementLines(
           IMPLEMENT_REPORT_LINE,
           SHARED_MECHANISM_IMPLEMENT_LINE,
           ...implementReworkLines(previous),
-          ...WORKSPACE_TOOL_LINES,
+          ...workspaceToolLines(now),
           "- 実装の説明をMarkdownで書き、そのあとに、観点とテストの対応を次の形式で必ず付ける",
         ]),
     "```json",
@@ -3736,8 +3737,11 @@ export function buildPrompt(
      * 渡す。渡すと、提出の前のセルフレビューをさせない（同じ成果物を二重にレビューしない）。提出の前の検証はさせる。
      */
     pullRequestReview?: boolean;
+    /** 実装・直しの指示に入れる、指示を作った時刻（ミリ秒。PBI-469）。渡さなければ Date.now()。 */
+    now?: number;
   } = {},
 ): string {
+  const now = extra.now ?? Date.now();
   // 引き継いで直す既存の PR のことと、その PR の指摘
   const continued = continuedPullRequestLines(task, extra.continuedFeedback, step);
   const content = taskContent(task, extra, step);
@@ -4247,7 +4251,7 @@ export function buildPrompt(
           IMPLEMENT_REPORT_LINE,
           SHARED_MECHANISM_IMPLEMENT_LINE,
           ...implementReworkLines(previous),
-          ...WORKSPACE_TOOL_LINES,
+          ...workspaceToolLines(now),
           `- 修正の説明をMarkdownで書き、そのあとに、観点 ${REPRODUCTION_VIEWPOINT}（再現のテストが通る）とテストの対応を次の形式で必ず付ける`,
           "```json",
           `{"${TEST_MAP_HEADING}": [{"viewpointId": "${REPRODUCTION_VIEWPOINT}", "tests": ["テストのファイル › テストの名前"]}]}`,
@@ -4278,7 +4282,7 @@ export function buildPrompt(
       // 要求要件・設計の工程を経ないタスク（direct・工程の見直し）は、タスクの内容と集めた情報（前段の調査があればその結果）から実装する
       if (!designed && withoutRequirements(task)) {
         return [
-          ...directImplementLines(task, content, previous, remarks, skipSelfReview),
+          ...directImplementLines(task, content, previous, remarks, skipSelfReview, now),
           ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         ].join("\n");
       }
@@ -4338,7 +4342,7 @@ export function buildPrompt(
               IMPLEMENT_REPORT_LINE,
               SHARED_MECHANISM_IMPLEMENT_LINE,
               ...implementReworkLines(previous),
-              ...WORKSPACE_TOOL_LINES,
+              ...workspaceToolLines(now),
               "- 実装の説明をMarkdownで書く。テストの仕組みを用意したときだけ、そのあとに次の形式でテストのコマンドを付け、書いたテストがあれば観点との対応も付ける",
               `\`\`\`${TEST_COMMAND_FENCE}`,
               '{"command": "テストのコマンド"}',
@@ -4357,7 +4361,7 @@ export function buildPrompt(
               IMPLEMENT_REPORT_LINE,
               SHARED_MECHANISM_IMPLEMENT_LINE,
               ...implementReworkLines(previous),
-              ...WORKSPACE_TOOL_LINES,
+              ...workspaceToolLines(now),
               "- 実装の説明をMarkdownで書き、そのあとに、観点ごとのテストの対応を次の形式で必ず付ける",
               "```json",
               `{"${TEST_MAP_HEADING}": [{"viewpointId": "TV-1", "tests": ["テストのファイル › テストの名前"]}]}`,
@@ -8008,11 +8012,28 @@ export const ENVIRONMENT_ONLY_HEADING = "この環境だけの結果";
  * 実装の工程で、環境（イメージ）に無いツールなどを自分で入れて検証を通すときの指示（PBI-278）。入れること自体は止めない。
  * 置き場所を PR・コミットに混ざらない所にし、入れたことと、その環境だけの結果であることを説明（PR の本文に載る）に申告させる。
  */
-const WORKSPACE_TOOL_LINES = [
+const WORKSPACE_TOOL_LINES_BASE = [
   `- 検証に要るツール・ブラウザ・フォントなどが実行環境（イメージ）に無いときは、自分で入れて検証してよい。入れる場所は、作業領域の ${WORKSPACE_TOOLS_DIR}/ の下にする（sacty は、ここを PR・コミットに入れない）。リポジトリが無視していない別の場所に入れると、PR に混ざるので避ける。${WORKSPACE_TOOLS_DIR}/ は入れたツールの置き場だけで、ログ・集計・起点の写し・下書きなどの作業用のファイルは置かない`,
   `- 検証の記録（ログ・集計）、起点の写し（ベースの内容を取り出して比べるときなど）、下書きなどの作業用のファイルは、作業領域の外の ${WORKSPACE_SCRATCH_DIR}/ に置く。作業領域の中に置くと、リポジトリ全体を対象にするフォーマッター・リンター・テストの結果が変わる。リポジトリのファイル（スクリプト・テスト・設定・文書）に、${WORKSPACE_TOOLS_DIR} や ${WORKSPACE_SCRATCH_DIR} など sacty の作業領域の内部の名前を書かない（テストが起点と比べたいときは、リポジトリが持つ固定の入力か、テストの中で一時ディレクトリを作って使う）`,
   `- 環境に無いものを自分で入れて検証を通したときは、実装の説明に「## ${ENVIRONMENT_ONLY_HEADING}」の節を作り、入れたもの（名前・版・入れ方・置き場所）、それで通した検証、入れていない環境では確かめていないことを書く。この節は PR の本文にそのまま載り、PR のレビューの子タスクと人間が確かめる。入れていなければ、この節は作らない`,
 ];
+
+/** 指示の時刻の形（秒まで・UTC。例：2026-11-21T10:30:00Z）。 */
+function promptTimestamp(now: number): string {
+  return new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+/**
+ * 実装・直しの指示に入れる、指示を作った時刻の行（PBI-469）。ADR・作業の記録などの日時を、推測で書かせない。
+ * 特定のリポジトリの決まり（名前の形・タイムゾーン）には寄せない。
+ */
+function timestampLine(now: number): string {
+  return `- この指示を作った時刻は ${promptTimestamp(now)}（UTC）です。ファイル名・本文に日時を書くとき（記録・決定・作業の履歴など）は、日時を推測で決めず、書く直前にコンテナで今の時刻を確かめる（date -u など）。日時の形とタイムゾーンは、リポジトリの決まりに従う`;
+}
+
+function workspaceToolLines(now: number): string[] {
+  return [timestampLine(now), ...WORKSPACE_TOOL_LINES_BASE];
+}
 
 /** オーケストレーターに渡す、工程の組み合わせの説明（PBI-17）。 */
 const planDescriptions: Record<StepPlan, string> = {
