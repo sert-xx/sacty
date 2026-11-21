@@ -40,6 +40,112 @@ export function isFiltering(filter: TaskFilter): boolean {
   return Object.values(filter).some((v) => v.trim() !== "");
 }
 
+/** 最初の表示の状態：終わっていないタスクがあれば ACTIVE、無ければ「すべて」（空の一覧を最初に見せない）。 */
+export function defaultStatusFor(rows: Pick<TaskRow, "status">[]): "" | typeof ACTIVE {
+  return rows.some((r) => r.status.tone !== "completed" && r.status.tone !== "cancelled")
+    ? ACTIVE
+    : "";
+}
+
+/** 開いたときの最初の表示と違う条件があるか（「条件をクリア」を出すか）。状態は、最初の表示の状態と比べる。 */
+export function differsFromInitial(filter: TaskFilter, defaultStatus: TaskFilter["status"]) {
+  const { status, ...rest } = filter;
+  return status !== defaultStatus || isFiltering({ ...EMPTY_FILTER, ...rest });
+}
+
+/** URL から読んだ絞り込み。指定が無い（検査に通らない）項目は undefined。 */
+export type ParsedFilter = { [K in keyof TaskFilter]?: TaskFilter[K] };
+
+type QueryParams = Record<string, string | string[] | undefined>;
+
+const START_KINDS = {
+  sacty: true,
+  github_issue: true,
+  github_pull_request: true,
+  split: true,
+  jira: true,
+  deployment: true,
+  audit: true,
+  schedule: true,
+  security: true,
+} satisfies Record<TaskRow["start"], true>;
+const STATUS_VALUES = new Set<string>([
+  ACTIVE,
+  "person",
+  "working",
+  "waiting",
+  "completed",
+  "cancelled",
+]);
+
+function isRealDay(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * URL のクエリ（q・from・to・start・repo・status）を絞り込みにする。空・同じ名前が 2 つ以上・知らない値・
+ * 形の違う値は、その項目の指定が無いものとして扱う。状態の「すべて」は status=all（空の状態になる）。
+ */
+export function parseTaskFilter(params: QueryParams | URLSearchParams): ParsedFilter {
+  const one = (name: string): string | undefined => {
+    if (params instanceof URLSearchParams) {
+      const all = params.getAll(name);
+      return all.length === 1 && all[0] !== "" ? all[0] : undefined;
+    }
+    const v = params[name];
+    return typeof v === "string" && v !== "" ? v : undefined;
+  };
+  const parsed: ParsedFilter = {};
+  const q = one("q");
+  if (q !== undefined) parsed.query = q;
+  const from = one("from");
+  if (from !== undefined && isRealDay(from)) parsed.from = from;
+  const to = one("to");
+  if (to !== undefined && isRealDay(to)) parsed.to = to;
+  const start = one("start");
+  if (start !== undefined && Object.hasOwn(START_KINDS, start)) {
+    parsed.start = start as TaskFilter["start"];
+  }
+  const repo = one("repo");
+  if (repo !== undefined) parsed.repo = repo;
+  const status = one("status");
+  if (status === "all") parsed.status = "";
+  else if (status !== undefined && STATUS_VALUES.has(status)) {
+    parsed.status = status as TaskFilter["status"];
+  }
+  return parsed;
+}
+
+/** 日をブラウザーのタイムゾーンで決めるので、サーバーでは行を選べない（開始時期の指定があるとき）。 */
+export function needsLocalDay(filter: Pick<TaskFilter, "from" | "to">): boolean {
+  return filter.from !== "" || filter.to !== "";
+}
+
+const FILTER_PARAMS = ["q", "from", "to", "start", "repo", "status"] as const;
+
+/**
+ * 絞り込みを URL のクエリにする。最初の表示と違う項目だけを書き、絞り込みに関係のないクエリは残す。
+ * 返すのは、先頭の `?` つきの文字列（クエリが無ければ空）。
+ */
+export function filterQuery(
+  filter: TaskFilter,
+  defaultStatus: TaskFilter["status"],
+  search: string,
+): string {
+  const params = new URLSearchParams(search);
+  for (const name of FILTER_PARAMS) params.delete(name);
+  if (filter.query !== "") params.set("q", filter.query);
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  if (filter.start) params.set("start", filter.start);
+  if (filter.repo) params.set("repo", filter.repo);
+  if (filter.status !== defaultStatus) params.set("status", filter.status || "all");
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
 /** 日時（ISO 8601）を、画面のタイムゾーンの日（YYYY-MM-DD）にする。 */
 export function localDay(at: string): string {
   const d = new Date(at);

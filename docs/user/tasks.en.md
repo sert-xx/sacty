@@ -249,12 +249,28 @@ Only tasks that match every filter are shown.
 | Start date (from), (to) | Tasks created between the dates (both days included; either one alone works too) |
 | Started from | Where the task started, such as Sacty or GitHub Issue |
 | Repository | The repository the task works on. A task with multiple specified repositories appears for any of the specified repositories. "Not decided / No repository" is for tasks whose repository is not decided yet and that have no specified repositories |
-| Status | Not finished, Needs you, In progress, Waiting, Completed, Cancelled |
+| Status | All, Not finished, Needs you, In progress, Waiting, Completed, Cancelled (first "Not finished") |
 
-The count (such as "1 of 5") is shown on the right of the fields.
-Press "Clear filters" to go back to all tasks.
-The filters stay only while the screen is open (automatic updates keep them; reloading or moving to another project clears them).
-The "Needs you" cards are not filtered.
+When you first open the list, the status is "Not finished" and only the tasks that are running now are listed.
+A project with no unfinished tasks opens with "All" (an empty list is never shown first).
+To see completed and cancelled tasks too, choose "All" in the status.
+The first view is decided once, when the screen opens. Automatic updates do not switch the status when a task finishes or starts.
+
+At most 50 rows are shown at a time (a child task's row counts as one row).
+When more rows match the filters, a button such as "Show more (70 left)" appears under the table.
+Pressing it adds the next 50 rows below and moves the focus to the title of the first added row.
+Changing a filter returns to the first 50 rows.
+A parent task may be in the first 50 rows and its child task in the next 50. After you add more, the child task follows under its parent, indented.
+
+The count is shown on the right of the fields. When every row is shown it looks like "1 of 5"; when the rows are cut into 50, it looks like "120 of 277 (showing 50)", so you can see the total, the number that match, and the number shown.
+"Clear filters" appears only when the filters differ from the first view. Pressing it returns to the first view (the status is the "Not finished" or "All" decided when the screen opened, and every other filter is empty). It is not shown while the first view is unchanged.
+
+The filters are kept in the query of the screen's URL (`q`, `from`, `to`, `start`, `repo`, `status`; "All" is `status=all`).
+Only filters that differ from the first view are written, and no query is added while the first view is unchanged.
+Opening that URL, reloading, or sharing the link opens the list with the same filters. Going back in the browser after opening a task keeps the filters and the rows you added (opening by reload or link starts from the first 50 rows).
+Changing a filter does not add to the browser's history. A value that cannot be read (an unknown status, a start date that is not a date, and so on) is treated as if that filter were not set. Moving to another project's list does not carry the previous filters over.
+When a start date is in the URL, the table shows "Loading…" first because the day is decided in the browser's time zone.
+The "Needs you" cards are not filtered or cut.
 
 ## Reading the task details
 

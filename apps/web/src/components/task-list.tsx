@@ -2,7 +2,8 @@
 
 import { CircleX } from "lucide-react";
 import Link from "next/link";
-import { useId, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { ActionLink } from "@/components/action-link";
 import { DaemonError } from "@/components/daemon-error";
 import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
@@ -14,11 +15,15 @@ import { useMessages } from "@/i18n/client";
 import { repoLabels } from "@/lib/repo-label";
 import {
   ACTIVE,
+  defaultStatusFor,
+  differsFromInitial,
   EMPTY_FILTER,
   filterOptions,
-  isFiltering,
+  filterQuery,
   matchesFilter,
   NO_REPO,
+  needsLocalDay,
+  type ParsedFilter,
   type TaskFilter,
 } from "@/lib/task-filter";
 import type { TaskListData, TaskRow } from "@/lib/task-list-data";
@@ -30,6 +35,21 @@ export function taskListLiveUrl(projectId: string): string {
   return `/live/tasks?project=${encodeURIComponent(projectId)}`;
 }
 
+/** 一度に出す行の数（子タスクの行も 1 行と数える）。「さらに表示」で、この数ずつ足す。 */
+export const TASK_PAGE_SIZE = 50;
+
+/** 絞り込みの状態。status が undefined の間は、開いたときに決めた最初の表示の状態に従う。 */
+type FilterState = Omit<TaskFilter, "status"> & { status?: TaskFilter["status"] };
+
+const subscribeNothing = () => () => {};
+
+/** URL の絞り込みのクエリを書き換える（履歴は増やさない。ほかのクエリとハッシュは残す）。 */
+function writeFilterUrl(filter: TaskFilter, defaultStatus: TaskFilter["status"]) {
+  const url = new URL(window.location.href);
+  url.search = filterQuery(filter, defaultStatus, url.search);
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 /**
  * 人間の判断が必要なタスクと、すべてのタスク（PBI-108）。画面をリロードせず、一定の間隔でデータだけを取り直し、
  * 新しいタスク・状態の変化を出す（タブが隠れている間は止め、見えたらすぐに取り直す）。
@@ -37,23 +57,84 @@ export function taskListLiveUrl(projectId: string): string {
  * initial が null（描いたときにデーモンに届かなかった）なら、届くまで error を出し、届いたら一覧を出し、表示している
  * プロジェクトを URL のプロジェクトに合わせる（ヘッダーとずらさない）。
  */
-export function LiveTaskList({
-  projectId,
-  initial,
-  initialVersion,
-  error,
-}: {
+export function LiveTaskList(props: LiveTaskListProps) {
+  // 戻る・進むでは、絞り込みと足した行数を保つ。新しく開いたときは、URL から作り直す（PBI-441）
+  const { bfcacheId } = useRouter();
+  return <LiveTaskListBody key={bfcacheId} {...props} />;
+}
+
+type LiveTaskListProps = {
   projectId: string;
   initial: TaskListData | null;
   initialVersion?: string;
   error?: string;
-}) {
+  /** URL の絞り込み（検査した後。指定の無い項目は undefined）。 */
+  initialFilter?: ParsedFilter;
+};
+
+function LiveTaskListBody({
+  projectId,
+  initial,
+  initialVersion,
+  error,
+  initialFilter,
+}: LiveTaskListProps) {
   const url = taskListLiveUrl(projectId);
   const { data, stale } = useLiveData(() => url, initial, initialVersion);
   const { tasks: m, labels } = useMessages();
-  // 絞り込みは画面の中だけで持つ（取り直しても消さない。別のプロジェクトへ移ると、key が変わって消える）
-  const [filter, setFilter] = useState<TaskFilter>(EMPTY_FILTER);
-  const rows = data ? data.rows.filter((row) => matchesFilter(row, filter)) : [];
+  // 絞り込みと足した行数は画面の中で持つ（取り直しても消さない。別のプロジェクトへ移ると、key が変わって消える）。
+  // 絞り込みは URL のクエリにも書く
+  const [picked, setPicked] = useState<FilterState>(() => ({
+    ...EMPTY_FILTER,
+    ...initialFilter,
+    status: initialFilter?.status,
+  }));
+  const [limit, setLimit] = useState(TASK_PAGE_SIZE);
+  // 最初の表示の状態は、開いたときに 1 回だけ決める（取り直しでは切り替えない）。デーモンに届かずに開いたときは、
+  // 最初にデータが届いた時点で決める
+  const [defaultStatus, setDefaultStatus] = useState<TaskFilter["status"] | null>(() =>
+    initial ? defaultStatusFor(initial.rows) : null,
+  );
+  if (defaultStatus === null && data) setDefaultStatus(defaultStatusFor(data.rows));
+  const initialStatus = defaultStatus ?? "";
+  const filter: TaskFilter = { ...picked, status: picked.status ?? initialStatus };
+  // 開始時期は日をブラウザーのタイムゾーンで決めるので、サーバーの描画と描き直しでは行を出さない
+  const hydrated = useSyncExternalStore(
+    subscribeNothing,
+    () => true,
+    () => false,
+  );
+  const waitingForBrowser = !hydrated && needsLocalDay(filter);
+  const matching =
+    data && !waitingForBrowser ? data.rows.filter((r) => matchesFilter(r, filter)) : [];
+  const rows = indentShown(matching).slice(0, limit);
+  const totalRows = data?.rows.length ?? 0;
+  const pendingFocus = useRef<string | null>(null);
+  const tbody = useRef<HTMLTableSectionElement>(null);
+  useEffect(() => {
+    // 「さらに表示」で足した最初の行へ、フォーカスを移す（ボタンが消えても、フォーカスが行方不明にならない）
+    const id = pendingFocus.current;
+    pendingFocus.current = null;
+    if (id === null) return;
+    const row = [...(tbody.current?.rows ?? [])].find(
+      (r) => r.getAttribute("data-testid") === `task-row-${id}`,
+    );
+    row?.querySelector("a")?.focus();
+  });
+  const change = (next: TaskFilter) => {
+    setPicked(next);
+    setLimit(TASK_PAGE_SIZE);
+    writeFilterUrl(next, initialStatus);
+  };
+  const clear = () => {
+    setPicked({ ...EMPTY_FILTER, status: undefined });
+    setLimit(TASK_PAGE_SIZE);
+    writeFilterUrl({ ...EMPTY_FILTER, status: initialStatus }, initialStatus);
+  };
+  const showMore = () => {
+    pendingFocus.current = matching[limit]?.id ?? null;
+    setLimit((n) => n + TASK_PAGE_SIZE);
+  };
   return (
     <>
       <StaleNotice stale={stale} />
@@ -102,11 +183,21 @@ export function LiveTaskList({
           <>
             <TaskFilterBar
               rows={data.rows}
-              shown={rows.length}
+              count={
+                waitingForBrowser
+                  ? ""
+                  : matching.length > limit
+                    ? m.filter.countPartial(matching.length, totalRows, limit)
+                    : m.filter.count(matching.length, totalRows)
+              }
               filter={filter}
-              onChange={setFilter}
+              canClear={differsFromInitial(filter, initialStatus)}
+              onChange={change}
+              onClear={clear}
             />
-            {rows.length === 0 ? (
+            {waitingForBrowser ? (
+              <p className="px-5 pb-8 text-sm text-muted-foreground">{m.loading}</p>
+            ) : rows.length === 0 ? (
               <p className="px-5 pb-8 text-sm text-muted-foreground">{m.filter.none}</p>
             ) : (
               <div className="overflow-x-auto">
@@ -127,10 +218,10 @@ export function LiveTaskList({
                       </th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody ref={tbody}>
                     {/* 分割で作った子タスク・PR のレビューの子タスクは、親のすぐ下に字下げして出す（PBI-27・PBI-341） */}
                     {/* 絞り込みで親が隠れた子は、無関係なタスクの子に見えないよう字下げしない（PBI-341） */}
-                    {indentShown(rows).map((task) => (
+                    {rows.map((task) => (
                       <tr
                         key={task.id}
                         className="border-t border-border hover:bg-muted"
@@ -234,6 +325,13 @@ export function LiveTaskList({
                 </table>
               </div>
             )}
+            {matching.length > limit && (
+              <div className="px-5 py-4">
+                <Button type="button" variant="outline" onClick={showMore}>
+                  {m.filter.more(matching.length - limit)}
+                </Button>
+              </div>
+            )}
           </>
         )}
       </TasksSection>
@@ -247,14 +345,18 @@ const SELECT =
 /** 一覧の絞り込み（題の検索・開始時期・開始地点・リポジトリ・状態）。選択肢は、一覧にあるものだけを出す。 */
 function TaskFilterBar({
   rows,
-  shown,
+  count,
   filter,
+  canClear,
   onChange,
+  onClear,
 }: {
   rows: TaskRow[];
-  shown: number;
+  count: string;
   filter: TaskFilter;
+  canClear: boolean;
   onChange: (filter: TaskFilter) => void;
+  onClear: () => void;
 }) {
   const { tasks: m, labels } = useMessages();
   const uid = useId();
@@ -348,11 +450,11 @@ function TaskFilterBar({
         </select>
       </label>
       <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span role="status" data-testid="task-filter-count">
-          {m.filter.count(shown, rows.length)}
+        <span role="status" data-testid="task-filter-count" className="[overflow-wrap:anywhere]">
+          {count}
         </span>
-        {isFiltering(filter) && (
-          <Button type="button" variant="outline" size="sm" onClick={() => onChange(EMPTY_FILTER)}>
+        {canClear && (
+          <Button type="button" variant="outline" size="sm" onClick={onClear}>
             {m.filter.clear}
           </Button>
         )}

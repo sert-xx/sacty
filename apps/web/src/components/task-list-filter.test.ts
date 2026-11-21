@@ -276,6 +276,12 @@ describe("タスクの一覧の絞り込みの操作", () => {
     render({ projectId: "p1", needsYou: [], rows });
     const bar = container.querySelector('[data-testid="task-filter"]');
     expect(bar).not.toBeNull();
+    // 最初の表示は「終わっていない」（完了の b は出ない）
+    expect(shown()).toEqual(["a", "c"]);
+    expect(container.querySelector('[data-testid="task-filter-count"]')?.textContent).toBe(
+      "3件中 2件",
+    );
+    change(select("状態"), "");
     expect(shown()).toEqual(["a", "b", "c"]);
     expect(container.querySelector('[data-testid="task-filter-count"]')?.textContent).toBe(
       "3件中 3件",
@@ -299,7 +305,8 @@ describe("タスクの一覧の絞り込みの操作", () => {
       (b) => b.textContent === "条件をクリア",
     );
     act(() => clear?.click());
-    expect(shown()).toEqual(["a", "b", "c"]);
+    // クリアの行き先は最初の表示（終わっていない）
+    expect(shown()).toEqual(["a", "c"]);
     expect(
       [...container.querySelectorAll("button")].some((b) => b.textContent === "条件をクリア"),
     ).toBe(false);

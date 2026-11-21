@@ -6,13 +6,20 @@ import { LiveTaskList, TasksSection } from "@/components/task-list";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getStatus, listProjects } from "@/lib/daemon";
 import { liveVersion } from "@/lib/live-server";
+import { parseTaskFilter } from "@/lib/task-filter";
 import { loadTaskList } from "@/lib/task-list-data";
 
 /**
  * プロジェクトのタスクの一覧（PBI-114 で `/` から移した）。表示するプロジェクトは URL の ID で決め、表示している
  * プロジェクト（cookie。ヘッダーが出す）をそれに合わせる。プロジェクトが無ければ 404。
  */
-export default async function TasksPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TasksPage({
+  params,
+  searchParams = Promise.resolve({}),
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { tasks: m, forms } = await getMessages();
   return (
     <>
@@ -40,7 +47,7 @@ export default async function TasksPage({ params }: { params: Promise<{ id: stri
           </TasksSection>
         }
       >
-        <Tasks params={params} />
+        <Tasks params={params} searchParams={searchParams} />
       </Suspense>
     </>
   );
@@ -108,14 +115,30 @@ async function AgentStatus() {
 }
 
 /** URL のプロジェクトのタスク（描いたときのデータ。画面が取り直す。PBI-108）。 */
-async function Tasks({ params }: { params: Promise<{ id: string }> }) {
+async function Tasks({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await params;
+  // 絞り込みは URL のクエリから読み、描いたときから出す（開いた後に切り替えない。PBI-441）
+  const initialFilter = parseTaskFilter(await searchParams);
   let data: Awaited<ReturnType<typeof loadTaskList>>;
   try {
     data = await loadTaskList(id);
   } catch (error) {
     if (error instanceof DaemonUnavailableError) {
-      return <LiveTaskList key={id} projectId={id} initial={null} error={error.message} />;
+      return (
+        <LiveTaskList
+          key={id}
+          projectId={id}
+          initial={null}
+          error={error.message}
+          initialFilter={initialFilter}
+        />
+      );
     }
     throw error;
   }
@@ -126,7 +149,13 @@ async function Tasks({ params }: { params: Promise<{ id: string }> }) {
       {/* 開いたプロジェクトを、表示しているプロジェクトにする（ヘッダーの選択と URL をずらさない。PBI-98・PBI-114） */}
       <FollowProject projectId={id} />
       {/* 別のプロジェクトの一覧へ移ったら、取り直しの状態を作り直す */}
-      <LiveTaskList key={id} projectId={id} initial={data} initialVersion={liveVersion(data)} />
+      <LiveTaskList
+        key={id}
+        projectId={id}
+        initial={data}
+        initialVersion={liveVersion(data)}
+        initialFilter={initialFilter}
+      />
     </>
   );
 }
