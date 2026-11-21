@@ -34,9 +34,9 @@
 ## 確かめたこと
 
 - 最後の変更の後に実行した（結果はそのときのもの）：
-  - `npx vitest run`（全件）：335 ファイル・6665 件が通り、14 件はスキップだった。
+  - `npx vitest run`（全件）：335 ファイル・6666 件が通り、14 件はスキップだった。
   - `npm run lint`（`biome check --error-on-warnings .`）：801 ファイルを検査して通った。
-  - `npm run typecheck`（`tsc --noEmit`）：通った。
+  - `npm run typecheck`（`tsc -b packages/core apps/daemon packages/cli && npm run typecheck -w @sacty/web`）：通った。
 - service・prompts・投影・届かなかった回の判定の変更を 1 つずつ外すと、新しいテストが落ちることも確かめた。
 - `npx vitest run tests/docs apps/daemon/src/default-skills.test.ts`：5 ファイル・217 件が通った。
 - `grep -rn "20261103-0744-deliver-discarded-ai-review-to-person"`（`node_modules`・`.git` を除く）：旧ファイル名への参照が残っていないことを確かめた。
@@ -49,9 +49,11 @@
 | 人の一時停止が打ち切りと重なると消える（implement-1-2、implement-3-1） | 打ち切りより先の一時停止の要求も人の要求として残すようにし、テスト `TV-14（人の操作を優先・人が先）` を足した |
 | 待ちの印が無い間に始め直しが止まる（implement-1-3） | 印が無い間は、いま見た時刻から待つ。仕様書の記述も実装に合わせた |
 | 届かなかった回の結線のテスト（implement-1-1） | 親の取り込みを通す 2 件を足した |
-| 打ち切りより先・打ち切りの間の人の一時停止（implement-4-1） | 順序 A（人が先）・B（止めている間）の 2 件のテストで、`ReviewRunStopped` を記録せず人の一時停止にすることを確かめた。`abortReviewRun` の人の要求の扱いを外すと落ちる |
+| 打ち切りより先・打ち切りの間の人の一時停止（implement-4-1） | 順序 A（人が先）・B（止めている間）・B'（止めた実行が失敗で返った後の確認の間）の 3 件のテストで、`ReviewRunStopped` を記録せず人の一時停止にすることを確かめた。B' は、`abortReviewRun` の人の一時停止の分岐で `running` も記録する直しを外すと落ちることを確かめた（A は `abortReviewRun` の人の要求の扱いを外すと落ちる。B は `kill` の中で `pause()` を呼ぶ形で、止める最中を確かめる） |
 | テストのファイル名（implement-1-4） | `daemon-review-run-stopped.test.ts` に変え、CONTRIBUTING.md の表に行を足した |
 
 ## 残したこと
+
+- 順序 B'（止めた実行が失敗で返った後に人が一時停止）：`running` のままなら、費用を `AgentRunFailed` に残してから人の一時停止にする。
 
 - CI と、ブラウザのテスト、build は実行していない。マージの前に PR のチェックで確かめる。

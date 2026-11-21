@@ -448,6 +448,30 @@ describe("レビューの実行中に PR の先頭が変わったときの打ち
     expect(t.get().status).toBe("paused");
   });
 
+  it("TV-14（人の操作を優先・止めた実行が失敗で返った後）止めた実行の確認の間に人が一時停止したら、費用を残して、ReviewRunStopped を記録せず、人の一時停止にする", async () => {
+    const t = await secondRound([HOLD, review("2回目")]);
+    const { done } = await t.startHeld();
+    let runDone = false;
+    void done.then(() => {
+      runDone = true;
+    });
+    const ensure = t.executor.ensureStopped.bind(t.executor);
+    let paused: Promise<Task> | undefined;
+    t.executor.ensureStopped = async (runId: string) => {
+      if (runDone && !paused) paused = t.service.pause(t.id);
+      return ensure(runId);
+    };
+    head(t, HEAD_C);
+    await t.service.checkPullRequests();
+    await paused?.catch(() => {});
+    expect(paused).toBeDefined();
+    expect(t.events("ReviewRunStopped")).toHaveLength(0);
+    expect(payloads(t.events("TaskPaused"))).toMatchObject([{ reason: "manual" }]);
+    expect(t.events("AgentRunFailed")).toHaveLength(1);
+    expect(t.get().status).toBe("paused");
+    expect(t.get().reviewTarget?.headCommit).toBe(HEAD_B);
+  });
+
   it("再起動の後に PR を読めない間でも、最初に見た時刻から FEEDBACK_QUIET_MS が過ぎれば始め直す", async () => {
     const t = setup([HOLD, review("1回目")]);
     const { done } = await t.startHeld();

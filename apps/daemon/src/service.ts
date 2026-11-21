@@ -1520,6 +1520,7 @@ export class TaskService {
     {
       runId: string;
       agentId: string;
+      message: DaemonText;
       usage?: TokenUsage;
       costUsd: number;
       estimated: boolean;
@@ -3490,18 +3491,39 @@ export class TaskService {
       const unstopped = await this.unstopped(runIds);
       const after = this.tasks.get(taskId);
       if (!after || this.cancelling.has(taskId) || after.status === "cancelled") return;
-      // 止めている間に人が一時停止した：人の操作を優先する（ReviewRunStopped は記録しない）
+      // 止めている間に人が一時停止した：人の操作を優先する（ReviewRunStopped は記録しない）。止めた実行が失敗で返って
+      // 実行中のままなら、その費用を AgentRunFailed に残してから、人の一時停止にする（順序 B）
       if (this.reviewStopHumanPause.has(taskId)) {
-        if (after.status === "queued" || after.status === "idle") {
-          this.append(after, [
-            {
-              actor: "person",
-              event: {
-                type: "TaskPaused",
-                payload: { reason: "manual", ...this.unstoppedPayload(unstopped) },
+        const run = this.reviewStopRuns.get(taskId);
+        const items: ActivityItem[] = [];
+        if (after.status === "running" && run && after.currentRunId === run.runId) {
+          items.push({
+            actor: "sacty",
+            event: {
+              type: "AgentRunFailed",
+              payload: {
+                runId: run.runId,
+                step: "review",
+                agentId: run.agentId,
+                reason: "error",
+                message: run.message,
+                ...(run.usage ? { usage: run.usage } : {}),
+                costUsd: run.costUsd,
+                estimated: run.estimated,
+                ...(run.costUnknown ? { costUnknown: true as const } : {}),
               },
             },
-          ]);
+          });
+        }
+        if (items.length > 0 || after.status === "queued" || after.status === "idle") {
+          items.push({
+            actor: "person",
+            event: {
+              type: "TaskPaused",
+              payload: { reason: "manual", ...this.unstoppedPayload(unstopped) },
+            },
+          });
+          this.append(after, items);
         }
         return;
       }
@@ -13189,6 +13211,7 @@ export class TaskService {
         this.reviewStopRuns.set(task.id, {
           runId,
           agentId: agent.id,
+          message: outcome.message,
           ...(outcome.usage ? { usage: outcome.usage } : {}),
           costUsd,
           estimated,

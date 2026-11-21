@@ -2132,7 +2132,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   - 実行の失敗の経路は、印を見て、`AgentRunFailed`・`TaskPaused` を記録しない。止めた実行の費用（`AgentRunCompleted` を記録していない分）はメモリーに残し、`ReviewRunStopped` の `costUsd`・`estimated`・`usage`・`costUnknown` に持たせる。
   - 投稿待ち：実行の後・投稿の直前の確認（`composeReviewPost`）が先頭の違いを見つけ、投稿せずに `ReviewRunStopped` を記録する。実行の費用は `AgentRunCompleted` で数え済みなので、この記録は費用を持たない。
   - コンテナの停止を確かめられないとき：`ReviewRunStopped` を記録せず、`unstoppedRuns` を付けた一時停止（`TaskPaused`。実行が開いていれば、先に `AgentRunFailed`）にして、人の確認を待つ（作業領域が書き換わりうるので、始め直さない）。
-  - 止めている間に人が中止・一時停止を求めたら、人の操作を優先し、`ReviewRunStopped` を記録しない。
+  - 止めている間に人が中止・一時停止を求めたら、人の操作を優先し、`ReviewRunStopped` を記録しない。一時停止は、検知より先に求めた場合と、止めた実行が失敗で返った後の確認の間に求めた場合のどちらも、人の一時停止として記録する（止めた実行が実行中のままなら、その費用を `AgentRunFailed` に残してから `TaskPaused` を記録する）。
 - 打ち切った回（`head_changed`）の投影：タスクを `queued` に戻し、`reviewTarget`・`reviewResolvedAt`・今の回の `outputs.review`・`reviewComments` と、回ごとの記録（`reviewVerdicts`・`reviewRecords`・`reviewDispatch`）の今の回の要素を消す。
   `reviewRound`・`previousReview`・`earlierReviews` は変えない（回の番号を進めない）。打ち切った回の記録は、画面・`get_task` に出ず、始め直した回の後の `ReviewRestarted` で作る `previousReview.record` にも使わない。
   打ち切りの印として `Task.reviewStop`（`from`・`to`・`at` と、消した対象の `repo`・`number`）を持ち、次の `ReviewTargetResolved` で消す（作業履歴の欄は増えない。[作業履歴](event-log.md#投影)）。
