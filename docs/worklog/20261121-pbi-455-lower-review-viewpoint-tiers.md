@@ -1,0 +1,36 @@
+# 既定のレビューの観点ごとの段階を、それぞれ 1 段下げる
+
+- 日付: 2026-11-21（UTC）
+- タスク: PBI-455
+- PR: なし
+- ブランチ: なし
+- 関係する ADR: [既定のレビューの観点ごとの段階を、それぞれ 1 段下げる](../adr/20261121-0946-lower-review-viewpoint-tiers-one-more-step.md)
+
+## 目的
+
+レビューの費用を下げるため、既定の観点カタログの観点ごとの段階を、それぞれ 1 段下げる。
+
+## したこと
+
+- `viewpoints.md` の「観点ごとの段階」の表を、`standard`・`entry`・`lite` の 3 行にした（`advanced` の行は無くなる）。理由の列と、使わない段階の文（`advanced` を足した）も合わせた。
+- `review-dispatch` の `SKILL.md` の起動表の例の段階と、軽い依頼の決まりに添えた例、`self-review.md` の例を、新しい表に合わせた。決まりの文は変えていない。
+- 軽い依頼のプロンプト（`lightSelfReviewLines`）の例の括弧を、同じ書き方に直した。
+- 仕様書（日英）の `context`・`tasks-and-steps` と、ユーザー文書 `config`（日英）の「エージェントの段階」の表を直した。仕様書の X-3 の段階（`standard` となっていた）は `lite` に直した。
+- 段階の割り当てを固定するテスト（`default-skills.test.ts`・`self-review-depth.test.ts`）を直した。
+- ADR を足し、前回の ADR と C-18 の ADR を置き換え済みにした（リンクも直した）。
+
+## 確かめたこと
+
+- `npm run lint`（biome）: 通った。
+- `npx vitest run tests/docs apps/daemon/src/default-skills.test.ts apps/daemon/src/self-review-depth.test.ts`: 通った（6 ファイル・237 件）。
+- `npm test`（全件）: 環境に起因する失敗（`@sacty/daemon` などのパッケージが解決できないテスト、ブラウザのテストの時間切れ）があった。変更前の状態では確かめていない。
+
+## レビューの指摘と対応
+
+| 指摘 | 対応 |
+| --- | --- |
+| なし | なし |
+
+## 残したこと
+
+なし

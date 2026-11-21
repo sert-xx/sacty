@@ -4,7 +4,7 @@
 - タスク: PBI-344
 - PR: #370
 - ブランチ: feat/issue-344-review-viewpoint-tiers
-- 関係する ADR: [既定のレビューの観点ごとの段階を下げ、expert も既定で使わない](../adr/20261114-1354-lower-review-viewpoint-tiers.md)
+- 関係する ADR: [既定のレビューの観点ごとの段階を下げ、expert も既定で使わない](../adr/20261114-1354-superseded-lower-review-viewpoint-tiers.md)
 
 ## 目的
 

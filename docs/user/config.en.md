@@ -232,10 +232,10 @@ sacty has the tier agents by default under the names `claude_<tier>` and `codex_
 
 | Tier | Meaning | Intended use |
 | --- | --- | --- |
-| `lite` | Fastest and cheapest | Mechanical checks such as wording and links |
-| `entry` | Enough for everyday work | Wording and fit for the reader, checks against conventions and rules, and analysis of verification results |
-| `standard` | Standard | The default for viewpoints that read the target and judge it |
-| `advanced` | Hard reasoning | Correctness, security, concurrency, and design consistency, and defect hunting not bound to a viewpoint |
+| `lite` | Fastest and cheapest | Mechanical checks such as wording and links, wording and fit for the reader, checks against conventions and rules, and analysis of verification results |
+| `entry` | Enough for everyday work | Viewpoints centered on set-form checks, such as checks against requirements and existing code |
+| `standard` | Standard | Correctness, security, concurrency, and design consistency, and defect hunting not bound to a viewpoint |
+| `advanced` | Hard reasoning | (Not used by default; only when a person chooses it) |
 | `expert` | Deeper reasoning | (Not used by default; only when a person chooses it) |
 | `ultimate` | The top tier | (Not used by default; only when a person chooses it) |
 
