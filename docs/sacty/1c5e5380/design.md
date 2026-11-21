@@ -10,6 +10,7 @@
 - 対象
   - 直しの間（実行待ち・実行中・待機・一時停止）に工程の PR がマージされたことの検知と、実行の停止・承認の記録
   - `publishStepPullRequest` が、マージ済みの PR から新しいブランチ・PR を作らないこと
+  - 作成の経路で前の PR を閉じられなかったときに、新しい PR を作らないこと
   - 作業履歴の表示と、PR への1回だけの知らせ（実装の PR の作り直しを止めたときも、同じ知らせを書く）
   - 要求要件へ戻している間にマージされた設計の PR への、承認として扱わなかったことの1回だけの知らせ
   - 起動時の回復で、工程の直しの実行も停止を確かめるまで残すこと
@@ -24,7 +25,12 @@
 
 ## 確認したいこと
 
-なし
+### should
+
+- 作成の経路で、前の PR を閉じる操作が失敗したら（読み直しても `open`）、どうするか
+  - 推奨：新しい PR を作らず、今の PR の作成の失敗と同じく一時停止（`pr.failed`）にする。再開すると `publishStepPullRequest` が読み直しからやり直し、マージ済みなら承認、開いていれば閉じ直す。
+  - 理由：前の PR が開いたまま新しい PR を作ると、人が前の PR をマージしても見守られず、#497 と同じく承認待ちに戻る。
+  - 懸念：GitHub の一時的な失敗でも、タスクの持ち主が再開を押すまで止まり、その手間が増える。
 
 ### 確認しないと決めたこと
 
@@ -47,7 +53,7 @@
 
 - 知らせには新しい目印を付けて1件だけ書き、sacty の知らせとして指摘の取り込みから外す。承認にした知らせは `<!-- sacty-merge-approval:<タスク ID>:<PR 番号> -->`、承認にしなかった知らせは `<!-- sacty-merge-not-approved:<タスク ID>:<PR 番号> -->`。書き済みの確認と取り込みの除外は、どちらも sacty のアカウント（`noticeAccounts`）の投稿に限る。
 - 再レビューの返信の絞り込み（`service.ts` の `isReworkNotice` などを並べた所）では、ほかの sacty の知らせと同じく、目印だけで返信から外す（アカウントを見ない今の決まりに合わせる）。
-- 作成の経路で push した新しいブランチ（`StepBranchPushed` で記録済み）は、マージを見つけても消さずに残し、ほかの工程のブランチと同じく、タスクの終わりの片づけで消す。
+- 作成の経路で push した新しいブランチ（`StepBranchPushed` で記録済み）は、マージを見つけても閉じられなくても消さずに残し、ほかの工程のブランチと同じく、タスクの終わりの片づけで消す。次にその工程のブランチを作るときは、`stepBranches` にある名前を飛ばして回を決める（push は強制しないので、同じ名前だと失敗するため）。
 - 承認にしなかった知らせは、作業履歴（イベント）に記録しない。PR の目印で1回だけにする。
 
 ## 構成
@@ -58,9 +64,9 @@
 | 〃（新しい状態の導出） | `reworkOf` は、工程の PR の承認待ちから同じ工程へ戻す `ChangesRequested` で、ゲートの PR 番号を入れる。前の工程へ戻す `ChangesRequested` では入れない。写しは `StepSubmitted` で取る。起動時に作業履歴から投影し直すので、入れ替えの前から直しの途中のタスクにも入る。導けない履歴（この 2 つのイベントが無いもの）では `undefined` のままで、今までどおり見守らない |
 | 〃（前の工程へ戻したとき） | 設計の PR の承認待ちから要求要件へ戻す `ChangesRequested` で、ゲートの PR 番号を `sentBackFrom` に入れ、設計の次の `StepPullRequestPublished` で消す |
 | `packages/core/src/events.ts` | `ReworkStoppedByMerge` に任意の `step` を足す |
-| `apps/daemon/src/service.ts` | `checkReworkMerges`・`stopReworkForMerge`・`endReworkByMerge` を、`reworkingStepPullRequest` の PR にも当てる。`publishStepPullRequest` に、マージを見つけたときの分岐を足す。起動時の回復で実行を残す条件に、`reworkingStepPullRequest(task)` を足す。`checkPullRequests` で `sentBackFrom` の PR も読み、承認にしなかった知らせを送る |
+| `apps/daemon/src/service.ts` | `checkReworkMerges`・`stopReworkForMerge`・`endReworkByMerge` を、`reworkingStepPullRequest` の PR にも当てる。`publishStepPullRequest` に、マージを見つけたときの分岐と、前の PR を閉じられなかったときの分岐を足し、新しいブランチの回の決め方を変える。起動時の回復で実行を残す条件に、`reworkingStepPullRequest(task)` を足す。`checkPullRequests` で `sentBackFrom` の PR も読み、承認にしなかった知らせを送る |
 | `apps/daemon/src/merge-approval-notice.ts`（新規）・`github.ts`・`service.ts` | 2 つの知らせの本文と目印、`isMergeApprovalNotice`（両方の目印を判定する）を足す。`isReworkNotice` を使っている2か所に、この判定も足す。`github.ts` の取り込みの除外では、目印と sacty のアカウントの両方で判定する。`service.ts` の返信の絞り込みでは、目印だけで判定する |
-| `apps/web/src/lib/labels.ts` | `step` があれば「PR #N がマージされたため、<工程>の直しを止めた」と出す（日英） |
+| `apps/web/src/lib/labels.ts`・`apps/web/src/i18n/messages/labels.ts` | `step` があれば「PR #N がマージされたため、<工程>の直しを止めた」と出す（日英） |
 
 ## 処理の流れ
 
@@ -73,6 +79,7 @@
    - それ以外（前の工程への差し戻しの後の PR など）は、今までどおり新しいブランチ・PR を作る。
 3. push の後、前の PR が `reworkingStepPullRequest` の PR なら、`upsert` の直前の 1 か所で前の PR の状態を読み直す。
    - 作成の経路では、前の PR を閉じる操作（戻り値は無い）の後に読み直す。閉じた後はマージできないので、読み直しから作成までの間にマージは起きない。
+   - 作成の経路で、閉じる操作が失敗し、読み直しても `open` なら、新しい PR を作らず、`pr.failed` で一時停止にする（推奨の答え。確認したいことの should）。
    - マージ済みで、先頭が直しのコミットでなければ、PR の更新も作成もせず、1 と同じ記録をする。
    - 先頭が直しのコミットなら、今までどおり記録して承認待ちにする。
 4. 記録の後に知らせを送り、送信の結果は待たない。
@@ -88,6 +95,7 @@
 - 知らせを書けなくても、タスクは変えない。目印の付いたコメントがすでにあれば書かない。
 - 止めた後・記録の前にデーモンが再起動したら、回復が実行を残して一時停止にし、次の見守りが停止を確かめてから 1 の記録をする。
 - 入れ替えの時点で、マージ済みの PR の上で直しが走っているタスクも、入れ替えの後の最初の見守りが 1 として扱う。
+- 前の PR を閉じられずに一時停止したタスクは、再開で `publishStepPullRequest` をやり直す。push 済みのブランチの名前は飛ばし、次の回の名前で作る。
 
 ## 影響範囲
 
@@ -96,7 +104,7 @@
   - 決めること：工程の PR の直しの間のマージを承認にし、直しを捨てる。要求要件へ戻している間の設計の PR のマージは承認にせず、PR に知らせる。保存するイベントの形を変え、前の版に戻せなくなる。
   - 理由：今の「人のマージで承認」の決まりにそろえる。人がマージ前に直した箇所が、自動の直しの版で黙って戻るのを防ぐ。
 - 仕様書
-  - `docs/spec/approval.md`（日英）の「要求要件・設計の PR を作り直すか」にある「PR がマージ済み」を、承認済みのマージに限る。
+  - `docs/spec/approval.md`（日英）の「要求要件・設計の PR を作り直すか」にある「PR がマージ済み」を、承認済みのマージに限る。前の PR を閉じられなかったら新しい PR を作らず一時停止にすることと、ブランチの回の決め方も書く。
   - 同じファイルの「実装の作り直しの間のマージ」の隣に、工程の PR の節を足す。要求要件へ戻している間の設計の PR のマージで知らせを書くことも、この節に書く。
   - 同じファイルの「PR の確認」の、確認の初めに見る「実装を作り直している間」に、工程の直しの間を足す。
   - 同じファイルの「承認待ちでの一時停止」の「要求要件・設計の PR：止めている間は見守らない」は、承認待ちの一時停止だけの話だと書き分ける。直しの間の一時停止は見守ることも書く。
@@ -104,9 +112,12 @@
 - ユーザー文書
   - `docs/user/tasks.md`（日英）の「直してからマージしたとき・作り直しの間にマージしたとき」に、工程の PR のことと、要求要件へ戻している間の設計の PR のマージ（承認にならず、PR に知らせが出て、設計の PR が作り直される）を足す。
   - `docs/user/getting-started.md`（日英）の「更新前のバックアップと旧版への復帰」の、旧版で読み込めない新しい種類の記録の例に、マージで止めた要求要件・設計の直しの記録を足す。
+  - 紹介のページ（`docs/user/introduction.md`、日英）と図（`intro.mjs`、`tasks.mjs` の `approval-branches`）は、「マージで承認」と承認のブランチの形が変わらないので直さない。差分で合っていることを確かめる。
+- 画面の文言：作業履歴の文言は `docs/spec/ui-wording.md` の規則に従い、`apps/web/src/i18n/wording-policy.test.ts` を通す。
 - テスト
-  - `apps/daemon/src/daemon-step-pull-requests.test.ts` で、次を確かめる：処理の流れの 1〜3・5、知らせ、push の後のマージ、閉じた PR、前の工程への差し戻しで新しい PR を作ること。
+  - `apps/daemon/src/daemon-step-pull-requests.test.ts` で、次を確かめる：処理の流れの 1〜3・5、知らせ、push の後のマージ、閉じた PR、前の PR を閉じられなかったとき、ブランチの回、前の工程への差し戻しで新しい PR を作ること。
   - 実装の PR の知らせは `apps/daemon/src/daemon-implement.test.ts` で確かめる。
+  - get_task の `pullRequests` の状態は `apps/daemon/src/task-mcp.test.ts` で確かめる。
   - ほかに `projection.test.ts`・`labels.test.ts`・`imitated-notices.test.ts`。
 - 作業履歴 `docs/worklog/20261121-pbi-462-<スラッグ>.md` を足す。
 
@@ -127,42 +138,48 @@
 - [TV-5] 新しい PR を作る経路では、前の PR を閉じた後の読み直しでマージを見つける
   - 入力：タスクブランチが進んでいて新しい PR を作る経路で、最初の読み込みでは #N が open、新しいブランチの push の後・前の PR を閉じる操作の前に人が #N をマージし、閉じる操作はエラーを返さない
   - 期待結果：閉じる操作の後の読み直しで merged と分かり、新しい PR は作られず、StepPullRequestPublished は記録されず、ReworkStoppedByMerge（step: design）・PullRequestMerged・StepApproved が1組記録され、PR #N に知らせが1件書かれ、push した新しいブランチは stepBranches に残る
-- [TV-6] publish の最中のマージは、publish の側が1回だけ記録する
+- [TV-6] 前の PR を閉じられなかったら、新しい PR を作らず一時停止にする
+  - 入力：新しい PR を作る経路で、前の PR #N を閉じる操作がエラーになり、その後の読み直しで #N が open のまま。その後、人が #N をマージしてから再開する
+  - 期待結果：1回目は新しい PR が作られず、StepPullRequestPublished は記録されず、TaskPaused（reason: error）が記録される。再開の後は、新しいブランチ・PR を作らずに ReworkStoppedByMerge（step: design）・PullRequestMerged・StepApproved が1組記録される
+- [TV-7] PR の無い push 済みのブランチの名前を、次の回で使わない
+  - 入力：観点5で <タスクブランチ>-design-2 を push したまま承認になった後、実装の PR の指摘で設計に戻し、設計の publishStepPullRequest が新しい PR を作る
+  - 期待結果：新しいブランチは <タスクブランチ>-design-3 になり、push が失敗せず、PR が作られて StepPullRequestPublished が記録される
+- [TV-8] publish の最中のマージは、publish の側が1回だけ記録する
   - 入力：publishStepPullRequest が本文のまとめを実行している間に #N がマージされ、その間に PR の確認が走る
   - 期待結果：PR の確認は実行を止めず記録もせず、publish の読み直しが ReworkStoppedByMerge・PullRequestMerged・StepApproved を1組だけ記録し、PR に知らせが1件書かれる
-- [TV-7] 人が直してからマージしたら、人の版を承認済みの成果にする
+- [TV-9] 人が直してからマージしたら、人の版を承認済みの成果にする
   - 入力：直しの間に、人が #N に直接コミットしてからマージし、マージのコミットの設計のファイルが sacty の提出した版と違う
   - 期待結果：PullRequestMerged が edited: true と、マージのコミットの document を持ち、承認済みの設計は人の版になる。設計のファイルを読めないときは何も記録されず、次の確認で記録される
-- [TV-8] get_task と画面で、マージした PR が open のまま残らない
+- [TV-10] get_task と画面で、マージした PR が open のまま残らない
   - 入力：観点1の承認の後に get_task を呼び、タスクの画面を開く
   - 期待結果：pullRequests の #N の state が merged になり、画面も #N をマージ済みとして出す
-- [TV-9] 作業履歴に、直しを捨てたことを工程の名前で出す
+- [TV-11] 作業履歴に、直しを捨てたことを工程の名前で出す
   - 入力：step: design の ReworkStoppedByMerge を、作業履歴の表示の文言にする（日英）
   - 期待結果：「PR #N がマージされたため、設計の直しを止めた」と、それに対応する英語の文になる。step の無い記録は、今までの「実装の作り直し」の文言のままになる
-- [TV-10] 既存の履歴を、新しい版で投影し直す
+- [TV-12] 既存の履歴を、新しい版で投影し直す
   - 入力：(a) step の無い ReworkStoppedByMerge・PullRequestMerged・StepApproved を含む実装の作り直しの履歴と、(b) 設計の PR #N の承認待ちから同じ工程へ戻す ChangesRequested の後、直しの AgentRunCompleted まで進んだ（承認の無い）履歴を、新しい版で投影し直す
   - 期待結果：(a) は実装の承認として投影され、タスクの状態・承認済みの実装・指摘の無効化が変更の前の版の結果と一致する。(b) は reworkingStepPullRequest が #N を返し、#N の写しが StepSubmitted の時点の設計の成果とテスト観点と一致する
-- [TV-11] PR に1回だけ知らせる
+- [TV-13] PR に1回だけ知らせる
   - 入力：観点1の承認の後に PR の確認が2回走り、捨てた指摘が3件ある。別に、実装の PR の作り直しをマージで止めたタスク、セキュリティのタスク、GitHub のアカウントの無いプロジェクトでも同じことが起きる
   - 期待結果：#N と実装の PR に、目印 <!-- sacty-merge-approval:<タスク ID>:<PR 番号> --> の付いたコメントがそれぞれ1件だけあり、マージを承認として扱ったこと・自動の直しを取り込まなかったこと・残っていた提案の件数（#N では 3 件）が書かれている。セキュリティのタスクとアカウントの無いプロジェクトには書かれない
-- [TV-12] 知らせの目印の判定を、取り込みと返信の絞り込みで分ける
+- [TV-14] 知らせの目印の判定を、取り込みと返信の絞り込みで分ける
   - 入力：目印 <!-- sacty-merge-approval: と <!-- sacty-merge-not-approved: で始まるコメントが、sacty のアカウントと、sacty のアカウントでない人（PR の作者を含む）から、工程の PR と実装の PR に付いている
   - 期待結果：sacty のアカウントのコメントは指摘として取り込まれない。人のコメントは指摘として取り込まれ、書き済みとも見なされず、sacty の知らせが1件書かれる。再レビューの返信の絞り込みでは、作者のコメントも含めて目印の付いたコメントは返信に数えられない
-- [TV-13] 停止を確かめる前に再起動しても、コンテナを残したまま承認しない
+- [TV-15] 停止を確かめる前に再起動しても、コンテナを残したまま承認しない
   - 入力：観点1で実行を止めた後、ReworkStoppedByMerge を記録する前にデーモンを再起動する
   - 期待結果：起動時の回復が unstoppedRuns 付きの TaskPaused を記録し、停止を確かめた後の PR の確認で ReworkStoppedByMerge（was: paused）・PullRequestMerged・StepApproved が記録される
-- [TV-14] push の後のマージは今までどおり
+- [TV-16] push の後のマージは今までどおり
   - 入力：直しのコミットを #N に push し、PR を更新して StepPullRequestPublished を記録した後に、人が #N をマージする
   - 期待結果：ReworkStoppedByMerge は記録されず、PR の確認が PullRequestMerged（edited: false）・StepApproved を記録し、知らせは書かれない
-- [TV-15] 直しの間に閉じた PR は今までどおり
+- [TV-17] 直しの間に閉じた PR は今までどおり
   - 入力：設計の直しの間に、#N がマージされずに閉じられる
   - 期待結果：ReworkStoppedByMerge と承認は記録されず、直しの後に新しいブランチ・PR が作られ、#N が superseded になる
-- [TV-16] 前の工程への差し戻しでは、マージを承認にせず直しの PR を作り、PR に1回だけ知らせる
+- [TV-18] 前の工程への差し戻しでは、マージを承認にせず直しの PR を作り、PR に1回だけ知らせる
   - 入力：設計の PR #N の指摘で要求要件に戻し、要求要件の PR はマージ済み（承認済み）と記録されている。要求要件の直しの間に人が #N をマージし、PR の確認が2回走り、その後に要求要件が承認されて設計の工程が動き、設計の publishStepPullRequest まで進む。別に、同じことがセキュリティのタスクと GitHub のアカウントの無いプロジェクトで起きる
   - 期待結果：要求要件の直しの後に -requirements-2 のブランチと新しい PR が作られる。PR の確認と設計の publishStepPullRequest のどちらでも #N のマージで ReworkStoppedByMerge と設計の StepApproved は記録されず、設計の新しいブランチと新しい PR が作られる。#N には目印 <!-- sacty-merge-not-approved:<タスク ID>:<N> --> の付いたコメントが1件だけあり、要求要件の直しの最中だったため設計の承認として扱っていないことと、要求要件の承認の後に設計の PR を作り直すことが書かれている。セキュリティのタスクとアカウントの無いプロジェクトには書かれない
-- [TV-17] 修正を戻すと落ちる
-  - 入力：reworkingStepPullRequest が常に undefined を返すようにし、publishStepPullRequest のマージの分岐と、ReworkStoppedByMerge の投影の成果の戻しと、sentBackFrom の PR への知らせを外して、観点1〜7・11・16 のテストを動かす
+- [TV-19] 修正を戻すと落ちる
+  - 入力：reworkingStepPullRequest が常に undefined を返すようにし、publishStepPullRequest のマージの分岐と、閉じられなかったときの分岐と、ブランチの回で stepBranches を飛ばす処理と、ReworkStoppedByMerge の投影の成果の戻しと、sentBackFrom の PR への知らせを外して、観点1〜9・13・18 のテストを動かす
   - 期待結果：それらのテストが落ちる
-- [TV-18] 仕様書・ユーザー文書・ADR に、工程の PR の直しの間のマージが書かれている
+- [TV-20] 仕様書・ユーザー文書・ADR に、工程の PR の直しの間のマージが書かれている
   - 入力：docs/spec/approval.md・tasks-and-steps.md・docs/user/tasks.md・docs/user/getting-started.md とその英語版、足した ADR の差分
-  - 期待結果：要求要件・設計の直しの間（直しのコミットが PR の先頭になる前）にマージされたら、承認として進み、直しを捨て、新しい PR を作らず、PR に1回知らせることが日英で書かれている。push の後と閉じたときは今までどおりであること、承認待ちでの一時停止の間は見守らないこと、要求要件へ戻している間の設計の PR のマージは承認にならず PR に知らせが出て設計の PR が作り直されることも書かれ、「マージ済みなら新しい PR を作る」は承認済みのマージ（前の工程への差し戻し）に限られている。getting-started.md（日英）の旧版への復帰の説明に、マージで止めた要求要件・設計の直しの記録は旧版で読み込めないことが書かれている。ADR には、この決めと、理由（今の「人のマージで承認」の決まりにそろえる・人の直しが黙って戻るのを防ぐ）と、前の版のデーモンに戻せなくなることが書かれている
+  - 期待結果：要求要件・設計の直しの間（直しのコミットが PR の先頭になる前）にマージされたら、承認として進み、直しを捨て、新しい PR を作らず、PR に1回知らせることが日英で書かれている。push の後と閉じたときは今までどおりであること、承認待ちでの一時停止の間は見守らないこと、要求要件へ戻している間の設計の PR のマージは承認にならず PR に知らせが出て設計の PR が作り直されること、前の PR を閉じられなければ新しい PR を作らず一時停止にすることも書かれ、「マージ済みなら新しい PR を作る」は承認済みのマージ（前の工程への差し戻し）に限られている。getting-started.md（日英）の旧版への復帰の説明に、マージで止めた要求要件・設計の直しの記録は旧版で読み込めないことが書かれている。ADR には、この決めと、理由（今の「人のマージで承認」の決まりにそろえる・人の直しが黙って戻るのを防ぐ）と、前の版のデーモンに戻せなくなることが書かれている
