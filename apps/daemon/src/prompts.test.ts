@@ -4424,6 +4424,75 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
       );
     });
 
+    describe("入口を足す・変える変更では、差し替えない実行を求める（PBI-451）", () => {
+      const sectionOf = (prompt: string): string => {
+        const from = prompt.indexOf("--- 提出の前の検証 ---");
+        return prompt.slice(from, prompt.indexOf("--- ", from + 5));
+      };
+      const entryLine = (prompt: string): string | undefined =>
+        sectionOf(prompt)
+          .split("\n")
+          .find((l) => l.startsWith("- 入口（"));
+      const FRAGMENTS = [
+        "足さない・変えない変更では何もしない",
+        "入口の外から見える契約（呼び方・引数・出力の形〔項目・型・書式〕・終了コード・既定の振る舞い）",
+        "出力の形を変えずに値の誤りだけを直す変更と、契約を変えない内部の変更は含めない",
+        "ビルドした成果物（リポジトリがビルドを定めていなければ、配る形のまま）",
+        "時計・タイマー・通信などを差し替えずに1回以上動かし",
+        "動かした入口・動かし方・結果を実装の説明に書く",
+        "差し替えたテストの実行は、これに数えない",
+        "動かせなければ、その理由を実装の説明に書く",
+        "外部への書き込み・削除・送信・課金を伴う入口と、本番の資源に触れる入口は動かさず、その理由を書く",
+        "どの入口も、通信の有無の判断に依らず、その1回の実行にだけ、入口が使いうる認証の経路のすべて（認証情報の環境変数・設定ファイル・ホームの下の決まった場所のファイル・認証の代理など）を外して動かす",
+        "環境変数は、その実行の子プロセスでだけ外すか空にする",
+        "設定ファイルとホームの下のファイルは、設定の置き場所・ホームを指す環境変数を空の一時ディレクトリに向けて、そこを読ませる",
+        "外部を読むだけの通信には、認証情報の代わりにダミーの値を渡してよい",
+        "認証情報のファイルの実物は、作業領域の中か外かを問わず、移さない・消さない・読まない",
+        "1つでも外せなければ動かさず、その理由を書く",
+        "動かし方（コマンド行・URL・環境変数）と結果のどちらにも、トークン・認証ヘッダーなどの秘密の値を書かない",
+        "作業履歴などリポジトリに残す文書に写すときも同じ",
+      ];
+
+      it("コードの実装の指示の「提出の前の検証」に、差し替えない実行の行が1つ出る", () => {
+        const prompt = buildPrompt(task(["implement"]), "implement");
+        const line = entryLine(prompt);
+        expect(line).toBeDefined();
+        for (const f of FRAGMENTS) expect(line, f).toContain(f);
+        expect(
+          sectionOf(prompt)
+            .split("\n")
+            .filter((l) => l.startsWith("- 入口（")),
+        ).toHaveLength(1);
+      });
+
+      it("要求要件・設計あり・不具合の修正・PR のレビューの子タスクがレビューする回にも、同じ行が出る", () => {
+        const base = entryLine(buildPrompt(task(["implement"]), "implement"));
+        expect(base).toBeDefined();
+        const prompts = [
+          buildPrompt(task(steps), "implement"),
+          buildPrompt(task(["investigate", "reproduce", "implement"], reproduction), "implement"),
+          buildPrompt(task(["implement"]), "implement", reviewed),
+          buildPrompt(task(steps), "implement", reviewed),
+          buildPrompt(
+            task(["investigate", "reproduce", "implement"], reproduction),
+            "implement",
+            reviewed,
+          ),
+        ];
+        for (const prompt of prompts) expect(entryLine(prompt)).toBe(base);
+      });
+
+      it("文書だけの依頼には出さない", () => {
+        const docs = { documentsOnly: true } as Partial<Task>;
+        for (const extra of [undefined, reviewed]) {
+          const prompt = buildPrompt(task(["implement"], docs), "implement", extra);
+          expect(prompt).toContain("--- 提出の前の検証 ---");
+          expect(prompt).not.toContain("差し替えずに1回以上動かし");
+          expect(entryLine(prompt)).toBeUndefined();
+        }
+      });
+    });
+
     it("出典の分類は、提出する最終版に対してさせる", () => {
       const prompt = buildPrompt(task(steps), "requirements", {
         ...reviewed,
