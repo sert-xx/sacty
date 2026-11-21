@@ -108,6 +108,14 @@ export type PullRequestCi = {
  * 同じコミットの CI を待ち直すときに、前の再実行の記録を戻す（PBI-311）。戻さないと、再実行で通った結果だけが最終レビューに
  * 渡り、元の失敗が消える。1つも頼めなかった再実行は、無かったものとする。
  */
+/** 2 つのコミットが同じか（短い表記は、長いほうの先頭と一致すれば同じ）。 */
+function sameHeadCommit(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (!x || !y) return false;
+  return x.length <= y.length ? y.startsWith(x) : x.startsWith(y);
+}
+
 function restoredCiRerun(task: Task, commit: string): Pick<PullRequestCi, "rerun"> {
   const past = task.pullRequestCiReruns?.find((r) => r.commit === commit);
   if (!past || past.skipped) return {};
@@ -1195,6 +1203,11 @@ export type Task = {
   reviewWatch?: { since: string };
   /** 見守りを終えた理由（ReviewWatchEnded。PBI-411）。再レビューを始めると消える。 */
   reviewWatchEnded?: { reason: PayloadOf<"ReviewWatchEnded">["reason"] };
+  /**
+   * フォークからの PR の新しい先頭を、自動では再レビューせずに、人の操作を待っている（ReviewRestartHeld。PBI-461）。
+   * commit は待っている先頭。再レビューを始める・見守りを終える・新しく投稿すると消える。
+   */
+  reviewHold?: { commit: string };
   /**
    * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。PBI-411）。名前は「対象を確かめた時刻」だが、実行を始める
    * たびに上書きする（対象を確かめた時刻が入っているのは、実行を始める前だけ）。レビューが PR のコメントを読むのは、この後
@@ -3201,6 +3214,7 @@ export function applyEvent(
         ...(event.payload.latestCommit ? { latestCommit: event.payload.latestCommit } : {}),
       };
       task.reviewWatchEnded = undefined;
+      task.reviewHold = undefined;
       task.reviewWatch =
         event.payload.watch && currentReviewVerdict(task) !== "no_findings"
           ? { since: task.reviewResolvedAt ?? event.at }
@@ -3213,7 +3227,20 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the review is not watched");
       }
       task.reviewWatch = undefined;
+      task.reviewHold = undefined;
       task.reviewWatchEnded = { reason: event.payload.reason };
+      break;
+
+    case "ReviewRestartHeld":
+      if (task.status === "cancelled" || !task.reviewWatch || !task.reviewPost) {
+        throw new ActivityIntegrityError(event, "the review is not watched");
+      }
+      // レビューした先頭に戻ったときの記録は、待ちを消す
+      task.reviewHold =
+        task.reviewTarget?.headCommit &&
+        sameHeadCommit(task.reviewTarget.headCommit, event.payload.commit)
+          ? undefined
+          : { commit: event.payload.commit };
       break;
 
     case "ReviewRestarted":
@@ -3249,6 +3276,7 @@ export function applyEvent(
         event.payload.reason === "replied" ? task.reviewWatch?.since : undefined;
       task.reviewWatch = undefined;
       task.reviewWatchEnded = undefined;
+      task.reviewHold = undefined;
       task.reviewResolvedAt = undefined;
       task.outputs = Object.fromEntries(
         Object.entries(task.outputs).filter(([key]) => key !== "review"),
@@ -3396,6 +3424,8 @@ export function applyEvent(
           task.outputs = { ...task.outputs, [step]: copy.output };
           if (step === "design") task.testViewpoints = copy.testViewpoints;
         }
+        // 直しの完了が置き換えたセルフレビューと出典の分類は、直しの版のものなので「記録なし」にする
+        voidSubmissionChecks(task, step);
         task.status = "awaiting_approval";
         task.gate = { step, submission: stepRework.submission };
         const discardedByStep = new Set(event.payload.discardedRemarks.map((r) => r.id));

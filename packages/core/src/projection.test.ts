@@ -8233,6 +8233,27 @@ describe("要求要件・設計の自動の直しの間の PR のマージ（PBI
     expect(approvedTask?.reworkOf).toBeUndefined();
   });
 
+  it("作り直しを止める記録で、直しの版の出典の分類とセルフレビューを「記録なし」にする", () => {
+    const classified = {
+      sequential: false,
+      items: [{ id: "TV-1", kind: "input" as const, refs: [], excerpt: "原文", found: true }],
+      unclassified: [],
+    };
+    seq = 0;
+    const base = [...designGate("t"), sendBackDesign("t")];
+    const rework = run("t", "design", "d2", "# 設計 v2（直し）");
+    const withProvenance = rework.map((e) =>
+      e.type === "AgentRunCompleted"
+        ? { ...e, payload: { ...e.payload, provenance: classified } }
+        : e,
+    );
+    const before = project([...base, ...withProvenance]).get("t");
+    expect(before?.provenances?.design).toEqual(classified);
+    const stopped = project([...base, ...withProvenance, stoppedDesign("t")]).get("t");
+    expect(stopped?.outputs.design).toBe("# 設計 v1");
+    expect(stopped?.provenances?.design).toBeNull();
+  });
+
   it("直しの PR でない PR（前の工程へ戻した後の PR・直しを始めていない PR）には、作り直しを止める記録を投影できない", () => {
     seq = 0;
     expect(() => project([...designGate("t"), stoppedDesign("t")])).toThrow();

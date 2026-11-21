@@ -42,7 +42,9 @@ describe("ReviewWatchNotice", () => {
     expect(html).toContain('data-state="watching"');
     expect(html).toContain("PR の変化を見守っています");
     expect(html).toMatch(/<p role="status"[^>]*>2回目のレビューの判定：提案あり/);
-    expect(html).toContain("PR の作者の対応を待っています。あなたの対応は要りません。");
+    expect(html).toContain(
+      "PR の作者の対応を待っています。フォークからの PR でなければ、あなたの対応は要りません。",
+    );
     // 仕組み（何が起きると再レビュー・完了になるか）は、補足に置く
     expect(html).toContain("自動で再レビューします");
     expect(html).toContain('href="https://github.com/acme/app/pull/9#r1"');
@@ -51,7 +53,29 @@ describe("ReviewWatchNotice", () => {
       "en",
     );
     expect(en).toContain("Verdict of review round 1: changes required");
-    expect(en).toContain("Waiting for the PR author to respond. Nothing is needed from you.");
+    expect(en).toContain(
+      "Waiting for the PR author to respond. Unless the PR is from a fork, nothing is needed from you.",
+    );
+  });
+
+  it("フォークからの PR で自動の再レビューを見送っているときは、人が再レビューを押すまでレビューしないことと、新しい先頭を出す（PBI-461）", () => {
+    const patch = {
+      reviewWatch: watch,
+      reviewVerdicts: [{ round: 1, verdict: "changes_required" as const }],
+      reviewHold: { commit: "d".repeat(40) },
+    };
+    const html = render(patch);
+    expect(html).toContain('data-testid="review-watch-held"');
+    expect(html).toContain(
+      "新しいコミット（ddddddd）は、「再レビューして PR に投稿」を押すまでレビューしません。",
+    );
+    // 保留中は、「あなたの対応は要りません」と言わない
+    expect(html).not.toContain("あなたの対応は要りません");
+    expect(render(patch, "en")).toContain(
+      "The new commit (ddddddd) is not reviewed until you press",
+    );
+    // 待っていなければ出さない
+    expect(render({ ...patch, reviewHold: undefined })).not.toContain("review-watch-held");
   });
 
   it("判定が無い回も、判定が無いことを出して見守る。sacty が作った PR の子タスクは、PR を作ったタスクを待っていると出す", () => {

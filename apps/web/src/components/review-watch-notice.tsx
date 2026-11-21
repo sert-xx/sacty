@@ -37,7 +37,9 @@ export function ReviewWatchNotice({ task }: { task: Task }) {
         className="flex flex-col gap-1.5 rounded-xl border border-border px-5 py-4"
       >
         <h2 id="review-watch" className="text-[15px] font-semibold">
-          <WithHint hint={task.reviewOf ? w.parentHint : w.hint}>{w.title}</WithHint>
+          <WithHint hint={task.reviewOf ? w.parentHint : task.reviewHold ? w.heldHint : w.hint}>
+            {w.title}
+          </WithHint>
         </h2>
         <p role="status" className="text-sm">
           {w.verdict(
@@ -45,7 +47,13 @@ export function ReviewWatchNotice({ task }: { task: Task }) {
             m.reviewVerdict[verdict ?? (missing === "absent" ? "absent" : "unreadable")],
           )}
         </p>
-        <p className="text-sm">{task.reviewOf ? w.waitingParent : w.waiting}</p>
+        {task.reviewHold ? (
+          <p role="status" data-testid="review-watch-held" className="text-sm">
+            {w.held(task.reviewHold.commit.slice(0, 7))}
+          </p>
+        ) : (
+          <p className="text-sm">{task.reviewOf ? w.waitingParent : w.waiting}</p>
+        )}
         {link}
       </section>
     );

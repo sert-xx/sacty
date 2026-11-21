@@ -4,7 +4,7 @@
 - タスク: PBI-411
 - PR: #452
 - ブランチ: feat/issue-411-review-watch
-- 関係する ADR: [レビューのタスクは、判定が指摘なしになるまで完了にせず、PR の変化を見守って自動で再レビューする](../adr/20261119-1925-review-task-watches-pr-until-no-findings.md)
+- 関係する ADR: [レビューのタスクは、判定が指摘なしになるまで完了にせず、PR の変化を見守って自動で再レビューする](../adr/20261119-1925-superseded-review-task-watches-pr-until-no-findings.md)
 
 ## 目的
 
