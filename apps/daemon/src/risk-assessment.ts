@@ -3,6 +3,7 @@ import {
   type EventInput,
   message,
   type PauseReason,
+  parseRepoUrl,
   RISK_SIGNAL_WEIGHT,
   RiskAssessment,
   RiskDependencyUpdate,
@@ -144,7 +145,7 @@ function riskCriteriaLines(): string[] {
     "",
     "評価は、次の形式で出してください。",
     "```json",
-    `{"${RISK_ASSESSMENT_HEADING}": {"level": "medium", "signals": [], "dependencyUpdate": "none", "change": "変更の種類", "scope": "影響の範囲", "reversibility": "取り消しやすさ", "verification": "確かめた範囲", "focus": [{"where": "src/pay.ts:40-72", "why": "見る理由"}]}}`,
+    `{"${RISK_ASSESSMENT_HEADING}": {"level": "medium", "signals": [], "dependencyUpdate": "none", "change": "変更の種類", "scope": "影響の範囲", "reversibility": "取り消しやすさ", "verification": "確かめた範囲", "focus": [{"where": "src/pay.ts:40-72", "why": "見る理由と、人間に判断・確認してほしいこと"}]}}`,
     "```",
     `- signals：当たったリスクの合図の配列。必ず配列で書き、無ければ空の配列にする。上の ${signalsOf("heavy").length + signalsOf("light").length} つの名前だけを使う（配列でない・ほかの名前が混ざる答えは、sacty が読めないものとして扱います）`,
     `- dependencyUpdate：依存の版の更新の上げ幅。${RiskDependencyUpdate.options.join("・")} のどれか1つ（ほかの値は、sacty が読めないものとして扱います）`,
@@ -152,7 +153,7 @@ function riskCriteriaLines(): string[] {
     "- scope：影響の範囲（どの機能・利用者・呼び出し元に及ぶか）",
     "- reversibility：取り消しやすさ（変更を元に戻すだけで戻るか。戻らないものがあれば、それは何か）",
     "- verification：確かめた範囲（どのテスト・実行で、何を確かめてあるか。確かめていないことは何か）",
-    `- focus：人がとくに見る箇所（重要な順に ${RISK_FOCUS_MAX} つまで。とくに見る箇所が無ければ、空の配列）。where はパスと行、why はそこを見る理由`,
+    `- focus：人がとくに見る箇所（重要な順に ${RISK_FOCUS_MAX} つまで。とくに見る箇所が無ければ、空の配列）。where はパスと正の行番号・行範囲（例 src/cancel.ts:10-40。仕様・設定・手順などは自由文でもよい）、why はそこを見る理由と、人間に判断・確認してほしいことの両方を書く。修正指摘の全文は繰り返さない`,
     "- 各項目は、1〜2文で、コードや記録で確かめた事実を書く。推測は、推測と分かるように書く。秘密の値は書かない",
   ];
 }
@@ -484,6 +485,59 @@ export const RISK_SECTION_TITLE = "リスク評価";
 /** コードとして書く箇所から、バッククォートを除く（インラインコードを閉じさせない）。 */
 const asCode = (value: string) => `\`${value.replace(/`/g, "'")}\``;
 
+/** 記録に改行があっても、空行を含むすべての行を同じ引用枠に入れる。 */
+function alertLines(kind: string, lines: string[]): string[] {
+  return [
+    `> [!${kind}]`,
+    ...lines.flatMap((line) =>
+      line.split(/\r\n|[\r\n\u2028\u2029]/).map((part) => (part ? `> ${part}` : ">")),
+    ),
+  ];
+}
+
+/** URL の区切りを保ち、Markdown のリンク先の括弧もエンコードする。 */
+const urlPart = (part: string) =>
+  encodeURIComponent(part).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+
+/** 相対パスと正しい行の指定だけを、評価したコミットへ結ぶ。ファイルの存在確認はしない。 */
+function focusLocation(
+  where: string,
+  repoUrl: string | undefined,
+  commit: string | undefined,
+): string {
+  const fallback = asCode(where);
+  const repo = repoUrl ? parseRepoUrl(repoUrl) : undefined;
+  const match = where.match(/^(.+):([1-9]\d*)(?:-([1-9]\d*))?$/);
+  if (
+    !repo ||
+    !commit ||
+    commit.trim() !== commit ||
+    !/^[a-f\d]{7,64}$/i.test(commit) ||
+    !match ||
+    match[0] !== where
+  )
+    return fallback;
+  const [, path = "", first = "", last] = match;
+  const start = Number(first);
+  const end = last === undefined ? start : Number(last);
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    end < start ||
+    // u を付けると、サロゲートの範囲は対になっていないものだけに当たる。
+    /[\\:\u2028\u2029\uD800-\uDFFF]/u.test(path) ||
+    [...path].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
+    path.startsWith("/") ||
+    path.split("/").some((part) => !part || part === "." || part === "..")
+  )
+    return fallback;
+  const label = fallback;
+  return `[${label}](${repo.url}/blob/${commit}/${path.split("/").map(urlPart).join("/")}#L${first}${last === undefined ? "" : `-L${last}`})`;
+}
+
 /** 合図の名前に、重さを添える（「取り消しにくい変更（重い）」）。外した合図（以前の記録）には、添えない。 */
 function signalLabel(signal: RiskSignal): string {
   const weight = RISK_SIGNAL_WEIGHT[signal];
@@ -496,7 +550,7 @@ function signalLabel(signal: RiskSignal): string {
  * PR の説明・レビューのコメントに載せる、リスク評価の節（PBI-362）。評価が無ければ（まだ評価していない）、何も出さない。
  * 評価できなかったときは、評価できなかったことと理由を書く。
  */
-export function riskAssessmentLines(risk: Task["riskAssessment"]): string[] {
+export function riskAssessmentLines(risk: Task["riskAssessment"], repoUrl?: string): string[] {
   if (!risk) return [];
   const heading = `### ${RISK_SECTION_TITLE}`;
   const note =
@@ -510,23 +564,45 @@ export function riskAssessmentLines(risk: Task["riskAssessment"]): string[] {
       `- 評価できませんでした${reason ? `（${reason.replace(/\s*\n\s*/g, " ")}）` : ""}。レビューの深さは、差分を見て決めてください。`,
     ];
   }
+  const level = {
+    low: { alert: "NOTE", category: 1 },
+    medium: { alert: "IMPORTANT", category: 2 },
+    high: { alert: "WARNING", category: 3 },
+  }[a.level];
+  const grounds = [
+    `変更の種類：${a.change}`,
+    `影響の範囲：${a.scope}`,
+    `取り消しやすさ：${a.reversibility}`,
+  ];
   return [
     heading,
     "",
-    `- 段階：**${RISK_LEVEL_LABEL[a.level]}**（低・中・高の3段階）`,
-    `- 勧めるレビューの深さ：${RISK_DEPTH_LABEL[a.level]}`,
-    ...(a.signals.length > 0 ? [`- リスクの合図：${a.signals.map(signalLabel).join("、")}`] : []),
-    ...(a.dependencyUpdate
-      ? [`- 依存の版の更新：${RISK_DEPENDENCY_LABEL[a.dependencyUpdate]}`]
-      : []),
-    `- 変更の種類：${a.change}`,
-    `- 影響の範囲：${a.scope}`,
-    `- 取り消しやすさ：${a.reversibility}`,
-    `- 確かめた範囲：${a.verification}`,
+    ...alertLines(level.alert, [
+      `**変更リスク: ${RISK_LEVEL_LABEL[a.level]}(${level.category})**`,
+      "",
+      ...(a.level === "low" ? [grounds.join("。"), ""] : grounds.map((line) => `- ${line}`)),
+      `- 勧めるレビューの深さ：${RISK_DEPTH_LABEL[a.level]}`,
+      ...(a.signals.length > 0 ? [`- リスクの合図：${a.signals.map(signalLabel).join("、")}`] : []),
+      ...(a.dependencyUpdate
+        ? [`- 依存の版の更新：${RISK_DEPENDENCY_LABEL[a.dependencyUpdate]}`]
+        : []),
+    ]),
+    "",
     ...(a.focus.length > 0
-      ? ["- とくに見る箇所：", ...a.focus.map((f) => `  - ${asCode(f.where)}：${f.why}`)]
+      ? [
+          ...alertLines("TIP", [
+            "**とくに見る箇所（人間への確認依頼）**",
+            "",
+            ...a.focus.map((f) => `- ${focusLocation(f.where, repoUrl, risk.commit)}：${f.why}`),
+          ]),
+          "",
+        ]
       : []),
-    `- ${note}`,
+    "**確認範囲・未確認事項**",
+    "",
+    `- 確かめた範囲：${a.verification}`,
+    "",
+    note,
   ];
 }
 
@@ -542,11 +618,12 @@ export function declinedRiskMarker(taskId: string, commit: string): string {
 export function buildDeclinedRiskComment(input: {
   taskId: string;
   commit: string;
+  repo?: string;
   risk: NonNullable<Task["riskAssessment"]>;
 }): string {
   return [
     declinedRiskMarker(input.taskId, input.commit),
-    ...riskAssessmentLines(input.risk),
+    ...riskAssessmentLines(input.risk, input.repo),
     "",
     `評価した先頭：\`${input.commit.slice(0, 7)}\`。この回は、AI のレビューの提案だけが残り、それもすべて、この PR では対応しないと判断しました（理由は、提案への返信にあります）。再レビューはしていないので、レビューの判定は「提案あり」のままです。直させたい提案があれば、この PR に「要対応」とコメントしてください。`,
   ].join("\n");

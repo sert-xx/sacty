@@ -15800,7 +15800,7 @@ export class TaskService {
           signal,
           this.deps.pulls.commentIssue({
             ...pr,
-            body: buildDeclinedRiskComment({ taskId: task.id, commit, risk }),
+            body: buildDeclinedRiskComment({ taskId: task.id, commit, repo, risk }),
             signal,
           }),
         );
