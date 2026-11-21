@@ -10,11 +10,12 @@
 
 - 対象
   - `apps/daemon/src/step-questions.ts`：`readStepQuestions` の `counted` に、問いごとの文（`items`）を足す
-  - `apps/daemon/src/task-mcp.ts`：ツール `get_step_questions`、要約の欄 `stepQuestions`、`get_task` の説明と `INSTRUCTIONS` の案内
-  - 仕様書 `docs/spec/mcp-server.md`・`.en.md`、ユーザー文書 `docs/user/mcp.md`・`.en.md`、新しい ADR（日本語だけ）
+  - `apps/daemon/src/task-mcp.ts`：ツール `get_step_questions`、要約の欄 `stepQuestions`、承認前の確認の案内（`get_task`・`approve_step`・`request_changes` の説明と `INSTRUCTIONS`）
+  - 仕様書 `docs/spec/mcp-server.md`・`.en.md`、ユーザー文書 `docs/user/mcp.md`・`.en.md`、新しい ADR（日本語だけ）、作業履歴
   - テスト：`step-questions.test.ts`・`task-mcp-read.test.ts`（または `task-mcp.test.ts`）
 - 対象外
   - 要求要件・設計のほかの工程（調査など）の成果物。PR の本文に問いを出す工程と同じ範囲にする
+  - 人の判断待ち（`escalated`）の工程。`approval` があっても、要約に欄を入れず、ツールは断る
   - デーモンの HTTP API の追加。MCP の層が、`get_task` と同じ `GET /api/tasks/:id` の結果から読む
   - `wait_for_task` の cursor と、待ちを起こす条件
   - PR の本文の見た目と、マージの振る舞い
@@ -29,6 +30,9 @@
   - 対象を要求要件・設計の工程に限り、調査の工程は入れない、でよいか。
     推奨：はい。調査の「確認したいこと」は must・should に分けないので、いつも「読み取れなかった」になり、要約にそう出続けるため。
     懸念：調査だけのタスクを承認するとき、手元の AI は問いを MCP で知れず、今と同じく `get_deliverable` で全文を読む必要が残る。
+  - 人の判断待ち（`escalated`）の要求要件・設計の工程は対象にしない、でよいか。
+    推奨：はい。判断待ちは承認・差し戻しで問いに答える状態ではなく、答え方を案内できないため。
+    懸念：前の版で差し戻しの上限に達して判断待ちになり、画面で「承認する」が出るタスクでは、手元の AI が問いを MCP で知れないまま承認を勧めることがある。
 
 確認しないと決めたこと
 
@@ -48,7 +52,8 @@
 - `readStepQuestions` の `counted` に `items: { kind: "must" | "should"; text: string }[]` を足す。
   - `items` は、`countQuestions` が数える範囲と同じ所から作り、件数は `items` の数から出す。数え方と切り出しを1か所にまとめる。
   - `stepQuestionsLines` は `items` を使わない。
-- 要約の `stepQuestions`：承認待ちで、`approval.step` が `requirements`・`design` のときだけ入れる。ほかのときは欄ごと入れない。
+- 対象の判定：タスクの `status` が `awaiting_approval` で、`task.gate.step` が `requirements`・`design` のときだけ。`approval` の有無では判定しない（`approvalOf` は `escalated` にも返すため）。
+- 要約の `stepQuestions`：対象のときだけ入れる。ほかのときは欄ごと入れない。
 
 | `status` | `readStepQuestions` の結果 | 一緒に返す値 |
 | --- | --- | --- |
@@ -63,19 +68,24 @@
   - `howToAnswer`
   - `fullText`（「全文は `get_deliverable`（step と kind `output`）で読めます」）
 - ツールの説明に `READ_UNTRUSTED_NOTE` を付け、答える専用のツールは無いと書く。
-  `get_task` の説明と `INSTRUCTIONS` にある「`get_deliverable` で読む」の文は、`get_step_questions` への案内に直す。
+- 承認前の確認の案内を直す。承認待ちの要求要件・設計では、`humanAsks` に加えて `get_step_questions` の問いも確かめ、利用者に伝える、と書く。
+  - `get_task` の説明と `INSTRUCTIONS`（3583 行目付近）の「`get_deliverable` で読む」の文
+  - `approve_step` の説明（2989 行目付近）と `request_changes` の説明（3033 行目付近）
+  - `INSTRUCTIONS` の承認・差し戻しの段落（3582 行目付近）
 
 ## エラー時の振る舞い
 
 - タスクが無い・ID の形が違う：`get_task` と同じ失敗の文を返す。
-- 承認待ちでない、または承認待ちの工程が要求要件・設計でない：失敗にし、「承認待ちの要求要件・設計の工程がありません」と、`get_task` の `approval` で確かめるよう案内する。
+- 対象でない（承認待ちでない・`escalated`・承認待ちの工程が要求要件・設計でない）：失敗にし、「承認待ちの要求要件・設計の工程がありません」と返す。`get_task` の `status` と `approval` で確かめるよう案内する。
 - `unreadable`：「問いは無い」とは書かず、「読み取れませんでした。全文は `get_deliverable` で読めます」と返す。
 
 ## 影響範囲
 
 - 要約に欄が増える：`TaskSummarySchema` を使う `list_tasks`・`get_task`・`wait_for_task` の結果。
 - ツールの名前の一覧を確かめるテスト（`task-mcp.test.ts`）と、仕様書・ユーザー文書のツールの一覧。
+- 仕様書の冒頭のツールの数：日本語の「19個」を「20個」に、英語の「nineteen tools」を「twenty tools」に直す。
 - ユーザー文書の先頭の HTML コメントに `apps/daemon/src/step-questions.ts` を足す（`tests/docs/docs.test.ts` が確かめる）。
+- 作業履歴：`docs/worklog/` に、このタスクのファイルを足す（`docs/worklog/README.md` の決まり）。
 
 ## テスト観点
 
@@ -104,20 +114,23 @@
   - 入力：1件 1001 文字の問いを含み、must に 21 件ある成果物を持つ承認待ちの設計のタスクで get_step_questions を呼ぶ
   - 期待結果：1001 文字の問いは 1000 文字と「…（以下 1 文字を省略）」に切られ、must の questions は 20 件で、omittedQuestions が 1 になる
 - [TV-9] 承認待ちの要求要件・設計が無いタスクは断る
-  - 入力：実装の工程が承認待ちのタスクと、実行中のタスクで、それぞれ get_step_questions を呼ぶ
-  - 期待結果：どちらも失敗になり、文に「承認待ちの要求要件・設計の工程がありません」と get_task の approval で確かめる案内が入る
+  - 入力：実装の工程が承認待ちのタスク、実行中のタスク、設計の工程が escalated（approval がある）のタスクで、それぞれ get_step_questions を呼ぶ
+  - 期待結果：どれも失敗になり、文に「承認待ちの要求要件・設計の工程がありません」と get_task の status と approval で確かめる案内が入る
 - [TV-10] 要約に問いの有無と件数が出る
-  - 入力：設計が承認待ちで must 1・should 2 のタスク、問いが「なし」のタスク、節の無いタスク、実装が承認待ちのタスクを get_task と list_tasks で読む
-  - 期待結果：要約の stepQuestions が順に {status: counted, must: 1, should: 2}・{status: none}・{status: unreadable}・欄なしになる
+  - 入力：設計が承認待ちで must 1・should 2 のタスク、問いが「なし」のタスク、節の無いタスク、実装が承認待ちのタスク、問いのある設計の工程が escalated のタスクを get_task と list_tasks で読む
+  - 期待結果：要約の stepQuestions が順に {status: counted, must: 1, should: 2}・{status: none}・{status: unreadable}・欄なし・欄なしになる
 - [TV-11] 答え方が承認の手段に合わせて結果に出る
   - 入力：設計が承認待ちで approval.method が pull_request のタスクと approve_step のタスクで get_step_questions を呼ぶ
   - 期待結果：pull_request では PR のコメントで答え、答えずにマージすると推奨の答えで進む旨が、approve_step では request_changes の comments で答え、答えずに approve_step すると推奨の答えで進む旨が howToAnswer に入る
-- [TV-12] ツールの説明に、データとして扱う注意と答え方と全文の読み方が書かれている
-  - 入力：get_step_questions のツールの説明と、get_task の説明・INSTRUCTIONS を読む
-  - 期待結果：get_step_questions の説明に READ_UNTRUSTED_NOTE と答える専用のツールが無い旨があり、get_task の説明と INSTRUCTIONS が「確認したいこと」を get_step_questions で読むと案内する
-- [TV-13] 仕様書とユーザー文書（日英）に、ツール・要約の欄・答え方・読み取れないときの扱いが書かれている
+- [TV-12] ツールの説明と承認前の案内に、データとして扱う注意・答え方・get_step_questions の確認が書かれている
+  - 入力：get_step_questions・get_task・approve_step・request_changes のツールの説明と、INSTRUCTIONS の承認・差し戻しの段落を読む
+  - 期待結果：get_step_questions の説明に READ_UNTRUSTED_NOTE と答える専用のツールが無い旨があり、get_task・approve_step・request_changes の説明と INSTRUCTIONS が、承認待ちの要求要件・設計では humanAsks に加えて get_step_questions の問いを確かめて利用者に伝えると案内し、「確認したいこと」を get_deliverable で読むという文が残っていない
+- [TV-13] 仕様書とユーザー文書（日英）に、ツール・要約の欄・答え方・読み取れないときの扱い・ツールの数が書かれている
   - 入力：docs/spec/mcp-server.md・.en.md と docs/user/mcp.md・.en.md の差分を読む
-  - 期待結果：get_step_questions の節（結果の欄・上限・unreadable の扱い・get_deliverable の案内）、要約の stepQuestions の行、「確認したいこと」は get_step_questions で読む旨があり、humanAsks の節の「get_deliverable で本文を読む」の文が直され、ユーザー文書の先頭の HTML コメントに apps/daemon/src/step-questions.ts がある
+  - 期待結果：get_step_questions の節（結果の欄・上限・unreadable の扱い・escalated を対象にしないこと・get_deliverable の案内）、要約の stepQuestions の行、「確認したいこと」は get_step_questions で読む旨があり、humanAsks の節の「get_deliverable で本文を読む」の文が直され、仕様書の冒頭のツールの数が「20個」「twenty tools」になり、ユーザー文書の先頭の HTML コメントに apps/daemon/src/step-questions.ts がある
 - [TV-14] ADR に、読み取りのツールを足した理由と MCP の層で読み取る決定が書かれている
   - 入力：docs/adr に足した ADR の差分を読む
   - 期待結果：get_task に欄を足さずツールを足した理由、readStepQuestions を MCP の層で呼びデーモンの API を足さないこと、答える専用のツールは足さないことが日本語で書かれている
+- [TV-15] 作業履歴に、このタスクの記録が足されている
+  - 入力：docs/worklog に足したファイルの差分を読む
+  - 期待結果：このタスク（PBI-475）の作業履歴のファイルが docs/worklog/README.md の決まり（ファイル名と節）どおりに日本語で書かれ、get_step_questions と要約の stepQuestions を足したことが書かれている
