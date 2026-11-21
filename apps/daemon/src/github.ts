@@ -285,6 +285,17 @@ export function isReviewStopNotice(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(REVIEW_STOP_MARKER_PREFIX);
 }
 
+/**
+ * フォークからの PR で、新しいコミットを自動ではレビューしないことを PR に知らせる投稿の目印の前半（PBI-461）。
+ * `<!-- sacty-fork-hold:<タスク ID> -->`。人間の指摘・作者の返信としては数えない。
+ */
+export const FORK_HOLD_MARKER_PREFIX = "<!-- sacty-fork-hold:";
+
+/** 本文が、フォークの PR の知らせの目印で始まるか（PBI-461）。 */
+export function isForkHoldNotice(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(FORK_HOLD_MARKER_PREFIX);
+}
+
 /** sacty が、工程のエージェントの頼みで投稿したコメント（sacty-github-comments）の目印の前半（PBI-301）。 */
 const GITHUB_COMMENT_MARKER_PREFIX = "<!-- sacty-comment:";
 
@@ -489,7 +500,8 @@ export type PullRequestStatus = {
   updatedAt?: string;
   /**
    * PR がフォークからのものか（head のリポジトリが base と違う。head のリポジトリを読めない・消えたフォークも true。PBI-461）。
-   * 分からなければ無い。
+   * head と base が同じリポジトリと確かめられたときだけ false。この値を持たない状態（status を読んだ答えでないもの）は、
+   * 見守りではフォークとして扱う。
    */
   fork?: boolean;
 } & (
@@ -635,6 +647,7 @@ export class GitHubPullRequests implements PullRequests {
           (isReviewStopNotice(item.body) ||
             isHumanAskNotice(item.body) ||
             isReworkNotice(item.body) ||
+            isForkHoldNotice(item.body) ||
             isDecisionNotice(item.body) ||
             isDeferralNotice(item.body) ||
             isBasisComment(item.body)) &&
@@ -1121,14 +1134,10 @@ export class GitHubPullRequests implements PullRequests {
     };
     const headName = repoName("head");
     const baseName = repoName("base");
-    const fork =
-      (json.head as { repo?: unknown } | null)?.repo === null
-        ? true
-        : headName !== undefined && baseName !== undefined
-          ? headName !== baseName
-          : undefined;
+    // 同じリポジトリと確かめられたときだけ false（head のリポジトリが消えていても、名前を読めなくても true）
+    const fork = headName === undefined || baseName === undefined || headName !== baseName;
     const head = {
-      ...(fork !== undefined ? { fork } : {}),
+      fork,
       ...(typeof sha === "string" ? { headSha: sha } : {}),
       ...(typeof json.updated_at === "string" && json.updated_at
         ? { updatedAt: json.updated_at }

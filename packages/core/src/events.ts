@@ -3488,7 +3488,7 @@ const ReviewWatchEnded = z.object({
 /**
  * フォークからの PR の見守りで、新しい先頭のコミットを見つけたが、自動では再レビューしなかった（PBI-461）。PR のコードが
  * 人の判断なしにコンテナで動かないよう、再レビューは人の操作（画面・MCP の再レビュー）を待つ。commit は、いまの PR の先頭。
- * 先頭が変わるたびに記録して、画面と MCP の先頭を更新する。
+ * 先頭が変わるたびに記録して、画面と MCP の先頭を更新する。commit がレビューした先頭と同じなら、待ちを消す（先頭が戻ったとき）。
  */
 const ReviewRestartHeld = z.object({
   type: z.literal("ReviewRestartHeld"),

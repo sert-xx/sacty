@@ -46,6 +46,15 @@ const input = {
   body: "本文",
 };
 
+/** status の答えから fork を除く（fork 以外の項目を、完全一致で確かめるため）。 */
+async function statusWithoutFork(
+  client: GitHubPullRequests,
+  pr: { repo: string; token: string; number: number },
+) {
+  const { fork: _fork, ...rest } = await client.status(pr);
+  return rest;
+}
+
 describe("GitHub の PR（PBI-10b）", () => {
   it("PRを作る", async () => {
     const { impl, calls } = fakeFetch([
@@ -585,14 +594,14 @@ describe("承認待ちの間の PR の状態（PBI-14a）", () => {
     ]);
     const client = new GitHubPullRequests(impl);
     const pr = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
-    expect(await client.status(pr)).toEqual({
+    expect(await statusWithoutFork(client, pr)).toEqual({
       state: "merged",
       mergedBy: "reviewer",
       headSha: "abc",
       mergeCommit: "def",
     });
-    expect(await client.status(pr)).toEqual({ state: "closed" });
-    expect(await client.status(pr)).toEqual({ state: "open" });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "closed" });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
     expect(errorText(await client.status(pr).catch((e: unknown) => e))).toEqual({
       code: "github.failed",
       params: { action: "getPr", status: 404, detail: "Not Found", hint: "permission" },
@@ -617,11 +626,19 @@ describe("承認待ちの PR のベースブランチとの競合（mergeable）
     ]);
     const client = new GitHubPullRequests(impl);
     const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
-    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", mergeable: false });
-    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", mergeable: true });
-    expect(await client.status(pr)).toEqual({ state: "open" });
-    expect(await client.status(pr)).toEqual({ state: "open" });
-    expect(await client.status(pr)).toEqual({ state: "closed" });
+    expect(await statusWithoutFork(client, pr)).toEqual({
+      state: "open",
+      headSha: "a",
+      mergeable: false,
+    });
+    expect(await statusWithoutFork(client, pr)).toEqual({
+      state: "open",
+      headSha: "a",
+      mergeable: true,
+    });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "closed" });
     // PR の状態を読む 1 回の問い合わせだけ
     expect(calls).toHaveLength(5);
   });
@@ -639,11 +656,15 @@ describe("PR の更新の時刻（PBI-411）", () => {
     ]);
     const client = new GitHubPullRequests(impl);
     const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
-    expect(await client.status(pr)).toEqual({ state: "open", headSha: "abc", updatedAt: at });
-    expect(await client.status(pr)).toEqual({ state: "closed", updatedAt: at });
-    expect(await client.status(pr)).toEqual({ state: "merged", updatedAt: at });
-    expect(await client.status(pr)).toEqual({ state: "open" });
-    expect(await client.status(pr)).toEqual({ state: "open" });
+    expect(await statusWithoutFork(client, pr)).toEqual({
+      state: "open",
+      headSha: "abc",
+      updatedAt: at,
+    });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "closed", updatedAt: at });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "merged", updatedAt: at });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
     expect(calls).toHaveLength(5);
   });
 });
@@ -658,10 +679,10 @@ describe("承認待ちの PR のドラフト（PBI-331）", () => {
     ]);
     const client = new GitHubPullRequests(impl);
     const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
-    expect(await client.status(pr)).toEqual({ state: "open", draft: true });
-    expect(await client.status(pr)).toEqual({ state: "open", draft: false });
-    expect(await client.status(pr)).toEqual({ state: "open" });
-    expect(await client.status(pr)).toEqual({ state: "closed" });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open", draft: true });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open", draft: false });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
+    expect(await statusWithoutFork(client, pr)).toEqual({ state: "closed" });
   });
 });
 
@@ -2456,7 +2477,7 @@ describe("一時的な失敗か（PBI-301）", () => {
 });
 
 describe("PR がフォークからのものか（status の fork。PBI-461）", () => {
-  it("head と base のリポジトリが違えば fork: true、同じなら false（大文字小文字は区別しない）、head のリポジトリが消えていれば true、読めなければ含めない", async () => {
+  it("head と base のリポジトリが違えば fork: true、同じなら false（大文字小文字は区別しない）、head のリポジトリが消えていれば true、読めなければ true（フォークとして扱う）", async () => {
     const repo = (full_name: string) => ({ full_name });
     const { impl } = fakeFetch([
       {
@@ -2483,6 +2504,6 @@ describe("PR がフォークからのものか（status の fork。PBI-461）", 
     expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: true });
     expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: false });
     expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: true });
-    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a" });
+    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: true });
   });
 });

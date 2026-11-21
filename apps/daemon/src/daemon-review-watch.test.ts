@@ -1074,6 +1074,22 @@ describe("依頼で取り込んだ PR の GitHub の再依頼と、見守り（P
     return { ...base, id, get };
   }
 
+  it("フォークの PR でも、GitHub の再依頼は、今までどおり新しいタスクを作ってレビューする（PBI-461 条件 3）", async () => {
+    const { activity, pulls, service, id, clock } = await requestedAndPosted("changes_required");
+    pulls.state = { state: "open", fork: true };
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B, requestedReviewers: ["me"] };
+    pulls.lastRequestAt = new Date(clock.now + MINUTE).toISOString();
+    clock.now += 2 * MINUTE;
+    const { restarted } = await service.restartRerequestedReviews([requested(10)]);
+    expect(restarted).toHaveLength(1);
+    const next = restarted[0]?.id ?? "";
+    expect(next).not.toBe(id);
+    await service.runNext(next);
+    await service.runNext(next);
+    expect(pulls.reviews.at(-1)?.commit).toBe(HEAD_B);
+    activity.close();
+  });
+
   it("見守り中のタスクの PR に再依頼が来たら、新しいタスクを作り、元のタスクには何も記録しない。PR の変化では、新しいタスクだけが再レビューする（二重にしない）", async () => {
     const { activity, pulls, service, id, get, clock } =
       await requestedAndPosted("changes_required");
@@ -1260,7 +1276,7 @@ describe("フォークからの PR は、push・返信で自動では再レビ�
   it.each([["merged" as const], ["closed" as const]])(
     "フォークの PR が %s になったら、待っている最中でも今までどおり見守りを終えて完了する（条件 6）",
     async (state) => {
-      const { activity, pulls, id, get, events, tick } = await posted(["changes_required"]);
+      const { activity, pulls, get, events, tick } = await posted(["changes_required"]);
       pulls.state = fork;
       pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
       await tick();
@@ -1271,8 +1287,67 @@ describe("フォークからの PR は、push・返信で自動では再レビ�
       expect(get().reviewWatchEnded?.reason).toBe(state);
       expect(get().reviewHold).toBeUndefined();
       expect(events("ReviewWatchEnded").map((e) => e.payload)).toEqual([{ reason: state }]);
-      expect(id).toBeTruthy();
       activity.close();
     },
   );
+
+  it("フォークかどうかを読めない（fork が無い）PR も、自動では再レビューしない", async () => {
+    const { activity, pulls, service, id, get, tick } = await posted(["changes_required"]);
+    pulls.state = { state: "open", fork: undefined };
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    await tick();
+    await tick(FEEDBACK_QUIET_MS * 2);
+    expect(restarts(service, id)).toEqual([]);
+    expect(get().reviewHold?.commit).toBe(HEAD_B);
+    activity.close();
+  });
+
+  it("先頭がレビューした先頭に戻ったら、待ちの記録は消える", async () => {
+    const { activity, pulls, get, tick } = await posted(["changes_required"]);
+    pulls.state = fork;
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    await tick();
+    expect(get().reviewHold?.commit).toBe(HEAD_B);
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_A };
+    await tick();
+    expect(get().reviewHold).toBeUndefined();
+    expect(reviewWatching(get())).toBe(true);
+    activity.close();
+  });
+
+  it("PR への知らせの投稿に失敗したら、次の確認でやり直す。投稿できたら繰り返さない", async () => {
+    const { activity, pulls, get, tick } = await posted(["changes_required"]);
+    pulls.state = fork;
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    pulls.commentFail = "rate limited";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await tick();
+    expect(pulls.issueComments).toEqual([]);
+    expect(get().reviewHold?.commit).toBe(HEAD_B);
+    expect(reviewWatching(get())).toBe(true);
+    pulls.commentFail = undefined;
+    await tick();
+    await tick();
+    expect(pulls.issueComments).toHaveLength(1);
+    warn.mockRestore();
+    activity.close();
+  });
+
+  it("人の再レビューの後に、またフォークの push があっても、PR への知らせは繰り返さない", async () => {
+    const { activity, pulls, service, id, get, tick, run } = await posted([
+      "changes_required",
+      "changes_required",
+    ]);
+    pulls.state = fork;
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    await tick();
+    expect(pulls.issueComments).toHaveLength(1);
+    expect(service.rereview(id).status).toBe("queued");
+    await run();
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_C };
+    await tick();
+    expect(get().reviewHold?.commit).toBe(HEAD_C);
+    expect(pulls.issueComments).toHaveLength(1);
+    activity.close();
+  });
 });

@@ -58,14 +58,18 @@ describe("ReviewWatchNotice", () => {
     const patch = {
       reviewWatch: watch,
       reviewVerdicts: [{ round: 1, verdict: "changes_required" as const }],
-      reviewHold: { commit: "d".repeat(40), at: "2026-11-20T01:00:00Z" },
+      reviewHold: { commit: "d".repeat(40) },
     };
     const html = render(patch);
     expect(html).toContain('data-testid="review-watch-held"');
     expect(html).toContain(
-      "フォークからの PR なので、新しいコミット（ddddddd）は、人が再レビューを押すまでレビューしません。",
+      "新しいコミット（ddddddd）は、「再レビューして PR に投稿」を押すまでレビューしません。",
     );
-    expect(render(patch, "en")).toContain("so the new commit (ddddddd) is not reviewed until");
+    // 保留中は、「あなたの対応は要りません」と言わない
+    expect(html).not.toContain("あなたの対応は要りません");
+    expect(render(patch, "en")).toContain(
+      "The new commit (ddddddd) is not reviewed until you press",
+    );
     // 待っていなければ出さない
     expect(render({ ...patch, reviewHold: undefined })).not.toContain("review-watch-held");
   });

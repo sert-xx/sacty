@@ -203,7 +203,7 @@ The findings follow the writing rules of the repository (Japanese when there are
 ### After the review is posted
 
 A review task is not done until the verdict becomes "no findings".
-sacty watches the PR for changes and re-reviews automatically when the PR author responds.
+sacty watches the PR for changes and re-reviews automatically when the PR author responds (except for PRs from a fork).
 
 While it watches, the task status is "Waiting on the PR", with the current verdict (changes required, suggestions, verdict unreadable, or no verdict given).
 It waits for the PR author to respond, so nothing is needed from you.
@@ -220,8 +220,8 @@ sacty handles changes of the PR as follows.
 A PR from a fork (a PR whose head repository differs from the repository it targets) is not re-reviewed automatically, neither on a push nor on the author's reply.
 The re-review verification runs the PR's code in the container, so it must not run without a person's decision.
 When a new commit is pushed, the task details and `review.heldCommit` of `get_task` show that it is not reviewed until a person presses "Review again and post to the PR", and show the new commit.
-sacty comments once on the PR that the new commit is not reviewed automatically (it does not repeat as more commits arrive).
-When a person asks for it with "Review again and post to the PR", `rereview_task`, or a GitHub re-request of the review, it re-reviews as it does for a same-repository PR.
+sacty comments once on the PR that the new commit is not reviewed automatically (it does not repeat as more commits arrive). If posting fails, it tries again at the next check.
+When a person asks for it with "Review again and post to the PR", `rereview_task`, or a GitHub re-request of the review (only for PRs taken in by a review request), it re-reviews as it does for a same-repository PR.
 Ending the watch when the PR is merged or closed is the same as for a same-repository PR.
 
 - Consecutive pushes and replies are re-reviewed once, after things go quiet (2 minutes after the last change).
@@ -294,7 +294,7 @@ A re-request on GitHub is handled as follows.
   A request made during a review is not queued for another round.
   If you re-requested during a review, re-request again after the post or use "Review again and post to the PR" in the task details.
 - For PRs taken in by the label, a re-request does not create a new task.
-  While the task is watching, the same task re-reviews automatically on changes of the PR. After it is done with "no findings", use "Review again and post to the PR" in the task details.
+  While the task is watching, the same task re-reviews automatically on changes of the PR (except for PRs from a fork). After it is done with "no findings", use "Review again and post to the PR" in the task details.
 - For PRs sacty created, a re-request does not create a new task either. A PR sacty created is re-reviewed by its child task ([Review of PRs sacty created](#the-review-child-task)).
 - If the re-request cannot be checked, no automatic re-review starts; the intake result shows the reason, and sacty checks again next time.
   You can also start it manually with "Review again and post to the PR".

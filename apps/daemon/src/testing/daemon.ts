@@ -781,8 +781,10 @@ export class FakePulls implements PullRequests {
     // 先頭のコミットを指定していなければ、レビューの対象の PR の先頭とする（投稿の直前の確認。PBI-111）
     const state = this.states[input.number] ?? this.state;
     const draft = this.drafts[input.number];
+    // 指定が無ければ、同じリポジトリの PR（フォークでない。PBI-461）
     return {
       headSha: this.prInfo.headSha,
+      fork: false,
       ...state,
       ...(state.state === "open" && draft !== undefined ? { draft } : {}),
     };
