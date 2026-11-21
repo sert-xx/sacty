@@ -435,6 +435,19 @@ describe("レビューの実行中に PR の先頭が変わったときの打ち
     expect(t.get().reviewTarget?.headCommit).toBe(HEAD_B);
   });
 
+  it("TV-14（人の操作を優先・人が先）打ち切りの検知より先に人が一時停止を求めていたら、ReviewRunStopped を記録せず、人の一時停止にする", async () => {
+    const t = await secondRound([HOLD, review("2回目")]);
+    const { done } = await t.startHeld();
+    const paused = t.service.pause(t.id);
+    head(t, HEAD_C);
+    await t.service.checkPullRequests();
+    await done;
+    await paused.catch(() => {});
+    expect(t.events("ReviewRunStopped")).toHaveLength(0);
+    expect(payloads(t.events("TaskPaused"))).toMatchObject([{ reason: "manual" }]);
+    expect(t.get().status).toBe("paused");
+  });
+
   it("再起動の後に PR を読めない間でも、最初に見た時刻から FEEDBACK_QUIET_MS が過ぎれば始め直す", async () => {
     const t = setup([HOLD, review("1回目")]);
     const { done } = await t.startHeld();

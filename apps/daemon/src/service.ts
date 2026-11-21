@@ -3476,6 +3476,8 @@ export class TaskService {
       let runIds: string[] = [];
       if (inflight) {
         const humanStop = this.pauseRequested.has(taskId);
+        // 打ち切りより先に人が一時停止を求めていた：その操作を優先する（実行の終わりで消えないよう、人の要求として残す）
+        if (humanStop) this.reviewStopHumanPause.add(taskId);
         this.pauseRequested.add(taskId);
         runIds = [...inflight.runIds];
         try {
