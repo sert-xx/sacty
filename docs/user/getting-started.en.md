@@ -196,7 +196,8 @@ Add the price of that model.
 ### Back up before updating and returning to an older version
 
 Before updating, stop the daemon and back up the data directory specified by `SACTY_HOME` (default: `~/.sacty`).
-A database containing new kinds of records (tasks with Document or Operation, audits of completed tasks and their fix tasks, and so on) cannot be read by an older version that does not support them, and startup fails.
+A database containing new kinds of records (tasks with Document or Operation, audits of completed tasks and their fix tasks, records of a Requirements or Design revision stopped because its PR was merged, and so on) cannot be read by an older version that does not support them, and startup fails.
+The activity is an append-only record, so it cannot be edited by hand to make an older version read it.
 
 To return to an older version, do the following.
 

@@ -77,7 +77,13 @@ export type TestsRunResult = PayloadOf<"TestsRun"> & { at: string };
 /** 前回投稿したレビュー（PBI-111）。round は前回の回、headCommit は前回レビューしたコミット、at は投稿を記録した時刻。 */
 export type PreviousReview = NonNullable<
   PayloadOf<"TaskCreated">["reviewRerequest"]
->["previousReview"];
+>["previousReview"] & {
+  /**
+   * その回を投稿したとき、PR の先頭がレビューした先頭と違っていたときの、その先頭（PBI-465。reviewPost.latestCommit を写す。
+   * 作業履歴の欄は増えない）。親のいないタスクで、その回を親に届かなかった回と見分ける根拠にする。
+   */
+  latestCommit?: string;
+};
 
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
 
@@ -230,7 +236,9 @@ function passVerification(task: Task): void {
   task.publishPending = true;
   task.status = "queued";
 }
-export type IntegrationReview = PayloadOf<"IntegrationReviewed"> & { at: string };
+export type IntegrationReview = PayloadOf<"IntegrationReviewed"> & {
+  at: string;
+};
 
 /**
  * マージの後の監視の状態（PBI-89）。waiting：待っている（phase が ci なら CI/CD、check ならデプロイの確認）、passed：通った、
@@ -344,6 +352,8 @@ export type TaskRemark = {
   respondedIn?: number;
   /** 対応と一緒に、工程エージェントが人に確かめたいこととして挙げたこと（PBI-301）。対応と同じ提出回のものだけ持つ。 */
   confirm?: string;
+  /** 指摘の要点の1行（PBI-471）。対応と同じ提出回のものだけ持つ。以前の記録には無い。 */
+  gist?: string;
   /** 対応したか、理由があって対応しなかったか（PBI-352）。対応と同じ提出回のものだけ持つ。申告が無ければ無い。 */
   status?: RemarkResponseStatus;
   /** PR のレビュー・コメントから取り込んだ指摘の、元のコメント（PBI-352）。画面から書いた指摘には無い。 */
@@ -383,6 +393,8 @@ export type TaskRemark = {
   deferral?: {
     proposedIn: number;
     reason: string;
+    /** 申告のときの、指摘の要点（PBI-471）。後の提出で対応が無くなっても、後続のタスク・Issue の題に使えるよう残す。 */
+    gist?: string;
     decision?: DeferralDecision;
     /** 後続に回すと決めた指摘の扱い（無ければ、何もしない）。 */
     handling?: DeferralHandling;
@@ -527,7 +539,12 @@ export type TaskAuditFinding = Omit<
           /** 採用に添えた人の手入れ（PBI-151）。 */
           note?: AuditAdoptNote;
         }
-      | { kind: "rejected"; at: string; reason: string; bulk?: { id: string; count: number } };
+      | {
+          kind: "rejected";
+          at: string;
+          reason: string;
+          bulk?: { id: string; count: number };
+        };
   })[];
 };
 
@@ -551,7 +568,10 @@ export type TaskAuditState = {
   /** 予算で一時停止している（上限を上げると外れる）。 */
   paused?: { at: string };
   /** seq は追記の順（同じ時刻の記録の前後を決める。PR #138 レビュー指摘）。 */
-  survey?: Omit<PayloadOf<"AuditSurveyed">, "auditId" | "promotions"> & { at: string; seq: number };
+  survey?: Omit<PayloadOf<"AuditSurveyed">, "auditId" | "promotions"> & {
+    at: string;
+    seq: number;
+  };
   /** 深掘りを終えた工程（終えた順）。 */
   dives: (Omit<PayloadOf<"AuditDeepDived">, "auditId" | "findings" | "memories"> & {
     at: string;
@@ -768,7 +788,12 @@ export type Task = {
    * 直しに入る前に AI が「この PR では対応しない」と選り分けた提案（古い順。SuggestionsTriaged。PBI-436）。消さずに積む。
    * 再レビューの指示に、毎回、データとして渡す（レビューが、未対応に数えず、蒸し返さないように）。
    */
-  declinedSuggestions?: { text: string; reason: string; url?: string; round: number }[];
+  declinedSuggestions?: {
+    text: string;
+    reason: string;
+    url?: string;
+    round: number;
+  }[];
   /**
    * 判定し直した回の提案もすべて対応しないとしたので、返信の後にドラフトを外す（SuggestionsTriaged の stop。PBI-436・440）。
    * ドラフトを外す（PullRequestMarkedReady）と消える。一時停止では消えない（以前の版が一時停止させた記録のため）。
@@ -1059,6 +1084,37 @@ export type Task = {
   /** sacty がプッシュした、要求要件・設計のブランチ（中止で消す。PBI-57）。 */
   stepBranches: string[];
   /**
+   * sacty がプッシュした工程のブランチごとの、プッシュしたコミット（PBI-462）。次にブランチを作るとき、記録済みの名前でも、
+   * 同じコミットなら使い回し、違うコミットのときだけ次の回の名前にする。
+   */
+  stepBranchCommits?: Record<string, string>;
+  /**
+   * 要求要件・設計の提出ごとの、成果とテスト観点の写し（StepSubmitted の時点のもの。PBI-462）。直しの間にその工程の PR が
+   * マージされたとき、直しの成果を捨てて、承認待ちだった提出の版に戻すために持つ。
+   */
+  stepSubmitted?: Partial<
+    Record<
+      StepPullRequestKey,
+      {
+        output: string;
+        testViewpoints: TestViewpoint[];
+        /** 提出の時点のセルフレビューと出典の分類（直しの完了が置き換えたかを見分けるために持つ） */
+        selfReview?: unknown;
+        provenance?: unknown;
+      }
+    >
+  >;
+  /**
+   * 要求要件・設計の PR の承認待ちから、同じ工程へ差し戻した（自動の直しを含む）ときの、直しを始めたときの承認待ちの PR
+   * （PBI-462）。その工程の次の PR の記録・承認で消す。
+   */
+  reworkOf?: { step: StepPullRequestKey; number: number };
+  /**
+   * 設計の PR の承認待ちから、前の工程（要求要件）へ差し戻した間の、差し戻した元の PR（PBI-462）。その PR がマージされても
+   * 承認にはせず、PR に知らせる。その工程の次の PR の記録で消す。
+   */
+  sentBackFrom?: { step: StepPullRequestKey; number: number };
+  /**
    * sacty が作った PR に、取り込むラベルを付けた・付けられなかった記録（PR ごとに1件。PBI-88）。記録のある PR には、
    * 更新しても付け直さない。
    */
@@ -1090,7 +1146,12 @@ export type Task = {
   remarkRepliesDeferred?: { step: StepKey; submission: number; number: number };
   continuedResponses?: Record<
     string,
-    { text: string; status?: RemarkResponseStatus; respondedIn: number; repliedIn?: number }
+    {
+      text: string;
+      status?: RemarkResponseStatus;
+      respondedIn: number;
+      repliedIn?: number;
+    }
   >;
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
   misses: (PayloadOf<"GuardianMissed"> & { at: string })[];
@@ -1187,6 +1248,12 @@ export type Task = {
    * commit は待っている先頭。再レビューを始める・見守りを終える・新しく投稿すると消える。
    */
   reviewHold?: { commit: string };
+  /**
+   * レビューの実行を、PR の先頭が変わったために打ち切って、始め直しを待っている（ReviewRunStopped の head_changed。PBI-465）。
+   * from は打ち切った回がレビューしていた先頭、to は打ち切りを決めたときの新しい先頭、at はその時刻。repo・number は、消した
+   * reviewTarget の PR（待ちの間の PR の先頭を、source の無いタスクも同じ PR で読むため）。次の ReviewTargetResolved で消える。
+   */
+  reviewStop?: { from: string; to: string; at: string; repo?: string; number?: number };
   /**
    * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。PBI-411）。名前は「対象を確かめた時刻」だが、実行を始める
    * たびに上書きする（対象を確かめた時刻が入っているのは、実行を始める前だけ）。レビューが PR のコメントを読むのは、この後
@@ -1672,7 +1739,12 @@ export function applyEvent(
       ...(event.payload.repos ? { repos: event.payload.repos } : {}),
       ...(event.payload.noRepo ? { noRepo: true as const } : {}),
       ...(event.payload.repo && event.payload.repoReason
-        ? { repoChoice: { reason: event.payload.repoReason, by: "orchestrator" as const } }
+        ? {
+            repoChoice: {
+              reason: event.payload.repoReason,
+              by: "orchestrator" as const,
+            },
+          }
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       ...(event.payload.viewpoints ? { inheritedViewpoints: event.payload.viewpoints } : {}),
@@ -1683,7 +1755,10 @@ export function applyEvent(
       ...(event.payload.image ? { requestedImage: event.payload.image } : {}),
       ...(event.payload.images ? { requestedImages: event.payload.images } : {}),
       ...(event.payload.agents
-        ? { requestedAgents: event.payload.agents, agents: event.payload.agents }
+        ? {
+            requestedAgents: event.payload.agents,
+            agents: event.payload.agents,
+          }
         : {}),
       ...(event.payload.fix ? { fix: event.payload.fix } : {}),
       ...(event.payload.auditFix ? { auditFix: event.payload.auditFix } : {}),
@@ -1714,7 +1789,12 @@ export function applyEvent(
       pullRequestBodies: {},
       submissions: {},
       remarks: [],
-      budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
+      budget: {
+        usedUsd: 0,
+        capUsd: event.payload.budgetCapUsd,
+        warned: false,
+        estimated: false,
+      },
       createdAt: event.at,
       updatedAt: event.at,
     });
@@ -1783,7 +1863,10 @@ export function applyEvent(
           event.payload.steps.includes(step as StepKey),
         );
         if (event.payload.images || requested.length > 0) {
-          task.images = { ...event.payload.images, ...Object.fromEntries(requested) };
+          task.images = {
+            ...event.payload.images,
+            ...Object.fromEntries(requested),
+          };
         }
       }
       if ((event.payload.image || event.payload.images) && event.payload.imageSource) {
@@ -1806,7 +1889,11 @@ export function applyEvent(
       }
       // 工程の組み合わせの予算（budget.per_plan_usd）。上限が変わるので、80% の通知をし直す
       if (event.payload.budgetCapUsd !== undefined) {
-        task.budget = { ...task.budget, capUsd: event.payload.budgetCapUsd, warned: false };
+        task.budget = {
+          ...task.budget,
+          capUsd: event.payload.budgetCapUsd,
+          warned: false,
+        };
       }
       if (event.payload.reason !== undefined) {
         task.stepsChoice = {
@@ -1863,7 +1950,11 @@ export function applyEvent(
           // どのエージェントで、担当を何件起動したか（PBI-379）。記録の無い実行（これより前の作業履歴）では、前の実行の
           // 記録を、今回のものとして残さない
           task.reviewDispatch = event.payload.reviewDispatch
-            ? { ...event.payload.reviewDispatch, round, agentId: event.payload.agentId }
+            ? {
+                ...event.payload.reviewDispatch,
+                round,
+                agentId: event.payload.agentId,
+              }
             : undefined;
           task.reviewUndispatched = undefined;
           // 過程の記録（PBI-460）。記録の欄の無い実行の回は、要素を作らない（同じ回の前の実行の要素も残さない）
@@ -1898,7 +1989,10 @@ export function applyEvent(
                   : {}),
               // 戻し先を示した回は、その実行のエージェントも残す（戻し先の判断の記録に使う。PBI-332）
               ...(event.payload.reviewRework
-                ? { rework: event.payload.reviewRework, agentId: event.payload.agentId }
+                ? {
+                    rework: event.payload.reviewRework,
+                    agentId: event.payload.agentId,
+                  }
                 : {}),
             },
           ];
@@ -1938,7 +2032,10 @@ export function applyEvent(
           task.lastTests = undefined;
           task.testsSkippedAt = undefined;
         }
-        task.outputs = { ...task.outputs, [event.payload.step]: event.payload.output };
+        task.outputs = {
+          ...task.outputs,
+          [event.payload.step]: event.payload.output,
+        };
         // 提出の前のセルフレビュー（PBI-120）。報告をさせない工程・それより前の記録では、前の報告を残さない
         if (event.payload.selfReview !== undefined) {
           task.selfReviews = {
@@ -1985,6 +2082,7 @@ export function applyEvent(
                 respondedIn: submission,
                 // 人に確かめたいことは、同じ提出の中の持ち越し（申告した実行が、まだ提出されていない）のときだけ残す
                 confirm: r.deferral.proposedIn === submission ? r.confirm : undefined,
+                gist: r.deferral.proposedIn === submission ? r.gist : undefined,
                 status: "deferred" as const,
                 submittedIn: submission,
               };
@@ -1994,6 +2092,7 @@ export function applyEvent(
               response: undefined,
               respondedIn: undefined,
               confirm: undefined,
+              gist: undefined,
               status: undefined,
               submittedIn: submission,
             };
@@ -2010,7 +2109,11 @@ export function applyEvent(
             proposed?.decision !== undefined
               ? proposed
               : proposable && response.status === "deferred"
-                ? { proposedIn: submission, reason: response.text }
+                ? {
+                    proposedIn: submission,
+                    reason: response.text,
+                    ...(response.gist ? { gist: response.gist } : {}),
+                  }
                 : response.status === "addressed"
                   ? undefined
                   : proposed;
@@ -2019,6 +2122,7 @@ export function applyEvent(
             response: response.text,
             respondedIn: submission,
             confirm: response.confirm,
+            gist: response.gist,
             status: response.status === "deferred" && !proposable ? undefined : response.status,
             submittedIn: submission,
             ...(deferral ? { deferral } : {}),
@@ -2031,8 +2135,25 @@ export function applyEvent(
     case "StepSubmitted":
       if (task.status !== "idle") throw new ActivityIntegrityError(event, `status ${task.status}`);
       task.status = "awaiting_approval";
-      task.gate = { step: event.payload.step, submission: event.payload.submission };
-      task.submissions = { ...task.submissions, [event.payload.step]: event.payload.submission };
+      task.gate = {
+        step: event.payload.step,
+        submission: event.payload.submission,
+      };
+      task.submissions = {
+        ...task.submissions,
+        [event.payload.step]: event.payload.submission,
+      };
+      if (event.payload.step === "requirements" || event.payload.step === "design") {
+        task.stepSubmitted = {
+          ...task.stepSubmitted,
+          [event.payload.step]: {
+            output: task.outputs[event.payload.step] ?? "",
+            testViewpoints: event.payload.step === "design" ? task.testViewpoints : [],
+            selfReview: task.selfReviews?.[event.payload.step],
+            provenance: task.provenances?.[event.payload.step],
+          },
+        };
+      }
       break;
 
     case "StepApproved": {
@@ -2089,6 +2210,7 @@ export function applyEvent(
       task.pendingReview = undefined;
       task.gate = undefined;
       task.escalation = undefined;
+      task.reworkOf = undefined;
       // 上流の工程を承認し直したら、前の実装の説明・テストの対応は引き継がない（PBI-299）
       if (step !== "implement") {
         task.implementHistory = undefined;
@@ -2106,7 +2228,10 @@ export function applyEvent(
         task.steps.findIndex((s) => s.key === event.payload.step),
       );
       const submission = (task.submissions[event.payload.step] ?? 0) + 1;
-      task.submissions = { ...task.submissions, [event.payload.step]: submission };
+      task.submissions = {
+        ...task.submissions,
+        [event.payload.step]: submission,
+      };
       task.approved = {
         ...task.approved,
         [event.payload.step]: {
@@ -2168,6 +2293,9 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, `status ${task.status}`);
       }
       const target = event.payload.target ?? event.payload.step;
+      // 要求要件・設計の PR の承認待ちからの差し戻しは、その PR を覚える（PBI-462）。同じ工程の直しなら reworkOf、前の工程へ
+      // 戻すなら sentBackFrom
+      const stepGate = event.payload.step !== "implement" ? gatePullRequest(task) : undefined;
       if (target !== event.payload.step) {
         const at = task.steps.findIndex((s) => s.key === event.payload.step);
         const to = task.steps.findIndex((s) => s.key === target);
@@ -2195,6 +2323,19 @@ export function applyEvent(
       task.status = "queued";
       task.gate = undefined;
       task.escalation = undefined;
+      task.reworkOf =
+        stepGate && stepGate.step === event.payload.step && target === event.payload.step
+          ? {
+              step: stepGate.step as StepPullRequestKey,
+              number: stepGate.number,
+            }
+          : undefined;
+      if (stepGate && stepGate.step !== target) {
+        task.sentBackFrom = {
+          step: stepGate.step as StepPullRequestKey,
+          number: stepGate.number,
+        };
+      }
       // 止まった工程の途中経過（検証・PR の更新の待ち）は、作り直しに持ち越さない
       if (fromHeld) {
         task.stepReview = undefined;
@@ -2269,7 +2410,11 @@ export function applyEvent(
       const proposal = findProposal(task, event, event.payload.proposalId);
       if (proposal.judgement) throw new ActivityIntegrityError(event, "already judged");
       updateProposal(task, proposal.id, {
-        judgement: { verdict: event.payload.verdict, reason: event.payload.reason, at: event.at },
+        judgement: {
+          verdict: event.payload.verdict,
+          reason: event.payload.reason,
+          at: event.at,
+        },
       });
       break;
     }
@@ -2347,7 +2492,11 @@ export function applyEvent(
         // 承認の時刻・implementHistory・implementBase は変えない（同じ実装の PR の続き）
         task.approved = {
           ...task.approved,
-          design: { ...approved, output: p.output, testViewpoints: p.testViewpoints },
+          design: {
+            ...approved,
+            output: p.output,
+            testViewpoints: p.testViewpoints,
+          },
         };
         task.outputs = { ...task.outputs, design: p.output };
         task.testViewpoints = p.testViewpoints;
@@ -2916,7 +3065,12 @@ export function applyEvent(
               label: p.label,
               ...(event.payload.created ? { created: true } : {}),
             }
-          : { repo: p.repo, number: p.number, label: p.label, failed: event.payload.message },
+          : {
+              repo: p.repo,
+              number: p.number,
+              label: p.label,
+              failed: event.payload.message,
+            },
       ];
       break;
     }
@@ -2987,7 +3141,10 @@ export function applyEvent(
           if (comments.length > 0) {
             const pauses = [...task.decisionPauses];
             const last = pauses[pauses.length - 1] as DecisionPause;
-            pauses[pauses.length - 1] = { ...last, decisions: [...last.decisions, ...comments] };
+            pauses[pauses.length - 1] = {
+              ...last,
+              decisions: [...last.decisions, ...comments],
+            };
             task.decisionPauses = pauses;
           }
         }
@@ -3173,6 +3330,7 @@ export function applyEvent(
       }
       if (task.reviewTarget) throw new ActivityIntegrityError(event, "already resolved");
       task.reviewTarget = event.payload;
+      task.reviewStop = undefined;
       task.reviewResolvedAt = event.at;
       // 読めなかった回は、前に読めた名前を残す（PR の元のブランチは変わらない。PBI-392）
       if (event.payload.headBranch) task.reviewBranch = event.payload.headBranch;
@@ -3221,6 +3379,43 @@ export function applyEvent(
       task.reviewWatchEnded = { reason: event.payload.reason };
       break;
 
+    case "ReviewRunStopped": {
+      // 投稿していないレビューの、実行中・対象の確認中・投稿待ちだけ（PBI-465）。一時停止・完了などでは記録できない。
+      // 始め直しの待ち（reviewStop があって対象が無い）は止める実行が無いので記録しない
+      if (
+        activeStep(task) !== "review" ||
+        task.reviewPost ||
+        (task.status !== "running" && task.status !== "queued" && task.status !== "idle") ||
+        (task.reviewStop && !task.reviewTarget)
+      ) {
+        throw new ActivityIntegrityError(event, "no unposted review run to stop");
+      }
+      task.status = "queued";
+      task.currentRunId = undefined;
+      if (event.payload.reason !== "head_changed") break;
+      // 打ち切った回の、回ごとの記録・今の回の本文と行へのコメントは消す。回の番号と前回の記録は変えない
+      const stopped = task.reviewTarget;
+      const round = task.reviewRound ?? 1;
+      task.reviewStop = {
+        from: event.payload.from,
+        to: event.payload.to ?? event.payload.from,
+        at: event.at,
+        ...(stopped ? { repo: stopped.repo, number: stopped.number } : {}),
+      };
+      task.reviewTarget = undefined;
+      task.reviewResolvedAt = undefined;
+      task.reviewComments = [];
+      task.outputs = Object.fromEntries(
+        Object.entries(task.outputs).filter(([key]) => key !== "review"),
+      );
+      task.reviewVerdicts = task.reviewVerdicts?.filter((v) => v.round !== round);
+      if (task.reviewVerdicts?.length === 0) task.reviewVerdicts = undefined;
+      task.reviewRecords = task.reviewRecords?.filter((r) => r.round !== round);
+      if (task.reviewRecords?.length === 0) task.reviewRecords = undefined;
+      if (task.reviewDispatch?.round === round) task.reviewDispatch = undefined;
+      break;
+    }
+
     case "ReviewRestartHeld":
       if (task.status === "cancelled" || !task.reviewWatch || !task.reviewPost) {
         throw new ActivityIntegrityError(event, "the review is not watched");
@@ -3254,6 +3449,7 @@ export function applyEvent(
           comments: task.reviewComments,
           ...(task.reviewTarget.baseCommit ? { baseCommit: task.reviewTarget.baseCommit } : {}),
           ...(task.reviewTarget.baseBranch ? { baseBranch: task.reviewTarget.baseBranch } : {}),
+          ...(task.reviewPost.latestCommit ? { latestCommit: task.reviewPost.latestCommit } : {}),
           ...(recorded ? { record: recorded.record } : {}),
         };
       }
@@ -3319,7 +3515,10 @@ export function applyEvent(
           throw new ActivityIntegrityError(event, "already posted");
         }
       }
-      task.githubComments = { ...task.githubComments, [p.step]: { ...p, at: event.at } };
+      task.githubComments = {
+        ...task.githubComments,
+        [p.step]: { ...p, at: event.at },
+      };
       break;
     }
 
@@ -3401,6 +3600,51 @@ export function applyEvent(
     }
 
     case "ReworkStoppedByMerge": {
+      // 要求要件・設計の直しの間に、その工程の PR がマージされた（PBI-462）。直しの成果を捨てて、承認待ちだった提出の版に
+      // 戻し、その工程の承認待ちに戻す（同じ追記で、続けて PullRequestMerged・StepApproved を記録する）
+      if (event.payload.step) {
+        const step = event.payload.step;
+        const stepRework = reworkingStepPullRequest(task);
+        if (!stepRework || stepRework.step !== step || stepRework.number !== event.payload.number) {
+          throw new ActivityIntegrityError(event, "the step is not being reworked");
+        }
+        if (task.status === "running") {
+          throw new ActivityIntegrityError(event, "stop the run before stopping the rework");
+        }
+        const copy = task.stepSubmitted?.[step];
+        if (copy) {
+          // 直しの完了が成果・セルフレビュー・出典の分類を置き換えていたときだけ、直しの版のものとして「記録なし」にする。
+          // 実行中・実行待ちで止めたときは、承認待ちだった提出の版の記録を残す
+          const replaced =
+            task.outputs[step] !== copy.output ||
+            JSON.stringify(task.selfReviews?.[step]) !== JSON.stringify(copy.selfReview) ||
+            JSON.stringify(task.provenances?.[step]) !== JSON.stringify(copy.provenance);
+          task.outputs = { ...task.outputs, [step]: copy.output };
+          if (step === "design") task.testViewpoints = copy.testViewpoints;
+          if (replaced) voidSubmissionChecks(task, step);
+        }
+        task.status = "awaiting_approval";
+        task.gate = { step, submission: stepRework.submission };
+        const discardedByStep = new Set(event.payload.discardedRemarks.map((r) => r.id));
+        task.remarks = task.remarks.map((r) =>
+          discardedByStep.has(r.id) ? { ...r, voided: true } : r,
+        );
+        task.reworkOf = undefined;
+        task.currentRunId = undefined;
+        task.verification = undefined;
+        resetVerifyFailures(task);
+        task.verifyFeedback = undefined;
+        task.publishPending = undefined;
+        task.stepReview = undefined;
+        task.pendingReview = undefined;
+        task.escalation = undefined;
+        task.pausedReason = undefined;
+        task.pausedMessage = undefined;
+        task.unstoppedRuns = undefined;
+        task.resumeTo = undefined;
+        task.pausedCancelledChildren = undefined;
+        break;
+      }
       // 実装の作り直しの間に、実装の PR がマージされた（PBI-276）。作り直しの途中経過を捨てて、実装の承認待ちに戻す
       // （同じ追記で、続けて PullRequestMerged・StepApproved を記録する）
       const reworking = reworkingPullRequest(task);
@@ -3525,6 +3769,10 @@ export function applyEvent(
       if (!task.stepBranches.includes(event.payload.branch)) {
         task.stepBranches = [...task.stepBranches, event.payload.branch];
       }
+      task.stepBranchCommits = {
+        ...task.stepBranchCommits,
+        [event.payload.branch]: event.payload.commit,
+      };
       break;
 
     case "StepPullRequestPublished": {
@@ -3556,6 +3804,13 @@ export function applyEvent(
       if (!task.stepBranches.includes(p.branch)) {
         task.stepBranches = [...task.stepBranches, p.branch];
       }
+      task.stepBranchCommits = {
+        ...task.stepBranchCommits,
+        [p.branch]: p.commit,
+      };
+      // この工程の直し・差し戻しは、PR にした。覚えていた PR は、もう見守らない（PBI-462）
+      task.reworkOf = undefined;
+      if (task.sentBackFrom?.step === p.step) task.sentBackFrom = undefined;
       break;
     }
 
@@ -3573,7 +3828,10 @@ export function applyEvent(
       task.pushedBranch = event.payload;
       // 実装のブランチにプッシュした内容に、それまでに反映した設計の直しが入った（PBI-446）
       if (task.designEdits?.some((e) => !e.committed)) {
-        task.designEdits = task.designEdits.map((e) => ({ ...e, committed: true }));
+        task.designEdits = task.designEdits.map((e) => ({
+          ...e,
+          committed: true,
+        }));
       }
       break;
 
@@ -3644,7 +3902,11 @@ export function applyEvent(
       if (task.steps.length > 0 || task.gathered) {
         throw new ActivityIntegrityError(event, "information is not being gathered");
       }
-      task.gathered = { brief: event.payload.brief, sources: event.payload.sources, at: event.at };
+      task.gathered = {
+        brief: event.payload.brief,
+        sources: event.payload.sources,
+        at: event.at,
+      };
       break;
 
     // PR のレビューの子タスクが、親タスクの集めた情報を引き継いだ（PBI-345）。集めるのと同じく、工程を選ぶ前に1回だけ
@@ -3716,7 +3978,11 @@ export function applyEvent(
       }
       task.questions = [
         ...task.questions,
-        { id: event.payload.questionId, text: event.payload.text, askedAt: event.at },
+        {
+          id: event.payload.questionId,
+          text: event.payload.text,
+          askedAt: event.at,
+        },
       ];
       break;
 
@@ -3777,7 +4043,10 @@ export function applyEvent(
       }
       task.exports = {
         ...task.exports,
-        [step]: { ...task.exports[step], started: { approvedAt, runId, at: event.at } },
+        [step]: {
+          ...task.exports[step],
+          started: { approvedAt, runId, at: event.at },
+        },
       };
       break;
     }
@@ -3816,7 +4085,10 @@ export function applyEvent(
       }
       task.exports = {
         ...task.exports,
-        [event.payload.step]: { ...task.exports[event.payload.step], retry: true },
+        [event.payload.step]: {
+          ...task.exports[event.payload.step],
+          retry: true,
+        },
       };
       break;
 
@@ -4054,7 +4326,10 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, `step ${step} is not chosen`);
       }
       task.images = { ...task.images, [step]: to };
-      task.imageChanges = { ...task.imageChanges, [step]: { from, to, at: event.at } };
+      task.imageChanges = {
+        ...task.imageChanges,
+        [step]: { from, to, at: event.at },
+      };
       break;
     }
 
@@ -4088,7 +4363,11 @@ export function applyEvent(
     // 人がタスクの題を変えた（PBI-323）。中止したタスクのほかは状態を問わず、この後に題を使うもの（指示・コミット・通知など）から使う
     case "TaskRenamed":
       task.title = event.payload.to;
-      task.titleChange = { from: event.payload.from, to: event.payload.to, at: event.at };
+      task.titleChange = {
+        from: event.payload.from,
+        to: event.payload.to,
+        at: event.at,
+      };
       break;
 
     // 人が工程のエージェントを変えた（PBI-121）。工程の状態は問わず、その工程を次に実行するときから使う
@@ -4098,7 +4377,10 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, `step ${step} is not chosen`);
       }
       task.agents = { ...task.agents, [step]: to };
-      task.agentChanges = { ...task.agentChanges, [step]: { from, to, at: event.at } };
+      task.agentChanges = {
+        ...task.agentChanges,
+        [step]: { from, to, at: event.at },
+      };
       break;
     }
 
@@ -4106,7 +4388,11 @@ export function applyEvent(
       if (event.payload.capUsd <= task.budget.usedUsd) {
         throw new ActivityIntegrityError(event, "new cap must exceed the amount spent");
       }
-      task.budget = { ...task.budget, capUsd: event.payload.capUsd, raised: true };
+      task.budget = {
+        ...task.budget,
+        capUsd: event.payload.capUsd,
+        raised: true,
+      };
       break;
 
     // マージの後の監視（PBI-89）。PBI-116 からは、マージの後の監視の工程の中身で、監視が終わると工程を終える
@@ -4121,7 +4407,12 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the pull request is not merged");
       }
       task.deployment = event.payload.commit
-        ? { ...event.payload, startedAt: event.at, state: "waiting", phase: "ci" }
+        ? {
+            ...event.payload,
+            startedAt: event.at,
+            state: "waiting",
+            phase: "ci",
+          }
         : {
             ...event.payload,
             startedAt: event.at,
@@ -4165,7 +4456,11 @@ export function applyEvent(
       }
       task.deployment = {
         ...watch,
-        check: { runId: event.payload.runId, skill: event.payload.skill, startedAt: event.at },
+        check: {
+          runId: event.payload.runId,
+          skill: event.payload.skill,
+          startedAt: event.at,
+        },
       };
       break;
     }
@@ -4301,12 +4596,18 @@ export function applyEvent(
       // 終わらない実装で止まったタスクも、回数は数え直すが、作業領域の目印は残す（再開の後も進まなければ止める。PBI-347）
       if (task.pausedReason === "incomplete" && task.incompleteRuns) {
         const { fingerprint } = task.incompleteRuns;
-        task.incompleteRuns = { runs: 0, ...(fingerprint ? { fingerprint } : {}) };
+        task.incompleteRuns = {
+          runs: 0,
+          ...(fingerprint ? { fingerprint } : {}),
+        };
       }
       task.unreadableReviews = undefined;
       // 担当を起動しないレビューのやり直しは、人が再開したら、もう一度上限まで試す（PBI-379）
       if (task.reviewUndispatched) {
-        task.reviewUndispatched = { ...task.reviewUndispatched, sinceResume: 0 };
+        task.reviewUndispatched = {
+          ...task.reviewUndispatched,
+          sinceResume: 0,
+        };
       }
       // 中止された子タスクで止めた親を再開したら、その中止を認めたことにする（PBI-27）
       if (task.split && task.pausedCancelledChildren?.length) {
@@ -4411,7 +4712,10 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
       findings: audit.findings.map((f) =>
         f !== finding
           ? f
-          : { ...f, proposals: f.proposals.map((p) => (p.id === id ? { ...p, decision } : p)) },
+          : {
+              ...f,
+              proposals: f.proposals.map((p) => (p.id === id ? { ...p, decision } : p)),
+            },
       ),
     };
     return;
@@ -4449,7 +4753,11 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
         findings: [...audit.findings, ...findings.map((f) => ({ ...f, at: event.at }))],
         memories: [
           ...audit.memories,
-          ...memories.map((m) => ({ ...m, at: event.at, step: event.payload.step })),
+          ...memories.map((m) => ({
+            ...m,
+            at: event.at,
+            step: event.payload.step,
+          })),
         ],
       };
       return;
@@ -4483,7 +4791,11 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
       if (!audit.paused) throw integrity("the audit is not paused");
       if (event.payload.capUsd <= audit.usedUsd)
         throw integrity("the new cap is not above the used amount");
-      task.audit = { ...audit, capUsd: event.payload.capUsd, paused: undefined };
+      task.audit = {
+        ...audit,
+        capUsd: event.payload.capUsd,
+        paused: undefined,
+      };
       return;
   }
 }
@@ -4544,7 +4856,72 @@ export function reworkingPullRequest(
   if (!pr?.number || (task.pullRequestState !== "open" && task.pullRequestState !== "closed")) {
     return undefined;
   }
-  return { number: pr.number, ...(pr.repo ? { repo: pr.repo } : {}), commit: pr.commit };
+  return {
+    number: pr.number,
+    ...(pr.repo ? { repo: pr.repo } : {}),
+    commit: pr.commit,
+  };
+}
+
+/**
+ * 要求要件・設計の自動の直しの間（実行待ち・実行中・待機・一時停止。直しの PR を閉じられずに止めた一時停止も含む）の、
+ * 直しを始めたときの承認待ちの PR（PBI-462）。人がこの PR をマージしたら、直しを止めて捨て、マージを承認として進める
+ * （ReworkStoppedByMerge の step 付き）。人の判断待ちの一時停止と、承認待ちで止めた一時停止は含めない。前の工程へ差し戻して
+ * いる間の PR（sentBackFrom）と、承認済みの前の工程の PR は、reworkOf でないので含めない。
+ */
+export function reworkingStepPullRequest(task: Task):
+  | {
+      step: StepPullRequestKey;
+      number: number;
+      repo: string;
+      commit: string;
+      submission: number;
+    }
+  | undefined {
+  if (
+    task.status !== "queued" &&
+    task.status !== "running" &&
+    task.status !== "idle" &&
+    task.status !== "paused"
+  ) {
+    return undefined;
+  }
+  if (
+    task.status === "paused" &&
+    (task.pausedReason === "needs_decision" || task.resumeTo === "awaiting_approval")
+  ) {
+    return undefined;
+  }
+  const step = activeStep(task);
+  if (step !== "requirements" && step !== "design") return undefined;
+  const of = task.reworkOf;
+  if (!of || of.step !== step) return undefined;
+  const pr = latestStepPullRequest(task, step);
+  if (!pr || pr.number !== of.number || pr.superseded || pr.state !== "open") return undefined;
+  return {
+    step,
+    number: pr.number,
+    repo: pr.repo,
+    commit: pr.commit,
+    submission: pr.submission,
+  };
+}
+
+/**
+ * 要求要件・設計の PR にまだ反映していない指摘（PBI-462）。最後の差し戻しで足された指摘のうち、無効にしておらず、提出済みの
+ * PR の内容に渡していないもの（直しの実行が見たが、まだ提出していないものを含む）。
+ */
+export function unreflectedStepRemarks(task: Task, step: StepKey): TaskRemark[] {
+  const submitted = task.submissions[step] ?? 0;
+  const latest = lastChangeRound(task, step);
+  return task.remarks.filter(
+    (r) =>
+      r.step === step &&
+      !r.voided &&
+      !r.triaged &&
+      r.round === latest &&
+      (r.submittedIn === undefined || r.submittedIn > submitted),
+  );
 }
 
 /**
@@ -4587,7 +4964,9 @@ function withoutNoAction(
     ...(aiReview.length > 0 ? { aiReview } : {}),
     ...(Object.keys(aiReviewFrom).length > 0 ? { aiReviewFrom } : {}),
     ...(pending.triage
-      ? { triage: Object.keys(declinedAt).length > 0 ? { declined: declinedAt } : {} }
+      ? {
+          triage: Object.keys(declinedAt).length > 0 ? { declined: declinedAt } : {},
+        }
       : {}),
   };
 }
@@ -4830,6 +5209,7 @@ export function deferProposals(task: Task): {
 export function decidedDeferrals(task: Task): {
   remarkId: string;
   text: string;
+  gist?: string;
   reason: string;
   decision: DeferralDecision;
   origin?: RemarkOrigin;
@@ -4842,6 +5222,7 @@ export function decidedDeferrals(task: Task): {
           {
             remarkId: r.id,
             text: r.text,
+            ...((r.deferral.gist ?? r.gist) ? { gist: r.deferral.gist ?? r.gist } : {}),
             reason: r.deferral.reason,
             decision: r.deferral.decision,
             ...(r.origin ? { origin: r.origin } : {}),

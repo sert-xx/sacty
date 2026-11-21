@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx, apps/web/src/lib/labels.ts, apps/web/src/i18n/messages/labels.ts, apps/web/src/i18n/messages/parts.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts, packages/core/src/messages.ts, apps/daemon/src/risk-assessment.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx, apps/web/src/lib/labels.ts, apps/web/src/i18n/messages/labels.ts, apps/web/src/i18n/messages/parts.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts, packages/core/src/messages.ts, apps/daemon/src/risk-assessment.ts, apps/daemon/src/merge-approval-notice.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -732,8 +732,8 @@ If you operate sacty, keep the following in mind.
 
 In a redo started by PR comments, there can be things you have to check yourself: whether your comment was read as you meant it.
 In that case, "N things for you to check" appears on the approval screen and, in the task details, under the approval notice.
-The same content is posted as a comment on the PR, starting with "Sacty：人に確かめてほしいことがあります". The sentence with the task-screen link is followed by "タスクの画面は、依頼した人のマシンでだけ開けます。" (the task screen opens only on the requester's machine) when the screen URL is `127.0.0.1`, `localhost`, or `[::1]`.
-If the result is not what you meant, comment on the PR or request changes on the task screen.
+The same content is posted as a comment on the PR, starting with "Sacty：人に確かめてほしいことがあります". The comment names each remark by a link to its original comment (or, when there is no link, by a one-line gist), and writes no task ID or screen URL.
+If the result is not what you meant, comment on the PR or request changes on the Sacty screen.
 
 It appears in the following cases.
 
@@ -780,7 +780,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   When permission is missing, it does not turn the reply into a PR comment and records in the Activity that it could not reply.
   When GitHub's posting limit is hit, it does not turn the reply into a PR comment either, and retries after waiting.
 - For a review body and a regular comment, it posts a PR comment.
-  Its opening sentence shows the kind of the original post (a review body, a regular comment, or a line comment), whether the sacty AI or a person wrote it, and a link to the original.
+  Its opening sentence is `[この指摘](link)への返信です。` (a reply to this remark), with a link to the original post (the kind of the original post and who wrote it are not written).
   A reply to a regular comment quotes the start of the original comment on one line right after the opening (up to 100 characters; secrets are hidden).
   Even when several replies are posted together, the first few lines show which post each one replies to.
   A reply to a finding handed to the implementation of a taken-over PR shows neither the source nor a quotation. A reply to a finding taken in after the implementation started shows them.
@@ -789,7 +789,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
   For a suggestion the AI decided before fixing not to handle in this PR, the reply says that the AI decided it, gives the reason for each suggestion it does not handle, and says how to have it fixed ([Sorting AI review suggestions](#sorting-ai-review-suggestions)).
   When the AI declared neither, only the explanation of the response is shown.
-- The end of the reply says "Sacty の<工程名>の工程で、AI が書きました。" (AI wrote this in the <step> step of Sacty; the task ID is not written).
+- The end of the reply says "Sacty の AI が書きました。" (a Sacty AI wrote this; the step name and the task ID are not written).
 - Secret values are hidden and long text is cut.
   Paths inside sacty's workspace are replaced with names a person can follow.
 - A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) also replies the same way, per PR comment passed to the implementation.
@@ -898,7 +898,7 @@ The decisions have the following results.
 | Decide later | It stays in the list |
 
 - sacty records the decisions and the list of those comments in a PR comment.
-  For a comment written on the sacty screen, it shows only the comment's number and the decision (text written on the screen is not put on the PR).
+  Each remark is shown by a link to its original comment and a one-line gist (a copy of the AI review body is not shown; a remark written on the Sacty screen is shown by the gist only). The reason for the proposal stays, with remark IDs and secrets removed. It ends with "意図と違うときは、Sacty の画面で差し戻してください。".
   The Activity shows whether it could comment, or why not.
   It does not comment in a project with no GitHub account chosen, or in security check and security fix tasks.
 - The sacty PR review does not count a comment you decided to defer as unaddressed, and does not raise it again.
@@ -919,8 +919,8 @@ Choose "Handling when deferred" from the following three.
   The created task starts right away like any other task ([Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task)).
   The original PR is already merged, so the follow-up task makes its fix in a new PR.
   The link to the created follow-up task appears under "Results for deferred findings" in the completed task's details.
-- The issue is created right away when you decide with "Defer". Its title is the first line of the comment. The body has the comment, the reason for the proposal, and a link to the original PR.
-  Even for a comment written on the sacty screen, choosing to create an issue puts its text in the issue.
+- The issue is created right away when you decide with "Defer". Its title is "[PR #number follow-up] gist of the remark". The body has the gist and a link to the original comment, the reason for the proposal, and a link to the original PR (no task ID, remark ID, or copy of the AI review body).
+  A follow-up task's title is made the same way (it becomes the title of the PR it opens; no URL, secret value, or internal path goes in). The heading of the instructions to the agent is a fixed "後続に回した指摘への対応" instead of the title, so a sentence written in the title is never read as an instruction.
 - When it could not be created, the reason appears under "Results for deferred findings" in the task details and in the Activity. It is not retried, so create one yourself if you need it.
   The reason an issue could not be created also appears under "Decided" on the approval screen.
   When the reason says the issue may have been created (the request did not finish in time, or sacty stopped partway), check GitHub before you create one.
@@ -956,6 +956,25 @@ If a person merges the implementation PR while the implementation is being rewor
 - To handle the discarded comments (including PR comments that arrived while paused and had not been applied yet), create a follow-up task ([Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task)).
 - While Requirements or Design is being redone, a merge of the implementation PR does not stop it.
 
+If a person merges the PR of Requirements or Design while that step is being revised (after a request for changes, or imported PR comments or suggestions), the merge is also taken as the approval.
+
+- sacty stops the running revision and moves on to the next step.
+  It does not take in the revision's result and does not create a new PR.
+  What is approved is the contents of the merged PR (if you edited the PR, your edited contents).
+- A comment appears on the PR once, saying that the merge was taken as the approval and how many suggestions were not taken in.
+  The same comment also appears when a merge stops a rework of the implementation PR.
+- The task's activity shows "PR #N was merged, so the rework of the design was stopped" ("the rework of the requirements" for Requirements).
+- If you merge after sacty has put the revision in the PR, the revision is what is approved.
+- If you close the PR without merging, sacty creates a new PR after the revision.
+
+If you merge the original Design PR while the task has gone back to Requirements because of comments on the Design PR, it is not taken as the approval of Design.
+A comment appears on the PR once, saying that the merge was not taken as the approval of Design because Requirements was being revised.
+After you approve Requirements, sacty recreates the Design PR, so approve it again in that PR.
+
+If sacty cannot close the PR from before the revision when it submits the revision in a new PR, it pauses the task without creating the new PR.
+When you resume the task, sacty starts again from closing the PR.
+If you merge the PR from before the revision while the task is paused, the task moves on as approved without waiting for a resume.
+
 ### The form of the PR body
 
 If the target repository (or, if it has none, the org's public `.github` repository) has a PR template (`pull_request_template.md`), sacty writes the PR body following its headings.
@@ -970,9 +989,8 @@ When the body follows the template's headings, sacty fills it as follows.
 
 When sacty uses its own format, the implementation PR body looks as follows.
 
-- The "結論" (conclusion) section at the top holds only a summary of the change and the last fix (followed by the record of moving on despite a failure and what you should confirm, if any).
-- The "レビューの進め方" (How the review goes) section after it has, one sentence per item, Sacty's review (the child task that reviews the PR reviews it and posts the review, the draft is removed when there are no findings, and CI results are checked on the PR) and the AI review state.
-  In a body that follows a template, the same items are at the end of the body, before the approval guidance.
+- The "結論" (conclusion) section at the top holds a summary of the change and the last fix (followed by the record of moving on despite a failure and what you should confirm, if any). It does not have the line "Sacty のタスク…の成果物です", nor an explanation of Sacty's process or the state of the AI review. The task ID is only in a hidden marker.
+- The end of the body has "この PR は Sacty が作成しました。" and two approval sentences ("この PR をマージすると（PR の中で直してからでも）、実装を承認したことになります。" and "直してほしい所は、この PR にコメントかレビューで書いてください。").
 - When an item or the list of what you should confirm, the findings of a record of moving on despite a failure, or the content of a child task is long, the full text goes into the collapsible section "省いた続き" of the body.
   When the whole body exceeds the limit (65,000 characters) and its end is cut, the number of omitted characters and GitHub's limit are written.
 - The approved requirements and design are given as key points and a link to the PR approved by merging.
@@ -982,13 +1000,13 @@ When sacty uses its own format, the implementation PR body looks as follows.
 - The PR of a child task of a split has a "この PR の範囲（分割の子タスク）" (scope of this PR) section ([Scope of the PR of a child task of a split](#scope-of-the-pr-of-a-child-task-of-a-split)).
 - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated).
   When the implementation's description itself starts with a heading such as "## 変更内容", no empty "変更" heading is put in front of it.
-- The table matching viewpoints to tests is kept short, and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint).
+- "確かめ方" (how it was checked) has a table matching viewpoints to tests (the test is "N 件（file）"; full test names are not listed), and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint). When the only viewpoint is the one line of the request, there is no table, just one line "テスト：N 件（file）".
+- When the requirements were skipped, the body says "要求要件の文書は作らず、依頼の内容を受け入れの基準にしました。".
+- If a remark ID is written in the description, Sacty removes it (an ID in parentheses with "への対応" is removed with its parentheses; an ID inside a sentence becomes "指摘").
 
 After the implementation is redone (whether the redo started from a request for changes or from AI review comments), the body describes the whole PR, not only the last fix.
 
-- What the last fix changed is shown separately in a "最後の直し" (last fix) section (and one line in the conclusion).
-  This section is also what remains after the first paragraph that the conclusion's "最後の直し" already shows.
-  When it fits in the conclusion, the section is not shown.
+- What the last fix changed appears once. When the first paragraph fits in the conclusion, it is shown there and the rest goes into a "最後の直し" (last fix) section (no section if nothing remains). When it does not fit (including a bullet list), it is not shown in the conclusion and the whole text goes only into the section.
 - The table of viewpoints and tests also keeps the tests mapped in the earlier submissions.
 
 The following rules apply to the viewpoint-test mapping and to internal paths.
@@ -1105,7 +1123,7 @@ In more detail, each section holds the following.
     A long section is copied up to a limit, and you read the rest in the result file.
   - To answer, comment on that PR. sacty takes the comment in and reflects the answer in the output.
   - If you merge without answering, work goes on to the next step with the recommended answers. This is the same when a must question is left unanswered.
-  - 確かめる所 is a check of sources; the questions a person should decide appear in 確認したいこと. Even when it says "確かめる項目：0件", there may be questions in 確認したいこと.
+  - 確かめる所 is a check of sources; the questions a person should decide appear in 確認したいこと. Even when there is nothing to confirm there, there may be questions in 確認したいこと.
 - 既定で決めたこと
   - A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと.
 
@@ -1144,7 +1162,7 @@ Anything mixed into the middle of the body cannot be removed, so the self-review
 
 For requirements and designs, the deliverable cards and the approval screen show "Items to check: n".
 The items to check may not match your intent, so check them one by one.
-When you approve the requirements or design on a PR, the same content appears under "確かめる所" in the PR body.
+When you approve the requirements or design on a PR, the items to confirm and their grounds appear under "確かめる所" in the PR body (the counts of items and of quotes, derivations, and inferences are not written there).
 
 Which items you need to check is decided by how the basis of each item is classified.
 In the Requirements and Design steps, an agent other than the author sorts the basis of each item (`R-n` of the requirements, `TV-n` of the test viewpoints) into the following three.
@@ -1178,7 +1196,6 @@ The implementation PR is reviewed by the child task that reviews the PR, and onc
 From the end of the Implementation step to the merge, things go in this order.
 
 1. When the Implementation step finishes, sacty pushes the implementation, opens the implementation PR as a draft, and creates the child task that reviews the PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
-   The "レビューの進め方" section of the PR body gets a note about Sacty's review.
 2. The child task reviews the PR and posts the review to the PR. It also reads the CI result at that point.
    - A CI failure caused by the change becomes a "changes required" finding.
    - A failure unrelated to the change is written in the review body as something a person should check.

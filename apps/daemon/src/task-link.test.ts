@@ -1,87 +1,71 @@
 import { describe, expect, it } from "vitest";
-import { buildDeferralNotice } from "./deferral-notice.js";
-import { buildHumanAskNotice } from "./human-ask-notice.js";
+import { buildDecisionNotice } from "./decision-notice.js";
 import { buildStopNotice } from "./review-stop-notice.js";
 import { buildReworkNotice } from "./rework-notice.js";
 import { TASK_LINK_NOTE, taskLink } from "./task-link.js";
 
-// PR に投稿する知らせの、タスクの画面へのリンクの注釈（PBI-450）
+// 画面へのリンクの注釈（PBI-450）と、PR のコメントから画面の URL を外したこと（PBI-471）
 
-const ID = "t-1";
+const ID = "52359c0c-6e66-4842-a4ae-65e73d30a117";
 
-/** 知らせ 4 種を、画面の URL から組み立てる。 */
-function notices(webUrl: string): Record<string, string> {
-  const link = taskLink(webUrl, ID);
-  const common = { taskUrl: link.url, localOnly: link.localOnly, secrets: [] as string[] };
-  return {
-    humanAsk:
-      buildHumanAskNotice({
-        taskId: ID,
-        step: "implement",
-        stepName: "実装",
-        submission: 1,
-        confirms: [{ remarkIds: ["r1"], text: "確かめたいこと" }],
-        ...common,
-      }) ?? "",
-    rework: buildReworkNotice({
-      taskId: ID,
-      round: 1,
-      reason: "理由",
-      stepName: "設計",
-      ...common,
-    }),
-    reviewStop: buildStopNotice({
-      taskId: ID,
-      reason: "error",
-      summary: "",
-      taskUrl: link.url,
-      localOnly: link.localOnly,
-    }),
-    deferral:
-      buildDeferralNotice({
-        taskId: ID,
-        decision: 1,
-        items: [{ remarkId: "r1", decision: "fix" }],
-        ...common,
-      }) ?? "",
-  };
-}
+/** 目印の行を除いた本文。 */
+const visible = (body: string) => body.split("\n").slice(1).join("\n");
 
-/** `[タスクの画面](…)` を含む文（行）。 */
-function linkSentence(body: string): string {
-  return body.split("\n").find((line) => line.includes("[タスクの画面](")) ?? "";
-}
-
-describe("タスクの画面へのリンクの注釈（PBI-450）", () => {
+describe("タスクの画面へのリンク", () => {
   it.each(["http://127.0.0.1:4700", "http://localhost:4700", "http://[::1]:4700"])(
-    "ループバックのホスト（%s）では、知らせ 4 種のリンクの文の直後に注釈が付く（TV-1）",
+    "ループバックのホスト（%s）では、画面でだけ開けるリンクとして読む",
     (url) => {
       expect(taskLink(url, ID)).toEqual({ url: `${url}/tasks/${ID}`, localOnly: true });
-      for (const [name, body] of Object.entries(notices(url))) {
-        const sentence = linkSentence(body);
-        expect(sentence, name).toContain(`${url}/tasks/${ID}`);
-        expect(sentence.endsWith(TASK_LINK_NOTE), name).toBe(true);
-        expect(TASK_LINK_NOTE).toBe("タスクの画面は、依頼した人のマシンでだけ開けます。");
-        // リンクの文の終わり（。）の直後に注釈が続く
-        expect(sentence, name).toMatch(/。タスクの画面は、依頼した人のマシンでだけ開けます。$/);
-      }
     },
   );
 
-  it("ループバックでないホストでは注釈を付けず、URL として読めない文字列では付ける（TV-2）", () => {
+  it("ループバックでないホストは注釈が要らず、URL として読めない文字列は注意を残す側に倒す", () => {
     expect(taskLink("https://sacty.example.com", ID).localOnly).toBe(false);
-    for (const [name, body] of Object.entries(notices("https://sacty.example.com"))) {
-      expect(linkSentence(body), name).toContain("https://sacty.example.com/tasks/t-1");
-      expect(body, name).not.toContain(TASK_LINK_NOTE);
-    }
     expect(taskLink("not a url", ID).localOnly).toBe(true);
-    for (const [name, body] of Object.entries(notices("not a url"))) {
-      expect(body, name).toContain(TASK_LINK_NOTE);
-    }
+    expect(TASK_LINK_NOTE).toBe("タスクの画面は、依頼した人のマシンでだけ開けます。");
   });
+});
 
-  it("設計に戻した知らせの製品名は「Sacty」に揃う（TV-13）", () => {
-    expect(notices("http://127.0.0.1:4700").rework).toContain("- Sacty が作る設計の PR");
-    expect(notices("http://127.0.0.1:4700").rework).not.toMatch(/sacty が/);
+describe("設計に戻した・レビューが止まった・人の判断を待つコメントは、画面の URL と内部の語を出さず、画面の案内を文で書く（TV-17）", () => {
+  const notices: Record<string, { body: string; guide: string }> = {
+    rework: {
+      body: buildReworkNotice({
+        taskId: ID,
+        round: 1,
+        reason: "理由",
+        stepName: "設計",
+        secrets: [],
+      }),
+      guide: "意図と違うときは、Sacty の画面で差し戻してください。",
+    },
+    reviewStop: {
+      body: buildStopNotice({ taskId: ID, reason: "error", summary: "" }),
+      guide: "Sacty の画面で、このタスクを再開してください。",
+    },
+    decision: {
+      body: buildDecisionNotice({
+        taskId: ID,
+        round: 1,
+        findings: [{ finding: "指摘", reason: "根拠" }],
+        secrets: [],
+      }),
+      guide: "補足を付けて再開するときは、Sacty の画面で再開してください。",
+    },
+  };
+
+  for (const [name, { body, guide }] of Object.entries(notices)) {
+    it(`${name}：目印の外に URL・タスクの ID・「工程」・注釈が無く、「Sacty の画面で」の文がある`, () => {
+      const text = visible(body);
+      expect(text).not.toContain("http://");
+      expect(text).not.toContain(ID);
+      expect(text).not.toContain("工程");
+      expect(text).not.toContain(TASK_LINK_NOTE);
+      expect(text).toContain(guide);
+    });
+  }
+
+  it("設計に戻した知らせの製品名は「Sacty」に揃う", () => {
+    expect(notices.rework?.body).toContain("- Sacty が作る設計の PR");
+    expect(notices.rework?.body).not.toMatch(/sacty が/);
   });
 });

@@ -60,8 +60,9 @@ const bodyOf = (t: Task) => joinBodyText(buildPullRequestBodyText(t));
 /**
  * 本文の節（sacty が付ける次の見出しの手前まで。実装の説明の中の「## 検証」などは、節の中に含まれる）。
  */
-const SACTY_HEADINGS = ["結論", "要求要件", "変更", LAST_FIX_HEADING, "観点 → テスト → 実行結果"];
-const section = (body: string, heading: string) => {
+const SACTY_HEADINGS = ["結論", "要求要件", "変更", LAST_FIX_HEADING, "確かめ方"];
+const section = (rawBody: string, heading: string) => {
+  const body = `\n${rawBody}`;
   const start = body.indexOf(`\n## ${heading}\n`);
   if (start < 0) return undefined;
   const rest = body.slice(start + 1);
@@ -217,7 +218,8 @@ describe("作り直しの後の PR の本文は、PR 全体の説明にする（
         implementHistory: [FEATURE, withFix(FEATURE, FIX2)],
       }),
     );
-    expect(body).toContain("ほか 17 件");
+    expect(body).toContain("テスト：18 件（`t0.test.ts`");
+    expect(body).not.toContain("ケース 3");
   });
 });
 

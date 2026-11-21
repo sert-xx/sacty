@@ -2154,15 +2154,12 @@ describe("成果の書き出し（PBI-56）", () => {
     const parts = buildPullRequestBodyParts(task);
     for (const footer of [plain, parts.footer]) {
       expect(footer).toContain(
-        "- この PR をマージすると、実装を承認したことになり、タスクが完了します（Sacty の画面からは承認しません）。",
-      );
-      expect(footer).toContain(
-        "人の指摘はこの工程のエージェントが、実装のやり直し（この PR を更新します）か",
+        "この PR をマージすると（PR の中で直してからでも）、実装を承認したことになります。\n直してほしい所は、この PR にコメントかレビューで書いてください。",
       );
       expect(footer).not.toContain("ゴールガーディアン");
       expect(footer).not.toContain("成果物チェック");
     }
-    expect(parts.footer).toContain(`sacty task ${task.id}`);
+    expect(parts.footer).toContain(`<!-- sacty task ${task.id} -->`);
     // マージの後の監視の工程があれば、それを終えてから完了すると書く（飛ばしたなら書かない。PBI-116）
     const watched = (state: "todo" | "skip") =>
       buildPullRequestBody({
@@ -2173,10 +2170,10 @@ describe("成果の書き出し（PBI-56）", () => {
         ],
       } as Task);
     expect(watched("todo")).toContain(
-      "- この PR をマージすると、実装を承認したことになり、マージの後の監視（CI/CD とスキルに従った確認）を終えるとタスクが完了します（Sacty の画面からは承認しません）。",
+      "この PR をマージすると（PR の中で直してからでも）、実装を承認したことになります（マージの後の監視を終えると、完了します）。",
     );
     expect(watched("skip")).toContain(
-      "- この PR をマージすると、実装を承認したことになり、タスクが完了します（Sacty の画面からは承認しません）。",
+      "この PR をマージすると（PR の中で直してからでも）、実装を承認したことになります。\n",
     );
   });
 
@@ -2238,8 +2235,9 @@ describe("要求要件・設計の PR（PBI-57）", () => {
           id: "design-1-1",
           step: "design",
           round: 1,
-          text: "観点が足りない",
-          response: "足した",
+          text: "観点が足りない\n\n詳しい全文の段落（写さない）",
+          gist: "観点が足りない",
+          response: "足した（design-1-1 への対応）",
           voided: false,
         },
       ],
@@ -2262,11 +2260,16 @@ describe("要求要件・設計の PR（PBI-57）", () => {
     expect(buildStepPullRequestTitle(task, "design")).toBe("[設計] 決済");
     const body = buildStepPullRequestBody(task, "design", "docs/sacty/t1/design.md");
     expect(body).toContain("成果のファイル：`docs/sacty/t1/design.md`");
-    expect(body).toContain("この PR をマージすると、設計を承認したことになり");
+    expect(body).toContain(
+      "この PR をマージすると（PR の中で直してからでも）、設計を承認したことになります。",
+    );
     expect(body).toContain(
       "- 要求要件：[`docs/sacty/t1/requirements.md`](https://github.com/acme/app/blob/c0ffee/docs/sacty/t1/requirements.md)（PR：[#7](https://github.com/acme/app/pull/7)）",
     );
-    expect(body).toContain("- [design-1-1] 観点が足りない\n  - 対応：足した");
+    // 指摘は要点の1行と対応だけ。全文と指摘の ID は載せない（PBI-471）
+    expect(body).toContain("- 観点が足りない\n  - 対応：足した");
+    expect(body).not.toContain("design-1-1");
+    expect(body).not.toContain("詳しい全文の段落");
   });
 
   it("実装の PR の指摘の判断の指示は、これまでと同じ（実装・設計・要求要件から選ぶ）", () => {
@@ -5352,8 +5355,9 @@ describe("工程の見直しと、要求要件・設計を経ない実装", () =
     expect(prompt).not.toContain("承認済みの要求要件");
 
     const body = buildPullRequestBody(task);
-    expect(body).toContain("要求要件の工程を省きました");
-    expect(body).toContain("REQ タスクの目的");
+    expect(body).toContain("要求要件の文書は作らず、依頼の内容を受け入れの基準にしました。");
+    // 観点が依頼の1行だけなので、観点の表は出さない（PBI-471）
+    expect(body).not.toContain("| 観点 |");
   });
 
   it("要求要件だけを飛ばした設計は、タスクの内容を要求要件として扱う。設計だけを飛ばした実装は、今までどおり要求要件に従う", () => {
@@ -6055,7 +6059,7 @@ describe("タスクの開始時に集めた情報", () => {
         },
         ...extra,
       }) as unknown as Task;
-    const HEADING = "## この PR の範囲（分割の子タスク）";
+    const HEADING = "## この PR の範囲";
     const SCOPE = "--- この PR の範囲（分割の子タスク） ---";
     const quoted = (text: string) =>
       text
@@ -6275,7 +6279,7 @@ describe("タスクの開始時に集めた情報", () => {
       const text = buildPullRequestBodyText(childTask());
       expect(text.main).toContain(HEADING);
       expect(text.main).toContain(
-        `この PR は、親タスク「${PARENT_TITLE}」をタスク分割で分けた子タスクの1つの PR です。実現するのは、下の子タスクの内容に書かれた範囲だけです。範囲外と書かれたこと（ほかの子タスクが担当すること）は、この PR では変えません。`,
+        `この PR は、「${PARENT_TITLE}」を分けた作業の1つの PR です。実現するのは、下の範囲に書かれたことだけです。範囲外と書かれたこと（ほかの PR が扱うこと）は、この PR では変えません。`,
       );
       // 要約せず、引用としてそのまま載せる
       expect(text.main).toContain(quoted(CONTENT));
@@ -6289,7 +6293,7 @@ describe("タスクの開始時に集めた情報", () => {
       expect(text.main.indexOf(HEADING)).toBeLessThan(text.main.indexOf("## 要求要件"));
       // PR テンプレートに沿わせる本文では、目的の欄に入れる
       const parts = buildPullRequestBodyParts(childTask());
-      expect(parts.summary).toContain("**この PR の範囲（分割の子タスク）**");
+      expect(parts.summary).toContain("**この PR の範囲**");
       expect(parts.summary).toContain(quoted(CONTENT));
       expect(parts.summary).not.toContain("親の要求要件");
     });
@@ -6300,7 +6304,7 @@ describe("タスクの開始時に集めた情報", () => {
       });
       const main = buildPullRequestBodyText(fix).main;
       expect(main).toContain(
-        `この PR は、親タスク「${PARENT_TITLE}」の統合レビューの指摘を直す、修正の子タスクの PR です。`,
+        `この PR は、「${PARENT_TITLE}」の統合レビューの指摘を直す作業の PR です。`,
       );
       expect(main).toContain("範囲外と書かれたことは、この PR では変えません。");
     });
@@ -6337,7 +6341,7 @@ describe("タスクの開始時に集めた情報", () => {
       const section = main.slice(from, to);
       expect(section.length).toBeLessThan(CHILD_SCOPE_BODY_MAX + 1_000);
       expect(section).toMatch(
-        /…（子タスクの内容が長いので、ここから先の \d+ 文字は、本文の「省いた続き」に載せています）/,
+        /…（範囲の内容が長いので、ここから先の \d+ 文字は、本文の「省いた続き」に載せています）/,
       );
       expect(section).not.toContain("タスクの画面");
       // 省いた続きの全文は、折りたたみに載せる（TV-9）
@@ -6352,17 +6356,15 @@ describe("タスクの開始時に集めた情報", () => {
       const oneLine = buildPullRequestBodyText(
         childTask("あ".repeat(CHILD_SCOPE_BODY_MAX + 1)),
       ).main;
-      expect(oneLine).toContain("子タスクの内容が長いので");
+      expect(oneLine).toContain("範囲の内容が長いので");
       // 範囲の節には引用を出さない（続きは、折りたたみに全文がある）
       expect(oneLine.slice(0, oneLine.indexOf("<details>"))).not.toContain("> あ");
-      expect(oneLine).toContain(
-        "子タスクの内容（タスク分割が書いたものを、そのまま載せています）：\n\n…（子タスクの内容が長いので",
-      );
+      expect(oneLine).toContain("範囲の内容（そのまま載せています）：\n\n…（範囲の内容が長いので");
       // 上限ちょうどの内容は切らない
       const exact = "あ".repeat(CHILD_SCOPE_BODY_MAX);
       const whole = buildPullRequestBodyText(childTask(exact)).main;
       expect(whole).toContain(`> ${exact}`);
-      expect(whole).not.toContain("子タスクの内容が長いので");
+      expect(whole).not.toContain("範囲の内容が長いので");
     });
 
     it("使った秘密の値は、範囲の節でも伏せる。伏せる前の記録で読むので、記録の無い子タスクでも範囲は入る", () => {
@@ -7590,6 +7592,24 @@ describe("指摘への対応の「人に確かめたいこと」（PBI-301）", 
     ]);
     expect(read.output).not.toContain("confirm");
     expect(read.output).not.toContain("sacty-responses");
+  });
+
+  it("対応の gist（指摘の要点）は、改行・前後の空白を除いて1行にし、120 文字（… を含む）までで記録する。無い対応は gist を持たない（TV-14）", () => {
+    const read = extractBlocks(
+      block([
+        { remarkId: "implement-1-1", text: "直した", gist: "  エラーの\n文言を直す  " },
+        { remarkId: "implement-1-2", text: "直した", gist: `長い\n${"あ".repeat(300)}` },
+        { remarkId: "implement-1-3", text: "直した" },
+      ]),
+      ids,
+      [],
+    );
+    expect(read.responses?.[0]?.gist).toBe("エラーの 文言を直す");
+    const long = read.responses?.[1]?.gist ?? "";
+    expect(long).not.toContain("\n");
+    expect(long.length).toBe(120);
+    expect(long.endsWith("…")).toBe(true);
+    expect(read.responses?.[2]).toEqual({ remarkId: "implement-1-3", text: "直した" });
   });
 
   it("confirm が文字列でない・長すぎるときは、文字でなければ捨て、長ければ上限で切る。対応の文が無い対応は読まない", () => {

@@ -4,7 +4,7 @@
 - タスク: PBI-291
 - PR: #292
 - ブランチ: feat/issue-291-pbi-291
-- 関係する ADR: [古い head への AI のレビューを捨てたとき、その指摘を画面で人に届ける](../adr/20261103-0744-deliver-discarded-ai-review-to-person.md)
+- 関係する ADR: [古い head への AI のレビューを捨てたとき、その指摘を画面で人に届ける](../adr/20261103-0744-superseded-deliver-discarded-ai-review-to-person.md)
 
 ## 目的
 

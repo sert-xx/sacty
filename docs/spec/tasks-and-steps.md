@@ -255,6 +255,7 @@
   - 小さくない指摘（直す所が 2 か所を超える、または方針を変える）と、判断に迷うときは、回数の上限を通常のとおり（最大 5 回）にする。
   - どちらで進めたかを、報告の `summary` の最初に書かせる。
 - 実装・文書作成・調査の差し戻しの指示には、この節の指示を出さない。
+- 差し戻し・PR の指摘などで要求要件・設計を直している間に、人がその工程の PR をマージしたら、直し（実行・PR の更新）を止めて、承認待ちだった提出のマージを承認として進める。直しの結果は使わず、新しい PR は作らない（[工程の PR の直しの間のマージ](approval.md#工程の-pr-の直しの間のマージ)）。
 
 関係する ADR: [要求要件・設計の差し戻しでは、前回の成果物を元に、指摘に関わる所だけを書き換える](../adr/20261101-1355-partial-rework-of-requirements-and-design.md)
 
@@ -351,7 +352,7 @@
 - 人間が確かめる項目（`needsCheck`）は、推論と、原文が Input に見つからない引用と、分類の無い項目。書いたエージェントが自分で分類した（`sequential`）ときは、すべての項目。
 - 画面は、成果物のカード（承認済みの成果物では出さない）と承認の画面に、確かめる項目の数と区分ごとの数を出す（`ProvenanceNote`）。
   確かめる項目があれば警告の色で開いたまま挙げ、引用・導出は「そのほか」として折りたたむ。記録が無ければ警告を出す。
-- 要求要件・設計の PR の本文には「確かめる所」として、同じ件数と確かめる項目を入れる（`provenanceGuideLines`。テンプレートに沿わせるときは目的・概要の所）。
+- 要求要件・設計の PR の本文には「確かめる所」として、確かめる項目（推論など）の ID と根拠を入れる（PR 用の `provenanceGuideLines`。テンプレートに沿わせるときは目的・概要の所）。確かめる項目の件数と、引用・導出・推論の数、分類をサブエージェントが行ったかどうかの行は、本文に書かない（PBI-471。画面の表示は変えない）。
 
 関係する ADR: [承認する人が見る所を絞るため、要求要件・設計の項目の出典を、書いたエージェントとは別のサブエージェントに分類させる](../adr/20261027-1427-classify-provenance-before-approval.md)
 
@@ -650,7 +651,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 - 引き継ぐかは、オーケストレーターが工程の選択の答えの `continuePullRequest` で決める。
   指示にこの項目を出すのは、タスクに PR のリンクがあり、実装する組み合わせ（`CONTINUABLE_PLANS`：`standard`・`skip-requirements`・`skip-design`・`direct`・`bugfix`・`security-fix`）を選べるタスクだけ（`continuablePullRequest`）。
   PR から取り込んだタスク・分割の子タスクには出さない。
-  人が後続に回すと決めた指摘の後続のタスク（`derivedFrom.deferredRemarkId` がある。[後続に回したい案と、人の決定](approval.md#後続に回したい案と人の決定)）にも出さず、答えの `continuePullRequest` も読まない（依頼にある PR は、元のタスクのマージ済みの PR で、引き継げない。新しいブランチと PR で直す）。
+  人が後続に回すと決めた指摘の後続のタスク（`derivedFrom.deferredRemarkId` がある。[後続に回したい案と、人の決定](approval.md#後続に回したい案と人の決定)）にも出さず、答えの `continuePullRequest` も読まない（依頼にある PR は、元のタスクのマージ済みの PR で、引き継げない。新しいブランチと PR で直す）。後続のタスクの題は、指摘の要点から作る（`[PR #<番号> follow-up] <要点>`。[指摘を示す 1 行](approval.md#指摘を示す-1-行)）。エージェントへの指示の見出し（各工程・リスクの評価・監査・デプロイの指示の題の所）には題を使わず、固定の「後続に回した指摘への対応」にする（`instructionTitle`）。外から来た文を、指示として読ませないため（PBI-471）。
   sacty が説明に足した記録の中のリンクは、見ない。続きのタスク（[完了したタスクから続きのタスクを作る（派生）](#完了したタスクから続きのタスクを作る派生)）の元のタスクの記録（`derivedFrom.record`）と、再実行で作ったタスクの前の試行の記録（どちらも、PR の URL と、工程の成果の本文が入る）を除いた、人が書いた題と説明（再実行の補足を含む）の中のリンクだけを見る（`rerunEditableBody`）。
   指示では、PR を参考にして別の変更をする・PR をレビューするだけなら書かないこと、指摘で直すことが具体的に決まっているなら `direct` を、セキュリティ上の問題を直すなら `security-fix` を選ぶこと、`baseBranch` を書かないことを求める。
   実装しない組み合わせの答えの `continuePullRequest` は読まない。
@@ -1258,7 +1259,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     違反があっても止めず、PR の本文の範囲の節に書き、PR のレビューの子タスクに要修正の指摘にさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
 - 実装の PR はドラフトで作り（更新したときも、ドラフトに戻す。戻せなくても PR の作成は失敗にしない）、`PullRequestPublished` に `awaitingReview` を付けて、実装の承認待ちにする（`awaitsReview`）。
   既存の PR を引き継ぐタスクは、人の PR なのでドラフトにせず、`awaitingReview` も付けない。
-  PR の本文には、最終レビューの行の代わりに、レビューの子タスクがレビューし、指摘なしでドラフトを外すことと、CI の結果は PR で確かめることを、結論の外の「レビューの進め方」の節に 1 項目 1 文で書く（`REVIEW_BODY_LINES`。PBI-450）。結論には、変更・最後の直しと、省けない行だけを置く。
+  PR の本文には、最終レビューの行も、Sacty の過程の説明も書かない（PBI-471。本文は、目的・変更、確かめ方、人が確かめること、AI が作った印、承認の案内の 2 文だけにする。[実装の PR の本文の組み立て](approval.md#実装の-pr-の本文の組み立て)）。
 - PR を作ったら、その PR をレビューする子タスクを作る（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
   子タスクの判定が今のコミットで指摘なしになったら（判定し直した回に提案が残り、それもすべて対応しないとしたときは、評価だけの実行の後に、判定は提案ありのまま。`reason: suggestions_declined`。[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）、PR の確認で sacty がドラフトを外し、`PullRequestMarkedReady`（PR の番号・コミット・子タスク）を記録する（`markReady`）。これで PR は人の承認（マージ）を待つ。
   - 今のコミットは、GitHub の PR の今の先頭（`pullRequestHead`。指摘なしを待つ PR の先頭は、PR の確認で `DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて先に読む。答えは `DRAFT_TIMEOUT_MS` まで待ち、過ぎたら通信を中断する）。レビューの間に人がコミットを足したら、子タスクにその先頭を再レビューさせ、レビューしていない先頭のドラフトは外さない。先頭を読めなければ、次の確認でやり直す。
@@ -1295,7 +1296,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても、テストの仕組みが無いという判断を使えなくても止めない（`orchestrator.testCommandUnknown`・`orchestrator.noTests*` で止まらない。sacty はテストを実行しないため。[テストの仕組みが無いタスク](#テストの仕組みが無いタスク)）。
 - テストの仕組みが無いタスク（`noTestsReason`）の実装の指示では、用意したテストを提出の前に自分で実行させ、実行したコマンドと結果を実装の説明に書かせる（sacty は申告したテストのコマンドを実行しない）。受け入れは PR のレビューの子タスクが見ると伝える（`NO_TESTS_JUDGE_BY`・`ADDED_TEST_COMMAND_LINE`）。
 
-コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`REVIEW_BODY_LINES`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
 
 ### 再現の工程の後
 
@@ -2033,11 +2034,12 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   - デーモンが絞らない（確かめられない・迷うときも絞らない。理由は、デーモンのログに 1 行残す）：前回の先頭が今回の先頭の祖先でない・取得できない（履歴の書き換え）。前回の起点・向き先のブランチの記録が無い、または PR の向き先・差分の起点（merge-base）が前回と変わった。前回の回に判定の記録が無い。前回の回の記録（`previousReview.record`）が無い・`null`、または見られなかった観点（`notReviewed`）か、`kind` が `stopped` の検証がある（`reviewRecordBlocksNarrowing`。構造の欄だけで決め、文の中身は読まない）。前回の回の観点ごとの担当の起動を確かめられなかった（前回の回の `reviewDispatch` の担当の数が 0 件と数えた。数えられなかった `null` と記録が無い回は、起動できなかった証拠が無いので絞る）。前回以降に変わった行数が、今回の PR 全体の差分の行数の半分を超える（ちょうど半分は絞る）。前回以降に変わったファイルのうち、前回の時点の PR の差分に無かったものが 3 つ以上あり、かつ変わったファイルの半分を超える（名前の変更は、変更先の 1 ファイルとして数える）。前回以降の差分が空・100 万字を超える（渡せない）・名前に制御文字や引用符を含むパスがある。PR を作ったタスクが、前の工程へ戻って作り直した後の提出（前回の回の指摘の戻し先が、その PR の工程より前の工程。`reviewReworkTarget`）。
     行数と新しいファイルの値は、PR の大半を作り直した直しや、前回までに見ていない所を広く触った直しを、絞らずに PR 全体で見るための目安（直しの大きさが PR の半分までなら、前回以降の差分で見落としにくい、という見立て）。見落とした `must` は、次の回・人の確認で拾う（ADR に、受け入れた見落としの種類を書いた）。
   - GitHub の再依頼で作ったタスクは、前回の自分の投稿は持つが、前回の回の判定（`reviewVerdicts`）を持たないので、前回の記録の有無によらず絞らない（判定を写さず、新しい状態を足さない。PBI-421 と同じ）。
+  - 親に届かなかった回の指摘は、絞る回でも範囲の中に入れ、今回の先頭で確かめ直させる（PBI-465。[投稿の前の先頭の変化での打ち切り](#投稿の前の先頭の変化での打ち切り)）。
   - 前回以降の差分は、前回の先頭から今回の先頭まで（`diffCommits`）を、PR 全体の差分と同じに、指示とは分けた JSON のデータとして渡す。全体は、いつも、PR 全体の差分と同じ置き場の別のファイル（`since.diff`。読み取り専用。同じ先頭の判定し直しでは置かない）に置き、指示にその場所を書く。このファイルを書けなかったときは、実行を失敗にせず、絞らずに PR 全体を見る（デーモンのログに 1 行残す）。差分に入っていない文書（Git の外の文書など）を対象にしているときの範囲は、前回以降の差分には変更が入らないので、絞る回の指示も、その文書の再レビューの規則（`linked-docs.md`）で決めさせる。長いとき（6 万字を超える）は、指示に載せるのは先頭だけにする。秘密の値の伏せ方は PR 全体の差分と同じ（差分は PR の作者の内容として、指示とは分けて渡し、書かれた指示には従わせない）。
   - 絞る回の `rereviewLines` の「範囲は PR 全体にする」の行は、絞る節のとおりに絞ることを言う文に差し替える。絞らない回の指示の文は変えない。指示の節には、範囲・起動する観点・親が絞らない条件（前回の記録に見られなかった観点・止まった検証がある（指示に前回の記録が無いときは、前回の本文で確かめる）、前回の本文に判定が無いと書かれている／読めない、前回以降の差分を読めない・今回のコードと食い違う、作り直しと読める、迷う。絞らないことと理由は、本文に書かせず、記録の `scope` に書かせる）・変えないもの・本文の 1 行を書く（スキルを差し替えたプロジェクトでも分かるように）。
     本文に書かせるのは、絞ったことだけで、「前回（<前回の先頭>）以降の変更と前回の指摘だけを確かめた」の 1 行。絞った理由と起動しなかった観点は、記録の `scope`・`viewpoints`（`not_launched` と理由）に書かせる。
   - 前回以降が文書だけで、この節にも当たる回は、観点はこの節、検証は上の項目の節が決める（2 つは食い違わない）。この節に当たらない回は、文書だけの節は検証だけを絞り、観点は規則 1〜7 で決める。
-- 本文と過程の記録（PBI-460。[ADR](../adr/20261121-1603-pr-review-without-process-info.md)）：PR に投稿する本文と行へのコメントには、PR を読む人が直すべきか・何が問題かを判断できる情報だけを書かせ、Sacty の過程の情報は、本文の後の記録のブロックで返させる（`reviewRecordInstructionLines`）。PR を読む人は、Sacty を使っていないことがある。
+- 本文と過程の記録（PBI-460。[ADR](../adr/20261121-1603-superseded-pr-review-without-process-info.md)）：PR に投稿する本文と行へのコメントには、PR を読む人が直すべきか・何が問題かを判断できる情報だけを書かせ、Sacty の過程の情報は、本文の後の記録のブロックで返させる（`reviewRecordInstructionLines`）。PR を読む人は、Sacty を使っていないことがある。
   - 本文は総評から始めさせる（先頭の行を「## 総評」の見出しにする）。総評の前に、作業の経過の文（「レビューの本文を書きます」など）を書かせない。
   - 書かせるもの：判定の根拠になる総評、指摘（場所・何が問題か・直し方）、修正の判断に要る検証の結果（落ちたもの・確かめられなかったもの）。
   - 書かせないもの：観点の ID・数・名前、観点ごとの担当・サブエージェント・逐次モード・起動表、採用しなかった指摘とその一覧、落とした指摘の件数、動いたエージェント・モデル・切り替え、検証のやり方（使い回したなど）と通った検証、Sacty のタスクの ID。
@@ -2079,8 +2081,9 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   エージェントの本文は、Claude Code では判定の塊を含む最後の `result` から読む（最終の答えの後の通知への返答を投稿しない。[エージェントの実行](agent-execution.md#出力の扱い)）。
   sacty の設定の `reviewMentionSelf` が On なら、作者の代わりに、投稿するアカウント（プロジェクトでそのホストに選んだ gh のアカウント）に @ メンションする（login の形でなければ誰にもメンションしない。作者には付けない）。
 - 投稿の直前に、PR の先頭のコミットを確かめる（すでに投稿したレビューが目印で見つかったときは確かめない）。
-  レビューしたコミットと違えば（途中で push された）、レビューしたコミットに対して投稿し、どのコミットのレビューかと、「再レビュー」で最新をレビューできることを本文に書く。
+  レビューしたコミットと違い（途中で push された）、PR がフォークからのもの（`PullRequestStatus.fork` が false と確かめられないもの）なら、レビューしたコミットに対して投稿し、どのコミットのレビューかと、「再レビュー」で最新をレビューできることを本文に書く。
   そのときの先頭を `PullRequestReviewPosted` の `latestCommit` に残し、本文にも表示されない目印で残す。
+  フォークでない PR で先頭が違えば、投稿せずに、その回を打ち切る（`ReviewRunStopped` の `reason: head_changed`。PBI-465。[投稿の前の先頭の変化での打ち切り](#投稿の前の先頭の変化での打ち切り)）。
   確かめられなければ（応答に先頭のコミットが無い・空のときも）、投稿せずに一時停止する（`review.headUnknown`。再開すると確かめ直す）。
   投稿の後・記録の前に止まっていたら、投稿したレビューの本文の目印から先頭を記録し直す。
 - 結果は、人の承認を待たずに PR にレビュー（`COMMENT`）として投稿する。
@@ -2109,7 +2112,49 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   エージェントの本文と指摘の文は、対象のリポジトリの文章の決まり（スキル `writing` の順）に従わせ、決まりが無ければ日本語にする。
 - PR の確認（60秒ごと）で、レビューをまだ投稿していない（実行待ち・実行中・投稿の前の一時停止など）レビューのタスクの PR がマージ・クローズされていたら、タスクを中止する（実行中の実行を止める。`TaskCancelled` の `reason: pull_request_merged`・`pull_request_closed`）。
   再レビューの実行中のタスクも同じ（前の回のレビューを投稿していても、中止になる）。
+  実行中・対象の確認中・投稿待ちのタスクは、`TaskCancelled` の前に `ReviewRunStopped`（`reason: merged`・`closed`）を記録し、止めた実行を失敗に見せない（PBI-465。[投稿の前の先頭の変化での打ち切り](#投稿の前の先頭の変化での打ち切り)）。
   取り込みを通さずに人が作ったレビューのタスク（`source` が無い）は、この中止の対象ではない（実行中に PR がマージ・クローズされても、最後まで実行して投稿し、判定が指摘なしでなければ、次の確認で見守りを終えて完了になる。指摘なしなら、投稿で完了する）。レビューを投稿した後のタスクは、中止せずに完了にする（[投稿の後の PR の見守り](#投稿の後の-pr-の見守り)）。
+
+### 投稿の前の先頭の変化での打ち切り
+
+関係する ADR: [投稿の前に PR の先頭が変わったレビューは打ち切って始め直し、親に届かなかった回の指摘は次の回で確かめ直す](../adr/20261121-1756-stop-unposted-review-on-head-change.md)
+
+投稿していないレビュー（1 回目を含む）の途中で PR の先頭が変わったら、古い先頭宛ての本文を投稿せずに、その回を打ち切る（PBI-465）。
+先頭が落ち着いてから、新しい先頭で、同じ回の番号のまま始め直す。
+フォークからの PR は打ち切らない（古い先頭宛てに `latestCommit` を付けて投稿する。PBI-461）。先頭が変わらないレビューの振る舞いは変わらない。
+
+- 見張るタスク：PR の確認（60秒ごと。`checkReviewPullRequests` → `checkReviewHead`）で、レビューの工程が今の工程で、レビューを投稿していない、実行待ち・実行中のタスクの PR の先頭を読む。1 回目も再レビューも、取り込んだタスクも、取り込みを通さずに人が作ったタスク（`source` が無い）も同じ。
+  - 読む PR は、`source` があればそれ、無ければ対象（`reviewTarget`）、それも無ければ打ち切りが残した `reviewStop` の `repo`・`number`（`reviewPullRequestOf`）。
+  - 一時停止中のタスクは見張らない（止める実行が無く、記録もできない）。再開した後の実行で、この見張りか投稿の直前の確認が見つける。投稿待ち（`idle`）は、投稿の直前の確認が見つける。
+  - PR がフォークからのもの（`status.fork` が false と確かめられないもの）は、打ち切らない。先頭を読めない応答（先頭が無い・形が違う）では、何も決めない。
+- 打ち切り：対象の先頭（`reviewTarget.headCommit`）と違えば、待たずに打ち切る（`abortReviewRun`）。`ReviewRunStopped` を記録するのは、打ち切りを決めた処理だけ。
+  - 実行中・対象の確認中：止める印（メモリーの `reviewStopping`）を立てて実行を止め、コンテナが止まったと確かめた後に `ReviewRunStopped`（`reason: head_changed`、`from` にレビューしていた先頭、`to` に新しい先頭、`runIds` に止めた実行。actor `sacty`）を記録する。
+  - 実行の失敗の経路は、印を見て、`AgentRunFailed`・`TaskPaused` を記録しない。止めた実行の費用（`AgentRunCompleted` を記録していない分）はメモリーに残し、`ReviewRunStopped` の `costUsd`・`estimated`・`usage`・`costUnknown` に持たせる。
+  - 投稿待ち：実行の後・投稿の直前の確認（`composeReviewPost`）が先頭の違いを見つけ、投稿せずに `ReviewRunStopped` を記録する。実行の費用は `AgentRunCompleted` で数え済みなので、この記録は費用を持たない。
+  - コンテナの停止を確かめられないとき：`ReviewRunStopped` を記録せず、`unstoppedRuns` を付けた一時停止（`TaskPaused`。実行が開いていれば、先に `AgentRunFailed`）にして、人の確認を待つ（作業領域が書き換わりうるので、始め直さない）。
+  - 止めている間に人が中止・一時停止を求めたら、人の操作を優先し、`ReviewRunStopped` を記録しない。一時停止は、検知より先に求めた場合と、止めた実行が失敗で返った後の確認の間に求めた場合のどちらも、人の一時停止として記録する（止めた実行が実行中のままなら、その費用を `AgentRunFailed` に残してから `TaskPaused` を記録する）。
+- 打ち切った回（`head_changed`）の投影：タスクを `queued` に戻し、`reviewTarget`・`reviewResolvedAt`・今の回の `outputs.review`・`reviewComments` と、回ごとの記録（`reviewVerdicts`・`reviewRecords`・`reviewDispatch`）の今の回の要素を消す。
+  `reviewRound`・`previousReview`・`earlierReviews` は変えない（回の番号を進めない）。打ち切った回の記録は、画面・`get_task` に出ず、始め直した回の後の `ReviewRestarted` で作る `previousReview.record` にも使わない。
+  打ち切りの印として `Task.reviewStop`（`from`・`to`・`at` と、消した対象の `repo`・`number`）を持ち、次の `ReviewTargetResolved` で消す（作業履歴の欄は増えない。[作業履歴](event-log.md#投影)）。
+- 始め直し：`reviewStop` があって対象の無いタスクは、同じ先頭を `FEEDBACK_QUIET_MS`（2分）見続けるまで、実行の列（`runNext`・`queuedTaskIds`）に入れない（`reviewSettlingNow`）。
+  - 待ちの先頭と起点は、メモリー（`reviewSettling`）に持つ。初めは、打ち切りを決めた先頭と時刻。待ちの間に先頭が変われば、待ちの先頭と起点を替える（止める実行は無いので、`ReviewRunStopped` は記録し直さない）。
+  - 待ちの印が無い間（デーモンを起動し直した後、一時停止から再開した後）は、`reviewStop.to` と、いま見た時刻から待ち直す（その後の確認で読んだ先頭が違えば、先頭と起点を替える）。PR を読めない状態が続いても、待ちは過ぎる。待ちの間に人が一時停止したら、待ちの印を消し、`reviewStop` は残す。
+  - 落ち着いたら、その先頭で対象を確かめ直して（`ReviewTargetResolved`）、1 回だけ走る。
+  - 打ち切りの回数と待つ時間に、上限は設けない。落ち着くまで走らないので、費用は、先頭の変化 1 回につき実行 1 回分まで。待ちの間は `queued` のままで、作業履歴の `ReviewRunStopped`（時刻と `to`）で、待っていると分かる。push が止まれば始まる。
+- PR のマージ・クローズ（`source.review` のあるタスクだけ。`source` の無い、人が作ったタスクは中止しない）：実行中・対象の確認中・投稿待ちのタスクは、`checkReviewPullRequests` が中止（`cancel`）の前に同じ印を立てる。
+  `cancel` が実行を止めて終わりを待った後に `ReviewRunStopped`（`reason: merged`・`closed`。`to` は無い）を記録し、続けて `TaskCancelled`（`reason: pull_request_merged`・`pull_request_closed`）を残す。`AgentRunFailed`・一時停止は記録しない。
+  コンテナの停止を確かめられたかによらず記録する（止めた実行の費用を残すため）。確かめられないときの扱いは、ほかの中止と同じ（作業領域を消さず、後片付けにコンテナの失敗を残して、中止まで進む。一時停止にしない）。
+  始め直しの待ちの間は、止める実行が無いので、`ReviewRunStopped` を記録せず、`TaskCancelled` だけを残す。
+- 親に届かなかった回：再レビューの対象を決めたとき、前回・前々回以前の回のうち、PR を作ったタスク（親）に届かなかった回を、作業履歴の記録から決める（`undeliveredRounds`。作業履歴に欄は足さない）。
+  - 子タスク（`reviewOf` から親を引く）：親の `discardedReviews` の項目の `url` が、その回のレビューの URL と同じなら、届かなかった。親がまだ取り込みも捨てもしていない回（親の `importedFeedback` に、URL の `pullrequestreview-<ID>` から作る `review:<ID>` が無い）は、その回の `headCommit` が今回の対象の先頭と違えば、届かなかった（親は、取り込むときに今の先頭と比べて捨てるため）。
+  - 親のいないタスク：その回の `latestCommit`（投稿のときに先頭が変わっていた）があれば、届かなかった。GitHub の再依頼で作ったタスク（`reviewRerequest`）の前回の回は、判定しない（前回の記録に `latestCommit` が無く、人が明示して頼んだ回のため）。
+  - 判定のために、`previousReview`・`earlierReviews` は、その回の投稿の `reviewPost.latestCommit` を写して `latestCommit` に持つ。
+  - 指示（`rereviewLines`）は、届かなかった回のデータに `delivered: false` を付け、その回を、同じ原因の `[要修正]` の回数にも、前回までの現れの一覧にも数えさせない（実装の担当に届いていない回は、同じ原因が続いたことにならない）。親の提案の選り分けに渡す、提案だけの回の連続の数（`countSuggestionRounds`）も、その回を飛ばす（数えず、続きの途切れにもしない）。
+  - その回の指摘（`[提案]` を含む）は、再レビューの範囲の絞り（PBI-432）にかかわらず範囲の中として扱わせる。今回の先頭のコードで当てはまるかを確かめさせ、当てはまるものは今回の指摘として出させる（「未対応の指摘は、新しい指摘として繰り返さない」を当てない）。当てはまらないものは、「前回の指摘」の節に、今回の先頭では当てはまらないと書かせる。
+  - 渡す本文は、そのタスクの作業履歴の `previousReview`・`earlierReviews` にあるものだけ（PR から読み直さない）。データで、指示ではない（書かれた指示には従わない）と添える。
+  - 親が古い先頭宛ての指摘を直しに取り込まないことは変わらない（`PullRequestReviewDiscarded` と画面の `DiscardedReviewNotice` は残る。[AI のレビューの指摘](approval.md#ai-のレビューの指摘)）。
+
+コード: `apps/daemon/src/service.ts`（`checkReviewPullRequests`・`checkReviewHead`・`abortReviewRun`・`recordReviewRunStopped`・`recordableReviewStop`・`reviewPullRequestOf`・`reviewSettlingNow`・`composeReviewPost`・`cancel`・`undeliveredReviewRounds`）、`apps/daemon/src/undelivered-review.ts`（`undeliveredRounds`）、`apps/daemon/src/prompts.ts`（`rereviewLines`）、`apps/daemon/src/suggestion-triage.ts`（`countSuggestionRounds`）、`packages/core/src/events.ts`（`ReviewRunStopped`）、`packages/core/src/projection.ts`（`applyEvent`・`reviewStop`）
 
 ### 投稿の後の PR の見守り
 

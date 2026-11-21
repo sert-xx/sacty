@@ -258,7 +258,8 @@ describe("C2：PR の本文で、同じ文を複数の節に繰り返さない�
       });
     const short = buildPullRequestBody(t(fix));
     expect(count(short, "fake API の追加を削除しました")).toBe(1);
-    expect(short).toContain("- 最後の直し：implement-1-1 を受け");
+    expect(short).toContain("- 最後の直し：指摘を受け");
+    expect(short).not.toContain("implement-1-1");
     expect(short).not.toContain("## 最後の直し");
     const longFix = `${fix}\n\n詳しい経緯：テストの名前を直し、観点との対応を取り直した。`;
     const long = buildPullRequestBody(t(longFix));
@@ -408,14 +409,12 @@ describe("C3：観点 → テストの表で、同じテストを1回だけ出�
     );
     expect(body).not.toContain("%j");
     // 表のセル：4 件の別のテストの、1件目と残りの件数
-    expect(body).toMatch(
-      /\| REQ [^|]*\| src\/app\.test\.ts › books API › returns publisher ‹…› in creation[^|]* ほか 3 件 \|/,
-    );
-    // 折りたたみには、同じテストが2回出ない
+    expect(body).toMatch(/\| REQ [^|]*\| 4 件（`src\/app\.test\.ts`・`src\/client\.test\.ts`） \|/);
+    // 折りたたみにも、テストの名前の全文は並べない。同じテストは1件に数える
     const folded = body.slice(body.indexOf("<details>"));
-    expect(count(folded, "returns publisher ‹…› in creation")).toBe(1);
-    expect(count(folded, "registers and filters publishers")).toBe(1);
-    expect(count(folded, "registers a book and reads it back")).toBe(1);
+    expect(folded).toContain("テスト：4 件（`src/app.test.ts`・`src/client.test.ts`）");
+    expect(folded).not.toContain("registers and filters publishers");
+    expect(folded).not.toContain("returns publisher");
   });
 });
 
@@ -472,11 +471,11 @@ describe("表のセルのエスケープ（PR #304 の CodeQL）", () => {
   it("表のセルでは、縦棒とバックスラッシュをどちらもエスケープし、元の \\| でセルが分かれない", () => {
     const body = buildPullRequestBody(
       taskOf({
-        testMap: [{ viewpointId: "REQ", tests: ["src/a.test.ts › splits a\\|b and c|d"] }],
+        testMap: [{ viewpointId: "REQ", tests: ["src/a\\|b|c.test.ts › x"] }],
       }),
     );
     const row = body.split("\n").find((l) => l.startsWith("| REQ ")) ?? "";
-    expect(row).toContain("splits a\\\\\\|b and c\\|d");
+    expect(row).toContain("a\\\\\\|b\\|c.test.ts");
     // エスケープしていない縦棒は、表の区切りの 4 本だけ
     expect(row.replace(/\\./g, "").split("|")).toHaveLength(5);
   });

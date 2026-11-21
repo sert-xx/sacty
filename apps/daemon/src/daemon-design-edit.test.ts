@@ -285,7 +285,8 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     // PR の本文の「設計の直し」に、前・後・指摘が載る
     const body = bodiesOf(service, id).at(-1) ?? "";
     expect(body).toContain("## 設計の直し");
-    expect(body).toContain("implement-1-1");
+    // 指摘の内部の ID は、本文に出さない（PBI-471）
+    expect(body).not.toContain("implement-1-1");
     expect(body).toContain("「失敗しました」");
     expect(body).toContain("「決済に失敗しました」");
     expect(body).toContain("反映した直し（1 件）");
@@ -485,7 +486,7 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     );
     const body = bodiesOf(service, id).at(-1) ?? "";
     expect(body).toContain("反映した直し（2 件）");
-    expect(body).toContain("implement-2-1");
+    expect(body).not.toContain("implement-2-1");
     activity.close();
   });
 
@@ -712,9 +713,9 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       expect(notices).toHaveLength(1);
       const body = notices[0]?.body ?? "";
       expect(notices[0]?.number).toBe(9);
-      expect(body).toContain("設計の工程に戻しました");
+      expect(body).toContain("設計に戻しました");
       expect(body).toContain("設計の PR");
-      expect(body).toContain("実装の工程で直す");
+      expect(body).toContain("実装で直す");
       expect(body).not.toContain("ghp_secret");
       expect(body).toContain("@\u200bmallory");
       expect(body).not.toContain("@mallory");
@@ -738,12 +739,9 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       activity.close();
     });
 
-    it.each([
-      ["http://127.0.0.1:4700", true],
-      ["https://sacty.example.com", false],
-    ])(
-      "設計に戻した知らせの注釈は、サービスに渡した画面の URL（%s）で決まる（注釈あり：%s）",
-      async (webUrl, note) => {
+    it.each(["http://127.0.0.1:4700", "https://sacty.example.com"])(
+      "設計に戻した知らせには、画面の URL（%s）もタスクの ID も出さず、「Sacty の画面で」の案内だけを書く",
+      async (webUrl) => {
         const made = await toRework([], {
           target: "design",
           reason: "決定を変える（方針）：構成を選び直す",
@@ -751,8 +749,11 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
         });
         await noticesSettled(made.service);
         const body = noticesOf(made)[0]?.body ?? "";
-        expect(body).toContain("/tasks/");
-        expect(body.includes("タスクの画面は、依頼した人のマシンでだけ開けます。")).toBe(note);
+        const visible = body.replace(/<!--[\s\S]*?-->/g, "");
+        expect(visible).not.toContain("http://");
+        expect(visible).not.toContain("/tasks/");
+        expect(visible).not.toContain(made.id);
+        expect(visible).toContain("Sacty の画面で差し戻してください。");
         made.activity.close();
       },
     );

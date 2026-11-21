@@ -219,6 +219,30 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
         });
         return;
       }
+      // 打ち切ったレビューの実行（PBI-465）。止めた実行を中断として閉じ、費用（AgentRunCompleted を記録していない分）を足す。
+      // 投稿の直前の打ち切りは、実行が AgentRunCompleted で閉じているので、行は足さない
+      case "ReviewRunStopped": {
+        const p = event.payload;
+        const open = p.runIds
+          .map((id) => started.get(id))
+          .filter((r): r is CostRun => r !== undefined);
+        for (const run of open) {
+          Object.assign(run, { result: "interrupted" });
+        }
+        const [first] = open;
+        // 開始の記録が無い実行の費用も、落とさない
+        if (!first && p.costUsd > 0) push("review", runOf(event, p, "interrupted"));
+        if (first) {
+          Object.assign(first, {
+            ...(p.usage ? { usage: p.usage } : {}),
+            costUsd: p.costUsd,
+            estimated: p.estimated,
+            ...(p.costUnknown ? { costUnknown: true } : {}),
+          });
+        }
+        for (const id of p.runIds) started.delete(id);
+        return;
+      }
       case "ReworkJudged":
         // PR のレビューの子タスクの答えから決めた判断は、実行していない（子タスクの費用は子タスクに数える。PBI-332）
         if (event.payload.reviewTaskId) return;

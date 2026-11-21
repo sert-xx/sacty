@@ -2,7 +2,7 @@ import type { StepKey } from "@sacty/core";
 import { redact } from "./agents/redact.js";
 import { HUMAN_ASK_MARKER_PREFIX } from "./github.js";
 import { withoutInternalPaths } from "./prompts.js";
-import { taskLinkNote } from "./task-link.js";
+import { markdownText } from "./remark-line.js";
 
 /*
  * 人に確かめてほしいことを、sacty が作った PR に知らせるコメント（PBI-301）。
@@ -52,19 +52,32 @@ export function withoutMentions(text: string): string {
   return text.replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b");
 }
 
+/**
+ * 指摘を示す手がかり（PBI-471）。PR のコメントから取り込んだ指摘は、元のコメントへのリンク（url）。リンクが作れない指摘
+ * （画面から書かれた指摘など）は、指摘の要点の1行（line。`remarkLine` で整えたもの）。指摘の ID・画面の URL は出さない。
+ */
+export type RemarkRef = { url?: string; line?: string };
+
+/** 指摘を示す文（リンクがあればリンク、無ければ要点の1行。どちらも無ければ「指摘」）。 */
+export function remarkRefText(ref: RemarkRef): string {
+  if (ref.url) return `[この指摘](${ref.url})`;
+  return ref.line ? `「${markdownText(ref.line)}」` : "指摘";
+}
+
+/** 複数の指摘を示す文。 */
+export function remarkRefsText(refs: readonly RemarkRef[]): string {
+  return refs.length > 0 ? refs.map(remarkRefText).join("・") : "指摘";
+}
+
 export type HumanAskNoticeInput = {
   taskId: string;
   step: StepKey;
   stepName: string;
   submission: number;
-  /** 戻し先の判断（PR の工程のエージェント）が指摘の意図を読み取れなかったときの、指摘の ID と理由。 */
-  undecided?: { remarkIds: string[]; reason: string };
-  /** 実行が挙げた、人に確かめたいこと。同じ文の確認は 1 件にまとまっていて、付いていた指摘を `remarkIds` に並べる（PBI-354）。 */
-  confirms: { remarkIds: string[]; text: string }[];
-  /** タスクの画面の URL。 */
-  taskUrl: string;
-  /** 画面の URL が依頼した人のマシンでだけ開けるか（注釈を添える）。 */
-  localOnly?: boolean;
+  /** 指摘の意図を読み取れなかったときの、指摘の手がかりと理由。 */
+  undecided?: { remarks: readonly RemarkRef[]; reason: string };
+  /** 実行が挙げた、人に確かめたいこと。同じ文の確認は 1 件にまとまっていて、付いていた指摘を `remarks` に並べる（PBI-354）。 */
+  confirms: { remarks: readonly RemarkRef[]; text: string }[];
   secrets: readonly string[];
 };
 
@@ -80,7 +93,7 @@ export function buildHumanAskNotice(input: HumanAskNoticeInput): string | undefi
   if (input.undecided) {
     lines.push(
       "",
-      `**戻し先の判断で、指摘（${input.undecided.remarkIds.join("・")}）の意図を読み取れませんでした。** 理由：`,
+      `**${remarkRefsText(input.undecided.remarks)}の意図を読み取れませんでした。** 理由：`,
       "",
       askQuote(input.undecided.reason, input.secrets),
       "",
@@ -90,14 +103,11 @@ export function buildHumanAskNotice(input: HumanAskNoticeInput): string | undefi
   for (const c of input.confirms) {
     lines.push(
       "",
-      `**作り直しの実行が確かめたいこと（指摘 ${c.remarkIds.join("・")}）：**`,
+      `**確かめたいこと（${remarkRefsText(c.remarks)}）：**`,
       "",
       askQuote(c.text, input.secrets),
     );
   }
-  lines.push(
-    "",
-    `意図と違うときは、この PR にコメントするか、[タスクの画面](${input.taskUrl})で差し戻してください。${taskLinkNote(input.localOnly).join("")}`,
-  );
+  lines.push("", "意図と違うときは、この PR にコメントするか、Sacty の画面で差し戻してください。");
   return lines.join("\n");
 }

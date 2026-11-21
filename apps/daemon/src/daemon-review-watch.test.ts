@@ -248,8 +248,8 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
     activity.close();
   });
 
-  it("再レビューの実行中に来た push は、重ねて始めず、投稿の後に拾う（条件 5）", async () => {
-    const { activity, pulls, service, id, get, tick, run } = await posted([
+  it("再レビューの実行の後・投稿の前に push が来たら、古い先頭宛てには投稿せず、先頭が落ち着いてから始め直す（条件 5・PBI-465）", async () => {
+    const { activity, pulls, service, id, get, events, tick, run } = await posted([
       "suggestions",
       "suggestions",
       "no_findings",
@@ -263,18 +263,20 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
     pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_C };
     await tick(FEEDBACK_QUIET_MS * 2);
     expect(restarts(service, id)).toHaveLength(1);
+    // 投稿の直前に先頭の違いを見つけたので、B 宛てには投稿しない
     await service.runNext(id);
-    expect(pulls.reviews[1]?.commit).toBe(HEAD_B);
-    expect(get().reviewPost?.latestCommit).toBe(HEAD_C);
-    // 投稿の後の確認で、C を拾う
+    expect(pulls.reviews).toHaveLength(1);
+    expect(events("ReviewRunStopped")).toHaveLength(1);
+    expect(get().reviewPost).toBeUndefined();
+    // 先頭が落ち着いてから、C を 1 回だけレビューして投稿する（再レビューの始め直しは記録しない）
     await tick();
+    expect(service.queuedTaskIds()).not.toContain(id);
     await tick(FEEDBACK_QUIET_MS);
-    expect(restarts(service, id)).toEqual([
-      { reason: "pushed", commit: HEAD_B },
-      { reason: "pushed", commit: HEAD_C },
-    ]);
     await run();
-    expect(pulls.reviews[2]?.commit).toBe(HEAD_C);
+    expect(pulls.reviews).toHaveLength(2);
+    expect(pulls.reviews[1]?.commit).toBe(HEAD_C);
+    expect(get().reviewPost?.latestCommit).toBeUndefined();
+    expect(restarts(service, id)).toHaveLength(1);
     expect(isDone(get())).toBe(true);
     activity.close();
   });
@@ -351,6 +353,21 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
         "comment:51",
         "me",
         "<!-- sacty-rework-notice:x:1 -->\n設計に戻しました",
+        MINUTE,
+      ),
+      // マージを承認として扱った知らせと、扱わなかった知らせ（PBI-462）。作者（me）の投稿でも、目印だけで返信から外す
+      comment(
+        clock,
+        "comment:52",
+        "me",
+        "<!-- sacty-merge-approval:x:8 -->\n承認として扱いました",
+        MINUTE,
+      ),
+      comment(
+        clock,
+        "comment:53",
+        "me",
+        "<!-- sacty-merge-not-approved:x:8 -->\n承認として扱っていません",
         MINUTE,
       ),
       comment(clock, "comment:6", "me", "<!-- sacty-comment:x -->\nコメント", MINUTE),

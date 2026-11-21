@@ -3,33 +3,49 @@ import { isHumanAskNotice } from "./github.js";
 import { ASK_TEXT_MAX, askQuote, buildHumanAskNotice, humanAskMarker } from "./human-ask-notice.js";
 
 const TASK = "52359c0c-6e66-4842-a4ae-65e73d30a117";
-const URL = "http://127.0.0.1:4700/tasks/52359c0c-6e66-4842-a4ae-65e73d30a117";
+const PR = "https://github.com/acme/app/pull/7";
 const base = {
   taskId: TASK,
   step: "implement" as const,
   stepName: "実装",
   submission: 2,
-  taskUrl: URL,
   secrets: [] as string[],
 };
+const link = { url: `${PR}#issuecomment-401` };
+const reviewLink = { url: `${PR}#pullrequestreview-601` };
+const screen = { line: "エラーの文言を直す" };
 
-describe("人に確かめてほしいことの PR のコメント（PBI-301）", () => {
-  it("戻し先の判断で読み取れなかった理由と、作り直しの実行が確かめたいことを、目印・タスクの画面へのリンクつきで書く", () => {
+/** 目印の行を除いた本文。 */
+const visible = (body: string | undefined) => (body ?? "").split("\n").slice(1).join("\n");
+
+describe("人に確かめてほしいことの PR のコメント（PBI-301・PBI-471）", () => {
+  it("指摘を元のコメントへのリンクか要点で示し、画面の案内を文で書く。画面の URL・タスクの ID・指摘の ID・内部の語を出さない（TV-16）", () => {
     const body = buildHumanAskNotice({
       ...base,
       undecided: {
-        remarkIds: ["implement-1-1"],
+        remarks: [link],
         reason: "「前と言ってること」が何を指すか読み取れない",
       },
-      confirms: [{ remarkIds: ["implement-1-1"], text: "上限の値は 31 日と推測しました" }],
+      confirms: [{ remarks: [screen], text: "上限の値は 31 日と推測しました" }],
     });
     expect(body?.startsWith(humanAskMarker(TASK, "implement", 2))).toBe(true);
     expect(body).toContain("人に確かめてほしいことがあります");
-    expect(body).toContain("戻し先の判断で、指摘（implement-1-1）の意図を読み取れませんでした");
+    expect(body).toContain(`**[この指摘](${link.url})の意図を読み取れませんでした。**`);
     expect(body).toContain("> 「前と言ってること」が何を指すか読み取れない");
-    expect(body).toContain("作り直しの実行が確かめたいこと（指摘 implement-1-1）");
+    expect(body).toContain("確かめたいこと（「エラーの文言を直す」）");
     expect(body).toContain("> 上限の値は 31 日と推測しました");
-    expect(body).toContain(`](${URL})`);
+    expect(body).toContain("Sacty の画面で差し戻してください。");
+    const text = visible(body);
+    for (const word of [
+      "http://127.0.0.1",
+      TASK,
+      "implement-1-1",
+      "戻し先の判断",
+      "作り直しの実行",
+      "タスクの画面は",
+    ]) {
+      expect(text).not.toContain(word);
+    }
     expect(isHumanAskNotice(body)).toBe(true);
   });
 
@@ -37,12 +53,10 @@ describe("人に確かめてほしいことの PR のコメント（PBI-301）",
     const body = buildHumanAskNotice({
       ...base,
       undecided: {
-        remarkIds: ["implement-1-1"],
+        remarks: [link],
         reason: "/sacty-input/task.md:77 の記述が読めない",
       },
-      confirms: [
-        { remarkIds: ["implement-1-1"], text: "/sacty-input/task.md:12 のとおりに直しました" },
-      ],
+      confirms: [{ remarks: [link], text: "/sacty-input/task.md:12 のとおりに直しました" }],
     });
     expect(body).not.toContain("/sacty-input");
     expect(body).not.toContain("task.md:");
@@ -55,29 +69,27 @@ describe("人に確かめてほしいことの PR のコメント（PBI-301）",
     expect(buildHumanAskNotice({ ...base, confirms: [] })).toBeUndefined();
   });
 
-  it("確かめたいことが複数あれば、すべて、指摘の ID ごとに書く。判断できなかった理由が無くても書ける", () => {
+  it("確かめたいことが複数あれば、すべて、指摘のリンクか要点ごとに書く。判断できなかった理由が無くても書ける", () => {
     const body = buildHumanAskNotice({
       ...base,
       confirms: [
-        { remarkIds: ["implement-1-1"], text: "一つ目" },
-        { remarkIds: ["implement-1-2"], text: "二つ目" },
+        { remarks: [link], text: "一つ目" },
+        { remarks: [reviewLink], text: "二つ目" },
       ],
     });
-    expect(body).toContain("指摘 implement-1-1");
+    expect(body).toContain(`確かめたいこと（[この指摘](${link.url})）`);
+    expect(body).toContain(`確かめたいこと（[この指摘](${reviewLink.url})）`);
     expect(body).toContain("> 二つ目");
-    expect(body).not.toContain("ゴールガーディアンが判断できませんでした");
   });
 
   it("複数の指摘に付いていた同じ確認は、1 回だけ書き、付いていた指摘を並べる（PBI-354）", () => {
     const body = buildHumanAskNotice({
       ...base,
-      confirms: [
-        { remarkIds: ["implement-1-1", "implement-2-1"], text: "CI を再実行して確認してください" },
-      ],
+      confirms: [{ remarks: [link, screen], text: "CI を再実行して確認してください" }],
     });
-    expect(body).toContain("作り直しの実行が確かめたいこと（指摘 implement-1-1・implement-2-1）");
+    expect(body).toContain(`確かめたいこと（[この指摘](${link.url})・「エラーの文言を直す」）`);
     expect(body?.split("> CI を再実行して確認してください").length).toBe(2);
-    expect(body?.split("作り直しの実行が確かめたいこと").length).toBe(2);
+    expect(body?.split("確かめたいこと（").length).toBe(2);
   });
 
   it("目印は、タスク・工程・提出回ごとに別（同じ提出に二度書かず、別の提出には書ける。前方一致もしない）", () => {

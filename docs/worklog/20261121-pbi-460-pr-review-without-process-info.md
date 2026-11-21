@@ -4,7 +4,7 @@
 - タスク: PBI-460
 - PR: なし
 - ブランチ: main
-- 関係する ADR: [PR に投稿するレビューには判断に要る情報だけを書き、Sacty の過程の情報は Sacty の記録に残す](../adr/20261121-1603-pr-review-without-process-info.md)
+- 関係する ADR: [PR に投稿するレビューには判断に要る情報だけを書き、Sacty の過程の情報は Sacty の記録に残す](../adr/20261121-1603-superseded-pr-review-without-process-info.md)
 
 ## 目的
 

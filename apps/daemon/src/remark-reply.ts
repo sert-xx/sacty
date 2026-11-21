@@ -52,19 +52,6 @@ export function remarkReplyMarker(taskId: string, remarkId: string, submission: 
   return `${remarkReplyMarkerOf(taskId, remarkId)}${submission} -->`;
 }
 
-const ORIGIN_NAME: Record<RemarkOriginRef["kind"], string> = {
-  review: "このレビュー",
-  review_comment: "この行へのコメント",
-  comment: "このコメント",
-};
-
-/** 書き出しの文で言う、元の投稿の種類。 */
-const ORIGIN_KIND: Record<RemarkOriginRef["kind"], string> = {
-  review: "レビューの本文",
-  review_comment: "行へのコメント",
-  comment: "通常のコメント",
-};
-
 /** 通常のコメントへの返信に添える、元のコメントの引用の長さの上限（文字数）。 */
 export const REPLY_QUOTE_MAX = 100;
 
@@ -91,35 +78,24 @@ export function remarkQuote(text: string, secrets: readonly string[]): string | 
 }
 
 /**
- * 返信の書き出しに渡す、元の投稿の情報。出どころ（author）は、取り込んだ指摘の `source`、それが無い指摘（人が「この PR で
- * 直す」と決めた案の指摘）は、元の指摘（fixOf）の `source` で決める。引き継いだ PR の指摘は、記録が無いので言わない。
+ * 返信の書き出しに渡す、元の投稿の情報（PBI-471）。元の投稿の種類・書いた人は、PR を読む人の判断に要らないので、書き出しに出さない。
+ * 通常のコメントへの返信に添える引用だけ、取り込んだ指摘の記録（originText）から渡す。引き継いだ PR の指摘は、記録が無いので渡さない。
  */
 export function remarkReplyOrigin(
-  due: { continued?: true; source?: "sacty_review"; originText?: string },
+  due: { continued?: true; originText?: string },
   ref: RemarkOriginRef,
   pullRequestUrl: string,
 ): NonNullable<RemarkReplyInput["origin"]> {
   return {
     ref,
     url: remarkOriginUrl(pullRequestUrl, ref),
-    ...(due.continued
-      ? {}
-      : {
-          author: due.source ? ("sacty_review" as const) : ("human" as const),
-          ...(due.originText !== undefined ? { quote: due.originText } : {}),
-        }),
+    ...(!due.continued && due.originText !== undefined ? { quote: due.originText } : {}),
   };
 }
 
-/** 書き出しの文。元の投稿の種類と、出どころ（sacty の AI のレビューか、人の投稿か。分からなければ言わない）を読めるようにする。 */
+/** 書き出しの文（元のコメントへのリンク付き）。種類・書いた人は書かない。 */
 function replyOpening(origin: NonNullable<RemarkReplyInput["origin"]>): string {
-  const from =
-    origin.author === "sacty_review"
-      ? "Sacty の AI が書いた"
-      : origin.author === "human"
-        ? "人が書いた"
-        : "";
-  return `${from}${ORIGIN_KIND[origin.ref.kind]}（[${ORIGIN_NAME[origin.ref.kind]}](${origin.url})）への返信です。`;
+  return `[この指摘](${origin.url})への返信です。`;
 }
 
 /**
@@ -167,7 +143,6 @@ export function readRemarkReply(body: string): {
 
 export type RemarkReplyInput = {
   taskId: string;
-  stepName: string;
   /** 指摘の ID。引き継いだ PR の指摘では、元のコメントのキー（目印にだけ使う）。 */
   remarkId: string;
   /** 引き継いだ PR の指摘への対応（指摘の ID は sacty の中のものでないので、末尾に書かない）。 */
@@ -184,8 +159,6 @@ export type RemarkReplyInput = {
   origin?: {
     ref: RemarkOriginRef;
     url: string;
-    /** 元の投稿の出どころ。引き継いだ PR の指摘は、記録が無いので渡さない。 */
-    author?: "sacty_review" | "human";
     /** 元のコメントの本文。通常のコメントへの返信にだけ、冒頭を引用する。 */
     quote?: string;
   };
@@ -221,6 +194,6 @@ export function buildRemarkReply(input: RemarkReplyInput): string {
     ...(input.status === "deferred" ? ["", DEFERRAL_PROPOSAL_NOTE] : []),
     "",
     "---",
-    `Sacty の${input.stepName}の工程で、AI が書きました。`,
+    "Sacty の AI が書きました。",
   ].join("\n");
 }

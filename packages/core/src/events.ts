@@ -318,6 +318,11 @@ export const RemarkResponse = z.object({
    * など。承認の画面と PR のコメントで人に知らせる。無ければ確かめたいことは無い。以前の作業履歴には無い。
    */
   confirm: z.string().optional(),
+  /**
+   * 指摘の要点の1行（PBI-471）。PR の説明・コメント・Issue・後続のタスクの題に、指摘を示すために使う。
+   * 以前の作業履歴には無い（要点が無い指摘は、対応の文だけを載せる）。
+   */
+  gist: z.string().optional(),
 });
 
 /** 検証の記録の、コマンドの種類（既定のスキルの verification-run の種類）。 */
@@ -3276,8 +3281,13 @@ const PullRequestReopened = z.object({
 const ReworkStoppedByMerge = z.object({
   type: z.literal("ReworkStoppedByMerge"),
   payload: z.object({
-    /** マージされた実装の PR。 */
+    /** マージされた PR（step があれば、その工程の PR。無ければ実装の PR）。 */
     number: z.number().int().positive(),
+    /**
+     * 要求要件・設計の直し（自動の直しの間に、その工程の PR がマージされた。PBI-462）なら、その工程。無ければ実装の作り直し。
+     * 前の版は、この欄を読まずに捨てて実装の記録として投影し、整合性のエラーにする（前の版には戻せない）。
+     */
+    step: StepPullRequestKey.optional(),
     /**
      * 止めたときの作り直しの段階。queued：実行を待っていた。running：エージェントの実行中。verifying：最終レビュー
      * （とその前の PR の CI）の途中。publishing：PR の更新の待ち・途中。paused：一時停止していた。
@@ -3546,6 +3556,28 @@ const PullRequestReviewPosted = z.object({
 const ReviewWatchEnded = z.object({
   type: z.literal("ReviewWatchEnded"),
   payload: z.object({ reason: z.enum(["merged", "closed", "parent_completed"]) }),
+});
+
+/**
+ * 投稿していないレビュー（1 回目を含む）の実行を打ち切った（PBI-465）。head_changed：レビューしていた PR の先頭が変わった
+ * （古い先頭宛ての本文は投稿しない。先頭が落ち着いてから、新しい先頭で同じ回の番号のまま始め直す）。merged・closed：PR が
+ * マージ・クローズされたので止めた（続く TaskCancelled で中止する。失敗（AgentRunFailed・一時停止）には見せない）。
+ * from はレビューしていた先頭、to は新しい先頭（head_changed だけ）。runIds は止めた実行。費用の欄は、AgentRunCompleted を
+ * 記録していない実行の分だけ持つ（投稿の直前の打ち切りは、その費用を AgentRunCompleted で数え済みなので持たない）。
+ * 前の版のデーモンは、この記録を持つ作業履歴を読めない。
+ */
+const ReviewRunStopped = z.object({
+  type: z.literal("ReviewRunStopped"),
+  payload: z.object({
+    reason: z.enum(["head_changed", "merged", "closed"]),
+    from: z.string().min(1),
+    to: z.string().min(1).optional(),
+    runIds: z.array(z.string()).default([]),
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+    costUnknown: z.boolean().optional(),
+  }),
 });
 
 /**
@@ -4453,6 +4485,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReviewGitHubRetried,
   PullRequestReviewPosted,
   ReviewWatchEnded,
+  ReviewRunStopped,
   ReviewRestartHeld,
   ReviewRestarted,
   BranchPushed,
