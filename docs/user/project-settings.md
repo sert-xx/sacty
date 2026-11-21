@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts、apps/web/src/components/shell/follow-project.tsx、apps/web/src/components/delete-project.tsx、apps/web/src/app/actions.ts（saveProjectAction・deleteProjectAction） -->
+<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/components/save-bar.tsx、apps/web/src/lib/unsaved-changes.tsx、apps/web/src/i18n/messages/projects.ts、apps/web/src/components/shell/follow-project.tsx、apps/web/src/components/delete-project.tsx、apps/web/src/app/actions.ts（saveProjectAction・deleteProjectAction） -->
 
 **日本語** | [English](project-settings.en.md)
 

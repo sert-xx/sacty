@@ -249,7 +249,7 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
 - Changes made in other tabs, the CLI, or the daemon (tasks added by intake, approvals, resumes, tasks the daemon picked up and started, and so on) are reflected in the header's project switcher (the counts that need you) and notices by "Refetching screen data" below. This applies on every screen, whatever the state of the tasks.
 
 Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`), `apps/web/src/components/shell/live-header.tsx` (`LiveHeaderMenus`, `selectedProject`),
-`apps/web/src/components/shell/menus.tsx` (`ProjectMenu`, `NotificationsMenu`), `packages/core/src/person-turn.ts` (`personTurnTasks`), `apps/web/src/components/shell/rail.tsx` (`railItems`), `apps/web/src/lib/page-scope.ts` (`pageScope`),
+`apps/web/src/components/shell/menus.tsx` (`ProjectMenu`, `NotificationsMenu`), `packages/core/src/person-turn.ts` (`personTurnTasks`), `apps/web/src/components/shell/rail.tsx` (`railItems`), `apps/web/src/lib/unsaved-changes.tsx` (`UnsavedChangesProvider`, `useUnsavedChanges`, `useLeaveGuard`), `apps/web/src/components/shell/guarded-link.tsx` (`GuardedLink`), `apps/web/src/components/save-bar.tsx` (`SaveBar`), `apps/web/src/lib/page-scope.ts` (`pageScope`),
 `apps/web/src/lib/header-data.ts` (`loadHeaderData`), `apps/web/src/components/shell/follow-project.tsx` (`FollowProject`),
 `apps/web/src/lib/project-select.ts`, `apps/web/src/lib/current-project.ts` (`selectProject`),
 `apps/web/src/app/switch/route.ts`, `apps/web/src/app/actions.ts`

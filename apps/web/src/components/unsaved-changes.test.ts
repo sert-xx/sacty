@@ -50,6 +50,7 @@ vi.mock("next/link", () => ({
 const { SettingsForm } = await import("./settings-form");
 const { ProjectEditor } = await import("./project-editor");
 const { RailNav } = await import("./shell/rail");
+const { GuardedLink } = await import("./shell/guarded-link");
 const { HeaderFallback } = await import("./shell/header");
 const { UnsavedChangesProvider } = await import("@/lib/unsaved-changes");
 
@@ -305,5 +306,79 @@ describe("対象にしないもの", () => {
     expect(beforeUnloadPrevented()).toBe(false);
     click(railLink);
     expect(confirmSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("Slack の通知の欄だけを変えたとき（親が描き直されない欄）", () => {
+  const pick = (value: string) => {
+    const select = container.querySelector("section select") as HTMLSelectElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+    act(() => {
+      setter?.call(select, value);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
+  const open = () =>
+    mount(h(SettingsForm, { intakeLabel: "sacty", reviewLabel: "", reviewRequested: false }));
+
+  it("表示と確認が出る。元に戻すと消える", () => {
+    open();
+    expect(unsavedNote()).toBeUndefined();
+    pick("slack-webhook");
+    expect(unsavedNote()).toBeDefined();
+    expect(beforeUnloadPrevented()).toBe(true);
+    click(railLink);
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(moved).toEqual([]);
+    pick("");
+    expect(unsavedNote()).toBeUndefined();
+    expect(beforeUnloadPrevented()).toBe(false);
+  });
+
+  it("Webhook の URL を入力しても出る", () => {
+    open();
+    pick("slack-webhook");
+    edit('input[id$="-notify-webhook"]', "https://x.test/h");
+    expect(
+      (container.querySelector('input[name="notification"]') as HTMLInputElement).value,
+    ).toContain("https://x.test/h");
+    expect(unsavedNote()).toBeDefined();
+  });
+
+  it("保存に成功すると消える", async () => {
+    settingsResults = [{ saved: true }];
+    open();
+    pick("slack-webhook");
+    await submit();
+    expect(unsavedNote()).toBeUndefined();
+    expect(beforeUnloadPrevented()).toBe(false);
+  });
+});
+
+describe("パンくずのリンク（GuardedLink）", () => {
+  const crumb = 'nav[aria-label="crumb"] a';
+  const open = () =>
+    mount(
+      h("nav", { "aria-label": "crumb" }, h(GuardedLink, { href: "/projects" }, "プロジェクト")),
+    );
+  it("変更があるとき、確認を断ると移らない", () => {
+    mount(
+      h(
+        "div",
+        null,
+        h("nav", { "aria-label": "crumb" }, h(GuardedLink, { href: "/projects" }, "プロジェクト")),
+        h(SettingsForm, { intakeLabel: "sacty", reviewLabel: "", reviewRequested: false }),
+      ),
+    );
+    edit('input[name="intakeLabel"]', "変えた値");
+    click(crumb);
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(moved).toEqual([]);
+  });
+  it("変更が無いとき、確認せずに移る", () => {
+    open();
+    click(crumb);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(moved).toEqual(["/projects"]);
   });
 });

@@ -23,7 +23,7 @@ export function SaveBar({
   return (
     <div
       data-testid="save-bar"
-      className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border bg-background py-3 sm:bottom-0"
+      className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 flex max-h-[40vh] overflow-y-auto flex-wrap items-center gap-x-4 gap-y-2 border-t border-border bg-background py-3 sm:bottom-0"
     >
       <Button type="submit" disabled={disabled} className="min-h-11 w-fit px-6">
         {label}

@@ -9,7 +9,15 @@ import {
   MIN_INTAKE_INTERVAL_SEC,
   type SlackNotification,
 } from "@sacty/core";
-import { startTransition, useActionState, useEffect, useId, useRef, useState } from "react";
+import {
+  startTransition,
+  useActionState,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { type SaveSettingsState, saveSettingsAction } from "@/app/actions";
 import { DesktopNotificationSettings } from "@/components/desktop-notification-settings";
 import { NotificationSettings } from "@/components/notification-settings";
@@ -140,12 +148,14 @@ export function SettingsForm({
   const [current, setCurrent] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<string | null>(null);
   const submitted = useRef("");
-  useEffect(() => {
+  const measure = useCallback(() => {
     if (!formRef.current) return;
     const now = snapshot(formRef.current);
     setCurrent(now);
     setBaseline((base) => base ?? now);
-  });
+  }, []);
+  // 親が描き直されたとき（Slack の欄は子の状態なので、下の onValueChange でも取り直す）
+  useEffect(measure);
   useEffect(() => {
     if (state.saved && !state.message) setBaseline(submitted.current);
   }, [state]);
@@ -348,14 +358,18 @@ export function SettingsForm({
           )}
         </p>
       </section>
-      <NotificationSettings saved={notification} problems={notificationProblems} />
+      <NotificationSettings
+        saved={notification}
+        problems={notificationProblems}
+        onValueChange={measure}
+      />
       <DesktopNotificationSettings />
-      {state.message && (
-        <p role="alert" className="text-sm text-warn">
-          {state.message}
-        </p>
-      )}
       <SaveBar dirty={dirty} disabled={pending} label={t.save}>
+        {state.message && (
+          <p role="alert" className="basis-full text-sm text-warn">
+            {state.message}
+          </p>
+        )}
         {state.saved && !state.message && !dirty && (
           <p role="status" className="text-sm text-muted-foreground">
             {t.saved}

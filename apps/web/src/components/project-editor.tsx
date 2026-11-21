@@ -829,60 +829,77 @@ export function ProjectEditor({
         </>
       )}
 
-      {state.message && (
-        <p role="alert" className="text-sm leading-6 whitespace-pre-line text-warn">
-          {state.message}
-        </p>
-      )}
-      {/* 読み込んだ後にほかの保存で変わっていた。編集中の入力は、再読み込みするまで残す（PBI-274） */}
-      {state.conflict && (
-        <div className="flex flex-col gap-2">
-          <p className="text-sm leading-6 text-muted-foreground">{t.reloadLatestNote}</p>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => window.location.reload()}
-            className="w-fit"
-          >
-            <RefreshCwIcon aria-hidden="true" />
-            {t.reloadLatest}
-          </Button>
-        </div>
-      )}
-      {/* 併合して保存した。画面はほかの保存の変更を見ていないので、読み込み直して確かめる（PBI-301） */}
-      {state.saved && state.merged && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => window.location.reload()}
-          className="w-fit"
-        >
-          <RefreshCwIcon aria-hidden="true" />
-          {t.reloadLatest}
-        </Button>
-      )}
-      {/* 保存したが、コンテキストに誤りがある（PBI-76） */}
-      {state.saved && state.contextError && (
-        <p role="alert" className="text-sm leading-6 whitespace-pre-line text-warn">
-          {t.savedContextError(state.contextError)}
-        </p>
-      )}
-      {needsAccount && (
-        <p role="alert" className="text-sm text-warn">
-          {t.githubRequired}
-        </p>
-      )}
-      <SaveBar
-        dirty={dirty}
-        disabled={pending || needsAccount || mergedStale}
-        label={project ? t.save : t.create}
-      >
-        {state.saved && !dirty && !state.message && !state.contextError && (
-          <p role="status" className="text-sm text-accent-foreground">
-            {state.merged ? t.savedMerged : t.saved}
-          </p>
-        )}
-      </SaveBar>
+      {/* 保存の結果と注意の文。固定した帯の中に置く（長いフォームの途中で保存しても、結果が見えるように） */}
+      {(() => {
+        const results = (
+          <div className="flex basis-full flex-col gap-2 empty:hidden">
+            {state.saved && !dirty && !state.message && !state.contextError && (
+              <p role="status" className="text-sm text-accent-foreground">
+                {state.merged ? t.savedMerged : t.saved}
+              </p>
+            )}
+            {state.message && (
+              <p role="alert" className="text-sm leading-6 whitespace-pre-line text-warn">
+                {state.message}
+              </p>
+            )}
+            {/* 読み込んだ後にほかの保存で変わっていた。編集中の入力は、再読み込みするまで残す（PBI-274） */}
+            {state.conflict && (
+              <div className="flex flex-col gap-2">
+                <p className="text-sm leading-6 text-muted-foreground">{t.reloadLatestNote}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => window.location.reload()}
+                  className="w-fit"
+                >
+                  <RefreshCwIcon aria-hidden="true" />
+                  {t.reloadLatest}
+                </Button>
+              </div>
+            )}
+            {/* 併合して保存した。画面はほかの保存の変更を見ていないので、読み込み直して確かめる（PBI-301） */}
+            {state.saved && state.merged && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => window.location.reload()}
+                className="w-fit"
+              >
+                <RefreshCwIcon aria-hidden="true" />
+                {t.reloadLatest}
+              </Button>
+            )}
+            {/* 保存したが、コンテキストに誤りがある（PBI-76） */}
+            {state.saved && state.contextError && (
+              <p role="alert" className="text-sm leading-6 whitespace-pre-line text-warn">
+                {t.savedContextError(state.contextError)}
+              </p>
+            )}
+            {needsAccount && (
+              <p role="alert" className="text-sm text-warn">
+                {t.githubRequired}
+              </p>
+            )}
+          </div>
+        );
+        return project ? (
+          <SaveBar dirty={dirty} disabled={pending || needsAccount || mergedStale} label={t.save}>
+            {results}
+          </SaveBar>
+        ) : (
+          <>
+            {results}
+            <Button
+              type="submit"
+              disabled={pending || needsAccount || mergedStale}
+              className="min-h-11 w-fit px-6"
+            >
+              {t.create}
+            </Button>
+          </>
+        );
+      })()}
     </form>
   );
 }
