@@ -37,6 +37,9 @@ const completed = (task: Task, extra: Partial<Task> = {}): Task => ({
   ...extra,
 });
 
+const escapeHtml = (text: string): string =>
+  text.replaceAll("&", "&amp;").replaceAll("'", "&#x27;").replaceAll('"', "&quot;");
+
 function render(task: Task, extra: Record<string, unknown> = {}): string {
   return renderToStaticMarkup(
     createElement(TaskDetailView, {
@@ -59,6 +62,38 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
       expect(html).toContain("Task t2");
       // 読めなかったタスクは ID を出す
       expect(html).toContain('href="/tasks/t3"');
+    }
+  });
+
+  it("日英で、作るボタンは、上部の操作の並び（再レビューと同じ所）の中に、再レビューと同じ見た目・ヒントで出し、概要の欄には置かない", () => {
+    for (const language of ["ja", "en"] as const) {
+      locale = language;
+      const m = messagesFor(language).parts.derive;
+      const task = completed(project([created("t1")]).get("t1") as Task);
+      const html = render(task);
+      const button = html.indexOf('data-testid="derive-open"');
+      expect(button).toBeGreaterThan(-1);
+      expect(html.match(/data-testid="derive-open"/g)).toHaveLength(1);
+      // 上部の操作の並びの中（その直下の枠の中）にあり、タブの並び・概要の欄より前
+      const actions = html.lastIndexOf("flex flex-wrap items-start gap-2", button);
+      expect(actions).toBeGreaterThan(-1);
+      const between = html.slice(actions, button);
+      const depth =
+        (between.match(/<div/g) ?? []).length - (between.match(/<\/div>/g) ?? []).length;
+      expect(depth).toBe(1); // 操作の並び（開いたまま）の下の、ボタンとヒントを入れる枠だけ
+      expect(button).toBeLessThan(html.indexOf('role="tablist"'));
+      expect(button).toBeLessThan(html.indexOf('id="derived-tasks"'));
+      // 再レビューと同じボタン（outline・min-h-10）
+      const tag = html.slice(
+        html.lastIndexOf("<button", button),
+        html.indexOf("</button>", button),
+      );
+      expect(tag).toContain("min-h-10");
+      expect(tag).toContain("border-border bg-background");
+      // 横のヒント。概要の欄の補足とは別の文
+      expect(html).toContain(escapeHtml(m.openHint));
+      // 一覧の空の表示は概要の欄に残る
+      expect(html.indexOf(escapeHtml(m.none))).toBeGreaterThan(html.indexOf('id="derived-tasks"'));
     }
   });
 
