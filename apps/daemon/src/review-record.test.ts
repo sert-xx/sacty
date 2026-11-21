@@ -93,6 +93,17 @@ describe("stripReviewRecord：記録のブロックを取り除く（PBI-460）"
     expect(stripReviewRecord(keepText)).toBe(keepText);
   });
 
+  it("見出しの無いフェンスの欄名は、フェンスごとに数える。大小文字だけ違う同じ欄名は 1 種類で残り、別々のフェンスに分かれた 1 種類ずつも残る", () => {
+    const fences = [
+      '```json\n{"viewpoints":[],"Viewpoints":[]}\n```',
+      '```json\n{"dismissed":[]}\n```',
+      '```json\n{"viewpoints":[]}\n```',
+      '```json\n{"dropped":{}}\n```',
+    ];
+    const text = `指摘です。\n\n${fences.join("\n\n")}\n\n以上。`;
+    expect(stripReviewRecord(text)).toBe(text);
+  });
+
   it("行の途中にバッククォートを含む行は開きではなく、後ろの指摘を巻き込まない", () => {
     const text =
       "```foo``` を使うと\n\n## 指摘\n1. [提案] 直す\n\n```sacty-review-record\n" +
