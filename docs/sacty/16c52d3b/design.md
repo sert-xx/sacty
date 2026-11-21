@@ -24,7 +24,9 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
 
 ### should
 
-なし
+- 前の外しの ID を読んでから外す要求を送るまでの間に人が外すと、答えの ID は人の外しのもので、sacty の外しと見分けられません。この ID を sacty の外しとして記録してよいですか。
+  - 推奨：はい。間は要求1回分です。この場合を ID なしにするには、sacty の外しを全部 ID なしにするしかなく、R-1 に反します。
+  - 懸念：重なったときは、人が外した PR が次の戻す経路で戻され、PR #501 と同じくマージが「まだドラフト」で失敗します。
 
 ## 既定で決めたこと
 
@@ -38,7 +40,7 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
 
 | 場所 | 変更 |
 | --- | --- |
-| `apps/daemon/src/github.ts` | `draftHistory` を足す（REST で今の draft を読み、ドラフトでなければ GraphQL の `timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT])` の id・種類・時刻を読む。タイムラインを読めなければ「読めない」を返す）。`setDraft` の外しの答えに、mutation を呼んだか（`changed`）・要求の前に読んだ最後の `ReadyForReviewEvent` の ID・答えの最後の `ReadyForReviewEvent` の ID を足す |
+| `apps/daemon/src/github.ts` | `draftHistory` を足す（REST で今の draft を読み、ドラフトでなければ GraphQL の `timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT])` の id・種類・時刻を読む。draft かタイムラインを読めなければ「読めない」を返す）。`setDraft` の外しの答えに、mutation を呼んだか（`changed`）・要求の前に読んだ最後の `ReadyForReviewEvent` の ID（`timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT])` の別の読み取り。外しが無ければ「無い」）・答えの最後の `ReadyForReviewEvent` の ID を足す |
 | `apps/daemon/src/service.ts` | 判定を足し、スコープの戻す経路から呼ぶ。外しの4か所（`markReady`・`undraftMarkedReady`・付け替え・検証の後の外し）で記録する |
 | `packages/core`（`events.ts`・`projection.ts`） | イベント2種類と、PR ごとの投影 |
 | `apps/web`（`labels.ts`・`i18n/messages/labels.ts`） | 表示の文言（日英） |
@@ -52,12 +54,13 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
 
 ## 処理の流れ（外しの ID の記録）
 
-`setDraft` の外しは、REST で今の draft を読み、ドラフトのときだけ、最後の `ReadyForReviewEvent` の ID（前の ID）を読んでから mutation を呼ぶ。
+`setDraft` の外しは、REST で今の draft を読み、ドラフトのときだけ、最後の `ReadyForReviewEvent` の ID（前の ID。`READY_FOR_REVIEW_EVENT` だけを読む）を読んでから mutation を呼ぶ。
 答えの形ごとに、次のとおり記録する。
 
 | 外す要求の答え | `PullRequestUndraftNoted` |
 | --- | --- |
 | 変化なし（すでに外れていて、mutation を呼ばなかった） | 記録しない（人が外した PR は、判定の5で `person` になる） |
+| 前の外しが無い（読めて0件）・答えの ID がある | その ID で記録する（sacty がドラフトで作った PR の最初の外し） |
 | 前の ID を読めた・答えの ID が前の ID とも記録済みの ID とも違う | その ID で記録する |
 | 前の ID を読めた・答えの ID が前の ID か記録済みの ID と同じ | `draftHistory` で1回読み直し、両方と違う外しの ID になれば、その ID で記録する。同じか読めなければ ID なし |
 | 前の ID を読めなかった | 答えの ID を使わず、ID なしで記録する（人の前の外しの ID と見分けられないため） |
@@ -67,13 +70,13 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
 
 戻す経路が、PR をドラフトへ戻そうとするときに呼ぶ。
 
-1. `draftHistory` で今の draft を読む。ドラフトなら、今の処理のまま進む（記録しない）。draft を読めなければ、今と同じく戻せなかったものとして扱う（記録しない）
-2. ドラフトでなく、タイムラインを読めない（失敗・時間切れ）なら `unreadable` で戻さない（次の確認で読み直す）
+1. `draftHistory` で今の draft を読む。ドラフトなら、今の処理のまま進む（記録しない）
+2. draft かタイムラインを読めない（失敗・時間切れ）なら `unreadable` で戻さない（次の確認で読み直す）。draft を読めないときは、元からドラフトかを確かめられないまま記録する
 3. 切り替えが1件も無い、または最後の外しの ID が sacty の記録にある → 今と同じく戻す
 4. 最後の外しが記録に無く、最後の `PullRequestUndraftNoted` に ID が無いか、前の版の外しの記録だけがある。または、最後が `convert_to_draft` なのにドラフトでない → `undetermined` で戻さない
 5. それ以外で最後の外しが記録に無い → `person` で戻さない
 
-- 重ねた PR の直しの提出は、判定で戻さないときは `pr.stackDraftFailed` にせずに進める。戻そうとして戻せないときは、今と同じく止める。
+- 重ねた PR の直しの提出は、判定で戻さないとき（draft を読めない場合を含む）は `pr.stackDraftFailed` にせずに進める。判定の3で戻そうとして戻せないときは、今と同じく止める。
 - 記録の重複は、台帳から決める。
   - `person`：同じ `eventId` が記録済みなら記録しない
   - `unreadable`：その PR の最後の記録が `unreadable` で、この起動の後に読めたことが無ければ記録しない
@@ -112,12 +115,12 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
 - [TV-7] 人が外した重ねた PR に直しを提出しても、止めずに進める
   - 入力：人が外した重ねた PR に、やり直しの実装を提出する
   - 期待結果：PR はドラフトでないままで、pr.stackDraftFailed で止まらずに承認待ちに進み、PullRequestRedraftSkipped（person）が1件記録される
-- [TV-8] 履歴を読めない重ねた PR に直しを提出しても、止めずに進める
-  - 入力：draftHistory がタイムラインを読めないフェイクで、ドラフトでない重ねた PR にやり直しの実装を提出する
-  - 期待結果：PR はドラフトでないままで、pr.stackDraftFailed で止まらずに承認待ちに進み、PullRequestRedraftSkipped（unreadable）が1件記録される
+- [TV-8] 履歴か draft を読めない重ねた PR に直しを提出しても、止めずに進める
+  - 入力：draftHistory がタイムラインを読めないフェイクと、REST の draft の読み取りが失敗するフェイクのそれぞれで、ドラフトでない重ねた PR にやり直しの実装を提出する
+  - 期待結果：どちらの場合も PR はドラフトでないままで、pr.stackDraftFailed で止まらずに承認待ちに進み、PullRequestRedraftSkipped（unreadable）が1件記録される
 - [TV-9] sacty が外した PR は、今と同じくドラフトへ戻す（再起動の後も）
-  - 入力：sacty が指摘なしで外した（ID が記録された）PR に人がコミットを足し、デーモンを作り直してから PR の確認を行う
-  - 期待結果：PR はドラフトに戻り、PullRequestRedraftSkipped は記録されない
+  - 入力：sacty がドラフトで作り、初めて指摘なしで外した（要求の前に外しが1件も無く、答えの ID が記録された）PR に人がコミットを足し、デーモンを作り直してから PR の確認を行う
+  - 期待結果：PullRequestUndraftNoted が答えの ID で記録されていて、PR はドラフトに戻り、PullRequestRedraftSkipped は記録されない
 - [TV-10] 人が切り替えていない PR は、今と同じくドラフトへ戻す
   - 入力：切り替えのイベントが1件も無く、ドラフトでない指摘なしを待つ PR で、PR の確認を行う
   - 期待結果：PR はドラフトに戻り、PullRequestRedraftSkipped は記録されない
@@ -146,8 +149,8 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
   - 入力：人が外して戻した後の PR を sacty が指摘なしで外し、外す要求の前の最後の外しの読み取りを失敗させ、外しの答えが人の前の外しの ID を返し、その後に差し戻しを起こして PR の確認を行う
   - 期待結果：PullRequestUndraftNoted は ID なしで記録され、PR はドラフトへ戻らず、PullRequestRedraftSkipped（undetermined）が1件記録される
 - [TV-19] GitHub の切り替えの履歴と外しの答えの ID を読む
-  - 入力：GitHubPullRequests に、REST の draft が true・false の答え、timelineItems の最後が ReadyForReviewEvent・ConvertToDraftEvent・空・エラーの答えと、外しで REST の draft がすでに false の答え、外しの要求の前の読み取りと markPullRequestReadyForReview の答えに ReadyForReviewEvent の id がある・無い答えを返す fetch を渡す
-  - 期待結果：draftHistory はドラフトならタイムラインを読まずにドラフトを返し、ドラフトでなければ最後の切り替えの id・種類を返し、タイムラインのエラーでは読めないことを返し、setDraft の外しはすでに外れていれば mutation を呼ばずに changed: false を返し、変えたときは changed: true と要求の前の最後の外しの id と答えの id を、あれば返し、無ければ返さない
+  - 入力：GitHubPullRequests に、REST の draft が true・false・エラーの答え、timelineItems の最後が ReadyForReviewEvent・ConvertToDraftEvent・空・エラーの答えと、外しで REST の draft がすでに false の答え、外しの要求の前の READY_FOR_REVIEW_EVENT だけの読み取りが id あり・空（外しが無い）・エラーの答え、markPullRequestReadyForReview の答えに ReadyForReviewEvent の id がある・無い答えを返す fetch を渡す
+  - 期待結果：draftHistory はドラフトならタイムラインを読まずにドラフトを返し、ドラフトでなければ最後の切り替えの id・種類を返し、draft かタイムラインのエラーでは読めないことを返し、setDraft の外しはすでに外れていれば mutation を呼ばずに changed: false を返し、変えたときは changed: true と、要求の前の最後の外しの id（空なら外しが無いこと、エラーなら読めないこと）と答えの id を、あれば返し、無ければ返さない
 - [TV-20] 新しい記録を作業履歴に表示する
   - 入力：PullRequestUndraftNoted と、reason が person・unreadable・undetermined の PullRequestRedraftSkipped を、日本語と英語で表示する
   - 期待結果：それぞれ PR の番号と、sacty が外したこと・戻さなかった理由（人が外した・読めなかった・決められなかった）の文言が出る
