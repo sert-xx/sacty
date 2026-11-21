@@ -74,7 +74,7 @@ Lessons that help later tasks are kept as memories, which the AI reads in the ne
 
 ![It gets better the more you use it](images/intro-loop.en.svg)
 
-![The audit screen, with the causes found and the fix proposals](images/intro-audit.en.png)
+![The audit screen, with a cause opened and fix proposals selected](images/intro-audit.en.png)
 
 See [Viewing audits](audit.en.md) for how to read and use it.
 

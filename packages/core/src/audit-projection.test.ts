@@ -239,4 +239,74 @@ describe("監査のイベントの畳み込み（PBI-125）", () => {
       project([...events, ev("AuditProposalRejected", { proposalId: "p1", reason: "r" })]),
     ).toThrow(ActivityIntegrityError);
   });
+
+  it("まとめて却下した印（bulk）は提案の判断に写し、印の無い以前の版の記録は今と同じに読む。印の件数は 1 以上の整数（PBI-443）", () => {
+    const proposal = (id: string) => ({
+      id,
+      title: id,
+      body: "",
+      target: { kind: "sacty" },
+      candidates: [{ kind: "sacty" }],
+    });
+    const finding = {
+      causeKey: "k",
+      title: "原因",
+      detail: "",
+      evidence: [],
+      proposals: [proposal("p1"), proposal("p2")],
+    };
+    const base = [
+      ...completed(),
+      ev("AuditQueued", { auditId: "a1", capUsd: 1 }),
+      surveyed([{ step: "document", reason: "r" }]),
+      ev("AuditDeepDived", {
+        auditId: "a1",
+        step: "document",
+        summary: "",
+        findings: [finding],
+        ...run,
+      }),
+    ];
+    const task = project([
+      ...base,
+      ev("AuditProposalRejected", {
+        proposalId: "p1",
+        reason: "不要",
+        bulk: { id: "b1", count: 3 },
+      }),
+      // 印の無い、以前の版の記録
+      ev("AuditProposalRejected", { proposalId: "p2", reason: "古い記録" }),
+    ]).get("t1");
+    const [p1, p2] = task?.audit?.findings[0]?.proposals ?? [];
+    expect(p1?.decision).toMatchObject({
+      kind: "rejected",
+      reason: "不要",
+      bulk: { id: "b1", count: 3 },
+    });
+    expect(p2?.decision).toEqual({
+      kind: "rejected",
+      at: "2026-10-01T00:00:00Z",
+      reason: "古い記録",
+    });
+    for (const bulk of [
+      { id: "", count: 1 },
+      { id: "b", count: 0 },
+      { id: "b", count: 1.5 },
+    ]) {
+      expect(() =>
+        EventInput.parse({
+          type: "AuditProposalRejected",
+          payload: { proposalId: "p1", reason: "r", bulk },
+        }),
+      ).toThrow();
+    }
+    // まとめて却下した提案も、判断し直せない
+    expect(() =>
+      project([
+        ...base,
+        ev("AuditProposalRejected", { proposalId: "p1", reason: "a", bulk: { id: "b", count: 1 } }),
+        ev("AuditProposalRejected", { proposalId: "p1", reason: "b" }),
+      ]),
+    ).toThrow(ActivityIntegrityError);
+  });
 });

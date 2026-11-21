@@ -2,6 +2,8 @@
 
 import {
   AUDIT_ADOPT_NOTE_KINDS,
+  AUDIT_BULK_REJECT_MAX,
+  AUDIT_REJECT_REASON_MAX,
   type AuditAdoptNoteKind,
   AuditTarget,
   CreateTaskInput,
@@ -56,6 +58,7 @@ import {
   previewProjectContext,
   rebuildContextImage,
   rejectAuditProposal,
+  rejectAuditProposals,
   renameTask,
   requestChanges,
   requestSecurityFix,
@@ -1190,6 +1193,55 @@ export async function rejectAuditProposalAction(
   if (!result.ok) return { message: result.message, reason };
   refresh();
   return {};
+}
+
+export type BulkRejectState = {
+  /** 入力の誤り・デーモンに届かないなど、1 件も記録できなかった理由。 */
+  message?: string;
+  reason?: string;
+  /** 結果（PBI-443）。却下できた提案の ID と、できなかった提案の ID・理由（画面の言語の文）。 */
+  result?: {
+    rejectedIds: string[];
+    failed: { proposalId: string; message: string }[];
+  };
+};
+
+/**
+ * 監査の改修の提案をまとめて却下する（PBI-443）。理由は必須で、選んだ全件に同じ理由を記録する。形・件数・重複・
+ * 理由の長さを確かめてから、デーモンの受け口を呼ぶ。1 件でも却下できたら、画面を描き直す。
+ */
+export async function rejectAuditProposalsAction(
+  _prev: BulkRejectState,
+  formData: FormData,
+): Promise<BulkRejectState> {
+  const m = await getMessages();
+  const a = m.common.action;
+  const projectId = String(formData.get("projectId") ?? "");
+  const reason = String(formData.get("reason") ?? "");
+  const ids = formData.getAll("proposalId").map(String);
+  if (
+    !projectId ||
+    ids.length === 0 ||
+    ids.length > AUDIT_BULK_REJECT_MAX ||
+    new Set(ids).size !== ids.length ||
+    ids.some((id) => id === "")
+  ) {
+    return { message: m.audit.bulk.invalidSelection(AUDIT_BULK_REJECT_MAX), reason };
+  }
+  const trimmed = reason.trim();
+  if (trimmed === "") return { message: m.audit.bulk.reasonRequired, reason };
+  if (trimmed.length > AUDIT_REJECT_REASON_MAX) {
+    return { message: m.audit.bulk.reasonTooLong(AUDIT_REJECT_REASON_MAX), reason };
+  }
+  let result: Awaited<ReturnType<typeof rejectAuditProposals>>;
+  try {
+    result = await rejectAuditProposals(projectId, ids, trimmed);
+  } catch {
+    return { message: a.daemonDown, reason };
+  }
+  if (!result.ok) return { message: result.message, reason };
+  if (result.rejectedIds.length > 0) refresh();
+  return { result: { rejectedIds: result.rejectedIds, failed: result.failed } };
 }
 
 export type DeleteAuditMemoryState = { message?: string };

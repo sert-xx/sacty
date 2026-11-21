@@ -129,6 +129,23 @@ export type SurveyMemoryPromotion = {
 };
 /** 人が却下した提案と理由（同じ提案を繰り返さないため）。 */
 export type RejectedAuditProposal = { title: string; reason: string };
+
+/** まとめての却下 1 回を 1 行にするときの、題の例の件数と、1 件の題の文字数の上限（PBI-443）。 */
+const BULK_REJECTED_EXAMPLES = 3;
+const BULK_REJECTED_TITLE_MAX = 100;
+
+/**
+ * まとめて却下した提案を、1 行にまとめた題にする。count は、この行に束ねた記録の件数。題は先頭の 3 件だけ書き、残りは
+ * 「ほか K 件」にする（まとめての却下の件数に、行の数も文字数も比例させない）。
+ */
+export function bulkRejectedTitle(titles: readonly string[]): string {
+  const examples = titles
+    .slice(0, BULK_REJECTED_EXAMPLES)
+    .map((t) => clip(t.replace(/\n/g, " "), BULK_REJECTED_TITLE_MAX))
+    .join("／");
+  const rest = titles.length - BULK_REJECTED_EXAMPLES;
+  return `まとめて却下（${titles.length} 件。例：${examples}${rest > 0 ? ` ほか ${rest} 件` : ""}）`;
+}
 /**
  * 人が採用のときに手を入れた提案（補足か差し替え。同じ手入れが要る提案を繰り返さないため。PBI-151）。
  */

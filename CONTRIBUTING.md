@@ -154,6 +154,7 @@ npm run build       # すべてのパッケージのビルド
   | `daemon-orchestrator-sessions.test.ts` | オーケストレーターへの質問、エラーレポート、セッションログと元のセッションのファイル、時間切れで止めた実行の再開、オーケストレーターのセッションの使い回し、サブエージェント |
   | `daemon-deployment-security.test.ts` | マージの後の CI/CD とデプロイの監視、セキュリティチェックとセキュリティ対応 |
   | `daemon-audit-memory.test.ts` | 完了したタスクの監査、メモリー |
+  | `daemon-audit-bulk.test.ts` | 監査の提案のまとめての却下（記録の形・失敗の分け方・秘密情報の伏せ方・以後の監査に渡す量・件数と所要時間） |
   | `task-mcp.test.ts` | 起動中の sacty を操作する MCP サーバー（`sacty mcp`）のツール（一覧・詳細・再レビュー・作成・承認・差し戻し・確かめたいこと）と、タスクの PR・ブランチ・絞り込み |
   | `task-mcp-wait.test.ts` | `sacty mcp` の `wait_for_task`（時計と待ちを差し替える。人の出番で起きる・動いているだけでは起きない・時間切れ・上限・応答しないとき・`cursor`・取り消しと後片付け・子のレビュー） |
   | `packages/cli/src/mcp-pause.test.ts` | `sacty mcp` の一時停止・再開（本物のサービスと API と `daemonApi` をつなぐ。断り・送る入力・結果を受け取れないとき・`canPause`・`canResume`） |

@@ -858,7 +858,10 @@ const ja = {
     AuditCapRaised: (cap: string) => `監査の予算の上限を ${cap} に上げて再開した`,
     AuditProposalAdopted: (withTask: boolean): string =>
       withTask ? "改修の提案を採用し、改修のタスクを作った" : "改修の提案を採用した（Sacty 宛て）",
-    AuditProposalRejected: (reason: string) => `改修の提案を却下した：${reason}`,
+    AuditProposalRejected: (reason: string, bulkCount?: number) =>
+      bulkCount === undefined
+        ? `改修の提案を却下した：${reason}`
+        : `改修の提案を却下した（まとめて却下した全 ${bulkCount} 件の 1 件）：${reason}`,
     AuditMemoryDeleted: (reason: "person" | "capacity" | "expired" | "promoted"): string =>
       reason === "person"
         ? "監査が登録したメモリーを消した"
@@ -1525,7 +1528,10 @@ const en: LabelMessages = {
     AuditCapRaised: (cap) => `Raised the audit budget cap to ${cap} and resumed`,
     AuditProposalAdopted: (withTask) =>
       withTask ? "Adopted a proposal and created a fix task" : "Adopted a proposal (for Sacty)",
-    AuditProposalRejected: (reason) => `Rejected a proposal: ${reason}`,
+    AuditProposalRejected: (reason, bulkCount) =>
+      bulkCount === undefined
+        ? `Rejected a proposal: ${reason}`
+        : `Rejected a proposal (1 of ${bulkCount} rejected in bulk): ${reason}`,
     AuditMemoryDeleted: (reason) =>
       reason === "person"
         ? "Deleted a memory the audit registered"

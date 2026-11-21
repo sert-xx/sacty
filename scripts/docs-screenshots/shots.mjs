@@ -19,6 +19,31 @@ async function aiReviewAttached(page) {
   await attached.waitFor({ timeout: 1000 });
 }
 
+/**
+ * 監査の画面で、判断待ちの提案がある原因を 1 つ開き、その判断待ちの提案をすべて選ぶ（選択の帯が出た状態にする）。
+ * 選ぶだけで、作業履歴には何も書かない。
+ */
+async function openAuditCauseAndSelect(page) {
+  const rows = page.locator(
+    'section[aria-labelledby="audit-causes"] li[data-testid^="audit-cause-"] button[aria-expanded]',
+  );
+  await rows.first().waitFor();
+  const all = page.getByRole("checkbox", {
+    name: /判断待ちをすべて選ぶ|Select all needing a decision/,
+  });
+  const count = await rows.count();
+  for (let i = 0; i < count; i++) {
+    await rows.nth(i).click();
+    if ((await all.count()) > 0) {
+      await all.first().check();
+      await page.waitForTimeout(300);
+      return;
+    }
+    await rows.nth(i).click();
+  }
+  throw new Error("判断待ちの提案がある原因が無い");
+}
+
 export const SHOTS = [
   {
     // 上の2段の欄（あなたの出番・止まっているタスクの理由・終わっていないタスク・費用と予算）まで
@@ -121,11 +146,11 @@ export const SHOTS = [
     maxHeight: 1100,
   },
   {
-    // 原因（再発を先に）と、判断待ちの改修の提案（2件）まで。提案どうしの間は狭いので、次の提案が入らない余白にする
+    // 原因を 1 つ開き、判断待ちの提案を選んで、選択の帯が出たところまで（開いた原因の下の端まで）
     name: "audit",
     path: "/projects/payments/audit",
-    until: 'section[aria-labelledby="audit-proposals"] > ul > li:nth-child(2)',
-    pad: 4,
+    prepare: openAuditCauseAndSelect,
+    until: 'section[aria-labelledby="audit-causes"] li:has(button[aria-expanded="true"])',
   },
   // 紹介のページ（introduction.md）の画面。ふだんの使い方が伝わる状態のデータ（seed-intro.mjs）で撮る
   {
@@ -136,10 +161,11 @@ export const SHOTS = [
     until: 'section[aria-labelledby="all-tasks"]',
   },
   {
-    // 監査が見つけた原因と、改修の提案（判断待ちと、採用して改修のタスクになったもの）
+    // 監査が見つけた原因を開いて、判断待ちの改修の提案を選んだところ（まとめて却下の帯が出る）
     name: "intro-audit",
     scenario: "intro",
     path: "/projects/payments/audit",
-    until: 'section[aria-labelledby="audit-proposals"]',
+    prepare: openAuditCauseAndSelect,
+    until: 'section[aria-labelledby="audit-causes"] li:has(button[aria-expanded="true"])',
   },
 ];
