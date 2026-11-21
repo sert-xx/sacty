@@ -57,7 +57,7 @@ export function ChatPanel({
         render={
           <Button
             size="icon-lg"
-            className="fixed right-4 bottom-4 z-40 size-12 rounded-full shadow-lg sm:right-6 sm:bottom-6"
+            className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 size-12 rounded-full shadow-lg sm:right-6 sm:bottom-6"
           />
         }
         aria-label={label}

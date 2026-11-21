@@ -77,13 +77,16 @@ export function AppRail() {
   return <RailNav pathname={usePathname()} />;
 }
 
-/** サイドメニュー。アイコンの下に小さく名称を出す（pathname が無ければ強調しない）。 */
+/**
+ * サイドメニュー。アイコンの下に小さく名称を出す（pathname が無ければ強調しない）。幅 640px 未満では、左の列にせず、
+ * 画面の下に固定した横並びにする（ホームバーの分は safe-area で空ける）。nav は 1 つだけで、配置は CSS で変える。
+ */
 export function RailNav({ pathname }: { pathname?: string }) {
   const t = useMessages().shell.nav;
   return (
     <nav
       aria-label={t.main}
-      className="sticky top-16 flex h-[calc(100dvh-4rem)] w-[68px] shrink-0 flex-col gap-1 overflow-y-auto border-r border-border bg-chrome px-1 py-2 sm:w-[88px] sm:px-1.5 sm:py-3"
+      className="fixed inset-x-0 bottom-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-bottom))] shrink-0 flex-row gap-1 border-t border-border bg-chrome px-1 pt-1 pb-[env(safe-area-inset-bottom)] sm:sticky sm:inset-x-auto sm:top-16 sm:bottom-auto sm:z-auto sm:h-[calc(100dvh-4rem)] sm:w-[88px] sm:flex-col sm:overflow-y-auto sm:border-t-0 sm:border-r sm:px-1.5 sm:py-3"
     >
       {railItems(pathname).map((item) => {
         const on = pathname !== undefined && item.active(pathname);
@@ -94,7 +97,7 @@ export function RailNav({ pathname }: { pathname?: string }) {
             href={item.href}
             aria-current={on ? "page" : undefined}
             className={cn(
-              "flex flex-col items-center gap-1 rounded-[10px] px-0.5 pt-2.5 pb-2 text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring",
+              "flex min-h-11 min-w-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-[10px] px-0.5 text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring sm:flex-none sm:justify-start sm:gap-1 sm:pt-2.5 sm:pb-2",
               on && "bg-accent text-accent-foreground hover:bg-accent",
             )}
           >

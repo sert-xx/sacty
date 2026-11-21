@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 // フォントは npm のパッケージから読む（ビルドのときに Google Fonts に取りに行かない。外への通信が制限された
 // 環境でもビルドできるように。PBI-39）。使う文字の範囲だけを、ブラウザが必要なときに読む
 import "@fontsource/ibm-plex-sans-jp/400.css";
@@ -24,6 +24,9 @@ export const metadata: Metadata = {
   title: "Sacty",
   description: "AI software factory",
 };
+
+// 画面の下の安全な領域（ホームバー）を env(safe-area-inset-bottom) で使えるようにする
+export const viewport: Viewport = { viewportFit: "cover" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -58,7 +61,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <main
             id={MAIN_ID}
             tabIndex={-1}
-            className="min-w-0 flex-1 px-4 py-7 outline-none sm:px-8"
+            className="min-w-0 flex-1 px-4 pt-7 pb-[calc(5.5rem+env(safe-area-inset-bottom))] outline-none sm:px-8 sm:py-7"
           >
             <div className="mx-auto flex max-w-6xl flex-col gap-6">
               {/* Docker を使えない・エージェントのイメージが無い（PBI-148）。タスクを実行できないので、どの画面でも中身の上に出す */}
