@@ -64,6 +64,7 @@ import {
   reviewReworkTarget,
   reviewWatching,
   reworkingPullRequest,
+  reworkingStepPullRequest,
   reworkTargets,
   skippableSteps,
   stepImageOf,
@@ -8064,5 +8065,260 @@ describe("残った指摘を引き継ぐ戻し先（PBI-414）", () => {
     expect(carriesPendingRemarks(rework, "design")).toBe(true);
     expect(carriesPendingRemarks({ target: "implement" }, "design")).toBe(false);
     expect(carriesPendingRemarks(undefined, "implement")).toBe(false);
+  });
+});
+
+describe("要求要件・設計の自動の直しの間の PR のマージ（PBI-462）", () => {
+  const repo = "https://github.com/acme/app";
+  const viewpoint = (id: string, title: string) => ({
+    id,
+    title,
+    input: `${title}の入力`,
+    expected: `${title}の期待`,
+  });
+  const run = (id: string, step: "requirements" | "design", runId: string, output: string) => [
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId, step, agentId: "a", authMode: "subscription" },
+    }),
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId,
+        step,
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output,
+        responses: [],
+        ...(step === "design"
+          ? { testViewpoints: [viewpoint("TV-1", output === "# 設計 v1" ? "提出" : "直し")] }
+          : {}),
+      },
+    }),
+  ];
+  const prEvents = (id: string, number: number, commit: string, branch: string) => [
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: repo, baseBranch: "main", baseCommit: "b1" },
+    }),
+    ev(id, { type: "TaskBranchCreated", payload: { branch: "sacty/t", commit: "b1" } }),
+    ev(id, {
+      type: "StepBranchPushed",
+      payload: { step: "design", branch, commit },
+    }),
+    ev(id, {
+      type: "StepPullRequestPublished",
+      payload: {
+        step: "design",
+        branch,
+        commit,
+        base: "b1",
+        path: "docs/sacty/t/design.md",
+        url: `${repo}/pull/${number}`,
+        number,
+        repo,
+      },
+    }),
+    ev(id, { type: "StepSubmitted", payload: { step: "design", submission: 1 } }),
+  ];
+  /** 設計の PR #8 の承認待ちまで（要求要件は承認済みとして、設計だけの工程）。 */
+  const designGate = (id: string) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["design"] } }),
+    ...run(id, "design", "d1", "# 設計 v1"),
+    ...prEvents(id, 8, "c8", "sacty/t-design-1"),
+  ];
+  const sendBackDesign = (id: string) =>
+    ev(
+      id,
+      {
+        type: "ChangesRequested",
+        payload: {
+          step: "design",
+          target: "design",
+          round: 1,
+          remarks: [
+            { id: "design-1-1", text: "提案1" },
+            { id: "design-1-2", text: "提案2" },
+          ],
+        },
+      },
+      "person",
+    );
+  const stoppedDesign = (id: string, patch: Record<string, unknown> = {}) =>
+    ev(id, {
+      type: "ReworkStoppedByMerge",
+      payload: {
+        number: 8,
+        step: "design",
+        was: "running",
+        stoppedRuns: [],
+        discardedRemarks: [{ id: "design-1-1", text: "提案1" }],
+        ...patch,
+      },
+    });
+  const approved = (id: string) => [
+    ev(id, { type: "PullRequestMerged", payload: { number: 8, commit: "c8" } }, "person"),
+    ev(id, { type: "StepApproved", payload: { step: "design", next: "idle" } }, "person"),
+  ];
+
+  it("直しの間は、直しを始めたときの承認待ちの PR を返し、写しは提出の時点の成果とテスト観点になる（TV-12 b）", () => {
+    seq = 0;
+    const gate = project(designGate("t")).get("t");
+    expect(gate && reworkingStepPullRequest(gate)).toBeUndefined();
+    seq = 0;
+    const done = project([
+      ...designGate("t"),
+      sendBackDesign("t"),
+      ...run("t", "design", "d2", "# 設計 v2（直し）"),
+    ]).get("t");
+    expect(done?.status).toBe("idle");
+    expect(done && reworkingStepPullRequest(done)).toMatchObject({
+      step: "design",
+      number: 8,
+      repo,
+      commit: "c8",
+    });
+    expect(done?.outputs.design).toBe("# 設計 v2（直し）");
+    expect(done?.stepSubmitted?.design?.output).toBe("# 設計 v1");
+    expect(done?.stepSubmitted?.design?.testViewpoints.map((v) => v.title)).toEqual(["提出"]);
+    // 承認待ちで止めた一時停止は見守らない。直しの間の一時停止は見守る
+    seq = 0;
+    const gatePaused = project([
+      ...designGate("t"),
+      ev("t", { type: "TaskPaused", payload: { reason: "manual" } }, "person"),
+    ]).get("t");
+    expect(gatePaused?.status).toBe("paused");
+    expect(gatePaused && reworkingStepPullRequest(gatePaused)).toBeUndefined();
+    seq = 0;
+    const paused = project([
+      ...designGate("t"),
+      sendBackDesign("t"),
+      ev("t", { type: "TaskPaused", payload: { reason: "manual" } }, "person"),
+    ]).get("t");
+    expect(paused && reworkingStepPullRequest(paused)).toMatchObject({ number: 8 });
+  });
+
+  it("作り直しを止める記録で、直しの成果とテスト観点を提出の版に戻し、設計の承認待ちに戻して、承認で提出の版が承認済みになる。捨てた指摘は無効になる", () => {
+    seq = 0;
+    const stoppedTask = project([
+      ...designGate("t"),
+      sendBackDesign("t"),
+      ...run("t", "design", "d2", "# 設計 v2（直し）"),
+      stoppedDesign("t"),
+    ]).get("t");
+    expect(stoppedTask?.status).toBe("awaiting_approval");
+    expect(stoppedTask?.gate).toEqual({ step: "design", submission: 1 });
+    expect(stoppedTask?.outputs.design).toBe("# 設計 v1");
+    expect(stoppedTask?.testViewpoints.map((v) => v.title)).toEqual(["提出"]);
+    expect(stoppedTask && gatePullRequest(stoppedTask)).toMatchObject({ number: 8, state: "open" });
+    expect(stoppedTask?.remarks.map((r) => [r.id, r.voided])).toEqual([
+      ["design-1-1", true],
+      ["design-1-2", false],
+    ]);
+    seq = 0;
+    const approvedTask = project([
+      ...designGate("t"),
+      sendBackDesign("t"),
+      ...run("t", "design", "d2", "# 設計 v2（直し）"),
+      stoppedDesign("t"),
+      ...approved("t"),
+    ]).get("t");
+    expect(approvedTask?.approved.design?.output).toBe("# 設計 v1");
+    expect(approvedTask?.approved.design?.testViewpoints.map((v) => v.title)).toEqual(["提出"]);
+    expect(approvedTask?.stepPullRequests[0]?.state).toBe("merged");
+    expect(approvedTask?.reworkOf).toBeUndefined();
+  });
+
+  it("直しの PR でない PR（前の工程へ戻した後の PR・直しを始めていない PR）には、作り直しを止める記録を投影できない", () => {
+    seq = 0;
+    expect(() => project([...designGate("t"), stoppedDesign("t")])).toThrow();
+    // 前の工程（要求要件）へ戻す差し戻しは、reworkOf を入れず、sentBackFrom に元の PR を入れる
+    seq = 0;
+    const back = project([
+      created("t"),
+      ev("t", { type: "StepsChosen", payload: { steps: ["requirements", "design"] } }),
+      ...run("t", "requirements", "r1", "# 要求要件 v1"),
+      ev("t", { type: "StepSubmitted", payload: { step: "requirements", submission: 1 } }),
+      ev(
+        "t",
+        { type: "StepApproved", payload: { step: "requirements", next: "queued" } },
+        "person",
+      ),
+      ...run("t", "design", "d1", "# 設計 v1"),
+      ...prEvents("t", 8, "c8", "sacty/t-design-1"),
+      ev(
+        "t",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "design",
+            target: "requirements",
+            round: 1,
+            remarks: [{ id: "requirements-1-1", text: "前提が違う" }],
+          },
+        },
+        "person",
+      ),
+    ]).get("t");
+    expect(back?.reworkOf).toBeUndefined();
+    expect(back?.sentBackFrom).toEqual({ step: "design", number: 8 });
+    expect(back && reworkingStepPullRequest(back)).toBeUndefined();
+  });
+
+  it("step の無い作り直しを止める記録を含む実装の履歴は、これまでどおり実装の承認として投影される（TV-12 a）", () => {
+    const base = (id: string) => [
+      created(id),
+      ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+      ev(id, {
+        type: "RepositoryPrepared",
+        payload: { url: repo, baseBranch: "main", baseCommit: "b1" },
+      }),
+      ...verifiedImplementation(id),
+      ev(id, {
+        type: "PullRequestPublished",
+        payload: { branch: "sacty/t", commit: "c1", url: `${repo}/pull/7`, repo, number: 7 },
+      }),
+      ev(id, { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
+      ev(
+        id,
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            round: 1,
+            remarks: [{ id: "implement-1-1", text: "直して" }],
+          },
+        },
+        "person",
+      ),
+      ev(id, {
+        type: "ReworkStoppedByMerge",
+        payload: {
+          number: 7,
+          was: "queued",
+          stoppedRuns: [],
+          discardedRemarks: [{ id: "implement-1-1", text: "直して" }],
+        },
+      }),
+      ev(id, { type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person"),
+      ev(id, { type: "StepApproved", payload: { step: "implement", next: "idle" } }, "person"),
+    ];
+    seq = 0;
+    const task = project(base("t")).get("t");
+    expect(task?.pullRequestState).toBe("merged");
+    expect(task?.approved.implement?.submission).toBe(1);
+    expect(task?.remarks.every((r) => r.voided)).toBe(true);
+    expect(task?.gate).toBeUndefined();
+  });
+
+  it("工程のブランチごとに、プッシュしたコミットを持つ", () => {
+    seq = 0;
+    const task = project(designGate("t")).get("t");
+    expect(task?.stepBranchCommits).toEqual({ "sacty/t-design-1": "c8" });
   });
 });

@@ -476,8 +476,13 @@ export class FakeRepos implements RepositoryWorkspace {
   /** プッシュしたコミット（タスクブランチの作成。PBI-57）。 */
   pushedCommits: { commit: string; branch: string }[] = [];
   pushFail?: string;
+  /** true なら、本物の強制しないプッシュと同じく、違うコミットがある名前へのプッシュを断る。 */
+  rejectExistingBranch = false;
   async pushCommit(_gitDir: string, commit: string, branch: string) {
     if (this.pushFail) throw new Error(this.pushFail);
+    if (this.rejectExistingBranch && this.remote[branch] && this.remote[branch] !== commit) {
+      throw new Error(`non-fast-forward: ${branch}`);
+    }
     this.pushedCommits.push({ commit, branch });
     this.remote[branch] = commit;
   }
@@ -499,9 +504,19 @@ export class FakeRepos implements RepositoryWorkspace {
     message: string;
     date: string;
     allowEmpty?: boolean;
+    skipPush?: boolean;
   }) {
     if (this.commitFilesFail) throw new Error(this.commitFilesFail);
-    const commit = `d${this.committedFiles.length + 1}`.padEnd(40, "0");
+    // 本物と同じく、同じ入力（親・内容・日時・題）からは同じコミットができる
+    const same = this.committedFiles.find(
+      (c) =>
+        c.parent === input.parent &&
+        c.date === input.date &&
+        c.message === input.message &&
+        !c.allowEmpty === !input.allowEmpty &&
+        JSON.stringify(c.files) === JSON.stringify(input.files),
+    );
+    const commit = same?.commit ?? `d${this.committedFiles.length + 1}`.padEnd(40, "0");
     this.committedFiles.push({
       parent: input.parent,
       files: input.files,
@@ -511,7 +526,7 @@ export class FakeRepos implements RepositoryWorkspace {
       ...(input.allowEmpty ? { allowEmpty: true } : {}),
       commit,
     });
-    this.remote[input.branch] = commit;
+    if (!input.skipPush) this.remote[input.branch] = commit;
     return { commit };
   }
   /**

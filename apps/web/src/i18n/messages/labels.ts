@@ -554,10 +554,11 @@ const ja = {
       feedback: string | undefined,
       held: number,
       decision?: boolean,
+      step?: string,
     ) =>
       decision
         ? `人の判断を待って止めていた PR #${number} がマージされた。止めた理由の指摘${held}件を反映せずに、マージを承認として進める`
-        : `PR #${number} がマージされたため、実装の作り直しを止めた（${stage}${runs > 0 ? `・実行${runs}件を停止` : ""}）${remarks.length > 0 ? `。作り直しに渡す前の指摘${remarks.length}件を捨てた（${remarks.join("、")}）` : ""}${feedback ? `。やり直しに渡すはずだった${feedback}の結果を捨てた` : ""}${held > 0 ? `。一時停止の間に届いて未反映だった PR の指摘${held}件を捨てた` : ""}。マージを承認として進める`,
+        : `PR #${number} がマージされたため、${step ? `${step}の直し` : "実装の作り直し"}を止めた（${stage}${runs > 0 ? `・実行${runs}件を停止` : ""}）${remarks.length > 0 ? `。作り直しに渡す前の指摘${remarks.length}件を捨てた（${remarks.join("、")}）` : ""}${feedback ? `。やり直しに渡すはずだった${feedback}の結果を捨てた` : ""}${held > 0 ? `。一時停止の間に届いて未反映だった PR の指摘${held}件を捨てた` : ""}。マージを承認として進める`,
     PullRequestConflicted: (number: number) =>
       `PR #${number} がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）`,
     PullRequestConflictResolved: (number: number) => `PR #${number} の競合が解消された`,
@@ -1329,10 +1330,10 @@ const en: LabelMessages = {
       `PR #${number} was merged with a person's edits and approved${by ? ` (${by})` : ""} (${submitted} → ${final})${fallback === "deleted" ? ". The file was deleted, so Sacty's version was approved" : fallback === "unreadable" ? ". The file could not be read, so Sacty's version was approved" : ""}`,
     PullRequestClosed: (number) => `PR #${number} closed without merging · needs you`,
     PullRequestReopened: (number) => `PR #${number} reopened · awaiting merge`,
-    ReworkStoppedByMerge: (number, stage, runs, remarks, feedback, held, decision) =>
+    ReworkStoppedByMerge: (number, stage, runs, remarks, feedback, held, decision, step) =>
       decision
         ? `PR #${number}, which was paused waiting for a human decision, was merged. The merge is taken as the approval, without applying the ${held} finding${held === 1 ? "" : "s"} that caused the pause`
-        : `PR #${number} was merged, so the rework of the implementation was stopped (${stage}${runs > 0 ? `, ${runs} run${runs === 1 ? "" : "s"} stopped` : ""})${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}${held > 0 ? `. Discarded ${held} PR comment${held === 1 ? "" : "s"} that arrived while paused and were not yet applied` : ""}. The merge is taken as the approval`,
+        : `PR #${number} was merged, so the rework of ${step ? `the ${step.toLowerCase()}` : "the implementation"} was stopped (${stage}${runs > 0 ? `, ${runs} run${runs === 1 ? "" : "s"} stopped` : ""})${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}${held > 0 ? `. Discarded ${held} PR comment${held === 1 ? "" : "s"} that arrived while paused and were not yet applied` : ""}. The merge is taken as the approval`,
     PullRequestConflicted: (number) =>
       `PR #${number} conflicts with the base branch (it is merged in when you send it back or comment)`,
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,

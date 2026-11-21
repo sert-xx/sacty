@@ -1944,6 +1944,23 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(git(origin, "branch", "--list", stepBranch)).toBe("");
   });
 
+  it("commitFiles に push しない指定をすると、コミットだけを作ってブランチへプッシュせず、そのコミットを pushCommit でプッシュできる（PBI-462）", async () => {
+    const { origin, workspace, gitDir, baseCommit, stepBranch, path, input } = await prepareTask();
+    const made = await workspace.commitFiles({ ...input, skipPush: true });
+    // ブランチには無いが、コミットは作ってある（内容は、プッシュする場合と同じコミット）
+    expect(git(origin, "branch", "--list", stepBranch)).toBe("");
+    // 作ったコミットを、強制しないプッシュでブランチへ積む
+    await workspace.pushCommit(gitDir, made.commit, stepBranch);
+    expect(git(origin, "rev-parse", stepBranch)).toBe(made.commit);
+    expect(git(origin, "rev-parse", `${stepBranch}^`)).toBe(baseCommit);
+    expect(git(origin, "show", `${stepBranch}:${path}`)).toBe("# 要求要件");
+    // push する指定のコミットも、同じコミットになる（コミットの中身はブランチの名前に依らない）
+    const other = await workspace.commitFiles({ ...input, branch: `${stepBranch}-other` });
+    expect(other.commit).toBe(made.commit);
+    // 同じコミットを同じ名前へもう一度プッシュしても失敗しない
+    await workspace.pushCommit(gitDir, made.commit, stepBranch);
+  });
+
   it("タスクブランチを作り、成果のファイルを工程のブランチにコミットし、実装はタスクブランチのファイルを引き継いで積む（PBI-57）：マージ後のタスクブランチに、成果のファイルを引き継いで実装を積む", async () => {
     const { origin, workspace, clone, gitDir, baseCommit, taskBranch, stepBranch, path, input } =
       await prepareTask();

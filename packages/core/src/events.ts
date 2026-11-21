@@ -3213,8 +3213,13 @@ const PullRequestReopened = z.object({
 const ReworkStoppedByMerge = z.object({
   type: z.literal("ReworkStoppedByMerge"),
   payload: z.object({
-    /** マージされた実装の PR。 */
+    /** マージされた PR（step があれば、その工程の PR。無ければ実装の PR）。 */
     number: z.number().int().positive(),
+    /**
+     * 要求要件・設計の直し（自動の直しの間に、その工程の PR がマージされた。PBI-462）なら、その工程。無ければ実装の作り直し。
+     * 前の版は、この欄を読まずに捨てて実装の記録として投影し、整合性のエラーにする（前の版には戻せない）。
+     */
+    step: StepPullRequestKey.optional(),
     /**
      * 止めたときの作り直しの段階。queued：実行を待っていた。running：エージェントの実行中。verifying：最終レビュー
      * （とその前の PR の CI）の途中。publishing：PR の更新の待ち・途中。paused：一時停止していた。

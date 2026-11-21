@@ -1050,6 +1050,28 @@ export type Task = {
   /** sacty がプッシュした、要求要件・設計のブランチ（中止で消す。PBI-57）。 */
   stepBranches: string[];
   /**
+   * sacty がプッシュした工程のブランチごとの、プッシュしたコミット（PBI-462）。次にブランチを作るとき、記録済みの名前でも、
+   * 同じコミットなら使い回し、違うコミットのときだけ次の回の名前にする。
+   */
+  stepBranchCommits?: Record<string, string>;
+  /**
+   * 要求要件・設計の提出ごとの、成果とテスト観点の写し（StepSubmitted の時点のもの。PBI-462）。直しの間にその工程の PR が
+   * マージされたとき、直しの成果を捨てて、承認待ちだった提出の版に戻すために持つ。
+   */
+  stepSubmitted?: Partial<
+    Record<StepPullRequestKey, { output: string; testViewpoints: TestViewpoint[] }>
+  >;
+  /**
+   * 要求要件・設計の PR の承認待ちから、同じ工程へ差し戻した（自動の直しを含む）ときの、直しを始めたときの承認待ちの PR
+   * （PBI-462）。その工程の次の PR の記録・承認で消す。
+   */
+  reworkOf?: { step: StepPullRequestKey; number: number };
+  /**
+   * 設計の PR の承認待ちから、前の工程（要求要件）へ差し戻した間の、差し戻した元の PR（PBI-462）。その PR がマージされても
+   * 承認にはせず、PR に知らせる。その工程の次の PR の記録で消す。
+   */
+  sentBackFrom?: { step: StepPullRequestKey; number: number };
+  /**
    * sacty が作った PR に、取り込むラベルを付けた・付けられなかった記録（PR ごとに1件。PBI-88）。記録のある PR には、
    * 更新しても付け直さない。
    */
@@ -1988,6 +2010,15 @@ export function applyEvent(
       task.status = "awaiting_approval";
       task.gate = { step: event.payload.step, submission: event.payload.submission };
       task.submissions = { ...task.submissions, [event.payload.step]: event.payload.submission };
+      if (event.payload.step === "requirements" || event.payload.step === "design") {
+        task.stepSubmitted = {
+          ...task.stepSubmitted,
+          [event.payload.step]: {
+            output: task.outputs[event.payload.step] ?? "",
+            testViewpoints: event.payload.step === "design" ? task.testViewpoints : [],
+          },
+        };
+      }
       break;
 
     case "StepApproved": {
@@ -2044,6 +2075,7 @@ export function applyEvent(
       task.pendingReview = undefined;
       task.gate = undefined;
       task.escalation = undefined;
+      task.reworkOf = undefined;
       // 上流の工程を承認し直したら、前の実装の説明・テストの対応は引き継がない（PBI-299）
       if (step !== "implement") {
         task.implementHistory = undefined;
@@ -2123,6 +2155,9 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, `status ${task.status}`);
       }
       const target = event.payload.target ?? event.payload.step;
+      // 要求要件・設計の PR の承認待ちからの差し戻しは、その PR を覚える（PBI-462）。同じ工程の直しなら reworkOf、前の工程へ
+      // 戻すなら sentBackFrom
+      const stepGate = event.payload.step !== "implement" ? gatePullRequest(task) : undefined;
       if (target !== event.payload.step) {
         const at = task.steps.findIndex((s) => s.key === event.payload.step);
         const to = task.steps.findIndex((s) => s.key === target);
@@ -2150,6 +2185,13 @@ export function applyEvent(
       task.status = "queued";
       task.gate = undefined;
       task.escalation = undefined;
+      task.reworkOf =
+        stepGate && stepGate.step === event.payload.step && target === event.payload.step
+          ? { step: stepGate.step as StepPullRequestKey, number: stepGate.number }
+          : undefined;
+      if (stepGate && stepGate.step !== target) {
+        task.sentBackFrom = { step: stepGate.step as StepPullRequestKey, number: stepGate.number };
+      }
       // 止まった工程の途中経過（検証・PR の更新の待ち）は、作り直しに持ち越さない
       if (fromHeld) {
         task.stepReview = undefined;
@@ -3338,6 +3380,44 @@ export function applyEvent(
     }
 
     case "ReworkStoppedByMerge": {
+      // 要求要件・設計の直しの間に、その工程の PR がマージされた（PBI-462）。直しの成果を捨てて、承認待ちだった提出の版に
+      // 戻し、その工程の承認待ちに戻す（同じ追記で、続けて PullRequestMerged・StepApproved を記録する）
+      if (event.payload.step) {
+        const step = event.payload.step;
+        const stepRework = reworkingStepPullRequest(task);
+        if (!stepRework || stepRework.step !== step || stepRework.number !== event.payload.number) {
+          throw new ActivityIntegrityError(event, "the step is not being reworked");
+        }
+        if (task.status === "running") {
+          throw new ActivityIntegrityError(event, "stop the run before stopping the rework");
+        }
+        const copy = task.stepSubmitted?.[step];
+        if (copy) {
+          task.outputs = { ...task.outputs, [step]: copy.output };
+          if (step === "design") task.testViewpoints = copy.testViewpoints;
+        }
+        task.status = "awaiting_approval";
+        task.gate = { step, submission: stepRework.submission };
+        const discardedByStep = new Set(event.payload.discardedRemarks.map((r) => r.id));
+        task.remarks = task.remarks.map((r) =>
+          discardedByStep.has(r.id) ? { ...r, voided: true } : r,
+        );
+        task.reworkOf = undefined;
+        task.currentRunId = undefined;
+        task.verification = undefined;
+        resetVerifyFailures(task);
+        task.verifyFeedback = undefined;
+        task.publishPending = undefined;
+        task.stepReview = undefined;
+        task.pendingReview = undefined;
+        task.escalation = undefined;
+        task.pausedReason = undefined;
+        task.pausedMessage = undefined;
+        task.unstoppedRuns = undefined;
+        task.resumeTo = undefined;
+        task.pausedCancelledChildren = undefined;
+        break;
+      }
       // 実装の作り直しの間に、実装の PR がマージされた（PBI-276）。作り直しの途中経過を捨てて、実装の承認待ちに戻す
       // （同じ追記で、続けて PullRequestMerged・StepApproved を記録する）
       const reworking = reworkingPullRequest(task);
@@ -3462,6 +3542,10 @@ export function applyEvent(
       if (!task.stepBranches.includes(event.payload.branch)) {
         task.stepBranches = [...task.stepBranches, event.payload.branch];
       }
+      task.stepBranchCommits = {
+        ...task.stepBranchCommits,
+        [event.payload.branch]: event.payload.commit,
+      };
       break;
 
     case "StepPullRequestPublished": {
@@ -3493,6 +3577,10 @@ export function applyEvent(
       if (!task.stepBranches.includes(p.branch)) {
         task.stepBranches = [...task.stepBranches, p.branch];
       }
+      task.stepBranchCommits = { ...task.stepBranchCommits, [p.branch]: p.commit };
+      // この工程の直し・差し戻しは、PR にした。覚えていた PR は、もう見守らない（PBI-462）
+      task.reworkOf = undefined;
+      if (task.sentBackFrom?.step === p.step) task.sentBackFrom = undefined;
       break;
     }
 
@@ -4482,6 +4570,61 @@ export function reworkingPullRequest(
     return undefined;
   }
   return { number: pr.number, ...(pr.repo ? { repo: pr.repo } : {}), commit: pr.commit };
+}
+
+/**
+ * 要求要件・設計の自動の直しの間（実行待ち・実行中・待機・一時停止。直しの PR を閉じられずに止めた一時停止も含む）の、
+ * 直しを始めたときの承認待ちの PR（PBI-462）。人がこの PR をマージしたら、直しを止めて捨て、マージを承認として進める
+ * （ReworkStoppedByMerge の step 付き）。人の判断待ちの一時停止と、承認待ちで止めた一時停止は含めない。前の工程へ差し戻して
+ * いる間の PR（sentBackFrom）と、承認済みの前の工程の PR は、reworkOf でないので含めない。
+ */
+export function reworkingStepPullRequest(task: Task):
+  | {
+      step: StepPullRequestKey;
+      number: number;
+      repo: string;
+      commit: string;
+      submission: number;
+    }
+  | undefined {
+  if (
+    task.status !== "queued" &&
+    task.status !== "running" &&
+    task.status !== "idle" &&
+    task.status !== "paused"
+  ) {
+    return undefined;
+  }
+  if (
+    task.status === "paused" &&
+    (task.pausedReason === "needs_decision" || task.resumeTo === "awaiting_approval")
+  ) {
+    return undefined;
+  }
+  const step = activeStep(task);
+  if (step !== "requirements" && step !== "design") return undefined;
+  const of = task.reworkOf;
+  if (!of || of.step !== step) return undefined;
+  const pr = latestStepPullRequest(task, step);
+  if (!pr || pr.number !== of.number || pr.superseded || pr.state !== "open") return undefined;
+  return { step, number: pr.number, repo: pr.repo, commit: pr.commit, submission: pr.submission };
+}
+
+/**
+ * 要求要件・設計の PR にまだ反映していない指摘（PBI-462）。最後の差し戻しで足された指摘のうち、無効にしておらず、提出済みの
+ * PR の内容に渡していないもの（直しの実行が見たが、まだ提出していないものを含む）。
+ */
+export function unreflectedStepRemarks(task: Task, step: StepKey): TaskRemark[] {
+  const submitted = task.submissions[step] ?? 0;
+  const latest = lastChangeRound(task, step);
+  return task.remarks.filter(
+    (r) =>
+      r.step === step &&
+      !r.voided &&
+      !r.triaged &&
+      r.round === latest &&
+      (r.submittedIn === undefined || r.submittedIn > submitted),
+  );
 }
 
 /**

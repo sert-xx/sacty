@@ -49,8 +49,18 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
 - Whether the Requirements or Design PR is recreated
   - If that step's PR is open and the head of the task branch has not changed, the same PR is updated (redoing that step).
   - In the following cases, a new branch and PR are created from the latest task branch, and the earlier open PR is closed.
-    - The PR has been merged or closed
+    - The PR was merged as an approval (for example, after a later step sent the task back to an earlier step), or merged while the task was sent back to an earlier step (not taken as the approval; [Merging during a rework of a step PR](#merging-during-a-rework-of-a-step-pr))
+    - The PR was closed
     - The task branch moved because a fix to an earlier step was merged
+  - If the PR that was waiting for approval when the rework started (`reworkOf`) has been merged, no new branch or PR is created, and the merge is taken as the approval ([Merging during a rework of a step PR](#merging-during-a-rework-of-a-step-pr)).
+  - If, when creating a new PR, the PR that was waiting for approval when the rework started cannot be closed (it is still open when read again after closing), no new PR is created and the task is paused with `pr.failed`.
+    If a person merges that PR while the task is paused, the merge is taken as the approval without waiting for a resume.
+    If the task is resumed without a merge, it starts again from reading the PR status (and closes the PR again if it is open).
+    For other recreations (such as the PR after sending the task back to an earlier step), a failure to close the earlier PR only leaves a warning, and the new PR is created.
+  - The round of a new branch: the commit is made first (without pushing), and the round moves on only when the name `<task branch>-<step>-<round>` is already recorded (`stepBranches`) and its recorded commit (`stepBranchCommits`) differs from this commit.
+    If the commit is the same, it is pushed again to the same name (so retrying the PR creation or resuming does not add branches).
+    A rejected push is not taken as a sign to move to the next round.
+    A pushed new branch is kept even when it does not become a PR (a merge was found, or the earlier PR could not be closed), and is deleted by the cleanup at the end of the task.
   - If a PR cannot be opened, the reason is recorded and the task stops.
 - The implementation PR
   - If there is a task branch, the implementation is stacked on the latest task branch and opened as a PR from the task branch to the base branch (the implementation PR).
@@ -75,7 +85,7 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
 
 Code (web UI links): `apps/web/src/lib/labels.ts` (`personAction`, `personLink`, `reviewPullRequestUrl`), `packages/core/src/projection.ts` (`openProposal`), `apps/web/src/components/action-link.tsx` (`ActionLink`, `ExternalMark`)
 
-Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `taskBranchName`, `publishStepPullRequest`, `publish`), `packages/core/src/events.ts` (`StepPullRequestKey`, `DEFAULT_DOCUMENTS_DIR`, `isDocumentsDir`), `packages/core/src/projection.ts` (`stepDocumentPath`), `apps/daemon/src/prompts.ts` (`buildStepDocument`)
+Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `taskBranchName`, `publishStepPullRequest`, `publish`), `packages/core/src/events.ts` (`StepPullRequestKey`, `DEFAULT_DOCUMENTS_DIR`, `isDocumentsDir`), `packages/core/src/projection.ts` (`stepDocumentPath`, `stepBranchCommits`), `apps/daemon/src/prompts.ts` (`buildStepDocument`)
 
 ## When the implementation has no changes
 
@@ -188,7 +198,8 @@ Every 60 seconds the daemon checks the PRs of tasks that have a PR for the curre
 - If the PR is merged, or closed without merging, while comments are being imported (for example while the step to redo is being decided), changes are not requested. The status is read again within the same check and recorded as the merged or closed case above ([Importing PR comments](#importing-pr-comments)).
 - When an implementation PR is merged and the after-merge watch step is not skipped, the after-merge watch starts in the same append ([After-merge watch](deployment-watch.en.md)).
 - At the start of the check, the following are done in order.
-  1. The implementation PR of a task that is reworking the implementation (not waiting for approval) is also checked (`checkReworkMerges`; [Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation)).
+  1. The implementation PR of a task that is reworking the implementation (not waiting for approval), and the step PR of a task that is reworking Requirements or Design, are also checked (`checkReworkMerges`; [Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation), [Merging during a rework of a step PR](#merging-during-a-rework-of-a-step-pr)).
+     Then it is checked whether the original Design PR of a task sent back to Requirements has been merged (`checkSentBackMerges`).
   2. The base of the PRs waiting for approval of child tasks stacked on a dependency's PR is changed (`retargetPullRequest`; [Child tasks stacked on a dependency's PR](split-and-integrate.en.md#child-tasks-stacked-on-a-dependencys-pr)).
   3. Comments that arrived on the implementation PR of a paused task are kept as not yet addressed (`checkHeldFeedback`; [Comments that arrive while paused](#comments-that-arrive-while-paused)).
 - At the end of the check, the following are done in order.
@@ -207,7 +218,7 @@ If a person merges the implementation PR while the implementation is being rewor
 
 - Targets (`reworkingPullRequest`): tasks whose active step is Implement and whose status is queued (`queued`), running (`running`), waiting (`idle`, for example waiting to open the PR), or paused (`paused`), and whose PR in `Task.pullRequest` is open (`pullRequestState` is `open`) or was closed while waiting for approval and then sent back (`closed`; it may be reopened and merged on GitHub, and whether it is merged is decided by GitHub's state).
   - A continued existing PR (`Task.continuedPullRequest`) has no `Task.pullRequest` until the first submission. During that time, the continued PR is watched. The projection then records the continued PR as the implementation PR before recording the merge (the commit is the head of the PR when it was taken over).
-  - While Requirements or Design is being redone (the active step is not Implement), nothing is watched. When the task reaches Implement and the PR is already merged, the rework is stopped in the same way.
+  - While Requirements or Design is being redone (the active step is not Implement), the implementation PR is not watched. When the task reaches Implement and the PR is already merged, the rework is stopped in the same way. A merge of the Requirements or Design PR during that time is handled by [Merging during a rework of a step PR](#merging-during-a-rework-of-a-step-pr).
   - Tasks waiting for approval or escalated are watched by the check above.
 - Check: the PR status is read (with the project's gh account; if it cannot be read, the next check tries again). Only when it is merged, the following is done. Nothing is done while it is open or closed.
   1. If something is running, its containers are stopped and the task waits for it to end (the same as pause and cancel; the stopped run is not recorded as a person's pause). If it cannot be confirmed that the stopped containers are gone, the task is paused and does not move on (the next check confirms again).
@@ -223,8 +234,45 @@ If a person merges the implementation PR while the implementation is being rewor
 - Just before the PR is updated (`publish`, including updating a continued existing PR), it is also checked whether the earlier PR has been merged. If it has, nothing is pushed and no PR is created; the same records approve it (for when the PR update starts before the check).
   If it is found merged by the check after the push (the check for whether to create a new PR, or the check of a continued PR), no new PR is created and the task is not paused either; the same records approve it (for when the PR is merged during the push).
 - Later checks do not record again, because the task is already approved.
+- Notice on the PR: after the records, sacty writes on the PR that it took the merge as the approval (the same notice as in [Merging during a rework of a step PR](#merging-during-a-rework-of-a-step-pr)). It is not written for the merge of a PR paused waiting for a human decision (`decision: true`), because no rework had started.
 
-Code: `apps/daemon/src/service.ts` (`checkReworkMerges`, `stopReworkForMerge`, `endReworkByMerge`, `mergeApprovalItems`, `publish`, `pauseIfRequested`), `packages/core/src/projection.ts` (`reworkingPullRequest`, `unreflectedImplementRemarks`, `ReworkStoppedByMerge`)
+Code: `apps/daemon/src/service.ts` (`checkReworkMerges`, `stopReworkForMerge`, `endReworkByMerge`, `mergeApprovalItems`, `announceMergeApproval`, `publish`, `pauseIfRequested`), `packages/core/src/projection.ts` (`reworkingPullRequest`, `unreflectedImplementRemarks`, `ReworkStoppedByMerge`)
+
+### Merging during a rework of a step PR
+
+Related ADR: [要求要件・設計の自動の直しの間の PR のマージを承認にし、直しを捨てる](../adr/20261121-1619-step-pull-request-merge-during-rework.md)
+
+If a person merges the Requirements or Design PR during an automatic rework of that step (after a request for changes from waiting for approval, imported PR comments, adopted suggestions, and so on), the merge is taken as the approval.
+The result of the rework is not used, and no new branch or PR is created.
+
+- Targets (`reworkingStepPullRequest`): tasks whose active step is Requirements or Design and whose status is queued (`queued`), running (`running`), waiting (`idle`), or paused (`paused`); the target is the PR that was waiting for approval when the rework started (`Task.reworkOf`). It must be the latest PR of that step and open (`open`).
+  - `reworkOf` is kept when the task is sent back to the same step from waiting for approval of a Requirements or Design PR, and is cleared when the next PR of that step is recorded (`StepPullRequestPublished`) or the step is approved.
+  - A pause during the rework (including the `pr.failed` pause) is a target. A pause a person made while waiting for approval (resuming to waiting for approval; [Pausing while waiting for approval](#pausing-while-waiting-for-approval)) and a pause waiting for a human decision (`needs_decision`) are not.
+  - When a later step sends the task back to an earlier step, the approved (merge recorded) PR of the earlier step is not a target. A new rework PR is created ([Approval through PRs](#approval-through-prs)).
+  - While the task is sent back from waiting for approval of a Design PR to Requirements, the original Design PR (`Task.sentBackFrom`) is not a target ("Merges not taken as the approval" below).
+- Where it is watched
+  - At the start of the PR check (`checkPullRequests`, every 60 seconds; `checkReworkMerges`). The PR status is read (if it cannot be read, the next check tries again). If it is merged, the run is stopped and confirmed when something is running, and then the records are written, as in [Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation).
+  - The check does not stop a task that is updating or creating its PR (waiting, and waiting to create the PR of that step). `publishStepPullRequest` reads the earlier PR's status again just before updating or creating the PR, and records it. On the path that creates a new PR, it reads it again after closing the earlier PR.
+  - A merge after the rework commit was pushed to the PR and the PR update was recorded is approved by the PR check as the approval of the rework's submission ([The PR check](#the-pr-check); neither the rework stop record nor the notice is written).
+  - A PR closed without merging is not a target. A new PR is created after the rework, and the earlier PR is marked superseded (`superseded`).
+- Records: `ReworkStoppedByMerge` (actor `sacty`, with the step in `step`), `PullRequestMerged`, and `StepApproved` (actor `person`) are recorded in one append.
+  - `ReworkStoppedByMerge` has the same name as the record for the implementation rework; when it has `step`, it is projected as the record of a step rework. `discardedRemarks` are the comments of the last request for changes that were not passed to a submitted PR (`unreflectedStepRemarks`). `discardedFeedback` is not written.
+  - The approved result and test viewpoints are the version of the submission that was waiting for approval (the copy at `StepSubmitted`; `Task.stepSubmitted`). The projection discards the rework's result and returns to that version.
+  - If a person edited the PR before merging (the PR head differs from the submitted commit), the file is read from the merged commit and the person's version is approved, as in [The PR check](#the-pr-check). The comparison with sacty's version uses the version of the submission that was waiting for approval. If it cannot be fetched, nothing is recorded: the PR check tries again in the next check, and `publishStepPullRequest` pauses with `pr.failed` so that the check during the pause tries again.
+- Notice on the PR (`announceMergeApproval`): after the records, a comment with the marker `<!-- sacty-merge-approval:<task ID>:<PR number> -->` is written, only once per PR. It says that the merge was taken as the approval, that the automatic rework was not taken in, and the number of discarded suggestions (the number of `discardedRemarks`).
+  - It is not written for projects without a selected GitHub account or for security tasks.
+  - Sending is not awaited. If it cannot be written, the task is not changed (only a warning is left).
+  - Whether it is already written is checked only against comments posted by sacty's accounts that start with the marker. Importing PR comments leaves out only the posts by sacty's accounts. Narrowing down replies while watching a PR after posting leaves them out by the marker alone.
+- Merges not taken as the approval (`checkSentBackMerges`): while the task is sent back from waiting for approval of a Design PR to Requirements, a person's merge of the original Design PR is not taken as the approval. Nothing is recorded in the activity either.
+  - A comment with the marker `<!-- sacty-merge-not-approved:<task ID>:<PR number> -->` is written on the PR only once. It says that the merge was not taken as the approval of Design because Requirements was being reworked, and that the Design PR will be recreated after Requirements is approved. When and how it is written is the same as for the approval notice.
+  - It is watched at the start of the PR check, and when `publishStepPullRequest` recreates the Design PR.
+  - After Requirements is approved, a new Design PR is created ([Approval through PRs](#approval-through-prs)).
+- Activity: "PR #N was merged, so the rework of the design was stopped" (for Requirements, "the rework of the requirements").
+- Recovery at startup (`recoverInterrupted`) also pauses a step rework run with `unstoppedRuns`, so the task does not move on to approval until the stop is confirmed.
+- A task whose rework was running on an already merged PR when the daemon was switched to this version is handled the same way by the first check after the switch (the projection is rebuilt from the activity, so `reworkOf` and the rest are derived from the activity).
+- Compatibility: once a `ReworkStoppedByMerge` with `step` is recorded, an earlier version of the daemon cannot project the activity (it reads it as an implementation record and fails the integrity check) and cannot start. The activity is append-only and cannot be fixed by hand.
+
+Code: `apps/daemon/src/service.ts` (`checkReworkMerges`, `checkSentBackMerges`, `reworkTarget`, `stepPublishing`, `stopReworkForMerge`, `endReworkByMerge`, `endStepReworkInPublish`, `submittedView`, `announceMergeApproval`, `announceMergeNotApproved`, `publishStepPullRequest`, `recoverInterrupted`), `apps/daemon/src/merge-approval-notice.ts`, `apps/daemon/src/github.ts` (`isMergeApprovalNotice`, `findIssueComment`), `packages/core/src/projection.ts` (`reworkingStepPullRequest`, `unreflectedStepRemarks`, `reworkOf`, `sentBackFrom`, `stepSubmitted`, `ReworkStoppedByMerge`), `packages/core/src/events.ts` (`ReworkStoppedByMerge`)
 
 ### Comments that arrive while paused
 
@@ -265,7 +313,7 @@ A person can also pause a task that is waiting for approval (`awaiting_approval`
 - Pausing: there is no agent run, so `TaskPaused` (actor `person`, reason `manual`) is recorded on the spot. The approval gate (`gate`) and the PR records stay as they are, and `resumeTo: awaiting_approval` is kept as where to resume to.
 - While paused, the task cannot be approved or sent back (its state is `paused`). What happens to the PR depends on the kind of PR.
   - The implementation PR: it is treated like the PR while the implementation is being reworked (`reworkingPullRequest`). If it is merged, `ReworkStoppedByMerge` (`was: paused`) is recorded, followed by `PullRequestMerged` and `StepApproved`, and the merge is taken as the approval ([Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation)). No resume is needed. Comments that arrive are kept as not yet applied ([Comments that arrive while paused](#comments-that-arrive-while-paused)). The step to redo is not decided.
-  - A Requirements or Design PR: it is not watched while paused. Both merges and comments are handled by the check after the resume.
+  - A Requirements or Design PR: it is not watched while paused waiting for approval (resuming to waiting for approval). Both merges and comments are handled by the check after the resume. A pause during a rework is different: merges are watched ([Merging during a rework of a step PR](#merging-during-a-rework-of-a-step-pr)).
 - Resuming: `TaskResumed` returns the task to waiting for approval (the approval gate is still there, so the approval screen can be used as it is). No agent runs.
   What happened while it was paused is picked up by the PR check after the resume (every 60 seconds).
   - If the PR was merged, the merge is taken as the approval ([The PR check](#the-pr-check)).
