@@ -23,7 +23,10 @@
 
 - `apps/daemon/src/task-mcp.test.ts`：指定したタスクが画面と同じ要求で作ったものと等しく `noRepo` が無いこと、Org の下の URL、省いたときの `repo: null`、対象に無い値・別プロジェクトが対象にする URL・形の誤り（`task.repositoryUnknown`）・空白だけの断り、`list_projects` と説明、要約の `repo`。
 - `packages/cli/src/mcp.test.ts`：指定した `repo` が送る本文にそのまま入ること。
-- 結果は、実装の説明に書く。
+- `npx biome check --error-on-warnings .`：811 ファイル、エラーなし。
+- `npm run typecheck`：エラーなし。
+- `npx vitest run`：339 ファイルが通過。6878 件通過、14 件スキップ。
+- ビルドは、リポジトリの検証の手順に無いため実行していない。
 
 ## 残したこと
 

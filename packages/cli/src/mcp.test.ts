@@ -43,9 +43,9 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
     await expect(api.getTask("a")).rejects.toThrow("起動中の sacty が見つかりません");
     await expect(api.rereview("a")).rejects.toThrow("起動中の sacty が見つかりません");
     await expect(api.listProjects()).rejects.toThrow("起動中の sacty が見つかりません");
-    await expect(api.createTask({ projectId: "p", title: "題", body: "" })).rejects.toThrow(
-      "起動中の sacty が見つかりません",
-    );
+    await expect(
+      api.createTask({ projectId: "p", title: "題", body: "", repo: null }),
+    ).rejects.toThrow("起動中の sacty が見つかりません");
     expect(api.webUrl()).toBeUndefined();
     expect(calls).toEqual([]);
   });

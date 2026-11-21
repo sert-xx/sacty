@@ -1014,9 +1014,9 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
       const api = apiOver(service);
       const { call } = await connect(api);
       for (const repo of ["   ", ""]) {
-        expect(
-          (await call("create_task", { project_id: "default", title: "題", repo })).isError,
-        ).toBe(true);
+        const result = await call("create_task", { project_id: "default", title: "題", repo });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("repo は、省くか、リポジトリの URL を指定してください");
       }
       expect(api.calls).toEqual([]);
       expect(service.list()).toEqual([]);
