@@ -1672,6 +1672,17 @@ Resume the task as follows, depending on why it stopped.
 
 What to check for each reason is also in [Troubleshooting](troubleshooting.en.md#tasks-stop-or-do-not-progress).
 
+#### When a push fails temporarily
+
+When the `git push` that opens a PR or stacks a rework (the implementation PR, a taken-over PR, and the requirements and design PRs) is rejected by what looks like a temporary failure, sacty does not stop. It waits and retries only the push of the same commit (up to 3 times, after 15 seconds, 1 minute, and 3 minutes).
+
+- sacty treats these as temporary: `[remote rejected] ... (failed)`, a GitHub internal error, HTTP 5xx, a rate limit, and a connection failure.
+- The retries and the result (it went through or it did not) show in the task's Activity.
+- A failure that waiting does not change stops at once without a retry: a rejection by protection or a rule, a rejection because the token has no `workflow` scope, a non-fast-forward, and an authentication failure.
+- If you pause or cancel while sacty waits, it stops without pushing.
+- If the push still fails after 3 retries, the task stops. Press "Resume" and sacty redoes the push that stopped without running an agent (if a new comment has reached the PR, it reads the comment and sends the task back).
+- In the reason text of the stop, the `remote:` guidance lines (such as `Create a pull request ...` and URLs) are removed and the failure line comes first. The `remote:` lines that give the reason for a rejection stay.
+
 The paused section has links for investigating the cause.
 - "View the error report": shown only when the error report is shown on the screen. It moves you to the error report (which sits below on a narrow width).
 - "View the log of the stopped run": shown only when there is a run that caused this pause. When you paused the task yourself, or the pause was not caused by a failed run, it does not link to an earlier failed run. When it stopped because the implementation did not finish, or the rework changed nothing, it links to the implementation run that completed just before.

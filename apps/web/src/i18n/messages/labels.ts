@@ -595,6 +595,12 @@ const ja = {
       message: string,
     ) =>
       `GitHub の一時的な失敗のため、${seconds}秒後に${where === "reviewTarget" ? "レビューの対象の PR の確認" : "レビューの投稿"}を自動でやり直す（${attempt}/${maxAttempts}回目。${message}）`,
+    PushRetried: (attempt: number, maxAttempts: number, seconds: number, message: string) =>
+      `git push が一時的な失敗で拒まれたので、${seconds}秒待って push をやり直す（${attempt}/${maxAttempts}回目。${message}）`,
+    PushRetryEnded: (outcome: "pushed" | "failed", retries: number) =>
+      outcome === "pushed"
+        ? `push のやり直しが通った（やり直し ${retries}回）`
+        : `push は、${retries}回やり直しても通らなかった`,
     PullRequestReviewPosted: (url: string) => `レビューを PR に投稿した（${url}）`,
     ReviewRestarted: (actor: string) => `再レビューを始めた（${actor}）`,
     ReviewRestartedByUpdate: (commit: string) =>
@@ -1347,6 +1353,12 @@ const en: LabelMessages = {
     ReviewTargetResolved: (url, commit) => `Confirmed the PR to review (${url} · ${commit})`,
     ReviewGitHubRetried: (where, attempt, maxAttempts, seconds, message) =>
       `Because of a temporary GitHub failure, retrying ${where === "reviewTarget" ? "the check of the PR to review" : "posting the review"} automatically in ${seconds}s (retry ${attempt} of ${maxAttempts}; ${message})`,
+    PushRetried: (attempt, maxAttempts, seconds, message) =>
+      `The git push was rejected by a temporary failure, so pushing again after ${seconds}s (retry ${attempt} of ${maxAttempts}; ${message})`,
+    PushRetryEnded: (outcome, retries) =>
+      outcome === "pushed"
+        ? `The push went through after retrying (${retries} ${retries === 1 ? "retry" : "retries"})`
+        : `The push still failed after ${retries} ${retries === 1 ? "retry" : "retries"}`,
     PullRequestReviewPosted: (url) => `Posted the review to the PR (${url})`,
     ReviewRestarted: (actor) => `Started a re-review (${actor})`,
     ReviewRestartedByUpdate: (commit) =>

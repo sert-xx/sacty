@@ -3316,6 +3316,11 @@ export function applyEvent(
       // 記録だけ（GitHub の一時的な失敗で、間を置いてやり直した。PBI-301）
       break;
 
+    case "PushRetried":
+    case "PushRetryEnded":
+      // 記録だけ（PR の push を、一時的な失敗で、間を置いてやり直した・やり直しが終わった。PBI-467）
+      break;
+
     case "PullRequestReviewPosted": {
       // 書いたレビューを投稿すると、レビューの工程（人間の承認は無い）が終わる。見守る版の投稿（watch）は、判定が指摘なしで
       // なければ、完了にせずに PR の変化を見守る（reviewWatching。PBI-411）。指摘なしなら完了し、見守らない（完了の後は、人が

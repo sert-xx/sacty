@@ -481,6 +481,43 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     });
   });
 
+  it("PR の push のやり直し（何回目か・上限・待った秒数・失敗の文）と、その結果（通った・通らなかった）を、日英で出す（PBI-467）", () => {
+    const retried = event({
+      type: "PushRetried",
+      payload: {
+        branch: "sacty/x",
+        commit: "c".repeat(40),
+        attempt: 2,
+        maxAttempts: 3,
+        waitMs: 60_000,
+        message: "! [remote rejected] c -> sacty/x (failed)",
+      },
+    });
+    expect(describeEventParts(retried, ja).text).toBe(
+      "git push が一時的な失敗で拒まれたので、60秒待って push をやり直す（2/3回目。! [remote rejected] c -> sacty/x (failed)）",
+    );
+    expect(describeEventParts(retried, labels.en).text).toBe(
+      "The git push was rejected by a temporary failure, so pushing again after 60s (retry 2 of 3; ! [remote rejected] c -> sacty/x (failed))",
+    );
+    const ended = (outcome: "pushed" | "failed", retries: number) =>
+      event({
+        type: "PushRetryEnded",
+        payload: { branch: "sacty/x", commit: "c".repeat(40), outcome, retries },
+      });
+    expect(describeEventParts(ended("pushed", 2), ja).text).toBe(
+      "push のやり直しが通った（やり直し 2回）",
+    );
+    expect(describeEventParts(ended("failed", 3), ja).text).toBe(
+      "push は、3回やり直しても通らなかった",
+    );
+    expect(describeEventParts(ended("pushed", 2), labels.en).text).toBe(
+      "The push went through after retrying (2 retries)",
+    );
+    expect(describeEventParts(ended("failed", 3), labels.en).text).toBe(
+      "The push still failed after 3 retries",
+    );
+  });
+
   it("再開で足した補足は、再開の行に「補足あり」を付け、本文を詳細に出す（日英）", () => {
     const resumed = event({
       type: "TaskResumed",
