@@ -606,6 +606,7 @@ describe("リスク評価のリンクと過去の記録", () => {
       `/blob/${commit}/src/cancel.ts#L10)`,
     );
     expect(render("src/cancel.ts:10-10")).toContain("#L10-L10)");
+    expect(render("src/😀.ts:1")).toContain("/src/%F0%9F%98%80.ts#L1)");
   });
 
   it.each([
@@ -624,6 +625,8 @@ describe("リスク評価のリンクと過去の記録", () => {
     "a.ts:01",
     "a.ts:9007199254740992",
     "仕様・設定・手順を確認する",
+    "src/\uD800.ts:1",
+    "src/\uDC00.ts:1",
   ])("リンクにできない %s はテキストのまま", (where) => {
     const markdown = render(where);
     expect(markdown).not.toContain("/blob/");
@@ -948,20 +951,52 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
   });
 
   it("レビュー本文の長さ制限でも独立した評価枠を残し、最新の先頭へリンクを動かさない", () => {
+    const risk = assessed(
+      {
+        ...medium,
+        focus: Array.from({ length: RISK_FOCUS_MAX }, (_, i) => ({
+          where: `src/${"字".repeat(180)}${i}.ts:10-40`,
+          why: "理由".repeat(200),
+        })),
+      },
+      "review",
+      target.headCommit,
+    );
     const body = buildReviewBody(
       reviewTask({
         ...clear,
-        outputs: { review: "長い総評".repeat(30_000) },
-        riskAssessment: assessed(medium, "review", target.headCommit),
+        outputs: { review: "総評。😀".repeat(30_000) },
+        riskAssessment: risk,
       }),
       { risk: true, latestCommit: "b".repeat(40) },
     );
+    expect(body.length).toBeLessThanOrEqual(60_000);
+    expect(body.isWellFormed()).toBe(true);
+    expect(body).toContain("総評。😀");
     expect(body).toContain("長いため省略しました");
-    expect(body).toContain(
-      riskAssessmentLines(assessed(medium, "review", target.headCommit), target.repo).join("\n"),
-    );
+    expect(body).toContain("AI がレビューしました");
+    expect(body).toContain(riskAssessmentLines(risk, target.repo).join("\n"));
     expect(body).toContain(`/blob/${target.headCommit}/`);
     expect(body).not.toContain(`/blob/${"b".repeat(40)}/`);
+  });
+
+  it("古い評価の詳細だけで上限を超えるときは、評価の節と詳細の参照先を残す", () => {
+    const body = reviewBody(
+      reviewTask({
+        ...clear,
+        riskAssessment: assessed(
+          { ...medium, change: "変更".repeat(32_000) },
+          "review",
+          target.headCommit,
+        ),
+      }),
+    );
+    expect(body.length).toBeLessThanOrEqual(60_000);
+    expect(body).toContain(
+      "### リスク評価\n\n評価の詳細は長いため省略しました。sacty のタスクの画面で確かめてください。",
+    );
+    expect(body).toContain("総評");
+    expect(body).toContain("AI がレビューしました");
   });
 
   it("評価できなかったときも、指摘なしの回なら、そのことを載せて投稿する", () => {

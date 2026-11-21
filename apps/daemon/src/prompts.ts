@@ -9379,10 +9379,6 @@ export function buildReviewBody(
       ? ["", "### 行についての指摘", "", ...commentLines(task.reviewComments)].join("\n")
       : "";
   const review = `${task.outputs.review ?? ""}${folded}`;
-  const body =
-    review.length > REVIEW_BODY_MAX
-      ? `${review.slice(0, REVIEW_BODY_MAX)}\n\n…（長いため省略しました）`
-      : review;
   const round = task.reviewRound ?? 1;
   const judged = task.reviewVerdicts?.find((v) => v.round === round);
   const verdict = judged?.verdict;
@@ -9406,7 +9402,7 @@ export function buildReviewBody(
           "",
         ]
       : [];
-  return [
+  const header = [
     reviewMarker(task),
     "## sacty のレビュー",
     "",
@@ -9420,14 +9416,30 @@ export function buildReviewBody(
     ].join(" "),
     "",
     ...stale,
-    // PR から取り込んだレビューのタスクは、PR のリスク評価を、レビューの本文の前に載せる（PBI-362）
-    ...(risk.length > 0 ? [...risk, ""] : []),
-    body,
+    "",
+  ].join("\n");
+  const footer = [
+    "",
     "",
     "---",
     `sacty のタスク ${task.id} で、AI がレビューしました（人間は確認していません）。`,
     ...reviewDispatchLines(task, round),
   ].join("\n");
+  // 評価や末尾の案内の分を先に確保して、投稿する本文全体を上限に収める。
+  const available = REVIEW_BODY_MAX - header.length - footer.length;
+  const truncated = "\n\n…（長いため省略しました）";
+  const riskText = risk.length > 0 ? `${risk.join("\n")}\n\n` : "";
+  // 古い記録などで評価だけでも上限を超えるときは、枠の途中で切らずに詳細の参照先を案内する。
+  const assessment =
+    riskText.length > available - truncated.length
+      ? `${risk[0]}\n\n評価の詳細は長いため省略しました。sacty のタスクの画面で確かめてください。\n\n`
+      : riskText;
+  const reviewMax = available - assessment.length;
+  const body =
+    review.length > reviewMax
+      ? `${headOf(review, reviewMax - truncated.length)}${truncated}`
+      : review;
+  return `${header}${assessment}${body}${footer}`;
 }
 
 /** エージェントの種類の、製品の名前。 */

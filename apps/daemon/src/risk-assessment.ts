@@ -527,7 +527,8 @@ function focusLocation(
     !Number.isSafeInteger(start) ||
     !Number.isSafeInteger(end) ||
     end < start ||
-    /[\\:\u2028\u2029]/.test(path) ||
+    // u を付けると、サロゲートの範囲は対になっていないものだけに当たる。
+    /[\\:\u2028\u2029\uD800-\uDFFF]/u.test(path) ||
     [...path].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
     path.startsWith("/") ||
     path.split("/").some((part) => !part || part === "." || part === "..")
