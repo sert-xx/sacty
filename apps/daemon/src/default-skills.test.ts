@@ -1461,10 +1461,24 @@ describe("既定の review スキルの、PR のレビューの範囲と観点�
     expect(read("skills/review/review-dispatch/references/self-review.md")).toContain(
       "親がその観点を代わりに見る",
     );
-    // 手順 7 は変えない
-    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+    // 手順 7：届いていない結果を自分で書かない決まりは残し、例外は結果が揃った後に限る
+    const skill = read("skills/review/review-dispatch/SKILL.md");
+    expect(skill).toContain(
       "届いていない担当の結果を、自分で書かない。起動し直しても失敗した観点だけは、結果が揃った後に",
     );
+    expect(skill).toContain("例外は2つ。");
+    expect(skill).toContain(
+      "結果が揃った後に、起動し直しても失敗した観点だけを親が代わりに見るとき",
+    );
+    // 本文の「レビューの範囲」の数に含め、代わりに見たことは書かない
+    expect(prReview()).toContain(
+      "親が代わりに見た観点は、担当に分けて見た観点の数に含め、代わりに見たことは書かない",
+    );
+    // 依頼文の書き方と、範囲を分けた起動し直しの一部が失敗したとき
+    expect(agg).toContain("「あなたはレビューの観点担当です」の1文と「禁止」の行を含める");
+    expect(agg).toContain("失敗した範囲だけを見る");
+    // 番号付きリストの 4（checked の確認）は、新しい節より前にある
+    expect(agg.indexOf("4. `checked` を見て")).toBeLessThan(agg.indexOf("## 親が代わりに見る"));
     // 汎用の書き方
     expect(agg).not.toMatch(/sacty|Node\.js|npm |vitest|TypeScript/);
   });

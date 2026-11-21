@@ -16,3 +16,9 @@
 - 仕様書・ユーザー文書（日英）・ADR を足した。
 - 代わりに見たことは本文に書かず、集約の記録の `substituted_by_parent`・`failure_reason` に残す。デーモンの記録の型は変えていない。
 - テストを足した。
+
+## 確かめたこと
+
+- `npx biome check --error-on-warnings .`：通過。
+- `npx vitest run apps/daemon/src/default-skills.test.ts apps/daemon/src/prompts.test.ts apps/daemon/src/review-verdict-missing.test.ts tests/docs`：499 件が成功。
+- 全件の vitest・typecheck・build は、この環境で関係の無い失敗があるため、変更に関係するファイルだけを実行した。
