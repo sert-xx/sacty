@@ -48,6 +48,7 @@
 - イベント `ReviewRunStopped`
   - 欄：`reason`（`head_changed`・`merged`・`closed`）・`from`（レビューしていた先頭）・`to`（新しい先頭。`head_changed` だけ）・`runIds`・費用（`costUsd`・`estimated`・`usage`・費用不明の印）。
   - 記録できるのは、投稿していないレビューのタスク（実行中・対象の確認中・投稿待ち）だけ。ほかの状態（一時停止・完了など）なら `ActivityIntegrityError`。
+  - 始め直しの待ちの間（`reviewStop` があり `queued`）は止める実行が無いので、マージ・クローズでも記録しない。
   - 費用は、`AgentRunCompleted` を記録していない実行の分だけ持つ。投稿の直前の打ち切りは、費用を `AgentRunCompleted` で数え済みなので持たない（二重に数えない）。
 - 投影
   - `head_changed` で消すもの：`reviewTarget`・`reviewResolvedAt`・今の回の `outputs.review`・`reviewComments`と、`round` を持つ回ごとの記録（`reviewVerdicts`・`reviewRecords`・`reviewDispatch` など）の今の回の要素。タスクは `queued` に戻す。
@@ -83,7 +84,9 @@
    - 手順 1 で読んだ先頭が待ちの先頭と違えば、待ちの先頭と起点をそれに替える。止める実行は無く、`ReviewRunStopped` は記録し直さない。
    - 起動の後は、最初に読んだ先頭とその時刻から待ち直す。
    - 落ち着いたら、その先頭で対象を確かめ直して、1回だけ走る。
-4. マージ・クローズ：`cancel(pull_request_merged|pull_request_closed)` が実行を止める前に、同じ印を立てる。`ReviewRunStopped(merged|closed)` と `TaskCancelled` を残す。
+4. マージ・クローズ
+   - 実行中・対象の確認中・投稿待ち：`cancel(pull_request_merged|pull_request_closed)` が実行を止める前に、同じ印を立てる。`ReviewRunStopped(merged|closed)` と `TaskCancelled` を残す。
+   - 始め直しの待ちの間：止める実行が無いので、`ReviewRunStopped` は記録せず、`TaskCancelled` だけを残す。待ちの印（メモリー）も消す。
 5. 届かなかった回
    - `rereviewLines` は、`delivered: false` の回を、同じ原因の回数に数えさせない。`countSuggestionRounds` も、その回を飛ばす。
    - その回の指摘（提案を含む）は、再レビューの範囲の絞り（PBI-432）にかかわらず範囲の中に入れ、今回の先頭で確かめさせる。当てはまるものは、今回の指摘として出させる（「未対応の指摘は繰り返さない」を当てない）。
@@ -140,9 +143,9 @@
 - [TV-8] 投稿していないレビューのタスクのほかでは ReviewRunStopped を投影できない
   - 入力：一時停止中（paused）のレビューのタスクに ReviewRunStopped（head_changed）を投影する
   - 期待結果：ActivityIntegrityError が投げられる
-- [TV-9] 再レビューの実行中のマージ・クローズは失敗に見えない形で中止する
-  - 入力：2回目のレビューの実行中に PR がマージされる（別の場合としてクローズされる）
-  - 期待結果：ReviewRunStopped（reason merged、クローズなら closed）と TaskCancelled（pull_request_merged、クローズなら pull_request_closed）が残り、AgentRunFailed と TaskPaused は記録されない
+- [TV-9] 再レビューの実行中と始め直しの待ちの間のマージ・クローズは、失敗に見えない形で中止する
+  - 入力：2回目のレビューの実行中に PR がマージされる（別の場合としてクローズされる）場合と、ReviewRunStopped（head_changed）の後の始め直しの待ちの間に PR がマージされる（別の場合としてクローズされる）場合
+  - 期待結果：実行中の場合は ReviewRunStopped（reason merged、クローズなら closed）と TaskCancelled（pull_request_merged、クローズなら pull_request_closed）が残り、待ちの間の場合は新しい ReviewRunStopped が記録されずに TaskCancelled（pull_request_merged、クローズなら pull_request_closed）だけが残り、ActivityIntegrityError は起きず、どちらでも AgentRunFailed と TaskPaused は記録されない
 - [TV-10] 止めたコンテナを確かめられなければ一時停止にする
   - 入力：head_changed の打ち切りで ensureStopped が false を返す
   - 期待結果：ReviewRunStopped は記録されず、unstoppedRuns を付けた TaskPaused が記録され、始め直しは起きない
@@ -175,7 +178,7 @@
   - 期待結果：打ち切り・始め直しの待ち・回ごとの記録の消去・費用の数え方・マージの記録・届かなかった回の判定と扱いを確かめるテストが落ちる
 - [TV-20] 仕様書（日英）に打ち切りと回の数え方が書かれている
   - 入力：docs/spec の tasks-and-steps・approval・event-log の日英の差分
-  - 期待結果：レビュー（1回目を含む、フォークを除く）の実行中・投稿の直前の先頭の変化での打ち切り、FEEDBACK_QUIET_MS 待ってからの1回の始め直しと待ちの間に先頭が変わったときの待ちの起点の替え方、ReviewRunStopped の欄・記録できる状態・費用（AgentRunCompleted で数え済みの分は持たない）、head_changed で回ごとの記録のすべて（reviewRecords を含む）から今の回の要素を消すこと、マージ・クローズの記録、届かなかった回の判定（親が捨てた・親が未取り込みで先頭が違う・親のいないタスクの latestCommit、再依頼のタスクは判定しない）とその回を数えないこと、その回の指摘を次の回が指示に従わないデータとして受け取り確かめることが、日英で同じ内容で書かれている
+  - 期待結果：レビュー（1回目を含む、フォークを除く）の実行中・投稿の直前の先頭の変化での打ち切り、FEEDBACK_QUIET_MS 待ってからの1回の始め直しと待ちの間に先頭が変わったときの待ちの起点の替え方、ReviewRunStopped の欄・記録できる状態・費用（AgentRunCompleted で数え済みの分は持たない）、head_changed で回ごとの記録のすべて（reviewRecords を含む）から今の回の要素を消すこと、マージ・クローズの記録（実行中は ReviewRunStopped と TaskCancelled、始め直しの待ちの間は TaskCancelled だけ）、届かなかった回の判定（親が捨てた・親が未取り込みで先頭が違う・親のいないタスクの latestCommit、再依頼のタスクは判定しない）とその回を数えないこと、その回の指摘を次の回が指示に従わないデータとして受け取り確かめることが、日英で同じ内容で書かれている
 - [TV-21] ユーザー文書（日英）が今の振る舞いを書いている
   - 入力：docs/user/intake.md と docs/user/intake.en.md の差分
   - 期待結果：古い先頭宛てのレビューの説明が「捨てる」だけでなく、次の回のレビューが新しい先頭で確かめ直すことと、レビューの途中で PR が更新されると打ち切って落ち着いてから始め直すことと、ReviewRunStopped を記録した後は前の版のデーモンが作業履歴を読めず起動できないこと・戻せるのは最初の記録の前までで、記録した後に戻す手順は無いことを、経緯の言い回しなしに書いている
