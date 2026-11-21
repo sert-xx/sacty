@@ -71,7 +71,7 @@ describe("ReviewWatchNotice", () => {
   });
 
   it("見守りを終えて完了したタスクには、終えた理由（マージ・クローズ）を出す", () => {
-    const ended = (reason: "merged" | "closed") =>
+    const ended = (reason: "merged" | "closed" | "parent_completed") =>
       render({
         reviewVerdicts: [{ round: 1, verdict: "suggestions" }],
         reviewWatchEnded: { reason },
@@ -79,6 +79,9 @@ describe("ReviewWatchNotice", () => {
     expect(ended("merged")).toContain('data-state="merged"');
     expect(ended("merged")).toContain("PR がマージされたので、完了にしました。");
     expect(ended("closed")).toContain("PR がマージされずに閉じられたので、完了にしました。");
+    expect(ended("parent_completed")).toContain(
+      "PR を作ったタスクが完了したので、完了にしました。",
+    );
   });
 
   it("指摘なしで完了したタスク・更新の前の版が投稿して完了したタスク・一時停止中・中止したタスクには、何も出さない", () => {

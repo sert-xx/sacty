@@ -228,7 +228,7 @@ sacty handles changes of the PR as follows.
 
 To stop the watch, pause or cancel the task in the task details.
 
-- While paused, no re-review starts when the PR changes, and the task is not marked done when the PR is merged or closed.
+- While paused, no re-review starts when the PR changes, and the task is not marked done when the PR is merged or closed (the review child task of a PR that sacty opened is the exception: even while paused, it is marked done when the PR is merged or closed, or when the original task is done).
   On resume it goes back to watching and picks up the changes that happened while it was paused.
 - A cancelled task can no longer be re-reviewed.
 
@@ -393,8 +393,9 @@ The child task is cancelled in these cases.
 
 - You merge or close the PR before the child task posts its review (also during a re-review run)
 - You cancel the original task
+- The original task is done (only a child task that has not posted yet)
 
-If you merge or close the PR after the review is posted, the child task is done instead of cancelled.
+If you merge or close the PR after the review is posted, the child task is done instead of cancelled. This also applies while it is paused.
 
 If you reopen the PR of a child task that was cancelled by the close, sacty creates a new child task and reviews it again (a child task you cancelled is not recreated).
 

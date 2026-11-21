@@ -177,8 +177,8 @@ const ja = {
     reviewWatching: (verdict: "changes_required" | "suggestions" | "unreadable" | "absent") =>
       `PR の対応待ち（${{ changes_required: "修正が必要", suggestions: "提案あり", unreadable: "判定を読めない", absent: "判定が付いていない" }[verdict]}）`,
     /** 指摘なしにならないまま、PR の見守りを終えて完了した（PBI-411）。 */
-    reviewWatchEnded: (reason: "merged" | "closed") =>
-      `完了（${reason === "merged" ? "PR がマージされた" : "PR が閉じられた"}）`,
+    reviewWatchEnded: (reason: "merged" | "closed" | "parent_completed") =>
+      `完了（${reason === "merged" ? "PR がマージされた" : reason === "closed" ? "PR が閉じられた" : "PR を作ったタスクが完了した"}）`,
     testsRunning: "テストを実行中",
     waitingPullRequestCi: "PR の CI を待っている",
     watchingCi: "マージの後の監視・CI/CD 待ち",
@@ -606,15 +606,21 @@ const ja = {
       `見守っていた PR の先頭が変わったので、最新のコミットの再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
     ReviewRestartedByReply: (commit: string) =>
       `見守っていた PR に作者が返信したので、同じコミットを判定し直す再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
-    ReviewWatchEnded: (reason: "merged" | "closed"): string =>
+    ReviewWatchEnded: (reason: "merged" | "closed" | "parent_completed"): string =>
       reason === "merged"
         ? "PR がマージされたので、PR の見守りを終えた"
-        : "PR がマージされずに閉じられたので、PR の見守りを終えた",
+        : reason === "closed"
+          ? "PR がマージされずに閉じられたので、PR の見守りを終えた"
+          : "PR を作ったタスクが完了したので、PR の見守りを終えた",
     cancelledBecause: (
       text: string,
-      reason: "pull_request_merged" | "pull_request_closed" | "parent_cancelled",
+      reason:
+        | "pull_request_merged"
+        | "pull_request_closed"
+        | "parent_cancelled"
+        | "parent_completed",
     ) =>
-      `${text}（${reason === "pull_request_merged" ? "PR がマージされたため" : reason === "pull_request_closed" ? "PR が閉じられたため" : "レビューする PR の元のタスクが中止されたため"}）`,
+      `${text}（${reason === "pull_request_merged" ? "PR がマージされたため" : reason === "pull_request_closed" ? "PR が閉じられたため" : reason === "parent_completed" ? "PR を作ったタスクが完了したため" : "レビューする PR の元のタスクが中止されたため"}）`,
     GuardianMissed: "合格の見逃し：合格にした成果物が差し戻された",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
     OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,
@@ -1032,7 +1038,8 @@ const en: LabelMessages = {
     completedNoChanges: "Done (no changes)",
     reviewWatching: (verdict) =>
       `Waiting on the PR (${{ changes_required: "changes required", suggestions: "suggestions", unreadable: "verdict unreadable", absent: "no verdict given" }[verdict]})`,
-    reviewWatchEnded: (reason) => `Done (${reason === "merged" ? "PR merged" : "PR closed"})`,
+    reviewWatchEnded: (reason) =>
+      `Done (${reason === "merged" ? "PR merged" : reason === "closed" ? "PR closed" : "parent task done"})`,
     testsRunning: "Running tests",
     waitingPullRequestCi: "Waiting for the PR's CI",
     watchingCi: "After-merge watch · waiting for CI/CD",
@@ -1352,9 +1359,11 @@ const en: LabelMessages = {
     ReviewWatchEnded: (reason) =>
       reason === "merged"
         ? "The PR was merged, so stopped watching the PR"
-        : "The PR was closed without merging, so stopped watching the PR",
+        : reason === "closed"
+          ? "The PR was closed without merging, so stopped watching the PR"
+          : "The parent task was completed, so stopped watching the PR",
     cancelledBecause: (text, reason) =>
-      `${text} (${reason === "pull_request_merged" ? "the PR was merged" : reason === "pull_request_closed" ? "the PR was closed" : "the task whose PR it reviews was cancelled"})`,
+      `${text} (${reason === "pull_request_merged" ? "the PR was merged" : reason === "pull_request_closed" ? "the PR was closed" : reason === "parent_completed" ? "the task whose PR it reviews was completed" : "the task whose PR it reviews was cancelled"})`,
     IssueCommentFailed: (message) =>
       `Could not post the investigation result to the issue: ${message}`,
     GitHubCommentsPosted: (step, results) =>

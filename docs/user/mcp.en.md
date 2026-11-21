@@ -143,7 +143,7 @@ The status of a deliverable is as follows.
 Deliverables from before a rework (earlier rounds) and the agent's original files cannot be read (look at them in the web UI).
 
 Only a task that has posted its review to the PR (done, or watching the PR for changes) can be re-reviewed (`canRereview` in the result of `list_tasks` is `true`).
-A PR review task is not done until the verdict becomes "no findings"; meanwhile `state` is `idle` and `review.watching` is `true` ([After the review is posted](intake.en.md#after-the-review-is-posted)).
+A PR review task is not done until the verdict becomes "no findings" or the watch ends (the PR is merged or closed, or the parent task is done); meanwhile `state` is `idle` and `review.watching` is `true` ([After the review is posted](intake.en.md#after-the-review-is-posted)).
 If you ask for a task under review or a task that is not a PR review, it returns the reason and changes nothing.
 
 ## Find the tasks waiting for a person
