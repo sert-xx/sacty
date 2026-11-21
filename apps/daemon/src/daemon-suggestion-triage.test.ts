@@ -117,7 +117,12 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
 
   function make(
     outcomes: AgentOutcome[],
-    shared: { pulls?: FakePulls; repos?: FakeRepos; projects?: MemoryProjectStore } = {},
+    shared: {
+      pulls?: FakePulls;
+      repos?: FakeRepos;
+      projects?: MemoryProjectStore;
+      risk?: boolean;
+    } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = shared.pulls ?? new FakePulls();
@@ -128,6 +133,7 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
       ci: CI,
       draftPullRequests: true,
       reviewTasks: true,
+      ...(shared.risk ? { riskAssessment: true } : {}),
       now: later,
       pulls,
       repos,
@@ -151,9 +157,11 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     verdict: string,
     reviewBody: string,
     after: AgentOutcome[],
-    options: { importNow?: boolean } = {},
+    options: { importNow?: boolean; risk?: boolean } = {},
   ) {
-    const made = make([implement(), verdictOut(verdict, reviewBody), ...after]);
+    const made = make([implement(), verdictOut(verdict, reviewBody), ...after], {
+      ...(options.risk ? { risk: true } : {}),
+    });
     const created = made.service.createTask({
       projectId: "default",
       title: "決済API",
@@ -387,8 +395,9 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     after: AgentOutcome[],
     reviewBody = body(finding("提案", "名前の付け方")),
     answer = triage(["S1", "decline", "好みの範囲"]),
+    options: { risk?: boolean } = {},
   ) {
-    const made = await reviewed("suggestions", reviewBody, [answer, ...after]);
+    const made = await reviewed("suggestions", reviewBody, [answer, ...after], options);
     await made.service.runNext(made.id);
     expect(replies(made.pulls)).toHaveLength(1);
     return made;
@@ -593,11 +602,17 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
   });
 
   /** 判定し直しの回が提案を残し、それもすべて対応しないとして、返信の直前まで進める。 */
-  async function leftSuggestions() {
-    const made = await declinedAll([
-      verdictOut("suggestions", body(finding("提案", "別の提案"))),
-      triage(["S1", "decline", "同じ原因の別の現れ"]),
-    ]);
+  async function leftSuggestions(riskRuns?: AgentOutcome[]) {
+    const made = await declinedAll(
+      [
+        verdictOut("suggestions", body(finding("提案", "別の提案"))),
+        triage(["S1", "decline", "同じ原因の別の現れ"]),
+        ...(riskRuns ?? []),
+      ],
+      undefined,
+      undefined,
+      riskRuns ? { risk: true } : {},
+    );
     const { service, pulls, childId } = made;
     await service.checkPullRequests();
     await service.checkPullRequests();
@@ -732,6 +747,137 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     expect(restarts(third.service, childId)).toHaveLength(1);
     expect(taskOf(third.service, id).status).toBe("awaiting_approval");
     third.activity.close();
+  });
+
+  const riskAnswer = (level: "low" | "medium" | "high" = "medium") =>
+    out(
+      block({
+        "sacty-risk-assessment": {
+          level,
+          signals: [],
+          change: "決済の再送の扱いを直す",
+          scope: "決済の API",
+          reversibility: "元に戻せば戻る",
+          verification: "差分のテストを読んだ",
+          focus: [],
+        },
+      }),
+    );
+  const riskEvents = (svc: TaskService, id: string) =>
+    (svc.get(id)?.activity ?? []).flatMap((e) => (e.type === "PullRequestRiskAssessed" ? [e] : []));
+  const riskComments = (pulls: FakePulls) =>
+    pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-risk-declined:"));
+
+  it("提案が残ったままドラフトを外す前に、評価だけを 1 回実行し、結果を PR にコメントして、評価の記録つきでドラフトを外す（再レビューはしない）", async () => {
+    const made = await leftSuggestions([riskAnswer("high")]);
+    const { activity, service, pulls, executor, id, childId } = made;
+    // 返信が済むまでは、評価もドラフトを外すのもしない
+    await service.checkPullRequests();
+    expect(riskEvents(service, id)).toHaveLength(0);
+    expect(pulls.drafts[7]).toBe(true);
+    await service.runNext(id);
+    const before = executor.calls.length;
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    // 評価だけの実行が 1 回：残った提案と、対応しない理由を渡し、観点の担当・検証は起動しない
+    expect(executor.calls.length).toBe(before + 1);
+    const prompt = promptOf(executor, before);
+    expect(prompt).toContain("残った提案と、対応しないとした理由");
+    expect(prompt).toContain("同じ原因の別の現れ");
+    const events = riskEvents(service, id);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toMatchObject({
+      via: "suggestions_declined",
+      commit: commitOf(service, id),
+      assessment: { level: "high" },
+    });
+    expect(taskOf(service, id).riskAssessment?.via).toBe("suggestions_declined");
+    expect(riskComments(pulls)).toHaveLength(1);
+    expect(riskComments(pulls)[0]?.body).toContain("リスク評価");
+    expect(riskComments(pulls)[0]?.body).toContain("要対応");
+    expect(pulls.drafts[7]).toBe(false);
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(1);
+    // 判定は「提案あり」のまま。子タスクは再レビューされず、評価の記録も持たない
+    expect(taskOf(service, childId).reviewVerdicts?.at(-1)?.verdict).toBe("suggestions");
+    expect(taskOf(service, childId).riskAssessment).toBeUndefined();
+    // 繰り返さない
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    expect(executor.calls.length).toBe(before + 1);
+    expect(riskEvents(service, id)).toHaveLength(1);
+    expect(riskComments(pulls)).toHaveLength(1);
+    activity.close();
+  });
+
+  it("評価が失敗しても、評価できなかった理由を記録し、コメントを 1 通だけ書いて、ドラフトを外す", async () => {
+    const made = await leftSuggestions([{ kind: "failed", reason: "error", message: "時間切れ" }]);
+    const { activity, service, pulls, id } = made;
+    await service.runNext(id);
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    const events = riskEvents(service, id);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload.assessment).toBeUndefined();
+    expect(events[0]?.payload.reason).toBeDefined();
+    expect(riskComments(pulls)).toHaveLength(1);
+    expect(riskComments(pulls)[0]?.body).toContain("評価できませんでした");
+    expect(pulls.drafts[7]).toBe(false);
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(1);
+    expect(taskOf(service, id).status).toBe("awaiting_approval");
+    activity.close();
+  });
+
+  it("評価の後・ドラフトを外す前にデーモンが止まっても、起動し直した後に評価もコメントも重ねず、ドラフトを外す", async () => {
+    const made = await leftSuggestions([riskAnswer()]);
+    const { pulls, repos, projects, id } = made;
+    await made.service.runNext(id);
+    // ドラフトを外せない間に評価とコメントが済む
+    pulls.setDraftFail = "GitHub が答えない";
+    await made.service.checkPullRequests();
+    expect(riskEvents(made.service, id)).toHaveLength(1);
+    expect(riskComments(pulls)).toHaveLength(1);
+    expect(count(made.service, id, "PullRequestMarkedReady")).toBe(0);
+    made.activity.close();
+    delete pulls.setDraftFail;
+    const again = make([], { pulls, repos, projects, risk: true });
+    await again.service.checkPullRequests();
+    await again.service.checkPullRequests();
+    expect(again.executor.calls.length).toBe(0);
+    expect(riskEvents(again.service, id)).toHaveLength(1);
+    expect(riskComments(pulls)).toHaveLength(1);
+    expect(count(again.service, id, "PullRequestMarkedReady")).toBe(1);
+    expect(pulls.drafts[7]).toBe(false);
+    again.activity.close();
+  });
+
+  it("以前の版が提案が残った旨で一時停止させたタスクを再開しても、評価してからドラフトを外す", async () => {
+    const made = await leftSuggestions([riskAnswer()]);
+    const { activity, service, pulls, id } = made;
+    await service.runNext(id);
+    await service.pause(id);
+    service.resume(id, {});
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    expect(riskEvents(service, id)).toHaveLength(1);
+    expect(riskComments(pulls)).toHaveLength(1);
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(1);
+    expect(pulls.drafts[7]).toBe(false);
+    activity.close();
+  });
+
+  it("評価の対象でない回（リスク評価を有効にしていないデーモン）は、評価せず・コメントせずに、ドラフトを外す", async () => {
+    const made = await leftSuggestions();
+    const { activity, service, pulls, executor, id } = made;
+    await service.runNext(id);
+    const before = executor.calls.length;
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    expect(executor.calls.length).toBe(before);
+    expect(riskEvents(service, id)).toHaveLength(0);
+    expect(riskComments(pulls)).toHaveLength(0);
+    expect(pulls.drafts[7]).toBe(false);
+    activity.close();
   });
 
   it("デーモンを起動し直しても、選り分けの実行・返信・判定し直しは、重ならず・抜けずに続く", async () => {

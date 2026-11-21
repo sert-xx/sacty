@@ -146,7 +146,7 @@ const ja = {
     open: "レビューを開く",
     suggestionsLeft: "提案が残っていますが、AI が対応しないと判断し、ドラフトを外しています。",
     suggestionsLeftHint:
-      "理由は PR への返信と作業履歴にあります。指摘なしの回が無いので、この先頭にリスク評価はありません。直させたいときは、PR に要対応とコメントしてください。",
+      "理由は PR への返信と作業履歴にあります。再レビューはしていません。リスク評価だけを 1 回実行しています（「PR のリスク評価」の欄）。直させたいときは、PR に要対応とコメントしてください。",
   },
   gate: {
     undecidable: "変更の申し出の判断待ち",
@@ -811,7 +811,7 @@ const en: TaskMessages = {
     suggestionsLeft:
       "Suggestions remain, but the AI judged none needed handling, so the draft was removed.",
     suggestionsLeftHint:
-      "The reasons are in the reply on the PR and the activity log. There was no round without findings, so this head has no risk assessment. To have them fixed, comment on the PR that they need action.",
+      "The reasons are in the PR reply and the activity log. The PR was not reviewed again; only the risk assessment was run once (see the PR risk assessment section). To have them fixed, comment on the PR that they need action.",
   },
   gate: {
     undecidable: "Change request needs your decision",

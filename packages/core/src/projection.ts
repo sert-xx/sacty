@@ -864,7 +864,7 @@ export type Task = {
    * PR の説明（via が publish）と、投稿するレビューのコメント（via が review）に載せる。
    */
   riskAssessment?: {
-    via: "publish" | "review";
+    via: "publish" | "review" | "suggestions_declined";
     commit?: string;
     /** 評価したときの PR の差分の起点（PBI-421）。 */
     base?: string;
@@ -979,7 +979,7 @@ export type Task = {
    */
   pullRequest?: PayloadOf<"PullRequestPublished"> & {
     reviewedCommit?: string;
-    /** reviewedCommit の先頭は、判定が「提案あり」のまま、提案をすべて対応しないとしてドラフトを外した。リスク評価は無い（PBI-440）。 */
+    /** reviewedCommit の先頭は、判定が「提案あり」のまま、提案をすべて対応しないとしてドラフトを外した。再レビューはせず、リスク評価だけを 1 回行った（PBI-440）。 */
     suggestionsLeft?: true;
   };
   /** 実装の承認待ちの間に見守っている、実装の PR の状態（PBI-14a・PBI-110）。PR を作っていなければ無い。 */

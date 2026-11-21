@@ -476,7 +476,13 @@ import {
   stopMarkerOfTask,
   stopSummary,
 } from "./review-stop-notice.js";
-import { assessesRiskInReview } from "./risk-assessment.js";
+import {
+  assessesRiskInReview,
+  assessPullRequestRisk,
+  buildDeclinedRiskComment,
+  buildRiskAssessmentPrompt,
+  declinedRiskMarker,
+} from "./risk-assessment.js";
 import { agentTimeoutMs } from "./run-timeouts.js";
 import {
   contextSecretUses,
@@ -14409,6 +14415,9 @@ export class TaskService {
       else if (awaiting && this.triageStopDue(parent)) {
         // 判定し直した回の提案もすべて対応しないとした：理由の返信が済んだので、一時停止せずに、判定は「提案あり」のまま
         // ドラフトを外して人の承認を待つ（PBI-440。AI どうしの往復は、ここで止まる）
+        // その前に、再レビューはせず、リスク評価だけを 1 回実行して PR に載せる（PBI-440。止まったことを確かめられなかった
+        // 実行があれば、一時停止にして、外さない）
+        if ((await this.assessDeclinedRisk(parent, child, target)) !== "done") return;
         await this.markReady(parent, child, target, "suggestions_declined");
       } else if (awaiting && this.rejudgeDue(parent, child, target)) {
         try {
@@ -14717,6 +14726,156 @@ export class TaskService {
     // 人がまだ決めていない案が 1 件でもあれば（前の提出の案・前の回の指摘の案も）、判定し直しは、その決定を待つ（PBI-383）
     return undecidedDeferrals(task) ? "awaits_decision" : "declined";
   }
+
+  /**
+   * 判定し直した回の提案もすべて対応しないとした PR の、リスク評価だけの実行（PBI-440）。ドラフトを外す前に、その先頭に 1 回だけ、
+   * 評価して（PullRequestRiskAssessed。via は suggestions_declined）PR にコメントする。再レビュー（観点の担当の起動・検証）は
+   * しない。評価できなくても（予算の上限・実行の失敗・答えを読めない）、理由を記録して、ドラフトを外す。評価済みの先頭は
+   * 評価し直さず（デーモンの起動し直し・ドラフトを外せずにやり直した確認）、コメントは目印で見つけて重ねない。
+   * リスク評価を有効にしていない・評価の対象でない（既存の PR を引き継いだタスク）ときは、何もしない。
+   * stopped：止まったことを確かめられなかった実行があったので、一時停止にした（ドラフトは外さない）。
+   */
+  private async assessDeclinedRisk(
+    parent: Task,
+    child: Task,
+    commit: string,
+  ): Promise<"done" | "stopped"> {
+    if (this.deps.riskAssessment !== true) return "done";
+    if (!assessesRiskInReview(child, parent.continuedPullRequest !== undefined)) return "done";
+    const pr = parent.pullRequest;
+    if (!pr?.awaitingReview || !pr.number || !pr.repo || parent.stack) return "done";
+    const { number, repo } = pr;
+    const config = this.deps.config();
+    if (!config.ok) return "done";
+    const known = this.mustGet(parent.id).riskAssessment;
+    if (!(known?.via === "suggestions_declined" && known.commit === commit)) {
+      const latest = this.mustGet(parent.id);
+      const repository = latest.repository;
+      const base = repository ? workBaseCommit(repository, latest.baseMerge) : undefined;
+      const usedSecrets: string[] = [];
+      const assessed = await assessPullRequestRisk({
+        commit,
+        budgetExceeded: budgetState(latest.budget) === "exceeded",
+        secrets: usedSecrets,
+        run: () =>
+          this.runOrchestrator(
+            latest,
+            config.config,
+            (platforms) =>
+              [
+                buildRiskAssessmentPrompt(
+                  latest,
+                  { base: base ?? "HEAD", commit },
+                  (latest.declinedSuggestions ?? []).map((d) => ({
+                    text: d.text,
+                    reason: d.reason,
+                  })),
+                ),
+                ...platformPromptLines(platforms),
+              ].join("\n"),
+            "orchestrator",
+            "implemented",
+          ),
+      });
+      const runId = assessed.failure?.runId;
+      const unconfirmed = runId !== undefined && this.unconfirmedRuns.delete(runId);
+      const now = this.tasks.get(parent.id);
+      if (!now) return "stopped";
+      this.append(now, [
+        {
+          actor: assessed.payload.assessment ? "orchestrator" : "sacty",
+          event: {
+            type: "PullRequestRiskAssessed",
+            payload: { ...assessed.payload, ...(base ? { base } : {}) },
+          },
+        },
+        ...(unconfirmed && assessed.failure && runId
+          ? [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "TaskPaused" as const,
+                  // 止まったことを確かめられなかった実行を記録する（再開・中止の前に、残ったコンテナを確かめ直す）
+                  payload: {
+                    reason: assessed.failure.reason,
+                    message: assessed.failure.message,
+                    unstoppedRuns: [runId],
+                  },
+                },
+              },
+            ]
+          : []),
+      ]);
+      this.warnIfNeeded(this.mustGet(parent.id));
+      if (unconfirmed) return "stopped";
+    }
+    // 評価している間に、止められた・差し戻された・PR の先頭が変わったときは、コメントもドラフトを外すのもしない
+    const after = this.tasks.get(parent.id);
+    if (
+      after?.status !== "awaiting_approval" ||
+      this.cancelling.has(after.id) ||
+      this.pauseRequested.has(after.id) ||
+      after.pullRequest?.number !== number ||
+      !this.triageStopDue(after)
+    ) {
+      return "stopped";
+    }
+    const risk = after.riskAssessment;
+    if (risk?.via === "suggestions_declined" && risk.commit === commit) {
+      await this.commentDeclinedRisk(after, repo, number, commit, risk);
+    }
+    return "done";
+  }
+
+  /**
+   * 残った提案をすべて対応しないとした回の評価を、PR にコメントする（PBI-440）。同じ先頭の投稿が PR にあれば（デーモンの
+   * 起動し直しの後・ドラフトを外せずにやり直した確認）、目印で見つけて書かない。投稿できなくても、ドラフトを外すのは止めない
+   * （評価は、画面と作業履歴に残る）。
+   */
+  private async commentDeclinedRisk(
+    task: Task,
+    repo: string,
+    number: number,
+    commit: string,
+    risk: NonNullable<Task["riskAssessment"]>,
+  ): Promise<void> {
+    const key = `${task.id}:${commit}`;
+    if (this.riskCommented.has(key)) return;
+    const usedSecrets: string[] = [];
+    try {
+      const account = this.githubAccountOf(task, repo).account;
+      if (!account) return;
+      const token = await this.githubToken(task, repo, usedSecrets);
+      const marker = declinedRiskMarker(task.id, commit);
+      const signal = this.stopNoticeDeadline();
+      const pr = { repo, token, number };
+      const same = await untilAborted(
+        signal,
+        this.deps.pulls.listIssueComments({ ...pr, prefix: marker, account, signal }),
+      );
+      if (same.length === 0) {
+        // 確かめている間に、止められた・差し戻された・先頭が変わったら、書かない
+        const now = this.tasks.get(task.id);
+        if (now?.status !== "awaiting_approval" || now.pullRequest?.number !== number) return;
+        await untilAborted(
+          signal,
+          this.deps.pulls.commentIssue({
+            ...pr,
+            body: buildDeclinedRiskComment({ taskId: task.id, commit, risk }),
+            signal,
+          }),
+        );
+      }
+      this.riskCommented.add(key);
+    } catch (error) {
+      console.warn(
+        `[daemon] PR #${number}（${repo}）にリスク評価をコメントできませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    }
+  }
+
+  /** 残った提案をすべて対応しないとした回の評価を、PR にコメントした先頭（タスクと先頭。起動し直すと消え、目印で見つけ直す）。 */
+  private readonly riskCommented = new Set<string>();
 
   /**
    * 直しに入る前の選り分けが、判定し直した回の提案のすべてを対応しないとして、返信を済ませたか（PBI-436）。返信が済んでから、

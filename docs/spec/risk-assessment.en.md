@@ -7,12 +7,13 @@ The assessment is a guide for a person deciding how deeply to review the PR, and
 It is not made when a PR is opened or updated, and it is not put in the PR description.
 sacty does not skip a review, merge automatically, or change the steps because of the assessment.
 
-Related ADR: [Produce a PR risk assessment (not used to skip reviews or to merge automatically)](../adr/20261116-1632-superseded-pr-risk-assessment.md), [Decide the PR risk level by the weight of the signals and the size of a dependency version update](../adr/20261117-0433-superseded-risk-level-by-signal-weight.md), [When the size of a dependency version update cannot be read, make the PR risk level medium](../adr/20261117-0455-unknown-dependency-update-is-medium.md), [The PR risk assessment reads only the last answer and does not fall back to an earlier one when it cannot be read](../adr/20261117-1245-risk-assessment-reads-only-last-answer.md), [Assess the PR risk only in a round where the review has no findings](../adr/20261121-0300-risk-assessment-only-when-review-has-no-findings.md)
+Related ADR: [Produce a PR risk assessment (not used to skip reviews or to merge automatically)](../adr/20261116-1632-superseded-pr-risk-assessment.md), [Decide the PR risk level by the weight of the signals and the size of a dependency version update](../adr/20261117-0433-superseded-risk-level-by-signal-weight.md), [When the size of a dependency version update cannot be read, make the PR risk level medium](../adr/20261117-0455-unknown-dependency-update-is-medium.md), [The PR risk assessment reads only the last answer and does not fall back to an earlier one when it cannot be read](../adr/20261117-1245-risk-assessment-reads-only-last-answer.md), [Assess the PR risk only in a round where the review has no findings](../adr/20261121-0300-superseded-risk-assessment-only-when-review-has-no-findings.md)
 
 ## When it is assessed
 
-It is assessed only in a round of the PR review step where the head of this round was judged to have no findings (`via` is `review`).
-The review step's agent assesses it, giving the assessment with its review answer.
+It is assessed in only two occasions.
+- A round of the PR review step where the head of this round was judged to have no findings (`via` is `review`). The review step's agent assesses it, giving the assessment with its review answer.
+- The assessment-only run before the draft is removed, when a re-judged round leaves only suggestions and all of them are declined (`via` is `suggestions_declined`; PBI-440). There is no re-review. An orchestrator agent reads the code and the diff after the implementation, with the remaining suggestions and the reasons they were declined as material. The result goes into one PR comment and the UI. Even if it cannot be assessed, the reason is recorded and the draft is removed. It is not repeated for the same head of the same PR. Its cost is recorded like any assessment run and counts toward the budget. The target is the task that opened the implementation PR, on a daemon with the risk assessment enabled.
 
 | Review step | Assessed? |
 | --- | --- |
@@ -192,7 +193,7 @@ Code: `apps/daemon/src/risk-assessment.ts` (`riskAssessmentLines`), `apps/daemon
 
 ## Record and UI
 
-- `PullRequestRiskAssessed` holds the occasion (`via`), the commit assessed (`commit`), and the assessment (`assessment`) or the reason it could not be assessed (`reason`). Only a record with `via` of `review` (a round with no findings) is newly recorded.
+- `PullRequestRiskAssessed` holds the occasion (`via`), the commit assessed (`commit`), and the assessment (`assessment`) or the reason it could not be assessed (`reason`). Only records with `via` of `review` (a round with no findings) and `suggestions_declined` (the assessment-only run when the remaining suggestions were all declined) are newly recorded.
 - Records from before the version upgrade can still be read. A record with `via` of `publish` (including those with `base`, the start of the PR diff at the time of the assessment, and `inheritedFrom`, the commit carried over from), and a record with `via` of `review` that was made in a round with findings, are loaded as they are. The task detail, the activity row, and the cost totals do not change (a record with no `agentId` gets no cost row).
 - A task holds only the last assessment (`Task.riskAssessment`). A record of a failed assessment does not keep the earlier assessment.
 - The UI shows a "PR risk assessment" section.

@@ -812,7 +812,7 @@ What happens after the sorting:
 - When every suggestion is declined and nothing is left to fix, sacty neither fixes nor updates the PR. After the replies, the child task reviews the same commit once more.
   - With no findings, sacty removes the draft and waits for your approval.
   - When a must-fix or a suggestion to handle comes up, sacty goes on to fix it.
-  - When only suggestions remain and all of them are declined too, sacty does not pause the task. After the replies, it removes the draft and waits for your approval. The verdict stays "suggestions", and this head has no risk assessment because there was no round without findings. The approval screen and the task overview say so. This keeps the two AIs from going back and forth.
+  - When only suggestions remain and all of them are declined too, sacty does not pause the task. After the replies, it removes the draft and waits for your approval. The verdict stays "suggestions". sacty does not review again; it runs only the risk assessment once and posts it as a PR comment before removing the draft (the draft is removed even if the assessment fails; the reason appears in the activity log and the screen). The approval screen and the task overview say so. This keeps the two AIs from going back and forth.
 - A re-review does not count the declined suggestions as unaddressed and does not raise them again. However, when a fresh check shows one has must-fix weight (a bug, security, data corruption, and so on), the review raises it as a must-fix and sacty fixes it.
 
 You can read the declined suggestions and their reasons in two places:
@@ -960,7 +960,7 @@ For a task that had a final review in an earlier version, the body shows that re
 ### PR risk assessment
 
 When the child task that reviews an implementation PR finds no findings, sacty has an AI assess the risk of the PR's content and shows it in the "リスク評価" (risk assessment) section of the review comment and in the "PR risk assessment" section of the task detail.
-Nothing is assessed when a PR is opened or updated, so no wait for an assessment is added, and the PR body does not carry it either.
+Nothing is assessed when a PR is opened or updated, so no wait for an assessment is added, and the PR body does not carry it either. The one exception: when a re-judged round leaves only suggestions and all of them are declined, the risk assessment alone is run once before the draft is removed, without a re-review (the remaining suggestions and the reasons they were declined are part of the material; it appears in a PR comment and on the screen).
 Use it as a guide when you decide how deeply to review the PR at the final judgment.
 The assessment is a guide. sacty does not skip a review or a test, or merge automatically, because of it.
 
