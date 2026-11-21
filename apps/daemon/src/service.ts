@@ -314,6 +314,7 @@ import {
   isBasisComment,
   isDecisionNotice,
   isDeferralNotice,
+  isForkHoldNotice,
   isHumanAskNotice,
   isReviewStopNotice,
   isReworkNotice,
@@ -495,6 +496,7 @@ import {
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import { annotateReviewComments, voidedByPersonOf } from "./review-comments.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
+import { buildForkHoldNotice, forkHoldMarker } from "./review-fork-hold-notice.js";
 import {
   buildResolvedNotice,
   buildStopNotice,
@@ -1439,6 +1441,8 @@ export class TaskService {
   private readonly reviewWatchChecked = new Map<string, number>();
   /** 見守っている PR を、続けて読めなかった回数（PBI-411。読めたら消す）。 */
   private readonly reviewWatchFailures = new Map<string, number>();
+  /** フォークの PR の知らせを、投稿した（または投稿済みと確かめた）タスク（PBI-461。メモリーだけ。起動し直すと、目印で探し直す）。 */
+  private readonly reviewForkHoldNoticed = new Set<string>();
   /** 承認待ちの PR の、PR の確認で最後に読んだ head（タスク → PR の番号・提出したコミット・読んだ head。PR #304 のレビュー）。 */
   private readonly latestHeads = new Map<
     string,
@@ -3145,6 +3149,7 @@ export class TaskService {
    * レビューを投稿したタスクの、PR の変化の見守り（PBI-411）。PR の確認（60秒ごと）から、読んだ PR の状態を渡して呼ぶ。
    * - PR がマージされた・マージせずに閉じられた：見守りを終える（見守っていたタスクは完了する）
    * - PR の先頭が、レビューした先頭と違う：再レビューを始める（同じ先頭では 1 回だけ）
+   * - フォークからの PR（読めないときも）：push・作者の返信では再レビューを始めない。新しい先頭を記録して PR に知らせ、人の再レビューを待つ（holdForkRestart。PBI-461）
    * - 先頭は同じで、その回のレビューの実行を始めた後に PR の作者が返信した：同じ先頭を判定し直す（同じ先頭では 1 回だけ）。sacty の投稿（目印で始まるレビュー・行へのコメント・知らせ）と Bot の投稿は、返信に数えない
    * 続けての push・返信は、最後の変化から FEEDBACK_QUIET_MS たつまで待って、1 回にまとめる（初めて見た時刻は、メモリーだけに
    * 持つ。デーモンを起動し直すと、待ち直す）。再レビューの実行中・一時停止中・中止の途中のタスクは動かさない（実行中に来た
@@ -3180,6 +3185,7 @@ export class TaskService {
     if (!target) return;
     if (status.state !== "open") {
       forget();
+      this.reviewForkHoldNoticed.delete(taskId);
       this.append(task, [
         {
           actor: "sacty",
@@ -3198,6 +3204,15 @@ export class TaskService {
     const head = status.headSha?.trim() ?? "";
     // 先頭を読めない応答では、何も決めない（次の確認でやり直す）
     if (!/^[0-9A-Za-z]{7,64}$/.test(head)) return;
+    // フォークからの PR は、push・作者の返信で自動では再レビューしない（再レビューの検証で、信頼できない PR のコードが
+    // 人の判断なしにコンテナで動くため。PBI-461）。人の再レビュー（画面・MCP）は、これまでどおり。GitHub の再依頼は、
+    // restartRerequestedReviews が、頼んだ人と権限を確かめて決める。フォークかどうかを確かめられなかったときも、
+    // フォークとして扱う
+    if (status.fork !== false) {
+      forget();
+      await this.holdForkRestart(task, head, token);
+      return;
+    }
     const now = this.now();
     if (!sameCommit(target.headCommit, head)) {
       this.reviewWatchReplies.delete(taskId);
@@ -3272,6 +3287,7 @@ export class TaskService {
         !isReviewStopNotice(item.body) &&
         !isHumanAskNotice(item.body) &&
         !isReworkNotice(item.body) &&
+        !isForkHoldNotice(item.body) &&
         !isDecisionNotice(item.body) &&
         !isDeferralNotice(item.body) &&
         !isBasisComment(item.body) &&
@@ -3306,6 +3322,59 @@ export class TaskService {
         event: { type: "ReviewRestarted", payload: { reason: "replied", commit: head } },
       },
     ]);
+  }
+
+  /**
+   * フォークからの PR の、見守りの再レビューを見送る（PBI-461）。レビューした先頭と違う先頭が出たら、その先頭を記録して、
+   * 画面と MCP に出す（先頭が変わるたびに更新する）。先頭がレビューした先頭に戻ったときは、待ちの記録を消す。
+   * PR には、知らせの目印のコメントが無ければ 1 回だけ知らせる（投稿に失敗したら、次の確認でやり直す。デーモンを起動し直しても
+   * 繰り返さない）。同じ先頭の作者の返信でも、再レビューしない。
+   */
+  private async holdForkRestart(task: Task, head: string, token: string): Promise<void> {
+    const target = task.reviewTarget;
+    if (!target) return;
+    if (sameCommit(target.headCommit, head)) {
+      // レビューした先頭に戻った：待っている先頭は、もう無い（projection が、同じ先頭の記録で待ちを消す）
+      if (task.reviewHold) {
+        this.append(task, [
+          { actor: "sacty", event: { type: "ReviewRestartHeld", payload: { commit: head } } },
+        ]);
+      }
+      return;
+    }
+    if (!task.reviewHold || !sameCommit(task.reviewHold.commit, head)) {
+      this.append(task, [
+        { actor: "sacty", event: { type: "ReviewRestartHeld", payload: { commit: head } } },
+      ]);
+    }
+    if (this.reviewForkHoldNoticed.has(task.id)) return;
+    await this.serialized(`fork-hold-notice:${task.id}`, async () => {
+      if (this.reviewForkHoldNoticed.has(task.id)) return;
+      const signal = this.stopNoticeDeadline();
+      try {
+        const pr = { repo: target.repo, token, number: target.number };
+        const existing = await untilAborted(
+          signal,
+          this.deps.pulls.findIssueComment({ ...pr, marker: forkHoldMarker(task.id) }),
+        );
+        if (!existing) {
+          await untilAborted(
+            signal,
+            this.deps.pulls.commentIssue({
+              ...pr,
+              body: buildForkHoldNotice(task.id, head),
+              signal,
+            }),
+          );
+        }
+        this.reviewForkHoldNoticed.add(task.id);
+      } catch (error) {
+        // 知らせられなくても、見守りは続ける（次の確認で、やり直す）
+        console.warn(
+          `[daemon] レビューのタスク ${task.id} の PR #${target.number} に、新しいコミットを自動でレビューしないことを知らせられませんでした：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+        );
+      }
+    });
   }
 
   /**
@@ -8221,6 +8290,8 @@ export class TaskService {
       const round = task.reviewRound;
       let requestedAt: string | undefined;
       let requested: boolean;
+      // フォークの PR で、人の操作とみなせない再依頼：始めずに、新しい先頭を待ちとして記録する（PBI-461）
+      let held: { head: string; token: string } | undefined;
       try {
         const token = await this.githubToken(task, issue.repo, usedSecrets);
         const ref = { repo: issue.repo, number: issue.number, token };
@@ -8231,6 +8302,26 @@ export class TaskService {
         requestedAt =
           (await this.deps.pulls.lastReviewRequest({ ...ref, reviewer: account })) ?? undefined;
         requested = Date.parse(requestedAt ?? "") > posted;
+        // フォークの PR（head のリポジトリが読めないときも）の再依頼は、頼んだ人が PR の作者でなく、リポジトリへの
+        // 書き込みの権限を持つときだけ、人の操作とみなす（作者の再依頼で、フォークのコードが人の判断なしに動かないように）。
+        // 頼んだ人・権限を読めないときは、みなさない側に倒す
+        if (requested && (!pr.headRepo || !sameRepo(pr.headRepo, issue.repo))) {
+          const trusted = await this.deps.pulls
+            .lastReviewRequester({ ...ref, reviewer: account })
+            .then(async (requester) =>
+              requester !== undefined && requester.toLowerCase() !== pr.author.toLowerCase()
+                ? await this.deps.pulls.canWrite({ repo: issue.repo, token, login: requester })
+                : false,
+            )
+            .catch((error: unknown) => {
+              // 安全側（みなさない）に倒す。原因（状態コードなど）は、秘密の値を伏せてログに残す
+              console.warn(
+                `[daemon] PR #${issue.number}（${issue.repo}）の再依頼の依頼者・権限を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+              );
+              return false;
+            });
+          if (!trusted) held = { head: pr.headSha, token };
+        }
       } catch (error) {
         failed.push({
           issue,
@@ -8272,6 +8363,12 @@ export class TaskService {
       )
         continue;
       if (!latest.reviewTarget || !latest.reviewPost || !latest.source) continue;
+      if (held) {
+        // 見守り中なら、自動の再レビューの見送りと同じに、画面・MCP に出して PR に知らせる。見守っていなければ、待つ先が無い
+        if (latest.reviewWatch && held.head)
+          await this.holdForkRestart(latest, held.head, held.token);
+        continue;
+      }
       const config = this.deps.config();
       restarted.push(
         this.append({ id: randomUUID(), projectId: latest.projectId }, [

@@ -600,6 +600,7 @@ const PARAMS = {
       "readChecks",
       "rerunChecks",
       "listEvents",
+      "getPermission",
     ]),
     status: z.number(),
     detail: z.string(),
@@ -810,6 +811,7 @@ const githubActionJa = {
   readChecks: "CI/CD の状態を読めませんでした",
   rerunChecks: "CI の失敗したジョブを再実行できませんでした",
   listEvents: "PR のできごと（レビューの依頼など）を読めませんでした",
+  getPermission: "ユーザーのリポジトリへの権限を読めませんでした",
 } as const;
 const githubActionEn = {
   updatePr: "Could not update the PR",
@@ -831,6 +833,7 @@ const githubActionEn = {
   readChecks: "Could not read the CI/CD status",
   rerunChecks: "Could not rerun the failed CI jobs",
   listEvents: "Could not read the PR events (such as review requests)",
+  getPermission: "Could not read the user's permission on the repository",
 } as const;
 const githubHintJa = {
   none: "",
