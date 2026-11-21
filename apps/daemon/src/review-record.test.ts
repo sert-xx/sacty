@@ -11,12 +11,15 @@ import {
 /** レビューの記録のブロックの取り除きと、記録の検査（PBI-460）。 */
 const leak = (n: number) => `LEAK-${n}`;
 const payload = (n: number) =>
-  `{"viewpoints":[{"id":"C-1","status":"launched","reason":"${leak(n)}"}]}`;
+  `{"viewpoints":[{"id":"C-1","status":"launched","reason":"${leak(n)}"}],"dropped":{"overlapping":0}}`;
 const KEEP = [
   "総評の文です。",
   "verification: 手で確かめた",
   '```json\n{"mode":"production","scope":"read"}\n```',
   "```yaml\nmyverification: 1\n```",
+  "```yaml\nverification: npm test\n```",
+  '```json\n{"dropped": "ok", "note": "設定の例"}\n```',
+  '{\n  "verification": "lint"\n}',
   "最後の地の文です。",
 ];
 const keepText = KEEP.join("\n\n");
@@ -37,18 +40,18 @@ const variants: [string, string][] = [
   ],
   [
     "情報文字列が json だけで、記録に固有の欄名だけの JSON",
-    `\`\`\`json\n{"viewpoints": [{"id": "C-1", "status": "launched", "reason": "${leak(10)}"}]}\n\`\`\``,
+    `\`\`\`json\n{"viewpoints": [{"id": "C-1", "status": "launched", "reason": "${leak(10)}"}], "dropped": {}}\n\`\`\``,
   ],
   [
     "情報文字列が空で、途中で切れて JSON として読めないフェンス",
-    `\`\`\`\n{"dismissed": [{"title": "${leak(11)}", "reas\n\`\`\``,
+    `\`\`\`\n{"dismissed": [{"title": "${leak(11)}", "reas, "verification": [\n\`\`\``,
   ],
-  ["単引用符のキー", `\`\`\`\n{'viewpoints': ["${leak(12)}"]}\n\`\`\``],
-  ["大小文字違いで : の前に空白", `\`\`\`\n{"Dismissed" : ["${leak(13)}"]}\n\`\`\``],
-  ["引用符の無いキー", `\`\`\`yaml\ndropped: 1\nnote: ${leak(14)}\n\`\`\``],
+  ["単引用符のキー", `\`\`\`\n{'viewpoints': ["${leak(12)}"], 'verification': []}\n\`\`\``],
+  ["大小文字違いで : の前に空白", `\`\`\`\n{"Dismissed" : ["${leak(13)}"], "dropped": 1}\n\`\`\``],
+  ["引用符の無いキー", `\`\`\`yaml\ndropped: 1\nverification: ${leak(14)}\n\`\`\``],
   [
     "フェンスの外の、複数行の JSON",
-    `{\n  "notReviewed": [{"id": "C-1", "reason": "${leak(15)}"}]\n}`,
+    `{\n  "notReviewed": [{"id": "C-1", "reason": "${leak(15)}"}],\n  "dismissed": []\n}`,
   ],
   ["閉じていないフェンス（文字列の終わりまで）", `\`\`\`sacty-review-record\n${payload(16)}`],
 ];

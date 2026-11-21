@@ -22,9 +22,19 @@ const RECORD_FIELD_NAMES = ["viewpoints", "notReviewed", "dismissed", "dropped",
  * 欄名の直前・直後が英数字・`_` のもの（`myverification:` など）は当てない。mode・scope は一般の設定の語なので使わない。
  */
 const FIELD_KEY = new RegExp(
-  `(?<![A-Za-z0-9_])["']?(?:${RECORD_FIELD_NAMES.join("|")})["']?\\s*:`,
-  "i",
+  `(?<![A-Za-z0-9_])["']?(${RECORD_FIELD_NAMES.join("|")})["']?\\s*:`,
+  "gi",
 );
+
+/** 見出しの無い範囲を記録とみなす、記録に固有の欄名の種類の数（2 つ以上。1 つだけの設定の例は残す）。 */
+const FIELD_KEY_MIN = 2;
+
+/** 文字列に、記録に固有の欄名がキーとして何種類あるか。 */
+function hasRecordKeys(text: string): boolean {
+  const found = new Set<string>();
+  for (const m of text.matchAll(FIELD_KEY)) found.add((m[1] ?? "").toLowerCase());
+  return found.size >= FIELD_KEY_MIN;
+}
 const HEADING_ANYWHERE = new RegExp(REVIEW_RECORD_HEADING, "i");
 
 /** 行頭の字下げ・引用（`>`）・リストの印。 */
@@ -118,7 +128,7 @@ function stripOnce(text: string): string {
   const fenced = new Array<boolean>(lines.length).fill(false);
   for (const fence of findFences(lines)) {
     for (let i = fence.start; i <= fence.end; i++) fenced[i] = true;
-    // 見出しを情報文字列に含むもの、または中身に記録に固有の欄名をキーとして含むもの（JSON として読めるかは問わない）
+    // 見出しを情報文字列に含むもの、または中身に記録に固有の欄名を 2 種類以上キーとして含むもの（JSON として読めるかは問わない）
     // 中身に、見出し付きのフェンスが入れ子になっているもの（外側を除くと内側が現れる）も、外側ごと除く
     const nestedHeading = fence.content.some((l) => {
       const m = bare(l).match(/^(?:`{3,}|~{3,})(.*)$/);
@@ -127,7 +137,7 @@ function stripOnce(text: string): string {
     if (
       HEADING_ANYWHERE.test(fence.info) ||
       nestedHeading ||
-      FIELD_KEY.test(fence.content.join("\n"))
+      hasRecordKeys(fence.content.join("\n"))
     ) {
       for (let i = fence.start; i <= fence.end; i++) remove[i] = true;
     }
@@ -144,7 +154,7 @@ function stripOnce(text: string): string {
       end = k;
       if (depth <= 0) break;
     }
-    if (FIELD_KEY.test(lines.slice(i, end + 1).join("\n"))) {
+    if (hasRecordKeys(lines.slice(i, end + 1).join("\n"))) {
       for (let k = i; k <= end; k++) remove[k] = true;
     }
     i = end;
