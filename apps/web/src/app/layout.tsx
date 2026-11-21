@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 // フォントは npm のパッケージから読む（ビルドのときに Google Fonts に取りに行かない。外への通信が制限された
 // 環境でもビルドできるように。PBI-39）。使う文字の範囲だけを、ブラウザが必要なときに読む
 import "@fontsource/ibm-plex-sans-jp/400.css";
@@ -25,10 +25,18 @@ export const metadata: Metadata = {
   description: "AI software factory",
 };
 
+// 画面の下の安全な領域（ホームバー）を env(safe-area-inset-bottom) で使えるようにする。cover は左右にも効くので、
+// ヘッダー・左の列・本文・丸いボタン・質問のパネルは、左右（と下）の安全な領域も空ける（縦向きでは 0 で、見え方は変わらない）
+export const viewport: Viewport = { viewportFit: "cover" };
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     // テーマのクラスは、最初の描画の前にスクリプトで付ける（サーバーの描画と食い違ってよい）
-    <html lang="ja" suppressHydrationWarning className="h-full antialiased">
+    <html
+      lang="ja"
+      suppressHydrationWarning
+      className="h-full antialiased max-sm:scroll-pb-[calc(3.5rem+env(safe-area-inset-bottom))]"
+    >
       <head>
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: 固定の文字列で、利用者の入力を含まない */}
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
@@ -58,7 +66,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <main
             id={MAIN_ID}
             tabIndex={-1}
-            className="min-w-0 flex-1 px-4 py-7 outline-none sm:px-8"
+            className="min-w-0 flex-1 pt-7 pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(5.5rem+env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] outline-none sm:py-7 sm:pr-[max(2rem,env(safe-area-inset-right))] sm:pl-8"
           >
             <div className="mx-auto flex max-w-6xl flex-col gap-6">
               {/* Docker を使えない・エージェントのイメージが無い（PBI-148）。タスクを実行できないので、どの画面でも中身の上に出す */}
