@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-21（UTC）
 - タスク: なし
-- PR: なし
+- PR: #1
 - ブランチ: fix/risk-assessment-alerts
 - 関係する ADR: [リスクの判断材料と人間への確認依頼を独立した Alert に分ける](../adr/20261121-0345-risk-assessment-alerts.md)
 
