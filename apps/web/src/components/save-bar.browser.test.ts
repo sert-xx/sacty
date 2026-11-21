@@ -76,7 +76,17 @@ beforeAll(async () => {
     },
     oxc: { jsx: { runtime: "automatic" } },
     optimizeDeps: {
-      include: ["react", "react-dom/client", "react/jsx-runtime", "lucide-react", "cn"],
+      include: [
+        "react",
+        "react-dom/client",
+        "react/jsx-runtime",
+        "lucide-react",
+        "cn",
+        "react/jsx-dev-runtime",
+        "@base-ui/react/button",
+        "class-variance-authority",
+        "zod",
+      ],
     },
     plugins: [
       {
@@ -117,7 +127,17 @@ beforeAll(async () => {
   if (!address || typeof address === "string") throw new Error("Browser fixture has no port");
   url = `http://127.0.0.1:${address.port}`;
   browser = await chromium.launch({ headless: true });
-}, 60000);
+  // 依存の最適化のし直しでページが読み直されるのを、各テストの上限（30 秒）の中で待たないよう、ここで 1 度開いて済ませる。
+  // goto と waitFor の上限は、それぞれ 90 秒にする（goto の既定は 30 秒で、初回の準備がそれを超えると落ちるため）。
+  // beforeAll の上限（120 秒）は、サーバーとブラウザーの起動に、この事前の読み込み（最大 90 秒）を足しても収まる値にしている。
+  const warm = await browser.newPage({ viewport: { width: 1280, height: 700 } });
+  try {
+    await warm.goto(`${url}/?dirty=0&long=0`, { timeout: 90000 });
+    await warm.getByRole("button", { name: "保存する" }).waitFor({ timeout: 90000 });
+  } finally {
+    await warm.close();
+  }
+}, 120000);
 
 afterAll(async () => {
   await browser?.close();
