@@ -714,7 +714,7 @@ When a comment goes back to Design, sacty posts one notice on the implementation
 When a round fixes a comment in Implementation and the approved design document needs a local fix, the design document is fixed inside the implementation PR.
 
 - The notice for work that went back to Design says that it went back, the reason (which decision changes), and what to do next (approve the design PR).
-  - To have the comment fixed in the implementation step instead, write "fix it in the implementation step" in the comment from the next round. The redo of the design has already started.
+  - To have the comment fixed in the implementation instead, write "fix it in the implementation step" in the comment from the next round. The redo of the design has already started.
   - There is one notice per request for changes. The notice is not imported as a comment, and it does not count toward the replies when watching the review.
 - In a round that fixes a local change (wording, one row of a table or list, a default value, adding a row) in Implementation, when the approved design document needs a fix, the implementation gives the fix, and sacty applies it to the approved design and puts it in the same implementation PR.
   - The "Design fixes" section of the PR body lists, for each fix, the before, the after, and the comment. Fixes that were not applied are listed with their reasons.

@@ -13,6 +13,8 @@ describe("withoutRemarkIds（文の中の指摘の ID。TV-4）", () => {
     ["See implement-1-1.", "See 指摘."],
     ["implement-1-1\n直しました", "指摘\n直しました"],
     ["see `implement-1-1` and reimplement-1-1x", "see `指摘` and reimplement-1-1x"],
+    ["design-1-2abc と implement-1-1-foo", "design-1-2abc と implement-1-1-foo"],
+    ["docs/review-1-2.md を見る", "docs/review-1-2.md を見る"],
   ])("%s", (input, expected) => {
     expect(withoutRemarkIds(input)).toBe(expected);
   });

@@ -11,7 +11,9 @@ const ID = `${STEP_KEYS}-\\d+-\\d+(?:[〜~]\\d+-\\d+)?`;
 /** 区切り（と・、・,）で並ぶ ID。 */
 const ID_LIST = `${ID}(?:\\s*[、,・と]\\s*${ID})*`;
 /** ID の前に語の境界を置く（ほかの語の一部を ID と読まない）。 */
-const BOUNDARY = "(?<![A-Za-z0-9-])";
+const BOUNDARY = "(?<![A-Za-z0-9/-])";
+/** ID の後ろにも語の境界を置く（`design-1-2abc` のような語は壊さない。文末の `.` は許す）。 */
+const END_BOUNDARY = "(?![A-Za-z0-9-])";
 /** 置き換えたあと、日本語の語が続くときだけ、間の空白を詰める（任意。続くものが ASCII でも置き換えは行う）。 */
 const SPACE_BEFORE_CJK = "(?:[ \\u3000]*(?=[\\u3000-\\u9fff\\uff00-\\uffef]|$))?";
 
@@ -21,8 +23,11 @@ const PARENTHESIZED = new RegExp(
   `(?<![ \\u3000])[ \\u3000]*[（(][ \\t\\u3000]*${ID_LIST}(?:[ \\t\\u3000]*(?:への対応|の対応|に対応))?[ \\t\\u3000]*[）)]`,
   "g",
 );
-const AFTER_REMARK_WORD = new RegExp(`指摘\\s*${BOUNDARY}${ID_LIST}${SPACE_BEFORE_CJK}`, "g");
-const BARE = new RegExp(`${BOUNDARY}${ID_LIST}${SPACE_BEFORE_CJK}`, "g");
+const AFTER_REMARK_WORD = new RegExp(
+  `指摘\\s*${BOUNDARY}${ID_LIST}${END_BOUNDARY}${SPACE_BEFORE_CJK}`,
+  "g",
+);
+const BARE = new RegExp(`${BOUNDARY}${ID_LIST}${END_BOUNDARY}${SPACE_BEFORE_CJK}`, "g");
 
 /**
  * 文の中の指摘の ID を、文を壊さずに除く。規則は上から順に当て、当たった所は次の規則に回さない。

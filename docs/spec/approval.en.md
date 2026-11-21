@@ -1118,7 +1118,7 @@ Code: `apps/daemon/src/human-ask-notice.ts`, `apps/daemon/src/rework-notice.ts`,
 
 When the work goes back to Design, one notice per request for changes is posted on the implementation PR (`rework-notice.ts`). It lets a person see that the work went back and what to do next.
 
-- Content: that the work went back to Design, the reason (which decision changes), what the person does next (approve the design PR), and how to say so when the person wants it fixed in the implementation step.
+- Content: that the work went back to Design, the reason (which decision changes), what the person does next (approve the design PR), and how to say so when the person wants it fixed in the implementation.
   To have it fixed in the implementation step, write "fix it in the implementation step" in the comment from the next round (the redo of the design has already started).
 - Marker: the comment starts with `<!-- sacty-rework-notice:<task ID>:<round> -->`. When a comment with the marker already exists for the round, it is not posted twice.
 - When it is posted: only after a design decision (`ReworkJudged`) recorded by the new version. A round that resumes from an earlier decision does not post it.
