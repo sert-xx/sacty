@@ -186,6 +186,7 @@ The review step of the task details shows the same information, together with th
 
 For a review imported from a GitHub PR (a review request or a label), a "リスク評価" (risk assessment) section for the PR is added right after the verdict, only in a round whose verdict is no findings. It is not added in a round with suggestions, required fixes, or no verdict.
 It holds the level (low, medium, or high), the suggested review depth, the grounds, and the places to look at (the levels mean the same as in [PR risk assessment](tasks.en.md#pr-risk-assessment)).
+The level and grounds appear in a GitHub Alert: `[!NOTE]` for low (1), `[!IMPORTANT]` for medium (2), and `[!WARNING]` for high (3). These numbers identify categories, not scores or probabilities. A separate `[!TIP]` shows the focus locations, why they matter, and what a person should judge or verify; it is omitted when there are no focus items. Valid file and line references link to the assessed commit. Verification scope and unverified matters remain free text outside the alerts, together with the AI guidance note.
 The assessment is separate from the findings and the verdict, and does not change the verdict.
 When it could not be assessed in a round with no findings, that is written and the review is posted as it is. A [review of a PR that sacty created](#reviewing-prs-that-sacty-created) gets this section in a round with no findings too, if it is a review of an implementation PR (not for a requirements or design PR, nor for a task that continues an existing PR; neither the section nor the "PR risk assessment" section appears for those).
 
@@ -227,7 +228,7 @@ sacty handles changes of the PR as follows.
 
 To stop the watch, pause or cancel the task in the task details.
 
-- While paused, no re-review starts when the PR changes, and the task is not marked done when the PR is merged or closed.
+- While paused, no re-review starts when the PR changes, and the task is not marked done when the PR is merged or closed (the review child task of a PR that sacty opened is the exception: even while paused, it is marked done when the PR is merged or closed, or when the original task is done).
   On resume it goes back to watching and picks up the changes that happened while it was paused.
 - A cancelled task can no longer be re-reviewed.
 
@@ -392,8 +393,9 @@ The child task is cancelled in these cases.
 
 - You merge or close the PR before the child task posts its review (also during a re-review run)
 - You cancel the original task
+- The original task is done (only a child task that has not posted yet)
 
-If you merge or close the PR after the review is posted, the child task is done instead of cancelled.
+If you merge or close the PR after the review is posted, the child task is done instead of cancelled. This also applies while it is paused.
 
 If you reopen the PR of a child task that was cancelled by the close, sacty creates a new child task and reviews it again (a child task you cancelled is not recreated).
 

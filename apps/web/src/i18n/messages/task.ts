@@ -125,7 +125,8 @@ const ja = {
     ended: {
       merged: "PR がマージされたので、完了にしました。",
       closed: "PR がマージされずに閉じられたので、完了にしました。",
-    } as Record<"merged" | "closed", string>,
+      parent_completed: "PR を作ったタスクが完了したので、完了にしました。",
+    } as Record<"merged" | "closed" | "parent_completed", string>,
   },
   discardedReview: {
     title: (count: number) => `取り込んでいない AI のレビューの指摘が${count}件あります`,
@@ -788,6 +789,7 @@ const en: TaskMessages = {
     ended: {
       merged: "The PR was merged, so the task is done.",
       closed: "The PR was closed without merging, so the task is done.",
+      parent_completed: "The task that opened the PR is done, so this task is done.",
     },
   },
   discardedReview: {

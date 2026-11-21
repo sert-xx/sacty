@@ -86,6 +86,7 @@ import {
   isAiReviewRemark,
   isAuditTarget,
   isCompleted,
+  isDone,
   isFinished,
   isRepoless,
   isSecurityTask,
@@ -3014,8 +3015,15 @@ export class TaskService {
       this.deps.projects.get(t.projectId) !== undefined;
     const unposted = (t: Task) =>
       t.source?.review !== undefined && t.source.kind === "github_pull_request" && !isCompleted(t);
+    // 一時停止中の、レビューの子タスク（PBI-457）。投稿済みで見守っていたもの。PR がマージ・クローズされたら、見守りを終えて完了する
+    const pausedWatch = (t: Task) =>
+      t.status === "paused" &&
+      t.reviewOf !== undefined &&
+      reviewWatching(t) &&
+      t.reviewTarget !== undefined &&
+      this.deps.projects.get(t.projectId) !== undefined;
     const open = [...this.tasks.values()].filter(
-      (t) => t.status !== "cancelled" && (unposted(t) || watched(t)),
+      (t) => t.status !== "cancelled" && (unposted(t) || watched(t) || pausedWatch(t)),
     );
     // 見守りから外れたタスク（再レビューを始めた・見守りを終えた・一時停止・中止）の、初めて見た時刻は忘れる
     const watching = new Set(open.filter(watched).map((t) => t.id));
@@ -3029,7 +3037,7 @@ export class TaskService {
       for (const id of [...memo.keys()]) if (!watching.has(id)) memo.delete(id);
     }
     for (const task of open) {
-      const source = watched(task) ? task.reviewTarget : task.source;
+      const source = watched(task) || pausedWatch(task) ? task.reviewTarget : task.source;
       if (!source) continue;
       // 投稿から時間がたった PR の見守りは、間を空けて読む（開いたままの PR が増えても、GitHub への問い合わせを増やし続けない）
       if (watched(task) && !this.reviewWatchDue(task)) continue;
@@ -3048,7 +3056,10 @@ export class TaskService {
         token = await this.githubToken(task, source.repo, usedSecrets);
         const pr = { repo: source.repo, token, number: source.number };
         // 見守りの読み取りは、答えを待つ時間を限る（答えの返らない PR が 1 件あっても、後ろのタスクと確認の残りを止めない）
-        status = watched(task) ? await this.statusWithin(pr) : await this.deps.pulls.status(pr);
+        status =
+          watched(task) || pausedWatch(task)
+            ? await this.statusWithin(pr)
+            : await this.deps.pulls.status(pr);
       } catch (error) {
         console.warn(
           `[daemon] レビューのタスク ${task.id} の PR #${source.number}（${source.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -3071,6 +3082,10 @@ export class TaskService {
         continue;
       }
       if (status.state === "open") continue;
+      if (pausedWatch(task)) {
+        this.endReviewWatch(task.id, status.state);
+        continue;
+      }
       // 確かめている間に、中止された・完了した（レビューを投稿した）なら、中止しない
       const latest = this.tasks.get(task.id);
       if (!latest || latest.status === "cancelled" || isCompleted(latest)) continue;
@@ -3082,6 +3097,38 @@ export class TaskService {
         console.warn(`[daemon] レビューのタスク ${task.id} を中止できませんでした：`, error);
       });
     }
+  }
+
+  /**
+   * 見守っているレビューの子タスクの、見守りを終えて完了にする（PBI-457）。一時停止中なら、sacty が再開してから終える
+   * （一時停止のままだと、一覧に残る）。確かめている間に状態が変わった（再レビュー・中止・一時停止の途中など）なら、何もしない。
+   */
+  private endReviewWatch(taskId: string, reason: "merged" | "closed" | "parent_completed"): void {
+    const latest = this.tasks.get(taskId);
+    if (!latest?.reviewOf || !reviewWatching(latest)) return;
+    if (latest.status !== "idle" && latest.status !== "paused") return;
+    if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return;
+    if (this.inflight.has(taskId)) return;
+    this.reviewWatchHeads.delete(taskId);
+    this.reviewWatchReplies.delete(taskId);
+    this.reviewWatchRead.delete(taskId);
+    this.append(latest, [
+      ...(latest.status === "paused"
+        ? [
+            {
+              actor: "sacty" as const,
+              event: {
+                type: "TaskResumed" as const,
+                payload: { retry: false },
+              },
+            },
+          ]
+        : []),
+      {
+        actor: "sacty",
+        event: { type: "ReviewWatchEnded", payload: { reason } },
+      },
+    ]);
   }
 
   /**
@@ -15172,7 +15219,19 @@ export class TaskService {
       if (!child.reviewOf || child.status === "cancelled") continue;
       if (isCompleted(child) && !reviewWatching(child)) continue;
       if (this.cancelling.has(child.id)) continue;
-      if (this.tasks.get(child.reviewOf.taskId)?.status !== "cancelled") continue;
+      const parent = this.tasks.get(child.reviewOf.taskId);
+      if (parent && isDone(parent)) {
+        // 親が完了したら、終わっていない子（一時停止中・見守り中を含む）を片付ける（PBI-457）。PR の状態は読まない
+        if (reviewWatching(child)) {
+          this.endReviewWatch(child.id, "parent_completed");
+        } else {
+          await this.cancel(child.id, "parent_completed").catch((error: unknown) => {
+            console.warn(`[daemon] レビューの子タスク ${child.id} を中止できませんでした：`, error);
+          });
+        }
+        continue;
+      }
+      if (parent?.status !== "cancelled") continue;
       await this.cancel(child.id, "parent_cancelled").catch((error: unknown) => {
         console.warn(`[daemon] レビューの子タスク ${child.id} を中止できませんでした：`, error);
       });
@@ -15800,7 +15859,12 @@ export class TaskService {
           signal,
           this.deps.pulls.commentIssue({
             ...pr,
-            body: buildDeclinedRiskComment({ taskId: task.id, commit, risk }),
+            body: buildDeclinedRiskComment({
+              taskId: task.id,
+              commit,
+              repo,
+              risk,
+            }),
             signal,
           }),
         );
@@ -16517,7 +16581,11 @@ export class TaskService {
      * sacty が中止する理由（レビューの PR がマージされた・閉じられた。PBI-44。PR のレビューの子タスクの親が中止された。
      * PBI-330）。人間の中止では無い。
      */
-    reason?: "pull_request_merged" | "pull_request_closed" | "parent_cancelled",
+    reason?:
+      | "pull_request_merged"
+      | "pull_request_closed"
+      | "parent_cancelled"
+      | "parent_completed",
   ): Promise<Task> {
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError(message("task.notFound"));

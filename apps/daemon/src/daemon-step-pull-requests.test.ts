@@ -12,6 +12,7 @@ import {
   MAX_INCOMPLETE_CONTINUATIONS,
   MVP_STEPS,
   message,
+  personTurnGroup,
   RERUN_NOTE_HEADING,
   RERUN_RECORD_HEADING,
   renderMessage,
@@ -3004,6 +3005,101 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           expect(child.status).toBe("cancelled");
           expect(child.cancelled?.reason).toBe("parent_cancelled");
           activity.close();
+        });
+
+        describe("一時停止中の子タスクも、PR のマージ・クローズと親の完了で片付く（PBI-457）", () => {
+          /** 修正が必要の判定を投稿して見守る子を作り、一時停止する。 */
+          async function pausedWatching() {
+            const made = await watched([verdictOut("changes_required")]);
+            const { service, pulls, id } = made;
+            const childId = childOf(service, id);
+            pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+            await runReview(service, childId);
+            expect(reviewWatching(taskOf(service, childId))).toBe(true);
+            await service.pause(childId);
+            expect(taskOf(service, childId).status).toBe("paused");
+            return { ...made, childId };
+          }
+
+          it("投稿済みで一時停止中の子は、PR がマージされた後の次の確認で完了になり、マージで見守りを終えたことが残る（条件 1・6）", async () => {
+            const { activity, service, pulls, id, childId } = await pausedWatching();
+            // PR が開いていて親も未完了なら、何もしない（条件 5）
+            await service.checkPullRequests();
+            expect(taskOf(service, childId).status).toBe("paused");
+            expect(types(service, childId)).not.toContain("ReviewWatchEnded");
+            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+            await service.checkPullRequests();
+            const child = taskOf(service, childId);
+            expect(isDone(child)).toBe(true);
+            expect(child.status).toBe("idle");
+            expect(child.reviewWatchEnded?.reason).toBe("merged");
+            expect(types(service, childId)).not.toContain("TaskCancelled");
+            expect(personTurnGroup(child)).toBeUndefined();
+            activity.close();
+          });
+
+          it("投稿済みで一時停止中の子は、PR がマージされずに閉じられても完了になる（条件 2）", async () => {
+            const { activity, service, pulls, childId } = await pausedWatching();
+            pulls.states[7] = { state: "closed" };
+            await service.checkPullRequests();
+            const child = taskOf(service, childId);
+            expect(isDone(child)).toBe(true);
+            expect(child.reviewWatchEnded?.reason).toBe("closed");
+            activity.close();
+          });
+
+          /** 親の確認だけ読めて、親が完了した後の PR の確認は読めない形にする。 */
+          const unreadableAfterParentDone = (
+            service: TaskService,
+            pulls: FakePulls,
+            id: string,
+          ) => {
+            const read = pulls.status.bind(pulls);
+            pulls.status = async (input) => {
+              if (isDone(taskOf(service, id))) throw new Error("unreadable");
+              return read(input);
+            };
+          };
+
+          it("親が完了したら、PR の状態を読めなくても、一時停止中の見守りの子は完了になる（条件 3）", async () => {
+            const { activity, service, pulls, id, childId } = await pausedWatching();
+            unreadableAfterParentDone(service, pulls, id);
+            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+            await service.checkPullRequests();
+            expect(isDone(taskOf(service, id))).toBe(true);
+            const child = taskOf(service, childId);
+            expect(isDone(child)).toBe(true);
+            expect(child.reviewWatchEnded?.reason).toBe("parent_completed");
+            activity.close();
+          });
+
+          it("親が完了したら、PR の状態を読めなくても、投稿前に一時停止した子は中止になる（条件 3）", async () => {
+            const made = await watched([verdictOut("changes_required")]);
+            const { activity, service, pulls, id } = made;
+            const childId = childOf(service, id);
+            await service.pause(childId);
+            unreadableAfterParentDone(service, pulls, id);
+            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+            await service.checkPullRequests();
+            expect(isDone(taskOf(service, id))).toBe(true);
+            const child = taskOf(service, childId);
+            expect(child.status).toBe("cancelled");
+            expect(child.cancelled?.reason).toBe("parent_completed");
+            activity.close();
+          });
+
+          it("投稿前に一時停止した子は、PR がマージされたら、今までどおり中止になる（条件 4）", async () => {
+            const made = await watched([verdictOut("changes_required")]);
+            const { activity, service, pulls, id } = made;
+            const childId = childOf(service, id);
+            await service.pause(childId);
+            pulls.states[7] = { state: "closed" };
+            await service.checkPullRequests();
+            const child = taskOf(service, childId);
+            expect(child.status).toBe("cancelled");
+            expect(child.cancelled?.reason).toBe("pull_request_closed");
+            activity.close();
+          });
         });
       });
 

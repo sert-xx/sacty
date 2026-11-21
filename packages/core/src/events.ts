@@ -3478,11 +3478,11 @@ const PullRequestReviewPosted = z.object({
 /**
  * レビューを投稿した後の、PR の変化の見守りを終えた（PBI-411）。見守っていたタスクだけに記録し、そのタスクは完了する
  * （指摘なしで完了したタスクは見守っていないので、記録しない）。merged：PR がマージされた、closed：PR がマージされずに
- * 閉じられた。
+ * 閉じられた。parent_completed：レビューの子タスクの親が完了した（PBI-457）。
  */
 const ReviewWatchEnded = z.object({
   type: z.literal("ReviewWatchEnded"),
-  payload: z.object({ reason: z.enum(["merged", "closed"]) }),
+  payload: z.object({ reason: z.enum(["merged", "closed", "parent_completed"]) }),
 });
 
 /**
@@ -3670,7 +3670,9 @@ const TaskCancelled = z.object({
      * レビューのタスクを中止した。parent_cancelled は、PR のレビューの子タスクの親が中止された（PBI-330）。人間が中止したときは
      * 無い。
      */
-    reason: z.enum(["pull_request_merged", "pull_request_closed", "parent_cancelled"]).optional(),
+    reason: z
+      .enum(["pull_request_merged", "pull_request_closed", "parent_cancelled", "parent_completed"])
+      .optional(),
     cleanup: z.array(
       z.object({
         target: CleanupTarget,
