@@ -7461,6 +7461,20 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    it("やり直しの途中で一時的でない失敗（保護での拒否）に変わったら、そこでやり直しをやめ、回数を記録して pr.failed で止まる", async () => {
+      const { activity, service, repos, id } = await toPublish();
+      repos.pushScript = [
+        FAILED,
+        remoteRejected("protected branch hook declined", "remote: error: GH006: Protected branch"),
+      ];
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(2);
+      expect(kinds(service, id)).toEqual(["PushRetried", "PushRetryEnded", "TaskPaused"]);
+      expect(seen(service, id)[1]?.payload).toMatchObject({ outcome: "failed", retries: 1 });
+      expect(seen(service, id)[2]?.payload).toMatchObject({ message: { code: "pr.failed" } });
+      activity.close();
+    });
+
     it("停止の理由の文は、案内の remote: の行を除き、失敗の行を先頭に置き、拒否の理由の行は残し、秘密の値を伏せる", async () => {
       const { activity, service, repos, id } = await toPublish();
       repos.pushScript = [

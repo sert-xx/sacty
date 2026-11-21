@@ -1430,7 +1430,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
     通ったら `PushRetryEnded`（`outcome: pushed`・やり直した回数）、上限まで通らなければ `PushRetryEnded`（`outcome: failed`）を記録して、今までどおり止める。
     同じコミットがすでにブランチの先頭にあれば（前の回で通っていて応答だけが失われた）、プッシュは通り、通ったとして扱う（その回もやり直しの回数に数える）。
   - 待つ間に一時停止・中止・デーモンの停止を求められたら、プッシュせずにやめる（何も記録せず、一時停止の理由も上書きしない）。
-  - 止まった後に人が再開すると（この変更の前の版で止まったタスクを含む）、PR に新しい指摘が届いていなければ、エージェントを実行せず、止まったプッシュからやり直す。
+  - 止まった後に人が再開すると（プッシュのやり直しの記録が出る前に止まったタスクを含む）、PR に新しい指摘が届いていなければ、エージェントを実行せず、止まったプッシュからやり直す。
   - 止める理由の文は、`remote:` の案内の行（空の行・`Create a pull request ...`・`To create a merge request ...`・URL だけの行）を除き、`!`・`error:`・`fatal:` で始まる失敗の行を先頭に置く。拒否の理由を書いた `remote:` の行は残す。
 - 予算の上限に達していても、PR は作る（費用がかからず、人の承認を待つだけなので。下の「予算・一時停止・再開・中止」）。本文が重なったときのエージェントは、予算の上限に達していれば実行せず、人の本文のまま変えない。
 - 人の一時停止：プッシュの前・PR を作る直前に、一時停止・中止を求められていれば、PR を作らずに止める（一時停止なら PR の作成の待ちのまま。再開すると作る）。
@@ -1442,7 +1442,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   PR のマージで実装を承認すると、マージの後の監視の工程へ進む（飛ばしていれば、タスクは完了する）。
 - 差し戻し・PR の指摘で実装を作り直している間に、人が実装の PR をマージしたら、作り直し（実行・PR の更新）を止めて、マージを承認として進める。新しい PR は作らない（[実装の作り直しの間のマージ](approval.md#実装の作り直しの間のマージ)）。
 
-コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`commitSubjectFor`・`implementSubmitted`・`submitEvents`・`pause`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
+コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`commitSubjectFor`・`implementSubmitted`・`submitEvents`・`pause`・`retryPush`・`pushRetrying`）、`apps/daemon/src/repository.ts`（`classifyPushFailure`・`formatPushFailure`・`PushFailedError`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
 
 ### 実装がテストを対応させる観点
 

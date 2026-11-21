@@ -332,9 +332,11 @@ const TRANSIENT_PUSH_RE = [
   /Could not resolve host/i,
   /Failed to connect/i,
   /Couldn't connect to server/i,
-  /Connection (?:reset|refused|timed out)/i,
-  /Operation timed out/i,
+  /Connection (?:was )?(?:reset|refused|closed)/i,
   /timed out/i,
+  /unexpected disconnect/i,
+  /SSL_ERROR_SYSCALL|GnuTLS recv error|OpenSSL SSL_read/i,
+  /HTTP\/2 stream \d+ was not closed cleanly/i,
   /the remote end hung up unexpectedly/i,
   /RPC failed; curl \d+/i,
 ];

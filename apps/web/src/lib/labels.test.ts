@@ -494,7 +494,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
       },
     });
     expect(describeEventParts(retried, ja).text).toBe(
-      "git push が一時的な失敗で拒まれたので、60秒待って push をやり直す（2/3回目。! [remote rejected] c -> sacty/x (failed)）",
+      "git のプッシュが一時的な失敗で拒まれたので、60秒待ってプッシュをやり直す（2/3回目。! [remote rejected] c -> sacty/x (failed)）",
     );
     expect(describeEventParts(retried, labels.en).text).toBe(
       "The git push was rejected by a temporary failure, so pushing again after 60s (retry 2 of 3; ! [remote rejected] c -> sacty/x (failed))",
@@ -505,10 +505,10 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         payload: { branch: "sacty/x", commit: "c".repeat(40), outcome, retries },
       });
     expect(describeEventParts(ended("pushed", 2), ja).text).toBe(
-      "push のやり直しが通った（やり直し 2回）",
+      "プッシュのやり直しが通った（やり直し 2回）",
     );
     expect(describeEventParts(ended("failed", 3), ja).text).toBe(
-      "push は、3回やり直しても通らなかった",
+      "プッシュは、3回やり直しても通らなかった",
     );
     expect(describeEventParts(ended("pushed", 2), labels.en).text).toBe(
       "The push went through after retrying (2 retries)",

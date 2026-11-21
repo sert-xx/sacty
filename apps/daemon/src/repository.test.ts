@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
 import { stopFetchProcessesSync } from "./fetch-processes.js";
 import {
+  classifyPushFailure,
   DIFF_LIMIT,
   GitRepositoryWorkspace,
   NothingToCommitError,
@@ -2249,6 +2250,26 @@ describe("PR の push の失敗の分類と停止の理由の文（PBI-467）", 
     }
     throw new Error("push が成功した");
   };
+
+  it.each([
+    ["Connection was reset by peer", true],
+    ["fatal: unable to access 'https://github.com/o/r.git/': Connection reset by peer", true],
+    ["error: RPC failed; curl 56 OpenSSL SSL_read: SSL_ERROR_SYSCALL, errno 104", true],
+    ["error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502", true],
+    ["error: HTTP/2 stream 1 was not closed cleanly: CANCEL (err 8)", true],
+    ["fatal: unable to access 'https://github.com/o/r.git/': Operation timed out", true],
+    ["fatal: the remote end hung up unexpectedly", true],
+    ["fatal: unable to access 'x': The requested URL returned error: 403", false],
+    ["fatal: unable to access 'x': The requested URL returned error: 401", false],
+    [
+      "fatal: unable to access 'x': The requested URL returned error: 403 secondary rate limit",
+      true,
+    ],
+    ["! [rejected] a -> b (non-fast-forward)", false],
+    ["error: something unexpected", false],
+  ])("標準エラー %j の分類は、一時的か = %s", (stderr, transient) => {
+    expect(classifyPushFailure(stderr)).toBe(transient);
+  });
 
   it("デーモンの言語の設定（LANG）が ja_JP.UTF-8 でも C でも、分類と文が同じになる（git の文言を訳さない）", async () => {
     const { workspace, gitDir, baseCommit } = await rejectingRemote();

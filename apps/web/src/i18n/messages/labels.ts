@@ -596,11 +596,11 @@ const ja = {
     ) =>
       `GitHub の一時的な失敗のため、${seconds}秒後に${where === "reviewTarget" ? "レビューの対象の PR の確認" : "レビューの投稿"}を自動でやり直す（${attempt}/${maxAttempts}回目。${message}）`,
     PushRetried: (attempt: number, maxAttempts: number, seconds: number, message: string) =>
-      `git push が一時的な失敗で拒まれたので、${seconds}秒待って push をやり直す（${attempt}/${maxAttempts}回目。${message}）`,
+      `git のプッシュが一時的な失敗で拒まれたので、${seconds}秒待ってプッシュをやり直す（${attempt}/${maxAttempts}回目。${message}）`,
     PushRetryEnded: (outcome: "pushed" | "failed", retries: number) =>
       outcome === "pushed"
-        ? `push のやり直しが通った（やり直し ${retries}回）`
-        : `push は、${retries}回やり直しても通らなかった`,
+        ? `プッシュのやり直しが通った（やり直し ${retries}回）`
+        : `プッシュは、${retries}回やり直しても通らなかった`,
     PullRequestReviewPosted: (url: string) => `レビューを PR に投稿した（${url}）`,
     ReviewRestarted: (actor: string) => `再レビューを始めた（${actor}）`,
     ReviewRestartedByUpdate: (commit: string) =>
