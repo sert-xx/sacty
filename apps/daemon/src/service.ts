@@ -200,7 +200,7 @@ import { parseLimitReset } from "./agents/limit-reset.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactEscaped, redactText } from "./agents/redact.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
-import { aiReviewFor, aiReviewOfHead } from "./ai-review-head.js";
+import { aiReviewFor, aiReviewOfHead, aiReviewsOfHeads } from "./ai-review-head.js";
 import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
 import {
   type AdoptedAuditProposalNote,
@@ -1521,11 +1521,19 @@ export class TaskService {
     return started;
   }
 
-  /** 画面に返すタスクの一覧。処理の段階（preparingOf）を足す。 */
+  /**
+   * 画面に返すタスクの一覧。処理の段階（preparingOf）と、承認待ちで PR が開いているタスクの AI のレビューの状況
+   * （aiReview。詳細（view）と同じ計算。PBI-442）を足す。
+   */
   listView(): Task[] {
-    return this.list().map((task) => {
+    const tasks = this.list();
+    const aiReviews = aiReviewsOfHeads(tasks, sameRepo, (t) => this.latestHeadOf(t));
+    return tasks.map((task) => {
       const preparing = this.preparingOf(task.id);
-      return preparing ? { ...task, preparing } : task;
+      const aiReview = aiReviews.get(task.id);
+      return preparing || aiReview
+        ? { ...task, ...(preparing ? { preparing } : {}), ...(aiReview ? { aiReview } : {}) }
+        : task;
     });
   }
 

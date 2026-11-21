@@ -1,6 +1,6 @@
 "use client";
 
-import { auditAdoptionRate } from "@sacty/core";
+import { auditAdoptionRate, PERSON_TURN_GROUPS } from "@sacty/core";
 import { cn } from "cn";
 import Link from "next/link";
 import { Fragment, type ReactNode } from "react";
@@ -12,10 +12,10 @@ import { StaleNotice } from "@/components/live-status";
 import { StatusLabelView } from "@/components/task-bits";
 import { Hint, WithHint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
-import type { DashboardMessages } from "@/i18n/messages/dashboard";
 import { perTask } from "@/lib/audit";
 import type { DashboardData } from "@/lib/dashboard-data";
 import { FIX_ONCE_REASONS, REWORK_STEPS } from "@/lib/dashboard-rules";
+import { durationText } from "@/lib/duration-text";
 import { usd } from "@/lib/labels";
 import { projectAuditPath, taskPath } from "@/lib/paths";
 import { useClock } from "@/lib/use-clock";
@@ -25,23 +25,13 @@ import { useLiveData } from "@/lib/use-live-data";
 const FULL_ON_FOCUS =
   "truncate group-focus-within:whitespace-normal group-focus-within:[overflow-wrap:anywhere]";
 
+export { durationText };
+
 /** ダッシュボードのデータを取り直す先（PBI-114）。 */
 export const DASHBOARD_LIVE_URL = "/live/dashboard";
 
 /** 実行待ちが上限より多い状態が、これだけ続いたら目立たせる（PBI-118）。 */
 export const QUEUE_OVER_MS = 10 * 60_000;
-
-/**
- * 待っている時間・期間の文（分・時間・日のどれか1つ。PBI-118）。1分未満は「1分未満」。
- */
-export function durationText(ms: number, d: DashboardMessages["duration"]): string {
-  const minutes = Math.floor(Math.max(0, ms) / 60_000);
-  if (minutes < 1) return d.underMinute;
-  if (minutes < 60) return d.minutes(minutes);
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return d.hours(hours);
-  return d.days(Math.floor(hours / 24));
-}
 
 /**
  * ダッシュボード（PBI-114・PBI-118）。欄（カード）を並べる。画面をリロードせず、一定の間隔でデータだけを取り直す（PBI-108）。
@@ -244,7 +234,8 @@ function TaskRow({
 }
 
 /**
- * あなたの出番（PBI-118）：人の判断を待っているタスクを、待っている時間が長い順に出す。題は、人が判断する場所（承認の画面か
+ * あなたの出番（PBI-118・PBI-442）：人の判断を待っているタスクを、判断すれば進む組 → 一時停止の組の順に、組の中は待っている
+ * 時間が長い順に出す。組ごとに見出しと件数を付け、0 件の組は出さない。題は、人が判断する場所（承認の画面か
  * タスクの詳細）へのリンク。
  */
 export function AttentionCard({ data, now }: { data: DashboardData; now: number }) {
@@ -266,32 +257,57 @@ export function AttentionCard({ data, now }: { data: DashboardData; now: number 
         <Empty>{m.empty}</Empty>
       ) : (
         <ScrollList label={m.list} testId="attention-list">
-          {rows.map((task) => (
-            <TaskRow
-              key={task.id}
-              testId={`attention-${task.id}`}
-              href={task.href}
-              external={task.external}
-              title={task.title}
-              projectName={task.projectName}
-              note={task.note}
-              aside={
-                <>
-                  <span className="sr-only">{t.openTasks.status}</span>
-                  <StatusLabelView text={task.status.text} tone={task.status.tone} />
-                  {/* 待っている時間は画面の時計で計算するので、サーバーと数秒ずれても描き直さない */}
-                  <span
-                    data-testid={`attention-waiting-${task.id}`}
-                    className="text-xs text-muted-foreground tabular-nums"
-                    suppressHydrationWarning
-                  >
-                    <span className="sr-only">{m.waiting}</span>
-                    {durationText(now - Date.parse(task.waitingSince), t.duration)}
+          {/* 上の組（判断すれば進む）→ 下の組（一時停止）。上の組が先頭にあるので、欄を開いたときに見出しと先頭の行が見える */}
+          {PERSON_TURN_GROUPS.map((group) => {
+            const inGroup = rows.filter((r) => r.group === group);
+            if (inGroup.length === 0) return null;
+            const headingId = `attention-group-${group}`;
+            return (
+              <li
+                key={group}
+                data-testid={headingId}
+                className="border-b border-border last:border-b-0"
+              >
+                <h3
+                  id={headingId}
+                  className="flex items-baseline justify-between gap-3 bg-muted px-5 py-1.5 text-xs font-semibold"
+                >
+                  <span>{m.groups[group]}</span>
+                  <span className="font-normal text-muted-foreground">
+                    {m.groupCount(inGroup.length)}
                   </span>
-                </>
-              }
-            />
-          ))}
+                </h3>
+                <ul aria-labelledby={headingId}>
+                  {inGroup.map((task) => (
+                    <TaskRow
+                      key={task.id}
+                      testId={`attention-${task.id}`}
+                      href={task.href}
+                      external={task.external}
+                      title={task.title}
+                      projectName={task.projectName}
+                      note={task.note}
+                      aside={
+                        <>
+                          <span className="sr-only">{t.openTasks.status}</span>
+                          <StatusLabelView text={task.status.text} tone={task.status.tone} />
+                          {/* 待っている時間は画面の時計で計算するので、サーバーと数秒ずれても描き直さない */}
+                          <span
+                            data-testid={`attention-waiting-${task.id}`}
+                            className="text-xs text-muted-foreground tabular-nums"
+                            suppressHydrationWarning
+                          >
+                            <span className="sr-only">{m.waiting}</span>
+                            {durationText(now - Date.parse(task.waitingSince), t.duration)}
+                          </span>
+                        </>
+                      }
+                    />
+                  ))}
+                </ul>
+              </li>
+            );
+          })}
         </ScrollList>
       )}
     </DashboardCard>

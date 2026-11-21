@@ -8,6 +8,7 @@ export * from "./github-url.js";
 export * from "./implement-description.js";
 export { code, DaemonText, message } from "./message-code.js";
 export * from "./messages.js";
+export * from "./person-turn.js";
 export * from "./projection.js";
 export * from "./projects.js";
 export * from "./schedules.js";

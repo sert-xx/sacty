@@ -1,4 +1,10 @@
-import { type ActivityEvent, PREPARING_PHASES, type Task, type TaskProposal } from "@sacty/core";
+import {
+  type ActivityEvent,
+  PREPARING_PHASES,
+  personTurnGroup,
+  type Task,
+  type TaskProposal,
+} from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { labels } from "@/i18n/messages/labels";
 import { review as reviewMessages } from "@/i18n/messages/review";
@@ -9,8 +15,8 @@ import {
   describeEventParts,
   describeEvent as describeIn,
   judgedByGoalForCurrent,
-  needsPerson,
   personAction as personActionIn,
+  personStatusText as personStatusTextIn,
   statusText as statusTextIn,
   statusTone,
   stepImageOptions,
@@ -97,7 +103,7 @@ describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
       status: "escalated",
       proposals: [proposal({ judgement: { verdict: "undecidable", reason: "x", at: "" } })],
     });
-    expect(needsPerson(undecided)).toBe(true);
+    expect(personTurnGroup(undecided) !== undefined).toBe(true);
     expect(personAction(undecided)).toEqual({ href: "/tasks/t1#proposals", label: "判断する" });
     // 差し戻しの上限によるエスカレーションと承認待ちは、承認の画面へ
     expect(personAction(task({ status: "escalated" })).href).toBe("/tasks/t1/review");
@@ -640,7 +646,7 @@ describe("一時停止と中止の表示（PBI-3）", () => {
       "Cancelled (person): cleaned up Running container, Branch created by Sacty; failed: PR opened by Sacty",
     );
     expect(statusText(task({ status: "cancelled" }))).toBe("中止");
-    expect(needsPerson(task({ status: "cancelled" }))).toBe(false);
+    expect(personTurnGroup(task({ status: "cancelled" })) !== undefined).toBe(false);
   });
 });
 
@@ -1447,7 +1453,7 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
     );
     for (const t of [watching("changes_required"), watching("suggestions"), watching()]) {
       expect(statusTone(t)).toBe("waiting");
-      expect(needsPerson(t)).toBe(false);
+      expect(personTurnGroup(t) !== undefined).toBe(false);
       // 見守り中も、一時停止・中止の操作を出す
       expect(canControl(t)).toBe(true);
     }
@@ -2406,7 +2412,7 @@ describe("状態の表示の種類（PBI-42）", () => {
       expect(statusTextIn(processing, labels.en)).toBe(texts[phase][1]);
       expect(statusTone(processing)).toBe("working");
       // 人の出番には数えない
-      expect(needsPerson(processing)).toBe(false);
+      expect(personTurnGroup(processing) !== undefined).toBe(false);
     }
     // 段階の文は、互いに見分けられる
     expect(new Set(Object.values(texts).map((t) => t[0])).size).toBe(PREPARING_PHASES.length);
@@ -3224,7 +3230,7 @@ describe("マージの後の監視の工程の表示（PBI-116）", () => {
     expect(statusText(watching("ci"))).toBe("マージの後の監視・CI/CD 待ち");
     expect(statusText(watching("check"))).toBe("マージの後の監視・確認中");
     expect(statusTone(watching("ci"))).toBe("working");
-    expect(needsPerson(watching("ci"))).toBe(false);
+    expect(personTurnGroup(watching("ci")) !== undefined).toBe(false);
     // 英語の工程の名前も、ほかの工程とそろえる
     expect(labels.en.step.deployment).toBe("After-merge watch");
     expect(statusTextIn(watching("ci"), labels.en)).toBe("After-merge watch · waiting for CI/CD");
@@ -3564,4 +3570,39 @@ describe("作業履歴の「工程を決定」「作業するリポジトリを�
       ).toMatch(l === labels.ja ? /（費用不明）$/ : / \(cost unknown\)$/);
     });
   }
+});
+
+describe("人の出番の行の状態の文（PBI-442）", () => {
+  const prOpen = (aiReview?: Task["aiReview"]) =>
+    task({
+      status: "awaiting_approval",
+      gate: { step: "implement", submission: 1 },
+      pullRequestState: "open",
+      ...(aiReview ? { aiReview } : {}),
+    });
+
+  it("AI のレビューが PR の今の head をレビュー中（reviewing）のときだけ、statusText の後ろに「・AI のレビュー中」を添える", () => {
+    const base = statusText(prOpen());
+    for (const status of ["none", "unknown", "attached"] as const) {
+      expect(personStatusTextIn(prOpen({ head: "h", status }), ja)).toBe(base);
+    }
+    expect(personStatusTextIn(prOpen(), ja)).toBe(base);
+    expect(personStatusTextIn(prOpen({ head: "h", status: "reviewing" }), ja)).toBe(
+      `${base}・AI のレビュー中`,
+    );
+    expect(personStatusTextIn(prOpen({ head: "h", status: "reviewing" }), labels.en)).toBe(
+      `${statusTextIn(prOpen(), labels.en)} · AI review in progress`,
+    );
+  });
+
+  it("AI が戻し先を判断中の承認待ちは、人の出番にならず、状態の表示も working のまま", () => {
+    const judging = task({
+      status: "awaiting_approval",
+      gate: { step: "implement", submission: 1 },
+      pendingReview: { keys: ["k"], remarks: ["r"] } as Task["pendingReview"],
+    });
+    expect(statusTone(judging)).toBe("working");
+    expect(personTurnGroup(judging)).toBeUndefined();
+    expect(statusTone(prOpen())).toBe("person");
+  });
 });

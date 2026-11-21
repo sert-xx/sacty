@@ -118,9 +118,14 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 Each dashboard section contains the following.
 
 - Needs you
-  - The open tasks whose state display is a person's turn, longest wait first. A person's turn means `statusTone` is `person` (awaiting approval, paused, escalated). Tasks awaiting approval are excluded while sacty is deciding where to send PR feedback back to.
+  - The open tasks that are a person's turn, in two groups. The check, the group, and the order live in one place, `personTurnGroup` and `personTurnTasks` in `packages/core`, and the dashboard, the header notifications, the cards above the task list, the MCP `list_tasks` (`needs_person`), and the condition under which the aggregate returns `waitingSince` all use them.
+    - Upper group `decision`: awaiting approval and escalated. A task awaiting approval is not a person's turn while sacty is deciding where to send PR feedback back to (it has `pendingReview`).
+    - Lower group `paused`: paused (whatever the reason).
+    - The order is the upper group, then the lower group; within a group the longest wait first, then by ID. Tasks of deleted projects are not included.
+  - The section shows, per group, a heading (`h3`: the group name and a count) and a list that the heading labels through `aria-labelledby`. A group with 0 tasks has no heading. The count in the section heading is the total. The upper group comes first, so its heading and first row are visible without scrolling, however many tasks the lower group has.
+  - While the task is awaiting approval, the PR of the current submission is open, and the AI review is reviewing the current head of that PR (`aiReview.status` is `reviewing`), the status text is followed by " · AI review in progress" (`personStatusText`). The group and the order do not change. The rows of the header notifications and of the cards above the task list are the same. `aiReview` is added to the task list response (`GET /api/tasks`) only for tasks awaiting approval whose PR is open, with the same calculation as the task details (`aiReviewsOfHeads`, which batches it for the list and returns the same result as `aiReviewOfHead`). GitHub is not read.
   - Each row shows the title, the project, the state, and the waiting time. The title links to where the person decides (`personAction`). For steps reviewed on a PR, it opens the PR in a new tab (see [Approval and request changes](approval.en.md#approval-through-prs)).
-  - The wait starts at the latest activity record that put the task in that state (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced; the aggregate's `waitingSince`). When there is no record, it starts at `updatedAt`.
+  - The wait starts at the latest activity record that put the task in that state (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced; the aggregate's `waitingSince`). When there is no record, it starts at `updatedAt`. The condition under which the aggregate returns `waitingSince` is also the tasks `personTurnGroup` returns (tasks awaiting approval while the AI is deciding are excluded).
   - The waiting time is one of minutes, hours, or days (rounded down; "under a minute" below one minute; `durationText`).
   - When there is none: "Nothing needs you right now."
 - Why tasks are paused
@@ -226,15 +231,15 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
 
   | Screen | Side menu | Notices |
   | --- | --- | --- |
-  | "All projects" | Only "Settings". "Settings" moves to the project list (`/projects`), so it never jumps to a project | Not split by project, newest first. Opening one switches to the task's project and opens the task |
-  | Project | "Tasks", "Schedules", "Audit", and "Settings" | Split into "Other projects" and "This project" |
+  | "All projects" | Only "Settings". "Settings" moves to the project list (`/projects`), so it never jumps to a project | The same target and order as "Needs you" on the dashboard (upper group, then lower group, with group headings and the waiting time on each row), not split by project. Opening one switches to the task's project and opens the task |
+  | Project | "Tasks", "Schedules", "Audit", and "Settings" | The same (the order is not changed per screen) |
 
   The side menu does not show "Dashboard". It is not used, and the dashboard opens from the logo and from "All projects" in the project switcher.
 - The header is in the root layout, so navigation (links) within the web UI does not redraw it (the selection is decided in the browser from the screen's URL). Server actions for operations that change what the notices cover (approve, request changes, pause, resume, cancel, create task, and so on) call `refresh()` so that the header is redrawn too. They call it before moving with `redirect` as well.
 - Changes made in other tabs, the CLI, or the daemon (tasks added by intake, approvals, resumes, tasks the daemon picked up and started, and so on) are reflected in the header's project switcher (the counts that need you) and notices by "Refetching screen data" below. This applies on every screen, whatever the state of the tasks.
 
 Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`), `apps/web/src/components/shell/live-header.tsx` (`LiveHeaderMenus`, `selectedProject`),
-`apps/web/src/components/shell/menus.tsx` (`ProjectMenu`, `NotificationsMenu`), `apps/web/src/components/shell/rail.tsx` (`railItems`), `apps/web/src/lib/page-scope.ts` (`pageScope`),
+`apps/web/src/components/shell/menus.tsx` (`ProjectMenu`, `NotificationsMenu`), `packages/core/src/person-turn.ts` (`personTurnTasks`), `apps/web/src/components/shell/rail.tsx` (`railItems`), `apps/web/src/lib/page-scope.ts` (`pageScope`),
 `apps/web/src/lib/header-data.ts` (`loadHeaderData`), `apps/web/src/components/shell/follow-project.tsx` (`FollowProject`),
 `apps/web/src/lib/project-select.ts`, `apps/web/src/lib/current-project.ts` (`selectProject`),
 `apps/web/src/app/switch/route.ts`, `apps/web/src/app/actions.ts`

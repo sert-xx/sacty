@@ -1,14 +1,17 @@
 "use client";
 
 import { Menu } from "@base-ui/react/menu";
+import { PERSON_TURN_GROUPS, type PersonTurnGroup } from "@sacty/core";
 import { cn } from "cn";
 import { BellIcon, ChevronDownIcon, UserRoundIcon } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import { setLanguageAction } from "@/app/actions";
 import { useMessages } from "@/i18n/client";
 import type { LanguagePreference } from "@/i18n/locale";
+import { durationText } from "@/lib/duration-text";
 import { DASHBOARD_PATH, projectTasksPath, switchPath } from "@/lib/paths";
 import { applyTheme, readTheme, type ThemePreference, writeTheme } from "@/lib/theme";
+import { useClock } from "@/lib/use-clock";
 import { ExternalMark } from "../action-link";
 
 // 重なりの順は Positioner に付ける。Positioner は位置を transform で決めるので、それ自体が重なりの文脈を作り、
@@ -114,28 +117,25 @@ export type Notice = {
   projectId: string;
   projectName: string;
   status: string;
+  /** どちらの組か（上の組：decision、下の組：paused。PBI-442）。 */
+  group: PersonTurnGroup;
+  /** 待ち始めた時刻（ISO 8601）。待っている時間は画面の時計で計算する。 */
+  waitingSince: string;
   href: string;
   /** href が GitHub の PR（プロジェクトを切り替えず、新しいタブで開く。PBI-136）。 */
   external?: true;
 };
 
 /**
- * お知らせ：全プロジェクトの、人間の対応待ち。ほかのプロジェクトを先に並べる
- * （表示中のプロジェクトのものは一覧で見えているため）。開くと、そのプロジェクトに切り替える。
- * currentName が無い（「すべてのプロジェクト」を選んでいる。PBI-114）ときは、分けずに新しい順に並べる（どれも
- * そのタスクのプロジェクトに切り替えて開く）。
+ * お知らせ：全プロジェクトの、人間の対応待ち。ダッシュボードの「あなたの出番」と同じ対象・同じ並び（上の組：判断すれば
+ * 進むもの → 下の組：一時停止。組の中は待ち始めの古い順）で、組の見出しを付けて出す（PBI-442）。表示中のプロジェクトで
+ * 分けない。開くと、そのタスクのプロジェクトに切り替える。
  */
-export function NotificationsMenu({
-  others,
-  here,
-  currentName,
-}: {
-  others: Notice[];
-  here: Notice[];
-  currentName?: string;
-}) {
+export function NotificationsMenu({ notices }: { notices: Notice[] }) {
   const t = useMessages().shell.notices;
-  const total = others.length + here.length;
+  const duration = useMessages().dashboard.duration;
+  const now = useClock();
+  const total = notices.length;
   const item = (n: Notice) => (
     <Menu.LinkItem
       key={n.taskId}
@@ -150,7 +150,18 @@ export function NotificationsMenu({
         <span className="line-clamp-2 min-w-0">{n.title}</span>
         {n.external && <ExternalMark />}
       </span>
-      <span className="text-xs text-muted-foreground">{n.projectName}</span>
+      <span className="flex w-full items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 truncate">{n.projectName}</span>
+        {/* 待っている時間は画面の時計で計算するので、サーバーと数秒ずれても描き直さない */}
+        <span
+          data-testid={`notice-waiting-${n.taskId}`}
+          className="shrink-0 tabular-nums"
+          suppressHydrationWarning
+        >
+          <span className="sr-only">{t.waiting}</span>
+          {durationText(now - Date.parse(n.waitingSince), duration)}
+        </span>
+      </span>
     </Menu.LinkItem>
   );
   return (
@@ -170,25 +181,18 @@ export function NotificationsMenu({
               <span className="text-xs font-normal text-muted-foreground">{t.total(total)}</span>
             </p>
             {total === 0 && <p className="px-3 py-4 text-sm text-muted-foreground">{t.none}</p>}
-            {currentName === undefined && others.length > 0 && (
-              <Menu.Group>{others.map(item)}</Menu.Group>
-            )}
-            {currentName !== undefined && others.length > 0 && (
-              <Menu.Group>
-                <Menu.GroupLabel className="mt-1 rounded-md bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-                  {t.others}
-                </Menu.GroupLabel>
-                {others.map(item)}
-              </Menu.Group>
-            )}
-            {currentName !== undefined && here.length > 0 && (
-              <Menu.Group>
-                <Menu.GroupLabel className="mt-1 rounded-md bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-                  {t.here(currentName)}
-                </Menu.GroupLabel>
-                {here.map(item)}
-              </Menu.Group>
-            )}
+            {PERSON_TURN_GROUPS.map((group) => {
+              const inGroup = notices.filter((n) => n.group === group);
+              if (inGroup.length === 0) return null;
+              return (
+                <Menu.Group key={group} data-testid={`notices-${group}`}>
+                  <Menu.GroupLabel className="mt-1 rounded-md bg-muted px-3 py-1 text-[11px] text-muted-foreground">
+                    {t.groups[group]}
+                  </Menu.GroupLabel>
+                  {inGroup.map(item)}
+                </Menu.Group>
+              );
+            })}
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>

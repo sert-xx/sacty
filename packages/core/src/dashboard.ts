@@ -1,5 +1,6 @@
 import { addUsd, isChargedEvent } from "./cost.js";
 import type { ActivityEvent, ReworkCause, StepKey } from "./events.js";
+import { personTurnGroup } from "./person-turn.js";
 import { isFinished, type Task } from "./projection.js";
 
 /**
@@ -302,11 +303,7 @@ export class DashboardStats {
     for (const task of input.tasks) {
       if (!projects.has(task.projectId)) continue;
       liveTasks.add(task.id);
-      if (
-        task.status === "awaiting_approval" ||
-        task.status === "paused" ||
-        task.status === "escalated"
-      ) {
+      if (personTurnGroup(task)) {
         const since = this.waiting.get(task.id);
         if (since) waitingSince[task.id] = since;
       }

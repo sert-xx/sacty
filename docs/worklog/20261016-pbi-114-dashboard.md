@@ -4,7 +4,7 @@
 - タスク: PBI-114
 - PR: #124
 - ブランチ: feat/issue-114-dashboard
-- 関係する ADR: [画面の入口をダッシュボードにし、タスクの一覧と設定をプロジェクトの URL に置き、ヘッダーの選択を開いている画面で決める](../adr/20261016-0151-dashboard-and-project-urls.md)
+- 関係する ADR: [画面の入口をダッシュボードにし、タスクの一覧と設定をプロジェクトの URL に置き、ヘッダーの選択を開いている画面で決める](../adr/20261016-0151-superseded-dashboard-and-project-urls.md)
 
 ## 目的
 

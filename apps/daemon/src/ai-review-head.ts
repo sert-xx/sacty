@@ -67,3 +67,38 @@ export function aiReviewOfHead(
     sameRepo,
   );
 }
+
+/**
+ * 一覧のために、承認待ちで PR が開いているタスクだけの AI のレビューの状況をまとめて計算する（`aiReviewOfHead` と同じ
+ * 結果）。対象が無ければ何もしない。あれば全タスクを 1 回だけなめて、レビューのタスクを PR の番号ごとに分け、対象ごとに同じ
+ * 番号のものだけを突き合わせる（全タスクどうしの突き合わせにしない）。
+ */
+export function aiReviewsOfHeads(
+  tasks: readonly Task[],
+  sameRepo: (a: string, b: string) => boolean,
+  latestHeadOf: (task: Task) => string | undefined,
+): Map<string, AiReviewOfHead> {
+  const out = new Map<string, AiReviewOfHead>();
+  const targets = tasks.filter((t) => {
+    if (t.status !== "awaiting_approval") return false;
+    const pr = gatePullRequest(t);
+    return Boolean(pr && pr.state === "open" && pr.repo);
+  });
+  if (targets.length === 0) return out;
+  const reviewsByNumber = new Map<number, Task[]>();
+  for (const other of tasks) {
+    if (other.status === "cancelled" || !other.steps.some((s) => s.key === "review")) continue;
+    const ref = referencedPullRequest(other);
+    if (!ref) continue;
+    const bucket = reviewsByNumber.get(ref.number);
+    if (bucket) bucket.push(other);
+    else reviewsByNumber.set(ref.number, [other]);
+  }
+  for (const task of targets) {
+    const number = gatePullRequest(task)?.number;
+    const sameNumber = (number !== undefined && reviewsByNumber.get(number)) || [];
+    const review = aiReviewOfHead(task, sameNumber, sameRepo, latestHeadOf(task));
+    if (review) out.set(task.id, review);
+  }
+  return out;
+}

@@ -25,8 +25,13 @@ const ja = {
     title: "あなたの出番",
     total: (n: number) => `全${n}件`,
     none: "対応待ちはありません。",
-    others: "ほかのプロジェクト",
-    here: (name: string) => `このプロジェクト（${name}）`,
+    /** 組の見出し（PBI-442）。ダッシュボードの「あなたの出番」と同じ。 */
+    groups: {
+      decision: "判断で進むタスク",
+      paused: "再開を待つタスク",
+    },
+    /** 行に出す、待っている時間（「3時間」など）の前の語。 */
+    waiting: "待っている時間：",
   },
   /** sacty の新しい版（PBI-135・PBI-147）。 */
   update: {
@@ -104,8 +109,11 @@ const en: ShellMessages = {
     title: "Needs you",
     total: (n) => `${n} total`,
     none: "Nothing needs you.",
-    others: "Other projects",
-    here: (name) => `This project (${name})`,
+    groups: {
+      decision: "Ready for your decision",
+      paused: "Waiting to resume",
+    },
+    waiting: "Waiting: ",
   },
   update: {
     title: "A new version of Sacty is available",

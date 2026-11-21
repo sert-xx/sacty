@@ -247,7 +247,7 @@ describe("ダッシュボードのデータの形（PBI-118）", () => {
 });
 
 describe("ダッシュボードのあなたの出番（PBI-118）", () => {
-  it("承認待ち・一時停止・エスカレーションを、待っている時間が長い順に、判断する場所へのリンクつきで出す", () => {
+  it("承認待ち・エスカレーション（上の組）→ 一時停止（下の組）の順に、組の中は待っている時間が長い順に、判断する場所へのリンクつきで出す", () => {
     const tasks = [
       task({
         id: "a",
@@ -285,13 +285,57 @@ describe("ダッシュボードのあなたの出番（PBI-118）", () => {
       { c: "2026-10-09T00:00:00Z", b: "2026-10-11T00:00:00Z" },
       labels,
     );
-    expect(rows.map((r) => [r.id, r.waitingSince, r.href])).toEqual([
-      ["c", "2026-10-09T00:00:00Z", "/tasks/c/review"],
-      ["b", "2026-10-11T00:00:00Z", "/tasks/b"],
-      ["a", "2026-10-12T00:00:00Z", "/tasks/a/review"],
+    expect(rows.map((r) => [r.id, r.group, r.waitingSince, r.href])).toEqual([
+      ["c", "decision", "2026-10-09T00:00:00Z", "/tasks/c/review"],
+      ["a", "decision", "2026-10-12T00:00:00Z", "/tasks/a/review"],
+      ["b", "paused", "2026-10-11T00:00:00Z", "/tasks/b"],
     ]);
     expect(rows[0]?.projectName).toBe("決済");
-    expect(rows[1]?.status).toEqual({ text: "予算上限で一時停止", tone: "person" });
+    expect(rows[2]?.status).toEqual({ text: "予算上限で一時停止", tone: "person" });
+  });
+
+  it("待ち始めが同じなら ID の順、記録が無ければ updatedAt。待ち始めが新しい承認待ちが、古い一時停止より先に出る", () => {
+    const same = "2026-10-10T00:00:00Z";
+    const rows = attentionRows(
+      projects,
+      [
+        task({ id: "p", status: "paused", updatedAt: "2026-10-01T00:00:00Z" }),
+        task({ id: "d2", status: "awaiting_approval", gate: gate(), updatedAt: same }),
+        task({ id: "d1", status: "awaiting_approval", gate: gate(), updatedAt: same }),
+        task({
+          id: "d0",
+          status: "awaiting_approval",
+          gate: gate(),
+          updatedAt: "2026-10-20T00:00:00Z",
+        }),
+      ],
+      {},
+      labels,
+    );
+    expect(rows.map((r) => r.id)).toEqual(["d1", "d2", "d0", "p"]);
+  });
+
+  it("AI のレビューが今の head をレビュー中（reviewing）の承認待ちにだけ「・AI のレビュー中」を添え、組と並びは変えない", () => {
+    const pr = (id: string, status: "none" | "reviewing" | "unknown" | "attached", day: number) =>
+      task({
+        id,
+        status: "awaiting_approval",
+        gate: gate("implement"),
+        pullRequestState: "open",
+        aiReview: { head: "abc", status },
+        updatedAt: `2026-10-0${day}T00:00:00Z`,
+      });
+    const rows = attentionRows(
+      projects,
+      [pr("a", "reviewing", 1), pr("b", "none", 2), pr("c", "unknown", 3), pr("d", "attached", 4)],
+      {},
+      labels,
+    );
+    expect(rows.map((r) => r.id)).toEqual(["a", "b", "c", "d"]);
+    expect(rows.map((r) => r.group)).toEqual(["decision", "decision", "decision", "decision"]);
+    expect(
+      rows.filter((r) => r.status.text.endsWith("・AI のレビュー中")).map((r) => r.id),
+    ).toEqual(["a"]);
   });
 
   it("0 件・1 件・消したプロジェクト", () => {
@@ -300,10 +344,25 @@ describe("ダッシュボードのあなたの出番（PBI-118）", () => {
       attentionRows(projects, [task({ status: "paused", projectId: "gone" })], {}, labels),
     ).toEqual([]);
     expect(
-      attentionRows(projects, [task({ id: "only", status: "paused" })], {}, labels).map(
-        (r) => r.id,
-      ),
-    ).toEqual(["only"]);
+      attentionRows(projects, [task({ id: "only", status: "paused" })], {}, labels).map((r) => [
+        r.id,
+        r.group,
+      ]),
+    ).toEqual([["only", "paused"]]);
+    expect(
+      attentionRows(
+        projects,
+        [
+          task({
+            id: "only",
+            status: "escalated",
+            escalation: { step: "design", target: "design", pendingRemarks: [] },
+          }),
+        ],
+        {},
+        labels,
+      ).map((r) => [r.id, r.group]),
+    ).toEqual([["only", "decision"]]);
   });
 });
 

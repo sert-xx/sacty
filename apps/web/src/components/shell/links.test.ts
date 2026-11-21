@@ -147,9 +147,11 @@ describe("ヘッダーのリンク（PBI-114）", () => {
       projectId: "p2",
       projectName: "Webサイト",
       status: "要求要件の承認待ち",
+      group: "decision" as const,
+      waitingSince: "2026-11-01T00:00:00.000Z",
       href: "/tasks/t1/review",
     };
-    render(h(NotificationsMenu, { others: [notice], here: [], currentName: "決済" }));
+    render(h(NotificationsMenu, { notices: [notice] }));
     act(() => (container.querySelector("button") as HTMLButtonElement).click());
     expect(document.querySelector('a[href^="/switch"]')?.getAttribute("href")).toBe(
       "/switch?project=p2&to=%2Ftasks%2Ft1%2Freview",
@@ -172,6 +174,8 @@ describe("ヘッダーの切り替えの、画面ごとの選んだ表示（PBI-
         projectId: "p1",
         projectName: "決済",
         status: "要求要件の承認待ち",
+        group: "decision" as const,
+        waitingSince: "2026-11-01T00:00:00.000Z",
         href: "/tasks/t1/review",
       },
       {
@@ -180,6 +184,8 @@ describe("ヘッダーの切り替えの、画面ごとの選んだ表示（PBI-
         projectId: "p 2",
         projectName: "Webサイト",
         status: "設計の承認待ち",
+        group: "decision" as const,
+        waitingSince: "2026-11-01T00:00:00.000Z",
         href: "/tasks/t2/review",
       },
     ],
@@ -230,7 +236,7 @@ describe("ヘッダーの切り替えの、画面ごとの選んだ表示（PBI-
     ]);
   });
 
-  it("プロジェクトの画面では、URL のプロジェクトを選んだ表示にし、お知らせはそのプロジェクトとほかに分ける", () => {
+  it("プロジェクトの画面では、URL のプロジェクトを選んだ表示にし、お知らせは「すべてのプロジェクト」の画面と同じ並びで、プロジェクトでは分けない", () => {
     pathname = "/projects/p%202/tasks";
     render(h(LiveHeaderMenus, { initial: data, language: "ja" }));
     const trigger = container.querySelector('[data-testid="project-menu"]') as HTMLButtonElement;
@@ -242,6 +248,109 @@ describe("ヘッダーの切り替えの、画面ごとの選んだ表示（PBI-
     });
     const bell = container.querySelector('button[aria-label^="お知らせ"]') as HTMLButtonElement;
     act(() => bell.click());
-    expect(document.body.textContent).toContain("このプロジェクト（Webサイト）");
+    const popup = document.body.textContent ?? "";
+    expect(popup).not.toContain("ほかのプロジェクト");
+    expect(popup).not.toContain("このプロジェクト");
+    expect(
+      [...document.querySelectorAll('a[href^="/switch"]')].map((a) => a.getAttribute("href")),
+    ).toEqual([
+      "/switch?project=p1&to=%2Ftasks%2Ft1%2Freview",
+      "/switch?project=p%202&to=%2Ftasks%2Ft2%2Freview",
+    ]);
+  });
+});
+
+describe("ヘッダーのお知らせ：種類の 2 つの組と、待っている時間（PBI-442）", () => {
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const notice = (
+    taskId: string,
+    group: "decision" | "paused",
+    minutes: number,
+    projectId = "p1",
+  ) => ({
+    taskId,
+    title: `題 ${taskId}`,
+    projectId,
+    projectName: projectId === "p1" ? "決済" : "Webサイト",
+    status: group === "decision" ? "要求要件の承認待ち" : "一時停止中",
+    group,
+    waitingSince: ago(minutes),
+    href: `/tasks/${taskId}/review`,
+  });
+  // データの順が、ダッシュボードと同じ並び（上の組 → 下の組。組の中は古い順）
+  const notices = [
+    notice("d1", "decision", 3 * 24 * 60),
+    notice("d2", "decision", 125, "p2"),
+    notice("p1", "paused", 600),
+    notice("p2", "paused", 45, "p2"),
+  ];
+  const data = {
+    projects: [
+      { id: "p1", name: "決済", needsYou: 2 },
+      { id: "p2", name: "Webサイト", needsYou: 2 },
+    ],
+    current: { id: "p1", name: "決済", needsYou: 2 },
+    notices,
+  };
+
+  it.each([
+    ["すべてのプロジェクト", "/dashboard"],
+    ["プロジェクトを選んだ画面", "/projects/p2/tasks"],
+  ])(
+    "%s でも、組の見出しの下に同じ順で行が出て、各行に待っている時間が出る。プロジェクトの組分けは出ない",
+    (_name, path) => {
+      pathname = path;
+      render(h(LiveHeaderMenus, { initial: data, language: "ja" }));
+      act(() =>
+        (container.querySelector('button[aria-label^="お知らせ"]') as HTMLButtonElement).click(),
+      );
+      const groups = [...document.querySelectorAll('[data-testid^="notices-"]')];
+      expect(groups.map((g) => g.getAttribute("data-testid"))).toEqual([
+        "notices-decision",
+        "notices-paused",
+      ]);
+      expect(groups[0]?.textContent).toContain("判断で進むタスク");
+      expect(groups[1]?.textContent).toContain("再開を待つタスク");
+      expect(
+        [...document.querySelectorAll('[data-testid^="notice-waiting-"]')].map((e) => [
+          e.getAttribute("data-testid"),
+          e.textContent,
+        ]),
+      ).toEqual([
+        ["notice-waiting-d1", "待っている時間：3日"],
+        ["notice-waiting-d2", "待っている時間：2時間"],
+        ["notice-waiting-p1", "待っている時間：10時間"],
+        ["notice-waiting-p2", "待っている時間：45分"],
+      ]);
+      const popup = document.body.textContent ?? "";
+      expect(popup).not.toContain("ほかのプロジェクト");
+      expect(popup).not.toContain("このプロジェクト");
+    },
+  );
+
+  it("0 件のときは件数を出さず、空の文を出す。片方の組だけのとき、もう片方の見出しは出ない", () => {
+    pathname = "/dashboard";
+    render(h(LiveHeaderMenus, { initial: { ...data, notices: [] }, language: "ja" }));
+    const bell = container.querySelector('button[aria-label^="お知らせ"]') as HTMLButtonElement;
+    expect(bell.getAttribute("aria-label")).toBe("お知らせ");
+    act(() => bell.click());
+    expect(document.body.textContent).toContain("対応待ちはありません。");
+    expect(document.querySelector('[data-testid^="notices-"]')).toBeNull();
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(
+      h(LiveHeaderMenus, {
+        initial: { ...data, notices: notices.filter((n) => n.group === "paused") },
+        language: "ja",
+      }),
+    );
+    act(() =>
+      (container.querySelector('button[aria-label^="お知らせ"]') as HTMLButtonElement).click(),
+    );
+    expect(document.querySelector('[data-testid="notices-decision"]')).toBeNull();
+    expect(document.querySelector('[data-testid="notices-paused"]')).not.toBeNull();
   });
 });
