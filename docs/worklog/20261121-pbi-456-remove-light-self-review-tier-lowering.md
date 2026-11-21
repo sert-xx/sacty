@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-21（UTC）
 - タスク: PBI-456
-- PR: なし
+- PR: #516
 - ブランチ: なし
 - 関係する ADR: [軽い依頼の自己レビューから、段階を 1 段下げる決まりを消す](../adr/20261121-2100-remove-light-self-review-tier-lowering.md)
 
@@ -19,8 +19,17 @@
 
 ## 確かめたこと
 
-- `npx vitest run tests/docs apps/daemon/src/self-review-depth.test.ts apps/daemon/src/default-skills.test.ts`、`npm run lint`、`npm test`（結果は実装の説明のとおり）。
+- `npm run format`（biome format）: 通った。
+- `npm run lint`（biome check）: 通った（790 ファイル、警告なし）。
+- `npm run typecheck`: 通った。
+- `npx vitest run`（全件）: 330 ファイル、6445 件が通った（14 件はスキップ）。`tests/docs`・`self-review-depth.test.ts`・`default-skills.test.ts` を含む。
+- `npm run build`: 実行しなかった。作業領域に成果物を書くため。
 
 ## レビューの指摘と対応
 
-- なし。
+- ADR の理由に、比べた案と採らなかった理由が無いとの指摘：理由に 2 案を足した。
+- 作業履歴に確かめた結果・typecheck・「残したこと」・PR 番号が無いとの指摘：直した。
+
+## 残したこと
+
+なし
