@@ -82,7 +82,7 @@ When sacty does not respond within 30 seconds, the tools answer that the daemon 
 
 | Tool | What it does |
 | --- | --- |
-| `list_tasks` | Lists tasks, newest first. Can filter by PR, branch name, repository, title, and so on. With `needs_person`, it lists only the tasks waiting for a person, the longest wait first |
+| `list_tasks` | Lists tasks, newest first. Can filter by PR, branch name, repository, title, and so on. With `needs_person`, it lists only the tasks waiting for a person: tasks that move on once you decide first, then paused tasks (the longest wait first within each) |
 | `get_task` | Returns the details of a task (description, review body, why it is stopped, recent activity) |
 | `rereview_task` | Puts a PR review task into re-review |
 | `list_projects` | Lists the projects that have not been deleted, with their IDs, names, and target repositories |
@@ -150,9 +150,9 @@ If you ask for a task under review or a task that is not a PR review, it returns
 
 Ask "Which sacty tasks are waiting for me?" and the AI calls `list_tasks` with `needs_person: true`.
 
-- The condition is the same as "Your turn" on the web dashboard. Tasks that are awaiting approval, escalated, or paused, minus those awaiting approval while the AI is deciding where to send back the PR remarks.
-- The bell in the web header also counts the awaiting-approval tasks the AI is deciding on, so its count can differ. The number excluded is `excludedAiJudging` in the result.
-- They are sorted by the longest wait first (by ID when equal), and each task gets the time it started waiting (`waitingSince`). If `waitingSinceSource` is `dashboard`, it is the time from the daemon's aggregate; if `updatedAt`, there was no record, so `updatedAt` stands in.
+- The condition is the same as "Needs you" on the web dashboard, the header bell, and the cards above the task list. Tasks that are awaiting approval, escalated, or paused, minus those awaiting approval while the AI is deciding where to send back the PR remarks. The number excluded is `excludedAiJudging` in the result.
+- They are sorted with the upper group first (`personTurnGroup` is `decision`: awaiting approval, escalated), then the lower group (`paused`). Within a group, the longest wait comes first (by ID when equal). The result's `order` is `personTurnGroup_waitingSince_asc`.
+- Each task gets `personTurnGroup`, which says which group it is in, and the time it started waiting (`waitingSince`). If `waitingSinceSource` is `dashboard`, it is the time from the daemon's aggregate; if `updatedAt`, there was no record, so `updatedAt` stands in.
 - When the result includes `nextOffset`, pass it as `offset` to get the rest. `nextOffset` is absent once everything has been returned.
 - When the wait times cannot be read, it fails with the reason instead of replacing them with `updatedAt`.
 - The web UI's status text and color, the link to where a person decides, and the PR conflict note are not shown. Use `state`, `approval`, `asks`, `pausedReason`, and `url`.

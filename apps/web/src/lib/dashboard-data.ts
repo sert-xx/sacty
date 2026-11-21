@@ -4,7 +4,9 @@ import {
   type DashboardSummary,
   isFinished,
   type PauseReason,
+  type PersonTurnGroup,
   type Project,
+  personTurnTasks,
   type Task,
 } from "@sacty/core";
 import { getMessages } from "@/i18n/server";
@@ -17,7 +19,14 @@ import {
   listTasks,
 } from "@/lib/daemon";
 import { PAUSE_REASON_ORDER } from "@/lib/dashboard-rules";
-import { personLink, prConflictNote, type StatusTone, statusText, statusTone } from "@/lib/labels";
+import {
+  personLink,
+  personStatusText,
+  prConflictNote,
+  type StatusTone,
+  statusText,
+  statusTone,
+} from "@/lib/labels";
 import { notificationProblems } from "@/lib/notification-problems";
 
 /** ダッシュボードの「終わっていないタスク」の欄の1行（PBI-114）。 */
@@ -34,6 +43,8 @@ export type AttentionRow = OpenTaskRow & {
   href: string;
   /** href が GitHub の PR（新しいタブで開く。PBI-136）。 */
   external?: true;
+  /** どちらの組か（上の組：decision、下の組：paused。PBI-442）。 */
+  group: PersonTurnGroup;
   /** 待ち始めた時刻（その状態になった作業履歴の記録。無ければ updatedAt）。 */
   waitingSince: string;
   /** 行に添える案内（実装の PR がベースブランチと競合しているとき、取り込む操作）。 */
@@ -127,9 +138,10 @@ export function openTaskRows(
 }
 
 /**
- * あなたの出番（PBI-118）：人の判断を待っているタスク（状態の表示が「人の出番」のもの。承認待ちでも戻し先の判断で AI が
- * PR の指摘を判断している間は除く）を、待っている時間が長い順に出す。待ち始めは、デーモンの集計の時刻（その状態になった
- * 作業履歴の記録）。無ければ updatedAt。
+ * あなたの出番（PBI-118・PBI-442）：人の判断を待っているタスクを、上の組（判断すれば進む：承認待ち・エスカレーション。
+ * 承認待ちでも戻し先の判断で AI が PR の指摘を判断している間は除く）→ 下の組（一時停止）の順に出す。組の中は待ち始めの
+ * 古い順。判定と並びは core の personTurnTasks（ベル・一覧のカード・MCP と同じ）。待ち始めは、デーモンの集計の時刻
+ * （その状態になった作業履歴の記録）。無ければ updatedAt。
  */
 export function attentionRows(
   projects: readonly Project[],
@@ -138,19 +150,20 @@ export function attentionRows(
   labels: Labels,
 ): AttentionRow[] {
   const names = new Map(projects.map((p) => [p.id, p.name]));
-  return liveOpenTasks(projects, tasks)
-    .filter((t) => statusTone(t) === "person")
-    .map((t) => ({
-      id: t.id,
-      title: t.title,
-      projectId: t.projectId,
-      projectName: names.get(t.projectId) ?? t.projectId,
-      status: { text: statusText(t, labels), tone: statusTone(t) },
-      ...personLink(t, labels),
-      waitingSince: waitingSince[t.id] ?? t.updatedAt,
-      ...(prConflictNote(t, labels) ? { note: prConflictNote(t, labels) } : {}),
-    }))
-    .sort((a, b) => a.waitingSince.localeCompare(b.waitingSince) || a.id.localeCompare(b.id));
+  return personTurnTasks(liveOpenTasks(projects, tasks), {
+    projectIds: new Set(projects.map((p) => p.id)),
+    waitingSince,
+  }).map(({ task: t, group, waitingSince: since }) => ({
+    id: t.id,
+    title: t.title,
+    projectId: t.projectId,
+    projectName: names.get(t.projectId) ?? t.projectId,
+    status: { text: personStatusText(t, labels), tone: statusTone(t) },
+    group,
+    ...personLink(t, labels),
+    waitingSince: since,
+    ...(prConflictNote(t, labels) ? { note: prConflictNote(t, labels) } : {}),
+  }));
 }
 
 /** 止まっているタスクの理由ごとの件数とタスク（PBI-118）。理由の無い古い記録は「人が止めた」に入れる。 */

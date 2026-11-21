@@ -20,7 +20,7 @@ The dashboard shows the following sections in the order of the table. The first 
 
 | Section | What it shows | When empty |
 | --- | --- | --- |
-| [Needs you](#needs-you) | Tasks awaiting approval, paused, or escalated | "Nothing needs you right now." |
+| [Needs you](#needs-you) | Tasks awaiting approval, escalated, or paused | "Nothing needs you right now." |
 | [Why tasks are paused](#why-tasks-are-paused) | Paused tasks counted by reason | "No tasks are paused." |
 | [Open tasks](#open-tasks) | All tasks except completed and cancelled ones | "There are no open tasks." |
 | [Cost and budget](#cost-and-budget) | The cost for today and the last 7 days (an estimate), and the tasks near their budget | "No task is near its budget." |
@@ -34,10 +34,11 @@ Sections sit side by side when there is room and stack otherwise. The same secti
 
 ### Needs you
 
-This section shows tasks awaiting approval, paused, or escalated, longest wait first. Each row shows the task title, the project name, the status, and the waiting time (in the image, the project name is under the title, and the status and the waiting time are on the right).
+This section shows the tasks that wait for a person, in two groups. The upper group, "Ready for your decision", holds tasks that move on once you decide (awaiting approval, escalated). The lower group, "Waiting to resume", holds tasks that stay stopped (paused, whatever the reason). Each group has a heading with a count, and a group with no tasks is not shown. Within a group, the longest wait comes first (by ID when equal). Because the upper group comes first, the tasks you can move forward right now are visible without scrolling, however many paused tasks there are. Each row shows the task title, the project name, the status, and the waiting time (in the image, the project name is under the title, and the status and the waiting time are on the right).
 
 - Press a title to go to the screen where you decide.
 - If the task is awaiting approval and the PR of the current submission is open, pressing the title opens the PR on GitHub in a new tab instead (the title has a "↗").
+- If the task is awaiting approval and sacty's AI review is reviewing the current head of that PR, the status is followed by " · AI review in progress". The group and the order do not change, and you can still approve and merge.
 - When the implementation PR conflicts with the base branch, the status says so ([When the base branch moves ahead](tasks.en.md#when-the-base-branch-moves-ahead)).
 
 ### Why tasks are paused
