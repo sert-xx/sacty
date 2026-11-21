@@ -8,52 +8,98 @@ export const REDACTED = "[REDACTED]";
  */
 const MIN_GUESSED_LENGTH = 8;
 
-/** 値の全体の出現を探す木（Aho-Corasick）。値の集合が同じ間は、使い回せる。 */
+/**
+ * 認証ファイルとして読む大きさの上限（バイト）。ファイルの全体が1つの値になることがあるので、取り出す前のファイルの大きさで判定する。
+ * 本物の認証ファイルは数 KB〜数十 KB なので、十分な余裕を持たせた。超えたファイルは、読まず、伏せる対象から外さずに実行を失敗にする。
+ */
+export const MAX_AUTH_FILE_BYTES = 1024 * 1024;
+
+/**
+ * 値の全体の出現を探す木（Aho-Corasick）。値の集合が同じ間は、使い回せる。
+ * 節は型付き配列で持つ（1 文字あたり約 14 バイト）。子が 1 つの節（長い値の途中はほぼすべて）は、その子を配列に直接入れ、
+ * 子が 2 つ以上ある節の 2 つ目以降だけを Map に入れる（そうなる節の数は、値の数以下）。
+ */
 export type SecretMatcher = {
   targets: string[];
-  /** 節ごとの、文字（UTF-16 の1単位）から子の節への対応（節 0 が根） */
-  children: Map<number, number>[];
-  fail: number[];
+  /** 節の数（根を含む）。 */
+  nodes: number;
+  /** 節（0 が根）の最初の子の文字・節（0 は子なし） */
+  firstCode: Uint16Array;
+  firstChild: Int32Array;
+  /** 子が 2 つ以上ある節の、2 つ目以降の子（文字 → 節） */
+  more: Map<number, Map<number, number>>;
+  fail: Int32Array;
   /** 節 n までの文字列の末尾に一致する、いちばん長い値の長さ（無ければ 0） */
-  best: number[];
+  best: Int32Array;
 };
 
 function uniqueTargets(secrets: readonly string[]): string[] {
   return [...new Set(secrets)].filter((s) => s.length > 0);
 }
 
+/** node の、文字 code の子の節（無ければ 0。根は誰の子でもないので、0 を「無い」に使える）。 */
+function childOf(m: SecretMatcher, node: number, code: number): number {
+  const first = m.firstChild[node] as number;
+  if (first === 0) return 0;
+  if (m.firstCode[node] === code) return first;
+  return m.more.get(node)?.get(code) ?? 0;
+}
+
 export function compileSecrets(secrets: readonly string[]): SecretMatcher {
   const targets = uniqueTargets(secrets);
-  const children: Map<number, number>[] = [new Map()];
-  const best: number[] = [0];
+  let capacity = 1;
+  for (const secret of targets) capacity += secret.length;
+  const m: SecretMatcher = {
+    targets,
+    nodes: 0,
+    firstCode: new Uint16Array(capacity),
+    firstChild: new Int32Array(capacity),
+    more: new Map(),
+    fail: new Int32Array(capacity),
+    best: new Int32Array(capacity),
+  };
+  let count = 1;
   for (const secret of targets) {
     let node = 0;
     for (let i = 0; i < secret.length; i++) {
       const code = secret.charCodeAt(i);
-      let found = (children[node] as Map<number, number>).get(code);
-      if (found === undefined) {
-        found = children.length;
-        children.push(new Map());
-        best.push(0);
-        (children[node] as Map<number, number>).set(code, found);
+      let found = childOf(m, node, code);
+      if (found === 0) {
+        found = count++;
+        if (m.firstChild[node] === 0) {
+          m.firstCode[node] = code;
+          m.firstChild[node] = found;
+        } else {
+          const extra = m.more.get(node) ?? new Map<number, number>();
+          m.more.set(node, extra);
+          extra.set(code, found);
+        }
       }
       node = found;
     }
-    best[node] = secret.length;
+    m.best[node] = secret.length;
   }
-  const fail: number[] = new Array(children.length).fill(0);
-  const queue: number[] = [...(children[0] as Map<number, number>).values()];
-  for (let head = 0; head < queue.length; head++) {
+  m.nodes = count;
+  const queue = new Int32Array(count);
+  let tail = 0;
+  const link = (node: number, code: number, c: number) => {
+    let f = m.fail[node] as number;
+    while (f !== 0 && childOf(m, f, code) === 0) f = m.fail[f] as number;
+    m.fail[c] = childOf(m, f, code);
+    m.best[c] = Math.max(m.best[c] as number, m.best[m.fail[c] as number] as number);
+    queue[tail++] = c;
+  };
+  // 根の子は fail が根（根からの link は、根自身の子に当たらないよう別に扱う）
+  const rootFirst = m.firstChild[0] as number;
+  if (rootFirst !== 0) queue[tail++] = rootFirst;
+  for (const c of m.more.get(0)?.values() ?? []) queue[tail++] = c;
+  for (let head = 0; head < tail; head++) {
     const node = queue[head] as number;
-    for (const [code, c] of children[node] as Map<number, number>) {
-      let f = fail[node] as number;
-      while (f !== 0 && !(children[f] as Map<number, number>).has(code)) f = fail[f] as number;
-      fail[c] = (children[f] as Map<number, number>).get(code) ?? 0;
-      best[c] = Math.max(best[c] as number, best[fail[c] as number] as number);
-      queue.push(c);
-    }
+    const first = m.firstChild[node] as number;
+    if (first !== 0) link(node, m.firstCode[node] as number, first);
+    for (const [code, c] of m.more.get(node) ?? []) link(node, code, c);
   }
-  return { targets, children, fail, best };
+  return m;
 }
 
 type Cluster = { start: number; end: number; emitted: boolean };
@@ -66,9 +112,8 @@ function findClusters(text: string, m: SecretMatcher, covered: number): Cluster[
   let state = 0;
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
-    while (state !== 0 && !(m.children[state] as Map<number, number>).has(code))
-      state = m.fail[state] as number;
-    state = (m.children[state] as Map<number, number>).get(code) ?? 0;
+    while (state !== 0 && childOf(m, state, code) === 0) state = m.fail[state] as number;
+    state = childOf(m, state, code);
     const length = m.best[state] as number;
     if (length === 0) continue;
     const start = i + 1 - length;

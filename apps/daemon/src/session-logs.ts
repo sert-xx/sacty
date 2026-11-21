@@ -89,6 +89,11 @@ export interface SessionLogSink {
   /** 実行の途中で分かった秘密情報（コンテナで更新された認証ファイルの値など）。 */
   addSecrets(values: readonly string[]): void;
   /**
+   * 伏せる対象にできない値（大きすぎる認証ファイルなど）が出力に混ざりうるので、この実行の出力を残さない。
+   * いままでの出力も、これからの出力も、ファイルに残さない。
+   */
+  withholdOutput(): void;
+  /**
    * コンテナが終わった後、実行ごとの設定の場所（dir）から、エージェントの元のセッションのファイルを写す（PBI-66）。
    * 写せなくても、実行は止めない。
    */
@@ -104,7 +109,7 @@ export interface SessionLogSink {
    */
   agentFilesNotArchived(input: {
     runtime: AgentSessionRuntime;
-    reason: "container_not_confirmed";
+    reason: "container_not_confirmed" | "secret_file_too_large";
     sessionId?: string;
   }): void;
 }
@@ -114,7 +119,7 @@ export type ArchivedAgentSession = AgentArchive & {
   runtime: AgentSessionRuntime;
   sessionId?: string;
   /** 写さなかった理由（files は空）。 */
-  notArchived?: "container_not_confirmed";
+  notArchived?: "container_not_confirmed" | "secret_file_too_large";
 };
 
 /** 秘密情報と、JSON の文字列の中に書かれたときの形（エスケープされた形）。長い順。 */
@@ -143,31 +148,42 @@ export class StreamRedactor {
   private pending = "";
   /** pending の先頭の、すでに `[REDACTED]` を渡したかたまりの中の文字数。 */
   private covered = 0;
-  /** 前回の値の集合と木（値が変わらない間は、木を使い回す）。 */
-  private compiled: { secrets: readonly string[]; matcher: SecretMatcher } | undefined;
+  /** 前回の値の集合と、そこから作った値の形・いちばん長い値の長さ・木（値が変わらない間は、作り直さず使い回す）。 */
+  private compiled:
+    | { secrets: readonly string[]; longest: number; matcher: SecretMatcher }
+    | undefined;
 
   constructor(private readonly secrets: () => readonly string[]) {}
 
-  private matcherFor(forms: readonly string[]): SecretMatcher {
+  /**
+   * 値の集合が前回と同じ（同じ文字列が同じ順）なら、値の形・木を作り直さない。長い値でも、1 回の `push` で
+   * 値のエスケープ・並べ替え・全体の比較をしないよう、要素は `===` で比べる（同じ文字列なら参照が同じで、長さによらない）。
+   */
+  private compiledFor(): NonNullable<typeof this.compiled> {
+    const secrets = this.secrets();
     const previous = this.compiled;
     if (
-      previous?.secrets.length === forms.length &&
-      previous.secrets.every((s, i) => s === forms[i])
+      previous?.secrets.length === secrets.length &&
+      previous.secrets.every((s, i) => s === secrets[i])
     )
-      return previous.matcher;
-    this.compiled = { secrets: forms, matcher: compileSecrets(forms) };
-    return this.compiled.matcher;
+      return previous;
+    const forms = secretForms(secrets);
+    this.compiled = {
+      secrets: [...secrets],
+      longest: forms[0]?.length ?? 0,
+      matcher: compileSecrets(forms),
+    };
+    return this.compiled;
   }
 
   push(text: string): string {
-    const forms = secretForms(this.secrets());
-    const longest = forms[0]?.length ?? 0;
+    const { longest, matcher } = this.compiledFor();
     const buf = this.pending + text;
     let cut = buf.length - Math.min(buf.length, Math.max(0, longest - 1));
     // サロゲートペア（絵文字・補助漢字）の途中で分けない（分けると、UTF-8 にするときに文字が壊れる）。
     // 持っておく分を1つ増やすので、持っておく長さは足りたまま
     if (cut > 0 && isHighSurrogate(buf.charCodeAt(cut - 1))) cut--;
-    const result = redactPartial(buf, this.matcherFor(forms), this.covered, cut);
+    const result = redactPartial(buf, matcher, this.covered, cut);
     this.pending = result.rest;
     this.covered = result.covered;
     return result.out;
@@ -177,7 +193,7 @@ export class StreamRedactor {
   peek(): string {
     return redactPartial(
       this.pending,
-      this.matcherFor(secretForms(this.secrets())),
+      this.compiledFor().matcher,
       this.covered,
       this.pending.length,
     ).out;
@@ -285,6 +301,15 @@ export class HeadTailFile {
     this.put(buf.subarray(0, cut));
     this.headFull = true;
     this.toTail(buf.subarray(cut));
+  }
+
+  /** メモリーに持つ分（書きかけの行・末尾）を捨てる。閉じても、これらはファイルに書かれない。 */
+  discard(): void {
+    this.pending = Buffer.alloc(0);
+    this.tail = [];
+    this.tailSize = 0;
+    this.evictedBytes = 0;
+    this.headFull = false;
   }
 
   /** 省いたことの目印（省いた大きさ・行数から作る）を間に入れ、末尾を書いて閉じる。 */
@@ -419,6 +444,8 @@ export class SessionLog implements SessionLogSink {
   private secretsAtFirstWrite: number | undefined;
   private warned = false;
   private closed = false;
+  /** 出力を残さない（伏せる対象にできない値が混ざりうる）。 */
+  private withheld = false;
   /** 写したエージェントのファイル（PBI-66）。写していなければ undefined。 */
   archived: ArchivedAgentSession | undefined;
 
@@ -453,6 +480,27 @@ export class SessionLog implements SessionLogSink {
     for (const value of values) if (value) this.extra.add(value);
   }
 
+  withholdOutput(): void {
+    this.withheld = true;
+    for (const file of Object.values(this.files)) file.discard();
+    this.clearWithheld();
+  }
+
+  /** 書いたファイルの中身を、出力を残さない旨の1行に置き換える。 */
+  private clearWithheld(): void {
+    for (const file of Object.values(this.files)) {
+      try {
+        writeFileSync(
+          file.path,
+          "[sacty] output withheld: it may contain a value that cannot be redacted.\n",
+          { mode: 0o600 },
+        );
+      } catch (error) {
+        this.warn(error);
+      }
+    }
+  }
+
   async archiveAgentFiles(
     input: Parameters<SessionLogSink["archiveAgentFiles"]>[0],
   ): Promise<void> {
@@ -480,7 +528,9 @@ export class SessionLog implements SessionLogSink {
   agentFilesNotArchived(input: Parameters<SessionLogSink["agentFilesNotArchived"]>[0]): void {
     if (this.archived) return;
     console.warn(
-      `[daemon] コンテナが止まったことを確かめられなかったため、エージェントのセッションのファイルを写しませんでした（${this.meta.runId}）。`,
+      input.reason === "secret_file_too_large"
+        ? `[daemon] 認証ファイルが大きすぎて値を伏せられないため、エージェントのセッションのファイルを写しませんでした（${this.meta.runId}）。`
+        : `[daemon] コンテナが止まったことを確かめられなかったため、エージェントのセッションのファイルを写しませんでした（${this.meta.runId}）。`,
     );
     this.archived = {
       files: [],
@@ -498,7 +548,7 @@ export class SessionLog implements SessionLogSink {
    * 書き終えていない最後の行は入れない。閉じた後・読めなければ undefined。
    */
   snapshot(): SessionLogSnapshot | undefined {
-    if (this.closed) return undefined;
+    if (this.closed || this.withheld) return undefined;
     const markers = this.markers();
     const forms = secretForms(this.allSecrets());
     const texts: Partial<Record<SessionLogFile, string>> = {};
@@ -526,15 +576,22 @@ export class SessionLog implements SessionLogSink {
     if (this.closed) return;
     this.closed = true;
     this.onClose?.();
-    for (const file of ["events", "stderr"] as const) {
-      this.files[file].write(this.redactors[file].flush());
+    if (!this.withheld) {
+      for (const file of ["events", "stderr"] as const) {
+        this.files[file].write(this.redactors[file].flush());
+      }
     }
     const markers = this.markers();
     this.files.events.close(markers.events);
     this.files.stderr.close(markers.stderr);
+    if (this.withheld) this.clearWithheld();
     // 書き始めた後に分かった秘密情報（コンテナで更新されたトークンなど）は、書いたファイル全体から伏せ直す
     const all = this.allSecrets();
-    if (this.secretsAtFirstWrite !== undefined && all.length > this.secretsAtFirstWrite) {
+    if (
+      !this.withheld &&
+      this.secretsAtFirstWrite !== undefined &&
+      all.length > this.secretsAtFirstWrite
+    ) {
       const forms = secretForms(all);
       for (const file of Object.values(this.files)) {
         try {
@@ -549,6 +606,7 @@ export class SessionLog implements SessionLogSink {
     }
     const truncated: NonNullable<SessionLogMeta["truncated"]> = {};
     for (const file of ["events", "stderr"] as const) {
+      if (this.withheld) break; // 1 行に置き換えたログに、省いた大きさを付けない
       const { bytes, lines } = this.files[file].dropped;
       if (bytes > 0) truncated[file] = { droppedBytes: bytes, droppedLines: lines };
     }
@@ -586,7 +644,7 @@ export class SessionLog implements SessionLogSink {
   }
 
   private write(file: SessionLogFile, text: string): void {
-    if (this.closed || !text) return;
+    if (this.closed || this.withheld || !text) return;
     this.secretsAtFirstWrite ??= this.allSecrets().length;
     this.files[file].write(this.redactors[file].push(text));
   }
@@ -630,6 +688,7 @@ const NOOP_LOG = {
   stdout() {},
   stderr() {},
   addSecrets() {},
+  withholdOutput() {},
   async archiveAgentFiles() {},
   agentFilesNotArchived() {},
   close() {},

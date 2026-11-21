@@ -2178,8 +2178,10 @@ const AgentSessionArchived = z.object({
     /**
      * 写さなかった理由（files は空）。container_not_confirmed：コンテナが止まったことを確かめられなかった
      * （動いたままのコンテナが写す途中のファイルを差し替えられるため、写さない）。
+     * secret_file_too_large：認証ファイルが上限（1MiB）を超えた（伏せられない値が混ざりうるため、写さない）。
+     * この値は新しい版が書く。前の版のデーモンに戻すと、この値を含む行は読めなくなりうるので、戻す前に確かめる。
      */
-    notArchived: z.enum(["container_not_confirmed"]).optional(),
+    notArchived: z.enum(["container_not_confirmed", "secret_file_too_large"]).optional(),
   }),
 });
 

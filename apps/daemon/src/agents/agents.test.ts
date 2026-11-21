@@ -1,12 +1,23 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AgentConfig, agentFor, CONFIG_TEMPLATE, loadConfig } from "../config.js";
+import { AgentTimeoutError } from "../errors.js";
 import { MemorySecretStore } from "../secrets.js";
+import type { SessionLogSink } from "../session-logs.js";
 import { waitFor } from "../testing/wait.js";
 import { dockerRunArgs, syncBackIfChanged } from "./docker.js";
 import { buildInvocation, type Invocation } from "./invocation.js";
@@ -104,6 +115,29 @@ describe("認証方式ごとの環境変数", () => {
     });
     expect(codexInv.env.CODEX_HOME).toBe("/.codex");
     expect(codexInv.sessionFiles).toBe("codex");
+  });
+
+  it("Codex の subscription のホストの認証ファイルは、上限ちょうどなら伏せる対象に入れ、+1 バイトなら読まない", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sacty-inv-"));
+    try {
+      const codex: AgentConfig = {
+        ...base,
+        id: "x",
+        runtime: "codex",
+        auth: { mode: "subscription", auth_file: join(dir, "auth.json") },
+      };
+      const collect = async (size: number) => {
+        // 非 JSON の中身は、全体が 1 つの値になる
+        writeFileSync(join(dir, "auth.json"), "a".repeat(size));
+        const seen: string[] = [];
+        await buildInvocation(codex, "prompt", new MemorySecretStore({}), (v) => seen.push(v));
+        return seen;
+      };
+      expect(await collect(1024 * 1024)).toEqual(["a".repeat(1024 * 1024)]);
+      expect(await collect(1024 * 1024 + 1)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("作業領域の外で読ませる場所は、Claude Code には --add-dir で渡し、Codex には足さない（PBI-91）", async () => {
@@ -1866,6 +1900,38 @@ while true; do sleep 0.05; done`,
     expect(logged).not.toContain("old-token");
   });
 
+  it("コンテナが止まったことを確かめられず、認証ファイルも大きくされたときは、停止の確認の失敗を返し、出力も書き戻しもしない", async () => {
+    const { existsSync } = await import("node:fs");
+    const { DockerExecutor, RunningContainers } = await import("./docker.js");
+    const { bin, hostAuth } = await fakeDocker(
+      `head -c 1100000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
+touch "$here/ready"
+trap 'exit 137' TERM
+while true; do sleep 0.05; done`,
+      "echo still-running; exit 0",
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const executor = new DockerExecutor(undefined, undefined, new RunningContainers(spawn, 10, 1));
+    const running = executor.run({
+      runId: "r444a",
+      image: "img",
+      workspaceDir: dir,
+      invocation: invocation(hostAuth),
+    });
+    await waitFor(() => existsSync(join(bin, "ready")), {
+      what: "偽の docker が認証ファイルを大きくした合図（ready）",
+      source: { name: "偽の docker の実行", ended: running },
+    });
+    executor.abortAll();
+    const outcome = await running;
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      message: { code: "run.containerNotConfirmed" },
+    });
+    expect(outcome).not.toHaveProperty("output");
+    expect(readFileSync(hostAuth, "utf8")).toBe("old-token");
+  });
+
   it("コンテナが認証ファイルをホストのほかのファイルへのリンクに差し替えても、その中身を書き戻さない", async () => {
     const { DockerExecutor } = await import("./docker.js");
     const { hostAuth } = await fakeDocker(
@@ -2694,6 +2760,193 @@ agents:
     expect(result.config.agentWarnings).toEqual([]);
     // 既定の工程の AI は、providers.codex があるので codex_standard のまま
     expect(result.config.defaultAgent.id).toBe("codex_standard");
+  });
+});
+
+describe("大きすぎる認証ファイルは、伏せる対象から外さず、実行を失敗にする（偽のdockerコマンド。PBI-444）", () => {
+  let dir: string;
+  const originalPath = process.env.PATH;
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function run(
+    hostAuthContent: string,
+    dockerScript: string,
+    log?: SessionLogSink,
+    sessionFiles?: "codex",
+    syncBack = false,
+    timeoutMs?: number,
+  ) {
+    const { chmodSync } = await import("node:fs");
+    const { DockerExecutor } = await import("./docker.js");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "docker"), dockerScript);
+    chmodSync(join(bin, "docker"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const hostAuth = join(dir, "auth.json");
+    writeFileSync(hostAuth, hostAuthContent);
+    const outcome = await new DockerExecutor().run({
+      runId: "r-large-auth",
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...(log ? { log } : {}),
+      image: "img",
+      workspaceDir: dir,
+      invocation: {
+        command: ["codex"],
+        env: { CODEX_HOME: "/.codex" },
+        stage: {
+          containerDir: "/.codex",
+          files: [{ hostPath: hostAuth, name: "auth.json", syncBack }],
+        },
+        ...(sessionFiles ? { sessionFiles } : {}),
+        parser: "codex-jsonl",
+      },
+    });
+    return { outcome, hostAuth };
+  }
+
+  const completes = `echo '{"type":"item.completed","item":{"type":"agent_message","text":"分析"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}'
+`;
+
+  it("起動の前に大きすぎれば、起動せずに失敗にする", async () => {
+    const { outcome } = await run(
+      "a".repeat(1024 * 1024 + 1),
+      `#!/bin/sh\ntouch "$(dirname "$0")/started"\n${completes}`,
+    );
+    // 失敗の文言には、ホストの認証ファイルのパスを渡す
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      reason: "auth",
+      message: { code: "run.authFileUnreadable", params: { path: join(dir, "auth.json") } },
+    });
+    expect(existsSync(join(dir, "bin", "started"))).toBe(false);
+  });
+
+  it("コンテナの中で大きくされたら、出力を返さず失敗にし、ホストの認証ファイルに書き戻さない", async () => {
+    const { outcome, hostAuth } = await run(
+      '{"token":"host-token-value-0123456789"}',
+      `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in *:/.codex) host="\${arg%%:*}" ;; esac
+done
+head -c 1100000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
+${completes}`,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(outcome).toMatchObject({ kind: "failed", reason: "auth" });
+    expect(outcome).not.toHaveProperty("output");
+    expect(readFileSync(hostAuth, "utf8")).toBe('{"token":"host-token-value-0123456789"}');
+  });
+
+  it("コンテナの中で大きくされたら、セッションログに出力を残さないようにする", async () => {
+    const calls: string[] = [];
+    const log = {
+      stdout: (t: string) => calls.push(`out:${t.length}`),
+      stderr: () => {},
+      addSecrets: () => {},
+      withholdOutput: () => calls.push("withhold"),
+      archiveAgentFiles: async () => {},
+      agentFilesNotArchived: () => {},
+    } as unknown as SessionLogSink;
+    await run(
+      '{"token":"host-token-value-0123456789"}',
+      `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in *:/.codex) host="\${arg%%:*}" ;; esac
+done
+head -c 1100000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
+${completes}`,
+      log,
+    );
+    expect(calls).toContain("withhold");
+  });
+
+  it("大きくされたら、更新後のトークンを出力しても、セッションログにも写したファイルにも残さない", async () => {
+    const { SessionLogStore } = await import("../session-logs.js");
+    const root = mkdtempSync(join(tmpdir(), "sacty-runs-"));
+    try {
+      const log = new SessionLogStore(root).open(
+        {
+          taskId: "task-1",
+          runId: "run-1",
+          role: "design",
+          agentId: "codex",
+          runtime: "codex",
+          authMode: "subscription",
+        },
+        () => [],
+      );
+      const token = "refreshed-token-0123456789";
+      const { outcome } = await run(
+        '{"token":"host-token-value-0123456789"}',
+        `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in *:/.codex) host="\${arg%%:*}" ;; esac
+done
+printf '${token}' > "$host/auth.json"
+head -c 1100000 /dev/zero | tr '\\0' 'a' >> "$host/auth.json"
+mkdir -p "$host/sessions"
+echo '{"note":"${token}"}' > "$host/sessions/s.jsonl"
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"key ${token}"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+        log,
+        "codex",
+      );
+      expect(outcome).toMatchObject({ kind: "failed", reason: "auth" });
+      log.close(outcome);
+      const found: string[] = [];
+      const walk = (d: string) => {
+        for (const e of readdirSync(d, { withFileTypes: true })) {
+          const f = join(d, e.name);
+          if (e.isDirectory()) walk(f);
+          else if (readFileSync(f, "utf8").includes(token)) found.push(f);
+        }
+      };
+      walk(root);
+      expect(found).toEqual([]);
+      expect(log.archived).toMatchObject({ notArchived: "secret_file_too_large", files: [] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("時間切れの実行で大きくされたら、上限超えの失敗ではなく時間切れを返す", async () => {
+    await expect(
+      run(
+        '{"token":"host-token-value-0123456789"}',
+        `#!/bin/sh
+[ "$1" = "run" ] || exit 0
+for arg in "$@"; do
+  case "$arg" in *:/.codex) host="\${arg%%:*}" ;; esac
+done
+head -c 1100000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
+sleep 20
+`,
+        undefined,
+        undefined,
+        false,
+        1500,
+      ),
+    ).rejects.toBeInstanceOf(AgentTimeoutError);
+  }, 30_000);
+
+  it("上限以下の非 JSON の認証ファイルは、今までどおり伏せる対象になる", async () => {
+    const { outcome } = await run(
+      "plain-text-credential-0123456789",
+      `#!/bin/sh
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"key plain-text-credential-0123456789"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+    );
+    expect(outcome).toMatchObject({ kind: "completed", output: "key [REDACTED]" });
   });
 });
 

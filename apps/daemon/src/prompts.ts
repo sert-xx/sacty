@@ -7142,7 +7142,11 @@ function chatLogRunLine(run: QuestionLogRun): string {
   const a = run.agentFiles;
   if (run.status === "available" && a) {
     if (a.notArchived) {
-      notes.push("エージェントの元のファイルは残していない（コンテナの停止を確かめられなかった）");
+      notes.push(
+        a.notArchived === "secret_file_too_large"
+          ? "エージェントの元のファイルは残していない（認証ファイルが大きすぎて値を伏せられなかった）"
+          : "エージェントの元のファイルは残していない（コンテナの停止を確かめられなかった）",
+      );
     } else {
       notes.push(
         `エージェントの元のファイル ${a.count}件${a.truncated > 0 ? `（${a.truncated}件は上限で間を省いた）` : ""}${a.skipped > 0 ? `・写せなかったもの ${a.skipped}件` : ""}`,
