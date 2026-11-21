@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AgentConfig, agentFor, CONFIG_TEMPLATE, loadConfig } from "../config.js";
+import { AgentTimeoutError } from "../errors.js";
 import { MemorySecretStore } from "../secrets.js";
 import type { SessionLogSink } from "../session-logs.js";
 import { waitFor } from "../testing/wait.js";
@@ -114,6 +115,29 @@ describe("認証方式ごとの環境変数", () => {
     });
     expect(codexInv.env.CODEX_HOME).toBe("/.codex");
     expect(codexInv.sessionFiles).toBe("codex");
+  });
+
+  it("Codex の subscription のホストの認証ファイルは、上限ちょうどなら伏せる対象に入れ、+1 バイトなら読まない", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sacty-inv-"));
+    try {
+      const codex: AgentConfig = {
+        ...base,
+        id: "x",
+        runtime: "codex",
+        auth: { mode: "subscription", auth_file: join(dir, "auth.json") },
+      };
+      const collect = async (size: number) => {
+        // 非 JSON の中身は、全体が 1 つの値になる
+        writeFileSync(join(dir, "auth.json"), "a".repeat(size));
+        const seen: string[] = [];
+        await buildInvocation(codex, "prompt", new MemorySecretStore({}), (v) => seen.push(v));
+        return seen;
+      };
+      expect(await collect(1024 * 1024)).toEqual(["a".repeat(1024 * 1024)]);
+      expect(await collect(1024 * 1024 + 1)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("作業領域の外で読ませる場所は、Claude Code には --add-dir で渡し、Codex には足さない（PBI-91）", async () => {
@@ -2753,6 +2777,7 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
     log?: SessionLogSink,
     sessionFiles?: "codex",
     syncBack = false,
+    timeoutMs?: number,
   ) {
     const { chmodSync } = await import("node:fs");
     const { DockerExecutor } = await import("./docker.js");
@@ -2766,6 +2791,7 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
     writeFileSync(hostAuth, hostAuthContent);
     const outcome = await new DockerExecutor().run({
       runId: "r-large-auth",
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...(log ? { log } : {}),
       image: "img",
       workspaceDir: dir,
@@ -2891,6 +2917,26 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("時間切れの実行で大きくされたら、上限超えの失敗ではなく時間切れを返す", async () => {
+    await expect(
+      run(
+        '{"token":"host-token-value-0123456789"}',
+        `#!/bin/sh
+[ "$1" = "run" ] || exit 0
+for arg in "$@"; do
+  case "$arg" in *:/.codex) host="\${arg%%:*}" ;; esac
+done
+head -c 1100000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
+sleep 20
+`,
+        undefined,
+        undefined,
+        false,
+        1500,
+      ),
+    ).rejects.toBeInstanceOf(AgentTimeoutError);
+  }, 30_000);
 
   it("上限以下の非 JSON の認証ファイルは、今までどおり伏せる対象になる", async () => {
     const { outcome } = await run(

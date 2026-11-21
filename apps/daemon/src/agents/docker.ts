@@ -162,8 +162,9 @@ export function readStagedFile(staged: StagedFile, maxBytes?: number): Buffer {
     if (!fstatSync(fd).isFile()) throw new Error(`${staged.name}: not a regular file`);
     assertRealDirs();
     if (maxBytes === undefined) return readFileSync(fd);
-    // 上限を超えるときは、超えた分を読まずに例外にする（読んでいる間に大きくなっても、上限 + 1 バイトまでしか読まない）
-    const buf = Buffer.alloc(Math.min(maxBytes + 1, fstatSync(fd).size + 1));
+    // 上限を超えるときは、超えた分を読まずに例外にする（常に上限 + 1 バイトまでしか読まない）。読んでいる間に
+    // 大きくなったファイルを、途中で切って成功にしないため、バッファは上限 + 1 バイトを確保する
+    const buf = Buffer.alloc(maxBytes + 1);
     let filled = 0;
     while (filled < buf.length) {
       const n = readSync(fd, buf, filled, buf.length - filled, filled);

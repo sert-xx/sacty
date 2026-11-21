@@ -303,6 +303,15 @@ export class HeadTailFile {
     this.toTail(buf.subarray(cut));
   }
 
+  /** メモリーに持つ分（書きかけの行・末尾）を捨てる。閉じても、これらはファイルに書かれない。 */
+  discard(): void {
+    this.pending = Buffer.alloc(0);
+    this.tail = [];
+    this.tailSize = 0;
+    this.evictedBytes = 0;
+    this.headFull = false;
+  }
+
   /** 省いたことの目印（省いた大きさ・行数から作る）を間に入れ、末尾を書いて閉じる。 */
   close(marker: (droppedBytes: number, droppedLines: number) => string): void {
     if (this.pending.length > 0) this.put(this.pending); // 改行で終わらない最後の行
@@ -473,6 +482,7 @@ export class SessionLog implements SessionLogSink {
 
   withholdOutput(): void {
     this.withheld = true;
+    for (const file of Object.values(this.files)) file.discard();
     this.clearWithheld();
   }
 

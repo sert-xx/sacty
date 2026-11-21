@@ -143,3 +143,24 @@ describe("ステージした認証ファイルの上限（readStagedFile）", ()
     }
   });
 });
+
+describe("出力を残さないと決めた実行（HeadTailFile.discard）", () => {
+  it("捨てた後に閉じても、溜めていた書きかけの行も末尾も、ファイルに書かれない", async () => {
+    const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { HeadTailFile } = await import("../session-logs.js");
+    const dir = mkdtempSync(join(tmpdir(), "sacty-htf-"));
+    try {
+      const path = join(dir, "events");
+      const file = new HeadTailFile(path, { head: 20, tail: 40 }, true, () => {});
+      file.write("0123456789\n");
+      file.write("secret-in-tail\nsecret-pending");
+      file.discard();
+      file.close(() => "[omitted]\n");
+      expect(readFileSync(path, "utf8")).toBe("0123456789\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
