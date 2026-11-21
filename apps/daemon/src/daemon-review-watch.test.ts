@@ -1181,3 +1181,98 @@ describe("依頼で取り込んだ PR の GitHub の再依頼と、見守り（P
     activity.close();
   });
 });
+
+describe("フォークからの PR は、push・返信で自動では再レビューしない（PBI-461）", () => {
+  const fork = { state: "open", fork: true } as const;
+
+  it("フォークの PR の push では再レビューを始めず、新しい先頭を記録する。PR には 1 回だけ、内部の言葉を使わずに知らせる（条件 1・2）", async () => {
+    const { activity, pulls, service, id, get, events, tick } = await posted(["changes_required"]);
+    pulls.state = fork;
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    await tick();
+    await tick(FEEDBACK_QUIET_MS * 2);
+    await tick(FEEDBACK_QUIET_MS * 2);
+    expect(restarts(service, id)).toEqual([]);
+    expect(get().status).toBe("idle");
+    expect(reviewWatching(get())).toBe(true);
+    expect(get().reviewHold?.commit).toBe(HEAD_B);
+    expect(events("ReviewRestartHeld").map((e) => e.payload)).toEqual([{ commit: HEAD_B }]);
+    // 同じ先頭では、PR に 1 回だけ（確認を重ねても繰り返さない）
+    const notices = () => pulls.issueComments.filter((c) => c.body.includes(HEAD_B.slice(0, 7)));
+    expect(notices()).toHaveLength(1);
+    const body = notices()[0]?.body ?? "";
+    expect(body).toContain("自動ではレビューされません");
+    expect(body).not.toMatch(/タスク|見守り|sacty-review/);
+    // 新しい先頭が出たら、画面・MCP に出す先頭は更新する。PR への知らせは増やさない
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_C };
+    await tick();
+    await tick(FEEDBACK_QUIET_MS * 2);
+    expect(get().reviewHold?.commit).toBe(HEAD_C);
+    expect(restarts(service, id)).toEqual([]);
+    expect(pulls.issueComments).toHaveLength(1);
+    activity.close();
+  });
+
+  it("人が再レビューを頼んだら、フォークの PR でも再レビューする。待ちの記録は消える（条件 3）", async () => {
+    const { activity, pulls, service, id, get, tick, run } = await posted([
+      "changes_required",
+      "suggestions",
+    ]);
+    pulls.state = fork;
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    await tick();
+    await tick(FEEDBACK_QUIET_MS);
+    expect(get().reviewHold?.commit).toBe(HEAD_B);
+    expect(service.rereview(id).status).toBe("queued");
+    expect(get().reviewHold).toBeUndefined();
+    await run();
+    expect(pulls.reviews.at(-1)?.commit).toBe(HEAD_B);
+    activity.close();
+  });
+
+  it("フォークの PR では、先頭が同じままの作者の返信でも、判定し直さない（条件 4）", async () => {
+    const { activity, pulls, service, id, clock, get, tick } = await posted(["changes_required"]);
+    pulls.state = fork;
+    pulls.feedbackList = [comment(clock, "comment:1", "me", "これは直しません。理由は…", MINUTE)];
+    await tick(MINUTE);
+    await tick(FEEDBACK_QUIET_MS);
+    await tick(FEEDBACK_QUIET_MS);
+    expect(restarts(service, id)).toEqual([]);
+    expect(get().reviewHold).toBeUndefined();
+    expect(pulls.issueComments).toEqual([]);
+    expect(reviewWatching(get())).toBe(true);
+    activity.close();
+  });
+
+  it("同じリポジトリの PR（フォークでない）は、今までどおり push で自動で再レビューする（条件 5）", async () => {
+    const { activity, pulls, service, id, get, events, tick } = await posted(["changes_required"]);
+    pulls.state = { state: "open", fork: false };
+    pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+    await tick();
+    await tick(FEEDBACK_QUIET_MS);
+    expect(restarts(service, id)).toEqual([{ reason: "pushed", commit: HEAD_B }]);
+    expect(events("ReviewRestartHeld")).toEqual([]);
+    expect(get().reviewHold).toBeUndefined();
+    expect(pulls.issueComments).toEqual([]);
+    activity.close();
+  });
+
+  it.each([["merged" as const], ["closed" as const]])(
+    "フォークの PR が %s になったら、待っている最中でも今までどおり見守りを終えて完了する（条件 6）",
+    async (state) => {
+      const { activity, pulls, id, get, events, tick } = await posted(["changes_required"]);
+      pulls.state = fork;
+      pulls.prInfo = { ...pulls.prInfo, headSha: HEAD_B };
+      await tick();
+      expect(get().reviewHold?.commit).toBe(HEAD_B);
+      pulls.state = { state, fork: true };
+      await tick();
+      expect(isDone(get())).toBe(true);
+      expect(get().reviewWatchEnded?.reason).toBe(state);
+      expect(get().reviewHold).toBeUndefined();
+      expect(events("ReviewWatchEnded").map((e) => e.payload)).toEqual([{ reason: state }]);
+      expect(id).toBeTruthy();
+      activity.close();
+    },
+  );
+});

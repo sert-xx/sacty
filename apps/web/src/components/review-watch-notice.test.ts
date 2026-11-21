@@ -54,6 +54,22 @@ describe("ReviewWatchNotice", () => {
     expect(en).toContain("Waiting for the PR author to respond. Nothing is needed from you.");
   });
 
+  it("フォークからの PR で自動の再レビューを見送っているときは、人が再レビューを押すまでレビューしないことと、新しい先頭を出す（PBI-461）", () => {
+    const patch = {
+      reviewWatch: watch,
+      reviewVerdicts: [{ round: 1, verdict: "changes_required" as const }],
+      reviewHold: { commit: "d".repeat(40), at: "2026-11-20T01:00:00Z" },
+    };
+    const html = render(patch);
+    expect(html).toContain('data-testid="review-watch-held"');
+    expect(html).toContain(
+      "フォークからの PR なので、新しいコミット（ddddddd）は、人が再レビューを押すまでレビューしません。",
+    );
+    expect(render(patch, "en")).toContain("so the new commit (ddddddd) is not reviewed until");
+    // 待っていなければ出さない
+    expect(render({ ...patch, reviewHold: undefined })).not.toContain("review-watch-held");
+  });
+
   it("判定が無い回も、判定が無いことを出して見守る。sacty が作った PR の子タスクは、PR を作ったタスクを待っていると出す", () => {
     expect(
       render({ reviewWatch: watch, reviewVerdicts: [{ round: 1, missing: "absent" }] }),

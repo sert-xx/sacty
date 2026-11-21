@@ -46,6 +46,11 @@ export function ReviewWatchNotice({ task }: { task: Task }) {
           )}
         </p>
         <p className="text-sm">{task.reviewOf ? w.waitingParent : w.waiting}</p>
+        {task.reviewHold && (
+          <p role="status" data-testid="review-watch-held" className="text-sm">
+            {w.held(task.reviewHold.commit.slice(0, 7))}
+          </p>
+        )}
         {link}
       </section>
     );

@@ -3486,6 +3486,16 @@ const ReviewWatchEnded = z.object({
 });
 
 /**
+ * フォークからの PR の見守りで、新しい先頭のコミットを見つけたが、自動では再レビューしなかった（PBI-461）。PR のコードが
+ * 人の判断なしにコンテナで動かないよう、再レビューは人の操作（画面・MCP の再レビュー）を待つ。commit は、いまの PR の先頭。
+ * 先頭が変わるたびに記録して、画面と MCP の先頭を更新する。
+ */
+const ReviewRestartHeld = z.object({
+  type: z.literal("ReviewRestartHeld"),
+  payload: z.object({ commit: z.string() }),
+});
+
+/**
  * 人間が「再レビュー」を求めた（PBI-44）。レビューを投稿した後のタスク（完了したか、PR の変化を見守っている。PBI-411）のレビューの工程をやり直し、PR の最新の
  * コミットに対してもう一度レビューして投稿する（対象の PR は、実行の前に確かめ直す）。
  * reason が rerequested なら、PR の作者が GitHub でレビューを再依頼したのを、sacty が見つけて始めた（PBI-143）。
@@ -4380,6 +4390,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReviewGitHubRetried,
   PullRequestReviewPosted,
   ReviewWatchEnded,
+  ReviewRestartHeld,
   ReviewRestarted,
   BranchPushed,
   GuardianMissed,

@@ -495,6 +495,7 @@ import {
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import { annotateReviewComments, voidedByPersonOf } from "./review-comments.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
+import { buildForkHoldNotice } from "./review-fork-hold-notice.js";
 import {
   buildResolvedNotice,
   buildStopNotice,
@@ -3198,6 +3199,13 @@ export class TaskService {
     const head = status.headSha?.trim() ?? "";
     // 先頭を読めない応答では、何も決めない（次の確認でやり直す）
     if (!/^[0-9A-Za-z]{7,64}$/.test(head)) return;
+    // フォークからの PR は、push・作者の返信で自動では再レビューしない（再レビューの検証で、信頼できない PR のコードが
+    // 人の判断なしにコンテナで動くため。PBI-461）。人の再レビュー（画面・MCP）と、GitHub の再依頼は、これまでどおり
+    if (status.fork === true) {
+      forget();
+      await this.holdForkRestart(task, head, token);
+      return;
+    }
     const now = this.now();
     if (!sameCommit(target.headCommit, head)) {
       this.reviewWatchReplies.delete(taskId);
@@ -3306,6 +3314,41 @@ export class TaskService {
         event: { type: "ReviewRestarted", payload: { reason: "replied", commit: head } },
       },
     ]);
+  }
+
+  /**
+   * フォークからの PR の、見守りの再レビューを見送る（PBI-461）。レビューした先頭と違う先頭が出たら、その先頭を記録して、
+   * 画面と MCP に出す（先頭が変わるたびに更新する）。PR には、見送り始めたとき（記録が無いとき）に 1 回だけ知らせる
+   * （同じ先頭では、デーモンを起動し直しても繰り返さない）。同じ先頭の作者の返信でも、再レビューしない。
+   */
+  private async holdForkRestart(task: Task, head: string, token: string): Promise<void> {
+    const target = task.reviewTarget;
+    if (!target || sameCommit(target.headCommit, head)) return;
+    if (task.reviewHold && sameCommit(task.reviewHold.commit, head)) return;
+    const first = task.reviewHold === undefined;
+    this.append(task, [
+      { actor: "sacty", event: { type: "ReviewRestartHeld", payload: { commit: head } } },
+    ]);
+    if (!first) return;
+    const abort = new AbortController();
+    try {
+      await withDeadline(
+        this.deps.pulls.commentIssue({
+          repo: target.repo,
+          token,
+          number: target.number,
+          body: buildForkHoldNotice(head),
+          signal: abort.signal,
+        }),
+        this.draftTimeoutMs(),
+      );
+    } catch (error) {
+      abort.abort();
+      // 知らせられなくても、見守りは続ける（記録は済んでいるので、繰り返さない）
+      console.warn(
+        `[daemon] レビューのタスク ${task.id} の PR #${target.number} に、新しいコミットを自動でレビューしないことを知らせられませんでした：${renderMessage(errorText(error), "ja")}`,
+      );
+    }
   }
 
   /**

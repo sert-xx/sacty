@@ -487,6 +487,11 @@ export type PullRequestStatus = {
    * コメントを読み直さないために使う。読めなければ無い。
    */
   updatedAt?: string;
+  /**
+   * PR がフォークからのものか（head のリポジトリが base と違う。head のリポジトリを読めない・消えたフォークも true。PBI-461）。
+   * 分からなければ無い。
+   */
+  fork?: boolean;
 } & (
   | {
       state: "open";
@@ -1107,7 +1112,23 @@ export class GitHubPullRequests implements PullRequests {
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw apiError("getPr", res.status, json);
     const sha = (json.head as { sha?: unknown } | null)?.sha;
+    const repoName = (key: "head" | "base") => {
+      const repo = (json[key] as { repo?: unknown } | null)?.repo as
+        | { full_name?: unknown }
+        | null
+        | undefined;
+      return typeof repo?.full_name === "string" ? repo.full_name.toLowerCase() : undefined;
+    };
+    const headName = repoName("head");
+    const baseName = repoName("base");
+    const fork =
+      (json.head as { repo?: unknown } | null)?.repo === null
+        ? true
+        : headName !== undefined && baseName !== undefined
+          ? headName !== baseName
+          : undefined;
     const head = {
+      ...(fork !== undefined ? { fork } : {}),
       ...(typeof sha === "string" ? { headSha: sha } : {}),
       ...(typeof json.updated_at === "string" && json.updated_at
         ? { updatedAt: json.updated_at }

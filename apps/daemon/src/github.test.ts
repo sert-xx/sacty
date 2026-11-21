@@ -2454,3 +2454,35 @@ describe("一時的な失敗か（PBI-301）", () => {
     expect(isTransientGitHubFailure(undefined)).toBe(false);
   });
 });
+
+describe("PR がフォークからのものか（status の fork。PBI-461）", () => {
+  it("head と base のリポジトリが違えば fork: true、同じなら false（大文字小文字は区別しない）、head のリポジトリが消えていれば true、読めなければ含めない", async () => {
+    const repo = (full_name: string) => ({ full_name });
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: {
+          state: "open",
+          head: { sha: "a", repo: repo("someone/app") },
+          base: { repo: repo("acme/app") },
+        },
+      },
+      {
+        status: 200,
+        json: {
+          state: "open",
+          head: { sha: "a", repo: repo("Acme/App") },
+          base: { repo: repo("acme/app") },
+        },
+      },
+      { status: 200, json: { state: "open", head: { sha: "a", repo: null } } },
+      { status: 200, json: { state: "open", head: { sha: "a" } } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
+    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: true });
+    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: false });
+    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: true });
+    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a" });
+  });
+});

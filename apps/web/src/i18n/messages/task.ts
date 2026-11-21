@@ -120,6 +120,8 @@ const ja = {
     verdict: (round: number, verdict: string) => `${round}回目のレビューの判定：${verdict}`,
     waiting: "PR の作者の対応を待っています。あなたの対応は要りません。",
     waitingParent: "PR を作ったタスクの対応を待っています。あなたの対応は要りません。",
+    held: (commit: string) =>
+      `フォークからの PR なので、新しいコミット（${commit}）は、人が再レビューを押すまでレビューしません。`,
     open: "投稿したレビューを開く",
     endedTitle: "PR の見守りを終えました",
     ended: {
@@ -784,6 +786,8 @@ const en: TaskMessages = {
     verdict: (round: number, verdict: string) => `Verdict of review round ${round}: ${verdict}`,
     waiting: "Waiting for the PR author to respond. Nothing is needed from you.",
     waitingParent: "Waiting for the task that opened the PR. Nothing is needed from you.",
+    held: (commit: string) =>
+      `This PR is from a fork, so the new commit (${commit}) is not reviewed until a person presses re-review.`,
     open: "Open the posted review",
     endedTitle: "Stopped watching the PR",
     ended: {

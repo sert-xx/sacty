@@ -1174,6 +1174,11 @@ export type Task = {
   /** 見守りを終えた理由（ReviewWatchEnded。PBI-411）。再レビューを始めると消える。 */
   reviewWatchEnded?: { reason: PayloadOf<"ReviewWatchEnded">["reason"] };
   /**
+   * フォークからの PR の新しい先頭を、自動では再レビューせずに、人の操作を待っている（ReviewRestartHeld。PBI-461）。
+   * commit は待っている先頭。再レビューを始める・見守りを終える・新しく投稿すると消える。
+   */
+  reviewHold?: { commit: string; at: string };
+  /**
    * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。PBI-411）。名前は「対象を確かめた時刻」だが、実行を始める
    * たびに上書きする（対象を確かめた時刻が入っているのは、実行を始める前だけ）。レビューが PR のコメントを読むのは、この後
    * なので、見守りは、これより後の作者の返信を数える。作業履歴から作るので、以前の版の回にも付く。
@@ -3159,6 +3164,7 @@ export function applyEvent(
         ...(event.payload.latestCommit ? { latestCommit: event.payload.latestCommit } : {}),
       };
       task.reviewWatchEnded = undefined;
+      task.reviewHold = undefined;
       task.reviewWatch =
         event.payload.watch && currentReviewVerdict(task) !== "no_findings"
           ? { since: task.reviewResolvedAt ?? event.at }
@@ -3171,7 +3177,15 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the review is not watched");
       }
       task.reviewWatch = undefined;
+      task.reviewHold = undefined;
       task.reviewWatchEnded = { reason: event.payload.reason };
+      break;
+
+    case "ReviewRestartHeld":
+      if (task.status === "cancelled" || !task.reviewWatch || !task.reviewPost) {
+        throw new ActivityIntegrityError(event, "the review is not watched");
+      }
+      task.reviewHold = { commit: event.payload.commit, at: event.at };
       break;
 
     case "ReviewRestarted":
@@ -3207,6 +3221,7 @@ export function applyEvent(
         event.payload.reason === "replied" ? task.reviewWatch?.since : undefined;
       task.reviewWatch = undefined;
       task.reviewWatchEnded = undefined;
+      task.reviewHold = undefined;
       task.reviewResolvedAt = undefined;
       task.outputs = Object.fromEntries(
         Object.entries(task.outputs).filter(([key]) => key !== "review"),

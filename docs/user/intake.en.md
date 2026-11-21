@@ -217,6 +217,13 @@ sacty handles changes of the PR as follows.
 | The PR author replied without adding a commit (an objection, "won't fix", and so on) | Reads the reply and judges the same commit again |
 | It was merged, or closed without merging | Ends the watch and marks the task done |
 
+A PR from a fork (a PR whose head repository differs from the repository it targets) is not re-reviewed automatically, neither on a push nor on the author's reply.
+The re-review verification runs the PR's code in the container, so it must not run without a person's decision.
+When a new commit is pushed, the task details and `review.heldCommit` of `get_task` show that it is not reviewed until a person presses "Review again and post to the PR", and show the new commit.
+sacty comments once on the PR that the new commit is not reviewed automatically (it does not repeat as more commits arrive).
+When a person asks for it with "Review again and post to the PR", `rereview_task`, or a GitHub re-request of the review, it re-reviews as it does for a same-repository PR.
+Ending the watch when the PR is merged or closed is the same as for a same-repository PR.
+
 - Consecutive pushes and replies are re-reviewed once, after things go quiet (2 minutes after the last change).
 - A commit is re-reviewed only once, whether by a push or by a reply.
   If replies to the same commit continue after it was judged again, nothing starts automatically (use "Review again and post to the PR").
@@ -346,9 +353,10 @@ The PR's code can reach the same things as the agent.
 - During the run, through the gateway, it can read GitHub with the GitHub account chosen in the project and use the MCP servers given to the agent.
 - Even in a bot's dependency update PR (such as `dependabot[bot]`), the install scripts of the new versions run.
 
-Commits pushed to the PR after it was imported run in the same way.
+Commits pushed to the PR after it was imported run in the same way when the PR is from the same repository.
 This is because sacty keeps watching the PR for changes after posting its review until the verdict becomes "no findings" and, meanwhile, re-reviews automatically on every push ([After the review is posted](#after-the-review-is-posted)).
-It does not check who pushed or whether the push comes from a fork. If a PR you trusted at import can later receive a push you do not trust, pause or cancel the task to stop the watch.
+It does not check who pushed. If a PR you trusted at import can later receive a push you do not trust, pause or cancel the task to stop the watch.
+A PR from a fork is not re-reviewed automatically on a push; the code of a new commit does not run until a person asks for a re-review.
 A task that is done with the verdict "no findings" does not move when a commit is pushed to the PR.
 
 Intake does not filter by whether a PR comes from a fork or a bot.

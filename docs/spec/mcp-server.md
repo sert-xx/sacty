@@ -606,7 +606,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | `rerunOf` | 再実行の元の、中止したタスクの ID（再実行で作ったタスクにだけ） |
 | `pullRequests` | [結び付いた PR](#タスクに結び付いた-pr-とブランチ) |
 | `branches` | [結び付いたブランチ](#タスクに結び付いた-pr-とブランチ) |
-| `review` | PR のレビューのタスクだけ。レビューの回（`round`）と、今の回の投稿の URL（`postedUrl`）・判定（`verdict`）。投稿・判定は、あるときだけ。`watching` は、レビューを投稿した後に PR の変化を見守っているときだけ `true`（完了していない。人の出番ではない）。`watchEnded` は、見守りを終えた理由（`merged`・`closed`・`parent_completed`。親が完了した）があるときだけ（[投稿の後の PR の見守り](tasks-and-steps.md#投稿の後の-pr-の見守り)） |
+| `review` | PR のレビューのタスクだけ。レビューの回（`round`）と、今の回の投稿の URL（`postedUrl`）・判定（`verdict`）。投稿・判定は、あるときだけ。`watching` は、レビューを投稿した後に PR の変化を見守っているときだけ `true`（完了していない。人の出番ではない）。`heldCommit` は、フォークからの PR で、新しい先頭を自動では再レビューせず、人の再レビュー（`rereview_task`）を待っているときの、その先頭のコミット。`watchEnded` は、見守りを終えた理由（`merged`・`closed`・`parent_completed`。親が完了した）があるときだけ（[投稿の後の PR の見守り](tasks-and-steps.md#投稿の後の-pr-の見守り)） |
 | `reviewOf` | PR のレビューの子タスクの、親のタスクの ID |
 | `reviewTasks` | このタスクの PR をレビューする子タスク（タスクの ID と PR の番号） |
 | `pausedReason` | 一時停止の理由（一時停止中だけ） |
