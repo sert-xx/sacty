@@ -5962,9 +5962,14 @@ const OMITTED_HERE = "続きは、本文の「省いた続き」にあります"
 /** 省いた続きに載せる文の、1 つの上限（文字数）。本文の長さの上限に収めるため。 */
 const OMITTED_PART_MAX = 12_000;
 
-/** `<details>` と折りたたみの中に載せる文。HTML のコメントを除き、折りたたみを閉じる・開く記号を無効にする。 */
+/**
+ * `<details>` と折りたたみの中に載せる文。HTML のコメントを除き、折りたたみを閉じる・開く記号と、
+ * 通知の飛ぶ @ を無効にする（`@` の後ろに幅の無い空白を入れる）。
+ */
 export function foldedText(text: string): string {
-  return withoutHtmlComments(text).replace(/<(\/?details)/gi, "&lt;$1");
+  return withoutHtmlComments(text)
+    .replace(/<(\/?details)/gi, "&lt;$1")
+    .replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b");
 }
 
 /** 長い文を、上限で切って、省いた文字数と理由を書く。 */
@@ -6168,9 +6173,7 @@ export function approvedBasisFullText(
   if (output === undefined || output.trim() === "") return undefined;
   const hidden = withoutInternalPaths(redact(output, secrets ?? []));
   // 本文の折りたたみにも、全文のコメントにも、同じ文を載せる（折りたたみの記号と、通知の飛ぶ @ を無効にする）
-  return foldedText(hidden)
-    .replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b")
-    .trim();
+  return foldedText(hidden).trim();
 }
 
 /** 承認済みの成果物の要点と、全文のある場所（マージで承認した PR・本文の折りたたみ・全文のコメント）。 */
@@ -6182,7 +6185,7 @@ function approvedBasisDigest(
   if (output === undefined || output.trim() === "") return ["（なし）"];
   // 要求要件は AI が書いた文書なので、HTML のコメント（sacty の投稿の目印に見える文字列）は載せない
   const clean = withoutHtmlComments(output);
-  const digest = leadParagraph(clean);
+  const digest = leadParagraph(clean).replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b");
   const links = mergedStepPullRequests(task);
   return [
     ...(digest ? [digest, ""] : []),
@@ -6194,7 +6197,7 @@ function approvedBasisDigest(
               ? `全文は、本文が長いので、Sacty が投稿したコメントに載せています：[全文のコメント](${comment.url})`
               : "全文は、本文が長いので、この PR を作った後に、Sacty がコメントに載せます。",
           ]
-        : foldedLines("全文", [foldedText(clean.trim())])),
+        : foldedLines("全文", [foldedText(clean).trim()])),
   ];
 }
 

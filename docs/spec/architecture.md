@@ -274,7 +274,7 @@ sacty は、5つのパッケージでできている。
   - 「すべてのプロジェクト」の画面では、選んだ表示は「すべてのプロジェクト」。
     件数はすべてのプロジェクトの対応待ちの合計。
 - 表示しているプロジェクトは cookie `sacty-project` に持つ（httpOnly・`SameSite=Lax`・1年）。
-  - タスクの詳細などのヘッダーの選んだ表示と、サイドメニューの「タスク」（`/projects/current/tasks`）・「スケジュール」（`/projects/current/schedules`）・「監査」（`/projects/current/audit`）・「設定」（`/projects/current`）は、cookie のプロジェクトを使う。
+  - タスクの詳細などのヘッダーの選んだ表示と、サイドメニューの「タスク」（`/projects/current/tasks`）・「スケジュール」（`/projects/current/schedules`）・「監査」（`/projects/current/audit`）・「プロジェクトの設定」（`/projects/current`）は、cookie のプロジェクトを使う。
   - cookie のプロジェクトが無い・無くなっていれば、最初のプロジェクトを使う。
   - cookie に入れる ID は `^[\w-]{1,100}$` の形のものだけ。
 - cookie を変えるのは次のとき。
@@ -289,11 +289,18 @@ sacty は、5つのパッケージでできている。
 
   | 画面 | サイドメニュー | お知らせ |
   | --- | --- | --- |
-  | 「すべてのプロジェクト」 | 「設定」だけ。「設定」はプロジェクトの一覧（`/projects`）へ移る（どのプロジェクトにも飛ばない） | ダッシュボードの「あなたの出番」と同じ対象・同じ並び（上の組 → 下の組。組の見出しと、行ごとの待っている時間つき）。プロジェクトでは分けない。開くと、そのタスクのプロジェクトに切り替えてタスクを開く |
-  | プロジェクト | 「タスク」「スケジュール」「監査」「設定」 | 同じ（画面で並びを変えない） |
+  | 「すべてのプロジェクト」 | 「プロジェクト」「Sacty の設定」。「プロジェクト」はプロジェクトの一覧（`/projects`）へ移る（どのプロジェクトにも飛ばない） | ダッシュボードの「あなたの出番」と同じ対象・同じ並び（上の組 → 下の組。組の見出しと、行ごとの待っている時間つき）。プロジェクトでは分けない。開くと、そのタスクのプロジェクトに切り替えてタスクを開く |
+  | プロジェクト | 「タスク」「スケジュール」「監査」「プロジェクトの設定」「Sacty の設定」 | 同じ（画面で並びを変えない） |
 
+  「Sacty の設定」（`/settings`）は下の端に置き、`/settings` を開いているときだけ強調する。
+  「プロジェクトの設定」はプロジェクトの画面の設定で強調し、「プロジェクト」はプロジェクトの一覧のとき強調する。
   サイドメニューに「ダッシュボード」は出さない。
   使わないためで、ダッシュボードはロゴとプロジェクトの切り替えの「すべてのプロジェクト」から開ける。
+- 「Sacty の設定」とプロジェクトの設定は、保存していない変更（送る値の写しが、基準の写しと違うこと）を見張る。
+  - 基準の写しは、最初に描いたときの値。保存に成功したら（併合を含む）、送った時点の写しにする。元の値に戻せば変更なしの扱い。
+  - 変更があるとき、「保存する」の帯（画面の下に固定。幅 640px 未満ではメニューの上）に「保存していない変更があります」を出す。
+  - 画面の中の移動（サイドメニュー・ロゴ・パンくずの Link）は `onNavigate` で `window.confirm` を出し、断れば止める。閉じる・リロード・`<a>` の移動は `beforeunload` で確かめる。ブラウザーの戻る・進むは確かめない。
+  - 押した時点で効く項目（デスクトップ通知の On・Off・テストの通知・秘密情報の取り出し直し・コンテキストのプレビュー・GitHub アカウントの再読み込み・エクスポート・プロジェクトの削除）と、プロジェクトの作成のフォームは対象にしない。
 - ヘッダーは全体のレイアウトにあり、画面の中の移動（リンク）では描き直されない（選んだ表示は、画面の URL から画面の中で決める）。
   お知らせの対象が変わる操作（承認・差し戻し・一時停止・再開・中止・タスクの作成など）のサーバーアクションは、`refresh()` を呼んでヘッダーも描き直させる。
   `redirect` で移るときも、その前に呼ぶ。
@@ -301,7 +308,7 @@ sacty は、5つのパッケージでできている。
   どの画面でも、タスクの状態によらない。
 
 コード: `apps/web/src/components/shell/header.tsx`（`AppHeader`・`HeaderFallback`）、`apps/web/src/components/shell/live-header.tsx`（`LiveHeaderMenus`・`selectedProject`）、
-`apps/web/src/components/shell/menus.tsx`（`ProjectMenu`・`NotificationsMenu`）、`packages/core/src/person-turn.ts`（`personTurnTasks`）、`apps/web/src/components/shell/rail.tsx`（`railItems`）、`apps/web/src/lib/page-scope.ts`（`pageScope`）、
+`apps/web/src/components/shell/menus.tsx`（`ProjectMenu`・`NotificationsMenu`）、`packages/core/src/person-turn.ts`（`personTurnTasks`）、`apps/web/src/components/shell/rail.tsx`（`railItems`）、`apps/web/src/lib/unsaved-changes.tsx`（`UnsavedChangesProvider`・`useUnsavedChanges`・`useLeaveGuard`）、`apps/web/src/components/shell/guarded-link.tsx`（`GuardedLink`）、`apps/web/src/components/save-bar.tsx`（`SaveBar`）、`apps/web/src/lib/page-scope.ts`（`pageScope`）、
 `apps/web/src/lib/header-data.ts`（`loadHeaderData`）、`apps/web/src/components/shell/follow-project.tsx`（`FollowProject`）、
 `apps/web/src/lib/project-select.ts`、`apps/web/src/lib/current-project.ts`（`selectProject`）、
 `apps/web/src/app/switch/route.ts`、`apps/web/src/app/actions.ts`

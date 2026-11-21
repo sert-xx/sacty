@@ -1,10 +1,11 @@
-import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { DeleteProjectSection } from "@/components/delete-project";
 import { ProjectEditor } from "@/components/project-editor";
 import { FollowProject } from "@/components/shell/follow-project";
+import { GuardedLink } from "@/components/shell/guarded-link";
 import { Hint } from "@/components/ui/hint";
 import { getMessages } from "@/i18n/server";
 import {
@@ -17,6 +18,23 @@ import {
   getStatus,
 } from "@/lib/daemon";
 import { projectImages } from "@/lib/labels";
+import { PROJECTS_PATH } from "@/lib/paths";
+
+/** ブラウザーのタイトルは見出しと同じ文言にする。プロジェクトを取れなければ、既定のタイトルのまま。 */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  try {
+    const view = await getProject(id);
+    if (view) return { title: (await getMessages()).projects.settingsTitle(view.project.name) };
+  } catch {
+    // 取れなければ既定のタイトル
+  }
+  return {};
+}
 
 /** プロジェクトの設定（PBI-114 で `/projects/<ID>` から移した）。プロジェクトが無ければ 404。 */
 export default async function ProjectSettingsPage({
@@ -30,9 +48,9 @@ export default async function ProjectSettingsPage({
   return (
     <>
       <nav aria-label={t.breadcrumb} className="text-sm text-muted-foreground">
-        <Link href="/projects" className="text-accent-foreground underline">
+        <GuardedLink href={PROJECTS_PATH} className="text-accent-foreground underline">
           {t.title}
-        </Link>
+        </GuardedLink>
       </nav>
       <Suspense fallback={<p className="text-sm text-muted-foreground">{t.loading}</p>}>
         <ProjectSettings params={params} searchParams={searchParams} />

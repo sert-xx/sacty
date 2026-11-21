@@ -1,7 +1,7 @@
 "use client";
 
 import { DEFAULT_MENTION_KINDS, NotificationKind, type SlackNotification } from "@sacty/core";
-import { startTransition, useActionState, useId, useState } from "react";
+import { startTransition, useActionState, useEffect, useId, useRef, useState } from "react";
 import { type TestNotificationState, testNotificationAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
@@ -19,8 +19,11 @@ const SELECT =
 export function NotificationSettings({
   saved,
   problems = [],
+  onValueChange,
 }: {
   saved?: SlackNotification;
+  /** 送る値（hidden の notification）が変わった後に呼ぶ。親が、保存していない変更を比べ直すため。 */
+  onValueChange?: () => void;
   /** 送れなかった理由（画面の言語の文。PBI-115）。通知を直す場所なので、ここにも出す。 */
   problems?: readonly string[];
 }) {
@@ -86,6 +89,14 @@ export function NotificationSettings({
             ...off,
           }
         : undefined;
+  const sent = notification ? JSON.stringify(notification) : "";
+  // 欄の値は、この部品の状態にあり、親は描き直されない。送る値が変わったら（commit の後に）親へ知らせる
+  const notify = useRef(onValueChange);
+  notify.current = onValueChange;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 送る値が変わったときだけ呼ぶ
+  useEffect(() => {
+    notify.current?.();
+  }, [sent]);
   const [testState, testAction, testing] = useActionState<TestNotificationState, FormData>(
     testNotificationAction,
     {},
@@ -99,11 +110,7 @@ export function NotificationSettings({
       aria-labelledby={`${uid}-notification`}
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
     >
-      <input
-        type="hidden"
-        name="notification"
-        value={notification ? JSON.stringify(notification) : ""}
-      />
+      <input type="hidden" name="notification" value={sent} />
       <h2 id={`${uid}-notification`} className="text-[15px] font-semibold">
         {t.notifyTitle} <Hint text={t.notifyHint} />
       </h2>

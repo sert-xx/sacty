@@ -372,7 +372,7 @@ The implementation PR body is written to be read short, conclusion first. The fu
      - "この状況は本文を書いた時点のものなので、最新の状況はこの PR のレビューの欄で確かめてください。" (this state is as of when the body was written, so check the latest in this PR's reviews; `AI_REVIEW_STATUS_NOTE`)
    - The verdict and findings of an earlier version's final review are not put here either.
 4. The omitted rest (if any; `omittedContinuationLines`; PBI-450)
-   - The full text of the human-check items that were cut or did not fit, the full text of a cut summary, and the rest of a cut child-task content go into the collapsible section "省いた続き" (the quote marker and HTML comments are handled as in "How full text is put in" below). The reader is never told to check the rest on a screen.
+   - The full text of the human-check items that were cut or did not fit, the full text of a cut summary, and the rest of a cut child-task content go into the collapsible section "省いた続き" (HTML comments are removed, `<details` is neutralised, and a zero-width space is put after the `@` of `@name`; a summary and a child-task content are quoted; one text is capped at 12,000 characters). The reader is never told to check the rest on a screen.
    - One text is up to 12,000 characters; the part beyond that is replaced by a sentence giving the omitted count and saying the body has a length limit.
 5. The approved requirements (the bug reproduction for a reproduce task; `approvedBasisLines`)
    - The head of the first paragraph and where the full text is (`approvedBasisDigest`).
@@ -451,7 +451,7 @@ A template is judged absent or unusable as follows.
 - Content of the implementation PR (`buildPullRequestBodyParts`)
   - Purpose: that it is the result of a Sacty task, the number of items for a person to confirm (if any, "この PR の末尾にあります" (it is at the end of this PR)), for the PR of a child task of a split the scope of this PR (a bold heading; the content is as in [Assembling the implementation PR body](#assembling-the-implementation-pr-body)), and the approved requirements (the bug reproduction for a reproduce task; the head of the first paragraph and where the full text is, as in the conclusion above)
   - Changes: the Implementation step's output (without progress reports; after a redo, the description of the whole PR followed by a bold "最後の直し" and the description of the last fix)
-  - Tests: the viewpoint → test → result table and the test results (6 in [Assembling the implementation PR body](#assembling-the-implementation-pr-body))
+  - Tests: the viewpoint → test → result table and the test results (the "viewpoint → test → result" item in [Assembling the implementation PR body](#assembling-the-implementation-pr-body))
   - Related Issue: `Closes #<number>` (for a task taken in from an Issue)
   - The exported results and the omitted rest (`omittedContinuationLines`; only a heading, because it is already inside a collapsible section) go into "the Sacty record". The omitted rest goes at the top of the record. The record is in the part that may be cut (main), but the full text of the rest lies outside the list of items a person should confirm.
   - What a person should confirm and the record that a person moved on despite the failure go into the last part (footer).

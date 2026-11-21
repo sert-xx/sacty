@@ -220,7 +220,7 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
   - On a project screen, the switcher shows that project as selected. If the URL's ID is not in the project list, it shows "All projects".
   - On an "All projects" screen, it shows "All projects". The count is the total of tasks that need you in all projects.
 - The displayed project is kept in the cookie `sacty-project` (httpOnly, `SameSite=Lax`, 1 year).
-  - The header's selection on screens such as the task details, and "Tasks" (`/projects/current/tasks`), "Schedules" (`/projects/current/schedules`), "Audit" (`/projects/current/audit`), and "Settings" (`/projects/current`) in the side menu, use the cookie's project.
+  - The header's selection on screens such as the task details, and "Tasks" (`/projects/current/tasks`), "Schedules" (`/projects/current/schedules`), "Audit" (`/projects/current/audit`), and "Project settings" (`/projects/current`) in the side menu, use the cookie's project.
   - If the cookie has no project or the project no longer exists, the first project is used.
   - Only IDs of the form `^[\w-]{1,100}$` are put in the cookie.
 - The cookie changes in these cases.
@@ -234,15 +234,22 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
 
   | Screen | Side menu | Notices |
   | --- | --- | --- |
-  | "All projects" | Only "Settings". "Settings" moves to the project list (`/projects`), so it never jumps to a project | The same target and order as "Needs you" on the dashboard (upper group, then lower group, with group headings and the waiting time on each row), not split by project. Opening one switches to the task's project and opens the task |
-  | Project | "Tasks", "Schedules", "Audit", and "Settings" | The same (the order is not changed per screen) |
+  | "All projects" | "Projects" and "Sacty settings". "Projects" moves to the project list (`/projects`), so it never jumps to a project | The same target and order as "Needs you" on the dashboard (upper group, then lower group, with group headings and the waiting time on each row), not split by project. Opening one switches to the task's project and opens the task |
+  | Project | "Tasks", "Schedules", "Audit", "Project settings", and "Sacty settings" | The same (the order is not changed per screen) |
 
+  "Sacty settings" (`/settings`) sits at the bottom and is highlighted only while `/settings` is open.
+  "Project settings" is highlighted on a project's settings screen, and "Projects" on the project list.
   The side menu does not show "Dashboard". It is not used, and the dashboard opens from the logo and from "All projects" in the project switcher.
+- "Sacty settings" and the project settings watch for unsaved changes (a snapshot of the values to send differs from the baseline snapshot).
+  - The baseline snapshot is the values at first render. When a save succeeds (including a merged one), it becomes the snapshot sent at that time. Changing a value back to the original counts as no change.
+  - While there are unsaved changes, the "Save" bar (fixed at the bottom of the screen; above the menu below 640px wide) shows "You have unsaved changes".
+  - Navigation within the web UI (the side menu, the logo, and the breadcrumb `Link`s) shows `window.confirm` from `onNavigate` and stops if declined. Closing, reloading, and `<a>` navigation are checked with `beforeunload`. The browser's back and forward are not checked.
+  - Items that take effect when pressed (the desktop notification on/off, the test notification, re-fetching secrets, the context preview, reloading GitHub accounts, export, and deleting a project) and the form that creates a project are not covered.
 - The header is in the root layout, so navigation (links) within the web UI does not redraw it (the selection is decided in the browser from the screen's URL). Server actions for operations that change what the notices cover (approve, request changes, pause, resume, cancel, create task, and so on) call `refresh()` so that the header is redrawn too. They call it before moving with `redirect` as well.
 - Changes made in other tabs, the CLI, or the daemon (tasks added by intake, approvals, resumes, tasks the daemon picked up and started, and so on) are reflected in the header's project switcher (the counts that need you) and notices by "Refetching screen data" below. This applies on every screen, whatever the state of the tasks.
 
 Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`), `apps/web/src/components/shell/live-header.tsx` (`LiveHeaderMenus`, `selectedProject`),
-`apps/web/src/components/shell/menus.tsx` (`ProjectMenu`, `NotificationsMenu`), `packages/core/src/person-turn.ts` (`personTurnTasks`), `apps/web/src/components/shell/rail.tsx` (`railItems`), `apps/web/src/lib/page-scope.ts` (`pageScope`),
+`apps/web/src/components/shell/menus.tsx` (`ProjectMenu`, `NotificationsMenu`), `packages/core/src/person-turn.ts` (`personTurnTasks`), `apps/web/src/components/shell/rail.tsx` (`railItems`), `apps/web/src/lib/unsaved-changes.tsx` (`UnsavedChangesProvider`, `useUnsavedChanges`, `useLeaveGuard`), `apps/web/src/components/shell/guarded-link.tsx` (`GuardedLink`), `apps/web/src/components/save-bar.tsx` (`SaveBar`), `apps/web/src/lib/page-scope.ts` (`pageScope`),
 `apps/web/src/lib/header-data.ts` (`loadHeaderData`), `apps/web/src/components/shell/follow-project.tsx` (`FollowProject`),
 `apps/web/src/lib/project-select.ts`, `apps/web/src/lib/current-project.ts` (`selectProject`),
 `apps/web/src/app/switch/route.ts`, `apps/web/src/app/actions.ts`

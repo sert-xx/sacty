@@ -33,8 +33,8 @@ GitHub が、行へのコメントへの返信 1 件ごとに、本文の無い�
 
 - `npm run lint`：通った（警告なし）。
 - `npm run typecheck`：通った。
-- `npx vitest run`（全件）：323 ファイル・6,354 件が通り、14 件はスキップ。
-- `npm run build`・`npx vitest run tests/docs`：最後の変更の後に実行し、結果は下の記録に書く。
+- `npx vitest run`（全件）：326 ファイル・6,405 件が通り、14 件はスキップ。
+- `npm run build`：通った。`npx vitest run tests/docs`：通った。
 - 画面へのリンクの注釈・本文の形・全文のコメント・取り込みの見分けは、新しいテスト（`task-link.test.ts`・`pr-body-public.test.ts`・`sacty-posts-wording.test.ts`・`daemon-implement.test.ts`・`daemon-step-pull-requests.test.ts`・`github.test.ts`）で確かめた。
 
 ## 変えなかったこと

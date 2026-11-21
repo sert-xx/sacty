@@ -175,6 +175,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       github?: FakeGitHub;
       /** 承認する要求要件（2 回目の提出）の全文。 */
       requirements?: string;
+      /** 知らせのタスクの画面の URL（SACTY_WEB_URL）。 */
+      webUrl?: string;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -3774,6 +3776,32 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
       });
 
+      it.each([
+        ["http://127.0.0.1:4700", true],
+        ["http://localhost:4700", true],
+        ["http://[::1]:4700", true],
+        ["https://sacty.example.com", false],
+        ["画面の URL ではない文字列", true],
+      ])(
+        "止まった知らせの注釈は、サービスに渡した画面の URL（%s）で決まる（注釈あり：%s）",
+        async (webUrl, note) => {
+          const activity = new SqliteActivityStore(dbPath);
+          const pulls = new FakePulls();
+          const { service } = makeService(activity, [capacity], {
+            pulls,
+            planner: reviewPlanner,
+            webUrl,
+          });
+          const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+          await service.runNext(id);
+          await noticesSettled(service);
+          const body = pulls.issueComments[0]?.body ?? "";
+          expect(body).toContain("/tasks/");
+          expect(body.includes("タスクの画面は、依頼した人のマシンでだけ開けます。")).toBe(note);
+          activity.close();
+        },
+      );
+
       it("モデルの混雑で止まったら、PR に止まったこと・理由・タスクの画面へのリンクを1回書く", async () => {
         const activity = new SqliteActivityStore(dbPath);
         const pulls = new FakePulls();
@@ -6089,6 +6117,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       ci?: CiStatusReader;
       draftPullRequests?: boolean;
       reviewCiTimeoutMs?: number;
+      webUrl?: string;
     } = {},
   ) {
     const made = await toImplement([implement("# 実装の説明"), ...outcomes], options);
@@ -9383,6 +9412,31 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         );
       const asks = (pulls: FakePulls) =>
         pulls.issueComments.filter((c) => c.body.includes("<!-- sacty-human-ask:"));
+
+      it.each([
+        ["http://127.0.0.1:4700", true],
+        ["https://sacty.example.com", false],
+      ])(
+        "人に確かめてほしいことの投稿の注釈は、サービスに渡した画面の URL（%s）で決まる（注釈あり：%s）",
+        async (webUrl, note) => {
+          const pulls = new FakePulls();
+          const { activity, service } = await toImplementGate(
+            [
+              rework("undecidable", reason),
+              redone([{ remarkId: "implement-1-1", text: "直しました", confirm: "推測しました" }]),
+            ],
+            { pulls, now: later, webUrl },
+          );
+          pulls.feedbackList = [item("comment:401", { body: "ここ前と言ってること違わない？" })];
+          await service.checkPullRequests();
+          await drain(service);
+          await noticesSettled(service);
+          const body = asks(pulls)[0]?.body ?? "";
+          expect(body).toContain("/tasks/");
+          expect(body.includes("タスクの画面は、依頼した人のマシンでだけ開けます。")).toBe(note);
+          activity.close();
+        },
+      );
 
       it("判断できなかった理由と、実行の聞き返し（推測で決めたこと）を、作り直した実装が承認待ちに戻ったときに、実装の PR へ1回コメントする。承認の画面の元になる記録にも残る", async () => {
         const pulls = new FakePulls();

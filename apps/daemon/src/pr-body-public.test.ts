@@ -219,6 +219,21 @@ describe("マージで承認した PR が無いときの要求要件・再現の
     },
   );
 
+  it("本文の折りたたみの全文は、全文のコメントと同じく、通知の飛ぶ @名前 の @ の後ろに幅の無い空白を入れる", () => {
+    const t = task({
+      approved: {
+        requirements: { output: `${REQUIREMENTS}\n\n@octocat と @org/team へ`, submission: 1 },
+      },
+    });
+    for (const body of [buildPullRequestBodyText(t).main, buildPullRequestBodyParts(t).summary]) {
+      expect(body).toContain("@\u200boctocat");
+      expect(body).toContain("@\u200borg/team");
+      expect(body).not.toContain("@octocat");
+      expect(body).not.toContain("@org/team");
+    }
+    expect(approvedBasisFullText(t)).toContain("@\u200boctocat");
+  });
+
   it("マージで承認した PR があるときは、全文を載せない", () => {
     const t = task({
       stepPullRequests: [
