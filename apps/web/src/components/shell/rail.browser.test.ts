@@ -84,6 +84,9 @@ beforeAll(async () => {
         "react",
         "react-dom/client",
         "react/jsx-runtime",
+        "react/jsx-dev-runtime",
+        "@base-ui/react/button",
+        "class-variance-authority",
         "@base-ui/react/dialog",
         "@base-ui/react/popover",
         "lucide-react",
@@ -129,7 +132,18 @@ beforeAll(async () => {
   if (!address || typeof address === "string") throw new Error("Browser fixture has no port");
   url = `http://127.0.0.1:${address.port}`;
   browser = await chromium.launch({ headless: true });
-}, 60000);
+  // 最初にページを開くと、Vite が依存の束ねと変換を初めて行い、見つけた依存が増えると束ね直してページを読み込み直す。
+  // それを各テストの上限（30 秒）の中で待たないよう、ここで 1 度開いて済ませる。
+  // goto と waitFor の上限は、それぞれ 90 秒にする（goto の既定は 30 秒で、初回の準備がそれを超えると落ちるため）。
+  // beforeAll の上限（120 秒）は、サーバーとブラウザーの起動に、この事前の読み込み（最大 90 秒）を足しても収まる値にしている。
+  const warm = await browser.newPage({ viewport: { width: 1280, height: 700 } });
+  try {
+    await warm.goto(`${url}/?path=${encodeURIComponent("/projects/p1/tasks")}`, { timeout: 90000 });
+    await warm.getByRole("navigation", { name: "Main" }).waitFor({ timeout: 90000 });
+  } finally {
+    await warm.close();
+  }
+}, 120000);
 
 afterAll(async () => {
   await browser?.close();

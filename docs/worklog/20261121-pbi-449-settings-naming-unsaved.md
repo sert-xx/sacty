@@ -31,8 +31,8 @@
 実行したコマンドと結果（最後の変更の後）：
 
 - `npm run lint`・`npm run typecheck`：通った。
-- `npm test`（並列）：1 回目は `hint.browser.test.ts` の 2 件、2 回目は `rail.browser.test.ts` の複数が 30 秒の時間切れで落ちた（負荷による。個別に再実行すると通る）。
-- `npx vitest run --no-file-parallelism`（CI と同じ直列）：6358 件が通り、14 件はスキップ。失敗なし。
+- `npx vitest run --no-file-parallelism`（CI と同じ直列）：323 ファイル、6358 件が通り、14 件はスキップ。失敗なし。
+- main（PBI-448 の `rail.browser.test.ts` の事前の読み込みを含む）を取り込み済み。同じファイルの変更は両方の意図を保っている。
 
 ## レビューの指摘と対応
 
