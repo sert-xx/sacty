@@ -4,7 +4,7 @@
 - タスク: PBI-456
 - PR: #516
 - ブランチ: なし
-- 関係する ADR: [軽い依頼の自己レビューから、段階を 1 段下げる決まりを消す](../adr/20261121-2100-remove-light-self-review-tier-lowering.md)
+- 関係する ADR: [軽い依頼の自己レビューから、段階を 1 段下げる決まりを消す](../adr/20261121-1044-remove-light-self-review-tier-lowering.md)
 
 ## 目的
 
