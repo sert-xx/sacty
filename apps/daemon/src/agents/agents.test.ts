@@ -826,6 +826,31 @@ describe("出力の読み取り", () => {
     expect(parseCodexEvents(lines, 1)).toMatchObject({ kind: "failed", reason: "usage_limit" });
   });
 
+  it("モデルごとの上限・費用の上限の文を利用上限にし、似ているが違う文はしない（PBI-472）", () => {
+    for (const m of [
+      "You've hit your Opus limit · resets 3:45pm",
+      "You've hit your Sonnet limit · resets 3:45pm",
+      "You've hit your monthly spend limit",
+      "spend limit reached · resets Dec 1",
+      "YOU'VE HIT YOUR OPUS LIMIT",
+      "you've hit your sonnet limit",
+      "SPEND LIMIT REACHED",
+    ]) {
+      expect(classifyFailure(m), m).toBe("usage_limit");
+    }
+    for (const m of [
+      "context limit exceeded",
+      "output token limit reached",
+      "file size limit",
+      "spending limit page not found",
+      "Opus model not found",
+    ]) {
+      expect(classifyFailure(m), m).toBe("error");
+    }
+    // 利用上限を認証より先に判定する
+    expect(classifyFailure("spend limit reached, token expired")).toBe("usage_limit");
+  });
+
   it("分類の境界", () => {
     expect(classifyFailure("API Error: Request rejected (429)")).toBe("usage_limit");
     expect(classifyFailure("API Error: 401 Invalid authentication credentials")).toBe("auth");
