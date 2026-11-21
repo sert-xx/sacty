@@ -5544,7 +5544,7 @@ export function reviewSecurityLines(security: ReviewSecurity | undefined): strin
       ? [
           `  - sacty が差分を修正の範囲と照らし、違反を見つけました。直すべき指摘（要修正）にする：${ja(message("review.scopeViolated", check.violation))}`,
         ]
-      : check
+      : check && scope
         ? ["  - sacty が差分を修正の範囲と照らし、範囲の外の変更は見つかりませんでした"]
         : []),
   ];
@@ -6216,9 +6216,11 @@ function securityScopeBodyLines(task: Task, heading: (text: string) => string): 
   // 最終レビューをしない流れ（PBI-331）では、sacty が照らした結果と、子タスクが確かめることを書く（していない確認を書かない）
   const check = task.securityScopeCheck;
   const lead = check
-    ? check.violation
-      ? `問題を解消する最小限の変更に絞る対応です。Sacty が差分を範囲と照らし、違反を見つけました（${ja(message("review.scopeViolated", check.violation))}）。PR のレビューの子タスクが、直すべき指摘として扱います。`
-      : "問題を解消する最小限の変更に絞る対応です。Sacty が差分を範囲と照らし、範囲の外の変更は見つかりませんでした。最小限か（観点 SEC-MIN）は、PR のレビューの子タスクが確かめます。"
+    ? !scope
+      ? "問題を解消する最小限の変更に絞る対応です。最小限か（観点 SEC-MIN）は、PR のレビューの子タスクが確かめます。"
+      : check.violation
+        ? `問題を解消する最小限の変更に絞る対応です。Sacty が差分を範囲と照らし、違反を見つけました（${ja(message("review.scopeViolated", check.violation))}）。PR のレビューの子タスクが、直すべき指摘として扱います。`
+        : "問題を解消する最小限の変更に絞る対応です。Sacty が差分を範囲と照らし、範囲の外の変更は見つかりませんでした。最小限か（観点 SEC-MIN）は、PR のレビューの子タスクが確かめます。"
     : "問題を解消する最小限の変更に絞っています。差分は Sacty が範囲と照らし、ゴールガーディアンが最小限か（観点 SEC-MIN）を判定しました。";
   return [
     heading("修正の範囲（セキュリティ対応）"),

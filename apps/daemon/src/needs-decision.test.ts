@@ -324,7 +324,8 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
       e.type === "ReworkStoppedByMerge" ? [e] : [],
     );
     expect(stopped).toHaveLength(1);
-    expect(stopped[0]?.payload).toMatchObject({ number: 7, decision: true });
+    // 件数は、取り込んだ投稿の数ではなく、印の付いた指摘の数
+    expect(stopped[0]?.payload).toMatchObject({ number: 7, decision: true, discardedReview: 2 });
     expect(types(service, id)).toEqual(
       expect.arrayContaining(["PullRequestMerged", "StepApproved"]),
     );
@@ -607,7 +608,7 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
   it("止めた理由の秘密の値は、記録の前に伏せる", async () => {
     // 取り出した GitHub のトークン（テストの既定の値）
     const secret = "ghp_secret";
-    const { activity, service, id } = await reviewed(
+    const { activity, service, pulls, id } = await reviewed(
       review("changes_required", [{ title: "上限を超える", needs: `${MARK}。値は ${secret}` }]),
       [],
     );
@@ -618,6 +619,34 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
     ]);
     expect(stored).not.toContain(secret);
     expect(stored).toContain(MARK);
+    // PR に投稿する知らせの本文も、値を伏せて、指摘と根拠は引用する
+    await service.checkPullRequests();
+    const noticeBody = notices(pulls)[0]?.body ?? "";
+    expect(noticeBody).toContain(MARK);
+    expect(noticeBody).not.toContain(secret);
+    activity.close();
+  });
+
+  it("人のコメントから記録する判断の文も、記録の前に秘密の値を伏せる", async () => {
+    const secret = "ghp_secret";
+    const { activity, service, pulls, id } = await reviewed(
+      review("changes_required", [{ title: "上限を超える", needs: MARK }]),
+      [],
+    );
+    pulls.feedbackBy[7] = [
+      posted(pulls, 0),
+      item("comment:31", {
+        author: "alice",
+        at: new Date(clock).toISOString(),
+        body: `受け入れます。トークンは ${secret} です`,
+      }),
+    ];
+    clock += 2 * FEEDBACK_QUIET_MS;
+    await service.checkPullRequests();
+    const decisions = taskOf(service, id).decisionPauses?.[0]?.decisions ?? [];
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]?.text).toContain("受け入れます");
+    expect(JSON.stringify(taskOf(service, id).decisionPauses)).not.toContain(secret);
     activity.close();
   });
 });

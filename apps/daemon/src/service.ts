@@ -2157,6 +2157,8 @@ export class TaskService {
             pr.step !== "implement" &&
             latest?.status === "paused" &&
             latest.pausedReason === "needs_decision" &&
+            !this.cancelling.has(task.id) &&
+            !this.mergeStopping.has(task.id) &&
             gatePullRequest(latest)?.number === pr.number
           ) {
             this.append(latest, [
@@ -2188,6 +2190,8 @@ export class TaskService {
     token: string,
     usedSecrets: readonly string[],
   ): Promise<void> {
+    // セキュリティのタスクは、指摘と根拠（脆弱性の詳細を含みうる）を公開の PR に書かない（画面・get_task には出る）
+    if (isSecurityTask(task)) return;
     const round = task.decisionPauses?.length ?? 0;
     const pause = task.decisionPauses?.[round - 1];
     if (!pause) return;
@@ -2398,6 +2402,14 @@ export class TaskService {
         headUnknown = true;
       },
     );
+    // 取り込む投稿の出どころは、状態を読み直す前に確かめる（待つ間に、再開・中止・判断の開始があっても、記録の前に読み直すため）
+    const candidates = fresh
+      .filter((item) => !task.importedFeedback.includes(item.key))
+      .slice(0, REMARKS_MAX);
+    const importedBy =
+      candidates.length > 0
+        ? await this.importersOf(pr.repo, pr.number, token, candidates)
+        : new Map<string, "person" | "unverified">();
     // 読んでいる間に、実行が始まった・別の状態になった・人が反映の判断を始めたなら、残さない（次の確認でやり直す）
     const latest = this.tasks.get(taskId);
     if (
@@ -2415,7 +2427,6 @@ export class TaskService {
       .filter((item) => !latest.importedFeedback.includes(item.key))
       .slice(0, room);
     if (batch.length === 0) return !headUnknown;
-    const importedBy = await this.importersOf(pr.repo, pr.number, token, batch);
     this.append(this.tasks.get(taskId) ?? latest, [
       {
         // AI のレビューの指摘だけの回は、人間の操作にしない（PBI-275）
@@ -2796,6 +2807,10 @@ export class TaskService {
       return false;
     }
     if (this.cancelling.has(taskId)) return false;
+    const decision = latest.status === "paused" && latest.pausedReason === "needs_decision";
+    const discarded = decision
+      ? (latest.decisionPauses?.findLast((p) => !p.decided)?.findings.length ?? 0)
+      : (heldReview(latest)?.remarks.length ?? 0);
     this.append(latest, [
       {
         actor: "sacty",
@@ -2811,13 +2826,10 @@ export class TaskService {
             })),
             ...(latest.verifyFeedback ? { discardedFeedback: latest.verifyFeedback.kind } : {}),
             // 一時停止の間に届いて、まだ作り直しに渡していない PR の指摘（PBI-279）
-            ...(heldReview(latest)?.remarks.length
-              ? { discardedReview: heldReview(latest)?.remarks.length }
-              : {}),
-            // 人の判断を待って止めていた PR のマージ（作り直しは始めておらず、止めた理由の指摘は反映せずに承認として進める。PBI-452）
-            ...(latest.status === "paused" && latest.pausedReason === "needs_decision"
-              ? { decision: true as const }
-              : {}),
+            // 人の判断を待って止めていた PR のマージ（作り直しは始めておらず、止めた理由の指摘は反映せずに承認として進める。
+            // 件数は取り込んだ投稿の数ではなく、印の付いた指摘の数。PBI-452）
+            ...(discarded > 0 ? { discardedReview: discarded } : {}),
+            ...(decision ? { decision: true as const } : {}),
           },
         },
       },
@@ -15882,6 +15894,8 @@ export class TaskService {
     | "stopped"
   > {
     if (!isSecurityFix(task) || !task.repository) return undefined;
+    // 範囲の宣言が無ければ、照らすものが無い（差分も読まない）。照らしていないことは、記録の違反が無いことと同じ形で残る
+    if (!securityScope(task)) return {};
     try {
       const changes = await this.deps.repos.diffStats(
         this.repoDir(task),

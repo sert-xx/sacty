@@ -1869,6 +1869,10 @@ describe("セキュリティチェックとセキュリティ対応", () => {
         const scopeBody =
           (body.split("## 修正の範囲（セキュリティ対応）")[1] ?? "").split("\n## ")[0] ?? "";
         expect(scopeBody).not.toContain("宣言");
+        // 宣言が無ければ照らしていないので、「照らし、範囲の外の変更は見つかりませんでした」と書かない
+        for (const text of [reviewPrompt, scopeBody]) {
+          expect(text).not.toContain("範囲の外の変更は見つかりませんでした");
+        }
         for (const text of [
           implementPrompt
             .split("--- セキュリティ対応（最小限の変更） ---")[1]
