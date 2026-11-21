@@ -55,7 +55,15 @@ const DOC_DIFF = [
   " 末尾",
 ].join("\n");
 
+/** 前回の回の記録のブロック。undefined は、確かめられなかった所の無い記録。"none" は、記録を返さない。 */
+const recordBlockOf = (record: unknown): string =>
+  record === "none"
+    ? ""
+    : `\n\`\`\`sacty-review-record\n${record === undefined ? "{}" : String(record)}\n\`\`\``;
+
 type Options = {
+  /** 前回の回の記録のブロックの中身（JSON の文字列）。"none" なら、記録を返さない（これより前の版の回と同じ）。 */
+  firstRecord?: string;
   /** 前回の回の出力（判定。コメントがあれば含める）。 */
   first?: string;
   /** PR の差分（pr.diff）。 */
@@ -105,7 +113,9 @@ async function rereviewPrompt(options: Options = {}) {
   const { service, executor } = makeService(
     activity,
     [
-      out(options.first ?? `# 1回目\n${verdictBlock("changes_required")}`),
+      out(
+        `${options.first ?? `# 1回目\n${verdictBlock("changes_required")}`}${recordBlockOf(options.firstRecord)}`,
+      ),
       out(`# 2回目\n${verdictBlock("no_findings")}`),
     ],
     {
@@ -370,5 +380,22 @@ describe("前回以降が文書だけの再レビュー（PBI-421）", () => {
     expect(first.prompt).not.toContain(NARROW);
     expect(first.prompt).not.toContain("--- 再レビュー ---");
     expect(first.prompt).toContain(KEEP_DISPATCH);
+  });
+});
+
+describe("前回の記録による、文書だけの再レビューの絞らない条件（PBI-460）", () => {
+  const record = (value: unknown) => JSON.stringify(value);
+  const cases: [string, string, boolean][] = [
+    ["記録が無い", "none", false],
+    ["記録が null（読めなかった）", "{ 読めない記録", false],
+    ["見られなかった観点が 1 件ある", record({ notReviewed: [{ id: "C-1", reason: "x" }] }), false],
+    ["止まった検証が 1 件ある", record({ verification: [{ kind: "stopped", text: "x" }] }), false],
+    ["見られなかった観点が空で、止まった検証も無い", record({}), true],
+  ];
+
+  it.each(cases)("%s", async (_name, firstRecord, narrows) => {
+    const { prompt } = await rereviewPrompt({ firstRecord });
+    if (narrows) narrowed(prompt);
+    else notNarrowed(prompt);
   });
 });

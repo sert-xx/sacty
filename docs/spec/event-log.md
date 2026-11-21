@@ -64,6 +64,33 @@
   - 投影は、選り分けが済んだことを `pendingReview.triage` に持ち（起動し直しても実行し直さない）、`dropped` の指摘を `pendingReview` から外して `Task.remarks` に足す（`triaged: true`・`status: declined`・`round: 0`・`origin`。直しの回・直しの指示・提出での対応の書き直しの対象に数えない）。一部だけ対応しない指摘は `pendingReview` に残し、`pendingReview.triage.declined` に対応しない提案の文と理由を持つ（差し戻しの `remarks[].declinedParts` に引き継ぐ）。対応しないとした提案は `Task.declinedSuggestions`（文・理由・URL・回）に消さずに積む。`stop` は `Task.triageStop` に持ち、ドラフトを外す（`PullRequestMarkedReady`）と消える（一時停止では消さない。以前の版が一時停止させたタスクも、再開で同じ先頭のドラフトを外す）。
   - `runResult` が `interrupted` のもの（判断を採用しなかった）は、費用だけを数え、状態を変えない。
   - `ReviewRejudgeRequested` の `reason: triaged`：選り分けで、差し戻す指摘が残らなかったので、実装を実行せずに判定し直しを求めた。承認待ちの実装の PR について、`SuggestionsTriaged` と同じ追記で記録する（`Task.reviewRejudge.reason`）。`reason` が無いものは、実装の提出の記録（PBI-357）。
+- PR のレビューの過程の記録（PBI-460。[PR のレビューだけのタスク](tasks-and-steps.md#pr-のレビューだけのタスク)）は次のとおり。PR に投稿しない過程の情報を残し、タスクの画面と MCP の `get_task` で読む。
+  - `AgentRunCompleted` は、`reviewDispatch`（観点ごとの担当の数）の隣に、任意の欄 `reviewRecord`（`ReviewRecord` か `null`）を持つ。欄を足しただけで、イベントの種類と列挙は増えない。記録のブロックを返さなかった実行と、これより前の作業履歴には、欄が無い。
+  - 答えのうち、情報文字列に `sacty-review-record` を含む最初のブロックだけを読む（`readReviewRecordBlock`）。そのブロックが閉じていない・JSON として読めない・形の検査に通らない・上限を超える・秘密の値を伏せる処理が失敗したときは `null`。`null` でも、レビューは使い、投稿を止めない。
+  - 欄と上限は次の表のとおり（`checkReviewRecord`）。表に無い欄は認めず、どれか 1 つでも形の検査に通らなければ、記録の全体を `null` にする（一部だけ残さない）。答えに無い配列の欄は空の配列にし、`dropped` の無い件数は 0 にする。
+
+    | 欄 | 中身 | 上限 |
+    | --- | --- | --- |
+    | `mode` | `subagents`（観点ごとの担当に分けて見た）か `sequential`（逐次モードで見た） | — |
+    | `viewpoints` | 観点ごとの扱い（`id`・`status`・`reason`）。`status` は `launched`・`relaunched`・`failed`・`substituted`（親が代わりに見た）・`not_launched`（起動しなかった） | 100 件 |
+    | `notReviewed` | 見られなかった観点と理由（`id`・`reason`） | 100 件 |
+    | `dismissed` | 採用しなかった指摘と理由（`title`・`viewpoint`・`reason`） | 100 件 |
+    | `dropped` | 落とした指摘の件数（`overlapping`・`outOfScope`・`handled`・`must`。0 以上の整数） | — |
+    | `scope` | 絞ったこと・絞らなかったことと理由、基準にしなかった指示など（文字列） | 20 件 |
+    | `verification` | 検証の経過（`kind`・`text`）。`kind` は `ran`・`reused`・`stopped`・`skipped` | 20 件 |
+
+  - 文字列はすべて、秘密の値を伏せてから 1 件 500 文字に切る（伏せてから切るので、境界をまたぐ値も残らない）。伏せ方は、監査の材料と同じ（`auditRedactor`）。
+  - 記録の文字列は、PR を読んだエージェントが書いた、信頼しない入力として扱う。`get_task` は記録の欄（データ）として返し、再レビューの指示は `previousReview` の JSON のデータの区画に入れて、データで指示ではないと添え、画面は文字列のまま出す（Markdown・HTML として解釈しない）。
+  - 投影は、`Task.reviewRecords` を、`reviewVerdicts` と同じく回ごとの配列で持つ。要素は `round`・`record`（`null` を含む）・その回の `reviewDispatch`（`agentId` つき）。同じ回の実行し直しは、その回の要素だけを置き換え、ほかの回は残す。記録の欄が無い実行の回は、要素を作らない（同じ回の前の実行の要素も残さない）。最新の回の `Task.reviewDispatch` は変わらない。
+  - 前回の記録の写し：`previousReview`（`PreviousReviewSnapshot`）は、任意の欄 `record` を持つ。同じタスクの再レビュー（`ReviewRestarted`）は、その回の `reviewRecords` の記録を写す。GitHub の再依頼で作るタスクは、元のタスクの最新の回の記録を写す（`reviewRerequest.previousReview`）。`earlierReviews` に移す古い `previousReview` からは `record` を落とす（同じタスクの回の記録は `reviewRecords` に、再依頼の元のタスクの回の記録は元のタスクの画面と `get_task` にある）。写すのは、`get_task` と再レビューの指示のデータに出すため。再レビューを絞るかの判断に使うのは、同じタスクの再レビューだけ。
+  - 投稿する文字列からの除去（`stripReviewRecord`・`withoutReviewRecord`）：エージェントの答えから作って投稿するすべての文字列（本文・行へのコメントの各本文・リスク評価の各文）から、記録を読めたかどうかに関わらず、次を取り除く。投稿の直前（`buildReviewBody`・`buildReviewComments`）にも、同じ規則で取り除く。
+    - フェンスの見つけ方：行頭の空白（数を問わない）・引用（`>`）・リストの印を除いた後に、バッククォートかチルダの 3 文字以上で始まる行を開きとし、同じ文字で、開きと同じ長さ以上のフェンスで閉じる。閉じていないものは、文字列の終わりまで。
+    - 除くフェンス：情報文字列のどこかに `sacty-review-record` を含むもの（大小文字・前後の空白・`json sacty-review-record` のような並びを問わない）と、情報文字列を問わず、中身に記録に固有の欄名（`viewpoints`・`notReviewed`・`dismissed`・`dropped`・`verification`）をキーとして 1 つでも含むもの（JSON として読めるかは問わない）。閉じていないもの・2 つ目以降も除く。
+    - キーの一致は、大小文字、欄名の前後の引用符（二重・一重・無し）、`:` の前の空白を問わない。前後に英数字か `_` が続く語（`myverification:` など）は当てない。`mode`・`scope` は一般の設定の語なので、判定に使わない。
+    - フェンスの外：行頭の空白・引用・リストの印を除いた後に `{` か `[` で始まる行から、括弧の釣り合う行まで（釣り合わなければ文字列の終わりまで）を 1 つの範囲とし、その中にキーの一致があれば、範囲ごと除く。範囲の外の地の文の行は、キーの一致があっても除かない。
+    - 除いた後に `sacty-review-record` の文字列（大小文字を問わない）が残る行も除く。
+    - 除いた後の文字列を同じ規則で確かめ直し、何も除かれなくなるまで繰り返す（20 回まで）。
+    - 除いて空になった行へのコメントは捨てる。リスク評価の文のどれかが空になったときは、その回の評価を使わない。
 - 費用を持つイベント（[費用](#費用)の19種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
   `estimated` が1件でもあれば、`budget.estimated` を立てる。
 - `Task` の主な項目
@@ -91,7 +118,7 @@
 | `escalated` | エスカレーション（人間の判断待ち） |
 | `cancelled` | 中止 |
 
-コード: `packages/core/src/projection.ts`（`project`・`applyEvent`・`Task`・`TaskStatus`）、`packages/core/src/cost.ts`（`chargeBudget`）、`apps/daemon/src/service.ts`（`TaskService.append`）
+コード: `packages/core/src/projection.ts`（`project`・`applyEvent`・`Task`・`TaskStatus`）、`packages/core/src/cost.ts`（`chargeBudget`）、`apps/daemon/src/service.ts`（`TaskService.append`・`reviewRecordOf`）、`packages/core/src/events.ts`（`ReviewRecord`・`REVIEW_RECORD_LIST_MAX`・`REVIEW_RECORD_SHORT_LIST_MAX`・`REVIEW_RECORD_TEXT_MAX`）、`apps/daemon/src/review-record.ts`（`readReviewRecordBlock`・`checkReviewRecord`・`stripReviewRecord`・`withoutReviewRecord`）
 
 ## 費用
 

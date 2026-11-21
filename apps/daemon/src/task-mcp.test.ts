@@ -1284,6 +1284,105 @@ describe("タスクの PR・ブランチと絞り込み（PBI-392）", () => {
     expect(running.reviewBody).toBe("あ".repeat(12_000));
   });
 
+  describe("レビューの記録とリスク評価の全文（PBI-460）", () => {
+    const record = (n: number) => ({
+      mode: "subagents" as const,
+      viewpoints: [{ id: `C-${n}`, status: "substituted" as const, reason: `理由${n}` }],
+      notReviewed: [{ id: `D-${n}`, reason: `見られない${n}` }],
+      dismissed: [{ title: `題${n}`, viewpoint: "C-1", reason: `不採用${n}` }],
+      dropped: { overlapping: n, outOfScope: 0, handled: 0, must: 0 },
+      scope: [`絞った${n}`],
+      verification: [{ kind: "reused" as const, text: `使い回した${n}` }],
+    });
+    const long = "あ".repeat(70_000);
+
+    it("すべての回の記録と、各回のエージェント・モデル・担当の数・切り替え前のエージェント、前回の記録、リスク評価の全文を返す", () => {
+      const task: Task = {
+        ...base(),
+        reviewRound: 4,
+        reviewRecords: [1, 2, 3].map((n) => ({
+          round: n,
+          record: n === 2 ? null : record(n),
+          reviewDispatch: {
+            agentId: `agent-${n}`,
+            runtime: "claude-code",
+            model: `model-${n}`,
+            subagents: n * 2,
+            ...(n === 3 ? { configuredAgentId: "claude-subscription" } : {}),
+          },
+        })),
+        previousReview: {
+          round: 3,
+          url: `${REPO}/pull/40#r3`,
+          at: "2026-11-18T00:05:00.000Z",
+          headCommit: "h".repeat(40),
+          body: "前回",
+          comments: [],
+          record: record(3),
+        },
+        riskAssessment: {
+          via: "review",
+          commit: "n".repeat(40),
+          at: "2026-11-18T00:00:00.000Z",
+          assessment: {
+            level: "low",
+            signals: [],
+            change: long,
+            scope: "範囲",
+            reversibility: "戻せる",
+            verification: "確かめた",
+            focus: [],
+          },
+        },
+      };
+      const detail = describeTask({ task, activity: [] });
+      expect(detail.reviewRecords?.map((r) => r.round)).toEqual([1, 2, 3]);
+      expect(detail.reviewRecords?.[0]).toEqual({
+        round: 1,
+        record: record(1),
+        reviewDispatch: {
+          agentId: "agent-1",
+          runtime: "claude-code",
+          model: "model-1",
+          subagents: 2,
+        },
+      });
+      // 読めなかった回は、record が null
+      expect(detail.reviewRecords?.[1]?.record).toBeNull();
+      expect(detail.reviewRecords?.[2]?.reviewDispatch).toMatchObject({
+        agentId: "agent-3",
+        model: "model-3",
+        subagents: 6,
+        configuredAgentId: "claude-subscription",
+      });
+      expect(detail.previousReview?.record).toEqual(record(3));
+      // リスク評価は、省略せずに全文
+      expect(detail.riskAssessment).toContain(long);
+      expect(detail.riskAssessment).not.toContain("省略");
+    });
+
+    it("記録の欄が無い以前の作業履歴のタスクは、例外にならず、記録の欄を出さない", () => {
+      const detail = describeTask({
+        task: {
+          ...base(),
+          reviewRound: 3,
+          previousReview: {
+            round: 2,
+            url: `${REPO}/pull/40#r2`,
+            at: "2026-11-18T00:05:00.000Z",
+            headCommit: "h".repeat(40),
+            body: "前回",
+            comments: [],
+          },
+        },
+        activity: [],
+      });
+      expect(detail.reviewRecords).toBeUndefined();
+      expect(detail.riskAssessment).toBeUndefined();
+      expect(detail.previousReview).not.toHaveProperty("record");
+    });
+  });
+
   it("直しでは解消できない指摘で止めたタスクの詳細に、止めた理由（PR の番号・印の付いた指摘・根拠）を出す（PBI-452）", () => {
     const stopped: Task = {
       ...base(),

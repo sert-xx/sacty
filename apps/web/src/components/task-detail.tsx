@@ -60,6 +60,7 @@ import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { RerunDialog } from "@/components/rerun-dialog";
 import { ResumeForm, type ResumeStepSetting } from "@/components/resume-form";
+import { ReviewRecords } from "@/components/review-records";
 import { ReviewWatchNotice } from "@/components/review-watch-notice";
 import { RiskAssessmentCard } from "@/components/risk-assessment";
 import { RunStatusLine } from "@/components/run-status";
@@ -2014,6 +2015,10 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
             </li>
           )}
         </ul>
+      )}
+      {/* 過程の記録（すべての回。PBI-460） */}
+      {step === "review" && task.reviewRecords && task.reviewRecords.length > 0 && (
+        <ReviewRecords records={task.reviewRecords} />
       )}
       {step === "design" && output && (
         <>

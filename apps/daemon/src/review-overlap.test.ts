@@ -448,7 +448,9 @@ describe("再レビューの指示（PBI-445）", () => {
       expect(prompt).toContain(
         "弾かないもの：直しが効いていない指摘・直っているか確かめられない指摘",
       );
-      expect(prompt).toContain("却下済み・対応済みと重なって落とした件数を 1 行で書く");
+      expect(prompt).toContain(
+        "落とした件数（却下済み・対応済みと重なって落とした件数・既存の指摘と重なって省いた件数・目的の範囲の外として落とした件数）は、本文に書かず、記録の dropped に残す",
+      );
       expect(prompt).toContain("落とした指摘だけを数える");
       expect(prompt).toContain(
         "判定は、採用した指摘と、未対応の前回の指摘・既存の指摘で決める（落とした指摘は根拠にしない）",

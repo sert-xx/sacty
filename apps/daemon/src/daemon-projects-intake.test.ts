@@ -21,6 +21,7 @@ import { createApp } from "./server.js";
 import type { ServiceDeps, TaskService } from "./service.js";
 import { SessionLogStore } from "./session-logs.js";
 import { MemorySettingsStore, SqliteSettingsStore } from "./settings.js";
+import { describeTask } from "./task-mcp.js";
 import {
   agent,
   completed,
@@ -2609,6 +2610,48 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     expect(third?.reviewRerequest?.taskId).toBe(next.id);
     expect(third?.previousReview?.body).toBe("# 2回目");
     expect(third?.reviewRound).toBe(3);
+    activity.close();
+  });
+
+  it("再依頼で作る新しいタスクに、元のタスクの前回の回のレビューの記録を写し、get_task にも出す（PBI-460）", async () => {
+    const record = {
+      mode: "subagents",
+      viewpoints: [{ id: "C-1", status: "launched" }],
+      notReviewed: [{ id: "C-6", reason: "差分を読めなかった" }],
+      dismissed: [{ title: "指摘A", reason: "範囲の外" }],
+      scope: [],
+      verification: [{ kind: "stopped", text: "テストが止まった" }],
+    };
+    const answer = `# 1回目\n\n\`\`\`sacty-review-record\n${JSON.stringify(record)}\n\`\`\``;
+    const { activity, pulls, service, id } = await posted(undefined, answer);
+    // 元のタスクの回 1 の記録
+    const original = service.get(id)?.task.reviewRecords?.find((r) => r.round === 1)?.record;
+    expect(original).toEqual(record);
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+    requestAfterPost(service, pulls, id);
+    const { restarted } = await service.restartRerequestedReviews([pr(9)]);
+    const next = restarted[0];
+    if (!next) throw new Error("missing re-review task");
+    // 作業履歴の TaskCreated の previousReview と、新しいタスクの previousReview に、同じ記録がある
+    const created = (service.get(next.id)?.activity ?? []).find((e) => e.type === "TaskCreated");
+    expect(
+      created?.type === "TaskCreated" && created.payload.reviewRerequest?.previousReview.record,
+    ).toEqual(original);
+    expect(next.previousReview?.record).toEqual(original);
+    // 同じ記録が get_task の previousReview にある
+    const detail = describeTask({ task: next, activity: [] });
+    expect(detail.previousReview?.record).toEqual(original);
+    // 元のタスクの回の記録は、新しいタスクには写さない（元のタスクの画面と get_task で読む）
+    expect(next.reviewRecords).toBeUndefined();
+    activity.close();
+  });
+
+  it("再依頼で作る新しいタスクは、前回の記録が無い回（記録を返さなかった元のタスク）でも、欄を作らない", async () => {
+    const { activity, pulls, service, id } = await posted();
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+    requestAfterPost(service, pulls, id);
+    const next = (await service.restartRerequestedReviews([pr(9)])).restarted[0];
+    expect(next && "record" in (next.previousReview ?? {})).toBe(false);
     activity.close();
   });
 

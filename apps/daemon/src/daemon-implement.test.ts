@@ -4886,7 +4886,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(threaded.startsWith(`<!-- sacty-reply:${id}:review_comment:1:1 -->\n`)).toBe(true);
         expect(threaded).toContain("**対応しました。**\n\n回数を定数にしました");
         // 指摘の ID（キー）は、sacty の中のものなので、人には見せない
-        expect(threaded).toContain(`Sacty のタスク ${id} の実装の工程で、AI が書きました。`);
+        expect(threaded).toContain("Sacty の実装の工程で、AI が書きました。");
         expect(threaded).not.toContain("への対応）");
         // レビューの本文の指摘：元へのリンクを付けた PR のコメント
         expect(replies(pulls)).toHaveLength(1);
@@ -9867,9 +9867,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(threaded.startsWith(`<!-- sacty-reply:${id}:implement-1-1:2 -->\n`)).toBe(true);
         expect(threaded).toContain("**対応しました。**\n\nnull を返すようにしました");
         expect(threaded).not.toContain("への返信です");
-        expect(threaded).toContain(
-          `Sacty のタスク ${id} の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。`,
-        );
+        expect(threaded).toContain("Sacty の実装の工程で、AI が書きました。");
         // レビューの本文・通常のコメントの指摘：元へのリンクを付けた PR のコメント
         const [onReview, onComment] = prComments(pulls).map((c) => c.body);
         expect(prComments(pulls)).toHaveLength(2);
@@ -10029,7 +10027,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           expect(body?.startsWith(`<!-- sacty-reply:${id}:implement-1-${n + 1}:2 -->\n`)).toBe(
             true,
           );
-          expect(body).toContain("AI が書きました（指摘 implement-1-");
+          expect(body).toContain("Sacty の実装の工程で、AI が書きました。");
+          expect(body).not.toContain(`implement-1-${n + 1} への対応`);
         }
         expect(posted(service, id)[0]?.results.map((r) => r.remarkId)).toEqual([
           "implement-1-1",
@@ -10577,9 +10576,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(prComments(pulls)[0]?.body).toContain(
           "**対応しました。**\n\n画面の姿の決定を変えました",
         );
-        expect(prComments(pulls)[0]?.body).toContain(
-          "の設計の工程で、AI が書きました（指摘 design-1-1 への対応）。",
-        );
+        expect(prComments(pulls)[0]?.body).toContain("Sacty の設計の工程で、AI が書きました。");
         expect(posted(service, id)[0]).toMatchObject({
           step: "implement",
           submission: 2,

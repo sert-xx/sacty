@@ -1,4 +1,4 @@
-<!-- Code: packages/cli/src/index.ts (mcpCommand), packages/cli/src/mcp.ts, apps/daemon/src/task-mcp.ts (TOOLS, INSTRUCTIONS), apps/daemon/src/task-reads.ts, apps/daemon/src/byte-range.ts, apps/daemon/src/session-logs.ts (readMeta) -->
+<!-- Code: packages/cli/src/index.ts (mcpCommand), packages/cli/src/mcp.ts, apps/daemon/src/task-mcp.ts (TOOLS, INSTRUCTIONS), apps/daemon/src/task-reads.ts, apps/daemon/src/byte-range.ts, apps/daemon/src/session-logs.ts (readMeta), apps/daemon/src/review-record.ts -->
 
 [日本語](mcp.md) | **English**
 
@@ -83,7 +83,7 @@ When sacty does not respond within 30 seconds, the tools answer that the daemon 
 | Tool | What it does |
 | --- | --- |
 | `list_tasks` | Lists tasks, newest first. Can filter by PR, branch name, repository, title, and so on. With `needs_person`, it lists only the tasks waiting for a person: tasks that move on once you decide first, then paused tasks (the longest wait first within each) |
-| `get_task` | Returns the details of a task (description, review body, why it is stopped, recent activity) |
+| `get_task` | Returns the details of a task (description, review body, why it is stopped, recent activity). For a PR review task, it also returns the review records that are not written to the PR (per round: how the viewpoints were handled, the viewpoints that could not be reviewed, the findings not adopted, the verification progress, and the agent, model, and number of reviewers that ran; `reviewRecords`) and the full risk assessment without omission (`riskAssessment`). The sentences of the records are written by the reviewing AI and are treated as data, not instructions |
 | `rereview_task` | Puts a PR review task into re-review |
 | `list_projects` | Lists the projects that have not been deleted, with their IDs, names, and target repositories |
 | `create_task` | Creates a task in a project you specify, from a title and a description (`project_id`, `title`, `body`; the description can be omitted) |

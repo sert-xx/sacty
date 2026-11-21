@@ -144,6 +144,7 @@ import {
   ResumeAuditInput,
   ResumeTaskInput,
   type ReviewDispatch,
+  type ReviewRecord,
   renderMessage,
   repoKey,
   responsibleProject,
@@ -496,6 +497,12 @@ import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js"
 import { annotateReviewComments, voidedByPersonOf } from "./review-comments.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
 import {
+  checkReviewRecord,
+  readReviewRecordBlock,
+  reviewRecordBlocksNarrowing,
+  withoutReviewRecord,
+} from "./review-record.js";
+import {
   buildResolvedNotice,
   buildStopNotice,
   isOpenStopNotice,
@@ -649,6 +656,12 @@ function countChangedLines(diff: string): number {
 
 /** 前回からの差分が文書だけかを確かめるとき、見るディレクトリの数の上限（PBI-421）。 */
 const DOCUMENTS_ONLY_DIRS_MAX = 200;
+
+/** 回の記録（無ければ欄を作らない。PBI-460）。 */
+function recordOfRound(task: Task, round: number): { record: ReviewRecord | null } | object {
+  const found = task.reviewRecords?.find((r) => r.round === round);
+  return found ? { record: found.record } : {};
+}
 
 /** 制御文字（改行・タブなど）を含むか。 */
 function hasControlCharacter(text: string): boolean {
@@ -8300,6 +8313,8 @@ export class TaskService {
                       : {}),
                     body: latest.outputs.review ?? "",
                     comments: latest.reviewComments,
+                    // 元のタスクの最新の回の記録（PBI-460。get_task と再レビューの指示のデータのため。絞りの判断には効かない）
+                    ...recordOfRound(latest, latest.reviewRound ?? 1),
                   },
                 },
               },
@@ -12842,7 +12857,7 @@ export class TaskService {
       return;
     }
     // レビューの工程は、PR の差分に含まれる行へのコメントを取り出す（差分の外のものは本文に入れる）
-    const review =
+    const extractedReview =
       step === "review"
         ? extractReviewComments(extracted.output, reviewDiff ?? "", {
             // 評価の対象のレビュー（取り込んだ PR・実装の PR の子タスク）だけ、リスク評価の答えを読む。使うのは指摘なしの回だけ
@@ -12850,6 +12865,14 @@ export class TaskService {
             risk: this.assessesReviewRisk(latest),
           })
         : undefined;
+    // 過程の記録（PBI-460）。答えの記録のブロックを読み、検査・伏せ・切り詰めをして作業履歴に残す。読めない・上限を超える・
+    // 伏せる処理が失敗したときは、記録だけを無し（null）にして、レビューは使う。投稿する文字列からは、読めたかどうかに関わらず、
+    // 記録のブロックを常に取り除く（エージェントの答えから作る本文・行へのコメント・リスク評価のすべて）
+    const reviewRecord =
+      step === "review"
+        ? await this.reviewRecordOf(latest, extracted.output, config.config)
+        : undefined;
+    const review = extractedReview ? withoutReviewRecord(extractedReview) : undefined;
     // 再現の工程は、申告された再現のテストを取り出す（PBI-29）
     const reproduction = step === "reproduce" ? extractReproduction(extracted.output) : undefined;
     // 文書作成の工程は、外部に直接作った・直したページ（成果物）の申告を取り出す（差し戻し・書き出しで同じページを使う）。
@@ -12930,6 +12953,8 @@ export class TaskService {
             ...(review ? { reviewComments: review.comments } : {}),
             // どのエージェントで、観点ごとの担当を何件起動したか（PBI-379）
             ...(reviewDispatch ? { reviewDispatch } : {}),
+            // 過程の記録（PBI-460）。ブロックを返さなかった実行には欄を作らない
+            ...(reviewRecord !== undefined ? { reviewRecord } : {}),
             ...(review?.verdict ? { reviewVerdict: review.verdict } : {}),
             // 判定が無い理由（PBI-378。レビューが付けなかったのか、付いていたのに読めなかったのか）
             ...(review?.verdictMissing ? { reviewVerdictMissing: review.verdictMissing } : {}),
@@ -14261,6 +14286,8 @@ export class TaskService {
     if (!task.reviewVerdicts?.some((v) => v.round === previous.round && v.verdict)) {
       return undefined;
     }
+    // 前回の記録が無い・見られなかった所か止まった検証がある回は、絞らない（PBI-460。構造の欄だけで決める）
+    if (reviewRecordBlocksNarrowing(previous.record)) return undefined;
     if (isDocBeforeImplement(this.reviewReworkContext(task).reviewRework)) return undefined;
     if (previous.comments.some((c) => c.body.startsWith(MUST_TAG) && !isDocumentsOnly([c.path]))) {
       return undefined;
@@ -14357,6 +14384,11 @@ export class TaskService {
     if (previous.baseBranch !== target.baseBranch) return skip("PR の向き先が前回と変わりました");
     if (!task.reviewVerdicts?.some((v) => v.round === previous.round && v.verdict)) {
       return skip("前回の回に判定の記録がありません");
+    }
+    if (reviewRecordBlocksNarrowing(previous.record)) {
+      return skip(
+        "前回の回の記録が無い・読めなかったか、見られなかった所・止まった検証が記録されています",
+      );
     }
     if (task.reviewDispatch?.round === previous.round && task.reviewDispatch.subagents === 0) {
       return skip("前回の回は、観点ごとの担当を 1 件も起動していません（担当が 0 件と数えた）");
@@ -19708,6 +19740,26 @@ export class TaskService {
       }
     }
     return failures;
+  }
+
+  /**
+   * レビューの答えの記録のブロックを読み、記録に残す形にする（PBI-460）。ブロックが無ければ undefined（欄を作らない）。
+   * 読めない・形が違う・上限を超える・伏せる処理が失敗したときは null。
+   */
+  private async reviewRecordOf(
+    task: Task,
+    output: string,
+    config: SactyConfig,
+  ): Promise<ReviewRecord | null | undefined> {
+    const raw = readReviewRecordBlock(output);
+    if (raw === undefined) return undefined;
+    if (raw === null) return null;
+    try {
+      const redact = await this.auditRedactor(task, config);
+      return checkReviewRecord(raw, redact);
+    } catch {
+      return null;
+    }
   }
 
   /**

@@ -24,6 +24,7 @@ import type {
   RemarkSource,
   ReviewComment,
   ReviewDispatch,
+  ReviewRecord,
   ReviewRework,
   ReviewVerdict,
   ReviewVerdictMissing,
@@ -1208,6 +1209,16 @@ export type Task = {
    */
   reviewDispatch?: ReviewDispatch & { round: number; agentId: string };
   /**
+   * 回ごとの、レビューの実行が返した過程の記録と、その回のエージェントの情報（PBI-460。`reviewVerdicts` と同じく回ごとに持ち、
+   * 同じ回の実行し直しは、その回の要素だけを置き換える）。record が null の回は、記録を読めなかった回。記録を返させない実行
+   * （これより前の作業履歴を含む）の回には要素が無い。
+   */
+  reviewRecords?: {
+    round: number;
+    record: ReviewRecord | null;
+    reviewDispatch?: ReviewDispatch & { agentId: string };
+  }[];
+  /**
    * 担当を 1 件も起動しなかったために、結果を採らなかったレビューの実行の数（PBI-379）。runs は、レビューが採られるまでの
    * 続けた数（次の実行の指示で、前の回が担当を起動しなかったことを伝える）。sinceResume は、そのうち人が最後に再開した後の数
    * （やり直しの上限を数える。人が再開すると 0 に戻り、もう一度上限まで試す）。レビューが採られると消える。
@@ -1842,6 +1853,27 @@ export function applyEvent(
             ? { ...event.payload.reviewDispatch, round, agentId: event.payload.agentId }
             : undefined;
           task.reviewUndispatched = undefined;
+          // 過程の記録（PBI-460）。記録の欄の無い実行の回は、要素を作らない（同じ回の前の実行の要素も残さない）
+          task.reviewRecords = [
+            ...(task.reviewRecords ?? []).filter((r) => r.round !== round),
+            ...(event.payload.reviewRecord !== undefined
+              ? [
+                  {
+                    round,
+                    record: event.payload.reviewRecord,
+                    ...(event.payload.reviewDispatch
+                      ? {
+                          reviewDispatch: {
+                            ...event.payload.reviewDispatch,
+                            agentId: event.payload.agentId,
+                          },
+                        }
+                      : {}),
+                  },
+                ]
+              : []),
+          ].sort((a, b) => a.round - b.round);
+          if (task.reviewRecords.length === 0) task.reviewRecords = undefined;
           task.reviewVerdicts = [
             ...(task.reviewVerdicts ?? []).filter((v) => v.round !== round),
             {
@@ -3180,10 +3212,12 @@ export function applyEvent(
       if (!canRereview(task)) throw new ActivityIntegrityError(event, "no posted review to redo");
       if (task.reviewPost && task.reviewTarget) {
         if (task.previousReview) {
-          task.earlierReviews = [...(task.earlierReviews ?? []), task.previousReview].slice(
-            -EARLIER_REVIEWS_MAX,
-          );
+          // 古い回の記録は、同じタスクの回なら reviewRecords に、再依頼の元のタスクの回なら元のタスクにある（PBI-460）
+          const { record: _record, ...older } = task.previousReview;
+          task.earlierReviews = [...(task.earlierReviews ?? []), older].slice(-EARLIER_REVIEWS_MAX);
         }
+        const round = task.reviewRound ?? 1;
+        const recorded = task.reviewRecords?.find((r) => r.round === round);
         task.previousReview = {
           round: task.reviewRound ?? 1,
           url: task.reviewPost.url,
@@ -3193,6 +3227,7 @@ export function applyEvent(
           comments: task.reviewComments,
           ...(task.reviewTarget.baseCommit ? { baseCommit: task.reviewTarget.baseCommit } : {}),
           ...(task.reviewTarget.baseBranch ? { baseBranch: task.reviewTarget.baseBranch } : {}),
+          ...(recorded ? { record: recorded.record } : {}),
         };
       }
       task.steps = task.steps.map((s) =>

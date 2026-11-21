@@ -128,8 +128,8 @@ export function buildGitHubComment(input: {
     "",
     "---",
     input.awaitingApproval
-      ? `Sacty のタスク ${input.taskId} の${input.stepName}の工程で AI が書きました。この工程の成果は、PR のマージで承認されます。`
-      : `Sacty のタスク ${input.taskId} の${input.stepName}の工程で AI が書き、人間が承認しました。`,
+      ? `Sacty の${input.stepName}の工程で AI が書きました。この工程の成果は、PR のマージで承認されます。`
+      : `Sacty の${input.stepName}の工程で AI が書き、人間が承認しました。`,
   ].join("\n");
 }
 

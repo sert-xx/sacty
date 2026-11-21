@@ -77,7 +77,32 @@ describe("工程の出力で頼まれた、PR・Issue へのコメント", () =>
       body: "返信",
     });
     expect(body).toContain("<!-- sacty-comment:T-1:operation:2026-10-21T00:00:00.000Z:0 -->");
-    expect(body).toContain("作業の工程で AI が書き、人間が承認しました");
+    expect(body).toContain("Sacty の作業の工程で AI が書き、人間が承認しました");
     expect(withoutGitHubComments(`# 結果\n\n${block({ comments: [] })}`)).toBe("# 結果");
+  });
+
+  it("末尾に、タスクの ID を出さない。承認の前後で、工程の名前と、AI が書いた旨・承認の状態だけを書く（PBI-460）", () => {
+    const input = {
+      taskId: "T-1",
+      step: "operation",
+      stepName: "作業",
+      approvedAt: "2026-10-21T00:00:00.000Z",
+      index: 0,
+      body: "返信",
+    };
+    const marker = "<!-- sacty-comment:T-1:operation:2026-10-21T00:00:00.000Z:0 -->";
+    const awaiting = buildGitHubComment({ ...input, awaitingApproval: true });
+    const approved = buildGitHubComment({ ...input, awaitingApproval: false });
+    expect(awaiting.split("\n").at(-1)).toBe(
+      "Sacty の作業の工程で AI が書きました。この工程の成果は、PR のマージで承認されます。",
+    );
+    expect(approved.split("\n").at(-1)).toBe(
+      "Sacty の作業の工程で AI が書き、人間が承認しました。",
+    );
+    // 先頭の目印（表示されない HTML コメント）は残し、それ以外にタスクの ID を出さない
+    for (const text of [awaiting, approved]) {
+      expect(text.startsWith(marker)).toBe(true);
+      expect(text.replace(marker, "")).not.toContain("T-1");
+    }
   });
 });

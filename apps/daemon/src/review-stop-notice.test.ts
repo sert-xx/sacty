@@ -131,4 +131,23 @@ describe("レビューが止まったことの知らせ（PBI-292）", () => {
       expect(notifiesReviewStop(reason)).toBe(false);
     }
   });
+
+  it("担当を 1 件も起動しないレビューが続いて止まったときは、理由の行を中身の言葉の固定の文にし、担当・サブエージェントの語を出さない（PBI-460）", () => {
+    const summary = stopSummary(message("review.notDispatchedPaused", { runs: 4 }), []);
+    expect(summary).toBe(
+      "レビューを繰り返しましたが、確かめた結果が得られず、投稿できませんでした",
+    );
+    const body = buildStopNotice({ taskId: TASK, reason: "error", summary, taskUrl: URL });
+    const reason = body.split("\n").find((line) => line.startsWith("- 理由："));
+    expect(reason).toBe(
+      "- 理由：エラー（`レビューを繰り返しましたが、確かめた結果が得られず、投稿できませんでした`）",
+    );
+    expect(body).not.toContain("担当");
+    expect(body).not.toContain("サブエージェント");
+    expect(body).not.toContain("観点");
+    // 同じ止まり方は、同じ目印になる（回数の違いで別の止まり方にしない）
+    expect(stopKey("error", summary)).toBe(
+      stopKey("error", stopSummary(message("review.notDispatchedPaused", { runs: 5 }), [])),
+    );
+  });
 });

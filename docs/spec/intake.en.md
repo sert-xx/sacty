@@ -152,6 +152,7 @@ The person who asked for the review watches only the PR and would not notice fro
 - When it writes: when sacty writes the record that the task became paused (`append`), it writes one normal comment (an issue comment) without waiting for the write to finish (`announceReviewStop`).
   - Body: that the review stopped, the reason (kind and gist), and how to resume (a link to the task screen; the link is built from the URL of the screen that was started (`SACTY_WEB_URL`), or `http://127.0.0.1:4700` if unset). When the host of the screen URL is `127.0.0.1`, `localhost`, or `[::1]` (or the URL cannot be read), the sentence "タスクの画面は、依頼した人のマシンでだけ開けます。" is added right after the link sentence (PBI-450; [The note on task-screen links](approval.en.md#the-note-on-task-screen-links)). The heading is "Sacty のレビューが止まりました".
   - Gist of the reason: the pause explanation. If there is none, the explanation of the run (`AgentRunFailed`) or Orchestrator (`OrchestratorFailed`) that failed just before.
+    When the review stopped because reviews that started no per-viewpoint reviewers kept repeating (`review.notDispatchedPaused`), the gist is the fixed sentence "レビューを繰り返しましたが、確かめた結果が得られず、投稿できませんでした", which uses no words about the process (`UNDISPATCHED_SUMMARY`; PBI-460).
     sacty hides the secrets it used **first**, then puts it on one line and truncates it to 300 characters (truncating first would leave the front half of a secret that straddles the cut).
     Because the text comes from outside, sacty shows it as code (so an `@` mention does not appear in the body).
   - sacty posts with the account chosen in the project.
@@ -190,7 +191,7 @@ The person who asked for the review watches only the PR and would not notice fro
 - For a temporary failure of an agent run (such as a busy model), sacty has no process that waits and retries with the same agent.
   If a fallback agent is configured, sacty switches to it instead of stopping ([Fallback agents on failure](agent-execution.en.md#fallback-agents-on-failure)).
 
-Code: `apps/daemon/src/review-stop-notice.ts` (`notifiesReviewStop`, `stopSummary`, `stopKey`, `buildStopNotice`, `buildResolvedNotice`), `apps/daemon/src/service.ts` (`append`, `reviewStopTarget`, `announceReviewStop`, `resolveReviewStops`, `postReview`, `resolveReviewTarget`, `retryTransient`), `apps/daemon/src/github.ts` (`listIssueComments`, `editIssueComment`, `isReviewStopNotice`, `feedback`, `isTransientGitHubFailure`), `packages/core/src/events.ts` (`ReviewGitHubRetried`)
+Code: `apps/daemon/src/review-stop-notice.ts` (`notifiesReviewStop`, `stopSummary`, `UNDISPATCHED_SUMMARY`, `stopKey`, `buildStopNotice`, `buildResolvedNotice`), `apps/daemon/src/service.ts` (`append`, `reviewStopTarget`, `announceReviewStop`, `resolveReviewStops`, `postReview`, `resolveReviewTarget`, `retryTransient`), `apps/daemon/src/github.ts` (`listIssueComments`, `editIssueComment`, `isReviewStopNotice`, `feedback`, `isTransientGitHubFailure`), `packages/core/src/events.ts` (`ReviewGitHubRetried`)
 
 ## GitHub accounts and APIs
 
