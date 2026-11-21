@@ -480,6 +480,7 @@ import {
   remarkReplyOrigin,
 } from "./remark-reply.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import { annotateReviewComments, voidedByPersonOf } from "./review-comments.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
 import {
   buildResolvedNotice,
@@ -5342,7 +5343,7 @@ export class TaskService {
   }> {
     const token = await this.githubToken(task, target.repo, usedSecrets);
     const account = this.githubAccountOf(task, target.repo).account;
-    const existing = await this.deps.pulls.feedback({
+    const fetched = await this.deps.pulls.feedback({
       repo: target.repo,
       token,
       number: target.number,
@@ -5365,7 +5366,16 @@ export class TaskService {
       includeApprovals: true,
       // sacty が作者のアカウントで投稿した、指摘への返信（PBI-352）も、作者の返答として渡す
       includeSactyReplies: true,
+      // 返信の目印のタスク ID が、この PR を扱うタスクと一致するものだけを、sacty の返信とする（PBI-445）
+      sactyReplyTasks: remarkReplyTasksOn(
+        [...this.tasks.values()],
+        task.reviewOf?.taskId,
+        target.repo,
+        target.number,
+      ),
     });
+    // 1 件ずつ、人・sacty・確かめられないを付ける（人と sacty が同じアカウントでも見分ける。PBI-445）
+    const existing = annotateReviewComments(fetched, target.author);
     const previous = task.previousReview;
     if (!previous) return { existing };
     const author = target.author.toLowerCase();
@@ -8544,7 +8554,10 @@ export class TaskService {
     secrets: readonly string[],
     signal?: AbortSignal,
   ): Promise<
-    { kind: "none" } | { kind: "file"; content: string } | { kind: "failed"; detail: string }
+    | { kind: "none" }
+    | { kind: "file"; content: string }
+    | { kind: "failed"; detail: string }
+    | { kind: "aborted" }
   > {
     const path = designFilePath(task);
     const taskBranch = task.taskBranch;
@@ -8558,6 +8571,8 @@ export class TaskService {
       if (content === undefined) return { kind: "none" };
       return { kind: "file", content: applyEditsToFile(content, pendingDesignEdits(task)) };
     } catch (error) {
+      // 一時停止・中止による中断は、読めなかったのではない（呼び出し側が、記録せずに止める）
+      if (signal?.aborted) return { kind: "aborted" };
       const detail = renderMessage(redactText(errorText(error), secrets), "ja");
       console.warn(`設計のファイルを読めませんでした（task ${task.id}）：${detail}`);
       return { kind: "failed", detail };
@@ -8575,7 +8590,7 @@ export class TaskService {
     withProposal: boolean,
     secrets: readonly string[],
     signal?: AbortSignal,
-  ): Promise<ActivityItem | undefined> {
+  ): Promise<ActivityItem | "aborted" | undefined> {
     const remarkIds = designEditRemarkIds(task);
     const approved = task.approved.design;
     const read = extracted.designEdit;
@@ -8618,6 +8633,9 @@ export class TaskService {
     const file = withProposal
       ? ({ kind: "none" } as const)
       : await this.designFileContent(task, secrets, signal);
+    // 一時停止・中止で設計のファイルの取得が中断されたときは、記録しない（読めなかったことにして、直しを捨てない。
+    // 止まった実行として、再開でやり直す）
+    if (file.kind === "aborted") return "aborted";
     const result = applyDesignEdits(block.edits, {
       remarkIds: new Set(remarkIds),
       output,
@@ -11572,6 +11590,8 @@ export class TaskService {
     let reviewSecurity: ReviewSecurity | undefined;
     // PR のレビューの子タスクに渡す、PR を作ったタスクの、後続に回したい案の扱い（PBI-370）
     let reviewDeferrals: ReviewDeferrals | undefined;
+    // PR を作ったタスクの人が、画面で無効にした指摘（人の却下。PBI-445）
+    let reviewVoided: { text: string; url?: string }[] | undefined;
     // 引き継いで直す既存の PR の指摘（レビュー・行へのコメント・通常のコメント）。実装と、その前の工程に渡す
     const continued = this.mustGet(task.id).continuedPullRequest;
     const continuedFeedback =
@@ -11671,6 +11691,16 @@ export class TaskService {
                 scope: securityScope(parent),
                 ...(parent.securityScopeCheck ? { check: parent.securityScopeCheck } : {}),
               };
+            }
+            // PR を作ったタスクの人が画面で無効にした指摘（RemarkVoided）を、人の却下として渡す。その PR の工程の指摘だけ
+            // （マージで捨てた指摘は含めない。PBI-445）
+            if (parent && latest.reviewOf) {
+              reviewVoided = voidedByPersonOf(
+                parent.remarks,
+                latest.reviewOf.step,
+                reviewTarget.number,
+                reviewTarget.url,
+              );
             }
             // 実装の PR なら、人が後続に回すと決めた指摘を渡す（未対応に数えさせない。PBI-370）
             if (parent && latest.reviewOf?.step === "implement") {
@@ -11890,6 +11920,7 @@ export class TaskService {
               ...(reviewCi ? { reviewCi } : {}),
               ...(reviewSecurity ? { reviewSecurity } : {}),
               ...(reviewDeferrals ? { reviewDeferrals } : {}),
+              ...(reviewVoided && reviewVoided.length > 0 ? { reviewVoided } : {}),
               ...(rereviewDocsOnly ? { rereviewDocsOnly } : {}),
               ...(rereviewNarrow
                 ? {
@@ -12355,6 +12386,45 @@ export class TaskService {
         [...contextSecrets],
         this.inflight.get(latest.id)?.abort.signal,
       );
+      // 中断されたときは、完了も提出も記録せず、失敗した実行と同じに止める（再開すると、実装の実行からやり直す。
+      // 直しを「読めなかった」として捨てない）
+      if (edited === "aborted") {
+        const manual = await this.manualPauseInfo(task.id);
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "AgentRunFailed",
+              payload: {
+                runId,
+                step,
+                agentId: agent.id,
+                reason: "error",
+                message: "一時停止・中止の要求で、設計の直しの反映の前に中断しました。",
+                usage: outcome.usage,
+                costUsd,
+                estimated,
+                ...unknownCost(executed),
+              },
+            },
+          },
+          this.pauseOrFallBack(
+            task.id,
+            { runId, role: step, agent, selected: chosen.agent },
+            "error",
+            {
+              actor: "sacty",
+              event: {
+                type: "TaskPaused",
+                payload: { reason: this.stopReason(task.id, "error"), ...manual },
+              },
+            },
+            config.config,
+          ),
+        ]);
+        this.warnIfNeeded(this.mustGet(task.id));
+        return;
+      }
       if (edited) events.push(edited);
     }
     // 評価の対象のレビューは、指摘なしの回だけ、レビューの答えと一緒に出させた PR のリスク評価を記録する（PBI-362・PBI-429）。
@@ -13969,20 +14039,54 @@ export class TaskService {
         if (designPath && pendingEdits.length > 0) {
           const file = await this.deps.repos.readFile(gitDir, parent, designPath);
           if (file !== undefined) {
-            const applied = applyEditsToFileChecked(file, pendingEdits);
-            // 設計のファイルに当たらない直しがあれば、コミットしない（黙って「入れた」にしない。人が設計のファイルを直した場合）
-            if (applied.skipped.length > 0) {
-              return fail(
-                message("pr.failed", {
-                  detail: errorText(
-                    new Error(
-                      `設計の直し ${applied.skipped.length} 件が、設計のファイルに当たりません（設計のファイルが、直しの後に変わった）。`,
-                    ),
-                  ),
-                }),
-              );
+            // プッシュがリモートに届いた後、BranchPushed を記録する前に止まって再開したとき、タスクブランチの先頭
+            // （parent）は、直しを当て済みのコミットになっている。最後に記録したプッシュのコミットの設計のファイルに
+            // 直しを当てた結果が、先頭のファイルと同じなら、当て済みとして、もう一度当てない（二重に当てない・当たらずに止まらない）
+            const lastPushed =
+              task.pushedBranch?.branch === taskBranch.branch
+                ? task.pushedBranch.commit
+                : undefined;
+            let alreadyApplied = false;
+            if (lastPushed !== undefined && lastPushed !== parent) {
+              const before = await this.deps.repos
+                .readFile(gitDir, lastPushed, designPath)
+                .catch(() => undefined);
+              if (before !== undefined) {
+                const replay = applyEditsToFileChecked(before, pendingEdits);
+                alreadyApplied =
+                  replay.skipped.length === 0 && replay.doc === file && replay.doc !== before;
+              }
             }
-            if (applied.doc !== file) designOverrides = { [designPath]: applied.doc };
+            if (!alreadyApplied) {
+              const applied = applyEditsToFileChecked(file, pendingEdits);
+              // 起点の写しが無くても、before が無く after が 1 か所にある直しは、当て済みとして飛ばす（上と同じ再開の場面）
+              const stillMissing = applied.skipped.filter(
+                (e) =>
+                  !(
+                    file.split(e.before).length === 1 &&
+                    e.after !== "" &&
+                    file.split(e.after).length === 2
+                  ),
+              );
+              // 設計のファイルに当たらない直しがあれば、コミットしない（黙って「入れた」にしない。人が設計のファイルを直した場合）。
+              // 止めるときは、どの直しが当たらないかを示し、直し方（設計のファイルを元に戻す）を添える
+              if (stillMissing.length > 0) {
+                const which = stillMissing
+                  .slice(0, 3)
+                  .map((e) => `「${redactText(e.before, usedSecrets).slice(0, 40)}」`)
+                  .join("、");
+                return fail(
+                  message("pr.failed", {
+                    detail: errorText(
+                      new Error(
+                        `設計の直し ${stillMissing.length} 件（${which}）が、設計のファイルに当たりません（設計のファイルが、直しの後に変わった）。設計のファイルの該当箇所を、直しの前の内容に戻してから再開してください。`,
+                      ),
+                    ),
+                  }),
+                );
+              }
+              if (applied.doc !== file) designOverrides = { [designPath]: applied.doc };
+            }
           }
         }
         // 実装の作業領域は起点のコミットのままなので、sacty が最後に積んだコミット（無ければ起点）の後にタスクブランチへ
@@ -20870,6 +20974,29 @@ export function remarkReplyAccountsOn(
       ),
     ),
   ];
+}
+
+/**
+ * この PR を扱う sacty のタスクの ID（PR を作ったタスク・PR を取り込んだタスク・要求要件・設計の PR を持つタスク。PBI-445）。
+ * 返信の目印のタスク ID がこの中にあるときだけ、sacty の返信として読む。
+ */
+export function remarkReplyTasksOn(
+  tasks: readonly Task[],
+  parentId: string | undefined,
+  repo: string,
+  number: number,
+): string[] {
+  const on = (pr: { repo?: string; number?: number } | undefined) =>
+    pr?.number === number && pr.repo !== undefined && sameRepo(pr.repo, repo);
+  return tasks
+    .filter(
+      (t) =>
+        t.id === parentId ||
+        on(t.pullRequest) ||
+        on(t.continuedPullRequest) ||
+        (t.stepPullRequests ?? []).some(on),
+    )
+    .map((t) => t.id);
 }
 
 /**

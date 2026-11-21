@@ -98,6 +98,11 @@ export interface PullRequests {
      * レビューの工程に渡す既存のレビューと、再レビューの作者の返答だけが含める。
      */
     includeSactyReplies?: boolean;
+    /**
+     * この PR を扱う sacty のタスクの ID（PR を作ったタスク・取り込んだタスク。PBI-445）。includeSactyReplies のとき、返信の目印の
+     * タスク ID がここにある返信にだけ bySacty を付ける（本文だけでは sacty の返信と決めない）。
+     */
+    sactyReplyTasks?: readonly string[];
     /** 中断できる（答えを待つのをやめた通信を残さない。PBI-411）。 */
     signal?: AbortSignal;
   }): Promise<PullRequestFeedback[]>;
@@ -293,6 +298,14 @@ export function isSactyGitHubComment(body: unknown): boolean {
  */
 export const REMARK_REPLY_MARKER_PREFIX = "<!-- sacty-reply:";
 
+/** 指摘への返信の目印（`<!-- sacty-reply:<タスク ID>:...`）の、タスク ID（PBI-445）。目印で始まらなければ undefined。 */
+export function remarkReplyTaskOf(body: unknown): string | undefined {
+  if (!isSactyRemarkReply(body)) return undefined;
+  return (
+    String(body).trimStart().slice(REMARK_REPLY_MARKER_PREFIX.length).split(":")[0] || undefined
+  );
+}
+
 /** 本文が、指摘への返信の目印で始まるか（PBI-352）。人の指摘ではないので、PR の指摘に取り込まない。 */
 export function isSactyRemarkReply(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(REMARK_REPLY_MARKER_PREFIX);
@@ -357,6 +370,20 @@ export type PullRequestFeedback = {
   path?: string;
   line?: number;
   requestChanges?: boolean;
+  /** 投稿したアカウントの、リポジトリとの関係（GitHub の author_association。OWNER・MEMBER・COLLABORATOR・NONE など。PBI-445）。 */
+  association?: string;
+  /**
+   * 指摘への返信の目印（`sacty-reply`）で始まり、その目印のタスク ID が、この PR を扱う sacty のタスクと一致する、sacty の返信
+   * （`sactyReplyTasks` を渡したときだけ。PBI-445）。同じアカウントでも、人の投稿と見分けるのに使う。
+   */
+  bySacty?: true;
+  /**
+   * 投稿の出どころ（PBI-445。デーモンが、レビューの工程に渡す前に付ける）。sacty は sacty の返信、person は PR の作者・リポジトリの
+   * 組織のメンバー・共同作業者（書き込み権限までは確かめない）の投稿、unverified はそれ以外（本文では決めない）。
+   */
+  by?: "sacty" | "person" | "unverified";
+  /** by が sacty の返信の、状態の申告と、断った提案を含むか（PBI-445。返信の頭から読む）。 */
+  reply?: { status?: "addressed" | "declined" | "deferred"; declinedProposals?: true };
   /** 承認（APPROVED）のレビュー（本文のあるもの。`includeApprovals` のときだけ）。 */
   approved?: boolean;
   /**
@@ -617,6 +644,27 @@ export class GitHubPullRequests implements PullRequests {
       };
     };
     const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
+    // 人と sacty の区別に使う、投稿したアカウントの関係と、sacty の返信の印（PBI-445）。返信の印は、目印のタスク ID が、この PR を
+    // 扱う sacty のタスクと一致し、sacty のアカウントが投稿したときだけ付ける（本文の目印だけでは決めない）
+    const replyTasks = new Set(input.sactyReplyTasks ?? []);
+    const who = (
+      item: Record<string, unknown>,
+    ): Pick<PullRequestFeedback, "association" | "bySacty"> => {
+      const login = user(item).login;
+      const task = remarkReplyTaskOf(item.body);
+      return {
+        ...(typeof item.author_association === "string"
+          ? { association: item.author_association }
+          : {}),
+        ...(input.includeSactyReplies &&
+        task !== undefined &&
+        replyTasks.has(task) &&
+        typeof login === "string" &&
+        noticeAccounts.has(login.toLowerCase())
+          ? { bySacty: true as const }
+          : {}),
+      };
+    };
     const url = (item: Record<string, unknown>) =>
       typeof item.html_url === "string" ? { url: item.html_url } : {};
     const body = (item: Record<string, unknown>) =>
@@ -652,6 +700,7 @@ export class GitHubPullRequests implements PullRequests {
         body: body(r),
         ...(requestChanges ? { requestChanges } : {}),
         ...(approved ? { approved: true } : {}),
+        ...who(r),
         ...aiReview(r),
       });
     }
@@ -668,6 +717,7 @@ export class GitHubPullRequests implements PullRequests {
         path: String(c.path ?? ""),
         ...(typeof line === "number" ? { line } : {}),
         ...(lineContextOf(c.diff_hunk) ? { lineContext: lineContextOf(c.diff_hunk) } : {}),
+        ...who(c),
         ...aiReview(c, commentCommit),
       });
     }
@@ -680,6 +730,7 @@ export class GitHubPullRequests implements PullRequests {
         at: String(c.created_at ?? ""),
         ...url(c),
         body: body(c),
+        ...who(c),
         ...aiReview(c),
       });
     }

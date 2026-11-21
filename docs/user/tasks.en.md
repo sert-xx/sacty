@@ -725,8 +725,8 @@ When a round fixes a comment in Implementation and the approved design document 
 
 If you operate sacty, keep the following in mind.
 
-- When sacty applies a design fix, `DesignEdited` is recorded in the Activity. Once `DesignEdited` is recorded, you cannot go back to the previous version of sacty. The previous version cannot read `DesignEdited` and does not start.
-- Before going back to the previous version, check that the Activity has no design fix line (the number of fixes applied and not applied).
+- When sacty receives design fixes from the implementation output, `DesignEdited` is recorded in the Activity whether or not any fix is applied (including zero applied, an unreadable fix block, and a change request in the same output). Once `DesignEdited` is recorded, you cannot go back to the previous version of sacty. The previous version cannot read `DesignEdited` and does not start.
+- Before going back to the previous version, check that the Activity has no design fix line (a line with zero applied also counts).
 - If you went back and it no longer starts, upgrade again to this version and it runs. The Activity is not lost.
 
 ### Things for a person to check
@@ -840,6 +840,8 @@ The AI decides by these criteria.
 | --- | --- |
 | Handle in this PR | A suggestion inside the scope of the PR's purpose that, if not fixed, causes harm such as wrong behavior, text that misleads readers, or a gap in verification, or causes rework later |
 | Do not handle in this PR | A suggestion outside the scope of the purpose; preferences, formatting, and wording; a new suggestion about details of text added by a fix; another occurrence of the same cause that keeps coming; something answered in an earlier round as not fixable; raising again something already declined |
+
+The review side also does not post findings that overlap one already addressed or one you decided not to do ([Intake](intake.en.md)). A suggestion that overlaps one the AI decided not to handle is not posted either.
 
 - The later the review round, the stricter the bar for handling. When reviews with suggestions only come twice or more in a row, the AI does not handle them in principle.
 - When the AI is unsure, it decides to handle the suggestion if reviews with suggestions only have not come in a row, and not to handle it if they have.

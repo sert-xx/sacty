@@ -397,7 +397,7 @@ const ja = {
       `${id}を${accept ? "認めた" : "認めなかった"}（${actor}）`,
     ChangeApplied: (id: string) => `${id}の変更を反映`,
     DesignEdited: (applied: number, rejected: number, unreadable: boolean) =>
-      `実装の PR の指摘で、設計の局所の直しを反映（反映 ${applied} 件・反映しなかった ${rejected} 件${unreadable ? "・直しのブロックを読めなかった" : ""}）`,
+      `実装の PR の指摘で、設計の局所の直しを受け取った（反映 ${applied} 件・反映しなかった ${rejected} 件${unreadable ? "・直しのブロックを読めなかった" : ""}）`,
     RepositoryPrepared: (url: string, branch: string, commit: string) =>
       `対象リポジトリを用意（${url}・${branch}・${commit}）`,
     BaseBranchMerged: (commit: string, conflicts: number, files: string) =>
@@ -1200,7 +1200,7 @@ const en: LabelMessages = {
       `${id} ${accept ? "accepted" : "not accepted"} (${actor})`,
     ChangeApplied: (id) => `${id} applied`,
     DesignEdited: (applied, rejected, unreadable) =>
-      `Design edits from the implementation pull request's findings (applied ${applied} · not applied ${rejected}${unreadable ? " · the edit block could not be read" : ""})`,
+      `Design fixes received from the implementation PR's findings (applied ${applied} · not applied ${rejected}${unreadable ? " · the edit block could not be read" : ""})`,
     RepositoryPrepared: (url, branch, commit) =>
       `Target repository prepared (${url} · ${branch} · ${commit})`,
     BaseBranchMerged: (commit, conflicts, files) =>

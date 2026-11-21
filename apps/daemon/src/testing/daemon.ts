@@ -435,7 +435,15 @@ export class FakeRepos implements RepositoryWorkspace {
   ) {
     return this.defaultBranch;
   }
-  async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+  /** あれば、fetchBranch の中で呼ぶ（実行の中断（一時停止・中止）の再現。渡された signal を見られる）。 */
+  onFetchBranch?: (signal?: AbortSignal) => void | Promise<void>;
+  async fetchBranch(
+    gitDir: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
+    await this.onFetchBranch?.(signal);
     if (this.fetchBranchFail) throw new Error(this.fetchBranchFail);
     this.fetchedBranches.push({ gitDir, branch, ...(authEnv ? { authEnv } : {}) });
     return this.remote[branch] ?? this.branchHead;
@@ -606,6 +614,8 @@ export class FakeRepos implements RepositoryWorkspace {
   /** published と同じ順の、起点（作業領域のベース）と、第2の親にするコミット（ベースブランチの取り込み）。 */
   publishInputs: { baseCommit?: string; merge?: string }[] = [];
   publishFail?: string;
+  /** あれば、プッシュはリモートに届いた後（ブランチを進めた後）に、この文で失敗する（応答の失敗・時間切れの再現）。 */
+  publishFailAfterPush?: string;
   /** true なら、作業領域が起点から何も変わっていない（PBI-90）。 */
   unchanged = false;
   /** あれば、プッシュを、これが解決するまで終わらせない（PR の作成の前の一時停止のテスト。PBI-110）。 */
@@ -657,6 +667,7 @@ export class FakeRepos implements RepositoryWorkspace {
       this.files[commit] = { ...inherited, ...(input.overrides ?? {}) };
     }
     this.remote[input.branch] = commit;
+    if (this.publishFailAfterPush) throw new Error(this.publishFailAfterPush);
     return { commit };
   }
 }
@@ -1125,7 +1136,10 @@ export class FakePulls implements PullRequests {
   feedbackNoticeAccounts: (readonly string[] | undefined)[] = [];
   /** sacty の、指摘への返信も含めるか（レビューの工程に渡す既存のレビューだけ true。PBI-352）。 */
   feedbackIncludeSactyReplies: (boolean | undefined)[] = [];
+  /** 渡された、この PR を扱う sacty のタスクの ID（返信の目印のタスク ID と照らす。PBI-445）。 */
+  feedbackSactyReplyTasks: (readonly string[] | undefined)[] = [];
   async feedback(input: {
+    sactyReplyTasks?: readonly string[];
     account?: string;
     number: number;
     sactyReviews?: readonly SactyReviewRound[];
@@ -1135,6 +1149,7 @@ export class FakePulls implements PullRequests {
   }) {
     this.feedbackNoticeAccounts.push(input.noticeAccounts);
     this.feedbackIncludeSactyReplies.push(input.includeSactyReplies);
+    this.feedbackSactyReplyTasks.push(input.sactyReplyTasks);
     const allowed = (input.sactyReviews ?? []).filter((r) => r.allowed).map((r) => r.key);
     this.feedbackSactyReviews.push(allowed.length > 0 ? allowed : undefined);
     this.feedbackIncludeApprovals.push(input.includeApprovals);
@@ -1156,7 +1171,17 @@ export class FakePulls implements PullRequests {
       if (!input.includeSactyReplies && item.body.trimStart().startsWith("<!-- sacty-reply:")) {
         return [];
       }
-      return key !== undefined && item.author === input.account ? [] : [item];
+      // 本物と同じく、目印のタスク ID が、この PR を扱うタスクと一致する返信にだけ、sacty の返信の印を付ける（PBI-445）
+      const replyTask = item.body.trimStart().startsWith("<!-- sacty-reply:")
+        ? item.body.trimStart().slice("<!-- sacty-reply:".length).split(":")[0]
+        : undefined;
+      const marked =
+        input.includeSactyReplies &&
+        replyTask !== undefined &&
+        (input.sactyReplyTasks ?? []).includes(replyTask)
+          ? { ...item, bySacty: true as const }
+          : item;
+      return key !== undefined && item.author === input.account ? [] : [marked];
     });
   }
 }

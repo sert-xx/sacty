@@ -570,11 +570,11 @@ describe("作業履歴の設計の直しの行（PBI-446）", () => {
 
   it("反映した件数と反映しなかった件数の分かる行が、日本語と英語で出る", () => {
     expect(describeIn(edited(2, 1), labels.ja)).toBe(
-      "実装の PR の指摘で、設計の局所の直しを反映（反映 2 件・反映しなかった 1 件）",
+      "実装の PR の指摘で、設計の局所の直しを受け取った（反映 2 件・反映しなかった 1 件）",
     );
     expect(describeIn(edited(0, 0, true), labels.ja)).toContain("直しのブロックを読めなかった");
     expect(describeIn(edited(2, 1), labels.en)).toBe(
-      "Design edits from the implementation pull request's findings (applied 2 · not applied 1)",
+      "Design fixes received from the implementation PR's findings (applied 2 · not applied 1)",
     );
     expect(describeIn(edited(0, 0, true), labels.en)).toContain("could not be read");
   });

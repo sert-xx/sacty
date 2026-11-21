@@ -1,4 +1,5 @@
 import type { TestViewpoint } from "@sacty/core";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { describe, expect, it } from "vitest";
 import {
   applyDesignEdits,
@@ -376,5 +377,103 @@ describe("設計の直しの検査のすり抜け（レビューの指摘）", (
     const r = applyEditsToFileChecked(FILE, [edit]);
     expect(r.doc).toBe(FILE);
     expect(r.skipped).toEqual([edit]);
+  });
+});
+
+/** 解析器（CommonMark）が見出しと読むものを、木の全部から数える（検査の実装とは別に、期待を作る）。 */
+function parsedHeadings(doc: string): string[] {
+  const found: string[] = [];
+  const text = (n: { value?: string; children?: unknown[] }): string =>
+    typeof n.value === "string"
+      ? n.value
+      : (n.children ?? []).map((c) => text(c as { value?: string })).join("");
+  const walk = (n: { children?: unknown[] }): void => {
+    for (const c of n.children ?? []) {
+      const node = c as { type: string; depth?: number; children?: unknown[]; value?: string };
+      if (node.type === "heading") found.push(`${node.depth} ${text(node).trim()}`);
+      walk(node);
+    }
+  };
+  walk(fromMarkdown(doc) as unknown as { children: unknown[] });
+  return found;
+}
+
+describe("設計の直しは、どんな入力でも見出しの列を変えない（性質のテスト。検査の入口は applyDesignEdits）", () => {
+  const SHAPES = [
+    "新しい節\n---",
+    "新しい節\n===",
+    "> ## 引用の見出し",
+    "   ## 字下げの見出し",
+    "## 見出し",
+    "# x",
+    "- ## リストの中",
+    "```\n# コード\n```",
+    "````\n```\n# コード\n````",
+    "~~~\n# コード\n~~~",
+    "```\n# 閉じない",
+    "<div>\n# html\n</div>",
+    "    # 4 文字字下げ（コード）",
+    "# 閉じの # ##",
+    "平文",
+    "",
+  ];
+  const BEFORES = [
+    "- 決済失敗：「失敗しました」",
+    "エラー表",
+    "## エラー表",
+    "決済 API を作る。",
+    "- 在庫切れ：「在庫がありません」\n\n## 確認したいこと",
+  ];
+  // 乱数は固定の種から作る（失敗を再現できる）
+  function rng(seed: number) {
+    let x = seed;
+    return () => {
+      x = (x * 1664525 + 1013904223) % 4294967296;
+      return x / 4294967296;
+    };
+  }
+
+  it("反映された直しの後の文書（承認済みの設計と設計のファイル）の見出しの列は、反映の前と同じ", () => {
+    const rand = rng(446);
+    const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)] as T;
+    let appliedCount = 0;
+    for (let n = 0; n < 400; n++) {
+      const before = pick(BEFORES);
+      const shape = pick(SHAPES);
+      const after =
+        rand() < 0.5 ? `${before}\n${shape}` : rand() < 0.5 ? `${shape}\n${before}` : shape;
+      const result = applyDesignEdits(
+        [{ remarks: ["implement-1-1"], before, after, reason: "理由" }],
+        { remarkIds: ids, output: OUTPUT, viewpoints: VIEWPOINTS, file: FILE, secrets: [] },
+      );
+      if (result.applied.length > 0) appliedCount++;
+      expect(parsedHeadings(result.output), `before=${before} after=${after}`).toEqual(
+        parsedHeadings(OUTPUT),
+      );
+    }
+    // 見出しにならない直し（平文など）は反映される（何でも断る検査になっていない）
+    expect(appliedCount).toBeGreaterThan(0);
+  });
+
+  it("下線・引用・字下げの見出しを足す after は、反映しない", () => {
+    for (const after of [
+      "- 決済失敗：「失敗しました」\n\n新しい節\n---",
+      "> ## 引用",
+      "  ## 字下げ",
+    ]) {
+      const result = applyDesignEdits(
+        [
+          {
+            remarks: ["implement-1-1"],
+            before: "- 決済失敗：「失敗しました」",
+            after,
+            reason: "理由",
+          },
+        ],
+        { remarkIds: ids, output: OUTPUT, viewpoints: VIEWPOINTS, file: FILE, secrets: [] },
+      );
+      expect(result.applied, after).toHaveLength(0);
+      expect(result.output).toBe(OUTPUT);
+    }
   });
 });

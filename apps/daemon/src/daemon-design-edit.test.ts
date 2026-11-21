@@ -362,6 +362,61 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     activity.close();
   });
 
+  it("プッシュがリモートに届いた後に失敗して再開しても、設計の直しは当たらずに止まらず、二重にも当たらない", async () => {
+    const made = await toRework([
+      withEdits([edit(["implement-1-1"], "「失敗しました」", "「決済に失敗しました」")]),
+    ]);
+    const { service, id, repos, activity } = made;
+    await service.runNext(id);
+    repos.publishFailAfterPush = "connection reset";
+    await drain(service);
+    expect(taskOf(service, id).status).toBe("paused");
+    expect(repos.remote[taskBranchOf(id)]).toBeDefined();
+    repos.publishFailAfterPush = undefined;
+    service.resume(id, {});
+    await drain(service);
+    expect(taskOf(service, id).status).not.toBe("paused");
+    expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 2 });
+    const last = repos.published.at(-1);
+    const file =
+      last?.overrides?.[designPath(id)] ??
+      repos.files[repos.remote[taskBranchOf(id)] ?? ""]?.[designPath(id)] ??
+      "";
+    expect(file.match(/「決済に失敗しました」/g) ?? []).toHaveLength(1);
+    expect(file).not.toContain("「決済に失敗しましたました」");
+    activity.close();
+  });
+
+  it("設計のファイルの取得の間に一時停止されたら、「読めなかった」と記録せず、再開すると直しが反映される", async () => {
+    const made = await toRework([
+      withEdits([edit(["implement-1-1"], "「失敗しました」", "「決済に失敗しました」")]),
+      withEdits([edit(["implement-1-1"], "「失敗しました」", "「決済に失敗しました」")]),
+    ]);
+    const { service, id, repos, activity } = made;
+    repos.onFetchBranch = async (signal) => {
+      if (signal && !signal.aborted) {
+        service.pause(id);
+        // 実際の取得は、中断されると例外で終わる
+        if (signal.aborted) throw new Error("The operation was aborted");
+      }
+    };
+    await service.runNext(id);
+    await drain(service);
+    repos.onFetchBranch = undefined;
+    expect(
+      eventsOf(made).filter((e) => e.type === "DesignEdited" && e.payload.unreadable),
+    ).toHaveLength(0);
+    expect(JSON.stringify(eventsOf(made).filter((e) => e.type === "DesignEdited"))).not.toContain(
+      "読めなかった",
+    );
+    service.resume(id, {});
+    await drain(service);
+    const edited = eventsOf(made).filter((e) => e.type === "DesignEdited");
+    expect(edited).toHaveLength(1);
+    expect(edited[0]?.type === "DesignEdited" ? edited[0].payload.applied : []).toHaveLength(1);
+    activity.close();
+  });
+
   it("人が設計の PR で直してマージしたタスクで、2回目の直しは1回目の after に重なる before でも反映され、人の直しは残る（TV-11）", async () => {
     const made = await start([
       out("# 要求要件 v1"),

@@ -1,4 +1,5 @@
 import type { DesignEditItem, DesignEditRejected, Task, TestViewpoint } from "@sacty/core";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { redact } from "./agents/redact.js";
 import { DESIGN_EDIT_FIELDS, withoutInternalPaths } from "./prompts.js";
 
@@ -55,28 +56,71 @@ export type DesignEditResult = {
 
 type Heading = { level: number; title: string; index: number };
 
-/** 見出しの行（`#` の並びで始まる行。コードブロックの中は除く）の位置。 */
-function headingsOf(doc: string): Heading[] {
-  const found: Heading[] = [];
-  let fence: string | undefined;
-  let offset = 0;
-  for (const line of doc.split("\n")) {
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (f !== undefined) {
-      if (fence === undefined) fence = f[0] ?? "`";
-      else if (f[0] === fence) fence = undefined;
-    } else if (fence === undefined) {
-      const m = /^(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(line.replace(/\r$/, ""));
-      if (m) found.push({ level: m[1]?.length ?? 1, title: m[2] ?? "", index: offset });
+type MdNode = {
+  type: string;
+  value?: string;
+  children?: MdNode[];
+  depth?: number;
+  position?: { start: { offset?: number } };
+};
+
+function plainText(node: MdNode): string {
+  if (typeof node.value === "string") return node.value;
+  return (node.children ?? []).map(plainText).join("");
+}
+
+/** 文書を Markdown として解析した、見出し（引用・リストの中を含む全部。木の順）。ルート直下の見出しは root が真。 */
+type ParsedHeading = Heading & { root: boolean };
+
+/**
+ * 見出しを、Markdown の解析器（CommonMark）の解釈で数える。下線の見出し・引用やリストの中の見出し・字下げした見出し・
+ * 長さの違うコードブロックの囲みも、解析器の判定に任せる（自前の行の解析と食い違わせない）。解析できなければ例外を投げる。
+ */
+function parseHeadings(doc: string): ParsedHeading[] {
+  const tree = fromMarkdown(doc) as unknown as MdNode;
+  const found: ParsedHeading[] = [];
+  const walk = (node: MdNode, root: boolean): void => {
+    for (const child of node.children ?? []) {
+      if (child.type === "heading") {
+        found.push({
+          level: child.depth ?? 1,
+          title: plainText(child).trim(),
+          index: child.position?.start.offset ?? 0,
+          root,
+        });
+      }
+      walk(child, false);
     }
-    offset += line.length + 1;
-  }
+  };
+  walk(tree, true);
   return found;
 }
 
-/** 見出しの行だけを並べた列（直しが見出しを足す・消す・変えないことの検査に使う。文書の全体で比べる）。 */
-function headingLines(text: string): string[] {
-  return headingsOf(text).map((h) => `${"#".repeat(h.level)} ${h.title}`);
+/** ルート直下の見出し（節の境目）。 */
+function headingsOf(doc: string): Heading[] {
+  return parseHeadings(doc).filter((h) => h.root);
+}
+
+/** 見出しを並べた列（直しが見出しを足す・消す・変えないことの検査に使う。文書の全体の、すべての見出しで比べる）。 */
+function headingLines(text: string): string {
+  return parseHeadings(text)
+    .map((h) => `${"#".repeat(h.level)} ${h.title}`)
+    .join("\n");
+}
+
+/** 2 つの文書の見出しの列が同じか（解析できなければ、同じとは言わない）。 */
+function sameHeadings(a: string, b: string): boolean {
+  const x = safeHeadingLines(a);
+  return x !== undefined && x === safeHeadingLines(b);
+}
+
+/** headingLines の、解析できないとき undefined を返す版。 */
+function safeHeadingLines(text: string): string | undefined {
+  try {
+    return headingLines(text);
+  } catch {
+    return undefined;
+  }
 }
 
 /** 節（見出しの行から、同じかそれより浅い次の見出しの前まで）の範囲のうち、名前の頭が names のどれかのもの。 */
@@ -126,10 +170,14 @@ export function applyViewpointToDocument(
   edit: { viewpoint: string; field: string; before: string; after: string },
 ): string | undefined {
   const lines = doc.split("\n");
-  const sectionStarts = headingsOf(doc)
-    .filter((h) => h.title.startsWith("テスト観点"))
-    .map((h) => h.index);
-  if (sectionStarts.length === 0) return undefined;
+  let allHeadings: ParsedHeading[];
+  try {
+    allHeadings = parseHeadings(doc);
+  } catch {
+    return undefined;
+  }
+  if (!allHeadings.some((h) => h.root && h.title.startsWith("テスト観点"))) return undefined;
+  const headingStarts = new Set(allHeadings.map((h) => h.index));
   // 行ごとの、文書の先頭からの位置
   let offset = 0;
   const starts = lines.map((l) => {
@@ -143,9 +191,15 @@ export function applyViewpointToDocument(
     if (line.startsWith(head) && inViewpointSection(doc, starts[i] ?? 0)) rowLine = i;
   }
   if (rowLine < 0) return undefined;
-  // 行の範囲は、次の `- [` の行か見出しの行まで
+  // 行の範囲は、次の `- [` の行か見出し（解析器が見出しと読むもの）の行まで
   let end = rowLine + 1;
-  while (end < lines.length && !/^- \[|^#{1,6}[ \t]/.test(lines[end] ?? "")) end++;
+  while (
+    end < lines.length &&
+    !/^- \[/.test(lines[end] ?? "") &&
+    !headingStarts.has(starts[end] ?? -1)
+  ) {
+    end++;
+  }
   let target = -1;
   let prefix = head;
   if (edit.field === "title") {
@@ -221,6 +275,10 @@ export function applyDesignEdits(
   const applied: DesignEditItem[] = [];
   const rejected: DesignEditRejected[] = [];
   const viewpointIds = new Set(viewpoints.map((v) => v.id));
+  // 反映の前の文書を解析できなければ、すべての直しを反映しない
+  const parseFailed =
+    safeHeadingLines(output) === undefined ||
+    (file !== undefined && safeHeadingLines(file) === undefined);
 
   for (const [index, item] of raw.entries()) {
     const r =
@@ -265,6 +323,10 @@ export function applyDesignEdits(
       reject(input.rejectAll);
       continue;
     }
+    if (parseFailed) {
+      reject("設計の文書を Markdown として解析できないため、直しは反映しません。");
+      continue;
+    }
     if (index >= DESIGN_EDIT_MAX) {
       reject(
         `直しは 1 回の出力で ${DESIGN_EDIT_MAX} 件までなので、${index + 1} 件目以降は反映しません。`,
@@ -305,7 +367,7 @@ export function applyDesignEdits(
       reject("作業領域の内部のパスを含むため、反映しません（人が辿れないため）。");
       continue;
     }
-    if (headingLines(before).join("\n") !== headingLines(after).join("\n")) {
+    if (!sameHeadings(before, after)) {
       reject("見出しの行を足す・消す・変える直しは、反映しません。");
       continue;
     }
@@ -409,10 +471,8 @@ export function applyDesignEdits(
     const nextOutput = `${output.slice(0, outAt)}${after}${output.slice(outAt + before.length)}`;
     // 直した後の文書の全体で、見出しの行の列が変わらないこと（見出しの語だけを before にした直しも止める）
     if (
-      headingLines(nextOutput).join("\n") !== headingLines(output).join("\n") ||
-      (file !== undefined &&
-        nextFile !== undefined &&
-        headingLines(nextFile).join("\n") !== headingLines(file).join("\n"))
+      !sameHeadings(nextOutput, output) ||
+      (file !== undefined && nextFile !== undefined && !sameHeadings(nextFile, file))
     ) {
       reject("見出しの行を足す・消す・変える直しは、反映しません。");
       continue;

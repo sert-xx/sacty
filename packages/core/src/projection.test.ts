@@ -1165,6 +1165,21 @@ describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別
         ev("t", { type: "RemarkVoided", payload: { remarkId: "implement-1-1" } }, "person"),
       ]).get("t") as Task;
       expect(deferProposals(voided).map((p) => p.remarkId)).toEqual(["implement-1-2"]);
+      // 画面で無効にした（person）ことを残す。レビューの子に、人の却下として渡すため（PBI-445）。
+      // 人の操作でない無効化には付けない
+      expect(voided.remarks.find((r) => r.id === "implement-1-1")).toMatchObject({
+        voided: true,
+        voidedBy: "person",
+      });
+      expect(voided.remarks.find((r) => r.id === "implement-1-2")?.voidedBy).toBeUndefined();
+      const bySystem = project([
+        ...proposed(),
+        ev("t", { type: "RemarkVoided", payload: { remarkId: "implement-1-1" } }, "sacty"),
+      ]).get("t") as Task;
+      expect(bySystem.remarks.find((r) => r.id === "implement-1-1")).toMatchObject({
+        voided: true,
+      });
+      expect(bySystem.remarks.find((r) => r.id === "implement-1-1")?.voidedBy).toBeUndefined();
     });
 
     it("実装のほかの工程の「後続に回したい」は、申告が無いものとして扱う（案にしない）", () => {
