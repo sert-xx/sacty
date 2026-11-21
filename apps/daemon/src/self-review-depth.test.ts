@@ -257,7 +257,7 @@ describe("軽いと判定されたタスクでは、セルフレビューの観�
     }) as unknown as Task;
   const STEPS = ["requirements", "design", "implement"] as const;
 
-  it("要求要件・設計・実装・文書作成のどの工程でも、観点を 2 つに絞り、段階を下げ、横断の 2 回目を省き、起動しなかった観点を残させる", () => {
+  it("要求要件・設計・実装・文書作成のどの工程でも、観点を 2 つに絞り、段階を下げる指示は出さず、横断の 2 回目を省き、起動しなかった観点を残させる", () => {
     const prompts: [string, string][] = [
       ...STEPS.map(
         (step) => [step, buildPrompt(task({ selfReviewDepth: LIGHT }), step)] as [string, string],
@@ -281,10 +281,9 @@ describe("軽いと判定されたタスクでは、セルフレビューの観�
         "対象のリポジトリに、今回の変更に当てはまる開発向けの決まり・レビュー用のスキルがあれば、X-3・R も起動する",
       );
       expect(prompt, step).toContain("X-2 は、実行した検証が失敗・警告を出したときだけ起動する");
-      // 上位の段階の担当は 1 段下げる
-      expect(prompt, step).toContain(
-        "standard より上の段階の観点の担当は、1 段下の段階で起動する（既定の観点カタログには、standard より上の段階の観点は無い）",
-      );
+      // 段階を下げる指示は出さない（PBI-456）
+      expect(prompt, step).not.toContain("1 段下の段階で起動する");
+      expect(prompt, step).not.toContain("standard より上の段階");
       // 横断の 2 回目を省く
       expect(prompt, step).toContain("X-1 も、前回の回で must を出したときだけ起動する");
       expect(prompt, step).toContain("起動する観点が無ければ、再レビューをせずに提出へ進む");
@@ -328,15 +327,15 @@ describe("軽いと判定されたタスクでは、セルフレビューの観�
     for (const step of STEPS) {
       const light = buildPrompt(task({ selfReviewDepth: LIGHT }), step).split("\n");
       const normal = buildPrompt(task(), step).split("\n");
-      expect(light.length - normal.length, step).toBe(6);
+      expect(light.length - normal.length, step).toBe(5);
       expect(
         light.filter((line) => !normal.includes(line)),
         step,
-      ).toHaveLength(6);
+      ).toHaveLength(5);
     }
   });
 
-  it("指摘を受けた直しの実行では、起動する観点は直しの実行の規則のままにし、段階と再レビューの規則だけを当てる", () => {
+  it("指摘を受けた直しの実行では、起動する観点は直しの実行の規則のままにし、再レビューの規則だけを当てる", () => {
     const prompt = buildPrompt(
       task({
         selfReviewDepth: LIGHT,
@@ -355,7 +354,10 @@ describe("軽いと判定されたタスクでは、セルフレビューの観�
     );
     // 観点を 2 つに絞る指示（初回の規則）は、直しの実行の規則と食い違うので出さない
     expect(prompt).not.toContain(VIEWPOINTS);
-    expect(prompt).toContain("standard より上の段階の観点の担当は、1 段下の段階で起動する");
+    expect(prompt).not.toContain("1 段下の段階で起動する");
+    expect(prompt).toContain(
+      "再レビュー（2 回目以降）は、前回の回で must を出した観点だけを起動する",
+    );
   });
 
   it("PR のレビューの工程と、セルフレビューを省く工程（提出を PR のレビューの子タスクがレビューする）には、絞る指示を出さない", () => {
@@ -405,7 +407,8 @@ describe("既定のスキル review-dispatch の、軽い依頼の自己レビ�
     expect(text).toContain(
       "要件への適合の観点（主対象が `code` なら C-1、`design-doc` なら D-1、`user-doc` なら U-1）と X-1 だけ",
     );
-    expect(text).toContain("`standard` より上の段階の担当は、1 段下の段階で起動する");
+    expect(text).not.toContain("1 段下の段階で起動する");
+    expect(text).toContain("その後の再レビューにだけ、この規則を当てる");
     expect(text).toContain("X-1 も、前回の回で `must` を出したときだけ起動する");
     expect(text).toContain("起動しなかった観点は、起動表に「起動しない」と理由（軽い依頼）を残す");
     // PR のレビューと、明示の無い実行には当てはめない
@@ -435,11 +438,16 @@ describe("既定のスキル review-dispatch の、軽い依頼の自己レビ�
     expect(text).toContain("`pr-review` には当てはめない");
   });
 
-  it("観点カタログに段階を 1 段下げる規則があり、PR のレビューの資料は、対象が小さくても絞らないと書く", () => {
+  it("軽い依頼の自己レビューに段階を下げる規則は無く、PR のレビューの資料は、対象が小さくても絞らないと書く", () => {
     const viewpoints = skill("references/viewpoints.md");
-    expect(viewpoints).toContain(
-      "`standard` より上の段階の担当を、この表の 1 段下の段階で起動する（`advanced` は `standard`、`expert` は `advanced`、`ultimate` は `expert`）",
-    );
+    expect(viewpoints).not.toContain("1 段下");
+    expect(viewpoints).toContain("再レビューは前回の回で `must` を出した観点だけを起動する");
+    const selfReview = skill("references/self-review.md");
+    expect(selfReview).not.toContain("1 段下");
+    expect(selfReview).not.toContain("下げた段階");
+    expect(selfReview).toContain("**前回の回で `must` を出した観点だけ**");
+    expect(selfReview).toContain("その後の再レビューの規則だけを、ここから当てる");
+    expect(skill("references/aggregation.md")).not.toContain('"tier": "advanced');
     expect(skill("references/pr-review.md")).toContain(
       "対象が小さくても、観点は絞らない（`self-review` の「軽い依頼の自己レビュー」は、`pr-review` には当てはめない）",
     );

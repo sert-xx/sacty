@@ -527,7 +527,6 @@ The self-review of a task judged light goes as follows.
 
 - The first round uses only two viewpoints: fit to the requirements, and X-1, which looks for defects without being tied to a viewpoint.
   When the target repository has skills or instruction files that apply to this change, those viewpoints are used too.
-- A viewpoint that is reviewed with a model stronger than `standard` is reviewed with a model one tier lower. The default viewpoint catalog has no such viewpoint, so by default nothing changes.
 - A re-review after fixing uses only the viewpoints that raised a `must` in the previous round.
   When there was no `must`, no re-review is done.
 - The viewpoints that were not used, and why, stay in the agent's run log and in the summary of the self-review.

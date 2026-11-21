@@ -1,10 +1,10 @@
 # 既定のレビューの観点ごとの段階を、それぞれ 1 段下げる
 
 - 日時: 2026-11-21 09:46 UTC
-- ステータス: 採用
+- ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-455
 - 置き換え元: [既定のレビューの観点ごとの段階を下げ、expert も既定で使わない](20261114-1354-superseded-lower-review-viewpoint-tiers.md)（観点ごとの段階の割り当て）、[既定のレビューに、既存の実装との調和を見る観点 C-18 を足す](20261119-1605-superseded-review-viewpoint-for-harmony-with-existing-code.md)（C-18 の段階を `standard` とした部分）
-- 置き換え先: なし
+- 置き換え先: [軽い依頼の自己レビューから、段階を 1 段下げる決まりを消す](20261121-1044-remove-light-self-review-tier-lowering.md)（軽い依頼の自己レビューの決まりの文を変えないとした部分）
 
 ## 背景
 

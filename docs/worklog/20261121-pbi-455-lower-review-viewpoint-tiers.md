@@ -4,7 +4,7 @@
 - タスク: PBI-455
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: [既定のレビューの観点ごとの段階を、それぞれ 1 段下げる](../adr/20261121-0946-lower-review-viewpoint-tiers-one-more-step.md)
+- 関係する ADR: [既定のレビューの観点ごとの段階を、それぞれ 1 段下げる](../adr/20261121-0946-superseded-lower-review-viewpoint-tiers-one-more-step.md)
 
 ## 目的
 
