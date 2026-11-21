@@ -66,7 +66,15 @@ const DOC_DIFF = [
   " 末尾",
 ].join("\n");
 
+/** 前回の回の記録のブロック。undefined は、確かめられなかった所の無い記録。"none" は、記録を返さない。 */
+const recordBlockOf = (record: unknown): string =>
+  record === "none"
+    ? ""
+    : `\n\`\`\`sacty-review-record\n${record === undefined ? "{}" : String(record)}\n\`\`\``;
+
 type Options = {
+  /** 前回の回の記録のブロックの中身（JSON の文字列）。"none" なら、記録を返さない（これより前の版の回と同じ）。 */
+  firstRecord?: string;
   /** 前回の回の出力（判定。コメントがあれば含める）。 */
   first?: string;
   /** PR の差分（pr.diff）。 */
@@ -142,7 +150,9 @@ async function rereviewPrompt(options: Options = {}) {
   const { service, executor } = makeService(
     activity,
     [
-      out(options.first ?? `# 1回目\n${verdictBlock("changes_required")}`),
+      out(
+        `${options.first ?? `# 1回目\n${verdictBlock("changes_required")}`}${recordBlockOf(options.firstRecord)}`,
+      ),
       out(`# 2回目\n${verdictBlock("no_findings")}`),
     ],
     {
@@ -275,7 +285,7 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
       "指摘箇所が前回以降の差分の外でも採用する",
       "方針の観点（コードは C-17、設計書は D-1）を起動し、本文に明示する",
       "親が絞らない条件",
-      "本文の「レビューの範囲」",
+      "前回（aaaaaaa）以降の変更と前回の指摘だけを確かめた",
     ]) {
       expect(prompt, key).toContain(key);
     }
@@ -711,5 +721,69 @@ describe("再レビューの範囲と観点の絞り（PBI-432）", () => {
     // 絞らない再レビューは、一覧のまま
     const whole = await rereviewPrompt({ diff: PR_20, docBeforeImplement: true, changed: [] });
     expect(whole.prompt).toContain("主対象が design-doc なら D-1・D-2・D-5・D-10 と、X-1。");
+  });
+});
+
+describe("前回の記録による、絞らない条件（PBI-460）", () => {
+  const record = (value: unknown) => JSON.stringify(value);
+  const cases: [string, string, boolean][] = [
+    ["記録が無い（記録を返さなかった前回の回）", "none", false],
+    ["記録が null（読めなかった前回の回）", "{ 読めない記録", false],
+    ["見られなかった観点が 1 件ある", record({ notReviewed: [{ id: "C-1", reason: "x" }] }), false],
+    ["止まった検証が 1 件ある", record({ verification: [{ kind: "stopped", text: "x" }] }), false],
+    [
+      "見られなかった観点が空で、止まった検証も無い",
+      record({
+        notReviewed: [],
+        verification: [
+          { kind: "ran", text: "実行した" },
+          { kind: "skipped", text: "止まった" },
+        ],
+      }),
+      true,
+    ],
+  ];
+
+  it.each(cases)("同じタスクの再レビュー：%s", async (_name, firstRecord, narrows) => {
+    const warn = warned();
+    const { prompt } = await rereviewPrompt({
+      diff: PR_20,
+      since: diffOf(2, "src/fix.ts"),
+      firstRecord,
+    });
+    if (narrows) {
+      expect(prompt).toContain(NARROW);
+      expect(prompt).not.toContain(WHOLE.replace("PR 全体にする", "PR 全体にしない"));
+    } else {
+      expect(prompt).not.toContain(NARROW);
+      expect(prompt).toContain(WHOLE);
+      // 絞らなかった理由が、ログに 1 行出る
+      const reasons = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes("再レビューの範囲を絞りませんでした"));
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toContain("記録");
+    }
+    warn.mockRestore();
+  });
+
+  it("GitHub の再依頼で作ったタスク（前回の回の判定を持たない）は、前回の記録が確かめられなかった所の無いものでも、絞らない", async () => {
+    const warn = warned();
+    const { call, task, previous } = await narrowCall({ firstRecord: record({}) });
+    const clean = { notReviewed: [], verification: [], viewpoints: [], dismissed: [], scope: [] };
+    const rerequested = {
+      ...task,
+      previousReview: { ...previous, record: clean },
+      reviewVerdicts: undefined,
+    } as unknown as Task;
+    // 同じタスクで判定と記録がそろう回は絞れる。再依頼のタスクは、同じ記録でも絞らない
+    expect(
+      await call({
+        ...rerequested,
+        reviewVerdicts: [{ round: previous.round, verdict: "changes_required" }],
+      } as unknown as Task),
+    ).toBeDefined();
+    expect(await call(rerequested)).toBeUndefined();
+    warn.mockRestore();
   });
 });

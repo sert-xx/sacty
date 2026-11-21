@@ -3348,12 +3348,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         }
         return append(entry);
       };
-      // 投稿の直前に PR の先頭が変わっていた（PBI-111）
-      pulls.states[12] = { state: "open", headSha: "n".repeat(40) };
+      // 投稿の直前に PR の先頭が変わっていた（PBI-111。フォークからの PR は、打ち切らずに投稿する。PBI-465）
+      pulls.states[12] = { state: "open", headSha: "n".repeat(40), fork: true };
       await expect(service.runNext(id)).rejects.toThrow("disk full");
       expect(pulls.reviews).toHaveLength(2);
       // やり直しの前に、さらに push されても、投稿したときの先頭を記録する
-      pulls.states[12] = { state: "open", headSha: "m".repeat(40) };
+      pulls.states[12] = { state: "open", headSha: "m".repeat(40), fork: true };
       await service.runNext(id);
       expect(pulls.reviews).toHaveLength(2);
       expect(service.get(id)?.task.reviewPost).toMatchObject({
@@ -3451,7 +3451,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
-    it("投稿の直前に PR の先頭が変わっていたら、レビューしたコミットに投稿し、その旨を本文と作業履歴に残す（PBI-111）", async () => {
+    it("フォークからの PR は、投稿の直前に PR の先頭が変わっていたら、レビューしたコミットに投稿し、その旨を本文と作業履歴に残す（PBI-111）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       const { service } = makeService(activity, [out("# 評価")], { pulls, planner: reviewPlanner });
@@ -3466,7 +3466,11 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       // 応答に先頭のコミットが無い・空でも、確かめられないので投稿しない（PR 121 レビュー指摘）
       for (const headSha of [undefined, "", "  "]) {
         service.resume(id, {});
-        pulls.states[12] = { state: "open", ...(headSha === undefined ? {} : { headSha }) };
+        pulls.states[12] = {
+          state: "open",
+          fork: true,
+          ...(headSha === undefined ? {} : { headSha }),
+        };
         if (headSha === undefined) pulls.prInfo = { ...pulls.prInfo, headSha: "" };
         await service.runNext(id);
         pulls.prInfo = { ...pulls.prInfo, headSha: "h".repeat(40) };
@@ -3477,7 +3481,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           "PR の先頭のコミットを確かめられませんでした",
         );
       }
-      pulls.states[12] = { state: "open", headSha: "n".repeat(40) };
+      pulls.states[12] = { state: "open", headSha: "n".repeat(40), fork: true };
       service.resume(id, {});
       await service.runNext(id);
       expect(pulls.reviews).toHaveLength(1);
@@ -4886,7 +4890,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(threaded.startsWith(`<!-- sacty-reply:${id}:review_comment:1:1 -->\n`)).toBe(true);
         expect(threaded).toContain("**対応しました。**\n\n回数を定数にしました");
         // 指摘の ID（キー）は、sacty の中のものなので、人には見せない
-        expect(threaded).toContain(`Sacty のタスク ${id} の実装の工程で、AI が書きました。`);
+        expect(threaded).toContain("Sacty の実装の工程で、AI が書きました。");
         expect(threaded).not.toContain("への対応）");
         // レビューの本文の指摘：元へのリンクを付けた PR のコメント
         expect(replies(pulls)).toHaveLength(1);
@@ -6864,6 +6868,24 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(service.get(id)?.activity.filter((e) => e.type === "PullRequestMerged")).toHaveLength(
         1,
       );
+      activity.close();
+    });
+
+    it("作り直しを止めたら、実装の PR にも、マージを承認として扱ったことと、捨てた指摘の件数を、目印付きの知らせで1件だけ書く（PBI-462）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id);
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      await noticesSettled(service);
+      const notices = pulls.issueComments.filter((c) =>
+        c.body.includes(`<!-- sacty-merge-approval:${id}:7 -->`),
+      );
+      expect(notices).toHaveLength(1);
+      expect(notices[0]?.number).toBe(7);
+      expect(notices[0]?.body).toContain("承認として扱い");
+      expect(notices[0]?.body).toContain("1件");
       activity.close();
     });
 
@@ -9867,9 +9889,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(threaded.startsWith(`<!-- sacty-reply:${id}:implement-1-1:2 -->\n`)).toBe(true);
         expect(threaded).toContain("**対応しました。**\n\nnull を返すようにしました");
         expect(threaded).not.toContain("への返信です");
-        expect(threaded).toContain(
-          `Sacty のタスク ${id} の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。`,
-        );
+        expect(threaded).toContain("Sacty の実装の工程で、AI が書きました。");
         // レビューの本文・通常のコメントの指摘：元へのリンクを付けた PR のコメント
         const [onReview, onComment] = prComments(pulls).map((c) => c.body);
         expect(prComments(pulls)).toHaveLength(2);
@@ -10029,7 +10049,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           expect(body?.startsWith(`<!-- sacty-reply:${id}:implement-1-${n + 1}:2 -->\n`)).toBe(
             true,
           );
-          expect(body).toContain("AI が書きました（指摘 implement-1-");
+          expect(body).toContain("Sacty の実装の工程で、AI が書きました。");
+          expect(body).not.toContain(`implement-1-${n + 1} への対応`);
         }
         expect(posted(service, id)[0]?.results.map((r) => r.remarkId)).toEqual([
           "implement-1-1",
@@ -10577,9 +10598,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(prComments(pulls)[0]?.body).toContain(
           "**対応しました。**\n\n画面の姿の決定を変えました",
         );
-        expect(prComments(pulls)[0]?.body).toContain(
-          "の設計の工程で、AI が書きました（指摘 design-1-1 への対応）。",
-        );
+        expect(prComments(pulls)[0]?.body).toContain("Sacty の設計の工程で、AI が書きました。");
         expect(posted(service, id)[0]).toMatchObject({
           step: "implement",
           submission: 2,

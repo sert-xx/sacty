@@ -257,13 +257,21 @@ export function settleTriage(
 
 type Verdict = "changes_required" | "suggestions" | "no_findings";
 
-/** 提案だけの回が、今回（round）を含めて何回続いているか（今回の回から数える）。 */
+/**
+ * 提案だけの回が、今回（round）を含めて何回続いているか（今回の回から数える）。親に届かなかった回（undelivered。PBI-465）は、
+ * 数えず、続きの途切れにもしない（飛ばす）。
+ */
 export function countSuggestionRounds(
   round: number,
   verdictOf: (round: number) => Verdict | undefined,
+  undelivered: (round: number) => boolean = () => false,
 ): number {
   let n = 0;
-  while (n < round && verdictOf(round - n) === "suggestions") n++;
+  for (let r = round; r >= 1; r--) {
+    if (undelivered(r)) continue;
+    if (verdictOf(r) !== "suggestions") break;
+    n++;
+  }
   return n;
 }
 

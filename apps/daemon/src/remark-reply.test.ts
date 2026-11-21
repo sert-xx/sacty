@@ -22,6 +22,27 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
     secrets: [],
   };
 
+  it("末尾は工程の名前と AI が書いた旨だけで、タスクの ID・指摘の ID を出さない（先頭の目印は残る。PBI-460）", () => {
+    const body = buildRemarkReply({
+      ...base,
+      remarkId: "design-3-1",
+      stepName: "設計",
+      status: "addressed",
+    });
+    const marker = remarkReplyMarker("t1", "design-3-1", 2);
+    expect(body.split("\n").at(-1)).toBe("Sacty の設計の工程で、AI が書きました。");
+    expect(body.startsWith(marker)).toBe(true);
+    const rest = body.replace(marker, "");
+    expect(rest).not.toContain("t1");
+    expect(rest).not.toContain("design-3-1");
+    // 続きの実行の返信（continued）も、同じ末尾にする
+    expect(
+      buildRemarkReply({ ...base, remarkId: "design-3-1", stepName: "設計", continued: true })
+        .split("\n")
+        .at(-1),
+    ).toBe("Sacty の設計の工程で、AI が書きました。");
+  });
+
   it("origin の key から、種類と ID を読む。読めない形は undefined", () => {
     expect(remarkOriginRef("review_comment:501")).toEqual({ kind: "review_comment", id: 501 });
     expect(remarkOriginRef("review:601")).toEqual({ kind: "review", id: 601 });
@@ -40,7 +61,7 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
     expect(remarkOriginUrl(pr, { kind: "comment", id: 401 })).toBe(`${pr}#issuecomment-401`);
   });
 
-  it("先頭に目印を置き、対応したか・対応していないかを先頭に書く。申告が無ければ対応の文だけ。末尾に、どのタスクの AI が書いたかを書く", () => {
+  it("先頭に目印を置き、対応したか・対応していないかを先頭に書く。申告が無ければ対応の文だけ。末尾に、どの工程の AI が書いたかを書く（タスクの ID・指摘の ID は書かない）", () => {
     const addressed = buildRemarkReply({ ...base, status: "addressed" });
     expect(addressed).toBe(
       [
@@ -50,7 +71,7 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
         "null を返すようにしました",
         "",
         "---",
-        "Sacty のタスク t1 の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。",
+        "Sacty の実装の工程で、AI が書きました。",
       ].join("\n"),
     );
     expect(isSactyRemarkReply(addressed)).toBe(true);
@@ -273,7 +294,7 @@ describe("後続に回したい案の返信（PBI-370）", () => {
         "後続に回すか、この PR で直すかは、このタスクを承認する人が、マージの前に決めます。決定は、この PR にコメントで残します。",
         "",
         "---",
-        "Sacty のタスク t1 の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。",
+        "Sacty の実装の工程で、AI が書きました。",
       ].join("\n"),
     );
     // 決まったことのようには書かない

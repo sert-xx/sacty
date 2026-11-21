@@ -56,8 +56,18 @@ PR の作り方は[タスクと工程](tasks-and-steps.md#実装の-pr-の作成
 - 要求要件・設計の PR を作り直すか
   - その工程の PR が開いていて、タスクブランチの先頭が変わっていなければ、同じ PR を更新する（その工程のやり直し）。
   - 次のときは、タスクブランチの最新から新しいブランチと PR を作り、開いていた前の PR を閉じる。
-    - PR がマージ済み・閉じられた
+    - PR が承認済みのマージ（後の工程から前の工程へ差し戻したときなど）か、前の工程へ戻している間のマージ（承認にしない。[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)）
+    - PR が閉じられた
     - 前の工程の直しがマージされて、タスクブランチが進んだ
+  - 直しを始めたときの承認待ちの PR（`reworkOf`）がマージされていたら、新しいブランチ・PR を作らず、マージを承認として進める（[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)）。
+  - 新しい PR を作るときに、直しを始めたときの承認待ちの PR を閉じられなかったとき（閉じた後に読み直しても開いている）は、新しい PR を作らず、`pr.supersededNotClosed` で一時停止する。
+    止まっている間に人がその PR をマージしたら、再開を待たずに承認として進める。
+    マージされないまま再開すると、PR の状態の読み直しからやり直す（開いていれば閉じ直す）。
+    ほかの作り直し（前の工程への差し戻しの後の PR など）で前の PR を閉じられなかったときは、警告だけを残して新しい PR を作る。
+  - 新しいブランチの回：コミットを先に作り（プッシュしない）、`<タスクブランチ>-<工程>-<回>` の名前が記録済み（`stepBranches`）で、記録したコミット（`stepBranchCommits`）が今回と違うときだけ、次の回へ進む。
+    同じコミットなら、同じ名前へプッシュし直す（PR の作成の再試行・再開でブランチを増やさない）。
+    プッシュの拒否は、次の回へ進む合図にしない。
+    プッシュした新しいブランチは、PR にしなかったとき（マージを見つけた・前の PR を閉じられなかった）も残し、タスクの終わりの片付けで消す。
   - PR を作れなければ、理由を記録して止める。
 - 実装の PR
   - タスクブランチがあれば、実装をタスクブランチの最新に積み、タスクブランチからベースブランチへの PR（実装の PR）にする。
@@ -84,7 +94,7 @@ PR の作り方は[タスクと工程](tasks-and-steps.md#実装の-pr-の作成
 
 コード（画面の導線）: `apps/web/src/lib/labels.ts`（`personAction`・`personLink`・`reviewPullRequestUrl`）、`packages/core/src/projection.ts`（`openProposal`）、`apps/web/src/components/action-link.tsx`（`ActionLink`・`ExternalMark`）
 
-コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`taskBranchName`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`StepPullRequestKey`・`DEFAULT_DOCUMENTS_DIR`・`isDocumentsDir`）、`packages/core/src/projection.ts`（`stepDocumentPath`）、`apps/daemon/src/prompts.ts`（`buildStepDocument`）
+コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`taskBranchName`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`StepPullRequestKey`・`DEFAULT_DOCUMENTS_DIR`・`isDocumentsDir`）、`packages/core/src/projection.ts`（`stepDocumentPath`・`stepBranchCommits`）、`apps/daemon/src/prompts.ts`（`buildStepDocument`）
 
 ## 実装に変更が無いとき
 
@@ -167,6 +177,8 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   - 対応しないとした提案は、未対応に数えさせず、もう一度指摘させず（同じ原因の別の現れとしても出させず）、判定の根拠にさせない。提案の重みのままなら、レビューが理由が成り立たないと考えても、未対応として残させない（対応するかを決めるのは PR を作った側で、人は PR のコメントで覆せる）。
   - 確かめ直して要修正の重み（不具合・セキュリティ・データの破損・要件の不適合・互換性の破壊）に当たると分かったとき、またはその後の変更で影響が大きくなったときだけ、根拠と一緒に新しい要修正にさせる（そのときは、今までどおり直しに入る）。
   - 既定のスキル `review-dispatch` の流れ `pr-review` の再レビューの決まりにも、同じ扱いを書いている（[コンテキスト](context.md#既定のレビュー用スキル)）。
+- 子タスクがレビューを投稿する前に PR の先頭が変わったら（親の直し・人が足したコミット）、子タスクは古い先頭宛ての本文を投稿せずに、その回を打ち切り、先頭が落ち着いてから新しい先頭で同じ回の番号のまま始め直す（`ReviewRunStopped` の `reason: head_changed`。PBI-465。[投稿の前の先頭の変化での打ち切り](tasks-and-steps.md#投稿の前の先頭の変化での打ち切り)）。
+- 投稿した回が親に届かなかった（親が古い先頭宛てとして捨てた・まだ取り込まずに先頭が変わった）ときは、次の回の子タスクが、その回の指摘を今回の先頭で確かめ直す（再レビューの範囲の絞りにかかわらず範囲に入れ、当てはまるものを今回の指摘として出す）。その回は、同じ原因の要修正の回数にも、提案だけの回の連続にも数えない（PBI-465。[投稿の前の先頭の変化での打ち切り](tasks-and-steps.md#投稿の前の先頭の変化での打ち切り)）。
 - 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず、判定そのものでは再レビューも起きないので、PR は人の承認（マージ）を待つ。指摘なしの後でも、PR の先頭が変われば（人がコミットを足したときなど）、上のとおり再レビューを始める。
   指摘なしを待つ実装の PR は、子タスクが今の先頭を指摘なしにするまで、確認のたびにドラフトに戻す（`redraftAwaiting`。提出のときに戻せなかった PR も、レビューの途中も）。
   実装の PR（`awaitingReview`）は、PR の今のコミットを指摘なしにしたら、PR の確認で sacty がドラフトを外す（`PullRequestMarkedReady`。判定し直した回に提案が残り、それもすべて対応しないとしたときは、評価だけを実行して、提案ありのまま外す（PBI-440）。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
@@ -178,7 +190,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   差分が範囲の中の最小限の変更か（観点 `SEC-MIN`）を子タスクに確かめさせ、範囲の外の変更・要らない変更を要修正の指摘にさせる。sacty が違反を見つけていれば、それも要修正の指摘にさせる。
   繰り返しの回数に上限は無く、親と子タスクそれぞれの予算の上限で止まる。
 - 子タスクは、指摘なしでない判定を投稿すると、完了にならずに PR の変化を見守る（[投稿の後の PR の見守り](tasks-and-steps.md#投稿の後の-pr-の見守り)）。親の流れは変わらない：親は、子タスクの完了を待たず、投稿されたレビューと判定で進む（指摘の取り込み・再レビュー・ドラフトを外す判断は、子タスクが投稿済みか（`canRereview`・工程が終わっているか）と、今の回の判定で決める）。見守りは、子タスクを PR の先頭の変化・返信では再レビューしない（上の、親の流れによる再レビューだけ）。
-- 子タスクがレビューを投稿する前（実行待ち・実行中。再レビューの実行中も）に PR がマージ・クローズされたら、子タスクを中止する（PR のレビューだけのタスクと同じ。`checkReviewPullRequests`）。見守り中なら、中止せずに、見守りを終えて完了にする（`ReviewWatchEnded`）。見守り中の子タスクが一時停止していても同じで、sacty が再開してから見守りを終える。指摘なしで完了した後なら、完了のまま、何も記録しない。投稿する前の子タスクは、一時停止中も、PR のマージ・クローズで中止する。
+- 子タスクがレビューを投稿する前（実行待ち・実行中。再レビューの実行中も）に PR がマージ・クローズされたら、子タスクを中止する（PR のレビューだけのタスクと同じ。`checkReviewPullRequests`）。実行中・対象の確認中・投稿待ちなら、止めた実行を失敗に見せずに、`ReviewRunStopped`（`reason: merged`・`closed`）を記録してから `TaskCancelled` を残す（PBI-465。始め直しの待ちの間は `TaskCancelled` だけ。[投稿の前の先頭の変化での打ち切り](tasks-and-steps.md#投稿の前の先頭の変化での打ち切り)）。見守り中なら、中止せずに、見守りを終えて完了にする（`ReviewWatchEnded`）。見守り中の子タスクが一時停止していても同じで、sacty が再開してから見守りを終える。指摘なしで完了した後なら、完了のまま、何も記録しない。投稿する前の子タスクは、一時停止中も、PR のマージ・クローズで中止する。
 - 親が完了したら、PR の確認（`reconcileReviewTasks`）で、PR の状態を読まずに、終わっていない子タスクを片付ける。見守り中の子タスク（一時停止中を含む）は、見守りを終えて完了にし（`ReviewWatchEnded` の `reason: parent_completed`。一時停止中なら、先に sacty が再開する）、投稿する前の子タスク（一時停止中を含む）は中止する（`TaskCancelled` の `reason: parent_completed`）。
 - 親が中止されたら、PR の確認で、終わっていない子タスク（見守り中の子タスクを含む）も中止する（`TaskCancelled` の `reason: parent_cancelled`。中止の片付けで PR を閉じなかったときも、レビュー・見守りを続けない）。
   PR の確認は、子タスクの中止（片付けと記録）を待ってから終わる。
@@ -207,7 +219,8 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - 指摘の取り込みの間（戻し先の判断の最中など）にマージされた・マージされずに閉じられたときは、差し戻さない。同じ確認の中で状態を読み直し、上のマージ・閉じられた場合として記録する（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
 - 実装の PR のマージでは、マージの後の監視の工程を飛ばしていなければ、同じ追記でマージの後の監視を始める（[マージの後の監視](deployment-watch.md)）。
 - 確認の初めに、次を順に行う。
-  1. 承認待ちではなく、実装を作り直している間のタスクの実装の PR も確かめる（`checkReworkMerges`。[実装の作り直しの間のマージ](#実装の作り直しの間のマージ)）。
+  1. 承認待ちではなく、実装を作り直している間のタスクの実装の PR と、要求要件・設計を直している間のタスクのその工程の PR も確かめる（`checkReworkMerges`。[実装の作り直しの間のマージ](#実装の作り直しの間のマージ)・[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)）。
+     続けて、要求要件へ戻している間の元の設計の PR がマージされていないかを確かめる（`checkSentBackMerges`）。
   2. 依存先の PR に重ねた子タスクの承認待ちの PR の向き先を付け替える（`retargetPullRequest`。[依存先の PR に重ねる子タスク](split-and-integrate.md#依存先の-pr-に重ねる子タスク)）。
   3. 一時停止中のタスクの実装の PR に届いた指摘を、未反映として残す（`checkHeldFeedback`。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。
 - 確認の終わりに、次を順に行う。
@@ -226,7 +239,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 
 - 対象（`reworkingPullRequest`）：実行対象の工程が実装で、状態が実行待ち（`queued`）・実行中（`running`）・待機（`idle`。PR の作成の待ちなど）・一時停止（`paused`）のタスクのうち、`Task.pullRequest` の PR が開いている（`pullRequestState` が `open`）か、承認待ちで閉じられたまま差し戻したもの（`closed`。GitHub で開き直してマージされることがある。マージかどうかは GitHub の状態で決める）。
   - 引き継いだ既存の PR（`Task.continuedPullRequest`）は、初めて提出するまで `Task.pullRequest` が無い。その間も、引き継いだ PR を見守る。投影は、このとき引き継いだ PR を実装の PR として記録してから、マージを記録する（コミットは、引き継いだ時点の PR の先頭）。
-  - 要求要件・設計をやり直している間（実行対象の工程が実装でない）は見守らない。実装に進んだ時点で、PR がマージ済みなら同じく止める。
+  - 要求要件・設計をやり直している間（実行対象の工程が実装でない）は、実装の PR を見守らない。実装に進んだ時点で、PR がマージ済みなら同じく止める。その間の要求要件・設計の PR のマージは、[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)が扱う。
   - 承認待ち・エスカレーション中のタスクは、上の確認が見守る。
 - 確認：PR の状態を読み（プロジェクトの gh のアカウント。読めなければ次の確認でやり直す）、マージされていたら次を行う。開いたまま・閉じられたときは何もしない。
   1. 実行中の処理があれば、コンテナを止めて終わりを待つ（一時停止・中止と同じ。止めた実行は、人の一時停止としては記録しない）。止めたコンテナが無くなったと確かめられなければ、一時停止にして進めない（次の確認で確かめ直す）。
@@ -242,8 +255,45 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - PR の更新の直前（`publish`。引き継いだ既存の PR の更新も含む）にも、前の PR がマージされていないかを確かめる。マージされていれば、プッシュも PR の作成もせず、同じ記録で承認として進める（確認の前に PR の更新が始まる場合）。
   プッシュの後の確認（新しい PR を作るかの確認、引き継いだ PR の確認）でマージされていたときも、新しい PR は作らず、一時停止にもせず、同じ記録で承認として進める（プッシュの間にマージされた場合）。
 - 続きの確認では、承認済みのタスクなので、重ねて記録しない。
+- PR への知らせ：記録の後に、マージを承認として扱ったことを PR に書く（[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)の知らせと同じ）。人の判断を待って止めていた PR のマージ（`decision: true`）は、作り直しを始めていないので書かない。
 
-コード: `apps/daemon/src/service.ts`（`checkReworkMerges`・`stopReworkForMerge`・`endReworkByMerge`・`mergeApprovalItems`・`publish`・`pauseIfRequested`）、`packages/core/src/projection.ts`（`reworkingPullRequest`・`unreflectedImplementRemarks`・`ReworkStoppedByMerge`）
+コード: `apps/daemon/src/service.ts`（`checkReworkMerges`・`stopReworkForMerge`・`endReworkByMerge`・`mergeApprovalItems`・`announceMergeApproval`・`publish`・`pauseIfRequested`）、`packages/core/src/projection.ts`（`reworkingPullRequest`・`unreflectedImplementRemarks`・`ReworkStoppedByMerge`）
+
+### 工程の PR の直しの間のマージ
+
+関係する ADR: [要求要件・設計の自動の直しの間の PR のマージを承認にし、直しを捨てる](../adr/20261121-1619-step-pull-request-merge-during-rework.md)
+
+要求要件・設計の自動の直し（承認待ちからの差し戻し・PR の指摘の取り込み・提案の取り込みなど）の間に、人がその工程の PR をマージしたら、マージを承認として扱う。
+直しの結果は使わず、新しいブランチ・PR は作らない。
+
+- 対象（`reworkingStepPullRequest`）：実行対象の工程が要求要件・設計で、状態が実行待ち（`queued`）・実行中（`running`）・待機（`idle`）・一時停止（`paused`）のタスクの、直しを始めたときの承認待ちの PR（`Task.reworkOf`）。その工程の最新の PR で、開いている（`open`）もの。
+  - `reworkOf` は、要求要件・設計の PR の承認待ちから同じ工程へ差し戻したときに覚え、その工程の次の PR の記録（`StepPullRequestPublished`）・承認で消す。
+  - 直しの間の一時停止（`pr.supersededNotClosed`・`pr.mergedDocumentUnreadable` の一時停止を含む）は対象にする。承認待ちで人が止めた一時停止（再開の先が承認待ち。[承認待ちでの一時停止](#承認待ちでの一時停止)）と、人の判断待ちの一時停止（`needs_decision`）は対象にしない。
+  - 後の工程から前の工程へ戻したときの、承認済み（マージを記録済み）の前の工程の PR は対象にしない。直しの PR を新しく作る（[PR での承認](#pr-での承認)）。
+  - 設計の PR の承認待ちから要求要件へ戻している間の、元の設計の PR（`Task.sentBackFrom`）は対象にしない（下の「承認にしないマージ」）。
+- 見守る所
+  - PR の確認（`checkPullRequests`。60 秒ごと）の初め（`checkReworkMerges`）。PR の状態を読み（読めなければ次の確認でやり直す）、マージされていたら、[実装の作り直しの間のマージ](#実装の作り直しの間のマージ)と同じく、実行中ならコンテナを止めて確かめてから記録する。
+  - PR を更新・作成している最中（状態が待機で、その工程の PR の作成の待ち）のタスクは、確認が止めない。`publishStepPullRequest` が、PR を更新・作成する直前に、前の PR の状態を読み直して記録する。新しい PR を作る経路では、前の PR を閉じた後に読み直す。
+  - 直しのコミットを PR にプッシュして PR の更新を記録した後のマージは、直しの提出の承認として、PR の確認が承認する（[PR の確認](#pr-の確認)。作り直しの記録も知らせも書かない）。
+  - マージされずに閉じられた PR は対象にしない。直しの後に新しい PR を作り、前の PR は置き換え済み（`superseded`）にする。
+- 記録：1 回の追記で、`ReworkStoppedByMerge`（actor `sacty`。`step` にその工程）・`PullRequestMerged`・`StepApproved`（actor `person`）を記録する。
+  - `ReworkStoppedByMerge` は実装の作り直しの記録と同じ名前で、`step` があれば工程の直しの記録として投影する。`discardedRemarks` は、最後の差し戻しの指摘のうち提出済みの PR に渡していないもの（`unreflectedStepRemarks`）。`discardedFeedback` は書かない。
+  - 承認する成果とテスト観点は、承認待ちだった提出の版（`StepSubmitted` の時点の写し。`Task.stepSubmitted`）。projection が、直しの成果を捨ててこの版に戻す。
+  - 人が PR の中で直してからマージした（PR の先頭が提出のコミットと違う）ときは、[PR の確認](#pr-の確認)と同じく、マージしたコミットからファイルを読み、人の版を承認済みにする。sacty の版との比べは、承認待ちだった提出の版で行う。取得できなければ何も記録せず、PR の確認では次の確認でやり直し、`publishStepPullRequest` では `pr.mergedDocumentUnreadable` で一時停止して、止まっている間の確認がやり直す。
+- PR への知らせ（`announceMergeApproval`）：記録の後に、目印 `<!-- sacty-merge-approval:<タスク ID>:<PR 番号> -->` のコメントを 1 つの PR に 1 件だけ書く。マージを承認として扱ったこと、自動の直しを取り込まなかったこと、捨てた提案の件数（`discardedRemarks` の件数）を書く。
+  - GitHub のアカウントを選んでいないプロジェクトと、セキュリティのタスクには書かない。
+  - 送るのを待たない。書けなくても、タスクは変えない（警告だけを残す）。
+  - 書き済みかの確認は、sacty のアカウントが投稿した、目印で始まるコメントだけを見る。PR の指摘の取り込みからは、sacty のアカウントの投稿だけを外す。投稿の後の PR の見守りの返信の絞り込みでは、目印だけで外す。
+- 承認にしないマージ（`checkSentBackMerges`）：設計の PR の承認待ちから要求要件へ戻している間に、人が元の設計の PR をマージしても、承認にしない。作業履歴にも記録しない。
+  - PR に、目印 `<!-- sacty-merge-not-approved:<タスク ID>:<PR 番号> -->` のコメントを 1 回だけ書く。要求要件の直しの最中だったため設計の承認として扱っていないこと、要求要件の承認の後に設計の PR を作り直すことを書く。書く条件・書き方は、承認にした知らせと同じ。
+  - 見守るのは PR の確認の初めと、`publishStepPullRequest` が設計の PR を作り直すとき。
+  - 要求要件の承認の後は、設計の PR を新しく作る（[PR での承認](#pr-での承認)）。
+- 作業履歴の表示：「PR #N がマージされたため、設計の直しを止めた」（要求要件は「要求要件の直し」）。
+- 起動時の回復（`recoverInterrupted`）は、工程の直しの実行も、`unstoppedRuns` 付きの一時停止にして、停止を確かめるまで承認へ進めない。
+- この版へ入れ替えた時点で、マージ済みの PR の上で直しが走っていたタスクも、入れ替えの後の最初の確認が同じ扱いにする（投影は作業履歴から作り直すので、`reworkOf` などは作業履歴から決まる）。
+- 互換性：`step` 付きの `ReworkStoppedByMerge` を記録した後は、前の版のデーモンは作業履歴を投影できず（実装の記録として読み、整合性のエラーになる）、起動できない。作業履歴は追記だけで、手では直せない。
+
+コード: `apps/daemon/src/service.ts`（`checkReworkMerges`・`checkSentBackMerges`・`reworkTarget`・`stepPublishing`・`stopReworkForMerge`・`endReworkByMerge`・`endStepReworkInPublish`・`submittedView`・`announceMergeApproval`・`announceMergeNotApproved`・`publishStepPullRequest`・`recoverInterrupted`）、`apps/daemon/src/merge-approval-notice.ts`、`apps/daemon/src/github.ts`（`isMergeApprovalNotice`・`findIssueComment`）、`packages/core/src/projection.ts`（`reworkingStepPullRequest`・`unreflectedStepRemarks`・`reworkOf`・`sentBackFrom`・`stepSubmitted`・`ReworkStoppedByMerge`）、`packages/core/src/events.ts`（`ReworkStoppedByMerge`）
 
 ### 一時停止の間に届いた指摘
 
@@ -284,7 +334,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - 一時停止：エージェントの実行が無いので、その場で `TaskPaused`（actor `person`、理由 `manual`）を記録する。承認ゲート（`gate`）と PR の記録はそのまま残し、再開の先として `resumeTo: awaiting_approval` を持つ。
 - 止めている間は、承認も差し戻しもできない（状態が `paused`）。PR の取り込みと見守りは、PR の種類で次のとおり。
   - 実装の PR：実装を作り直している間の PR と同じ扱い（`reworkingPullRequest`）。マージされたら、`ReworkStoppedByMerge`（`was: paused`）に続けて `PullRequestMerged`・`StepApproved` を記録して承認として進める（[実装の作り直しの間のマージ](#実装の作り直しの間のマージ)）。再開は要らない。届いた指摘は未反映として残す（[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。戻し先の判断はしない。
-  - 要求要件・設計の PR：止めている間は見守らない。マージも指摘も、再開したあとの確認で扱う。
+  - 要求要件・設計の PR：承認待ちで止めている間（再開の先が承認待ち）は見守らない。マージも指摘も、再開したあとの確認で扱う。直しの間の一時停止は、これとは別で、マージを見守る（[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)）。
 - 再開：`TaskResumed` が承認待ちに戻す（承認ゲートは残っているので、承認の画面がそのまま使える）。エージェントは動かさない。
   止めていた間に起きたことは、再開のあとの PR の確認（60秒ごと）が取り込む。
   - マージされていれば、承認として進める（[PR の確認](#pr-の確認)）。
@@ -824,7 +874,8 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
   - 人の指摘は、head によらず取り込む。
   - 捨てた指摘は、人に届ける（PBI-291）。`PullRequestReviewDiscarded` の `items[].summary` に、指摘の要点（取り込む指摘と同じ文の先頭400文字。投稿の目印と見出しを除き、空白をそろえる。以前の記録には無い）を残し、`Task.discardedReviews` に積む。見守っている PR（承認ゲートの PR。実装の作り直しの間は実装の PR）へのものを `discardedAiReviews` が古い順に返し、PR がマージされたら返さない（クローズ後・差し戻した後は、マージまで残る）。
   - 承認の画面とタスクの詳細の上（`DiscardedReviewNotice`）に、「取り込んでいない AI のレビューの指摘」として、捨てた理由（古い head と、最後に捨てた時点の PR の head。そのあと PR が更新されても値は変わらない）・指摘ごとの対象のコミット・要点・GitHub へのリンクを出す。人が承認・マージする前に気づけるようにするため。
-  - 捨てた指摘を、自動で作り直しに取り込むことも、新しい head に AI のレビューをかけ直すことも、PR に sacty が投稿することもしない。新しい head にも当てはまると人が判断したら、差し戻しの指摘（またはPR への指摘）として伝える。人の指摘として扱う（`source` なし。差し戻しの回数に数える）。
+  - 捨てた指摘を、自動で作り直しに取り込むことも、捨てたことだけのために AI のレビューをかけ直すことも、PR に sacty が投稿することもしない。新しい head にも当てはまると人が判断したら、差し戻しの指摘（またはPR への指摘）として伝える。人の指摘として扱う（`source` なし。差し戻しの回数に数える）。
+  - PR のレビューの子タスクの投稿を捨てたときは、その子タスクの次の回が、捨てた回の指摘を新しい head で確かめ直し、当てはまるものを今回の指摘として出す（その回は、同じ原因の回数に数えない。PBI-465。[投稿の前の先頭の変化での打ち切り](tasks-and-steps.md#投稿の前の先頭の変化での打ち切り)）。
 - 今の head に AI のレビューが付いているか（PBI-302 D1。実験 S14・S18：作り直した head に AI のレビューが届く前に、人がマージに進んだ）：承認待ちの PR の今の head について、付いていない（`none`）・レビュー中（`reviewing`）・付いた（`attached`）を示す。今の head は、提出したコミット（`gatePullRequest` の `commit`）ではなく、PR の確認（`checkPullRequests`）で PR が開いている間に読んだ最新の head（`latestHeads`。人が足したコミットで変わる。同じ PR・同じ提出のときだけ使う。デーモンのメモリーに持つ）。まだ読めていない（デーモンの起動の直後・作り直した直後・GitHub が head を返さない）ときは、分からない（`unknown`）として、付いたとは出さない。承認やマージは止めない。
   - 判定（`aiReviewFor`・`aiReviewOfHead`）：同じ PR を指す（`referencedPullRequest`）、ほかの sacty のレビューのタスク（レビューの工程を持つ。中止したものを除く）を見る。今の head をレビューして投稿していれば（`reviewPost` と `reviewTarget.headCommit`。再レビューの前の回は `previousReview.headCommit`。コミットは短い表記との先頭の一致で比べる）付いた。投稿しておらず、動いていて（一時停止・エスカレーションを除く）、対象の head が今の head か、まだ決まっていなければレビュー中。ほかは付いていない。別の head へのレビューは、今の head のものに数えない。
   - 作業履歴からは復元しない（ほかのタスクを見て計算する）。画面に返すとき（`TaskService.view`。`GET /api/tasks/:id`）と、一覧の応答（`TaskService.listView`。`GET /api/tasks`）だけ `Task.aiReview`（head・状況・付いたときのレビューの URL）を足す。承認待ちでない・PR が開いていないタスクには足さない。一覧は、対象のタスクの分だけを `aiReviewsOfHeads` でまとめて計算し（全タスクを1回なめて、同じ PR の番号のレビューだけを突き合わせる）、詳細と同じ結果にする。
@@ -947,7 +998,7 @@ PR のレビュー・コメントから取り込んだ指摘を受けて工程�
     - 通常のコメントへの返信には、書き出しの次の行に、元のコメントの冒頭を1行で引用する（`remarkQuote`。`> 「…」`）。指摘の文（`Remark.text`）を元にし、秘密情報を伏せ、`withoutInternalPaths` を通し、HTML のコメント（目印）を除き、空白を1つにまとめてから、100 文字（`REPLY_QUOTE_MAX`）で切る（サロゲートペアの間では切らない）。`@` の後に幅の無い空白を挟む（切る処理と `@` の処理は、`human-ask-notice.ts` の `cutAtMax`・`withoutMentions` と共有）。そのあとは文字を置き換えず、インラインコードに入れる（`#123` の参照・画像・リンク・文字参照・強調が効かない。本文にバッククォートがあれば、より長い囲みで包む）。人が「この PR で直す」と決めた案の指摘（`fixOf`）の出どころは、元の指摘の `source` を引き継ぐ（`awaitingRemarkReplies`）。出どころと引用の組み立ては `remarkReplyOrigin`。レビューの本文・行へのコメントには引用を付けない。
     - 行へのコメントのスレッドへの返信には、書き出しを付けない。
   - 書き出しと末尾の署名の製品名は「Sacty」にする（PBI-450）。読む側（`readRemarkReply`）は、目印の次の行のうち「への返信です。」で終わる行と引用の行を飛ばすので、今までの「sacty の AI が書いた…への返信です。」の返信も、同じ状態として読む。見分けは目印で行うので、文の変更で壊れない。
-  - 本文の頭に目印（`<!-- sacty-reply:<タスク ID>:<指摘の ID>:<提出回> -->`）を置く。続けて、申告が `addressed` なら「対応しました。」、`declined` なら「対応していません。理由：」を書き、対応の文を載せる。申告が無ければ、対応の文だけを載せる。末尾に、sacty のどのタスクのどの工程の AI が、どの指摘への対応として書いたかを添える。
+  - 本文の頭に目印（`<!-- sacty-reply:<タスク ID>:<指摘の ID>:<提出回> -->`）を置く。続けて、申告が `addressed` なら「対応しました。」、`declined` なら「対応していません。理由：」を書き、対応の文を載せる。申告が無ければ、対応の文だけを載せる。末尾に、区切りの `---` と「Sacty の<工程名>の工程で、AI が書きました。」を添える（タスクの ID と指摘の ID は、末尾に書かず、目印にだけ持つ。`buildRemarkReply`）。
     `deferred` のときは、頭に「この PR では直さず、後続に回したいという案です（人に確認中で、まだ決まっていません）。理由：」を書き、対応の文の後に、後続に回すかこの PR で直すかは、タスクを承認する人がマージの前に決めることを添える（`DEFERRAL_PROPOSAL_HEAD`・`DEFERRAL_PROPOSAL_NOTE`）。
   - 対応の文は外から来た文なので、秘密情報を伏せてから 4,000 文字（`REPLY_TEXT_MAX`）で切り、`@名前` で他人に通知が飛ばないよう `@` の後ろに幅の無い空白を挟む。作業領域の内部のパスは、人が辿れる呼び方に置き換える（`withoutInternalPaths`）。
 - 二重に投稿しない：投稿の前に、行へのコメントと PR のコメントを1回ずつ、最後のページまで読み、返信に使ったと記録したアカウント（今のアカウントを含む）が投稿した、本文がこのタスクの目印で始まるものを、投稿済みの返信として使う（`listReviewComments`・`listIssueComments`。指摘ごとの照合は、提出回を問わない）。ほかの人が目印をまねた・引用した投稿は、投稿済みと見なさない。投稿の後・記録の前にデーモンが止まっても、二度投稿しない。同じタスクの返信は順に処理する（`serialized`）。

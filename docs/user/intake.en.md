@@ -1,4 +1,4 @@
-<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/review-stop-notice.ts, apps/daemon/src/review-dispatch-count.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts, apps/daemon/src/risk-assessment.ts -->
+<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/review-stop-notice.ts, apps/daemon/src/review-dispatch-count.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts, apps/daemon/src/risk-assessment.ts, apps/daemon/src/review-record.ts, apps/web/src/components/review-records.tsx -->
 
 [日本語](intake.md) | **English**
 
@@ -116,7 +116,7 @@ It decides from the PR title, description, and diff.
 - The agent reviews documents it judges to be targets too.
   It cannot attach those findings to PR lines, so it writes them in the review body with the document and section.
 - To let the agent read the documents, provide something that can read where they live, such as an MCP server, in the agent's environment.
-- Documents it could not read are listed in the review's scope in the review body.
+- For a document it could not read, the agent writes in the review body that it could not read it and what the reader should check.
 
 The agent reads the reviews and comments already on the PR and does not repeat the same problem.
 
@@ -133,20 +133,29 @@ Findings that overlap one already addressed or one already rejected are not post
   - A finding you disabled on the screen
 - A `[要修正]` that overlaps a suggestion the AI decided not to handle is not dropped. It appears as a new finding only when, checked again, it has the weight of a must.
 - When the problem changed or grew after the rejection, it appears as a new finding.
-- Only when something was dropped, the overview gets one line with the number (never the content; when `[要修正]` findings were dropped, that number is given too).
+- The number dropped is not written to the PR; you can read it in the "Review record" section of the task details (when `[要修正]` findings were dropped, that number too).
 
 What counts as your "won't do" is a reply from the PR's author or from an organization member or collaborator (`OWNER`, `MEMBER`, `COLLABORATOR`; write access is not checked). A reply from any other account does not cause a `[要修正]` to be dropped.
 
 Requests outside the PR's purpose (the PR description, or the request, acceptance criteria or design it points to), such as adding a feature the change does not need or reworking an unrelated place, are not posted.
-Only when some were dropped, the summary says the count in one line (not the content).
+The number dropped is not written to the PR; you can read it in the "Review record" section of the task details.
 `[要修正]` findings are never dropped on the ground of being outside the purpose, and neither are findings when the purpose cannot be read or it is unclear whether they are inside.
 In a re-review, when a previous finding is withdrawn as outside the purpose, its line in the previous-findings list says it was withdrawn and why.
 
 If the PR changes before the review finishes, sacty behaves as follows.
 
-- If the PR is pushed to while it is being reviewed, sacty posts the review against the reviewed commit and says in the review body which commit was reviewed.
+- If the PR is pushed to before the review is posted (the first review or a re-review), sacty stops that review without posting a review of the old commit.
+  Once the pushes stop and the PR's head commit has not changed for 2 minutes, sacty reviews the new commit.
+  While waiting, the task stays waiting to run, and the Activity shows that the review was stopped and the new commit.
+  The cost of the stopped review counts toward the task's cost.
+- A PR from a fork is not stopped. sacty posts the review against the reviewed commit and says in the review body which commit was reviewed ([Do not import PRs you do not trust](#do-not-import-prs-you-do-not-trust)).
 - When the PR is merged or closed before the review is posted (also during a re-review run), the review task is cancelled.
   After the review is posted, the task is done instead of cancelled ([After the review is posted](#after-the-review-is-posted)).
+
+When a review is stopped, its record (`ReviewRunStopped`) stays in the Activity.
+Once even one such record exists, an earlier version of the sacty daemon cannot read the Activity and cannot start.
+You can go back to an earlier version only until the first review is stopped.
+There is no procedure for going back to an earlier version after the record exists, so keep running the current version.
 
 ### The posted review
 
@@ -168,7 +177,7 @@ Who the @ mention goes to is decided as follows.
     The author, who usually follows the PR, may still get GitHub's usual review notification.
 
 When the AI assigned to a viewpoint fails even after being started again, the parent AI reviews that viewpoint instead (the body does not say so). If it can, the viewpoint counts as checked and a verdict is given.
-When some viewpoints still could not be checked (for example, checking documents against the implementation could not be finished), the review gives no verdict. The verdict line is "付いていません（レビューが判定を付けませんでした。…）" (the review gave no verdict), and the body starts with the viewpoints that could not be checked.
+When some parts still could not be checked (for example, checking documents against the implementation could not be finished), the review gives no verdict. The verdict line is "付いていません（レビューが判定を付けませんでした。…）" (the review gave no verdict), and the body starts with what was not checked and what the reader should check (for example "入力の検査の抜けは確かめていません。src/api の変更を、人が確かめてください").
 When the answer shows a verdict that sacty could not read, the verdict line is "読み取れませんでした" (could not be read).
 In both cases, the round is not treated as having no findings. Read the body to check.
 However, if what was checked has a `[要修正]` finding (including an earlier one, or another reviewer's, confirmed as unaddressed), the verdict is "修正が必要" (changes required).
@@ -176,14 +185,23 @@ However, if what was checked has a `[要修正]` finding (including an earlier o
 For a PR that changes part of a long document, the review checks only the changed parts and the parts whose correctness those changes can affect against the implementation.
 It does not check the whole of the unchanged text.
 
-After the summary, the review body says in one line how the viewpoints were checked.
-It gives the number of viewpoints when they were split among per-viewpoint reviewers, or says so when the reviewers could not be started and the viewpoints were checked one at a time.
+The review posted to the PR carries only what a reader of the PR needs to decide whether to fix something and what the problem is, because a reader of the PR may not use Sacty.
 
-At the end of the review, sacty writes in one line the kind of agent that reviewed (Claude Code or Codex), its model, and the number of per-viewpoint reviewers it started.
-The agent names you gave in `config.yaml` are not written to the PR.
-When the agent set for the review step was unavailable and its fallback agent ran the review, the line says so too ([Switching agents on failure](config.en.md#switching-agents-on-failure)).
-sacty counts the reviewers from the run's records. When it cannot count them, the line says that the number could not be checked.
-The review step of the task details shows the same information, together with the agent's name (the name you gave in `config.yaml`).
+- The body starts with the summary, followed by the findings and the verification results needed to decide on a fix (what failed and what could not be checked).
+- For what could not be checked (a document that could not be fetched, an omitted part of the diff, screens not captured, verification that was not run or stopped, repository instructions not used as a baseline, and so on), the body says what is unchecked and what the reader should do (for example "コードのテストは実行していません").
+- The body ends with only a separator line and "AI がレビューしました（人間は確認していません）。" (AI reviewed this; no person has checked it).
+
+The following is not written to the PR.
+You can read it per round in the "Review record" section of the review step in the task details, and with `get_task` from your local AI ([Operating from your local AI](mcp.en.md)).
+
+- How the viewpoints were checked (split among per-viewpoint reviewers, or one at a time) and how each viewpoint was handled (started, restarted, failed, reviewed by the parent instead, not started)
+- The viewpoints that could not be reviewed and why, the findings not adopted and why, and the counts of dropped findings
+- What was or was not narrowed and why, and the verification progress (ran, reused, stopped, not run)
+- The agent that reviewed (the name you gave in `config.yaml`), its model, the number of per-viewpoint reviewers it started, and that a fallback agent ran ([Switching agents on failure](config.en.md#switching-agents-on-failure))
+
+sacty counts the reviewers from the run's records. When it cannot count them, the section says that the number could not be checked.
+The sentences of the record are written by the reviewing AI, so the screen shows them as plain text.
+A round without a record (a round that returned none, or a round from an earlier version) has no section. A round whose record could not be read says so.
 
 For a review imported from a GitHub PR (a review request or a label), a "リスク評価" (risk assessment) section for the PR is added right after the verdict, only in a round whose verdict is no findings. It is not added in a round with suggestions, required fixes, or no verdict.
 It holds the level (low, medium, or high), the suggested review depth, the grounds, and the places to look at (the levels mean the same as in [PR risk assessment](tasks.en.md#pr-risk-assessment)).
@@ -260,18 +278,18 @@ When a previous `[要修正]` is not fixed but turns out, on checking again, to 
 A re-review narrows what it looks at to the check of the previous findings and the changes from the head commit reviewed last time to the current head commit (the changes since the previous review).
 Only a review that has a record of this sacty's own previous post is narrowed. A first review looks at the whole PR even when the PR already has reviews by other people or by other sacty instances.
 The viewpoints it starts are those concerning the previous findings, the mismatch between the fix and the rest of the PR, those that match the changes since the previous review, and the safety viewpoint decided by the kind of those changes (C-3 for code, D-5 for a design document, U-5 for a user-facing document; for documents, the accuracy viewpoint too).
-The "scope of the review" line of the review body says that the review was narrowed, the previous and current head commits, and the viewpoints that were not started.
+The review body says only that it was narrowed, as in "前回（abc1234）以降の変更と前回の指摘だけを確かめた" (checked only the changes since the previous review (abc1234) and the previous findings). Why it was narrowed and the viewpoints not started can be read in the "Review record" section of the task details.
 Even a narrowed re-review runs the verification again on the new head commit. A `[要修正]` that it finds is reported even when it is outside the changes since the previous review.
 A round where the author declined every finding, or replied without changing the code, has no changes since the previous review, so it only checks the previous findings.
 
 In the following cases the re-review is not narrowed and reviews the whole PR with the same viewpoints as a first review:
-the changes since the previous review cannot be confirmed (the previous head cannot be fetched, or the history was rewritten); the PR's target branch or the start of its diff (the target branch and the point where the PR branched from it) changed since last time; the previous round has no verdict (this includes a task created by a GitHub re-request); the previous round was counted as having started 0 per-viewpoint reviewers (a round whose reviewers could not be counted still narrows); a person pressed "review again" without adding a commit (a manual re-review of the same head looks at the whole PR); the lines changed since the previous review exceed half of the lines of the whole PR diff; many of the files changed since the previous review were not in the PR at the time of the previous review; the changes since the previous review cannot be handed over; or the task that made the PR submitted after going back to an earlier step and redoing it.
-The reviewing AI may also decline to narrow when the previous body says some viewpoints were not covered, when the changes read as a rewrite, or when it is unsure. It then says so in one line of the "scope of the review".
+the changes since the previous review cannot be confirmed (the previous head cannot be fetched, or the history was rewritten); the PR's target branch or the start of its diff (the target branch and the point where the PR branched from it) changed since last time; the previous round has no verdict (this includes a task created by a GitHub re-request); the previous round has no review record or its record could not be read; the previous round's record has viewpoints that could not be reviewed or verification that stopped; the previous round was counted as having started 0 per-viewpoint reviewers (a round whose reviewers could not be counted still narrows); a person pressed "review again" without adding a commit (a manual re-review of the same head looks at the whole PR); the lines changed since the previous review exceed half of the lines of the whole PR diff; many of the files changed since the previous review were not in the PR at the time of the previous review; the changes since the previous review cannot be handed over; or the task that made the PR submitted after going back to an earlier step and redoing it.
+The reviewing AI may also decline to narrow when the previous record (or the previous body, when no record is passed) has viewpoints that could not be reviewed or verification that stopped, when the changes read as a rewrite, or when it is unsure. That and the reason can be read in the "Review record" section of the task details.
 How the verdict and the weight of findings are decided does not change. Even a narrowed re-review gives "changes required" when it finds a `[要修正]`.
 
 When the changes since the previous review are documents only (documents such as `.md` files, not including instructions to agents, files under a directory that starts with `.`, or files under a skill's directory) and the PR's main target is code, the re-review also narrows the verification and runs only the checks that apply to documents (the code tests are not run).
-The code tests that were not run are written in the "scope of the review" line of the review body.
-When even one file that is not a document is included, when the difference from last time or the start of the PR diff cannot be confirmed, when there is no previous verdict, when a previous `[要修正]` reaches a file that is not a document, or when there is a file that is unclear as to whether it is a document, the verification is not narrowed either.
+The review body says that the code tests were not run, as in "コードのテストは実行していません".
+When even one file that is not a document is included, when the difference from last time or the start of the PR diff cannot be confirmed, when there is no previous verdict, when the previous round has no review record or its record has viewpoints that could not be reviewed or verification that stopped, when a previous `[要修正]` reaches a file that is not a document, or when there is a file that is unclear as to whether it is a document, the verification is not narrowed either.
 
 There are four ways to start a re-review.
 
@@ -336,7 +354,7 @@ sacty does not use a review that was written without starting any per-viewpoint 
   It tells the agent to start the reviewers and runs the review again automatically (up to 3 times).
   In the cost table of the task details, that run's result reads "Not used" (its cost is included in the task's cost).
 - If reviews that start no reviewer continue after the retries, the task stops, and sacty also tells the PR in a comment.
-  The reason reads "4 reviews in a row did not start any per-viewpoint reviewer (subagent)".
+  The reason in the PR comment reads "レビューを繰り返しましたが、確かめた結果が得られず、投稿できませんでした" (the review was repeated but no checked result was obtained, so nothing was posted). The reason on the task screen reads "4 reviews in a row did not start any per-viewpoint reviewer (subagent)".
 - When it stops, change the agent for the review step or fix the cause, then resume ([Changing a step's agent](tasks.en.md#changing-a-steps-agent)).
   Resuming reviews again.
 - sacty retries only a run where it confirmed that the agent had a way to start reviewers.
@@ -453,6 +471,8 @@ The first is the comments that sacty discarded without delivering them to the or
 
 - If the PR was updated after the review was made (the commit the review targeted differs from the PR's current head), sacty discards that review instead of delivering it.
   That it was discarded, and why, remain in the Activity.
+- The child task's next review checks the discarded comments again on the PR's new commit.
+  Comments that also apply to the new commit come out as comments of the next review and reach the original task.
 - The discarded comments are shown on the approval screen and the task detail as "AI review comments not taken in" (the reason, the PR's commit at the time of discarding, the target commit, the gist of each comment, and a link to GitHub).
   They stay until the PR is merged, so check them before you approve or merge.
 - When the original task goes back to waiting for approval, the child task reviews the current PR again.

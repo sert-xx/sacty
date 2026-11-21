@@ -195,7 +195,7 @@ describe("PR のレビューの判定が無い理由（PBI-378）", () => {
     const line = (verdict: NonNullable<Task["reviewVerdicts"]>[number]) =>
       buildReviewBody(task(verdict)).split("\n")[3];
     expect(line({ round: 1, missing: "absent" })).toBe(
-      "@alice 判定：付いていません（レビューが判定を付けませんでした。見ていない観点がある・対象を読めなかったレビューには、判定を付けません。本文を確かめてください）",
+      "@alice 判定：付いていません（レビューが判定を付けませんでした。確かめられなかった所がある・対象を読めなかったレビューには、判定を付けません。本文を確かめてください）",
     );
     const unreadable = "@alice 判定：読み取れませんでした（本文の指摘を確かめてください）";
     expect(line({ round: 1, missing: "invalid" })).toBe(unreadable);
@@ -210,7 +210,7 @@ describe("PR のレビューの判定が無い理由（PBI-378）", () => {
   it("レビューの指示は、判定を付けないときに、付けない理由を総評に書かせる", () => {
     const prompt = buildPrompt(task({ round: 1 }), "review", { diff });
     expect(prompt).toContain(
-      "判定を付けないときは、付けない理由（見ていない観点・読めなかったもの）を、総評に書きます",
+      "判定を付けないときは、付けない理由を、中身の言葉（何が未確認で、読む人が何をすればよいか）で、本文の最初に書きます",
     );
   });
 });

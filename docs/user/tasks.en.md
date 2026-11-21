@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx, apps/web/src/lib/labels.ts, apps/web/src/i18n/messages/labels.ts, apps/web/src/i18n/messages/parts.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts, packages/core/src/messages.ts, apps/daemon/src/risk-assessment.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/web/src/components/self-review-depth.tsx, apps/daemon/src/service.ts, apps/daemon/src/repository.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/integration.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts, apps/web/src/components/deferral.tsx, apps/web/src/lib/labels.ts, apps/web/src/i18n/messages/labels.ts, apps/web/src/i18n/messages/parts.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts, packages/core/src/messages.ts, apps/daemon/src/risk-assessment.ts, apps/daemon/src/merge-approval-notice.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -789,7 +789,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
   For a suggestion the AI decided before fixing not to handle in this PR, the reply says that the AI decided it, gives the reason for each suggestion it does not handle, and says how to have it fixed ([Sorting AI review suggestions](#sorting-ai-review-suggestions)).
   When the AI declared neither, only the explanation of the response is shown.
-- The end of the reply says which sacty task's AI wrote it.
+- The end of the reply says "Sacty の<工程名>の工程で、AI が書きました。" (AI wrote this in the <step> step of Sacty; the task ID is not written).
 - Secret values are hidden and long text is cut.
   Paths inside sacty's workspace are replaced with names a person can follow.
 - A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) also replies the same way, per PR comment passed to the implementation.
@@ -955,6 +955,25 @@ If a person merges the implementation PR while the implementation is being rewor
 - The stopped runs and the comments discarded before being passed to the rework (the ones not yet reflected in the PR) stay in the task's activity as "PR #N was merged, so the rework of the implementation was stopped".
 - To handle the discarded comments (including PR comments that arrived while paused and had not been applied yet), create a follow-up task ([Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task)).
 - While Requirements or Design is being redone, a merge of the implementation PR does not stop it.
+
+If a person merges the PR of Requirements or Design while that step is being revised (after a request for changes, or imported PR comments or suggestions), the merge is also taken as the approval.
+
+- sacty stops the running revision and moves on to the next step.
+  It does not take in the revision's result and does not create a new PR.
+  What is approved is the contents of the merged PR (if you edited the PR, your edited contents).
+- A comment appears on the PR once, saying that the merge was taken as the approval and how many suggestions were not taken in.
+  The same comment also appears when a merge stops a rework of the implementation PR.
+- The task's activity shows "PR #N was merged, so the rework of the design was stopped" ("the rework of the requirements" for Requirements).
+- If you merge after sacty has put the revision in the PR, the revision is what is approved.
+- If you close the PR without merging, sacty creates a new PR after the revision.
+
+If you merge the original Design PR while the task has gone back to Requirements because of comments on the Design PR, it is not taken as the approval of Design.
+A comment appears on the PR once, saying that the merge was not taken as the approval of Design because Requirements was being revised.
+After you approve Requirements, sacty recreates the Design PR, so approve it again in that PR.
+
+If sacty cannot close the PR from before the revision when it submits the revision in a new PR, it pauses the task without creating the new PR.
+When you resume the task, sacty starts again from closing the PR.
+If you merge the PR from before the revision while the task is paused, the task moves on as approved without waiting for a resume.
 
 ### The form of the PR body
 
@@ -1539,11 +1558,11 @@ sacty posts at the following times.
 
 - sacty posts after a person approves the step's output. Nothing is posted unless you approve.
   - If you request changes and then approve, sacty posts the revised version.
-  - The end of the comment notes that AI wrote it in a sacty task and a person approved it.
+  - The end of the comment says "Sacty の<工程名>の工程で AI が書き、人間が承認しました。" (AI wrote this in the <step> step of Sacty and a person approved it; the task ID is not written).
 - However, for a step that is approved by merging its PR (implementation, requirements, and design), sacty posts the requested comments to that PR without waiting for the merge, as soon as the output is awaiting approval.
   This lets the people watching the PR read a reply to a review comment right away.
   - After a send-back and rework, sacty posts the request of the new version once. It never posts the same version's request again after the merge.
-  - The end of this comment notes that AI wrote it and that the step's output is approved by merging the PR.
+  - The end of this comment says "Sacty の<工程名>の工程で AI が書きました。この工程の成果は、PR のマージで承認されます。" (AI wrote this in the <step> step of Sacty; the step's output is approved by merging the PR).
   - sacty does not import this comment as a PR remark (so a reply does not become a new remark and keep the send-backs going).
 
 In both cases, the following applies.

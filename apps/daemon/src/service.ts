@@ -144,6 +144,7 @@ import {
   ResumeAuditInput,
   ResumeTaskInput,
   type ReviewDispatch,
+  type ReviewRecord,
   renderMessage,
   repoKey,
   responsibleProject,
@@ -153,6 +154,7 @@ import {
   reviewReworkTarget,
   reviewWatching,
   reworkingPullRequest,
+  reworkingStepPullRequest,
   reworkTargets,
   SactySettings,
   type ScheduledTaskSettings,
@@ -177,6 +179,7 @@ import {
   type Task,
   type TaskProposal,
   type TicketService,
+  type TokenUsage,
   type TriageKind,
   targetHost,
   targetImageOf,
@@ -184,6 +187,7 @@ import {
   exportProject as toProjectExport,
   unmappedViewpoints,
   unreflectedImplementRemarks,
+  unreflectedStepRemarks,
   type VerificationRecord,
   verificationImageOf,
   workBaseCommit,
@@ -316,6 +320,7 @@ import {
   isDeferralNotice,
   isForkHoldNotice,
   isHumanAskNotice,
+  isMergeApprovalNotice,
   isReviewStopNotice,
   isReworkNotice,
   isSactyGitHubComment,
@@ -361,6 +366,12 @@ import {
   usefulCounts,
 } from "./memory.js";
 import { requesterTexts } from "./memory-answers.js";
+import {
+  buildMergeApprovalNotice,
+  buildMergeNotApprovedNotice,
+  mergeApprovalMarker,
+  mergeNotApprovedMarker,
+} from "./merge-approval-notice.js";
 import type { FeedReply, NotificationFeed } from "./notification-feed.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import { CONTAINER_HANDOFF_DIR, stageHandoff } from "./orchestrator-handoff.js";
@@ -498,6 +509,12 @@ import { annotateReviewComments, voidedByPersonOf } from "./review-comments.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
 import { buildForkHoldNotice, forkHoldMarker } from "./review-fork-hold-notice.js";
 import {
+  checkReviewRecord,
+  readReviewRecordBlock,
+  reviewRecordBlocksNarrowing,
+  withoutReviewRecord,
+} from "./review-record.js";
+import {
   buildResolvedNotice,
   buildStopNotice,
   isOpenStopNotice,
@@ -586,6 +603,7 @@ import {
   timeoutResumeLines,
 } from "./timeout-resume.js";
 import { triageReplyTextOf } from "./triage-reply.js";
+import { undeliveredRounds } from "./undelivered-review.js";
 import type { UpdateStatus } from "./update-check.js";
 import {
   CODE_COPY_DIR,
@@ -651,6 +669,12 @@ function countChangedLines(diff: string): number {
 
 /** 前回からの差分が文書だけかを確かめるとき、見るディレクトリの数の上限（PBI-421）。 */
 const DOCUMENTS_ONLY_DIRS_MAX = 200;
+
+/** 回の記録（無ければ欄を作らない。PBI-460）。 */
+function recordOfRound(task: Task, round: number): { record: ReviewRecord | null } | object {
+  const found = task.reviewRecords?.find((r) => r.round === round);
+  return found ? { record: found.record } : {};
+}
 
 /** 制御文字（改行・タブなど）を含むか。 */
 function hasControlCharacter(text: string): boolean {
@@ -1483,6 +1507,29 @@ export class TaskService {
   /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
   private readonly mergeStopping = new Set<string>();
   /**
+   * 投稿していないレビューの実行を、PR の先頭が変わった・PR がマージ・クローズされたために止めているタスク（PBI-465。メモリー
+   * だけ）。止めた実行の失敗の経路は、これを見て、AgentRunFailed・一時停止を記録しない（打ち切りを決めた処理が、停止を
+   * 確かめた後に ReviewRunStopped を記録する）。
+   */
+  private readonly reviewStopping = new Set<string>();
+  /** 止めた実行の記録に持つ、実行の失敗の経路が残した、実行の ID・エージェント・費用（PBI-465）。 */
+  private readonly reviewStopRuns = new Map<
+    string,
+    {
+      runId: string;
+      agentId: string;
+      usage?: TokenUsage;
+      costUsd: number;
+      estimated: boolean;
+      costUnknown?: true;
+    }
+  >();
+  /**
+   * 打ち切った後の始め直しの待ち（reviewStop があって対象が無いタスク）の、待ちの先頭と起点（PBI-465。メモリーだけ）。同じ先頭を
+   * FEEDBACK_QUIET_MS 見続けるまで、実行の列に入れない。デーモンを起動し直すと消え、最初に読んだ先頭とその時刻から待ち直す。
+   */
+  private readonly reviewSettling = new Map<string, { head: string; at: number }>();
+  /**
    * 人が再開したタスク（メモリーだけ）。止まった工程を走り直す前に、PR に届いた指摘をもう一度読む（PBI-279。一時停止の間の
    * 確認は一定の間隔なので、再開の直前に書かれた指摘も拾う）。デーモンの再起動で消えても、残しておいた指摘は作業履歴にある。
    */
@@ -1754,6 +1801,8 @@ export class TaskService {
   async checkPullRequests(): Promise<void> {
     // 実装の作り直しの間に、実装の PR がマージされたタスクは、作り直しを止めて承認として進める（PBI-276）
     await this.checkReworkMerges();
+    // 前の工程へ戻している間に、元の工程の PR がマージされたら、承認にせず PR に知らせる（PBI-462）
+    await this.checkSentBackMerges();
     // 重ねた子タスクの承認待ちの PR の向き先を、依存先の PR のマージの後のブランチに付け替える（PBI-317）
     // 前のタスクの GitHub の操作を待つ間に、後のタスクが変わりうるので、ID ごとにその時点の最新で決める
     for (const id of [...this.tasks.keys()]) {
@@ -2698,8 +2747,10 @@ export class TaskService {
    */
   private async checkReworkMerges(): Promise<void> {
     for (const task of [...this.tasks.values()]) {
-      const reworking = reworkingPullRequest(task);
+      const reworking = this.reworkTarget(task);
       if (!reworking?.repo || this.cancelling.has(task.id)) continue;
+      // PR を更新・作成している最中の要求要件・設計は止めず、記録は publishStepPullRequest に任せる（PBI-462）
+      if (this.stepPublishing(task, reworking)) continue;
       const usedSecrets: string[] = [];
       try {
         const token = await this.githubToken(task, reworking.repo, usedSecrets);
@@ -2708,7 +2759,21 @@ export class TaskService {
           token,
           number: reworking.number,
         });
-        if (status.state === "merged") await this.stopReworkForMerge(task.id, reworking, status);
+        if (status.state === "merged") {
+          // 人が PR の中で直してからマージしたなら、人の版を読む（読めなければ、何も記録せずに次の確認でやり直す）
+          let document: PullRequestMerge["document"];
+          if (reworking.step && status.headSha !== reworking.commit) {
+            const read = await this.readMergedDocument(
+              task,
+              reworking.number,
+              status.mergeCommit ?? status.headSha,
+              usedSecrets,
+            );
+            if (read === "retry") continue;
+            document = read;
+          }
+          await this.stopReworkForMerge(task.id, reworking, status, document);
+        }
       } catch (error) {
         console.warn(
           `[daemon] PR #${reworking.number}（${reworking.repo}）のマージの確認と作り直しの停止ができませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -2727,18 +2792,20 @@ export class TaskService {
    */
   private async stopReworkForMerge(
     taskId: string,
-    reworking: NonNullable<ReturnType<typeof reworkingPullRequest>>,
+    reworking: NonNullable<ReturnType<TaskService["reworkTarget"]>>,
     status: Extract<PullRequestStatus, { state: "merged" }>,
+    document?: PullRequestMerge["document"],
   ): Promise<void> {
     const same = () => {
       const task = this.tasks.get(taskId);
-      const now = task ? reworkingPullRequest(task) : undefined;
+      const now = task ? this.reworkTarget(task) : undefined;
       return task && now?.number === reworking.number && !this.cancelling.has(taskId)
         ? task
         : undefined;
     };
     const before = same();
     if (!before) return;
+    if (this.stepPublishing(before, reworking)) return;
     // 承認か一時停止を記録するまで、このタスクの実行を始めさせない（止めた実行が正常に終わっていても、続きの検証を
     // ワーカーが始めないように。runNext と queuedTaskIds が見る）
     this.mergeStopping.add(taskId);
@@ -2790,6 +2857,7 @@ export class TaskService {
       this.endReworkByMerge(taskId, reworking.number, status, {
         stoppedRuns,
         stage: inflight && stage === "queued" ? "running" : stage,
+        ...(document ? { document } : {}),
       });
     } finally {
       this.mergeStopping.delete(taskId);
@@ -2804,15 +2872,24 @@ export class TaskService {
     taskId: string,
     number: number,
     status: Extract<PullRequestStatus, { state: "merged" }>,
-    stopped: { stoppedRuns: string[]; stage?: ReworkStage },
+    stopped: {
+      stoppedRuns: string[];
+      stage?: ReworkStage;
+      document?: PullRequestMerge["document"];
+    },
   ): boolean {
     const latest = this.tasks.get(taskId);
-    const reworking = latest ? reworkingPullRequest(latest) : undefined;
+    const reworking = latest ? this.reworkTarget(latest) : undefined;
     if (!latest || !reworking || reworking.number !== number || latest.status === "running") {
       return false;
     }
     if (this.cancelling.has(taskId)) return false;
-    const decision = latest.status === "paused" && latest.pausedReason === "needs_decision";
+    const stepRework = reworking.step;
+    const decision =
+      !stepRework && latest.status === "paused" && latest.pausedReason === "needs_decision";
+    const discardedRemarks = (
+      stepRework ? unreflectedStepRemarks(latest, stepRework) : unreflectedImplementRemarks(latest)
+    ).map((r) => ({ id: r.id, text: r.text }));
     const discarded = decision
       ? (latest.decisionPauses?.findLast((p) => !p.decided)?.findings.length ?? 0)
       : (heldReview(latest)?.remarks.length ?? 0);
@@ -2823,13 +2900,13 @@ export class TaskService {
           type: "ReworkStoppedByMerge",
           payload: {
             number,
+            ...(stepRework ? { step: stepRework } : {}),
             was: stopped.stage ?? this.reworkStage(latest),
             stoppedRuns: stopped.stoppedRuns,
-            discardedRemarks: unreflectedImplementRemarks(latest).map((r) => ({
-              id: r.id,
-              text: r.text,
-            })),
-            ...(latest.verifyFeedback ? { discardedFeedback: latest.verifyFeedback.kind } : {}),
+            discardedRemarks,
+            ...(!stepRework && latest.verifyFeedback
+              ? { discardedFeedback: latest.verifyFeedback.kind }
+              : {}),
             // 一時停止の間に届いて、まだ作り直しに渡していない PR の指摘（PBI-279）
             // 人の判断を待って止めていた PR のマージ（作り直しは始めておらず、止めた理由の指摘は反映せずに承認として進める。
             // 件数は取り込んだ投稿の数ではなく、印の付いた指摘の数。PBI-452）
@@ -2840,11 +2917,161 @@ export class TaskService {
       },
       ...this.mergeApprovalItems(
         latest,
-        { step: "implement", number, repo: reworking.repo ?? "", commit: reworking.commit },
+        {
+          step: stepRework ?? "implement",
+          number,
+          repo: reworking.repo ?? "",
+          commit: reworking.commit,
+        },
         status,
+        stopped.document,
       ),
     ]);
+    // 直しを捨てて、マージを承認として進めたことを、PR に知らせる（人の判断待ちの PR のマージは、直しを始めていないので書かない）
+    if (!decision && reworking.repo) {
+      this.announceMergeApproval(latest, {
+        repo: reworking.repo,
+        number,
+        discarded: discardedRemarks.length,
+      });
+    }
     return true;
+  }
+
+  /**
+   * 設計の PR の承認待ちから要求要件へ戻している間（sentBackFrom）に、人がその設計の PR をマージしたか確かめ、マージ済みなら
+   * 承認にせず（要求要件の承認の後に、設計の PR を作り直す）、PR に知らせる（PBI-462）。何も記録しない。
+   */
+  private async checkSentBackMerges(): Promise<void> {
+    for (const task of [...this.tasks.values()]) {
+      const from = task.sentBackFrom;
+      if (!from || this.cancelling.has(task.id)) continue;
+      const pr = task.stepPullRequests.find((p) => p.number === from.number);
+      if (!pr || pr.superseded || pr.state !== "open") continue;
+      const usedSecrets: string[] = [];
+      try {
+        const token = await this.githubToken(task, pr.repo, usedSecrets);
+        const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+        if (status.state === "merged") {
+          this.announceMergeNotApproved(task, {
+            repo: pr.repo,
+            number: pr.number,
+            step: from.step,
+          });
+        }
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${pr.number}（${pr.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    }
+  }
+
+  /** 直しの間にマージを承認にする対象の PR（実装の作り直しか、要求要件・設計の自動の直し。PBI-462）。 */
+  private reworkTarget(
+    task: Task,
+  ): { step?: StepPullRequestKey; number: number; repo?: string; commit: string } | undefined {
+    const implement = reworkingPullRequest(task);
+    if (implement) return implement;
+    const step = reworkingStepPullRequest(task);
+    return step
+      ? { step: step.step, number: step.number, repo: step.repo, commit: step.commit }
+      : undefined;
+  }
+
+  /**
+   * 要求要件・設計の PR を更新・作成している最中か。この間は PR の確認が止めず、publishStepPullRequest が前の PR の
+   * マージを見つけて記録する（PBI-462）。
+   */
+  private stepPublishing(task: Task, reworking: { step?: StepPullRequestKey }): boolean {
+    return (
+      reworking.step !== undefined &&
+      task.status === "idle" &&
+      this.awaitingStepPullRequest(task) === reworking.step
+    );
+  }
+
+  /**
+   * 直しを捨てて、マージを承認として進めたことを、その PR にコメントする（PBI-462）。1 つの PR に 1 通（sacty のアカウントの
+   * 目印付きの投稿があれば書かない）。GitHub のアカウントを選んでいないプロジェクト・セキュリティのタスクには書かない。投稿
+   * できなくても、タスクは変えない。送るのは待たない。
+   */
+  private announceMergeApproval(
+    task: Task,
+    target: { repo: string; number: number; discarded: number },
+  ): void {
+    this.postMergeNotice(task, target, "approval", (link) =>
+      buildMergeApprovalNotice({
+        taskId: task.id,
+        number: target.number,
+        discarded: target.discarded,
+        taskUrl: link.url,
+        localOnly: link.localOnly,
+      }),
+    );
+  }
+
+  /** 承認として扱わなかったマージ（要求要件へ戻している間の設計の PR）を、その PR に知らせる（PBI-462）。 */
+  private announceMergeNotApproved(
+    task: Task,
+    target: { repo: string; number: number; step: StepPullRequestKey },
+  ): void {
+    this.postMergeNotice(task, target, "not-approved", (link) =>
+      buildMergeNotApprovedNotice({
+        taskId: task.id,
+        number: target.number,
+        stepName: STEP_NAME[target.step],
+        backName: STEP_NAME.requirements,
+        taskUrl: link.url,
+        localOnly: link.localOnly,
+      }),
+    );
+  }
+
+  private postMergeNotice(
+    task: Task,
+    target: { repo: string; number: number },
+    kind: "approval" | "not-approved",
+    build: (link: { url: string; localOnly: boolean }) => string,
+  ): void {
+    if (isSecurityTask(task)) return;
+    const { repo, number } = target;
+    const project = this.deps.projects.get(task.projectId);
+    const account = project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""];
+    if (!account) return;
+    const usedSecrets: string[] = [];
+    const link = taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", task.id);
+    const marker =
+      kind === "approval"
+        ? mergeApprovalMarker(task.id, number)
+        : mergeNotApprovedMarker(task.id, number);
+    void this.serialized(`merge-notice:${kind}:${task.id}:${number}`, async () => {
+      const signal = this.stopNoticeDeadline();
+      try {
+        const token = await untilAborted(
+          signal,
+          this.githubToken(task, repo, usedSecrets, project),
+        );
+        const pr = { repo, token, number };
+        const existing = await untilAborted(
+          signal,
+          this.deps.pulls.findIssueComment({
+            ...pr,
+            marker,
+            accounts: this.githubAccountsOnHost(repo),
+          }),
+        );
+        if (existing) return;
+        await untilAborted(
+          signal,
+          this.deps.pulls.commentIssue({ ...pr, body: build(link), signal }),
+        );
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} の、PR #${number} のマージの扱いを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    });
   }
 
   /** 実装の作り直しが、いまどの段階か（ReworkStoppedByMerge に残す）。 */
@@ -2927,6 +3154,18 @@ export class TaskService {
     return this.tasks.get(task.id);
   }
 
+  /** 直しの間の工程なら、成果とテスト観点を、承認待ちだった提出の版にしたタスク（PBI-462）。そうでなければ、そのまま。 */
+  private submittedView(task: Task, step: StepPullRequestKey): Task {
+    if (reworkingStepPullRequest(task)?.step !== step) return task;
+    const copy = task.stepSubmitted?.[step];
+    if (!copy) return task;
+    return {
+      ...task,
+      outputs: { ...task.outputs, [step]: copy.output },
+      ...(step === "design" ? { testViewpoints: copy.testViewpoints } : {}),
+    };
+  }
+
   /**
    * 人が PR の中で直してからマージした、要求要件・設計の成果のファイルを、マージ後のタスクブランチから読む（PBI-63）。
    * 退避した git のメタデータで読み、作業領域・利用者の git の設定は使わない。読むのは、その PR に出した成果のファイルの
@@ -2996,7 +3235,8 @@ export class TaskService {
       );
       return { path, commit, fallback: "deleted" };
     }
-    const sacty = buildStepDocument(task, step);
+    // 直しの間のマージは、直しの成果ではなく、承認待ちだった提出の版と比べる（PBI-462）
+    const sacty = buildStepDocument(this.submittedView(task, step), step);
     return content === sacty ? { path, commit } : { path, commit, sacty, final: content };
   }
 
@@ -3020,6 +3260,18 @@ export class TaskService {
       this.deps.projects.get(t.projectId) !== undefined;
     const unposted = (t: Task) =>
       t.source?.review !== undefined && t.source.kind === "github_pull_request" && !isCompleted(t);
+    // 先頭の変化を見張るレビュー（PBI-465）：投稿していない、1 回目を含むレビュー。source の無い、人が作ったタスクも含む（読む PR は
+    // reviewPullRequestOf）。一時停止中は止める実行が無く ReviewRunStopped も記録できないので見張らない。投稿待ち（idle）は、
+    // 投稿の直前の確認（composeReviewPost）が見つける
+    const unpostedReview = (t: Task) =>
+      !isCompleted(t) &&
+      t.status !== "cancelled" &&
+      (t.status === "queued" || t.status === "running") &&
+      activeStep(t) === "review" &&
+      !t.reviewPost &&
+      (t.reviewTarget !== undefined || t.reviewStop !== undefined) &&
+      this.reviewPullRequestOf(t) !== undefined &&
+      this.deps.projects.get(t.projectId) !== undefined;
     // 一時停止中の、レビューの子タスク（PBI-457）。投稿済みで見守っていたもの。PR がマージ・クローズされたら、見守りを終えて完了する
     const pausedWatch = (t: Task) =>
       t.status === "paused" &&
@@ -3028,8 +3280,17 @@ export class TaskService {
       t.reviewTarget !== undefined &&
       this.deps.projects.get(t.projectId) !== undefined;
     const open = [...this.tasks.values()].filter(
-      (t) => t.status !== "cancelled" && (unposted(t) || watched(t) || pausedWatch(t)),
+      (t) =>
+        t.status !== "cancelled" &&
+        (unposted(t) || unpostedReview(t) || watched(t) || pausedWatch(t)),
     );
+    // 始め直しを待っていたタスクが、待ちから外れた（実行を始めた・一時停止・中止）ら、待ちの印は忘れる
+    for (const id of [...this.reviewSettling.keys()]) {
+      const t = this.tasks.get(id);
+      if (t?.status !== "queued" || !t.reviewStop || t.reviewTarget) {
+        this.reviewSettling.delete(id);
+      }
+    }
     // 見守りから外れたタスク（再レビューを始めた・見守りを終えた・一時停止・中止）の、初めて見た時刻は忘れる
     const watching = new Set(open.filter(watched).map((t) => t.id));
     for (const memo of [
@@ -3042,7 +3303,12 @@ export class TaskService {
       for (const id of [...memo.keys()]) if (!watching.has(id)) memo.delete(id);
     }
     for (const task of open) {
-      const source = watched(task) || pausedWatch(task) ? task.reviewTarget : task.source;
+      const source =
+        watched(task) || pausedWatch(task)
+          ? task.reviewTarget
+          : unposted(task)
+            ? task.source
+            : this.reviewPullRequestOf(task);
       if (!source) continue;
       // 投稿から時間がたった PR の見守りは、間を空けて読む（開いたままの PR が増えても、GitHub への問い合わせを増やし続けない）
       if (watched(task) && !this.reviewWatchDue(task)) continue;
@@ -3086,22 +3352,208 @@ export class TaskService {
         }
         continue;
       }
-      if (status.state === "open") continue;
+      if (status.state === "open") {
+        if (unpostedReview(task)) {
+          await this.checkReviewHead(task.id, status).catch((error: unknown) => {
+            console.warn(
+              `[daemon] レビューのタスク ${task.id} の PR の先頭の変化を確かめられませんでした：`,
+              error,
+            );
+          });
+        }
+        continue;
+      }
       if (pausedWatch(task)) {
         this.endReviewWatch(task.id, status.state);
         continue;
       }
+      // source の無い、人が作ったレビューのタスクは、PR のマージ・クローズで中止しない（先頭の変化の検知だけ。PBI-465）
+      if (!unposted(task)) continue;
       // 確かめている間に、中止された・完了した（レビューを投稿した）なら、中止しない
       const latest = this.tasks.get(task.id);
       if (!latest || latest.status === "cancelled" || isCompleted(latest)) continue;
       if (this.cancelling.has(task.id)) continue;
-      await this.cancel(
-        task.id,
-        status.state === "merged" ? "pull_request_merged" : "pull_request_closed",
-      ).catch((error: unknown) => {
-        console.warn(`[daemon] レビューのタスク ${task.id} を中止できませんでした：`, error);
-      });
+      // 実行中・対象の確認中・投稿待ちのレビューは、止めた実行を失敗に見せずに、ReviewRunStopped を記録して中止する
+      // （cancel が、実行の終わりを待った後に記録する）。始め直しの待ちの間は、止める実行が無いので記録しない（PBI-465）
+      this.reviewSettling.delete(task.id);
+      if (this.recordableReviewStop(latest)) this.reviewStopping.add(task.id);
+      try {
+        await this.cancel(
+          task.id,
+          status.state === "merged" ? "pull_request_merged" : "pull_request_closed",
+        ).catch((error: unknown) => {
+          console.warn(`[daemon] レビューのタスク ${task.id} を中止できませんでした：`, error);
+        });
+      } finally {
+        this.reviewStopping.delete(task.id);
+        this.reviewStopRuns.delete(task.id);
+      }
     }
+  }
+
+  /** 再レビューの指示に渡す、親に届かなかった前回・前々回以前の回（PBI-465）。無ければ空のオブジェクト。 */
+  private undeliveredReviewRounds(task: Task): { undeliveredRounds?: ReadonlySet<number> } {
+    if (!task.previousReview) return {};
+    const parent = task.reviewOf ? this.tasks.get(task.reviewOf.taskId) : undefined;
+    const rounds = undeliveredRounds(task, parent, task.reviewTarget?.headCommit);
+    return rounds.size > 0 ? { undeliveredRounds: rounds } : {};
+  }
+
+  /** 先頭の変化を見張るレビューのタスクが読む PR。source があればそれ、無ければ対象、それも無ければ打ち切りが残した PR。 */
+  private reviewPullRequestOf(task: Task): { repo: string; number: number } | undefined {
+    if (task.source?.review !== undefined && task.source.kind === "github_pull_request") {
+      return { repo: task.source.repo, number: task.source.number };
+    }
+    if (task.reviewTarget)
+      return { repo: task.reviewTarget.repo, number: task.reviewTarget.number };
+    const stop = task.reviewStop;
+    return stop?.repo !== undefined && stop.number !== undefined
+      ? { repo: stop.repo, number: stop.number }
+      : undefined;
+  }
+
+  /**
+   * 打ち切った後の、始め直しの待ちの間か（PBI-465）。同じ先頭を FEEDBACK_QUIET_MS 見続けるまで待つ。待ちの印（メモリー）が
+   * まだ無い（起動した後、最初の確認の前）間も待つ。
+   */
+  private reviewSettlingNow(task: Task): boolean {
+    if (!task.reviewStop || task.reviewTarget) return false;
+    const memo = this.reviewSettling.get(task.id);
+    return !memo || this.now() - memo.at < FEEDBACK_QUIET_MS;
+  }
+
+  /** ReviewRunStopped を記録できる状態（投稿していないレビューの、実行中・対象の確認中・投稿待ち。始め直しの待ちは除く）。 */
+  private recordableReviewStop(task: Task): boolean {
+    return (
+      activeStep(task) === "review" &&
+      !task.reviewPost &&
+      task.reviewTarget !== undefined &&
+      (task.status === "running" || task.status === "queued" || task.status === "idle")
+    );
+  }
+
+  /**
+   * 投稿していないレビューの PR の先頭を読んだ結果で、打ち切るか、始め直しを待つ（PBI-465）。フォークからの PR は、先頭が
+   * 変わっても打ち切らない（PBI-461）。先頭を読めない応答では、何も決めない。
+   * - 対象がある（実行中・対象の確認中）：対象の先頭と違えば、すぐ打ち切る
+   * - 対象が無い（始め直しの待ち）：待ちの先頭と違えば、待ちの先頭と起点を替える（実行は無いので、記録は増やさない）
+   */
+  private async checkReviewHead(taskId: string, status: PullRequestStatus): Promise<void> {
+    if (status.fork !== false) return;
+    const head = status.headSha?.trim() ?? "";
+    if (!/^[0-9A-Za-z]{7,64}$/.test(head)) return;
+    const task = this.tasks.get(taskId);
+    if (!task || task.status === "paused" || this.cancelling.has(taskId)) return;
+    if (task.reviewTarget) {
+      if (sameCommit(task.reviewTarget.headCommit, head)) return;
+      await this.abortReviewRun(taskId, head);
+      return;
+    }
+    if (!task.reviewStop || task.status !== "queued") return;
+    const memo = this.reviewSettling.get(taskId);
+    if (!memo || memo.head !== head) this.reviewSettling.set(taskId, { head, at: this.now() });
+  }
+
+  /**
+   * レビューの実行を、PR の先頭が変わったために止める（PBI-465）。止めた実行が無くなったと確かめてから、ReviewRunStopped
+   * （head_changed）を記録する。止めた実行の費用は、この記録に持つ。確かめられなければ記録せず、一時停止にして人の確認を待つ。
+   * 止めている間に人が中止した・状態が変わったなら、何も記録しない。
+   */
+  private async abortReviewRun(taskId: string, to: string): Promise<void> {
+    const before = this.tasks.get(taskId);
+    if (!before || !this.recordableReviewStop(before) || before.status === "idle") return;
+    if (this.reviewStopping.has(taskId) || this.cancelling.has(taskId)) return;
+    this.reviewStopping.add(taskId);
+    try {
+      const inflight = this.inflight.get(taskId);
+      let runIds: string[] = [];
+      if (inflight) {
+        const humanStop = this.pauseRequested.has(taskId);
+        this.pauseRequested.add(taskId);
+        runIds = [...inflight.runIds];
+        try {
+          this.stopRuns(runIds);
+          await inflight.done.catch(() => {});
+        } finally {
+          if (!humanStop) this.pauseRequested.delete(taskId);
+        }
+      }
+      const unstopped = await this.unstopped(runIds);
+      const after = this.tasks.get(taskId);
+      if (!after || this.cancelling.has(taskId) || after.status === "cancelled") return;
+      if (unstopped.length > 0) {
+        // 止めたコンテナを確かめられない間は、作業領域が書き換わりうるので、始め直さない。一時停止にして人が確かめる
+        const run = this.reviewStopRuns.get(taskId);
+        this.append(after, [
+          ...(after.status === "running" && run && after.currentRunId === run.runId
+            ? [
+                {
+                  actor: "sacty" as const,
+                  event: {
+                    type: "AgentRunFailed" as const,
+                    payload: {
+                      runId: run.runId,
+                      step: "review" as const,
+                      agentId: run.agentId,
+                      reason: "error" as const,
+                      message: this.notStopped(unstopped),
+                      ...(run.usage ? { usage: run.usage } : {}),
+                      costUsd: run.costUsd,
+                      estimated: run.estimated,
+                      ...(run.costUnknown ? { costUnknown: true as const } : {}),
+                    },
+                  },
+                },
+              ]
+            : []),
+          {
+            actor: "sacty" as const,
+            event: {
+              type: "TaskPaused" as const,
+              payload: { reason: "manual" as const, ...this.unstoppedPayload(unstopped) },
+            },
+          },
+        ]);
+        return;
+      }
+      if (!this.recordableReviewStop(after) || !after.reviewTarget) return;
+      if (this.pauseRequested.has(taskId)) return;
+      this.recordReviewRunStopped(after, "head_changed", runIds, to);
+      this.reviewSettling.set(taskId, { head: to, at: this.now() });
+    } finally {
+      this.reviewStopping.delete(taskId);
+      this.reviewStopRuns.delete(taskId);
+    }
+  }
+
+  /** ReviewRunStopped を記録する。止めた実行の費用は、実行の失敗の経路が残したもの（AgentRunCompleted を記録していない分）。 */
+  private recordReviewRunStopped(
+    task: Task,
+    reason: "head_changed" | "merged" | "closed",
+    runIds: string[],
+    to?: string,
+  ): void {
+    const from = task.reviewTarget?.headCommit;
+    if (!from) return;
+    const run = task.status === "running" ? this.reviewStopRuns.get(task.id) : undefined;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "ReviewRunStopped",
+          payload: {
+            reason,
+            from,
+            ...(to ? { to } : {}),
+            runIds: run && !runIds.includes(run.runId) ? [...runIds, run.runId] : runIds,
+            ...(run?.usage ? { usage: run.usage } : {}),
+            costUsd: run?.costUsd ?? 0,
+            estimated: run?.estimated ?? false,
+            ...(run?.costUnknown ? { costUnknown: true as const } : {}),
+          },
+        },
+      },
+    ]);
   }
 
   /**
@@ -3287,6 +3739,7 @@ export class TaskService {
         !isReviewStopNotice(item.body) &&
         !isHumanAskNotice(item.body) &&
         !isReworkNotice(item.body) &&
+        !isMergeApprovalNotice(item.body) &&
         !isForkHoldNotice(item.body) &&
         !isDecisionNotice(item.body) &&
         !isDeferralNotice(item.body) &&
@@ -4483,7 +4936,9 @@ export class TaskService {
     const musts = units.filter((u) => u.kind === "must");
     // 提案だけの回が、今回を含めて何回続いているか（今回の回から数える）
     const round = child.reviewRound ?? 1;
-    const suggestionRounds = countSuggestionRounds(round, verdictOf);
+    // 親に届かなかった回（古い先頭宛てで捨てられた回）は、数えない（PBI-465）
+    const undelivered = undeliveredRounds(child, task, child.reviewTarget?.headCommit);
+    const suggestionRounds = countSuggestionRounds(round, verdictOf, (r) => undelivered.has(r));
     const chosen = stepAgentFor(config, "implement", task.agents?.implement);
     if (!chosen.ok) {
       this.pauseForMissingAgent(task, pr.step, chosen.missing, { awaiting: true });
@@ -5979,6 +6434,10 @@ export class TaskService {
     const latest = this.tasks.get(task.id);
     if (!latest || !awaitingReviewPost(latest) || this.pauseRequested.has(task.id)) return;
     this.append(latest, [{ actor: "sacty", event }]);
+    // 先頭が変わっていたので投稿せずに打ち切った（PBI-465）：その先頭を、始め直しの待ちの先頭にする
+    if (event.type === "ReviewRunStopped" && event.payload.to) {
+      this.reviewSettling.set(task.id, { head: event.payload.to, at: this.now() });
+    }
     // 投稿の直後に、PR を作ったタスクの指摘の取り込みを始める（60 秒ごとの確認を待たない）
     if (event.type === "PullRequestReviewPosted" && latest.reviewOf) {
       this.importFeedbackSoon(latest.reviewOf.taskId, target.repo, target.number);
@@ -6022,9 +6481,18 @@ export class TaskService {
     if (existing) {
       latestCommit = postedLatestCommit(existing.body);
     } else {
-      const head = (await this.deps.pulls.status(pr)).headSha?.trim() ?? "";
+      const pullStatus = await this.deps.pulls.status(pr);
+      const head = pullStatus.headSha?.trim() ?? "";
       if (!/^[0-9A-Za-z]{7,64}$/.test(head)) throw new MessageError(message("review.headUnknown"));
       latestCommit = head !== target.headCommit ? head : undefined;
+      // フォークでない PR は、先頭が変わっていたら、古い先頭宛てのレビューを投稿せず、打ち切って始め直す（PBI-465）。
+      // 実行の費用は AgentRunCompleted で数え済みなので、この記録は費用を持たない
+      if (latestCommit && pullStatus.fork === false) {
+        return {
+          type: "ReviewRunStopped",
+          payload: { reason: "head_changed", from: target.headCommit, to: head, runIds: [] },
+        };
+      }
     }
     // sacty の設定で選んでいれば、PR の作者ではなく自分（投稿するアカウント）にメンションする
     const mentionSelf = this.deps.settings.get().reviewMentionSelf ? account : undefined;
@@ -8397,6 +8865,8 @@ export class TaskService {
                       : {}),
                     body: latest.outputs.review ?? "",
                     comments: latest.reviewComments,
+                    // 元のタスクの最新の回の記録（PBI-460。get_task と再レビューの指示のデータのため。絞りの判断には効かない）
+                    ...recordOfRound(latest, latest.reviewRound ?? 1),
                   },
                 },
               },
@@ -10122,7 +10592,10 @@ export class TaskService {
             // PR を作ったタスクの、指摘への返信を待っているレビューの子タスクは、待ちが明けるまで始めさせない（PBI-352）
             !this.reviewWaitsForReplies(t) &&
             // PR のマージで作り直しを止めている間は、実行を始めさせない（PBI-276）
-            !this.mergeStopping.has(t.id),
+            !this.mergeStopping.has(t.id) &&
+            // レビューの実行を打ち切っている間と、打ち切った後の始め直しを待っている間は、実行を始めさせない（PBI-465）
+            !this.reviewStopping.has(t.id) &&
+            !this.reviewSettlingNow(t),
         )
         // 監査だけが残るタスク（完了したタスク）は、ほかの実行の後にする（監査で、進めている作業の実行の枠を塞がない。PBI-125）
         .sort(
@@ -10257,7 +10730,9 @@ export class TaskService {
               reason: "error",
               // 作業を止めたコンテナが残っているかもしれない実装の作り直し（開いた PR がある）も、実行を残す。PR のマージで
               // 作り直しを止めるとき（PBI-276）、停止を確かめてから承認へ進むため
-              ...(step === "operation" || reworkingPullRequest(task)
+              ...(step === "operation" ||
+              reworkingPullRequest(task) ||
+              reworkingStepPullRequest(task)
                 ? this.unstoppedPayload([task.currentRunId])
                 : {}),
             },
@@ -11252,11 +11727,13 @@ export class TaskService {
       this.cancelling.has(taskId) ||
       this.pauseRequested.has(taskId) ||
       this.mergeStopping.has(taskId) ||
+      this.reviewStopping.has(taskId) ||
       this.retargeting.has(taskId)
     ) {
       return;
     }
     const task = this.tasks.get(taskId);
+    if (task && this.reviewSettlingNow(task)) return;
     if (task && this.parentCancelled(task)) {
       if (task.status === "cancelled" || isCompleted(task)) return;
       // 実行の印（inflight）を付ける前に中止する（中止は、実行中の処理の終わりを待つため）
@@ -11511,7 +11988,7 @@ export class TaskService {
     if (!this.pauseRequested.has(taskId)) return;
     this.pauseRequested.delete(taskId);
     // PR のマージで止めた実行（PBI-276）は、人の一時停止にしない（stopReworkForMerge が、止めた理由とともに承認として進める）
-    if (this.mergeStopping.has(taskId)) return;
+    if (this.mergeStopping.has(taskId) || this.reviewStopping.has(taskId)) return;
     const task = this.tasks.get(taskId);
     if (task?.status !== "queued" && task?.status !== "idle") return;
     this.append(task, [
@@ -12599,6 +13076,8 @@ export class TaskService {
               ...(step === "review"
                 ? { reviewRisk: this.assessesReviewRisk(this.mustGet(task.id)) }
                 : {}),
+              // 親（PR を作ったタスク）に届かなかった前回までの回（PBI-465）
+              ...(step === "review" ? this.undeliveredReviewRounds(this.mustGet(task.id)) : {}),
               // PR のレビューの子タスクに、指摘ごとの戻し先を示させる（PBI-332）
               ...this.reviewReworkContext(task),
               // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
@@ -12670,6 +13149,19 @@ export class TaskService {
     const { outcome, costUsd, estimated } = executed;
 
     if (outcome.kind === "failed") {
+      // レビューの実行を、PR の先頭の変化・マージ・クローズで止めた（PBI-465）。失敗にも一時停止にもせず、費用だけを残す
+      // （打ち切りを決めた処理が、停止を確かめた後に ReviewRunStopped を記録する）
+      if (step === "review" && this.reviewStopping.has(task.id)) {
+        this.reviewStopRuns.set(task.id, {
+          runId,
+          agentId: agent.id,
+          ...(outcome.usage ? { usage: outcome.usage } : {}),
+          costUsd,
+          estimated,
+          ...unknownCost(executed),
+        });
+        return;
+      }
       const manual = await this.manualPauseInfo(task.id);
       const failed: ActivityItem = {
         actor: "sacty",
@@ -12939,7 +13431,7 @@ export class TaskService {
       return;
     }
     // レビューの工程は、PR の差分に含まれる行へのコメントを取り出す（差分の外のものは本文に入れる）
-    const review =
+    const extractedReview =
       step === "review"
         ? extractReviewComments(extracted.output, reviewDiff ?? "", {
             // 評価の対象のレビュー（取り込んだ PR・実装の PR の子タスク）だけ、リスク評価の答えを読む。使うのは指摘なしの回だけ
@@ -12947,6 +13439,14 @@ export class TaskService {
             risk: this.assessesReviewRisk(latest),
           })
         : undefined;
+    // 過程の記録（PBI-460）。答えの記録のブロックを読み、検査・伏せ・切り詰めをして作業履歴に残す。読めない・上限を超える・
+    // 伏せる処理が失敗したときは、記録だけを無し（null）にして、レビューは使う。投稿する文字列からは、読めたかどうかに関わらず、
+    // 記録のブロックを常に取り除く（エージェントの答えから作る本文・行へのコメント・リスク評価のすべて）
+    const reviewRecord =
+      step === "review"
+        ? await this.reviewRecordOf(latest, extracted.output, config.config)
+        : undefined;
+    const review = extractedReview ? withoutReviewRecord(extractedReview) : undefined;
     // 再現の工程は、申告された再現のテストを取り出す（PBI-29）
     const reproduction = step === "reproduce" ? extractReproduction(extracted.output) : undefined;
     // 文書作成の工程は、外部に直接作った・直したページ（成果物）の申告を取り出す（差し戻し・書き出しで同じページを使う）。
@@ -13027,6 +13527,8 @@ export class TaskService {
             ...(review ? { reviewComments: review.comments } : {}),
             // どのエージェントで、観点ごとの担当を何件起動したか（PBI-379）
             ...(reviewDispatch ? { reviewDispatch } : {}),
+            // 過程の記録（PBI-460）。ブロックを返さなかった実行には欄を作らない
+            ...(reviewRecord !== undefined ? { reviewRecord } : {}),
             ...(review?.verdict ? { reviewVerdict: review.verdict } : {}),
             // 判定が無い理由（PBI-378。レビューが付けなかったのか、付いていたのに読めなかったのか）
             ...(review?.verdictMissing ? { reviewVerdictMissing: review.verdictMissing } : {}),
@@ -13918,6 +14420,9 @@ export class TaskService {
       const head = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
       // 同じ PR を更新するか（開いていて、タスクブランチが進んでいない）、作り直すか
       const last = latestStepPullRequest(current, step);
+      // 直しを始めたときの承認待ちの PR（その PR のマージは、承認として扱う。PBI-462）
+      const reworkLast =
+        last && reworkingStepPullRequest(current)?.number === last.number ? last : undefined;
       let reuse: typeof last;
       let supersede: number | undefined;
       // 前回の作り直しで閉じた後、記録の前に止まっていた（もう閉じている）なら、閉じたものとして記録する
@@ -13933,28 +14438,69 @@ export class TaskService {
           else supersede = last.number;
         } else if (status.state === "closed") {
           superseded = last.number;
+        } else if (status.state === "merged") {
+          if (reworkLast) {
+            // 直しの間にマージされた：直しの結果は使わず、マージを承認として進める。新しいブランチ・PR は作らない
+            if (
+              (await this.endStepReworkInPublish(task.id, reworkLast, status, usedSecrets)) ===
+              "retry"
+            ) {
+              fail(message("pr.mergedDocumentUnreadable"));
+            }
+            return;
+          }
+          // 要求要件へ戻している間にマージされた設計の PR は、承認にせず、PR に知らせる（PBI-462）
+          if (current.sentBackFrom?.number === last.number) {
+            this.announceMergeNotApproved(current, {
+              repo: last.repo,
+              number: last.number,
+              step: current.sentBackFrom.step,
+            });
+          }
         }
       }
-      const attempt = current.stepPullRequests.filter((p) => p.step === step).length + 1;
-      const branch = reuse?.branch ?? `${taskBranch.branch}-${step}-${attempt}`;
       const path = stepDocumentPath(current, step);
       // 同じ PR を更新するときは、その PR のブランチの最新に積む（人がレビューの提案をコミットしていても、
       // 強制プッシュせずに積めるように）
       const parent = reuse
         ? await this.deps.repos.fetchBranch(gitDir, reuse.branch, authEnv)
         : head;
-      const { commit } = await this.deps.repos.commitFiles({
+      const commitInput = {
         gitDir,
         parent,
         files: { [path]: buildStepDocument(current, step) },
-        branch,
         // 題は、コミットの日時（成果を出した時刻）のときの題にする（再試行で同じコミットにする。PBI-323）
         message: `${await this.commitSubjectFor(current, "docs", buildStepPullRequestTitle({ ...current, title: this.titleAt(current, this.outputAt(current, step)) }, step))}\n\nsacty task ${current.id}`,
         date: this.outputAt(current, step),
         // 新しい PR には、内容が同じでもコミットが要る（差分のコミットが無いと PR を作れない）
         allowEmpty: !reuse,
         authEnv,
-      });
+      };
+      let branch: string;
+      let commit: string;
+      if (reuse) {
+        branch = reuse.branch;
+        ({ commit } = await this.deps.repos.commitFiles({ ...commitInput, branch }));
+      } else {
+        // 新しいブランチは、コミットを先に作り（プッシュしない）、記録済みの名前のコミットと比べて名前を決める：
+        // 記録したコミットが今回と違う名前だけ飛ばし、同じコミットなら、同じ名前へプッシュし直す（PBI-462）
+        let attempt = current.stepPullRequests.filter((p) => p.step === step).length + 1;
+        const made = await this.deps.repos.commitFiles({
+          ...commitInput,
+          branch: `${taskBranch.branch}-${step}-${attempt}`,
+          skipPush: true,
+        });
+        commit = made.commit;
+        const recorded = this.mustGet(task.id);
+        while (
+          recorded.stepBranches.includes(`${taskBranch.branch}-${step}-${attempt}`) &&
+          recorded.stepBranchCommits?.[`${taskBranch.branch}-${step}-${attempt}`] !== commit
+        ) {
+          attempt += 1;
+        }
+        branch = `${taskBranch.branch}-${step}-${attempt}`;
+        await this.deps.repos.pushCommit(gitDir, commit, branch, authEnv);
+      }
       // PR の作成の前に、プッシュしたブランチを記録する（PR の作成に失敗しても、中止で消せるように）
       if (!this.mustGet(task.id).stepBranches.includes(branch)) {
         current = this.append(this.mustGet(task.id), [
@@ -13973,6 +14519,31 @@ export class TaskService {
           console.warn(
             `[daemon] 前の PR #${supersede}（${last.repo}）を閉じられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
           );
+        }
+        // 直しの PR は、閉じた後に読み直す（閉じられなかったら、新しい PR を作らない。PBI-462）
+        if (reworkLast) {
+          const reread = await this.deps.pulls.status({
+            repo: last.repo,
+            token,
+            number: last.number,
+          });
+          if (reread.state === "merged") {
+            if (
+              (await this.endStepReworkInPublish(task.id, reworkLast, reread, usedSecrets)) ===
+              "retry"
+            ) {
+              fail(message("pr.mergedDocumentUnreadable"));
+            }
+            return;
+          }
+          if (reread.state === "closed") {
+            superseded = supersede;
+          } else {
+            // 開いたまま：前の PR が開いたまま新しい PR を作ると、人が前の PR をマージしても見守られない。一時停止にして、
+            // 再開すると、ここからやり直す（止まっている間にマージされれば、PR の確認が承認として進める）
+            fail(message("pr.supersededNotClosed", { number: supersede }));
+            return;
+          }
         }
       }
       // 更新する head に、sacty の AI のレビューが付いているか（PR の本文に書く。PBI-302 D1）
@@ -14018,6 +14589,24 @@ export class TaskService {
       // 本文をまとめる間に一時停止・中止を求められた・まとめたコンテナが止まったか確かめられなかったら、PR を更新しない
       // （同じ PR がすでにあるので、作った PR を記録し損ねることはない。再開すると、ここからやり直す）
       if (reuse && ("stop" in sent || this.stopRequested(task.id))) return;
+      // 同じ PR を更新する直前に、直しの PR の状態を読み直す。直しのコミットが先頭になる前にマージされていたら、更新せずに、
+      // マージを承認として進める（先頭が直しのコミットなら、これまでどおり記録して承認待ちにする。PBI-462）
+      if (reuse && reworkLast) {
+        const reread = await this.deps.pulls.status({
+          repo: reuse.repo,
+          token,
+          number: reuse.number,
+        });
+        if (reread.state === "merged" && reread.headSha !== commit) {
+          if (
+            (await this.endStepReworkInPublish(task.id, reworkLast, reread, usedSecrets)) ===
+            "retry"
+          ) {
+            fail(message("pr.mergedDocumentUnreadable"));
+          }
+          return;
+        }
+      }
       const pr = await this.deps.pulls.upsert({
         repo,
         token,
@@ -14069,6 +14658,36 @@ export class TaskService {
     } catch (error) {
       fail(message("pr.failed", { detail: errorText(error) }));
     }
+  }
+
+  /**
+   * publishStepPullRequest が、直しの PR がマージされたと分かったときの記録（PBI-462）。人が PR の中で直してからマージした
+   * なら人の版を読み（読めなければ retry で、何も記録しない）、ReworkStoppedByMerge・PullRequestMerged・StepApproved を
+   * 1 回の追記で記録して、PR に知らせる。
+   */
+  private async endStepReworkInPublish(
+    taskId: string,
+    pr: { number: number; commit: string },
+    status: Extract<PullRequestStatus, { state: "merged" }>,
+    usedSecrets: string[],
+  ): Promise<"recorded" | "skipped" | "retry"> {
+    let document: PullRequestMerge["document"];
+    if (status.headSha !== pr.commit) {
+      const read = await this.readMergedDocument(
+        this.mustGet(taskId),
+        pr.number,
+        status.mergeCommit ?? status.headSha,
+        usedSecrets,
+      );
+      if (read === "retry") return "retry";
+      document = read;
+    }
+    const recorded = this.endReworkByMerge(taskId, pr.number, status, {
+      stoppedRuns: [],
+      stage: "publishing",
+      ...(document ? { document } : {}),
+    });
+    return recorded ? "recorded" : "skipped";
   }
 
   /**
@@ -14358,6 +14977,8 @@ export class TaskService {
     if (!task.reviewVerdicts?.some((v) => v.round === previous.round && v.verdict)) {
       return undefined;
     }
+    // 前回の記録が無い・見られなかった所か止まった検証がある回は、絞らない（PBI-460。構造の欄だけで決める）
+    if (reviewRecordBlocksNarrowing(previous.record)) return undefined;
     if (isDocBeforeImplement(this.reviewReworkContext(task).reviewRework)) return undefined;
     if (previous.comments.some((c) => c.body.startsWith(MUST_TAG) && !isDocumentsOnly([c.path]))) {
       return undefined;
@@ -14454,6 +15075,11 @@ export class TaskService {
     if (previous.baseBranch !== target.baseBranch) return skip("PR の向き先が前回と変わりました");
     if (!task.reviewVerdicts?.some((v) => v.round === previous.round && v.verdict)) {
       return skip("前回の回に判定の記録がありません");
+    }
+    if (reviewRecordBlocksNarrowing(previous.record)) {
+      return skip(
+        "前回の回の記録が無い・読めなかったか、見られなかった所・止まった検証が記録されています",
+      );
     }
     if (task.reviewDispatch?.round === previous.round && task.reviewDispatch.subagents === 0) {
       return skip("前回の回は、観点ごとの担当を 1 件も起動していません（担当が 0 件と数えた）");
@@ -16744,6 +17370,21 @@ export class TaskService {
         );
       } else {
         cleanup.push({ target: "container", result: "skipped" });
+      }
+      // PR のマージ・クローズで止めたレビューの実行は、失敗に見せずに、停止を確かめた後に記録する（PBI-465。
+      // コンテナの停止を確かめられたかによらず記録する。止めた実行の費用を残すため）
+      if (
+        (reason === "pull_request_merged" || reason === "pull_request_closed") &&
+        this.reviewStopping.has(id)
+      ) {
+        const stopping = this.tasks.get(id);
+        if (stopping && this.recordableReviewStop(stopping)) {
+          this.recordReviewRunStopped(
+            stopping,
+            reason === "pull_request_merged" ? "merged" : "closed",
+            inflight ? [...inflight.runIds] : [],
+          );
+        }
       }
       // オーケストレーターのセッション（PBI-67）。実行と質問への答えが終わった後に消す
       const sessions = this.deps.orchestratorSessions;
@@ -19805,6 +20446,26 @@ export class TaskService {
       }
     }
     return failures;
+  }
+
+  /**
+   * レビューの答えの記録のブロックを読み、記録に残す形にする（PBI-460）。ブロックが無ければ undefined（欄を作らない）。
+   * 読めない・形が違う・上限を超える・伏せる処理が失敗したときは null。
+   */
+  private async reviewRecordOf(
+    task: Task,
+    output: string,
+    config: SactyConfig,
+  ): Promise<ReviewRecord | null | undefined> {
+    const raw = readReviewRecordBlock(output);
+    if (raw === undefined) return undefined;
+    if (raw === null) return null;
+    try {
+      const redact = await this.auditRedactor(task, config);
+      return checkReviewRecord(raw, redact);
+    } catch {
+      return null;
+    }
   }
 
   /**

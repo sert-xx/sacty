@@ -734,6 +734,59 @@ export const ChildScope = z.object({
 });
 export type ChildScope = z.infer<typeof ChildScope>;
 
+/** PR のレビューの記録（PBI-460）の、各欄の件数の上限と、文字列 1 件の長さの上限。 */
+export const REVIEW_RECORD_LIST_MAX = 100;
+export const REVIEW_RECORD_SHORT_LIST_MAX = 20;
+export const REVIEW_RECORD_TEXT_MAX = 500;
+
+/** レビューの記録の、観点ごとの扱い（PBI-460）。 */
+export const ReviewViewpointStatus = z.enum([
+  "launched",
+  "relaunched",
+  "failed",
+  "substituted",
+  "not_launched",
+]);
+export type ReviewViewpointStatus = z.infer<typeof ReviewViewpointStatus>;
+
+/** レビューの記録の、検証の経過の種類（PBI-460）。stopped は、止まって結果が出なかった検証。 */
+export const ReviewVerificationKind = z.enum(["ran", "reused", "stopped", "skipped"]);
+export type ReviewVerificationKind = z.infer<typeof ReviewVerificationKind>;
+
+/**
+ * PR のレビューの実行が、依頼した側（sacty）に返した、過程の記録（PBI-460）。PR には書かない情報（観点ごとの扱い・見られなかった
+ * 観点・採用しなかった指摘・落とした件数・検証の経過）を、sacty の記録に残して、画面と get_task で読めるようにする。
+ * 中身は、PR を読んだエージェントが書いた信頼しない入力で、秘密の値を伏せて 1 件 500 文字に切ったもの。
+ */
+export const ReviewRecord = z.object({
+  mode: z.enum(["subagents", "sequential"]).optional(),
+  viewpoints: z
+    .array(
+      z.object({ id: z.string(), status: ReviewViewpointStatus, reason: z.string().optional() }),
+    )
+    .max(REVIEW_RECORD_LIST_MAX),
+  notReviewed: z
+    .array(z.object({ id: z.string(), reason: z.string() }))
+    .max(REVIEW_RECORD_LIST_MAX),
+  dismissed: z
+    .array(z.object({ title: z.string(), viewpoint: z.string().optional(), reason: z.string() }))
+    .max(REVIEW_RECORD_LIST_MAX),
+  /** 落とした指摘の件数。must は、そのうち要修正の重さだった数。 */
+  dropped: z
+    .object({
+      overlapping: z.number().int().nonnegative(),
+      outOfScope: z.number().int().nonnegative(),
+      handled: z.number().int().nonnegative(),
+      must: z.number().int().nonnegative(),
+    })
+    .optional(),
+  scope: z.array(z.string()).max(REVIEW_RECORD_SHORT_LIST_MAX),
+  verification: z
+    .array(z.object({ kind: ReviewVerificationKind, text: z.string() }))
+    .max(REVIEW_RECORD_SHORT_LIST_MAX),
+});
+export type ReviewRecord = z.infer<typeof ReviewRecord>;
+
 /** 再レビューで参照する、前回投稿の凍結された内容。 */
 const PreviousReviewSnapshot = z.object({
   round: z.number().int().positive(),
@@ -748,6 +801,11 @@ const PreviousReviewSnapshot = z.object({
    */
   baseCommit: z.string().min(1).optional(),
   baseBranch: z.string().min(1).optional(),
+  /**
+   * その回のレビューの記録（PBI-460）。前回の回の記録が無い・読めなかった（null）・これより前の版には、欄が無い。
+   * 再レビューの指示のデータと get_task に出す。絞りの判断には、同じタスクの再レビューだけが使う。
+   */
+  record: ReviewRecord.nullable().optional(),
 });
 
 const TaskCreated = z.object({
@@ -1385,6 +1443,11 @@ const AgentRunCompleted = z.object({
      * レビューの工程が、観点ごとの担当を何件起動したか（PBI-379）。これより前の作業履歴と、レビューでない工程には無い。
      */
     reviewDispatch: ReviewDispatch.optional(),
+    /**
+     * レビューの実行が返した、過程の記録（PBI-460）。記録を返させた実行で、読めない・上限を超える・形が違う・秘密の値を伏せられない
+     * ときは null。これより前の作業履歴と、記録を返させない実行には欄が無い。
+     */
+    reviewRecord: ReviewRecord.nullable().optional(),
     /** PR のレビューの子タスクが示した、指摘の戻し先と原因（PBI-332）。読めなければ無い。 */
     reviewRework: ReviewRework.optional(),
     /** 再現の工程が申告した、不具合を再現するテスト（PBI-29）。 */
@@ -3213,8 +3276,13 @@ const PullRequestReopened = z.object({
 const ReworkStoppedByMerge = z.object({
   type: z.literal("ReworkStoppedByMerge"),
   payload: z.object({
-    /** マージされた実装の PR。 */
+    /** マージされた PR（step があれば、その工程の PR。無ければ実装の PR）。 */
     number: z.number().int().positive(),
+    /**
+     * 要求要件・設計の直し（自動の直しの間に、その工程の PR がマージされた。PBI-462）なら、その工程。無ければ実装の作り直し。
+     * 前の版は、この欄を読まずに捨てて実装の記録として投影し、整合性のエラーにする（前の版には戻せない）。
+     */
+    step: StepPullRequestKey.optional(),
     /**
      * 止めたときの作り直しの段階。queued：実行を待っていた。running：エージェントの実行中。verifying：最終レビュー
      * （とその前の PR の CI）の途中。publishing：PR の更新の待ち・途中。paused：一時停止していた。
@@ -3483,6 +3551,28 @@ const PullRequestReviewPosted = z.object({
 const ReviewWatchEnded = z.object({
   type: z.literal("ReviewWatchEnded"),
   payload: z.object({ reason: z.enum(["merged", "closed", "parent_completed"]) }),
+});
+
+/**
+ * 投稿していないレビュー（1 回目を含む）の実行を打ち切った（PBI-465）。head_changed：レビューしていた PR の先頭が変わった
+ * （古い先頭宛ての本文は投稿しない。先頭が落ち着いてから、新しい先頭で同じ回の番号のまま始め直す）。merged・closed：PR が
+ * マージ・クローズされたので止めた（続く TaskCancelled で中止する。失敗（AgentRunFailed・一時停止）には見せない）。
+ * from はレビューしていた先頭、to は新しい先頭（head_changed だけ）。runIds は止めた実行。費用の欄は、AgentRunCompleted を
+ * 記録していない実行の分だけ持つ（投稿の直前の打ち切りは、その費用を AgentRunCompleted で数え済みなので持たない）。
+ * 前の版のデーモンは、この記録を持つ作業履歴を読めない。
+ */
+const ReviewRunStopped = z.object({
+  type: z.literal("ReviewRunStopped"),
+  payload: z.object({
+    reason: z.enum(["head_changed", "merged", "closed"]),
+    from: z.string().min(1),
+    to: z.string().min(1).optional(),
+    runIds: z.array(z.string()).default([]),
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+    costUnknown: z.boolean().optional(),
+  }),
 });
 
 /**
@@ -4390,6 +4480,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReviewGitHubRetried,
   PullRequestReviewPosted,
   ReviewWatchEnded,
+  ReviewRunStopped,
   ReviewRestartHeld,
   ReviewRestarted,
   BranchPushed,

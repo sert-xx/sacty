@@ -447,6 +447,48 @@ const ja = {
     reviewUndispatched: (runs: number, paused: boolean) =>
       `観点ごとの担当を起動しなかったため、使わなかったレビューの実行：${runs}回（${paused ? "続いたため、止めています。再開すると、もう一度レビューします" : "担当を起動するよう、やり直します"}）`,
     reviewComments: (n: number) => `行へのコメント（${n}件）`,
+    reviewRecordTitle: "レビューの記録",
+    reviewRecordSep: "：",
+    reviewRecordRound: (round: number) => `${round}回目のレビュー`,
+    reviewRecordModeLabel: "観点の見方",
+    reviewRecordMode: (mode: "subagents" | "sequential"): string =>
+      mode === "subagents" ? "観点ごとの担当に分けて見た" : "逐次モードで見た",
+    reviewRecordViewpoints: "観点ごとの扱い",
+    reviewRecordStatus: (status: string): string =>
+      status === "launched"
+        ? "起動した"
+        : status === "relaunched"
+          ? "起動し直した"
+          : status === "failed"
+            ? "失敗した"
+            : status === "substituted"
+              ? "親が代わりに見た"
+              : status === "not_launched"
+                ? "起動しなかった"
+                : status,
+    reviewRecordNotReviewed: "見られなかった観点と理由",
+    reviewRecordDismissed: "採用しなかった指摘と理由",
+    reviewRecordDropped: "落とした指摘の件数",
+    reviewRecordDroppedCounts: (d: {
+      overlapping: number;
+      outOfScope: number;
+      handled: number;
+      must: number;
+    }) =>
+      `既存の指摘と重なる ${d.overlapping}件・目的の範囲の外 ${d.outOfScope}件・対応済み／却下済みと重なる ${d.handled}件（このうち、修正が必要な指摘 ${d.must}件）`,
+    reviewRecordScope: "絞ったこと・基準にしなかった指示",
+    reviewRecordVerification: "検証の経過",
+    reviewRecordVerificationKind: (kind: string): string =>
+      kind === "ran"
+        ? "実行した"
+        : kind === "reused"
+          ? "使い回した"
+          : kind === "stopped"
+            ? "止まった"
+            : kind === "skipped"
+              ? "実行しなかった"
+              : kind,
+    reviewRecordUnreadable: "この回の記録は、読めなかったため残っていません。",
   },
   /** 提出の前のセルフレビューの深さ（依頼の大きさの判定と、人の上書き。PBI-369）。 */
   selfReviewDepth: {
@@ -1102,6 +1144,43 @@ const en: TaskMessages = {
     reviewUndispatched: (runs, paused) =>
       `Review runs not used because they started no per-viewpoint reviewer: ${runs} (${paused ? "this kept happening, so the task is paused; resuming reviews again" : "the review is run again so that it starts them"})`,
     reviewComments: (n) => `Line comments (${n})`,
+    reviewRecordTitle: "Review record",
+    reviewRecordSep: ": ",
+    reviewRecordRound: (round) => `Review round ${round}`,
+    reviewRecordModeLabel: "How the viewpoints were reviewed",
+    reviewRecordMode: (mode) =>
+      mode === "subagents" ? "Split across per-viewpoint reviewers" : "Reviewed sequentially",
+    reviewRecordViewpoints: "Handling of each viewpoint",
+    reviewRecordStatus: (status) =>
+      status === "launched"
+        ? "started"
+        : status === "relaunched"
+          ? "restarted"
+          : status === "failed"
+            ? "failed"
+            : status === "substituted"
+              ? "reviewed by the parent instead"
+              : status === "not_launched"
+                ? "not started"
+                : status,
+    reviewRecordNotReviewed: "Viewpoints that could not be reviewed, and why",
+    reviewRecordDismissed: "Findings not adopted, and why",
+    reviewRecordDropped: "Findings dropped (counts)",
+    reviewRecordDroppedCounts: (d) =>
+      `overlapping existing findings: ${d.overlapping}; outside the PR's purpose: ${d.outOfScope}; overlapping handled/rejected findings: ${d.handled} (of these, findings that needed a fix: ${d.must})`,
+    reviewRecordScope: "Narrowing and instructions not used as a baseline",
+    reviewRecordVerification: "Verification progress",
+    reviewRecordVerificationKind: (kind) =>
+      kind === "ran"
+        ? "ran"
+        : kind === "reused"
+          ? "reused"
+          : kind === "stopped"
+            ? "stopped"
+            : kind === "skipped"
+              ? "skipped"
+              : kind,
+    reviewRecordUnreadable: "The record for this round could not be read, so none was kept.",
   },
   selfReviewDepth: {
     light: "Self-review depth: light. Fewer viewpoints are used.",

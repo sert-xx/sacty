@@ -24,6 +24,10 @@ const REASON: Record<string, string> = {
   budget: "予算の上限",
 };
 
+/** 担当を起動しないレビューが続いて止まったときの、理由の要点（PR に出す。中身の言葉の固定の文。PBI-460）。 */
+export const UNDISPATCHED_SUMMARY =
+  "レビューを繰り返しましたが、確かめた結果が得られず、投稿できませんでした";
+
 /** 理由の要点の長さの上限（文字数）。外から来た文（エージェントの出力・stderr など）を PR に載せるので短く切る。 */
 export const SUMMARY_MAX = 300;
 
@@ -33,6 +37,10 @@ export const SUMMARY_MAX = 300;
  */
 export function stopSummary(text: DaemonText | undefined, secrets: readonly string[]): string {
   if (text === undefined) return "";
+  // 観点ごとの担当を 1 件も起動しないレビューが続いたときは、過程の語を使わない固定の文にする（PBI-460）
+  if (typeof text === "object" && text.code === "review.notDispatchedPaused") {
+    return UNDISPATCHED_SUMMARY;
+  }
   const hidden = redact(renderMessage(redactText(text, secrets), "ja"), secrets);
   const oneLine = hidden.replace(/\s+/g, " ").trim();
   return oneLine.length > SUMMARY_MAX ? `${oneLine.slice(0, SUMMARY_MAX)}…` : oneLine;

@@ -221,6 +221,6 @@ export function buildRemarkReply(input: RemarkReplyInput): string {
     ...(input.status === "deferred" ? ["", DEFERRAL_PROPOSAL_NOTE] : []),
     "",
     "---",
-    `Sacty のタスク ${input.taskId} の${input.stepName}の工程で、AI が書きました${input.continued ? "" : `（指摘 ${input.remarkId} への対応）`}。`,
+    `Sacty の${input.stepName}の工程で、AI が書きました。`,
   ].join("\n");
 }

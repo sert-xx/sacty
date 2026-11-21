@@ -532,6 +532,8 @@ const PARAMS = {
   "pr.continuedBranchMoved": z.object({ branch: TextParam, number: z.number() }),
   "pr.continuedNotOpen": z.object({ number: z.number() }),
   "pr.failed": z.object({ detail: TextParam }),
+  "pr.mergedDocumentUnreadable": null,
+  "pr.supersededNotClosed": z.object({ number: z.number() }),
   "pr.headMergeFailed": z.object({ branch: TextParam, detail: TextParam }),
   "pr.headConflicted": z.object({ branch: TextParam }),
   "pr.bodyMergeUnavailable": z.object({ detail: TextParam }),
@@ -1540,6 +1542,10 @@ const ja: MessageDictionary = {
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `タスクブランチ ${text(branch)} に、Sacty が積んでいない変更があります（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}）。実装の作業領域には含まれていないので、このまま実装を積むと消えてしまうため、PR を出すのを止めました。タスクブランチからその変更を取り除いてから再開してください（変更が必要なら、PR の指摘として書くと、Sacty が実装に反映します）。`,
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
+  "pr.mergedDocumentUnreadable":
+    "PR がマージされましたが、マージされた文書をまだ読めませんでした。一時停止している間は、読めるまでやり直します。",
+  "pr.supersededNotClosed": ({ number }) =>
+    `PR #${number} を閉じられなかったので、新しい PR は作っていません。再開すると、閉じるところからやり直します。止まっている間に PR がマージされたときは、再開を待たずに承認として進みます。`,
   "pr.headMergeFailed": ({ branch, detail }, text) =>
     `人が PR のブランチ ${text(branch)} に足したコミットを、作業領域に取り込めませんでした：${text(detail)}`,
   "pr.headConflicted": ({ branch }, text) =>
@@ -2426,6 +2432,10 @@ const en: MessageDictionary = {
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `The task branch ${text(branch)} has changes that Sacty did not push (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}). They are not in the implementation workspace and would be removed by the implementation commit, so the PR was not published. Remove those changes from the task branch, then resume (if the change is needed, write it as a PR comment and Sacty will apply it in the implementation).`,
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
+  "pr.mergedDocumentUnreadable":
+    "The PR was merged, but the merged document could not be read yet. While paused, Sacty retries until it can be read.",
+  "pr.supersededNotClosed": ({ number }) =>
+    `PR #${number} could not be closed, so no new PR was created. Resuming retries from closing it. If the PR is merged while paused, it is treated as approved without waiting for a resume.`,
   "pr.headMergeFailed": ({ branch, detail }, text) =>
     `Could not merge the commits a person added to the PR branch ${text(branch)} into the workspace: ${text(detail)}`,
   "pr.headConflicted": ({ branch }, text) =>
