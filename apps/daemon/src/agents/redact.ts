@@ -15,6 +15,8 @@ const MIN_GUESSED_LENGTH = 8;
  */
 export type SecretMatcher = {
   targets: string[];
+  /** 節の数（根を含む）。 */
+  nodes: number;
   /** 節（0 が根）の最初の子の文字・節（0 は子なし） */
   firstCode: Uint16Array;
   firstChild: Int32Array;
@@ -43,6 +45,7 @@ export function compileSecrets(secrets: readonly string[]): SecretMatcher {
   for (const secret of targets) capacity += secret.length;
   const m: SecretMatcher = {
     targets,
+    nodes: 0,
     firstCode: new Uint16Array(capacity),
     firstChild: new Int32Array(capacity),
     more: new Map(),
@@ -70,6 +73,7 @@ export function compileSecrets(secrets: readonly string[]): SecretMatcher {
     }
     m.best[node] = secret.length;
   }
+  m.nodes = count;
   const queue = new Int32Array(count);
   let tail = 0;
   const link = (node: number, code: number, c: number) => {

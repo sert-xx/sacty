@@ -4,7 +4,7 @@
 - タスク: PBI-429
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: [PR のリスク評価は、レビューが指摘なしになった回だけにする](../adr/20261121-0300-risk-assessment-only-when-review-has-no-findings.md)
+- 関係する ADR: [PR のリスク評価は、レビューが指摘なしになった回だけにする](../adr/20261121-0300-superseded-risk-assessment-only-when-review-has-no-findings.md)
 
 ## 目的
 

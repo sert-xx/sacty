@@ -194,6 +194,24 @@ describe("監査のレポート（PBI-124）", () => {
     expect(md).not.toContain("モック");
   });
 
+  it("まとめて却下した提案も、レポートは今と同じ形で理由を出し、まとめての印は付けない（PBI-443）", () => {
+    const period = reportPeriod("2026-10-01", "2026-10-17");
+    if (!period) throw new Error("period");
+    const withBulk = {
+      ...data,
+      proposals: data.proposals.map((p) =>
+        p.decision?.kind === "rejected"
+          ? { ...p, decision: { ...p.decision, bulk: { id: "b1", count: 5 } } }
+          : p,
+      ),
+    };
+    const before = auditReport(data, "決済", period, messagesFor("ja"));
+    const after = auditReport(withBulk, "決済", period, messagesFor("ja"));
+    expect(after).toBe(before);
+    expect(after).toContain("- 却下の理由: 変えない");
+    expect(after).not.toContain("まとめて");
+  });
+
   it("表のセルのバックスラッシュと改行は、表を崩さないようにする", () => {
     const period = reportPeriod("2026-10-01", "2026-10-17");
     if (!period) throw new Error("period");

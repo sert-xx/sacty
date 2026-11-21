@@ -75,7 +75,7 @@ sacty は、複数のタスクを並行して進めます。\
 
 ![回すほど賢くなる](images/intro-loop.svg)
 
-![監査の画面。見つけた原因と、改修の提案](images/intro-audit.png)
+![監査の画面。原因を開いて、改修の提案を選んだところ](images/intro-audit.png)
 
 見方と操作は [監査](audit.md) にあります。
 

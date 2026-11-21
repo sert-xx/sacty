@@ -6,11 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 const adoptAuditProposal = vi.fn();
 const rejectAuditProposal = vi.fn();
+const rejectAuditProposals = vi.fn();
 const resumeAudit = vi.fn();
 const refresh = vi.fn();
 vi.mock("@/lib/daemon", () => ({
   adoptAuditProposal,
   rejectAuditProposal,
+  rejectAuditProposals,
   resumeAudit,
   CONTEXT_CHECK_PARAM: "contextCheck",
 }));
@@ -20,9 +22,12 @@ vi.mock("next/headers", () => ({
 }));
 vi.mock("next/cache", () => ({ refresh, revalidatePath: () => {} }));
 
-const { adoptAuditProposalAction, rejectAuditProposalAction, resumeAuditAction } = await import(
-  "./actions"
-);
+const {
+  adoptAuditProposalAction,
+  rejectAuditProposalAction,
+  rejectAuditProposalsAction,
+  resumeAuditAction,
+} = await import("./actions");
 
 const form = (values: Record<string, string>) => {
   const data = new FormData();
@@ -33,6 +38,7 @@ const form = (values: Record<string, string>) => {
 beforeEach(() => {
   adoptAuditProposal.mockReset();
   rejectAuditProposal.mockReset();
+  rejectAuditProposals.mockReset();
   resumeAudit.mockReset();
   refresh.mockReset();
 });
@@ -168,6 +174,80 @@ describe("予算で止まった監査の再開（PBI-124）", () => {
       capUsd: "3",
       message: expect.stringContaining("デーモン"),
     });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("提案のまとめての却下（PBI-443）", () => {
+  const bulkForm = (ids: string[], reason: string, projectId = "p1") => {
+    const data = new FormData();
+    data.set("projectId", projectId);
+    data.set("reason", reason);
+    for (const id of ids) data.append("proposalId", id);
+    return data;
+  };
+
+  it("選んだ提案の ID・プロジェクト・前後の空白を除いた理由をデーモンへ渡し、却下できたら画面を描き直して結果を返す", async () => {
+    rejectAuditProposals.mockResolvedValue({
+      ok: true,
+      rejectedIds: ["a", "b"],
+      failed: [{ proposalId: "c", message: "その提案は、すでに採用か却下をしています。" }],
+    });
+    const state = await rejectAuditProposalsAction({}, bulkForm(["a", "b", "c"], "  不要  "));
+    expect(rejectAuditProposals).toHaveBeenCalledWith("p1", ["a", "b", "c"], "不要");
+    expect(state).toEqual({
+      result: {
+        rejectedIds: ["a", "b"],
+        failed: [{ proposalId: "c", message: "その提案は、すでに採用か却下をしています。" }],
+      },
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("1 件も却下できなければ、描き直さずに、できなかった理由を返す", async () => {
+    rejectAuditProposals.mockResolvedValue({
+      ok: true,
+      rejectedIds: [],
+      failed: [{ proposalId: "a", message: "判断済み" }],
+    });
+    const state = await rejectAuditProposalsAction({}, bulkForm(["a"], "理由"));
+    expect(state.result?.rejectedIds).toEqual([]);
+    expect(state.result?.failed).toHaveLength(1);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("2,001 件・重複・空の選択・理由が空・理由が長すぎるときは、デーモンを呼ばずに理由と入力を返す", async () => {
+    const many = Array.from({ length: 2001 }, (_, i) => `x${i}`);
+    for (const data of [
+      bulkForm(many, "理由"),
+      bulkForm(["a", "a"], "理由"),
+      bulkForm([], "理由"),
+      bulkForm(["a"], "理由", ""),
+    ]) {
+      const state = await rejectAuditProposalsAction({}, data);
+      expect(state.message).toContain("選んだ提案を確かめてください");
+    }
+    expect(await rejectAuditProposalsAction({}, bulkForm(["a"], "   "))).toEqual({
+      message: "理由を入力してください。",
+      reason: "   ",
+    });
+    expect((await rejectAuditProposalsAction({}, bulkForm(["a"], "あ".repeat(2001)))).message).toBe(
+      "理由は 2000 文字までです。",
+    );
+    expect(rejectAuditProposals).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("デーモンの拒否・通信の失敗では、理由を残して返し、描き直さない", async () => {
+    rejectAuditProposals.mockResolvedValueOnce({ ok: false, message: "確かめてください" });
+    expect(await rejectAuditProposalsAction({}, bulkForm(["a"], "理由"))).toEqual({
+      message: "確かめてください",
+      reason: "理由",
+    });
+    rejectAuditProposals.mockRejectedValueOnce(new Error("down"));
+    const down = await rejectAuditProposalsAction({}, bulkForm(["a"], "理由"));
+    expect(down.reason).toBe("理由");
+    expect(down.message).toBeTruthy();
     expect(refresh).not.toHaveBeenCalled();
   });
 });

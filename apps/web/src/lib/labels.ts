@@ -889,7 +889,9 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "FinalReviewSkipped":
       return e.FinalReviewSkipped;
     case "PullRequestMarkedReady":
-      return e.PullRequestMarkedReady(event.payload.number);
+      return event.payload.reason === "suggestions_declined"
+        ? e.PullRequestMarkedReadyWithSuggestions(event.payload.number)
+        : e.PullRequestMarkedReady(event.payload.number);
     case "ContinuedFeedbackPassed":
       return e.ContinuedFeedbackPassed(event.payload.keys.length);
     case "WorkspaceFilesSkipped":
@@ -1336,7 +1338,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "AuditProposalAdopted":
       return e.AuditProposalAdopted(event.payload.fixTaskId !== undefined);
     case "AuditProposalRejected":
-      return e.AuditProposalRejected(event.payload.reason);
+      return e.AuditProposalRejected(event.payload.reason, event.payload.bulk?.count);
     case "AuditMemoryDeleted":
       return e.AuditMemoryDeleted(event.payload.reason);
   }

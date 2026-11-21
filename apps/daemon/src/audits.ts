@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type ActivityEvent,
   AdoptAuditProposalInput,
@@ -13,6 +14,8 @@ import {
   type AuditRow,
   type AuditTarget,
   auditRemarkCount,
+  BulkRejectAuditProposalsInput,
+  type DaemonMessage,
   isAuditTarget,
   isPendingAuditProposal,
   type ListedAuditProposal,
@@ -36,6 +39,12 @@ import { InvalidOperationError } from "./service.js";
  * （利用者の画面に偽の監査を出さないため）。
  */
 
+/** 提案のまとめての却下の結果（PBI-443）。一部の失敗も、エラーにせずに failed に入れる。 */
+export type BulkRejectResult = {
+  rejected: ListedAuditProposal[];
+  failed: { proposalId: string; messages: DaemonMessage[] }[];
+};
+
 /** 監査のデータと操作。server.ts はこの形だけを使う（PBI-125 で実装を差し替える）。 */
 export interface AuditService {
   /** タスクの監査。監査が無ければ null。 */
@@ -48,6 +57,8 @@ export interface AuditService {
   adopt(proposalId: string, input: unknown): ListedAuditProposal | Promise<ListedAuditProposal>;
   /** 提案を却下する（理由は必須。記録の前に秘密情報を伏せるので、待つことがある）。 */
   reject(proposalId: string, input: unknown): ListedAuditProposal | Promise<ListedAuditProposal>;
+  /** 提案をまとめて却下する（PBI-443）。入力の誤りだけがエラーで、提案ごとの失敗は結果の failed に入れる。 */
+  rejectMany(input: unknown): BulkRejectResult | Promise<BulkRejectResult>;
   /** 予算で一時停止した監査を、新しい上限（累計）で再開する。 */
   resume(taskId: string, input: unknown): TaskAudit | Promise<TaskAudit>;
   /** 監査が登録したメモリーを、人が消す（PBI-126）。メモリーを登録した監査を返す。 */
@@ -96,6 +107,17 @@ export class NoAuditService implements AuditService {
     RejectAuditProposalInput.parse(input);
     void proposalId;
     throw new InvalidOperationError(message("audit.proposalNotFound"));
+  }
+
+  rejectMany(input: unknown): BulkRejectResult {
+    const { proposalIds } = BulkRejectAuditProposalsInput.parse(input);
+    return {
+      rejected: [],
+      failed: proposalIds.map((proposalId) => ({
+        proposalId,
+        messages: [message("audit.proposalNotFound")],
+      })),
+    };
   }
 
   resume(taskId: string, input: unknown): TaskAudit {
@@ -736,6 +758,29 @@ export class MockAuditService implements AuditService {
     if (proposal.decision) throw new InvalidOperationError(message("audit.alreadyDecided"));
     this.decisions.set(proposalId, { kind: "rejected", at: new Date().toISOString(), reason });
     return this.findProposal(proposalId);
+  }
+
+  rejectMany(input: unknown): BulkRejectResult {
+    const { projectId, proposalIds, reason } = BulkRejectAuditProposalsInput.parse(input);
+    const known = new Map(
+      (this.projectAudits(projectId)?.proposals ?? []).map((p) => [p.id, p] as const),
+    );
+    const failed: BulkRejectResult["failed"] = [];
+    const ok: string[] = [];
+    for (const id of proposalIds) {
+      const proposal = known.get(id);
+      if (!proposal) failed.push({ proposalId: id, messages: [message("audit.proposalNotFound")] });
+      else if (proposal.decision) {
+        failed.push({ proposalId: id, messages: [message("audit.alreadyDecided")] });
+      } else ok.push(id);
+    }
+    const at = new Date().toISOString();
+    const bulk = { id: randomUUID(), count: ok.length };
+    for (const id of ok) this.decisions.set(id, { kind: "rejected", at, reason, bulk });
+    const after = new Map(
+      (this.projectAudits(projectId)?.proposals ?? []).map((p) => [p.id, p] as const),
+    );
+    return { rejected: ok.flatMap((id) => after.get(id) ?? []), failed };
   }
 
   /** モックの監査はメモリーを登録しない。 */

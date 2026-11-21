@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -128,6 +129,20 @@ function hashOf(path: string): string | undefined {
   }
 }
 
+/** ステージしたファイルが、読む大きさの上限を超えた。 */
+export class StagedFileTooLargeError extends Error {
+  constructor(name: string, maxBytes: number) {
+    super(`${name}: larger than ${maxBytes} bytes`);
+  }
+}
+
+/**
+ * 認証ファイルとして読む大きさの上限（バイト）。伏せる値は、ファイルの全体が1つの値になることがあり、
+ * コンテナの中のエージェントが、ステージしたファイルを任意の大きさに書き換えられる。本物の認証ファイルは数 KB なので、
+ * 余裕を持たせて決めた。超えたときは、値を伏せる対象から外さずに、実行を失敗にする。
+ */
+export const MAX_STAGED_SECRET_FILE_BYTES = 256 * 1024;
+
 /** ステージしたファイル（実行ごとの一時ディレクトリ dir の中の、相対パス name。区切りは /）。 */
 export type StagedFile = { dir: string; name: string };
 
@@ -137,7 +152,7 @@ export type StagedFile = { dir: string; name: string };
  * 待たずに開き、開いたものが通常のファイルであること、一時ディレクトリと途中のディレクトリがリンクでないこと
  * （開く前と後）を確かめる。違えば例外（ホストのほかのファイルの中身を読まない）。
  */
-export function readStagedFile(staged: StagedFile): Buffer {
+export function readStagedFile(staged: StagedFile, maxBytes?: number): Buffer {
   const assertRealDirs = () => {
     if (!lstatSync(staged.dir).isDirectory()) throw new Error(`${staged.dir}: not a directory`);
     assertRealParents(staged.dir, staged.name);
@@ -147,7 +162,17 @@ export function readStagedFile(staged: StagedFile): Buffer {
   try {
     if (!fstatSync(fd).isFile()) throw new Error(`${staged.name}: not a regular file`);
     assertRealDirs();
-    return readFileSync(fd);
+    if (maxBytes === undefined) return readFileSync(fd);
+    // 上限を超えるときは、超えた分を読まずに例外にする（読んでいる間に大きくなっても、上限 + 1 バイトまでしか読まない）
+    const buf = Buffer.alloc(Math.min(maxBytes + 1, fstatSync(fd).size + 1));
+    let filled = 0;
+    while (filled < buf.length) {
+      const n = readSync(fd, buf, filled, buf.length - filled, filled);
+      if (n === 0) break;
+      filled += n;
+    }
+    if (filled > maxBytes) throw new StagedFileTooLargeError(staged.name, maxBytes);
+    return buf.subarray(0, filled);
   } finally {
     closeSync(fd);
   }
@@ -435,12 +460,19 @@ export class DockerExecutor implements AgentExecutor {
     // ステージした認証ファイルの値（実行前と、コンテナで更新された後の両方）。出力から取り除く。
     const stagedFiles: StagedFile[] = [];
     const stagedSecrets: string[] = [];
+    /** 上限を超えた大きさだったファイル（値を伏せる対象にできないので、実行を失敗にする）。 */
+    let secretFileTooLarge: string | undefined;
     const collectSecrets = () => {
       for (const staged of stagedFiles) {
         try {
           // リンクを辿らずに読む（コンテナが差し替えたリンクの先や FIFO を読まない。PBI-71）
-          stagedSecrets.push(...secretStringsInJson(readStagedFile(staged).toString("utf8")));
-        } catch {
+          stagedSecrets.push(
+            ...secretStringsInJson(
+              readStagedFile(staged, MAX_STAGED_SECRET_FILE_BYTES).toString("utf8"),
+            ),
+          );
+        } catch (error) {
+          if (error instanceof StagedFileTooLargeError) secretFileTooLarge = staged.name;
           // 消えていれば・リンクなどに差し替えられていれば何もしない
         }
       }
@@ -489,6 +521,15 @@ export class DockerExecutor implements AgentExecutor {
         chmodSync(copied, 0o600);
       }
       collectSecrets();
+      if (secretFileTooLarge !== undefined) {
+        // 大きすぎて値を伏せる対象にできないものは、起動せずに失敗にする（伏せる対象から外さない）
+        rmSync(staging, { recursive: true, force: true });
+        return {
+          kind: "failed",
+          reason: "auth",
+          message: message("run.authFileUnreadable", { path: secretFileTooLarge }),
+        };
+      }
       mounts.push({
         hostPath: staging,
         containerPath: invocation.stage.containerDir,
@@ -676,6 +717,7 @@ export class DockerExecutor implements AgentExecutor {
       // ファイルをホストのほかのファイルへのリンクに差し替えられる。PBI-71）。書き戻さなかったことと理由は、デーモンの
       // ログに残す（値は出さない）
       for (const file of syncBacks) {
+        if (secretFileTooLarge !== undefined) continue; // 大きくされたファイルを、ホストの認証ファイルに書き戻さない
         if (!stopped) {
           console.warn(
             `[daemon] ${containerName} が止まったことを確かめられないため、${file.hostPath} への書き戻しをしませんでした。`,
@@ -720,6 +762,16 @@ export class DockerExecutor implements AgentExecutor {
           );
         }
       }
+    }
+    if (secretFileTooLarge !== undefined) {
+      // コンテナの中で大きくされた（値を伏せる対象にできない）。出力を返さず、失敗にする（使用量は残す）
+      return {
+        kind: "failed",
+        reason: "auth",
+        message: message("run.authFileUnreadable", { path: secretFileTooLarge }),
+        ...("usage" in outcome && outcome.usage ? { usage: outcome.usage } : {}),
+        ...("costUnknown" in outcome && outcome.costUnknown ? { costUnknown: true as const } : {}),
+      };
     }
     return outcome.kind === "failed"
       ? { ...outcome, message: redactText(outcome.message, stagedSecrets) }

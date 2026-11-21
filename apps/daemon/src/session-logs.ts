@@ -143,31 +143,42 @@ export class StreamRedactor {
   private pending = "";
   /** pending の先頭の、すでに `[REDACTED]` を渡したかたまりの中の文字数。 */
   private covered = 0;
-  /** 前回の値の集合と木（値が変わらない間は、木を使い回す）。 */
-  private compiled: { secrets: readonly string[]; matcher: SecretMatcher } | undefined;
+  /** 前回の値の集合と、そこから作った値の形・いちばん長い値の長さ・木（値が変わらない間は、作り直さず使い回す）。 */
+  private compiled:
+    | { secrets: readonly string[]; longest: number; matcher: SecretMatcher }
+    | undefined;
 
   constructor(private readonly secrets: () => readonly string[]) {}
 
-  private matcherFor(forms: readonly string[]): SecretMatcher {
+  /**
+   * 値の集合が前回と同じ（同じ文字列が同じ順）なら、値の形・木を作り直さない。長い値でも、1 回の `push` で
+   * 値のエスケープ・並べ替え・全体の比較をしないよう、要素は `===` で比べる（同じ文字列なら参照が同じで、長さによらない）。
+   */
+  private compiledFor(): NonNullable<typeof this.compiled> {
+    const secrets = this.secrets();
     const previous = this.compiled;
     if (
-      previous?.secrets.length === forms.length &&
-      previous.secrets.every((s, i) => s === forms[i])
+      previous?.secrets.length === secrets.length &&
+      previous.secrets.every((s, i) => s === secrets[i])
     )
-      return previous.matcher;
-    this.compiled = { secrets: forms, matcher: compileSecrets(forms) };
-    return this.compiled.matcher;
+      return previous;
+    const forms = secretForms(secrets);
+    this.compiled = {
+      secrets: [...secrets],
+      longest: forms[0]?.length ?? 0,
+      matcher: compileSecrets(forms),
+    };
+    return this.compiled;
   }
 
   push(text: string): string {
-    const forms = secretForms(this.secrets());
-    const longest = forms[0]?.length ?? 0;
+    const { longest, matcher } = this.compiledFor();
     const buf = this.pending + text;
     let cut = buf.length - Math.min(buf.length, Math.max(0, longest - 1));
     // サロゲートペア（絵文字・補助漢字）の途中で分けない（分けると、UTF-8 にするときに文字が壊れる）。
     // 持っておく分を1つ増やすので、持っておく長さは足りたまま
     if (cut > 0 && isHighSurrogate(buf.charCodeAt(cut - 1))) cut--;
-    const result = redactPartial(buf, this.matcherFor(forms), this.covered, cut);
+    const result = redactPartial(buf, matcher, this.covered, cut);
     this.pending = result.rest;
     this.covered = result.covered;
     return result.out;
@@ -177,7 +188,7 @@ export class StreamRedactor {
   peek(): string {
     return redactPartial(
       this.pending,
-      this.matcherFor(secretForms(this.secrets())),
+      this.compiledFor().matcher,
       this.covered,
       this.pending.length,
     ).out;

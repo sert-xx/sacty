@@ -1,6 +1,14 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderMessage } from "@sacty/core";
@@ -2694,6 +2702,79 @@ agents:
     expect(result.config.agentWarnings).toEqual([]);
     // 既定の工程の AI は、providers.codex があるので codex_standard のまま
     expect(result.config.defaultAgent.id).toBe("codex_standard");
+  });
+});
+
+describe("大きすぎる認証ファイルは、伏せる対象から外さず、実行を失敗にする（偽のdockerコマンド。PBI-444）", () => {
+  let dir: string;
+  const originalPath = process.env.PATH;
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function run(hostAuthContent: string, dockerScript: string) {
+    const { chmodSync } = await import("node:fs");
+    const { DockerExecutor } = await import("./docker.js");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "docker"), dockerScript);
+    chmodSync(join(bin, "docker"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const hostAuth = join(dir, "auth.json");
+    writeFileSync(hostAuth, hostAuthContent);
+    const outcome = await new DockerExecutor().run({
+      runId: "r-large-auth",
+      image: "img",
+      workspaceDir: dir,
+      invocation: {
+        command: ["codex"],
+        env: { CODEX_HOME: "/.codex" },
+        stage: { containerDir: "/.codex", files: [{ hostPath: hostAuth, name: "auth.json" }] },
+        parser: "codex-jsonl",
+      },
+    });
+    return { outcome, hostAuth };
+  }
+
+  const completes = `echo '{"type":"item.completed","item":{"type":"agent_message","text":"分析"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}'
+`;
+
+  it("起動の前に大きすぎれば、起動せずに失敗にする", async () => {
+    const { outcome } = await run(
+      "a".repeat(300 * 1024),
+      `#!/bin/sh\ntouch "$(dirname "$0")/started"\n${completes}`,
+    );
+    expect(outcome).toMatchObject({ kind: "failed", reason: "auth" });
+    expect(existsSync(join(dir, "bin", "started"))).toBe(false);
+  });
+
+  it("コンテナの中で大きくされたら、出力を返さず失敗にし、ホストの認証ファイルに書き戻さない", async () => {
+    const { outcome, hostAuth } = await run(
+      '{"token":"host-token-value-0123456789"}',
+      `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in *:/.codex) host="\${arg%%:*}" ;; esac
+done
+head -c 300000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
+${completes}`,
+    );
+    expect(outcome).toMatchObject({ kind: "failed", reason: "auth" });
+    expect(outcome).not.toHaveProperty("output");
+    expect(readFileSync(hostAuth, "utf8")).toBe('{"token":"host-token-value-0123456789"}');
+  });
+
+  it("上限以下の非 JSON の認証ファイルは、今までどおり伏せる対象になる", async () => {
+    const { outcome } = await run(
+      "plain-text-credential-0123456789",
+      `#!/bin/sh
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"key plain-text-credential-0123456789"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+    );
+    expect(outcome).toMatchObject({ kind: "completed", output: "key [REDACTED]" });
   });
 });
 

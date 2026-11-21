@@ -6477,6 +6477,8 @@ function reworkDecisionLines(own: string): string[] {
 /** 選り分けの指示に載せる、前の回の指摘・対応しないとした提案の件数と、1 件の文の長さの上限。 */
 const TRIAGE_HISTORY_MAX = 30;
 const TRIAGE_ITEM_IN_PROMPT = 600;
+/** 今回の提案・要修正の 1 件の文の上限。「問題・起きる条件・実害・直し方」が判断の材料から落ちないようにする（PBI-440）。 */
+const TRIAGE_CURRENT_ITEM_IN_PROMPT = 2_000;
 
 /** 選り分けの判断の材料（PBI-436）。 */
 export type TriageInput = {
@@ -6505,6 +6507,7 @@ export function buildTriagePrompt(task: Task, input: TriageInput): string {
       task.approved[step]?.output ?? "",
     ]);
   const cut = (v: string) => cutHead(hideItem(v), TRIAGE_ITEM_IN_PROMPT);
+  const cutCurrent = (v: string) => cutHead(hideItem(v), TRIAGE_CURRENT_ITEM_IN_PROMPT);
   const history = task.remarks
     .filter((r) => r.step === "implement" && !r.voided)
     .slice(-TRIAGE_HISTORY_MAX)
@@ -6527,8 +6530,8 @@ export function buildTriagePrompt(task: Task, input: TriageInput): string {
   }));
   const data = {
     review: { round: input.round, suggestionOnlyRounds: input.suggestionRounds },
-    suggestions: input.suggestions.map((u) => ({ id: u.id, text: cut(u.text).text })),
-    mustFix: input.musts.map((u) => ({ id: u.id, text: cut(u.text).text })),
+    suggestions: input.suggestions.map((u) => ({ id: u.id, text: cutCurrent(u.text).text })),
+    mustFix: input.musts.map((u) => ({ id: u.id, text: cutCurrent(u.text).text })),
     previousFindings: history,
     previouslyDeclined: declined,
     ...(input.pullRequestBody

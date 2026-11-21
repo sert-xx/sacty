@@ -194,6 +194,26 @@ describe("PR を作ったタスクの詳細に、レビューの子タスクの�
     expect(view(task, [child(risk(NEW_HEAD))])).not.toContain('data-testid="risk-stale"');
   });
 
+  it("残った提案をすべて対応しないとした回の評価（親が持つ）は、評価したコミットつきで出し、子タスクの前の先頭の評価より新しければそちらを出す。子タスクの評価の方が新しければ、子タスクの評価を出す", () => {
+    const declined = (commit: string, at: string) => ({
+      ...risk(commit, "medium", "suggestions_declined"),
+      at,
+    });
+    const task = parent({
+      pullRequest: { number: 7, commit: HEAD, reviewedCommit: NEW_HEAD },
+      riskAssessment: declined(NEW_HEAD, "2026-11-21T00:00:02Z"),
+    });
+    const older = child({ ...risk(HEAD), at: "2026-11-21T00:00:01Z" });
+    const html = view(task, [older]);
+    expect(html).toContain(">中<");
+    expect(html).toContain("評価したコミット 2222222");
+    expect(html).toContain("残った提案をすべて対応しないとした回に、ドラフトを外す前に評価");
+    expect(html).not.toContain('data-testid="risk-stale"');
+    expect(riskAssessmentToShow(task, [older])?.current).toBe(true);
+    const newer = child({ ...risk(HEAD, "low"), at: "2026-11-21T00:00:03Z" });
+    expect(riskAssessmentToShow(task, [newer])?.risk.assessment?.level).toBe("low");
+  });
+
   it("評価できなかったときは、そのことと理由を出す", () => {
     const html = view(parent(), [
       child({ via: "review", commit: HEAD, reason: { code: "pr.riskUnreadable" }, at: "x" }),
