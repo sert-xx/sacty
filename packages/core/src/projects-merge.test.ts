@@ -9,7 +9,11 @@ const repo = (name: string, image?: string) => ({
   ...(image ? { image } : {}),
 });
 const def = (names: string[], extra: Partial<ProjectDefinition> = {}): ProjectDefinition =>
-  ({ name: "決済", targets: names.map((n) => repo(n)), ...extra }) as ProjectDefinition;
+  ({
+    name: "決済",
+    targets: names.map((n) => repo(n)),
+    ...extra,
+  }) as ProjectDefinition;
 const names = (d: ProjectDefinition | undefined) =>
   d?.targets.map((t) => t.target.split("/").pop());
 
@@ -36,7 +40,10 @@ describe("mergeProjectDefinitions", () => {
       "b",
     ]);
     // 大文字小文字だけ違う URL は同じ対象だが、内容が違うので併合できない（どちらを採るか決められない）
-    const upper = { ...def(["a"]), targets: [repo("a"), repo("B")] } as ProjectDefinition;
+    const upper = {
+      ...def(["a"]),
+      targets: [repo("a"), repo("B")],
+    } as ProjectDefinition;
     expect(mergeProjectDefinitions(base, def(["a", "b"]), upper)).toBeUndefined();
   });
 
@@ -50,9 +57,15 @@ describe("mergeProjectDefinitions", () => {
       "a",
       "c",
     ]);
-    const changed = { ...three, targets: [repo("a"), repo("b", "node"), repo("c")] };
+    const changed = {
+      ...three,
+      targets: [repo("a"), repo("b", "node"), repo("c")],
+    };
     expect(mergeProjectDefinitions(three, changed, def(["a", "c"]))).toBeUndefined();
-    const other = { ...three, targets: [repo("a"), repo("b", "python"), repo("c")] };
+    const other = {
+      ...three,
+      targets: [repo("a"), repo("b", "python"), repo("c")],
+    };
     expect(mergeProjectDefinitions(three, changed, other)).toBeUndefined();
     // 片方だけが変えた対象は、その変更を採る
     expect(mergeProjectDefinitions(three, changed, three)?.targets[1]).toMatchObject({
@@ -77,9 +90,14 @@ describe("mergeProjectDefinitions", () => {
       mergeProjectDefinitions(base, named, { ...def(["a"]), name: "別の名前" }),
     ).toBeUndefined();
     // 同じに変えたなら併合できる
-    expect(mergeProjectDefinitions(base, named, { ...named })).toMatchObject({ name: "改名" });
+    expect(mergeProjectDefinitions(base, named, { ...named })).toMatchObject({
+      name: "改名",
+    });
     // 任意の項目
-    const withContext = { ...def(["a"]), context: { repo: "https://github.com/acme/ctx" } };
+    const withContext = {
+      ...def(["a"]),
+      context: { repo: "https://github.com/acme/ctx" },
+    };
     expect(mergeProjectDefinitions(base, base, withContext)?.context).toEqual(withContext.context);
     expect(mergeProjectDefinitions(base, withContext, base)?.context).toEqual(withContext.context);
     // 後続に回す指摘の扱いの既定（PBI-370）
@@ -91,7 +109,10 @@ describe("mergeProjectDefinitions", () => {
       "issue",
     );
     expect(
-      mergeProjectDefinitions(base, handling, { ...def(["a"]), deferralHandling: "task" as const }),
+      mergeProjectDefinitions(base, handling, {
+        ...def(["a"]),
+        deferralHandling: "task" as const,
+      }),
     ).toBeUndefined();
     const accounts = { ...def(["a"]), githubAccounts: { "github.com": "me" } };
     expect(mergeProjectDefinitions(base, accounts, base)?.githubAccounts).toEqual({

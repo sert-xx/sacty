@@ -15,10 +15,10 @@ GitHub のタイムラインの切り替えは、actor が PR の作者・sacty�
 ## 決定
 
 - 人が GitHub でドラフトを外した PR は、一時停止に伴う戻し（`settlePausedDraft`）のほかは、sacty がドラフトへ戻さない。直しの提出・PR の確認・レビューの回の始め・外す間の変化・重ねた PR の付け替えのどれでも、人がコミットを足した後も同じにする。
-- 戻す前に、GitHub の最後のドラフトの切り替え（`ReadyForReviewEvent`・`ConvertToDraftEvent`）を読み、最後の外しのイベント ID が、sacty が記録した外しの ID と合うときだけ戻す。
+- 戻す前に、GitHub の最後のドラフトの切り替え（`ReadyForReviewEvent`・`ConvertToDraftEvent`）を読み、切り替えが1件も無い PR と、最後の外しのイベント ID が sacty の記録した外しの ID と合う PR は戻す。それ以外（人が外した・読めない・決められない）は戻さない。
   sacty の外しは、外す要求（`markPullRequestReadyForReview`）の答えの `ReadyForReviewEvent` の ID を、作業履歴（`PullRequestUndraftNoted`）に記録して覚える。再起動で消えない。
 - 戻さなかったことは `PullRequestRedraftSkipped`（理由 `person`・`unreadable`・`undetermined`）で作業履歴に残す。重複は作業履歴から決める（外し1回につき1件・読めない間に1件・決められない PR につき1件）。
-- 切り替えの履歴を読めない（`unreadable`）・最後の切り替えが sacty のものか決められない（`undetermined`）ときも、戻さない側に倒す。決められないのは、前の版が外した PR（外しの ID の記録が無い）と、外す要求の答えから今回の外しの ID を決められなかったとき。
+- 切り替えの履歴を読めない（`unreadable`）・最後の切り替えが sacty のものか決められない（`undetermined`）ときも、戻さない側に倒す。決められないのは、前の版が外した PR（外しの ID の記録が無く、`undraftTracked` の無い `PullRequestMarkedReady` などがある）と、外す要求の答えから今回の外しの ID を決められなかったとき。
 - 重ねた PR に直しを提出するときは、判定で戻さない PR を、`pr.stackDraftFailed` で止めずに進める。
 - 戻さなかった PR のレビューの回は、今のまま続ける（台帳では「指摘なし」を待つ状態のまま）。マージは今も承認として進む。
 - 新しい 2 種類のイベントを記録した後は、前の版のデーモンへ切り戻せなくなる。互換の層は作らない。不具合は前の版へ戻さず、直した版を出して直す。

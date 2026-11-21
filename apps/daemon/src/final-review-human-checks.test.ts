@@ -75,7 +75,7 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
       }),
     } as Partial<Task>);
     expect(buildPullRequestBody(reused)).toContain(
-      "→ 合格（ゴールガーディアンは実行せず、同じ内容の PR の CI の結果を使い回した。終了コード 0）",
+      "→ 合格（AI の確かめでは実行せず、同じ内容の PR の CI の結果を使い回した。終了コード 0）",
     );
   });
 
@@ -90,7 +90,7 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     const body = buildPullRequestBody(reviewed);
     expect(body).toContain(checklist);
     expect(body).toContain(
-      "→ 合格（ゴールガーディアンが実行。終了コード 1。終了コードは 0 でないが、失敗は環境によるものだけと判断して合格にした。下の「人が確かめること」）",
+      "→ 合格（AI の確かめで実行。終了コード 1。終了コードは 0 でないが、失敗は環境によるものだけと判断して合格にした。下の「人が確かめること」）",
     );
     // 長さの上限で省かれない footer の、承認の案内の前に置く（PR #215 レビュー指摘）
     const parts = buildPullRequestBodyParts(reviewed);
@@ -114,7 +114,7 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
       } as Partial<Task>),
     );
     expect(plain).not.toContain("人が確かめること");
-    expect(plain).toContain("→ 合格（ゴールガーディアンが実行。終了コード 0）");
+    expect(plain).toContain("→ 合格（AI の確かめで実行。終了コード 0）");
   });
 
   it("実装のやり直しに、環境によると判断した失敗を、直す対象ではないと伝える", () => {
@@ -289,8 +289,8 @@ describe("人がゴールガーディアンの不合格のままレビューへ�
     for (const b of [text, filled]) {
       const { body, truncated } = limitBody(b.main, b.footer, PR_BODY_MAX, b.keep);
       expect(truncated).toBe(true);
-      expect(body).toContain("人が、ゴールガーディアンの不合格のまま、レビューへ進めました。");
-      expect(body).toContain("- 不合格の観点：REQ");
+      expect(body).toContain("人が、AI の確かめの不合格のまま、PR を出すと決めました。");
+      expect(body).not.toContain("不合格の観点");
       expect(body).toContain("- 最終レビューの所見：エラーの文言が要求要件と違う");
     }
   });

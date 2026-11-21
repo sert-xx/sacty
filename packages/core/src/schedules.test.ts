@@ -33,14 +33,22 @@ describe("スケジュールタスクの予定の時刻", () => {
   });
 
   it("毎週：選んだ曜日だけ（2026-10-25 は日曜）", () => {
-    const rule = ScheduleRule.parse({ kind: "weekly", time: "18:30", days: [3, 1, 1] });
+    const rule = ScheduleRule.parse({
+      kind: "weekly",
+      time: "18:30",
+      days: [3, 1, 1],
+    });
     expect(rule).toMatchObject({ days: [1, 3] });
     expect(latestScheduleSlot(rule, at(2026, 10, 25, 12))).toEqual(at(2026, 10, 21, 18, 30));
     expect(nextScheduleSlot(rule, at(2026, 10, 25, 12))).toEqual(at(2026, 10, 26, 18, 30));
   });
 
   it("毎月：その月に無い日は、月の最後の日", () => {
-    const rule = ScheduleRule.parse({ kind: "monthly", time: "07:00", day: 31 });
+    const rule = ScheduleRule.parse({
+      kind: "monthly",
+      time: "07:00",
+      day: 31,
+    });
     expect(nextScheduleSlot(rule, at(2026, 11, 1))).toEqual(at(2026, 11, 30, 7));
     expect(nextScheduleSlot(rule, at(2027, 2, 1))).toEqual(at(2027, 2, 28, 7));
     expect(latestScheduleSlot(rule, at(2026, 11, 15))).toEqual(at(2026, 10, 31, 7));
@@ -52,7 +60,10 @@ describe("スケジュールタスクの予定の時刻", () => {
     const now = at(2026, 10, 25, 12);
     const due = dueScheduleSlot(s, now);
     expect(due).toEqual(at(2026, 10, 25, 9));
-    const done = { ...s, lastRun: { slot: due?.toISOString() ?? "", at: now.toISOString() } };
+    const done = {
+      ...s,
+      lastRun: { slot: due?.toISOString() ?? "", at: now.toISOString() },
+    };
     expect(dueScheduleSlot(done, at(2026, 10, 25, 23))).toBeUndefined();
     expect(dueScheduleSlot(done, at(2026, 10, 26, 9))).toEqual(at(2026, 10, 26, 9));
   });
@@ -79,7 +90,12 @@ describe("スケジュールタスクの入力", () => {
           repo: "https://github.com/a/b",
         },
       }).task,
-    ).toEqual({ template: "sacty-setup", title: "", body: "", repo: "https://github.com/a/b" });
+    ).toEqual({
+      template: "sacty-setup",
+      title: "",
+      body: "",
+      repo: "https://github.com/a/b",
+    });
   });
 
   it("時刻・曜日・日の誤りを断る", () => {

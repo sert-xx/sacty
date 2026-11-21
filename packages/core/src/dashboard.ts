@@ -10,7 +10,11 @@ import { isFinished, type Task } from "./projection.js";
  */
 
 /** 完了・中止の件数と、完了したタスクの作成から完了までの時間の中央値（完了が無ければ null）。 */
-export type FlowSum = { completed: number; cancelled: number; medianLeadMs: number | null };
+export type FlowSum = {
+  completed: number;
+  cancelled: number;
+  medianLeadMs: number | null;
+};
 
 /** 品質の信号の種類（直近 30 日の回数）。 */
 export type QualityKind =
@@ -128,7 +132,12 @@ const KEEP_DAYS = 32;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 type CostEntry = { at: number; projectId: string; usd: number };
-type FinishEntry = { at: number; projectId: string; cancelled: boolean; leadMs: number };
+type FinishEntry = {
+  at: number;
+  projectId: string;
+  cancelled: boolean;
+  leadMs: number;
+};
 type QualityEntry = {
   at: number;
   projectId: string;
@@ -202,11 +211,19 @@ export class DashboardStats {
         break;
       }
       case "GuardianMissed":
-        this.quality.push({ at, projectId: event.projectId, kind: "guardianMissed" });
+        this.quality.push({
+          at,
+          projectId: event.projectId,
+          kind: "guardianMissed",
+        });
         break;
       case "IntegrationReviewed":
         if (!event.payload.passed) {
-          this.quality.push({ at, projectId: event.projectId, kind: "integrationFailed" });
+          this.quality.push({
+            at,
+            projectId: event.projectId,
+            kind: "integrationFailed",
+          });
         }
         break;
       case "DeploymentFixRegistered":

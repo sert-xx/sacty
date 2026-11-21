@@ -140,7 +140,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(body).toContain(
       "テスト：テストの仕組みが無いリポジトリとして進めたため、テストでは検証していません。",
     );
-    expect(body).toContain(`テストの仕組みが無いと判断した根拠（オーケストレーター）：${NO_TESTS}`);
+    expect(body).toContain(`テストの仕組みが無いと判断した根拠：${NO_TESTS}`);
     expect(body).toContain("（テストなし。目的から確認）");
     // 人の承認は今どおり要る
     expect(isCompleted(task)).toBe(false);

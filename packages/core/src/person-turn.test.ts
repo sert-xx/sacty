@@ -51,8 +51,17 @@ describe("人の出番の並び（PBI-442）", () => {
       task({ id: "d-a", status: "awaiting_approval", updatedAt: at(8) }),
       // 記録の無い 1 件は updatedAt で並ぶ
       task({ id: "d-none", status: "awaiting_approval", updatedAt: at(3) }),
-      task({ id: "gone", status: "paused", projectId: "gone", updatedAt: at(1) }),
-      task({ id: "judging", status: "awaiting_approval", pendingReview: pending }),
+      task({
+        id: "gone",
+        status: "paused",
+        projectId: "gone",
+        updatedAt: at(1),
+      }),
+      task({
+        id: "judging",
+        status: "awaiting_approval",
+        pendingReview: pending,
+      }),
       task({ id: "running", status: "running" }),
     ];
     const waitingSince = {
@@ -94,7 +103,10 @@ describe("人の出番の並び（PBI-442）", () => {
   it("0 件・片方の組だけ", () => {
     expect(personTurnTasks([], { projectIds, waitingSince: {} })).toEqual([]);
     expect(
-      personTurnTasks([task({ id: "r", status: "running" })], { projectIds, waitingSince: {} }),
+      personTurnTasks([task({ id: "r", status: "running" })], {
+        projectIds,
+        waitingSince: {},
+      }),
     ).toEqual([]);
     expect(
       personTurnTasks([task({ id: "only", status: "paused" })], {

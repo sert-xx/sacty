@@ -30,7 +30,11 @@ export const TargetImageName = z.preprocess(
 
 export const ProjectTarget = z.discriminatedUnion("scope", [
   z.object({ scope: z.literal("org"), target: OrgUrl, image: TargetImageName }),
-  z.object({ scope: z.literal("repo"), target: RepoUrl, image: TargetImageName }),
+  z.object({
+    scope: z.literal("repo"),
+    target: RepoUrl,
+    image: TargetImageName,
+  }),
 ]);
 export type ProjectTarget = z.infer<typeof ProjectTarget>;
 
@@ -409,7 +413,11 @@ export const ProjectDefinition = z.object({
 export type ProjectDefinition = z.infer<typeof ProjectDefinition>;
 export type ProjectDefinitionInput = z.input<typeof ProjectDefinition>;
 
-export type Project = ProjectDefinition & { id: string; createdAt: string; updatedAt: string };
+export type Project = ProjectDefinition & {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+};
 
 /** 対象の URL のホスト。 */
 export function targetHost(target: ProjectTarget): string {
@@ -443,7 +451,10 @@ export function projectConflicts(
     const key = `${target.scope}:${target.target.toLowerCase()}`;
     if (seen.has(key)) {
       problems.push(
-        message("project.targetDuplicated", { scope: target.scope, target: target.target }),
+        message("project.targetDuplicated", {
+          scope: target.scope,
+          target: target.target,
+        }),
       );
       continue;
     }
@@ -467,7 +478,12 @@ export function projectConflicts(
     for (const key of source.keys) {
       const id = `${source.platform}\u0000${key}`;
       if (seenKeys.has(id)) {
-        problems.push(message("project.ticketKeyDuplicated", { platform: source.platform, key }));
+        problems.push(
+          message("project.ticketKeyDuplicated", {
+            platform: source.platform,
+            key,
+          }),
+        );
         continue;
       }
       seenKeys.add(id);
@@ -628,8 +644,16 @@ export function exportProject(project: Project): ProjectExport {
       // 対象ごとのイメージの指定（PBI-41）も含める
       targets: project.targets.map((t) =>
         t.scope === "org"
-          ? { scope: "org" as const, target: t.target, ...(t.image ? { image: t.image } : {}) }
-          : { scope: "repo" as const, target: t.target, ...(t.image ? { image: t.image } : {}) },
+          ? {
+              scope: "org" as const,
+              target: t.target,
+              ...(t.image ? { image: t.image } : {}),
+            }
+          : {
+              scope: "repo" as const,
+              target: t.target,
+              ...(t.image ? { image: t.image } : {}),
+            },
       ),
       ...(project.context
         ? {

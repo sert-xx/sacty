@@ -21,7 +21,10 @@ describe("タスクの予算に入れる費用を持つイベント（PBI-86）"
       usedUsd: 0.100001,
       estimated: true,
     });
-    const other = { type: "StepSubmitted", payload: { step: "design" } } as ActivityEvent;
+    const other = {
+      type: "StepSubmitted",
+      payload: { step: "design" },
+    } as ActivityEvent;
     expect(chargeBudget(budget, other)).toBe(budget);
     expect(addUsd(0.1, 0.2)).toBe(0.3);
   });
@@ -31,7 +34,13 @@ describe("タスクの予算に入れる費用を持つイベント（PBI-86）"
     const triaged = (runResult: string, costUsd: number) =>
       ({
         type: "SuggestionsTriaged",
-        payload: { items: [], dropped: [], runResult, costUsd, estimated: false },
+        payload: {
+          items: [],
+          dropped: [],
+          runResult,
+          costUsd,
+          estimated: false,
+        },
       }) as unknown as ActivityEvent;
     const done = chargeBudget(budget, triaged("completed", 0.3));
     expect(done.usedUsd).toBe(0.4);

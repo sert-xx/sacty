@@ -66,7 +66,7 @@
   - PR のプッシュのやり直し（PBI-467）：`PushRetried`（`branch`・`commit`・`attempt`・`maxAttempts`・`waitMs`・`message`（失敗の文。秘密の値は伏せたもの））と `PushRetryEnded`（`branch`・`commit`・`outcome`（`pushed` か `failed`）・`retries`）。どちらも記録だけで状態は変えない。前の版は、この 2 種を `EventInput` の検査で読めず、起動できない（一度記録したら、前の版に戻せない）。
     - 前の版に戻せるのは、どちらかを記録する前まで。戻す前に、作業履歴の `activity` の表に、`type` が `PushRetried` か `PushRetryEnded` の行が無いことを確かめる。
     - 戻して起動できなければ、この変更の版へ進め直す。
-  - ドラフトの切り替えの記録（PBI-468）：`PullRequestUndraftNoted`（`number`・`eventId`。sacty が外した切り替えの GitHub のイベント ID。`eventId` が無いのは、外す要求の答えから今回の外しの ID を決められなかったとき）と `PullRequestRedraftSkipped`（`number`・`reason`（`person`・`unreadable`・`undetermined`）・`eventId`（`person` だけ。人の外しの ID））。どちらも状態は `Task.draftTrail`（PR の番号ごと）にだけ持つ。判定と記録の重複の決まりは、[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)。
+  - ドラフトの切り替えの記録（PBI-468）：`PullRequestUndraftNoted`（`number`・`eventId`。sacty が外した切り替えの GitHub のイベント ID。`eventId` が無いのは、外す要求の答えから今回の外しの ID を決められなかったとき）と `PullRequestRedraftSkipped`（`number`・`reason`（`person`・`unreadable`・`undetermined`）・`eventId`（`person` だけ。人の外しの ID））。`PullRequestMarkedReady` と `ready` の `PullRequestRetargeted` には、外しを覚える版が書いたことを示す `undraftTracked` が付く（無い記録は前の版が外した）。状態は `Task.draftTrail`（PR の番号ごと）にだけ持つ。判定と記録の重複の決まりは、[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)。
     - 前の版は、この 2 種を `EventInput` の検査で読めず、起動できない（`activity.ts` の `toEvent`）。前の版に戻せるのは、どちらかを記録する前まで。互換の層は作らない。不具合は前の版へ戻さず、直した版を出して直す（[ADR](../adr/20261121-2022-do-not-redraft-pull-request-a-person-marked-ready.md)）。
   - `runResult` が `interrupted` のもの（判断を採用しなかった）は、費用だけを数え、状態を変えない。
   - `ReviewRejudgeRequested` の `reason: triaged`：選り分けで、差し戻す指摘が残らなかったので、実装を実行せずに判定し直しを求めた。承認待ちの実装の PR について、`SuggestionsTriaged` と同じ追記で記録する（`Task.reviewRejudge.reason`）。`reason` が無いものは、実装の提出の記録（PBI-357）。

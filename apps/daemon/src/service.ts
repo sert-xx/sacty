@@ -397,6 +397,7 @@ import {
   extractMergedPullRequestBody,
   mergePullRequestBody,
   normalizeNewlines,
+  withTaskMarker,
 } from "./pr-body-merge.js";
 import {
   fillTemplate,
@@ -463,6 +464,7 @@ import {
   extractStepPlan,
   extractStepReview,
   extractTicketTriage,
+  instructionTitle,
   integrationViewpointIds,
   investigationMarker,
   isDocBeforeImplement,
@@ -499,6 +501,7 @@ import {
   withoutWorkReport,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
+import { remarkLine } from "./remark-line.js";
 import {
   buildRemarkReply,
   remarkOriginRef,
@@ -579,7 +582,6 @@ import {
   splitSuggestions,
 } from "./suggestion-triage.js";
 import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
-import { taskLink } from "./task-link.js";
 import {
   type DeliverableKind,
   listDeliverables,
@@ -767,7 +769,10 @@ export type ContextPreviewView = Omit<ContextPreview, "platforms"> & {
 };
 
 /** すべての工程で使うと決まっているイメージ（再実行で人が指定した・プロジェクトの対象で指定した。PBI-41）。 */
-type PinnedImage = { name: string; source: "project" | "rerun" | "request" | "parent" };
+type PinnedImage = {
+  name: string;
+  source: "project" | "rerun" | "request" | "parent";
+};
 
 /**
  * 工程の選択で記録する、依頼の大きさの判定と理由（PBI-369）。セルフレビューをする工程（SELF_REVIEW_STEPS）が無い
@@ -785,7 +790,9 @@ export function selfReviewDepthOf(chosen: {
   if (chosen.selfReviewDepth === "light" && forced) {
     return {
       selfReviewDepth: "normal",
-      selfReviewDepthReason: message(forced, { reason: chosen.selfReviewDepthReason ?? "" }),
+      selfReviewDepthReason: message(forced, {
+        reason: chosen.selfReviewDepthReason ?? "",
+      }),
     };
   }
   return {
@@ -826,12 +833,21 @@ type ActivityItem = { actor: Actor; event: EventInput };
 type ReworkStage = Extract<EventInput, { type: "ReworkStoppedByMerge" }>["payload"]["was"];
 
 /** 情報収集のまとめと、読んで関係があると判断した情報源。 */
-export type GatheredInformation = { brief: string; sources: { title: string; url?: string }[] };
+export type GatheredInformation = {
+  brief: string;
+  sources: { title: string; url?: string }[];
+};
 
 /** 実行に渡すコンテキストと、置いた段階のサブエージェントの定義（PBI-119）。 */
-type RunContext = Awaited<ReturnType<typeof prepareContext>> & { tiers: PlacedTier[] };
+type RunContext = Awaited<ReturnType<typeof prepareContext>> & {
+  tiers: PlacedTier[];
+};
 
-export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: DaemonText };
+export type CleanupItem = {
+  target: CleanupTarget;
+  present: boolean;
+  detail?: DaemonText;
+};
 type CleanupResult = {
   target: CleanupTarget;
   result: "done" | "skipped" | "failed";
@@ -847,7 +863,10 @@ function serviceConnection(started: StartedServices): {
   forwards?: LocalForward[];
 } {
   const { forwards } = localForwards(started.services);
-  return { network: started.network, ...(forwards.length > 0 ? { forwards } : {}) };
+  return {
+    network: started.network,
+    ...(forwards.length > 0 ? { forwards } : {}),
+  };
 }
 
 /**
@@ -1059,7 +1078,11 @@ export type ServiceDeps = {
    * - maxMs：倍にしていく待ちの上限（既定は 1 時間。GitHub が示した待ちは、これを超えても、1 日までは守る）
    * - maxRetries：やり直しの回数の上限（既定は 5 回）。超えて制限に当たったら、失敗として記録する
    */
-  remarkReplyRateLimit?: { baseMs?: number; maxMs?: number; maxRetries?: number };
+  remarkReplyRateLimit?: {
+    baseMs?: number;
+    maxMs?: number;
+    maxRetries?: number;
+  };
   /**
    * Sacty のレビューのタスクが、GitHub の一時的な失敗（5xx・レート制限・接続の失敗）で止まりそうなとき、自動でやり直すまでの
    * 待ち時間（ミリ秒）の並び（PBI-301）。長さが、やり直しの回数の上限。既定は 15 秒・1 分・3 分・5 分の 4 回（計 9 分余り）。
@@ -1120,7 +1143,12 @@ export type DaemonStatus = {
   /** チケットの取り込み先に選べる接続先（gateway.platforms の名前。PBI-52）。 */
   platforms: string[];
   /** タスクの詳細で工程のエージェントに選べるもの（config.yaml の agents。PBI-121）。 */
-  agents: { id: string; runtime: string; model?: string; reasoningEffort?: string }[];
+  agents: {
+    id: string;
+    runtime: string;
+    model?: string;
+    reasoningEffort?: string;
+  }[];
   /** config.yaml で決まる、工程ごとのエージェントの名前（step_agents か default_agent。PBI-121）。 */
   stepAgents: Partial<Record<StepKey, string>>;
   /** sacty の新しい版（PBI-135）。最新・確かめられない・OFF なら無い。 */
@@ -1183,7 +1211,9 @@ export type ProjectView = {
  * 読み取り用の状態は作業履歴から復元したものを保持する。
  */
 /** 使った分の全体を読めなかった実行の印（イベントの costUnknown。読めたならイベントには持たせない。PBI-281）。 */
-function unknownCost(run: { costUnknown?: boolean | undefined }): { costUnknown?: true } {
+function unknownCost(run: { costUnknown?: boolean | undefined }): {
+  costUnknown?: true;
+} {
   return run.costUnknown ? { costUnknown: true } : {};
 }
 
@@ -1233,7 +1263,11 @@ type ExecuteRun = {
    */
   contextMcp?: readonly (GatewayMcpServer | HostedMcpRelay)[];
   /** 追加でマウントする、sacty が管理するディレクトリ（レビューの差分の全体。PBI-65）。 */
-  mounts?: readonly { hostPath: string; containerPath: string; readOnly: boolean }[];
+  mounts?: readonly {
+    hostPath: string;
+    containerPath: string;
+    readOnly: boolean;
+  }[];
   /**
    * タスクごとの依存のキャッシュを使う（PBI-319）。タスクのイメージで対象のリポジトリを扱う実行（工程・最終レビュー・
    * 統合レビュー）だけ。
@@ -1449,7 +1483,13 @@ export class TaskService {
    */
   private readonly pullRequestCiReads = new Map<
     string,
-    { head: string; reads: number; nextAt: number; since: number; settled: boolean }
+    {
+      head: string;
+      reads: number;
+      nextAt: number;
+      since: number;
+      settled: boolean;
+    }
   >();
   /**
    * sacty が実装の PR のドラフトを外した時刻（タスク → 時刻。PBI-381）。ここから PR_CI_SETTLE_MS の間は、CI に失敗が無くても
@@ -1649,7 +1689,11 @@ export class TaskService {
       const preparing = this.preparingOf(task.id);
       const aiReview = aiReviews.get(task.id);
       return preparing || aiReview
-        ? { ...task, ...(preparing ? { preparing } : {}), ...(aiReview ? { aiReview } : {}) }
+        ? {
+            ...task,
+            ...(preparing ? { preparing } : {}),
+            ...(aiReview ? { aiReview } : {}),
+          }
         : task;
     });
   }
@@ -1776,7 +1820,11 @@ export class TaskService {
     const root = this.deps.sessionLogs?.agentFilesDir(taskId, runId);
     if (!found || !root) return undefined;
     const { files, ...rest } = found.payload;
-    return { ...rest, archivedAt: found.at, files: await checkArchivedFiles(root, files) };
+    return {
+      ...rest,
+      archivedAt: found.at,
+      files: await checkArchivedFiles(root, files),
+    };
   }
 
   /** 写したエージェントのファイルの場所（ダウンロード用。PBI-66）。作業履歴に記録したファイルだけを返す。 */
@@ -1855,7 +1903,11 @@ export class TaskService {
       let token: string;
       try {
         token = await this.githubToken(task, pr.repo, usedSecrets);
-        status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+        status = await this.deps.pulls.status({
+          repo: pr.repo,
+          token,
+          number: pr.number,
+        });
       } catch (error) {
         console.warn(
           `[daemon] PR #${pr.number}（${pr.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -1909,7 +1961,12 @@ export class TaskService {
             warnDraftUnknown(pr.number, pr.repo);
           }
           if (pr.step === "implement") {
-            ciCandidates.push({ taskId: task.id, pr: { ...pr, repo: pr.repo }, head, token });
+            ciCandidates.push({
+              taskId: task.id,
+              pr: { ...pr, repo: pr.repo },
+              head,
+              token,
+            });
           }
           try {
             const settled = await this.importFeedback(latest, token);
@@ -1956,13 +2013,22 @@ export class TaskService {
         );
       } else if (status.state === "closed") {
         this.append(latest, [
-          { actor: "sacty", event: { type: "PullRequestClosed", payload: { number: pr.number } } },
+          {
+            actor: "sacty",
+            event: {
+              type: "PullRequestClosed",
+              payload: { number: pr.number },
+            },
+          },
         ]);
       } else {
         this.append(latest, [
           {
             actor: "sacty",
-            event: { type: "PullRequestReopened", payload: { number: pr.number } },
+            event: {
+              type: "PullRequestReopened",
+              payload: { number: pr.number },
+            },
           },
         ]);
       }
@@ -1977,7 +2043,7 @@ export class TaskService {
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
     // 人が後続に回すと決めた指摘の、後続のタスクを作る（元のタスクが完了してから。PBI-370）
-    this.settleDeferralTasks();
+    await this.settleDeferralTasks();
     // Issue を作ると決めたのに、途中で止まって結果の記録が無い指摘に、止まったことを記録する
     this.settleInterruptedDeferralIssues();
     // 「指摘なし」の後に落ちた CI を、タスクの詳細に出す（PBI-364）。ほかの確認がすべて終わった後に、1件だけ読む
@@ -2090,7 +2156,12 @@ export class TaskService {
             actor: "sacty",
             event: {
               type: "PullRequestCiFailed",
-              payload: { number: pr.number, commit: head, checks, ...(more > 0 ? { more } : {}) },
+              payload: {
+                number: pr.number,
+                commit: head,
+                checks,
+                ...(more > 0 ? { more } : {}),
+              },
             },
           },
         ]);
@@ -2232,7 +2303,10 @@ export class TaskService {
             gatePullRequest(latest)?.number === pr.number
           ) {
             this.append(latest, [
-              { actor: "sacty", event: { type: "TaskResumed", payload: { retry: false } } },
+              {
+                actor: "sacty",
+                event: { type: "TaskResumed", payload: { retry: false } },
+              },
             ]);
           }
           continue;
@@ -2268,7 +2342,6 @@ export class TaskService {
     const key = `${task.id}:${round}`;
     if (this.decisionNoticed.has(key)) return;
     this.decisionNoticed.add(key);
-    const link = taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", task.id);
     await this.serialized(`decision-notice:${key}`, async () => {
       const signal = this.stopNoticeDeadline();
       try {
@@ -2289,8 +2362,6 @@ export class TaskService {
               taskId: task.id,
               round,
               findings: pause.findings,
-              taskUrl: link.url,
-              localOnly: link.localOnly,
               secrets: usedSecrets,
             }),
             signal,
@@ -2401,7 +2472,10 @@ export class TaskService {
         ? [
             {
               actor: "sacty" as const,
-              event: { type: "TaskResumed" as const, payload: { retry: false } },
+              event: {
+                type: "TaskResumed" as const,
+                payload: { retry: false },
+              },
             },
           ]
         : []),
@@ -2591,7 +2665,10 @@ export class TaskService {
       // 判断の実行は費用がかかる。予算の上限に達していれば、実行せずに止める（工程の実行の前の確認と同じ）
       if (budgetState(held.budget) === "exceeded") {
         this.append(held, [
-          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+          {
+            actor: "sacty",
+            event: { type: "TaskPaused", payload: { reason: "budget" } },
+          },
         ]);
         return true;
       }
@@ -2625,7 +2702,10 @@ export class TaskService {
           this.append(latest, [
             {
               actor: reworkActor(judged),
-              event: { type: "ReworkJudged", payload: { ...judged, runResult: "interrupted" } },
+              event: {
+                type: "ReworkJudged",
+                payload: { ...judged, runResult: "interrupted" },
+              },
             },
           ]);
           this.warnIfNeeded(this.mustGet(taskId));
@@ -2635,7 +2715,10 @@ export class TaskService {
       const recorded = this.append(latest, [
         {
           actor: reworkActor(judged),
-          event: { type: "ReworkJudged", payload: { ...judged, weighed: true as const } },
+          event: {
+            type: "ReworkJudged",
+            payload: { ...judged, weighed: true as const },
+          },
         },
       ]);
       this.warnIfNeeded(recorded);
@@ -2655,7 +2738,11 @@ export class TaskService {
         const usedSecrets: string[] = [];
         try {
           const token = await this.githubToken(held, pr.repo, usedSecrets);
-          const reread = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+          const reread = await this.deps.pulls.status({
+            repo: pr.repo,
+            token,
+            number: pr.number,
+          });
           const merging = this.tasks.get(taskId);
           if (reread.state === "merged" && merging && !this.mergeStopping.has(taskId)) {
             return this.endHeldByMerge(merging, reread);
@@ -2860,7 +2947,10 @@ export class TaskService {
                 actor: "sacty",
                 event: {
                   type: "TaskPaused",
-                  payload: { reason: "manual", ...this.unstoppedPayload(unstopped) },
+                  payload: {
+                    reason: "manual",
+                    ...this.unstoppedPayload(unstopped),
+                  },
                 },
               },
             ]);
@@ -2967,7 +3057,11 @@ export class TaskService {
       const usedSecrets: string[] = [];
       try {
         const token = await this.githubToken(task, pr.repo, usedSecrets);
-        const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+        const status = await this.deps.pulls.status({
+          repo: pr.repo,
+          token,
+          number: pr.number,
+        });
         if (status.state === "merged") {
           this.announceMergeNotApproved(task, {
             repo: pr.repo,
@@ -2984,14 +3078,24 @@ export class TaskService {
   }
 
   /** 直しの間にマージを承認にする対象の PR（実装の作り直しか、要求要件・設計の自動の直し。PBI-462）。 */
-  private reworkTarget(
-    task: Task,
-  ): { step?: StepPullRequestKey; number: number; repo?: string; commit: string } | undefined {
+  private reworkTarget(task: Task):
+    | {
+        step?: StepPullRequestKey;
+        number: number;
+        repo?: string;
+        commit: string;
+      }
+    | undefined {
     const implement = reworkingPullRequest(task);
     if (implement) return implement;
     const step = reworkingStepPullRequest(task);
     return step
-      ? { step: step.step, number: step.number, repo: step.repo, commit: step.commit }
+      ? {
+          step: step.step,
+          number: step.number,
+          repo: step.repo,
+          commit: step.commit,
+        }
       : undefined;
   }
 
@@ -3016,13 +3120,11 @@ export class TaskService {
     task: Task,
     target: { repo: string; number: number; discarded: number },
   ): void {
-    this.postMergeNotice(task, target, "approval", (link) =>
+    this.postMergeNotice(task, target, "approval", () =>
       buildMergeApprovalNotice({
         taskId: task.id,
         number: target.number,
         discarded: target.discarded,
-        taskUrl: link.url,
-        localOnly: link.localOnly,
       }),
     );
   }
@@ -3032,14 +3134,12 @@ export class TaskService {
     task: Task,
     target: { repo: string; number: number; step: StepPullRequestKey },
   ): void {
-    this.postMergeNotice(task, target, "not-approved", (link) =>
+    this.postMergeNotice(task, target, "not-approved", () =>
       buildMergeNotApprovedNotice({
         taskId: task.id,
         number: target.number,
         stepName: STEP_NAME[target.step],
         backName: STEP_NAME.requirements,
-        taskUrl: link.url,
-        localOnly: link.localOnly,
       }),
     );
   }
@@ -3048,7 +3148,7 @@ export class TaskService {
     task: Task,
     target: { repo: string; number: number },
     kind: "approval" | "not-approved",
-    build: (link: { url: string; localOnly: boolean }) => string,
+    build: () => string,
   ): void {
     if (isSecurityTask(task)) return;
     const { repo, number } = target;
@@ -3056,7 +3156,6 @@ export class TaskService {
     const account = project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""];
     if (!account) return;
     const usedSecrets: string[] = [];
-    const link = taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", task.id);
     const marker =
       kind === "approval"
         ? mergeApprovalMarker(task.id, number)
@@ -3078,10 +3177,7 @@ export class TaskService {
           }),
         );
         if (existing) return;
-        await untilAborted(
-          signal,
-          this.deps.pulls.commentIssue({ ...pr, body: build(link), signal }),
-        );
+        await untilAborted(signal, this.deps.pulls.commentIssue({ ...pr, body: build(), signal }));
       } catch (error) {
         console.warn(
           `[daemon] タスク ${task.id} の、PR #${number} のマージの扱いを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -3134,7 +3230,10 @@ export class TaskService {
         actor: "person",
         event: {
           type: "StepApproved",
-          payload: { step: pr.step, next: this.nextAfterApproval(task, pr.step) },
+          payload: {
+            step: pr.step,
+            next: this.nextAfterApproval(task, pr.step),
+          },
         },
       },
       // 実装の PR のマージなら、マージのコミットの CI/CD とデプロイの監視を始める（PBI-89。プロジェクトで On のときだけ）
@@ -3408,7 +3507,9 @@ export class TaskService {
   }
 
   /** 再レビューの指示に渡す、親に届かなかった前回・前々回以前の回（PBI-465）。無ければ空のオブジェクト。 */
-  private undeliveredReviewRounds(task: Task): { undeliveredRounds?: ReadonlySet<number> } {
+  private undeliveredReviewRounds(task: Task): {
+    undeliveredRounds?: ReadonlySet<number>;
+  } {
     if (!task.previousReview) return {};
     const parent = task.reviewOf ? this.tasks.get(task.reviewOf.taskId) : undefined;
     const rounds = undeliveredRounds(task, parent, task.reviewTarget?.headCommit);
@@ -3533,7 +3634,10 @@ export class TaskService {
             actor: "person",
             event: {
               type: "TaskPaused",
-              payload: { reason: "manual", ...this.unstoppedPayload(unstopped) },
+              payload: {
+                reason: "manual",
+                ...this.unstoppedPayload(unstopped),
+              },
             },
           });
           this.append(after, items);
@@ -3569,7 +3673,10 @@ export class TaskService {
             actor: "sacty" as const,
             event: {
               type: "TaskPaused" as const,
-              payload: { reason: "manual" as const, ...this.unstoppedPayload(unstopped) },
+              payload: {
+                reason: "manual" as const,
+                ...this.unstoppedPayload(unstopped),
+              },
             },
           },
         ]);
@@ -3701,7 +3808,10 @@ export class TaskService {
       this.append(task, [
         {
           actor: "sacty",
-          event: { type: "ReviewWatchEnded", payload: { reason: status.state } },
+          event: {
+            type: "ReviewWatchEnded",
+            payload: { reason: status.state },
+          },
         },
       ]);
       return;
@@ -3746,7 +3856,10 @@ export class TaskService {
       this.append(task, [
         {
           actor: "sacty",
-          event: { type: "ReviewRestarted", payload: { reason: "pushed", commit: head } },
+          event: {
+            type: "ReviewRestarted",
+            payload: { reason: "pushed", commit: head },
+          },
         },
       ]);
       return;
@@ -3832,7 +3945,10 @@ export class TaskService {
     this.append(latest, [
       {
         actor: "sacty",
-        event: { type: "ReviewRestarted", payload: { reason: "replied", commit: head } },
+        event: {
+          type: "ReviewRestarted",
+          payload: { reason: "replied", commit: head },
+        },
       },
     ]);
   }
@@ -3850,14 +3966,20 @@ export class TaskService {
       // レビューした先頭に戻った：待っている先頭は、もう無い（projection が、同じ先頭の記録で待ちを消す）
       if (task.reviewHold) {
         this.append(task, [
-          { actor: "sacty", event: { type: "ReviewRestartHeld", payload: { commit: head } } },
+          {
+            actor: "sacty",
+            event: { type: "ReviewRestartHeld", payload: { commit: head } },
+          },
         ]);
       }
       return;
     }
     if (!task.reviewHold || !sameCommit(task.reviewHold.commit, head)) {
       this.append(task, [
-        { actor: "sacty", event: { type: "ReviewRestartHeld", payload: { commit: head } } },
+        {
+          actor: "sacty",
+          event: { type: "ReviewRestartHeld", payload: { commit: head } },
+        },
       ]);
     }
     if (this.reviewForkHoldNoticed.has(task.id)) return;
@@ -3868,7 +3990,10 @@ export class TaskService {
         const pr = { repo: target.repo, token, number: target.number };
         const existing = await untilAborted(
           signal,
-          this.deps.pulls.findIssueComment({ ...pr, marker: forkHoldMarker(task.id) }),
+          this.deps.pulls.findIssueComment({
+            ...pr,
+            marker: forkHoldMarker(task.id),
+          }),
         );
         if (!existing) {
           await untilAborted(
@@ -4093,7 +4218,11 @@ export class TaskService {
         ...(c.url ? { url: c.url } : {}),
       });
     }
-    return { result: "failed", checks, failures: failures.slice(0, CI_FAILURES_MAX) };
+    return {
+      result: "failed",
+      checks,
+      failures: failures.slice(0, CI_FAILURES_MAX),
+    };
   }
 
   /**
@@ -4166,7 +4295,9 @@ export class TaskService {
     task: Task,
     commit: string | undefined,
   ): Promise<NonNullable<Extract<EventInput, { type: "StepsChosen" }>["payload"]["deployment"]>> {
-    const skip = (detail: DaemonText) => ({ skipped: message("deploy.stepSkipped", { detail }) });
+    const skip = (detail: DaemonText) => ({
+      skipped: message("deploy.stepSkipped", { detail }),
+    });
     if (!commit) return skip(message("deploy.noSkill"));
     try {
       const found = await findDeploymentSkill(this.deps.repos, this.trustedGitDir(task), commit);
@@ -4241,7 +4372,12 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "DeploymentFixSuppressed",
-            payload: { kind, fingerprint, reason, ...(existing ? { existing } : {}) },
+            payload: {
+              kind,
+              fingerprint,
+              reason,
+              ...(existing ? { existing } : {}),
+            },
           },
         },
       ]);
@@ -4276,7 +4412,14 @@ export class TaskService {
         actor: "sacty",
         event: {
           type: "DeploymentFixRegistered",
-          payload: { taskId: randomUUID(), kind, fingerprint, depth, title, body },
+          payload: {
+            taskId: randomUUID(),
+            kind,
+            fingerprint,
+            depth,
+            title,
+            body,
+          },
         },
       },
     ]);
@@ -4332,7 +4475,10 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "DeploymentWatchSkipped",
-            payload: { reason: "budget", detail: message("deploy.budgetExceeded") },
+            payload: {
+              reason: "budget",
+              detail: message("deploy.budgetExceeded"),
+            },
           },
         },
       ]);
@@ -4368,7 +4514,10 @@ export class TaskService {
     this.append(task, [
       {
         actor: "sacty",
-        event: { type: "DeploymentCheckStarted", payload: { runId, skill, image: usedImage } },
+        event: {
+          type: "DeploymentCheckStarted",
+          payload: { runId, skill, image: usedImage },
+        },
       },
     ]);
     type Payload = Extract<EventInput, { type: "DeploymentChecked" }>["payload"];
@@ -4389,7 +4538,9 @@ export class TaskService {
         : record("sacty", {
             result: "unknown",
             evidence: [],
-            failed: message("deploy.checkFailed", { detail: redactText(failed, usedSecrets) }),
+            failed: message("deploy.checkFailed", {
+              detail: redactText(failed, usedSecrets),
+            }),
             runResult: "failed",
             ...setting,
             costUsd: 0,
@@ -4686,7 +4837,9 @@ export class TaskService {
       );
       // 選んだエージェントが無ければ、判断せずに止める（指摘は未判断のまま残す。再開したら判断し直す）
       if ("missingAgent" in judged) {
-        this.pauseForMissingAgent(current, pr.step, judged.missingAgent, { awaiting: true });
+        this.pauseForMissingAgent(current, pr.step, judged.missingAgent, {
+          awaiting: true,
+        });
         return;
       }
       // 判断の間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
@@ -4698,7 +4851,10 @@ export class TaskService {
           this.append(latest, [
             {
               actor: reworkActor(judged),
-              event: { type: "ReworkJudged", payload: { ...judged, runResult: "interrupted" } },
+              event: {
+                type: "ReworkJudged",
+                payload: { ...judged, runResult: "interrupted" },
+              },
             },
           ]);
         }
@@ -4714,7 +4870,10 @@ export class TaskService {
       current = this.append(latest, [
         {
           actor: reworkActor(judged),
-          event: { type: "ReworkJudged", payload: { ...judged, weighed: true as const } },
+          event: {
+            type: "ReworkJudged",
+            payload: { ...judged, weighed: true as const },
+          },
         },
       ]);
       // 対応を求めていない指摘（「承知しました」など）は、判断の記録で差し戻しから除かれる。1 件も残らなければ、差し戻さない
@@ -4726,7 +4885,11 @@ export class TaskService {
     // 判断の間（エージェントの実行は長い）に、人が PR をマージした・閉じたかもしれない。差し戻す前に PR の状態を読み直し、
     // 開いたままでなければ差し戻さない（マージは承認。承認した成果を差し戻して、マージ済みのタスクが動き出さないように）。
     // 取り込んだ指摘と判断は作業履歴に残っている。マージ・クローズの記録は、確かめ直し（checkPullRequests）が行う
-    const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+    const status = await this.deps.pulls.status({
+      repo: pr.repo,
+      token,
+      number: pr.number,
+    });
     // 読んでいる間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
     const settling = this.tasks.get(task.id);
     const watched = settling ? gatePullRequest(settling) : undefined;
@@ -4803,7 +4966,10 @@ export class TaskService {
     if (marked.length === 0) return undefined;
     // 人の判断が済んだ先頭では、同じ印で止めない（同じ指摘で止まり続けない）
     if (!pr.commit || decidedPause(task, pr.commit)) return undefined;
-    return marked.map((f) => ({ finding: f.finding, reason: f.needsDecision ?? "" }));
+    return marked.map((f) => ({
+      finding: f.finding,
+      reason: f.needsDecision ?? "",
+    }));
   }
 
   /**
@@ -4827,9 +4993,10 @@ export class TaskService {
             reason: "needs_decision",
             message: message("review.needsDecision", {
               number: pr.number,
-              findings: findings
-                .slice(0, DECISION_FINDINGS_MAX)
-                .map((f) => ({ finding: clean(f.finding, 300), reason: clean(f.reason, 1000) })),
+              findings: findings.slice(0, DECISION_FINDINGS_MAX).map((f) => ({
+                finding: clean(f.finding, 300),
+                reason: clean(f.reason, 1000),
+              })),
             }),
             ...(pr.commit ? { commit: pr.commit } : {}),
           },
@@ -5001,7 +5168,9 @@ export class TaskService {
     const suggestionRounds = countSuggestionRounds(round, verdictOf, (r) => undelivered.has(r));
     const chosen = stepAgentFor(config, "implement", task.agents?.implement);
     if (!chosen.ok) {
-      this.pauseForMissingAgent(task, pr.step, chosen.missing, { awaiting: true });
+      this.pauseForMissingAgent(task, pr.step, chosen.missing, {
+        awaiting: true,
+      });
       return "stopped";
     }
     const { outcome, costUsd, estimated, costUnknown, runId, agent } =
@@ -5115,7 +5284,10 @@ export class TaskService {
         event: {
           type: "SuggestionsTriaged",
           payload: {
-            items: items.map((i) => ({ ...i, ...(url(i.remark) ? { url: url(i.remark) } : {}) })),
+            items: items.map((i) => ({
+              ...i,
+              ...(url(i.remark) ? { url: url(i.remark) } : {}),
+            })),
             dropped,
             round,
             suggestionRounds,
@@ -5328,7 +5500,11 @@ export class TaskService {
           }
         } catch (error) {
           return {
-            outcome: { kind: "failed", reason: "error", message: errorText(error) },
+            outcome: {
+              kind: "failed",
+              reason: "error",
+              message: errorText(error),
+            },
             costUsd: 0,
             estimated: false,
             runId,
@@ -5336,7 +5512,13 @@ export class TaskService {
         }
       }
       // 再開できなかったセッションを新しく始め直したら、その実行の ID になる（PBI-67）
-      return await this.execute({ ...run, prompt, taskId: task.id, runId, workspaceDir });
+      return await this.execute({
+        ...run,
+        prompt,
+        taskId: task.id,
+        runId,
+        workspaceDir,
+      });
     } finally {
       // 写しは数 GB になりうるので、非同期で消す（消す間もデーモンが応答し続ける。PBI-156）。消せなくても、実行の結果
       // （判定・答え・分析と費用）を失わないよう、警告だけにする
@@ -5367,7 +5549,12 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "WorkspaceFilesSkipped",
-            payload: { runId, role, count: skipped.count, paths: skipped.paths },
+            payload: {
+              runId,
+              role,
+              count: skipped.count,
+              paths: skipped.paths,
+            },
           },
         },
       ]);
@@ -5401,7 +5588,10 @@ export class TaskService {
       });
       const { url } =
         existing ??
-        (await this.deps.pulls.commentIssue({ ...target, body: buildInvestigationComment(task) }));
+        (await this.deps.pulls.commentIssue({
+          ...target,
+          body: buildInvestigationComment(task),
+        }));
       event = { type: "IssueCommented", payload: { url } };
     } catch (error) {
       event = {
@@ -5470,11 +5660,17 @@ export class TaskService {
         if (!valid()) return;
         const target = comment.target.slice(0, 2000);
         if (!comment.repo || !comment.number) {
-          results.push({ target, failed: message("githubComments.targetInvalid") });
+          results.push({
+            target,
+            failed: message("githubComments.targetInvalid"),
+          });
           continue;
         }
         if (!commentAllowed(comment.repo, project?.targets ?? [], task)) {
-          results.push({ target, failed: message("githubComments.targetNotAllowed") });
+          results.push({
+            target,
+            failed: message("githubComments.targetNotAllowed"),
+          });
           continue;
         }
         try {
@@ -5518,7 +5714,10 @@ export class TaskService {
             }));
           results.push({ target, url });
         } catch (error) {
-          results.push({ target, failed: redactText(errorText(error), usedSecrets) });
+          results.push({
+            target,
+            failed: redactText(errorText(error), usedSecrets),
+          });
         }
       }
     }
@@ -5545,16 +5744,20 @@ export class TaskService {
    * レビューの工程の対象の PR を確かめる（PBI-19）。タスクにある、タスクの対象リポジトリの PR を、
    * プロジェクトの gh のアカウントで読む。確かめられなければ理由を返す（トークンは含めない）。
    */
-  private async resolveReviewTarget(
-    task: Task,
-  ): Promise<
-    | { ok: true; target: Extract<EventInput, { type: "ReviewTargetResolved" }>["payload"] }
+  private async resolveReviewTarget(task: Task): Promise<
+    | {
+        ok: true;
+        target: Extract<EventInput, { type: "ReviewTargetResolved" }>["payload"];
+      }
     | { ok: false; message: DaemonText; abandoned?: true }
   > {
     const ref = referencedPullRequest(task);
     if (!ref) {
       const repo = (task.repository && githubRepoOf(task.repository.url)) ?? "";
-      return { ok: false, message: message("review.pullRequestMissing", { repo }) };
+      return {
+        ok: false,
+        message: message("review.pullRequestMissing", { repo }),
+      };
     }
     const usedSecrets: string[] = [];
     try {
@@ -5600,7 +5803,10 @@ export class TaskService {
     const ref = continuablePullRequest(task);
     if (!ref) {
       const repo = (task.repository && githubRepoOf(task.repository.url)) ?? "";
-      return { ok: false, message: message("review.pullRequestMissing", { repo }) };
+      return {
+        ok: false,
+        message: message("review.pullRequestMissing", { repo }),
+      };
     }
     const unavailable = (detail: DaemonText) => ({
       ok: false as const,
@@ -5671,7 +5877,11 @@ export class TaskService {
     let timer: NodeJS.Timeout | undefined;
     try {
       const token = await this.githubToken(task, target.repo, usedSecrets);
-      const reading = ci.snapshot({ repo: target.repo, token, commit: target.headCommit });
+      const reading = ci.snapshot({
+        repo: target.repo,
+        token,
+        commit: target.headCommit,
+      });
       // 時間切れの後に届いた失敗は、知らせない（時間切れとして知らせる）
       reading.catch(() => {});
       const expired = new Promise<"expired">((resolve) => {
@@ -5688,7 +5898,10 @@ export class TaskService {
         return { commit: target.headCommit, checks: "unreadable" };
       }
       // ワークフローのほかに、その中のジョブも渡す（ワークフローが成功でも、実行されなかったジョブを見落とさない）
-      return { commit: target.headCommit, checks: [...snapshot.checks, ...(snapshot.jobs ?? [])] };
+      return {
+        commit: target.headCommit,
+        checks: [...snapshot.checks, ...(snapshot.jobs ?? [])],
+      };
     } catch (error) {
       console.warn(
         `[daemon] レビューのタスク ${task.id} で、PR #${target.number}（${target.repo}）の CI を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -5820,7 +6033,10 @@ export class TaskService {
     );
     const shown = Math.min(githubRetryAfterMs(error) ?? 0, REMARK_REPLY_SHOWN_WAIT_MAX_MS);
     const until = now + Math.max(shown, backoff);
-    this.rateLimits.set(key, { until: Math.max(until, waiting ? current.until : 0), streak });
+    this.rateLimits.set(key, {
+      until: Math.max(until, waiting ? current.until : 0),
+      streak,
+    });
   }
 
   /** やり直しの回数の上限を超えて、制限に当たったか（その提出の残りの返信を、失敗として記録する）。 */
@@ -6123,7 +6339,12 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "RemarkRepliesStarted",
-            payload: { step: due.step, submission: due.submission, number: due.number, account },
+            payload: {
+              step: due.step,
+              submission: due.submission,
+              number: due.number,
+              account,
+            },
           },
         },
       ]);
@@ -6230,7 +6451,6 @@ export class TaskService {
         }
         const reply = {
           taskId,
-          stepName: STEP_NAME[remark.step],
           remarkId: remark.id,
           ...(remark.continued ? { continued: true as const } : {}),
           submission: remark.respondedIn,
@@ -6333,7 +6553,10 @@ export class TaskService {
           deferred.push(remark);
           continue;
         }
-        results.push({ ...base, failed: redactText(errorText(error), usedSecrets) });
+        results.push({
+          ...base,
+          failed: redactText(errorText(error), usedSecrets),
+        });
       }
     }
     finish();
@@ -6581,7 +6804,10 @@ export class TaskService {
       if (error instanceof RetryAbandoned) return;
       event = {
         type: "TaskPaused",
-        payload: { reason: "error", message: redactText(errorText(error), usedSecrets) },
+        payload: {
+          reason: "error",
+          message: redactText(errorText(error), usedSecrets),
+        },
       };
     }
     const latest = this.tasks.get(task.id);
@@ -6589,7 +6815,10 @@ export class TaskService {
     this.append(latest, [{ actor: "sacty", event }]);
     // 先頭が変わっていたので投稿せずに打ち切った（PBI-465）：その先頭を、始め直しの待ちの先頭にする
     if (event.type === "ReviewRunStopped" && event.payload.to) {
-      this.reviewSettling.set(task.id, { head: event.payload.to, at: this.now() });
+      this.reviewSettling.set(task.id, {
+        head: event.payload.to,
+        at: this.now(),
+      });
     }
     // 投稿の直後に、PR を作ったタスクの指摘の取り込みを始める（60 秒ごとの確認を待たない）
     if (event.type === "PullRequestReviewPosted" && latest.reviewOf) {
@@ -6643,7 +6872,12 @@ export class TaskService {
       if (latestCommit && pullStatus.fork === false) {
         return {
           type: "ReviewRunStopped",
-          payload: { reason: "head_changed", from: target.headCommit, to: head, runIds: [] },
+          payload: {
+            reason: "head_changed",
+            from: target.headCommit,
+            to: head,
+            runIds: [],
+          },
         };
       }
     }
@@ -6687,8 +6921,12 @@ export class TaskService {
     config: SactyConfig,
   ): Promise<
     | ChosenSteps
-    | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
-    | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
+    | {
+        failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"];
+      }
+    | {
+        repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"];
+      }
   > {
     const listedCandidates =
       isRepoless(task) || task.repos ? await this.taskRepositoryCandidates(task) : undefined;
@@ -6830,8 +7068,12 @@ export class TaskService {
     candidates: readonly string[],
     specified = false,
   ):
-    | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
-    | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
+    | {
+        repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"];
+      }
+    | {
+        failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"];
+      } {
     const cost = {
       ...(choice.agentId ? { agentId: choice.agentId } : {}),
       ...(choice.authMode ? { authMode: choice.authMode } : {}),
@@ -6845,7 +7087,13 @@ export class TaskService {
     };
     const found = repo ? candidates.find((c) => sameGitHubUrl(c, repo)) : undefined;
     if (found) {
-      return { repository: { repo: found, reason: reason || choice.reason || "", ...cost } };
+      return {
+        repository: {
+          repo: found,
+          reason: reason || choice.reason || "",
+          ...cost,
+        },
+      };
     }
     const detail = repo
       ? message(specified ? "repo.notSpecified" : "repo.notCandidate", { repo })
@@ -6886,12 +7134,17 @@ export class TaskService {
     }
     if ("missing" in candidates)
       throw new InvalidOperationError(
-        message("repo.noLongerTarget", { repo: candidates.missing, detail: candidates.detail }),
+        message("repo.noLongerTarget", {
+          repo: candidates.missing,
+          detail: candidates.detail,
+        }),
       );
     const chosen = candidates.repositories.find((c) => sameGitHubUrl(c, repo));
     if (!chosen)
       throw new InvalidOperationError(
-        message(task.repos ? "repo.notSpecified" : "repo.notCandidate", { repo }),
+        message(task.repos ? "repo.notSpecified" : "repo.notCandidate", {
+          repo,
+        }),
       );
     const latest = this.mustGet(id);
     if (!awaitingRepository(latest) || latest.status !== "paused") {
@@ -6918,7 +7171,9 @@ export class TaskService {
     shared: readonly SharedCompose[],
   ):
     | (Omit<ChosenSteps, "exports"> & { exports?: PlannedSteps["exports"] })
-    | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
+    | {
+        failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"];
+      } {
     const { services: raw, ...rest } = choice;
     const offered = shared.length > 0 ? { sharedComposes: shared.map((s) => s.name) } : {};
     if (!raw) return { ...rest, ...offered };
@@ -6956,7 +7211,11 @@ export class TaskService {
         file: found.file,
         names: raw.names,
         steps: raw.steps,
-        compose: { name: found.name, repo: found.repo, ...(found.ref ? { ref: found.ref } : {}) },
+        compose: {
+          name: found.name,
+          repo: found.repo,
+          ...(found.ref ? { ref: found.ref } : {}),
+        },
       },
     };
   }
@@ -7129,17 +7388,26 @@ export class TaskService {
       const origin = gateway?.hostOrigin?.();
       // ゲートウェイの起点はホストから見たもの。手元のセッションには実行の上限が無いので、時間切れの警告は出さない
       const routing: McpRouting = origin
-        ? { ...this.mcpRouting(config, undefined, origin), runLimitMs: Number.POSITIVE_INFINITY }
+        ? {
+            ...this.mcpRouting(config, undefined, origin),
+            runLimitMs: Number.POSITIVE_INFINITY,
+          }
         : { runLimitMs: Number.POSITIVE_INFINITY };
       // 段階のサブエージェントは、sacty の AI の定義のモデルで作る。Bedrock・providers の接続先のモデルの名前は、手元の
       // ログインでは使えないので置かない
       const parent = config ? this.previewParent(config, runtime) : undefined;
       const warnings: DaemonText[] = [];
-      let tiers: { entries: PlacedTier[]; warnings: DaemonText[] } = { entries: [], warnings: [] };
+      let tiers: { entries: PlacedTier[]; warnings: DaemonText[] } = {
+        entries: [],
+        warnings: [],
+      };
       if (parent && config) {
         if (parent.auth.mode === "bedrock" || parent.auth.mode === "provider") {
           warnings.push(
-            message("local.tiersSkipped", { parent: parent.id, mode: parent.auth.mode }),
+            message("local.tiersSkipped", {
+              parent: parent.id,
+              mode: parent.auth.mode,
+            }),
           );
         } else {
           tiers = this.tiersFor(parent, config);
@@ -7284,7 +7552,10 @@ export class TaskService {
   private contextResolved(
     runId: string,
     context: RunContext,
-    platforms: { platforms: readonly Platform[]; warnings: readonly DaemonText[] },
+    platforms: {
+      platforms: readonly Platform[];
+      warnings: readonly DaemonText[];
+    },
   ): ActivityItem {
     return {
       actor: "sacty",
@@ -7344,12 +7615,20 @@ export class TaskService {
     config: SactyConfig,
   ): Promise<{ destinations: ExportDestination[]; rules: string }> {
     const hostPlatforms = config.platforms.map(
-      (p): ExportDestination => ({ via: "platform", name: p.name, description: p.description }),
+      (p): ExportDestination => ({
+        via: "platform",
+        name: p.name,
+        description: p.description,
+      }),
     );
     // ホストの MCP サーバーは、ゲートウェイがあるときだけ渡せる（PBI-36）
     const host = this.deps.gateway
       ? config.hostMcp.map(
-          (m): ExportDestination => ({ via: "mcp", name: m.name, description: m.description }),
+          (m): ExportDestination => ({
+            via: "mcp",
+            name: m.name,
+            description: m.description,
+          }),
         )
       : [];
     const root = this.deps.projects.get(task.projectId)?.context;
@@ -7369,12 +7648,22 @@ export class TaskService {
     const hostNames = new Set(host.map((h) => h.name));
     const contextMcp = info.mcp
       .filter((name) => !hostNames.has(name))
-      .map((name): ExportDestination => ({ via: "mcp", name, description: "" }));
+      .map(
+        (name): ExportDestination => ({
+          via: "mcp",
+          name,
+          description: "",
+        }),
+      );
     // プロジェクトのコンテキストで定義した PF も、書き出し先にできる（同じ名前ならホストのもの。PBI-74）
     const contextPlatforms = mergePlatforms(config.platforms, info.platforms)
       .platforms.filter((p) => p.from !== undefined)
       .map(
-        (p): ExportDestination => ({ via: "platform", name: p.name, description: p.description }),
+        (p): ExportDestination => ({
+          via: "platform",
+          name: p.name,
+          description: p.description,
+        }),
       );
     return {
       destinations: [...hostPlatforms, ...contextPlatforms, ...host, ...contextMcp],
@@ -7387,7 +7676,9 @@ export class TaskService {
    * 書き出し先（無ければ書き出さない）と理由を必ず持たせる。使える接続先が無い・書き出せる工程が無いなら、持たない。
    */
   private withExports(
-    choice: Omit<ChosenSteps, "exports"> & { exports?: PlannedSteps["exports"] },
+    choice: Omit<ChosenSteps, "exports"> & {
+      exports?: PlannedSteps["exports"];
+    },
     destinations: readonly ExportDestination[],
   ): ChosenSteps {
     const { exports: raw, ...rest } = choice;
@@ -7400,7 +7691,11 @@ export class TaskService {
       const found = destinations.find((d) => d.name === name && (!via || d.via === via));
       if (!found) return { reason: message("export.destinationUnknown", { name }) };
       return {
-        to: { via: found.via, name: found.name, location: plan.to.location ?? "" },
+        to: {
+          via: found.via,
+          name: found.name,
+          location: plan.to.location ?? "",
+        },
         reason: plan.reason,
       };
     };
@@ -7416,7 +7711,11 @@ export class TaskService {
   private serviceSpec(
     task: Task,
     step: StepKey,
-  ): (ServicesSpec & { compose?: { name: string; repo: string; ref?: string } }) | undefined {
+  ):
+    | (ServicesSpec & {
+        compose?: { name: string; repo: string; ref?: string };
+      })
+    | undefined {
     const services = task.services;
     if (!this.deps.services || !services?.steps.includes(step)) return undefined;
     if (step === "investigate" && task.investigation !== "bug") return undefined;
@@ -7456,7 +7755,10 @@ export class TaskService {
     const services = this.deps.services;
     if (!found || !services) return undefined;
     // 人間が止めた（一時停止・中止）なら、起動しない
-    const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
+    const stopped = {
+      ok: false as const,
+      message: message("run.stoppedByPerson"),
+    };
     if (this.stopRequested(task.id)) return stopped;
     // 起動の待ち（up --wait）の間に止められたら、起動を打ち切れるように、実行として覚える
     this.track(runId);
@@ -7588,7 +7890,10 @@ export class TaskService {
                       name: entry.name,
                       detail: entry.error ?? "",
                     })
-                  : message("contextImage.building", { project, name: entry.name }),
+                  : message("contextImage.building", {
+                      project,
+                      name: entry.name,
+                    }),
             }),
       };
     }
@@ -7674,7 +7979,11 @@ export class TaskService {
     config: SactyConfig,
     pinned: PinnedImage | undefined,
     offered = false,
-  ): ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
+  ):
+    | ChosenSteps
+    | {
+        failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"];
+      } {
     const {
       image: picked,
       imageReason,
@@ -7747,13 +8056,17 @@ export class TaskService {
           "reason" | "message"
         >;
       }
-    | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+    | {
+        failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"];
+      }
   > {
     // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。既定のイメージで動く。
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）。セッションは、前のエージェントのものを引き継ぐ
     const agent = this.usableAgent(config, agentFor(config, role), task.id, role);
     const failed = (detail: DaemonText) =>
-      message(role === "gather" ? "gather.failed" : "orchestrator.failed", { detail });
+      message(role === "gather" ? "gather.failed" : "orchestrator.failed", {
+        detail,
+      });
     // 工程の実行と同じく、既定のコンテキストとプロジェクトのコンテキスト（規則・スキル・MCP サーバー）を渡す（PBI-146。
     // 既定のスキル plan-steps で、答えの JSON を検査させる）。用意できなければ、実行せずに理由を返す（費用は無い）
     const runId = randomUUID();
@@ -7849,7 +8162,10 @@ export class TaskService {
     config: SactyConfig,
     via: "requested" | "label" | "sacty",
   ): Promise<
-    ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+    | ChosenSteps
+    | {
+        failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"];
+      }
   > {
     const pinned = this.pinnedImage(task);
     const candidates = Object.values(config.images ?? {}).map(({ name, description }) => ({
@@ -7863,7 +8179,10 @@ export class TaskService {
     // 親のイメージを決められない（記録が無い・その名前が images から消えた）ときだけ、下のオーケストレーターの選択に戻る
     const parentImage = via === "sacty" ? this.parentImageOf(task) : undefined;
     if (parentImage && imageDefined(config, parentImage)) {
-      return this.withImages(reviewOnlySteps(via), config, { name: parentImage, source: "parent" });
+      return this.withImages(reviewOnlySteps(via), config, {
+        name: parentImage,
+        source: "parent",
+      });
     }
     const ran = await this.runOrchestrator(task, config, (platforms) =>
       [buildReviewImagePrompt(task, candidates), ...platformPromptLines(platforms)].join("\n"),
@@ -7874,7 +8193,9 @@ export class TaskService {
       return {
         failure: {
           reason: "error",
-          message: message("orchestrator.failed", { detail: message("orchestrator.unreadable") }),
+          message: message("orchestrator.failed", {
+            detail: message("orchestrator.unreadable"),
+          }),
           ...ran.cost,
         },
       };
@@ -7909,7 +8230,10 @@ export class TaskService {
       const latest = this.mustGet(task.id);
       if (latest.status !== "queued" || latest.stepReview !== after) return;
       this.append(latest, [
-        { actor: "orchestrator", event: { type: "StepsSkipped", payload: { after, ...reviewed } } },
+        {
+          actor: "orchestrator",
+          event: { type: "StepsSkipped", payload: { after, ...reviewed } },
+        },
       ]);
       return;
     }
@@ -7934,7 +8258,11 @@ export class TaskService {
         ...cost
       } = "failure" in ran
         ? ran.failure
-        : { reason: "error", message: message("orchestrator.unreadable"), ...ran.cost };
+        : {
+            reason: "error",
+            message: message("orchestrator.unreadable"),
+            ...ran.cost,
+          };
       // コンテナが止まったことを確かめられなかった実行（元のコンテナが動いたままかもしれない）なら、次の工程の実行と
       // 重ならないように止める（代わりのエージェントに切り替えないのと同じ。fallBack）
       const unconfirmed = "failure" in ran && this.unconfirmedRuns.delete(ran.failure.runId ?? "");
@@ -7957,7 +8285,10 @@ export class TaskService {
                 actor: "sacty" as const,
                 event: {
                   type: "TaskPaused" as const,
-                  payload: { reason: ran.failure.reason, message: ran.failure.message },
+                  payload: {
+                    reason: ran.failure.reason,
+                    message: ran.failure.message,
+                  },
                 },
               },
             ]
@@ -7969,7 +8300,12 @@ export class TaskService {
           actor: "orchestrator",
           event: {
             type: "StepsSkipped",
-            payload: { after, steps: chosen.steps, reason: chosen.reason, ...ran.cost },
+            payload: {
+              after,
+              steps: chosen.steps,
+              reason: chosen.reason,
+              ...ran.cost,
+            },
           },
         },
       ]);
@@ -7985,9 +8321,16 @@ export class TaskService {
     exports: { destinations: ExportDestination[]; rules: string },
     sharedComposes: readonly SharedCompose[] = [],
     /** 対象リポジトリの無いタスク（PBI-73）の、作業するリポジトリの候補・コンテキスト。 */
-    repoless?: { repositories: readonly string[]; context?: string; rules?: string },
+    repoless?: {
+      repositories: readonly string[];
+      context?: string;
+      rules?: string;
+    },
   ): Promise<
-    PlannedSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+    | PlannedSteps
+    | {
+        failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"];
+      }
   > {
     const ran = await this.runOrchestrator(task, config, (platforms) =>
       [
@@ -8048,7 +8391,9 @@ export class TaskService {
     return {
       failure: {
         reason: "error",
-        message: message("orchestrator.failed", { detail: message("orchestrator.unreadable") }),
+        message: message("orchestrator.failed", {
+          detail: message("orchestrator.unreadable"),
+        }),
         ...cost,
       },
     };
@@ -8064,7 +8409,9 @@ export class TaskService {
    * PR のレビューの子タスクの指示に渡す、親の PR の工程・戻し先の候補・承認済みの成果物（PBI-332）。子タスクでなければ・親が
    * 無ければ渡さない（ラベルや依頼で取り込んだレビューだけのタスクは、戻し先を示さない）。
    */
-  private reviewReworkContext(task: Task): { reviewRework?: ReviewReworkContext } {
+  private reviewReworkContext(task: Task): {
+    reviewRework?: ReviewReworkContext;
+  } {
     const of = this.tasks.get(task.id)?.reviewOf;
     const parent = of && this.tasks.get(of.taskId);
     if (!of || !parent) return {};
@@ -8168,7 +8515,10 @@ export class TaskService {
       );
     const judgement =
       outcome.kind === "completed"
-        ? extractRework(outcome.output, targets, { remarks: remarks.length, aiReview })
+        ? extractRework(outcome.output, targets, {
+            remarks: remarks.length,
+            aiReview,
+          })
         : { reason: message("rework.runFailed", { detail: outcome.message }) };
     return {
       ...judgement,
@@ -8271,7 +8621,11 @@ export class TaskService {
     }
     const agent = config.config.defaultAgent;
     return {
-      agent: { id: agent.id, runtime: agent.runtime, authMode: agent.auth.mode },
+      agent: {
+        id: agent.id,
+        runtime: agent.runtime,
+        authMode: agent.auth.mode,
+      },
       problems: [],
       warnings: [
         // 接続先・単価が無くて使えないエージェント（PBI-134）
@@ -8446,7 +8800,11 @@ export class TaskService {
     try {
       settings = this.deps.settings.get();
     } catch (error) {
-      return { settingsUnreadable: true, settingsError: errorText(error), ...runs };
+      return {
+        settingsUnreadable: true,
+        settingsError: errorText(error),
+        ...runs,
+      };
     }
     return { ...this.labelOf(settings), ...runs };
   }
@@ -8472,7 +8830,10 @@ export class TaskService {
       project,
       exclusions: project.targets
         .filter((t) => t.scope === "org")
-        .map((t) => ({ org: t.target, repos: excludedRepositories(all, id, t.target) })),
+        .map((t) => ({
+          org: t.target,
+          repos: excludedRepositories(all, id, t.target),
+        })),
     };
   }
 
@@ -8503,10 +8864,16 @@ export class TaskService {
       const usedSecrets: string[] = [];
       try {
         const token = await this.githubToken({ projectId: id }, target.target, usedSecrets);
-        for (const repo of await this.deps.pulls.repositories({ org: target.target, token }))
+        for (const repo of await this.deps.pulls.repositories({
+          org: target.target,
+          token,
+        }))
           add(repo);
       } catch (error) {
-        errors.push({ org: target.target, message: redactText(errorText(error), usedSecrets) });
+        errors.push({
+          org: target.target,
+          message: redactText(errorText(error), usedSecrets),
+        });
       }
     }
     return {
@@ -8870,9 +9237,10 @@ export class TaskService {
    * 検索の結果は反映が遅れる（投稿の直後に、外れた依頼が残る）ので、それだけでは再レビューしない。
    * 確かめられなかった PR は failed に返す（取り込み側は、その検索の読んだ位置を進めず、次の取り込みで確かめ直す）。
    */
-  async restartRerequestedReviews(
-    found: readonly FoundIssue[],
-  ): Promise<{ restarted: Task[]; failed: { issue: FoundIssue; message: DaemonText }[] }> {
+  async restartRerequestedReviews(found: readonly FoundIssue[]): Promise<{
+    restarted: Task[];
+    failed: { issue: FoundIssue; message: DaemonText }[];
+  }> {
     const restarted: Task[] = [];
     const failed: { issue: FoundIssue; message: DaemonText }[] = [];
     // Off にしたら再レビューしない（検索の後に設定を変えたときも）
@@ -8921,7 +9289,10 @@ export class TaskService {
         // アカウントを変えたなど）ときに、投稿のたびに再レビューを繰り返さないため
         if (!pr.requestedReviewers.some((r) => r.toLowerCase() === account.toLowerCase())) continue;
         requestedAt =
-          (await this.deps.pulls.lastReviewRequest({ ...ref, reviewer: account })) ?? undefined;
+          (await this.deps.pulls.lastReviewRequest({
+            ...ref,
+            reviewer: account,
+          })) ?? undefined;
         requested = Date.parse(requestedAt ?? "") > posted;
         // フォークの PR（head のリポジトリが読めないときも）の再依頼は、頼んだ人が PR の作者でなく、リポジトリへの
         // 書き込みの権限を持つときだけ、人の操作とみなす（作者の再依頼で、フォークのコードが人の判断なしに動かないように）。
@@ -8931,7 +9302,11 @@ export class TaskService {
             .lastReviewRequester({ ...ref, reviewer: account })
             .then(async (requester) =>
               requester !== undefined && requester.toLowerCase() !== pr.author.toLowerCase()
-                ? await this.deps.pulls.canWrite({ repo: issue.repo, token, login: requester })
+                ? await this.deps.pulls.canWrite({
+                    repo: issue.repo,
+                    token,
+                    login: requester,
+                  })
                 : false,
             )
             .catch((error: unknown) => {
@@ -9053,7 +9428,12 @@ export class TaskService {
     const host = new Set(config.ok ? config.config.platforms.map((p) => p.name) : []);
     const groups = new Map<
       string,
-      { platform: string; service: TicketService; keys: Set<string>; projectId?: string }
+      {
+        platform: string;
+        service: TicketService;
+        keys: Set<string>;
+        projectId?: string;
+      }
     >();
     for (const project of this.deps.projects.all()) {
       for (const source of project.tickets ?? []) {
@@ -9181,7 +9561,12 @@ export class TaskService {
           actor: "gatherer",
           event: {
             type: "InformationGathered",
-            payload: { ...gathered, agentId: "test", costUsd: 0, estimated: false },
+            payload: {
+              ...gathered,
+              agentId: "test",
+              costUsd: 0,
+              estimated: false,
+            },
           },
         },
       ]);
@@ -9189,7 +9574,10 @@ export class TaskService {
     }
     if (budgetState(task.budget) === "exceeded") {
       this.append(task, [
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "budget" } },
+        },
       ]);
       return true;
     }
@@ -9202,7 +9590,10 @@ export class TaskService {
       this.append(this.mustGet(task.id), [
         {
           actor: "sacty",
-          event: { type: "TaskPaused", payload: { reason: "error", message: triaging.failed } },
+          event: {
+            type: "TaskPaused",
+            payload: { reason: "error", message: triaging.failed },
+          },
         },
       ]);
       return true;
@@ -9221,16 +9612,25 @@ export class TaskService {
     if (listed && "missing" in listed) {
       const failure = {
         reason: "error" as const,
-        message: message("repo.noLongerTarget", { repo: listed.missing, detail: listed.detail }),
+        message: message("repo.noLongerTarget", {
+          repo: listed.missing,
+          detail: listed.detail,
+        }),
         agentId: "unknown",
         costUsd: 0,
         estimated: false,
       };
       this.append(task, [
-        { actor: "gatherer", event: { type: "OrchestratorFailed", payload: failure } },
+        {
+          actor: "gatherer",
+          event: { type: "OrchestratorFailed", payload: failure },
+        },
         {
           actor: "sacty",
-          event: { type: "TaskPaused", payload: { reason: "error", message: failure.message } },
+          event: {
+            type: "TaskPaused",
+            payload: { reason: "error", message: failure.message },
+          },
         },
       ]);
       return true;
@@ -9257,7 +9657,11 @@ export class TaskService {
       // 書き込みの API は、指示にも出さない（ゲートウェイが拒否する）
       (platforms) =>
         [
-          buildGatherPrompt(task, triage, { candidates, unreadable, sharedComposes }),
+          buildGatherPrompt(task, triage, {
+            candidates,
+            unreadable,
+            sharedComposes,
+          }),
           ...platformPromptLines(readOnlyPlatforms(platforms)),
         ].join("\n"),
       "gather",
@@ -9273,12 +9677,17 @@ export class TaskService {
           ? ran.failure
           : {
               reason: "error" as const,
-              message: message("gather.failed", { detail: message("gather.unreadable") }),
+              message: message("gather.failed", {
+                detail: message("gather.unreadable"),
+              }),
               ...ran.cost,
             };
       const failedAgent = definedAgent(config, failure.agentId);
       this.append(latest, [
-        { actor: "gatherer", event: { type: "OrchestratorFailed", payload: failure } },
+        {
+          actor: "gatherer",
+          event: { type: "OrchestratorFailed", payload: failure },
+        },
         // 失敗したら、止めずに代わりのエージェントで集め直す
         (failedAgent &&
           failure.runId &&
@@ -9307,7 +9716,10 @@ export class TaskService {
     this.append(latest, [
       {
         actor: "gatherer",
-        event: { type: "InformationGathered", payload: { ...information, ...ran.cost } },
+        event: {
+          type: "InformationGathered",
+          payload: { ...information, ...ran.cost },
+        },
       },
       // 集めている間に、人がリポジトリを選んだなら、トリアージは記録しない（次の実行で、選んだリポジトリで書き直す）
       ...(triaging && awaitingTicketTriage(latest) && latest.repo === task.repo
@@ -9330,7 +9742,10 @@ export class TaskService {
       actor: "sacty",
       event: {
         type: "TaskPaused",
-        payload: { reason: "error", message: message("ticket.triageFailed", { detail }) },
+        payload: {
+          reason: "error",
+          message: message("ticket.triageFailed", { detail }),
+        },
       },
     });
     // 後の工程は概要を読んで作業するので、概要が無ければ要件を書けていない（triageTicket と同じ）
@@ -9388,7 +9803,9 @@ export class TaskService {
     if (!platform) {
       return {
         failed: message("ticket.triageFailed", {
-          detail: message("ticket.platformMissing", { platform: ticket.platform }),
+          detail: message("ticket.platformMissing", {
+            platform: ticket.platform,
+          }),
         }),
       };
     }
@@ -9396,7 +9813,11 @@ export class TaskService {
     const listed = fixed ? undefined : await this.projectRepositories(task.projectId);
     const candidates = fixed ? [fixed] : (listed?.repositories ?? []);
     if (candidates.length === 0) {
-      return { failed: message("ticket.triageFailed", { detail: message("ticket.noCandidates") }) };
+      return {
+        failed: message("ticket.triageFailed", {
+          detail: message("ticket.noCandidates"),
+        }),
+      };
     }
     return { platform, candidates, fixed, unreadable: listed?.errors ?? [] };
   }
@@ -9413,11 +9834,17 @@ export class TaskService {
     if (!ticket) return;
     const pause = (reason: PauseReason, text: DaemonText) =>
       this.append(this.mustGet(task.id), [
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason, message: text } } },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason, message: text } },
+        },
       ]);
     if (budgetState(task.budget) === "exceeded") {
       this.append(task, [
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "budget" } },
+        },
       ]);
       return;
     }
@@ -9464,14 +9891,20 @@ export class TaskService {
       this.append(latest, [
         {
           actor: "orchestrator",
-          event: { type: "OrchestratorFailed", payload: { reason, message: text, ...cost } },
+          event: {
+            type: "OrchestratorFailed",
+            payload: { reason, message: text, ...cost },
+          },
         },
         // 失敗したら、止めずに代わりのエージェントで読み直す
         this.pauseOrFallBack(
           task.id,
           { runId, role: "orchestrator", agent, selected },
           reason,
-          { actor: "sacty", event: { type: "TaskPaused", payload: { reason, message: text } } },
+          {
+            actor: "sacty",
+            event: { type: "TaskPaused", payload: { reason, message: text } },
+          },
           config,
         ),
       ]);
@@ -9523,7 +9956,10 @@ export class TaskService {
         actor: "person",
         event: {
           type: "TicketTriaged",
-          payload: { repo: chosen, reason: message("ticket.repoChosenByPerson") },
+          payload: {
+            repo: chosen,
+            reason: message("ticket.repoChosenByPerson"),
+          },
         },
       },
     ]);
@@ -9540,7 +9976,10 @@ export class TaskService {
         event:
           "url" in event
             ? { type: "IssueCommented", payload: { url: event.url } }
-            : { type: "IssueCommentFailed", payload: { message: event.failed } },
+            : {
+                type: "IssueCommentFailed",
+                payload: { message: event.failed },
+              },
       },
     ]);
   }
@@ -9551,7 +9990,10 @@ export class TaskService {
     const latest = this.tasks.get(task.id);
     if (!latest || !awaitingTicketPrComment(latest)) return;
     this.append(latest, [
-      { actor: "sacty", event: { type: "TicketPullRequestCommented", payload: event } },
+      {
+        actor: "sacty",
+        event: { type: "TicketPullRequestCommented", payload: event },
+      },
     ]);
   }
 
@@ -9562,7 +10004,11 @@ export class TaskService {
     const ticket = task.ticket;
     const config = this.deps.config();
     if (!ticket || !this.deps.tickets) {
-      return { failed: message("ticket.platformMissing", { platform: ticket?.platform ?? "" }) };
+      return {
+        failed: message("ticket.platformMissing", {
+          platform: ticket?.platform ?? "",
+        }),
+      };
     }
     // 接続先は、ホストの PF か、プロジェクトのコンテキストの PF（PBI-74）
     let platform: Platform | undefined;
@@ -9575,7 +10021,11 @@ export class TaskService {
       return { failed: redactText(errorText(error), usedSecrets) };
     }
     if (!platform)
-      return { failed: message("ticket.platformMissing", { platform: ticket.platform }) };
+      return {
+        failed: message("ticket.platformMissing", {
+          platform: ticket.platform,
+        }),
+      };
     try {
       return await this.deps.tickets.comment({
         platform,
@@ -9718,7 +10168,10 @@ export class TaskService {
       const head = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv, signal);
       const content = await this.deps.repos.readFile(gitDir, head, path);
       if (content === undefined) return { kind: "none" };
-      return { kind: "file", content: applyEditsToFile(content, pendingDesignEdits(task)) };
+      return {
+        kind: "file",
+        content: applyEditsToFile(content, pendingDesignEdits(task)),
+      };
     } catch (error) {
       // 一時停止・中止による中断は、読めなかったのではない（呼び出し側が、記録せずに止める）
       if (signal?.aborted) return { kind: "aborted" };
@@ -9764,7 +10217,11 @@ export class TaskService {
       actor: "sacty",
       event: {
         type: "DesignEdited",
-        payload: { runId, round: (task.submissions.implement ?? 0) + 1, ...payload },
+        payload: {
+          runId,
+          round: (task.submissions.implement ?? 0) + 1,
+          ...payload,
+        },
       },
     });
     const block =
@@ -9826,7 +10283,6 @@ export class TaskService {
     const project = this.deps.projects.get(task.projectId);
     if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
     const usedSecrets: string[] = [];
-    const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
     const reason = renderMessage(target.reason, "ja");
     void this.serialized(`rework-notice:${task.id}:${round}`, async () => {
       const signal = this.stopNoticeDeadline();
@@ -9840,14 +10296,15 @@ export class TaskService {
           round,
           reason,
           stepName: STEP_NAME.design,
-          taskUrl: link(task.id).url,
-          localOnly: link(task.id).localOnly,
           secrets: usedSecrets,
         });
         const pr = { repo, token, number };
         const existing = await untilAborted(
           signal,
-          this.deps.pulls.findIssueComment({ ...pr, marker: reworkNoticeMarker(task.id, round) }),
+          this.deps.pulls.findIssueComment({
+            ...pr,
+            marker: reworkNoticeMarker(task.id, round),
+          }),
         );
         if (existing) return;
         await untilAborted(signal, this.deps.pulls.commentIssue({ ...pr, body, signal }));
@@ -9877,7 +10334,19 @@ export class TaskService {
     const project = this.deps.projects.get(task.projectId);
     if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
     const usedSecrets: string[] = [];
-    const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
+    // 指摘は、元のコメントへのリンク（PR のコメントから取り込んだ指摘）か、要点の1行（リンクが作れない指摘）で示す
+    const prUrl = watched.url ?? `${repo.replace(/\/+$/, "")}/pull/${number}`;
+    const refsOf = (remarkIds: readonly string[]) =>
+      remarkIds.map((remarkId) => {
+        const remark = task.remarks.find((r) => r.id === remarkId);
+        const ref =
+          remark?.origin && remark.origin.number === number
+            ? remarkOriginRef(remark.origin.key)
+            : undefined;
+        return ref
+          ? { url: remarkOriginUrl(prUrl, ref) }
+          : { line: remark ? remarkLine(remark, usedSecrets) : "" };
+      });
     void this.serialized(`human-ask:${task.id}:${gate.step}:${gate.submission}`, async () => {
       // 期限は、順番を待った後の処理の始まりから数える
       const signal = this.stopNoticeDeadline();
@@ -9892,11 +10361,17 @@ export class TaskService {
           stepName: STEP_NAME[gate.step],
           submission: gate.submission,
           ...(asks.undecided
-            ? { undecided: { remarkIds: asks.undecided.remarkIds, reason: asks.undecided.reason } }
+            ? {
+                undecided: {
+                  remarks: refsOf(asks.undecided.remarkIds),
+                  reason: asks.undecided.reason,
+                },
+              }
             : {}),
-          confirms: asks.confirms.map((c) => ({ remarkIds: c.remarkIds, text: c.text })),
-          taskUrl: link(task.id).url,
-          localOnly: link(task.id).localOnly,
+          confirms: asks.confirms.map((c) => ({
+            remarks: refsOf(c.remarkIds),
+            text: c.text,
+          })),
           secrets: usedSecrets,
         });
         if (!body) return;
@@ -10042,7 +10517,6 @@ export class TaskService {
       if (same.length > 0) return;
       // 確かめている間に再開・中止された（今は別の状態の）なら、書かない
       if (this.tasks.get(taskId)?.status !== "paused") return;
-      const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
       await untilAborted(
         signal,
         this.deps.pulls.commentIssue({
@@ -10051,8 +10525,6 @@ export class TaskService {
             taskId,
             reason,
             summary,
-            taskUrl: link(taskId).url,
-            localOnly: link(taskId).localOnly,
           }),
           signal,
         }),
@@ -10070,7 +10542,11 @@ export class TaskService {
    * タスクの状態から対象の PR が消えるため）。
    */
   private async resolveReviewStops(
-    posted: { taskId: string; projectId: string; target: { repo: string; number: number } },
+    posted: {
+      taskId: string;
+      projectId: string;
+      target: { repo: string; number: number };
+    },
     reviewUrl: string,
   ): Promise<void> {
     const { taskId, target } = posted;
@@ -10419,7 +10895,10 @@ export class TaskService {
             ...(previous.ticket ? { ticket: previous.ticket } : {}),
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
-            rerun: { taskId: previous.id, ...(input.image ? { image: input.image } : {}) },
+            rerun: {
+              taskId: previous.id,
+              ...(input.image ? { image: input.image } : {}),
+            },
             ...(previous.derivedFrom ? { derivedFrom: previous.derivedFrom } : {}),
             // セキュリティの組み合わせは引き継ぐ（最小限の変更の決まりと、公開しない扱いを外さないため）。ほかの
             // 組み合わせは引き継がず、オーケストレーターが選ぶ
@@ -10623,7 +11102,12 @@ export class TaskService {
    */
   private fallBack(
     taskId: string,
-    failed: { runId: string; role: string; agent: AgentConfig; selected?: AgentConfig },
+    failed: {
+      runId: string;
+      role: string;
+      agent: AgentConfig;
+      selected?: AgentConfig;
+    },
     reason: string,
     config?: SactyConfig,
     /** この処理の中で、すでに試したエージェント（制限の期限が過ぎていても、もう一度は試さない）。 */
@@ -10642,7 +11126,10 @@ export class TaskService {
     }
     const byRole = this.fallbackTried.get(taskId) ?? new Map();
     this.fallbackTried.set(taskId, byRole);
-    const entry = byRole.get(failed.role) ?? { tried: new Set<string>(), pending: false };
+    const entry = byRole.get(failed.role) ?? {
+      tried: new Set<string>(),
+      pending: false,
+    };
     byRole.set(failed.role, entry);
     entry.tried.add(failed.agent.id);
     const skip = (id: string) =>
@@ -10673,7 +11160,12 @@ export class TaskService {
   /** 失敗して代わりのエージェントに切り替えるなら、その記録。そうでなければ、止める記録（pause）。 */
   private pauseOrFallBack(
     taskId: string,
-    failed: { runId: string; role: string; agent: AgentConfig; selected?: AgentConfig },
+    failed: {
+      runId: string;
+      role: string;
+      agent: AgentConfig;
+      selected?: AgentConfig;
+    },
     reason: string,
     pause: ActivityItem,
     config?: SactyConfig,
@@ -10831,7 +11323,10 @@ export class TaskService {
                 actor: "sacty" as const,
                 event: {
                   type: "TaskPaused" as const,
-                  payload: { reason: "error" as const, message: message("run.daemonStopped") },
+                  payload: {
+                    reason: "error" as const,
+                    message: message("run.daemonStopped"),
+                  },
                 },
               },
             ]
@@ -11031,7 +11526,10 @@ export class TaskService {
     // 消す候補は、最初に待つ前（API の待ち受け・ワーカーを始める前）に決める。片付けの間に始まった実行・質問が作る
     // 一時領域・作業領域は、候補に入らないので消さない（PBI-157 レビュー指摘）
     const scratch = RUN_SCRATCH_DIRS.flatMap((name) =>
-      idEntries(join(root, name)).map((runId) => ({ runId, path: join(root, name, runId) })),
+      idEntries(join(root, name)).map((runId) => ({
+        runId,
+        path: join(root, name, runId),
+      })),
     );
     const taskIds = new Set([
       ...idEntries(root),
@@ -11292,9 +11790,16 @@ export class TaskService {
       skipBasis?: boolean;
       stage: PullRequestBodyStage;
     },
-  ): Promise<{ body: string; template: PullRequestTemplateUse; basisPending?: string }> {
+  ): Promise<{
+    body: string;
+    template: PullRequestTemplateUse;
+    basisPending?: string;
+  }> {
     const make = (basisComment?: { url?: string }) => {
-      const stage = { ...input.stage, ...(basisComment ? { basisComment } : {}) };
+      const stage = {
+        ...input.stage,
+        ...(basisComment ? { basisComment } : {}),
+      };
       return this.pullRequestBody(
         task.id,
         input.repo,
@@ -11414,7 +11919,7 @@ export class TaskService {
       if (!unchanged()) return;
       if (ready) {
         try {
-          const undrafted = await this.deps.pulls.setDraft({
+          const undrafted = await this.setDraftWithin(task.id, {
             repo: pr.repo,
             token,
             number: pr.number,
@@ -11446,7 +11951,7 @@ export class TaskService {
             payload: {
               number: pr.number,
               baseBranch: repository.baseBranch,
-              ...(ready ? { ready: true as const } : {}),
+              ...(ready ? { ready: true as const, undraftTracked: true as const } : {}),
             },
           },
         },
@@ -11552,7 +12057,10 @@ export class TaskService {
       this.append(this.mustGet(task.id), [
         {
           actor: "sacty",
-          event: { type: "BaseBranchMerged", payload: { from: base, commit: tip, conflicts } },
+          event: {
+            type: "BaseBranchMerged",
+            payload: { from: base, commit: tip, conflicts },
+          },
         },
       ]);
       return conflicts.length > 0
@@ -11561,7 +12069,9 @@ export class TaskService {
     } catch (error) {
       return {
         kind: "failed",
-        message: message("merge.failed", { detail: redactText(errorText(error), usedSecrets) }),
+        message: message("merge.failed", {
+          detail: redactText(errorText(error), usedSecrets),
+        }),
       };
     }
   }
@@ -11698,7 +12208,11 @@ export class TaskService {
     config: SactyConfig,
     rebase?: { branch: string },
   ): Promise<
-    | { ok: true; dir: string; prepared?: { url: string; baseBranch: string; baseCommit: string } }
+    | {
+        ok: true;
+        dir: string;
+        prepared?: { url: string; baseBranch: string; baseCommit: string };
+      }
     | { ok: false; message: DaemonText }
   > {
     // 完了の後に作業領域を消している途中なら、消し終わってから用意し直す（PBI-157）
@@ -11740,7 +12254,10 @@ export class TaskService {
         this.append(task, [
           {
             actor: "sacty",
-            event: { type: "RepositoryPrepared", payload: { url, baseBranch, baseCommit } },
+            event: {
+              type: "RepositoryPrepared",
+              payload: { url, baseBranch, baseCommit },
+            },
           },
         ]);
       } else if (baseCommit !== workBaseCommit(task.repository, task.baseMerge)) {
@@ -11805,7 +12322,10 @@ export class TaskService {
     const account = project?.githubAccounts?.[host];
     if (!account) {
       throw new MessageError(
-        message("github.accountRequired", { project: project?.name ?? task.projectId, host }),
+        message("github.accountRequired", {
+          project: project?.name ?? task.projectId,
+          host,
+        }),
       );
     }
     const token = await this.deps.github.token(host, account, signal);
@@ -11977,7 +12497,10 @@ export class TaskService {
                     },
                     {
                       actor: "sacty",
-                      event: { type: "TaskPaused", payload: { reason: pauseReason, ...manual } },
+                      event: {
+                        type: "TaskPaused",
+                        payload: { reason: pauseReason, ...manual },
+                      },
                     },
                   ]);
                 } else {
@@ -11999,7 +12522,11 @@ export class TaskService {
                       actor: "sacty",
                       event: {
                         type: "TaskPaused",
-                        payload: { reason: pauseReason, message: text, ...manual },
+                        payload: {
+                          reason: pauseReason,
+                          message: text,
+                          ...manual,
+                        },
                       },
                     },
                   ]);
@@ -12076,7 +12603,10 @@ export class TaskService {
                 actor: "sacty",
                 event: {
                   type: "TaskPaused",
-                  payload: { reason: this.stopReason(taskId, "error"), ...manual },
+                  payload: {
+                    reason: this.stopReason(taskId, "error"),
+                    ...manual,
+                  },
                 },
               },
             ]);
@@ -12099,7 +12629,11 @@ export class TaskService {
                 actor: "sacty",
                 event: {
                   type: "TaskPaused",
-                  payload: { reason: this.stopReason(taskId, "error"), message: text, ...manual },
+                  payload: {
+                    reason: this.stopReason(taskId, "error"),
+                    message: text,
+                    ...manual,
+                  },
                 },
               },
             ]);
@@ -12158,7 +12692,10 @@ export class TaskService {
         actor: "person",
         event: {
           type: "TaskPaused",
-          payload: { reason: "manual", ...this.unstoppedPayload(unstoppedRuns) },
+          payload: {
+            reason: "manual",
+            ...this.unstoppedPayload(unstoppedRuns),
+          },
         },
       },
     ]);
@@ -12176,7 +12713,10 @@ export class TaskService {
   }
 
   /** 停止を確かめられなかった実行を、一時停止の記録に添える形にする。 */
-  private unstoppedPayload(runs: string[]): { message?: DaemonText; unstoppedRuns?: string[] } {
+  private unstoppedPayload(runs: string[]): {
+    message?: DaemonText;
+    unstoppedRuns?: string[];
+  } {
     return runs.length > 0 ? { message: this.notStopped(runs), unstoppedRuns: runs } : {};
   }
 
@@ -12310,7 +12850,11 @@ export class TaskService {
               actor: "sacty",
               event: {
                 type: "TaskPaused",
-                payload: { reason: this.stopReason(initial.id, "error"), message: text, ...manual },
+                payload: {
+                  reason: this.stopReason(initial.id, "error"),
+                  message: text,
+                  ...manual,
+                },
               },
             },
           ]);
@@ -12355,7 +12899,10 @@ export class TaskService {
               actor: "sacty",
               event: {
                 type: "TaskPaused",
-                payload: { reason: this.stopReason(initial.id, "error"), ...manual },
+                payload: {
+                  reason: this.stopReason(initial.id, "error"),
+                  ...manual,
+                },
               },
             },
           ]);
@@ -12366,7 +12913,10 @@ export class TaskService {
         this.append(initial, [
           {
             actor: "sacty",
-            event: { type: "TaskPaused", payload: { reason: "error", message: ready.message } },
+            event: {
+              type: "TaskPaused",
+              payload: { reason: "error", message: ready.message },
+            },
           },
         ]);
         return;
@@ -12394,7 +12944,10 @@ export class TaskService {
       this.preparingPhases.set(taskId, "planning");
       if (budgetState(this.mustGet(taskId).budget) === "exceeded") {
         this.append(this.mustGet(taskId), [
-          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+          {
+            actor: "sacty",
+            event: { type: "TaskPaused", payload: { reason: "budget" } },
+          },
         ]);
         return;
       }
@@ -12428,7 +12981,11 @@ export class TaskService {
             actor: "sacty",
             event: {
               type: "TaskPaused",
-              payload: { reason: this.stopReason(initial.id, "error"), message: text, ...manual },
+              payload: {
+                reason: this.stopReason(initial.id, "error"),
+                message: text,
+                ...manual,
+              },
             },
           },
         ]);
@@ -12462,7 +13019,10 @@ export class TaskService {
         if (latest.status !== "queued" || latest.steps.length > 0) return;
         const failedAgent = definedAgent(config.config, choice.failure.agentId);
         this.append(latest, [
-          { actor: "orchestrator", event: { type: "OrchestratorFailed", payload: choice.failure } },
+          {
+            actor: "orchestrator",
+            event: { type: "OrchestratorFailed", payload: choice.failure },
+          },
           // 失敗したら、止めずに代わりのエージェントで選び直す
           (failedAgent &&
             choice.failure.runId &&
@@ -12480,7 +13040,10 @@ export class TaskService {
             actor: "sacty",
             event: {
               type: "TaskPaused",
-              payload: { reason: choice.failure.reason, message: choice.failure.message },
+              payload: {
+                reason: choice.failure.reason,
+                message: choice.failure.message,
+              },
             },
           },
         ]);
@@ -12554,7 +13117,10 @@ export class TaskService {
           },
           {
             actor: "sacty",
-            event: { type: "TaskPaused", payload: { reason: "error", message: problem } },
+            event: {
+              type: "TaskPaused",
+              payload: { reason: "error", message: problem },
+            },
           },
         ]);
         this.warnIfNeeded(this.mustGet(taskId));
@@ -12646,7 +13212,10 @@ export class TaskService {
 
     if (budgetState(task.budget) === "exceeded") {
       this.append(task, [
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "budget" } },
+        },
       ]);
       return;
     }
@@ -12666,7 +13235,15 @@ export class TaskService {
       this.append(
         latest,
         resolved.ok
-          ? [{ actor: "sacty", event: { type: "ReviewTargetResolved", payload: resolved.target } }]
+          ? [
+              {
+                actor: "sacty",
+                event: {
+                  type: "ReviewTargetResolved",
+                  payload: resolved.target,
+                },
+              },
+            ]
           : [
               {
                 actor: "sacty",
@@ -12750,7 +13327,10 @@ export class TaskService {
     try {
       ready = repoless
         ? REPO_STEPS.includes(step)
-          ? { ok: false, message: message("repo.stepNeedsRepository", { step }) }
+          ? {
+              ok: false,
+              message: message("repo.stepNeedsRepository", { step }),
+            }
           : { ok: true, dir: join(this.deps.workspaceRoot, task.id, "empty") }
         : await this.prepareRepository(this.mustGet(task.id), config.config);
     } catch (error) {
@@ -12811,10 +13391,19 @@ export class TaskService {
             actor: "sacty",
             event: {
               type: "AgentRunFailed",
-              payload: { runId, step, agentId: agent.id, reason: "error", message: synced.message },
+              payload: {
+                runId,
+                step,
+                agentId: agent.id,
+                reason: "error",
+                message: synced.message,
+              },
             },
           },
-          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+          {
+            actor: "sacty",
+            event: { type: "TaskPaused", payload: { reason: "error" } },
+          },
         ]);
         return;
       }
@@ -12924,7 +13513,12 @@ export class TaskService {
     const multiRepoStep = copiesRepositories(task, step);
     const otherReposDir =
       multiRepoStep && !repoless ? join(this.deps.workspaceRoot, "_repos", runId) : undefined;
-    const codeRepositories: { repo: string; path: string; branch: string; commit: string }[] = [];
+    const codeRepositories: {
+      repo: string;
+      path: string;
+      branch: string;
+      commit: string;
+    }[] = [];
     let copyFailed = false;
     let agentInvoked = false;
     // 提出を PR のレビューの子タスクがレビューする工程か（PBI-346）。指示と記録で同じ判定を使うよう、実行の前に1回だけ決める
@@ -13152,7 +13746,11 @@ export class TaskService {
           for (const input of inputs) writeFileSync(join(inputDir, input.name), input.text);
         } catch (error) {
           executed = {
-            outcome: { kind: "failed", reason: "error", message: errorText(error) },
+            outcome: {
+              kind: "failed",
+              reason: "error",
+              message: errorText(error),
+            },
             costUsd: 0,
             estimated: false,
           };
@@ -13169,7 +13767,11 @@ export class TaskService {
       const stepImage = resolveImage(imageConfig, runImageName);
       if (!stepImage.ok) {
         executed ??= {
-          outcome: { kind: "failed", reason: "error", message: stepImage.message },
+          outcome: {
+            kind: "failed",
+            reason: "error",
+            message: stepImage.message,
+          },
           costUsd: 0,
           estimated: false,
         };
@@ -13190,7 +13792,11 @@ export class TaskService {
           );
       if (services && !services.ok) {
         executed = {
-          outcome: { kind: "failed", reason: "error", message: services.message },
+          outcome: {
+            kind: "failed",
+            reason: "error",
+            message: services.message,
+          },
           costUsd: 0,
           estimated: false,
         };
@@ -13229,7 +13835,9 @@ export class TaskService {
                     rereviewNarrow: {
                       ...rereviewNarrow,
                       ...(reviewDiffDir && !rereviewNarrow.sameHead
-                        ? { diffFile: `${CONTAINER_REVIEW_DIR}/${REREVIEW_DIFF_FILE}` }
+                        ? {
+                            diffFile: `${CONTAINER_REVIEW_DIR}/${REREVIEW_DIFF_FILE}`,
+                          }
                         : {}),
                     },
                   }
@@ -13279,10 +13887,22 @@ export class TaskService {
                       ]
                     : []),
                   ...(inputDir
-                    ? [{ hostPath: inputDir, containerPath: CONTAINER_INPUT_DIR, readOnly: true }]
+                    ? [
+                        {
+                          hostPath: inputDir,
+                          containerPath: CONTAINER_INPUT_DIR,
+                          readOnly: true,
+                        },
+                      ]
                     : []),
                   ...(otherReposDir
-                    ? [{ hostPath: otherReposDir, containerPath: "/sacty-repos", readOnly: true }]
+                    ? [
+                        {
+                          hostPath: otherReposDir,
+                          containerPath: "/sacty-repos",
+                          readOnly: true,
+                        },
+                      ]
                     : []),
                 ],
               }
@@ -13364,7 +13984,10 @@ export class TaskService {
               actor: "sacty",
               event: {
                 type: "TaskPaused",
-                payload: { reason: this.stopReason(task.id, "error"), ...manual },
+                payload: {
+                  reason: this.stopReason(task.id, "error"),
+                  ...manual,
+                },
               },
             }
           : this.pauseOrFallBack(
@@ -13461,7 +14084,14 @@ export class TaskService {
         extractedPlan.ok && splitRepositories
           ? splitWithRepositories(extractedPlan, splitCandidates ?? [], Boolean(task.repos))
           : extractedPlan;
-      const run = { runId, step, agentId: agent.id, costUsd, estimated, usage: outcome.usage };
+      const run = {
+        runId,
+        step,
+        agentId: agent.id,
+        costUsd,
+        estimated,
+        usage: outcome.usage,
+      };
       // 人間の差し戻しの指摘（統合レビューの承認待ちから。PBI-31）への対応
       const { responses } = extractBlocks(
         outcome.output,
@@ -13477,7 +14107,10 @@ export class TaskService {
               payload: { ...run, reason: "error", message: plan.message },
             },
           },
-          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+          {
+            actor: "sacty",
+            event: { type: "TaskPaused", payload: { reason: "error" } },
+          },
         ]);
         this.warnIfNeeded(this.mustGet(task.id));
         return;
@@ -13489,7 +14122,12 @@ export class TaskService {
           actor: "agent",
           event: {
             type: "AgentRunCompleted",
-            payload: { ...run, authMode: agent.auth.mode, output: outcome.output, responses },
+            payload: {
+              ...run,
+              authMode: agent.auth.mode,
+              output: outcome.output,
+              responses,
+            },
           },
         },
         {
@@ -13506,6 +14144,9 @@ export class TaskService {
                 scope: {
                   content: c.body,
                   parentTitle: latest.title,
+                  ...(latest.derivedFrom?.deferredRemarkId
+                    ? { parentDeferred: true as const }
+                    : {}),
                   ...(latest.split ? { fix: true as const } : {}),
                 },
                 dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
@@ -13591,7 +14232,10 @@ export class TaskService {
         },
         {
           actor: "sacty",
-          event: { type: "TaskPaused", payload: { reason: "error", message: failure } },
+          event: {
+            type: "TaskPaused",
+            payload: { reason: "error", message: failure },
+          },
         },
       ]);
       this.warnIfNeeded(this.mustGet(task.id));
@@ -13748,7 +14392,10 @@ export class TaskService {
               actor: "sacty",
               event: {
                 type: "TaskPaused",
-                payload: { reason: this.stopReason(task.id, "error"), ...manual },
+                payload: {
+                  reason: this.stopReason(task.id, "error"),
+                  ...manual,
+                },
               },
             },
             config.config,
@@ -13772,7 +14419,9 @@ export class TaskService {
             ...(commit ? { commit } : {}),
             ...(review.risk
               ? { assessment: review.risk }
-              : { reason: review.riskUnreadable ?? message("pr.riskUnreadable") }),
+              : {
+                  reason: review.riskUnreadable ?? message("pr.riskUnreadable"),
+                }),
           },
         },
       });
@@ -13810,7 +14459,10 @@ export class TaskService {
     const proposalId = `CP-${latest.proposals.length + 1}`;
     events.push({
       actor: "agent",
-      event: { type: "ChangeProposed", payload: { proposalId, fromStep: step, ...proposal } },
+      event: {
+        type: "ChangeProposed",
+        payload: { proposalId, fromStep: step, ...proposal },
+      },
     });
     events.push({
       actor: "sacty",
@@ -14218,7 +14870,13 @@ export class TaskService {
             actor: "sacty",
             event: {
               type: "AgentRunFailed",
-              payload: { runId, step, agentId: agent.id, reason: "error", message: detail },
+              payload: {
+                runId,
+                step,
+                agentId: agent.id,
+                reason: "error",
+                message: detail,
+              },
             },
           },
         ]);
@@ -14227,7 +14885,11 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "TaskPaused",
-            payload: { reason: this.stopReason(task.id, "error"), message: detail, ...stopped },
+            payload: {
+              reason: this.stopReason(task.id, "error"),
+              message: detail,
+              ...stopped,
+            },
           },
         },
       ]);
@@ -14281,7 +14943,13 @@ export class TaskService {
       this.warnIfNeeded(this.mustGet(task.id));
     };
     const fail = (failed: DaemonText) =>
-      record("sacty", { ...base, failed, runResult: "failed", costUsd: 0, estimated: false });
+      record("sacty", {
+        ...base,
+        failed,
+        runResult: "failed",
+        costUsd: 0,
+        estimated: false,
+      });
     if (budgetState(task.budget) === "exceeded") return fail(message("export.budgetExceeded"));
     // 人が選んだエージェントが config.yaml から消えていれば、既定に戻さず、書き出せなかった理由にする（PBI-121）
     if (!chosen.ok) return fail(message("agent.chosenMissing", { step, name: chosen.missing }));
@@ -14293,7 +14961,9 @@ export class TaskService {
         platform = await this.findPlatform(task, config, to.name, usedSecrets);
       } catch (error) {
         return fail(
-          message("export.failed", { detail: redactText(errorText(error), usedSecrets) }),
+          message("export.failed", {
+            detail: redactText(errorText(error), usedSecrets),
+          }),
         );
       }
       if (!platform) return fail(message("export.destinationMissing", { name: to.name }));
@@ -14305,7 +14975,9 @@ export class TaskService {
         context = await this.runContext(task, agent, config, usedSecrets, to.name, "export");
       } catch (error) {
         return fail(
-          message("export.failed", { detail: redactText(errorText(error), usedSecrets) }),
+          message("export.failed", {
+            detail: redactText(errorText(error), usedSecrets),
+          }),
         );
       }
       if (!context?.placed.mcpServers.includes(to.name)) {
@@ -14337,10 +15009,20 @@ export class TaskService {
       // 用意したコンテキスト（層・注意・置いた段階）も、この実行の記録として残す（PBI-119）。finally で消す範囲の中で
       // 記録する（記録に失敗しても、用意したディレクトリとホストの MCP サーバーの確保を残さない。PR #129 再レビュー指摘）
       this.append(latest, [
-        ...(context ? [this.contextResolved(runId, context, { platforms: [], warnings: [] })] : []),
+        ...(context
+          ? [
+              this.contextResolved(runId, context, {
+                platforms: [],
+                warnings: [],
+              }),
+            ]
+          : []),
         {
           actor: "sacty",
-          event: { type: "ExportStarted", payload: { step, runId, approvedAt: approved.at } },
+          event: {
+            type: "ExportStarted",
+            payload: { step, runId, approvedAt: approved.at },
+          },
         },
       ]);
       executed = await this.execute({
@@ -14401,7 +15083,12 @@ export class TaskService {
     // 秘密情報は、execute が出力の全文から取り除いている（理由を切り詰めるのは、その後）
     const result = extractExport(outcome.output);
     if (result && "url" in result) {
-      return record("agent", { ...base, ...cost, url: result.url, runResult: "completed" });
+      return record("agent", {
+        ...base,
+        ...cost,
+        url: result.url,
+        runResult: "completed",
+      });
     }
     return record("agent", {
       ...base,
@@ -14422,7 +15109,10 @@ export class TaskService {
       throw new InvalidOperationError(message("export.notRetryable"));
     }
     return this.append(task, [
-      { actor: "person", event: { type: "ExportRequested", payload: { step: step.data } } },
+      {
+        actor: "person",
+        event: { type: "ExportRequested", payload: { step: step.data } },
+      },
     ]);
   }
 
@@ -14542,14 +15232,21 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "TaskPaused",
-            payload: { reason: "error", message: redactText(text, usedSecrets) },
+            payload: {
+              reason: "error",
+              message: redactText(text, usedSecrets),
+            },
           },
         },
       ]);
     };
     const repo = this.taskRepo(task);
     if (!repo) {
-      fail(message("pr.unavailable", { detail: message("run.repositoryNotConfigured") }));
+      fail(
+        message("pr.unavailable", {
+          detail: message("run.repositoryNotConfigured"),
+        }),
+      );
       return;
     }
     // 退避した git のメタデータが無ければ、同じ起点で用意し直す
@@ -14694,14 +15391,21 @@ export class TaskService {
         current = this.append(this.mustGet(task.id), [
           {
             actor: "sacty",
-            event: { type: "StepBranchPushed", payload: { step, branch, commit } },
+            event: {
+              type: "StepBranchPushed",
+              payload: { step, branch, commit },
+            },
           },
         ]);
       }
       // 作り直すときは、開いていた前の PR を閉じる（マージされないように。閉じられなければ、中止のときに閉じる）
       if (supersede !== undefined && last) {
         try {
-          await this.deps.pulls.close({ repo: last.repo, token, number: supersede });
+          await this.deps.pulls.close({
+            repo: last.repo,
+            token,
+            number: supersede,
+          });
           superseded = supersede;
         } catch (error) {
           console.warn(
@@ -14927,7 +15631,10 @@ export class TaskService {
     } catch (error) {
       // テンプレートの処理の失敗でも、PR の作成は止めない（sacty の決まった形の本文にする）
       text = fallback;
-      template = { fallback: "unusable", message: redactText(errorText(error), usedSecrets) };
+      template = {
+        fallback: "unusable",
+        message: redactText(errorText(error), usedSecrets),
+      };
     }
     const limited = limitBody(
       redact(text.main, usedSecrets),
@@ -14942,7 +15649,10 @@ export class TaskService {
     // 本文の解析は別スレッドで動かす（記号が長く続く本文でも、デーモンのほかの処理を待たせない。PBI-372）
     return {
       body: linksUnlinked(await unlinkedGeneratedBody(limited.body, usedSecrets), taskId, repo),
-      template: { ...template, ...(limited.truncated ? { truncated: true } : {}) },
+      template: {
+        ...template,
+        ...(limited.truncated ? { truncated: true } : {}),
+      },
     };
   }
 
@@ -14970,7 +15680,12 @@ export class TaskService {
       secrets: readonly string[];
       agent?: boolean;
     },
-  ): Promise<{ body?: string; record: boolean; stop?: true; overwritten?: DaemonText }> {
+  ): Promise<{
+    body?: string;
+    record: boolean;
+    stop?: true;
+    overwritten?: DaemonText;
+  }> {
     const generated = input.generated;
     const base = task.pullRequestBodies?.[pullRequestBodyKey(input.repo, input.number)];
     if (base === undefined) return { body: generated, record: true };
@@ -14994,6 +15709,13 @@ export class TaskService {
     let merged: Awaited<ReturnType<typeof mergePullRequestBody>>;
     try {
       merged = await mergePullRequestBody({ base, human, generated });
+      // 競合が無いときは、タスクの ID の目印を1つだけにする（以前の版の可視の行を残さない。PBI-471）
+      if (merged.conflicts === 0) {
+        merged = {
+          ...merged,
+          text: withTaskMarker(merged.text, task.id, base),
+        };
+      }
     } catch (error) {
       // 本文に触れず、理由を作業履歴に残す（画面で、本文に今回の内容が入らなかったことが分かるように）
       this.append(this.mustGet(task.id), [
@@ -15005,7 +15727,9 @@ export class TaskService {
               repo: input.repo,
               number: input.number,
               outcome: "kept",
-              reason: message("pr.bodyMergeError", { detail: errorText(error) }),
+              reason: message("pr.bodyMergeError", {
+                detail: errorText(error),
+              }),
             },
           },
         },
@@ -15014,7 +15738,10 @@ export class TaskService {
     }
     if (merged.conflicts === 0 && merged.text.length <= PR_BODY_MAX) {
       const unlinked = await unlinkedMergedBody(merged.text, input.secrets);
-      return { body: linksUnlinked(unlinked, task.id, input.repo), record: true };
+      return {
+        body: linksUnlinked(unlinked, task.id, input.repo),
+        record: true,
+      };
     }
     // 重なった箇所は、エージェントにまとめさせる
     const kept = (reason: DaemonText, cost: Record<string, unknown> = {}) => {
@@ -15023,7 +15750,13 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "PullRequestBodyResolved",
-            payload: { repo: input.repo, number: input.number, outcome: "kept", reason, ...cost },
+            payload: {
+              repo: input.repo,
+              number: input.number,
+              outcome: "kept",
+              reason,
+              ...cost,
+            },
           },
         },
       ]);
@@ -15071,8 +15804,10 @@ export class TaskService {
       }
       return result;
     }
-    const body = extractMergedPullRequestBody(ran.output, PR_BODY_MAX);
-    if (!body) return kept(message("orchestrator.unreadable"), ran.cost);
+    const extracted = extractMergedPullRequestBody(ran.output, PR_BODY_MAX);
+    const body = extracted && withTaskMarker(extracted, task.id, base);
+    if (!body || body.length > PR_BODY_MAX)
+      return kept(message("orchestrator.unreadable"), ran.cost);
     // まとめる間に人が本文をまた直していたら、その直しを含まない本文で上書きしない（次の更新で、もう一度まとめる）
     let now: string | undefined;
     try {
@@ -15089,7 +15824,12 @@ export class TaskService {
         actor: "orchestrator",
         event: {
           type: "PullRequestBodyResolved",
-          payload: { repo: input.repo, number: input.number, outcome: "resolved", ...ran.cost },
+          payload: {
+            repo: input.repo,
+            number: input.number,
+            outcome: "resolved",
+            ...ran.cost,
+          },
         },
       },
     ]);
@@ -15287,7 +16027,12 @@ export class TaskService {
       );
       const now = await this.deps.repos.mergeBaseOf(gitDir, target.headCommit, target.baseCommit);
       if (!before || !now || before !== now) return skip("PR の差分の起点が前回と変わりました");
-      if (sameHead) return { previousCommit: previous.headCommit, diff: "", sameHead: true };
+      if (sameHead)
+        return {
+          previousCommit: previous.headCommit,
+          diff: "",
+          sameHead: true,
+        };
       if (!(await this.deps.repos.isAncestor(gitDir, previous.headCommit, target.headCommit))) {
         return skip("前回の先頭が今回の先頭の祖先ではありません（履歴の書き換え）");
       }
@@ -15325,7 +16070,11 @@ export class TaskService {
       ) {
         return skip("前回以降に変わったファイルの多くが、前回の時点の PR の差分に無いものです");
       }
-      return { previousCommit: previous.headCommit, diff: since, sameHead: false };
+      return {
+        previousCommit: previous.headCommit,
+        diff: since,
+        sameHead: false,
+      };
     } catch (error) {
       return skip(
         `前回以降の差分を確かめられませんでした：${renderMessage(redactText(errorText(error), secrets), "ja")}`,
@@ -15380,7 +16129,10 @@ export class TaskService {
       });
     }
     if (latest.pullRequestBodies?.[pullRequestBodyKey(repo, number)] !== body) {
-      events.push({ type: "PullRequestBodyWritten", payload: { repo, number, body } });
+      events.push({
+        type: "PullRequestBodyWritten",
+        payload: { repo, number, body },
+      });
     }
     if (events.length === 0) return;
     this.append(
@@ -15413,7 +16165,10 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "TaskPaused",
-            payload: { reason: "error", message: redactText(text, usedSecrets) },
+            payload: {
+              reason: "error",
+              message: redactText(text, usedSecrets),
+            },
           },
         },
       ]);
@@ -15439,7 +16194,9 @@ export class TaskService {
         });
         if (
           now.state === "merged" &&
-          this.endReworkByMerge(task.id, earlier.number, now, { stoppedRuns: [] })
+          this.endReworkByMerge(task.id, earlier.number, now, {
+            stoppedRuns: [],
+          })
         ) {
           return "stopped";
         }
@@ -15467,7 +16224,11 @@ export class TaskService {
       // 新しく競合したなら、PullRequestHeadMerged の投影が実装のやり直しに戻した
       if (waitingPublish && head.fresh) return "stopped";
       // 前の取り込みの目印が残っているなら、目印のある内容をプッシュせずに止める
-      return fail(message("pr.headConflicted", { branch: task.pushedBranch?.branch ?? branch }));
+      return fail(
+        message("pr.headConflicted", {
+          branch: task.pushedBranch?.branch ?? branch,
+        }),
+      );
     }
     // 先頭を読む間に一時停止・中止を求められたら、プッシュしない
     if (this.stopRequested(task.id)) return "stopped";
@@ -15478,7 +16239,9 @@ export class TaskService {
       try {
         if ((await this.deps.repos.conflictMarkers(dir, unresolved)).length > 0) {
           return fail(
-            message("pr.headConflicted", { branch: task.pushedBranch?.branch ?? branch }),
+            message("pr.headConflicted", {
+              branch: task.pushedBranch?.branch ?? branch,
+            }),
           );
         }
       } catch (error) {
@@ -15628,7 +16391,10 @@ export class TaskService {
       // PRの作成の前に、プッシュしたブランチを記録する（PRの作成に失敗しても、中止で片付けられるように）
       if (task.pushedBranch?.commit !== commit || task.pushedBranch.branch !== branch) {
         this.append(task, [
-          { actor: "sacty", event: { type: "BranchPushed", payload: { branch, commit } } },
+          {
+            actor: "sacty",
+            event: { type: "BranchPushed", payload: { branch, commit } },
+          },
         ]);
       }
       // やり直しの実装が何も変えず、出すコミットが、AI のレビューの指摘が残る PR の先頭のままなら、提出にせずに止める（同じ
@@ -15660,14 +16426,22 @@ export class TaskService {
             actor: "sacty",
             event: {
               type: "ImplementationUnchanged",
-              payload: { repo: reviewedRepo, number, commit, reviewTaskId: reviewer.id },
+              payload: {
+                repo: reviewedRepo,
+                number,
+                commit,
+                reviewTaskId: reviewer.id,
+              },
             },
           },
           {
             actor: "sacty",
             event: {
               type: "TaskPaused",
-              payload: { reason: "unchanged", message: message("implement.unchanged", { number }) },
+              payload: {
+                reason: "unchanged",
+                message: message("implement.unchanged", { number }),
+              },
             },
           },
         ]);
@@ -15680,10 +16454,18 @@ export class TaskService {
       // （マージ済みの PR を更新しても、マージされていない内容が完了扱いになってしまうため）
       let number = task.pullRequest?.number;
       if (number && task.pullRequest?.repo === prRepo) {
-        const previous = await this.deps.pulls.status({ repo: prRepo, token, number });
+        const previous = await this.deps.pulls.status({
+          repo: prRepo,
+          token,
+          number,
+        });
         if (previous.state === "merged") {
           // プッシュの間にマージされた（PBI-276）：新しい PR は作らず、マージを承認として進める
-          if (this.endReworkByMerge(task.id, number, previous, { stoppedRuns: [] })) {
+          if (
+            this.endReworkByMerge(task.id, number, previous, {
+              stoppedRuns: [],
+            })
+          ) {
             return "stopped";
           }
           number = undefined;
@@ -15836,8 +16618,9 @@ export class TaskService {
           }
         }
       }
-      // 依存先の PR に重ねている間は、ドラフトにできなければ、記録せずに止める（ドラフトでない重ねた PR で承認待ちにすると、
-      // 依存先より先にマージされうる。再開すると、ここからやり直す。PBI-317）
+      // 依存先の PR に重ねている間は、ドラフトに戻そうとして戻せなければ、記録せずに止める（ドラフトでない重ねた PR で承認待ちに
+      // すると、依存先より先にマージされうる。再開すると、ここからやり直す。PBI-317）。判定で戻さなかったとき（redraftSkipped）は、
+      // 止めずに進める
       if (task.stack && !draft && !redraftSkipped) {
         return fail(
           message("pr.stackDraftFailed", {
@@ -15856,7 +16639,7 @@ export class TaskService {
       // sacty が作る PR は、ドラフトのまま承認待ちにし、PR のレビューの子タスクの指摘なしで外す（PBI-331）
       if (!task.stack && !awaitsReview) {
         try {
-          const undrafted = await this.deps.pulls.setDraft({
+          const undrafted = await this.setDraftWithin(task.id, {
             repo: prRepo,
             token,
             number: pr.number,
@@ -15993,13 +16776,21 @@ export class TaskService {
         try {
           ({ commit } = await push());
         } catch {
-          fail(message("pr.continuedBranchMoved", { branch, number: continued.number }));
+          fail(
+            message("pr.continuedBranchMoved", {
+              branch,
+              number: continued.number,
+            }),
+          );
           return;
         }
       }
       if (task.pushedBranch?.commit !== commit || task.pushedBranch.branch !== branch) {
         this.append(task, [
-          { actor: "sacty", event: { type: "BranchPushed", payload: { branch, commit } } },
+          {
+            actor: "sacty",
+            event: { type: "BranchPushed", payload: { branch, commit } },
+          },
         ]);
       }
       const token = await this.githubToken(task, continued.repo, usedSecrets);
@@ -16011,7 +16802,9 @@ export class TaskService {
       // プッシュの間にマージされた（PBI-276）：マージを承認として進める
       if (
         now.state === "merged" &&
-        this.endReworkByMerge(task.id, continued.number, now, { stoppedRuns: [] })
+        this.endReworkByMerge(task.id, continued.number, now, {
+          stoppedRuns: [],
+        })
       ) {
         return;
       }
@@ -16116,7 +16909,8 @@ export class TaskService {
             event: {
               type: "TaskCreated",
               payload: {
-                title: reviewTaskTitle(parent.title, number),
+                // 親が後続のタスクのときは、外から来た文の題を、レビューの指示に入る題にしない
+                title: reviewTaskTitle(instructionTitle(parent), number),
                 body: "",
                 start: "github_pull_request",
                 budgetCapUsd: config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD,
@@ -16139,7 +16933,10 @@ export class TaskService {
       this.append(latest, [
         {
           actor: "sacty",
-          event: { type: "ReviewTaskCreated", payload: { taskId: childId, step, repo, number } },
+          event: {
+            type: "ReviewTaskCreated",
+            payload: { taskId: childId, step, repo, number },
+          },
         },
       ]);
     } catch (error) {
@@ -16245,7 +17042,10 @@ export class TaskService {
    */
   private reconcileReviewTask(
     parentId: string,
-    options: { heads?: Map<string, string | undefined>; submittedCommit?: string } = {},
+    options: {
+      heads?: Map<string, string | undefined>;
+      submittedCommit?: string;
+    } = {},
   ): Promise<void> {
     return this.serialized(`review-reconcile:${parentId}`, () =>
       this.reconcileReviewTaskNow(parentId, options),
@@ -16254,7 +17054,10 @@ export class TaskService {
 
   private async reconcileReviewTaskNow(
     parentId: string,
-    options: { heads?: Map<string, string | undefined>; submittedCommit?: string },
+    options: {
+      heads?: Map<string, string | undefined>;
+      submittedCommit?: string;
+    },
   ): Promise<void> {
     const { heads, submittedCommit } = options;
     // 親と子が、今も再レビューの対象か（すべての await の後と記録の直前で、同じ判定で読み直す）。expected：始めに読んだ PR の提出
@@ -16404,7 +17207,12 @@ export class TaskService {
       const token = await this.githubToken(task, repo, usedSecrets);
       // 人が外した PR は戻さない（PBI-468）
       if (!(await this.mayRedraft(task.id, repo, token, number))) return;
-      const result = await this.setDraftWithin(task.id, { repo, token, number, draft: true });
+      const result = await this.setDraftWithin(task.id, {
+        repo,
+        token,
+        number,
+        draft: true,
+      });
       if (result.draft) {
         this.redrafted.add(key);
         this.redraftPending.delete(key);
@@ -16429,7 +17237,10 @@ export class TaskService {
       this.append(this.mustGet(task.id), [
         {
           actor: "sacty",
-          event: { type: "TaskPaused", payload: { reason: "error", message: synced.message } },
+          event: {
+            type: "TaskPaused",
+            payload: { reason: "error", message: synced.message },
+          },
         },
       ]);
       return false;
@@ -16439,7 +17250,10 @@ export class TaskService {
         actor: "sacty",
         event: {
           type: "BaseConflictsRemained",
-          payload: { files: synced.files, ...(synced.fresh ? { fresh: true } : {}) },
+          payload: {
+            files: synced.files,
+            ...(synced.fresh ? { fresh: true } : {}),
+          },
         },
       },
     ]);
@@ -16475,7 +17289,10 @@ export class TaskService {
     }
     if (remaining.length === 0) return true;
     const failed = this.append(this.mustGet(task.id), [
-      { actor: "sacty", event: { type: "BaseConflictsRemained", payload: { files: remaining } } },
+      {
+        actor: "sacty",
+        event: { type: "BaseConflictsRemained", payload: { files: remaining } },
+      },
     ]);
     this.pauseIfVerificationKeepsFailing(failed);
     return false;
@@ -16810,7 +17627,12 @@ export class TaskService {
       const pr = { repo, token, number };
       const same = await untilAborted(
         signal,
-        this.deps.pulls.listIssueComments({ ...pr, prefix: marker, account, signal }),
+        this.deps.pulls.listIssueComments({
+          ...pr,
+          prefix: marker,
+          account,
+          signal,
+        }),
       );
       if (same.length === 0) {
         // 確かめている間に、止められた・差し戻された・先頭が変わったら、書かない
@@ -16911,10 +17733,12 @@ export class TaskService {
    * セキュリティ対応の差分を、前段の調査が宣言した修正の範囲と照らす（PBI-331。PR の本文と PR のレビューの子タスクに
    * 渡す）。セキュリティ対応でなければ undefined。差分を取れなければ止める（"stopped"）。
    */
-  private async checkSecurityScope(
-    task: Task,
-  ): Promise<
-    | { violation?: NonNullable<ReturnType<typeof scopeViolation>> & { max: number } }
+  private async checkSecurityScope(task: Task): Promise<
+    | {
+        violation?: NonNullable<ReturnType<typeof scopeViolation>> & {
+          max: number;
+        };
+      }
     | undefined
     | "stopped"
   > {
@@ -16938,7 +17762,9 @@ export class TaskService {
             type: "TaskPaused",
             payload: {
               reason: "error",
-              message: message("verify.diffUnavailable", { detail: errorText(error) }),
+              message: message("verify.diffUnavailable", {
+                detail: errorText(error),
+              }),
             },
           },
         },
@@ -16978,7 +17804,10 @@ export class TaskService {
     const key = `${taskId}:${input.number}`;
     this.draftRequests.set(key, (this.draftRequests.get(key) ?? 0) + 1);
     const abort = new AbortController();
-    const request = this.deps.pulls.setDraft({ ...input, signal: abort.signal });
+    const request = this.deps.pulls.setDraft({
+      ...input,
+      signal: abort.signal,
+    });
     let counted = true;
     const ms = this.draftTimeoutMs();
     const settle = setTimeout(() => done(), ms * DRAFT_SETTLE_FACTOR);
@@ -17077,13 +17906,16 @@ export class TaskService {
   ): Promise<void> {
     // 人が外した・切り替えの履歴を読めない・決められない PR は戻さない（PBI-468）
     if (!paused && !(await this.mayRedraft(taskId, repo, token, number))) return;
-    await this.setDraftWithin(taskId, { repo, token, number, draft: true }).catch(
-      (error: unknown) => {
-        console.warn(
-          `[daemon] PR #${number}（${repo}）は${why}ので、ドラフトに戻そうとしましたが、戻せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
-        );
-      },
-    );
+    await this.setDraftWithin(taskId, {
+      repo,
+      token,
+      number,
+      draft: true,
+    }).catch((error: unknown) => {
+      console.warn(
+        `[daemon] PR #${number}（${repo}）は${why}ので、ドラフトに戻そうとしましたが、戻せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+      );
+    });
   }
 
   /**
@@ -17173,7 +18005,11 @@ export class TaskService {
         actor: "sacty",
         event: {
           type: "PullRequestRedraftSkipped",
-          payload: { number, reason, ...(eventId !== undefined ? { eventId } : {}) },
+          payload: {
+            number,
+            reason,
+            ...(eventId !== undefined ? { eventId } : {}),
+          },
         },
       },
     ]);
@@ -17195,7 +18031,7 @@ export class TaskService {
     number: number,
     answer: SetDraftAnswer | undefined,
   ): Promise<void> {
-    if (answer?.changed === false || answer?.draft === true) return;
+    if (answer?.changed === false) return;
     const known = (id: string): boolean => {
       const previous = answer?.previous;
       return (
@@ -17261,7 +18097,11 @@ export class TaskService {
     try {
       const token = await this.githubToken(task, pr.repo, usedSecrets);
       // 答えが返らなくても PR の確認全体を止めない（時間切れは次の確認でやり直す）
-      const status = await this.statusWithin({ repo: pr.repo, token, number: pr.number });
+      const status = await this.statusWithin({
+        repo: pr.repo,
+        token,
+        number: pr.number,
+      });
       if (status.state !== "open") return;
       if (status.draft === undefined) {
         warnDraftUnknown(pr.number, pr.repo);
@@ -17347,7 +18187,12 @@ export class TaskService {
     try {
       let result: { draft: boolean } | undefined;
       try {
-        result = await this.setDraftWithin(taskId, { repo, token, number, draft: false });
+        result = await this.setDraftWithin(taskId, {
+          repo,
+          token,
+          number,
+          draft: false,
+        });
       } catch (error) {
         console.warn(
           `[daemon] 指摘なしで外した PR #${number}（${repo}）がドラフトに戻っていたので外し直そうとしましたが、外せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
@@ -17370,7 +18215,12 @@ export class TaskService {
                 actor: "sacty",
                 event: {
                   type: "PullRequestMarkedReady",
-                  payload: { number, commit: target, reviewTaskId: child.id },
+                  payload: {
+                    number,
+                    commit: target,
+                    reviewTaskId: child.id,
+                    undraftTracked: true,
+                  },
                 },
               },
             ]);
@@ -17530,7 +18380,13 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "PullRequestMarkedReady",
-            payload: { number, commit, reviewTaskId: child.id, ...(reason ? { reason } : {}) },
+            payload: {
+              number,
+              commit,
+              reviewTaskId: child.id,
+              ...(reason ? { reason } : {}),
+              undraftTracked: true,
+            },
           },
         },
       ]);
@@ -17570,7 +18426,9 @@ export class TaskService {
                       names: stalled.slice(0, 5).join(", "),
                       total: stalled.length,
                     })
-                  : message("verify.tooManyAttempts", { count: MAX_VERIFY_ATTEMPTS }),
+                  : message("verify.tooManyAttempts", {
+                      count: MAX_VERIFY_ATTEMPTS,
+                    }),
           },
         },
       },
@@ -17606,7 +18464,10 @@ export class TaskService {
         throw new InvalidOperationError(message("pause.awaitingPerson"));
       }
       this.append(task, [
-        { actor: "person", event: { type: "TaskPaused", payload: { reason: "manual" } } },
+        {
+          actor: "person",
+          event: { type: "TaskPaused", payload: { reason: "manual" } },
+        },
       ]);
       return this.mustGet(id);
     }
@@ -17754,7 +18615,11 @@ export class TaskService {
         cleanup.push(
           containerStopped
             ? { target: "container", result: "done" }
-            : { target: "container", result: "failed", detail: this.notStopped(runIds) },
+            : {
+                target: "container",
+                result: "failed",
+                detail: this.notStopped(runIds),
+              },
         );
       } else if (task.unstoppedRuns?.length) {
         // 一時停止のときに停止を確かめられなかったコンテナは、ここで確かめ直す
@@ -17764,7 +18629,11 @@ export class TaskService {
         cleanup.push(
           containerStopped
             ? { target: "container", result: "done" }
-            : { target: "container", result: "failed", detail: this.notStopped(runs) },
+            : {
+                target: "container",
+                result: "failed",
+                detail: this.notStopped(runs),
+              },
         );
       } else {
         cleanup.push({ target: "container", result: "skipped" });
@@ -17791,7 +18660,11 @@ export class TaskService {
           sessions.remove(id);
           cleanup.push({ target: "session", result: "done" });
         } catch (error) {
-          cleanup.push({ target: "session", result: "failed", detail: errorText(error) });
+          cleanup.push({
+            target: "session",
+            result: "failed",
+            detail: errorText(error),
+          });
         }
       } else {
         cleanup.push({ target: "session", result: "skipped" });
@@ -17811,8 +18684,16 @@ export class TaskService {
           }
           // PR を作ったときと同じく、プロジェクトの gh のアカウントで閉じる
           const token = await this.githubToken(latest, pr.repo, usedSecrets);
-          await this.deps.pulls.close({ repo: pr.repo, token, number: pr.number });
-          cleanup.push({ target: "pull_request", result: "done", detail: pr.url });
+          await this.deps.pulls.close({
+            repo: pr.repo,
+            token,
+            number: pr.number,
+          });
+          cleanup.push({
+            target: "pull_request",
+            result: "done",
+            detail: pr.url,
+          });
         } catch (error) {
           cleanup.push({
             target: "pull_request",
@@ -17830,8 +18711,16 @@ export class TaskService {
             .status({ repo: step.repo, token, number: step.number })
             .catch(() => undefined);
           if (now && now.state !== "open") continue;
-          await this.deps.pulls.close({ repo: step.repo, token, number: step.number });
-          cleanup.push({ target: "pull_request", result: "done", detail: step.url });
+          await this.deps.pulls.close({
+            repo: step.repo,
+            token,
+            number: step.number,
+          });
+          cleanup.push({
+            target: "pull_request",
+            result: "done",
+            detail: step.url,
+          });
         } catch (error) {
           cleanup.push({
             target: "pull_request",
@@ -17862,7 +18751,11 @@ export class TaskService {
       }
       for (const branch of branches) {
         if (unprepared !== undefined) {
-          cleanup.push({ target: "branch", result: "failed", detail: unprepared });
+          cleanup.push({
+            target: "branch",
+            result: "failed",
+            detail: unprepared,
+          });
           continue;
         }
         const usedSecrets: string[] = [];
@@ -17918,7 +18811,10 @@ export class TaskService {
       const cancelled = this.append(this.mustGet(id), [
         {
           actor: reason ? "sacty" : "person",
-          event: { type: "TaskCancelled", payload: { ...(reason ? { reason } : {}), cleanup } },
+          event: {
+            type: "TaskCancelled",
+            payload: { ...(reason ? { reason } : {}), cleanup },
+          },
         },
       ]);
       // 分割したタスクを中止したら、終わっていない子タスクも中止する（PBI-27）
@@ -17987,7 +18883,11 @@ export class TaskService {
     let commit = "";
     let executed: Executed | undefined;
     const failed = (detail: DaemonText) => ({
-      outcome: { kind: "failed" as const, reason: "error" as const, message: detail },
+      outcome: {
+        kind: "failed" as const,
+        reason: "error" as const,
+        message: detail,
+      },
       costUsd: 0,
       estimated: false,
     });
@@ -18009,7 +18909,10 @@ export class TaskService {
         else executed = failed(prepared.message);
       } else if (!ready.ok) {
         executed = failed(
-          message("integrate.baseUnavailable", { branch: baseBranch, detail: ready.message }),
+          message("integrate.baseUnavailable", {
+            branch: baseBranch,
+            detail: ready.message,
+          }),
         );
       } else {
         const usedSecrets: string[] = [];
@@ -18083,7 +18986,10 @@ export class TaskService {
             actor: "sacty",
             event: {
               type: "TaskPaused",
-              payload: { reason: this.stopReason(task.id, outcome.reason), ...manual },
+              payload: {
+                reason: this.stopReason(task.id, outcome.reason),
+                ...manual,
+              },
             },
           },
           config,
@@ -18183,11 +19089,21 @@ export class TaskService {
   ): Promise<
     | {
         ok: true;
-        repositories: { repo: string; baseBranch: string; commit: string; dir: string }[];
+        repositories: {
+          repo: string;
+          baseBranch: string;
+          commit: string;
+          dir: string;
+        }[];
       }
     | { ok: false; message: DaemonText }
   > {
-    const repositories: { repo: string; baseBranch: string; commit: string; dir: string }[] = [];
+    const repositories: {
+      repo: string;
+      baseBranch: string;
+      commit: string;
+      dir: string;
+    }[] = [];
     const seen = new Set<string>();
     for (const c of parent.split?.children ?? []) {
       const child = this.tasks.get(c.taskId);
@@ -18199,7 +19115,10 @@ export class TaskService {
       seen.add(key);
       const unavailable = (detail: DaemonText) => ({
         ok: false as const,
-        message: message("integrate.baseUnavailable", { branch: `${repo} ${branch}`, detail }),
+        message: message("integrate.baseUnavailable", {
+          branch: `${repo} ${branch}`,
+          detail,
+        }),
       });
       // 読んでいる間は、子タスクの作業領域を消さない。完了の後に消した子タスクのものを用意し直したなら、読み終えたら
       // （失敗しても）また消す（PBI-157 レビュー指摘）
@@ -18307,7 +19226,11 @@ export class TaskService {
       if (!repo || this.taskRepo(dep) !== repo) continue;
       if (!child.dependsOn.every((d) => d === id || this.covers(parent, dep, d))) continue;
       return {
-        stackedOn: { taskId: dep.id, branch: reviewed.branch, commit: reviewed.commit },
+        stackedOn: {
+          taskId: dep.id,
+          branch: reviewed.branch,
+          commit: reviewed.commit,
+        },
       };
     }
     return undefined;
@@ -18437,7 +19360,10 @@ export class TaskService {
       this.append(task, [
         {
           actor: "sacty",
-          event: { type: "StackedDependencyMerged", payload: { taskId: dep.id, baseBranch } },
+          event: {
+            type: "StackedDependencyMerged",
+            payload: { taskId: dep.id, baseBranch },
+          },
         },
       ]);
       return;
@@ -18611,7 +19537,10 @@ export class TaskService {
             ...run,
             onInvoke,
             prompt: this.continuedPrompt(run, resuming.cause),
-            session: { resume: resuming.sessionId, filesDir: resuming.filesDir },
+            session: {
+              resume: resuming.sessionId,
+              filesDir: resuming.filesDir,
+            },
           }
         : { ...run, onInvoke },
     );
@@ -18746,7 +19675,14 @@ export class TaskService {
     try {
       executed = await this.executeOnce(
         plan.mode === "resume"
-          ? { ...run, session: { resume: plan.sessionId, filesDir: plan.filesDir, fork: chat } }
+          ? {
+              ...run,
+              session: {
+                resume: plan.sessionId,
+                filesDir: plan.filesDir,
+                fork: chat,
+              },
+            }
           : fresh,
       );
     } finally {
@@ -18817,7 +19753,10 @@ export class TaskService {
                 sourceDir,
                 files: archived.files,
               })
-              .catch(() => ({ saved: false, notSaved: "copy_failed" as const }));
+              .catch(() => ({
+                saved: false,
+                notSaved: "copy_failed" as const,
+              }));
     }
     const task = this.tasks.get(run.taskId);
     if (task) {
@@ -18890,7 +19829,11 @@ export class TaskService {
       log?.close(executed.outcome);
       return { ...executed, archived: log?.archived };
     } catch (error) {
-      log?.close({ kind: "failed", reason: "error", message: errorText(error) });
+      log?.close({
+        kind: "failed",
+        reason: "error",
+        message: errorText(error),
+      });
       throw error;
     } finally {
       this.recordAgentSession(run, log);
@@ -19013,7 +19956,10 @@ export class TaskService {
           // 接続先を決めて使う実行（操作・書き出し）は、決めた PF・MCP だけを使える。書き出しは、選んだ PF か、
           // 選んだ MCP だけを置いたコンテキストを渡すので、その範囲に縛る（PBI-131）
           run.role === "operation" || run.role === "export"
-            ? { platforms: platforms.map((p) => p.name), hostMcp: run.context?.mcpServers ?? [] }
+            ? {
+                platforms: platforms.map((p) => p.name),
+                hostMcp: run.context?.mcpServers ?? [],
+              }
             : undefined,
           github,
           // 情報収集は読むだけ。外部の本文に書かれた指示に誘導されても書き込めないよう、外部 PF を GET・HEAD に限る
@@ -19021,7 +19967,10 @@ export class TaskService {
         );
         usedSecrets.push(gatewayRun.token);
         if (viaGateway) {
-          gateway = { origin: this.deps.gateway.containerOrigin(), token: gatewayRun.token };
+          gateway = {
+            origin: this.deps.gateway.containerOrigin(),
+            token: gatewayRun.token,
+          };
         }
       }
       // タスクごとの依存のキャッシュ（PBI-319）。用意できなければ、キャッシュを使わずに実行する。渡すときは、使い方の案内を
@@ -19110,7 +20059,9 @@ export class TaskService {
         // 代わりのエージェントに切り替えず、同じ作業領域で操作が重ならないように止める）
         message:
           error instanceof AgentTimeoutError && error.unconfirmedContainer
-            ? message("run.containerNotConfirmed", { name: error.unconfirmedContainer })
+            ? message("run.containerNotConfirmed", {
+                name: error.unconfirmedContainer,
+              })
             : errorText(error),
         // 時間切れで止めた実行は、止めるまでに読めた使用量を費用にする。読めなければ不明（0 とは記録しない。PBI-281）
         ...(error instanceof AgentTimeoutError && error.usage ? { usage: error.usage } : {}),
@@ -19135,7 +20086,10 @@ export class TaskService {
         ? { ...outcome, message: redactText(outcome.message, usedSecrets) }
         : // 出力の JSON は、取り出すときにデコードする（レビューのコメント・監査・再現のテストなど）。デコードすると元の値に
           // 戻るエスケープ（"\u0073…"）も伏せる（PBI-131）
-          { ...outcome, output: redactEscaped(redact(outcome.output, usedSecrets), usedSecrets) };
+          {
+            ...outcome,
+            output: redactEscaped(redact(outcome.output, usedSecrets), usedSecrets),
+          };
     // サブスクリプションは実際の請求が発生しないので、同じ単価で換算した値として扱う
     const estimated =
       run.agent.auth.mode === "subscription" ||
@@ -19189,7 +20143,10 @@ export class TaskService {
     this.append(task, [
       {
         actor: "sacty",
-        event: { type: "SubagentNoticeImitated", payload: { runId, agentId, count } },
+        event: {
+          type: "SubagentNoticeImitated",
+          payload: { runId, agentId, count },
+        },
       },
     ]);
   }
@@ -19202,7 +20159,10 @@ export class TaskService {
     this.append(task, [
       {
         actor: "sacty",
-        event: { type: "AiRequestsRetried", payload: { runId, agentId, ...stats } },
+        event: {
+          type: "AiRequestsRetried",
+          payload: { runId, agentId, ...stats },
+        },
       },
     ]);
   }
@@ -19215,7 +20175,10 @@ export class TaskService {
       actor: "sacty",
       event: {
         type: "StepSubmitted",
-        payload: { step: "implement", submission: (task.submissions.implement ?? 0) + 1 },
+        payload: {
+          step: "implement",
+          submission: (task.submissions.implement ?? 0) + 1,
+        },
       },
     };
   }
@@ -19227,7 +20190,12 @@ export class TaskService {
       const index = task.steps.findIndex((s) => s.key === step);
       const nextStep = task.steps[index + 1]?.key;
       const next = nextStep && EXECUTABLE_STEPS.includes(nextStep) ? "queued" : "idle";
-      return [{ actor: "sacty", event: { type: "StepCompleted", payload: { step, next } } }];
+      return [
+        {
+          actor: "sacty",
+          event: { type: "StepCompleted", payload: { step, next } },
+        },
+      ];
     }
     if (!GATED_STEPS.includes(step)) return [];
     // 実装は、PR を作ってから承認待ちにする（PBI-110。publish の implementSubmitted）
@@ -19276,7 +20244,10 @@ export class TaskService {
     }
     if (!accepted) return this.submitEvents(task, proposal.fromStep);
     return [
-      { actor: "sacty", event: { type: "ChangeApplied", payload: { proposalId: proposal.id } } },
+      {
+        actor: "sacty",
+        event: { type: "ChangeApplied", payload: { proposalId: proposal.id } },
+      },
       ...this.submitEvents(
         task,
         proposal.target === "requirements" ? "requirements" : proposal.fromStep,
@@ -19358,12 +20329,20 @@ export class TaskService {
       const after = pullRequestInText(repoUrl, `${title}\n${task.body}`);
       if (before?.number !== after?.number) {
         throw new InvalidOperationError(
-          message("title.pullRequestChanged", { number: before?.number ?? after?.number ?? 0 }),
+          message("title.pullRequestChanged", {
+            number: before?.number ?? after?.number ?? 0,
+          }),
         );
       }
     }
     return this.append(task, [
-      { actor: "person", event: { type: "TaskRenamed", payload: { from: task.title, to: title } } },
+      {
+        actor: "person",
+        event: {
+          type: "TaskRenamed",
+          payload: { from: task.title, to: title },
+        },
+      },
     ]);
   }
 
@@ -19385,7 +20364,10 @@ export class TaskService {
       throw new InvalidOperationError(message("selfReview.depthUnchanged", { depth }));
     }
     return this.append(task, [
-      { actor: "person", event: { type: "SelfReviewDepthChanged", payload: { from, to: depth } } },
+      {
+        actor: "person",
+        event: { type: "SelfReviewDepthChanged", payload: { from, to: depth } },
+      },
     ]);
   }
 
@@ -19427,7 +20409,10 @@ export class TaskService {
     const legacy = task.image === undefined && Object.keys(task.images ?? {}).length > 0;
     const from = task.image ?? (legacy ? undefined : DEFAULT_IMAGE_NAME);
     if (from === image) return undefined;
-    return { type: "TaskImageChanged", payload: { ...(from ? { from } : {}), to: image } };
+    return {
+      type: "TaskImageChanged",
+      payload: { ...(from ? { from } : {}), to: image },
+    };
   }
 
   /**
@@ -19513,7 +20498,10 @@ export class TaskService {
         actor: "sacty",
         event: {
           type: "TaskPaused",
-          payload: { reason: "error", message: message("agent.chosenMissing", { step, name }) },
+          payload: {
+            reason: "error",
+            message: message("agent.chosenMissing", { step, name }),
+          },
         },
       },
     ]);
@@ -19528,7 +20516,10 @@ export class TaskService {
       throw new InvalidOperationError(message("change.notAwaiting"));
     }
     return this.append(task, [
-      { actor: "person", event: { type: "ChangeDecided", payload: { proposalId, accept } } },
+      {
+        actor: "person",
+        event: { type: "ChangeDecided", payload: { proposalId, accept } },
+      },
       ...this.settleEvents(task, open, accept),
     ]);
   }
@@ -19567,7 +20558,10 @@ export class TaskService {
       budgetState(warned.budget) === "exceeded"
     ) {
       this.append(warned, [
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "budget" } },
+        },
       ]);
     }
   }
@@ -19623,7 +20617,10 @@ export class TaskService {
     if (!config.ok) throw new InvalidOperationError(message("chat.unavailable"));
     const questionId = `Q-${task.questions.length + 1}`;
     const asked = this.append(task, [
-      { actor: "person", event: { type: "QuestionAsked", payload: { questionId, text } } },
+      {
+        actor: "person",
+        event: { type: "QuestionAsked", payload: { questionId, text } },
+      },
     ]);
     // 実行の ID は、セッションを新しく始め直すと変わる（止める対象を、いまの実行にする。PBI-67）
     const entry: { runId: string; done: Promise<void> } = {
@@ -19662,7 +20659,11 @@ export class TaskService {
     // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。利用制限中か、このタスクで失敗したなら、代わりの
     // エージェント（agents の fallback）
     const agent = this.usableAgent(config, agentFor(config, "orchestrator"), task.id, "chat");
-    const setting = { agentId: agent.id, ...agentSetting(agent), runId: chat.runId };
+    const setting = {
+      agentId: agent.id,
+      ...agentSetting(agent),
+      runId: chat.runId,
+    };
     let payload: Extract<EventInput, { type: "QuestionAnswered" }>["payload"];
     // 各実行のセッションログを、答えの実行ごとの場所に並べて、読み取り専用でマウントする（PBI-91）
     const logsDir = join(this.deps.workspaceRoot, "_question-logs", chat.runId);
@@ -19680,7 +20681,13 @@ export class TaskService {
           role: "chat",
           ...("runs" in logs
             ? {
-                mounts: [{ hostPath: logsDir, containerPath: CONTAINER_LOGS_DIR, readOnly: true }],
+                mounts: [
+                  {
+                    hostPath: logsDir,
+                    containerPath: CONTAINER_LOGS_DIR,
+                    readOnly: true,
+                  },
+                ],
                 readDirs: [CONTAINER_LOGS_DIR],
               }
             : {}),
@@ -19718,7 +20725,12 @@ export class TaskService {
           ...cost,
         };
       } else if (!answer) {
-        payload = { questionId, failed: message("chat.emptyAnswer"), runResult: "failed", ...cost };
+        payload = {
+          questionId,
+          failed: message("chat.emptyAnswer"),
+          runResult: "failed",
+          ...cost,
+        };
       } else {
         payload = {
           questionId,
@@ -19807,7 +20819,10 @@ export class TaskService {
     if (!config.ok) throw new InvalidOperationError(message("errorReport.unavailable"));
     const analysisId = `A-${task.errorAnalyses.length + 1}`;
     const requested = this.append(task, [
-      { actor: "person", event: { type: "ErrorAnalysisRequested", payload: { analysisId } } },
+      {
+        actor: "person",
+        event: { type: "ErrorAnalysisRequested", payload: { analysisId } },
+      },
     ]);
     const entry: { runId: string; done: Promise<void> } = {
       runId: randomUUID(),
@@ -19838,7 +20853,11 @@ export class TaskService {
     config: SactyConfig,
   ): Promise<void> {
     const agent = this.usableAgent(config, agentFor(config, "orchestrator"), task.id, "chat");
-    const setting = { agentId: agent.id, ...agentSetting(agent), runId: run.runId };
+    const setting = {
+      agentId: agent.id,
+      ...agentSetting(agent),
+      runId: run.runId,
+    };
     let payload: Extract<EventInput, { type: "ErrorAnalyzed" }>["payload"];
     const logsDir = join(this.deps.workspaceRoot, "_question-logs", run.runId);
     try {
@@ -19858,7 +20877,9 @@ export class TaskService {
       let reportFile = false;
       if ("runs" in logs) {
         try {
-          writeFileSync(join(logsDir, ERROR_REPORT_FILE), report, { mode: 0o600 });
+          writeFileSync(join(logsDir, ERROR_REPORT_FILE), report, {
+            mode: 0o600,
+          });
           reportFile = true;
         } catch {
           reportFile = false;
@@ -19873,7 +20894,13 @@ export class TaskService {
           role: "chat",
           ...("runs" in logs
             ? {
-                mounts: [{ hostPath: logsDir, containerPath: CONTAINER_LOGS_DIR, readOnly: true }],
+                mounts: [
+                  {
+                    hostPath: logsDir,
+                    containerPath: CONTAINER_LOGS_DIR,
+                    readOnly: true,
+                  },
+                ],
                 readDirs: [CONTAINER_LOGS_DIR],
               }
             : {}),
@@ -19969,7 +20996,9 @@ export class TaskService {
             type: "ErrorAnalyzed",
             payload: {
               ...rest,
-              failed: message("errorReport.failed", { detail: errorText(error) }),
+              failed: message("errorReport.failed", {
+                detail: errorText(error),
+              }),
               runResult: "failed",
             },
           },
@@ -20088,7 +21117,13 @@ export class TaskService {
     const step = audit.survey ? nextAuditDive(audit) : undefined;
     if (audit.survey && !step) {
       this.append(task, [
-        { actor: "sacty", event: { type: "AuditCompleted", payload: { auditId: audit.auditId } } },
+        {
+          actor: "sacty",
+          event: {
+            type: "AuditCompleted",
+            payload: { auditId: audit.auditId },
+          },
+        },
       ]);
       return;
     }
@@ -20098,7 +21133,11 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "AuditBudgetPaused",
-            payload: { auditId: audit.auditId, usedUsd: audit.usedUsd, capUsd: audit.capUsd },
+            payload: {
+              auditId: audit.auditId,
+              usedUsd: audit.usedUsd,
+              capUsd: audit.capUsd,
+            },
           },
         },
       ]);
@@ -20171,7 +21210,10 @@ export class TaskService {
             survey: hide(audit.survey?.summary ?? ""),
             candidates,
             known: known.causes.map((c) => ({ ...c, title: hide(c.title) })),
-            rejected: known.rejected.map((r) => ({ title: hide(r.title), reason: hide(r.reason) })),
+            rejected: known.rejected.map((r) => ({
+              title: hide(r.title),
+              reason: hide(r.reason),
+            })),
             adoptNotes: known.adoptNotes.map((n) => ({
               ...n,
               title: hide(n.title),
@@ -20193,7 +21235,11 @@ export class TaskService {
             activity,
             counts,
             logs,
-            opened?.map((m) => ({ ...m, title: hide(m.title), summary: hide(m.summary) })),
+            opened?.map((m) => ({
+              ...m,
+              title: hide(m.title),
+              summary: hide(m.summary),
+            })),
             promotion && {
               ...promotion,
               memories: promotion.memories.map((m) => ({
@@ -20217,9 +21263,19 @@ export class TaskService {
           prompt,
           role: step ? "audit-dive" : "audit",
           mounts: [
-            { hostPath: ledgerDir, containerPath: AUDIT_LEDGER_DIR, readOnly: true },
+            {
+              hostPath: ledgerDir,
+              containerPath: AUDIT_LEDGER_DIR,
+              readOnly: true,
+            },
             ...("runs" in logs
-              ? [{ hostPath: logsDir, containerPath: CONTAINER_LOGS_DIR, readOnly: true }]
+              ? [
+                  {
+                    hostPath: logsDir,
+                    containerPath: CONTAINER_LOGS_DIR,
+                    readOnly: true,
+                  },
+                ]
               : []),
           ],
           readDirs: [AUDIT_LEDGER_DIR, ...("runs" in logs ? [CONTAINER_LOGS_DIR] : [])],
@@ -20247,13 +21303,20 @@ export class TaskService {
           actor: "auditor",
           event: {
             type: "AuditFailed",
-            payload: { auditId: audit.auditId, reason, ...(step ? { step } : {}), ...run },
+            payload: {
+              auditId: audit.auditId,
+              reason,
+              ...(step ? { step } : {}),
+              ...run,
+            },
           },
         },
       ];
       if (outcome.kind === "failed") {
         record = failed(
-          message("audit.runFailed", { detail: mapFreeText(outcome.message, hideResult) }),
+          message("audit.runFailed", {
+            detail: mapFreeText(outcome.message, hideResult),
+          }),
         );
       } else if (!step) {
         const survey = extractAuditSurvey(
@@ -20343,7 +21406,10 @@ export class TaskService {
                     })),
                     ...(memories
                       ? {
-                          memories: dive.memories.map((m) => ({ ...m, id: randomUUID() })),
+                          memories: dive.memories.map((m) => ({
+                            ...m,
+                            id: randomUUID(),
+                          })),
                           ...(dive.skippedMemories.length > 0
                             ? { skippedMemories: dive.skippedMemories }
                             : {}),
@@ -20441,7 +21507,11 @@ export class TaskService {
     const task = this.tasks.get(run.taskId);
     if (!task) return run;
     const layers = taskMemoryLayers(task);
-    const mounts: { hostPath: string; containerPath: string; readOnly: boolean }[] = [];
+    const mounts: {
+      hostPath: string;
+      containerPath: string;
+      readOnly: boolean;
+    }[] = [];
     const project = existingLayerDir(root, layers.project);
     if (project) {
       mounts.push({
@@ -20559,7 +21629,10 @@ export class TaskService {
   }
 
   /** コンテキストにする提案が、判断待ちか採用済みのメモリー（同じ提案を重ねないため）と、却下の理由（PBI-128）。 */
-  private memoryPromotions(): { promoting: Set<string>; rejected: Map<string, string> } {
+  private memoryPromotions(): {
+    promoting: Set<string>;
+    rejected: Map<string, string>;
+  } {
     const promoting = new Set<string>();
     const rejected = new Map<string, string>();
     for (const task of this.tasks.values()) {
@@ -20748,7 +21821,12 @@ export class TaskService {
     }
     return candidates
       .filter((m) => counts.has(m.id))
-      .map((m) => ({ id: m.id, title: m.title, summary: m.summary, count: counts.get(m.id) ?? 0 }))
+      .map((m) => ({
+        id: m.id,
+        title: m.title,
+        summary: m.summary,
+        count: counts.get(m.id) ?? 0,
+      }))
       .sort((a, b) => b.count - a.count);
   }
 
@@ -20784,7 +21862,10 @@ export class TaskService {
       const updated = this.append(task, [
         {
           actor: "person",
-          event: { type: "AuditMemoryDeleted", payload: { memoryId, reason: "person" } },
+          event: {
+            type: "AuditMemoryDeleted",
+            payload: { memoryId, reason: "person" },
+          },
         },
       ]);
       this.writeMemories([
@@ -20792,7 +21873,10 @@ export class TaskService {
           ? layerOf(placed)
           : memory.scope === "project"
             ? { kind: "project", projectId: task.projectId }
-            : { kind: "repository", repo: repositoryMemoryKey(memory.repo) ?? memory.repo },
+            : {
+                kind: "repository",
+                repo: repositoryMemoryKey(memory.repo) ?? memory.repo,
+              },
       ]);
       return updated;
     }
@@ -20811,7 +21895,11 @@ export class TaskService {
         actor: "sacty",
         event: {
           type: "AuditBudgetWarned",
-          payload: { auditId: audit.auditId, usedUsd: audit.usedUsd, capUsd: audit.capUsd },
+          payload: {
+            auditId: audit.auditId,
+            usedUsd: audit.usedUsd,
+            capUsd: audit.capUsd,
+          },
         },
       },
     ]);
@@ -20941,7 +22029,10 @@ export class TaskService {
   async projectFlakyTests(projectId: string): Promise<ProjectFlakyTests | null> {
     if (!this.deps.projects.get(projectId)) return null;
     const hide = await this.auditHide(projectId);
-    return { projectId, tests: flakyTests([...this.tasks.values()], projectId, hide) };
+    return {
+      projectId,
+      tests: flakyTests([...this.tasks.values()], projectId, hide),
+    };
   }
 
   async auditHide(projectId: string): Promise<(text: string) => string> {
@@ -20977,7 +22068,10 @@ export class TaskService {
             const bulkId = p.decision.bulk?.id;
             if (bulkId) {
               // まとめての却下は、同じ操作の記録を 1 行にまとめる（件数に比例して行が増えないように。PBI-443）
-              const group = bulks.get(bulkId) ?? { titles: [], reason: p.decision.reason };
+              const group = bulks.get(bulkId) ?? {
+                titles: [],
+                reason: p.decision.reason,
+              };
               group.titles.push(p.title);
               bulks.set(bulkId, group);
             } else {
@@ -21143,7 +22237,13 @@ export class TaskService {
         actor: "person",
         event: {
           type: "SecurityFixRequested",
-          payload: { category, taskId: randomUUID(), title, body, findings: listed },
+          payload: {
+            category,
+            taskId: randomUUID(),
+            title,
+            body,
+            findings: listed,
+          },
         },
       },
     ]);
@@ -21177,7 +22277,11 @@ export class TaskService {
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
             plan: "security-fix",
-            securityFix: { taskId: task.id, category, findings: requested.findings },
+            securityFix: {
+              taskId: task.id,
+              category,
+              findings: requested.findings,
+            },
           },
         },
       },
@@ -21230,7 +22334,10 @@ export class TaskService {
     return this.append(found.task, [
       {
         actor: "person",
-        event: { type: "AuditProposalRejected", payload: { proposalId, reason: hide(reason) } },
+        event: {
+          type: "AuditProposalRejected",
+          payload: { proposalId, reason: hide(reason) },
+        },
       },
     ]);
   }
@@ -21331,7 +22438,10 @@ export class TaskService {
     return this.append(task, [
       {
         actor: "person",
-        event: { type: "AuditCapRaised", payload: { auditId: audit.auditId, capUsd } },
+        event: {
+          type: "AuditCapRaised",
+          payload: { auditId: audit.auditId, capUsd },
+        },
       },
     ]);
   }
@@ -21377,7 +22487,11 @@ export class TaskService {
    * （PBI-107）。projectId のあるものは、そのプロジェクトの警告（保存し直すと置き換える）。settings のものは、
    * sacty の設定（通知先。PBI-115）の警告（設定を保存し直すと置き換える）。
    */
-  private secretProblems: { text: DaemonText; projectId?: string; settings?: true }[] = [];
+  private secretProblems: {
+    text: DaemonText;
+    projectId?: string;
+    settings?: true;
+  }[] = [];
 
   /**
    * 秘密情報の取り出しの世代（PBI-107）。取り出しを始めるたびに1つ進め、全体（設定の秘密情報）とプロジェクトごとに、
@@ -21392,7 +22506,11 @@ export class TaskService {
   /** 取り出しの結果の警告を、その世代が最新の範囲だけ置き換える（PBI-107）。 */
   private applySecretProblems(
     round: number,
-    problems: readonly { text: DaemonText; projectId?: string; settings?: true }[],
+    problems: readonly {
+      text: DaemonText;
+      projectId?: string;
+      settings?: true;
+    }[],
   ): void {
     const latest = (p: { projectId?: string; settings?: true }) =>
       p.projectId !== undefined
@@ -21445,7 +22563,10 @@ export class TaskService {
       ...failures.map(({ ref, error }) => {
         const use = uses.find((u) => u.ref === ref);
         return {
-          text: message("secret.prefetchFailed", { where: use?.where ?? ref, detail: error.text }),
+          text: message("secret.prefetchFailed", {
+            where: use?.where ?? ref,
+            detail: error.text,
+          }),
           ...(use?.projectId ? { projectId: use.projectId } : {}),
           ...(use?.settings ? { settings: true as const } : {}),
         };
@@ -21531,7 +22652,10 @@ export class TaskService {
   private async contextSecretUsesOf(
     projects: readonly Project[],
     config: SactyConfig,
-  ): Promise<{ uses: SecretUse[]; problems: { text: DaemonText; projectId: string }[] }> {
+  ): Promise<{
+    uses: SecretUse[];
+    problems: { text: DaemonText; projectId: string }[];
+  }> {
     const targets = projects.filter((p) => p.context);
     if (targets.length === 0) return { uses: [], problems: [] };
     const uses: SecretUse[][] = targets.map(() => []);
@@ -21564,12 +22688,19 @@ export class TaskService {
         const root = project.context as NonNullable<Project["context"]>;
         const fail = (detail: DaemonText) => {
           problems[i] = {
-            text: message("secret.contextUnavailable", { project: project.name, detail }),
+            text: message("secret.contextUnavailable", {
+              project: project.name,
+              detail,
+            }),
             projectId: project.id,
           };
         };
         const timedOut = () =>
-          fail(message("secret.contextTimedOut", { seconds: Math.ceil(limitMs / 1000) }));
+          fail(
+            message("secret.contextTimedOut", {
+              seconds: Math.ceil(limitMs / 1000),
+            }),
+          );
         if (expired) {
           timedOut();
           continue;
@@ -21620,7 +22751,9 @@ export class TaskService {
     const cancelledDependency = this.cancelledInStack(task);
     if (cancelledDependency) {
       throw new InvalidOperationError(
-        message("stack.dependencyCancelled", { title: cancelledDependency.title }),
+        message("stack.dependencyCancelled", {
+          title: cancelledDependency.title,
+        }),
       );
     }
     // 止めたコンテナがまだ残っているかもしれないうちは、再開しない（作業領域を取り合うため）
@@ -21655,7 +22788,10 @@ export class TaskService {
       ) {
         throw new InvalidOperationError(message("resume.bugfixNeedsTestCommand"));
       }
-      events.push({ actor: "person", event: { type: "TestsDecided", payload: input.tests } });
+      events.push({
+        actor: "person",
+        event: { type: "TestsDecided", payload: input.tests },
+      });
     }
     // 再開と一緒に、タスクのイメージ・工程のエージェントを変える（タスクの詳細で変えるのと同じ）。テストが決まらないことで
     // 止めない（PBI-331）ので、それを理由に工程の選択からやり直すことはない
@@ -21704,7 +22840,10 @@ export class TaskService {
       throw new InvalidOperationError(this.notStopped(task.unstoppedRuns));
     }
     return this.append(task, [
-      { actor: "person", event: { type: "VerificationOverridden", payload: {} } },
+      {
+        actor: "person",
+        event: { type: "VerificationOverridden", payload: {} },
+      },
     ]);
   }
 
@@ -21745,7 +22884,10 @@ export class TaskService {
     }
     const next = this.nextAfterApproval(task, step);
     return this.append(task, [
-      { actor: "person", event: { type: "StepApproved", payload: { step, next } } },
+      {
+        actor: "person",
+        event: { type: "StepApproved", payload: { step, next } },
+      },
     ]);
   }
 
@@ -21868,7 +23010,10 @@ export class TaskService {
               actor: "sacty" as const,
               event: {
                 type: "GuardianMissed" as const,
-                payload: { reviewAt: review.at, remarkIds: remarks.map((r) => r.id) },
+                payload: {
+                  reviewAt: review.at,
+                  remarkIds: remarks.map((r) => r.id),
+                },
               },
             },
           ]
@@ -21903,7 +23048,10 @@ export class TaskService {
               actor: "sacty" as const,
               event: {
                 type: "TaskPaused" as const,
-                payload: { reason: "unchanged" as const, message: options.pause },
+                payload: {
+                  reason: "unchanged" as const,
+                  message: options.pause,
+                },
               },
             },
           ]
@@ -22003,6 +23151,7 @@ export class TaskService {
     items: readonly {
       remarkId: string;
       text: string;
+      gist?: string;
       reason: string;
       decision: "defer" | "fix";
       origin?: RemarkOrigin;
@@ -22010,6 +23159,11 @@ export class TaskService {
     }[],
     watched: ReturnType<typeof gatePullRequest>,
   ): void {
+    // 指摘の要点（申告のときに書かれたもの。無ければ、指摘の全文の最初の行で示す）
+    const gistOf = (remarkId: string): string | undefined => {
+      const remark = task.remarks.find((r) => r.id === remarkId);
+      return remark?.deferral?.gist ?? remark?.gist;
+    };
     /** GitHub の Issue を作ると選んだ指摘の結果を記録する。 */
     const handled = (remarkId: string, result: { url: string } | { failure: DaemonText }): void => {
       try {
@@ -22043,7 +23197,10 @@ export class TaskService {
         this.append(this.mustGet(task.id), [
           {
             actor: "sacty",
-            event: { type: "DeferralDecisionsPosted", payload: { number, decision, ...result } },
+            event: {
+              type: "DeferralDecisionsPosted",
+              payload: { number, decision, ...result },
+            },
           },
         ]);
       } catch (error) {
@@ -22070,7 +23227,6 @@ export class TaskService {
       return;
     }
     const usedSecrets: string[] = [];
-    const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
     const url = watched.url ?? `${repo.replace(/\/+$/, "")}/pull/${number}`;
     // Issue を作っている最中の指摘（PR の確認が、途中で止まった処理と取り違えないように）
     const inflight = wantIssues.map((item) => `${task.id}:${item.remarkId}`);
@@ -22097,6 +23253,7 @@ export class TaskService {
               taskId: task.id,
               remarkId: item.remarkId,
               text: item.text,
+              ...(gistOf(item.remarkId) ? { gist: gistOf(item.remarkId) } : {}),
               reason: item.reason,
               pullRequest: { url, number },
               ...(ref ? { originUrl: remarkOriginUrl(url, ref) } : {}),
@@ -22104,7 +23261,12 @@ export class TaskService {
             });
             const created = await untilAborted(
               issueSignal,
-              this.deps.pulls.createIssue({ repo, token, ...issue, signal: issueSignal }),
+              this.deps.pulls.createIssue({
+                repo,
+                token,
+                ...issue,
+                signal: issueSignal,
+              }),
             );
             issues.set(item.remarkId, created.url);
             handled(item.remarkId, { url: created.url });
@@ -22138,10 +23300,10 @@ export class TaskService {
             return {
               remarkId: item.remarkId,
               decision: item.decision,
+              line: remarkLine({ text: item.text, gist: gistOf(item.remarkId) }, usedSecrets),
               ...(ref
                 ? {
                     quoted: {
-                      text: item.text,
                       reason: item.reason,
                       url: remarkOriginUrl(url, ref),
                     },
@@ -22156,8 +23318,6 @@ export class TaskService {
                 : {}),
             };
           }),
-          taskUrl: link(task.id).url,
-          localOnly: link(task.id).localOnly,
           secrets: usedSecrets,
         });
         if (!body) return;
@@ -22230,7 +23390,7 @@ export class TaskService {
    * 理由を記録して、やり直さない。作った後・記録の前に止まっていたら、作成の記録（derivedFrom の、元のタスクと指摘の ID）
    * で見つけて、二度作らない（依頼の文の中の文字列では照合しない）。
    */
-  private settleDeferralTasks(): void {
+  private async settleDeferralTasks(): Promise<void> {
     for (const original of [...this.tasks.values()]) {
       for (const due of deferralTasksDue(original)) {
         const record = (result: { taskId: string } | { failure: DaemonText }): void => {
@@ -22240,7 +23400,11 @@ export class TaskService {
                 actor: "sacty",
                 event: {
                   type: "DeferralHandled",
-                  payload: { remarkId: due.remarkId, handling: "task" as const, ...result },
+                  payload: {
+                    remarkId: due.remarkId,
+                    handling: "task" as const,
+                    ...result,
+                  },
                 },
               },
             ]);
@@ -22268,10 +23432,31 @@ export class TaskService {
             pr?.number && due.origin?.number === pr.number
               ? remarkOriginRef(due.origin.key)
               : undefined;
+          // 題（後続の PR の題にもなる）に、登録済みの秘密の値を出さない。Issue・コメントと同じく、GitHub のトークンの
+          // 値を伏せる対象にする（取り出せなければ、ほかの伏せ（形で見つける秘密・内部のパス）だけで作る）
+          const usedSecrets: string[] = [];
+          if (pr?.repo) {
+            try {
+              await this.githubToken(
+                original,
+                pr.repo,
+                usedSecrets,
+                undefined,
+                AbortSignal.timeout(30_000),
+              );
+            } catch (error) {
+              // 取り出せないとき（時間切れを含む）は、伏せる値が無いまま作る。理由は残す
+              console.warn(
+                `[daemon] タスク ${original.id} の後続のタスクの題を伏せる値を取り出せませんでした：${renderMessage(errorText(error), "ja")}`,
+              );
+            }
+          }
           const request = buildDeferralTask({
             remarkId: due.remarkId,
             text: due.text,
+            ...(due.gist ? { gist: due.gist } : {}),
             reason: due.reason,
+            secrets: usedSecrets,
             ...(pr?.number && url ? { pullRequest: { url, number: pr.number } } : {}),
             ...(ref && url ? { originUrl: remarkOriginUrl(url, ref) } : {}),
           });
@@ -22314,7 +23499,10 @@ export class TaskService {
     if (!remark) throw new InvalidOperationError(message("remark.notFound"));
     if (remark.voided) return task;
     return this.append(task, [
-      { actor: "person", event: { type: "RemarkVoided", payload: { remarkId } } },
+      {
+        actor: "person",
+        event: { type: "RemarkVoided", payload: { remarkId } },
+      },
     ]);
   }
 }
@@ -22476,7 +23664,10 @@ function splitWithRepositories(
   const children: SplitChild[] = [];
   for (const child of plan.children) {
     if (!child.repo)
-      return { ok: false, message: message("split.repoMissing", { key: child.key }) };
+      return {
+        ok: false,
+        message: message("split.repoMissing", { key: child.key }),
+      };
     const found = candidates.find((c) => sameGitHubUrl(c, child.repo ?? ""));
     if (!found) {
       return {
@@ -22605,7 +23796,12 @@ function allSactyReviews(reviews: { sactyReviews?: SactyReviewRound[] }): {
   sactyReviews?: SactyReviewRound[];
 } {
   return reviews.sactyReviews
-    ? { sactyReviews: reviews.sactyReviews.map((r) => ({ ...r, allowed: true })) }
+    ? {
+        sactyReviews: reviews.sactyReviews.map((r) => ({
+          ...r,
+          allowed: true,
+        })),
+      }
     : {};
 }
 

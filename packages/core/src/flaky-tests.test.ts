@@ -60,7 +60,9 @@ describe("不安定なテストの集計（PBI-312）", () => {
     const other = { name: "b" };
     const list = flakyTests(
       [
-        task("a", { flakySightings: [seen("2026-01-01"), seen("2026-01-09", other)] }),
+        task("a", {
+          flakySightings: [seen("2026-01-01"), seen("2026-01-09", other)],
+        }),
         seenIn("b", "2026-01-02"),
         seenIn("c", "2026-01-03"),
       ],
@@ -86,7 +88,11 @@ describe("不安定なテストの集計（PBI-312）", () => {
       ],
       "p1",
     );
-    expect(test).toMatchObject({ taskCount: 1, lastSeenAt: "2026-01-05", reason: "新しい根拠" });
+    expect(test).toMatchObject({
+      taskCount: 1,
+      lastSeenAt: "2026-01-05",
+      reason: "新しい根拠",
+    });
     expect(test?.tasks).toHaveLength(1);
   });
 
@@ -94,8 +100,12 @@ describe("不安定なテストの集計（PBI-312）", () => {
     const list = flakyTests(
       [
         seenIn("a", "2026-01-01"),
-        task("b", { flakySightings: [seen("2026-01-02", { file: "./tests/sub/../ui.spec.ts" })] }),
-        task("c", { flakySightings: [seen("2026-01-03", { file: "tests/other.spec.ts" })] }),
+        task("b", {
+          flakySightings: [seen("2026-01-02", { file: "./tests/sub/../ui.spec.ts" })],
+        }),
+        task("c", {
+          flakySightings: [seen("2026-01-03", { file: "tests/other.spec.ts" })],
+        }),
         seenIn("d", "2026-01-04", { repo: "https://github.com/acme/other" }),
         seenIn("e", "2026-01-05", { repo: "https://github.com/ACME/app.git" }),
       ],
@@ -115,8 +125,14 @@ describe("不安定なテストの集計（PBI-312）", () => {
       seenIn("c", "2026-01-03", { projectId: "p2" }),
       seenIn("d", "2026-01-04", { projectId: "p2" }),
     ];
-    expect(flakyTests(tasks, "p1")[0]).toMatchObject({ taskCount: 1, known: false });
-    expect(flakyTests(tasks, "p2")[0]).toMatchObject({ taskCount: 3, known: true });
+    expect(flakyTests(tasks, "p1")[0]).toMatchObject({
+      taskCount: 1,
+      known: false,
+    });
+    expect(flakyTests(tasks, "p2")[0]).toMatchObject({
+      taskCount: 3,
+      known: true,
+    });
     expect(flakyTests(tasks, "p3")).toEqual([]);
     expect(knownFlakyTests(tasks, task("x"))).toEqual([]);
   });
@@ -177,7 +193,11 @@ describe("不安定なテストの集計（PBI-312）", () => {
     it("別のテスト・別のリポジトリを直すタスクは関係しない", () => {
       const list = [
         task("x", { flakyFix: { ...flakyFix, name: "別" }, status: "queued" }),
-        task("y", { flakyFix, status: "queued", repo: "https://github.com/acme/other" }),
+        task("y", {
+          flakyFix,
+          status: "queued",
+          repo: "https://github.com/acme/other",
+        }),
       ];
       expect(flakyTests([...three, ...list], "p1")[0]?.fixTask).toBeUndefined();
     });
@@ -195,7 +215,10 @@ describe("不安定なテストの集計（PBI-312）", () => {
     });
 
     it("分割したら、子孫の PR のマージで数え直す", () => {
-      const parent = task("fix", { flakyFix, status: "completed" as Task["status"] });
+      const parent = task("fix", {
+        flakyFix,
+        status: "completed" as Task["status"],
+      });
       const child = task("c1", { parent: { taskId: "fix", dependsOn: [] } });
       const grandchild = task("c2", {
         parent: { taskId: "c1", dependsOn: [] },

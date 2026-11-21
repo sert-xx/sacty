@@ -31,7 +31,10 @@ const make = (id: string, def: ProjectDefinitionInput): Project => ({
 });
 
 const projects = [
-  make("p1", { name: "決済", targets: [{ scope: "org", target: "https://github.com/acme" }] }),
+  make("p1", {
+    name: "決済",
+    targets: [{ scope: "org", target: "https://github.com/acme" }],
+  }),
   make("p2", {
     name: "認証",
     targets: [{ scope: "repo", target: "https://github.com/acme/auth" }],
@@ -51,11 +54,19 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
     expect(conflicts).toEqual([
       {
         code: "project.targetTaken",
-        params: { scope: "org", target: "https://github.com/ACME", project: "決済" },
+        params: {
+          scope: "org",
+          target: "https://github.com/ACME",
+          project: "決済",
+        },
       },
       {
         code: "project.targetTaken",
-        params: { scope: "repo", target: "https://github.com/Acme/Auth", project: "認証" },
+        params: {
+          scope: "repo",
+          target: "https://github.com/Acme/Auth",
+          project: "認証",
+        },
       },
     ]);
     expect(conflicts.map((m) => renderMessage(m, "ja"))).toEqual([
@@ -113,7 +124,10 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
         { scope: "repo", target: " https://GHE.example.co.jp/acme/auth.git/ " },
         { scope: "org", target: "https://ghe2.example.co.jp:8443/acme/" },
       ],
-      githubAccounts: { "ghe.example.co.jp": "corp", "ghe2.example.co.jp:8443": "corp" },
+      githubAccounts: {
+        "ghe.example.co.jp": "corp",
+        "ghe2.example.co.jp:8443": "corp",
+      },
     });
     // 書き方の揺れ（前後の空白・末尾の / と .git・ホストの大文字）はそろえる
     expect(def.targets).toEqual([
@@ -136,11 +150,17 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
       ["https://github.com/acme/auth/x", /input\.urlExtraPath/],
     ] as const) {
       expect(() =>
-        ProjectDefinition.parse({ name: "x", targets: [{ scope: "repo", target }] }),
+        ProjectDefinition.parse({
+          name: "x",
+          targets: [{ scope: "repo", target }],
+        }),
       ).toThrow(problem);
     }
     expect(() =>
-      ProjectDefinition.parse({ name: "x", targets: [{ scope: "org", target: "acme" }] }),
+      ProjectDefinition.parse({
+        name: "x",
+        targets: [{ scope: "org", target: "acme" }],
+      }),
     ).toThrow(/input\.invalidOrg/);
   });
 
@@ -216,7 +236,10 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
 
   it("名前の形を検査し、取り込み元・リポジトリの設定（以前の形）は持たない", () => {
     expect(() =>
-      ProjectDefinition.parse({ name: "x", targets: [{ scope: "repo", target: "acme" }] }),
+      ProjectDefinition.parse({
+        name: "x",
+        targets: [{ scope: "repo", target: "acme" }],
+      }),
     ).toThrow(/input\.invalidRepo/);
     expect(() => ProjectDefinition.parse({ name: " " })).toThrow(/input\.nameRequired/);
     const parsed = ProjectDefinition.parse({
@@ -267,7 +290,10 @@ describe("コンテキストリポジトリの指定", () => {
       expect(ContextSource.safeParse({ repo: "/Users/acme/mono", path }).success).toBe(true);
     }
     for (const path of ["/etc", "../x", "a/../../b", "a/./b", ".", "a//b", "a/", "a\\b", "a b"]) {
-      const parsed = ContextSource.safeParse({ repo: "/Users/acme/mono", path });
+      const parsed = ContextSource.safeParse({
+        repo: "/Users/acme/mono",
+        path,
+      });
       expect(parsed.success).toBe(false);
       expect(parsed.error?.issues.map((i) => renderMessage(issueMessage(i), "ja"))).toEqual([
         "パスは、リポジトリの根からの相対パス（例 contexts/team。. と .. の部分は使えない）で入力してください。",
@@ -280,7 +306,11 @@ describe("コンテキストリポジトリの指定", () => {
       "git@github.com:acme/mono.git",
     );
     expect(
-      contextLabel({ repo: "git@github.com:acme/mono.git", ref: "main", path: "contexts/team" }),
+      contextLabel({
+        repo: "git@github.com:acme/mono.git",
+        ref: "main",
+        path: "contexts/team",
+      }),
     ).toBe("git@github.com:acme/mono.git//contexts/team#main");
   });
 });
@@ -292,7 +322,11 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
       { scope: "org", target: "https://github.com/acme" },
       { scope: "repo", target: "https://github.com/other/payments" },
     ],
-    context: { repo: "https://example.com/ctx.git", ref: "main", path: "contexts/pay" },
+    context: {
+      repo: "https://example.com/ctx.git",
+      ref: "main",
+      path: "contexts/pay",
+    },
     // 個人の設定（gh のアカウント。PBI-13）は書き出さない
     githubAccounts: { "github.com": "side-job" },
   });
@@ -308,7 +342,11 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
           { scope: "org", target: "https://github.com/acme" },
           { scope: "repo", target: "https://github.com/other/payments" },
         ],
-        context: { repo: "https://example.com/ctx.git", ref: "main", path: "contexts/pay" },
+        context: {
+          repo: "https://example.com/ctx.git",
+          ref: "main",
+          path: "contexts/pay",
+        },
       },
     });
     const text = JSON.stringify(exported);
@@ -326,7 +364,10 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
   });
 
   it("マージの後の監視の On・Off は持たない。以前の版の deploymentWatch は読まずに捨てる（PBI-116）", () => {
-    const exported = exportProject({ ...full, deploymentWatch: true } as Project);
+    const exported = exportProject({
+      ...full,
+      deploymentWatch: true,
+    } as Project);
     expect("deploymentWatch" in exported.project).toBe(false);
     for (const old of [true, false, "yes"]) {
       const parsed = ProjectExport.parse({
@@ -337,7 +378,10 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
       expect("deploymentWatch" in parsed.project).toBe(false);
     }
     // 保存した定義に残っていても読まない
-    const stored = ProjectDefinition.parse({ name: "acme", deploymentWatch: true });
+    const stored = ProjectDefinition.parse({
+      name: "acme",
+      deploymentWatch: true,
+    });
     expect("deploymentWatch" in stored).toBe(false);
   });
 
@@ -347,7 +391,10 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     // 以前の版（取り込み元・リポジトリの設定）は読まない（移行の手段は設けない。PBI-25）
     expect(() => ProjectExport.parse({ ...ok, version: 1 })).toThrow(/input\.unsupportedVersion/);
     expect(() =>
-      ProjectExport.parse({ ...ok, project: { ...ok.project, token: "ghp_secret" } }),
+      ProjectExport.parse({
+        ...ok,
+        project: { ...ok.project, token: "ghp_secret" },
+      }),
     ).toThrow();
     expect(() =>
       ProjectExport.parse({
@@ -378,8 +425,11 @@ describe("Slack の通知先（PBI-38。PBI-115 で sacty の設定に移した�
       language: "ja",
     });
     expect(
-      settings({ kind: "slack-webhook", webhook: "op://Work/Slack/webhook", language: "en" })
-        .success,
+      settings({
+        kind: "slack-webhook",
+        webhook: "op://Work/Slack/webhook",
+        language: "en",
+      }).success,
     ).toBe(true);
     // 書かなければ通知しない
     const none = settings(undefined);
@@ -391,13 +441,20 @@ describe("Slack の通知先（PBI-38。PBI-115 で sacty の設定に移した�
     };
     // 秘密情報の値（URL）をそのまま書いたら受け付けない
     expect(
-      reasons({ kind: "slack-webhook", webhook: "https://hooks.slack.com/services/T/B/X" }),
+      reasons({
+        kind: "slack-webhook",
+        webhook: "https://hooks.slack.com/services/T/B/X",
+      }),
     ).toContain("input.secretRef");
     expect(reasons({ kind: "slack-api", url: "not a url", channel: "#a" })).toContain(
       "input.invalidUrl",
     );
     expect(
-      reasons({ kind: "slack-api", url: "https://slack.com/api/chat.postMessage", channel: " " }),
+      reasons({
+        kind: "slack-api",
+        url: "https://slack.com/api/chat.postMessage",
+        channel: " ",
+      }),
     ).toContain("input.channelRequired");
     expect(
       reasons({
@@ -423,7 +480,11 @@ describe("Slack の通知先（PBI-38。PBI-115 で sacty の設定に移した�
               channel: "#a",
               ...(mention === undefined ? {} : { mention }),
             }
-          : { kind, webhook: "slack-webhook", ...(mention === undefined ? {} : { mention }) },
+          : {
+              kind,
+              webhook: "slack-webhook",
+              ...(mention === undefined ? {} : { mention }),
+            },
       );
     const both = parse({
       targets: [" U0123ABCD ", "W0456", "S0789EFGH", "@here", "@channel", "U0123ABCD"],
@@ -510,7 +571,10 @@ describe("Slack の通知先（PBI-38。PBI-115 で sacty の設定に移した�
       expect(text).not.toContain("U0123ABCD");
       const result = ProjectExport.safeParse({
         ...exported,
-        project: { ...exported.project, notification: { kind: "slack-webhook", webhook: "x" } },
+        project: {
+          ...exported.project,
+          notification: { kind: "slack-webhook", webhook: "x" },
+        },
       });
       expect(result.success).toBe(false);
       expect(result.error?.issues.map((i) => issueMessage(i))).toContainEqual({
@@ -532,7 +596,11 @@ describe("Slack の通知先（PBI-38。PBI-115 で sacty の設定に移した�
           exported.project,
           { name: "古い" },
         ]) {
-          const result = ProjectExport.safeParse({ sacty: "project", version, project });
+          const result = ProjectExport.safeParse({
+            sacty: "project",
+            version,
+            project,
+          });
           expect(result.success).toBe(false);
           // 画面が出すのは最初の誤りなので、版の誤りが最初に来る
           expect(result.error?.issues[0]).toMatchObject({
@@ -557,10 +625,17 @@ describe("Slack の通知先（PBI-38。PBI-115 で sacty の設定に移した�
 
   it("対象で指定したイメージは、リポジトリの対象の指定が Org の対象の指定より優先する（PBI-41）", () => {
     const project = (targets: unknown[]) =>
-      ({ id: "p", ...ProjectDefinition.parse({ name: "x", targets }) }) as Project;
+      ({
+        id: "p",
+        ...ProjectDefinition.parse({ name: "x", targets }),
+      }) as Project;
     const both = project([
       { scope: "org", target: "https://github.com/acme", image: "java" },
-      { scope: "repo", target: "https://github.com/acme/web", image: "default" },
+      {
+        scope: "repo",
+        target: "https://github.com/acme/web",
+        image: "default",
+      },
       { scope: "repo", target: "https://github.com/acme/api" },
     ]);
     expect(targetImageOf(both, "https://github.com/acme/web")).toBe("default");
@@ -629,7 +704,11 @@ describe("チケットの取り込み先（PBI-52）", () => {
     const def = ProjectDefinition.parse({
       name: "請求",
       tickets: [
-        { platform: "jira", service: "jira-server", keys: ["BILL", "OPS", "OPS"] },
+        {
+          platform: "jira",
+          service: "jira-server",
+          keys: ["BILL", "OPS", "OPS"],
+        },
         { platform: "other", service: "jira-server", keys: ["PAY"] },
       ],
     });
@@ -657,12 +736,24 @@ describe("チケットの取り込み先（PBI-52）", () => {
   it("取り込み先と、対象のイメージを書き出す", () => {
     const withImage = make("p3", {
       name: "決済",
-      targets: [{ scope: "repo", target: "https://github.com/acme/payments", image: "java" }],
+      targets: [
+        {
+          scope: "repo",
+          target: "https://github.com/acme/payments",
+          image: "java",
+        },
+      ],
       tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
     });
     const exported = exportProject(withImage);
     expect(exported.project).toMatchObject({
-      targets: [{ scope: "repo", target: "https://github.com/acme/payments", image: "java" }],
+      targets: [
+        {
+          scope: "repo",
+          target: "https://github.com/acme/payments",
+          image: "java",
+        },
+      ],
       tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
     });
     expect(ProjectExport.parse(JSON.parse(JSON.stringify(exported)))).toEqual(exported);
@@ -677,7 +768,10 @@ describe("共用の compose（PBI-70）", () => {
     file: "compose/redis.yml",
   };
   const codeOf = (input: unknown) => {
-    const parsed = ProjectDefinition.safeParse({ ...base, sharedComposes: [input] });
+    const parsed = ProjectDefinition.safeParse({
+      ...base,
+      sharedComposes: [input],
+    });
     return parsed.success ? undefined : renderMessage(parsed.error.issues[0]?.message, "ja");
   };
 
@@ -688,7 +782,13 @@ describe("共用の compose（PBI-70）", () => {
       ...base,
       sharedComposes: [
         { ...infra, ref: " main ", description: "  Redis。結合テストに要る " },
-        { name: "kafka", repo: "/srv/kafka", file: "compose.yaml", ref: "", description: " " },
+        {
+          name: "kafka",
+          repo: "/srv/kafka",
+          file: "compose.yaml",
+          ref: "",
+          description: " ",
+        },
         { name: "ssh", repo: "git@github.com:acme/infra.git", file: "a/b.yml" },
       ],
     });
@@ -776,7 +876,10 @@ describe("共用の compose（PBI-70）", () => {
     expect(
       ProjectExport.safeParse({
         ...exported,
-        project: { ...exported.project, sharedComposes: [{ ...infra, token: "ghp_abc" }] },
+        project: {
+          ...exported.project,
+          sharedComposes: [{ ...infra, token: "ghp_abc" }],
+        },
       }).success,
     ).toBe(false);
   });
@@ -809,7 +912,9 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
         expect(result.success, `${key} ${String(bad)}`).toBe(false);
         const issue = result.error?.issues[0];
         expect(issue?.path, key).toEqual([key]);
-        expect(issueMessage(issue as never), `${key} ${String(bad)}`).toEqual({ code });
+        expect(issueMessage(issue as never), `${key} ${String(bad)}`).toEqual({
+          code,
+        });
       }
       expect(SactySettings.parse({ [key]: 60 })).toEqual({ [key]: 60 });
       // 文言の下限と既定値は、定数と一致する
@@ -829,8 +934,12 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
 describe("メモリーを残す日数（PBI-127）", () => {
   it("1〜上限の整数。画面の入力（文字列）と空も受け付け、空は設定しない（既定の 90 日）", () => {
     expect(DEFAULT_MEMORY_RETENTION_DAYS).toBe(90);
-    expect(SactySettings.parse({ memoryRetentionDays: "30" })).toEqual({ memoryRetentionDays: 30 });
-    expect(SactySettings.parse({ memoryRetentionDays: 1 })).toEqual({ memoryRetentionDays: 1 });
+    expect(SactySettings.parse({ memoryRetentionDays: "30" })).toEqual({
+      memoryRetentionDays: 30,
+    });
+    expect(SactySettings.parse({ memoryRetentionDays: 1 })).toEqual({
+      memoryRetentionDays: 1,
+    });
     expect(SactySettings.parse({ memoryRetentionDays: MAX_MEMORY_RETENTION_DAYS })).toEqual({
       memoryRetentionDays: MAX_MEMORY_RETENTION_DAYS,
     });
@@ -845,8 +954,12 @@ describe("メモリーを残す日数（PBI-127）", () => {
 
 describe("レビューのメンションの相手", () => {
   it("On（画面のチェックボックスの on も）なら true を持ち、Off なら持たない（既定は PR の作者にメンションする）", () => {
-    expect(SactySettings.parse({ reviewMentionSelf: "on" })).toEqual({ reviewMentionSelf: true });
-    expect(SactySettings.parse({ reviewMentionSelf: true })).toEqual({ reviewMentionSelf: true });
+    expect(SactySettings.parse({ reviewMentionSelf: "on" })).toEqual({
+      reviewMentionSelf: true,
+    });
+    expect(SactySettings.parse({ reviewMentionSelf: true })).toEqual({
+      reviewMentionSelf: true,
+    });
     expect(SactySettings.parse({ reviewMentionSelf: false })).toEqual({});
     expect(SactySettings.parse({})).toEqual({});
   });

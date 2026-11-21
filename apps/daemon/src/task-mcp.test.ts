@@ -8,6 +8,7 @@ import { message, renderMessage } from "@sacty/core";
 import { describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
+import { provenanceGuideLines } from "./prompts.js";
 import { createApp } from "./server.js";
 import type { TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
@@ -2224,6 +2225,46 @@ describe("承認待ちの工程の承認（PBI-396）", () => {
       await drain(service);
       return { activity, service, id };
     }
+
+    it("PR の説明・コメントから外した指摘の ID・全文・要点・タスクの ID・題・出典の数え方は、画面の API と get_task に今までどおり出る（PBI-471）", async () => {
+      const { activity, service, id } = await reqAsking([
+        {
+          remarkId: "requirements-1-1",
+          text: "足した",
+          gist: "見出しを足す",
+          confirm: "上限は 31 日と推測しました",
+        },
+      ]);
+      // 画面が読むタスクの API：指摘の ID・全文・対応・要点
+      const view = service.view(id)?.task;
+      expect(view?.id).toBe(id);
+      expect(view?.remarks[0]).toMatchObject({
+        id: "requirements-1-1",
+        text: "見出しを足す",
+        response: "足した",
+        gist: "見出しを足す",
+      });
+      // get_task：タスクの ID・題と、確かめたいことの指摘の ID
+      const { json } = await connect(apiOver(service));
+      const detail = await json<Asked>("get_task", { task_id: id });
+      expect(detail.id).toBe(id);
+      expect(detail.title).toBe(view?.title);
+      expect(detail.humanAsks?.confirms[0]?.remarkIds).toEqual(["requirements-1-1"]);
+      // 出典の分類の件数（画面の確かめる項目）は、PR の説明から外しても、画面の関数は変わらない
+      const provenance = {
+        items: [
+          { id: "R-1", kind: "input", refs: [], excerpt: "x", found: true },
+          { id: "R-2", kind: "derived", refs: [], excerpt: "" },
+          { id: "R-3", kind: "inference", refs: [], excerpt: "" },
+        ],
+        unclassified: [],
+        sequential: true,
+      } as never;
+      const guide = provenanceGuideLines(provenance);
+      expect(guide[0]).toBe("確かめる項目：3件（引用 1・導出 1・推論 1）");
+      expect(guide.join("\n")).toContain("サブエージェントを起動できず");
+      activity.close();
+    });
 
     it("PR を作らない工程：確かめたいこと（confirms）が get_task に入り、同じ文の確認は1件にまとまって指摘の ID が並ぶ。答え方は approve_step と request_changes の comments", async () => {
       const { activity, service, id } = await reqAsking([

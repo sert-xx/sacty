@@ -153,7 +153,7 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
   - 期待結果：draftHistory はドラフトならタイムラインを読まずにドラフトを返し、ドラフトでなければ最後の切り替えの id・種類を返し、draft かタイムラインのエラーでは読めないことを返し、setDraft の外しはすでに外れていれば mutation を呼ばずに changed: false を返し、変えたときは changed: true と、要求の前の最後の外しの id（空なら外しが無いこと、エラーなら読めないこと）と答えの id を、あれば返し、無ければ返さない
 - [TV-20] 新しい記録を作業履歴に表示する
   - 入力：PullRequestUndraftNoted と、reason が person・unreadable・undetermined の PullRequestRedraftSkipped を、日本語と英語で表示する
-  - 期待結果：それぞれ PR の番号と、sacty が外したこと・戻さなかった理由（人が外した・読めなかった・決められなかった）の文言が出る
+  - 期待結果：それぞれ PR の番号と、sacty が外したこと・戻さなかった理由（人が外した・切り替えの履歴を読めなかった・最後の切り替えが sacty のものか決められなかった）の文言が出る
 - [TV-21] 仕様書に新しい決まりを載せる
   - 入力：docs/spec の tasks-and-steps・approval・event-log・split-and-integrate の日英の差分
   - 期待結果：人が外した PR を一時停止のほかは戻さないこと、判定と3つの理由、重ねた PR の提出を止めないこと、2つのイベントと数え直した種類の数、記録の後は前の版へ切り戻せないこと（互換の層は作らない）が書かれている

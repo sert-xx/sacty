@@ -5,8 +5,6 @@ import { describe, expect, it } from "vitest";
 import { aiReviewFor, aiReviewOfHead } from "./ai-review-head.js";
 import { DEFAULT_CONTEXT_DIR } from "./context.js";
 import {
-  AI_REVIEW_STATUS_NOTE,
-  aiReviewBodyLines,
   buildPrompt,
   buildPullRequestBodyParts,
   buildPullRequestBodyText,
@@ -123,14 +121,14 @@ describe("A2 終了コードが 0 でないのに合格にした理由を、「�
       ),
     );
     expect(body).toContain(
-      "→ 合格（ゴールガーディアンが実行。終了コード 1。終了コードは 0 でないが、失敗は環境によるものだけと判断して合格にした。下の「人が確かめること」）",
+      "→ 合格（AI の確かめで実行。終了コード 1。終了コードは 0 でないが、失敗は環境によるものだけと判断して合格にした。下の「人が確かめること」）",
     );
     expect(body).toContain("- [ ] 環境によると判断したテストの失敗：a.test.ts：起点でも失敗する");
     const ok = joinBodyText(buildPullRequestBodyText(withTests({ exitCode: 0 })));
-    expect(ok).toContain("→ 合格（ゴールガーディアンが実行。終了コード 0）");
+    expect(ok).toContain("→ 合格（AI の確かめで実行。終了コード 0）");
     expect(ok).not.toContain("合格にした");
     const failed = joinBodyText(buildPullRequestBodyText(withTests({ exitCode: 1 })));
-    expect(failed).toContain("→ 不合格（ゴールガーディアンが実行。終了コード 1）");
+    expect(failed).toContain("→ 不合格（AI の確かめで実行。終了コード 1）");
   });
 });
 
@@ -234,9 +232,6 @@ describe("D1 今の head に sacty の AI のレビューが付いているか",
       head: "7ed51c5aaaa",
       status: "unknown",
     });
-    expect(aiReviewBodyLines({ head: "7ed51c5aaaa", status: "unknown" }).join("\n")).toContain(
-      "状況は分かりません",
-    );
   });
 
   it("承認待ちでない・PR が開いていないタスクは、状況を持たない。作成前の PR（番号なし）は none", () => {
@@ -256,61 +251,36 @@ describe("D1 今の head に sacty の AI のレビューが付いているか",
     ).toEqual({ head: "abc", status: "none" });
   });
 
-  it("PR の本文に、今の head の AI のレビューの状況を書く（無ければ書かない）", () => {
+  it("PR の本文には、AI のレビューの状況を書かない（書いた時点で古くなる。PBI-471）", () => {
     const t = task();
-    for (const [status, text] of [
-      ["none", "この head（7ed51c5）には、Sacty の AI のレビューがまだ付いていません。"],
-      ["reviewing", "この head（7ed51c5）を、Sacty の AI のレビューがレビュー中です。"],
-      ["attached", "この head（7ed51c5）には、Sacty の AI のレビューが付いています。"],
-    ] as const) {
-      const aiReview = { head: "7ed51c5aaaa", status };
-      expect(aiReviewBodyLines(aiReview)).toEqual([
-        `AI のレビュー：${text}`,
-        AI_REVIEW_STATUS_NOTE,
-      ]);
-      const bodyText = joinBodyText(buildPullRequestBodyText(t, { aiReview }));
-      expect(bodyText).toContain(`- AI のレビュー：${text}\n- ${AI_REVIEW_STATUS_NOTE}`);
-      // 結論の外の節（レビューの進め方）にある。画面を案内しない（TV-3）
-      expect(bodyText.indexOf("## レビューの進め方")).toBeGreaterThan(bodyText.indexOf("## 結論"));
-      expect(bodyText).not.toContain("承認の画面");
-      const parts = buildPullRequestBodyParts(t, { aiReview });
-      expect(parts.summary).not.toContain("AI のレビュー：");
-      expect(parts.footer).toContain(`- AI のレビュー：${text}\n- ${AI_REVIEW_STATUS_NOTE}`);
-    }
-    // 要求要件・設計の PR の本文にも書く（承認の案内の前。テンプレートに沿わせる本文は要約）
     const step = task({ stepPullRequests: [] } as Partial<Task>);
-    const aiReview = { head: "7ed51c5aaaa", status: "reviewing" as const };
-    const stepText = buildStepPullRequestBodyText(
-      step,
-      "requirements",
-      "docs/sacty/t-1/requirements.md",
-      aiReview,
-    );
-    expect(stepText.footer).toContain(
-      "この head（7ed51c5）を、Sacty の AI のレビューがレビュー中です。",
-    );
-    expect(stepText.footer).toContain(AI_REVIEW_STATUS_NOTE);
-    expect(stepText.footer).not.toContain("承認の画面");
-    expect(stepText.footer.indexOf("AI のレビュー：")).toBeLessThan(stepText.footer.indexOf("---"));
-    expect(
-      buildStepPullRequestBodyParts(
-        step,
-        "requirements",
-        "docs/sacty/t-1/requirements.md",
-        aiReview,
-      ).summary,
-    ).toContain("AI のレビュー：");
-    expect(
-      buildStepPullRequestBodyText(step, "requirements", "docs/sacty/t-1/requirements.md").footer,
-    ).not.toContain("AI のレビュー：");
-    expect(aiReviewBodyLines(undefined)).toEqual([]);
-    expect(joinBodyText(buildPullRequestBodyText(t))).not.toContain("AI のレビュー：");
-    expect(
-      aiReviewBodyLines({
-        head: "abcdef1234",
-        status: "attached",
-        url: "https://github.com/a/b/pull/1#r",
-      })[0],
-    ).toContain("付いています：https://github.com/a/b/pull/1#r");
+    for (const status of ["none", "reviewing", "attached", "unknown"] as const) {
+      const aiReview = { head: "7ed51c5aaaa", status };
+      const bodies = [
+        joinBodyText(buildPullRequestBodyText(t, { aiReview })),
+        JSON.stringify(buildPullRequestBodyParts(t, { aiReview })),
+        joinBodyText(
+          buildStepPullRequestBodyText(
+            step,
+            "requirements",
+            "docs/sacty/t-1/requirements.md",
+            aiReview,
+          ),
+        ),
+        JSON.stringify(
+          buildStepPullRequestBodyParts(
+            step,
+            "requirements",
+            "docs/sacty/t-1/requirements.md",
+            aiReview,
+          ),
+        ),
+      ];
+      for (const body of bodies) {
+        expect(body).not.toContain("AI のレビュー：");
+        expect(body).not.toContain("7ed51c5");
+        expect(body).not.toContain("承認の画面");
+      }
+    }
   });
 });

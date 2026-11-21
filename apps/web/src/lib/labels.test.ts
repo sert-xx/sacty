@@ -88,12 +88,20 @@ describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
 
   it("人の判断を待つ申し出（判定の無いもの）も、判断フォームのある「変更の申し出」へ誘導する（PBI-333）", () => {
     const waiting = task({ status: "escalated", proposals: [proposal()] });
-    expect(personAction(waiting)).toEqual({ href: "/tasks/t1#proposals", label: "判断する" });
+    expect(personAction(waiting)).toEqual({
+      href: "/tasks/t1#proposals",
+      label: "判断する",
+    });
     expect(statusText(waiting)).toBe("変更の申し出の判断待ち");
     // 人が判断したら、もう待たない
     const decided = task({
       status: "idle",
-      proposals: [{ ...proposal(), decision: { accept: true, at: "2026-11-12T00:00:00.000Z" } }],
+      proposals: [
+        {
+          ...proposal(),
+          decision: { accept: true, at: "2026-11-12T00:00:00.000Z" },
+        },
+      ],
     });
     expect(statusText(decided)).not.toBe("変更の申し出の判断待ち");
   });
@@ -101,10 +109,17 @@ describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
   it("判定できなかった申し出は、判断フォームのある「変更の申し出と判定」へ誘導する", () => {
     const undecided = task({
       status: "escalated",
-      proposals: [proposal({ judgement: { verdict: "undecidable", reason: "x", at: "" } })],
+      proposals: [
+        proposal({
+          judgement: { verdict: "undecidable", reason: "x", at: "" },
+        }),
+      ],
     });
     expect(personTurnGroup(undecided) !== undefined).toBe(true);
-    expect(personAction(undecided)).toEqual({ href: "/tasks/t1#proposals", label: "判断する" });
+    expect(personAction(undecided)).toEqual({
+      href: "/tasks/t1#proposals",
+      label: "判断する",
+    });
     // 差し戻しの上限によるエスカレーションと承認待ちは、承認の画面へ
     expect(personAction(task({ status: "escalated" })).href).toBe("/tasks/t1/review");
     expect(personAction(task({ status: "awaiting_approval" }))).toEqual({
@@ -200,11 +215,19 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     );
     expect(
       describeEvent(
-        event({ type: "StepSubmitted", payload: { step: "implement", submission: 2 } }),
+        event({
+          type: "StepSubmitted",
+          payload: { step: "implement", submission: 2 },
+        }),
       ),
     ).toBe("実装を提出（2回目）");
     expect(
-      describeEvent(event({ type: "StepApproved", payload: { step: "implement", next: "idle" } })),
+      describeEvent(
+        event({
+          type: "StepApproved",
+          payload: { step: "implement", next: "idle" },
+        }),
+      ),
     ).toBe("実装を承認・凍結（人間）");
   });
 
@@ -213,7 +236,13 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
       describeEvent(
         event({
           type: "TaskCreated",
-          payload: { title: "t", body: "", start: "sacty", budgetCapUsd: 1, ...payload },
+          payload: {
+            title: "t",
+            body: "",
+            start: "sacty",
+            budgetCapUsd: 1,
+            ...payload,
+          },
         } as unknown as Pick<ActivityEvent, "type" | "payload">),
       );
     expect(created({ plan: "standard" })).toBe("タスクを作成（人間）");
@@ -256,7 +285,11 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         type: "ChangesRequested",
         payload: { step: "requirements", round: 2, remarks, overLimit: false },
       });
-    const ai = { id: "requirements-2-1", text: "AI の指摘", source: "sacty_review" as const };
+    const ai = {
+      id: "requirements-2-1",
+      text: "AI の指摘",
+      source: "sacty_review" as const,
+    };
     const human = { id: "requirements-2-2", text: "人の指摘" };
     // 人の指摘が無ければ「AI のレビュー」、混ざれば内訳
     expect(describeEventParts(requested([ai]), ja).text).toBe(
@@ -284,7 +317,12 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
           type: "PullRequestReviewImported",
           payload: {
             number: 7,
-            items: items.map((i, n) => ({ key: `k${n}`, author: "sert-xx", at: "x", ...i })),
+            items: items.map((i, n) => ({
+              key: `k${n}`,
+              author: "sert-xx",
+              at: "x",
+              ...i,
+            })),
             remarks: items.map(() => "r"),
           },
         }),
@@ -317,8 +355,18 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         reason: "stale_head",
         head: "d".repeat(40),
         items: [
-          { key: "review:1", author: "sert-xx", at: "x", commit: "c".repeat(40) },
-          { key: "review_comment:2", author: "sert-xx", at: "x", commit: "c".repeat(40) },
+          {
+            key: "review:1",
+            author: "sert-xx",
+            at: "x",
+            commit: "c".repeat(40),
+          },
+          {
+            key: "review_comment:2",
+            author: "sert-xx",
+            at: "x",
+            commit: "c".repeat(40),
+          },
         ],
       },
     });
@@ -347,7 +395,11 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
             key: "review:601",
             url: "https://github.com/acme/app/pull/7#issuecomment-3",
           },
-          { remarkId: "implement-1-3", key: "comment:401", failed: "403 forbidden" },
+          {
+            remarkId: "implement-1-3",
+            key: "comment:401",
+            failed: "403 forbidden",
+          },
           { remarkId: "implement-1-4", key: "comment:402" },
         ],
       },
@@ -392,7 +444,12 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     );
     const started = event({
       type: "RemarkRepliesStarted",
-      payload: { step: "implement", submission: 2, number: 7, account: "acme-dev" },
+      payload: {
+        step: "implement",
+        submission: 2,
+        number: 7,
+        account: "acme-dev",
+      },
     });
     expect(describeEvent(started)).toBe(
       "指摘への対応を PR #7 に返信し始めた（GitHub のアカウント acme-dev）",
@@ -406,7 +463,13 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         step: "implement",
         submission: 2,
         number: 7,
-        results: [{ remarkId: "implement-1-1", key: "comment:1", url: "https://example.com/c" }],
+        results: [
+          {
+            remarkId: "implement-1-1",
+            key: "comment:1",
+            url: "https://example.com/c",
+          },
+        ],
       },
     });
     expect(describeEventParts(allDone, ja).text).toBe(
@@ -456,11 +519,18 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         number: 7,
         retried: true,
         results: [
-          { remarkId: "implement-1-1", key: "comment:1", url: "https://example.com/c" },
+          {
+            remarkId: "implement-1-1",
+            key: "comment:1",
+            url: "https://example.com/c",
+          },
           {
             remarkId: "implement-1-2",
             key: "comment:2",
-            failed: { code: "github.replyGaveUpAfterRateLimit", params: { attempts: 6 } },
+            failed: {
+              code: "github.replyGaveUpAfterRateLimit",
+              params: { attempts: 6 },
+            },
           },
         ],
       },
@@ -502,7 +572,12 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     const ended = (outcome: "pushed" | "failed", retries: number) =>
       event({
         type: "PushRetryEnded",
-        payload: { branch: "sacty/x", commit: "c".repeat(40), outcome, retries },
+        payload: {
+          branch: "sacty/x",
+          commit: "c".repeat(40),
+          outcome,
+          retries,
+        },
       });
     expect(describeEventParts(ended("pushed", 2), ja).text).toBe(
       "プッシュのやり直しが通った（やり直し 2回）",
@@ -549,14 +624,22 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
       describeEvent(event({ type: "TestsDecided", payload: { noTestsReason: "スキル集" } })),
     ).toBe("テストなしで進めると決定（人間）：スキル集");
     expect(
-      describeEvent(event({ type: "TaskResumed", payload: { retry: true, rechooseSteps: true } })),
+      describeEvent(
+        event({
+          type: "TaskResumed",
+          payload: { retry: true, rechooseSteps: true },
+        }),
+      ),
     ).toBe("再開（人間）：工程の選択からやり直します");
     expect(describeEvent(event({ type: "TaskResumed", payload: { retry: true } }))).toBe(
       "再開（人間）",
     );
     expect(
       describeIn(
-        event({ type: "TestsDecided", payload: { noTestsReason: "docs only" } }),
+        event({
+          type: "TestsDecided",
+          payload: { noTestsReason: "docs only" },
+        }),
         labels.en,
       ),
     ).toBe("Decided to proceed without tests (person): docs only");
@@ -564,7 +647,12 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
 
   it("実装の承認待ちと完了を表示する", () => {
     expect(
-      statusText(task({ status: "awaiting_approval", gate: { step: "implement", submission: 1 } })),
+      statusText(
+        task({
+          status: "awaiting_approval",
+          gate: { step: "implement", submission: 1 },
+        }),
+      ),
     ).toBe("実装の承認待ち");
     const done = task({
       steps: [{ key: "requirements", state: "done" }],
@@ -633,13 +721,19 @@ describe("英語の表示（PBI-4b）", () => {
   it("用語集の英語で、状態と作業履歴を表示する", () => {
     expect(
       statusTextIn(
-        task({ status: "awaiting_approval", gate: { step: "implement", submission: 2 } }),
+        task({
+          status: "awaiting_approval",
+          gate: { step: "implement", submission: 2 },
+        }),
         en,
       ),
     ).toBe("Implement awaiting approval (submission 2)");
     expect(
       statusTextIn(
-        task({ status: "awaiting_approval", gate: { step: "requirements", submission: 1 } }),
+        task({
+          status: "awaiting_approval",
+          gate: { step: "requirements", submission: 1 },
+        }),
         en,
       ),
     ).toBe("Requirements awaiting approval");
@@ -762,7 +856,12 @@ describe("作業履歴に記録したデーモンの文言（PBI-11b）", () => 
       params: {
         detail: {
           code: "github.failed",
-          params: { action: "createPr", status: 401, detail: "Bad credentials", hint: "token" },
+          params: {
+            action: "createPr",
+            status: 401,
+            detail: "Bad credentials",
+            hint: "token",
+          },
         },
       },
     });
@@ -792,7 +891,12 @@ describe("作業履歴に記録したデーモンの文言（PBI-11b）", () => 
         warnings: [
           {
             code: "context.lockedOverride",
-            params: { from: "t@1", kind: "skills", name: "review", lockedBy: "c@2" },
+            params: {
+              from: "t@1",
+              kind: "skills",
+              name: "review",
+              lockedBy: "c@2",
+            },
           },
         ],
       },
@@ -843,7 +947,11 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
         gate: { step: "implement", submission },
         pullRequest: { branch: "b", commit: "c1", url: "u", number: 7 },
         pullRequestState: "open",
-        pullRequestConflict: { number: 7, commit: "c1", at: "2026-10-10T00:00:00.000Z" },
+        pullRequestConflict: {
+          number: 7,
+          commit: "c1",
+          at: "2026-10-10T00:00:00.000Z",
+        },
       });
     expect(statusText(conflicting())).toBe("実装の PR がベースブランチと競合");
     expect(statusText(conflicting(2))).toBe("実装の PR がベースブランチと競合（2回目）");
@@ -919,11 +1027,19 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
         actor: "sacty",
       }) as ActivityEvent;
     expect(
-      describeEvent(event({ type: "PullRequestConflicted", payload: { number: 7 } } as never)),
+      describeEvent(
+        event({
+          type: "PullRequestConflicted",
+          payload: { number: 7 },
+        } as never),
+      ),
     ).toBe("PR #7 がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）");
     expect(
       describeEvent(
-        event({ type: "PullRequestConflictResolved", payload: { number: 7 } } as never),
+        event({
+          type: "PullRequestConflictResolved",
+          payload: { number: 7 },
+        } as never),
       ),
     ).toBe("PR #7 の競合が解消された");
   });
@@ -969,7 +1085,14 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     );
     // 実行も指摘も無ければ、段階だけ
     expect(
-      describeEvent(event({ number: 7, was: "queued", stoppedRuns: [], discardedRemarks: [] })),
+      describeEvent(
+        event({
+          number: 7,
+          was: "queued",
+          stoppedRuns: [],
+          discardedRemarks: [],
+        }),
+      ),
     ).toBe(
       "PR #7 がマージされたため、実装の作り直しを止めた（実行待ち）。マージを承認として進める",
     );
@@ -1009,7 +1132,14 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     });
     expect(describeEvent(requirements)).toContain("要求要件の直しを止めた");
     expect(
-      describeEvent(event({ number: 7, was: "queued", stoppedRuns: [], discardedRemarks: [] })),
+      describeEvent(
+        event({
+          number: 7,
+          was: "queued",
+          stoppedRuns: [],
+          discardedRemarks: [],
+        }),
+      ),
     ).toContain("実装の作り直しを止めた");
   });
 
@@ -1056,11 +1186,21 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
         actor: "person",
       }) as ActivityEvent;
     expect(
-      describeEvent(event({ type: "PullRequestMerged", payload: { number: 7, by: "reviewer" } })),
+      describeEvent(
+        event({
+          type: "PullRequestMerged",
+          payload: { number: 7, by: "reviewer" },
+        }),
+      ),
     ).toBe("PR #7 がマージされ、承認（reviewer）");
     // 前の版の作業履歴（古い内容でのマージ）も読める
     expect(
-      describeEvent(event({ type: "PullRequestMerged", payload: { number: 7, outdated: true } })),
+      describeEvent(
+        event({
+          type: "PullRequestMerged",
+          payload: { number: 7, outdated: true },
+        }),
+      ),
     ).toBe("PR #7 が最新の提出より前の内容でマージされた・判断待ち");
     // 人が直してからのマージは、両方のコミットと、成果のファイルを読めなかったことを出す（PBI-63）
     const edited = (document?: { path: string; fallback?: "deleted" | "unreadable" }) =>
@@ -1120,7 +1260,12 @@ describe("要求要件・設計の PR（PBI-57）", () => {
     expect(statusText(pr("merged_outdated"))).toBe("別の内容でマージ・承認へ");
     expect(statusTextIn(pr("open"), labels.en)).toBe("Design PR awaiting merge");
     expect(
-      statusText(task({ status: "awaiting_approval", gate: { step: "design", submission: 1 } })),
+      statusText(
+        task({
+          status: "awaiting_approval",
+          gate: { step: "design", submission: 1 },
+        }),
+      ),
     ).toBe("設計の承認待ち");
   });
 
@@ -1279,7 +1424,11 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       text: "Steps chosen: Implement / images: java17 (orchestrator)",
     });
     // 元がプロジェクトの対象の指定なら、imageReason があっても詳細に出さない
-    const project = chosen({ image: "java17", imageSource: "project", imageReason: "理由" });
+    const project = chosen({
+      image: "java17",
+      imageSource: "project",
+      imageReason: "理由",
+    });
     expect(describeEventParts(project, ja).detail).toBeUndefined();
     expect(describeEventParts(project, labels.en).detail).toBeUndefined();
     // 既定のイメージにした理由（単数）は詳細に出て、行には印だけが出る
@@ -1407,7 +1556,11 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
         file: "compose/redis.yml",
         names: ["redis"],
         steps: ["implement"],
-        compose: { name: "infra", repo: "https://github.com/acme/test-infra", ref: "main" },
+        compose: {
+          name: "infra",
+          repo: "https://github.com/acme/test-infra",
+          ref: "main",
+        },
       },
       servicesReason: "結合テストが Redis を使う",
     });
@@ -1424,7 +1577,9 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     // 対象リポジトリの compose（names が空ならすべて）
     expect(
       describeEventParts(
-        chosen({ services: { file: "compose.yaml", names: [], steps: ["implement"] } }),
+        chosen({
+          services: { file: "compose.yaml", names: [], steps: ["implement"] },
+        }),
         ja,
       ).text,
     ).toBe("工程を決定：実装 / サービス：すべて（compose.yaml。実装で使う）");
@@ -1503,7 +1658,11 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
         step: "implement",
         file: "compose.yaml",
         services: [
-          { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+          {
+            name: "db",
+            ports: [5432],
+            hostPorts: [{ port: 15432, target: 5432 }],
+          },
           { name: "mock", ports: [] },
         ],
       },
@@ -1531,7 +1690,12 @@ describe("調査の工程（PBI-18）", () => {
         actor: "sacty",
       }) as ActivityEvent;
     expect(
-      describeEvent(event({ type: "IssueCommented", payload: { url: "https://x/issues/5#c" } })),
+      describeEvent(
+        event({
+          type: "IssueCommented",
+          payload: { url: "https://x/issues/5#c" },
+        }),
+      ),
     ).toBe("調査の結果を Issue にコメントした（https://x/issues/5#c）");
     expect(statusText(task({ steps: [{ key: "investigate", state: "done" }] }))).toBe("完了");
   });
@@ -1567,7 +1731,10 @@ describe("レビューの工程（PBI-19）", () => {
     ).toBe("レビューの対象の PR を確認（https://github.com/acme/app/pull/12・abcdef1）");
     expect(
       describeEvent(
-        event({ type: "PullRequestReviewPosted", payload: { url: "https://x/pull/12#r" } }),
+        event({
+          type: "PullRequestReviewPosted",
+          payload: { url: "https://x/pull/12#r" },
+        }),
       ),
     ).toBe("レビューを PR に投稿した（https://x/pull/12#r）");
     expect(statusText(task({ steps: [{ key: "review", state: "done" }] }))).toBe("完了");
@@ -1582,7 +1749,12 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
       reviewPost: posted,
       // 見守りの状態は、判定が指摘なしでない投稿にだけ付く
       ...(verdict === "no_findings" ? {} : { reviewWatch: { since: "2026-11-19T23:50:00.000Z" } }),
-      reviewVerdicts: [{ round: 1, ...(verdict ? { verdict } : { missing: "absent" as const }) }],
+      reviewVerdicts: [
+        {
+          round: 1,
+          ...(verdict ? { verdict } : { missing: "absent" as const }),
+        },
+      ],
       ...patch,
     });
 
@@ -1592,7 +1764,11 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
     // 判定が無い回は、詳細の知らせと同じ言い方で分ける
     expect(statusText(watching())).toBe("PR の対応待ち（判定が付いていない）");
     expect(
-      statusText(watching(undefined, { reviewVerdicts: [{ round: 1, missing: "invalid" }] })),
+      statusText(
+        watching(undefined, {
+          reviewVerdicts: [{ round: 1, missing: "invalid" }],
+        }),
+      ),
     ).toBe("PR の対応待ち（判定を読めない）");
     expect(statusText(watching(undefined, { reviewVerdicts: [{ round: 1 }] }))).toBe(
       "PR の対応待ち（判定を読めない）",
@@ -1645,7 +1821,10 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
   });
 
   it("見守り中に一時停止したタスクは、一時停止（人の出番）と出す。中止したタスクは中止", () => {
-    const paused = watching("suggestions", { status: "paused", pausedReason: "manual" });
+    const paused = watching("suggestions", {
+      status: "paused",
+      pausedReason: "manual",
+    });
     expect(statusText(paused)).toBe(labels.ja.pause.manual);
     expect(statusTone(paused)).toBe("person");
     const cancelled = watching("suggestions", { status: "cancelled" });
@@ -1726,7 +1905,12 @@ describe("テストのコマンドの表示（PBI-28）", () => {
 describe("再現の表示（PBI-29）", () => {
   it("再現できなかったときは承認待ちではなく判断待ちと出し、作業履歴に結果を出す", () => {
     expect(
-      statusText(task({ status: "awaiting_approval", gate: { step: "reproduce", submission: 1 } })),
+      statusText(
+        task({
+          status: "awaiting_approval",
+          gate: { step: "reproduce", submission: 1 },
+        }),
+      ),
     ).toBe("再現できなかった・判断待ち");
     // 再現のテストを実行している間（PBI-29）
     const checking = task({ status: "idle", reproductionPending: true });
@@ -1830,7 +2014,17 @@ describe("最終レビューの表示：出力の JSON を直して読んだと�
     expect(describeEvent(reviewed())).toBe("最終レビュー：合格（以前の版の AI の判定・$0.5000）");
     const repaired = {
       code: "review.outputRepaired",
-      params: { repairs: [{ kind: "brace", count: 1, line: 1, column: 2556, key: "humanChecks" }] },
+      params: {
+        repairs: [
+          {
+            kind: "brace",
+            count: 1,
+            line: 1,
+            column: 2556,
+            key: "humanChecks",
+          },
+        ],
+      },
     };
     expect(describeEvent(reviewed(repaired))).toBe(
       "最終レビュー：合格（以前の版の AI の判定・$0.5000）。最終レビューの出力の JSON が崩れていたので、直して読みました（入れ子のオブジェクトの閉じ括弧 } の欠け（humanChecks の前に補った）：JSON の 1 行目の 2556 文字目）。",
@@ -1847,7 +2041,10 @@ describe("オーケストレーターの失敗の表示（PBI-32）", () => {
       type: "OrchestratorFailed",
       payload: {
         reason: "usage_limit",
-        message: { code: "orchestrator.failed", params: { detail: "ThrottlingException" } },
+        message: {
+          code: "orchestrator.failed",
+          params: { detail: "ThrottlingException" },
+        },
         agentId: "codex-bedrock",
         costUsd: 0.3,
         estimated: false,
@@ -1893,7 +2090,12 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
   });
 
   it("オーケストレーター・最終レビューの失敗は、$0.0000 と出さずに不明と出す", () => {
-    const base = { message: timeout, reason: "error", costUsd: 0, estimated: false };
+    const base = {
+      message: timeout,
+      reason: "error",
+      costUsd: 0,
+      estimated: false,
+    };
     expect(describeEvent(event("OrchestratorFailed", { ...base, costUnknown: true }))).toContain(
       "（費用不明）",
     );
@@ -1925,7 +2127,11 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     expect(describeEventParts(steps, labels.en).text).toMatch(/ \(cost unknown\)$/);
     expect(
       describeEventParts(
-        event("StepsChosen", { steps: ["requirements"], ...base, costUsd: 0.3 }),
+        event("StepsChosen", {
+          steps: ["requirements"],
+          ...base,
+          costUsd: 0.3,
+        }),
         ja,
       ).text,
     ).toMatch(/（\$0\.3000以上・概算）$/);
@@ -1940,17 +2146,32 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     ).toMatch(/（費用不明）$/);
     expect(
       describeEvent(
-        event("AgentRunCompleted", { step: "implement", output: "", responses: [], ...base }),
+        event("AgentRunCompleted", {
+          step: "implement",
+          output: "",
+          responses: [],
+          ...base,
+        }),
       ),
     ).toContain("費用不明");
     expect(
       describeEvent(
-        event("FinalReviewed", { passed: true, viewpoints: [], remarks: [], summary: "", ...base }),
+        event("FinalReviewed", {
+          passed: true,
+          viewpoints: [],
+          remarks: [],
+          summary: "",
+          ...base,
+        }),
       ),
     ).toContain("費用不明");
     // 印が無い成功は、これまでどおり（印も費用も付けない）
     const plain = describeEvent(
-      event("StepsChosen", { steps: ["requirements"], costUsd: 0, estimated: true }),
+      event("StepsChosen", {
+        steps: ["requirements"],
+        costUsd: 0,
+        estimated: true,
+      }),
     );
     expect(plain).not.toContain("費用不明");
     expect(plain).not.toContain("以上");
@@ -1997,10 +2218,34 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
   it("提案の選り分けの行は、件数と費用を出し、詳細に提案ごとの判断と理由を出す（PBI-436）", () => {
     const triaged = event("SuggestionsTriaged", {
       items: [
-        { id: "S1", remark: 0, text: "提案1", decision: "decline", reason: "好みの範囲" },
-        { id: "S2", remark: 0, text: "提案2", decision: "decline", reason: "範囲の外" },
-        { id: "S3", remark: 0, text: "提案3", decision: "decline", reason: "言い回し" },
-        { id: "S4", remark: 1, text: "提案4", decision: "address", reason: "直さないと害が出る" },
+        {
+          id: "S1",
+          remark: 0,
+          text: "提案1",
+          decision: "decline",
+          reason: "好みの範囲",
+        },
+        {
+          id: "S2",
+          remark: 0,
+          text: "提案2",
+          decision: "decline",
+          reason: "範囲の外",
+        },
+        {
+          id: "S3",
+          remark: 0,
+          text: "提案3",
+          decision: "decline",
+          reason: "言い回し",
+        },
+        {
+          id: "S4",
+          remark: 1,
+          text: "提案4",
+          decision: "address",
+          reason: "直さないと害が出る",
+        },
       ],
       dropped: [],
       agentId: "a",
@@ -2025,7 +2270,14 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     // 判断できず、対応する側にした提案は、そう出す。採用しなかった実行は、そう出す
     const defaulted = event("SuggestionsTriaged", {
       items: [
-        { id: "S1", remark: 0, text: "提案1", decision: "address", reason: "x", defaulted: true },
+        {
+          id: "S1",
+          remark: 0,
+          text: "提案1",
+          decision: "address",
+          reason: "x",
+          defaulted: true,
+        },
       ],
       dropped: [],
       agentId: "a",
@@ -2131,17 +2383,36 @@ describe("オーケストレーターのセッションの記録の表示（PBI-
       "オーケストレーターのセッション（s1）を再開した",
     );
     expect(
-      describeEvent(event({ mode: "new", reason: "agent_changed", sessionId: "s2", saved: true })),
+      describeEvent(
+        event({
+          mode: "new",
+          reason: "agent_changed",
+          sessionId: "s2",
+          saved: true,
+        }),
+      ),
     ).toBe("オーケストレーターのセッションを新しく始めた（エージェントを変えたため）：s2");
     expect(
       describeEvent(
-        event({ mode: "new", reason: "resume_failed", saved: false, notSaved: "no_session" }),
+        event({
+          mode: "new",
+          reason: "resume_failed",
+          saved: false,
+          notSaved: "no_session",
+        }),
       ),
     ).toBe(
       "オーケストレーターのセッションを新しく始めた（AI が再開を受け付けなかったため）。セッションは保存できなかった（セッションの ID が分からない）",
     );
     expect(
-      describeEvent(event({ role: "chat", mode: "forked", resumedFrom: "s1", sessionId: "f1" })),
+      describeEvent(
+        event({
+          role: "chat",
+          mode: "forked",
+          resumedFrom: "s1",
+          sessionId: "f1",
+        }),
+      ),
     ).toBe("質問のためにセッション（s1）を複製した：f1");
     expect(describeEvent(event({ role: "chat", mode: "new", reason: "first" }))).toBe(
       "質問のために新しいセッションを始めた（このタスクで初めて）",
@@ -2179,7 +2450,10 @@ describe("終わっていない実装の記録の表示（PBI-347・PBI-348・PB
       detail: "・docs",
     });
     // 申告が無い・読めないとき。残っていることが無ければ、括弧も詳細も出さない
-    const undeclared = event("ImplementationIncomplete", { remaining: [], undeclared: true });
+    const undeclared = event("ImplementationIncomplete", {
+      remaining: [],
+      undeclared: true,
+    });
     expect(describeEventParts(undeclared, ja)).toEqual({
       text: "実装し終えたかの申告が無いか読めないため、提出せずに実装を続ける",
     });
@@ -2242,7 +2516,10 @@ describe("終わっていない実装の記録の表示（PBI-347・PBI-348・PB
       "やり直しの実装が、PR #51（7a1b2c3）の AI のレビューの指摘をすべて、理由を付けて断り、何も変えなかった。断った理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる",
     );
     expect(describeIn(asked, labels.en)).toContain("PR #51 (7a1b2c3)");
-    const restarted = event("ReviewRestarted", { reason: "declined", commit: "7a1b2c3d4e5f6a7b" });
+    const restarted = event("ReviewRestarted", {
+      reason: "declined",
+      commit: "7a1b2c3d4e5f6a7b",
+    });
     expect(describeEvent(restarted)).toBe(
       "PR を作ったタスクが、指摘をすべて理由を付けて断ったので、同じコミットを判定し直す再レビューを始めた（7a1b2c3。同じコミットには 1 回だけ）",
     );
@@ -2381,14 +2658,24 @@ describe("時間切れで止めた実行の記録の表示（PBI-280）", () => 
   const event = (type: string, payload: Record<string, unknown>) =>
     ({
       type,
-      payload: { runId: "r", role: "implement", agentId: "a", runtime: "claude-code", ...payload },
+      payload: {
+        runId: "r",
+        role: "implement",
+        agentId: "a",
+        runtime: "claude-code",
+        ...payload,
+      },
       actor: "sacty",
     }) as unknown as ActivityEvent;
   it("止めた上限・続けたセッション・続けられなかった理由を出す", () => {
     expect(describeEvent(event("AgentRunTimedOut", { minutes: 3 }))).toContain("上限の3分");
     expect(
       describeEvent(
-        event("AgentRunContinued", { mode: "resumed", sessionId: "s1", stoppedRunId: "x" }),
+        event("AgentRunContinued", {
+          mode: "resumed",
+          sessionId: "s1",
+          stoppedRunId: "x",
+        }),
       ),
     ).toContain("セッション（s1）を続けた");
     expect(
@@ -2419,7 +2706,11 @@ describe("時間切れで止めた実行の記録の表示（PBI-280）", () => 
     ).toContain("unknown-roleの実行");
     expect(
       describeIn(
-        event("AgentRunContinued", { mode: "restarted", reason: "no_session", stoppedRunId: "x" }),
+        event("AgentRunContinued", {
+          mode: "restarted",
+          reason: "no_session",
+          stoppedRunId: "x",
+        }),
         labels.en,
       ),
     ).toContain("ran it again from the start (the previous run's session was not recorded)");
@@ -2451,7 +2742,11 @@ describe("時間切れで止めた実行の記録の表示（PBI-280）", () => 
     // cause の無い記録（それより前の版）は、時間切れの続き
     expect(
       describeEvent(
-        event("AgentRunContinued", { mode: "resumed", sessionId: "s1", stoppedRunId: "x" }),
+        event("AgentRunContinued", {
+          mode: "resumed",
+          sessionId: "s1",
+          stoppedRunId: "x",
+        }),
       ),
     ).toBe("時間切れで止めた実装の実行のセッション（s1）を続けた");
   });
@@ -2544,7 +2839,12 @@ describe("状態の表示の種類（PBI-42）", () => {
     expect(statusTone(task({ status: "paused" }))).toBe("person");
     expect(statusTone(task({ status: "escalated" }))).toBe("person");
     expect(
-      statusTone(task({ status: "awaiting_approval", gate: { step: "design", submission: 1 } })),
+      statusTone(
+        task({
+          status: "awaiting_approval",
+          gate: { step: "design", submission: 1 },
+        }),
+      ),
     ).toBe("person");
   });
 
@@ -2768,13 +3068,22 @@ describe("成果の書き出しの作業履歴（PBI-56）", () => {
       "要求要件を confluence に書き出せなかった（$0.0150）：書き出せませんでした：権限が無い。",
     );
     expect(
-      describeEvent(exported({ failed: { code: "export.stopped" }, runResult: "interrupted" })),
+      describeEvent(
+        exported({
+          failed: { code: "export.stopped" },
+          runResult: "interrupted",
+        }),
+      ),
     ).toBe(
       "要求要件の confluence への書き出しを中断した（$0.0150）：人間が止めたため、書き出しを中断しました。",
     );
     expect(
       describeEvent(
-        event({ type: "ExportRequested", actor: "person", payload: { step: "design" } }),
+        event({
+          type: "ExportRequested",
+          actor: "person",
+          payload: { step: "design" },
+        }),
       ),
     ).toBe("設計の書き出し直しを求めた（人間）");
     expect(describeIn(exported({ url: "https://wiki/1", runResult: "completed" }), labels.en)).toBe(
@@ -2842,7 +3151,10 @@ describe("実装に変更が無い実装の承認（PBI-90・PBI-110）", () => 
     // 差し戻して作り直した提出回（3回目）には、2回目の変更なしを引き継がない
     expect(
       statusText(
-        prGate({ gate: { step: "implement", submission: 3 }, submissions: { implement: 3 } }),
+        prGate({
+          gate: { step: "implement", submission: 3 },
+          submissions: { implement: 3 },
+        }),
       ),
     ).toBe("実装の承認待ち（3回目）");
     expect(
@@ -2900,7 +3212,12 @@ describe("テストの仕組みが無いタスクの作業履歴（PBI-94）", (
     expect(describeEventParts(chosen, labels.en).detail).toContain(
       "Why the repository has no tests: README だけ",
     );
-    const skipped = { type: "TestsSkipped", payload: {}, ...at, actor: "sacty" } as ActivityEvent;
+    const skipped = {
+      type: "TestsSkipped",
+      payload: {},
+      ...at,
+      actor: "sacty",
+    } as ActivityEvent;
     expect(describeEvent(skipped)).toBe(
       "テストのコマンドが無いため、テストを飛ばして最終レビューへ",
     );
@@ -2922,7 +3239,12 @@ describe("実装で用意したテストの結果（PBI-94・PR #105 レビュ�
     // 不合格を「検証しました」と見せない（PR #105 再レビュー指摘）
     expect(addedTestsResult(task({ noTestsReason: "無い", lastTests: ran(false) }))).toBe("failed");
     expect(
-      addedTestsResult(task({ noTestsReason: "無い", testsSkippedAt: "2026-10-15T00:00:00.000Z" })),
+      addedTestsResult(
+        task({
+          noTestsReason: "無い",
+          testsSkippedAt: "2026-10-15T00:00:00.000Z",
+        }),
+      ),
     ).toBeUndefined();
     expect(addedTestsResult(task({ noTestsReason: "無い" }))).toBeUndefined();
     // テストのコマンドがあるタスクは対象外
@@ -2940,7 +3262,13 @@ describe("実装で用意したテストの結果（PBI-94・PR #105 レビュ�
     expect(addedTestsResult(task(redone))).toBeUndefined();
     // やり直しを待っている間（検証の前）は、前の不合格が最新の結果
     expect(
-      addedTestsResult(task({ noTestsReason: "無い", lastTests: ran(false), status: "queued" })),
+      addedTestsResult(
+        task({
+          noTestsReason: "無い",
+          lastTests: ran(false),
+          status: "queued",
+        }),
+      ),
     ).toBe("failed");
   });
 
@@ -2952,7 +3280,11 @@ describe("実装で用意したテストの結果（PBI-94・PR #105 レビュ�
     expect(of({ lastTests: ran(false) })).toBe(m.testCommandAddedFailed("make test"));
     expect(of({ lastTests: ran(false) })).not.toContain("目的から判定");
     expect(
-      of({ lastTests: ran(false), verification: "pending", addedTestCommand: "make check" }),
+      of({
+        lastTests: ran(false),
+        verification: "pending",
+        addedTestCommand: "make check",
+      }),
     ).toBe(m.testCommandAddedPending("make check"));
     expect(of({})).toBe(m.testCommandNone);
     // 根拠は文に入れず、画面が補足で出す
@@ -2984,7 +3316,10 @@ describe("今の提出の検証の結果か（PR #105 再レビュー指摘）",
   const T1 = "2026-10-15T00:00:00.000Z";
   const T2 = "2026-10-15T00:01:00.000Z";
   it("やり直した実装の検証が始まったら、テストも最終レビューも前の提出のものとして返す", () => {
-    const failed = { lastTests: tests(T1, false), lastReview: review(T1) } as Partial<Task>;
+    const failed = {
+      lastTests: tests(T1, false),
+      lastReview: review(T1),
+    } as Partial<Task>;
     expect(verificationResults(task(failed))).toMatchObject({
       testsCurrent: true,
       reviewCurrent: true,
@@ -2996,7 +3331,11 @@ describe("今の提出の検証の結果か（PR #105 再レビュー指摘）",
     // 今の提出のテストに通り、最終レビューを待っている：前の最終レビューは前の提出のもの
     expect(
       verificationResults(
-        task({ lastTests: tests(T2, true), lastReview: review(T1), verification: "tests_passed" }),
+        task({
+          lastTests: tests(T2, true),
+          lastReview: review(T1),
+          verification: "tests_passed",
+        }),
       ),
     ).toMatchObject({ testsCurrent: true, reviewCurrent: false });
     // テストを飛ばしたタスク：飛ばした時より前の最終レビューは前の提出のもの
@@ -3028,14 +3367,24 @@ describe("最終レビューの中で実行したテスト（以前の版のゴ�
     const reused = review(0);
     expect(
       verificationResults(
-        task({ lastReview: { ...reused, tests: { ...reused.tests, reusedFrom: "ci" } } }),
+        task({
+          lastReview: {
+            ...reused,
+            tests: { ...reused.tests, reusedFrom: "ci" },
+          },
+        }),
       ).tests,
     ).toMatchObject({ reusedFrom: "ci", passed: true });
     expect(verificationResults(task({ lastReview: reused })).tests?.reusedFrom).toBeUndefined();
   });
   it("最終レビューの tests を、テストの実行として出す（終了コードを申告しなければ不合格）", () => {
     expect(verificationResults(task({ lastReview: review(0) }))).toMatchObject({
-      tests: { command: "make test", exitCode: 0, passed: true, byGuardian: true },
+      tests: {
+        command: "make test",
+        exitCode: 0,
+        passed: true,
+        byGuardian: true,
+      },
       testsCurrent: true,
       reviewCurrent: true,
     });
@@ -3052,7 +3401,11 @@ describe("最終レビューの中で実行したテスト（以前の版のゴ�
           },
         }),
       ).tests,
-    ).toMatchObject({ exitCode: 1, passed: true, environmentFailures: failures });
+    ).toMatchObject({
+      exitCode: 1,
+      passed: true,
+      environmentFailures: failures,
+    });
     expect(verificationResults(task({ lastReview: review(1) })).tests).not.toHaveProperty(
       "environmentFailures",
     );
@@ -3062,7 +3415,11 @@ describe("最終レビューの中で実行したテスト（以前の版のゴ�
         task({
           lastReview: {
             ...environment,
-            tests: { ...environment.tests, exitCode: 127, missingCommands: ["go"] },
+            tests: {
+              ...environment.tests,
+              exitCode: 127,
+              missingCommands: ["go"],
+            },
           },
         }),
       ).tests,
@@ -3098,14 +3455,22 @@ describe("テストの無い観点を、今の提出について目的から判�
   const T1 = "2026-10-15T00:00:00.000Z";
   const T2 = "2026-10-15T00:01:00.000Z";
   it("今の提出の最終レビューがあるときだけ true にし、検証待ちの間は「未実行」にする", () => {
-    const judged = { noTestsReason: "無い", testsSkippedAt: T1, lastReview: review(T2) };
+    const judged = {
+      noTestsReason: "無い",
+      testsSkippedAt: T1,
+      lastReview: review(T2),
+    };
     expect(judgedByGoalForCurrent(task(judged))).toBe(true);
     // やり直した実装の検証待ち：前の提出の判定は使わない
     expect(judgedByGoalForCurrent(task({ ...judged, verification: "pending" }))).toBe(false);
     // テストを飛ばした後、最終レビューの前
     expect(
       judgedByGoalForCurrent(
-        task({ noTestsReason: "無い", testsSkippedAt: T2, lastReview: review(T1) }),
+        task({
+          noTestsReason: "無い",
+          testsSkippedAt: T2,
+          lastReview: review(T1),
+        }),
       ),
     ).toBe(false);
     expect(judgedByGoalForCurrent(task({ noTestsReason: "無い" }))).toBe(false);
@@ -3124,9 +3489,18 @@ describe("タスクのイメージの表示（PBI-318）", () => {
 
   it("タスクに1つのイメージと、選んだ元を出す。工程ごとの行は出さない", () => {
     const info = taskImageInfo(
-      task({ status: "running", steps, image: "java", imageSource: "orchestrator" }),
+      task({
+        status: "running",
+        steps,
+        image: "java",
+        imageSource: "orchestrator",
+      }),
     );
-    expect(info).toEqual({ image: "java", source: { by: "orchestrator" }, legacy: [] });
+    expect(info).toEqual({
+      image: "java",
+      source: { by: "orchestrator" },
+      legacy: [],
+    });
     for (const by of ["project", "rerun", "request"] as const) {
       expect(taskImageInfo(task({ steps, image: "go", imageSource: by })).source).toEqual({ by });
     }
@@ -3230,16 +3604,29 @@ describe("タスクのイメージの表示（PBI-318）", () => {
     const run = (step: string) =>
       ev({
         type: "AgentRunStarted",
-        payload: { runId: `r${seq}`, step, agentId: "a", authMode: "subscription" },
+        payload: {
+          runId: `r${seq}`,
+          step,
+          agentId: "a",
+          authMode: "subscription",
+        },
       } as Pick<ActivityEvent, "type" | "payload">);
     const activity = [
       ev({
         type: "TaskCreated",
-        payload: { title: "t", body: "", start: "sacty", images: { implement: "java" } },
+        payload: {
+          title: "t",
+          body: "",
+          start: "sacty",
+          images: { implement: "java" },
+        },
       } as Pick<ActivityEvent, "type" | "payload">),
       ev({
         type: "StepsChosen",
-        payload: { steps: ["design", "implement"], images: { design: "python" } },
+        payload: {
+          steps: ["design", "implement"],
+          images: { design: "python" },
+        },
       } as Pick<ActivityEvent, "type" | "payload">),
       run("design"),
       // 実行の後に変えても、実行で使った名前は変わらない
@@ -3266,14 +3653,14 @@ describe("タスクのイメージの表示（PBI-318）", () => {
       stepRunImages([
         activity[0] as ActivityEvent,
         activity[1] as ActivityEvent,
-        ev({ type: "TaskResumed", payload: { retry: true, rechooseSteps: true } } as Pick<
-          ActivityEvent,
-          "type" | "payload"
-        >),
-        ev({ type: "StepsChosen", payload: { steps: ["design", "review"] } } as Pick<
-          ActivityEvent,
-          "type" | "payload"
-        >),
+        ev({
+          type: "TaskResumed",
+          payload: { retry: true, rechooseSteps: true },
+        } as Pick<ActivityEvent, "type" | "payload">),
+        ev({
+          type: "StepsChosen",
+          payload: { steps: ["design", "review"] },
+        } as Pick<ActivityEvent, "type" | "payload">),
         run("design"),
         run("review"),
       ]),
@@ -3323,7 +3710,11 @@ describe("タスクのイメージの表示（PBI-318）", () => {
     const check = (image?: string) =>
       ev({
         type: "DeploymentCheckStarted",
-        payload: { runId: `c${seq}`, skill: "watch", ...(image ? { image } : {}) },
+        payload: {
+          runId: `c${seq}`,
+          skill: "watch",
+          ...(image ? { image } : {}),
+        },
       } as Pick<ActivityEvent, "type" | "payload">);
     const chosen = (steps: string[], images: Record<string, string>) =>
       ev({ type: "StepsChosen", payload: { steps, images } } as Pick<
@@ -3337,7 +3728,10 @@ describe("タスクのイメージの表示（PBI-318）", () => {
     // 監視の確認も deployment の実行。記録の名前があればそれ、無い古い記録は再生で求める
     expect(
       stepRunImages([
-        chosen(["implement", "deployment"], { implement: "java", deployment: "python" }),
+        chosen(["implement", "deployment"], {
+          implement: "java",
+          deployment: "python",
+        }),
         check(),
         check("rust"),
       ]),
@@ -3430,7 +3824,10 @@ describe("マージの後の監視の工程の表示（PBI-116）", () => {
       text: "工程を決定：実装 → マージの後の監視 / マージの後の監視：する（スキル .agents/skills/deployment-observer/SKILL.md）",
     });
     const skippedChoice = chosen({
-      skipped: { code: "deploy.stepSkipped", params: { detail: { code: "deploy.noSkill" } } },
+      skipped: {
+        code: "deploy.stepSkipped",
+        params: { detail: { code: "deploy.noSkill" } },
+      },
     });
     expect(skippedChoice.text).toBe(
       "工程を決定：実装 → マージの後の監視 / マージの後の監視：飛ばす",
@@ -3593,7 +3990,11 @@ describe("差し戻しの上限が無い（PBI-414）", () => {
     actor: "sacty",
     at: "2026-11-01T00:00:00.000Z",
     seq: 2,
-    payload: { step: "requirements", reason: "too_many_changes", pendingRemarks: [] },
+    payload: {
+      step: "requirements",
+      reason: "too_many_changes",
+      pendingRemarks: [],
+    },
   } as unknown as ActivityEvent;
 
   it("R-3：overLimit: true の差し戻しと too_many_changes のエスカレーションは、以前の版の記録と分かる文で出す（日英）。新しい記録は上限に触れない", () => {
@@ -3671,7 +4072,13 @@ describe("作業履歴の「工程を決定」「作業するリポジトリを�
   const repo = (actor: string, payload: Record<string, unknown> = {}) =>
     ({
       type: "RepositoryChosen",
-      payload: { repo: "acme/web", reason: "", costUsd: 0, estimated: false, ...payload },
+      payload: {
+        repo: "acme/web",
+        reason: "",
+        costUsd: 0,
+        estimated: false,
+        ...payload,
+      },
       ...at,
       actor,
     }) as ActivityEvent;
@@ -3680,7 +4087,12 @@ describe("作業履歴の「工程を決定」「作業するリポジトリを�
     image: "node26-playwright",
     imageSource: "orchestrator",
     imageReason: long,
-    exports: { design: { to: { via: "platform", name: "wiki", location: "" }, reason: long } },
+    exports: {
+      design: {
+        to: { via: "platform", name: "wiki", location: "" },
+        reason: long,
+      },
+    },
     services: { file: "compose.yaml", names: ["db"], steps: ["implement"] },
     servicesReason: long,
     noTestsReason: long,
@@ -3708,7 +4120,9 @@ describe("作業履歴の「工程を決定」「作業するリポジトリを�
         chosen({
           image: "node26-playwright",
           deployment: { skipped: "" },
-          exports: { design: { to: { via: "platform", name: "wiki", location: "" } } },
+          exports: {
+            design: { to: { via: "platform", name: "wiki", location: "" } },
+          },
         }),
         l,
       );
@@ -3821,19 +4235,25 @@ describe("ドラフトの切り替えの記録の表示（PBI-468）", () => {
     }) as ActivityEvent;
 
   it("sacty が外したことと、ドラフトへ戻さなかった理由（人が外した・読めなかった・決められなかった）を、PR の番号とともに日英で出す", () => {
-    const undrafted = event({ type: "PullRequestUndraftNoted", payload: { number: 7 } });
+    const undrafted = event({
+      type: "PullRequestUndraftNoted",
+      payload: { number: 7 },
+    });
     expect(describeIn(undrafted, labels.ja)).toBe("sacty が PR #7 のドラフトを外した");
     expect(describeIn(undrafted, labels.en)).toBe("sacty marked PR #7 ready for review");
     const skipped = (reason: "person" | "unreadable" | "undetermined") =>
-      event({ type: "PullRequestRedraftSkipped", payload: { number: 7, reason } });
+      event({
+        type: "PullRequestRedraftSkipped",
+        payload: { number: 7, reason },
+      });
     expect(describeIn(skipped("person"), labels.ja)).toBe(
       "PR #7 をドラフトへ戻さなかった（人が外した）",
     );
     expect(describeIn(skipped("unreadable"), labels.ja)).toBe(
-      "PR #7 をドラフトへ戻さなかった（読めなかった）",
+      "PR #7 をドラフトへ戻さなかった（切り替えの履歴を読めなかった）",
     );
     expect(describeIn(skipped("undetermined"), labels.ja)).toBe(
-      "PR #7 をドラフトへ戻さなかった（決められなかった）",
+      "PR #7 をドラフトへ戻さなかった（最後の切り替えが sacty のものか決められなかった）",
     );
     expect(describeIn(skipped("person"), labels.en)).toContain("PR #7");
     expect(describeIn(skipped("person"), labels.en)).toContain("a person marked it ready");

@@ -836,10 +836,10 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     const child = taskOf(service, b);
     expect(child.stack?.taskId).toBe(a);
     expect(child.pullRequest).toMatchObject({ number: 8, draft: true, awaitingReview: true });
-    // 本文は、付け替えの後にレビューの子タスクが指摘なしにしてから外すと案内する（PR #348 5回目のレビュー提案）
+    // 本文は、付け替えの後にレビューが指摘なしになってから外すと案内する（PR #348 5回目のレビュー提案）
     const stackedBody = pulls.calls.findLast((c) => c.body.includes("に重ねています"))?.body ?? "";
     expect(stackedBody).toContain(
-      "Sacty のレビューの子タスクがこの PR をレビューします。指摘なしになると、ドラフトを外します。",
+      "AI がこの PR をレビューします。指摘なしになると、ドラフトを外します。",
     );
     await service.checkPullRequests();
     expect(taskOf(service, b).reviewTasks).toBeUndefined();
@@ -947,11 +947,15 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     await drain(service);
     // 人が、子の PR の本文の先頭に補足を足した。作業領域へのリンクと、外すと秘密の値（GitHub のトークン ghp_secret）になる文字がある
     const kept = "> 人のメモ：[設計](https://example.com/design) を見ること。";
+    // 本文の最初の見出しの前に足す（先頭の重ねた PR の案内は、付け替えで書き換わるので、その直前に足すと重なる）
+    const original = pulls.bodies[8] ?? "";
+    const at = original.indexOf("\n## 要求要件");
     pulls.bodies[8] = [
+      original.slice(0, at),
+      "",
       kept,
       "> [手順](/workspace/docs/setup.md) に沿う。値は ghp_[s](/workspace)ecret です。",
-      "",
-      pulls.bodies[8] ?? "",
+      original.slice(at),
     ].join("\n");
     merge(pulls, service, a);
     await service.checkPullRequests();
@@ -960,9 +964,9 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     const call = pulls.calls.at(-1);
     expect(call).toMatchObject({ number: 8, baseBranch: "main", retarget: true });
     const updated = call?.body ?? "";
-    expect(
-      updated.startsWith(`${kept}\n> 手順（\`docs/setup.md\`） に沿う。値は [REDACTED] です。\n\n`),
-    ).toBe(true);
+    expect(updated).toContain(
+      `${kept}\n> 手順（\`docs/setup.md\`） に沿う。値は [REDACTED] です。\n`,
+    );
     expect(updated).not.toContain("ghp_secret");
     expect(updated).not.toContain("](/workspace");
     expect(JSON.stringify(service.get(b)?.activity)).not.toContain("ghp_secret");
@@ -1790,7 +1794,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     ];
     const verdict = (value: string, text: string) =>
       out(`${text}\n\n${block({ "sacty-review-verdict": { verdict: value } })}`);
-    const HEADING = "## この PR の範囲（分割の子タスク）";
+    const HEADING = "## この PR の範囲";
     const SCOPE = "--- この PR の範囲（分割の子タスク） ---";
     const quoted = CONTENT.split("\n")
       .map((l) => (l === "" ? ">" : `> ${l}`))
@@ -1840,9 +1844,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       // 最初の提出の PR の本文
       const first = pulls.bodies[7] ?? "";
       expect(first).toContain(HEADING);
-      expect(first).toContain(
-        "この PR は、親タスク「決済をまるごと作る」をタスク分割で分けた子タスクの1つの PR です。",
-      );
+      expect(first).toContain("この PR は、「決済をまるごと作る」を分けた作業の1つの PR です。");
       expect(first).toContain(quoted);
       // 親タスクの要求要件・設計の全文は、範囲ではないので載せない
       expect(first).not.toContain("親タスクの要求要件（承認済み）");
@@ -1956,9 +1958,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       const body = pulls.bodies[7] ?? "";
       expect(body).toContain(HEADING);
       expect(body).toContain("> - 例の後ろの受け入れ条件");
-      expect(body).toContain(
-        "この PR は、親タスク「決済をまるごと作る」をタスク分割で分けた子タスクの1つの PR です。",
-      );
+      expect(body).toContain("この PR は、「決済をまるごと作る」を分けた作業の1つの PR です。");
       // レビューの指示
       const before = executor.calls.length;
       await runReview(service, pulls, a);
@@ -1984,7 +1984,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       const number = taskOf(service, b).pullRequest?.number ?? 0;
       expect(number).toBeGreaterThan(7);
       expect(pulls.bodies[number]).toContain(
-        "この PR は、親タスク「決済を作り直す」をタスク分割で分けた子タスクの1つの PR です。",
+        "この PR は、「決済を作り直す」を分けた作業の1つの PR です。",
       );
       expect(pulls.bodies[number]).toContain("> - 画面を作る");
       activity.close();

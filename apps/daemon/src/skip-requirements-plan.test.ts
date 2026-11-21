@@ -231,14 +231,14 @@ describe("PR の本文の基準（R-12）", () => {
   it("基準を依頼と承認済みの設計とし、人が指定したタスクにはオーケストレーターの判断と書かない", () => {
     const chosen = buildPullRequestBody(designed());
     expect(chosen).toContain(
-      "オーケストレーターの判断で、要求要件の工程を省きました。タスクの内容（依頼）と承認済みの設計を受け入れの基準にしています",
+      "要求要件の文書は作らず、依頼の内容と承認済みの設計を受け入れの基準にしました。",
     );
     expect(chosen).not.toContain("人間が承認済み");
     const requested = buildPullRequestBody(
       designed({ requestedPlan: "skip-requirements", stepsChoice: undefined }),
     );
     expect(requested).toContain(
-      "人が進め方で組み合わせを指定したため、要求要件の工程はありません。タスクの内容（依頼）と承認済みの設計を受け入れの基準にしています",
+      "要求要件の文書は作らず、依頼の内容と承認済みの設計を受け入れの基準にしました。",
     );
     expect(requested).not.toContain("オーケストレーターの判断で");
   });

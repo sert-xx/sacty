@@ -15,8 +15,9 @@ describe("監査の入力（PBI-124）", () => {
       target: { kind: "sacty" },
     });
     expect(
-      AdoptAuditProposalInput.safeParse({ target: { kind: "context", repo: "r", depth: 0 } })
-        .success,
+      AdoptAuditProposalInput.safeParse({
+        target: { kind: "context", repo: "r", depth: 0 },
+      }).success,
     ).toBe(true);
     for (const target of [
       { kind: "context", repo: "r", depth: -1 },
@@ -36,23 +37,32 @@ describe("監査の入力（PBI-124）", () => {
   it("宛先の repo の長さは制限しない（コンテキストの指定の上限 500 文字を超える候補も採用できる。PR #134 レビュー指摘）", () => {
     const repo = `https://example.com/${"a".repeat(600)}`;
     expect(
-      AdoptAuditProposalInput.safeParse({ target: { kind: "context", repo, depth: 0 } }).success,
+      AdoptAuditProposalInput.safeParse({
+        target: { kind: "context", repo, depth: 0 },
+      }).success,
     ).toBe(true);
     expect(
-      AdoptAuditProposalInput.safeParse({ target: { kind: "repository", repo } }).success,
+      AdoptAuditProposalInput.safeParse({
+        target: { kind: "repository", repo },
+      }).success,
     ).toBe(true);
   });
 
   it("却下の理由は、前後の空白を除いて 1 文字から上限まで", () => {
-    expect(RejectAuditProposalInput.parse({ reason: "  理由  " })).toEqual({ reason: "理由" });
+    expect(RejectAuditProposalInput.parse({ reason: "  理由  " })).toEqual({
+      reason: "理由",
+    });
     expect(RejectAuditProposalInput.safeParse({ reason: "   " }).success).toBe(false);
     expect(RejectAuditProposalInput.safeParse({}).success).toBe(false);
     expect(
-      RejectAuditProposalInput.safeParse({ reason: "あ".repeat(AUDIT_REJECT_REASON_MAX) }).success,
+      RejectAuditProposalInput.safeParse({
+        reason: "あ".repeat(AUDIT_REJECT_REASON_MAX),
+      }).success,
     ).toBe(true);
     expect(
-      RejectAuditProposalInput.safeParse({ reason: "あ".repeat(AUDIT_REJECT_REASON_MAX + 1) })
-        .success,
+      RejectAuditProposalInput.safeParse({
+        reason: "あ".repeat(AUDIT_REJECT_REASON_MAX + 1),
+      }).success,
     ).toBe(false);
   });
 

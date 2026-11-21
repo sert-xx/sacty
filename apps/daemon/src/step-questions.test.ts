@@ -65,7 +65,7 @@ const FORM_B = [
 const NONE_LINE = "確認したいこと：なし（must・should とも問いはありません）";
 const ANSWER_COMMENT =
   "- 答えるには、この PR にコメントしてください。Sacty が取り込み、答えを成果物に反映します。";
-const ANSWER_MERGE = "- 答えずにマージすると、推奨の答えで次の工程に進みます（must も同じです）。";
+const ANSWER_MERGE = "- 答えずにマージすると、推奨の答えで次に進みます（must も同じです）。";
 
 describe("要求要件・設計の PR の本文の「確認したいこと」（PBI-439）", () => {
   it("形 A：承認の案内の後・確かめる所の前に、件数・must の意味・答え方・中身が出て、確認しないと決めたことは写さない", () => {
@@ -197,7 +197,14 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       ["## 確認したいこと", "### must", "- A（推奨：a）", "### should", "- B（推奨：b）"].join(
         "\n",
       ),
-      { provenances: { design: { items: [], unclassified: [] } } } as Partial<Task>,
+      {
+        provenances: {
+          design: {
+            items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+            unclassified: [],
+          },
+        },
+      } as Partial<Task>,
     );
     const parts = buildStepPullRequestBodyParts(withProvenance, "design", PATH);
     const filled = fillTemplate("## 目的\n\n## 変更\n", parts);
@@ -205,7 +212,7 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       filled.main.indexOf("## 目的"),
       filled.main.indexOf("## 変更"),
     );
-    expect(purpose.indexOf("マージすると設計の承認になります")).toBeLessThan(
+    expect(purpose.indexOf("設計の成果物です。")).toBeLessThan(
       purpose.indexOf("**確認したいこと**"),
     );
     expect(purpose.indexOf("**確認したいこと**")).toBeLessThan(purpose.indexOf("**確かめる所**"));
@@ -222,16 +229,19 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
   it("確かめる所の直後に、出典の確かめで、問いは確認したいことに出る旨の1行を足し、確かめる項目の語は変えない（2つの本文の形）", () => {
     const prov = {
       provenances: {
-        design: { items: [], unclassified: [], sequential: false },
+        design: {
+          items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+          unclassified: [],
+          sequential: false,
+        },
       },
     } as unknown as Partial<Task>;
-    const note =
-      "出典（引用・導出・推論）の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。";
+    const note = "出典の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。";
     const body = text(FORM_A, undefined, prov).main;
-    expect(body).toMatch(new RegExp(`## 確かめる所\\n\\n${note}\\n\\n確かめる項目：0件`));
+    expect(body).toMatch(new RegExp(`## 確かめる所\\n\\n${note}\\n\\n- R-9：推論`));
     const parts = buildStepPullRequestBodyParts(task(FORM_A, prov), "design", PATH);
     expect(parts.summary).toMatch(
-      new RegExp(`\\*\\*確かめる所\\*\\*\\n\\n${note}\\n\\n確かめる項目：0件`),
+      new RegExp(`\\*\\*確かめる所\\*\\*\\n\\n${note}\\n\\n- R-9：推論`),
     );
   });
 
@@ -257,7 +267,7 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       id: `r-${i}`,
       step: "design",
       text: t,
-      response: "対応した",
+      response: t,
       voided: false,
     }));
     const t = task(FORM_A, { remarks } as unknown as Partial<Task>);
@@ -287,7 +297,7 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
         id: "r-1",
         step: "design",
         text: "指摘".padEnd(3000, "あ"),
-        response: "対応した",
+        response: "指摘".padEnd(3000, "あ"),
         voided: false,
       },
     ];
@@ -366,7 +376,12 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       "  | 1 | 2 |",
     ].join("\n");
     const body = text(output, undefined, {
-      provenances: { design: { items: [], unclassified: [] } },
+      provenances: {
+        design: {
+          items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+          unclassified: [],
+        },
+      },
     } as Partial<Task>).main;
     expect(body).toMatch(/\| 1 \| 2 \|\n```\n\n## 確かめる所/);
   });
@@ -431,7 +446,12 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       "  ```",
     ].join("\n");
     const body = text(output, undefined, {
-      provenances: { design: { items: [], unclassified: [] } },
+      provenances: {
+        design: {
+          items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+          unclassified: [],
+        },
+      },
     } as Partial<Task>).main;
     expect(body).toContain("`<!--` と `<details>`");
     expect(body).not.toMatch(/<details open>|<DETAILS>/);
@@ -461,7 +481,12 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       `<!-- ${"x".repeat(STEP_QUESTIONS_MAX)}`,
     ].join("\n");
     const body = text(inFence, undefined, {
-      provenances: { design: { items: [], unclassified: [] } },
+      provenances: {
+        design: {
+          items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+          unclassified: [],
+        },
+      },
     } as Partial<Task>).main;
     expect(body).toMatch(/\n```\n\n…（長いので省きました/);
     expect(body).toMatch(/## 確かめる所/);

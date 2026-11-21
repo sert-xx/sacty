@@ -171,7 +171,10 @@ function updateDraftTrail(
   change: (trail: PullRequestDraftTrail) => PullRequestDraftTrail,
 ): void {
   const key = String(number);
-  const trail = task.draftTrail?.[key] ?? { undraftIds: [], skippedPersonIds: [] };
+  const trail = task.draftTrail?.[key] ?? {
+    undraftIds: [],
+    skippedPersonIds: [],
+  };
   task.draftTrail = { ...task.draftTrail, [key]: change(trail) };
 }
 
@@ -379,6 +382,8 @@ export type TaskRemark = {
   respondedIn?: number;
   /** 対応と一緒に、工程エージェントが人に確かめたいこととして挙げたこと（PBI-301）。対応と同じ提出回のものだけ持つ。 */
   confirm?: string;
+  /** 指摘の要点の1行（PBI-471）。対応と同じ提出回のものだけ持つ。以前の記録には無い。 */
+  gist?: string;
   /** 対応したか、理由があって対応しなかったか（PBI-352）。対応と同じ提出回のものだけ持つ。申告が無ければ無い。 */
   status?: RemarkResponseStatus;
   /** PR のレビュー・コメントから取り込んだ指摘の、元のコメント（PBI-352）。画面から書いた指摘には無い。 */
@@ -418,6 +423,8 @@ export type TaskRemark = {
   deferral?: {
     proposedIn: number;
     reason: string;
+    /** 申告のときの、指摘の要点（PBI-471）。後の提出で対応が無くなっても、後続のタスク・Issue の題に使えるよう残す。 */
+    gist?: string;
     decision?: DeferralDecision;
     /** 後続に回すと決めた指摘の扱い（無ければ、何もしない）。 */
     handling?: DeferralHandling;
@@ -1281,7 +1288,13 @@ export type Task = {
    * from は打ち切った回がレビューしていた先頭、to は打ち切りを決めたときの新しい先頭、at はその時刻。repo・number は、消した
    * reviewTarget の PR（待ちの間の PR の先頭を、source の無いタスクも同じ PR で読むため）。次の ReviewTargetResolved で消える。
    */
-  reviewStop?: { from: string; to: string; at: string; repo?: string; number?: number };
+  reviewStop?: {
+    from: string;
+    to: string;
+    at: string;
+    repo?: string;
+    number?: number;
+  };
   /**
    * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。PBI-411）。名前は「対象を確かめた時刻」だが、実行を始める
    * たびに上書きする（対象を確かめた時刻が入っているのは、実行を始める前だけ）。レビューが PR のコメントを読むのは、この後
@@ -2110,6 +2123,7 @@ export function applyEvent(
                 respondedIn: submission,
                 // 人に確かめたいことは、同じ提出の中の持ち越し（申告した実行が、まだ提出されていない）のときだけ残す
                 confirm: r.deferral.proposedIn === submission ? r.confirm : undefined,
+                gist: r.deferral.proposedIn === submission ? r.gist : undefined,
                 status: "deferred" as const,
                 submittedIn: submission,
               };
@@ -2119,6 +2133,7 @@ export function applyEvent(
               response: undefined,
               respondedIn: undefined,
               confirm: undefined,
+              gist: undefined,
               status: undefined,
               submittedIn: submission,
             };
@@ -2135,7 +2150,11 @@ export function applyEvent(
             proposed?.decision !== undefined
               ? proposed
               : proposable && response.status === "deferred"
-                ? { proposedIn: submission, reason: response.text }
+                ? {
+                    proposedIn: submission,
+                    reason: response.text,
+                    ...(response.gist ? { gist: response.gist } : {}),
+                  }
                 : response.status === "addressed"
                   ? undefined
                   : proposed;
@@ -2144,6 +2163,7 @@ export function applyEvent(
             response: response.text,
             respondedIn: submission,
             confirm: response.confirm,
+            gist: response.gist,
             status: response.status === "deferred" && !proposable ? undefined : response.status,
             submittedIn: submission,
             ...(deferral ? { deferral } : {}),
@@ -2776,7 +2796,7 @@ export function applyEvent(
       if (!pr || pr.number !== event.payload.number) {
         throw new ActivityIntegrityError(event, "not the pull request of the task");
       }
-      if (event.payload.ready) {
+      if (event.payload.ready && !event.payload.undraftTracked) {
         updateDraftTrail(task, event.payload.number, (trail) => ({
           ...trail,
           previousVersionUndraft: true,
@@ -2861,10 +2881,12 @@ export function applyEvent(
       ) {
         throw new ActivityIntegrityError(event, "the pull request is not waiting for the review");
       }
-      updateDraftTrail(task, event.payload.number, (trail) => ({
-        ...trail,
-        previousVersionUndraft: true,
-      }));
+      if (!event.payload.undraftTracked) {
+        updateDraftTrail(task, event.payload.number, (trail) => ({
+          ...trail,
+          previousVersionUndraft: true,
+        }));
+      }
       const { draft: _draft, awaitingReview: _awaiting, suggestionsLeft: _left, ...rest } = pr;
       task.pullRequest = {
         ...rest,
@@ -5272,6 +5294,7 @@ export function deferProposals(task: Task): {
 export function decidedDeferrals(task: Task): {
   remarkId: string;
   text: string;
+  gist?: string;
   reason: string;
   decision: DeferralDecision;
   origin?: RemarkOrigin;
@@ -5284,6 +5307,7 @@ export function decidedDeferrals(task: Task): {
           {
             remarkId: r.id,
             text: r.text,
+            ...((r.deferral.gist ?? r.gist) ? { gist: r.deferral.gist ?? r.gist } : {}),
             reason: r.deferral.reason,
             decision: r.deferral.decision,
             ...(r.origin ? { origin: r.origin } : {}),

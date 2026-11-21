@@ -114,14 +114,24 @@ export function flakyTests(
   }
   const groups = new Map<
     string,
-    { repo: string; file: string; name: string; seen: { task: Task; at: string; reason: string }[] }
+    {
+      repo: string;
+      file: string;
+      name: string;
+      seen: { task: Task; at: string; reason: string }[];
+    }
   >();
   for (const task of own) {
     const repo = taskRepo(task);
     if (!repo) continue;
     for (const { name, file, reason, at } of task.flakySightings ?? []) {
       const key = testKey(repo, file, name);
-      const group = groups.get(key) ?? { repo, file: repoPath(file), name, seen: [] };
+      const group = groups.get(key) ?? {
+        repo,
+        file: repoPath(file),
+        name,
+        seen: [],
+      };
       group.seen.push({ task, at, reason });
       groups.set(key, group);
     }
