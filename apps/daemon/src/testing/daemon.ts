@@ -47,6 +47,7 @@ import {
   type DiffFile,
   type FileChange,
   NothingToCommitError,
+  pushFailure,
   type RepositoryWorkspace,
 } from "../repository.js";
 import { MemorySecretStore } from "../secrets.js";
@@ -478,8 +479,37 @@ export class FakeRepos implements RepositoryWorkspace {
   pushFail?: string;
   /** true なら、本物の強制しないプッシュと同じく、違うコミットがある名前へのプッシュを断る。 */
   rejectExistingBranch = false;
-  async pushCommit(_gitDir: string, commit: string, branch: string) {
+  /**
+   * 本物の push の呼び出し（pushCommit・publish・要求要件・設計のコミットの push）ごとに、先頭から1つ使う結果（PBI-467）。
+   * 文字列は、その git の標準エラー出力で失敗する（本物の分類で作った PushFailedError）。applied は、リモートが進んだ後に
+   * 失敗する（応答だけが失われた）。使い切った後は通る。
+   */
+  pushScript: (string | { stderr: string; applied: true })[] = [];
+  /** push の呼び出しごとの、コミット・ブランチ・渡された認証の環境（PBI-467）。 */
+  pushAttempts: { commit: string; branch: string; authEnv?: Record<string, string> }[] = [];
+  /** push を1回数え、pushScript の結果が失敗なら、その失敗と、リモートが進むかを返す。 */
+  private takePush(commit: string, branch: string, authEnv?: Record<string, string>) {
+    this.pushAttempts.push({ commit, branch, ...(authEnv ? { authEnv } : {}) });
+    const step = this.pushScript.shift();
+    if (step === undefined) return { applied: true as const };
+    const stderr = typeof step === "string" ? step : step.stderr;
+    return {
+      applied: typeof step !== "string",
+      error: pushFailure(stderr, commit, branch),
+    };
+  }
+  async pushCommit(
+    _gitDir: string,
+    commit: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+  ) {
     if (this.pushFail) throw new Error(this.pushFail);
+    const taken = this.takePush(commit, branch, authEnv);
+    if (taken.error) {
+      if (taken.applied) this.remote[branch] = commit;
+      throw taken.error;
+    }
     if (this.rejectExistingBranch && this.remote[branch] && this.remote[branch] !== commit) {
       throw new Error(`non-fast-forward: ${branch}`);
     }
@@ -505,6 +535,7 @@ export class FakeRepos implements RepositoryWorkspace {
     date: string;
     allowEmpty?: boolean;
     skipPush?: boolean;
+    authEnv?: Record<string, string>;
   }) {
     if (this.commitFilesFail) throw new Error(this.commitFilesFail);
     // 本物と同じく、同じ入力（親・内容・日時・題）からは同じコミットができる
@@ -526,7 +557,11 @@ export class FakeRepos implements RepositoryWorkspace {
       ...(input.allowEmpty ? { allowEmpty: true } : {}),
       commit,
     });
-    if (!input.skipPush) this.remote[input.branch] = commit;
+    if (!input.skipPush) {
+      const taken = this.takePush(commit, input.branch, input.authEnv);
+      if (!taken.error || taken.applied) this.remote[input.branch] = commit;
+      if (taken.error) throw taken.error;
+    }
     return { commit };
   }
   /**
@@ -651,6 +686,7 @@ export class FakeRepos implements RepositoryWorkspace {
     merge?: string;
     keep?: { commit: string; paths: string[] };
     overrides?: Record<string, string>;
+    authEnv?: Record<string, string>;
   }) {
     this.publishStarted.resolve();
     if (this.publishGate) await this.publishGate;
@@ -682,7 +718,9 @@ export class FakeRepos implements RepositoryWorkspace {
     if (Object.keys(inherited).length > 0 || input.overrides) {
       this.files[commit] = { ...inherited, ...(input.overrides ?? {}) };
     }
-    this.remote[input.branch] = commit;
+    const taken = this.takePush(commit, input.branch, input.authEnv);
+    if (!taken.error || taken.applied) this.remote[input.branch] = commit;
+    if (taken.error) throw taken.error;
     if (this.publishFailAfterPush) throw new Error(this.publishFailAfterPush);
     return { commit };
   }
@@ -1555,6 +1593,7 @@ export function makeService(
     remarkReplyRateLimit?: ServiceDeps["remarkReplyRateLimit"];
     /** レビューのタスクが GitHub の一時的な失敗を自動でやり直すまでの待ち（ミリ秒。PBI-301）。 */
     reviewRetryDelaysMs?: readonly number[];
+    pushRetryDelaysMs?: readonly number[];
     projects?: MemoryProjectStore;
     settings?: MemorySettingsStore;
     contexts?: ContextFetcher;
@@ -1651,6 +1690,7 @@ export function makeService(
     ...(options.rateLimits ? { rateLimits: options.rateLimits } : {}),
     ...(options.remarkReplyRateLimit ? { remarkReplyRateLimit: options.remarkReplyRateLimit } : {}),
     ...(options.reviewRetryDelaysMs ? { reviewRetryDelaysMs: options.reviewRetryDelaysMs } : {}),
+    ...(options.pushRetryDelaysMs ? { pushRetryDelaysMs: options.pushRetryDelaysMs } : {}),
     // 情報収集は、既定では集めずに進める（情報収集のテストでは差し替える）
     ...(options.realGatherer ? {} : { gatherer: options.gatherer ?? (async () => undefined) }),
     // オーケストレーターの代わりに、標準の工程を選ぶ（オーケストレーターのテストでは差し替える）

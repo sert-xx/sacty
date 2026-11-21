@@ -2,6 +2,7 @@ import type { StepKey } from "@sacty/core";
 import { redact } from "./agents/redact.js";
 import { HUMAN_ASK_MARKER_PREFIX } from "./github.js";
 import { withoutInternalPaths } from "./prompts.js";
+import { withoutRemarkIds } from "./remark-ids.js";
 import { markdownText } from "./remark-line.js";
 
 /*
@@ -36,7 +37,8 @@ export function askQuote(text: string, secrets: readonly string[], max = ASK_TEX
  */
 export function publicText(text: string, secrets: readonly string[], max: number): string {
   // 作業領域の内部のパスは、人が辿れないので、人が辿れる呼び方に置き換える（PBI-301 A7）
-  const hidden = withoutInternalPaths(redact(text, secrets)).trim();
+  // エージェントが文の中に書いた指摘の ID も除く（PBI-471。人は辿れない）
+  const hidden = withoutRemarkIds(withoutInternalPaths(redact(text, secrets))).trim();
   return withoutMentions(cutAtMax(hidden, max));
 }
 

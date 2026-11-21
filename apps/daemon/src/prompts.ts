@@ -5794,6 +5794,7 @@ function bodyTask(rawTask: Task, stage: PullRequestBodyStage): Task {
         childScope: {
           content: scope.content,
           parentTitle: scope.parentTitle,
+          ...(scope.parentDeferred ? { parentDeferred: true as const } : {}),
           ...(scope.fix ? { fix: true as const } : {}),
         },
       }
@@ -8544,6 +8545,8 @@ const CHILD_PARENT_REQUIREMENTS_HEADING = "親タスクの要求要件（承認�
 export type ChildScope = {
   /** 親タスクの題。 */
   parentTitle: string;
+  /** 親タスクが、後続に回した指摘から作ったタスクか（指示には、題を入れない）。 */
+  parentDeferred?: boolean;
   /** 統合レビューの指摘を直す、修正の子タスクか。 */
   fix: boolean;
   /** 分割のエージェントが書いた、子タスクの内容（実現すること・受け入れ条件・範囲外）。そのまま。 */
@@ -8563,6 +8566,7 @@ export function childScopeOf(task: Task, splitParent?: Task): ChildScope | undef
   if (recorded) {
     return {
       parentTitle: recorded.parentTitle,
+      ...(recorded.parentDeferred ? { parentDeferred: true } : {}),
       fix: recorded.fix === true,
       content: recorded.content.replace(/\r\n?/g, "\n").trim(),
     };
@@ -8601,6 +8605,7 @@ function restoredChildScope(task: Task, parent: Task): ChildScope | undefined {
   if (!task.body.startsWith(`${original.body || EMPTY_CHILD_BODY}\n\n---\n\n`)) return undefined;
   return {
     parentTitle: parent.title,
+    ...(parent.derivedFrom?.deferredRemarkId ? { parentDeferred: true } : {}),
     // 最初の分割の子タスクは分割の子、統合レビューの後に足した子タスク（2回目から）は修正の子
     fix: entry.round > 1,
     content: original.body.replace(/\r\n?/g, "\n").trim(),
@@ -8625,7 +8630,7 @@ function splitChildScope(content: string): { shown: string; rest: string } {
 
 /** 子タスクが、親タスクの何であるか（PR の本文と、レビューの指示の、範囲の説明の主語）。 */
 function childScopeKind(scope: ChildScope): string {
-  const parent = `親タスク「${scope.parentTitle}」`;
+  const parent = `親タスク「${instructionTitle({ title: scope.parentTitle, derivedFrom: scope.parentDeferred ? { deferredRemarkId: "parent" } : undefined })}」`;
   return scope.fix
     ? `${parent}の統合レビューの指摘を直す、修正の子タスク`
     : `${parent}をタスク分割で分けた子タスクの1つ`;

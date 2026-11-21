@@ -462,6 +462,7 @@ import {
   extractStepPlan,
   extractStepReview,
   extractTicketTriage,
+  instructionTitle,
   integrationViewpointIds,
   investigationMarker,
   isDocBeforeImplement,
@@ -506,7 +507,7 @@ import {
   remarkReplyMarkerOf,
   remarkReplyOrigin,
 } from "./remark-reply.js";
-import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import { NothingToCommitError, PushFailedError, type RepositoryWorkspace } from "./repository.js";
 import { annotateReviewComments, voidedByPersonOf } from "./review-comments.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
 import { buildForkHoldNotice, forkHoldMarker } from "./review-fork-hold-notice.js";
@@ -579,7 +580,6 @@ import {
   splitSuggestions,
 } from "./suggestion-triage.js";
 import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
-import { taskLink } from "./task-link.js";
 import {
   type DeliverableKind,
   listDeliverables,
@@ -1065,6 +1065,12 @@ export type ServiceDeps = {
    * 待ち時間（ミリ秒）の並び（PBI-301）。長さが、やり直しの回数の上限。既定は 15 秒・1 分・3 分・5 分の 4 回（計 9 分余り）。
    */
   reviewRetryDelaysMs?: readonly number[];
+  /**
+   * PR を作る・直しを積む git push が、一時的な失敗（`[remote rejected] ... (failed)`・HTTP 5xx・レート制限・接続の失敗など）で
+   * 拒まれたとき、同じコミットを push し直すまでの待ち時間（ミリ秒）の並び（PBI-467）。長さが、やり直しの回数の上限。
+   * 既定は 15 秒・1 分・3 分の 3 回。
+   */
+  pushRetryDelaysMs?: readonly number[];
   /**
    * 要求要件・設計を、対象のリポジトリへの PR のマージで承認するか（PBI-57）。既定は承認する（PR を作れるタスクだけ）。
    * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
@@ -1966,7 +1972,7 @@ export class TaskService {
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
     // 人が後続に回すと決めた指摘の、後続のタスクを作る（元のタスクが完了してから。PBI-370）
-    this.settleDeferralTasks();
+    await this.settleDeferralTasks();
     // Issue を作ると決めたのに、途中で止まって結果の記録が無い指摘に、止まったことを記録する
     this.settleInterruptedDeferralIssues();
     // 「指摘なし」の後に落ちた CI を、タスクの詳細に出す（PBI-364）。ほかの確認がすべて終わった後に、1件だけ読む
@@ -3002,13 +3008,11 @@ export class TaskService {
     task: Task,
     target: { repo: string; number: number; discarded: number },
   ): void {
-    this.postMergeNotice(task, target, "approval", (link) =>
+    this.postMergeNotice(task, target, "approval", () =>
       buildMergeApprovalNotice({
         taskId: task.id,
         number: target.number,
         discarded: target.discarded,
-        taskUrl: link.url,
-        localOnly: link.localOnly,
       }),
     );
   }
@@ -3018,14 +3022,12 @@ export class TaskService {
     task: Task,
     target: { repo: string; number: number; step: StepPullRequestKey },
   ): void {
-    this.postMergeNotice(task, target, "not-approved", (link) =>
+    this.postMergeNotice(task, target, "not-approved", () =>
       buildMergeNotApprovedNotice({
         taskId: task.id,
         number: target.number,
         stepName: STEP_NAME[target.step],
         backName: STEP_NAME.requirements,
-        taskUrl: link.url,
-        localOnly: link.localOnly,
       }),
     );
   }
@@ -3034,7 +3036,7 @@ export class TaskService {
     task: Task,
     target: { repo: string; number: number },
     kind: "approval" | "not-approved",
-    build: (link: { url: string; localOnly: boolean }) => string,
+    build: () => string,
   ): void {
     if (isSecurityTask(task)) return;
     const { repo, number } = target;
@@ -3042,7 +3044,6 @@ export class TaskService {
     const account = project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""];
     if (!account) return;
     const usedSecrets: string[] = [];
-    const link = taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", task.id);
     const marker =
       kind === "approval"
         ? mergeApprovalMarker(task.id, number)
@@ -3064,10 +3065,7 @@ export class TaskService {
           }),
         );
         if (existing) return;
-        await untilAborted(
-          signal,
-          this.deps.pulls.commentIssue({ ...pr, body: build(link), signal }),
-        );
+        await untilAborted(signal, this.deps.pulls.commentIssue({ ...pr, body: build(), signal }));
       } catch (error) {
         console.warn(
           `[daemon] タスク ${task.id} の、PR #${number} のマージの扱いを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -6413,11 +6411,7 @@ export class TaskService {
     attempt: () => Promise<T>,
   ): Promise<T> {
     const delays = this.deps.reviewRetryDelaysMs ?? [15_000, 60_000, 180_000, 300_000];
-    const abandoned = () =>
-      this.stopping ||
-      this.cancelling.has(taskId) ||
-      this.pauseRequested.has(taskId) ||
-      !this.tasks.has(taskId);
+    const abandoned = () => this.retryAbandoned(taskId);
     for (let retry = 0; ; retry++) {
       try {
         return await attempt();
@@ -6443,15 +6437,112 @@ export class TaskService {
             },
           ]);
         }
-        // 長く待つ間も、止める・中止・停止に気づけるよう、短く区切って待つ
-        const until = Date.now() + waitMs;
-        while (Date.now() < until) {
-          if (abandoned()) throw new RetryAbandoned();
-          await new Promise((resolve) => setTimeout(resolve, Math.min(1000, until - Date.now())));
-        }
-        if (abandoned()) throw new RetryAbandoned();
+        await this.retryWait(taskId, waitMs);
       }
     }
+  }
+
+  /** 一時的な失敗のやり直しを、やめるべきか（止める・中止・デーモンの停止）。 */
+  private retryAbandoned(taskId: string): boolean {
+    return (
+      this.stopping ||
+      this.cancelling.has(taskId) ||
+      this.pauseRequested.has(taskId) ||
+      !this.tasks.has(taskId)
+    );
+  }
+
+  /** やり直すまで待つ。長く待つ間も、止める・中止・停止に気づけるよう、短く区切って待ち、気づいたら RetryAbandoned を投げる。 */
+  private async retryWait(taskId: string, waitMs: number): Promise<void> {
+    const until = Date.now() + waitMs;
+    while (Date.now() < until) {
+      if (this.retryAbandoned(taskId)) throw new RetryAbandoned();
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000, until - Date.now())));
+    }
+    if (this.retryAbandoned(taskId)) throw new RetryAbandoned();
+  }
+
+  /**
+   * PR を作る・直しを積む push を実行し、一時的な失敗（PushFailedError の transient）で拒まれたら、同じコミットの push だけを、
+   * 間を置いてやり直す（PBI-467）。コミットは作り直さない（失敗が持つコミットとブランチを push し直す）。一時的でない失敗は、
+   * そのまま投げる。やり直しが通れば、push したコミットを pushed で返す。
+   */
+  private async pushRetrying<T>(
+    taskId: string,
+    usedSecrets: readonly string[],
+    gitDir: string,
+    authEnv: Record<string, string> | undefined,
+    run: () => Promise<T>,
+    pushed: (commit: string) => T,
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (!(error instanceof PushFailedError) || !error.transient) throw error;
+      const { commit, branch } = error;
+      await this.retryPush(taskId, usedSecrets, error, () =>
+        this.deps.repos.pushCommit(gitDir, commit, branch, authEnv),
+      );
+      return pushed(commit);
+    }
+  }
+
+  /**
+   * 一時的な push の失敗（first）の後、決めた回数まで、間を置いて push し直す（PBI-467）。待った後、push し直す直前に
+   * PushRetried（失敗の文は秘密の値を伏せたもの）を記録し、通れば PushRetryEnded（pushed）、上限まで通らなければ
+   * PushRetryEnded（failed）を記録して最後の失敗を投げる。待つ間に止める・中止・停止があれば、何も記録せずに RetryAbandoned を
+   * 投げる。同じコミットがすでにブランチの先頭にあれば、git の push は通る（前の回で通っていて応答だけが失われたとき）。
+   */
+  private async retryPush(
+    taskId: string,
+    usedSecrets: readonly string[],
+    first: PushFailedError,
+    push: () => Promise<void>,
+  ): Promise<void> {
+    const delays = this.deps.pushRetryDelaysMs ?? [15_000, 60_000, 180_000];
+    const { branch, commit } = first;
+    const record = (event: EventInput) => {
+      const task = this.tasks.get(taskId);
+      if (task && task.status !== "cancelled") this.append(task, [{ actor: "sacty", event }]);
+    };
+    let last: unknown = first;
+    for (let retry = 0; retry < delays.length; retry++) {
+      const waitMs = delays[retry] ?? 0;
+      await this.retryWait(taskId, waitMs);
+      record({
+        type: "PushRetried",
+        payload: {
+          branch,
+          commit,
+          attempt: retry + 1,
+          maxAttempts: delays.length,
+          waitMs,
+          message: redactText(errorText(last), usedSecrets),
+        },
+      });
+      try {
+        await push();
+        record({
+          type: "PushRetryEnded",
+          payload: { branch, commit, outcome: "pushed", retries: retry + 1 },
+        });
+        return;
+      } catch (error) {
+        last = error;
+        if (!(error instanceof PushFailedError) || !error.transient) {
+          record({
+            type: "PushRetryEnded",
+            payload: { branch, commit, outcome: "failed", retries: retry + 1 },
+          });
+          throw error;
+        }
+      }
+    }
+    record({
+      type: "PushRetryEnded",
+      payload: { branch, commit, outcome: "failed", retries: delays.length },
+    });
+    throw last;
   }
 
   /**
@@ -13403,6 +13494,9 @@ export class TaskService {
                 scope: {
                   content: c.body,
                   parentTitle: latest.title,
+                  ...(latest.derivedFrom?.deferredRemarkId
+                    ? { parentDeferred: true as const }
+                    : {}),
                   ...(latest.split ? { fix: true as const } : {}),
                 },
                 dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
@@ -14468,7 +14562,14 @@ export class TaskService {
       // タスクブランチは、ベースブランチの起点のコミットから作る（作ったら、中止で消せるように記録する）
       if (!current.taskBranch) {
         const branch = taskBranchName(current);
-        await this.deps.repos.pushCommit(gitDir, repository.baseCommit, branch, authEnv);
+        await this.pushRetrying(
+          task.id,
+          usedSecrets,
+          gitDir,
+          authEnv,
+          () => this.deps.repos.pushCommit(gitDir, repository.baseCommit, branch, authEnv),
+          () => undefined,
+        );
         current = this.append(this.mustGet(task.id), [
           {
             actor: "sacty",
@@ -14544,7 +14645,14 @@ export class TaskService {
       let commit: string;
       if (reuse) {
         branch = reuse.branch;
-        ({ commit } = await this.deps.repos.commitFiles({ ...commitInput, branch }));
+        ({ commit } = await this.pushRetrying(
+          task.id,
+          usedSecrets,
+          gitDir,
+          authEnv,
+          () => this.deps.repos.commitFiles({ ...commitInput, branch }),
+          (pushed) => ({ commit: pushed }),
+        ));
       } else {
         // 新しいブランチは、コミットを先に作り（プッシュしない）、記録済みの名前のコミットと比べて名前を決める：
         // 記録したコミットが今回と違う名前だけ飛ばし、同じコミットなら、同じ名前へプッシュし直す（PBI-462）
@@ -14563,7 +14671,14 @@ export class TaskService {
           attempt += 1;
         }
         branch = `${taskBranch.branch}-${step}-${attempt}`;
-        await this.deps.repos.pushCommit(gitDir, commit, branch, authEnv);
+        await this.pushRetrying(
+          task.id,
+          usedSecrets,
+          gitDir,
+          authEnv,
+          () => this.deps.repos.pushCommit(gitDir, commit, branch, authEnv),
+          () => undefined,
+        );
       }
       // PR の作成の前に、プッシュしたブランチを記録する（PR の作成に失敗しても、中止で消せるように）
       if (!this.mustGet(task.id).stepBranches.includes(branch)) {
@@ -14720,6 +14835,8 @@ export class TaskService {
       // すでにある子タスクの再レビューも、提出の直後に始める（60 秒ごとの確認を待たない）
       this.reconcileReviewTaskSoon(submitted.id, commit);
     } catch (error) {
+      // push のやり直しを待つ間に、一時停止・中止・デーモンの停止を求められた：何も記録せずに終える（PBI-467）
+      if (error instanceof RetryAbandoned) return;
       fail(message("pr.failed", { detail: errorText(error) }));
     }
   }
@@ -15481,22 +15598,30 @@ export class TaskService {
       // 認証・タスクブランチの取得・コミットの題の用意などを待つ間に一時停止・中止を求められたら、プッシュしない（プッシュの
       // 直前に確かめる。この後は、プッシュまで await しない）
       if (this.stopRequested(task.id)) return "stopped";
-      const { commit } = await this.deps.repos.publish({
-        dir,
+      const { commit } = await this.pushRetrying(
+        task.id,
+        usedSecrets,
         gitDir,
-        // ベースブランチの最新を取り込んでいれば、作業領域はそのコミットに実装の変更を加えたもの。コミットは、そのコミットを
-        // 第2の親にしたマージコミットにする（まだ parent の履歴に含まれていなければ）
-        baseCommit: workBaseCommit(repositoryNow, task.baseMerge),
-        ...(task.baseMerge ? { merge: task.baseMerge.commit } : {}),
-        parent,
-        branch,
-        message: `${subject}\n\nsacty task ${task.id}`,
-        // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
-        date,
         authEnv,
-        ...(keep ? { keep } : {}),
-        ...(designOverrides ? { overrides: designOverrides } : {}),
-      });
+        () =>
+          this.deps.repos.publish({
+            dir,
+            gitDir,
+            // ベースブランチの最新を取り込んでいれば、作業領域はそのコミットに実装の変更を加えたもの。コミットは、そのコミットを
+            // 第2の親にしたマージコミットにする（まだ parent の履歴に含まれていなければ）
+            baseCommit: workBaseCommit(repositoryNow, task.baseMerge),
+            ...(task.baseMerge ? { merge: task.baseMerge.commit } : {}),
+            parent,
+            branch,
+            message: `${subject}\n\nsacty task ${task.id}`,
+            // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
+            date,
+            authEnv,
+            ...(keep ? { keep } : {}),
+            ...(designOverrides ? { overrides: designOverrides } : {}),
+          }),
+        (pushed) => ({ commit: pushed }),
+      );
       // PRの作成の前に、プッシュしたブランチを記録する（PRの作成に失敗しても、中止で片付けられるように）
       if (task.pushedBranch?.commit !== commit || task.pushedBranch.branch !== branch) {
         this.append(task, [
@@ -15777,6 +15902,8 @@ export class TaskService {
         this.checkBudget(submitted);
         return "published";
       }
+      // push のやり直しを待つ間に、一時停止・中止・デーモンの停止を求められた：何も記録しない（PBI-467）
+      if (error instanceof RetryAbandoned) return "stopped";
       return fail(message("pr.failed", { detail: errorText(error) }));
     }
   }
@@ -15826,9 +15953,18 @@ export class TaskService {
       // 認証を待つ間に一時停止・中止を求められていれば、人のブランチにプッシュしない（一時停止は、PR の作成の待ちのまま）
       if (this.stopRequested(task.id)) return;
       try {
-        ({ commit } = await push());
+        ({ commit } = await this.pushRetrying(
+          task.id,
+          usedSecrets,
+          gitDir,
+          authEnv,
+          push,
+          (pushed) => ({ commit: pushed }),
+        ));
       } catch (error) {
-        if (error instanceof NothingToCommitError) throw error;
+        if (error instanceof NothingToCommitError || error instanceof RetryAbandoned) throw error;
+        // 一時的な失敗が上限まで続いた：人が PR のブランチを進めたのではないので、push の失敗として止める（PBI-467）
+        if (error instanceof PushFailedError && error.transient) throw error;
         const head = await this.deps.repos
           .fetchBranch(gitDir, branch, authEnv)
           .catch(() => undefined);
@@ -15904,6 +16040,8 @@ export class TaskService {
         this.checkBudget(submitted);
         return;
       }
+      // push のやり直しを待つ間に、一時停止・中止・デーモンの停止を求められた：何も記録しない（PBI-467）
+      if (error instanceof RetryAbandoned) return;
       fail(message("pr.failed", { detail: errorText(error) }));
     }
   }
@@ -15961,7 +16099,8 @@ export class TaskService {
             event: {
               type: "TaskCreated",
               payload: {
-                title: reviewTaskTitle(parent.title, number),
+                // 親が後続のタスクのときは、外から来た文の題を、レビューの指示に入る題にしない
+                title: reviewTaskTitle(instructionTitle(parent), number),
                 body: "",
                 start: "github_pull_request",
                 budgetCapUsd: config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD,
@@ -21907,7 +22046,7 @@ export class TaskService {
    * 理由を記録して、やり直さない。作った後・記録の前に止まっていたら、作成の記録（derivedFrom の、元のタスクと指摘の ID）
    * で見つけて、二度作らない（依頼の文の中の文字列では照合しない）。
    */
-  private settleDeferralTasks(): void {
+  private async settleDeferralTasks(): Promise<void> {
     for (const original of [...this.tasks.values()]) {
       for (const due of deferralTasksDue(original)) {
         const record = (result: { taskId: string } | { failure: DaemonText }): void => {
@@ -21945,12 +22084,22 @@ export class TaskService {
             pr?.number && due.origin?.number === pr.number
               ? remarkOriginRef(due.origin.key)
               : undefined;
+          // 題（後続の PR の題にもなる）に、登録済みの秘密の値を出さない。Issue・コメントと同じく、GitHub のトークンの
+          // 値を伏せる対象にする（取り出せなければ、ほかの伏せ（形で見つける秘密・内部のパス）だけで作る）
+          const usedSecrets: string[] = [];
+          if (pr?.repo) {
+            try {
+              await this.githubToken(original, pr.repo, usedSecrets);
+            } catch {
+              // 取り出せないときは、伏せる値が無いまま作る
+            }
+          }
           const request = buildDeferralTask({
             remarkId: due.remarkId,
             text: due.text,
             ...(due.gist ? { gist: due.gist } : {}),
             reason: due.reason,
-            secrets: [],
+            secrets: usedSecrets,
             ...(pr?.number && url ? { pullRequest: { url, number: pr.number } } : {}),
             ...(ref && url ? { originUrl: remarkOriginUrl(url, ref) } : {}),
           });

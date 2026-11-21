@@ -673,6 +673,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   - 起点（PR の先頭）か前にプッシュしたコミットに積み、強制プッシュはしない。
     プッシュに失敗し、ブランチの先頭が起点とも前にプッシュしたコミットとも違えば、もう一度プッシュする（プッシュはできて応答だけを受け取れなかったなら、先頭はこの提出のコミットなので、何も変わらずに通る）。
     それも通らなければ、人が積んだとして止める（`pr.continuedBranchMoved`）。
+    ただし、プッシュが一時的な失敗のまま上限（3 回）までやり直しても通らなかったときは、人が積んだとはせず、`pr.failed` で止める（上の「プッシュが一時的な失敗で拒まれたら」）。この再プッシュは、一時的でない失敗のときだけ行う。
   - プッシュの直前（認証を待った後と、もう一度プッシュする前）に一時停止・中止を求められていれば、プッシュしない（一時停止なら、PR の作成の待ちのまま止める）。
   - プッシュの後に PR が開いていなければ止める（`pr.continuedNotOpen`）。ただし、実装を作り直している間にマージ済みだったときは、止めずにマージを承認として進める（[実装の作り直しの間のマージ](approval.md#実装の作り直しの間のマージ)）。
   - PR の題・本文は変えず、レビュー用のラベルも付けない。
@@ -1419,6 +1420,18 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   すでにある PR を、やり直しの実装が何も変えず、その先頭に AI のレビューの指摘が残っていれば、提出にせずに一時停止する（[終わっていない実装と、変更の無いやり直し](#終わっていない実装と変更の無いやり直し)）。
 - PR の作成に失敗したら、理由を記録して止める（`pr.failed` など）。
   再開すると、実装をやり直さずに PR の作成からやり直す（PR の作成の待ちは、一時停止・再起動の後も残る）。
+- プッシュが一時的な失敗で拒まれたら、止めずに、同じコミットのプッシュだけをやり直す（PBI-467。引き継いだ PR・要求要件・設計の PR も同じ。ブランチの削除は対象外）。
+  - 一時的な失敗：`[remote rejected] ... (failed)`・GitHub の内部エラー（`Internal Server Error`）・HTTP 5xx（`RPC failed; HTTP 500` など）・レート制限（429、レート制限と説明する 403）・接続の失敗（`Could not resolve host`・`Connection reset`・`timed out`・`the remote end hung up unexpectedly` など）。
+  - 一時的でない失敗はやり直さずに、すぐ止める：保護・ルールでの拒否（`GH006`・`GH013`）、`[remote rejected]` の理由が `(failed)` 以外（`workflow` の権限が無いことによる `refusing to allow an OAuth App ...` を含む）、fast-forward でない（`[rejected]`）、認証の失敗、上の一時的な失敗のどれにも当たらない失敗。
+    止める理由のコード（`pr.failed` など）は、やり直しの有無によらず変わらない。
+  - 回数と間隔：15 秒・1 分・3 分の最大 3 回（`pushRetryDelaysMs`）。待つ間も、タスクの実行の枠を手放さない。
+  - 判定は、プッシュを `LC_ALL=C` で実行して、git の英語の文言で行う（デーモンの `LANG` に依らない）。
+  - 待った後、プッシュし直す直前に、何回目か・上限・待った時間・失敗の文（秘密の値は伏せる）を `PushRetried` に記録する。
+    通ったら `PushRetryEnded`（`outcome: pushed`・やり直した回数）、上限まで通らなければ `PushRetryEnded`（`outcome: failed`）を記録して、今までどおり止める。
+    同じコミットがすでにブランチの先頭にあれば（前の回で通っていて応答だけが失われた）、プッシュは通り、通ったとして扱う（その回もやり直しの回数に数える）。
+  - 待つ間に一時停止・中止・デーモンの停止を求められたら、プッシュせずにやめる（何も記録せず、一時停止の理由も上書きしない）。
+  - 止まった後に人が再開すると（プッシュのやり直しの記録が出る前に止まったタスクを含む）、PR に新しい指摘が届いていなければ、エージェントを実行せず、止まったプッシュからやり直す。
+  - 止める理由の文は、`remote:` の案内の行（空の行・`Create a pull request ...`・`To create a merge request ...`・URL だけの行）を除き、`!`・`error:`・`fatal:` で始まる失敗の行を先頭に置く。拒否の理由を書いた `remote:` の行は残す。
 - 予算の上限に達していても、PR は作る（費用がかからず、人の承認を待つだけなので。下の「予算・一時停止・再開・中止」）。本文が重なったときのエージェントは、予算の上限に達していれば実行せず、人の本文のまま変えない。
 - 人の一時停止：プッシュの前・PR を作る直前に、一時停止・中止を求められていれば、PR を作らずに止める（一時停止なら PR の作成の待ちのまま。再開すると作る）。
   PR を作り始めた後に求められたら、PR を作り終えて記録してから（作った PR を記録しないまま止めると、再開で PR を二重に作りうる・中止で閉じられないため）、求めたものによって次の状態になる。
@@ -1429,7 +1442,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   PR のマージで実装を承認すると、マージの後の監視の工程へ進む（飛ばしていれば、タスクは完了する）。
 - 差し戻し・PR の指摘で実装を作り直している間に、人が実装の PR をマージしたら、作り直し（実行・PR の更新）を止めて、マージを承認として進める。新しい PR は作らない（[実装の作り直しの間のマージ](approval.md#実装の作り直しの間のマージ)）。
 
-コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`commitSubjectFor`・`implementSubmitted`・`submitEvents`・`pause`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
+コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`commitSubjectFor`・`implementSubmitted`・`submitEvents`・`pause`・`retryPush`・`pushRetrying`）、`apps/daemon/src/repository.ts`（`classifyPushFailure`・`formatPushFailure`・`PushFailedError`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
 
 ### 実装がテストを対応させる観点
 

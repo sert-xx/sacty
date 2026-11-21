@@ -121,3 +121,17 @@ describe("人に確かめてほしいことの PR のコメント（PBI-301・PB
     ]);
   });
 });
+
+describe("人への確認のコメントの文に、指摘の ID が書かれていても出さない（PBI-471）", () => {
+  it("確かめたいことの文・判断の理由から、ID を除く", () => {
+    const body = buildHumanAskNotice({
+      ...base,
+      undecided: { remarks: [link], reason: "implement-1-2 の意図が読み取れない" },
+      confirms: [
+        { remarks: [screen], text: "（implement-1-1 への対応）上限は 31 日と推測しました" },
+      ],
+    });
+    expect(body).not.toMatch(/implement-1-\d/);
+    expect(body).toContain("上限は 31 日と推測しました");
+  });
+});

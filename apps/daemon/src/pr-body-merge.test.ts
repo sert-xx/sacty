@@ -6,6 +6,7 @@ import {
   extractMergedPullRequestBody,
   hasMergeMarkers,
   mergePullRequestBody,
+  withTaskMarker,
 } from "./pr-body-merge.js";
 
 const base = [
@@ -111,5 +112,32 @@ describe("エージェントにまとめさせる指示と答え（PBI-334）", 
 
   it("ラベルの無い似た行は、目印として扱わない", () => {
     expect(hasMergeMarkers("=======\n<<<<<<< 別のもの")).toBe(false);
+  });
+});
+
+describe("withTaskMarker（目印と空行の整え。PBI-471 R-18・R-19）", () => {
+  const ID = "52359c0c-6e66-4842-a4ae-65e73d30a117";
+  const marker = `<!-- sacty task ${ID} -->`;
+
+  it.each([
+    ["中に > を含む", "本文\n\n<!-- sacty task a>b -->\n"],
+    ["複数行に割れた", "本文\n\n<!-- sacty\ntask x\n-->\n"],
+    ["--!> で閉じる", "本文\n\n<!-- sacty task x --!>\n"],
+    ["別の ID に書き換えた", "本文\n\n<!-- sacty task 00000000-0000-0000-0000-000000000000 -->\n"],
+    ["閉じていない", "本文\n\n<!-- sacty task x\n"],
+  ])("人が書き換えた目印（%s）も除き、正しい目印を1つだけ置く", (_name, text) => {
+    const out = withTaskMarker(text, ID, "");
+    expect(out).toBe(`本文\n\n${marker}`);
+  });
+
+  it("人が書いたコードブロックの連続した空行は詰めない", () => {
+    const text = `\`\`\`\na\n\n\n\nb\n\`\`\`\n\n${marker}`;
+    expect(withTaskMarker(text, ID, "")).toBe(`\`\`\`\na\n\n\n\nb\n\`\`\`\n\n${marker}`);
+  });
+
+  it("以前の版の可視のタスク ID の行を除き、人が足した行は残す", () => {
+    const previous = `Sacty のタスク「題」の成果物です（sacty task ${ID}）。\n\n本文`;
+    const out = withTaskMarker(`${previous}\n\n人の補足`, ID, previous);
+    expect(out).toBe(`本文\n\n人の補足\n\n${marker}`);
   });
 });

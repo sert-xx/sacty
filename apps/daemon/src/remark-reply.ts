@@ -3,6 +3,7 @@ import { redact } from "./agents/redact.js";
 import { REMARK_REPLY_MARKER_PREFIX } from "./github.js";
 import { cutAtMax, withoutMentions } from "./human-ask-notice.js";
 import { withoutInternalPaths } from "./prompts.js";
+import { withoutRemarkIds } from "./remark-ids.js";
 import { TRIAGE_REPLY_NOTE } from "./triage-reply.js";
 
 /*
@@ -171,7 +172,7 @@ export type RemarkReplyInput = {
  * 文字を挟む。作業領域の内部のパスは、人が辿れる呼び方に置き換える。
  */
 export function buildRemarkReply(input: RemarkReplyInput): string {
-  const hidden = withoutInternalPaths(redact(input.text, input.secrets)).trim();
+  const hidden = withoutRemarkIds(withoutInternalPaths(redact(input.text, input.secrets))).trim();
   // 文字の途中（サロゲートペアの間）で切らない
   const text = withoutMentions(cutAtMax(hidden, REPLY_TEXT_MAX));
   const quote =

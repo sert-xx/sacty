@@ -735,6 +735,8 @@ const DeploymentFix = z.object({
 export const ChildScope = z.object({
   content: z.string(),
   parentTitle: z.string(),
+  /** 親タスクが、後続に回した指摘から作ったタスクか（題が外から来た文になるので、指示に題を入れない。PBI-471）。 */
+  parentDeferred: z.literal(true).optional(),
   fix: z.literal(true).optional(),
 });
 export type ChildScope = z.infer<typeof ChildScope>;
@@ -3532,6 +3534,38 @@ const ReviewGitHubRetried = z.object({
 });
 
 /**
+ * PR を作る・直しを積む git push が、一時的な失敗（`[remote rejected] ... (failed)`・GitHub の内部エラー・HTTP 5xx・レート制限・
+ * 接続の失敗）で拒まれ、間を置いて同じコミットを push し直す（PBI-467）。待った後、push し直す直前に1回ずつ記録する。
+ * attempt は何回目のやり直しか、waitMs は待った時間（ミリ秒）。message は失敗の文（秘密の値は伏せたもの）。
+ * 記録だけで、状態は変えない。この記録を残した作業履歴は、この記録を知らない前の版のデーモンが読めない。
+ */
+const PushRetried = z.object({
+  type: z.literal("PushRetried"),
+  payload: z.object({
+    branch: z.string(),
+    commit: z.string(),
+    attempt: z.number().int().positive(),
+    maxAttempts: z.number().int().positive(),
+    waitMs: z.number().int().nonnegative(),
+    message: DaemonText,
+  }),
+});
+
+/**
+ * push のやり直しが終わった（PBI-467）。outcome は、通った（pushed）か、上限の回数までやり直しても通らなかった（failed）か。
+ * retries は、やり直した回数。通らなかったときは、この後に今までどおりタスクを止める。記録だけで、状態は変えない。
+ */
+const PushRetryEnded = z.object({
+  type: z.literal("PushRetryEnded"),
+  payload: z.object({
+    branch: z.string(),
+    commit: z.string(),
+    outcome: z.enum(["pushed", "failed"]),
+    retries: z.number().int().nonnegative(),
+  }),
+});
+
+/**
  * レビューの結果を、対象の PR にレビュー（COMMENT）として投稿した。レビューの工程が終わる（PBI-19）。
  * latestCommit は、投稿の直前に確かめた PR の先頭が、レビューしたコミットと違ったときの、その先頭（PBI-111。レビューは、
  * レビューしたコミットに対して投稿し、その旨を本文に書く）。
@@ -4483,6 +4517,8 @@ export const EventInput = z.discriminatedUnion("type", [
   RemarkRepliesPosted,
   ReviewTargetResolved,
   ReviewGitHubRetried,
+  PushRetried,
+  PushRetryEnded,
   PullRequestReviewPosted,
   ReviewWatchEnded,
   ReviewRunStopped,

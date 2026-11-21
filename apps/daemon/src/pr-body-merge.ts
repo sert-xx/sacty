@@ -109,7 +109,10 @@ export function taskMarkerLine(taskId: string): string {
   return `<!-- sacty task ${taskId} -->`;
 }
 
-const ANY_TASK_MARKER = /<!--\s*sacty task\b[^>]*?-->/gi;
+// `sacty task` で始まる HTML コメントの全体（複数行・中に `>` を含むもの・`--!>` で閉じるものも）。閉じ方が無ければ、行の終わりまで
+const ANY_TASK_MARKER = /<!--\s*sacty\s+task\b(?:[\s\S]*?(?:--!?>)|[^\n]*)/gi;
+/** 目印を除いた位置を示す、本文に現れない文字。 */
+const REMOVED = "\u0000";
 const VISIBLE_TASK_ID =
   /\bsacty task [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -126,17 +129,27 @@ export function withTaskMarker(text: string, taskId: string, sactyPrevious: stri
       .filter((line) => VISIBLE_TASK_ID.test(line.replace(ANY_TASK_MARKER, "")))
       .map((line) => line.trim()),
   );
+  // 目印は、本文の全体に当てる（人が書き換えて、複数行に割った目印も除くため）。除いた行が空になったら、行ごと除く
+  const unmarked = normalizeNewlines(text).replace(ANY_TASK_MARKER, REMOVED);
   const lines: string[] = [];
-  for (const line of normalizeNewlines(text).split("\n")) {
-    if (previousLines.has(line.trim())) continue;
-    const stripped = line.replace(ANY_TASK_MARKER, "");
-    if (stripped === line) lines.push(line);
-    else if (stripped.trim() !== "") lines.push(stripped.trimEnd());
+  // 目印を除いた位置の前後だけ、連続した空行を1つにする（人が書いたコードブロックなどの空行は、詰めない）
+  let blankAfterRemoval = false;
+  for (const line of unmarked.split("\n")) {
+    const removed = line.includes(REMOVED);
+    const stripped = line.replaceAll(REMOVED, "");
+    if (previousLines.has(stripped.trim()) && !removed) {
+      blankAfterRemoval = true;
+      continue;
+    }
+    if (removed && stripped.trim() === "") {
+      blankAfterRemoval = true;
+      continue;
+    }
+    if (stripped.trim() === "" && blankAfterRemoval && lines.at(-1)?.trim() === "") continue;
+    blankAfterRemoval = removed;
+    lines.push(removed ? stripped.trimEnd() : line);
   }
-  const body = lines
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trimEnd();
+  const body = lines.join("\n").replace(/^\n+/, "").trimEnd();
   return `${body}\n\n${taskMarkerLine(taskId)}`;
 }
 

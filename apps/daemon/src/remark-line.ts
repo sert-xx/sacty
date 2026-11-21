@@ -9,6 +9,9 @@ import { cutWithEllipsis, GIST_MAX, withoutRemarkIds } from "./remark-ids.js";
 /** 指摘の全文の末尾に添える、コメントが付いた行の内容（lineContextText）の目印。 */
 const LINE_CONTEXT = "（コメントが付いた行の内容：";
 
+/** URL（`http(s)://`・大文字小文字を問わない）と、リンクになりうる `www.`・`//host`。 */
+const URL_LIKE = /(?:[a-z][a-z0-9+.-]*:)?\/\/\S+|\bwww\.\S+/gi;
+
 /** 指摘の全文から、要点の元になる最初の行を取る。目印の HTML コメントと、空・`#`・`>` で始まる行は飛ばす。 */
 export function firstMeaningfulLine(text: string): string {
   const at = text.lastIndexOf(`\n${LINE_CONTEXT}`);
@@ -39,7 +42,7 @@ export function remarkLine(
   const flat = withoutRemarkIds(
     hidden
       .replace(/\s+/g, " ")
-      .replace(/https?:\/\/\S+/g, "")
+      .replace(URL_LIKE, "")
       .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ""),
   )
     .replace(/\s+/g, " ")
@@ -47,7 +50,10 @@ export function remarkLine(
   return cutWithEllipsis(flat, max);
 }
 
-/** 本文に載せるとき、行の頭の `#`・`>`・`-` と、バッククォートを、記法として効かせずに文字として出す。 */
+/**
+ * 本文に載せるとき、記法として効かせずに文字として出す。行の頭の `#`・`>`・`-`・`+`・`*` と、バッククォート、
+ * リンク・HTML コメント・タグ・課題の参照（`owner/repo#12`）になる `<`・`>`・`[`・`]`・`#` を、行のどこにあっても逃がす。
+ */
 export function markdownText(line: string): string {
-  return line.replace(/^([#>\-+*])/, "\\$1").replaceAll("`", "\\`");
+  return line.replace(/^([-+*])/, "\\$1").replace(/[`<>[\]#]/g, (c) => `\\${c}`);
 }

@@ -233,9 +233,10 @@ describe("後続に回すと決めた指摘の扱い（PBI-370）", () => {
     expect(text).not.toContain("@alice");
     expect(text).not.toContain("https://example.com/x");
     expect(text).not.toContain("implement-1-1");
-    expect(text).not.toContain("（ ");
+    expect(text).not.toMatch(/[（(]\s*[）)]/);
     const line = issue.body.split("\n").find((l) => l.startsWith("\\#")) ?? "";
-    expect(line.length).toBeLessThanOrEqual(130);
+    // 逃がしの `\` を除いた長さが、指摘を示す1行の上限（… を含む 120 文字）以内
+    expect(line.replace(/\\(.)/g, "$1").length).toBeLessThanOrEqual(120);
     expect(issue.body).toContain("> 仕組みが要る [REDACTED]");
   });
 

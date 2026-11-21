@@ -51,7 +51,6 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
 
   it("知らせ 4 種と要求要件の全文のコメントも、目印で見分ける", () => {
     const common = { secrets: [] };
-    const taskUrl = "http://127.0.0.1:4700/tasks/t1";
     expect(
       isHumanAskNotice(
         buildHumanAskNotice({
@@ -75,7 +74,6 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
           taskId: "t1",
           number: 8,
           discarded: 3,
-          taskUrl,
         }),
       ),
     ).toBe(true);
@@ -86,7 +84,6 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
           number: 8,
           stepName: "設計",
           backName: "要求要件",
-          taskUrl,
         }),
       ),
     ).toBe(true);

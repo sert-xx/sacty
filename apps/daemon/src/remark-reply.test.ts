@@ -21,6 +21,16 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
     secrets: [],
   };
 
+  it("対応の文に指摘の ID が書かれていても、返信に出さない", () => {
+    const body = buildRemarkReply({
+      ...base,
+      status: "addressed",
+      text: "implement-1-2 と同じ理由で直しました（implement-1-3 への対応）。",
+    });
+    expect(body.split("\n").slice(1).join("\n")).not.toMatch(/implement-1-\d/);
+    expect(body).toContain("指摘と同じ理由で直しました。");
+  });
+
   it("末尾は「Sacty の AI が書きました。」だけで、工程の名前・タスクの ID・指摘の ID を出さない（先頭の目印は残る。TV-15）", () => {
     const body = buildRemarkReply({
       ...base,

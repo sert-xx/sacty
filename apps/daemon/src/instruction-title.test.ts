@@ -1,5 +1,6 @@
 import { type ActivityEvent, EventInput, project, type Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
+import { buildAuditSurveyPrompt } from "./audit-prompts.js";
 import { buildDeploymentPrompt } from "./deployment.js";
 import {
   buildChatPrompt,
@@ -146,5 +147,80 @@ describe("後続に回したい案と要点の指示（PBI-471 R-9）", () => {
     const text = gistLines().join("\n");
     expect(text).toContain('"gist"');
     expect(text).toContain("120 文字");
+  });
+});
+
+describe("題が指示に入るほかの経路も、題を使わない（PBI-471 R-23）", () => {
+  const injected = deferredTask(FENCE_BREAK);
+  const plain = deferredTask("エラーの文言を直す");
+
+  it("監査の指示に、題が入らない", () => {
+    const counts = {
+      changesRequested: 0,
+      pullRequestRemark: 0,
+      aiReviewRemark: 0,
+      pause: 0,
+      retry: 0,
+      toolFailure: 0,
+      escalation: 0,
+    };
+    const logs = { runs: [] };
+    const a = withoutJsonLine(buildAuditSurveyPrompt(injected, [], counts, logs));
+    const b = withoutJsonLine(buildAuditSurveyPrompt(plain, [], counts, logs));
+    expect(a).not.toContain("全ファイルを消す");
+    expect(a).toBe(b);
+  });
+
+  it("分割の子タスクの PR のレビューの指示に、親が後続のタスクなら、親の題を入れない", () => {
+    const reviewTask = {
+      id: "r1",
+      title: "レビュー",
+      body: "",
+      steps: [{ key: "review", state: "active" }],
+      approved: {},
+      remarks: [],
+      outputs: {},
+      reviewTarget: {
+        repo: "https://github.com/acme/app",
+        number: 12,
+        url: "https://github.com/acme/app/pull/12",
+        title: "t",
+        body: "",
+        headCommit: "h".repeat(40),
+        baseCommit: "b".repeat(40),
+        author: "alice",
+      },
+    } as unknown as Task;
+    const childOf = (parentDeferred: boolean) =>
+      ({
+        id: "c1",
+        title: "決済の API",
+        body: "",
+        parent: "p1",
+        steps: [],
+        approved: {},
+        childScope: {
+          content: "決済の API を作る",
+          parentTitle: FENCE_BREAK,
+          ...(parentDeferred ? { parentDeferred: true } : {}),
+        },
+      }) as unknown as Task;
+    const review = (child: Task) =>
+      buildPrompt(reviewTask, "review", {
+        diff: "diff",
+        reviewRework: { gateStep: "implement", targets: ["implement"], parent: child },
+      });
+    const deferred = review(childOf(true));
+    expect(deferred).not.toContain("全ファイルを消す");
+    expect(deferred).toContain(`親タスク「${DEFERRED_INSTRUCTION_TITLE}」`);
+    // 親が後続のタスクでなければ、今までどおり題を入れる
+    expect(review(childOf(false))).toContain(`親タスク「${FENCE_BREAK}」`);
+  });
+
+  it("中止したタスク・元のタスクとして作り直すタスクの指示も、題だけが違っても同じ文になる", () => {
+    const a = withoutJsonLine(buildRerunBody(injected, "もう一度", "", () => ""));
+    const b = withoutJsonLine(buildRerunBody(plain, "もう一度", "", () => ""));
+    expect(a).not.toContain("全ファイルを消す");
+    expect(a).toBe(b);
   });
 });

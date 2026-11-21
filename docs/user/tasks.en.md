@@ -783,7 +783,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   Its opening sentence is `[この指摘](link)への返信です。` (a reply to this remark), with a link to the original post (the kind of the original post and who wrote it are not written).
   A reply to a regular comment quotes the start of the original comment on one line right after the opening (up to 100 characters; secrets are hidden).
   Even when several replies are posted together, the first few lines show which post each one replies to.
-  A reply to a finding handed to the implementation of a taken-over PR shows neither the source nor a quotation. A reply to a finding taken in after the implementation started shows them.
+  A reply to a finding handed to the implementation of a taken-over PR has no quotation. A reply to a finding taken in after the implementation started has one.
 - The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
   When it was not addressed, the reason (for example, out of this task's scope) follows.
   For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
@@ -1001,7 +1001,7 @@ When sacty uses its own format, the implementation PR body looks as follows.
 - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated).
   When the implementation's description itself starts with a heading such as "## 変更内容", no empty "変更" heading is put in front of it.
 - "確かめ方" (how it was checked) has a table matching viewpoints to tests (the test is "N 件（file）"; full test names are not listed), and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint). When the only viewpoint is the one line of the request, there is no table, just one line "テスト：N 件（file）".
-- When the requirements were skipped, the body says "要求要件の文書は作らず、依頼の内容を受け入れの基準にしました。".
+- When the requirements were skipped, the body says "要求要件の文書は作らず、依頼の内容を受け入れの基準にしました。". When only the requirements are skipped and the design is approved, it says "依頼の内容と承認済みの設計を受け入れの基準にしました。".
 - If a remark ID is written in the description, Sacty removes it (an ID in parentheses with "への対応" is removed with its parentheses; an ID inside a sentence becomes "指摘").
 
 After the implementation is redone (whether the redo started from a request for changes or from AI review comments), the body describes the whole PR, not only the last fix.
@@ -1689,6 +1689,17 @@ In the resume section, you can change the following along with the resume.
 - **Change the task image and step agents** (open it to use): you can choose again the task image and the agent for each step not finished yet.
   The current settings are selected first, only what you changed is recorded, and it is used from the next run.
   Resuming without deciding the tests does not choose the steps again, so you can change them here ([Deciding the tests on resume](#deciding-the-tests-on-resume)).
+
+#### When a push fails temporarily
+
+When the `git push` that opens a PR or stacks a rework (the implementation PR, a taken-over PR, and the requirements and design PRs) is rejected by what looks like a temporary failure, sacty does not stop. It waits and retries only the push of the same commit (up to 3 times, after 15 seconds, 1 minute, and 3 minutes).
+
+- sacty treats these as temporary: `[remote rejected] ... (failed)`, a GitHub internal error, HTTP 5xx, a rate limit, and a connection failure.
+- The retries and the result (it went through or it did not) show in the task's Activity.
+- A failure that waiting does not change stops at once without a retry: a rejection by protection or a rule, a rejection because the token has no `workflow` scope, a non-fast-forward, and an authentication failure.
+- If you pause or cancel while sacty waits, it stops without pushing.
+- If the push still fails after 3 retries, the task stops. Press "Resume" and sacty redoes the push that stopped without running an agent (if a new comment has reached the PR, it reads the comment and sends the task back).
+- In the reason text of the stop, the `remote:` guidance lines (such as `Create a pull request ...` and URLs) are removed and the failure line comes first. The `remote:` lines that give the reason for a rejection stay.
 
 ### Pausing a task
 

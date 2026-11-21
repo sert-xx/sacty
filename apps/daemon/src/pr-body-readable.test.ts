@@ -564,7 +564,8 @@ describe("要求要件・設計の PR の説明（TV-10〜TV-13）", () => {
       expect(line).not.toContain("implement-1-1");
       expect(line).not.toContain("（）");
       expect(line.startsWith("- \\#")).toBe(true);
-      expect(line.length).toBeLessThanOrEqual(2 + 1 + 120);
+      // 逃がしの `\` を除いた長さが、指摘を示す1行の上限（… を含む 120 文字）以内
+      expect(line.slice(2).replace(/\\(.)/g, "$1").length).toBeLessThanOrEqual(120);
       expect(body).not.toMatch(/^#見出しにならない/m);
     }
   });
