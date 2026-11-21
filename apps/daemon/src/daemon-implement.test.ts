@@ -5646,6 +5646,30 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         ctx.activity.close();
       });
 
+      it("止まった後の再開でも、1 回目の push が一時的に失敗したら、エージェントを実行せず、やり直して PR を更新する", async () => {
+        const ctx = setup([0, 0, 0]);
+        await toPublish(ctx);
+        ctx.repos.remote["feature/retry"] = "9".repeat(40);
+        ctx.repos.branchHeads["feature/retry"] = "9".repeat(40);
+        ctx.repos.pushScript = [REJECT, REJECT, REJECT, REJECT];
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.service.get(ctx.id)?.task.status).toBe("paused");
+        const runs = ctx.executor.calls.length;
+        const before = types(ctx.service, ctx.id).length;
+        ctx.repos.pushScript = [REJECT];
+        ctx.service.resume(ctx.id, {});
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.executor.calls).toHaveLength(runs);
+        expect(
+          types(ctx.service, ctx.id)
+            .slice(before)
+            .filter((t) =>
+              ["PushRetried", "PushRetryEnded", "PullRequestPublished", "TaskPaused"].includes(t),
+            ),
+        ).toEqual(["PushRetried", "PushRetryEnded", "PullRequestPublished"]);
+        ctx.activity.close();
+      });
+
       it("1 回失敗しても止まらず、同じコミット・ブランチ・認証の環境で push し直して PR を更新する", async () => {
         const ctx = setup([0, 0, 0]);
         await toPublish(ctx);

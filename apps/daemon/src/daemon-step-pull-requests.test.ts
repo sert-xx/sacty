@@ -339,6 +339,25 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it("止まった後の再開でも、1 回目の push が一時的に失敗したら、エージェントを実行せず、やり直して PR を作る", async () => {
+      const { activity, service, repos, executor, id } = await toDesign([0, 0, 0]);
+      repos.pushScript = [REJECT, REJECT, REJECT, REJECT];
+      await service.runNext(id);
+      expect(taskOf(service, id).status).toBe("paused");
+      const runs = executor.calls.length;
+      since = types(service, id).length;
+      repos.pushScript = [REJECT];
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(runs);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "StepPullRequestPublished",
+      ]);
+      activity.close();
+    });
+
     it("やり直しの途中で一時的でない失敗（保護での拒否）に変わったら、そこでやめ、回数を記録して pr.failed で止まる", async () => {
       const { activity, service, repos, id } = await toDesign([0, 0, 0]);
       repos.pushScript = [
