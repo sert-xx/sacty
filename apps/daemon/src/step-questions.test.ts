@@ -539,4 +539,25 @@ describe("問いごとの文（PBI-475）", () => {
     expect(read.items[0]?.kind).toBe("must");
     expect(read.items[0]?.text).toContain("通貨を決めるか");
   });
+
+  it("札の行に文があり下に箇条書きが続くとき、札の行の文と導入の行を最初の項目の文に含める（件数は変わらない）", () => {
+    const read = readStepQuestions(
+      [
+        "## 確認したいこと",
+        "",
+        "**must**：通貨を決めるか",
+        "次の点：",
+        "- 推奨：円",
+        "- 懸念：為替",
+        "**should**：なし",
+      ].join("\n"),
+    );
+    expect(read.kind).toBe("counted");
+    if (read.kind !== "counted") return;
+    expect(read.must).toBe(2);
+    expect(read.items[0]?.text).toContain("通貨を決めるか");
+    expect(read.items[0]?.text).toContain("次の点：");
+    expect(read.items[0]?.text).toContain("推奨：円");
+    expect(read.items[1]?.text).toBe("懸念：為替");
+  });
 });

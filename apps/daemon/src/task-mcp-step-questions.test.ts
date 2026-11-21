@@ -171,6 +171,19 @@ describe("get_step_questions（PBI-475）", () => {
     expect(r.data.questions?.[0]?.text).toBe(`${"あ".repeat(1000)}\n…（以下 1 文字を省略）`);
   });
 
+  it("上限の境界：ちょうど 1000 文字・各 20 件は切らず、should も 20 件で切り、省いた件数は合計する", async () => {
+    const exact = "あ".repeat(1000);
+    const musts = [exact, ...Array.from({ length: 19 }, (_, i) => `m${String(i)}`)];
+    const shoulds = Array.from({ length: 22 }, (_, i) => `s${String(i)}`);
+    const call = await connect(taskOf("design", section(musts, shoulds), withPr));
+    const r = await call("get_step_questions");
+    const qs = r.data.questions ?? [];
+    expect(qs.filter((q) => q.kind === "must")).toHaveLength(20);
+    expect(qs.filter((q) => q.kind === "should")).toHaveLength(20);
+    expect(qs[0]?.text).toBe(exact);
+    expect(r.data.omittedQuestions).toBe(2);
+  });
+
   it("承認待ちの要求要件・設計が無いタスクは、失敗にして get_task で確かめる案内を返す", async () => {
     const out = section(["x"], []);
     const cases: Task[] = [

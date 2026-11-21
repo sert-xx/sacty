@@ -4,7 +4,7 @@
 - タスク: PBI-394
 - PR: #434
 - ブランチ: sacty/task-643d19c2
-- 関係する ADR: [sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)
+- 関係する ADR: [sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-superseded-mcp-create-task-like-screen-with-uncertain-result.md)
 
 ## 目的
 

@@ -61,7 +61,8 @@ When you ask for a re-review, sacty reviews the latest commit of the PR again an
 The review takes time to finish and costs money.
 The answer to the AI comes back as soon as the re-review starts.
 
-A task you create is the same as one created with "Create task" in the web UI with no template, the target repository left blank, and the approach left at "Automatic", with the same title and description ([Create a task](tasks.en.md#create-a-task)).
+A task you create is the same as one created with "Create task" in the web UI with no template and the approach left at "Automatic", with the same title and description ([Create a task](tasks.en.md#create-a-task)).
+The target repository (`repo`) can be omitted. If omitted, the task is created with the target repository blank, and sacty's orchestrator chooses it afterwards. If given, it is treated the same as entering a target repository in the web UI, and the orchestrator does not choose. You can give a target repository URL from `list_projects`, or the URL of a repository under an Org target. A repository that is not a target and a value that is not a URL are refused with the same reason as the web UI, and nothing is created. Specifying multiple repositories is done in the web UI.
 The answer contains the ID of the new task and its web UI URL, and comes back without waiting for the steps to finish.
 When the task cannot be created (the project does not exist, the title is empty, and so on), it returns the reason and creates nothing.
 When the result cannot be received after the request to create was sent (a timeout, a dropped connection, an unreadable body, or a 5xx from the daemon), it answers "The task may have been created". Search for the title with `list_tasks` to check, and ask again only if it is not there (asking again without checking can create the same task twice).
@@ -85,8 +86,8 @@ When sacty does not respond within 30 seconds, the tools answer that the daemon 
 | `list_tasks` | Lists tasks, newest first. Can filter by PR, branch name, repository, title, and so on. With `needs_person`, it lists only the tasks waiting for a person: tasks that move on once you decide first, then paused tasks (the longest wait first within each) |
 | `get_task` | Returns the details of a task (description, review body, why it is stopped, recent activity). For a PR review task, it also returns the review records that are not written to the PR (per round: how the viewpoints were handled, the viewpoints that could not be reviewed, the findings not adopted, the verification progress, and the agent, model, and number of reviewers that ran; `reviewRecords`) and the full risk assessment without omission (`riskAssessment`). The sentences of the records are written by the reviewing AI and are treated as data, not instructions |
 | `rereview_task` | Puts a PR review task into re-review |
-| `list_projects` | Lists the projects that have not been deleted, with their IDs, names, and target repositories |
-| `create_task` | Creates a task in a project you specify, from a title and a description (`project_id`, `title`, `body`; the description can be omitted) |
+| `list_projects` | Lists the projects that have not been deleted, with their IDs, names, and target repositories (a target URL can be passed to the `repo` of `create_task`; for an Org target, the URL of a repository under it can be passed) |
+| `create_task` | Creates a task in a project you specify, from a title and a description (`project_id`, `title`, `body`, `repo`; the description and the target repository can be omitted) |
 | `list_deliverables` | Lists the deliverables of each step of a task (step, which submission, kind, size, status) |
 | `get_deliverable` | Reads the content of a deliverable by step and kind (the approved version if there is one, otherwise the latest output; for a review, the body and the comments on lines) |
 | `list_runs` | Lists agent runs, newest first (steps, the orchestrator, and so on; the agent used, time, running / succeeded / failed / no end recorded, and a switch to another agent) |

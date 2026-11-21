@@ -176,13 +176,22 @@ function countQuestions(body: string[]): StepQuestionItem[] | undefined {
     else if (indents.length > 0) {
       const top = Math.min(...indents);
       const groups: string[][] = [];
+      // 札の行の文と最初の項目より前の導入の行は、最初の項目の文の先頭に足す
+      const lead: string[] = label.rest ? [label.rest] : [];
       for (const e of all) {
         const item = e.fenced ? undefined : LIST_HEAD.exec(e.line);
         const indent = item ? (item[1] as string).replace(/\t/g, "    ").length : -1;
         if (item && indent === top) groups.push([e.line]);
-        else groups[groups.length - 1]?.push(e.line);
+        else if (groups.length === 0) {
+          if (e.line.trim() || e.fenced) lead.push(e.line);
+        } else groups[groups.length - 1]?.push(e.line);
       }
-      found[label.kind] = groups.map(asItem);
+      found[label.kind] = groups.map((g, i) => {
+        const one = asItem(g);
+        return i === 0 && lead.length > 0
+          ? { kind: one.kind, text: [...lead, one.text].join("\n").trim() }
+          : one;
+      });
     } else if (label.rest) found[label.kind] = [asItem([label.rest, ...range.map((e) => e.line)])];
     else return undefined;
   }
