@@ -1725,7 +1725,7 @@ const ListTasksInput = z.strictObject({
     .boolean()
     .optional()
     .describe(
-      "true なら、人の出番のタスクだけ（画面のダッシュボードの「あなたの出番」と同じ：承認待ち・エスカレーション・一時停止。AI が PR の指摘を判断中の承認待ちは除く）。待ち始めの古い順に並べ、各タスクに waitingSince が入る。",
+      "true なら、人の出番のタスクだけ（画面のダッシュボードの「あなたの出番」と同じ：承認待ち・エスカレーション・一時停止。AI が PR の指摘を判断中の承認待ちは除く）。上の組（personTurnGroup が decision）→ 下の組（paused）の順で、組の中は待ち始めの古い順（同じなら id の順）に並べ、各タスクに personTurnGroup と waitingSince が入る。",
     ),
   state: z
     .array(z.enum(STATE_VALUES))
