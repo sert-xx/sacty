@@ -24,13 +24,12 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
 
 ### should
 
-1. sacty の外す要求の答えを受け取れなかった（時間切れ・失敗）後の、記録の無い外しを「決められない」として戻さなくてよいか。
-   - 推奨：はい。遅れて届いた sacty の要求か人の操作かを見分けられず、R-10 が戻さない側を求めるため。
-   - 懸念：今は `undraftUnsettled` などで確認のたびに戻している PR を、戻さなくなります。外す間に差し戻した PR が、レビューしていない先頭のままマージできる状態で残ります。
+なし
 
 ## 既定で決めたこと
 
 - sacty の外しは、`markPullRequestReadyForReview` の答えで、その PR の最後の `ReadyForReviewEvent` の ID を受け取って記録する（actor は人と同じアカウントになるので使わない）。
+- 答えの ID が、要求の前に読んだ最後の外しの ID か、その PR に記録済みの ID と同じなら、1回だけ読み直す。それでも同じなら ID なしとして記録する（タイムラインへの反映の遅れで、前の外しの ID を受け取るため）。
 - 前の版が外した PR（sacty の外しの記録が無く、`PullRequestMarkedReady` か `PullRequestRetargeted` の `ready` がある）の、記録の無い外しは「決められない」とする。
 - sacty がドラフトにした切り替えは記録しない。判定に要るのは、最後の外しが誰のものかだけのため。
 - sacty の外しの記録も、作業履歴に1行出す（表示の `switch` が全種類を扱うため）。
@@ -39,17 +38,25 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
 
 | 場所 | 変更 |
 | --- | --- |
-| `apps/daemon/src/github.ts` | `draftHistory` を足す（GraphQL の `isDraft` と、`timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT])` の id・種類・時刻）。`setDraft` の外しの答えに、最後の `ReadyForReviewEvent` の ID を足す |
+| `apps/daemon/src/github.ts` | `draftHistory` を足す（GraphQL の `isDraft` と、`timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT])` の id・種類・時刻）。`setDraft` の外しで、要求の前に最後の `ReadyForReviewEvent` の ID を読み、答えに最後の `ReadyForReviewEvent` の ID を足す |
 | `apps/daemon/src/service.ts` | 判定を足し、スコープの戻す経路から呼ぶ。外しの4か所（`markReady`・`undraftMarkedReady`・付け替え・検証の後の外し）で記録する |
 | `packages/core`（`events.ts`・`projection.ts`） | イベント2種類と、PR ごとの投影 |
 | `apps/web`（`labels.ts`・`i18n/messages/labels.ts`） | 表示の文言（日英） |
-| `apps/daemon/src/testing/daemon.ts` | 切り替えの履歴（`setDraft` が ID を振って積む、人の外しを足す、読み取りの失敗） |
+| `apps/daemon/src/testing/daemon.ts` | 切り替えの履歴（`setDraft` が ID を振って積む、人の外しを足す、読み取りの失敗、外しの答えに前の外しの ID を返す） |
 
 ## データ
 
-- `PullRequestUndraftNoted { number, eventId? }`：sacty が外した。`eventId` が無いのは、答えを受け取れなかった・答えに ID が無かったとき
+- `PullRequestUndraftNoted { number, eventId? }`：sacty が外した。`eventId` が無いのは、答えを受け取れなかった・答えに ID が無かった・読み直しても前の外しと同じ ID だったとき
 - `PullRequestRedraftSkipped { number, reason: "person" | "unreadable" | "undetermined", eventId? }`：戻さなかった。`person` は外しの `eventId` を持つ
 - 投影：PR ごとに、sacty の外しの ID・最後の `PullRequestUndraftNoted` に ID があるか・前の版の外しの記録があるか・最後の `PullRequestRedraftSkipped`
+
+## 処理の流れ（外しの ID の記録）
+
+1. `markPullRequestReadyForReview` の前に、最後の `ReadyForReviewEvent` の ID を読む（読めなければ「前の ID」を空とする）
+2. 答えの ID が、前の ID とも記録済みの ID とも違えば、その ID を記録する
+3. 同じなら、`draftHistory` で1回読み直し、違う外しの ID になっていれば記録する。同じか読めなければ、ID なしで記録する
+
+- 答えを受け取れなかった（時間切れ・失敗）後の記録の無い外しも、ID なしの記録として、判定で「決められない」とする
 
 ## 処理の流れ（判定）
 
@@ -126,18 +133,21 @@ sacty は、PR をドラフトへ戻す前に、GitHub の最後のドラフト�
 - [TV-16] 外す要求の答えを受け取れなかった後の外しは、決められないとして戻さない
   - 入力：setDraftAnswerLost で、指摘なしの外しの答えを失わせた後に差し戻しを起こし、PR の確認を行う
   - 期待結果：ID なしの PullRequestUndraftNoted が記録され、PR はドラフトでないままで、PullRequestRedraftSkipped（undetermined）が1件記録される
-- [TV-17] GitHub の切り替えの履歴と外しの答えの ID を読む
-  - 入力：GitHubPullRequests に、timelineItems の最後が ReadyForReviewEvent・ConvertToDraftEvent・空・エラーの答えと、markPullRequestReadyForReview の答えに ReadyForReviewEvent の id がある・無い答えを返す fetch を渡す
-  - 期待結果：draftHistory は isDraft と最後の切り替えの id・種類を返し、エラーでは例外を投げ、setDraft の外しは id があれば返し、無ければ返さない
-- [TV-18] 新しい記録を作業履歴に表示する
+- [TV-17] 外しの答えが前の外しの ID なら、sacty の外しの ID として記録しない
+  - 入力：人が外して戻した後の PR を sacty が指摘なしで外し、フェイクの外しの答えと1回の読み直しがどちらも人の前の外しの ID を返し（タイムラインの反映の遅れ）、その後に sacty の外しのイベントが最後になってから差し戻しを起こして PR の確認を行う
+  - 期待結果：PullRequestUndraftNoted は ID なしで記録され、前の外しの ID は sacty の外しとして記録されず、PullRequestRedraftSkipped は person ではなく undetermined が1件記録される
+- [TV-18] GitHub の切り替えの履歴と外しの答えの ID を読む
+  - 入力：GitHubPullRequests に、timelineItems の最後が ReadyForReviewEvent・ConvertToDraftEvent・空・エラーの答えと、外しの要求の前の読み取りと markPullRequestReadyForReview の答えに ReadyForReviewEvent の id がある・無い答えを返す fetch を渡す
+  - 期待結果：draftHistory は isDraft と最後の切り替えの id・種類を返し、エラーでは例外を投げ、setDraft の外しは要求の前の最後の外しの id と答えの id があれば返し、無ければ返さない
+- [TV-19] 新しい記録を作業履歴に表示する
   - 入力：PullRequestUndraftNoted と、reason が person・unreadable・undetermined の PullRequestRedraftSkipped を、日本語と英語で表示する
   - 期待結果：それぞれ PR の番号と、sacty が外したこと・戻さなかった理由（人が外した・読めなかった・決められなかった）の文言が出る
-- [TV-19] 仕様書に新しい決まりを載せる
+- [TV-20] 仕様書に新しい決まりを載せる
   - 入力：docs/spec の tasks-and-steps・approval・event-log・split-and-integrate の日英の差分
   - 期待結果：人が外した PR を一時停止のほかは戻さないこと、判定と3つの理由、重ねた PR の提出を止めないこと、2つのイベントと数え直した種類の数、記録の後は前の版へ切り戻せないこと（互換の層は作らない）が書かれている
-- [TV-20] ユーザー文書に今の振る舞いを載せる
+- [TV-21] ユーザー文書に今の振る舞いを載せる
   - 入力：docs/user/tasks.md と .en.md の差分
   - 期待結果：「指摘なし」の前に人が外した PR と、直しの提出・重ねた PR の付け替えでも sacty がドラフトへ戻さないことが、です・ます調の今の振る舞いとして書かれ、一時停止の案内は残っている
-- [TV-21] ADR と作業履歴を足す
+- [TV-22] ADR と作業履歴を足す
   - 入力：docs/adr と docs/worklog の差分
   - 期待結果：ADR に人が外した PR を戻さない方針と、新しい記録の後は前の版へ切り戻せないこと（互換の層は作らない）が書かれ、作業履歴が docs/worklog/<UTC日付>-pbi-468-<slug>.md にひな形どおりにあり、tests/docs が通る
