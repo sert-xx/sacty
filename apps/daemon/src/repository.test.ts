@@ -2253,7 +2253,14 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     await expect(workspace.deleteBranch(gitDir, branch, undefined, head)).rejects.toThrow();
     expect(git(origin, "branch", "--list", branch)).toContain(branch);
     // 先頭が同じなら消せる
-    await workspace.deleteBranch(gitDir, branch, undefined, moved);
+    // 削除の push も、応答が止まっても待ち続けないよう時間切れを付ける
+    const timer = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await workspace.deleteBranch(gitDir, branch, undefined, moved);
+      expect(timer).toHaveBeenCalledWith(120_000);
+    } finally {
+      timer.mockRestore();
+    }
     expect(git(origin, "branch", "--list", branch)).toBe("");
   });
 });

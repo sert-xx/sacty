@@ -32,6 +32,7 @@
   - `npm run lint`・`npm run typecheck`（web を含む）：通った。
   - `npm run docs:diagrams`：図を作り直した（警告 2 件は既存の図の幅）。
 - 完了の片付けの中では作業領域を用意し直さない（自分の片付けを待って止まるため）。削除の `fetch`・`push` には 120 秒の時間切れを付けた。
+  - 止まらないことのテスト：完了の片付けの中で git のメタデータが無い場合（`daemon-step-pull-requests-direct.test.ts`。`prepare: false` を外すと止まって落ちる）、先頭の取得が止まった場合（同。時間切れの信号を渡さないと落ちる）、`deleteBranch` の時間切れ（`repository.test.ts`）。
 
 ## 残したこと
 

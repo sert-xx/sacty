@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { StepKey, Task } from "@sacty/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { TaskService } from "./service.js";
@@ -50,7 +50,12 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
 
   async function start(
     outcomes: AgentOutcome[],
-    options: { steps?: StepKey[]; repos?: FakeRepos; pulls?: FakePulls } = {},
+    options: {
+      steps?: StepKey[];
+      repos?: FakeRepos;
+      pulls?: FakePulls;
+      containerMounts?: () => Promise<string[]>;
+    } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = options.pulls ?? new FakePulls();
@@ -60,6 +65,7 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
       now: later,
       pulls,
       repos,
+      ...(options.containerMounts ? { containerMounts: options.containerMounts } : {}),
       planner: async () => ({
         steps: [...(options.steps ?? (["requirements", "design"] as StepKey[]))],
         fallback: false,
@@ -458,6 +464,73 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
       expect(repos.deleteCalls.length).toBeGreaterThan(0);
       expect(taskOf(service, id).status).toBe("idle");
       expect(types(service, id)).not.toContain("TaskPaused");
+      made.activity.close();
+    });
+
+    it("TV-17: 完了の片付けの中で、退避した git のメタデータが無くても、作業領域を用意し直さず、自分の完了を待たずに完了の片付けが終わる", async () => {
+      const repos = new FakeRepos();
+      let gitDirOf: string | undefined;
+      let armed = false;
+      const made = await start([out("# 要求要件"), design()], {
+        repos,
+        // 完了の片付けが作業領域を消す前に、マージを見つけたときの削除（失敗する）を待ってから、メタデータを消す
+        containerMounts: async () => {
+          if (armed && gitDirOf) {
+            await waitFor(() => repos.deleteCalls.some((c) => c.branch.includes("-design-")), {
+              what: "マージを見つけたときの削除",
+            });
+            rmSync(gitDirOf, { recursive: true, force: true });
+          }
+          return [];
+        },
+      });
+      const { service, id } = made;
+      await merge(made, "requirements");
+      await service.runNext(id);
+      gitDirOf = join(dir, "workspaces", "_git", `${id}.git`);
+      expect(existsSync(gitDirOf)).toBe(true);
+      const prepared = repos.prepared.length;
+      repos.deleteFail = "remote rejected";
+      armed = true;
+      await merge(made, "design");
+      await waitFor(() => !existsSync(join(dir, "workspaces", id)), { what: "完了の片付け" });
+      await Promise.race([
+        service.workspaceCleanupsSettled(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("片付けが止まった")), 5000)),
+      ]);
+      expect(repos.prepared).toHaveLength(prepared);
+      expect(existsSync(gitDirOf)).toBe(false);
+      expect(taskOf(service, id).status).toBe("idle");
+      expect(types(service, id)).not.toContain("TaskPaused");
+      made.activity.close();
+    });
+
+    it("TV-17: ブランチの先頭の取得が止まっても、時間切れで打ち切られ、PR の確認は戻り、消さず記録もしない", async () => {
+      const made = await start([out("# 要求要件")]);
+      const { service, repos, id } = made;
+      const pr = prOf(made, "requirements");
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      const timer = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockImplementation((ms) => (ms === 120_000 ? AbortSignal.abort() : timeout(ms)));
+      repos.onFetchBranch = (signal) =>
+        new Promise<void>((_, reject) => {
+          if (!signal) return; // 時間切れの信号が渡されなければ、ずっと止まる
+          const stop = () => reject(new Error("時間切れのため中断"));
+          if (signal.aborted) stop();
+          else signal.addEventListener("abort", stop);
+        });
+      try {
+        await Promise.race([
+          close(made, "requirements"),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("確認が止まった")), 5000)),
+        ]);
+        expect(timer).toHaveBeenCalledWith(120_000);
+      } finally {
+        timer.mockRestore();
+      }
+      expect(calls(repos, pr?.branch ?? "")).toEqual([]);
+      expect(types(service, id)).not.toContain("StepBranchKept");
       made.activity.close();
     });
 
