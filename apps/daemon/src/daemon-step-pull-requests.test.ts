@@ -3088,17 +3088,119 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             activity.close();
           });
 
-          it("投稿前に一時停止した子は、PR がマージされたら、今までどおり中止になる（条件 4）", async () => {
+          it("投稿前に一時停止した子は、PR がマージ・クローズされたら、今までどおり中止になる（条件 4）", async () => {
+            for (const [state, reason] of [
+              ["merged", "pull_request_merged"],
+              ["closed", "pull_request_closed"],
+            ] as const) {
+              const made = await watched([verdictOut("changes_required")]);
+              const { activity, service, pulls, id } = made;
+              const childId = childOf(service, id);
+              await service.pause(childId);
+              pulls.states[7] =
+                state === "merged" ? { state, headSha: commitOf(service, id) } : { state };
+              await service.checkPullRequests();
+              const child = taskOf(service, childId);
+              expect(child.status).toBe("cancelled");
+              expect(child.cancelled?.reason).toBe(reason);
+              activity.close();
+              rmSync(dbPath, { force: true });
+            }
+          });
+
+          it("親が完了したら、一時停止していない見守り中の子も、PR の状態を読めなくても完了になる（条件 3）", async () => {
             const made = await watched([verdictOut("changes_required")]);
             const { activity, service, pulls, id } = made;
             const childId = childOf(service, id);
-            await service.pause(childId);
-            pulls.states[7] = { state: "closed" };
+            pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+            await runReview(service, childId);
+            expect(taskOf(service, childId).status).toBe("idle");
+            unreadableAfterParentDone(service, pulls, id);
+            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
             await service.checkPullRequests();
             const child = taskOf(service, childId);
-            expect(child.status).toBe("cancelled");
-            expect(child.cancelled?.reason).toBe("pull_request_closed");
+            expect(isDone(child)).toBe(true);
+            expect(child.reviewWatchEnded?.reason).toBe("parent_completed");
             activity.close();
+          });
+
+          it("既に一時停止のまま残った子も、サービスを作り直した後の確認で片付く（条件 6）", async () => {
+            const { activity, pulls, id, childId } = await pausedWatching();
+            activity.close();
+            const again = new SqliteActivityStore(dbPath);
+            const restarted = makeService(again, [], {
+              stepPullRequests: true,
+              reviewTasks: true,
+              pulls,
+            });
+            expect(taskOf(restarted.service, childId).status).toBe("paused");
+            pulls.states[7] = { state: "merged", headSha: commitOf(restarted.service, id) };
+            await restarted.service.checkPullRequests();
+            const child = taskOf(restarted.service, childId);
+            expect(isDone(child)).toBe(true);
+            expect(child.reviewWatchEnded?.reason).toBe("merged");
+            again.close();
+          });
+
+          it("見守りを終える記録の書き込みに失敗しても、PR の確認は止まらず、次の確認でやり直す", async () => {
+            const { activity, service, pulls, id, childId } = await pausedWatching();
+            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+            const real = activity.append.bind(activity);
+            let failing = true;
+            const append = vi.spyOn(activity, "append").mockImplementation((input) => {
+              if (failing && JSON.stringify(input).includes("ReviewWatchEnded")) {
+                throw new Error("disk full");
+              }
+              return real(input);
+            });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            await expect(service.checkPullRequests()).resolves.toBeUndefined();
+            expect(warn.mock.calls.flat().join(" ")).toContain(childId);
+            expect(taskOf(service, childId).status).toBe("paused");
+            failing = false;
+            append.mockRestore();
+            warn.mockRestore();
+            await service.checkPullRequests();
+            expect(isDone(taskOf(service, childId))).toBe(true);
+            activity.close();
+          });
+
+          it("止めたと確かめられなかった実行がある一時停止の子は、終えずに次の確認に回す", async () => {
+            const { activity, pulls, id, childId } = await pausedWatching();
+            // 止めたと確かめられなかった実行を残した一時停止（台帳に記録する）
+            activity.append({
+              taskId: childId,
+              projectId: "default",
+              events: [
+                {
+                  actor: "sacty",
+                  event: {
+                    type: "TaskResumed",
+                    payload: { retry: false },
+                  },
+                },
+                {
+                  actor: "sacty",
+                  event: {
+                    type: "TaskPaused",
+                    payload: { reason: "manual", unstoppedRuns: ["run-x"] },
+                  },
+                },
+              ],
+            });
+            const restartedStore = new SqliteActivityStore(dbPath);
+            activity.close();
+            const restarted = makeService(restartedStore, [], {
+              stepPullRequests: true,
+              reviewTasks: true,
+              pulls,
+            });
+            expect(taskOf(restarted.service, childId).unstoppedRuns).toEqual(["run-x"]);
+            pulls.states[7] = { state: "merged", headSha: commitOf(restarted.service, id) };
+            await restarted.service.checkPullRequests();
+            expect(taskOf(restarted.service, childId).status).toBe("paused");
+            expect(types(restarted.service, childId)).not.toContain("ReviewWatchEnded");
+            restartedStore.close();
           });
         });
       });

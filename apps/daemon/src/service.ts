@@ -3002,6 +3002,7 @@ export class TaskService {
    * - レビューをまだ投稿していない（実行待ち・実行中・投稿の前の一時停止など）タスク：PR がマージされた・マージせずに
    *   閉じられたら中止する（もうレビューする必要が無いため。実行中の実行を止める）
    * - レビューを投稿して PR の変化を見守っているタスク（PBI-411）：watchReview が、見守りを終える・再レビューを始める
+   * - レビューの子タスクで、投稿済みのまま一時停止しているもの（PBI-457）：PR がマージ・クローズされたら、見守りを終えて完了する
    */
   private async checkReviewPullRequests(): Promise<void> {
     // 見守っているタスク。取り込みを通さずに人が作ったレビューのタスク（source が無い）も含む（対象の PR は reviewTarget）。
@@ -3109,26 +3110,35 @@ export class TaskService {
     if (latest.status !== "idle" && latest.status !== "paused") return;
     if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return;
     if (this.inflight.has(taskId)) return;
+    // 止めたと確かめられなかった実行がある間は、終えない（再開は確かめるまで進まない決まりと揃える）。次の確認に回す
+    if (latest.unstoppedRuns?.length) return;
     this.reviewWatchHeads.delete(taskId);
     this.reviewWatchReplies.delete(taskId);
     this.reviewWatchRead.delete(taskId);
-    this.append(latest, [
-      ...(latest.status === "paused"
-        ? [
-            {
-              actor: "sacty" as const,
-              event: {
-                type: "TaskResumed" as const,
-                payload: { retry: false },
+    try {
+      this.append(latest, [
+        ...(latest.status === "paused"
+          ? [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "TaskResumed" as const,
+                  payload: { retry: false },
+                },
               },
-            },
-          ]
-        : []),
-      {
-        actor: "sacty",
-        event: { type: "ReviewWatchEnded", payload: { reason } },
-      },
-    ]);
+            ]
+          : []),
+        {
+          actor: "sacty",
+          event: { type: "ReviewWatchEnded", payload: { reason } },
+        },
+      ]);
+    } catch (error) {
+      // 記録の書き込みに失敗しても、この回の確認の残りは続ける（次の確認でやり直す）
+      console.warn(
+        `[daemon] レビューの子タスク ${taskId} の見守りを終えられませんでした：${renderMessage(errorText(error), "ja")}`,
+      );
+    }
   }
 
   /**
@@ -15209,7 +15219,8 @@ export class TaskService {
    * - 子タスクの無い承認待ちの PR（作る前に止まったもの）には作る
    * - 親が PR を更新して承認待ちに戻った（指摘を直した）のに、子タスクが前の先頭をレビューして終わっていれば、最新の
    *   コミットを再レビューさせる。同じ先頭では1回だけ（先頭を読み違えても、繰り返さない）
-   * 一時停止・中止を求められた親と子、一時停止した子は動かさない。
+   * 親が完了したら、終わっていない子（一時停止中・見守り中を含む）を片付ける（PBI-457）。
+   * 一時停止・中止を求められた親と子は動かさない（親が完了した子の片付けと、親の中止の片付けを除く）。
    */
   private async reconcileReviewTasks(): Promise<void> {
     if (this.deps.reviewTasks !== true) return;

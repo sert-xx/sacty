@@ -590,7 +590,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | 項目 | 内容 |
 | --- | --- |
 | `id`・`title`・`projectId` | タスクの ID・題・プロジェクトの ID |
-| `state` | `cancelled`（中止）、`completed`（完了。`isFinished`）、ほかはタスクの状態（`status`）のまま。PR のレビューのタスクは、レビューを投稿しても、判定が指摘なしになるまで `completed` にならない（PR の変化を見守る間は `idle` で、`review.watching` が `true`） |
+| `state` | `cancelled`（中止）、`completed`（完了。`isFinished`）、ほかはタスクの状態（`status`）のまま。PR のレビューのタスクは、レビューを投稿しても、判定が指摘なしになるか、見守りを終える（PR のマージ・クローズ、親の完了）まで `completed` にならない（PR の変化を見守る間は `idle` で、`review.watching` が `true`） |
 | `steps` | 工程と状態（`<工程>:<状態>`。進める順） |
 | `preparing` | `state` が `queued` のまま、最初の工程の前の処理をデーモンがいま進めているときだけ入る、その段階（`repository`・`gathering`・`triage`・`planning`・`review_target`・`starting`。[最初の工程が始まる前の処理の表示](tasks-and-steps.md#最初の工程が始まる前の処理の表示)）。枠などを待っているだけの `queued` と、工程の実行を1回でも始めたタスク（処理していても）には無い。`state` は変えない |
 | `reviewTask` | PR のレビューのタスクか（PR のレビューの取り込み（`source.review` がある）か、レビューの工程がある） |
@@ -606,7 +606,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | `rerunOf` | 再実行の元の、中止したタスクの ID（再実行で作ったタスクにだけ） |
 | `pullRequests` | [結び付いた PR](#タスクに結び付いた-pr-とブランチ) |
 | `branches` | [結び付いたブランチ](#タスクに結び付いた-pr-とブランチ) |
-| `review` | PR のレビューのタスクだけ。レビューの回（`round`）と、今の回の投稿の URL（`postedUrl`）・判定（`verdict`）。投稿・判定は、あるときだけ。`watching` は、レビューを投稿した後に PR の変化を見守っているときだけ `true`（完了していない。人の出番ではない）。`watchEnded` は、見守りを終えた理由（`merged`・`closed`）があるときだけ（[投稿の後の PR の見守り](tasks-and-steps.md#投稿の後の-pr-の見守り)） |
+| `review` | PR のレビューのタスクだけ。レビューの回（`round`）と、今の回の投稿の URL（`postedUrl`）・判定（`verdict`）。投稿・判定は、あるときだけ。`watching` は、レビューを投稿した後に PR の変化を見守っているときだけ `true`（完了していない。人の出番ではない）。`watchEnded` は、見守りを終えた理由（`merged`・`closed`・`parent_completed`。親が完了した）があるときだけ（[投稿の後の PR の見守り](tasks-and-steps.md#投稿の後の-pr-の見守り)） |
 | `reviewOf` | PR のレビューの子タスクの、親のタスクの ID |
 | `reviewTasks` | このタスクの PR をレビューする子タスク（タスクの ID と PR の番号） |
 | `pausedReason` | 一時停止の理由（一時停止中だけ） |

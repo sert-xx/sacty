@@ -178,7 +178,7 @@ const ja = {
       `PR の対応待ち（${{ changes_required: "修正が必要", suggestions: "提案あり", unreadable: "判定を読めない", absent: "判定が付いていない" }[verdict]}）`,
     /** 指摘なしにならないまま、PR の見守りを終えて完了した（PBI-411）。 */
     reviewWatchEnded: (reason: "merged" | "closed" | "parent_completed") =>
-      `完了（${reason === "merged" ? "PR がマージされた" : reason === "closed" ? "PR が閉じられた" : "親のタスクが完了した"}）`,
+      `完了（${reason === "merged" ? "PR がマージされた" : reason === "closed" ? "PR が閉じられた" : "PR を作ったタスクが完了した"}）`,
     testsRunning: "テストを実行中",
     waitingPullRequestCi: "PR の CI を待っている",
     watchingCi: "マージの後の監視・CI/CD 待ち",
@@ -611,7 +611,7 @@ const ja = {
         ? "PR がマージされたので、PR の見守りを終えた"
         : reason === "closed"
           ? "PR がマージされずに閉じられたので、PR の見守りを終えた"
-          : "親のタスクが完了したので、PR の見守りを終えた",
+          : "PR を作ったタスクが完了したので、PR の見守りを終えた",
     cancelledBecause: (
       text: string,
       reason:
@@ -620,7 +620,7 @@ const ja = {
         | "parent_cancelled"
         | "parent_completed",
     ) =>
-      `${text}（${reason === "pull_request_merged" ? "PR がマージされたため" : reason === "pull_request_closed" ? "PR が閉じられたため" : reason === "parent_completed" ? "レビューする PR の元のタスクが完了したため" : "レビューする PR の元のタスクが中止されたため"}）`,
+      `${text}（${reason === "pull_request_merged" ? "PR がマージされたため" : reason === "pull_request_closed" ? "PR が閉じられたため" : reason === "parent_completed" ? "PR を作ったタスクが完了したため" : "レビューする PR の元のタスクが中止されたため"}）`,
     GuardianMissed: "合格の見逃し：合格にした成果物が差し戻された",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
     OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,

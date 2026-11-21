@@ -3667,8 +3667,8 @@ const TaskCancelled = z.object({
   payload: z.object({
     /**
      * sacty が中止した理由（PBI-44）。レビューの PR がマージされた・マージされずに閉じられたので、終わっていない
-     * レビューのタスクを中止した。parent_cancelled は、PR のレビューの子タスクの親が中止された（PBI-330）。人間が中止したときは
-     * 無い。
+     * レビューのタスクを中止した。parent_cancelled は、PR のレビューの子タスクの親が中止された（PBI-330）。parent_completed は、親が完了した
+     * （PBI-457）。人間が中止したときは無い。
      */
     reason: z
       .enum(["pull_request_merged", "pull_request_closed", "parent_cancelled", "parent_completed"])
