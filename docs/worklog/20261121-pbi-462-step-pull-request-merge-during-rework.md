@@ -18,10 +18,10 @@
   - 直しを始めたときの承認待ちの PR（`reworkOf`）と、前の工程へ戻している間の元の PR（`sentBackFrom`）を、差し戻しの記録から覚える。
   - 提出ごとの成果とテスト観点の写し（`stepSubmitted`）と、工程のブランチごとのコミット（`stepBranchCommits`）を持つ。
   - `reworkingStepPullRequest` で、見守る PR を決める。承認待ちの一時停止と、人の判断待ちの一時停止は除く。
-  - `step` 付きの `ReworkStoppedByMerge` で、直しの成果を捨てて提出の版に戻し、その工程の承認待ちに戻す。
+  - `step` 付きの `ReworkStoppedByMerge` で、直しの成果を捨てて提出の版に戻し、その工程の承認待ちに戻す。セルフレビューと出典の分類は、直しの完了が置き換えていたときだけ「記録なし」にする（実行待ち・実行中で止めたときは、提出の版の記録を残す。提出の時点の値を `stepSubmitted` に持って比べる）。
 - デーモン（`apps/daemon/src/service.ts`）
   - `checkReworkMerges` が工程の直しも見守る。PR を更新・作成している最中のタスクは止めず、`publishStepPullRequest` が更新・作成の直前に読み直して記録する。
-  - 新しい PR を作る経路で直しの PR を閉じられなければ、`pr.failed` で一時停止する。
+  - 新しい PR を作る経路で直しの PR を閉じられなければ、`pr.supersededNotClosed` で一時停止する（マージ後の文書を読めないときは `pr.mergedDocumentUnreadable`）。承認済みの設計は `pr.failed` と書いているが、実際のキーに置き換えた。仕様書もこのキーで書く。
   - 新しいブランチは、コミットを先に作り、記録済みの名前のコミットと比べて回を決める。
   - `checkSentBackMerges` が、要求要件へ戻している間の設計の PR のマージを PR に知らせる。
   - 承認にした知らせを、工程の PR と実装の PR の作り直しの停止（人の判断待ちを除く）に書く（`apps/daemon/src/merge-approval-notice.ts`）。指摘の取り込みと再レビューの返信からは外す。
