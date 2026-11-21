@@ -8313,7 +8313,13 @@ export class TaskService {
                 ? await this.deps.pulls.canWrite({ repo: issue.repo, token, login: requester })
                 : false,
             )
-            .catch(() => false);
+            .catch((error: unknown) => {
+              // 安全側（みなさない）に倒す。原因（状態コードなど）は、秘密の値を伏せてログに残す
+              console.warn(
+                `[daemon] PR #${issue.number}（${issue.repo}）の再依頼の依頼者・権限を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+              );
+              return false;
+            });
           if (!trusted) held = { head: pr.headSha, token };
         }
       } catch (error) {
