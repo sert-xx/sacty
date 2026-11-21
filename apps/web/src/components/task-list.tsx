@@ -2,7 +2,7 @@
 
 import { CircleX } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { ActionLink } from "@/components/action-link";
 import { DaemonError } from "@/components/daemon-error";
@@ -104,22 +104,21 @@ function LiveTaskListBody({
   if (defaultStatus === null && data) setDefaultStatus(defaultStatusFor(data.rows));
   const initialStatus = defaultStatus ?? "";
   const filter: TaskFilter = { ...picked, status: picked.status ?? initialStatus };
-  // サーバーが渡す絞り込みが変わった（同じ一覧へのリンクでクエリ無しへ移ったなど）とき、いまの絞り込みと違えば、
-  // その絞り込みに合わせる（自分が URL に書いた絞り込みでサーバーが描き直されたときは、行数も保つ）
-  const propsFilter: TaskFilter = {
-    ...EMPTY_FILTER,
-    ...initialFilter,
-    status: initialFilter?.status ?? initialStatus,
-  };
-  const propsKey = filterQuery(propsFilter, initialStatus, "");
-  const [seenPropsKey, setSeenPropsKey] = useState(propsKey);
-  if (seenPropsKey !== propsKey) {
-    setSeenPropsKey(propsKey);
-    if (propsKey !== filterQuery(filter, initialStatus, "")) {
-      setPicked({ ...EMPTY_FILTER, ...initialFilter, status: initialFilter?.status });
-      setLimit(TASK_PAGE_SIZE);
-    }
-  }
+  // 今の URL（ルーターの検索条件）が変わったとき、画面の絞り込みと違えば、URL に合わせる（同じ一覧へのリンクで
+  // クエリ無しへ移ったなど）。自分で書いた URL は同じ絞り込みなので、行数も保つ
+  const search = useSearchParams().toString();
+  const current = useRef({ filter, initialStatus });
+  current.current = { filter, initialStatus };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 検索条件が変わったときだけ、今の URL と比べる
+  useEffect(() => {
+    const fromUrl = parseTaskFilter(new URLSearchParams(window.location.search));
+    const next: FilterState = { ...EMPTY_FILTER, ...fromUrl, status: fromUrl.status };
+    const { filter: now, initialStatus: base } = current.current;
+    const asFilter: TaskFilter = { ...EMPTY_FILTER, ...next, status: next.status ?? base };
+    if (filterQuery(asFilter, base, "") === filterQuery(now, base, "")) return;
+    setPicked(next);
+    setLimit(TASK_PAGE_SIZE);
+  }, [search]);
   // 開始時期は日をブラウザーのタイムゾーンで決めるので、サーバーの描画と描き直しでは行を出さない
   const hydrated = useSyncExternalStore(
     subscribeNothing,

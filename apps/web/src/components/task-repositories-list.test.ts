@@ -14,7 +14,10 @@ vi.mock("@/lib/daemon", () => ({
   listTasks: async () => tasks,
   listProjects: async () => [{ id: "default" }],
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh() {} }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 const { loadTaskList } = await import("@/lib/task-list-data");
 const { LiveTaskList } = await import("./task-list");
 

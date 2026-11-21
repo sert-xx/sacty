@@ -98,7 +98,7 @@ beforeAll(async () => {
           if (id === "\0virtual:list-actions")
             return "export async function followProjectAction() {}";
           if (id === "\0virtual:list-next-navigation")
-            return "export const useRouter = () => ({ refresh() {}, push() {}, replace() {}, bfcacheId: 'one' });";
+            return "export const useRouter = () => ({ refresh() {}, push() {}, replace() {}, bfcacheId: 'one' }); export const useSearchParams = () => new URLSearchParams(window.location.search);";
           if (id === "\0virtual:list-next-link")
             return "import React from 'react'; export default function Link(props) { return React.createElement('a', props); }";
         },

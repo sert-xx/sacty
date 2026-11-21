@@ -19,6 +19,8 @@ vi.mock("next/navigation", () => ({
     bfcacheId: bfcache.id,
   }),
   usePathname: () => "/projects/p1/tasks",
+  useSearchParams: () =>
+    new URLSearchParams(typeof window === "undefined" ? "" : window.location.search),
 }));
 vi.mock("@/app/actions", () => {
   const action = vi.fn(async () => ({}));
@@ -240,6 +242,8 @@ describe("URL への書き出し", () => {
 
   it("全項目を URL に書き、履歴を増やさない（replaceState だけを使う）", () => {
     mount(data(list));
+    // App Router が書いた履歴の state（__NA つき）を、操作の前に入れておく
+    window.history.replaceState({ __NA: true }, "", window.location.href);
     const replace = vi.spyOn(window.history, "replaceState");
     const push = vi.spyOn(window.history, "pushState");
     const length = window.history.length;
@@ -260,6 +264,7 @@ describe("URL への書き出し", () => {
     expect(replace).toHaveBeenCalledTimes(8);
     // state を渡すと、App Router がルーターの URL を更新せず、あとでクエリが消える
     for (const call of replace.mock.calls) expect(call[0]).toBeNull();
+    expect(window.history.state).not.toEqual({ __NA: true });
     expect(push).not.toHaveBeenCalled();
     expect(window.history.length).toBe(length);
   });
@@ -531,10 +536,78 @@ describe("50 行ずつの表示", () => {
     mount(data(many(120)));
     change(input("search"), "タスク");
     pressMore();
-    window.history.replaceState(window.history.state, "", window.location.href);
     render(data(many(120)), { filter: parseTaskFilter(params()) });
     expect(input("search").value).toBe("タスク");
     expect(ids()).toHaveLength(100);
+  });
+
+  it("クエリ無しで開いて絞り込み、クエリ無しの同じ一覧へ移ると（サーバーの props が変わらなくても）、最初の表示に戻る", () => {
+    const list = [...many(60, "終", { status: done }), ...many(60, "進", { status: working })];
+    mount(data(list));
+    change(select("状態"), "");
+    change(input("search"), "終");
+    pressMore();
+    expect(ids()).toHaveLength(60);
+    window.history.replaceState(null, "", "/projects/p1/tasks");
+    render(data(list));
+    expect(input("search").value).toBe("");
+    expect(select("状態").value).toBe("active");
+    expect(ids()).toHaveLength(50);
+    expect(ids()[0]).toBe("進-1");
+  });
+
+  it("どの操作の列の後でも、画面の絞り込みは今の URL と一致する（サーバーの props は {} のまま）", () => {
+    const list = [
+      ...many(70, "終", { status: done, repoless: false }),
+      ...many(70, "進", { status: working }),
+    ];
+    const queries = [
+      "",
+      "?status=all",
+      "?q=%E7%B5%82&status=all",
+      "?status=working&start=sacty",
+      "?from=2026-10-01&to=2026-10-31",
+      "?repo=gone&status=foo",
+      "?foo=1",
+    ];
+    let seed = 12345;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % n;
+    };
+    const shown = () => ({
+      query: input("search").value,
+      status: select("状態").value,
+      start: select("開始地点").value,
+      repo: select("リポジトリ").value,
+      from: input("date", 0).value,
+      to: input("date", 1).value,
+    });
+    mount(data(list));
+    for (let i = 0; i < 80; i++) {
+      const op = rand(6);
+      if (op === 0) change(input("search"), ["", "終", "進", "x"][rand(4)] ?? "");
+      else if (op === 1)
+        change(select("状態"), ["", "active", "completed", "working"][rand(4)] ?? "");
+      else if (op === 2) change(input("date", 0), ["", "2026-10-05"][rand(2)] ?? "");
+      else if (op === 3 && more()) pressMore();
+      else if (op === 4) {
+        window.history.replaceState(null, "", `/projects/p1/tasks${queries[rand(queries.length)]}`);
+        render(data(list));
+      } else render(data(list));
+      const url = parseTaskFilter(params());
+      const base = ids().length >= 0 ? select("状態").value : "";
+      expect(shown()).toEqual({
+        query: url.query ?? "",
+        // 状態は、URL に無ければ最初の表示（終わっていないタスクがあるので「終わっていない」）
+        status: url.status === undefined ? "active" : url.status,
+        start: url.start ?? "",
+        repo: url.repo ?? "",
+        from: url.from ?? "",
+        to: url.to ?? "",
+      });
+      expect(base).toBe(shown().status);
+    }
   });
 
   it("作り直されたとき（サーバーの値が古くても）、今の URL の絞り込みで始まる", () => {
