@@ -1915,7 +1915,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
 
 関係する ADR: [完了したタスクから、元のタスクを指す続きのタスクを何度でも作れるようにする（派生）](../adr/20261028-0054-derive-follow-up-task.md)
 
-- 完了したタスク（工程をすべて終えて止まった、中止していないタスク。`canDerive`）は、詳細の「続きのタスク」から、続きの作業のタスクを作れる（`POST /api/tasks/:id/derive`）。
+- 完了したタスク（工程をすべて終えて止まった、中止していないタスク。`canDerive`）は、詳細の上の操作の並びの「続きのタスクを作る」から、続きの作業のタスクを作れる（`POST /api/tasks/:id/derive`）。
   元のタスクは変えず、元のタスクを指す新しいタスクを作る（`TaskCreated` の `derivedFrom`。元のタスクの ID と、説明に足した元のタスクの記録の本文 `record`）。
   元のタスクには、作業履歴の復元で作ったタスクを作った順に記録する（`derivedTasks`）。
   1つのタスクから、いくつでも作れる。
@@ -1938,12 +1938,12 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   記録に入るレポート・修正の範囲を、公開の場所に出さないため（上の「セキュリティチェックとセキュリティ対応」の公開しない扱い）。
   `securityFix`（元のレポート・区分・指摘の全件）は引き継がない（直す指摘は、人が内容に書く）。
 - 続きのタスクを中止して再実行するときは、元のタスクの記録を除いた説明を人が直し、記録は sacty が付け直す（上の「中止したタスクの再実行」）。
-- 画面では、完了したタスクの詳細に「続きのタスク」の欄（作ったタスクの一覧と、作るダイアログ）を出し、続きのタスクの詳細のプロパティの「続きの元」に元のタスクへのリンクを出す。
+- 画面では、完了したタスクの詳細の上の操作の並び（再レビューと同じ所。同じ見た目・ヒント。狭い幅では折り返す）に「続きのタスクを作る」ボタン（ダイアログを開く。`DeriveButton`）を出し、概要に「続きのタスク」の欄（作ったタスクの一覧。ボタンは置かない）を出し、続きのタスクの詳細のプロパティの「続きの元」に元のタスクへのリンクを出す。
   作ったタスクの題は、タスクの一覧（`GET /api/tasks`）を1度だけ取って引く（1件ずつ取らない）。
   一覧を取れなければ、ID で出す（詳細は出す）。
   セキュリティの組み合わせのタスクでは、進め方の選択肢をセキュリティの組み合わせだけにする。
 
-コード: `apps/daemon/src/service.ts`（`deriveTask`）、`apps/daemon/src/prompts.ts`（`deriveRecord`・`deriveBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/derive`）、`packages/core/src/events.ts`（`DeriveTaskInput`・`DERIVE_RECORD_HEADING`）、`packages/core/src/projection.ts`（`canDerive`・`applyEvent`）、`apps/web/src/components/derive-dialog.tsx`（`DerivedTasksCard`）、`apps/web/src/lib/task-detail-data.ts`
+コード: `apps/daemon/src/service.ts`（`deriveTask`）、`apps/daemon/src/prompts.ts`（`deriveRecord`・`deriveBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/derive`）、`packages/core/src/events.ts`（`DeriveTaskInput`・`DERIVE_RECORD_HEADING`）、`packages/core/src/projection.ts`（`canDerive`・`applyEvent`）、`apps/web/src/components/derive-dialog.tsx`（`DeriveButton`・`DerivedTasksCard`）、`apps/web/src/lib/task-detail-data.ts`
 
 ## オーケストレーターに質問
 

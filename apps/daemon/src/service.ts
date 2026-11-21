@@ -11507,7 +11507,7 @@ export class TaskService {
       if (!retirable()) return 0;
       // 実装の無い進め方（PBI-464）で残っている sacty のブランチは、作業領域を消す前に消す（失敗しても完了は止めない）
       try {
-        await this.settleStepBranches(taskId, "final");
+        await this.settleStepBranches(taskId, "final", { prepare: false });
       } catch (error) {
         console.warn(
           `[daemon] 完了したタスクのブランチを消せませんでした：${renderMessage(redactText(errorText(error), []), "ja")}`,
@@ -15634,7 +15634,12 @@ export class TaskService {
   private async settleStepBranches(
     taskId: string,
     mode: "events" | "final",
-    options: { only?: readonly string[]; sactyClosed?: readonly string[] } = {},
+    options: {
+      only?: readonly string[];
+      sactyClosed?: readonly string[];
+      /** false：作業領域（退避した git のメタデータ）が無くても、用意し直さない（完了の片付けの中。自分の片付けを待たないため） */
+      prepare?: boolean;
+    } = {},
   ): Promise<{ branch: string; result: StepBranchResult; detail?: DaemonText }[]> {
     const task = this.tasks.get(taskId);
     if (!task?.repository || !directStepFlow(task)) return [];
@@ -15645,10 +15650,10 @@ export class TaskService {
       const pr = task.stepPullRequests.find((p) => p.branch === branch);
       if (pr && (pr.state === "merged" || pr.state === "merged_outdated")) {
         plan.push({ branch, kind: "unconditional" });
-      } else if (kept.has(branch)) {
-        plan.push({ branch, kind: "kept" });
       } else if (options.sactyClosed?.includes(branch)) {
         plan.push({ branch, kind: "unconditional" });
+      } else if (kept.has(branch)) {
+        plan.push({ branch, kind: "kept" });
       } else if (mode === "final" || pr?.state === "closed") {
         plan.push({ branch, kind: "compare" });
       }
@@ -15661,6 +15666,9 @@ export class TaskService {
     const results: { branch: string; result: StepBranchResult; detail?: DaemonText }[] = [];
     try {
       const gitDir = this.trustedGitDir(task);
+      if (!existsSync(gitDir) && options.prepare === false) {
+        throw new MessageError(message("cleanup.stepBranchNoGitDir"));
+      }
       if (!existsSync(gitDir)) {
         const loaded = this.deps.config();
         const ready = loaded.ok
@@ -15668,7 +15676,9 @@ export class TaskService {
           : { ok: false as const, message: loaded.problem };
         if (!ready.ok) {
           throw new MessageError(
-            message("pr.failed", { detail: renderMessage(ready.message, "ja") }),
+            message("cleanup.stepBranchPrepareFailed", {
+              detail: renderMessage(ready.message, "ja"),
+            }),
           );
         }
       }
@@ -15735,7 +15745,12 @@ export class TaskService {
     if (!pushed) return unresolved(message("cleanup.stepBranchUnrecorded", { branch }));
     let head: string;
     try {
-      head = await this.deps.repos.fetchBranch(gitDir, branch, authEnv);
+      head = await this.deps.repos.fetchBranch(
+        gitDir,
+        branch,
+        authEnv,
+        AbortSignal.timeout(120_000),
+      );
     } catch (error) {
       // リモートにもう無い（人が閉じて GitHub が消した・マージの後に消した）なら、消せたものとする
       if (remoteRefMissing(error)) return { result: "deleted" };
@@ -18969,7 +18984,10 @@ export class TaskService {
             cleanup.push({
               target: "branch",
               result: "failed",
-              detail: r.detail ?? r.branch,
+              detail: message("cleanup.stepBranchFailed", {
+                branch: r.branch,
+                detail: r.detail ? renderMessage(r.detail, "ja") : "",
+              }),
             });
           }
         }

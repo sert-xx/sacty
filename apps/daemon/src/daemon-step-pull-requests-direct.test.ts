@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { StepKey, Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
@@ -558,14 +559,39 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
   });
 
   it("TV-26: タスクブランチがすでにある実装の無いタスクは、今の流れのまま、タスクブランチへ向け、タスクブランチの先頭と比べ、完了のときにブランチを消さない", async () => {
-    // 前の版が作ったタスクを表す：タスクブランチがあり、進め方に実装が無い
-    const made = await start([out("# 要求要件"), design()], {
+    // 前の版が作ったタスクを、作業履歴から作る：タスクブランチと要求要件の PR があり、進め方に実装が無い
+    const first = await start([out("# 要求要件")], {
       steps: ["requirements", "design", "implement"],
     });
-    const { service, repos, pulls, id } = made;
-    const task = taskOf(service, id);
-    expect(task.taskBranch?.branch).toBe(prefixOf(id));
-    task.steps = task.steps.filter((s) => s.key !== "implement");
+    const { pulls, repos, id } = first;
+    expect(taskOf(first.service, id).taskBranch?.branch).toBe(prefixOf(id));
+    first.activity.close();
+    const raw = new DatabaseSync(dbPath);
+    // 前の版の作業履歴を作るために、追記専用の保護を外して進め方を書き換える（開き直すと、保護は作り直される）
+    raw.exec("DROP TRIGGER activity_no_update");
+    const chosen = raw
+      .prepare("SELECT id, payload FROM activity WHERE type = 'StepsChosen'")
+      .get() as {
+      id: string;
+      payload: string;
+    };
+    const payload = JSON.parse(chosen.payload) as { steps: string[] };
+    payload.steps = payload.steps.filter((step) => step !== "implement");
+    raw
+      .prepare("UPDATE activity SET payload = ? WHERE id = ?")
+      .run(JSON.stringify(payload), chosen.id);
+    raw.close();
+    const activity = new SqliteActivityStore(dbPath);
+    const restarted = makeService(activity, [design()], {
+      stepPullRequests: true,
+      now: later,
+      pulls,
+      repos,
+    });
+    const made = { activity, ...restarted, id };
+    const { service } = made;
+    expect(taskOf(service, id).steps.some((s) => s.key === "implement")).toBe(false);
+    expect(taskOf(service, id).taskBranch?.branch).toBe(prefixOf(id));
     const req = prOf(made, "requirements");
     pulls.states[req?.number ?? 0] = {
       state: "merged",

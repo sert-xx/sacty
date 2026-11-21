@@ -79,7 +79,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
   - After creating or importing a project, the UI moves to that project's settings (`/projects/<ID>/settings`).
   - "Tasks" (the breadcrumb) on the task details goes back to the task list of the task's project. Before the task is read and while the daemon is unreachable, it goes back to `/projects/current/tasks`.
 - Layout of the task details (`TaskDetailView`)
-  - The title, status, steps, actions (pause, cancel, re-review), and tabs are fixed at the top of the screen (visible while scrolling).
+  - The title, status, steps, actions (pause, cancel, re-review, create a follow-up task), and tabs are fixed at the top of the screen (visible while scrolling).
   - The notice when waiting for an approval or a decision (`GateNotice`) and the resume section appear below the tabs on every tab.
   - The tabs are Overview, Activity, Costs, Step settings, and Audit (only for completed tasks). The open tab is kept in `?tab=` (omitted for Overview; a tab that is not shown falls back to Overview).
     Hidden tabs are still rendered, so text being typed and open sections are kept when switching tabs.

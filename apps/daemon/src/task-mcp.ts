@@ -1374,8 +1374,7 @@ function cancelTargets(task: Task): {
       ]
     : [];
   // 人がコミットを足したので残している工程のブランチ（実装の無い進め方。PBI-464）は、消さない
-  const kept = new Set(keptStepBranches(task));
-  for (const name of kept) {
+  for (const name of keptNow) {
     untouchedBranches.push({ name, reason: "人がコミットを足したため、消しません" });
   }
   return {

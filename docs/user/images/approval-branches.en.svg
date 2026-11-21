@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 350" width="1040" height="350" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/approval-branches.mjs）を直して npm run docs:diagrams で作り直す -->
-  <title id="title">Branches when approving through PRs (a way of proceeding with an implementation)</title>
+  <title id="title">Branches when approving through PRs (a plan with an implementation)</title>
   <desc id="desc">With an implementation: a task branch is created from the base commit. Requirements and design are PRs from step branches into the task branch, and the implementation is a PR from the task branch into the base branch. Merging is approval.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;

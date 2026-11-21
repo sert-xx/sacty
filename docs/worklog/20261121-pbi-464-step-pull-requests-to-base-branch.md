@@ -27,6 +27,12 @@
 - `apps/daemon/src/daemon-step-pull-requests-direct.test.ts`（TV-1〜TV-22・TV-25・TV-26）、`packages/core/src/projection.test.ts`（TV-27）、`packages/cli/src/mcp-cancel.test.ts`（TV-20）、`apps/daemon/src/repository.test.ts`（期待する先頭での削除）。
 - 既存の分割の子タスクのテストは、子タスクが実装の工程を持つ進め方にして、親がタスクブランチを作らないことも確かめるようにした。
 
+- 実行した検証（レビューの指摘を直した後のコードで実行）：
+  - `npm test`：339 ファイル・6867 件が通った（14 件はスキップ。ローカルの git が古く、`merge-tree --merge-base` を使う既存のテストが飛ぶ）。
+  - `npm run lint`・`npm run typecheck`（web を含む）：通った。
+  - `npm run docs:diagrams`：図を作り直した（警告 2 件は既存の図の幅）。
+- 完了の片付けの中では作業領域を用意し直さない（自分の片付けを待って止まるため）。削除の `fetch`・`push` には 120 秒の時間切れを付けた。
+
 ## 残したこと
 
 - すでにリモートに残っている過去のタスクのブランチの片付けは、していない。

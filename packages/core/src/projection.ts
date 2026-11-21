@@ -5451,7 +5451,6 @@ export function canRetryExport(task: Task, step: StepKey): boolean {
   );
 }
 
-/** 現在実行対象の工程（active な工程）。 */
 /**
  * タスクブランチを作らずに、要求要件・設計の PR をベースブランチへ直接出す進め方（PBI-464）か。タスクブランチが無く、
  * 進め方に実装の工程が無いタスク。工程は StepsChosen の後で実装を増減しないので、途中で切り替わらない。
@@ -5478,6 +5477,7 @@ export function keptStepBranches(task: Task): string[] {
   );
 }
 
+/** 現在実行対象の工程（active な工程）。 */
 export function activeStep(task: Task): StepKey | undefined {
   return task.steps.find((s) => s.state === "active")?.key;
 }

@@ -30,21 +30,21 @@ Code: `apps/daemon/src/service.ts` (`approve`, `gateTask`, `nextAfterApproval`),
 Requirements and Design (`StepPullRequestKey`) and Implementation are approved through PRs. The implementation PR is opened as a draft when the Implementation step finishes, and its draft is removed once the PR review child task reports no findings ([Tasks and steps](tasks-and-steps.en.md#the-flow-without-the-final-review)).
 How the PR is opened is in [Tasks and steps](tasks-and-steps.en.md#opening-the-implementation-pr), and how tasks with records of an earlier version's final review are handled is in [Tasks and steps](tasks-and-steps.en.md#tasks-from-the-version-with-the-final-review). Approval, Request changes, approval by merging the PR, and importing PR comments work the same for the three steps.
 
-When Requirements, Design, and Implementation are all approved through PRs (a task whose way of proceeding has an Implementation step), the branches look like this (an example where the task ID starts with 1a2b3c4d).
-A task whose way of proceeding has no Implementation step does not create a task branch ([PRs of steps in a flow without an implementation](#prs-of-steps-in-a-flow-without-an-implementation)).
+When Requirements, Design, and Implementation are all approved through PRs (a task whose plan has an Implementation step), the branches look like this (an example where the task ID starts with 1a2b3c4d).
+A task whose plan has no Implementation step does not create a task branch ([PRs of steps in a flow without an implementation](#prs-of-steps-in-a-flow-without-an-implementation)).
 
 ![Branches when approving through PRs](images/approval-branches.en.svg)
 
 - Whether a task is approved through PRs (`stepPullRequestsOn`)
   - If it has a task branch, it is always approved through PRs.
-  - If it has no task branch and its way of proceeding has no Implementation step (`directStepFlow`), it is approved through PRs as long as a record of a step PR exists (the number of submissions in the web UI does not take it out).
+  - If it has no task branch and its plan has no Implementation step (`directStepFlow`), it is approved through PRs as long as a record of a step PR exists (the number of submissions in the web UI does not take it out).
     While there is no record yet, it is approved through PRs when the conditions below hold.
   - A task that takes over an existing PR (`Task.continuedPullRequest`) does not open Requirements and Design as PRs ([Taking over an existing PR](tasks-and-steps.en.md#taking-over-an-existing-pr)).
   - Without a task branch, it is approved through PRs when all of the following hold.
     - There is a target repository
     - The requirements and design have not yet been submitted in the web UI
     - The project has a GitHub account for that host
-- For a task whose way of proceeding has an Implementation step, the task branch `sacty/task-<first 8 chars of task ID>` is created from the base commit of the base branch (`TaskBranchCreated`).
+- For a task whose plan has an Implementation step, the task branch `sacty/task-<first 8 chars of task ID>` is created from the base commit of the base branch (`TaskBranchCreated`).
 - PRs for Requirements and Design
   - sacty writes the result to the file `<documentsDir>/<first 8 chars of task ID>/<step>.md` and opens it as a PR from the step branch `<task branch>-<step>-<round>` to the task branch.
   - The Orchestrator decides `documentsDir`. If its shape is not usable, the default `docs/sacty` (`DEFAULT_DOCUMENTS_DIR`) is used.
@@ -97,7 +97,7 @@ Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `taskBranchName`, `pub
 
 Related ADR: [In a flow without an implementation, create no task branch and open the step PRs straight against the base branch](../adr/20261121-2215-step-pull-requests-to-base-branch-without-implementation.md)
 
-A task whose way of proceeding has no Implementation step and that has no task branch (`directStepFlow`; `design-only`, the parent of a task split, and so on) creates no task branch, and opens the Requirements and Design PRs straight from the step branch to the base branch.
+A task whose plan has no Implementation step and that has no task branch (`directStepFlow`; `design-only`, the parent of a task split, and so on) creates no task branch, and opens the Requirements and Design PRs straight from the step branch to the base branch.
 Merging the PR is the approval of that step, as before.
 When the last step's approval completes the task, the documents are on the base branch.
 
@@ -107,7 +107,7 @@ The branches of a flow without an implementation look like this (an example wher
 
 - How the target is decided: a task with no `TaskBranchCreated` and no `implement` in `steps`.
   `steps` does not gain or lose the implementation after `StepsChosen`, so the flow never switches midway.
-  A task that already has a task branch (made by an earlier version) keeps the existing flow even if its way of proceeding has no implementation (it does not switch midway).
+  A task that already has a task branch (made by an earlier version) keeps the existing flow even if its plan has no implementation (it does not switch midway).
   A task made by an earlier version that has neither a task branch nor a step PR yet proceeds in the direct flow.
 - Differences from the task-branch flow
 

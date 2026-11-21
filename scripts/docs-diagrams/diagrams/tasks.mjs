@@ -230,7 +230,7 @@ export const approvalBranches = {
   height: 350,
   title: t(
     "PR で承認するときのブランチ（実装がある進め方）",
-    "Branches when approving through PRs (a way of proceeding with an implementation)",
+    "Branches when approving through PRs (a plan with an implementation)",
   ),
   desc: t(
     "実装がある進め方：起点のコミットからタスクブランチを作り、要求要件・設計は工程のブランチからタスクブランチへの PR、実装はタスクブランチからベースブランチへの PR にする。マージが承認になる。",
@@ -343,7 +343,7 @@ export const approvalBranchesDirect = {
   height: 280,
   title: t(
     "PR で承認するときのブランチ（実装の無い進め方）",
-    "Branches when approving through PRs (a way of proceeding without an implementation)",
+    "Branches when approving through PRs (a plan without an implementation)",
   ),
   desc: t(
     "実装の無い進め方：タスクブランチを作らず、要求要件・設計は工程のブランチからベースブランチへの PR にする。マージが承認になり、完了したときには文書がベースブランチに入っている。",
