@@ -21,13 +21,13 @@ const projects = [
   { id: 'p2', name: 'Portal', needsYou: 2 },
   { id: 'p3', name: 'Billing', needsYou: 0 },
 ];
-const notice = (n) => ({ taskId: 't' + n, title: 'Task ' + n, projectId: 'p1', projectName: 'Payments', status: 'Waiting', href: '/tasks/t' + n });
+const notice = (n, group) => ({ taskId: 't' + n, title: 'Task ' + n, projectId: 'p1', projectName: 'Payments', status: 'Waiting', group, waitingSince: '2026-11-01T00:00:00.000Z', href: '/tasks/t' + n });
 createRoot(document.getElementById('root')).render(
   h(React.Fragment, null,
     h('header', { className: 'sticky top-0 z-30 flex h-16 items-center justify-between bg-white px-4' },
       h(ProjectMenu, { projects, current: projects[0] }),
       h('div', { className: 'flex gap-2' },
-        h(NotificationsMenu, { others: [notice(1), notice(2)], here: [notice(3), notice(4)], currentName: 'Payments' }),
+        h(NotificationsMenu, { notices: [notice(1, 'decision'), notice(2, 'decision'), notice(3, 'paused'), notice(4, 'paused')] }),
         h(UserMenu, { language: 'system' }),
       ),
     ),
@@ -45,9 +45,10 @@ export function useMessages() {
   return {
     shell: {
       project: { label: 'Project', all: 'All projects', switch: 'Switch project', manage: 'Manage projects', needsYou: (n) => n + ' waiting', trigger: (n) => 'Project: ' + n },
-      notices: { label: 'Notices', labelWithCount: (n) => 'Notices ' + n, title: 'Notices', total: (n) => n + ' items', none: 'None', others: 'Other projects', here: (n) => 'In ' + n },
+      notices: { label: 'Notices', labelWithCount: (n) => 'Notices ' + n, title: 'Notices', total: (n) => n + ' items', none: 'None', groups: { decision: 'Decide', paused: 'Resume' }, waiting: 'Waiting: ' },
       user: { label: 'Account', settings: 'Settings', theme: 'Theme', themes: { system: 'System', light: 'Light', dark: 'Dark' }, language: 'Language', languages: { system: 'System', ja: 'Japanese', en: 'English' }, languageNote: 'Note' },
     },
+    dashboard: { duration: { underMinute: 'under a minute', minutes: (n) => n + ' min', hours: (n) => n + ' h', days: (n) => n + ' d' } },
     labels: { action: { newTab: 'Opens in a new tab' } },
   };
 }

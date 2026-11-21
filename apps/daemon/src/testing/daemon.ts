@@ -1110,7 +1110,10 @@ export class FakePulls implements PullRequests {
   feedbackNoticeAccounts: (readonly string[] | undefined)[] = [];
   /** sacty の、指摘への返信も含めるか（レビューの工程に渡す既存のレビューだけ true。PBI-352）。 */
   feedbackIncludeSactyReplies: (boolean | undefined)[] = [];
+  /** 渡された、この PR を扱う sacty のタスクの ID（返信の目印のタスク ID と照らす。PBI-445）。 */
+  feedbackSactyReplyTasks: (readonly string[] | undefined)[] = [];
   async feedback(input: {
+    sactyReplyTasks?: readonly string[];
     account?: string;
     number: number;
     sactyReviews?: readonly SactyReviewRound[];
@@ -1120,6 +1123,7 @@ export class FakePulls implements PullRequests {
   }) {
     this.feedbackNoticeAccounts.push(input.noticeAccounts);
     this.feedbackIncludeSactyReplies.push(input.includeSactyReplies);
+    this.feedbackSactyReplyTasks.push(input.sactyReplyTasks);
     const allowed = (input.sactyReviews ?? []).filter((r) => r.allowed).map((r) => r.key);
     this.feedbackSactyReviews.push(allowed.length > 0 ? allowed : undefined);
     this.feedbackIncludeApprovals.push(input.includeApprovals);
@@ -1141,7 +1145,17 @@ export class FakePulls implements PullRequests {
       if (!input.includeSactyReplies && item.body.trimStart().startsWith("<!-- sacty-reply:")) {
         return [];
       }
-      return key !== undefined && item.author === input.account ? [] : [item];
+      // 本物と同じく、目印のタスク ID が、この PR を扱うタスクと一致する返信にだけ、sacty の返信の印を付ける（PBI-445）
+      const replyTask = item.body.trimStart().startsWith("<!-- sacty-reply:")
+        ? item.body.trimStart().slice("<!-- sacty-reply:".length).split(":")[0]
+        : undefined;
+      const marked =
+        input.includeSactyReplies &&
+        replyTask !== undefined &&
+        (input.sactyReplyTasks ?? []).includes(replyTask)
+          ? { ...item, bySacty: true as const }
+          : item;
+      return key !== undefined && item.author === input.account ? [] : [marked];
     });
   }
 }

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/daemon", () => ({
   listProjects: () => Promise.reject(new Error("unreachable")),
   listTasks: () => Promise.reject(new Error("unreachable")),
+  getDashboardSummary: () => Promise.reject(new Error("unreachable")),
 }));
 vi.mock("@/i18n/server", () => ({
   languagePreference: async () => "en",

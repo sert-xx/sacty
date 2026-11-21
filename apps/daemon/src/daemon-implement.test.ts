@@ -6122,6 +6122,29 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
+  it("タスクの一覧の応答（listView）の aiReview は、承認待ちで PR が開いているタスクだけにあり、詳細（view）と同じ値（PBI-442）", async () => {
+    const { activity, service, pulls, id } = await toImplementGate();
+    const other = service.createTask({ projectId: "default", title: "止める" });
+    await service.pause(other.id);
+    const entry = (taskId: string) => service.listView().find((t) => t.id === taskId);
+    // PR の確認で最新の head を読む前は「分からない」
+    expect(entry(id)?.aiReview).toEqual(service.view(id)?.task.aiReview);
+    expect(entry(id)?.aiReview?.status).toBe("unknown");
+    const commit = service.get(id)?.task.pullRequest?.commit;
+    pulls.state = { state: "open", headSha: commit };
+    await service.checkPullRequests();
+    expect(entry(id)?.aiReview).toEqual(service.view(id)?.task.aiReview);
+    expect(entry(id)?.aiReview).toEqual({ head: commit, status: "none" });
+    // 承認待ちでないタスクには付かない
+    expect(entry(other.id)?.aiReview).toBeUndefined();
+    // PR が閉じたら付かない
+    pulls.state = { state: "closed" };
+    await service.checkPullRequests();
+    expect(entry(id)?.aiReview).toBeUndefined();
+    expect(entry(id)?.aiReview).toEqual(service.view(id)?.task.aiReview);
+    activity.close();
+  });
+
   it("実装の説明にあるコンテナの作業領域へのリンクは、PR の本文ではリンクにしない（PBI-366）", async () => {
     const made = await toImplement([
       implement(

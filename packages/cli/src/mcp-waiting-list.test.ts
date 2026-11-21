@@ -32,6 +32,7 @@ type Item = {
   projectId: string;
   projectName: string;
   pendingReview?: boolean;
+  personTurnGroup?: string;
   waitingSince?: string;
   waitingSinceSource?: string;
 };
@@ -150,7 +151,8 @@ describe("人の出番の絞り込み：画面のダッシュボードの「あ�
     expect(r.data.tasks).toMatchObject([
       { id, waitingSince: "2026-11-02T00:00:00.000Z", waitingSinceSource: "updatedAt" },
     ]);
-    expect(r.data.order).toBe("waitingSince_asc");
+    expect(r.data.order).toBe("personTurnGroup_waitingSince_asc");
+    expect(r.data.tasks[0]?.personTurnGroup).toBe("decision");
     t.activity.close();
   });
 
@@ -184,10 +186,15 @@ describe("人の出番の絞り込み：画面のダッシュボードの「あ�
     const d = t.make("D（記録なし）", { status: "awaiting_approval" });
     const dashboard = t.service.dashboard().waitingSince;
     expect(Object.keys(dashboard).sort()).toEqual([a, b, c, e].sort());
+    // 上の組（承認待ち・エスカレーション）→ 下の組（一時停止）。組の中は待ち始めの順
+    const group = (id: string) => (t.live(id).status === "paused" ? 1 : 0);
     const expected = [a, b, c, d, e]
       .map((id) => ({ id, since: dashboard[id] ?? t.live(id).updatedAt }))
-      .sort((x, y) => x.since.localeCompare(y.since) || x.id.localeCompare(y.id));
-    expect(expected.slice(0, 3).map((x) => x.id)).toEqual([c, a, b]);
+      .sort(
+        (x, y) =>
+          group(x.id) - group(y.id) || x.since.localeCompare(y.since) || x.id.localeCompare(y.id),
+      );
+    expect(expected.slice(2).map((x) => x.id)).toEqual([c, a, b]);
     const r = await t.call({ needs_person: true });
     expect(r.data.tasks.map((x) => [x.id, x.waitingSince])).toEqual(
       expected.map((x) => [x.id, x.since]),
@@ -204,6 +211,87 @@ describe("人の出番の絞り込み：画面のダッシュボードの「あ�
     const ids = [1, 2, 3].map((n) => t.make(`同時${n}`, { status: "paused", updatedAt: same }));
     const r = await t.call({ needs_person: true });
     expect(r.data.tasks.map((x) => x.id)).toEqual([...ids].sort());
+    t.activity.close();
+  });
+});
+
+describe("人の出番の組と並び・続きの取得（PBI-442）", () => {
+  const day = (n: number) => `2026-11-0${n}T00:00:00.000Z`;
+
+  it("上の組（承認待ち・エスカレーション）→ 下の組（一時停止）の順で、組の中は待ち始めの古い順。各タスクに組の値が入る", async () => {
+    const t = await setup();
+    // 待ち始め（updatedAt）の順は、組・作成の順とばらばら
+    const p1 = t.make("止まり1", { status: "paused", updatedAt: day(1) });
+    const d1 = t.make("判断1", { status: "awaiting_approval", updatedAt: day(5) });
+    const p2 = t.make("止まり2", { status: "paused", updatedAt: day(2) });
+    const d2 = t.make("判断2", { status: "escalated", updatedAt: day(4) });
+    const r = await t.call({ needs_person: true });
+    expect(r.data.order).toBe("personTurnGroup_waitingSince_asc");
+    expect(r.data.tasks.map((x) => [x.id, x.personTurnGroup])).toEqual([
+      [d2, "decision"],
+      [d1, "decision"],
+      [p1, "paused"],
+      [p2, "paused"],
+    ]);
+    t.activity.close();
+  });
+
+  it("limit 2 で offset 0・2・4 と続けて取ると、組の境目をまたいでも重なりも抜けも無く、total・excludedAiJudging は同じ", async () => {
+    const t = await setup();
+    const ids = [
+      t.make("判断1", { status: "awaiting_approval", updatedAt: day(6) }),
+      t.make("判断2", { status: "escalated", updatedAt: day(5) }),
+      t.make("判断3", { status: "awaiting_approval", updatedAt: day(4) }),
+      t.make("止まり1", { status: "paused", updatedAt: day(1) }),
+      t.make("止まり2", { status: "paused", updatedAt: day(2) }),
+      t.make("止まり3", { status: "paused", updatedAt: day(3) }),
+    ];
+    t.make("AI が判断中", {
+      status: "awaiting_approval",
+      pendingReview: { judgement: undefined },
+    });
+    const whole = await t.call({ needs_person: true, limit: 100 });
+    expect(whole.data.tasks).toHaveLength(6);
+    expect(whole.data.tasks.map((x) => x.id).sort()).toEqual([...ids].sort());
+    const parts = [];
+    for (const offset of [0, 2, 4])
+      parts.push(await t.call({ needs_person: true, limit: 2, offset }));
+    expect(parts.flatMap((r) => r.data.tasks.map((x) => x.id))).toEqual(
+      whole.data.tasks.map((x) => x.id),
+    );
+    expect(parts.flatMap((r) => r.data.tasks.map((x) => x.personTurnGroup))).toEqual([
+      "decision",
+      "decision",
+      "decision",
+      "paused",
+      "paused",
+      "paused",
+    ]);
+    for (const r of parts) {
+      expect(r.data.total).toBe(6);
+      expect(r.data.excludedAiJudging).toBe(1);
+    }
+    expect(parts.map((r) => r.data.nextOffset)).toEqual([2, 4, undefined]);
+    // waitingSince は今のまま（記録が無いので updatedAt で補い、そう分かる）
+    for (const item of whole.data.tasks) expect(item.waitingSinceSource).toBe("updatedAt");
+    t.activity.close();
+  });
+
+  it("ツールの説明・出力の型・サーバーの説明に、組の欄の名前と値・並びがあり、ベルの件数が違うという文は無い", async () => {
+    const t = await setup();
+    const tools = (await t.client.listTools()).tools;
+    const list = tools.find((x) => x.name === "list_tasks");
+    const schema = JSON.stringify(list?.outputSchema);
+    expect(schema).toContain("personTurnGroup_waitingSince_asc");
+    expect(schema).toContain("personTurnGroup");
+    expect(schema).toContain("decision");
+    expect(schema).toContain("paused");
+    expect(list?.description).toContain("personTurnGroup");
+    expect(list?.description).toContain("personTurnGroup_waitingSince_asc");
+    expect(list?.description).not.toContain("件数が違う");
+    const instructions = t.client.getInstructions() ?? "";
+    expect(instructions).toContain("personTurnGroup");
+    expect(instructions).not.toContain("件数が違う");
     t.activity.close();
   });
 });
@@ -335,6 +423,7 @@ describe("状態・プロジェクトの絞り込み、続き、プロジェク�
     const r = await t.call({});
     expect(r.data.order).toBe("createdAt_desc");
     expect(r.data.tasks[0]?.waitingSince).toBeUndefined();
+    expect(r.data.tasks[0]?.personTurnGroup).toBeUndefined();
     expect(r.data.nextOffset).toBeUndefined();
     expect(r.data.excludedAiJudging).toBeUndefined();
     const paths = t.requests.map((x) => x.path).sort();

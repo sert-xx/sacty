@@ -1,10 +1,10 @@
-import { isRepoless, pullRequestCiFailure, type Task } from "@sacty/core";
+import { isRepoless, personTurnTasks, pullRequestCiFailure, type Task } from "@sacty/core";
 import { getMessages } from "@/i18n/server";
-import { listProjects, listTasks } from "@/lib/daemon";
+import { getDashboardSummary, listProjects, listTasks } from "@/lib/daemon";
 
 import {
-  needsPerson,
   personAction,
+  personStatusText,
   prConflictNote,
   type StatusTone,
   statusText,
@@ -68,9 +68,10 @@ export type TaskListData = {
  * 届かなければ例外。
  */
 export async function loadTaskList(projectId: string): Promise<TaskListData | null> {
-  const [tasks, projects, { labels }] = await Promise.all([
+  const [tasks, projects, summary, { labels }] = await Promise.all([
     listTasks(),
     listProjects(),
+    getDashboardSummary(),
     getMessages(),
   ]);
   const project = projects.find((p) => p.id === projectId);
@@ -78,10 +79,14 @@ export async function loadTaskList(projectId: string): Promise<TaskListData | nu
   const mine = tasks.filter((t) => t.projectId === project.id);
   return {
     projectId: project.id,
-    needsYou: mine.filter(needsPerson).map((t) => ({
+    // 対象と並びは、ダッシュボードの「あなたの出番」と同じ（core の personTurnTasks。組の見出しは出さない。PBI-442）
+    needsYou: personTurnTasks(mine, {
+      projectIds: new Set([project.id]),
+      waitingSince: summary.waitingSince,
+    }).map(({ task: t }) => ({
       id: t.id,
       title: t.title,
-      status: statusText(t, labels),
+      status: personStatusText(t, labels),
       ...(prConflictNote(t, labels) ? { note: prConflictNote(t, labels) } : {}),
       action: personAction(t, labels),
     })),

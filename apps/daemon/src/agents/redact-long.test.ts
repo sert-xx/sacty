@@ -44,20 +44,16 @@ describe("とても長い値でも、伏せる処理のメモリと時間が長�
     expect(large / small).toBeLessThan(2.1);
   });
 
-  // 時間は、遅い CI でも揺れないよう、修正前の実測（数秒以上）と区別できる範囲で余裕を取る。二乗への退行は、節の数の比のテストで捉える
-  it("2MB の値の木を作るのも、2MB の入力から値を伏せるのも、5 秒以内で、全体が 1 つの目印になる", () => {
+  it("2MB の値を含む入力から、値の全体を伏せる", () => {
     const value = longValue(2 * MB, 3);
-    const start = performance.now();
-    const text = `head ${value} tail ${value}`;
-    expect(redact(text, [value])).toBe(`head ${REDACTED} tail ${REDACTED}`);
-    expect(performance.now() - start).toBeLessThan(5000);
+    expect(redact(`head ${value} tail ${value}`, [value])).toBe(
+      `head ${REDACTED} tail ${REDACTED}`,
+    );
   });
 
-  it("同じ文字だけの長い値と入力でも、遅くならない（失敗の連鎖が二乗にならない）", () => {
+  it("同じ文字だけの長い値と入力でも、全体が 1 つの目印になる", () => {
     const value = "a".repeat(MB);
-    const start = performance.now();
     expect(redact(`x${"a".repeat(2 * MB)}y`, [value])).toBe(`x${REDACTED}y`);
-    expect(performance.now() - start).toBeLessThan(5000);
   });
 
   it("認証ファイルの大きさの上限は 1MiB で、その大きさの値でも木は 1 文字あたり 30 バイト以下で作れる", () => {
@@ -126,6 +122,24 @@ describe("長い値でも、値の文字を 1 文字も残さない（PBI-438 �
         parts.push(redactor.push(buf.subarray(i, i + step)));
       parts.push(redactor.flush());
       expect(Buffer.concat(parts).toString("utf8")).toBe(`before ${REDACTED} after ${REDACTED}`);
+    }
+  });
+});
+
+describe("ステージした認証ファイルの上限（readStagedFile）", () => {
+  it("上限ちょうどは読め、上限 + 1 バイトは例外になる", async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { readStagedFile, StagedFileTooLargeError } = await import("./docker.js");
+    const dir = mkdtempSync(join(tmpdir(), "sacty-staged-"));
+    try {
+      writeFileSync(join(dir, "exact"), "a".repeat(100));
+      writeFileSync(join(dir, "over"), "a".repeat(101));
+      expect(readStagedFile({ dir, name: "exact" }, 100).length).toBe(100);
+      expect(() => readStagedFile({ dir, name: "over" }, 100)).toThrow(StagedFileTooLargeError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

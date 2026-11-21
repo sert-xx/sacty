@@ -502,6 +502,31 @@ describe("ダッシュボードの集計：対応待ちの時刻と待ち行列�
     });
   });
 
+  it("待ち始めを返す条件は、人の出番の判定（personTurnGroup）に従う：AI が判断中の承認待ちと実行待ちには返さない（PBI-442）", () => {
+    const stats = new DashboardStats();
+    const t = task();
+    for (const id of ["a", "judging", "p", "q"]) {
+      stats.add(
+        event("StepSubmitted", NOW, { step: "design", submission: 1 }, { taskId: id }),
+        t,
+        t,
+      );
+    }
+    const s = summarize(stats, {
+      tasks: [
+        task({ id: "a", status: "awaiting_approval" }),
+        task({
+          id: "judging",
+          status: "awaiting_approval",
+          pendingReview: { keys: ["k"], remarks: ["r"] },
+        } as Partial<Task>),
+        task({ id: "p", status: "paused" }),
+        task({ id: "q", status: "queued" }),
+      ],
+    });
+    expect(Object.keys(s.waitingSince).sort()).toEqual(["a", "p"]);
+  });
+
   it("実行中と実行待ちは、ワーカーの処理中と処理の対象の ID で数える。消したプロジェクトと無いタスクは数えない", () => {
     const stats = new DashboardStats();
     expect(summarize(stats).queue).toEqual({ running: 0, queued: 0, max: 3 });

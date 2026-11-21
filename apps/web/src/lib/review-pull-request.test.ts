@@ -7,6 +7,7 @@ const listTasks = vi.fn(async (_options?: { open?: boolean }): Promise<Task[]> =
 vi.mock("@/lib/daemon", () => ({
   listProjects: async () => [{ id: "p1", name: "決済", targets: [], createdAt: "", updatedAt: "" }],
   listTasks,
+  getDashboardSummary: async () => ({ waitingSince: {} }),
 }));
 vi.mock("@/i18n/server", () => ({ getMessages: async () => messagesFor("ja") }));
 vi.mock("@/lib/current-project", () => ({

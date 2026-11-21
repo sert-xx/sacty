@@ -129,7 +129,7 @@ sacty は、5つのパッケージでできている。
       完了したタスクの成果物を3秒ごとに運ばないためである。
       完了したものを含む全件は、成果物の大きさによって1回で数十〜数百 MB になる。
       ヘッダーのお知らせ（対応待ち）も同じ経路で取る。
-    - 作業履歴を要する集計（`GET /api/dashboard`。下の[ダッシュボードの集計](#ダッシュボードの集計)）。
+    - 作業履歴を要する集計（`GET /api/dashboard`。下の[ダッシュボードの集計](#ダッシュボードの集計)）。ヘッダーのお知らせと、タスクの一覧の上のカードも、待ち始め（`waitingSince`）を読むために、この集計を読む。
     - 取り込みの状況（`GET /api/status` の `intake`）。
   - 一覧の欄（あなたの出番・終わっていないタスク・予算に近いタスク）は、1行の高さが 4rem 以上、欄の高さは5件分（20rem）。
     それより多ければ欄の中でスクロールする（キーボードでもスクロールできるよう、欄がフォーカスを受ける）。
@@ -148,14 +148,20 @@ sacty は、5つのパッケージでできている。
 ダッシュボードの欄ごとの中身は次のとおり。
 
 - あなたの出番
-  - 終わっていないタスクのうち、状態の表示が人の出番のものを、待っている時間が長い順に出す。
-    人の出番は、`statusTone` が `person` のもの（承認待ち・一時停止・エスカレーション）。
-    承認待ちでも、PR の指摘の戻し先を判断している間は除く。
+  - 終わっていないタスクのうち、人の出番のものを、2つの組に分けて出す。
+    判定・組・並びは `packages/core` の `personTurnGroup`・`personTurnTasks` に1か所だけ置き、ダッシュボード・ヘッダーのお知らせ・一覧の上のカード・MCP の `list_tasks`（`needs_person`）・集計の `waitingSince` を返す条件が同じものを使う。
+    - 上の組 `decision`：承認待ち・エスカレーション。承認待ちでも、PR の指摘の戻し先を判断している間（`pendingReview` がある）は人の出番に入れない。
+    - 下の組 `paused`：一時停止（理由は問わない）。
+    - 並びは、上の組 → 下の組、組の中は待ち始めの古い順、同じなら ID の順。消したプロジェクトのタスクは入れない。
+  - 欄は、組ごとに見出し（`h3`。組の名前と件数）と、見出しを `aria-labelledby` で指す一覧を出す。件数が 0 の組は見出しも出さない。
+    欄の見出しの件数は全体の件数。上の組が先頭にあるので、下の組が何件あっても、欄をスクロールしなくても上の組の見出しと先頭の行が見える。
+  - 承認待ちで、今の提出の PR が開いていて、AI のレビューがその PR の今の head をレビューしている間（`aiReview.status` が `reviewing`）は、状態の文の後ろに「・AI のレビュー中」を添える（`personStatusText`）。組と並びは変えない。
+    ヘッダーのお知らせと一覧の上のカードの行も同じ。`aiReview` は、タスクの一覧の応答（`GET /api/tasks`）の、承認待ちで PR が開いているタスクだけに、タスクの詳細と同じ計算（`aiReviewsOfHeads`。一覧のための束ね方で、`aiReviewOfHead` と結果は同じ）で載る。GitHub は読まない。
   - 各行は、題・プロジェクト・状態・待っている時間。
     題は、人が判断する場所へのリンク（`personAction`）。
     PR で確かめる工程は PR を新しいタブで開く（[承認と差し戻し](approval.md#pr-での承認)）。
   - 待ち始めは、その状態になった作業履歴の記録（`StepSubmitted`・`TaskPaused`・`TaskEscalated`・再現できなかった `ReproductionChecked`）の最後の時刻（集計の `waitingSince`）。
-    記録が無ければ `updatedAt`。
+    記録が無ければ `updatedAt`。集計が `waitingSince` を返す条件も、`personTurnGroup` が返すタスク（AI が判断中の承認待ちを除く）。
   - 待っている時間は、分・時間・日のどれか1つ（切り捨て。1分未満は「1分未満」。`durationText`）。
   - 無ければ「対応待ちはありません。」
 - 止まっているタスクの理由
@@ -229,7 +235,7 @@ sacty は、5つのパッケージでできている。
 ## ダッシュボードの集計
 
 作業履歴を要する集計（対応待ちの時刻・費用・流量・品質・待ち行列）は、デーモンが `GET /api/dashboard` で返す（`DashboardSummary`）。
-画面が3秒ごとに取り直しても、タスクの全件や作業履歴を読み直さない。
+画面が3秒ごとに取り直しても、タスクの全件や作業履歴を読み直さない。読むのは、ダッシュボードのほか、ヘッダー（`loadHeaderData`）とタスクの一覧のカード（`loadTaskList`）である。この集計を重くする・失敗しうる形にするときは、この3つに響く。
 
 - デーモンは、起動のときに作業履歴を読んで状態を復元するのと同じ1回の走査で、イベントを1つずつ `DashboardStats` に畳み込む（`project` の `applied`）。
   作業履歴に書き足すときも、適用したイベントを畳み込む。
@@ -283,8 +289,8 @@ sacty は、5つのパッケージでできている。
 
   | 画面 | サイドメニュー | お知らせ |
   | --- | --- | --- |
-  | 「すべてのプロジェクト」 | 「設定」だけ。「設定」はプロジェクトの一覧（`/projects`）へ移る（どのプロジェクトにも飛ばない） | プロジェクトで分けずに新しい順。開くと、そのタスクのプロジェクトに切り替えてタスクを開く |
-  | プロジェクト | 「タスク」「スケジュール」「監査」「設定」 | 「ほかのプロジェクト」「このプロジェクト」に分ける |
+  | 「すべてのプロジェクト」 | 「設定」だけ。「設定」はプロジェクトの一覧（`/projects`）へ移る（どのプロジェクトにも飛ばない） | ダッシュボードの「あなたの出番」と同じ対象・同じ並び（上の組 → 下の組。組の見出しと、行ごとの待っている時間つき）。プロジェクトでは分けない。開くと、そのタスクのプロジェクトに切り替えてタスクを開く |
+  | プロジェクト | 「タスク」「スケジュール」「監査」「設定」 | 同じ（画面で並びを変えない） |
 
   サイドメニューに「ダッシュボード」は出さない。
   使わないためで、ダッシュボードはロゴとプロジェクトの切り替えの「すべてのプロジェクト」から開ける。
@@ -295,7 +301,7 @@ sacty は、5つのパッケージでできている。
   どの画面でも、タスクの状態によらない。
 
 コード: `apps/web/src/components/shell/header.tsx`（`AppHeader`・`HeaderFallback`）、`apps/web/src/components/shell/live-header.tsx`（`LiveHeaderMenus`・`selectedProject`）、
-`apps/web/src/components/shell/menus.tsx`（`ProjectMenu`・`NotificationsMenu`）、`apps/web/src/components/shell/rail.tsx`（`railItems`）、`apps/web/src/lib/page-scope.ts`（`pageScope`）、
+`apps/web/src/components/shell/menus.tsx`（`ProjectMenu`・`NotificationsMenu`）、`packages/core/src/person-turn.ts`（`personTurnTasks`）、`apps/web/src/components/shell/rail.tsx`（`railItems`）、`apps/web/src/lib/page-scope.ts`（`pageScope`）、
 `apps/web/src/lib/header-data.ts`（`loadHeaderData`）、`apps/web/src/components/shell/follow-project.tsx`（`FollowProject`）、
 `apps/web/src/lib/project-select.ts`、`apps/web/src/lib/current-project.ts`（`selectProject`）、
 `apps/web/src/app/switch/route.ts`、`apps/web/src/app/actions.ts`
@@ -320,9 +326,9 @@ sacty は、5つのパッケージでできている。
   | 先 | 返すもの |
   | --- | --- |
   | `GET /live/dashboard` | ダッシュボードの欄のデータ（あなたの出番・止まっている理由・終わっていないタスク・費用と予算・待ち行列・取り込みの状況・流量・品質の信号・通知を送れなかった理由。`loadDashboard`） |
-  | `GET /live/tasks?project=<ID>` | URL のプロジェクトの、タスクの一覧の行と、人間の判断が必要なタスクのカード（表示に要るものだけ。`loadTaskList`）。プロジェクトが無い・ID の形が違えば `{ missing: true }` |
+  | `GET /live/tasks?project=<ID>` | URL のプロジェクトの、タスクの一覧の行と、人間の判断が必要なタスクのカード（表示に要るものだけ。`loadTaskList`。カードの並びのために `GET /api/dashboard` も読む）。プロジェクトが無い・ID の形が違えば `{ missing: true }` |
   | `GET /live/tasks/<ID>` | タスクの詳細に出すもの（タスク・作業履歴・親・子タスク・片付けるもの・イメージの候補など。`loadTaskDetail`）。タスクが無ければ（消したプロジェクトのタスクを含む）`{ missing: true }` |
-  | `GET /live/header?current=<ID>` | ヘッダーのプロジェクトの切り替え（対応待ちの件数）とお知らせ（`loadHeaderData`） |
+  | `GET /live/header?current=<ID>` | ヘッダーのプロジェクトの切り替え（対応待ちの件数）とお知らせ（`loadHeaderData`。待ち始めのために `GET /api/dashboard` も読む） |
   | `GET /live/tasks/<ID>/review` | 成果物のレビューの画面のタスク。タスクが無ければ（消したプロジェクトのタスクを含む）`{ missing: true }` |
   | `GET /live/tasks/<ID>/runs/<実行の ID>?events=&stderr=` | 実行のログの、画面が持っている分に足された分（下を参照） |
   | `GET /live/projects` | プロジェクトの一覧と、取り込みの状況（`loadProjectList`） |

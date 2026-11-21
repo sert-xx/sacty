@@ -817,6 +817,8 @@ The AI decides by these criteria.
 | Handle in this PR | A suggestion inside the scope of the PR's purpose that, if not fixed, causes harm such as wrong behavior, text that misleads readers, or a gap in verification, or causes rework later |
 | Do not handle in this PR | A suggestion outside the scope of the purpose; preferences, formatting, and wording; a new suggestion about details of text added by a fix; another occurrence of the same cause that keeps coming; something answered in an earlier round as not fixable; raising again something already declined |
 
+The review side also does not post findings that overlap one already addressed or one you decided not to do ([Intake](intake.en.md)). A suggestion that overlaps one the AI decided not to handle is not posted either.
+
 - The later the review round, the stricter the bar for handling. When reviews with suggestions only come twice or more in a row, the AI does not handle them in principle.
 - When the AI is unsure, it decides to handle the suggestion if reviews with suggestions only have not come in a row, and not to handle it if they have.
 - A suggestion the AI could not judge (the run failed, the answer could not be read, and so on) is set to be handled and is fixed.

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -1875,6 +1876,38 @@ while true; do sleep 0.05; done`,
     expect(logged).not.toContain("old-token");
   });
 
+  it("コンテナが止まったことを確かめられず、認証ファイルも大きくされたときは、停止の確認の失敗を返し、出力も書き戻しもしない", async () => {
+    const { existsSync } = await import("node:fs");
+    const { DockerExecutor, RunningContainers } = await import("./docker.js");
+    const { bin, hostAuth } = await fakeDocker(
+      `head -c 1100000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
+touch "$here/ready"
+trap 'exit 137' TERM
+while true; do sleep 0.05; done`,
+      "echo still-running; exit 0",
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const executor = new DockerExecutor(undefined, undefined, new RunningContainers(spawn, 10, 1));
+    const running = executor.run({
+      runId: "r444a",
+      image: "img",
+      workspaceDir: dir,
+      invocation: invocation(hostAuth),
+    });
+    await waitFor(() => existsSync(join(bin, "ready")), {
+      what: "偽の docker が認証ファイルを大きくした合図（ready）",
+      source: { name: "偽の docker の実行", ended: running },
+    });
+    executor.abortAll();
+    const outcome = await running;
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      message: { code: "run.containerNotConfirmed" },
+    });
+    expect(outcome).not.toHaveProperty("output");
+    expect(readFileSync(hostAuth, "utf8")).toBe("old-token");
+  });
+
   it("コンテナが認証ファイルをホストのほかのファイルへのリンクに差し替えても、その中身を書き戻さない", async () => {
     const { DockerExecutor } = await import("./docker.js");
     const { hostAuth } = await fakeDocker(
@@ -2714,7 +2747,12 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function run(hostAuthContent: string, dockerScript: string, log?: SessionLogSink) {
+  async function run(
+    hostAuthContent: string,
+    dockerScript: string,
+    log?: SessionLogSink,
+    sessionFiles?: "codex",
+  ) {
     const { chmodSync } = await import("node:fs");
     const { DockerExecutor } = await import("./docker.js");
     dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
@@ -2734,6 +2772,7 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
         command: ["codex"],
         env: { CODEX_HOME: "/.codex" },
         stage: { containerDir: "/.codex", files: [{ hostPath: hostAuth, name: "auth.json" }] },
+        ...(sessionFiles ? { sessionFiles } : {}),
         parser: "codex-jsonl",
       },
     });
@@ -2749,7 +2788,12 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":
       "a".repeat(1024 * 1024 + 1),
       `#!/bin/sh\ntouch "$(dirname "$0")/started"\n${completes}`,
     );
-    expect(outcome).toMatchObject({ kind: "failed", reason: "auth" });
+    // 失敗の文言には、ホストの認証ファイルのパスを渡す
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      reason: "auth",
+      message: { code: "run.authFileUnreadable", params: { path: join(dir, "auth.json") } },
+    });
     expect(existsSync(join(dir, "bin", "started"))).toBe(false);
   });
 
@@ -2789,6 +2833,56 @@ ${completes}`,
       log,
     );
     expect(calls).toContain("withhold");
+  });
+
+  it("大きくされたら、更新後のトークンを出力しても、セッションログにも写したファイルにも残さない", async () => {
+    const { SessionLogStore } = await import("../session-logs.js");
+    const root = mkdtempSync(join(tmpdir(), "sacty-runs-"));
+    try {
+      const log = new SessionLogStore(root).open(
+        {
+          taskId: "task-1",
+          runId: "run-1",
+          role: "design",
+          agentId: "codex",
+          runtime: "codex",
+          authMode: "subscription",
+        },
+        () => [],
+      );
+      const token = "refreshed-token-0123456789";
+      const { outcome } = await run(
+        '{"token":"host-token-value-0123456789"}',
+        `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in *:/.codex) host="\${arg%%:*}" ;; esac
+done
+printf '${token}' > "$host/auth.json"
+head -c 1100000 /dev/zero | tr '\\0' 'a' >> "$host/auth.json"
+mkdir -p "$host/sessions"
+echo '{"note":"${token}"}' > "$host/sessions/s.jsonl"
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"key ${token}"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+        log,
+        "codex",
+      );
+      expect(outcome).toMatchObject({ kind: "failed", reason: "auth" });
+      log.close(outcome);
+      const found: string[] = [];
+      const walk = (d: string) => {
+        for (const e of readdirSync(d, { withFileTypes: true })) {
+          const f = join(d, e.name);
+          if (e.isDirectory()) walk(f);
+          else if (readFileSync(f, "utf8").includes(token)) found.push(f);
+        }
+      };
+      walk(root);
+      expect(found).toEqual([]);
+      expect(log.archived).toMatchObject({ notArchived: "secret_file_too_large", files: [] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("上限以下の非 JSON の認証ファイルは、今までどおり伏せる対象になる", async () => {

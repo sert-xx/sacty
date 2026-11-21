@@ -2129,7 +2129,7 @@ const AgentSessionArchived = z.object({
      * 写さなかった理由（files は空）。container_not_confirmed：コンテナが止まったことを確かめられなかった
      * （動いたままのコンテナが写す途中のファイルを差し替えられるため、写さない）。
      */
-    notArchived: z.enum(["container_not_confirmed"]).optional(),
+    notArchived: z.enum(["container_not_confirmed", "secret_file_too_large"]).optional(),
   }),
 });
 

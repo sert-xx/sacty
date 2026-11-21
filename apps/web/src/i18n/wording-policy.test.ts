@@ -59,6 +59,7 @@ const EXCEPTIONS: Record<string, string> = {
   "runLog.clipped": "省略の印。括弧で理由を添える",
   "runLog.notFoundHelp": "無い理由の案内",
   "runLog.agentFiles.notArchived.container_not_confirmed": "写していない理由の注記",
+  "runLog.agentFiles.notArchived.secret_file_too_large": "写していない理由の注記",
   "task.orchestratorSession.notSaved": "何が起きた・次に何が起きるの2文",
   "task.deployment.suppressed.duplicate": "作らなかった理由",
   "common.daemon.notConfigured": "エラー。何が無い・何をするの2文",

@@ -142,12 +142,6 @@ export class StagedFileTooLargeError extends Error {
   }
 }
 
-/**
- * ステージした認証ファイルとして読む大きさの上限（バイト）。コンテナの中のエージェントが、ステージしたファイルを
- * 任意の大きさに書き換えられる。超えたときは、値を伏せる対象から外さずに、実行を失敗にする。
- */
-export const MAX_STAGED_SECRET_FILE_BYTES = MAX_AUTH_FILE_BYTES;
-
 /** ステージしたファイル（実行ごとの一時ディレクトリ dir の中の、相対パス name。区切りは /）。 */
 export type StagedFile = { dir: string; name: string };
 
@@ -467,18 +461,19 @@ export class DockerExecutor implements AgentExecutor {
     const stagedSecrets: string[] = [];
     /** 上限を超えた大きさだったファイル（値を伏せる対象にできないので、実行を失敗にする）。 */
     let secretFileTooLarge: string | undefined;
+    /** コンテナの停止を確かめられなかった・デーモンの停止。上限超えの失敗より、この結果を優先して返す。 */
+    let stopResult = false;
+    const hostPathOf = new Map<StagedFile, string>();
     const collectSecrets = () => {
       for (const staged of stagedFiles) {
         try {
           // リンクを辿らずに読む（コンテナが差し替えたリンクの先や FIFO を読まない。PBI-71）
           stagedSecrets.push(
-            ...secretStringsInJson(
-              readStagedFile(staged, MAX_STAGED_SECRET_FILE_BYTES).toString("utf8"),
-            ),
+            ...secretStringsInJson(readStagedFile(staged, MAX_AUTH_FILE_BYTES).toString("utf8")),
           );
         } catch (error) {
           if (error instanceof StagedFileTooLargeError) {
-            secretFileTooLarge = staged.name;
+            secretFileTooLarge = hostPathOf.get(staged) ?? staged.name;
             log?.withholdOutput?.(); // ファイルの中身は伏せられないので、この実行の出力をセッションログに残さない
           }
           // 消えていれば・リンクなどに差し替えられていれば何もしない
@@ -514,6 +509,7 @@ export class DockerExecutor implements AgentExecutor {
         try {
           copyFileSync(file.hostPath, copied);
           stagedFiles.push(staged);
+          hostPathOf.set(staged, file.hostPath);
           const hashAtCopy = hashOfStaged(staged);
           if (file.syncBack && hashAtCopy) {
             syncBacks.push({ hostPath: file.hostPath, staged, hashAtCopy });
@@ -654,6 +650,7 @@ export class DockerExecutor implements AgentExecutor {
       if (this.aborting) {
         // デーモンを止めるために止めた実行も、止めるまでに読めた使用量は残す。全体は分からない（PBI-281）
         const partial = reader.finish(exitCode, stderr);
+        stopResult = true;
         outcome = {
           kind: "failed",
           reason: "error",
@@ -703,6 +700,7 @@ export class DockerExecutor implements AgentExecutor {
       // それまでに出力された分から使用量を拾う（結果が出る前に止めたので、全体は分からない）。時間切れと停止の確認の失敗で共有する
       const partial = timedOut.error || !stopped ? reader.finish(1) : undefined;
       if (!stopped) {
+        stopResult = true;
         // 止まったことを確かめられなくても、それまでに読めた使用量と不明の印は残す（コンテナが動き続けていれば、この後の分は
         // 分からない）
         outcome = {
@@ -756,7 +754,9 @@ export class DockerExecutor implements AgentExecutor {
           runtime: invocation.sessionFiles,
           ...(reader.sessionId ? { sessionId: reader.sessionId } : {}),
         };
-        if (stopped) await log.archiveAgentFiles({ dir: staging, ...session });
+        if (secretFileTooLarge !== undefined)
+          log.agentFilesNotArchived({ ...session, reason: "secret_file_too_large" });
+        else if (stopped) await log.archiveAgentFiles({ dir: staging, ...session });
         else log.agentFilesNotArchived({ ...session, reason: "container_not_confirmed" });
       }
       // 消せなくても、実行の結果（出力・使用量）は失わない（警告だけにする）
@@ -772,6 +772,9 @@ export class DockerExecutor implements AgentExecutor {
       }
     }
     if (secretFileTooLarge !== undefined) {
+      // コンテナの停止を確かめられなかった・デーモンの停止は、その結果を優先する（出力は返さない）
+      if (stopResult && outcome.kind === "failed")
+        return { ...outcome, message: redactText(outcome.message, stagedSecrets) };
       // コンテナの中で大きくされた（値を伏せる対象にできない）。出力を返さず、失敗にする（使用量は残す）
       return {
         kind: "failed",

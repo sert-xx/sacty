@@ -109,7 +109,7 @@ export interface SessionLogSink {
    */
   agentFilesNotArchived(input: {
     runtime: AgentSessionRuntime;
-    reason: "container_not_confirmed";
+    reason: "container_not_confirmed" | "secret_file_too_large";
     sessionId?: string;
   }): void;
 }
@@ -119,7 +119,7 @@ export type ArchivedAgentSession = AgentArchive & {
   runtime: AgentSessionRuntime;
   sessionId?: string;
   /** 写さなかった理由（files は空）。 */
-  notArchived?: "container_not_confirmed";
+  notArchived?: "container_not_confirmed" | "secret_file_too_large";
 };
 
 /** 秘密情報と、JSON の文字列の中に書かれたときの形（エスケープされた形）。長い順。 */
@@ -480,15 +480,11 @@ export class SessionLog implements SessionLogSink {
   private clearWithheld(): void {
     for (const file of Object.values(this.files)) {
       try {
-        if (existsSync(file.path)) {
-          writeFileSync(
-            file.path,
-            "[sacty] output withheld: it may contain a value that cannot be redacted.\n",
-            {
-              mode: 0o600,
-            },
-          );
-        }
+        writeFileSync(
+          file.path,
+          "[sacty] output withheld: it may contain a value that cannot be redacted.\n",
+          { mode: 0o600 },
+        );
       } catch (error) {
         this.warn(error);
       }
@@ -522,7 +518,9 @@ export class SessionLog implements SessionLogSink {
   agentFilesNotArchived(input: Parameters<SessionLogSink["agentFilesNotArchived"]>[0]): void {
     if (this.archived) return;
     console.warn(
-      `[daemon] コンテナが止まったことを確かめられなかったため、エージェントのセッションのファイルを写しませんでした（${this.meta.runId}）。`,
+      input.reason === "secret_file_too_large"
+        ? `[daemon] 認証ファイルが大きすぎて値を伏せられないため、エージェントのセッションのファイルを写しませんでした（${this.meta.runId}）。`
+        : `[daemon] コンテナが止まったことを確かめられなかったため、エージェントのセッションのファイルを写しませんでした（${this.meta.runId}）。`,
     );
     this.archived = {
       files: [],

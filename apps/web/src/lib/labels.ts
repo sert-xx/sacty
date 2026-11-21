@@ -17,6 +17,7 @@ import {
   isCompleted,
   MAX_FIX_CHAIN,
   openProposal,
+  personTurnGroup,
   pullRequestConflict,
   reviewWatching,
   type StepKey,
@@ -135,12 +136,11 @@ export function statusTone(task: Task): StatusTone {
   // レビューを投稿した後の PR の見守りは、PR の作者の対応を待っている（人の出番でも、完了でもない。PBI-411）
   if (task.status === "idle" && reviewWatching(task)) return "waiting";
   if (task.status === "idle" && isCompleted(task)) return "completed";
-  // PR の指摘の戻し先を判断している間は、承認待ちでも AI が進めている
-  if (task.status === "awaiting_approval" && task.pendingReview) return "working";
   if ((task.status === "queued" || task.status === "idle") && heldReview(task)) return "working";
   // 実行待ちのまま、最初の工程の前の処理（リポジトリの用意・情報収集・進め方の判定など）を sacty が進めている（PBI-410）
   if (task.status === "queued" && task.preparing) return "working";
-  if (needsPerson(task)) return "person";
+  // 承認待ちでも、PR の指摘の戻し先を AI が判断している間は personTurnGroup が無く、下の「working」になる
+  if (personTurnGroup(task)) return "person";
   if (task.status === "queued" || task.status === "blocked") return "waiting";
   // 実行中・子タスクの進行中に加え、テスト・最終レビュー・判定など、完了していない idle も sacty が進めている
   return "working";
@@ -297,11 +297,13 @@ export function canControl(task: Task): boolean {
   return task.status !== "cancelled" && (!isCompleted(task) || reviewWatching(task));
 }
 
-/** 人間の判断が必要な状態か（承認待ち・エスカレーション・一時停止）。 */
-export function needsPerson(task: Task): boolean {
-  return (
-    task.status === "awaiting_approval" || task.status === "escalated" || task.status === "paused"
-  );
+/**
+ * 人の出番の行（ダッシュボード・ベル・一覧の上のカード）の状態の文（PBI-442）。statusText に、Sacty の AI のレビューが
+ * PR の今の head をレビューしている間（aiReview.status が reviewing）だけ、「レビュー中」を添える。組と並びは変えない。
+ */
+export function personStatusText(task: Task, labels: LabelMessages): string {
+  const text = statusText(task, labels);
+  return task.aiReview?.status === "reviewing" ? text + labels.personTurn.aiReviewInProgress : text;
 }
 
 /**

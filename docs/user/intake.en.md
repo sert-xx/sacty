@@ -124,6 +124,19 @@ The agent reads the reviews and comments already on the PR and does not repeat t
   A thread that is merely not marked resolved does not count as unaddressed.
 - Only when it confirms that a finding is unaddressed does the summary say that an existing finding is unaddressed, and then the verdict is not "no findings".
 
+Findings that overlap one already addressed or one already rejected are not posted.
+
+- Whether something is addressed is checked at the head commit. Even if a reply says "addressed", a finding that is not actually fixed stays as not addressed.
+- A finding that overlaps any of the following is dropped even when it is `[要修正]`.
+  - A finding you wrote "won't do" or "out of scope" for in a PR comment
+  - A finding you sent to a follow-up
+  - A finding you disabled on the screen
+- A `[要修正]` that overlaps a suggestion the AI decided not to handle is not dropped. It appears as a new finding only when, checked again, it has the weight of a must.
+- When the problem changed or grew after the rejection, it appears as a new finding.
+- Only when something was dropped, the overview gets one line with the number (never the content; when `[要修正]` findings were dropped, that number is given too).
+
+What counts as your "won't do" is a reply from the PR's author or from an organization member or collaborator (`OWNER`, `MEMBER`, `COLLABORATOR`; write access is not checked). A reply from any other account does not cause a `[要修正]` to be dropped.
+
 Requests outside the PR's purpose (the PR description, or the request, acceptance criteria or design it points to), such as adding a feature the change does not need or reworking an unrelated place, are not posted.
 Only when some were dropped, the summary says the count in one line (not the content).
 `[要修正]` findings are never dropped on the ground of being outside the purpose, and neither are findings when the purpose cannot be read or it is unclear whether they are inside.
