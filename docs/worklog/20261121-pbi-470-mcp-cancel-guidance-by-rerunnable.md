@@ -23,7 +23,7 @@
 - 実行した検証（直しの後のコードで実行）：
   - `npm run lint`：通った。
   - `npm run typecheck`・`npm run build`：通った。
-  - `npx vitest run`：338 ファイル中、336 通過・2 ファイルで 3 件が 5 秒の時間切れ（全件の負荷による。`tests/docs/docs.test.ts` の 2 件と `tests/desktop/migration.test.ts` の 1 件）。この 2 ファイルと `tests/docs` を単独で流し直すと、5 ファイル 120 件が通った。
+  - `npx vitest run`：338 ファイル中、337 通過・1 ファイルで 2 件が 5 秒の時間切れ（全件の負荷による。`tests/docs/docs.test.ts`）。`tests/docs` と `mcp-rerun.test.ts` を単独で流し直すと、5 ファイル 127 件が通った。
 - 案内を戻すと落ちること：`get_cancel_plan` の判定を無効にして daemon をビルドし直すと、`mcp-rerun.test.ts` の「再実行できないタスク」のテストが落ちた。戻した後は通る。
 
 ## レビューの指摘と対応
