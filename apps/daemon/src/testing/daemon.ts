@@ -482,16 +482,16 @@ export class FakeRepos implements RepositoryWorkspace {
   /**
    * 本物の push の呼び出し（pushCommit・publish・要求要件・設計のコミットの push）ごとに、先頭から1つ使う結果（PBI-467）。
    * 文字列は、その git の標準エラー出力で失敗する（本物の分類で作った PushFailedError）。applied は、リモートが進んだ後に
-   * 失敗する（応答だけが失われた）。"ok" と、使い切った後は通る。
+   * 失敗する（応答だけが失われた）。使い切った後は通る。
    */
-  pushScript: (string | { stderr: string; applied: true } | "ok")[] = [];
+  pushScript: (string | { stderr: string; applied: true })[] = [];
   /** push の呼び出しごとの、コミット・ブランチ・渡された認証の環境（PBI-467）。 */
   pushAttempts: { commit: string; branch: string; authEnv?: Record<string, string> }[] = [];
   /** push を1回数え、pushScript の結果が失敗なら、その失敗と、リモートが進むかを返す。 */
   private takePush(commit: string, branch: string, authEnv?: Record<string, string>) {
     this.pushAttempts.push({ commit, branch, ...(authEnv ? { authEnv } : {}) });
     const step = this.pushScript.shift();
-    if (step === undefined || step === "ok") return { applied: true as const };
+    if (step === undefined) return { applied: true as const };
     const stderr = typeof step === "string" ? step : step.stderr;
     return {
       applied: typeof step !== "string",

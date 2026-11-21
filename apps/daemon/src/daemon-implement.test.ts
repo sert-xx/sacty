@@ -5646,6 +5646,44 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         ctx.activity.close();
       });
 
+      it("1 回失敗しても止まらず、同じコミット・ブランチ・認証の環境で push し直して PR を更新する", async () => {
+        const ctx = setup([0, 0, 0]);
+        await toPublish(ctx);
+        ctx.repos.pushScript = [REJECT];
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.repos.pushAttempts).toHaveLength(2);
+        expect(ctx.repos.pushAttempts[1]).toEqual(ctx.repos.pushAttempts[0]);
+        expect(kinds(ctx)).toEqual(["PushRetried", "PushRetryEnded", "PullRequestPublished"]);
+        expect(
+          ctx.service.get(ctx.id)?.activity.findLast((e) => e.type === "PushRetryEnded")?.payload,
+        ).toMatchObject({ outcome: "pushed", retries: 1 });
+        ctx.activity.close();
+      });
+
+      it("やり直しの途中で一時的でない失敗（保護での拒否）に変わったら、そこでやめ、回数を記録する。先頭が進んでいれば今までどおり 1 回だけ push し直し、通らなければ pr.continuedBranchMoved で止まる", async () => {
+        const ctx = setup([0, 0, 0]);
+        await toPublish(ctx);
+        // 先頭は、起点とも前にプッシュしたコミットとも違い、一時的でない失敗なので、今までどおり先頭を読み直して 1 回だけ push し直す
+        // （それも通らなければ、人が PR のブランチを進めたとして止まる）
+        ctx.repos.remote["feature/retry"] = "9".repeat(40);
+        ctx.repos.branchHeads["feature/retry"] = "9".repeat(40);
+        ctx.repos.pushScript = [
+          REJECT,
+          "remote: error: GH006: Protected branch update failed\n! [remote rejected] c1 -> feature/retry (protected branch hook declined)",
+          "! [rejected] c1 -> feature/retry (non-fast-forward)",
+        ];
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.repos.pushAttempts).toHaveLength(3);
+        expect(kinds(ctx)).toEqual(["PushRetried", "PushRetryEnded", "TaskPaused"]);
+        expect(
+          ctx.service.get(ctx.id)?.activity.findLast((e) => e.type === "PushRetryEnded")?.payload,
+        ).toMatchObject({ outcome: "failed", retries: 1 });
+        expect(ctx.service.get(ctx.id)?.task.pausedMessage).toMatchObject({
+          code: "pr.continuedBranchMoved",
+        });
+        ctx.activity.close();
+      });
+
       it("やり直しを待つ間に一時停止したら、push も記録もせずにやめ、pr.failed にせず一時停止の理由を上書きしない", async () => {
         const ctx = setup([60_000]);
         await toPublish(ctx);
@@ -7424,6 +7462,14 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       ],
       ["fast-forward でない", " ! [rejected]        x -> x (non-fast-forward)"],
       ["認証の失敗", "fatal: Authentication failed for 'https://github.com/acme/app.git/'"],
+      [
+        "レート制限でない HTTP 401",
+        "fatal: unable to access 'https://x/': The requested URL returned error: 401",
+      ],
+      [
+        "レート制限でない HTTP 403",
+        "fatal: unable to access 'https://x/': The requested URL returned error: 403",
+      ],
       ["分類に当たらない文", "something unexpected happened"],
     ])("一時的でない失敗（%s）は、やり直さずにすぐ止める", async (_name, stderr) => {
       const { activity, service, repos, id } = await toPublish();

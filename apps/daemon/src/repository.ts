@@ -377,7 +377,7 @@ function isPushGuidance(line: string): boolean {
  * git push の標準エラー出力を、停止の理由の文にする（PBI-467）。案内の `remote:` の行を除き、失敗の行（`!`・`error:`・`fatal:`
  * で始まる行）を、元の順のまま先頭に置く。拒否の理由を書いた `remote:` の行は残す。
  */
-export function formatPushFailure(stderr: string): string {
+function formatPushFailure(stderr: string): string {
   const lines = stderr.split("\n").filter((line) => !isPushGuidance(line));
   const failure = (line: string) => /^(?:!|error:|fatal:)/.test(line.trim());
   return [...lines.filter(failure), ...lines.filter((line) => !failure(line))].join("\n").trim();

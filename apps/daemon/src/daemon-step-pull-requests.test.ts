@@ -286,6 +286,75 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it("タスクブランチの作成の push が 1 回失敗しても、同じコミット・ブランチへ push し直してから、ブランチと PR を記録する", async () => {
+      const repos = new FakeRepos();
+      repos.pushScript = [REJECT];
+      const { activity, service, id } = await start([out("# 要求要件")], {
+        repos,
+        pushRetryDelaysMs: [0, 0, 0],
+      });
+      // タスクブランチへの 2 回（失敗と、やり直し）の後に、工程のブランチへ push する
+      expect(repos.pushAttempts.filter((p) => p.branch === taskBranchOf(id))).toHaveLength(2);
+      expect(repos.pushAttempts[1]).toEqual(repos.pushAttempts[0]);
+      expect(repos.pushAttempts[0]?.branch).toBe(taskBranchOf(id));
+      const kinds = types(service, id).filter(
+        (t) => watched.includes(t) || t === "TaskBranchCreated",
+      );
+      expect(kinds).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "TaskBranchCreated",
+        "StepPullRequestPublished",
+      ]);
+      expect(taskOf(service, id).taskBranch).toEqual({
+        branch: taskBranchOf(id),
+        commit: "base123",
+      });
+      activity.close();
+    });
+
+    it("同じ PR を更新する push が 1 回失敗しても、同じブランチへ同じコミットを push し直して、同じ PR を更新する", async () => {
+      const made = await start(
+        [out("# 要求要件 v1"), rework("requirements", "要求要件で直せる"), out("# 要求要件 v2")],
+        { pushRetryDelaysMs: [0, 0, 0] },
+      );
+      const { activity, service, repos, pulls, id } = made;
+      pulls.feedbackBy[7] = [item("comment:3")];
+      await service.checkPullRequests();
+      expect(taskOf(service, id).status).toBe("queued");
+      const before = repos.pushAttempts.length;
+      since = types(service, id).length;
+      repos.pushScript = [REJECT];
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(before + 2);
+      const [first, second] = repos.pushAttempts.slice(before);
+      expect(second).toEqual(first);
+      expect(first?.branch).toBe(`${taskBranchOf(id)}-requirements-1`);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "StepPullRequestPublished",
+      ]);
+      expect(pulls.calls.at(-1)?.number).toBe(7);
+      activity.close();
+    });
+
+    it("やり直しの途中で一時的でない失敗（保護での拒否）に変わったら、そこでやめ、回数を記録して pr.failed で止まる", async () => {
+      const { activity, service, repos, id } = await toDesign([0, 0, 0]);
+      repos.pushScript = [
+        REJECT,
+        "remote: error: GH006: Protected branch update failed\n! [remote rejected] d1 -> sacty/x (protected branch hook declined)",
+      ];
+      const before = repos.pushAttempts.length;
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(before + 2);
+      expect(kinds(service, id)).toEqual(["PushRetried", "PushRetryEnded", "TaskPaused"]);
+      const ended = service.get(id)?.activity.findLast((e) => e.type === "PushRetryEnded");
+      expect(ended?.payload).toMatchObject({ outcome: "failed", retries: 1 });
+      expect(taskOf(service, id).pausedMessage).toMatchObject({ code: "pr.failed" });
+      activity.close();
+    });
+
     it("上限まで通らずに止まったら、再開で、エージェントを実行せず push からやり直す", async () => {
       const { activity, service, repos, executor, id } = await toDesign([0, 0, 0]);
       repos.pushScript = [REJECT, REJECT, REJECT, REJECT];
