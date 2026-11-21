@@ -1,6 +1,6 @@
 import type { Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { fillTemplate, limitBody, PR_BODY_MAX, TRUNCATED_NOTE } from "./pr-template.js";
+import { fillTemplate, limitBody, PR_BODY_MAX, truncatedNote } from "./pr-template.js";
 import { buildStepPullRequestBodyParts, buildStepPullRequestBodyText } from "./prompts.js";
 import { readStepQuestions, STEP_QUESTIONS_MAX } from "./step-questions.js";
 
@@ -64,7 +64,7 @@ const FORM_B = [
 ].join("\n");
 const NONE_LINE = "確認したいこと：なし（must・should とも問いはありません）";
 const ANSWER_COMMENT =
-  "- 答えるには、この PR にコメントしてください。sacty が取り込み、答えを成果物に反映します。";
+  "- 答えるには、この PR にコメントしてください。Sacty が取り込み、答えを成果物に反映します。";
 const ANSWER_MERGE = "- 答えずにマージすると、推奨の答えで次の工程に進みます（must も同じです）。";
 
 describe("要求要件・設計の PR の本文の「確認したいこと」（PBI-439）", () => {
@@ -299,7 +299,7 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
     );
     for (const body of [plain, filled]) {
       // 切れ目が、本文の冒頭（件数の行より前）に来る上限
-      const max = body.footer.length + TRUNCATED_NOTE.length + 64 + 100;
+      const max = body.footer.length + truncatedNote(body.main.length).length + 64 + 100;
       const without = limitBody(body.main, body.footer, max, []);
       expect(without.truncated).toBe(true);
       expect(without.body, without.body).not.toContain(ANSWER_MERGE);

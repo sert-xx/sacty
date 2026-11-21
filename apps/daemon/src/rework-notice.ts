@@ -1,5 +1,6 @@
 import { REWORK_NOTICE_MARKER_PREFIX } from "./github.js";
 import { askQuote } from "./human-ask-notice.js";
+import { taskLinkNote } from "./task-link.js";
 
 /*
  * 実装の PR の指摘を設計の工程に戻したことを、その PR に知らせるコメント（PBI-446）。設計に戻すと、設計のやり直し・設計の PR・
@@ -22,6 +23,8 @@ export type ReworkNoticeInput = {
   stepName: string;
   /** タスクの画面の URL。 */
   taskUrl: string;
+  /** 画面の URL が依頼した人のマシンでだけ開けるか（注釈を添える）。 */
+  localOnly?: boolean;
   secrets: readonly string[];
 };
 
@@ -42,9 +45,9 @@ export function buildReworkNotice(input: ReworkNoticeInput): string {
     "",
     "**次に人がすること：**",
     "",
-    `- sacty が作る設計の PR を確かめ、承認（マージ）してください。承認されると、この PR の実装をやり直します。`,
+    `- Sacty が作る設計の PR を確かめ、承認（マージ）してください。承認されると、この PR の実装をやり直します。`,
     "- 局所の変更で足りる（設計の工程までは要らない）と考えるときは、次の回から、指摘に「実装の工程で直す」と書いてください。その回は、実装の工程で直し、設計書の直しも同じ PR に入ります（設計のやり直しは、すでに始まっています）。",
     "",
-    `意図と違うときは、[タスクの画面](${input.taskUrl})で差し戻してください。`,
+    `意図と違うときは、[タスクの画面](${input.taskUrl})で差し戻してください。${taskLinkNote(input.localOnly).join("")}`,
   ].join("\n");
 }

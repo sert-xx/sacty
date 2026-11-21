@@ -33,6 +33,8 @@ You can write the following settings in config.yaml. Where a setting has a detai
 | `update_check` | Checks daily for a newer sacty release and shows it in the web UI ([Updating sacty](getting-started.en.md#updating-sacty)). Set `false` where the internet is not reachable (GitHub is not contacted) | `true` |
 
 You set the following two in "Sacty settings" in the web UI, not in config.yaml.
+Open "Sacty settings" from the bottom of the side menu or from the menu of the person icon at the top right (`/settings`).
+It is separate from the per-project "Project settings". Save your changes with "Save" (you are asked to confirm if you leave the screen with unsaved changes).
 
 - The intake interval: set for each kind of intake ([Intake](intake.en.md#intake-intervals)).
 - The days to keep memories ([Viewing audits](audit.en.md#memories))

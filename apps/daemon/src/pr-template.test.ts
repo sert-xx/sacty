@@ -7,7 +7,7 @@ import {
   NOT_APPLICABLE,
   PR_BODY_MAX,
   TEMPLATE_MAX_BYTES,
-  TRUNCATED_NOTE,
+  TRUNCATED_NOTE_HEAD,
 } from "./pr-template.js";
 import type { BodyParts } from "./prompts.js";
 
@@ -60,7 +60,7 @@ describe("PR テンプレートを埋める（PBI-87）", () => {
         "Closes #12",
         "",
         "<details>",
-        "<summary>sacty の記録</summary>",
+        "<summary>Sacty の記録</summary>",
         "",
         "最終レビューの記録",
         "",
@@ -141,7 +141,7 @@ describe("PR テンプレートを埋める（PBI-87）", () => {
         "テストの内容",
         "",
         "<details>",
-        "<summary>sacty の記録</summary>",
+        "<summary>Sacty の記録</summary>",
         "",
         "最終レビューの記録",
         "",
@@ -172,7 +172,7 @@ describe("PR テンプレートを埋める（PBI-87）", () => {
     expect(main).toContain("## Types of changes\n\n- [ ] Bug fix");
     expect(main).toContain("## Checklist:\n\n- [ ] My code follows the code style");
     // 変更の見出しが無いので、変更は sacty の記録に入れる
-    expect(main).toContain("<summary>sacty の記録</summary>\n\n変更の内容\n\n最終レビューの記録");
+    expect(main).toContain("<summary>Sacty の記録</summary>\n\n変更の内容\n\n最終レビューの記録");
   });
 
   it("Detail（詳細）の見出しは変更として当てる", () => {
@@ -227,14 +227,14 @@ describe("PR の本文の長さ（PBI-87）", () => {
     expect(truncated).toBe(true);
     expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
     expect(body.endsWith("FOOTER sacty task t-1")).toBe(true);
-    expect(body).toContain(TRUNCATED_NOTE);
+    expect(body).toContain(TRUNCATED_NOTE_HEAD);
   });
 
   it("省いたところで閉じられていないコメント・コードブロック・折りたたみを閉じる", () => {
     const main = `<details>\n<summary>x</summary>\n\n\`\`\`\n<!-- ${"b".repeat(PR_BODY_MAX)}`;
     const { body } = limitBody(main, "FOOTER", PR_BODY_MAX);
     expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
-    const head = body.slice(0, body.indexOf(TRUNCATED_NOTE));
+    const head = body.slice(0, body.indexOf(TRUNCATED_NOTE_HEAD));
     expect(head.endsWith(" -->\n```\n\n")).toBe(true);
     expect(body).toContain("</details>\n\nFOOTER");
   });
@@ -265,7 +265,7 @@ describe("PR の本文の長さ（PBI-87）", () => {
     for (const main of cases) {
       const { body } = limitBody(main, "FOOTER", PR_BODY_MAX, keep);
       expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
-      const tail = body.slice(body.indexOf(TRUNCATED_NOTE));
+      const tail = body.slice(body.indexOf(TRUNCATED_NOTE_HEAD));
       for (const k of keep) {
         if (main.includes(`\n${k}`) && main.endsWith(k)) expect(tail).toContain(`\n${k}\n`);
       }

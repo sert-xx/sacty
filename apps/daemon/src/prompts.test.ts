@@ -2153,7 +2153,7 @@ describe("成果の書き出し（PBI-56）", () => {
     const parts = buildPullRequestBodyParts(task);
     for (const footer of [plain, parts.footer]) {
       expect(footer).toContain(
-        "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
+        "- この PR をマージすると、実装を承認したことになり、タスクが完了します（Sacty の画面からは承認しません）。",
       );
       expect(footer).toContain(
         "人の指摘はこの工程のエージェントが、実装のやり直し（この PR を更新します）か",
@@ -2172,10 +2172,10 @@ describe("成果の書き出し（PBI-56）", () => {
         ],
       } as Task);
     expect(watched("todo")).toContain(
-      "- この PR をマージすると、実装を承認したことになり、マージの後の監視（CI/CD とスキルに従った確認）を終えるとタスクが完了します（sacty の画面からは承認しません）。",
+      "- この PR をマージすると、実装を承認したことになり、マージの後の監視（CI/CD とスキルに従った確認）を終えるとタスクが完了します（Sacty の画面からは承認しません）。",
     );
     expect(watched("skip")).toContain(
-      "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
+      "- この PR をマージすると、実装を承認したことになり、タスクが完了します（Sacty の画面からは承認しません）。",
     );
   });
 
@@ -4424,6 +4424,73 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
       );
     });
 
+    describe("入口を足す・変える変更では、差し替えない実行を求める（PBI-451）", () => {
+      const sectionOf = (prompt: string): string => {
+        const from = prompt.indexOf("--- 提出の前の検証 ---");
+        return prompt.slice(from, prompt.indexOf("--- ", from + 5));
+      };
+      const entryLine = (prompt: string): string | undefined =>
+        sectionOf(prompt)
+          .split("\n")
+          .find((l) => l.startsWith("- 入口（"));
+      const FRAGMENTS = [
+        "足さない・変えない変更では何もしない",
+        "入口の外から見える契約（呼び方・引数・出力の形〔項目・型・書式〕・終了コード・既定の振る舞い）",
+        "出力の形を変えずに値の誤りだけを直す変更と、契約を変えない内部の変更は含めない",
+        "ビルドした成果物（リポジトリがビルドを定めていなければ、配る形のまま）",
+        "時計・タイマー・通信などを差し替えずに1回以上動かし",
+        "動かした入口・動かし方・結果を実装の説明に書く",
+        "差し替えたテストの実行は、これに数えない",
+        "動かせなければ、その理由を実装の説明に書く",
+        "外部への書き込み・削除・送信・課金を伴う入口と、本番の資源に触れる入口は動かさず、その理由を書く",
+        "その1回の実行にだけ認証情報を外して動かす",
+        "環境変数は、その実行の子プロセスでだけ外すか空にする",
+        "設定の置き場所を指す環境変数を空の一時ディレクトリに向けて読ませる",
+        "作業領域の外にある認証情報のファイルの実物は、移さない・消さない・読まない",
+        "外せなければ動かさず、その理由を書く",
+        "動かし方（コマンド行・URL・環境変数）と結果のどちらにも、トークン・認証ヘッダーなどの秘密の値を書かない",
+      ];
+
+      it("コードの実装の指示の「提出の前の検証」に、差し替えない実行の行が1つ出る", () => {
+        const prompt = buildPrompt(task(["implement"]), "implement");
+        const line = entryLine(prompt);
+        expect(line).toBeDefined();
+        for (const f of FRAGMENTS) expect(line, f).toContain(f);
+        expect(
+          sectionOf(prompt)
+            .split("\n")
+            .filter((l) => l.startsWith("- 入口（")),
+        ).toHaveLength(1);
+      });
+
+      it("要求要件・設計あり・不具合の修正・PR のレビューの子タスクがレビューする回にも、同じ行が出る", () => {
+        const base = entryLine(buildPrompt(task(["implement"]), "implement"));
+        expect(base).toBeDefined();
+        const prompts = [
+          buildPrompt(task(steps), "implement"),
+          buildPrompt(task(["investigate", "reproduce", "implement"], reproduction), "implement"),
+          buildPrompt(task(["implement"]), "implement", reviewed),
+          buildPrompt(task(steps), "implement", reviewed),
+          buildPrompt(
+            task(["investigate", "reproduce", "implement"], reproduction),
+            "implement",
+            reviewed,
+          ),
+        ];
+        for (const prompt of prompts) expect(entryLine(prompt)).toBe(base);
+      });
+
+      it("文書だけの依頼には出さない", () => {
+        const docs = { documentsOnly: true } as Partial<Task>;
+        for (const extra of [undefined, reviewed]) {
+          const prompt = buildPrompt(task(["implement"], docs), "implement", extra);
+          expect(prompt).toContain("--- 提出の前の検証 ---");
+          expect(prompt).not.toContain("差し替えずに1回以上動かし");
+          expect(entryLine(prompt)).toBeUndefined();
+        }
+      });
+    });
+
     it("出典の分類は、提出する最終版に対してさせる", () => {
       const prompt = buildPrompt(task(steps), "requirements", {
         ...reviewed,
@@ -6266,9 +6333,15 @@ describe("タスクの開始時に集めた情報", () => {
       const to = main.indexOf("## 要求要件");
       const section = main.slice(from, to);
       expect(section.length).toBeLessThan(CHILD_SCOPE_BODY_MAX + 1_000);
-      expect(section).toContain(
-        "…（子タスクの内容が長いので、ここから先を省きました。続きは sacty のタスクの画面で確かめてください）",
+      expect(section).toMatch(
+        /…（子タスクの内容が長いので、ここから先の \d+ 文字は、本文の「省いた続き」に載せています）/,
       );
+      expect(section).not.toContain("タスクの画面");
+      // 省いた続きの全文は、折りたたみに載せる（TV-9）
+      const text = buildPullRequestBodyText(childTask(long)).main;
+      const folded = text.slice(text.indexOf("<summary>省いた続き</summary>"));
+      expect(folded).toContain("> - 条件 399：");
+      expect(text.split("<details>").length).toBe(text.split("</details>").length);
       // 行の途中で切らない（引用の最後の行は、元の行のどれか）
       const last = section.split("\n").findLast((l) => l.startsWith("> ")) ?? "";
       expect(lines).toContain(last.slice(2));
@@ -6277,7 +6350,8 @@ describe("タスクの開始時に集めた情報", () => {
         childTask("あ".repeat(CHILD_SCOPE_BODY_MAX + 1)),
       ).main;
       expect(oneLine).toContain("子タスクの内容が長いので");
-      expect(oneLine).not.toContain("> あ");
+      // 範囲の節には引用を出さない（続きは、折りたたみに全文がある）
+      expect(oneLine.slice(0, oneLine.indexOf("<details>"))).not.toContain("> あ");
       expect(oneLine).toContain(
         "子タスクの内容（タスク分割が書いたものを、そのまま載せています）：\n\n…（子タスクの内容が長いので",
       );

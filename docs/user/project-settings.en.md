@@ -1,4 +1,4 @@
-<!-- Code: packages/core/src/projects.ts (ProjectDefinition, ProjectTarget, ProjectExport), packages/core/src/github-url.ts, apps/daemon/src/gh.ts, apps/daemon/src/github.ts, apps/web/src/components/project-editor.tsx, apps/web/src/i18n/messages/projects.ts, apps/web/src/components/shell/follow-project.tsx, apps/web/src/components/delete-project.tsx, apps/web/src/app/actions.ts (saveProjectAction, deleteProjectAction) -->
+<!-- Code: packages/core/src/projects.ts (ProjectDefinition, ProjectTarget, ProjectExport), packages/core/src/github-url.ts, apps/daemon/src/gh.ts, apps/daemon/src/github.ts, apps/web/src/components/project-editor.tsx, apps/web/src/components/save-bar.tsx, apps/web/src/lib/unsaved-changes.tsx, apps/web/src/i18n/messages/projects.ts, apps/web/src/components/shell/follow-project.tsx, apps/web/src/components/delete-project.tsx, apps/web/src/app/actions.ts (saveProjectAction, deleteProjectAction) -->
 
 [日本語](project-settings.md) | **English**
 
@@ -8,8 +8,11 @@ You register per-project settings in the project settings of the web UI (they do
 
 You open a project's settings in either of the following ways.
 
-- Click "Settings" in the side menu (it opens the settings of the project selected in the header).
+- Click "Project settings" in the side menu (it opens the settings of the project selected in the header).
 - Open `/projects/<ID>/settings`.
+
+The heading is `Project "<name>" settings`, and the browser tab title is the same.
+The settings shared by all projects are in "Sacty settings" in the side menu ([Configuration](config.en.md)).
 
 When you create or import a project, the web UI switches to that project and opens its settings.
 
@@ -119,6 +122,25 @@ You can change the handling per comment on the approval screen ([Deciding the fi
 | Do nothing | It creates nothing. This is the initial value |
 | Create a Sacty follow-up task | It creates a follow-up task after the task completes |
 | Create a GitHub issue | It creates an issue in the repository of the PR when you decide |
+
+## Unsaved changes
+
+When you change a field, "You have unsaved changes" appears next to "Save" at the bottom of the screen.
+"Save" stays visible at the bottom of the screen while you scroll (below 640px wide, it sits above the bottom menu).
+
+If you click a link in the side menu, header, or breadcrumb, close the tab, or reload while there are unsaved changes, you are asked to confirm.
+If you change a value back to the original, it counts as no change.
+When a save succeeds, the note and the confirmation go away. When a save fails, your input stays, and so do the note and the confirmation.
+
+The following take effect when you press them, so they are not covered by the note or the confirmation.
+
+- The context preview with the saved settings
+- Reloading the GitHub accounts
+- Export
+- Deleting a project
+
+The form that creates a project is not covered either.
+The browser's back and forward buttons are not confirmed.
 
 ## When several people change the settings
 

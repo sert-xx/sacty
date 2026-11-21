@@ -115,7 +115,7 @@ export function remarkReplyOrigin(
 function replyOpening(origin: NonNullable<RemarkReplyInput["origin"]>): string {
   const from =
     origin.author === "sacty_review"
-      ? "sacty の AI が書いた"
+      ? "Sacty の AI が書いた"
       : origin.author === "human"
         ? "人が書いた"
         : "";
@@ -221,6 +221,6 @@ export function buildRemarkReply(input: RemarkReplyInput): string {
     ...(input.status === "deferred" ? ["", DEFERRAL_PROPOSAL_NOTE] : []),
     "",
     "---",
-    `sacty のタスク ${input.taskId} の${input.stepName}の工程で、AI が書きました${input.continued ? "" : `（指摘 ${input.remarkId} への対応）`}。`,
+    `Sacty のタスク ${input.taskId} の${input.stepName}の工程で、AI が書きました${input.continued ? "" : `（指摘 ${input.remarkId} への対応）`}。`,
   ].join("\n");
 }

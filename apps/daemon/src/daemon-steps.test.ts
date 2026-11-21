@@ -3147,8 +3147,9 @@ describe("再現の工程（PBI-29）", () => {
     // PR の本文には、再現の説明と、再現のテストの観点（REPRO）を載せる
     const body = pulls.calls[0]?.body ?? "";
     expect(body).toContain("## 不具合の再現");
-    // 全文は載せない（再現の説明は見出しだけなので、要点は無く、全文のある場所だけを書く）
-    expect(body).toContain("全文は sacty のタスクの画面で確かめてください。");
+    // 再現の説明は見出しだけなので、要点は無い。マージで承認した PR が無いので、全文は本文の折りたたみに載せる
+    expect(body).toContain("<summary>全文</summary>");
+    expect(body).not.toContain("タスクの画面");
     expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \|\n/);
     expect(body).not.toContain("## 要求要件");
     // 実装の承認待ちから差し戻すときに、再現には戻せない（実装した後のコードでは再現できない）

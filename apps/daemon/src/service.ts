@@ -270,7 +270,12 @@ import {
 } from "./context.js";
 import type { ContextImageBuilder, ContextImagesView } from "./context-images.js";
 import type { ContextMcpServers } from "./context-mcp.js";
-import { buildDeferralIssue, buildDeferralNotice, buildDeferralTask } from "./deferral-notice.js";
+import {
+  buildDeferralIssue,
+  buildDeferralNotice,
+  buildDeferralTask,
+  issueFailureLine,
+} from "./deferral-notice.js";
 import {
   buildCiFixTask,
   buildDeploymentFixTask,
@@ -299,9 +304,11 @@ import {
   httpsHost,
 } from "./gh.js";
 import {
+  BASIS_COMMENT_MARKER_PREFIX,
   type FoundIssue,
   githubRetryAfterMs,
   githubStatus,
+  isBasisComment,
   isDeferralNotice,
   isHumanAskNotice,
   isReviewStopNotice,
@@ -324,7 +331,7 @@ import {
   requestedGitHubComments,
 } from "./github-comments.js";
 import { GitHubRateLimitStore } from "./github-rate-limits.js";
-import { githubPromptLines, githubRelayEnv } from "./github-relay.js";
+import { GITHUB_COMMENT_BODY_MAX, githubPromptLines, githubRelayEnv } from "./github-relay.js";
 import { buildHumanAskNotice, humanAskMarker } from "./human-ask-notice.js";
 import {
   CONTAINER_PROJECT_MEMORY_DIR,
@@ -384,6 +391,7 @@ import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
   answerMarker,
+  approvedBasisFullText,
   type BodyParts,
   type BodyText,
   buildChatPrompt,
@@ -443,6 +451,7 @@ import {
   lineContextText,
   MUST_TAG,
   operationSucceeded,
+  type PullRequestBodyStage,
   passedContinuedFeedback,
   postedLatestCommit,
   provenanceIds,
@@ -545,6 +554,7 @@ import {
   splitSuggestions,
 } from "./suggestion-triage.js";
 import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
+import { taskLink } from "./task-link.js";
 import {
   type DeliverableKind,
   listDeliverables,
@@ -2954,6 +2964,7 @@ export class TaskService {
         !isHumanAskNotice(item.body) &&
         !isReworkNotice(item.body) &&
         !isDeferralNotice(item.body) &&
+        !isBasisComment(item.body) &&
         !isSactyGitHubComment(item.body),
     );
     const latest = current();
@@ -8677,7 +8688,7 @@ export class TaskService {
     const project = this.deps.projects.get(task.projectId);
     if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
     const usedSecrets: string[] = [];
-    const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+    const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
     const reason = renderMessage(target.reason, "ja");
     void this.serialized(`rework-notice:${task.id}:${round}`, async () => {
       const signal = this.stopNoticeDeadline();
@@ -8691,7 +8702,8 @@ export class TaskService {
           round,
           reason,
           stepName: STEP_NAME.design,
-          taskUrl: `${base}/tasks/${task.id}`,
+          taskUrl: link(task.id).url,
+          localOnly: link(task.id).localOnly,
           secrets: usedSecrets,
         });
         const pr = { repo, token, number };
@@ -8727,7 +8739,7 @@ export class TaskService {
     const project = this.deps.projects.get(task.projectId);
     if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
     const usedSecrets: string[] = [];
-    const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+    const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
     void this.serialized(`human-ask:${task.id}:${gate.step}:${gate.submission}`, async () => {
       // 期限は、順番を待った後の処理の始まりから数える
       const signal = this.stopNoticeDeadline();
@@ -8745,7 +8757,8 @@ export class TaskService {
             ? { undecided: { remarkIds: asks.undecided.remarkIds, reason: asks.undecided.reason } }
             : {}),
           confirms: asks.confirms.map((c) => ({ remarkIds: c.remarkIds, text: c.text })),
-          taskUrl: `${base}/tasks/${task.id}`,
+          taskUrl: link(task.id).url,
+          localOnly: link(task.id).localOnly,
           secrets: usedSecrets,
         });
         if (!body) return;
@@ -8891,7 +8904,7 @@ export class TaskService {
       if (same.length > 0) return;
       // 確かめている間に再開・中止された（今は別の状態の）なら、書かない
       if (this.tasks.get(taskId)?.status !== "paused") return;
-      const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+      const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
       await untilAborted(
         signal,
         this.deps.pulls.commentIssue({
@@ -8900,7 +8913,8 @@ export class TaskService {
             taskId,
             reason,
             summary,
-            taskUrl: `${base}/tasks/${taskId}`,
+            taskUrl: link(taskId).url,
+            localOnly: link(taskId).localOnly,
           }),
           signal,
         }),
@@ -10037,6 +10051,141 @@ export class TaskService {
   }
 
   /**
+   * 承認済みの要求要件（再現）の全文を、PR のコメントに分けて載せる（PBI-450）。本文に全文を載せると上限を超えるときだけ使う。
+   * 目印（`<!-- sacty-basis:<タスク ID> -->`、続きは `:<番号>`）で見つけた同じコメントを書き換え、無ければ書く（作り直しのたびに
+   * コメントが増えない）。全文がコメントの上限を超える分は、続きのコメントに分ける。不要になった続きは、空の知らせに書き換える。
+   * 1 つ目のコメントの URL を返す。
+   */
+  private async syncBasisComments(
+    task: Task,
+    input: { repo: string; token: string; number: number; text: string },
+  ): Promise<string> {
+    const project = this.deps.projects.get(task.projectId);
+    const account = project?.githubAccounts?.[httpsHost(`${input.repo}/`) ?? ""];
+    const pr = { repo: input.repo, token: input.token, number: input.number };
+    const markerOf = (index: number) =>
+      `${BASIS_COMMENT_MARKER_PREFIX}${task.id}${index === 0 ? "" : `:${index + 1}`} -->`;
+    const heading = (index: number, total: number) =>
+      index === 0
+        ? "## 承認済みの要求要件・不具合の再現（全文）\n\nPR の本文が長いので、全文をこのコメントに載せています。Sacty が書き換えます。"
+        : `## 承認済みの要求要件・不具合の再現（全文の続き ${index + 1}/${total}）`;
+    // 見出しと目印の分を空けて、コメントの上限に収まる長さで切る（行の切れ目を優先する）
+    const chunks: string[] = [];
+    let rest = input.text;
+    const room = GITHUB_COMMENT_BODY_MAX - 1_000;
+    while (rest.length > 0) {
+      let cut = Math.min(room, rest.length);
+      if (cut < rest.length) {
+        const nl = rest.lastIndexOf("\n", cut);
+        if (nl > room / 2) cut = nl;
+        const code = rest.charCodeAt(cut - 1);
+        if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+      }
+      chunks.push(rest.slice(0, cut).trim());
+      rest = rest.slice(cut);
+    }
+    const existing = (
+      await this.deps.pulls.listIssueComments({
+        ...pr,
+        prefix: `${BASIS_COMMENT_MARKER_PREFIX}${task.id}`,
+        ...(account ? { account } : {}),
+        complete: true,
+      })
+    ).sort((a, b) => a.id - b.id);
+    const byMarker = new Map(
+      existing.map((c) => [c.body.trimStart().split("\n", 1)[0]?.trim() ?? "", c]),
+    );
+    let first = "";
+    const total = Math.max(chunks.length, 1);
+    for (let i = 0; i < total; i++) {
+      const body = `${markerOf(i)}\n${heading(i, total)}\n\n${chunks[i] ?? ""}`;
+      const found = byMarker.get(markerOf(i));
+      byMarker.delete(markerOf(i));
+      if (found) {
+        if (found.body !== body) {
+          await this.deps.pulls.editIssueComment({
+            repo: input.repo,
+            token: input.token,
+            id: found.id,
+            body,
+          });
+        }
+        if (i === 0) first = found.url;
+      } else {
+        const posted = await this.deps.pulls.commentIssue({ ...pr, body });
+        if (i === 0) first = posted.url;
+      }
+    }
+    // 全文が短くなって要らなくなった続きは、空の知らせに書き換える（目印は残す）
+    for (const [marker, extra] of byMarker) {
+      if (!marker.startsWith(BASIS_COMMENT_MARKER_PREFIX)) continue;
+      const body = `${marker}\n（この続きは、全文が短くなったので、空になりました）`;
+      if (extra.body !== body) {
+        await this.deps.pulls.editIssueComment({
+          repo: input.repo,
+          token: input.token,
+          id: extra.id,
+          body,
+        });
+      }
+    }
+    return first;
+  }
+
+  /**
+   * 実装の PR の本文を作る（PBI-450）。マージで承認した PR が無く、承認済みの要求要件（再現）の全文を本文に載せると上限を
+   * 超えるときは、全文をコメントに分け（`syncBasisComments`）、本文には、そのコメントへのリンクを置く。PR がまだ無い
+   * （number が無い）ときは、本文に「PR を作った後に投稿する」と書き、`basisPending` を返す（呼び出し側が、PR を作った後に
+   * コメントを投稿して、本文を作り直す）。
+   */
+  private async implementBody(
+    task: Task,
+    input: {
+      repo: string;
+      token: string;
+      secrets: readonly string[];
+      number?: number;
+      /** true なら、全文のコメントに載せず、本文の後ろを省いた形で返す（コメントの投稿に失敗したとき） */
+      skipBasis?: boolean;
+      stage: PullRequestBodyStage;
+    },
+  ): Promise<{ body: string; template: PullRequestTemplateUse; basisPending?: string }> {
+    const make = (basisComment?: { url?: string }) => {
+      const stage = { ...input.stage, ...(basisComment ? { basisComment } : {}) };
+      return this.pullRequestBody(
+        task.id,
+        input.repo,
+        input.token,
+        input.secrets,
+        () => buildPullRequestBodyText(this.latestTitled(task), stage),
+        () => buildPullRequestBodyParts(this.latestTitled(task), stage),
+      );
+    };
+    const first = await make();
+    const full = approvedBasisFullText(task, input.secrets);
+    if (full === undefined || !first.template.truncated || input.skipBasis) return first;
+    if (input.number === undefined) {
+      return { ...(await make({})), basisPending: full };
+    }
+    // コメントの投稿・書き換えに失敗しても、PR の作成・更新は止めない（リンクなしの、省いた量を書いた本文にする）
+    let url: string;
+    try {
+      url = await this.syncBasisComments(task, {
+        repo: input.repo,
+        token: input.token,
+        number: input.number,
+        text: full,
+      });
+    } catch (error) {
+      console.warn(
+        `[daemon] 要求要件の全文のコメントを投稿できませんでした：${renderMessage(redactText(errorText(error), [...input.secrets]), "ja")}`,
+      );
+      return first;
+    }
+    return make({ url });
+  }
+
+  /**
    * 重ねた子タスクの、承認待ちの実装の PR の向き先を、今の起点のブランチに付け替える（PBI-317。依存先の PR がマージされた
    * 後）。本文も書き直し（重ねた先が変わる・無くなる）、重ねるのをやめたなら、ドラフトを外す（検証に通った PR なので）。
    * 失敗したら、記録せずに次の確認でやり直す（承認待ちのまま。タスクは止めない）。付け替えの間は、そのタスクを実行しない。
@@ -10085,14 +10234,13 @@ export class TaskService {
         ...this.splitParentStage(task),
       };
       // 本文は、待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
-      const { body } = await this.pullRequestBody(
-        task.id,
-        pr.repo,
+      const { body } = await this.implementBody(task, {
+        repo: pr.repo,
         token,
-        usedSecrets,
-        () => buildPullRequestBodyText(this.latestTitled(task), stage),
-        () => buildPullRequestBodyParts(this.latestTitled(task), stage),
-      );
+        secrets: usedSecrets,
+        number: pr.number,
+        stage,
+      });
       // 人が直した本文は、3方向でマージして残す（PBI-334）
       // 付け替えはタスクの実行の外なので、重なってもエージェントは実行しない（次のやり直しの提出でまとめる）
       const sent = await this.reconcilePullRequestBody(task, {
@@ -14219,26 +14367,18 @@ export class TaskService {
       if (this.stopRequested(task.id)) return "stopped";
       task = this.mustGet(task.id);
       // 本文の「sacty のタスク「…」」は、待つ間に人が変えた題にする（テンプレートを読んだ後に作る。PBI-323）
-      const { body, template } = await this.pullRequestBody(
-        task.id,
-        prRepo,
+      const { body, template, basisPending } = await this.implementBody(task, {
+        repo: prRepo,
         token,
-        usedSecrets,
-        () =>
-          buildPullRequestBodyText(this.latestTitled(task), {
-            secrets: usedSecrets,
-            aiReview,
-            ...(stackedOn ? { stackedOn } : {}),
-            ...this.splitParentStage(task),
-          }),
-        () =>
-          buildPullRequestBodyParts(this.latestTitled(task), {
-            secrets: usedSecrets,
-            aiReview,
-            ...(stackedOn ? { stackedOn } : {}),
-            ...this.splitParentStage(task),
-          }),
-      );
+        secrets: usedSecrets,
+        ...(number ? { number } : {}),
+        stage: {
+          secrets: usedSecrets,
+          aiReview,
+          ...(stackedOn ? { stackedOn } : {}),
+          ...this.splitParentStage(task),
+        },
+      });
       // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
       // 記録する（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。検証に通った後なら、そのときの
       // 一時停止は、承認待ちになったので止めなかったと返す（pause の pause.reachedApproval）
@@ -14268,8 +14408,63 @@ export class TaskService {
         ...(task.stack ? { requireDraft: true } : {}),
         ...(stacked ? { retarget: true } : {}),
       });
+      let writtenBody = body;
+      if (basisPending !== undefined && !number) {
+        // PR を作った後に、要求要件の全文をコメントに載せ、本文のリンクを作り直す（PBI-450）。失敗したら、リンクなしの本文にする
+        const stageNow = {
+          secrets: usedSecrets,
+          aiReview,
+          ...(stackedOn ? { stackedOn } : {}),
+          ...this.splitParentStage(task),
+        };
+        let rebuilt: { body: string };
+        try {
+          rebuilt = await this.implementBody(task, {
+            repo: prRepo,
+            token,
+            secrets: usedSecrets,
+            number: pr.number,
+            stage: stageNow,
+          });
+        } catch (error) {
+          console.warn(
+            `[daemon] 要求要件の全文のコメントを投稿できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          );
+          rebuilt = await this.implementBody(task, {
+            repo: prRepo,
+            token,
+            secrets: usedSecrets,
+            number: pr.number,
+            skipBasis: true,
+            stage: stageNow,
+          });
+        }
+        writtenBody = rebuilt.body;
+        // すでにあった PR（前回、作った後に止まったもの）は、人が直した本文を残すために、3 方向でマージしてから更新する
+        let toSend = writtenBody;
+        if (pr.existing) {
+          const again = await this.reconcilePullRequestBody(task, {
+            repo: prRepo,
+            token,
+            number: pr.number,
+            generated: writtenBody,
+            secrets: usedSecrets,
+          });
+          if ("stop" in again || this.stopRequested(task.id)) return "stopped";
+          toSend = again.body ?? writtenBody;
+        }
+        await this.deps.pulls.upsert({
+          repo: prRepo,
+          token,
+          branch,
+          baseBranch: repositoryNow.baseBranch,
+          title: this.latestTitled(task).title,
+          body: toSend,
+          number: pr.number,
+        });
+      }
       if (sent.record && !pr.existing) {
-        this.recordPullRequestBody(task.id, prRepo, pr.number, body, sent.overwritten);
+        this.recordPullRequestBody(task.id, prRepo, pr.number, writtenBody, sent.overwritten);
       }
       let draft = pr.draft;
       let draftError: unknown;
@@ -20269,13 +20464,15 @@ export class TaskService {
       return;
     }
     const usedSecrets: string[] = [];
-    const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+    const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
     const url = watched.url ?? `${repo.replace(/\/+$/, "")}/pull/${number}`;
     // Issue を作っている最中の指摘（PR の確認が、途中で止まった処理と取り違えないように）
     const inflight = wantIssues.map((item) => `${task.id}:${item.remarkId}`);
     for (const key of inflight) this.deferralIssuesInflight.add(key);
     // 結果を記録した指摘（記録が無いまま終わる指摘を、残さない）
     const issues = new Map<string, string | undefined>();
+    // Issue を作れなかった指摘の、知らせに書く失敗の理由（伏せ済みの 1 行）
+    const issueFailures = new Map<string, string>();
     void this.serialized(`deferral:${task.id}`, async () => {
       // 決定のコメントの期限。Issue は、1 件ごとに別の期限を持つ（件数が多くても、後ろの指摘が、前の指摘の時間で失敗しない）
       let signal = this.stopNoticeDeadline();
@@ -20317,6 +20514,7 @@ export class TaskService {
               `[daemon] タスク ${task.id} の、後続に回すと決めた指摘 ${item.remarkId} の Issue を作れませんでした：${renderMessage(failure, "ja")}`,
             );
             issues.set(item.remarkId, undefined);
+            issueFailures.set(item.remarkId, issueFailureLine(renderMessage(failure, "ja")));
             handled(item.remarkId, { failure });
           }
         }
@@ -20347,9 +20545,13 @@ export class TaskService {
               ...(item.handling === "issue" && issues.get(item.remarkId)
                 ? { issueUrl: issues.get(item.remarkId) }
                 : {}),
+              ...(item.handling === "issue" && issueFailures.has(item.remarkId)
+                ? { issueFailure: issueFailures.get(item.remarkId) }
+                : {}),
             };
           }),
-          taskUrl: `${base}/tasks/${task.id}`,
+          taskUrl: link(task.id).url,
+          localOnly: link(task.id).localOnly,
           secrets: usedSecrets,
         });
         if (!body) return;
@@ -20566,7 +20768,7 @@ function discardedSummary(item: PullRequestFeedback): string {
   // 行の内容の添え書きは、表示用の要点には要らない
   const text = (feedbackRemarks([{ ...item, lineContext: undefined }])[0] ?? "")
     .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/^\s*#+\s*sacty のレビュー\s*$/gm, " ")
+    .replace(/^\s*#+\s*[Ss]acty のレビュー\s*$/gm, " ")
     .replace(/\s+/g, " ")
     .trim();
   return text.length > DISCARDED_SUMMARY_MAX

@@ -109,6 +109,8 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       mergeBase?: boolean;
       /** 今の時刻（無ければ、PR の指摘を書き終わるのを待つ時間がたった時刻）。 */
       now?: () => number;
+      /** 知らせのタスクの画面の URL（SACTY_WEB_URL）。 */
+      webUrl?: string;
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -116,6 +118,7 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     const repos = options.repos ?? new FakeRepos();
     const made = makeService(activity, outcomes, {
       ...(options.settings ? { settings: options.settings } : {}),
+      ...(options.webUrl !== undefined ? { webUrl: options.webUrl } : {}),
       ...(options.github ? { github: options.github } : {}),
       stepPullRequests: true,
       ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
@@ -734,6 +737,25 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       ).toHaveLength(1);
       activity.close();
     });
+
+    it.each([
+      ["http://127.0.0.1:4700", true],
+      ["https://sacty.example.com", false],
+    ])(
+      "設計に戻した知らせの注釈は、サービスに渡した画面の URL（%s）で決まる（注釈あり：%s）",
+      async (webUrl, note) => {
+        const made = await toRework([], {
+          target: "design",
+          reason: "決定を変える（方針）：構成を選び直す",
+          start: { webUrl },
+        });
+        await noticesSettled(made.service);
+        const body = noticesOf(made)[0]?.body ?? "";
+        expect(body).toContain("/tasks/");
+        expect(body.includes("タスクの画面は、依頼した人のマシンでだけ開けます。")).toBe(note);
+        made.activity.close();
+      },
+    );
 
     it("実装に戻した判断（局所の変更）には、知らせを投稿しない", async () => {
       const made = await toRework([]);

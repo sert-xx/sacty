@@ -8,8 +8,14 @@ const ja = {
     tasks: "タスク",
     schedules: "スケジュール",
     audit: "監査",
-    settings: "設定",
+    settings: "プロジェクト\u200bの設定",
+    projects: "プロジェクト",
+    sactySettings: "Sacty の\u200b設定",
   },
+  /** 保存していない変更（設定の画面）。 */
+  unsaved: "保存していない変更があります",
+  leaveConfirm:
+    "保存していない変更があります。このページを離れると、変更は失われます。離れますか？",
   project: {
     label: "プロジェクト",
     trigger: (name: string) => `プロジェクト：${name}（切り替える）`,
@@ -92,8 +98,12 @@ const en: ShellMessages = {
     tasks: "Tasks",
     schedules: "Schedules",
     audit: "Audit",
-    settings: "Settings",
+    settings: "Project settings",
+    projects: "Projects",
+    sactySettings: "Sacty settings",
   },
+  unsaved: "You have unsaved changes",
+  leaveConfirm: "You have unsaved changes. If you leave this page, they will be lost. Leave?",
   project: {
     label: "Project",
     trigger: (name) => `Project: ${name} (switch)`,
