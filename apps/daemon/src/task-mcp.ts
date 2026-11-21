@@ -523,10 +523,10 @@ const TaskSummarySchema = z.object({
           "true：レビューを投稿した後、PR の変化を見守っている（その回の判定が指摘なしでないので、完了していない。待っているのは PR の作者の対応で、人の出番ではない。PR の先頭が変わる・作者が返信すると sacty が自動で再レビューし、PR がマージ・クローズされると完了する）。見守っていなければ無い",
         ),
       watchEnded: z
-        .enum(["merged", "closed"])
+        .enum(["merged", "closed", "parent_completed"])
         .optional()
         .describe(
-          "PR の見守りを終えた理由（merged：PR がマージされた、closed：PR がマージされずに閉じられた）。終えていなければ無い",
+          "PR の見守りを終えた理由（merged：PR がマージされた、closed：PR がマージされずに閉じられた、parent_completed：親のタスクが完了した）。終えていなければ無い",
         ),
     })
     .optional()

@@ -590,7 +590,7 @@ The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, `req
 | Field | Description |
 | --- | --- |
 | `id`, `title`, `projectId` | The task ID, the title, and the project ID |
-| `state` | `cancelled` (cancelled), `completed` (complete; `isFinished`), otherwise the task status (`status`) as it is. A PR review task does not become `completed` after posting its review until the verdict is no findings (while it watches the PR for changes it is `idle` and `review.watching` is `true`) |
+| `state` | `cancelled` (cancelled), `completed` (complete; `isFinished`), otherwise the task status (`status`) as it is. A PR review task does not become `completed` after posting its review until the verdict is no findings or the watch ends (the PR is merged or closed, or the parent is done) (while it watches the PR for changes it is `idle` and `review.watching` is `true`) |
 | `steps` | Steps and their states (`<step>:<state>`, in order) |
 | `preparing` | Present only while `state` is still `queued` and the daemon is processing the task before its first step: the phase (`repository`, `gathering`, `triage`, `planning`, `review_target`, `starting`; [Display while processing before the first step](tasks-and-steps.en.md#display-while-processing-before-the-first-step)). A `queued` task that is only waiting for a slot and the like, and a task that has started a step run at least once (even while it is processed), do not have it. `state` does not change |
 | `reviewTask` | Whether it is a PR review task (imported as a PR review (`source.review` is set) or has the review step) |
@@ -606,7 +606,7 @@ The result of `list_tasks`, `rereview_task`, `create_task`, `approve_step`, `req
 | `rerunOf` | The ID of the cancelled original task of the rerun (only on a task made by a rerun) |
 | `pullRequests` | The [tied PRs](#prs-and-branches-tied-to-a-task) |
 | `branches` | The [tied branches](#prs-and-branches-tied-to-a-task) |
-| `review` | Only for PR review tasks. The review round (`round`), and the URL of the post (`postedUrl`) and the verdict (`verdict`) of the current round. The post and the verdict are present only when they exist. `watching` is `true` only while it watches the PR for changes after posting its review (not complete; not the person's turn). `watchEnded` is present only when there is a reason the watch ended (`merged`, `closed`) ([Watching the PR after posting](tasks-and-steps.en.md#watching-the-pr-after-posting)) |
+| `review` | Only for PR review tasks. The review round (`round`), and the URL of the post (`postedUrl`) and the verdict (`verdict`) of the current round. The post and the verdict are present only when they exist. `watching` is `true` only while it watches the PR for changes after posting its review (not complete; not the person's turn). `watchEnded` is present only when there is a reason the watch ended (`merged`, `closed`, `parent_completed`: the parent is done) ([Watching the PR after posting](tasks-and-steps.en.md#watching-the-pr-after-posting)) |
 | `reviewOf` | For a PR review child task, the ID of the parent task |
 | `reviewTasks` | The child tasks that review this task's PRs (task ID and PR number) |
 | `pausedReason` | The reason for the pause (only while paused) |
