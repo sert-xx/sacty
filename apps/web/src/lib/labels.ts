@@ -1019,6 +1019,15 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         Math.round(event.payload.waitMs / 1000),
         l.text(event.payload.message),
       );
+    case "PushRetried":
+      return e.PushRetried(
+        event.payload.attempt,
+        event.payload.maxAttempts,
+        Math.round(event.payload.waitMs / 1000),
+        l.text(event.payload.message),
+      );
+    case "PushRetryEnded":
+      return e.PushRetryEnded(event.payload.outcome, event.payload.retries);
     case "PullRequestReviewPosted":
       return e.PullRequestReviewPosted(event.payload.url);
     case "GuardianMissed":

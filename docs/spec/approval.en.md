@@ -62,6 +62,8 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
     A rejected push is not taken as a sign to move to the next round.
     A pushed new branch is kept even when it does not become a PR (a merge was found, or the earlier PR could not be closed), and is deleted by the cleanup at the end of the task.
   - If a PR cannot be opened, the reason is recorded and the task stops.
+    If the push of the task branch, of a step branch, or of a commit stacked on the same PR is rejected by a temporary failure, the same commit is pushed to the same branch again, up to 3 retries after 15 seconds, 1 minute, and 3 minutes (the kinds of failure, the records, and pausing while waiting are the same as in [Opening the implementation PR](tasks-and-steps.en.md#opening-the-implementation-pr); PBI-467).
+    The branch name does not grow.
 - The implementation PR
   - If there is a task branch, the implementation is stacked on the latest task branch and opened as a PR from the task branch to the base branch (the implementation PR).
   - If there is no task branch, it is opened as a PR from a sacty branch (`sacty/task-<first 8 characters of the task ID>`) to the base branch.

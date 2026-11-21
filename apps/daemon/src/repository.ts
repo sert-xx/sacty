@@ -309,6 +309,114 @@ export class NothingToCommitError extends MessageError {}
 
 class GitInterruptedError extends MessageError {}
 
+/**
+ * PR を作る・直しを積むときの git push が失敗した（PBI-467）。transient は、待てば通るかもしれない失敗（GitHub の内部エラー・
+ * HTTP 5xx・レート制限・接続の失敗など）。commit・branch は、push しようとしたコミットとブランチ（同じものを push し直せる）。
+ */
+export class PushFailedError extends MessageError {
+  constructor(
+    text: ConstructorParameters<typeof MessageError>[0],
+    readonly transient: boolean,
+    readonly commit: string,
+    readonly branch: string,
+  ) {
+    super(text);
+  }
+}
+
+const RATE_LIMIT_RE = /rate limit|too many requests|HTTP 429\b|returned error: 429\b/i;
+const TRANSIENT_PUSH_RE = [
+  /Internal Server Error/i,
+  /HTTP 5\d\d\b/,
+  /returned error: 5\d\d\b/,
+  /Could not resolve host/i,
+  /Failed to connect/i,
+  /Couldn't connect to server/i,
+  /Connection (?:was )?(?:reset|refused|closed)/i,
+  /timed out/i,
+  /unexpected disconnect/i,
+  /SSL_ERROR_SYSCALL|GnuTLS recv error|OpenSSL SSL_read/i,
+  /HTTP\/2 stream \d+ was not closed cleanly/i,
+  /the remote end hung up unexpectedly/i,
+  /RPC failed; curl \d+/i,
+];
+
+/**
+ * git push の標準エラー出力が、待てば通るかもしれない失敗か（PBI-467）。一時的でないもの（保護・ルールでの拒否・理由が
+ * `(failed)` 以外の `[remote rejected]`・fast-forward でない・認証の失敗）を先に判定し、どちらにも当たらなければ一時的でない。
+ * 文言は英語（LC_ALL=C）で読む。
+ */
+export function classifyPushFailure(stderr: string): boolean {
+  if (/\[rejected\]/.test(stderr)) return false;
+  let failedRejection = false;
+  for (const line of stderr.split("\n")) {
+    if (!line.includes("[remote rejected]")) continue;
+    const reason = /\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/.exec(line.trim())?.[1];
+    if (reason !== "failed") return false;
+    failedRejection = true;
+  }
+  if (/GH\d{3}|protected branch|Authentication failed|Permission denied/i.test(stderr))
+    return false;
+  if (RATE_LIMIT_RE.test(stderr)) return true;
+  if (/HTTP (?:code )?40[13]\b|returned error: 40[13]\b/.test(stderr)) return false;
+  return failedRejection || TRANSIENT_PUSH_RE.some((re) => re.test(stderr));
+}
+
+/** 成功時の案内など、失敗の理由ではない `remote:` の行か（空・PR/MR の作成の案内・URL だけの行）。 */
+function isPushGuidance(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed === "remote:") return true;
+  return (
+    /^remote:\s+Create a pull request\b/.test(trimmed) ||
+    /^remote:\s+To create a merge request\b/.test(trimmed) ||
+    /^remote:\s+https?:\/\/\S+$/.test(trimmed)
+  );
+}
+
+/**
+ * git push の標準エラー出力を、停止の理由の文にする（PBI-467）。案内の `remote:` の行を除き、失敗の行（`!`・`error:`・`fatal:`
+ * で始まる行）を、元の順のまま先頭に置く。拒否の理由を書いた `remote:` の行は残す。
+ */
+function formatPushFailure(stderr: string): string {
+  const lines = stderr.split("\n").filter((line) => !isPushGuidance(line));
+  const failure = (line: string) => /^(?:!|error:|fatal:)/.test(line.trim());
+  return [...lines.filter(failure), ...lines.filter((line) => !failure(line))].join("\n").trim();
+}
+
+/** push の失敗（git push の標準エラー出力）を PushFailedError にする。 */
+export function pushFailure(stderr: string, commit: string, branch: string): PushFailedError {
+  return new PushFailedError(
+    message("git.failed", { command: "push", detail: formatPushFailure(stderr) }),
+    classifyPushFailure(stderr),
+    commit,
+    branch,
+  );
+}
+
+/**
+ * コミットを、ブランチへ強制せずに push する。分類のために git の文言は訳さない（LC_ALL=C）。失敗は PushFailedError にする
+ * （git を起動できない・中断は、そのまま投げる）。
+ */
+async function pushRef(
+  gitDir: string,
+  commit: string,
+  branch: string,
+  authEnv: Record<string, string> | undefined,
+): Promise<void> {
+  try {
+    await git(
+      "push",
+      ["--git-dir", gitDir, "push", "--", "origin", `${commit}:refs/heads/${branch}`],
+      { ...cloneEnv(authEnv), LC_ALL: "C" },
+    );
+  } catch (error) {
+    if (error instanceof MessageError && error.text.code === "git.failed") {
+      throw pushFailure(error.text.params.detail, commit, branch);
+    }
+    throw error;
+  }
+}
+
 const BASE_ENV_KEYS = ["PATH", "TMPDIR", "LANG"];
 
 function pick(keys: string[]): Record<string, string> {
@@ -935,11 +1043,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     });
     // プッシュは、HTTPS の GitHub なら gh のトークン、それ以外はホストの認証（ssh-agent など）を使う。
     // 作業領域は読まない
-    await git(
-      "push",
-      ["--git-dir", input.gitDir, "push", "--", "origin", `${commit}:refs/heads/${input.branch}`],
-      cloneEnv(input.authEnv),
-    );
+    await pushRef(input.gitDir, commit, input.branch, input.authEnv);
     return { commit };
   }
 
@@ -1219,11 +1323,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
   ): Promise<void> {
     if (!COMMIT_RE.test(commit)) throw new MessageError(message("git.invalidParentCommit"));
     if (!validBranch(branch)) throw new MessageError(message("git.invalidBranch"));
-    await git(
-      "push",
-      ["--git-dir", gitDir, "push", "--", "origin", `${commit}:refs/heads/${branch}`],
-      cloneEnv(authEnv),
-    );
+    await pushRef(gitDir, commit, branch, authEnv);
   }
 
   async commitFiles(input: Parameters<RepositoryWorkspace["commitFiles"]>[0]) {
@@ -1288,11 +1388,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     }
     // プッシュは、HTTPS の GitHub なら gh のトークン、それ以外はホストの認証を使う。強制プッシュはしない
     if (!input.skipPush) {
-      await git(
-        "push",
-        ["--git-dir", input.gitDir, "push", "--", "origin", `${commit}:refs/heads/${input.branch}`],
-        cloneEnv(input.authEnv),
-      );
+      await pushRef(input.gitDir, commit, input.branch, input.authEnv);
     }
     return { commit };
   }

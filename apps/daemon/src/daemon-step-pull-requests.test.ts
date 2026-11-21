@@ -159,6 +159,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       webUrl?: string;
       /** タスクの計画（セキュリティの組み合わせなど）。 */
       plan?: "security-fix";
+      /** push のやり直しの待ち時間（PBI-467）。 */
+      pushRetryDelaysMs?: readonly number[];
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -169,6 +171,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ...(options.webUrl !== undefined ? { webUrl: options.webUrl } : {}),
       ...(options.github ? { github: options.github } : {}),
       stepPullRequests: true,
+      ...(options.pushRetryDelaysMs ? { pushRetryDelaysMs: options.pushRetryDelaysMs } : {}),
       ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
       ...(options.reviewTasks ? { reviewTasks: true } : {}),
       ...(options.mergeBase ? { mergeBase: true } : {}),
@@ -216,6 +219,181 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     repos.remote[taskBranchOf(id)] = `m${pr.number}`.padEnd(40, "0");
     await service.checkPullRequests();
   }
+
+  describe("要求要件・設計の PR の push が一時的に失敗したら、push だけをやり直す（PBI-467）", () => {
+    const REJECT =
+      "! [remote rejected] d1 -> sacty/x (failed)\nerror: failed to push some refs to 'https://x-access-token:ghp_secret@github.com/acme/app.git'";
+    const watched = ["PushRetried", "PushRetryEnded", "StepPullRequestPublished", "TaskPaused"];
+    /** 設計の PR を作る手前より後の、やり直しと PR の作成の記録。 */
+    let since = 0;
+    const kinds = (svc: TaskService, id: string) =>
+      types(svc, id)
+        .slice(since)
+        .filter((t) => watched.includes(t));
+    /** 要求要件をマージして、設計の PR を作る手前まで進める。 */
+    async function toDesign(pushRetryDelaysMs: readonly number[]) {
+      const made = await start([out("# 要求要件"), design()], { pushRetryDelaysMs });
+      await merge(made, "requirements");
+      expect(taskOf(made.service, made.id).status).toBe("queued");
+      since = types(made.service, made.id).length;
+      return made;
+    }
+
+    it("設計の PR の新しいブランチへの push が 1 回失敗しても、同じ名前のブランチへ push し直して PR を作り、ブランチを増やさない", async () => {
+      const { activity, service, repos, id } = await toDesign([0, 0, 0]);
+      const taskBranch = taskBranchOf(id);
+      repos.pushScript = [REJECT];
+      await service.runNext(id);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "StepPullRequestPublished",
+      ]);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.findLast((e) => e.type === "PushRetryEnded")?.payload).toMatchObject({
+        outcome: "pushed",
+        retries: 1,
+      });
+      const pushes = repos.pushAttempts.filter((p) => p.branch.endsWith("-design-1"));
+      expect(pushes).toHaveLength(2);
+      expect(pushes[1]).toEqual(pushes[0]);
+      expect(
+        events.find((e) => e.type === "StepBranchPushed" && e.payload.step === "design")?.payload,
+      ).toMatchObject({ branch: `${taskBranch}-design-1` });
+      expect(taskOf(service, id).stepBranches.filter((b) => b.endsWith("-design-2"))).toEqual([]);
+      expect(taskOf(service, id).stepPullRequests.at(-1)?.branch).toBe(`${taskBranch}-design-1`);
+      activity.close();
+    });
+
+    it("やり直しを待つ間に一時停止したら、push も記録もせずにやめ、pr.failed にせず一時停止の理由を上書きしない", async () => {
+      const { activity, service, repos, id } = await toDesign([60_000]);
+      repos.pushScript = [REJECT];
+      const before = repos.pushAttempts.length;
+      const running = service.runNext(id);
+      await waitFor(() => repos.pushAttempts.length === before + 1, { what: "最初の push" });
+      const pausing = service.pause(id).catch((e: unknown) => e);
+      await running;
+      await pausing;
+      expect(repos.pushAttempts).toHaveLength(before + 1);
+      expect(kinds(service, id)).toEqual(["TaskPaused"]);
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "TaskPaused")?.payload,
+      ).toMatchObject({
+        reason: "manual",
+      });
+      expect(taskOf(service, id).status).toBe("paused");
+      expect(taskOf(service, id).pausedMessage).not.toMatchObject({ code: "pr.failed" });
+      activity.close();
+    });
+
+    it("タスクブランチの作成の push が 1 回失敗しても、同じコミット・ブランチへ push し直してから、ブランチと PR を記録する", async () => {
+      const repos = new FakeRepos();
+      repos.pushScript = [REJECT];
+      const { activity, service, id } = await start([out("# 要求要件")], {
+        repos,
+        pushRetryDelaysMs: [0, 0, 0],
+      });
+      // タスクブランチへの 2 回（失敗と、やり直し）の後に、工程のブランチへ push する
+      expect(repos.pushAttempts.filter((p) => p.branch === taskBranchOf(id))).toHaveLength(2);
+      expect(repos.pushAttempts[1]).toEqual(repos.pushAttempts[0]);
+      expect(repos.pushAttempts[0]?.branch).toBe(taskBranchOf(id));
+      const kinds = types(service, id).filter(
+        (t) => watched.includes(t) || t === "TaskBranchCreated",
+      );
+      expect(kinds).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "TaskBranchCreated",
+        "StepPullRequestPublished",
+      ]);
+      expect(taskOf(service, id).taskBranch).toEqual({
+        branch: taskBranchOf(id),
+        commit: "base123",
+      });
+      activity.close();
+    });
+
+    it("同じ PR を更新する push が 1 回失敗しても、同じブランチへ同じコミットを push し直して、同じ PR を更新する", async () => {
+      const made = await start(
+        [out("# 要求要件 v1"), rework("requirements", "要求要件で直せる"), out("# 要求要件 v2")],
+        { pushRetryDelaysMs: [0, 0, 0] },
+      );
+      const { activity, service, repos, pulls, id } = made;
+      pulls.feedbackBy[7] = [item("comment:3")];
+      await service.checkPullRequests();
+      expect(taskOf(service, id).status).toBe("queued");
+      const before = repos.pushAttempts.length;
+      since = types(service, id).length;
+      repos.pushScript = [REJECT];
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(before + 2);
+      const [first, second] = repos.pushAttempts.slice(before);
+      expect(second).toEqual(first);
+      expect(first?.branch).toBe(`${taskBranchOf(id)}-requirements-1`);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "StepPullRequestPublished",
+      ]);
+      expect(pulls.calls.at(-1)?.number).toBe(7);
+      activity.close();
+    });
+
+    it("止まった後の再開でも、1 回目の push が一時的に失敗したら、エージェントを実行せず、やり直して PR を作る", async () => {
+      const { activity, service, repos, executor, id } = await toDesign([0, 0, 0]);
+      repos.pushScript = [REJECT, REJECT, REJECT, REJECT];
+      await service.runNext(id);
+      expect(taskOf(service, id).status).toBe("paused");
+      const runs = executor.calls.length;
+      since = types(service, id).length;
+      repos.pushScript = [REJECT];
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(runs);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "StepPullRequestPublished",
+      ]);
+      activity.close();
+    });
+
+    it("やり直しの途中で一時的でない失敗（保護での拒否）に変わったら、そこでやめ、回数を記録して pr.failed で止まる", async () => {
+      const { activity, service, repos, id } = await toDesign([0, 0, 0]);
+      repos.pushScript = [
+        REJECT,
+        "remote: error: GH006: Protected branch update failed\n! [remote rejected] d1 -> sacty/x (protected branch hook declined)",
+      ];
+      const before = repos.pushAttempts.length;
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(before + 2);
+      expect(kinds(service, id)).toEqual(["PushRetried", "PushRetryEnded", "TaskPaused"]);
+      const ended = service.get(id)?.activity.findLast((e) => e.type === "PushRetryEnded");
+      expect(ended?.payload).toMatchObject({ outcome: "failed", retries: 1 });
+      expect(taskOf(service, id).pausedMessage).toMatchObject({ code: "pr.failed" });
+      activity.close();
+    });
+
+    it("上限まで通らずに止まったら、再開で、エージェントを実行せず push からやり直す", async () => {
+      const { activity, service, repos, executor, id } = await toDesign([0, 0, 0]);
+      repos.pushScript = [REJECT, REJECT, REJECT, REJECT];
+      await service.runNext(id);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetried",
+        "PushRetried",
+        "PushRetryEnded",
+        "TaskPaused",
+      ]);
+      expect(taskOf(service, id).pausedMessage).toMatchObject({ code: "pr.failed" });
+      const runs = executor.calls.length;
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(runs);
+      expect(kinds(service, id).at(-1)).toBe("StepPullRequestPublished");
+      activity.close();
+    });
+  });
 
   it("要求要件の PR のマージ待ちで一時停止すると、止めている間のマージは見守らず、再開したあとの確認で承認として進む（PBI-301）", async () => {
     const made = await start([out("# 要求要件"), design()]);

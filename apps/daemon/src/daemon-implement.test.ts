@@ -177,6 +177,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       requirements?: string;
       /** 知らせのタスクの画面の URL（SACTY_WEB_URL）。 */
       webUrl?: string;
+      /** push のやり直しの待ち時間（PBI-467）。 */
+      pushRetryDelaysMs?: readonly number[];
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -5582,6 +5584,152 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    describe("引き継いだ PR の push が一時的に失敗したら、やり直す（PBI-467）", () => {
+      const REJECT =
+        "! [remote rejected] c1 -> feature/retry (failed)\nerror: failed to push some refs";
+      const setup = (pushRetryDelaysMs: readonly number[]) => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        const repos = new FakeRepos();
+        repos.branchHeads["feature/retry"] = head;
+        humanPullRequest(pulls);
+        const made = makeService(
+          activity,
+          [
+            steps(),
+            implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
+          ],
+          { realPlanner: true, pulls, repos, pushRetryDelaysMs },
+        );
+        const { id } = made.service.createTask({
+          projectId: "default",
+          title: "PR #12 の指摘",
+          body,
+        });
+        return { activity, pulls, repos, id, ...made };
+      };
+      const toPublish = async (ctx: ReturnType<typeof setup>) => {
+        for (let i = 0; i < 6 && !ctx.service.get(ctx.id)?.task.publishPending; i++) {
+          await ctx.service.runNext(ctx.id);
+        }
+        expect(ctx.service.get(ctx.id)?.task.publishPending).toBe(true);
+      };
+      const kinds = (ctx: ReturnType<typeof setup>) =>
+        types(ctx.service, ctx.id).filter((t) =>
+          ["PushRetried", "PushRetryEnded", "PullRequestPublished", "TaskPaused"].includes(t),
+        );
+
+      it("一時的な失敗が上限まで続いたら、ブランチが進んだとせず、push の失敗（pr.failed）で止まる。再開すると、エージェントを実行せず push からやり直す", async () => {
+        const ctx = setup([0, 0, 0]);
+        await toPublish(ctx);
+        // 先頭は、起点とも前にプッシュしたコミットとも違う
+        ctx.repos.remote["feature/retry"] = "9".repeat(40);
+        ctx.repos.branchHeads["feature/retry"] = "9".repeat(40);
+        ctx.repos.pushScript = [REJECT, REJECT, REJECT, REJECT];
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.repos.pushAttempts).toHaveLength(4);
+        expect(kinds(ctx)).toEqual([
+          "PushRetried",
+          "PushRetried",
+          "PushRetried",
+          "PushRetryEnded",
+          "TaskPaused",
+        ]);
+        const events = ctx.service.get(ctx.id)?.activity ?? [];
+        expect(events.findLast((e) => e.type === "PushRetryEnded")?.payload).toMatchObject({
+          outcome: "failed",
+          retries: 3,
+        });
+        expect(ctx.service.get(ctx.id)?.task.pausedMessage).toMatchObject({ code: "pr.failed" });
+        const runs = ctx.executor.calls.length;
+        ctx.service.resume(ctx.id, {});
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.executor.calls).toHaveLength(runs);
+        expect(ctx.repos.pushAttempts).toHaveLength(5);
+        expect(kinds(ctx).at(-1)).toBe("PullRequestPublished");
+        ctx.activity.close();
+      });
+
+      it("止まった後の再開でも、1 回目の push が一時的に失敗したら、エージェントを実行せず、やり直して PR を更新する", async () => {
+        const ctx = setup([0, 0, 0]);
+        await toPublish(ctx);
+        ctx.repos.remote["feature/retry"] = "9".repeat(40);
+        ctx.repos.branchHeads["feature/retry"] = "9".repeat(40);
+        ctx.repos.pushScript = [REJECT, REJECT, REJECT, REJECT];
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.service.get(ctx.id)?.task.status).toBe("paused");
+        const runs = ctx.executor.calls.length;
+        const before = types(ctx.service, ctx.id).length;
+        ctx.repos.pushScript = [REJECT];
+        ctx.service.resume(ctx.id, {});
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.executor.calls).toHaveLength(runs);
+        expect(
+          types(ctx.service, ctx.id)
+            .slice(before)
+            .filter((t) =>
+              ["PushRetried", "PushRetryEnded", "PullRequestPublished", "TaskPaused"].includes(t),
+            ),
+        ).toEqual(["PushRetried", "PushRetryEnded", "PullRequestPublished"]);
+        ctx.activity.close();
+      });
+
+      it("1 回失敗しても止まらず、同じコミット・ブランチ・認証の環境で push し直して PR を更新する", async () => {
+        const ctx = setup([0, 0, 0]);
+        await toPublish(ctx);
+        ctx.repos.pushScript = [REJECT];
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.repos.pushAttempts).toHaveLength(2);
+        expect(ctx.repos.pushAttempts[1]).toEqual(ctx.repos.pushAttempts[0]);
+        expect(kinds(ctx)).toEqual(["PushRetried", "PushRetryEnded", "PullRequestPublished"]);
+        expect(
+          ctx.service.get(ctx.id)?.activity.findLast((e) => e.type === "PushRetryEnded")?.payload,
+        ).toMatchObject({ outcome: "pushed", retries: 1 });
+        ctx.activity.close();
+      });
+
+      it("やり直しの途中で一時的でない失敗（保護での拒否）に変わったら、そこでやめ、回数を記録する。先頭が進んでいれば今までどおり 1 回だけ push し直し、通らなければ pr.continuedBranchMoved で止まる", async () => {
+        const ctx = setup([0, 0, 0]);
+        await toPublish(ctx);
+        // 先頭は、起点とも前にプッシュしたコミットとも違い、一時的でない失敗なので、今までどおり先頭を読み直して 1 回だけ push し直す
+        // （それも通らなければ、人が PR のブランチを進めたとして止まる）
+        ctx.repos.remote["feature/retry"] = "9".repeat(40);
+        ctx.repos.branchHeads["feature/retry"] = "9".repeat(40);
+        ctx.repos.pushScript = [
+          REJECT,
+          "remote: error: GH006: Protected branch update failed\n! [remote rejected] c1 -> feature/retry (protected branch hook declined)",
+          "! [rejected] c1 -> feature/retry (non-fast-forward)",
+        ];
+        await ctx.service.runNext(ctx.id);
+        expect(ctx.repos.pushAttempts).toHaveLength(3);
+        expect(kinds(ctx)).toEqual(["PushRetried", "PushRetryEnded", "TaskPaused"]);
+        expect(
+          ctx.service.get(ctx.id)?.activity.findLast((e) => e.type === "PushRetryEnded")?.payload,
+        ).toMatchObject({ outcome: "failed", retries: 1 });
+        expect(ctx.service.get(ctx.id)?.task.pausedMessage).toMatchObject({
+          code: "pr.continuedBranchMoved",
+        });
+        ctx.activity.close();
+      });
+
+      it("やり直しを待つ間に一時停止したら、push も記録もせずにやめ、pr.failed にせず一時停止の理由を上書きしない", async () => {
+        const ctx = setup([60_000]);
+        await toPublish(ctx);
+        ctx.repos.pushScript = [REJECT];
+        const running = ctx.service.runNext(ctx.id);
+        await waitFor(() => ctx.repos.pushAttempts.length === 1, { what: "最初の push" });
+        const pausing = ctx.service.pause(ctx.id).catch((e: unknown) => e);
+        await running;
+        await pausing;
+        expect(ctx.repos.pushAttempts).toHaveLength(1);
+        expect(kinds(ctx)).toEqual(["TaskPaused"]);
+        expect(
+          ctx.service.get(ctx.id)?.activity.findLast((e) => e.type === "TaskPaused")?.payload,
+        ).toMatchObject({ reason: "manual" });
+        ctx.activity.close();
+      });
+    });
+
     /** 引き継いだ PR で実装の承認待ちまで進め、PR の指摘で実装に差し戻す。 */
     async function continuedThenSentBack() {
       const activity = new SqliteActivityStore(dbPath);
@@ -7257,6 +7405,266 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         ["StepApproved", "person"],
       ]);
       activity.close();
+    });
+  });
+
+  describe("PR の push が一時的に失敗したら、push だけをやり直す（PBI-467）", () => {
+    const remoteRejected = (reason = "failed", extra = "") =>
+      [
+        extra,
+        "To https://x-access-token:ghp_secret@github.com/acme/app.git",
+        `! [remote rejected] ${"c1".padEnd(40, "0")} -> sacty/x (${reason})`,
+        "error: failed to push some refs to 'https://x-access-token:ghp_secret@github.com/acme/app.git'",
+      ]
+        .filter((line) => line !== "")
+        .join("\n");
+    const FAILED = remoteRejected();
+    const TYPES = ["PushRetried", "PushRetryEnded", "PullRequestPublished", "TaskPaused"];
+    const seen = (svc: TaskService, id: string) =>
+      svc.get(id)?.activity.filter((e) => TYPES.includes(e.type)) ?? [];
+    const kinds = (svc: TaskService, id: string) => seen(svc, id).map((e) => e.type);
+
+    /** 実装を終えて、PR の作成だけが残るところまで進める。 */
+    async function toPublish(options: Parameters<typeof toImplement>[1] = {}) {
+      const repos = options.repos ?? new FakeRepos();
+      const pulls = options.pulls ?? new FakePulls();
+      const made = await toImplement([implement("# 実装の説明")], {
+        pushRetryDelaysMs: [0, 0, 0],
+        ...options,
+        repos,
+        pulls,
+      });
+      await made.service.runNext(made.id); // 実装
+      await made.service.runNext(made.id); // 検証
+      expect(made.service.get(made.id)?.task.publishPending).toBe(true);
+      return { ...made, repos, pulls };
+    }
+
+    it("[remote rejected] ... (failed) で 1 回失敗しても止まらず、同じコミット・ブランチ・認証の環境で push し直して PR を作る。記録する失敗の文の秘密の値は伏せる", async () => {
+      const { activity, service, repos, id } = await toPublish();
+      repos.pushScript = [FAILED];
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(2);
+      expect(repos.pushAttempts[1]).toEqual(repos.pushAttempts[0]);
+      expect(repos.pushAttempts[0]?.authEnv).toBeDefined();
+      expect(kinds(service, id)).toEqual(["PushRetried", "PushRetryEnded", "PullRequestPublished"]);
+      const [retried, ended] = seen(service, id);
+      expect(retried?.payload).toMatchObject({ attempt: 1, maxAttempts: 3, waitMs: 0 });
+      const text = ja(retried?.payload.message as DaemonText);
+      expect(text).toContain("[remote rejected]");
+      expect(text).not.toContain("ghp_secret");
+      expect(ended?.payload).toMatchObject({ outcome: "pushed", retries: 1 });
+      activity.close();
+    });
+
+    it.each([
+      ["HTTP 5xx", "error: RPC failed; HTTP 500 curl 22 The requested URL returned error: 500"],
+      ["429", "fatal: unable to access 'https://x/': The requested URL returned error: 429"],
+      [
+        "レート制限の 403",
+        "remote: You have exceeded a secondary rate limit.\nfatal: unable to access 'https://x/': The requested URL returned error: 403",
+      ],
+      ["接続の失敗", "fatal: unable to access 'https://x/': Could not resolve host: github.com"],
+    ])("%s は一時的とみなして、やり直す", async (_name, stderr) => {
+      const { activity, service, repos, id } = await toPublish();
+      repos.pushScript = [stderr];
+      await service.runNext(id);
+      expect(kinds(service, id)).toEqual(["PushRetried", "PushRetryEnded", "PullRequestPublished"]);
+      expect(seen(service, id)[1]?.payload).toMatchObject({ outcome: "pushed", retries: 1 });
+      expect(repos.pushAttempts).toHaveLength(2);
+      activity.close();
+    });
+
+    it.each([
+      ["保護での拒否", "remote: error: GH006: Protected branch update failed for refs/heads/x."],
+      [
+        "ルールでの拒否",
+        "remote: error: GH013: Repository rule violations found for refs/heads/x.",
+      ],
+      ["フックでの拒否", remoteRejected("pre-receive hook declined")],
+      [
+        "workflow の権限が無い",
+        remoteRejected(
+          "refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope",
+        ),
+      ],
+      ["fast-forward でない", " ! [rejected]        x -> x (non-fast-forward)"],
+      ["認証の失敗", "fatal: Authentication failed for 'https://github.com/acme/app.git/'"],
+      [
+        "レート制限でない HTTP 401",
+        "fatal: unable to access 'https://x/': The requested URL returned error: 401",
+      ],
+      [
+        "レート制限でない HTTP 403",
+        "fatal: unable to access 'https://x/': The requested URL returned error: 403",
+      ],
+      ["分類に当たらない文", "something unexpected happened"],
+    ])("一時的でない失敗（%s）は、やり直さずにすぐ止める", async (_name, stderr) => {
+      const { activity, service, repos, id } = await toPublish();
+      repos.pushScript = [stderr];
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(1);
+      expect(kinds(service, id)).toEqual(["TaskPaused"]);
+      const paused = service.get(id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.pausedMessage).toMatchObject({ code: "pr.failed" });
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "TaskPaused")?.payload,
+      ).toMatchObject({
+        reason: "error",
+      });
+      activity.close();
+    });
+
+    it("上限の回数までやり直しても通らなければ、回数を記録して、今までと同じ pr.failed で止まる", async () => {
+      const { activity, service, repos, id } = await toPublish();
+      repos.pushScript = [FAILED, FAILED, FAILED, FAILED];
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(4);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetried",
+        "PushRetried",
+        "PushRetryEnded",
+        "TaskPaused",
+      ]);
+      const events = seen(service, id);
+      expect(events.slice(0, 3).map((e) => e.payload.attempt)).toEqual([1, 2, 3]);
+      expect(events[3]?.payload).toMatchObject({ outcome: "failed", retries: 3 });
+      expect(events[4]?.payload).toMatchObject({ reason: "error", message: { code: "pr.failed" } });
+      activity.close();
+    });
+
+    it("やり直しの途中で一時的でない失敗（保護での拒否）に変わったら、そこでやり直しをやめ、回数を記録して pr.failed で止まる", async () => {
+      const { activity, service, repos, id } = await toPublish();
+      repos.pushScript = [
+        FAILED,
+        remoteRejected("protected branch hook declined", "remote: error: GH006: Protected branch"),
+      ];
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(2);
+      expect(kinds(service, id)).toEqual(["PushRetried", "PushRetryEnded", "TaskPaused"]);
+      expect(seen(service, id)[1]?.payload).toMatchObject({ outcome: "failed", retries: 1 });
+      expect(seen(service, id)[2]?.payload).toMatchObject({ message: { code: "pr.failed" } });
+      activity.close();
+    });
+
+    it("停止の理由の文は、案内の remote: の行を除き、失敗の行を先頭に置き、拒否の理由の行は残し、秘密の値を伏せる", async () => {
+      const { activity, service, repos, id } = await toPublish();
+      repos.pushScript = [
+        [
+          "remote:",
+          "remote: Create a pull request for 'x' on GitHub by visiting:",
+          "remote:      https://github.com/o/r/pull/new/x",
+          "remote: error: GH006: Protected branch update failed",
+          "To https://x-access-token:ghp_secret@github.com/o/r.git",
+          " ! [remote rejected] c1 -> x (protected branch hook declined)",
+          "error: failed to push some refs to 'https://x-access-token:ghp_secret@github.com/o/r.git'",
+        ].join("\n"),
+      ];
+      await service.runNext(id);
+      const text = ja(service.get(id)?.task.pausedMessage);
+      const detail = text.slice(
+        text.indexOf("git push に失敗しました：") + "git push に失敗しました：".length,
+      );
+      expect(detail.startsWith("! [remote rejected]")).toBe(true);
+      expect(detail).not.toContain("Create a pull request");
+      expect(detail).not.toContain("pull/new");
+      expect(detail).not.toMatch(/^remote:$/m);
+      expect(detail).toContain("remote: error: GH006: Protected branch update failed");
+      expect(detail).not.toContain("ghp_secret");
+      activity.close();
+    });
+
+    it("前の回で push が通って応答だけが失われたときは、やり直しの push を通ったとして扱い、回数に数える", async () => {
+      const { activity, service, repos, id } = await toPublish();
+      repos.rejectExistingBranch = true;
+      repos.pushScript = [{ stderr: FAILED, applied: true }];
+      await service.runNext(id);
+      expect(kinds(service, id)).toEqual(["PushRetried", "PushRetryEnded", "PullRequestPublished"]);
+      expect(seen(service, id)[1]?.payload).toMatchObject({ outcome: "pushed", retries: 1 });
+      activity.close();
+    });
+
+    it("やり直しを待つ間に一時停止したら、push も記録もせずにやめ、一時停止の理由を上書きしない", async () => {
+      const { activity, service, repos, id } = await toPublish({ pushRetryDelaysMs: [60_000] });
+      repos.pushScript = [FAILED];
+      const running = service.runNext(id);
+      await waitFor(() => repos.pushAttempts.length === 1, { what: "最初の push" });
+      const pausing = service.pause(id).catch((e: unknown) => e);
+      await running;
+      await pausing;
+      expect(repos.pushAttempts).toHaveLength(1);
+      expect(kinds(service, id)).toEqual(["TaskPaused"]);
+      expect(seen(service, id)[0]?.payload).toMatchObject({ reason: "manual" });
+      activity.close();
+    });
+
+    it("push の失敗（上限まで）で止まった実装のタスクを、新しい指摘なしで再開すると、エージェントを実行せず push からやり直す", async () => {
+      const { activity, service, repos, executor, id } = await toPublish();
+      repos.pushScript = [FAILED, FAILED, FAILED, FAILED];
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      const runs = executor.calls.length;
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(runs);
+      expect(repos.pushAttempts).toHaveLength(5);
+      expect(kinds(service, id).at(-1)).toBe("PullRequestPublished");
+      activity.close();
+    });
+
+    it("前の版の形（案内の remote: の行が残る pr.failed）で止まったタスクと、やり直しを待つ間に一時停止したタスクを再開しても、push からやり直す", async () => {
+      // (a) 案内の行が残る pr.failed で止まった
+      const a = await toPublish();
+      a.repos.pushScript = [
+        "remote: Create a pull request for 'x' on GitHub by visiting:\nremote:      https://github.com/o/r/pull/new/x\n! [remote rejected] c1 -> x (pre-receive hook declined)",
+      ];
+      await a.service.runNext(a.id);
+      expect(a.service.get(a.id)?.task.status).toBe("paused");
+      const runsA = a.executor.calls.length;
+      a.service.resume(a.id, {});
+      a.repos.pushScript = [FAILED];
+      await a.service.runNext(a.id);
+      expect(a.executor.calls).toHaveLength(runsA);
+      expect(kinds(a.service, a.id).slice(-3)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "PullRequestPublished",
+      ]);
+      expect(seen(a.service, a.id).at(-2)?.payload).toMatchObject({
+        outcome: "pushed",
+        retries: 1,
+      });
+      a.activity.close();
+      // (b) やり直しを待つ間に一時停止した
+      const b = await toPublish({ pushRetryDelaysMs: [60_000] });
+      b.repos.pushScript = [FAILED];
+      const running = b.service.runNext(b.id);
+      await waitFor(() => b.repos.pushAttempts.length === 1, { what: "最初の push" });
+      const pausing = b.service.pause(b.id).catch((e: unknown) => e);
+      await running;
+      await pausing;
+      expect(b.service.get(b.id)?.task.status).toBe("paused");
+      const runsB = b.executor.calls.length;
+      b.service.resume(b.id, {});
+      b.repos.pushScript = [FAILED];
+      // 再開後は、待ち時間を実際には待たない（上限の 60 秒の待ちを短くするため、待ち時間は 1 回分だけ）
+      vi.useFakeTimers();
+      try {
+        const resumed = b.service.runNext(b.id);
+        await vi.advanceTimersByTimeAsync(61_000);
+        await resumed;
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(b.executor.calls).toHaveLength(runsB);
+      expect(kinds(b.service, b.id).slice(-3)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "PullRequestPublished",
+      ]);
+      b.activity.close();
     });
   });
 
