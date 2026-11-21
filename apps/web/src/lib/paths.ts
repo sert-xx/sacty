@@ -15,6 +15,9 @@
 
 export const DASHBOARD_PATH = "/dashboard";
 
+/** sacty の設定（すべてのプロジェクトに共通）。 */
+export const SETTINGS_PATH = "/settings";
+
 /** プロジェクトの一覧。 */
 export const PROJECTS_PATH = "/projects";
 

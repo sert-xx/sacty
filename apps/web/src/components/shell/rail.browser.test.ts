@@ -24,6 +24,7 @@ import { ChatPanel } from '/apps/web/src/components/chat-panel.tsx';
 const h = React.createElement;
 const params = new URLSearchParams(location.search);
 const path = params.get('path') ?? '/projects/p1/tasks';
+globalThis.__locale = params.get('lang') ?? 'en';
 document.documentElement.className = ${JSON.stringify(htmlClass)};
 createRoot(document.getElementById('root')).render(
   h('div', { className: 'flex min-h-screen flex-col' },
@@ -41,9 +42,10 @@ createRoot(document.getElementById('root')).render(
 `;
 
 const i18n = `
+import { messagesFor } from '/apps/web/src/i18n/index.ts';
 export function useMessages() {
   return {
-    shell: { nav: { main: 'Main', tasks: 'Tasks', schedules: 'Schedules', audit: 'Audit', settings: 'Settings' } },
+    shell: messagesFor(globalThis.__locale).shell,
     common: { help: 'Help' },
     task: { chat: { open: 'Open chat', openPending: 'Open chat (pending)', close: 'Close', title: 'Chat', note: 'Note', hint: 'Hint' } },
   };
@@ -134,10 +136,17 @@ afterAll(async () => {
   await server?.close();
 });
 
-async function open(width: number, path = "/projects/p1/tasks", fallback = false): Promise<Page> {
+async function open(
+  width: number,
+  path = "/projects/p1/tasks",
+  fallback = false,
+  lang: "en" | "ja" = "en",
+): Promise<Page> {
   const page = await browser.newPage({ viewport: { width, height: 700 } });
-  await page.goto(`${url}/?path=${encodeURIComponent(path)}${fallback ? "&fallback=1" : ""}`);
-  await page.getByRole("navigation", { name: "Main" }).waitFor();
+  await page.goto(
+    `${url}/?path=${encodeURIComponent(path)}&lang=${lang}${fallback ? "&fallback=1" : ""}`,
+  );
+  await page.locator("nav").waitFor();
   return page;
 }
 
@@ -170,16 +179,23 @@ it("at 375px the items keep their order, names and destinations, in one row", as
   const page = await open(375, "/projects/p1/audit");
   try {
     const links = page.getByRole("navigation", { name: "Main" }).getByRole("link");
-    expect(await links.allTextContents()).toEqual(["Tasks", "Schedules", "Audit", "Settings"]);
+    expect((await links.allTextContents()).map((text) => text.replace(/\u200b/g, ""))).toEqual([
+      "Tasks",
+      "Schedules",
+      "Audit",
+      "Project settings",
+      "Sacty settings",
+    ]);
     expect(await links.evaluateAll((els) => els.map((e) => e.getAttribute("href")))).toEqual([
       "/projects/current/tasks",
       "/projects/current/schedules",
       "/projects/current/audit",
       "/projects/current",
+      "/settings",
     ]);
     expect(
       await links.evaluateAll((els) => els.map((e) => e.getAttribute("aria-current"))),
-    ).toEqual([null, null, "page", null]);
+    ).toEqual([null, null, "page", null, null]);
     const ys = await links.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().y));
     expect(new Set(ys).size).toBe(1);
   } finally {
@@ -187,12 +203,15 @@ it("at 375px the items keep their order, names and destinations, in one row", as
   }
 }, 30000);
 
-it("at 375px the all-projects screens show only one item, Settings", async () => {
+it("at 375px the all-projects screens show two items, Projects and Sacty settings", async () => {
   const page = await open(375, "/");
   try {
     const links = page.getByRole("navigation", { name: "Main" }).getByRole("link");
-    expect(await links.allTextContents()).toEqual(["Settings"]);
-    expect(await links.first().getAttribute("href")).toBe("/projects");
+    expect(await links.allTextContents()).toEqual(["Projects", "Sacty settings"]);
+    expect(await links.evaluateAll((els) => els.map((e) => e.getAttribute("href")))).toEqual([
+      "/projects",
+      "/settings",
+    ]);
   } finally {
     await page.close();
   }
@@ -213,6 +232,47 @@ it("at 375px every item is at least 44px wide and tall", async () => {
     }
   }
 }, 30000);
+
+it("at 320px and 375px, in Japanese and English, the five items stay in a bottom row: 44px or larger, names do not overlap, nothing overflows", async () => {
+  for (const lang of ["ja", "en"] as const) {
+    for (const width of [320, 375]) {
+      const page = await open(width, "/projects/p1/tasks", false, lang);
+      try {
+        const nav = page.locator("nav");
+        const n = await box(nav);
+        expect(n.x).toBe(0);
+        expect(n.width).toBe(width);
+        expect(n.y + n.height).toBe(700);
+        expect(await nav.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
+        const links = nav.getByRole("link");
+        expect(await links.count()).toBe(5);
+        const names = await nav.locator("a > span").evaluateAll((els) =>
+          els.map((e) => {
+            const range = document.createRange();
+            range.selectNodeContents(e);
+            const r = range.getBoundingClientRect();
+            return { left: r.left, right: r.right, link: e.parentElement?.getBoundingClientRect() };
+          }),
+        );
+        for (let i = 0; i < 5; i++) {
+          const b = await box(links.nth(i));
+          expect(b.width, `${lang} ${width} item ${i}`).toBeGreaterThanOrEqual(44);
+          expect(b.height, `${lang} ${width} item ${i}`).toBeGreaterThanOrEqual(44);
+          const name = names[i];
+          // 名称は、自分の項目の中に収まり、隣の項目の名称と重ならない
+          expect(name?.left, `${lang} ${width} item ${i}`).toBeGreaterThanOrEqual(b.x - 0.5);
+          expect(name?.right, `${lang} ${width} item ${i}`).toBeLessThanOrEqual(
+            b.x + b.width + 0.5,
+          );
+          const next = names[i + 1];
+          if (name && next) expect(name.right).toBeLessThanOrEqual(next.left);
+        }
+      } finally {
+        await page.close();
+      }
+    }
+  }
+}, 60000);
 
 it("at 375px the chat button sits above the menu without overlapping it", async () => {
   const page = await open(375);

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import type { StepKey } from "@sacty/core";
 import { takeFences } from "../agent-json.js";
@@ -6,7 +6,7 @@ import { COMPLETION_FENCE, completionBlock } from "../completion.js";
 import type { AgentConfig } from "../config.js";
 import { CLAUDE_MCP_CONFIG, GATEWAY_TOKEN_SECRET, type PlacedContext } from "../context.js";
 import type { SecretStore } from "../secrets.js";
-import { secretStringsInJson } from "./redact.js";
+import { MAX_AUTH_FILE_BYTES, secretStringsInJson } from "./redact.js";
 
 /**
  * 何として実行するか。工程か、ゴールガーディアン（変更の申し出の判定・最終レビュー）か、オーケストレーター
@@ -284,7 +284,11 @@ export async function buildInvocation(
         const hostPath = expandHome(auth.auth_file ?? "~/.codex/auth.json");
         // 認証ファイルのトークン類も、出力から取り除く対象にする
         try {
-          for (const value of secretStringsInJson(readFileSync(hostPath, "utf8"))) onSecret(value);
+          // 上限を超えるファイルは、メモリに読まない。コンテナに写すときに同じ上限で調べ、超えていれば起動せずに失敗にする
+          if (statSync(hostPath).size <= MAX_AUTH_FILE_BYTES) {
+            for (const value of secretStringsInJson(readFileSync(hostPath, "utf8")))
+              onSecret(value);
+          }
         } catch {
           // 読めない場合は実行時に「認証ファイルを読めません」として止まる
         }

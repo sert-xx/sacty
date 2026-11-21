@@ -2,7 +2,15 @@
 
 import { type Project, type ProjectTarget, targetUrlProblem } from "@sacty/core";
 import { RefreshCwIcon, XIcon } from "lucide-react";
-import { startTransition, useActionState, useEffect, useId, useState, useTransition } from "react";
+import {
+  startTransition,
+  useActionState,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import {
   reloadGitHubAccountsAction,
   type SaveProjectState,
@@ -16,6 +24,8 @@ import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
 import type { GitHubAccounts, ProjectPlatforms } from "@/lib/daemon";
 import { githubAccountChoices } from "@/lib/github-accounts";
+import { useUnsavedChanges } from "@/lib/unsaved-changes";
+import { SaveBar } from "./save-bar";
 
 const initial: SaveProjectState = {};
 
@@ -167,6 +177,16 @@ export function ProjectEditor({
       : {}),
   });
 
+  // 保存していない変更：送る定義の写しを、基準の写し（最初に描いたとき。保存に成功したら、送った写し）と比べる。元の値に戻せば
+  // 変更なしの扱い。プロジェクトの作成のフォーム（project が無い）は対象にしない
+  const [baseline, setBaseline] = useState(definition);
+  const submitted = useRef(definition);
+  useEffect(() => {
+    if (state.saved) setBaseline(submitted.current);
+  }, [state]);
+  const dirty = project !== undefined && definition !== baseline;
+  useUnsavedChanges(dirty);
+
   const updateTarget = (i: number, patch: Partial<ProjectTarget>) =>
     setTargets((list) => list.map((t, j) => (j === i ? ({ ...t, ...patch } as ProjectTarget) : t)));
 
@@ -177,6 +197,7 @@ export function ProjectEditor({
       onSubmit={(e) => {
         e.preventDefault();
         if (mergedStale) return;
+        submitted.current = definition;
         const data = new FormData(e.currentTarget);
         startTransition(() => formAction(data));
       }}
@@ -828,11 +849,6 @@ export function ProjectEditor({
           </Button>
         </div>
       )}
-      {state.saved && !state.message && !state.contextError && (
-        <p role="status" className="text-sm text-accent-foreground">
-          {state.merged ? t.savedMerged : t.saved}
-        </p>
-      )}
       {/* 併合して保存した。画面はほかの保存の変更を見ていないので、読み込み直して確かめる（PBI-301） */}
       {state.saved && state.merged && (
         <Button
@@ -856,13 +872,17 @@ export function ProjectEditor({
           {t.githubRequired}
         </p>
       )}
-      <Button
-        type="submit"
+      <SaveBar
+        dirty={dirty}
         disabled={pending || needsAccount || mergedStale}
-        className="min-h-11 w-fit px-6"
+        label={project ? t.save : t.create}
       >
-        {project ? t.save : t.create}
-      </Button>
+        {state.saved && !dirty && !state.message && !state.contextError && (
+          <p role="status" className="text-sm text-accent-foreground">
+            {state.merged ? t.savedMerged : t.saved}
+          </p>
+        )}
+      </SaveBar>
     </form>
   );
 }

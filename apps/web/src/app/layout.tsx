@@ -18,6 +18,7 @@ import { RailNav } from "@/components/shell/rail";
 import { MAIN_ID, SkipLink } from "@/components/shell/skip-link";
 import { UpdateNotice } from "@/components/shell/update-notice";
 import { THEME_SCRIPT } from "@/lib/theme";
+import { UnsavedChangesProvider } from "@/lib/unsaved-changes";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -42,59 +43,61 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body className="flex min-h-full flex-col">
-        {/* ブラウザのデスクトップ通知（このブラウザで On にしたときだけ。画面には何も描かない） */}
-        <DesktopNotifications />
-        {/* 本文へ飛ぶリンク（最初の Tab で見える。フォーカスが無い間は見えない） */}
-        <Suspense fallback={null}>
-          <Localized>
-            <SkipLink />
-          </Localized>
-        </Suspense>
-        {/* 画面の言語は cookie とリクエストから決まるので、どこも Suspense の中で決める */}
-        <Suspense fallback={<HeaderFallback />}>
-          <Localized>
-            <AppHeader />
-          </Localized>
-        </Suspense>
-        <div className="flex flex-1">
-          {/* 表示中の画面（URL）も、描画のたびに決まるので Suspense の中で読む */}
-          <Suspense fallback={<RailNav />}>
+        <UnsavedChangesProvider>
+          {/* ブラウザのデスクトップ通知（このブラウザで On にしたときだけ。画面には何も描かない） */}
+          <DesktopNotifications />
+          {/* 本文へ飛ぶリンク（最初の Tab で見える。フォーカスが無い間は見えない） */}
+          <Suspense fallback={null}>
             <Localized>
-              <RailGate />
+              <SkipLink />
             </Localized>
           </Suspense>
-          <main
-            id={MAIN_ID}
-            tabIndex={-1}
-            className="min-w-0 flex-1 pt-7 pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(5.5rem+env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] outline-none sm:py-7 sm:pr-[max(2rem,env(safe-area-inset-right))] sm:pl-8"
-          >
-            <div className="mx-auto flex max-w-6xl flex-col gap-6">
-              {/* Docker を使えない・エージェントのイメージが無い（PBI-148）。タスクを実行できないので、どの画面でも中身の上に出す */}
-              <Suspense fallback={null}>
-                <Localized>
-                  <DockerNotice />
-                </Localized>
-              </Suspense>
-              {/* コンテキストのイメージ（images.yaml）を作っている・作れなかった（PBI-325）。どの画面でも、中身の上に出す */}
-              <Suspense fallback={null}>
-                <Localized>
-                  <ContextImagesNotice />
-                </Localized>
-              </Suspense>
-              {/* sacty の新しい版（PBI-135）。どの画面でも、中身の上に出す */}
-              <Suspense fallback={null}>
-                <Localized>
-                  <UpdateNotice />
-                </Localized>
-              </Suspense>
-              <Suspense fallback={null}>
-                <Localized>
-                  <ProjectGate>{children}</ProjectGate>
-                </Localized>
-              </Suspense>
-            </div>
-          </main>
-        </div>
+          {/* 画面の言語は cookie とリクエストから決まるので、どこも Suspense の中で決める */}
+          <Suspense fallback={<HeaderFallback />}>
+            <Localized>
+              <AppHeader />
+            </Localized>
+          </Suspense>
+          <div className="flex flex-1">
+            {/* 表示中の画面（URL）も、描画のたびに決まるので Suspense の中で読む */}
+            <Suspense fallback={<RailNav />}>
+              <Localized>
+                <RailGate />
+              </Localized>
+            </Suspense>
+            <main
+              id={MAIN_ID}
+              tabIndex={-1}
+              className="min-w-0 flex-1 pt-7 pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(5.5rem+env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] outline-none sm:py-7 sm:pr-[max(2rem,env(safe-area-inset-right))] sm:pl-8"
+            >
+              <div className="mx-auto flex max-w-6xl flex-col gap-6">
+                {/* Docker を使えない・エージェントのイメージが無い（PBI-148）。タスクを実行できないので、どの画面でも中身の上に出す */}
+                <Suspense fallback={null}>
+                  <Localized>
+                    <DockerNotice />
+                  </Localized>
+                </Suspense>
+                {/* コンテキストのイメージ（images.yaml）を作っている・作れなかった（PBI-325）。どの画面でも、中身の上に出す */}
+                <Suspense fallback={null}>
+                  <Localized>
+                    <ContextImagesNotice />
+                  </Localized>
+                </Suspense>
+                {/* sacty の新しい版（PBI-135）。どの画面でも、中身の上に出す */}
+                <Suspense fallback={null}>
+                  <Localized>
+                    <UpdateNotice />
+                  </Localized>
+                </Suspense>
+                <Suspense fallback={null}>
+                  <Localized>
+                    <ProjectGate>{children}</ProjectGate>
+                  </Localized>
+                </Suspense>
+              </div>
+            </main>
+          </div>
+        </UnsavedChangesProvider>
       </body>
     </html>
   );

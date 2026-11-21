@@ -122,7 +122,8 @@ When you open the web UI, it shows the dashboard first.
 | --- | --- | --- |
 | Dashboard | `/dashboard` (also when you open `/`) | Across all projects: what needs you, why tasks are paused, open tasks, cost and budget, the step queue, intake, throughput, and quality signals ([Dashboard](dashboard.en.md)). When Slack notifications could not be sent, the reason is shown above the sections |
 | Task list | `/projects/<ID>/tasks` | The project's tasks. "Create task" is also here |
-| Project settings | `/projects/<ID>/settings` | The project's settings ([Project settings](project-settings.en.md)) |
+| Project settings | `/projects/<ID>/settings` | The project's settings ([Project settings](project-settings.en.md)). The heading is `Project "<name>" settings` |
+| Sacty settings | `/settings` | Settings shared by all projects (intake intervals, the number of tasks to run at once, Slack notifications, and so on; [Configuration](config.en.md)) |
 | Project list | `/projects` | Create and import projects |
 | Task details | `/tasks/<ID>` | The task's progress, approvals, and run logs |
 
@@ -131,8 +132,11 @@ When the screen is narrower than 640px, the side menu appears in a row at the bo
 
 - In the header's project switcher, choosing "All projects" moves to the dashboard, and choosing a project moves to that project's task list.
   The header shows the project of the open screen ("All projects" on the dashboard and similar screens).
-- "Tasks" and "Settings" in the side menu open the task list and settings of the project selected in the header.
-  While "All projects" is selected, "Tasks" is not shown and "Settings" opens the project list.
+- "Tasks" and "Project settings" in the side menu open the task list and settings of the project selected in the header.
+  While "All projects" is selected, "Tasks" is not shown and "Projects" (the project list) is shown.
+- "Sacty settings" at the bottom of the side menu is shown on every screen and opens `/settings`.
+  You can also open it from "Sacty settings" in the menu of the person icon at the top right.
+  It is separate from the per-project "Project settings".
 - Opening `/projects/<ID>` moves to that project's task list.
   Opening the ID of a project that does not exist shows that the page was not found.
 
