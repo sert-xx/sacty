@@ -21,10 +21,16 @@
 
 ## 確かめたこと
 
-- 下の「検証」のコマンドを実行した結果は、PR の本文に書いた。
+- `npm run lint`（biome）: 通った。
+- `npx vitest run tests/docs apps/daemon/src/default-skills.test.ts apps/daemon/src/self-review-depth.test.ts`: 通った（6 ファイル・237 件）。
+- `npm test`（全件）: 環境に起因する失敗（`@sacty/daemon` などのパッケージが解決できないテスト、ブラウザのテストの時間切れ）があった。変更前の状態では確かめていない。
 
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
 | なし | なし |
+
+## 残したこと
+
+なし
