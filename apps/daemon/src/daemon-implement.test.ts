@@ -12838,6 +12838,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(task && heldReview(task)).toEqual({
           keys: ["comment:1"],
           remarks: ["全体として、失敗時のログが足りない"],
+          // 作者でも組織の関係者でもない投稿は、出どころを確かめられない人（PBI-452）
+          unverified: [0],
         });
         expect(task?.importedFeedback).toEqual(["comment:1"]);
         // 差し戻しにも判断にもなっていない（指摘は最初の差し戻しの 1 件のまま）

@@ -54,6 +54,7 @@ import {
   DEPLOYMENT_CI_TIMEOUT_MS,
   DecideChangeInput,
   DecideDeferralsInput,
+  type DecisionPause,
   DeriveTaskInput,
   type DesignEditItem,
   type DesignEditRejected,
@@ -270,6 +271,7 @@ import {
 } from "./context.js";
 import type { ContextImageBuilder, ContextImagesView } from "./context-images.js";
 import type { ContextMcpServers } from "./context-mcp.js";
+import { buildDecisionNotice, decisionNoticeMarker } from "./decision-notice.js";
 import {
   buildDeferralIssue,
   buildDeferralNotice,
@@ -309,6 +311,7 @@ import {
   githubRetryAfterMs,
   githubStatus,
   isBasisComment,
+  isDecisionNotice,
   isDeferralNotice,
   isHumanAskNotice,
   isReviewStopNotice,
@@ -332,7 +335,7 @@ import {
 } from "./github-comments.js";
 import { GitHubRateLimitStore } from "./github-rate-limits.js";
 import { GITHUB_COMMENT_BODY_MAX, githubPromptLines, githubRelayEnv } from "./github-relay.js";
-import { buildHumanAskNotice, humanAskMarker } from "./human-ask-notice.js";
+import { buildHumanAskNotice, cutAtMax, humanAskMarker } from "./human-ask-notice.js";
 import {
   CONTAINER_PROJECT_MEMORY_DIR,
   CONTAINER_REPOSITORY_MEMORY_DIR,
@@ -597,6 +600,19 @@ import {
  * レビューの工程で、PR の差分の全体を置くファイルの名前（PBI-65）。sacty が管理する `_review/<runId>/` に置き、
  * 読み取り専用で別にマウントする。作業領域の写しは PR 由来のリンクやファイルを含むので、その中には書かない。
  */
+/** 印で止めた理由に載せる、指摘の件数の上限（記録を大きくしないため）。 */
+const DECISION_FINDINGS_MAX = 10;
+
+/** 印で止めた回で、人の判断が済んだ、この先頭の回（無ければ undefined）。 */
+function decidedPause(task: Task, commit: string): DecisionPause | undefined {
+  return task.decisionPauses?.findLast(
+    (p) => p.decided && p.commit !== "" && sameCommit(p.commit, commit),
+  );
+}
+
+/** 範囲の違反の記録の max に固定で書く旧値（以前の版の schema が必須にしているため。値は読まない）。 */
+const LEGACY_SCOPE_MAX_LINES = 300;
+
 const REVIEW_DIFF_FILE = "pr.diff";
 /** 再レビューを絞る回の、前回以降の差分の全体を置くファイル（PBI-432）。 */
 const REREVIEW_DIFF_FILE = "since.diff";
@@ -1743,6 +1759,8 @@ export class TaskService {
     }
     // 一時停止の間に実装の PR に届いた指摘を、未反映として残す（PBI-279）
     await this.checkHeldFeedback();
+    // 直しでは解消できない指摘で止めたタスクの PR：知らせの投稿・マージ・人のコメントでの再開（PBI-452）
+    await this.checkDecisionPauses();
     // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
     const waiting = [...this.tasks.values()].filter(
       (t) =>
@@ -2103,6 +2121,224 @@ export class TaskService {
     }
   }
 
+  /** 印で止めたことを PR に知らせた回（タスク ID:止めた回）。再起動の後は、目印で探して、二重に書かない。 */
+  private readonly decisionNoticed = new Set<string>();
+  /** 印で止めたタスクの PR の、人のコメントを初めて見た時刻（書き終わりを待つため。タスク ID ごと）。 */
+  private readonly decisionSeenAt = new Map<string, Map<string, number>>();
+
+  /**
+   * 直しでは解消できない指摘で止めた（reason が needs_decision）タスクの PR を見張る（PBI-452）。承認待ちのまま止めているので、
+   * 実装・要求要件・設計のどの PR も、承認ゲートの PR（gatePullRequest）を見る。
+   * - 止めた理由を、PR に 1 回だけ知らせる（decision-notice）
+   * - 要求要件・設計の PR がマージされていたら、再開して承認待ちに戻す（次の確認が、マージを承認として進める）。実装の PR の
+   *   マージは、checkReworkMerges が承認として進める
+   * - PR に届いた指摘を、未反映として残す。人（by が person）のコメントがあれば、同じ追記で再開する（人が了承か方針を書いた
+   *   ので。出どころを確かめられない人・AI のレビュー・sacty の知らせでは再開しない）
+   */
+  private async checkDecisionPauses(): Promise<void> {
+    const stopped = new Set<string>();
+    for (const task of [...this.tasks.values()]) {
+      if (task.status !== "paused" || task.pausedReason !== "needs_decision") continue;
+      stopped.add(task.id);
+      const pr = gatePullRequest(task);
+      if (!pr?.repo || this.cancelling.has(task.id) || this.mergeStopping.has(task.id)) continue;
+      const usedSecrets: string[] = [];
+      try {
+        const token = await this.githubToken(task, pr.repo, usedSecrets);
+        await this.announceDecisionNotice(task, { ...pr, repo: pr.repo }, token, usedSecrets);
+        const status = await this.deps.pulls.status({
+          repo: pr.repo,
+          token,
+          number: pr.number,
+        });
+        if (status.state === "merged") {
+          const latest = this.tasks.get(task.id);
+          if (
+            pr.step !== "implement" &&
+            latest?.status === "paused" &&
+            latest.pausedReason === "needs_decision" &&
+            !this.cancelling.has(task.id) &&
+            !this.mergeStopping.has(task.id) &&
+            gatePullRequest(latest)?.number === pr.number
+          ) {
+            this.append(latest, [
+              { actor: "sacty", event: { type: "TaskResumed", payload: { retry: false } } },
+            ]);
+          }
+          continue;
+        }
+        if (status.state !== "open") continue;
+        await this.holdDecisionFeedback(task.id, token);
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${pr.number}（${pr.repo}）の、人の判断を待つ間の確認ができませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    }
+    for (const id of [...this.decisionSeenAt.keys()]) {
+      if (!stopped.has(id)) this.decisionSeenAt.delete(id);
+    }
+  }
+
+  /**
+   * 印で止めたことを、PR に 1 回だけコメントする（PBI-452）。止めた回ごとに 1 通（目印で見つけたものがあれば書かない）。投稿
+   * できなくても、タスクは変えない（例外は投げず、次の確認でやり直す）。
+   */
+  private async announceDecisionNotice(
+    task: Task,
+    pr: { repo: string; number: number },
+    token: string,
+    usedSecrets: readonly string[],
+  ): Promise<void> {
+    // セキュリティのタスクは、指摘と根拠（脆弱性の詳細を含みうる）を公開の PR に書かない（画面・get_task には出る）
+    if (isSecurityTask(task)) return;
+    const round = task.decisionPauses?.length ?? 0;
+    const pause = task.decisionPauses?.[round - 1];
+    if (!pause) return;
+    const key = `${task.id}:${round}`;
+    if (this.decisionNoticed.has(key)) return;
+    this.decisionNoticed.add(key);
+    const link = taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", task.id);
+    await this.serialized(`decision-notice:${key}`, async () => {
+      const signal = this.stopNoticeDeadline();
+      try {
+        const target = { repo: pr.repo, token, number: pr.number };
+        const existing = await untilAborted(
+          signal,
+          this.deps.pulls.findIssueComment({
+            ...target,
+            marker: decisionNoticeMarker(task.id, round),
+          }),
+        );
+        if (existing) return;
+        await untilAborted(
+          signal,
+          this.deps.pulls.commentIssue({
+            ...target,
+            body: buildDecisionNotice({
+              taskId: task.id,
+              round,
+              findings: pause.findings,
+              taskUrl: link.url,
+              localOnly: link.localOnly,
+              secrets: usedSecrets,
+            }),
+            signal,
+          }),
+        );
+      } catch (error) {
+        this.decisionNoticed.delete(key);
+        console.warn(
+          `[daemon] タスク ${task.id} の、人の判断を待って止めたことを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), [...usedSecrets]), "ja")}`,
+        );
+      }
+    });
+  }
+
+  /**
+   * 印で止めたタスクの PR に届いた指摘を、未反映として残す（PBI-452）。承認待ちの取り込みと同じ上限（REMARKS_MAX）まで。
+   * 人（by が person）のコメントがあるときは、最後の人のコメントから FEEDBACK_QUIET_MS 待ってから記録し（方針を何通かに分けて
+   * 書いても 1 回にまとめる）、同じ追記で再開する。人のコメントが無いとき（出どころを確かめられない人・AI のレビューだけ）は、
+   * 残すだけで再開しない。
+   */
+  private async holdDecisionFeedback(taskId: string, token: string): Promise<void> {
+    const task = this.tasks.get(taskId);
+    const pr = task && gatePullRequest(task);
+    if (!task || !pr?.repo || task.pendingReview?.judgement) return;
+    const listed = (
+      await this.deps.pulls.feedback({
+        repo: pr.repo,
+        token,
+        number: pr.number,
+        ...this.githubAccountOf(task, pr.repo),
+        ...this.sactyReviewsOf(pr.repo, pr.number),
+        ...replyAccounts(task),
+      })
+    )
+      .filter((item) => !task.importedFeedback.includes(item.key))
+      .filter((item) => !handedOverFeedback(task, pr, item));
+    const fresh = await this.withoutStaleReviews(
+      taskId,
+      { repo: pr.repo, number: pr.number },
+      token,
+      listed,
+      "held",
+    );
+    if (fresh.length === 0) return;
+    const importedBy = await this.importersOf(pr.repo, pr.number, token, fresh);
+    const persons = fresh.filter((item) => importedBy.get(item.key) === "person");
+    if (persons.length > 0) {
+      // 方針は何通かに分けて書かれるので、最後の人のコメントから一定の時間たつまで待つ（記録しない）。時刻は、このデーモンが
+      // 初めて見た時刻より後には数えない（GitHub の時刻が、この機械の時計より先に進んでいても待ち続けない）
+      const now = this.now();
+      const previouslySeen = this.decisionSeenAt.get(taskId);
+      const seenAt = new Map(
+        persons.map((item) => [item.key, previouslySeen?.get(item.key) ?? now]),
+      );
+      this.decisionSeenAt.set(taskId, seenAt);
+      const newest = Math.max(
+        ...persons.map((item) => Math.min(Date.parse(item.at) || 0, seenAt.get(item.key) ?? now)),
+      );
+      if (now - newest < FEEDBACK_QUIET_MS) return;
+    }
+    // 読んでいる間に、再開・中止・別の状態になったなら、記録しない（次の確認でやり直す）
+    const latest = this.tasks.get(taskId);
+    if (
+      !latest ||
+      this.cancelling.has(taskId) ||
+      latest.status !== "paused" ||
+      latest.pausedReason !== "needs_decision" ||
+      latest.pendingReview?.judgement ||
+      gatePullRequest(latest)?.number !== pr.number
+    ) {
+      return;
+    }
+    const room = Math.max(REMARKS_MAX - (latest.pendingReview?.remarks.length ?? 0), 0);
+    const batch = fresh
+      .filter((item) => !latest.importedFeedback.includes(item.key))
+      .slice(0, room);
+    if (batch.length === 0) return;
+    // 人のコメントは、秘密の値を伏せてから記録する（人の判断の文として、作業履歴・画面・直しの指示に出るため）
+    const secrets = gitAuthSecrets(token);
+    const remarks = feedbackRemarks(batch).map((text, i) =>
+      importedBy.get(batch[i]?.key ?? "") === "person" ? redact(text, secrets) : text,
+    );
+    const resumes = batch.some((item) => importedBy.get(item.key) === "person");
+    this.append(latest, [
+      {
+        actor: batch.some((item) => item.source !== "sacty_review") ? "person" : "sacty",
+        event: {
+          type: "PullRequestReviewImported",
+          payload: {
+            number: pr.number,
+            items: batch.map((item) => ({
+              key: item.key,
+              author: item.author,
+              at: item.at,
+              ...(item.url ? { url: item.url } : {}),
+              ...(item.source ? { source: item.source } : {}),
+              ...(item.source && item.review ? { review: item.review } : {}),
+              ...(importedBy.get(item.key) ? { by: importedBy.get(item.key) } : {}),
+            })),
+            remarks,
+            held: true,
+          },
+        },
+      },
+      // 人が了承か方針を書いたので、再開する（承認待ちに戻り、残った指摘から、選り分け・判断・差し戻しに進む）。取り込みと同じ
+      // 追記で記録する（別の追記だと、間でデーモンが止まったとき、取り込み済みのコメントは読み直されず、止まったままになる）
+      ...(resumes
+        ? [
+            {
+              actor: "sacty" as const,
+              event: { type: "TaskResumed" as const, payload: { retry: false } },
+            },
+          ]
+        : []),
+    ]);
+    this.decisionSeenAt.delete(taskId);
+  }
+
   /**
    * 一時停止中のタスクの実装の PR に届いた指摘（人の指摘と、sacty 自身の AI のレビューの指摘）を、未反映として残す（PBI-279）。
    * 差し戻しにはしない。再開したあと、止まった工程を走り直す前に、戻し先を判断させ（指摘がすべて、レビューの子タスクの最後の回の AI のレビューの指摘で、その回の判定の記録が指摘なしでなければ、子タスクの答え（判定や戻し先を読めなかった回も、その PR の工程をやり直す答えにする）。人の指摘を含む・子タスクが無い・ほかの回の投稿・その回の判定の記録が無いか指摘なしのときは、PR の工程のエージェント。PBI-332）、反映する
@@ -2112,6 +2348,8 @@ export class TaskService {
   private async checkHeldFeedback(): Promise<void> {
     for (const task of [...this.tasks.values()]) {
       if (task.status !== "paused" || task.pendingReview?.judgement) continue;
+      // 印で止めた回（PBI-452）は、checkDecisionPauses が見張る（承認待ちのまま止めているので、取り込みの条件が違う）
+      if (task.pausedReason === "needs_decision") continue;
       const pr = reworkingPullRequest(task);
       if (!pr?.repo || this.cancelling.has(task.id) || this.mergeStopping.has(task.id)) continue;
       const usedSecrets: string[] = [];
@@ -2164,6 +2402,14 @@ export class TaskService {
         headUnknown = true;
       },
     );
+    // 取り込む投稿の出どころは、状態を読み直す前に確かめる（待つ間に、再開・中止・判断の開始があっても、記録の前に読み直すため）
+    const candidates = fresh
+      .filter((item) => !task.importedFeedback.includes(item.key))
+      .slice(0, REMARKS_MAX);
+    const importedBy =
+      candidates.length > 0
+        ? await this.importersOf(pr.repo, pr.number, token, candidates)
+        : new Map<string, "person" | "unverified">();
     // 読んでいる間に、実行が始まった・別の状態になった・人が反映の判断を始めたなら、残さない（次の確認でやり直す）
     const latest = this.tasks.get(taskId);
     if (
@@ -2181,7 +2427,7 @@ export class TaskService {
       .filter((item) => !latest.importedFeedback.includes(item.key))
       .slice(0, room);
     if (batch.length === 0) return !headUnknown;
-    this.append(latest, [
+    this.append(this.tasks.get(taskId) ?? latest, [
       {
         // AI のレビューの指摘だけの回は、人間の操作にしない（PBI-275）
         actor: batch.some((item) => item.source !== "sacty_review") ? "person" : "sacty",
@@ -2196,6 +2442,7 @@ export class TaskService {
               ...(item.url ? { url: item.url } : {}),
               ...(item.source ? { source: item.source } : {}),
               ...(item.source && item.review ? { review: item.review } : {}),
+              ...(importedBy.get(item.key) ? { by: importedBy.get(item.key) } : {}),
             })),
             remarks: feedbackRemarks(batch),
             held: true,
@@ -2560,6 +2807,10 @@ export class TaskService {
       return false;
     }
     if (this.cancelling.has(taskId)) return false;
+    const decision = latest.status === "paused" && latest.pausedReason === "needs_decision";
+    const discarded = decision
+      ? (latest.decisionPauses?.findLast((p) => !p.decided)?.findings.length ?? 0)
+      : (heldReview(latest)?.remarks.length ?? 0);
     this.append(latest, [
       {
         actor: "sacty",
@@ -2575,9 +2826,10 @@ export class TaskService {
             })),
             ...(latest.verifyFeedback ? { discardedFeedback: latest.verifyFeedback.kind } : {}),
             // 一時停止の間に届いて、まだ作り直しに渡していない PR の指摘（PBI-279）
-            ...(heldReview(latest)?.remarks.length
-              ? { discardedReview: heldReview(latest)?.remarks.length }
-              : {}),
+            // 人の判断を待って止めていた PR のマージ（作り直しは始めておらず、止めた理由の指摘は反映せずに承認として進める。
+            // 件数は取り込んだ投稿の数ではなく、印の付いた指摘の数。PBI-452）
+            ...(discarded > 0 ? { discardedReview: discarded } : {}),
+            ...(decision ? { decision: true as const } : {}),
           },
         },
       },
@@ -2963,6 +3215,7 @@ export class TaskService {
         !isReviewStopNotice(item.body) &&
         !isHumanAskNotice(item.body) &&
         !isReworkNotice(item.body) &&
+        !isDecisionNotice(item.body) &&
         !isDeferralNotice(item.body) &&
         !isBasisComment(item.body) &&
         !isSactyGitHubComment(item.body),
@@ -3729,7 +3982,12 @@ export class TaskService {
         .filter((item) => !latest.importedFeedback.includes(item.key))
         .slice(0, REMARKS_MAX);
       if (batch.length === 0) return;
-      current = this.append(latest, [
+      const importedBy = await this.importersOf(pr.repo, pr.number, token, batch);
+      // 読んでいる間に変わったなら、記録しない（次の確認でやり直す）
+      const again = this.tasks.get(task.id);
+      if (again?.status !== "awaiting_approval" || again.pendingReview) return;
+      if (stillReady && !stillReady()) return;
+      current = this.append(again, [
         {
           // レビューは人間の判断なので、人間の操作として記録する。AI のレビュー（sacty のレビューのタスクの投稿）だけの
           // 回は、人間の操作にしない（PBI-275）
@@ -3745,6 +4003,7 @@ export class TaskService {
                 ...(item.url ? { url: item.url } : {}),
                 ...(item.source ? { source: item.source } : {}),
                 ...(item.source && item.review ? { review: item.review } : {}),
+                ...(importedBy.get(item.key) ? { by: importedBy.get(item.key) } : {}),
               })),
               remarks: feedbackRemarks(batch),
             },
@@ -3754,6 +4013,13 @@ export class TaskService {
     }
     let pending = current.pendingReview;
     if (!pending) return;
+    // 直しでは解消できないと印を付けた要修正が残った回は、直しに入らずに、承認待ちのまま止めて人の判断を待つ（PBI-452）
+    const marked = this.needsDecisionOf(current, pr, pending);
+    if (marked) {
+      if (stillReady && !stillReady()) return;
+      this.pauseForDecision(current, pr, marked, token);
+      return;
+    }
     // AI のレビューの提案は、直しに入る前に、AI が PR の範囲で「対応する／対応しない」に選り分ける（PBI-436）。済んでいれば
     // （pending.triage）、起動し直しても実行し直さない
     if (!pending.judgement && !pending.triage) {
@@ -3842,6 +4108,98 @@ export class TaskService {
   }
 
   /**
+   * 取り込む指摘の、人の投稿の出どころ（PBI-452）。PR の作者・リポジトリの OWNER・MEMBER・COLLABORATOR の投稿は person、それ以外は
+   * unverified（`annotateReviewComments` と同じ基準）。AI のレビュー（sacty_review）の投稿には付けない。PR の作者を読めなければ、
+   * 作者とは見なさない（組織との関係だけで決める）。
+   */
+  private async importersOf(
+    repo: string,
+    number: number,
+    token: string,
+    batch: readonly PullRequestFeedback[],
+  ): Promise<Map<string, "person" | "unverified">> {
+    const people = batch.filter((item) => item.source !== "sacty_review");
+    const by = new Map<string, "person" | "unverified">();
+    if (people.length === 0) return by;
+    let author = "";
+    try {
+      author = (await this.deps.pulls.pullRequest({ repo, number, token }))?.author ?? "";
+    } catch {
+      // PR の作者を読めなければ、組織との関係だけで決める
+    }
+    for (const item of annotateReviewComments(people, author)) {
+      if (item.by === "person" || item.by === "unverified") by.set(item.key, item.by);
+    }
+    return by;
+  }
+
+  /**
+   * 取り込んだ指摘が、直しでは解消できず人の判断が要る、と PR のレビューが印を付けた要修正の回か（PBI-452）。止めるのは、次の
+   * すべてがそろうときだけ：人（by が person）の指摘が無い（出どころを確かめられない人と AI のレビューは数えない）・取り込んだ
+   * AI のレビューの指摘がすべて、レビューの子タスクの最後の回のもの・その回の判定が修正が必要で、印（needsDecision）の付いた指摘が
+   * ある・この PR の先頭で、人の判断が済んでいない。止める指摘（印の付いたもの）を返す。判断・選り分けの前だけ判定する。
+   * 戻し先（reviewTaskRework）は通さない（人の指摘を含む回も、ここで別に判定する）。
+   */
+  private needsDecisionOf(
+    task: Task,
+    pr: NonNullable<ReturnType<typeof gatePullRequest>>,
+    pending: NonNullable<Task["pendingReview"]>,
+  ): { finding: string; reason: string }[] | undefined {
+    if (pending.judgement || pending.triage) return undefined;
+    const ai = new Set(pending.aiReview ?? []);
+    const unverified = new Set(pending.unverified ?? []);
+    if (ai.size === 0) return undefined;
+    if (pending.remarks.some((_, i) => !ai.has(i) && !unverified.has(i))) return undefined;
+    const record = (task.reviewTasks ?? []).findLast(
+      (r) => r.step === pr.step && r.number === pr.number,
+    );
+    const child = record && this.tasks.get(record.taskId);
+    if (!child) return undefined;
+    const round = child.reviewRound ?? 1;
+    const from = sactyReviewKey(child.id, round);
+    if ([...ai].some((i) => pending.aiReviewFrom?.[String(i)] !== from)) return undefined;
+    const last = child.reviewVerdicts?.find((v) => v.round === round);
+    if (last?.verdict !== "changes_required") return undefined;
+    const marked = (last.rework?.findings ?? []).filter((f) => f.needsDecision);
+    if (marked.length === 0) return undefined;
+    // 人の判断が済んだ先頭では、同じ印で止めない（同じ指摘で止まり続けない）
+    if (!pr.commit || decidedPause(task, pr.commit)) return undefined;
+    return marked.map((f) => ({ finding: f.finding, reason: f.needsDecision ?? "" }));
+  }
+
+  /**
+   * 印の付いた要修正が残ったので、差し戻し（直し）に入らずに、承認待ちのまま止める（PBI-452）。承認ゲートと取り込んだ指摘は残す。
+   * 指摘と根拠は、記録の前に秘密の値を伏せ、切る（作業履歴・画面・MCP・PR のどれも伏せた文を読む）。
+   */
+  private pauseForDecision(
+    task: Task,
+    pr: NonNullable<ReturnType<typeof gatePullRequest>>,
+    findings: readonly { finding: string; reason: string }[],
+    token: string,
+  ): void {
+    const secrets = gitAuthSecrets(token);
+    const clean = (text: string, max: number) => cutAtMax(redact(text, secrets).trim(), max);
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskPaused",
+          payload: {
+            reason: "needs_decision",
+            message: message("review.needsDecision", {
+              number: pr.number,
+              findings: findings
+                .slice(0, DECISION_FINDINGS_MAX)
+                .map((f) => ({ finding: clean(f.finding, 300), reason: clean(f.reason, 1000) })),
+            }),
+            ...(pr.commit ? { commit: pr.commit } : {}),
+          },
+        },
+      },
+    ]);
+  }
+
+  /**
    * 取り込む指摘から、古い head へのレビューを除き、捨てたことを作業履歴に残す（PBI-275）。sacty のレビューのタスクの投稿
    * （AI のレビュー）で、対象にしたコミットが今の PR の head と違うもの（レビューの間や、取り込みの前に PR が更新された）は、
    * もう直された内容へのレビューなので、元のタスクに届けない。捨てたものは取り込み済みにして、取り込み直さない。
@@ -3891,7 +4249,10 @@ export class TaskService {
         ? latest !== undefined &&
           latest.status !== "running" &&
           !latest.pendingReview?.judgement &&
-          reworkingPullRequest(latest)?.number === pr.number
+          (reworkingPullRequest(latest)?.number === pr.number ||
+            (latest.status === "paused" &&
+              latest.pausedReason === "needs_decision" &&
+              gatePullRequest(latest)?.number === pr.number))
         : latest?.status === "awaiting_approval" &&
           !latest.pendingReview &&
           watched?.number === pr.number;
@@ -15511,6 +15872,10 @@ export class TaskService {
     }
     const ai = new Set(pending.aiReview ?? []);
     const from = sactyReviewKey(child.id, child.reviewRound ?? 1);
+    // 印で止めて人が判断した回の、止めた回の指摘だけなら、止め直さずに、残った指摘で直しに入る（PBI-452。判断済みの先頭で、
+    // 止めた回の指摘だけが対象。実装が断った後の、新しい回の指摘は今までどおり止める）
+    const decided = decidedPause(task, pr.commit);
+    if (decided?.from.includes(from)) return false;
     return (
       pending.remarks.length > 0 &&
       pending.remarks.every((_, i) => ai.has(i) && pending.aiReviewFrom?.[String(i)] === from)
@@ -15524,9 +15889,13 @@ export class TaskService {
   private async checkSecurityScope(
     task: Task,
   ): Promise<
-    { violation?: NonNullable<ReturnType<typeof scopeViolation>> } | undefined | "stopped"
+    | { violation?: NonNullable<ReturnType<typeof scopeViolation>> & { max: number } }
+    | undefined
+    | "stopped"
   > {
     if (!isSecurityFix(task) || !task.repository) return undefined;
+    // 範囲の宣言が無ければ、照らすものが無い（差分も読まない）。照らしていないことは、記録の違反が無いことと同じ形で残る
+    if (!securityScope(task)) return {};
     try {
       const changes = await this.deps.repos.diffStats(
         this.repoDir(task),
@@ -15534,7 +15903,8 @@ export class TaskService {
         workBaseCommit(task.repository, task.baseMerge),
       );
       const violation = scopeViolation(securityScope(task), changes);
-      return violation ? { violation } : {};
+      // max は、変えた行の数の上限を持っていた前の版が記録を読めるように、旧値を固定で書く（読まず、表示しない）
+      return violation ? { violation: { ...violation, max: LEGACY_SCOPE_MAX_LINES } } : {};
     } catch (error) {
       this.append(task, [
         {
@@ -15726,7 +16096,8 @@ export class TaskService {
       if (latest.pullRequest.awaitingReview && latest.stack) return;
       // やり直しが PR を何も変えずに止まったタスク（PBI-347）は、人が PR を確かめて判断する。人がドラフトを外したら戻さない
       // （AI のレビューの指摘を採らないと判断して、マージで実装を承認できるように）
-      if (latest.pausedReason === "unchanged") return;
+      // 直しでは解消できない指摘で止めたタスク（PBI-452）も同じ。受け入れるだけなら、マージで済む
+      if (latest.pausedReason === "unchanged" || latest.pausedReason === "needs_decision") return;
       await this.redraftFor(task.id, pr.repo, pr.number, token, "タスクが一時停止している");
     } catch (error) {
       console.warn(

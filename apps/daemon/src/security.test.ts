@@ -6,7 +6,6 @@ import {
   extractSecurityFindings,
   extractSecurityScope,
   pathInScope,
-  SECURITY_FIX_MAX_CHANGED_LINES,
   scopeViolation,
   securityFixTask,
 } from "./security.js";
@@ -131,22 +130,23 @@ describe("差分と範囲の照合", () => {
         scope,
         diff({ "package.json": 1, "src/util.ts": 1, "src/pay.test.ts": 3, "tests/e2e/a.ts": 1 }),
       ),
-    ).toEqual({ outside: ["src/util.ts"], max: SECURITY_FIX_MAX_CHANGED_LINES });
+    ).toEqual({ outside: ["src/util.ts"] });
     expect(scopeViolation(scope, diff({ "package.json": 1 }))).toBeUndefined();
   });
 
-  it("ロックファイルを除いた行の数が上限を超えたら返す。範囲の宣言が無ければ行の数だけを確かめる", () => {
-    const max = SECURITY_FIX_MAX_CHANGED_LINES;
+  it("範囲の中の大きな差分は、違反にしない（変えた行の数の上限は無い）。範囲の宣言が無ければ、照らさない", () => {
+    // テストのファイルを含め 600 行変えても、範囲の外のファイルが無ければ違反なし（ロックファイルも行の数に関わらない）
     expect(
-      scopeViolation(scope, diff({ "package.json": 1, "package-lock.json": 5000 })),
+      scopeViolation(scope, diff({ "package.json": 100, "src/pay.test.ts": 500 })),
     ).toBeUndefined();
-    expect(scopeViolation(scope, diff({ "package.json": max + 1 }))).toEqual({
-      outside: [],
-      lines: max + 1,
-      max,
+    expect(scopeViolation(scope, diff({ "package.json": 600, "package-lock.json": 5000 }))).toBe(
+      undefined,
+    );
+    // 範囲の外のファイルがあれば、行の数が少なくても今までどおり違反（記録に行の数は持たない）
+    expect(scopeViolation(scope, diff({ "package.json": 600, "src/util.ts": 1 }))).toEqual({
+      outside: ["src/util.ts"],
     });
-    expect(scopeViolation(undefined, diff({ "src/anything.ts": max }))).toBeUndefined();
-    expect(scopeViolation(undefined, diff({ "src/anything.ts": max + 1 }))?.lines).toBe(max + 1);
+    expect(scopeViolation(undefined, diff({ "src/anything.ts": 600 }))).toBeUndefined();
   });
 });
 
@@ -217,6 +217,46 @@ describe("区分の対応のタスクと PR の本文", () => {
     expect(body).toContain("- 変えてよいファイル：`package.json`");
     expect(body).toContain("- 上げる依存：lib 1.0.0 → 1.0.1");
     expect(body).toContain("- 解消の確かめ方：`osv-scanner scan source -r .`");
+  });
+});
+
+describe("以前の版が記録した行数の違反の PR の本文（PBI-452）", () => {
+  const taskWith = (violation: { outside: string[]; lines?: number; max: number }) =>
+    ({
+      id: "t-3",
+      title: "GHSA を直す",
+      body: "",
+      requestedPlan: "security-fix",
+      steps: [
+        { key: "investigate", state: "done" },
+        { key: "implement", state: "awaiting_approval" },
+      ],
+      approved: {
+        investigate: {
+          output: json({
+            "sacty-security-scope": {
+              paths: ["a.ts"],
+              packages: [],
+              verification: "",
+              reason: "",
+            },
+          }),
+        },
+      },
+      securityScopeCheck: { violation },
+      outputs: { implement: "# 実装" },
+      testMap: [],
+      remarks: [],
+      stepPullRequests: [],
+      exports: {},
+      testViewpoints: [],
+    }) as unknown as Task;
+
+  it("範囲の外のファイルの違反は本文に出し、行の数は出さない", () => {
+    const body = buildPullRequestBody(taskWith({ outside: ["b.ts"], lines: 400, max: 300 }));
+    expect(body).toContain("## 修正の範囲（セキュリティ対応）");
+    expect(body).toContain("b.ts");
+    expect(body).not.toMatch(/400|300 |行の数|上限/);
   });
 });
 

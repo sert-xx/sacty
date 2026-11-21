@@ -4,7 +4,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport as LegacyTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { ActivityEvent, Task } from "@sacty/core";
-import { renderMessage } from "@sacty/core";
+import { message, renderMessage } from "@sacty/core";
 import { describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
@@ -1282,6 +1282,23 @@ describe("タスクの PR・ブランチと絞り込み（PBI-392）", () => {
     expect(summarizeTask({ ...paused, status: "running" }).pausedReason).toBeUndefined();
     expect(running.pausedMessage).toBeUndefined();
     expect(running.reviewBody).toBe("あ".repeat(12_000));
+  });
+
+  it("直しでは解消できない指摘で止めたタスクの詳細に、止めた理由（PR の番号・印の付いた指摘・根拠）を出す（PBI-452）", () => {
+    const stopped: Task = {
+      ...base(),
+      status: "paused",
+      pausedReason: "needs_decision",
+      pausedMessage: message("review.needsDecision", {
+        number: 7,
+        findings: [{ finding: "構成を選び直す", reason: "方式を変えても解消しない" }],
+      }),
+    };
+    const detail = describeTask({ task: stopped, activity: [] });
+    expect(detail.pausedReason).toBe("needs_decision");
+    expect(detail.pausedMessage).toContain("PR #7");
+    expect(detail.pausedMessage).toContain("構成を選び直す");
+    expect(detail.pausedMessage).toContain("方式を変えても解消しない");
   });
 
   it("例外の原因は、内側までたどって出す（5 段まで）", () => {

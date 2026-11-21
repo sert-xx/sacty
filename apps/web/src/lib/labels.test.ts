@@ -938,6 +938,37 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     );
   });
 
+  it("人の判断を待って止めていた PR のマージは、作り直しを止めた・一時停止の間に届いた指摘を捨てた、とは書かず、止めた理由の指摘を反映せずに承認として進めると表示する（PBI-452）", () => {
+    const decision = {
+      type: "ReworkStoppedByMerge",
+      payload: {
+        number: 7,
+        was: "paused",
+        stoppedRuns: [],
+        discardedRemarks: [],
+        discardedReview: 2,
+        decision: true,
+      },
+      seq: 1,
+      id: "e1",
+      taskId: "t",
+      projectId: "p",
+      at: "",
+      actor: "sacty",
+    } as unknown as ActivityEvent;
+    const ja = describeEvent(decision);
+    expect(ja).toBe(
+      "人の判断を待って止めていた PR #7 がマージされた。止めた理由の指摘2件を反映せずに、マージを承認として進める",
+    );
+    expect(ja).not.toContain("作り直しを止めた");
+    expect(ja).not.toContain("一時停止の間に届いた");
+    const en = describeIn(decision, labels.en);
+    expect(en).toContain("which was paused waiting for a human decision, was merged");
+    expect(en).toContain("without applying the 2 findings that caused the pause");
+    expect(en).not.toContain("rework of the implementation was stopped");
+    expect(en).not.toContain("arrived while paused");
+  });
+
   it("作業履歴に、PR のマージ・クローズ・開き直しを表示する", () => {
     const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
       ({

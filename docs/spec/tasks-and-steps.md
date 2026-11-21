@@ -738,19 +738,20 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   範囲の宣言は承認しない（前段の調査は承認しない）。
   sacty は、承認済みとして渡された前段の調査の本文から最後の宣言を読む（`securityScope`・`extractSecurityScope`。`paths` が空なら読めないものとする）。
 - 実装は、要求要件・設計を経ない実装（上の「工程の見直し」）の指示に、最小限の変更の決まり（`securityFixImplementLines`）と範囲の宣言（JSON のデータとして）を足して実行する。
-  範囲の外を変えないこと（回帰のテストのファイルは足してよい）、リファクタリング・整形などを混ぜないこと、依存はパッケージマネージャーで上げること、変えた行の数の上限を伝える。
+  範囲の外を変えないこと（回帰のテストのファイルは足してよい）、リファクタリング・整形などを混ぜないこと、依存はパッケージマネージャーで上げることを伝える。変えた行の数は見ない（範囲の外のファイルと、最小限の変更かだけを見る）。
   観点 `REQ` は「問題が解消している」で、依存・設定の更新でテストが書けないときは、`untested` に検査のコマンドで確かめる理由を書かせる。
 - PR を作る前（`FinalReviewSkipped` の前。`checkSecurityScope`）に、sacty が差分を範囲と照らす（`scopeViolation`）。
-  照合には、エージェントに渡す差分（`DIFF_LIMIT` で切り詰める）ではなく、切り詰めないファイルごとの追加と削除の行の数を使う（`diffStats`。`git diff --numstat --no-renames`）。
+  照合には、エージェントに渡す差分（`DIFF_LIMIT` で切り詰める）ではなく、切り詰めない、変えたファイルのパスを使う（`diffStats`。`git diff --numstat --no-renames`。行の数は照合に使わない）。
   名前の変更は、変更元の削除と変更先の追加に分ける（範囲の外のファイルを範囲の中へ移して隠さないため）。
-  行の数を出さないファイル（バイナリと、作業領域の `.gitattributes` の `-diff` などで差分を隠したもの）は、変更前と変更後の中身の行の数を、すべて削除してすべて追加したものとして数える（リポジトリの属性で行の数を隠させないため）。
+  行の数を出さないファイル（バイナリと、作業領域の `.gitattributes` の `-diff` などで差分を隠したもの）は、変更前と変更後の中身の行の数を、すべて削除してすべて追加したものとして数える（`diffStats` の返す形［パスごとの追加と削除の行の数］を保つため。照合には行の数を使わない）。
   足したファイルは変更前を、消したファイルは変更後を 0 行にし（`git diff --name-status` で見分ける）、ある中身を読めなければ取れなかったものとして止める。
   中身は1つずつ読む（プロセスを一度に多く起動しない）。
   取れなければ、記録せずに一時停止する（`verify.diffUnavailable`）。
   - 範囲の外のファイル：`paths` のどれにも当たらない（そのもの・末尾が `/` ならその下・`*` は `/` を除く任意の文字。`pathInScope`）、テストのファイルでもない（テストのディレクトリの中か、名前がテストの慣習に当たる）ファイル。
-  - 変えた行の数：ロックファイル（`package-lock.json`・`yarn.lock`・`go.sum` など）を除く（テストのファイルは数える）、追加と削除の行の合計が `SECURITY_FIX_MAX_CHANGED_LINES`（300）を超える。
-  - 範囲の宣言を読めなければ、行の数だけを確かめる。
+  - 範囲の宣言を読めなければ、照合しない（違反にしない）。実装とレビューの指示には、宣言が無いので sacty は範囲を照らしていないことを伝え、最小限の変更かはレビューが確かめる。PR の本文の範囲の節には、この文を足さない。
+  - テスト・文書を含めて、何行変えても、行の数では違反にしない（PBI-452）。
 - 違反があっても止めない。結果を `FinalReviewSkipped` の `securityScope` に記録し、PR の本文の範囲の節に書いて、PR のレビューの子タスクに要修正の指摘にさせる（[最終レビューをしない流れ](#最終レビューをしない流れ)）。
+  違反の記録は、範囲の外のファイル（`outside`）と、前の版が読めるよう固定で書く `max`（300。読まず、表示しない）で、`lines` は持たない。以前の版が記録した `lines`・`max` は読み込み、表示しない。`outside` が空の以前の記録（行の数だけの違反）は、違反なしとして扱う。
   以前の版の最終レビューは、観点 `REQ` に `SEC-MIN`（差分が最小限か）を足して判定し、違反があれば `SEC-MIN` を不合格にしていた。
 - 範囲を広げるには、タスクを中止して再実行する（前段の調査には差し戻せない。`reworkTargets`）。
   実装の指示では、範囲の外を変えないと直せないときは、理由と広げるべき範囲を説明に書かせる。
@@ -760,7 +761,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   既存の PR を引き継いだときは、PR の題・本文を変えない（上の「既存の PR の引き継ぎ」）ので、範囲はタスクの詳細の前段の調査の結果で確かめる。
 - 公開リポジトリへの PR も、ほかの実装と同じく作る。
 
-コード: `apps/daemon/src/security.ts`（`extractSecurityScope`・`securityScope`・`scopeViolation`・`pathInScope`・`SECURITY_FIX_MAX_CHANGED_LINES`・`MINIMAL_CHANGE_VIEWPOINT`）、`apps/daemon/src/repository.ts`（`diffStats`・`parseNumstat`）、`apps/daemon/src/service.ts`（`checkSecurityScope`・`rerunTask`）、`apps/daemon/src/prompts.ts`（`approvedBasisLines`）
+コード: `apps/daemon/src/security.ts`（`extractSecurityScope`・`securityScope`・`scopeViolation`・`pathInScope`・`MINIMAL_CHANGE_VIEWPOINT`）、`apps/daemon/src/repository.ts`（`diffStats`・`parseNumstat`）、`apps/daemon/src/service.ts`（`checkSecurityScope`・`rerunTask`）、`apps/daemon/src/prompts.ts`（`approvedBasisLines`）
 
 ## 最初の工程が始まる前の処理の表示
 
@@ -1252,7 +1253,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     未完了と申告した・申告が無ければ記録せず、`ImplementationIncomplete` を記録して実装をやり直す（[終わっていない実装と、変更の無いやり直し](#終わっていない実装と変更の無いやり直し)）。
     完了と申告していても、観点とテストの対応に欠けた観点があれば、同じく実装をやり直す（[実装がテストを対応させる観点](#実装がテストを対応させる観点)）。
   - セキュリティ対応のタスクは、`FinalReviewSkipped` の前に、差分を前段の調査が宣言した修正の範囲と照らす（`checkSecurityScope`。照合の仕方は下の「セキュリティ対応」と同じ）。
-    結果を `FinalReviewSkipped` の `securityScope`（違反があれば `violation` に範囲の外のファイル・変えた行の数・上限）に記録する（`Task.securityScopeCheck`）。
+    結果を `FinalReviewSkipped` の `securityScope`（違反があれば `violation` に範囲の外のファイルと、前の版が読めるための固定の `max`）に記録する（`Task.securityScopeCheck`）。
     差分を取れなければ、記録せずに一時停止する（`verify.diffUnavailable`）。
     違反があっても止めず、PR の本文の範囲の節に書き、PR のレビューの子タスクに要修正の指摘にさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
 - 実装の PR はドラフトで作り（更新したときも、ドラフトに戻す。戻せなくても PR の作成は失敗にしない）、`PullRequestPublished` に `awaitingReview` を付けて、実装の承認待ちにする（`awaitsReview`）。
@@ -1280,7 +1281,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     - 外し直す間に差し戻された・PR を更新した・子タスクの再レビューが始まった・先頭が変わった、または外した答えを受け取れなかったら、
       タスクが終わっておらず PR の番号が同じならドラフトに戻す。外した答えを今の記録のまま受け取れなければ、外す要求が後から届くかもしれないので、
       次の提出でも指摘なしで外すまで確認のたびにドラフトに戻す（`undraftUnsettled`）。
-    - 一時停止したタスクの PR は、GitHub でドラフトでなければ、ドラフトに戻す（`settlePausedDrafts`。止めている間はマージさせない。依存先の PR に重ねた、指摘なしを待つ PR と、やり直しが何も変えずに止まったタスク（`unchanged`）の PR は除く。`DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて確かめる）。外し直す間に止めた・戻せなかった・答えが返らなかった（`DRAFT_TIMEOUT_MS`）ときも、止めている間は確認のたびにやり直す。
+    - 一時停止したタスクの PR は、GitHub でドラフトでなければ、ドラフトに戻す（`settlePausedDrafts`。止めている間はマージさせない。依存先の PR に重ねた、指摘なしを待つ PR と、やり直しが何も変えずに止まったタスク（`unchanged`）と、直しでは解消できない指摘で止まったタスク（`needs_decision`）の PR は除く。`DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて確かめる）。外し直す間に止めた・戻せなかった・答えが返らなかった（`DRAFT_TIMEOUT_MS`）ときも、止めている間は確認のたびにやり直す。
       再開したら、指摘なしで記録した PR は、上と同じく外し直す。
   - 実装の PR のコミットの日時と題は、実装の工程が終わったとき（`outputAt`）にする（最終レビューの日時が無いため）。
   - 外す要求の答えがドラフトのままなら、記録せずに次の確認でやり直す。
@@ -1750,7 +1751,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   上限に達したら、工程を選ぶ前と工程を実行する前に一時停止（`budget`）にする（実装の工程の中で sacty が実装の PR を作るとき（`publishPending`）と、書き終えたレビューを PR に投稿するときは、費用がかからないので止めずに行う。レビューの実行がその回で上限を超えても、投稿してから、次の再レビューの前に止まる）。
   承認待ちのタスクは止めない。
   予算で止まったタスクの再開には、使った額より大きい累計の新しい上限（10000 米ドルまで）が要る（`BudgetCapRaised`）。
-- 一時停止の理由（`PauseReason`）：`budget`・`usage_limit`（AI の利用上限）・`auth`（認証エラー・秘密情報が無い）・`error`・`verification`・`manual`（人が止めた）・`child_cancelled`（子タスクの中止）・`incomplete`（実装が続けて終わらない）・`unchanged`（やり直しが PR を何も変えなかった）。
+- 一時停止の理由（`PauseReason`）：`budget`・`usage_limit`（AI の利用上限）・`auth`（認証エラー・秘密情報が無い）・`error`・`verification`・`manual`（人が止めた）・`child_cancelled`（子タスクの中止）・`incomplete`（実装が続けて終わらない）・`unchanged`（やり直しが PR を何も変えなかった）・`needs_decision`（PR のレビューが、直しでは解消できず人の判断が要ると印を付けた要修正が残った。[直しでは解消できない指摘での一時停止](approval.md#直しでは解消できない指摘での一時停止)）。
   AI の実行の失敗は、その理由のまま一時停止にする（人が止めていたら `manual`）。
   時間をおいて自動で再開する仕組みは無い。
 - 人の一時停止：エスカレーション（変更の申し出の人の判断待ちを含む）・子タスク待ちは止められない。

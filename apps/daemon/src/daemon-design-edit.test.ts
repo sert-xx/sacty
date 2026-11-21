@@ -807,4 +807,109 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       made.activity.close();
     });
   });
+
+  describe("直しでは解消できない指摘で止めた回の、戻し先が設計の回（PBI-452。TV-18）", () => {
+    const CI = {
+      snapshot: async () => ({ checks: [], jobs: [], failedRuns: [] }),
+    } as unknown as ServiceDeps["ci"];
+    const MARK = "方針の変更が要り、実装の直しでは解消しない";
+    const verdict = (target: string) =>
+      out(
+        [
+          "# 評価",
+          "",
+          "## 指摘",
+          "",
+          "**[要修正] 構成を選び直す**（src/pay.ts）\n構成の説明。",
+          block({
+            "sacty-review-verdict": {
+              verdict: "changes_required",
+              rework: {
+                findings: [
+                  {
+                    finding: "構成を選び直す",
+                    target,
+                    reason: "決定を変える（方針）：構成を選び直す",
+                    needs_decision: MARK,
+                  },
+                ],
+                cause: "guardian_missed",
+              },
+            },
+          }),
+        ].join("\n\n"),
+      );
+    const noticeOfDesign = (pulls: FakePulls) =>
+      pulls.issueComments.filter((c) => c.body.includes("sacty-rework-notice"));
+
+    it("止めた時点では設計に戻さず（差し戻しも知らせも無い）、人のコメントで再開した後に、設計に戻して知らせを 1 通出し、設計の指示にコメントの文が入る", async () => {
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          designText(),
+          implement(),
+          verdict("design"),
+          // 再開の後の、戻し先の判断（人の指摘を含む回は、PR の工程のエージェントが判断する）
+          rework("design", "決定を変える（方針）：構成を選び直す"),
+          designText(),
+        ],
+        { reviewTasks: true, ci: CI },
+      );
+      const { service, pulls, id, executor, activity } = made;
+      await merge(made, "requirements");
+      await service.runNext(id);
+      await merge(made, "design");
+      await drain(service);
+      expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
+      const childId = taskOf(service, id).reviewTasks?.find((r) => r.number === 9)?.taskId ?? "";
+      for (let i = 0; i < 4 && taskOf(service, childId).status !== "completed"; i++) {
+        await service.runNext(childId);
+      }
+      const reviewPost = item("review:60", {
+        kind: "review",
+        author: "me",
+        body: pulls.reviews[0]?.body ?? "",
+      });
+      pulls.prInfo = {
+        ...pulls.prInfo,
+        number: 9,
+        headSha: taskOf(service, id).pullRequest?.commit ?? "",
+      };
+      pulls.feedbackBy[9] = [reviewPost];
+      await service.checkPullRequests();
+      // 止めた時点：承認待ちのまま止まり、設計への差し戻しも、設計に戻した知らせも無い
+      expect(taskOf(service, id)).toMatchObject({
+        status: "paused",
+        pausedReason: "needs_decision",
+      });
+      expect(types(service, id)).not.toContain("ChangesRequested");
+      expect(noticeOfDesign(pulls)).toEqual([]);
+      // 人のコメントが held で取り込まれ、同じ追記で再開する
+      pulls.feedbackBy[9] = [
+        reviewPost,
+        item("comment:40", { author: "alice", body: "構成は見直して構いません。進めてください" }),
+      ];
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      const heldAt = events.findIndex(
+        (e) => e.type === "PullRequestReviewImported" && e.payload.held,
+      );
+      expect(events[heldAt + 1]).toMatchObject({ type: "TaskResumed", actor: "sacty" });
+      // 再開の後、既存の流れで、戻し先を判断して設計に戻す。知らせは 1 通
+      await service.checkPullRequests();
+      await noticesSettled(service);
+      const changed = (service.get(id)?.activity ?? []).filter(
+        (e) => e.type === "ChangesRequested",
+      );
+      expect(changed).toHaveLength(1);
+      expect(changed[0]).toMatchObject({ payload: { target: "design" } });
+      expect(noticeOfDesign(pulls)).toHaveLength(1);
+      // 設計のやり直しの指示に、人のコメントの文が入る
+      await service.runNext(id);
+      expect(promptOf(executor, executor.calls.length - 1)).toContain(
+        "構成は見直して構いません。進めてください",
+      );
+      activity.close();
+    });
+  });
 });

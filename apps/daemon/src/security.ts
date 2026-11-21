@@ -18,12 +18,6 @@ export const SECURITY_FINDINGS_HEADING = "sacty-security-findings";
 export const SECURITY_SCOPE_HEADING = "sacty-security-scope";
 /** セキュリティ対応の最終レビューで、ゴールガーディアンだけが判定する観点（差分が最小限か）。 */
 export const MINIMAL_CHANGE_VIEWPOINT = "SEC-MIN";
-/**
- * セキュリティ対応で、変えてよい行の数（追加と削除の合計。ロックファイルは数えない）。超えたら、sacty が観点 SEC-MIN を
- * 不合格にする（最小限の変更でなければレビューに時間がかかり、問題の修正が遅れるため）。
- */
-export const SECURITY_FIX_MAX_CHANGED_LINES = 300;
-
 /** 区分の名前（指示・対応のタスクの題に出す）。 */
 export const SECURITY_CATEGORY_NAME: Record<SecurityCategory, string> = {
   dependency: "依存の脆弱性",
@@ -32,34 +26,6 @@ export const SECURITY_CATEGORY_NAME: Record<SecurityCategory, string> = {
   secret: "秘密情報の混入",
   config: "設定・IaC",
 };
-
-/**
- * 依存を固定するロックファイルの名前。変更した行の数に数えない（依存を1つ上げるだけでも大きく変わるため）。中身が範囲の
- * パッケージだけかは、ゴールガーディアンが観点 SEC-MIN で確かめる。
- */
-const LOCKFILES = new Set([
-  "package-lock.json",
-  "npm-shrinkwrap.json",
-  "yarn.lock",
-  "pnpm-lock.yaml",
-  "bun.lock",
-  "bun.lockb",
-  "deno.lock",
-  "Cargo.lock",
-  "go.sum",
-  "poetry.lock",
-  "uv.lock",
-  "Pipfile.lock",
-  "pdm.lock",
-  "Gemfile.lock",
-  "composer.lock",
-  "packages.lock.json",
-  "gradle.lockfile",
-  "mix.lock",
-  "pubspec.lock",
-  "Podfile.lock",
-  "Package.resolved",
-]);
 
 /** セキュリティ対応の、修正の範囲の宣言（前段の調査の申告）。 */
 export type SecurityScope = {
@@ -160,32 +126,23 @@ export function pathInScope(path: string, patterns: readonly string[]): boolean 
   });
 }
 
-const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
-
-/** セキュリティ対応の差分が、修正の範囲を守っていないこと（範囲の外のファイル・上限を超えた行の数）。 */
-export type ScopeViolation = { outside: string[]; lines?: number; max: number };
+/** セキュリティ対応の差分が、修正の範囲を守っていないこと（範囲の外のファイル）。 */
+export type ScopeViolation = { outside: string[] };
 
 /**
- * セキュリティ対応の差分を、修正の範囲と照らす。範囲の外のファイル（テストのファイルは除く。回帰のテストを足すため）と、
- * 変えた行の数の上限を超えたことを返す（守っていれば undefined）。行の数は、テストのファイルを含め、ロックファイルだけを
- * 除いて数える。範囲の宣言が無ければ、行の数だけを確かめる。changes は、切り詰めていない、名前の変更を削除と追加に分けた
- * ファイルごとの変更（RepositoryWorkspace.diffStats）。
+ * セキュリティ対応の差分を、修正の範囲と照らす。範囲の外のファイル（テストのファイルは除く。回帰のテストを足すため）を
+ * 返す（守っていれば undefined）。変えた行の数では違反にしない。範囲の宣言が無ければ、照らさない（undefined）。changes は、
+ * 名前の変更を削除と追加に分けたファイルごとの変更（RepositoryWorkspace.diffStats）。
  */
 export function scopeViolation(
   scope: SecurityScope | undefined,
   changes: readonly FileChange[],
 ): ScopeViolation | undefined {
-  const outside = scope
-    ? changes
-        .map((c) => c.path)
-        .filter((path) => !pathInScope(path, scope.paths) && !isTestPath(path))
-    : [];
-  const changed = changes
-    .filter((c) => !LOCKFILES.has(basename(c.path)))
-    .reduce((sum, c) => sum + c.added + c.removed, 0);
-  const over = changed > SECURITY_FIX_MAX_CHANGED_LINES;
-  if (outside.length === 0 && !over) return undefined;
-  return { outside, ...(over ? { lines: changed } : {}), max: SECURITY_FIX_MAX_CHANGED_LINES };
+  if (!scope) return undefined;
+  const outside = changes
+    .map((c) => c.path)
+    .filter((path) => !pathInScope(path, scope.paths) && !isTestPath(path));
+  return outside.length > 0 ? { outside } : undefined;
 }
 
 /** テストのファイルか（テストのディレクトリの中か、名前がテストの慣習に当たる）。 */

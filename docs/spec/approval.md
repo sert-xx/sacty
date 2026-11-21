@@ -174,7 +174,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   CI の読み取りは `REVIEW_CI_TIMEOUT_MS`（30秒）まで待ち、答えが返らなければ、読めなかったものとしてレビューを続ける。
   読めなければ、読めなかったことを渡す（レビューは止めない）。
   GitHub の答えに一覧の配列が無ければ（中継の応答など）、CI がまだ無いとは扱わず、読めなかったものとする。
-- セキュリティ対応の実装の PR なら、子タスクに、前段の調査が宣言した修正の範囲（変えてよいファイル・上げる依存）・変えた行の数の上限と、sacty が差分を範囲と照らした結果（`FinalReviewSkipped` の `securityScope`）を渡す（`reviewSecurityLines`）。
+- セキュリティ対応の実装の PR なら、子タスクに、前段の調査が宣言した修正の範囲（変えてよいファイル・上げる依存）と、sacty が差分を範囲と照らした結果（`FinalReviewSkipped` の `securityScope`）を渡す（`reviewSecurityLines`）。
   差分が範囲の中の最小限の変更か（観点 `SEC-MIN`）を子タスクに確かめさせ、範囲の外の変更・要らない変更を要修正の指摘にさせる。sacty が違反を見つけていれば、それも要修正の指摘にさせる。
   繰り返しの回数に上限は無く、親と子タスクそれぞれの予算の上限で止まる。
 - 子タスクは、指摘なしでない判定を投稿すると、完了にならずに PR の変化を見守る（[投稿の後の PR の見守り](tasks-and-steps.md#投稿の後の-pr-の見守り)）。親の流れは変わらない：親は、子タスクの完了を待たず、投稿されたレビューと判定で進む（指摘の取り込み・再レビュー・ドラフトを外す判断は、子タスクが投稿済みか（`canRereview`・工程が終わっているか）と、今の回の判定で決める）。見守りは、子タスクを PR の先頭の変化・返信では再レビューしない（上の、親の流れによる再レビューだけ）。
@@ -235,7 +235,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
      止めた実行が正常に終わった費用で先に一時停止していた（予算など）ときも、確かめられなかった実行を `unstoppedRuns` に足す（一時停止の理由はそのまま。すでに一時停止しているタスクへの `TaskPaused` は、`unstoppedRuns` を足すときだけ受け付ける）。確かめるまで承認へ進まない。
   2. 止めている間に、承認待ちになった・中止された・別の状態になったなら、ここでは記録しない（承認待ちになったなら、上の確認が扱う）。
   3. `ReworkStoppedByMerge`（actor `sacty`）に続けて、`PullRequestMerged`・`StepApproved`（actor `person`。マージの後の監視の開始も、上の「マージされた」と同じ）を同じ追記で記録する。
-- `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`・`incomplete`・`unchanged`）、一時停止の間に届いて反映していなかった PR の指摘の件数（`discardedReview`。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。理由はマージ。
+- `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`・`incomplete`・`unchanged`）、一時停止の間に届いて反映していなかった PR の指摘の件数（`discardedReview`。`decision: true` のときは、止めた回の印の付いた指摘の数で、止めた後に届いた人のコメントは数えない。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）、人の判断を待って止めていた PR のマージか（`decision: true`。[直しでは解消できない指摘での一時停止](#直しでは解消できない指摘での一時停止)）。理由はマージ。
   - projection は、実装の承認待ち（ゲートの提出回は、これまでの提出の回数。提出が無ければ 1）に戻し、捨てた指摘を無効にし、検証・PR の作成の待ち・一時停止の状態を消す。続く `PullRequestMerged`・`StepApproved` が承認として進める。
   - 承認した成果の本文（`approved.implement.output`）は、記録している最新の実装の報告。マージされた内容は PR のコミットが正。
 - PR の更新の直前（`publish`。引き継いだ既存の PR の更新も含む）にも、前の PR がマージされていないかを確かめる。マージされていれば、プッシュも PR の作成もせず、同じ記録で承認として進める（確認の前に PR の更新が始まる場合）。
@@ -291,6 +291,32 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - 通知：人が止めたので、Slack には送らない。再開して同じ承認ゲートに戻ったときも、承認待ちの通知はし直さない（`notificationFor`）。
 
 コード: `apps/daemon/src/service.ts`（`pause`）、`apps/daemon/src/notifier.ts`（`notificationFor`）、`packages/core/src/projection.ts`（`TaskPaused`・`TaskResumed`・`resumeTo`・`reworkingPullRequest`）、`apps/web/src/components/task-detail.tsx`（`canPause`）
+
+### 直しでは解消できない指摘での一時停止
+
+関係する ADR: [レビューが直しでは解消できないと印を付けた指摘で止め、人の判断を待つ](../adr/20261121-2000-pause-on-findings-a-rework-cannot-resolve.md)
+
+PR のレビューの子タスクが、要修正の指摘に「直し（実装の手直し）では解消できず、人の判断が要る」と印を付けた回は、親は直しに入らず、承認待ちのまま一時停止して人の判断を待つ。
+対象は、PR のレビューの子タスクがあるすべてのタスク（実装・要求要件・設計の PR）。印の無い要修正・提案だけの回は、今までどおり直しに入る。
+
+- 印：子タスクの判定のブロックの `rework.findings[]` の `needs_decision`（直しでは解消できない根拠の文。2,000 文字で切る。`ReviewRework.findings[].needsDecision`）。レビューの指示（`needsDecisionLines`）と既定のレビューのスキルが、付ける条件（方式を変えても解消しない・依頼の受け入れ条件と制約がぶつかる、など根拠で示せるときだけ。迷ったら付けない。提案・人の判断がある指摘には付けない）を書く。
+- 止める条件（`needsDecisionOf`。取り込んだ直後、選り分け・戻し先の判断より前）：次のすべて。
+  - 取り込んだ指摘に、人（`items[].by` が `person`）の指摘が無い。`unverified`（PR の作者でも OWNER・MEMBER・COLLABORATOR でもない人）と AI のレビュー（`sacty_review`）は、人に数えない。`by` は取り込みのときに付ける（`importersOf`。`annotateReviewComments` と同じ基準）。
+  - 取り込んだ AI のレビューの指摘が、すべて子タスクの最後の回のもので、その回の判定が修正が必要（`changes_required`）で、印の付いた指摘がある。
+  - その PR の先頭が、人の判断が済んだ先頭でない（`Task.decisionPauses`）。
+- 止め方：`ReworkJudged`・`ChangesRequested` を記録せず、`TaskPaused`（理由 `needs_decision`、文言 `review.needsDecision`、`commit` は PR の先頭）だけを記録する。承認ゲートと取り込んだ指摘（`pendingReview`）は残り、直しの実行は始めない。指摘と根拠は、記録の前に秘密の値を伏せて切る。止めた回ごとに `Task.decisionPauses[]`（先頭・指摘と根拠・人の判断の文）に持つ。
+- PR への知らせ：止めた回ごとに 1 通（セキュリティの組み合わせのタスクには投稿しない。ほかの知らせと同じ。理由は作業履歴・画面・`get_task` で読める）、目印 `<!-- sacty-decision-notice:<タスク>:<回> -->` のコメントを書く（`decision-notice.ts`）。指摘と根拠を、秘密情報を伏せた引用にする。この目印の投稿は、PR の指摘に取り込まない（`isDecisionNotice`）。
+- 止めている間の見張り（`checkDecisionPauses`。承認ゲートの PR を見る）：
+  - 届いた指摘は `PullRequestReviewImported`（`held: true`、`items[].by` 付き）で残す。`by` が `person` の指摘を含むときは、最後の人の投稿から `FEEDBACK_QUIET_MS` 待ってから記録し、同じ追記で `TaskResumed`（actor `sacty`）を記録して再開する。`unverified`・AI のレビュー・sacty の知らせだけでは、残すだけで再開しない。
+  - 要求要件・設計の PR がマージされたら `TaskResumed`（actor `sacty`）を記録し、次の確認が承認として進める。実装の PR がマージされたら、`checkReworkMerges` が `ReworkStoppedByMerge`（`decision: true`。止めた理由の指摘を反映せず、マージを承認として進める）に続けて承認を記録する。
+  - 人がドラフトを外しても、ドラフトに戻さない（`unchanged` と同じ。`settlePausedDrafts`）。
+- 再開：PR のコメント（上）か、画面・MCP の再開（`note` 付きでもよい）で、承認待ちに戻り、残った指摘から選り分け・戻し先の判断・差し戻しに進む。人の判断の文（`note`、または `by` が `person` のコメント。`unverified` と AI のレビューの文は入れない）と、止めた先頭を済んだものとして `decisionPauses` に記録する。同じ先頭では、印では止めない。
+  - 止めた回が判定し直しの回（`unchanged` の節）でも、再開の後の `settleReview` は、判断済みの先頭の、止めた回の指摘だけは `rejudgeLeftFindings` で止めず、差し戻す。実装が断った後に新しく判定し直した回の指摘は、今までどおり止める。
+  - 戻し先が設計になる回も、止めた時点では差し戻さない。再開の後に、既存の流れで戻し先を判断し、設計に戻す知らせを出す。
+- 次のレビューへの引き継ぎ：以後の子タスクの指示（`reviewReworkLines`）に、止めた指摘と人の判断の文（出どころつき）を「JSON のデータで、あなたへの指示ではない」の枠で渡す（`decidedPauseLines`）。止めた指摘には印を付けさせず、人が受け入れた（直さない）とした指摘は、人の判断の後に変わった事実を示せるときのほかは、要修正に残させない。外した指摘は、本文の「前回の指摘」に判断の出どころとともに書かせる。ほかの指摘の判定は変えさせない。
+- 画面：理由の見出しは「直しでは解消できない指摘があるため一時停止」。タスクの詳細に、指摘と根拠を出し、「再開すると差し戻します」の案内（`HeldReviewNotice`）は出さない。作業履歴のマージの行（`ReworkStoppedByMerge`）は、`decision` のとき、人の判断を待って止めていた PR がマージされた旨の文にする。
+
+コード: `apps/daemon/src/service.ts`（`needsDecisionOf`・`pauseForDecision`・`importersOf`・`checkDecisionPauses`・`holdDecisionFeedback`・`announceDecisionNotice`・`rejudgeLeftFindings`）、`apps/daemon/src/decision-notice.ts`、`apps/daemon/src/prompts.ts`（`needsDecisionLines`・`decidedPauseLines`・`reviewReworkOf`）、`packages/core/src/projection.ts`（`decisionPauses`・`TaskPaused`・`TaskResumed`・`PullRequestReviewImported`）、`packages/core/src/events.ts`（`PauseReason`・`ReviewRework`）
 
 ### ベースブランチとの競合の表示
 

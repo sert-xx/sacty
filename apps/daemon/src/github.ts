@@ -334,6 +334,18 @@ export function isReworkNotice(body: unknown): boolean {
 }
 
 /**
+ * 直しでは解消できないとレビューが印を付けた指摘で止めたことを、その PR に知らせる投稿の目印（PBI-452）。
+ * `<!-- sacty-decision-notice:<タスク ID>:<回> -->`。人間の指摘ではないので、PR の指摘に取り込まない（取り込むと、sacty の知らせが
+ * 人の判断として再開してしまう）。
+ */
+export const DECISION_NOTICE_MARKER_PREFIX = "<!-- sacty-decision-notice:";
+
+/** 本文が、止めたことの知らせの目印で始まるか（PBI-452）。 */
+export function isDecisionNotice(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(DECISION_NOTICE_MARKER_PREFIX);
+}
+
+/**
  * 後続に回したい案への、人の決定を PR に残す投稿の目印（PBI-370）。`<!-- sacty-deferral:<タスク ID>:<何回目の決定か> -->`。
  * sacty が決定を写した記録で、人間の指摘ではないので、PR の指摘に取り込まない。
  */
@@ -618,6 +630,7 @@ export class GitHubPullRequests implements PullRequests {
           (isReviewStopNotice(item.body) ||
             isHumanAskNotice(item.body) ||
             isReworkNotice(item.body) ||
+            isDecisionNotice(item.body) ||
             isDeferralNotice(item.body) ||
             isBasisComment(item.body)) &&
           typeof login === "string" &&

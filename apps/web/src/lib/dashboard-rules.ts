@@ -17,8 +17,9 @@ const PAUSE_REASON_RANK = {
   verification: 4,
   incomplete: 5,
   unchanged: 6,
-  manual: 7,
-  child_cancelled: 8,
+  needs_decision: 7,
+  manual: 8,
+  child_cancelled: 9,
 } satisfies Record<PauseReason, number>;
 
 /**

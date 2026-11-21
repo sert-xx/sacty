@@ -958,6 +958,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
           ? l.discardedFeedback[event.payload.discardedFeedback]
           : undefined,
         event.payload.discardedReview ?? 0,
+        event.payload.decision === true,
       );
     case "PullRequestConflicted":
       return e.PullRequestConflicted(event.payload.number);

@@ -2563,6 +2563,85 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
+      const MARK = "方針の変更が要り、設計の直しでは解消しない";
+      const marked = () =>
+        reworkOut("changes_required", {
+          findings: [
+            {
+              finding: "構成を選び直す",
+              target: "design",
+              reason: "決定を変えない：表記だけ",
+              needs_decision: MARK,
+            },
+          ],
+          cause: "guardian_missed",
+        });
+      /** 設計の PR のレビューの子タスクが印を付けた回を、親が取り込んで、止めるところまで進める。 */
+      async function stopped() {
+        const made = await designed([
+          marked(),
+          // 再開の後の、戻し先の判断（人の指摘を含む回）と、設計のやり直し
+          out(block({ "sacty-rework": { target: "design", reason: "決定を変えない：表記だけ" } })),
+          out("# 設計 v2"),
+        ]);
+        const { service, pulls, number, childId } = made;
+        await runReview(service, childId);
+        pulls.feedbackBy[number] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        return made;
+      }
+
+      it("設計の PR の回で印が付いたら、承認待ちのまま止まる。PR のコメント（by が person）で、取り込みと同じ追記で再開し、設計の直しの指示にコメントの文が入る（PBI-452）", async () => {
+        const made = await stopped();
+        const { activity, service, pulls, executor, id, number } = made;
+        expect(taskOf(service, id)).toMatchObject({
+          status: "paused",
+          pausedReason: "needs_decision",
+        });
+        expect(types(service, id)).not.toContain("ChangesRequested");
+        pulls.feedbackBy[number] = [
+          posted(pulls, 0),
+          {
+            key: "comment:70",
+            kind: "comment",
+            author: "alice",
+            at,
+            body: "構成は見直して進めてください",
+          },
+        ];
+        await service.checkPullRequests();
+        const events = service.get(id)?.activity ?? [];
+        // 設計の PR の取り込みも、held で記録できる（作業履歴を読めなくならない）
+        const heldAt = events.findIndex(
+          (e) => e.type === "PullRequestReviewImported" && e.payload.held,
+        );
+        expect(heldAt).toBeGreaterThan(0);
+        expect(events[heldAt + 1]).toMatchObject({ type: "TaskResumed", actor: "sacty" });
+        await service.checkPullRequests();
+        expect(types(service, id)).toContain("ChangesRequested");
+        await service.runNext(id);
+        expect(executor.calls.at(-1)?.command.join(" ")).toContain("構成は見直して進めてください");
+        activity.close();
+      });
+
+      it("印で止めた設計の PR が、止まっている間にマージされたら、再開（actor が sacty）して、マージを承認として進める。直しは始めない（PBI-452）", async () => {
+        const made = await stopped();
+        const { activity, service, pulls, id, number } = made;
+        const pr = taskOf(service, id).stepPullRequests.findLast((x) => x.step === "design");
+        pulls.states[number] = { state: "merged", mergedBy: "alice", headSha: pr?.commit ?? "" };
+        const calls = made.executor.calls.length;
+        await service.checkPullRequests();
+        const events = service.get(id)?.activity ?? [];
+        const resumed = events.findIndex((e) => e.type === "TaskResumed");
+        expect(events[resumed]).toMatchObject({ actor: "sacty" });
+        expect(events.slice(resumed).map((e) => e.type)).toEqual(
+          expect.arrayContaining(["PullRequestMerged", "StepApproved"]),
+        );
+        expect(types(service, id)).not.toContain("ChangesRequested");
+        expect(made.executor.calls.length).toBe(calls);
+        activity.close();
+      });
+
       it("戻し先が読めない・知らない値・無いなら、その PR の工程で直す（受け入れ条件 1）", async () => {
         const made = await designed([
           reworkOut("changes_required", {

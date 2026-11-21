@@ -9,9 +9,11 @@ import {
   isFinished,
   MAX_FIX_CHAIN,
   message,
+  renderMessage,
   TASK_BODY_MAX,
 } from "@sacty/core";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { CiSnapshot, CiStatusReader } from "./ci.js";
@@ -1741,13 +1743,145 @@ describe("セキュリティチェックとセキュリティ対応", () => {
           securityScope: {},
         });
         const body = pulls.calls.at(-1)?.body ?? "";
-        expect(body).toContain("範囲の外の変更・行の数の超過は見つかりませんでした");
+        expect(body).toContain("範囲の外の変更は見つかりませんでした");
         expect(body).toContain("PR のレビューの子タスクが確かめます");
         expect(body).not.toContain("ゴールガーディアンが最小限か");
         const reviewPrompt = executor.calls.at(-1)?.command.join(" ") ?? "";
         expect(reviewPrompt).toContain("この PR はセキュリティ対応です");
-        expect(reviewPrompt).toContain("範囲の外の変更・行の数の超過は見つかりませんでした");
+        expect(reviewPrompt).toContain("範囲の外の変更は見つかりませんでした");
         expect(reviewPrompt).not.toContain("違反を見つけました");
+        activity.close();
+      });
+
+      it("テスト・文書を含めて 600 行を超える差分でも、範囲の外のファイルが無ければ違反にしない（行の数の上限は無い。PBI-452）", async () => {
+        const { activity, service, id, executor, pulls, skipped } = await runNew([
+          { path: "package.json", added: 200, removed: 100 },
+          { path: "src/fix.test.ts", added: 300, removed: 0 },
+        ]);
+        // 違反が記録されない。行の数は、指示・PR の本文のどこにも出ない
+        expect(skipped?.type === "FinalReviewSkipped" && skipped.payload).toEqual({
+          securityScope: {},
+        });
+        expect(taskOf(service, id).securityScopeCheck?.violation).toBeUndefined();
+        const body = pulls.calls.at(-1)?.body ?? "";
+        const reviewPrompt = executor.calls.at(-1)?.command.join(" ") ?? "";
+        for (const text of [body, reviewPrompt]) {
+          expect(text).not.toContain("違反を見つけました");
+          expect(text).not.toContain("行の数");
+          expect(text).not.toContain("300 行");
+        }
+        activity.close();
+      });
+
+      it("範囲の外のファイルの違反は、行の数を持たず、前の版が読める形（max を持つ）で記録する（PBI-452）", async () => {
+        const { activity, skipped } = await runNew([
+          { path: "package.json", added: 1, removed: 0 },
+          { path: "src/util.ts", added: 1, removed: 0 },
+        ]);
+        const violation =
+          skipped?.type === "FinalReviewSkipped" ? skipped.payload.securityScope?.violation : {};
+        expect(violation).toEqual({ outside: ["src/util.ts"], max: 300 });
+        // 変更前の版の schema（lines は任意、max は必須の整数）でも読める
+        const before = z.object({
+          outside: z.array(z.string()),
+          lines: z.number().int().nonnegative().optional(),
+          max: z.number().int().positive(),
+        });
+        expect(before.safeParse(violation).success).toBe(true);
+        activity.close();
+      });
+
+      it("実装の指示・レビューの指示・PR の本文・画面の文言に、変えた行の数の上限が出ない。「最小限の変更」「範囲の外を変えない」は残る（PBI-452）", async () => {
+        const { activity, executor, pulls, service, id } = await runNew([
+          { path: "package.json", added: 1, removed: 0 },
+          { path: "src/util.ts", added: 1, removed: 0 },
+        ]);
+        const prompts = executor.calls.map((c) => c.command.join(" "));
+        const implementPrompt =
+          prompts.find((p) => p.includes("--- セキュリティ対応（最小限の変更） ---")) ?? "";
+        const reviewPrompt = prompts.at(-1) ?? "";
+        const body = pulls.calls.at(-1)?.body ?? "";
+        const task = taskOf(service, id);
+        const section = (text: string) => text.split("## 修正の範囲（セキュリティ対応）")[1] ?? "";
+        const scopeBody = section(body).split("\n## ")[0] ?? "";
+        const reviewSection = reviewPrompt.split("この PR はセキュリティ対応です")[1] ?? "";
+        const implementSection =
+          implementPrompt.split("--- セキュリティ対応（最小限の変更） ---")[1] ?? "";
+        for (const text of [
+          implementSection.split("--- 修正の範囲")[0] ?? "",
+          reviewSection.split("--- ")[0] ?? "",
+          scopeBody,
+        ]) {
+          expect(text).not.toContain("300");
+          expect(text).not.toContain("行の数");
+          expect(text).not.toContain("上限");
+        }
+        // 範囲の外を変えない・最小限の変更は、残る
+        expect(implementSection).toContain("最小限の変更だけ");
+        expect(implementSection).toContain("範囲の外を変えない");
+        expect(reviewSection).toContain("範囲の外の変更");
+        expect(reviewSection).toContain("直すべき指摘（要修正）にする");
+        expect(scopeBody).toContain("最小限の変更に絞る");
+        expect(task.securityScopeCheck?.violation?.outside).toEqual(["src/util.ts"]);
+        // 画面の文言（ja・en）
+        const violation = { outside: ["src/util.ts"], lines: 571, max: 300 };
+        for (const language of ["ja", "en"] as const) {
+          const text = renderMessage(message("review.scopeViolated", violation), language);
+          expect(text).toContain("src/util.ts");
+          expect(text).not.toMatch(/300|571|行の数|lines/);
+        }
+        activity.close();
+      });
+
+      it("範囲の宣言が無いときは、行の数で違反にしない。実装とレビューの指示に、範囲を照らしていない旨があり、PR の本文には新しい文を足さない（PBI-452）", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const repos = new FakeRepos();
+        repos.changes = [{ path: "src/anything.ts", added: 400, removed: 200 }];
+        const pulls = new FakePulls();
+        const made = makeService(
+          activity,
+          [out("# 調査（範囲の宣言なし）"), implemented, verdict],
+          { planner: fixPlanner, repos, pulls, stepPullRequests: true, reviewTasks: true },
+        );
+        const { id } = made.service.createTask({
+          projectId: "default",
+          title: "GHSA-0000-0000-0000 を直す",
+          plan: "security-fix",
+        });
+        for (let i = 0; i < 5 && taskOf(made.service, id).status !== "awaiting_approval"; i++) {
+          await made.service.runNext(id);
+        }
+        const childId = taskOf(made.service, id).reviewTasks?.[0]?.taskId;
+        for (let i = 0; i < 4 && childId && !isCompleted(taskOf(made.service, childId)); i++) {
+          await made.service.runNext(childId);
+        }
+        const skipped = made.service.get(id)?.activity.find((e) => e.type === "FinalReviewSkipped");
+        expect(skipped?.type === "FinalReviewSkipped" && skipped.payload).toEqual({
+          securityScope: {},
+        });
+        const prompts = made.executor.calls.map((c) => c.command.join(" "));
+        const implementPrompt =
+          prompts.find((p) => p.includes("--- セキュリティ対応（最小限の変更） ---")) ?? "";
+        const reviewPrompt = prompts.at(-1) ?? "";
+        expect(implementPrompt).toContain("宣言が無いので、sacty は範囲を照らしていません");
+        expect(reviewPrompt).toContain("宣言が無いので、sacty は範囲を照らしていません");
+        const body = pulls.calls.at(-1)?.body ?? "";
+        const scopeBody =
+          (body.split("## 修正の範囲（セキュリティ対応）")[1] ?? "").split("\n## ")[0] ?? "";
+        expect(scopeBody).not.toContain("宣言");
+        // 宣言が無ければ照らしていないので、「照らし、範囲の外の変更は見つかりませんでした」と書かない
+        for (const text of [reviewPrompt, scopeBody]) {
+          expect(text).not.toContain("範囲の外の変更は見つかりませんでした");
+        }
+        for (const text of [
+          implementPrompt
+            .split("--- セキュリティ対応（最小限の変更） ---")[1]
+            ?.split("--- 修正の範囲")[0] ?? "",
+          scopeBody,
+        ]) {
+          expect(text).not.toContain("行の数");
+          expect(text).not.toContain("上限");
+        }
         activity.close();
       });
 

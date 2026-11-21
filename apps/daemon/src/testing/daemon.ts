@@ -31,6 +31,7 @@ import type { ContextFetcher, ContextRef } from "../context.js";
 import { MessageError } from "../errors.js";
 import type { GitHubAuth } from "../gh.js";
 import {
+  isDecisionNotice,
   type PullRequestFeedback,
   type PullRequestInfo,
   type PullRequestStatus,
@@ -1160,6 +1161,8 @@ export class FakePulls implements PullRequests {
     // sacty のレビューは除く（PBI-88）
     // sacty のレビューのタスクの投稿には、本物と同じく、AI のレビューの印（source）を付ける（PBI-275）
     return (this.feedbackBy[input.number] ?? this.feedbackList).flatMap((item) => {
+      // 本物と同じく、sacty が人の判断を待って止めたことを知らせる投稿（PBI-452）は、アカウントによらず取り込まない
+      if (isDecisionNotice(item.body)) return [];
       const key = sactyReviewTask(item.body);
       const round = input.sactyReviews?.find((r) => r.key === key && r.account === item.author);
       // 投稿したレビューのタスクと回（目印の中身）も、本物と同じく添える（PBI-332）

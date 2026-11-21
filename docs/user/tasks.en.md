@@ -1644,6 +1644,7 @@ Resume the task as follows, depending on why it stopped.
 | The budget limit | Enter the new cumulative limit and press "Change cap and resume" (for the budget settings, see [config.yaml settings](config.en.md#budget)) |
 | An AI usage limit, an authentication error, an error, and so on | Check the cause, then press "Resume" |
 | The implementation does not finish, or a rework changed nothing | Check the reason, change the step's agent if needed, then press "Resume" ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)) |
+| A finding a rework cannot resolve | The AI review left a finding it marked as unresolvable by a rework and needing your decision, so the task stopped without starting a rework. Comment on the PR with your approval or direction and the task resumes with it. You can also resume from the screen with a note. To accept the finding as it is, merge the PR (it is approved without applying the findings that caused the pause) |
 | The chosen agent can no longer be used | Choose the agent again, then resume ([Changing a step's agent](#changing-a-steps-agent)) |
 | AI review suggestions remained | The draft is removed and the task waits for approval. Check the PR and the reasons for the declined suggestions. Comment on the PR that a suggestion you want fixed needs action ([Sorting AI review suggestions](#sorting-ai-review-suggestions)) |
 
@@ -1908,8 +1909,8 @@ Besides creating a security fix task from a report, you can create one in "Creat
 1. In Investigate, the agent confirms the problem and decides the fix scope (the files that may change, the dependencies to raise, the command that confirms the fix). The scope does not need your approval.
 2. In Implement, the agent fixes only inside the scope, with the smallest change that solves the problem. It does not mix in refactoring, reformatting, or unrelated fixes.
 3. sacty checks the diff against the scope and then opens the PR. The child task that reviews the PR checks that the change is minimal (viewpoint `SEC-MIN`).
-   - It is a violation if files outside the scope changed, or more than 300 lines changed excluding lockfiles. The violation appears in the PR body, the child task makes it a "changes required" finding, and sacty fixes the implementation.
-   - Regression test files may be added outside the scope (their lines are counted).
+   - It is a violation if files outside the scope changed. The number of changed lines is not a violation. The violation appears in the PR body, the child task makes it a "changes required" finding, and sacty fixes the implementation.
+   - Regression test files may be added outside the scope.
 4. The PR body shows "修正の範囲（セキュリティ対応）". Check that the diff stays within the scope, and approve by merging. A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) does not change the PR body, so check the scope in the Investigate result in the task details.
 
 When the problem cannot be fixed without changing something outside the scope, the agent writes the reason and the scope to widen in the implementation notes. You cannot request changes on the preliminary Investigate, so cancel the task, press "Rerun", and write the scope to widen in "Additional notes". The rerun task also proceeds as "Security fix".

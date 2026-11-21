@@ -449,7 +449,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 
 - `POST /api/tasks/:id/resume` に、`{}` か `{ note }` だけを送る。`capUsd`・`tests`・`image`・`agents` は引数に無く、送る経路も無い。再開の判断（`service.resume`）・記録（`TaskResumed`）は画面と同じ。MCP 専用の経路・記録は無い。
 - 再開したら、文と、補足を足したか（`resumed`：`taskId`・`noteAdded`）と、再開した後の[タスクの要約](#タスクの要約)（戻った先の `state`）を返す。文で、戻った先が分かる。`queued` は、止まった工程を実行し直す（時間と費用がかかる。終わるのは待たない）。`awaiting_approval`・`waiting_children` は、そこへ戻っただけで、工程は実行し直さない。ほかは、sacty が次へ進める。
-- 再開できるのは、状態が `paused` で、理由が `manual`・`error`・`verification`・`incomplete`・`unchanged`・`usage_limit`・`auth`（理由の無い古い記録を含む）のとき。`verification`・`incomplete` は回数を数え直すので、同じ失敗ならまた止まる。
+- 再開できるのは、状態が `paused` で、理由が `manual`・`error`・`verification`・`incomplete`・`unchanged`・`needs_decision`・`usage_limit`・`auth`（理由の無い古い記録を含む）のとき。`verification`・`incomplete` は回数を数え直すので、同じ失敗ならまた止まる。
 - **再開できない**（API に送らず、何も記録せず、画面で人が決めることを返す）のは、理由が `budget`（予算の上限の引き上げ。費用が増える判断）・テストの扱いを人が決められる停止（`canDecideTests`。テストの扱いの決定）・理由が `child_cancelled`（再開すると子タスクの中止を認めることになる）・チケットから取り込んだタスクで、作業するリポジトリを決める前に止まったとき（`awaitingTicketTriage`・`awaitingRepository`。画面の再開フォームがリポジトリの選択を必須にする場面。作業するリポジトリの選択）のとき。文は「このツールでは再開できません（何も変えていません）。画面で人が決めてください：…」。判定は `resumeBlock` で、要約の `canResume` と `get_task` の `resumeBlocked`（`reason`・`decideOnScreen`）も同じ関数を使う。
 - 一時停止中でない・無い（消したプロジェクトのタスクを含む。先に `GET /api/tasks/:id` で確かめる）・`task_id` の形が正しくない・補足が長すぎる（`RESUME_NOTE_MAX` の 10000 文字を超える、または足すと説明の上限を超える。`resumeNoteRoom`）ときも、API に送らず、理由を返す。
   デーモンが断るもの（外部作業の工程が始まっている・重ねていた依存先が中止された・止まったと確かめられないコンテナが残っている）は、デーモンの理由をそのまま返す。`canResume` はこれらを見ないので、真でもデーモンが断ることがある。

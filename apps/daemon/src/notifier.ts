@@ -73,6 +73,7 @@ const PAUSE: Record<Language, Record<PauseReason, string>> = {
     child_cancelled: "子タスクの中止",
     incomplete: "実装が終わらない",
     unchanged: "やり直しで変更が無い",
+    needs_decision: "直しでは解消できない指摘があり、人の判断が要る",
   },
   en: {
     budget: "budget cap",
@@ -84,6 +85,7 @@ const PAUSE: Record<Language, Record<PauseReason, string>> = {
     child_cancelled: "a subtask was cancelled",
     incomplete: "the implementation keeps ending unfinished",
     unchanged: "the rework changed nothing",
+    needs_decision: "a finding cannot be resolved by a rework and needs a human decision",
   },
 };
 
