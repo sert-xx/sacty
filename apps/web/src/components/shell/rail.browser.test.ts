@@ -13,6 +13,8 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf
 // 本文（main）の実際のクラスは layout.tsx から取る（余白の確かめが、実際の画面と食い違わないように）
 const mainClass = /<main[^>]*?className="([^"]+)"/.exec(read("../../app/layout.tsx"))?.[1] ?? "";
 
+const htmlClass = /<html[^>]*?className="([^"]+)"/.exec(read("../../app/layout.tsx"))?.[1] ?? "";
+
 // 実際のサイドメニューと質問のパネルの丸いボタンを、ヘッダー（sticky h-16）・長い本文と同じ並びで置く
 const entry = `
 import React from 'react';
@@ -20,12 +22,14 @@ import { createRoot } from 'react-dom/client';
 import { RailNav } from '/apps/web/src/components/shell/rail.tsx';
 import { ChatPanel } from '/apps/web/src/components/chat-panel.tsx';
 const h = React.createElement;
-const path = new URLSearchParams(location.search).get('path') ?? '/projects/p1/tasks';
+const params = new URLSearchParams(location.search);
+const path = params.get('path') ?? '/projects/p1/tasks';
+document.documentElement.className = ${JSON.stringify(htmlClass)};
 createRoot(document.getElementById('root')).render(
   h('div', { className: 'flex min-h-screen flex-col' },
     h('header', { className: 'sticky top-0 z-30 h-16 bg-white' }, 'Header'),
     h('div', { className: 'flex flex-1' },
-      h(RailNav, { pathname: path }),
+      h(RailNav, params.get('fallback') ? {} : { pathname: path }),
       h('main', { className: ${JSON.stringify(mainClass)}, 'data-testid': 'main' },
         h('div', { className: 'h-[1500px]' }, 'Body'),
         h('p', { 'data-testid': 'last' }, 'Last line'),
@@ -50,7 +54,7 @@ async function tailwindCss(): Promise<string> {
   const sources = ["./rail.tsx", "../chat-panel.tsx", "../ui/button.tsx", "../../app/layout.tsx"]
     .map(read)
     .join("\n");
-  const candidates = new Set(`${sources}\n${entry}`.match(/[^\s"'`{}<>,;]+/g) ?? []);
+  const candidates = new Set(`${sources}\n${entry}`.match(/[^\s"'`{}<>;]+/g) ?? []);
   const compiler = await compile('@import "tailwindcss";', {
     base: fileURLToPath(new URL(".", import.meta.url)),
     onDependency: () => {},
@@ -130,9 +134,9 @@ afterAll(async () => {
   await server?.close();
 });
 
-async function open(width: number, path = "/projects/p1/tasks"): Promise<Page> {
+async function open(width: number, path = "/projects/p1/tasks", fallback = false): Promise<Page> {
   const page = await browser.newPage({ viewport: { width, height: 700 } });
-  await page.goto(`${url}/?path=${encodeURIComponent(path)}`);
+  await page.goto(`${url}/?path=${encodeURIComponent(path)}${fallback ? "&fallback=1" : ""}`);
   await page.getByRole("navigation", { name: "Main" }).waitFor();
   return page;
 }
@@ -239,12 +243,16 @@ it("at 375px the end of the body is not hidden by the menu, and the bar reserves
     const nav = await box(page.getByRole("navigation", { name: "Main" }));
     const last = await box(page.getByTestId("last"));
     expect(last.y + last.height).toBeLessThanOrEqual(nav.y);
-    // ホームバーの余白は、この環境では 0 になるので、nav の高さと余白が env() で決まることを CSS で確かめる
+    // ホームバー・切り欠きの余白は、この環境では 0 になるので、env() で決まることを CSS で確かめる
     const rules = await page.evaluate(() =>
       [...document.styleSheets].flatMap((s) => [...s.cssRules].map((r) => r.cssText)).join("\n"),
     );
     expect(rules).toMatch(/padding-bottom:\s*env\(safe-area-inset-bottom\)/);
     expect(rules).toMatch(/height:\s*calc\(3\.5rem \+ env\(safe-area-inset-bottom\)\)/);
+    expect(rules).toMatch(/padding-left:\s*max\(0\.25rem, env\(safe-area-inset-left\)\)/);
+    expect(rules).toMatch(/padding-right:\s*max\(1rem, env\(safe-area-inset-right\)\)/);
+    expect(rules).toMatch(/padding-bottom:\s*calc\(5\.5rem \+ env\(safe-area-inset-bottom\)\)/);
+    expect(rules).toMatch(/bottom:\s*calc\(4\.5rem \+ env\(safe-area-inset-bottom\)\)/);
   } finally {
     await page.close();
   }
@@ -277,6 +285,70 @@ it("at 1280px the menu stays a left column of 88px and the chat button stays 24p
     expect(main.x).toBe(88);
     const button = await box(page.getByRole("button", { name: "Open chat" }));
     expect(1280 - (button.x + button.width)).toBe(24);
+    expect(700 - (button.y + button.height)).toBe(24);
+  } finally {
+    await page.close();
+  }
+}, 30000);
+
+it("at 375px focusing an element near the bottom scrolls it above the menu", async () => {
+  const page = await open(375);
+  try {
+    await page.evaluate(() => {
+      const b = document.createElement("button");
+      b.textContent = "Near bottom";
+      b.style.cssText = "position:absolute;top:1480px;left:16px";
+      document.querySelector("[data-testid=main]")?.appendChild(b);
+      (document.querySelector("[data-testid=main]") as HTMLElement).style.position = "relative";
+      window.scrollTo(0, 0);
+      b.scrollIntoView({ block: "nearest" });
+    });
+    await page.waitForTimeout(100);
+    const nav = await box(page.getByRole("navigation", { name: "Main" }));
+    const target = await box(page.getByRole("button", { name: "Near bottom" }));
+    expect(target.y + target.height).toBeLessThanOrEqual(nav.y);
+  } finally {
+    await page.close();
+  }
+}, 30000);
+
+it("the menu switches between the bottom bar and the left column exactly at 640px", async () => {
+  for (const [width, bottom] of [
+    [639, true],
+    [640, false],
+  ] as const) {
+    const page = await open(width);
+    try {
+      const n = await box(page.getByRole("navigation", { name: "Main" }));
+      if (bottom) expect(n).toMatchObject({ x: 0, width, y: 700 - n.height });
+      else expect(n).toMatchObject({ x: 0, y: 64, width: 88 });
+    } finally {
+      await page.close();
+    }
+  }
+}, 30000);
+
+it("at 375px the loading fallback (no pathname) is also a bottom bar with no item highlighted", async () => {
+  const page = await open(375, "/projects/p1/tasks", true);
+  try {
+    const nav = page.getByRole("navigation", { name: "Main" });
+    const n = await box(nav);
+    expect(n.width).toBe(375);
+    expect(n.y + n.height).toBe(700);
+    expect(await nav.locator("[aria-current]").count()).toBe(0);
+  } finally {
+    await page.close();
+  }
+}, 30000);
+
+it("at 852px (landscape phone) the layout matches the left-column layout", async () => {
+  const page = await open(852);
+  try {
+    const n = await box(page.getByRole("navigation", { name: "Main" }));
+    expect(n).toMatchObject({ x: 0, y: 64, width: 88 });
+    expect((await box(page.getByTestId("main"))).x).toBe(88);
+    const button = await box(page.getByRole("button", { name: "Open chat" }));
+    expect(852 - (button.x + button.width)).toBe(24);
     expect(700 - (button.y + button.height)).toBe(24);
   } finally {
     await page.close();

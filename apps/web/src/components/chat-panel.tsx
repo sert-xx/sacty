@@ -57,7 +57,7 @@ export function ChatPanel({
         render={
           <Button
             size="icon-lg"
-            className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 size-12 rounded-full shadow-lg sm:right-6 sm:bottom-6"
+            className="fixed right-[max(1rem,env(safe-area-inset-right))] bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 size-12 rounded-full shadow-lg sm:right-[max(1.5rem,env(safe-area-inset-right))] sm:bottom-6"
           />
         }
         aria-label={label}
@@ -76,7 +76,7 @@ export function ChatPanel({
         )}
       </DialogPrimitive.Trigger>
       <DialogPrimitive.Portal keepMounted>
-        <DialogPrimitive.Popup className="fixed inset-y-0 right-0 z-50 flex w-full sm:top-16 flex-col border-l border-border bg-popover text-sm text-popover-foreground shadow-xl outline-none sm:w-[440px] sm:max-w-[calc(100%-3rem)] data-closed:hidden">
+        <DialogPrimitive.Popup className="fixed inset-y-0 right-0 z-50 flex w-full pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] sm:top-16 flex-col border-l border-border bg-popover text-sm text-popover-foreground shadow-xl outline-none sm:w-[440px] sm:max-w-[calc(100%-3rem)] data-closed:hidden">
           <div className="flex items-start gap-2 border-b border-border p-4">
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <DialogPrimitive.Title className="text-[15px] font-semibold">

@@ -86,7 +86,7 @@ export function RailNav({ pathname }: { pathname?: string }) {
   return (
     <nav
       aria-label={t.main}
-      className="fixed inset-x-0 bottom-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-bottom))] shrink-0 flex-row gap-1 border-t border-border bg-chrome px-1 pt-1 pb-[env(safe-area-inset-bottom)] sm:sticky sm:inset-x-auto sm:top-16 sm:bottom-auto sm:z-auto sm:h-[calc(100dvh-4rem)] sm:w-[88px] sm:flex-col sm:overflow-y-auto sm:border-t-0 sm:border-r sm:px-1.5 sm:py-3"
+      className="fixed inset-x-0 bottom-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-bottom))] shrink-0 flex-row gap-1 border-t border-border bg-chrome pt-1 pr-[max(0.25rem,env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] pl-[max(0.25rem,env(safe-area-inset-left))] sm:sticky sm:inset-x-auto sm:top-16 sm:bottom-auto sm:z-auto sm:h-[calc(100dvh-4rem)] sm:w-[calc(88px+env(safe-area-inset-left))] sm:flex-col sm:overflow-y-auto sm:border-t-0 sm:border-r sm:py-3 sm:pr-1.5 sm:pl-[calc(0.375rem+env(safe-area-inset-left))]"
     >
       {railItems(pathname).map((item) => {
         const on = pathname !== undefined && item.active(pathname);

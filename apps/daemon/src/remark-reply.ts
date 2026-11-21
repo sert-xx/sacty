@@ -3,6 +3,7 @@ import { redact } from "./agents/redact.js";
 import { REMARK_REPLY_MARKER_PREFIX } from "./github.js";
 import { cutAtMax, withoutMentions } from "./human-ask-notice.js";
 import { withoutInternalPaths } from "./prompts.js";
+import { TRIAGE_REPLY_NOTE } from "./triage-reply.js";
 
 /*
  * PR のレビュー・コメントから取り込んだ指摘への対応を、PR に返信する投稿（PBI-352）。
@@ -130,6 +131,40 @@ export const DEFERRAL_PROPOSAL_HEAD =
 export const DEFERRAL_PROPOSAL_NOTE =
   "後続に回すか、この PR で直すかは、このタスクを承認する人が、マージの前に決めます。決定は、この PR にコメントで残します。";
 
+/** 返信の頭（状態の申告）。返信を作る側（buildRemarkReply）と、読む側（readRemarkReply）で同じ文を使う。 */
+export const ADDRESSED_HEAD = "**対応しました。**";
+export const DECLINED_HEAD = "**対応していません。** 理由：";
+
+/**
+ * sacty の返信の本文から、状態の申告（頭）と、断った提案を含むかを読む（PBI-445）。頭は、目印・書き出し・引用の行のあとの最初の行だけを
+ * 見る（対応の文の中に同じ文があっても、頭と読まない）。申告が無い返信の状態は undefined。断った提案を含むとは、AI が選り分けで
+ * 「この PR では対応しない」とした提案が、返信に入っていること（頭は「対応しました。」でも、含む）。
+ */
+export function readRemarkReply(body: string): {
+  status?: RemarkResponseStatus;
+  declinedProposals: boolean;
+} {
+  const lines = body.trimStart().split("\n");
+  const first = lines
+    .slice(1)
+    .map((l) => l.trim())
+    .find((l) => l !== "" && !l.startsWith(">") && !l.endsWith("への返信です。"));
+  const status: RemarkResponseStatus | undefined =
+    first === undefined
+      ? undefined
+      : first.startsWith(ADDRESSED_HEAD)
+        ? "addressed"
+        : first.startsWith(DECLINED_HEAD)
+          ? "declined"
+          : first.startsWith(DEFERRAL_PROPOSAL_HEAD)
+            ? "deferred"
+            : undefined;
+  return {
+    ...(status ? { status } : {}),
+    declinedProposals: body.includes(TRIAGE_REPLY_NOTE),
+  };
+}
+
 export type RemarkReplyInput = {
   taskId: string;
   stepName: string;
@@ -172,9 +207,9 @@ export function buildRemarkReply(input: RemarkReplyInput): string {
       : undefined;
   const head =
     input.status === "addressed"
-      ? "**対応しました。**"
+      ? ADDRESSED_HEAD
       : input.status === "declined"
-        ? "**対応していません。** 理由："
+        ? DECLINED_HEAD
         : input.status === "deferred"
           ? DEFERRAL_PROPOSAL_HEAD
           : undefined;

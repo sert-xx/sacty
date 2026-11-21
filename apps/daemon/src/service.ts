@@ -467,6 +467,7 @@ import {
   remarkReplyOrigin,
 } from "./remark-reply.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import { annotateReviewComments, voidedByPersonOf } from "./review-comments.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
 import {
   buildResolvedNotice,
@@ -5301,7 +5302,7 @@ export class TaskService {
   }> {
     const token = await this.githubToken(task, target.repo, usedSecrets);
     const account = this.githubAccountOf(task, target.repo).account;
-    const existing = await this.deps.pulls.feedback({
+    const fetched = await this.deps.pulls.feedback({
       repo: target.repo,
       token,
       number: target.number,
@@ -5324,7 +5325,16 @@ export class TaskService {
       includeApprovals: true,
       // sacty が作者のアカウントで投稿した、指摘への返信（PBI-352）も、作者の返答として渡す
       includeSactyReplies: true,
+      // 返信の目印のタスク ID が、この PR を扱うタスクと一致するものだけを、sacty の返信とする（PBI-445）
+      sactyReplyTasks: remarkReplyTasksOn(
+        [...this.tasks.values()],
+        task.reviewOf?.taskId,
+        target.repo,
+        target.number,
+      ),
     });
+    // 1 件ずつ、人・sacty・確かめられないを付ける（人と sacty が同じアカウントでも見分ける。PBI-445）
+    const existing = annotateReviewComments(fetched, target.author);
     const previous = task.previousReview;
     if (!previous) return { existing };
     const author = target.author.toLowerCase();
@@ -11375,6 +11385,8 @@ export class TaskService {
     let reviewSecurity: ReviewSecurity | undefined;
     // PR のレビューの子タスクに渡す、PR を作ったタスクの、後続に回したい案の扱い（PBI-370）
     let reviewDeferrals: ReviewDeferrals | undefined;
+    // PR を作ったタスクの人が、画面で無効にした指摘（人の却下。PBI-445）
+    let reviewVoided: { text: string; url?: string }[] | undefined;
     // 引き継いで直す既存の PR の指摘（レビュー・行へのコメント・通常のコメント）。実装と、その前の工程に渡す
     const continued = this.mustGet(task.id).continuedPullRequest;
     const continuedFeedback =
@@ -11474,6 +11486,16 @@ export class TaskService {
                 scope: securityScope(parent),
                 ...(parent.securityScopeCheck ? { check: parent.securityScopeCheck } : {}),
               };
+            }
+            // PR を作ったタスクの人が画面で無効にした指摘（RemarkVoided）を、人の却下として渡す。その PR の工程の指摘だけ
+            // （マージで捨てた指摘は含めない。PBI-445）
+            if (parent && latest.reviewOf) {
+              reviewVoided = voidedByPersonOf(
+                parent.remarks,
+                latest.reviewOf.step,
+                reviewTarget.number,
+                reviewTarget.url,
+              );
             }
             // 実装の PR なら、人が後続に回すと決めた指摘を渡す（未対応に数えさせない。PBI-370）
             if (parent && latest.reviewOf?.step === "implement") {
@@ -11693,6 +11715,7 @@ export class TaskService {
               ...(reviewCi ? { reviewCi } : {}),
               ...(reviewSecurity ? { reviewSecurity } : {}),
               ...(reviewDeferrals ? { reviewDeferrals } : {}),
+              ...(reviewVoided && reviewVoided.length > 0 ? { reviewVoided } : {}),
               ...(rereviewDocsOnly ? { rereviewDocsOnly } : {}),
               ...(rereviewNarrow
                 ? {
@@ -20634,6 +20657,29 @@ export function remarkReplyAccountsOn(
       ),
     ),
   ];
+}
+
+/**
+ * この PR を扱う sacty のタスクの ID（PR を作ったタスク・PR を取り込んだタスク・要求要件・設計の PR を持つタスク。PBI-445）。
+ * 返信の目印のタスク ID がこの中にあるときだけ、sacty の返信として読む。
+ */
+export function remarkReplyTasksOn(
+  tasks: readonly Task[],
+  parentId: string | undefined,
+  repo: string,
+  number: number,
+): string[] {
+  const on = (pr: { repo?: string; number?: number } | undefined) =>
+    pr?.number === number && pr.repo !== undefined && sameRepo(pr.repo, repo);
+  return tasks
+    .filter(
+      (t) =>
+        t.id === parentId ||
+        on(t.pullRequest) ||
+        on(t.continuedPullRequest) ||
+        (t.stepPullRequests ?? []).some(on),
+    )
+    .map((t) => t.id);
 }
 
 /**

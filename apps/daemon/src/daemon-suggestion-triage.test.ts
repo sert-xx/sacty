@@ -234,9 +234,25 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     await service.checkPullRequests();
     await service.checkPullRequests();
     expect(restarts(service, childId)).toHaveLength(1);
+    // 投稿した返信が、PR のコメントとして読まれる（PR を作ったタスクの返信は sacty の返信。PBI-445）
+    pulls.feedbackBy[7] = [
+      ...(pulls.feedbackBy[7] ?? []),
+      item("comment:90", { author: "me", body: reply }),
+    ];
     const before = executor.calls.length;
     await runReview(service, childId);
     const prompt = promptOf(executor, before);
+    expect(pulls.feedbackSactyReplyTasks.some((tasks) => tasks?.includes(id))).toBe(true);
+    const existingJson = JSON.parse(
+      prompt.split("\n").find((l) => l.startsWith('{"existingReviews"')) ?? "{}",
+    );
+    const byKey = Object.fromEntries(
+      existingJson.existingReviews.map((r: { author: string; by: string }) => [r.author, r]),
+    );
+    expect(byKey.me).toMatchObject({
+      by: "sacty",
+      reply: { status: "declined", declinedProposals: true },
+    });
     // その回の指示に、対応しないとした提案がデータとして渡り、未対応に数えない指示になっている
     expect(prompt).toContain("declinedByAuthor");
     expect(prompt).toContain("名前の付け方");
