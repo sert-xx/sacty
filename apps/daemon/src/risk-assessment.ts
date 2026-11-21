@@ -14,6 +14,7 @@ import {
 } from "@sacty/core";
 import { headedObject, type JsonCandidate, jsonCandidates } from "./agent-json.js";
 import { redact } from "./agents/redact.js";
+import { markdownCode, urlPathSegment } from "./markdown-text.js";
 import { headOf } from "./orchestrator-handoff.js";
 
 /**
@@ -482,9 +483,6 @@ export async function assessPullRequestRisk(input: {
 /** リスク評価の節の題。 */
 export const RISK_SECTION_TITLE = "リスク評価";
 
-/** コードとして書く箇所から、バッククォートを除く（インラインコードを閉じさせない）。 */
-const asCode = (value: string) => `\`${value.replace(/`/g, "'")}\``;
-
 /** 記録に改行があっても、空行を含むすべての行を同じ引用枠に入れる。 */
 function alertLines(kind: string, lines: string[]): string[] {
   return [
@@ -495,31 +493,17 @@ function alertLines(kind: string, lines: string[]): string[] {
   ];
 }
 
-/** URL の区切りを保ち、Markdown のリンク先の括弧もエンコードする。 */
-const urlPart = (part: string) =>
-  encodeURIComponent(part).replace(
-    /[!'()*]/g,
-    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-
 /** 相対パスと正しい行の指定だけを、評価したコミットへ結ぶ。ファイルの存在確認はしない。 */
 function focusLocation(
   where: string,
   repoUrl: string | undefined,
   commit: string | undefined,
 ): string {
-  const fallback = asCode(where);
+  // ラベルは、バッククォートも含めてリンク先と同じ綴りにする（長いバッククォートで囲む）。
+  const fallback = markdownCode(where);
   const repo = repoUrl ? parseRepoUrl(repoUrl) : undefined;
   const match = where.match(/^(.+):([1-9]\d*)(?:-([1-9]\d*))?$/);
-  if (
-    !repo ||
-    !commit ||
-    commit.trim() !== commit ||
-    !/^[a-f\d]{7,64}$/i.test(commit) ||
-    !match ||
-    match[0] !== where
-  )
-    return fallback;
+  if (!repo || !commit || !/^[a-f\d]{7,64}$/i.test(commit) || !match) return fallback;
   const [, path = "", first = "", last] = match;
   const start = Number(first);
   const end = last === undefined ? start : Number(last);
@@ -530,12 +514,11 @@ function focusLocation(
     // u を付けると、サロゲートの範囲は対になっていないものだけに当たる。
     /[\\:\u2028\u2029\uD800-\uDFFF]/u.test(path) ||
     [...path].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
-    path.startsWith("/") ||
+    // 先頭の「/」も、空の区切りとして、ここで拒む。
     path.split("/").some((part) => !part || part === "." || part === "..")
   )
     return fallback;
-  const label = fallback;
-  return `[${label}](${repo.url}/blob/${commit}/${path.split("/").map(urlPart).join("/")}#L${first}${last === undefined ? "" : `-L${last}`})`;
+  return `[${fallback}](${repo.url}/blob/${commit}/${path.split("/").map(urlPathSegment).join("/")}#L${first}${last === undefined ? "" : `-L${last}`})`;
 }
 
 /** 合図の名前に、重さを添える（「取り消しにくい変更（重い）」）。外した合図（以前の記録）には、添えない。 */
@@ -580,7 +563,9 @@ export function riskAssessmentLines(risk: Task["riskAssessment"], repoUrl?: stri
     ...alertLines(level.alert, [
       `**変更リスク: ${RISK_LEVEL_LABEL[a.level]}(${level.category})**`,
       "",
-      ...(a.level === "low" ? [grounds.join("。"), ""] : grounds.map((line) => `- ${line}`)),
+      ...(a.level === "low"
+        ? [`${grounds.map((g) => g.replace(/。\s*$/, "")).join("。")}。`, ""]
+        : grounds.map((line) => `- ${line}`)),
       `- 勧めるレビューの深さ：${RISK_DEPTH_LABEL[a.level]}`,
       ...(a.signals.length > 0 ? [`- リスクの合図：${a.signals.map(signalLabel).join("、")}`] : []),
       ...(a.dependencyUpdate

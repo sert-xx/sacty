@@ -102,6 +102,7 @@ import {
 } from "./final-review-criteria.js";
 import { type PullRequestFeedback, REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
 import { withoutGitHubComments } from "./github-comments.js";
+import { markdownCode, urlPathSegment } from "./markdown-text.js";
 import { headOf } from "./orchestrator-handoff.js";
 import {
   CONTAINER_LOGS_DIR,
@@ -133,6 +134,7 @@ import {
   TRIAGE_HEADING,
   withoutHtmlComments,
 } from "./suggestion-triage.js";
+import { TASK_LINK_NOTE } from "./task-link.js";
 import { CHANGE_DOCUMENT_EXTENSION_LIST } from "./test-files.js";
 import { DECLARATION_ONLY_LINES } from "./timeout-resume.js";
 import {
@@ -6506,22 +6508,6 @@ function stepArtifactLink(p: Task["stepPullRequests"][number]): string {
   return `${artifact}（PR：[#${p.number ?? web[2]}](${p.url})）`;
 }
 
-/** URL のパスの1区切り。Markdown のリンク先を閉じる括弧も符号にする。 */
-function urlPathSegment(text: string): string {
-  return encodeURIComponent(text).replace(
-    /[()]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-}
-
-/** インラインのコード。中にバッククォートがあれば、それより長いバッククォートで囲む。 */
-function markdownCode(text: string): string {
-  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
-  const fence = "`".repeat(longest + 1);
-  const pad = longest > 0 ? " " : "";
-  return `${fence}${pad}${text}${pad}${fence}`;
-}
-
 /** 要求要件・設計の PR の題（PBI-57）。 */
 export function buildStepPullRequestTitle(task: Task, step: StepPullRequestKey): string {
   return `[${STEP_NAME[step]}] ${task.title}`;
@@ -9895,7 +9881,7 @@ export function buildReviewBody(
   const mention = mentionOf(options.mentionSelf ?? task.reviewTarget?.author);
   const reviewed = task.reviewTarget?.headCommit ?? "";
   // 今回レビューした先頭の評価だけを、指摘なしの回にだけ載せる（前の回の評価・指摘のある回に、前の評価を載せない。PBI-429）
-  const risk =
+  const riskLines =
     options.risk === true &&
     verdict === "no_findings" &&
     task.riskAssessment?.via === "review" &&
@@ -9937,11 +9923,12 @@ export function buildReviewBody(
   // 評価や末尾の案内の分を先に確保して、投稿する本文全体を上限に収める。
   const available = REVIEW_BODY_MAX - header.length - footer.length;
   const truncated = "\n\n…（長いため省略しました）";
-  const riskText = risk.length > 0 ? `${risk.join("\n")}\n\n` : "";
-  // 古い記録などで評価だけでも上限を超えるときは、枠の途中で切らずに詳細の参照先を案内する。
+  const riskText = riskLines.length > 0 ? `${riskLines.join("\n")}\n\n` : "";
+  // 評価の節が、上限から見出し・末尾・省略の印を引いた残りに収まらないとき（古い記録など）は、枠の途中で切らずに、省略したことと詳細の読み先を案内する。
+  // 画面のリンクは出さず、画面は依頼した人のマシンでだけ開けることを添える（PBI-450）。
   const assessment =
     riskText.length > available - truncated.length
-      ? `${risk[0]}\n\n評価の詳細は長いため省略しました。sacty のタスクの画面で確かめてください。\n\n`
+      ? `${riskLines[0]}\n\n評価の詳細は長いため省略しました。依頼した人は、Sacty のタスク ${task.id} の画面で確かめられます。${TASK_LINK_NOTE}\n\n`
       : riskText;
   const reviewMax = available - assessment.length;
   const body =

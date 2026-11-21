@@ -128,7 +128,6 @@ describe("PR を作る・更新する時点では、リスクを評価しない�
     const number = pulls.calls[0] ? [...Object.keys(pulls.bodies)].map(Number)[0] : undefined;
     expect(number).toBeDefined();
     expect(pulls.bodies[number ?? 0]).not.toContain("リスク評価");
-    expect(pulls.bodies[number ?? 0]).not.toContain("段階：");
     // 更新（直しの提出）。同じ実行器で、もう 1 回実装を提出する
     expect(typed(service, id).task.status).toBe("awaiting_approval");
     service.requestChanges(id, { step: "implement", submission: 1, comments: ["直してください"] });

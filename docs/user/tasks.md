@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/web/src/components/self-review-depth.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts、apps/web/src/components/deferral.tsx、apps/web/src/lib/labels.ts、apps/web/src/i18n/messages/labels.ts、apps/web/src/i18n/messages/parts.ts、apps/daemon/src/suggestion-triage.ts、apps/daemon/src/triage-reply.ts、packages/core/src/messages.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/web/src/components/self-review-depth.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts、apps/web/src/components/deferral.tsx、apps/web/src/lib/labels.ts、apps/web/src/i18n/messages/labels.ts、apps/web/src/i18n/messages/parts.ts、apps/daemon/src/suggestion-triage.ts、apps/daemon/src/triage-reply.ts、packages/core/src/messages.ts、apps/daemon/src/risk-assessment.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -1165,8 +1165,13 @@ PR を作る・更新するときは評価しないので、評価のための�
 
 コメントでは、次のように分けて表示します。1〜3 は区分番号で、評価点や確率ではありません。
 
-- 段階と根拠は GitHub Alert に表示します。低(1)は `[!NOTE]`、中(2)は `[!IMPORTANT]`、高(3)は `[!WARNING]` です。変更の種類・影響の範囲・取り消しやすさ・勧めるレビューの深さと、該当するリスクの合図（重さ付き）・依存更新の上げ幅を含みます。低の根拠は1段落、中・高の根拠は別の項目です。
-- とくに見る箇所は、独立した `[!TIP]` に、対象箇所・見る理由・人間に判断や確認してほしいことを表示します。確認箇所がなければ、この枠は出ません。相対ファイルパスと正しい行番号なら、Enterprise を含め、評価したコミットへのリンクになります。それ以外はテキストのままです。過去の記録には、記録にある情報だけが出ます。
+- 段階と根拠は GitHub Alert に表示します。段階と Alert の対応は次のとおりです。
+  - 低(1)：`[!NOTE]`（見出しは「変更リスク: 低(1)」）
+  - 中(2)：`[!IMPORTANT]`（「変更リスク: 中(2)」）
+  - 高(3)：`[!WARNING]`（「変更リスク: 高(3)」）
+
+  Alert には、変更の種類・影響の範囲・取り消しやすさ・勧めるレビューの深さと、該当するリスクの合図（重さ付き）・依存更新の上げ幅を含みます。低の根拠は1段落、中・高の根拠は別の項目です。
+- とくに見る箇所は、「とくに見る箇所（人間への確認依頼）」という見出しの独立した `[!TIP]` に、対象箇所・見る理由・人間に判断や確認してほしいことを表示します。確認箇所がなければ、この枠は出ません。相対ファイルパスと正しい行番号なら、Enterprise を含め、評価したコミットへのリンクになります。それ以外はテキストのままです。過去の記録には、記録にある情報だけが出ます。
 - **確認範囲・未確認事項** と AI による目安の注記は枠外に表示します。確かめた範囲は、未確認事項を含む自由文のままで、自動分割はしません。
 
 評価について、次のことを知っておいてください。
