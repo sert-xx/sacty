@@ -33,7 +33,14 @@ const INTERNAL_WORDS = [
 ];
 
 /** 表示される文（HTML のコメントの目印を除く）。 */
-const visible = (text: string) => text.replace(/<!--[\s\S]*?-->/g, "");
+const visible = (text: string) => {
+  let out = text;
+  for (let prev = ""; prev !== out; ) {
+    prev = out;
+    out = out.replace(/<!--[\s\S]*?-->/g, "");
+  }
+  return out;
+};
 
 const baseTask = (extra: Record<string, unknown> = {}) =>
   ({
@@ -623,11 +630,7 @@ describe("人が直した説明の更新（TV-25〜TV-27）", () => {
       outputs: { implement: "予約のキャンセルと一覧の表示を足しました。" },
     });
     const base = generatedOf(before);
-    const human =
-      `${base.replace("## 確かめ方", "## 確かめ方（人が直した見出し）")}\n\n人の補足`.replace(
-        `\n\n人の補足`,
-        "\n\n人の補足",
-      );
+    const human = `${base.replace("## 確かめ方", "## 確かめ方（人が直した見出し）")}\n\n人の補足`;
     const generated = generatedOf(after);
     const merged = await mergePullRequestBody({ base, human, generated });
     const text = withTaskMarker(merged.text, ID, base);

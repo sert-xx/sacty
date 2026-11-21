@@ -749,7 +749,11 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
         });
         await noticesSettled(made.service);
         const body = noticesOf(made)[0]?.body ?? "";
-        const visible = body.replace(/<!--[\s\S]*?-->/g, "");
+        let visible = body;
+        for (let prev = ""; prev !== visible; ) {
+          prev = visible;
+          visible = visible.replace(/<!--[\s\S]*?-->/g, "");
+        }
         expect(visible).not.toContain("http://");
         expect(visible).not.toContain("/tasks/");
         expect(visible).not.toContain(made.id);
