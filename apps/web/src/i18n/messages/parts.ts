@@ -329,6 +329,8 @@ const ja = {
     hint: "完了したタスクの成果をもとに、続きの作業（見つかった問題の対応・追加の改善など）を別のタスクとして作ります。元のタスクは変わりません。いくつでも作れます。",
     none: "まだ作っていません。",
     open: "続きのタスクを作る",
+    openHint:
+      "完了したタスクの成果をもとに、続きの作業を別のタスクとして作ります。元のタスクは変わりません。作ったタスクは、概要の「続きのタスク」に並びます。",
     dialogTitle: "続きのタスクを作る",
     description: "このタスクの成果を引き継いだ新しいタスクを作ります。",
     descriptionHint:
@@ -676,6 +678,8 @@ const en: PartsMessages = {
     hint: "Creates a separate task for follow-up work based on this completed task's results (handling issues it found, further improvements, and so on). The original task doesn't change. You can create as many as you need.",
     none: "None yet.",
     open: "Create a follow-up task",
+    openHint:
+      "Creates a separate task for follow-up work based on this completed task's results. The original task doesn't change. Tasks you create are listed under \"Follow-up tasks\" in the overview.",
     dialogTitle: "Create a follow-up task",
     description: "Creates a new task that takes over this task's results.",
     descriptionHint:

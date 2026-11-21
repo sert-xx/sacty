@@ -62,6 +62,24 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
     }
   });
 
+  it("作るボタンは、上部の操作の並びに、再レビューと同じ見た目・ヒントで出し、概要の欄には置かない", () => {
+    locale = "ja";
+    const task = completed(project([created("t1")]).get("t1") as Task);
+    const html = render(task);
+    const button = html.indexOf('data-testid="derive-open"');
+    expect(button).toBeGreaterThan(-1);
+    // 上に固定した見出しの中（タブの並びより前）にあり、概要の「続きのタスク」の欄より前
+    expect(button).toBeLessThan(html.indexOf('role="tablist"'));
+    expect(button).toBeLessThan(html.indexOf('id="derived-tasks"'));
+    expect(html.match(/data-testid="derive-open"/g)).toHaveLength(1);
+    // 再レビューと同じ ボタン（outline・min-h-10）と、横のヒント
+    const tag = html.slice(html.lastIndexOf("<button", button), html.indexOf("</button>", button));
+    expect(tag).toContain("min-h-10");
+    expect(html).toContain(messagesFor("ja").parts.derive.openHint);
+    // 一覧は概要の欄にそのまま出る
+    expect(html).toContain(messagesFor("ja").parts.derive.none);
+  });
+
   it("完了していない・中止したタスクには出さない", () => {
     locale = "ja";
     const task = project([created("t1")]).get("t1") as Task;
