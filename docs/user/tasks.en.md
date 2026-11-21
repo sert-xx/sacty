@@ -658,10 +658,14 @@ The comments are taken in as follows.
 - sacty checks every minute and takes them in 2 minutes after the last comment. Posts by sacty's review child task are taken in without waiting the 2 minutes.
 - It excludes bots and sacty's own posts, but includes posts by the sacty review task that imported that PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
 
-The step to redo depends on whether the comment changes a decision already approved in the requirements or design (acceptance criteria, behavior, screens, the shape of APIs and data, and so on).
+For a comment on an implementation PR, the step to redo depends on how heavy the decision is that the comment would change.
 
-- A comment that does not change a decision (adding to documents, fixing the implementation, reflecting something already decided) is fixed in the step of that PR (the implementation, for the implementation PR).
-- Only a comment that changes the decision itself goes back to the step that holds it.
+- Only a change of policy goes back to Design. These are decisions that are hard to undo, such as choosing a different method or structure, changing the scope or acceptance criteria, the shape of a public interface or of stored data, security, and migration.
+- A local change is fixed in Implementation. Examples are wording, one row of a table or list, a default value, and adding a row.
+- A round with even one change of policy goes back to Design as a whole.
+- When it is hard to say which, it is fixed in Implementation. However, a comment that touches security, authorization, the shape of stored data, or migration goes back to Design when in doubt.
+- A change only to the wording of a test viewpoint (without changing its input or expected result) is fixed in Implementation. A comment that changes the input or expected result, or adds or removes a viewpoint, goes back to Design.
+- When you write "send it back to design" or "fix it in the implementation step" in a comment, sacty follows it.
 
 Who judges the step to redo depends on where the comments come from.
 
@@ -682,7 +686,7 @@ A comment that asks for nothing does not start a redo.
 The judgment and its reasons are kept and passed to the redo as follows.
 
 - The judgment and its reasons are kept in the Activity and the PR section.
-  The reason says which decision is changed or not changed.
+  The reason starts with one of "does not change a decision", "changes a decision (local)", or "changes a decision (policy)", and says which decision it is.
 - The reason and the judgment can run long, so the screen (the PR section and the Activity) shows the first one or two sentences as the gist, and you can open "Details" to read the full text.
   The record in the Activity and the judgment passed to the redo stay in full.
 - The judgment of the step to redo (the step and the reasoning on how it read the comment) is also passed to the redo that starts from it.
@@ -704,6 +708,26 @@ You add notes in a separate field, and choose between requesting changes and app
 - When you request changes to another step, only your notes are passed.
 - Your notes are one per line, up to 50 comments of 2,000 characters each. The remaining comments are not subject to this.
 - The replies about the remaining comments go to the original PR comments (only when the remaining comments were passed on; comments not passed on because you requested changes to another step get no reply).
+
+### The notice when work goes back to design, and local fixes to the design document
+
+When a comment goes back to Design, sacty posts one notice on the implementation PR.
+When a round fixes a comment in Implementation and the approved design document needs a local fix, the design document is fixed inside the implementation PR.
+
+- The notice for work that went back to Design says that it went back, the reason (which decision changes), and what to do next (approve the design PR).
+  - To have the comment fixed in the implementation step instead, write "fix it in the implementation step" in the comment from the next round. The redo of the design has already started.
+  - There is one notice per request for changes. The notice is not imported as a comment, and it does not count toward the replies when watching the review.
+- In a round that fixes a local change (wording, one row of a table or list, a default value, adding a row) in Implementation, when the approved design document needs a fix, the implementation gives the fix, and sacty applies it to the approved design and puts it in the same implementation PR.
+  - The "Design fixes" section of the PR body lists, for each fix, the before, the after, and the comment. Fixes that were not applied are listed with their reasons.
+  - Merging the implementation PR approves these design fixes. sacty does not ask you to approve the design PR again.
+  - A fix that touches security, authorization, the shape of stored data, or migration is not applied. A change of policy is raised as a [change request](#change-requests).
+  - The task's Activity shows the number of fixes applied and not applied.
+
+If you operate sacty, keep the following in mind.
+
+- When sacty receives design fixes from the implementation output, `DesignEdited` is recorded in the Activity whether or not any fix is applied (including zero applied, an unreadable fix block, and a change request in the same output). Once `DesignEdited` is recorded, you cannot go back to the previous version of sacty. The previous version cannot read `DesignEdited` and does not start.
+- Before going back to the previous version, check that the Activity has no design fix line (a line with zero applied also counts).
+- If you went back and it no longer starts, upgrade again to this version and it runs. The Activity is not lost.
 
 ### Things for a person to check
 

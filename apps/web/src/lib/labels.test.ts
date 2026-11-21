@@ -536,6 +536,50 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
   });
 });
 
+describe("作業履歴の設計の直しの行（PBI-446）", () => {
+  const edited = (applied: number, rejected: number, unreadable = false): ActivityEvent =>
+    ({
+      type: "DesignEdited",
+      payload: {
+        runId: "r1",
+        round: 2,
+        output: "# 設計",
+        testViewpoints: [],
+        applied: Array.from({ length: applied }, () => ({
+          remarks: ["implement-1-1"],
+          before: "a",
+          after: "b",
+          reason: "r",
+        })),
+        rejected: Array.from({ length: rejected }, () => ({
+          remarks: ["implement-1-1"],
+          before: "a",
+          after: "b",
+          reason: "r",
+          rejection: "理由",
+        })),
+        ...(unreadable ? { unreadable: true } : {}),
+      },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-10T00:00:00.000Z",
+      actor: "sacty",
+    }) as ActivityEvent;
+
+  it("反映した件数と反映しなかった件数の分かる行が、日本語と英語で出る", () => {
+    expect(describeIn(edited(2, 1), labels.ja)).toBe(
+      "実装の PR の指摘で、設計の局所の直しを受け取った（反映 2 件・反映しなかった 1 件）",
+    );
+    expect(describeIn(edited(0, 0, true), labels.ja)).toContain("直しのブロックを読めなかった");
+    expect(describeIn(edited(2, 1), labels.en)).toBe(
+      "Design fixes received from the implementation PR's findings (applied 2 · not applied 1)",
+    );
+    expect(describeIn(edited(0, 0, true), labels.en)).toContain("could not be read");
+  });
+});
+
 describe("英語の表示（PBI-4b）", () => {
   const en = labels.en;
   const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
