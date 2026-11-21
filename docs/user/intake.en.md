@@ -167,7 +167,8 @@ Who the @ mention goes to is decided as follows.
   - Even when it is on, the review is posted publicly on the PR.
     The author, who usually follows the PR, may still get GitHub's usual review notification.
 
-When some viewpoints could not be checked (for example, checking documents against the implementation could not be finished), the review gives no verdict. The verdict line is "付いていません（レビューが判定を付けませんでした。…）" (the review gave no verdict), and the body starts with the viewpoints that could not be checked.
+When the AI assigned to a viewpoint fails even after being started again, the parent AI reviews that viewpoint instead (the body does not say so). If it can, the viewpoint counts as checked and a verdict is given.
+When some viewpoints still could not be checked (for example, checking documents against the implementation could not be finished), the review gives no verdict. The verdict line is "付いていません（レビューが判定を付けませんでした。…）" (the review gave no verdict), and the body starts with the viewpoints that could not be checked.
 When the answer shows a verdict that sacty could not read, the verdict line is "読み取れませんでした" (could not be read).
 In both cases, the round is not treated as having no findings. Read the body to check.
 However, if what was checked has a `[要修正]` finding (including an earlier one, or another reviewer's, confirmed as unaddressed), the verdict is "修正が必要" (changes required).

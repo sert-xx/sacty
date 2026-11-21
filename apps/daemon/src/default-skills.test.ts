@@ -1431,6 +1431,44 @@ describe("既定の review スキルの、PR のレビューの範囲と観点�
     );
   });
 
+  it("起動し直しても失敗した観点だけを、結果が揃った後に親が代わりに見て、見られた観点に数え、本文には書かない（PBI-459）", () => {
+    const agg = aggregation();
+    expect(agg).toContain("## 親が代わりに見る");
+    // 対象は、起動し直しても失敗した観点（起動できない・failed・時間切れ）だけ
+    expect(agg).toContain(
+      "起動し直しても失敗した観点（起動できない・`failed`・時間切れ）だけ、親が自分でその観点を見る",
+    );
+    expect(agg).toContain(
+      "担当を起動できなかった・時間切れで結果が届かなかった観点も、`failed` と同じに、1回だけ起動し直す",
+    );
+    // 範囲の外だけの failed は、代わりにも見ない。担当を起動しない回にも当てはめない
+    expect(agg).toContain("代わりにも見ず、見られなかった観点にも数えない");
+    expect(agg).toContain(
+      "担当を1件も起動しなかった回（差分も作業領域も読めない）には当てはめない",
+    );
+    // 結果が揃った後だけ
+    expect(agg).toContain("すべての担当の起動と起動し直しの結果が揃った後だけ");
+    // 見られたら見られた観点、見られなければ完了できないとき
+    expect(agg).toContain("その観点を「見られた観点」に数える。指摘は担当の指摘と同じに");
+    expect(agg).toContain("代わりに見ても見られなかったとき");
+    // 本文に書かず、記録に残す
+    expect(agg).toContain("代わりに見たことは、投稿する本文・提出物の説明に書かない");
+    expect(agg).toContain("`substituted_by_parent`");
+    expect(agg).toContain("`failure_reason`");
+    // PR のレビューと自己レビューの両方に当てる
+    expect(prReview()).toContain("親がその観点を代わりに見る");
+    expect(prReview()).toContain("代わりに見たことは本文に書かず");
+    expect(read("skills/review/review-dispatch/references/self-review.md")).toContain(
+      "親がその観点を代わりに見る",
+    );
+    // 手順 7 は変えない
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "届いていない担当の結果を、自分で書かない。起動し直しても失敗した観点だけは、結果が揃った後に",
+    );
+    // 汎用の書き方
+    expect(agg).not.toMatch(/sacty|Node\.js|npm |vitest|TypeScript/);
+  });
+
   it("親は、範囲の外を理由にした failed を起動し直さず、範囲を見きれなかった failed は範囲を分けて起動し直す", () => {
     const text = aggregation();
     expect(text).toContain(
@@ -1616,7 +1654,7 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
       "- 再レビューで、重みを見直した指摘が残り、`must` が無い：採用した指摘が無くても、提案あり（「修正が必要」にも「指摘なし」にもしない）",
     );
     expect(section).toContain(
-      "- 見られなかった観点があるとき（担当が、起動し直しても `failed` のまま）は、上の4つより先に、「完了できないとき」で決める（`must` が無ければ、重みを見直した指摘が残っていても、判定を書かない）",
+      "- 見られなかった観点があるとき（担当が、起動し直しても失敗のままで、親が代わりに見ても見られなかった）は、上の4つより先に、「完了できないとき」で決める（`must` が無ければ、重みを見直した指摘が残っていても、判定を書かない）",
     );
     // 判定の決めを、ほかの箇所で言い直さない（「採用の規則」と「既存の指摘との重なり」は、判定の節を指す）
     const before = text.slice(0, text.indexOf("## 指摘と判定の書き方"));
