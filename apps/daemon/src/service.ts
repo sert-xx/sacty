@@ -10145,6 +10145,8 @@ export class TaskService {
       token: string;
       secrets: readonly string[];
       number?: number;
+      /** true なら、全文のコメントに載せず、本文の後ろを省いた形で返す（コメントの投稿に失敗したとき） */
+      skipBasis?: boolean;
       stage: PullRequestBodyStage;
     },
   ): Promise<{ body: string; template: PullRequestTemplateUse; basisPending?: string }> {
@@ -10161,16 +10163,25 @@ export class TaskService {
     };
     const first = await make();
     const full = approvedBasisFullText(task, input.secrets);
-    if (full === undefined || !first.template.truncated) return first;
+    if (full === undefined || !first.template.truncated || input.skipBasis) return first;
     if (input.number === undefined) {
       return { ...(await make({})), basisPending: full };
     }
-    const url = await this.syncBasisComments(task, {
-      repo: input.repo,
-      token: input.token,
-      number: input.number,
-      text: full,
-    });
+    // コメントの投稿・書き換えに失敗しても、PR の作成・更新は止めない（リンクなしの、省いた量を書いた本文にする）
+    let url: string;
+    try {
+      url = await this.syncBasisComments(task, {
+        repo: input.repo,
+        token: input.token,
+        number: input.number,
+        text: full,
+      });
+    } catch (error) {
+      console.warn(
+        `[daemon] 要求要件の全文のコメントを投稿できませんでした：${renderMessage(redactText(errorText(error), [...input.secrets]), "ja")}`,
+      );
+      return first;
+    }
     return make({ url });
   }
 
@@ -14399,27 +14410,56 @@ export class TaskService {
       });
       let writtenBody = body;
       if (basisPending !== undefined && !number) {
-        // PR を作った後に、要求要件の全文をコメントに載せ、本文のリンクを作り直す（PBI-450）
-        const rebuilt = await this.implementBody(task, {
-          repo: prRepo,
-          token,
+        // PR を作った後に、要求要件の全文をコメントに載せ、本文のリンクを作り直す（PBI-450）。失敗したら、リンクなしの本文にする
+        const stageNow = {
           secrets: usedSecrets,
-          number: pr.number,
-          stage: {
+          aiReview,
+          ...(stackedOn ? { stackedOn } : {}),
+          ...this.splitParentStage(task),
+        };
+        let rebuilt: { body: string };
+        try {
+          rebuilt = await this.implementBody(task, {
+            repo: prRepo,
+            token,
             secrets: usedSecrets,
-            aiReview,
-            ...(stackedOn ? { stackedOn } : {}),
-            ...this.splitParentStage(task),
-          },
-        });
+            number: pr.number,
+            stage: stageNow,
+          });
+        } catch (error) {
+          console.warn(
+            `[daemon] 要求要件の全文のコメントを投稿できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          );
+          rebuilt = await this.implementBody(task, {
+            repo: prRepo,
+            token,
+            secrets: usedSecrets,
+            number: pr.number,
+            skipBasis: true,
+            stage: stageNow,
+          });
+        }
         writtenBody = rebuilt.body;
+        // すでにあった PR（前回、作った後に止まったもの）は、人が直した本文を残すために、3 方向でマージしてから更新する
+        let toSend = writtenBody;
+        if (pr.existing) {
+          const again = await this.reconcilePullRequestBody(task, {
+            repo: prRepo,
+            token,
+            number: pr.number,
+            generated: writtenBody,
+            secrets: usedSecrets,
+          });
+          if ("stop" in again || this.stopRequested(task.id)) return "stopped";
+          toSend = again.body ?? writtenBody;
+        }
         await this.deps.pulls.upsert({
           repo: prRepo,
           token,
           branch,
           baseBranch: repositoryNow.baseBranch,
           title: this.latestTitled(task).title,
-          body: writtenBody,
+          body: toSend,
           number: pr.number,
         });
       }

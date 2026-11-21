@@ -5963,10 +5963,8 @@ const OMITTED_HERE = "続きは、本文の「省いた続き」にあります"
 const OMITTED_PART_MAX = 12_000;
 
 /** `<details>` と折りたたみの中に載せる文。HTML のコメントを除き、折りたたみを閉じる・開く記号を無効にする。 */
-function foldedText(text: string): string {
-  return withoutHtmlComments(text)
-    .replaceAll("<details", "&lt;details")
-    .replaceAll("</details>", "&lt;/details>");
+export function foldedText(text: string): string {
+  return withoutHtmlComments(text).replace(/<(\/?details)/gi, "&lt;$1");
 }
 
 /** 長い文を、上限で切って、省いた文字数と理由を書く。 */
@@ -6169,7 +6167,10 @@ export function approvedBasisFullText(
     : rawTask.approved.requirements?.output;
   if (output === undefined || output.trim() === "") return undefined;
   const hidden = withoutInternalPaths(redact(output, secrets ?? []));
-  return withoutHtmlComments(hidden).trim();
+  // 本文の折りたたみにも、全文のコメントにも、同じ文を載せる（折りたたみの記号と、通知の飛ぶ @ を無効にする）
+  return foldedText(hidden)
+    .replace(/@(?=[A-Za-z0-9_-])/g, "@\u200b")
+    .trim();
 }
 
 /** 承認済みの成果物の要点と、全文のある場所（マージで承認した PR・本文の折りたたみ・全文のコメント）。 */
@@ -9852,7 +9853,7 @@ export function buildReviewBody(
       ? [
           // 投稿の後・記録の前に止まっても、投稿した本文からその先頭を記録し直せるように、全体を表示されない形で残す
           `${LATEST_COMMIT_PREFIX}${options.latestCommit} -->`,
-          `> このレビューは ${reviewed.slice(0, 7)} のコードに対するものです。レビューの間に、PR の先頭が ${options.latestCommit.slice(0, 7)} に変わりました。最新のコミットは、sacty の「再レビュー」でレビューできます。`,
+          `> このレビューは ${reviewed.slice(0, 7)} のコードに対するものです。レビューの間に、PR の先頭が ${options.latestCommit.slice(0, 7)} に変わりました。最新のコミットは、Sacty の「再レビュー」でレビューできます。`,
           "",
         ]
       : [];

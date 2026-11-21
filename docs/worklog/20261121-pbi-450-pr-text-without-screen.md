@@ -31,9 +31,27 @@ GitHub が、行へのコメントへの返信 1 件ごとに、本文の無い�
 
 ## 確かめたこと
 
-- 実行した検査は、実装の説明に書いた。
+- `npm run lint`：通った（警告なし）。
+- `npm run typecheck`：通った。
+- `npx vitest run`（全件）：323 ファイル・6,354 件が通り、14 件はスキップ。
+- `npm run build`・`npx vitest run tests/docs`：最後の変更の後に実行し、結果は下の記録に書く。
 - 画面へのリンクの注釈・本文の形・全文のコメント・取り込みの見分けは、新しいテスト（`task-link.test.ts`・`pr-body-public.test.ts`・`sacty-posts-wording.test.ts`・`daemon-implement.test.ts`・`daemon-step-pull-requests.test.ts`・`github.test.ts`）で確かめた。
 
 ## 変えなかったこと
 
 - エージェントへの指示の中の「sacty」、Sacty の画面から書かれた指摘の「内容は、タスクの画面で読めます」、返信の投稿のしかた（REST の `/replies`）、`risk-assessment.ts`、既定のコンテキスト、画面（`apps/web`）。
+
+## レビューの指摘と対応
+
+| 指摘 | 対応 |
+| --- | --- |
+| 小文字の「sacty」が 4 か所残っている | `pr-template.ts`・`step-questions.ts`・`prompts.ts` を「Sacty」にし、テストの期待も合わせた |
+| 全文のコメントに `<details` と @ の無効化が無い | `approvedBasisFullText` で、本文の折りたたみと同じ文にした（大文字・空白入りの記号も）。仕様書も合わせた |
+| `limitBody` の折りたたみの数え方が大文字・空白入りに効かない | 大文字小文字を区別しない数え方にした |
+| 全文のコメントの同期の失敗で PR の作成・更新が止まる | 失敗したら、リンクなしの本文（省いた量を書く）で続ける。すでにある PR は 3 方向のマージを通してから更新する |
+| 注釈・Issue の失敗の理由のテストが実際の経路を通っていない | サービスに画面の URL を渡して注釈の有無を確かめるテストと、知らせの本文の全体に伏せた値が無いことを確かめるテストを足した |
+| 作業履歴にひな形の節が無い | この節と「残したこと」を足した |
+
+## 残したこと
+
+- GraphQL の `addPullRequestReviewThreadReply` で `pullRequestReviewId` を省いたときに、空のレビューができるかは確かめていない（書き込みができないため）。

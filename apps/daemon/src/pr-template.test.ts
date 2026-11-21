@@ -60,7 +60,7 @@ describe("PR テンプレートを埋める（PBI-87）", () => {
         "Closes #12",
         "",
         "<details>",
-        "<summary>sacty の記録</summary>",
+        "<summary>Sacty の記録</summary>",
         "",
         "最終レビューの記録",
         "",
@@ -141,7 +141,7 @@ describe("PR テンプレートを埋める（PBI-87）", () => {
         "テストの内容",
         "",
         "<details>",
-        "<summary>sacty の記録</summary>",
+        "<summary>Sacty の記録</summary>",
         "",
         "最終レビューの記録",
         "",
@@ -172,7 +172,7 @@ describe("PR テンプレートを埋める（PBI-87）", () => {
     expect(main).toContain("## Types of changes\n\n- [ ] Bug fix");
     expect(main).toContain("## Checklist:\n\n- [ ] My code follows the code style");
     // 変更の見出しが無いので、変更は sacty の記録に入れる
-    expect(main).toContain("<summary>sacty の記録</summary>\n\n変更の内容\n\n最終レビューの記録");
+    expect(main).toContain("<summary>Sacty の記録</summary>\n\n変更の内容\n\n最終レビューの記録");
   });
 
   it("Detail（詳細）の見出しは変更として当てる", () => {

@@ -366,4 +366,29 @@ describe("古い形の本文を祖先にした 3 方向のマージ（TV-16）",
     const merged = await mergePullRequestBody({ base, human, generated });
     expect(merged.conflicts).toBe(1);
   });
+
+  it("全文は、大文字・空白入りの折りたたみの記号と @ を無効にして載せる", () => {
+    const t = task({
+      approved: {
+        requirements: {
+          output: "# 要求\n\n<DETAILS>a</DETAILS >\n\n@octocat へ",
+          submission: 1,
+        },
+      },
+    });
+    const text = approvedBasisFullText(t) ?? "";
+    expect(text).not.toMatch(/<\/?details/i);
+    expect(text).toContain("@\u200boctocat");
+    // 本文の折りたたみは、開閉が同じ数
+    const body = buildPullRequestBodyText(t).main;
+    expect(body.split("<details>").length).toBe(body.split("</details>").length);
+  });
+
+  it("limitBody は、大文字・空白入りの記号で切った折りたたみも数えて閉じない折りたたみを残さない", () => {
+    const main = `<DETAILS>\n${"あ".repeat(PR_BODY_MAX)}`;
+    const { body } = limitBody(main, "FOOTER");
+    expect((body.match(/<details\b/gi) ?? []).length).toBe(
+      (body.match(/<\/details\s*>/gi) ?? []).length,
+    );
+  });
 });

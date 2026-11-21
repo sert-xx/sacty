@@ -6190,6 +6190,55 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     made.activity.close();
   });
 
+  it("全文のコメントは、折りたたみの記号（大文字・空白入りも）と @ を無効にして載せる（PBI-450）", async () => {
+    const lines = Array.from({ length: 7_000 }, (_, i) => `- R-${i}：${"あ".repeat(5)}`);
+    const requirements = [
+      "# 要求要件",
+      "",
+      "<DETAILS>開いたまま</DETAILS >と</details >と<details open>",
+      "",
+      "@octocat に確認する。",
+      "",
+      ...lines,
+    ].join("\n");
+    const made = await toImplement([implement("# 実装の説明")], { requirements });
+    await drain(made.service);
+    const comments = made.pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-basis:"));
+    expect(comments.length).toBeGreaterThanOrEqual(2);
+    const text = comments.map((c) => c.body).join("\n");
+    expect(text).not.toMatch(/<\/?details/i);
+    expect(text).toContain("&lt;DETAILS>");
+    expect(text).toContain("&lt;/details >");
+    expect(text).not.toContain("@octocat");
+    expect(text).toContain("@\u200boctocat");
+    made.activity.close();
+  });
+
+  it("全文のコメントを投稿できなくても、PR の作成は止まらず、リンクなしの本文を記録する（PBI-450）", async () => {
+    const lines = Array.from({ length: 7_000 }, (_, i) => `- R-${i}：${"あ".repeat(5)}`);
+    const requirements = ["# 要求要件", "", ...lines].join("\n");
+    class FailingBasis extends FakePulls {
+      override async commentIssue(input: Parameters<FakePulls["commentIssue"]>[0]) {
+        if (input.body.startsWith("<!-- sacty-basis:")) throw new Error("GitHub が落ちています");
+        return super.commentIssue(input);
+      }
+    }
+    const pulls = new FailingBasis();
+    const made = await toImplement([implement("# 実装の説明")], { requirements, pulls });
+    await drain(made.service);
+    const last = pulls.calls.at(-1)?.body ?? "";
+    expect(pulls.calls.length).toBeGreaterThan(0);
+    expect(last).not.toContain("この PR を作った後に、Sacty がコメントに載せます。");
+    expect(last).not.toContain("[全文のコメント](");
+    expect(last).not.toContain("タスクの画面");
+    expect(last.length).toBeLessThanOrEqual(PR_BODY_MAX);
+    const written = made.service
+      .get(made.id)
+      ?.activity.findLast((e) => e.type === "PullRequestBodyWritten");
+    expect(written).toBeDefined();
+    made.activity.close();
+  });
+
   it("実装の説明にあるコンテナの作業領域へのリンクは、PR の本文ではリンクにしない（PBI-366）", async () => {
     const made = await toImplement([
       implement(

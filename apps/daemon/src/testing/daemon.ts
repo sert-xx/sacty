@@ -1518,6 +1518,8 @@ export function makeService(
     contexts?: ContextFetcher;
     defaultContext?: string;
     github?: FakeGitHub;
+    /** 知らせのタスクの画面の URL（SACTY_WEB_URL）。 */
+    webUrl?: string;
     now?: () => number;
     planner?: ServiceDeps["planner"];
     /** オーケストレーターを差し替えず、エージェントで工程を選ばせる（PBI-17 のテスト）。 */
@@ -1579,6 +1581,7 @@ export function makeService(
   const pulls = options.pulls ?? new FakePulls();
   const service = new TaskService({
     activity,
+    ...(options.webUrl !== undefined ? { webUrl: options.webUrl } : {}),
     config: options.config ?? configOf(agent()),
     secrets:
       options.secretStore ??

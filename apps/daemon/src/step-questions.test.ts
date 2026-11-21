@@ -64,7 +64,7 @@ const FORM_B = [
 ].join("\n");
 const NONE_LINE = "確認したいこと：なし（must・should とも問いはありません）";
 const ANSWER_COMMENT =
-  "- 答えるには、この PR にコメントしてください。sacty が取り込み、答えを成果物に反映します。";
+  "- 答えるには、この PR にコメントしてください。Sacty が取り込み、答えを成果物に反映します。";
 const ANSWER_MERGE = "- 答えずにマージすると、推奨の答えで次の工程に進みます（must も同じです）。";
 
 describe("要求要件・設計の PR の本文の「確認したいこと」（PBI-439）", () => {

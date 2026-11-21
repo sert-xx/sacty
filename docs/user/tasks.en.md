@@ -276,7 +276,7 @@ The "Needs you" cards are not filtered or cut.
 
 The task details look like this.
 
-![Task details (the title, status, steps, and tabs fixed at the top, the notice for a person and the Sacty AI review, the description, deliverables, PR, and gathered information on the Overview tab, and the properties and recent activity in the right column)](images/task-detail.en.png)
+![Task details (the title, status, steps, and tabs fixed at the top, the notice for a person and the sacty AI review, the description, deliverables, PR, and gathered information on the Overview tab, and the properties and recent activity in the right column)](images/task-detail.en.png)
 
 The top part of the screen shows the following.
 
@@ -595,7 +595,7 @@ Steps that created a PR are not approved from the sacty web UI (the web UI guide
 
 The details of a task waiting for its implementation PR to be merged look like this.
 
-![Details of a task waiting for its implementation PR to be merged (the "Review on the PR" button and the Sacty AI review below it)](images/task-pull-request.en.png)
+![Details of a task waiting for its implementation PR to be merged (the "Review on the PR" button and the sacty AI review below it)](images/task-pull-request.en.png)
 
 When a step is awaiting approval, decide as follows.
 

@@ -284,7 +284,7 @@ function encodePath(path: string): string {
 type Category = "summary" | "changes" | "tests" | "issue";
 
 /** 埋められない見出しに書く文。 */
-export const NOT_APPLICABLE = "該当なし（sacty は記入していません）";
+export const NOT_APPLICABLE = "該当なし（Sacty は記入していません）";
 
 /** 見出しの文から、入れる内容の種類を決める（当てはまらなければ undefined。上から順に当てる）。 */
 const CATEGORY_RULES: [Category | undefined, RegExp][] = [
@@ -402,7 +402,7 @@ function keptElements(lines: string[]): Kept[] {
 
 /** 折りたたんだ sacty の記録。 */
 function details(body: string): string {
-  return ["<details>", "<summary>sacty の記録</summary>", "", body.trim(), "", "</details>"].join(
+  return ["<details>", "<summary>Sacty の記録</summary>", "", body.trim(), "", "</details>"].join(
     "\n",
   );
 }
@@ -520,8 +520,8 @@ export function limitBody(
   if (opensComment(head)) head += " -->";
   const fences = head.split("\n").filter((line) => FENCE.test(line)).length;
   if (fences % 2 === 1) head += "\n```";
-  const open = (head.match(/<details>/g) ?? []).length;
-  const close = (head.match(/<\/details>/g) ?? []).length;
+  const open = (head.match(/<details\b/gi) ?? []).length;
+  const close = (head.match(/<\/details\s*>/gi) ?? []).length;
   head += `\n\n${truncatedNote(omitted)}`;
   if (open > close) head += "\n\n</details>".repeat(open - close);
   // 省いて消えた、省けない部分は footer の前に出し直す。残っているかは、行として丸ごと（前後が行の境目）、HTML の
