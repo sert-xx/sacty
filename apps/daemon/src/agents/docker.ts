@@ -179,8 +179,10 @@ export function readStagedFile(staged: StagedFile, maxBytes?: number): Buffer {
 
 function hashOfStaged(staged: StagedFile): string | undefined {
   try {
-    return createHash("sha256").update(readStagedFile(staged)).digest("hex");
-  } catch {
+    // 上限を超えるときは、全体を読まずに例外にする（呼ぶ側が起動前の失敗にする）
+    return createHash("sha256").update(readStagedFile(staged, MAX_AUTH_FILE_BYTES)).digest("hex");
+  } catch (error) {
+    if (error instanceof StagedFileTooLargeError) throw error;
     return undefined;
   }
 }
@@ -474,7 +476,7 @@ export class DockerExecutor implements AgentExecutor {
         } catch (error) {
           if (error instanceof StagedFileTooLargeError) {
             secretFileTooLarge = hostPathOf.get(staged) ?? staged.name;
-            log?.withholdOutput?.(); // ファイルの中身は伏せられないので、この実行の出力をセッションログに残さない
+            log?.withholdOutput(); // ファイルの中身は伏せられないので、この実行の出力をセッションログに残さない
           }
           // 消えていれば・リンクなどに差し替えられていれば何もしない
         }

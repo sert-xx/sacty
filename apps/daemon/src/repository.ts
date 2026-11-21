@@ -174,6 +174,11 @@ export interface RepositoryWorkspace {
      */
     keep?: { commit: string; paths: string[] };
     /**
+     * このコミットの内容を、渡した内容に置き換えるファイル（パス → 全文。PBI-446）。keep で引き継いだ後に当てる。実装の工程が出した
+     * 設計の直しを、タスクブランチの設計のファイルに当てたもの。
+     */
+    overrides?: Record<string, string>;
+    /**
      * ベースブランチから作業領域に取り込んだコミット（mergeBase。取得済みであること）。parent の履歴にまだ含まれていなければ、
      * これを第2の親にしたマージコミットにする（作業領域は、このコミットをマージした内容になっているので、コミットの内容は
      * そのまま作業領域の内容）。含まれていれば、これまでどおり parent だけを親にする。内容が parent と変わらなくても、
@@ -863,6 +868,32 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
             "--cacheinfo",
             `${match[1]},${match[2]},${match[3]}`,
           ]);
+        }
+        tree = (await run("write-tree", ["write-tree"])).trim();
+      }
+      const overrides = Object.entries(input.overrides ?? {});
+      if (overrides.length > 0) {
+        if (!overrides.every(([path]) => validPath(path))) {
+          throw new MessageError(message("git.invalidPath"));
+        }
+        const scratch = mkdtempSync(join(tmpdir(), "sacty-git-"));
+        try {
+          for (const [i, [path, content]] of overrides.entries()) {
+            const file = join(scratch, `file-${i}`);
+            writeFileSync(file, content);
+            // 属性のフィルター（外部コマンド）を通さずに、そのままの内容で書く
+            const blob = (
+              await run("hash-object", ["hash-object", "-w", "--no-filters", "--", file])
+            ).trim();
+            await run("update-index", [
+              "update-index",
+              "--add",
+              "--cacheinfo",
+              `100644,${blob},${path}`,
+            ]);
+          }
+        } finally {
+          rmSync(scratch, { recursive: true, force: true });
         }
         tree = (await run("write-tree", ["write-tree"])).trim();
       }

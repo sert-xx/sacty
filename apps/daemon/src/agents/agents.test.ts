@@ -2752,6 +2752,7 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
     dockerScript: string,
     log?: SessionLogSink,
     sessionFiles?: "codex",
+    syncBack = false,
   ) {
     const { chmodSync } = await import("node:fs");
     const { DockerExecutor } = await import("./docker.js");
@@ -2771,7 +2772,10 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
       invocation: {
         command: ["codex"],
         env: { CODEX_HOME: "/.codex" },
-        stage: { containerDir: "/.codex", files: [{ hostPath: hostAuth, name: "auth.json" }] },
+        stage: {
+          containerDir: "/.codex",
+          files: [{ hostPath: hostAuth, name: "auth.json", syncBack }],
+        },
         ...(sessionFiles ? { sessionFiles } : {}),
         parser: "codex-jsonl",
       },
@@ -2806,6 +2810,9 @@ for arg in "$@"; do
 done
 head -c 1100000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
 ${completes}`,
+      undefined,
+      undefined,
+      true,
     );
     expect(outcome).toMatchObject({ kind: "failed", reason: "auth" });
     expect(outcome).not.toHaveProperty("output");

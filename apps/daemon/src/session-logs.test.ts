@@ -312,6 +312,19 @@ describe("セッションログの保存（PBI-62）", () => {
     const read = store.read("task-1", "run-1");
     expect(`${read?.events}${read?.stderr}`).not.toMatch(/withhold-(content|stderr)/);
     expect(read?.events).toContain("output withheld");
+    expect(read?.meta.truncated).toBeUndefined();
+  });
+
+  it("出力を残さないと決めたとき、上限で省いていた大きさも記録に付けない（PBI-444）", () => {
+    const store = new SessionLogStore(join(dir, "runs"), {
+      events: { head: 50, tail: 47 },
+      stderr: { head: 30, tail: 20 },
+    });
+    const log = store.open(info, () => []);
+    for (let i = 0; i < 10; i++) log.stdout(line(i));
+    log.withholdOutput();
+    log.close({ kind: "failed", reason: "auth", message: "x" });
+    expect(store.read("task-1", "run-1")?.meta.truncated).toBeUndefined();
   });
 
   const done = {

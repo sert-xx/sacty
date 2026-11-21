@@ -323,6 +323,17 @@ export function isHumanAskNotice(body: unknown): boolean {
 }
 
 /**
+ * 実装の PR の指摘を設計の工程に戻したことを、その PR に知らせる投稿の目印（PBI-446）。
+ * `<!-- sacty-rework-notice:<タスク ID>:<差し戻しの回> -->`。人間の指摘ではないので、PR の指摘に取り込まない。
+ */
+export const REWORK_NOTICE_MARKER_PREFIX = "<!-- sacty-rework-notice:";
+
+/** 本文が、設計に戻したことの知らせの目印で始まるか（PBI-446）。 */
+export function isReworkNotice(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(REWORK_NOTICE_MARKER_PREFIX);
+}
+
+/**
  * 後続に回したい案への、人の決定を PR に残す投稿の目印（PBI-370）。`<!-- sacty-deferral:<タスク ID>:<何回目の決定か> -->`。
  * sacty が決定を写した記録で、人間の指摘ではないので、PR の指摘に取り込まない。
  */
@@ -595,6 +606,7 @@ export class GitHubPullRequests implements PullRequests {
         !(
           (isReviewStopNotice(item.body) ||
             isHumanAskNotice(item.body) ||
+            isReworkNotice(item.body) ||
             isDeferralNotice(item.body)) &&
           typeof login === "string" &&
           noticeAccounts.has(login.toLowerCase())

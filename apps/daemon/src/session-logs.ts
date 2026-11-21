@@ -92,7 +92,7 @@ export interface SessionLogSink {
    * 伏せる対象にできない値（大きすぎる認証ファイルなど）が出力に混ざりうるので、この実行の出力を残さない。
    * いままでの出力も、これからの出力も、ファイルに残さない。
    */
-  withholdOutput?(): void;
+  withholdOutput(): void;
   /**
    * コンテナが終わった後、実行ごとの設定の場所（dir）から、エージェントの元のセッションのファイルを写す（PBI-66）。
    * 写せなくても、実行は止めない。
@@ -596,6 +596,7 @@ export class SessionLog implements SessionLogSink {
     }
     const truncated: NonNullable<SessionLogMeta["truncated"]> = {};
     for (const file of ["events", "stderr"] as const) {
+      if (this.withheld) break; // 1 行に置き換えたログに、省いた大きさを付けない
       const { bytes, lines } = this.files[file].dropped;
       if (bytes > 0) truncated[file] = { droppedBytes: bytes, droppedLines: lines };
     }
@@ -677,6 +678,7 @@ const NOOP_LOG = {
   stdout() {},
   stderr() {},
   addSecrets() {},
+  withholdOutput() {},
   async archiveAgentFiles() {},
   agentFilesNotArchived() {},
   close() {},
