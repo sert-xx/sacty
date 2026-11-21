@@ -22,9 +22,10 @@
 
 ### must
 
-- Org の対象のプロジェクトで、`list_projects` が示す値を Org の URL だけにしてよいか。
-  - 推奨：はい。説明に「Org の対象なら、その Org の下のリポジトリの URL を指定できる」と書く。デーモンは Org の下の URL を候補の一覧なしで受け付けるので、広げなくても指定できる。
-  - 懸念：Org の対象のプロジェクトでは、AI が利用者からリポジトリ名を聞くか、推測することになる。個々の名前を並べる必要があれば、`GET /api/projects/:id/repositories` を呼ぶ作りを足すことになり、GitHub を読む時間と失敗の扱いが加わる。
+- Org の対象のプロジェクトで、`list_projects` が示す値を Org の URL だけにし、Org の下の URL を画面と同じく受け入れてよいか。
+  - 推奨：はい。説明に「Org の対象なら、その Org の下のリポジトリの URL を指定できる」と書く。Org を対象に登録した時点で、その下のリポジトリを作業対象にすることを許しているため、MCP の層で候補と照らさない。
+  - 存在しない URL を指定すると、作成は通り、タスクの開始時の clone で失敗して一時停止（エラー）になる。エージェントは実行しない（費用はかからない）。
+  - 懸念：Org の対象のプロジェクトでは、AI が利用者からリポジトリ名を聞くか、推測することになる。候補と照らすなら `GET /api/projects/:id/repositories` を呼ぶ作りを足し、GitHub を読む時間と失敗の扱いが加わる。
 
 ### should
 
@@ -32,8 +33,8 @@
   - 推奨：はい。受け入れ条件は「対象のリポジトリの指定」で、1つで足りる。
   - 懸念：複数のリポジトリにまたがる仕事は、今までどおり画面で作ることになる。後で要れば `repos` を足す（引数・断り・要約を直す追加の作業）。
 - 要約の `repo` で、「まだ決まっていない」と「リポジトリ無しで進む・進んだ」を分けなくてよいか。
-  - 推奨：分けない。どちらも `null` にする。受け入れ条件5が求めるのは「決まっていないと分かる」ことだけ。
-  - 懸念：調べもの・分割の親のタスクは、完了した後も `null` のまま。利用者が「まだ選ばれていない」と読み違えうる。分けるなら、後で項目の値の種類を足す。
+  - 推奨：分けない。どちらも `null` にし、文書に「`null` は、決まっていない、またはリポジトリ無しで進む・進んだ」と書く。受け入れ条件5が求めるのは「決まっていないと分かる」ことだけ。
+  - 懸念：AI は `null` だけでは、選ばれるのを待つべきか分からない（段階の項目と合わせて読む）。分けるなら、後で `awaitingRepository` に当たる真偽の項目を足す。
 
 ### 確認しないと決めたこと
 
@@ -55,7 +56,7 @@
 | `CreateTaskToolInput` | `repo`（文字列。省略できる）を足す。説明に、`list_projects` の `targets` の URL か、Org の対象の下のリポジトリの URL を渡すと書く |
 | `create_task` の `run` | `CreateTaskInput.pick({ title, body, repo })` で検査し、`api.createTask({ projectId, title, body, repo })` を呼ぶ。`repo` を省いたら `null` |
 | `SactyApi.createTask`・`daemonApi.createTask` | 入力に `repo: string \| null` を足し、そのまま送る（`{ ...input, repo: null }` の上書きをやめる） |
-| `TaskSummarySchema`・`summarizeTask` | `repo: string \| null` を足す（いつも入る。`null` は決まっていない） |
+| `TaskSummarySchema`・`summarizeTask` | `repo: string \| null` を足す（いつも入る。`null` は、決まっていない、またはリポジトリ無しで進む・進んだ） |
 | `list_projects` | 結果の形は変えない。`targets` の説明に、`create_task` の `repo` に渡せることを足す |
 | 説明文・`INSTRUCTIONS` | `create_task` の「対象リポジトリ空欄と同じ」を、省いたときの振る舞いに直し、指定できることを書く |
 
@@ -64,6 +65,8 @@
 ## 影響範囲
 
 - 要約に `repo` が入るので、`list_tasks`・`get_task`・書き込みのツールの結果が1項目増える。
+  - 項目を足すだけで、既存の項目の名前・意味を変えないので、互換とみなす（既存のクライアントは知らない項目を読まないだけ）。仕様書の要約の表と、作業履歴に書く。
+- 前の版のデーモン：`POST /api/tasks` の `repo` は画面が使う既存の入力なので、前の版でも効き、黙って無視されることは無い。要約の元の項目（`repo`・`source.repo`・`repository`）が無ければ `null` にする。
 - 文書
   - 日英の `docs/spec/mcp-server.md`：`list_projects`・`create_task`・タスクの要約の表・関係する ADR のリンク
   - 日英の `docs/user/mcp.md`：「使う」の段落・ツールの表
@@ -96,11 +99,11 @@
   - 入力：リポジトリの対象と Org の対象を持つプロジェクトで list_projects を呼び、ツールの一覧の list_projects・create_task の説明を読む
   - 期待結果：targets に各対象の URL が入り、説明に、repo の対象の URL と Org の対象の下のリポジトリの URL を create_task の repo に渡せることが書かれている
 - [TV-9] get_task の要約で、対象のリポジトリと、決まっていないことが分かる
-  - 入力：repo を指定して作ったタスク、指定しないで作ったタスク（RepositoryChosen の前と後）、Issue から取り込んだタスクで get_task を呼ぶ
-  - 期待結果：repo がそれぞれ、指定した URL・null・選ばれた URL・source.repo になる
+  - 入力：repo を指定して作ったタスク、指定しないで作ったタスク（RepositoryChosen の前と後）、Issue から取り込んだタスク、repo・source.repo・repository の欄が無いタスクで get_task を呼ぶ
+  - 期待結果：repo がそれぞれ、指定した URL・null・選ばれた URL・source.repo・null になる
 - [TV-10] 日英の仕様書・ユーザー文書・ツールの説明・INSTRUCTIONS が、repo の指定に合っている
   - 入力：docs/spec/mcp-server.md・.en.md、docs/user/mcp.md・.en.md、task-mcp.ts の差分
-  - 期待結果：create_task の引数の表と送る要求に repo（省くと null・指定の値・断りの理由）が、list_projects に渡せる値が、要約の表に repo（null は決まっていない）が書かれ、「対象リポジトリ空欄と同じ」は省いたときの記述だけに残る
+  - 期待結果：create_task の引数の表と送る要求に repo（省くと null・指定の値・断りの理由）が、list_projects に渡せる値（Org の対象ならその下の URL）が、要約の表に repo（null は、決まっていない、またはリポジトリ無しで進む・進んだ）と項目の追加が互換であることが書かれ、「対象リポジトリ空欄と同じ」は省いたときの記述だけに残る
 - [TV-11] ADR の置き換えと作業履歴が、docs の規則に合っている
   - 入力：docs/adr と docs/worklog の差分
   - 期待結果：新しい ADR が対象リポジトリの指定を足す決定と置き換え元を書き、20261119-0100 の ADR が superseded の名前・ステータス・置き換え先を持ち、ほかの文書のリンクが新しい名前に直り、作業履歴に PBI-474 の記録がある
