@@ -1131,7 +1131,7 @@ describe("PR テンプレート（PBI-87）", () => {
     const [requirements, designPr, impl] = pulls.calls.map((c) => c.body);
     // 要求要件の PR：テンプレートの見出しに沿い、承認の仕方とタスクの ID は最後に必ず入る
     expect(requirements).toMatch(
-      /^## 概要\n\n<!-- 何のための PR か -->\n\nsacty のタスク「決済API」の要求要件です。/,
+      /^## 概要\n\n<!-- 何のための PR か -->\n\nSacty のタスク「決済API」の要求要件です。/,
     );
     expect(requirements).toContain(
       `## 変更内容\n\n成果のファイル：\`docs/sacty/${id.slice(0, 8)}/requirements.md\``,
@@ -1148,11 +1148,9 @@ describe("PR テンプレート（PBI-87）", () => {
     );
     // 実装の PR：目的・変更・テストをそれぞれの見出しに入れ、レビューは sacty の記録にする
     expect(impl).toContain(
-      "## 概要\n\n<!-- 何のための PR か -->\n\nsacty のタスク「決済API」の成果物です。",
+      "## 概要\n\n<!-- 何のための PR か -->\n\nSacty のタスク「決済API」の成果物です。",
     );
-    expect(impl).toContain(
-      "sacty のレビュー：（sacty のレビューの子タスクが、この PR をレビューして投稿します。",
-    );
+    expect(impl).toContain("- Sacty のレビューの子タスクが、この PR をレビューして投稿します。");
     expect(impl).toContain(
       "**要求要件（人間が承認済み）**\n\n全文は、マージで承認した次の PR にあります。\n\n- 要求要件：[`docs/sacty/",
     );
@@ -1167,8 +1165,12 @@ describe("PR テンプレート（PBI-87）", () => {
     // チェックボックスには、sacty が印を付けない
     expect(impl).not.toMatch(/\[[xX]\]/);
     // 最後の部分に、タスクの ID と、マージが実装の承認になることの案内（PBI-110）
+    // その間に、レビューの進め方（1 項目 1 文。上限で省かれない footer の、承認の案内の前。PBI-450）
     expect(impl).toContain(
-      `sacty task ${id}）。\n\n- この PR をマージすると、実装を承認したことになり`,
+      `sacty task ${id}）。\n\n**レビューの進め方**\n\n- Sacty のレビューの子タスク`,
+    );
+    expect(impl).toContain(
+      "確かめてください。\n\n- この PR をマージすると、実装を承認したことになり",
     );
     expect(impl?.trimEnd().endsWith("人が直した最終のコミットの両方を記録に残します）。")).toBe(
       true,
@@ -1260,7 +1262,7 @@ describe("PR テンプレート（PBI-87）", () => {
       expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
       expect(body).toContain(`sacty task ${made.id}`);
       expect(body).toContain(
-        "この PR は sacty が作成しました。\n\n- この PR をマージすると、実装を承認したことになり",
+        "この PR は Sacty が作成しました。\n\n- この PR をマージすると、実装を承認したことになり",
       );
       expect(body.endsWith("人が直した最終のコミットの両方を記録に残します）。")).toBe(true);
       expect(taskOf(made.service, made.id).pullRequest?.template?.truncated).toBe(true);

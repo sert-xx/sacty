@@ -50,7 +50,7 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
         "null を返すようにしました",
         "",
         "---",
-        "sacty のタスク t1 の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。",
+        "Sacty のタスク t1 の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。",
       ].join("\n"),
     );
     expect(isSactyRemarkReply(addressed)).toBe(true);
@@ -84,7 +84,7 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
 
     it("元の投稿の種類・出どころ・リンクを、文で書く。出どころが分からない（引き継いだ PR の指摘）ときは、出どころを言わない", () => {
       expect(open("review", 601, { author: "sacty_review" })[1]).toBe(
-        `sacty の AI が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-601)）への返信です。`,
+        `Sacty の AI が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-601)）への返信です。`,
       );
       expect(open("review", 602, { author: "human" })[1]).toBe(
         `人が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-602)）への返信です。`,
@@ -182,7 +182,7 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
         "> 「`直して`」",
       ]);
       expect(openOf({ source: "sacty_review", originText: "直して" })[1]).toBe(
-        `sacty の AI が書いた通常のコメント（[このコメント](${url}#issuecomment-401)）への返信です。`,
+        `Sacty の AI が書いた通常のコメント（[このコメント](${url}#issuecomment-401)）への返信です。`,
       );
       expect(openOf({ continued: true, originText: "直して" }).slice(1, 3)).toEqual([
         `通常のコメント（[このコメント](${url}#issuecomment-401)）への返信です。`,
@@ -225,7 +225,7 @@ describe("指摘への対応の、PR への返信の本文（PBI-352）", () => 
       );
       expect(onReview).not.toEqual(onComment);
       expect(onReview[0]).not.toBe(onComment[0]);
-      expect(onReview[0]).toContain("sacty の AI が書いたレビューの本文");
+      expect(onReview[0]).toContain("Sacty の AI が書いたレビューの本文");
       expect(onComment[0]).toContain("人が書いた通常のコメント");
       expect(onComment[1]).toBe("> 「`再開のフォームの候補も直して`」");
     });
@@ -273,7 +273,7 @@ describe("後続に回したい案の返信（PBI-370）", () => {
         "後続に回すか、この PR で直すかは、このタスクを承認する人が、マージの前に決めます。決定は、この PR にコメントで残します。",
         "",
         "---",
-        "sacty のタスク t1 の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。",
+        "Sacty のタスク t1 の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。",
       ].join("\n"),
     );
     // 決まったことのようには書かない

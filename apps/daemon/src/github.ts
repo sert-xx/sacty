@@ -344,6 +344,17 @@ export function isDeferralNotice(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(DEFERRAL_NOTICE_MARKER_PREFIX);
 }
 
+/**
+ * 承認済みの要求要件（再現）の全文を、PR のコメントに分けて載せる投稿の目印（PBI-450）。1 つ目は `<!-- sacty-basis:<タスク ID> -->`、
+ * 続きは `<!-- sacty-basis:<タスク ID>:<2 以降の番号> -->`。sacty が全文を写した記録で、人間の指摘ではないので、PR の指摘に取り込まない。
+ */
+export const BASIS_COMMENT_MARKER_PREFIX = "<!-- sacty-basis:";
+
+/** 本文が、要求要件の全文のコメントの目印で始まるか（PBI-450）。 */
+export function isBasisComment(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(BASIS_COMMENT_MARKER_PREFIX);
+}
+
 /** sacty のレビューの目印の中身（タスクの ID。再レビューの回は `<ID>:<回>`。PBI-44・PBI-88）。 */
 export function sactyReviewKey(taskId: string, round = 1): string {
   return round > 1 ? `${taskId}:${round}` : taskId;
@@ -607,7 +618,8 @@ export class GitHubPullRequests implements PullRequests {
           (isReviewStopNotice(item.body) ||
             isHumanAskNotice(item.body) ||
             isReworkNotice(item.body) ||
-            isDeferralNotice(item.body)) &&
+            isDeferralNotice(item.body) ||
+            isBasisComment(item.body)) &&
           typeof login === "string" &&
           noticeAccounts.has(login.toLowerCase())
         ) &&

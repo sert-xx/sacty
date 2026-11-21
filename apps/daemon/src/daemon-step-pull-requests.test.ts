@@ -2792,7 +2792,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(pulls.drafts[7]).toBe(true);
         expect(pulls.draftChanges).toEqual([]);
         expect(task.pullRequestCi).toBeUndefined();
-        expect(pulls.calls[0]?.body).toContain("sacty のレビュー：（sacty のレビューの子タスクが");
+        expect(pulls.calls[0]?.body).toContain(
+          "- Sacty のレビューの子タスクが、この PR をレビューして投稿します。",
+        );
         expect(pulls.calls[0]?.body).not.toContain("最終レビュー：");
         // ドラフトのまま、レビューの子タスクを作る
         expect(taskOf(service, id).reviewTasks?.map((r) => [r.number, r.step])).toEqual([
@@ -6952,6 +6954,29 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 "扱い：GitHub の Issue を作ると決めましたが、作れませんでした",
               );
               expect(taskOf(service, id).remarks[0]?.deferral?.decision).toBe("defer");
+              activity.close();
+            });
+
+            it("Issue を作れなかった理由は、決定のコメントに 1 行で書く（秘密の値・URL の資格情報・内部のパスは伏せ、500 文字まで）。「作業履歴にあります」とは書かない", async () => {
+              const made = await reviewed([deferred()]);
+              const { activity, service, pulls, id } = made;
+              await settle(service, id);
+              pulls.issueFail = `410 Issues are disabled ghp_secret\nhttps://user:token123@example.com/x\n/sacty-input/task.md:12 ${"あ".repeat(800)}`;
+              decideWith(service, id, "issue");
+              await noticesSettled(service);
+              const line =
+                notices(pulls)[0]
+                  ?.body.split("\n")
+                  .find((l) => l.startsWith("扱い：GitHub の Issue を作ると決めましたが")) ?? "";
+              expect(line).toContain("作れませんでした。理由：");
+              expect(line).toContain("410 Issues are disabled");
+              expect(line).not.toContain("ghp_secret");
+              expect(line).not.toContain("token123");
+              expect(line).not.toContain("/sacty-input");
+              expect(line).not.toContain("作業履歴");
+              const reason = line.slice(line.indexOf("理由：")).replaceAll("\u200b", "");
+              expect(reason.length).toBeLessThanOrEqual("理由：".length + 500 + 1);
+              expect(notices(pulls)[0]?.body).not.toContain("作業履歴にあります");
               activity.close();
             });
 

@@ -288,6 +288,7 @@ A re-request on GitHub is handled as follows.
 
 When a review stops (an error, the AI usage limit, an authentication error, or the budget cap), sacty also tells the PR that asked for it, in a comment.
 The comment says that the review stopped, the gist of the reason, and how to resume (a link to the task screen).
+The task screen runs on the requester's machine, so when the screen URL is `127.0.0.1`, `localhost`, or `[::1]`, the sentence "タスクの画面は、依頼した人のマシンでだけ開けます。" (the task screen opens only on the requester's machine) is added right after the link sentence.
 
 To resume, open the task on the screen and press "Resume".
 
@@ -441,8 +442,8 @@ The second is whether a Sacty AI review is attached to the current commit of the
 - A review takes a while to reach a commit created by a rework.
   Approving or merging before it arrives means going ahead without seeing its comments.
 - sacty does not block approving or merging.
-- The "Conclusion" of the PR body also gets one line with the state when the body was written.
-  A review that arrives later is not reflected, so check the approval screen for the latest state.
+- The "レビューの進め方" (How the review goes) section of the PR body also gets the state when the body was written.
+  A review that arrives later is not reflected, so check the PR's reviews on GitHub for the latest state.
 
 ## JIRA tickets
 

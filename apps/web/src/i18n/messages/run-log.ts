@@ -88,6 +88,8 @@ const ja = {
     notArchived: {
       container_not_confirmed:
         "コンテナが止まったことを確かめられなかったため、この実行のファイルは写していません。",
+      secret_file_too_large:
+        "認証ファイルが大きすぎて値を伏せられないため、この実行のファイルは写していません。",
     } as Record<string, string>,
     notFound: "このファイルはありません。",
   },
@@ -179,6 +181,8 @@ const en: RunLogMessages = {
     notArchived: {
       container_not_confirmed:
         "The files of this run were not copied because the container could not be confirmed to have stopped.",
+      secret_file_too_large:
+        "The files of this run were not copied because an auth file was too large to redact.",
     },
     notFound: "This file does not exist.",
   },

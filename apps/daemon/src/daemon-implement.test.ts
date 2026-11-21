@@ -173,12 +173,14 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       rateLimits?: ServiceDeps["rateLimits"];
       remarkReplyRateLimit?: ServiceDeps["remarkReplyRateLimit"];
       github?: FakeGitHub;
+      /** 承認する要求要件（2 回目の提出）の全文。 */
+      requirements?: string;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
     const made = makeService(
       activity,
-      [out("# 要求要件 v1"), out("# 要求要件 v2"), design, ...outcomes],
+      [out("# 要求要件 v1"), out(options.requirements ?? "# 要求要件 v2"), design, ...outcomes],
       options,
     );
     const { service } = made;
@@ -3374,7 +3376,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const body = pulls.reviews[0]?.body ?? "";
       expect(body.split("\n").slice(0, 6)).toEqual([
         `<!-- sacty-review:${id} -->`,
-        "## sacty のレビュー",
+        "## Sacty のレビュー",
         "",
         "@alice 判定：提案あり（マージは可）",
         "",
@@ -4856,7 +4858,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(threaded.startsWith(`<!-- sacty-reply:${id}:review_comment:1:1 -->\n`)).toBe(true);
         expect(threaded).toContain("**対応しました。**\n\n回数を定数にしました");
         // 指摘の ID（キー）は、sacty の中のものなので、人には見せない
-        expect(threaded).toContain(`sacty のタスク ${id} の実装の工程で、AI が書きました。`);
+        expect(threaded).toContain(`Sacty のタスク ${id} の実装の工程で、AI が書きました。`);
         expect(threaded).not.toContain("への対応）");
         // レビューの本文の指摘：元へのリンクを付けた PR のコメント
         expect(replies(pulls)).toHaveLength(1);
@@ -6116,7 +6118,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     await service.checkPullRequests();
     expect(service.view(id)?.task.aiReview?.status).toBe("unknown");
     expect(pulls.calls.at(-1)?.body).toContain(
-      `AI のレビュー：この head（${commit?.slice(0, 7)}）には、sacty の AI のレビューがまだ付いていません`,
+      `AI のレビュー：この head（${commit?.slice(0, 7)}）には、Sacty の AI のレビューがまだ付いていません。`,
     );
     expect(service.view("no-such-task")).toBeUndefined();
     activity.close();
@@ -6143,6 +6145,49 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     expect(entry(id)?.aiReview).toBeUndefined();
     expect(entry(id)?.aiReview).toEqual(service.view(id)?.task.aiReview);
     activity.close();
+  });
+
+  it("要求要件の全文で本文が上限を超えるときは、全文を目印つきのコメントに分けて載せ、作り直しでは同じコメントを書き換える（PBI-450）", async () => {
+    const lines = Array.from({ length: 7_000 }, (_, i) => `- R-${i}：${"あ".repeat(5)}`);
+    const requirements = ["# 要求要件", "", "最初の段落。", "", ...lines].join("\n");
+    expect(requirements.length).toBeGreaterThan(65_000);
+    const made = await toImplement([implement("# 実装の説明"), implement("# 実装の説明 2")], {
+      requirements,
+    });
+    await drain(made.service);
+    const { pulls, id } = made;
+    const commentsOf = () =>
+      pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-basis:"));
+    // PR を作った時点では、コメントを投稿してから本文にリンクを書く（作った直後の更新）
+    expect(pulls.calls[0]?.body).toContain("この PR を作った後に、Sacty がコメントに載せます。");
+    const body = pulls.calls[1]?.body ?? "";
+    // 本文には全文の代わりにコメントへのリンクがあり、画面に頼らない
+    expect(body).toContain("[全文のコメント](");
+    expect(body).not.toContain("<summary>全文</summary>");
+    expect(body).not.toContain("タスクの画面");
+    expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+    // 目印のコメントとその続きをつなぐと全文になる
+    const comments = commentsOf();
+    expect(comments.length).toBeGreaterThanOrEqual(2);
+    expect(comments[0]?.body.startsWith(`<!-- sacty-basis:${id} -->`)).toBe(true);
+    expect(comments[1]?.body.startsWith(`<!-- sacty-basis:${id}:2 -->`)).toBe(true);
+    const joined = comments
+      .map((c) => c.body.split("\n").slice(1).join("\n"))
+      .join("\n")
+      .replaceAll(/^## 承認済みの要求要件・不具合の再現.*$/gm, "");
+    for (const line of [lines[0], lines[3_500], lines[6_999]]) expect(joined).toContain(line);
+    // 作り直しでは、同じコメントを書き換える（新しいコメントを増やさない）
+    const before = comments.length;
+    made.service.requestChanges(id, {
+      step: "implement",
+      submission: 1,
+      comments: ["説明を直す"],
+    });
+    await drain(made.service);
+    expect(pulls.calls.length).toBeGreaterThan(2);
+    expect(pulls.calls.at(-1)?.body).toContain("[全文のコメント](");
+    expect(commentsOf()).toHaveLength(before);
+    made.activity.close();
   });
 
   it("実装の説明にあるコンテナの作業領域へのリンクは、PR の本文ではリンクにしない（PBI-366）", async () => {
@@ -9720,7 +9765,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(threaded).toContain("**対応しました。**\n\nnull を返すようにしました");
         expect(threaded).not.toContain("への返信です");
         expect(threaded).toContain(
-          `sacty のタスク ${id} の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。`,
+          `Sacty のタスク ${id} の実装の工程で、AI が書きました（指摘 implement-1-1 への対応）。`,
         );
         // レビューの本文・通常のコメントの指摘：元へのリンクを付けた PR のコメント
         const [onReview, onComment] = prComments(pulls).map((c) => c.body);
@@ -9869,7 +9914,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const [onAi, onHuman] = prComments(pulls).map((c) => c.body);
         expect(prComments(pulls)).toHaveLength(2);
         expect(first2(onAi ?? "")[0]).toBe(
-          `sacty の AI が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-602)）への返信です。`,
+          `Sacty の AI が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-602)）への返信です。`,
         );
         expect(first2(onHuman ?? "")).toEqual([
           `人が書いた通常のコメント（[このコメント](${pr}#issuecomment-401)）への返信です。`,

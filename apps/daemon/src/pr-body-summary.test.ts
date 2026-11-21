@@ -143,10 +143,13 @@ describe("実装の PR の本文：結論を冒頭に置く（PBI-264）", () =>
     expect(head).toContain(
       "- 変更：予約のキャンセル API と画面の操作を足しました。 キャンセルした予約は一覧に残り、時間帯は空きます。",
     );
-    expect(head).toContain(
-      "- sacty のレビュー：（sacty のレビューの子タスクが、この PR をレビューして投稿します。",
-    );
+    // 結論は変更・最後の直しと、省けない行だけ。レビューの進め方は、結論の外の節に 1 項目 1 文で置く
     expect(head).toContain("- [ ] 実機の画面の見た目を確かめる");
+    const conclusion = head.slice(head.indexOf("## 結論"), head.indexOf("## レビューの進め方"));
+    expect(conclusion).not.toContain("レビューの子タスク");
+    expect(head).toContain(
+      "## レビューの進め方\n\n- Sacty のレビューの子タスクが、この PR をレビューして投稿します。\n- 指摘があれば Sacty が直し、指摘なしになるとドラフトを外します。\n- Sacty はテストの実行と CI の待ちをしないので、CI の結果はこの PR のチェックで確かめてください。",
+    );
     expect(body.indexOf("## 結論")).toBeLessThan(body.indexOf("## 観点 → テスト → 実行結果"));
   });
 
@@ -158,7 +161,7 @@ describe("実装の PR の本文：結論を冒頭に置く（PBI-264）", () =>
       const text = buildPullRequestBodyText(t);
       const all = [text.main, text.footer, JSON.stringify(buildPullRequestBodyParts(t))].join("\n");
       expect(text.main).toContain(
-        "- sacty のレビュー：（sacty のレビューの子タスクが、この PR をレビューして投稿します。",
+        "- Sacty のレビューの子タスクが、この PR をレビューして投稿します。",
       );
       expect(all).not.toContain("- 最終レビュー：");
       expect(all).not.toContain("ゴールガーディアンの最終レビュー（");
@@ -204,8 +207,11 @@ describe("実装の PR の本文：要求要件・設計は全文を載せない
 
   it("リンクできる PR が無いときは、全文のある場所（タスクの画面）を書く", () => {
     const body = buildPullRequestBody(task({ stepPullRequests: [] }));
-    expect(body).toContain("全文は sacty のタスクの画面で確かめてください。");
-    expect(body).not.toContain("R-99");
+    // 全文は、本文の折りたたみに載せる（画面に頼らない）
+    expect(body).toContain("<details>\n<summary>全文</summary>");
+    expect(body).toContain("R-99");
+    expect(body).not.toContain("タスクの画面");
+    expect(body.split("<details>").length).toBe(body.split("</details>").length);
   });
 
   it("要求要件が見出しと表だけでも、落とさず、リンクだけを書く。空のときは（なし）", () => {
@@ -255,10 +261,11 @@ describe("実装の PR の本文：要求要件・設計は全文を載せない
       }),
     );
     expect(reproduced).toContain(
-      "## 不具合の再現（失敗するテストで再現し、sacty が失敗を確かめた）",
+      "## 不具合の再現（失敗するテストで再現し、Sacty が失敗を確かめた）",
     );
-    expect(reproduced).toContain("全文は sacty のタスクの画面で確かめてください。");
-    expect(reproduced).not.toContain("全文にしかない再現");
+    expect(reproduced).toContain("<summary>全文</summary>");
+    expect(reproduced).toContain("全文にしかない再現");
+    expect(reproduced).not.toContain("タスクの画面");
     expect(reproduced).toContain("| REPRO 再現のテストが通る |");
   });
 });
@@ -555,8 +562,11 @@ describe("PR テンプレートに沿わせる本文（PBI-264。既存の仕様
       }),
     });
     const { main, footer } = fillTemplate(TEMPLATE, buildPullRequestBodyParts(t));
-    expect(main).toContain(
-      "sacty のレビュー：（sacty のレビューの子タスクが、この PR をレビューして投稿します。",
+    // レビューの進め方は、省かれない footer に置く（目的の節には置かない）
+    expect(main).not.toContain("レビューの子タスク");
+    expect(footer).toContain("- Sacty のレビューの子タスクが、この PR をレビューして投稿します。");
+    expect(footer.indexOf("**レビューの進め方**")).toBeLessThan(
+      footer.indexOf("この PR をマージすると"),
     );
     expect(main).not.toContain("最終レビュー：合格。");
     expect(main).toContain("人が確かめること：1 件（この PR の末尾にあります）");
@@ -573,10 +583,11 @@ describe("PR テンプレートに沿わせる本文（PBI-264。既存の仕様
   });
 
   it("テンプレートの見出しが無くても、要約・変更・テストを畳まずに出す", () => {
-    const { main } = fillTemplate("説明だけのテンプレート\n", buildPullRequestBodyParts(task()));
-    expect(main).toContain(
-      "sacty のレビュー：（sacty のレビューの子タスクが、この PR をレビューして投稿します。",
+    const { main, footer } = fillTemplate(
+      "説明だけのテンプレート\n",
+      buildPullRequestBodyParts(task()),
     );
+    expect(footer).toContain("- Sacty のレビューの子タスクが、この PR をレビューして投稿します。");
     expect(main).toContain("| 観点 | テスト | 最終レビュー |");
   });
 });

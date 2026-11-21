@@ -2153,7 +2153,7 @@ describe("成果の書き出し（PBI-56）", () => {
     const parts = buildPullRequestBodyParts(task);
     for (const footer of [plain, parts.footer]) {
       expect(footer).toContain(
-        "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
+        "- この PR をマージすると、実装を承認したことになり、タスクが完了します（Sacty の画面からは承認しません）。",
       );
       expect(footer).toContain(
         "人の指摘はこの工程のエージェントが、実装のやり直し（この PR を更新します）か",
@@ -2172,10 +2172,10 @@ describe("成果の書き出し（PBI-56）", () => {
         ],
       } as Task);
     expect(watched("todo")).toContain(
-      "- この PR をマージすると、実装を承認したことになり、マージの後の監視（CI/CD とスキルに従った確認）を終えるとタスクが完了します（sacty の画面からは承認しません）。",
+      "- この PR をマージすると、実装を承認したことになり、マージの後の監視（CI/CD とスキルに従った確認）を終えるとタスクが完了します（Sacty の画面からは承認しません）。",
     );
     expect(watched("skip")).toContain(
-      "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
+      "- この PR をマージすると、実装を承認したことになり、タスクが完了します（Sacty の画面からは承認しません）。",
     );
   });
 
@@ -6266,9 +6266,15 @@ describe("タスクの開始時に集めた情報", () => {
       const to = main.indexOf("## 要求要件");
       const section = main.slice(from, to);
       expect(section.length).toBeLessThan(CHILD_SCOPE_BODY_MAX + 1_000);
-      expect(section).toContain(
-        "…（子タスクの内容が長いので、ここから先を省きました。続きは sacty のタスクの画面で確かめてください）",
+      expect(section).toMatch(
+        /…（子タスクの内容が長いので、ここから先の \d+ 文字は、本文の「省いた続き」に載せています）/,
       );
+      expect(section).not.toContain("タスクの画面");
+      // 省いた続きの全文は、折りたたみに載せる（TV-9）
+      const text = buildPullRequestBodyText(childTask(long)).main;
+      const folded = text.slice(text.indexOf("<summary>省いた続き</summary>"));
+      expect(folded).toContain("> - 条件 399：");
+      expect(text.split("<details>").length).toBe(text.split("</details>").length);
       // 行の途中で切らない（引用の最後の行は、元の行のどれか）
       const last = section.split("\n").findLast((l) => l.startsWith("> ")) ?? "";
       expect(lines).toContain(last.slice(2));
@@ -6277,7 +6283,8 @@ describe("タスクの開始時に集めた情報", () => {
         childTask("あ".repeat(CHILD_SCOPE_BODY_MAX + 1)),
       ).main;
       expect(oneLine).toContain("子タスクの内容が長いので");
-      expect(oneLine).not.toContain("> あ");
+      // 範囲の節には引用を出さない（続きは、折りたたみに全文がある）
+      expect(oneLine.slice(0, oneLine.indexOf("<details>"))).not.toContain("> あ");
       expect(oneLine).toContain(
         "子タスクの内容（タスク分割が書いたものを、そのまま載せています）：\n\n…（子タスクの内容が長いので",
       );

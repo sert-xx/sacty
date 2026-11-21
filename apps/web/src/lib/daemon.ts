@@ -1049,7 +1049,7 @@ export type AgentFiles = {
   limitBytes: number;
   skipped: string[];
   /** 写さなかった理由（files は空）。 */
-  notArchived?: "container_not_confirmed";
+  notArchived?: "container_not_confirmed" | "secret_file_too_large";
   archivedAt: string;
   files: AgentFile[];
 };

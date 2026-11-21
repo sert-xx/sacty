@@ -477,9 +477,16 @@ export function fillTemplate(template: string, parts: BodyParts): BodyText {
  */
 export const PR_BODY_MAX = 65_000;
 
-/** 長さの上限で省いたときに書く文。 */
-export const TRUNCATED_NOTE =
-  "…（本文が長いので、ここから先を省きました。続きは sacty のタスクの画面で確かめてください）";
+/** 長さの上限で省いたときに書く文の頭（本文から、省いた所を見つけるのに使う）。 */
+export const TRUNCATED_NOTE_HEAD = "…（本文が長いので、ここから先の ";
+
+/** GitHub の PR の本文の上限（文字。省いた理由に書く）。 */
+export const GITHUB_BODY_LIMIT = 65_536;
+
+/** 長さの上限で省いたときに書く文。省いた文字数と、省いた理由（GitHub の本文の上限）を書く。 */
+export function truncatedNote(omitted: number): string {
+  return `${TRUNCATED_NOTE_HEAD}${omitted} 文字を省きました。GitHub の PR の本文は ${GITHUB_BODY_LIMIT.toLocaleString("en-US")} 文字までなので、これより後ろは載せられません）`;
+}
 
 /**
  * main と footer をつないだ本文を、上限に収める。超えるときは main の後ろを省く（footer は省かない）。
@@ -500,18 +507,22 @@ export function limitBody(
   const kept = keep.filter((k) => k.length > 0);
   // 閉じる記号・省いた文・出し直す部分の分を空けておく
   const reserve =
-    footer.length + kept.reduce((sum, k) => sum + k.length + 2, 0) + TRUNCATED_NOTE.length + 64;
+    footer.length +
+    kept.reduce((sum, k) => sum + k.length + 2, 0) +
+    truncatedNote(main.length).length +
+    64;
   let cut = Math.max(0, max - reserve);
   // サロゲートペアの途中で切らない
   const code = main.charCodeAt(cut - 1);
   if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
   let head = main.slice(0, cut);
+  const omitted = main.length - head.length;
   if (opensComment(head)) head += " -->";
   const fences = head.split("\n").filter((line) => FENCE.test(line)).length;
   if (fences % 2 === 1) head += "\n```";
   const open = (head.match(/<details>/g) ?? []).length;
   const close = (head.match(/<\/details>/g) ?? []).length;
-  head += `\n\n${TRUNCATED_NOTE}`;
+  head += `\n\n${truncatedNote(omitted)}`;
   if (open > close) head += "\n\n</details>".repeat(open - close);
   // 省いて消えた、省けない部分は footer の前に出し直す。残っているかは、行として丸ごと（前後が行の境目）、HTML の
   // コメントとコードブロックの外にあるかで確かめる（`Closes #123` を `Closes #12` と見なさない。PR #99 再レビュー指摘）
