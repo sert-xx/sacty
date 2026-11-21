@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-304
 - 置き換え元: [段階に expert を足して 6 つにし、ultimate を各ツールの最上位のモデルにする](20261104-1327-superseded-expert-tier-between-advanced-and-ultimate.md)（観点ごとの段階を変えないとした部分）
-- 置き換え先: [既定のレビューの観点ごとの段階を下げ、expert も既定で使わない](20261114-1354-lower-review-viewpoint-tiers.md)（X-1 を expert で動かすとした部分）
+- 置き換え先: [既定のレビューの観点ごとの段階を下げ、expert も既定で使わない](20261114-1354-superseded-lower-review-viewpoint-tiers.md)（X-1 を expert で動かすとした部分）
 
 ## 背景
 

@@ -72,19 +72,19 @@ describe("既定のスキル（git・review）の、PR のレビューの投稿�
 });
 
 describe("既定の review スキルの、段階のサブエージェント（PBI-119）", () => {
-  it("観点カタログに観点ごとの段階の表があり、expert・ultimate を除く段階をすべて使う（PBI-344）", () => {
+  it("観点カタログに観点ごとの段階の表があり、advanced・expert・ultimate を除く段階をすべて使う（PBI-455）", () => {
     const text = read("skills/review/review-dispatch/references/viewpoints.md");
     expect(text).toContain("## 観点ごとの段階");
     expect(text).toContain("`lite` < `entry` < `standard` < `advanced` < `expert` < `ultimate`");
-    for (const tier of ["lite", "entry", "standard", "advanced"]) {
+    for (const tier of ["lite", "entry", "standard"]) {
       expect(text, tier).toMatch(new RegExp(`^\\| \`${tier}\` \\|`, "m"));
     }
-    // expert・ultimate は既定では使わない（人が選んだときだけ）
-    expect(text).not.toMatch(/^\| `(expert|ultimate)` \|/m);
-    expect(text).toContain("下の表で使わない段階（`expert`・`ultimate`）もある。");
+    // advanced・expert・ultimate は既定では使わない（人が選んだときだけ）
+    expect(text).not.toMatch(/^\| `(advanced|expert|ultimate)` \|/m);
+    expect(text).toContain("下の表で使わない段階（`advanced`・`expert`・`ultimate`）もある。");
   });
 
-  it("観点ごとの段階は、深い推論が要る観点だけを advanced に置く。どの観点も 1 つの段階にだけ入る（PBI-344）", () => {
+  it("観点ごとの段階は、前回より 1 段下げた割り当てで、どの観点も 1 つの段階にだけ入る（PBI-455）", () => {
     const text = read("skills/review/review-dispatch/references/viewpoints.md");
     const section = text.slice(text.indexOf("## 観点ごとの段階"));
     const tiers = new Map<string, string>();
@@ -95,13 +95,12 @@ describe("既定の review スキルの、段階のサブエージェント（PB
       }
     }
     const expected: Record<string, string[]> = {
-      advanced: ["C-1", "C-3", "C-7", "C-9", "C-17", "D-2", "X-1", "R"],
-      standard: [
+      standard: ["C-1", "C-3", "C-7", "C-9", "C-17", "D-2", "X-1", "R"],
+      entry: [
         ...["C-2", "C-4", "C-6", "C-8", "C-10", "C-11", "C-12", "C-16", "C-18"],
         ...["D-1", "D-3", "D-5", "D-7", "D-8", "D-9", "D-10", "U-1", "U-2", "U-5"],
       ],
-      entry: ["C-5", "C-13", "C-14", "C-15", "D-4", "D-6", "U-3", "U-6", "X-2", "X-3"],
-      lite: ["U-4"],
+      lite: ["C-5", "C-13", "C-14", "C-15", "D-4", "D-6", "U-3", "U-4", "U-6", "X-2", "X-3"],
     };
     for (const [tier, ids] of Object.entries(expected)) {
       for (const id of ids) expect(tiers.get(id), id).toBe(tier);
@@ -1115,8 +1114,8 @@ describe("既定の review スキルの、対象のリポジトリの指示（�
     expect(guidance()).toContain("1件につき、担当 R を1つ起動する");
     expect(catalog()).toMatch(/^\| X-3 \| リポジトリの指示への準拠 \|/m);
     expect(catalog()).toMatch(/^\| R-1・R-2… \| リポジトリのレビュー用のスキル/m);
-    expect(catalog()).toMatch(/^\| `advanced` \| .*R（R-1・R-2…） \|/m);
-    expect(catalog()).toMatch(/^\| `entry` \| .*X-3 \|/m);
+    expect(catalog()).toMatch(/^\| `standard` \| .*R（R-1・R-2…） \|/m);
+    expect(catalog()).toMatch(/^\| `lite` \| .*X-3 \|/m);
     expect(read("skills/review/review-execution/SKILL.md")).toContain(
       "観点 ID が R-1・R-2 など（リポジトリのレビュー用のスキル）のときは、`references/R.md` を読む",
     );
@@ -1293,14 +1292,14 @@ describe("既定の review スキルの、方針の妥当性と指摘の出し�
   const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
   const aggregation = () => read("skills/review/review-dispatch/references/aggregation.md");
 
-  it("コードの必須観点に方針の妥当性を見る C-17 があり、advanced で起動し、隣の観点と境界を分ける", () => {
+  it("コードの必須観点に方針の妥当性を見る C-17 があり、standard で起動し、隣の観点と境界を分ける", () => {
     const required = catalog().split("### 条件付き")[0] ?? "";
     expect(required).toMatch(
       /^\| C-17 \| 方針の妥当性 \| .*もっと単純で確実な方針.* \| 方針の中の個々の欠陥（C-1・C-2・C-3 など）、要らないコード（C-15）、責務の分け方・命名（C-5）、既存のコードの慣習に合っているか（C-18） \|$/m,
     );
     expect(catalog()).toMatch(/^\| C-5 \| .*方針の選び方そのもの（C-17）.* \|$/m);
     expect(catalog()).toMatch(/^\| C-15 \| .*方針の選び方そのもの（C-17） \|$/m);
-    expect(catalog()).toMatch(/^\| `advanced` \| .*C-17、/m);
+    expect(catalog()).toMatch(/^\| `standard` \| .*C-17、/m);
     const c17 = read("skills/review/review-execution/references/C-17.md");
     expect(c17).toMatch(/^# C-17 方針の妥当性$/m);
     for (const heading of [
@@ -1701,12 +1700,12 @@ describe("既定の review スキルの、既存の実装との調和（PBI-405�
   const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
   const c18 = () => read("skills/review/review-execution/references/C-18.md");
 
-  it("コードの必須観点に、既存のコードの慣習との整合を見る C-18 があり、standard で起動する", () => {
+  it("コードの必須観点に、既存のコードの慣習との整合を見る C-18 があり、entry で起動する", () => {
     const required = catalog().split("### 条件付き")[0] ?? "";
     expect(required).toMatch(
       /^\| C-18 \| 既存の実装との調和 \| 文書に書かれていないが、既存のコードを読めば分かる慣習に、変更が合っているか。.*命名の方針.*置き場所と構成.*層の分担.*業務のロジックの置き場所.*技術の使い方の方針.*データアクセス.* \|$/m,
     );
-    expect(catalog()).toMatch(/^\| `standard` \| .*C-18、.*`entry` には置かない \|$/m);
+    expect(catalog()).toMatch(/^\| `entry` \| .*C-18、.*照合が中心なので `entry` に置く \|$/m);
     expect(c18()).toMatch(/^# C-18 既存の実装との調和$/m);
     for (const heading of [
       "## 確かめる手順",

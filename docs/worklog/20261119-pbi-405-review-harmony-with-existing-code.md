@@ -4,7 +4,7 @@
 - タスク: PBI-405
 - PR: #449
 - ブランチ: feat/issue-405-review-harmony-with-existing-code
-- 関係する ADR: [既定のレビューに、既存の実装との調和を見る観点 C-18 を足す](../adr/20261119-1605-review-viewpoint-for-harmony-with-existing-code.md)
+- 関係する ADR: [既定のレビューに、既存の実装との調和を見る観点 C-18 を足す](../adr/20261119-1605-superseded-review-viewpoint-for-harmony-with-existing-code.md)
 
 ## 目的
 

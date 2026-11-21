@@ -283,7 +283,7 @@ describe("軽いと判定されたタスクでは、セルフレビューの観�
       expect(prompt, step).toContain("X-2 は、実行した検証が失敗・警告を出したときだけ起動する");
       // 上位の段階の担当は 1 段下げる
       expect(prompt, step).toContain(
-        "standard より上の段階の観点の担当は、1 段下の段階で起動する（既定の観点カタログでは、advanced の X-1・C-1・R を standard で起動する）",
+        "standard より上の段階の観点の担当は、1 段下の段階で起動する（既定の観点カタログには、standard より上の段階の観点は無い）",
       );
       // 横断の 2 回目を省く
       expect(prompt, step).toContain("X-1 も、前回の回で must を出したときだけ起動する");
