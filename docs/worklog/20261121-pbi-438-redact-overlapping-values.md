@@ -21,7 +21,7 @@
 
 - `npm run lint`・`npm run typecheck`：通った。
 - `npx vitest run --no-file-parallelism`：299 ファイル・6042 件が通り、14 件はスキップ。
-- 3 つのソースの変更を戻したときに落ちることは、この版では確かめ直していない（前の版では、11 件が落ちて、戻すと通った）。
+- 3 つのソースの変更を main の版に戻すと、`redact-overlap.test.ts` の 11 件が落ち、戻すと通る（先頭 ef3ba84 で確かめた）。
 
 ## レビューの指摘と対応
 

@@ -97,6 +97,7 @@ Code: `apps/daemon/src/service.ts` (`prefetchSecrets`, `prefetchProjectSecrets`,
 - Before recording to the Activity, sacty replaces the values used in that run with `[REDACTED]` in the agent's result text and output.
   - Target values: retrieved secrets, the gateway token, MCP header values, the gh token, and strings of 16 or more characters in auth files
   - Regardless of length, no character of a whole occurrence of a value is left. Occurrences that overlap other values or themselves, or where one value contains another, become a single `[REDACTED]` (occurrences that are merely adjacent stay separate `[REDACTED]`s).
+  - Even for a very long value (such as the whole of a non-JSON auth file), redaction uses about 14 bytes of memory per character and time proportional to the lengths of the value and the input. No length limit is set, and no value is excluded from redaction.
   - For output that arrives in pieces, the tail of the received text (one character shorter than the longest value) is carried over unredacted and matched together with the next piece.
   - It does not change message codes and arguments with fixed values; it replaces only free text.
 - sacty also replaces JSON strings (`"…"`) in the output that contain a value once their escapes (such as `\u0073`) are decoded with redacted strings. This is because sacty decodes the output's JSON for review comments, audits, reproduction tests, and so on.
