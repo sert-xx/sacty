@@ -4,7 +4,7 @@
 - タスク: PBI-459
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: [観点の担当が起動し直しても失敗したときは、親が代わりに見る](../adr/20261121-2200-parent-reviews-failed-viewpoints.md)
+- 関係する ADR: [観点の担当が起動し直しても失敗したときは、親が代わりに見る](../adr/20261121-1330-parent-reviews-failed-viewpoints.md)
 
 ## 目的
 
