@@ -77,7 +77,13 @@ export type TestsRunResult = PayloadOf<"TestsRun"> & { at: string };
 /** 前回投稿したレビュー（PBI-111）。round は前回の回、headCommit は前回レビューしたコミット、at は投稿を記録した時刻。 */
 export type PreviousReview = NonNullable<
   PayloadOf<"TaskCreated">["reviewRerequest"]
->["previousReview"];
+>["previousReview"] & {
+  /**
+   * その回を投稿したとき、PR の先頭がレビューした先頭と違っていたときの、その先頭（PBI-465。reviewPost.latestCommit を写す。
+   * 作業履歴の欄は増えない）。親のいないタスクで、その回を親に届かなかった回と見分ける根拠にする。
+   */
+  latestCommit?: string;
+};
 
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
 
@@ -1238,6 +1244,12 @@ export type Task = {
    * commit は待っている先頭。再レビューを始める・見守りを終える・新しく投稿すると消える。
    */
   reviewHold?: { commit: string };
+  /**
+   * レビューの実行を、PR の先頭が変わったために打ち切って、始め直しを待っている（ReviewRunStopped の head_changed。PBI-465）。
+   * from は打ち切った回がレビューしていた先頭、to は打ち切りを決めたときの新しい先頭、at はその時刻。repo・number は、消した
+   * reviewTarget の PR（待ちの間の PR の先頭を、source の無いタスクも同じ PR で読むため）。次の ReviewTargetResolved で消える。
+   */
+  reviewStop?: { from: string; to: string; at: string; repo?: string; number?: number };
   /**
    * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。PBI-411）。名前は「対象を確かめた時刻」だが、実行を始める
    * たびに上書きする（対象を確かめた時刻が入っているのは、実行を始める前だけ）。レビューが PR のコメントを読むのは、この後
@@ -3307,6 +3319,7 @@ export function applyEvent(
       }
       if (task.reviewTarget) throw new ActivityIntegrityError(event, "already resolved");
       task.reviewTarget = event.payload;
+      task.reviewStop = undefined;
       task.reviewResolvedAt = event.at;
       // 読めなかった回は、前に読めた名前を残す（PR の元のブランチは変わらない。PBI-392）
       if (event.payload.headBranch) task.reviewBranch = event.payload.headBranch;
@@ -3355,6 +3368,43 @@ export function applyEvent(
       task.reviewWatchEnded = { reason: event.payload.reason };
       break;
 
+    case "ReviewRunStopped": {
+      // 投稿していないレビューの、実行中・対象の確認中・投稿待ちだけ（PBI-465）。一時停止・完了などでは記録できない。
+      // 始め直しの待ち（reviewStop があって対象が無い）は止める実行が無いので記録しない
+      if (
+        activeStep(task) !== "review" ||
+        task.reviewPost ||
+        (task.status !== "running" && task.status !== "queued" && task.status !== "idle") ||
+        (task.reviewStop && !task.reviewTarget)
+      ) {
+        throw new ActivityIntegrityError(event, "no unposted review run to stop");
+      }
+      task.status = "queued";
+      task.currentRunId = undefined;
+      if (event.payload.reason !== "head_changed") break;
+      // 打ち切った回の、回ごとの記録・今の回の本文と行へのコメントは消す。回の番号と前回の記録は変えない
+      const stopped = task.reviewTarget;
+      const round = task.reviewRound ?? 1;
+      task.reviewStop = {
+        from: event.payload.from,
+        to: event.payload.to ?? event.payload.from,
+        at: event.at,
+        ...(stopped ? { repo: stopped.repo, number: stopped.number } : {}),
+      };
+      task.reviewTarget = undefined;
+      task.reviewResolvedAt = undefined;
+      task.reviewComments = [];
+      task.outputs = Object.fromEntries(
+        Object.entries(task.outputs).filter(([key]) => key !== "review"),
+      );
+      task.reviewVerdicts = task.reviewVerdicts?.filter((v) => v.round !== round);
+      if (task.reviewVerdicts?.length === 0) task.reviewVerdicts = undefined;
+      task.reviewRecords = task.reviewRecords?.filter((r) => r.round !== round);
+      if (task.reviewRecords?.length === 0) task.reviewRecords = undefined;
+      if (task.reviewDispatch?.round === round) task.reviewDispatch = undefined;
+      break;
+    }
+
     case "ReviewRestartHeld":
       if (task.status === "cancelled" || !task.reviewWatch || !task.reviewPost) {
         throw new ActivityIntegrityError(event, "the review is not watched");
@@ -3388,6 +3438,7 @@ export function applyEvent(
           comments: task.reviewComments,
           ...(task.reviewTarget.baseCommit ? { baseCommit: task.reviewTarget.baseCommit } : {}),
           ...(task.reviewTarget.baseBranch ? { baseBranch: task.reviewTarget.baseBranch } : {}),
+          ...(task.reviewPost.latestCommit ? { latestCommit: task.reviewPost.latestCommit } : {}),
           ...(recorded ? { record: recorded.record } : {}),
         };
       }

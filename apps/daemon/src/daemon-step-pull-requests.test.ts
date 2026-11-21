@@ -8356,6 +8356,52 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it("親がまだ取り込んでいない古い先頭宛ての 2 回目は、3 回目の実際の指示で delivered: false になり、同じ原因の回数に数えさせない（PBI-465）", async () => {
+      const pulls = new FakePulls();
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          verdictOut("changes_required"),
+          out("# 要求要件 v2"),
+          verdictOut("suggestions", "# 評価\n\n2回目の指摘"),
+          out("# 要求要件 v3"),
+          verdictOut("no_findings", "# 評価\n\nマージしてよい"),
+        ],
+        { pulls, reviewTasks: true },
+      );
+      const { activity, service, executor, id } = made;
+      const childId = childOf(service, id);
+      const first = commitOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+      await runReview(service, childId);
+      pulls.feedbackBy[7] = [posted(pulls, 0)];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      const second = commitOf(service, id);
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      pulls.prInfo = { ...pulls.prInfo, headSha: second };
+      await runReview(service, childId);
+      expect(taskOf(service, childId).reviewRound).toBe(2);
+      // 2 回目は親に取り込まれる前に、人の指摘で親が別のコミットを積んだ
+      expect(taskOf(service, id).importedFeedback).toEqual(["review:50"]);
+      pulls.feedbackBy[7] = [posted(pulls, 0), item("comment:h1")];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      const third = commitOf(service, id);
+      expect(third).not.toBe(second);
+      pulls.prInfo = { ...pulls.prInfo, headSha: third };
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      const before = executor.calls.length;
+      await runReview(service, childId);
+      expect(taskOf(service, childId).reviewRound).toBe(3);
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("これは 3 回目のレビューです");
+      expect(prompt).toMatch(/"delivered":\s*false/);
+      activity.close();
+    });
+
     it("レビューした先頭が親の積んだコミットと違っても（ほかで push された）、同じ更新で再レビューを繰り返さない", async () => {
       const pulls = new FakePulls();
       const made = await start(

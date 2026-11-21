@@ -153,6 +153,48 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
     }
   };
 
+  // レビューの実行を、PR の先頭が変わったために打ち切った（PBI-465。止めた実行の費用を、記録が持つ）
+  if (rand() < 0.15) {
+    add({ type: "TaskCreated", payload: { title: "t", body: "", start: "sacty" } }, "person");
+    add({ type: "StepsChosen", payload: { steps: ["review"] } });
+    const target = {
+      repo: "https://github.com/acme/app",
+      number: 7,
+      url: "https://github.com/acme/app/pull/7",
+      title: "t",
+      headCommit: "h1",
+      baseCommit: "b1",
+    };
+    add({ type: "ReviewTargetResolved", payload: target });
+    add({
+      type: "AgentRunStarted",
+      payload: { runId: "rv1", step: "review", agentId: "claude", authMode: "api-key" },
+    });
+    add({
+      type: "AgentRunCompleted",
+      payload: {
+        runId: "rv1",
+        step: "review",
+        authMode: "api-key",
+        output: "# 評価",
+        ...charged(),
+      },
+    });
+    add({ type: "PullRequestReviewPosted", payload: { url: "https://x/pull/7#r1" } });
+    add({ type: "ReviewRestarted", payload: { reason: "updated", commit: "h2" } });
+    add({ type: "ReviewTargetResolved", payload: { ...target, headCommit: "h2" } });
+    add({
+      type: "AgentRunStarted",
+      payload: { runId: "rv2", step: "review", agentId: "claude", authMode: "api-key" },
+    });
+    const { agentId: _agentId, ...stoppedCost } = charged();
+    add({
+      type: "ReviewRunStopped",
+      payload: { reason: "head_changed", from: "h2", to: "h3", runIds: ["rv2"], ...stoppedCost },
+    });
+    return events;
+  }
+
   const kind = pick(["plain", "ticket", "repoless"] as const);
   add(
     {

@@ -144,9 +144,18 @@ In a re-review, when a previous finding is withdrawn as outside the purpose, its
 
 If the PR changes before the review finishes, sacty behaves as follows.
 
-- If the PR is pushed to while it is being reviewed, sacty posts the review against the reviewed commit and says in the review body which commit was reviewed.
+- If the PR is pushed to before the review is posted (the first review or a re-review), sacty stops that review without posting a review of the old commit.
+  Once the pushes stop and the PR's head commit has not changed for 2 minutes, sacty reviews the new commit.
+  While waiting, the task stays waiting to run, and the Activity shows that the review was stopped and the new commit.
+  The cost of the stopped review counts toward the task's cost.
+- A PR from a fork is not stopped. sacty posts the review against the reviewed commit and says in the review body which commit was reviewed ([Do not import PRs you do not trust](#do-not-import-prs-you-do-not-trust)).
 - When the PR is merged or closed before the review is posted (also during a re-review run), the review task is cancelled.
   After the review is posted, the task is done instead of cancelled ([After the review is posted](#after-the-review-is-posted)).
+
+When a review is stopped, its record (`ReviewRunStopped`) stays in the Activity.
+Once even one such record exists, an earlier version of the sacty daemon cannot read the Activity and cannot start.
+You can go back to an earlier version only until the first review is stopped.
+There is no procedure for going back to an earlier version after the record exists, so keep running the current version.
 
 ### The posted review
 
@@ -462,6 +471,8 @@ The first is the comments that sacty discarded without delivering them to the or
 
 - If the PR was updated after the review was made (the commit the review targeted differs from the PR's current head), sacty discards that review instead of delivering it.
   That it was discarded, and why, remain in the Activity.
+- The child task's next review checks the discarded comments again on the PR's new commit.
+  Comments that also apply to the new commit come out as comments of the next review and reach the original task.
 - The discarded comments are shown on the approval screen and the task detail as "AI review comments not taken in" (the reason, the PR's commit at the time of discarding, the target commit, the gist of each comment, and a link to GitHub).
   They stay until the PR is merged, so check them before you approve or merge.
 - When the original task goes back to waiting for approval, the child task reviews the current PR again.

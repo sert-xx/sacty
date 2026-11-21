@@ -1645,6 +1645,31 @@ describe("レビューを投稿した後の、PR の変化の見守りの表示�
       "The PR was merged, so stopped watching the PR",
     );
   });
+
+  it("打ち切ったレビューの実行は、どの先頭からどの先頭に変わったかを出し、失敗とは違う言い方にする（PBI-465）", () => {
+    const ev = (type: string, payload: unknown): ActivityEvent =>
+      ({
+        type,
+        payload,
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-11-20T00:00:00.000Z",
+        actor: "sacty",
+      }) as ActivityEvent;
+    const from = "a".repeat(40);
+    const to = "b".repeat(40);
+    expect(describeEvent(ev("ReviewRunStopped", { reason: "head_changed", from, to }))).toContain(
+      "PR の先頭が aaaaaaa から bbbbbbb に変わったので、実行を打ち切った",
+    );
+    expect(describeEvent(ev("ReviewRunStopped", { reason: "merged", from }))).toBe(
+      "PR がマージされたので、aaaaaaa のレビューの実行を止めた",
+    );
+    expect(
+      describeIn(ev("ReviewRunStopped", { reason: "head_changed", from, to }), labels.en),
+    ).toContain("The head of the PR changed from aaaaaaa to bbbbbbb");
+  });
 });
 
 describe("テストのコマンドの表示（PBI-28）", () => {

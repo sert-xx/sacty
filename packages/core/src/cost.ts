@@ -51,6 +51,7 @@ export const CHARGED_EVENT_TYPES = [
   "RepositoryChosen",
   "AgentRunCompleted",
   "AgentRunFailed",
+  "ReviewRunStopped",
   "ChangeJudged",
   "ReworkJudged",
   "SuggestionsTriaged",

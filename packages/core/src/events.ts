@@ -3554,6 +3554,28 @@ const ReviewWatchEnded = z.object({
 });
 
 /**
+ * 投稿していないレビュー（1 回目を含む）の実行を打ち切った（PBI-465）。head_changed：レビューしていた PR の先頭が変わった
+ * （古い先頭宛ての本文は投稿しない。先頭が落ち着いてから、新しい先頭で同じ回の番号のまま始め直す）。merged・closed：PR が
+ * マージ・クローズされたので止めた（続く TaskCancelled で中止する。失敗（AgentRunFailed・一時停止）には見せない）。
+ * from はレビューしていた先頭、to は新しい先頭（head_changed だけ）。runIds は止めた実行。費用の欄は、AgentRunCompleted を
+ * 記録していない実行の分だけ持つ（投稿の直前の打ち切りは、その費用を AgentRunCompleted で数え済みなので持たない）。
+ * 前の版のデーモンは、この記録を持つ作業履歴を読めない。
+ */
+const ReviewRunStopped = z.object({
+  type: z.literal("ReviewRunStopped"),
+  payload: z.object({
+    reason: z.enum(["head_changed", "merged", "closed"]),
+    from: z.string().min(1),
+    to: z.string().min(1).optional(),
+    runIds: z.array(z.string()).default([]),
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+    costUnknown: z.boolean().optional(),
+  }),
+});
+
+/**
  * フォークからの PR の見守りで、新しい先頭のコミットを見つけたが、自動では再レビューしなかった（PBI-461）。PR のコードが
  * 人の判断なしにコンテナで動かないよう、再レビューは人の操作（画面・MCP の再レビュー）を待つ。commit は、いまの PR の先頭。
  * 先頭が変わるたびに記録して、画面と MCP の先頭を更新する。commit がレビューした先頭と同じなら、待ちを消す（先頭が戻ったとき）。
@@ -4458,6 +4480,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReviewGitHubRetried,
   PullRequestReviewPosted,
   ReviewWatchEnded,
+  ReviewRunStopped,
   ReviewRestartHeld,
   ReviewRestarted,
   BranchPushed,

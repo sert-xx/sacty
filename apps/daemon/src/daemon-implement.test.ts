@@ -3348,12 +3348,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         }
         return append(entry);
       };
-      // 投稿の直前に PR の先頭が変わっていた（PBI-111）
-      pulls.states[12] = { state: "open", headSha: "n".repeat(40) };
+      // 投稿の直前に PR の先頭が変わっていた（PBI-111。フォークからの PR は、打ち切らずに投稿する。PBI-465）
+      pulls.states[12] = { state: "open", headSha: "n".repeat(40), fork: true };
       await expect(service.runNext(id)).rejects.toThrow("disk full");
       expect(pulls.reviews).toHaveLength(2);
       // やり直しの前に、さらに push されても、投稿したときの先頭を記録する
-      pulls.states[12] = { state: "open", headSha: "m".repeat(40) };
+      pulls.states[12] = { state: "open", headSha: "m".repeat(40), fork: true };
       await service.runNext(id);
       expect(pulls.reviews).toHaveLength(2);
       expect(service.get(id)?.task.reviewPost).toMatchObject({
@@ -3451,7 +3451,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
-    it("投稿の直前に PR の先頭が変わっていたら、レビューしたコミットに投稿し、その旨を本文と作業履歴に残す（PBI-111）", async () => {
+    it("フォークからの PR は、投稿の直前に PR の先頭が変わっていたら、レビューしたコミットに投稿し、その旨を本文と作業履歴に残す（PBI-111）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       const { service } = makeService(activity, [out("# 評価")], { pulls, planner: reviewPlanner });
@@ -3466,7 +3466,11 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       // 応答に先頭のコミットが無い・空でも、確かめられないので投稿しない（PR 121 レビュー指摘）
       for (const headSha of [undefined, "", "  "]) {
         service.resume(id, {});
-        pulls.states[12] = { state: "open", ...(headSha === undefined ? {} : { headSha }) };
+        pulls.states[12] = {
+          state: "open",
+          fork: true,
+          ...(headSha === undefined ? {} : { headSha }),
+        };
         if (headSha === undefined) pulls.prInfo = { ...pulls.prInfo, headSha: "" };
         await service.runNext(id);
         pulls.prInfo = { ...pulls.prInfo, headSha: "h".repeat(40) };
@@ -3477,7 +3481,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           "PR の先頭のコミットを確かめられませんでした",
         );
       }
-      pulls.states[12] = { state: "open", headSha: "n".repeat(40) };
+      pulls.states[12] = { state: "open", headSha: "n".repeat(40), fork: true };
       service.resume(id, {});
       await service.runNext(id);
       expect(pulls.reviews).toHaveLength(1);

@@ -607,6 +607,16 @@ const ja = {
       `見守っていた PR の先頭が変わったので、最新のコミットの再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
     ReviewRestartedByReply: (commit: string) =>
       `見守っていた PR に作者が返信したので、同じコミットを判定し直す再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
+    ReviewRunStopped: (
+      reason: "head_changed" | "merged" | "closed",
+      from: string,
+      to: string | undefined,
+    ): string =>
+      reason === "head_changed"
+        ? `レビューの途中で PR の先頭が ${from} から ${to ?? ""} に変わったので、実行を打ち切った（古い先頭宛てには投稿しない。先頭が落ち着いてから、新しい先頭で始め直す）`
+        : reason === "merged"
+          ? `PR がマージされたので、${from} のレビューの実行を止めた`
+          : `PR がマージされずに閉じられたので、${from} のレビューの実行を止めた`,
     ReviewRestartHeld: (commit: string) =>
       `フォークからの PR の新しいコミット（${commit}）は、自動では再レビューしない（人が再レビューを押すまで待つ）`,
     ReviewWatchEnded: (reason: "merged" | "closed" | "parent_completed"): string =>
@@ -1359,6 +1369,12 @@ const en: LabelMessages = {
       `The head of the watched PR changed, so started a re-review of the latest commit (${commit}; once per commit)`,
     ReviewRestartedByReply: (commit) =>
       `The author replied on the watched PR, so started a re-review that judges the same commit again (${commit}; once per commit)`,
+    ReviewRunStopped: (reason, from, to) =>
+      reason === "head_changed"
+        ? `The head of the PR changed from ${from} to ${to ?? ""} during the review, so stopped the run (nothing is posted for the old head; the review starts again on the new head once it settles)`
+        : reason === "merged"
+          ? `The PR was merged, so stopped the review run of ${from}`
+          : `The PR was closed without merging, so stopped the review run of ${from}`,
     ReviewRestartHeld: (commit) =>
       `A new commit (${commit}) on a PR from a fork is not re-reviewed automatically (waits until a person starts the re-review)`,
     ReviewWatchEnded: (reason) =>

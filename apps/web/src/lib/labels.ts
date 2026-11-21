@@ -1198,6 +1198,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
                 : e.ReviewRestarted(actor);
     case "ReviewWatchEnded":
       return e.ReviewWatchEnded(event.payload.reason);
+    case "ReviewRunStopped":
+      return e.ReviewRunStopped(
+        event.payload.reason,
+        event.payload.from.slice(0, 7),
+        event.payload.to?.slice(0, 7),
+      );
     case "ReviewRestartHeld":
       return e.ReviewRestartHeld(event.payload.commit.slice(0, 7));
     case "ContextResolved":

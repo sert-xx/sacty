@@ -2184,6 +2184,8 @@ describe("レビューの工程（PBI-19）", () => {
       comments: [{ path: "src/retry.ts", line: 2, body: "[要修正] 上限が無い" }],
       // PR の差分の起点が前回と同じかを、再レビューが確かめるために、その回の向き先を残す（PBI-421）
       baseCommit: "b".repeat(40),
+      // 投稿の直前に先頭が変わっていた回の、その先頭（親のいないタスクで、届かなかった回と見分ける。PBI-465）
+      latestCommit: "n".repeat(40),
     });
     expect(restarted?.reviewRound).toBe(2);
     expect(restarted?.reviewPost).toBeUndefined();
@@ -9704,5 +9706,225 @@ describe("要求要件・設計の自動の直しの間の PR のマージ（PBI
     seq = 0;
     const task = project(designGate("t")).get("t");
     expect(task?.stepBranchCommits).toEqual({ "sacty/t-design-1": "c8" });
+  });
+});
+
+describe("レビューの実行の打ち切り（PBI-465）", () => {
+  const H1 = "1".repeat(40);
+  const H2 = "2".repeat(40);
+  const H3 = "3".repeat(40);
+  const target = (headCommit: string) => ({
+    repo: "https://github.com/acme/app",
+    number: 12,
+    url: "https://github.com/acme/app/pull/12",
+    title: "再試行",
+    headCommit,
+    baseCommit: "b".repeat(40),
+  });
+  const record = {
+    mode: "subagents" as const,
+    viewpoints: [{ id: "C-1", status: "launched" as const }],
+    notReviewed: [],
+    dismissed: [],
+    scope: [],
+    verification: [],
+  };
+  const started = (id: string, runId: string) =>
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId, step: "review", agentId: "a", authMode: "subscription" },
+    });
+  const finished = (id: string, runId: string, costUsd: number, extra: Record<string, unknown>) =>
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId,
+        step: "review",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd,
+        estimated: false,
+        output: "# 評価",
+        ...extra,
+      },
+    });
+  /** 1 回目を投稿して、2 回目の再レビューが HEAD2 を対象に、実行を始めたところまで。 */
+  const secondRoundRunning = (id: string) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["review"] } }),
+    ev(id, { type: "ReviewTargetResolved", payload: target(H1) }),
+    started(id, "r1"),
+    finished(id, "r1", 0, {
+      reviewVerdict: "suggestions",
+      reviewRecord: record,
+      reviewComments: [{ path: "a.ts", line: 1, body: "[提案] 一回目" }],
+    }),
+    ev(id, {
+      type: "PullRequestReviewPosted",
+      payload: { url: "https://x/pull/12#pullrequestreview-1" },
+    }),
+    ev(id, { type: "ReviewRestarted", payload: { reason: "updated", commit: H2 } }),
+    ev(id, { type: "ReviewTargetResolved", payload: target(H2) }),
+    started(id, "r2"),
+  ];
+
+  it("TV-6 打ち切った回の、round を持つ回ごとの記録は消え、1 回目の要素は残る。回の番号と前回の記録は変わらない", () => {
+    const id = "t-stop-1";
+    const events = [
+      ...secondRoundRunning(id),
+      finished(id, "r2", 2, {
+        reviewVerdict: "changes_required",
+        reviewRecord: record,
+        reviewDispatch: { subagents: 2 },
+        reviewComments: [{ path: "b.ts", line: 2, body: "[要修正] 二回目" }],
+      }),
+    ];
+    const before = project(events).get(id);
+    expect(before?.reviewVerdicts?.map((v) => v.round)).toEqual([1, 2]);
+    expect(before?.reviewRecords?.map((r) => r.round)).toEqual([1, 2]);
+    const stopped = project([
+      ...events,
+      ev(id, { type: "ReviewRunStopped", payload: { reason: "head_changed", from: H2, to: H3 } }),
+    ]).get(id);
+    expect(stopped?.reviewVerdicts?.map((v) => v.round)).toEqual([1]);
+    expect(stopped?.reviewRecords?.map((r) => r.round)).toEqual([1]);
+    expect(stopped?.reviewDispatch).toBeUndefined();
+    expect(stopped?.reviewComments).toEqual([]);
+    expect(stopped?.outputs.review).toBeUndefined();
+    expect(stopped?.reviewTarget).toBeUndefined();
+    expect(stopped?.status).toBe("queued");
+    expect(stopped?.currentRunId).toBeUndefined();
+    // 回の番号・前回の記録は変えない。reviewStop は、消した対象の PR を残す
+    expect(stopped?.reviewRound).toBe(2);
+    expect(stopped?.previousReview?.round).toBe(1);
+    expect(stopped?.reviewStop).toMatchObject({
+      from: H2,
+      to: H3,
+      repo: "https://github.com/acme/app",
+      number: 12,
+    });
+    // 次の対象を確かめると、reviewStop は消える。始め直した回の previousReview には、打ち切った回の記録を使わない
+    const resumed = project([
+      ...events,
+      ev(id, { type: "ReviewRunStopped", payload: { reason: "head_changed", from: H2, to: H3 } }),
+      ev(id, { type: "ReviewTargetResolved", payload: target(H3) }),
+      started(id, "r3"),
+      finished(id, "r3", 0, { reviewVerdict: "no_findings" }),
+      ev(id, {
+        type: "PullRequestReviewPosted",
+        payload: { url: "https://x/pull/12#pullrequestreview-3" },
+      }),
+      ev(id, { type: "ReviewRestarted", payload: { reason: "updated", commit: H3 } }),
+    ]).get(id);
+    expect(resumed?.reviewStop).toBeUndefined();
+    expect(resumed?.reviewVerdicts?.map((v) => v.round)).toEqual([1, 2]);
+    expect(resumed?.previousReview?.round).toBe(2);
+    expect(resumed?.previousReview?.body).toBe("# 評価");
+    expect(resumed?.earlierReviews?.map((r) => r.round)).toEqual([1]);
+    expect(resumed?.reviewRound).toBe(3);
+  });
+
+  it("TV-7 打ち切った実行の費用を一度だけ数える（実行中の打ち切りは記録の費用を、投稿の直前の打ち切りは AgentRunCompleted の費用だけ）", () => {
+    const running = project([
+      ...secondRoundRunning("t-cost-1"),
+      ev("t-cost-1", {
+        type: "ReviewRunStopped",
+        payload: {
+          reason: "head_changed",
+          from: H2,
+          to: H3,
+          runIds: ["r2"],
+          costUsd: 1.5,
+          estimated: true,
+        },
+      }),
+    ]).get("t-cost-1");
+    expect(running?.budget.usedUsd).toBe(1.5);
+    expect(running?.budget.estimated).toBe(true);
+    const beforePost = project([
+      ...secondRoundRunning("t-cost-2"),
+      finished("t-cost-2", "r2", 2.0, { reviewVerdict: "suggestions" }),
+      ev("t-cost-2", {
+        type: "ReviewRunStopped",
+        payload: { reason: "head_changed", from: H2, to: H3 },
+      }),
+    ]).get("t-cost-2");
+    expect(beforePost?.budget.usedUsd).toBe(2.0);
+  });
+
+  it("TV-8 投稿していないレビューの、実行中・実行待ち・投稿待ち以外では記録できない", () => {
+    const id = "t-paused";
+    const paused = [
+      ...secondRoundRunning(id),
+      ev(id, {
+        type: "AgentRunFailed",
+        payload: { runId: "r2", step: "review", agentId: "a", reason: "error", message: "x" },
+      }),
+      ev(id, { type: "TaskPaused", payload: { reason: "error" } }),
+    ];
+    expect(project(paused).get(id)?.status).toBe("paused");
+    expect(() =>
+      project([
+        ...paused,
+        ev(id, { type: "ReviewRunStopped", payload: { reason: "head_changed", from: H2, to: H3 } }),
+      ]),
+    ).toThrow(/no unposted review run to stop/);
+    // 投稿した後（見守り・完了）も記録できない
+    const done = "t-done";
+    expect(() =>
+      project([
+        ...secondRoundRunning(done),
+        finished(done, "r2", 0, { reviewVerdict: "suggestions" }),
+        ev(done, {
+          type: "PullRequestReviewPosted",
+          payload: { url: "https://x/pull/12#pullrequestreview-2" },
+        }),
+        ev(done, {
+          type: "ReviewRunStopped",
+          payload: { reason: "head_changed", from: H2, to: H3 },
+        }),
+      ]),
+    ).toThrow(/no unposted review run to stop/);
+    // 始め直しの待ちの間（止める実行が無い）も記録できない
+    const waiting = "t-wait";
+    expect(() =>
+      project([
+        ...secondRoundRunning(waiting),
+        ev(waiting, {
+          type: "ReviewRunStopped",
+          payload: { reason: "head_changed", from: H2, to: H3 },
+        }),
+        ev(waiting, { type: "ReviewRunStopped", payload: { reason: "merged", from: H3 } }),
+      ]),
+    ).toThrow(/no unposted review run to stop/);
+  });
+
+  it("マージ・クローズで止めた記録は、回ごとの記録を消さず、続く TaskCancelled で中止できる", () => {
+    const id = "t-merged";
+    const task = project([
+      ...secondRoundRunning(id),
+      ev(id, { type: "ReviewRunStopped", payload: { reason: "merged", from: H2, runIds: ["r2"] } }),
+      ev(id, { type: "TaskCancelled", payload: { reason: "pull_request_merged", cleanup: [] } }),
+    ]).get(id);
+    expect(task?.status).toBe("cancelled");
+    expect(task?.reviewStop).toBeUndefined();
+  });
+
+  it("再レビューの前回の記録に、投稿の直前に先頭が変わっていた回の latestCommit を写す", () => {
+    const id = "t-latest";
+    const task = project([
+      created(id),
+      ev(id, { type: "StepsChosen", payload: { steps: ["review"] } }),
+      ev(id, { type: "ReviewTargetResolved", payload: target(H1) }),
+      started(id, "r1"),
+      finished(id, "r1", 0, { reviewVerdict: "suggestions" }),
+      ev(id, {
+        type: "PullRequestReviewPosted",
+        payload: { url: "https://x/pull/12#pullrequestreview-1", latestCommit: H2 },
+      }),
+      ev(id, { type: "ReviewRestarted", payload: { reason: "updated", commit: H2 } }),
+    ]).get(id);
+    expect(task?.previousReview?.latestCommit).toBe(H2);
   });
 });

@@ -403,6 +403,68 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     activity.close();
   });
 
+  /** 偽の GitHub が付ける実際のレビューの ID（投稿の URL の pullrequestreview-<id>）と同じ項目の鍵・URL にする。 */
+  const real = (pulls: FakePulls, n: number, commit: string) =>
+    item(`review:${n + 1}`, {
+      commit,
+      kind: "review",
+      author: "me",
+      body: pulls.reviews[n]?.body ?? "",
+      url: `https://github.com/acme/app/pull/7#pullrequestreview-${n + 1}`,
+    });
+
+  it("親に届かなかった 2 回目（取り込む前に先頭が変わって捨てられた）は、提案だけの回の連続に数えず、選り分けの指示に渡る回数が減る（PBI-465）", async () => {
+    const made = await reviewed(
+      "suggestions",
+      body(finding("提案", "提案A")),
+      [
+        triage(["S1", "address"]),
+        responded([{ remarkId: "implement-1-1", status: "addressed", text: "Aを直しました" }]),
+        verdictOut("suggestions", body(finding("提案", "提案B"))),
+        reworkOut,
+        responded([
+          { remarkId: "implement-2-1", status: "addressed", text: "人の指摘を直しました" },
+        ]),
+        verdictOut("suggestions", body(finding("提案", "提案C"))),
+        triage(["S1", "decline", "好み"]),
+      ],
+      { importNow: false },
+    );
+    const { activity, service, executor, pulls, id, childId, first } = made;
+    pulls.feedbackBy[7] = [real(pulls, 0, first)];
+    await service.checkPullRequests();
+    await settle(service, id);
+    const second = advance(made);
+    await service.checkPullRequests();
+    await runReview(service, childId);
+    expect(taskOf(service, childId).reviewRound).toBe(2);
+    // 2 回目を親が取り込む前に、人の指摘で親が別のコミットを積む
+    pulls.feedbackBy[7] = [real(pulls, 0, first), item("comment:h1", { body: "人の指摘" })];
+    await service.checkPullRequests();
+    await settle(service, id);
+    const third = advance(made);
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    await runReview(service, childId);
+    expect(taskOf(service, childId).reviewRound).toBe(3);
+    // 2 回目（古い先頭宛て）と 3 回目が、まとめて届く：2 回目は捨て、3 回目の提案を選り分ける
+    pulls.feedbackBy[7] = [
+      ...(pulls.feedbackBy[7] ?? []),
+      real(pulls, 1, second),
+      real(pulls, 2, third),
+    ];
+    const before = executor.calls.length;
+    await service.checkPullRequests();
+    const prompt = executor.calls
+      .slice(before)
+      .map((c) => c.command.join(" "))
+      .find((c) => c.includes("提案だけの回が"));
+    expect(prompt).toBeDefined();
+    expect(prompt).toContain("提案だけの回が 2 回続いています");
+    expect(prompt).not.toContain("提案だけの回が 3 回続いています");
+    activity.close();
+  });
+
   const reworkOut = out(
     block({ "sacty-rework": { target: "implement", reason: "決定は変えない" } }),
   );

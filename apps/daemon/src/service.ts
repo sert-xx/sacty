@@ -179,6 +179,7 @@ import {
   type Task,
   type TaskProposal,
   type TicketService,
+  type TokenUsage,
   type TriageKind,
   targetHost,
   targetImageOf,
@@ -602,6 +603,7 @@ import {
   timeoutResumeLines,
 } from "./timeout-resume.js";
 import { triageReplyTextOf } from "./triage-reply.js";
+import { undeliveredRounds } from "./undelivered-review.js";
 import type { UpdateStatus } from "./update-check.js";
 import {
   CODE_COPY_DIR,
@@ -1504,6 +1506,32 @@ export class TaskService {
   private readonly draftRequests = new Map<string, number>();
   /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
   private readonly mergeStopping = new Set<string>();
+  /**
+   * 投稿していないレビューの実行を、PR の先頭が変わった・PR がマージ・クローズされたために止めているタスク（PBI-465。メモリー
+   * だけ）。止めた実行の失敗の経路は、これを見て、AgentRunFailed・一時停止を記録しない（打ち切りを決めた処理が、停止を
+   * 確かめた後に ReviewRunStopped を記録する）。
+   */
+  private readonly reviewStopping = new Set<string>();
+  /** 打ち切りで実行を止めている間に、人が一時停止を求めたタスク（PBI-465）。人の一時停止を優先し、打ち切りは記録しない。 */
+  private readonly reviewStopHumanPause = new Set<string>();
+  /** 止めた実行の記録に持つ、実行の失敗の経路が残した、実行の ID・エージェント・費用（PBI-465）。 */
+  private readonly reviewStopRuns = new Map<
+    string,
+    {
+      runId: string;
+      agentId: string;
+      message: DaemonText;
+      usage?: TokenUsage;
+      costUsd: number;
+      estimated: boolean;
+      costUnknown?: true;
+    }
+  >();
+  /**
+   * 打ち切った後の始め直しの待ち（reviewStop があって対象が無いタスク）の、待ちの先頭と起点（PBI-465。メモリーだけ）。同じ先頭を
+   * FEEDBACK_QUIET_MS 見続けるまで、実行の列に入れない。デーモンを起動し直すと消え、最初に読んだ先頭とその時刻から待ち直す。
+   */
+  private readonly reviewSettling = new Map<string, { head: string; at: number }>();
   /**
    * 人が再開したタスク（メモリーだけ）。止まった工程を走り直す前に、PR に届いた指摘をもう一度読む（PBI-279。一時停止の間の
    * 確認は一定の間隔なので、再開の直前に書かれた指摘も拾う）。デーモンの再起動で消えても、残しておいた指摘は作業履歴にある。
@@ -3235,6 +3263,18 @@ export class TaskService {
       this.deps.projects.get(t.projectId) !== undefined;
     const unposted = (t: Task) =>
       t.source?.review !== undefined && t.source.kind === "github_pull_request" && !isCompleted(t);
+    // 先頭の変化を見張るレビュー（PBI-465）：投稿していない、1 回目を含むレビュー。source の無い、人が作ったタスクも含む（読む PR は
+    // reviewPullRequestOf）。一時停止中は止める実行が無く ReviewRunStopped も記録できないので見張らない。投稿待ち（idle）は、
+    // 投稿の直前の確認（composeReviewPost）が見つける
+    const unpostedReview = (t: Task) =>
+      !isCompleted(t) &&
+      t.status !== "cancelled" &&
+      (t.status === "queued" || t.status === "running") &&
+      activeStep(t) === "review" &&
+      !t.reviewPost &&
+      (t.reviewTarget !== undefined || t.reviewStop !== undefined) &&
+      this.reviewPullRequestOf(t) !== undefined &&
+      this.deps.projects.get(t.projectId) !== undefined;
     // 一時停止中の、レビューの子タスク（PBI-457）。投稿済みで見守っていたもの。PR がマージ・クローズされたら、見守りを終えて完了する
     const pausedWatch = (t: Task) =>
       t.status === "paused" &&
@@ -3243,8 +3283,17 @@ export class TaskService {
       t.reviewTarget !== undefined &&
       this.deps.projects.get(t.projectId) !== undefined;
     const open = [...this.tasks.values()].filter(
-      (t) => t.status !== "cancelled" && (unposted(t) || watched(t) || pausedWatch(t)),
+      (t) =>
+        t.status !== "cancelled" &&
+        (unposted(t) || unpostedReview(t) || watched(t) || pausedWatch(t)),
     );
+    // 始め直しを待っていたタスクが、待ちから外れた（実行を始めた・一時停止・中止）ら、待ちの印は忘れる
+    for (const id of [...this.reviewSettling.keys()]) {
+      const t = this.tasks.get(id);
+      if (t?.status !== "queued" || !t.reviewStop || t.reviewTarget) {
+        this.reviewSettling.delete(id);
+      }
+    }
     // 見守りから外れたタスク（再レビューを始めた・見守りを終えた・一時停止・中止）の、初めて見た時刻は忘れる
     const watching = new Set(open.filter(watched).map((t) => t.id));
     for (const memo of [
@@ -3257,7 +3306,12 @@ export class TaskService {
       for (const id of [...memo.keys()]) if (!watching.has(id)) memo.delete(id);
     }
     for (const task of open) {
-      const source = watched(task) || pausedWatch(task) ? task.reviewTarget : task.source;
+      const source =
+        watched(task) || pausedWatch(task)
+          ? task.reviewTarget
+          : unposted(task)
+            ? task.source
+            : this.reviewPullRequestOf(task);
       if (!source) continue;
       // 投稿から時間がたった PR の見守りは、間を空けて読む（開いたままの PR が増えても、GitHub への問い合わせを増やし続けない）
       if (watched(task) && !this.reviewWatchDue(task)) continue;
@@ -3301,22 +3355,252 @@ export class TaskService {
         }
         continue;
       }
-      if (status.state === "open") continue;
+      if (status.state === "open") {
+        if (unpostedReview(task)) {
+          await this.checkReviewHead(task.id, status).catch((error: unknown) => {
+            console.warn(
+              `[daemon] レビューのタスク ${task.id} の PR の先頭の変化を確かめられませんでした：`,
+              error,
+            );
+          });
+        }
+        continue;
+      }
       if (pausedWatch(task)) {
         this.endReviewWatch(task.id, status.state);
         continue;
       }
+      // source の無い、人が作ったレビューのタスクは、PR のマージ・クローズで中止しない（先頭の変化の検知だけ。PBI-465）
+      if (!unposted(task)) continue;
       // 確かめている間に、中止された・完了した（レビューを投稿した）なら、中止しない
       const latest = this.tasks.get(task.id);
       if (!latest || latest.status === "cancelled" || isCompleted(latest)) continue;
       if (this.cancelling.has(task.id)) continue;
-      await this.cancel(
-        task.id,
-        status.state === "merged" ? "pull_request_merged" : "pull_request_closed",
-      ).catch((error: unknown) => {
-        console.warn(`[daemon] レビューのタスク ${task.id} を中止できませんでした：`, error);
-      });
+      // 実行中・対象の確認中・投稿待ちのレビューは、止めた実行を失敗に見せずに、ReviewRunStopped を記録して中止する
+      // （cancel が、実行の終わりを待った後に記録する）。始め直しの待ちの間は、止める実行が無いので記録しない（PBI-465）
+      this.reviewSettling.delete(task.id);
+      if (this.recordableReviewStop(latest)) this.reviewStopping.add(task.id);
+      try {
+        await this.cancel(
+          task.id,
+          status.state === "merged" ? "pull_request_merged" : "pull_request_closed",
+        ).catch((error: unknown) => {
+          console.warn(`[daemon] レビューのタスク ${task.id} を中止できませんでした：`, error);
+        });
+      } finally {
+        this.reviewStopping.delete(task.id);
+        this.reviewStopRuns.delete(task.id);
+      }
     }
+  }
+
+  /** 再レビューの指示に渡す、親に届かなかった前回・前々回以前の回（PBI-465）。無ければ空のオブジェクト。 */
+  private undeliveredReviewRounds(task: Task): { undeliveredRounds?: ReadonlySet<number> } {
+    if (!task.previousReview) return {};
+    const parent = task.reviewOf ? this.tasks.get(task.reviewOf.taskId) : undefined;
+    const rounds = undeliveredRounds(task, parent, task.reviewTarget?.headCommit);
+    return rounds.size > 0 ? { undeliveredRounds: rounds } : {};
+  }
+
+  /** 先頭の変化を見張るレビューのタスクが読む PR。source があればそれ、無ければ対象、それも無ければ打ち切りが残した PR。 */
+  private reviewPullRequestOf(task: Task): { repo: string; number: number } | undefined {
+    if (task.source?.review !== undefined && task.source.kind === "github_pull_request") {
+      return { repo: task.source.repo, number: task.source.number };
+    }
+    if (task.reviewTarget)
+      return { repo: task.reviewTarget.repo, number: task.reviewTarget.number };
+    const stop = task.reviewStop;
+    return stop?.repo !== undefined && stop.number !== undefined
+      ? { repo: stop.repo, number: stop.number }
+      : undefined;
+  }
+
+  /**
+   * 打ち切った後の、始め直しの待ちの間か（PBI-465）。同じ先頭を FEEDBACK_QUIET_MS 見続けるまで待つ。待ちの印（メモリー）が
+   * まだ無い間は、初めて見た時刻（先頭は reviewStop.to）から待つ。
+   */
+  private reviewSettlingNow(task: Task): boolean {
+    if (!task.reviewStop || task.reviewTarget) return false;
+    let memo = this.reviewSettling.get(task.id);
+    if (!memo) {
+      // 印が無い間（起動の後、最初の確認の前）は、いま見た時刻から待つ。PR を読めない状態が続いても、待ちは過ぎる
+      memo = { head: task.reviewStop.to, at: this.now() };
+      this.reviewSettling.set(task.id, memo);
+    }
+    return this.now() - memo.at < FEEDBACK_QUIET_MS;
+  }
+
+  /** ReviewRunStopped を記録できる状態（投稿していないレビューの、実行中・対象の確認中・投稿待ち。始め直しの待ちは除く）。 */
+  private recordableReviewStop(task: Task): boolean {
+    return (
+      activeStep(task) === "review" &&
+      !task.reviewPost &&
+      task.reviewTarget !== undefined &&
+      (task.status === "running" || task.status === "queued" || task.status === "idle")
+    );
+  }
+
+  /**
+   * 投稿していないレビューの PR の先頭を読んだ結果で、打ち切るか、始め直しを待つ（PBI-465）。フォークからの PR は、先頭が
+   * 変わっても打ち切らない（PBI-461）。先頭を読めない応答では、何も決めない。
+   * - 対象がある（実行中・対象の確認中）：対象の先頭と違えば、すぐ打ち切る
+   * - 対象が無い（始め直しの待ち）：待ちの先頭と違えば、待ちの先頭と起点を替える（実行は無いので、記録は増やさない）
+   */
+  private async checkReviewHead(taskId: string, status: PullRequestStatus): Promise<void> {
+    if (status.fork !== false) return;
+    const head = status.headSha?.trim() ?? "";
+    if (!/^[0-9A-Za-z]{7,64}$/.test(head)) return;
+    const task = this.tasks.get(taskId);
+    if (!task || task.status === "paused" || this.cancelling.has(taskId)) return;
+    if (task.reviewTarget) {
+      if (sameCommit(task.reviewTarget.headCommit, head)) return;
+      await this.abortReviewRun(taskId, head);
+      return;
+    }
+    if (!task.reviewStop || task.status !== "queued") return;
+    const memo = this.reviewSettling.get(taskId);
+    if (!memo || memo.head !== head) this.reviewSettling.set(taskId, { head, at: this.now() });
+  }
+
+  /**
+   * レビューの実行を、PR の先頭が変わったために止める（PBI-465）。止めた実行が無くなったと確かめてから、ReviewRunStopped
+   * （head_changed）を記録する。止めた実行の費用は、この記録に持つ。確かめられなければ記録せず、一時停止にして人の確認を待つ。
+   * 止めている間に人が中止した・状態が変わったなら、何も記録しない。
+   */
+  private async abortReviewRun(taskId: string, to: string): Promise<void> {
+    const before = this.tasks.get(taskId);
+    if (!before || !this.recordableReviewStop(before) || before.status === "idle") return;
+    if (this.reviewStopping.has(taskId) || this.cancelling.has(taskId)) return;
+    this.reviewStopping.add(taskId);
+    try {
+      const inflight = this.inflight.get(taskId);
+      let runIds: string[] = [];
+      if (inflight) {
+        const humanStop = this.pauseRequested.has(taskId);
+        // 打ち切りより先に人が一時停止を求めていた：その操作を優先する（実行の終わりで消えないよう、人の要求として残す）
+        if (humanStop) this.reviewStopHumanPause.add(taskId);
+        this.pauseRequested.add(taskId);
+        runIds = [...inflight.runIds];
+        try {
+          this.stopRuns(runIds);
+          await inflight.done.catch(() => {});
+        } finally {
+          if (!humanStop) this.pauseRequested.delete(taskId);
+        }
+      }
+      const unstopped = await this.unstopped(runIds);
+      const after = this.tasks.get(taskId);
+      if (!after || this.cancelling.has(taskId) || after.status === "cancelled") return;
+      // 止めている間に人が一時停止した：人の操作を優先する（ReviewRunStopped は記録しない）。止めた実行が失敗で返って
+      // 実行中のままなら、その費用を AgentRunFailed に残してから、人の一時停止にする（順序 B）
+      if (this.reviewStopHumanPause.has(taskId)) {
+        const run = this.reviewStopRuns.get(taskId);
+        const items: ActivityItem[] = [];
+        if (after.status === "running" && run && after.currentRunId === run.runId) {
+          items.push({
+            actor: "sacty",
+            event: {
+              type: "AgentRunFailed",
+              payload: {
+                runId: run.runId,
+                step: "review",
+                agentId: run.agentId,
+                reason: "error",
+                message: run.message,
+                ...(run.usage ? { usage: run.usage } : {}),
+                costUsd: run.costUsd,
+                estimated: run.estimated,
+                ...(run.costUnknown ? { costUnknown: true as const } : {}),
+              },
+            },
+          });
+        }
+        if (items.length > 0 || after.status === "queued" || after.status === "idle") {
+          items.push({
+            actor: "person",
+            event: {
+              type: "TaskPaused",
+              payload: { reason: "manual", ...this.unstoppedPayload(unstopped) },
+            },
+          });
+          this.append(after, items);
+        }
+        return;
+      }
+      if (unstopped.length > 0) {
+        // 止めたコンテナを確かめられない間は、作業領域が書き換わりうるので、始め直さない。一時停止にして人が確かめる
+        const run = this.reviewStopRuns.get(taskId);
+        this.append(after, [
+          ...(after.status === "running" && run && after.currentRunId === run.runId
+            ? [
+                {
+                  actor: "sacty" as const,
+                  event: {
+                    type: "AgentRunFailed" as const,
+                    payload: {
+                      runId: run.runId,
+                      step: "review" as const,
+                      agentId: run.agentId,
+                      reason: "error" as const,
+                      message: this.notStopped(unstopped),
+                      ...(run.usage ? { usage: run.usage } : {}),
+                      costUsd: run.costUsd,
+                      estimated: run.estimated,
+                      ...(run.costUnknown ? { costUnknown: true as const } : {}),
+                    },
+                  },
+                },
+              ]
+            : []),
+          {
+            actor: "sacty" as const,
+            event: {
+              type: "TaskPaused" as const,
+              payload: { reason: "manual" as const, ...this.unstoppedPayload(unstopped) },
+            },
+          },
+        ]);
+        return;
+      }
+      if (!this.recordableReviewStop(after) || !after.reviewTarget) return;
+      if (this.pauseRequested.has(taskId)) return;
+      this.recordReviewRunStopped(after, "head_changed", runIds, to);
+      this.reviewSettling.set(taskId, { head: to, at: this.now() });
+    } finally {
+      this.reviewStopping.delete(taskId);
+      this.reviewStopHumanPause.delete(taskId);
+      this.reviewStopRuns.delete(taskId);
+    }
+  }
+
+  /** ReviewRunStopped を記録する。止めた実行の費用は、実行の失敗の経路が残したもの（AgentRunCompleted を記録していない分）。 */
+  private recordReviewRunStopped(
+    task: Task,
+    reason: "head_changed" | "merged" | "closed",
+    runIds: string[],
+    to?: string,
+  ): void {
+    const from = task.reviewTarget?.headCommit;
+    if (!from) return;
+    const run = task.status === "running" ? this.reviewStopRuns.get(task.id) : undefined;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "ReviewRunStopped",
+          payload: {
+            reason,
+            from,
+            ...(to ? { to } : {}),
+            runIds: run && !runIds.includes(run.runId) ? [...runIds, run.runId] : runIds,
+            ...(run?.usage ? { usage: run.usage } : {}),
+            costUsd: run?.costUsd ?? 0,
+            estimated: run?.estimated ?? false,
+            ...(run?.costUnknown ? { costUnknown: true as const } : {}),
+          },
+        },
+      },
+    ]);
   }
 
   /**
@@ -4699,7 +4983,9 @@ export class TaskService {
     const musts = units.filter((u) => u.kind === "must");
     // 提案だけの回が、今回を含めて何回続いているか（今回の回から数える）
     const round = child.reviewRound ?? 1;
-    const suggestionRounds = countSuggestionRounds(round, verdictOf);
+    // 親に届かなかった回（古い先頭宛てで捨てられた回）は、数えない（PBI-465）
+    const undelivered = undeliveredRounds(child, task, child.reviewTarget?.headCommit);
+    const suggestionRounds = countSuggestionRounds(round, verdictOf, (r) => undelivered.has(r));
     const chosen = stepAgentFor(config, "implement", task.agents?.implement);
     if (!chosen.ok) {
       this.pauseForMissingAgent(task, pr.step, chosen.missing, { awaiting: true });
@@ -6195,6 +6481,10 @@ export class TaskService {
     const latest = this.tasks.get(task.id);
     if (!latest || !awaitingReviewPost(latest) || this.pauseRequested.has(task.id)) return;
     this.append(latest, [{ actor: "sacty", event }]);
+    // 先頭が変わっていたので投稿せずに打ち切った（PBI-465）：その先頭を、始め直しの待ちの先頭にする
+    if (event.type === "ReviewRunStopped" && event.payload.to) {
+      this.reviewSettling.set(task.id, { head: event.payload.to, at: this.now() });
+    }
     // 投稿の直後に、PR を作ったタスクの指摘の取り込みを始める（60 秒ごとの確認を待たない）
     if (event.type === "PullRequestReviewPosted" && latest.reviewOf) {
       this.importFeedbackSoon(latest.reviewOf.taskId, target.repo, target.number);
@@ -6238,9 +6528,18 @@ export class TaskService {
     if (existing) {
       latestCommit = postedLatestCommit(existing.body);
     } else {
-      const head = (await this.deps.pulls.status(pr)).headSha?.trim() ?? "";
+      const pullStatus = await this.deps.pulls.status(pr);
+      const head = pullStatus.headSha?.trim() ?? "";
       if (!/^[0-9A-Za-z]{7,64}$/.test(head)) throw new MessageError(message("review.headUnknown"));
       latestCommit = head !== target.headCommit ? head : undefined;
+      // フォークでない PR は、先頭が変わっていたら、古い先頭宛てのレビューを投稿せず、打ち切って始め直す（PBI-465）。
+      // 実行の費用は AgentRunCompleted で数え済みなので、この記録は費用を持たない
+      if (latestCommit && pullStatus.fork === false) {
+        return {
+          type: "ReviewRunStopped",
+          payload: { reason: "head_changed", from: target.headCommit, to: head, runIds: [] },
+        };
+      }
     }
     // sacty の設定で選んでいれば、PR の作者ではなく自分（投稿するアカウント）にメンションする
     const mentionSelf = this.deps.settings.get().reviewMentionSelf ? account : undefined;
@@ -10340,7 +10639,10 @@ export class TaskService {
             // PR を作ったタスクの、指摘への返信を待っているレビューの子タスクは、待ちが明けるまで始めさせない（PBI-352）
             !this.reviewWaitsForReplies(t) &&
             // PR のマージで作り直しを止めている間は、実行を始めさせない（PBI-276）
-            !this.mergeStopping.has(t.id),
+            !this.mergeStopping.has(t.id) &&
+            // レビューの実行を打ち切っている間と、打ち切った後の始め直しを待っている間は、実行を始めさせない（PBI-465）
+            !this.reviewStopping.has(t.id) &&
+            !this.reviewSettlingNow(t),
         )
         // 監査だけが残るタスク（完了したタスク）は、ほかの実行の後にする（監査で、進めている作業の実行の枠を塞がない。PBI-125）
         .sort(
@@ -11472,11 +11774,13 @@ export class TaskService {
       this.cancelling.has(taskId) ||
       this.pauseRequested.has(taskId) ||
       this.mergeStopping.has(taskId) ||
+      this.reviewStopping.has(taskId) ||
       this.retargeting.has(taskId)
     ) {
       return;
     }
     const task = this.tasks.get(taskId);
+    if (task && this.reviewSettlingNow(task)) return;
     if (task && this.parentCancelled(task)) {
       if (task.status === "cancelled" || isCompleted(task)) return;
       // 実行の印（inflight）を付ける前に中止する（中止は、実行中の処理の終わりを待つため）
@@ -11731,7 +12035,12 @@ export class TaskService {
     if (!this.pauseRequested.has(taskId)) return;
     this.pauseRequested.delete(taskId);
     // PR のマージで止めた実行（PBI-276）は、人の一時停止にしない（stopReworkForMerge が、止めた理由とともに承認として進める）
-    if (this.mergeStopping.has(taskId)) return;
+    if (
+      this.mergeStopping.has(taskId) ||
+      (this.reviewStopping.has(taskId) && !this.reviewStopHumanPause.has(taskId))
+    ) {
+      return;
+    }
     const task = this.tasks.get(taskId);
     if (task?.status !== "queued" && task?.status !== "idle") return;
     this.append(task, [
@@ -12819,6 +13128,8 @@ export class TaskService {
               ...(step === "review"
                 ? { reviewRisk: this.assessesReviewRisk(this.mustGet(task.id)) }
                 : {}),
+              // 親（PR を作ったタスク）に届かなかった前回までの回（PBI-465）
+              ...(step === "review" ? this.undeliveredReviewRounds(this.mustGet(task.id)) : {}),
               // PR のレビューの子タスクに、指摘ごとの戻し先を示させる（PBI-332）
               ...this.reviewReworkContext(task),
               // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
@@ -12890,6 +13201,24 @@ export class TaskService {
     const { outcome, costUsd, estimated } = executed;
 
     if (outcome.kind === "failed") {
+      // レビューの実行を、PR の先頭の変化・マージ・クローズで止めた（PBI-465）。失敗にも一時停止にもせず、費用だけを残す
+      // （打ち切りを決めた処理が、停止を確かめた後に ReviewRunStopped を記録する）
+      if (
+        step === "review" &&
+        this.reviewStopping.has(task.id) &&
+        !this.reviewStopHumanPause.has(task.id)
+      ) {
+        this.reviewStopRuns.set(task.id, {
+          runId,
+          agentId: agent.id,
+          message: outcome.message,
+          ...(outcome.usage ? { usage: outcome.usage } : {}),
+          costUsd,
+          estimated,
+          ...unknownCost(executed),
+        });
+        return;
+      }
       const manual = await this.manualPauseInfo(task.id);
       const failed: ActivityItem = {
         actor: "sacty",
@@ -16942,6 +17271,7 @@ export class TaskService {
       return this.mustGet(id);
     }
     this.pauseRequested.add(id);
+    if (this.reviewStopping.has(id)) this.reviewStopHumanPause.add(id);
     this.inflight.get(id)?.abort.abort();
     this.pauseCounts.set(id, (this.pauseCounts.get(id) ?? 0) + 1);
     const inflight = this.inflight.get(id);
@@ -17098,6 +17428,21 @@ export class TaskService {
         );
       } else {
         cleanup.push({ target: "container", result: "skipped" });
+      }
+      // PR のマージ・クローズで止めたレビューの実行は、失敗に見せずに、停止を確かめた後に記録する（PBI-465。
+      // コンテナの停止を確かめられたかによらず記録する。止めた実行の費用を残すため）
+      if (
+        (reason === "pull_request_merged" || reason === "pull_request_closed") &&
+        this.reviewStopping.has(id)
+      ) {
+        const stopping = this.tasks.get(id);
+        if (stopping && this.recordableReviewStop(stopping)) {
+          this.recordReviewRunStopped(
+            stopping,
+            reason === "pull_request_merged" ? "merged" : "closed",
+            inflight ? [...inflight.runIds] : [],
+          );
+        }
       }
       // オーケストレーターのセッション（PBI-67）。実行と質問への答えが終わった後に消す
       const sessions = this.deps.orchestratorSessions;
