@@ -47,7 +47,7 @@ mise・nodenv・fnm などの版の管理ツールで、ディレクトリに合
 
 質問フォームのブラウザーテストには Chromium を使います。
 上のインストールコマンドでブラウザーを用意してください。
-CI でテストを実行するときも、`npm ci` の後に `npx playwright install --with-deps chromium` を実行し、Chromium と OS の依存を用意してください。
+CI でテストを実行するときも、`npm ci` の後に `npx playwright install --only-shell chromium` を実行し、ヘッドレスのシェルの Chromium を用意してください。OS のライブラリ（`--with-deps`）は、実行環境に足りないものだけを入れてください。
 
 ### 初めてコミットする前に：作者の名前とメールアドレスを確かめる
 
