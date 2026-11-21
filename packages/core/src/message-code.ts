@@ -25,6 +25,9 @@ export function message<K extends MessageCode>(
  */
 export const DaemonText = z.union([
   z.string(),
-  z.object({ code: z.string(), params: z.record(z.string(), z.unknown()).optional() }),
+  z.object({
+    code: z.string(),
+    params: z.record(z.string(), z.unknown()).optional(),
+  }),
 ]);
 export type DaemonText = z.infer<typeof DaemonText>;

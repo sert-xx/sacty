@@ -20,14 +20,23 @@ const ev = (input: EventInput, actor: ActivityEvent["actor"] = "sacty") =>
   }) as ActivityEvent;
 const created = () =>
   ev(
-    { type: "TaskCreated", payload: { title: "README", body: "節を足す", start: "sacty" } },
+    {
+      type: "TaskCreated",
+      payload: { title: "README", body: "節を足す", start: "sacty" },
+    },
     "person",
   );
 const chosen = (extra: Record<string, unknown> = {}) =>
-  ev({ type: "StepsChosen", payload: { steps: [...MVP_STEPS], ...extra } } as EventInput);
+  ev({
+    type: "StepsChosen",
+    payload: { steps: [...MVP_STEPS], ...extra },
+  } as EventInput);
 const changed = (from: "light" | "normal", to: "light" | "normal") =>
   ev({ type: "SelfReviewDepthChanged", payload: { from, to } }, "person");
-const LIGHT = { selfReviewDepth: "light", selfReviewDepthReason: "節を足すだけ" };
+const LIGHT = {
+  selfReviewDepth: "light",
+  selfReviewDepthReason: "節を足すだけ",
+};
 const project = (events: ActivityEvent[]) => {
   const task = projectAll(events).get("t1");
   if (!task) throw new Error("no task");
@@ -37,13 +46,22 @@ const project = (events: ActivityEvent[]) => {
 describe("依頼の大きさの判定と、セルフレビューの深さ（PBI-369）", () => {
   it("工程の選択の判定と理由を持つ。軽いと判定され、人が上書きしていないときだけ、深さは軽い", () => {
     const light = project([created(), chosen(LIGHT)]);
-    expect(light.selfReviewDepth).toEqual({ judged: "light", reason: "節を足すだけ" });
+    expect(light.selfReviewDepth).toEqual({
+      judged: "light",
+      reason: "節を足すだけ",
+    });
     expect(effectiveSelfReviewDepth(light)).toBe("light");
     const normal = project([
       created(),
-      chosen({ selfReviewDepth: "normal", selfReviewDepthReason: "振る舞いを変える" }),
+      chosen({
+        selfReviewDepth: "normal",
+        selfReviewDepthReason: "振る舞いを変える",
+      }),
     ]);
-    expect(normal.selfReviewDepth).toEqual({ judged: "normal", reason: "振る舞いを変える" });
+    expect(normal.selfReviewDepth).toEqual({
+      judged: "normal",
+      reason: "振る舞いを変える",
+    });
     expect(effectiveSelfReviewDepth(normal)).toBe("normal");
     // 判定の無い記録（この判定より前の作業履歴）は、通常
     const none = project([created(), chosen()]);
@@ -92,7 +110,10 @@ describe("依頼の大きさの判定と、セルフレビューの深さ（PBI-
       ev({ type: "TaskPaused", payload: { reason: "manual" } } as EventInput, "person");
     const resumed = () =>
       ev(
-        { type: "TaskResumed", payload: { retry: true, rechooseSteps: true } } as EventInput,
+        {
+          type: "TaskResumed",
+          payload: { retry: true, rechooseSteps: true },
+        } as EventInput,
         "person",
       );
     const before = project([

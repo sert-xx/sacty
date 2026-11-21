@@ -12,7 +12,7 @@
 
 - 書くときの形は `{ type, payload }`。
   `type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。
-  種類は137（タスクの作成・分割、重ねた子タスクの依存先のマージ、工程の進行、エージェントの実行、予算・一時停止・再開・中止、タスクの題・イメージの変更、変更の申し出と判断、検証、終わっていない実装と変更の無いやり直し、git・PR、PR のドラフトの解除・向き先の付け替え・CI のやり直しの依頼、人が PR に足したコミットの取り込み、PR の本文の記録と人が直した本文のまとめ、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、PR のレビューの子タスクの作成、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
+  種類は141（タスクの作成・分割、重ねた子タスクの依存先のマージ、工程の進行、エージェントの実行、予算・一時停止・再開・中止、タスクの題・イメージの変更、変更の申し出と判断、検証、終わっていない実装と変更の無いやり直し、git・PR、PR のドラフトの解除・向き先の付け替え・CI のやり直しの依頼、sacty が外した切り替えの記録と、ドラフトへ戻さなかった記録（人が外した・読めなかった・決められなかった）、人が PR に足したコミットの取り込み、PR の本文の記録と人が直した本文のまとめ、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、PR のレビューの子タスクの作成、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
 - 記録した後の形（`ActivityEvent`）は、書くときの形に次を足したもの。
   - `seq`（作業履歴全体で単調に増える）
   - `id`（UUID）
@@ -66,6 +66,8 @@
   - PR のプッシュのやり直し（PBI-467）：`PushRetried`（`branch`・`commit`・`attempt`・`maxAttempts`・`waitMs`・`message`（失敗の文。秘密の値は伏せたもの））と `PushRetryEnded`（`branch`・`commit`・`outcome`（`pushed` か `failed`）・`retries`）。どちらも記録だけで状態は変えない。前の版は、この 2 種を `EventInput` の検査で読めず、起動できない（一度記録したら、前の版に戻せない）。
     - 前の版に戻せるのは、どちらかを記録する前まで。戻す前に、作業履歴の `activity` の表に、`type` が `PushRetried` か `PushRetryEnded` の行が無いことを確かめる。
     - 戻して起動できなければ、この変更の版へ進め直す。
+  - ドラフトの切り替えの記録（PBI-468）：`PullRequestUndraftNoted`（`number`・`eventId`。sacty が外した切り替えの GitHub のイベント ID。`eventId` が無いのは、外す要求の答えから今回の外しの ID を決められなかったとき）と `PullRequestRedraftSkipped`（`number`・`reason`（`person`・`unreadable`・`undetermined`）・`eventId`（`person` だけ。人の外しの ID））。`PullRequestMarkedReady` と `ready` の `PullRequestRetargeted` には、外しを覚える版が書いたことを示す `undraftTracked` が付く（無い記録は前の版が外した）。状態は `Task.draftTrail`（PR の番号ごと）にだけ持つ。判定と記録の重複の決まりは、[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)。
+    - 前の版は、この 2 種を `EventInput` の検査で読めず、起動できない（`activity.ts` の `toEvent`）。前の版に戻せるのは、どちらかを記録する前まで。互換の層は作らない。不具合は前の版へ戻さず、直した版を出して直す（[ADR](../adr/20261121-2022-do-not-redraft-pull-request-a-person-marked-ready.md)）。
   - `runResult` が `interrupted` のもの（判断を採用しなかった）は、費用だけを数え、状態を変えない。
   - `ReviewRejudgeRequested` の `reason: triaged`：選り分けで、差し戻す指摘が残らなかったので、実装を実行せずに判定し直しを求めた。承認待ちの実装の PR について、`SuggestionsTriaged` と同じ追記で記録する（`Task.reviewRejudge.reason`）。`reason` が無いものは、実装の提出の記録（PBI-357）。
 - PR のレビューの過程の記録（PBI-460。[PR のレビューだけのタスク](tasks-and-steps.md#pr-のレビューだけのタスク)）は次のとおり。PR に投稿しない過程の情報を残し、タスクの画面と MCP の `get_task` で読む。

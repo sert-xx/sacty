@@ -80,7 +80,12 @@ function claudeEntries(event: Json, line: number): LogEntry[] | undefined {
         entries.push({ line, kind: "thinking", text: str(c.thinking) });
       else if (c.type === "redacted_thinking") entries.push({ line, kind: "thinking", text: "" });
       else if (c.type === "tool_use") {
-        entries.push({ line, kind: "toolCall", name: str(c.name), input: pretty(c.input ?? {}) });
+        entries.push({
+          line,
+          kind: "toolCall",
+          name: str(c.name),
+          input: pretty(c.input ?? {}),
+        });
       } else if (c.type === "tool_result") {
         entries.push({
           line,

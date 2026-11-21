@@ -1258,7 +1258,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     結果を `FinalReviewSkipped` の `securityScope`（違反があれば `violation` に範囲の外のファイルと、前の版が読めるための固定の `max`）に記録する（`Task.securityScopeCheck`）。
     差分を取れなければ、記録せずに一時停止する（`verify.diffUnavailable`）。
     違反があっても止めず、PR の本文の範囲の節に書き、PR のレビューの子タスクに要修正の指摘にさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
-- 実装の PR はドラフトで作り（更新したときも、ドラフトに戻す。戻せなくても PR の作成は失敗にしない）、`PullRequestPublished` に `awaitingReview` を付けて、実装の承認待ちにする（`awaitsReview`）。
+- 実装の PR はドラフトで作り（更新したときも、ドラフトに戻す。人が外した PR は戻さない。戻せなくても PR の作成は失敗にしない）、`PullRequestPublished` に `awaitingReview` を付けて、実装の承認待ちにする（`awaitsReview`）。
   既存の PR を引き継ぐタスクは、人の PR なのでドラフトにせず、`awaitingReview` も付けない。
   PR の本文には、最終レビューの行も、Sacty の過程の説明も書かない（PBI-471。本文は、目的・変更、確かめ方、人が確かめること、AI が作った印、承認の案内の 2 文だけにする。[実装の PR の本文の組み立て](approval.md#実装の-pr-の本文の組み立て)）。
 - PR を作ったら、その PR をレビューする子タスクを作る（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
@@ -1275,7 +1275,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     答えを待つのをやめたら、その通信を中断する。中断しても終わらない要求も、`DRAFT_TIMEOUT_MS` の `DRAFT_SETTLE_FACTOR`（10）倍を過ぎたら数えない（GitHub が復旧した後に、外せないままにしない）。
     PR の確認のたびに GitHub の状態（`draft`）を読み、台帳に合わせる（`settleDraft`。答えを待つのをやめた・中断した・数えるのをやめた要求が後から GitHub に届いたときのため。デーモンが覚えていなくても、再起動の後も、直せなかったときも次の確認でやり直す）。
     あるべき状態は、台帳と子タスクの今の状態から決める（`wantsDraft`）。GitHub の先頭を読めなければ、ドラフトを外さない（変えない）。
-    - 指摘なしを待つ PR は、ドラフトにする（依存先の PR に重ねた PR は除く。人がドラフトを外してマージしてよいため）。
+    - 指摘なしを待つ PR は、ドラフトにする（依存先の PR に重ねた PR は除く。人がドラフトを外してマージしてよいため。人が外した PR は、下の判定で戻さない）。
     - 指摘なしで外して記録した PR（人の承認待ち）は、子タスクが GitHub の今の先頭で指摘なしにしているときだけ、ドラフトでなくする。
       ドラフトなら外し直す（`undraftMarkedReady`。GitHub の先頭を読めたときだけ）。
       GitHub の先頭が指摘なしにした先頭と違えば（外した後に人がコミットを足した。人が PR をドラフトにしたかにかかわらず）、子タスクにその先頭を再レビューさせ、
@@ -1285,19 +1285,36 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
       次の提出でも指摘なしで外すまで確認のたびにドラフトに戻す（`undraftUnsettled`）。
     - 一時停止したタスクの PR は、GitHub でドラフトでなければ、ドラフトに戻す（`settlePausedDrafts`。止めている間はマージさせない。依存先の PR に重ねた、指摘なしを待つ PR と、やり直しが何も変えずに止まったタスク（`unchanged`）と、直しでは解消できない指摘で止まったタスク（`needs_decision`）の PR は除く。`DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて確かめる）。外し直す間に止めた・戻せなかった・答えが返らなかった（`DRAFT_TIMEOUT_MS`）ときも、止めている間は確認のたびにやり直す。
       再開したら、指摘なしで記録した PR は、上と同じく外し直す。
+  - 人が外した PR は、一時停止に伴う戻し（`settlePausedDrafts`）のほかは、ドラフトへ戻さない（PBI-468）。戻す経路（直しの提出・`settleDraft`・`redraftAwaiting`・`markReady` と `undraftMarkedReady` の外す間の変化・`redraftAfterRetarget`）の前に、GitHub の最後のドラフトの切り替えを読んで判定する（`mayRedraft`・`PullRequests.draftHistory`）。
+    GitHub の actor は人も sacty も同じアカウントなので使わず、sacty が外した切り替えのイベント（`ReadyForReviewEvent`）の ID を作業履歴に記録して照合する。
+    1. 今の draft を REST で読み、ドラフトなら今の処理のまま進める（記録しない）。
+    2. draft かタイムラインを読めなければ、戻さない（理由 `unreadable`。次の確認で読み直す）。
+    3. 切り替えが1件も無い、または最後の外しの ID が sacty の外しの記録（`PullRequestUndraftNoted`）にあれば、今と同じく戻す。
+    4. 最後の外しが記録に無く、最後の `PullRequestUndraftNoted` に ID が無い、または前の版の外しの記録（外しを `PullRequestUndraftNoted` で覚える版が付ける `undraftTracked` が無い `PullRequestMarkedReady`・`ready` の `PullRequestRetargeted`）だけがあるとき、または最後が `convert_to_draft` なのにドラフトでないときは、戻さない（`undetermined`）。
+    5. それ以外で最後の外しが記録に無ければ、人が外したので戻さない（`person`）。
+  - sacty の外し（`markReady`・`undraftMarkedReady`・付け替え・検証の後の外し）は、`setDraft` の答え（切り替えの要求を呼んだか `changed`・要求の前の最後の外しの ID `previous`・答えの外しの ID `readyId`）から、`PullRequestUndraftNoted`（PR の番号・`eventId`）を記録する（`noteUndraft`）。
+    - 変化なし（すでに外れていて、切り替えの要求を呼ばなかった）：記録しない（人が外した PR は 5 で `person`）。
+    - 要求の前の外しが無い（読めて0件）・答えの ID がある：その ID で記録する（sacty がドラフトで作った PR の最初の外し）。
+    - 要求の前の外しを読めて、答えの ID が前の ID とも記録済みの ID とも違う：その ID で記録する。同じなら（タイムラインへの反映の遅れ）1回読み直し、両方と違う外しの ID になればその ID で、同じか読めなければ ID なしで記録する。
+    - 要求の前の外しを読めなかった・答えに ID が無い・答えを受け取れなかった：ID なしで記録する（最後の外しが sacty のものか決められないので、戻さない）。答えを受け取れなかったときに、前の記録が ID なしなら重ねない。
+  - 戻さなかったときは、`PullRequestRedraftSkipped`（PR の番号・理由。`person` は外しの `eventId`）を記録する（`noteRedraftSkipped`）。重複は作業履歴から決める。
+    `person` は同じ `eventId` が記録済みなら記録しない。`unreadable` は、最後の記録が `unreadable` で、デーモンの起動の後に読めたことが無ければ記録しない（`draftReadable`）。`undetermined` は PR につき1件。元からドラフトの PR では記録しない。
+  - 重ねた PR の直しの提出は、判定で戻さないとき（draft を読めない場合を含む）も、`pr.stackDraftFailed` にせずに進める。判定が戻すと決めたのに戻せなかったときは、今と同じく止める。
+  - 戻さなかった PR のレビューの回は、今のまま続く（台帳では「指摘なし」を待つ状態のまま）。
+  - 新しい 2 種類のイベント（`PullRequestUndraftNoted`・`PullRequestRedraftSkipped`）を記録した後は、前の版のデーモンが作業履歴を読めず、起動できない（`activity.ts` の `toEvent` が全行を `EventInput` で parse する）。互換の層は作らない。不具合は前の版へ戻さず、直した版を出して直す（[ADR](../adr/20261121-2022-do-not-redraft-pull-request-a-person-marked-ready.md)）。
   - 実装の PR のコミットの日時と題は、実装の工程が終わったとき（`outputAt`）にする（最終レビューの日時が無いため）。
   - 外す要求の答えがドラフトのままなら、記録せずに次の確認でやり直す。
   - 外した後の確認では、指摘なしにした先頭（`reviewedCommit`）とレビューした先頭を比べ、同じ先頭を再レビューしない。
   - 外す・戻す・先頭を読む GitHub の答えは、PR の更新でドラフトに戻すときも含めて `DRAFT_TIMEOUT_MS`（30秒）まで待ち、返らなければ答えを受け取れなかったものとして扱う。
   - 記録した先頭は、指摘なしにした先頭（人が足したコミットを含む）として持ち、依存のある子タスクはそこから重ねる（`reviewedPullRequest`）。
-  - 指摘なしを待つ PR は、台帳の `draft` にかかわらず、デーモンの起動の後に一度 GitHub でドラフトに戻す（`redraftAwaiting`。提出のときに戻せなかった・戻せなかったことの記憶が再起動で消えたときのため）。戻せなければ、指摘なしになるまで確認のたびに戻す。戻せたら、同じ提出では繰り返さない。
+  - 指摘なしを待つ PR は、台帳の `draft` にかかわらず、デーモンの起動の後に一度 GitHub でドラフトに戻す（`redraftAwaiting`。提出のときに戻せなかった・戻せなかったことの記憶が再起動で消えたときのため）。戻せなければ、指摘なしになるまで確認のたびに戻す。戻せたら、同じ提出では繰り返さない。人が外した PR などは、判定（`mayRedraft`）で戻さない。
   外せなければ記録せず、次の PR の確認でやり直す。外す間に親が変わったら（差し戻し・PR の更新）記録しない。
 - sacty は PR の CI を待たない・再実行しない。不安定なテストの台帳に新しい記録はできない。
   指摘なしでドラフトを外した後は、PR の確認で CI を読み、失敗していたら、タスクの詳細と、タスクの一覧の行に出し、読んでいる間に通ったら消す（出すだけ。[指摘なしの後の CI の失敗の表示](approval.md#指摘なしの後の-ci-の失敗の表示)）。
 - 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても、テストの仕組みが無いという判断を使えなくても止めない（`orchestrator.testCommandUnknown`・`orchestrator.noTests*` で止まらない。sacty はテストを実行しないため。[テストの仕組みが無いタスク](#テストの仕組みが無いタスク)）。
 - テストの仕組みが無いタスク（`noTestsReason`）の実装の指示では、用意したテストを提出の前に自分で実行させ、実行したコマンドと結果を実装の説明に書かせる（sacty は申告したテストのコマンドを実行しない）。受け入れは PR のレビューの子タスクが見ると伝える（`NO_TESTS_JUDGE_BY`・`ADDED_TEST_COMMAND_LINE`）。
 
-コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`・`mayRedraft`・`noteUndraft`・`noteRedraftSkipped`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`・`PullRequestUndraftNoted`・`PullRequestRedraftSkipped`）、`packages/core/src/projection.ts`（`reviewedPullRequest`・`Task.draftTrail`）
 
 ### 再現の工程の後
 
@@ -1409,7 +1426,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 ### 実装の PR の作成
 
 - `FinalReviewSkipped` を記録すると、実装の工程を終えずに、PR の作成の待ち（`Task.publishPending`。状態は実行待ち）にする。
-  続けて sacty が、実装の作業領域をコミットしてプッシュし、実装の PR をドラフトで作る（すでに PR があれば更新して、ドラフトに戻す。[最終レビューをしない流れ](#最終レビューをしない流れ)）。
+  続けて sacty が、実装の作業領域をコミットしてプッシュし、実装の PR をドラフトで作る（すでに PR があれば更新して、ドラフトに戻す。人が外した PR などは判定で戻さない。[最終レビューをしない流れ](#最終レビューをしない流れ)）。
   エージェントは使わない。ただし、すでにある PR を更新するときに、人が直した本文と sacty の新しい本文が同じ箇所で重なったら、オーケストレーターのエージェントにまとめさせる（[人が直した本文の更新](approval.md#人が直した本文の更新)。費用はタスクの予算に入れる）。
   コミットの日時は、実装の工程が終わった時刻にする（再開しても同じコミットになる）。
   - コミットの1行目（`commitSubject`・`detectCommitConvention`。PBI-301 A8。実験 S5 r2）：リポジトリが Conventional Commits の形を定めているときだけ、題に種類を付ける（`feat: <題>`）。定めているのは、次のどれか。Commitizen・commitlint の設定のファイル（`.czrc`・`.cz.json`・`commitlint.config.*`・`.commitlintrc*` など）がある。`package.json` に commitlint・commitizen の設定か依存がある。AGENTS.md・CLAUDE.md・CONTRIBUTING・README が Conventional Commits・Commitizen・commitlint に触れるか、`feat:` と `fix:` の両方を例に挙げている。commitlint が1行目の形を独自に決めている設定（`headerPattern`・`parserPreset`）は読み解けないので、定めていないものとして扱う（`package.json` の依存や別のファイルの設定があっても、独自の形があれば優先し、種類を付けない）。定めは、エージェントが書き換えた作業領域ではなく、起点のコミットから読む（`COMMIT_CONVENTION_FILES`。再開しても同じコミットになる。読めなかったときは定めが無いものとして題のまま）。種類は、文書だけの依頼の実装は `docs`、不具合の修正は `fix`、それ以外は `feat`。要求要件・設計の PR のコミットは `docs`。題がすでに種類の付いた形（`feat: …`・`fix(api): …`）なら重ねて付けない。定めが無いリポジトリでは、今までどおり題のまま。2行目以降の `sacty task <ID>` は変えない。既存の PR を引き継ぐタスクが積むコミットも同じ。1行目の長さは変えない（長さの上限を定めるリポジトリでは、長い題が収まらないことがある）。

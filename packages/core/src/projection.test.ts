@@ -2232,7 +2232,11 @@ describe("レビューの工程（PBI-19）", () => {
       scope: [],
       verification: [{ kind: "ran" as const, text: `検証${n}` }],
     });
-    const dispatch = (n: number) => ({ subagents: n, runtime: "claude-code", model: `m${n}` });
+    const dispatch = (n: number) => ({
+      subagents: n,
+      runtime: "claude-code",
+      model: `m${n}`,
+    });
     /** 2 回目以降のレビューの実行（対象の確認から、実行の完了まで）。 */
     const another = (id: string, runId: string, extra: Record<string, unknown>, resolve = true) => [
       // 同じ回の実行し直しは、対象を確かめ直さず、実行待ちに戻して始める
@@ -2241,7 +2245,12 @@ describe("レビューの工程（PBI-19）", () => {
         : ev(id, { type: "StepQueued", payload: { step: "review" } }),
       ev(id, {
         type: "AgentRunStarted",
-        payload: { runId, step: "review", agentId: "a", authMode: "subscription" },
+        payload: {
+          runId,
+          step: "review",
+          agentId: "a",
+          authMode: "subscription",
+        },
       }),
       ev(id, {
         type: "AgentRunCompleted",
@@ -2259,7 +2268,10 @@ describe("レビューの工程（PBI-19）", () => {
       }),
     ];
     const post = (id: string, n: number) =>
-      ev(id, { type: "PullRequestReviewPosted", payload: { url: `https://x/pull/12#r${n}` } });
+      ev(id, {
+        type: "PullRequestReviewPosted",
+        payload: { url: `https://x/pull/12#r${n}` },
+      });
     const restart = (id: string) => ev(id, { type: "ReviewRestarted", payload: {} }, "person");
 
     it("すべての回の記録を回ごとに残し、同じ回の実行し直しはその回だけを置き換える。再レビューで前回の記録に写し、古い回の previousReview からは落とす", () => {
@@ -2275,13 +2287,24 @@ describe("レビューの工程（PBI-19）", () => {
         ...events,
         post("t17", 1),
         restart("t17"),
-        ...another("t17", "r2a", { reviewRecord: record(2), reviewDispatch: dispatch(2) }),
+        ...another("t17", "r2a", {
+          reviewRecord: record(2),
+          reviewDispatch: dispatch(2),
+        }),
         ...another("t17", "r2b", { reviewRecord: null, reviewDispatch: dispatch(3) }, false),
       ];
       const second = project(all).get("t17");
       expect(second?.reviewRecords).toEqual([
-        { round: 1, record: record(1), reviewDispatch: { ...dispatch(1), agentId: "a" } },
-        { round: 2, record: null, reviewDispatch: { ...dispatch(3), agentId: "a" } },
+        {
+          round: 1,
+          record: record(1),
+          reviewDispatch: { ...dispatch(1), agentId: "a" },
+        },
+        {
+          round: 2,
+          record: null,
+          reviewDispatch: { ...dispatch(3), agentId: "a" },
+        },
       ]);
       // 回 2 をもう一度実行し直して、記録のある実行にする
       const rerun = [
@@ -2297,7 +2320,10 @@ describe("レビューの工程（PBI-19）", () => {
         [2, record(4), 4],
       ]);
       // 回 3 の開始時の前回の記録は、回 2 の後の実行の記録と同じ。古い回（回 1）の previousReview からは落とす
-      expect(third?.previousReview).toMatchObject({ round: 2, record: record(4) });
+      expect(third?.previousReview).toMatchObject({
+        round: 2,
+        record: record(4),
+      });
       expect(third?.earlierReviews).toHaveLength(1);
       expect(third?.earlierReviews?.[0]).toMatchObject({ round: 1 });
       expect(third?.earlierReviews?.[0] && "record" in third.earlierReviews[0]).toBe(false);
@@ -8687,14 +8713,21 @@ describe("人に確かめてほしいこと（PBI-301）", () => {
         decided: true,
         remarkTexts: ["指摘 comment:1", "指摘 comment:2"],
         responses: [
-          { remarkId: "implement-1-1", text: "直した", gist: "エラーの文言を直す" },
+          {
+            remarkId: "implement-1-1",
+            text: "直した",
+            gist: "エラーの文言を直す",
+          },
           // 以前の版の記録：gist が無い
           { remarkId: "implement-1-2", text: "直した", status: "declined" },
         ],
       }),
     ).get("t") as Task;
     const [first, second] = task.remarks;
-    expect(first).toMatchObject({ response: "直した", gist: "エラーの文言を直す" });
+    expect(first).toMatchObject({
+      response: "直した",
+      gist: "エラーの文言を直す",
+    });
     expect(second).toMatchObject({ response: "直した", status: "declined" });
     expect(second?.gist).toBeUndefined();
     expect("gist" in RemarkResponse.parse({ remarkId: "a", text: "b" })).toBe(false);
@@ -9755,7 +9788,12 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
   const started = (id: string, runId: string) =>
     ev(id, {
       type: "AgentRunStarted",
-      payload: { runId, step: "review", agentId: "a", authMode: "subscription" },
+      payload: {
+        runId,
+        step: "review",
+        agentId: "a",
+        authMode: "subscription",
+      },
     });
   const finished = (id: string, runId: string, costUsd: number, extra: Record<string, unknown>) =>
     ev(id, {
@@ -9787,7 +9825,10 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
       type: "PullRequestReviewPosted",
       payload: { url: "https://x/pull/12#pullrequestreview-1" },
     }),
-    ev(id, { type: "ReviewRestarted", payload: { reason: "updated", commit: H2 } }),
+    ev(id, {
+      type: "ReviewRestarted",
+      payload: { reason: "updated", commit: H2 },
+    }),
     ev(id, { type: "ReviewTargetResolved", payload: target(H2) }),
     started(id, "r2"),
   ];
@@ -9808,7 +9849,10 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
     expect(before?.reviewRecords?.map((r) => r.round)).toEqual([1, 2]);
     const stopped = project([
       ...events,
-      ev(id, { type: "ReviewRunStopped", payload: { reason: "head_changed", from: H2, to: H3 } }),
+      ev(id, {
+        type: "ReviewRunStopped",
+        payload: { reason: "head_changed", from: H2, to: H3 },
+      }),
     ]).get(id);
     expect(stopped?.reviewVerdicts?.map((v) => v.round)).toEqual([1]);
     expect(stopped?.reviewRecords?.map((r) => r.round)).toEqual([1]);
@@ -9830,7 +9874,10 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
     // 次の対象を確かめると、reviewStop は消える。始め直した回の previousReview には、打ち切った回の記録を使わない
     const resumed = project([
       ...events,
-      ev(id, { type: "ReviewRunStopped", payload: { reason: "head_changed", from: H2, to: H3 } }),
+      ev(id, {
+        type: "ReviewRunStopped",
+        payload: { reason: "head_changed", from: H2, to: H3 },
+      }),
       ev(id, { type: "ReviewTargetResolved", payload: target(H3) }),
       started(id, "r3"),
       finished(id, "r3", 0, { reviewVerdict: "no_findings" }),
@@ -9838,7 +9885,10 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
         type: "PullRequestReviewPosted",
         payload: { url: "https://x/pull/12#pullrequestreview-3" },
       }),
-      ev(id, { type: "ReviewRestarted", payload: { reason: "updated", commit: H3 } }),
+      ev(id, {
+        type: "ReviewRestarted",
+        payload: { reason: "updated", commit: H3 },
+      }),
     ]).get(id);
     expect(resumed?.reviewStop).toBeUndefined();
     expect(resumed?.reviewVerdicts?.map((v) => v.round)).toEqual([1, 2]);
@@ -9882,7 +9932,13 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
       ...secondRoundRunning(id),
       ev(id, {
         type: "AgentRunFailed",
-        payload: { runId: "r2", step: "review", agentId: "a", reason: "error", message: "x" },
+        payload: {
+          runId: "r2",
+          step: "review",
+          agentId: "a",
+          reason: "error",
+          message: "x",
+        },
       }),
       ev(id, { type: "TaskPaused", payload: { reason: "error" } }),
     ];
@@ -9890,7 +9946,10 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
     expect(() =>
       project([
         ...paused,
-        ev(id, { type: "ReviewRunStopped", payload: { reason: "head_changed", from: H2, to: H3 } }),
+        ev(id, {
+          type: "ReviewRunStopped",
+          payload: { reason: "head_changed", from: H2, to: H3 },
+        }),
       ]),
     ).toThrow(/no unposted review run to stop/);
     // 投稿した後（見守り・完了）も記録できない
@@ -9918,7 +9977,10 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
           type: "ReviewRunStopped",
           payload: { reason: "head_changed", from: H2, to: H3 },
         }),
-        ev(waiting, { type: "ReviewRunStopped", payload: { reason: "merged", from: H3 } }),
+        ev(waiting, {
+          type: "ReviewRunStopped",
+          payload: { reason: "merged", from: H3 },
+        }),
       ]),
     ).toThrow(/no unposted review run to stop/);
   });
@@ -9927,8 +9989,14 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
     const id = "t-merged";
     const task = project([
       ...secondRoundRunning(id),
-      ev(id, { type: "ReviewRunStopped", payload: { reason: "merged", from: H2, runIds: ["r2"] } }),
-      ev(id, { type: "TaskCancelled", payload: { reason: "pull_request_merged", cleanup: [] } }),
+      ev(id, {
+        type: "ReviewRunStopped",
+        payload: { reason: "merged", from: H2, runIds: ["r2"] },
+      }),
+      ev(id, {
+        type: "TaskCancelled",
+        payload: { reason: "pull_request_merged", cleanup: [] },
+      }),
     ]).get(id);
     expect(task?.status).toBe("cancelled");
     expect(task?.reviewStop).toBeUndefined();
@@ -9944,9 +10012,15 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
       finished(id, "r1", 0, { reviewVerdict: "suggestions" }),
       ev(id, {
         type: "PullRequestReviewPosted",
-        payload: { url: "https://x/pull/12#pullrequestreview-1", latestCommit: H2 },
+        payload: {
+          url: "https://x/pull/12#pullrequestreview-1",
+          latestCommit: H2,
+        },
       }),
-      ev(id, { type: "ReviewRestarted", payload: { reason: "updated", commit: H2 } }),
+      ev(id, {
+        type: "ReviewRestarted",
+        payload: { reason: "updated", commit: H2 },
+      }),
     ]).get(id);
     expect(task?.previousReview?.latestCommit).toBe(H2);
   });

@@ -93,7 +93,13 @@ export const OrgUrl = z
     if (problem) ctx.addIssue({ code: "custom", message: code(problem) });
   });
 
-export type GitHubRepo = { url: string; host: string; owner: string; name: string; path: string };
+export type GitHubRepo = {
+  url: string;
+  host: string;
+  owner: string;
+  name: string;
+  path: string;
+};
 
 /** リポジトリの URL を読む（読めなければ undefined）。 */
 export function parseRepoUrl(url: string): GitHubRepo | undefined {

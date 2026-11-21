@@ -33,7 +33,10 @@ describe("デーモンの文言（PBI-11）", () => {
     );
     expect(
       renderMessage(
-        { code: "project.sourceTaken", params: { scope: "team", target: "a", project: "b" } },
+        {
+          code: "project.sourceTaken",
+          params: { scope: "team", target: "a", project: "b" },
+        },
         "ja",
       ),
     ).toBe("project.sourceTaken");
@@ -63,14 +66,25 @@ describe("デーモンの文言（PBI-11）", () => {
     expect(tooMany).toEqual({ code: "input.tooMany", params: { maximum: 50 } });
 
     const longRef = first(definition([], { repo: "ctx", ref: "a".repeat(201) }));
-    expect(longRef).toEqual({ code: "input.tooLong", params: { maximum: 200 } });
+    expect(longRef).toEqual({
+      code: "input.tooLong",
+      params: { maximum: 200 },
+    });
     expect(renderMessage(longRef, "ja")).toBe("200文字以内で入力してください。");
     expect(renderMessage(longRef, "en")).toBe("Keep it within 200 characters.");
 
     const unknown = first(
-      ProjectExport.safeParse({ sacty: "project", version: 5, project: { name: "x" }, token: "t" }),
+      ProjectExport.safeParse({
+        sacty: "project",
+        version: 5,
+        project: { name: "x" },
+        token: "t",
+      }),
     );
-    expect(unknown).toEqual({ code: "input.unknownKeys", params: { keys: "token" } });
+    expect(unknown).toEqual({
+      code: "input.unknownKeys",
+      params: { keys: "token" },
+    });
     expect(renderMessage(unknown, "ja")).toBe("知らない項目があります（token）。");
 
     const negative = first(ResumeTaskInput.safeParse({ capUsd: -1 }));
@@ -142,7 +156,9 @@ describe("実装が終わらないための一時停止の理由（PBI-353）", 
 
 describe("オーケストレーターを実行できなかった理由（PBI-34）", () => {
   it("理由の文の終わりの句点を重ねない", () => {
-    const detail = message("secret.opSignedOut", { ref: "op://Work/Bedrock/credential" });
+    const detail = message("secret.opSignedOut", {
+      ref: "op://Work/Bedrock/credential",
+    });
     const ja = renderMessage(message("orchestrator.failed", { detail }), "ja");
     expect(ja).not.toContain("。。");
     expect(ja).toMatch(/再開してください。再開すると、工程の選択からやり直します。$/);

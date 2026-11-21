@@ -30,7 +30,13 @@ export function withoutFormatPlaceholders(name: string): string {
   return name.replace(FORMAT_PLACEHOLDER, TEST_NAME_VALUE_MARK).replace(/%%/g, "%");
 }
 
-type Parts = { file: string; middle: string[]; title: string; whole: string; key: string };
+type Parts = {
+  file: string;
+  middle: string[];
+  title: string;
+  whole: string;
+  key: string;
+};
 
 function partsOf(name: string): Parts {
   const whole = name.trim().replace(/\s+/g, " ");
@@ -40,7 +46,13 @@ function partsOf(name: string): Parts {
   const middle = segments.slice(1, -1);
   const title = segments.at(-1) ?? "";
   // 区切りの書き方（`›` と ` > `）や空白の違いでは別のテストにしない、判定のためのキー（PR #304 のレビュー）
-  return { file, middle, title, whole, key: [file, ...middle, title].join("\u0000") };
+  return {
+    file,
+    middle,
+    title,
+    whole,
+    key: [file, ...middle, title].join("\u0000"),
+  };
 }
 
 /** a の describe の並びが、b の末尾と一致する（空も含む。b より短い）。a の名前は b の名前の接頭辞を省いたもの。 */

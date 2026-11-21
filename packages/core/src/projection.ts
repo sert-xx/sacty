@@ -148,6 +148,36 @@ export function canOverrideVerification(task: Task): boolean {
   );
 }
 
+/** PR ごとのドラフトの切り替えの記録（Task.draftTrail。PBI-468）。 */
+export type PullRequestDraftTrail = {
+  /** sacty が外した切り替えの ID（PullRequestUndraftNoted の eventId）。 */
+  undraftIds: string[];
+  /** 最後の PullRequestUndraftNoted が ID を持つか。その記録が無ければ無い。 */
+  lastUndraftHasId?: boolean;
+  /** 前の版が外した記録（PullRequestMarkedReady・ready の PullRequestRetargeted）がある。 */
+  previousVersionUndraft?: true;
+  /** 人が外したので戻さなかった外しの ID（PullRequestRedraftSkipped の person）。 */
+  skippedPersonIds: string[];
+  /** 最後の PullRequestRedraftSkipped の理由。 */
+  lastSkipped?: "person" | "unreadable" | "undetermined";
+  /** 決められなかった（undetermined）ので戻さなかった記録がある。 */
+  undeterminedSkipped?: true;
+};
+
+/** PR のドラフトの切り替えの記録を更新する（前の状態の写しは書き換えない。PBI-468）。 */
+function updateDraftTrail(
+  task: Task,
+  number: number,
+  change: (trail: PullRequestDraftTrail) => PullRequestDraftTrail,
+): void {
+  const key = String(number);
+  const trail = task.draftTrail?.[key] ?? {
+    undraftIds: [],
+    skippedPersonIds: [],
+  };
+  task.draftTrail = { ...task.draftTrail, [key]: change(trail) };
+}
+
 /** sacty が PR に書いた本文の記録（Task.pullRequestBodies）のキー（PBI-334）。 */
 export function pullRequestBodyKey(repo: string, number: number): string {
   return `${repo}#${number}`;
@@ -927,6 +957,11 @@ export type Task = {
    */
   pullRequestBodies?: Record<string, string>;
   /**
+   * PR ごとの、ドラフトの切り替えの記録（キーは PR の番号。PBI-468）。sacty が外した切り替えの ID と、ドラフトへ戻さなかった記録
+   * から、人が外した PR をドラフトへ戻さない判定と、記録の重複の判定を、作業履歴から復元する。
+   */
+  draftTrail?: Record<string, PullRequestDraftTrail>;
+  /**
    * PR のリスク評価の最後のもの（PullRequestRiskAssessed。PBI-362）。assessment が無ければ、評価できなかった（reason に理由）。
    * PR の説明（via が publish）と、投稿するレビューのコメント（via が review）に載せる。
    */
@@ -1253,7 +1288,13 @@ export type Task = {
    * from は打ち切った回がレビューしていた先頭、to は打ち切りを決めたときの新しい先頭、at はその時刻。repo・number は、消した
    * reviewTarget の PR（待ちの間の PR の先頭を、source の無いタスクも同じ PR で読むため）。次の ReviewTargetResolved で消える。
    */
-  reviewStop?: { from: string; to: string; at: string; repo?: string; number?: number };
+  reviewStop?: {
+    from: string;
+    to: string;
+    at: string;
+    repo?: string;
+    number?: number;
+  };
   /**
    * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。PBI-411）。名前は「対象を確かめた時刻」だが、実行を始める
    * たびに上書きする（対象を確かめた時刻が入っているのは、実行を始める前だけ）。レビューが PR のコメントを読むのは、この後
@@ -2546,6 +2587,33 @@ export function applyEvent(
       };
       break;
 
+    case "PullRequestUndraftNoted": {
+      const id = event.payload.eventId;
+      updateDraftTrail(task, event.payload.number, (trail) => ({
+        ...trail,
+        lastUndraftHasId: id !== undefined,
+        undraftIds:
+          id !== undefined && !trail.undraftIds.includes(id)
+            ? [...trail.undraftIds, id]
+            : trail.undraftIds,
+      }));
+      break;
+    }
+
+    case "PullRequestRedraftSkipped": {
+      const { reason, eventId } = event.payload;
+      updateDraftTrail(task, event.payload.number, (trail) => ({
+        ...trail,
+        lastSkipped: reason,
+        skippedPersonIds:
+          reason === "person" && eventId !== undefined
+            ? [...trail.skippedPersonIds, eventId]
+            : trail.skippedPersonIds,
+        ...(reason === "undetermined" ? { undeterminedSkipped: true as const } : {}),
+      }));
+      break;
+    }
+
     case "PullRequestBodyResolved":
       // 費用は chargeBudget が足す。本文は、更新した後の PullRequestBodyWritten で記録する
       break;
@@ -2728,6 +2796,12 @@ export function applyEvent(
       if (!pr || pr.number !== event.payload.number) {
         throw new ActivityIntegrityError(event, "not the pull request of the task");
       }
+      if (event.payload.ready && !event.payload.undraftTracked) {
+        updateDraftTrail(task, event.payload.number, (trail) => ({
+          ...trail,
+          previousVersionUndraft: true,
+        }));
+      }
       const { draft: _draft, ...rest } = pr;
       task.pullRequest = {
         ...(event.payload.ready ? rest : pr),
@@ -2806,6 +2880,12 @@ export function applyEvent(
         (!pr.awaitingReview && pr.reviewedCommit === undefined)
       ) {
         throw new ActivityIntegrityError(event, "the pull request is not waiting for the review");
+      }
+      if (!event.payload.undraftTracked) {
+        updateDraftTrail(task, event.payload.number, (trail) => ({
+          ...trail,
+          previousVersionUndraft: true,
+        }));
       }
       const { draft: _draft, awaitingReview: _awaiting, suggestionsLeft: _left, ...rest } = pr;
       task.pullRequest = {

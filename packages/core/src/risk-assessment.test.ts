@@ -27,7 +27,10 @@ const ev = (taskId: string, input: EventInput, actor: ActivityEvent["actor"] = "
 const created = (taskId: string) =>
   ev(
     taskId,
-    { type: "TaskCreated", payload: { title: "title", body: "body", start: "sacty" } },
+    {
+      type: "TaskCreated",
+      payload: { title: "title", body: "body", start: "sacty" },
+    },
     "person",
   );
 
@@ -85,7 +88,13 @@ describe("PR のリスク評価の記録（PBI-362）", () => {
       created("t1"),
       ev("t1", {
         type: "PullRequestRiskAssessed",
-        payload: { via: "publish", commit: "c1", assessment, agentId: "a", costUsd: 0.25 },
+        payload: {
+          via: "publish",
+          commit: "c1",
+          assessment,
+          agentId: "a",
+          costUsd: 0.25,
+        },
       }),
       ev("t1", {
         type: "PullRequestRiskAssessed",

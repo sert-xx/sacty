@@ -31,7 +31,9 @@ describe("CreateTaskInput", () => {
   });
 
   it("タイトルが上限を超えると、文言のコードで拒否する（画面の言語の文言にできる）", () => {
-    const parsed = CreateTaskInput.safeParse({ title: "あ".repeat(TASK_TITLE_MAX + 1) });
+    const parsed = CreateTaskInput.safeParse({
+      title: "あ".repeat(TASK_TITLE_MAX + 1),
+    });
     expect(parsed.success).toBe(false);
     expect(parsed.error?.issues[0]?.path).toEqual(["title"]);
     expect(parsed.error?.issues[0]?.message).toBe("input.titleTooLong");
@@ -78,8 +80,10 @@ describe("PR に付けるラベルの予定（PBI-88・PBI-99）", () => {
       }).payload,
     ).toEqual({ ...base, label: "sacty-review" });
     expect(
-      EventInput.parse({ type: "PullRequestPublished", payload: { ...base, intakeLabel: "sacty" } })
-        .payload,
+      EventInput.parse({
+        type: "PullRequestPublished",
+        payload: { ...base, intakeLabel: "sacty" },
+      }).payload,
     ).toEqual(base);
   });
 
@@ -118,7 +122,9 @@ describe("ResumeTaskInput の補足", () => {
   });
 
   it("LF にそろえても上限を超える補足は、再開用の誤りで断る", () => {
-    const result = ResumeTaskInput.safeParse({ note: `${"あ".repeat(RESUME_NOTE_MAX)}\r\nい` });
+    const result = ResumeTaskInput.safeParse({
+      note: `${"あ".repeat(RESUME_NOTE_MAX)}\r\nい`,
+    });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toContain("input.resumeNoteTooLong");
   });
@@ -139,7 +145,9 @@ describe("差し戻しの原因（PBI-268）", () => {
     // PBI-267 までの作業履歴には、cause が無い
     expect(EventInput.parse(changes()).payload).not.toHaveProperty("cause");
     for (const cause of ["guardian_missed", "base_changed", "new_request"]) {
-      expect(EventInput.parse(changes({ cause })).payload).toMatchObject({ cause });
+      expect(EventInput.parse(changes({ cause })).payload).toMatchObject({
+        cause,
+      });
     }
     expect(EventInput.safeParse(changes({ cause: "other" })).success).toBe(false);
   });
@@ -201,7 +209,10 @@ describe("CI の一覧が通ったか（ciAllPassed。PBI-375）", () => {
   });
 
   it("消したことの記録（PullRequestCiRecovered）は、PR の番号と先頭のコミットを持つ", () => {
-    const recovered = (payload: object) => ({ type: "PullRequestCiRecovered", payload });
+    const recovered = (payload: object) => ({
+      type: "PullRequestCiRecovered",
+      payload,
+    });
     expect(EventInput.safeParse(recovered({ number: 7, commit: "abc" })).success).toBe(true);
     expect(EventInput.safeParse(recovered({ number: 7, commit: "" })).success).toBe(false);
     expect(EventInput.safeParse(recovered({ number: 0, commit: "abc" })).success).toBe(false);
