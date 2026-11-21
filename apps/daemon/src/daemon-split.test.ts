@@ -839,7 +839,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     // 本文は、付け替えの後にレビューの子タスクが指摘なしにしてから外すと案内する（PR #348 5回目のレビュー提案）
     const stackedBody = pulls.calls.findLast((c) => c.body.includes("に重ねています"))?.body ?? "";
     expect(stackedBody).toContain(
-      "sacty のレビューの子タスクがこの PR をレビューします。指摘なしになると、ドラフトを外します。",
+      "Sacty のレビューの子タスクがこの PR をレビューします。指摘なしになると、ドラフトを外します。",
     );
     await service.checkPullRequests();
     expect(taskOf(service, b).reviewTasks).toBeUndefined();

@@ -276,7 +276,7 @@ The "Needs you" cards are not filtered or cut.
 
 The task details look like this.
 
-![Task details (the title, status, steps, and tabs fixed at the top, the notice for a person and the Sacty AI review, the description, deliverables, PR, and gathered information on the Overview tab, and the properties and recent activity in the right column)](images/task-detail.en.png)
+![Task details (the title, status, steps, and tabs fixed at the top, the notice for a person and the sacty AI review, the description, deliverables, PR, and gathered information on the Overview tab, and the properties and recent activity in the right column)](images/task-detail.en.png)
 
 The top part of the screen shows the following.
 
@@ -595,7 +595,7 @@ Steps that created a PR are not approved from the sacty web UI (the web UI guide
 
 The details of a task waiting for its implementation PR to be merged look like this.
 
-![Details of a task waiting for its implementation PR to be merged (the "Review on the PR" button and the Sacty AI review below it)](images/task-pull-request.en.png)
+![Details of a task waiting for its implementation PR to be merged (the "Review on the PR" button and the sacty AI review below it)](images/task-pull-request.en.png)
 
 When a step is awaiting approval, decide as follows.
 
@@ -733,6 +733,7 @@ If you operate sacty, keep the following in mind.
 
 In a redo started by PR comments, there can be things you have to check yourself: whether your comment was read as you meant it.
 In that case, "N things for you to check" appears on the approval screen and, in the task details, under the approval notice.
+The same content is posted as a comment on the PR, starting with "Sacty：人に確かめてほしいことがあります". The sentence with the task-screen link is followed by "タスクの画面は、依頼した人のマシンでだけ開けます。" (the task screen opens only on the requester's machine) when the screen URL is `127.0.0.1`, `localhost`, or `[::1]`.
 If the result is not what you meant, comment on the PR or request changes on the task screen.
 
 It appears in the following cases.
@@ -970,8 +971,14 @@ When the body follows the template's headings, sacty fills it as follows.
 
 When sacty uses its own format, the implementation PR body looks as follows.
 
-- The "結論" (conclusion) section at the top holds a summary of the change and sacty's review (the child task that reviews the PR reviews it and posts the review).
-- The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging.
+- The "結論" (conclusion) section at the top holds only a summary of the change and the last fix (followed by the record of moving on despite a failure and what you should confirm, if any).
+- The "レビューの進め方" (How the review goes) section after it has, one sentence per item, Sacty's review (the child task that reviews the PR reviews it and posts the review, the draft is removed when there are no findings, and CI results are checked on the PR) and the AI review state.
+  In a body that follows a template, the same items are at the end of the body, before the approval guidance.
+- When an item or the list of what you should confirm, the findings of a record of moving on despite a failure, or the content of a child task is long, the full text goes into the collapsible section "省いた続き" of the body.
+  When the whole body exceeds the limit (65,000 characters) and its end is cut, the number of omitted characters and GitHub's limit are written.
+- The approved requirements and design are given as key points and a link to the PR approved by merging.
+  When there is no PR approved by merging (approved on the screen), the full text goes into a collapsible section of the body.
+  When putting it in would push the body over the limit, the full text goes into Sacty comments and the body links to that comment (the comments are rewritten each time the body is rebuilt).
 - The risk assessment is not put in the body ([PR risk assessment](#pr-risk-assessment)).
 - The PR of a child task of a split has a "この PR の範囲（分割の子タスク）" (scope of this PR) section ([Scope of the PR of a child task of a split](#scope-of-the-pr-of-a-child-task-of-a-split)).
 - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated).
@@ -1168,7 +1175,7 @@ The implementation PR is reviewed by the child task that reviews the PR, and onc
 From the end of the Implementation step to the merge, things go in this order.
 
 1. When the Implementation step finishes, sacty pushes the implementation, opens the implementation PR as a draft, and creates the child task that reviews the PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
-   The conclusion of the PR body gets a "sacty のレビュー" line.
+   The "レビューの進め方" section of the PR body gets a note about Sacty's review.
 2. The child task reviews the PR and posts the review to the PR. It also reads the CI result at that point.
    - A CI failure caused by the change becomes a "changes required" finding.
    - A failure unrelated to the change is written in the review body as something a person should check.
@@ -1377,7 +1384,7 @@ The PR of a child task of a split achieves only a part of the parent task.
 Both the PR body and sacty's review show how far the scope of that PR goes.
 
 - The "この PR の範囲（分割の子タスク）" section of the PR body carries the parent task's title and the child task's content (what to achieve, the acceptance criteria, and what is out of scope, as the task split wrote them) as it is.
-  When the content is long, only the first part is carried, and you can see the rest on sacty's task screen.
+  When the content is long, only the first part is carried, and the rest goes into the collapsible section "省いた続き" of the body.
 - The section stays when the implementation is redone and the PR is updated.
 - The child task that reviews the PR receives the scope of the child task and reviews with it.
   Even when what is written as out of scope (what another child task handles) is not implemented in that PR, it is not raised as a "changes required" comment.
@@ -1637,6 +1644,7 @@ Resume the task as follows, depending on why it stopped.
 | The budget limit | Enter the new cumulative limit and press "Change cap and resume" (for the budget settings, see [config.yaml settings](config.en.md#budget)) |
 | An AI usage limit, an authentication error, an error, and so on | Check the cause, then press "Resume" |
 | The implementation does not finish, or a rework changed nothing | Check the reason, change the step's agent if needed, then press "Resume" ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)) |
+| A finding a rework cannot resolve | The AI review left a finding it marked as unresolvable by a rework and needing your decision, so the task stopped without starting a rework. Comment on the PR with your approval or direction and the task resumes with it. You can also resume from the screen with a note. To accept the finding as it is, merge the PR (it is approved without applying the findings that caused the pause) |
 | The chosen agent can no longer be used | Choose the agent again, then resume ([Changing a step's agent](#changing-a-steps-agent)) |
 | AI review suggestions remained | The draft is removed and the task waits for approval. Check the PR and the reasons for the declined suggestions. Comment on the PR that a suggestion you want fixed needs action ([Sorting AI review suggestions](#sorting-ai-review-suggestions)) |
 
@@ -1901,8 +1909,8 @@ Besides creating a security fix task from a report, you can create one in "Creat
 1. In Investigate, the agent confirms the problem and decides the fix scope (the files that may change, the dependencies to raise, the command that confirms the fix). The scope does not need your approval.
 2. In Implement, the agent fixes only inside the scope, with the smallest change that solves the problem. It does not mix in refactoring, reformatting, or unrelated fixes.
 3. sacty checks the diff against the scope and then opens the PR. The child task that reviews the PR checks that the change is minimal (viewpoint `SEC-MIN`).
-   - It is a violation if files outside the scope changed, or more than 300 lines changed excluding lockfiles. The violation appears in the PR body, the child task makes it a "changes required" finding, and sacty fixes the implementation.
-   - Regression test files may be added outside the scope (their lines are counted).
+   - It is a violation if files outside the scope changed. The number of changed lines is not a violation. The violation appears in the PR body, the child task makes it a "changes required" finding, and sacty fixes the implementation.
+   - Regression test files may be added outside the scope.
 4. The PR body shows "修正の範囲（セキュリティ対応）". Check that the diff stays within the scope, and approve by merging. A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) does not change the PR body, so check the scope in the Investigate result in the task details.
 
 When the problem cannot be fixed without changing something outside the scope, the agent writes the reason and the scope to widen in the implementation notes. You cannot request changes on the preliminary Investigate, so cancel the task, press "Rerun", and write the scope to widen in "Additional notes". The rerun task also proceeds as "Security fix".

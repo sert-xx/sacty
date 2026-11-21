@@ -571,6 +571,26 @@ export function nextAuditDive(audit: TaskAuditState): StepKey | undefined {
   return audit.survey?.concerns.find((c) => !done.has(c.step))?.step;
 }
 
+/** 印で止めた回（PBI-452。Task.decisionPauses）。文は、記録の前に秘密の値を伏せたもの。 */
+export type DecisionPause = {
+  /** 止めた PR の先頭のコミット。 */
+  commit: string;
+  /** 印の付いた指摘と、直しでは解消できないとされた根拠。 */
+  findings: { finding: string; reason: string }[];
+  /**
+   * 止めた回の指摘の出どころのレビューの回（`<レビューのタスク ID>:<回>`）。再開の後、同じ回の指摘だけを、判定し直しの回の止め方
+   * （PBI-357）の対象から外すため。
+   */
+  from: string[];
+  /** 人の判断が済んだか（再開した）。 */
+  decided?: true;
+  /**
+   * 人の判断の文。note：画面・MCP の再開の補足（再開した人）。comment：PR の人のコメント（by が person。author は投稿者のログイン）。
+   * 出どころを確かめられない人のコメントと、AI のレビューの文は入れない。
+   */
+  decisions: { text: string; source: "note" | "comment"; author?: string }[];
+};
+
 export type Task = {
   id: string;
   projectId: string;
@@ -792,6 +812,12 @@ export type Task = {
      */
     outputs?: Record<number, string>;
   };
+  /**
+   * 直しでは解消できず人の判断が要る、と PR のレビューが印を付けた要修正で止めた回（TaskPaused の reason が needs_decision）の
+   * 一覧（古い順。PBI-452）。止めた回ごとに、止めた PR の先頭・印の付いた指摘と根拠・人の判断の文を持つ。人の判断が済んだ先頭では、
+   * 同じ印で止めない。以後のレビューの子の指示に、止めた指摘と人の判断の文を渡す。
+   */
+  decisionPauses?: DecisionPause[];
   pausedReason?: PauseReason;
   /** 止まった理由の詳しい説明。 */
   pausedMessage?: DaemonText;
@@ -1324,6 +1350,12 @@ export type Task = {
      * review）。無い位置の指摘は、出どころの回が分からない。
      */
     aiReviewFrom?: Record<string, string>;
+    /**
+     * remarks のうち、出どころを確かめられない人（PR の作者でも、リポジトリの OWNER・MEMBER・COLLABORATOR でもない）の指摘の位置
+     * （PBI-452。`PullRequestReviewImported` の items の by）。印で止めるかの判断が、人の指摘に数えないため。判断・選り分けの前だけ
+     * 使う（それ以降は引き継がない）。無ければ、AI のレビューでない指摘はすべて人の指摘。
+     */
+    unverified?: number[];
     /**
      * 提案の選り分けが済んでいる（SuggestionsTriaged。PBI-436。起動し直しても、選り分けを実行し直さない）。declined は、
      * 指摘の位置（文字列）ごとの、その指摘の中で対応しないとした提案（直しの指示と返信に使う）。
@@ -2561,7 +2593,14 @@ export function applyEvent(
       }
       passVerification(task);
       task.pullRequestCi = undefined;
-      task.securityScopeCheck = event.payload.securityScope;
+      {
+        // 以前の版は、変えた行の数の超過も違反に記録した（outside が空）。いまは行の数で違反にしないので、違反なしとして読む
+        const check = event.payload.securityScope;
+        task.securityScopeCheck =
+          check?.violation && check.violation.outside.length === 0
+            ? { ...check, violation: undefined }
+            : check;
+      }
       break;
 
     case "PullRequestMarkedReady": {
@@ -2841,7 +2880,10 @@ export function applyEvent(
       // 一時停止の間（と、再開した直後の、止まった工程を走り直す前）に届いた指摘は、未反映として残す（PBI-279）。
       // 差し戻しにはしない。何回かに分けて届いた指摘は続けて足す
       if (event.payload.held) {
-        const reworking = reworkingPullRequest(task);
+        // 印で止めた回（承認待ちのまま止めている）は、止めている PR（要求要件・設計の PR も）の指摘を残す（PBI-452）
+        const decisionPaused = task.status === "paused" && task.pausedReason === "needs_decision";
+        const reworking =
+          reworkingPullRequest(task) ?? (decisionPaused ? gatePullRequest(task) : undefined);
         if (!reworking || task.status === "running") {
           throw new ActivityIntegrityError(
             event,
@@ -2870,12 +2912,40 @@ export function applyEvent(
           ...(task.pendingReview?.aiReviewFrom ?? {}),
           ...reviewFromOf(event.payload.items, before),
         };
+        const heldUnverified = [
+          ...(task.pendingReview?.unverified ?? []),
+          ...event.payload.items.flatMap((item, i) =>
+            item.by === "unverified" ? [before + i] : [],
+          ),
+        ];
         task.pendingReview = {
           keys: [...(task.pendingReview?.keys ?? []), ...heldKeys],
           remarks: [...(task.pendingReview?.remarks ?? []), ...event.payload.remarks],
           ...(heldAi.length > 0 ? { aiReview: heldAi } : {}),
           ...(Object.keys(heldFrom).length > 0 ? { aiReviewFrom: heldFrom } : {}),
+          ...(heldUnverified.length > 0 ? { unverified: heldUnverified } : {}),
         };
+        // 印で止めている間に届いた、人（by が person）のコメントは、人の判断の文として残す。出どころを確かめられない人と、
+        // AI のレビューの文は残さない
+        if (decisionPaused && task.decisionPauses?.length) {
+          const comments = event.payload.items.flatMap((item, i) =>
+            item.by === "person" && item.source !== "sacty_review"
+              ? [
+                  {
+                    text: event.payload.remarks[i] ?? "",
+                    source: "comment" as const,
+                    author: item.author,
+                  },
+                ]
+              : [],
+          );
+          if (comments.length > 0) {
+            const pauses = [...task.decisionPauses];
+            const last = pauses[pauses.length - 1] as DecisionPause;
+            pauses[pauses.length - 1] = { ...last, decisions: [...last.decisions, ...comments] };
+            task.decisionPauses = pauses;
+          }
+        }
         break;
       }
       // 実装の PR と、要求要件・設計の PR（PBI-57）の指摘
@@ -2896,11 +2966,15 @@ export function applyEvent(
         item.source === "sacty_review" ? [i] : [],
       );
       const aiReviewFrom = reviewFromOf(event.payload.items, 0);
+      const unverified = event.payload.items.flatMap((item, i) =>
+        item.by === "unverified" ? [i] : [],
+      );
       task.pendingReview = {
         keys,
         remarks: event.payload.remarks,
         ...(aiReview.length > 0 ? { aiReview } : {}),
         ...(Object.keys(aiReviewFrom).length > 0 ? { aiReviewFrom } : {}),
+        ...(unverified.length > 0 ? { unverified } : {}),
       };
       break;
     }
@@ -3766,6 +3840,17 @@ export function applyEvent(
       // triageStop は一時停止で消さない（以前の版が一時停止させたタスクも、再開で同じ先頭のドラフトを外す。PBI-440）
       task.pausedReason = event.payload.reason;
       task.pausedMessage = event.payload.message;
+      if (event.payload.reason === "needs_decision") {
+        task.decisionPauses = [
+          ...(task.decisionPauses ?? []),
+          {
+            commit: event.payload.commit ?? "",
+            findings: needsDecisionFindings(event.payload.message),
+            from: [...new Set(Object.values(task.pendingReview?.aiReviewFrom ?? {}))],
+            decisions: [],
+          },
+        ];
+      }
       task.unstoppedRuns = event.payload.unstoppedRuns;
       task.pausedCancelledChildren = event.payload.cancelledChildren;
       break;
@@ -4171,6 +4256,20 @@ export function applyEvent(
         };
       }
       task.pausedCancelledChildren = undefined;
+      // 印で止めた回は、再開で人の判断が済んだことにする。再開の補足は、人の判断の文として残す（PBI-452）
+      if (task.pausedReason === "needs_decision" && task.decisionPauses?.length) {
+        const pauses = [...task.decisionPauses];
+        const last = pauses[pauses.length - 1] as DecisionPause;
+        pauses[pauses.length - 1] = {
+          ...last,
+          decided: true,
+          decisions: [
+            ...last.decisions,
+            ...(event.payload.note ? [{ text: event.payload.note, source: "note" as const }] : []),
+          ],
+        };
+        task.decisionPauses = pauses;
+      }
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
       // 人が再開のときに足した補足は、説明の後に足す（後の工程とオーケストレーターは説明を読む）
@@ -4432,7 +4531,8 @@ function withoutNoAction(
 
 /**
  * 一時停止の間（と、再開した直後の、止まった工程を走り直す前）に届いて、まだ反映していない実装の PR の指摘（PBI-279）。
- * 承認待ちで取り込んだ指摘（pendingReview）とは、承認ゲートが無いことで区別する。再開したあと、止まった工程を走り直す前に、
+ * 承認待ちで取り込んだ指摘（pendingReview）とは、承認ゲートが無いことで区別する（ただし、印で止めた回（PBI-452）は、承認ゲートを
+ * 残したまま止めるので、実装の PR では、取り込んだ指摘もここで返す。要求要件・設計の PR の回は返さない）。再開したあと、止まった工程を走り直す前に、
  * ゴールガーディアンに戻し先を判断させて、その工程に差し戻す。
  */
 export function heldReview(task: Task): NonNullable<Task["pendingReview"]> | undefined {
@@ -5342,6 +5442,21 @@ export function deliveredWithoutChanges(task: Task): boolean {
   const submission = task.noChanges?.submission;
   if (submission === undefined || task.pullRequest) return false;
   return task.submissions.implement === submission;
+}
+
+/** TaskPaused（reason が needs_decision）の説明（review.needsDecision）から、印の付いた指摘と根拠を読む（PBI-452）。 */
+function needsDecisionFindings(
+  text: DaemonText | undefined,
+): { finding: string; reason: string }[] {
+  if (!text || typeof text === "string" || text.code !== "review.needsDecision") return [];
+  const findings = (text.params as { findings?: unknown } | undefined)?.findings;
+  if (!Array.isArray(findings)) return [];
+  return findings.flatMap((f) => {
+    const r = f as { finding?: unknown; reason?: unknown } | null;
+    return typeof r?.finding === "string" && typeof r.reason === "string"
+      ? [{ finding: r.finding, reason: r.reason }]
+      : [];
+  });
 }
 
 /**

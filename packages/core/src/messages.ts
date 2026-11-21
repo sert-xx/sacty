@@ -448,10 +448,11 @@ const PARAMS = {
   "review.flakyNoFailedTests": null,
   "review.flakyUnreadableFailedTests": z.object({ count: z.number() }),
   "review.flakyUnexplained": z.object({ name: z.string() }),
+  // lines・max は以前の版の記録を読むために残す（読まず、表示しない）
   "review.scopeViolated": z.object({
     outside: z.array(z.string()),
     lines: z.number().int().nonnegative().optional(),
-    max: z.number().int().positive(),
+    max: z.number().int().positive().optional(),
   }),
   "security.notReport": null,
   "security.alreadyRequested": null,
@@ -518,6 +519,11 @@ const PARAMS = {
   "implement.unchanged": z.object({ number: z.number() }),
   "implement.declinedAgain": z.object({ number: z.number() }),
   "implement.deferredAgain": z.object({ number: z.number() }),
+  // 引数の指摘と根拠は、記録の前に秘密の値を伏せた文（PBI-452）
+  "review.needsDecision": z.object({
+    number: z.number(),
+    findings: z.array(z.object({ finding: z.string(), reason: z.string() })),
+  }),
   "triage.left": z.object({ number: z.number() }),
   "merge.failed": z.object({ detail: TextParam }),
   "pr.unavailable": z.object({ detail: TextParam }),
@@ -1449,13 +1455,10 @@ const ja: MessageDictionary = {
     `失敗したテストの名前（failedTests）のうち ${count} 件を読めず、全件を説明できるか確かめられない`,
   "review.flakyUnexplained": ({ name }) =>
     `${name}：環境による失敗にも不安定な失敗にも挙げられていない`,
-  "review.scopeViolated": ({ outside, lines, max }) =>
+  "review.scopeViolated": ({ outside }) =>
     [
       "差分が修正の範囲を守っていません（sacty の検査）。",
       ...(outside.length > 0 ? [`範囲の外のファイルを変えています：${outside.join("・")}。`] : []),
-      ...(lines !== undefined
-        ? [`変えた行の数（ロックファイルを除く）が ${lines} 行で、上限の ${max} 行を超えています。`]
-        : []),
     ].join(""),
   "security.notReport":
     "承認して完了したセキュリティチェックのタスクではないので、対応のタスクを作れません。",
@@ -1517,6 +1520,12 @@ const ja: MessageDictionary = {
     `AI のレビューが指摘を残した PR #${number} を、やり直しの実装が何も変えませんでした。同じ内容は再レビューされないので、提出していません。再開すると、指摘を渡して実装をやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "implement.declinedAgain": ({ number }) =>
     `やり直しの実装が、PR #${number} の AI のレビューの指摘をすべて、理由を付けて断り、何も変えませんでした。断った理由を PR に返信し、AI のレビューに同じ内容を判定し直させましたが、指摘が残りました。AI どうしの往復を続けないよう、ここで止めています。再開すると、残った指摘を渡してやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
+  "review.needsDecision": ({ number, findings }) =>
+    `PR #${number} の AI のレビューが、直し（実装の手直し）では解消できず、人の判断が要ると印を付けた要修正が残っています。直しに入らずに止めています。${findings
+      .map((f) => `\n- ${f.finding}：${f.reason}`)
+      .join(
+        "",
+      )}\n人が、了承か方針を PR にコメントするか、画面・MCP で補足を付けて再開すると、その判断を渡して進めます。`,
   "implement.deferredAgain": ({ number }) =>
     `やり直しの実装が、PR #${number} の AI のレビューの指摘を、断るか、後続に回したい案にして、何も変えませんでした。案を人が決めた後、AI のレビューに同じ内容を判定し直させましたが、指摘が残りました。AI どうしの往復を続けないよう、ここで止めています。再開すると、残った指摘を渡してやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "triage.left": ({ number }) =>
@@ -2329,14 +2338,11 @@ const en: MessageDictionary = {
     `${count} of the failed test names (failedTests) could not be read, so it could not be confirmed that every failure is explained`,
   "review.flakyUnexplained": ({ name }) =>
     `${name}: reported neither as an environment failure nor as a flaky failure`,
-  "review.scopeViolated": ({ outside, lines, max }) =>
+  "review.scopeViolated": ({ outside }) =>
     [
       "The diff does not stay within the fix scope (sacty's check).",
       ...(outside.length > 0
         ? [` It changes files outside the scope: ${outside.join(", ")}.`]
-        : []),
-      ...(lines !== undefined
-        ? [` It changes ${lines} lines (excluding lockfiles), over the limit of ${max}.`]
         : []),
     ].join(""),
   "security.notReport":
@@ -2400,6 +2406,12 @@ const en: MessageDictionary = {
     `The rework of the implementation changed nothing in PR #${number}, on which the AI review left findings. The same content is not reviewed again, so nothing was submitted. Resuming redoes the implementation with the findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "implement.declinedAgain": ({ number }) =>
     `The rework of the implementation declined every finding of the AI review on PR #${number} with a reason and changed nothing. sacty replied on the PR with the reasons and had the AI review judge the same content once more, but findings remained. sacty stops here so that the two AIs do not keep going back and forth. Resuming redoes the work with the remaining findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
+  "review.needsDecision": ({ number, findings }) =>
+    `The AI review of PR #${number} left must-fix findings it marked as unresolvable by a rework (they need a human decision). Sacty stopped without starting a rework.${findings
+      .map((f) => `\n- ${f.finding}: ${f.reason}`)
+      .join(
+        "",
+      )}\nComment on the PR with your approval or direction, or resume from the screen or MCP with a note, and Sacty will carry the decision forward.`,
   "implement.deferredAgain": ({ number }) =>
     `The rework of the implementation declined the findings of the AI review on PR #${number} or proposed to defer them, and changed nothing. After a person decided the proposals, sacty had the AI review judge the same content once more, but findings remained. sacty stops here so that the two AIs do not keep going back and forth. Resuming redoes the work with the remaining findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "triage.left": ({ number }) =>

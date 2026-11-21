@@ -150,7 +150,7 @@ The person who asked for the review watches only the PR and would not notice fro
     sacty does not tell the PR when a person paused the task (`manual`).
   - sacty does not write the comment if the project has no GitHub account chosen for the PR's host.
 - When it writes: when sacty writes the record that the task became paused (`append`), it writes one normal comment (an issue comment) without waiting for the write to finish (`announceReviewStop`).
-  - Body: that the review stopped, the reason (kind and gist), and how to resume (a link to the task screen; the link is built from the URL of the screen that was started (`SACTY_WEB_URL`), or `http://127.0.0.1:4700` if unset).
+  - Body: that the review stopped, the reason (kind and gist), and how to resume (a link to the task screen; the link is built from the URL of the screen that was started (`SACTY_WEB_URL`), or `http://127.0.0.1:4700` if unset). When the host of the screen URL is `127.0.0.1`, `localhost`, or `[::1]` (or the URL cannot be read), the sentence "タスクの画面は、依頼した人のマシンでだけ開けます。" is added right after the link sentence (PBI-450; [The note on task-screen links](approval.en.md#the-note-on-task-screen-links)). The heading is "Sacty のレビューが止まりました".
   - Gist of the reason: the pause explanation. If there is none, the explanation of the run (`AgentRunFailed`) or Orchestrator (`OrchestratorFailed`) that failed just before.
     sacty hides the secrets it used **first**, then puts it on one line and truncates it to 300 characters (truncating first would leave the front half of a secret that straddles the cut).
     Because the text comes from outside, sacty shows it as code (so an `@` mention does not appear in the body).

@@ -226,10 +226,18 @@ describe("PR の本文の長さの上限と、人が確かめること（PR #215
     expect(shown.join("\n").length).toBeLessThanOrEqual(HUMAN_CHECKS_BODY_MAX);
     // 環境による失敗の1件も入らなかった分に数える
     expect(footer).toContain(
-      `- [ ] ほかに ${31 - shown.length} 件あります。sacty のタスクの画面の最終レビュー（人が確かめること）で確かめてください。`,
+      `- [ ] ほかに ${31 - shown.length} 件あります。続きは、本文の「省いた続き」にあります。`,
     );
+    expect(footer).not.toContain("タスクの画面");
+    // 入りきらなかった項目の全文は、決まった形では結論の後の折りたたみ、テンプレートでは sacty の記録の先頭にある
+    expect(text.main).toContain("<summary>省いた続き</summary>");
+    expect(text.main).toContain("- [ ] 確認 29 ");
+    const filled = fillTemplate("## 概要\n", buildPullRequestBodyParts(t));
+    expect(filled.main).toContain("**省いた続き**");
+    expect(filled.main).toContain("- [ ] 確認 29 ");
+    expect(filled.footer).not.toContain("- [ ] 確認 29 ");
     const { body } = limitBody("あ".repeat(70_000), footer, PR_BODY_MAX);
-    expect(body).toContain("件あります。sacty のタスクの画面の最終レビュー");
+    expect(body).toContain("件あります。続きは、本文の「省いた続き」にあります。");
     expect(body).toContain("この PR をマージすると");
   });
 
@@ -243,10 +251,16 @@ describe("PR の本文の長さの上限と、人が確かめること（PR #215
       buildPullRequestBodyParts(reviewed).footer,
     ]) {
       expect(body).toContain(
-        `- [ ] ${"a".repeat(HUMAN_CHECK_ITEM_MAX - 1)}…（続きは sacty のタスクの画面で）`,
+        `- [ ] ${"a".repeat(HUMAN_CHECK_ITEM_MAX - 1)}…（続きは、本文の「省いた続き」にあります）`,
       );
-      expect(body).not.toContain("😀tail");
     }
+    // 切った項目の全文は、折りたたみにある（結論・footer には載せない）
+    const text = buildPullRequestBodyText(reviewed);
+    expect(text.main).toContain(`<summary>省いた続き</summary>`);
+    expect(text.main).toContain(`- [ ] ${item}`);
+    expect(text.footer).not.toContain("😀tail");
+    expect(buildPullRequestBodyParts(reviewed).footer).not.toContain("😀tail");
+    expect(buildPullRequestBodyParts(reviewed).record).toContain(`- [ ] ${item}`);
   });
 });
 
@@ -285,9 +299,13 @@ describe("人がゴールガーディアンの不合格のままレビューへ�
     const long = overridden(`a\n${"b".repeat(HUMAN_CHECK_ITEM_MAX)}`);
     for (const body of [buildPullRequestBody(long), buildPullRequestBodyParts(long).footer]) {
       expect(body).toContain(
-        `- 最終レビューの所見：a ${"b".repeat(HUMAN_CHECK_ITEM_MAX - 2)}…（続きは sacty のタスクの画面で）`,
+        `- 最終レビューの所見：a ${"b".repeat(HUMAN_CHECK_ITEM_MAX - 2)}…（続きは、本文の「省いた続き」にあります）`,
       );
     }
+    // 所見の全文は、折りたたみにある
+    expect(buildPullRequestBodyText(long).main).toContain(
+      `> a ${"b".repeat(HUMAN_CHECK_ITEM_MAX)}`,
+    );
     const later = { ...overridden(), submissions: { implement: 1 } } as Task;
     expect(buildPullRequestBody(later)).not.toContain("不合格のまま");
     expect(buildPullRequestBodyParts(later).footer).not.toContain("不合格のまま");

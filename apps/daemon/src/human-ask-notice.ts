@@ -2,6 +2,7 @@ import type { StepKey } from "@sacty/core";
 import { redact } from "./agents/redact.js";
 import { HUMAN_ASK_MARKER_PREFIX } from "./github.js";
 import { withoutInternalPaths } from "./prompts.js";
+import { taskLinkNote } from "./task-link.js";
 
 /*
  * 人に確かめてほしいことを、sacty が作った PR に知らせるコメント（PBI-301）。
@@ -62,6 +63,8 @@ export type HumanAskNoticeInput = {
   confirms: { remarkIds: string[]; text: string }[];
   /** タスクの画面の URL。 */
   taskUrl: string;
+  /** 画面の URL が依頼した人のマシンでだけ開けるか（注釈を添える）。 */
+  localOnly?: boolean;
   secrets: readonly string[];
 };
 
@@ -94,7 +97,7 @@ export function buildHumanAskNotice(input: HumanAskNoticeInput): string | undefi
   }
   lines.push(
     "",
-    `意図と違うときは、この PR にコメントするか、[タスクの画面](${input.taskUrl})で差し戻してください。`,
+    `意図と違うときは、この PR にコメントするか、[タスクの画面](${input.taskUrl})で差し戻してください。${taskLinkNote(input.localOnly).join("")}`,
   );
   return lines.join("\n");
 }

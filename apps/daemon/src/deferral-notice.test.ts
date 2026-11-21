@@ -135,7 +135,10 @@ describe("後続に回すと決めた指摘の扱い（PBI-370）", () => {
       "扱い：GitHub の Issue を作りました（https://github.com/acme/app/issues/901）。",
     );
     expect(line({ handling: "issue" })).toBe(
-      "扱い：GitHub の Issue を作ると決めましたが、作れませんでした（理由は、タスクの画面の作業履歴にあります）。",
+      "扱い：GitHub の Issue を作ると決めましたが、作れませんでした。",
+    );
+    expect(line({ handling: "issue", issueFailure: "GitHub が 422 を返しました" })).toBe(
+      "扱い：GitHub の Issue を作ると決めましたが、作れませんでした。理由：GitHub が 422 を返しました",
     );
     expect(line({ handling: "task" })).toBe(
       "扱い：このタスクが完了した後に、Sacty が後続のタスクを作ります。",

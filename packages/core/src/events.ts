@@ -522,7 +522,18 @@ export type ReworkAnswer = z.infer<typeof ReworkAnswer>;
  */
 export const ReviewRework = z.object({
   findings: z
-    .array(z.object({ finding: z.string(), target: StepKey.optional(), reason: z.string() }))
+    .array(
+      z.object({
+        finding: z.string(),
+        target: StepKey.optional(),
+        reason: z.string(),
+        /**
+         * 直し（実装の手直し）では解消できず、人の判断が要る、という印と、その根拠の文（PBI-452。2,000 文字で切る）。判定が
+         * 「修正が必要」の指摘にだけ付く。無ければ、ふつうの要修正（直しに入る）。前の版は、この欄を読まずに捨てる。
+         */
+        needsDecision: z.string().optional(),
+      }),
+    )
     .default([]),
   cause: ReworkCause.optional(),
   answer: ReworkAnswer.optional(),
@@ -581,6 +592,8 @@ export const PauseReason = z.enum([
   "incomplete",
   // AI のレビューの指摘が残る PR を、やり直しの実装が何も変えなかった（PBI-347）
   "unchanged",
+  // PR のレビューが、直しでは解消できず人の判断が要る、と印を付けた要修正が残った（PBI-452）
+  "needs_decision",
 ]);
 export type PauseReason = z.infer<typeof PauseReason>;
 
@@ -1453,6 +1466,11 @@ const TaskPaused = z.object({
     unstoppedRuns: z.array(z.string()).optional(),
     /** 中止された子タスク（reason が child_cancelled のとき）。再開すると、中止を認めたことになる。 */
     cancelledChildren: z.array(z.string()).optional(),
+    /**
+     * 止めた回の PR の先頭のコミット（reason が needs_decision のとき。PBI-452）。人の判断が済んだ先頭では、同じ印で
+     * 止めないため。前の版は、この欄を読まずに捨てる。
+     */
+    commit: z.string().min(1).optional(),
   }),
 });
 
@@ -3213,6 +3231,11 @@ const ReworkStoppedByMerge = z.object({
     discardedFeedback: z.enum(["tests", "review", "merge", "incomplete", "unchanged"]).optional(),
     /** 捨てた、一時停止の間に届いて、まだ作り直しに渡していない PR の指摘の件数（PBI-279）。 */
     discardedReview: z.number().int().positive().optional(),
+    /**
+     * 人の判断を待って止めていた（TaskPaused の reason が needs_decision の）PR のマージ（PBI-452）。作り直しは始めて
+     * おらず、止めた理由の指摘を反映せずに、マージを承認として進める。前の版は、この欄を読まずに捨てる。
+     */
+    decision: z.literal(true).optional(),
   }),
 });
 
@@ -3294,6 +3317,11 @@ const PullRequestReviewImported = z.object({
            * 戻し先を、その回の判定から決めるため。無ければ（以前の版の記録も）、工程のエージェントが判断する。
            */
           review: z.string().min(1).optional(),
+          /**
+           * 人の投稿の出どころ（PBI-452。sacty_review の投稿には付けない）。person：PR の作者か、リポジトリの OWNER・
+           * MEMBER・COLLABORATOR。unverified：それ以外（書き込みの権限を確かめていない人）。前の版は、この欄を読まずに捨てる。
+           */
+          by: z.enum(["person", "unverified"]).optional(),
         }),
       )
       .min(1),

@@ -167,11 +167,13 @@ describe("差し戻しの回数の上限（PBI-414）", () => {
     ];
     expect(isMessageCode("gate.overLimit")).toBe(false);
     const skipped: string[] = [];
-    // 出力の修理の文言（種類ごとの表を引くため、決まった引数でないと呼べない。差し戻しの回数に関わらない）
+    // 出力の修理の文言と、止めた指摘の一覧を引数に取る文言（種類ごとの表・配列を引くため、決まった引数でないと呼べない。差し戻しの回数に関わらない）
     const SKIPPED = [
       "en:integrate.outputRepaired",
+      "en:review.needsDecision",
       "en:review.outputRepaired",
       "ja:integrate.outputRepaired",
+      "ja:review.needsDecision",
       "ja:review.outputRepaired",
     ];
     for (const locale of ["ja", "en"] as const) {

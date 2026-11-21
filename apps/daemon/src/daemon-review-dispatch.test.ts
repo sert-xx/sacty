@@ -197,7 +197,7 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
     });
     await service.runNext(id);
     expect(pulls.reviews[0]?.body).toContain(
-      "観点ごとの担当（サブエージェント）は起動していません（担当を起動する手段があることを、sacty が確かめられなかった実行です）。",
+      "観点ごとの担当（サブエージェント）は起動していません（担当を起動する手段があることを、Sacty が確かめられなかった実行です）。",
     );
     activity.close();
   });

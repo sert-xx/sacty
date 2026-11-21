@@ -1809,6 +1809,28 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       expect(feedback.map((f) => f.key)).toEqual(["comment:2", "comment:3"]);
     });
 
+    it("要求要件の全文のコメント（PBI-450）は、sacty のタスクのアカウントのものだけ、PR の指摘に取り込まない。続きのコメントも同じ", async () => {
+      const basis = "<!-- sacty-basis:t1 -->\n## 承認済みの要求要件・不具合の再現（全文）";
+      const more =
+        "<!-- sacty-basis:t1:2 -->\n## 承認済みの要求要件・不具合の再現（全文の続き 2/2）";
+      const { impl } = fakeFetch([
+        { status: 200, json: [] },
+        { status: 200, json: [] },
+        {
+          status: 200,
+          json: [
+            comment(1, "sacty-bot", basis),
+            comment(2, "sacty-bot", more),
+            comment(3, "alice", "人間のコメント"),
+            // 他人が目印をまねても、人間の指摘として取り込む（指摘を隠されないように）
+            comment(4, "mallory", basis),
+          ],
+        },
+      ]);
+      const feedback = await new GitHubPullRequests(impl).feedback({ ...pr, account: "sacty-bot" });
+      expect(feedback.map((f) => f.key)).toEqual(["comment:3", "comment:4"]);
+    });
+
     it("設計に戻したことの知らせ（PBI-446）は、sacty のタスクのアカウントのものだけ、PR の指摘に取り込まない", async () => {
       const notice = "<!-- sacty-rework-notice:t1:1 -->\n## Sacty：指摘を設計に戻しました";
       const { impl } = fakeFetch([

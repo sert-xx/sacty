@@ -549,7 +549,11 @@ function TabPanel({ tab, open, children }: { tab: TabKey; open: TabKey; children
 /** 一時停止の間に PR に届いた指摘があることを出す（PBI-279）。再開したあと、止まった工程を走り直す前に反映する。 */
 function HeldReviewNotice({ task }: { task: Task }) {
   const { task: m } = useMessages();
-  const held = task.status === "paused" ? heldReview(task) : undefined;
+  // 印で止めた回（直しでは解消できない指摘）は、再開しても差し戻さずに判断を渡すので、この案内を出さない（PBI-452）
+  const held =
+    task.status === "paused" && task.pausedReason !== "needs_decision"
+      ? heldReview(task)
+      : undefined;
   const pr = reworkingPullRequest(task);
   if (!held || !pr) return null;
   return (

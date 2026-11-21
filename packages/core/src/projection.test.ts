@@ -5523,6 +5523,36 @@ describe("終わっていない実装と、変更の無いやり直し（PBI-347
     expect(done?.implementCompletion).toEqual({ status: "complete" });
   });
 
+  it("以前の版が記録した、行数の違反（securityScope.violation の lines・max）を読み込める。範囲の外のファイルが無い違反は、違反なしとして扱う（PBI-452）", () => {
+    seq = 0;
+    const legacy = (id: string, violation: { outside: string[]; lines: number; max: number }) =>
+      ev(id, { type: "FinalReviewSkipped", payload: { securityScope: { violation } } });
+    // 以前の版の記録は、作業履歴を読むときの検査（EventInput）を通る
+    for (const violation of [
+      { outside: [], lines: 571, max: 300 },
+      { outside: ["a.ts"], lines: 400, max: 300 },
+    ]) {
+      expect(
+        EventSchema.safeParse({
+          type: "FinalReviewSkipped",
+          payload: { securityScope: { violation } },
+        }).success,
+      ).toBe(true);
+    }
+    const onlyLines = project([
+      ...prepared("t1"),
+      ...implemented("t1", "r1"),
+      legacy("t1", { outside: [], lines: 571, max: 300 }),
+    ]).get("t1");
+    expect(onlyLines?.securityScopeCheck?.violation).toBeUndefined();
+    const outside = project([
+      ...prepared("t2"),
+      ...implemented("t2", "r1"),
+      legacy("t2", { outside: ["a.ts"], lines: 400, max: 300 }),
+    ]).get("t2");
+    expect(outside?.securityScopeCheck?.violation?.outside).toEqual(["a.ts"]);
+  });
+
   it("申告の項目の無い（申告させる前の）実装の完了は、今までどおり PR の作成へ進められる（受け入れ条件 6）", () => {
     seq = 0;
     const task = project([...prepared("t1"), ...implemented("t1", "r1"), skipped("t1")]).get("t1");

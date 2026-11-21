@@ -60,6 +60,7 @@ const ja = {
       child_cancelled: "子タスクの中止",
       incomplete: "実装が終わらない",
       unchanged: "やり直しで変更なし",
+      needs_decision: "人の判断待ち",
     } satisfies Record<PauseReason, string>,
   },
   /** 費用と予算（PBI-118）。 */
@@ -200,6 +201,7 @@ const en: DashboardMessages = {
       child_cancelled: "Subtask cancelled",
       incomplete: "Implementation unfinished",
       unchanged: "Rework changed nothing",
+      needs_decision: "Needs a decision",
     },
   },
   costs: {
