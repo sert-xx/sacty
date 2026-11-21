@@ -5,9 +5,9 @@ import {
   CalendarClockIcon,
   ListChecksIcon,
   ScanSearchIcon,
+  SettingsIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMessages } from "@/i18n/client";
 import { pageScope } from "@/lib/page-scope";
@@ -17,7 +17,9 @@ import {
   CURRENT_PROJECT_SETTINGS_PATH,
   CURRENT_PROJECT_TASKS_PATH,
   PROJECTS_PATH,
+  SETTINGS_PATH,
 } from "@/lib/paths";
+import { GuardedLink } from "./guarded-link";
 
 /** プロジェクトのタスクの一覧の画面か（`/projects/<ID>/tasks`。PBI-114）。 */
 const PROJECT_TASKS = /^\/projects\/[^/]+\/tasks(\/|$)/;
@@ -59,6 +61,14 @@ const SETTINGS = {
     p !== CURRENT_PROJECT_AUDIT_PATH,
 };
 
+/** sacty の設定（すべてのプロジェクトに共通）。メニューの下の端に置く。 */
+const SACTY_SETTINGS = {
+  href: SETTINGS_PATH,
+  key: "sactySettings" as const,
+  icon: SettingsIcon,
+  active: (p: string) => p === SETTINGS_PATH || p.startsWith(`${SETTINGS_PATH}/`),
+};
+
 /**
  * サイドメニューの項目（PBI-114）。プロジェクトの画面では、タスク・スケジュールタスク・監査・設定は表示しているプロジェクト（cookie。画面が
  * 合わせる）の画面へ移る。「すべてのプロジェクト」の画面（ダッシュボードなど）では、プロジェクトを決められないので、タスク・
@@ -67,9 +77,9 @@ const SETTINGS = {
  */
 export function railItems(pathname: string | undefined) {
   if (pathname !== undefined && pageScope(pathname).kind === "all") {
-    return [{ ...SETTINGS, href: PROJECTS_PATH }];
+    return [{ ...SETTINGS, key: "projects" as const, href: PROJECTS_PATH }, SACTY_SETTINGS];
   }
-  return [TASKS, SCHEDULES, AUDIT, SETTINGS];
+  return [TASKS, SCHEDULES, AUDIT, SETTINGS, SACTY_SETTINGS];
 }
 
 /** サイドメニュー。表示中の画面を強調する。 */
@@ -86,18 +96,19 @@ export function RailNav({ pathname }: { pathname?: string }) {
   return (
     <nav
       aria-label={t.main}
-      className="fixed inset-x-0 bottom-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-bottom))] shrink-0 flex-row gap-1 border-t border-border bg-chrome pt-1 pr-[max(0.25rem,env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] pl-[max(0.25rem,env(safe-area-inset-left))] sm:sticky sm:inset-x-auto sm:top-16 sm:bottom-auto sm:z-auto sm:h-[calc(100dvh-4rem)] sm:w-[calc(88px+env(safe-area-inset-left))] sm:flex-col sm:overflow-y-auto sm:border-t-0 sm:border-r sm:py-3 sm:pr-1.5 sm:pl-[calc(0.375rem+env(safe-area-inset-left))]"
+      className="fixed inset-x-0 bottom-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-bottom))] shrink-0 flex-row gap-0 border-t border-border bg-chrome pt-1 pr-[max(0.25rem,env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] pl-[max(0.25rem,env(safe-area-inset-left))] sm:sticky sm:inset-x-auto sm:top-16 sm:bottom-auto sm:z-auto sm:h-[calc(100dvh-4rem)] sm:w-[calc(88px+env(safe-area-inset-left))] sm:gap-1 sm:flex-col sm:overflow-y-auto sm:border-t-0 sm:border-r sm:py-3 sm:pr-1.5 sm:pl-[calc(0.375rem+env(safe-area-inset-left))]"
     >
       {railItems(pathname).map((item) => {
         const on = pathname !== undefined && item.active(pathname);
         const Icon = item.icon;
         return (
-          <Link
+          <GuardedLink
             key={item.href}
             href={item.href}
             aria-current={on ? "page" : undefined}
             className={cn(
-              "flex min-h-11 min-w-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-[10px] px-0.5 text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring sm:flex-none sm:justify-start sm:gap-1 sm:pt-2.5 sm:pb-2",
+              "flex min-h-11 min-w-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-[10px] px-0 text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring sm:flex-none sm:justify-start sm:px-0.5 sm:gap-1 sm:pt-2.5 sm:pb-2",
+              item.key === "sactySettings" && "sm:mt-auto",
               on && "bg-accent text-accent-foreground hover:bg-accent",
             )}
           >
@@ -111,7 +122,7 @@ export function RailNav({ pathname }: { pathname?: string }) {
             >
               {t[item.key]}
             </span>
-          </Link>
+          </GuardedLink>
         );
       })}
     </nav>

@@ -65,7 +65,8 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
         ["タスク", "/projects/current/tasks"],
         ["スケジュール", "/projects/current/schedules"],
         ["監査", "/projects/current/audit"],
-        ["設定", "/projects/current"],
+        ["プロジェクトの設定", "/projects/current"],
+        ["Sacty の設定", "/settings"],
       ]);
     }
   });
@@ -73,7 +74,10 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
   it("「すべてのプロジェクト」の画面では、タスク・監査を出さず、設定はプロジェクトの一覧へ移る（どのプロジェクトにも飛ばない。ダッシュボードは出さない）", () => {
     for (const p of ["/dashboard", "/projects", "/settings"]) {
       render(h(RailNav, { pathname: p }));
-      expect(hrefs(), p).toEqual([["設定", "/projects"]]);
+      expect(hrefs(), p).toEqual([
+        ["プロジェクト", "/projects"],
+        ["Sacty の設定", "/settings"],
+      ]);
     }
   });
 
@@ -88,12 +92,13 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
     ["/projects/p1/tasks", "タスク"],
     ["/tasks/t1", "タスク"],
     ["/tasks/t1/review", "タスク"],
-    ["/projects/p1/settings", "設定"],
-    ["/projects", "設定"],
+    ["/projects/p1/settings", "プロジェクトの設定"],
+    ["/projects", "プロジェクト"],
+    ["/settings", "Sacty の設定"],
     ["/projects/p1/audit", "監査"],
     ["/projects/p1/schedules", "スケジュール"],
     ["/projects/p1/schedules/s1", "スケジュール"],
-  ])("%s では「%s」を強調する", (pathname, label) => {
+  ])("%s では「%s」だけを強調する", (pathname, label) => {
     render(h(RailNav, { pathname }));
     expect(current()).toEqual([label]);
   });
@@ -107,13 +112,46 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
     expect(container.querySelector('nav a[href="/dashboard"]')).toBeNull();
   });
 
+  it("英語の画面では、プロジェクトの画面の 5 項目と、すべてのプロジェクトの画面の 2 項目を呼び分ける", () => {
+    const en = (node: ReactNode) =>
+      act(() => {
+        root.render(h(I18nProvider as unknown as FC<{ locale: "en" }>, { locale: "en" }, node));
+      });
+    en(h(RailNav, { pathname: "/projects/p1/tasks" }));
+    expect(hrefs()).toEqual([
+      ["Tasks", "/projects/current/tasks"],
+      ["Schedules", "/projects/current/schedules"],
+      ["Audit", "/projects/current/audit"],
+      ["Project settings", "/projects/current"],
+      ["Sacty settings", "/settings"],
+    ]);
+    en(h(RailNav, { pathname: "/dashboard" }));
+    expect(hrefs()).toEqual([
+      ["Projects", "/projects"],
+      ["Sacty settings", "/settings"],
+    ]);
+  });
+
+  it("/settings では「Sacty の設定」だけを強調し、「プロジェクト」は強調しない", () => {
+    render(h(RailNav, { pathname: "/settings" }));
+    expect(current()).toEqual(["Sacty の設定"]);
+    const projects = container.querySelector('nav a[href="/projects"]');
+    expect(projects?.hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("/projects/p1/settings では「Sacty の設定」を強調しない", () => {
+    render(h(RailNav, { pathname: "/projects/p1/settings" }));
+    const sacty = container.querySelector('nav a[href="/settings"]');
+    expect(sacty?.hasAttribute("aria-current")).toBe(false);
+  });
+
   it("タスクという名前のプロジェクトの設定は、設定を強調する（ID の部分で見分けない）", () => {
     render(h(RailNav, { pathname: "/projects/tasks/settings" }));
-    expect(current()).toEqual(["設定"]);
+    expect(current()).toEqual(["プロジェクトの設定"]);
     render(h(RailNav, { pathname: "/projects/audit/settings" }));
-    expect(current()).toEqual(["設定"]);
+    expect(current()).toEqual(["プロジェクトの設定"]);
     render(h(RailNav, { pathname: "/projects/schedules/settings" }));
-    expect(current()).toEqual(["設定"]);
+    expect(current()).toEqual(["プロジェクトの設定"]);
   });
 });
 
@@ -121,6 +159,12 @@ describe("ヘッダーのリンク（PBI-114）", () => {
   it("ロゴはダッシュボードへ移る", () => {
     render(HeaderFallback({ language: "ja" }));
     expect(container.querySelector("header a")?.getAttribute("href")).toBe("/dashboard");
+  });
+
+  it("人のアイコンのメニューにも、「Sacty の設定」（/settings）が残っている", () => {
+    render(HeaderFallback({ language: "ja" }));
+    act(() => (container.querySelector("header button[aria-label]") as HTMLButtonElement).click());
+    expect(hrefs()).toContainEqual(["Sacty の設定", "/settings"]);
   });
 
   it("プロジェクトの切り替えは、先頭の「すべてのプロジェクト」がダッシュボードへ、個別のプロジェクトがそのタスクの一覧へ移る", () => {

@@ -1,9 +1,9 @@
-import Link from "next/link";
 import type { LanguagePreference } from "@/i18n/locale";
 import { languagePreference } from "@/i18n/server";
 import { type HeaderData, loadHeaderData } from "@/lib/header-data";
 import { liveVersion } from "@/lib/live-server";
 import { DASHBOARD_PATH } from "@/lib/paths";
+import { GuardedLink } from "./guarded-link";
 import { LiveHeaderMenus } from "./live-header";
 import { UserMenu } from "./menus";
 import { SactyMark } from "./sacty-mark";
@@ -11,13 +11,13 @@ import { SactyMark } from "./sacty-mark";
 function Frame({ children }: { children?: React.ReactNode }) {
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-chrome pr-[max(0.625rem,env(safe-area-inset-right))] pl-[max(0.625rem,env(safe-area-inset-left))] sm:gap-3 sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pl-[max(1rem,env(safe-area-inset-left))]">
-      <Link
+      <GuardedLink
         href={DASHBOARD_PATH}
         className="flex items-center gap-2 text-xl font-bold tracking-wide text-foreground"
       >
         <SactyMark className="size-7 shrink-0 rounded-[23%] dark:ring-1 dark:ring-white/20" />
         Sacty
-      </Link>
+      </GuardedLink>
       <span aria-hidden="true" className="hidden h-7 w-px bg-border sm:block" />
       {children}
     </header>

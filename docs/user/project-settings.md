@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts、apps/web/src/components/shell/follow-project.tsx、apps/web/src/components/delete-project.tsx、apps/web/src/app/actions.ts（saveProjectAction・deleteProjectAction） -->
+<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/components/save-bar.tsx、apps/web/src/lib/unsaved-changes.tsx、apps/web/src/i18n/messages/projects.ts、apps/web/src/components/shell/follow-project.tsx、apps/web/src/components/delete-project.tsx、apps/web/src/app/actions.ts（saveProjectAction・deleteProjectAction） -->
 
 **日本語** | [English](project-settings.en.md)
 
@@ -8,8 +8,11 @@
 
 プロジェクトの設定は、次のどちらかで開きます。
 
-- サイドメニューの「設定」を押す（ヘッダーで選んでいるプロジェクトの設定を開きます）。
+- サイドメニューの「プロジェクトの設定」を押す（ヘッダーで選んでいるプロジェクトの設定を開きます）。
 - `/projects/<ID>/settings` を開く。
+
+画面の見出しは「プロジェクト「<名前>」の設定」で、ブラウザーのタブのタイトルも同じです。
+すべてのプロジェクトに共通の設定は、サイドメニューの「Sacty の設定」です（[設定](config.md)）。
 
 プロジェクトを作る・インポートすると、画面はそのプロジェクトに切り替わり、設定を開きます。
 
@@ -135,6 +138,25 @@ sacty は、選んだアカウントを次のように使います。
 | 何もしない | 何も作りません。初めは、この値です |
 | Sacty の後続のタスクを作る | タスクが完了した後に、続きのタスクを作ります |
 | GitHub の Issue を作る | 決定のときに、PR のリポジトリに Issue を作ります |
+
+## 保存していない変更
+
+欄を変えると、画面の下の「保存する」のそばに「保存していない変更があります」と出ます。
+「保存する」は、スクロールしても画面の下に見えます（幅 640px 未満では、下のメニューの上に出ます）。
+
+保存していない変更があるまま、サイドメニュー・ヘッダー・パンくずのリンクを押す、タブを閉じる、リロードすると、確かめる表示が出ます。
+変更を元の値に戻したときは、変更が無い扱いです。
+保存に成功すると、この表示も確認も消えます。保存に失敗したときは、入力が残り、表示も確認も残ります。
+
+次は、押した時点で効くので、この表示と確認の対象ではありません。
+
+- 保存した設定でのコンテキストのプレビュー
+- GitHub アカウントの再読み込み
+- エクスポート
+- プロジェクトの削除
+
+プロジェクトを作るフォームも、対象ではありません。
+ブラウザーの戻る・進むでは確かめません。
 
 ## 同時に変更したとき
 

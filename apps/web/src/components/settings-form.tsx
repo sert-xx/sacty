@@ -9,17 +9,31 @@ import {
   MIN_INTAKE_INTERVAL_SEC,
   type SlackNotification,
 } from "@sacty/core";
-import { startTransition, useActionState, useId, useState } from "react";
+import {
+  startTransition,
+  useActionState,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { type SaveSettingsState, saveSettingsAction } from "@/app/actions";
 import { DesktopNotificationSettings } from "@/components/desktop-notification-settings";
 import { NotificationSettings } from "@/components/notification-settings";
-import { Button } from "@/components/ui/button";
+import { SaveBar } from "@/components/save-bar";
 import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
+import { useUnsavedChanges } from "@/lib/unsaved-changes";
 
 const initial: SaveSettingsState = {};
+
+/** 送る欄の値の写し（名前のある欄だけ。押した時点で効く項目は、名前が無く、含まれない）。 */
+function snapshot(form: HTMLFormElement): string {
+  return JSON.stringify([...new FormData(form)].map(([key, value]) => [key, String(value)]));
+}
 
 /**
  * sacty 全体の設定の編集（取り込むラベル。PBI-26。同時に実行するタスクの数。PBI-30）。取り込みは「Issue の取り込み」と
@@ -128,12 +142,33 @@ export function SettingsForm({
   const [retention, setRetention] = useState(
     memoryRetentionDays === undefined ? "" : String(memoryRetentionDays),
   );
+  // 保存していない変更：送る欄の値の写しを、基準の写し（最初に描いたとき。保存に成功したら、送った写し）と比べる。
+  // 元の値に戻せば変更なしの扱い。写しは、親が描くたびに DOM の値から取り、子の部品の欄（Slack）は onValueChange で取り直す
+  const formRef = useRef<HTMLFormElement>(null);
+  const [current, setCurrent] = useState<string | null>(null);
+  const [baseline, setBaseline] = useState<string | null>(null);
+  const submitted = useRef("");
+  const measure = useCallback(() => {
+    if (!formRef.current) return;
+    const now = snapshot(formRef.current);
+    setCurrent(now);
+    setBaseline((base) => base ?? now);
+  }, []);
+  // 親が描き直されたとき（Slack の欄は子の状態なので、下の onValueChange でも取り直す）
+  useEffect(measure);
+  useEffect(() => {
+    if (state.saved && !state.message) setBaseline(submitted.current);
+  }, [state]);
+  const dirty = baseline !== null && current !== null && current !== baseline;
+  useUnsavedChanges(dirty);
   return (
     <form
+      ref={formRef}
       // 送信は自分で呼び出す（action に渡すと、送信の後に React がフォームをリセットするため）
       onSubmit={(e) => {
         e.preventDefault();
         const data = new FormData(e.currentTarget);
+        submitted.current = snapshot(e.currentTarget);
         startTransition(() => formAction(data));
       }}
       // 入力の誤りは、ブラウザの言語ではなく画面の言語の文で出す（デーモンが検査する。PBI-100）
@@ -323,21 +358,24 @@ export function SettingsForm({
           )}
         </p>
       </section>
-      <NotificationSettings saved={notification} problems={notificationProblems} />
+      <NotificationSettings
+        saved={notification}
+        problems={notificationProblems}
+        onValueChange={measure}
+      />
       <DesktopNotificationSettings />
-      {state.message && (
-        <p role="alert" className="text-sm text-warn">
-          {state.message}
-        </p>
-      )}
-      {state.saved && !state.message && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {t.saved}
-        </p>
-      )}
-      <Button type="submit" disabled={pending} className="w-fit">
-        {t.save}
-      </Button>
+      <SaveBar dirty={dirty} disabled={pending} label={t.save}>
+        {state.message && (
+          <p role="alert" className="text-sm text-warn">
+            {state.message}
+          </p>
+        )}
+        {state.saved && !state.message && !dirty && (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t.saved}
+          </p>
+        )}
+      </SaveBar>
     </form>
   );
 }
