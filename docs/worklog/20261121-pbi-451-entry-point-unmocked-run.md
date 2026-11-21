@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-21（UTC）
 - タスク: PBI-451
-- PR: なし
+- PR: #509
 - ブランチ: なし
 - 関係する ADR: [20261121-1900-entry-point-unmocked-run-and-test.md](../adr/20261121-1900-entry-point-unmocked-run-and-test.md)
 
@@ -20,7 +20,9 @@ PBI-399 の MCP の道具が、時計を差し替えたテストをすべて通�
 
 ## 確かめたこと
 
-- `prompts.test.ts`・`default-skills.test.ts`・`tests/docs` を実行した。全件の結果は PR の説明に書く。
+- `npm run lint`・`npm run typecheck`・`npm test`（全件）を実行した（すべて通った。全件は 326 ファイル・6408 件が通り、14 件はスキップ）。
+- 旧方針の文（外部を読むだけの通信に限った認証の外し方、`setTimeout` の例）を、方針に合わせて直した。
+- 秘密の値は書いていない。
 
 ## レビューの指摘と対応
 
