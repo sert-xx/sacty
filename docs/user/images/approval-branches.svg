@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 350" width="1040" height="350" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/approval-branches.mjs）を直して npm run docs:diagrams で作り直す -->
-  <title id="title">PR で承認するときのブランチ</title>
-  <desc id="desc">起点のコミットからタスクブランチを作り、要求要件・設計は工程のブランチからタスクブランチへの PR、実装はタスクブランチからベースブランチへの PR にする。マージが承認になる。</desc>
+  <title id="title">PR で承認するときのブランチ（実装がある進め方）</title>
+  <desc id="desc">実装がある進め方：起点のコミットからタスクブランチを作り、要求要件・設計は工程のブランチからタスクブランチへの PR、実装はタスクブランチからベースブランチへの PR にする。マージが承認になる。</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;

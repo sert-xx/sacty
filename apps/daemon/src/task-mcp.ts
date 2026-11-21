@@ -18,6 +18,7 @@ import {
   canDerive,
   canRereview,
   DeriveTaskInput,
+  directStepFlow,
   gatePullRequest,
   hasFailures,
   humanAsks,
@@ -25,6 +26,7 @@ import {
   isFinished,
   isSecurityTask,
   issueMessage,
+  keptStepBranches,
   openProposal,
   PERSON_TURN_GROUPS,
   type PersonTurnGroup,
@@ -1353,13 +1355,14 @@ function cancelTargets(task: Task): {
     if (step.state === "open" && !step.superseded) closePullRequests.push(step.url);
   }
   const continued = task.continuedPullRequest?.branch;
+  const keptNow = new Set(keptStepBranches(task));
   const deleteBranches = [
     ...new Set(
       [
         (task.pushedBranch ?? task.pullRequest)?.branch,
         task.taskBranch?.branch,
         ...task.stepBranches,
-      ].filter((b): b is string => Boolean(b) && b !== continued),
+      ].filter((b): b is string => Boolean(b) && b !== continued && !keptNow.has(b as string)),
     ),
   ];
   const untouchedBranches = continued
@@ -1370,6 +1373,10 @@ function cancelTargets(task: Task): {
         },
       ]
     : [];
+  // 人がコミットを足したので残している工程のブランチ（実装の無い進め方。PBI-464）は、消さない
+  for (const name of keptNow) {
+    untouchedBranches.push({ name, reason: "人がコミットを足したため、消しません" });
+  }
   return {
     closePullRequests: [...new Set(closePullRequests)],
     deleteBranches,
@@ -3248,6 +3255,11 @@ const TOOLS: readonly ToolDefinition[] = [
       }
       if (containers.length > 0) {
         notes.push("実行中の実行は打ち切られます（かけた費用は戻りません）。");
+      }
+      if (!blocked && directStepFlow(task) && targets.deleteBranches.length > 0) {
+        notes.push(
+          "要求要件・設計のブランチは、リモートの先頭が sacty の最後の push と違えば（人がコミットを足していれば）消しません。すでにリモートに無いブランチは消せたものとします。",
+        );
       }
       if (!blocked) {
         notes.push(

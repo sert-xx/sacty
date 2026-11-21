@@ -6,7 +6,7 @@ import { contextLayers, contextMcp, contextMerge } from "./context.mjs";
 import gateway from "./gateway.mjs";
 import gatewayPf from "./gateway-pf.mjs";
 import { introContext, introFlow, introGateway, introLoop } from "./intro.mjs";
-import { approvalBranches, tasksFlow } from "./tasks.mjs";
+import { approvalBranches, approvalBranchesDirect, tasksFlow } from "./tasks.mjs";
 import {
   auditUser,
   composeUser,
@@ -29,6 +29,7 @@ export const DIAGRAMS = [
   contextMcp,
   tasksFlow,
   approvalBranches,
+  approvalBranchesDirect,
   budgetFlow,
   questionFlow,
   deploymentState,
