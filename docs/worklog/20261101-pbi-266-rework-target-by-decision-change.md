@@ -4,7 +4,7 @@
 - タスク: PBI-266
 - PR: #265
 - ブランチ: feat/issue-266-rework-target
-- 関係する ADR: [PR の指摘の戻し先は、承認済みの決定を変えるかで決め、変えない指摘は実装に戻す](../adr/20261101-1350-rework-target-by-decision-change.md)
+- 関係する ADR: [PR の指摘の戻し先は、承認済みの決定を変えるかで決め、変えない指摘は実装に戻す](../adr/20261101-1350-superseded-rework-target-by-decision-change.md)
 
 ## 目的
 

@@ -346,6 +346,13 @@ describe("レビューを投稿した後の、PR の変化の見守り（PBI-411
       ),
       comment(clock, "comment:4", "me", "<!-- sacty-human-ask:x:implement:1 -->\n確認", MINUTE),
       comment(clock, "comment:5", "me", "<!-- sacty-deferral:x:1 -->\n決定", MINUTE),
+      comment(
+        clock,
+        "comment:51",
+        "me",
+        "<!-- sacty-rework-notice:x:1 -->\n設計に戻しました",
+        MINUTE,
+      ),
       comment(clock, "comment:6", "me", "<!-- sacty-comment:x -->\nコメント", MINUTE),
       // 作者でない人のコメント
       comment(clock, "comment:7", "bob", "横から失礼します", MINUTE),

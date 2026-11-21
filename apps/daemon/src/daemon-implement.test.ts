@@ -8937,8 +8937,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const prompt = promptOf(executor, before);
       expect(prompt).toContain("過去の削除は戻せない");
       expect(prompt).toContain("決定を変えない指摘は、この PR の実装で直します");
+      // 実装の PR は、決定を変えるときに、局所の変更か方針の変更かも書かせる（PBI-446）
       expect(prompt).toContain(
-        "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
+        "理由の先頭に、指摘が決定を変えないか、変えるか（変えるときは、局所の変更か方針の変更か）",
       );
       // 設計には戻らず、実装への差し戻しになる（承認済みの設計は残る）
       const task = service.get(id)?.task;

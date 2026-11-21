@@ -435,7 +435,15 @@ export class FakeRepos implements RepositoryWorkspace {
   ) {
     return this.defaultBranch;
   }
-  async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+  /** あれば、fetchBranch の中で呼ぶ（実行の中断（一時停止・中止）の再現。渡された signal を見られる）。 */
+  onFetchBranch?: (signal?: AbortSignal) => void | Promise<void>;
+  async fetchBranch(
+    gitDir: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
+    await this.onFetchBranch?.(signal);
     if (this.fetchBranchFail) throw new Error(this.fetchBranchFail);
     this.fetchedBranches.push({ gitDir, branch, ...(authEnv ? { authEnv } : {}) });
     return this.remote[branch] ?? this.branchHead;
@@ -601,10 +609,13 @@ export class FakeRepos implements RepositoryWorkspace {
     message: string;
     date: string;
     keep?: { commit: string; paths: string[] };
+    overrides?: Record<string, string>;
   }[] = [];
   /** published と同じ順の、起点（作業領域のベース）と、第2の親にするコミット（ベースブランチの取り込み）。 */
   publishInputs: { baseCommit?: string; merge?: string }[] = [];
   publishFail?: string;
+  /** あれば、プッシュはリモートに届いた後（ブランチを進めた後）に、この文で失敗する（応答の失敗・時間切れの再現）。 */
+  publishFailAfterPush?: string;
   /** true なら、作業領域が起点から何も変わっていない（PBI-90）。 */
   unchanged = false;
   /** あれば、プッシュを、これが解決するまで終わらせない（PR の作成の前の一時停止のテスト。PBI-110）。 */
@@ -623,6 +634,7 @@ export class FakeRepos implements RepositoryWorkspace {
     baseCommit?: string;
     merge?: string;
     keep?: { commit: string; paths: string[] };
+    overrides?: Record<string, string>;
   }) {
     this.publishStarted.resolve();
     if (this.publishGate) await this.publishGate;
@@ -635,13 +647,27 @@ export class FakeRepos implements RepositoryWorkspace {
       message: input.message,
       date: input.date,
       ...(input.keep ? { keep: input.keep } : {}),
+      ...(input.overrides ? { overrides: input.overrides } : {}),
     });
     this.publishInputs.push({
       ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
       ...(input.merge ? { merge: input.merge } : {}),
     });
     const commit = `c${this.published.length}`.padEnd(40, "0");
+    // 引き継いだ（keep）ファイルは keep.commit の内容、置き換えた（overrides）ファイルは渡した内容を、このコミットのファイルにする
+    const inherited: Record<string, string | null> = {};
+    for (const path of input.keep?.paths ?? []) {
+      const kept = input.keep
+        ? (this.files[input.keep.commit]?.[path] ??
+          this.committedFiles.findLast((c) => path in c.files)?.files[path])
+        : undefined;
+      if (kept !== undefined) inherited[path] = kept;
+    }
+    if (Object.keys(inherited).length > 0 || input.overrides) {
+      this.files[commit] = { ...inherited, ...(input.overrides ?? {}) };
+    }
     this.remote[input.branch] = commit;
+    if (this.publishFailAfterPush) throw new Error(this.publishFailAfterPush);
     return { commit };
   }
 }

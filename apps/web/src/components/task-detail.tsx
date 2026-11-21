@@ -244,7 +244,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
       {/* 題・状態・工程・操作・タブは、スクロールしても見えるよう上に固定する */}
       <div
         ref={stickyRef}
-        className="sticky top-16 z-20 -mx-4 flex flex-col gap-3 border-b border-border bg-background/95 px-4 pt-4 backdrop-blur sm:-mx-8 sm:px-8"
+        className="sticky top-16 z-20 -mr-[max(1rem,env(safe-area-inset-right))] -ml-[max(1rem,env(safe-area-inset-left))] flex flex-col gap-3 border-b border-border bg-background/95 pt-4 pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))] backdrop-blur sm:-mr-[max(2rem,env(safe-area-inset-right))] sm:-ml-8 sm:pr-[max(2rem,env(safe-area-inset-right))] sm:pl-8"
       >
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-col gap-2">
