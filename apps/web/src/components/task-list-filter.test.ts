@@ -232,6 +232,7 @@ describe("タスクの一覧の絞り込みの操作", () => {
   let container: HTMLDivElement;
   let root: Root;
   beforeEach(() => {
+    window.history.replaceState(null, "", "/projects/p1/tasks");
     // 取り直しは、このテストでは返さない（絞り込みだけを確かめる）
     vi.stubGlobal("fetch", () => new Promise(() => {}));
     container = document.createElement("div");

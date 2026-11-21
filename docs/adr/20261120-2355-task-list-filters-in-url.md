@@ -13,7 +13,7 @@
 ## 決定
 
 - 最初の表示の状態は「終わっていない」。終わっていないタスクが 0 件でタスクがあれば「すべて」。開いたときに 1 回だけ決める。
-- 絞り込みの全項目を URL のクエリ（`q`・`from`・`to`・`start`・`repo`・`status`。状態の「すべて」は `status=all`）に、最初の表示と違う項目だけ書く。書き換えは `history.replaceState`。ページが `searchParams` を読み、サーバーの描画から同じ条件で出す。
+- 絞り込みの全項目を URL のクエリ（`q`・`from`・`to`・`start`・`repo`・`status`。状態の「すべて」は `status=all`）に、最初の表示と違う項目だけ書く。書き換えは `history.replaceState(null, …)`（App Router の履歴の state を渡すと、ルーターが URL の変更を知らず、あとで描き直したときにクエリが消えるため、state は渡さない）。ページが `searchParams` を読み、サーバーの描画から同じ条件で出す。
 - 一度に出すのは 50 行で、「さらに表示」で足す（ページ送りにしない）。足した行数は、Next.js の Activity（`useRouter().bfcacheId` を `key`）で、戻る・進むのときだけ保つ。
 - 「条件をクリア」は、最初の表示と違うときだけ出し、最初の表示に戻す。
 - 絞り込みと区切りは画面の側で行い、デーモンの API・MCP の `list_tasks` は変えない。

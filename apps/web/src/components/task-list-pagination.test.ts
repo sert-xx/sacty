@@ -258,6 +258,8 @@ describe("URL への書き出し", () => {
       status: "waiting",
     });
     expect(replace).toHaveBeenCalledTimes(8);
+    // state を渡すと、App Router がルーターの URL を更新せず、あとでクエリが消える
+    for (const call of replace.mock.calls) expect(call[0]).toBeNull();
     expect(push).not.toHaveBeenCalled();
     expect(window.history.length).toBe(length);
   });
@@ -509,6 +511,39 @@ describe("50 行ずつの表示", () => {
     render(data(many(120)));
     expect(input("search").value).toBe("");
     expect(ids()).toHaveLength(50);
+  });
+
+  it("同じ一覧へクエリ無しで移る（サーバーの絞り込みが変わる）と、最初の表示に戻る", () => {
+    const list = [...many(60, "終", { status: done }), ...many(60, "進", { status: working })];
+    const url = "/projects/p1/tasks?status=all&q=%E7%B5%82";
+    mount(data(list), { filter: parseTaskFilter(new URLSearchParams(url.split("?")[1])), url });
+    expect(input("search").value).toBe("終");
+    pressMore();
+    window.history.replaceState(null, "", "/projects/p1/tasks");
+    render(data(list), { filter: {} });
+    expect(input("search").value).toBe("");
+    expect(select("状態").value).toBe("active");
+    expect(ids()).toHaveLength(50);
+    expect(ids()[0]).toBe("進-1");
+  });
+
+  it("自分が URL に書いた絞り込みでサーバーが描き直されても、足した行数を保つ", () => {
+    mount(data(many(120)));
+    change(input("search"), "タスク");
+    pressMore();
+    window.history.replaceState(window.history.state, "", window.location.href);
+    render(data(many(120)), { filter: parseTaskFilter(params()) });
+    expect(input("search").value).toBe("タスク");
+    expect(ids()).toHaveLength(100);
+  });
+
+  it("作り直されたとき（サーバーの値が古くても）、今の URL の絞り込みで始まる", () => {
+    const url = "/projects/p1/tasks?q=%E3%82%BF%E3%82%B9%E3%82%AF&status=all";
+    window.history.replaceState(null, "", url);
+    bfcache.id = "three";
+    render(data(many(120)), { filter: {} });
+    expect(input("search").value).toBe("タスク");
+    expect(select("状態").value).toBe("");
   });
 
   it("別のプロジェクトへ移ると、前の絞り込み・足した行数を持ち込まない", () => {

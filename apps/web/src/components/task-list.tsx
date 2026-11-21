@@ -24,6 +24,7 @@ import {
   NO_REPO,
   needsLocalDay,
   type ParsedFilter,
+  parseTaskFilter,
   type TaskFilter,
 } from "@/lib/task-filter";
 import type { TaskListData, TaskRow } from "@/lib/task-list-data";
@@ -36,7 +37,7 @@ export function taskListLiveUrl(projectId: string): string {
 }
 
 /** 一度に出す行の数（子タスクの行も 1 行と数える）。「さらに表示」で、この数ずつ足す。 */
-export const TASK_PAGE_SIZE = 50;
+const TASK_PAGE_SIZE = 50;
 
 /** 絞り込みの状態。status が undefined の間は、開いたときに決めた最初の表示の状態に従う。 */
 type FilterState = Omit<TaskFilter, "status"> & { status?: TaskFilter["status"] };
@@ -47,7 +48,9 @@ const subscribeNothing = () => () => {};
 function writeFilterUrl(filter: TaskFilter, defaultStatus: TaskFilter["status"]) {
   const url = new URL(window.location.href);
   url.search = filterQuery(filter, defaultStatus, url.search);
-  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  // state は null にする。App Router の state（__NA つき）を渡すと、ルーターが URL の変更を知らず、あとで描き直したときに
+  // クエリが消える。null なら、Next.js が内部の state を写してルーターの URL も合わせる
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 /**
@@ -84,11 +87,14 @@ function LiveTaskListBody({
   const { tasks: m, labels } = useMessages();
   // 絞り込みと足した行数は画面の中で持つ（取り直しても消さない。別のプロジェクトへ移ると、key が変わって消える）。
   // 絞り込みは URL のクエリにも書く
-  const [picked, setPicked] = useState<FilterState>(() => ({
-    ...EMPTY_FILTER,
-    ...initialFilter,
-    status: initialFilter?.status,
-  }));
+  // 最初の値は今の URL から作る（戻るで、サーバーが最初に描いたときの値のまま作り直されても、アドレス欄と食い違わない）
+  const [picked, setPicked] = useState<FilterState>(() => {
+    const start =
+      typeof window === "undefined"
+        ? initialFilter
+        : parseTaskFilter(new URLSearchParams(window.location.search));
+    return { ...EMPTY_FILTER, ...start, status: start?.status };
+  });
   const [limit, setLimit] = useState(TASK_PAGE_SIZE);
   // 最初の表示の状態は、開いたときに 1 回だけ決める（取り直しでは切り替えない）。デーモンに届かずに開いたときは、
   // 最初にデータが届いた時点で決める
@@ -98,6 +104,22 @@ function LiveTaskListBody({
   if (defaultStatus === null && data) setDefaultStatus(defaultStatusFor(data.rows));
   const initialStatus = defaultStatus ?? "";
   const filter: TaskFilter = { ...picked, status: picked.status ?? initialStatus };
+  // サーバーが渡す絞り込みが変わった（同じ一覧へのリンクでクエリ無しへ移ったなど）とき、いまの絞り込みと違えば、
+  // その絞り込みに合わせる（自分が URL に書いた絞り込みでサーバーが描き直されたときは、行数も保つ）
+  const propsFilter: TaskFilter = {
+    ...EMPTY_FILTER,
+    ...initialFilter,
+    status: initialFilter?.status ?? initialStatus,
+  };
+  const propsKey = filterQuery(propsFilter, initialStatus, "");
+  const [seenPropsKey, setSeenPropsKey] = useState(propsKey);
+  if (seenPropsKey !== propsKey) {
+    setSeenPropsKey(propsKey);
+    if (propsKey !== filterQuery(filter, initialStatus, "")) {
+      setPicked({ ...EMPTY_FILTER, ...initialFilter, status: initialFilter?.status });
+      setLimit(TASK_PAGE_SIZE);
+    }
+  }
   // 開始時期は日をブラウザーのタイムゾーンで決めるので、サーバーの描画と描き直しでは行を出さない
   const hydrated = useSyncExternalStore(
     subscribeNothing,

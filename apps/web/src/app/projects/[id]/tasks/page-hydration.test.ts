@@ -106,6 +106,10 @@ const rowIds = (root: ParentNode) =>
 
 async function serverThenHydrate(query: Record<string, string | string[]>) {
   const list = await listFor(query);
+  // ブラウザーの URL は、サーバーが読んだクエリと同じ
+  const search = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) for (const x of [v].flat()) search.append(k, x);
+  window.history.replaceState(null, "", `/projects/p1/tasks?${search}`);
   const html = renderToString(wrap(list));
   const server = document.createElement("div");
   server.innerHTML = html;

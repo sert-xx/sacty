@@ -136,7 +136,7 @@ export function filterQuery(
 ): string {
   const params = new URLSearchParams(search);
   for (const name of FILTER_PARAMS) params.delete(name);
-  if (filter.query !== "") params.set("q", filter.query);
+  if (filter.query.trim() !== "") params.set("q", filter.query);
   if (filter.from) params.set("from", filter.from);
   if (filter.to) params.set("to", filter.to);
   if (filter.start) params.set("start", filter.start);
