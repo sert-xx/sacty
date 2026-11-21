@@ -19,7 +19,7 @@
 コード・テスト・文書・画面の表示名を変えた。
 
 - コード：`apps/daemon/src/service.ts`（検知・打ち切り・始め直しの待ち・マージとクローズの記録・投稿の直前の打ち切り・届かなかった回の判定の結線）、`apps/daemon/src/undelivered-review.ts`、`apps/daemon/src/prompts.ts`、`apps/daemon/src/suggestion-triage.ts`、`packages/core` のイベント `ReviewRunStopped` と投影（`reviewStop`・回ごとの記録の消去）、費用の数え方。打ち切りで実行を止めている間に人が一時停止したら、人の一時停止を優先し、`ReviewRunStopped` を記録しない。始め直しの待ちの印が無い間は、初めて見た時刻から待つ（PR を読めない状態が続いても、待ちは過ぎる）。
-- テスト：`apps/daemon/src/daemon-review-run-stopped.test.ts`、`packages/core/src/projection.test.ts`、`apps/web/src/lib/labels.test.ts`、既存の `daemon-review-watch.test.ts`・`daemon-implement.test.ts`・`step-costs-totals.test.ts` の追従。
+- テスト：`apps/daemon/src/daemon-review-run-stopped.test.ts`、親の取り込みを通して届かなかった回の判定を確かめる `daemon-step-pull-requests.test.ts`・`daemon-suggestion-triage.test.ts` の各 1 件、`packages/core/src/projection.test.ts`、`apps/web/src/lib/labels.test.ts`、既存の `daemon-review-watch.test.ts`・`daemon-implement.test.ts`・`step-costs-totals.test.ts` の追従。
 - 画面：作業履歴の表示名（日英）。
 - 仕様書（日英）
   - `docs/spec/tasks-and-steps.md`：投稿の直前の確かめで、古い先頭宛てに `latestCommit` を付けて投稿するのをフォークからの PR に限った。節「投稿の前の先頭の変化での打ち切り」を足した（見張り・打ち切り・投影・始め直し・マージとクローズ・届かなかった回）。再レビューの範囲の絞り（PBI-432）に、届かなかった回の指摘は範囲に入れる例外を足した。
