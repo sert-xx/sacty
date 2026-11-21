@@ -42,7 +42,9 @@ describe("ReviewWatchNotice", () => {
     expect(html).toContain('data-state="watching"');
     expect(html).toContain("PR の変化を見守っています");
     expect(html).toMatch(/<p role="status"[^>]*>2回目のレビューの判定：提案あり/);
-    expect(html).toContain("PR の作者の対応を待っています。あなたの対応は要りません。");
+    expect(html).toContain(
+      "PR の作者の対応を待っています。フォークからの PR でなければ、あなたの対応は要りません。",
+    );
     // 仕組み（何が起きると再レビュー・完了になるか）は、補足に置く
     expect(html).toContain("自動で再レビューします");
     expect(html).toContain('href="https://github.com/acme/app/pull/9#r1"');
@@ -51,7 +53,9 @@ describe("ReviewWatchNotice", () => {
       "en",
     );
     expect(en).toContain("Verdict of review round 1: changes required");
-    expect(en).toContain("Waiting for the PR author to respond. Nothing is needed from you.");
+    expect(en).toContain(
+      "Waiting for the PR author to respond. Unless the PR is from a fork, nothing is needed from you.",
+    );
   });
 
   it("フォークからの PR で自動の再レビューを見送っているときは、人が再レビューを押すまでレビューしないことと、新しい先頭を出す（PBI-461）", () => {

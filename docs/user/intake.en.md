@@ -206,7 +206,7 @@ A review task is not done until the verdict becomes "no findings".
 sacty watches the PR for changes and re-reviews automatically when the PR author responds (except for PRs from a fork).
 
 While it watches, the task status is "Waiting on the PR", with the current verdict (changes required, suggestions, verdict unreadable, or no verdict given).
-It waits for the PR author to respond, so nothing is needed from you.
+It waits for the PR author to respond, so nothing is needed from you (for a PR from a fork, a new pushed commit is not reviewed until you press "Review again and post to the PR").
 It does not appear in "Needs you" or the bell in the header, and no completion notification is sent.
 
 sacty handles changes of the PR as follows.
@@ -273,7 +273,7 @@ When even one file that is not a document is included, when the difference from 
 
 There are four ways to start a re-review.
 
-- Do nothing: after posting the review, sacty watches the PR for changes and starts one automatically ([After the review is posted](#after-the-review-is-posted)).
+- Do nothing: after posting the review, sacty watches the PR for changes and starts one automatically (except for PRs from a fork; [After the review is posted](#after-the-review-is-posted)).
 - From the web UI: when you want it reviewed again right away, press "Review again and post to the PR" in the task details.
   sacty reruns the selected task. It works while the task is watching and after it is done.
 - Ask your local AI: if you connect sacty's MCP server to Claude Code or Codex, you can ask it to "re-review this PR" ([Operating sacty from your local AI](mcp.en.md)).
