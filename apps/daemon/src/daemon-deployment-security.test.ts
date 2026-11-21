@@ -1744,7 +1744,7 @@ describe("セキュリティチェックとセキュリティ対応", () => {
         });
         const body = pulls.calls.at(-1)?.body ?? "";
         expect(body).toContain("範囲の外の変更は見つかりませんでした");
-        expect(body).toContain("PR のレビューの子タスクが確かめます");
+        expect(body).toContain("PR のレビューで確かめます");
         expect(body).not.toContain("ゴールガーディアンが最小限か");
         const reviewPrompt = executor.calls.at(-1)?.command.join(" ") ?? "";
         expect(reviewPrompt).toContain("この PR はセキュリティ対応です");

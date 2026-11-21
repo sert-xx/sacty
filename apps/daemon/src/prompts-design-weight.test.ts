@@ -308,7 +308,7 @@ describe("実装の PR の本文の「設計の直し」（PBI-446）", () => {
     expect(text).toContain("この PR のマージが、設計の直しの承認を兼ねます");
     expect(text).toContain("反映した直し（1 件）");
     expect(text).toContain("反映しなかった直し（1 件）");
-    expect(text).toContain("指摘 implement-1-1（観点 TV-1の expected）");
+    expect(text).toContain("指摘（観点 TV-1の expected）");
     expect(text).toContain("    > 「失敗しました」");
   });
 

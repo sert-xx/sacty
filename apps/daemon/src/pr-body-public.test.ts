@@ -1,6 +1,10 @@
 import type { FinalReview, Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { buildPullRequestBodyMergePrompt, mergePullRequestBody } from "./pr-body-merge.js";
+import {
+  buildPullRequestBodyMergePrompt,
+  mergePullRequestBody,
+  withTaskMarker,
+} from "./pr-body-merge.js";
 import {
   fillTemplate,
   GITHUB_BODY_LIMIT,
@@ -9,7 +13,6 @@ import {
   truncatedNote,
 } from "./pr-template.js";
 import {
-  AI_REVIEW_STATUS_NOTE,
   approvedBasisFullText,
   buildPullRequestBodyParts,
   buildPullRequestBodyText,
@@ -74,9 +77,9 @@ const task = (extra: Record<string, unknown> = {}) =>
 const STATUSES = ["none", "reviewing", "attached", "unknown"] as const;
 const TEMPLATE = "## 概要\n\n## 変更内容\n\n## テスト\n";
 
-describe("AI のレビューの行が画面を案内しない（TV-3）", () => {
+describe("本文に、レビューの進め方と AI のレビューの状況を書かない（PBI-471）", () => {
   it.each(STATUSES)(
-    "状況 %s：実装の PR・要求要件・設計の PR の本文に「承認の画面」が無く、PR のレビューの欄の案内がある",
+    "状況 %s：実装の PR・要求要件・設計の PR の本文に、レビューの進め方・AI のレビューの行・承認の画面が無い",
     (status) => {
       const aiReview = {
         head: "abc1234def",
@@ -93,17 +96,16 @@ describe("AI のレビューの行が画面を案内しない（TV-3）", () => 
       ];
       for (const body of bodies) {
         expect(body).not.toContain("承認の画面");
-        expect(body).toContain("最新の状況はこの PR のレビューの欄で確かめてください。");
-        const line = body.split(/\\n|\n/).find((l) => l.includes("AI のレビュー：")) ?? "";
-        // 括弧書きの注釈が無い（head の短縮 ID の括弧だけ）
-        expect(line.replace("（abc1234）", "")).not.toMatch(/[（(]/);
+        expect(body).not.toContain("レビューの進め方");
+        expect(body).not.toContain("AI のレビュー：");
+        expect(body).not.toContain("子タスク");
       }
     },
   );
 });
 
-describe("決まった形の本文の結論とレビューの進め方（TV-4）", () => {
-  it("結論は変更・最後の直しだけで、記録・人が確かめることが続き、その後に、1 項目 1 文のレビューの進め方がある", () => {
+describe("決まった形の本文の結論（PBI-471）", () => {
+  it("結論は変更・最後の直しだけで、記録・人が確かめることが続き、レビューの進め方の節は無い", () => {
     const t = task({
       outputs: {
         implement: "予約のキャンセルを足しました。\n\n## 最後の直し\n\n指摘の文言を直しました。",
@@ -120,53 +122,35 @@ describe("決まった形の本文の結論とレビューの進め方（TV-4）
     const main = buildPullRequestBodyText(t, {
       aiReview: { head: "abc1234def", status: "none" },
     }).main;
-    const conclusion = main.slice(main.indexOf("## 結論"), main.indexOf("## レビューの進め方"));
+    const conclusion = main.slice(main.indexOf("## 結論"), main.indexOf("## 要求要件"));
     const items = conclusion.split("\n").filter((l) => l.startsWith("- "));
     expect(items.filter((l) => !l.startsWith("- [ ]")).map((l) => l.split("：")[0])).toEqual([
       "- 変更",
       "- 最後の直し",
       "- 最終レビューの所見",
     ]);
-    expect(conclusion).toContain("人が、ゴールガーディアンの不合格のまま、レビューへ進めました。");
+    expect(conclusion).toContain("人が、AI の確かめの不合格のまま、PR を出すと決めました。");
     expect(conclusion).toContain("- [ ] 実機で確かめる");
-    expect(conclusion).not.toContain("レビューの子タスク");
-    const guide = main.slice(main.indexOf("## レビューの進め方"));
-    expect(guide.split("\n").slice(0, 9)).toEqual([
-      "## レビューの進め方",
-      "",
-      "- Sacty のレビューの子タスクが、この PR をレビューして投稿します。",
-      "- 指摘があれば Sacty が直し、指摘なしになるとドラフトを外します。",
-      "- Sacty はテストの実行と CI の待ちをしないので、CI の結果はこの PR のチェックで確かめてください。",
-      "- AI のレビュー：この head（abc1234）には、Sacty の AI のレビューがまだ付いていません。",
-      `- ${AI_REVIEW_STATUS_NOTE}`,
-      "",
-      expect.any(String),
-    ]);
+    expect(main).not.toContain("レビューの進め方");
+    expect(main).not.toContain("ゴールガーディアン");
   });
 });
 
-describe("テンプレートに沿わせる本文のレビューの行の置き場所（TV-5）", () => {
-  it("目的の節には無く、footer の承認の案内の前にあり、main を上限で切っても footer に残る", () => {
+describe("footer の承認の案内と目印（PBI-471）", () => {
+  it("テンプレートに沿わせても、承認の2文と目印が footer に残り、main を上限で切っても残る", () => {
     const t = task({ outputs: { implement: `説明。\n\n${"あ".repeat(70_000)}` } });
     const parts = buildPullRequestBodyParts(t, {
       aiReview: { head: "abc1234def", status: "reviewing" },
     });
-    expect(parts.summary).not.toContain("レビューの子タスク");
-    expect(parts.summary).not.toContain("AI のレビュー：");
     const filled = fillTemplate(TEMPLATE, parts);
-    expect(filled.main).not.toContain("レビューの子タスク");
-    const guide = filled.footer.indexOf(
-      "- Sacty のレビューの子タスクが、この PR をレビューして投稿します。",
-    );
-    expect(guide).toBeGreaterThanOrEqual(0);
-    expect(guide).toBeLessThan(filled.footer.indexOf("この PR をマージすると"));
     expect(filled.footer).toContain(
-      "- AI のレビュー：この head（abc1234）を、Sacty の AI のレビューがレビュー中です。",
+      "この PR をマージすると（PR の中で直してからでも）、実装を承認したことになります。\n直してほしい所は、この PR にコメントかレビューで書いてください。",
     );
     const { body, truncated } = limitBody(filled.main, filled.footer, PR_BODY_MAX, filled.keep);
     expect(truncated).toBe(true);
-    expect(body).toContain("- 指摘があれば Sacty が直し、指摘なしになるとドラフトを外します。");
-    expect(body).toContain("sacty task t-1");
+    expect(body).toContain("直してほしい所は、この PR にコメントかレビューで書いてください。");
+    expect(body.trimEnd().endsWith("<!-- sacty task t-1 -->")).toBe(true);
+    expect(body.split("sacty task t-1")).toHaveLength(2);
   });
 });
 
@@ -348,17 +332,19 @@ describe("人が読む文の製品名（TV-13）", () => {
   });
 });
 
-describe("古い形の本文を祖先にした 3 方向のマージ（TV-16）", () => {
-  it("人が「変更」の節に足した行と、新しい「レビューの進め方」の両方を含む本文にマージされる", async () => {
+describe("古い形の本文を祖先にした 3 方向のマージ（PBI-471）", () => {
+  it("人が「変更」の節に足した行を残し、レビューの進め方を足さず、可視のタスク ID の行は残さない", async () => {
     const t = task();
-    const generated = joinBodyText(
-      buildPullRequestBodyText(t, { aiReview: { head: "abc1234def", status: "none" } }),
-    );
-    // 今までの形：結論に、括弧書きのレビューの行 2 つがあり、レビューの進め方の節が無い
-    const guideStart = generated.indexOf("## レビューの進め方");
-    const guideEnd = generated.indexOf("## 要求要件");
-    const oldBase = `${generated.slice(0, guideStart).replace("## 結論\n\n", "## 結論\n\n- 変更：予約のキャンセルを足しました。\n- sacty のレビュー：（sacty のレビューの子タスクが、この PR をレビューして投稿します。）\n- AI のレビュー：この head（abc1234）には、sacty の AI のレビューがまだ付いていません（この本文を書いた時点の状況です。最新の状況は、sacty の承認の画面で確かめてください）\n")}${generated.slice(guideEnd)}`;
-    expect(oldBase).not.toContain("## レビューの進め方");
+    const generated = joinBodyText(buildPullRequestBodyText(t));
+    // 以前の形：冒頭と footer に可視のタスク ID の行があり、結論の後に「レビューの進め方」の節がある
+    const visible =
+      "Sacty のタスク「予約をキャンセルできるようにする」の成果物です（sacty task t-1）。";
+    const oldBase = `${visible}\n\n${generated
+      .replace(
+        "## 要求要件",
+        "## レビューの進め方\n\n- Sacty のレビューの子タスクが、この PR をレビューして投稿します。\n\n## 要求要件",
+      )
+      .replace("<!-- sacty task t-1 -->", "")}\n（sacty task t-1）`;
     const human = oldBase.replace(
       "詳しい説明の段落です。",
       "詳しい説明の段落です。\n\n人が足した行",
@@ -366,9 +352,12 @@ describe("古い形の本文を祖先にした 3 方向のマージ（TV-16）",
     expect(human).toContain("人が足した行");
     const merged = await mergePullRequestBody({ base: oldBase, human, generated });
     expect(merged.conflicts).toBe(0);
-    expect(merged.text).toContain("人が足した行");
-    expect(merged.text).toContain("## レビューの進め方");
-    expect(merged.text).not.toContain("承認の画面");
+    const text = withTaskMarker(merged.text, "t-1", oldBase);
+    expect(text).toContain("人が足した行");
+    expect(text).not.toContain("レビューの進め方");
+    expect(text).not.toContain(visible);
+    expect(text.replaceAll("<!-- sacty task t-1 -->", "")).not.toContain("sacty task");
+    expect(text.split("<!-- sacty task t-1 -->")).toHaveLength(2);
   });
 
   it("人が結論の同じ行を直していて重なったときは、競合として返す（まとめさせる経路に進む）", async () => {

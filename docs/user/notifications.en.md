@@ -64,7 +64,7 @@ A notification contains the following.
 Nothing is sent when you pause a task yourself.
 
 The links in Slack notifications point to the Sacty screen that runs on the requester's machine.
-The notices that Sacty posts as PR comments (things for a person to check, the work went back to design, the review stopped, and the decision on deferral proposals) also reach people who read only the PR on GitHub, so the sentence with a screen link is followed by "タスクの画面は、依頼した人のマシンでだけ開けます。" (the task screen opens only on the requester's machine) when the screen URL is `127.0.0.1`, `localhost`, or `[::1]`.
+The notices that Sacty posts as PR comments (things for a person to check, the work went back to design, the review stopped, the work paused for a person's decision, and the decision on deferral proposals) also reach people who read only the PR on GitHub, so they write no screen URL or task ID, and guide with a sentence of the form "Sacty の画面で〜してください".
 
 If a notification cannot be sent, sacty does not stop the task and shows the reason as a warning. The warning disappears the next time sending succeeds. It appears in these places.
 

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { budgetState, computeCostUsd } from "./cost.js";
-import type { ActivityEvent, EventInput, StepKey } from "./events.js";
 import {
+  type ActivityEvent,
   bodyWithResumeNote,
   DERIVE_RECORD_HEADING,
+  type EventInput,
   EventInput as EventSchema,
   exportSteps,
   MVP_STEPS,
@@ -11,8 +12,10 @@ import {
   RERUN_RECORD_HEADING,
   RESUME_NOTE_HEADING,
   RESUME_NOTE_MAX,
+  RemarkResponse,
   rerunEditableBody,
   STEP_PLANS,
+  type StepKey,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
   testsMadeNoProgress,
@@ -8675,6 +8678,26 @@ describe("人に確かめてほしいこと（PBI-301）", () => {
       }),
     ).get("t") as Task;
     expect(humanAsks(many).confirms.map((c) => c.text)).toEqual(["一つ目", "二つ目"]);
+  });
+
+  it("指摘の要点（gist）を対応と一緒に写す。要点の無い以前の記録も読め、gist は無い（PBI-471）", () => {
+    seq = 0;
+    const task = project(
+      reworked("t", {
+        decided: true,
+        remarkTexts: ["指摘 comment:1", "指摘 comment:2"],
+        responses: [
+          { remarkId: "implement-1-1", text: "直した", gist: "エラーの文言を直す" },
+          // 以前の版の記録：gist が無い
+          { remarkId: "implement-1-2", text: "直した", status: "declined" },
+        ],
+      }),
+    ).get("t") as Task;
+    const [first, second] = task.remarks;
+    expect(first).toMatchObject({ response: "直した", gist: "エラーの文言を直す" });
+    expect(second).toMatchObject({ response: "直した", status: "declined" });
+    expect(second?.gist).toBeUndefined();
+    expect("gist" in RemarkResponse.parse({ remarkId: "a", text: "b" })).toBe(false);
   });
 
   it("同じ文の確認が複数の指摘に付いていれば、1 件にまとめ、付いていた指摘を指摘の順に並べる（PBI-354）", () => {

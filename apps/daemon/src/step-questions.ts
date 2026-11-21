@@ -248,7 +248,7 @@ function openFence(text: string): string | undefined {
 const QUESTIONS_NONE_LINE = "確認したいこと：なし（must・should とも問いはありません）";
 const answerLines = [
   "- 答えるには、この PR にコメントしてください。Sacty が取り込み、答えを成果物に反映します。",
-  "- 答えずにマージすると、推奨の答えで次の工程に進みます（must も同じです）。",
+  "- 答えずにマージすると、推奨の答えで次に進みます（must も同じです）。",
 ];
 
 type StepQuestionsSection = {

@@ -284,6 +284,7 @@
   ただし、要求要件・設計を差し戻して前回の下書きを元に直すときは、範囲と回数を絞る（[要求要件・設計の差し戻しの直し方](#要求要件設計の差し戻しの直し方)）。
 - 実装・修正の工程（要求要件・設計あり、要求要件を省いた、テストの仕組みが無い、不具合の修正のどれも）は、要求要件・設計（これらを省いたタスクは、タスクの内容）に無い、複数の処理から共有される仕組み（キュー・ロック・直列化・キャッシュ・グローバルな状態・共有のヘルパーなど）を足させない（`SHARED_MECHANISM_IMPLEMENT_LINE`。PBI-302 B4）。求められた振る舞いは、既存の仕組みとその場の処理で満たさせる。足さないと満たせないと確かめたときだけ足し、実装の説明の最後に「共有の仕組みを足した理由」の節を作って、足した仕組みと、足さないと満たせない理由（どの要求を、なぜ既存の仕組みでは満たせないか）を書かせる。以前の版の最終レビューは、この理由があり確かめられれば `humanChecks` に「共有の仕組みを足した：…（理由）」を書き（PR の本文の「人が確かめること」に出る）、理由が無い・足さなくても満たせるなら、範囲外の変更として不合格にしていた。
 - 実装・修正の工程（要求要件・設計あり、要求要件を省いた、テストの仕組みが無い、文書だけ、不具合の修正のどれも）は、セルフレビューと提出の前の検証の前に、範囲外の変更などの基準を、提出の前に差分で1つずつ確かめさせる（`implementReviewCriteriaLines`。PBI-315。もとは以前の版の最終レビューの不合格の基準を先に渡すためのもの。指示の見出しは「提出の前に確かめる、レビューの基準」で、実装の PR のレビューがこれらに当たる変更を指摘する（指摘があると実装を直す）と伝える）。基準は、求められていない振る舞いの変更、既存のテストの期待を弱める変更、リファクタリングでの既存の振る舞いの変化、リポジトリの決まりが求める変更、観点を検証していないテスト（テストの仕組みがあるタスクだけ）、受け入れの確かめを縮めること、共有の仕組みの異常の後の回復、リポジトリのファイルに書いた sacty の作業領域の内部の名前。AI のレビューの過去の指摘があれば、応えるときは要求に対する欠陥の修正にとどめさせる。これは基準とは分けて伝える（指示の文は、AI の指摘に応えるときは要求に対する欠陥の修正にとどめ、それを超えて振る舞いを変えないこと、既存のテストの期待を弱める変更は AI の指摘に応えたものでも上の基準に当たること、と書く）。範囲外の変更の基準と AI の指摘への応え方は、セキュリティ対応には入れない（観点 SEC-MIN が見る）。何が当たるかの言葉は、`apps/daemon/src/final-review-criteria.ts` の定数（`UNREQUESTED_BEHAVIOR`・`TEST_WEAKENING`・`EXISTING_BEHAVIOR`・`CONVENTION_CHANGES`・`HOLLOW_TEST`・`SHALLOW_ACCEPTANCE`・`SHARED_MECHANISM`・`INTERNAL_NAMES`）を使う（一覧の `FINAL_REVIEW_CRITERIA` は、指示にすべての基準があることをテストで確かめるためのもの）。範囲の拠り所は、タスクの進め方の言葉にする（要求要件を省いたタスクには、承認済みの要求要件と書かない）。
+- 実装・修正の工程（直しを含む。どの枝も）の指示には、指示を作った時刻（UTC。`2026-11-21T10:30:00Z` の形）と、ファイル名・本文に日時を書くとき（記録・決定・作業の履歴など）は推測で決めず、書く直前にコンテナで今の時刻を確かめる（`date -u` など）決まりを入れる（`timestampLine`。PBI-469）。日時の形とタイムゾーンはリポジトリの決まりに従わせる。時刻は `buildPrompt` の `extra.now` で渡し（service は時計の `this.now()` を渡す。渡さなければ `Date.now()`）、要求要件・設計・文書作成の工程には入れない（全工程に渡る既定の規則が、日時を書くときに今の時刻を確かめさせる。[コンテキスト](context.md)）。提出の前に確かめる基準には、`FUTURE_TIMESTAMP`（このタスクで足したファイルの、作成・決定・記録の日時として書いたファイル名と対になる本文の日時の欄が、提出の直前に確かめた今の時刻より後なら、今の時刻に直す。今はリポジトリの決まりのタイムゾーンに直して比べ、決まりが無ければ UTC。期限・予定日など記録の日時ではない日時は直さない）も入る。sacty がファイル名を読んで止める検査はしない（日時の形とタイムゾーンはリポジトリごとに違うため）。PR のレビューは観点 X-1 が同じものを見る。
 - 実装・修正の工程は、セルフレビューの前に、提出の前の検証を指示する（`implementVerificationLines`。PBI-301 A3。実験 S18 r4）。リポジトリが定めるフォーマッター・リンター・型チェックなどの検証を、PR に入る変更すべて（コード・テスト・文書・設定。エージェントが足したファイルを含む）に対して実行し、通してから提出させる。対象を変更したファイルに絞れるツールは絞ってよいが、文書など種類で対象から外させない。文書だけの依頼（`documentsOnly`）では、文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査など）に限り、テスト・ビルド・型チェック・コードのリンターは実行させない（文書向けのセルフレビューの規則と食い違わせない）。sacty が PR に足す成果物のファイル（作業領域に無い）があるタスクでは、リポジトリ全体を対象にする検証がそのファイルも検査することを伝え、落ちたときの直し方は、PR のレビューの指摘に従わせる。実行しなかった検証・実行できなかった検証は、理由を実装の説明に書かせる（理由なしに省かせない）。検証を通すために、設定やテストを弱めさせない。テストは、途中は関係するものだけ、全件は最後の変更の後に1回実行させる（[実装の途中のテストの範囲](#実装の途中のテストの範囲)）。あわせて、セルフレビューの指示（`selfReviewLines`。どの主対象の種類にも）で、検証の実行は既定のスキルの `references/verification-run.md` の手順の全体に従わせ、見出しや一部の行だけを読んで進めさせない。
 - 同じ節に、入口（CLI のコマンド・道具・API のエンドポイントなど、利用者や呼び出し側が直接使うもの）を足す・変える変更だけ、ビルドした成果物（ビルドが無ければ配る形のまま）でその入口を、時計・タイマー・通信などを差し替えずに1回以上動かし、動かした入口・動かし方・結果を実装の説明に書かせる行を出す（`ENTRY_UNMOCKED_RUN_LINE`。PBI-451。PBI-399 の MCP の道具で、時計を差し替えたテストが全部通ったのに、本物の時計の小数で失敗した）。差し替えたテストの実行は、動かしたことに数えない。動かせなければ理由を書かせる。外部への書き込み・削除・送信・課金を伴う入口と本番の資源に触れる入口は動かさず、どの入口も、通信の有無の判断に依らず、その1回の実行にだけ、入口が使いうる認証の経路のすべて（認証情報の環境変数・設定ファイル・ホームの下の決まった場所のファイル・認証の代理など）を外して動かさせる（環境変数は子プロセスでだけ外すか空にし、設定ファイルとホームの下のファイルは、設定の置き場所・ホームを指す環境変数を空の一時ディレクトリに向けて読ませる。外部を読むだけの通信にはダミーの値を渡してよい。認証情報のファイルの実物は、作業領域の中か外かを問わず、移さない・消さない・読まない。1つでも外せなければ動かさず、理由を書かせる）。動かし方と結果に秘密の値を書かせず、作業履歴などリポジトリに残す文書に写すときも同じとする。「入口を変える」は、入口の外から見える契約（呼び方・引数・出力の形〔項目・型・書式〕・終了コード・既定の振る舞い）を変えることで、出力の形を変えずに値の誤りだけを直す変更と契約を変えない内部の変更は含めず、足さない・変えない変更では何もしない。コードの実装・修正のどの経路にも出し（入口を足したかはオーケストレーターが判定できないため）、文書だけの依頼には出さない。PR のレビューは、既定の review スキルの C-4 の手順 6 で、差し替えたテストだけで確かめた道に、差し替えない道（手元で結果が決まる本物の部品。外部のサービスを本物で通すことは求めない）を通る小さなテストを求め（そのテストは、手順 2・手順 4・「壊れやすさ」の対象にしない）、入口を足す・変える変更で、この記載（結果か動かせなかった理由）が無ければ指摘する。新しい観点にせず C-4 に足したのは、必須の観点で担当と実行の時間が増えないため。
 - 要求要件・設計の工程も、セルフレビューの前に、PR に入る成果物のファイルの検証を指示する（`documentVerificationLines`。PBI-301 A3。実験 S18 r4：要求要件の PR で Prettier に通らない表が出た）。成果物は sacty が `<documentsDir>/<タスクの短い ID>/<工程>.md`（`stepDocumentPath`）に置いて PR に入れる。下書きは作業領域の外の一時ファイルなので、置かれる場所のパスとして検査できる方法で、リポジトリが定める文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査）を実行し、通してから提出させる。実行するのは文書に効く検証だけで、テスト・ビルド・型チェック・コードのリンターは実行させない（文書が主対象のときの決まり。PBI-285）。実行しなかった検証・実行できなかった検証は、理由をセルフレビューの報告の `summary` に書かせる。成果物を PR に足さないタスク（既存の PR を引き継ぐ）には入れない。
@@ -352,11 +353,11 @@
 - 人間が確かめる項目（`needsCheck`）は、推論と、原文が Input に見つからない引用と、分類の無い項目。書いたエージェントが自分で分類した（`sequential`）ときは、すべての項目。
 - 画面は、成果物のカード（承認済みの成果物では出さない）と承認の画面に、確かめる項目の数と区分ごとの数を出す（`ProvenanceNote`）。
   確かめる項目があれば警告の色で開いたまま挙げ、引用・導出は「そのほか」として折りたたむ。記録が無ければ警告を出す。
-- 要求要件・設計の PR の本文には「確かめる所」として、同じ件数と確かめる項目を入れる（`provenanceGuideLines`。テンプレートに沿わせるときは目的・概要の所）。
+- 要求要件・設計の PR の本文には「確かめる所」として、確かめる項目（推論など）の ID と根拠を入れる（PR 用の `provenancePullRequestLines`。テンプレートに沿わせるときは目的・概要の所）。確かめる項目の件数と、引用・導出・推論の数、分類をサブエージェントが行ったかどうかの行は、本文に書かない（PBI-471。画面の表示は変えない）。
 
 関係する ADR: [承認する人が見る所を絞るため、要求要件・設計の項目の出典を、書いたエージェントとは別のサブエージェントに分類させる](../adr/20261027-1427-classify-provenance-before-approval.md)
 
-コード: `apps/daemon/src/prompts.ts`（`provenanceLines`・`provenanceInputs`・`checkProvenance`・`provenanceIds`・`viewpointRename`・`provenanceGuideLines`・`PROVENANCE_HEADING`）、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`（`Provenance`・`PROVENANCE_STEPS`・`needsCheck`）、`packages/core/src/projection.ts`、`apps/web/src/components/provenance.tsx`（`ProvenanceNote`）
+コード: `apps/daemon/src/prompts.ts`（`provenanceLines`・`provenanceInputs`・`checkProvenance`・`provenanceIds`・`viewpointRename`・`provenanceGuideLines`・`provenancePullRequestLines`・`PROVENANCE_HEADING`）、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`（`Provenance`・`PROVENANCE_STEPS`・`needsCheck`）、`packages/core/src/projection.ts`、`apps/web/src/components/provenance.tsx`（`ProvenanceNote`）
 
 ## 進め方の組み合わせ
 
@@ -651,7 +652,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 - 引き継ぐかは、オーケストレーターが工程の選択の答えの `continuePullRequest` で決める。
   指示にこの項目を出すのは、タスクに PR のリンクがあり、実装する組み合わせ（`CONTINUABLE_PLANS`：`standard`・`skip-requirements`・`skip-design`・`direct`・`bugfix`・`security-fix`）を選べるタスクだけ（`continuablePullRequest`）。
   PR から取り込んだタスク・分割の子タスクには出さない。
-  人が後続に回すと決めた指摘の後続のタスク（`derivedFrom.deferredRemarkId` がある。[後続に回したい案と、人の決定](approval.md#後続に回したい案と人の決定)）にも出さず、答えの `continuePullRequest` も読まない（依頼にある PR は、元のタスクのマージ済みの PR で、引き継げない。新しいブランチと PR で直す）。
+  人が後続に回すと決めた指摘の後続のタスク（`derivedFrom.deferredRemarkId` がある。[後続に回したい案と、人の決定](approval.md#後続に回したい案と人の決定)）にも出さず、答えの `continuePullRequest` も読まない（依頼にある PR は、元のタスクのマージ済みの PR で、引き継げない。新しいブランチと PR で直す）。後続のタスクの題は、指摘の要点から作る（`[PR #<番号> follow-up] <要点>`。[指摘を示す 1 行](approval.md#指摘を示す-1-行)）。エージェントへの指示の見出し（各工程・リスクの評価・監査・デプロイの指示の題の所）には題を使わず、固定の「後続に回した指摘への対応」にする（`instructionTitle`）。外から来た文を、指示として読ませないため（PBI-471）。
   sacty が説明に足した記録の中のリンクは、見ない。続きのタスク（[完了したタスクから続きのタスクを作る（派生）](#完了したタスクから続きのタスクを作る派生)）の元のタスクの記録（`derivedFrom.record`）と、再実行で作ったタスクの前の試行の記録（どちらも、PR の URL と、工程の成果の本文が入る）を除いた、人が書いた題と説明（再実行の補足を含む）の中のリンクだけを見る（`rerunEditableBody`）。
   指示では、PR を参考にして別の変更をする・PR をレビューするだけなら書かないこと、指摘で直すことが具体的に決まっているなら `direct` を、セキュリティ上の問題を直すなら `security-fix` を選ぶこと、`baseBranch` を書かないことを求める。
   実装しない組み合わせの答えの `continuePullRequest` は読まない。
@@ -1260,7 +1261,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     違反があっても止めず、PR の本文の範囲の節に書き、PR のレビューの子タスクに要修正の指摘にさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
 - 実装の PR はドラフトで作り（更新したときも、ドラフトに戻す。戻せなくても PR の作成は失敗にしない）、`PullRequestPublished` に `awaitingReview` を付けて、実装の承認待ちにする（`awaitsReview`）。
   既存の PR を引き継ぐタスクは、人の PR なのでドラフトにせず、`awaitingReview` も付けない。
-  PR の本文には、最終レビューの行の代わりに、レビューの子タスクがレビューし、指摘なしでドラフトを外すことと、CI の結果は PR で確かめることを、結論の外の「レビューの進め方」の節に 1 項目 1 文で書く（`REVIEW_BODY_LINES`。PBI-450）。結論には、変更・最後の直しと、省けない行だけを置く。
+  PR の本文には、最終レビューの行も、Sacty の過程の説明も書かない（PBI-471。本文は、目的・変更、確かめ方、人が確かめること、AI が作った印、承認の案内の 2 文だけにする。[実装の PR の本文の組み立て](approval.md#実装の-pr-の本文の組み立て)）。
 - PR を作ったら、その PR をレビューする子タスクを作る（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
   子タスクの判定が今のコミットで指摘なしになったら（判定し直した回に提案が残り、それもすべて対応しないとしたときは、評価だけの実行の後に、判定は提案ありのまま。`reason: suggestions_declined`。[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）、PR の確認で sacty がドラフトを外し、`PullRequestMarkedReady`（PR の番号・コミット・子タスク）を記録する（`markReady`）。これで PR は人の承認（マージ）を待つ。
   - 今のコミットは、GitHub の PR の今の先頭（`pullRequestHead`。指摘なしを待つ PR の先頭は、PR の確認で `DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて先に読む。答えは `DRAFT_TIMEOUT_MS` まで待ち、過ぎたら通信を中断する）。レビューの間に人がコミットを足したら、子タスクにその先頭を再レビューさせ、レビューしていない先頭のドラフトは外さない。先頭を読めなければ、次の確認でやり直す。
@@ -1297,7 +1298,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても、テストの仕組みが無いという判断を使えなくても止めない（`orchestrator.testCommandUnknown`・`orchestrator.noTests*` で止まらない。sacty はテストを実行しないため。[テストの仕組みが無いタスク](#テストの仕組みが無いタスク)）。
 - テストの仕組みが無いタスク（`noTestsReason`）の実装の指示では、用意したテストを提出の前に自分で実行させ、実行したコマンドと結果を実装の説明に書かせる（sacty は申告したテストのコマンドを実行しない）。受け入れは PR のレビューの子タスクが見ると伝える（`NO_TESTS_JUDGE_BY`・`ADDED_TEST_COMMAND_LINE`）。
 
-コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`REVIEW_BODY_LINES`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
 
 ### 再現の工程の後
 
@@ -2052,7 +2053,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   - 絞る回の `rereviewLines` の「範囲は PR 全体にする」の行は、絞る節のとおりに絞ることを言う文に差し替える。絞らない回の指示の文は変えない。指示の節には、範囲・起動する観点・親が絞らない条件（前回の記録に見られなかった観点・止まった検証がある（指示に前回の記録が無いときは、前回の本文で確かめる）、前回の本文に判定が無いと書かれている／読めない、前回以降の差分を読めない・今回のコードと食い違う、作り直しと読める、迷う。絞らないことと理由は、本文に書かせず、記録の `scope` に書かせる）・変えないもの・本文の 1 行を書く（スキルを差し替えたプロジェクトでも分かるように）。
     本文に書かせるのは、絞ったことだけで、「前回（<前回の先頭>）以降の変更と前回の指摘だけを確かめた」の 1 行。絞った理由と起動しなかった観点は、記録の `scope`・`viewpoints`（`not_launched` と理由）に書かせる。
   - 前回以降が文書だけで、この節にも当たる回は、観点はこの節、検証は上の項目の節が決める（2 つは食い違わない）。この節に当たらない回は、文書だけの節は検証だけを絞り、観点は規則 1〜7 で決める。
-- 本文と過程の記録（PBI-460。[ADR](../adr/20261121-1603-pr-review-without-process-info.md)）：PR に投稿する本文と行へのコメントには、PR を読む人が直すべきか・何が問題かを判断できる情報だけを書かせ、Sacty の過程の情報は、本文の後の記録のブロックで返させる（`reviewRecordInstructionLines`）。PR を読む人は、Sacty を使っていないことがある。
+- 本文と過程の記録（PBI-460。[ADR](../adr/20261121-1603-superseded-pr-review-without-process-info.md)）：PR に投稿する本文と行へのコメントには、PR を読む人が直すべきか・何が問題かを判断できる情報だけを書かせ、Sacty の過程の情報は、本文の後の記録のブロックで返させる（`reviewRecordInstructionLines`）。PR を読む人は、Sacty を使っていないことがある。
   - 本文は総評から始めさせる（先頭の行を「## 総評」の見出しにする）。総評の前に、作業の経過の文（「レビューの本文を書きます」など）を書かせない。
   - 書かせるもの：判定の根拠になる総評、指摘（場所・何が問題か・直し方）、修正の判断に要る検証の結果（落ちたもの・確かめられなかったもの）。
   - 書かせないもの：観点の ID・数・名前、観点ごとの担当・サブエージェント・逐次モード・起動表、採用しなかった指摘とその一覧、落とした指摘の件数、動いたエージェント・モデル・切り替え、検証のやり方（使い回したなど）と通った検証、Sacty のタスクの ID。

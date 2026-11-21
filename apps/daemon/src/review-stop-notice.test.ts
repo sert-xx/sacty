@@ -14,17 +14,16 @@ import {
 } from "./review-stop-notice.js";
 
 const TASK = "52359c0c-6e66-4842-a4ae-65e73d30a117";
-const URL = "http://127.0.0.1:4700/tasks/52359c0c-6e66-4842-a4ae-65e73d30a117";
 
 describe("レビューが止まったことの知らせ（PBI-292）", () => {
-  it("F37 の止まり方（モデルの混雑）を、理由・再開のしかた（タスクの画面へのリンク）つきで書く", () => {
+  it("F37 の止まり方（モデルの混雑）を、理由・再開のしかた（画面の案内の文）つきで書く", () => {
     const summary = stopSummary("Selected model is at capacity. Please try a different model.", []);
-    const body = buildStopNotice({ taskId: TASK, reason: "error", summary, taskUrl: URL });
+    const body = buildStopNotice({ taskId: TASK, reason: "error", summary });
     expect(body.startsWith(stopMarker(TASK, stopKey("error", summary)))).toBe(true);
     expect(body).toContain("Sacty のレビューが止まりました");
     expect(body).toContain("エラー");
     expect(body).toContain("Selected model is at capacity");
-    expect(body).toContain(`](${URL})`);
+    expect(body).toContain("Sacty の画面で、このタスクを再開してください。");
     expect(isReviewStopNotice(body)).toBe(true);
     expect(isOpenStopNotice(body)).toBe(true);
   });
@@ -53,7 +52,6 @@ describe("レビューが止まったことの知らせ（PBI-292）", () => {
       taskId: TASK,
       reason: "usage_limit",
       summary: "",
-      taskUrl: URL,
     });
     expect(body).toContain("AI の利用上限");
     expect(body).not.toContain("（`");
@@ -74,7 +72,7 @@ describe("レビューが止まったことの知らせ（PBI-292）", () => {
         }
       }
       expect(summary.length).toBeLessThanOrEqual(SUMMARY_MAX + 1);
-      const body = buildStopNotice({ taskId: TASK, reason: "error", summary, taskUrl: URL });
+      const body = buildStopNotice({ taskId: TASK, reason: "error", summary });
       expect(body).not.toContain("ghp_");
     }
     // 引数に入った外から来た文の秘密情報も伏せる
@@ -92,7 +90,7 @@ describe("レビューが止まったことの知らせ（PBI-292）", () => {
 
   it("外から来た文は、コードにして載せる（@ メンションや目印のようなものを本文に出さない）", () => {
     const summary = stopSummary("denied for @alice `rm` <!-- sacty-review:x -->", []);
-    const body = buildStopNotice({ taskId: TASK, reason: "error", summary, taskUrl: URL });
+    const body = buildStopNotice({ taskId: TASK, reason: "error", summary });
     expect(body).toContain("`denied for @alice 'rm' <!-- sacty-review:x -->`");
     // 目印は先頭の行だけ。外から来た文の中の目印では始まらない
     expect(body.split("\n")[0]).toBe(stopMarker(TASK, stopKey("error", summary)));
@@ -103,7 +101,6 @@ describe("レビューが止まったことの知らせ（PBI-292）", () => {
       taskId: TASK,
       reason: "error",
       summary: "混雑",
-      taskUrl: URL,
     });
     const resolved = buildResolvedNotice(
       open,
@@ -137,7 +134,7 @@ describe("レビューが止まったことの知らせ（PBI-292）", () => {
     expect(summary).toBe(
       "レビューを繰り返しましたが、確かめた結果が得られず、投稿できませんでした",
     );
-    const body = buildStopNotice({ taskId: TASK, reason: "error", summary, taskUrl: URL });
+    const body = buildStopNotice({ taskId: TASK, reason: "error", summary });
     const reason = body.split("\n").find((line) => line.startsWith("- 理由："));
     expect(reason).toBe(
       "- 理由：エラー（`レビューを繰り返しましたが、確かめた結果が得られず、投稿できませんでした`）",

@@ -252,6 +252,18 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    it("実装の工程の指示に、時計の時刻を入れる（PBI-469）", async () => {
+      const { activity, service, executor } = await toImplement([implement("# 実装", [TV1, TV2])], {
+        now: () => Date.UTC(2026, 10, 21, 10, 30, 0),
+      });
+      await drain(service);
+      const prompt = executor.calls
+        .map((_, i) => promptOf(executor, i))
+        .find((p) => p.includes("--- テスト観点（承認済み・すべてにテストを対応させる） ---"));
+      expect(prompt).toContain("2026-11-21T10:30:00Z");
+      activity.close();
+    });
+
     it("設計のある実装の指示は、観点の対応が欠けると提出されないことと、変更が要らないときも対応させることを伝える", async () => {
       const { activity, service, executor } = await toImplement([implement("# 実装", [TV1, TV2])]);
       await drain(service);
@@ -3783,14 +3795,14 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       });
 
       it.each([
-        ["http://127.0.0.1:4700", true],
-        ["http://localhost:4700", true],
-        ["http://[::1]:4700", true],
-        ["https://sacty.example.com", false],
-        ["画面の URL ではない文字列", true],
+        "http://127.0.0.1:4700",
+        "http://localhost:4700",
+        "http://[::1]:4700",
+        "https://sacty.example.com",
+        "画面の URL ではない文字列",
       ])(
-        "止まった知らせの注釈は、サービスに渡した画面の URL（%s）で決まる（注釈あり：%s）",
-        async (webUrl, note) => {
+        "止まった知らせは、サービスに渡した画面の URL（%s）に関わらず、画面の URL・注釈を出さず「Sacty の画面で」の案内を書く（PBI-471）",
+        async (webUrl) => {
           const activity = new SqliteActivityStore(dbPath);
           const pulls = new FakePulls();
           const { service } = makeService(activity, [capacity], {
@@ -3802,13 +3814,15 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           await service.runNext(id);
           await noticesSettled(service);
           const body = pulls.issueComments[0]?.body ?? "";
-          expect(body).toContain("/tasks/");
-          expect(body.includes("タスクの画面は、依頼した人のマシンでだけ開けます。")).toBe(note);
+          expect(body).not.toContain("/tasks/");
+          expect(body).not.toContain("http://");
+          expect(body).not.toContain("タスクの画面は、依頼した人のマシンでだけ開けます。");
+          expect(body).toContain("Sacty の画面で、このタスクを再開してください。");
           activity.close();
         },
       );
 
-      it("モデルの混雑で止まったら、PR に止まったこと・理由・タスクの画面へのリンクを1回書く", async () => {
+      it("モデルの混雑で止まったら、PR に止まったこと・理由・画面での再開の案内を1回書く", async () => {
         const activity = new SqliteActivityStore(dbPath);
         const pulls = new FakePulls();
         const { service } = makeService(activity, [capacity], { pulls, planner: reviewPlanner });
@@ -3825,7 +3839,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         });
         expect(comment?.body).toContain("Sacty のレビューが止まりました");
         expect(comment?.body).toContain("Selected model is at capacity");
-        expect(comment?.body).toContain(`](http://127.0.0.1:4700/tasks/${id})`);
+        expect(comment?.body).toContain("Sacty の画面で、このタスクを再開してください。");
         // 自分のアカウントの投稿だけを、同じ止まり方の投稿として探す
         expect(pulls.listedAccounts).toEqual(["me"]);
         activity.close();
@@ -4892,7 +4906,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(threaded.startsWith(`<!-- sacty-reply:${id}:review_comment:1:1 -->\n`)).toBe(true);
         expect(threaded).toContain("**対応しました。**\n\n回数を定数にしました");
         // 指摘の ID（キー）は、sacty の中のものなので、人には見せない
-        expect(threaded).toContain("Sacty の実装の工程で、AI が書きました。");
+        expect(threaded).toContain("Sacty の AI が書きました。");
         expect(threaded).not.toContain("への対応）");
         // レビューの本文の指摘：元へのリンクを付けた PR のコメント
         expect(replies(pulls)).toHaveLength(1);
@@ -4902,7 +4916,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         });
         // 出どころの記録が無いので、出どころを言わない（断定しない）。書き出しの行を、そのまま比べる
         expect((replies(pulls)[0]?.body ?? "").split("\n").slice(1, 4)).toEqual([
-          "レビューの本文（[このレビュー](https://github.com/acme/app/pull/12#pullrequestreview-21)）への返信です。",
+          "[この指摘](https://github.com/acme/app/pull/12#pullrequestreview-21)への返信です。",
           "",
           "**対応していません。** 理由：",
         ]);
@@ -6277,7 +6291,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     return made;
   }
 
-  it("画面に返すタスクには、承認待ちの PR の今の head の AI のレビューの状況を足し、PR の本文にも書く。承認待ちでなければ足さない（PBI-302 D1）", async () => {
+  it("画面に返すタスクには、承認待ちの PR の今の head の AI のレビューの状況を足す（PR の本文には書かない）。承認待ちでなければ足さない（PBI-302 D1）", async () => {
     const { activity, service, pulls, id } = await toImplementGate();
     const task = service.get(id)?.task;
     const commit = task?.pullRequest?.commit;
@@ -6298,9 +6312,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     pulls.prInfo = { ...pulls.prInfo, headSha: undefined } as typeof pulls.prInfo;
     await service.checkPullRequests();
     expect(service.view(id)?.task.aiReview?.status).toBe("unknown");
-    expect(pulls.calls.at(-1)?.body).toContain(
-      `AI のレビュー：この head（${commit?.slice(0, 7)}）には、Sacty の AI のレビューがまだ付いていません。`,
-    );
+    // 画面には出すが、PR の本文には書かない（書いた時点で古くなる。PBI-471）
+    expect(pulls.calls.at(-1)?.body).not.toContain("AI のレビュー：");
     expect(service.view("no-such-task")).toBeUndefined();
     activity.close();
   });
@@ -6590,7 +6603,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       number: undefined,
     });
     // 最終レビューをしないので、最終レビューの列は出さない
-    expect(call?.body).toContain("| TV-1 同じキーの再送 | pay.test.ts › 同じキーの再送 |\n");
+    expect(call?.body).toContain("| TV-1 同じキーの再送 | 1 件（`pay.test.ts`） |\n");
+    expect(call?.body).not.toContain("pay.test.ts › 同じキーの再送");
     // 入力・期待結果の全文は、表の外の折りたたみに出す
     expect(call?.body).toContain("  - 入力：同じキーで2回送る");
     expect(call?.body).not.toContain("最終レビューの所見：");
@@ -7769,7 +7783,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       await publishing;
       expect(pulls.calls).toHaveLength(1);
       expect(pulls.calls[0]?.title).toBe("途中で変えた題");
-      expect(pulls.calls[0]?.body).toContain("途中で変えた題");
+      // 本文は題を繰り返さない（PBI-471）
       expect(pulls.calls[0]?.body).not.toContain(`「${before}」`);
       activity.close();
     });
@@ -7809,7 +7823,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       };
       await drain(service);
       expect(pulls.calls.at(-1)?.title).toBe("テンプレートの間に変えた題");
-      expect(pulls.calls.at(-1)?.body).toContain("「テンプレートの間に変えた題」");
+      expect(pulls.calls.at(-1)?.body).not.toContain("成果物です");
       activity.close();
     });
 
@@ -8928,7 +8942,6 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const updated = pulls.calls[1]?.body ?? "";
       expect(updated.startsWith("> 人のメモ：リリースノートに載せる\n\n")).toBe(true);
       // sacty の更新（新しい head・最後の直し）も入る
-      expect(updated).toContain("c200000");
       expect(updated).toContain("実装の説明 v2");
       expect(updated).not.toContain("\r");
       expect(eventsOf(service, id, "PullRequestBodyResolved")).toEqual([]);
@@ -8938,6 +8951,33 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(recorded).not.toContain("人のメモ");
       activity.close();
     });
+
+    it.each([
+      ["消した", (body: string, id: string) => body.replace(`<!-- sacty task ${id} -->`, "")],
+      [
+        "別のタスクの ID に書き換えた",
+        (body: string, id: string) => body.replace(id, "00000000-0000-4000-8000-000000000000"),
+      ],
+    ])(
+      "人が説明の目印を%s後の更新でも、同じ PR の説明に入り、更新後の説明にタスクの ID の目印が1つだけある（PBI-471）",
+      async (_name, edit) => {
+        const { activity, service, pulls, id } = await toImplementGate(rework());
+        const first = pulls.calls[0]?.body ?? "";
+        expect(first.split(`<!-- sacty task ${id} -->`)).toHaveLength(2);
+        pulls.bodies[7] = `${edit(first, id)}\n\n> 人のメモ`;
+        sendBack(service, id);
+        await drain(service);
+        // 同じ PR（#7）の説明の更新で、新しい PR を作らない
+        expect(pulls.calls[1]).toMatchObject({ number: 7 });
+        const updated = pulls.calls[1]?.body ?? "";
+        expect(updated.match(/<!-- sacty task [^>]*-->/g)).toEqual([`<!-- sacty task ${id} -->`]);
+        expect(updated).toContain("> 人のメモ");
+        expect(updated).toContain("実装の説明 v2");
+        // Sacty が作った PR として扱われ続ける
+        expect(service.get(id)?.task.pullRequest?.number).toBe(7);
+        activity.close();
+      },
+    );
 
     it("人の直しとマージした本文からも、作業領域へのリンクを外し、外した後に現れる秘密の値を伏せる。人が書いたほかのリンクは変えない（PBI-385）", async () => {
       const { activity, service, executor, pulls, id } = await toImplementGate(rework());
@@ -9019,6 +9059,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           "## まとめた本文",
           "",
           "手順（`docs/setup.md`） と [設計](https://example.com/design) のとおり。値は [REDACTED] です。",
+          "",
+          `<!-- sacty task ${id} -->`,
         ].join("\n"),
       );
       expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
@@ -9070,7 +9112,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         }));
         sendBack(service, id);
         await drain(service);
-        expect(pulls.calls[1]?.body).toBe(merged);
+        // まとめた本文の末尾に、タスクの ID の目印を1つ置く（PBI-471）
+        expect(pulls.calls[1]?.body).toBe(`${merged}\n\n<!-- sacty task ${id} -->`);
         expect(linksKeptLogs(warn)).toEqual([
           `[daemon] タスク ${id} の PR（https://github.com/acme/app）の本文から、作業領域へのリンクを外せませんでした（解析に失敗しました：別スレッドが答えずに終了（終了コード 1））。本文は、リンクを外さずに使います`,
         ]);
@@ -9090,7 +9133,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       pulls.bodies[7] = "人が全部書き直した本文";
       sendBack(service, id);
       await drain(service);
-      expect(pulls.calls[1]?.body).toBe(merged);
+      expect(pulls.calls[1]?.body).toBe(`${merged}\n\n<!-- sacty task ${id} -->`);
       const prompt = promptOf(executor, executor.calls.length - 1);
       expect(prompt).toContain("人が全部書き直した本文");
       expect(prompt).toContain("<<<<<<< github-now");
@@ -9193,7 +9236,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       pulls.bodyFail = "network";
       sendBack(service, id);
       await drain(service);
-      expect(pulls.calls[1]?.body).toContain("c200000");
+      expect(pulls.calls[1]?.body).toContain("実装の説明 v2");
       expect(pulls.calls[1]?.body).not.toContain("人が全部書き直した本文");
       // 人の直しを確かめずに上書きしたことを、作業履歴に残す
       expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
@@ -9843,14 +9886,11 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const asks = (pulls: FakePulls) =>
         pulls.issueComments.filter((c) => c.body.includes("<!-- sacty-human-ask:"));
 
-      it.each([
-        ["http://127.0.0.1:4700", true],
-        ["https://sacty.example.com", false],
-      ])(
-        "人に確かめてほしいことの投稿の注釈は、サービスに渡した画面の URL（%s）で決まる（注釈あり：%s）",
-        async (webUrl, note) => {
+      it.each(["http://127.0.0.1:4700", "https://sacty.example.com"])(
+        "人に確かめてほしいことの投稿は、サービスに渡した画面の URL（%s）に関わらず、画面の URL・タスクの ID・注釈を出さず「Sacty の画面で」の案内を書く（PBI-471）",
+        async (webUrl) => {
           const pulls = new FakePulls();
-          const { activity, service } = await toImplementGate(
+          const { activity, service, id } = await toImplementGate(
             [
               rework("undecidable", reason),
               redone([{ remarkId: "implement-1-1", text: "直しました", confirm: "推測しました" }]),
@@ -9861,9 +9901,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           await service.checkPullRequests();
           await drain(service);
           await noticesSettled(service);
-          const body = asks(pulls)[0]?.body ?? "";
-          expect(body).toContain("/tasks/");
-          expect(body.includes("タスクの画面は、依頼した人のマシンでだけ開けます。")).toBe(note);
+          // 目印（先頭の行）の外
+          const body = (asks(pulls)[0]?.body ?? "").split("\n").slice(1).join("\n");
+          expect(body).not.toContain("/tasks/");
+          expect(body).not.toContain("http://127.0.0.1");
+          expect(body).not.toContain(id);
+          expect(body).not.toContain("タスクの画面は、依頼した人のマシンでだけ開けます。");
+          expect(body).toContain("Sacty の画面で差し戻してください。");
           activity.close();
         },
       );
@@ -9904,7 +9948,10 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(body).toContain("<!-- sacty-human-ask:");
         expect(body).toContain(`> ${reason}`);
         expect(body).toContain("消えていた上限は 31 日と推測しました");
-        expect(body).toContain("戻し先の判断で、指摘（implement-1-1）の意図を読み取れませんでした");
+        expect(body).toContain(
+          "**[この指摘](https://github.com/acme/app/pull/7#issuecomment-401)の意図を読み取れませんでした。**",
+        );
+        expect(body).not.toContain("implement-1-1");
         // 自分の投稿は、次の PR の確認で人間の指摘として取り込まない（取り込み済みの目印の対象外にして、差し戻しの連鎖を作らない）
         pulls.feedbackList = [];
         await service.checkPullRequests();
@@ -9951,11 +9998,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         const posted = asks(pulls);
         expect(posted).toHaveLength(1);
         const body = posted[0]?.body ?? "";
+        const pr = "https://github.com/acme/app/pull/7";
         expect(body).toContain(
-          "作り直しの実行が確かめたいこと（指摘 implement-1-1・implement-1-2）",
+          `確かめたいこと（[この指摘](${pr}#issuecomment-401)・[この指摘](${pr}#issuecomment-402)）`,
         );
-        expect(body).toContain("作り直しの実行が確かめたいこと（指摘 implement-1-3）");
-        expect(body.split("作り直しの実行が確かめたいこと").length).toBe(3);
+        expect(body).toContain(`確かめたいこと（[この指摘](${pr}#issuecomment-403)）`);
+        expect(body.split("確かめたいこと（").length).toBe(3);
+        expect(body).not.toContain("implement-1-");
         expect(body.split("> CI を再実行し、結果を確認してください。\n").length).toBe(2);
         activity.close();
       });
@@ -10190,7 +10239,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         await noticesSettled(service);
         expect(service.get(id)?.task.status).toBe("awaiting_approval");
         expect(asks(pulls)).toHaveLength(1);
-        expect(asks(pulls)[0]?.body).not.toContain("作り直しの実行が確かめたいこと");
+        expect(asks(pulls)[0]?.body).not.toContain("確かめたいこと（");
         activity.close();
       });
 
@@ -10297,7 +10346,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(threaded.startsWith(`<!-- sacty-reply:${id}:implement-1-1:2 -->\n`)).toBe(true);
         expect(threaded).toContain("**対応しました。**\n\nnull を返すようにしました");
         expect(threaded).not.toContain("への返信です");
-        expect(threaded).toContain("Sacty の実装の工程で、AI が書きました。");
+        expect(threaded).toContain("Sacty の AI が書きました。");
         // レビューの本文・通常のコメントの指摘：元へのリンクを付けた PR のコメント
         const [onReview, onComment] = prComments(pulls).map((c) => c.body);
         expect(prComments(pulls)).toHaveLength(2);
@@ -10306,15 +10355,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           number: 7,
         });
         expect(onReview).toContain(`<!-- sacty-reply:${id}:implement-1-2:2 -->`);
-        expect(onReview).toContain(
-          `人が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-601)）への返信です。`,
-        );
+        expect(onReview).toContain(`[この指摘](${pr}#pullrequestreview-601)への返信です。`);
         expect(onReview).toContain(
           "**対応していません。** 理由：\n\nログの追加は、このタスクの範囲の外です",
         );
         // 申告が読めない（知らない値）なら、対応の文だけ。@名前では通知を飛ばさない
         expect(onComment).toContain(
-          `人が書いた通常のコメント（[このコメント](${pr}#issuecomment-401)）への返信です。\n> 「\`再開のフォームの候補も直して\`」\n`,
+          `[この指摘](${pr}#issuecomment-401)への返信です。\n> 「\`再開のフォームの候補も直して\`」\n`,
         );
         expect(onComment).not.toContain("**対応");
         expect(onComment).toContain("候補を直しました @​alice");
@@ -10374,7 +10421,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(pulls.reviewReplies).toHaveLength(0);
         expect(prComments(pulls)).toHaveLength(1);
         expect(prComments(pulls)[0]?.body).toContain(
-          `人が書いた行へのコメント（[この行へのコメント](${pr}#discussion_r777)）への返信です。`,
+          `[この指摘](${pr}#discussion_r777)への返信です。`,
         );
         expect(posted(service, id)[0]?.results).toEqual([
           {
@@ -10405,7 +10452,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           body: "## sacty のレビュー\n@me 判定：要修正\n戻り値の確認が無い",
         });
 
-      it("指摘が1件（レビューの本文だけ）：PR のコメントを1通だけ、種類と出どころと元へのリンクを書き出しに書いて投稿する。レビューの本文は引用しない", async () => {
+      it("指摘が1件（レビューの本文だけ）：PR のコメントを1通だけ、元へのリンクだけを書き出しに書いて投稿する。レビューの本文は引用しない", async () => {
         const pulls = new FakePulls();
         const { activity, service, id } = await toImplementGate(
           [decided(), redone([{ remarkId: "implement-1-1", status: "addressed", text: "直した" }])],
@@ -10418,15 +10465,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(prComments(pulls)).toHaveLength(1);
         const lines = (prComments(pulls)[0]?.body ?? "").split("\n");
         expect(lines[0]).toBe(`<!-- sacty-reply:${id}:implement-1-1:2 -->`);
-        expect(lines[1]).toBe(
-          `人が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-601)）への返信です。`,
-        );
+        expect(lines[1]).toBe(`[この指摘](${pr}#pullrequestreview-601)への返信です。`);
         expect(lines[2]).toBe("");
         expect(lines[3]).toBe("**対応しました。**");
         activity.close();
       });
 
-      it("sacty のレビューの指摘と、人の通常のコメントが混ざる：2通の、目印の行を除く最初の2行が違い、それぞれの種類と出どころが読める。投稿の数と宛先は変わらない", async () => {
+      it("sacty のレビューの指摘と、人の通常のコメントが混ざる：2通の書き出しは、種類と出どころを言わず、リンク先と引用だけが違う。投稿の数と宛先は変わらない", async () => {
         const pulls = new FakePulls();
         const { activity, service, id } = await toImplementGate(
           [
@@ -10444,11 +10489,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(pulls.reviewReplies).toHaveLength(0);
         const [onAi, onHuman] = prComments(pulls).map((c) => c.body);
         expect(prComments(pulls)).toHaveLength(2);
-        expect(first2(onAi ?? "")[0]).toBe(
-          `Sacty の AI が書いたレビューの本文（[このレビュー](${pr}#pullrequestreview-602)）への返信です。`,
-        );
+        expect(first2(onAi ?? "")[0]).toBe(`[この指摘](${pr}#pullrequestreview-602)への返信です。`);
         expect(first2(onHuman ?? "")).toEqual([
-          `人が書いた通常のコメント（[このコメント](${pr}#issuecomment-401)）への返信です。`,
+          `[この指摘](${pr}#issuecomment-401)への返信です。`,
           "> 「`再開のフォームの候補も直して`」",
         ]);
         expect(first2(onAi ?? "")).not.toEqual(first2(onHuman ?? ""));
@@ -10457,7 +10500,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           expect(body?.startsWith(`<!-- sacty-reply:${id}:implement-1-${n + 1}:2 -->\n`)).toBe(
             true,
           );
-          expect(body).toContain("Sacty の実装の工程で、AI が書きました。");
+          expect(body).toContain("Sacty の AI が書きました。");
           expect(body).not.toContain(`implement-1-${n + 1} への対応`);
         }
         expect(posted(service, id)[0]?.results.map((r) => r.remarkId)).toEqual([
@@ -10492,15 +10535,15 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(threaded.reviewReplies).toHaveLength(1);
         expect(threaded.reviewReplies[0]?.body).not.toContain("への返信です");
         expect(prComments(threaded)).toHaveLength(1);
-        expect(first2(prComments(threaded)[0]?.body ?? "")[0]).toContain(
-          "人が書いた通常のコメント",
+        expect(first2(prComments(threaded)[0]?.body ?? "")[0]).toBe(
+          `[この指摘](${pr}#issuecomment-401)への返信です。`,
         );
         const rejected = await run(true);
         expect(rejected.reviewReplies).toHaveLength(0);
         const [onLine, onComment] = prComments(rejected).map((c) => c.body);
         expect(prComments(rejected)).toHaveLength(2);
         expect(first2(onLine ?? "")).toEqual([
-          `人が書いた行へのコメント（[この行へのコメント](${pr}#discussion_r501)）への返信です。`,
+          `[この指摘](${pr}#discussion_r501)への返信です。`,
           "**対応しました。**",
         ]);
         expect(first2(onComment ?? "")[1]).toBe("> 「`再開のフォームの候補も直して`」");
@@ -11006,7 +11049,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(prComments(pulls)[0]?.body).toContain(
           "**対応しました。**\n\n画面の姿の決定を変えました",
         );
-        expect(prComments(pulls)[0]?.body).toContain("Sacty の設計の工程で、AI が書きました。");
+        expect(prComments(pulls)[0]?.body).toContain("Sacty の AI が書きました。");
         expect(posted(service, id)[0]).toMatchObject({
           step: "implement",
           submission: 2,

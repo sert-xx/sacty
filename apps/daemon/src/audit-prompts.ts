@@ -34,6 +34,7 @@ import {
   clip,
   guardianCodeLines,
   humanRemarks,
+  instructionTitle,
   NO_SETUP_LINES,
   remarkSections,
   STEP_NAME,
@@ -196,7 +197,7 @@ function ledgerLines(
   const layers = task.context?.layers ?? [];
   return [
     "--- タスク ---",
-    `題：${task.title}`,
+    `題：${instructionTitle(task)}`,
     `始まり：${task.start}`,
     `工程：${steps || "（なし）"}`,
     task.repository ? `対象リポジトリ：${task.repository.url}` : "対象リポジトリ：なし",
