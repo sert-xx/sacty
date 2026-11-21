@@ -141,6 +141,7 @@ npm run build       # すべてのパッケージのビルド
   | `daemon-steps.test.ts` | 作業履歴、工程の実行と費用、予算と秘密情報の通知、承認ゲート、設計・再現の工程、変更の申し出、タスクの並行実行 |
   | `daemon-implement.test.ts` | 実装の工程と実装の PR（テスト・セルフレビュー・レビューの指摘への対応・マージまで） |
   | `daemon-step-pull-requests.test.ts` | 要求要件・設計の PR（タスクブランチへのフロー） |
+| `daemon-step-pull-requests-direct.test.ts` | 要求要件・設計の PR（実装の無い進め方でベースブランチへ直接出すフロー。ブランチの削除の規則を含む） |
   | `daemon-split.test.ts` | タスク分割、子タスクのテスト観点、依存先の PR に重ねる子タスク、統合レビュー |
   | `daemon-repoless.test.ts` | リポジトリを指定しないタスク |
   | `daemon-deliverables.test.ts` | 成果の書き出し、PR テンプレート、非コードの成果と単発作業、提出の前のセルフレビュー・出典の分類の記録 |

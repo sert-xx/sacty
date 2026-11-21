@@ -9,6 +9,7 @@ import {
   DEFAULT_DOCUMENTS_DIR,
   DERIVE_RECORD_HEADING,
   DOCUMENT_PAGES_MAX,
+  directStepFlow,
   displayTestNames,
   ExportVia,
   effectiveSelfReviewDepth,
@@ -7610,7 +7611,12 @@ export function deriveRecord(original: Task): string {
     record.push(`- 実装の PR（${state}）：${original.pullRequest.url}`);
   }
   for (const pr of original.stepPullRequests.filter((p) => !p.superseded)) {
-    record.push(`- ${STEP_NAME[pr.step]}の PR（${pr.state}）：${pr.url}`);
+    // 実装の無い進め方（ベースブランチへ直接出した工程の PR。PBI-464）でマージした PR は、文書のパスも示す
+    const documentAt =
+      directStepFlow(original) && (pr.state === "merged" || pr.state === "merged_outdated")
+        ? `（文書：${pr.path}）`
+        : "";
+    record.push(`- ${STEP_NAME[pr.step]}の PR（${pr.state}）：${pr.url}${documentAt}`);
   }
   if (original.split) {
     record.push(

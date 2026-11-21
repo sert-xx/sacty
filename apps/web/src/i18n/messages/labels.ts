@@ -533,6 +533,8 @@ const ja = {
       `タスクブランチを作成（${branch}・${commit}）`,
     StepBranchPushed: (step: string, branch: string, commit: string) =>
       `${step}のファイルをブランチにプッシュ（${branch}・${commit}）`,
+    StepBranchKept: (branch: string, head: string, pushed: string) =>
+      `人がコミットを足したので、ブランチを消さずに残す（${branch}・先頭 ${head}・sacty の最後の push ${pushed}）`,
     ReviewTaskCreated: (step: string, number: number) =>
       `${step}の PR #${number} をレビューする子タスクを作成`,
     PullRequestLabeled: (number: number, label: string, created: boolean) =>
@@ -1366,6 +1368,8 @@ const en: LabelMessages = {
     TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
     StepBranchPushed: (step, branch, commit) =>
       `Pushed the ${step} file to a branch (${branch} · ${commit})`,
+    StepBranchKept: (branch, head, pushed) =>
+      `Kept the branch because a person added commits (${branch} · head ${head} · sacty's last push ${pushed})`,
     ReviewTaskCreated: (step, number) => `Created a child task to review the ${step} PR #${number}`,
     PullRequestLabeled: (number, label, created) =>
       `Added the review label "${label}" to PR #${number}${created ? " (created the label)" : ""}`,

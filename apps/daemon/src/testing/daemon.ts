@@ -370,8 +370,26 @@ export class FakeRepos implements RepositoryWorkspace {
   }
   deleted: string[] = [];
   deleteFail?: string;
-  async deleteBranch(_gitDir: string, branch: string) {
+  /** 期待する先頭を渡して消した呼び出し（PBI-464）。 */
+  deleteCalls: { branch: string; expectedHead?: string }[] = [];
+  /** 期待する先頭を渡されたとき、リモートの先頭と違えば断る（比べた後に人が push した場合の再現）。 */
+  deleteLeaseCheck = false;
+  async deleteBranch(
+    _gitDir: string,
+    branch: string,
+    _authEnv?: Record<string, string>,
+    expectedHead?: string,
+  ) {
+    this.deleteCalls.push({ branch, ...(expectedHead ? { expectedHead } : {}) });
     if (this.deleteFail) throw new Error(this.deleteFail);
+    if (
+      this.deleteLeaseCheck &&
+      expectedHead &&
+      this.remote[branch] !== undefined &&
+      this.remote[branch] !== expectedHead
+    ) {
+      throw new Error("! [rejected] (stale info)");
+    }
     this.deleted.push(branch);
   }
   /** 差分の起点にしたコミット（ベースブランチを取り込んだら、その先頭）。 */
