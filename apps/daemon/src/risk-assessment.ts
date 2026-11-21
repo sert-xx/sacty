@@ -16,6 +16,7 @@ import { headedObject, type JsonCandidate, jsonCandidates } from "./agent-json.j
 import { redact } from "./agents/redact.js";
 import { markdownCode, urlPathSegment } from "./markdown-text.js";
 import { headOf } from "./orchestrator-handoff.js";
+import { instructionTitle } from "./prompts.js";
 
 /**
  * PR のリスク評価（PBI-362）。人が、PR をどの深さでレビューするかを決めるための目安を出す。評価によって、レビューを省く・
@@ -403,7 +404,7 @@ export function buildRiskAssessmentPrompt(
     "答えの JSON は、出す前にファイルに書き、jq などの道具（無ければ python3 や node）で JSON として読めるかを確かめ、通るまで直してください。答えは本文の最後に 1 回だけ出してください。",
     "",
     "--- タスク ---",
-    `# ${task.title}`,
+    `# ${instructionTitle(task)}`,
     "",
     task.body || "（内容なし）",
     "",

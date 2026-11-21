@@ -1,6 +1,5 @@
 import { DECISION_NOTICE_MARKER_PREFIX } from "./github.js";
 import { askQuote } from "./human-ask-notice.js";
-import { taskLinkNote } from "./task-link.js";
 
 /*
  * AI のレビューが「直しでは解消できず、人の判断が要る」と印を付けた要修正が残ったので、直しに入らずに止めたことを、その PR に
@@ -19,10 +18,6 @@ export type DecisionNoticeInput = {
   round: number;
   /** 印の付いた指摘と、直しでは解消できないとされた根拠。 */
   findings: readonly { finding: string; reason: string }[];
-  /** タスクの画面の URL。 */
-  taskUrl: string;
-  /** 画面の URL が依頼した人のマシンでだけ開けるか（注釈を添える）。 */
-  localOnly?: boolean;
   secrets: readonly string[];
 };
 
@@ -48,6 +43,6 @@ export function buildDecisionNotice(input: DecisionNoticeInput): string {
     "- 了承するか、進め方の方針があるときは、この PR にコメントで書いてください。書いた内容を直しの指示に渡して、再開します。",
     "- 指摘をそのまま受け入れるなら、この PR をマージしてください（止めた理由の指摘は反映せずに、マージを承認として進めます）。",
     "",
-    `画面で補足を付けて再開することもできます：[タスクの画面](${input.taskUrl})。${taskLinkNote(input.localOnly).join("")}`,
+    "補足を付けて再開するときは、Sacty の画面で再開してください。",
   ].join("\n");
 }

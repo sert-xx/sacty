@@ -309,12 +309,21 @@ describe("出典の分類から、人間が確かめる所の案内", () => {
     } as Partial<Task>);
     const body = buildStepPullRequestBody(t, "requirements", "docs/sacty/t-1/requirements.md");
     expect(body).toContain(
-      "## 確かめる所\n\n出典（引用・導出・推論）の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。\n\n確かめる項目：3件",
+      "## 確かめる所\n\n出典の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。\n\n- R-",
     );
     expect(body).toContain("- R-4：推論（根拠：src/pay.ts:10）");
+    // 確かめる項目の件数と、出典の数え方・分類の方法は、PR の本文に出さない（画面には今までどおり出る）
+    for (const text of [
+      body,
+      JSON.stringify(buildStepPullRequestBodyParts(t, "requirements", "docs/x.md")),
+    ]) {
+      expect(text).not.toContain("確かめる項目：");
+      expect(text).not.toMatch(/引用 \d|導出 \d|推論 \d/);
+      expect(text).not.toContain("サブエージェント");
+    }
     const parts = buildStepPullRequestBodyParts(t, "requirements", "docs/x.md");
     expect(parts.summary).toContain(
-      "**確かめる所**\n\n出典（引用・導出・推論）の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。\n\n確かめる項目：3件",
+      "**確かめる所**\n\n出典の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。\n\n- R-",
     );
     expect(buildStepPullRequestBody(task(), "requirements", "docs/x.md")).not.toContain(
       "確かめる所",

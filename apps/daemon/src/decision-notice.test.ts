@@ -7,7 +7,6 @@ describe("人の判断を待って止めたことの知らせ（PBI-452）", () 
     taskId: "t-1",
     round: 2,
     findings: [{ finding: "上限を超える", reason: "方式を変えても解消しない" }],
-    taskUrl: "http://127.0.0.1:4700/tasks/t-1",
     secrets: [] as string[],
   };
 

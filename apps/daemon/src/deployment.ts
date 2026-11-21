@@ -10,7 +10,7 @@ import {
 } from "@sacty/core";
 import { headedObject, lastJsonAnswer } from "./agent-json.js";
 import { errorText } from "./errors.js";
-import { gatheredLines } from "./prompts.js";
+import { gatheredLines, instructionTitle } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 
 /**
@@ -123,7 +123,7 @@ function originLines(task: Task, watch: DeploymentWatch): string[] {
   const commit = watch.commit ?? "";
   const pr = task.pullRequest?.url ?? `#${watch.number}`;
   return [
-    `- 元のタスク：${task.title}（sacty のタスク ${task.id}）`,
+    `- 元のタスク：${instructionTitle(task)}（sacty のタスク ${task.id}）`,
     `- マージした PR：${pr}`,
     `- リポジトリ：${watch.repo}（ベースブランチ ${watch.branch}）`,
     `- マージのコミット：${commit}（${watch.repo.replace(/\/+$/, "")}/commit/${commit}）`,
@@ -261,7 +261,7 @@ export function buildDeploymentPrompt(task: Task, watch: DeploymentWatch, skill:
     `- スキル：作業領域（カレントディレクトリ）の ${skill}。最初に読み、その手順に従う（スキルが参照するファイルも読む）。何をデプロイの完了とみなすかもスキルに従う`,
     `- リポジトリ：${watch.repo}（ベースブランチ ${watch.branch}）`,
     `- マージのコミット：${watch.commit ?? ""}`,
-    `- マージした PR：${task.pullRequest?.url ?? `#${watch.number}`}（タスクの題：${task.title}）`,
+    `- マージした PR：${task.pullRequest?.url ?? `#${watch.number}`}（タスクの題：${instructionTitle(task)}）`,
     "- 作業領域は、マージのコミットのコードの使い捨ての写しです",
     "- 確かめるだけにする。コード・リポジトリ・アプリ・データ・設定を変更しない。デプロイのやり直しやロールバックもしない。CI/CD を再実行しない",
     "- 秘密情報（API キー・トークン・パスワードなど）は出力に書かない",

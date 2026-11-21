@@ -517,7 +517,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       title: "[要求要件] 決済API",
     });
     expect(pulls.calls[0]?.number).toBeUndefined();
-    expect(pulls.calls[0]?.body).toContain("この PR をマージすると、要求要件を承認したことになり");
+    expect(pulls.calls[0]?.body).toContain(
+      "この PR をマージすると（PR の中で直してからでも）、要求要件を承認したことになります。",
+    );
     expect(pulls.calls[0]?.body).toContain(docOf(id, "requirements"));
     let task = taskOf(service, id);
     expect(task.status).toBe("awaiting_approval");
@@ -792,7 +794,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(first).toContain("## 確認したいこと");
       expect(first).toContain("should 2件（must はありません）。");
       expect(first).toContain("答えるには、この PR にコメントしてください");
-      expect(first).toContain("答えずにマージすると、推奨の答えで次の工程に進みます");
+      expect(first).toContain("答えずにマージすると、推奨の答えで次に進みます");
       expect(first).toContain("国名の表示は要るか（推奨：要らない）");
       expect(first).toContain("通貨の表示は要るか（推奨：要る）");
       pulls.feedbackBy[7] = [item("comment:1", { body: "推奨どおりでお願いします" })];
@@ -3062,9 +3064,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(pulls.drafts[7]).toBe(true);
         expect(pulls.draftChanges).toEqual([]);
         expect(task.pullRequestCi).toBeUndefined();
-        expect(pulls.calls[0]?.body).toContain(
-          "- Sacty のレビューの子タスクが、この PR をレビューして投稿します。",
-        );
+        expect(pulls.calls[0]?.body).not.toContain("レビューの進め方");
         expect(pulls.calls[0]?.body).not.toContain("最終レビュー：");
         // ドラフトのまま、レビューの子タスクを作る
         expect(taskOf(service, id).reviewTasks?.map((r) => [r.number, r.step])).toEqual([
@@ -5963,7 +5963,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       describe("AI のレビューの指摘をすべて断って何も変えなかったら、断った理由を返信し、同じ先頭を 1 回だけ判定し直させる（PBI-357）", () => {
         /** 指摘への対応を添えた、実装の実行（作業領域は変えない）。 */
-        const responded = (responses: { remarkId: string; status?: string; text: string }[]) =>
+        const responded = (
+          responses: { remarkId: string; status?: string; text: string; gist?: string }[],
+        ) =>
           out(
             [
               "# 実装の説明（変更なし）",
@@ -6521,10 +6523,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
 
         describe("後続に回したい案を、人が 1 件ずつ決める（PBI-370）", () => {
-          const deferred = (remarkId = "implement-1-1") =>
+          const deferred = (remarkId = "implement-1-1", gist?: string) =>
             responded([
               {
                 remarkId,
+                ...(gist ? { gist } : {}),
                 status: "deferred",
                 text: "直すには新しい保存の仕組みが要り、このタスクの範囲を超えます",
               },
@@ -7014,8 +7017,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             expect(notice?.body).toContain(`<!-- sacty-deferral:${id}:1 -->`);
             expect(notice?.body).toContain("### 後続に回す（1 件）");
             expect(notice?.body).toContain(
-              "**指摘 implement-1-1**（[元のコメント](https://github.com/acme/app/pull/7#pullrequestreview-50)）",
+              "**指摘：** [この指摘](https://github.com/acme/app/pull/7#pullrequestreview-50)",
             );
+            expect(notice?.body).not.toContain("implement-1-1");
             expect(notice?.body).toContain("> 直すには新しい保存の仕組みが要り");
             expect(
               service.get(id)?.activity.find((e) => e.type === "DeferralDecisionsPosted"),
@@ -7345,10 +7349,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await noticesSettled(service);
             expect(notices(pulls)).toHaveLength(1);
             const body = notices(pulls)[0]?.body ?? "";
+            // リンクが作れない指摘は、要点の1行（要点が無ければ、指摘の最初の行）で示す。指摘の ID は書かない
             expect(body).toContain(
-              "**指摘 implement-1-1**（Sacty の画面から書かれた指摘。内容は、タスクの画面で読めます）",
+              "**指摘：** 管理画面からも変えられるようにしてほしい（社外に出していない計画）",
             );
-            expect(body).not.toContain("社外に出していない計画");
+            expect(body).not.toContain("implement-1-1");
             expect(body).not.toContain("秘密の計画");
             expect(body).not.toContain("実装が、後続に回したいとした理由");
             activity.close();
@@ -7391,8 +7396,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(issue?.body).toContain(`<!-- sacty-deferral-issue:${id}:implement-1-1 -->`);
               expect(issue?.body).toContain("> 直すには新しい保存の仕組みが要り");
               expect(issue?.body).toContain(
-                "元のコメント：https://github.com/acme/app/pull/7#pullrequestreview-50",
+                "[この指摘](https://github.com/acme/app/pull/7#pullrequestreview-50)",
               );
+              expect(issue?.body).not.toContain("implement-1-1 を後続に回すと");
               expect(handled(service, id)).toHaveLength(1);
               expect(handled(service, id)[0]).toMatchObject({
                 actor: "sacty",
@@ -7408,6 +7414,69 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(taskOf(service, id).remarks[0]?.deferral?.handled).toEqual({
                 url: "https://github.com/acme/app/issues/901",
               });
+              activity.close();
+            });
+
+            it("後続のタスクの題と Issue の題は、指摘の要点から作り、指摘の ID を含めない（TV-20）", async () => {
+              const made = await reviewed([
+                deferred("implement-1-1", "エラーの文言を直す"),
+                verdictOut("no_findings", "# 評価\n\n指摘なし"),
+              ]);
+              const { activity, service, pulls, id, childId } = made;
+              await settle(service, id);
+              await service.runNext(id);
+              decideWith(service, id, "task");
+              await noticesSettled(service);
+              await service.checkPullRequests();
+              await runReview(service, childId);
+              await service.checkPullRequests();
+              const pr = taskOf(service, id).pullRequest;
+              pulls.states[7] = { state: "merged", mergedBy: "reviewer", headSha: pr?.commit };
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              const followUp = service.list().find((t) => t.derivedFrom?.taskId === id);
+              expect(followUp?.title).toBe("[PR #7 follow-up] エラーの文言を直す");
+              expect(followUp?.title).not.toContain("implement-1-1");
+              activity.close();
+            });
+
+            it("後続のタスクの題に、GitHub のトークンの値が入らない（R-21）", async () => {
+              const made = await reviewed([
+                deferred("implement-1-1", "ghp_secret を使う箇所を直す"),
+                verdictOut("no_findings", "# 評価\n\n指摘なし"),
+              ]);
+              const { activity, service, pulls, id, childId } = made;
+              await settle(service, id);
+              await service.runNext(id);
+              decideWith(service, id, "task");
+              await noticesSettled(service);
+              await service.checkPullRequests();
+              await runReview(service, childId);
+              await service.checkPullRequests();
+              const pr = taskOf(service, id).pullRequest;
+              pulls.states[7] = { state: "merged", mergedBy: "reviewer", headSha: pr?.commit };
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              const followUp = service.list().find((t) => t.derivedFrom?.taskId === id);
+              expect(followUp?.title.startsWith("[PR #7 follow-up] ")).toBe(true);
+              expect(followUp?.title).not.toContain("ghp_secret");
+              activity.close();
+            });
+
+            it("要点を持つ指摘は、Issue の題と本文にも要点を使い、指摘の ID を含めない（TV-19）", async () => {
+              const made = await reviewed([deferred("implement-1-1", "エラーの文言を直す")]);
+              const { activity, service, pulls, id } = made;
+              await settle(service, id);
+              decideWith(service, id, "issue");
+              await noticesSettled(service);
+              const issue = pulls.createdIssues[0];
+              expect(issue?.title).toBe("[PR #7 follow-up] エラーの文言を直す");
+              const body = (issue?.body ?? "").split("\n").slice(1).join("\n");
+              expect(body).toContain("（エラーの文言を直す）");
+              expect(body).not.toContain("implement-1-1");
+              expect(body).not.toContain(id);
               activity.close();
             });
 
@@ -7431,24 +7500,26 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             });
 
             it.each([
-              ["http://127.0.0.1:4700", true],
-              ["http://localhost:4700", true],
-              ["http://[::1]:4700", true],
-              ["https://sacty.example.com", false],
-              ["画面の URL ではない文字列", true],
+              "http://127.0.0.1:4700",
+              "http://localhost:4700",
+              "http://[::1]:4700",
+              "https://sacty.example.com",
+              "画面の URL ではない文字列",
             ])(
-              "知らせの画面へのリンクの注釈は、サービスに渡した画面の URL（%s）で決まる（注釈あり：%s）",
-              async (webUrl, note) => {
+              "決定のコメントは、サービスに渡した画面の URL（%s）に関わらず、画面の URL・注釈を出さず「Sacty の画面で」の案内を書く（PBI-471）",
+              async (webUrl) => {
                 const made = await reviewed([deferred()], undefined, webUrl);
                 const { activity, service, pulls, id } = made;
                 await settle(service, id);
                 decideWith(service, id, "none");
                 await noticesSettled(service);
                 const body = notices(pulls)[0]?.body ?? "";
-                expect(body).toContain("[タスクの画面](");
-                expect(body.includes("タスクの画面は、依頼した人のマシンでだけ開けます。")).toBe(
-                  note,
-                );
+                const visible = body.split("\n").slice(1).join("\n");
+                expect(visible).not.toContain("/tasks/");
+                expect(visible).not.toContain("http://127.0.0.1");
+                expect(visible).not.toContain(id);
+                expect(visible).not.toContain("タスクの画面は、依頼した人のマシンでだけ開けます。");
+                expect(visible).toContain("Sacty の画面で差し戻してください。");
                 activity.close();
               },
             );
@@ -7571,7 +7642,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               await service.checkPullRequests();
               expect(followUps()).toHaveLength(1);
               const followUp = followUps()[0];
-              expect(followUp?.title).toBe("[PR #7 follow-up] 後続に回した指摘 implement-1-1");
+              expect(followUp?.title).toMatch(/^\[PR #7 follow-up\] \S/);
+              expect(followUp?.title).not.toContain("implement-1-1");
+              expect(followUp?.title).not.toContain("後続に回した指摘");
               expect(followUp?.body).toContain("後続に回すと人が決めた指摘に対応してください");
               expect(followUp?.body).toContain("直すには新しい保存の仕組みが要り");
               expect(followUp?.body).toContain(

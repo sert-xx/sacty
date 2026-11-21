@@ -352,11 +352,11 @@
 - 人間が確かめる項目（`needsCheck`）は、推論と、原文が Input に見つからない引用と、分類の無い項目。書いたエージェントが自分で分類した（`sequential`）ときは、すべての項目。
 - 画面は、成果物のカード（承認済みの成果物では出さない）と承認の画面に、確かめる項目の数と区分ごとの数を出す（`ProvenanceNote`）。
   確かめる項目があれば警告の色で開いたまま挙げ、引用・導出は「そのほか」として折りたたむ。記録が無ければ警告を出す。
-- 要求要件・設計の PR の本文には「確かめる所」として、同じ件数と確かめる項目を入れる（`provenanceGuideLines`。テンプレートに沿わせるときは目的・概要の所）。
+- 要求要件・設計の PR の本文には「確かめる所」として、確かめる項目（推論など）の ID と根拠を入れる（PR 用の `provenancePullRequestLines`。テンプレートに沿わせるときは目的・概要の所）。確かめる項目の件数と、引用・導出・推論の数、分類をサブエージェントが行ったかどうかの行は、本文に書かない（PBI-471。画面の表示は変えない）。
 
 関係する ADR: [承認する人が見る所を絞るため、要求要件・設計の項目の出典を、書いたエージェントとは別のサブエージェントに分類させる](../adr/20261027-1427-classify-provenance-before-approval.md)
 
-コード: `apps/daemon/src/prompts.ts`（`provenanceLines`・`provenanceInputs`・`checkProvenance`・`provenanceIds`・`viewpointRename`・`provenanceGuideLines`・`PROVENANCE_HEADING`）、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`（`Provenance`・`PROVENANCE_STEPS`・`needsCheck`）、`packages/core/src/projection.ts`、`apps/web/src/components/provenance.tsx`（`ProvenanceNote`）
+コード: `apps/daemon/src/prompts.ts`（`provenanceLines`・`provenanceInputs`・`checkProvenance`・`provenanceIds`・`viewpointRename`・`provenanceGuideLines`・`provenancePullRequestLines`・`PROVENANCE_HEADING`）、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`（`Provenance`・`PROVENANCE_STEPS`・`needsCheck`）、`packages/core/src/projection.ts`、`apps/web/src/components/provenance.tsx`（`ProvenanceNote`）
 
 ## 進め方の組み合わせ
 
@@ -651,7 +651,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 - 引き継ぐかは、オーケストレーターが工程の選択の答えの `continuePullRequest` で決める。
   指示にこの項目を出すのは、タスクに PR のリンクがあり、実装する組み合わせ（`CONTINUABLE_PLANS`：`standard`・`skip-requirements`・`skip-design`・`direct`・`bugfix`・`security-fix`）を選べるタスクだけ（`continuablePullRequest`）。
   PR から取り込んだタスク・分割の子タスクには出さない。
-  人が後続に回すと決めた指摘の後続のタスク（`derivedFrom.deferredRemarkId` がある。[後続に回したい案と、人の決定](approval.md#後続に回したい案と人の決定)）にも出さず、答えの `continuePullRequest` も読まない（依頼にある PR は、元のタスクのマージ済みの PR で、引き継げない。新しいブランチと PR で直す）。
+  人が後続に回すと決めた指摘の後続のタスク（`derivedFrom.deferredRemarkId` がある。[後続に回したい案と、人の決定](approval.md#後続に回したい案と人の決定)）にも出さず、答えの `continuePullRequest` も読まない（依頼にある PR は、元のタスクのマージ済みの PR で、引き継げない。新しいブランチと PR で直す）。後続のタスクの題は、指摘の要点から作る（`[PR #<番号> follow-up] <要点>`。[指摘を示す 1 行](approval.md#指摘を示す-1-行)）。エージェントへの指示の見出し（各工程・リスクの評価・監査・デプロイの指示の題の所）には題を使わず、固定の「後続に回した指摘への対応」にする（`instructionTitle`）。外から来た文を、指示として読ませないため（PBI-471）。
   sacty が説明に足した記録の中のリンクは、見ない。続きのタスク（[完了したタスクから続きのタスクを作る（派生）](#完了したタスクから続きのタスクを作る派生)）の元のタスクの記録（`derivedFrom.record`）と、再実行で作ったタスクの前の試行の記録（どちらも、PR の URL と、工程の成果の本文が入る）を除いた、人が書いた題と説明（再実行の補足を含む）の中のリンクだけを見る（`rerunEditableBody`）。
   指示では、PR を参考にして別の変更をする・PR をレビューするだけなら書かないこと、指摘で直すことが具体的に決まっているなら `direct` を、セキュリティ上の問題を直すなら `security-fix` を選ぶこと、`baseBranch` を書かないことを求める。
   実装しない組み合わせの答えの `continuePullRequest` は読まない。
@@ -1260,7 +1260,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     違反があっても止めず、PR の本文の範囲の節に書き、PR のレビューの子タスクに要修正の指摘にさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
 - 実装の PR はドラフトで作り（更新したときも、ドラフトに戻す。戻せなくても PR の作成は失敗にしない）、`PullRequestPublished` に `awaitingReview` を付けて、実装の承認待ちにする（`awaitsReview`）。
   既存の PR を引き継ぐタスクは、人の PR なのでドラフトにせず、`awaitingReview` も付けない。
-  PR の本文には、最終レビューの行の代わりに、レビューの子タスクがレビューし、指摘なしでドラフトを外すことと、CI の結果は PR で確かめることを、結論の外の「レビューの進め方」の節に 1 項目 1 文で書く（`REVIEW_BODY_LINES`。PBI-450）。結論には、変更・最後の直しと、省けない行だけを置く。
+  PR の本文には、最終レビューの行も、Sacty の過程の説明も書かない（PBI-471。本文は、目的・変更、確かめ方、人が確かめること、AI が作った印、承認の案内の 2 文だけにする。[実装の PR の本文の組み立て](approval.md#実装の-pr-の本文の組み立て)）。
 - PR を作ったら、その PR をレビューする子タスクを作る（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
   子タスクの判定が今のコミットで指摘なしになったら（判定し直した回に提案が残り、それもすべて対応しないとしたときは、評価だけの実行の後に、判定は提案ありのまま。`reason: suggestions_declined`。[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）、PR の確認で sacty がドラフトを外し、`PullRequestMarkedReady`（PR の番号・コミット・子タスク）を記録する（`markReady`）。これで PR は人の承認（マージ）を待つ。
   - 今のコミットは、GitHub の PR の今の先頭（`pullRequestHead`。指摘なしを待つ PR の先頭は、PR の確認で `DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて先に読む。答えは `DRAFT_TIMEOUT_MS` まで待ち、過ぎたら通信を中断する）。レビューの間に人がコミットを足したら、子タスクにその先頭を再レビューさせ、レビューしていない先頭のドラフトは外さない。先頭を読めなければ、次の確認でやり直す。
@@ -1297,7 +1297,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても、テストの仕組みが無いという判断を使えなくても止めない（`orchestrator.testCommandUnknown`・`orchestrator.noTests*` で止まらない。sacty はテストを実行しないため。[テストの仕組みが無いタスク](#テストの仕組みが無いタスク)）。
 - テストの仕組みが無いタスク（`noTestsReason`）の実装の指示では、用意したテストを提出の前に自分で実行させ、実行したコマンドと結果を実装の説明に書かせる（sacty は申告したテストのコマンドを実行しない）。受け入れは PR のレビューの子タスクが見ると伝える（`NO_TESTS_JUDGE_BY`・`ADDED_TEST_COMMAND_LINE`）。
 
-コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`REVIEW_BODY_LINES`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
 
 ### 再現の工程の後
 
@@ -2052,7 +2052,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   - 絞る回の `rereviewLines` の「範囲は PR 全体にする」の行は、絞る節のとおりに絞ることを言う文に差し替える。絞らない回の指示の文は変えない。指示の節には、範囲・起動する観点・親が絞らない条件（前回の記録に見られなかった観点・止まった検証がある（指示に前回の記録が無いときは、前回の本文で確かめる）、前回の本文に判定が無いと書かれている／読めない、前回以降の差分を読めない・今回のコードと食い違う、作り直しと読める、迷う。絞らないことと理由は、本文に書かせず、記録の `scope` に書かせる）・変えないもの・本文の 1 行を書く（スキルを差し替えたプロジェクトでも分かるように）。
     本文に書かせるのは、絞ったことだけで、「前回（<前回の先頭>）以降の変更と前回の指摘だけを確かめた」の 1 行。絞った理由と起動しなかった観点は、記録の `scope`・`viewpoints`（`not_launched` と理由）に書かせる。
   - 前回以降が文書だけで、この節にも当たる回は、観点はこの節、検証は上の項目の節が決める（2 つは食い違わない）。この節に当たらない回は、文書だけの節は検証だけを絞り、観点は規則 1〜7 で決める。
-- 本文と過程の記録（PBI-460。[ADR](../adr/20261121-1603-pr-review-without-process-info.md)）：PR に投稿する本文と行へのコメントには、PR を読む人が直すべきか・何が問題かを判断できる情報だけを書かせ、Sacty の過程の情報は、本文の後の記録のブロックで返させる（`reviewRecordInstructionLines`）。PR を読む人は、Sacty を使っていないことがある。
+- 本文と過程の記録（PBI-460。[ADR](../adr/20261121-1603-superseded-pr-review-without-process-info.md)）：PR に投稿する本文と行へのコメントには、PR を読む人が直すべきか・何が問題かを判断できる情報だけを書かせ、Sacty の過程の情報は、本文の後の記録のブロックで返させる（`reviewRecordInstructionLines`）。PR を読む人は、Sacty を使っていないことがある。
   - 本文は総評から始めさせる（先頭の行を「## 総評」の見出しにする）。総評の前に、作業の経過の文（「レビューの本文を書きます」など）を書かせない。
   - 書かせるもの：判定の根拠になる総評、指摘（場所・何が問題か・直し方）、修正の判断に要る検証の結果（落ちたもの・確かめられなかったもの）。
   - 書かせないもの：観点の ID・数・名前、観点ごとの担当・サブエージェント・逐次モード・起動表、採用しなかった指摘とその一覧、落とした指摘の件数、動いたエージェント・モデル・切り替え、検証のやり方（使い回したなど）と通った検証、Sacty のタスクの ID。

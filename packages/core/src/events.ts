@@ -318,6 +318,11 @@ export const RemarkResponse = z.object({
    * など。承認の画面と PR のコメントで人に知らせる。無ければ確かめたいことは無い。以前の作業履歴には無い。
    */
   confirm: z.string().optional(),
+  /**
+   * 指摘の要点の1行（PBI-471）。PR の説明・コメント・Issue・後続のタスクの題に、指摘を示すために使う。
+   * 以前の作業履歴には無い（要点が無い指摘は、対応の文だけを載せる）。
+   */
+  gist: z.string().optional(),
 });
 
 /** 検証の記録の、コマンドの種類（既定のスキルの verification-run の種類）。 */
@@ -730,6 +735,8 @@ const DeploymentFix = z.object({
 export const ChildScope = z.object({
   content: z.string(),
   parentTitle: z.string(),
+  /** 親タスクが、後続に回した指摘から作ったタスクか（題が外から来た文になるので、指示に題を入れない。PBI-471）。 */
+  parentDeferred: z.literal(true).optional(),
   fix: z.literal(true).optional(),
 });
 export type ChildScope = z.infer<typeof ChildScope>;

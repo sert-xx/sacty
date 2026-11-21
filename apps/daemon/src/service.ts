@@ -395,6 +395,7 @@ import {
   extractMergedPullRequestBody,
   mergePullRequestBody,
   normalizeNewlines,
+  withTaskMarker,
 } from "./pr-body-merge.js";
 import {
   fillTemplate,
@@ -461,6 +462,7 @@ import {
   extractStepPlan,
   extractStepReview,
   extractTicketTriage,
+  instructionTitle,
   integrationViewpointIds,
   investigationMarker,
   isDocBeforeImplement,
@@ -497,6 +499,7 @@ import {
   withoutWorkReport,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
+import { remarkLine } from "./remark-line.js";
 import {
   buildRemarkReply,
   remarkOriginRef,
@@ -577,7 +580,6 @@ import {
   splitSuggestions,
 } from "./suggestion-triage.js";
 import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
-import { taskLink } from "./task-link.js";
 import {
   type DeliverableKind,
   listDeliverables,
@@ -1970,7 +1972,7 @@ export class TaskService {
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
     // 人が後続に回すと決めた指摘の、後続のタスクを作る（元のタスクが完了してから。PBI-370）
-    this.settleDeferralTasks();
+    await this.settleDeferralTasks();
     // Issue を作ると決めたのに、途中で止まって結果の記録が無い指摘に、止まったことを記録する
     this.settleInterruptedDeferralIssues();
     // 「指摘なし」の後に落ちた CI を、タスクの詳細に出す（PBI-364）。ほかの確認がすべて終わった後に、1件だけ読む
@@ -2261,7 +2263,6 @@ export class TaskService {
     const key = `${task.id}:${round}`;
     if (this.decisionNoticed.has(key)) return;
     this.decisionNoticed.add(key);
-    const link = taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", task.id);
     await this.serialized(`decision-notice:${key}`, async () => {
       const signal = this.stopNoticeDeadline();
       try {
@@ -2282,8 +2283,6 @@ export class TaskService {
               taskId: task.id,
               round,
               findings: pause.findings,
-              taskUrl: link.url,
-              localOnly: link.localOnly,
               secrets: usedSecrets,
             }),
             signal,
@@ -3009,13 +3008,11 @@ export class TaskService {
     task: Task,
     target: { repo: string; number: number; discarded: number },
   ): void {
-    this.postMergeNotice(task, target, "approval", (link) =>
+    this.postMergeNotice(task, target, "approval", () =>
       buildMergeApprovalNotice({
         taskId: task.id,
         number: target.number,
         discarded: target.discarded,
-        taskUrl: link.url,
-        localOnly: link.localOnly,
       }),
     );
   }
@@ -3025,14 +3022,12 @@ export class TaskService {
     task: Task,
     target: { repo: string; number: number; step: StepPullRequestKey },
   ): void {
-    this.postMergeNotice(task, target, "not-approved", (link) =>
+    this.postMergeNotice(task, target, "not-approved", () =>
       buildMergeNotApprovedNotice({
         taskId: task.id,
         number: target.number,
         stepName: STEP_NAME[target.step],
         backName: STEP_NAME.requirements,
-        taskUrl: link.url,
-        localOnly: link.localOnly,
       }),
     );
   }
@@ -3041,7 +3036,7 @@ export class TaskService {
     task: Task,
     target: { repo: string; number: number },
     kind: "approval" | "not-approved",
-    build: (link: { url: string; localOnly: boolean }) => string,
+    build: () => string,
   ): void {
     if (isSecurityTask(task)) return;
     const { repo, number } = target;
@@ -3049,7 +3044,6 @@ export class TaskService {
     const account = project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""];
     if (!account) return;
     const usedSecrets: string[] = [];
-    const link = taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", task.id);
     const marker =
       kind === "approval"
         ? mergeApprovalMarker(task.id, number)
@@ -3071,10 +3065,7 @@ export class TaskService {
           }),
         );
         if (existing) return;
-        await untilAborted(
-          signal,
-          this.deps.pulls.commentIssue({ ...pr, body: build(link), signal }),
-        );
+        await untilAborted(signal, this.deps.pulls.commentIssue({ ...pr, body: build(), signal }));
       } catch (error) {
         console.warn(
           `[daemon] タスク ${task.id} の、PR #${number} のマージの扱いを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -6223,7 +6214,6 @@ export class TaskService {
         }
         const reply = {
           taskId,
-          stepName: STEP_NAME[remark.step],
           remarkId: remark.id,
           ...(remark.continued ? { continued: true as const } : {}),
           submission: remark.respondedIn,
@@ -9819,7 +9809,6 @@ export class TaskService {
     const project = this.deps.projects.get(task.projectId);
     if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
     const usedSecrets: string[] = [];
-    const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
     const reason = renderMessage(target.reason, "ja");
     void this.serialized(`rework-notice:${task.id}:${round}`, async () => {
       const signal = this.stopNoticeDeadline();
@@ -9833,8 +9822,6 @@ export class TaskService {
           round,
           reason,
           stepName: STEP_NAME.design,
-          taskUrl: link(task.id).url,
-          localOnly: link(task.id).localOnly,
           secrets: usedSecrets,
         });
         const pr = { repo, token, number };
@@ -9870,7 +9857,19 @@ export class TaskService {
     const project = this.deps.projects.get(task.projectId);
     if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
     const usedSecrets: string[] = [];
-    const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
+    // 指摘は、元のコメントへのリンク（PR のコメントから取り込んだ指摘）か、要点の1行（リンクが作れない指摘）で示す
+    const prUrl = watched.url ?? `${repo.replace(/\/+$/, "")}/pull/${number}`;
+    const refsOf = (remarkIds: readonly string[]) =>
+      remarkIds.map((remarkId) => {
+        const remark = task.remarks.find((r) => r.id === remarkId);
+        const ref =
+          remark?.origin && remark.origin.number === number
+            ? remarkOriginRef(remark.origin.key)
+            : undefined;
+        return ref
+          ? { url: remarkOriginUrl(prUrl, ref) }
+          : { line: remark ? remarkLine(remark, usedSecrets) : "" };
+      });
     void this.serialized(`human-ask:${task.id}:${gate.step}:${gate.submission}`, async () => {
       // 期限は、順番を待った後の処理の始まりから数える
       const signal = this.stopNoticeDeadline();
@@ -9885,11 +9884,14 @@ export class TaskService {
           stepName: STEP_NAME[gate.step],
           submission: gate.submission,
           ...(asks.undecided
-            ? { undecided: { remarkIds: asks.undecided.remarkIds, reason: asks.undecided.reason } }
+            ? {
+                undecided: {
+                  remarks: refsOf(asks.undecided.remarkIds),
+                  reason: asks.undecided.reason,
+                },
+              }
             : {}),
-          confirms: asks.confirms.map((c) => ({ remarkIds: c.remarkIds, text: c.text })),
-          taskUrl: link(task.id).url,
-          localOnly: link(task.id).localOnly,
+          confirms: asks.confirms.map((c) => ({ remarks: refsOf(c.remarkIds), text: c.text })),
           secrets: usedSecrets,
         });
         if (!body) return;
@@ -10035,7 +10037,6 @@ export class TaskService {
       if (same.length > 0) return;
       // 確かめている間に再開・中止された（今は別の状態の）なら、書かない
       if (this.tasks.get(taskId)?.status !== "paused") return;
-      const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
       await untilAborted(
         signal,
         this.deps.pulls.commentIssue({
@@ -10044,8 +10045,6 @@ export class TaskService {
             taskId,
             reason,
             summary,
-            taskUrl: link(taskId).url,
-            localOnly: link(taskId).localOnly,
           }),
           signal,
         }),
@@ -13495,6 +13494,9 @@ export class TaskService {
                 scope: {
                   content: c.body,
                   parentTitle: latest.title,
+                  ...(latest.derivedFrom?.deferredRemarkId
+                    ? { parentDeferred: true as const }
+                    : {}),
                   ...(latest.split ? { fix: true as const } : {}),
                 },
                 dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
@@ -14983,6 +14985,10 @@ export class TaskService {
     let merged: Awaited<ReturnType<typeof mergePullRequestBody>>;
     try {
       merged = await mergePullRequestBody({ base, human, generated });
+      // 競合が無いときは、タスクの ID の目印を1つだけにする（以前の版の可視の行を残さない。PBI-471）
+      if (merged.conflicts === 0) {
+        merged = { ...merged, text: withTaskMarker(merged.text, task.id, base) };
+      }
     } catch (error) {
       // 本文に触れず、理由を作業履歴に残す（画面で、本文に今回の内容が入らなかったことが分かるように）
       this.append(this.mustGet(task.id), [
@@ -15060,8 +15066,10 @@ export class TaskService {
       }
       return result;
     }
-    const body = extractMergedPullRequestBody(ran.output, PR_BODY_MAX);
-    if (!body) return kept(message("orchestrator.unreadable"), ran.cost);
+    const extracted = extractMergedPullRequestBody(ran.output, PR_BODY_MAX);
+    const body = extracted && withTaskMarker(extracted, task.id, base);
+    if (!body || body.length > PR_BODY_MAX)
+      return kept(message("orchestrator.unreadable"), ran.cost);
     // まとめる間に人が本文をまた直していたら、その直しを含まない本文で上書きしない（次の更新で、もう一度まとめる）
     let now: string | undefined;
     try {
@@ -16091,7 +16099,8 @@ export class TaskService {
             event: {
               type: "TaskCreated",
               payload: {
-                title: reviewTaskTitle(parent.title, number),
+                // 親が後続のタスクのときは、外から来た文の題を、レビューの指示に入る題にしない
+                title: reviewTaskTitle(instructionTitle(parent), number),
                 body: "",
                 start: "github_pull_request",
                 budgetCapUsd: config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD,
@@ -21806,6 +21815,7 @@ export class TaskService {
     items: readonly {
       remarkId: string;
       text: string;
+      gist?: string;
       reason: string;
       decision: "defer" | "fix";
       origin?: RemarkOrigin;
@@ -21813,6 +21823,11 @@ export class TaskService {
     }[],
     watched: ReturnType<typeof gatePullRequest>,
   ): void {
+    // 指摘の要点（申告のときに書かれたもの。無ければ、指摘の全文の最初の行で示す）
+    const gistOf = (remarkId: string): string | undefined => {
+      const remark = task.remarks.find((r) => r.id === remarkId);
+      return remark?.deferral?.gist ?? remark?.gist;
+    };
     /** GitHub の Issue を作ると選んだ指摘の結果を記録する。 */
     const handled = (remarkId: string, result: { url: string } | { failure: DaemonText }): void => {
       try {
@@ -21873,7 +21888,6 @@ export class TaskService {
       return;
     }
     const usedSecrets: string[] = [];
-    const link = (id: string) => taskLink(this.deps.webUrl ?? "http://127.0.0.1:4700", id);
     const url = watched.url ?? `${repo.replace(/\/+$/, "")}/pull/${number}`;
     // Issue を作っている最中の指摘（PR の確認が、途中で止まった処理と取り違えないように）
     const inflight = wantIssues.map((item) => `${task.id}:${item.remarkId}`);
@@ -21900,6 +21914,7 @@ export class TaskService {
               taskId: task.id,
               remarkId: item.remarkId,
               text: item.text,
+              ...(gistOf(item.remarkId) ? { gist: gistOf(item.remarkId) } : {}),
               reason: item.reason,
               pullRequest: { url, number },
               ...(ref ? { originUrl: remarkOriginUrl(url, ref) } : {}),
@@ -21941,10 +21956,10 @@ export class TaskService {
             return {
               remarkId: item.remarkId,
               decision: item.decision,
+              line: remarkLine({ text: item.text, gist: gistOf(item.remarkId) }, usedSecrets),
               ...(ref
                 ? {
                     quoted: {
-                      text: item.text,
                       reason: item.reason,
                       url: remarkOriginUrl(url, ref),
                     },
@@ -21959,8 +21974,6 @@ export class TaskService {
                 : {}),
             };
           }),
-          taskUrl: link(task.id).url,
-          localOnly: link(task.id).localOnly,
           secrets: usedSecrets,
         });
         if (!body) return;
@@ -22033,7 +22046,7 @@ export class TaskService {
    * 理由を記録して、やり直さない。作った後・記録の前に止まっていたら、作成の記録（derivedFrom の、元のタスクと指摘の ID）
    * で見つけて、二度作らない（依頼の文の中の文字列では照合しない）。
    */
-  private settleDeferralTasks(): void {
+  private async settleDeferralTasks(): Promise<void> {
     for (const original of [...this.tasks.values()]) {
       for (const due of deferralTasksDue(original)) {
         const record = (result: { taskId: string } | { failure: DaemonText }): void => {
@@ -22071,10 +22084,31 @@ export class TaskService {
             pr?.number && due.origin?.number === pr.number
               ? remarkOriginRef(due.origin.key)
               : undefined;
+          // 題（後続の PR の題にもなる）に、登録済みの秘密の値を出さない。Issue・コメントと同じく、GitHub のトークンの
+          // 値を伏せる対象にする（取り出せなければ、ほかの伏せ（形で見つける秘密・内部のパス）だけで作る）
+          const usedSecrets: string[] = [];
+          if (pr?.repo) {
+            try {
+              await this.githubToken(
+                original,
+                pr.repo,
+                usedSecrets,
+                undefined,
+                AbortSignal.timeout(30_000),
+              );
+            } catch (error) {
+              // 取り出せないとき（時間切れを含む）は、伏せる値が無いまま作る。理由は残す
+              console.warn(
+                `[daemon] タスク ${original.id} の後続のタスクの題を伏せる値を取り出せませんでした：${renderMessage(errorText(error), "ja")}`,
+              );
+            }
+          }
           const request = buildDeferralTask({
             remarkId: due.remarkId,
             text: due.text,
+            ...(due.gist ? { gist: due.gist } : {}),
             reason: due.reason,
+            secrets: usedSecrets,
             ...(pr?.number && url ? { pullRequest: { url, number: pr.number } } : {}),
             ...(ref && url ? { originUrl: remarkOriginUrl(url, ref) } : {}),
           });
