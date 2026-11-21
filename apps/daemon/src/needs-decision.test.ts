@@ -321,7 +321,8 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
       review("changes_required", [{ title: "上限を超える", needs: MARK }]),
       [],
     );
-    pulls.drafts[7] = false;
+    // 人が GitHub でドラフトを外した（一時停止に伴う戻しも、この理由では戻さない）
+    pulls.humanUndraft(7);
     pulls.draftChanges.length = 0;
     await service.checkPullRequests();
     expect(pulls.draftChanges).toEqual([]);

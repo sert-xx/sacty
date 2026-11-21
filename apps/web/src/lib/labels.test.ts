@@ -3807,3 +3807,37 @@ describe("改修の提案の却下の行（PBI-443）", () => {
     expect(describeEventParts(rejected({}), labels.en).text).toBe("Rejected a proposal: 不要");
   });
 });
+
+describe("ドラフトの切り替えの記録の表示（PBI-468）", () => {
+  const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
+    ({
+      ...e,
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-10T00:00:00.000Z",
+      actor: "sacty",
+    }) as ActivityEvent;
+
+  it("sacty が外したことと、ドラフトへ戻さなかった理由（人が外した・読めなかった・決められなかった）を、PR の番号とともに日英で出す", () => {
+    const undrafted = event({ type: "PullRequestUndraftNoted", payload: { number: 7 } });
+    expect(describeIn(undrafted, labels.ja)).toBe("sacty が PR #7 のドラフトを外した");
+    expect(describeIn(undrafted, labels.en)).toBe("sacty marked PR #7 ready for review");
+    const skipped = (reason: "person" | "unreadable" | "undetermined") =>
+      event({ type: "PullRequestRedraftSkipped", payload: { number: 7, reason } });
+    expect(describeIn(skipped("person"), labels.ja)).toBe(
+      "PR #7 をドラフトへ戻さなかった（人が外した）",
+    );
+    expect(describeIn(skipped("unreadable"), labels.ja)).toBe(
+      "PR #7 をドラフトへ戻さなかった（読めなかった）",
+    );
+    expect(describeIn(skipped("undetermined"), labels.ja)).toBe(
+      "PR #7 をドラフトへ戻さなかった（決められなかった）",
+    );
+    expect(describeIn(skipped("person"), labels.en)).toContain("PR #7");
+    expect(describeIn(skipped("person"), labels.en)).toContain("a person marked it ready");
+    expect(describeIn(skipped("unreadable"), labels.en)).toContain("could not be read");
+    expect(describeIn(skipped("undetermined"), labels.en)).toContain("could not tell");
+  });
+});

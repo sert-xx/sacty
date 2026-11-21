@@ -103,6 +103,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     ...patch,
   });
   const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
+  /** 指定した種類のイベントの内容（PBI-468）。 */
+  const payloads = (svc: TaskService, id: string, type: string) =>
+    (svc.get(id)?.activity ?? []).filter((e) => e.type === type).map((e) => e.payload);
   const promptOf = (executor: FakeExecutor, i: number) =>
     executor.calls[i]?.command.join(" ") ?? "";
   const taskOf = (svc: TaskService, id: string) => svc.get(id)?.task as Task;
@@ -3619,7 +3622,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("ドラフトを外す要求の答えを受け取れなければ、ドラフトに戻して記録せず、次の確認でやり直す（PR #348 2回目のレビュー指摘）", async () => {
+      it("ドラフトを外す要求の答えを受け取れなければ、ID なしで外しを記録し、最後の外しが sacty のものか決められないので戻さず、次の確認でやり直す（PR #348 2回目のレビュー指摘・PBI-468）", async () => {
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
@@ -3628,12 +3631,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         // GitHub では外れたが、答えを受け取れない
         pulls.setDraftAnswerLost = "socket hang up";
         await service.checkPullRequests();
-        expect(pulls.draftChanges).toEqual([
-          { number: 7, draft: false },
-          { number: 7, draft: true },
-        ]);
-        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.draftChanges).toEqual([{ number: 7, draft: false }]);
+        expect(pulls.drafts[7]).toBe(false);
         expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        expect(payloads(service, id, "PullRequestUndraftNoted")).toEqual([{ number: 7 }]);
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
+        ]);
         pulls.setDraftAnswerLost = undefined;
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(false);
@@ -3779,7 +3783,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("ドラフトを外す答えが返らなくても待ち続けず、ドラフトに戻す。外す要求が後から届いても、指摘なしで外すまで確認のたびに戻す（PR #348 4回目のレビュー指摘）", async () => {
+      it("ドラフトを外す答えが返らなくても待ち続けない。最後の外しが sacty のものか決められないので、戻さずに記録する（PR #348 4回目のレビュー指摘・PBI-468）", async () => {
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
           draftTimeoutMs: 20,
         });
@@ -3794,18 +3798,22 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const setDraft = vi.spyOn(pulls, "setDraft");
         setDraft.mockImplementation(async (input) => {
           if (input.draft) return original(input);
-          pulls.drafts[input.number] = false;
+          // GitHub では外れる（外しのイベントが付く）が、答えを返さない
+          pulls.humanUndraft(input.number);
           return new Promise(() => {});
         });
         await service.checkPullRequests();
-        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.drafts[7]).toBe(false);
         expect(types(service, id)).not.toContain("PullRequestMarkedReady");
-        // 外す要求が後から届いて外れた後に、人がコミットを足しても（指摘なしでない先頭）、次の確認で戻す
-        pulls.drafts[7] = false;
+        expect(payloads(service, id, "PullRequestUndraftNoted")).toEqual([{ number: 7 }]);
+        // 外す要求が外した後に、人がコミットを足しても（指摘なしでない先頭）、決められないので戻さない（記録は重ねない）
         pulls.prInfo = { ...pulls.prInfo, headSha: "h".repeat(40) };
         await service.checkPullRequests();
-        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.drafts[7]).toBe(false);
         expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
+        ]);
         setDraft.mockRestore();
         activity.close();
       });
@@ -3870,7 +3878,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("外す要求の答えを受け取れなかったことは、PR を更新した次の提出にも引き継ぎ、後から外れても戻す（PR #348 5回目のレビュー指摘）", async () => {
+      it("外す要求の答えを受け取れなかったことは、PR を更新した次の提出にも引き継ぎ、後から外れても決められないので戻さない（PR #348 5回目のレビュー指摘・PBI-468）", async () => {
         const made = await implemented(
           [
             verdictOut("no_findings", "# 評価\n\n問題なし"),
@@ -3914,8 +3922,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await loopTurn();
         expect(pulls.drafts[7]).toBe(false);
         await service.checkPullRequests();
-        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.drafts[7]).toBe(false);
         expect(types(service, id).filter((t) => t === "PullRequestMarkedReady")).toHaveLength(0);
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
+        ]);
         setDraft.mockRestore();
         activity.close();
       });
@@ -4422,18 +4433,315 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("指摘なしを待つ PR のドラフトが GitHub で外れていたら、覚えていなくても確認のたびにドラフトに戻す（PR #348 10回目のレビュー指摘）", async () => {
+      describe("人がドラフトを外した PR を、sacty がドラフトへ戻さない（PBI-468）", () => {
+        const skipped = (svc: TaskService, id: string) =>
+          payloads(svc, id, "PullRequestRedraftSkipped");
+        const noted = (svc: TaskService, id: string) =>
+          payloads(svc, id, "PullRequestUndraftNoted");
+        /** デーモンを作り直す（同じ台帳・同じ GitHub。メモリー上の記憶は消える）。 */
+        const restart = (made: { activity: SqliteActivityStore; pulls: FakePulls }) => {
+          made.activity.close();
+          const activity = new SqliteActivityStore(dbPath);
+          const { service } = makeService(activity, [], {
+            stepPullRequests: true,
+            pulls: made.pulls,
+            reviewTasks: true,
+            now: later,
+            ci: failingCi(),
+            draftPullRequests: true,
+          });
+          return { activity, service };
+        };
+        /** 指摘なしのレビューが済み、sacty がまだドラフトを外していない PR（#7）。 */
+        async function reviewed(outcomes: AgentOutcome[] = []) {
+          const made = await implemented([
+            verdictOut("no_findings", "# 評価\n\n問題なし"),
+            ...outcomes,
+          ]);
+          const childId = childOf(made.service, made.id);
+          made.pulls.prInfo = {
+            ...made.pulls.prInfo,
+            number: 7,
+            headSha: commitOf(made.service, made.id),
+          };
+          await runReview(made.service, childId);
+          return { ...made, childId };
+        }
+        const HUMAN_HEAD = "h".repeat(40);
+
+        it("PR の確認で、人が外した PR をドラフトへ戻さず、外し1回につき1件だけ記録する。再起動の後も戻さず、重ねない", async () => {
+          const made = await implemented([]);
+          const { service, pulls, id } = made;
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+          const human = pulls.humanUndraft(7);
+          for (let i = 0; i < 3; i++) await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(pulls.draftChanges).toEqual([]);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "person", eventId: human }]);
+          // 再起動の後の redraftAwaiting と PR の確認も、戻さず、記録を重ねない
+          const again = restart(made);
+          await again.service.checkPullRequests();
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(pulls.draftChanges).toEqual([]);
+          expect(skipped(again.service, id)).toHaveLength(1);
+          // 人がもう一度外せば（別の外し）、また1件記録する
+          pulls.humanDraft(7);
+          const second = pulls.humanUndraft(7);
+          await again.service.checkPullRequests();
+          expect(
+            skipped(again.service, id).map((p) => (p as { eventId?: string }).eventId),
+          ).toEqual([human, second]);
+          again.activity.close();
+        });
+
+        it("人が外した PR に、PR の指摘で直した実装を提出しても、ドラフトへ戻さず、承認待ちに進む", async () => {
+          const made = await implemented([
+            verdictOut("changes_required"),
+            implement("# 実装の説明 v2"),
+          ]);
+          const { activity, service, pulls, id } = made;
+          const childId = childOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+          await runReview(service, childId);
+          pulls.feedbackBy[7] = [posted(pulls, 0)];
+          await service.checkPullRequests();
+          const human = pulls.humanUndraft(7);
+          const setDraft = vi.spyOn(pulls, "setDraft");
+          for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+            await service.runNext(id);
+          }
+          expect(taskOf(service, id).status).toBe("awaiting_approval");
+          expect(taskOf(service, id).pullRequest?.awaitingReview).toBe(true);
+          expect(types(service, id).filter((t) => t === "StepSubmitted")).toHaveLength(2);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(setDraft.mock.calls.some(([input]) => input.draft)).toBe(false);
+          expect(skipped(service, id)).toContainEqual({
+            number: 7,
+            reason: "person",
+            eventId: human,
+          });
+          setDraft.mockRestore();
+          activity.close();
+        });
+
+        it("sacty が指摘なしで外した後に、人が外し直した PR に人がコミットを足しても、ドラフトへ戻さず記録する", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(types(service, id)).toContain("PullRequestMarkedReady");
+          // 人がドラフトにして、外し直し（最後の外しが人）、コミットを足した
+          pulls.humanDraft(7);
+          const human = pulls.humanUndraft(7);
+          pulls.prInfo = { ...pulls.prInfo, headSha: HUMAN_HEAD };
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "person", eventId: human }]);
+          activity.close();
+        });
+
+        it("人が外した PR は、指摘なしの外す間に差し戻されても、ドラフトへ戻さない。外しは変化なしなので、sacty の外しを記録しない", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          const human = pulls.humanUndraft(7);
+          const gate = Promise.withResolvers<void>();
+          pulls.setDraftGate = gate.promise;
+          const checking = service.checkPullRequests();
+          await pulls.setDraftStarted.promise;
+          service.requestChanges(id, {
+            step: "implement",
+            submission: 1,
+            comments: ["ここを直して"],
+          });
+          pulls.setDraftGate = undefined;
+          gate.resolve();
+          await checking;
+          expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+          expect(noted(service, id)).toEqual([]);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(pulls.draftChanges).toEqual([]);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "person", eventId: human }]);
+          activity.close();
+        });
+
+        it("sacty が外した PR は、人がコミットを足したら、再起動の後も今までどおりドラフトへ戻す。外しの ID は、答えの ID で記録する", async () => {
+          const made = await reviewed();
+          const { service, pulls, id } = made;
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          // sacty がドラフトで作った PR の最初の外し（要求の前に外しが無い）は、答えの外しの ID を記録する
+          expect(noted(service, id)).toEqual([
+            { number: 7, eventId: pulls.timeline[7]?.at(-1)?.id },
+          ]);
+          pulls.prInfo = { ...pulls.prInfo, headSha: HUMAN_HEAD };
+          const again = restart(made);
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(true);
+          expect(skipped(again.service, id)).toEqual([]);
+          again.activity.close();
+        });
+
+        it("切り替えのイベントが1件も無く、ドラフトでない指摘なしを待つ PR は、今までどおりドラフトへ戻す", async () => {
+          const made = await implemented([]);
+          const { activity, service, pulls, id } = made;
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+          pulls.drafts[7] = false;
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(true);
+          expect(skipped(service, id)).toEqual([]);
+          activity.close();
+        });
+
+        for (const fail of [false, "timeline"] as const) {
+          it(`人が外した後に人がドラフトにした PR（最後が convert_to_draft でドラフト）では、履歴を読める場合（${fail === false}）も読めない場合も、戻さなかった記録を残さない`, async () => {
+            const made = await implemented([]);
+            const { activity, service, pulls, id } = made;
+            pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+            pulls.humanUndraft(7);
+            pulls.humanDraft(7);
+            pulls.draftHistoryFail = fail;
+            await service.checkPullRequests();
+            await service.checkPullRequests();
+            expect(pulls.drafts[7]).toBe(true);
+            expect(skipped(service, id)).toEqual([]);
+            activity.close();
+          });
+        }
+
+        it("履歴を読めない間は戻さず、読めない状態が続く間に1件だけ記録する（再起動の後も）。読めた後に人が外していたら、person を1件足す", async () => {
+          const made = await implemented([]);
+          const { service, pulls, id } = made;
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+          pulls.drafts[7] = false;
+          pulls.draftHistoryFail = "timeline";
+          await service.checkPullRequests();
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          const again = restart(made);
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(again.service, id)).toEqual([{ number: 7, reason: "unreadable" }]);
+          // 読めない間に人が外していた：読めるようになったら、person を1件足す
+          pulls.draftHistoryFail = false;
+          const human = pulls.humanUndraft(7);
+          await again.service.checkPullRequests();
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(again.service, id)).toEqual([
+            { number: 7, reason: "unreadable" },
+            { number: 7, reason: "person", eventId: human },
+          ]);
+          again.activity.close();
+        });
+
+        it("前の版が外した PR（外しの記録が無く、PullRequestMarkedReady がある）の記録の無い外しは、決められないので戻さず、1件だけ記録する（再起動の後も）", async () => {
+          const made = await reviewed();
+          const { service, pulls, id } = made;
+          // 外す要求は、人が外した PR に変化なしで答える。履歴を読めなかった確認で、PullRequestMarkedReady だけが記録に入る
+          pulls.humanUndraft(7);
+          pulls.draftHistoryFail = "draft";
+          await service.checkPullRequests();
+          pulls.draftHistoryFail = false;
+          expect(types(service, id)).toContain("PullRequestMarkedReady");
+          expect(noted(service, id)).toEqual([]);
+          pulls.prInfo = { ...pulls.prInfo, headSha: HUMAN_HEAD };
+          await service.checkPullRequests();
+          await service.checkPullRequests();
+          const again = restart(made);
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(
+            skipped(again.service, id).filter(
+              (p) => (p as { reason: string }).reason === "undetermined",
+            ),
+          ).toEqual([{ number: 7, reason: "undetermined" }]);
+          expect(
+            skipped(again.service, id).some((p) => (p as { reason: string }).reason === "person"),
+          ).toBe(false);
+          again.activity.close();
+        });
+
+        /** 指摘なしの外す要求の間に差し戻す（外した後の判定に、差し戻しが入る）。 */
+        async function rejectDuringUndraft(made: Awaited<ReturnType<typeof reviewed>>) {
+          const { service, pulls, id } = made;
+          const gate = Promise.withResolvers<void>();
+          pulls.setDraftGate = gate.promise;
+          const checking = service.checkPullRequests();
+          await pulls.setDraftStarted.promise;
+          service.requestChanges(id, {
+            step: "implement",
+            submission: 1,
+            comments: ["ここを直して"],
+          });
+          pulls.setDraftGate = undefined;
+          gate.resolve();
+          await checking;
+        }
+
+        it("外す要求の答えを受け取れなかった後の外しは、ID なしで記録し、決められないので戻さず、1件だけ記録する", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          pulls.setDraftAnswerLost = "socket hang up";
+          await service.checkPullRequests();
+          pulls.setDraftAnswerLost = undefined;
+          await rejectDuringUndraft(made).catch(() => undefined);
+          await service.checkPullRequests();
+          expect(noted(service, id)).toEqual([{ number: 7 }]);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "undetermined" }]);
+          activity.close();
+        });
+
+        it("外しの答えが前の外しの ID なら（反映の遅れ）、sacty の外しの ID として記録せず、決められないので戻さない", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          // 人が外して戻した後の PR を、sacty が指摘なしで外す。答えと1回の読み直しが、人の前の外しの ID を返す
+          const earlier = pulls.humanUndraft(7);
+          pulls.humanDraft(7);
+          pulls.timelineLagReads = 2;
+          await rejectDuringUndraft(made);
+          expect(pulls.timelineLagReads).toBe(0);
+          expect(noted(service, id)).toEqual([{ number: 7 }]);
+          expect(JSON.stringify(noted(service, id))).not.toContain(earlier);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "undetermined" }]);
+          activity.close();
+        });
+
+        it("要求の前の最後の外しを読めなければ、答えの ID を使わず ID なしで記録し、戻さない", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          const earlier = pulls.humanUndraft(7);
+          pulls.humanDraft(7);
+          // 答えは、人の前の外しの ID を返す
+          pulls.previousReadFail = true;
+          pulls.timelineLagReads = 1;
+          await rejectDuringUndraft(made);
+          expect(noted(service, id)).toEqual([{ number: 7 }]);
+          expect(JSON.stringify(noted(service, id))).not.toContain(earlier);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "undetermined" }]);
+          activity.close();
+        });
+      });
+
+      it("sacty がドラフトに戻した PR が、記録に無い外しでドラフトでなくなっていたら（最後の切り替えが convert_to_draft のまま）、決められないので戻さず、1件だけ記録する（PR #348 10回目のレビュー指摘・PBI-468）", async () => {
         const made = await implemented([]);
         const { activity, service, pulls, id } = made;
         pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(true);
-        // 再起動の後に一度戻した後で、古い外す要求が GitHub に届いた
+        // 再起動の後に一度戻した後で、古い外す要求が（記録に無い外しのイベントなしに）GitHub に届いた
+        pulls.humanDraft(7);
+        pulls.drafts[7] = false;
         for (let i = 0; i < 2; i++) {
-          pulls.drafts[7] = false;
           await service.checkPullRequests();
-          expect(pulls.drafts[7], String(i)).toBe(true);
+          expect(pulls.drafts[7], String(i)).toBe(false);
         }
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
+        ]);
         expect(types(service, id)).not.toContain("PullRequestMarkedReady");
         activity.close();
       });
@@ -4668,7 +4976,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("外し直す答えを受け取れなければ、ドラフトに戻し、次の確認で外し直す（PR #348 11回目のレビュー指摘）", async () => {
+      it("外し直す答えを受け取れなければ、最後の外しが sacty のものか決められないので戻さず、次の確認で外し直す（PR #348 11回目のレビュー指摘・PBI-468）", async () => {
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
@@ -4680,9 +4988,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         pulls.setDraftAnswerLost = "接続が切れた";
         const changes = pulls.draftChanges.length;
         await service.checkPullRequests();
-        expect(pulls.draftChanges.slice(changes)).toEqual([
-          { number: 7, draft: false },
-          { number: 7, draft: true },
+        expect(pulls.draftChanges.slice(changes)).toEqual([{ number: 7, draft: false }]);
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
         ]);
         pulls.setDraftAnswerLost = undefined;
         await service.checkPullRequests();
@@ -5735,7 +6043,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await settle(service, id);
         expect(taskOf(service, id).pausedReason).toBe("unchanged");
         // 人が、AI のレビューの指摘を採らないと判断して、GitHub でドラフトを外す
-        pulls.drafts[7] = false;
+        pulls.humanUndraft(7);
         const changes = pulls.draftChanges.length;
         await service.checkPullRequests();
         await service.checkPullRequests();
@@ -5804,9 +6112,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await settle(service, id);
         await service.pause(id);
         expect(taskOf(service, id).pausedReason).toBe("manual");
-        pulls.drafts[7] = false;
+        // 人が外した PR も、一時停止に伴う戻しは、判定を通さずに戻す（PBI-468）
+        pulls.humanUndraft(7);
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(true);
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([]);
         activity.close();
       });
 

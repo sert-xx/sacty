@@ -37,6 +37,24 @@ function fakeFetch(
   return { impl, calls };
 }
 
+/** 要求の前の最後の外しの読み取り・タイムラインの答え（PBI-468）。 */
+const timelineAnswer = (...nodes: unknown[]) => ({
+  status: 200,
+  json: { data: { node: { timelineItems: { nodes } } } },
+});
+const readyEvent = (id: string) => ({ __typename: "ReadyForReviewEvent", id, createdAt: "t1" });
+const convertEvent = (id: string) => ({ __typename: "ConvertToDraftEvent", id, createdAt: "t2" });
+const markedAnswer = (...nodes: unknown[]) => ({
+  status: 200,
+  json: {
+    data: {
+      markPullRequestReadyForReview: {
+        pullRequest: { isDraft: false, timelineItems: { nodes } },
+      },
+    },
+  },
+});
+
 const input = {
   repo: "https://github.com/acme/app",
   token: "ghp_secret",
@@ -115,10 +133,8 @@ describe("GitHub の PR（PBI-10b）", () => {
   it("ドラフトを外すときは、PR の node_id で GraphQL の markPullRequestReadyForReview を呼ぶ", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
-      {
-        status: 200,
-        json: { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } },
-      },
+      timelineAnswer(),
+      markedAnswer(readyEvent("RFR_1")),
     ]);
     const result = await new GitHubPullRequests(impl).setDraft({
       repo: input.repo,
@@ -126,22 +142,24 @@ describe("GitHub の PR（PBI-10b）", () => {
       number: 7,
       draft: false,
     });
-    expect(result).toEqual({ draft: false });
+    expect(result).toEqual({ draft: false, changed: true, previous: "none", readyId: "RFR_1" });
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["GET", "https://api.github.com/repos/acme/app/pulls/7"],
       ["POST", "https://api.github.com/graphql"],
+      ["POST", "https://api.github.com/graphql"],
     ]);
-    const body = calls[1]?.body as { query: string; variables: unknown };
+    const body = calls[2]?.body as { query: string; variables: unknown };
     expect(body.query).toContain("markPullRequestReadyForReview");
     expect(body.variables).toEqual({ id: "PR_node" });
-    expect(calls[1]?.auth).toBe("Bearer ghp_secret");
+    expect(calls[2]?.auth).toBe("Bearer ghp_secret");
   });
 
   it("ドラフトの切り替えの通信には、渡した中断の合図を付ける（PBI-331）", async () => {
     const seen: (AbortSignal | undefined)[] = [];
     const answers = [
       { number: 7, draft: true, node_id: "PR_node" },
-      { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } },
+      timelineAnswer().json,
+      markedAnswer().json,
     ];
     const impl = (async (_url: string, init?: RequestInit) => {
       seen.push(init?.signal ?? undefined);
@@ -155,7 +173,7 @@ describe("GitHub の PR（PBI-10b）", () => {
       draft: false,
       signal: abort.signal,
     });
-    expect(seen).toEqual([abort.signal, abort.signal]);
+    expect(seen).toEqual([abort.signal, abort.signal, abort.signal]);
   });
 
   it("ドラフトに戻すときは convertPullRequestToDraft を呼び、すでにその状態なら何もしない", async () => {
@@ -169,10 +187,94 @@ describe("GitHub の PR（PBI-10b）", () => {
     ]);
     const client = new GitHubPullRequests(impl);
     const args = { repo: input.repo, token: input.token, number: 7, draft: true };
-    await client.setDraft(args);
-    await client.setDraft(args);
+    expect(await client.setDraft(args)).toEqual({ draft: true, changed: true });
+    expect(await client.setDraft(args)).toEqual({ draft: true, changed: false });
     expect(JSON.stringify(calls[1]?.body)).toContain("convertPullRequestToDraft");
     expect(calls).toHaveLength(3);
+  });
+
+  it("draftHistory：ドラフトならタイムラインを読まずにドラフトを返し、ドラフトでなければ最後の切り替えの id・種類を返し、読めなければ読めないことを返す（PBI-468）", async () => {
+    const args = { repo: input.repo, token: input.token, number: 7 };
+    const read = async (
+      responses: { status: number; json: unknown }[],
+    ): Promise<{ history: unknown; calls: number }> => {
+      const { impl, calls } = fakeFetch(responses);
+      const history = await new GitHubPullRequests(impl).draftHistory(args);
+      return { history, calls: calls.length };
+    };
+    const rest = (draft: boolean) => ({
+      status: 200,
+      json: { number: 7, draft, node_id: "PR_node" },
+    });
+    // ドラフト：REST だけ
+    expect(await read([rest(true)])).toEqual({ history: { read: true, draft: true }, calls: 1 });
+    // ドラフトでない：最後の切り替え（外した・ドラフトにした）
+    expect((await read([rest(false), timelineAnswer(readyEvent("RFR_1"))])).history).toEqual({
+      read: true,
+      draft: false,
+      last: { id: "RFR_1", kind: "ready_for_review", at: "t1" },
+    });
+    expect((await read([rest(false), timelineAnswer(convertEvent("CTD_1"))])).history).toEqual({
+      read: true,
+      draft: false,
+      last: { id: "CTD_1", kind: "convert_to_draft", at: "t2" },
+    });
+    // 切り替えが1件も無い
+    expect((await read([rest(false), timelineAnswer()])).history).toEqual({
+      read: true,
+      draft: false,
+    });
+    // 読めない：draft の読み取りのエラー・タイムラインのエラー
+    expect((await read([{ status: 502, json: {} }])).history).toEqual({ read: false });
+    expect((await read([rest(false), { status: 502, json: {} }])).history).toEqual({
+      read: false,
+    });
+    expect(
+      (await read([rest(false), { status: 200, json: { errors: [{ message: "boom" }] } }])).history,
+    ).toEqual({ read: false });
+    // 読む型は、外しとドラフトにした切り替えの両方
+    const { impl, calls } = fakeFetch([rest(false), timelineAnswer()]);
+    await new GitHubPullRequests(impl).draftHistory(args);
+    const query = (calls[1]?.body as { query: string } | undefined)?.query;
+    expect(query).toContain("READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT");
+    expect(query).toContain("last: 1");
+  });
+
+  it("setDraft の外し：すでに外れていれば何も呼ばず changed: false。変えたときは、要求の前の最後の外しの id（無ければ none・読めなければ unreadable）と、答えの外しの id（あれば）を返す（PBI-468）", async () => {
+    const args = { repo: input.repo, token: input.token, number: 7, draft: false };
+    const rest = (draft: boolean) => ({
+      status: 200,
+      json: { number: 7, draft, node_id: "PR_node" },
+    });
+    // すでに外れている：mutation も要求の前の読み取りも呼ばない
+    const already = fakeFetch([rest(false)]);
+    expect(await new GitHubPullRequests(already.impl).setDraft(args)).toEqual({
+      draft: false,
+      changed: false,
+    });
+    expect(already.calls).toHaveLength(1);
+    // 要求の前に外しがあった・答えにも id がある
+    const before = fakeFetch([
+      rest(true),
+      timelineAnswer(readyEvent("RFR_old")),
+      markedAnswer(readyEvent("RFR_new")),
+    ]);
+    expect(await new GitHubPullRequests(before.impl).setDraft(args)).toEqual({
+      draft: false,
+      changed: true,
+      previous: { id: "RFR_old" },
+      readyId: "RFR_new",
+    });
+    // 要求の前の読み取りは、外しの切り替えだけを読む
+    const previousQuery = (before.calls[1]?.body as { query: string } | undefined)?.query;
+    expect(previousQuery).toContain("itemTypes: [READY_FOR_REVIEW_EVENT]");
+    expect(previousQuery).not.toContain("CONVERT_TO_DRAFT_EVENT");
+    // 要求の前の読み取りが失敗しても、外す要求は呼ぶ。答えに id が無ければ返さない
+    const failed = fakeFetch([rest(true), { status: 502, json: {} }, markedAnswer()]);
+    const answer = await new GitHubPullRequests(failed.impl).setDraft(args);
+    expect(answer).toEqual({ draft: false, changed: true, previous: "unreadable" });
+    expect("readyId" in answer).toBe(false);
+    expect(failed.calls).toHaveLength(3);
   });
 
   it("PR の答えを読めない・ドラフトかが書かれていないときは、切り替えずに失敗にする（ドラフトのまま進めない）", async () => {
@@ -196,6 +298,7 @@ describe("GitHub の PR（PBI-10b）", () => {
     ]) {
       const { impl } = fakeFetch([
         { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
+        timelineAnswer(),
         { status: 200, json: answer },
       ]);
       const error = await new GitHubPullRequests(impl)
@@ -210,6 +313,7 @@ describe("GitHub の PR（PBI-10b）", () => {
   it("GraphQL の答えにエラーがあれば、ドラフトの切り替えの失敗にする", async () => {
     const { impl } = fakeFetch([
       { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
+      timelineAnswer(),
       { status: 200, json: { errors: [{ message: "Resource not accessible by integration" }] } },
     ]);
     const error = await new GitHubPullRequests(impl)

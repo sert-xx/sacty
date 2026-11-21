@@ -1412,7 +1412,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     activity.close();
   });
 
-  it("付け替えで、ドラフトを外す操作の答えを受け取れず、その間にタスクが変わっていたら、ドラフトに戻して記録しない", async () => {
+  it("付け替えで、ドラフトを外す操作の答えを受け取れず、その間にタスクが変わっていたら、最後の外しが sacty のものか決められないので戻さず、記録しない（PBI-468）", async () => {
     const { activity, service, pulls, ids } = await splitParent(chain, [
       implement("# A の実装"),
       implement("# B の実装"),
@@ -1433,15 +1433,107 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     gate.resolve();
     await checking;
     pulls.setDraftAnswerLost = undefined;
-    expect(pulls.draftChanges).toEqual([
-      { number: 8, draft: false },
-      { number: 8, draft: true },
-    ]);
-    expect(pulls.drafts[8]).toBe(true);
+    expect(pulls.draftChanges).toEqual([{ number: 8, draft: false }]);
+    expect(pulls.drafts[8]).toBe(false);
     expect(types(service, b)).not.toContain("PullRequestRetargeted");
-    expect(taskOf(service, b).pullRequest?.draft).toBe(true);
+    // 答えを受け取れなかった外しは、ID なしで記録し、戻さなかったことを「決められなかった」として1件だけ記録する
+    const events = service.get(b)?.activity ?? [];
+    expect(
+      events.filter((e) => e.type === "PullRequestUndraftNoted").map((e) => e.payload),
+    ).toEqual([{ number: 8 }]);
+    expect(
+      events.filter((e) => e.type === "PullRequestRedraftSkipped").map((e) => e.payload),
+    ).toEqual([{ number: 8, reason: "undetermined" }]);
     activity.close();
   });
+
+  /** 指定した種類のイベントの内容（PBI-468）。 */
+  const payloadsOf = (svc: TaskService, id: string, type: string) =>
+    (svc.get(id)?.activity ?? []).filter((e) => e.type === type).map((e) => e.payload);
+
+  it("付け替えで、ドラフトを外す操作を待つ間に差し戻されても、人が外した重ねた PR はドラフトに戻さず、1件だけ記録する（PBI-468）", async () => {
+    const { activity, service, pulls, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      implement("# B の実装"),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    // 人が GitHub でドラフトを外した（sacty の外す要求は、変化なしで答える）
+    const human = pulls.humanUndraft(8);
+    const gate = Promise.withResolvers<void>();
+    pulls.setDraftGate = gate.promise;
+    const checking = service.checkPullRequests();
+    await pulls.setDraftStarted.promise;
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    pulls.setDraftGate = undefined;
+    gate.resolve();
+    await checking;
+    expect(pulls.draftChanges).toEqual([]);
+    expect(pulls.drafts[8]).toBe(false);
+    expect(types(service, b)).not.toContain("PullRequestRetargeted");
+    expect(types(service, b)).not.toContain("PullRequestUndraftNoted");
+    expect(payloadsOf(service, b, "PullRequestRedraftSkipped")).toEqual([
+      { number: 8, reason: "person", eventId: human },
+    ]);
+    activity.close();
+  });
+
+  it("人が外した重ねた PR に、やり直しの実装を提出しても、ドラフトに戻さず、止めずに承認待ちへ進める（PBI-468）", async () => {
+    const { activity, service, pulls, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      implement("# B の実装"),
+      implement("# B の実装 v2"),
+    ]);
+    const [, b] = ids as [string, string];
+    await drain(service);
+    const human = pulls.humanUndraft(8);
+    pulls.setDraftFail = "GraphQL down";
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    await drain(service);
+    const child = taskOf(service, b);
+    expect(child.status).toBe("awaiting_approval");
+    expect(child.gate).toEqual({ step: "implement", submission: 2 });
+    expect(pulls.drafts[8]).toBe(false);
+    expect(
+      (service.get(b)?.activity ?? []).some(
+        (e) =>
+          e.type === "AgentRunFailed" &&
+          renderMessage(e.payload.message, "ja").includes("ドラフトにできませんでした"),
+      ),
+    ).toBe(false);
+    expect(payloadsOf(service, b, "PullRequestRedraftSkipped")).toEqual([
+      { number: 8, reason: "person", eventId: human },
+    ]);
+    activity.close();
+  });
+
+  for (const mode of ["timeline", "draft"] as const) {
+    it(`ドラフトの切り替えの履歴を読めない（${mode}）重ねた PR に、やり直しの実装を提出しても、止めずに承認待ちへ進め、読めなかったことを1件記録する（PBI-468）`, async () => {
+      const { activity, service, pulls, ids } = await splitParent(chain, [
+        implement("# A の実装"),
+        implement("# B の実装"),
+        implement("# B の実装 v2"),
+      ]);
+      const [, b] = ids as [string, string];
+      await drain(service);
+      // ドラフトでない重ねた PR（切り替えの履歴を読めない）
+      pulls.drafts[8] = false;
+      pulls.draftHistoryFail = mode;
+      service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+      await drain(service);
+      const child = taskOf(service, b);
+      expect(child.status).toBe("awaiting_approval");
+      expect(child.gate).toEqual({ step: "implement", submission: 2 });
+      expect(pulls.drafts[8]).toBe(false);
+      expect(payloadsOf(service, b, "PullRequestRedraftSkipped")).toEqual([
+        { number: 8, reason: "unreadable" },
+      ]);
+      activity.close();
+    });
+  }
 
   it("重ねた PR をドラフトにできなければ（ドラフトを使えないリポジトリ・切り替えの失敗）、普通の PR のまま承認待ちにせずに止める", async () => {
     const { activity, service, pulls, ids } = await splitParent(chain, [
@@ -1468,7 +1560,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     expect(pulls.drafts[8]).toBe(true);
     expect(pulls.calls.at(-1)).toMatchObject({ draft: true, requireDraft: true });
 
-    // 人がドラフトを外した PR を、やり直しでドラフトに戻せなければ止める（承認待ちにしない）
+    // ドラフトでなくなった PR（切り替えの履歴に外しが無い）を、やり直しでドラフトに戻せなければ止める（承認待ちにしない）
     pulls.drafts[8] = false;
     pulls.setDraftFail = "GraphQL down";
     service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });

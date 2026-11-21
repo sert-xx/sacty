@@ -515,6 +515,15 @@ const ja = {
       `PR のレビューの子タスクが指摘なしにしたので、PR #${number} のドラフトを外して人の承認待ちにした`,
     PullRequestMarkedReadyWithSuggestions: (number: number) =>
       `残った提案をすべて対応しないとしたので、PR #${number} のドラフトを外して人の承認待ちにした（判定は「提案あり」のまま。再レビューはせず、リスク評価だけを先に 1 回行った）`,
+    PullRequestUndraftNoted: (number: number) => `sacty が PR #${number} のドラフトを外した`,
+    PullRequestRedraftSkipped: (number: number, reason: "person" | "unreadable" | "undetermined") =>
+      `PR #${number} をドラフトへ戻さなかった（${
+        reason === "person"
+          ? "人が外した"
+          : reason === "unreadable"
+            ? "読めなかった"
+            : "決められなかった"
+      }）`,
     ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
     WorkspaceFilesSkipped: (count: number) =>
       `読めないファイルが${count}件あり、作業領域の写しには入れなかった（権限など。エージェントが入れたツールの可能性）`,
@@ -1326,6 +1335,15 @@ const en: LabelMessages = {
       `The PR's review child task found nothing, so PR #${number} was marked ready (waiting for a person's approval)`,
     PullRequestMarkedReadyWithSuggestions: (number) =>
       `All remaining suggestions were declined, so PR #${number} was marked ready (waiting for a person's approval). The verdict stays "suggestions"; the PR was not reviewed again, and only the risk assessment was run once beforehand`,
+    PullRequestUndraftNoted: (number) => `sacty marked PR #${number} ready for review`,
+    PullRequestRedraftSkipped: (number, reason) =>
+      `Did not convert PR #${number} back to a draft (${
+        reason === "person"
+          ? "a person marked it ready"
+          : reason === "unreadable"
+            ? "the switch history could not be read"
+            : "could not tell who switched it last"
+      })`,
     ContinuedFeedbackPassed: (count) =>
       `Passed the feedback on the taken-over PR to the implementation (${count})`,
     WorkspaceFilesSkipped: (count) =>

@@ -1202,7 +1202,7 @@ From the end of the Implementation step to the merge, things go in this order.
    - A CI failure caused by the change becomes a "changes required" finding.
    - A failure unrelated to the change is written in the review body as something a person should check.
    - If the CI has not finished, the child task reviews without waiting and writes that the CI is running.
-3. If there are findings, sacty fixes the implementation and updates the PR (putting it back to draft), and the child task reviews it again.
+3. If there are findings, sacty fixes the implementation and updates the PR (putting it back to draft, except a PR whose draft you removed on GitHub), and the child task reviews it again.
 4. When the child task gives "no findings", sacty removes the draft.
 5. Check the PR's CI result, then merge the PR (sacty does not wait for the CI).
    Merging this PR approves the implementation.
@@ -1211,7 +1211,10 @@ In "Related tasks" of the task details, you can see the child task's status, whi
 
 At every PR check (every minute), sacty checks the PR's draft state and sets it as follows.
 
-- If you remove the draft on GitHub before "no findings", sacty turns the PR back into a draft (except stacked PRs; [PRs of dependent child tasks (stacked PRs)](#prs-of-dependent-child-tasks-stacked-prs)).
+- If you remove the draft on GitHub before "no findings", sacty does not turn the PR back into a draft. This holds when it submits a fix, at a PR check, at the start of a review round, and when it retargets a stacked PR, and also after you add commits ([PRs of dependent child tasks (stacked PRs)](#prs-of-dependent-child-tasks-stacked-prs)).
+  The task's activity records "Did not convert PR #number back to a draft (a person marked it ready)", one entry for each time you removed the draft.
+- If sacty cannot read the draft switch history from GitHub, or cannot tell whether sacty or you made the last switch, it does not turn the PR back into a draft either.
+  The activity records the reason as "the switch history could not be read" or "could not tell who switched it last". While the history stays unreadable, only one entry is recorded.
 - If the PR is turned back into a draft on GitHub after sacty removed the draft, sacty removes it again.
   However, if you add commits to the PR after sacty removed the draft, sacty turns the PR back into a draft until the child task re-reviews that head and gives "no findings".
 
@@ -1453,7 +1456,7 @@ The details of what happens when the dependency's PR is merged are as follows.
 - When the dependency was squash-merged, the diff can show the dependency's changes on top.
   When you send it back or write a comment on the PR, sacty merges in the base branch and redoes it, and the diff goes back to only the child task's changes.
 - When you send the child task back while the base is being changed, sacty does not record the change and updates the PR with the reworked submission.
-  If you sent it back while the draft was being removed, sacty turns it back into a draft.
+  If you sent it back while the draft was being removed, sacty turns it back into a draft, except a PR whose draft you removed.
 - When the child task had not started yet, it starts from the branch the dependency's PR was merged into.
 
 In the following cases, things go differently.
@@ -1463,6 +1466,7 @@ In the following cases, things go differently.
   - They are not in the base branch yet, so child tasks that depend on that child task wait until the dependency's PR is merged.
   - A child task stacked on that child task's PR also waits, without its base being changed, until the dependency's PR is merged.
 - When it cannot be made a draft (the repository cannot use draft PRs, or the change failed), sacty does not make it a normal PR and pauses the child task. Resuming tries again.
+  However, for a PR whose draft you removed, or a PR whose switch history cannot be read or whose last switch cannot be attributed, sacty does not turn it back into a draft when it submits a fix, and moves the child task on to approval without stopping it.
   If you resume after the dependency's PR is merged, sacty opens the PR as a draft without stacking it, like any other PR (the draft is removed when the child task that reviews the PR gives "no findings").
 - When the dependency's PR is fixed (sent back or commented on) and the child task that reviews the PR gives it "no findings" again, the dependent child task takes in the new content when its implementation is redone.
   How it is merged in and how conflicts are handled are the same as in [When the base branch moves ahead](#when-the-base-branch-moves-ahead). It is not merged in while waiting for approval.

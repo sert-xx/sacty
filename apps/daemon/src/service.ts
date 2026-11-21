@@ -312,6 +312,7 @@ import {
 } from "./gh.js";
 import {
   BASIS_COMMENT_MARKER_PREFIX,
+  type DraftHistory,
   type FoundIssue,
   githubRetryAfterMs,
   githubStatus,
@@ -330,6 +331,7 @@ import {
   type PullRequests,
   REMARK_REPLY_MARKER_PREFIX,
   type SactyReviewRound,
+  type SetDraftAnswer,
   sactyReviewKey,
   sactyReviewTask,
 } from "./github.js";
@@ -1505,6 +1507,11 @@ export class TaskService {
    * たびにドラフトに戻す。
    */
   private readonly undraftUnsettled = new Set<string>();
+  /**
+   * このデーモンの起動の後に、ドラフトの切り替えの履歴を読めた PR（タスク ID と PR の番号。PBI-468）。読めない状態が続く間は、
+   * 戻さなかった記録（unreadable）を1件だけにする。再起動で消えるので、起動の後に読めるまでは、記録済みの unreadable を重ねない。
+   */
+  private readonly draftReadable = new Set<string>();
   /**
    * 答えを待つのをやめた後も、まだ終わっていないドラフトの切り替えの要求の数（PBI-331。タスク ID と PR の番号）。終わるまで
    * ドラフトを外さない（後から届いた戻す要求で、外した PR がドラフトに戻り、記録と食い違うのを防ぐ）。
@@ -11407,13 +11414,15 @@ export class TaskService {
       if (!unchanged()) return;
       if (ready) {
         try {
-          await this.deps.pulls.setDraft({
+          const undrafted = await this.deps.pulls.setDraft({
             repo: pr.repo,
             token,
             number: pr.number,
             draft: false,
           });
+          await this.noteUndraft(task.id, pr.repo, token, pr.number, undrafted);
         } catch (error) {
+          await this.noteUndraft(task.id, pr.repo, token, pr.number, undefined);
           // 答えを受け取れなくても、GitHub ではドラフトが外れているかもしれない。待つ間にタスクが変わったなら、ドラフトに
           // 戻しておく（変わったタスクは付け替えの対象から外れうるので、次の確認では直らない）。変わっていなければ、次の確認で
           // やり直す（記録していないので）
@@ -11468,6 +11477,8 @@ export class TaskService {
     const latest = this.tasks.get(taskId);
     if (!latest || latest.status === "cancelled" || isCompleted(latest)) return;
     if (latest.pullRequest?.number !== number) return;
+    // 人が外した PR は戻さない（PBI-468）
+    if (!(await this.mayRedraft(taskId, repo, token, number))) return;
     await this.deps.pulls.setDraft({ repo, token, number, draft: true }).catch((error: unknown) => {
       console.warn(
         `[daemon] PR #${number}（${repo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -15796,31 +15807,38 @@ export class TaskService {
       }
       let draft = pr.draft;
       let draftError: unknown;
+      let redraftSkipped = false;
       const baseRecord = stacked ? { baseBranch: repositoryNow.baseBranch } : {};
       if (awaitsReview || task.stack) {
         // 前の提出でドラフトを外した PR を更新した（PR の指摘で実装をやり直した）なら、ドラフトに戻す。戻せなく
         // ても（リポジトリがドラフトを使えないなど）、PR の作成は失敗にしない。依存先の PR に重ねている間は、検証に通った後も
         // ドラフトにする（PBI-317。作った PR がドラフトでなかったときも）
+        // 人が外した・切り替えの履歴を読めない・最後の切り替えが sacty のものか決められない PR は、戻さない（重ねた PR も、止めずに
+        // 進める。PBI-468）
         if ((number || task.stack) && !draft) {
-          draft = await this.setDraftWithin(task.id, {
-            repo: prRepo,
-            token,
-            number: pr.number,
-            draft: true,
-          })
-            .then((r) => r.draft)
-            .catch((error: unknown) => {
-              draftError = error;
-              console.warn(
-                `[daemon] PR #${pr.number}（${prRepo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-              );
-              return false;
-            });
+          if (await this.mayRedraft(task.id, prRepo, token, pr.number)) {
+            draft = await this.setDraftWithin(task.id, {
+              repo: prRepo,
+              token,
+              number: pr.number,
+              draft: true,
+            })
+              .then((r) => r.draft)
+              .catch((error: unknown) => {
+                draftError = error;
+                console.warn(
+                  `[daemon] PR #${pr.number}（${prRepo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+                );
+                return false;
+              });
+          } else {
+            redraftSkipped = true;
+          }
         }
       }
       // 依存先の PR に重ねている間は、ドラフトにできなければ、記録せずに止める（ドラフトでない重ねた PR で承認待ちにすると、
       // 依存先より先にマージされうる。再開すると、ここからやり直す。PBI-317）
-      if (task.stack && !draft) {
+      if (task.stack && !draft && !redraftSkipped) {
         return fail(
           message("pr.stackDraftFailed", {
             detail:
@@ -15838,8 +15856,15 @@ export class TaskService {
       // sacty が作る PR は、ドラフトのまま承認待ちにし、PR のレビューの子タスクの指摘なしで外す（PBI-331）
       if (!task.stack && !awaitsReview) {
         try {
-          await this.deps.pulls.setDraft({ repo: prRepo, token, number: pr.number, draft: false });
+          const undrafted = await this.deps.pulls.setDraft({
+            repo: prRepo,
+            token,
+            number: pr.number,
+            draft: false,
+          });
+          await this.noteUndraft(task.id, prRepo, token, pr.number, undrafted);
         } catch (error) {
+          await this.noteUndraft(task.id, prRepo, token, pr.number, undefined);
           return fail(message("pr.readyFailed", { detail: errorText(error) }));
         }
       }
@@ -16377,6 +16402,8 @@ export class TaskService {
     const usedSecrets: string[] = [];
     try {
       const token = await this.githubToken(task, repo, usedSecrets);
+      // 人が外した PR は戻さない（PBI-468）
+      if (!(await this.mayRedraft(task.id, repo, token, number))) return;
       const result = await this.setDraftWithin(task.id, { repo, token, number, draft: true });
       if (result.draft) {
         this.redrafted.add(key);
@@ -16947,7 +16974,7 @@ export class TaskService {
   private setDraftWithin(
     taskId: string,
     input: Omit<Parameters<PullRequests["setDraft"]>[0], "signal">,
-  ): Promise<{ draft: boolean }> {
+  ): Promise<SetDraftAnswer> {
     const key = `${taskId}:${input.number}`;
     this.draftRequests.set(key, (this.draftRequests.get(key) ?? 0) + 1);
     const abort = new AbortController();
@@ -17045,7 +17072,11 @@ export class TaskService {
     number: number,
     token: string,
     why: string,
+    /** 一時停止に伴う戻し（人が外した PR も戻す。判定を通さない）。 */
+    paused?: "paused",
   ): Promise<void> {
+    // 人が外した・切り替えの履歴を読めない・決められない PR は戻さない（PBI-468）
+    if (!paused && !(await this.mayRedraft(taskId, repo, token, number))) return;
     await this.setDraftWithin(taskId, { repo, token, number, draft: true }).catch(
       (error: unknown) => {
         console.warn(
@@ -17053,6 +17084,155 @@ export class TaskService {
         );
       },
     );
+  }
+
+  /**
+   * 実装の PR をドラフトへ戻してよいか判定する（PBI-468。一時停止に伴う戻しは通さない）。GitHub の最後のドラフトの切り替えを読み、
+   * 人が外した PR は戻さずに作業履歴に残す。
+   * - ドラフトなら、今の処理のまま進める（記録しない）
+   * - ドラフトか切り替えの履歴を読めなければ、戻さない（unreadable。次の確認で読み直す）
+   * - 切り替えが無い・最後の外しが sacty の外し（PullRequestUndraftNoted の ID）なら、戻す
+   * - 最後の外しが sacty のものか決められなければ（外しの ID を記録していない・前の版の外し・最後が convert_to_draft なのに
+   *   ドラフトでない）、戻さない（undetermined）。それ以外は人が外したので、戻さない（person）
+   * 戻してよければ true。
+   */
+  private async mayRedraft(
+    taskId: string,
+    repo: string,
+    token: string,
+    number: number,
+  ): Promise<boolean> {
+    const key = `${taskId}:${number}`;
+    const history = await this.draftHistoryWithin({ repo, token, number });
+    if (!history.read) {
+      this.noteRedraftSkipped(taskId, number, "unreadable");
+      return false;
+    }
+    this.draftReadable.add(key);
+    if (history.draft) return true;
+    const last = history.last;
+    if (!last) return true;
+    const trail = this.tasks.get(taskId)?.draftTrail?.[String(number)];
+    if (last.kind === "convert_to_draft") {
+      this.noteRedraftSkipped(taskId, number, "undetermined");
+      return false;
+    }
+    if (trail?.undraftIds.includes(last.id)) return true;
+    if (
+      trail?.lastUndraftHasId === false ||
+      (trail?.lastUndraftHasId === undefined && trail?.previousVersionUndraft)
+    ) {
+      this.noteRedraftSkipped(taskId, number, "undetermined");
+      return false;
+    }
+    this.noteRedraftSkipped(taskId, number, "person", last.id);
+    return false;
+  }
+
+  /** PR のドラフトの切り替えの履歴を読む。答えが DRAFT_TIMEOUT_MS を過ぎたら、通信を中断して読めなかったことにする（PBI-468）。 */
+  private draftHistoryWithin(input: {
+    repo: string;
+    token: string;
+    number: number;
+  }): Promise<DraftHistory> {
+    const abort = new AbortController();
+    return withDeadline(
+      this.deps.pulls.draftHistory({ ...input, signal: abort.signal }),
+      this.draftTimeoutMs(),
+    ).catch((): DraftHistory => {
+      abort.abort();
+      return { read: false };
+    });
+  }
+
+  /**
+   * PR をドラフトへ戻さなかったことを作業履歴に残す（PBI-468）。同じものは重ねない：person は外し（eventId）1回につき1件、
+   * unreadable は読めない状態が続く間に1件（最後の記録が unreadable で、この起動の後に読めていなければ記録しない）、
+   * undetermined は PR につき1件。
+   */
+  private noteRedraftSkipped(
+    taskId: string,
+    number: number,
+    reason: "person" | "unreadable" | "undetermined",
+    eventId?: string,
+  ): void {
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+    const key = `${taskId}:${number}`;
+    const trail = task.draftTrail?.[String(number)];
+    if (reason === "person" && eventId !== undefined && trail?.skippedPersonIds.includes(eventId)) {
+      return;
+    }
+    if (reason === "unreadable") {
+      if (trail?.lastSkipped === "unreadable" && !this.draftReadable.has(key)) return;
+      this.draftReadable.delete(key);
+    }
+    if (reason === "undetermined" && trail?.undeterminedSkipped) return;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "PullRequestRedraftSkipped",
+          payload: { number, reason, ...(eventId !== undefined ? { eventId } : {}) },
+        },
+      },
+    ]);
+  }
+
+  /**
+   * sacty が PR のドラフトを外した切り替えを、外しのイベント ID で作業履歴に残す（PBI-468）。answer は外す要求の答え
+   * （答えを受け取れなかったときは undefined）。
+   * - 変化なし（すでに外れていて、切り替えの要求を呼ばなかった）：記録しない（人が外した PR）
+   * - 要求の前の最後の外しを読めた（無いときも）・答えの外しの ID が、前の外しの ID とも記録済みの ID とも違う：その ID で記録する。
+   *   同じなら（タイムラインへの反映の遅れ）1回読み直し、両方と違う外しの ID になれば、その ID で記録する
+   * - それ以外（前の外しを読めなかった・答えに ID が無い・答えを受け取れなかった・読み直しても同じ）：ID なしで記録する
+   *   （最後の外しが sacty のものか決められないので、戻さない）。答えを受け取れなかったときは、前の記録が ID なしなら重ねない
+   */
+  private async noteUndraft(
+    taskId: string,
+    repo: string,
+    token: string,
+    number: number,
+    answer: SetDraftAnswer | undefined,
+  ): Promise<void> {
+    if (answer?.changed === false || answer?.draft === true) return;
+    const known = (id: string): boolean => {
+      const previous = answer?.previous;
+      return (
+        (typeof previous === "object" && previous.id === id) ||
+        !!this.tasks.get(taskId)?.draftTrail?.[String(number)]?.undraftIds.includes(id)
+      );
+    };
+    let eventId: string | undefined;
+    if (answer?.previous !== undefined && answer.previous !== "unreadable") {
+      if (answer.readyId !== undefined && !known(answer.readyId)) {
+        eventId = answer.readyId;
+      } else if (answer.readyId !== undefined) {
+        const again = await this.draftHistoryWithin({ repo, token, number });
+        if (
+          again.read &&
+          !again.draft &&
+          again.last?.kind === "ready_for_review" &&
+          !known(again.last.id)
+        ) {
+          eventId = again.last.id;
+        }
+      }
+    }
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+    if (answer === undefined && task.draftTrail?.[String(number)]?.lastUndraftHasId === false) {
+      return;
+    }
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "PullRequestUndraftNoted",
+          payload: { number, ...(eventId !== undefined ? { eventId } : {}) },
+        },
+      },
+    ]);
   }
 
   /**
@@ -17096,7 +17276,14 @@ export class TaskService {
       // （AI のレビューの指摘を採らないと判断して、マージで実装を承認できるように）
       // 直しでは解消できない指摘で止めたタスク（PBI-452）も同じ。受け入れるだけなら、マージで済む
       if (latest.pausedReason === "unchanged" || latest.pausedReason === "needs_decision") return;
-      await this.redraftFor(task.id, pr.repo, pr.number, token, "タスクが一時停止している");
+      await this.redraftFor(
+        task.id,
+        pr.repo,
+        pr.number,
+        token,
+        "タスクが一時停止している",
+        "paused",
+      );
     } catch (error) {
       console.warn(
         `[daemon] 一時停止したタスクの PR #${pr.number}（${pr.repo}）のドラフトを確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -17165,8 +17352,13 @@ export class TaskService {
         console.warn(
           `[daemon] 指摘なしで外した PR #${number}（${repo}）がドラフトに戻っていたので外し直そうとしましたが、外せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
         );
+        // 答えを受け取れなくても外れているかもしれない。最後の外しが sacty のものか決められないので、ID なしで記録する
+        await this.noteUndraft(taskId, repo, token, number, undefined);
       }
-      if (result && !result.draft) this.notePullRequestUndrafted(taskId);
+      if (result && !result.draft) {
+        this.notePullRequestUndrafted(taskId);
+        await this.noteUndraft(taskId, repo, token, number, result);
+      }
       const current = result && unchanged();
       if (current && (await this.pullRequestHead(current, repo, number)) === target) {
         const latest = unchanged();
@@ -17258,6 +17450,8 @@ export class TaskService {
     const key = `${parent.id}:${pr.commit}`;
     const redraft = async () => {
       if (token === undefined) return;
+      // 人が外した PR は戻さない（PBI-468）
+      if (!(await this.mayRedraft(parent.id, repo, token, number))) return;
       // 戻せたと確かめられるまで、次の確認でも戻す（台帳には draft が残るため）
       this.redraftPending.add(key);
       await this.setDraftWithin(parent.id, { repo, token, number, draft: true })
@@ -17281,8 +17475,11 @@ export class TaskService {
           return;
         }
         this.notePullRequestUndrafted(parent.id);
+        await this.noteUndraft(parent.id, repo, token, number, undrafted);
       } catch (error) {
         warn("のドラフトを外せませんでした", error);
+        // 答えを受け取れなくても外れているかもしれない。最後の外しが sacty のものか決められないので、ID なしで記録する
+        await this.noteUndraft(parent.id, repo, token, number, undefined);
         // 外す要求が後から届くかもしれないので、指摘なしで外すまで確認のたびに戻す
         this.undraftUnsettled.add(`${parent.id}:${number}`);
         await redraft();

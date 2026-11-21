@@ -31,12 +31,15 @@ import type { ContextFetcher, ContextRef } from "../context.js";
 import { MessageError } from "../errors.js";
 import type { GitHubAuth } from "../gh.js";
 import {
+  type DraftHistory,
+  type DraftSwitch,
   isDecisionNotice,
   type PullRequestFeedback,
   type PullRequestInfo,
   type PullRequestStatus,
   type PullRequests,
   type SactyReviewRound,
+  type SetDraftAnswer,
   sactyReviewTask,
 } from "../github.js";
 import type { HostMcpSpec } from "../host-mcp.js";
@@ -803,18 +806,85 @@ export class FakePulls implements PullRequests {
   /** あれば、ドラフトの切り替えを済ませた後、答えを返す前に、これが解決するまで待つ（PBI-317）。 */
   setDraftGate?: Promise<void>;
   setDraftStarted = Promise.withResolvers<void>();
-  async setDraft(input: Parameters<PullRequests["setDraft"]>[0]) {
+  /** PR ごとの、ドラフトの切り替えのタイムライン（GitHub の ReadyForReviewEvent・ConvertToDraftEvent。古い順。PBI-468）。 */
+  timeline: Record<number, DraftSwitch[]> = {};
+  private switchSeq = 0;
+  /**
+   * draftHistory が読めない。draft は REST の draft の読み取りの失敗。timeline はタイムラインの読み取りの失敗で、
+   * ドラフトの PR では（タイムラインを読まないので）読める。
+   */
+  draftHistoryFail: false | "draft" | "timeline" = false;
+  /** あれば、ドラフトを外す要求の前の最後の外しの読み取りに失敗する。 */
+  previousReadFail = false;
+  /**
+   * 0 より大きければ、外す要求の答えと draftHistory は、タイムラインの最後の1件を含まない（反映の遅れ）。読むたびに1つ減る。
+   */
+  timelineLagReads = 0;
+  private pushSwitch(number: number, kind: DraftSwitch["kind"], id?: string): string {
+    const event: DraftSwitch = {
+      id: id ?? `event-${++this.switchSeq}`,
+      kind,
+      at: new Date(Date.now()).toISOString(),
+    };
+    this.timeline[number] = [...(this.timeline[number] ?? []), event];
+    return event.id;
+  }
+  /** 人が GitHub でドラフトを外した（sacty の記録に無い外しのイベントが最後になる）。外しのイベントの ID を返す。 */
+  humanUndraft(number: number): string {
+    this.drafts[number] = false;
+    return this.pushSwitch(number, "ready_for_review");
+  }
+  /** 人が GitHub でドラフトにした。 */
+  humanDraft(number: number): string {
+    this.drafts[number] = true;
+    return this.pushSwitch(number, "convert_to_draft");
+  }
+  /** 反映の遅れを含めた、今読めるタイムライン。 */
+  private visibleTimeline(number: number): DraftSwitch[] {
+    const all = this.timeline[number] ?? [];
+    if (this.timelineLagReads <= 0) return all;
+    this.timelineLagReads -= 1;
+    return all.slice(0, -1);
+  }
+  async draftHistory(input: Parameters<PullRequests["draftHistory"]>[0]): Promise<DraftHistory> {
+    if (this.draftHistoryFail === "draft") return { read: false };
+    if (this.drafts[input.number] ?? false) return { read: true, draft: true };
+    if (this.draftHistoryFail === "timeline") return { read: false };
+    const last = this.visibleTimeline(input.number).at(-1);
+    return { read: true, draft: false, ...(last ? { last } : {}) };
+  }
+  async setDraft(input: Parameters<PullRequests["setDraft"]>[0]): Promise<SetDraftAnswer> {
     if (this.setDraftFail) throw new Error(this.setDraftFail);
-    if ((this.drafts[input.number] ?? false) !== input.draft) {
+    const changed = (this.drafts[input.number] ?? false) !== input.draft;
+    let previous: SetDraftAnswer["previous"];
+    if (changed && !input.draft) {
+      const last = [...(this.timeline[input.number] ?? [])]
+        .reverse()
+        .find((e) => e.kind === "ready_for_review");
+      previous = this.previousReadFail ? "unreadable" : last ? { id: last.id } : "none";
+    }
+    if (changed) {
       this.draftChanges.push({ number: input.number, draft: input.draft });
+      this.pushSwitch(input.number, input.draft ? "convert_to_draft" : "ready_for_review");
     }
     this.drafts[input.number] = input.draft;
+    let readyId: string | undefined;
+    if (changed && !input.draft) {
+      readyId = this.visibleTimeline(input.number)
+        .filter((e) => e.kind === "ready_for_review")
+        .at(-1)?.id;
+    }
     if (this.setDraftGate) {
       this.setDraftStarted.resolve();
       await this.setDraftGate;
     }
     if (this.setDraftAnswerLost) throw new Error(this.setDraftAnswerLost);
-    return { draft: input.draft };
+    return {
+      draft: input.draft,
+      changed,
+      ...(previous ? { previous } : {}),
+      ...(readyId ? { readyId } : {}),
+    };
   }
   closed: { repo: string; token: string; number: number }[] = [];
   closeFail?: string;

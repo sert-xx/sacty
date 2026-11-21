@@ -2882,6 +2882,34 @@ const PullRequestMarkedReady = z.object({
 });
 
 /**
+ * sacty が実装の PR のドラフトを外した（PBI-468）。外した切り替えを GitHub のタイムラインの ReadyForReviewEvent の ID で覚え、
+ * 人が外した切り替えと見分ける（GitHub の actor は、人も sacty も同じアカウントなので使えない）。eventId が無いのは、外す要求の
+ * 答えから今回の外しの ID を決められなかったとき（答えを受け取れなかった・要求の前の最後の外しを読めなかった・反映の遅れで
+ * 前の外しの ID が返った）。この後の最後の外しが sacty のものか決められないので、sacty は PR をドラフトへ戻さない。
+ */
+const PullRequestUndraftNoted = z.object({
+  type: z.literal("PullRequestUndraftNoted"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    eventId: z.string().min(1).optional(),
+  }),
+});
+
+/**
+ * sacty が、実装の PR をドラフトへ戻さなかった（PBI-468）。person は、最後の切り替えが人の「ドラフトを外す」だった
+ * （eventId はその外し。1回につき1件）。unreadable は、切り替えの履歴を GitHub から読めなかった（読めない状態が続く間に1件）。
+ * undetermined は、最後の切り替えが sacty のものか決められなかった（その PR につき1件）。一時停止に伴う戻しは対象外。
+ */
+const PullRequestRedraftSkipped = z.object({
+  type: z.literal("PullRequestRedraftSkipped"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    reason: z.enum(["person", "unreadable", "undetermined"]),
+    eventId: z.string().min(1).optional(),
+  }),
+});
+
+/**
  * 実装が検証に通った後、PR を作ろうとしたら、実装が起点から何も変えていなかった（PBI-90）。PR を作らず、実装の承認で
  * 人間が実装の説明（変更が要らない理由）を確かめる。承認すると、変更なしで完了する（差し戻せば実装をやり直す）。
  * submission は、この後に提出する実装の提出回（PBI-110）。まだ PR を作っていないタスクだけで記録する。
@@ -4475,6 +4503,8 @@ export const EventInput = z.discriminatedUnion("type", [
   VerificationOverridden,
   FinalReviewSkipped,
   PullRequestMarkedReady,
+  PullRequestUndraftNoted,
+  PullRequestRedraftSkipped,
   NoChangesFound,
   ImplementationIncomplete,
   ImplementationUnchanged,
