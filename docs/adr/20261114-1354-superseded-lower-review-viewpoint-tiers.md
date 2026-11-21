@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-344
 - 置き換え元: [横断の観点 X-1 を expert で動かし、ultimate は既定で使わない](20261104-2323-superseded-cross-cutting-viewpoint-on-expert-tier.md)（X-1 を expert で動かすとした部分）
-- 置き換え先: [既定のレビューの観点ごとの段階を、それぞれ 1 段下げる](20261121-0946-lower-review-viewpoint-tiers-one-more-step.md)（観点ごとの段階の割り当て）
+- 置き換え先: [既定のレビューの観点ごとの段階を、それぞれ 1 段下げる](20261121-0946-superseded-lower-review-viewpoint-tiers-one-more-step.md)（観点ごとの段階の割り当て）
 
 ## 背景
 

@@ -148,7 +148,7 @@ R（リポジトリのレビュー用のスキル）と X-3（リポジトリの
   "workflow": "self-review | pr-review",
   "round": 1,
   "target_kind": "code | design-doc | user-doc",
-  "launched": [{ "viewpoint": "C-1", "skill": "<R のときだけ、スキルの名前>", "tier": "advanced | …| 親と同じ", "status": "passed | changes_required | failed", "findings": { "must": 0, "should": 0, "nit": 0 } }],
+  "launched": [{ "viewpoint": "C-1", "skill": "<R のときだけ、スキルの名前>", "tier": "standard | …| 親と同じ", "status": "passed | changes_required | failed", "findings": { "must": 0, "should": 0, "nit": 0 } }],
   "not_launched": [{ "viewpoint": "C-7", "reason": "並行処理・共有状態の変更が無い" }],
   "linked_docs": [{ "source": "<URL かリポジトリ内のパス>", "role": "target | evidence", "reason": "本文が成果物の設計書として示している", "fetched": true, "copy": "/tmp/agent-scratch/review-linked/design.md", "version": "<版や更新日時。分からなければ空>", "not_fetched_reason": "" }],
   "verification": { "summary": "/tmp/agent-scratch/review-verify/round-1/summary.json", "failed": ["test:pytest"], "not_run": ["build（CI で実行していない）"] },
