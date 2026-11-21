@@ -36,19 +36,10 @@ const initial: DeriveTaskState = {};
 const SECURITY_PLANS: readonly StepPlan[] = ["security-fix", "security-check"];
 
 /**
- * 完了したタスクの、続きの作業のタスク（派生）。作ったタスクを並べ、新しく作るダイアログを出す。derived は、
- * このタスクから作ったタスク（読めなかったものは ID だけ）。
+ * 完了したタスクの、続きの作業のタスク（派生）の一覧。derived は、このタスクから作ったタスク（読めなかったものは
+ * ID だけ）。作るボタンは、上部の操作の並びに出す（DeriveButton）。
  */
-export function DerivedTasksCard({
-  task,
-  derived,
-  security,
-}: {
-  task: Task;
-  derived: { id: string; title?: string }[];
-  /** セキュリティの組み合わせのタスク（続きの進め方を、セキュリティの組み合わせに限る）。 */
-  security: boolean;
-}) {
+export function DerivedTasksCard({ derived }: { derived: { id: string; title?: string }[] }) {
   const t = useMessages().parts.derive;
   return (
     <CardSection id="derived-tasks" title={t.title} hint={t.hint}>
@@ -69,14 +60,24 @@ export function DerivedTasksCard({
             ))}
           </ul>
         )}
-        <DeriveDialog
-          taskId={task.id}
-          projectId={task.projectId}
-          repo={task.source?.repo ?? task.repo ?? task.repository?.url ?? ""}
-          security={security}
-        />
       </div>
     </CardSection>
+  );
+}
+
+/** 上部の操作の並びに出す、続きのタスクを作るボタン（再レビューと同じ見た目・ヒント）。 */
+export function DeriveButton({ task, security }: { task: Task; security: boolean }) {
+  const t = useMessages().parts.derive;
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <DeriveDialog
+        taskId={task.id}
+        projectId={task.projectId}
+        repo={task.source?.repo ?? task.repo ?? task.repository?.url ?? ""}
+        security={security}
+      />
+      <Hint text={t.openHint} />
+    </div>
   );
 }
 
@@ -118,7 +119,7 @@ function DeriveDialog({
     >
       <DialogTrigger
         render={
-          <Button variant="outline" className="min-h-10 self-start" data-testid="derive-open">
+          <Button variant="outline" className="min-h-10" data-testid="derive-open">
             {t.open}
           </Button>
         }

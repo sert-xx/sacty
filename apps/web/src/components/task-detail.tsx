@@ -39,7 +39,7 @@ import { DaemonError } from "@/components/daemon-error";
 import { DeferralHandledNotice } from "@/components/deferral-handled";
 import { DeferralPendingNotice } from "@/components/deferral-pending";
 import { DeploymentWatchCard } from "@/components/deployment";
-import { DerivedTasksCard } from "@/components/derive-dialog";
+import { DeriveButton, DerivedTasksCard } from "@/components/derive-dialog";
 import { DiscardedReviewNotice } from "@/components/discarded-review";
 import { ErrorReportCard, showErrorReport } from "@/components/error-report";
 import { ExportRetryButton } from "@/components/export-retry-button";
@@ -263,6 +263,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           </div>
           <div className="flex flex-wrap items-start gap-2">
             {canRereview(task) && <RereviewButton taskId={task.id} />}
+            {canDerive(task) && <DeriveButton task={task} security={isSecurityTask(task)} />}
             {canControl(task) && (
               <TaskControls
                 taskId={task.id}
@@ -706,13 +707,7 @@ function Overview({ data }: { data: TaskDetailData }) {
         <SecurityFixesCard task={task} findings={data.securityFindings} />
       )}
       {/* 完了したタスクの続きの作業のタスク（派生） */}
-      {canDerive(task) && (
-        <DerivedTasksCard
-          task={task}
-          derived={data.derivedTasks ?? []}
-          security={isSecurityTask(task)}
-        />
-      )}
+      {canDerive(task) && <DerivedTasksCard derived={data.derivedTasks ?? []} />}
       {/* 申し出が無いときは出さない（無いことは作業履歴で確かめられる） */}
       {task.proposals.length > 0 && <Proposals task={task} />}
       {task.operation && (

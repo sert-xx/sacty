@@ -25,6 +25,9 @@ describe("利用上限の失敗の文から明ける時刻を読む", () => {
     // 時間帯の名前の無い形・日付つきの形は読まない
     expect(read("You've hit your Opus limit · resets 3:45pm", now)).toBeUndefined();
     expect(read("spend limit reached · resets Dec 1", now)).toBeUndefined();
+    // `reached` を許すのは spend だけ
+    expect(read("session limit reached · resets 3:45pm (Asia/Tokyo)", now)).toBeUndefined();
+    expect(read("Opus limit reached · resets 3:45pm (Asia/Tokyo)", now)).toBeUndefined();
   });
 
   it("週の上限は、曜日つきで読む（曜日が今日と同じで時刻が前なら翌週）", () => {

@@ -280,7 +280,7 @@ The task details look like this.
 
 The top part of the screen shows the following.
 
-- The title, status, steps, actions (pause, cancel, re-review), and tabs are fixed at the top of the screen and stay visible when you scroll.
+- The title, status, steps, actions (pause, cancel, re-review, create a follow-up task), and tabs are fixed at the top of the screen and stay visible when you scroll.
 - When the task is waiting for an approval or a decision, or is paused, the notice appears below the tabs whichever tab is open.
 - While the PR awaiting approval is open, "Sacty AI review" appears below the notice.
   It shows whether a Sacty AI review is attached to the PR's current head (its latest commit): not yet, reviewing, or attached ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
@@ -1755,7 +1755,7 @@ It adds the notes and the record of the previous attempt (step outputs, remarks,
 
 You can carry on with follow-up work (handling issues it found, further improvements, and so on) as a separate task based on a completed task's results.
 
-1. In the "Follow-up tasks" section of a completed task's details, press "Create a follow-up task".
+1. In the row of actions at the top of a completed task's details (the same place as "Review again"), press "Create a follow-up task".
 2. In the dialog, write the repository to work in (empty means no repository), the plan, the title, and the description (what to do next).
    The description is required.
 
@@ -1766,7 +1766,7 @@ It adds the original task's record (step outputs, PRs, an earlier version's fina
   You can create as many follow-up tasks from one task as you need.
 - It does not take over a PR in the original task's record.
   To take over an open PR and fix it, write a link to that PR in the title or the description.
-- The tasks you create are listed in the "Follow-up tasks" section, and "Follow-up of" in the properties of a follow-up task's details shows a link to the original task.
+- The tasks you create are listed in the "Follow-up tasks" section of the Overview tab, and "Follow-up of" in the properties of a follow-up task's details shows a link to the original task.
 - The ticket and the intake source (issue or PR) are not carried over (results are not returned to the ticket or issue).
 - From a security check or security fix task, you can create only a follow-up whose plan is "Security fix" or "Security check" ("Security fix" if you don't choose).
   This keeps the report's contents out of public places.
