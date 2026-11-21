@@ -109,7 +109,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 - The dashboard lays out sections (cards). They sit side by side when there is room and stack otherwise (a single section takes the full width). The order is: Needs you → Why tasks are paused → Open tasks → Cost and budget → Step queue → Intake → Throughput → Quality signals. Every section spans all projects, and tasks of deleted projects are neither shown nor counted.
   - The data comes through the following three routes. Neither all tasks nor the activity log is carried every 3 seconds.
     - The open tasks (`GET /api/tasks?open=1`; finished tasks are `isFinished`). This avoids carrying the deliverables of completed tasks every 3 seconds. All tasks including completed ones can be tens to hundreds of MB per fetch, depending on the size of the deliverables. The header's notices (tasks that need you) are fetched the same way.
-    - The aggregates that need the activity log (`GET /api/dashboard`; see [Dashboard aggregates](#dashboard-aggregates) below).
+    - The aggregates that need the activity log (`GET /api/dashboard`; see [Dashboard aggregates](#dashboard-aggregates) below). The header notices and the cards above the task list read it too, for the waiting start (`waitingSince`).
     - The intake status (`intake` of `GET /api/status`).
   - In the list sections (Needs you, Open tasks, Tasks near their budget), a row is at least 4rem high and the section is 5 rows high (20rem). With more rows, the section scrolls inside (the section takes focus so it can also be scrolled with the keyboard). The title and the project name are cut to one line, and the full text is shown on hover (`title`) and wrapped while the row has focus. Count notes are built from per-language wording.
   - Mechanisms, the definitions of the numbers, and the period boundaries go into the hint next to the heading (`Hint`), not into the body ([Web UI wording and hints](ui-wording.en.md)).
@@ -121,9 +121,14 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 Each dashboard section contains the following.
 
 - Needs you
-  - The open tasks whose state display is a person's turn, longest wait first. A person's turn means `statusTone` is `person` (awaiting approval, paused, escalated). Tasks awaiting approval are excluded while sacty is deciding where to send PR feedback back to.
+  - The open tasks that are a person's turn, in two groups. The check, the group, and the order live in one place, `personTurnGroup` and `personTurnTasks` in `packages/core`, and the dashboard, the header notifications, the cards above the task list, the MCP `list_tasks` (`needs_person`), and the condition under which the aggregate returns `waitingSince` all use them.
+    - Upper group `decision`: awaiting approval and escalated. A task awaiting approval is not a person's turn while sacty is deciding where to send PR feedback back to (it has `pendingReview`).
+    - Lower group `paused`: paused (whatever the reason).
+    - The order is the upper group, then the lower group; within a group the longest wait first, then by ID. Tasks of deleted projects are not included.
+  - The section shows, per group, a heading (`h3`: the group name and a count) and a list that the heading labels through `aria-labelledby`. A group with 0 tasks has no heading. The count in the section heading is the total. The upper group comes first, so its heading and first row are visible without scrolling, however many tasks the lower group has.
+  - While the task is awaiting approval, the PR of the current submission is open, and the AI review is reviewing the current head of that PR (`aiReview.status` is `reviewing`), the status text is followed by " · AI review in progress" (`personStatusText`). The group and the order do not change. The rows of the header notifications and of the cards above the task list are the same. `aiReview` is added to the task list response (`GET /api/tasks`) only for tasks awaiting approval whose PR is open, with the same calculation as the task details (`aiReviewsOfHeads`, which batches it for the list and returns the same result as `aiReviewOfHead`). GitHub is not read.
   - Each row shows the title, the project, the state, and the waiting time. The title links to where the person decides (`personAction`). For steps reviewed on a PR, it opens the PR in a new tab (see [Approval and request changes](approval.en.md#approval-through-prs)).
-  - The wait starts at the latest activity record that put the task in that state (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced; the aggregate's `waitingSince`). When there is no record, it starts at `updatedAt`.
+  - The wait starts at the latest activity record that put the task in that state (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced; the aggregate's `waitingSince`). When there is no record, it starts at `updatedAt`. The condition under which the aggregate returns `waitingSince` is also the tasks `personTurnGroup` returns (tasks awaiting approval while the AI is deciding are excluded).
   - The waiting time is one of minutes, hours, or days (rounded down; "under a minute" below one minute; `durationText`).
   - When there is none: "Nothing needs you right now."
 - Why tasks are paused
@@ -184,7 +189,7 @@ Code: `apps/web/src/lib/paths.ts`, `apps/web/src/app/page.tsx`, `apps/web/src/ap
 
 ## Dashboard aggregates
 
-The daemon returns the aggregates that need the activity log (waiting times, cost, throughput, quality, queue) at `GET /api/dashboard` (`DashboardSummary`). Even though the UI refetches every 3 seconds, the daemon reads neither all tasks nor the activity log again.
+The daemon returns the aggregates that need the activity log (waiting times, cost, throughput, quality, queue) at `GET /api/dashboard` (`DashboardSummary`). Even though the UI refetches every 3 seconds, the daemon reads neither all tasks nor the activity log again. It is read by the dashboard, the header (`loadHeaderData`), and the cards of the task list (`loadTaskList`); making this aggregate heavier or able to fail affects all three.
 
 - At startup, in the same single pass that reads the activity log to restore the state, the daemon folds each event into `DashboardStats` (the `applied` callback of `project`). When appending to the activity log, it folds in the applied events too.
 - What it keeps
@@ -229,15 +234,15 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
 
   | Screen | Side menu | Notices |
   | --- | --- | --- |
-  | "All projects" | Only "Settings". "Settings" moves to the project list (`/projects`), so it never jumps to a project | Not split by project, newest first. Opening one switches to the task's project and opens the task |
-  | Project | "Tasks", "Schedules", "Audit", and "Settings" | Split into "Other projects" and "This project" |
+  | "All projects" | Only "Settings". "Settings" moves to the project list (`/projects`), so it never jumps to a project | The same target and order as "Needs you" on the dashboard (upper group, then lower group, with group headings and the waiting time on each row), not split by project. Opening one switches to the task's project and opens the task |
+  | Project | "Tasks", "Schedules", "Audit", and "Settings" | The same (the order is not changed per screen) |
 
   The side menu does not show "Dashboard". It is not used, and the dashboard opens from the logo and from "All projects" in the project switcher.
 - The header is in the root layout, so navigation (links) within the web UI does not redraw it (the selection is decided in the browser from the screen's URL). Server actions for operations that change what the notices cover (approve, request changes, pause, resume, cancel, create task, and so on) call `refresh()` so that the header is redrawn too. They call it before moving with `redirect` as well.
 - Changes made in other tabs, the CLI, or the daemon (tasks added by intake, approvals, resumes, tasks the daemon picked up and started, and so on) are reflected in the header's project switcher (the counts that need you) and notices by "Refetching screen data" below. This applies on every screen, whatever the state of the tasks.
 
 Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`), `apps/web/src/components/shell/live-header.tsx` (`LiveHeaderMenus`, `selectedProject`),
-`apps/web/src/components/shell/menus.tsx` (`ProjectMenu`, `NotificationsMenu`), `apps/web/src/components/shell/rail.tsx` (`railItems`), `apps/web/src/lib/page-scope.ts` (`pageScope`),
+`apps/web/src/components/shell/menus.tsx` (`ProjectMenu`, `NotificationsMenu`), `packages/core/src/person-turn.ts` (`personTurnTasks`), `apps/web/src/components/shell/rail.tsx` (`railItems`), `apps/web/src/lib/page-scope.ts` (`pageScope`),
 `apps/web/src/lib/header-data.ts` (`loadHeaderData`), `apps/web/src/components/shell/follow-project.tsx` (`FollowProject`),
 `apps/web/src/lib/project-select.ts`, `apps/web/src/lib/current-project.ts` (`selectProject`),
 `apps/web/src/app/switch/route.ts`, `apps/web/src/app/actions.ts`
@@ -261,9 +266,9 @@ Because the elements on the screen stay as they are, text being typed, selection
   | Route | Returns |
   | --- | --- |
   | `GET /live/dashboard` | The data of the dashboard's sections (needs you, why tasks are paused, open tasks, cost and budget, step queue, intake, throughput, quality signals, and the reason notifications could not be sent. `loadDashboard`) |
-  | `GET /live/tasks?project=<ID>` | The rows of the task list of the URL's project and the cards of tasks that need a person (only what is shown. `loadTaskList`). `{ missing: true }` if the project does not exist or the ID has the wrong form |
+  | `GET /live/tasks?project=<ID>` | The rows of the task list of the URL's project and the cards of tasks that need a person (only what is shown. `loadTaskList`; it also reads `GET /api/dashboard` for the order of the cards). `{ missing: true }` if the project does not exist or the ID has the wrong form |
   | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`). `{ missing: true }` if the task does not exist (including tasks of a deleted project) |
-  | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |
+  | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`; it also reads `GET /api/dashboard` for the waiting start) |
   | `GET /live/tasks/<ID>/review` | The task for the deliverable review screen. `{ missing: true }` if the task does not exist (including tasks of a deleted project) |
   | `GET /live/tasks/<ID>/runs/<run ID>?events=&stderr=` | What was added to the run log after what the screen has (see below) |
   | `GET /live/projects` | The project list and the intake status (`loadProjectList`) |

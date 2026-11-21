@@ -1612,7 +1612,7 @@ export type DesignEditField = z.infer<typeof DesignEditField>;
 
 /**
  * 実装の工程が出した設計の直し（局所の変更。PBI-446）の1件。置き換え（before を after にする）の形。載せる文は、秘密情報の
- * 伏せ・内部のパスの置き換え・@ の無効化をした後のもの。remarks・viewpoint・field は、形に合う値だけを載せる（合わない値は
+ * 伏せ・内部のパスの置き換えをした後のもの（@ の無効化は、PR の本文に載せるときにする）。remarks・viewpoint・field は、形に合う値だけを載せる（合わない値は
  * 「（不正な値）」）。
  */
 export const DesignEditItem = z.object({

@@ -20,7 +20,8 @@ vi.mock("@/app/actions", () => ({
 }));
 
 const { I18nProvider } = await import("@/i18n/client");
-const { LiveDashboard, DASHBOARD_LIVE_URL, durationText } = await import("./dashboard");
+const { LiveDashboard, DASHBOARD_LIVE_URL } = await import("./dashboard");
+const { durationText } = await import("@/lib/duration-text");
 const { liveVersion } = await import("@/lib/live-server");
 const { messagesFor } = await import("@/i18n");
 
@@ -101,6 +102,7 @@ const attention = (
 ): AttentionRow => ({
   ...row(id, "p1", "決済", { text: "要求要件の承認待ち", tone: "person" }),
   href: `/tasks/${id}/review`,
+  group: "decision",
   waitingSince,
   ...patch,
 });
@@ -236,6 +238,7 @@ describe("ダッシュボードのあなたの出番（PBI-118）", () => {
           attention("b", minutes(2 * 60 + 30), {
             projectName: "Webサイト",
             status: { text: "一時停止中", tone: "person" },
+            group: "paused",
             href: "/tasks/b",
           }),
           attention("c", minutes(45)),
@@ -257,6 +260,106 @@ describe("ダッシュボードのあなたの出番（PBI-118）", () => {
     const ul = byId("attention-list");
     expect(ul?.className).toContain("max-h-80");
     expect(ul?.getAttribute("tabindex")).toBe("0");
+  });
+
+  it("組ごとに見出しと件数を出し（欄の見出しの件数は全体のまま）、各組の ul を見出しに結び付ける。上の組が先", () => {
+    show(
+      base({
+        attention: [
+          attention("d1", minutes(30)),
+          attention("d2", minutes(20)),
+          attention("p1", minutes(600), {
+            group: "paused",
+            status: { text: "一時停止中", tone: "person" },
+          }),
+          attention("p2", minutes(500), {
+            group: "paused",
+            status: { text: "一時停止中", tone: "person" },
+          }),
+          attention("p3", minutes(400), {
+            group: "paused",
+            status: { text: "一時停止中", tone: "person" },
+          }),
+        ],
+      }),
+    );
+    expect(byId("attention-summary")?.textContent).toBe("5件");
+    const heading = (g: string) => container.querySelector(`#attention-group-${g}`);
+    expect(heading("decision")?.tagName).toBe("H3");
+    expect(heading("decision")?.textContent).toBe("判断で進むタスク2件");
+    expect(heading("paused")?.textContent).toBe("再開を待つタスク3件");
+    for (const g of ["decision", "paused"]) {
+      const ul = byId(`attention-group-${g}`)?.querySelector("ul");
+      expect(ul?.getAttribute("aria-labelledby")).toBe(`attention-group-${g}`);
+    }
+    const ids = [...container.querySelectorAll('[data-testid^="attention-"]')]
+      .map((e) => e.getAttribute("data-testid") ?? "")
+      .filter((x) => /^attention-(d|p)\d$/.test(x));
+    expect(ids).toEqual([
+      "attention-d1",
+      "attention-d2",
+      "attention-p1",
+      "attention-p2",
+      "attention-p3",
+    ]);
+    // 見出しは、状態の名前と紛れない
+    for (const name of ["承認待ち", "エスカレーション", "一時停止中"]) {
+      expect(heading("decision")?.textContent).not.toContain(name);
+      expect(heading("paused")?.textContent).not.toContain(name);
+    }
+  });
+
+  it("片方の組だけのとき、0 件の組の見出しは出さない", () => {
+    show(base({ attention: [attention("d1", minutes(30))] }));
+    expect(byId("attention-group-decision")).not.toBeNull();
+    expect(byId("attention-group-paused")).toBeNull();
+    expect(container.querySelectorAll('[data-testid^="attention-d"]').length).toBeGreaterThan(0);
+    rerender(
+      h(LiveDashboard, {
+        initial: base({
+          attention: [
+            attention("p1", minutes(30), {
+              group: "paused",
+              status: { text: "一時停止中", tone: "person" },
+            }),
+          ],
+        }),
+        initialVersion: "x",
+      }),
+    );
+    expect(byId("attention-group-decision")).toBeNull();
+    expect(byId("attention-group-paused")?.textContent).toContain("再開を待つタスク");
+    expect(byId("attention-p1")).not.toBeNull();
+  });
+
+  it("0 件のときは空の文だけを出し、組の見出しを出さない", () => {
+    show(base());
+    expect(byId("attention-list")).toBeNull();
+    expect(container.querySelector("#attention-group-decision")).toBeNull();
+    expect(container.querySelector("#attention-group-paused")).toBeNull();
+    expect(byId("dashboard-card-attention")?.textContent).toContain("対応待ちはありません。");
+    expect(byId("attention-summary")).toBeNull();
+  });
+
+  it("英語では、組の見出しも英語（状態の名前と紛れない）", () => {
+    show(
+      base({
+        attention: [
+          attention("d1", minutes(30)),
+          attention("p1", minutes(60), {
+            group: "paused",
+            status: { text: "Paused", tone: "person" },
+          }),
+        ],
+      }),
+      "en",
+    );
+    expect(container.querySelector("#attention-group-decision")?.textContent).toContain(
+      "Ready for your decision",
+    );
+    expect(container.querySelector("#attention-group-paused")?.textContent).toContain(
+      "Waiting to resume",
+    );
   });
 
   it("待っている時間は、データが変わらなくても画面の時計で進む", async () => {

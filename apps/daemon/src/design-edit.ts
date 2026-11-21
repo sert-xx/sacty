@@ -55,29 +55,50 @@ export type DesignEditResult = {
 
 type Heading = { level: number; title: string; index: number };
 
-/** 見出しの行（`#` の並びで始まる行）の位置。 */
+/** 見出しの行（`#` の並びで始まる行。コードブロックの中は除く）の位置。 */
 function headingsOf(doc: string): Heading[] {
   const found: Heading[] = [];
-  for (const m of doc.matchAll(/^(#{1,6})[ \t]+(.+?)[ \t]*$/gm)) {
-    found.push({ level: m[1]?.length ?? 1, title: m[2] ?? "", index: m.index ?? 0 });
+  let fence: string | undefined;
+  let offset = 0;
+  for (const line of doc.split("\n")) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (f !== undefined) {
+      if (fence === undefined) fence = f[0] ?? "`";
+      else if (f[0] === fence) fence = undefined;
+    } else if (fence === undefined) {
+      const m = /^(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(line.replace(/\r$/, ""));
+      if (m) found.push({ level: m[1]?.length ?? 1, title: m[2] ?? "", index: offset });
+    }
+    offset += line.length + 1;
   }
   return found;
 }
 
-/** 見出しの行だけを並べた列（直しが見出しを足す・消す・変えないことの検査に使う）。 */
+/** 見出しの行だけを並べた列（直しが見出しを足す・消す・変えないことの検査に使う。文書の全体で比べる）。 */
 function headingLines(text: string): string[] {
-  return text.split(/\r?\n/).filter((l) => /^#{1,6}[ \t]/.test(l));
+  return headingsOf(text).map((h) => `${"#".repeat(h.level)} ${h.title}`);
 }
 
-/** index の位置が、直せない節（その節の中の小見出しを含む）にあるか。 */
-function inFrozenSection(doc: string, index: number): boolean {
-  const stack: Heading[] = [];
-  for (const h of headingsOf(doc)) {
-    if (h.index > index) break;
-    while (stack.length > 0 && (stack[stack.length - 1]?.level ?? 0) >= h.level) stack.pop();
-    stack.push(h);
+/** 節（見出しの行から、同じかそれより浅い次の見出しの前まで）の範囲のうち、名前の頭が names のどれかのもの。 */
+function sectionRanges(doc: string, names: readonly string[]): Array<[number, number]> {
+  const heads = headingsOf(doc);
+  const ranges: Array<[number, number]> = [];
+  for (const [i, h] of heads.entries()) {
+    if (!names.some((name) => h.title.startsWith(name))) continue;
+    const next = heads.slice(i + 1).find((n) => n.level <= h.level);
+    ranges.push([h.index, next ? next.index : doc.length]);
   }
-  return stack.some((h) => FROZEN_SECTIONS.some((name) => h.title.startsWith(name)));
+  return ranges;
+}
+
+/** [from, to) が、直せない節に重なるか（始まりだけでなく、範囲の全体で見る）。 */
+function overlapsFrozenSection(doc: string, from: number, to: number): boolean {
+  return sectionRanges(doc, FROZEN_SECTIONS).some(([s, e]) => from < e && to > s);
+}
+
+/** index の位置が、テスト観点の節（その節の中の小見出しを含む）にあるか。 */
+function inViewpointSection(doc: string, index: number): boolean {
+  return sectionRanges(doc, ["テスト観点"]).some(([s, e]) => index >= s && index < e);
 }
 
 /** text の中の needle の位置（重ならない出現）。 */
@@ -116,20 +137,10 @@ export function applyViewpointToDocument(
     offset += l.length + 1;
     return at;
   });
-  const sectionAt = (index: number) => {
-    const heads = headingsOf(doc);
-    const stack: Heading[] = [];
-    for (const h of heads) {
-      if (h.index > index) break;
-      while (stack.length > 0 && (stack[stack.length - 1]?.level ?? 0) >= h.level) stack.pop();
-      stack.push(h);
-    }
-    return stack.some((h) => h.title.startsWith("テスト観点"));
-  };
   const head = `- [${edit.viewpoint}] `;
   let rowLine = -1;
   for (const [i, line] of lines.entries()) {
-    if (line.startsWith(head) && sectionAt(starts[i] ?? 0)) rowLine = i;
+    if (line.startsWith(head) && inViewpointSection(doc, starts[i] ?? 0)) rowLine = i;
   }
   if (rowLine < 0) return undefined;
   // 行の範囲は、次の `- [` の行か見出しの行まで
@@ -154,22 +165,36 @@ export function applyViewpointToDocument(
 }
 
 /**
- * 反映した直しを、設計のファイルに順に当てる。当てられない直し（before が 1 か所でない。すでに当たっている場合を含む）は
- * 飛ばす。人が直した内容・テスト観点の節は、直しの箇所のほかは、そのまま残る。
+ * 反映した直しを、設計のファイルに順に当てる。人が直した内容・テスト観点の節は、直しの箇所のほかは、そのまま残る。
+ * 当てられない直し（before が 1 か所でない。すでに当たっている場合を含む）は、飛ばした直しとして返す（黙って捨てない）。
  */
-export function applyEditsToFile(file: string, edits: readonly DesignEditItem[]): string {
+export function applyEditsToFileChecked(
+  file: string,
+  edits: readonly DesignEditItem[],
+): { doc: string; skipped: DesignEditItem[] } {
   let doc = file;
+  const skipped: DesignEditItem[] = [];
   for (const e of edits) {
     if (e.viewpoint !== undefined && e.field !== undefined) {
-      doc = applyViewpointToDocument(doc, { ...e, viewpoint: e.viewpoint, field: e.field }) ?? doc;
+      const next = applyViewpointToDocument(doc, { ...e, viewpoint: e.viewpoint, field: e.field });
+      if (next === undefined) skipped.push(e);
+      else doc = next;
       continue;
     }
     const at = occurrences(doc, e.before);
-    if (at.length !== 1) continue;
+    if (at.length !== 1) {
+      skipped.push(e);
+      continue;
+    }
     const first = at[0] ?? 0;
     doc = `${doc.slice(0, first)}${e.after}${doc.slice(first + e.before.length)}`;
   }
-  return doc;
+  return { doc, skipped };
+}
+
+/** applyEditsToFileChecked の、設計のファイルだけを返す版（検査のための読み込みで使う）。 */
+export function applyEditsToFile(file: string, edits: readonly DesignEditItem[]): string {
+  return applyEditsToFileChecked(file, edits).doc;
 }
 
 const text = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -276,7 +301,7 @@ export function applyDesignEdits(
       reject("秘密情報の値を含むため、反映しません（値は載せていません）。");
       continue;
     }
-    if (withoutInternalPaths(after) !== after) {
+    if (withoutInternalPaths(after) !== after || withoutInternalPaths(before) !== before) {
       reject("作業領域の内部のパスを含むため、反映しません（人が辿れないため）。");
       continue;
     }
@@ -319,20 +344,29 @@ export function applyDesignEdits(
         );
         continue;
       }
-      target[field] = next;
+      if (file !== undefined) {
+        const nextFile = applyViewpointToDocument(file, {
+          viewpoint: target.id,
+          field,
+          before,
+          after,
+        });
+        if (nextFile === undefined) {
+          reject("before が、設計のファイルのその観点の行にありません。");
+          continue;
+        }
+        file = nextFile;
+      }
       output =
         applyViewpointToDocument(output, { viewpoint: target.id, field, before, after }) ?? output;
-      if (file !== undefined) {
-        file =
-          applyViewpointToDocument(file, { viewpoint: target.id, field, before, after }) ?? file;
-      }
+      target[field] = next;
       applied.push({
         remarks: remarks.slice(0, 50),
         viewpoint: target.id,
         field,
         before,
         after,
-        reason,
+        reason: withoutInternalPaths(reason),
       });
       continue;
     }
@@ -347,12 +381,14 @@ export function applyDesignEdits(
       );
       continue;
     }
-    if (inFrozenSection(output, inOutput[0] ?? 0)) {
-      reject(
-        "スコープ・確認したいこと・既定で決めたこと・テスト観点の節は、実装の工程からは直せません。",
-      );
+    const FROZEN_WHY =
+      "スコープ・確認したいこと・既定で決めたこと・テスト観点の節は、実装の工程からは直せません。";
+    const outAt = inOutput[0] ?? 0;
+    if (overlapsFrozenSection(output, outAt, outAt + before.length)) {
+      reject(FROZEN_WHY);
       continue;
     }
+    let nextFile = file;
     if (file !== undefined) {
       const inFile = occurrences(file, before);
       if (inFile.length !== 1) {
@@ -363,18 +399,32 @@ export function applyDesignEdits(
         );
         continue;
       }
-      if (inFrozenSection(file, inFile[0] ?? 0)) {
-        reject(
-          "スコープ・確認したいこと・既定で決めたこと・テスト観点の節は、実装の工程からは直せません。",
-        );
+      const fileAt = inFile[0] ?? 0;
+      if (overlapsFrozenSection(file, fileAt, fileAt + before.length)) {
+        reject(FROZEN_WHY);
         continue;
       }
-      const at = inFile[0] ?? 0;
-      file = `${file.slice(0, at)}${after}${file.slice(at + before.length)}`;
+      nextFile = `${file.slice(0, fileAt)}${after}${file.slice(fileAt + before.length)}`;
     }
-    const at = inOutput[0] ?? 0;
-    output = `${output.slice(0, at)}${after}${output.slice(at + before.length)}`;
-    applied.push({ remarks: remarks.slice(0, 50), before, after, reason });
+    const nextOutput = `${output.slice(0, outAt)}${after}${output.slice(outAt + before.length)}`;
+    // 直した後の文書の全体で、見出しの行の列が変わらないこと（見出しの語だけを before にした直しも止める）
+    if (
+      headingLines(nextOutput).join("\n") !== headingLines(output).join("\n") ||
+      (file !== undefined &&
+        nextFile !== undefined &&
+        headingLines(nextFile).join("\n") !== headingLines(file).join("\n"))
+    ) {
+      reject("見出しの行を足す・消す・変える直しは、反映しません。");
+      continue;
+    }
+    file = nextFile;
+    output = nextOutput;
+    applied.push({
+      remarks: remarks.slice(0, 50),
+      before,
+      after,
+      reason: withoutInternalPaths(reason),
+    });
   }
   return { output, viewpoints, applied, rejected };
 }

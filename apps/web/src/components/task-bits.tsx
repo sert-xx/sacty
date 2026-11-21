@@ -64,13 +64,23 @@ export function StatusLabel({ task }: { task: Task }) {
 }
 
 /** タスクの状態の表示（文言と色だけから描く。タスクの一覧は、これだけを取り直す。PBI-108）。 */
-export function StatusLabelView({ text, tone }: { text: string; tone: StatusTone }) {
+export function StatusLabelView({
+  text,
+  tone,
+  className,
+}: {
+  text: string;
+  tone: StatusTone;
+  /** 外側の欄が狭いときに折り返したいなど、呼び出し側が足すクラス。 */
+  className?: string;
+}) {
   const style = STATUS_STYLE[tone];
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1.5 text-sm font-medium whitespace-nowrap",
         style.text,
+        className,
       )}
     >
       {tone === "completed" ? (

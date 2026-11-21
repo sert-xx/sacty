@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyDesignEdits,
   applyEditsToFile,
+  applyEditsToFileChecked,
   applyViewpointToDocument,
   DESIGN_EDIT_MAX,
   INVALID_VALUE,
@@ -282,5 +283,98 @@ describe("設計の直しの検査と適用（PBI-446）", () => {
     expect(readDesignEditBlock("文字列").kind).toBe("unreadable");
     expect(readDesignEditBlock({ edits: "x" }).kind).toBe("unreadable");
     expect(readDesignEditBlock({ edits: [] })).toEqual({ kind: "read", edits: [] });
+  });
+});
+
+describe("設計の直しの検査のすり抜け（レビューの指摘）", () => {
+  const why = (r: ReturnType<typeof run>) => String(r.rejected[0]?.rejection);
+  const unchanged = (r: ReturnType<typeof run>) => {
+    expect(r.applied).toEqual([]);
+    expect(r.output).toBe(OUTPUT);
+    expect(r.viewpoints).toEqual(VIEWPOINTS);
+  };
+
+  it("見出しの語だけを before にした直しは、見出しが変わるので反映しない", () => {
+    const r = run([body("エラー表", "失敗表")]);
+    unchanged(r);
+    expect(why(r)).toMatch(/見出しの行/);
+  });
+
+  it("直せる節から直せない節をまたぐ before は、反映しない", () => {
+    const before = "「在庫がありません」\n\n## 確認したいこと\n\n- must 1：再送は 1 回でよいか";
+    const r = run([body(before, before.replace("1 回でよいか", "2 回でよいか"))]);
+    unchanged(r);
+    expect(why(r)).toMatch(/実装の工程からは直せません/);
+  });
+
+  it("直せない節の中のコードブロックの `#` 行を、見出しとして数えない", () => {
+    const output = OUTPUT.replace(
+      "- must 1：再送は 1 回でよいか",
+      "```\n# コメント\n```\n- must 1：再送は 1 回でよいか",
+    );
+    const r = run([body("再送は 1 回でよいか", "x")], { output, file: undefined });
+    expect(r.applied).toEqual([]);
+    expect(why(r)).toMatch(/実装の工程からは直せません/);
+  });
+
+  it("コードブロックの中の `#` 行は見出しではないので、直せる節のコードの直しは反映する", () => {
+    const output = OUTPUT.replace(
+      "- 在庫切れ：「在庫がありません」",
+      "- 在庫切れ：「在庫がありません」\n\n```\n# 例\nfoo\n```",
+    );
+    const r = run([body("foo", "bar")], { output, file: undefined });
+    expect(r.rejected).toEqual([]);
+    expect(r.output).toContain("bar");
+  });
+
+  it("観点の直しは、設計のファイルのその観点の行に当たらなければ反映しない（承認済みの観点も変えない）", () => {
+    const file = FILE.replace("  - 期待結果：エラー文言が表示される", "  - 期待結果：別の文言");
+    const r = run(
+      [body("エラー文言が表示される", "エラーが出る", { viewpoint: "TV-2", field: "expected" })],
+      { file },
+    );
+    unchanged(r);
+    expect(why(r)).toMatch(/設計のファイルのその観点の行にありません/);
+  });
+
+  it("2,000 文字ちょうどの after は反映し、2,001 文字は反映しない", () => {
+    const ok = run([body("「失敗しました」", "あ".repeat(2_000))]);
+    expect(ok.rejected).toEqual([]);
+    const ng = run([body("「失敗しました」", "あ".repeat(2_001))]);
+    expect(ng.applied).toEqual([]);
+  });
+
+  it("観点の数を変える after・欄の無い field は反映しない", () => {
+    unchanged(run([body("同じキー", "同じキー TV-1 TV-3", { viewpoint: "TV-1", field: "title" })]));
+    unchanged(run([body("決済は1回", "x", { viewpoint: "TV-1" })]));
+  });
+
+  it("反映しない直しの before・reason に秘密情報・内部のパスがあっても、載せる文には残らない", () => {
+    const r = run([
+      body("存在しない SECRET-VALUE-123", "x", { reason: "/sacty-input/a SECRET-VALUE-123" }),
+    ]);
+    const text = JSON.stringify(r.rejected);
+    expect(text).not.toContain("SECRET-VALUE-123");
+    expect(text).not.toContain("/sacty-input");
+  });
+
+  it("反映した直しの reason の内部のパスは、置き換えて記録する", () => {
+    const r = run([body("「失敗しました」", "「A」", { reason: "/sacty-input/a を見た" })]);
+    expect(r.applied).toHaveLength(1);
+    expect(JSON.stringify(r.applied)).not.toContain("/sacty-input");
+  });
+
+  it("コミットでは、当たらない直しを飛ばした直しとして返す", () => {
+    const edit = {
+      remarks: ["implement-1-1"],
+      viewpoint: "TV-2",
+      field: "expected",
+      before: "存在しない",
+      after: "x",
+      reason: "r",
+    };
+    const r = applyEditsToFileChecked(FILE, [edit]);
+    expect(r.doc).toBe(FILE);
+    expect(r.skipped).toEqual([edit]);
   });
 });

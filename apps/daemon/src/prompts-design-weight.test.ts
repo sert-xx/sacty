@@ -106,6 +106,19 @@ const BASELINE_LINES = [
 ];
 
 describe("実装の PR：戻し先を決定の重さで分ける基準（PBI-446）", () => {
+  it("古い文が残らない：決定を変える指摘の2行と implement の説明も、設計の局所の変更を除く（両方の経路）", () => {
+    const own = buildReworkPrompt(taskOf(), ["x"], TARGETS, "implement");
+    const child = review("implement", taskOf());
+    for (const p of [own, child]) {
+      expect(p).toContain("ただし、承認済みの設計の局所の変更は除きます");
+      expect(p).toContain("設計の決定の変更は、方針の変更が1つでもあるときだけ");
+    }
+    expect(child).toContain("設計の局所の変更は、この PR の実装で直す）");
+    // 要求要件・設計の PR には入らない
+    const step = review("design", taskOf());
+    expect(step).not.toContain("設計の局所の変更は除きます");
+  });
+
   it("工程のエージェントの戻し先の指示に、局所は実装・方針は設計と読める基準が入る（TV-1）", () => {
     const p = buildReworkPrompt(taskOf(), ["エラー表の文言を直してください"], TARGETS, "implement");
     for (const line of WEIGHT_LINES) expect(p).toContain(line);

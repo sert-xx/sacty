@@ -61,13 +61,7 @@ export function LiveHeaderMenus({
           {stale === "signedOut" ? m.signedOutShort : m.staleShort}
         </span>
       )}
-      {data && (
-        <NotificationsMenu
-          others={data.notices.filter((n) => n.projectId !== selected?.id)}
-          here={data.notices.filter((n) => n.projectId === selected?.id)}
-          currentName={selected?.name}
-        />
-      )}
+      {data && <NotificationsMenu notices={data.notices} />}
       <UserMenu language={language} />
     </>
   );

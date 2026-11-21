@@ -532,6 +532,42 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       activity.close();
     });
 
+    it("見出しの語だけの直し・内部のパスを含む直しは、service を通しても反映せず、本文・イベントに内部のパスが残らない。反映が0件の本文は「直しました」と書かない（TV-14・TV-17）", async () => {
+      const made = await toRework([
+        withEdits([
+          edit(["implement-1-1"], "エラー表", "失敗表"),
+          edit(["implement-1-1"], "「失敗しました」", "詳細は /sacty-input/a を見る"),
+          edit(["implement-1-1"], "「在庫がありません」", "「在庫切れです」", {
+            reason: "/sacty-input/x.md:3 に合わせる",
+          }),
+        ]),
+      ]);
+      const { service, id, repos, activity } = made;
+      await service.runNext(id);
+      await drain(service);
+      const task = taskOf(service, id);
+      expect(task.approved.design?.output).toContain("エラー表");
+      expect(task.approved.design?.output).not.toContain("失敗表");
+      expect(task.designEdits?.[0]?.applied).toHaveLength(1);
+      expect(JSON.stringify(task.designEdits)).not.toContain("/sacty-input");
+      expect(repos.published.at(-1)?.overrides).toBeDefined();
+      const body = bodiesOf(service, id).at(-1) ?? "";
+      expect(body).not.toContain("/sacty-input");
+      expect(body).toContain("反映しなかった直し（2 件）");
+      activity.close();
+    });
+
+    it("反映した直しが0件の回の本文は、設計を直したと書かない", async () => {
+      const made = await toRework([withEdits([edit(["implement-9-9"], "「失敗しました」", "x")])]);
+      const { service, id, activity } = made;
+      await service.runNext(id);
+      await drain(service);
+      const body = bodiesOf(service, id).at(-1) ?? "";
+      expect(body).toContain("反映した直しは 0 件");
+      expect(body).not.toContain("承認済みの設計も直しました");
+      activity.close();
+    });
+
     it("変更の申し出と同時に出した直しは反映せず、申し出だけを扱う", async () => {
       const proposal = block({
         "sacty-change-proposal": {

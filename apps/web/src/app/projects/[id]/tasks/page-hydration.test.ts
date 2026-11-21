@@ -12,6 +12,7 @@ vi.mock("@/lib/daemon", () => ({
   listProjectRepositories: vi.fn(),
   listTasks,
   getStatus: async () => ({ problems: [] }),
+  getDashboardSummary: async () => ({ waitingSince: {} }),
 }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: ReactNode }) =>

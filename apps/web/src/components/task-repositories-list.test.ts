@@ -13,6 +13,7 @@ vi.mock("@/i18n/server", () => ({ getMessages: async () => messagesFor(locale) }
 vi.mock("@/lib/daemon", () => ({
   listTasks: async () => tasks,
   listProjects: async () => [{ id: "default" }],
+  getDashboardSummary: async () => ({ waitingSince: {} }),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh() {} }),

@@ -208,6 +208,10 @@ const ja = {
     integrationFailed: "統合レビュー不合格・判断待ち",
     stepApproval: (step: string, n: number) => `${step}の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
   },
+  /** 人の出番の行の状態の文に添える（PBI-442）。 */
+  personTurn: {
+    aiReviewInProgress: "・AI のレビュー中",
+  },
   action: {
     decide: "判断する",
     review: "チェックする",
@@ -1050,6 +1054,10 @@ const en: LabelMessages = {
     notReproduced: "Not reproduced · needs you",
     integrationFailed: "Integration review failed · needs you",
     stepApproval: (step, n) => `${step} awaiting approval${n > 1 ? ` (submission ${n})` : ""}`,
+  },
+  /** 人の出番の行の状態の文に添える（PBI-442）。 */
+  personTurn: {
+    aiReviewInProgress: " · AI review in progress",
   },
   action: {
     decide: "Decide",

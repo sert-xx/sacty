@@ -23,8 +23,14 @@ const ja = {
   /** あなたの出番（PBI-118）。 */
   attention: {
     title: "あなたの出番",
-    hint: "承認待ち・一時停止・エスカレーションのタスクを、待っている時間が長い順に出します。待ち始めは、その状態になった作業履歴の記録の時刻です。",
+    hint: "人が判断すれば進むタスク（承認待ち・エスカレーション）を上に、止まったままのタスク（一時停止）を下に出します。どちらも、待っている時間が長い順です。待ち始めは、その状態になった作業履歴の記録の時刻です。",
     summary: (n: number) => `${n}件`,
+    /** 組の見出し（PBI-442）。状態の名前と紛れない語にする。 */
+    groups: {
+      decision: "判断で進むタスク",
+      paused: "再開を待つタスク",
+    },
+    groupCount: (n: number) => `${n}件`,
     list: "対応待ちのタスクの一覧",
     waiting: "待っている時間：",
     empty: "対応待ちはありません。",
@@ -160,8 +166,13 @@ const en: DashboardMessages = {
   },
   attention: {
     title: "Needs you",
-    hint: "Tasks awaiting approval, paused, or escalated, longest wait first. The wait starts at the activity record that put the task in that state.",
+    hint: "Tasks that move on once you decide (awaiting approval, escalated) come first, then tasks that stay stopped (paused). Within each group, the longest wait comes first. The wait starts at the activity record that put the task in that state.",
     summary: (n) => `${n} task${n === 1 ? "" : "s"}`,
+    groups: {
+      decision: "Ready for your decision",
+      paused: "Waiting to resume",
+    },
+    groupCount: (n) => `${n} task${n === 1 ? "" : "s"}`,
     list: "List of tasks that need you",
     waiting: "Waiting: ",
     empty: "Nothing needs you right now.",

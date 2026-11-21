@@ -203,7 +203,7 @@ import { parseLimitReset } from "./agents/limit-reset.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactEscaped, redactText } from "./agents/redact.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
-import { aiReviewFor, aiReviewOfHead } from "./ai-review-head.js";
+import { aiReviewFor, aiReviewOfHead, aiReviewsOfHeads } from "./ai-review-head.js";
 import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
 import {
   type AdoptedAuditProposalNote,
@@ -283,6 +283,7 @@ import {
 import {
   applyDesignEdits,
   applyEditsToFile,
+  applyEditsToFileChecked,
   designFilePath,
   pendingDesignEdits,
   readDesignEditBlock,
@@ -1542,11 +1543,19 @@ export class TaskService {
     return started;
   }
 
-  /** 画面に返すタスクの一覧。処理の段階（preparingOf）を足す。 */
+  /**
+   * 画面に返すタスクの一覧。処理の段階（preparingOf）と、承認待ちで PR が開いているタスクの AI のレビューの状況
+   * （aiReview。詳細（view）と同じ計算。PBI-442）を足す。
+   */
   listView(): Task[] {
-    return this.list().map((task) => {
+    const tasks = this.list();
+    const aiReviews = aiReviewsOfHeads(tasks, sameRepo, (t) => this.latestHeadOf(t));
+    return tasks.map((task) => {
       const preparing = this.preparingOf(task.id);
-      return preparing ? { ...task, preparing } : task;
+      const aiReview = aiReviews.get(task.id);
+      return preparing || aiReview
+        ? { ...task, ...(preparing ? { preparing } : {}), ...(aiReview ? { aiReview } : {}) }
+        : task;
     });
   }
 
@@ -8532,7 +8541,11 @@ export class TaskService {
    */
   private async designFileContent(
     task: Task,
-  ): Promise<{ kind: "none" } | { kind: "file"; content: string } | { kind: "failed" }> {
+    secrets: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<
+    { kind: "none" } | { kind: "file"; content: string } | { kind: "failed"; detail: string }
+  > {
     const path = designFilePath(task);
     const taskBranch = task.taskBranch;
     const repository = task.repository;
@@ -8540,12 +8553,14 @@ export class TaskService {
     try {
       const gitDir = this.trustedGitDir(task);
       const authEnv = await this.gitAuth(task, repository.url, []);
-      const head = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+      const head = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv, signal);
       const content = await this.deps.repos.readFile(gitDir, head, path);
       if (content === undefined) return { kind: "none" };
       return { kind: "file", content: applyEditsToFile(content, pendingDesignEdits(task)) };
-    } catch {
-      return { kind: "failed" };
+    } catch (error) {
+      const detail = renderMessage(redactText(errorText(error), secrets), "ja");
+      console.warn(`設計のファイルを読めませんでした（task ${task.id}）：${detail}`);
+      return { kind: "failed", detail };
     }
   }
 
@@ -8559,6 +8574,7 @@ export class TaskService {
     extracted: Extracted,
     withProposal: boolean,
     secrets: readonly string[],
+    signal?: AbortSignal,
   ): Promise<ActivityItem | undefined> {
     const remarkIds = designEditRemarkIds(task);
     const approved = task.approved.design;
@@ -8599,7 +8615,9 @@ export class TaskService {
       });
     }
     if (block.edits.length === 0) return undefined;
-    const file = withProposal ? ({ kind: "none" } as const) : await this.designFileContent(task);
+    const file = withProposal
+      ? ({ kind: "none" } as const)
+      : await this.designFileContent(task, secrets, signal);
     const result = applyDesignEdits(block.edits, {
       remarkIds: new Set(remarkIds),
       output,
@@ -8612,7 +8630,9 @@ export class TaskService {
               "同じ出力に変更の申し出もあるため、設計の直しは反映しません（申し出だけを扱います）。",
           }
         : file.kind === "failed"
-          ? { rejectAll: "設計のファイルを読めなかったため、設計の直しは反映しません。" }
+          ? {
+              rejectAll: `設計のファイルを読めなかったため、設計の直しは反映しません（${file.detail}）。`,
+            }
           : {}),
     });
     return record({
@@ -12333,6 +12353,7 @@ export class TaskService {
         extracted,
         proposal !== undefined,
         [...contextSecrets],
+        this.inflight.get(latest.id)?.abort.signal,
       );
       if (edited) events.push(edited);
     }
@@ -13948,8 +13969,20 @@ export class TaskService {
         if (designPath && pendingEdits.length > 0) {
           const file = await this.deps.repos.readFile(gitDir, parent, designPath);
           if (file !== undefined) {
-            const next = applyEditsToFile(file, pendingEdits);
-            if (next !== file) designOverrides = { [designPath]: next };
+            const applied = applyEditsToFileChecked(file, pendingEdits);
+            // 設計のファイルに当たらない直しがあれば、コミットしない（黙って「入れた」にしない。人が設計のファイルを直した場合）
+            if (applied.skipped.length > 0) {
+              return fail(
+                message("pr.failed", {
+                  detail: errorText(
+                    new Error(
+                      `設計の直し ${applied.skipped.length} 件が、設計のファイルに当たりません（設計のファイルが、直しの後に変わった）。`,
+                    ),
+                  ),
+                }),
+              );
+            }
+            if (applied.doc !== file) designOverrides = { [designPath]: applied.doc };
           }
         }
         // 実装の作業領域は起点のコミットのままなので、sacty が最後に積んだコミット（無ければ起点）の後にタスクブランチへ

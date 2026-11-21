@@ -14,6 +14,7 @@ vi.mock("@/lib/daemon", () => ({
   listProjects,
   listProjectRepositories,
   listTasks,
+  getDashboardSummary: async () => ({ waitingSince: {} }),
   getStatus: async () => ({ problems: [] }),
 }));
 vi.mock("next/navigation", () => ({
