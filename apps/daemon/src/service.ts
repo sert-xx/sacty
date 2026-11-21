@@ -13816,6 +13816,8 @@ export class TaskService {
           runId,
           prompt: [
             buildPrompt(this.mustGet(task.id), step, {
+              // 実装・直しの指示に入れる、指示を作った時刻（PBI-469）
+              now: this.now(),
               ...(reviewDiff !== undefined
                 ? {
                     diff: reviewDiff,
