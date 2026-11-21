@@ -6,7 +6,7 @@ An AI agent examines the whole process of a completed task, from the step choice
 
 A person adopts or rejects each proposal, and an adopted proposal becomes a fix task. When adopting, they can also supplement the proposed fix or replace it with their own. Audits are recorded in the audited task's activity log.
 
-Related ADRs: [Build the audit screens first, on a mock backend](../adr/20261017-1145-audit-ui-with-mock.md), [Audit completed tasks in two stages, recorded in the activity log](../adr/20261017-1310-audit-engine.md), [Derive the flaky test ledger from the activity log, and leave proposals to tasks a person creates](../adr/20261106-1105-superseded-derive-flaky-test-ledger-from-activity.md)
+Related ADRs: [Build the audit screens first, on a mock backend](../adr/20261017-1145-audit-ui-with-mock.md), [Group audit proposals by cause, show the top ones, and reject several at once](../adr/20261121-1400-audit-bulk-reject.md), [Audit completed tasks in two stages, recorded in the activity log](../adr/20261017-1310-audit-engine.md), [Derive the flaky test ledger from the activity log, and leave proposals to tasks a person creates](../adr/20261106-1105-superseded-derive-flaky-test-ledger-from-activity.md)
 
 ## When an audit starts, and what is audited
 
@@ -79,7 +79,7 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAudi
 - Causes are grouped within a project by a cause key (`causeKey`).
   - The deep dive gets these:
     - The project's existing causes (key, title, whether a fix was adopted)
-    - The rejected proposals with their reasons
+    - The rejected proposals with their reasons (a bulk rejection becomes one line per operation; see "Reject" below)
     - The proposals a person edited when adopting
   - If a cause is the same as an existing one, the agent uses its key (`sameAs`).
   - A new cause key is `<audit ID>:<step>:<number>`.
@@ -103,6 +103,17 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAudi
 - Reject (`AuditProposalRejected`)
   - It needs a reason (1–2000 characters after trimming).
   - The reason also appears on the audit page and in reports, so secrets are redacted before it is recorded (older records get common secret patterns redacted when shown).
+  - A record made by rejecting in bulk has the optional field `bulk` (`{ id, count }`).
+    - `id` is the same for one operation, and `count` is the number rejected by that operation (an integer, 1 or more). It is set even when only one proposal was selected (`count: 1`).
+    - There is one record per proposal, written where a one-by-one rejection is written (the activity log of the task of the audit that made the proposal, as a person's action).
+    - A record without `bulk` (from earlier versions, or a one-by-one rejection) is read as before. Records are not converted.
+    - `bulk` is copied to the `decision` of a `rejected` proposal. The audit page's rejected proposals and the activity row show "1 of N rejected in bulk".
+  - The "rejected proposals and reasons" given to the deep dive take this form, so lines and characters do not grow with the number rejected in bulk.
+    - A rejection without `bulk` is one line per proposal as before (`- title: reason`).
+    - Rejections with `bulk` are merged into one line per `bulk.id`: `- まとめて却下（N 件。例：title1／title2／title3 ほか K 件）：reason` (the line is written in Japanese like the rest of the prompt).
+    - N is the number of records merged into the line, not `bulk.count`. Proposals of cancelled tasks and memory-to-context proposals (cause key starting with `memory:`) are removed before merging. K is N − 3 (omitted if 0 or less).
+    - Only the first 3 titles are written; the titles from the 4th on are not passed (omitted). A title is cut at 100 characters and the reason at 300, and line breaks become spaces.
+    - Rejections of memory-to-context proposals are still not in "rejected proposals and reasons"; they appear as the rejection reason on the memory's row in the memory list.
 - A decided proposal cannot be decided again. Proposals of a cancelled task cannot be decided.
 - The cause states are as in this table.
 
@@ -165,7 +176,7 @@ Code: `apps/daemon/src/service.ts` (`warnAuditBudget`, `resumeAudit`, `auditBudg
 ## Mock
 
 - Started with the environment variable `SACTY_AUDIT_MOCK=1`, the daemon does not run audits (`audit: false`) and returns mock data (`MockAuditService`) to the screens.
-  - Adopting, rejecting, and resuming are kept only in the daemon's memory.
+  - Adopting, rejecting (including rejecting in bulk), and resuming are kept only in the daemon's memory.
   - The returned data has `mock: true`.
 - The mock assigns scenes to the project's completed tasks in the order they completed. The scenes go in the order audited, deep dive, paused by budget, failed, surveying, and waiting. From the 9th task on, two kinds of audited alternate.
 
@@ -182,10 +193,29 @@ Code: `apps/daemon/src/audits.ts` (`MockAuditService`, `AuditService`), `apps/da
 | `GET /api/audits/dashboard` | Counts for the dashboard (per project and per week) |
 | `POST /api/audits/proposals/:id/adopt` | Adopt a proposal (`{ target, note? }`, where `note` is `{ kind, text }`) |
 | `POST /api/audits/proposals/:id/reject` | Reject a proposal (`{ reason }`) |
+| `POST /api/audits/proposals/reject` | Reject proposals in bulk (`{ projectId, proposalIds, reason }`; see [Reject in bulk](#reject-in-bulk)) |
 | `POST /api/audits/memories/:id/delete` | Delete a memory the audit registered ([Memory](memory.en.md)). Returns the audit that registered it (`{ audit }`) |
 
 - Invalid input is 400 (message codes).
 - An operation that does not fit the state (already decided, a target not in the candidates, a cancelled task, not paused, too low a cap) is 409.
+
+### Reject in bulk
+
+- Input: `projectId`, `proposalIds` (1–2,000, no duplicates), and `reason` (1–2000 characters after trimming). A wrong shape, count, duplicate, or reason is 400 and nothing is recorded for any proposal.
+- Response: `{ rejected, failed }`.
+  - `rejected` holds the rejected proposals (the same shape a one-by-one rejection returns).
+  - `failed` holds `{ proposalId, messages }` for each proposal that could not be rejected. `messages` are message codes with parameters (the screen renders them in its language).
+  - Even when some or all fail, the response is 200 and the failures are in `failed`.
+- Each proposal goes through the same checks as a one-by-one rejection. A proposal that fails goes to `failed`.
+  - A missing proposal, or one of a project other than `projectId`: `audit.proposalNotFound` (nothing is recorded).
+  - A proposal of a cancelled task: `audit.notAdoptable`. A decided proposal: `audit.alreadyDecided`.
+- The reason is redacted once. The secret values from the settings and the GitHub tokens are fetched once per project (not once per original task).
+- A proposal decided by another operation while the secrets are fetched is checked again without waiting and moved to `failed` (no double record is made).
+- Only the proposals that pass are written, in one append per original task. `bulk.count` is the number that passed.
+- `rejected` is picked up by rebuilding the audit page's data once after writing.
+- The target for 2,000 proposals (50 original tasks) is within 5 seconds.
+
+Code: `apps/daemon/src/service.ts` (`rejectAuditProposals`), `apps/daemon/src/ledger-audits.ts` (`rejectMany`)
 
 Code: `apps/daemon/src/server.ts` (`createApp`)
 
@@ -196,10 +226,24 @@ Code: `apps/daemon/src/server.ts` (`createApp`)
   - Evidence links to the activity row (`#event-<ID>`) and the run log.
   - Activity rows of audit runs also open their logs.
 - Audit page (`/projects/<ID>/audit`; "Audit" in the side menu)
-  - It shows causes (recurred first), proposals (those needing a decision first), audited tasks, and report export (it does not show the flaky test ledger; [Flaky test ledger](#the-flaky-test-ledger)).
+  - It shows causes, audited tasks, and report export (it does not show the flaky test ledger; [Flaky test ledger](#the-flaky-test-ledger)). Proposals are read and decided inside their cause (one section for causes and proposals).
+  - Causes keep the current order (recurred, proposed, adopted, fixed, rejected; the same state by the number of tasks it was found in) and show the top 20 as collapsed rows.
+    - "Show more" adds 20 at a time. The note reads "Showing M of N". "Show more" is not shown when there are 20 or fewer.
+    - The filter and the number shown stay in the URL: `?causes=pending|recurred` (missing or unknown means all) and `?shown=<a multiple of 20>`. The page's server filters and cuts, and passes only the causes shown and their proposals to the browser.
+    - "Needs decision" means a cause with at least one proposal needing a decision (these can remain on recurred and fixed causes, so it is not the same as the state "proposed").
+    - A collapsed row shows the state (recurred in the warning color and bold), the title, how many times it was found, and the number needing a decision.
+    - Opening a cause shows its tasks (the first 5 and "N more") and its proposals (those needing a decision first, newest first; the first 10, and "N more" adds 10 at a time). Adopt, edit, and reject (one at a time) are done only inside the open cause (decision inputs are not shown twice).
+    - The open causes and the selection are kept in the page, so they survive the redraw after a decision.
+  - Proposals needing a decision can be selected and rejected together with one reason.
+    - Each proposal has a checkbox, and each cause has "Select all needing a decision" (only the proposals shown at that moment; partly selected shows the mixed state). The selection can span causes and survives collapsing a cause.
+    - A bar above the list shows "N selected" and "Reject selected" (disabled with 0 selected; the bar is not shown when the project has no proposal needing a decision).
+    - The confirmation dialog shows the count, the titles grouped by cause (scrolling inside the dialog), that rejecting cannot be undone, and the reason (required, up to 2,000 characters). "Cancel" and Escape close it without recording anything and keep the selection. Closing returns focus to "Reject selected".
+    - Up to 2,000 can be selected. Beyond that the confirm button is disabled and the limit is explained.
+    - The result appears under the bar. When all are rejected it says "Rejected N"; when some could not be, it says "Rejected N; M could not be rejected" and lists the titles and reasons of those. The selection is cleared when at least one was rejected.
   - An adoption for sacty shows that no task was created in the project.
   - For a proposal that needs a decision, the adopt form can open an edit to the proposed fix (supplement or replacement).
   - A note attached to an adoption is shown under the proposal with its kind (and in reports).
+  - A proposal rejected in bulk shows "1 of N rejected in bulk" with its reason (the task details' "Audit" tab uses the same proposal view).
 - Dashboard
   - The "Audit" card shows, per project, causes, recurred, and needing-decision counts and the adoption rate.
   - It also shows, per week, the changes requested and PR remarks per task (from the evidence counts of finished audits).
@@ -208,6 +252,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`)
   - The period is in UTC dates, through the end of the last day. A date that does not exist or a start after the end is 400.
   - Headings follow the UI language; audit text is not translated.
   - Times are UTC with the year.
+  - The rejection reason is shown per proposal. A proposal rejected in bulk also gets the same reason once per proposal, with no bulk mark (the report is unchanged).
 
-Code: `apps/web/src/components/audit.tsx` (`TaskAuditCard`, `ProposalView`), `apps/web/src/components/audit-screen.tsx` (`AuditScreen`),
+Code: `apps/web/src/components/audit.tsx` (`TaskAuditCard`, `ProposalView`), `apps/web/src/components/audit-screen.tsx` (`AuditScreen`), `apps/web/src/components/audit-causes.tsx` (`AuditCauses`), `apps/web/src/lib/audit-view.ts` (`sliceAudits`),
 `apps/web/src/components/dashboard.tsx` (`AuditCard`), `apps/web/src/lib/audit-report.ts` (`auditReport`, `reportPeriod`)

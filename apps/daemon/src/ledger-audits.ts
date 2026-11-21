@@ -5,6 +5,7 @@ import {
   type AuditProposalDecision,
   type AuditRow,
   auditRemarkCount,
+  type DaemonMessage,
   isAuditTarget,
   isPendingAuditProposal,
   type ListedAuditProposal,
@@ -16,7 +17,13 @@ import {
   type TaskAudit,
   type TaskAuditFinding,
 } from "@sacty/core";
-import { type AuditService, causeStatus, sortCauses, weekStart } from "./audits.js";
+import {
+  type AuditService,
+  type BulkRejectResult,
+  causeStatus,
+  sortCauses,
+  weekStart,
+} from "./audits.js";
 import { redactLog } from "./ci.js";
 import { lastUsefulAt, memoryPlacements, usefulDates } from "./memory.js";
 
@@ -34,6 +41,12 @@ export type AuditLedger = {
   auditRunning(taskId: string): boolean;
   adoptAuditProposal(proposalId: string, raw: unknown): Promise<Task>;
   rejectAuditProposal(proposalId: string, raw: unknown): Promise<Task>;
+  /** 提案をまとめて却下する（PBI-443）。却下できた提案の ID と、できなかった提案とその理由を返す。 */
+  rejectAuditProposals(raw: unknown): Promise<{
+    rejectedIds: string[];
+    failed: { proposalId: string; messages: DaemonMessage[] }[];
+    hide: (text: string) => string;
+  }>;
   resumeAudit(taskId: string, raw: unknown): Task;
   deleteAuditMemory(memoryId: string): Task;
   /** 監査の画面・レポートに出す文（元のタスクの題など）の秘密情報を伏せる関数（プロジェクトごと）。 */
@@ -399,6 +412,20 @@ export class LedgerAuditService implements AuditService {
 
   async reject(proposalId: string, input: unknown): Promise<ListedAuditProposal> {
     return this.proposalAfter(await this.ledger.rejectAuditProposal(proposalId, input), proposalId);
+  }
+
+  async rejectMany(input: unknown): Promise<BulkRejectResult> {
+    const result = await this.ledger.rejectAuditProposals(input);
+    // 返す提案は、書いた後に 1 回だけ組み直して拾う（提案ごとに組み直さない）
+    const projectId = (input as { projectId: string }).projectId;
+    const wanted = new Set(result.rejectedIds);
+    const proposals =
+      wanted.size > 0 ? (this.projectAuditsWith(projectId, result.hide)?.proposals ?? []) : [];
+    const rejected = proposals.filter((p) => wanted.has(p.id));
+    if (rejected.length !== wanted.size) {
+      throw new Error("a rejected proposal is missing after the operation");
+    }
+    return { rejected, failed: result.failed };
   }
 
   async deleteMemory(memoryId: string): Promise<TaskAudit> {

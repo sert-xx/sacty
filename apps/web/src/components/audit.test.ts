@@ -10,12 +10,19 @@ vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor(locale) }));
 vi.mock("@/app/actions", () => ({
   adoptAuditProposalAction: vi.fn(),
   rejectAuditProposalAction: vi.fn(),
+  rejectAuditProposalsAction: vi.fn(),
   deleteAuditMemoryAction: vi.fn(),
   resumeAuditAction: vi.fn(),
 }));
 
 const { TaskAuditCard } = await import("./audit");
 const { AuditScreen } = await import("./audit-screen");
+const { sliceAudits } = await import("@/lib/audit-view");
+
+const screen = (data: ProjectAudits) => {
+  const sliced = sliceAudits(data, "all", 20);
+  return createElement(AuditScreen, { data: sliced.data, view: sliced.view, today: "2026-10-17" });
+};
 
 const zero = {
   changesRequested: 0,
@@ -239,13 +246,12 @@ describe("プロジェクトの監査の画面（PBI-124）", () => {
 
   it("原因（再発を目立たせる）・判断待ちの件数・監査したタスク・レポートの出力を出す", () => {
     locale = "ja";
-    const html = renderToStaticMarkup(createElement(AuditScreen, { data, today: "2026-10-17" }));
+    const html = renderToStaticMarkup(screen(data));
     expect(html).toContain("1回の監査の予算 $1.50");
     expect(html).not.toContain("モック");
     expect(html).toContain("再発した原因");
     expect(html).toMatch(/data-testid="audit-cause-status"[^>]*>再発</);
     expect(html).toContain("判断待ち 1 件");
-    expect(html).toContain("出た監査");
     expect(html).toContain('href="/tasks/t1#audit"');
     expect(html).toMatch(/data-testid="audit-row-t1"[\s\S]*?>3</);
     expect(html).toContain('action="/projects/p%201/audit/report"');
@@ -255,14 +261,9 @@ describe("プロジェクトの監査の画面（PBI-124）", () => {
 
   it("原因・提案・監査が無ければ、無いことを出す", () => {
     locale = "ja";
-    const html = renderToStaticMarkup(
-      createElement(AuditScreen, {
-        data: { ...data, audits: [], causes: [], proposals: [] },
-        today: "2026-10-17",
-      }),
-    );
+    const html = renderToStaticMarkup(screen({ ...data, audits: [], causes: [], proposals: [] }));
     expect(html).toContain("原因はまだありません。");
-    expect(html).toContain("提案はまだありません。");
+    expect(html).not.toContain("まとめて却下");
     expect(html).toContain("完了したタスクはまだありません。");
   });
 });

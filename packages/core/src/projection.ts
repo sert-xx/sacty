@@ -511,7 +511,7 @@ export type TaskAuditFinding = Omit<
           /** 採用に添えた人の手入れ（PBI-151）。 */
           note?: AuditAdoptNote;
         }
-      | { kind: "rejected"; at: string; reason: string };
+      | { kind: "rejected"; at: string; reason: string; bulk?: { id: string; count: number } };
   })[];
 };
 
@@ -4161,7 +4161,12 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
             ...(event.payload.fixTaskId ? { fixTaskId: event.payload.fixTaskId } : {}),
             ...(event.payload.note ? { note: event.payload.note } : {}),
           }
-        : { kind: "rejected" as const, at: event.at, reason: event.payload.reason };
+        : {
+            kind: "rejected" as const,
+            at: event.at,
+            reason: event.payload.reason,
+            ...(event.payload.bulk ? { bulk: event.payload.bulk } : {}),
+          };
     task.audit = {
       ...audit,
       findings: audit.findings.map((f) =>

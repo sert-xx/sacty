@@ -1336,7 +1336,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "AuditProposalAdopted":
       return e.AuditProposalAdopted(event.payload.fixTaskId !== undefined);
     case "AuditProposalRejected":
-      return e.AuditProposalRejected(event.payload.reason);
+      return e.AuditProposalRejected(event.payload.reason, event.payload.bulk?.count);
     case "AuditMemoryDeleted":
       return e.AuditMemoryDeleted(event.payload.reason);
   }

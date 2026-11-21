@@ -1,46 +1,39 @@
 "use client";
 
-import { auditRemarkCount, isPendingAuditProposal, type ProjectAudits } from "@sacty/core";
-import { cn } from "cn";
+import { auditRemarkCount, type ProjectAudits } from "@sacty/core";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { AuditStatusLabel, MockBadge, ProposalView } from "@/components/audit";
+import { AuditStatusLabel, MockBadge } from "@/components/audit";
+import { AuditCauses } from "@/components/audit-causes";
 import { CardSection } from "@/components/card-section";
 import { Button } from "@/components/ui/button";
 import { WithHint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
-import { auditCauseTitle } from "@/lib/audit";
+import type { AuditView } from "@/lib/audit-view";
 import { formatStamp, usd } from "@/lib/labels";
 import { projectAuditReportPath, taskPath } from "@/lib/paths";
 
-/** 原因の状態の色。再発は目立たせる（警告の色）。 */
-const CAUSE_STYLE: Record<ProjectAudits["causes"][number]["status"], string> = {
-  recurred: "border-warn-line bg-warn-soft text-warn font-semibold",
-  proposed: "border-accent-line bg-accent text-accent-foreground",
-  adopted: "border-ok-line bg-ok-soft text-ok",
-  fixed: "border-ok-line bg-ok-soft text-ok",
-  rejected: "border-input text-muted-foreground",
-};
-
 /**
- * プロジェクトの監査の画面（PBI-124）。タスクをまたいでまとめた原因・改修の提案（判断待ちを上に）・不安定なテスト・
- * 監査したタスク・レポートの出力を出す。プロジェクトをまたいで集約しない。
+ * プロジェクトの監査の画面（PBI-124）。タスクをまたいでまとめた原因（畳んだ行。開くと改修の提案を出す。PBI-443）・
+ * 不安定なテスト・監査したタスク・レポートの出力を出す。プロジェクトをまたいで集約しない。
  */
 export function AuditScreen({
   data,
+  view,
   today,
   flaky,
 }: {
+  /** 出す原因とその提案だけにした監査のデータ（区切りは画面のサーバーの側で行う。sliceAudits）。 */
   data: ProjectAudits;
+  view: AuditView;
   today: string;
   /** 不安定なテストの台帳の欄（PBI-312）。 */
   flaky?: ReactNode;
 }) {
   const messages = useMessages();
   const m = messages.audit;
-  const pending = data.proposals.filter(isPendingAuditProposal).length;
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
@@ -50,95 +43,7 @@ export function AuditScreen({
         {data.mock && <MockBadge />}
       </div>
 
-      <CardSection
-        id="audit-causes"
-        title={m.screen.causes}
-        hint={m.screen.causesHint}
-        note={m.screen.causesNote(data.causes.length)}
-      >
-        {data.causes.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{m.screen.causesNone}</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {data.causes.map((cause) => (
-              <li
-                key={cause.id}
-                data-testid={`audit-cause-${cause.id}`}
-                className={cn(
-                  "flex flex-col gap-1.5 rounded-lg border px-3 py-2.5",
-                  cause.status === "recurred" ? "border-warn-line" : "border-border",
-                )}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    data-testid="audit-cause-status"
-                    className={cn(
-                      "rounded-full border px-2 py-0.5 text-xs",
-                      CAUSE_STYLE[cause.status],
-                    )}
-                  >
-                    {m.screen.causeStatus[cause.status]}
-                  </span>
-                  <span className="text-sm font-semibold">
-                    {auditCauseTitle(cause.id, cause.title, m)}
-                  </span>
-                  <span className="text-xs text-muted-foreground tabular-nums">
-                    {m.screen.occurrences(cause.occurrences.length)}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  {cause.fixedAt && (
-                    <span>
-                      {m.screen.fixedAt}{" "}
-                      <time dateTime={cause.fixedAt} className="font-mono">
-                        {formatStamp(cause.fixedAt, messages.locale)}
-                      </time>
-                    </span>
-                  )}
-                  {cause.recurredAt && (
-                    <span className="text-warn">
-                      {m.screen.recurredAt}{" "}
-                      <time dateTime={cause.recurredAt} className="font-mono">
-                        {formatStamp(cause.recurredAt, messages.locale)}
-                      </time>
-                    </span>
-                  )}
-                </div>
-                <p className="flex flex-wrap gap-x-3 gap-y-1 text-[13px]">
-                  <span className="text-muted-foreground">{m.screen.tasks}</span>
-                  {cause.occurrences.map((o) => (
-                    <Link
-                      key={o.taskId}
-                      href={taskPath(o.taskId)}
-                      className="text-accent-foreground underline [overflow-wrap:anywhere]"
-                    >
-                      {o.taskTitle}
-                    </Link>
-                  ))}
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardSection>
-
-      <CardSection
-        id="audit-proposals"
-        title={m.screen.proposals}
-        note={pending > 0 ? m.screen.proposalsNote(pending) : undefined}
-      >
-        {data.proposals.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{m.screen.proposalsNone}</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {data.proposals.map((p) => (
-              <li key={p.id}>
-                <ProposalView proposal={p} from={{ taskId: p.taskId, title: p.taskTitle }} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardSection>
+      <AuditCauses data={data} view={view} />
 
       {flaky}
 
