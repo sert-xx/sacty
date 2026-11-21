@@ -470,7 +470,7 @@ const ja = {
       handled: number;
       must: number;
     }) =>
-      `既存の指摘と重なる ${d.overlapping}件・目的の範囲の外 ${d.outOfScope}件・対応済み／却下済みと重なる ${d.handled}件（このうち要修正の重さ ${d.must}件）`,
+      `既存の指摘と重なる ${d.overlapping}件・目的の範囲の外 ${d.outOfScope}件・対応済み／却下済みと重なる ${d.handled}件（このうち、修正が必要な指摘 ${d.must}件）`,
     reviewRecordScope: "絞ったこと・基準にしなかった指示",
     reviewRecordVerification: "検証の経過",
     reviewRecordVerificationKind: (kind: string): string =>
@@ -1157,7 +1157,7 @@ const en: TaskMessages = {
     reviewRecordDismissed: "Findings not adopted, and why",
     reviewRecordDropped: "Findings dropped (counts)",
     reviewRecordDroppedCounts: (d) =>
-      `overlapping existing findings: ${d.overlapping}; outside the PR's purpose: ${d.outOfScope}; overlapping handled/rejected findings: ${d.handled} (of these, must-fix weight: ${d.must})`,
+      `overlapping existing findings: ${d.overlapping}; outside the PR's purpose: ${d.outOfScope}; overlapping handled/rejected findings: ${d.handled} (of these, findings that needed a fix: ${d.must})`,
     reviewRecordScope: "Narrowing and instructions not used as a baseline",
     reviewRecordVerification: "Verification progress",
     reviewRecordVerificationKind: (kind) =>

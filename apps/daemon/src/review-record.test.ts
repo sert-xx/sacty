@@ -90,6 +90,58 @@ describe("stripReviewRecord：記録のブロックを取り除く（PBI-460）"
     expect(stripReviewRecord(keepText)).toBe(keepText);
   });
 
+  it("行の途中にバッククォートを含む行は開きではなく、後ろの指摘を巻き込まない", () => {
+    const text =
+      "```foo``` を使うと\n\n## 指摘\n1. [提案] 直す\n\n```sacty-review-record\n" +
+      payload(20) +
+      "\n```";
+    const stripped = stripReviewRecord(text);
+    expect(stripped).toContain("## 指摘");
+    expect(stripped).toContain("1. [提案] 直す");
+    expect(stripped).toContain("```foo``` を使うと");
+    expect(stripped).not.toContain("LEAK-20");
+  });
+
+  it("改行が CRLF・CR でも、見出し付きのブロックを閉じた形で除く（mode と scope だけの記録も残らない）", () => {
+    for (const nl of ["\r\n", "\r"]) {
+      const text = [
+        "総評",
+        "",
+        "```sacty-review-record",
+        '{"mode":"sequential","scope":["LEAK-21"]}',
+        "```",
+        "",
+        "末尾",
+      ].join(nl);
+      const stripped = stripReviewRecord(text);
+      expect(stripped).not.toContain("LEAK-21");
+      expect(stripped.toLowerCase()).not.toContain("sacty-review-record");
+      expect(stripped).toContain("総評");
+      expect(stripped).toContain("末尾");
+      const block = `\`\`\`sacty-review-record${nl}{"mode":"sequential"}${nl}\`\`\``;
+      expect(readReviewRecordBlock(block)).toEqual({ mode: "sequential" });
+    }
+  });
+
+  it("長いフェンスの中に、mode と scope だけの記録の見出し付きフェンスが入れ子のとき、外側ごと除く", () => {
+    const text = [
+      "総評",
+      "",
+      "````md",
+      "```sacty-review-record",
+      '{"mode":"sequential","scope":["LEAK-22"]}',
+      "```",
+      "````",
+      "",
+      "末尾",
+    ].join("\n");
+    const stripped = stripReviewRecord(text);
+    expect(stripped).not.toContain("LEAK-22");
+    expect(stripped).not.toContain("````");
+    expect(stripped).toContain("総評");
+    expect(stripped).toContain("末尾");
+  });
+
   it("行へのコメントの本文とリスク評価の各文にも使える", () => {
     const reviewed = withoutReviewRecord({
       output: `本文\n${variants[0]?.[1]}`,
@@ -189,6 +241,44 @@ describe("readReviewRecordBlock・checkReviewRecord（PBI-460）", () => {
     ]) {
       expect(checkReviewRecord(bad, identity)).toBeNull();
     }
+  });
+
+  it("件数の上限は、ちょうどの件数が通り、1 件超えると全体が null になる（欄ごと）", () => {
+    const n = (count: number, make: () => unknown) => Array.from({ length: count }, make);
+    const fields: [string, number, () => unknown][] = [
+      ["viewpoints", 100, () => ({ id: "C", status: "failed" })],
+      ["notReviewed", 100, () => ({ id: "C", reason: "r" })],
+      ["dismissed", 100, () => ({ title: "t", reason: "r" })],
+      ["scope", 20, () => "x"],
+      ["verification", 20, () => ({ kind: "ran", text: "x" })],
+    ];
+    for (const [key, max, make] of fields) {
+      expect(checkReviewRecord({ [key]: n(max, make) }, identity)).not.toBeNull();
+      expect(checkReviewRecord({ [key]: n(max + 1, make) }, identity)).toBeNull();
+    }
+  });
+
+  it("リスク評価の文が記録だけのときは、評価を使わない。ほかの文が残る評価は、記録だけを除いて使う", () => {
+    const block = variants[0]?.[1] ?? "";
+    const base = {
+      change: "変更",
+      scope: "範囲",
+      reversibility: "戻せる",
+      verification: "確認",
+      focus: [],
+    };
+    const dropped = withoutReviewRecord({
+      output: "本文",
+      comments: [],
+      risk: { ...base, scope: block },
+    });
+    expect(dropped.risk).toBeUndefined();
+    const kept = withoutReviewRecord({
+      output: "本文",
+      comments: [],
+      risk: { ...base, change: `変更\n${block}` },
+    });
+    expect(kept.risk?.change).toBe("変更");
   });
 
   it("欄が欠けた記録は、配列を空にして残す。伏せる関数が例外を投げれば null", () => {

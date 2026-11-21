@@ -117,7 +117,6 @@ It decides from the PR title, description, and diff.
   It cannot attach those findings to PR lines, so it writes them in the review body with the document and section.
 - To let the agent read the documents, provide something that can read where they live, such as an MCP server, in the agent's environment.
 - For a document it could not read, the agent writes in the review body that it could not read it and what the reader should check.
-- Documents it could not read are listed in the review's scope in the review body.
 
 The agent reads the reviews and comments already on the PR and does not repeat the same problem.
 

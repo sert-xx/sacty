@@ -145,7 +145,8 @@ npm run build       # すべてのパッケージのビルド
   | `daemon-repoless.test.ts` | リポジトリを指定しないタスク |
   | `daemon-deliverables.test.ts` | 成果の書き出し、PR テンプレート、非コードの成果と単発作業、提出の前のセルフレビュー・出典の分類の記録 |
   | `daemon-task-lifecycle.test.ts` | 開始時の情報収集、テストの仕組みが無いリポジトリ、タスクのテンプレート、中止したタスクの再実行、続きのタスク（派生）、作業領域の片付け、依存のキャッシュ |
-  | `daemon-review-dispatch.test.ts` | PR のレビューが起動した観点ごとの担当の数の記録、担当を起動しなかったレビューのやり直しと一時停止、投稿する本文の担当の数の行 |
+  | `daemon-review-dispatch.test.ts` | PR のレビューが起動した観点ごとの担当の数の記録、担当を起動しなかったレビューのやり直しと一時停止、投稿する本文に担当の数などの過程の情報が出ないこと |
+  | `daemon-review-record.test.ts` | PR のレビューの過程の記録（`sacty-review-record`）の読み取り・検査・作業履歴への記録と、投稿する本文からの取り除き |
   | `daemon-projects-intake.test.ts` | プロジェクト（対象・エクスポート・削除）、sacty の設定、Issue・PR・JIRA のチケットの取り込みとトリアージ、レビューの再依頼、Slack の通知先 |
   | `daemon-risk-assessment.test.ts` | PR のリスク評価（PR を作る・更新するときは評価しないこと、レビューの工程での評価・記録・コメントへの掲載・答えからの JSON の取り除き） |
   | `daemon-review-watch.test.ts` | レビューを投稿した後の PR の見守り（先頭の変化・作者の返信での再レビュー、マージ・クローズでの完了、以前の版で完了したタスク、GitHub の再依頼との両立） |

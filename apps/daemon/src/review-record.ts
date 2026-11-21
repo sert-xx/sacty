@@ -30,6 +30,9 @@ const HEADING_ANYWHERE = new RegExp(REVIEW_RECORD_HEADING, "i");
 /** 行頭の字下げ・引用（`>`）・リストの印。 */
 const LINE_PREFIX = /^(?:[ \t]+|>|(?:[-*+]|\d{1,9}[.)])(?=[ \t]))*/;
 
+/** 改行は \r\n・\r・\n のどれでも分ける。 */
+const LINE_BREAK = /\r\n|\r|\n/;
+
 interface Fence {
   start: number;
   end: number;
@@ -68,7 +71,8 @@ function findFences(lines: readonly string[]): Fence[] {
       continue;
     }
     const opening = rest.match(/^(`{3,}|~{3,})(.*)$/);
-    if (opening) {
+    // バッククォートのフェンスは、情報文字列にバッククォートを含まないものだけが開き（「```foo``` を使うと」は開きではない）
+    if (opening && !(opening[1]?.startsWith("`") && (opening[2] ?? "").includes("`"))) {
       open = {
         start: i,
         char: opening[1]?.[0] ?? "`",
@@ -109,13 +113,22 @@ function bracketDelta(line: string): number {
 
 /** 1 回分の除去。除くものが無ければ、入力をそのまま返す。 */
 function stripOnce(text: string): string {
-  const lines = text.split("\n");
+  const lines = text.split(LINE_BREAK);
   const remove = new Array<boolean>(lines.length).fill(false);
   const fenced = new Array<boolean>(lines.length).fill(false);
   for (const fence of findFences(lines)) {
     for (let i = fence.start; i <= fence.end; i++) fenced[i] = true;
     // 見出しを情報文字列に含むもの、または中身に記録に固有の欄名をキーとして含むもの（JSON として読めるかは問わない）
-    if (HEADING_ANYWHERE.test(fence.info) || FIELD_KEY.test(fence.content.join("\n"))) {
+    // 中身に、見出し付きのフェンスが入れ子になっているもの（外側を除くと内側が現れる）も、外側ごと除く
+    const nestedHeading = fence.content.some((l) => {
+      const m = bare(l).match(/^(?:`{3,}|~{3,})(.*)$/);
+      return m !== null && HEADING_ANYWHERE.test(m[1] ?? "");
+    });
+    if (
+      HEADING_ANYWHERE.test(fence.info) ||
+      nestedHeading ||
+      FIELD_KEY.test(fence.content.join("\n"))
+    ) {
       for (let i = fence.start; i <= fence.end; i++) remove[i] = true;
     }
   }
@@ -163,7 +176,7 @@ export function stripReviewRecord(text: string): string {
  * 読まない）。ブロックが無ければ undefined（記録を返さなかった）。あるのに JSON として読めなければ null。
  */
 export function readReviewRecordBlock(output: string): unknown | null | undefined {
-  const lines = output.split("\n");
+  const lines = output.split(LINE_BREAK);
   const block = findFences(lines).find((f) => HEADING_ANYWHERE.test(f.info));
   if (!block) return undefined;
   if (!block.closed) return null;
