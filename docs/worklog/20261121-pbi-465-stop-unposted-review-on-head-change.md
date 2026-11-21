@@ -33,7 +33,11 @@
 
 ## 確かめたこと
 
-- 最後の変更の後に、`npx vitest run`（全件）、`npm run lint`、`npm run typecheck` を実行した。結果は PR の本文の「どう確かめたか」に書いた。service・prompts・投影・届かなかった回の判定の変更を 1 つずつ外すと、新しいテストが落ちることも確かめた。
+- 最後の変更の後に実行した（結果はそのときのもの）：
+  - `npx vitest run`（全件）：335 ファイル・6665 件が通り、14 件はスキップだった。
+  - `npm run lint`（`biome check --error-on-warnings .`）：801 ファイルを検査して通った。
+  - `npm run typecheck`（`tsc --noEmit`）：通った。
+- service・prompts・投影・届かなかった回の判定の変更を 1 つずつ外すと、新しいテストが落ちることも確かめた。
 - `npx vitest run tests/docs apps/daemon/src/default-skills.test.ts`：5 ファイル・217 件が通った。
 - `grep -rn "20261103-0744-deliver-discarded-ai-review-to-person"`（`node_modules`・`.git` を除く）：旧ファイル名への参照が残っていないことを確かめた。
 - 書いた振る舞いを、次のコードと突き合わせた：`apps/daemon/src/service.ts` の `checkReviewPullRequests`・`checkReviewHead`・`abortReviewRun`・`recordReviewRunStopped`・`recordableReviewStop`・`reviewSettlingNow`・`composeReviewPost`・`cancel`、`packages/core/src/events.ts` の `ReviewRunStopped`、`packages/core/src/projection.ts` の `ReviewRunStopped`・`ReviewTargetResolved`・`ReviewRestarted`、`packages/core/src/cost.ts` の `CHARGED_EVENT_TYPES`、`apps/web/src/lib/step-costs.ts`、`apps/daemon/src/undelivered-review.ts`、`apps/daemon/src/prompts.ts` の `rereviewLines`、`apps/daemon/src/suggestion-triage.ts` の `countSuggestionRounds`。
@@ -45,6 +49,7 @@
 | 人の一時停止が打ち切りと重なると消える（implement-1-2、implement-3-1） | 打ち切りより先の一時停止の要求も人の要求として残すようにし、テスト `TV-14（人の操作を優先・人が先）` を足した |
 | 待ちの印が無い間に始め直しが止まる（implement-1-3） | 印が無い間は、いま見た時刻から待つ。仕様書の記述も実装に合わせた |
 | 届かなかった回の結線のテスト（implement-1-1） | 親の取り込みを通す 2 件を足した |
+| 打ち切りより先・打ち切りの間の人の一時停止（implement-4-1） | 順序 A（人が先）・B（止めている間）の 2 件のテストで、`ReviewRunStopped` を記録せず人の一時停止にすることを確かめた。`abortReviewRun` の人の要求の扱いを外すと落ちる |
 | テストのファイル名（implement-1-4） | `daemon-review-run-stopped.test.ts` に変え、CONTRIBUTING.md の表に行を足した |
 
 ## 残したこと
