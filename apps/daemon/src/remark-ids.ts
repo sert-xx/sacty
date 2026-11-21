@@ -10,8 +10,10 @@ const STEP_KEYS =
 const ID = `${STEP_KEYS}-\\d+-\\d+(?:[〜~]\\d+-\\d+)?`;
 /** 区切り（と・、・,）で並ぶ ID。 */
 const ID_LIST = `${ID}(?:\\s*[、,・と]\\s*${ID})*`;
-/** 置き換えたあと、日本語の語が続くときは、間の空白を詰める。 */
-const SPACE_BEFORE_CJK = "[ \\u3000]*(?=[\\u3000-\\u9fff\\uff00-\\uffef]|$)";
+/** ID の前に語の境界を置く（ほかの語の一部を ID と読まない）。 */
+const BOUNDARY = "(?<![A-Za-z0-9-])";
+/** 置き換えたあと、日本語の語が続くときだけ、間の空白を詰める（任意。続くものが ASCII でも置き換えは行う）。 */
+const SPACE_BEFORE_CJK = "(?:[ \\u3000]*(?=[\\u3000-\\u9fff\\uff00-\\uffef]|$))?";
 
 // 括弧の前の空白は、(?<![ 　]) で「空白の並びの先頭」からだけ始める（どの位置からも始めると、閉じ括弧の無い長い空白で 2 乗になる）。
 // 括弧の中の空白は、区切りと語の前後に1通りでだけ当てる
@@ -19,8 +21,8 @@ const PARENTHESIZED = new RegExp(
   `(?<![ \\u3000])[ \\u3000]*[（(][ \\t\\u3000]*${ID_LIST}(?:[ \\t\\u3000]*(?:への対応|の対応|に対応))?[ \\t\\u3000]*[）)]`,
   "g",
 );
-const AFTER_REMARK_WORD = new RegExp(`指摘\\s*${ID_LIST}${SPACE_BEFORE_CJK}`, "g");
-const BARE = new RegExp(`${ID_LIST}${SPACE_BEFORE_CJK}`, "g");
+const AFTER_REMARK_WORD = new RegExp(`指摘\\s*${BOUNDARY}${ID_LIST}${SPACE_BEFORE_CJK}`, "g");
+const BARE = new RegExp(`${BOUNDARY}${ID_LIST}${SPACE_BEFORE_CJK}`, "g");
 
 /**
  * 文の中の指摘の ID を、文を壊さずに除く。規則は上から順に当て、当たった所は次の規則に回さない。

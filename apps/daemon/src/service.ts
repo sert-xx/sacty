@@ -22089,9 +22089,18 @@ export class TaskService {
           const usedSecrets: string[] = [];
           if (pr?.repo) {
             try {
-              await this.githubToken(original, pr.repo, usedSecrets);
-            } catch {
-              // 取り出せないときは、伏せる値が無いまま作る
+              await this.githubToken(
+                original,
+                pr.repo,
+                usedSecrets,
+                undefined,
+                AbortSignal.timeout(30_000),
+              );
+            } catch (error) {
+              // 取り出せないとき（時間切れを含む）は、伏せる値が無いまま作る。理由は残す
+              console.warn(
+                `[daemon] タスク ${original.id} の後続のタスクの題を伏せる値を取り出せませんでした：${renderMessage(errorText(error), "ja")}`,
+              );
             }
           }
           const request = buildDeferralTask({

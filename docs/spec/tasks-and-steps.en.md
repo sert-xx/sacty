@@ -241,11 +241,11 @@ To narrow down what the approver looks at, the Requirements and Design steps (`P
   - The projection keeps the classification of the latest submission per step in `provenances`. When the text is replaced outside a step run, it becomes no record, as with the self-review.
 - The items a person checks (`needsCheck`) are inferences, quotes whose original text is not in the input, and items without a classification. When the authoring agent classified the items itself (`sequential`), every item.
 - The screen shows the number of items to check and the number per kind on the deliverable cards (not on approved deliverables) and the approval screen (`ProvenanceNote`). When there are items to check, they are listed open in the warning color, and quotes and derived items are collapsed under "Others". With no record, a warning is shown.
-- The body of a Requirements or Design PR has the items to confirm and their grounds under "Where to check" (the PR version of `provenanceGuideLines`; the number of items to confirm, the counts of quotes, derivations, and inferences, and the line about whether sub-agents classified are not written in the body, PBI-471; the screen is unchanged; in the purpose or summary part when following a template).
+- The body of a Requirements or Design PR has the items to confirm and their grounds under "Where to check" (the PR version, `provenancePullRequestLines`; the number of items to confirm, the counts of quotes, derivations, and inferences, and the line about whether sub-agents classified are not written in the body, PBI-471; the screen is unchanged; in the purpose or summary part when following a template).
 
 Related ADR: [Have a subagent other than the author classify the provenance of requirements and design items, to narrow down what the approver looks at](../adr/20261027-1427-classify-provenance-before-approval.md)
 
-Code: `apps/daemon/src/prompts.ts` (`provenanceLines`, `provenanceInputs`, `checkProvenance`, `provenanceIds`, `viewpointRename`, `provenanceGuideLines`, `PROVENANCE_HEADING`), `apps/daemon/src/service.ts`, `packages/core/src/events.ts` (`Provenance`, `PROVENANCE_STEPS`, `needsCheck`), `packages/core/src/projection.ts`, `apps/web/src/components/provenance.tsx` (`ProvenanceNote`)
+Code: `apps/daemon/src/prompts.ts` (`provenanceLines`, `provenanceInputs`, `checkProvenance`, `provenanceIds`, `viewpointRename`, `provenanceGuideLines`, `provenancePullRequestLines`, `PROVENANCE_HEADING`), `apps/daemon/src/service.ts`, `packages/core/src/events.ts` (`Provenance`, `PROVENANCE_STEPS`, `needsCheck`), `packages/core/src/projection.ts`, `apps/web/src/components/provenance.tsx` (`ProvenanceNote`)
 
 ## Plans
 

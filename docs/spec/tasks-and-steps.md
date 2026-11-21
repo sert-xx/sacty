@@ -352,11 +352,11 @@
 - 人間が確かめる項目（`needsCheck`）は、推論と、原文が Input に見つからない引用と、分類の無い項目。書いたエージェントが自分で分類した（`sequential`）ときは、すべての項目。
 - 画面は、成果物のカード（承認済みの成果物では出さない）と承認の画面に、確かめる項目の数と区分ごとの数を出す（`ProvenanceNote`）。
   確かめる項目があれば警告の色で開いたまま挙げ、引用・導出は「そのほか」として折りたたむ。記録が無ければ警告を出す。
-- 要求要件・設計の PR の本文には「確かめる所」として、確かめる項目（推論など）の ID と根拠を入れる（PR 用の `provenanceGuideLines`。テンプレートに沿わせるときは目的・概要の所）。確かめる項目の件数と、引用・導出・推論の数、分類をサブエージェントが行ったかどうかの行は、本文に書かない（PBI-471。画面の表示は変えない）。
+- 要求要件・設計の PR の本文には「確かめる所」として、確かめる項目（推論など）の ID と根拠を入れる（PR 用の `provenancePullRequestLines`。テンプレートに沿わせるときは目的・概要の所）。確かめる項目の件数と、引用・導出・推論の数、分類をサブエージェントが行ったかどうかの行は、本文に書かない（PBI-471。画面の表示は変えない）。
 
 関係する ADR: [承認する人が見る所を絞るため、要求要件・設計の項目の出典を、書いたエージェントとは別のサブエージェントに分類させる](../adr/20261027-1427-classify-provenance-before-approval.md)
 
-コード: `apps/daemon/src/prompts.ts`（`provenanceLines`・`provenanceInputs`・`checkProvenance`・`provenanceIds`・`viewpointRename`・`provenanceGuideLines`・`PROVENANCE_HEADING`）、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`（`Provenance`・`PROVENANCE_STEPS`・`needsCheck`）、`packages/core/src/projection.ts`、`apps/web/src/components/provenance.tsx`（`ProvenanceNote`）
+コード: `apps/daemon/src/prompts.ts`（`provenanceLines`・`provenanceInputs`・`checkProvenance`・`provenanceIds`・`viewpointRename`・`provenanceGuideLines`・`provenancePullRequestLines`・`PROVENANCE_HEADING`）、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`（`Provenance`・`PROVENANCE_STEPS`・`needsCheck`）、`packages/core/src/projection.ts`、`apps/web/src/components/provenance.tsx`（`ProvenanceNote`）
 
 ## 進め方の組み合わせ
 
