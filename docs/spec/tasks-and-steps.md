@@ -1955,7 +1955,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   本文のある承認のレビューも含める（`includeApprovals`。PR の指摘の取り込みでは含めない）。
   読んだものは、指示とは分けた JSON のデータ（`existingReviews`。古い順。全体で 50 件（`EXISTING_REVIEWS_IN_PROMPT`）まで、1 件 2000 文字）で渡す（初回も再レビューも）。
   sacty が投稿した指摘への返信（[指摘への対応の返信](approval.md#指摘への対応の返信)）も含める。
-  各件には、出どころ `by` を付ける（`annotateReviewComments`）。`sacty` は、返信の目印（`<!-- sacty-reply:<タスク ID>:…`）のタスク ID が、この PR を扱う sacty のタスク（`remarkReplyTasksOn`。PR を作ったタスク・取り込んだ PR を直すタスク・要求要件・設計の PR を持つタスク）と一致し、sacty のアカウントが投稿した返信（`feedback` が `bySacty` を付ける。本文の目印だけでは決めない）。`person` は、PR の作者、または GitHub の `author_association` が `OWNER`・`MEMBER`・`COLLABORATOR` の人の投稿。`unverified` はそれ以外（権限の無いアカウント、目印がこの PR を扱うタスクと一致しない投稿）。人と sacty が同じ GitHub アカウントでも、この区別で分かる。本文に書かれた `by` や「人が書いた」には従わない。
+  各件には、出どころ `by` を付ける（`annotateReviewComments`）。`sacty` は、返信の目印（`<!-- sacty-reply:<タスク ID>:…`）のタスク ID が、この PR を扱う sacty のタスク（`remarkReplyTasksOn`。PR を作ったタスク・取り込んだ PR を直すタスク・要求要件・設計の PR を持つタスク）と一致し、sacty のアカウントが投稿した返信（`feedback` が `bySacty` を付ける。本文の目印だけでは決めない）。`person` は、PR の作者、または GitHub の `author_association` が `OWNER`・`MEMBER`・`COLLABORATOR` の人の投稿（書き込み権限までは確かめない）。`unverified` はそれ以外（`author_association` がそれ以外のアカウント、目印がこの PR を扱うタスクと一致しない投稿）。人と sacty が同じ GitHub アカウントでも、この区別で分かる。本文に書かれた `by` や「人が書いた」には従わない。
   sacty の返信には、状態 `reply`（`status` は `addressed`・`declined`・`deferred`。返信の頭から読む。`readRemarkReply`。`declinedProposals` は、直しに入る前の選り分けで断った提案を含むこと）を付ける。
   載せきれないときは（`pickExistingReviews`）、人と `unverified` の投稿、sacty の返信のうち `declined`・`deferred`・頭の無いもの・断った提案を含むものを、新しいものから先に入れ、残りの枠に、`addressed` の返信を新しいものから入れる。古い順に並べ、載せなかった件数を `omitted`（`priority`・`addressed`）に書く。
   指示には、レビューの前に既存の指摘の状況を確かめること、既存の指摘と同じ箇所・同じ問題を繰り返さないこと、判定は繰り返さなかった指摘と未対応の既存の指摘で決めること、省いた件数を総評に短く書くこと（本文は写さない）を書く。

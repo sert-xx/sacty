@@ -9,11 +9,11 @@ import { readRemarkReply, remarkOriginRef, remarkOriginUrl } from "./remark-repl
  * （feedback が付ける bySacty）と、投稿した人の PR の作者・リポジトリとの関係で決める。本文に書かれた「人が書いた」などには従わない。
  */
 
-/** 人の投稿として扱う、リポジトリとの関係（書き込み権限のある人）。 */
+/** 人の投稿として扱う、リポジトリとの関係（組織のメンバー・共同作業者。書き込み権限までは確かめない）。 */
 const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /**
- * 出どころを付ける。sacty：bySacty の付いた返信。person：PR の作者、または書き込み権限のある人（OWNER・MEMBER・COLLABORATOR）。
+ * 出どころを付ける。sacty：bySacty の付いた返信。person：PR の作者、または組織のメンバー・共同作業者（書き込み権限は問わない。OWNER・MEMBER・COLLABORATOR）。
  * unverified：それ以外（権限の無いアカウント、目印がこの PR を扱うタスクと一致しない投稿）。人の却下として扱うのは person だけ。
  */
 export function annotateReviewComments(

@@ -368,7 +368,7 @@ export type PullRequestFeedback = {
   bySacty?: true;
   /**
    * 投稿の出どころ（PBI-445。デーモンが、レビューの工程に渡す前に付ける）。sacty は sacty の返信、person は PR の作者・リポジトリの
-   * 書き込み権限のある人の投稿、unverified はそれ以外（本文では決めない）。
+   * 組織のメンバー・共同作業者（書き込み権限までは確かめない）の投稿、unverified はそれ以外（本文では決めない）。
    */
   by?: "sacty" | "person" | "unverified";
   /** by が sacty の返信の、状態の申告と、断った提案を含むか（PBI-445。返信の頭から読む）。 */

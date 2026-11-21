@@ -135,7 +135,7 @@ Findings that overlap one already addressed or one already rejected are not post
 - When the problem changed or grew after the rejection, it appears as a new finding.
 - Only when something was dropped, the overview gets one line with the number (never the content; when `[要修正]` findings were dropped, that number is given too).
 
-What counts as your "won't do" is a reply from the PR's author or from someone with write access to the repository (`OWNER`, `MEMBER`, `COLLABORATOR`). A reply from any other account does not cause a `[要修正]` to be dropped.
+What counts as your "won't do" is a reply from the PR's author or from an organization member or collaborator (`OWNER`, `MEMBER`, `COLLABORATOR`; write access is not checked). A reply from any other account does not cause a `[要修正]` to be dropped.
 
 Requests outside the PR's purpose (the PR description, or the request, acceptance criteria or design it points to), such as adding a feature the change does not need or reworking an unrelated place, are not posted.
 Only when some were dropped, the summary says the count in one line (not the content).
