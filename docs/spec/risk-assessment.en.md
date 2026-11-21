@@ -7,7 +7,7 @@ The assessment is a guide for a person deciding how deeply to review the PR, and
 It is not made when a PR is opened or updated, and it is not put in the PR description.
 sacty does not skip a review, merge automatically, or change the steps because of the assessment.
 
-Related ADR: [Produce a PR risk assessment (not used to skip reviews or to merge automatically)](../adr/20261116-1632-superseded-pr-risk-assessment.md), [Decide the PR risk level by the weight of the signals and the size of a dependency version update](../adr/20261117-0433-superseded-risk-level-by-signal-weight.md), [When the size of a dependency version update cannot be read, make the PR risk level medium](../adr/20261117-0455-unknown-dependency-update-is-medium.md), [The PR risk assessment reads only the last answer and does not fall back to an earlier one when it cannot be read](../adr/20261117-1245-risk-assessment-reads-only-last-answer.md), [Assess the PR risk only in a round where the review has no findings](../adr/20261121-0300-superseded-risk-assessment-only-when-review-has-no-findings.md)
+Related ADR: [Produce a PR risk assessment (not used to skip reviews or to merge automatically)](../adr/20261116-1632-superseded-pr-risk-assessment.md), [Decide the PR risk level by the weight of the signals and the size of a dependency version update](../adr/20261117-0433-superseded-risk-level-by-signal-weight.md), [When the size of a dependency version update cannot be read, make the PR risk level medium](../adr/20261117-0455-unknown-dependency-update-is-medium.md), [The PR risk assessment reads only the last answer and does not fall back to an earlier one when it cannot be read](../adr/20261117-1245-risk-assessment-reads-only-last-answer.md), [Assess the PR risk only in a round where the review has no findings](../adr/20261121-0300-superseded-risk-assessment-only-when-review-has-no-findings.md), [Separate risk grounds and human requests into independent Alerts](../adr/20261121-0345-risk-assessment-alerts.md)
 
 ## When it is assessed
 
@@ -55,7 +55,7 @@ It compares the level from the signals with the level from the dependency versio
 - When there is a signal, the level the agent gave is not used (with exactly one light signal, the level is medium even if the agent gave high).
 - For the level with no signal, the agent is told to choose low when every change is one of the "safe kinds" and medium otherwise. If the agent gave high, it stays high.
 - The agent is told to choose the higher level when in doubt.
-- No numeric score is produced.
+- No score or probability is produced. The numbers 1–3 in posted comments identify the low, medium, and high categories.
 
 ### Risk signals
 
@@ -115,7 +115,7 @@ Code: `apps/daemon/src/risk-assessment.ts` (`riskCriteriaLines`, `riskLevelFor`,
 The agent answers with the assessment as `sacty-risk-assessment` JSON.
 
 ```json
-{"sacty-risk-assessment": {"level": "medium", "signals": [], "dependencyUpdate": "none", "change": "変更の種類", "scope": "影響の範囲", "reversibility": "取り消しやすさ", "verification": "確かめた範囲", "focus": [{"where": "src/pay.ts:40-72", "why": "見る理由"}]}}
+{"sacty-risk-assessment": {"level": "medium", "signals": [], "dependencyUpdate": "none", "change": "変更の種類", "scope": "影響の範囲", "reversibility": "取り消しやすさ", "verification": "確かめた範囲", "focus": [{"where": "src/pay.ts:40-72", "why": "見る理由と、人間に判断・確認してほしいこと"}]}}
 ```
 
 | Field | Content |
@@ -127,7 +127,7 @@ The agent answers with the assessment as `sacty-risk-assessment` JSON.
 | `scope` | The reach of the impact (which features, users, or callers it reaches) |
 | `reversibility` | The ease of undoing (whether reverting the change undoes it) |
 | `verification` | What was verified (which tests or runs verified what, and what has not been verified) |
-| `focus` | The places a person should look at (`where` is a path and lines, `why` is the reason to look; up to 5) |
+| `focus` | The places a person should look at (`where` is a path and lines, `why` includes both the reason to look and what the person should judge or verify; up to 5. Do not repeat the full finding) |
 
 - Only the last assessment answer is read. An assessment answer is an object that can be parsed as JSON and has the heading `sacty-risk-assessment` as a top-level key.
 - If the last answer cannot be read, sacty does not fall back to an earlier answer (a draft, and so on) and treats the answer as unreadable (an earlier answer may predate a signal or a size that was added later).
@@ -183,7 +183,12 @@ Code: `apps/daemon/src/risk-assessment.ts` (`reviewRiskLines`, `withoutRiskBlock
 
 The review comment carries the section "リスク評価" (`riskAssessmentLines`). The PR description does not.
 
-- It lists, in order: the level (low, medium, or high), the suggested review depth, the risk signals that apply (if any; each name carries its weight as "（重い）" (heavy) or "（軽い）" (light)), the size of the dependency version update (if any), the kind of change, the reach of the impact, the ease of undoing it, what was verified, the places to look at (if any), and a note that it is an AI-made guide.
+- The common renderer separates the decision material, human requests, and verification:
+  - The level and grounds appear in a GitHub Alert: low uses `[!NOTE]` and **変更リスク: 低(1)**, medium uses `[!IMPORTANT]` and **変更リスク: 中(2)**, and high uses `[!WARNING]` and **変更リスク: 高(3)**. The kind of change, reach of impact, and ease of undoing form one paragraph for low and separate items for medium/high. The suggested review depth, applicable risk signals (with their weights), and dependency update size remain in this alert.
+  - When focus items exist, a separate `[!TIP]` headed **とくに見る箇所（人間への確認依頼）** lists the location and the recorded reason/request in order. No request is invented for older records.
+  - **確認範囲・未確認事項** and the AI guidance note are outside the alerts. The existing `verification` remains free text; it is not automatically split into verified and unverified parts.
+- Each alert is a top-level blockquote, separated by an unquoted blank line. Every line inside an alert, including blank lines and multiline text in old records, is prefixed with a quote marker.
+- A `focus[].where` that is a relative path followed by positive line numbers (for example `src/cancel.ts:10-40`) links to the target repository at `riskAssessment.commit`. The repository host, including Enterprise, is preserved. Path segments are URL encoded, including spaces, Japanese characters, parentheses, brackets, and hash signs. No extra API is called to check file existence. Absolute paths, parent references, invalid/reversed line numbers, unknown repositories/commits, and free text remain text.
 - When the assessment failed, it says so with the reason, and says to decide the review depth from the diff.
 - Only the assessment of the head commit reviewed in this round, in a round with no findings (and the `suggestions_declined` assessment-only run for that head), is shown. An assessment of an earlier round or an earlier head, and one left over in a round without findings, are not shown as this round's. A round that judged the same head again (with no findings) shows that round's assessment.
 - The heading, the field names, and the depth text are in Japanese, like sacty's other fixed text. The grounds are shown in the language the agent wrote them in.

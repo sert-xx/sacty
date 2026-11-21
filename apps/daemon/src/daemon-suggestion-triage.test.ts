@@ -759,7 +759,12 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
           scope: "決済の API",
           reversibility: "元に戻せば戻る",
           verification: "差分のテストを読んだ",
-          focus: [],
+          focus: [
+            {
+              where: "src/retry.ts:10-20",
+              why: "再送の条件が変わるため、二重送信を防げるか確認してください。",
+            },
+          ],
         },
       }),
     );
@@ -793,7 +798,11 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     });
     expect(taskOf(service, id).riskAssessment?.via).toBe("suggestions_declined");
     expect(riskComments(pulls)).toHaveLength(1);
-    expect(riskComments(pulls)[0]?.body).toContain("リスク評価");
+    expect(riskComments(pulls)[0]?.body).toContain("> [!WARNING]\n> **変更リスク: 高(3)**");
+    expect(riskComments(pulls)[0]?.body).toContain("> [!TIP]");
+    expect(riskComments(pulls)[0]?.body).toContain(
+      `/blob/${commitOf(service, id)}/src/retry.ts#L10-L20`,
+    );
     expect(riskComments(pulls)[0]?.body).toContain("要対応");
     expect(pulls.drafts[7]).toBe(false);
     expect(count(service, id, "PullRequestMarkedReady")).toBe(1);

@@ -9395,7 +9395,7 @@ export function buildReviewBody(
     verdict === "no_findings" &&
     task.riskAssessment?.via === "review" &&
     task.riskAssessment.commit === task.reviewTarget?.headCommit
-      ? riskAssessmentLines(task.riskAssessment)
+      ? riskAssessmentLines(task.riskAssessment, task.reviewTarget?.repo)
       : [];
   const stale =
     options.latestCommit && reviewed && options.latestCommit !== reviewed

@@ -1010,12 +1010,11 @@ For a dependency version update (a change to the version of an external library 
 
 When other code changes together with a dependency version update, the level is the higher of that code change's level and the update's level.
 
-Besides the level and the suggested depth, the section holds the following.
+The comment separates the information as follows. The numbers 1–3 are category identifiers, not scores or probabilities.
 
-- The risk signals that apply (each name carries heavy or light)
-- The size of the dependency version update (when there is one)
-- The kind of change, the reach of the impact, the ease of undoing, and what was verified
-- The places to look at (file and lines, and the reason to look)
+- The level and grounds appear in a GitHub Alert: low (1) uses `[!NOTE]`, medium (2) uses `[!IMPORTANT]`, and high (3) uses `[!WARNING]`. It includes the kind of change, reach of impact, ease of undoing, suggested review depth, risk signals with their weights, and dependency update size when applicable. Low-risk grounds form one paragraph; medium/high grounds are separate items.
+- The places to look at appear in a separate `[!TIP]`, with the location, reason to look, and what you should judge or verify. This alert is omitted when there are no focus items. Valid relative file paths with line numbers link to the assessed commit, including on Enterprise. Other locations remain text; older records show only what was recorded.
+- **確認範囲・未確認事項** (verification scope and unverified matters) and the AI guidance note appear outside the alerts. What was verified stays free text, including anything unverified; it is not automatically split.
 
 Keep the following in mind about the assessment.
 

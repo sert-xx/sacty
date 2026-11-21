@@ -1,4 +1,5 @@
 import { message, type RiskAssessment, renderMessage, type Task } from "@sacty/core";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { describe, expect, it } from "vitest";
 import {
   buildPrompt,
@@ -10,10 +11,12 @@ import {
 } from "./prompts.js";
 import {
   assessesRiskInReview,
+  buildDeclinedRiskComment,
   extractRiskAssessment,
   RISK_ASSESSMENT_HEADING,
   RISK_FOCUS_MAX,
   RISK_LOADED_GUIDANCE_LINE,
+  reviewRiskLines,
   riskAssessmentLines,
   riskLevelFor,
 } from "./risk-assessment.js";
@@ -60,7 +63,7 @@ const target = {
   url: "https://github.com/acme/app/pull/12",
   title: "retry",
   body: "",
-  headCommit: "h".repeat(40),
+  headCommit: "a".repeat(40),
   baseCommit: "b".repeat(40),
   author: "alice",
 };
@@ -459,27 +462,49 @@ describe("リスク評価の節（PBI-362）", () => {
     signals: ["security", "irreversible"],
   };
 
-  it("段階・勧める深さ・合図・根拠・とくに見る箇所を書く", () => {
-    expect(riskAssessmentLines(assessed(high))).toEqual([
-      "### リスク評価",
-      "",
-      "- 段階：**高**（低・中・高の3段階）",
-      "- 勧めるレビューの深さ：設計と影響から確かめる（「とくに見る箇所」を読み、リスクの合図ごとに、設計の妥当さ・影響の範囲・戻し方を確かめる）",
-      "- リスクの合図：セキュリティ（重い）、取り消しにくい変更（重い）",
-      "- 変更の種類：予約のキャンセルの API を足す",
-      "- 影響の範囲：予約の一覧と詳細の応答",
-      "- 取り消しやすさ：変更を元に戻せば戻る",
-      "- 確かめた範囲：API のテストで、キャンセルできること・二重のキャンセルを断ることを確かめた",
-      "- とくに見る箇所：",
-      "  - `src/cancel.ts:10-40`：キャンセルできる条件の判定",
-      "- AI による目安です。レビューの深さを決める参考にしてください（この評価で、レビューやテストが省かれることはありません）。",
+  it.each([
+    ["low", "NOTE", "低(1)"],
+    ["medium", "IMPORTANT", "中(2)"],
+    ["high", "WARNING", "高(3)"],
+  ])("%s の段階別 Alert と独立した TIP、枠外の検証情報を書く", (level, alert, label) => {
+    const markdown = riskAssessmentLines(assessed({ ...high, level })).join("\n");
+    expect(markdown).toContain(`> [!${alert}]\n> **変更リスク: ${label}**\n>\n`);
+    expect(markdown).toContain("\n\n> [!TIP]\n> **とくに見る箇所（人間への確認依頼）**\n>\n");
+    const tree = fromMarkdown(markdown);
+    expect(tree.children.map((node) => node.type)).toEqual([
+      "heading",
+      "blockquote",
+      "blockquote",
+      "paragraph",
+      "list",
+      "paragraph",
     ]);
+    const [risk, tip] = tree.children.filter((node) => node.type === "blockquote");
+    expect(markdown.slice(risk?.position?.start.offset ?? 0, risk?.position?.end.offset)).toContain(
+      "勧めるレビューの深さ",
+    );
+    expect(markdown.slice(tip?.position?.start.offset, tip?.position?.end.offset)).toContain(
+      "src/cancel.ts:10-40",
+    );
+    expect(markdown.slice(tip?.position?.end.offset)).toContain(
+      `- 確かめた範囲：${medium.verification}`,
+    );
+    expect(markdown.slice(tip?.position?.end.offset)).toContain("AI による目安です。");
+    if (level === "low") {
+      expect(markdown).toContain(
+        `> 変更の種類：${medium.change}。影響の範囲：${medium.scope}。取り消しやすさ：${medium.reversibility}`,
+      );
+    } else {
+      expect(markdown).toContain(
+        `> - 変更の種類：${medium.change}\n> - 影響の範囲：${medium.scope}\n> - 取り消しやすさ：${medium.reversibility}`,
+      );
+    }
   });
 
   it("段階ごとに、勧める深さが決まる。合図・とくに見る箇所が無ければ、その行を出さない", () => {
     const low = riskAssessmentLines(assessed({ ...medium, level: "low", focus: [] })).join("\n");
     expect(low).toContain("### リスク評価");
-    expect(low).toContain("- 段階：**低**");
+    expect(low).toContain("> **変更リスク: 低(1)**");
     expect(low).toContain("- 勧めるレビューの深さ：流し読みでよい");
     expect(low).not.toContain("リスクの合図：");
     expect(low).not.toContain("とくに見る箇所：");
@@ -498,17 +523,17 @@ describe("リスク評価の節（PBI-362）", () => {
       }),
     );
     expect(lines).toContain(
-      "- リスクの合図：互換性の変更（重い）、大きな差分（軽い）、不具合の疑い",
+      "> - リスクの合図：互換性の変更（重い）、大きな差分（軽い）、不具合の疑い",
     );
-    expect(lines).toContain("- 依存の版の更新：メジャー");
+    expect(lines).toContain("> - 依存の版の更新：メジャー");
     // 合図の行のすぐ後に置く
-    expect(lines.indexOf("- 依存の版の更新：メジャー")).toBe(
-      lines.findIndex((line) => line.startsWith("- リスクの合図：")) + 1,
+    expect(lines.indexOf("> - 依存の版の更新：メジャー")).toBe(
+      lines.findIndex((line) => line.startsWith("> - リスクの合図：")) + 1,
     );
     const patch = riskAssessmentLines(
       assessed({ ...medium, level: "low", dependencyUpdate: "patch" }),
     ).join("\n");
-    expect(patch).toContain("- 段階：**低**");
+    expect(patch).toContain("> **変更リスク: 低(1)**");
     expect(patch).toContain("- 依存の版の更新：パッチ");
     expect(
       riskAssessmentLines(assessed({ ...medium, dependencyUpdate: "unknown" })).join("\n"),
@@ -539,7 +564,144 @@ describe("リスク評価の節（PBI-362）", () => {
     const lines = riskAssessmentLines(
       assessed({ ...medium, focus: [{ where: "a`b`.ts", why: "理由" }] }),
     );
-    expect(lines).toContain("  - `a'b'.ts`：理由");
+    expect(lines).toContain("> - `a'b'.ts`：理由");
+  });
+});
+
+describe("リスク評価のリンクと過去の記録", () => {
+  const commit = "a".repeat(40);
+  const repo = "https://ghe.example.com:8443/acme/app.git";
+  const render = (where: string, url: string | undefined = repo, sha = commit) =>
+    riskAssessmentLines(
+      assessed(
+        {
+          ...medium,
+          focus: [{ where, why: "条件が変わるため、対象者が要件に合うか確認してください。" }],
+        },
+        "review",
+        sha,
+      ),
+      url,
+    ).join("\n");
+
+  it("評価記録のコミットと Enterprise のホストを保ち、特殊文字をエンコードする", () => {
+    const where = "src/日本語 (例)[a]#%.ts:10-40";
+    const markdown = render(where);
+    const expected = `https://ghe.example.com:8443/acme/app/blob/${commit}/src/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%28%E4%BE%8B%29%5Ba%5D%23%25.ts#L10-L40`;
+    expect(markdown).toContain(`](${expected})`);
+    const tree = fromMarkdown(markdown);
+    const links: string[] = [];
+    const labels: string[] = [];
+    function visit(node: { type: string; url?: string; value?: string; children?: unknown[] }) {
+      if (node.type === "link" && node.url) links.push(node.url);
+      if (node.type === "inlineCode" && node.value) labels.push(node.value);
+      node.children?.forEach((child) => {
+        visit(child as Parameters<typeof visit>[0]);
+      });
+    }
+    visit(tree);
+    expect(links).toEqual([expected]);
+    expect(labels).toContain(where);
+    expect(render("src/cancel.ts:10", "https://github.com/acme/app")).toContain(
+      `/blob/${commit}/src/cancel.ts#L10)`,
+    );
+    expect(render("src/cancel.ts:10-10")).toContain("#L10-L10)");
+  });
+
+  it.each([
+    "/src/a.ts:1",
+    "../a.ts:1",
+    "src/../a.ts:1",
+    "./a.ts:1",
+    "src//a.ts:1",
+    "C:\\src\\a.ts:1",
+    "src\\a.ts:1",
+    "a.ts:0",
+    "a.ts:-1",
+    "a.ts:2-1",
+    "a.ts:1-0",
+    "a.ts:1.5",
+    "a.ts:01",
+    "a.ts:9007199254740992",
+    "仕様・設定・手順を確認する",
+  ])("リンクにできない %s はテキストのまま", (where) => {
+    const markdown = render(where);
+    expect(markdown).not.toContain("/blob/");
+    expect(markdown).toContain(where);
+  });
+
+  it("リポジトリ・コミットが不明ならリンクにせず、表示時の先頭に置き換えない", () => {
+    for (const url of ["", "not a repository"])
+      expect(render("a.ts:1", url)).not.toContain("/blob/");
+    for (const sha of ["", "main", "../main", "a/b"])
+      expect(render("a.ts:1", repo, sha)).not.toContain("/blob/");
+    expect(riskAssessmentLines(assessed(medium, "review", commit)).join("\n")).not.toContain(
+      "/blob/",
+    );
+    const comment = buildDeclinedRiskComment({
+      taskId: "test",
+      commit: "b".repeat(40),
+      repo,
+      risk: assessed(medium, "review", commit) as NonNullable<Task["riskAssessment"]>,
+    });
+    expect(comment).toContain(`/blob/${commit}/`);
+    expect(comment).not.toContain(`/blob/${"b".repeat(40)}/`);
+  });
+
+  it.each([0, 1, 3])("確認箇所が %i 件のときの省略・順序・既存の文言を保つ", (count) => {
+    const focus = Array.from({ length: count }, (_, i) => ({
+      where: `src/a.ts:${i + 1}`,
+      why: `記録にある理由${i}`,
+    }));
+    const markdown = riskAssessmentLines(assessed({ ...medium, focus }), repo).join("\n");
+    expect(markdown.includes("[!TIP]")).toBe(count > 0);
+    let previous = -1;
+    for (const item of focus) {
+      const at = markdown.indexOf(item.why);
+      expect(at).toBeGreaterThan(previous);
+      previous = at;
+    }
+    expect(markdown).not.toContain("確認してください");
+  });
+
+  it.each(["low", "medium", "high"])(
+    "%s の過去の記録に CRLF・空行・改行があっても枠の外へ漏れない",
+    (level) => {
+      const legacy = "一行目\r\n\r\n二行目\n三行目\r四行目";
+      const markdown = riskAssessmentLines(
+        assessed({
+          ...medium,
+          level,
+          change: legacy,
+          scope: legacy,
+          reversibility: legacy,
+          focus: [{ where: legacy, why: legacy }],
+          verification: "確認済み。未確認も同じ自由文。",
+        }),
+        repo,
+      ).join("\n");
+      const tree = fromMarkdown(markdown);
+      expect(tree.children.map((node) => node.type)).toEqual([
+        "heading",
+        "blockquote",
+        "blockquote",
+        "paragraph",
+        "list",
+        "paragraph",
+      ]);
+      for (const block of tree.children.filter((node) => node.type === "blockquote")) {
+        const text = markdown.slice(block.position?.start.offset, block.position?.end.offset);
+        expect(text.split("\n").every((line) => line.startsWith(">"))).toBe(true);
+        expect(text).toContain(">\n> 二行目");
+      }
+      expect(markdown).toContain("- 確かめた範囲：確認済み。未確認も同じ自由文。");
+    },
+  );
+
+  it("生成指示は見る理由と人間への確認依頼を同じ既存の why に求める", () => {
+    const prompt = reviewRiskLines(true).join("\n");
+    expect(prompt).toContain("why はそこを見る理由と、人間に判断・確認してほしいことの両方を書く");
+    expect(prompt).toContain("修正指摘の全文は繰り返さない");
   });
 });
 
@@ -779,7 +941,27 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
     expect(verdict).toBeGreaterThan(-1);
     expect(risk).toBeGreaterThan(verdict);
     expect(review).toBeGreaterThan(risk);
-    expect(body).toContain("- 段階：**中**（低・中・高の3段階）");
+    expect(body).toContain("> **変更リスク: 中(2)**");
+    expect(body).toContain(
+      `https://github.com/acme/app/blob/${target.headCommit}/src/cancel.ts#L10-L40`,
+    );
+  });
+
+  it("レビュー本文の長さ制限でも独立した評価枠を残し、最新の先頭へリンクを動かさない", () => {
+    const body = buildReviewBody(
+      reviewTask({
+        ...clear,
+        outputs: { review: "長い総評".repeat(30_000) },
+        riskAssessment: assessed(medium, "review", target.headCommit),
+      }),
+      { risk: true, latestCommit: "b".repeat(40) },
+    );
+    expect(body).toContain("長いため省略しました");
+    expect(body).toContain(
+      riskAssessmentLines(assessed(medium, "review", target.headCommit), target.repo).join("\n"),
+    );
+    expect(body).toContain(`/blob/${target.headCommit}/`);
+    expect(body).not.toContain(`/blob/${"b".repeat(40)}/`);
   });
 
   it("評価できなかったときも、指摘なしの回なら、そのことを載せて投稿する", () => {
