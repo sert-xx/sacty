@@ -3,7 +3,7 @@
 # PR risk assessment
 
 sacty has an AI assess the risk of a PR's content, and puts the level, the grounds, the suggested review depth, and the places to look at into the PR review comment and the UI.
-The assessment is a guide for a person deciding how deeply to review the PR, and it is given only when a person makes the final judgment (when the review has no findings).
+The assessment is a guide for a person deciding how deeply to review the PR, and it is given only when a person makes the final judgment (when the review has no findings, including the assessment-only run before the draft is removed when the remaining suggestions of a re-judged round were all declined).
 It is not made when a PR is opened or updated, and it is not put in the PR description.
 sacty does not skip a review, merge automatically, or change the steps because of the assessment.
 
@@ -185,7 +185,7 @@ The review comment carries the section "リスク評価" (`riskAssessmentLines`)
 
 - It lists, in order: the level (low, medium, or high), the suggested review depth, the risk signals that apply (if any; each name carries its weight as "（重い）" (heavy) or "（軽い）" (light)), the size of the dependency version update (if any), the kind of change, the reach of the impact, the ease of undoing it, what was verified, the places to look at (if any), and a note that it is an AI-made guide.
 - When the assessment failed, it says so with the reason, and says to decide the review depth from the diff.
-- Only the assessment of the head commit reviewed in this round, in a round with no findings, is shown. An assessment of an earlier round or an earlier head, and one left over in a round without findings, are not shown as this round's. A round that judged the same head again (with no findings) shows that round's assessment.
+- Only the assessment of the head commit reviewed in this round, in a round with no findings (and the `suggestions_declined` assessment-only run for that head), is shown. An assessment of an earlier round or an earlier head, and one left over in a round without findings, are not shown as this round's. A round that judged the same head again (with no findings) shows that round's assessment.
 - The heading, the field names, and the depth text are in Japanese, like sacty's other fixed text. The grounds are shown in the language the agent wrote them in.
 - It is placed after the verdict line and before the agent's body.
 
@@ -199,8 +199,8 @@ Code: `apps/daemon/src/risk-assessment.ts` (`riskAssessmentLines`), `apps/daemon
 - The UI shows a "PR risk assessment" section.
   - The detail of a review task (a child task or an imported PR review) shows that task's own assessment.
   - The detail of the task that opened the PR (including a task waiting for approval) shows the assessment given by the review child task of that implementation PR, without opening the child task. An assessment of a child task comes before an old `publish` assessment from before the version upgrade.
-  - It shows which head (commit) was assessed. The "current head" is the head the review child task last reviewed (or is reviewing): `reviewTarget.headCommit`, or `reviewRestartCommit` before the target is resolved. When the assessed head differs, it says it is not for the current head (an assessment is recorded only in a round with no findings, so after the head advances into a round with findings, the earlier head's assessment remains). With no head to compare, it is not shown as the current head. The detail of the review task itself uses the same comparison. A pre-upgrade `publish` assessment is compared with the PR's submitted head and the head judged to have no findings.
-  - When there is no assessment yet (no round with no findings yet), nothing is shown.
+  - It shows which head (commit) was assessed. The "current head" is the head the review child task last reviewed (or is reviewing): `reviewTarget.headCommit`, or `reviewRestartCommit` before the target is resolved. When the assessed head differs, it says it is not for the current head (an assessment is recorded only in a round with no findings or as a `suggestions_declined` run, so after the head advances into a round with findings, the earlier head's assessment remains). With no head to compare, it is not shown as the current head. The detail of the review task itself uses the same comparison. The `suggestions_declined` assessment of the task that opened the PR is shown before the child task's assessment of an earlier head when its assessed commit is that head. A pre-upgrade `publish` assessment is compared with the PR's submitted head and the head judged to have no findings.
+  - When there is no assessment yet (no round with no findings and no `suggestions_declined` run yet), nothing is shown.
 - The activity shows the occasion and the level (the reason, if it could not be assessed) in one row. A record of a carried-over assessment (from before the version upgrade) shows which commit's assessment was carried over to which commit in one row.
 
 Code: `packages/core/src/projection.ts` (`applyEvent`), `apps/web/src/components/risk-assessment.tsx` (`RiskAssessmentCard`, `riskAssessmentToShow`)

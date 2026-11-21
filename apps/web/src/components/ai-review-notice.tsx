@@ -11,8 +11,15 @@ import { useMessages } from "@/i18n/client";
 export function AiReviewNotice({ task }: { task: Task }) {
   const { task: m } = useMessages();
   const state = task.aiReview;
+  // 提案が残ったまま外した先頭が、今の先頭のときだけ出す（人のコミットで先頭が進んだ後は出さない。PBI-440）
+  const left =
+    task.pullRequest?.suggestionsLeft === true &&
+    (!state ||
+      !task.pullRequest.reviewedCommit ||
+      state.head.startsWith(task.pullRequest.reviewedCommit) ||
+      task.pullRequest.reviewedCommit.startsWith(state.head));
   if (!state) {
-    if (!task.pullRequest?.suggestionsLeft) return null;
+    if (!left) return null;
     return (
       <section
         data-testid="ai-review-suggestions-left"
@@ -42,7 +49,7 @@ export function AiReviewNotice({ task }: { task: Task }) {
       <p role="status" className="text-sm">
         {m.aiReview[state.status](head)}
       </p>
-      {task.pullRequest?.suggestionsLeft && (
+      {left && (
         <p data-testid="ai-review-suggestions-left" className="text-sm">
           <WithHint hint={m.aiReview.suggestionsLeftHint}>{m.aiReview.suggestionsLeft}</WithHint>
         </p>

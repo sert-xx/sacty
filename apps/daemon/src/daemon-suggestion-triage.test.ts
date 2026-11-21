@@ -851,6 +851,69 @@ describe("AI のレビューの提案の、直しに入る前の選り分け（P
     again.activity.close();
   });
 
+  it("評価の実行がデーモンの停止で止まったら、失敗の評価として記録せず、コメントもドラフトを外すのもしない。次の確認で、同じ先頭を評価し直す", async () => {
+    const made = await leftSuggestions([
+      { kind: "failed", reason: "error", message: "止められた" },
+      riskAnswer("high"),
+    ]);
+    const { activity, service, pulls, id } = made;
+    await service.runNext(id);
+    (service as unknown as { stopping: boolean }).stopping = true;
+    await service.checkPullRequests();
+    (service as unknown as { stopping: boolean }).stopping = false;
+    const interrupted = riskEvents(service, id);
+    expect(interrupted.every((e) => e.payload.commit === undefined)).toBe(true);
+    expect(riskComments(pulls)).toHaveLength(0);
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(0);
+    expect(pulls.drafts[7]).toBe(true);
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    const assessed = riskEvents(service, id).filter((e) => e.payload.commit !== undefined);
+    expect(assessed).toHaveLength(1);
+    expect(assessed[0]?.payload.assessment).toBeDefined();
+    expect(riskComments(pulls)).toHaveLength(1);
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(1);
+    expect(pulls.drafts[7]).toBe(false);
+    activity.close();
+  });
+
+  it("提案が残ったままドラフトを外した後に、人が一時停止して再開しても、ドラフトを外し直す（外した先頭のままなら）", async () => {
+    const made = await leftSuggestions();
+    const { activity, service, pulls, id } = made;
+    await service.runNext(id);
+    await service.checkPullRequests();
+    expect(pulls.drafts[7]).toBe(false);
+    await service.pause(id);
+    await service.checkPullRequests();
+    expect(pulls.drafts[7]).toBe(true);
+    service.resume(id, {});
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    expect(taskOf(service, id).status).toBe("awaiting_approval");
+    expect(pulls.drafts[7]).toBe(false);
+    expect(count(service, id, "SuggestionsTriaged")).toBe(2);
+    activity.close();
+  });
+
+  it("設定を読めないときは、評価できなかった理由を記録して、ドラフトを外す", async () => {
+    const made = await leftSuggestions([riskAnswer()]);
+    const { activity, service, pulls, id } = made;
+    await service.runNext(id);
+    const deps = (service as unknown as { deps: { config: () => unknown } }).deps;
+    const original = deps.config;
+    deps.config = () => ({ ok: false, problem: "設定が読めません" });
+    await service.checkPullRequests();
+    deps.config = original;
+    const events = riskEvents(service, id);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload.assessment).toBeUndefined();
+    expect(events[0]?.payload.reason).toBeDefined();
+    expect(events[0]?.payload.commit).toBe(commitOf(service, id));
+    expect(pulls.drafts[7]).toBe(false);
+    expect(count(service, id, "PullRequestMarkedReady")).toBe(1);
+    activity.close();
+  });
+
   it("以前の版が提案が残った旨で一時停止させたタスクを再開しても、評価してからドラフトを外す", async () => {
     const made = await leftSuggestions([riskAnswer()]);
     const { activity, service, pulls, id } = made;

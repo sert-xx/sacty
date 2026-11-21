@@ -14393,12 +14393,13 @@ export class TaskService {
     const cleared = now.child.reviewTarget?.headCommit === target && reviewCleared(now.child);
     // 提出のときにドラフトに戻せなかった PR は、指摘なしになるまで、確認のたびにドラフトに戻す（レビューの途中も。レビュー
     // していないコミットをマージできるままにしない。PBI-331）
-    // （判定し直した回の提案がすべて対応しないとされ、ドラフトを外す先頭は、戻さずに外す。PBI-440）
+    // （判定し直した回の提案がすべて対応しないとされ、ドラフトを外す先頭は、戻さずに外す。PBI-440。重ねた PR は外さない）
     const leftDue =
       awaiting &&
       !cleared &&
+      !now.parent.stack &&
       now.child.reviewTarget?.headCommit === target &&
-      this.triageStopDue(now.parent);
+      this.triageStopDue(now.parent, target);
     if (awaiting && !cleared && !leftDue) {
       await this.redraftAwaiting(now.parent, repo, gate.number);
       now = resolve(expected);
@@ -14411,15 +14412,17 @@ export class TaskService {
     if (child.reviewTarget?.headCommit === target) {
       // 今の先頭を指摘なしにしたら、ドラフトを外す（PBI-331）
       if (awaiting && cleared) await this.markReady(parent, child, target);
-      // 親が、その先頭の指摘のすべてを断って提出した：断った理由の返信が済んだら、同じ先頭を 1 回だけ判定し直す（PBI-357）
-      else if (awaiting && this.triageStopDue(parent)) {
+      // 判定し直した回の提案もすべて対応しないとした先頭（PBI-440）：評価だけを行って、ドラフトを外す
+      else if (awaiting && !parent.stack && this.triageStopDue(parent, target)) {
         // 判定し直した回の提案もすべて対応しないとした：理由の返信が済んだので、一時停止せずに、判定は「提案あり」のまま
         // ドラフトを外して人の承認を待つ（PBI-440。AI どうしの往復は、ここで止まる）
         // その前に、再レビューはせず、リスク評価だけを 1 回実行して PR に載せる（PBI-440。止まったことを確かめられなかった
         // 実行があれば、一時停止にして、外さない）
         if ((await this.assessDeclinedRisk(parent, child, target)) !== "done") return;
         await this.markReady(parent, child, target, "suggestions_declined");
-      } else if (awaiting && this.rejudgeDue(parent, child, target)) {
+      }
+      // 親が、その先頭の指摘のすべてを断って提出した：断った理由の返信が済んだら、同じ先頭を 1 回だけ判定し直す（PBI-357）
+      else if (awaiting && this.rejudgeDue(parent, child, target)) {
         try {
           this.append(child, [
             {
@@ -14746,7 +14749,28 @@ export class TaskService {
     if (!pr?.awaitingReview || !pr.number || !pr.repo || parent.stack) return "done";
     const { number, repo } = pr;
     const config = this.deps.config();
-    if (!config.ok) return "done";
+    if (!config.ok) {
+      // 設定を読めなくて評価できなかった：理由を記録して外す（評価できなかった理由が、作業履歴と画面から分かるように）
+      const unread = this.mustGet(parent.id).riskAssessment;
+      if (!(unread?.via === "suggestions_declined" && unread.commit === commit)) {
+        this.append(this.mustGet(parent.id), [
+          {
+            actor: "sacty",
+            event: {
+              type: "PullRequestRiskAssessed",
+              payload: {
+                via: "suggestions_declined",
+                commit,
+                reason: message("pr.riskFailed", { detail: config.problem }),
+                costUsd: 0,
+                estimated: false,
+              },
+            },
+          },
+        ]);
+      }
+      return "done";
+    }
     const known = this.mustGet(parent.id).riskAssessment;
     if (!(known?.via === "suggestions_declined" && known.commit === commit)) {
       const latest = this.mustGet(parent.id);
@@ -14781,12 +14805,21 @@ export class TaskService {
       const unconfirmed = runId !== undefined && this.unconfirmedRuns.delete(runId);
       const now = this.tasks.get(parent.id);
       if (!now) return "stopped";
+      // デーモンの停止・中止・一時停止のために止めた実行は、評価の失敗として採用しない。使った費用だけを、評価した先頭を
+      // 持たない記録にして残し（次の確認で、同じ先頭を評価し直す）、コメントも外すのもしない
+      const interrupted =
+        !assessed.payload.assessment &&
+        (this.stopping || this.cancelling.has(parent.id) || this.pauseRequested.has(parent.id));
+      const { commit: _assessedCommit, ...withoutCommit } = assessed.payload;
       this.append(now, [
         {
           actor: assessed.payload.assessment ? "orchestrator" : "sacty",
           event: {
             type: "PullRequestRiskAssessed",
-            payload: { ...assessed.payload, ...(base ? { base } : {}) },
+            payload: {
+              ...(interrupted ? withoutCommit : assessed.payload),
+              ...(base ? { base } : {}),
+            },
           },
         },
         ...(unconfirmed && assessed.failure && runId
@@ -14807,7 +14840,7 @@ export class TaskService {
           : []),
       ]);
       this.warnIfNeeded(this.mustGet(parent.id));
-      if (unconfirmed) return "stopped";
+      if (unconfirmed || interrupted) return "stopped";
     }
     // 評価している間に、止められた・差し戻された・PR の先頭が変わったときは、コメントもドラフトを外すのもしない
     const after = this.tasks.get(parent.id);
@@ -14881,11 +14914,13 @@ export class TaskService {
    * 直しに入る前の選り分けが、判定し直した回の提案のすべてを対応しないとして、返信を済ませたか（PBI-436）。返信が済んでから、
    * 一時停止せずにドラフトを外して人の承認を待つ（PBI-440。同じ先頭の判定のし直しは 1 回だけなので、ほかに往復を止める所が無い）。
    */
-  private triageStopDue(parent: Task): boolean {
+  private triageStopDue(parent: Task, head?: string): boolean {
     const stop = parent.triageStop;
     const pr = gatePullRequest(parent);
     return (
       stop !== undefined &&
+      // GitHub の今の先頭が、提案を断った先頭と違えば（人がコミットを足した）、効かない（今までどおり、再レビューと選り分け）
+      (head === undefined || !stop.commit || sameCommit(stop.commit, head)) &&
       pr?.number === stop.number &&
       (!stop.commit || (pr.commit !== undefined && sameCommit(stop.commit, pr.commit))) &&
       parent.status === "awaiting_approval" &&
@@ -15053,7 +15088,8 @@ export class TaskService {
   /**
    * 実装の PR が、今ドラフトであるべきか（PBI-331）。指摘なしを待つ PR（重ねた PR を除く）はドラフト。指摘なしで外して記録
    * した PR は、GitHub の先頭（head）をレビューの子タスクが指摘なしにしていればドラフトでなく、そうでなければ（外した後に人が
-   * コミットを足した・再レビューの途中）ドラフト。先頭が分からない・どちらでもない PR は undefined（何もしない）。
+   * コミットを足した・再レビューの途中）ドラフト。提案が残ったまま外して記録した先頭も、その先頭のままなら外したまま（readyAt）。
+   * 先頭が分からない・どちらでもない PR は undefined（何もしない）。
    */
   private wantsDraft(task: Task, repo: string, head: string | undefined): boolean | undefined {
     const pr = task.pullRequest;
@@ -15061,9 +15097,24 @@ export class TaskService {
     if (pr.awaitingReview) return task.stack ? undefined : true;
     if (pr.reviewedCommit === undefined || !head) return undefined;
     const child = this.reviewerOf(task, repo, pr.number);
-    // 提案が残ったまま外した先頭は、ドラフトに戻さない（PBI-440）
-    if (pr.suggestionsLeft && child?.reviewTarget?.headCommit === head) return false;
-    return !(child && child.reviewTarget?.headCommit === head && reviewCleared(child));
+    return !this.readyAt(task, child, head);
+  }
+
+  /**
+   * 子タスクが GitHub の今の先頭（head）について、ドラフトを外してよいとしているか（PBI-331・PBI-440）。指摘なしにした先頭か、
+   * 提案が残ったまま（判定し直した回の提案をすべて対応しないとして）外して記録した先頭（reviewedCommit が今の先頭）のとき。
+   * wantsDraft・undraftMarkedReady は、この判定を共通に使う。
+   */
+  private readyAt(task: Task, child: Task | undefined, head: string): boolean {
+    if (!child || child.reviewTarget?.headCommit !== head) return false;
+    if (reviewCleared(child)) return true;
+    const pr = task.pullRequest;
+    return !!(
+      pr?.suggestionsLeft &&
+      pr.reviewedCommit !== undefined &&
+      sameCommit(pr.reviewedCommit, head) &&
+      child.reviewVerdicts?.at(-1)?.verdict === "suggestions"
+    );
   }
 
   /** 実装の PR のレビューの子タスク（PBI-331）。 */
@@ -15174,7 +15225,7 @@ export class TaskService {
     const target = head;
     const child = reviewerOf(task);
     // 子タスクがその先頭を指摘なしにしていなければ、ドラフトのまま再レビューを待つ
-    if (!child || child.reviewTarget?.headCommit !== target || !reviewCleared(child)) return;
+    if (!child || !this.readyAt(task, child, target)) return;
     const round = child.reviewRound;
     const verdicts = child.reviewVerdicts?.length;
     const unchanged = (): Task | undefined => {
@@ -15185,7 +15236,7 @@ export class TaskService {
         reviewer.reviewTarget?.headCommit === target &&
         reviewer.reviewRound === round &&
         reviewer.reviewVerdicts?.length === verdicts &&
-        reviewCleared(reviewer)
+        this.readyAt(latest, reviewer, target)
         ? latest
         : undefined;
     };
