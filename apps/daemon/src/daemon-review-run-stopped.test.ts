@@ -412,6 +412,45 @@ describe("レビューの実行中に PR の先頭が変わったときの打ち
     expect(b.get().reviewStop).toBeUndefined();
   });
 
+  it("TV-14（人の操作を優先）打ち切りで実行を止めている間に人が一時停止したら、ReviewRunStopped を記録せず、人の一時停止にする", async () => {
+    const t = await secondRound([HOLD, review("2回目")]);
+    const { done } = await t.startHeld();
+    const kill = t.executor.kill.bind(t.executor);
+    let paused: Promise<Task> | undefined;
+    let called = false;
+    t.executor.kill = (runId: string) => {
+      if (!called) {
+        called = true;
+        paused = t.service.pause(t.id);
+      }
+      kill(runId);
+    };
+    head(t, HEAD_C);
+    await t.service.checkPullRequests();
+    await done;
+    await paused;
+    expect(t.events("ReviewRunStopped")).toHaveLength(0);
+    expect(payloads(t.events("TaskPaused"))).toMatchObject([{ reason: "manual" }]);
+    expect(t.get().status).toBe("paused");
+    expect(t.get().reviewTarget?.headCommit).toBe(HEAD_B);
+  });
+
+  it("再起動の後に PR を読めない間でも、最初に見た時刻から FEEDBACK_QUIET_MS が過ぎれば始め直す", async () => {
+    const t = setup([HOLD, review("1回目")]);
+    const { done } = await t.startHeld();
+    head(t, HEAD_B);
+    await t.service.checkPullRequests();
+    await done;
+    expect(t.events("ReviewRunStopped")).toHaveLength(1);
+    // 待ちの印が無い（起動の後）状態で、PR の状態を読めない
+    const { service: restarted } = t.build([review("1回目")]);
+    t.pulls.state = undefined as never;
+    expect(restarted.queuedTaskIds()).not.toContain(t.id);
+    await restarted.checkPullRequests();
+    t.clock.now += FEEDBACK_QUIET_MS + 1;
+    expect(restarted.queuedTaskIds()).toContain(t.id);
+  });
+
   it("TV-15 フォークの PR は打ち切らない（古い先頭宛てに latestCommit を付けて投稿する）", async () => {
     const t = setup([HOLD]);
     t.pulls.state = { state: "open", fork: true } as never;
@@ -529,6 +568,25 @@ describe("親に届かなかった回（PBI-465）", () => {
     expect(JSON.parse(text[text.indexOf("```json") + 1] ?? "{}").previousReview.delivered).toBe(
       false,
     );
+  });
+
+  it("TV-18（service 経由）親のいないタスクの、latestCommit 付きで投稿した回は、次の回の実際の指示で delivered: false になる", async () => {
+    const t = setup([HOLD, review("2回目")]);
+    t.pulls.state = { state: "open", fork: true } as never;
+    const { done, runId } = await t.startHeld();
+    head(t, HEAD_B);
+    t.executor.finishHeld(runId, review("1回目", "changes_required"));
+    await done;
+    await t.service.runNext(t.id);
+    expect(payloads(t.events("PullRequestReviewPosted"))).toMatchObject([{ latestCommit: HEAD_B }]);
+    // 以後は、フォークでない PR として再レビューが始まる
+    t.pulls.state = { state: "open", fork: false } as never;
+    await t.tick();
+    await t.tick(FEEDBACK_QUIET_MS);
+    await t.runThrough();
+    const second = t.prompts().find((p) => p.includes("これは 2 回目のレビューです")) ?? "";
+    expect(second).toMatch(/"delivered":\s*false/);
+    expect(second).toContain("delivered が false の回");
   });
 
   it("TV-19 届かなかった回は、提案だけの回の連続に数えず、連続を途切れさせない", () => {
