@@ -59,8 +59,8 @@
 
 | ID | トリガー | システム | 応答 |
 | --- | --- | --- | --- |
-| R-5 | 中止したとすれば `rerun_task` が断らないタスクに `get_cancel_plan` が呼ばれたとき | タスクの MCP | `irreversible` に、中止の後に `rerun_task` で再実行できる見込みであること（新しいタスクになり、作業領域・ブランチ・PR は戻らない。デーモンが断ることがある）を入れる |
-| R-6 | 中止したとすれば `rerun_task` が断るタスク（PR のレビュー・リポジトリが決まっていないチケット由来・既定値が通らない）に `get_cancel_plan` が呼ばれたとき | タスクの MCP | `irreversible` に `rerun_task` の案内を入れず、「中止すると MCP からはやり直せない」の前置きと、`rerunBlock` が返す理由と画面で決めることを入れる |
+| R-5 | 中止できて（`canCancel` が true）、中止したとすれば `rerun_task` が断らないタスクに `get_cancel_plan` が呼ばれたとき | タスクの MCP | `irreversible` に、中止の後に `rerun_task` で再実行できる見込みであること（新しいタスクになり、作業領域・ブランチ・PR は戻らない。デーモンが断ることがある）を入れる |
+| R-6 | 中止できて（`canCancel` が true）、中止したとすれば `rerun_task` が断るタスク（PR のレビュー・リポジトリが決まっていないチケット由来・既定値が通らない）に `get_cancel_plan` が呼ばれたとき | タスクの MCP | `irreversible` に `rerun_task` の案内を入れず、「中止すると MCP からはやり直せない」の前置きと、`rerunBlock` が返す理由と画面で決めることを入れる |
 | R-7 | 中止したタスクに `resume_task` が呼ばれたとき | タスクの MCP | `rerun_task` が断らないタスクだけ理由に `rerun_task` の案内を入れ、断るタスク（再実行済み・分割の子を含む）には「MCP からはやり直せない」の前置きと、`rerunBlock` が返す理由と画面で決めることを入れる |
 | R-8 | 中止できないタスク（`canCancel` が false）に `get_cancel_plan` が呼ばれたとき | タスクの MCP | `irreversible` に、`rerun_task` の案内も「MCP からはやり直せない」の案内も入れない |
 
@@ -72,7 +72,7 @@
   - 再実行できるタスク：`get_cancel_plan` の `irreversible` と `resume_task` の断りに `rerun_task` が入る
   - PR のレビューだけ・リポジトリが決まっていないチケット由来・既定値が通らないタスク：どちらにも `rerun_task` が入らず、MCP からはやり直せないことと `rerunBlock` の理由が入る
   - 再実行済みの中止したタスク：`resume_task` の断りに `rerun_task` の案内が入らず、再実行で作ったタスクの ID が入る
-  - 中止できないタスク：`get_cancel_plan` の `irreversible` に、やり直しの案内が入らない
+  - 中止できないタスク（完了・中止済みを含む）：`get_cancel_plan` の `irreversible` に、やり直しの案内が入らない
   - `cancel_task` の説明・`INSTRUCTIONS` の中止の段落・`gate.invalidTarget` の断りの文が、条件付きの書き方になっている（R-1）
   - 案内を切り替える直しを戻すと、上のテストが落ちる
 - 既存の `mcp-rerun.test.ts` のテストのうち、「resume_task の断り」と、説明・`INSTRUCTIONS` の文を確かめるものを、R-1・R-7 に合わせて直して通す
