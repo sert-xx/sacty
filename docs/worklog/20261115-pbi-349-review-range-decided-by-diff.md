@@ -4,7 +4,7 @@
 - タスク: PBI-349
 - PR: #379
 - ブランチ: feat/issue-349-review-document-range
-- 関係する ADR: [PR のレビューで親が担当に渡す範囲を差分で決め、観点をどう見たかを本文に書く](../adr/20261115-1515-review-range-decided-by-diff-and-viewpoint-line.md)
+- 関係する ADR: [PR のレビューで親が担当に渡す範囲を差分で決め、観点をどう見たかを本文に書く](../adr/20261115-1515-superseded-review-range-decided-by-diff-and-viewpoint-line.md)
 
 ## 目的
 

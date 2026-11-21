@@ -60,6 +60,7 @@ import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { RerunDialog } from "@/components/rerun-dialog";
 import { ResumeForm, type ResumeStepSetting } from "@/components/resume-form";
+import { ReviewRecords } from "@/components/review-records";
 import { ReviewWatchNotice } from "@/components/review-watch-notice";
 import { RiskAssessmentCard } from "@/components/risk-assessment";
 import { RunStatusLine } from "@/components/run-status";
@@ -1992,19 +1993,23 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
             </li>
           )}
           {/* どのエージェントで見たか・観点ごとの担当を何件起動したか（PBI-379） */}
-          {task.reviewDispatch && (
-            <li className="[overflow-wrap:anywhere]">
-              {/* 再レビューの実行中は、前の回の記録であることを示す */}
-              {task.reviewDispatch.round !== (task.reviewRound ?? 1) &&
-                m.reviewDispatchRound(task.reviewDispatch.round)}
-              {m.reviewAgent(task.reviewDispatch.agentId, task.reviewDispatch.model)}
-              {" · "}
-              {m.reviewSubagents(task.reviewDispatch.subagents)}
-              {task.reviewDispatch.configuredAgentId && (
-                <> · {m.reviewAgentSwitched(task.reviewDispatch.configuredAgentId)}</>
-              )}
-            </li>
-          )}
+          {/* 回ごとの記録（下の欄）にエージェントの行が出る回は、ここでは出さず 1 か所にする */}
+          {task.reviewDispatch &&
+            !task.reviewRecords?.some(
+              (r) => r.round === task.reviewDispatch?.round && r.reviewDispatch,
+            ) && (
+              <li className="[overflow-wrap:anywhere]">
+                {/* 再レビューの実行中は、前の回の記録であることを示す */}
+                {task.reviewDispatch.round !== (task.reviewRound ?? 1) &&
+                  m.reviewDispatchRound(task.reviewDispatch.round)}
+                {m.reviewAgent(task.reviewDispatch.agentId, task.reviewDispatch.model)}
+                {" · "}
+                {m.reviewSubagents(task.reviewDispatch.subagents)}
+                {task.reviewDispatch.configuredAgentId && (
+                  <> · {m.reviewAgentSwitched(task.reviewDispatch.configuredAgentId)}</>
+                )}
+              </li>
+            )}
           {task.reviewUndispatched && task.reviewUndispatched.runs > 0 && (
             <li className="[overflow-wrap:anywhere]">
               {m.reviewUndispatched(
@@ -2014,6 +2019,10 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
             </li>
           )}
         </ul>
+      )}
+      {/* 過程の記録（すべての回。PBI-460） */}
+      {step === "review" && task.reviewRecords && task.reviewRecords.length > 0 && (
+        <ReviewRecords records={task.reviewRecords} />
       )}
       {step === "design" && output && (
         <>

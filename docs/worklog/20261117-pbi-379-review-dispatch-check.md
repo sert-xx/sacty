@@ -4,7 +4,7 @@
 - タスク: PBI-379
 - PR: #420
 - ブランチ: feat/pbi-379-review-viewpoints
-- 関係する ADR: [観点ごとの担当を 1 件も起動しなかった PR のレビューは、採らずにやり直させ、続いたら止める](../adr/20261117-1015-reject-reviews-that-start-no-reviewers.md)
+- 関係する ADR: [観点ごとの担当を 1 件も起動しなかった PR のレビューは、採らずにやり直させ、続いたら止める](../adr/20261117-1015-superseded-reject-reviews-that-start-no-reviewers.md)
 
 ## 目的
 
@@ -95,4 +95,4 @@ PR のレビューが、既定のスキルの決まり（観点ごとの担当�
 
 - 工程の中の自己レビュー（要求要件・設計・実装・文書作成など）の、担当の起動の記録とやり直しは、別の PR にする。
 - 実物での確かめ（差分の小さい PR・大きい PR・再レビュー）。
-- 起動が 1 件だけのレビュー（数だけ合わせたもの）は、見分けない。必須の観点が揃っているかも、判定しない（[ADR](../adr/20261117-1015-reject-reviews-that-start-no-reviewers.md) の理由）。
+- 起動が 1 件だけのレビュー（数だけ合わせたもの）は、見分けない。必須の観点が揃っているかも、判定しない（[ADR](../adr/20261117-1015-superseded-reject-reviews-that-start-no-reviewers.md) の理由）。

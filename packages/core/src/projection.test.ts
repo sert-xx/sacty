@@ -1931,6 +1931,113 @@ describe("レビューの工程（PBI-19）", () => {
     expect(restarted?.earlierReviews).toBeUndefined();
   });
 
+  describe("レビューの記録（PBI-460）", () => {
+    const record = (n: number) => ({
+      mode: "subagents" as const,
+      viewpoints: [{ id: "C-1", status: "launched" as const }],
+      notReviewed: [],
+      dismissed: [{ title: `題${n}`, reason: `理由${n}` }],
+      scope: [],
+      verification: [{ kind: "ran" as const, text: `検証${n}` }],
+    });
+    const dispatch = (n: number) => ({ subagents: n, runtime: "claude-code", model: `m${n}` });
+    /** 2 回目以降のレビューの実行（対象の確認から、実行の完了まで）。 */
+    const another = (id: string, runId: string, extra: Record<string, unknown>, resolve = true) => [
+      // 同じ回の実行し直しは、対象を確かめ直さず、実行待ちに戻して始める
+      resolve
+        ? ev(id, { type: "ReviewTargetResolved", payload: target })
+        : ev(id, { type: "StepQueued", payload: { step: "review" } }),
+      ev(id, {
+        type: "AgentRunStarted",
+        payload: { runId, step: "review", agentId: "a", authMode: "subscription" },
+      }),
+      ev(id, {
+        type: "AgentRunCompleted",
+        payload: {
+          runId,
+          step: "review",
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: false,
+          output: "# 評価",
+          ...extra,
+        },
+      }),
+    ];
+    const post = (id: string, n: number) =>
+      ev(id, { type: "PullRequestReviewPosted", payload: { url: `https://x/pull/12#r${n}` } });
+    const restart = (id: string) => ev(id, { type: "ReviewRestarted", payload: {} }, "person");
+
+    it("すべての回の記録を回ごとに残し、同じ回の実行し直しはその回だけを置き換える。再レビューで前回の記録に写し、古い回の previousReview からは落とす", () => {
+      const events = run("t17");
+      const first = events[4] as Extract<ActivityEvent, { type: "AgentRunCompleted" }>;
+      first.payload = {
+        ...first.payload,
+        reviewRecord: record(1),
+        reviewDispatch: dispatch(1),
+      } as typeof first.payload;
+      // 回 2 は 2 回実行する（後の実行が、その回の記録になる）。回 3 は、記録の無い実行
+      const all = [
+        ...events,
+        post("t17", 1),
+        restart("t17"),
+        ...another("t17", "r2a", { reviewRecord: record(2), reviewDispatch: dispatch(2) }),
+        ...another("t17", "r2b", { reviewRecord: null, reviewDispatch: dispatch(3) }, false),
+      ];
+      const second = project(all).get("t17");
+      expect(second?.reviewRecords).toEqual([
+        { round: 1, record: record(1), reviewDispatch: { ...dispatch(1), agentId: "a" } },
+        { round: 2, record: null, reviewDispatch: { ...dispatch(3), agentId: "a" } },
+      ]);
+      // 回 2 をもう一度実行し直して、記録のある実行にする
+      const rerun = [
+        ...all,
+        ...another("t17", "r2c", { reviewRecord: record(4), reviewDispatch: dispatch(4) }, false),
+      ];
+      const third = project([...rerun, post("t17", 2), restart("t17")]).get("t17");
+      expect(third?.reviewRound).toBe(3);
+      expect(
+        third?.reviewRecords?.map((r) => [r.round, r.record, r.reviewDispatch?.subagents]),
+      ).toEqual([
+        [1, record(1), 1],
+        [2, record(4), 4],
+      ]);
+      // 回 3 の開始時の前回の記録は、回 2 の後の実行の記録と同じ。古い回（回 1）の previousReview からは落とす
+      expect(third?.previousReview).toMatchObject({ round: 2, record: record(4) });
+      expect(third?.earlierReviews).toHaveLength(1);
+      expect(third?.earlierReviews?.[0]).toMatchObject({ round: 1 });
+      expect(third?.earlierReviews?.[0] && "record" in third.earlierReviews[0]).toBe(false);
+      // 回 3 の記録の欄の無い実行は、要素を作らず、前の回の要素も残る
+      const noRecord = project([
+        ...rerun,
+        post("t17", 2),
+        restart("t17"),
+        ...another("t17", "r3", {}),
+      ]).get("t17");
+      expect(noRecord?.reviewRecords?.map((r) => r.round)).toEqual([1, 2]);
+    });
+
+    it("記録の欄が無い以前の作業履歴（3 回のレビュー）を、例外なく投影でき、記録の要素も前回の記録も作らない", () => {
+      const rounds = [
+        ...run("t19"),
+        post("t19", 1),
+        restart("t19"),
+        ...another("t19", "r2", {}),
+        post("t19", 2),
+        restart("t19"),
+        ...another("t19", "r3", {}),
+      ];
+      const task = project(rounds).get("t19");
+      expect(task?.reviewRound).toBe(3);
+      expect(task?.reviewRecords).toBeUndefined();
+      expect(task?.previousReview && "record" in task.previousReview).toBe(false);
+      expect(task?.earlierReviews?.every((r) => !("record" in r))).toBe(true);
+      expect(task?.reviewVerdicts?.map((v) => v.round)).toEqual([1, 2, 3]);
+    });
+  });
+
   it("判定が無い回は、その理由を回ごとに残す。判定がある回には残さない（PBI-378）", () => {
     const withPayload = (id: string, extra: Record<string, unknown>) => {
       const events = run(id);

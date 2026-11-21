@@ -86,6 +86,23 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
     const [task] = made.service.importIssues([pr(9)]);
     return { ...made, activity, pulls, id: task?.id ?? "" };
   }
+  /** 投稿する本文に、Sacty の過程の情報（エージェント・担当の数・切り替え・タスクの ID）が出ないこと（PBI-460）。 */
+  const expectNoProcessInfo = (body: string | undefined) => {
+    // 先頭の目印（表示されない HTML コメント）は、タスクの ID を含んでよい
+    const visible = (body ?? "").replace(/^<!-- sacty-review:[^>]*-->\n/, "");
+    expect(visible).toContain("AI がレビューしました（人間は確認していません）。");
+    for (const word of [
+      "レビューしたエージェント",
+      "Claude Code",
+      "Codex",
+      "担当",
+      "サブエージェント",
+      "切り替え",
+      "Sacty のタスク",
+    ]) {
+      expect(visible).not.toContain(word);
+    }
+  };
   const failures = (service: TaskService, id: string) =>
     (service.get(id)?.activity ?? []).flatMap((e) =>
       e.type === "AgentRunFailed" ? [e.payload] : [],
@@ -132,9 +149,8 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
     expect(pulls.reviews).toHaveLength(1);
     expect(pulls.reviews[0]?.body).toContain("# 2回目");
     expect(pulls.reviews[0]?.body).not.toContain("# 1回目");
-    expect(pulls.reviews[0]?.body).toContain(
-      "レビューしたエージェント：Claude Code。観点ごとの担当（サブエージェント）を 17 件起動しました。",
-    );
+    // 動いたエージェントと担当の数は、本文に書かず、作業履歴の記録（画面と get_task で読む）に残す
+    expectNoProcessInfo(pulls.reviews[0]?.body);
     // 公開されうる PR の本文には、利用者が付けた設定の名前（エージェントの ID）を出さない
     expect(pulls.reviews[0]?.body).not.toContain("claude-subscription");
     activity.close();
@@ -196,9 +212,7 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
       subagents: 0,
     });
     await service.runNext(id);
-    expect(pulls.reviews[0]?.body).toContain(
-      "観点ごとの担当（サブエージェント）は起動していません（担当を起動する手段があることを、Sacty が確かめられなかった実行です）。",
-    );
+    expectNoProcessInfo(pulls.reviews[0]?.body);
     activity.close();
   });
 
@@ -237,9 +251,7 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
       subagents: null,
     });
     await service.runNext(id);
-    expect(pulls.reviews[0]?.body).toContain(
-      "観点ごとの担当（サブエージェント）の起動の数は、確かめられませんでした。",
-    );
+    expectNoProcessInfo(pulls.reviews[0]?.body);
     activity.close();
   });
 
@@ -262,7 +274,7 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
       message: "You've hit your session limit",
     };
     const { service, pulls, activity, id } = start(
-      [limited, out(`# 切り替え先\n${verdict("no_findings")}`)],
+      [limited, out(`# 2回目の結果\n${verdict("no_findings")}`)],
       [0, 5],
       {
         config,
@@ -283,9 +295,8 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
       subagents: 5,
     });
     await service.runNext(id);
-    expect(pulls.reviews[0]?.body).toContain(
-      "レビューしたエージェント：Claude Code（`model-b`）。工程に設定したエージェントが使えなかったため、切り替え先のエージェントで実行しました。観点ごとの担当（サブエージェント）を 5 件起動しました。",
-    );
+    expectNoProcessInfo(pulls.reviews[0]?.body);
+    expect(pulls.reviews[0]?.body).not.toContain("model-b");
     // 設定の名前（切り替え前のものも）は、本文に出さない（画面に出すために、タスクには持つ）
     expect(pulls.reviews[0]?.body).not.toContain("claude-api");
     expect(pulls.reviews[0]?.body).not.toContain("claude-subscription");
@@ -351,7 +362,10 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
       ]),
     });
     const { service, executor, pulls, activity, id } = start(
-      [out(`# 担当なし\n${verdict("no_findings")}`), out(`# 担当あり\n${verdict("no_findings")}`)],
+      [
+        out(`# 1回目の結果\n${verdict("no_findings")}`),
+        out(`# 2回目の結果\n${verdict("no_findings")}`),
+      ],
       [0],
       {
         config: configOf(codex),
@@ -373,9 +387,7 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
       subagents: 19,
     });
     await service.runNext(id);
-    expect(pulls.reviews[0]?.body).toContain(
-      "レビューしたエージェント：Codex。観点ごとの担当（サブエージェント）を 19 件起動しました。",
-    );
+    expectNoProcessInfo(pulls.reviews[0]?.body);
     expect(pulls.reviews[0]?.body).not.toContain("codex-key");
     activity.close();
   });
@@ -447,36 +459,33 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
     expect(task?.reviewRound).toBe(2);
     expect(task?.reviewDispatch).toBeUndefined();
     expect(task && buildReviewBody(task)).toContain("# 2回目");
-    expect(task && buildReviewBody(task)).not.toContain("レビューしたエージェント");
-    expect(task && buildReviewBody(task)).not.toContain("観点ごとの担当");
+    expectNoProcessInfo(task && buildReviewBody(task));
     activity.close();
   });
 
-  it("本文の行は、モデルの名前を、PR の本文で別の働きをしない形にして書く。種類が分からなければ、モデルだけ・担当の数だけを書く", async () => {
-    const { service, activity, id } = start([out(`# 評価\n${verdict("no_findings")}`)], [3]);
+  it("本文の末尾は AI の印だけで、エージェントの製品名・モデル・切り替え・担当・サブエージェント・タスクの ID を出さない（PBI-460）", async () => {
+    const { service, activity, id } = start([out(`# 評価\n${verdict("no_findings")}`)], [5]);
     await service.runNext(id);
     const task = service.get(id)?.task;
     if (!task?.reviewDispatch) throw new Error("no review dispatch");
-    const line = (dispatch: Partial<NonNullable<typeof task.reviewDispatch>>) =>
-      buildReviewBody({ ...task, reviewDispatch: { ...task.reviewDispatch, ...dispatch } as never })
-        .split("\n")
-        .at(-1);
-    // バッククォートと改行を除き、100 文字で切る
-    expect(line({ model: "m`o`d\r\nel" })).toBe(
-      "レビューしたエージェント：Claude Code（`model`）。観点ごとの担当（サブエージェント）を 3 件起動しました。",
-    );
-    expect(line({ model: "x".repeat(150) })).toContain(`（\`${"x".repeat(100)}\`）。`);
-    expect(line({ model: "x".repeat(150) })).not.toContain("x".repeat(101));
-    // 製品の名前を知らない種類：種類は書かず、モデルだけ
-    expect(line({ runtime: "other", model: "model-x" })).toBe(
-      "レビューしたエージェント：`model-x`。観点ごとの担当（サブエージェント）を 3 件起動しました。",
-    );
-    // 種類の記録が無く、モデルも無い：担当の数だけ
-    expect(line({ runtime: undefined, model: undefined })).toBe(
-      "観点ごとの担当（サブエージェント）を 3 件起動しました。",
-    );
-    // 別の回の記録は、今回の本文に書かない
-    expect(line({ round: 2 })).not.toContain("観点ごとの担当");
+    const withDispatch = {
+      ...task,
+      reviewDispatch: {
+        ...task.reviewDispatch,
+        runtime: "claude-code",
+        model: "model-b",
+        configuredAgentId: "claude-subscription",
+        subagents: 5,
+      },
+    } as never;
+    const body = buildReviewBody(withDispatch);
+    expect(body.endsWith("---\nAI がレビューしました（人間は確認していません）。")).toBe(true);
+    expectNoProcessInfo(body);
+    for (const word of ["model-b", "claude-subscription", id]) {
+      expect(body.replace(/^<!-- sacty-review:[^>]*-->\n/, "")).not.toContain(word);
+    }
+    // 作業履歴の記録には残る（画面と get_task で読む）
+    expect(task.reviewDispatch).toMatchObject({ runtime: "claude-code", subagents: 5 });
     activity.close();
   });
 });

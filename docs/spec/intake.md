@@ -207,6 +207,7 @@ Sacty のレビューのタスクが、レビューを投稿する前に止ま�
 - 書くとき：タスクが一時停止に変わった記録を書いたとき（`append`）に、書き終えるのを待たずに通常のコメント（Issue のコメント）を1件書く（`announceReviewStop`）。
   - 本文：止まったこと、理由（種類と要点）、再開のしかた（タスクの画面へのリンク。リンクの元は、起動した画面の URL（`SACTY_WEB_URL`）で、無ければ `http://127.0.0.1:4700`）。画面の URL のホストが `127.0.0.1`・`localhost`・`[::1]` のとき（と URL として読めないとき）は、リンクの文の直後に「タスクの画面は、依頼した人のマシンでだけ開けます。」を添える（PBI-450。[タスクの画面へのリンクの注釈](approval.md#タスクの画面へのリンクの注釈)）。見出しは「Sacty のレビューが止まりました」。
   - 理由の要点：一時停止の説明。無ければ、直前に失敗した実行（`AgentRunFailed`）かオーケストレーター（`OrchestratorFailed`）の説明。
+    観点ごとの担当を起動しないレビューが続いて止まったとき（`review.notDispatchedPaused`）は、過程の語を使わない固定の文「レビューを繰り返しましたが、確かめた結果が得られず、投稿できませんでした」にする（`UNDISPATCHED_SUMMARY`。PBI-460）。
     使った秘密情報を**伏せてから**、1行にして 300 文字で切り詰める（切り詰めてから伏せると、切り口にかかった秘密情報の前半が残る）。
     外から来た文なので、コードにして載せる（`@` メンションを本文に出さない）。
   - 投稿は、プロジェクトで選んだアカウントで行う。
@@ -245,7 +246,7 @@ Sacty のレビューのタスクが、レビューを投稿する前に止ま�
 - モデルの混雑など、エージェントの実行の一時的な失敗は、同じエージェントで間を置いてやり直す処理は無い。
   代わりのエージェントを書いていれば、止めずに切り替える（[失敗したときの代わりのエージェント](agent-execution.md#失敗したときの代わりのエージェント)）。
 
-コード: `apps/daemon/src/review-stop-notice.ts`（`notifiesReviewStop`・`stopSummary`・`stopKey`・`buildStopNotice`・`buildResolvedNotice`）、`apps/daemon/src/service.ts`（`append`・`reviewStopTarget`・`announceReviewStop`・`resolveReviewStops`・`postReview`・`resolveReviewTarget`・`retryTransient`）、`apps/daemon/src/github.ts`（`listIssueComments`・`editIssueComment`・`isReviewStopNotice`・`feedback`・`isTransientGitHubFailure`）、`packages/core/src/events.ts`（`ReviewGitHubRetried`）
+コード: `apps/daemon/src/review-stop-notice.ts`（`notifiesReviewStop`・`stopSummary`・`UNDISPATCHED_SUMMARY`・`stopKey`・`buildStopNotice`・`buildResolvedNotice`）、`apps/daemon/src/service.ts`（`append`・`reviewStopTarget`・`announceReviewStop`・`resolveReviewStops`・`postReview`・`resolveReviewTarget`・`retryTransient`）、`apps/daemon/src/github.ts`（`listIssueComments`・`editIssueComment`・`isReviewStopNotice`・`feedback`・`isTransientGitHubFailure`）、`packages/core/src/events.ts`（`ReviewGitHubRetried`）
 
 ## GitHub のアカウントと API
 

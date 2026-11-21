@@ -789,7 +789,7 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
   For a suggestion the AI decided before fixing not to handle in this PR, the reply says that the AI decided it, gives the reason for each suggestion it does not handle, and says how to have it fixed ([Sorting AI review suggestions](#sorting-ai-review-suggestions)).
   When the AI declared neither, only the explanation of the response is shown.
-- The end of the reply says which sacty task's AI wrote it.
+- The end of the reply says "Sacty の<工程名>の工程で、AI が書きました。" (AI wrote this in the <step> step of Sacty; the task ID is not written).
 - Secret values are hidden and long text is cut.
   Paths inside sacty's workspace are replaced with names a person can follow.
 - A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) also replies the same way, per PR comment passed to the implementation.
@@ -1539,11 +1539,11 @@ sacty posts at the following times.
 
 - sacty posts after a person approves the step's output. Nothing is posted unless you approve.
   - If you request changes and then approve, sacty posts the revised version.
-  - The end of the comment notes that AI wrote it in a sacty task and a person approved it.
+  - The end of the comment says "Sacty の<工程名>の工程で AI が書き、人間が承認しました。" (AI wrote this in the <step> step of Sacty and a person approved it; the task ID is not written).
 - However, for a step that is approved by merging its PR (implementation, requirements, and design), sacty posts the requested comments to that PR without waiting for the merge, as soon as the output is awaiting approval.
   This lets the people watching the PR read a reply to a review comment right away.
   - After a send-back and rework, sacty posts the request of the new version once. It never posts the same version's request again after the merge.
-  - The end of this comment notes that AI wrote it and that the step's output is approved by merging the PR.
+  - The end of this comment says "Sacty の<工程名>の工程で AI が書きました。この工程の成果は、PR のマージで承認されます。" (AI wrote this in the <step> step of Sacty; the step's output is approved by merging the PR).
   - sacty does not import this comment as a PR remark (so a reply does not become a new remark and keep the send-backs going).
 
 In both cases, the following applies.

@@ -1039,9 +1039,7 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
       }),
     );
     expect(body.length).toBeLessThanOrEqual(60_000);
-    expect(body).toContain(
-      "### リスク評価\n\n評価の詳細は長いため省略しました。依頼した人は、Sacty のタスク t-1 の画面で確かめられます。タスクの画面は、依頼した人のマシンでだけ開けます。",
-    );
+    expect(body).toContain("### リスク評価\n\nリスク評価は長いため省略しました。");
     expect(body).toContain("総評");
     expect(body).toContain("AI がレビューしました");
   });

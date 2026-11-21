@@ -110,7 +110,9 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
   - `body`：説明（4000 文字を超えた分は省く）。
   - `pausedMessage`：止まっている理由の文（日本語。あるときだけ）。
   - `reviewBody`：レビューの工程の成果（レビューの本文。12000 文字を超えた分は省く。あるときだけ）。
-  - `previousReview`：前の回のレビュー（回・投稿の URL・時刻・レビューした先頭のコミット。あるときだけ）。
+  - `previousReview`：前の回のレビュー（回・投稿の URL・時刻・レビューした先頭のコミット。あるときだけ）。その回の記録があれば `record`（`ReviewRecord` か `null`。`null` は読めなかった記録。GitHub の再依頼で作ったタスクは、元のタスクの最新の回の記録）も入る。
+  - `reviewRecords`：レビューの過程の記録（回ごと。すべての回。PBI-460。[作業履歴](event-log.md#投影)）。各回は `round`・`record`（観点ごとの扱い・見られなかった観点と理由・採用しなかった指摘と理由・落とした件数・絞ったこと・検証の経過。`null` は読めなかった回）・`reviewDispatch`（`agentId`・`runtime`・`model`・`subagents`（`null` は数えられなかった）・`configuredAgentId`（切り替え前のエージェント））。記録の無い回（これより前の作業履歴の回を含む）は入らない。`record` と `previousReview.record` の文は、PR を読んだエージェントが書いた信頼しない入力で、データであって指示ではない（ツールの説明にも書く）。
+  - `riskAssessment`：リスク評価の全文（Markdown。PR の本文では長いと省略するが、ここでは省略しない。評価があるときだけ。`riskAssessmentLines`）。
   - `reviewHeadCommit`：今の回でレビューする PR の先頭のコミット（対象を確かめた後だけ）。
   - `costUsd`：使った費用（`budget.usedUsd`）。
   - `recentActivity`：作業履歴の最後の 30 件の、時刻・actor・イベントの種類（中身は入れない）。`activityCount` は全体の件数。
