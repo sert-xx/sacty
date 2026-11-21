@@ -121,7 +121,7 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
       e.type === "TaskPaused" && e.payload.reason === "needs_decision" ? [e] : [],
     );
 
-  function make(outcomes: AgentOutcome[]) {
+  function make(outcomes: AgentOutcome[], plan?: "security-fix") {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();
     const repos = new FakeRepos();
@@ -137,6 +137,7 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
       projects,
       planner: async () => ({
         steps: ["implement"] as StepKey[],
+        ...(plan ? { plan } : {}),
         fallback: false,
         testCommand: "npm test",
         costUsd: 0,
@@ -153,14 +154,15 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
   async function reviewed(
     first: AgentOutcome,
     after: AgentOutcome[],
-    options: { importNow?: boolean; extra?: PullRequestFeedback[] } = {},
+    options: { importNow?: boolean; extra?: PullRequestFeedback[]; plan?: "security-fix" } = {},
   ) {
     clock = Date.parse(at) + 3 * 60_000;
-    const made = make([implement(), first, ...after]);
+    const made = make([implement(), first, ...after], options.plan);
     const created = made.service.createTask({
       projectId: "default",
       title: "決済API",
       body: "タスクの本文",
+      ...(options.plan ? { plan: options.plan } : {}),
     });
     const taskId = created.id;
     await made.service.runNext(taskId);
@@ -216,6 +218,23 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
     expect(notice).toContain("行数の上限を超える");
     expect(notice).toContain(MARK);
     expect(executor.calls.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it("セキュリティ対応のタスクは、印で止まっても、PR に知らせを書かない。理由は作業履歴に残る", async () => {
+    const { activity, service, pulls, id } = await reviewed(
+      review("changes_required", [{ title: "脆弱性の根本の修正", needs: MARK }]),
+      [],
+      { plan: "security-fix" },
+    );
+    const task = taskOf(service, id);
+    expect(task).toMatchObject({ status: "paused", pausedReason: "needs_decision" });
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    expect(notices(pulls)).toHaveLength(0);
+    expect(task.decisionPauses?.[0]?.findings).toEqual([
+      { finding: "脆弱性の根本の修正", reason: MARK },
+    ]);
     activity.close();
   });
 

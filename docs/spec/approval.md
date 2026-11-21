@@ -235,7 +235,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
      止めた実行が正常に終わった費用で先に一時停止していた（予算など）ときも、確かめられなかった実行を `unstoppedRuns` に足す（一時停止の理由はそのまま。すでに一時停止しているタスクへの `TaskPaused` は、`unstoppedRuns` を足すときだけ受け付ける）。確かめるまで承認へ進まない。
   2. 止めている間に、承認待ちになった・中止された・別の状態になったなら、ここでは記録しない（承認待ちになったなら、上の確認が扱う）。
   3. `ReworkStoppedByMerge`（actor `sacty`）に続けて、`PullRequestMerged`・`StepApproved`（actor `person`。マージの後の監視の開始も、上の「マージされた」と同じ）を同じ追記で記録する。
-- `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`・`incomplete`・`unchanged`）、一時停止の間に届いて反映していなかった PR の指摘の件数（`discardedReview`。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）、人の判断を待って止めていた PR のマージか（`decision: true`。[直しでは解消できない指摘での一時停止](#直しでは解消できない指摘での一時停止)）。理由はマージ。
+- `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`・`incomplete`・`unchanged`）、一時停止の間に届いて反映していなかった PR の指摘の件数（`discardedReview`。`decision: true` のときは、止めた回の印の付いた指摘の数で、止めた後に届いた人のコメントは数えない。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）、人の判断を待って止めていた PR のマージか（`decision: true`。[直しでは解消できない指摘での一時停止](#直しでは解消できない指摘での一時停止)）。理由はマージ。
   - projection は、実装の承認待ち（ゲートの提出回は、これまでの提出の回数。提出が無ければ 1）に戻し、捨てた指摘を無効にし、検証・PR の作成の待ち・一時停止の状態を消す。続く `PullRequestMerged`・`StepApproved` が承認として進める。
   - 承認した成果の本文（`approved.implement.output`）は、記録している最新の実装の報告。マージされた内容は PR のコミットが正。
 - PR の更新の直前（`publish`。引き継いだ既存の PR の更新も含む）にも、前の PR がマージされていないかを確かめる。マージされていれば、プッシュも PR の作成もせず、同じ記録で承認として進める（確認の前に PR の更新が始まる場合）。
@@ -305,7 +305,7 @@ PR のレビューの子タスクが、要修正の指摘に「直し（実装�
   - 取り込んだ AI のレビューの指摘が、すべて子タスクの最後の回のもので、その回の判定が修正が必要（`changes_required`）で、印の付いた指摘がある。
   - その PR の先頭が、人の判断が済んだ先頭でない（`Task.decisionPauses`）。
 - 止め方：`ReworkJudged`・`ChangesRequested` を記録せず、`TaskPaused`（理由 `needs_decision`、文言 `review.needsDecision`、`commit` は PR の先頭）だけを記録する。承認ゲートと取り込んだ指摘（`pendingReview`）は残り、直しの実行は始めない。指摘と根拠は、記録の前に秘密の値を伏せて切る。止めた回ごとに `Task.decisionPauses[]`（先頭・指摘と根拠・人の判断の文）に持つ。
-- PR への知らせ：止めた回ごとに 1 通、目印 `<!-- sacty-decision-notice:<タスク>:<回> -->` のコメントを書く（`decision-notice.ts`）。指摘と根拠を、秘密情報を伏せた引用にする。この目印の投稿は、PR の指摘に取り込まない（`isDecisionNotice`）。
+- PR への知らせ：止めた回ごとに 1 通（セキュリティの組み合わせのタスクには投稿しない。ほかの知らせと同じ。理由は作業履歴・画面・`get_task` で読める）、目印 `<!-- sacty-decision-notice:<タスク>:<回> -->` のコメントを書く（`decision-notice.ts`）。指摘と根拠を、秘密情報を伏せた引用にする。この目印の投稿は、PR の指摘に取り込まない（`isDecisionNotice`）。
 - 止めている間の見張り（`checkDecisionPauses`。承認ゲートの PR を見る）：
   - 届いた指摘は `PullRequestReviewImported`（`held: true`、`items[].by` 付き）で残す。`by` が `person` の指摘を含むときは、最後の人の投稿から `FEEDBACK_QUIET_MS` 待ってから記録し、同じ追記で `TaskResumed`（actor `sacty`）を記録して再開する。`unverified`・AI のレビュー・sacty の知らせだけでは、残すだけで再開しない。
   - 要求要件・設計の PR がマージされたら `TaskResumed`（actor `sacty`）を記録し、次の確認が承認として進める。実装の PR がマージされたら、`checkReworkMerges` が `ReworkStoppedByMerge`（`decision: true`。止めた理由の指摘を反映せず、マージを承認として進める）に続けて承認を記録する。
