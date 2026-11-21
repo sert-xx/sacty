@@ -669,15 +669,19 @@ describe("リスク評価のリンクと過去の記録", () => {
     expect(markdown).toContain(where);
   });
 
-  it.each([
-    "src/a\tb.ts:1",
-    "src/a\u0001b.ts:1",
-    "src/a\u007fb.ts:1",
-    "src/a\u2028b.ts:1",
-    "src/a\u2029b.ts:1",
-  ])("制御文字・行の区切りを含む %j はリンクにしない", (where) => {
-    expect(render(where)).not.toContain("/blob/");
-  });
+  it.each(["src/a\tb.ts:1", "src/a\u0001b.ts:1", "src/a\u007fb.ts:1"])(
+    "制御文字を含む %j はリンクにしない",
+    (where) => {
+      expect(render(where)).not.toContain("/blob/");
+    },
+  );
+
+  it.each(["src/a\u2028b.ts:1", "src/a\u2029b.ts:1"])(
+    "行の区切り（U+2028・U+2029）を含む %j は、行指定の一致の段階で拒まれリンクにしない",
+    (where) => {
+      expect(render(where)).not.toContain("/blob/");
+    },
+  );
 
   it("リポジトリ・コミットが不明ならリンクにせず、表示時の先頭に置き換えない", () => {
     for (const url of ["", "not a repository"])

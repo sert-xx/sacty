@@ -502,6 +502,7 @@ function focusLocation(
   // ラベルは、バッククォートも含めてリンク先と同じ綴りにする（長いバッククォートで囲む）。
   const fallback = markdownCode(where);
   const repo = repoUrl ? parseRepoUrl(repoUrl) : undefined;
+  // 「.」は U+2028・U+2029・改行に一致しないので、これらを含む where は、ここで一致せずに表示のままになる。
   const match = where.match(/^(.+):([1-9]\d*)(?:-([1-9]\d*))?$/);
   if (!repo || !commit || !/^[a-f\d]{7,64}$/i.test(commit) || !match) return fallback;
   const [, path = "", first = "", last] = match;
@@ -512,7 +513,7 @@ function focusLocation(
     !Number.isSafeInteger(end) ||
     end < start ||
     // u を付けると、サロゲートの範囲は対になっていないものだけに当たる。
-    /[\\:\u2028\u2029\uD800-\uDFFF]/u.test(path) ||
+    /[\\:\uD800-\uDFFF]/u.test(path) ||
     [...path].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
     // 先頭の「/」も、空の区切りとして、ここで拒む。
     path.split("/").some((part) => !part || part === "." || part === "..")
