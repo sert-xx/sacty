@@ -2,10 +2,10 @@
  * 利用上限で失敗した文から、上限が明ける時刻を読み取る（PBI-428）。確かめた形だけを読み、時間帯を推測しない。
  *
  * 読む形：
- * - Claude Code：`… session|weekly limit · resets [Mon ]3:45pm (Asia/Tokyo)`（時間帯の名前つき）
+ * - Claude Code：`… session|weekly|Opus|Sonnet limit · resets [Mon ]3:45pm (Asia/Tokyo)`、`… spend limit [reached] · resets …`（時間帯の名前つき）
  * - Claude Code の古い形：`Claude AI usage limit reached|1760000000`（エポックからの秒）
  *
- * 読まない形（時間帯を確かに知る手段が無い）：時間帯の名前の無い Claude Code の `resets 3:45pm`、Codex の `try again at …`。
+ * 読まない形（時間帯を確かに知る手段が無い）：日付つきの `resets Dec 1`、時間帯の名前の無い Claude Code の `resets 3:45pm`、Codex の `try again at …`。
  * 読めないときは undefined（呼ぶ側は、今までどおり cooldown_minutes を使う）。
  */
 
@@ -21,7 +21,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // 量指定は、すべて上限つきで、入れ子にしない（処理時間が文の長さに比例する形だけ）
 const CLAUDE_RESET =
-  /(?:session|weekly) limit · resets (?:(Sun|Mon|Tue|Wed|Thu|Fri|Sat) )?(\d{1,2})(?::(\d{2}))?(am|pm) \(([A-Za-z0-9_+/-]{1,40})\)/;
+  /(?:(?:session|weekly|Opus|Sonnet) limit|spend limit(?: reached)?) · resets (?:(Sun|Mon|Tue|Wed|Thu|Fri|Sat) )?(\d{1,2})(?::(\d{2}))?(am|pm) \(([A-Za-z0-9_+/-]{1,40})\)/;
 const EPOCH_RESET = /Claude AI usage limit reached\|(\d{10})(?!\d)/;
 
 function formatterFor(zone: string): Intl.DateTimeFormat | undefined {
