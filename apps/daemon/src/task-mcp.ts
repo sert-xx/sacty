@@ -17,7 +17,6 @@ import {
   canDecideTests,
   canDerive,
   canRereview,
-  canRerun,
   DeriveTaskInput,
   gatePullRequest,
   hasFailures,
@@ -40,6 +39,7 @@ import {
   renderMessage,
   repoKey,
   rerunEditableBody,
+  rerunnableKind,
   resumeNoteRoom,
   reviewWatching,
   reworkTargets,
@@ -1090,9 +1090,13 @@ function pauseBlock(task: Task): string | undefined {
  */
 function resumeBlock(task: Task): { reason: string; decideOnScreen: string[] } | undefined {
   if (task.status === "cancelled") {
+    const noRerun = rerunBlock(task);
     return {
-      reason:
-        "中止したタスクは再開できません（何も変えていません）。やり直すなら、利用者に頼まれたときだけ rerun_task で再実行します（新しいタスクになります）。",
+      reason: `中止したタスクは再開できません（何も変えていません）。${
+        noRerun
+          ? noRerunGuide(noRerun)
+          : "やり直すなら、利用者に頼まれたときだけ rerun_task で再実行します（新しいタスクになります）。"
+      }`,
       decideOnScreen: [],
     };
   }
@@ -1243,6 +1247,15 @@ function rerunBlock(task: Task): { reason: string; decideOnScreen: string[] } | 
       decideOnScreen: [],
     };
   }
+  return rerunKindBlock(task);
+}
+
+/**
+ * 中止の後に再実行できない理由と、画面で人が行えること（できるなら undefined）。rerunBlock の、状態で断る条件（中止していない・
+ * 完了）を除いた残りの判定で、rerunBlock と中止の案内（get_cancel_plan・resume_task の断り）が同じこの関数を使う。
+ * 中止の前のタスクに呼ぶと「いま中止したとすれば rerun_task が断るか」になる。
+ */
+function rerunKindBlock(task: Task): { reason: string; decideOnScreen: string[] } | undefined {
   if (task.rerunBy !== undefined) {
     return {
       reason: `このタスクは再実行済みです（何も変えていません）。再実行で作ったタスク（${task.rerunBy}）を get_task で確かめてください。再実行は1度だけです。`,
@@ -1256,7 +1269,7 @@ function rerunBlock(task: Task): { reason: string; decideOnScreen: string[] } | 
       decideOnScreen: [],
     };
   }
-  if (!canRerun(task)) {
+  if (!rerunnableKind(task)) {
     return {
       reason:
         "PR のレビューのタスクは、再実行できません（何も変えていません）。PR で依頼し直してください。",
@@ -1340,8 +1353,28 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
 
 /** 中止の後に残るもの。 */
 const CANCEL_KEPT = ["作業履歴", "セッションログ"];
-const CANCEL_IRREVERSIBLE =
-  "中止は取り消せず、再開もできません。やり直すなら、中止したタスクの再実行（rerun_task。新しいタスクになり、作業領域・ブランチ・PR は戻りません）を使います。PR を閉じ、sacty のブランチ（リモートも）と作業領域を消します。";
+const CANCEL_IRREVERSIBLE_BASE = "中止は取り消せず、再開もできません。";
+const CANCEL_IRREVERSIBLE_CLEANUP =
+  "PR を閉じ、sacty のブランチ（リモートも）と作業領域を消します。";
+
+/** 再実行できないタスクに示す、「MCP からはやり直せない」の前置きと、rerunBlock が返す理由・画面で人が決めること。 */
+function noRerunGuide(block: { reason: string; decideOnScreen: string[] }): string {
+  const decide =
+    block.decideOnScreen.length > 0
+      ? `画面で人が決めること：${block.decideOnScreen.join("・")}。`
+      : "";
+  return `中止すると、MCP からはやり直せません。${block.reason.replace("（何も変えていません）", "")}${decide}`;
+}
+
+/** get_cancel_plan の irreversible。中止できるタスクだけ、中止の後のやり直しの道（再実行できる見込みか、できないか）を添える。 */
+function cancelIrreversible(task: Task, canCancel: boolean): string {
+  if (!canCancel) return `${CANCEL_IRREVERSIBLE_BASE}${CANCEL_IRREVERSIBLE_CLEANUP}`;
+  const block = rerunKindBlock(task);
+  const guide = block
+    ? noRerunGuide(block)
+    : "やり直すなら、中止の後に rerun_task で再実行できる見込みです（新しいタスクになり、作業領域・ブランチ・PR は戻りません。デーモンが断ることがあります）。";
+  return `${CANCEL_IRREVERSIBLE_BASE}${guide}${CANCEL_IRREVERSIBLE_CLEANUP}`;
+}
 
 /** 中止の片付けの結果を、結果の形にする。detail は文言のコードのこともあるので、文にする。 */
 function cleanupResults(task: Task): z.infer<typeof CleanupResultSchema>[] {
@@ -1969,7 +2002,7 @@ export function checkRequestChanges(
   const reworkStep = reworkTargets(task, input.step as StepKey)[0];
   if (!reworkStep) {
     throw new Error(
-      `${renderMessage({ code: "gate.invalidTarget" }, "ja")}このタスクは差し戻さず、画面で確かめるか、どうするかを判断してもらってください（中止は、利用者がそのタスクの中止をはっきり頼んだときだけ cancel_task で行えます。中止したタスクのやり直しは、利用者に頼まれたときだけ rerun_task で行えます）。`,
+      `${renderMessage({ code: "gate.invalidTarget" }, "ja")}このタスクは差し戻さず、画面で確かめるか、どうするかを判断してもらってください（中止は、利用者がそのタスクの中止をはっきり頼んだときだけ cancel_task で行えます。中止したタスクのうち再実行できる種類のものは、利用者に頼まれたときだけ rerun_task でやり直せます）。`,
     );
   }
   if (remarks.length === 0) {
@@ -3159,7 +3192,7 @@ const TOOLS: readonly ToolDefinition[] = [
           kept: CANCEL_KEPT,
         },
         notes,
-        irreversible: CANCEL_IRREVERSIBLE,
+        irreversible: cancelIrreversible(task, blocked === undefined),
         cancelArguments: {
           close_pull_requests: blocked ? [] : targets.closePullRequests,
           delete_branches: blocked ? [] : targets.deleteBranches,
@@ -3172,7 +3205,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: "cancel_task",
     title: "タスクの中止",
     description: [
-      "タスクを中止します（画面の「中止」と同じ）。**取り消せません。再開もできません。**やり直すなら、中止した後に rerun_task で再実行します（新しいタスクになり、作業領域・ブランチ・PR は戻りません）。",
+      "タスクを中止します（画面の「中止」と同じ）。**取り消せません。再開もできません。**再実行できる種類のタスクなら、中止した後に rerun_task で再実行できます（新しいタスクになり、作業領域・ブランチ・PR は戻りません）。PR のレビューのタスク・分割の子・リポジトリが決まっていないチケット由来のタスクなど、再実行できないタスクは、中止すると MCP からはやり直せません（get_cancel_plan の irreversible に、そのタスクのやり直しの道が出ます）。",
       "sacty が作った実装の PR を閉じ（マージはしません）、要求要件・設計の PR のうち開いているものも閉じ、sacty のブランチ（リモートも）を消し、",
       "作業領域・退避した git のメタデータ・依存のキャッシュを消し、実行中のコンテナを止め、オーケストレーターのセッションを消します。作業履歴とセッションログは残ります。",
       "マージ済みの PR・引き継いだ人の PR とそのブランチには触れません。",
@@ -3436,7 +3469,7 @@ const INSTRUCTIONS = [
   "一時停止を頼まれたら、get_task の canPause が true のタスクに pause_task を呼びます（実行中の実行は打ち切られ、再開すると工程を最初からやり直します。承認待ちを止めると、承認ゲートと PR の見守りが止まります）。",
   "再開を頼まれたら、get_task の pausedReason・pausedMessage・canResume を確かめてから、resume_task を呼びます（止まった工程を実行し直し、時間と費用がかかります。同じ原因ならまた止まります）。",
   "予算の上限の引き上げ・テストの扱い・子タスクの中止を認める判断・作業するリポジトリの選択など、画面で人が決める判断が要る停止は、resume_task で再開できません（get_task の resumeBlocked の、画面で人が決めることを利用者に伝えます）。",
-  "中止を頼まれたときだけ、get_cancel_plan で片付けの対象（閉じる PR・消すブランチ・作業領域）を読み、利用者に伝えてから、cancel_task を呼びます。中止は取り消せず、再開もできません（PR を閉じ、sacty のブランチと作業領域を消します。作業履歴とセッションログは残ります。質問への答え・エラーの分析の実行中の実行も止めます）。やり直すなら、中止の後に rerun_task で再実行します（新しいタスクになり、作業領域・ブランチ・PR は戻りません）。やり直しを頼まれただけでは中止せず、中止してよいか利用者に確かめます。",
+  "中止を頼まれたときだけ、get_cancel_plan で片付けの対象（閉じる PR・消すブランチ・作業領域）を読み、利用者に伝えてから、cancel_task を呼びます。中止は取り消せず、再開もできません（PR を閉じ、sacty のブランチと作業領域を消します。作業履歴とセッションログは残ります。質問への答え・エラーの分析の実行中の実行も止めます）。再実行できる種類のタスクなら、中止の後に rerun_task で再実行できます（新しいタスクになり、作業領域・ブランチ・PR は戻りません）。再実行できないタスクは、中止すると MCP からはやり直せません（get_cancel_plan の irreversible で確かめます）。やり直しを頼まれただけでは中止せず、中止してよいか利用者に確かめます。",
   "再実行（やり直し）を頼まれたら、get_task の canRerun（中止したタスクで再実行できないときは、rerunBlocked の理由。中止していない・完了したタスクは canRerun が false になるだけです）を確かめてから、中止したタスクに rerun_task を呼びます（新しいタスクを作り、時間と費用のかかる工程が始まります。元のタスクは二度と再実行できなくなり、取り消せません。作業領域・ブランチ・PR は引き継がれず、最初からやり直します）。題や説明を直しての再実行・リポジトリやイメージの変更は、画面で行います。結果を受け取れなかったときは、自動でやり直さず、元のタスクの rerunBy を get_task で確かめます（あれば作られています。無ければ呼び直してよいです）。",
   "完了したタスクの続きの作成（「続きを作って」など）を頼まれたら、get_task の canDerive（完了したタスクで作れないとき＝セキュリティの組み合わせは、deriveBlocked の理由）を確かめてから、derive_task に題（title）と内容（body）を指定して呼びます（新しいタスクを作り、時間と費用のかかる工程が始まります。作ったタスクは消せず、元のタスクは変わりません。呼ぶたびに別のタスクができます。作業するリポジトリは元のタスクのもの、進め方は自動で、変えたいときは画面の「続きのタスクを作る」で行います）。結果を受け取れなかったときは、自動でやり直さず（時間切れ・切断のときは、少し待ってから）、失敗の文にある呼ぶ前の derivedTasks と送った題を基準に、元のタスクの derivedTasks を get_task で確かめます（増えた ID のタスクの題と derivedFrom が今回の依頼と合えば作られています。増えていなければ呼び直してよいです）。",
   "題の変更を頼まれたら、rename_task に題（title）を指定して呼びます（中止したタスク以外は、状態を問いません。今の実行は止めず、この後に作る PR の題・本文・コミット・通知から新しい題になります。すでに作った PR の題とブランチ名は変わらず、作業するリポジトリが決まっているタスクで、題と説明から決まる PR の番号が変わる題は断られます（PR から取り込んだタスクは問いません）。説明（body）の変更はできません）。結果を受け取れなかったときは、get_task の title を確かめます（変わっていれば済んでいます。変わっていなければ呼び直してよいです）。",

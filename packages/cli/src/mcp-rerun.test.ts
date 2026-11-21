@@ -475,6 +475,7 @@ describe("本物のデーモンのサービスを通した、中止したタス�
     expect(r.text).toContain("中止したタスクは再開できません");
     expect(r.text).toContain("利用者に頼まれたときだけ rerun_task で再実行します");
     expect(r.text).not.toContain("やり直しを頼まれただけでは、中止しません");
+    expect(r.text).not.toContain("MCP からはやり直せません");
     const queued = t.service.createTask({ projectId: "default", title: "実行待ち" });
     const q = await t.call("resume_task", { task_id: queued.id });
     expect(q.isError).toBe(true);
@@ -500,9 +501,18 @@ describe("本物のデーモンのサービスを通した、中止したタス�
     ]) {
       expect(text).toContain(part);
     }
-    expect(tools.find((x) => x.name === "cancel_task")?.description).toContain("rerun_task");
+    const cancelText = tools.find((x) => x.name === "cancel_task")?.description ?? "";
+    expect(cancelText).toContain(
+      "再実行できる種類のタスクなら、中止した後に rerun_task で再実行できます",
+    );
+    expect(cancelText).toContain("MCP からはやり直せません");
+    expect(cancelText).not.toContain("やり直すなら、中止した後に rerun_task");
     const instructions = t.client.getInstructions() ?? "";
-    expect(instructions).toContain("rerun_task");
+    expect(instructions).toContain(
+      "再実行できる種類のタスクなら、中止の後に rerun_task で再実行できます",
+    );
+    expect(instructions).toContain("再実行できないタスクは、中止すると MCP からはやり直せません");
+    expect(instructions).not.toContain("やり直すなら、中止の後に rerun_task");
     expect(instructions).toContain("二度と再実行できなくなる");
     t.activity.close();
   });
@@ -573,5 +583,128 @@ describe("再実行を頼んだ後に結果を受け取れなかったときの�
     expect(unauthorized.live(bid).rerunBy).toBeUndefined();
     refused.activity.close();
     unauthorized.activity.close();
+  });
+
+  describe("中止の案内の切り替え：中止の後に再実行できるか（rerunBlock と同じ判定）", () => {
+    const ticket = {
+      platform: "jira",
+      service: "jira-cloud",
+      key: "ABC-9",
+      url: "https://example.test/ABC-9",
+    };
+    /** 中止の前のタスク（実行待ち）を作る。 */
+    const pending = (t: Setup, patch: Record<string, unknown> = {}, body = "人の説明") => {
+      const { id } = t.service.createTask({ projectId: "default", title: "決済API", body });
+      Object.assign(t.live(id), patch);
+      return id;
+    };
+    const plan = async (t: Setup, id: string) => {
+      const r = await t.call("get_cancel_plan", { task_id: id });
+      expect(r.isError).toBe(false);
+      return r.data as { canCancel: boolean; irreversible: string };
+    };
+
+    it("get_cancel_plan：再実行できるタスクの irreversible には rerun_task の案内（見込み・デーモンが断ることがある）が入り、前置きは入らない", async () => {
+      const t = await setup();
+      const p = await plan(t, pending(t));
+      expect(p.canCancel).toBe(true);
+      expect(p.irreversible).toContain("rerun_task で再実行できる見込みです");
+      expect(p.irreversible).toContain("デーモンが断ることがあります");
+      expect(p.irreversible).not.toContain("MCP からはやり直せません");
+      t.activity.close();
+    });
+
+    it("get_cancel_plan：PR のレビューのタスク・リポジトリ未定のチケット由来・既定値が通らないタスクには rerun_task を入れず、MCP からはやり直せないことと rerunBlock の理由を入れる", async () => {
+      const t = await setup();
+      const cases: [string, string, string][] = [
+        [pending(t, { start: "github_pull_request" }), "PR で依頼し直してください", ""],
+        [
+          pending(t, { start: "jira", repo: undefined, repository: undefined, ticket }),
+          "画面でリポジトリを選んで再実行してください",
+          "作業するリポジトリの選択",
+        ],
+        [
+          pending(t, { body: "あ".repeat(10_001) }),
+          "画面で直して再実行してください",
+          "題・説明・リポジトリを直しての再実行",
+        ],
+      ];
+      for (const [id, reason, screen] of cases) {
+        const p = await plan(t, id);
+        expect(p.canCancel, reason).toBe(true);
+        expect(p.irreversible, reason).not.toContain("rerun_task");
+        expect(p.irreversible, reason).toContain("中止すると、MCP からはやり直せません");
+        expect(p.irreversible, reason).toContain(reason);
+        expect(p.irreversible, reason).toContain(screen);
+        expect(p.irreversible, reason).toContain("PR を閉じ");
+      }
+      t.activity.close();
+    });
+
+    it("get_cancel_plan：中止できないタスク（完了・中止済み・再実行済み）の irreversible には、やり直しの案内が入らない", async () => {
+      const t = await setup();
+      const done = pending(t, { status: "idle", steps: [{ key: "implement", state: "done" }] });
+      const gone = await cancelled(t);
+      const again = await cancelled(t);
+      expect((await t.call("rerun_task", { task_id: again })).isError).toBe(false);
+      for (const id of [done, gone, again]) {
+        const p = await plan(t, id);
+        expect(p.canCancel, id).toBe(false);
+        expect(p.irreversible, id).not.toContain("rerun_task");
+        expect(p.irreversible, id).not.toContain("MCP からはやり直せません");
+      }
+      t.activity.close();
+    });
+
+    it("resume_task の断り：再実行できない中止したタスク（PR のレビュー・リポジトリ未定・既定値が通らない・分割の子・再実行済み）には rerun_task を入れず、前置きと rerunBlock の理由を入れる", async () => {
+      const t = await setup();
+      const again = await cancelled(t);
+      const rerun = (await t.call("rerun_task", { task_id: again })).data as Rerun;
+      const cases: [string, string][] = [
+        [await cancelled(t, { start: "github_pull_request" }), "PR で依頼し直してください"],
+        [
+          await cancelled(t, { start: "jira", repo: undefined, repository: undefined, ticket }),
+          "画面でリポジトリを選んで再実行してください",
+        ],
+        [await cancelled(t, { body: "あ".repeat(10_001) }), "画面で直して再実行してください"],
+        [
+          await cancelled(t, { parent: { taskId: "p", dependsOn: [] } }),
+          "親のタスクから進めてください",
+        ],
+        [again, rerun.rerun.newTaskId],
+      ];
+      for (const [id, reason] of cases) {
+        const r = await t.call("resume_task", { task_id: id });
+        expect(r.isError, reason).toBe(true);
+        expect(r.text, reason).toContain("中止したタスクは再開できません");
+        expect(r.text, reason).toContain("中止すると、MCP からはやり直せません");
+        expect(r.text, reason).toContain(reason);
+        expect(r.text, reason).not.toContain("rerun_task");
+      }
+      t.activity.close();
+    });
+
+    it("request_changes の gate.invalidTarget の断りの文は、再実行できる種類のものだけと条件付きで書く", async () => {
+      const { checkRequestChanges } = await import("../../../apps/daemon/src/task-mcp.js");
+      const task = {
+        steps: [{ key: "requirements", state: "awaiting_approval" }],
+        status: "awaiting_approval",
+        gate: { step: "requirements", submission: 1 },
+        submissions: { requirements: 1 },
+        remarks: [],
+        operationAttempted: true,
+      } as unknown as Task;
+      let message = "";
+      try {
+        checkRequestChanges(task, { step: "requirements", submission: 1 }, ["直す"]);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toContain("この工程には差し戻せません");
+      expect(message).toContain(
+        "再実行できる種類のものは、利用者に頼まれたときだけ rerun_task でやり直せます",
+      );
+      expect(message).not.toContain("中止したタスクのやり直しは");
+    });
   });
 });
