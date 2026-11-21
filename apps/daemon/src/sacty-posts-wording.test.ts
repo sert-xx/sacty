@@ -4,12 +4,14 @@ import {
   isBasisComment,
   isDeferralNotice,
   isHumanAskNotice,
+  isMergeApprovalNotice,
   isReviewStopNotice,
   isReworkNotice,
   isSactyRemarkReply,
   remarkReplyTaskOf,
 } from "./github.js";
 import { buildHumanAskNotice } from "./human-ask-notice.js";
+import { buildMergeApprovalNotice, buildMergeNotApprovedNotice } from "./merge-approval-notice.js";
 import { buildRemarkReply, readRemarkReply } from "./remark-reply.js";
 import { buildStopNotice } from "./review-stop-notice.js";
 import { buildReworkNotice } from "./rework-notice.js";
@@ -68,6 +70,27 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
     expect(
       isReworkNotice(
         buildReworkNotice({ taskId: "t1", round: 1, reason: "理由", stepName: "設計", ...common }),
+      ),
+    ).toBe(true);
+    expect(
+      isMergeApprovalNotice(
+        buildMergeApprovalNotice({
+          taskId: "t1",
+          number: 8,
+          discarded: 3,
+          taskUrl: common.taskUrl,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isMergeApprovalNotice(
+        buildMergeNotApprovedNotice({
+          taskId: "t1",
+          number: 8,
+          stepName: "設計",
+          backName: "要求要件",
+          taskUrl: common.taskUrl,
+        }),
       ),
     ).toBe(true);
     expect(
@@ -138,6 +161,18 @@ describe("古い文言の投稿も見分ける（TV-15）", () => {
     expect(
       isReworkNotice("<!-- sacty-rework-notice:t1:1 -->\n## Sacty：指摘を設計に戻しました"),
     ).toBe(true);
+    // マージを承認として扱った知らせと、扱わなかった知らせ（PBI-462）
+    expect(
+      isMergeApprovalNotice(
+        "<!-- sacty-merge-approval:t1:8 -->\n## Sacty：このマージを承認として扱いました",
+      ),
+    ).toBe(true);
+    expect(
+      isMergeApprovalNotice(
+        "<!-- sacty-merge-not-approved:t1:8 -->\n## Sacty：このマージを設計の承認として扱っていません",
+      ),
+    ).toBe(true);
+    expect(isMergeApprovalNotice("人のコメント")).toBe(false);
     expect(
       isReviewStopNotice("<!-- sacty-review-stopped:t1:k -->\n## Sacty のレビューが止まりました"),
     ).toBe(true);

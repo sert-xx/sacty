@@ -187,6 +187,7 @@ Code: `apps/daemon/src/prompts.ts` (`minimalDraftLines`, `documentDraftLines`, `
   - For a remark that is not small (more than 2 places to fix, or the direction changes), and when in doubt, the round limit is the normal one (up to 5).
   - The agent writes which case it took at the start of the report's `summary`.
 - The instructions for revising Implementation, Document, and Investigation do not get this section.
+- If a person merges the PR of that step while Requirements or Design is being revised (after a rejection, imported PR comments, and so on), the revision (the run and the PR update) is stopped and the merge is taken as the approval of the submission that was waiting for approval. The revision's result is not used, and no new PR is created ([Merging during a rework of a step PR](approval.en.md#merging-during-a-rework-of-a-step-pr)).
 
 Related ADR: [要求要件・設計の差し戻しでは、前回の成果物を元に、指摘に関わる所だけを書き換える](../adr/20261101-1355-partial-rework-of-requirements-and-design.md)
 

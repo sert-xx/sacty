@@ -6867,6 +6867,24 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    it("作り直しを止めたら、実装の PR にも、マージを承認として扱ったことと、捨てた指摘の件数を、目印付きの知らせで1件だけ書く（PBI-462）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id);
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      await noticesSettled(service);
+      const notices = pulls.issueComments.filter((c) =>
+        c.body.includes(`<!-- sacty-merge-approval:${id}:7 -->`),
+      );
+      expect(notices).toHaveLength(1);
+      expect(notices[0]?.number).toBe(7);
+      expect(notices[0]?.body).toContain("承認として扱い");
+      expect(notices[0]?.body).toContain("1件");
+      activity.close();
+    });
+
     it("PR の中で人が直してからマージしたなら、直した最終のコミットも残す", async () => {
       const pulls = new FakePulls();
       const { activity, service, id } = await toImplementGate([], { pulls });

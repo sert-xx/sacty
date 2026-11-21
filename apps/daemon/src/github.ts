@@ -124,6 +124,8 @@ export interface PullRequests {
     token: string;
     number: number;
     marker: string;
+    /** あれば、そのアカウントが投稿し、本文が marker で始まるものだけ（他人が目印をまねても、書き済みと見なさない。PBI-462）。 */
+    accounts?: readonly string[];
   }): Promise<{ url: string } | undefined>;
   /**
    * PR の行へのコメントのうち、本文が prefix で始まるもの（指摘への返信を二度投稿しないため。PBI-352）。account があれば、
@@ -357,6 +359,24 @@ export const REWORK_NOTICE_MARKER_PREFIX = "<!-- sacty-rework-notice:";
 /** 本文が、設計に戻したことの知らせの目印で始まるか（PBI-446）。 */
 export function isReworkNotice(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(REWORK_NOTICE_MARKER_PREFIX);
+}
+
+/**
+ * 工程の PR の自動の直しの間にマージされた PR に、マージを承認として扱ったことを知らせる投稿の目印（PBI-462）。
+ * `<!-- sacty-merge-approval:<タスク ID>:<PR 番号> -->`。承認にしなかったマージへの知らせは
+ * `<!-- sacty-merge-not-approved:<タスク ID>:<PR 番号> -->`。どちらも人間の指摘ではないので、PR の指摘に取り込まない。
+ */
+export const MERGE_APPROVAL_MARKER_PREFIX = "<!-- sacty-merge-approval:";
+export const MERGE_NOT_APPROVED_MARKER_PREFIX = "<!-- sacty-merge-not-approved:";
+
+/** 本文が、マージの承認・承認にしなかったことの知らせの目印で始まるか（PBI-462）。 */
+export function isMergeApprovalNotice(body: unknown): boolean {
+  if (typeof body !== "string") return false;
+  const head = body.trimStart();
+  return (
+    head.startsWith(MERGE_APPROVAL_MARKER_PREFIX) ||
+    head.startsWith(MERGE_NOT_APPROVED_MARKER_PREFIX)
+  );
 }
 
 /**
@@ -664,6 +684,7 @@ export class GitHubPullRequests implements PullRequests {
             isReworkNotice(item.body) ||
             isForkHoldNotice(item.body) ||
             isDecisionNotice(item.body) ||
+            isMergeApprovalNotice(item.body) ||
             isDeferralNotice(item.body) ||
             isBasisComment(item.body)) &&
           typeof login === "string" &&
@@ -862,7 +883,17 @@ export class GitHubPullRequests implements PullRequests {
       input.token,
       "listIssueComments",
     );
-    const found = comments.find((c) => typeof c.body === "string" && c.body.includes(input.marker));
+    const accounts = input.accounts?.map((a) => a.toLowerCase());
+    const found = comments.find((c) => {
+      if (typeof c.body !== "string") return false;
+      if (!accounts) return c.body.includes(input.marker);
+      const login = (c.user as { login?: unknown } | undefined)?.login;
+      return (
+        c.body.trimStart().startsWith(input.marker) &&
+        typeof login === "string" &&
+        accounts.includes(login.toLowerCase())
+      );
+    });
     return found ? { url: String(found.html_url ?? "") } : undefined;
   }
 

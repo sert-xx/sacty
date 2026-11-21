@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/web/src/components/self-review-depth.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts、apps/web/src/components/deferral.tsx、apps/web/src/lib/labels.ts、apps/web/src/i18n/messages/labels.ts、apps/web/src/i18n/messages/parts.ts、apps/daemon/src/suggestion-triage.ts、apps/daemon/src/triage-reply.ts、packages/core/src/messages.ts、apps/daemon/src/risk-assessment.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/web/src/components/self-review-depth.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/integration.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts、apps/web/src/components/deferral.tsx、apps/web/src/lib/labels.ts、apps/web/src/i18n/messages/labels.ts、apps/web/src/i18n/messages/parts.ts、apps/daemon/src/suggestion-triage.ts、apps/daemon/src/triage-reply.ts、packages/core/src/messages.ts、apps/daemon/src/risk-assessment.ts、apps/daemon/src/merge-approval-notice.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -1076,6 +1076,25 @@ PR の中で直してからマージした（sacty の提出と違う内容で�
 - 止めた実行と、作り直しに渡す前に捨てた指摘（まだ PR に反映していないもの）は、タスクの作業履歴に「PR #N がマージされたため、実装の作り直しを止めた」として残ります。
 - 捨てた指摘（一時停止の間に届いて、まだ反映していなかった PR の指摘を含みます）を直したいときは、続きのタスクを作ってください（[完了したタスクの続きのタスクを作る](#完了したタスクの続きのタスクを作る)）。
 - 要求要件・設計をやり直している間は、実装の PR がマージされても止めません。
+
+要求要件・設計を直している間（差し戻し・PR の指摘や提案の取り込み）に、人がその工程の PR をマージしたときも、マージを承認として扱います。
+
+- sacty は、走っている直しを止めて、次の工程に進みます。
+  直しの結果は取り込まず、新しい PR も作りません。
+  承認されるのは、マージした PR の内容（PR の中で直していれば、直した内容）です。
+- PR に、マージを承認として扱ったことと、取り込まなかった提案の件数を書いたコメントが1回出ます。
+  実装の PR の作り直しをマージで止めたときも、同じコメントが出ます。
+- タスクの作業履歴には「PR #N がマージされたため、設計の直しを止めた」（要求要件なら「要求要件の直し」）と残ります。
+- sacty が直しを PR に反映した後にマージしたときは、直した内容の承認になります。
+- マージせずに PR を閉じたときは、直しの後に新しい PR を作ります。
+
+設計の PR の指摘で要求要件へ戻している間に、元の設計の PR をマージしても、設計の承認にはなりません。
+PR に、要求要件の直しの最中だったため設計の承認として扱っていないことを書いたコメントが1回出ます。
+要求要件を承認した後に、sacty が設計の PR を作り直すので、その PR でもう一度承認してください。
+
+直しを新しい PR で出すときに、sacty が直す前の PR を閉じられなかったときは、新しい PR を作らずに一時停止します。
+再開すると、PR を閉じる所からやり直します。
+止まっている間に直す前の PR をマージすると、再開を待たずに承認として進みます。
 
 ### PR の本文の形
 

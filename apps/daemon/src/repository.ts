@@ -239,6 +239,11 @@ export interface RepositoryWorkspace {
     /** コミットの日時（同じ提出では同じ値。再開しても同じコミットを作り直せるように）。 */
     date: string;
     allowEmpty?: boolean;
+    /**
+     * true なら、コミットを作るだけでブランチへプッシュしない（作ったコミットは、既存の `pushCommit` でプッシュする。
+     * 記録したブランチのコミットと比べてから、ブランチの名前を決めるため）。
+     */
+    skipPush?: boolean;
     authEnv?: Record<string, string>;
   }): Promise<{ commit: string }>;
   /**
@@ -1282,11 +1287,13 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       rmSync(temp, { recursive: true, force: true });
     }
     // プッシュは、HTTPS の GitHub なら gh のトークン、それ以外はホストの認証を使う。強制プッシュはしない
-    await git(
-      "push",
-      ["--git-dir", input.gitDir, "push", "--", "origin", `${commit}:refs/heads/${input.branch}`],
-      cloneEnv(input.authEnv),
-    );
+    if (!input.skipPush) {
+      await git(
+        "push",
+        ["--git-dir", input.gitDir, "push", "--", "origin", `${commit}:refs/heads/${input.branch}`],
+        cloneEnv(input.authEnv),
+      );
+    }
     return { commit };
   }
 

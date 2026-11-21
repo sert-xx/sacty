@@ -938,6 +938,44 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     );
   });
 
+  it("作業履歴に、要求要件・設計の直しを PR のマージで止めたことを、工程の名前で表示する。step の無い記録は、実装の作り直しの文言のまま（PBI-462）", () => {
+    const event = (payload: object): ActivityEvent =>
+      ({
+        type: "ReworkStoppedByMerge",
+        payload,
+        seq: 1,
+        id: "e1",
+        taskId: "t",
+        projectId: "p",
+        at: "",
+        actor: "sacty",
+      }) as ActivityEvent;
+    const design = event({
+      number: 8,
+      step: "design",
+      was: "running",
+      stoppedRuns: ["r1"],
+      discardedRemarks: [{ id: "design-1-1", text: "提案" }],
+    });
+    expect(describeEvent(design)).toBe(
+      "PR #8 がマージされたため、設計の直しを止めた（実行中・実行1件を停止）。作り直しに渡す前の指摘1件を捨てた（design-1-1）。マージを承認として進める",
+    );
+    expect(describeIn(design, labels.en)).toContain(
+      "PR #8 was merged, so the rework of the design was stopped (running, 1 run stopped)",
+    );
+    const requirements = event({
+      number: 7,
+      step: "requirements",
+      was: "queued",
+      stoppedRuns: [],
+      discardedRemarks: [],
+    });
+    expect(describeEvent(requirements)).toContain("要求要件の直しを止めた");
+    expect(
+      describeEvent(event({ number: 7, was: "queued", stoppedRuns: [], discardedRemarks: [] })),
+    ).toContain("実装の作り直しを止めた");
+  });
+
   it("人の判断を待って止めていた PR のマージは、作り直しを止めた・一時停止の間に届いた指摘を捨てた、とは書かず、止めた理由の指摘を反映せずに承認として進めると表示する（PBI-452）", () => {
     const decision = {
       type: "ReworkStoppedByMerge",

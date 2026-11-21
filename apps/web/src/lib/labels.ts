@@ -959,6 +959,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
           : undefined,
         event.payload.discardedReview ?? 0,
         event.payload.decision === true,
+        event.payload.step ? l.step[event.payload.step] : undefined,
       );
     case "PullRequestConflicted":
       return e.PullRequestConflicted(event.payload.number);

@@ -1146,6 +1146,28 @@ describe("Issue へのコメント（PBI-18）", () => {
       `${api}/issues/5/comments?per_page=100&page=2`,
     ]);
     expect(calls[0]?.auth).toBe("Bearer ghp_secret");
+    // accounts を渡すと、そのアカウントが投稿し、本文が目印で始まるものだけを見つける（他人が目印をまねても、書き済みと見なさない）
+    const marker = "<!-- sacty-merge-approval:t1:8 -->";
+    const posted = (login: string, body: string) => ({
+      user: { login },
+      body,
+      html_url: `https://github.com/acme/app/issues/8#issuecomment-${login}`,
+    });
+    const mimic = new GitHubPullRequests(
+      fakeFetch([
+        { status: 200, json: [posted("mallory", `${marker}\nまね`)] },
+        {
+          status: 200,
+          json: [posted("mallory", `${marker}\nまね`), posted("Sacty-Bot", `${marker}\n本物`)],
+        },
+      ]).impl,
+    );
+    expect(
+      await mimic.findIssueComment({ ...target, marker, accounts: ["sacty-bot"] }),
+    ).toBeUndefined();
+    expect(await mimic.findIssueComment({ ...target, marker, accounts: ["sacty-bot"] })).toEqual({
+      url: "https://github.com/acme/app/issues/8#issuecomment-Sacty-Bot",
+    });
     expect(
       await client.findIssueComment({ ...target, marker: "<!-- sacty-investigation:t2 -->" }),
     ).toBeUndefined();
@@ -1941,6 +1963,29 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       ]);
       const feedback = await new GitHubPullRequests(impl).feedback({ ...pr, account: "sacty-bot" });
       expect(feedback.map((f) => f.key)).toEqual(["comment:2", "comment:3"]);
+    });
+
+    it("マージを承認として扱った知らせと、承認として扱わなかった知らせ（PBI-462）は、sacty のアカウントのものだけ、PR の指摘に取り込まない。人（PR の作者を含む）のコメントは指摘として取り込む", async () => {
+      const approval =
+        "<!-- sacty-merge-approval:t1:8 -->\n## Sacty：このマージを承認として扱いました";
+      const notApproved =
+        "<!-- sacty-merge-not-approved:t1:8 -->\n## Sacty：このマージを設計の承認として扱っていません";
+      const { impl } = fakeFetch([
+        { status: 200, json: [] },
+        { status: 200, json: [] },
+        {
+          status: 200,
+          json: [
+            comment(1, "sacty-bot", approval),
+            comment(2, "sacty-bot", notApproved),
+            comment(3, "alice", "人間のコメント"),
+            comment(4, "mallory", approval),
+            comment(5, "mallory", notApproved),
+          ],
+        },
+      ]);
+      const feedback = await new GitHubPullRequests(impl).feedback({ ...pr, account: "sacty-bot" });
+      expect(feedback.map((f) => f.key)).toEqual(["comment:3", "comment:4", "comment:5"]);
     });
 
     it("ほかに知っている sacty のアカウント（noticeAccounts）の止まったことの投稿も除く（それ以外のコメントは除かない）", async () => {

@@ -41,6 +41,7 @@ import {
   type TaskService,
 } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
+import { taskPullRequests } from "./task-mcp.js";
 import {
   agent,
   appendLegacy,
@@ -106,6 +107,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     executor.calls[i]?.command.join(" ") ?? "";
   const taskOf = (svc: TaskService, id: string) => svc.get(id)?.task as Task;
   const taskBranchOf = (id: string) => `sacty/task-${id.slice(0, 8)}`;
+  /** タスクブランチ（工程のブランチを除く）へのプッシュ。工程のブランチは、コミットを作ってから pushCommit でプッシュする。 */
+  const taskBranchPushes = (repos: FakeRepos) =>
+    repos.pushedCommits.filter((p) => !/-(requirements|design)-\d+$/.test(p.branch));
   const docOf = (id: string, step: string, dir = "docs/sacty") =>
     `${dir}/${id.slice(0, 8)}/${step}.md`;
 
@@ -153,6 +157,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       now?: () => number;
       /** 知らせのタスクの画面の URL（SACTY_WEB_URL）。 */
       webUrl?: string;
+      /** タスクの計画（セキュリティの組み合わせなど）。 */
+      plan?: "security-fix";
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -191,6 +197,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       projectId: "default",
       title: "決済API",
       body: "タスクの本文",
+      ...(options.plan ? { plan: options.plan } : {}),
     });
     await made.service.runNext(id);
     return { activity, ...made, id };
@@ -302,7 +309,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const { activity, service, repos, pulls, id } = made;
     const taskBranch = taskBranchOf(id);
     // 1. タスクブランチ（起点のコミットから）と、要求要件のブランチ・PR
-    expect(repos.pushedCommits).toEqual([{ commit: "base123", branch: taskBranch }]);
+    expect(taskBranchPushes(repos)).toEqual([{ commit: "base123", branch: taskBranch }]);
     expect(types(service, id).slice(-6)).toEqual([
       "AgentRunCompleted",
       "TaskBranchCreated",
@@ -1169,7 +1176,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(service.queuedTaskIds()).toEqual([id]);
     await service.runNext(id);
     // タスクブランチは作り直さず、同じ工程のブランチに、同じ日時で積み直す
-    expect(repos.pushedCommits).toHaveLength(1);
+    expect(taskBranchPushes(repos)).toHaveLength(1);
     expect(repos.committedFiles.map((c) => c.branch)).toEqual([
       `${taskBranchOf(id)}-requirements-1`,
       `${taskBranchOf(id)}-requirements-1`,
@@ -1400,9 +1407,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         pulls.calls.find((c) => c.branch === `${taskBranchOf(child)}-requirements-1`),
       ).toMatchObject({ baseBranch: taskBranchOf(child) });
     }
-    expect(repos.pushedCommits.map((p) => p.branch).sort()).toEqual(
-      [id, ...children].map(taskBranchOf).sort(),
-    );
+    expect(
+      taskBranchPushes(repos)
+        .map((p) => p.branch)
+        .sort(),
+    ).toEqual([id, ...children].map(taskBranchOf).sort());
     activity.close();
   });
 
@@ -8950,6 +8959,643 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
         activity.close();
       });
+    });
+  });
+
+  describe("要求要件・設計の自動の直しの間に人が PR をマージしたら、承認として扱い、直しを捨てる（PBI-462）", () => {
+    const REMARKS = ["提案1", "提案2", "提案3"];
+    /** PR を作った後に、プロジェクトの GitHub のアカウントの選択を外す。 */
+    const dropAccount = (projects: MemoryProjectStore) =>
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      });
+    const mergedState = (headSha: string | undefined, mergeCommit = "9".repeat(40)) => ({
+      state: "merged" as const,
+      mergedBy: "reviewer",
+      headSha,
+      mergeCommit,
+    });
+    const designPr = (made: Pick<Made, "service" | "id">) =>
+      taskOf(made.service, made.id).stepPullRequests.findLast((p) => p.step === "design");
+    const stoppedOf = (made: Pick<Made, "service" | "id">) =>
+      made.service.get(made.id)?.activity.filter((e) => e.type === "ReworkStoppedByMerge") ?? [];
+    const countOf = (made: Pick<Made, "service" | "id">, type: string) =>
+      types(made.service, made.id).filter((t) => t === type).length;
+    /** 直しの記録（作り直しを止めた・マージ・承認）が、この順に並んでいるか。 */
+    const approvedTail = (made: Pick<Made, "service" | "id">) => {
+      const all = types(made.service, made.id);
+      const at = all.indexOf("ReworkStoppedByMerge");
+      return all.slice(at, at + 3);
+    };
+    const NEW_DESIGN = out(
+      [
+        "# 設計 v2（直しの成果）",
+        block({
+          "sacty-test-viewpoints": [
+            { title: "直しの観点", input: "直しの入力", expected: "直しの期待" },
+          ],
+        }),
+      ].join("\n\n"),
+    );
+    /** 設計の PR #8 の承認待ちから、設計の直し（提案3件）を始めた状態。 */
+    async function toDesignRework(
+      extra: (AgentOutcome | typeof HOLD)[] = [],
+      options: Parameters<typeof start>[1] = {},
+    ) {
+      const made = await start(
+        [out("# 要求要件 v1"), design("# 設計 v1"), ...(extra as AgentOutcome[])],
+        options,
+      );
+      await merge(made, "requirements");
+      await made.service.runNext(made.id);
+      expect(taskOf(made.service, made.id).gate).toEqual({ step: "design", submission: 1 });
+      made.service.requestChanges(made.id, {
+        step: "design",
+        submission: 1,
+        comments: REMARKS,
+      });
+      return made;
+    }
+    const mergeDesign = (made: Made, headSha?: string) => {
+      made.pulls.states[8] = mergedState(headSha ?? designPr(made)?.commit);
+    };
+    /** 承認として進み、新しい PR・ブランチを作っていないか。 */
+    const expectApprovedWithoutNewPr = (made: Made, publishedBefore: number) => {
+      expect(approvedTail(made)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(countOf(made, "StepPullRequestPublished")).toBe(publishedBefore);
+      expect(made.pulls.calls).toHaveLength(publishedBefore);
+      expect(
+        made.repos.pushedCommits.filter((p) => /-design-\d+$/.test(p.branch)).map((p) => p.branch),
+      ).toEqual([`${taskBranchOf(made.id)}-design-1`]);
+    };
+
+    it("設計の直しの実行中にマージされたら、実行を止め、1回の追記で作り直しを止めた・マージ・承認を記録し、直しの結果は使わず新しい PR も作らない（TV-1・TV-10）", async () => {
+      const made = await toDesignRework([HOLD, NEW_DESIGN]);
+      const { service, executor, id } = made;
+      const first = taskOf(service, id).testViewpoints;
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      mergeDesign(made);
+      await service.checkPullRequests();
+      await running;
+      expect(executor.killed).toEqual([runId]);
+      expect(stoppedOf(made)[0]?.payload).toMatchObject({
+        number: 8,
+        step: "design",
+        was: "running",
+        stoppedRuns: [runId],
+        discardedRemarks: REMARKS.map((text, i) => ({ id: `design-1-${i + 1}`, text })),
+      });
+      expectApprovedWithoutNewPr(made, 2);
+      const task = taskOf(service, id);
+      expect(task.approved.design?.output).toContain("# 設計 v1");
+      expect(task.approved.design?.testViewpoints).toEqual(first);
+      expect(task.remarks.every((r) => r.voided)).toBe(true);
+      // get_task と画面が見る PR の状態は、マージ済みになる
+      expect(task.stepPullRequests.find((p) => p.number === 8)).toMatchObject({ state: "merged" });
+      expect(taskPullRequests(task).find((p) => p.number === 8)).toMatchObject({
+        role: "design",
+        state: "merged",
+      });
+      // 続きの確認で、記録を重ねない
+      await service.checkPullRequests();
+      expect(stoppedOf(made)).toHaveLength(1);
+      made.activity.close();
+    });
+
+    it("実行待ちの要求要件の直しと、手動で一時停止した設計の直しの間のマージも、承認として進める（TV-2）", async () => {
+      const queued = await start([out("# 要求要件 v1"), out("# 要求要件 v2")]);
+      queued.service.requestChanges(queued.id, {
+        step: "requirements",
+        submission: 1,
+        comments: ["直す"],
+      });
+      expect(taskOf(queued.service, queued.id).status).toBe("queued");
+      queued.pulls.states[7] = mergedState(
+        taskOf(queued.service, queued.id).stepPullRequests[0]?.commit,
+      );
+      await queued.service.checkPullRequests();
+      expect(stoppedOf(queued)[0]?.payload).toMatchObject({
+        number: 7,
+        step: "requirements",
+        was: "queued",
+        stoppedRuns: [],
+      });
+      expect(approvedTail(queued)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(taskOf(queued.service, queued.id).approved.requirements?.output).toBe("# 要求要件 v1");
+      expect(queued.pulls.calls).toHaveLength(1);
+      queued.activity.close();
+
+      const paused = await toDesignRework([NEW_DESIGN]);
+      await paused.service.pause(paused.id);
+      expect(taskOf(paused.service, paused.id).status).toBe("paused");
+      mergeDesign(paused);
+      await paused.service.checkPullRequests();
+      expect(stoppedOf(paused)[0]?.payload).toMatchObject({ step: "design", was: "paused" });
+      expectApprovedWithoutNewPr(paused, 2);
+      paused.activity.close();
+    });
+
+    it("承認待ちで一時停止している間のマージは、これまでどおり見守らず、再開した後の確認で承認する（作り直しの記録は残さない）", async () => {
+      const made = await start([out("# 要求要件 v1")]);
+      await made.service.pause(made.id);
+      made.pulls.states[7] = mergedState(taskOf(made.service, made.id).stepPullRequests[0]?.commit);
+      await made.service.checkPullRequests();
+      expect(stoppedOf(made)).toHaveLength(0);
+      expect(taskOf(made.service, made.id).status).toBe("paused");
+      made.service.resume(made.id, {});
+      await made.service.checkPullRequests();
+      expect(stoppedOf(made)).toHaveLength(0);
+      expect(taskOf(made.service, made.id).approved.requirements?.submission).toBe(1);
+      made.activity.close();
+    });
+
+    it("PR を作る時点でマージ済みなら、新しいブランチ・PR を作らず、承認する設計とテスト観点は提出した版（直しの成果ではない）にする（TV-3）", async () => {
+      const made = await toDesignRework([NEW_DESIGN]);
+      const { service, id } = made;
+      const submitted = taskOf(service, id).testViewpoints;
+      mergeDesign(made);
+      await service.runNext(id);
+      expect(stoppedOf(made)[0]?.payload).toMatchObject({ step: "design", was: "publishing" });
+      expectApprovedWithoutNewPr(made, 2);
+      const task = taskOf(service, id);
+      expect(task.outputs.design).toContain("# 設計 v1");
+      expect(task.approved.design?.output).toContain("# 設計 v1");
+      expect(task.approved.design?.output).not.toContain("直しの成果");
+      expect(task.approved.design?.testViewpoints).toEqual(submitted);
+      expect(task.approved.design?.testViewpoints.map((v) => v.title)).not.toContain("直しの観点");
+      made.activity.close();
+    });
+
+    it("PR の更新の直前に、直しのコミットが先頭に無いマージを見つけたら、更新せずに承認する（TV-4）", async () => {
+      const made = await toDesignRework([NEW_DESIGN]);
+      const { service, pulls, id } = made;
+      const submittedCommit = designPr(made)?.commit;
+      let reads = 0;
+      const original = pulls.status.bind(pulls);
+      pulls.status = async (input) => {
+        if (input.number === 8 && ++reads === 2) pulls.states[8] = mergedState(submittedCommit);
+        return original(input);
+      };
+      await service.runNext(id);
+      expect(reads).toBe(2);
+      expectApprovedWithoutNewPr(made, 2);
+      expect(taskOf(service, id).approved.design?.output).toContain("# 設計 v1");
+      // 直しのコミットは、PR のブランチへプッシュしたが、PR は更新していない
+      expect(made.repos.committedFiles.at(-1)?.branch).toBe(`${taskBranchOf(id)}-design-1`);
+      made.activity.close();
+    });
+
+    it("新しい PR を作る経路では、前の PR を閉じた後の読み直しでマージを見つけたら、新しい PR を作らず、PR に知らせ、プッシュしたブランチは残す（TV-5）", async () => {
+      const made = await toDesignRework([NEW_DESIGN], { projects: projectsWithAccount() });
+      const { service, pulls, repos, id } = made;
+      // タスクブランチが進んでいる：新しい PR を作る経路
+      repos.remote[taskBranchOf(id)] = "e".repeat(40);
+      const submittedCommit = designPr(made)?.commit;
+      pulls.close = async (input) => {
+        // 閉じる操作の前にマージされていた：エラーは返らない
+        pulls.states[input.number] = mergedState(submittedCommit);
+      };
+      await service.runNext(id);
+      await noticesSettled(service);
+      expect(approvedTail(made)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(stoppedOf(made)[0]?.payload).toMatchObject({ step: "design", number: 8 });
+      expect(countOf(made, "StepPullRequestPublished")).toBe(2);
+      expect(pulls.calls).toHaveLength(2);
+      expect(taskOf(service, id).stepBranches).toContain(`${taskBranchOf(id)}-design-2`);
+      expect(repos.pushedCommits.map((p) => p.branch)).toContain(`${taskBranchOf(id)}-design-2`);
+      const notices = pulls.issueComments.filter((c) => c.body.includes("sacty-merge-approval:"));
+      expect(notices.map((c) => c.number)).toEqual([8]);
+      made.activity.close();
+    });
+
+    it("直しの PR を閉じられなければ、新しい PR を作らず一時停止にし、止まっている間のマージは再開を待たずに承認し、マージされずに再開したら作り直す。ほかの作り直しは警告で進む（TV-6）", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        // 止まっている間にマージされた
+        const made = await toDesignRework([NEW_DESIGN]);
+        const { service, pulls, repos, id } = made;
+        repos.remote[taskBranchOf(id)] = "e".repeat(40);
+        pulls.closeFail = "close failed";
+        const published = countOf(made, "StepPullRequestPublished");
+        await service.runNext(id);
+        expect(countOf(made, "StepPullRequestPublished")).toBe(published);
+        expect(taskOf(service, id).status).toBe("paused");
+        expect(taskOf(service, id).pausedReason).toBe("error");
+        expect(pulls.calls).toHaveLength(published);
+        pulls.states[8] = { state: "open" };
+        mergeDesign(made);
+        await service.checkPullRequests();
+        expect(stoppedOf(made)[0]?.payload).toMatchObject({ step: "design", was: "paused" });
+        expect(approvedTail(made)).toEqual([
+          "ReworkStoppedByMerge",
+          "PullRequestMerged",
+          "StepApproved",
+        ]);
+        expect(pulls.calls).toHaveLength(published);
+        made.activity.close();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("直しの PR を閉じられずに止まり、マージされないまま再開したら、同じブランチへ同じコミットをプッシュし直して新しい PR を作る。ブランチは増えない（TV-6・TV-7 b）", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const repos = new FakeRepos();
+        repos.rejectExistingBranch = true;
+        const made = await toDesignRework([NEW_DESIGN], { repos });
+        const { service, pulls, id } = made;
+        repos.remote[taskBranchOf(id)] = "e".repeat(40);
+        pulls.closeFail = "close failed";
+        await service.runNext(id);
+        expect(taskOf(service, id).status).toBe("paused");
+        const branch = `${taskBranchOf(id)}-design-2`;
+        expect(taskOf(service, id).stepBranches.filter((b) => b === branch)).toHaveLength(1);
+        pulls.closeFail = undefined;
+        service.resume(id, {});
+        await service.runNext(id);
+        expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+        expect(stoppedOf(made)).toHaveLength(0);
+        expect(taskOf(service, id).stepBranches.filter((b) => /-design-\d+$/.test(b))).toEqual([
+          `${taskBranchOf(id)}-design-1`,
+          branch,
+        ]);
+        expect(repos.pushedCommits.filter((p) => p.branch === branch)).toHaveLength(2);
+        expect(pulls.calls.at(-1)).toMatchObject({ branch });
+        expect(pulls.closed.map((c) => c.number)).toEqual([8]);
+        made.activity.close();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("PR の作成が失敗して止まり、成果を変えずに再開したら、同じブランチへ同じコミットをプッシュし直す。ブランチも回も増えない（TV-7 b）", async () => {
+      const repos = new FakeRepos();
+      repos.rejectExistingBranch = true;
+      const made = await toDesignRework([NEW_DESIGN], { repos });
+      const { service, pulls, id } = made;
+      repos.remote[taskBranchOf(id)] = "e".repeat(40);
+      pulls.fail = "create failed";
+      await service.runNext(id);
+      expect(taskOf(service, id).status).toBe("paused");
+      pulls.fail = undefined;
+      service.resume(id, {});
+      await service.runNext(id);
+      const branch = `${taskBranchOf(id)}-design-2`;
+      expect(taskOf(service, id).stepBranches.filter((b) => /-design-\d+$/.test(b))).toEqual([
+        `${taskBranchOf(id)}-design-1`,
+        branch,
+      ]);
+      expect(repos.pushedCommits.filter((p) => p.branch === branch)).toHaveLength(2);
+      expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+      made.activity.close();
+    });
+
+    it("前の工程への差し戻しの後の設計の PR（直しの PR でない）は、閉じられなくても警告だけで新しい PR を作る（TV-6）", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const made = await start([
+          out("# 要求要件 v1"),
+          design("# 設計 v1"),
+          rework("requirements", "前提が誤っている"),
+          out("# 要求要件 v2"),
+          design("# 設計 v2"),
+        ]);
+        const { service, pulls, id } = made;
+        await merge(made, "requirements");
+        await service.runNext(id);
+        pulls.feedbackBy[8] = [item("comment:20", { body: "そもそも対象が違う" })];
+        await service.checkPullRequests();
+        await service.runNext(id);
+        await merge(made, "requirements");
+        pulls.closeFail = "close failed";
+        await service.runNext(id);
+        expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+        expect(countOf(made, "StepPullRequestPublished")).toBe(4);
+        expect(taskOf(service, id).status).toBe("awaiting_approval");
+        made.activity.close();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("記録済みのブランチの名前は、push の前に作ったコミットが記録と違うときだけ飛ばし、違うコミットを同じ名前へプッシュしない（TV-7 a）", async () => {
+      const repos = new FakeRepos();
+      repos.rejectExistingBranch = true;
+      const made = await toDesignRework([NEW_DESIGN, implement(), design("# 設計 v3")], {
+        repos,
+        projects: projectsWithAccount(),
+      });
+      const { service, pulls, id } = made;
+      // 観点5：-design-2 をプッシュしたまま、マージで承認になった
+      repos.remote[taskBranchOf(id)] = "e".repeat(40);
+      const submittedCommit = designPr(made)?.commit;
+      pulls.close = async (input) => {
+        pulls.states[input.number] = mergedState(submittedCommit);
+      };
+      await service.runNext(id);
+      pulls.close = FakePulls.prototype.close.bind(pulls);
+      expect(taskOf(service, id).stepBranches).toContain(`${taskBranchOf(id)}-design-2`);
+      // 実装まで進め、実装の PR の指摘で設計に戻す
+      await drain(service);
+      expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "design",
+        comments: ["設計から直す"],
+      });
+      await service.runNext(id);
+      const branch3 = `${taskBranchOf(id)}-design-3`;
+      expect(repos.pushedCommits.filter((p) => p.branch.endsWith("-design-2"))).toHaveLength(1);
+      expect(repos.pushedCommits.map((p) => p.branch)).toContain(branch3);
+      expect(pulls.calls.at(-1)).toMatchObject({ branch: branch3 });
+      expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+      made.activity.close();
+    });
+
+    it("publish の最中にマージされ、その間に PR の確認が走っても、確認は止めず記録せず、publish の読み直しが1組だけ記録し、PR に知らせが1件書かれる（TV-8）", async () => {
+      const made = await toDesignRework([NEW_DESIGN], { projects: projectsWithAccount() });
+      const { service, pulls, id } = made;
+      const submittedCommit = designPr(made)?.commit;
+      const checks: Promise<void>[] = [];
+      // 本文のまとめで人の直しを読む間に、マージされ、PR の確認が走る
+      pulls.onBodyRead = () => {
+        pulls.states[8] = mergedState(submittedCommit);
+        checks.push(service.checkPullRequests());
+      };
+      await service.runNext(id);
+      await Promise.all(checks);
+      await noticesSettled(service);
+      expect(checks.length).toBeGreaterThan(0);
+      expectApprovedWithoutNewPr(made, 2);
+      expect(stoppedOf(made)).toHaveLength(1);
+      expect(
+        pulls.issueComments.filter((c) => c.body.includes("sacty-merge-approval:")),
+      ).toHaveLength(1);
+      made.activity.close();
+    });
+
+    it("人が直してからマージしたら、人の版を承認済みの成果にする。読めなければ何も記録せず、次の確認で記録する（TV-9）", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const repos = new FakeRepos();
+        const made = await toDesignRework([HOLD], { repos });
+        const { service, pulls, executor, id } = made;
+        void service.runNext(id);
+        await executor.started.promise;
+        const human = "f".repeat(40);
+        const mergeCommit = "9".repeat(40);
+        repos.files[mergeCommit] = { [docOf(id, "design")]: "# 人が直した設計\n" };
+        pulls.states[8] = mergedState(human, mergeCommit);
+        repos.readError = "git が見つからない";
+        await service.checkPullRequests();
+        expect(stoppedOf(made)).toHaveLength(0);
+        repos.readError = undefined;
+        await service.checkPullRequests();
+        expect(
+          service.get(id)?.activity.findLast((e) => e.type === "PullRequestMerged")?.payload,
+        ).toMatchObject({ edited: true, commit: human, document: { commit: mergeCommit } });
+        expect(taskOf(service, id).approved.design).toMatchObject({
+          output: "# 人が直した設計",
+          edited: { sacty: expect.stringContaining("# 設計 v1") },
+        });
+        made.activity.close();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("直しの間に閉じられた PR は、これまでどおり承認せず、直しの後に新しいブランチ・PR を作り、前の PR を superseded にする（TV-17）", async () => {
+      const made = await toDesignRework([NEW_DESIGN]);
+      const { service, pulls, id } = made;
+      pulls.states[8] = { state: "closed" };
+      await service.checkPullRequests();
+      expect(stoppedOf(made)).toHaveLength(0);
+      await service.runNext(id);
+      const task = taskOf(service, id);
+      expect(task.gate).toEqual({ step: "design", submission: 2 });
+      expect(task.stepPullRequests.find((p) => p.number === 8)?.superseded).toBe(true);
+      expect(task.stepPullRequests.findLast((p) => p.step === "design")?.number).toBe(9);
+      made.activity.close();
+    });
+
+    it("直しのコミットを PR に push して更新した後のマージは、これまでどおり記録の後の確認が承認する。作り直しの記録も知らせも書かない（TV-16）", async () => {
+      const made = await toDesignRework([NEW_DESIGN], { projects: projectsWithAccount() });
+      const { service, pulls, id } = made;
+      await service.runNext(id);
+      expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+      const commit = designPr(made)?.commit;
+      pulls.states[8] = mergedState(commit);
+      await service.checkPullRequests();
+      await noticesSettled(service);
+      expect(stoppedOf(made)).toHaveLength(0);
+      expect(
+        service.get(id)?.activity.find((e) => e.type === "PullRequestMerged")?.payload,
+      ).toMatchObject({ edited: false });
+      expect(taskOf(service, id).approved.design?.output).toContain("直しの成果");
+      expect(pulls.issueComments.filter((c) => c.body.includes("sacty-merge"))).toEqual([]);
+      made.activity.close();
+    });
+
+    it("マージを承認として扱った知らせは、確認が2回走っても PR に1件だけ書き、残っていた提案の件数を書く。アカウントの無いプロジェクトとセキュリティのタスクには書かない（TV-13）", async () => {
+      const made = await toDesignRework([HOLD], { projects: projectsWithAccount() });
+      const { service, pulls, executor, id } = made;
+      void service.runNext(id);
+      await executor.started.promise;
+      mergeDesign(made);
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      await noticesSettled(service);
+      const notices = pulls.issueComments.filter((c) =>
+        c.body.includes(`<!-- sacty-merge-approval:${id}:8 -->`),
+      );
+      expect(notices).toHaveLength(1);
+      expect(notices[0]?.number).toBe(8);
+      expect(notices[0]?.body).toContain("承認として扱い");
+      expect(notices[0]?.body).toContain("取り込んでいません");
+      expect(notices[0]?.body).toContain("3件");
+      made.activity.close();
+
+      // アカウントを選んでいないプロジェクト
+      // アカウントを選んでいないプロジェクトには書かない
+      const noneProjects = projectsWithAccount();
+      const none = await toDesignRework([NEW_DESIGN], {
+        projects: noneProjects,
+        db: `${dbPath}-none`,
+      });
+      dropAccount(noneProjects);
+      (
+        none.service as unknown as {
+          announceMergeApproval: (t: Task, i: unknown) => void;
+        }
+      ).announceMergeApproval(taskOf(none.service, none.id), {
+        repo: "https://github.com/acme/app",
+        number: 8,
+        discarded: 3,
+      });
+      await noticesSettled(none.service);
+      expect(none.pulls.issueComments).toEqual([]);
+      none.activity.close();
+
+      // セキュリティのタスク
+      const security = await toDesignRework([NEW_DESIGN], {
+        projects: projectsWithAccount(),
+        db: `${dbPath}-security`,
+        plan: "security-fix",
+        planner: async () => ({
+          steps: [...MVP_STEPS],
+          plan: "security-fix",
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+        }),
+      });
+      expect(isSecurityTask(taskOf(security.service, security.id))).toBe(true);
+      mergeDesign(security);
+      await security.service.checkPullRequests();
+      await noticesSettled(security.service);
+      expect(stoppedOf(security)).toHaveLength(1);
+      expect(security.pulls.issueComments).toEqual([]);
+      security.activity.close();
+    });
+
+    it("停止を確かめる前にデーモンが再起動したら、回復が止めた実行を残して一時停止にし、確かめた後の確認で承認する（TV-15）", async () => {
+      const made = await toDesignRework([HOLD]);
+      const { service, activity, pulls, executor, id } = made;
+      void service.runNext(id);
+      const runId = await executor.started.promise;
+      const restarted = makeService(activity, [], {
+        stepPullRequests: true,
+        pulls,
+        repos: made.repos,
+      });
+      restarted.service.recoverInterrupted();
+      const paused = restarted.service.get(id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.unstoppedRuns).toEqual([runId]);
+      mergeDesign(made);
+      restarted.executor.stops = false;
+      await restarted.service.checkPullRequests();
+      expect(
+        restarted.service.get(id)?.activity.filter((e) => e.type === "ReworkStoppedByMerge"),
+      ).toHaveLength(0);
+      restarted.executor.stops = true;
+      await restarted.service.checkPullRequests();
+      const recorded = restarted.service
+        .get(id)
+        ?.activity.filter((e) => e.type === "ReworkStoppedByMerge");
+      expect(recorded?.[0]?.payload).toMatchObject({
+        step: "design",
+        was: "paused",
+        stoppedRuns: [runId],
+      });
+      expect(restarted.service.get(id)?.task.approved.design).toBeDefined();
+      activity.close();
+    });
+
+    it("要求要件へ戻している間に設計の PR がマージされても、承認にせず、PR に1回だけ知らせ、設計は作り直す。アカウントの無いプロジェクトとセキュリティのタスクには書かない（TV-18）", async () => {
+      const flow = async (options: Parameters<typeof start>[1] = {}) => {
+        const made = await start(
+          [
+            out("# 要求要件 v1"),
+            design("# 設計 v1"),
+            rework("requirements", "前提が誤っている"),
+            out("# 要求要件 v2"),
+            design("# 設計 v2"),
+          ],
+          options,
+        );
+        const { service, pulls, id } = made;
+        await merge(made, "requirements");
+        await service.runNext(id);
+        pulls.feedbackBy[8] = [item("comment:20", { body: "そもそも対象が違う" })];
+        await service.checkPullRequests();
+        // 要求要件の直しの間に、人が開いたままの設計の PR をマージした
+        pulls.states[8] = mergedState(designPr(made)?.commit);
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        // PR の確認が、承認にせずに、その時点で PR に知らせる（設計の publish を待たない）
+        await noticesSettled(service);
+        const early = pulls.issueComments.filter((c) =>
+          c.body.includes("sacty-merge-not-approved:"),
+        ).length;
+        await service.runNext(id);
+        expect(
+          taskOf(service, id).stepPullRequests.findLast((p) => p.step === "requirements")?.branch,
+        ).toBe(`${taskBranchOf(id)}-requirements-2`);
+        await merge(made, "requirements");
+        await service.runNext(id);
+        await noticesSettled(service);
+        return Object.assign(made, { early });
+      };
+      const made = await flow({ projects: projectsWithAccount() });
+      const { service, pulls, id } = made;
+      expect(made.early).toBe(1);
+      expect(stoppedOf(made)).toHaveLength(0);
+      expect(taskOf(service, id).approved.design).toBeUndefined();
+      expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+      expect(designPr(made)?.number).toBe(10);
+      expect(designPr(made)?.branch).toBe(`${taskBranchOf(id)}-design-2`);
+      const notices = pulls.issueComments.filter((c) =>
+        c.body.includes(`<!-- sacty-merge-not-approved:${id}:8 -->`),
+      );
+      expect(notices).toHaveLength(1);
+      expect(notices[0]?.body).toContain("要求要件の直しの最中だったため");
+      expect(notices[0]?.body).toContain("設計の PR を作り直します");
+      made.activity.close();
+
+      // アカウントを選んでいないプロジェクトには書かない
+      const noneProjects = projectsWithAccount();
+      const none = await toDesignRework([NEW_DESIGN], {
+        projects: noneProjects,
+        db: `${dbPath}-none`,
+      });
+      dropAccount(noneProjects);
+      (
+        none.service as unknown as {
+          announceMergeNotApproved: (t: Task, i: unknown) => void;
+        }
+      ).announceMergeNotApproved(taskOf(none.service, none.id), {
+        repo: "https://github.com/acme/app",
+        number: 8,
+        step: "design",
+      });
+      await noticesSettled(none.service);
+      expect(none.pulls.issueComments).toEqual([]);
+      none.activity.close();
+
+      const security = await flow({
+        projects: projectsWithAccount(),
+        db: `${dbPath}-security`,
+        plan: "security-fix",
+        planner: async () => ({
+          steps: [...MVP_STEPS],
+          plan: "security-fix",
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+        }),
+      });
+      expect(security.pulls.issueComments).toEqual([]);
+      expect(designPr(security)?.number).toBe(10);
+      security.activity.close();
     });
   });
 });
