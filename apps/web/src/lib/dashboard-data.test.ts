@@ -327,15 +327,16 @@ describe("ダッシュボードのあなたの出番（PBI-118）", () => {
       });
     const rows = attentionRows(
       projects,
-      [pr("a", "reviewing", 1), pr("b", "none", 2), pr("c", "unknown", 3), pr("d", "attached", 4)],
+      [pr("a", "none", 1), pr("b", "attached", 2), pr("c", "reviewing", 3), pr("d", "unknown", 4)],
       {},
       labels,
     );
+    // reviewing（c）は途中。updatedAt の古い順のまま動かない
     expect(rows.map((r) => r.id)).toEqual(["a", "b", "c", "d"]);
     expect(rows.map((r) => r.group)).toEqual(["decision", "decision", "decision", "decision"]);
     expect(
       rows.filter((r) => r.status.text.endsWith("・AI のレビュー中")).map((r) => r.id),
-    ).toEqual(["a"]);
+    ).toEqual(["c"]);
   });
 
   it("0 件・1 件・消したプロジェクト", () => {

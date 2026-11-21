@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import type { DashboardSummary, Project, Task } from "@sacty/core";
+import type { ActivityEvent, DashboardStats, DashboardSummary, Project, Task } from "@sacty/core";
 import { startTaskMcp } from "@sacty/daemon/task-mcp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { messagesFor } from "@/i18n";
@@ -81,6 +81,16 @@ async function setup() {
     Object.assign(service.get(id)?.task as Task, patch);
     return id;
   };
+  // 待ち始めの記録（集計の waitingSince）を、実際のイベントの畳み込みで作る
+  const wait = (id: string, at: string) => {
+    const task = service.get(id)?.task as Task;
+    const event = { type: "TaskPaused", taskId: id, at, payload: {} } as unknown as ActivityEvent;
+    (service as unknown as { dashboardStats: DashboardStats }).dashboardStats.add(
+      event,
+      task,
+      task,
+    );
+  };
   const mcpIds = async () => {
     const result = await client.callTool({
       name: "list_tasks",
@@ -88,7 +98,7 @@ async function setup() {
     });
     return (result.structuredContent as { tasks: { id: string }[] }).tasks.map((t) => t.id);
   };
-  return { activity, service, make, mcpIds };
+  return { activity, service, make, wait, mcpIds };
 }
 
 /**
@@ -98,7 +108,8 @@ async function setup() {
 describe("人の出番：4 か所が同じ対象・同じ並び（PBI-442）", () => {
   it("上の組 → 下の組、組の中は待ち始めの古い順。AI が判断中の承認待ち・消したプロジェクト・終わったタスクは入らない", async () => {
     const t = await setup();
-    // 作成の順：止まり古・判断新・止まり中・判断古・判断中。updatedAt の順は 1・6・3・4・5
+    // 作成の順：止まり古・判断新・止まり中・判断古・判断中。updatedAt の順は 1・6・3・4・5。
+    // 待ち始めの記録は一部だけにあり、記録の順は updatedAt の順と食い違う（判断新は記録で最も古く、止まり古は記録で最も新しい）
     const pausedOld = t.make("止まり古", { status: "paused", updatedAt: day(1) });
     const decisionNew = t.make("判断新", { status: "awaiting_approval", updatedAt: day(6) });
     const pausedMid = t.make("止まり中", { status: "paused", updatedAt: day(3) });
@@ -114,7 +125,10 @@ describe("人の出番：4 か所が同じ対象・同じ並び（PBI-442）", (
     t.make("中止", { status: "cancelled" });
     t.make("実行中", { status: "running" });
 
-    const expected = [decisionOld, decisionMid, decisionNew, pausedOld, pausedMid];
+    t.wait(decisionNew, day(2));
+    t.wait(pausedOld, day(7));
+    // 待ち始めの記録が無い判断古（updatedAt の 4）・判断中（5）は updatedAt で並ぶ
+    const expected = [decisionNew, decisionOld, decisionMid, pausedMid, pausedOld];
 
     const projects = (await getJson<{ projects: Project[] }>("/api/projects")).projects;
     const tasks = (await getJson<{ tasks: Task[] }>("/api/tasks?open=1")).tasks;

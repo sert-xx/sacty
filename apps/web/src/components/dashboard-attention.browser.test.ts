@@ -63,6 +63,19 @@ beforeAll(async () => {
       },
     },
     oxc: { jsx: { runtime: "automatic" } },
+    cacheDir: fileURLToPath(
+      new URL("../../node_modules/.vite-dashboard-attention", import.meta.url),
+    ),
+    optimizeDeps: {
+      include: [
+        "react",
+        "react-dom/client",
+        "react/jsx-runtime",
+        "@base-ui/react/popover",
+        "lucide-react",
+        "cn",
+      ],
+    },
     plugins: [
       {
         name: "attention-browser-fixture",

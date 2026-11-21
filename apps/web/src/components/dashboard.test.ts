@@ -20,7 +20,8 @@ vi.mock("@/app/actions", () => ({
 }));
 
 const { I18nProvider } = await import("@/i18n/client");
-const { LiveDashboard, DASHBOARD_LIVE_URL, durationText } = await import("./dashboard");
+const { LiveDashboard, DASHBOARD_LIVE_URL } = await import("./dashboard");
+const { durationText } = await import("@/lib/duration-text");
 const { liveVersion } = await import("@/lib/live-server");
 const { messagesFor } = await import("@/i18n");
 

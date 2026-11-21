@@ -106,7 +106,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 - The dashboard lays out sections (cards). They sit side by side when there is room and stack otherwise (a single section takes the full width). The order is: Needs you → Why tasks are paused → Open tasks → Cost and budget → Step queue → Intake → Throughput → Quality signals. Every section spans all projects, and tasks of deleted projects are neither shown nor counted.
   - The data comes through the following three routes. Neither all tasks nor the activity log is carried every 3 seconds.
     - The open tasks (`GET /api/tasks?open=1`; finished tasks are `isFinished`). This avoids carrying the deliverables of completed tasks every 3 seconds. All tasks including completed ones can be tens to hundreds of MB per fetch, depending on the size of the deliverables. The header's notices (tasks that need you) are fetched the same way.
-    - The aggregates that need the activity log (`GET /api/dashboard`; see [Dashboard aggregates](#dashboard-aggregates) below).
+    - The aggregates that need the activity log (`GET /api/dashboard`; see [Dashboard aggregates](#dashboard-aggregates) below). The header notices and the cards above the task list read it too, for the waiting start (`waitingSince`).
     - The intake status (`intake` of `GET /api/status`).
   - In the list sections (Needs you, Open tasks, Tasks near their budget), a row is at least 4rem high and the section is 5 rows high (20rem). With more rows, the section scrolls inside (the section takes focus so it can also be scrolled with the keyboard). The title and the project name are cut to one line, and the full text is shown on hover (`title`) and wrapped while the row has focus. Count notes are built from per-language wording.
   - Mechanisms, the definitions of the numbers, and the period boundaries go into the hint next to the heading (`Hint`), not into the body ([Web UI wording and hints](ui-wording.en.md)).
@@ -186,7 +186,7 @@ Code: `apps/web/src/lib/paths.ts`, `apps/web/src/app/page.tsx`, `apps/web/src/ap
 
 ## Dashboard aggregates
 
-The daemon returns the aggregates that need the activity log (waiting times, cost, throughput, quality, queue) at `GET /api/dashboard` (`DashboardSummary`). Even though the UI refetches every 3 seconds, the daemon reads neither all tasks nor the activity log again.
+The daemon returns the aggregates that need the activity log (waiting times, cost, throughput, quality, queue) at `GET /api/dashboard` (`DashboardSummary`). Even though the UI refetches every 3 seconds, the daemon reads neither all tasks nor the activity log again. It is read by the dashboard, the header (`loadHeaderData`), and the cards of the task list (`loadTaskList`); making this aggregate heavier or able to fail affects all three.
 
 - At startup, in the same single pass that reads the activity log to restore the state, the daemon folds each event into `DashboardStats` (the `applied` callback of `project`). When appending to the activity log, it folds in the applied events too.
 - What it keeps
@@ -263,9 +263,9 @@ Because the elements on the screen stay as they are, text being typed, selection
   | Route | Returns |
   | --- | --- |
   | `GET /live/dashboard` | The data of the dashboard's sections (needs you, why tasks are paused, open tasks, cost and budget, step queue, intake, throughput, quality signals, and the reason notifications could not be sent. `loadDashboard`) |
-  | `GET /live/tasks?project=<ID>` | The rows of the task list of the URL's project and the cards of tasks that need a person (only what is shown. `loadTaskList`). `{ missing: true }` if the project does not exist or the ID has the wrong form |
+  | `GET /live/tasks?project=<ID>` | The rows of the task list of the URL's project and the cards of tasks that need a person (only what is shown. `loadTaskList`; it also reads `GET /api/dashboard` for the order of the cards). `{ missing: true }` if the project does not exist or the ID has the wrong form |
   | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`). `{ missing: true }` if the task does not exist (including tasks of a deleted project) |
-  | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |
+  | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`; it also reads `GET /api/dashboard` for the waiting start) |
   | `GET /live/tasks/<ID>/review` | The task for the deliverable review screen. `{ missing: true }` if the task does not exist (including tasks of a deleted project) |
   | `GET /live/tasks/<ID>/runs/<run ID>?events=&stderr=` | What was added to the run log after what the screen has (see below) |
   | `GET /live/projects` | The project list and the intake status (`loadProjectList`) |

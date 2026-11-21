@@ -91,17 +91,18 @@ describe("タスクの一覧の上のカード：ダッシュボードの「あ�
         updatedAt: at(n),
       });
     tasks = [
-      prTask("r-reviewing", "reviewing", 1),
-      prTask("r-none", "none", 2),
-      prTask("r-unknown", "unknown", 3),
-      prTask("r-attached", "attached", 4),
+      prTask("r-none", "none", 1),
+      prTask("r-attached", "attached", 2),
+      prTask("r-reviewing", "reviewing", 3),
+      prTask("r-unknown", "unknown", 4),
     ];
     const data = await loadTaskList("default");
+    // reviewing は途中。updatedAt の古い順のまま動かない
     expect(data?.needsYou.map((c) => c.id)).toEqual([
-      "r-reviewing",
       "r-none",
-      "r-unknown",
       "r-attached",
+      "r-reviewing",
+      "r-unknown",
     ]);
     expect(
       data?.needsYou.filter((c) => c.status.endsWith("・AI のレビュー中")).map((c) => c.id),

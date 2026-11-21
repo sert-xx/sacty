@@ -10,6 +10,19 @@ function sameCommit(a: string | undefined, b: string | undefined): boolean {
   return x.startsWith(y) || y.startsWith(x);
 }
 
+/** AI のレビューの状況を出す対象か（承認待ちで、PR が開いている）。詳細と一覧で同じ条件を使う。 */
+function openGatePullRequest(task: Task) {
+  const pr = gatePullRequest(task);
+  if (task.status !== "awaiting_approval" || !pr || pr.state !== "open" || !pr.repo)
+    return undefined;
+  return pr;
+}
+
+/** PR をレビューする sacty のレビューのタスクか（中止したものを除く）。参照する PR は `referencedPullRequest` で読む。 */
+function isReviewTask(task: Task): boolean {
+  return task.status !== "cancelled" && task.steps.some((s) => s.key === "review");
+}
+
 /**
  * PR の head に、sacty 自身の AI のレビューが付いているか（PBI-302 D1。実験 S14・S18：作り直した head に AI のレビューが
  * 届く前に、人がマージに進んだ）。同じ PR を指す、ほかの sacty のレビューのタスクを見る。
@@ -28,8 +41,7 @@ export function aiReviewFor(
   let reviewing = false;
   let url: string | undefined;
   for (const other of tasks) {
-    if (other.id === selfId || other.status === "cancelled") continue;
-    if (!other.steps.some((s) => s.key === "review")) continue;
+    if (other.id === selfId || !isReviewTask(other)) continue;
     const ref = referencedPullRequest(other);
     if (!ref || ref.number !== pr.number || !sameRepo(ref.repo, pr.repo)) continue;
     if (other.reviewPost && sameCommit(other.reviewTarget?.headCommit, head)) {
@@ -56,9 +68,8 @@ export function aiReviewOfHead(
   sameRepo: (a: string, b: string) => boolean,
   latestHead: string | undefined,
 ): AiReviewOfHead | undefined {
-  const pr = gatePullRequest(task);
-  if (task.status !== "awaiting_approval" || !pr || pr.state !== "open" || !pr.repo)
-    return undefined;
+  const pr = openGatePullRequest(task);
+  if (!pr?.repo) return undefined;
   if (!latestHead) return { head: pr.commit, status: "unknown" };
   return aiReviewFor(
     { repo: pr.repo, number: pr.number, head: latestHead },
@@ -79,15 +90,11 @@ export function aiReviewsOfHeads(
   latestHeadOf: (task: Task) => string | undefined,
 ): Map<string, AiReviewOfHead> {
   const out = new Map<string, AiReviewOfHead>();
-  const targets = tasks.filter((t) => {
-    if (t.status !== "awaiting_approval") return false;
-    const pr = gatePullRequest(t);
-    return Boolean(pr && pr.state === "open" && pr.repo);
-  });
+  const targets = tasks.filter((t) => openGatePullRequest(t));
   if (targets.length === 0) return out;
   const reviewsByNumber = new Map<number, Task[]>();
   for (const other of tasks) {
-    if (other.status === "cancelled" || !other.steps.some((s) => s.key === "review")) continue;
+    if (!isReviewTask(other)) continue;
     const ref = referencedPullRequest(other);
     if (!ref) continue;
     const bucket = reviewsByNumber.get(ref.number);

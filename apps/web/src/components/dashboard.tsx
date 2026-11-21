@@ -25,8 +25,6 @@ import { useLiveData } from "@/lib/use-live-data";
 const FULL_ON_FOCUS =
   "truncate group-focus-within:whitespace-normal group-focus-within:[overflow-wrap:anywhere]";
 
-export { durationText };
-
 /** ダッシュボードのデータを取り直す先（PBI-114）。 */
 export const DASHBOARD_LIVE_URL = "/live/dashboard";
 

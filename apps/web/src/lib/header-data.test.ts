@@ -101,25 +101,29 @@ describe("ヘッダーのお知らせ：ダッシュボードの「あなたの�
 
   it("AI のレビューが今の head をレビュー中（reviewing）の承認待ちにだけ、状態の文に「AI のレビュー中」を添え、並びは変えない", async () => {
     const gate = { step: "implement", submission: 1 } as Task["gate"];
-    const review = (status: "none" | "reviewing" | "attached" | "unknown", id: string) =>
+    const review = (
+      status: "none" | "reviewing" | "attached" | "unknown",
+      id: string,
+      updatedAt: string,
+    ) =>
       task({
         id,
         status: "awaiting_approval",
         gate,
         pullRequestState: "open",
         aiReview: { head: "abc", status },
-        updatedAt: `2026-11-0${id.length}T00:00:00.000Z`,
+        updatedAt,
       });
     listTasks.mockResolvedValue([
-      review("reviewing", "r1"),
-      review("none", "r2"),
-      review("unknown", "r3"),
-      review("attached", "r4"),
+      review("reviewing", "r1", "2026-11-03T00:00:00.000Z"),
+      review("none", "r2", "2026-11-01T00:00:00.000Z"),
+      review("unknown", "r3", "2026-11-04T00:00:00.000Z"),
+      review("attached", "r4", "2026-11-02T00:00:00.000Z"),
     ]);
     const data = await loadHeaderData();
     const marked = data?.notices.filter((n) => n.status.endsWith("・AI のレビュー中"));
     expect(marked?.map((n) => n.taskId)).toEqual(["r1"]);
-    // 添えなかった場合と同じ並び（updatedAt の順＝ID の長さの順）
-    expect(data?.notices.map((n) => n.taskId)).toEqual(["r1", "r2", "r3", "r4"]);
+    // 添えなかった場合と同じ並び（updatedAt の古い順。reviewing は途中）
+    expect(data?.notices.map((n) => n.taskId)).toEqual(["r2", "r4", "r1", "r3"]);
   });
 });
