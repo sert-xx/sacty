@@ -85,6 +85,8 @@ beforeAll(async () => {
         "react",
         "react-dom/client",
         "react/jsx-runtime",
+        "react/jsx-dev-runtime",
+        "zod",
         "@base-ui/react/menu",
         "lucide-react",
         "cn",
@@ -130,7 +132,17 @@ beforeAll(async () => {
   if (!address || typeof address === "string") throw new Error("Browser fixture has no port");
   url = `http://127.0.0.1:${address.port}`;
   browser = await chromium.launch({ headless: true });
-}, 60000);
+  // 依存の最適化のし直しでページが読み直されるのを、各テストの上限（30 秒）の中で待たないよう、ここで 1 度開いて済ませる。
+  // goto と waitFor の上限は、それぞれ 60 秒にする（goto の既定は 30 秒で、初回の準備がそれを超えると落ちるため）。順に待つので、事前の読み込みは最大 120 秒かかる。
+  // beforeAll の上限（180 秒）は、サーバーとブラウザーの起動に、この最大 120 秒を足しても収まる値にしている。
+  const warm = await browser.newPage({ viewport: { width: 1280, height: 700 } });
+  try {
+    await warm.goto(url, { timeout: 60000 });
+    await warm.getByRole("button", { name: "Project: Payments" }).waitFor({ timeout: 60000 });
+  } finally {
+    await warm.close();
+  }
+}, 180000);
 
 afterAll(async () => {
   await browser?.close();
