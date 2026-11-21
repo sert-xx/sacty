@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #500
 - ブランチ: fix/risk-assessment-alerts
-- 関係する ADR: [リスクの判断材料と人間への確認依頼を独立した Alert に分ける](../adr/20261121-0345-risk-assessment-alerts.md)
+- 関係する ADR: [リスクの判断材料と人間への確認依頼を独立した Alert に分ける](../adr/20261121-0345-superseded-risk-assessment-alerts.md)
 
 ## 目的
 
