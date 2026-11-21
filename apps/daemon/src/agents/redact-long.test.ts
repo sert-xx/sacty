@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ByteRedactor } from "../agent-sessions.js";
 import { StreamRedactor } from "../session-logs.js";
-import { compileSecrets, REDACTED, redact } from "./redact.js";
+import { compileSecrets, MAX_AUTH_FILE_BYTES, REDACTED, redact } from "./redact.js";
 
 const MB = 1024 * 1024;
 
@@ -60,12 +60,13 @@ describe("とても長い値でも、伏せる処理のメモリと時間が長�
     expect(performance.now() - start).toBeLessThan(5000);
   });
 
-  it("32MB の値でも木を作れる（落ちない）", () => {
-    const value = "ab".repeat(16 * MB);
+  it("認証ファイルの大きさの上限は 1MiB で、その大きさの値でも木は 1 文字あたり 30 バイト以下で作れる", () => {
+    expect(MAX_AUTH_FILE_BYTES).toBe(MB);
+    const value = longValue(MAX_AUTH_FILE_BYTES, 4);
     const m = compileSecrets([value]);
     expect(m.best[m.best.length - 1]).toBe(value.length);
     expect(bytesPerNode(m) * (m.nodes / value.length)).toBeLessThanOrEqual(30);
-  }, 60_000);
+  });
 
   it("StreamRedactor：値の集合が変わらなければ、push のたびに値の形を作り直さない（長い値でも 1 回の時間が長さに比例しない）", () => {
     const value = `${longValue(200_000, 5)}\n"`;

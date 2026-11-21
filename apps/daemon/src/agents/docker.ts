@@ -28,7 +28,13 @@ import { forwardNotices, type LocalForward, withLocalForwards } from "./forward.
 import type { Invocation } from "./invocation.js";
 import { withOutputRelay } from "./output-relay.js";
 import { type AgentOutcome, ClaudeOutcomeReader, CodexOutcomeReader } from "./parse.js";
-import { redact, redactEscaped, redactText, secretStringsInJson } from "./redact.js";
+import {
+  MAX_AUTH_FILE_BYTES,
+  redact,
+  redactEscaped,
+  redactText,
+  secretStringsInJson,
+} from "./redact.js";
 
 export const CONTAINER_WORKSPACE = "/workspace";
 /** レビューの工程で、PR の差分の全体を読み取り専用で置くディレクトリ（作業領域の外。PBI-65）。 */
@@ -137,11 +143,10 @@ export class StagedFileTooLargeError extends Error {
 }
 
 /**
- * 認証ファイルとして読む大きさの上限（バイト）。伏せる値は、ファイルの全体が1つの値になることがあり、
- * コンテナの中のエージェントが、ステージしたファイルを任意の大きさに書き換えられる。本物の認証ファイルは数 KB なので、
- * 余裕を持たせて決めた。超えたときは、値を伏せる対象から外さずに、実行を失敗にする。
+ * ステージした認証ファイルとして読む大きさの上限（バイト）。コンテナの中のエージェントが、ステージしたファイルを
+ * 任意の大きさに書き換えられる。超えたときは、値を伏せる対象から外さずに、実行を失敗にする。
  */
-export const MAX_STAGED_SECRET_FILE_BYTES = 256 * 1024;
+export const MAX_STAGED_SECRET_FILE_BYTES = MAX_AUTH_FILE_BYTES;
 
 /** ステージしたファイル（実行ごとの一時ディレクトリ dir の中の、相対パス name。区切りは /）。 */
 export type StagedFile = { dir: string; name: string };
@@ -472,7 +477,10 @@ export class DockerExecutor implements AgentExecutor {
             ),
           );
         } catch (error) {
-          if (error instanceof StagedFileTooLargeError) secretFileTooLarge = staged.name;
+          if (error instanceof StagedFileTooLargeError) {
+            secretFileTooLarge = staged.name;
+            log?.withholdOutput?.(); // ファイルの中身は伏せられないので、この実行の出力をセッションログに残さない
+          }
           // 消えていれば・リンクなどに差し替えられていれば何もしない
         }
       }

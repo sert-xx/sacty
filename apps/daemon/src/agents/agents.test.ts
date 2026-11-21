@@ -15,6 +15,7 @@ import { renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AgentConfig, agentFor, CONFIG_TEMPLATE, loadConfig } from "../config.js";
 import { MemorySecretStore } from "../secrets.js";
+import type { SessionLogSink } from "../session-logs.js";
 import { waitFor } from "../testing/wait.js";
 import { dockerRunArgs, syncBackIfChanged } from "./docker.js";
 import { buildInvocation, type Invocation } from "./invocation.js";
@@ -2713,7 +2714,7 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function run(hostAuthContent: string, dockerScript: string) {
+  async function run(hostAuthContent: string, dockerScript: string, log?: SessionLogSink) {
     const { chmodSync } = await import("node:fs");
     const { DockerExecutor } = await import("./docker.js");
     dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
@@ -2726,6 +2727,7 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
     writeFileSync(hostAuth, hostAuthContent);
     const outcome = await new DockerExecutor().run({
       runId: "r-large-auth",
+      ...(log ? { log } : {}),
       image: "img",
       workspaceDir: dir,
       invocation: {
@@ -2744,7 +2746,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":
 
   it("起動の前に大きすぎれば、起動せずに失敗にする", async () => {
     const { outcome } = await run(
-      "a".repeat(300 * 1024),
+      "a".repeat(1024 * 1024 + 1),
       `#!/bin/sh\ntouch "$(dirname "$0")/started"\n${completes}`,
     );
     expect(outcome).toMatchObject({ kind: "failed", reason: "auth" });
@@ -2758,12 +2760,35 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":
 for arg in "$@"; do
   case "$arg" in *:/.codex) host="\${arg%%:*}" ;; esac
 done
-head -c 300000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
+head -c 1100000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
 ${completes}`,
     );
     expect(outcome).toMatchObject({ kind: "failed", reason: "auth" });
     expect(outcome).not.toHaveProperty("output");
     expect(readFileSync(hostAuth, "utf8")).toBe('{"token":"host-token-value-0123456789"}');
+  });
+
+  it("コンテナの中で大きくされたら、セッションログに出力を残さないようにする", async () => {
+    const calls: string[] = [];
+    const log = {
+      stdout: (t: string) => calls.push(`out:${t.length}`),
+      stderr: () => {},
+      addSecrets: () => {},
+      withholdOutput: () => calls.push("withhold"),
+      archiveAgentFiles: async () => {},
+      agentFilesNotArchived: () => {},
+    } as unknown as SessionLogSink;
+    await run(
+      '{"token":"host-token-value-0123456789"}',
+      `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in *:/.codex) host="\${arg%%:*}" ;; esac
+done
+head -c 1100000 /dev/zero | tr '\\0' 'a' > "$host/auth.json"
+${completes}`,
+      log,
+    );
+    expect(calls).toContain("withhold");
   });
 
   it("上限以下の非 JSON の認証ファイルは、今までどおり伏せる対象になる", async () => {

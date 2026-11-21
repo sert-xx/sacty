@@ -89,6 +89,11 @@ export interface SessionLogSink {
   /** 実行の途中で分かった秘密情報（コンテナで更新された認証ファイルの値など）。 */
   addSecrets(values: readonly string[]): void;
   /**
+   * 伏せる対象にできない値（大きすぎる認証ファイルなど）が出力に混ざりうるので、この実行の出力を残さない。
+   * いままでの出力も、これからの出力も、ファイルに残さない。
+   */
+  withholdOutput?(): void;
+  /**
    * コンテナが終わった後、実行ごとの設定の場所（dir）から、エージェントの元のセッションのファイルを写す（PBI-66）。
    * 写せなくても、実行は止めない。
    */
@@ -430,6 +435,8 @@ export class SessionLog implements SessionLogSink {
   private secretsAtFirstWrite: number | undefined;
   private warned = false;
   private closed = false;
+  /** 出力を残さない（伏せる対象にできない値が混ざりうる）。 */
+  private withheld = false;
   /** 写したエージェントのファイル（PBI-66）。写していなければ undefined。 */
   archived: ArchivedAgentSession | undefined;
 
@@ -462,6 +469,30 @@ export class SessionLog implements SessionLogSink {
 
   addSecrets(values: readonly string[]): void {
     for (const value of values) if (value) this.extra.add(value);
+  }
+
+  withholdOutput(): void {
+    this.withheld = true;
+    this.clearWithheld();
+  }
+
+  /** 書いたファイルの中身を、出力を残さない旨の1行に置き換える。 */
+  private clearWithheld(): void {
+    for (const file of Object.values(this.files)) {
+      try {
+        if (existsSync(file.path)) {
+          writeFileSync(
+            file.path,
+            "[sacty] output withheld: it may contain a value that cannot be redacted.\n",
+            {
+              mode: 0o600,
+            },
+          );
+        }
+      } catch (error) {
+        this.warn(error);
+      }
+    }
   }
 
   async archiveAgentFiles(
@@ -509,7 +540,7 @@ export class SessionLog implements SessionLogSink {
    * 書き終えていない最後の行は入れない。閉じた後・読めなければ undefined。
    */
   snapshot(): SessionLogSnapshot | undefined {
-    if (this.closed) return undefined;
+    if (this.closed || this.withheld) return undefined;
     const markers = this.markers();
     const forms = secretForms(this.allSecrets());
     const texts: Partial<Record<SessionLogFile, string>> = {};
@@ -537,15 +568,22 @@ export class SessionLog implements SessionLogSink {
     if (this.closed) return;
     this.closed = true;
     this.onClose?.();
-    for (const file of ["events", "stderr"] as const) {
-      this.files[file].write(this.redactors[file].flush());
+    if (!this.withheld) {
+      for (const file of ["events", "stderr"] as const) {
+        this.files[file].write(this.redactors[file].flush());
+      }
     }
     const markers = this.markers();
     this.files.events.close(markers.events);
     this.files.stderr.close(markers.stderr);
+    if (this.withheld) this.clearWithheld();
     // 書き始めた後に分かった秘密情報（コンテナで更新されたトークンなど）は、書いたファイル全体から伏せ直す
     const all = this.allSecrets();
-    if (this.secretsAtFirstWrite !== undefined && all.length > this.secretsAtFirstWrite) {
+    if (
+      !this.withheld &&
+      this.secretsAtFirstWrite !== undefined &&
+      all.length > this.secretsAtFirstWrite
+    ) {
       const forms = secretForms(all);
       for (const file of Object.values(this.files)) {
         try {
@@ -597,7 +635,7 @@ export class SessionLog implements SessionLogSink {
   }
 
   private write(file: SessionLogFile, text: string): void {
-    if (this.closed || !text) return;
+    if (this.closed || this.withheld || !text) return;
     this.secretsAtFirstWrite ??= this.allSecrets().length;
     this.files[file].write(this.redactors[file].push(text));
   }
