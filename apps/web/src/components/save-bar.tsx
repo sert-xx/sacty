@@ -16,14 +16,14 @@ export function SaveBar({
   dirty: boolean;
   disabled: boolean;
   label: string;
-  /** 保存したときの文など、状態の文。 */
+  /** 保存の結果・失敗・注意の文。長いときは、この中だけがスクロールする（「保存する」は帯に残る）。 */
   children?: React.ReactNode;
 }) {
   const unsaved = useMessages().shell.unsaved;
   return (
     <div
       data-testid="save-bar"
-      className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 flex max-h-[40vh] overflow-y-auto flex-wrap items-center gap-x-4 gap-y-2 border-t border-border bg-background py-3 sm:bottom-0"
+      className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border bg-background px-1 py-3 sm:bottom-0"
     >
       <Button type="submit" disabled={disabled} className="min-h-11 w-fit px-6">
         {label}
@@ -33,7 +33,12 @@ export function SaveBar({
           {unsaved}
         </p>
       )}
-      {children}
+      <div
+        data-testid="save-bar-results"
+        className="flex max-h-[25vh] min-w-[12rem] flex-1 flex-col gap-2 overflow-y-auto px-1 empty:hidden"
+      >
+        {children}
+      </div>
     </div>
   );
 }

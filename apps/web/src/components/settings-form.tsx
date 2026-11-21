@@ -143,7 +143,7 @@ export function SettingsForm({
     memoryRetentionDays === undefined ? "" : String(memoryRetentionDays),
   );
   // 保存していない変更：送る欄の値の写しを、基準の写し（最初に描いたとき。保存に成功したら、送った写し）と比べる。
-  // 元の値に戻せば変更なしの扱い。写しは、描くたびに DOM の値から取る（Slack の欄は、子の部品の中の状態のため）
+  // 元の値に戻せば変更なしの扱い。写しは、親が描くたびに DOM の値から取り、子の部品の欄（Slack）は onValueChange で取り直す
   const formRef = useRef<HTMLFormElement>(null);
   const [current, setCurrent] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<string | null>(null);
@@ -366,7 +366,7 @@ export function SettingsForm({
       <DesktopNotificationSettings />
       <SaveBar dirty={dirty} disabled={pending} label={t.save}>
         {state.message && (
-          <p role="alert" className="basis-full text-sm text-warn">
+          <p role="alert" className="text-sm text-warn">
             {state.message}
           </p>
         )}

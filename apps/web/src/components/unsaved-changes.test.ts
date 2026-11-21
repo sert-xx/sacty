@@ -242,7 +242,9 @@ describe.each(Object.entries(screens))("保存していない変更：%s", (_nam
     open();
     const input = edit(screen.field, "変えた値");
     await submit();
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe("保存できませんでした。");
+    const alert = container.querySelector('[role="alert"]') as HTMLElement;
+    expect(alert.textContent).toBe("保存できませんでした。");
+    expect(bar().contains(alert)).toBe(true);
     expect(input.value).toBe("変えた値");
     expect(unsavedNote()).toBeDefined();
     expect(beforeUnloadPrevented()).toBe(true);
@@ -302,6 +304,8 @@ describe("対象にしないもの", () => {
   it("プロジェクトの作成のフォームは、名前を入力しても、表示も確認も出ない", () => {
     mount(h(ProjectEditor, { github }));
     edit('input[id$="-name"]', "新しいプロジェクト");
+    expect(container.querySelector('[data-testid="save-bar"]')).toBeNull();
+    expect(container.querySelector('button[type="submit"]')).not.toBeNull();
     expect(unsavedNote()).toBeUndefined();
     expect(beforeUnloadPrevented()).toBe(false);
     click(railLink);
@@ -349,6 +353,7 @@ describe("Slack の通知の欄だけを変えたとき（親が描き直され�
     settingsResults = [{ saved: true }];
     open();
     pick("slack-webhook");
+    expect(unsavedNote()).toBeDefined();
     await submit();
     expect(unsavedNote()).toBeUndefined();
     expect(beforeUnloadPrevented()).toBe(false);

@@ -31,7 +31,8 @@ createRoot(document.getElementById('root')).render(
         h('div', { className: 'mx-auto flex max-w-6xl flex-col gap-6' },
           h('form', { className: 'flex flex-col gap-6' },
             h('div', { className: 'h-[3000px]' }, 'Long form'),
-            h(SaveBar, { dirty: params.get('dirty') === '1', disabled: false, label: '保存する' }),
+            h(SaveBar, { dirty: params.get('dirty') === '1', disabled: false, label: '保存する' },
+              params.get('long') === '1' ? h('p', { role: 'alert' }, Array.from({ length: 80 }, (_, i) => 'エラーの行 ' + i).join('\\n')) : null),
           ),
         ),
       ),
@@ -123,9 +124,9 @@ afterAll(async () => {
   await server?.close();
 });
 
-async function open(width: number, dirty = false): Promise<Page> {
+async function open(width: number, dirty = false, long = false): Promise<Page> {
   const page = await browser.newPage({ viewport: { width, height: 700 } });
-  await page.goto(`${url}/?dirty=${dirty ? 1 : 0}`);
+  await page.goto(`${url}/?dirty=${dirty ? 1 : 0}&long=${long ? 1 : 0}`);
   await page.getByRole("button", { name: "保存する" }).waitFor();
   return page;
 }
@@ -191,5 +192,22 @@ it("the unsaved-changes note shows next to the save button, in the same bar", as
     expect(button.y + button.height).toBeLessThanOrEqual(bar.y + bar.height);
   } finally {
     await page.close();
+  }
+}, 30000);
+
+it("a very long result keeps the bar within 40% of the screen and the save button stays visible", async () => {
+  for (const width of [375, 1280]) {
+    const page = await open(width, true, true);
+    try {
+      const bar = await box(page.getByTestId("save-bar"));
+      const button = await box(page.getByRole("button", { name: "保存する" }));
+      expect(bar.height).toBeLessThanOrEqual(700 * 0.4 + 1);
+      expect(button.y).toBeGreaterThanOrEqual(bar.y);
+      expect(button.y + button.height).toBeLessThanOrEqual(700);
+      const results = page.getByTestId("save-bar-results");
+      expect(await results.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+    } finally {
+      await page.close();
+    }
   }
 }, 30000);

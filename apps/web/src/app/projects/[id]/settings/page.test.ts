@@ -29,11 +29,22 @@ vi.mock("@/lib/daemon", () => {
 });
 
 const { default: Page, generateMetadata } = await import("./page");
+const { GuardedLink } = await import("@/components/shell/guarded-link");
+
+function findAll(node: unknown, match: (el: ReactElement) => boolean, out: ReactElement[] = []) {
+  if (Array.isArray(node)) for (const n of node) findAll(n, match, out);
+  else if (node && typeof node === "object" && "props" in node) {
+    const el = node as ReactElement<{ children?: unknown }>;
+    if (match(el)) out.push(el);
+    findAll(el.props.children, match, out);
+  }
+  return out;
+}
 
 const params = (id: string) => Promise.resolve({ id });
 
 /** 名前が「Sacty」のプロジェクトの設定の見出し（h1）。非同期の部品は、呼んで中身を取り出して描く。 */
-async function heading(): Promise<string> {
+async function render(): Promise<ReactElement> {
   const page = (await Page({
     params: params("p1"),
     searchParams: Promise.resolve({}),
@@ -44,7 +55,11 @@ async function heading(): Promise<string> {
   const inner = suspense.props.children as ReactElement<Record<string, unknown>> & {
     type: (props: unknown) => Promise<ReactElement>;
   };
-  const html = renderToStaticMarkup(await inner.type(inner.props));
+  return await inner.type(inner.props);
+}
+
+async function heading(): Promise<string> {
+  const html = renderToStaticMarkup(await render());
   return /<h1[^>]*>([^<]*)<\/h1>/.exec(html)?.[1] ?? "";
 }
 
@@ -63,5 +78,15 @@ describe.each([
   it("プロジェクトを取れなければ、タイトルは既定のまま", async () => {
     locale = lang;
     expect(await generateMetadata({ params: params("gone") })).toEqual({});
+  });
+});
+
+describe("パンくず", () => {
+  it("プロジェクトの一覧へのパンくずは、保存していない変更を確かめる GuardedLink で描く", async () => {
+    locale = "ja";
+    const page = await Page({ params: params("p1"), searchParams: Promise.resolve({}) });
+    const links = findAll(page, (el) => (el.props as { href?: string }).href === "/projects");
+    expect(links.length).toBeGreaterThan(0);
+    expect(links.every((el) => el.type === GuardedLink)).toBe(true);
   });
 });

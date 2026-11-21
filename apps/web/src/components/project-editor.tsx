@@ -831,8 +831,8 @@ export function ProjectEditor({
 
       {/* 保存の結果と注意の文。固定した帯の中に置く（長いフォームの途中で保存しても、結果が見えるように） */}
       {(() => {
-        const results = (
-          <div className="flex basis-full flex-col gap-2 empty:hidden">
+        const body = (
+          <>
             {state.saved && !dirty && !state.message && !state.contextError && (
               <p role="status" className="text-sm text-accent-foreground">
                 {state.merged ? t.savedMerged : t.saved}
@@ -881,15 +881,15 @@ export function ProjectEditor({
                 {t.githubRequired}
               </p>
             )}
-          </div>
+          </>
         );
         return project ? (
           <SaveBar dirty={dirty} disabled={pending || needsAccount || mergedStale} label={t.save}>
-            {results}
+            {body}
           </SaveBar>
         ) : (
           <>
-            {results}
+            <div className="flex flex-col gap-2 empty:hidden">{body}</div>
             <Button
               type="submit"
               disabled={pending || needsAccount || mergedStale}
