@@ -65,7 +65,7 @@
 | 〃（前の工程へ戻したとき） | 設計の PR の承認待ちから要求要件へ戻す `ChangesRequested` で、ゲートの PR 番号を `sentBackFrom` に入れ、設計の次の `StepPullRequestPublished` で消す |
 | 〃（ブランチの回） | `StepBranchPushed` の `commit` を、ブランチの名前ごとに投影に持つ（回の決め方で、記録したコミットと比べるため） |
 | `packages/core/src/events.ts` | `ReworkStoppedByMerge` に任意の `step` を足す |
-| `apps/daemon/src/repository.ts` | `RepositoryWorkspace` の `commitFiles` に、push しない指定を足す。作ったコミットをブランチへ push する操作（強制しない）を `RepositoryWorkspace` に足す |
+| `apps/daemon/src/repository.ts` | `RepositoryWorkspace` の `commitFiles` に、push しない指定だけを足す。作ったコミットの push には、既にある `pushCommit`（強制しない）を使い、新しい push の操作は足さない |
 | `apps/daemon/src/service.ts` | `checkReworkMerges`・`stopReworkForMerge`・`endReworkByMerge` を、`reworkingStepPullRequest` の PR にも当てる。`publishStepPullRequest` に、マージを見つけたときの分岐と、直しの PR を閉じられなかったときの分岐を足し、新しいブランチの回の決め方を変える。起動時の回復で実行を残す条件に、`reworkingStepPullRequest(task)` を足す。`checkPullRequests` で `sentBackFrom` の PR も読み、承認にしなかった知らせを送る |
 | `apps/daemon/src/merge-approval-notice.ts`（新規）・`github.ts`・`service.ts` | 2 つの知らせの本文と目印、`isMergeApprovalNotice`（両方の目印を判定する）を足す。`isReworkNotice` を使っている2か所に、この判定も足す。`github.ts` の取り込みの除外では、目印と sacty のアカウントの両方で判定する。`service.ts` の返信の絞り込みでは、目印だけで判定する |
 | `apps/web/src/lib/labels.ts`・`apps/web/src/i18n/messages/labels.ts` | `step` があれば「PR #N がマージされたため、<工程>の直しを止めた」と出す（日英） |
@@ -79,7 +79,7 @@
    - `publishStepPullRequest` の実行中のタスクは止めず、記録は 3 の `publishStepPullRequest` に任せる。
 2. `publishStepPullRequest` で、前の PR が `reworkingStepPullRequest` の PR で、GitHub で `merged` なら、新しいブランチ・PR を作らず、1 と同じ記録をする。
    - それ以外（前の工程への差し戻しの後の PR など）は、今までどおり新しいブランチ・PR を作る。
-   - 新しいブランチを作るときは、push せずにコミットを作り、`stepBranches` の記録と比べて回の名前を決めてから push する（既定で決めたこと）。同じ PR を更新するときは、今までどおりその PR のブランチへ push する。
+   - 新しいブランチを作るときは、`commitFiles` の push しない指定でコミットを作り、`stepBranches` の記録と比べて回の名前を決めてから、既存の `pushCommit` で push する（既定で決めたこと）。同じ PR を更新するときは、今までどおりその PR のブランチへ push する。
 3. push の後、前の PR が `reworkingStepPullRequest` の PR なら、`upsert` の直前の 1 か所で前の PR の状態を読み直す。
    - 作成の経路では、前の PR を閉じる操作（戻り値は無い）の後に読み直す。閉じた後はマージできないので、読み直しから作成までの間にマージは起きない。
    - 作成の経路で、閉じる操作が失敗し、読み直しても `open` なら、新しい PR を作らず、`pr.failed` で一時停止にする（推奨の答え。確認したいことの should）。この一時停止は直しの PR を閉じるときだけで、`reworkingStepPullRequest` でない PR の作り直しは、今までどおり警告だけで新しい PR を作る。この一時停止の間も 1 の見守りは続け、マージされたら再開を待たずに承認にする。
@@ -122,7 +122,7 @@
   - `apps/daemon/src/daemon-step-pull-requests.test.ts` で、次を確かめる：処理の流れの 1〜3・5、知らせ、push の後のマージ、閉じた PR、前の PR を閉じられなかったとき、ブランチの回、前の工程への差し戻しで新しい PR を作ること。
   - 実装の PR の知らせは `apps/daemon/src/daemon-implement.test.ts` で確かめる。
   - get_task の `pullRequests` の状態は `apps/daemon/src/task-mcp.test.ts` で確かめる。
-  - コミットを push せずに作ることと、作ったコミットの push は、`repository.ts` のテストで確かめる。
+  - `commitFiles` の push しない指定でコミットが作られブランチへ push されないことと、そのコミットを既存の `pushCommit` で push できることは、`apps/daemon/src/repository.test.ts` で確かめる。
   - ほかに `projection.test.ts`・`labels.test.ts`・`imitated-notices.test.ts`。
 - 作業履歴 `docs/worklog/20261121-pbi-462-<スラッグ>.md` を足す。
 
