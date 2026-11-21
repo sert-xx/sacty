@@ -30,18 +30,21 @@ Code: `apps/daemon/src/service.ts` (`approve`, `gateTask`, `nextAfterApproval`),
 Requirements and Design (`StepPullRequestKey`) and Implementation are approved through PRs. The implementation PR is opened as a draft when the Implementation step finishes, and its draft is removed once the PR review child task reports no findings ([Tasks and steps](tasks-and-steps.en.md#the-flow-without-the-final-review)).
 How the PR is opened is in [Tasks and steps](tasks-and-steps.en.md#opening-the-implementation-pr), and how tasks with records of an earlier version's final review are handled is in [Tasks and steps](tasks-and-steps.en.md#tasks-from-the-version-with-the-final-review). Approval, Request changes, approval by merging the PR, and importing PR comments work the same for the three steps.
 
-When Requirements, Design, and Implementation are all approved through PRs, the branches look like this (an example where the task ID starts with 1a2b3c4d).
+When Requirements, Design, and Implementation are all approved through PRs (a task whose way of proceeding has an Implementation step), the branches look like this (an example where the task ID starts with 1a2b3c4d).
+A task whose way of proceeding has no Implementation step does not create a task branch ([PRs of steps in a flow without an implementation](#prs-of-steps-in-a-flow-without-an-implementation)).
 
 ![Branches when approving through PRs](images/approval-branches.en.svg)
 
 - Whether a task is approved through PRs (`stepPullRequestsOn`)
   - If it has a task branch, it is always approved through PRs.
+  - If it has no task branch and its way of proceeding has no Implementation step (`directStepFlow`), it is approved through PRs as long as a record of a step PR exists (the number of submissions in the web UI does not take it out).
+    While there is no record yet, it is approved through PRs when the conditions below hold.
   - A task that takes over an existing PR (`Task.continuedPullRequest`) does not open Requirements and Design as PRs ([Taking over an existing PR](tasks-and-steps.en.md#taking-over-an-existing-pr)).
   - Without a task branch, it is approved through PRs when all of the following hold.
     - There is a target repository
     - The requirements and design have not yet been submitted in the web UI
     - The project has a GitHub account for that host
-- The task branch `sacty/task-<first 8 chars of task ID>` is created from the base commit of the base branch (`TaskBranchCreated`).
+- For a task whose way of proceeding has an Implementation step, the task branch `sacty/task-<first 8 chars of task ID>` is created from the base commit of the base branch (`TaskBranchCreated`).
 - PRs for Requirements and Design
   - sacty writes the result to the file `<documentsDir>/<first 8 chars of task ID>/<step>.md` and opens it as a PR from the step branch `<task branch>-<step>-<round>` to the task branch.
   - The Orchestrator decides `documentsDir`. If its shape is not usable, the default `docs/sacty` (`DEFAULT_DOCUMENTS_DIR`) is used.
@@ -70,7 +73,8 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
   - If changes other than the requirements and design files have been stacked on the task branch, publishing stops (`pr.taskBranchChanged`).
     Commits a person added after sacty stacked the implementation do not stop it; they are merged into the workspace and sacty stacks on their tip ([Merging commits a person added to the PR](tasks-and-steps.en.md#merging-commits-a-person-added-to-the-pr)).
   - A task that takes over an existing PR opens no PR; it pushes to the source branch of the taken-over PR and uses that PR as the implementation PR.
-- Each child task of Task split has its own task branch.
+- Each child task of Task split (which has an Implementation step) has its own task branch.
+  The parent of a split has no Implementation step, so it has no task branch ([PRs of steps in a flow without an implementation](#prs-of-steps-in-a-flow-without-an-implementation)).
 - The "review" link in the web UI (`personAction`)
   - The link appears in the task details, the task list, "Needs you" on the dashboard, and the header notifications.
   - When all of the following hold, the link opens the PR in a new tab (`reviewPullRequestUrl`). The label is "Review on the PR", and the sacty approval screen is skipped (PBI-136).
@@ -88,6 +92,67 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
 Code (web UI links): `apps/web/src/lib/labels.ts` (`personAction`, `personLink`, `reviewPullRequestUrl`), `packages/core/src/projection.ts` (`openProposal`), `apps/web/src/components/action-link.tsx` (`ActionLink`, `ExternalMark`)
 
 Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `taskBranchName`, `publishStepPullRequest`, `publish`), `packages/core/src/events.ts` (`StepPullRequestKey`, `DEFAULT_DOCUMENTS_DIR`, `isDocumentsDir`), `packages/core/src/projection.ts` (`stepDocumentPath`, `stepBranchCommits`), `apps/daemon/src/prompts.ts` (`buildStepDocument`)
+
+### PRs of steps in a flow without an implementation
+
+Related ADR: [In a flow without an implementation, create no task branch and open the step PRs straight against the base branch](../adr/20261121-2215-step-pull-requests-to-base-branch-without-implementation.md)
+
+A task whose way of proceeding has no Implementation step and that has no task branch (`directStepFlow`; `design-only`, the parent of a task split, and so on) creates no task branch, and opens the Requirements and Design PRs straight from the step branch to the base branch.
+Merging the PR is the approval of that step, as before.
+When the last step's approval completes the task, the documents are on the base branch.
+
+The branches of a flow without an implementation look like this (an example where the task ID starts with 1a2b3c4d).
+
+![Branches of a flow without an implementation](images/approval-branches-direct.en.svg)
+
+- How the target is decided: a task with no `TaskBranchCreated` and no `implement` in `steps`.
+  `steps` does not gain or lose the implementation after `StepsChosen`, so the flow never switches midway.
+  A task that already has a task branch (made by an earlier version) keeps the existing flow even if its way of proceeding has no implementation (it does not switch midway).
+  A task made by an earlier version that has neither a task branch nor a step PR yet proceeds in the direct flow.
+- Differences from the task-branch flow
+
+| Where | Task-branch flow | Direct flow |
+| --- | --- | --- |
+| Task branch | Created if missing (`TaskBranchCreated`) | Not created |
+| Step branch name | `<task branch>-<step>-<round>` | `sacty/task-<first 8 chars of task ID>-<step>-<round>` |
+| Start point and `base` of a new branch | The head of the task branch | The fetched head of `repository.baseBranch` |
+| Target of the PR | The task branch | `repository.baseBranch` |
+| When to recreate | Closed, merged, or the head differs from `base` | Closed, merged, or the PR of an earlier step was merged afterwards |
+| Reading the merged document (`readMergedDocument`) | Fetch and read the task branch | Fetch and read the base branch |
+
+- Recreating: an open PR is not recreated just because other people's merges moved the base branch; the commit is stacked on the same PR's branch.
+  Only when the PR of another step was merged after this PR was opened (for example, while the Design PR was open, the task went back to Requirements and the Requirements PR was merged; `earlierStepMergedAfter`) is the earlier PR closed and recreated.
+  The new branch is made from the latest base branch that includes that merge (the design is made from the latest base branch that includes the merge of the earlier step's PR).
+  Everything else (taking a merge during a rework as the approval, `pr.supersededNotClosed`, retrying pushes, the branch rounds) is the same as in the task-branch flow.
+  An open PR does not take in the latest base branch, so when other changes edited the same document, the person who merges resolves the conflict on GitHub.
+- Showing conflicts: as in the task-branch flow, the Requirements and Design PRs are not recorded (the document path differs per task, so conflicts are rare).
+- Deleting branches: sacty does not leave the branches it made on the remote.
+  The deletion rule lives in one function (`settleStepBranches`), and every path goes through it.
+  - Paths: the PR check (merged, closed), recreating (`publishStepPullRequest`), a merge during a rework (`endStepReworkInPublish`, `stopReworkForMerge`), completion (once `workspaceRetirable` holds, before the workspace is removed), and the cancel cleanup.
+  - The class is decided by the state of `stepPullRequests` at the time of deletion (not by the path, nor by whether an earlier path failed to delete). The following are applied from the top.
+    1. Delete unconditionally: the branch of a PR whose merge is recorded (whether or not `StepBranchKept` is recorded; a person's commits were taken in by the merge), and the branch of a PR sacty itself closed (`supersede` when recreating).
+    2. Do not delete: a branch for which `StepBranchKept` is recorded.
+    3. Compare, then delete: everything else (a PR a person closed, a PR found already closed when recreating, and the branches left at completion or cancel). Just before deleting, fetch the remote head and delete only when it equals the last push in `stepBranchCommits`.
+  - Result of the comparison
+    - If different: do not delete; record `StepBranchKept` (`branch`, the fetched `head`, and `pushed`, the last commit sacty pushed).
+    - If the branch is not on the remote (the fetch fails with `couldn't find remote ref`): treat it as deleted. This includes a branch GitHub deleted after the merge.
+    - Any other fetch failure (such as the network), or no record in `stepBranchCommits`: do not delete and record nothing. Completion and cancel retry with the same rule, and if the head still cannot be fetched there, the branch stays (cancel records it as failed in the cleanup of `TaskCancelled`).
+  - When sacty updates the same PR and the fetched head of the PR's branch differs from the last push (it stacks on a person's commit), it records `StepBranchKept`.
+    The branch contains a person's commit, so it is not deleted even if the head later matches (when the PR is merged, it is deleted by 1).
+  - Deletion happens only if the compared head is still the same (the expected head is passed to `deleteBranch`, which deletes with `--force-with-lease`).
+    If a person pushes between the fetch and the deletion, the branch stays.
+  - The projection excludes a branch with `StepBranchKept` from the branches to delete (`sactyBranches`) until that PR's merge is recorded (`keptStepBranches`). Reopening the PR does not release it.
+  - A failure to delete does not stop the task (it only logs a warning). Completion and cancel delete what remains with the same rule (a branch already gone counts as deleted).
+  - A taken-over PR opens no step PR and stays excluded from `sactyBranches`, so a person's branch is never deleted.
+  - The cancel confirmation (`cancelTargets`) shows the branches to delete with the same classification ([MCP server](mcp-server.en.md#get_cancel_plan)).
+- Derive record: the line of a merged step PR gets the document path (`path` of `StepPullRequestPublished`) ([Derive](tasks-and-steps.en.md#creating-a-follow-up-task-from-a-completed-task-derive)).
+  A follow-up task started from the base branch has the earlier task's documents in its workspace.
+- The related Issue in the PR body is a reference only and is not closed even by a PR to the base branch ([PR body and PR template](#pr-body-and-pr-template)).
+- Compatibility: a new event `StepBranchKept` was added.
+  After even one task of the direct flow is recorded, a daemon of the earlier version fails with an integrity error when projecting the activity log and does not start (the earlier version does not accept step PR records without a task branch).
+  Being unable to roll back to the earlier version is accepted (precedent: the compatibility note in [Merging during a rework of a step PR](#merging-during-a-rework-of-a-step-pr)).
+
+Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `publishStepPullRequest`, `settleStepBranches`, `settleStepBranch`, `readMergedDocument`, `earlierStepMergedAfter`, `sactyBranches`), `apps/daemon/src/repository.ts` (`deleteBranch`, `fetchBranch`), `packages/core/src/projection.ts` (`directStepFlow`, `keptStepBranches`, `StepBranchKept`), `packages/core/src/events.ts` (`StepBranchKept`)
 
 ## When the implementation has no changes
 
@@ -363,7 +428,7 @@ It only shows it; the base branch is not merged in (it is merged in, before the 
 - Recording: it is recorded with actor `sacty`, only when the conflict changes. The same state is not recorded twice.
   - Conflicted: `PullRequestConflicted`. It is held in `Task.pullRequestConflict` (the PR number, the commit of the submission at that time, and the time).
   - Resolved (a person fixed it on GitHub, or the base branch went back): `PullRequestConflictResolved`. It clears `Task.pullRequestConflict`.
-  - Only the implementation PR of a task in `awaiting_approval` is recorded. The Requirements and Design PRs (PRs to the task branch) and escalated tasks are not.
+  - Only the implementation PR of a task in `awaiting_approval` is recorded. The Requirements and Design PRs (PRs to the task branch or to the base branch) and escalated tasks are not.
   - Nothing is started: no run, no merge, no PR update, and no write to GitHub.
 - When it is shown (`pullRequestConflict`): the task is waiting for approval, the PR of the Implement gate is open, the recorded PR number and commit are the same as the current submission, and the step to redo for PR comments is not being decided (`pendingReview`).
   - The record is cleared when the PR is created again or updated (`PullRequestPublished`), and when it is merged, closed, or reopened (`PullRequestMerged`, `PullRequestClosed`, `PullRequestReopened`).
@@ -564,7 +629,7 @@ A template is judged absent or unusable as follows.
 - Content of the requirements and design PRs (`buildStepPullRequestBodyParts`)
   - Purpose: which step's result it is (and the approved earlier steps; the form of the links is as in "Links to earlier steps' outputs" below)
   - Changes: the result's file and the responses to comments
-  - Related Issue: `#<number>` (a reference only; merging into the task branch does not close it)
+  - Related Issue: `#<number>` (a reference only; merging into the task branch, or into the base branch in a flow without an implementation, does not close it)
   - There are no tests.
 - Content that did not fit into a heading and "the sacty record" are placed at the end of the body in a collapsible section (`<details>`). If no heading could take any content (such as a template without headings), the purpose, changes, and tests are placed without collapsing. If the related Issue does not fit into a heading, it is placed before the last part.
 - The last part (footer) always contains the following.
@@ -648,7 +713,7 @@ A question that was answered and left the section also disappears from the body 
 
 - Links to earlier steps' outputs (where the full approved requirements are in the implementation PR, and the approved earlier steps in the requirements and design PRs; `stepArtifactLink`; PBI-322)
   - One line per step: after `- <step>：`, the path of the output file as inline code linked to `<repository>/blob/<commit>/<path>`, then, in full-width brackets, `PR：` and a link to the PR URL (with the text `#<number>`).
-  - The file link points to the commit of the merged content (the head commit of the PR; if a person edited and merged it, the person's final commit). Without that record, it points to the commit sacty pushed to the PR. GitHub keeps the head commit of a PR in the PR's ref, so it stays readable after the PR and task branches are deleted. The merge commit is not used, because it may become unreachable once the task branch is deleted.
+  - The file link points to the commit of the merged content (the head commit of the PR; if a person edited and merged it, the person's final commit). Without that record, it points to the commit sacty pushed to the PR. GitHub keeps the head commit of a PR in the PR's ref, so it stays readable after the PR and task branches are deleted. The merge commit is not used, because it may become unreachable once the task branch (in a flow without an implementation, the step branch) is deleted.
   - The PR URL is also an explicit link. If full-width brackets or other characters follow the PR URL directly, GitHub's autolink includes them in the URL, opens `/pull/<number>（…`, and lands on the compare page.
   - The path is encoded segment by segment (parentheses too, so the link target does not close early), and the link text is the path as inline code (wrapped in a longer run of backticks if it contains backticks).
   - If the PR URL is not in the form `<repository>/pull/<number>`, the line is the path as inline code and, in full-width brackets, `PR：` and the URL in angle brackets (an autolink). Without a URL, only the path.

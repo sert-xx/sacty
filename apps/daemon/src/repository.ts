@@ -301,7 +301,13 @@ export interface RepositoryWorkspace {
     options?: { full?: boolean },
   ): Promise<string>;
   /** sacty のブランチを、リモートから消す（中止したとき）。 */
-  deleteBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<void>;
+  deleteBranch(
+    gitDir: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+    /** 渡すと、リモートのブランチの先頭がこのコミットのときだけ消す（取得の後に人が push したら、消さない。PBI-464）。 */
+    expectedHead?: string,
+  ): Promise<void>;
 }
 
 /** 起点から変更が無く、コミットするものが無い。 */
@@ -1577,7 +1583,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         "origin",
         `refs/heads/${branch}`,
       ],
-      cloneEnv(authEnv),
+      // リモートにブランチが無いことを、git の文言で見分ける（remoteRefMissing）ので、訳さない
+      { ...cloneEnv(authEnv), LC_ALL: "C" },
       undefined,
       signal && AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
     );
@@ -1623,14 +1630,30 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       : diff;
   }
 
-  async deleteBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+  async deleteBranch(
+    gitDir: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+    expectedHead?: string,
+  ) {
     // 人間のブランチを消さないよう、sacty のブランチだけを受け付ける
     if (!/^sacty\/[\w./-]+$/.test(branch)) throw new MessageError(message("git.notSactyBranch"));
+    if (expectedHead !== undefined && !COMMIT_RE.test(expectedHead)) {
+      throw new MessageError(message("git.invalidBaseCommit"));
+    }
     // プッシュと同じく、退避したメタデータと、gh のトークンかホストの認証を使う。作業領域は読まない
     try {
       await git(
         "push",
-        ["--git-dir", gitDir, "push", "--", "origin", `:refs/heads/${branch}`],
+        [
+          "--git-dir",
+          gitDir,
+          "push",
+          ...(expectedHead ? [`--force-with-lease=refs/heads/${branch}:${expectedHead}`] : []),
+          "--",
+          "origin",
+          `:refs/heads/${branch}`,
+        ],
         // すでに無いブランチの理由を読むので、git の文言は訳さない
         { ...cloneEnv(authEnv), LC_ALL: "C" },
       );

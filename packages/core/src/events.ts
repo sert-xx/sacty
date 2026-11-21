@@ -3277,6 +3277,20 @@ const StepBranchPushed = z.object({
 });
 
 /**
+ * 実装の無いタスク（タスクブランチを作らない進め方。PBI-464）で、人がコミットを足した工程のブランチを、消さずに残すと
+ * 決めた（取得した先頭 head が、sacty が最後に push した pushed と違う。同じ PR の更新で、人のコミットに積んだときも）。
+ * 残したブランチは、その PR のマージを記録するまで、sacty が消すブランチから外す。
+ */
+const StepBranchKept = z.object({
+  type: z.literal("StepBranchKept"),
+  payload: z.object({
+    branch: z.string().min(1),
+    head: z.string().min(1),
+    pushed: z.string().min(1),
+  }),
+});
+
+/**
  * 要求要件・設計の成果のファイルを、タスクブランチへの PR にした（作った・更新した。PBI-57）。続けてその工程の承認待ち
  * （StepSubmitted）にする。base は、工程のブランチを作ったときのタスクブランチの先頭（同じ PR を更新するときは変えない）。
  * supersedes は、作り直したので sacty が閉じた、その工程の前の PR（前の工程に戻した後など）。
@@ -4621,6 +4635,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReviewTaskCreated,
   TaskBranchCreated,
   StepBranchPushed,
+  StepBranchKept,
   StepPullRequestPublished,
   PullRequestMerged,
   PullRequestClosed,

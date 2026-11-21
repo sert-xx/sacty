@@ -36,18 +36,21 @@
 PR の作り方は[タスクと工程](tasks-and-steps.md#実装の-pr-の作成)、以前の版の最終レビューの記録を持つタスクの扱いは[タスクと工程](tasks-and-steps.md#最終レビューがあった版のタスク)にある。
 承認・差し戻し・PR のマージでの承認・PR の指摘の取り込みの扱いは、3つの工程で同じ。
 
-要求要件・設計・実装をすべて PR で承認するときのブランチは、次のようになる（タスク ID が 1a2b3c4d で始まる例）。
+要求要件・設計・実装をすべて PR で承認するとき（進め方に実装の工程があるタスク）のブランチは、次のようになる（タスク ID が 1a2b3c4d で始まる例）。
+進め方に実装の工程が無いタスクは、タスクブランチを作らない（[実装の無い進め方の工程の PR](#実装の無い進め方の工程の-pr)）。
 
 ![PR で承認するときのブランチ](images/approval-branches.svg)
 
 - PR で承認するタスクか（`stepPullRequestsOn`）
   - タスクブランチがあれば、常に PR で承認する。
+  - タスクブランチが無く、進め方に実装の工程が無ければ（`directStepFlow`）、工程の PR の記録があるかぎり PR で承認する（画面の提出の数では外さない）。
+    まだ記録が無いときは、下の条件を満たせば PR で承認する。
   - 既存の PR を引き継ぐタスク（`Task.continuedPullRequest`）は、要求要件・設計を PR にしない（[既存の PR の引き継ぎ](tasks-and-steps.md#既存の-pr-の引き継ぎ)）。
   - タスクブランチが無ければ、次のすべてを満たすときに PR で承認する。
     - 対象リポジトリがある
     - 画面で要求要件・設計をまだ提出していない
     - プロジェクトにそのホストの GitHub のアカウントがある
-- タスクブランチ `sacty/task-<タスク ID の先頭8文字>` を、ベースブランチの起点のコミットから作る（`TaskBranchCreated`）。
+- 進め方に実装の工程があるタスクは、タスクブランチ `sacty/task-<タスク ID の先頭8文字>` を、ベースブランチの起点のコミットから作る（`TaskBranchCreated`）。
 - 要求要件・設計の PR
   - sacty は成果をファイル `<documentsDir>/<タスク ID の先頭8文字>/<工程>.md` にし、工程のブランチ `<タスクブランチ>-<工程>-<回>` からタスクブランチへの PR にする。
   - `documentsDir` はオーケストレーターが決める。
@@ -77,7 +80,8 @@ PR の作り方は[タスクと工程](tasks-and-steps.md#実装の-pr-の作成
   - タスクブランチに、要求要件・設計のファイル以外の変更が積まれていれば、公開を止める（`pr.taskBranchChanged`）。
     sacty が実装を積んだ後に人が足したコミットは、止めずに作業領域に取り込んで、その先頭に積む（[人が PR に足したコミットの取り込み](tasks-and-steps.md#人が-pr-に足したコミットの取り込み)）。
   - 既存の PR を引き継ぐタスクは、PR を作らず、引き継いだ PR の元のブランチに積み、その PR を実装の PR にする。
-- タスク分割の子タスクは、それぞれ自分のタスクブランチを持つ。
+- タスク分割の子タスク（実装の工程を持つ）は、それぞれ自分のタスクブランチを持つ。
+  分割の親は実装の工程が無いので、タスクブランチを持たない（[実装の無い進め方の工程の PR](#実装の無い進め方の工程の-pr)）。
 - 画面の「チェックする」の導線（`personAction`）
   - 導線は、タスクの詳細・タスクの一覧・ダッシュボードの「あなたの出番」・ヘッダーのお知らせにある。
   - 次のすべてを満たすとき、導線は PR を新しいタブで開く（`reviewPullRequestUrl`）。
@@ -97,6 +101,67 @@ PR の作り方は[タスクと工程](tasks-and-steps.md#実装の-pr-の作成
 コード（画面の導線）: `apps/web/src/lib/labels.ts`（`personAction`・`personLink`・`reviewPullRequestUrl`）、`packages/core/src/projection.ts`（`openProposal`）、`apps/web/src/components/action-link.tsx`（`ActionLink`・`ExternalMark`）
 
 コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`taskBranchName`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`StepPullRequestKey`・`DEFAULT_DOCUMENTS_DIR`・`isDocumentsDir`）、`packages/core/src/projection.ts`（`stepDocumentPath`・`stepBranchCommits`）、`apps/daemon/src/prompts.ts`（`buildStepDocument`）
+
+### 実装の無い進め方の工程の PR
+
+関係する ADR: [実装の無い進め方では、タスクブランチを作らず、工程の PR をベースブランチへ直接出す](../adr/20261121-2215-step-pull-requests-to-base-branch-without-implementation.md)
+
+進め方に実装の工程が無く、タスクブランチも無いタスク（`directStepFlow`。`design-only`・タスク分割の親など）は、タスクブランチを作らず、要求要件・設計の PR を工程のブランチからベースブランチへ直接出す。
+PR のマージが、これまでどおりその工程の承認になる。
+最後の工程の承認で完了すると、文書はベースブランチに入っている。
+
+実装の無い進め方のブランチは、次のようになる（タスク ID が 1a2b3c4d で始まる例）。
+
+![実装の無い進め方のブランチ](images/approval-branches-direct.svg)
+
+- 対象の判定：`TaskBranchCreated` が無く、`steps` に `implement` が無いタスク。
+  `steps` は、`StepsChosen` の後で実装を増減しないので、途中で切り替わらない。
+  タスクブランチを作ったタスク（前の版で作ったもの）は、進め方に実装が無くても、これまでの流れのまま進む（途中で切り替えない）。
+  前の版で作ったタスクのうち、まだタスクブランチも工程の PR も無いものは、直接の流れで進む。
+- 流れの違い（タスクブランチの流れとの比べ）
+
+| 所 | タスクブランチの流れ | 直接の流れ |
+| --- | --- | --- |
+| タスクブランチ | 無ければ作る（`TaskBranchCreated`） | 作らない |
+| 工程のブランチの名前 | `<タスクブランチ>-<工程>-<回>` | `sacty/task-<タスク ID の先頭8文字>-<工程>-<回>` |
+| 新しいブランチの起点と `base` | タスクブランチの先頭 | `repository.baseBranch` を取得した先頭 |
+| PR の向き先 | タスクブランチ | `repository.baseBranch` |
+| 作り直す条件 | 閉じた・マージした、または先頭が `base` と違う | 閉じた・マージした、または前の工程の PR が後からマージされた |
+| マージした文書を読む（`readMergedDocument`） | タスクブランチを取得して読む | ベースブランチを取得して読む |
+
+- 作り直し：開いている PR は、ほかの人のマージでベースブランチが進んだだけでは作り直さず、同じ PR のブランチに積む。
+  別の工程の PR が、この PR を出した後にマージされたとき（設計の PR が開いている間に要求要件へ戻り、要求要件の PR がマージされたときなど。`earlierStepMergedAfter`）だけ、前の PR を閉じて作り直す。
+  新しいブランチは、そのマージを取り込んだベースブランチの最新から作る（設計は、前の工程の PR のマージを取り込んだベースブランチの最新から作る）。
+  それ以外（直しの間のマージを承認にする・`pr.supersededNotClosed`・push のやり直し・ブランチの回）は、タスクブランチの流れと同じ。
+  開いている PR はベースブランチの最新を取り込まないので、同じ文書をほかの変更が直したときは、マージする人が GitHub で競合を解く。
+- 競合の表示：要求要件・設計の PR は、タスクブランチの流れと同じく記録しない（文書のパスはタスクごとに別で、競合しにくいため）。
+- ブランチの削除：sacty が作ったブランチを、リモートに残さない。
+  削除の規則は 1 つの関数（`settleStepBranches`）に置き、すべての経路が通る。
+  - 経路：PR の確認（マージ・クローズ）、作り直し（`publishStepPullRequest`）、直しの間のマージ（`endStepReworkInPublish`・`stopReworkForMerge`）、完了（`workspaceRetirable` になり、作業領域を消す前）、中止の片付け。
+  - 分類は、削除する時点の `stepPullRequests` の状態で決める（経路や、前の経路で消せなかったかでは決めない）。上から順に当てる。
+    1. 無条件に消す：マージを記録した PR のブランチ（`StepBranchKept` の有無に関わらない。人のコミットはマージで取り込み済み）と、sacty がこの手で閉じた（作り直しの `supersede`）PR のブランチ。
+    2. 消さない：`StepBranchKept` を記録したブランチ。
+    3. 比べて消す：それ以外（人のクローズ、作り直しで見つけた閉じていた PR、完了・中止で残っているブランチ）。削除の直前にリモートの先頭を取得し、`stepBranchCommits` の最後の push と同じときだけ消す。
+  - 比べた結果
+    - 違うとき：消さずに `StepBranchKept`（`branch`・取得した `head`・sacty が最後に push した `pushed`）を記録する。
+    - リモートにブランチが無い（取得が `couldn't find remote ref` で失敗する）とき：消せたものとする。GitHub がマージの後に消した場合を含む。
+    - それ以外の取得の失敗（通信など）・`stepBranchCommits` に記録が無いとき：消さず、記録も足さない。完了・中止のときに同じ規則でやり直し、そこでも取得できなければ残す（中止は `TaskCancelled` の cleanup に失敗として記録する）。
+  - sacty が同じ PR を更新するとき、取得した PR のブランチの先頭が最後の push と違えば（人のコミットに積むとき）、`StepBranchKept` を記録する。
+    人のコミットを含むので、後で先頭が同じでも消さない（マージされたときは 1 で消す）。
+  - 削除は、比べた先頭が今も同じときだけにする（`deleteBranch` に期待する先頭を渡し、`--force-with-lease` で消す）。
+    取得から削除までの間に人が push したら、消せずに残る。
+  - 投影は `StepBranchKept` を記録したブランチを、その PR のマージを記録するまで、消すブランチ（`sactyBranches`）から除く（`keptStepBranches`）。PR が開き直されても外さない。
+  - 削除に失敗しても、タスクは止めない（警告だけにする）。完了・中止のときに、残りを同じ規則で消し直す（すでに無いブランチは消せたものとする）。
+  - 引き継いだ PR は工程の PR を作らず、`sactyBranches` から除く決まりのままなので、人のブランチは消えない。
+  - 中止の確認（`cancelTargets`）は、同じ分類で消すブランチを示す（[MCP サーバー](mcp-server.md#get_cancel_plan)）。
+- 派生の記録：マージした工程の PR の行に、文書のパス（`StepPullRequestPublished` の `path`）を付ける（[派生](tasks-and-steps.md#完了したタスクから続きのタスクを作る派生)）。
+  続きのタスクをベースブランチから始めると、前のタスクの文書が作業領域にある。
+- PR の本文の関係する Issue は、参照だけで、ベースブランチへの PR でも閉じない（[PR の本文](#pr-の本文と-pr-テンプレート)）。
+- 互換性：新しいイベント `StepBranchKept` を足した。
+  直接の流れのタスクを 1 件でも記録した後は、前の版のデーモンは整合性のエラーで作業履歴を投影できず、起動しない（前の版は、タスクブランチの無い工程の PR の記録を受け付けない）。
+  前の版へ戻せなくなることは許容する（前例：[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)の互換性）。
+
+コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`publishStepPullRequest`・`settleStepBranches`・`settleStepBranch`・`readMergedDocument`・`earlierStepMergedAfter`・`sactyBranches`）、`apps/daemon/src/repository.ts`（`deleteBranch`・`fetchBranch`）、`packages/core/src/projection.ts`（`directStepFlow`・`keptStepBranches`・`StepBranchKept`）、`packages/core/src/events.ts`（`StepBranchKept`）
 
 ## 実装に変更が無いとき
 
@@ -382,7 +447,7 @@ PR のレビューの子タスクが、要修正の指摘に「直し（実装�
 - 記録：競合が変わったときだけ、actor `sacty` で記録する。同じ状態は重ねて記録しない。
   - 競合した：`PullRequestConflicted`。`Task.pullRequestConflict`（PR の番号・そのときの提出のコミット・時刻）に持つ。
   - 解消した（人が GitHub で直した・ベースブランチが戻った）：`PullRequestConflictResolved`。`Task.pullRequestConflict` を消す。
-  - 記録するのは、承認待ち（`awaiting_approval`）の実装の PR だけ。要求要件・設計の PR（タスクブランチへの PR）と、エスカレーション中は記録しない。
+  - 記録するのは、承認待ち（`awaiting_approval`）の実装の PR だけ。要求要件・設計の PR（タスクブランチ・ベースブランチへの PR）と、エスカレーション中は記録しない。
   - 実行・取り込み・PR の更新・GitHub への書き込みは何も始めない。
 - 画面に出す条件（`pullRequestConflict`）：承認待ちで、実装のゲートの PR が開いていて、記録の PR の番号とコミットが今の提出と同じで、PR の指摘の戻し先を判断している間（`pendingReview`）でないとき。
   - PR を作り直した・更新した（`PullRequestPublished`）、マージされた・閉じられた・開き直された（`PullRequestMerged`・`PullRequestClosed`・`PullRequestReopened`）ときは、記録を消す。
@@ -603,7 +668,7 @@ Sacty の過程の説明と AI のレビューの状況は置かない。テン�
 - 要求要件・設計の PR の内容（`buildStepPullRequestBodyParts`）
   - 目的：何の工程の成果か（と承認済みの前の工程。リンクの形は下の「前の工程の成果物へのリンク」のとおり）
   - 変更：成果のファイルと指摘への対応
-  - 関係する Issue：`#<番号>`（参照だけ。タスクブランチへのマージでは閉じない）
+  - 関係する Issue：`#<番号>`（参照だけ。タスクブランチへのマージでも、実装の無い進め方のベースブランチへのマージでも閉じない）
   - テストは無い。
 - 見出しに入らなかった内容と「sacty の記録」は、本文の末尾に折りたたみ（`<details>`）で置く。
   どの見出しにも内容を入れられなかった（見出しの無いテンプレートなど）ときは、目的・変更・テストは折りたたまずに置く。
@@ -697,7 +762,7 @@ Sacty の過程の説明と AI のレビューの状況は置かない。テン�
 
 - 前の工程の成果物へのリンク（実装の PR の承認済みの要求要件の全文のある場所と、要求要件・設計の PR の承認済みの前の工程。`stepArtifactLink`。PBI-322）
   - 工程ごとに1行、「`- <工程>：`」に続けて、成果のファイルのパスのインラインのコードを `<リポジトリ>/blob/<コミット>/<パス>` へのリンクにし、全角の括弧の中に「PR：」と、PR の URL へのリンク（文字は `#<番号>`）を置く。
-  - ファイルのリンクは、マージされた内容のコミット（PR の先頭のコミット。人が直してマージしたなら、人が直した最終のコミット）を指す。記録が無ければ、sacty が PR に出したコミット。PR の先頭のコミットは GitHub が PR の参照に残すので、PR・タスクのブランチが消えても読める。マージのコミットは、タスクブランチが消えると辿れないことがあるので使わない。
+  - ファイルのリンクは、マージされた内容のコミット（PR の先頭のコミット。人が直してマージしたなら、人が直した最終のコミット）を指す。記録が無ければ、sacty が PR に出したコミット。PR の先頭のコミットは GitHub が PR の参照に残すので、PR・タスクのブランチが消えても読める。マージのコミットは、タスクブランチ（実装の無い進め方は工程のブランチ）が消えると辿れないことがあるので使わない。
   - PR の URL も明示的なリンクにする。PR の URL の直後に全角の括弧などを続けると、GitHub の自動リンクがそれも URL に含め、`/pull/<番号>（…` を開いて compare の画面になるため。
   - パスは区切りごとに符号にし（括弧も符号にして、リンク先が途中で閉じないようにする）、リンクの文字はパスのインラインのコード（中にバッククォートがあれば、より長いバッククォートで囲む）。
   - PR の URL が `<リポジトリ>/pull/<番号>` の形でなければ、パスのインラインのコードと、全角の括弧の中に「PR：」と山括弧で囲んだ URL（自動リンク）にする。URL が無ければパスだけ。

@@ -63,6 +63,7 @@ import {
   deferralTasksDue,
   deploymentCheckRunning,
   derivedRecord,
+  directStepFlow,
   ERROR_ANALYSIS_MAX,
   EventInput,
   type ExportPlan,
@@ -90,6 +91,7 @@ import {
   isFinished,
   isRepoless,
   isSecurityTask,
+  keptStepBranches,
   lastChangeRound,
   latestStepPullRequest,
   MAX_BASE_CONFLICTS,
@@ -166,6 +168,7 @@ import {
   STEP_PLANS,
   StepKey,
   type StepPlan,
+  type StepPullRequest,
   StepPullRequestKey,
   type StepSettingMap,
   sameAuditTarget,
@@ -2011,6 +2014,8 @@ export class TaskService {
           latest,
           this.mergeApprovalItems(latest, { ...pr, repo: pr.repo }, status, document),
         );
+        // 実装の無い進め方（PBI-464）は、マージした工程の PR のブランチを消す
+        if (pr.step !== "implement") await this.settleMergedStepBranch(task.id, pr.number);
       } else if (status.state === "closed") {
         this.append(latest, [
           {
@@ -2021,6 +2026,13 @@ export class TaskService {
             },
           },
         ]);
+        // 人がクローズした工程の PR のブランチは、先頭を比べてから消す（PBI-464）
+        if (pr.step !== "implement") {
+          const branch = this.tasks
+            .get(task.id)
+            ?.stepPullRequests.find((p) => p.number === pr.number)?.branch;
+          if (branch) await this.settleStepBranches(task.id, "events", { only: [branch] });
+        }
       } else {
         this.append(latest, [
           {
@@ -2960,11 +2972,13 @@ export class TaskService {
       }
       // 止めている間に、承認待ちになった（PR の更新を終えた）・中止されたなら、ここでは記録しない（承認待ちのマージは、
       // 次の確認で確かめる）
-      this.endReworkByMerge(taskId, reworking.number, status, {
+      const recorded = this.endReworkByMerge(taskId, reworking.number, status, {
         stoppedRuns,
         stage: inflight && stage === "queued" ? "running" : stage,
         ...(document ? { document } : {}),
       });
+      // 実装の無い進め方（PBI-464）は、マージした工程の PR のブランチを消す
+      if (recorded && reworking.step) await this.settleMergedStepBranch(taskId, reworking.number);
     } finally {
       this.mergeStopping.delete(taskId);
     }
@@ -3312,8 +3326,11 @@ export class TaskService {
     const ready = await this.prepareRepository(task, loaded.config);
     if (!ready.ok) return retry(ready.message);
     const current = this.mustGet(task.id);
-    const taskBranch = current.taskBranch;
-    if (!current.repository || !taskBranch) return retry(message("pr.workspaceMissing"));
+    // マージ後に読むブランチ：タスクブランチ、直接の流れ（PBI-464）はベースブランチ
+    const readBranch =
+      current.taskBranch?.branch ??
+      (directStepFlow(current) ? current.repository?.baseBranch : undefined);
+    if (!current.repository || !readBranch) return retry(message("pr.workspaceMissing"));
     // マージの時点を特定できるコミットが GitHub から取れなければ、次の確認でやり直す
     if (!merged) return retry(message("git.invalidBaseCommit"));
     const commit = merged;
@@ -3322,7 +3339,7 @@ export class TaskService {
       const authEnv = await this.gitAuth(current, current.repository.url, usedSecrets);
       // タスクブランチを取得すれば、マージのコミットは通常それに含まれる。含まれなければ（PR の先頭のコミットなど）、
       // そのコミットを取得する（すでにあれば取得しない）
-      await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+      await this.deps.repos.fetchBranch(gitDir, readBranch, authEnv);
       await this.deps.repos.fetchCommits(gitDir, [commit], authEnv);
     } catch (error) {
       return retry(errorText(error));
@@ -11488,6 +11505,15 @@ export class TaskService {
       }
       // 問い合わせている間に、作業領域を使い始めたなら消さない（使い始めた処理は、消し終わるのを待ってから作り直す）
       if (!retirable()) return 0;
+      // 実装の無い進め方（PBI-464）で残っている sacty のブランチは、作業領域を消す前に消す（失敗しても完了は止めない）
+      try {
+        await this.settleStepBranches(taskId, "final");
+      } catch (error) {
+        console.warn(
+          `[daemon] 完了したタスクのブランチを消せませんでした：${renderMessage(redactText(errorText(error), []), "ja")}`,
+        );
+      }
+      if (!retirable()) return 0;
       return this.removeWorkspacePaths(paths, mounts);
     })().finally(() => this.retiring.delete(taskId));
     this.retiring.set(
@@ -13816,6 +13842,8 @@ export class TaskService {
           runId,
           prompt: [
             buildPrompt(this.mustGet(task.id), step, {
+              // 実装・直しの指示に入れる、指示を作った時刻（PBI-469）
+              now: this.now(),
               ...(reviewDiff !== undefined
                 ? {
                     diff: reviewDiff,
@@ -15149,6 +15177,8 @@ export class TaskService {
    */
   private stepPullRequestsOn(task: Task): boolean {
     if (task.taskBranch) return true;
+    // 実装の無い進め方（PBI-464）で、工程の PR を作った後は、画面の提出の数で false にしない
+    if (directStepFlow(task) && task.stepPullRequests.length > 0) return true;
     // 既存の PR を引き継ぐタスクは、要求要件・設計を PR にしない（引き継いだ PR に成果のファイルを混ぜない。画面で承認する）
     if (task.continuedPullRequest) return false;
     if (this.deps.stepPullRequests === false || !task.repository) return false;
@@ -15265,8 +15295,10 @@ export class TaskService {
     try {
       const authEnv = await this.gitAuth(current, repository.url, usedSecrets);
       const token = await this.githubToken(current, repo, usedSecrets);
+      // 実装の無い進め方（PBI-464）は、タスクブランチを作らず、工程の PR をベースブランチへ直接出す
+      const direct = directStepFlow(current);
       // タスクブランチは、ベースブランチの起点のコミットから作る（作ったら、中止で消せるように記録する）
-      if (!current.taskBranch) {
+      if (!current.taskBranch && !direct) {
         const branch = taskBranchName(current);
         await this.pushRetrying(
           task.id,
@@ -15286,9 +15318,12 @@ export class TaskService {
           },
         ]);
       }
-      const taskBranch = current.taskBranch;
-      if (!taskBranch) return;
-      const head = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+      // 工程の PR の向き先（直接の流れはベースブランチ）と、工程のブランチの名前の前の部分
+      const targetBranch =
+        current.taskBranch?.branch ?? (direct ? repository.baseBranch : undefined);
+      if (!targetBranch) return;
+      const branchPrefix = current.taskBranch?.branch ?? taskBranchName(current);
+      const head = await this.deps.repos.fetchBranch(gitDir, targetBranch, authEnv);
       // 同じ PR を更新するか（開いていて、タスクブランチが進んでいない）、作り直すか
       const last = latestStepPullRequest(current, step);
       // 直しを始めたときの承認待ちの PR（その PR のマージは、承認として扱う。PBI-462）
@@ -15298,6 +15333,8 @@ export class TaskService {
       let supersede: number | undefined;
       // 前回の作り直しで閉じた後、記録の前に止まっていた（もう閉じている）なら、閉じたものとして記録する
       let superseded: number | undefined;
+      // sacty がこの手で閉じた前の PR のブランチ（無条件に消す。PBI-464）
+      let sactyClosed: string | undefined;
       if (last && !last.superseded && last.state === "open") {
         const status = await this.deps.pulls.status({
           repo: last.repo,
@@ -15305,7 +15342,10 @@ export class TaskService {
           number: last.number,
         });
         if (status.state === "open") {
-          if (last.base === head) reuse = last;
+          // タスクブランチの流れは、タスクブランチが進んでいなければ更新する。直接の流れは、ほかの人のマージでベース
+          // ブランチが進んでも更新し、前の工程の PR が後からマージされたときだけ作り直す（PBI-464）
+          const moved = direct ? earlierStepMergedAfter(current, last) : last.base !== head;
+          if (!moved) reuse = last;
           else supersede = last.number;
         } else if (status.state === "closed") {
           superseded = last.number;
@@ -15336,6 +15376,21 @@ export class TaskService {
       const parent = reuse
         ? await this.deps.repos.fetchBranch(gitDir, reuse.branch, authEnv)
         : head;
+      // 人のコミットに積むときは、そのブランチを残すと決めて記録する（積んだ後は先頭が同じでも、人のコミットを含む。PBI-464）
+      if (reuse && direct) {
+        const pushedBefore = this.mustGet(task.id).stepBranchCommits?.[reuse.branch];
+        if (pushedBefore && pushedBefore !== parent) {
+          current = this.append(this.mustGet(task.id), [
+            {
+              actor: "sacty",
+              event: {
+                type: "StepBranchKept",
+                payload: { branch: reuse.branch, head: parent, pushed: pushedBefore },
+              },
+            },
+          ]);
+        }
+      }
       const commitInput = {
         gitDir,
         parent,
@@ -15365,18 +15420,18 @@ export class TaskService {
         let attempt = current.stepPullRequests.filter((p) => p.step === step).length + 1;
         const made = await this.deps.repos.commitFiles({
           ...commitInput,
-          branch: `${taskBranch.branch}-${step}-${attempt}`,
+          branch: `${branchPrefix}-${step}-${attempt}`,
           skipPush: true,
         });
         commit = made.commit;
         const recorded = this.mustGet(task.id);
         while (
-          recorded.stepBranches.includes(`${taskBranch.branch}-${step}-${attempt}`) &&
-          recorded.stepBranchCommits?.[`${taskBranch.branch}-${step}-${attempt}`] !== commit
+          recorded.stepBranches.includes(`${branchPrefix}-${step}-${attempt}`) &&
+          recorded.stepBranchCommits?.[`${branchPrefix}-${step}-${attempt}`] !== commit
         ) {
           attempt += 1;
         }
-        branch = `${taskBranch.branch}-${step}-${attempt}`;
+        branch = `${branchPrefix}-${step}-${attempt}`;
         await this.pushRetrying(
           task.id,
           usedSecrets,
@@ -15407,6 +15462,7 @@ export class TaskService {
             number: supersede,
           });
           superseded = supersede;
+          sactyClosed = last.branch;
         } catch (error) {
           console.warn(
             `[daemon] 前の PR #${supersede}（${last.repo}）を閉じられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -15503,7 +15559,7 @@ export class TaskService {
         repo,
         token,
         branch,
-        baseBranch: taskBranch.branch,
+        baseBranch: targetBranch,
         // 作るときだけ使う（すでにある PR の題は変えない）。待つ間に人が変えた題にする（PBI-323）
         title: buildStepPullRequestTitle(this.latestTitled(current), step),
         body: sent.body,
@@ -15547,10 +15603,162 @@ export class TaskService {
       this.ensureReviewTask(submitted, step, repo, pr.number, pr.url);
       // すでにある子タスクの再レビューも、提出の直後に始める（60 秒ごとの確認を待たない）
       this.reconcileReviewTaskSoon(submitted.id, commit);
+      // 作り直しで閉じた前の PR のブランチを消す（直接の流れ。sacty が閉じたものは先頭を比べず、すでに閉じていたものは比べる）
+      if (direct && superseded !== undefined && last && last.branch !== branch) {
+        await this.settleStepBranches(task.id, "events", {
+          only: [last.branch],
+          ...(sactyClosed ? { sactyClosed: [sactyClosed] } : {}),
+        });
+      }
     } catch (error) {
       // push のやり直しを待つ間に、一時停止・中止・デーモンの停止を求められた：何も記録せずに終える（PBI-467）
       if (error instanceof RetryAbandoned) return;
       fail(message("pr.failed", { detail: errorText(error) }));
+    }
+  }
+
+  /**
+   * 実装の無い進め方（直接の流れ。PBI-464）で、sacty が作った工程のブランチを、リモートから消す。削除の規則は、ここ 1 か所で
+   * 決め、すべての経路（PR の確認・作り直し・直しの間のマージ・完了・中止）が通る。削除するか、削除の時点の stepPullRequests
+   * の状態で、上から順に決める：
+   * 1. 無条件に消す：マージを記録した PR のブランチ（StepBranchKept の有無に関わらない）と、sacty がこの手で閉じた PR
+   *    （sactyClosed）のブランチ
+   * 2. 消さない：StepBranchKept を記録したブランチ
+   * 3. 比べて消す：それ以外（人のクローズ・作り直しで見つけた閉じていた PR・完了と中止で残っているブランチ）。削除の直前に
+   *    先頭を取得し、最後の push（stepBranchCommits）と同じときだけ、その先頭を期待して消す
+   * 比べた結果が違えば、消さずに StepBranchKept を記録する。リモートに無ければ消せたものとする。それ以外の取得の失敗・
+   * 最後の push の記録が無いときは、消さず、記録も足さない（unresolved。完了・中止で同じ規則でやり直す）。
+   * events は、PR の確認・作り直し・直しの間のマージのとき（only のブランチのうち、閉じた・マージした PR のものだけ）、
+   * final は、完了・中止のとき（PR の無いブランチを含む、残っているすべて）。
+   */
+  private async settleStepBranches(
+    taskId: string,
+    mode: "events" | "final",
+    options: { only?: readonly string[]; sactyClosed?: readonly string[] } = {},
+  ): Promise<{ branch: string; result: StepBranchResult; detail?: DaemonText }[]> {
+    const task = this.tasks.get(taskId);
+    if (!task?.repository || !directStepFlow(task)) return [];
+    const kept = new Set(keptStepBranches(task));
+    const plan: { branch: string; kind: "unconditional" | "compare" | "kept" }[] = [];
+    for (const branch of task.stepBranches) {
+      if (options.only && !options.only.includes(branch)) continue;
+      const pr = task.stepPullRequests.find((p) => p.branch === branch);
+      if (pr && (pr.state === "merged" || pr.state === "merged_outdated")) {
+        plan.push({ branch, kind: "unconditional" });
+      } else if (kept.has(branch)) {
+        plan.push({ branch, kind: "kept" });
+      } else if (options.sactyClosed?.includes(branch)) {
+        plan.push({ branch, kind: "unconditional" });
+      } else if (mode === "final" || pr?.state === "closed") {
+        plan.push({ branch, kind: "compare" });
+      }
+    }
+    const work = plan.filter((p) => p.kind !== "kept");
+    if (work.length === 0) {
+      return plan.map((p) => ({ branch: p.branch, result: "kept" as const }));
+    }
+    const usedSecrets: string[] = [];
+    const results: { branch: string; result: StepBranchResult; detail?: DaemonText }[] = [];
+    try {
+      const gitDir = this.trustedGitDir(task);
+      if (!existsSync(gitDir)) {
+        const loaded = this.deps.config();
+        const ready = loaded.ok
+          ? await this.prepareRepository(task, loaded.config)
+          : { ok: false as const, message: loaded.problem };
+        if (!ready.ok) {
+          throw new MessageError(
+            message("pr.failed", { detail: renderMessage(ready.message, "ja") }),
+          );
+        }
+      }
+      const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
+      for (const { branch, kind } of plan) {
+        if (kind === "kept") {
+          results.push({ branch, result: "kept" });
+          continue;
+        }
+        results.push({
+          branch,
+          ...(await this.settleStepBranch(taskId, gitDir, authEnv, branch, kind, usedSecrets)),
+        });
+      }
+    } catch (error) {
+      const detail = redactText(errorText(error), usedSecrets);
+      console.warn(
+        `[daemon] 工程のブランチを消せませんでした（task ${taskId}）：${renderMessage(detail, "ja")}`,
+      );
+      for (const { branch, kind } of plan) {
+        if (!results.some((r) => r.branch === branch)) {
+          results.push(
+            kind === "kept" ? { branch, result: "kept" } : { branch, result: "unresolved", detail },
+          );
+        }
+      }
+    }
+    return results;
+  }
+
+  /** 工程の PR のマージを記録した後に、その PR のブランチを消す（直接の流れだけ。PBI-464）。 */
+  private async settleMergedStepBranch(taskId: string, number: number): Promise<void> {
+    const branch = this.tasks
+      .get(taskId)
+      ?.stepPullRequests.find((p) => p.number === number)?.branch;
+    if (branch) await this.settleStepBranches(taskId, "events", { only: [branch] });
+  }
+
+  /** settleStepBranches の 1 つのブランチ。 */
+  private async settleStepBranch(
+    taskId: string,
+    gitDir: string,
+    authEnv: Record<string, string> | undefined,
+    branch: string,
+    kind: "unconditional" | "compare",
+    usedSecrets: string[],
+  ): Promise<{ result: StepBranchResult; detail?: DaemonText }> {
+    const unresolved = (error: unknown) => {
+      const detail = redactText(errorText(error), usedSecrets);
+      console.warn(
+        `[daemon] 工程のブランチ ${branch} を消せませんでした：${renderMessage(detail, "ja")}`,
+      );
+      return { result: "unresolved" as const, detail };
+    };
+    if (kind === "unconditional") {
+      try {
+        await this.deps.repos.deleteBranch(gitDir, branch, authEnv);
+        return { result: "deleted" };
+      } catch (error) {
+        return unresolved(error);
+      }
+    }
+    const pushed = this.mustGet(taskId).stepBranchCommits?.[branch];
+    if (!pushed) return unresolved(message("cleanup.stepBranchUnrecorded", { branch }));
+    let head: string;
+    try {
+      head = await this.deps.repos.fetchBranch(gitDir, branch, authEnv);
+    } catch (error) {
+      // リモートにもう無い（人が閉じて GitHub が消した・マージの後に消した）なら、消せたものとする
+      if (remoteRefMissing(error)) return { result: "deleted" };
+      return unresolved(error);
+    }
+    if (head !== pushed) {
+      const latest = this.mustGet(taskId);
+      if (!latest.stepBranchesKept?.[branch]) {
+        this.append(latest, [
+          {
+            actor: "sacty",
+            event: { type: "StepBranchKept", payload: { branch, head, pushed } },
+          },
+        ]);
+      }
+      return { result: "kept" };
+    }
+    try {
+      // 比べた先頭が今も同じときだけ消す（比べた後に人が push したら、断られて残る）
+      await this.deps.repos.deleteBranch(gitDir, branch, authEnv, head);
+      return { result: "deleted" };
+    } catch (error) {
+      return unresolved(error);
     }
   }
 
@@ -15581,6 +15789,7 @@ export class TaskService {
       stage: "publishing",
       ...(document ? { document } : {}),
     });
+    if (recorded) await this.settleMergedStepBranch(taskId, pr.number);
     return recorded ? "recorded" : "skipped";
   }
 
@@ -18749,7 +18958,24 @@ export class TaskService {
           : { ok: false as const, message: loaded.problem };
         if (!ready.ok) unprepared = ready.message;
       }
+      // 実装の無い進め方（PBI-464）の工程のブランチは、削除の規則（settleStepBranches）で消す
+      const direct = directStepFlow(latest);
+      const stepOnly = direct ? new Set(latest.stepBranches) : new Set<string>();
+      if (direct && unprepared === undefined) {
+        for (const r of await this.settleStepBranches(id, "final")) {
+          if (r.result === "deleted") {
+            cleanup.push({ target: "branch", result: "done", detail: r.branch });
+          } else if (r.result === "unresolved") {
+            cleanup.push({
+              target: "branch",
+              result: "failed",
+              detail: r.detail ?? r.branch,
+            });
+          }
+        }
+      }
       for (const branch of branches) {
+        if (stepOnly.has(branch) && unprepared === undefined) continue;
         if (unprepared !== undefined) {
           cleanup.push({
             target: "branch",
@@ -18777,7 +19003,9 @@ export class TaskService {
           });
         }
       }
-      if (branches.length === 0) cleanup.push({ target: "branch", result: "skipped" });
+      if (!cleanup.some((c) => c.target === "branch")) {
+        cleanup.push({ target: "branch", result: "skipped" });
+      }
       // 作業領域：タスクの作業領域と、退避した git のメタデータ（ブランチを消すために用意し直したものは、無かったものとする）
       if (!containerStopped) {
         cleanup.push({
@@ -23813,7 +24041,35 @@ function sactyBranches(task: Task): string[] {
   ];
   // 引き継いだ既存の PR のブランチは、人のブランチなので消さない
   const continued = task.continuedPullRequest?.branch;
-  return [...new Set(branches.filter((b): b is string => Boolean(b) && b !== continued))];
+  // 人がコミットを足したので残している工程のブランチは、消さない（その PR のマージを記録するまで。PBI-464）
+  const kept = new Set(keptStepBranches(task));
+  return [
+    ...new Set(
+      branches.filter((b): b is string => Boolean(b) && b !== continued && !kept.has(b as string)),
+    ),
+  ];
+}
+
+/** 工程のブランチの削除の結果（PBI-464）。 */
+type StepBranchResult = "deleted" | "kept" | "unresolved";
+
+/** git の取得が、リモートにそのブランチが無いために失敗したか。 */
+function remoteRefMissing(error: unknown): boolean {
+  const text = errorText(error);
+  return /couldn't find remote ref/.test(typeof text === "string" ? text : JSON.stringify(text));
+}
+
+/**
+ * 直接の流れ（PBI-464）で、前の工程でない別の工程の PR が、この PR を出した後にマージされたか（作り直しの条件）。
+ * 設計の PR が開いている間に要求要件へ戻り、要求要件の PR がマージされたときなど。ベースブランチがほかの人のマージで
+ * 進んだだけでは作り直さない。
+ */
+function earlierStepMergedAfter(task: Task, last: StepPullRequest): boolean {
+  const index = task.stepPullRequests.findIndex((p) => p.number === last.number);
+  return task.stepPullRequests.some(
+    (p, i) =>
+      i > index && p.step !== last.step && (p.state === "merged" || p.state === "merged_outdated"),
+  );
 }
 
 /** promise を待つ。その間に stopped が true になったら、待たずに whenStopped を返す（PBI-77）。 */

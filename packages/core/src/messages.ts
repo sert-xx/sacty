@@ -662,6 +662,7 @@ const PARAMS = {
   "pr.templateOrgPrivate": z.object({ repo: z.string() }),
   "cleanup.prRepoUnknown": null,
   "cleanup.noWorkspace": null,
+  "cleanup.stepBranchUnrecorded": z.object({ branch: z.string() }),
   "cleanup.containerUnconfirmed": null,
   "git.unavailable": z.object({ detail: z.string() }),
   "git.failed": z.object({ command: z.string(), detail: z.string() }),
@@ -1739,6 +1740,8 @@ const ja: MessageDictionary = {
     `Org の .github リポジトリ（${repo}）は非公開なので、そのテンプレートは使いません（GitHub と同じく、公開のものだけを使います）。`,
   "cleanup.prRepoUnknown": "PRを作ったリポジトリの記録が無いため、閉じませんでした。",
   "cleanup.noWorkspace": "作業領域が無いため、ブランチを消せません。",
+  "cleanup.stepBranchUnrecorded": ({ branch }) =>
+    `sacty が最後に push したコミットの記録が無いため、ブランチ ${branch} を消しません。`,
   "cleanup.containerUnconfirmed":
     "コンテナが止まったことを確かめられないため、作業領域は消していません。",
   "git.unavailable": ({ detail }) => `gitを実行できません（${detail}）。`,
@@ -2628,6 +2631,8 @@ const en: MessageDictionary = {
     `The .github repository of the Org (${repo}) is private, so its template is not used (like GitHub, only a public one is used).`,
   "cleanup.prRepoUnknown": "Not closed because the PR's repository was not recorded.",
   "cleanup.noWorkspace": "Cannot delete the branch because there is no workspace.",
+  "cleanup.stepBranchUnrecorded": ({ branch }) =>
+    `Not deleting branch ${branch} because the commit sacty last pushed is not recorded.`,
   "cleanup.containerUnconfirmed":
     "The workspace was kept because the container could not be confirmed as stopped.",
   "git.unavailable": ({ detail }) => `Cannot run git (${detail}).`,

@@ -617,6 +617,8 @@ When the PR of the current submission is not open, or the task is escalated, you
 ### The order of the PRs
 
 Approval in PRs proceeds in this order.
+A task whose way of proceeding has no Implementation step (`design-only`, the parent of a Task split, and so on) creates no task branch and opens the Requirements and Design PRs straight against the base branch ([PRs without an implementation](#prs-without-an-implementation)).
+The steps below are for a way of proceeding that has an Implementation step.
 
 1. sacty creates a task branch (`sacty/task-<short task ID>`) from the starting commit of the base branch.
 2. The Requirements are written to a file (by default `docs/sacty/<short task ID>/requirements.md`) and opened as a PR to the task branch. When it is merged, sacty records it as approval of the Requirements and the task moves to the next step.
@@ -626,15 +628,40 @@ Approval in PRs proceeds in this order.
    - Implement waits for approval, and merging the PR approves the implementation and moves on to the after-merge watch step. If the target repository has no after-merge watch skill and this step was skipped, the task is completed.
    - In the after-merge watch, sacty follows CI/CD and the deployment, and the task is completed when it ends ([After-merge watch](deployment-watch.en.md)).
 
-When Requirements, Design, and Implementation are all approved in PRs, the branches and PRs look like this (an example where the short task ID is 1a2b3c4d).
+When Requirements, Design, and Implementation are all approved in PRs (a way of proceeding with an Implementation step), the branches and PRs look like this (an example where the short task ID is 1a2b3c4d).
 
-![Branches when approving through PRs](images/approval-branches.en.svg)
+![Branches when approving through PRs (a way of proceeding with an implementation)](images/approval-branches.en.svg)
 
 The following rules apply to the files and branches.
 
 - If the rules of the repository or the project's context decide where the files go, the Orchestrator follows them.
 - Each child task of a Task split has its own task branch.
-  The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
+  The parent of a split has no Implementation step, so it creates no task branch and opens the parent's Requirements and Design PRs straight against the base branch ("PRs without an implementation" below).
+
+#### PRs without an implementation
+
+A task whose way of proceeding has no Implementation step (`design-only`, the parent of a Task split, and so on) creates no task branch.
+The Requirements and Design PRs go from the step branch straight to the base branch (such as main).
+
+![Branches when approving through PRs (a way of proceeding without an implementation)](images/approval-branches-direct.en.svg)
+
+- Merging a PR approves that step.
+  When the last step's approval completes the task, the documents (by default `docs/sacty/<short task ID>/`) are on the base branch.
+  A follow-up task (derive) started from the base branch has the earlier task's documents in its workspace.
+  The original task's record gives the document location on the line of each merged PR.
+- An open PR is not recreated when other people's merges move the base branch; the same PR is updated.
+  Only when the PR of an earlier step was merged afterwards (for example, the task went back to Requirements while the Design PR was open) is the earlier PR closed and recreated from the latest base branch that includes that merge.
+  An open PR does not take in the latest base branch, so when other changes edited the same document, resolve the conflict on GitHub when you merge.
+- Because the PR targets the base branch, CI runs.
+  If branch protection requires reviews or checks, follow those rules when merging.
+- sacty does not leave the branches it made on the remote.
+  The branch of a merged PR and the branch of a PR sacty itself closed when recreating are deleted.
+  The branch of a PR a person closed is deleted only if the remote head equals sacty's last push.
+  At completion and at cancel, the sacty branches that remain are deleted with the same rule.
+- The branch of a step PR that a person added commits to is kept, not deleted, and recorded in the activity log (so the person's commits are not lost).
+  When that PR is merged, the branch is deleted. Delete it on GitHub if you do not need it.
+- Among tasks created before the update, one that has neither a task branch nor a Requirements or Design PR yet opens the Requirements PR, started after the update, against the base branch.
+  A task that already has a task branch keeps going with PRs to the task branch (it does not switch midway).
 
 In the following cases, no Requirements or Design PRs are created.
 
@@ -694,7 +721,7 @@ The judgment and its reasons are kept and passed to the redo as follows.
 - When there is something for a person to check, the approval screen and the task details show it, and the same content is also commented on the PR ([Things for a person to check](#things-for-a-person-to-check)).
 - After the redo, sacty replies on the PR, per comment, whether it was addressed or why it was not ([Replies to your comments](#replies-to-your-comments)).
 
-When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created.
+When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch (to the base branch in a way of proceeding without an implementation) is created.
 When the fix is merged, the PRs of the later steps are recreated.
 The previous open PRs are closed (the implementation PR is updated in place).
 
@@ -1316,7 +1343,7 @@ If another PR is merged while the task waits for approval and the implementation
 - The task details and the approval screen show that it conflicts and how to merge the base in (send the task back with a comment from this screen, or write a comment on the GitHub PR).
 - The status in "Needs you" (the dashboard and the task list) and in the header notifications also becomes "Implement PR conflicts with the base branch".
   The rows in "Needs you" add "Send it back or comment on the PR to merge the base branch in".
-- It is not shown for Requirements and Design PRs (PRs to the task branch).
+- It is not shown for Requirements and Design PRs (PRs to the task branch, or to the base branch in a way of proceeding without an implementation).
 
 sacty only shows it on the screen. It does not merge the base in or start a run on its own.
 It waits until you send the task back or write a comment.
@@ -1737,6 +1764,7 @@ When the comments that arrived all ask for nothing ("Understood", for example), 
 ### Cancelling and rerunning
 
 Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched).
+In a way of proceeding without an implementation, the branch of a step PR that a person added commits to is kept, not deleted (the same applies when the remote head differs from sacty's last push).
 A cancelled task cannot be resumed.
 
 A cancelled task can be started over (a rerun).
@@ -2039,7 +2067,8 @@ When the Implementation step changes nothing (it decided the requirements are al
    - If no changes is fine, press "Approve". The task becomes "Done (no changes)" without a PR.
    - If changes are needed, write your feedback and request changes. Implementation starts over, and a PR is created if there are changes.
 
-In tasks whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).
+In tasks with an Implementation step whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).
+A way of proceeding without an implementation creates no task branch.
 
 If a PR was already created and the implementation redone after a request for changes no longer differs from the base branch at all, the task stops with an error. Decide what to do with the open PR, then cancel the task or request changes again.
 When the redone implementation changes nothing from the content of the PR it published before, the task is handled differently ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)).

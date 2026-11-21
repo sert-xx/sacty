@@ -2224,6 +2224,38 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     );
     expect(git(origin, "branch", "--list", "feature/human")).toContain("feature/human");
   });
+
+  it("期待する先頭を渡して消すと、リモートの先頭がそのコミットのときだけ消し、違えば断って残す（PBI-464）", async () => {
+    const origin = makeOrigin();
+    git(origin, "config", "receive.denyCurrentBranch", "ignore");
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    const branch = "sacty/task-1234abcd-design-1";
+    git(origin, "branch", branch, baseCommit);
+    const head = git(origin, "rev-parse", branch).trim();
+    // 比べた後に、人がブランチを進めた（期待する先頭と違う）
+    git(origin, "update-ref", `refs/heads/${branch}`, git(origin, "rev-parse", "main").trim());
+    writeFileSync(join(clone, "later.txt"), "人の変更\n");
+    const moved = (
+      await workspace.publish({
+        dir: clone,
+        gitDir,
+        baseCommit,
+        parent: baseCommit,
+        branch: `${branch}-moved`,
+        message: "m",
+        date: "2026-10-10T01:00:00.000Z",
+      })
+    ).commit;
+    git(origin, "update-ref", `refs/heads/${branch}`, moved);
+    await expect(workspace.deleteBranch(gitDir, branch, undefined, head)).rejects.toThrow();
+    expect(git(origin, "branch", "--list", branch)).toContain(branch);
+    // 先頭が同じなら消せる
+    await workspace.deleteBranch(gitDir, branch, undefined, moved);
+    expect(git(origin, "branch", "--list", branch)).toBe("");
+  });
 });
 
 describe("PR の push の失敗の分類と停止の理由の文（PBI-467）", { timeout: 30_000 }, () => {
