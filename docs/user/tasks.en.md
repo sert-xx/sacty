@@ -227,7 +227,7 @@ This decision does not change the number of self-review rounds, the model, or th
 
 A project's task list looks like this.
 
-![The task list (Needs you cards and all tasks; the child tasks that review PRs are listed under their parent tasks)](images/task-list.en.png)
+![The task list (Needs you cards and the "Not finished" tasks shown first)](images/task-list.en.png)
 
 Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks with multiple specified repositories show the specified list even before a working repository is chosen, and also show the working repository once chosen. The specified list also uses repository names (`org/repo` for names that repeat among the specified repositories). Point at a name, or open the hint mark (ⓘ) next to the list, to see the whole URL (the mark also opens from the keyboard or by tapping). "Repository" in the properties of the task detail shows the specified repositories as `org/repo`, and pressing one opens that repository. A value that cannot be read as a URL (recorded by an older version) is shown as recorded and does not open anything. Other tasks whose repository is not decided yet show none. Of these, a task created without a repository shows "No repository". Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started. A task whose implementation PR, waiting to be merged, had failing CI shows a "CI failed" mark in the "Status" column ([When CI fails after "no findings"](#when-ci-fails-after-no-findings)).
 
@@ -249,12 +249,28 @@ Only tasks that match every filter are shown.
 | Start date (from), (to) | Tasks created between the dates (both days included; either one alone works too) |
 | Started from | Where the task started, such as Sacty or GitHub Issue |
 | Repository | The repository the task works on. A task with multiple specified repositories appears for any of the specified repositories. "Not decided / No repository" is for tasks whose repository is not decided yet and that have no specified repositories |
-| Status | Not finished, Needs you, In progress, Waiting, Completed, Cancelled |
+| Status | All, Not finished, Needs you, In progress, Waiting, Completed, Cancelled (first "Not finished") |
 
-The count (such as "1 of 5") is shown on the right of the fields.
-Press "Clear filters" to go back to all tasks.
-The filters stay only while the screen is open (automatic updates keep them; reloading or moving to another project clears them).
-The "Needs you" cards are not filtered.
+When you first open the list, the status is "Not finished" and only the tasks that are not completed or cancelled (including ones awaiting approval or waiting) are listed.
+A project with no unfinished tasks opens with "All" (an empty list is never shown first).
+To see completed and cancelled tasks too, choose "All" in the status.
+The first view is decided once, when the screen opens. Automatic updates do not switch the status when a task finishes or starts.
+
+At most 50 rows are shown at a time (a child task's row counts as one row).
+When more rows match the filters, a button such as "Show more (70 left)" appears under the table.
+Pressing it adds the next 50 rows below and moves the focus to the title of the first added row.
+Changing a filter returns to the first 50 rows.
+A parent task may be in the first 50 rows and its child task in the next 50. After you add more, the child task follows under its parent, indented.
+
+The count is shown on the right of the fields. When every row is shown it looks like "1 of 5"; when the rows are cut into 50, it looks like "120 of 277 (showing 50)", so you can see the total, the number that match, and the number shown.
+"Clear filters" appears only when the filters differ from the first view. Pressing it returns to the first view (the status is the "Not finished" or "All" decided when the screen opened, and every other filter is empty). It is not shown while the first view is unchanged.
+
+The filters are kept in the query of the screen's URL (`q`, `from`, `to`, `start`, `repo`, `status`; "All" is `status=all`).
+Only filters that differ from the first view are written, and no query is added while the first view is unchanged.
+Opening that URL, reloading, or sharing the link opens the list with the same filters. Going back in the browser after opening a task keeps the filters and the rows you added (opening by reload or link starts from the first 50 rows; after going through three or more screens, such as task or PR pages, before coming back, the rows you added return to 50, while the filters stay because they are in the URL).
+Changing a filter does not add to the browser's history. A value that cannot be read (an unknown status, a start date that is not a date, and so on) is treated as if that filter were not set. Moving to another project's list does not carry the previous filters over.
+When a start date is in the URL, the table shows "Loading…" first because the day is decided in the browser's time zone.
+The "Needs you" cards are not filtered or cut.
 
 ## Reading the task details
 
@@ -812,7 +828,7 @@ What happens after the sorting:
 - When every suggestion is declined and nothing is left to fix, sacty neither fixes nor updates the PR. After the replies, the child task reviews the same commit once more.
   - With no findings, sacty removes the draft and waits for your approval.
   - When a must-fix or a suggestion to handle comes up, sacty goes on to fix it.
-  - When only suggestions remain and all of them are declined too, sacty pauses the task after the replies. The pause area says that suggestions remained and what you can choose next. This keeps the two AIs from going back and forth.
+  - When only suggestions remain and all of them are declined too, sacty does not pause the task. After the replies, it removes the draft and waits for your approval. The verdict stays "suggestions". sacty does not review again; it runs only the risk assessment once and posts it as a PR comment before removing the draft (the draft is removed even if the assessment fails; the reason appears in the activity log and the screen). The approval screen and the task overview say so. This keeps the two AIs from going back and forth.
 - A re-review does not count the declined suggestions as unaddressed and does not raise them again. However, when a fresh check shows one has must-fix weight (a bug, security, data corruption, and so on), the review raises it as a must-fix and sacty fixes it.
 
 You can read the declined suggestions and their reasons in two places:
@@ -827,11 +843,12 @@ To have a declined suggestion fixed, do one of the following:
 
 In either case, when the Activity shows a request for changes with your comment, the fix has started.
 
-When the task paused because suggestions remained, choose one of these:
+When the draft was removed with suggestions remaining, choose one of these:
 
-- Press "Resume": the task goes back to waiting for approval. It does not stop again for the same reason.
-- Comment on the PR with the suggestion you want fixed.
+- Comment on the PR that the suggestion you want fixed needs action.
 - Check the PR, then approve (merge) or request changes.
+
+A task that an earlier version paused because suggestions remained goes back to waiting for approval when you press "Resume", and the draft is removed (it does not stop again).
 
 ### Deciding the findings proposed for deferral
 
@@ -959,7 +976,7 @@ For a task that had a final review in an earlier version, the body shows that re
 ### PR risk assessment
 
 When the child task that reviews an implementation PR finds no findings, sacty has an AI assess the risk of the PR's content and shows it in the "リスク評価" (risk assessment) section of the review comment and in the "PR risk assessment" section of the task detail.
-Nothing is assessed when a PR is opened or updated, so no wait for an assessment is added, and the PR body does not carry it either.
+Nothing is assessed when a PR is opened or updated, so no wait for an assessment is added, and the PR body does not carry it either. The one exception: when a re-judged round leaves only suggestions and all of them are declined, the risk assessment alone is run once before the draft is removed, without a re-review (the remaining suggestions and the reasons they were declined are part of the material; it appears in a PR comment and on the screen).
 Use it as a guide when you decide how deeply to review the PR at the final judgment.
 The assessment is a guide. sacty does not skip a review or a test, or merge automatically, because of it.
 
@@ -1595,7 +1612,7 @@ Resume the task as follows, depending on why it stopped.
 | An AI usage limit, an authentication error, an error, and so on | Check the cause, then press "Resume" |
 | The implementation does not finish, or a rework changed nothing | Check the reason, change the step's agent if needed, then press "Resume" ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)) |
 | The chosen agent can no longer be used | Choose the agent again, then resume ([Changing a step's agent](#changing-a-steps-agent)) |
-| AI review suggestions remained | Check the PR and the reasons for the declined suggestions. Pressing "Resume" returns the task to waiting for approval. Comment on the PR for a suggestion you want fixed ([Sorting AI review suggestions](#sorting-ai-review-suggestions)) |
+| AI review suggestions remained | The draft is removed and the task waits for approval. Check the PR and the reasons for the declined suggestions. Comment on the PR that a suggestion you want fixed needs action ([Sorting AI review suggestions](#sorting-ai-review-suggestions)) |
 
 What to check for each reason is also in [Troubleshooting](troubleshooting.en.md#tasks-stop-or-do-not-progress).
 

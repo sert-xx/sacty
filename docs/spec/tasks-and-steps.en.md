@@ -79,7 +79,7 @@ Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, 
 | `split` | Task split | Creates child tasks and waits for them to finish |
 | `integrate` | Integration review | Checks whether the child tasks' results meet the parent's requirements |
 | `reproduce` | Reproduce | Writes a test that reproduces the bug (fails) |
-| `implement` | Implementation | Implements. When the Implementation step finishes, sacty opens the implementation PR as a draft and waits for approval; once the PR review child task reports no findings, sacty removes the draft and waits for a person's approval (merging the PR) |
+| `implement` | Implementation | Implements. When the Implementation step finishes, sacty opens the implementation PR as a draft and waits for approval; once the PR review child task reports no findings, sacty removes the draft and waits for a person's approval (merging the PR). When a re-judged round leaves only suggestions and all of them are declined, it removes the draft with the verdict still "suggestions" after an assessment-only run (`reason: suggestions_declined`; PBI-440; see [The review child task of a PR](approval.en.md#the-review-child-task-of-a-pr)) |
 | `deployment` | After-merge watch | After the implementation PR is merged, waits for CI/CD, checks as the skill says, and registers a fix task on failure (no human approval. [After-merge watch](deployment-watch.en.md)) |
 | `document` | Document | Creates or edits a Markdown draft and waits for approval in the web UI |
 | `operation` | Operation | Performs the requested external change once and submits evidence for result approval |

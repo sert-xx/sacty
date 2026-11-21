@@ -17,6 +17,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh, push: vi.fn(), replace: vi.fn() }),
   // プロジェクトの画面（ヘッダーは URL のプロジェクトを選んだ表示にする。PBI-114）
   usePathname: () => "/projects/p1/tasks",
+  useSearchParams: () => new URLSearchParams(),
 }));
 const followProjectAction = vi.fn(async (_id: string) => {});
 vi.mock("@/app/actions", () => {

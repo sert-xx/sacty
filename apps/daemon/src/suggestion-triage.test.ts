@@ -345,6 +345,43 @@ describe("選り分けの指示（PBI-436）", () => {
     expect(prompt).toContain("選り分けません。必ず直します");
   });
 
+  it("今回の提案・要修正の文は 1 件 2,000 文字まで載せ（実害・直し方が落ちない）、前の回の指摘・対応しないとした提案は 600 文字で切る", () => {
+    const long = (mark: string) => `${"あ".repeat(1_900)}${mark}`;
+    const prompt = buildTriagePrompt(
+      baseTask({
+        remarks: [
+          {
+            id: "implement-1-1",
+            step: "implement",
+            round: 1,
+            text: long("前の指摘の末尾"),
+            source: "sacty_review",
+            voided: false,
+          },
+        ],
+        declinedSuggestions: [{ text: long("対応しないの末尾"), reason: "好み", round: 1 }],
+      }),
+      {
+        suggestions: [{ ...suggestions[0], text: long("提案の末尾") }],
+        musts: [{ ...musts[0], text: long("要修正の末尾") }],
+        round: 2,
+        suggestionRounds: 1,
+      },
+    );
+    expect(prompt).toContain("提案の末尾");
+    expect(prompt).toContain("要修正の末尾");
+    expect(prompt).not.toContain("前の指摘の末尾");
+    expect(prompt).not.toContain("対応しないの末尾");
+    const tooLong = buildTriagePrompt(task, {
+      suggestions: [{ ...suggestions[0], text: `${"い".repeat(2_000)}切れる文字` }],
+      musts: [],
+      round: 1,
+      suggestionRounds: 1,
+    });
+    expect(tooLong).not.toContain("切れる文字");
+    expect(tooLong).toContain("い".repeat(2_000));
+  });
+
   it("初回は対応する側に倒し、2 回目以降は敷居を上げる", () => {
     const first = buildTriagePrompt(task, {
       suggestions,

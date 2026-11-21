@@ -406,7 +406,7 @@ const ja = {
         : `人が PR のブランチ ${branch} に足したコミット（${commit}）を作業領域に取り込み（競合なし）`,
     PullRequestBodyWritten: (number: number) => `PR #${number} の本文を書いた`,
     PullRequestRiskAssessed: (
-      via: "publish" | "review",
+      via: "publish" | "review" | "suggestions_declined",
       level: "low" | "medium" | "high" | undefined,
       reason: string,
       inheritedFrom = "",
@@ -416,7 +416,12 @@ const ja = {
       if (inheritedFrom && level) {
         return `PR を出す前に、${inheritedFrom} の評価を${commit ? ` ${commit} に` : ""}引き継いだ（文書だけの変更のため評価し直さず、前回と同じ：${{ low: "低", medium: "中", high: "高" }[level]}）`;
       }
-      const when = via === "publish" ? "PR を出す前に" : "レビューの工程で";
+      const when =
+        via === "publish"
+          ? "PR を出す前に"
+          : via === "suggestions_declined"
+            ? "残った提案をすべて対応しないとした回に、ドラフトを外す前に"
+            : "レビューの工程で";
       return level
         ? `${when}、PR のリスクを評価した：${{ low: "低", medium: "中", high: "高" }[level]}`
         : `${when}、PR のリスクを評価できなかった${reason ? `：${reason}` : ""}`;
@@ -499,6 +504,8 @@ const ja = {
     FinalReviewSkipped: "最終レビューと CI の待ちをせず、実装の PR を作る準備をした",
     PullRequestMarkedReady: (number: number) =>
       `PR のレビューの子タスクが指摘なしにしたので、PR #${number} のドラフトを外して人の承認待ちにした`,
+    PullRequestMarkedReadyWithSuggestions: (number: number) =>
+      `残った提案をすべて対応しないとしたので、PR #${number} のドラフトを外して人の承認待ちにした（判定は「提案あり」のまま。再レビューはせず、リスク評価だけを先に 1 回行った）`,
     ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
     WorkspaceFilesSkipped: (count: number) =>
       `読めないファイルが${count}件あり、作業領域の写しには入れなかった（権限など。エージェントが入れたツールの可能性）`,
@@ -1199,7 +1206,12 @@ const en: LabelMessages = {
       if (inheritedFrom && level) {
         return `Before opening the PR, carried the assessment of ${inheritedFrom} over${commit ? ` to ${commit}` : ""} (documents-only change, so it was not reassessed; same as before: ${level})`;
       }
-      const when = via === "publish" ? "before opening the PR" : "in the review step";
+      const when =
+        via === "publish"
+          ? "before opening the PR"
+          : via === "suggestions_declined"
+            ? "before taking the PR out of draft, in a round whose remaining suggestions were all declined"
+            : "in the review step";
       return level
         ? `Assessed the PR's risk ${when}: ${level}`
         : `Could not assess the PR's risk ${when}${reason ? `: ${reason}` : ""}`;
@@ -1265,6 +1277,8 @@ const en: LabelMessages = {
       "Got ready to open the implementation PR without the final review or CI wait",
     PullRequestMarkedReady: (number) =>
       `The PR's review child task found nothing, so PR #${number} was marked ready (waiting for a person's approval)`,
+    PullRequestMarkedReadyWithSuggestions: (number) =>
+      `All remaining suggestions were declined, so PR #${number} was marked ready (waiting for a person's approval). The verdict stays "suggestions"; the PR was not reviewed again, and only the risk assessment was run once beforehand`,
     ContinuedFeedbackPassed: (count) =>
       `Passed the feedback on the taken-over PR to the implementation (${count})`,
     WorkspaceFilesSkipped: (count) =>

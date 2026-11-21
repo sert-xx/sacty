@@ -1775,7 +1775,12 @@ export type RiskAssessment = z.infer<typeof RiskAssessment>;
 const PullRequestRiskAssessed = z.object({
   type: z.literal("PullRequestRiskAssessed"),
   payload: z.object({
-    via: z.enum(["publish", "review"]),
+    /**
+     * 評価した場面。publish は以前の版が PR を作る・更新する前、review はレビューの工程の指摘なしの回。
+     * suggestions_declined は、判定し直した回に提案が残り、それもすべて対応しないとして、ドラフトを外す前に、評価だけを
+     * 1 回実行した（PBI-440）。
+     */
+    via: z.enum(["publish", "review", "suggestions_declined"]),
     commit: z.string().min(1).optional(),
     /**
      * 評価したときの PR の差分の起点（workBaseCommit。タスクの起点か、取り込んだベースの先頭。PBI-421）。前回の評価を引き継げるかを、
@@ -2735,6 +2740,11 @@ const PullRequestMarkedReady = z.object({
     commit: z.string().min(1),
     /** 指摘なしにしたレビューの子タスク。 */
     reviewTaskId: z.string().min(1),
+    /**
+     * 外した理由。無い記録は、指摘なし。suggestions_declined は、判定し直した回に提案が残り、それもすべて対応しないとしたので、
+     * 判定は「提案あり」のまま外した（PBI-440。再レビューはせず、リスク評価だけを 1 回行ってから外す）。
+     */
+    reason: z.literal("suggestions_declined").optional(),
   }),
 });
 
@@ -2858,7 +2868,7 @@ const SuggestionsTriaged = z.object({
     suggestionRounds: z.number().int().nonnegative().optional(),
     /**
      * 残った提案のすべてを対応しないとしたが、同じ先頭を判定し直した回の指摘だった：判定し直しは 1 回だけなので、返信の後に、
-     * 一時停止して人が選ぶ。
+     * 一時停止せずにドラフトを外して人の承認を待つ（PBI-440。以前の版は、一時停止して人が選んだ。その記録も読める）。
      */
     stop: z.literal(true).optional(),
     agentId: z.string(),

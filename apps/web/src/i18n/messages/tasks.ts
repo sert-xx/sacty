@@ -48,6 +48,11 @@ const ja = {
     },
     clear: "条件をクリア",
     count: (shown: number, total: number) => `${total}件中 ${shown}件`,
+    /** 絞り込みに合う行が、一度に出す行数より多いとき（出している件数も伝える）。 */
+    countPartial: (shown: number, total: number, displayed: number) =>
+      `${total}件中 ${shown}件（${displayed}件を表示）`,
+    /** 続きを足すボタン。残りの件数を出す。 */
+    more: (remaining: number) => `さらに表示（残り${remaining}件）`,
     none: "条件に合うタスクはありません。",
   },
 };
@@ -99,6 +104,8 @@ const en: TasksMessages = {
     },
     clear: "Clear filters",
     count: (shown, total) => `${shown} of ${total}`,
+    countPartial: (shown, total, displayed) => `${shown} of ${total} (showing ${displayed})`,
+    more: (remaining) => `Show more (${remaining} left)`,
     none: "No tasks match the filters.",
   },
 };

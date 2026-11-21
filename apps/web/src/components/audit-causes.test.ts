@@ -225,6 +225,8 @@ describe("畳んだ行と、開いた中（PBI-443）", () => {
       e.getAttribute("data-testid"),
     );
     expect(titles).toEqual(["audit-proposal-a:0", "audit-proposal-a:1", "audit-proposal-a:2"]);
+    // 提案の表示に、出た監査のタスクが読める（これまで画面全体の検査にあった「出た監査」の代わり）
+    expect(q('[data-testid="audit-proposal-a:0"]')?.textContent).toContain("出た監査");
     // 判断の入力（採用）は、判断待ちの提案ごとに 1 つだけ（二重に出ない）
     expect(qa("button").filter((b) => b.textContent === "採用する")).toHaveLength(2);
     expect(
@@ -464,6 +466,37 @@ describe("確認のダイアログ（PBI-443）", () => {
     );
     // 1 件でも却下できたので、選択は空にする
     expect(bar()).toBe("0 件を選択中");
+  });
+
+  it("成功したあと、フォーカスは結果の領域に移る。確定した後で失敗した提案の原因が一覧から外れても、題は確定時の写しから出る", async () => {
+    const data = select30();
+    bulkAction.mockImplementation(async () => ({
+      result: {
+        rejectedIds: ["c00:0"],
+        failed: [{ proposalId: "c01:0", message: "判断済み" }],
+      },
+    }));
+    act(() => trigger().click());
+    const reason = q<HTMLTextAreaElement>("#audit-bulk-reason") as HTMLTextAreaElement;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      set?.call(reason, "理由");
+      reason.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => (byText("却下を確定する") as HTMLButtonElement).click());
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    });
+    const result = q('[data-testid="audit-bulk-result"]') as HTMLElement;
+    expect(document.activeElement).toBe(result);
+    // 描き直しで c01 が一覧から外れても、失敗した提案の題は出る
+    const rest = dataOf(
+      data.causes.filter((c) => c.id !== "c01"),
+      data.proposals.filter((p) => p.causeId !== "c01"),
+    );
+    draw(rest);
+    expect(q('[data-testid="audit-bulk-result"]')?.textContent).toContain("提案 c01-0：判断済み");
+    expect(q('[data-testid="audit-bulk-result"]')?.textContent).not.toContain("題を表示できません");
   });
 
   it("1 件も却下できなければ、選択を残して「N 件とも却下できませんでした」と出す。入力の誤りはダイアログの中に出し、閉じない", async () => {

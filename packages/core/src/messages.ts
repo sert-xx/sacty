@@ -728,6 +728,7 @@ const PARAMS = {
   "audit.notFound": null,
   "audit.proposalNotFound": null,
   "audit.alreadyDecided": null,
+  "audit.bulkWriteFailed": null,
   "audit.memoryNotFound": null,
   "audit.memoryDeleted": null,
   "audit.targetNotCandidate": null,
@@ -1728,6 +1729,7 @@ const ja: MessageDictionary = {
   "audit.notFound": "このタスクの監査はありません。",
   "audit.proposalNotFound": "その提案はありません。",
   "audit.alreadyDecided": "その提案は、すでに採用か却下をしています。",
+  "audit.bulkWriteFailed": "記録を書けなかったため、この提案は却下していません。",
   "audit.memoryNotFound": "そのメモリーはありません。",
   "audit.memoryDeleted": "そのメモリーは、すでに消しています。",
   "audit.targetNotCandidate":
@@ -2608,6 +2610,7 @@ const en: MessageDictionary = {
   "audit.notFound": "This task has no audit.",
   "audit.proposalNotFound": "That proposal does not exist.",
   "audit.alreadyDecided": "That proposal has already been adopted or rejected.",
+  "audit.bulkWriteFailed": "The record could not be written, so this proposal was not rejected.",
   "audit.memoryNotFound": "That memory does not exist.",
   "audit.memoryDeleted": "That memory has already been deleted.",
   "audit.targetNotCandidate":

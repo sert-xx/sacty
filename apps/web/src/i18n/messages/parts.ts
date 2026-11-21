@@ -224,6 +224,7 @@ const ja = {
     via: {
       publish: "PR を出す前に評価（以前の版）",
       review: "レビューの工程で、指摘なしの回に評価",
+      suggestions_declined: "残った提案をすべて対応しないとした回に、ドラフトを外す前に評価",
     },
     stale: "PR の先頭は、この評価の後に進んでいます。今の先頭の評価ではありません。",
     failed: "評価できませんでした。レビューの深さは、差分を見て決めてください。",
@@ -571,6 +572,8 @@ const en: PartsMessages = {
     via: {
       publish: "Assessed before opening the PR (earlier version)",
       review: "Assessed in the review step, in a round with no findings",
+      suggestions_declined:
+        "Assessed before taking the PR out of draft, in a round whose remaining suggestions were all declined",
     },
     stale: "The PR's head has moved on since this assessment. It is not for the current head.",
     failed: "Could not be assessed. Decide the review depth from the diff.",

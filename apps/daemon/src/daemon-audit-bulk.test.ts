@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { ActivityEvent, EventInput } from "@sacty/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { ConfigResult } from "./config.js";
 import { LedgerAuditService } from "./ledger-audits.js";
@@ -262,6 +262,34 @@ describe("提案のまとめての却下の記録（PBI-443）", () => {
     // 先に却下した提案の記録は元のまま（bulk なし・理由もそのまま）
     expect(t1[0]?.payload).toEqual({ proposalId: "t1:c1:0", reason: "先に却下" });
     expect(t1[1]?.payload).toMatchObject({ bulk: { count: 1 } });
+    expect(rejectedEvents(activity, "t2")).toEqual([]);
+  });
+
+  it("2 つ目の元のタスクの書き込みが失敗しても（例外の種類を問わず）、書けた分は rejected で返し、失敗した分は failed に入れて投げない", async () => {
+    const { service, activity } = open([
+      { id: "t1", causes: [{ key: "c1", proposals: ["A"] }] },
+      { id: "t2", causes: [{ key: "c1", proposals: ["B", "C"] }] },
+    ]);
+    const append = (service as unknown as { append: (...args: unknown[]) => unknown }).append;
+    let calls = 0;
+    vi.spyOn(service as unknown as { append: typeof append }, "append").mockImplementation(
+      function (this: unknown, ...args: unknown[]) {
+        calls += 1;
+        if (calls === 2) throw new Error("disk full");
+        return append.apply(this, args);
+      },
+    );
+    const result = await service.rejectAuditProposals({
+      projectId: "default",
+      proposalIds: ["t1:c1:0", "t2:c1:0", "t2:c1:1"],
+      reason: "不要",
+    });
+    expect(result.rejectedIds).toEqual(["t1:c1:0"]);
+    expect(result.failed).toEqual([
+      { proposalId: "t2:c1:0", messages: [{ code: "audit.bulkWriteFailed" }] },
+      { proposalId: "t2:c1:1", messages: [{ code: "audit.bulkWriteFailed" }] },
+    ]);
+    expect(rejectedEvents(activity, "t1")).toHaveLength(1);
     expect(rejectedEvents(activity, "t2")).toEqual([]);
   });
 

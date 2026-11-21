@@ -5,6 +5,7 @@ import {
   type AuditProposalDecision,
   type AuditRow,
   auditRemarkCount,
+  BulkRejectAuditProposalsInput,
   type DaemonMessage,
   isAuditTarget,
   isPendingAuditProposal,
@@ -417,14 +418,12 @@ export class LedgerAuditService implements AuditService {
   async rejectMany(input: unknown): Promise<BulkRejectResult> {
     const result = await this.ledger.rejectAuditProposals(input);
     // 返す提案は、書いた後に 1 回だけ組み直して拾う（提案ごとに組み直さない）
-    const projectId = (input as { projectId: string }).projectId;
+    const projectId = BulkRejectAuditProposalsInput.parse(input).projectId;
     const wanted = new Set(result.rejectedIds);
     const proposals =
       wanted.size > 0 ? (this.projectAuditsWith(projectId, result.hide)?.proposals ?? []) : [];
+    // 書いた後に画面に出る状態でなくなった提案があっても、記録は確定しているので投げずに、見つかった分を返す
     const rejected = proposals.filter((p) => wanted.has(p.id));
-    if (rejected.length !== wanted.size) {
-      throw new Error("a rejected proposal is missing after the operation");
-    }
     return { rejected, failed: result.failed };
   }
 

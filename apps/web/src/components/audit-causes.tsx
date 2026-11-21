@@ -10,7 +10,7 @@ import {
 import { cn } from "cn";
 import { ChevronRightIcon } from "lucide-react";
 import Link from "next/link";
-import { memo, useActionState, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type BulkRejectState, rejectAuditProposalsAction } from "@/app/actions";
 import { ProposalView } from "@/components/audit";
 import { CardSection } from "@/components/card-section";
@@ -65,6 +65,9 @@ export function AuditCauses({ data, view }: { data: ProjectAudits; view: AuditVi
   const [reason, setReason] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [state, action, pending] = useActionState(rejectAuditProposalsAction, initial);
+  // 確定したときの提案の題の写し（描き直しで原因が一覧から外れても、失敗した提案の題を出せるように）
+  const [submitted, setSubmitted] = useState<ReadonlyMap<string, string>>(new Map());
+  const resultRef = useRef<HTMLDivElement>(null);
 
   const byCause = useMemo(() => {
     const map = new Map<string, ListedAuditProposal[]>();
@@ -100,7 +103,11 @@ export function AuditCauses({ data, view }: { data: ProjectAudits; view: AuditVi
     if (!state.result) return;
     setDialogOpen(false);
     setReason("");
-    if (state.result.rejectedIds.length > 0) setSelected(new Set());
+    if (state.result.rejectedIds.length > 0) {
+      setSelected(new Set());
+      // 開いたボタンは選択が空で押せなくなるので、フォーカスを結果の領域に移す
+      requestAnimationFrame(() => resultRef.current?.focus());
+    }
   }, [state.result]);
 
   const toggleOpen = useCallback(
@@ -180,7 +187,14 @@ export function AuditCauses({ data, view }: { data: ProjectAudits; view: AuditVi
                   {m.bulk.overLimit(AUDIT_BULK_REJECT_MAX)}
                 </span>
               )}
-              <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <Dialog
+                open={dialogOpen}
+                onOpenChange={(next) => {
+                  // 送信中は閉じない（結果が届いたときに、選び直した選択や理由が消えないように）
+                  if (!next && pending) return;
+                  setDialogOpen(next);
+                }}
+              >
                 <DialogTrigger
                   render={
                     <Button
@@ -193,8 +207,16 @@ export function AuditCauses({ data, view }: { data: ProjectAudits; view: AuditVi
                     </Button>
                   }
                 />
-                <DialogContent className="sm:max-w-lg">
-                  <form action={action} className="flex min-w-0 flex-col gap-4">
+                <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+                  <form
+                    action={action}
+                    onSubmit={() =>
+                      setSubmitted(
+                        new Map([...chosen].map((id) => [id, proposalInfo.get(id)?.title ?? ""])),
+                      )
+                    }
+                    className="flex min-w-0 flex-col gap-4"
+                  >
                     <input type="hidden" name="projectId" value={data.projectId} />
                     {[...chosen].map((id) => (
                       <input key={id} type="hidden" name="proposalId" value={id} />
@@ -233,13 +255,8 @@ export function AuditCauses({ data, view }: { data: ProjectAudits; view: AuditVi
                         {state.message}
                       </p>
                     )}
-                    {overLimit && (
-                      <p role="alert" className="text-sm text-warn">
-                        {m.bulk.overLimit(AUDIT_BULK_REJECT_MAX)}
-                      </p>
-                    )}
                     <DialogFooter>
-                      <DialogClose render={<Button variant="outline" />}>
+                      <DialogClose render={<Button variant="outline" disabled={pending} />}>
                         {m.bulk.cancel}
                       </DialogClose>
                       <Button
@@ -256,7 +273,7 @@ export function AuditCauses({ data, view }: { data: ProjectAudits; view: AuditVi
             </div>
           )}
 
-          <BulkResult state={state} titleOf={(id) => proposalInfo.get(id)?.title} />
+          <BulkResult state={state} titleOf={(id) => submitted.get(id)} resultRef={resultRef} />
 
           {data.causes.length === 0 ? (
             <p className="text-sm text-muted-foreground">{m.screen.filterNone}</p>
@@ -299,9 +316,11 @@ export function AuditCauses({ data, view }: { data: ProjectAudits; view: AuditVi
 function BulkResult({
   state,
   titleOf,
+  resultRef,
 }: {
   state: BulkRejectState;
   titleOf: (proposalId: string) => string | undefined;
+  resultRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const m = useMessages().audit.bulk;
   const result = state.result;
@@ -309,7 +328,13 @@ function BulkResult({
   const ok = result.rejectedIds.length;
   const ng = result.failed.length;
   return (
-    <div role="status" data-testid="audit-bulk-result" className="flex flex-col gap-1 text-sm">
+    <div
+      ref={resultRef}
+      tabIndex={-1}
+      role="status"
+      data-testid="audit-bulk-result"
+      className="flex flex-col gap-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
       <p className={ng > 0 ? "font-medium text-warn" : "text-ok"}>
         {ng === 0 ? m.done(ok) : ok === 0 ? m.none(ng) : m.partial(ok, ng)}
       </p>

@@ -104,10 +104,10 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAudi
   - It needs a reason (1–2000 characters after trimming).
   - The reason also appears on the audit page and in reports, so secrets are redacted before it is recorded (older records get common secret patterns redacted when shown).
   - A record made by rejecting in bulk has the optional field `bulk` (`{ id, count }`).
-    - `id` is the same for one operation, and `count` is the number rejected by that operation (an integer, 1 or more). It is set even when only one proposal was selected (`count: 1`).
+    - `id` is the same for one operation, and `count` is the number that passed the checks and were to be written (an integer, 1 or more; decided before writing). A failed write for one source task is returned in `failed` (`audit.bulkWriteFailed`) whatever the error, and no record is made, so `count` can be larger than the number actually recorded. It is set even when only one proposal was selected (`count: 1`).
     - There is one record per proposal, written where a one-by-one rejection is written (the activity log of the task of the audit that made the proposal, as a person's action).
     - A record without `bulk` (from earlier versions, or a one-by-one rejection) is read as before. Records are not converted.
-    - `bulk` is copied to the `decision` of a `rejected` proposal. The audit page's rejected proposals and the activity row show "1 of N rejected in bulk".
+    - `bulk` is copied to the `decision` of a `rejected` proposal. The audit page's rejected proposals and the activity row show the bulk mark (the proposal view: "1 of N rejected in bulk"; the activity row: "Rejected a proposal (1 of N rejected in bulk)").
   - The "rejected proposals and reasons" given to the deep dive take this form, so lines and characters do not grow with the number rejected in bulk.
     - A rejection without `bulk` is one line per proposal as before (`- title: reason`).
     - Rejections with `bulk` are merged into one line per `bulk.id`: `- まとめて却下（N 件。例：title1／title2／title3 ほか K 件）：reason` (the line is written in Japanese like the rest of the prompt).
@@ -211,7 +211,7 @@ Code: `apps/daemon/src/audits.ts` (`MockAuditService`, `AuditService`), `apps/da
   - A proposal of a cancelled task: `audit.notAdoptable`. A decided proposal: `audit.alreadyDecided`.
 - The reason is redacted once. The secret values from the settings and the GitHub tokens are fetched once per project (not once per original task).
 - A proposal decided by another operation while the secrets are fetched is checked again without waiting and moved to `failed` (no double record is made).
-- Only the proposals that pass are written, in one append per original task. `bulk.count` is the number that passed.
+- Only the proposals that pass are written, in one append per original task. `bulk.count` is the number that passed (decided before writing). A failed append for a task is returned as a failure whatever the error, so the count can exceed the number actually recorded.
 - `rejected` is picked up by rebuilding the audit page's data once after writing.
 - The target for 2,000 proposals (50 original tasks) is within 5 seconds.
 
