@@ -9,7 +9,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、承認待ちの工程の承認（`approve_step`）、承認待ちの工程の差し戻し（`request_changes`）、タスクの「人の出番」まで待つ（`wait_for_task`）、タスクの一時停止（`pause_task`）、一時停止中のタスクの再開（`resume_task`）、タスクの中止で片付けるものの確認（`get_cancel_plan`）、タスクの中止（`cancel_task`）、中止したタスクの再実行（`rerun_task`）、タスクのエラーレポートの読み取り（`get_error_report`）、完了したタスクからの続きの作成（`derive_task`）、タスクの題の変更（`rename_task`）の19個。
 `list_deliverables`・`get_deliverable`・`list_runs`・`get_error_report` は、成果物・実行・エラーレポートを読むだけのツール。実行のログを読むツールは、まだ無い（後続）。`wait_for_task` は、読むだけで何も変えない。
 
-関係する ADR: [中止の案内を、中止の後に再実行できるかで切り替える](../adr/20261121-2300-mcp-cancel-guidance-by-rerunnable.md)、[起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)、[sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-superseded-mcp-request-changes-basic-stop-before-limit.md)、[sacty mcp の待つツールは、デーモンに待つ API を足さず MCP の層で取りに行き、人の出番だけで起こす](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)、[sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)、[sacty mcp の中止は、片付けの対象を読む専用のツールと、読んだ対象を引数で確かめる歯止めを付けて足す](../adr/20261119-0900-mcp-cancel-with-plan-and-confirmed-targets.md)、[sacty mcp の再実行は、画面の既定値のまま補足だけを足す最小の版にし、画面の既定値で送れないものは MCP の層で断る](../adr/20261119-1000-superseded-mcp-rerun-minimal-screen-defaults.md)、[sacty mcp の続きの作成（派生）は、画面の既定値のまま題と内容だけを送り、題の変更は題だけを送る](../adr/20261120-0900-mcp-derive-and-rename-minimal.md)、[sacty mcp のエラーレポートの読み取りは、閉じられなかった実行のログを必ず省き、省いた印と全体の指紋で確かめる](../adr/20261119-1500-mcp-error-report-always-omit-stale-logs.md)
+関係する ADR: [sacty mcp のタスクの作成は、対象のリポジトリを指定できるようにし、省いたときは指定しない（空欄）で作る](../adr/20261121-2310-mcp-create-task-with-target-repository.md)、[中止の案内を、中止の後に再実行できるかで切り替える](../adr/20261121-2300-mcp-cancel-guidance-by-rerunnable.md)、[起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-superseded-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)、[sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-superseded-mcp-request-changes-basic-stop-before-limit.md)、[sacty mcp の待つツールは、デーモンに待つ API を足さず MCP の層で取りに行き、人の出番だけで起こす](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)、[sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)、[sacty mcp の中止は、片付けの対象を読む専用のツールと、読んだ対象を引数で確かめる歯止めを付けて足す](../adr/20261119-0900-mcp-cancel-with-plan-and-confirmed-targets.md)、[sacty mcp の再実行は、画面の既定値のまま補足だけを足す最小の版にし、画面の既定値で送れないものは MCP の層で断る](../adr/20261119-1000-superseded-mcp-rerun-minimal-screen-defaults.md)、[sacty mcp の続きの作成（派生）は、画面の既定値のまま題と内容だけを送り、題の変更は題だけを送る](../adr/20261120-0900-mcp-derive-and-rename-minimal.md)、[sacty mcp のエラーレポートの読み取りは、閉じられなかった実行のログを必ず省き、省いた印と全体の指紋で確かめる](../adr/20261119-1500-mcp-error-report-always-omit-stale-logs.md)
 
 ## 起動と接続
 
@@ -144,6 +144,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 `create_task` で、どのプロジェクトにタスクを作るかを指定するために使う。
 
 - 結果は `{ projects }`。1件は `id`（`create_task` の `project_id` に渡す）・`name`・`targets`（対象。`scope` が `org`（Organization 全体）か `repo`（1つのリポジトリ）と、対象の URL `target`）。
+  `scope` が `repo` の `target` は、`create_task` の `repo` にそのまま渡せる。`scope` が `org` の `target` は、その Org の下のリポジトリの URL を `create_task` の `repo` に渡せる（個々のリポジトリは、`GET /api/projects/:id/repositories` を呼ばないので、一覧に出ない）。
   プロジェクトのそのほかの設定（コンテキスト・チケット・GitHub のアカウントなど）は出さない。
 - 消したプロジェクトは、デーモンが定義ごと消すので、一覧に出ない。
 
@@ -156,17 +157,21 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | `project_id` | 文字列（必須） | タスクを作るプロジェクトの ID（`list_projects` の `id`） |
 | `title` | 文字列（必須） | 題。前後の空白を除いて 1〜200 文字（`TASK_TITLE_MAX`） |
 | `body` | 文字列 | 説明。前後の空白を除いて 10000 文字まで（`TASK_BODY_MAX`）。省けば空 |
+| `repo` | 文字列 | 対象のリポジトリの URL（`https://<ホスト>/<owner>/<name>`）。省けば、リポジトリを指定しない。`list_projects` の `targets` の URL（`scope` が `repo`）か、`scope` が `org` の対象の下のリポジトリの URL |
 
-- 画面の「タスクを作成」で、テンプレートなし・対象リポジトリ空欄・進め方「自動」のままにして作るのと同じ。
-  `POST /api/tasks` に `{ projectId, title, body, repo: null }` を送る（`repo: null` は、対象がリポジトリ1つだけのプロジェクトでも、リポジトリを指定しない。画面の空欄と同じ）。進め方・テンプレート・工程ごとの設定は送らない。
-  記録（`TaskCreated`。actor `person`・`start: "sacty"`）も、工程の始まり方（オーケストレーターが進め方を選ぶ）も、画面と同じ。
+- 画面の「タスクを作成」で、テンプレートなし・進め方「自動」のままにして作るのと同じ。
+  `POST /api/tasks` に `{ projectId, title, body, repo }` を送る。`repo` を省くと `null`（対象がリポジトリ1つだけのプロジェクトでも、リポジトリを指定しない。画面の空欄と同じ）で、作った後にオーケストレーターが対象のリポジトリを選ぶ。
+  `repo` を指定すると、その値を送る。画面で対象リポジトリを入れて作ったのと同じに扱い、デーモンが `RepositoryChosen` を待たずに `repo` を記録し（`noRepo` は付かない）、オーケストレーターはリポジトリを選ばない。複数のリポジトリ（`repos`）・進め方・テンプレート・工程ごとの設定は送らない。
+  記録（`TaskCreated`。actor `person`・`start: "sacty"`）も、工程の始まり方も、画面と同じ。
 - 作ったら、文と、作ったタスクの[タスクの要約](#タスクの要約)（ID・画面の URL を含む）を返す。工程が終わるのは待たない。返った ID で `get_task` を呼べる。
 - 作れないときは、理由を返し、何も作らない。
   - 前後の空白を除いた題が空・長すぎる題・長すぎる説明は、API を呼ぶ前に、画面と同じ検査（`CreateTaskInput`）で断る（長さは空白を除いた後に数える。引数の形で検査するのは、`title` と `project_id` が空でないことだけ。上限と、空白を除いた後の空は `CreateTaskInput` で検査する）。
+  - 空・空白だけの `repo` は、API を呼ぶ前に `CreateTaskInput` で断る（省いたことにはしない）。
   - 無い・消したプロジェクトは、デーモンが `project.notFound`（409）で断る。理由は「プロジェクトが見つかりません。」。
+  - プロジェクトの対象に無いリポジトリと、URL の形でない値（`owner/repo` の短い形を含む）は、MCP では検査せず、デーモンが `task.repositoryUnknown`（409）で断る。理由は画面と同じ「対象リポジトリを、プロジェクト「X」の対象（Org・リポジトリ）の中から選んでください。」。Org の対象の下の URL は、ほかのプロジェクトがそのリポジトリを対象にしていなければ、候補の一覧に無くても受け付ける（同じ Org を対象にするプロジェクトが複数あり、作成先が先に責任を持つほうでないときも、`task.repositoryUnknown` で断られる）（画面と同じ。Org を対象に登録した時点で、その下のリポジトリを作業対象にすることを許している）。存在しない URL は、作成は通り、タスクの開始時の clone で失敗して一時停止になる（エージェントは実行しない）。
   - デーモンの `invalid_input`（400）は、`issues` の文言を日本語にして返す（前の版のデーモンが入力を断ったときも、同じ）。
 - 作る API を呼んだ後に結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、その理由に続けて、タスクが作られている可能性があること・`list_tasks`（`query` に題）で確かめてから呼び直すことを返す（デーモンが記録した後に、応答が届かなかったのかもしれないため。作成の API には、二重に作らせないための仕組みが無い）。デーモンが 5xx 以外の応答で断ったとき（`DaemonRefusal`）、認証できなかったとき（401）、接続を断られたとき、呼ぶ前の失敗（`daemon.json` が無い）は、処理されていないので、理由だけを返す。
-- 前の版のデーモン：`POST /api/tasks`・`GET /api/projects` は、MCP のために足したものではないので、前の版のデーモンにもある。通らなければ、デーモンが断った理由（読めなければ状態コード）を返し、MCP サーバーは終わらない。
+- 前の版のデーモン：`POST /api/tasks`・`GET /api/projects` は、MCP のために足したものではないので、前の版のデーモンにもある（`repo` は画面が使う既存の入力）。通らなければ、デーモンが断った理由（読めなければ状態コード）を返し、MCP サーバーは終わらない。
 - ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`）・sacty の外に書く（`openWorldHint: true`。始まった工程が、PR などに書く）。
 
 ### approve_step
@@ -596,6 +601,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | 項目 | 内容 |
 | --- | --- |
 | `id`・`title`・`projectId` | タスクの ID・題・プロジェクトの ID |
+| `repo` | タスクの対象のリポジトリの URL（いつも入る）。取り込み元の `source.repo`、無ければ `repo`（`create_task` や画面で指定した、またはオーケストレーターが選んだ）、無ければ実装の対象の `repository.url`（`rerun_task` の既定値と同じ順）。`null` は、決まっていない、またはリポジトリ無しで進む・進んだ（調べもの・設計だけのタスク、分割の親）。この2つは分けない（段階の項目と合わせて読む）。複数のリポジトリ（`repos`）だけを指定して作ったタスクも `null`。`wait_for_task` の比べる欄には入れない（リポジトリが決まっても起こさない）。項目の追加だけで、既存の項目の名前・意味は変えないので互換（前の版のデーモンのタスクに元の項目が無ければ `null`） |
 | `state` | `cancelled`（中止）、`completed`（完了。`isFinished`）、ほかはタスクの状態（`status`）のまま。PR のレビューのタスクは、レビューを投稿しても、判定が指摘なしになるか、見守りを終える（PR のマージ・クローズ、親の完了）まで `completed` にならない（PR の変化を見守る間は `idle` で、`review.watching` が `true`） |
 | `steps` | 工程と状態（`<工程>:<状態>`。進める順） |
 | `preparing` | `state` が `queued` のまま、最初の工程の前の処理をデーモンがいま進めているときだけ入る、その段階（`repository`・`gathering`・`triage`・`planning`・`review_target`・`starting`。[最初の工程が始まる前の処理の表示](tasks-and-steps.md#最初の工程が始まる前の処理の表示)）。枠などを待っているだけの `queued` と、工程の実行を1回でも始めたタスク（処理していても）には無い。`state` は変えない |

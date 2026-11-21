@@ -502,10 +502,10 @@ export function daemonApi(
     async createTask(input) {
       const at = endpoint(); // 接続先が無いのは、頼む前の失敗（作られていない）
       try {
-        // 画面と同じく、対象リポジトリを空欄（リポジトリを指定しない）にし、進め方は送らない（自動）
+        // 画面と同じ要求（進め方は送らない＝自動）。repo は、指定しなければ null（リポジトリを指定しない）、指定すればそのまま送る
         const res = await request(at, "/api/tasks", {
           method: "POST",
-          body: { ...input, repo: null },
+          body: input,
         });
         // 5xx は、処理の途中で失敗したのかもしれず、作られたかどうかが分からない
         if (!res.ok && res.status >= 500) {

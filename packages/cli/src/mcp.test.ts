@@ -43,9 +43,9 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
     await expect(api.getTask("a")).rejects.toThrow("起動中の sacty が見つかりません");
     await expect(api.rereview("a")).rejects.toThrow("起動中の sacty が見つかりません");
     await expect(api.listProjects()).rejects.toThrow("起動中の sacty が見つかりません");
-    await expect(api.createTask({ projectId: "p", title: "題", body: "" })).rejects.toThrow(
-      "起動中の sacty が見つかりません",
-    );
+    await expect(
+      api.createTask({ projectId: "p", title: "題", body: "", repo: null }),
+    ).rejects.toThrow("起動中の sacty が見つかりません");
     expect(api.webUrl()).toBeUndefined();
     expect(calls).toEqual([]);
   });
@@ -257,9 +257,9 @@ describe("sacty mcp が呼ぶデーモンの API（PBI-392）", () => {
 });
 
 describe("sacty mcp のタスクの作成（PBI-394）", () => {
-  const input = { projectId: "p1", title: "題", body: "説明" };
+  const input = { projectId: "p1", title: "題", body: "説明", repo: null };
 
-  it("プロジェクトの一覧と作成は、画面と同じ API（GET /api/projects・POST /api/tasks）を、対象リポジトリ空欄・進め方なしで呼ぶ", async () => {
+  it("プロジェクトの一覧と作成は、画面と同じ API（GET /api/projects・POST /api/tasks）を、進め方なしで呼ぶ（repo が null なら対象リポジトリ空欄）", async () => {
     writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
     const { calls, fetcher } = fakeDaemon((_method, path) =>
       path === "/api/projects"
@@ -282,6 +282,20 @@ describe("sacty mcp のタスクの作成（PBI-394）", () => {
       title: "題",
       body: "説明",
       repo: null,
+    });
+  });
+
+  it("リポジトリを指定すると、デーモンに送る本文にそのまま入る（PBI-474）", async () => {
+    writeDaemonFile(home, { url: "http://127.0.0.1:4710", token: "tok" });
+    const { calls, fetcher } = fakeDaemon(() =>
+      Response.json({ task: { id: "t1", title: "題" } }, { status: 201 }),
+    );
+    await daemonApi(home, fetcher).createTask({ ...input, repo: "https://github.com/o/r" });
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      projectId: "p1",
+      title: "題",
+      body: "説明",
+      repo: "https://github.com/o/r",
     });
   });
 
