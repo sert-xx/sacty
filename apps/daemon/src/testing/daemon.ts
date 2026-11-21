@@ -1080,7 +1080,10 @@ export class FakePulls implements PullRequests {
   /** 書き込みの権限を持つ人（PBI-461）。 */
   writers: string[] = [];
   permissionFail?: string;
+  /** 権限を確かめた（リポジトリ・人）。 */
+  permissionChecks: { repo: string; login: string }[] = [];
   async canWrite(input: { repo: string; token: string; login: string }) {
+    this.permissionChecks.push({ repo: input.repo, login: input.login });
     if (this.permissionFail) throw new Error(this.permissionFail);
     return this.writers.some((w) => w.toLowerCase() === input.login.toLowerCase());
   }

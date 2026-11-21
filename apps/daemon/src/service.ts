@@ -3205,8 +3205,9 @@ export class TaskService {
     // 先頭を読めない応答では、何も決めない（次の確認でやり直す）
     if (!/^[0-9A-Za-z]{7,64}$/.test(head)) return;
     // フォークからの PR は、push・作者の返信で自動では再レビューしない（再レビューの検証で、信頼できない PR のコードが
-    // 人の判断なしにコンテナで動くため。PBI-461）。人の再レビュー（画面・MCP）と、GitHub の再依頼は、これまでどおり
-    // フォークかどうかを確かめられなかったときも、フォークとして扱う
+    // 人の判断なしにコンテナで動くため。PBI-461）。人の再レビュー（画面・MCP）は、これまでどおり。GitHub の再依頼は、
+    // restartRerequestedReviews が、頼んだ人と権限を確かめて決める。フォークかどうかを確かめられなかったときも、
+    // フォークとして扱う
     if (status.fork !== false) {
       forget();
       await this.holdForkRestart(task, head, token);

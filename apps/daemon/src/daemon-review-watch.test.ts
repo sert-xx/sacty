@@ -1096,6 +1096,10 @@ describe("依頼で取り込んだ PR の GitHub の再依頼と、見守り（P
     pulls.writers = ["maintainer"];
     const { restarted } = await service.restartRerequestedReviews([requested(10)]);
     expect(restarted).toHaveLength(1);
+    // 権限は、フォークでなく土台のリポジトリで確かめる（フォークの持ち主は、自分のフォークに書き込める）
+    expect(pulls.permissionChecks).toEqual([
+      { repo: "https://github.com/acme/app", login: "maintainer" },
+    ]);
     const next = restarted[0]?.id ?? "";
     expect(next).not.toBe(id);
     await service.runNext(next);
