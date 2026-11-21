@@ -21,6 +21,7 @@ import {
   awaitingRepository,
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
+  BulkRejectAuditProposalsInput,
   budgetState,
   ChangeSelfReviewDepthInput,
   ChangeStepAgentInput,
@@ -208,6 +209,7 @@ import {
   AUDIT_LEDGER_FILE,
   buildAuditDivePrompt,
   buildAuditSurveyPrompt,
+  bulkRejectedTitle,
   cut,
   extractAuditDive,
   extractAuditSurvey,
@@ -465,6 +467,7 @@ import {
   remarkReplyOrigin,
 } from "./remark-reply.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import { annotateReviewComments, voidedByPersonOf } from "./review-comments.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
 import {
   buildResolvedNotice,
@@ -5291,7 +5294,7 @@ export class TaskService {
   }> {
     const token = await this.githubToken(task, target.repo, usedSecrets);
     const account = this.githubAccountOf(task, target.repo).account;
-    const existing = await this.deps.pulls.feedback({
+    const fetched = await this.deps.pulls.feedback({
       repo: target.repo,
       token,
       number: target.number,
@@ -5314,7 +5317,16 @@ export class TaskService {
       includeApprovals: true,
       // sacty が作者のアカウントで投稿した、指摘への返信（PBI-352）も、作者の返答として渡す
       includeSactyReplies: true,
+      // 返信の目印のタスク ID が、この PR を扱うタスクと一致するものだけを、sacty の返信とする（PBI-445）
+      sactyReplyTasks: remarkReplyTasksOn(
+        [...this.tasks.values()],
+        task.reviewOf?.taskId,
+        target.repo,
+        target.number,
+      ),
     });
+    // 1 件ずつ、人・sacty・確かめられないを付ける（人と sacty が同じアカウントでも見分ける。PBI-445）
+    const existing = annotateReviewComments(fetched, target.author);
     const previous = task.previousReview;
     if (!previous) return { existing };
     const author = target.author.toLowerCase();
@@ -11365,6 +11377,8 @@ export class TaskService {
     let reviewSecurity: ReviewSecurity | undefined;
     // PR のレビューの子タスクに渡す、PR を作ったタスクの、後続に回したい案の扱い（PBI-370）
     let reviewDeferrals: ReviewDeferrals | undefined;
+    // PR を作ったタスクの人が、画面で無効にした指摘（人の却下。PBI-445）
+    let reviewVoided: { text: string; url?: string }[] | undefined;
     // 引き継いで直す既存の PR の指摘（レビュー・行へのコメント・通常のコメント）。実装と、その前の工程に渡す
     const continued = this.mustGet(task.id).continuedPullRequest;
     const continuedFeedback =
@@ -11464,6 +11478,16 @@ export class TaskService {
                 scope: securityScope(parent),
                 ...(parent.securityScopeCheck ? { check: parent.securityScopeCheck } : {}),
               };
+            }
+            // PR を作ったタスクの人が画面で無効にした指摘（RemarkVoided）を、人の却下として渡す。その PR の工程の指摘だけ
+            // （マージで捨てた指摘は含めない。PBI-445）
+            if (parent && latest.reviewOf) {
+              reviewVoided = voidedByPersonOf(
+                parent.remarks,
+                latest.reviewOf.step,
+                reviewTarget.number,
+                reviewTarget.url,
+              );
             }
             // 実装の PR なら、人が後続に回すと決めた指摘を渡す（未対応に数えさせない。PBI-370）
             if (parent && latest.reviewOf?.step === "implement") {
@@ -11683,6 +11707,7 @@ export class TaskService {
               ...(reviewCi ? { reviewCi } : {}),
               ...(reviewSecurity ? { reviewSecurity } : {}),
               ...(reviewDeferrals ? { reviewDeferrals } : {}),
+              ...(reviewVoided && reviewVoided.length > 0 ? { reviewVoided } : {}),
               ...(rereviewDocsOnly ? { rereviewDocsOnly } : {}),
               ...(rereviewNarrow
                 ? {
@@ -18807,6 +18832,7 @@ export class TaskService {
     const causes = new Map<string, KnownAuditCause>();
     const rejected: RejectedAuditProposal[] = [];
     const adoptNotes: AdoptedAuditProposalNote[] = [];
+    const bulks = new Map<string, { titles: string[]; reason: string }>();
     for (const t of this.tasks.values()) {
       if (t.projectId !== projectId || !t.audit || t.status === "cancelled") continue;
       for (const f of t.audit.findings) {
@@ -18822,7 +18848,15 @@ export class TaskService {
         });
         for (const p of f.proposals) {
           if (p.decision?.kind === "rejected") {
-            rejected.push({ title: p.title, reason: p.decision.reason });
+            const bulkId = p.decision.bulk?.id;
+            if (bulkId) {
+              // まとめての却下は、同じ操作の記録を 1 行にまとめる（件数に比例して行が増えないように。PBI-443）
+              const group = bulks.get(bulkId) ?? { titles: [], reason: p.decision.reason };
+              group.titles.push(p.title);
+              bulks.set(bulkId, group);
+            } else {
+              rejected.push({ title: p.title, reason: p.decision.reason });
+            }
           }
           // 採用のときの手入れも渡し、同じ手入れが要る提案を繰り返させない（PBI-151）
           if (p.decision?.kind === "adopted" && p.decision.note) {
@@ -18830,6 +18864,9 @@ export class TaskService {
           }
         }
       }
+    }
+    for (const { titles, reason } of bulks.values()) {
+      rejected.push({ title: bulkRejectedTitle(titles), reason });
     }
     return { causes: [...causes.values()], rejected, adoptNotes };
   }
@@ -19070,6 +19107,88 @@ export class TaskService {
         event: { type: "AuditProposalRejected", payload: { proposalId, reason: hide(reason) } },
       },
     ]);
+  }
+
+  /**
+   * 改修の提案をまとめて却下する（PBI-443）。理由は 1 つで、選んだ全件に同じ理由を記録する。1 件ずつの却下と同じ確かめを
+   * 提案ごとに通し、通らない提案（無い・別のプロジェクトのもの・中止済み・判断済み）は failed に入れる。秘密情報を伏せる
+   * 関数は、設定の秘密情報と、プロジェクトで選んだ GitHub のアカウントのトークンを、プロジェクトで 1 回だけ取り出して作る。
+   * 取り出す間にほかの操作が判断した提案は、待たずに確かめ直して failed に移す（二重の記録を作らない）。
+   * 元のタスクごとに 1 回の追記で書き、確かめを通した件数を、同じ操作の印（bulk.count）にする（書く前に決める。
+   * 追記が失敗した分は failed に入れるので、count は実際に記録された件数より大きくなりうる）。
+   */
+  async rejectAuditProposals(raw: unknown): Promise<{
+    rejectedIds: string[];
+    failed: { proposalId: string; messages: DaemonMessage[] }[];
+    /** 取り出した秘密情報で伏せる関数（返す提案の題を伏せるのに使い回し、取り出し直さない）。 */
+    hide: (text: string) => string;
+  }> {
+    const { projectId, proposalIds, reason } = BulkRejectAuditProposalsInput.parse(raw);
+    const failed = new Map<string, DaemonMessage[]>();
+    const check = (proposalId: string) => {
+      const found = this.findAuditProposal(proposalId);
+      if (!found || found.task.projectId !== projectId) {
+        return { messages: [message("audit.proposalNotFound")] };
+      }
+      if (found.task.status === "cancelled") return { messages: [message("audit.notAdoptable")] };
+      if (found.proposal.decision) return { messages: [message("audit.alreadyDecided")] };
+      return { found };
+    };
+    const passing = () => {
+      failed.clear();
+      const ok: { proposalId: string; task: Task }[] = [];
+      for (const proposalId of proposalIds) {
+        const result = check(proposalId);
+        if (result.found) ok.push({ proposalId, task: result.found.task });
+        else failed.set(proposalId, result.messages);
+      }
+      return ok;
+    };
+    const first = passing();
+    const done = () => [...failed].map(([proposalId, messages]) => ({ proposalId, messages }));
+    let hide = (text: string) => redactLog(text, []);
+    if (first.length === 0) return { rejectedIds: [], failed: done(), hide };
+    const config = this.deps.config();
+    if (config.ok) {
+      // 設定の秘密情報と、プロジェクトで選んだ GitHub のアカウントのトークン（元のタスクのリポジトリのホストの分を含む）を、
+      // プロジェクトで 1 回だけ取り出す。元のタスクごとには取り出さない
+      const values = await this.auditSecretValues(projectId, config.config);
+      hide = (text: string) => redactLog(text, values);
+    }
+    const hidden = hide(reason);
+    // 秘密情報を取り出す間に、ほかの操作が判断していないかを確かめ直す（待たずに、書くところまで続ける）
+    const ok = passing();
+    const byTask = new Map<string, { task: Task; ids: string[] }>();
+    for (const { proposalId, task } of ok) {
+      const entry = byTask.get(task.id) ?? { task, ids: [] };
+      entry.ids.push(proposalId);
+      byTask.set(task.id, entry);
+    }
+    const bulk = { id: randomUUID(), count: ok.length };
+    const rejectedIds: string[] = [];
+    for (const { task, ids } of byTask.values()) {
+      try {
+        this.append(
+          task,
+          ids.map((proposalId) => ({
+            actor: "person" as const,
+            event: {
+              type: "AuditProposalRejected" as const,
+              payload: { proposalId, reason: hidden, bulk },
+            },
+          })),
+        );
+        rejectedIds.push(...ids);
+      } catch (error) {
+        // 書き込みの例外の種類を問わず、そのタスクの提案を failed に入れ、書けた分を返す（先のタスクの却下は確定している）
+        const messages =
+          error instanceof InvalidOperationError
+            ? error.messages
+            : [message("audit.bulkWriteFailed")];
+        for (const proposalId of ids) failed.set(proposalId, messages);
+      }
+    }
+    return { rejectedIds, failed: done(), hide };
   }
 
   /** 予算で一時停止した監査を、新しい上限（累計。使った額より大きい）で再開する（PBI-125）。 */
@@ -20530,6 +20649,29 @@ export function remarkReplyAccountsOn(
       ),
     ),
   ];
+}
+
+/**
+ * この PR を扱う sacty のタスクの ID（PR を作ったタスク・PR を取り込んだタスク・要求要件・設計の PR を持つタスク。PBI-445）。
+ * 返信の目印のタスク ID がこの中にあるときだけ、sacty の返信として読む。
+ */
+export function remarkReplyTasksOn(
+  tasks: readonly Task[],
+  parentId: string | undefined,
+  repo: string,
+  number: number,
+): string[] {
+  const on = (pr: { repo?: string; number?: number } | undefined) =>
+    pr?.number === number && pr.repo !== undefined && sameRepo(pr.repo, repo);
+  return tasks
+    .filter(
+      (t) =>
+        t.id === parentId ||
+        on(t.pullRequest) ||
+        on(t.continuedPullRequest) ||
+        (t.stepPullRequests ?? []).some(on),
+    )
+    .map((t) => t.id);
 }
 
 /**

@@ -4172,7 +4172,12 @@ const AuditProposalAdopted = z.object({
 /** 人が改修の提案を却下した。理由は以後の監査に渡す。 */
 const AuditProposalRejected = z.object({
   type: z.literal("AuditProposalRejected"),
-  payload: z.object({ proposalId: z.string().min(1), reason: z.string().trim().min(1).max(2000) }),
+  payload: z.object({
+    proposalId: z.string().min(1),
+    reason: z.string().trim().min(1).max(2000),
+    /** まとめて却下したときの印（PBI-443）。同じ操作の記録は同じ id を持ち、count はその操作で却下した件数。 */
+    bulk: z.object({ id: z.string().min(1), count: z.number().int().min(1) }).optional(),
+  }),
 });
 
 /** 監査が登録したメモリーを消した（PBI-126）。メモリーを登録したタスクの作業履歴に記録する。 */

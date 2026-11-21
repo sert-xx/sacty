@@ -78,6 +78,23 @@ export const RejectAuditProposalInput = z
   .strict();
 export type RejectAuditProposalInput = z.infer<typeof RejectAuditProposalInput>;
 
+/** 1回のまとめての却下で選べる提案の数の上限。 */
+export const AUDIT_BULK_REJECT_MAX = 2000;
+
+/** 提案をまとめて却下する（PBI-443）。理由は 1 つで、選んだ全件に同じ理由を記録する。projectId は対象の範囲。 */
+export const BulkRejectAuditProposalsInput = z
+  .object({
+    projectId: z.string().min(1),
+    proposalIds: z
+      .array(z.string().min(1))
+      .min(1, code("input.required"))
+      .max(AUDIT_BULK_REJECT_MAX)
+      .refine((ids) => new Set(ids).size === ids.length),
+    reason: z.string().trim().min(1, code("input.required")).max(AUDIT_REJECT_REASON_MAX),
+  })
+  .strict();
+export type BulkRejectAuditProposalsInput = z.infer<typeof BulkRejectAuditProposalsInput>;
+
 /**
  * 予算で一時停止した監査を、新しい上限（累計）で再開する（タスクの予算と同じ扱い）。上限の金額に上限を設けない：
  * 既定の予算（config.yaml の budget.default_per_audit_usd）は正の数なら何でもよく、再開には使った額より大きい
@@ -117,7 +134,13 @@ export type AuditProposalDecision =
       /** 採用に添えた人の手入れ（補足か差し替え。添えなければ無い。PBI-151）。 */
       note?: AuditAdoptNote;
     }
-  | { kind: "rejected"; at: string; reason: string };
+  | {
+      kind: "rejected";
+      at: string;
+      reason: string;
+      /** まとめて却下した印（同じ操作の id と、その操作で却下した件数。以前の記録には無い。PBI-443）。 */
+      bulk?: { id: string; count: number };
+    };
 
 /** 改修の提案。 */
 export type AuditProposal = {

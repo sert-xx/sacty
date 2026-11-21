@@ -358,6 +358,11 @@ export type TaskRemark = {
   /** 前提が変わったなどの理由で、人間が無効にした指摘。エージェントには渡さない。 */
   voided: boolean;
   /**
+   * 人が画面で無効にした（RemarkVoided）ときだけ person（PBI-445）。マージで捨てた指摘（discardedRemarks）には付けない。
+   * PR のレビューの子タスクが、人の却下として読む。
+   */
+  voidedBy?: "person";
+  /**
    * 実装が、この指摘を、この PR では直さず後続に回したいと申告した案（PBI-370）。proposedIn は申告した提出回、reason は
    * その対応の文（理由）、decision は人の決定（defer は後続に回す、fix はこの PR で直す。無ければ、まだ決めていない）。
    * 決める前に、後の提出で「対応した」と申告されたら消える（案の取り下げ）。対応の文と違い、後の提出で対応が無くても残る。
@@ -511,7 +516,7 @@ export type TaskAuditFinding = Omit<
           /** 採用に添えた人の手入れ（PBI-151）。 */
           note?: AuditAdoptNote;
         }
-      | { kind: "rejected"; at: string; reason: string };
+      | { kind: "rejected"; at: string; reason: string; bulk?: { id: string; count: number } };
   })[];
 };
 
@@ -2138,7 +2143,13 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "unknown remark");
       }
       task.remarks = task.remarks.map((r) =>
-        r.id === event.payload.remarkId ? { ...r, voided: true } : r,
+        r.id === event.payload.remarkId
+          ? {
+              ...r,
+              voided: true,
+              ...(event.actor === "person" ? { voidedBy: "person" as const } : {}),
+            }
+          : r,
       );
       break;
 
@@ -4172,7 +4183,12 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
             ...(event.payload.fixTaskId ? { fixTaskId: event.payload.fixTaskId } : {}),
             ...(event.payload.note ? { note: event.payload.note } : {}),
           }
-        : { kind: "rejected" as const, at: event.at, reason: event.payload.reason };
+        : {
+            kind: "rejected" as const,
+            at: event.at,
+            reason: event.payload.reason,
+            ...(event.payload.bulk ? { bulk: event.payload.bulk } : {}),
+          };
     task.audit = {
       ...audit,
       findings: audit.findings.map((f) =>

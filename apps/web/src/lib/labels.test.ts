@@ -3565,3 +3565,29 @@ describe("作業履歴の「工程を決定」「作業するリポジトリを�
     });
   }
 });
+
+describe("改修の提案の却下の行（PBI-443）", () => {
+  const rejected = (payload: Record<string, unknown>): ActivityEvent =>
+    ({
+      type: "AuditProposalRejected",
+      payload: { proposalId: "p1", reason: "不要", ...payload },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-10T00:00:00.000Z",
+      actor: "person",
+    }) as ActivityEvent;
+
+  it("まとめて却下した記録は、全件の数と「その 1 件」を行に出す。以前の版の記録（印なし）は今と同じ文言（日英）", () => {
+    const bulk = { bulk: { id: "b1", count: 3 } };
+    expect(describeEventParts(rejected(bulk), ja).text).toBe(
+      "改修の提案を却下した（まとめて却下した全 3 件の 1 件）：不要",
+    );
+    expect(describeEventParts(rejected(bulk), labels.en).text).toBe(
+      "Rejected a proposal (1 of 3 rejected in bulk): 不要",
+    );
+    expect(describeEventParts(rejected({}), ja).text).toBe("改修の提案を却下した：不要");
+    expect(describeEventParts(rejected({}), labels.en).text).toBe("Rejected a proposal: 不要");
+  });
+});

@@ -815,6 +815,17 @@ export function createApp(
     }
   });
 
+  // 提案をまとめて却下する（PBI-443）。入力の誤りは 400、提案ごとの失敗は 200 の failed に入れる
+  app.post("/api/audits/proposals/reject", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json(await audits.rejectMany(json.body));
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post("/api/audits/proposals/:id/reject", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);

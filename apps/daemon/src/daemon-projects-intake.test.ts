@@ -1182,8 +1182,16 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
       prompt.split("\n").find((l) => l.startsWith('{"previousReview"')) ?? "{}",
     );
     expect(json.authorReplies).toEqual([
-      { kind: "review_comment", at, path: "src/retry.ts", line: 2, body: addressed },
-      { kind: "comment", at, body: declined },
+      // この PR を扱うタスクの ID（t-impl は、このテストの中のタスクではない）と目印が一致しないので、sacty の返信とは読まない
+      {
+        kind: "review_comment",
+        by: "unverified",
+        at,
+        path: "src/retry.ts",
+        line: 2,
+        body: addressed,
+      },
+      { kind: "comment", by: "unverified", at, body: declined },
     ]);
     expect(json.authorReplies[1].body).toContain("**対応していません。** 理由：");
     // 既存のレビューでは、作者（alice）の投稿として渡る（ほかのレビュアーの指摘にならない）

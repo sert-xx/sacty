@@ -488,8 +488,8 @@ describe("監査の小さな関数（PBI-124）", () => {
 });
 
 describe("監査の API（PBI-124）", () => {
-  function app(mock = true) {
-    const { deps } = setup(5);
+  function app(mock = true, tasks = 5) {
+    const { deps } = setup(tasks);
     const service = {
       list: deps.tasks,
       get: (id: string) => ({ activity: deps.activity(id) }),
@@ -548,5 +548,96 @@ describe("監査の API（PBI-124）", () => {
     );
     expect((await post("/api/tasks/t01/audit/resume", '{"capUsd":2}')).status).toBe(409);
     expect((await post("/api/tasks/t05/audit/resume", '{"capUsd":2}')).status).toBe(200);
+  });
+
+  it("まとめて却下（モック）：2 件を bulk 付きで却下し、続けて判断済みの 1 件を含めると、その 1 件は failed で返る（PBI-443）", async () => {
+    const a = app(true, 12);
+    const read = async () =>
+      (await (await a.request("/api/projects/p1/audits", { headers: auth })).json()) as {
+        proposals: {
+          id: string;
+          decision?: { kind: string; reason?: string; bulk?: { id: string; count: number } };
+        }[];
+      };
+    const post = (body: unknown) =>
+      a.request("/api/audits/proposals/reject", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify(body),
+      });
+    const pending = (await read()).proposals.filter((p) => !p.decision);
+    const [one, two] = pending;
+    if (!one || !two) throw new Error("pending proposals");
+    const res = await post({ projectId: "p1", proposalIds: [one.id, two.id], reason: "不要" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rejected: {
+        id: string;
+        decision: { kind: string; reason: string; bulk: { id: string; count: number } };
+      }[];
+      failed: unknown[];
+    };
+    expect(body.failed).toEqual([]);
+    expect(body.rejected.map((p) => p.id)).toEqual([one.id, two.id]);
+    for (const p of body.rejected) {
+      expect(p.decision).toMatchObject({ kind: "rejected", reason: "不要", bulk: { count: 2 } });
+    }
+    expect(body.rejected[0]?.decision.bulk.id).toBe(body.rejected[1]?.decision.bulk.id);
+    // 画面が読む提案にも、同じ印が付く
+    expect((await read()).proposals.find((p) => p.id === one.id)?.decision?.bulk?.count).toBe(2);
+
+    // 判断済みの 1 件を含めて却下する：その 1 件は failed に判断済みの理由で入り、残りの 1 件だけ count: 1 で却下する
+    const three = pending[2];
+    if (!three) throw new Error("third pending proposal");
+    const again = (await (
+      await post({ projectId: "p1", proposalIds: [one.id, three.id], reason: "続き" })
+    ).json()) as {
+      rejected: { id: string; decision: { bulk: { count: number } } }[];
+      failed: { proposalId: string; messages: { code: string }[] }[];
+    };
+    expect(again.rejected.map((p) => p.id)).toEqual([three.id]);
+    expect(again.rejected[0]?.decision.bulk.count).toBe(1);
+    expect(again.failed).toEqual([
+      { proposalId: one.id, messages: [{ code: "audit.alreadyDecided" }] },
+    ]);
+    // 判断済みの提案の理由は変わらない（二重に却下しない）
+    expect((await read()).proposals.find((p) => p.id === one.id)?.decision?.reason).toBe("不要");
+  });
+
+  it("まとめて却下の入力の誤りは 400（空・2,001 件・重複・理由が空）。別のプロジェクトの提案は failed に入れて記録しない（PBI-443）", async () => {
+    const a = app(true, 12);
+    const read = async () =>
+      (await (await a.request("/api/projects/p1/audits", { headers: auth })).json()) as {
+        proposals: { id: string; decision?: unknown }[];
+      };
+    const post = (body: string) =>
+      a.request("/api/audits/proposals/reject", { method: "POST", headers: auth, body });
+    const [one] = (await read()).proposals.filter((p) => !p.decision);
+    if (!one) throw new Error("pending proposal");
+    const bad = [
+      { projectId: "p1", proposalIds: [], reason: "理由" },
+      {
+        projectId: "p1",
+        proposalIds: Array.from({ length: 2001 }, (_, i) => `x${i}`),
+        reason: "理由",
+      },
+      { projectId: "p1", proposalIds: [one.id, one.id], reason: "理由" },
+      { projectId: "p1", proposalIds: [one.id], reason: "  " },
+      { proposalIds: [one.id], reason: "理由" },
+    ];
+    for (const input of bad) expect((await post(JSON.stringify(input))).status).toBe(400);
+    expect((await post("not json")).status).toBe(400);
+    // 別のプロジェクトとして呼ぶと、その提案は見つからない扱いで、何も記録しない
+    const other = (await (
+      await post(JSON.stringify({ projectId: "p2", proposalIds: [one.id], reason: "理由" }))
+    ).json()) as {
+      rejected: unknown[];
+      failed: { proposalId: string; messages: { code: string }[] }[];
+    };
+    expect(other.rejected).toEqual([]);
+    expect(other.failed).toEqual([
+      { proposalId: one.id, messages: [{ code: "audit.proposalNotFound" }] },
+    ]);
+    expect((await read()).proposals.find((p) => p.id === one.id)?.decision).toBeUndefined();
   });
 });
