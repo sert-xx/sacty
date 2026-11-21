@@ -51,6 +51,21 @@ To reject a proposal, do the following.
 
 sacty passes the reason for rejecting to later audits so they do not repeat the same proposal.
 
+### Rejecting unneeded proposals in bulk
+
+On the [audit page](#the-audit-page) you can select several proposals that need a decision and reject them together with one reason. You can select only proposals that are shown on the page. One bulk rejection takes up to 2,000 proposals.
+
+1. Press a cause's row to open it.
+2. Select the checkbox of each proposal you want to reject. "Select all needing a decision" on a cause selects the proposals it shows right now. You can open another cause and keep selecting. The count appears above the list as "N selected".
+3. Press "Reject selected". A confirmation dialog shows the count and the titles of the selected proposals, grouped by cause. Scroll inside the dialog to check every title.
+4. Write the reason and press "Confirm rejection". The reason is required, and the same reason is recorded for every selected proposal. "Cancel" or Escape closes the dialog without recording anything, and the selection stays.
+
+Rejecting in bulk cannot be undone. A proposal rejected this way is treated like one rejected by itself: the cause's state, the number needing a decision, and the dashboard counts and adoption rate change in the same way.
+
+- The proposal shows "1 of N rejected in bulk", and so does its row in the task's activity.
+- If some proposals could not be rejected (already decided by another operation, the original task cancelled, and so on), the page says "Rejected N; M could not be rejected" and lists their titles and reasons. The ones that were rejected are recorded.
+- Later audits get the proposals rejected in bulk as one line per operation, with the number rejected, the first 3 titles, and the reason. Titles from the 4th on are not passed, so a similar proposal may be made again. Rejecting one by one works as before.
+
 ### Adopting with an edit to the proposed fix
 
 When the cause is right but you do not want the proposed fix as it is, press "Edit the proposed fix", choose a kind, write the text, and then adopt. If you adopt without writing it, sacty uses the audit's proposal as it is.
@@ -83,17 +98,20 @@ Completed tasks (and PR review tasks that have posted their review) have an "Aud
 
 ## The audit page
 
-"Audit" in the side menu opens the audit page of the project you are viewing (`/projects/<ID>/audit`). The audit page looks like this (the image uses the audit mock data and shows the upper part of the page, down to the causes and the proposals that need a decision).
+"Audit" in the side menu opens the audit page of the project you are viewing (`/projects/<ID>/audit`). The audit page looks like this (the image uses the audit mock data and shows the upper part of the page, with one cause open and its proposals selected).
 
-![A project's audit page (causes, and the improvement proposals that need a decision)](images/audit.en.png)
+![A project's audit page (a cause opened, and proposals that need a decision selected)](images/audit.en.png)
 
 The page shows the following.
 
-- **Causes**: the same cause grouped across tasks.
+- **Causes and proposals**: a cause is the same cause grouped across tasks.
   - If the same cause is found again after its fix task's PR is merged, it becomes Recurred.
-  - Each shows its state (Recurred, Proposed, Adopted, Fixed, Rejected), how many times it was found, and the tasks.
-  - Recurred causes come first and stand out.
-- **Proposals**: those needing a decision come first. Each shows which task's audit it came from, and you can adopt or reject it here too.
+  - Causes are ordered Recurred, Proposed, Adopted, Fixed, Rejected, and by how many times found within the same state. The page shows the top 20, and "Show more" adds 20 at a time. A note reads "Showing M of N".
+  - You can filter by "All", "Needs decision", or "Recurred only". The filter and the number shown stay in the URL, so reloading opens the same view.
+  - A cause is a collapsed row showing its state, title, how many times it was found, and the number of proposals needing a decision. Recurred stands out.
+  - Press a row to open it. It shows the tasks (up to 5, then "N more") and the cause's proposals (those needing a decision first, up to 10, then "N more"). You adopt, edit, or reject proposals one at a time inside the open cause. Each proposal also shows which task's audit it came from.
+  - The open causes, the filter, and the number shown are kept after you decide a proposal.
+  - You can select proposals that need a decision and reject them together ([Rejecting unneeded proposals in bulk](#rejecting-unneeded-proposals-in-bulk)).
 - **Audited tasks**: state, remarks, cost, and when the audit finished.
 - **Report**: choose a start and end date and press "Export report" to download a Markdown file with the causes, proposals, and decisions of audits finished in the period. Headings follow the UI language; audit text is not translated. Times are UTC.
 
@@ -108,7 +126,7 @@ The "Audit" card on the dashboard shows the following ([Dashboard](dashboard.en.
 
 ## Checking the screens with mock data
 
-To check only the screens, start sacty with `SACTY_AUDIT_MOCK=1`. sacty runs no real audits and shows mock data. Adopting, rejecting, and resuming are kept only in the daemon's memory and reset when you restart sacty.
+To check only the screens, start sacty with `SACTY_AUDIT_MOCK=1`. sacty runs no real audits and shows mock data. Adopting, rejecting (including in bulk), and resuming are kept only in the daemon's memory and reset when you restart sacty.
 
 ```sh
 SACTY_AUDIT_MOCK=1 npx sacty up

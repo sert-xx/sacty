@@ -144,6 +144,9 @@ const ja = {
       "PR の今の head をまだ読めていないため、AI のレビューの状況は分かりません。",
     help: "承認やマージは止めませんが、レビューが付く前に進むと、その指摘を見ずに承認します。",
     open: "レビューを開く",
+    suggestionsLeft: "提案が残っていますが、AI が対応しないと判断し、ドラフトを外しています。",
+    suggestionsLeftHint:
+      "理由は PR への返信と作業履歴にあります。再レビューはしていません。リスク評価だけを 1 回実行しています（「PR のリスク評価」の欄）。直させたいときは、PR に要対応とコメントしてください。",
   },
   gate: {
     undecidable: "変更の申し出の判断待ち",
@@ -805,6 +808,10 @@ const en: TaskMessages = {
       "The PR's current head has not been read yet, so the AI review state is unknown.",
     help: "Approving and merging are not blocked, but going ahead before the review arrives means missing its comments.",
     open: "Open review",
+    suggestionsLeft:
+      "Suggestions remain, but the AI judged none needed handling, so the draft was removed.",
+    suggestionsLeftHint:
+      "The reasons are in the PR reply and the activity log. The PR was not reviewed again; only the risk assessment was run once (see the PR risk assessment section). To have them fixed, comment on the PR that they need action.",
   },
   gate: {
     undecidable: "Change request needs your decision",

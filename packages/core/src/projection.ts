@@ -511,7 +511,7 @@ export type TaskAuditFinding = Omit<
           /** 採用に添えた人の手入れ（PBI-151）。 */
           note?: AuditAdoptNote;
         }
-      | { kind: "rejected"; at: string; reason: string };
+      | { kind: "rejected"; at: string; reason: string; bulk?: { id: string; count: number } };
   })[];
 };
 
@@ -734,8 +734,8 @@ export type Task = {
    */
   declinedSuggestions?: { text: string; reason: string; url?: string; round: number }[];
   /**
-   * 判定し直した回の提案もすべて対応しないとしたので、返信の後に一時停止する（SuggestionsTriaged の stop。PBI-436）。
-   * 一時停止すると消える。
+   * 判定し直した回の提案もすべて対応しないとしたので、返信の後にドラフトを外す（SuggestionsTriaged の stop。PBI-436・440）。
+   * ドラフトを外す（PullRequestMarkedReady）と消える。一時停止では消えない（以前の版が一時停止させた記録のため）。
    */
   triageStop?: { number: number; commit?: string };
   /** 後続に回したい案を、人が決めた回数（DeferralsDecided の数。PR のコメントの目印に使う。PBI-370）。 */
@@ -864,7 +864,7 @@ export type Task = {
    * PR の説明（via が publish）と、投稿するレビューのコメント（via が review）に載せる。
    */
   riskAssessment?: {
-    via: "publish" | "review";
+    via: "publish" | "review" | "suggestions_declined";
     commit?: string;
     /** 評価したときの PR の差分の起点（PBI-421）。 */
     base?: string;
@@ -977,7 +977,11 @@ export type Task = {
    * reviewedCommit は、PR のレビューの子タスクが指摘なしにして、sacty がドラフトを外した PR の先頭（PBI-331）。人がレビューの間に
    * コミットを足したときは、sacty が提出したコミット（commit）と違う。依存のある子タスクは、これを起点に重ねる。
    */
-  pullRequest?: PayloadOf<"PullRequestPublished"> & { reviewedCommit?: string };
+  pullRequest?: PayloadOf<"PullRequestPublished"> & {
+    reviewedCommit?: string;
+    /** reviewedCommit の先頭は、判定が「提案あり」のまま、提案をすべて対応しないとしてドラフトを外した。再レビューはせず、リスク評価だけを 1 回行った（PBI-440）。 */
+    suggestionsLeft?: true;
+  };
   /** 実装の承認待ちの間に見守っている、実装の PR の状態（PBI-14a・PBI-110）。PR を作っていなければ無い。 */
   pullRequestState?: "open" | "closed" | "merged" | "merged_outdated";
   /** 実装の PR のマージの記録（PBI-63）。 */
@@ -2509,8 +2513,16 @@ export function applyEvent(
       ) {
         throw new ActivityIntegrityError(event, "the pull request is not waiting for the review");
       }
-      const { draft: _draft, awaitingReview: _awaiting, ...rest } = pr;
-      task.pullRequest = { ...rest, reviewedCommit: event.payload.commit };
+      const { draft: _draft, awaitingReview: _awaiting, suggestionsLeft: _left, ...rest } = pr;
+      task.pullRequest = {
+        ...rest,
+        reviewedCommit: event.payload.commit,
+        ...(event.payload.reason === "suggestions_declined"
+          ? { suggestionsLeft: true as const }
+          : {}),
+      };
+      // ドラフトを外したので、提案が残った旨の印は役目を終える
+      task.triageStop = undefined;
       break;
     }
 
@@ -3685,8 +3697,7 @@ export function applyEvent(
       }
       task.resumeTo = task.status;
       task.status = "paused";
-      // 提案が残った旨の一時停止は、止めた時点で役目を終える（再開してもう一度止めない。PBI-436）
-      task.triageStop = undefined;
+      // triageStop は一時停止で消さない（以前の版が一時停止させたタスクも、再開で同じ先頭のドラフトを外す。PBI-440）
       task.pausedReason = event.payload.reason;
       task.pausedMessage = event.payload.message;
       task.unstoppedRuns = event.payload.unstoppedRuns;
@@ -4161,7 +4172,12 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
             ...(event.payload.fixTaskId ? { fixTaskId: event.payload.fixTaskId } : {}),
             ...(event.payload.note ? { note: event.payload.note } : {}),
           }
-        : { kind: "rejected" as const, at: event.at, reason: event.payload.reason };
+        : {
+            kind: "rejected" as const,
+            at: event.at,
+            reason: event.payload.reason,
+            ...(event.payload.bulk ? { bulk: event.payload.bulk } : {}),
+          };
     task.audit = {
       ...audit,
       findings: audit.findings.map((f) =>

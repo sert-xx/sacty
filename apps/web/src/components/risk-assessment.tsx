@@ -44,6 +44,15 @@ export function riskAssessmentToShow(
     risk,
     current: risk.commit !== undefined && heads.includes(risk.commit),
   });
+  // 残った提案をすべて対応しないとしてドラフトを外した回の評価は、PR を作ったタスク自身が持つ。子タスクの前の先頭の評価
+  // （指摘なしの回）より新しければ、こちらを出す（PBI-440）
+  const childReview = reviewTasks.findLast(
+    (r) =>
+      r.step === "implement" && r.number === pr?.number && r.task?.riskAssessment?.via === "review",
+  )?.task?.riskAssessment;
+  if (own?.via === "suggestions_declined" && (!childReview || childReview.at <= own.at)) {
+    return judge(own);
+  }
   const child = reviewTasks.findLast(
     (r) =>
       r.step === "implement" && r.number === pr?.number && r.task?.riskAssessment?.via === "review",

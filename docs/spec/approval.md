@@ -159,7 +159,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   - 親が、直しに入る前の選り分けで提案のすべてを対応しないとして、直しに入らなかったとき（`ReviewRejudgeRequested` の `reason: triaged`。[直しに入る前の提案の選り分け](#直しに入る前の提案の選り分け)）も、上と同じく、返信が済んでから、同じ先頭を 1 回だけ判定し直す（`ReviewRestarted`、`reason: declined`）。
     - 指示には、PR を作った側が、直しに入る前に対応しないと判断した提案があり、コードを変えていないことを足す（`rejudgeLines`）。その提案は、作者の理由が成り立つかを確かめさせず、未対応に数えさせず、取り下げとも書かせない。新しい要修正が無ければ、判定は指摘なしになる。
     - 上の「取り下げるのは、指摘そのものが当たらないときだけ」などの、作者の理由を確かめる行は、`declinedByAuthor` に無い指摘（実装が断った指摘・要修正）にだけ当てる。
-    - 指摘なしなら、ドラフトを外して、人の承認を待つ。要修正を出した、または対応する提案が残ったときは、親は一時停止せずに直しに入る。提案だけが残り、それもすべて対応しないとしたときは、返信の後に親を一時停止する（文言は `triage.left`）。
+    - 指摘なしなら、ドラフトを外して、人の承認を待つ。要修正を出した、または対応する提案が残ったときは、親は一時停止せずに直しに入る。提案だけが残り、それもすべて対応しないとしたときは、返信の後に、一時停止せずに、判定は「提案あり」のままドラフトを外して人の承認を待つ（`PullRequestMarkedReady` の `reason: suggestions_declined`。PBI-440）。ドラフトを外す前に、再レビューはせず、リスク評価だけを 1 回行って PR にコメントする（`PullRequestRiskAssessed` の `via: suggestions_declined`。評価できなくても外す）。
 - 選り分けで始めた判定し直しの回（`reviewRejudge.reason` が `triaged`）の指示には、新しい指摘として出してよいのは `[要修正]` の重みのものだけで、`[提案]` の重みの新しい指摘は本文にも行へのコメントにも出さず判定の根拠にしない（観点の担当が挙げても集約で採用しない。判定は、新しい `[要修正]` と前回の指摘の扱い（未対応の `[要修正]`・重みを見直した指摘）でこれまでと同じに決め、新しい `[要修正]` も残す前回の指摘も無いときだけ指摘なし）、と書く。再レビューの範囲の絞りが効かない回でも足す（`triagedRejudgeLines`・`ReviewDeferrals.triagedRejudge`）。実装が断った後の判定し直しと通常の再レビューには足さない。
 - 対応しないとした提案の渡し方：親の `Task.declinedSuggestions` を、再レビューのたびに（前回の投稿より後の返答だけに頼らず、前々回以前の分も）、指示とは分けたデータ（`declinedByAuthor`。`finding`・`reason`・`url`、切ったときの `findingTruncated`・`reasonTruncated`）で渡す（`rereviewLines`・`declinedByAuthorLines`）。新しい 50 件まで、1 件は秘密情報を伏せてから 600 文字まで（`deferredByPerson` と同じ上限）。
   - 「前回の指摘」の節は、前回の指摘ごとに、対応を確かめた・未対応・PR を作った側が対応しないと判断した、のどれかを書かせる。
@@ -168,7 +168,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   - 既定のスキル `review-dispatch` の流れ `pr-review` の再レビューの決まりにも、同じ扱いを書いている（[コンテキスト](context.md#既定のレビュー用スキル)）。
 - 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず、判定そのものでは再レビューも起きないので、PR は人の承認（マージ）を待つ。指摘なしの後でも、PR の先頭が変われば（人がコミットを足したときなど）、上のとおり再レビューを始める。
   指摘なしを待つ実装の PR は、子タスクが今の先頭を指摘なしにするまで、確認のたびにドラフトに戻す（`redraftAwaiting`。提出のときに戻せなかった PR も、レビューの途中も）。
-  実装の PR（`awaitingReview`）は、PR の今のコミットを指摘なしにしたら、PR の確認で sacty がドラフトを外す（`PullRequestMarkedReady`。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
+  実装の PR（`awaitingReview`）は、PR の今のコミットを指摘なしにしたら、PR の確認で sacty がドラフトを外す（`PullRequestMarkedReady`。判定し直した回に提案が残り、それもすべて対応しないとしたときは、評価だけを実行して、提案ありのまま外す（PBI-440）。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
 - 子タスクには、レビューする先頭のコミットの CI の状態（ワークフローの実行・チェック・コミットの状態と、ワークフローの中のジョブ（GitHub Actions のチェック。ワークフローが成功でも、実行されなかったジョブを伝えるため）。チェックの名前・状態・結論・URL。失敗・実行中のものはすべて、成功したもの（`success`・`neutral`。実行されなかった `skipped` は省かない）は合わせて `REVIEW_CI_MAX` 件まで並べ、残りは件数だけ）を sacty が読んで渡す（`reviewCiOf`・`reviewCiLines`）。sacty は CI を待たないので、子タスクに、変更による失敗を要修正の指摘に、変更と関係が無いと確かめた失敗を本文の人が確かめることにさせ、終わっていないものは待たずに実行中と書かせる。
   CI の読み取りは `REVIEW_CI_TIMEOUT_MS`（30秒）まで待ち、答えが返らなければ、読めなかったものとしてレビューを続ける。
   読めなければ、読めなかったことを渡す（レビューは止めない）。
@@ -727,7 +727,7 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
 - 判定し直したレビューに残った指摘：親が指摘のすべてを断って提出し（`ReviewRejudgeRequested`）、子タスクが同じ先頭を判定し直した後に取り込んだ指摘が、すべて、その子タスクの最後の回の AI のレビューの指摘なら、差し戻し（`ChangesRequested`）と同じ追記で、一時停止（理由は `unchanged`、文言は `implement.declinedAgain`。後続に回したい案の決定を待って判定し直したときは `implement.deferredAgain`）を記録する（`rejudgeLeftFindings`）。やり直しは始めない（AI どうしの往復を続けず、人が判断する）。
   - 再開すると、残った指摘を渡して、戻し先の工程をやり直す。止まっている間の扱い（人がドラフトを外しても戻さない・マージすると承認として進める）は、変更の無いやり直しの一時停止と同じ（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。
   - 人の指摘・ほかのレビューのタスクの指摘が 1 件でも混ざっていれば、止めずに、今までどおり差し戻してやり直す。
-  - 選り分けで提案のすべてを対応しないとして求めた判定し直し（`ReviewRejudgeRequested` の `reason: triaged`）の後は、一時停止しない。選り分けの後に差し戻す指摘が残れば（要修正があった・対応する提案があった）、そのまま直しに入る。残らなければ、選り分けの一時停止になる（[直しに入る前の提案の選り分け](#直しに入る前の提案の選り分け)）。
+  - 選り分けで提案のすべてを対応しないとして求めた判定し直し（`ReviewRejudgeRequested` の `reason: triaged`）の後は、一時停止しない。選り分けの後に差し戻す指摘が残れば（要修正があった・対応する提案があった）、そのまま直しに入る。残らなければ、返信の後にドラフトを外して人の承認を待つ（[直しに入る前の提案の選り分け](#直しに入る前の提案の選り分け)）。
 
 ### AI のレビューの指摘
 
@@ -780,7 +780,7 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
 
 ### 直しに入る前の提案の選り分け
 
-関係する ADR: [AI のレビューの提案に対応するかどうかは、直しに入る前に AI が PR の範囲で判断し、対応しない判断は AI で終える](../adr/20261120-2109-triage-ai-review-suggestions-before-rework.md)
+関係する ADR: [AI のレビューの提案に対応するかどうかは、直しに入る前に AI が PR の範囲で判断し、対応しない判断は AI で終える](../adr/20261120-2109-superseded-triage-ai-review-suggestions-before-rework.md)
 
 sacty が作った実装の PR に、PR のレビューの子タスクの提案（`[提案]`）が届いたら、直しに入る前に、AI が PR の範囲を考えて、提案ごとに「この PR で対応する／対応しない」と理由を判断する（選り分け。`triageSuggestions`）。
 対応しない提案のために、直し・push・再レビューの往復を起こさないためである。
@@ -800,7 +800,7 @@ sacty が作った実装の PR に、PR のレビューの子タスクの提案�
   - 行へのコメント：`<パス>:<行>：` の後に頭が続けば、コメントの全体が 1 件。
   - 提案が 1 件も無ければ、選り分けの実行をしない。
 - 担い手：PR の工程（実装）のエージェント（人が選んだもの。無ければ `step_agents` か `default_agent`）が、新しいセッションで、実装後のコードの読み取り専用の写しを読んで判断する（役割 `triage`。[コードの写しで動かす実行](tasks-and-steps.md#コードの写しで動かす実行)）。実行に失敗したら、代わりのエージェント（`fallback`）でやり直す。人が選んだエージェントが設定から消えていれば、選り分けずに一時停止する（`agent.chosenMissing`。指摘は選り分け前のまま残す）。
-- 判断の材料（`buildTriagePrompt`）：タスクの題と依頼、承認済みの要求要件と設計（受け入れ条件を含む）、PR の説明（4,000 文字まで）、今回の提案（ID 付き）と要修正、前の回の実装の指摘と対応（`Task.remarks`。新しい 30 件まで）、これまでに対応しないとした提案（`Task.declinedSuggestions`。新しい 50 件まで）、何回目のレビューか、提案だけの回が今回を含めて何回続いているか（子タスクの回ごとの判定 `reviewVerdicts` から数える）。外から来た文は、秘密情報を伏せてから 1 件 600 文字で切り、指示とは分けた JSON のデータとして渡す。
+- 判断の材料（`buildTriagePrompt`）：タスクの題と依頼、承認済みの要求要件と設計（受け入れ条件を含む）、PR の説明（4,000 文字まで）、今回の提案（ID 付き）と要修正、前の回の実装の指摘と対応（`Task.remarks`。新しい 30 件まで）、これまでに対応しないとした提案（`Task.declinedSuggestions`。新しい 50 件まで）、何回目のレビューか、提案だけの回が今回を含めて何回続いているか（子タスクの回ごとの判定 `reviewVerdicts` から数える）。外から来た文は、秘密情報を伏せてから切り、指示とは分けた JSON のデータとして渡す。切る長さは、今回の提案と要修正の文が 1 件 2,000 文字まで（「問題・起きる条件・実害・直し方」が判断の材料から落ちないため。PBI-440）、前の回の指摘・その対応・対応しないとした提案とその理由が 1 件 600 文字まで。件数が多いときの合計の上限は置かない（1 つのレビューの本文の長さが上限で、指示が膨らむ前に切れるため）。
 - 判断の基準（指示に書く）：
   - 対応する：PR の目的の範囲の中にあり、この PR で直さないと、害（誤った振る舞い・読み手を誤らせる記述・検証の抜け）や後の手戻りが出るもの。
   - 対応しない：目的の範囲の外のもの、好み・書式・言い回し、直しで足した文面の細部への新しい提案、同じ原因の別の現れが提案として続くもの（原因を断つ直しが要るなら、その直しだけを 1 回対応する）、直す側が前の回に直せない・この環境ではできないと答えたもの、すでに対応しない・後続に回すと答えた・判断したものの蒸し返し。
@@ -822,13 +822,16 @@ sacty が作った実装の PR に、PR のレビューの子タスクの提案�
   - 返信が済んだ後、PR のレビューの子タスクが、同じ先頭を 1 回だけ判定し直す（`ReviewRestarted` の `reason: declined`。`rejudgeDue`。[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
   - その回が指摘なしなら、ドラフトを外して人の承認を待つ。リスク評価は、その回に出る。
   - その回が要修正を出した、または対応する提案が 1 件でもあったときは、一時停止せずに直しに入る（`settleReview`）。
-  - その回が提案だけを残し、それもすべて対応しないときは、判定し直しは 1 回だけなので、`SuggestionsTriaged` に `stop` を付けて記録する（`Task.triageStop`。PR の番号と先頭のコミットを持ち、先頭が進んだ後は効かない）。選り分けで求めた判定し直し（`reviewRejudge.reason` が `triaged`）の回だけで、実装が断った後の判定し直し（PBI-357・370）の回は、選り分けず、今までの一時停止（`implement.declinedAgain`・`deferredAgain`）のまま。返信が済んだ後に、一時停止（理由は `unchanged`、文言は `triage.left`）を記録する（`triageStopDue`）。人は、再開（承認待ちに戻る）・PR に要対応とコメントする・承認か差し戻しを選ぶ。再開しても、もう一度は止めず、判定し直しも始めない。
+  - その回が提案だけを残し、それもすべて対応しないときは、判定し直しは 1 回だけなので、`SuggestionsTriaged` に `stop` を付けて記録する（`Task.triageStop`。PR の番号と先頭のコミットを持ち、先頭が進んだ後は効かない）。選り分けで求めた判定し直し（`reviewRejudge.reason` が `triaged`）の回だけで、実装が断った後の判定し直し（PBI-357・370）の回は、選り分けず、今までの一時停止（`implement.declinedAgain`・`deferredAgain`）のまま。
+  - 返信が済んだ後（`triageStopDue`。返信するものが残っていない・保留が無い・PR の番号と先頭が `triageStop` と同じ）、一時停止せずに、PR の確認が `markReady` でドラフトを外す（`PullRequestMarkedReady` に `reason: suggestions_declined`。PBI-440）。指摘なしの回のドラフトの解除と違い、子タスクの判定は「提案あり」のままで、リスク評価は、再レビューではなく、評価だけの実行（`assessDeclinedRisk`）で出す。評価は、オーケストレーターのエージェントに、実装後のコードと差分を読ませ、材料に、残った提案と対応しないとした理由を渡す（評価の実行・記録・予算の数え方は、版を上げる前の PR を出す前の評価と同じ。[リスク評価を出す回の決定](../adr/20261120-2342-no-pause-when-rejudged-suggestions-all-declined.md)）。同じ PR のその先頭の評価は、記録（`Task.riskAssessment` の `via` と `commit`）で見つけて繰り返さない。PR のコメントは 1 通で、先頭に目印（タスクと先頭）を置き、同じ目印のコメントがあれば書かない（デーモンを起動し直しても重ならない）。評価できなかった（予算の上限・実行の失敗・答えを読めない）ときも、理由を記録してコメントに書き、ドラフトを外す。止まったことを確かめられなかった実行があれば、一時停止にして、外さない。評価の対象は、リスク評価を有効にしたデーモンの、PR を作ったタスク（既存の PR を引き継いだタスク・要求要件・設計の PR を除く）。分割の子タスクの PR（スタック）など、`markReady` がドラフトを外さない PR は、同じに外さない。外した後は `Task.triageStop` を消し、`pullRequest.suggestionsLeft` を立てる。ドラフトを外したままにするかは 1 か所（`readyAt`）で決める：子タスクの先頭が GitHub の PR の今の先頭で、子タスクが指摘なしとしたか、`suggestionsLeft` があり、`reviewedCommit` がその先頭で、最後の判定が「提案あり」のとき。ドラフトの確認（`wantsDraft`）・ドラフトの外し直し（`undraftMarkedReady`。一時停止して再開した後を含む）・`markReady` の最後の検査が、これを使う。画面の「提案が残っている」の表示は、`reviewedCommit` が今の先頭のときだけ出す。`triageStopDue` は、`triageStop` に持つ先頭を GitHub の今の先頭とも比べ、人がコミットを足していれば効かない（今までどおり、再レビューと選り分けが働く）。その先頭には、判定し直しも選り分けも始めない。評価の実行が、デーモンの停止・中止・一時停止のために止まったときは、評価の失敗として記録せず、費用だけを、コミットを持たない `PullRequestRiskAssessed` で記録して、次の確認で同じ先頭を評価し直す。設定を読めないときは、その理由の `PullRequestRiskAssessed` を記録して外す。
+  - 人は、作業履歴（ドラフトを外した行に、残った提案をすべて対応しないとしたと出る）と、承認の画面・タスクの概要（`AiReviewNotice`。提案が残っていること・再レビューをしていないこと・直させたいときは PR に要対応とコメントすること）で読める。PR に要対応とコメントすれば、人の指摘として取り込まれ、今までどおり直しに入る。先頭が進めば（人のコミット・直しの提出）、今までどおり再レビューと選り分けが働く。
+  - 以前の版が `triage.left` で一時停止させたタスクは、作業履歴を読み直しても壊れない（`TaskPaused` の `triage.left` を表示できるまま残す）。`Task.triageStop` は一時停止で消さないので、再開すると承認待ちに戻り、同じ先頭のままなら、ドラフトを外す（もう一度止めない）。
 - 採用しないとき：選り分けの間に、人が差し戻した・中止した・指摘が変わった・承認待ちでなくなったとき、またはデーモンの停止・中止のために実行を止めたときは、判断を採用しない。使った費用だけを `runResult: interrupted` の `SuggestionsTriaged` に残し、指摘は選り分け前のまま、次の確認で選り分け直す。
 - 人が覆す：PR に要対応とコメントすれば、人の指摘として取り込まれ（選り分けを通らない）、直しに入る。sacty の画面から差し戻すこともできる。人は、対応しないとされた提案と理由を、PR の返信と、sacty の作業履歴の両方で読める。
 - 記録と表示：`SuggestionsTriaged`（actor `agent`。[作業履歴](event-log.md#費用)）。費用はタスクの予算に入り、工程ごとの費用の表の「提案の選り分け」の行に出る。画面の作業履歴の行には「提案 N 件のうち M 件をこの PR で対応しない」と費用を出し、提案ごとの判断と理由は、行の詳細に出す（`describeEventParts`）。判断できずに対応する側にした提案があれば、行と詳細にそう添える。採用しなかった実行は、そのことを行に出す。概要の「最近の履歴」は、どの行も 2 行までで省略し、詳細は出さない。
 - 変えないもの：実装が直しの中で申告する `declined`・`deferred` と、人の決定（[後続に回したい案と、人の決定](#後続に回したい案と人の決定)）、自己レビュー、要求要件・設計の PR のレビュー、GitHub から取り込んだ PR のレビューだけのタスク、返信の組み立て（`remark-reply.ts`）。
 
-コード: `apps/daemon/src/service.ts`（`triageSuggestions`・`importFeedbackNow`・`settleReview`・`awaitingRemarkReplies`・`triageStopDue`・`rejudgeDue`）、`apps/daemon/src/suggestion-triage.ts`（`splitSuggestions`・`suggestionUnitsOf`・`extractTriage`・`settleTriage`・`TRIAGE_HEADING`）、`apps/daemon/src/triage-reply.ts`（`triageReplyTextOf`・`TRIAGE_REPLY_NOTE`）、`apps/daemon/src/prompts.ts`（`buildTriagePrompt`・`remarkLines`・`triageDeclinedLines`）、`packages/core/src/events.ts`（`SuggestionsTriaged`・`ReviewRejudgeRequested`・`Remark`）、`packages/core/src/projection.ts`（`applyEvent`・`declinedSuggestions`・`triageStop`）、`packages/core/src/messages.ts`（`triage.left`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/lib/step-costs.ts`（`stepCosts`）
+コード: `apps/daemon/src/service.ts`（`triageSuggestions`・`importFeedbackNow`・`settleReview`・`awaitingRemarkReplies`・`triageStopDue`・`rejudgeDue`）、`apps/daemon/src/suggestion-triage.ts`（`splitSuggestions`・`suggestionUnitsOf`・`extractTriage`・`settleTriage`・`TRIAGE_HEADING`）、`apps/daemon/src/triage-reply.ts`（`triageReplyTextOf`・`TRIAGE_REPLY_NOTE`）、`apps/daemon/src/prompts.ts`（`buildTriagePrompt`・`remarkLines`・`triageDeclinedLines`）、`packages/core/src/events.ts`（`SuggestionsTriaged`・`ReviewRejudgeRequested`・`Remark`）、`packages/core/src/projection.ts`（`applyEvent`・`declinedSuggestions`・`triageStop`・`suggestionsLeft`）、`packages/core/src/messages.ts`（`triage.left`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/ai-review-notice.tsx`、`apps/web/src/lib/step-costs.ts`（`stepCosts`）
 
 ### 人に確かめてほしいこと
 

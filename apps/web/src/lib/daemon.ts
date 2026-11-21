@@ -885,6 +885,43 @@ export function rejectAuditProposal(proposalId: string, reason: string): Promise
   return postOp(`/api/audits/proposals/${encodeURIComponent(proposalId)}/reject`, { reason });
 }
 
+/** まとめて却下した結果（PBI-443）。却下できた提案の ID と、できなかった提案の題を探すための ID と理由（画面の言語の文）。 */
+export type BulkRejectOutcome =
+  | { ok: true; rejectedIds: string[]; failed: { proposalId: string; message: string }[] }
+  | { ok: false; message: string };
+
+/**
+ * 改修の提案をまとめて却下する（PBI-443）。理由は 1 つで、選んだ全件に同じ理由を記録する。入力の誤りは ok: false、
+ * 提案ごとの失敗は、できた件数と一緒に failed で返る。
+ */
+export async function rejectAuditProposals(
+  projectId: string,
+  proposalIds: string[],
+  reason: string,
+): Promise<BulkRejectOutcome> {
+  const res = await daemonFetch("/api/audits/proposals/reject", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ projectId, proposalIds, reason }),
+  });
+  if (res.status === 409) return { ok: false, message: await operationMessage(res) };
+  if (res.status === 400) return { ok: false, message: await inputMessage(res) };
+  await ensureOk(res);
+  const { locale } = await getMessages();
+  const json = (await res.json()) as {
+    rejected: { id: string }[];
+    failed: { proposalId: string; messages: unknown[] }[];
+  };
+  return {
+    ok: true,
+    rejectedIds: json.rejected.map((p) => p.id),
+    failed: json.failed.map((f) => ({
+      proposalId: f.proposalId,
+      message: f.messages.map((m) => renderMessage(m, locale)).join("\n"),
+    })),
+  };
+}
+
 /** 監査が登録したメモリーを消す（PBI-126）。 */
 export function deleteAuditMemory(memoryId: string): Promise<OpResult> {
   return postOp(`/api/audits/memories/${encodeURIComponent(memoryId)}/delete`, {});

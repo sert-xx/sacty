@@ -557,6 +557,11 @@ export function ProposalView({
           <time dateTime={decision.at} className="ml-2 font-mono text-xs text-muted-foreground">
             {formatStamp(decision.at, messages.locale)}
           </time>
+          {decision.bulk && (
+            <span data-testid="audit-proposal-bulk" className="ml-2 text-xs text-muted-foreground">
+              {m.rejectedBulk(decision.bulk.count)}
+            </span>
+          )}
         </p>
       )}
       {!decision && <ProposalDecisionForms proposal={proposal} />}

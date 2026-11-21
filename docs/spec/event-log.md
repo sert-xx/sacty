@@ -59,8 +59,8 @@
   ただし中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` と、監査が登録したメモリーの削除 `AuditMemoryDeleted` は受け付ける。
 - 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`SubagentNoticeImitated`・`RunCostRecorded`・`ReviewGitHubRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`AgentRunTimedOut`・`AgentRunContinued`・`WorkspaceFilesSkipped`・`PullRequestBodyResolved`。費用を持つものは、下のとおり予算に足す）。
 - 直しに入る前の提案の選り分け（PBI-436。[直しに入る前の提案の選り分け](approval.md#直しに入る前の提案の選り分け)）の記録は次のとおり。
-  - `SuggestionsTriaged`（actor `agent`）：`items[]`（提案ごとの `id`・取り込んだ指摘の位置 `remark`・提案の文 `text`・判断 `decision`（`address` か `decline`）・理由 `reason`・判断が無く対応する側にした印 `defaulted`・元のコメントの URL `url`）、`dropped[]`（提案のすべてを対応しないとして差し戻しから外した指摘の位置）、`round`・`suggestionRounds`（判断の材料にした、レビューの回と、提案だけの回が続いた数）、`stop`（判定し直した回の提案もすべて対応しないので、返信の後に一時停止する）、実行の記録（`agentId`・`runResult`・`usage`・`costUsd` など）。
-  - 投影は、選り分けが済んだことを `pendingReview.triage` に持ち（起動し直しても実行し直さない）、`dropped` の指摘を `pendingReview` から外して `Task.remarks` に足す（`triaged: true`・`status: declined`・`round: 0`・`origin`。直しの回・直しの指示・提出での対応の書き直しの対象に数えない）。一部だけ対応しない指摘は `pendingReview` に残し、`pendingReview.triage.declined` に対応しない提案の文と理由を持つ（差し戻しの `remarks[].declinedParts` に引き継ぐ）。対応しないとした提案は `Task.declinedSuggestions`（文・理由・URL・回）に消さずに積む。`stop` は `Task.triageStop` に持ち、一時停止で消える。
+  - `SuggestionsTriaged`（actor `agent`）：`items[]`（提案ごとの `id`・取り込んだ指摘の位置 `remark`・提案の文 `text`・判断 `decision`（`address` か `decline`）・理由 `reason`・判断が無く対応する側にした印 `defaulted`・元のコメントの URL `url`）、`dropped[]`（提案のすべてを対応しないとして差し戻しから外した指摘の位置）、`round`・`suggestionRounds`（判断の材料にした、レビューの回と、提案だけの回が続いた数）、`stop`（判定し直した回の提案もすべて対応しないので、返信の後に、一時停止せずにドラフトを外す。以前の版は一時停止した）、実行の記録（`agentId`・`runResult`・`usage`・`costUsd` など）。
+  - 投影は、選り分けが済んだことを `pendingReview.triage` に持ち（起動し直しても実行し直さない）、`dropped` の指摘を `pendingReview` から外して `Task.remarks` に足す（`triaged: true`・`status: declined`・`round: 0`・`origin`。直しの回・直しの指示・提出での対応の書き直しの対象に数えない）。一部だけ対応しない指摘は `pendingReview` に残し、`pendingReview.triage.declined` に対応しない提案の文と理由を持つ（差し戻しの `remarks[].declinedParts` に引き継ぐ）。対応しないとした提案は `Task.declinedSuggestions`（文・理由・URL・回）に消さずに積む。`stop` は `Task.triageStop` に持ち、ドラフトを外す（`PullRequestMarkedReady`）と消える（一時停止では消さない。以前の版が一時停止させたタスクも、再開で同じ先頭のドラフトを外す）。
   - `runResult` が `interrupted` のもの（判断を採用しなかった）は、費用だけを数え、状態を変えない。
   - `ReviewRejudgeRequested` の `reason: triaged`：選り分けで、差し戻す指摘が残らなかったので、実装を実行せずに判定し直しを求めた。承認待ちの実装の PR について、`SuggestionsTriaged` と同じ追記で記録する（`Task.reviewRejudge.reason`）。`reason` が無いものは、実装の提出の記録（PBI-357）。
 - 費用を持つイベント（[費用](#費用)の19種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
@@ -111,7 +111,7 @@
   | `RepositoryChosen` | リポジトリの選択（`repository`） |
   | `StepsChosen`・`StepsSkipped`・`OrchestratorFailed`（actor が `gatherer` のものを除く） | オーケストレーター（`orchestrator`） |
   | `PullRequestBodyResolved`（PBI-334） | オーケストレーター（`orchestrator`。人が直した PR の本文との競合をまとめた実行。エージェントを実行しなかった（`agentId` が無い）ものは、行にしない。[人が直した本文の更新](approval.md#人が直した本文の更新)） |
-  | `PullRequestRiskAssessed`（PBI-362） | オーケストレーター（`orchestrator`。版を上げる前の、PR を作る前のリスク評価の実行。PBI-429 の後は、新しく記録しない。エージェントを実行しなかった（`agentId` が無い。予算の上限で評価しなかったもの・レビューの工程の答えから読んだもの・前回の評価を引き継いだもの（`inheritedFrom`。PBI-421））は、行にしない。[PR のリスク評価](risk-assessment.md)） |
+  | `PullRequestRiskAssessed`（PBI-362） | オーケストレーター（`orchestrator`。版を上げる前の、PR を作る前のリスク評価の実行。PBI-429 の後は、レビューの工程の答えから読んだ評価の記録（実行しないので行にしない）と、判定し直した回の提案がすべて対応しないとされたときの評価だけの実行（`via: suggestions_declined`。PBI-440）。エージェントを実行しなかった（`agentId` が無い。予算の上限で評価しなかったもの・レビューの工程の答えから読んだもの・前回の評価を引き継いだもの（`inheritedFrom`。PBI-421））は、行にしない。[PR のリスク評価](risk-assessment.md)） |
   | `AgentRunCompleted`・`AgentRunFailed` | その工程 |
   | `OutputExported` | 書き出し（`export`） |
   | `QuestionAnswered` | 質問への答え（`chat`） |

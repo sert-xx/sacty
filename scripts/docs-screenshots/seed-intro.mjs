@@ -359,6 +359,22 @@ const auditRun = (cost) => ({ ...ai, usage: usage(52000, 2100), auditCostUsd: co
               { kind: "sacty" },
             ],
           },
+          {
+            id: "proposal-1004-2",
+            title: L(
+              "リポジトリの README に、設計書の置き場所を書く",
+              "Write the location of design documents in the repository README",
+            ),
+            body: L(
+              "README の開発の手順に、設計書は `docs/design/` に置くと書く。",
+              "State in the development steps of the README that design documents go in `docs/design/`.",
+            ),
+            target: { kind: "repository", repo: PAY_REPO },
+            candidates: [
+              { kind: "repository", repo: PAY_REPO },
+              { kind: "context", repo: CONTEXT, depth: 0 },
+            ],
+          },
         ],
       },
     ],

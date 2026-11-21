@@ -21,6 +21,7 @@ import {
   awaitingRepository,
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
+  BulkRejectAuditProposalsInput,
   budgetState,
   ChangeSelfReviewDepthInput,
   ChangeStepAgentInput,
@@ -208,6 +209,7 @@ import {
   AUDIT_LEDGER_FILE,
   buildAuditDivePrompt,
   buildAuditSurveyPrompt,
+  bulkRejectedTitle,
   cut,
   extractAuditDive,
   extractAuditSurvey,
@@ -476,7 +478,13 @@ import {
   stopMarkerOfTask,
   stopSummary,
 } from "./review-stop-notice.js";
-import { assessesRiskInReview } from "./risk-assessment.js";
+import {
+  assessesRiskInReview,
+  assessPullRequestRisk,
+  buildDeclinedRiskComment,
+  buildRiskAssessmentPrompt,
+  declinedRiskMarker,
+} from "./risk-assessment.js";
 import { agentTimeoutMs } from "./run-timeouts.js";
 import {
   contextSecretUses,
@@ -14395,7 +14403,14 @@ export class TaskService {
     const cleared = now.child.reviewTarget?.headCommit === target && reviewCleared(now.child);
     // 提出のときにドラフトに戻せなかった PR は、指摘なしになるまで、確認のたびにドラフトに戻す（レビューの途中も。レビュー
     // していないコミットをマージできるままにしない。PBI-331）
-    if (awaiting && !cleared) {
+    // （判定し直した回の提案がすべて対応しないとされ、ドラフトを外す先頭は、戻さずに外す。PBI-440。重ねた PR は外さない）
+    const leftDue =
+      awaiting &&
+      !cleared &&
+      !now.parent.stack &&
+      now.child.reviewTarget?.headCommit === target &&
+      this.triageStopDue(now.parent, target);
+    if (awaiting && !cleared && !leftDue) {
       await this.redraftAwaiting(now.parent, repo, gate.number);
       now = resolve(expected);
       if (!now?.child) return;
@@ -14407,22 +14422,17 @@ export class TaskService {
     if (child.reviewTarget?.headCommit === target) {
       // 今の先頭を指摘なしにしたら、ドラフトを外す（PBI-331）
       if (awaiting && cleared) await this.markReady(parent, child, target);
+      // 判定し直した回の提案もすべて対応しないとした先頭（PBI-440）：評価だけを行って、ドラフトを外す
+      else if (awaiting && !parent.stack && this.triageStopDue(parent, target)) {
+        // 判定し直した回の提案もすべて対応しないとした：理由の返信が済んだので、一時停止せずに、判定は「提案あり」のまま
+        // ドラフトを外して人の承認を待つ（PBI-440。AI どうしの往復は、ここで止まる）
+        // その前に、再レビューはせず、リスク評価だけを 1 回実行して PR に載せる（PBI-440。止まったことを確かめられなかった
+        // 実行があれば、一時停止にして、外さない）
+        if ((await this.assessDeclinedRisk(parent, child, target)) !== "done") return;
+        await this.markReady(parent, child, target, "suggestions_declined");
+      }
       // 親が、その先頭の指摘のすべてを断って提出した：断った理由の返信が済んだら、同じ先頭を 1 回だけ判定し直す（PBI-357）
-      else if (awaiting && this.triageStopDue(parent)) {
-        // 判定し直した回の提案もすべて対応しないとした：理由の返信が済んだので、AI どうしの往復を続けずに止める（PBI-436）
-        const number = gatePullRequest(parent)?.number;
-        if (number !== undefined) {
-          this.append(parent, [
-            {
-              actor: "sacty",
-              event: {
-                type: "TaskPaused",
-                payload: { reason: "unchanged", message: message("triage.left", { number }) },
-              },
-            },
-          ]);
-        }
-      } else if (awaiting && this.rejudgeDue(parent, child, target)) {
+      else if (awaiting && this.rejudgeDue(parent, child, target)) {
         try {
           this.append(child, [
             {
@@ -14731,14 +14741,196 @@ export class TaskService {
   }
 
   /**
-   * 直しに入る前の選り分けが、判定し直した回の提案のすべてを対応しないとして、返信を済ませたか（PBI-436）。返信が済んでから、
-   * 一時停止して人が選ぶ（同じ先頭の判定のし直しは 1 回だけなので、ほかに往復を止める所が無い）。
+   * 判定し直した回の提案もすべて対応しないとした PR の、リスク評価だけの実行（PBI-440）。ドラフトを外す前に、その先頭に 1 回だけ、
+   * 評価して（PullRequestRiskAssessed。via は suggestions_declined）PR にコメントする。再レビュー（観点の担当の起動・検証）は
+   * しない。評価できなくても（予算の上限・実行の失敗・答えを読めない）、理由を記録して、ドラフトを外す。評価済みの先頭は
+   * 評価し直さず（デーモンの起動し直し・ドラフトを外せずにやり直した確認）、コメントは目印で見つけて重ねない。
+   * リスク評価を有効にしていない・評価の対象でない（既存の PR を引き継いだタスク）ときは、何もしない。
+   * stopped：止まったことを確かめられなかった実行があったので、一時停止にした（ドラフトは外さない）。
    */
-  private triageStopDue(parent: Task): boolean {
+  private async assessDeclinedRisk(
+    parent: Task,
+    child: Task,
+    commit: string,
+  ): Promise<"done" | "stopped"> {
+    if (this.deps.riskAssessment !== true) return "done";
+    if (!assessesRiskInReview(child, parent.continuedPullRequest !== undefined)) return "done";
+    const pr = parent.pullRequest;
+    if (!pr?.awaitingReview || !pr.number || !pr.repo || parent.stack) return "done";
+    const { number, repo } = pr;
+    const config = this.deps.config();
+    if (!config.ok) {
+      // 設定を読めなくて評価できなかった：理由を記録して外す（評価できなかった理由が、作業履歴と画面から分かるように）
+      const unread = this.mustGet(parent.id).riskAssessment;
+      if (!(unread?.via === "suggestions_declined" && unread.commit === commit)) {
+        this.append(this.mustGet(parent.id), [
+          {
+            actor: "sacty",
+            event: {
+              type: "PullRequestRiskAssessed",
+              payload: {
+                via: "suggestions_declined",
+                commit,
+                reason: message("pr.riskFailed", { detail: config.problem }),
+                costUsd: 0,
+                estimated: false,
+              },
+            },
+          },
+        ]);
+      }
+      return "done";
+    }
+    const known = this.mustGet(parent.id).riskAssessment;
+    if (!(known?.via === "suggestions_declined" && known.commit === commit)) {
+      const latest = this.mustGet(parent.id);
+      const repository = latest.repository;
+      const base = repository ? workBaseCommit(repository, latest.baseMerge) : undefined;
+      const usedSecrets: string[] = [];
+      const assessed = await assessPullRequestRisk({
+        commit,
+        budgetExceeded: budgetState(latest.budget) === "exceeded",
+        secrets: usedSecrets,
+        run: () =>
+          this.runOrchestrator(
+            latest,
+            config.config,
+            (platforms) =>
+              [
+                buildRiskAssessmentPrompt(
+                  latest,
+                  { base: base ?? "HEAD", commit },
+                  (latest.declinedSuggestions ?? []).map((d) => ({
+                    text: d.text,
+                    reason: d.reason,
+                  })),
+                ),
+                ...platformPromptLines(platforms),
+              ].join("\n"),
+            "orchestrator",
+            "implemented",
+          ),
+      });
+      const runId = assessed.failure?.runId;
+      const unconfirmed = runId !== undefined && this.unconfirmedRuns.delete(runId);
+      const now = this.tasks.get(parent.id);
+      if (!now) return "stopped";
+      // デーモンの停止・中止・一時停止のために止めた実行は、評価の失敗として採用しない。使った費用だけを、評価した先頭を
+      // 持たない記録にして残し（次の確認で、同じ先頭を評価し直す）、コメントも外すのもしない
+      const interrupted =
+        !assessed.payload.assessment &&
+        (this.stopping || this.cancelling.has(parent.id) || this.pauseRequested.has(parent.id));
+      const { commit: _assessedCommit, ...withoutCommit } = assessed.payload;
+      this.append(now, [
+        {
+          actor: assessed.payload.assessment ? "orchestrator" : "sacty",
+          event: {
+            type: "PullRequestRiskAssessed",
+            payload: {
+              ...(interrupted ? withoutCommit : assessed.payload),
+              ...(base ? { base } : {}),
+            },
+          },
+        },
+        ...(unconfirmed && assessed.failure && runId
+          ? [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "TaskPaused" as const,
+                  // 止まったことを確かめられなかった実行を記録する（再開・中止の前に、残ったコンテナを確かめ直す）
+                  payload: {
+                    reason: assessed.failure.reason,
+                    message: assessed.failure.message,
+                    unstoppedRuns: [runId],
+                  },
+                },
+              },
+            ]
+          : []),
+      ]);
+      this.warnIfNeeded(this.mustGet(parent.id));
+      if (unconfirmed || interrupted) return "stopped";
+    }
+    // 評価している間に、止められた・差し戻された・PR の先頭が変わったときは、コメントもドラフトを外すのもしない
+    const after = this.tasks.get(parent.id);
+    if (
+      after?.status !== "awaiting_approval" ||
+      this.cancelling.has(after.id) ||
+      this.pauseRequested.has(after.id) ||
+      after.pullRequest?.number !== number ||
+      !this.triageStopDue(after)
+    ) {
+      return "stopped";
+    }
+    const risk = after.riskAssessment;
+    if (risk?.via === "suggestions_declined" && risk.commit === commit) {
+      await this.commentDeclinedRisk(after, repo, number, commit, risk);
+    }
+    return "done";
+  }
+
+  /**
+   * 残った提案をすべて対応しないとした回の評価を、PR にコメントする（PBI-440）。同じ先頭の投稿が PR にあれば（デーモンの
+   * 起動し直しの後・ドラフトを外せずにやり直した確認）、目印で見つけて書かない。投稿できなくても、ドラフトを外すのは止めない
+   * （評価は、画面と作業履歴に残る）。
+   */
+  private async commentDeclinedRisk(
+    task: Task,
+    repo: string,
+    number: number,
+    commit: string,
+    risk: NonNullable<Task["riskAssessment"]>,
+  ): Promise<void> {
+    const key = `${task.id}:${commit}`;
+    if (this.riskCommented.has(key)) return;
+    const usedSecrets: string[] = [];
+    try {
+      const account = this.githubAccountOf(task, repo).account;
+      if (!account) return;
+      const token = await this.githubToken(task, repo, usedSecrets);
+      const marker = declinedRiskMarker(task.id, commit);
+      const signal = this.stopNoticeDeadline();
+      const pr = { repo, token, number };
+      const same = await untilAborted(
+        signal,
+        this.deps.pulls.listIssueComments({ ...pr, prefix: marker, account, signal }),
+      );
+      if (same.length === 0) {
+        // 確かめている間に、止められた・差し戻された・先頭が変わったら、書かない
+        const now = this.tasks.get(task.id);
+        if (now?.status !== "awaiting_approval" || now.pullRequest?.number !== number) return;
+        await untilAborted(
+          signal,
+          this.deps.pulls.commentIssue({
+            ...pr,
+            body: buildDeclinedRiskComment({ taskId: task.id, commit, risk }),
+            signal,
+          }),
+        );
+      }
+      this.riskCommented.add(key);
+    } catch (error) {
+      console.warn(
+        `[daemon] PR #${number}（${repo}）にリスク評価をコメントできませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    }
+  }
+
+  /** 残った提案をすべて対応しないとした回の評価を、PR にコメントした先頭（タスクと先頭。起動し直すと消え、目印で見つけ直す）。 */
+  private readonly riskCommented = new Set<string>();
+
+  /**
+   * 直しに入る前の選り分けが、判定し直した回の提案のすべてを対応しないとして、返信を済ませたか（PBI-436）。返信が済んでから、
+   * 一時停止せずにドラフトを外して人の承認を待つ（PBI-440。同じ先頭の判定のし直しは 1 回だけなので、ほかに往復を止める所が無い）。
+   */
+  private triageStopDue(parent: Task, head?: string): boolean {
     const stop = parent.triageStop;
     const pr = gatePullRequest(parent);
     return (
       stop !== undefined &&
+      // GitHub の今の先頭が、提案を断った先頭と違えば（人がコミットを足した）、効かない（今までどおり、再レビューと選り分け）
+      (head === undefined || !stop.commit || sameCommit(stop.commit, head)) &&
       pr?.number === stop.number &&
       (!stop.commit || (pr.commit !== undefined && sameCommit(stop.commit, pr.commit))) &&
       parent.status === "awaiting_approval" &&
@@ -14906,7 +15098,8 @@ export class TaskService {
   /**
    * 実装の PR が、今ドラフトであるべきか（PBI-331）。指摘なしを待つ PR（重ねた PR を除く）はドラフト。指摘なしで外して記録
    * した PR は、GitHub の先頭（head）をレビューの子タスクが指摘なしにしていればドラフトでなく、そうでなければ（外した後に人が
-   * コミットを足した・再レビューの途中）ドラフト。先頭が分からない・どちらでもない PR は undefined（何もしない）。
+   * コミットを足した・再レビューの途中）ドラフト。提案が残ったまま外して記録した先頭も、その先頭のままなら外したまま（readyAt）。
+   * 先頭が分からない・どちらでもない PR は undefined（何もしない）。
    */
   private wantsDraft(task: Task, repo: string, head: string | undefined): boolean | undefined {
     const pr = task.pullRequest;
@@ -14914,7 +15107,24 @@ export class TaskService {
     if (pr.awaitingReview) return task.stack ? undefined : true;
     if (pr.reviewedCommit === undefined || !head) return undefined;
     const child = this.reviewerOf(task, repo, pr.number);
-    return !(child && child.reviewTarget?.headCommit === head && reviewCleared(child));
+    return !this.readyAt(task, child, head);
+  }
+
+  /**
+   * 子タスクが GitHub の今の先頭（head）について、ドラフトを外してよいとしているか（PBI-331・PBI-440）。指摘なしにした先頭か、
+   * 提案が残ったまま（判定し直した回の提案をすべて対応しないとして）外して記録した先頭（reviewedCommit が今の先頭）のとき。
+   * wantsDraft・undraftMarkedReady は、この判定を共通に使う。
+   */
+  private readyAt(task: Task, child: Task | undefined, head: string): boolean {
+    if (!child || child.reviewTarget?.headCommit !== head) return false;
+    if (reviewCleared(child)) return true;
+    const pr = task.pullRequest;
+    return !!(
+      pr?.suggestionsLeft &&
+      pr.reviewedCommit !== undefined &&
+      sameCommit(pr.reviewedCommit, head) &&
+      child.reviewVerdicts?.at(-1)?.verdict === "suggestions"
+    );
   }
 
   /** 実装の PR のレビューの子タスク（PBI-331）。 */
@@ -15025,7 +15235,7 @@ export class TaskService {
     const target = head;
     const child = reviewerOf(task);
     // 子タスクがその先頭を指摘なしにしていなければ、ドラフトのまま再レビューを待つ
-    if (!child || child.reviewTarget?.headCommit !== target || !reviewCleared(child)) return;
+    if (!child || !this.readyAt(task, child, target)) return;
     const round = child.reviewRound;
     const verdicts = child.reviewVerdicts?.length;
     const unchanged = (): Task | undefined => {
@@ -15036,7 +15246,7 @@ export class TaskService {
         reviewer.reviewTarget?.headCommit === target &&
         reviewer.reviewRound === round &&
         reviewer.reviewVerdicts?.length === verdicts &&
-        reviewCleared(reviewer)
+        this.readyAt(latest, reviewer, target)
         ? latest
         : undefined;
     };
@@ -15113,7 +15323,12 @@ export class TaskService {
    * - 外す要求の答えを受け取れなかった（GitHub では外れているかもしれない。時間切れも。外す要求が後から届くかもしれないので、
    *   指摘なしで外すまで確認のたびに戻す）
    */
-  private async markReady(parent: Task, child: Task, commit: string): Promise<void> {
+  private async markReady(
+    parent: Task,
+    child: Task,
+    commit: string,
+    reason?: "suggestions_declined",
+  ): Promise<void> {
     const pr = parent.pullRequest;
     if (
       parent.status !== "awaiting_approval" ||
@@ -15201,7 +15416,10 @@ export class TaskService {
         reviewer.reviewTarget?.headCommit !== commit ||
         reviewer.reviewRound !== child.reviewRound ||
         reviewer.reviewVerdicts?.length !== child.reviewVerdicts?.length ||
-        !reviewCleared(reviewer)
+        (reason === "suggestions_declined"
+          ? reviewer.reviewVerdicts?.at(-1)?.verdict !== "suggestions" ||
+            !this.triageStopDue(current)
+          : !reviewCleared(reviewer))
       ) {
         await redraft();
         return;
@@ -15211,7 +15429,7 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "PullRequestMarkedReady",
-            payload: { number, commit, reviewTaskId: child.id },
+            payload: { number, commit, reviewTaskId: child.id, ...(reason ? { reason } : {}) },
           },
         },
       ]);
@@ -18599,6 +18817,7 @@ export class TaskService {
     const causes = new Map<string, KnownAuditCause>();
     const rejected: RejectedAuditProposal[] = [];
     const adoptNotes: AdoptedAuditProposalNote[] = [];
+    const bulks = new Map<string, { titles: string[]; reason: string }>();
     for (const t of this.tasks.values()) {
       if (t.projectId !== projectId || !t.audit || t.status === "cancelled") continue;
       for (const f of t.audit.findings) {
@@ -18614,7 +18833,15 @@ export class TaskService {
         });
         for (const p of f.proposals) {
           if (p.decision?.kind === "rejected") {
-            rejected.push({ title: p.title, reason: p.decision.reason });
+            const bulkId = p.decision.bulk?.id;
+            if (bulkId) {
+              // まとめての却下は、同じ操作の記録を 1 行にまとめる（件数に比例して行が増えないように。PBI-443）
+              const group = bulks.get(bulkId) ?? { titles: [], reason: p.decision.reason };
+              group.titles.push(p.title);
+              bulks.set(bulkId, group);
+            } else {
+              rejected.push({ title: p.title, reason: p.decision.reason });
+            }
           }
           // 採用のときの手入れも渡し、同じ手入れが要る提案を繰り返させない（PBI-151）
           if (p.decision?.kind === "adopted" && p.decision.note) {
@@ -18622,6 +18849,9 @@ export class TaskService {
           }
         }
       }
+    }
+    for (const { titles, reason } of bulks.values()) {
+      rejected.push({ title: bulkRejectedTitle(titles), reason });
     }
     return { causes: [...causes.values()], rejected, adoptNotes };
   }
@@ -18862,6 +19092,88 @@ export class TaskService {
         event: { type: "AuditProposalRejected", payload: { proposalId, reason: hide(reason) } },
       },
     ]);
+  }
+
+  /**
+   * 改修の提案をまとめて却下する（PBI-443）。理由は 1 つで、選んだ全件に同じ理由を記録する。1 件ずつの却下と同じ確かめを
+   * 提案ごとに通し、通らない提案（無い・別のプロジェクトのもの・中止済み・判断済み）は failed に入れる。秘密情報を伏せる
+   * 関数は、設定の秘密情報と、プロジェクトで選んだ GitHub のアカウントのトークンを、プロジェクトで 1 回だけ取り出して作る。
+   * 取り出す間にほかの操作が判断した提案は、待たずに確かめ直して failed に移す（二重の記録を作らない）。
+   * 元のタスクごとに 1 回の追記で書き、確かめを通した件数を、同じ操作の印（bulk.count）にする（書く前に決める。
+   * 追記が失敗した分は failed に入れるので、count は実際に記録された件数より大きくなりうる）。
+   */
+  async rejectAuditProposals(raw: unknown): Promise<{
+    rejectedIds: string[];
+    failed: { proposalId: string; messages: DaemonMessage[] }[];
+    /** 取り出した秘密情報で伏せる関数（返す提案の題を伏せるのに使い回し、取り出し直さない）。 */
+    hide: (text: string) => string;
+  }> {
+    const { projectId, proposalIds, reason } = BulkRejectAuditProposalsInput.parse(raw);
+    const failed = new Map<string, DaemonMessage[]>();
+    const check = (proposalId: string) => {
+      const found = this.findAuditProposal(proposalId);
+      if (!found || found.task.projectId !== projectId) {
+        return { messages: [message("audit.proposalNotFound")] };
+      }
+      if (found.task.status === "cancelled") return { messages: [message("audit.notAdoptable")] };
+      if (found.proposal.decision) return { messages: [message("audit.alreadyDecided")] };
+      return { found };
+    };
+    const passing = () => {
+      failed.clear();
+      const ok: { proposalId: string; task: Task }[] = [];
+      for (const proposalId of proposalIds) {
+        const result = check(proposalId);
+        if (result.found) ok.push({ proposalId, task: result.found.task });
+        else failed.set(proposalId, result.messages);
+      }
+      return ok;
+    };
+    const first = passing();
+    const done = () => [...failed].map(([proposalId, messages]) => ({ proposalId, messages }));
+    let hide = (text: string) => redactLog(text, []);
+    if (first.length === 0) return { rejectedIds: [], failed: done(), hide };
+    const config = this.deps.config();
+    if (config.ok) {
+      // 設定の秘密情報と、プロジェクトで選んだ GitHub のアカウントのトークン（元のタスクのリポジトリのホストの分を含む）を、
+      // プロジェクトで 1 回だけ取り出す。元のタスクごとには取り出さない
+      const values = await this.auditSecretValues(projectId, config.config);
+      hide = (text: string) => redactLog(text, values);
+    }
+    const hidden = hide(reason);
+    // 秘密情報を取り出す間に、ほかの操作が判断していないかを確かめ直す（待たずに、書くところまで続ける）
+    const ok = passing();
+    const byTask = new Map<string, { task: Task; ids: string[] }>();
+    for (const { proposalId, task } of ok) {
+      const entry = byTask.get(task.id) ?? { task, ids: [] };
+      entry.ids.push(proposalId);
+      byTask.set(task.id, entry);
+    }
+    const bulk = { id: randomUUID(), count: ok.length };
+    const rejectedIds: string[] = [];
+    for (const { task, ids } of byTask.values()) {
+      try {
+        this.append(
+          task,
+          ids.map((proposalId) => ({
+            actor: "person" as const,
+            event: {
+              type: "AuditProposalRejected" as const,
+              payload: { proposalId, reason: hidden, bulk },
+            },
+          })),
+        );
+        rejectedIds.push(...ids);
+      } catch (error) {
+        // 書き込みの例外の種類を問わず、そのタスクの提案を failed に入れ、書けた分を返す（先のタスクの却下は確定している）
+        const messages =
+          error instanceof InvalidOperationError
+            ? error.messages
+            : [message("audit.bulkWriteFailed")];
+        for (const proposalId of ids) failed.set(proposalId, messages);
+      }
+    }
+    return { rejectedIds, failed: done(), hide };
   }
 
   /** 予算で一時停止した監査を、新しい上限（累計。使った額より大きい）で再開する（PBI-125）。 */

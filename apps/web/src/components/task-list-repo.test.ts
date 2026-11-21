@@ -13,6 +13,8 @@ vi.mock("next/link", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
   usePathname: () => "/projects/p1/tasks",
+  useSearchParams: () =>
+    new URLSearchParams(typeof window === "undefined" ? "" : window.location.search),
 }));
 vi.mock("@/app/actions", () => {
   const action = vi.fn(async () => ({}));
