@@ -492,7 +492,7 @@ describe("リスク評価の節（PBI-362）", () => {
     expect(markdown.slice(tip?.position?.end.offset)).toContain("AI による目安です。");
     if (level === "low") {
       expect(markdown).toContain(
-        `> 変更の種類：${medium.change}。影響の範囲：${medium.scope}。取り消しやすさ：${medium.reversibility}`,
+        `> 変更の種類：${medium.change}。影響の範囲：${medium.scope}。取り消しやすさ：${medium.reversibility}。`,
       );
     } else {
       expect(markdown).toContain(
@@ -501,13 +501,48 @@ describe("リスク評価の節（PBI-362）", () => {
     }
   });
 
+  it("低の根拠が「。」で終わる値でも、句点を重ねず、末尾の句点は1つにする", () => {
+    const low = riskAssessmentLines(
+      assessed({
+        ...medium,
+        level: "low",
+        focus: [],
+        change: "文言の修正。",
+        scope: "画面だけ。",
+        reversibility: "戻しやすい。",
+      }),
+    ).join("\n");
+    expect(low).toContain(
+      "> 変更の種類：文言の修正。影響の範囲：画面だけ。取り消しやすさ：戻しやすい。\n",
+    );
+    expect(low).not.toContain("。。");
+  });
+
+  it("確認箇所のラベルにバッククォートがあっても、リンクの文字列を元のパスの綴りのまま表示する", () => {
+    const where = "src/a`b.ts:3";
+    const markdown = riskAssessmentLines(
+      assessed({ ...medium, focus: [{ where, why: "確認" }] }, "review", "a".repeat(40)),
+      "https://github.com/acme/app",
+    ).join("\n");
+    const labels: string[] = [];
+    function visit(node: { type: string; value?: string; children?: unknown[] }) {
+      if (node.type === "inlineCode" && node.value) labels.push(node.value);
+      node.children?.forEach((child) => {
+        visit(child as Parameters<typeof visit>[0]);
+      });
+    }
+    visit(fromMarkdown(markdown));
+    expect(labels).toContain(where);
+    expect(markdown).toContain("/src/a%60b.ts#L3)");
+  });
+
   it("段階ごとに、勧める深さが決まる。合図・とくに見る箇所が無ければ、その行を出さない", () => {
     const low = riskAssessmentLines(assessed({ ...medium, level: "low", focus: [] })).join("\n");
     expect(low).toContain("### リスク評価");
     expect(low).toContain("> **変更リスク: 低(1)**");
     expect(low).toContain("- 勧めるレビューの深さ：流し読みでよい");
     expect(low).not.toContain("リスクの合図：");
-    expect(low).not.toContain("とくに見る箇所：");
+    expect(low).not.toContain("[!TIP]");
     expect(riskAssessmentLines(assessed(medium)).join("\n")).toContain(
       "- 勧めるレビューの深さ：変えた振る舞いの箇所を読む",
     );
@@ -560,11 +595,11 @@ describe("リスク評価の節（PBI-362）", () => {
     expect(riskAssessmentLines(undefined)).toEqual([]);
   });
 
-  it("とくに見る箇所のバッククォートは、インラインコードを閉じないように置き換える", () => {
+  it("とくに見る箇所のバッククォートは、置き換えずに、長いバッククォートで囲んで元の綴りのまま表示する", () => {
     const lines = riskAssessmentLines(
       assessed({ ...medium, focus: [{ where: "a`b`.ts", why: "理由" }] }),
     );
-    expect(lines).toContain("> - `a'b'.ts`：理由");
+    expect(lines).toContain("> - `` a`b`.ts ``：理由");
   });
 });
 
@@ -627,16 +662,31 @@ describe("リスク評価のリンクと過去の記録", () => {
     "仕様・設定・手順を確認する",
     "src/\uD800.ts:1",
     "src/\uDC00.ts:1",
+    "src/a:b.ts:1",
   ])("リンクにできない %s はテキストのまま", (where) => {
     const markdown = render(where);
     expect(markdown).not.toContain("/blob/");
     expect(markdown).toContain(where);
   });
 
+  it.each(["src/a\tb.ts:1", "src/a\u0001b.ts:1", "src/a\u007fb.ts:1"])(
+    "制御文字を含む %j はリンクにしない",
+    (where) => {
+      expect(render(where)).not.toContain("/blob/");
+    },
+  );
+
+  it.each(["src/a\u2028b.ts:1", "src/a\u2029b.ts:1"])(
+    "行の区切り（U+2028・U+2029）を含む %j は、行指定の一致の段階で拒まれリンクにしない",
+    (where) => {
+      expect(render(where)).not.toContain("/blob/");
+    },
+  );
+
   it("リポジトリ・コミットが不明ならリンクにせず、表示時の先頭に置き換えない", () => {
     for (const url of ["", "not a repository"])
       expect(render("a.ts:1", url)).not.toContain("/blob/");
-    for (const sha of ["", "main", "../main", "a/b"])
+    for (const sha of ["", "main", "../main", "a/b", ` ${commit}`, `${commit} `, `${commit}\n`])
       expect(render("a.ts:1", repo, sha)).not.toContain("/blob/");
     expect(riskAssessmentLines(assessed(medium, "review", commit)).join("\n")).not.toContain(
       "/blob/",
@@ -664,7 +714,6 @@ describe("リスク評価のリンクと過去の記録", () => {
       expect(at).toBeGreaterThan(previous);
       previous = at;
     }
-    expect(markdown).not.toContain("確認してください");
   });
 
   it.each(["low", "medium", "high"])(
@@ -724,10 +773,8 @@ describe("PR の説明にリスク評価を載せない（PBI-429）", () => {
       const task = implementTask({ riskAssessment: risk });
       const text = joinBodyText(buildPullRequestBodyText(task));
       expect(text).not.toContain("リスク評価");
-      expect(text).not.toContain("段階：");
       const parts = buildPullRequestBodyParts(task);
       expect(Object.values(parts).join("\n")).not.toContain("リスク評価");
-      expect(Object.values(parts).join("\n")).not.toContain("段階：");
     },
   );
 
@@ -993,7 +1040,7 @@ describe("レビューのタスクのリスク評価（PBI-362）", () => {
     );
     expect(body.length).toBeLessThanOrEqual(60_000);
     expect(body).toContain(
-      "### リスク評価\n\n評価の詳細は長いため省略しました。sacty のタスクの画面で確かめてください。",
+      "### リスク評価\n\n評価の詳細は長いため省略しました。依頼した人は、Sacty のタスク t-1 の画面で確かめられます。タスクの画面は、依頼した人のマシンでだけ開けます。",
     );
     expect(body).toContain("総評");
     expect(body).toContain("AI がレビューしました");

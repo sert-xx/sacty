@@ -1,4 +1,4 @@
-<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/review-stop-notice.ts, apps/daemon/src/review-dispatch-count.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts -->
+<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/review-stop-notice.ts, apps/daemon/src/review-dispatch-count.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts, apps/daemon/src/suggestion-triage.ts, apps/daemon/src/triage-reply.ts, apps/daemon/src/risk-assessment.ts -->
 
 [日本語](intake.md) | **English**
 
@@ -186,7 +186,13 @@ The review step of the task details shows the same information, together with th
 
 For a review imported from a GitHub PR (a review request or a label), a "リスク評価" (risk assessment) section for the PR is added right after the verdict, only in a round whose verdict is no findings. It is not added in a round with suggestions, required fixes, or no verdict.
 It holds the level (low, medium, or high), the suggested review depth, the grounds, and the places to look at (the levels mean the same as in [PR risk assessment](tasks.en.md#pr-risk-assessment)).
-The level and grounds appear in a GitHub Alert: `[!NOTE]` for low (1), `[!IMPORTANT]` for medium (2), and `[!WARNING]` for high (3). These numbers identify categories, not scores or probabilities. A separate `[!TIP]` shows the focus locations, why they matter, and what a person should judge or verify; it is omitted when there are no focus items. Valid file and line references link to the assessed commit. Verification scope and unverified matters remain free text outside the alerts, together with the AI guidance note.
+The level and grounds appear in one of these GitHub Alerts. The numbers identify categories, not scores or probabilities.
+
+- Low (1): `[!NOTE]`, headed "変更リスク: 低(1)" ("Change risk: low (1)")
+- Medium (2): `[!IMPORTANT]`, headed "変更リスク: 中(2)" ("Change risk: medium (2)")
+- High (3): `[!WARNING]`, headed "変更リスク: 高(3)" ("Change risk: high (3)")
+
+A separate `[!TIP]`, headed "とくに見る箇所（人間への確認依頼）" ("Places to look at closely (requests to a human)"), shows the focus locations, why they matter, and what a person should judge or verify; it is omitted when there are no focus items. Valid file and line references link to the assessed commit. Verification scope and unverified matters (headed "確認範囲・未確認事項") remain free text outside the alerts, together with the AI guidance note.
 The assessment is separate from the findings and the verdict, and does not change the verdict.
 When it could not be assessed in a round with no findings, that is written and the review is posted as it is. A [review of a PR that sacty created](#reviewing-prs-that-sacty-created) gets this section in a round with no findings too, if it is a review of an implementation PR (not for a requirements or design PR, nor for a task that continues an existing PR; neither the section nor the "PR risk assessment" section appears for those).
 

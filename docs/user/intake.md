@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/daemon/src/review-stop-notice.ts、apps/daemon/src/review-dispatch-count.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts、apps/daemon/src/suggestion-triage.ts、apps/daemon/src/triage-reply.ts -->
+<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/daemon/src/review-stop-notice.ts、apps/daemon/src/review-dispatch-count.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts、apps/daemon/src/suggestion-triage.ts、apps/daemon/src/triage-reply.ts、apps/daemon/src/risk-assessment.ts -->
 
 **日本語** | [English](intake.en.md)
 
@@ -186,7 +186,13 @@ PR の目的（PR の説明や、示された依頼・受け入れ条件・設�
 
 GitHub の PR から取り込んだレビュー（レビューの依頼・ラベル）では、判定が指摘なしの回だけ、判定のすぐ後に、PR の「リスク評価」の節が付きます。提案あり・修正が必要・判定なしの回には付きません。
 段階（低・中・高）、勧めるレビューの深さ、根拠、とくに見る箇所が書かれます（段階の意味は、[PR のリスク評価](tasks.md#pr-のリスク評価)と同じです）。
-段階と根拠は、低(1)を `[!NOTE]`、中(2)を `[!IMPORTANT]`、高(3)を `[!WARNING]` の GitHub Alert に表示します。番号は区分で、評価点や確率ではありません。対象箇所・見る理由・人間に判断や確認してほしいことは、独立した `[!TIP]` に表示します（確認箇所がなければ省略します）。正しいファイルと行の指定は、評価したコミットへのリンクになります。確認範囲・未確認事項は自由文のまま、AI による目安の注記とともに枠外に表示します。
+段階と根拠は、次の GitHub Alert に表示します。番号は区分で、評価点や確率ではありません。
+
+- 低(1)：`[!NOTE]`（見出しは「変更リスク: 低(1)」）
+- 中(2)：`[!IMPORTANT]`（「変更リスク: 中(2)」）
+- 高(3)：`[!WARNING]`（「変更リスク: 高(3)」）
+
+対象箇所・見る理由・人間に判断や確認してほしいことは、「とくに見る箇所（人間への確認依頼）」という見出しの独立した `[!TIP]` に表示します（確認箇所がなければ省略します）。正しいファイルと行の指定は、評価したコミットへのリンクになります。確認範囲・未確認事項は自由文のまま、AI による目安の注記とともに枠外に表示します。
 評価は、指摘や判定とは別のもので、判定を変えません。
 指摘なしの回に評価できなかったときは、その旨が書かれ、レビューはそのまま投稿されます。
 [sacty が作った PR のレビュー](#sacty-が作った-pr-のレビュー)も、実装の PR のレビューなら、指摘なしの回にこの節が付きます（要求要件・設計の PR のレビューと、既存の PR を引き継いで直すタスクの PR のレビューには付かず、その PR では「PR のリスク評価」の欄も出ません）。
