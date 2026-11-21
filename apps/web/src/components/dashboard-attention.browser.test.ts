@@ -24,13 +24,13 @@ const row = (id, group, hours, text) => ({
   status: { text, tone: 'person' }, href: '/tasks/' + id, waitingSince: since(hours),
 });
 const attention = [
-  row('d1', 'decision', 1, '実装の PR のマージ待ち'),
+  row('d1', 'decision', 1, '実装の修正の PR のマージ待ち・AI のレビュー中'),
   row('d2', 'decision', 2, '設計の承認待ち'),
   ...Array.from({ length: 8 }, (_, i) => row('p' + i, 'paused', 100 + i, '利用上限で一時停止')),
 ];
 createRoot(document.getElementById('root')).render(
   h(I18nProvider, { locale: 'ja' },
-    h('div', { style: { padding: 8 } }, h(AttentionCard, { data: { attention }, now })),
+    h('div', { style: { padding: 16 } }, h(AttentionCard, { data: { attention }, now })),
   ),
 );
 `;
@@ -172,3 +172,35 @@ it.each([1440, 375])(
   },
   30000,
 );
+
+it("幅 375px で、「レビュー中」を添えた行の状態の文と待っている時間が欄の中に収まり、ページが横にずれない", async () => {
+  const page = await browser.newPage({ viewport: { width: 375, height: 900 } });
+  try {
+    await page.goto(url);
+    await page.getByTestId("attention-list").waitFor();
+    const m = await page.evaluate(() => {
+      const list = document.querySelector('[data-testid="attention-list"]');
+      const row = document.querySelector('[data-testid="attention-d1"]');
+      const wait = document.querySelector('[data-testid="attention-waiting-d1"]');
+      const status = [...(row?.querySelectorAll("span") ?? [])].find((s) =>
+        s.textContent?.includes("AI のレビュー中"),
+      );
+      const right = (e: Element | null | undefined) =>
+        e?.getBoundingClientRect().right ?? Number.NaN;
+      return {
+        listRight: list ? list.getBoundingClientRect().left + list.clientWidth : Number.NaN,
+        statusRight: right(status),
+        waitRight: right(wait),
+        statusScroll: status ? status.scrollWidth - status.clientWidth : Number.NaN,
+        pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    });
+    expect(m.statusRight).toBeLessThanOrEqual(m.listRight);
+    expect(m.statusRight).toBeLessThanOrEqual(m.listRight);
+    expect(m.waitRight).toBeLessThanOrEqual(m.listRight);
+    expect(m.statusScroll).toBeLessThanOrEqual(0);
+    expect(m.pageOverflow).toBeLessThanOrEqual(0);
+  } finally {
+    await page.close();
+  }
+}, 30000);

@@ -219,7 +219,9 @@ function TaskRow({
         </span>
       </div>
       {aside && (
-        <div className="ml-auto flex shrink-0 flex-col items-end gap-0.5 text-sm">{aside}</div>
+        <div className="ml-auto flex max-w-full shrink-0 flex-col items-end gap-0.5 text-sm">
+          {aside}
+        </div>
       )}
       {/* 案内は、題と状態の下に全幅で置く（狭い画面で、状態欄に押されて1文字ずつ折り返さないように） */}
       {note && (
@@ -288,7 +290,11 @@ export function AttentionCard({ data, now }: { data: DashboardData; now: number 
                       aside={
                         <>
                           <span className="sr-only">{t.openTasks.status}</span>
-                          <StatusLabelView text={task.status.text} tone={task.status.tone} />
+                          <StatusLabelView
+                            text={task.status.text}
+                            tone={task.status.tone}
+                            className="whitespace-normal text-right"
+                          />
                           {/* 待っている時間は画面の時計で計算するので、サーバーと数秒ずれても描き直さない */}
                           <span
                             data-testid={`attention-waiting-${task.id}`}
