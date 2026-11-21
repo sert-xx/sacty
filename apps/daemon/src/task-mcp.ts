@@ -17,7 +17,6 @@ import {
   canDecideTests,
   canDerive,
   canRereview,
-  canRerun,
   DeriveTaskInput,
   gatePullRequest,
   hasFailures,
@@ -40,6 +39,7 @@ import {
   renderMessage,
   repoKey,
   rerunEditableBody,
+  rerunnableKind,
   resumeNoteRoom,
   reviewWatching,
   reworkTargets,
@@ -57,7 +57,11 @@ import { validLogId } from "./session-logs.js";
 import { DELIVERABLE_KINDS, DELIVERABLE_STATUSES } from "./task-reads.js";
 
 /** 中止の確認の画面が読む、片付けの対象 1 つ（target は container・workspace・session・branch・pull_request）。 */
-export type CleanupPlanItem = { target: string; present: boolean; detail?: string };
+export type CleanupPlanItem = {
+  target: string;
+  present: boolean;
+  detail?: string;
+};
 
 /** MCP サーバーが呼ぶ、起動中の sacty の API。つながらない・断られたときは、理由を文にした例外にする。 */
 export type SactyApi = {
@@ -155,7 +159,12 @@ export type SactyApi = {
    */
   derive(
     taskId: string,
-    input: { title: string; body: string; repo: string | null; derivedBefore: string[] },
+    input: {
+      title: string;
+      body: string;
+      repo: string | null;
+      derivedBefore: string[];
+    },
   ): Promise<Task>;
   /**
    * タスクの題を変える（画面の「題を変える」と同じ API。PBI-412）。変えた後のタスクを返す。送るのは title だけ。
@@ -377,7 +386,12 @@ export function approvalOf(task: Task): Approval | undefined {
   const watched = gatePullRequest(task);
   if (watched && watched.step === step) {
     const url = watched.url || (watched.repo ? pullRequestUrl(watched.repo, watched.number) : "");
-    return { step, submission, method: "pull_request", ...(url ? { pullRequestUrl: url } : {}) };
+    return {
+      step,
+      submission,
+      method: "pull_request",
+      ...(url ? { pullRequestUrl: url } : {}),
+    };
   }
   return { step, submission, method: "approve_step" };
 }
@@ -719,7 +733,10 @@ const TaskDetailSchema = TaskSummarySchema.extend({
 export type TaskDetail = z.infer<typeof TaskDetailSchema>;
 
 /** rereview_task の結果。 */
-const RereviewSchema = z.object({ message: z.string(), task: TaskSummarySchema });
+const RereviewSchema = z.object({
+  message: z.string(),
+  task: TaskSummarySchema,
+});
 
 /**
  * wait_for_task の時間（秒・ミリ秒）。クライアントが1回の呼び出しを打ち切る既定は、Codex・公式 SDK のクライアントが 60 秒
@@ -798,7 +815,10 @@ const ProjectListSchema = z.object({
 });
 
 /** create_task の結果。 */
-const CreateTaskSchema = z.object({ message: z.string(), task: TaskSummarySchema });
+const CreateTaskSchema = z.object({
+  message: z.string(),
+  task: TaskSummarySchema,
+});
 
 /** approve_step の結果。 */
 const ApproveSchema = z.object({
@@ -1090,9 +1110,13 @@ function pauseBlock(task: Task): string | undefined {
  */
 function resumeBlock(task: Task): { reason: string; decideOnScreen: string[] } | undefined {
   if (task.status === "cancelled") {
+    const rerunRefusal = rerunBlock(task);
     return {
-      reason:
-        "中止したタスクは再開できません（何も変えていません）。やり直すなら、利用者に頼まれたときだけ rerun_task で再実行します（新しいタスクになります）。",
+      reason: `中止したタスクは再開できません（何も変えていません）。${
+        rerunRefusal
+          ? noRerunGuide("中止したタスクは", rerunRefusal)
+          : "やり直すなら、利用者に頼まれたときだけ rerun_task で再実行します（新しいタスクになります）。"
+      }`,
       decideOnScreen: [],
     };
   }
@@ -1131,7 +1155,10 @@ function resumeBlock(task: Task): { reason: string; decideOnScreen: string[] } |
  */
 function cancelBlock(task: Task): { reason: string; decideOnScreen: string[] } | undefined {
   if (task.status === "cancelled") {
-    return { reason: "すでに中止したタスクです（何も変えていません）。", decideOnScreen: [] };
+    return {
+      reason: "すでに中止したタスクです（何も変えていません）。",
+      decideOnScreen: [],
+    };
   }
   if (isFinished(task)) {
     return {
@@ -1203,7 +1230,11 @@ function deriveBlock(task: Task): { reason: string; decideOnScreen: string[] } |
 }
 
 /** 画面の「再実行」の既定値（題は元の題・説明は人の説明・リポジトリは元のタスクのもの。無ければ null）。 */
-function rerunDefaults(task: Task): { title: string; body: string; repo: string | null } {
+function rerunDefaults(task: Task): {
+  title: string;
+  body: string;
+  repo: string | null;
+} {
   return {
     title: task.title,
     body: rerunEditableBody(task),
@@ -1243,38 +1274,43 @@ function rerunBlock(task: Task): { reason: string; decideOnScreen: string[] } | 
       decideOnScreen: [],
     };
   }
+  return rerunKindBlock(task);
+}
+
+/**
+ * 中止の後に再実行できない理由と、画面で人が行えること（できるなら undefined）。rerunBlock の、状態で断る条件（中止していない・
+ * 完了）を除いた残りの判定で、rerunBlock と中止の案内（get_cancel_plan・resume_task の断り）が同じこの関数を使う。
+ * 中止の前のタスクに呼ぶと「いま中止したとすれば rerun_task が断るか」になる。
+ */
+function rerunKindBlock(task: Task): { reason: string; decideOnScreen: string[] } | undefined {
   if (task.rerunBy !== undefined) {
     return {
-      reason: `このタスクは再実行済みです（何も変えていません）。再実行で作ったタスク（${task.rerunBy}）を get_task で確かめてください。再実行は1度だけです。`,
+      reason: `このタスクは再実行済みです${NOTHING_CHANGED}。再実行で作ったタスク（${task.rerunBy}）を get_task で確かめてください。再実行は1度だけです。`,
       decideOnScreen: [],
     };
   }
   if (task.parent !== undefined) {
     return {
-      reason:
-        "分割の子タスクは、再実行できません（何も変えていません）。親のタスクから進めてください。",
+      reason: `分割の子タスクは、再実行できません${NOTHING_CHANGED}。親のタスクから進めてください。`,
       decideOnScreen: [],
     };
   }
-  if (!canRerun(task)) {
+  if (!rerunnableKind(task)) {
     return {
-      reason:
-        "PR のレビューのタスクは、再実行できません（何も変えていません）。PR で依頼し直してください。",
+      reason: `PR のレビューのタスクは、再実行できません${NOTHING_CHANGED}。PR で依頼し直してください。`,
       decideOnScreen: [],
     };
   }
   const defaults = rerunDefaults(task);
   if (task.ticket !== undefined && defaults.repo === null) {
     return {
-      reason:
-        "チケットから取り込み、作業するリポジトリが決まっていないタスクは、このツールでは再実行できません（何も変えていません）。画面でリポジトリを選んで再実行してください。",
+      reason: `チケットから取り込み、作業するリポジトリが決まっていないタスクは、このツールでは再実行できません${NOTHING_CHANGED}。画面でリポジトリを選んで再実行してください。`,
       decideOnScreen: ["作業するリポジトリの選択"],
     };
   }
   if (!RerunTaskInput.safeParse(defaults).success) {
     return {
-      reason:
-        "題・説明・リポジトリが、画面の既定値のままでは送れない（説明が上限を超えているなど）ため、このツールでは再実行できません（何も変えていません）。画面で直して再実行してください。",
+      reason: `題・説明・リポジトリが、画面の既定値のままでは送れない（説明が上限を超えているなど）ため、このツールでは再実行できません${NOTHING_CHANGED}。画面で直して再実行してください。`,
       decideOnScreen: ["題・説明・リポジトリを直しての再実行"],
     };
   }
@@ -1300,9 +1336,15 @@ function cancelTargets(task: Task): {
   if (pr?.number) {
     const url = pr.url ?? (pr.repo ? pullRequestUrl(pr.repo, pr.number) : `#${pr.number}`);
     if (task.continuedPullRequest) {
-      untouchedPullRequests.push({ url, reason: "引き継いだ人の PR のため、閉じません" });
+      untouchedPullRequests.push({
+        url,
+        reason: "引き継いだ人の PR のため、閉じません",
+      });
     } else if (task.pullRequestState === "merged") {
-      untouchedPullRequests.push({ url, reason: "マージ済みのため、閉じません" });
+      untouchedPullRequests.push({
+        url,
+        reason: "マージ済みのため、閉じません",
+      });
     } else {
       closePullRequests.push(url);
     }
@@ -1321,7 +1363,12 @@ function cancelTargets(task: Task): {
     ),
   ];
   const untouchedBranches = continued
-    ? [{ name: continued, reason: "引き継いだ人の PR のブランチのため、消しません" }]
+    ? [
+        {
+          name: continued,
+          reason: "引き継いだ人の PR のブランチのため、消しません",
+        },
+      ]
     : [];
   return {
     closePullRequests: [...new Set(closePullRequests)],
@@ -1338,10 +1385,40 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
   return x.size === y.size && [...x].every((v) => y.has(v));
 }
 
+/** rerunBlock の理由に入る、何も変えていないことの句。中止の案内に取り込むときは、これを消す。 */
+const NOTHING_CHANGED = "（何も変えていません）";
+
 /** 中止の後に残るもの。 */
 const CANCEL_KEPT = ["作業履歴", "セッションログ"];
-const CANCEL_IRREVERSIBLE =
-  "中止は取り消せず、再開もできません。やり直すなら、中止したタスクの再実行（rerun_task。新しいタスクになり、作業領域・ブランチ・PR は戻りません）を使います。PR を閉じ、sacty のブランチ（リモートも）と作業領域を消します。";
+const CANCEL_IRREVERSIBLE_BASE = "中止は取り消せず、再開もできません。";
+const CANCEL_IRREVERSIBLE_CLEANUP =
+  "PR を閉じ、sacty のブランチ（リモートも）と作業領域を消します。";
+
+/**
+ * 再実行できないタスクに示す、「MCP からはやり直せない」の前置きと、rerunBlock が返す理由・画面で人が行うこと。
+ * 前置きの主語（subject）は、呼び出し側が時制に合わせて渡す（中止の前は「中止すると」、中止の後は「中止したタスクは」）。
+ */
+function noRerunGuide(
+  subject: string,
+  block: { reason: string; decideOnScreen: string[] },
+): string {
+  const screen =
+    block.decideOnScreen.length > 0
+      ? `画面で人が行うこと：${block.decideOnScreen.join("・")}。`
+      : "";
+  return `${subject}、MCP からはやり直せません。${block.reason.replace(NOTHING_CHANGED, "")}${screen}`;
+}
+
+/** get_cancel_plan の irreversible。中止できるタスクだけ、中止の後のやり直しの道（再実行できる見込みか、できないか）を最後に添える。 */
+function cancelIrreversible(task: Task, canCancel: boolean): string {
+  const base = `${CANCEL_IRREVERSIBLE_BASE}${CANCEL_IRREVERSIBLE_CLEANUP}`;
+  if (!canCancel) return base;
+  const block = rerunKindBlock(task);
+  const guide = block
+    ? noRerunGuide("中止すると", block)
+    : "やり直すなら、中止の後に rerun_task で再実行できる見込みです（新しいタスクになり、作業領域・ブランチ・PR は戻りません。デーモンが断ることがあります）。";
+  return `${base}${guide}`;
+}
 
 /** 中止の片付けの結果を、結果の形にする。detail は文言のコードのこともあるので、文にする。 */
 function cleanupResults(task: Task): z.infer<typeof CleanupResultSchema>[] {
@@ -1421,7 +1498,12 @@ export function summarizeTask(task: Task, webUrl?: string): TaskSummary {
       : {}),
     ...(task.reviewOf ? { reviewOf: task.reviewOf.taskId } : {}),
     ...(task.reviewTasks && task.reviewTasks.length > 0
-      ? { reviewTasks: task.reviewTasks.map((r) => ({ taskId: r.taskId, number: r.number })) }
+      ? {
+          reviewTasks: task.reviewTasks.map((r) => ({
+            taskId: r.taskId,
+            number: r.number,
+          })),
+        }
       : {}),
     ...(task.status === "paused" && task.pausedReason ? { pausedReason: task.pausedReason } : {}),
     ...(approval ? { approval } : {}),
@@ -1429,7 +1511,11 @@ export function summarizeTask(task: Task, webUrl?: string): TaskSummary {
     ...(isAwaitingAiJudgement(task) ? { pendingReview: true } : {}),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
-    ...(webUrl ? { url: `${webUrl.replace(/\/$/, "")}/tasks/${encodeURIComponent(task.id)}` } : {}),
+    ...(webUrl
+      ? {
+          url: `${webUrl.replace(/\/$/, "")}/tasks/${encodeURIComponent(task.id)}`,
+        }
+      : {}),
   };
 }
 
@@ -1618,7 +1704,10 @@ function describeCancelled(task: Task): NonNullable<TaskDetail["cancelled"]> {
     cleanup,
     failed: cleanup
       .filter((c) => c.result === "failed")
-      .map((c) => ({ target: c.target, reason: c.reason ?? "理由は記録されていません" })),
+      .map((c) => ({
+        target: c.target,
+        reason: c.reason ?? "理由は記録されていません",
+      })),
   };
 }
 
@@ -1669,7 +1758,9 @@ function describeAsks(task: Task): z.infer<typeof HumanAsksSchema> | undefined {
             step: asks.undecided.step,
             remarkIds: asks.undecided.remarkIds.slice(0, ASK_REMARK_IDS_MAX),
             ...(asks.undecided.remarkIds.length > ASK_REMARK_IDS_MAX
-              ? { omittedRemarkIds: asks.undecided.remarkIds.length - ASK_REMARK_IDS_MAX }
+              ? {
+                  omittedRemarkIds: asks.undecided.remarkIds.length - ASK_REMARK_IDS_MAX,
+                }
               : {}),
             reason: clip(asks.undecided.reason, ASK_TEXT_MAX),
           },
@@ -1969,7 +2060,7 @@ export function checkRequestChanges(
   const reworkStep = reworkTargets(task, input.step as StepKey)[0];
   if (!reworkStep) {
     throw new Error(
-      `${renderMessage({ code: "gate.invalidTarget" }, "ja")}このタスクは差し戻さず、画面で確かめるか、どうするかを判断してもらってください（中止は、利用者がそのタスクの中止をはっきり頼んだときだけ cancel_task で行えます。中止したタスクのやり直しは、利用者に頼まれたときだけ rerun_task で行えます）。`,
+      `${renderMessage({ code: "gate.invalidTarget" }, "ja")}このタスクは差し戻さず、画面で確かめるか、どうするかを判断してもらってください（中止は、利用者がそのタスクの中止をはっきり頼んだときだけ cancel_task で行えます。中止したタスクのうち再実行できる種類のものは、利用者に頼まれたときだけ rerun_task でやり直せます）。`,
     );
   }
   if (remarks.length === 0) {
@@ -2441,7 +2532,10 @@ async function waitForTask(
   let snapshot = await poll(true);
   const base: { task: WatchTask; children: WatchChild[] } = baseline
     ? { task: baseline.w, children: [...baseline.c] }
-    : { task: watchOfTask(snapshot.task), children: snapshot.children.map(watchOfChild) };
+    : {
+        task: watchOfTask(snapshot.task),
+        children: snapshot.children.map(watchOfChild),
+      };
 
   const cursorOf = () => {
     // 引けなかった子は、前に分かっていた値を cursor に残す（次に引けたとき、比べられる）
@@ -2450,7 +2544,12 @@ async function waitForTask(
       const watch = watchOfChild(c);
       return watch.u ? (known.get(watch.i) ?? watch) : watch;
     });
-    return encodeCursor({ v: 1, t: taskId, w: watchOfTask(snapshot.task), c: children });
+    return encodeCursor({
+      v: 1,
+      t: taskId,
+      w: watchOfTask(snapshot.task),
+      c: children,
+    });
   };
 
   /** 途中の問い合わせが続けて失敗したときの理由。届かないときは待ちの途中で届かなくなった理由、応答のある失敗は元の理由。cursor を添える。 */
@@ -2461,7 +2560,9 @@ async function waitForTask(
       original instanceof Error &&
       /^デーモンが \d{3} を返しました。|^デーモンに認証できません。/.test(original.message);
     const reason = answered ? (original as Error).message : READ_REASONS.waitLost;
-    return new Error(`${reason}（呼び直すときの cursor：${cursorOf()}）`, { cause: original });
+    return new Error(`${reason}（呼び直すときの cursor：${cursorOf()}）`, {
+      cause: original,
+    });
   };
 
   const finish = (changes: string[]) => {
@@ -2705,7 +2806,10 @@ const TOOLS: readonly ToolDefinition[] = [
     },
     async run(api, args) {
       // 画面と同じ検査（前後の空白を除いた題が空・長すぎるなど）。断るときは、何も作らない
-      const checked = CreateTaskInput.pick({ title: true, body: true }).safeParse({
+      const checked = CreateTaskInput.pick({
+        title: true,
+        body: true,
+      }).safeParse({
         title: args.title,
         body: args.body,
       });
@@ -2846,7 +2950,9 @@ const TOOLS: readonly ToolDefinition[] = [
     annotations: { readOnlyHint: true, openWorldHint: false },
     async run(api, args) {
       const taskId = checkedTaskId(args.task_id);
-      const found = await api.getErrorReport(taskId, { lang: args.lang ?? "ja" });
+      const found = await api.getErrorReport(taskId, {
+        lang: args.lang ?? "ja",
+      });
       if (!found) throw taskNotFound();
       // 省いたことを示す印が無い（前の版のデーモン）ときは、レポートの中身を使わずに断る
       if (!found.omitted) throw new Error(READ_REASONS.reportNotOmitted);
@@ -2891,10 +2997,17 @@ const TOOLS: readonly ToolDefinition[] = [
     },
     async run(api, args) {
       const taskId = checkedTaskId(args.task_id);
-      const task = await api.approve(taskId, { step: args.step, submission: args.submission });
+      const task = await api.approve(taskId, {
+        step: args.step,
+        submission: args.submission,
+      });
       return {
         message: "承認しました。sacty が次の工程を始めます。",
-        approved: { taskId: task.id, step: args.step, submission: args.submission },
+        approved: {
+          taskId: task.id,
+          step: args.step,
+          submission: args.submission,
+        },
         task: summarizeTask(task, api.webUrl()),
       };
     },
@@ -3159,7 +3272,7 @@ const TOOLS: readonly ToolDefinition[] = [
           kept: CANCEL_KEPT,
         },
         notes,
-        irreversible: CANCEL_IRREVERSIBLE,
+        irreversible: cancelIrreversible(task, !blocked),
         cancelArguments: {
           close_pull_requests: blocked ? [] : targets.closePullRequests,
           delete_branches: blocked ? [] : targets.deleteBranches,
@@ -3172,7 +3285,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: "cancel_task",
     title: "タスクの中止",
     description: [
-      "タスクを中止します（画面の「中止」と同じ）。**取り消せません。再開もできません。**やり直すなら、中止した後に rerun_task で再実行します（新しいタスクになり、作業領域・ブランチ・PR は戻りません）。",
+      "タスクを中止します（画面の「中止」と同じ）。**取り消せません。再開もできません。**再実行できる種類のタスクなら、中止した後に rerun_task で再実行できます（新しいタスクになり、作業領域・ブランチ・PR は戻りません）。PR のレビューのタスク・分割の子・リポジトリが決まっていないチケット由来のタスクなど、再実行できないタスクは、中止すると MCP からはやり直せません（get_cancel_plan の irreversible に、そのタスクのやり直しの道が出ます）。",
       "sacty が作った実装の PR を閉じ（マージはしません）、要求要件・設計の PR のうち開いているものも閉じ、sacty のブランチ（リモートも）を消し、",
       "作業領域・退避した git のメタデータ・依存のキャッシュを消し、実行中のコンテナを止め、オーケストレーターのセッションを消します。作業履歴とセッションログは残ります。",
       "マージ済みの PR・引き継いだ人の PR とそのブランチには触れません。",
@@ -3243,7 +3356,10 @@ const TOOLS: readonly ToolDefinition[] = [
       const cleanup = cleanupResults(task);
       const failed = cleanup
         .filter((c) => c.result === "failed")
-        .map((c) => ({ target: c.target, reason: c.reason ?? "理由は記録されていません" }));
+        .map((c) => ({
+          target: c.target,
+          reason: c.reason ?? "理由は記録されていません",
+        }));
       const done = (target: string) =>
         cleanup.filter((c) => c.target === target && c.result === "done" && c.reason);
       const message =
@@ -3309,7 +3425,11 @@ const TOOLS: readonly ToolDefinition[] = [
       });
       return {
         message: `再実行しました。新しいタスク（${task.id}）を作り、sacty が工程を始めます（時間と費用がかかります）。元のタスク（${taskId}）は、もう再実行できません。`,
-        rerun: { originalTaskId: taskId, newTaskId: task.id, noteAdded: note !== "" },
+        rerun: {
+          originalTaskId: taskId,
+          newTaskId: task.id,
+          noteAdded: note !== "",
+        },
         task: summarizeTask(task, api.webUrl()),
       };
     },
@@ -3348,7 +3468,10 @@ const TOOLS: readonly ToolDefinition[] = [
       const blocked = deriveBlock(found.task);
       if (blocked) throw new Error(blocked.reason);
       // デーモンと同じ検査（DeriveTaskInput）で、題・内容の誤りを送らずに断る
-      const checkedInput = DeriveTaskInput.pick({ title: true, body: true }).safeParse({
+      const checkedInput = DeriveTaskInput.pick({
+        title: true,
+        body: true,
+      }).safeParse({
         title: args.title,
         body: args.body,
       });
@@ -3436,7 +3559,7 @@ const INSTRUCTIONS = [
   "一時停止を頼まれたら、get_task の canPause が true のタスクに pause_task を呼びます（実行中の実行は打ち切られ、再開すると工程を最初からやり直します。承認待ちを止めると、承認ゲートと PR の見守りが止まります）。",
   "再開を頼まれたら、get_task の pausedReason・pausedMessage・canResume を確かめてから、resume_task を呼びます（止まった工程を実行し直し、時間と費用がかかります。同じ原因ならまた止まります）。",
   "予算の上限の引き上げ・テストの扱い・子タスクの中止を認める判断・作業するリポジトリの選択など、画面で人が決める判断が要る停止は、resume_task で再開できません（get_task の resumeBlocked の、画面で人が決めることを利用者に伝えます）。",
-  "中止を頼まれたときだけ、get_cancel_plan で片付けの対象（閉じる PR・消すブランチ・作業領域）を読み、利用者に伝えてから、cancel_task を呼びます。中止は取り消せず、再開もできません（PR を閉じ、sacty のブランチと作業領域を消します。作業履歴とセッションログは残ります。質問への答え・エラーの分析の実行中の実行も止めます）。やり直すなら、中止の後に rerun_task で再実行します（新しいタスクになり、作業領域・ブランチ・PR は戻りません）。やり直しを頼まれただけでは中止せず、中止してよいか利用者に確かめます。",
+  "中止を頼まれたときだけ、get_cancel_plan で片付けの対象（閉じる PR・消すブランチ・作業領域）を読み、利用者に伝えてから、cancel_task を呼びます。中止は取り消せず、再開もできません（PR を閉じ、sacty のブランチと作業領域を消します。作業履歴とセッションログは残ります。質問への答え・エラーの分析の実行中の実行も止めます）。再実行できる種類のタスクなら、中止の後に rerun_task で再実行できます（新しいタスクになり、作業領域・ブランチ・PR は戻りません）。再実行できないタスクは、中止すると MCP からはやり直せません（get_cancel_plan の irreversible で確かめます）。やり直しを頼まれただけでは中止せず、中止してよいか利用者に確かめます。",
   "再実行（やり直し）を頼まれたら、get_task の canRerun（中止したタスクで再実行できないときは、rerunBlocked の理由。中止していない・完了したタスクは canRerun が false になるだけです）を確かめてから、中止したタスクに rerun_task を呼びます（新しいタスクを作り、時間と費用のかかる工程が始まります。元のタスクは二度と再実行できなくなり、取り消せません。作業領域・ブランチ・PR は引き継がれず、最初からやり直します）。題や説明を直しての再実行・リポジトリやイメージの変更は、画面で行います。結果を受け取れなかったときは、自動でやり直さず、元のタスクの rerunBy を get_task で確かめます（あれば作られています。無ければ呼び直してよいです）。",
   "完了したタスクの続きの作成（「続きを作って」など）を頼まれたら、get_task の canDerive（完了したタスクで作れないとき＝セキュリティの組み合わせは、deriveBlocked の理由）を確かめてから、derive_task に題（title）と内容（body）を指定して呼びます（新しいタスクを作り、時間と費用のかかる工程が始まります。作ったタスクは消せず、元のタスクは変わりません。呼ぶたびに別のタスクができます。作業するリポジトリは元のタスクのもの、進め方は自動で、変えたいときは画面の「続きのタスクを作る」で行います）。結果を受け取れなかったときは、自動でやり直さず（時間切れ・切断のときは、少し待ってから）、失敗の文にある呼ぶ前の derivedTasks と送った題を基準に、元のタスクの derivedTasks を get_task で確かめます（増えた ID のタスクの題と derivedFrom が今回の依頼と合えば作られています。増えていなければ呼び直してよいです）。",
   "題の変更を頼まれたら、rename_task に題（title）を指定して呼びます（中止したタスク以外は、状態を問いません。今の実行は止めず、この後に作る PR の題・本文・コミット・通知から新しい題になります。すでに作った PR の題とブランチ名は変わらず、作業するリポジトリが決まっているタスクで、題と説明から決まる PR の番号が変わる題は断られます（PR から取り込んだタスクは問いません）。説明（body）の変更はできません）。結果を受け取れなかったときは、get_task の title を確かめます（変わっていれば済んでいます。変わっていなければ呼び直してよいです）。",
@@ -3545,7 +3668,10 @@ function createTaskMcpServer(
         } catch (error) {
           // 取り消された待ちは、失敗ではない（取り消した側は結果を読まない。標準エラーにも残さない）
           if (error instanceof WaitCancelled) {
-            return { content: [{ type: "text", text: error.message }], isError: true };
+            return {
+              content: [{ type: "text", text: error.message }],
+              isError: true,
+            };
           }
           // どのツールが・なぜ失敗したかを、標準エラーに残す（標準出力は MCP のやりとりだけ）。元の原因
           // （つながらなかった理由など）があれば、それも出す
@@ -3571,7 +3697,11 @@ type ServeOptions = NonNullable<Parameters<typeof serveStdio>[1]>;
  */
 export function startTaskMcp(
   api: SactyApi,
-  options: { version: string; transport?: ServeOptions["transport"]; clock?: WaitClock },
+  options: {
+    version: string;
+    transport?: ServeOptions["transport"];
+    clock?: WaitClock;
+  },
 ): { close(): Promise<void> } {
   // 閉じるとき、待っている呼び出しを先に止める（タイマー・問い合わせを残さず、閉じるのが待ちの終わりを待たない）
   const shutdown = new AbortController();
