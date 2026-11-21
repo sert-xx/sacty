@@ -285,6 +285,24 @@ describe("起動中の sacty を操作する MCP サーバー（PBI-392）", () 
     return { activity, pulls, service, id };
   }
 
+  it("フォークからの PR で、新しい先頭を自動では再レビューしないとき、get_task の review.heldCommit にその先頭が出る。人が rereview_task で始めると消える（PBI-461）", async () => {
+    const { activity, pulls, service, id } = await reviewed("feat/retry", "suggestions");
+    const api = apiOver(service, "http://127.0.0.1:4700/");
+    const { client, call, json } = await connect(api);
+    const head = "d".repeat(40);
+    pulls.state = { state: "open", fork: true };
+    pulls.prInfo = { ...pulls.prInfo, headSha: head };
+    await service.checkPullRequests();
+    const held = await json<TaskSummary>("get_task", { task_id: id });
+    expect(held.review).toMatchObject({ watching: true, heldCommit: head });
+    expect(held.state).toBe("idle");
+    expect((await call("rereview_task", { task_id: id })).isError).toBeFalsy();
+    const restarted = await json<TaskSummary>("get_task", { task_id: id });
+    expect(restarted.review).not.toHaveProperty("heldCommit");
+    await client.close();
+    activity.close();
+  });
+
   it("レビューを投稿しても、判定が指摘なしでなければ completed にならない。要約で、見守り中であること・判定・見守りを終えた理由が分かる（PBI-411）", async () => {
     const { activity, pulls, service, id } = await reviewed("feat/retry", "suggestions");
     const api = apiOver(service, "http://127.0.0.1:4700/");

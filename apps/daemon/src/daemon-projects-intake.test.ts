@@ -2655,6 +2655,74 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     activity.close();
   });
 
+  describe("フォークの PR（PBI-461）", () => {
+    const fork = "https://github.com/mallory/app";
+    async function forkPosted() {
+      const ctx = await posted();
+      ctx.pulls.prInfo = {
+        ...ctx.pulls.prInfo,
+        author: "mallory",
+        headRepo: fork,
+        requestedReviewers: ["me"],
+      };
+      requestAfterPost(ctx.service, ctx.pulls, ctx.id);
+      return ctx;
+    }
+
+    it("フォークの作者が自分で再依頼しても、書き込みの権限があっても、別のタスクを作らない", async () => {
+      const { activity, pulls, service, id } = await forkPosted();
+      pulls.lastRequester = "Mallory";
+      pulls.writers = ["mallory"];
+      expect((await service.restartRerequestedReviews([pr(9)])).restarted).toEqual([]);
+      expect(restarts(service, id)).toEqual([]);
+      activity.close();
+    });
+
+    it("フォークの PR を、書き込みの権限がある別の人が再依頼したときは、別のタスクを作る", async () => {
+      const { activity, pulls, service, id } = await forkPosted();
+      pulls.lastRequester = "maintainer";
+      pulls.writers = ["Maintainer"];
+      const { restarted } = await service.restartRerequestedReviews([pr(9)]);
+      expect(restarted).toHaveLength(1);
+      expect(restarted[0]?.reviewRerequest?.taskId).toBe(id);
+      activity.close();
+    });
+
+    it.each([
+      ["権限が無い人", () => ({ lastRequester: "stranger", writers: [] as string[] })],
+      ["頼んだ人が分からない", () => ({ lastRequester: undefined, writers: ["maintainer"] })],
+      [
+        "権限を読めない",
+        () => ({ lastRequester: "maintainer", writers: ["maintainer"], permissionFail: "403" }),
+      ],
+    ])("フォークの PR の再依頼は、%s ときは始めない（みなさない側に倒す）", async (_n, set) => {
+      const { activity, pulls, service, id } = await forkPosted();
+      Object.assign(pulls, set());
+      const result = await service.restartRerequestedReviews([pr(9)]);
+      expect(result).toEqual({ restarted: [], failed: [] });
+      expect(restarts(service, id)).toEqual([]);
+      activity.close();
+    });
+
+    it("head のリポジトリを読めない PR も、フォークと同じに扱う", async () => {
+      const { activity, pulls, service } = await forkPosted();
+      pulls.prInfo = { ...pulls.prInfo, headRepo: undefined };
+      pulls.lastRequester = "mallory";
+      expect((await service.restartRerequestedReviews([pr(9)])).restarted).toEqual([]);
+      activity.close();
+    });
+
+    it("同じリポジトリの PR は、頼んだ人を確かめずに再レビューする（変えない）", async () => {
+      const { activity, pulls, service, id } = await posted();
+      pulls.prInfo = { ...pulls.prInfo, author: "alice", requestedReviewers: ["me"] };
+      pulls.lastRequester = "alice";
+      pulls.permissionFail = "unused";
+      requestAfterPost(service, pulls, id);
+      expect((await service.restartRerequestedReviews([pr(9)])).restarted).toHaveLength(1);
+      activity.close();
+    });
+  });
+
   it("依頼が残っていても、最後の依頼が投稿より前か、依頼のできごとが無ければ、再レビューしない（繰り返さない）", async () => {
     const { activity, pulls, service, id } = await posted();
     pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };

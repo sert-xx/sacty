@@ -781,8 +781,10 @@ export class FakePulls implements PullRequests {
     // 先頭のコミットを指定していなければ、レビューの対象の PR の先頭とする（投稿の直前の確認。PBI-111）
     const state = this.states[input.number] ?? this.state;
     const draft = this.drafts[input.number];
+    // 指定が無ければ、同じリポジトリの PR（フォークでない。PBI-461）
     return {
       headSha: this.prInfo.headSha,
+      fork: false,
       ...state,
       ...(state.state === "open" && draft !== undefined ? { draft } : {}),
     };
@@ -1035,6 +1037,7 @@ export class FakePulls implements PullRequests {
     headSha: "h".repeat(40),
     baseSha: "b".repeat(40),
     author: "alice",
+    headRepo: "https://github.com/acme/app",
     /** 今レビューを依頼されている人（PBI-143）。 */
     requestedReviewers: [] as string[],
   };
@@ -1062,6 +1065,27 @@ export class FakePulls implements PullRequests {
     });
     if (this.lastRequestFail) throw new Error(this.lastRequestFail);
     return this.lastRequestAt;
+  }
+  /** 最後にレビューを依頼した人（PBI-461）。 */
+  lastRequester?: string;
+  async lastReviewRequester(_input: {
+    repo: string;
+    token: string;
+    number: number;
+    reviewer: string;
+  }) {
+    if (this.lastRequestFail) throw new Error(this.lastRequestFail);
+    return this.lastRequester;
+  }
+  /** 書き込みの権限を持つ人（PBI-461）。 */
+  writers: string[] = [];
+  permissionFail?: string;
+  /** 権限を確かめた（リポジトリ・人）。 */
+  permissionChecks: { repo: string; login: string }[] = [];
+  async canWrite(input: { repo: string; token: string; login: string }) {
+    this.permissionChecks.push({ repo: input.repo, login: input.login });
+    if (this.permissionFail) throw new Error(this.permissionFail);
+    return this.writers.some((w) => w.toLowerCase() === input.login.toLowerCase());
   }
   reviews: {
     repo: string;

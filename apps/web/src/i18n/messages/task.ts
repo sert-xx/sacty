@@ -114,12 +114,17 @@ const ja = {
   /** レビューを投稿した後の、PR の変化の見守り（PBI-411）。 */
   reviewWatch: {
     title: "PR の変化を見守っています",
-    hint: "PR に新しいコミットが push されるか、PR の作者が返信すると、自動で再レビューします。判定が「指摘なし」になるか、PR がマージ・クローズされると、完了します。「再レビューして PR に投稿」で、今すぐレビューし直すこともできます。",
+    hint: "新しいコミットの push か作者の返信で、自動で再レビューします（フォークからの PR を除く）。判定が「指摘なし」か、PR のマージ・クローズで完了します。「再レビューして PR に投稿」で、今すぐレビューし直せます。",
     parentHint:
       "PR を作ったタスクが PR を更新して承認待ちに戻ると、自動で再レビューします。判定が「指摘なし」になるか、PR がマージ・クローズされると、完了します。",
     verdict: (round: number, verdict: string) => `${round}回目のレビューの判定：${verdict}`,
-    waiting: "PR の作者の対応を待っています。あなたの対応は要りません。",
+    waiting:
+      "PR の作者の対応を待っています。フォークからの PR でなければ、あなたの対応は要りません。",
     waitingParent: "PR を作ったタスクの対応を待っています。あなたの対応は要りません。",
+    heldHint:
+      "フォークからの PR は、PR のコードを人の判断なしに動かさないため、push や作者の返信では自動で再レビューしません。判定が「指摘なし」になるか、PR がマージ・クローズされると、完了します。",
+    held: (commit: string) =>
+      `新しいコミット（${commit}）は、「再レビューして PR に投稿」を押すまでレビューしません。`,
     open: "投稿したレビューを開く",
     endedTitle: "PR の見守りを終えました",
     ended: {
@@ -820,12 +825,17 @@ const en: TaskMessages = {
   },
   reviewWatch: {
     title: "Watching the PR for changes",
-    hint: "When a new commit is pushed to the PR or the PR author replies, the re-review starts automatically. The task is done when the verdict becomes “no findings” or the PR is merged or closed. You can also use “Review again and post to the PR” to review again right now.",
+    hint: "When a new commit is pushed to the PR or the PR author replies, the re-review starts automatically (except for a PR from a fork). The task is done when the verdict becomes “no findings” or the PR is merged or closed. You can also use “Review again and post to the PR” to review again right now.",
     parentHint:
       "When the task that opened the PR updates it and returns to awaiting approval, the re-review starts automatically. The task is done when the verdict becomes “no findings” or the PR is merged or closed.",
     verdict: (round: number, verdict: string) => `Verdict of review round ${round}: ${verdict}`,
-    waiting: "Waiting for the PR author to respond. Nothing is needed from you.",
+    waiting:
+      "Waiting for the PR author to respond. Unless the PR is from a fork, nothing is needed from you.",
     waitingParent: "Waiting for the task that opened the PR. Nothing is needed from you.",
+    heldHint:
+      "A PR from a fork does not start a re-review automatically on a push or an author reply, because the PR's code would run without a person's decision. The task is done when the verdict becomes “no findings” or the PR is merged or closed.",
+    held: (commit: string) =>
+      `The new commit (${commit}) is not reviewed until you press “Review again and post to the PR”.`,
     open: "Open the posted review",
     endedTitle: "Stopped watching the PR",
     ended: {

@@ -212,10 +212,10 @@ The findings follow the writing rules of the repository (Japanese when there are
 ### After the review is posted
 
 A review task is not done until the verdict becomes "no findings".
-sacty watches the PR for changes and re-reviews automatically when the PR author responds.
+sacty watches the PR for changes and re-reviews automatically when the PR author responds (except for PRs from a fork).
 
 While it watches, the task status is "Waiting on the PR", with the current verdict (changes required, suggestions, verdict unreadable, or no verdict given).
-It waits for the PR author to respond, so nothing is needed from you.
+It waits for the PR author to respond, so nothing is needed from you (for a PR from a fork, a new pushed commit is not reviewed until you press "Review again and post to the PR").
 It does not appear in "Needs you" or the bell in the header, and no completion notification is sent.
 
 sacty handles changes of the PR as follows.
@@ -225,6 +225,15 @@ sacty handles changes of the PR as follows.
 | A new commit was pushed | Re-reviews the latest commit |
 | The PR author replied without adding a commit (an objection, "won't fix", and so on) | Reads the reply and judges the same commit again |
 | It was merged, or closed without merging | Ends the watch and marks the task done |
+
+A PR from a fork (a PR whose head repository differs from the repository it targets) is not re-reviewed automatically, neither on a push nor on the author's reply.
+The re-review verification runs the PR's code in the container, so it must not run without a person's decision.
+When a new commit is pushed, the task details and `review.heldCommit` of `get_task` show that it is not reviewed until a person presses "Review again and post to the PR", and show the new commit.
+sacty comments once on the PR that the new commit is not reviewed automatically (it does not repeat as more commits arrive). If posting fails, it tries again at the next check.
+When a person asks for it with "Review again and post to the PR" or `rereview_task`, it re-reviews as it does for a same-repository PR.
+A GitHub re-request (only for PRs taken in by a review request) counts as a person's action only when the requester is not the PR's author and has write access to the repository.
+When the PR's author re-requests by themselves, or the requester or the permission cannot be read, it does not re-review and shows the new commit as above (the notice on the PR stays once). To re-review after the author's re-request, have a person with write access re-request, or press "Review again and post to the PR" in the UI.
+Ending the watch when the PR is merged or closed is the same as for a same-repository PR.
 
 - Consecutive pushes and replies are re-reviewed once, after things go quiet (2 minutes after the last change).
 - A commit is re-reviewed only once, whether by a push or by a reply.
@@ -275,7 +284,7 @@ When even one file that is not a document is included, when the difference from 
 
 There are four ways to start a re-review.
 
-- Do nothing: after posting the review, sacty watches the PR for changes and starts one automatically ([After the review is posted](#after-the-review-is-posted)).
+- Do nothing: after posting the review, sacty watches the PR for changes and starts one automatically (except for PRs from a fork; [After the review is posted](#after-the-review-is-posted)).
 - From the web UI: when you want it reviewed again right away, press "Review again and post to the PR" in the task details.
   sacty reruns the selected task. It works while the task is watching and after it is done.
 - Ask your local AI: if you connect sacty's MCP server to Claude Code or Codex, you can ask it to "re-review this PR" ([Operating sacty from your local AI](mcp.en.md)).
@@ -295,8 +304,9 @@ A re-request on GitHub is handled as follows.
 - A new task is created only for requests made after the review was posted (after the task is done, or while it watches the PR).
   A request made during a review is not queued for another round.
   If you re-requested during a review, re-request again after the post or use "Review again and post to the PR" in the task details.
+- For a PR from a fork, a new task is created only when the requester is not the PR's author and has write access to the repository (not when it cannot be read; see "Re-review" above).
 - For PRs taken in by the label, a re-request does not create a new task.
-  While the task is watching, the same task re-reviews automatically on changes of the PR. After it is done with "no findings", use "Review again and post to the PR" in the task details.
+  While the task is watching, the same task re-reviews automatically on changes of the PR (except for PRs from a fork). After it is done with "no findings", use "Review again and post to the PR" in the task details.
 - For PRs sacty created, a re-request does not create a new task either. A PR sacty created is re-reviewed by its child task ([Review of PRs sacty created](#the-review-child-task)).
 - If the re-request cannot be checked, no automatic re-review starts; the intake result shows the reason, and sacty checks again next time.
   You can also start it manually with "Review again and post to the PR".
@@ -355,9 +365,10 @@ The PR's code can reach the same things as the agent.
 - During the run, through the gateway, it can read GitHub with the GitHub account chosen in the project and use the MCP servers given to the agent.
 - Even in a bot's dependency update PR (such as `dependabot[bot]`), the install scripts of the new versions run.
 
-Commits pushed to the PR after it was imported run in the same way.
+Commits pushed to the PR after it was imported run in the same way when the PR is from the same repository.
 This is because sacty keeps watching the PR for changes after posting its review until the verdict becomes "no findings" and, meanwhile, re-reviews automatically on every push ([After the review is posted](#after-the-review-is-posted)).
-It does not check who pushed or whether the push comes from a fork. If a PR you trusted at import can later receive a push you do not trust, pause or cancel the task to stop the watch.
+It does not check who pushed. If a PR you trusted at import can later receive a push you do not trust, pause or cancel the task to stop the watch.
+A PR from a fork is not re-reviewed automatically on a push; the code of a new commit does not run until a person asks for a re-review.
 A task that is done with the verdict "no findings" does not move when a commit is pushed to the PR.
 
 Intake does not filter by whether a PR comes from a fork or a bot.

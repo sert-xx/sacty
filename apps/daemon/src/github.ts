@@ -214,6 +214,21 @@ export interface PullRequests {
     reviewer: string;
   }): Promise<string | undefined>;
   /**
+   * PR で reviewer に最後にレビューを依頼した人の login（PBI-461。lastReviewRequest と同じ依頼の、できごとの actor）。
+   * 依頼が無いか、依頼した人が分からなければ undefined。フォークの PR の再依頼を、人の操作とみなせるかを確かめるため。
+   */
+  lastReviewRequester(input: {
+    repo: string;
+    token: string;
+    number: number;
+    reviewer: string;
+  }): Promise<string | undefined>;
+  /**
+   * login が、リポジトリへの書き込みの権限（write・maintain・admin）を持つか（PBI-461）。読めなければ失敗する
+   * （持たないとは扱わない。呼び出し側は、読めないときも、みなさない側に倒す）。
+   */
+  canWrite(input: { repo: string; token: string; login: string }): Promise<boolean>;
+  /**
    * account が投稿した PR のレビューのうち、本文が marker で始まるものを探す
    * （同じレビューを二度投稿しないため。PBI-19）。
    */
@@ -283,6 +298,17 @@ export const REVIEW_STOP_MARKER_PREFIX = "<!-- sacty-review-stopped:";
 /** 本文が、レビューが止まったことの投稿の目印で始まるか（PBI-292）。 */
 export function isReviewStopNotice(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(REVIEW_STOP_MARKER_PREFIX);
+}
+
+/**
+ * フォークからの PR で、新しいコミットを自動ではレビューしないことを PR に知らせる投稿の目印の前半（PBI-461）。
+ * `<!-- sacty-fork-hold:<タスク ID> -->`。人間の指摘・作者の返信としては数えない。
+ */
+export const FORK_HOLD_MARKER_PREFIX = "<!-- sacty-fork-hold:";
+
+/** 本文が、フォークの PR の知らせの目印で始まるか（PBI-461）。 */
+export function isForkHoldNotice(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(FORK_HOLD_MARKER_PREFIX);
 }
 
 /** sacty が、工程のエージェントの頼みで投稿したコメント（sacty-github-comments）の目印の前半（PBI-301）。 */
@@ -487,6 +513,12 @@ export type PullRequestStatus = {
    * コメントを読み直さないために使う。読めなければ無い。
    */
   updatedAt?: string;
+  /**
+   * PR がフォークからのものか（head のリポジトリが base と違う。head のリポジトリを読めない・消えたフォークも true。PBI-461）。
+   * head と base が同じリポジトリと確かめられたときだけ false。この値を持たない状態（status を読んだ答えでないもの）は、
+   * 見守りではフォークとして扱う。
+   */
+  fork?: boolean;
 } & (
   | {
       state: "open";
@@ -630,6 +662,7 @@ export class GitHubPullRequests implements PullRequests {
           (isReviewStopNotice(item.body) ||
             isHumanAskNotice(item.body) ||
             isReworkNotice(item.body) ||
+            isForkHoldNotice(item.body) ||
             isDecisionNotice(item.body) ||
             isDeferralNotice(item.body) ||
             isBasisComment(item.body)) &&
@@ -1030,13 +1063,24 @@ export class GitHubPullRequests implements PullRequests {
   }
 
   async lastReviewRequest(input: Parameters<PullRequests["lastReviewRequest"]>[0]) {
+    return (await this.lastRequestEvent(input))?.at;
+  }
+
+  async lastReviewRequester(input: Parameters<PullRequests["lastReviewRequester"]>[0]) {
+    return (await this.lastRequestEvent(input))?.actor;
+  }
+
+  /** reviewer への、最後の review_requested のできごと（日時と、依頼した人の login。人が分からなければ actor は無い）。 */
+  private async lastRequestEvent(
+    input: Parameters<PullRequests["lastReviewRequest"]>[0],
+  ): Promise<{ at: string; actor?: string } | undefined> {
     const events = await this.list(
       input.repo,
       `/issues/${input.number}/events?per_page=100`,
       input.token,
       "listEvents",
     );
-    let last: string | undefined;
+    let last: { at: string; actor?: string } | undefined;
     for (const e of events) {
       const login = (e.requested_reviewer as { login?: unknown } | null | undefined)?.login;
       if (
@@ -1044,12 +1088,32 @@ export class GitHubPullRequests implements PullRequests {
         typeof login === "string" &&
         login.toLowerCase() === input.reviewer.toLowerCase() &&
         typeof e.created_at === "string" &&
-        (last === undefined || Date.parse(e.created_at) > Date.parse(last))
+        (last === undefined || Date.parse(e.created_at) > Date.parse(last.at))
       ) {
-        last = e.created_at;
+        const actor = (e.actor as { login?: unknown } | null | undefined)?.login;
+        last = { at: e.created_at, ...(typeof actor === "string" && actor ? { actor } : {}) };
       }
     }
     return last;
+  }
+
+  async canWrite(input: Parameters<PullRequests["canWrite"]>[0]) {
+    const res = await this.fetchImpl(
+      `${repoApi(input.repo).base}/collaborators/${encodeURIComponent(input.login)}/permission`,
+      {
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${input.token}`,
+          "x-github-api-version": "2022-11-28",
+        },
+      },
+    );
+    const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+    if (!res.ok) throw apiError("getPermission", res.status, json ?? {});
+    // 答えの形が違うときは、権限があるとは扱わない（権限を読めないのと同じに、失敗にする）
+    if (!json || typeof json !== "object") throw apiError("getPermission", res.status, {});
+    const role = typeof json.role_name === "string" ? json.role_name : json.permission;
+    return role === "admin" || role === "maintain" || role === "write";
   }
 
   async findReview(input: Parameters<PullRequests["findReview"]>[0]) {
@@ -1107,7 +1171,19 @@ export class GitHubPullRequests implements PullRequests {
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw apiError("getPr", res.status, json);
     const sha = (json.head as { sha?: unknown } | null)?.sha;
+    const repoName = (key: "head" | "base") => {
+      const repo = (json[key] as { repo?: unknown } | null)?.repo as
+        | { full_name?: unknown }
+        | null
+        | undefined;
+      return typeof repo?.full_name === "string" ? repo.full_name.toLowerCase() : undefined;
+    };
+    const headName = repoName("head");
+    const baseName = repoName("base");
+    // 同じリポジトリと確かめられたときだけ false（head のリポジトリが消えていても、名前を読めなくても true）
+    const fork = headName === undefined || baseName === undefined || headName !== baseName;
     const head = {
+      fork,
       ...(typeof sha === "string" ? { headSha: sha } : {}),
       ...(typeof json.updated_at === "string" && json.updated_at
         ? { updatedAt: json.updated_at }
@@ -1343,6 +1419,7 @@ export function apiError(
     | "readChecks"
     | "rerunChecks"
     | "listEvents"
+    | "getPermission"
     | "getLabel"
     | "createLabel"
     | "addLabel"
