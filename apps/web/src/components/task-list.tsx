@@ -303,7 +303,10 @@ function LiveTaskListBody({
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-3.5 whitespace-nowrap text-muted-foreground max-sm:col-span-2 max-sm:row-start-2 max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-2 max-sm:p-0 max-sm:text-xs max-sm:whitespace-normal">
+                        <td
+                          data-label={`${m.column.start}: `}
+                          className="px-3 py-3.5 whitespace-nowrap text-muted-foreground max-sm:col-span-2 max-sm:row-start-2 max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-2 max-sm:p-0 max-sm:text-xs max-sm:whitespace-normal max-sm:before:sr-only max-sm:before:content-[attr(data-label)]"
+                        >
                           {labels.start[task.start]}
                           {/* テンプレートで作ったタスク（PBI-90） */}
                           {task.template && (
@@ -325,10 +328,16 @@ function LiveTaskListBody({
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-3.5 max-sm:col-span-2 max-sm:row-start-3 max-sm:block max-sm:p-0">
+                        <td
+                          data-label={`${m.column.steps}: `}
+                          className="px-3 py-3.5 max-sm:col-span-2 max-sm:row-start-3 max-sm:block max-sm:p-0 max-sm:before:sr-only max-sm:before:content-[attr(data-label)]"
+                        >
                           <StepChipsView steps={task.steps} />
                         </td>
-                        <td className="px-5 py-3.5 max-sm:col-start-2 max-sm:row-start-1 max-sm:block max-sm:p-0 max-sm:text-right">
+                        <td
+                          data-label={`${m.column.status}: `}
+                          className="px-5 py-3.5 max-sm:col-start-2 max-sm:row-start-1 max-sm:block max-sm:p-0 max-sm:text-right max-sm:before:sr-only max-sm:before:content-[attr(data-label)]"
+                        >
                           <StatusLabelView text={task.status.text} tone={task.status.tone} />
                           {/* 承認待ちの実装の PR の CI が失敗していた印（状態は変えない。色だけに頼らず、
                               アイコンと文字で出す。PBI-371） */}

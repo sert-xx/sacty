@@ -285,6 +285,35 @@ it("the start point and the repository are small and under the title in the card
   }
 }, 30000);
 
+it("the card keeps the column names for assistive technology only under 640px (TV-3)", async () => {
+  const names = (width: number) =>
+    open(width, "lang=en&data=rich").then(async (page) => {
+      try {
+        return await page
+          .getByTestId("task-row-t1")
+          .locator("td")
+          .evaluateAll((cells) =>
+            cells.map((c) => {
+              const before = getComputedStyle(c, "::before");
+              return { text: c.textContent, content: before.content, position: before.position };
+            }),
+          );
+      } finally {
+        await page.close();
+      }
+    });
+  const narrow = await names(375);
+  expect(narrow.map((c) => c.content)).toEqual([
+    "none",
+    '"Started from: "',
+    '"Steps: "',
+    '"Status: "',
+  ]);
+  expect(narrow.slice(1).every((c) => c.position === "absolute")).toBe(true);
+  const wide = await names(1280);
+  expect(wide.every((c) => c.content === "none" || c.content === "normal")).toBe(true);
+}, 30000);
+
 it("under 640px only search and status show; Filter opens the rest (TV-5)", async () => {
   const page = await open(375, "lang=en&data=rich");
   try {
