@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -120,6 +121,120 @@ describe("共用の compose のリポジトリの取得（PBI-70）", { timeout:
     ).rejects.toThrow(/no-such-branch/);
     const { commit } = await fetcher.checkout({ repo, dest: join(dir, "run3") });
     expect(commit).toBe(run(repo, "rev-parse", "HEAD"));
+  });
+
+  it("中断された取得の後も同じキャッシュで取得できる", async () => {
+    const repo = makeRepo();
+    const fetcher = new GitSharedComposeFetcher(join(dir, "cache"));
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      fetcher.checkout({ repo, dest: join(dir, "stopped"), signal: controller.signal }),
+    ).rejects.toThrow();
+    const result = await fetcher.checkout({ repo, dest: join(dir, "next") });
+    expect(result.commit).toBe(run(repo, "rev-parse", "HEAD"));
+  });
+
+  it("取得待ちの中断は先行取得を待たず、後から取得を始めない", async () => {
+    const repo = makeRepo();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let fetches = 0;
+    const spawnImpl: typeof spawn = ((command, args, options) => {
+      if (command === "git" && Array.isArray(args) && args.includes("fetch")) {
+        fetches++;
+        if (fetches === 1) {
+          const child = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+            ...options,
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+          entered.resolve();
+          void release.promise.then(() => child.stdin?.end());
+          return child;
+        }
+      }
+      return spawn(command, args, options);
+    }) as typeof spawn;
+    const fetcher = new GitSharedComposeFetcher(join(dir, "cache"), spawnImpl);
+    const first = fetcher.checkout({ repo, dest: join(dir, "first") });
+    await entered.promise;
+    const controller = new AbortController();
+    const waiting = fetcher.checkout({
+      repo,
+      dest: join(dir, "waiting"),
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(waiting).rejects.toThrow();
+    expect(fetches).toBe(1);
+    release.resolve();
+    await expect(first).rejects.toThrow();
+    await fetcher.checkout({ repo, dest: join(dir, "next") });
+    expect(fetches).toBe(2);
+    expect(existsSync(join(dir, "waiting"))).toBe(false);
+  });
+
+  it("中断の error 後も Git の close まで後続の取得を待つ", async () => {
+    const repo = makeRepo();
+    const entered = Promise.withResolvers<void>();
+    let held: EventEmitter | undefined;
+    let fetches = 0;
+    const spawnImpl: typeof spawn = ((command, args, options) => {
+      if (command === "git" && Array.isArray(args) && args.includes("fetch")) {
+        fetches++;
+        if (fetches === 1) {
+          held = Object.assign(new EventEmitter(), {
+            stdout: new EventEmitter(),
+            stderr: new EventEmitter(),
+          });
+          options?.signal?.addEventListener("abort", () =>
+            held?.emit("error", new Error("aborted")),
+          );
+          entered.resolve();
+          return held;
+        }
+      }
+      return spawn(command, args, options);
+    }) as typeof spawn;
+    const fetcher = new GitSharedComposeFetcher(join(dir, "cache"), spawnImpl);
+    const controller = new AbortController();
+    const first = fetcher.checkout({ repo, dest: join(dir, "first"), signal: controller.signal });
+    await entered.promise;
+    const next = fetcher.checkout({ repo, dest: join(dir, "next") });
+    controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fetches).toBe(1);
+    held?.emit("close", null);
+    await expect(first).rejects.toThrow();
+    await next;
+    expect(fetches).toBe(2);
+  });
+
+  it("実行中の git を停止し、同じキャッシュの後続の取得を続ける", async () => {
+    const repo = makeRepo();
+    const entered = Promise.withResolvers<void>();
+    let hold = true;
+    const spawnImpl: typeof spawn = ((command, args, options) => {
+      if (command === "git" && Array.isArray(args) && args.includes("fetch") && hold) {
+        hold = false;
+        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], options);
+        entered.resolve();
+        return child;
+      }
+      return spawn(command, args, options);
+    }) as typeof spawn;
+    const fetcher = new GitSharedComposeFetcher(join(dir, "cache"), spawnImpl);
+    const controller = new AbortController();
+    const pending = fetcher.checkout({
+      repo,
+      dest: join(dir, "stopped"),
+      signal: controller.signal,
+    });
+    await entered.promise;
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    const result = await fetcher.checkout({ repo, dest: join(dir, "next") });
+    expect(result.commit).toBe(run(repo, "rev-parse", "HEAD"));
   });
 
   it("実行ごとのディレクトリは作業領域の根の下にあり、デーモンの起動時にまとめて消す", () => {

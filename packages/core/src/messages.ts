@@ -82,6 +82,8 @@ const PARAMS = {
     project: z.string(),
   }),
   "project.sharedComposeDuplicated": z.object({ name: z.string() }),
+  "project.sharedComposeForRepoDuplicated": z.object({ target: z.string() }),
+  "project.sharedComposeForRepoNotTarget": z.object({ target: z.string() }),
   "project.hasActiveTasks": z.object({ count: Count }),
   "pause.alreadyPaused": null,
   "pause.awaitingPerson": null,
@@ -209,6 +211,7 @@ const PARAMS = {
   "input.sharedComposeRepoCredential": null,
   "input.sharedComposeRepoForm": null,
   "input.sharedComposeFile": null,
+  "input.sharedComposeForRepo": null,
   "input.invalidRef": null,
   "input.invalidContextPath": null,
   "input.invalidLabel": null,
@@ -276,6 +279,7 @@ const PARAMS = {
   "services.failed": z.object({ file: z.string(), detail: z.string() }),
   // 共用の compose（PBI-70）
   "services.sharedUnknown": z.object({ name: z.string() }),
+  "services.nameConflict": z.object({ name: z.string() }),
   "services.sharedFetchFailed": z.object({
     name: z.string(),
     repo: z.string(),
@@ -1085,6 +1089,10 @@ const ja: MessageDictionary = {
     `チケットの取り込み先（${platform}）のキー「${key}」は、プロジェクト「${project}」が取り込んでいます。`,
   "project.sharedComposeDuplicated": ({ name }) =>
     `共用の compose の名前「${name}」が重複しています。`,
+  "project.sharedComposeForRepoDuplicated": ({ target }) =>
+    `使うリポジトリ「${target}」が重複しています。`,
+  "project.sharedComposeForRepoNotTarget": ({ target }) =>
+    `使うリポジトリ「${target}」はプロジェクトの対象に含まれていません。`,
   "project.hasActiveTasks": ({ count }) =>
     `終わっていないタスク（または、実行中・実行待ちの処理）が${count}件あるため、プロジェクトを削除できません。タスクを完了するか中止してから、削除してください。`,
   "project.targetTaken": ({ scope, target, project }) =>
@@ -1259,6 +1267,8 @@ const ja: MessageDictionary = {
     "共用の compose のリポジトリは、git の URL（https://…・ssh://…・git@host:…）か、ローカルの絶対パスで入力してください。",
   "input.sharedComposeFile":
     "共用の compose の compose ファイルは、リポジトリの根からの相対パス（.. や $ を含まない）で入力してください。",
+  "input.sharedComposeForRepo":
+    "使うリポジトリは、リポジトリまたは Org の URL を1〜50件入力してください。",
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
   "input.invalidContextPath":
     "パスは、リポジトリの根からの相対パス（例 contexts/team。. と .. の部分は使えない）で入力してください。",
@@ -1373,6 +1383,8 @@ const ja: MessageDictionary = {
     `共用の compose「${name}」のリポジトリに、compose ファイル（${file}）がありません。プロジェクトの設定の compose ファイルのパスを確かめてください。`,
   "services.sharedUnsafe": ({ name, file, detail }) =>
     `共用の compose「${name}」の compose ファイル（${file}）に、Sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・取得したリポジトリの外のマウントなどは使えません。`,
+  "services.nameConflict": ({ name }) =>
+    `サービスの名前または別名「${name}」が複数の compose で重複しています。`,
   "services.sharedFailed": ({ name, file, detail }) =>
     `共用の compose「${name}」の compose ファイル（${file}）のサービスを起動できませんでした。出力の末尾：${detail}`,
   "image.notInImages": ({ name }) =>
@@ -1973,6 +1985,10 @@ const en: MessageDictionary = {
     `The key "${key}" of the ticket source (${platform}) is already imported by the project "${project}".`,
   "project.sharedComposeDuplicated": ({ name }) =>
     `The shared compose name "${name}" is duplicated.`,
+  "project.sharedComposeForRepoDuplicated": ({ target }) =>
+    `The repository or org "${target}" is listed more than once.`,
+  "project.sharedComposeForRepoNotTarget": ({ target }) =>
+    `The repository or org "${target}" is not a project target.`,
   "project.hasActiveTasks": ({ count }) =>
     `The project cannot be deleted because ${count} task(s) are unfinished (or still running or queued). Complete or cancel them, then delete the project.`,
   "project.targetTaken": ({ scope, target, project }) =>
@@ -2149,6 +2165,7 @@ const en: MessageDictionary = {
     "Enter the repository of the shared compose as a git URL (https://…, ssh://…, git@host:…) or an absolute local path.",
   "input.sharedComposeFile":
     "Enter the compose file of the shared compose as a path relative to the repository root (without .. or $).",
+  "input.sharedComposeForRepo": "Enter 1 to 50 repository or org URLs.",
   "input.invalidRef": "Enter a branch or tag name as the ref.",
   "input.invalidContextPath":
     "Enter the path relative to the repository root (e.g. contexts/team, without . or .. parts).",
@@ -2262,6 +2279,8 @@ const en: MessageDictionary = {
     `The repository of the shared compose "${name}" has no compose file (${file}). Check the compose file path in the project settings.`,
   "services.sharedUnsafe": ({ name, file, detail }) =>
     `The compose file (${file}) of the shared compose "${name}" has settings Sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the fetched repository and so on are not allowed.`,
+  "services.nameConflict": ({ name }) =>
+    `The service name or alias "${name}" is used by multiple compose files.`,
   "services.sharedFailed": ({ name, file, detail }) =>
     `Could not start the services in the compose file (${file}) of the shared compose "${name}". End of the output: ${detail}`,
   "image.notInImages": ({ name }) =>

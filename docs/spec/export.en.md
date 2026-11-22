@@ -37,7 +37,7 @@ Code: `apps/daemon/src/service.ts` (`awaitingExport`, `exportOutput`, `retryExpo
 
 ## Exporting and importing projects
 
-- `GET /api/projects/:id/export` returns `{ sacty: "project", version: 5, project: { … } }` (`PROJECT_EXPORT_VERSION`).
+- `GET /api/projects/:id/export` returns `{ sacty: "project", version: 5, project: { … } }` (`PROJECT_EXPORT_VERSION`). A shared compose includes `forRepos` only when specified; it accepts one to 50 repository or org target URLs. Imports also reject duplicates and values outside the targets.
   - `project` contains `name`, `targets`, `context`, `tickets`, and `sharedComposes`.
   - It does not include IDs, timestamps, or `githubAccounts` (personal settings). It does not include `deferralHandling` (the default handling of deferred findings) either.
   - From the web UI, it downloads as `sacty-project-<name>.json`.
@@ -47,3 +47,7 @@ Code: `apps/daemon/src/service.ts` (`awaitingExport`, `exportOutput`, `retryExpo
   - Version 3 and 4 files (the versions that included the notification destination) are rejected with or without it, with a message asking to export again (`input.exportVersionWithNotification`). Other version differences are `input.unsupportedVersion`. Either way, the version error is returned as the first error (the web UI shows the first error).
 
 Code: `packages/core/src/projects.ts` (`ProjectExport`, `exportProject`, `PROJECT_EXPORT_VERSION`), `apps/daemon/src/service.ts` (`exportProject`, `importProject`, `saveProject`), `apps/web/src/app/projects/[id]/export/route.ts`, `apps/web/src/app/actions.ts` (`importProjectAction`)
+
+## Rolling back to an earlier version
+
+Before rolling back, export the project and cancel unfinished tasks that selected multiple composes. Saving project settings in the earlier version removes the links. After returning to the new version, restore the links and rerun the cancelled tasks. An export containing links cannot be imported by the earlier version.

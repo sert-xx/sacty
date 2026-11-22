@@ -33,7 +33,14 @@ const initial: SaveProjectState = {};
 type TicketRow = { platform: string; service: "jira-cloud" | "jira-server"; keys: string };
 
 /** 画面で編集する、共用の compose の1行（PBI-70）。空の ref・説明は保存しない。 */
-type SharedRow = { name: string; repo: string; ref: string; file: string; description: string };
+type SharedRow = {
+  name: string;
+  repo: string;
+  ref: string;
+  file: string;
+  description: string;
+  forRepos: string;
+};
 
 type Exclusion = { org: string; repos: { repo: string; projectName: string }[] };
 
@@ -109,6 +116,7 @@ export function ProjectEditor({
       ref: s.ref ?? "",
       file: s.file,
       description: s.description ?? "",
+      forRepos: (s.forRepos ?? []).join("\n"),
     })),
   );
   const updateShared = (i: number, patch: Partial<SharedRow>) =>
@@ -172,6 +180,14 @@ export function ProjectEditor({
             ...(s.ref.trim() ? { ref: s.ref.trim() } : {}),
             file: s.file.trim(),
             ...(s.description.trim() ? { description: s.description.trim() } : {}),
+            ...(s.forRepos.trim()
+              ? {
+                  forRepos: s.forRepos
+                    .split(/\r?\n/)
+                    .map((url) => url.trim())
+                    .filter(Boolean),
+                }
+              : {}),
           })),
         }
       : {}),
@@ -560,6 +576,18 @@ export function ProjectEditor({
                       />
                     </label>
                   </div>
+                  <label
+                    htmlFor={`${uid}-shared-${i}-for-repos`}
+                    className="flex flex-col gap-1 text-xs text-muted-foreground"
+                  >
+                    {t.sharedForRepos}
+                    <textarea
+                      id={`${uid}-shared-${i}-for-repos`}
+                      value={row.forRepos}
+                      onChange={(e) => updateShared(i, { forRepos: e.target.value })}
+                      className="rounded-md border border-border bg-background p-2 font-mono"
+                    />
+                  </label>
                 </li>
               ))}
             </ul>
@@ -571,7 +599,7 @@ export function ProjectEditor({
               onClick={() =>
                 setShared((list) => [
                   ...list,
-                  { name: "", repo: "", ref: "", file: "", description: "" },
+                  { name: "", repo: "", ref: "", file: "", description: "", forRepos: "" },
                 ])
               }
             >

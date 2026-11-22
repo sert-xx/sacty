@@ -1572,6 +1572,23 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     expect(describeEventParts(shared, labels.en).detail).toContain(
       "Why these services: 結合テストが Redis を使う",
     );
+    const combined = chosen({
+      services: {
+        file: "compose.yml",
+        names: [],
+        steps: ["implement"],
+        more: [
+          {
+            file: "shared.yml",
+            names: [],
+            compose: { name: "infra", repo: "https://github.com/acme/infra" },
+          },
+        ],
+      },
+    });
+    const combinedText = describeEventParts(combined, ja).text;
+    expect(combinedText).toContain("compose.yml");
+    expect(combinedText).toContain("共用の compose「infra」の shared.yml");
     // 対象リポジトリの compose（names が空ならすべて）
     expect(
       describeEventParts(

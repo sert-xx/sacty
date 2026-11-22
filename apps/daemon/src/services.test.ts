@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { message } from "@sacty/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkComposeSources,
   composePorts,
@@ -782,6 +782,197 @@ describe("正規化した compose の設定から、localhost に転送するポ
 });
 
 describe("共用の compose の起動（PBI-70）", () => {
+  it("compose down が応答しなくても期限後に残りとネットワークを回収する", async () => {
+    const calls: string[][] = [];
+    const kill = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const spawnImpl = ((_cmd: string, args: string[]) => {
+        calls.push(args);
+        const child = Object.assign(new EventEmitter(), {
+          stdout: new EventEmitter(),
+          stderr: new EventEmitter(),
+          kill,
+        });
+        if (calls.length !== 1) queueMicrotask(() => child.emit("close", 0));
+        return child;
+      }) as never;
+      const runner = new DockerComposeServices(spawnImpl, 300, { dockerTimeoutMs: 20 });
+      await runner.stopGroup("stalled", 2);
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+      expect(calls[1]).toContain("sacty-svc-g1stalled");
+      expect(calls[2]).toEqual(["network", "rm", "sacty-svc-stalled-network"]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-g0stalled (timeout, code=なし)"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("回収失敗の種類と終了コードを秘密を含めず記録する", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    try {
+      const spawnImpl = ((_cmd: string, _args: string[]) => {
+        const child = Object.assign(new EventEmitter(), {
+          stdout: new EventEmitter(),
+          stderr: new EventEmitter(),
+          kill: vi.fn(),
+        });
+        calls++;
+        const current = calls;
+        queueMicrotask(() => {
+          child.stderr.emit("data", "secret-value");
+          if (current === 1) child.emit("error", new Error("secret-value"));
+          else child.emit("close", 42);
+        });
+        return child;
+      }) as never;
+      const runner = new DockerComposeServices(spawnImpl);
+      await runner.stopGroup("failed", 1);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-g0failed (spawn, code=なし)"),
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-failed-network (exit, code=42)"),
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("secret-value");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("ネットワーク作成の停止と時間切れは待ち続けず、エラーの秘密を伏せる", async () => {
+    const children: { args: string[]; kill: ReturnType<typeof vi.fn> }[] = [];
+    const entered = Promise.withResolvers<void>();
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: vi.fn(() => {
+          child.emit("close", 1);
+          return true;
+        }),
+      });
+      children.push({ args, kill: child.kill });
+      if (args[0] === "network" && args[1] === "create") entered.resolve();
+      queueMicrotask(() => {
+        if (args.includes("config")) {
+          child.stdout.emit("data", JSON.stringify(normalized({ db: { image: "db" } })));
+          child.emit("close", 0);
+        } else if (args[0] === "network" && args[1] === "create") {
+          child.stderr.emit("data", "network unavailable: secret-value");
+        } else child.emit("close", 0);
+      });
+      return child;
+    }) as never;
+    const runner = new DockerComposeServices(spawnImpl, 300, {
+      table: async () => [],
+      dockerTimeoutMs: 50,
+    });
+    const members = [
+      {
+        workspaceDir: ws,
+        spec: { file: "compose/redis.yml", names: [] },
+        secrets: ["secret-value"],
+      },
+    ];
+    const pending = runner.startGroup({ runId: "abort-network", members });
+    await entered.promise;
+    runner.abort("abort-network");
+    expect(await pending).toMatchObject({ ok: false, message: { code: "run.stoppedByPerson" } });
+    expect(children.find((child) => child.args[1] === "create")?.kill).toHaveBeenCalled();
+
+    const result = await runner.startGroup({ runId: "timeout-network", members });
+    expect(result).toMatchObject({ ok: false, message: { code: "services.failed" } });
+    expect(JSON.stringify(result)).toContain("network unavailable");
+    expect(JSON.stringify(result)).not.toContain("secret-value");
+  });
+  it("複数の compose は衝突を起動前に検査し、同じネットワークで起動して片付ける", async () => {
+    const calls: string[][] = [];
+    const configs: unknown[] = [];
+    let answer: unknown[] = [];
+    let failSecond = false;
+    let upCount = 0;
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      });
+      if (args.includes("up"))
+        configs.push(JSON.parse(readFileSync(args[args.indexOf("-f") + 1] as string, "utf8")));
+      setTimeout(() => {
+        if (args.includes("config")) child.stdout.emit("data", JSON.stringify(answer.shift()));
+        if (args.includes("up")) upCount++;
+        child.emit("close", failSecond && args.includes("up") && upCount === 2 ? 1 : 0);
+      }, 0);
+      return child;
+    }) as never;
+    const runner = new DockerComposeServices(spawnImpl, 300, { table: async () => [] });
+    const members = [
+      { workspaceDir: ws, spec: { file: "compose/redis.yml", names: [] } },
+      { workspaceDir: ws, spec: { file: "compose/redis.yml", names: [], shared: "infra" } },
+    ];
+    for (const shared of [
+      { db: { image: "redis" } },
+      { redis: { image: "redis", container_name: "db" } },
+    ]) {
+      answer = [normalized({ db: { image: "postgres" } }), normalized(shared)];
+      expect(await runner.startGroup({ runId: "conflict", members })).toMatchObject({
+        ok: false,
+        message: { code: "services.nameConflict" },
+      });
+      expect(calls.some((args) => args.includes("up"))).toBe(false);
+    }
+    answer = [normalized({ db: { image: "postgres" } }), normalized({ redis: { image: "redis" } })];
+    failSecond = true;
+    expect(await runner.startGroup({ runId: "failed", members })).toMatchObject({
+      ok: false,
+      message: { code: "services.sharedFailed" },
+    });
+    expect(calls.filter((args) => args.includes("down"))).toHaveLength(2);
+    expect(calls).toContainEqual(["network", "rm", "sacty-svc-failed-network"]);
+    calls.length = 0;
+    configs.length = 0;
+    upCount = 0;
+    failSecond = false;
+    answer = [
+      normalized({ db: { image: "postgres" } }),
+      normalized({ redis: { image: "redis", container_name: "cache" } }),
+    ];
+    const result = await runner.startGroup({ runId: "success", members });
+    expect(result).toMatchObject({
+      ok: true,
+      started: {
+        network: "sacty-svc-success-network",
+        services: [{ name: "db" }, { name: "redis" }],
+      },
+    });
+    expect(configs).toHaveLength(2);
+    for (const config of configs as { networks: Record<string, unknown> }[])
+      expect(config.networks.sacty).toEqual({ external: true, name: "sacty-svc-success-network" });
+    await runner.stopGroup("success", 2);
+    expect(calls.filter((args) => args.includes("down"))).toHaveLength(2);
+    expect(calls).toContainEqual(["network", "rm", "sacty-svc-success-network"]);
+    calls.length = 0;
+    configs.length = 0;
+    answer = [
+      normalized({ app: { image: "app" }, db: { image: "postgres" } }),
+      normalized({ redis: { image: "redis" }, unused: { image: "unused" } }),
+    ];
+    const selected = members.map((member) => ({
+      ...member,
+      spec: { ...member.spec, names: ["db", "redis"] },
+    }));
+    const picked = await runner.startGroup({ runId: "selected", members: selected });
+    expect(picked.ok && picked.started.services.map((service) => service.name)).toEqual([
+      "db",
+      "redis",
+    ]);
+    expect(configs.map((config) => Object.keys((config as { services: object }).services))).toEqual(
+      [["db"], ["redis"]],
+    );
+  });
   /** docker compose の偽物。config は決めた設定を返し、up は決めた終了コードと出力を返す。 */
   function fakeCompose(config: unknown, up: { code: number; out: string } = { code: 0, out: "" }) {
     const calls: string[][] = [];
