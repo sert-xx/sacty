@@ -231,6 +231,11 @@ A project's task list looks like this.
 
 Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks with multiple specified repositories show the specified list even before a working repository is chosen, and also show the working repository once chosen. The specified list also uses repository names (`org/repo` for names that repeat among the specified repositories). Point at a name, or open the hint mark (ⓘ) next to the list, to see the whole URL (the mark also opens from the keyboard or by tapping). "Repository" in the properties of the task detail shows the specified repositories as `org/repo`, and pressing one opens that repository. A value that cannot be read as a URL (recorded by an older version) is shown as recorded and does not open anything. Other tasks whose repository is not decided yet show none. Of these, a task created without a repository shows "No repository". Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started. A task whose implementation PR, waiting to be merged, had failing CI shows a "CI failed" mark in the "Status" column ([When CI fails after "no findings"](#when-ci-fails-after-no-findings)).
 
+On a screen narrower than 640px (such as a smartphone), each task is shown as one card instead of a table row.
+The first line shows the title (up to 2 lines, cut when longer) and, to its right, the status (and the "CI failed" mark).
+The second line shows where the task started, the template, the number it was taken in from, and the repository in small text, and the steps follow below it.
+The table header is not shown. Child tasks are listed with a shallow indent.
+
 Child tasks are indented directly under their parent task.
 
 - The child tasks of a task split are listed in the order the split decided.
@@ -242,6 +247,10 @@ Child tasks are indented directly under their parent task.
 
 Use the fields above "All tasks" to filter the list.
 Only tasks that match every filter are shown.
+On a screen narrower than 640px, only the search and the status are shown.
+Press the "Filter" button to show the start date, where the task started, and the repository.
+While it is closed, the button shows how many of those three are in use (such as "Filter (2)").
+Whether it is open is not kept in the URL.
 
 | Field | How it filters |
 | --- | --- |
@@ -262,7 +271,7 @@ Pressing it adds the next 50 rows below and moves the focus to the title of the 
 Changing a filter returns to the first 50 rows.
 A parent task may be in the first 50 rows and its child task in the next 50. After you add more, the child task follows under its parent, indented.
 
-The count is shown on the right of the fields. When every row is shown it looks like "1 of 5"; when the rows are cut into 50, it looks like "120 of 277 (showing 50)", so you can see the total, the number that match, and the number shown.
+The count is shown on the right of the fields (next to the "Filter" button on a screen narrower than 640px). When every row is shown it looks like "1 of 5"; when the rows are cut into 50, it looks like "120 of 277 (showing 50)", so you can see the total, the number that match, and the number shown.
 "Clear filters" appears only when the filters differ from the first view. Pressing it returns to the first view (the status is the "Not finished" or "All" decided when the screen opened, and every other filter is empty). It is not shown while the first view is unchanged.
 
 The filters are kept in the query of the screen's URL (`q`, `from`, `to`, `start`, `repo`, `status`; "All" is `status=all`).
@@ -281,6 +290,8 @@ The task details look like this.
 The top part of the screen shows the following.
 
 - The title, status, steps, actions (pause, cancel, re-review, create a follow-up task), and tabs are fixed at the top of the screen and stay visible when you scroll.
+  On a screen narrower than 640px, only the title cut to 1 line and the tabs are fixed (160px or less together with the header).
+  The full title, the status, the steps, and the actions are at the top of the page and scroll away.
 - When the task is waiting for an approval or a decision, or is paused, the notice appears below the tabs whichever tab is open.
 - While the PR awaiting approval is open, "Sacty AI review" appears below the notice.
   It shows whether a Sacty AI review is attached to the PR's current head (its latest commit): not yet, reviewing, or attached ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
@@ -300,6 +311,7 @@ Switch the view with the tabs.
 - Under "Deliverables" on the Overview tab, choose a step to read its deliverable one at a time. At first, the deliverable of the current step (running, awaiting approval, or the last finished step) is shown.
 
 "Properties" in the right column shows the following.
+Below 1024px the right column moves after the main content, so the link to the PR and the cost also appear at the top of the Overview tab (before the description). At that width, the PR and cost rows of the properties are not shown.
 
 - The current step, the PR, the cost, the project, the repository, the base branch, the tests (the test command), and the ticket
 - Where the task started from (with the template's name for a task created from a template)

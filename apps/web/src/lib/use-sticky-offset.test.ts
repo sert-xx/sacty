@@ -38,8 +38,9 @@ afterEach(() => {
 
 function Probe() {
   const ref = useRef<HTMLDivElement>(null);
-  useStickyOffset(ref);
-  return h("div", { ref });
+  const bar = useRef<HTMLDivElement>(null);
+  useStickyOffset(ref, bar);
+  return h("div", { ref }, h("div", { ref: bar }));
 }
 const read = () => document.documentElement.style.getPropertyValue(STICKY_OFFSET_VAR);
 
@@ -62,5 +63,34 @@ describe("useStickyOffset", () => {
     await act(async () => root.unmount());
     expect(disconnected).toBe(true);
     expect(read()).toBe("");
+  });
+
+  it("640px 未満では帯の高さを測り、幅をまたぐと測り直す", async () => {
+    let wide = false;
+    let change: (() => void) | undefined;
+    vi.stubGlobal("matchMedia", () => ({
+      get matches() {
+        return wide;
+      },
+      addEventListener: (_: string, cb: () => void) => {
+        change = cb;
+      },
+      removeEventListener: () => {},
+    }));
+    // 外側の箱（display: contents）は 0、帯は 70
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).parentElement?.parentElement ? 70 : wide ? 204 : 0;
+      },
+    });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => root.render(h(Probe)));
+    expect(read()).toBe(`${stickyOffsetPx(70)}px`);
+    wide = true;
+    await act(async () => change?.());
+    expect(read()).toBe(`${stickyOffsetPx(204)}px`);
+    await act(async () => root.unmount());
   });
 });
