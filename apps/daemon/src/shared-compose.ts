@@ -22,6 +22,7 @@ export interface SharedComposeFetcher {
     ref?: string;
     dest: string;
     authEnv?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<{ commit: string }>;
 }
 
@@ -58,11 +59,13 @@ export class GitSharedComposeFetcher implements SharedComposeFetcher {
     args: string[],
     authEnv?: Record<string, string>,
     cwd?: string,
+    signal?: AbortSignal,
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((done) => {
       const child = this.spawnImpl("git", args, {
         env: gitEnv(authEnv),
         ...(cwd ? { cwd } : {}),
+        ...(signal ? { signal } : {}),
         stdio: ["ignore", "pipe", "pipe"],
       });
       let stdout = "";
@@ -79,8 +82,14 @@ export class GitSharedComposeFetcher implements SharedComposeFetcher {
   }
 
   /** git を実行し、失敗したら git のエラー文（外から来た文）で投げる。 */
-  private async mustGit(args: string[], authEnv?: Record<string, string>): Promise<string> {
-    const result = await this.git(args, authEnv);
+  private async mustGit(
+    args: string[],
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    signal?.throwIfAborted();
+    const result = await this.git(args, authEnv, undefined, signal);
+    signal?.throwIfAborted();
     if (result.code === 0) return result.stdout;
     if (result.code === 127) {
       throw new MessageError(message("git.unavailable", { detail: result.stderr }));
@@ -106,14 +115,15 @@ export class GitSharedComposeFetcher implements SharedComposeFetcher {
     return next;
   }
 
-  checkout({ repo, ref, dest, authEnv }: Parameters<SharedComposeFetcher["checkout"]>[0]) {
+  checkout({ repo, ref, dest, authEnv, signal }: Parameters<SharedComposeFetcher["checkout"]>[0]) {
     const key = createHash("sha256").update(repo).digest("hex").slice(0, 24);
     const cache = join(this.cacheDir, `${key}.git`);
     return this.serialized(key, async () => {
+      signal?.throwIfAborted();
       if (!existsSync(join(cache, "HEAD"))) {
         await rm(cache, { recursive: true, force: true });
         mkdirSync(cache, { recursive: true });
-        await this.mustGit(["init", "--bare", "--quiet", cache]);
+        await this.mustGit(["init", "--bare", "--quiet", cache], undefined, signal);
       }
       // ref の最新を取る（キャッシュの更新）。ref が無ければ既定のブランチ（リモートの HEAD）。浅く取る
       await this.mustGit(
@@ -131,26 +141,40 @@ export class GitSharedComposeFetcher implements SharedComposeFetcher {
           ref || "HEAD",
         ],
         authEnv,
+        signal,
       );
       const commit = (
-        await this.mustGit(["--git-dir", cache, "rev-parse", "--verify", "FETCH_HEAD^{commit}"])
+        await this.mustGit(
+          ["--git-dir", cache, "rev-parse", "--verify", "FETCH_HEAD^{commit}"],
+          undefined,
+          signal,
+        )
       ).trim();
       // そのコミットの中身を、実行ごとのディレクトリに書き出す（.git は含めない）。消す間もデーモンが応答し続けるよう、
       // 非同期で消す（PBI-156）
       await rm(dest, { recursive: true, force: true });
+      signal?.throwIfAborted();
       mkdirSync(dest, { recursive: true });
-      await this.extract(cache, commit, dest);
+      await this.extract(cache, commit, dest, signal);
       return { commit };
     });
   }
 
   /** git archive の中身を、tar で dest に展開する。 */
-  private async extract(cache: string, commit: string, dest: string): Promise<void> {
+  private async extract(
+    cache: string,
+    commit: string,
+    dest: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    signal?.throwIfAborted();
     const archive = this.spawnImpl("git", ["--git-dir", cache, "archive", "--format=tar", commit], {
       env: gitEnv(),
+      ...(signal ? { signal } : {}),
       stdio: ["ignore", "pipe", "pipe"],
     });
     const tar = this.spawnImpl("tar", ["-x", "-f", "-", "-C", dest], {
+      ...(signal ? { signal } : {}),
       stdio: ["pipe", "ignore", "pipe"],
     });
     let errors = "";

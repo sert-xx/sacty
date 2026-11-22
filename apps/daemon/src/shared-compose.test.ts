@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -120,6 +120,45 @@ describe("共用の compose のリポジトリの取得（PBI-70）", { timeout:
     ).rejects.toThrow(/no-such-branch/);
     const { commit } = await fetcher.checkout({ repo, dest: join(dir, "run3") });
     expect(commit).toBe(run(repo, "rev-parse", "HEAD"));
+  });
+
+  it("中断された取得の後も同じキャッシュで取得できる", async () => {
+    const repo = makeRepo();
+    const fetcher = new GitSharedComposeFetcher(join(dir, "cache"));
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      fetcher.checkout({ repo, dest: join(dir, "stopped"), signal: controller.signal }),
+    ).rejects.toThrow();
+    const result = await fetcher.checkout({ repo, dest: join(dir, "next") });
+    expect(result.commit).toBe(run(repo, "rev-parse", "HEAD"));
+  });
+
+  it("実行中の git を停止し、同じキャッシュの後続の取得を続ける", async () => {
+    const repo = makeRepo();
+    const entered = Promise.withResolvers<void>();
+    let hold = true;
+    const spawnImpl: typeof spawn = ((command, args, options) => {
+      if (command === "git" && Array.isArray(args) && args.includes("fetch") && hold) {
+        hold = false;
+        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], options);
+        entered.resolve();
+        return child;
+      }
+      return spawn(command, args, options);
+    }) as typeof spawn;
+    const fetcher = new GitSharedComposeFetcher(join(dir, "cache"), spawnImpl);
+    const controller = new AbortController();
+    const pending = fetcher.checkout({
+      repo,
+      dest: join(dir, "stopped"),
+      signal: controller.signal,
+    });
+    await entered.promise;
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    const result = await fetcher.checkout({ repo, dest: join(dir, "next") });
+    expect(result.commit).toBe(run(repo, "rev-parse", "HEAD"));
   });
 
   it("実行ごとのディレクトリは作業領域の根の下にあり、デーモンの起動時にまとめて消す", () => {

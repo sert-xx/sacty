@@ -577,23 +577,41 @@ export class DockerComposeServices implements ServiceRunner {
       table?: () => Promise<ProcessInfo[]>;
       /** 起動したサービスの所有元（既定はこのプロセス。テストでは差し替える）。 */
       owner?: ProcessIdentity;
+      dockerTimeoutMs?: number;
     } = {},
   ) {}
 
-  /** docker を実行する（compose 以外。stdout だけを返す）。 */
-  private docker(args: string[]): Promise<{ code: number; stdout: string }> {
+  /** docker を実行する（compose 以外）。 */
+  private docker(
+    args: string[],
+    state?: { aborted: boolean; child?: ChildProcess },
+  ): Promise<{ code: number; stdout: string; out: string }> {
     return new Promise((done) => {
       const child = this.spawnImpl("docker", args, {
         env: dockerClientEnv(),
         stdio: ["ignore", "pipe", "pipe"],
       });
+      if (state) state.child = child;
       let stdout = "";
+      let stderr = "";
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        done({ code: 1, stdout, out: `${stdout}${stderr}\nDocker command timed out` });
+      }, this.deps.dockerTimeoutMs ?? IMAGE_ID_TIMEOUT_MS);
       child.stdout?.on("data", (chunk) => {
         stdout += chunk;
       });
-      child.stderr?.on("data", () => {});
-      child.on("error", () => done({ code: 127, stdout }));
-      child.on("close", (code) => done({ code: code ?? 1, stdout }));
+      child.stderr?.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        done({ code: 127, stdout, out: stdout + stderr + error.message });
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        done({ code: code ?? 1, stdout, out: stdout + stderr });
+      });
     });
   }
 
@@ -695,10 +713,19 @@ export class DockerComposeServices implements ServiceRunner {
     const network = `${composeProject(input.runId)}-network`;
     let createdNetwork = false;
     try {
+      const remaining = new Set(input.members.flatMap((member) => member.spec.names));
       for (const member of input.members) {
-        const result = await this.prepare({ ...member, runId: input.runId }, state);
+        const result = await this.prepare({ ...member, runId: input.runId }, state, remaining);
         if (!result.ok) return result;
         prepared.push({ ...result, workspaceDir: member.workspaceDir });
+      }
+      if (remaining.size > 0) {
+        return {
+          ok: false as const,
+          message:
+            prepared[0]?.failed(`サービス ${[...remaining].join("・")} がありません`) ??
+            message("services.failed", { file: "", detail: "サービスがありません" }),
+        };
       }
       const seen = new Set<string>();
       for (const item of prepared) {
@@ -718,17 +745,34 @@ export class DockerComposeServices implements ServiceRunner {
           seen.add(name);
         }
       }
-      const created = await this.docker(["network", "create", network]);
+      if (state.aborted) return { ok: false as const, message: message("run.stoppedByPerson") };
+      const created = await this.docker(["network", "create", network], state);
+      if (state.aborted) {
+        await this.stopGroup(input.runId, prepared.length);
+        return { ok: false as const, message: message("run.stoppedByPerson") };
+      }
       if (created.code !== 0)
         return {
           ok: false as const,
           message:
-            prepared[0]?.failed(created.stdout) ??
-            message("services.failed", { file: "", detail: created.stdout }),
+            prepared[0]?.failed(
+              redact(
+                created.out,
+                input.members.flatMap((item) => item.secrets ?? []),
+              ),
+            ) ??
+            message("services.failed", {
+              file: "",
+              detail: redact(
+                created.out,
+                input.members.flatMap((item) => item.secrets ?? []),
+              ),
+            }),
         };
       createdNetwork = true;
       const owner = this.deps.owner ?? selfIn(await (this.deps.table ?? psTable)());
       for (const [i, item] of prepared.entries()) {
+        if (item.safe.services.length === 0) continue;
         if (state.aborted) {
           await this.stopGroup(input.runId, prepared.length);
           return { ok: false as const, message: message("run.stoppedByPerson") };
@@ -803,6 +847,7 @@ export class DockerComposeServices implements ServiceRunner {
   private async prepare(
     { runId: _runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0],
     state: { aborted: boolean; child?: ChildProcess },
+    remaining?: Set<string>,
   ) {
     const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
     const track = (child: ChildProcess) => {
@@ -854,7 +899,19 @@ export class DockerComposeServices implements ServiceRunner {
     } catch {
       return { ok: false as const, message: failed(normalized.out) };
     }
-    const safe = sanitizeCompose(parsed, workspaceDir, spec.names, {
+    let selected = spec.names;
+    if (remaining && selected.length && isObject(parsed) && isObject(parsed.services)) {
+      selected = selected.filter((name) => isObject((parsed.services as Json)[name]));
+      for (const name of selected) remaining.delete(name);
+      if (selected.length === 0) {
+        return {
+          ok: true as const,
+          safe: { config: { services: {}, networks: {} }, services: [] },
+          failed,
+        };
+      }
+    }
+    const safe = sanitizeCompose(parsed, workspaceDir, selected, {
       aliasContainerNames: shared !== undefined,
     });
     if (!safe.ok) {

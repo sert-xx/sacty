@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { message } from "@sacty/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkComposeSources,
   composePorts,
@@ -782,6 +782,51 @@ describe("正規化した compose の設定から、localhost に転送するポ
 });
 
 describe("共用の compose の起動（PBI-70）", () => {
+  it("ネットワーク作成の停止と時間切れは待ち続けず、エラーの秘密を伏せる", async () => {
+    const children: { args: string[]; kill: ReturnType<typeof vi.fn> }[] = [];
+    const entered = Promise.withResolvers<void>();
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: vi.fn(() => {
+          child.emit("close", 1);
+          return true;
+        }),
+      });
+      children.push({ args, kill: child.kill });
+      if (args[0] === "network" && args[1] === "create") entered.resolve();
+      queueMicrotask(() => {
+        if (args.includes("config")) {
+          child.stdout.emit("data", JSON.stringify(normalized({ db: { image: "db" } })));
+          child.emit("close", 0);
+        } else if (args[0] === "network" && args[1] === "create") {
+          child.stderr.emit("data", "secret-value");
+        } else child.emit("close", 0);
+      });
+      return child;
+    }) as never;
+    const runner = new DockerComposeServices(spawnImpl, 300, {
+      table: async () => [],
+      dockerTimeoutMs: 50,
+    });
+    const members = [
+      {
+        workspaceDir: ws,
+        spec: { file: "compose/redis.yml", names: [] },
+        secrets: ["secret-value"],
+      },
+    ];
+    const pending = runner.startGroup({ runId: "abort-network", members });
+    await entered.promise;
+    runner.abort("abort-network");
+    expect(await pending).toMatchObject({ ok: false, message: { code: "run.stoppedByPerson" } });
+    expect(children.find((child) => child.args[1] === "create")?.kill).toHaveBeenCalled();
+
+    const result = await runner.startGroup({ runId: "timeout-network", members });
+    expect(result).toMatchObject({ ok: false, message: { code: "services.failed" } });
+    expect(JSON.stringify(result)).not.toContain("secret-value");
+  });
   it("複数の compose は衝突を起動前に検査し、同じネットワークで起動して片付ける", async () => {
     const calls: string[][] = [];
     const configs: unknown[] = [];
@@ -849,6 +894,24 @@ describe("共用の compose の起動（PBI-70）", () => {
     await runner.stopGroup("success", 2);
     expect(calls.filter((args) => args.includes("down"))).toHaveLength(2);
     expect(calls).toContainEqual(["network", "rm", "sacty-svc-success-network"]);
+    calls.length = 0;
+    configs.length = 0;
+    answer = [
+      normalized({ app: { image: "app" }, db: { image: "postgres" } }),
+      normalized({ redis: { image: "redis" }, unused: { image: "unused" } }),
+    ];
+    const selected = members.map((member) => ({
+      ...member,
+      spec: { ...member.spec, names: ["db", "redis"] },
+    }));
+    const picked = await runner.startGroup({ runId: "selected", members: selected });
+    expect(picked.ok && picked.started.services.map((service) => service.name)).toEqual([
+      "db",
+      "redis",
+    ]);
+    expect(configs.map((config) => Object.keys((config as { services: object }).services))).toEqual(
+      [["db"], ["redis"]],
+    );
   });
   /** docker compose の偽物。config は決めた設定を返し、up は決めた終了コードと出力を返す。 */
   function fakeCompose(config: unknown, up: { code: number; out: string } = { code: 0, out: "" }) {

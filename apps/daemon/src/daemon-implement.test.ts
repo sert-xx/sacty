@@ -2847,6 +2847,38 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
 
     for (const mode of ["pause", "cancel"] as const) {
       const label = mode === "pause" ? "一時停止" : "中止";
+      it(`複数の共用 compose の最初の取得を${label}したら残りを取得しない`, async () => {
+        const entered = Promise.withResolvers<void>();
+        const calls: string[] = [];
+        const shared: SharedComposeFetcher = {
+          checkout: async ({ repo, signal }) => {
+            calls.push(repo);
+            entered.resolve();
+            await new Promise<void>((_resolve, reject) => {
+              if (signal?.aborted) reject(signal.reason);
+              else signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+            return { commit: "unused" };
+          },
+        };
+        const services = new FakeServices();
+        const { activity, service, id } = await toImplement([implement("# 実装")], {
+          services,
+          sharedComposes: shared,
+          projects: projectsWithShared(),
+          planner: plan({
+            services: { compose: ["infra", "kafka"], names: [], steps: ["implement"] },
+          }),
+        });
+        const running = service.runNext(id);
+        await entered.promise;
+        await (mode === "pause" ? service.pause(id) : service.cancel(id));
+        await running;
+        expect(calls).toHaveLength(1);
+        expect(services.groups).toHaveLength(0);
+        expect(service.get(id)?.task.status).toBe(mode === "pause" ? "paused" : "cancelled");
+        activity.close();
+      });
       it(`取得の待ちの間に${label}されたら、取得したものを片付けて起動しない（レビュー指摘）`, async () => {
         const services = new FakeServices();
         const shared = new FakeSharedComposes();

@@ -110,6 +110,8 @@
 対象が未決定の情報収集には全件とひもづけ先を示す。
 複数の compose は1つのネットワークで起動する。
 サービス名か `container_name` の別名が compose 間で衝突すると、起動前に `services.nameConflict` で止める。
+複数の compose で `names` を指定したときは、各 compose に存在する名前を選ぶ。
+どの compose にも存在しない名前はエラーにし、空なら各 compose の全サービスを選ぶ。
 
 - 取得
   - 実行のたびに、リポジトリごとのキャッシュ `SACTY_HOME/cache/shared-compose/<URL の SHA-256 の先頭24桁>.git`（bare）に、`git fetch --depth 1` で ref の最新を取る。

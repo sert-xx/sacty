@@ -7868,6 +7868,10 @@ export class TaskService {
       }[] = [];
       this.track(runId);
       for (const [i, member] of members.entries()) {
+        if (this.stopRequested(task.id)) {
+          await rm(runDir, { recursive: true, force: true });
+          return { ok: false, message: message("run.stoppedByPerson") };
+        }
         const { compose } = member;
         const spec: ServicesSpec = {
           file: member.file,
@@ -7881,10 +7885,15 @@ export class TaskService {
           dir = join(runDir, String(i));
           try {
             const authEnv = await this.gitAuth(task, compose.repo, secrets);
+            if (this.stopRequested(task.id)) {
+              await rm(runDir, { recursive: true, force: true });
+              return { ok: false, message: message("run.stoppedByPerson") };
+            }
             ({ commit } = await this.sharedComposeFetcher.checkout({
               repo: compose.repo,
               ...(compose.ref ? { ref: compose.ref } : {}),
               dest: dir,
+              signal: this.inflight.get(task.id)?.abort.signal,
               ...(authEnv ? { authEnv } : {}),
             }));
           } catch (error) {
@@ -7900,6 +7909,10 @@ export class TaskService {
               }),
             };
           }
+        }
+        if (this.stopRequested(task.id)) {
+          await rm(runDir, { recursive: true, force: true });
+          return { ok: false, message: message("run.stoppedByPerson") };
         }
         inputs.push({
           workspaceDir: dir,
@@ -7989,10 +8002,12 @@ export class TaskService {
       dir = sharedComposeRunDir(this.deps.workspaceRoot, runId);
       try {
         const authEnv = await this.gitAuth(task, compose.repo, usedSecrets);
+        if (this.stopRequested(task.id)) return stopped;
         ({ commit } = await this.sharedComposeFetcher.checkout({
           repo: compose.repo,
           ...(compose.ref ? { ref: compose.ref } : {}),
           dest: dir,
+          signal: this.inflight.get(task.id)?.abort.signal,
           ...(authEnv ? { authEnv } : {}),
         }));
       } catch (error) {
