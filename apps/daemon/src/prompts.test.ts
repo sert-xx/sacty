@@ -328,11 +328,39 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
   ] as const)("%s では未確認の所があっても指摘に応じた判定を求める", (_name, extra) => {
     const prompt = buildPrompt(reviewTask(extra), "review", { diff });
     expect(prompt).toContain(
-      "差分・作業領域・本文で示された主対象の文書のどれか1つでも読めれば判定を付け、どれも読めなかったときだけ付けません",
+      "差分を読めないとき、または要求要件・設計の PR で主対象の文書を読めないときは判定を付けません。それ以外は、確かめられなかった所があっても判定を付けます",
     );
     expect(prompt).toContain("無ければ指摘の重さに応じて suggestions か no_findings を付けます");
     expect(prompt).toContain("確かめられなかったことは、本文の最初に中身の言葉で書きます");
     expect(prompt).not.toContain("無ければ付けません");
+  });
+
+  it("初回と再レビューの入力にかかわらず差分を読めない場合は判定を付けない", () => {
+    for (const reviewOf of [undefined, { taskId: "parent", step: "design" }] as const) {
+      for (const previousReview of [
+        undefined,
+        {
+          round: 1,
+          url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+          at: "2026-10-16T01:00:00.000Z",
+          headCommit: "p".repeat(40),
+          body: "判定がありません",
+          comments: [],
+        },
+      ]) {
+        for (const inputDiff of ["", diff]) {
+          const prompt = buildPrompt(
+            reviewTask({ reviewOf, previousReview, reviewRound: previousReview ? 2 : 1 }),
+            "review",
+            { diff: inputDiff, replies: [] },
+          );
+          expect(prompt).toContain(
+            "差分を読めないとき、または要求要件・設計の PR で主対象の文書を読めないときは判定を付けません",
+          );
+          expect(prompt).not.toContain("差分を読めないときは PR の説明などから対象を定め");
+        }
+      }
+    }
   });
 
   it("既定のスキルを使い、自分では投稿せず、食い違えばプロンプトの出力の形を優先するよう指示する", () => {
@@ -362,7 +390,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain('{"sacty-review-verdict": {"verdict": "changes_required"}}');
     expect(prompt).not.toContain("changesRequested");
     expect(prompt).toContain(
-      "差分・作業領域・本文で示された主対象の文書のどれか1つでも読めれば判定を付け、どれも読めなかったときだけ付けません",
+      "差分を読めないとき、または要求要件・設計の PR で主対象の文書を読めないときは判定を付けません。それ以外は、確かめられなかった所があっても判定を付けます",
     );
     expect(prompt).toContain("無ければ指摘の重さに応じて suggestions か no_findings を付けます");
     expect(prompt).toContain(
@@ -410,7 +438,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
       "起動表を作り、スキルの起動の規則が決めた担当（必須観点、当てはまる条件付き観点、横断の観点、リポジトリの指示の担当）を、全部起動する",
     );
     expect(prompt).toContain(
-      "サブエージェントを起動する手段（ツール）がこの実行に無いときだけ、スキルの逐次モードで見る。差分も作業領域も読めないなど、スキルの「完了できないとき」に当たるときは、スキルの決まりのとおりにする",
+      "サブエージェントを起動する手段（ツール）がこの実行に無いときだけ、スキルの逐次モードで見る。差分や主対象の文書を読めないなど、スキルの「完了できないとき」に当たるときは、スキルの決まりのとおりにする",
     );
     // 前の実行が担当を起動しなかったのでなければ、やり直しの知らせは無い
     expect(prompt).not.toContain("【やり直し】");
