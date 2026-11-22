@@ -1031,7 +1031,7 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     await wait();
     expect(notice()?.textContent).toContain("一時停止の間に、PR の指摘が2件届いています");
     expect(notice()?.textContent).toContain("PR #7");
-    expect(notice()?.textContent).toContain("指摘のうち 1件は AI のレビューのものです");
+    expect(notice()?.textContent).toContain("AI のレビューの指摘 1件を含む、PR #7 に届いた指摘は");
     expect(notice()?.textContent).toContain("走り直す前に、戻し先を判断して差し戻します");
     // 再開したら（実行待ち）、お知らせは消える
     server = detail(

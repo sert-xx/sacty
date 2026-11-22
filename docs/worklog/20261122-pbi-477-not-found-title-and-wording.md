@@ -51,7 +51,7 @@
 | 指摘 | 対応 |
 | --- | --- |
 | `settings.secretsResult` に、理由を添える括弧が残っている | 日英とも括弧を文に直し（「詳しくは下の警告を見てください。」・"See the warnings below."）、期待値と件数を直した。辞書の全関数を例示値で呼んで括弧を見る検査は足していない（検査は関数を読まない決まりのまま、差分のレビューで確かめる） |
-| 文の数を増やした本文がある | この PR では直さない（括弧の中身の規則で、文数は検査の対象外） |
+| 括弧を外すために文が増え、1 文・2 文までの規則と日英の文数が崩れた | 注釈を語句・読点でつなぐ形にまとめ、文数を括弧を足す前（日英とも）に戻した。対象は、設定の `*Current`・`intervalWhenOn`（「既定の」を数の前に置く）、作業履歴の `ReworkStoppedByMerge`・`PullRequestMarkedReadyWithSuggestions`・`PullRequestReviewImported`・CI の失敗・セッションの引き継ぎ、`environmentPassNote`、`discardedReview.help`・`heldReview.help`・`task.costs.unknownNote`・`reviewDispatchRound`。文数を見る検査は足していない |
 | 括弧に認める「数字」の判定が緩い | 単位・助数詞の一覧の語だけに絞り、注釈が落ちる入力と、長さの境界（日 13／14 字・英 29／30 字）、「！」「…」で終わる文、`etc.`・`i.e.` の固定入力のテストを足した |
 | 作業履歴の件数・記録が合っていない | 件数を数え直し、確かめたこと・この節・PR 番号を足した |
 

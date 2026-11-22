@@ -514,7 +514,7 @@ const ja = {
     PullRequestMarkedReady: (number: number) =>
       `PR のレビューの子タスクが指摘なしにしたので、PR #${number} のドラフトを外して人の承認待ちにした`,
     PullRequestMarkedReadyWithSuggestions: (number: number) =>
-      `残った提案をすべて対応しないとしたので、PR #${number} のドラフトを外して人の承認待ちにした。判定は「提案あり」のまま。再レビューはせず、リスク評価だけを先に 1 回行った`,
+      `残った提案をすべて対応しないとしたので、PR #${number} のドラフトを外して人の承認待ちにした。判定は「提案あり」のまま、再レビューはせず、リスク評価だけを先に 1 回行った`,
     PullRequestUndraftNoted: (number: number) => `sacty が PR #${number} のドラフトを外した`,
     PullRequestRedraftSkipped: (number: number, reason: "person" | "unreadable" | "undetermined") =>
       `PR #${number} をドラフトへ戻さなかった（${
@@ -569,12 +569,12 @@ const ja = {
     ) =>
       decision
         ? `人の判断を待って止めていた PR #${number} がマージされた。止めた理由の指摘${held}件を反映せずに、マージを承認として進める`
-        : `PR #${number} がマージされたため、${step ? `${step}の直し` : "実装の作り直し"}を止めた。段階は${stage}${runs > 0 ? `で、実行${runs}件を停止した` : ""}${remarks.length > 0 ? `。作り直しに渡す前の指摘${remarks.length}件を捨てた（${remarks.join("、")}）` : ""}${feedback ? `。やり直しに渡すはずだった${feedback}の結果を捨てた` : ""}${held > 0 ? `。一時停止の間に届いて未反映だった PR の指摘${held}件を捨てた` : ""}。マージを承認として進める`,
+        : `PR #${number} がマージされたため、${step ? `${step}の直し` : "実装の作り直し"}を${stage}で止め${runs > 0 ? `、実行${runs}件を停止した` : "た"}${remarks.length > 0 ? `。作り直しに渡す前の指摘${remarks.length}件を捨てた（${remarks.join("、")}）` : ""}${feedback ? `。やり直しに渡すはずだった${feedback}の結果を捨てた` : ""}${held > 0 ? `。一時停止の間に届いて未反映だった PR の指摘${held}件を捨てた` : ""}。マージを承認として進める`,
     PullRequestConflicted: (number: number) =>
       `PR #${number} がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）`,
     PullRequestConflictResolved: (number: number) => `PR #${number} の競合が解消された`,
     PullRequestCiFailed: (number: number, commit: string, checks: string[], more: number) =>
-      `PR #${number} の CI が失敗していた（${commit}）。失敗した検査は ${checks.join("、")}${more > 0 ? ` ほか${more}件` : ""}。sacty は何も始めない`,
+      `PR #${number} の CI で、${commit} の ${checks.join("、")}${more > 0 ? ` ほか${more}件` : ""}が失敗していた。sacty は何も始めない`,
     PullRequestCiRecovered: (number: number, commit: string) =>
       `PR #${number} の CI が通った（${commit}）。CI の失敗の表示を消した`,
     IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
@@ -676,7 +676,7 @@ const ja = {
     ChatSessionStarted: (reason: string) => `質問のために新しいセッションを始めた（${reason}）`,
     sessionNotSaved: (why: string) => `。セッションは保存できなかった：${why}`,
     sessionHandoff: (from: string, id: string, truncated: boolean) =>
-      `。前のエージェント（${from}）のセッション（${id}）のやり取りを引き継いだ${truncated ? "。古い部分は省いた" : ""}`,
+      `。前のエージェント（${from}）のセッション（${id}）のやり取りを${truncated ? "古い部分を省いて" : ""}引き継いだ`,
     AgentFellBack: (
       from: string,
       to: string,
@@ -790,7 +790,7 @@ const ja = {
           ? `PR #${number} の指摘（${authors}）を${count}件取り込んだ`
           : ai === count
             ? `PR #${number} の AI のレビューの指摘（${authors}）を${count}件取り込んだ`
-            : `PR #${number} の指摘（${authors}）を${count}件取り込んだ。うち AI のレビューの指摘は ${ai}件`
+            : `PR #${number} の指摘（${authors}）を${count}件取り込み、うち AI のレビューの指摘は ${ai}件だった`
       }${held ? "。一時停止の間に届いたので、未反映として残し、再開のときに戻し先を判断する" : ""}`,
     PullRequestReviewDiscarded: (number: number, count: number, reviewed: string, head: string) =>
       `PR #${number} への AI のレビューの指摘${count}件を取り込まずに捨てた：レビューの対象は古い head（${reviewed}）で、PR の今の head は ${head}`,
@@ -1387,12 +1387,12 @@ const en: LabelMessages = {
     ReworkStoppedByMerge: (number, stage, runs, remarks, feedback, held, decision, step) =>
       decision
         ? `PR #${number}, which was paused waiting for a human decision, was merged. The merge is taken as the approval, without applying the ${held} finding${held === 1 ? "" : "s"} that caused the pause`
-        : `PR #${number} was merged, so the rework of ${step ? `the ${step.toLowerCase()}` : "the implementation"} was stopped. Stage: ${stage}${runs > 0 ? `, ${runs} run${runs === 1 ? "" : "s"} stopped` : ""}${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}${held > 0 ? `. Discarded ${held} PR comment${held === 1 ? "" : "s"} that arrived while paused and were not yet applied` : ""}. The merge is taken as the approval`,
+        : `PR #${number} was merged, so the rework of ${step ? `the ${step.toLowerCase()}` : "the implementation"} was stopped at stage ${stage}${runs > 0 ? `, with ${runs} run${runs === 1 ? "" : "s"} stopped` : ""}${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}${held > 0 ? `. Discarded ${held} PR comment${held === 1 ? "" : "s"} that arrived while paused and were not yet applied` : ""}. The merge is taken as the approval`,
     PullRequestConflicted: (number) =>
       `PR #${number} conflicts with the base branch (it is merged in when you send it back or comment)`,
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,
     PullRequestCiFailed: (number, commit, checks, more) =>
-      `CI was failing on PR #${number} (${commit}). Failing checks: ${checks.join(", ")}${more > 0 ? ` and ${more} more` : ""}. sacty starts nothing`,
+      `CI was failing on PR #${number} at ${commit}: ${checks.join(", ")}${more > 0 ? ` and ${more} more` : ""}. sacty starts nothing`,
     PullRequestCiRecovered: (number, commit) =>
       `CI passed on PR #${number} (${commit}). The CI failure notice was cleared`,
     IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
@@ -1475,7 +1475,7 @@ const en: LabelMessages = {
     ChatSessionStarted: (reason) => `Started a new session to answer the question (${reason})`,
     sessionNotSaved: (why) => `. The session could not be saved: ${why}`,
     sessionHandoff: (from, id, truncated) =>
-      `. Handed over the conversation of the previous agent's (${from}) session (${id})${truncated ? ". Older parts were omitted" : ""}`,
+      `. Handed over the conversation of the previous agent's (${from}) session (${id})${truncated ? ", with older parts omitted" : ""}`,
     AgentFellBack: (from, to, role, until, reason) =>
       `${from} ${{ usage_limit: "reached its usage limit", auth: "failed to authenticate", error: "failed" }[reason]}, so retrying with ${to} (${role}; ${from} is not used${reason === "usage_limit" ? "" : " for this task"} until ${until.toLocaleString("en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })})`,
     RunCostRecorded: (source, cost, converted, unpriced) =>

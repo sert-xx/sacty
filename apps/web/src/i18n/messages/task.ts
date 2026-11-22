@@ -65,7 +65,7 @@ const ja = {
   heldReview: {
     title: (count: number) => `一時停止の間に、PR の指摘が${count}件届いています`,
     help: (number: number, ai: number) =>
-      `PR #${number} に届いた指摘は、再開すると、止まった工程を走り直す前に、戻し先を判断して差し戻します。${ai > 0 ? `指摘のうち ${ai}件は AI のレビューのものです。` : ""}`,
+      `${ai > 0 ? `AI のレビューの指摘 ${ai}件を含む、` : ""}PR #${number} に届いた指摘は、再開すると、止まった工程を走り直す前に、戻し先を判断して差し戻します。`,
   },
   /** 人に確かめてほしいこと（PBI-301）。指摘の意図を判断できなかった理由と、実行が挙げた聞き返し・推測で決めたこと。 */
   humanAsk: {
@@ -136,7 +136,7 @@ const ja = {
   discardedReview: {
     title: (count: number) => `取り込んでいない AI のレビューの指摘が${count}件あります`,
     help: (number: number, head: string) =>
-      `PR #${number} への AI のレビューの指摘は、対象が古い head だったので、作り直しには取り込んでいません。最後に捨てた時点の PR の head は ${head} で、そのあと PR が更新されていれば、今の head は変わっています。今の head にも当てはまる指摘があれば、差し戻しで指摘として伝えてください。承認・マージする前に確かめてください。`,
+      `PR #${number} への AI のレビューの指摘は、対象が古い head だったので、作り直しには取り込んでいません。最後に捨てた時点の PR の head は ${head} で、そのあと PR が更新されていれば、今の head は変わっています。今の head にも当てはまる指摘があれば、承認・マージする前に、差し戻しで指摘として伝えてください。`,
     reviewed: (commit: string) => `対象：${commit}`,
     open: "指摘を開く",
   },
@@ -443,7 +443,7 @@ const ja = {
           ? "観点ごとの担当：起動していません（担当を起動する手段があることを確かめられなかった実行です）"
           : `観点ごとの担当：${count}件を起動`,
     reviewDispatchRound: (round: number) =>
-      `${round}回目のレビューの記録です。今の回は、まだ終わっていません。`,
+      `${round}回目のレビューの記録で、今の回は、まだ終わっていません。`,
     reviewUndispatched: (runs: number, paused: boolean) =>
       `観点ごとの担当を起動しなかったため、使わなかったレビューの実行：${runs}回（${paused ? "続いたため、止めています。再開すると、もう一度レビューします" : "担当を起動するよう、やり直します"}）`,
     reviewComments: (n: number) => `行へのコメント（${n}件）`,
@@ -558,7 +558,7 @@ const ja = {
     unknown: "不明",
     atLeast: (usd: string) => `${usd}以上`,
     unknownNote: (n: number) =>
-      `${n}回の実行は、時間切れなどで使った分を全部は読めませんでした。その費用は、読めた分だけが合計に入っています。読めなければ 0 ではなく不明です。`,
+      `${n}回の実行は、時間切れなどで使った分を全部は読めませんでした。その費用は、読めた分だけが合計に入り、読めなければ 0 ではなく不明です。`,
     setting: (agent: string, auth: string, model: string, effort: string) =>
       `${agent}・${auth}・${model}・${effort}`,
     gather: "情報収集",
@@ -776,7 +776,7 @@ const en: TaskMessages = {
     title: (count: number) =>
       `${count} PR comment${count === 1 ? "" : "s"} arrived while the task was paused`,
     help: (number: number, ai: number) =>
-      `When you resume, the comments on PR #${number} are read and the task is sent back to the step decided for them, before the step that stopped runs again.${ai > 0 ? ` ${ai} of them are from the AI review.` : ""}`,
+      `When you resume, the comments on PR #${number}${ai > 0 ? `, ${ai} of them from the AI review,` : ""} are read and the task is sent back to the step decided for them, before the step that stopped runs again.`,
   },
   humanAsk: {
     title: (count: number) => `${count} thing${count === 1 ? "" : "s"} for you to check`,
@@ -848,7 +848,7 @@ const en: TaskMessages = {
     title: (count: number) =>
       `${count} AI review comment${count === 1 ? " was" : "s were"} not taken in`,
     help: (number: number, head: string) =>
-      `The AI review comments on PR #${number} were for an old head, so they were not taken into the rework. The PR's head when they were last discarded was ${head}; if the PR has been updated since, the current head has changed. If any still applies to the current head, send it back as a change request. Check them before you approve or merge.`,
+      `The AI review comments on PR #${number} were for an old head, so they were not taken into the rework. The PR's head when they were last discarded was ${head}; if the PR has been updated since, the current head has changed. If any still applies to the current head, send it back as a change request before you approve or merge.`,
     reviewed: (commit: string) => `For: ${commit}`,
     open: "Open comment",
   },
@@ -1140,7 +1140,7 @@ const en: TaskMessages = {
           ? "Per-viewpoint reviewers: none started (this run could not be confirmed to have a way to start them)"
           : `Per-viewpoint reviewers: ${count} started`,
     reviewDispatchRound: (round) =>
-      `Record of review round ${round}. The current round has not finished. `,
+      `Record of review round ${round}; the current round has not finished. `,
     reviewUndispatched: (runs, paused) =>
       `Review runs not used because they started no per-viewpoint reviewer: ${runs} (${paused ? "this kept happening, so the task is paused; resuming reviews again" : "the review is run again so that it starts them"})`,
     reviewComments: (n) => `Line comments (${n})`,

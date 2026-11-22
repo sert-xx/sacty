@@ -39,23 +39,23 @@ const ja = {
   intervalLabel: "取り込みの間隔（秒）",
   intervalHelp: (min: number, fallback: number) => `${min} 以上。空なら ${fallback}。`,
   intervalCurrent: (sec: number, byDefault: boolean) =>
-    `いまは ${sec} 秒ごと${byDefault ? "。既定の値です" : ""}。`,
+    `いまは${byDefault ? "、既定の" : ""} ${sec} 秒ごと。`,
   intervalWhenOn: (sec: number, byDefault: boolean) =>
-    `始めると ${sec} 秒ごと${byDefault ? "。既定の値です" : ""}。`,
+    `始めると${byDefault ? "、既定の" : ""} ${sec} 秒ごと。`,
   parallelTitle: "並行実行",
   parallelHint:
     "実行待ちのタスクを、古い順にこの数まで同時に実行します。増やすほど、マシンの負荷と AI の利用上限の消費が増えます。",
   parallelLabel: "同時に実行するタスクの数",
   parallelHelp: (fallback: number, max: number) => `1〜${max}。空なら ${fallback}。`,
   parallelCurrent: (n: number, byDefault: boolean) =>
-    `いまは ${n} 件まで${byDefault ? "。既定の値です" : ""}。`,
+    `いまは${byDefault ? "、既定の" : ""} ${n} 件まで。`,
   memoryTitle: "メモリー",
   memoryHint:
     "監査が登録したメモリーは、タスクで役に立つたびに有効な最終利用日が新しくなります。有効な最終利用日からこの日数を過ぎたメモリーは、自動で消します。",
   memoryLabel: "メモリーを残す日数",
   memoryHelp: (fallback: number, max: number) => `1〜${max}。空なら ${fallback}。`,
   memoryCurrent: (n: number, byDefault: boolean) =>
-    `いまは ${n} 日${byDefault ? "。既定の値です" : ""}。`,
+    `いまは${byDefault ? "、既定の" : ""} ${n} 日。`,
   notifyTitle: "Slack の通知（任意）",
   notifyHint:
     "承認待ち・エスカレーション・一時停止・完了を Slack に知らせます。本文の題名の前に [プロジェクトの名前] を付けます。人が自分で一時停止したときは知らせません。",
@@ -161,23 +161,23 @@ const en: SettingsMessages = {
   intervalLabel: "Intake interval (seconds)",
   intervalHelp: (min, fallback) => `${min} or more. ${fallback} if empty.`,
   intervalCurrent: (sec, byDefault) =>
-    `Every ${sec} seconds now${byDefault ? ". This is the default" : ""}.`,
+    `Every ${sec} seconds now${byDefault ? ", the default" : ""}.`,
   intervalWhenOn: (sec, byDefault) =>
-    `Every ${sec} seconds once started${byDefault ? ". This is the default" : ""}.`,
+    `Every ${sec} seconds once started${byDefault ? ", the default" : ""}.`,
   parallelTitle: "Parallel tasks",
   parallelHint:
     "Queued tasks run at the same time, oldest first, up to this number. A larger number uses more of your machine and of the AI usage limit.",
   parallelLabel: "Tasks to run at the same time",
   parallelHelp: (fallback, max) => `1 to ${max}. ${fallback} if empty.`,
   parallelCurrent: (n, byDefault) =>
-    `Up to ${n} task${n === 1 ? "" : "s"} now${byDefault ? ". This is the default" : ""}.`,
+    `Up to ${n} task${n === 1 ? "" : "s"} now${byDefault ? ", the default" : ""}.`,
   memoryTitle: "Memory",
   memoryHint:
     "Each time a memory the audit registered helps a task, its last useful date moves forward. Memories whose last useful date is older than this many days are deleted automatically.",
   memoryLabel: "Days to keep memories",
   memoryHelp: (fallback, max) => `1 to ${max}. ${fallback} if empty.`,
   memoryCurrent: (n, byDefault) =>
-    `${n} day${n === 1 ? "" : "s"} now${byDefault ? ". This is the default" : ""}.`,
+    `${n} day${n === 1 ? "" : "s"} now${byDefault ? ", the default" : ""}.`,
   notifyTitle: "Slack notifications (optional)",
   notifyHint:
     "Tells Slack about approvals, escalations, pauses, and completions. The message puts [project name] before the task title. Pausing a task yourself is not notified.",
