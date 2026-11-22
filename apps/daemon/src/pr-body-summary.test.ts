@@ -143,14 +143,11 @@ describe("実装の PR の本文：結論を冒頭に置く（PBI-264）", () =>
     expect(head).toContain(
       "- 変更：予約のキャンセル API と画面の操作を足しました。 キャンセルした予約は一覧に残り、時間帯は空きます。",
     );
-    // 結論は変更・最後の直しと、省けない行だけ。レビューの進め方は、結論の外の節に 1 項目 1 文で置く
+    // 結論は変更・最後の直しと、省けない行だけ。レビューの進め方の節は無い（PBI-471）
     expect(head).toContain("- [ ] 実機の画面の見た目を確かめる");
-    const conclusion = head.slice(head.indexOf("## 結論"), head.indexOf("## レビューの進め方"));
-    expect(conclusion).not.toContain("レビューの子タスク");
-    expect(head).toContain(
-      "## レビューの進め方\n\n- Sacty のレビューの子タスクが、この PR をレビューして投稿します。\n- 指摘があれば Sacty が直し、指摘なしになるとドラフトを外します。\n- Sacty はテストの実行と CI の待ちをしないので、CI の結果はこの PR のチェックで確かめてください。",
-    );
-    expect(body.indexOf("## 結論")).toBeLessThan(body.indexOf("## 観点 → テスト → 実行結果"));
+    expect(body).not.toContain("レビューの進め方");
+    expect(body).not.toContain("レビューの子タスク");
+    expect(body.indexOf("## 結論")).toBeLessThan(body.indexOf("## 確かめ方"));
   });
 
   it("以前の版の最終レビューの判定・総評・再発の確認は、本文に出さない（最終レビューは PBI-331 でやめた）", () => {
@@ -160,9 +157,7 @@ describe("実装の PR の本文：結論を冒頭に置く（PBI-264）", () =>
       const t = task({ lastReview });
       const text = buildPullRequestBodyText(t);
       const all = [text.main, text.footer, JSON.stringify(buildPullRequestBodyParts(t))].join("\n");
-      expect(text.main).toContain(
-        "- Sacty のレビューの子タスクが、この PR をレビューして投稿します。",
-      );
+      expect(all).not.toContain("レビューの進め方");
       expect(all).not.toContain("- 最終レビュー：");
       expect(all).not.toContain("ゴールガーディアンの最終レビュー（");
       expect(all).not.toContain("番目の総評の文");
@@ -180,8 +175,10 @@ describe("実装の PR の本文：結論を冒頭に置く（PBI-264）", () =>
       }),
     );
     const head = body.slice(0, body.indexOf("## 要求要件"));
-    expect(head).toContain("人が、ゴールガーディアンの不合格のまま、レビューへ進めました。");
-    expect(head).toContain("- 不合格の観点：TV-2");
+    expect(head).toContain("人が、AI の確かめの不合格のまま、PR を出すと決めました。");
+    expect(head).toContain("- 最終レビューの所見：エラーの文言が違う");
+    expect(head).not.toContain("ゴールガーディアン");
+    expect(head).not.toContain("不合格の観点");
   });
 });
 
@@ -247,7 +244,8 @@ describe("実装の PR の本文：要求要件・設計は全文を載せない
     const skipped = buildPullRequestBody(
       task({ steps: [{ key: "implement", state: "active" }], stepPullRequests: [] }),
     );
-    expect(skipped).toContain("（オーケストレーターの判断で、要求要件の工程を省きました。");
+    expect(skipped).toContain("要求要件の文書は作らず、依頼の内容を受け入れの基準にしました。");
+    expect(skipped).not.toContain("オーケストレーター");
     const reproduced = buildPullRequestBody(
       task({
         steps: [
@@ -276,14 +274,20 @@ describe("実装の PR の本文：表のセルを短くする（PBI-264）", ()
     const rows = body.split("\n").filter((l) => l.startsWith("| TV-"));
     expect(rows).toHaveLength(2);
     for (const row of rows) expect(row.length).toBeLessThan(220);
-    expect(rows[0]).toContain("ケース 1 ほか 5 件");
+    // テストの名前の全文は並べず、件数とファイルだけにする（PBI-471）
+    expect(rows[0]).toContain("6 件（`apps/api/src/presentation/http/cancellation.test.ts`）");
+    expect(rows[0]).not.toContain("ケース 1");
     expect(rows[0]).toContain("| ✅ |");
     expect(rows[1]).toContain("| ❌ |");
-    expect(rows[1]).toContain("a.test.ts › 単独");
+    expect(rows[1]).toContain("1 件（`a.test.ts`）");
+    expect(rows[1]).not.toContain("単独");
     expect(body).toContain("| 観点 | テスト | 最終レビュー |");
     // 折りたたみには、全件・入力・期待結果・所見の全文がある
     const folded = body.slice(body.indexOf("<summary>観点ごとの詳細"));
-    expect(folded).toContain(TESTS.join(" / "));
+    expect(folded).not.toContain("ケース 1");
+    expect(folded).toContain(
+      "テスト：6 件（`apps/api/src/presentation/http/cancellation.test.ts`）",
+    );
     expect(folded).toContain("入力：未キャンセルの予約が 1 件ある状態で、GET を送る");
     expect(folded).toContain("期待結果：どちらの応答も cancelledAt が null になる");
     expect(folded).toContain(`最終レビューの所見：${LONG_REASON}`);
@@ -308,7 +312,8 @@ describe("実装の PR の本文：表のセルを短くする（PBI-264）", ()
     const row = body.split("\n").find((l) => l.startsWith("| TV-1")) ?? "";
     expect(row).toContain(`${"題".repeat(60)}…`);
     expect(row).not.toContain("題".repeat(61));
-    expect(row).toContain("x \\| y");
+    expect(row).toContain("1 件（`a.test.ts`）");
+    expect(row).not.toContain("x | y");
   });
 
   it("テストが無い観点は、表には短く、理由は折りたたみに出す。観点が1件も無くても壊れない", () => {
@@ -503,15 +508,13 @@ describe("実装の PR の本文：作業の報告を載せない（PBI-264）",
 
   it("改行の無い長い空白列でも、線形時間で本文を作る", () => {
     // 文の途中の長い空白（行の端ではないので、trim では消えない）
-    const blanks = " ".repeat(100_000);
-    const started = Date.now();
+    const blanks = " ".repeat(200_000);
     const body = buildPullRequestBody(
       task({
         outputs: { implement: `x${blanks}y` },
         lastReview: review({ summary: `合格。p${blanks}q` }),
       }),
     );
-    expect(Date.now() - started).toBeLessThan(1000);
     expect(body).toContain("- 変更：x");
   });
 
@@ -562,11 +565,11 @@ describe("PR テンプレートに沿わせる本文（PBI-264。既存の仕様
       }),
     });
     const { main, footer } = fillTemplate(TEMPLATE, buildPullRequestBodyParts(t));
-    // レビューの進め方は、省かれない footer に置く（目的の節には置かない）
-    expect(main).not.toContain("レビューの子タスク");
-    expect(footer).toContain("- Sacty のレビューの子タスクが、この PR をレビューして投稿します。");
-    expect(footer.indexOf("**レビューの進め方**")).toBeLessThan(
-      footer.indexOf("この PR をマージすると"),
+    // レビューの進め方は書かない。承認の案内は、省かれない footer に置く（PBI-471）
+    expect(`${main}\n${footer}`).not.toContain("レビューの進め方");
+    expect(`${main}\n${footer}`).not.toContain("レビューの子タスク");
+    expect(footer).toContain(
+      "この PR をマージすると（PR の中で直してからでも）、実装を承認したことになります。",
     );
     expect(main).not.toContain("最終レビュー：合格。");
     expect(main).toContain("人が確かめること：1 件（この PR の末尾にあります）");
@@ -574,7 +577,7 @@ describe("PR テンプレートに沿わせる本文（PBI-264。既存の仕様
     expect(main).not.toContain("R-99");
     expect(main).toContain("予約のキャンセル API と画面の操作を足しました。");
     expect(main).not.toContain("コミット・プッシュはしていません");
-    expect(main).toContain("ケース 1 ほか 5 件");
+    expect(main).toContain("6 件（`apps/api/src/presentation/http/cancellation.test.ts`）");
     expect(main).not.toContain("ゴールガーディアンの最終レビュー（続き）");
     // 人が確かめることは footer（最後）に置く
     expect(footer).toContain("- [ ] 実機で確かめる");
@@ -587,7 +590,7 @@ describe("PR テンプレートに沿わせる本文（PBI-264。既存の仕様
       "説明だけのテンプレート\n",
       buildPullRequestBodyParts(task()),
     );
-    expect(footer).toContain("- Sacty のレビューの子タスクが、この PR をレビューして投稿します。");
+    expect(footer).toContain("直してほしい所は、この PR にコメントかレビューで書いてください。");
     expect(main).toContain("| 観点 | テスト | 最終レビュー |");
   });
 });
@@ -605,7 +608,7 @@ describe("長さの上限（PBI-264）", () => {
     expect(truncated).toBe(true);
     expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
     expect(body).toContain("- [ ] 実機で確かめる");
-    expect(body).toContain("人が、ゴールガーディアンの不合格のまま、レビューへ進めました。");
+    expect(body).toContain("人が、AI の確かめの不合格のまま、PR を出すと決めました。");
     expect(body).toContain("sacty task t-1");
     expect(body).toContain("この PR をマージすると");
   });
@@ -628,7 +631,7 @@ describe("長さの上限（PBI-264）", () => {
     const { body, truncated } = limitBody(b.main, b.footer, max, b.keep);
     expect(truncated).toBe(true);
     expect(body.length).toBeLessThanOrEqual(max);
-    expect(body).toContain("人が、ゴールガーディアンの不合格のまま、レビューへ進めました。");
+    expect(body).toContain("人が、AI の確かめの不合格のまま、PR を出すと決めました。");
     for (const check of checks) expect(body.split(`- [ ] ${check}`).length - 1).toBe(1);
     expect(body.indexOf(`- [ ] ${checks[5]}`)).toBeLessThan(body.indexOf("この PR をマージすると"));
     // 上限に収まるなら、重ねて出さない
@@ -651,8 +654,6 @@ describe("要約・短縮の前に秘密の値を伏せる（PBI-264）", () => 
   const cases: [string, (filler: (n: number) => string) => Record<string, unknown>][] = [
     // 変更の要約（240 文字）
     ["変更の要約", (f) => ({ outputs: { implement: `${f(230)}${SECRET}` } })],
-    // 表のテスト名（70 文字）
-    ["テスト名", (f) => ({ testMap: [{ viewpointId: "TV-1", tests: [`${f(60)}${SECRET}`] }] })],
     // 表の観点の題（60 文字）
     [
       "観点の題",

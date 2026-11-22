@@ -144,9 +144,18 @@ In a re-review, when a previous finding is withdrawn as outside the purpose, its
 
 If the PR changes before the review finishes, sacty behaves as follows.
 
-- If the PR is pushed to while it is being reviewed, sacty posts the review against the reviewed commit and says in the review body which commit was reviewed.
+- If the PR is pushed to before the review is posted (the first review or a re-review), sacty stops that review without posting a review of the old commit.
+  Once the pushes stop and the PR's head commit has not changed for 2 minutes, sacty reviews the new commit.
+  While waiting, the task stays waiting to run, and the Activity shows that the review was stopped and the new commit.
+  The cost of the stopped review counts toward the task's cost.
+- A PR from a fork is not stopped. sacty posts the review against the reviewed commit and says in the review body which commit was reviewed ([Do not import PRs you do not trust](#do-not-import-prs-you-do-not-trust)).
 - When the PR is merged or closed before the review is posted (also during a re-review run), the review task is cancelled.
   After the review is posted, the task is done instead of cancelled ([After the review is posted](#after-the-review-is-posted)).
+
+When a review is stopped, its record (`ReviewRunStopped`) stays in the Activity.
+Once even one such record exists, an earlier version of the sacty daemon cannot read the Activity and cannot start.
+You can go back to an earlier version only until the first review is stopped.
+There is no procedure for going back to an earlier version after the record exists, so keep running the current version.
 
 ### The posted review
 
@@ -314,8 +323,7 @@ A re-request on GitHub is handled as follows.
 ### When a review stops
 
 When a review stops (an error, the AI usage limit, an authentication error, or the budget cap), sacty also tells the PR that asked for it, in a comment.
-The comment says that the review stopped, the gist of the reason, and how to resume (a link to the task screen).
-The task screen runs on the requester's machine, so when the screen URL is `127.0.0.1`, `localhost`, or `[::1]`, the sentence "タスクの画面は、依頼した人のマシンでだけ開けます。" (the task screen opens only on the requester's machine) is added right after the link sentence.
+The comment says that the review stopped, the gist of the reason, and how to resume ("Sacty の画面で、このタスクを再開してください。"; no task screen URL or task ID is written, because a person who reads only the PR cannot open it and the ID means nothing to them).
 
 To resume, open the task on the screen and press "Resume".
 
@@ -462,6 +470,8 @@ The first is the comments that sacty discarded without delivering them to the or
 
 - If the PR was updated after the review was made (the commit the review targeted differs from the PR's current head), sacty discards that review instead of delivering it.
   That it was discarded, and why, remain in the Activity.
+- The child task's next review checks the discarded comments again on the PR's new commit.
+  Comments that also apply to the new commit come out as comments of the next review and reach the original task.
 - The discarded comments are shown on the approval screen and the task detail as "AI review comments not taken in" (the reason, the PR's commit at the time of discarding, the target commit, the gist of each comment, and a link to GitHub).
   They stay until the PR is merged, so check them before you approve or merge.
 - When the original task goes back to waiting for approval, the child task reviews the current PR again.
@@ -471,8 +481,7 @@ The second is whether a Sacty AI review is attached to the current commit of the
 - A review takes a while to reach a commit created by a rework.
   Approving or merging before it arrives means going ahead without seeing its comments.
 - sacty does not block approving or merging.
-- The "レビューの進め方" (How the review goes) section of the PR body also gets the state when the body was written.
-  A review that arrives later is not reflected, so check the PR's reviews on GitHub for the latest state.
+- The PR body does not write the state of the AI review. Check the PR's reviews on GitHub for the latest state.
 
 ## JIRA tickets
 

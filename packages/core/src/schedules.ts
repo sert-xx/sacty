@@ -62,7 +62,11 @@ export const ScheduledTaskSettings = z
   .strict()
   .superRefine((value, ctx) => {
     if (!value.template && value.title === "") {
-      ctx.addIssue({ code: "custom", path: ["title"], message: code("input.titleRequired") });
+      ctx.addIssue({
+        code: "custom",
+        path: ["title"],
+        message: code("input.titleRequired"),
+      });
     }
   })
   // テンプレートでは、題・説明・進め方を持たない（テンプレートが決める）
@@ -126,7 +130,10 @@ export type Schedule = z.infer<typeof Schedule>;
  * 画面に返すスケジュールタスク。次の予定の時刻（止めていれば無い）と、作るべき回があるのにネットにつながらず作成を
  * 待っているか（waitingForNetwork）を添える。
  */
-export type ScheduleView = Schedule & { nextRunAt?: string; waitingForNetwork?: true };
+export type ScheduleView = Schedule & {
+  nextRunAt?: string;
+  waitingForNetwork?: true;
+};
 
 /** その月の日数。 */
 function daysInMonth(year: number, month: number): number {

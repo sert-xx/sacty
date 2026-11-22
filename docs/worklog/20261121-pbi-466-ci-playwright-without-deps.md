@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-21（UTC）
 - タスク: PBI-466
-- PR: なし
+- PR: #558
 - ブランチ: なし
 - 関係する ADR: [最小の CI を GitHub Actions で足し、main の承認数は 0 のままにする](../adr/20261112-0224-minimal-ci-without-required-approvals.md)
 
@@ -27,8 +27,9 @@ CI の `npx playwright install --with-deps --only-shell chromium` は OS のラ�
 | 44915001427（6678c24） | 13 秒 | 約6分08秒 |
 
 - 変える前の実行では、Chromium 用のライブラリはランナーに最初から入っていて、`--with-deps` が新しく入れたのはフォント9個（IPA ゴシック・WenQuanYi など）だけだった。
-- 変えた後の時間と、Playwright を使うテスト7ファイル（`*.browser.test.ts`）の結果は、この PR の CI を見て追記する（作業の環境では GitHub Actions を動かせず、未確認）。日本語のフォントが無いと位置の検査が変わるおそれがある。落ちたら、足りないフォントだけを apt で入れる（`--with-deps` には戻さない）。
-- ジョブの時間は、テストの時間のばらつき（5〜6分台）が、準備の差（数秒）より大きい。比べるときは準備の手順の時間を見る。
+- 変えた後の時間と、Playwright を使うテスト7ファイル（`*.browser.test.ts`）の結果は未確認（作業の環境では GitHub Actions を動かせない）。「残したこと」を見る。
+- 表の3回では、テスト（vitest）の時間が約5分23秒〜6分12秒、ジョブ全体が約6分08秒〜7分05秒とばらつく。このばらつきが、準備の差（数秒）より大きい。比べるときは準備の手順の時間を見る。
+- 実行した検査：`npm run lint` は通った。`npx vitest run tests/docs` は98件が通った。`npm test`（全件）は334ファイル中16が失敗した（`packages/cli`・`tests/desktop` は `@sacty/daemon` のパッケージが見つからず、画面のテスト5ファイルはこの環境にブラウザとフォントが無いため。どれも今回の変更とは無関係）。
 
 ## レビューの指摘と対応
 
@@ -38,4 +39,4 @@ CI の `npx playwright install --with-deps --only-shell chromium` は OS のラ�
 
 ## 残したこと
 
-- 変えた後の CI の時間とテストの結果の追記（PR の CI の後）。
+- 変えた後の CI の時間と、`*.browser.test.ts` 7ファイルの結果の追記（PR の CI の後）。日本語のフォントが無いと位置の検査が変わるおそれがある。落ちたら、足りないフォントだけを apt で入れる（`--with-deps` には戻さない）。

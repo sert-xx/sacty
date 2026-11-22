@@ -3,7 +3,8 @@ import { redactUrlCredentials } from "./ci.js";
 import { DEFERRAL_NOTICE_MARKER_PREFIX } from "./github.js";
 import { askQuote, publicText } from "./human-ask-notice.js";
 import { clip, withoutInternalPaths } from "./prompts.js";
-import { taskLinkNote } from "./task-link.js";
+import { withoutRemarkIds } from "./remark-ids.js";
+import { markdownText, remarkLine } from "./remark-line.js";
 
 /*
  * 後続に回したい案（実装が、この PR では直さず後続に回したいと申告した指摘）への、人の決定を、PR に残すコメント（PBI-370）。
@@ -20,10 +21,14 @@ export type DeferralNoticeItem = {
   remarkId: string;
   decision: DeferralDecision;
   /**
-   * その PR のコメントから取り込んだ指摘の、指摘の文・実装が書いた後続に回したい理由・元のコメントの URL。sacty の画面から
-   * 書いた指摘には無い（画面で書いた文と、それへの対応は、PR に載せない。指摘への対応の返信と同じ）。
+   * 指摘を示す、指摘の要点の1行（`remarkLine` で整えたもの。PBI-471）。指摘の ID・全文は載せない。
    */
-  quoted?: { text: string; reason: string; url: string };
+  line: string;
+  /**
+   * その PR のコメントから取り込んだ指摘の、実装が書いた後続に回したい理由・元のコメントの URL。sacty の画面から
+   * 書いた指摘には無い（画面で書いた文への対応は、PR に載せない。指摘への対応の返信と同じ）。
+   */
+  quoted?: { reason: string; url: string };
   /** 後続に回すと決めた指摘の扱い（無ければ、何もしない）。 */
   handling?: DeferralHandling;
   /** 扱いが issue のとき：作った Issue の URL。作れなければ無い。 */
@@ -36,10 +41,6 @@ export type DeferralNoticeInput = {
   taskId: string;
   decision: number;
   items: readonly DeferralNoticeItem[];
-  /** タスクの画面の URL。 */
-  taskUrl: string;
-  /** 画面の URL が依頼した人のマシンでだけ開けるか（注釈を添える）。 */
-  localOnly?: boolean;
   secrets: readonly string[];
 };
 
@@ -78,25 +79,29 @@ export function deferralIssueMarker(taskId: string, remarkId: string): string {
   return `<!-- sacty-deferral-issue:${taskId}:${remarkId} -->`;
 }
 
-/** 文の、最初の空でない行。 */
-function firstLine(text: string): string {
-  return (
-    text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line !== "") ?? ""
-  );
+/** 指摘を示す文。リンクがあればリンクと要点、リンクが作れなければ要点だけ。 */
+function remarkHead(url: string | undefined, line: string): string {
+  if (url) return line ? `[この指摘](${url})（${markdownText(line)}）` : `[この指摘](${url})`;
+  return line ? markdownText(line) : "指摘";
+}
+
+/** 後続に回したい理由を、PR・Issue に載せる引用にする。指摘の ID を除いてから、秘密情報を伏せて引用にする。 */
+function reasonQuote(reason: string, secrets: readonly string[], max?: number): string {
+  return askQuote(withoutRemarkIds(reason), secrets, max);
 }
 
 /**
- * 人が後続に回すと決めて、GitHub の Issue を作ると選んだ指摘の、Issue の題と本文（PBI-370）。指摘の文と理由は外から来た
- * 文なので、秘密情報を伏せ、作業領域の内部のパスを置き換えてから切り詰め、引用にして載せる（askQuote）。題は、指摘の文の
- * 最初の行。人が Issue を作ると選んだ指摘なので、sacty の画面から書いた指摘の文も載せる。
+ * 人が後続に回すと決めて、GitHub の Issue を作ると選んだ指摘の、Issue の題と本文（PBI-370・PBI-471）。題と、本文の指摘は、
+ * 指摘を示す1行（`remarkLine`。要点が無ければ、目印・見出しを除いた指摘の最初の行）と、元のコメントへのリンク。指摘の全文・
+ * タスクの ID・指摘の ID は載せない。理由は外から来た文なので、指摘の ID を除き、秘密情報を伏せ、内部のパスを置き換えてから、
+ * 切り詰めて引用にして載せる（askQuote）。
  */
 export function buildDeferralIssue(input: {
   taskId: string;
   remarkId: string;
   text: string;
+  /** 指摘の要点（無ければ、指摘の全文の最初の行を使う）。 */
+  gist?: string;
   reason: string;
   /** 元の PR の URL と番号。 */
   pullRequest: { url: string; number: number };
@@ -104,25 +109,25 @@ export function buildDeferralIssue(input: {
   originUrl?: string;
   secrets: readonly string[];
 }): { title: string; body: string } {
-  // 伏せてから、最初の行を取る（複数行の秘密の値の前半を、題に残さない）
-  const head = firstLine(publicText(input.text, input.secrets, Number.MAX_SAFE_INTEGER));
+  const remark = { text: input.text, ...(input.gist ? { gist: input.gist } : {}) };
+  const title = remarkLine(remark, input.secrets, DEFERRAL_TITLE_MAX) || "後続に回した指摘";
+  const line = remarkLine(remark, input.secrets);
   return {
-    title: `[PR #${input.pullRequest.number} follow-up] ${publicText(head, [], DEFERRAL_TITLE_MAX)}`,
+    title: `[PR #${input.pullRequest.number} follow-up] ${title}`,
     body: [
       deferralIssueMarker(input.taskId, input.remarkId),
       `PR #${input.pullRequest.number}（${input.pullRequest.url}）のレビューで、この PR では直さず、後続に回すと人が決めた指摘です。`,
       "",
       "## 指摘",
       "",
-      askQuote(input.text, input.secrets, DEFERRAL_ISSUE_TEXT_MAX),
+      remarkHead(input.originUrl, line),
       "",
       "## 実装が、後続に回したいとした理由",
       "",
-      askQuote(input.reason, input.secrets, DEFERRAL_ISSUE_TEXT_MAX),
-      ...(input.originUrl ? ["", `元のコメント：${input.originUrl}`] : []),
+      reasonQuote(input.reason, input.secrets, DEFERRAL_ISSUE_TEXT_MAX),
       "",
       "---",
-      `Sacty のタスク ${input.taskId} で、指摘 ${input.remarkId} を後続に回すと決めたときに、Sacty が作りました。`,
+      "後続に回すと決めたときに、Sacty が作りました。",
     ].join("\n"),
   };
 }
@@ -142,9 +147,12 @@ export const DEFERRAL_TASK_TEXT_MAX = 2_000;
 export function buildDeferralTask(input: {
   remarkId: string;
   text: string;
+  /** 指摘の要点（無ければ、指摘の全文の最初の行を、題に使う）。 */
+  gist?: string;
   reason: string;
   pullRequest?: { url: string; number: number };
   originUrl?: string;
+  secrets: readonly string[];
 }): { title: string; body: string } {
   const short = (text: string, max: number) => {
     const trimmed = text.trim();
@@ -154,6 +162,7 @@ export function buildDeferralTask(input: {
   const data = {
     deferredFinding: {
       remarkId: input.remarkId,
+      ...(input.gist ? { gist: input.gist } : {}),
       finding: short(input.text, DEFERRAL_TASK_TEXT_MAX),
       reasonForDeferral: short(input.reason, DEFERRAL_TASK_TEXT_MAX),
       ...(input.pullRequest ? { pullRequest: input.pullRequest.url } : {}),
@@ -161,7 +170,7 @@ export function buildDeferralTask(input: {
     },
   };
   return {
-    title: `${tag} 後続に回した指摘 ${input.remarkId}`,
+    title: `${tag} ${remarkLine({ text: input.text, ...(input.gist ? { gist: input.gist } : {}) }, input.secrets, DEFERRAL_TITLE_MAX) || "後続に回した指摘"}`,
     body: [
       input.pullRequest
         ? `PR #${input.pullRequest.number}（${input.pullRequest.url}）のレビューで、その PR では直さず、後続に回すと人が決めた指摘に対応してください。`
@@ -190,21 +199,16 @@ export function buildDeferralNotice(input: DeferralNoticeInput): string | undefi
       "",
       `### ${title}（${items.length} 件）`,
       ...items.flatMap((item) => [
+        "",
+        `**指摘：** ${remarkHead(item.quoted?.url, item.line)}`,
         ...(item.quoted
           ? [
               "",
-              `**指摘 ${item.remarkId}**（[元のコメント](${item.quoted.url})）`,
-              "",
-              askQuote(item.quoted.text, input.secrets),
-              "",
               "実装が、後続に回したいとした理由：",
               "",
-              askQuote(item.quoted.reason, input.secrets),
+              reasonQuote(item.quoted.reason, input.secrets),
             ]
-          : [
-              "",
-              `**指摘 ${item.remarkId}**（Sacty の画面から書かれた指摘。内容は、タスクの画面で読めます）`,
-            ]),
+          : []),
         ...(decision === "defer" ? ["", handlingLine(item)] : []),
       ]),
     ];
@@ -220,6 +224,6 @@ export function buildDeferralNotice(input: DeferralNoticeInput): string | undefi
     ...section("fix", "この PR で直す"),
     "",
     "---",
-    `${fixNote}後続に回すと決めた指摘は、この PR では直しません。決定は、[タスクの画面](${input.taskUrl})で行われました。${taskLinkNote(input.localOnly).join("")}`,
+    `${fixNote}後続に回すと決めた指摘は、この PR では直しません。意図と違うときは、Sacty の画面で差し戻してください。`,
   ].join("\n");
 }

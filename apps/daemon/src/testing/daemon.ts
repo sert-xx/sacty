@@ -31,12 +31,15 @@ import type { ContextFetcher, ContextRef } from "../context.js";
 import { MessageError } from "../errors.js";
 import type { GitHubAuth } from "../gh.js";
 import {
+  type DraftHistory,
+  type DraftSwitch,
   isDecisionNotice,
   type PullRequestFeedback,
   type PullRequestInfo,
   type PullRequestStatus,
   type PullRequests,
   type SactyReviewRound,
+  type SetDraftAnswer,
   sactyReviewTask,
 } from "../github.js";
 import type { HostMcpSpec } from "../host-mcp.js";
@@ -47,6 +50,7 @@ import {
   type DiffFile,
   type FileChange,
   NothingToCommitError,
+  pushFailure,
   type RepositoryWorkspace,
 } from "../repository.js";
 import { MemorySecretStore } from "../secrets.js";
@@ -141,7 +145,12 @@ export function authorOfToken(token: string): string {
 export function rateLimitError(retryAfterMs?: number, detail = RATE_LIMIT_DETAIL): Error {
   return Object.assign(
     new MessageError(
-      message("github.failed", { action: "commentIssue", status: 403, detail, hint: "none" }),
+      message("github.failed", {
+        action: "commentIssue",
+        status: 403,
+        detail,
+        hint: "none",
+      }),
     ),
     retryAfterMs !== undefined ? { retryAfterMs } : {},
   );
@@ -221,7 +230,10 @@ export class FakeServices implements ServiceRunner {
     if (this.fail) return { ok: false as const, message: this.fail };
     return {
       ok: true as const,
-      started: { network: `sacty-svc-${input.runId}_sacty`, services: this.services },
+      started: {
+        network: `sacty-svc-${input.runId}_sacty`,
+        services: this.services,
+      },
     };
   }
   async stop(runId: string) {
@@ -261,7 +273,12 @@ export class FakeServices implements ServiceRunner {
 
 /** 共用の compose のリポジトリの取得の偽物（PBI-70）。取得の呼び出しを記録し、compose ファイルを置く。 */
 export class FakeSharedComposes implements SharedComposeFetcher {
-  calls: { repo: string; ref?: string; dest: string; authEnv?: Record<string, string> }[] = [];
+  calls: {
+    repo: string;
+    ref?: string;
+    dest: string;
+    authEnv?: Record<string, string>;
+  }[] = [];
   /** あれば、取得を、これが解決するまで終わらせない（一時停止・中止のテスト）。 */
   gate?: Promise<void>;
   entered = Promise.withResolvers<void>();
@@ -287,7 +304,9 @@ export class FakeSharedComposes implements SharedComposeFetcher {
 /** clone の代わりに空のディレクトリを作り、決まった差分を返す偽物。 */
 /** PR の本文に書く、今の head の AI のレビューの状況（レビューのタスクが無ければ付いていない。PBI-302 D1）。 */
 export function noAiReview(task: Task) {
-  return { aiReview: { head: task.pullRequest?.commit ?? "", status: "none" as const } };
+  return {
+    aiReview: { head: task.pullRequest?.commit ?? "", status: "none" as const },
+  };
 }
 
 export class FakeRepos implements RepositoryWorkspace {
@@ -351,8 +370,26 @@ export class FakeRepos implements RepositoryWorkspace {
   }
   deleted: string[] = [];
   deleteFail?: string;
-  async deleteBranch(_gitDir: string, branch: string) {
+  /** 期待する先頭を渡して消した呼び出し（PBI-464）。 */
+  deleteCalls: { branch: string; expectedHead?: string }[] = [];
+  /** 期待する先頭を渡されたとき、リモートの先頭と違えば断る（比べた後に人が push した場合の再現）。 */
+  deleteLeaseCheck = false;
+  async deleteBranch(
+    _gitDir: string,
+    branch: string,
+    _authEnv?: Record<string, string>,
+    expectedHead?: string,
+  ) {
+    this.deleteCalls.push({ branch, ...(expectedHead ? { expectedHead } : {}) });
     if (this.deleteFail) throw new Error(this.deleteFail);
+    if (
+      this.deleteLeaseCheck &&
+      expectedHead &&
+      this.remote[branch] !== undefined &&
+      this.remote[branch] !== expectedHead
+    ) {
+      throw new Error("! [rejected] (stale info)");
+    }
     this.deleted.push(branch);
   }
   /** 差分の起点にしたコミット（ベースブランチを取り込んだら、その先頭）。 */
@@ -378,7 +415,10 @@ export class FakeRepos implements RepositoryWorkspace {
     return this.diffText
       .split("\n")
       .filter((line) => line.startsWith("diff --git "))
-      .map((line) => ({ status: "M", path: line.replace(/^diff --git a\/.* b\//, "") }));
+      .map((line) => ({
+        status: "M",
+        path: line.replace(/^diff --git a\/.* b\//, ""),
+      }));
   }
   /** ファイルごとの変更（セキュリティ対応の範囲の照合）。 */
   changes: FileChange[] = [{ path: "src/pay.ts", added: 1, removed: 0 }];
@@ -416,18 +456,30 @@ export class FakeRepos implements RepositoryWorkspace {
     this.snapshots.push({ gitDir, baseCommit, outDir });
   }
   /** レビューの対象の PR のコミットの取得と、PR の差分（PBI-19）。 */
-  fetchedCommits: { gitDir: string; commits: string[]; authEnv?: Record<string, string> }[] = [];
+  fetchedCommits: {
+    gitDir: string;
+    commits: string[];
+    authEnv?: Record<string, string>;
+  }[] = [];
   fetchFail?: string;
   /** これを含む取得だけ失敗にする（前回の先頭・前回の起点が取得できない場合。PBI-421）。 */
   fetchFailFor: string[] = [];
   async fetchCommits(gitDir: string, commits: string[], authEnv?: Record<string, string>) {
     if (this.fetchFail) throw new Error(this.fetchFail);
     if (commits.some((c) => this.fetchFailFor.includes(c))) throw new Error("fetch failed");
-    this.fetchedCommits.push({ gitDir, commits, ...(authEnv ? { authEnv } : {}) });
+    this.fetchedCommits.push({
+      gitDir,
+      commits,
+      ...(authEnv ? { authEnv } : {}),
+    });
   }
   /** ベースブランチの最新の取得（統合レビュー。PBI-31）。 */
   branchHead = "c".repeat(40);
-  fetchedBranches: { gitDir: string; branch: string; authEnv?: Record<string, string> }[] = [];
+  fetchedBranches: {
+    gitDir: string;
+    branch: string;
+    authEnv?: Record<string, string>;
+  }[] = [];
   fetchBranchFail?: string;
   async remoteDefaultBranch(
     _gitDir: string,
@@ -446,7 +498,11 @@ export class FakeRepos implements RepositoryWorkspace {
   ) {
     await this.onFetchBranch?.(signal);
     if (this.fetchBranchFail) throw new Error(this.fetchBranchFail);
-    this.fetchedBranches.push({ gitDir, branch, ...(authEnv ? { authEnv } : {}) });
+    this.fetchedBranches.push({
+      gitDir,
+      branch,
+      ...(authEnv ? { authEnv } : {}),
+    });
     return this.remote[branch] ?? this.branchHead;
   }
   /** タスクブランチの、sacty が積んだ後の変更（PBI-57）。テストで、人が直接積んだ変更を表す。 */
@@ -478,8 +534,41 @@ export class FakeRepos implements RepositoryWorkspace {
   pushFail?: string;
   /** true なら、本物の強制しないプッシュと同じく、違うコミットがある名前へのプッシュを断る。 */
   rejectExistingBranch = false;
-  async pushCommit(_gitDir: string, commit: string, branch: string) {
+  /**
+   * 本物の push の呼び出し（pushCommit・publish・要求要件・設計のコミットの push）ごとに、先頭から1つ使う結果（PBI-467）。
+   * 文字列は、その git の標準エラー出力で失敗する（本物の分類で作った PushFailedError）。applied は、リモートが進んだ後に
+   * 失敗する（応答だけが失われた）。使い切った後は通る。
+   */
+  pushScript: (string | { stderr: string; applied: true })[] = [];
+  /** push の呼び出しごとの、コミット・ブランチ・渡された認証の環境（PBI-467）。 */
+  pushAttempts: {
+    commit: string;
+    branch: string;
+    authEnv?: Record<string, string>;
+  }[] = [];
+  /** push を1回数え、pushScript の結果が失敗なら、その失敗と、リモートが進むかを返す。 */
+  private takePush(commit: string, branch: string, authEnv?: Record<string, string>) {
+    this.pushAttempts.push({ commit, branch, ...(authEnv ? { authEnv } : {}) });
+    const step = this.pushScript.shift();
+    if (step === undefined) return { applied: true as const };
+    const stderr = typeof step === "string" ? step : step.stderr;
+    return {
+      applied: typeof step !== "string",
+      error: pushFailure(stderr, commit, branch),
+    };
+  }
+  async pushCommit(
+    _gitDir: string,
+    commit: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+  ) {
     if (this.pushFail) throw new Error(this.pushFail);
+    const taken = this.takePush(commit, branch, authEnv);
+    if (taken.error) {
+      if (taken.applied) this.remote[branch] = commit;
+      throw taken.error;
+    }
     if (this.rejectExistingBranch && this.remote[branch] && this.remote[branch] !== commit) {
       throw new Error(`non-fast-forward: ${branch}`);
     }
@@ -505,6 +594,7 @@ export class FakeRepos implements RepositoryWorkspace {
     date: string;
     allowEmpty?: boolean;
     skipPush?: boolean;
+    authEnv?: Record<string, string>;
   }) {
     if (this.commitFilesFail) throw new Error(this.commitFilesFail);
     // 本物と同じく、同じ入力（親・内容・日時・題）からは同じコミットができる
@@ -526,7 +616,11 @@ export class FakeRepos implements RepositoryWorkspace {
       ...(input.allowEmpty ? { allowEmpty: true } : {}),
       commit,
     });
-    if (!input.skipPush) this.remote[input.branch] = commit;
+    if (!input.skipPush) {
+      const taken = this.takePush(commit, input.branch, input.authEnv);
+      if (!taken.error || taken.applied) this.remote[input.branch] = commit;
+      if (taken.error) throw taken.error;
+    }
     return { commit };
   }
   /**
@@ -586,12 +680,21 @@ export class FakeRepos implements RepositoryWorkspace {
     return this.diffBetween[`${baseCommit}..${headCommit}`] ?? this.prDiff;
   }
   /** ベースブランチの取り込み（mergeBase）の結果と、呼び出しの記録。 */
-  mergeResult: { status: "unchanged" | "merged" | "conflicted"; conflicts: string[] } = {
+  mergeResult: {
+    status: "unchanged" | "merged" | "conflicted";
+    conflicts: string[];
+  } = {
     status: "merged",
     conflicts: [],
   };
   mergeFail?: string;
-  merges: { dir: string; gitDir: string; base: string; target: string; exclude?: string[] }[] = [];
+  merges: {
+    dir: string;
+    gitDir: string;
+    base: string;
+    target: string;
+    exclude?: string[];
+  }[] = [];
   async mergeBase(input: {
     dir: string;
     gitDir: string;
@@ -651,6 +754,7 @@ export class FakeRepos implements RepositoryWorkspace {
     merge?: string;
     keep?: { commit: string; paths: string[] };
     overrides?: Record<string, string>;
+    authEnv?: Record<string, string>;
   }) {
     this.publishStarted.resolve();
     if (this.publishGate) await this.publishGate;
@@ -682,7 +786,9 @@ export class FakeRepos implements RepositoryWorkspace {
     if (Object.keys(inherited).length > 0 || input.overrides) {
       this.files[commit] = { ...inherited, ...(input.overrides ?? {}) };
     }
-    this.remote[input.branch] = commit;
+    const taken = this.takePush(commit, input.branch, input.authEnv);
+    if (!taken.error || taken.applied) this.remote[input.branch] = commit;
+    if (taken.error) throw taken.error;
     if (this.publishFailAfterPush) throw new Error(this.publishFailAfterPush);
     return { commit };
   }
@@ -765,18 +871,85 @@ export class FakePulls implements PullRequests {
   /** あれば、ドラフトの切り替えを済ませた後、答えを返す前に、これが解決するまで待つ（PBI-317）。 */
   setDraftGate?: Promise<void>;
   setDraftStarted = Promise.withResolvers<void>();
-  async setDraft(input: Parameters<PullRequests["setDraft"]>[0]) {
+  /** PR ごとの、ドラフトの切り替えのタイムライン（GitHub の ReadyForReviewEvent・ConvertToDraftEvent。古い順。PBI-468）。 */
+  timeline: Record<number, DraftSwitch[]> = {};
+  private switchSeq = 0;
+  /**
+   * draftHistory が読めない。draft は REST の draft の読み取りの失敗。timeline はタイムラインの読み取りの失敗で、
+   * ドラフトの PR では（タイムラインを読まないので）読める。
+   */
+  draftHistoryFail: false | "draft" | "timeline" = false;
+  /** あれば、ドラフトを外す要求の前の最後の外しの読み取りに失敗する。 */
+  previousReadFail = false;
+  /**
+   * 0 より大きければ、外す要求の答えと draftHistory は、タイムラインの最後の1件を含まない（反映の遅れ）。読むたびに1つ減る。
+   */
+  timelineLagReads = 0;
+  private pushSwitch(number: number, kind: DraftSwitch["kind"]): string {
+    const event: DraftSwitch = {
+      id: `event-${++this.switchSeq}`,
+      kind,
+      at: new Date(Date.now()).toISOString(),
+    };
+    this.timeline[number] = [...(this.timeline[number] ?? []), event];
+    return event.id;
+  }
+  /** 人が GitHub でドラフトを外した（sacty の記録に無い外しのイベントが最後になる）。外しのイベントの ID を返す。 */
+  humanUndraft(number: number): string {
+    this.drafts[number] = false;
+    return this.pushSwitch(number, "ready_for_review");
+  }
+  /** 人が GitHub でドラフトにした。 */
+  humanDraft(number: number): string {
+    this.drafts[number] = true;
+    return this.pushSwitch(number, "convert_to_draft");
+  }
+  /** 反映の遅れを含めた、今読めるタイムライン。 */
+  private visibleTimeline(number: number): DraftSwitch[] {
+    const all = this.timeline[number] ?? [];
+    if (this.timelineLagReads <= 0) return all;
+    this.timelineLagReads -= 1;
+    return all.slice(0, -1);
+  }
+  async draftHistory(input: Parameters<PullRequests["draftHistory"]>[0]): Promise<DraftHistory> {
+    if (this.draftHistoryFail === "draft") return { read: false };
+    if (this.drafts[input.number] ?? false) return { read: true, draft: true };
+    if (this.draftHistoryFail === "timeline") return { read: false };
+    const last = this.visibleTimeline(input.number).at(-1);
+    return { read: true, draft: false, ...(last ? { last } : {}) };
+  }
+  async setDraft(input: Parameters<PullRequests["setDraft"]>[0]): Promise<SetDraftAnswer> {
     if (this.setDraftFail) throw new Error(this.setDraftFail);
-    if ((this.drafts[input.number] ?? false) !== input.draft) {
+    const changed = (this.drafts[input.number] ?? false) !== input.draft;
+    let previous: SetDraftAnswer["previous"];
+    if (changed && !input.draft) {
+      const last = [...(this.timeline[input.number] ?? [])]
+        .reverse()
+        .find((e) => e.kind === "ready_for_review");
+      previous = this.previousReadFail ? "unreadable" : last ? { id: last.id } : "none";
+    }
+    if (changed) {
       this.draftChanges.push({ number: input.number, draft: input.draft });
+      this.pushSwitch(input.number, input.draft ? "convert_to_draft" : "ready_for_review");
     }
     this.drafts[input.number] = input.draft;
+    let readyId: string | undefined;
+    if (changed && !input.draft) {
+      readyId = this.visibleTimeline(input.number)
+        .filter((e) => e.kind === "ready_for_review")
+        .at(-1)?.id;
+    }
     if (this.setDraftGate) {
       this.setDraftStarted.resolve();
       await this.setDraftGate;
     }
     if (this.setDraftAnswerLost) throw new Error(this.setDraftAnswerLost);
-    return { draft: input.draft };
+    return {
+      draft: input.draft,
+      changed,
+      ...(previous ? { previous } : {}),
+      ...(readyId ? { readyId } : {}),
+    };
   }
   closed: { repo: string; token: string; number: number }[] = [];
   closeFail?: string;
@@ -805,7 +978,12 @@ export class FakePulls implements PullRequests {
     };
   }
   /** Issue へのコメント（調査の結果。PBI-18）。 */
-  issueComments: { repo: string; token: string; number: number; body: string }[] = [];
+  issueComments: {
+    repo: string;
+    token: string;
+    number: number;
+    body: string;
+  }[] = [];
   commentFail?: string;
   async commentIssue(input: {
     repo: string;
@@ -825,7 +1003,12 @@ export class FakePulls implements PullRequests {
     };
   }
   /** 作った Issue（PBI-370）。issueFail があれば、作れない。 */
-  createdIssues: { repo: string; token: string; title: string; body: string }[] = [];
+  createdIssues: {
+    repo: string;
+    token: string;
+    title: string;
+    body: string;
+  }[] = [];
   issueFail?: string;
   issueGate?: Promise<void>;
   /** Issue の作成を始めた回数（作成の最中であることを、テストが待つのに使う）。 */
@@ -961,7 +1144,10 @@ export class FakePulls implements PullRequests {
       author: authorOfToken(c.token),
       body: c.body,
     }));
-    const foreign = this.foreignReviewComments.map((c, i) => ({ id: 8000 + i, ...c }));
+    const foreign = this.foreignReviewComments.map((c, i) => ({
+      id: 8000 + i,
+      ...c,
+    }));
     return [...foreign, ...own].flatMap((c) =>
       c.number === input.number &&
       c.body.trimStart().startsWith(input.prefix) &&
@@ -1240,7 +1426,10 @@ export function withPromptArg(invocation: Invocation): Invocation {
   const { stdin, command } = invocation;
   if (stdin === undefined) return invocation;
   if (command[0] === "claude" && command[1] === "-p") {
-    return { ...invocation, command: ["claude", "-p", stdin, ...command.slice(2)] };
+    return {
+      ...invocation,
+      command: ["claude", "-p", stdin, ...command.slice(2)],
+    };
   }
   if (command.at(-1) === "-" && command.at(-2) === "--") {
     return { ...invocation, command: [...command.slice(0, -1), stdin] };
@@ -1420,7 +1609,9 @@ export class FakeExecutor implements AgentExecutor {
         if (restoredDir) cpSync(restoredDir, config, { recursive: true });
         for (const [path, content] of Object.entries(this.sessionFiles(invocation, runId))) {
           mkdirSync(dirname(join(config, path)), { recursive: true });
-          writeFileSync(join(config, path), content, { flag: this.appendSessionFiles ? "a" : "w" });
+          writeFileSync(join(config, path), content, {
+            flag: this.appendSessionFiles ? "a" : "w",
+          });
         }
         await log.archiveAgentFiles({
           dir: config,
@@ -1497,7 +1688,11 @@ export class FakeExecutor implements AgentExecutor {
   }
   kill(runId: string) {
     this.killed.push(runId);
-    this.held.get(runId)?.({ kind: "failed", reason: "error", message: "container killed" });
+    this.held.get(runId)?.({
+      kind: "failed",
+      reason: "error",
+      message: "container killed",
+    });
     this.held.delete(runId);
   }
   /** HOLD の実行を、渡した結果で終える（PBI-128）。 */
@@ -1555,6 +1750,7 @@ export function makeService(
     remarkReplyRateLimit?: ServiceDeps["remarkReplyRateLimit"];
     /** レビューのタスクが GitHub の一時的な失敗を自動でやり直すまでの待ち（ミリ秒。PBI-301）。 */
     reviewRetryDelaysMs?: readonly number[];
+    pushRetryDelaysMs?: readonly number[];
     projects?: MemoryProjectStore;
     settings?: MemorySettingsStore;
     contexts?: ContextFetcher;
@@ -1628,7 +1824,10 @@ export function makeService(
     secrets:
       options.secretStore ??
       new MemorySecretStore(
-        options.secrets ?? { "claude-oauth-token": "oauth-secret", "github-token": "ghp_secret" },
+        options.secrets ?? {
+          "claude-oauth-token": "oauth-secret",
+          "github-token": "ghp_secret",
+        },
       ),
     executor,
     repos,
@@ -1637,7 +1836,10 @@ export function makeService(
     // 取り込むラベルとレビュー用のラベル（sacty の設定。PBI-26・PBI-44。sacty の PR にはレビュー用のラベルを付ける。PBI-99）
     settings:
       options.settings ??
-      new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty-review" }),
+      new MemorySettingsStore({
+        intakeLabel: "sacty",
+        reviewLabel: "sacty-review",
+      }),
     contexts: options.contexts ?? new FakeContexts(),
     defaultContext: options.defaultContext,
     github: options.github ?? new FakeGitHub(),
@@ -1651,6 +1853,7 @@ export function makeService(
     ...(options.rateLimits ? { rateLimits: options.rateLimits } : {}),
     ...(options.remarkReplyRateLimit ? { remarkReplyRateLimit: options.remarkReplyRateLimit } : {}),
     ...(options.reviewRetryDelaysMs ? { reviewRetryDelaysMs: options.reviewRetryDelaysMs } : {}),
+    ...(options.pushRetryDelaysMs ? { pushRetryDelaysMs: options.pushRetryDelaysMs } : {}),
     // 情報収集は、既定では集めずに進める（情報収集のテストでは差し替える）
     ...(options.realGatherer ? {} : { gatherer: options.gatherer ?? (async () => undefined) }),
     // オーケストレーターの代わりに、標準の工程を選ぶ（オーケストレーターのテストでは差し替える）
@@ -1707,7 +1910,12 @@ export function makeService(
 /** チケットの管理のサービス（JIRA）の偽物（PBI-52）。コメントを記録する。 */
 export class FakeTickets implements TicketClient {
   comments: { platform: string; service: string; key: string; body: string }[] = [];
-  searched: { platform: string; service: string; keys: readonly string[]; label: string }[] = [];
+  searched: {
+    platform: string;
+    service: string;
+    keys: readonly string[];
+    label: string;
+  }[] = [];
   commentFail?: string;
   found: FoundTicket[] = [];
   async search(input: Parameters<TicketClient["search"]>[0]) {
@@ -1737,7 +1945,11 @@ export const jiraPlatform = () =>
     PlatformFile.parse({
       upstream: "https://jira.example.com",
       description: "JIRA",
-      auth: { header: "Authorization", prefix: "Bearer ", secret: "jira-token" },
+      auth: {
+        header: "Authorization",
+        prefix: "Bearer ",
+        secret: "jira-token",
+      },
       allow: ["GET /rest/api/**", "POST /rest/api/2/issue/*/comment"],
     }),
   );
@@ -1805,7 +2017,9 @@ export function noticesSettled(service: TaskService): Promise<void> {
  * 数えるのをやめる上限を過ぎるまで）。noticesSettled と同じく、本体に待つ口が無いので、数の表（private）を直接見る。
  */
 export function draftRequestsSettled(service: TaskService): Promise<void> {
-  const internals = service as unknown as { draftRequests: Map<string, number> };
+  const internals = service as unknown as {
+    draftRequests: Map<string, number>;
+  };
   return waitFor(() => internals.draftRequests.size === 0, {
     what: "終わっていないドラフトの切り替えの要求が、無くなること",
   });

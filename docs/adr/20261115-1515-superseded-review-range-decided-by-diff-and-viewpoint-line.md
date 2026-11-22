@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #379、PBI-349
 - 置き換え元: なし
-- 置き換え先: [PR に投稿するレビューには判断に要る情報だけを書き、Sacty の過程の情報は Sacty の記録に残す](20261121-1603-pr-review-without-process-info.md)（PR のレビューの本文に、観点をどう見たかを1行で書く部分）
+- 置き換え先: [PR に投稿するレビューには判断に要る情報だけを書き、Sacty の過程の情報は Sacty の記録に残す](20261121-1603-superseded-pr-review-without-process-info.md)（PR のレビューの本文に、観点をどう見たかを1行で書く部分）
 
 ## 背景
 

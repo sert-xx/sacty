@@ -47,7 +47,7 @@ mise・nodenv・fnm などの版の管理ツールで、ディレクトリに合
 
 質問フォームのブラウザーテストには Chromium を使います。
 上のインストールコマンドでブラウザーを用意してください。
-CI でテストを実行するときも、`npm ci` の後に `npx playwright install --only-shell chromium` を実行し、ヘッドレスのシェルの Chromium を用意してください。OS のライブラリ（`--with-deps`）は、実行環境に足りないものだけを入れてください。
+CI でテストを実行するときも、`npm ci` の後に `npx playwright install --only-shell chromium` を実行し、ヘッドレスのシェルの Chromium を用意してください。
 
 ### 初めてコミットする前に：作者の名前とメールアドレスを確かめる
 
@@ -141,6 +141,7 @@ npm run build       # すべてのパッケージのビルド
   | `daemon-steps.test.ts` | 作業履歴、工程の実行と費用、予算と秘密情報の通知、承認ゲート、設計・再現の工程、変更の申し出、タスクの並行実行 |
   | `daemon-implement.test.ts` | 実装の工程と実装の PR（テスト・セルフレビュー・レビューの指摘への対応・マージまで） |
   | `daemon-step-pull-requests.test.ts` | 要求要件・設計の PR（タスクブランチへのフロー） |
+| `daemon-step-pull-requests-direct.test.ts` | 要求要件・設計の PR（実装の無い進め方でベースブランチへ直接出すフロー。ブランチの削除の規則を含む） |
   | `daemon-split.test.ts` | タスク分割、子タスクのテスト観点、依存先の PR に重ねる子タスク、統合レビュー |
   | `daemon-repoless.test.ts` | リポジトリを指定しないタスク |
   | `daemon-deliverables.test.ts` | 成果の書き出し、PR テンプレート、非コードの成果と単発作業、提出の前のセルフレビュー・出典の分類の記録 |
@@ -150,6 +151,7 @@ npm run build       # すべてのパッケージのビルド
   | `daemon-projects-intake.test.ts` | プロジェクト（対象・エクスポート・削除）、sacty の設定、Issue・PR・JIRA のチケットの取り込みとトリアージ、レビューの再依頼、Slack の通知先 |
   | `daemon-risk-assessment.test.ts` | PR のリスク評価（PR を作る・更新するときは評価しないこと、レビューの工程での評価・記録・コメントへの掲載・答えからの JSON の取り除き） |
   | `daemon-review-watch.test.ts` | レビューを投稿した後の PR の見守り（先頭の変化・作者の返信での再レビュー、マージ・クローズでの完了、以前の版で完了したタスク、GitHub の再依頼との両立） |
+  | `daemon-review-run-stopped.test.ts` | 投稿前のレビューの実行中・投稿の直前に PR の先頭が変わったときの打ち切りと始め直しの待ち、マージ・クローズでの中止の記録、親に届かなかった回の扱い |
   | `daemon-suggestion-triage.test.ts` | AI のレビューの提案の、直しに入る前の選り分け（直しに入らないときの返信と判定し直し、一部だけ対応、要修正・人の指摘との混在、失敗時、判定し直しの回の止め方、起動し直し） |
   | `daemon-context.test.ts` | コンテキスト（リポジトリ・取得の認証・MCP サーバー・外部 PF・プレビュー・イメージ）、秘密情報をまとめて取り出すこと、タスクの作成時のイメージとエージェントの指定 |
   | `daemon-orchestrator-sessions.test.ts` | オーケストレーターへの質問、エラーレポート、セッションログと元のセッションのファイル、時間切れで止めた実行の再開、オーケストレーターのセッションの使い回し、サブエージェント |

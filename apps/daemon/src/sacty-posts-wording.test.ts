@@ -21,7 +21,6 @@ import { buildReworkNotice } from "./rework-notice.js";
 
 const base = {
   taskId: "t1",
-  stepName: "実装",
   remarkId: "implement-1-1",
   submission: 2,
   text: "null を返すようにしました",
@@ -35,12 +34,11 @@ const withOrigin = (status: "addressed" | "declined" | "deferred") =>
     origin: {
       ref: { kind: "review", id: 601 },
       url: "https://github.com/acme/app/pull/7#pullrequestreview-601",
-      author: "sacty_review",
     },
   });
 
 describe("新しい文の投稿を、取り込みが Sacty のものと見分ける（TV-14）", () => {
-  it("返信：目印で見分け、状態を書いたとおりに読む。書き出しが「Sacty の AI が書いた…への返信です。」でも飛ばす", () => {
+  it("返信：目印で見分け、状態を書いたとおりに読む。新しい書き出し「[この指摘](…)への返信です。」でも飛ばす（TV-24）", () => {
     for (const status of ["addressed", "declined", "deferred"] as const) {
       const body = buildRemarkReply({ ...base, status });
       expect(isSactyRemarkReply(body)).toBe(true);
@@ -48,13 +46,11 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
       expect(readRemarkReply(body).status).toBe(status);
       expect(readRemarkReply(withOrigin(status)).status).toBe(status);
     }
-    expect(withOrigin("addressed").split("\n")[1]).toMatch(
-      /^Sacty の AI が書いた.*への返信です。$/,
-    );
+    expect(withOrigin("addressed").split("\n")[1]).toMatch(/^\[この指摘\]\(.*\)への返信です。$/);
   });
 
   it("知らせ 4 種と要求要件の全文のコメントも、目印で見分ける", () => {
-    const common = { taskUrl: "http://127.0.0.1:4700/tasks/t1", localOnly: true, secrets: [] };
+    const common = { secrets: [] };
     expect(
       isHumanAskNotice(
         buildHumanAskNotice({
@@ -62,7 +58,7 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
           step: "implement",
           stepName: "実装",
           submission: 1,
-          confirms: [{ remarkIds: ["r"], text: "確認" }],
+          confirms: [{ remarks: [{ line: "要点" }], text: "確認" }],
           ...common,
         }),
       ),
@@ -78,7 +74,6 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
           taskId: "t1",
           number: 8,
           discarded: 3,
-          taskUrl: common.taskUrl,
         }),
       ),
     ).toBe(true);
@@ -89,7 +84,6 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
           number: 8,
           stepName: "設計",
           backName: "要求要件",
-          taskUrl: common.taskUrl,
         }),
       ),
     ).toBe(true);
@@ -99,8 +93,6 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
           taskId: "t1",
           reason: "error",
           summary: "",
-          taskUrl: common.taskUrl,
-          localOnly: true,
         }),
       ),
     ).toBe(true);
@@ -109,7 +101,7 @@ describe("新しい文の投稿を、取り込みが Sacty のものと見分け
         buildDeferralNotice({
           taskId: "t1",
           decision: 1,
-          items: [{ remarkId: "r", decision: "fix" }],
+          items: [{ remarkId: "r", decision: "fix", line: "要点" }],
           ...common,
         }) ?? "",
       ),
@@ -137,6 +129,20 @@ describe("古い文言の投稿も見分ける（TV-15）", () => {
       "---",
       sig,
     ].join("\n");
+
+  it("新しい書き出し「[この指摘](…)への返信です。」と古い書き出しのどちらの返信からも、状態（対応した・対応していない）を読む（TV-24）", () => {
+    const opening = (line: string, head: string) =>
+      ["<!-- sacty-reply:t1:implement-1-1:2 -->", line, "", head, "", "理由の文"].join("\n");
+    for (const line of [
+      "Sacty の AI が書いたレビューの本文（[このレビュー](https://x/y)）への返信です。",
+      "[この指摘](https://x/y)への返信です。",
+    ]) {
+      expect(readRemarkReply(opening(line, "**対応しました。**")).status).toBe("addressed");
+      expect(readRemarkReply(opening(line, "**対応していません。** 理由：")).status).toBe(
+        "declined",
+      );
+    }
+  });
 
   it("書き出しが「sacty の AI が書いた…への返信です。」の返信は、Sacty の投稿と見分け、状態を読む", () => {
     expect(isSactyRemarkReply(old("**対応しました。**"))).toBe(true);

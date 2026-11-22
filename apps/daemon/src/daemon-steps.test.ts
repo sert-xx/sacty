@@ -491,10 +491,9 @@ describe("工程の実行と費用", () => {
     const task = service.createTask({ projectId: "default", title: "クラウドを調べる" });
     const running = service.runNext(task.id);
     await vi.waitFor(() => expect(waiting).toBe(true));
-    const started = Date.now();
+    // 準備は終わらないので、人の停止だけが待ちを抜ける（上限を待たない）。固まればテストの時間切れで落ちる
     await service.pause(task.id);
     await running;
-    expect(Date.now() - started).toBeLessThan(2_000);
     expect(executor.calls).toHaveLength(0);
     expect(service.get(task.id)?.task.pausedReason).toBe("manual");
     activity.close();
@@ -3150,7 +3149,7 @@ describe("再現の工程（PBI-29）", () => {
     // 再現の説明は見出しだけなので、要点は無い。マージで承認した PR が無いので、全文は本文の折りたたみに載せる
     expect(body).toContain("<summary>全文</summary>");
     expect(body).not.toContain("タスクの画面");
-    expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \|\n/);
+    expect(body).toMatch(/\| REPRO 再現のテストが通る \| 1 件（`pay\.test\.ts`） \|\n/);
     expect(body).not.toContain("## 要求要件");
     // 実装の承認待ちから差し戻すときに、再現には戻せない（実装した後のコードでは再現できない）
     expect(reworkTargets(done as Task, "implement")).toEqual(["implement"]);

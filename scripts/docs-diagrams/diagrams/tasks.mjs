@@ -228,10 +228,13 @@ export const approvalBranches = {
   outputs: ["spec", "user"],
   width: 1040,
   height: 350,
-  title: t("PR で承認するときのブランチ", "Branches when approving through PRs"),
+  title: t(
+    "PR で承認するときのブランチ（実装がある進め方）",
+    "Branches when approving through PRs (a plan with an implementation)",
+  ),
   desc: t(
-    "起点のコミットからタスクブランチを作り、要求要件・設計は工程のブランチからタスクブランチへの PR、実装はタスクブランチからベースブランチへの PR にする。マージが承認になる。",
-    "A task branch is created from the base commit. Requirements and design are PRs from step branches into the task branch, and the implementation is a PR from the task branch into the base branch. Merging is approval.",
+    "実装がある進め方：起点のコミットからタスクブランチを作り、要求要件・設計は工程のブランチからタスクブランチへの PR、実装はタスクブランチからベースブランチへの PR にする。マージが承認になる。",
+    "With an implementation: a task branch is created from the base commit. Requirements and design are PRs from step branches into the task branch, and the implementation is a PR from the task branch into the base branch. Merging is approval.",
   ),
   legend: t("○ マージ（＝承認）・● コミット", "○ merge (= approval) · ● commit"),
   items: [
@@ -326,6 +329,91 @@ export const approvalBranches = {
       y: L.main,
       merge: true,
       label: t("実装の承認", "implementation approved"),
+      labelPos: "above",
+    },
+  ],
+};
+
+// 実装の無い進め方のブランチ（タスクブランチを作らない。仕様書とユーザードキュメントで同じ図）
+const D = { main: 70, req: 145, design: 220 };
+export const approvalBranchesDirect = {
+  name: "approval-branches-direct",
+  outputs: ["spec", "user"],
+  width: 1040,
+  height: 280,
+  title: t(
+    "PR で承認するときのブランチ（実装の無い進め方）",
+    "Branches when approving through PRs (a plan without an implementation)",
+  ),
+  desc: t(
+    "実装の無い進め方：タスクブランチを作らず、要求要件・設計は工程のブランチからベースブランチへの PR にする。マージが承認になり、完了したときには文書がベースブランチに入っている。",
+    "Without an implementation: no task branch is created. Requirements and design are PRs from step branches straight into the base branch. Merging is approval, and the documents are on the base branch when the task completes.",
+  ),
+  legend: t("○ マージ（＝承認）・● コミット", "○ merge (= approval) · ● commit"),
+  items: [
+    {
+      kind: "tag",
+      x: 20,
+      y: D.main,
+      tone: "gray",
+      text: t("main（ベースブランチ）", "main (base branch)"),
+    },
+    { kind: "tag", x: 20, y: D.req, tone: "blue", text: "sacty/task-1a2b3c4d-requirements-1" },
+    { kind: "tag", x: 20, y: D.design, tone: "purple", text: "sacty/task-1a2b3c4d-design-1" },
+    {
+      kind: "lane",
+      tone: "gray",
+      points: [
+        [X0, D.main],
+        [1010, D.main],
+      ],
+    },
+    {
+      kind: "lane",
+      tone: "blue",
+      points: [
+        [420, D.main],
+        [420, D.req],
+        [560, D.req],
+        [560, D.main],
+      ],
+    },
+    {
+      kind: "lane",
+      tone: "purple",
+      points: [
+        [640, D.main],
+        [640, D.design],
+        [800, D.design],
+        [800, D.main],
+      ],
+    },
+    {
+      kind: "commit",
+      tone: "gray",
+      x: X0 + 20,
+      y: D.main,
+      label: t("起点", "base"),
+      labelPos: "above",
+    },
+    { kind: "commit", tone: "blue", x: 490, y: D.req, label: "requirements.md" },
+    {
+      kind: "commit",
+      tone: "gray",
+      x: 560,
+      y: D.main,
+      merge: true,
+      label: t("要求要件の承認", "requirements approved"),
+      labelPos: "above",
+    },
+    { kind: "commit", tone: "purple", x: 720, y: D.design, label: "design.md" },
+    {
+      kind: "commit",
+      tone: "gray",
+      x: 800,
+      y: D.main,
+      merge: true,
+      label: t("設計の承認（完了）", "design approved (done)"),
       labelPos: "above",
     },
   ],

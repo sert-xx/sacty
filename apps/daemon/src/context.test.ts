@@ -2881,7 +2881,6 @@ describe("Codex の定義の name の読み取りの範囲と正規化（PR #129
         "agents/codex/agents/ok.toml": 'name = "ok"\ndescription = "x"\n',
       },
     });
-    const started = Date.now();
     const codex = await prepareContext(
       fetcher,
       { repo: "https://example.com/p.git" },
@@ -2890,8 +2889,7 @@ describe("Codex の定義の name の読み取りの範囲と正規化（PR #129
       undefined,
       defaultDir,
     );
-    // /dev/zero を読み続けない
-    expect(Date.now() - started).toBeLessThan(5_000);
+    // /dev/zero を読み続けない（読み続ければ戻らず、テストの時間切れで落ちる。下の設定の中身の検査も残す）
     const config = parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8")) as {
       agents: Record<string, unknown>;
     };

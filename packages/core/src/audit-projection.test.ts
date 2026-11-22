@@ -31,7 +31,12 @@ const completed = () => {
   return [
     ev("TaskCreated", { title: "A", body: "", start: "sacty" }),
     ev("StepsChosen", { steps: ["document"] }),
-    ev("AgentRunStarted", { runId: "r", step: "document", agentId: "a", authMode: "stub" }),
+    ev("AgentRunStarted", {
+      runId: "r",
+      step: "document",
+      agentId: "a",
+      authMode: "stub",
+    }),
     ev("AgentRunCompleted", {
       runId: "r",
       step: "document",
@@ -54,7 +59,13 @@ const counts = {
   escalation: 0,
 };
 const surveyed = (concerns: { step: string; reason: string }[]) =>
-  ev("AuditSurveyed", { auditId: "a1", summary: "s", counts, concerns, ...run });
+  ev("AuditSurveyed", {
+    auditId: "a1",
+    summary: "s",
+    counts,
+    concerns,
+    ...run,
+  });
 
 describe("監査のイベントの畳み込み（PBI-125）", () => {
   it("監査の費用は監査の状態に足し、タスクの予算・状態は変えない", () => {
@@ -67,7 +78,11 @@ describe("監査のイベントの畳み込み（PBI-125）", () => {
     expect(task?.budget.usedUsd).toBe(0.5);
     expect(task?.status).toBe("idle");
     expect(isAuditTarget(task as never)).toBe(true);
-    expect(task?.audit).toMatchObject({ usedUsd: 0.25, estimated: true, capUsd: 1 });
+    expect(task?.audit).toMatchObject({
+      usedUsd: 0.25,
+      estimated: true,
+      capUsd: 1,
+    });
     expect(nextAuditDive(task?.audit as never)).toBe("document");
     expect(auditOpen(task as never)).toBe(true);
   });
@@ -78,7 +93,10 @@ describe("監査のイベントの畳み込み（PBI-125）", () => {
       ev("AuditQueued", { auditId: "a1", capUsd: 1 }),
       surveyed([]),
     ]).get("t1");
-    expect(task?.audit?.survey?.counts).toEqual({ ...counts, aiReviewRemark: 0 });
+    expect(task?.audit?.survey?.counts).toEqual({
+      ...counts,
+      aiReviewRemark: 0,
+    });
     // 足した種類を数えた記録も読める
     const withAi = project([
       ...completed(),
@@ -180,7 +198,9 @@ describe("監査のイベントの畳み込み（PBI-125）", () => {
     ];
     const task = project(deleted).get("t1");
     expect(task?.status).toBe("cancelled");
-    expect(task?.audit?.memories[0]?.deleted).toMatchObject({ reason: "capacity" });
+    expect(task?.audit?.memories[0]?.deleted).toMatchObject({
+      reason: "capacity",
+    });
     // 消したメモリーをもう一度は消せない。提案の判断など、ほかの監査の記録は足せない
     expect(() =>
       project([...deleted, ev("AuditMemoryDeleted", { memoryId: "m1", reason: "expired" })]),
@@ -304,7 +324,11 @@ describe("監査のイベントの畳み込み（PBI-125）", () => {
     expect(() =>
       project([
         ...base,
-        ev("AuditProposalRejected", { proposalId: "p1", reason: "a", bulk: { id: "b", count: 1 } }),
+        ev("AuditProposalRejected", {
+          proposalId: "p1",
+          reason: "a",
+          bulk: { id: "b", count: 1 },
+        }),
         ev("AuditProposalRejected", { proposalId: "p1", reason: "b" }),
       ]),
     ).toThrow(ActivityIntegrityError);

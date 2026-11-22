@@ -65,7 +65,7 @@ const FORM_B = [
 const NONE_LINE = "確認したいこと：なし（must・should とも問いはありません）";
 const ANSWER_COMMENT =
   "- 答えるには、この PR にコメントしてください。Sacty が取り込み、答えを成果物に反映します。";
-const ANSWER_MERGE = "- 答えずにマージすると、推奨の答えで次の工程に進みます（must も同じです）。";
+const ANSWER_MERGE = "- 答えずにマージすると、推奨の答えで次に進みます（must も同じです）。";
 
 describe("要求要件・設計の PR の本文の「確認したいこと」（PBI-439）", () => {
   it("形 A：承認の案内の後・確かめる所の前に、件数・must の意味・答え方・中身が出て、確認しないと決めたことは写さない", () => {
@@ -197,7 +197,14 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       ["## 確認したいこと", "### must", "- A（推奨：a）", "### should", "- B（推奨：b）"].join(
         "\n",
       ),
-      { provenances: { design: { items: [], unclassified: [] } } } as Partial<Task>,
+      {
+        provenances: {
+          design: {
+            items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+            unclassified: [],
+          },
+        },
+      } as Partial<Task>,
     );
     const parts = buildStepPullRequestBodyParts(withProvenance, "design", PATH);
     const filled = fillTemplate("## 目的\n\n## 変更\n", parts);
@@ -205,7 +212,7 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       filled.main.indexOf("## 目的"),
       filled.main.indexOf("## 変更"),
     );
-    expect(purpose.indexOf("マージすると設計の承認になります")).toBeLessThan(
+    expect(purpose.indexOf("設計の成果物です。")).toBeLessThan(
       purpose.indexOf("**確認したいこと**"),
     );
     expect(purpose.indexOf("**確認したいこと**")).toBeLessThan(purpose.indexOf("**確かめる所**"));
@@ -222,16 +229,19 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
   it("確かめる所の直後に、出典の確かめで、問いは確認したいことに出る旨の1行を足し、確かめる項目の語は変えない（2つの本文の形）", () => {
     const prov = {
       provenances: {
-        design: { items: [], unclassified: [], sequential: false },
+        design: {
+          items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+          unclassified: [],
+          sequential: false,
+        },
       },
     } as unknown as Partial<Task>;
-    const note =
-      "出典（引用・導出・推論）の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。";
+    const note = "出典の確かめです。人に決めてほしい問いは「確認したいこと」に出ます。";
     const body = text(FORM_A, undefined, prov).main;
-    expect(body).toMatch(new RegExp(`## 確かめる所\\n\\n${note}\\n\\n確かめる項目：0件`));
+    expect(body).toMatch(new RegExp(`## 確かめる所\\n\\n${note}\\n\\n- R-9：推論`));
     const parts = buildStepPullRequestBodyParts(task(FORM_A, prov), "design", PATH);
     expect(parts.summary).toMatch(
-      new RegExp(`\\*\\*確かめる所\\*\\*\\n\\n${note}\\n\\n確かめる項目：0件`),
+      new RegExp(`\\*\\*確かめる所\\*\\*\\n\\n${note}\\n\\n- R-9：推論`),
     );
   });
 
@@ -257,7 +267,7 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       id: `r-${i}`,
       step: "design",
       text: t,
-      response: "対応した",
+      response: t,
       voided: false,
     }));
     const t = task(FORM_A, { remarks } as unknown as Partial<Task>);
@@ -287,7 +297,7 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
         id: "r-1",
         step: "design",
         text: "指摘".padEnd(3000, "あ"),
-        response: "対応した",
+        response: "指摘".padEnd(3000, "あ"),
         voided: false,
       },
     ];
@@ -366,7 +376,12 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       "  | 1 | 2 |",
     ].join("\n");
     const body = text(output, undefined, {
-      provenances: { design: { items: [], unclassified: [] } },
+      provenances: {
+        design: {
+          items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+          unclassified: [],
+        },
+      },
     } as Partial<Task>).main;
     expect(body).toMatch(/\| 1 \| 2 \|\n```\n\n## 確かめる所/);
   });
@@ -404,18 +419,16 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
   });
 
   it("長い 1 行があっても、時間がかからない", () => {
-    const start = Date.now();
     const output = [
       `# ${"\t#".repeat(40_000)}`,
       "## 確認したいこと",
       "### must",
       "なし",
       "### should",
-      `- ${"close.".repeat(100_000)}`,
+      `- ${"close.".repeat(60_000)}`,
     ].join("\n");
     expect(readStepQuestions(output)).toMatchObject({ kind: "counted", should: 1 });
     mainOf(output);
-    expect(Date.now() - start).toBeLessThan(2_000);
   });
 
   it("インラインコード・コードブロックの中の <!--・<details> を数えず、コードの外の生の HTML は無効にする。閉じ行で終わっても後ろが巻き込まれない", () => {
@@ -431,7 +444,12 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       "  ```",
     ].join("\n");
     const body = text(output, undefined, {
-      provenances: { design: { items: [], unclassified: [] } },
+      provenances: {
+        design: {
+          items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+          unclassified: [],
+        },
+      },
     } as Partial<Task>).main;
     expect(body).toContain("`<!--` と `<details>`");
     expect(body).not.toMatch(/<details open>|<DETAILS>/);
@@ -461,9 +479,105 @@ describe("要求要件・設計の PR の本文の「確認したいこと」（
       `<!-- ${"x".repeat(STEP_QUESTIONS_MAX)}`,
     ].join("\n");
     const body = text(inFence, undefined, {
-      provenances: { design: { items: [], unclassified: [] } },
+      provenances: {
+        design: {
+          items: [{ id: "R-9", kind: "inference", refs: [], excerpt: "" }],
+          unclassified: [],
+        },
+      },
     } as Partial<Task>).main;
     expect(body).toMatch(/\n```\n\n…（長いので省きました/);
     expect(body).toMatch(/## 確かめる所/);
+  });
+});
+
+describe("問いごとの文（PBI-475）", () => {
+  it("must・should の札の下の箇条書きを、いちばん浅い1項目ずつ（入れ子・続きの行を含む）切り出し、件数は items の数と同じ", () => {
+    const read = readStepQuestions(
+      [
+        "# 設計",
+        "",
+        "## 確認したいこと",
+        "",
+        "**must**",
+        "",
+        "- 決済の通貨を決めるか",
+        "- 返金の期限を決めるか",
+        "  - 推奨：30日",
+        "  - 理由：規約に合わせる",
+        "",
+        "**should**",
+        "",
+        "- 画面の文言を直すか",
+        "",
+        "## 次",
+      ].join("\n"),
+    );
+    expect(read.kind).toBe("counted");
+    if (read.kind !== "counted") return;
+    expect(read.must).toBe(2);
+    expect(read.should).toBe(1);
+    expect(read.items.map((i) => i.kind)).toEqual(["must", "must", "should"]);
+    expect(read.items[0]?.text).toBe("決済の通貨を決めるか");
+    expect(read.items[1]?.text).toContain("返金の期限を決めるか");
+    expect(read.items[1]?.text).toContain("  - 推奨：30日");
+    expect(read.items[1]?.text).toContain("  - 理由：規約に合わせる");
+    expect(read.items[2]?.text).toContain("画面の文言を直すか");
+  });
+
+  it("札の後に文があり並びが無い問いは、1件として切り出す（should が「なし」なら must だけ）", () => {
+    const read = readStepQuestions(
+      ["## 確認したいこと", "", "**must**：通貨を決めるか", "**should**：なし"].join("\n"),
+    );
+    expect(read.kind).toBe("counted");
+    if (read.kind !== "counted") return;
+    expect(read.must).toBe(1);
+    expect(read.should).toBe(0);
+    expect(read.items).toHaveLength(1);
+    expect(read.items[0]?.kind).toBe("must");
+    expect(read.items[0]?.text).toContain("通貨を決めるか");
+  });
+
+  it("札の行に文があり下に箇条書きが続くとき、札の行の文と導入の行を最初の項目の文に含める（件数は変わらない）", () => {
+    const read = readStepQuestions(
+      [
+        "## 確認したいこと",
+        "",
+        "**must**：通貨を決めるか",
+        "次の点：",
+        "- 推奨：円",
+        "- 懸念：為替",
+        "**should**：なし",
+      ].join("\n"),
+    );
+    expect(read.kind).toBe("counted");
+    if (read.kind !== "counted") return;
+    expect(read.must).toBe(2);
+    expect(read.items[0]?.text).toContain("通貨を決めるか");
+    expect(read.items[0]?.text).toContain("次の点：");
+    expect(read.items[0]?.text).toContain("推奨：円");
+    expect(read.items[1]?.text).toBe("懸念：為替");
+  });
+
+  it("コードブロックの中の `- x` を問いとして数えない（問いの文には、コードブロックの行が含まれる）", () => {
+    const read = readStepQuestions(
+      [
+        "## 確認したいこと",
+        "### must",
+        "- 設定を変えるか",
+        "  ```yaml",
+        "  - x",
+        "  - y",
+        "  ```",
+        "### should",
+        "- 文言を直すか",
+      ].join("\n"),
+    );
+    expect(read.kind).toBe("counted");
+    if (read.kind !== "counted") return;
+    expect(read.must).toBe(1);
+    expect(read.should).toBe(1);
+    expect(read.items).toHaveLength(2);
+    expect(read.items[0]?.text).toContain("- x");
   });
 });

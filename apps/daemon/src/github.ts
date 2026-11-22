@@ -3,6 +3,34 @@ import { redactLog, redactUrlCredentials } from "./ci.js";
 import { errorText, MessageError } from "./errors.js";
 import { githubGraphqlUrl } from "./github-relay.js";
 
+/** PR のドラフトの切り替え（GitHub のタイムラインの ReadyForReviewEvent・ConvertToDraftEvent）。PBI-468。 */
+export type DraftSwitch = {
+  /** タイムラインのイベントの ID。 */
+  id: string;
+  /** ready_for_review は、ドラフトを外した。convert_to_draft は、ドラフトにした。 */
+  kind: "ready_for_review" | "convert_to_draft";
+  /** イベントの時刻（ISO 8601。無ければ空）。 */
+  at: string;
+};
+
+/** PR のドラフトの切り替えの履歴の読み取り（draftHistory。PBI-468）。 */
+export type DraftHistory =
+  | { read: false }
+  | { read: true; draft: true }
+  | { read: true; draft: false; last?: DraftSwitch };
+
+/**
+ * ドラフトの切り替えの答え（PBI-468）。draft は変えた後の状態。changed は、切り替えの要求（mutation）を呼んだか（すでにその状態なら
+ * false）。ドラフトを外して changed のときだけ、previous（要求の前の最後の ReadyForReviewEvent の ID。外しが無ければ "none"、
+ * 読めなければ "unreadable"）と readyId（答えの最後の ReadyForReviewEvent の ID。無ければ無い）を持つ。
+ */
+export type SetDraftAnswer = {
+  draft: boolean;
+  changed?: boolean;
+  previous?: { id: string } | "none" | "unreadable";
+  readyId?: string;
+};
+
 /** PRを作る口。テストでは偽物に差し替える。repo はリポジトリの URL（https://<ホスト>/<owner>/<name>。PBI-40）。 */
 export interface PullRequests {
   /** PRを作る。number があれば、そのPRの本文（retarget なら向き先も）を更新する。 */
@@ -55,7 +83,17 @@ export interface PullRequests {
     draft: boolean;
     /** 中断すると、通信をやめて失敗にする（答えを待つ上限。PBI-331）。 */
     signal?: AbortSignal;
-  }): Promise<{ draft: boolean }>;
+  }): Promise<SetDraftAnswer>;
+  /**
+   * PR のドラフトの切り替えの履歴を読む（PBI-468）。今の draft を読み、ドラフトでなければ、最後の切り替え（ドラフトを外した・
+   * ドラフトにした）の ID・種類・時刻を読む。draft かタイムラインを読めなければ、読めないことを返す（失敗にしない）。
+   */
+  draftHistory(input: {
+    repo: string;
+    token: string;
+    number: number;
+    signal?: AbortSignal;
+  }): Promise<DraftHistory>;
   /** PRを閉じる（中止したとき。マージはしない）。 */
   close(input: { repo: string; token: string; number: number }): Promise<void>;
   /** PR の状態（承認待ちの間に見守る。PBI-14a）。 */
@@ -621,6 +659,10 @@ export class GitHubPullRequests implements PullRequests {
 
   setDraft(input: Parameters<PullRequests["setDraft"]>[0]) {
     return setPullRequestDraft(this.fetchImpl, input);
+  }
+
+  draftHistory(input: Parameters<PullRequests["draftHistory"]>[0]) {
+    return readDraftHistory(this.fetchImpl, input);
   }
 
   close(input: Parameters<PullRequests["close"]>[0]) {
@@ -1363,18 +1405,104 @@ function draftUnsupported(json: Record<string, unknown>): boolean {
   return texts.some((t) => typeof t === "string" && /draft/i.test(t));
 }
 
+/** GitHub の REST・GraphQL を呼ぶときの共通の頭（ドラフトの切り替え・履歴）。 */
+function draftHeaders(token: string): Record<string, string> {
+  return {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${token}`,
+    "x-github-api-version": "2022-11-28",
+    "content-type": "application/json",
+  };
+}
+
+/** タイムラインの1件を、ドラフトの切り替えとして読む。読めなければ undefined。 */
+function parseDraftSwitch(node: unknown): DraftSwitch | undefined {
+  const n = node as { __typename?: unknown; id?: unknown; createdAt?: unknown } | null;
+  if (!n || typeof n.id !== "string" || !n.id) return undefined;
+  const kind =
+    n.__typename === "ReadyForReviewEvent"
+      ? "ready_for_review"
+      : n.__typename === "ConvertToDraftEvent"
+        ? "convert_to_draft"
+        : undefined;
+  if (!kind) return undefined;
+  return { id: n.id, kind, at: typeof n.createdAt === "string" ? n.createdAt : "" };
+}
+
+/**
+ * PR のタイムラインの最後の切り替え（PBI-468）を GraphQL で読む（types は itemTypes）。切り替えが無ければ last の無い
+ * 答え、読めなければ undefined。
+ */
+async function readLastSwitch(
+  fetchImpl: Fetch,
+  input: { repo: string; token: string; nodeId: string; signal?: AbortSignal },
+  types: string,
+): Promise<{ last?: DraftSwitch } | undefined> {
+  const host = parseRepoUrl(input.repo)?.host ?? "github.com";
+  try {
+    const res = await fetchImpl(githubGraphqlUrl(host), {
+      method: "POST",
+      headers: draftHeaders(input.token),
+      ...(input.signal ? { signal: input.signal } : {}),
+      body: JSON.stringify({
+        query: `query($id: ID!) { node(id: $id) { ... on PullRequest { timelineItems(last: 1, itemTypes: [${types}]) { nodes { __typename ... on ReadyForReviewEvent { id createdAt } ... on ConvertToDraftEvent { id createdAt } } } } } }`,
+        variables: { id: input.nodeId },
+      }),
+    });
+    if (!res.ok) return undefined;
+    const answer = (await res.json().catch(() => undefined)) as
+      | { data?: { node?: { timelineItems?: { nodes?: unknown } } }; errors?: unknown }
+      | undefined;
+    if (!answer || (Array.isArray(answer.errors) && answer.errors.length > 0)) return undefined;
+    const nodes = answer.data?.node?.timelineItems?.nodes;
+    if (!Array.isArray(nodes)) return undefined;
+    if (nodes.length === 0) return {};
+    const last = parseDraftSwitch(nodes[nodes.length - 1]);
+    return last ? { last } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** PR のドラフトの切り替えの履歴を読む（PBI-468。GitHubPullRequests.draftHistory）。 */
+async function readDraftHistory(
+  fetchImpl: Fetch,
+  input: { repo: string; token: string; number: number; signal?: AbortSignal },
+): Promise<DraftHistory> {
+  try {
+    const res = await fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
+      headers: draftHeaders(input.token),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+    if (!res.ok || typeof json?.draft !== "boolean") return { read: false };
+    if (json.draft) return { read: true, draft: true };
+    const id = json.node_id;
+    if (typeof id !== "string" || !id) return { read: false };
+    const found = await readLastSwitch(
+      fetchImpl,
+      {
+        repo: input.repo,
+        token: input.token,
+        nodeId: id,
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
+      "READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT",
+    );
+    if (!found) return { read: false };
+    return { read: true, draft: false, ...(found.last ? { last: found.last } : {}) };
+  } catch {
+    return { read: false };
+  }
+}
+
 /** PR のドラフトを切り替える。GitHubPullRequests の一部だが、upsert と分けて読みやすくする。 */
 async function setPullRequestDraft(
   fetchImpl: Fetch,
   input: { repo: string; token: string; number: number; draft: boolean; signal?: AbortSignal },
-): Promise<{ draft: boolean }> {
+): Promise<SetDraftAnswer> {
   const signal = input.signal ? { signal: input.signal } : {};
-  const headers = {
-    accept: "application/vnd.github+json",
-    authorization: `Bearer ${input.token}`,
-    "x-github-api-version": "2022-11-28",
-    "content-type": "application/json",
-  };
+  const headers = draftHeaders(input.token);
   const res = await fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
     headers,
     ...signal,
@@ -1383,33 +1511,56 @@ async function setPullRequestDraft(
   const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
   if (!res.ok) throw apiError("getPr", res.status, json ?? {});
   if (typeof json?.draft !== "boolean") throw apiError("draftPr", res.status, {});
-  if (json.draft === input.draft) return { draft: input.draft };
+  if (json.draft === input.draft) return { draft: input.draft, changed: false };
   const id = json.node_id;
   if (typeof id !== "string" || !id) throw apiError("draftPr", res.status, {});
   const mutation = input.draft ? "convertPullRequestToDraft" : "markPullRequestReadyForReview";
   const host = parseRepoUrl(input.repo)?.host ?? "github.com";
+  // ドラフトを外す前に、最後の外しの ID を読む（答えの ID が今回の外しのものかを見分けるため。PBI-468）
+  let previous: SetDraftAnswer["previous"];
+  if (!input.draft) {
+    const before = await readLastSwitch(
+      fetchImpl,
+      { repo: input.repo, token: input.token, nodeId: id, ...signal },
+      "READY_FOR_REVIEW_EVENT",
+    );
+    previous = !before ? "unreadable" : before.last ? { id: before.last.id } : "none";
+  }
+  const readyEvents = input.draft
+    ? ""
+    : " timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT]) { nodes { __typename ... on ReadyForReviewEvent { id createdAt } } }";
   const done = await fetchImpl(githubGraphqlUrl(host), {
     method: "POST",
     headers,
     ...signal,
     body: JSON.stringify({
-      query: `mutation($id: ID!) { ${mutation}(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
+      query: `mutation($id: ID!) { ${mutation}(input: { pullRequestId: $id }) { pullRequest { isDraft${readyEvents} } } }`,
       variables: { id },
     }),
   });
   const answer = ((await done.json().catch(() => undefined)) ?? {}) as Record<string, unknown>;
   const errors = Array.isArray(answer.errors) ? answer.errors : [];
   // 変えた後の状態が答えにあり、求めた状態になっているときだけ成功にする（答えを読めないときも失敗）
-  const changed = (
-    answer.data as Record<string, { pullRequest?: { isDraft?: unknown } }> | undefined
-  )?.[mutation]?.pullRequest?.isDraft;
-  if (!done.ok || errors.length > 0 || changed !== input.draft) {
+  const pullRequest = (
+    answer.data as
+      | Record<string, { pullRequest?: { isDraft?: unknown; timelineItems?: { nodes?: unknown } } }>
+      | undefined
+  )?.[mutation]?.pullRequest;
+  if (!done.ok || errors.length > 0 || pullRequest?.isDraft !== input.draft) {
     const first = errors[0] as Record<string, unknown> | undefined;
     throw apiError("draftPr", done.status, {
       message: typeof first?.message === "string" ? first.message : answer.message,
     });
   }
-  return { draft: input.draft };
+  if (input.draft) return { draft: true, changed: true };
+  const nodes = pullRequest.timelineItems?.nodes;
+  const readyId = Array.isArray(nodes) ? parseDraftSwitch(nodes[nodes.length - 1])?.id : undefined;
+  return {
+    draft: false,
+    changed: true,
+    ...(previous ? { previous } : {}),
+    ...(readyId ? { readyId } : {}),
+  };
 }
 
 /** PRを閉じる。GitHubPullRequests の一部だが、upsert と分けて読みやすくする。 */

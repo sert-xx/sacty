@@ -12,8 +12,22 @@ describe("利用上限の失敗の文から明ける時刻を読む", () => {
     expect(read("You've hit your session limit · resets 3:45pm (Asia/Tokyo)", now)).toBe(
       "2026-11-20T06:45:00.000Z",
     );
-    // classifyFailure が利用上限にしない Opus・Sonnet の文は、読む形に入れない
-    expect(read("You've hit your Opus limit · resets 3:45pm (Asia/Tokyo)", now)).toBeUndefined();
+    // モデルごとの上限・費用の上限も、同じ決まりで読む
+    expect(read("You've hit your Opus limit · resets 3:45pm (Asia/Tokyo)", now)).toBe(
+      "2026-11-20T06:45:00.000Z",
+    );
+    expect(read("You've hit your Sonnet limit · resets 3:45pm (Asia/Tokyo)", now)).toBe(
+      "2026-11-20T06:45:00.000Z",
+    );
+    expect(read("spend limit reached · resets 3:45pm (Asia/Tokyo)", now)).toBe(
+      "2026-11-20T06:45:00.000Z",
+    );
+    // 時間帯の名前の無い形・日付つきの形は読まない
+    expect(read("You've hit your Opus limit · resets 3:45pm", now)).toBeUndefined();
+    expect(read("spend limit reached · resets Dec 1", now)).toBeUndefined();
+    // `reached` を許すのは spend だけ
+    expect(read("session limit reached · resets 3:45pm (Asia/Tokyo)", now)).toBeUndefined();
+    expect(read("Opus limit reached · resets 3:45pm (Asia/Tokyo)", now)).toBeUndefined();
   });
 
   it("週の上限は、曜日つきで読む（曜日が今日と同じで時刻が前なら翌週）", () => {

@@ -19,9 +19,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
 import { stopFetchProcessesSync } from "./fetch-processes.js";
 import {
+  classifyPushFailure,
   DIFF_LIMIT,
   GitRepositoryWorkspace,
   NothingToCommitError,
+  PushFailedError,
   SKIPPED_PATHS_MAX,
   WORKSPACE_TOOLS_DIR,
 } from "./repository.js";
@@ -2221,6 +2223,113 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       /Sacty のブランチではありません/,
     );
     expect(git(origin, "branch", "--list", "feature/human")).toContain("feature/human");
+  });
+
+  it("期待する先頭を渡して消すと、リモートの先頭がそのコミットのときだけ消し、違えば断って残す（PBI-464）", async () => {
+    const origin = makeOrigin();
+    git(origin, "config", "receive.denyCurrentBranch", "ignore");
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    const branch = "sacty/task-1234abcd-design-1";
+    git(origin, "branch", branch, baseCommit);
+    const head = git(origin, "rev-parse", branch).trim();
+    // 比べた後に、人がブランチを進めた（期待する先頭と違う）
+    git(origin, "update-ref", `refs/heads/${branch}`, git(origin, "rev-parse", "main").trim());
+    writeFileSync(join(clone, "later.txt"), "人の変更\n");
+    const moved = (
+      await workspace.publish({
+        dir: clone,
+        gitDir,
+        baseCommit,
+        parent: baseCommit,
+        branch: `${branch}-moved`,
+        message: "m",
+        date: "2026-10-10T01:00:00.000Z",
+      })
+    ).commit;
+    git(origin, "update-ref", `refs/heads/${branch}`, moved);
+    await expect(workspace.deleteBranch(gitDir, branch, undefined, head)).rejects.toThrow();
+    expect(git(origin, "branch", "--list", branch)).toContain(branch);
+    // 先頭が同じなら消せる
+    // 削除の push も、応答が止まっても待ち続けないよう時間切れを付ける
+    const timer = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await workspace.deleteBranch(gitDir, branch, undefined, moved);
+      expect(timer).toHaveBeenCalledWith(120_000);
+    } finally {
+      timer.mockRestore();
+    }
+    expect(git(origin, "branch", "--list", branch)).toBe("");
+  });
+});
+
+describe("PR の push の失敗の分類と停止の理由の文（PBI-467）", { timeout: 30_000 }, () => {
+  /** 受け取る側の pre-receive フックが、LC_ALL の値を標準エラーに出して拒むリモート（bare）と、そこへ push するコミット。 */
+  async function rejectingRemote() {
+    const remote = join(dir, "remote.git");
+    git(dir, "init", "--bare", "--initial-branch=main", remote);
+    const hook = join(remote, "hooks", "pre-receive");
+    writeFileSync(hook, '#!/bin/sh\necho "LC_ALL=$LC_ALL" >&2\nexit 1\n');
+    chmodSync(hook, 0o755);
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "clone");
+    const gitDir = join(dir, "metadata");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    git(dir, "--git-dir", gitDir, "remote", "set-url", "origin", remote);
+    return { workspace, gitDir, baseCommit };
+  }
+  const failure = async (workspace: GitRepositoryWorkspace, gitDir: string, commit: string) => {
+    try {
+      await workspace.pushCommit(gitDir, commit, "sacty/task-1");
+    } catch (error) {
+      return error;
+    }
+    throw new Error("push が成功した");
+  };
+
+  it.each([
+    ["Connection was reset by peer", true],
+    ["fatal: unable to access 'https://github.com/o/r.git/': Connection reset by peer", true],
+    ["error: RPC failed; curl 56 OpenSSL SSL_read: SSL_ERROR_SYSCALL, errno 104", true],
+    ["error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502", true],
+    ["error: HTTP/2 stream 1 was not closed cleanly: CANCEL (err 8)", true],
+    ["fatal: unable to access 'https://github.com/o/r.git/': Operation timed out", true],
+    ["fatal: the remote end hung up unexpectedly", true],
+    ["fatal: unable to access 'x': The requested URL returned error: 403", false],
+    ["fatal: unable to access 'x': The requested URL returned error: 401", false],
+    [
+      "fatal: unable to access 'x': The requested URL returned error: 403 secondary rate limit",
+      true,
+    ],
+    ["! [rejected] a -> b (non-fast-forward)", false],
+    ["error: something unexpected", false],
+  ])("標準エラー %j の分類は、一時的か = %s", (stderr, transient) => {
+    expect(classifyPushFailure(stderr)).toBe(transient);
+  });
+
+  it("デーモンの言語の設定（LANG）が ja_JP.UTF-8 でも C でも、分類と文が同じになる（git の文言を訳さない）", async () => {
+    const { workspace, gitDir, baseCommit } = await rejectingRemote();
+    const original = process.env.LANG;
+    const results: PushFailedError[] = [];
+    try {
+      for (const lang of ["ja_JP.UTF-8", "C"]) {
+        process.env.LANG = lang;
+        const error = await failure(workspace, gitDir, baseCommit);
+        expect(error).toBeInstanceOf(PushFailedError);
+        results.push(error as PushFailedError);
+      }
+    } finally {
+      if (original === undefined) delete process.env.LANG;
+      else process.env.LANG = original;
+    }
+    expect(results.map((e) => e.transient)).toEqual([false, false]);
+    expect(JSON.stringify(results[0]?.text)).toBe(JSON.stringify(results[1]?.text));
+    expect(JSON.stringify(results[0]?.text)).toContain("remote: LC_ALL=C");
+    expect(results[0]?.commit).toBe(baseCommit);
+    expect(results[0]?.branch).toBe("sacty/task-1");
   });
 });
 

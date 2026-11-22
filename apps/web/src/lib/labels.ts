@@ -900,6 +900,10 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       return event.payload.reason === "suggestions_declined"
         ? e.PullRequestMarkedReadyWithSuggestions(event.payload.number)
         : e.PullRequestMarkedReady(event.payload.number);
+    case "PullRequestUndraftNoted":
+      return e.PullRequestUndraftNoted(event.payload.number);
+    case "PullRequestRedraftSkipped":
+      return e.PullRequestRedraftSkipped(event.payload.number, event.payload.reason);
     case "ContinuedFeedbackPassed":
       return e.ContinuedFeedbackPassed(event.payload.keys.length);
     case "WorkspaceFilesSkipped":
@@ -923,6 +927,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         l.step[event.payload.step],
         event.payload.branch,
         event.payload.commit.slice(0, 7),
+      );
+    case "StepBranchKept":
+      return e.StepBranchKept(
+        event.payload.branch,
+        event.payload.head.slice(0, 7),
+        event.payload.pushed.slice(0, 7),
       );
     case "StepPullRequestPublished":
       return e.StepPullRequestPublished(
@@ -1019,6 +1029,15 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         Math.round(event.payload.waitMs / 1000),
         l.text(event.payload.message),
       );
+    case "PushRetried":
+      return e.PushRetried(
+        event.payload.attempt,
+        event.payload.maxAttempts,
+        Math.round(event.payload.waitMs / 1000),
+        l.text(event.payload.message),
+      );
+    case "PushRetryEnded":
+      return e.PushRetryEnded(event.payload.outcome, event.payload.retries);
     case "PullRequestReviewPosted":
       return e.PullRequestReviewPosted(event.payload.url);
     case "GuardianMissed":
@@ -1198,6 +1217,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
                 : e.ReviewRestarted(actor);
     case "ReviewWatchEnded":
       return e.ReviewWatchEnded(event.payload.reason);
+    case "ReviewRunStopped":
+      return e.ReviewRunStopped(
+        event.payload.reason,
+        event.payload.from.slice(0, 7),
+        event.payload.to?.slice(0, 7),
+      );
     case "ReviewRestartHeld":
       return e.ReviewRestartHeld(event.payload.commit.slice(0, 7));
     case "ContextResolved":

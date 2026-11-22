@@ -174,7 +174,7 @@
 
   | 理由 | 文の例 |
   | --- | --- |
-  | `usage_limit`（利用上限） | `usage limit`・`rate limit`・`429`・`quota` など |
+  | `usage_limit`（利用上限） | `usage limit`・`rate limit`・`429`・`quota`・`Opus limit`・`Sonnet limit`・`spend limit` など |
   | `auth`（認証） | `401`・`403`・`unauthorized`・`expired`・`not logged in` など |
   | `error` | それ以外 |
 
@@ -191,8 +191,8 @@
 - 実行が `usage_limit` で失敗したら、そのエージェントを、すべてのタスクで利用制限中として覚える（`markLimited`）。
   期限は、失敗の文から上限が明ける時刻を確かに読み取れたとき（`parseLimitReset`）はその時刻、読み取れないときは `agent_fallback.cooldown_minutes`（既定 60 分）の後。
   `AgentFellBack` の `until` と画面の表示は、この期限。
-- 読み取る形は、時間帯の名前つきの Claude Code の `· resets 3:45pm (Asia/Tokyo)`（曜日つきを含む）と、古い形の `Claude AI usage limit reached|<エポックからの秒>` だけ。
-  時間帯の名前の無い形（`resets 3:45pm`、Codex の `try again at …`）は、動いた環境の時間帯を知る手段が無いので、読み取れない扱い。
+- 読み取る形は、時間帯の名前つきの Claude Code の `· resets 3:45pm (Asia/Tokyo)`（曜日つきを含む。`session`・`weekly`・`Opus`・`Sonnet`・`spend` の上限の文）と、古い形の `Claude AI usage limit reached|<エポックからの秒>` だけ。
+  時間帯の名前の無い形（`resets 3:45pm`）、日付つきの形（`resets Dec 1`）、Codex の `try again at …` は、動いた環境の時間帯を知る手段が無いので、読み取れない扱い。
   日付の無い時刻は、失敗の時刻より後の、いちばん近いその時刻（曜日つきはその曜日）と読む。
   失敗の時刻の 30 分前までに当たる時刻（日付の無い時刻は、30 分より前に当たるなら翌日・翌週と読む）、過去のエポック、8 日より先の時刻、不正な時刻と知らない時間帯は、読み取れない扱い。
   文は、CLI 自身の失敗の出力（`is_error` の `result`・stderr・`errors`・Codex の `turn.failed`／`error`）からだけ読み、エージェントの発言（`assistantText`・`is_error` でない `result`）からは読まない（`AgentOutcome.cliText`）。

@@ -21,7 +21,7 @@ vi.mock("@/app/actions", () => ({ deriveTaskAction }));
 vi.mock("@/lib/repository-candidates", () => ({ candidatesLoader: () => () => {} }));
 
 const { I18nProvider } = await import("@/i18n/client");
-const { DerivedTasksCard } = await import("./derive-dialog");
+const { DeriveButton } = await import("./derive-dialog");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -63,7 +63,7 @@ const choose = (select: HTMLSelectElement, value: string) =>
     select.dispatchEvent(new Event("change", { bubbles: true }));
   });
 async function open(security: boolean) {
-  await render(h(DerivedTasksCard, { task, derived: [], security }));
+  await render(h(DeriveButton, { task, security }));
   await act(() => field<HTMLElement>("derive-open").click());
   await wait(50);
 }

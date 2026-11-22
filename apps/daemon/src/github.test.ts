@@ -17,7 +17,11 @@ type Call = { url: string; method: string; body?: unknown; auth?: string };
 
 /** 決まった応答を順に返す fetch の偽物。 */
 function fakeFetch(
-  responses: { status: number; json: unknown; headers?: Record<string, string> }[],
+  responses: {
+    status: number;
+    json: unknown;
+    headers?: Record<string, string>;
+  }[],
 ) {
   const calls: Call[] = [];
   const impl = (async (url: string, init: RequestInit) => {
@@ -36,6 +40,32 @@ function fakeFetch(
   }) as unknown as typeof fetch;
   return { impl, calls };
 }
+
+/** 要求の前の最後の外しの読み取り・タイムラインの答え（PBI-468）。 */
+const timelineAnswer = (...nodes: unknown[]) => ({
+  status: 200,
+  json: { data: { node: { timelineItems: { nodes } } } },
+});
+const readyEvent = (id: string) => ({
+  __typename: "ReadyForReviewEvent",
+  id,
+  createdAt: "t1",
+});
+const convertEvent = (id: string) => ({
+  __typename: "ConvertToDraftEvent",
+  id,
+  createdAt: "t2",
+});
+const markedAnswer = (...nodes: unknown[]) => ({
+  status: 200,
+  json: {
+    data: {
+      markPullRequestReadyForReview: {
+        pullRequest: { isDraft: false, timelineItems: { nodes } },
+      },
+    },
+  },
+});
 
 const input = {
   repo: "https://github.com/acme/app",
@@ -58,15 +88,27 @@ async function statusWithoutFork(
 describe("GitHub の PR（PBI-10b）", () => {
   it("PRを作る", async () => {
     const { impl, calls } = fakeFetch([
-      { status: 201, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
+      {
+        status: 201,
+        json: { html_url: "https://github.com/acme/app/pull/7", number: 7 },
+      },
     ]);
     const pr = await new GitHubPullRequests(impl).upsert(input);
-    expect(pr).toEqual({ url: "https://github.com/acme/app/pull/7", number: 7, draft: false });
+    expect(pr).toEqual({
+      url: "https://github.com/acme/app/pull/7",
+      number: 7,
+      draft: false,
+    });
     expect(calls).toEqual([
       {
         url: "https://api.github.com/repos/acme/app/pulls",
         method: "POST",
-        body: { title: "決済API", head: "sacty/task-1234abcd", base: "main", body: "本文" },
+        body: {
+          title: "決済API",
+          head: "sacty/task-1234abcd",
+          base: "main",
+          body: "本文",
+        },
         auth: "Bearer ghp_secret",
       },
     ]);
@@ -76,11 +118,22 @@ describe("GitHub の PR（PBI-10b）", () => {
     const { impl, calls } = fakeFetch([
       {
         status: 201,
-        json: { html_url: "https://github.com/acme/app/pull/7", number: 7, draft: true },
+        json: {
+          html_url: "https://github.com/acme/app/pull/7",
+          number: 7,
+          draft: true,
+        },
       },
     ]);
-    const pr = await new GitHubPullRequests(impl).upsert({ ...input, draft: true });
-    expect(pr).toEqual({ url: "https://github.com/acme/app/pull/7", number: 7, draft: true });
+    const pr = await new GitHubPullRequests(impl).upsert({
+      ...input,
+      draft: true,
+    });
+    expect(pr).toEqual({
+      url: "https://github.com/acme/app/pull/7",
+      number: 7,
+      draft: true,
+    });
     expect(calls[0]?.body).toMatchObject({ draft: true });
   });
 
@@ -88,12 +141,24 @@ describe("GitHub の PR（PBI-10b）", () => {
     const { impl, calls } = fakeFetch([
       {
         status: 422,
-        json: { message: "Draft pull requests are not supported in this repository." },
+        json: {
+          message: "Draft pull requests are not supported in this repository.",
+        },
       },
-      { status: 201, json: { html_url: "https://github.com/acme/app/pull/8", number: 8 } },
+      {
+        status: 201,
+        json: { html_url: "https://github.com/acme/app/pull/8", number: 8 },
+      },
     ]);
-    const pr = await new GitHubPullRequests(impl).upsert({ ...input, draft: true });
-    expect(pr).toEqual({ url: "https://github.com/acme/app/pull/8", number: 8, draft: false });
+    const pr = await new GitHubPullRequests(impl).upsert({
+      ...input,
+      draft: true,
+    });
+    expect(pr).toEqual({
+      url: "https://github.com/acme/app/pull/8",
+      number: 8,
+      draft: false,
+    });
     expect(calls.map((c) => (c.body as { draft?: boolean }).draft)).toEqual([true, undefined]);
   });
 
@@ -101,13 +166,19 @@ describe("GitHub の PR（PBI-10b）", () => {
     const { impl, calls } = fakeFetch([
       {
         status: 422,
-        json: { message: "Draft pull requests are not supported in this repository." },
+        json: {
+          message: "Draft pull requests are not supported in this repository.",
+        },
       },
       // 同じブランチの開いた PR は無い
       { status: 200, json: [] },
     ]);
     await expect(
-      new GitHubPullRequests(impl).upsert({ ...input, draft: true, requireDraft: true }),
+      new GitHubPullRequests(impl).upsert({
+        ...input,
+        draft: true,
+        requireDraft: true,
+      }),
     ).rejects.toThrow();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
   });
@@ -115,10 +186,8 @@ describe("GitHub の PR（PBI-10b）", () => {
   it("ドラフトを外すときは、PR の node_id で GraphQL の markPullRequestReadyForReview を呼ぶ", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
-      {
-        status: 200,
-        json: { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } },
-      },
+      timelineAnswer(),
+      markedAnswer(readyEvent("RFR_1")),
     ]);
     const result = await new GitHubPullRequests(impl).setDraft({
       repo: input.repo,
@@ -126,26 +195,35 @@ describe("GitHub の PR（PBI-10b）", () => {
       number: 7,
       draft: false,
     });
-    expect(result).toEqual({ draft: false });
+    expect(result).toEqual({
+      draft: false,
+      changed: true,
+      previous: "none",
+      readyId: "RFR_1",
+    });
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["GET", "https://api.github.com/repos/acme/app/pulls/7"],
       ["POST", "https://api.github.com/graphql"],
+      ["POST", "https://api.github.com/graphql"],
     ]);
-    const body = calls[1]?.body as { query: string; variables: unknown };
+    const body = calls[2]?.body as { query: string; variables: unknown };
     expect(body.query).toContain("markPullRequestReadyForReview");
     expect(body.variables).toEqual({ id: "PR_node" });
-    expect(calls[1]?.auth).toBe("Bearer ghp_secret");
+    expect(calls[2]?.auth).toBe("Bearer ghp_secret");
   });
 
   it("ドラフトの切り替えの通信には、渡した中断の合図を付ける（PBI-331）", async () => {
     const seen: (AbortSignal | undefined)[] = [];
     const answers = [
       { number: 7, draft: true, node_id: "PR_node" },
-      { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } },
+      timelineAnswer().json,
+      markedAnswer().json,
     ];
     const impl = (async (_url: string, init?: RequestInit) => {
       seen.push(init?.signal ?? undefined);
-      return new Response(JSON.stringify(answers[seen.length - 1]), { status: 200 });
+      return new Response(JSON.stringify(answers[seen.length - 1]), {
+        status: 200,
+      });
     }) as unknown as typeof fetch;
     const abort = new AbortController();
     await new GitHubPullRequests(impl).setDraft({
@@ -155,7 +233,7 @@ describe("GitHub の PR（PBI-10b）", () => {
       draft: false,
       signal: abort.signal,
     });
-    expect(seen).toEqual([abort.signal, abort.signal]);
+    expect(seen).toEqual([abort.signal, abort.signal, abort.signal]);
   });
 
   it("ドラフトに戻すときは convertPullRequestToDraft を呼び、すでにその状態なら何もしない", async () => {
@@ -163,23 +241,153 @@ describe("GitHub の PR（PBI-10b）", () => {
       { status: 200, json: { number: 7, draft: false, node_id: "PR_node" } },
       {
         status: 200,
-        json: { data: { convertPullRequestToDraft: { pullRequest: { isDraft: true } } } },
+        json: {
+          data: {
+            convertPullRequestToDraft: { pullRequest: { isDraft: true } },
+          },
+        },
       },
       { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    const args = { repo: input.repo, token: input.token, number: 7, draft: true };
-    await client.setDraft(args);
-    await client.setDraft(args);
+    const args = {
+      repo: input.repo,
+      token: input.token,
+      number: 7,
+      draft: true,
+    };
+    expect(await client.setDraft(args)).toEqual({ draft: true, changed: true });
+    expect(await client.setDraft(args)).toEqual({
+      draft: true,
+      changed: false,
+    });
     expect(JSON.stringify(calls[1]?.body)).toContain("convertPullRequestToDraft");
     expect(calls).toHaveLength(3);
+  });
+
+  it("draftHistory：ドラフトならタイムラインを読まずにドラフトを返し、ドラフトでなければ最後の切り替えの id・種類を返し、読めなければ読めないことを返す（PBI-468）", async () => {
+    const args = { repo: input.repo, token: input.token, number: 7 };
+    const read = async (
+      responses: { status: number; json: unknown }[],
+    ): Promise<{ history: unknown; calls: number }> => {
+      const { impl, calls } = fakeFetch(responses);
+      const history = await new GitHubPullRequests(impl).draftHistory(args);
+      return { history, calls: calls.length };
+    };
+    const rest = (draft: boolean) => ({
+      status: 200,
+      json: { number: 7, draft, node_id: "PR_node" },
+    });
+    // ドラフト：REST だけ
+    expect(await read([rest(true)])).toEqual({
+      history: { read: true, draft: true },
+      calls: 1,
+    });
+    // ドラフトでない：最後の切り替え（外した・ドラフトにした）
+    expect((await read([rest(false), timelineAnswer(readyEvent("RFR_1"))])).history).toEqual({
+      read: true,
+      draft: false,
+      last: { id: "RFR_1", kind: "ready_for_review", at: "t1" },
+    });
+    expect((await read([rest(false), timelineAnswer(convertEvent("CTD_1"))])).history).toEqual({
+      read: true,
+      draft: false,
+      last: { id: "CTD_1", kind: "convert_to_draft", at: "t2" },
+    });
+    // 切り替えが1件も無い
+    expect((await read([rest(false), timelineAnswer()])).history).toEqual({
+      read: true,
+      draft: false,
+    });
+    // 読めない：draft の読み取りのエラー・タイムラインのエラー
+    expect((await read([{ status: 502, json: {} }])).history).toEqual({
+      read: false,
+    });
+    expect((await read([rest(false), { status: 502, json: {} }])).history).toEqual({
+      read: false,
+    });
+    expect(
+      (await read([rest(false), { status: 200, json: { errors: [{ message: "boom" }] } }])).history,
+    ).toEqual({ read: false });
+    // 読む型は、外しとドラフトにした切り替えの両方
+    const { impl, calls } = fakeFetch([rest(false), timelineAnswer()]);
+    await new GitHubPullRequests(impl).draftHistory(args);
+    const query = (calls[1]?.body as { query: string } | undefined)?.query;
+    expect(query).toContain("READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT");
+    expect(query).toContain("last: 1");
+  });
+
+  it("draftHistory：通信が例外になる・PR の答えに node_id が無いときも、読めないことを返す（PBI-468）", async () => {
+    const args = { repo: input.repo, token: input.token, number: 7 };
+    const rejecting = (async () => {
+      throw new Error("socket hang up");
+    }) as unknown as typeof fetch;
+    expect(await new GitHubPullRequests(rejecting).draftHistory(args)).toEqual({
+      read: false,
+    });
+    const { impl, calls } = fakeFetch([{ status: 200, json: { number: 7, draft: false } }]);
+    expect(await new GitHubPullRequests(impl).draftHistory(args)).toEqual({
+      read: false,
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("setDraft の外し：すでに外れていれば何も呼ばず changed: false。変えたときは、要求の前の最後の外しの id（無ければ none・読めなければ unreadable）と、答えの外しの id（あれば）を返す（PBI-468）", async () => {
+    const args = {
+      repo: input.repo,
+      token: input.token,
+      number: 7,
+      draft: false,
+    };
+    const rest = (draft: boolean) => ({
+      status: 200,
+      json: { number: 7, draft, node_id: "PR_node" },
+    });
+    // すでに外れている：mutation も要求の前の読み取りも呼ばない
+    const already = fakeFetch([rest(false)]);
+    expect(await new GitHubPullRequests(already.impl).setDraft(args)).toEqual({
+      draft: false,
+      changed: false,
+    });
+    expect(already.calls).toHaveLength(1);
+    // 要求の前に外しがあった・答えにも id がある
+    const before = fakeFetch([
+      rest(true),
+      timelineAnswer(readyEvent("RFR_old")),
+      markedAnswer(readyEvent("RFR_new")),
+    ]);
+    expect(await new GitHubPullRequests(before.impl).setDraft(args)).toEqual({
+      draft: false,
+      changed: true,
+      previous: { id: "RFR_old" },
+      readyId: "RFR_new",
+    });
+    // 要求の前の読み取りは、外しの切り替えだけを読む
+    const previousQuery = (before.calls[1]?.body as { query: string } | undefined)?.query;
+    expect(previousQuery).toContain("itemTypes: [READY_FOR_REVIEW_EVENT]");
+    expect(previousQuery).not.toContain("CONVERT_TO_DRAFT_EVENT");
+    // 要求の前の読み取りが失敗しても、外す要求は呼ぶ。答えに id が無ければ返さない
+    const failed = fakeFetch([rest(true), { status: 502, json: {} }, markedAnswer()]);
+    const answer = await new GitHubPullRequests(failed.impl).setDraft(args);
+    expect(answer).toEqual({
+      draft: false,
+      changed: true,
+      previous: "unreadable",
+    });
+    expect("readyId" in answer).toBe(false);
+    expect(failed.calls).toHaveLength(3);
   });
 
   it("PR の答えを読めない・ドラフトかが書かれていないときは、切り替えずに失敗にする（ドラフトのまま進めない）", async () => {
     for (const json of [undefined, { number: 7, node_id: "PR_node" }]) {
       const { impl, calls } = fakeFetch([{ status: 200, json }]);
       const error = await new GitHubPullRequests(impl)
-        .setDraft({ repo: input.repo, token: input.token, number: 7, draft: false })
+        .setDraft({
+          repo: input.repo,
+          token: input.token,
+          number: 7,
+          draft: false,
+        })
         .catch((e: unknown) => e);
       expect(ja(errorText(error)), JSON.stringify(json)).toContain(
         "PR のドラフトを切り替えられませんでした",
@@ -192,14 +400,24 @@ describe("GitHub の PR（PBI-10b）", () => {
     for (const answer of [
       undefined,
       { data: { markPullRequestReadyForReview: {} } },
-      { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: true } } } },
+      {
+        data: {
+          markPullRequestReadyForReview: { pullRequest: { isDraft: true } },
+        },
+      },
     ]) {
       const { impl } = fakeFetch([
         { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
+        timelineAnswer(),
         { status: 200, json: answer },
       ]);
       const error = await new GitHubPullRequests(impl)
-        .setDraft({ repo: input.repo, token: input.token, number: 7, draft: false })
+        .setDraft({
+          repo: input.repo,
+          token: input.token,
+          number: 7,
+          draft: false,
+        })
         .catch((e: unknown) => e);
       expect(ja(errorText(error)), JSON.stringify(answer)).toContain(
         "PR のドラフトを切り替えられませんでした",
@@ -210,10 +428,21 @@ describe("GitHub の PR（PBI-10b）", () => {
   it("GraphQL の答えにエラーがあれば、ドラフトの切り替えの失敗にする", async () => {
     const { impl } = fakeFetch([
       { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
-      { status: 200, json: { errors: [{ message: "Resource not accessible by integration" }] } },
+      timelineAnswer(),
+      {
+        status: 200,
+        json: {
+          errors: [{ message: "Resource not accessible by integration" }],
+        },
+      },
     ]);
     const error = await new GitHubPullRequests(impl)
-      .setDraft({ repo: input.repo, token: input.token, number: 7, draft: false })
+      .setDraft({
+        repo: input.repo,
+        token: input.token,
+        number: 7,
+        draft: false,
+      })
       .catch((e: unknown) => e);
     expect(ja(errorText(error))).toContain("PR のドラフトを切り替えられませんでした");
     expect(ja(errorText(error))).toContain("Resource not accessible by integration");
@@ -223,12 +452,21 @@ describe("GitHub の PR（PBI-10b）", () => {
     const { impl, calls } = fakeFetch([
       {
         status: 201,
-        json: { html_url: "https://ghe.example.co.jp/acme/app/pull/3", number: 3 },
+        json: {
+          html_url: "https://ghe.example.co.jp/acme/app/pull/3",
+          number: 3,
+        },
       },
-      { status: 201, json: { html_url: "https://ghe.example.co.jp/acme/app/issues/3#c1" } },
+      {
+        status: 201,
+        json: { html_url: "https://ghe.example.co.jp/acme/app/issues/3#c1" },
+      },
     ]);
     const client = new GitHubPullRequests(impl);
-    await client.upsert({ ...input, repo: "https://ghe.example.co.jp/acme/app" });
+    await client.upsert({
+      ...input,
+      repo: "https://ghe.example.co.jp/acme/app",
+    });
     await client.commentIssue({
       repo: "https://ghe.example.co.jp/acme/app",
       token: "t",
@@ -244,7 +482,10 @@ describe("GitHub の PR（PBI-10b）", () => {
   it("同じブランチのPRがすでにあれば、それを使う", async () => {
     const { impl, calls } = fakeFetch([
       { status: 422, json: { message: "Validation Failed" } },
-      { status: 200, json: [{ html_url: "https://github.com/acme/app/pull/8", number: 8 }] },
+      {
+        status: 200,
+        json: [{ html_url: "https://github.com/acme/app/pull/8", number: 8 }],
+      },
     ]);
     const pr = await new GitHubPullRequests(impl).upsert(input);
     expect(pr.number).toBe(8);
@@ -257,20 +498,40 @@ describe("GitHub の PR（PBI-10b）", () => {
 
   it("更新で retarget なら、向き先（base）も baseBranch に付け替える。無ければ向き先を送らない（PBI-317）", async () => {
     const { impl, calls } = fakeFetch([
-      { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
-      { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
+      {
+        status: 200,
+        json: { html_url: "https://github.com/acme/app/pull/7", number: 7 },
+      },
+      {
+        status: 200,
+        json: { html_url: "https://github.com/acme/app/pull/7", number: 7 },
+      },
     ]);
     const client = new GitHubPullRequests(impl);
-    await client.upsert({ ...input, number: 7, baseBranch: "main", retarget: true });
+    await client.upsert({
+      ...input,
+      number: 7,
+      baseBranch: "main",
+      retarget: true,
+    });
     await client.upsert({ ...input, number: 7, baseBranch: "main" });
-    expect(calls[0]).toMatchObject({ method: "PATCH", body: { body: "本文", base: "main" } });
+    expect(calls[0]).toMatchObject({
+      method: "PATCH",
+      body: { body: "本文", base: "main" },
+    });
     expect(calls[1]?.body).toEqual({ body: "本文" });
   });
 
   it("更新で本文が無ければ、本文を送らない（人が直した本文に触れない。PBI-334）。作った PR は existing にしない", async () => {
     const { impl, calls } = fakeFetch([
-      { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
-      { status: 201, json: { html_url: "https://github.com/acme/app/pull/9", number: 9 } },
+      {
+        status: 200,
+        json: { html_url: "https://github.com/acme/app/pull/7", number: 7 },
+      },
+      {
+        status: 201,
+        json: { html_url: "https://github.com/acme/app/pull/9", number: 9 },
+      },
     ]);
     const client = new GitHubPullRequests(impl);
     await client.upsert({ ...input, number: 7, body: undefined });
@@ -281,22 +542,34 @@ describe("GitHub の PR（PBI-10b）", () => {
 
   it("PR の今の本文を読む。本文が無ければ空、読めない・答えが JSON でなければ失敗にする（PBI-334）", async () => {
     const ok = fakeFetch([{ status: 200, json: { body: "人の本文" } }]);
-    expect(await new GitHubPullRequests(ok.impl).pullRequestBody({ ...input, number: 7 })).toBe(
-      "人の本文",
-    );
+    expect(
+      await new GitHubPullRequests(ok.impl).pullRequestBody({
+        ...input,
+        number: 7,
+      }),
+    ).toBe("人の本文");
     const empty = fakeFetch([{ status: 200, json: { body: null } }]);
-    expect(await new GitHubPullRequests(empty.impl).pullRequestBody({ ...input, number: 7 })).toBe(
-      "",
-    );
+    expect(
+      await new GitHubPullRequests(empty.impl).pullRequestBody({
+        ...input,
+        number: 7,
+      }),
+    ).toBe("");
     const denied = fakeFetch([{ status: 404, json: { message: "Not Found" } }]);
     await expect(
-      new GitHubPullRequests(denied.impl).pullRequestBody({ ...input, number: 7 }),
+      new GitHubPullRequests(denied.impl).pullRequestBody({
+        ...input,
+        number: 7,
+      }),
     ).rejects.toThrow();
   });
 
   it("番号があれば本文を更新し、失敗は理由つきのエラーにする（トークンは含めない）", async () => {
     const { impl, calls } = fakeFetch([
-      { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
+      {
+        status: 200,
+        json: { html_url: "https://github.com/acme/app/pull/7", number: 7 },
+      },
       { status: 401, json: { message: "Bad credentials" } },
     ]);
     const client = new GitHubPullRequests(impl);
@@ -308,7 +581,12 @@ describe("GitHub の PR（PBI-10b）", () => {
     // 理由はコードと引数で持ち、GitHub の文は翻訳せずに引数で渡す（PBI-11b）
     expect(errorText(error)).toEqual({
       code: "github.failed",
-      params: { action: "updatePr", status: 401, detail: "Bad credentials", hint: "token" },
+      params: {
+        action: "updatePr",
+        status: 401,
+        detail: "Bad credentials",
+        hint: "token",
+      },
     });
   });
 });
@@ -418,7 +696,9 @@ describe("GitHub Enterprise Server の検索・Org（PBI-40）", () => {
       {
         status: 200,
         json: [{ full_name: "acme/web" }],
-        headers: { link: `<https://api.github.com/orgs/acme/repos?page=2>; rel="next"` },
+        headers: {
+          link: `<https://api.github.com/orgs/acme/repos?page=2>; rel="next"`,
+        },
       },
     ]);
     expect(
@@ -503,7 +783,13 @@ describe("検索の上限の先（レビュー指摘）", () => {
     });
     // #1（00:00:01）と #2（00:00:02）があるが、初回の応答は不完全で #2 だけを返した
     const { impl, calls } = fakeFetch([
-      { status: 200, json: { incomplete_results: true, items: [item(2, "2026-01-01T00:00:02Z")] } },
+      {
+        status: 200,
+        json: {
+          incomplete_results: true,
+          items: [item(2, "2026-01-01T00:00:02Z")],
+        },
+      },
       {
         status: 200,
         json: {
@@ -563,14 +849,22 @@ describe("中止したときに PR を閉じる（PBI-3）", () => {
       { status: 404, json: { message: "Not Found" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    await client.close({ repo: "https://github.com/acme/app", token: "t", number: 7 });
+    await client.close({
+      repo: "https://github.com/acme/app",
+      token: "t",
+      number: 7,
+    });
     expect(calls[0]).toMatchObject({
       url: "https://api.github.com/repos/acme/app/pulls/7",
       method: "PATCH",
       body: { state: "closed" },
     });
     await expect(
-      client.close({ repo: "https://github.com/acme/app", token: "t", number: 8 }),
+      client.close({
+        repo: "https://github.com/acme/app",
+        token: "t",
+        number: 8,
+      }),
     ).rejects.toThrow(/PRを閉じられませんでした：GitHub API 404/);
   });
 });
@@ -593,7 +887,11 @@ describe("承認待ちの間の PR の状態（PBI-14a）", () => {
       { status: 404, json: { message: "Not Found" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    const pr = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
+    const pr = {
+      repo: "https://github.com/acme/app",
+      token: "ghp_secret",
+      number: 7,
+    };
     expect(await statusWithoutFork(client, pr)).toEqual({
       state: "merged",
       mergedBy: "reviewer",
@@ -604,7 +902,12 @@ describe("承認待ちの間の PR の状態（PBI-14a）", () => {
     expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
     expect(errorText(await client.status(pr).catch((e: unknown) => e))).toEqual({
       code: "github.failed",
-      params: { action: "getPr", status: 404, detail: "Not Found", hint: "permission" },
+      params: {
+        action: "getPr",
+        status: 404,
+        detail: "Not Found",
+        hint: "permission",
+      },
     });
     expect(calls[0]).toMatchObject({
       url: "https://api.github.com/repos/acme/app/pulls/7",
@@ -617,12 +920,34 @@ describe("承認待ちの間の PR の状態（PBI-14a）", () => {
 describe("承認待ちの PR のベースブランチとの競合（mergeable）", () => {
   it("開いている PR の mergeable を、true・false のときだけ答えに含める（計算中の null・無いときは含めない）。追加の問い合わせはしない", async () => {
     const { impl, calls } = fakeFetch([
-      { status: 200, json: { state: "open", merged: false, head: { sha: "a" }, mergeable: false } },
-      { status: 200, json: { state: "open", merged: false, head: { sha: "a" }, mergeable: true } },
+      {
+        status: 200,
+        json: {
+          state: "open",
+          merged: false,
+          head: { sha: "a" },
+          mergeable: false,
+        },
+      },
+      {
+        status: 200,
+        json: {
+          state: "open",
+          merged: false,
+          head: { sha: "a" },
+          mergeable: true,
+        },
+      },
       { status: 200, json: { state: "open", merged: false, mergeable: null } },
-      { status: 200, json: { state: "open", merged: false, mergeable: "dirty" } },
+      {
+        status: 200,
+        json: { state: "open", merged: false, mergeable: "dirty" },
+      },
       // 閉じた・マージ済みの PR には含めない
-      { status: 200, json: { state: "closed", merged: false, mergeable: false } },
+      {
+        status: 200,
+        json: { state: "closed", merged: false, mergeable: false },
+      },
     ]);
     const client = new GitHubPullRequests(impl);
     const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
@@ -648,7 +973,15 @@ describe("PR の更新の時刻（PBI-411）", () => {
   it("PR の状態の答えに、updated_at が文字列のときだけ、更新の時刻を含める（どの状態でも。追加の問い合わせはしない）", async () => {
     const at = "2026-11-20T00:10:00Z";
     const { impl, calls } = fakeFetch([
-      { status: 200, json: { state: "open", merged: false, updated_at: at, head: { sha: "abc" } } },
+      {
+        status: 200,
+        json: {
+          state: "open",
+          merged: false,
+          updated_at: at,
+          head: { sha: "abc" },
+        },
+      },
       { status: 200, json: { state: "closed", merged: false, updated_at: at } },
       { status: 200, json: { state: "closed", merged: true, updated_at: at } },
       { status: 200, json: { state: "open", merged: false, updated_at: 5 } },
@@ -661,8 +994,14 @@ describe("PR の更新の時刻（PBI-411）", () => {
       headSha: "abc",
       updatedAt: at,
     });
-    expect(await statusWithoutFork(client, pr)).toEqual({ state: "closed", updatedAt: at });
-    expect(await statusWithoutFork(client, pr)).toEqual({ state: "merged", updatedAt: at });
+    expect(await statusWithoutFork(client, pr)).toEqual({
+      state: "closed",
+      updatedAt: at,
+    });
+    expect(await statusWithoutFork(client, pr)).toEqual({
+      state: "merged",
+      updatedAt: at,
+    });
     expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
     expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
     expect(calls).toHaveLength(5);
@@ -679,8 +1018,14 @@ describe("承認待ちの PR のドラフト（PBI-331）", () => {
     ]);
     const client = new GitHubPullRequests(impl);
     const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
-    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open", draft: true });
-    expect(await statusWithoutFork(client, pr)).toEqual({ state: "open", draft: false });
+    expect(await statusWithoutFork(client, pr)).toEqual({
+      state: "open",
+      draft: true,
+    });
+    expect(await statusWithoutFork(client, pr)).toEqual({
+      state: "open",
+      draft: false,
+    });
     expect(await statusWithoutFork(client, pr)).toEqual({ state: "open" });
     expect(await statusWithoutFork(client, pr)).toEqual({ state: "closed" });
   });
@@ -757,8 +1102,18 @@ describe("PR へのフィードバック（PBI-14b）", () => {
       {
         status: 200,
         json: [
-          { id: 20, user: human, body: "テストも足してほしい", created_at: "2026-10-11T00:00:08Z" },
-          { id: 21, user: bot, body: "deployed", created_at: "2026-10-11T00:00:09Z" },
+          {
+            id: 20,
+            user: human,
+            body: "テストも足してほしい",
+            created_at: "2026-10-11T00:00:08Z",
+          },
+          {
+            id: 21,
+            user: bot,
+            body: "deployed",
+            created_at: "2026-10-11T00:00:09Z",
+          },
         ],
       },
     ]);
@@ -827,7 +1182,11 @@ describe("フィードバックの次のページ（PBI-14b レビュー指摘�
 });
 
 describe("PR の行へのコメントへの返信（PBI-352）", () => {
-  const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
+  const target = {
+    repo: "https://github.com/acme/app",
+    token: "ghp_secret",
+    number: 7,
+  };
 
   it("GitHub が示す待ちは、retry-after と x-ratelimit-reset の両方があれば、遅い方（PBI-356）", () => {
     const now = 1_800_000_000_000;
@@ -835,15 +1194,27 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
     const of = (headers: Record<string, string>) => retryAfterOf(new Headers(headers), now);
     // retry-after の方が早い：reset まで待つ
     expect(
-      of({ "retry-after": "60", "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset(600) }),
+      of({
+        "retry-after": "60",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": reset(600),
+      }),
     ).toBe(600_000);
     // reset の方が早い：retry-after まで待つ
     expect(
-      of({ "retry-after": "900", "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset(600) }),
+      of({
+        "retry-after": "900",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": reset(600),
+      }),
     ).toBe(900_000);
     // 残りが 0 でなければ、reset は待ちの条件にしない
     expect(
-      of({ "retry-after": "60", "x-ratelimit-remaining": "12", "x-ratelimit-reset": reset(600) }),
+      of({
+        "retry-after": "60",
+        "x-ratelimit-remaining": "12",
+        "x-ratelimit-reset": reset(600),
+      }),
     ).toBe(60_000);
     // 片方だけ・どちらも無い・読めない値
     expect(of({ "retry-after": "30" })).toBe(30_000);
@@ -861,7 +1232,10 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
       {
         status: 403,
         json: limit,
-        headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+        headers: {
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-reset": String(reset),
+        },
       },
       { status: 404, json: { message: "Not Found" } },
       { status: 429, json: limit, headers: { "retry-after": "30" } },
@@ -881,7 +1255,10 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
         {
           status: 403,
           json: {},
-          headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+          headers: {
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": String(reset),
+          },
         },
       ]).impl,
     );
@@ -896,7 +1273,10 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
     const nullBody = () => ({
       status: 403,
       json: null,
-      headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+      headers: {
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": String(reset),
+      },
     });
     const nulls = new GitHubPullRequests(fakeFetch([nullBody(), nullBody(), nullBody()]).impl);
     for (const failed of [
@@ -906,7 +1286,10 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
       await nulls.replyToReviewComment(input).catch((e: unknown) => e),
       await nulls.commentIssue({ ...target, body: "x" }).catch((e: unknown) => e),
     ]) {
-      expect(errorText(failed)).toMatchObject({ code: "github.failed", params: { status: 403 } });
+      expect(errorText(failed)).toMatchObject({
+        code: "github.failed",
+        params: { status: 403 },
+      });
       expect(githubRetryAfterMs(failed)).toBeGreaterThan(590_000);
     }
     // 示されていなければ、無い
@@ -923,7 +1306,10 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
 
   it("行へのコメントに返信して URL を返し、失敗（消えたコメント・返信への返信）は理由つきのエラーにする", async () => {
     const { impl, calls } = fakeFetch([
-      { status: 201, json: { html_url: "https://github.com/acme/app/pull/7#discussion_r99" } },
+      {
+        status: 201,
+        json: { html_url: "https://github.com/acme/app/pull/7#discussion_r99" },
+      },
       { status: 404, json: { message: "Not Found" } },
     ]);
     const client = new GitHubPullRequests(impl);
@@ -962,7 +1348,11 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
     const { impl, calls } = fakeFetch([{ status: 200, json: list }]);
     const client = new GitHubPullRequests(impl);
     expect(
-      await client.listReviewComments({ ...target, prefix: marker, account: "sacty-bot" }),
+      await client.listReviewComments({
+        ...target,
+        prefix: marker,
+        account: "sacty-bot",
+      }),
     ).toEqual([
       {
         id: 4,
@@ -1039,7 +1429,9 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
         {
           status: 200,
           json: [],
-          headers: { link: '<https://evil.example.com/next?page=2>; rel="next"' },
+          headers: {
+            link: '<https://evil.example.com/next?page=2>; rel="next"',
+          },
         },
       ]).impl,
     );
@@ -1058,8 +1450,16 @@ describe("PR の行へのコメントへの返信（PBI-352）", () => {
 describe("Issue へのコメント（PBI-18）", () => {
   it("Issue にコメントして URL を返し、失敗は理由つきのエラーにする", async () => {
     const { impl, calls } = fakeFetch([
-      { status: 201, json: { html_url: "https://github.com/acme/app/issues/5#issuecomment-9" } },
-      { status: 403, json: { message: "Resource not accessible by integration" } },
+      {
+        status: 201,
+        json: {
+          html_url: "https://github.com/acme/app/issues/5#issuecomment-9",
+        },
+      },
+      {
+        status: 403,
+        json: { message: "Resource not accessible by integration" },
+      },
     ]);
     const client = new GitHubPullRequests(impl);
     const input = {
@@ -1085,7 +1485,10 @@ describe("Issue へのコメント（PBI-18）", () => {
 
   it("Issue を作って URL と番号を返し、失敗は理由つきのエラーにする（PBI-370）", async () => {
     const { impl, calls } = fakeFetch([
-      { status: 201, json: { html_url: "https://github.com/acme/app/issues/12", number: 12 } },
+      {
+        status: 201,
+        json: { html_url: "https://github.com/acme/app/issues/12", number: 12 },
+      },
       { status: 410, json: { message: "Issues are disabled for this repo" } },
     ]);
     const client = new GitHubPullRequests(impl);
@@ -1122,7 +1525,9 @@ describe("Issue へのコメント（PBI-18）", () => {
             html_url: "https://github.com/acme/app/issues/5#issuecomment-1",
           },
         ],
-        headers: { link: `<${api}/issues/5/comments?per_page=100&page=2>; rel="next"` },
+        headers: {
+          link: `<${api}/issues/5/comments?per_page=100&page=2>; rel="next"`,
+        },
       },
       {
         status: 200,
@@ -1137,9 +1542,16 @@ describe("Issue へのコメント（PBI-18）", () => {
       { status: 404, json: { message: "Not Found" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 5 };
+    const target = {
+      repo: "https://github.com/acme/app",
+      token: "ghp_secret",
+      number: 5,
+    };
     expect(
-      await client.findIssueComment({ ...target, marker: "<!-- sacty-investigation:t1 -->" }),
+      await client.findIssueComment({
+        ...target,
+        marker: "<!-- sacty-investigation:t1 -->",
+      }),
     ).toEqual({ url: "https://github.com/acme/app/issues/5#issuecomment-2" });
     expect(calls.map((c) => c.url)).toEqual([
       `${api}/issues/5/comments?per_page=100`,
@@ -1163,18 +1575,34 @@ describe("Issue へのコメント（PBI-18）", () => {
       ]).impl,
     );
     expect(
-      await mimic.findIssueComment({ ...target, marker, accounts: ["sacty-bot"] }),
+      await mimic.findIssueComment({
+        ...target,
+        marker,
+        accounts: ["sacty-bot"],
+      }),
     ).toBeUndefined();
-    expect(await mimic.findIssueComment({ ...target, marker, accounts: ["sacty-bot"] })).toEqual({
+    expect(
+      await mimic.findIssueComment({
+        ...target,
+        marker,
+        accounts: ["sacty-bot"],
+      }),
+    ).toEqual({
       url: "https://github.com/acme/app/issues/8#issuecomment-Sacty-Bot",
     });
     expect(
-      await client.findIssueComment({ ...target, marker: "<!-- sacty-investigation:t2 -->" }),
+      await client.findIssueComment({
+        ...target,
+        marker: "<!-- sacty-investigation:t2 -->",
+      }),
     ).toBeUndefined();
     expect(
       errorText(
         await client
-          .findIssueComment({ ...target, marker: "<!-- sacty-investigation:t1 -->" })
+          .findIssueComment({
+            ...target,
+            marker: "<!-- sacty-investigation:t1 -->",
+          })
           .catch((e: unknown) => e),
       ),
     ).toMatchObject({
@@ -1186,7 +1614,11 @@ describe("Issue へのコメント（PBI-18）", () => {
 
 describe("PR のレビュー（PBI-19）", () => {
   const api = "https://api.github.com/repos/acme/app";
-  const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 12 };
+  const target = {
+    repo: "https://github.com/acme/app",
+    token: "ghp_secret",
+    number: 12,
+  };
 
   it("PR の先頭・向き先のコミットと説明・作者を読み、失敗は理由つきのエラーにする", async () => {
     const { impl, calls } = fakeFetch([
@@ -1220,13 +1652,19 @@ describe("PR のレビュー（PBI-19）", () => {
       author: "alice",
       requestedReviewers: ["me", "bob"],
     });
-    expect(calls[0]).toMatchObject({ url: `${api}/pulls/12`, auth: "Bearer ghp_secret" });
+    expect(calls[0]).toMatchObject({
+      url: `${api}/pulls/12`,
+      auth: "Bearer ghp_secret",
+    });
     expect(errorText(await client.pullRequest(target).catch((e: unknown) => e))).toMatchObject({
       code: "github.failed",
       params: { action: "getPr", status: 404 },
     });
     // 作者も依頼先も読めないときは空
-    expect(await client.pullRequest(target)).toMatchObject({ author: "", requestedReviewers: [] });
+    expect(await client.pullRequest(target)).toMatchObject({
+      author: "",
+      requestedReviewers: [],
+    });
   });
 
   it("引き継ぐ PR の状態・元のブランチとそのリポジトリ・向き先のブランチを読み、読めなければ持たない", async () => {
@@ -1251,7 +1689,11 @@ describe("PR のレビュー（PBI-19）", () => {
       pr({ state: "closed", merged: true }),
       pr({ state: "closed", merged: false, merged_at: null }),
       // フォークが消された PR は、元のブランチのリポジトリが null
-      pr({ head: { sha: "h".repeat(40), ref: "x", repo: null }, base: {}, state: undefined }),
+      pr({
+        head: { sha: "h".repeat(40), ref: "x", repo: null },
+        base: {},
+        state: undefined,
+      }),
     ]);
     const client = new GitHubPullRequests(impl);
     expect(await client.pullRequest(target)).toMatchObject({
@@ -1328,7 +1770,10 @@ describe("PR のレビュー（PBI-19）", () => {
       errorText(
         await client.lastReviewRequest({ ...target, reviewer: "me" }).catch((e: unknown) => e),
       ),
-    ).toMatchObject({ code: "github.failed", params: { action: "listEvents", status: 404 } });
+    ).toMatchObject({
+      code: "github.failed",
+      params: { action: "listEvents", status: 404 },
+    });
   });
 
   it("最後の依頼をした人（actor）を返す。人が分からなければ undefined（PBI-461）", async () => {
@@ -1395,7 +1840,11 @@ describe("PR のレビュー（PBI-19）", () => {
   it("権限を読めないときは、権限が無いとは扱わず、失敗にする（PBI-461）", async () => {
     const { impl } = fakeFetch([{ status: 403, json: { message: "Forbidden" } }]);
     const error = await new GitHubPullRequests(impl)
-      .canWrite({ repo: "https://github.com/acme/app", token: "t", login: "someone" })
+      .canWrite({
+        repo: "https://github.com/acme/app",
+        token: "t",
+        login: "someone",
+      })
       .catch((e: unknown) => e);
     expect(errorText(error)).toMatchObject({
       code: "github.failed",
@@ -1411,7 +1860,9 @@ describe("PR のレビュー（PBI-19）", () => {
           status: 200,
           headers:
             index + 1 < pages
-              ? { link: `<${api}/issues/12/events?per_page=100&page=${index + 2}>; rel="next"` }
+              ? {
+                  link: `<${api}/issues/12/events?per_page=100&page=${index + 2}>; rel="next"`,
+                }
               : {},
           json: [
             {
@@ -1422,7 +1873,10 @@ describe("PR のレビュー（PBI-19）", () => {
           ],
         })),
       );
-      const result = new GitHubPullRequests(impl).lastReviewRequest({ ...target, reviewer: "me" });
+      const result = new GitHubPullRequests(impl).lastReviewRequest({
+        ...target,
+        reviewer: "me",
+      });
       if (pages === 50) await expect(result).resolves.toBe("2026-10-19T01:00:00Z");
       else {
         expect(errorText(await result.catch((error: unknown) => error))).toMatchObject({
@@ -1437,7 +1891,9 @@ describe("PR のレビュー（PBI-19）", () => {
     const { impl, calls } = fakeFetch([
       {
         status: 200,
-        json: { html_url: "https://github.com/acme/app/pull/12#pullrequestreview-5" },
+        json: {
+          html_url: "https://github.com/acme/app/pull/12#pullrequestreview-5",
+        },
       },
       { status: 422, json: { message: "Unprocessable" } },
     ]);
@@ -1492,7 +1948,9 @@ describe("PR のレビュー（PBI-19）", () => {
             html_url: "https://github.com/acme/app/pull/12#pullrequestreview-8",
           },
         ],
-        headers: { link: `<${api}/pulls/12/reviews?per_page=100&page=2>; rel="next"` },
+        headers: {
+          link: `<${api}/pulls/12/reviews?per_page=100&page=2>; rel="next"`,
+        },
       },
       {
         status: 200,
@@ -1538,7 +1996,13 @@ describe("PR のレビュー（PBI-19）", () => {
             body: "<!-- sacty-review:t1 -->\n## sacty のレビュー\n\n- 上限が無い",
             submitted_at: at(1),
           },
-          { id: 2, user: human, state: "COMMENTED", body: "ここを直して", submitted_at: at(2) },
+          {
+            id: 2,
+            user: human,
+            state: "COMMENTED",
+            body: "ここを直して",
+            submitted_at: at(2),
+          },
           // 人間が本文に目印を写しても、人間の指摘として取り込む
           {
             id: 3,
@@ -1561,7 +2025,14 @@ describe("PR のレビュー（PBI-19）", () => {
             created_at: at(4),
           },
           // 同じアカウントでも、目印で始まらないもの（人間が手で書いた）は取り込む
-          { id: 5, user: me, body: "手で書いた指摘", path: "a.ts", line: 1, created_at: at(5) },
+          {
+            id: 5,
+            user: me,
+            body: "手で書いた指摘",
+            path: "a.ts",
+            line: 1,
+            created_at: at(5),
+          },
         ],
       },
       { status: 200, json: [] },
@@ -1585,14 +2056,19 @@ describe("対象の Org のリポジトリ（PBI-25）", () => {
           { full_name: "acme/web", archived: false },
           { full_name: "acme/old", archived: true },
         ],
-        headers: { link: `<${api}/orgs/acme/repos?per_page=100&type=all&page=2>; rel="next"` },
+        headers: {
+          link: `<${api}/orgs/acme/repos?per_page=100&type=all&page=2>; rel="next"`,
+        },
       },
       { status: 200, json: [{ full_name: "acme/api", private: true }] },
       { status: 403, json: { message: "Forbidden" } },
     ]);
     const client = new GitHubPullRequests(impl);
     expect(
-      await client.repositories({ org: "https://github.com/acme", token: "ghp_secret" }),
+      await client.repositories({
+        org: "https://github.com/acme",
+        token: "ghp_secret",
+      }),
     ).toEqual(["https://github.com/acme/api", "https://github.com/acme/web"]);
     expect(calls[0]).toMatchObject({
       url: `${api}/orgs/acme/repos?per_page=100&type=all`,
@@ -1604,7 +2080,10 @@ describe("対象の Org のリポジトリ（PBI-25）", () => {
           .repositories({ org: "https://github.com/acme", token: "ghp_secret" })
           .catch((e: unknown) => e),
       ),
-    ).toMatchObject({ code: "github.failed", params: { action: "listRepositories", status: 403 } });
+    ).toMatchObject({
+      code: "github.failed",
+      params: { action: "listRepositories", status: 403 },
+    });
   });
 
   it("個人のアカウントは、公開リポジトリに加えて、トークンで読めるその持ち主の非公開リポジトリも含める（レビュー指摘）", async () => {
@@ -1640,7 +2119,10 @@ describe("対象の Org のリポジトリ（PBI-25）", () => {
     ]);
     const client = new GitHubPullRequests(impl);
     expect(
-      await client.repositories({ org: "https://github.com/someone", token: "ghp_secret" }),
+      await client.repositories({
+        org: "https://github.com/someone",
+        token: "ghp_secret",
+      }),
     ).toEqual(["https://github.com/Someone/dotfiles", "https://github.com/Someone/private-app"]);
     expect(calls.map((c) => c.url)).toEqual([
       `${api}/orgs/someone/repos?per_page=100&type=all`,
@@ -1651,7 +2133,11 @@ describe("対象の Org のリポジトリ（PBI-25）", () => {
 });
 
 describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
-  const pr = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
+  const pr = {
+    repo: "https://github.com/acme/app",
+    token: "ghp_secret",
+    number: 7,
+  };
 
   describe("レビューが止まったことの投稿（PBI-292）", () => {
     const notice = (task: string, key = "k1", state = "") =>
@@ -1699,7 +2185,12 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
         { status: 403, json: { message: "Resource not accessible" } },
       ]);
       const client = new GitHubPullRequests(impl);
-      await client.editIssueComment({ repo: pr.repo, token: pr.token, id: 31, body: "解消済み" });
+      await client.editIssueComment({
+        repo: pr.repo,
+        token: pr.token,
+        id: 31,
+        body: "解消済み",
+      });
       expect(calls).toEqual([
         {
           url: "https://api.github.com/repos/acme/app/issues/comments/31",
@@ -1749,7 +2240,11 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       }) as unknown as typeof fetch;
       const client = new GitHubPullRequests(impl);
       const controller = new AbortController();
-      const base = { repo: pr.repo, token: pr.token, signal: controller.signal };
+      const base = {
+        repo: pr.repo,
+        token: pr.token,
+        signal: controller.signal,
+      };
       await client.listIssueComments({ ...base, number: 7, prefix: "x" });
       await client.commentIssue({ ...base, number: 7, body: "b" });
       await client.editIssueComment({ ...base, id: 1, body: "b" });
@@ -1794,7 +2289,12 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
           status: 200,
           json: [
             // 行へのコメントへの返信（スレッドの中の投稿）
-            { ...comment(11, "sacty-bot", reply), path: "src/a.ts", line: 3, in_reply_to_id: 10 },
+            {
+              ...comment(11, "sacty-bot", reply),
+              path: "src/a.ts",
+              line: 3,
+              in_reply_to_id: 10,
+            },
             { ...comment(12, "mallory", reply), path: "src/a.ts", line: 3 },
           ],
         },
@@ -1901,7 +2401,10 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
           ],
         },
       ]);
-      const feedback = await new GitHubPullRequests(impl).feedback({ ...pr, account: "sacty-bot" });
+      const feedback = await new GitHubPullRequests(impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+      });
       expect(feedback.map((f) => f.key)).toEqual(["comment:2", "comment:3", "comment:4"]);
     });
 
@@ -1920,7 +2423,10 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
           ],
         },
       ]);
-      const feedback = await new GitHubPullRequests(impl).feedback({ ...pr, account: "sacty-bot" });
+      const feedback = await new GitHubPullRequests(impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+      });
       expect(feedback.map((f) => f.key)).toEqual(["comment:2", "comment:3"]);
     });
 
@@ -1942,7 +2448,10 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
           ],
         },
       ]);
-      const feedback = await new GitHubPullRequests(impl).feedback({ ...pr, account: "sacty-bot" });
+      const feedback = await new GitHubPullRequests(impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+      });
       expect(feedback.map((f) => f.key)).toEqual(["comment:3", "comment:4"]);
     });
 
@@ -1961,7 +2470,10 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
           ],
         },
       ]);
-      const feedback = await new GitHubPullRequests(impl).feedback({ ...pr, account: "sacty-bot" });
+      const feedback = await new GitHubPullRequests(impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+      });
       expect(feedback.map((f) => f.key)).toEqual(["comment:2", "comment:3"]);
     });
 
@@ -1984,7 +2496,10 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
           ],
         },
       ]);
-      const feedback = await new GitHubPullRequests(impl).feedback({ ...pr, account: "sacty-bot" });
+      const feedback = await new GitHubPullRequests(impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+      });
       expect(feedback.map((f) => f.key)).toEqual(["comment:3", "comment:4", "comment:5"]);
     });
 
@@ -2091,7 +2606,13 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
         body: "承認しますが、src/retry.ts の上限は改善してください",
         submitted_at: "2026-10-11T00:00:01Z",
       },
-      { id: 2, state: "APPROVED", user: human, body: "", submitted_at: "2026-10-11T00:00:02Z" },
+      {
+        id: 2,
+        state: "APPROVED",
+        user: human,
+        body: "",
+        submitted_at: "2026-10-11T00:00:02Z",
+      },
       {
         id: 3,
         state: "COMMENTED",
@@ -2124,7 +2645,10 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       { status: 200, json: { name: "sacty ai" } },
       { status: 200, json: [{ name: "sacty ai" }] },
     ]);
-    const result = await new GitHubPullRequests(impl).addLabel({ ...pr, label: "sacty ai" });
+    const result = await new GitHubPullRequests(impl).addLabel({
+      ...pr,
+      label: "sacty ai",
+    });
     expect(result).toEqual({ created: false });
     expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
       ["GET", "https://api.github.com/repos/acme/app/labels/sacty%20ai", undefined],
@@ -2139,7 +2663,12 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       { status: 201, json: { name: "sacty" } },
       { status: 200, json: [] },
     ]);
-    expect(await new GitHubPullRequests(made.impl).addLabel({ ...pr, label: "sacty" })).toEqual({
+    expect(
+      await new GitHubPullRequests(made.impl).addLabel({
+        ...pr,
+        label: "sacty",
+      }),
+    ).toEqual({
       created: true,
     });
     expect(made.calls[1]).toMatchObject({
@@ -2155,11 +2684,19 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       { status: 404, json: { message: "Not Found" } },
       {
         status: 422,
-        json: { message: "Validation Failed", errors: [{ code: "already_exists" }] },
+        json: {
+          message: "Validation Failed",
+          errors: [{ code: "already_exists" }],
+        },
       },
       { status: 200, json: [] },
     ]);
-    expect(await new GitHubPullRequests(raced.impl).addLabel({ ...pr, label: "sacty" })).toEqual({
+    expect(
+      await new GitHubPullRequests(raced.impl).addLabel({
+        ...pr,
+        label: "sacty",
+      }),
+    ).toEqual({
       created: false,
     });
     expect(raced.calls).toHaveLength(3);
@@ -2174,14 +2711,23 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       [
         [
           { status: 404, json: {} },
-          { status: 403, json: { message: "Resource not accessible by integration" } },
+          {
+            status: 403,
+            json: { message: "Resource not accessible by integration" },
+          },
         ],
         "リポジトリにラベルを作れませんでした",
       ],
       [
         [
           { status: 404, json: {} },
-          { status: 422, json: { message: "Validation Failed", errors: [{ code: "invalid" }] } },
+          {
+            status: 422,
+            json: {
+              message: "Validation Failed",
+              errors: [{ code: "invalid" }],
+            },
+          },
         ],
         "リポジトリにラベルを作れませんでした",
       ],
@@ -2229,7 +2775,13 @@ describe("Bot のアカウントの sacty のレビュー（PBI-88 レビュー�
             body: "<!-- sacty-review:r2 -->\n別のタスク",
             submitted_at: at(2),
           },
-          { id: 3, user: ci, state: "COMMENTED", body: "CI が通りました", submitted_at: at(3) },
+          {
+            id: 3,
+            user: ci,
+            state: "COMMENTED",
+            body: "CI が通りました",
+            submitted_at: at(3),
+          },
           // ほかの Bot が目印を写しても含めない
           {
             id: 4,
@@ -2270,7 +2822,11 @@ describe("sacty 自身の AI のレビューの印と、対象にしたコミッ
   const at = (n: number) => `2026-10-11T00:00:0${n}Z`;
   const me = { login: "sacty-bot", type: "User" };
   const head = "a".repeat(40);
-  const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
+  const target = {
+    repo: "https://github.com/acme/app",
+    token: "ghp_secret",
+    number: 7,
+  };
 
   it("投稿の印で見分けて source を付け、レビューと行へのコメントの対象のコミットを添える。人のコメントには付けない（アカウントは同じ）", async () => {
     const { impl } = fakeFetch([
@@ -2309,14 +2865,26 @@ describe("sacty 自身の AI のレビューの印と、対象にしたコミッ
             commit_id: head,
             created_at: at(3),
           },
-          { id: 4, user: me, body: "手で書いた行", path: "a.ts", line: 1, created_at: at(4) },
+          {
+            id: 4,
+            user: me,
+            body: "手で書いた行",
+            path: "a.ts",
+            line: 1,
+            created_at: at(4),
+          },
         ],
       },
       // 印を写した通常のコメントでも、タスクの回と一致して、アカウントが同じなら AI のレビュー（コミットは無い）
       {
         status: 200,
         json: [
-          { id: 5, user: me, body: "<!-- sacty-review:r1 -->\n要約", created_at: at(5) },
+          {
+            id: 5,
+            user: me,
+            body: "<!-- sacty-review:r1 -->\n要約",
+            created_at: at(5),
+          },
           { id: 6, user: me, body: "人のコメント", created_at: at(6) },
         ],
       },
@@ -2366,7 +2934,10 @@ describe("sacty 自身の AI のレビューの印と、対象にしたコミッ
           },
         ],
       },
-      { status: 200, json: [{ id: 6, user: me, body: "人のコメント", created_at: at(6) }] },
+      {
+        status: 200,
+        json: [{ id: 6, user: me, body: "人のコメント", created_at: at(6) }],
+      },
     ]);
     const feedback = await new GitHubPullRequests(impl).feedback({
       ...target,
@@ -2618,9 +3189,25 @@ describe("PR がフォークからのものか（status の fork。PBI-461）", 
     ]);
     const client = new GitHubPullRequests(impl);
     const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
-    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: true });
-    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: false });
-    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: true });
-    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", fork: true });
+    expect(await client.status(pr)).toEqual({
+      state: "open",
+      headSha: "a",
+      fork: true,
+    });
+    expect(await client.status(pr)).toEqual({
+      state: "open",
+      headSha: "a",
+      fork: false,
+    });
+    expect(await client.status(pr)).toEqual({
+      state: "open",
+      headSha: "a",
+      fork: true,
+    });
+    expect(await client.status(pr)).toEqual({
+      state: "open",
+      headSha: "a",
+      fork: true,
+    });
   });
 });

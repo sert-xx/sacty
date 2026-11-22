@@ -179,7 +179,7 @@ describe("本物のデーモンのサービスを通した、タスクの中止�
   it("ツールの一覧。中止は destructive・openWorld で読み取り専用でなく、読み取りは readOnly", async () => {
     const t = await setup();
     const { tools } = await t.client.listTools();
-    expect(tools).toHaveLength(19);
+    expect(tools).toHaveLength(20);
     const cancel = tools.find((x) => x.name === "cancel_task");
     const plan = tools.find((x) => x.name === "get_cancel_plan");
     expect(cancel?.annotations).toMatchObject({
@@ -313,6 +313,50 @@ describe("本物のデーモンのサービスを通した、タスクの中止�
     expect(t.pulls.closed.map((c) => c.number)).toEqual([7, 8]);
     expect(t.repos.deleted).toEqual(planned.willDelete.branches);
     expect((r.data as Cancelled).closedPullRequests).toEqual(planned.willClose.pullRequests);
+    t.activity.close();
+  });
+
+  it("実装の無い進め方（タスクブランチなし）の中止の確認は、開いている工程の PR のブランチを消すものに、人がコミットを足して残したブランチを理由つきで触れないものに示す（PBI-464）", async () => {
+    const t = await setup();
+    const id = make(t, "設計だけ", {
+      steps: [
+        { key: "requirements", state: "done" },
+        { key: "design", state: "active" },
+      ],
+      stepBranches: ["sacty/task-x-requirements-1", "sacty/task-x-design-1"],
+      stepBranchCommits: { "sacty/task-x-requirements-1": "c1", "sacty/task-x-design-1": "c2" },
+      stepBranchesKept: { "sacty/task-x-requirements-1": { head: "h1", pushed: "c1" } },
+      stepPullRequests: [
+        {
+          step: "requirements",
+          repo: "https://github.com/acme/app",
+          number: 8,
+          url: "https://github.com/acme/app/pull/8",
+          branch: "sacty/task-x-requirements-1",
+          state: "closed",
+          submission: 1,
+        },
+        {
+          step: "design",
+          repo: "https://github.com/acme/app",
+          number: 9,
+          url: "https://github.com/acme/app/pull/9",
+          branch: "sacty/task-x-design-1",
+          state: "open",
+          submission: 1,
+        },
+      ],
+    });
+    const planned = await t.planOf(id);
+    expect(planned.willDelete.branches).toEqual(["sacty/task-x-design-1"]);
+    expect(planned.untouched.branches).toEqual([
+      {
+        name: "sacty/task-x-requirements-1",
+        reason: expect.stringContaining("人がコミットを足した"),
+      },
+    ]);
+    expect(planned.cancelArguments.delete_branches).toEqual(["sacty/task-x-design-1"]);
+    expect(planned.notes.join("")).toContain("先頭が sacty の最後の push と違えば");
     t.activity.close();
   });
 

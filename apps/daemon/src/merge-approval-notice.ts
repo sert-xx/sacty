@@ -1,5 +1,4 @@
 import { MERGE_APPROVAL_MARKER_PREFIX, MERGE_NOT_APPROVED_MARKER_PREFIX } from "./github.js";
-import { taskLinkNote } from "./task-link.js";
 
 /*
  * 工程（要求要件・設計）の PR の自動の直しの間に、人がその PR をマージしたときの知らせ（PBI-462）。
@@ -23,8 +22,6 @@ export type MergeApprovalNoticeInput = {
   number: number;
   /** 捨てた提案（指摘）の件数。 */
   discarded: number;
-  taskUrl: string;
-  localOnly?: boolean;
 };
 
 /** マージを承認として扱ったことの知らせの本文。 */
@@ -39,7 +36,7 @@ export function buildMergeApprovalNotice(input: MergeApprovalNoticeInput): strin
       ? `直しに反映していなかった提案が${input.discarded}件ありました。これも取り込んでいません。`
       : "直しに反映していなかった提案はありません。",
     "",
-    `経過は[タスクの画面](${input.taskUrl})で確かめられます。${taskLinkNote(input.localOnly).join("")}`,
+    "経過は、Sacty の画面で確かめられます。",
   ].join("\n");
 }
 
@@ -50,8 +47,6 @@ export type MergeNotApprovedNoticeInput = {
   stepName: string;
   /** 戻した先の工程の名前（要求要件）。 */
   backName: string;
-  taskUrl: string;
-  localOnly?: boolean;
 };
 
 /** マージを承認として扱わなかったことの知らせの本文。 */
@@ -63,6 +58,6 @@ export function buildMergeNotApprovedNotice(input: MergeNotApprovedNoticeInput):
     `${input.backName}の直しの最中だったため、このマージは${input.stepName}の承認として扱っていません。`,
     `${input.backName}の承認の後に、${input.stepName}の PR を作り直します。`,
     "",
-    `経過は[タスクの画面](${input.taskUrl})で確かめられます。${taskLinkNote(input.localOnly).join("")}`,
+    "経過は、Sacty の画面で確かめられます。",
   ].join("\n");
 }

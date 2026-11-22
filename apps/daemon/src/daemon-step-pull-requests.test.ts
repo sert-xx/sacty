@@ -78,7 +78,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         title,
         block({
           "sacty-test-viewpoints": [
-            { title: "同じキーの再送", input: "同じキーで2回送る", expected: "決済は1回" },
+            {
+              title: "同じキーの再送",
+              input: "同じキーで2回送る",
+              expected: "決済は1回",
+            },
           ],
         }),
       ].join("\n\n"),
@@ -103,6 +107,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     ...patch,
   });
   const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
+  /** 指定した種類のイベントの内容（PBI-468）。 */
+  const payloads = (svc: TaskService, id: string, type: string) =>
+    (svc.get(id)?.activity ?? []).filter((e) => e.type === type).map((e) => e.payload);
   const promptOf = (executor: FakeExecutor, i: number) =>
     executor.calls[i]?.command.join(" ") ?? "";
   const taskOf = (svc: TaskService, id: string) => svc.get(id)?.task as Task;
@@ -159,6 +166,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       webUrl?: string;
       /** タスクの計画（セキュリティの組み合わせなど）。 */
       plan?: "security-fix";
+      /** push のやり直しの待ち時間（PBI-467）。 */
+      pushRetryDelaysMs?: readonly number[];
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -169,6 +178,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ...(options.webUrl !== undefined ? { webUrl: options.webUrl } : {}),
       ...(options.github ? { github: options.github } : {}),
       stepPullRequests: true,
+      ...(options.pushRetryDelaysMs ? { pushRetryDelaysMs: options.pushRetryDelaysMs } : {}),
       ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
       ...(options.reviewTasks ? { reviewTasks: true } : {}),
       ...(options.mergeBase ? { mergeBase: true } : {}),
@@ -209,21 +219,219 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const task = taskOf(service, id);
     const pr =
       step === "implement"
-        ? { number: task.pullRequest?.number ?? 0, commit: task.pullRequest?.commit }
+        ? {
+            number: task.pullRequest?.number ?? 0,
+            commit: task.pullRequest?.commit,
+          }
         : task.stepPullRequests.findLast((p) => p.step === step);
     if (!pr) throw new Error(`no pull request for ${step}`);
-    pulls.states[pr.number] = { state: "merged", mergedBy: "reviewer", headSha: pr.commit };
+    pulls.states[pr.number] = {
+      state: "merged",
+      mergedBy: "reviewer",
+      headSha: pr.commit,
+    };
     repos.remote[taskBranchOf(id)] = `m${pr.number}`.padEnd(40, "0");
     await service.checkPullRequests();
   }
 
+  describe("要求要件・設計の PR の push が一時的に失敗したら、push だけをやり直す（PBI-467）", () => {
+    const REJECT =
+      "! [remote rejected] d1 -> sacty/x (failed)\nerror: failed to push some refs to 'https://x-access-token:ghp_secret@github.com/acme/app.git'";
+    const watched = ["PushRetried", "PushRetryEnded", "StepPullRequestPublished", "TaskPaused"];
+    /** 設計の PR を作る手前より後の、やり直しと PR の作成の記録。 */
+    let since = 0;
+    const kinds = (svc: TaskService, id: string) =>
+      types(svc, id)
+        .slice(since)
+        .filter((t) => watched.includes(t));
+    /** 要求要件をマージして、設計の PR を作る手前まで進める。 */
+    async function toDesign(pushRetryDelaysMs: readonly number[]) {
+      const made = await start([out("# 要求要件"), design()], {
+        pushRetryDelaysMs,
+      });
+      await merge(made, "requirements");
+      expect(taskOf(made.service, made.id).status).toBe("queued");
+      since = types(made.service, made.id).length;
+      return made;
+    }
+
+    it("設計の PR の新しいブランチへの push が 1 回失敗しても、同じ名前のブランチへ push し直して PR を作り、ブランチを増やさない", async () => {
+      const { activity, service, repos, id } = await toDesign([0, 0, 0]);
+      const taskBranch = taskBranchOf(id);
+      repos.pushScript = [REJECT];
+      await service.runNext(id);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "StepPullRequestPublished",
+      ]);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.findLast((e) => e.type === "PushRetryEnded")?.payload).toMatchObject({
+        outcome: "pushed",
+        retries: 1,
+      });
+      const pushes = repos.pushAttempts.filter((p) => p.branch.endsWith("-design-1"));
+      expect(pushes).toHaveLength(2);
+      expect(pushes[1]).toEqual(pushes[0]);
+      expect(
+        events.find((e) => e.type === "StepBranchPushed" && e.payload.step === "design")?.payload,
+      ).toMatchObject({ branch: `${taskBranch}-design-1` });
+      expect(taskOf(service, id).stepBranches.filter((b) => b.endsWith("-design-2"))).toEqual([]);
+      expect(taskOf(service, id).stepPullRequests.at(-1)?.branch).toBe(`${taskBranch}-design-1`);
+      activity.close();
+    });
+
+    it("やり直しを待つ間に一時停止したら、push も記録もせずにやめ、pr.failed にせず一時停止の理由を上書きしない", async () => {
+      const { activity, service, repos, id } = await toDesign([60_000]);
+      repos.pushScript = [REJECT];
+      const before = repos.pushAttempts.length;
+      const running = service.runNext(id);
+      await waitFor(() => repos.pushAttempts.length === before + 1, {
+        what: "最初の push",
+      });
+      const pausing = service.pause(id).catch((e: unknown) => e);
+      await running;
+      await pausing;
+      expect(repos.pushAttempts).toHaveLength(before + 1);
+      expect(kinds(service, id)).toEqual(["TaskPaused"]);
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "TaskPaused")?.payload,
+      ).toMatchObject({
+        reason: "manual",
+      });
+      expect(taskOf(service, id).status).toBe("paused");
+      expect(taskOf(service, id).pausedMessage).not.toMatchObject({
+        code: "pr.failed",
+      });
+      activity.close();
+    });
+
+    it("タスクブランチの作成の push が 1 回失敗しても、同じコミット・ブランチへ push し直してから、ブランチと PR を記録する", async () => {
+      const repos = new FakeRepos();
+      repos.pushScript = [REJECT];
+      const { activity, service, id } = await start([out("# 要求要件")], {
+        repos,
+        pushRetryDelaysMs: [0, 0, 0],
+      });
+      // タスクブランチへの 2 回（失敗と、やり直し）の後に、工程のブランチへ push する
+      expect(repos.pushAttempts.filter((p) => p.branch === taskBranchOf(id))).toHaveLength(2);
+      expect(repos.pushAttempts[1]).toEqual(repos.pushAttempts[0]);
+      expect(repos.pushAttempts[0]?.branch).toBe(taskBranchOf(id));
+      const kinds = types(service, id).filter(
+        (t) => watched.includes(t) || t === "TaskBranchCreated",
+      );
+      expect(kinds).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "TaskBranchCreated",
+        "StepPullRequestPublished",
+      ]);
+      expect(taskOf(service, id).taskBranch).toEqual({
+        branch: taskBranchOf(id),
+        commit: "base123",
+      });
+      activity.close();
+    });
+
+    it("同じ PR を更新する push が 1 回失敗しても、同じブランチへ同じコミットを push し直して、同じ PR を更新する", async () => {
+      const made = await start(
+        [out("# 要求要件 v1"), rework("requirements", "要求要件で直せる"), out("# 要求要件 v2")],
+        { pushRetryDelaysMs: [0, 0, 0] },
+      );
+      const { activity, service, repos, pulls, id } = made;
+      pulls.feedbackBy[7] = [item("comment:3")];
+      await service.checkPullRequests();
+      expect(taskOf(service, id).status).toBe("queued");
+      const before = repos.pushAttempts.length;
+      since = types(service, id).length;
+      repos.pushScript = [REJECT];
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(before + 2);
+      const [first, second] = repos.pushAttempts.slice(before);
+      expect(second).toEqual(first);
+      expect(first?.branch).toBe(`${taskBranchOf(id)}-requirements-1`);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "StepPullRequestPublished",
+      ]);
+      expect(pulls.calls.at(-1)?.number).toBe(7);
+      activity.close();
+    });
+
+    it("止まった後の再開でも、1 回目の push が一時的に失敗したら、エージェントを実行せず、やり直して PR を作る", async () => {
+      const { activity, service, repos, executor, id } = await toDesign([0, 0, 0]);
+      repos.pushScript = [REJECT, REJECT, REJECT, REJECT];
+      await service.runNext(id);
+      expect(taskOf(service, id).status).toBe("paused");
+      const runs = executor.calls.length;
+      since = types(service, id).length;
+      repos.pushScript = [REJECT];
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(runs);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetryEnded",
+        "StepPullRequestPublished",
+      ]);
+      activity.close();
+    });
+
+    it("やり直しの途中で一時的でない失敗（保護での拒否）に変わったら、そこでやめ、回数を記録して pr.failed で止まる", async () => {
+      const { activity, service, repos, id } = await toDesign([0, 0, 0]);
+      repos.pushScript = [
+        REJECT,
+        "remote: error: GH006: Protected branch update failed\n! [remote rejected] d1 -> sacty/x (protected branch hook declined)",
+      ];
+      const before = repos.pushAttempts.length;
+      await service.runNext(id);
+      expect(repos.pushAttempts).toHaveLength(before + 2);
+      expect(kinds(service, id)).toEqual(["PushRetried", "PushRetryEnded", "TaskPaused"]);
+      const ended = service.get(id)?.activity.findLast((e) => e.type === "PushRetryEnded");
+      expect(ended?.payload).toMatchObject({ outcome: "failed", retries: 1 });
+      expect(taskOf(service, id).pausedMessage).toMatchObject({
+        code: "pr.failed",
+      });
+      activity.close();
+    });
+
+    it("上限まで通らずに止まったら、再開で、エージェントを実行せず push からやり直す", async () => {
+      const { activity, service, repos, executor, id } = await toDesign([0, 0, 0]);
+      repos.pushScript = [REJECT, REJECT, REJECT, REJECT];
+      await service.runNext(id);
+      expect(kinds(service, id)).toEqual([
+        "PushRetried",
+        "PushRetried",
+        "PushRetried",
+        "PushRetryEnded",
+        "TaskPaused",
+      ]);
+      expect(taskOf(service, id).pausedMessage).toMatchObject({
+        code: "pr.failed",
+      });
+      const runs = executor.calls.length;
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(runs);
+      expect(kinds(service, id).at(-1)).toBe("StepPullRequestPublished");
+      activity.close();
+    });
+  });
+
   it("要求要件の PR のマージ待ちで一時停止すると、止めている間のマージは見守らず、再開したあとの確認で承認として進む（PBI-301）", async () => {
     const made = await start([out("# 要求要件"), design()]);
     const { service, id } = made;
-    expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
+    expect(taskOf(service, id).gate).toEqual({
+      step: "requirements",
+      submission: 1,
+    });
     await service.pause(id);
     expect(taskOf(service, id).status).toBe("paused");
-    expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
+    expect(taskOf(service, id).gate).toEqual({
+      step: "requirements",
+      submission: 1,
+    });
     // 止めている間にマージされても、承認として進めない（実装の PR と違い、作り直しの間の見守りの対象ではない）
     await merge(made, "requirements");
     expect(taskOf(service, id).status).toBe("paused");
@@ -259,7 +467,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     );
     expect(text).not.toContain("requirements.md");
     // 起点（sacty がまだ実装を積んでいない）から、タスクブランチの先頭までを確かめた
-    expect(repos.changedCalls.at(-1)).toEqual({ from: "base123", to: "m8".padEnd(40, "0") });
+    expect(repos.changedCalls.at(-1)).toEqual({
+      from: "base123",
+      to: "m8".padEnd(40, "0"),
+    });
     expect(repos.published).toEqual([]);
     expect(pulls.calls.filter((c) => c.baseBranch === "main")).toEqual([]);
     // 人が取り除いて再開すると、実装の PR を出す
@@ -339,14 +550,22 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       title: "[要求要件] 決済API",
     });
     expect(pulls.calls[0]?.number).toBeUndefined();
-    expect(pulls.calls[0]?.body).toContain("この PR をマージすると、要求要件を承認したことになり");
+    expect(pulls.calls[0]?.body).toContain(
+      "この PR をマージすると（PR の中で直してからでも）、要求要件を承認したことになります。",
+    );
     expect(pulls.calls[0]?.body).toContain(docOf(id, "requirements"));
     let task = taskOf(service, id);
     expect(task.status).toBe("awaiting_approval");
     expect(task.gate).toEqual({ step: "requirements", submission: 1 });
     expect(task.taskBranch).toEqual({ branch: taskBranch, commit: "base123" });
     expect(task.stepPullRequests).toMatchObject([
-      { step: "requirements", number: 7, state: "open", submission: 1, base: "base123" },
+      {
+        step: "requirements",
+        number: 7,
+        state: "open",
+        submission: 1,
+        base: "base123",
+      },
     ]);
     // 2. PR を作った工程は、画面からは承認できない（PR への案内）
     expect(() => service.approve(id, { step: "requirements", submission: 1 })).toThrow(/pull\/7/);
@@ -361,7 +580,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ["PullRequestMerged", "person"],
       ["StepApproved", "person"],
     ]);
-    expect(merged[1]?.payload).toEqual({ step: "requirements", next: "queued" });
+    expect(merged[1]?.payload).toEqual({
+      step: "requirements",
+      next: "queued",
+    });
     task = taskOf(service, id);
     expect(task.approved.requirements?.output).toBe("# 要求要件 v1");
     expect(task.stepPullRequests[0]?.state).toBe("merged");
@@ -476,7 +698,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       out(
         [
           "# 要求要件 v2",
-          block({ "sacty-responses": [{ remarkId: "requirements-1-1", text: "条件を書いた" }] }),
+          block({
+            "sacty-responses": [{ remarkId: "requirements-1-1", text: "条件を書いた" }],
+          }),
         ].join("\n\n"),
       ),
     ]);
@@ -522,7 +746,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       "requirements-1-2",
       "requirements-1-3",
     ]);
-    expect(task.prRework).toMatchObject({ target: "requirements", decided: true });
+    expect(task.prRework).toMatchObject({
+      target: "requirements",
+      decided: true,
+    });
 
     // やり直した要求要件は、同じブランチの最新（人がレビューの提案をコミットしていれば、その上）に積んで同じ PR を更新する
     expect(repos.remote[`${taskBranchOf(id)}-requirements-1`]).toBe(
@@ -614,7 +841,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(first).toContain("## 確認したいこと");
       expect(first).toContain("should 2件（must はありません）。");
       expect(first).toContain("答えるには、この PR にコメントしてください");
-      expect(first).toContain("答えずにマージすると、推奨の答えで次の工程に進みます");
+      expect(first).toContain("答えずにマージすると、推奨の答えで次に進みます");
       expect(first).toContain("国名の表示は要るか（推奨：要らない）");
       expect(first).toContain("通貨の表示は要るか（推奨：要る）");
       pulls.feedbackBy[7] = [item("comment:1", { body: "推奨どおりでお願いします" })];
@@ -660,7 +887,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(prompt).toContain("[requirements-1-1] 推奨どおりでお願いします");
       expect(prompt).toContain("--- 提出の前の確認（セルフレビューは行わない） ---");
       expect(prompt).not.toContain("--- 提出の前のセルフレビュー ---");
-      expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 2 });
+      expect(taskOf(service, id).gate).toEqual({
+        step: "requirements",
+        submission: 2,
+      });
       // スコープの節の無い前回の下書き（PBI-340 より前）には、スコープを足して並べ直すことを例外として許す（PR #363 のレビュー）
       expect(prompt).toContain(
         "例外：前回の下書きには、冒頭に、対象と対象外を書いた「スコープ」の節がありません",
@@ -790,7 +1020,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       pulls.feedbackBy[8] = [item("comment:20", { body: "推奨どおり" })];
       await service.checkPullRequests();
       const change = service.get(id)?.activity.find((e) => e.type === "ChangesRequested");
-      expect(change?.payload).toMatchObject({ step: "design", target: "requirements" });
+      expect(change?.payload).toMatchObject({
+        step: "design",
+        target: "requirements",
+      });
       expect(change?.payload).not.toHaveProperty("answer");
       const before = executor.calls.length;
       await service.runNext(id);
@@ -803,7 +1036,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     it("コメントが付いた行の内容と直前の行を指摘の文に添え、戻し先の判断と直しの実行に、行番号でなく内容で箇所を確かめさせる", async () => {
       const made = await start([
         out("# 要求要件 v1"),
-        out(block({ "sacty-rework": { target: "requirements", reason: "要求要件で直せる" } })),
+        out(
+          block({
+            "sacty-rework": {
+              target: "requirements",
+              reason: "要求要件で直せる",
+            },
+          }),
+        ),
         out("# 要求要件 v2"),
       ]);
       const { activity, service, executor, pulls, id } = made;
@@ -813,7 +1053,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           path: docOf(id, "requirements"),
           line: 89,
           body: "ここは空の入力も拒否してください",
-          lineContext: { line: "| R-9 | 空を拒否する |", before: ["| R-8 | 上限は 50 |"] },
+          lineContext: {
+            line: "| R-9 | 空を拒否する |",
+            before: ["| R-8 | 上限は 50 |"],
+          },
         }),
         item("review_comment:3", {
           kind: "review_comment",
@@ -843,7 +1086,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     it("長い指摘でも、指摘の文は切らず、添える行の内容もそのまま付く（PBI-413）。やり直しの指示に、本文の最後の指摘まで入る", async () => {
       const made = await start([
         out("# 要求要件 v1"),
-        out(block({ "sacty-rework": { target: "requirements", reason: "要求要件で直せる" } })),
+        out(
+          block({
+            "sacty-rework": {
+              target: "requirements",
+              reason: "要求要件で直せる",
+            },
+          }),
+        ),
         out("# 要求要件 v2"),
       ]);
       const { activity, service, executor, pulls, id } = made;
@@ -876,7 +1126,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     ])("総評の本文が%sでも、末尾の指摘まで渡り、切ったしるしが付かない", async (_name, length) => {
       const made = await start([
         out("# 要求要件 v1"),
-        out(block({ "sacty-rework": { target: "requirements", reason: "要求要件で直せる" } })),
+        out(
+          block({
+            "sacty-rework": {
+              target: "requirements",
+              reason: "要求要件で直せる",
+            },
+          }),
+        ),
         out("# 要求要件 v2"),
       ]);
       const { activity, service, executor, pulls, id } = made;
@@ -916,7 +1173,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     let task = taskOf(service, id);
     expect(task.steps.map((s) => s.state)).toEqual(["active", "todo", "todo"]);
     expect(task.approved).toEqual({});
-    expect(task.prRework).toMatchObject({ target: "requirements", decided: true });
+    expect(task.prRework).toMatchObject({
+      target: "requirements",
+      decided: true,
+    });
 
     // マージ済みの要求要件の PR は戻さず、タスクブランチの最新から直しの PR を新しく作る
     await service.runNext(id);
@@ -975,7 +1235,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     await service.runNext(id);
     await merge(made, "design");
     await drain(service);
-    expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
+    expect(taskOf(service, id).gate).toEqual({
+      step: "implement",
+      submission: 1,
+    });
     pulls.feedbackBy[9] = [item("comment:30", { body: "観点が足りない" })];
     await service.checkPullRequests();
     expect(taskOf(service, id).steps.map((s) => s.state)).toEqual(["done", "active", "todo"]);
@@ -994,7 +1257,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       branch: taskBranch,
     });
     expect(pulls.calls.at(-1)).toMatchObject({ number: 9, baseBranch: "main" });
-    expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 2 });
+    expect(taskOf(service, id).gate).toEqual({
+      step: "implement",
+      submission: 2,
+    });
     activity.close();
   });
 
@@ -1021,7 +1287,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       step: "investigate",
       submission: 1,
     });
-    investigate.service.approve(investigate.id, { step: "investigate", submission: 1 });
+    investigate.service.approve(investigate.id, {
+      step: "investigate",
+      submission: 1,
+    });
     expect(isCompleted(taskOf(investigate.service, investigate.id))).toBe(true);
     investigate.activity.close();
 
@@ -1062,9 +1331,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         (c) => c.target === "pull_request" || c.target === "branch",
       ),
     ).toEqual([
-      { target: "pull_request", result: "done", detail: "https://github.com/acme/app/pull/8" },
+      {
+        target: "pull_request",
+        result: "done",
+        detail: "https://github.com/acme/app/pull/8",
+      },
       { target: "branch", result: "done", detail: taskBranch },
-      { target: "branch", result: "done", detail: `${taskBranch}-requirements-1` },
+      {
+        target: "branch",
+        result: "done",
+        detail: `${taskBranch}-requirements-1`,
+      },
       { target: "branch", result: "done", detail: `${taskBranch}-design-1` },
     ]);
     // 中止の後に GitHub でマージされても、何も記録しない
@@ -1097,7 +1374,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     activity.close();
 
     // 開いていると記録していても、GitHub で閉じられていれば閉じない
-    const closed = await start([out("# 要求要件")], { db: join(dir, "closed.db") });
+    const closed = await start([out("# 要求要件")], {
+      db: join(dir, "closed.db"),
+    });
     closed.pulls.states[7] = { state: "closed" };
     await closed.service.cancel(closed.id);
     expect(closed.pulls.closed).toEqual([]);
@@ -1124,7 +1403,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(task.approved.requirements).toBeUndefined();
     expect(task.status).toBe("awaiting_approval");
     // 画面から差し戻すと、作り直した要求要件を新しい PR で出す
-    service.requestChanges(id, { step: "requirements", submission: 1, comments: ["やり直す"] });
+    service.requestChanges(id, {
+      step: "requirements",
+      submission: 1,
+      comments: ["やり直す"],
+    });
     await service.runNext(id);
     task = taskOf(service, id);
     expect(task.gate).toEqual({ step: "requirements", submission: 2 });
@@ -1147,7 +1430,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     ]);
     const { activity, service, pulls, id } = made;
     for (let i = 1; i <= 3; i++) {
-      service.requestChanges(id, { step: "requirements", submission: i, comments: [`指摘${i}`] });
+      service.requestChanges(id, {
+        step: "requirements",
+        submission: i,
+        comments: [`指摘${i}`],
+      });
       await service.runNext(id);
     }
     expect(pulls.calls.slice(1).every((c) => c.number === 7)).toBe(true);
@@ -1156,7 +1443,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const task = taskOf(service, id);
     expect(task.status).toBe("queued");
     expect(task.escalation).toBeUndefined();
-    expect(task.remarks.at(-1)).toMatchObject({ step: "requirements", round: 4 });
+    expect(task.remarks.at(-1)).toMatchObject({
+      step: "requirements",
+      round: 4,
+    });
     expect(types(service, id)).not.toContain("TaskEscalated");
     activity.close();
   });
@@ -1171,7 +1461,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     // 再起動
     const again = new SqliteActivityStore(dbPath);
     pulls.fail = undefined;
-    const { service } = makeService(again, [], { stepPullRequests: true, pulls, repos });
+    const { service } = makeService(again, [], {
+      stepPullRequests: true,
+      pulls,
+      repos,
+    });
     service.resume(id, {});
     expect(service.queuedTaskIds()).toEqual([id]);
     await service.runNext(id);
@@ -1193,9 +1487,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const old = makeService(activity, [out("# 要求要件")]);
     const { id } = old.service.createTask({ projectId: "default", title: "A" });
     await old.service.runNext(id);
-    expect(taskOf(old.service, id).gate).toEqual({ step: "requirements", submission: 1 });
+    expect(taskOf(old.service, id).gate).toEqual({
+      step: "requirements",
+      submission: 1,
+    });
     // PR で承認する版に更新した
-    const { service, repos } = makeService(activity, [design()], { stepPullRequests: true });
+    const { service, repos } = makeService(activity, [design()], {
+      stepPullRequests: true,
+    });
     service.approve(id, { step: "requirements", submission: 1 });
     await service.runNext(id);
     expect(repos.pushedCommits).toEqual([]);
@@ -1206,7 +1505,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
   });
 
   it("オーケストレーターが決めた置き場所にファイルを置く。使えない形なら既定の置き場所にする", async () => {
-    const made = await start([out("# 要求要件")], { documentsDir: "docs/specs" });
+    const made = await start([out("# 要求要件")], {
+      documentsDir: "docs/specs",
+    });
     expect(Object.keys(made.repos.committedFiles[0]?.files ?? {})).toEqual([
       docOf(made.id, "requirements", "docs/specs"),
     ]);
@@ -1227,7 +1528,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       PlatformFile.parse({
         upstream: "https://wiki.example.com",
         description: "Confluence",
-        auth: { header: "Authorization", prefix: "Bearer ", secret: "wiki-token" },
+        auth: {
+          header: "Authorization",
+          prefix: "Bearer ",
+          secret: "wiki-token",
+        },
         allow: ["POST /rest/api/content"],
       }),
     );
@@ -1309,13 +1614,19 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
   it("PR の状態を確かめている間に人が画面で差し戻したら、マージを承認として記録しない", async () => {
     const pulls = new FakePulls();
-    const made = await start([out("# 要求要件 v1"), out("# 要求要件 v2")], { pulls });
+    const made = await start([out("# 要求要件 v1"), out("# 要求要件 v2")], {
+      pulls,
+    });
     const { activity, service, id } = made;
     const status = pulls.status.bind(pulls);
     pulls.status = async (input) => {
       // GitHub に問い合わせている間に、人が画面で差し戻した
       if (taskOf(service, id).gate) {
-        service.requestChanges(id, { step: "requirements", submission: 1, comments: ["違う"] });
+        service.requestChanges(id, {
+          step: "requirements",
+          submission: 1,
+          comments: ["違う"],
+        });
       }
       return { ...(await status(input)), state: "merged", headSha: "x" };
     };
@@ -1342,7 +1653,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       pulls,
       repos,
     });
-    const { id } = service.createTask({ projectId: "default", title: "決済API" });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "決済API",
+    });
     const running = service.runNext(id);
     await called.promise;
     const cancelling = service.cancel(id);
@@ -1381,7 +1695,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         repos,
         planner: async (task) => ({
           steps: task.parent
-            ? ["requirements" as const, "design" as const]
+            ? ["requirements" as const, "design" as const, "implement" as const]
             : [...STEP_PLANS.split].filter((s) => s !== "investigate"),
           fallback: false,
           testCommand: "npm test",
@@ -1391,7 +1705,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       },
     );
     const { service } = made;
-    const { id } = service.createTask({ projectId: "default", title: "決済をまるごと作る" });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "決済をまるごと作る",
+    });
     await service.runNext(id);
     await merge({ ...made, id }, "requirements");
     await service.runNext(id);
@@ -1407,11 +1724,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         pulls.calls.find((c) => c.branch === `${taskBranchOf(child)}-requirements-1`),
       ).toMatchObject({ baseBranch: taskBranchOf(child) });
     }
+    // 分割の親は実装の工程が無いので、タスクブランチを作らず、要求要件・設計の PR をベースブランチへ直接出す（PBI-464）
+    expect(taskOf(service, id).taskBranch).toBeUndefined();
     expect(
       taskBranchPushes(repos)
         .map((p) => p.branch)
         .sort(),
-    ).toEqual([id, ...children].map(taskBranchOf).sort());
+    ).toEqual(children.map(taskBranchOf).sort());
     activity.close();
   });
 
@@ -1556,10 +1875,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       // 再起動しても、作業履歴から同じ状態を復元する
       activity.close();
       const again = new SqliteActivityStore(dbPath);
-      const restored = makeService(again, [], { stepPullRequests: true }).service;
+      const restored = makeService(again, [], {
+        stepPullRequests: true,
+      }).service;
       const back = taskOf(restored, id);
       expect(back.approved.requirements?.output).toBe(task.approved.requirements?.output);
-      expect(back.approved.requirements?.edited).toEqual({ sacty: "# 要求要件 v1" });
+      expect(back.approved.requirements?.edited).toEqual({
+        sacty: "# 要求要件 v1",
+      });
       expect(back.stepPullRequests.map((p) => p.merge?.edited)).toEqual([true, true]);
       expect(back.pullRequestMerge?.commit).toBe(impl.head);
       again.close();
@@ -1571,9 +1894,15 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       mergeEdited(made, "requirements", undefined);
       await service.checkPullRequests();
       const task = taskOf(service, id);
-      expect(task.approved.requirements).toMatchObject({ output: "# 要求要件 v1", edited: {} });
+      expect(task.approved.requirements).toMatchObject({
+        output: "# 要求要件 v1",
+        edited: {},
+      });
       const doc = mergedOf(service, id)[0]?.payload.document;
-      expect(doc).toEqual({ path: docOf(id, "requirements"), commit: "f7".padEnd(40, "0") });
+      expect(doc).toEqual({
+        path: docOf(id, "requirements"),
+        commit: "f7".padEnd(40, "0"),
+      });
       activity.close();
     });
 
@@ -1740,7 +2069,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
       // 再起動
       const again = new SqliteActivityStore(dbPath);
-      const restarted = makeService(again, [], { stepPullRequests: true, pulls, repos });
+      const restarted = makeService(again, [], {
+        stepPullRequests: true,
+        pulls,
+        repos,
+      });
       let task = taskOf(restarted.service, id);
       expect(task.stepPullRequests.at(-1)?.state).toBe("merged_outdated");
       expect(task.stepPullRequests.at(-1)?.merge).toBeUndefined();
@@ -1754,8 +2087,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       };
       // マージのコミットが取れないときは、PR の先頭のコミットから読む（タスクブランチの先端は読まない）
       repos.remote[taskBranchOf(id)] = "a".repeat(40);
-      repos.files["a".repeat(40)] = { [docOf(id, "design")]: "Later unreviewed change\n" };
-      repos.files["e".repeat(40)] = { [docOf(id, "design")]: "# 人が直した設計\n" };
+      repos.files["a".repeat(40)] = {
+        [docOf(id, "design")]: "Later unreviewed change\n",
+      };
+      repos.files["e".repeat(40)] = {
+        [docOf(id, "design")]: "# 人が直した設計\n",
+      };
       await restarted.service.checkPullRequests();
       task = taskOf(restarted.service, id);
       expect(task.steps.map((s) => s.state)).toEqual(["done", "done", "active"]);
@@ -1827,7 +2164,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       for (let i = 0; i < 4 && !isCompleted(taskOf(svc, childId)); i++) await svc.runNext(childId);
     };
     const posted = (pulls: FakePulls, n: number, author = "me") =>
-      item(`review:${50 + n}`, { kind: "review", author, body: pulls.reviews[n]?.body ?? "" });
+      item(`review:${50 + n}`, {
+        kind: "review",
+        author,
+        body: pulls.reviews[n]?.body ?? "",
+      });
 
     describe("レビューの往復の待ちを削る：投稿の直後の取り込みと、提出の直後の再レビュー（PBI-425）", () => {
       const CI0 = {
@@ -1871,7 +2212,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const childId = childOf(service, id);
         const first = commitOf(service, id);
         pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
-        const head: { override?: string; staleAfterPost?: string; fail: boolean } = { fail: false };
+        const head: {
+          override?: string;
+          staleAfterPost?: string;
+          fail: boolean;
+        } = { fail: false };
         const status = pulls.status.bind(pulls);
         const statusCalls = { fromHeadRead: 0 };
         let gateHeadRead: ((release: () => void) => Promise<void>) | undefined;
@@ -1953,7 +2298,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const [event] = importedOf(service, id);
         expect(event?.actor).toBe("sacty");
         expect(event?.payload.items).toHaveLength(1);
-        expect(event?.payload.items[0]).toMatchObject({ source: "sacty_review" });
+        expect(event?.payload.items[0]).toMatchObject({
+          source: "sacty_review",
+        });
         expect(pulls.reviews).toHaveLength(1);
         await made.parentSettled();
         activity.close();
@@ -2079,7 +2426,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await made.resubmit();
         const second = commitOf(service, id);
         expect(taskOf(service, id).status).toBe("awaiting_approval");
-        expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 2 });
+        expect(taskOf(service, id).gate).toEqual({
+          step: "implement",
+          submission: 2,
+        });
         await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
         await flush();
         expect(restartsOf(service, childId)).toEqual([]);
@@ -2152,7 +2502,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         ]);
         const { activity, service, reads, executor, childId, id } = made;
         // 人の指摘（2 分より古い）を PR の確認が取り込み、その判断の実行が止まっている（親は承認待ちで、pendingReview がある）
-        reads.human = [item("comment:human-1", { author: "alice", at: "2020-01-01T00:00:00Z" })];
+        reads.human = [
+          item("comment:human-1", {
+            author: "alice",
+            at: "2020-01-01T00:00:00Z",
+          }),
+        ];
         const check = service.checkPullRequests();
         await vi.waitFor(() => expect(taskOf(service, id).pendingReview).toBeDefined());
         // 判断の実行が始まって、止まっている
@@ -2356,7 +2711,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         }
         if (options.parentImage) service.changeTaskImage(id, { image: options.parentImage });
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         const chosen = service.get(childId)?.activity.find((e) => e.type === "StepsChosen");
         const picked = made.executor.calls.filter((c) =>
@@ -2379,7 +2738,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           costUsd: 0,
         });
         expect(taskOf(service, childId).image).toBe("java");
-        expect(executor.images.at(-1)).toEqual({ image: "sacty-agent-java:test" });
+        expect(executor.images.at(-1)).toEqual({
+          image: "sacty-agent-java:test",
+        });
         expect(types(service, childId)).toContain("PullRequestReviewPosted");
         activity.close();
       });
@@ -2431,7 +2792,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         service.changeTaskImage(id, { image: "java" });
         names = ["rust"];
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         const chosen = service.get(childId)?.activity.find((e) => e.type === "StepsChosen");
         expect(
@@ -2482,7 +2847,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const pr = taskOf(service, id).stepPullRequests.findLast((x) => x.step === "design");
         const number = pr?.number ?? 0;
         pulls.prInfo = { ...pulls.prInfo, number, headSha: pr?.commit ?? "" };
-        return { ...made, pulls, number, childId: childOf(service, id, number) };
+        return {
+          ...made,
+          pulls,
+          number,
+          childId: childOf(service, id, number),
+        };
       }
       const judged = (svc: TaskService, id: string) =>
         svc.get(id)?.activity.filter((e) => e.type === "ReworkJudged") ?? [];
@@ -2491,7 +2861,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await designed([
           reworkOut("changes_required", {
             findings: [
-              { finding: "見出しの誤字", target: "design", reason: "決定を変えない：表記だけ" },
+              {
+                finding: "見出しの誤字",
+                target: "design",
+                reason: "決定を変えない：表記だけ",
+              },
               {
                 finding: "受け入れ条件 2 の上限を変える",
                 target: "requirements",
@@ -2544,7 +2918,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await designed([
           reworkOut("suggestions", {
             findings: [
-              { finding: "見出しの誤字", target: "design", reason: "決定を変えない：表記だけ" },
+              {
+                finding: "見出しの誤字",
+                target: "design",
+                reason: "決定を変えない：表記だけ",
+              },
             ],
             cause: "base_changed",
           }),
@@ -2591,7 +2969,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await designed([
           marked(),
           // 再開の後の、戻し先の判断（人の指摘を含む回）と、設計のやり直し
-          out(block({ "sacty-rework": { target: "design", reason: "決定を変えない：表記だけ" } })),
+          out(
+            block({
+              "sacty-rework": {
+                target: "design",
+                reason: "決定を変えない：表記だけ",
+              },
+            }),
+          ),
           out("# 設計 v2"),
         ]);
         const { service, pulls, number, childId } = made;
@@ -2626,7 +3011,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           (e) => e.type === "PullRequestReviewImported" && e.payload.held,
         );
         expect(heldAt).toBeGreaterThan(0);
-        expect(events[heldAt + 1]).toMatchObject({ type: "TaskResumed", actor: "sacty" });
+        expect(events[heldAt + 1]).toMatchObject({
+          type: "TaskResumed",
+          actor: "sacty",
+        });
         await service.checkPullRequests();
         expect(types(service, id)).toContain("ChangesRequested");
         await service.runNext(id);
@@ -2638,7 +3026,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await stopped();
         const { activity, service, pulls, id, number } = made;
         const pr = taskOf(service, id).stepPullRequests.findLast((x) => x.step === "design");
-        pulls.states[number] = { state: "merged", mergedBy: "alice", headSha: pr?.commit ?? "" };
+        pulls.states[number] = {
+          state: "merged",
+          mergedBy: "alice",
+          headSha: pr?.commit ?? "",
+        };
         const calls = made.executor.calls.length;
         await service.checkPullRequests();
         const events = service.get(id)?.activity ?? [];
@@ -2666,7 +3058,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
         expect(judged(service, id)[0]).toMatchObject({
           actor: "sacty",
-          payload: { target: "design", cause: "base_changed", reviewTaskId: childId },
+          payload: {
+            target: "design",
+            cause: "base_changed",
+            reviewTaskId: childId,
+          },
         });
         activity.close();
       });
@@ -2694,7 +3090,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const base = configOf(agent())();
         const config = (): ConfigResult =>
           base.ok
-            ? { ok: true, config: { ...base.config, guardianAgent: agent({ id: "guardian" }) } }
+            ? {
+                ok: true,
+                config: {
+                  ...base.config,
+                  guardianAgent: agent({ id: "guardian" }),
+                },
+              }
             : base;
         const made = await designed(
           [
@@ -2710,7 +3112,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const calls = executor.calls.length;
         pulls.feedbackBy[number] = [
           posted(pulls, 0),
-          item("comment:900", { kind: "comment", author: "reviewer", body: "ここも直して" }),
+          item("comment:900", {
+            kind: "comment",
+            author: "reviewer",
+            body: "ここも直して",
+          }),
         ];
         await service.checkPullRequests();
         for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
@@ -2719,7 +3125,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(prompt).not.toContain("ゴールガーディアン");
         expect(judged(service, id)[0]).toMatchObject({
           actor: "agent",
-          payload: { target: "design", agentId: "claude-subscription", runResult: "completed" },
+          payload: {
+            target: "design",
+            agentId: "claude-subscription",
+            runResult: "completed",
+          },
         });
         expect(judged(service, id)[0]?.payload).not.toHaveProperty("reviewTaskId");
         activity.close();
@@ -2730,7 +3140,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             findings: [{ finding: "誤字", target: "design", reason: "決定を変えない" }],
           }),
           reworkOut("changes_required", {
-            findings: [{ finding: "上限を変える", target: "requirements", reason: "決定を変える" }],
+            findings: [
+              {
+                finding: "上限を変える",
+                target: "requirements",
+                reason: "決定を変える",
+              },
+            ],
           }),
           rework("design", "決定を変えない：前の回の指摘は表記だけ"),
         ]);
@@ -2757,10 +3173,18 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       it("人が選んだ工程のエージェントが設定から消えていたら、既定のエージェントで判断せずに、理由を示して止める（PR #350 レビュー指摘）", async () => {
         const base = configOf(agent())();
-        let agents: Record<string, ReturnType<typeof agent>> = { strong: agent({ id: "strong" }) };
+        let agents: Record<string, ReturnType<typeof agent>> = {
+          strong: agent({ id: "strong" }),
+        };
         const config = (): ConfigResult =>
           base.ok
-            ? { ok: true, config: { ...base.config, agents: { ...base.config.agents, ...agents } } }
+            ? {
+                ok: true,
+                config: {
+                  ...base.config,
+                  agents: { ...base.config.agents, ...agents },
+                },
+              }
             : base;
         const made = await designed(
           [
@@ -2777,7 +3201,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const calls = executor.calls.length;
         pulls.feedbackBy[number] = [
           posted(pulls, 0),
-          item("comment:901", { kind: "comment", author: "reviewer", body: "ここも直して" }),
+          item("comment:901", {
+            kind: "comment",
+            author: "reviewer",
+            body: "ここも直して",
+          }),
         ];
         await service.checkPullRequests();
         const task = taskOf(service, id);
@@ -2808,7 +3236,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                   conclusion: "failure",
                   url: "https://example.com/runs/1",
                 },
-                { kind: "check" as const, name: "lint", status: "pending" as const },
+                {
+                  kind: "check" as const,
+                  name: "lint",
+                  status: "pending" as const,
+                },
               ],
               // ワークフローの中のジョブ（実行されなかったもの）
               jobs: [
@@ -2838,14 +3270,22 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const signals: (AbortSignal | undefined)[] = [];
         let max = 0;
         spy.mockImplementation(
-          (input: Parameters<FakePulls["status"]>[0] & { signal?: AbortSignal }) => {
+          (
+            input: Parameters<FakePulls["status"]>[0] & {
+              signal?: AbortSignal;
+            },
+          ) => {
             if (!new Error().stack?.includes(caller)) return original(input);
             signals.push(input.signal);
             max = Math.max(max, signals.filter((signal) => !signal?.aborted).length);
             return new Promise(() => {});
           },
         );
-        return { signals, maxActive: () => max, restore: () => spy.mockRestore() };
+        return {
+          signals,
+          maxActive: () => max,
+          restore: () => spy.mockRestore(),
+        };
       }
 
       async function implemented(
@@ -2880,13 +3320,15 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         }
         // エージェントの実行は実装の工程だけ（ゴールガーディアンを動かさない）
         expect(executor.calls).toHaveLength(1);
-        expect(task.pullRequest).toMatchObject({ number: 7, draft: true, awaitingReview: true });
+        expect(task.pullRequest).toMatchObject({
+          number: 7,
+          draft: true,
+          awaitingReview: true,
+        });
         expect(pulls.drafts[7]).toBe(true);
         expect(pulls.draftChanges).toEqual([]);
         expect(task.pullRequestCi).toBeUndefined();
-        expect(pulls.calls[0]?.body).toContain(
-          "- Sacty のレビューの子タスクが、この PR をレビューして投稿します。",
-        );
+        expect(pulls.calls[0]?.body).not.toContain("レビューの進め方");
         expect(pulls.calls[0]?.body).not.toContain("最終レビュー：");
         // ドラフトのまま、レビューの子タスクを作る
         expect(taskOf(service, id).reviewTasks?.map((r) => [r.number, r.step])).toEqual([
@@ -2940,7 +3382,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           const { activity, service, pulls, id, settle, restartsOf } = made;
           const childId = childOf(service, id);
           const first = commitOf(service, id);
-          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first, author: "me" };
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            headSha: first,
+            author: "me",
+          };
           await runReview(service, childId);
           // 子は、修正が必要の判定を投稿して、完了にならずに見守る（実行待ちにも出ない）
           expect(reviewWatching(taskOf(service, childId))).toBe(true);
@@ -3004,7 +3451,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           const made = await watched([verdictOut("changes_required")]);
           const { activity, service, pulls, id } = made;
           const childId = childOf(service, id);
-          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            headSha: commitOf(service, id),
+          };
           await runReview(service, childId);
           expect(reviewWatching(taskOf(service, childId))).toBe(true);
           pulls.closeFail = "boom";
@@ -3022,7 +3473,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             const made = await watched([verdictOut("changes_required")]);
             const { service, pulls, id } = made;
             const childId = childOf(service, id);
-            pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+            pulls.prInfo = {
+              ...pulls.prInfo,
+              number: 7,
+              headSha: commitOf(service, id),
+            };
             await runReview(service, childId);
             expect(reviewWatching(taskOf(service, childId))).toBe(true);
             await service.pause(childId);
@@ -3036,7 +3491,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await service.checkPullRequests();
             expect(taskOf(service, childId).status).toBe("paused");
             expect(types(service, childId)).not.toContain("ReviewWatchEnded");
-            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+            pulls.states[7] = {
+              state: "merged",
+              headSha: commitOf(service, id),
+            };
             await service.checkPullRequests();
             const child = taskOf(service, childId);
             expect(isDone(child)).toBe(true);
@@ -3073,7 +3531,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           it("親が完了したら、PR の状態を読めなくても、一時停止中の見守りの子は完了になる（条件 3）", async () => {
             const { activity, service, pulls, id, childId } = await pausedWatching();
             unreadableAfterParentDone(service, pulls, id);
-            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+            pulls.states[7] = {
+              state: "merged",
+              headSha: commitOf(service, id),
+            };
             await service.checkPullRequests();
             expect(isDone(taskOf(service, id))).toBe(true);
             const child = taskOf(service, childId);
@@ -3088,7 +3549,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             const childId = childOf(service, id);
             await service.pause(childId);
             unreadableAfterParentDone(service, pulls, id);
-            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+            pulls.states[7] = {
+              state: "merged",
+              headSha: commitOf(service, id),
+            };
             await service.checkPullRequests();
             expect(isDone(taskOf(service, id))).toBe(true);
             const child = taskOf(service, childId);
@@ -3121,11 +3585,18 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             const made = await watched([verdictOut("changes_required")]);
             const { activity, service, pulls, id } = made;
             const childId = childOf(service, id);
-            pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+            pulls.prInfo = {
+              ...pulls.prInfo,
+              number: 7,
+              headSha: commitOf(service, id),
+            };
             await runReview(service, childId);
             expect(taskOf(service, childId).status).toBe("idle");
             unreadableAfterParentDone(service, pulls, id);
-            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+            pulls.states[7] = {
+              state: "merged",
+              headSha: commitOf(service, id),
+            };
             await service.checkPullRequests();
             const child = taskOf(service, childId);
             expect(isDone(child)).toBe(true);
@@ -3143,7 +3614,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               pulls,
             });
             expect(taskOf(restarted.service, childId).status).toBe("paused");
-            pulls.states[7] = { state: "merged", headSha: commitOf(restarted.service, id) };
+            pulls.states[7] = {
+              state: "merged",
+              headSha: commitOf(restarted.service, id),
+            };
             await restarted.service.checkPullRequests();
             const child = taskOf(restarted.service, childId);
             expect(isDone(child)).toBe(true);
@@ -3153,7 +3627,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
           it("見守りを終える記録の書き込みに失敗しても、PR の確認は止まらず、次の確認でやり直す", async () => {
             const { activity, service, pulls, id, childId } = await pausedWatching();
-            pulls.states[7] = { state: "merged", headSha: commitOf(service, id) };
+            pulls.states[7] = {
+              state: "merged",
+              headSha: commitOf(service, id),
+            };
             const real = activity.append.bind(activity);
             let failing = true;
             const append = vi.spyOn(activity, "append").mockImplementation((input) => {
@@ -3205,7 +3682,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               pulls,
             });
             expect(taskOf(restarted.service, childId).unstoppedRuns).toEqual(["run-x"]);
-            pulls.states[7] = { state: "merged", headSha: commitOf(restarted.service, id) };
+            pulls.states[7] = {
+              state: "merged",
+              headSha: commitOf(restarted.service, id),
+            };
             await restarted.service.checkPullRequests();
             expect(taskOf(restarted.service, childId).status).toBe("paused");
             expect(types(restarted.service, childId)).not.toContain("ReviewWatchEnded");
@@ -3294,7 +3774,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         const setDraft = vi.spyOn(pulls, "setDraft").mockRejectedValueOnce(new Error("502"));
         await service.checkPullRequests();
@@ -3344,7 +3828,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         pulls.statusFail = "502";
         await service.checkPullRequests();
@@ -3365,7 +3853,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         ]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         pulls.feedbackBy[7] = [posted(pulls, 0)];
         await service.checkPullRequests();
@@ -3392,7 +3884,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         const gate = Promise.withResolvers<void>();
         pulls.setDraftGate = gate.promise;
@@ -3420,7 +3916,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         const gate = Promise.withResolvers<void>();
         pulls.setDraftGate = gate.promise;
@@ -3441,21 +3941,26 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("ドラフトを外す要求の答えを受け取れなければ、ドラフトに戻して記録せず、次の確認でやり直す（PR #348 2回目のレビュー指摘）", async () => {
+      it("ドラフトを外す要求の答えを受け取れなければ、ID なしで外しを記録し、最後の外しが sacty のものか決められないので戻さず、次の確認でやり直す（PR #348 2回目のレビュー指摘・PBI-468）", async () => {
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         // GitHub では外れたが、答えを受け取れない
         pulls.setDraftAnswerLost = "socket hang up";
         await service.checkPullRequests();
-        expect(pulls.draftChanges).toEqual([
-          { number: 7, draft: false },
-          { number: 7, draft: true },
-        ]);
-        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.draftChanges).toEqual([{ number: 7, draft: false }]);
+        expect(pulls.drafts[7]).toBe(false);
         expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        expect(payloads(service, id, "PullRequestUndraftNoted")).toEqual([{ number: 7 }]);
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
+        ]);
         pulls.setDraftAnswerLost = undefined;
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(false);
@@ -3471,7 +3976,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         ]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         pulls.feedbackBy[7] = [posted(pulls, 0)];
         await service.checkPullRequests();
@@ -3523,7 +4032,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           await service.runNext(id);
         }
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         const before = executor.calls.length;
         await runReview(service, childId);
         const prompt = executor.calls[before]?.command.join(" ") ?? "";
@@ -3536,7 +4049,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         // 外す間に人がコミットを足し、ドラフトに戻す要求も失敗した
         const human = "h".repeat(40);
@@ -3569,7 +4086,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         // 外す間に人がコミットを足し、ドラフトに戻す要求も失敗した
         const setDraft = vi.spyOn(pulls, "setDraft");
@@ -3601,13 +4122,39 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("ドラフトを外す答えが返らなくても待ち続けず、ドラフトに戻す。外す要求が後から届いても、指摘なしで外すまで確認のたびに戻す（PR #348 4回目のレビュー指摘）", async () => {
+      it("切り替えの履歴の答えが返らなくても待ち続けず、戻さずに、読めなかったことを1件だけ記録する（PBI-468）", async () => {
+        const made = await implemented([], [], { draftTimeoutMs: 20 });
+        const { activity, service, pulls, id } = made;
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
+        pulls.drafts[7] = false;
+        const history = vi
+          .spyOn(pulls, "draftHistory")
+          .mockImplementation(() => new Promise(() => undefined));
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "unreadable" },
+        ]);
+        history.mockRestore();
+        activity.close();
+      });
+
+      it("ドラフトを外す答えが返らなくても待ち続けない。最後の外しが sacty のものか決められないので、戻さずに記録する（PR #348 4回目のレビュー指摘・PBI-468）", async () => {
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
           draftTimeoutMs: 20,
         });
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         // レビューの前の確認で、一度ドラフトに戻してある（同じ提出では、もう戻さない状態）
         await service.checkPullRequests();
         await runReview(service, childId);
@@ -3616,18 +4163,22 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const setDraft = vi.spyOn(pulls, "setDraft");
         setDraft.mockImplementation(async (input) => {
           if (input.draft) return original(input);
-          pulls.drafts[input.number] = false;
+          // GitHub では外れる（外しのイベントが付く）が、答えを返さない
+          pulls.humanUndraft(input.number);
           return new Promise(() => {});
         });
         await service.checkPullRequests();
-        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.drafts[7]).toBe(false);
         expect(types(service, id)).not.toContain("PullRequestMarkedReady");
-        // 外す要求が後から届いて外れた後に、人がコミットを足しても（指摘なしでない先頭）、次の確認で戻す
-        pulls.drafts[7] = false;
+        expect(payloads(service, id, "PullRequestUndraftNoted")).toEqual([{ number: 7 }]);
+        // 外す要求が外した後に、人がコミットを足しても（指摘なしでない先頭）、決められないので戻さない（記録は重ねない）
         pulls.prInfo = { ...pulls.prInfo, headSha: "h".repeat(40) };
         await service.checkPullRequests();
-        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.drafts[7]).toBe(false);
         expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
+        ]);
         setDraft.mockRestore();
         activity.close();
       });
@@ -3638,7 +4189,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         // 外す間に人がコミットを足し、ドラフトに戻す要求は答えを返さない（GitHub でも戻っていない）
         const setDraft = vi.spyOn(pulls, "setDraft");
@@ -3663,7 +4218,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         // ドラフトに戻す要求が、答えを待つのをやめた後も終わらない（後から GitHub に届く）
         const late = Promise.withResolvers<void>();
         const original = pulls.setDraft.bind(pulls);
@@ -3692,7 +4251,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("外す要求の答えを受け取れなかったことは、PR を更新した次の提出にも引き継ぎ、後から外れても戻す（PR #348 5回目のレビュー指摘）", async () => {
+      it("外す要求の答えを受け取れなかったことは、PR を更新した次の提出にも引き継ぎ、後から外れても決められないので戻さない（PR #348 5回目のレビュー指摘・PBI-468）", async () => {
         const made = await implemented(
           [
             verdictOut("no_findings", "# 評価\n\n問題なし"),
@@ -3704,7 +4263,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         );
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         // 外す要求は答えを返さず、GitHub にも届いていない（後から届く）
         const late = Promise.withResolvers<void>();
@@ -3719,7 +4282,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(types(service, id)).not.toContain("PullRequestMarkedReady");
         // 人の指摘で直して、PR を更新する
         pulls.feedbackBy[7] = [
-          item("comment:1", { kind: "comment", author: "alice", body: "直して" }),
+          item("comment:1", {
+            kind: "comment",
+            author: "alice",
+            body: "直して",
+          }),
         ];
         await service.checkPullRequests();
         for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
@@ -3736,8 +4303,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await loopTurn();
         expect(pulls.drafts[7]).toBe(false);
         await service.checkPullRequests();
-        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.drafts[7]).toBe(false);
         expect(types(service, id).filter((t) => t === "PullRequestMarkedReady")).toHaveLength(0);
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
+        ]);
         setDraft.mockRestore();
         activity.close();
       });
@@ -3750,7 +4320,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         );
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         pulls.feedbackBy[7] = [posted(pulls, 0)];
         await service.checkPullRequests();
@@ -3780,7 +4354,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           });
           const { activity, service, pulls, id } = made;
           const childId = childOf(service, id);
-          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            headSha: commitOf(service, id),
+          };
           // ドラフトに戻す要求が答えを返さない（中断に応じる・応じない）
           const original = pulls.setDraft.bind(pulls);
           const setDraft = vi.spyOn(pulls, "setDraft");
@@ -3819,7 +4397,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         const gate = Promise.withResolvers<void>();
         pulls.setDraftGate = gate.promise;
@@ -3842,7 +4424,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         // ドラフトに戻す要求が、中断に応じず、上限を過ぎてから GitHub に届く
         const original = pulls.setDraft.bind(pulls);
         const setDraft = vi.spyOn(pulls, "setDraft");
@@ -3864,7 +4450,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await vi.waitFor(() => expect(pulls.drafts[7]).toBe(true));
         // 次の PR の確認で、GitHub の状態を読んで外し直す
         await service.checkPullRequests();
-        expect(setDraft.mock.calls.at(-1)?.[0]).toMatchObject({ number: 7, draft: false });
+        expect(setDraft.mock.calls.at(-1)?.[0]).toMatchObject({
+          number: 7,
+          draft: false,
+        });
         expect(pulls.drafts[7]).toBe(false);
         setDraft.mockRestore();
         activity.close();
@@ -3892,7 +4481,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         const { setDraft, late, landed } = lateFirstRedraft(pulls);
         await service.checkPullRequests();
         await runReview(service, childId);
@@ -3921,7 +4514,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         const { setDraft, late, landed } = lateFirstRedraft(pulls);
         await service.checkPullRequests();
         await runReview(service, childId);
@@ -3951,7 +4548,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         // 起動の後のドラフトに戻す要求は、中断で失敗するが、GitHub には後から届く
         const original = pulls.setDraft.bind(pulls);
         const setDraft = vi.spyOn(pulls, "setDraft");
@@ -3993,7 +4594,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         await service.checkPullRequests();
         expect(types(service, id)).toContain("PullRequestMarkedReady");
@@ -4024,7 +4629,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         ]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         await service.checkPullRequests();
         expect(types(service, id)).toContain("PullRequestMarkedReady");
@@ -4085,7 +4694,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           const clock = { now: later() };
           const made = await start(
             [implement(), verdictOut("no_findings", "# 評価\n\n問題なし"), ...outcomes],
-            { pulls, steps: ["implement"], reviewTasks: true, ci, now: () => clock.now },
+            {
+              pulls,
+              steps: ["implement"],
+              reviewTasks: true,
+              ci,
+              now: () => clock.now,
+            },
           );
           const { service, id } = made;
           for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
@@ -4100,7 +4715,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           // ドラフトを外した時刻を覚える処理が、呼ばれたか（指摘なしで外す経路だけでは、覚えた時刻が、最初に読んだ時刻と
           // 同じになって、読み取りの結果には表れないので、呼び出しそのものを確かめる）
           const noted = vi.spyOn(
-            service as unknown as { notePullRequestUndrafted: (taskId: string) => void },
+            service as unknown as {
+              notePullRequestUndrafted: (taskId: string) => void;
+            },
             "notePullRequestUndrafted",
           );
           await service.checkPullRequests();
@@ -4124,7 +4741,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           await service.checkPullRequests();
           expect(state.read).toEqual([head, head]);
           expect(ciFailed(service, id)).toEqual(["PullRequestCiFailed"]);
-          expect(taskOf(service, id).pullRequestCiFailure).toMatchObject({ number: 7, head });
+          expect(taskOf(service, id).pullRequestCiFailure).toMatchObject({
+            number: 7,
+            head,
+          });
           activity.close();
         });
 
@@ -4169,7 +4789,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             "PullRequestCiRecovered",
             "PullRequestCiFailed",
           ]);
-          expect(taskOf(service, id).pullRequestCiFailure).toMatchObject({ number: 7, head });
+          expect(taskOf(service, id).pullRequestCiFailure).toMatchObject({
+            number: 7,
+            head,
+          });
           // 読む回数は、先頭のコミットごとの上限のまま。落ちたままなら、記録し直さない
           for (let i = 0; i < PR_CI_READS_MAX + 5; i++) {
             clock.now += PR_CI_READ_INTERVAL_MS;
@@ -4227,7 +4850,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         await service.checkPullRequests();
         pulls.drafts[7] = true;
@@ -4244,18 +4871,415 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("指摘なしを待つ PR のドラフトが GitHub で外れていたら、覚えていなくても確認のたびにドラフトに戻す（PR #348 10回目のレビュー指摘）", async () => {
-        const made = await implemented([]);
-        const { activity, service, pulls, id } = made;
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
-        await service.checkPullRequests();
-        expect(pulls.drafts[7]).toBe(true);
-        // 再起動の後に一度戻した後で、古い外す要求が GitHub に届いた
-        for (let i = 0; i < 2; i++) {
+      describe("人がドラフトを外した PR を、sacty がドラフトへ戻さない（PBI-468）", () => {
+        const skipped = (svc: TaskService, id: string) =>
+          payloads(svc, id, "PullRequestRedraftSkipped");
+        const noted = (svc: TaskService, id: string) =>
+          payloads(svc, id, "PullRequestUndraftNoted");
+        /** デーモンを作り直す（同じ台帳・同じ GitHub。メモリー上の記憶は消える）。 */
+        const restart = (made: { activity: SqliteActivityStore; pulls: FakePulls }) => {
+          made.activity.close();
+          const activity = new SqliteActivityStore(dbPath);
+          const { service } = makeService(activity, [], {
+            stepPullRequests: true,
+            pulls: made.pulls,
+            reviewTasks: true,
+            now: later,
+            ci: failingCi(),
+            draftPullRequests: true,
+          });
+          return { activity, service };
+        };
+        /** 指摘なしのレビューが済み、sacty がまだドラフトを外していない PR（#7）。 */
+        async function reviewed(outcomes: AgentOutcome[] = []) {
+          const made = await implemented([
+            verdictOut("no_findings", "# 評価\n\n問題なし"),
+            ...outcomes,
+          ]);
+          const childId = childOf(made.service, made.id);
+          made.pulls.prInfo = {
+            ...made.pulls.prInfo,
+            number: 7,
+            headSha: commitOf(made.service, made.id),
+          };
+          await runReview(made.service, childId);
+          return { ...made, childId };
+        }
+        const HUMAN_HEAD = "h".repeat(40);
+
+        it("PR の確認で、人が外した PR をドラフトへ戻さず、外し1回につき1件だけ記録する。再起動の後も戻さず、重ねない", async () => {
+          const made = await implemented([]);
+          const { service, pulls, id } = made;
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            headSha: commitOf(service, id),
+          };
+          const human = pulls.humanUndraft(7);
+          for (let i = 0; i < 3; i++) await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(pulls.draftChanges).toEqual([]);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "person", eventId: human }]);
+          // 再起動の後の redraftAwaiting と PR の確認も、戻さず、記録を重ねない
+          const again = restart(made);
+          await again.service.checkPullRequests();
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(pulls.draftChanges).toEqual([]);
+          expect(skipped(again.service, id)).toHaveLength(1);
+          // 人がもう一度外せば（別の外し）、また1件記録する
+          pulls.humanDraft(7);
+          const second = pulls.humanUndraft(7);
+          await again.service.checkPullRequests();
+          expect(
+            skipped(again.service, id).map((p) => (p as { eventId?: string }).eventId),
+          ).toEqual([human, second]);
+          again.activity.close();
+        });
+
+        it("人が外した PR に、PR の指摘で直した実装を提出しても、ドラフトへ戻さず、承認待ちに進む", async () => {
+          const made = await implemented([
+            verdictOut("changes_required"),
+            implement("# 実装の説明 v2"),
+          ]);
+          const { activity, service, pulls, id } = made;
+          const childId = childOf(service, id);
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            headSha: commitOf(service, id),
+          };
+          await runReview(service, childId);
+          pulls.feedbackBy[7] = [posted(pulls, 0)];
+          await service.checkPullRequests();
+          const human = pulls.humanUndraft(7);
+          const setDraft = vi.spyOn(pulls, "setDraft");
+          for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+            await service.runNext(id);
+          }
+          expect(taskOf(service, id).status).toBe("awaiting_approval");
+          expect(taskOf(service, id).pullRequest?.awaitingReview).toBe(true);
+          expect(types(service, id).filter((t) => t === "StepSubmitted")).toHaveLength(2);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(setDraft.mock.calls.some(([input]) => input.draft)).toBe(false);
+          expect(skipped(service, id)).toContainEqual({
+            number: 7,
+            reason: "person",
+            eventId: human,
+          });
+          setDraft.mockRestore();
+          activity.close();
+        });
+
+        it("sacty が指摘なしで外した後に、人が外し直した PR に人がコミットを足しても、ドラフトへ戻さず記録する", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(types(service, id)).toContain("PullRequestMarkedReady");
+          // 人がドラフトにして、外し直し（最後の外しが人）、コミットを足した
+          pulls.humanDraft(7);
+          const human = pulls.humanUndraft(7);
+          pulls.prInfo = { ...pulls.prInfo, headSha: HUMAN_HEAD };
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "person", eventId: human }]);
+          activity.close();
+        });
+
+        it("人が外した PR は、指摘なしの外す間に差し戻されても、ドラフトへ戻さない。外しは変化なしなので、sacty の外しを記録しない", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          const human = pulls.humanUndraft(7);
+          const gate = Promise.withResolvers<void>();
+          pulls.setDraftGate = gate.promise;
+          const checking = service.checkPullRequests();
+          await pulls.setDraftStarted.promise;
+          service.requestChanges(id, {
+            step: "implement",
+            submission: 1,
+            comments: ["ここを直して"],
+          });
+          pulls.setDraftGate = undefined;
+          gate.resolve();
+          await checking;
+          expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+          expect(noted(service, id)).toEqual([]);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(pulls.draftChanges).toEqual([]);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "person", eventId: human }]);
+          activity.close();
+        });
+
+        it("sacty が外した PR は、人がコミットを足したら、再起動の後も今までどおりドラフトへ戻す。外しの ID は、答えの ID で記録する", async () => {
+          const made = await reviewed();
+          const { service, pulls, id } = made;
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          // sacty がドラフトで作った PR の最初の外し（要求の前に外しが無い）は、答えの外しの ID を記録する
+          expect(noted(service, id)).toEqual([
+            { number: 7, eventId: pulls.timeline[7]?.at(-1)?.id },
+          ]);
+          pulls.prInfo = { ...pulls.prInfo, headSha: HUMAN_HEAD };
+          const again = restart(made);
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(true);
+          expect(skipped(again.service, id)).toEqual([]);
+          again.activity.close();
+        });
+
+        it("切り替えのイベントが1件も無く、ドラフトでない指摘なしを待つ PR は、今までどおりドラフトへ戻す", async () => {
+          const made = await implemented([]);
+          const { activity, service, pulls, id } = made;
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            headSha: commitOf(service, id),
+          };
           pulls.drafts[7] = false;
           await service.checkPullRequests();
-          expect(pulls.drafts[7], String(i)).toBe(true);
+          expect(pulls.drafts[7]).toBe(true);
+          expect(skipped(service, id)).toEqual([]);
+          activity.close();
+        });
+
+        for (const fail of [false, "timeline"] as const) {
+          it(`人が外した後に人がドラフトにした PR（最後が convert_to_draft でドラフト）では、履歴を読める場合（${fail === false}）も読めない場合も、戻さなかった記録を残さない`, async () => {
+            const made = await implemented([]);
+            const { activity, service, pulls, id } = made;
+            pulls.prInfo = {
+              ...pulls.prInfo,
+              number: 7,
+              headSha: commitOf(service, id),
+            };
+            pulls.humanUndraft(7);
+            pulls.humanDraft(7);
+            pulls.draftHistoryFail = fail;
+            await service.checkPullRequests();
+            await service.checkPullRequests();
+            expect(pulls.drafts[7]).toBe(true);
+            expect(skipped(service, id)).toEqual([]);
+            activity.close();
+          });
         }
+
+        it("履歴を読めない間は戻さず、読めない状態が続く間に1件だけ記録する（再起動の後も）。読めた後に人が外していたら、person を1件足す", async () => {
+          const made = await implemented([]);
+          const { service, pulls, id } = made;
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            headSha: commitOf(service, id),
+          };
+          pulls.drafts[7] = false;
+          pulls.draftHistoryFail = "timeline";
+          await service.checkPullRequests();
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          const again = restart(made);
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(again.service, id)).toEqual([{ number: 7, reason: "unreadable" }]);
+          // 読めない間に人が外していた：読めるようになったら、person を1件足す
+          pulls.draftHistoryFail = false;
+          const human = pulls.humanUndraft(7);
+          await again.service.checkPullRequests();
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(again.service, id)).toEqual([
+            { number: 7, reason: "unreadable" },
+            { number: 7, reason: "person", eventId: human },
+          ]);
+          again.activity.close();
+        });
+
+        it("前の版が外した PR（外しの記録が無く、PullRequestMarkedReady がある）の記録の無い外しは、決められないので戻さず、1件だけ記録する（再起動の後も）", async () => {
+          const made = await reviewed();
+          const { service, pulls, id } = made;
+          // 前の版は、外しを覚える印（undraftTracked）を付けずに PullRequestMarkedReady を書いた
+          const original = made.activity.append.bind(made.activity);
+          vi.spyOn(made.activity, "append").mockImplementation((input) =>
+            original({
+              ...input,
+              events: input.events.map((e) => {
+                if (e.event.type !== "PullRequestMarkedReady") return e;
+                const { undraftTracked: _tracked, ...payload } = e.event.payload;
+                return { ...e, event: { ...e.event, payload } };
+              }),
+            }),
+          );
+          // 外す要求は、人が外した PR に変化なしで答える。履歴を読めなかった確認で、PullRequestMarkedReady だけが記録に入る
+          pulls.humanUndraft(7);
+          pulls.draftHistoryFail = "draft";
+          await service.checkPullRequests();
+          pulls.draftHistoryFail = false;
+          expect(types(service, id)).toContain("PullRequestMarkedReady");
+          expect(noted(service, id)).toEqual([]);
+          pulls.prInfo = { ...pulls.prInfo, headSha: HUMAN_HEAD };
+          await service.checkPullRequests();
+          await service.checkPullRequests();
+          const again = restart(made);
+          await again.service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(
+            skipped(again.service, id).filter(
+              (p) => (p as { reason: string }).reason === "undetermined",
+            ),
+          ).toEqual([{ number: 7, reason: "undetermined" }]);
+          expect(
+            skipped(again.service, id).some((p) => (p as { reason: string }).reason === "person"),
+          ).toBe(false);
+          again.activity.close();
+        });
+
+        it("人が外した PR に、sacty の外す要求が変化なしで答えて指摘なしで記録した後に、人がコミットを足しても、sacty の外しの記録が無いので、決められないでなく person で戻さない", async () => {
+          const made = await reviewed();
+          const { service, pulls, id } = made;
+          const human = pulls.humanUndraft(7);
+          await service.checkPullRequests();
+          expect(types(service, id)).toContain("PullRequestMarkedReady");
+          expect(noted(service, id)).toEqual([]);
+          pulls.prInfo = { ...pulls.prInfo, headSha: HUMAN_HEAD };
+          await service.checkPullRequests();
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "person", eventId: human }]);
+          const again = restart(made);
+          await again.service.checkPullRequests();
+          expect(skipped(again.service, id)).toHaveLength(1);
+          again.activity.close();
+        });
+
+        it("2回目以降の sacty の外し（要求の前に人の外しがある）は、答えの外しの ID を記録し、その外しなら戻す", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          const earlier = pulls.humanUndraft(7);
+          pulls.humanDraft(7);
+          await rejectDuringUndraft(made);
+          const mine = pulls.timeline[7]?.findLast((e) => e.kind === "ready_for_review")?.id;
+          expect(mine).not.toBe(earlier);
+          expect(noted(service, id)).toEqual([{ number: 7, eventId: mine }]);
+          expect(pulls.drafts[7]).toBe(true);
+          expect(skipped(service, id)).toEqual([]);
+          activity.close();
+        });
+
+        it("外しの答えが前の外しの ID でも、1回の読み直しで今回の外しの ID を読めれば、その ID で記録し、戻す", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          const earlier = pulls.humanUndraft(7);
+          pulls.humanDraft(7);
+          pulls.timelineLagReads = 1;
+          await rejectDuringUndraft(made);
+          const mine = pulls.timeline[7]?.findLast((e) => e.kind === "ready_for_review")?.id;
+          expect(mine).not.toBe(earlier);
+          expect(noted(service, id)).toEqual([{ number: 7, eventId: mine }]);
+          expect(pulls.drafts[7]).toBe(true);
+          expect(skipped(service, id)).toEqual([]);
+          activity.close();
+        });
+
+        it("ドラフトでない PR の REST の draft を読めなければ、戻さず、読めなかったことを1件だけ記録する", async () => {
+          const made = await implemented([]);
+          const { activity, service, pulls, id } = made;
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            headSha: commitOf(service, id),
+          };
+          pulls.drafts[7] = false;
+          pulls.draftHistoryFail = "draft";
+          await service.checkPullRequests();
+          await service.checkPullRequests();
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "unreadable" }]);
+          activity.close();
+        });
+
+        /** 指摘なしの外す要求の間に差し戻す（外した後の判定に、差し戻しが入る）。 */
+        async function rejectDuringUndraft(made: Awaited<ReturnType<typeof reviewed>>) {
+          const { service, pulls, id } = made;
+          const gate = Promise.withResolvers<void>();
+          pulls.setDraftGate = gate.promise;
+          const checking = service.checkPullRequests();
+          await pulls.setDraftStarted.promise;
+          service.requestChanges(id, {
+            step: "implement",
+            submission: 1,
+            comments: ["ここを直して"],
+          });
+          pulls.setDraftGate = undefined;
+          gate.resolve();
+          await checking;
+        }
+
+        it("外す要求の答えを受け取れなかった後の外しは、ID なしで記録し、決められないので戻さず、1件だけ記録する", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          pulls.setDraftAnswerLost = "socket hang up";
+          await service.checkPullRequests();
+          pulls.setDraftAnswerLost = undefined;
+          await rejectDuringUndraft(made);
+          await service.checkPullRequests();
+          expect(noted(service, id)).toEqual([{ number: 7 }]);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "undetermined" }]);
+          activity.close();
+        });
+
+        it("外しの答えが前の外しの ID なら（反映の遅れ）、sacty の外しの ID として記録せず、決められないので戻さない", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          // 人が外して戻した後の PR を、sacty が指摘なしで外す。答えと1回の読み直しが、人の前の外しの ID を返す
+          const earlier = pulls.humanUndraft(7);
+          pulls.humanDraft(7);
+          pulls.timelineLagReads = 2;
+          await rejectDuringUndraft(made);
+          expect(pulls.timelineLagReads).toBe(0);
+          expect(noted(service, id)).toEqual([{ number: 7 }]);
+          expect(JSON.stringify(noted(service, id))).not.toContain(earlier);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "undetermined" }]);
+          activity.close();
+        });
+
+        it("要求の前の最後の外しを読めなければ、答えの ID を使わず ID なしで記録し、戻さない", async () => {
+          const made = await reviewed();
+          const { activity, service, pulls, id } = made;
+          const earlier = pulls.humanUndraft(7);
+          pulls.humanDraft(7);
+          // 答えは、人の前の外しの ID を返す
+          pulls.previousReadFail = true;
+          pulls.timelineLagReads = 1;
+          await rejectDuringUndraft(made);
+          expect(noted(service, id)).toEqual([{ number: 7 }]);
+          expect(JSON.stringify(noted(service, id))).not.toContain(earlier);
+          expect(pulls.drafts[7]).toBe(false);
+          expect(skipped(service, id)).toEqual([{ number: 7, reason: "undetermined" }]);
+          activity.close();
+        });
+      });
+
+      it("sacty がドラフトに戻した PR が、記録に無い外しでドラフトでなくなっていたら（最後の切り替えが convert_to_draft のまま）、決められないので戻さず、1件だけ記録する（PR #348 10回目のレビュー指摘・PBI-468）", async () => {
+        const made = await implemented([]);
+        const { activity, service, pulls, id } = made;
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        // 再起動の後に一度戻した後で、古い外す要求が（記録に無い外しのイベントなしに）GitHub に届いた
+        pulls.humanDraft(7);
+        pulls.drafts[7] = false;
+        for (let i = 0; i < 2; i++) {
+          await service.checkPullRequests();
+          expect(pulls.drafts[7], String(i)).toBe(false);
+        }
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
+        ]);
         expect(types(service, id)).not.toContain("PullRequestMarkedReady");
         activity.close();
       });
@@ -4292,7 +5316,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         ]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(false);
@@ -4313,7 +5341,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         await service.checkPullRequests();
         pulls.drafts[7] = true;
@@ -4330,7 +5362,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         await service.checkPullRequests();
         pulls.drafts[7] = true;
@@ -4359,7 +5395,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         await service.checkPullRequests();
         pulls.drafts[7] = true;
@@ -4394,7 +5434,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       it("開いている PR の答えにドラフトかが無ければ、確認中も一時停止中もデーモンのログに残す（PR #348 14回目のレビュー指摘）", async () => {
         const made = await implemented([]);
         const { activity, service, pulls, id } = made;
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         delete pulls.drafts[7];
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
@@ -4416,9 +5460,15 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       it("一時停止したタスクの PR は並べて確かめ、答えが返らない PR が続いても、1つずつ待たない（PR #348 13回目のレビュー指摘）", async () => {
         const ok = verdictOut("no_findings", "# 評価\n\n問題なし");
-        const made = await implemented([ok, implement(), ok], [], { draftTimeoutMs: 300 });
+        const made = await implemented([ok, implement(), ok], [], {
+          draftTimeoutMs: 300,
+        });
         const { activity, service, pulls, id } = made;
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childOf(service, id));
         await service.checkPullRequests();
         const second = service.createTask({
@@ -4443,7 +5493,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       });
 
       it("指摘なしを待つ実装の PR の先頭は並べて読み、答えが返らなければ中断する（PR #348 15回目のレビュー指摘）", async () => {
-        const made = await implemented([implement()], [], { draftTimeoutMs: 100 });
+        const made = await implemented([implement()], [], {
+          draftTimeoutMs: 100,
+        });
         const { activity, service, pulls, id } = made;
         const second = service.createTask({
           projectId: "default",
@@ -4470,7 +5522,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         await service.checkPullRequests();
         service.pause(id);
@@ -4490,11 +5546,15 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
-      it("外し直す答えを受け取れなければ、ドラフトに戻し、次の確認で外し直す（PR #348 11回目のレビュー指摘）", async () => {
+      it("外し直す答えを受け取れなければ、最後の外しが sacty のものか決められないので戻さず、次の確認で外し直す（PR #348 11回目のレビュー指摘・PBI-468）", async () => {
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         await service.checkPullRequests();
         pulls.drafts[7] = true;
@@ -4502,9 +5562,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         pulls.setDraftAnswerLost = "接続が切れた";
         const changes = pulls.draftChanges.length;
         await service.checkPullRequests();
-        expect(pulls.draftChanges.slice(changes)).toEqual([
-          { number: 7, draft: false },
-          { number: 7, draft: true },
+        expect(pulls.draftChanges.slice(changes)).toEqual([{ number: 7, draft: false }]);
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([
+          { number: 7, reason: "undetermined" },
         ]);
         pulls.setDraftAnswerLost = undefined;
         await service.checkPullRequests();
@@ -4516,7 +5576,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;
         const childId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, childId);
         const original = pulls.setDraft.bind(pulls);
         const setDraft = vi.spyOn(pulls, "setDraft");
@@ -4550,7 +5614,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const { activity, service, id } = made;
         await service.runNext(id);
         const paused = taskOf(service, id);
-        expect(paused).toMatchObject({ status: "paused", pausedReason: "budget" });
+        expect(paused).toMatchObject({
+          status: "paused",
+          pausedReason: "budget",
+        });
         expect(paused.testCommand).toBeUndefined();
         expect(paused.steps.map((s) => s.key)).toEqual(["implement"]);
         service.resume(id, { capUsd: 2000, image: "default" });
@@ -4581,7 +5648,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const task = taskOf(service, id);
         expect(task.testCommand).toBeUndefined();
         expect(task.status).toBe("awaiting_approval");
-        expect(task.pullRequest).toMatchObject({ number: 7, awaitingReview: true });
+        expect(task.pullRequest).toMatchObject({
+          number: 7,
+          awaitingReview: true,
+        });
         expect(types(service, id)).not.toContain("TaskPaused");
         activity.close();
       });
@@ -4656,7 +5726,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const task = taskOf(service, id);
         expect(task.status).toBe("awaiting_approval");
         expect(task.pullRequestCi).toBeUndefined();
-        expect(task.pullRequest).toMatchObject({ number: 7, draft: true, awaitingReview: true });
+        expect(task.pullRequest).toMatchObject({
+          number: 7,
+          draft: true,
+          awaitingReview: true,
+        });
         expect(types(service, id)).toContain("FinalReviewSkipped");
         expect(executor.calls).toHaveLength(0);
         expect(task.reviewTasks?.map((r) => r.number)).toEqual([7]);
@@ -4669,7 +5743,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       for (const settings of [
         undefined,
         new MemorySettingsStore({}),
-        new MemorySettingsStore({ reviewLabel: "sacty-review", triageOff: ["reviewLabel"] }),
+        new MemorySettingsStore({
+          reviewLabel: "sacty-review",
+          triageOff: ["reviewLabel"],
+        }),
       ]) {
         rmSync(dbPath, { force: true });
         const pulls = new FakePulls();
@@ -4681,7 +5758,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(pulls.labels).toEqual([]);
         const childId = childOf(service, id);
         expect(taskOf(service, id).reviewTasks).toEqual([
-          { taskId: childId, step: "requirements", repo: "https://github.com/acme/app", number: 7 },
+          {
+            taskId: childId,
+            step: "requirements",
+            repo: "https://github.com/acme/app",
+            number: 7,
+          },
         ]);
         expect(service.get(id)?.activity.at(-1)).toMatchObject({
           type: "ReviewTaskCreated",
@@ -4712,9 +5794,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const done = taskOf(service, id);
         activity.close();
         const again = new SqliteActivityStore(dbPath);
-        const restarted = makeService(again, [], { stepPullRequests: true }).service;
+        const restarted = makeService(again, [], {
+          stepPullRequests: true,
+        }).service;
         expect(restarted.get(id)?.task.reviewTasks).toEqual(done.reviewTasks);
-        expect(restarted.get(childId)?.task.reviewOf).toEqual({ taskId: id, step: "requirements" });
+        expect(restarted.get(childId)?.task.reviewOf).toEqual({
+          taskId: id,
+          step: "requirements",
+        });
         again.close();
       }
     });
@@ -4745,7 +5832,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       });
 
       it("実装の PR を子タスクがレビューするタスクは、セルフレビューを指示せず、検証と検証の記録・テストの全件は指示する（受け入れ条件 1・2・4）", async () => {
-        const made = await start([implement()], { steps: ["implement"], reviewTasks: true });
+        const made = await start([implement()], {
+          steps: ["implement"],
+          reviewTasks: true,
+        });
         const { activity, service, executor, id } = made;
         const prompt = promptOf(executor, 0);
         expect(prompt).toContain(SKIPPED);
@@ -4769,7 +5859,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           const step = steps ? "implement" : "requirements";
           expect(promptOf(executor, 0), step).toContain(DISPATCH);
           expect(promptOf(executor, 0), step).not.toContain(SKIPPED);
-          expect(completed(service, id, step), step).toMatchObject({ selfReview: null });
+          expect(completed(service, id, step), step).toMatchObject({
+            selfReview: null,
+          });
           activity.close();
         }
       });
@@ -4785,11 +5877,16 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           body: "タスクの本文",
         });
         await service.runNext(id);
-        expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
+        expect(taskOf(service, id).gate).toEqual({
+          step: "requirements",
+          submission: 1,
+        });
         expect(taskOf(service, id).stepPullRequests).toEqual([]);
         expect(promptOf(executor, 0)).toContain(DISPATCH);
         expect(promptOf(executor, 0)).not.toContain(SKIPPED);
-        expect(completed(service, id, "requirements")).toMatchObject({ selfReview: null });
+        expect(completed(service, id, "requirements")).toMatchObject({
+          selfReview: null,
+        });
         activity.close();
       });
 
@@ -4890,7 +5987,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         ]);
         await settle(service, id);
         expect(taskOf(service, id).status).toBe("awaiting_approval");
-        expect(completedRun(service, id)?.completion).toEqual({ status: "complete" });
+        expect(completedRun(service, id)?.completion).toEqual({
+          status: "complete",
+        });
         expect(types(service, id)).not.toContain("ImplementationIncomplete");
         expect(pulls.calls).toHaveLength(1);
         expect(pulls.calls[0]?.body).not.toContain("sacty-completion");
@@ -5019,7 +6118,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           repos.tree = `${n}`.padStart(40, "0");
           if (executor.calls.length === before + 1) {
             repos.remote[pushed.branch] = human;
-            repos.mergeResult = { status: "conflicted", conflicts: [conflicted] };
+            repos.mergeResult = {
+              status: "conflicted",
+              conflicts: [conflicted],
+            };
             repos.markers = [conflicted];
           }
           return undefined;
@@ -5056,9 +6158,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
         // 完了と申告した実行では、競合の確認を飛ばさない：目印が残っていれば、提出せずに実装をやり直す
         await service.runNext(id);
-        expect(completedRun(service, id)?.completion).toEqual({ status: "complete" });
+        expect(completedRun(service, id)?.completion).toEqual({
+          status: "complete",
+        });
         expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
-        expect(taskOf(service, id).verifyFeedback).toEqual({ kind: "merge", files: [conflicted] });
+        expect(taskOf(service, id).verifyFeedback).toEqual({
+          kind: "merge",
+          files: [conflicted],
+        });
         expect(pulls.calls).toHaveLength(updates);
         expect(repos.published).toHaveLength(published);
 
@@ -5124,9 +6231,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
         // 完了と申告した実行では、競合の確認を飛ばさない：目印が残っていれば、PR を作らずに実装をやり直す
         await service.runNext(id);
-        expect(completedRun(service, id)?.completion).toEqual({ status: "complete" });
+        expect(completedRun(service, id)?.completion).toEqual({
+          status: "complete",
+        });
         expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
-        expect(taskOf(service, id).verifyFeedback).toEqual({ kind: "merge", files: [conflicted] });
+        expect(taskOf(service, id).verifyFeedback).toEqual({
+          kind: "merge",
+          files: [conflicted],
+        });
         expect(taskOf(service, id).verifyFailures).toBe(1);
         expect(repos.published).toHaveLength(0);
         expect(pulls.calls).toHaveLength(0);
@@ -5299,7 +6411,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const pulls = new FakePulls();
         const repos = new FakeRepos();
         // 最初の実行を失敗させて止め、再開して、作業領域と工程があって実装の完了がまだ無い作業履歴にする
-        const failed: AgentOutcome = { kind: "failed", reason: "error", message: "exit code 1" };
+        const failed: AgentOutcome = {
+          kind: "failed",
+          reason: "error",
+          message: "exit code 1",
+        };
         const made = await start([failed], {
           pulls,
           repos,
@@ -5405,7 +6521,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         let task = taskOf(service, id);
         expect(task.status).toBe("paused");
         expect(task.pausedReason).toBe("unchanged");
-        expect(task.pausedMessage).toEqual({ code: "implement.unchanged", params: { number: 7 } });
+        expect(task.pausedMessage).toEqual({
+          code: "implement.unchanged",
+          params: { number: 7 },
+        });
         expect(renderMessage(task.pausedMessage as DaemonText, "ja")).toContain(
           "PR #7 を、やり直しの実装が何も変えませんでした",
         );
@@ -5557,7 +6676,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await settle(service, id);
         expect(taskOf(service, id).pausedReason).toBe("unchanged");
         // 人が、AI のレビューの指摘を採らないと判断して、GitHub でドラフトを外す
-        pulls.drafts[7] = false;
+        pulls.humanUndraft(7);
         const changes = pulls.draftChanges.length;
         await service.checkPullRequests();
         await service.checkPullRequests();
@@ -5609,7 +6728,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const task = taskOf(service, id);
         expect(
           service.get(id)?.activity.find((e) => e.type === "ReworkStoppedByMerge")?.payload,
-        ).toMatchObject({ number: 7, was: "queued", discardedFeedback: "incomplete" });
+        ).toMatchObject({
+          number: 7,
+          was: "queued",
+          discardedFeedback: "incomplete",
+        });
         expect(task.pullRequestState).toBe("merged");
         expect(task.steps.find((s) => s.key === "implement")?.state).toBe("done");
         expect(task.approved.implement?.submission).toBe(1);
@@ -5626,9 +6749,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await settle(service, id);
         await service.pause(id);
         expect(taskOf(service, id).pausedReason).toBe("manual");
-        pulls.drafts[7] = false;
+        // 人が外した PR も、一時停止に伴う戻しは、判定を通さずに戻す（PBI-468）
+        pulls.humanUndraft(7);
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(true);
+        expect(payloads(service, id, "PullRequestRedraftSkipped")).toEqual([]);
         activity.close();
       });
 
@@ -5785,13 +6910,23 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       describe("AI のレビューの指摘をすべて断って何も変えなかったら、断った理由を返信し、同じ先頭を 1 回だけ判定し直させる（PBI-357）", () => {
         /** 指摘への対応を添えた、実装の実行（作業領域は変えない）。 */
-        const responded = (responses: { remarkId: string; status?: string; text: string }[]) =>
+        const responded = (
+          responses: {
+            remarkId: string;
+            status?: string;
+            text: string;
+            gist?: string;
+          }[],
+        ) =>
           out(
             [
               "# 実装の説明（変更なし）",
               block({
                 "sacty-test-map": [
-                  { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+                  {
+                    viewpointId: "TV-1",
+                    tests: ["pay.test.ts › 同じキーの再送"],
+                  },
                 ],
               }),
               block({ "sacty-responses": responses }),
@@ -5799,7 +6934,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           );
         const declined = (remarkId = "implement-1-1") =>
           responded([
-            { remarkId, status: "declined", text: "この指摘は、このタスクの範囲の外です" },
+            {
+              remarkId,
+              status: "declined",
+              text: "この指摘は、このタスクの範囲の外です",
+            },
           ]);
         const replies = (pulls: FakePulls) =>
           pulls.issueComments.filter((c) => c.body.startsWith("<!-- sacty-reply:"));
@@ -5876,7 +7015,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           const review = posted(pulls, 0);
           pulls.feedbackBy[7] = [
             longTail
-              ? { ...review, body: `${review.body}\n${"い".repeat(3_000)}${longTail}` }
+              ? {
+                  ...review,
+                  body: `${review.body}\n${"い".repeat(3_000)}${longTail}`,
+                }
               : review,
           ];
           await service.checkPullRequests();
@@ -5913,7 +7055,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             actor: "sacty",
             payload: { number: 7, commit: first, reviewTaskId: childId },
           });
-          expect(task.reviewRejudge).toMatchObject({ number: 7, commit: first });
+          expect(task.reviewRejudge).toMatchObject({
+            number: 7,
+            commit: first,
+          });
           // 返信が済むまでは、判定し直しを始めない（断った理由を読ませるため）
           await service.checkPullRequests();
           expect(restarts(service, childId)).toHaveLength(0);
@@ -6043,7 +7188,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           const again = reopen([declined("implement-2-1")], pulls, repos, projects);
           task = taskOf(again.service, id);
           expect(task.status).toBe("paused");
-          expect(task.reviewRejudge).toMatchObject({ number: 7, commit: first });
+          expect(task.reviewRejudge).toMatchObject({
+            number: 7,
+            commit: first,
+          });
           expect(taskOf(again.service, childId).reviewRejudgeCommit).toBe(first);
           again.service.resume(id, {});
           await settle(again.service, id);
@@ -6165,7 +7313,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           pulls.feedbackBy[7] = [
             posted(pulls, 0),
             posted(pulls, 1),
-            item("comment:900", { author: "reviewer", body: "ここも直してほしい" }),
+            item("comment:900", {
+              author: "reviewer",
+              body: "ここも直してほしい",
+            }),
           ];
           repos.sameAsParent = false;
           await service.checkPullRequests();
@@ -6198,7 +7349,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         it("対応したと申告した指摘があれば（何も変えていないのに）、今までどおり一時停止する（受け入れ条件 5）", async () => {
           await stops(
             await reviewed([
-              responded([{ remarkId: "implement-1-1", status: "addressed", text: "直しました" }]),
+              responded([
+                {
+                  remarkId: "implement-1-1",
+                  status: "addressed",
+                  text: "直しました",
+                },
+              ]),
             ]),
           );
         });
@@ -6289,8 +7446,16 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               verdictOut("changes_required"),
               rework("implement"),
               responded([
-                { remarkId: "implement-1-1", status: "declined", text: "範囲の外です" },
-                { remarkId: "implement-1-2", status: "declined", text: "当たりません" },
+                {
+                  remarkId: "implement-1-1",
+                  status: "declined",
+                  text: "範囲の外です",
+                },
+                {
+                  remarkId: "implement-1-2",
+                  status: "declined",
+                  text: "当たりません",
+                },
               ]),
             ],
             options(pulls, repos, projectsWithAccount()),
@@ -6303,7 +7468,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           await runReview(service, childId);
           pulls.feedbackBy[7] = [
             posted(pulls, 0),
-            item("comment:900", { author: "reviewer", body: "ここも直してほしい" }),
+            item("comment:900", {
+              author: "reviewer",
+              body: "ここも直してほしい",
+            }),
           ];
           await service.checkPullRequests();
           expect(taskOf(service, id).remarks.map((r) => r.source)).toEqual([
@@ -6311,7 +7479,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             undefined,
           ]);
           repos.sameAsParent = true;
-          await stops({ ...made, pulls, repos, projects: projectsWithAccount(), childId, first });
+          await stops({
+            ...made,
+            pulls,
+            repos,
+            projects: projectsWithAccount(),
+            childId,
+            first,
+          });
         });
 
         it("元のコメントの記録が無い指摘（この仕組みより前に取り込んだもの）は、返信できないので、今までどおり一時停止する（受け入れ条件 6）", async () => {
@@ -6330,7 +7505,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           // AI のレビューの指摘を、元のコメントの記録なしで差し戻す（以前の版の作業履歴と同じ形）
           service.requestChanges(
             id,
-            { step: "implement", submission: 1, comments: ["受け入れ条件が足りない"] },
+            {
+              step: "implement",
+              submission: 1,
+              comments: ["受け入れ条件が足りない"],
+            },
             { aiReview: [0] },
           );
           expect(taskOf(service, id).remarks.at(-1)).toMatchObject({
@@ -6339,14 +7518,22 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           });
           expect(taskOf(service, id).remarks.at(-1)?.origin).toBeUndefined();
           repos.sameAsParent = true;
-          await stops({ ...made, pulls, repos, projects: projectsWithAccount(), childId, first });
+          await stops({
+            ...made,
+            pulls,
+            repos,
+            projects: projectsWithAccount(),
+            childId,
+            first,
+          });
         });
 
         describe("後続に回したい案を、人が 1 件ずつ決める（PBI-370）", () => {
-          const deferred = (remarkId = "implement-1-1") =>
+          const deferred = (remarkId = "implement-1-1", gist?: string) =>
             responded([
               {
                 remarkId,
+                ...(gist ? { gist } : {}),
                 status: "deferred",
                 text: "直すには新しい保存の仕組みが要り、このタスクの範囲を超えます",
               },
@@ -6358,7 +7545,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             id: string,
             decisions: { remarkId: string; decision: "defer" | "fix" }[],
             submission = 2,
-          ) => svc.decideDeferrals(id, { step: "implement", submission, decisions });
+          ) =>
+            svc.decideDeferrals(id, {
+              step: "implement",
+              submission,
+              decisions,
+            });
 
           describe("提出に至らなかった実行で申告した案を、提出のときに必ず返信する（PBI-383）", () => {
             const REASON = "直すには新しい保存の仕組みが要り、このタスクの範囲を超えます";
@@ -6371,10 +7563,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                   MAP,
                   block({
                     "sacty-responses": [
-                      { remarkId: "implement-1-1", status: "deferred", text: REASON },
+                      {
+                        remarkId: "implement-1-1",
+                        status: "deferred",
+                        text: REASON,
+                      },
                     ],
                   }),
-                  declare({ status: "incomplete", remaining: ["失敗時のテスト"] }),
+                  declare({
+                    status: "incomplete",
+                    remaining: ["失敗時のテスト"],
+                  }),
                 ].join("\n\n"),
               );
             /** 決定を PR のコメントに残し終えるまで待つ（記録を待つ。固定の時間は待たない）。 */
@@ -6467,7 +7666,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(task.status).toBe("awaiting_approval");
               expect(types(service, id)).not.toContain("ImplementationUnchanged");
               expect(task.pullRequest?.commit).toBe(first);
-              expect(task.reviewRejudge).toMatchObject({ commit: first, awaitsDecision: true });
+              expect(task.reviewRejudge).toMatchObject({
+                commit: first,
+                awaitsDecision: true,
+              });
               carried(task, 2);
               activity.close();
               const again = reopen([], pulls, repos, projects);
@@ -6487,7 +7689,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               executor.logLines = () => {
                 if (executor.calls.length === before + 1) {
                   repos.remote[pushed.branch] = "d".repeat(40);
-                  repos.mergeResult = { status: "conflicted", conflicts: [conflicted] };
+                  repos.mergeResult = {
+                    status: "conflicted",
+                    conflicts: [conflicted],
+                  };
                   repos.markers = [conflicted];
                 }
                 return undefined;
@@ -6530,8 +7735,16 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                   verdictOut("changes_required"),
                   rework("implement"),
                   responded([
-                    { remarkId: "implement-1-1", status: "deferred", text: REASON },
-                    { remarkId: "implement-1-2", status: "addressed", text: "直しました" },
+                    {
+                      remarkId: "implement-1-1",
+                      status: "deferred",
+                      text: REASON,
+                    },
+                    {
+                      remarkId: "implement-1-2",
+                      status: "addressed",
+                      text: "直しました",
+                    },
                   ]),
                   ...outcomes,
                 ],
@@ -6550,7 +7763,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               await runReview(service, childId);
               pulls.feedbackBy[7] = [
                 posted(pulls, 0),
-                item("comment:900", { author: "reviewer", body: "ここも直してほしい" }),
+                item("comment:900", {
+                  author: "reviewer",
+                  body: "ここも直してほしい",
+                }),
               ];
               await service.checkPullRequests();
               repos.sameAsParent = true;
@@ -6562,13 +7778,22 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(replies(pulls)).toHaveLength(0);
               // 一時停止中は、案を決められない
               expect(deferProposals(task)).toEqual([]);
-              expect(task.remarks[0]?.deferral).toEqual({ proposedIn: 2, reason: REASON });
+              expect(task.remarks[0]?.deferral).toEqual({
+                proposedIn: 2,
+                reason: REASON,
+              });
               return { ...made, pulls, repos, projects, childId, first };
             }
 
             it("変更なしの一時停止からの再開：再開した実行が、案にした指摘に対応を書かなくても、提出のときに案を返信する", async () => {
               const made = await pausedUnchanged([
-                responded([{ remarkId: "implement-1-2", status: "addressed", text: "直しました" }]),
+                responded([
+                  {
+                    remarkId: "implement-1-2",
+                    status: "addressed",
+                    text: "直しました",
+                  },
+                ]),
               ]);
               const { activity, service, executor, pulls, repos, id } = made;
               repos.sameAsParent = false;
@@ -6602,7 +7827,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(task.status).toBe("awaiting_approval");
               expect(count(service, id, "ImplementationUnchanged")).toBe(1);
               expect(task.pullRequest?.commit).toBe(first);
-              expect(task.reviewRejudge).toMatchObject({ commit: first, awaitsDecision: true });
+              expect(task.reviewRejudge).toMatchObject({
+                commit: first,
+                awaitsDecision: true,
+              });
               carried(task, 2);
               await repliesThenWaits(service, pulls, id, childId);
               activity.close();
@@ -6637,7 +7865,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               const clock = { now: later() };
               const made = await start(
                 [implement(), verdictOut("changes_required"), deferred(), ...outcomes],
-                { ...options(pulls, repos, projectsWithAccount()), now: () => clock.now },
+                {
+                  ...options(pulls, repos, projectsWithAccount()),
+                  now: () => clock.now,
+                },
               );
               const { service, id } = made;
               await settle(service, id);
@@ -6652,7 +7883,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               pulls.feedbackBy[7] = [posted(pulls, 0)];
               await service.checkPullRequests();
               await settle(service, id);
-              expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 2 });
+              expect(taskOf(service, id).gate).toEqual({
+                step: "implement",
+                submission: 2,
+              });
               pulls.rateLimited = true;
               await service.runNext(id);
               pulls.rateLimited = false;
@@ -6676,13 +7910,22 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
             it("返信の待ちの間に、人が「この PR で直す」と決めたら、「人に確認中」の返信は投稿せず、直した対応だけを、元のコメントに返信する", async () => {
               const made = await replyLimited([
-                responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+                responded([
+                  {
+                    remarkId: "implement-2-1",
+                    status: "addressed",
+                    text: "直しました",
+                  },
+                ]),
               ]);
               const { activity, service, pulls, id, clock } = made;
               decide(service, id, [{ remarkId: "implement-1-1", decision: "fix" }]);
               await decisionPosted(service, id);
               await settle(service, id);
-              expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 3 });
+              expect(taskOf(service, id).gate).toEqual({
+                step: "implement",
+                submission: 3,
+              });
               clock.now += 61_000;
               await service.runNext(id);
               const bodies = replies(pulls).map((r) => r.body);
@@ -6695,11 +7938,20 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             it("提出した案の返信が、GitHub のレート制限の待ちの間に、次の指摘で作り直しになっても、次の提出のときに、案を 1 回だけ返信する", async () => {
               const made = await replyLimited([
                 verdictOut("changes_required", "# 評価\n\n別の要修正"),
-                responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+                responded([
+                  {
+                    remarkId: "implement-2-1",
+                    status: "addressed",
+                    text: "直しました",
+                  },
+                ]),
               ]);
               const { activity, service, pulls, id, childId, clock } = made;
               // 返信できないまま、新しい先頭のレビューの指摘で、作り直す
-              pulls.prInfo = { ...pulls.prInfo, headSha: commitOf(service, id) };
+              pulls.prInfo = {
+                ...pulls.prInfo,
+                headSha: commitOf(service, id),
+              };
               await service.checkPullRequests();
               await runReview(service, childId);
               pulls.feedbackBy[7] = [posted(pulls, 0), posted(pulls, 1)];
@@ -6756,7 +8008,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 ["implement-2-1", "declined"],
               ]);
               // 最新の回は断っただけでも、前の提出の案が決まっていないので、待つ印を付ける
-              expect(task.reviewRejudge).toMatchObject({ commit: second, awaitsDecision: true });
+              expect(task.reviewRejudge).toMatchObject({
+                commit: second,
+                awaitsDecision: true,
+              });
               await service.runNext(id);
               expect(replies(pulls)).toHaveLength(2);
               await service.checkPullRequests();
@@ -6832,18 +8087,26 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await noticesSettled(service);
             expect(notices(pulls)).toHaveLength(1);
             const notice = notices(pulls)[0];
-            expect(notice).toMatchObject({ repo: "https://github.com/acme/app", number: 7 });
+            expect(notice).toMatchObject({
+              repo: "https://github.com/acme/app",
+              number: 7,
+            });
             expect(notice?.body).toContain(`<!-- sacty-deferral:${id}:1 -->`);
             expect(notice?.body).toContain("### 後続に回す（1 件）");
             expect(notice?.body).toContain(
-              "**指摘 implement-1-1**（[元のコメント](https://github.com/acme/app/pull/7#pullrequestreview-50)）",
+              "**指摘：** [この指摘](https://github.com/acme/app/pull/7#pullrequestreview-50)",
             );
+            expect(notice?.body).not.toContain("implement-1-1");
             expect(notice?.body).toContain("> 直すには新しい保存の仕組みが要り");
             expect(
               service.get(id)?.activity.find((e) => e.type === "DeferralDecisionsPosted"),
             ).toMatchObject({
               actor: "sacty",
-              payload: { number: 7, decision: 1, url: expect.stringContaining("#issuecomment-") },
+              payload: {
+                number: 7,
+                decision: 1,
+                url: expect.stringContaining("#issuecomment-"),
+              },
             });
             task = taskOf(service, id);
             expect(task.status).toBe("awaiting_approval");
@@ -6943,7 +8206,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             const made = await reviewed(
               [
                 deferred(),
-                responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+                responded([
+                  {
+                    remarkId: "implement-2-1",
+                    status: "addressed",
+                    text: "直しました",
+                  },
+                ]),
               ],
               tail,
             );
@@ -6965,7 +8234,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           it("人が「この PR で直す」と決めると、決定と同じ追記で、その指摘を実装に差し戻す（人の差し戻し）。実装には、人が決めた指摘として渡り、直した対応を、元のコメントにもう一度返信する（受け入れ条件 4）", async () => {
             const made = await reviewed([
               deferred(),
-              responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+              responded([
+                {
+                  remarkId: "implement-2-1",
+                  status: "addressed",
+                  text: "直しました",
+                },
+              ]),
             ]);
             const { activity, service, executor, pulls, repos, id, childId } = made;
             await settle(service, id);
@@ -7099,7 +8374,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               .get(id)
               ?.activity.find((e) => e.type === "DeferralDecisionsPosted");
             expect(posted?.payload).toMatchObject({ number: 7, decision: 1 });
-            const payload = (posted?.payload ?? {}) as { failure?: unknown; url?: string };
+            const payload = (posted?.payload ?? {}) as {
+              failure?: unknown;
+              url?: string;
+            };
             const failure = JSON.stringify(payload.failure);
             expect(failure).toContain("GitHub API 500");
             expect(failure).not.toContain("ghp_secret");
@@ -7167,10 +8445,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             await noticesSettled(service);
             expect(notices(pulls)).toHaveLength(1);
             const body = notices(pulls)[0]?.body ?? "";
+            // リンクが作れない指摘は、要点の1行（要点が無ければ、指摘の最初の行）で示す。指摘の ID は書かない
             expect(body).toContain(
-              "**指摘 implement-1-1**（Sacty の画面から書かれた指摘。内容は、タスクの画面で読めます）",
+              "**指摘：** 管理画面からも変えられるようにしてほしい（社外に出していない計画）",
             );
-            expect(body).not.toContain("社外に出していない計画");
+            expect(body).not.toContain("implement-1-1");
             expect(body).not.toContain("秘密の計画");
             expect(body).not.toContain("実装が、後続に回したいとした理由");
             activity.close();
@@ -7213,8 +8492,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(issue?.body).toContain(`<!-- sacty-deferral-issue:${id}:implement-1-1 -->`);
               expect(issue?.body).toContain("> 直すには新しい保存の仕組みが要り");
               expect(issue?.body).toContain(
-                "元のコメント：https://github.com/acme/app/pull/7#pullrequestreview-50",
+                "[この指摘](https://github.com/acme/app/pull/7#pullrequestreview-50)",
               );
+              expect(issue?.body).not.toContain("implement-1-1 を後続に回すと");
               expect(handled(service, id)).toHaveLength(1);
               expect(handled(service, id)[0]).toMatchObject({
                 actor: "sacty",
@@ -7233,6 +8513,77 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               activity.close();
             });
 
+            it("後続のタスクの題と Issue の題は、指摘の要点から作り、指摘の ID を含めない（TV-20）", async () => {
+              const made = await reviewed([
+                deferred("implement-1-1", "エラーの文言を直す"),
+                verdictOut("no_findings", "# 評価\n\n指摘なし"),
+              ]);
+              const { activity, service, pulls, id, childId } = made;
+              await settle(service, id);
+              await service.runNext(id);
+              decideWith(service, id, "task");
+              await noticesSettled(service);
+              await service.checkPullRequests();
+              await runReview(service, childId);
+              await service.checkPullRequests();
+              const pr = taskOf(service, id).pullRequest;
+              pulls.states[7] = {
+                state: "merged",
+                mergedBy: "reviewer",
+                headSha: pr?.commit,
+              };
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              const followUp = service.list().find((t) => t.derivedFrom?.taskId === id);
+              expect(followUp?.title).toBe("[PR #7 follow-up] エラーの文言を直す");
+              expect(followUp?.title).not.toContain("implement-1-1");
+              activity.close();
+            });
+
+            it("後続のタスクの題に、GitHub のトークンの値が入らない（R-21）", async () => {
+              const made = await reviewed([
+                deferred("implement-1-1", "ghp_secret を使う箇所を直す"),
+                verdictOut("no_findings", "# 評価\n\n指摘なし"),
+              ]);
+              const { activity, service, pulls, id, childId } = made;
+              await settle(service, id);
+              await service.runNext(id);
+              decideWith(service, id, "task");
+              await noticesSettled(service);
+              await service.checkPullRequests();
+              await runReview(service, childId);
+              await service.checkPullRequests();
+              const pr = taskOf(service, id).pullRequest;
+              pulls.states[7] = {
+                state: "merged",
+                mergedBy: "reviewer",
+                headSha: pr?.commit,
+              };
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              await service.checkPullRequests();
+              const followUp = service.list().find((t) => t.derivedFrom?.taskId === id);
+              expect(followUp?.title.startsWith("[PR #7 follow-up] ")).toBe(true);
+              expect(followUp?.title).not.toContain("ghp_secret");
+              activity.close();
+            });
+
+            it("要点を持つ指摘は、Issue の題と本文にも要点を使い、指摘の ID を含めない（TV-19）", async () => {
+              const made = await reviewed([deferred("implement-1-1", "エラーの文言を直す")]);
+              const { activity, service, pulls, id } = made;
+              await settle(service, id);
+              decideWith(service, id, "issue");
+              await noticesSettled(service);
+              const issue = pulls.createdIssues[0];
+              expect(issue?.title).toBe("[PR #7 follow-up] エラーの文言を直す");
+              const body = (issue?.body ?? "").split("\n").slice(1).join("\n");
+              expect(body).toContain("（エラーの文言を直す）");
+              expect(body).not.toContain("implement-1-1");
+              expect(body).not.toContain(id);
+              activity.close();
+            });
+
             it("Issue を作れなければ、理由を記録し（秘密の値は伏せる）、決定のコメントに、作れなかったことを書く。決定は変えない", async () => {
               const made = await reviewed([deferred()]);
               const { activity, service, pulls, id } = made;
@@ -7241,7 +8592,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               decideWith(service, id, "issue");
               await noticesSettled(service);
               expect(pulls.createdIssues).toHaveLength(0);
-              const failed = (handled(service, id)[0]?.payload ?? {}) as { failure?: unknown };
+              const failed = (handled(service, id)[0]?.payload ?? {}) as {
+                failure?: unknown;
+              };
               const failure = JSON.stringify(failed.failure);
               expect(failure).toContain("Issues are disabled");
               expect(failure).not.toContain("ghp_secret");
@@ -7253,24 +8606,26 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             });
 
             it.each([
-              ["http://127.0.0.1:4700", true],
-              ["http://localhost:4700", true],
-              ["http://[::1]:4700", true],
-              ["https://sacty.example.com", false],
-              ["画面の URL ではない文字列", true],
+              "http://127.0.0.1:4700",
+              "http://localhost:4700",
+              "http://[::1]:4700",
+              "https://sacty.example.com",
+              "画面の URL ではない文字列",
             ])(
-              "知らせの画面へのリンクの注釈は、サービスに渡した画面の URL（%s）で決まる（注釈あり：%s）",
-              async (webUrl, note) => {
+              "決定のコメントは、サービスに渡した画面の URL（%s）に関わらず、画面の URL・注釈を出さず「Sacty の画面で」の案内を書く（PBI-471）",
+              async (webUrl) => {
                 const made = await reviewed([deferred()], undefined, webUrl);
                 const { activity, service, pulls, id } = made;
                 await settle(service, id);
                 decideWith(service, id, "none");
                 await noticesSettled(service);
                 const body = notices(pulls)[0]?.body ?? "";
-                expect(body).toContain("[タスクの画面](");
-                expect(body.includes("タスクの画面は、依頼した人のマシンでだけ開けます。")).toBe(
-                  note,
-                );
+                const visible = body.split("\n").slice(1).join("\n");
+                expect(visible).not.toContain("/tasks/");
+                expect(visible).not.toContain("http://127.0.0.1");
+                expect(visible).not.toContain(id);
+                expect(visible).not.toContain("タスクの画面は、依頼した人のマシンでだけ開けます。");
+                expect(visible).toContain("Sacty の画面で差し戻してください。");
                 activity.close();
               },
             );
@@ -7319,16 +8674,28 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 githubAccounts: { "github.com": "me" },
               };
               expect(() =>
-                service.saveProject("default", { ...definition, deferralHandling: "jira" }),
+                service.saveProject("default", {
+                  ...definition,
+                  deferralHandling: "jira",
+                }),
               ).toThrow();
-              service.saveProject("default", { ...definition, deferralHandling: "issue" });
+              service.saveProject("default", {
+                ...definition,
+                deferralHandling: "issue",
+              });
               expect(projects.get("default")?.deferralHandling).toBe("issue");
               expect(service.view(id)?.task.deferralHandlingDefault).toBe("issue");
               expect(() =>
                 service.decideDeferrals(id, {
                   step: "implement",
                   submission: 2,
-                  decisions: [{ remarkId: "implement-1-1", decision: "fix", handling: "issue" }],
+                  decisions: [
+                    {
+                      remarkId: "implement-1-1",
+                      decision: "fix",
+                      handling: "issue",
+                    },
+                  ],
                 }),
               ).toThrow();
               expect(count(service, id, "DeferralsDecided")).toBe(0);
@@ -7336,7 +8703,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(
                 service.get(id)?.activity.find((e) => e.type === "DeferralsDecided")?.payload,
               ).toMatchObject({
-                decisions: [{ remarkId: "implement-1-1", decision: "defer", handling: "issue" }],
+                decisions: [
+                  {
+                    remarkId: "implement-1-1",
+                    decision: "defer",
+                    handling: "issue",
+                  },
+                ],
               });
               await noticesSettled(service);
               expect(pulls.createdIssues).toHaveLength(1);
@@ -7386,14 +8759,20 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               expect(handled(service, id)).toHaveLength(0);
               // PR がマージされて、タスクが完了する
               const pr = taskOf(service, id).pullRequest;
-              pulls.states[7] = { state: "merged", mergedBy: "reviewer", headSha: pr?.commit };
+              pulls.states[7] = {
+                state: "merged",
+                mergedBy: "reviewer",
+                headSha: pr?.commit,
+              };
               await service.checkPullRequests();
               expect(isCompleted(taskOf(service, id))).toBe(true);
               await service.checkPullRequests();
               await service.checkPullRequests();
               expect(followUps()).toHaveLength(1);
               const followUp = followUps()[0];
-              expect(followUp?.title).toBe("[PR #7 follow-up] 後続に回した指摘 implement-1-1");
+              expect(followUp?.title).toMatch(/^\[PR #7 follow-up\] \S/);
+              expect(followUp?.title).not.toContain("implement-1-1");
+              expect(followUp?.title).not.toContain("後続に回した指摘");
               expect(followUp?.body).toContain("後続に回すと人が決めた指摘に対応してください");
               expect(followUp?.body).toContain("直すには新しい保存の仕組みが要り");
               expect(followUp?.body).toContain(
@@ -7425,11 +8804,22 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               svc.decideDeferrals(id, {
                 step: "implement",
                 submission: 2,
-                decisions: [{ remarkId: "implement-1-1", decision: "defer", handling: "issue" }],
+                decisions: [
+                  {
+                    remarkId: "implement-1-1",
+                    decision: "defer",
+                    handling: "issue",
+                  },
+                ],
               });
             const definition = {
               name: "デフォルト",
-              targets: [{ scope: "repo" as const, target: "https://github.com/acme/app" }],
+              targets: [
+                {
+                  scope: "repo" as const,
+                  target: "https://github.com/acme/app",
+                },
+              ],
             };
             /** 後続のタスクを作ると決めて、PR をマージし、タスクを完了させる（後続のタスクを作る直前まで）。 */
             async function completedWithTask(
@@ -7442,7 +8832,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               service.decideDeferrals(id, {
                 step: "implement",
                 submission: 2,
-                decisions: [{ remarkId: "implement-1-1", decision: "defer", handling: "task" }],
+                decisions: [
+                  {
+                    remarkId: "implement-1-1",
+                    decision: "defer",
+                    handling: "task",
+                  },
+                ],
               });
               await noticesSettled(service);
               prepare?.(made);
@@ -7461,7 +8857,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               const { activity, service, pulls, projects, id } = made;
               await settle(service, id);
               // gh に無いアカウント：トークンを取り出せない
-              projects.put("default", { ...definition, githubAccounts: { "github.com": "ghost" } });
+              projects.put("default", {
+                ...definition,
+                githubAccounts: { "github.com": "ghost" },
+              });
               issue(service, id);
               await noticesSettled(service);
               expect(pulls.createdIssues).toHaveLength(0);
@@ -7556,7 +8955,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               // Issue の作成が、終わらない
               pulls.issueGate = new Promise(() => {});
               issue(made.service, id);
-              await waitFor(() => pulls.issueStarted === 1, { what: "Issue の作成の開始" });
+              await waitFor(() => pulls.issueStarted === 1, {
+                what: "Issue の作成の開始",
+              });
               await made.service.checkPullRequests();
               expect(handled(made.service, id)).toHaveLength(0);
               made.activity.close();
@@ -7585,8 +8986,16 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                   verdictOut("changes_required"),
                   rework("implement"),
                   responded([
-                    { remarkId: "implement-1-1", status: "deferred", text: "仕組みが要る" },
-                    { remarkId: "implement-1-2", status: "deferred", text: "範囲の外" },
+                    {
+                      remarkId: "implement-1-1",
+                      status: "deferred",
+                      text: "仕組みが要る",
+                    },
+                    {
+                      remarkId: "implement-1-2",
+                      status: "deferred",
+                      text: "範囲の外",
+                    },
                   ]),
                 ],
                 options(pulls, repos, projectsWithAccount()),
@@ -7598,11 +9007,18 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               ).deps.stopNoticeTimeoutMs = 30;
               await settle(service, id);
               const childId = childOf(service, id);
-              pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+              pulls.prInfo = {
+                ...pulls.prInfo,
+                number: 7,
+                headSha: commitOf(service, id),
+              };
               await runReview(service, childId);
               pulls.feedbackBy[7] = [
                 posted(pulls, 0),
-                item("comment:900", { author: "reviewer", body: "ここも直してほしい" }),
+                item("comment:900", {
+                  author: "reviewer",
+                  body: "ここも直してほしい",
+                }),
               ];
               await service.checkPullRequests();
               await settle(service, id);
@@ -7616,8 +9032,16 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 step: "implement",
                 submission: 2,
                 decisions: [
-                  { remarkId: "implement-1-1", decision: "defer", handling: "issue" },
-                  { remarkId: "implement-1-2", decision: "defer", handling: "issue" },
+                  {
+                    remarkId: "implement-1-1",
+                    decision: "defer",
+                    handling: "issue",
+                  },
+                  {
+                    remarkId: "implement-1-2",
+                    decision: "defer",
+                    handling: "issue",
+                  },
                 ],
               });
               // 1 件目が期限を超えて、失敗が記録されるのを待つ（固定の時間では待たない）
@@ -7648,7 +9072,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 made.pulls.createIssue = async () => fail();
                 issue(made.service, made.id);
                 await vi.waitFor(() => expect(handled(made.service, made.id)).toHaveLength(1));
-                const payload = handled(made.service, made.id)[0]?.payload as { failure?: unknown };
+                const payload = handled(made.service, made.id)[0]?.payload as {
+                  failure?: unknown;
+                };
                 // 同じ台帳で繰り返すので、このタスクを中止しておく（決定済みで、返信するものが無い提出は、提出の直後に、
                 // 同じ PR 番号のレビューの子タスクに判定し直しを始めさせ、次の繰り返しの子タスクが作られなくなる。
                 // 親の中止は、PR の確認が子タスクにも伝える）
@@ -7667,8 +9093,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                   }),
                 );
               };
-              expect(await reasonOf(github(410))).toMatchObject({ code: "github.failed" });
-              expect(await reasonOf(github(422))).toMatchObject({ code: "github.failed" });
+              expect(await reasonOf(github(410))).toMatchObject({
+                code: "github.failed",
+              });
+              expect(await reasonOf(github(422))).toMatchObject({
+                code: "github.failed",
+              });
               expect(await reasonOf(github(502))).toMatchObject({
                 code: "deferral.issueUncertain",
               });
@@ -7685,7 +9115,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               await settle(made.service, id);
               pulls.issueGate = new Promise(() => {});
               issue(made.service, id);
-              await waitFor(() => pulls.issueStarted === 1, { what: "Issue の作成の開始" });
+              await waitFor(() => pulls.issueStarted === 1, {
+                what: "Issue の作成の開始",
+              });
               made.activity.close();
               const again = reopen([], pulls, repos, projects);
               await again.service.cancel(id);
@@ -7710,7 +9142,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               const { activity, service, id } = made;
               const followUp = service.list().find((t) => t.derivedFrom?.taskId === id);
               expect(followUp?.repo).toBe("https://github.com/acme/app");
-              expect(handled(service, id)[0]?.payload).toMatchObject({ taskId: followUp?.id });
+              expect(handled(service, id)[0]?.payload).toMatchObject({
+                taskId: followUp?.id,
+              });
               activity.close();
             });
 
@@ -7822,7 +9256,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 number: 9,
               });
               // 後続のタスクは、sacty が決めた依頼にある PR も候補にしない（後続に回した指摘の記録が無ければ、候補になる文）
-              const unmarked = { ...followUp, derivedFrom: { taskId: id } } as Task;
+              const unmarked = {
+                ...followUp,
+                derivedFrom: { taskId: id },
+              } as Task;
               expect(continuablePullRequest(unmarked)).toEqual({
                 repo: "https://github.com/acme/app",
                 number: 7,
@@ -7841,7 +9278,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               const followUps = () => service.list().filter((t) => t.derivedFrom?.taskId === id);
               expect(followUps()).toHaveLength(1);
               existing = followUps()[0]?.id ?? "";
-              expect(handled(service, id)[0]?.payload).toMatchObject({ taskId: existing });
+              expect(handled(service, id)[0]?.payload).toMatchObject({
+                taskId: existing,
+              });
               // 人が、同じタスクから、目印をまねた文の続きのタスクを作っても、後続のタスクとは見なさない
               const spoof = service.deriveTask(id, {
                 title: "別の続き",
@@ -7863,7 +9302,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               made.service.decideDeferrals(id, {
                 step: "implement",
                 submission: 2,
-                decisions: [{ remarkId: "implement-1-1", decision: "defer", handling: "task" }],
+                decisions: [
+                  {
+                    remarkId: "implement-1-1",
+                    decision: "defer",
+                    handling: "task",
+                  },
+                ],
               });
               await noticesSettled(made.service);
               pulls.states[7] = {
@@ -7874,7 +9319,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               // マージの記録まで（PR の確認の終わりの、後続のタスクの作成は、まだ）
               const settle370 = vi
                 .spyOn(
-                  made.service as unknown as { settleDeferralTasks: () => void },
+                  made.service as unknown as {
+                    settleDeferralTasks: () => void;
+                  },
                   "settleDeferralTasks",
                 )
                 .mockImplementation(() => {});
@@ -7884,7 +9331,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               // 後続のタスクだけ作って、記録の前に止まった
               const created = made.service.deriveTask(
                 id,
-                { title: "後続", body: "依頼", repo: "https://github.com/acme/app" },
+                {
+                  title: "後続",
+                  body: "依頼",
+                  repo: "https://github.com/acme/app",
+                },
                 { remarkId: "implement-1-1" },
               );
               expect(handled(made.service, id)).toHaveLength(0);
@@ -7931,10 +9382,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             const post = (body: unknown) =>
               app.request(`/api/tasks/${id}/deferrals/decide`, {
                 method: "POST",
-                headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+                headers: {
+                  authorization: `Bearer ${token}`,
+                  "content-type": "application/json",
+                },
                 body: JSON.stringify(body),
               });
-            const refused = await post({ step: "implement", submission: 2, decisions: [] });
+            const refused = await post({
+              step: "implement",
+              submission: 2,
+              decisions: [],
+            });
             expect(refused.status).toBeGreaterThanOrEqual(400);
             expect(JSON.stringify(await refused.json())).toContain("deferral.none");
             expect(count(service, id, "DeferralsDecided")).toBe(0);
@@ -7961,7 +9419,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             const made = await reviewed([
               deferred(),
               rework("implement"),
-              responded([{ remarkId: "implement-2-1", status: "addressed", text: "直しました" }]),
+              responded([
+                {
+                  remarkId: "implement-2-1",
+                  status: "addressed",
+                  text: "直しました",
+                },
+              ]),
             ]);
             const { activity, service, executor, pulls, repos, id } = made;
             repos.sameAsParent = false;
@@ -7972,7 +9436,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             // 人が、別の指摘を PR に書く：実装をやり直す
             pulls.feedbackBy[7] = [
               posted(pulls, 0),
-              item("comment:900", { author: "reviewer", body: "ここも直してほしい" }),
+              item("comment:900", {
+                author: "reviewer",
+                body: "ここも直してほしい",
+              }),
             ];
             await service.checkPullRequests();
             expect(taskOf(service, id).status).toBe("queued");
@@ -8000,7 +9467,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         reviewTasks: true,
         gatherer: async (task) => {
           gatheredFor.push(task.id);
-          return { brief: "PAY-100：二重請求をなくす", sources: [{ title: "PAY-100" }] };
+          return {
+            brief: "PAY-100：二重請求をなくす",
+            sources: [{ title: "PAY-100" }],
+          };
         },
       });
       const { activity, service, id } = made;
@@ -8035,7 +9505,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       const done = taskOf(service, childId).gathered;
       activity.close();
       const again = new SqliteActivityStore(dbPath);
-      const restarted = makeService(again, [], { stepPullRequests: true }).service;
+      const restarted = makeService(again, [], {
+        stepPullRequests: true,
+      }).service;
       expect(restarted.get(childId)?.task.gathered).toEqual(done);
       again.close();
     });
@@ -8059,7 +9531,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(taskOf(service, id).gathered).toBeUndefined();
       await service.runNext(childId);
       expect(gatheredFor).toContain(childId);
-      expect(taskOf(service, childId).gathered).toMatchObject({ brief: "子で集めた" });
+      expect(taskOf(service, childId).gathered).toMatchObject({
+        brief: "子で集めた",
+      });
       expect(taskOf(service, childId).gathered?.inheritedFrom).toBeUndefined();
       expect(types(service, childId)).toContain("InformationGathered");
       expect(types(service, childId)).not.toContain("GatheredInherited");
@@ -8197,7 +9671,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         "# 要求要件 v2",
         `\`\`\`json\n${JSON.stringify({
           "sacty-responses": [
-            { remarkId: "requirements-1-1", status: "addressed", text: "条件を足しました" },
+            {
+              remarkId: "requirements-1-1",
+              status: "addressed",
+              text: "条件を足しました",
+            },
           ],
         })}\n\`\`\``,
       ].join("\n\n");
@@ -8209,7 +9687,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           verdictOut("no_findings"),
           verdictOut("no_findings"),
         ],
-        { pulls, reviewTasks: true, projects: projectsWithAccount(), now: () => clock },
+        {
+          pulls,
+          reviewTasks: true,
+          projects: projectsWithAccount(),
+          now: () => clock,
+        },
       );
       const { activity, service, id } = made;
       const childId = childOf(service, id);
@@ -8258,12 +9741,19 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       );
       const { activity, service, id } = made;
       const childId = childOf(service, id);
-      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+      pulls.prInfo = {
+        ...pulls.prInfo,
+        number: 7,
+        headSha: commitOf(service, id),
+      };
       await runReview(service, childId);
       const completed = service
         .get(childId)
         ?.activity.findLast((e) => e.type === "AgentRunCompleted");
-      expect(completed?.payload).toMatchObject({ step: "review", reviewVerdictMissing: "absent" });
+      expect(completed?.payload).toMatchObject({
+        step: "review",
+        reviewVerdictMissing: "absent",
+      });
       expect(completed?.payload).not.toHaveProperty("reviewVerdict");
       expect(taskOf(service, childId).reviewVerdicts).toEqual([{ round: 1, missing: "absent" }]);
       expect(pulls.reviews[0]?.body).toContain(
@@ -8356,6 +9846,52 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it("親がまだ取り込んでいない古い先頭宛ての 2 回目は、3 回目の実際の指示で delivered: false になり、同じ原因の回数に数えさせない（PBI-465）", async () => {
+      const pulls = new FakePulls();
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          verdictOut("changes_required"),
+          out("# 要求要件 v2"),
+          verdictOut("suggestions", "# 評価\n\n2回目の指摘"),
+          out("# 要求要件 v3"),
+          verdictOut("no_findings", "# 評価\n\nマージしてよい"),
+        ],
+        { pulls, reviewTasks: true },
+      );
+      const { activity, service, executor, id } = made;
+      const childId = childOf(service, id);
+      const first = commitOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+      await runReview(service, childId);
+      pulls.feedbackBy[7] = [posted(pulls, 0)];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      const second = commitOf(service, id);
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      pulls.prInfo = { ...pulls.prInfo, headSha: second };
+      await runReview(service, childId);
+      expect(taskOf(service, childId).reviewRound).toBe(2);
+      // 2 回目は親に取り込まれる前に、人の指摘で親が別のコミットを積んだ
+      expect(taskOf(service, id).importedFeedback).toEqual(["review:50"]);
+      pulls.feedbackBy[7] = [posted(pulls, 0), item("comment:h1")];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      const third = commitOf(service, id);
+      expect(third).not.toBe(second);
+      pulls.prInfo = { ...pulls.prInfo, headSha: third };
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      const before = executor.calls.length;
+      await runReview(service, childId);
+      expect(taskOf(service, childId).reviewRound).toBe(3);
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("これは 3 回目のレビューです");
+      expect(prompt).toMatch(/"delivered":\s*false/);
+      activity.close();
+    });
+
     it("レビューした先頭が親の積んだコミットと違っても（ほかで push された）、同じ更新で再レビューを繰り返さない", async () => {
       const pulls = new FakePulls();
       const made = await start(
@@ -8378,7 +9914,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     });
 
     it("指摘の無いレビューは、親に取り込まず差し戻さない。提案だけの回と、評価を読めない回は取り込む（PO の指摘・PBI-145）", async () => {
-      const cases: { name: string; review: string; imported: boolean; verdict?: string }[] = [
+      const cases: {
+        name: string;
+        review: string;
+        imported: boolean;
+        verdict?: string;
+      }[] = [
         {
           name: "指摘なし",
           review: [
@@ -8395,7 +9936,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             "# 評価\n\nマージしてよい",
             block({
               "sacty-review-comments": [
-                { path: "src/retry.ts", line: 2, severity: "should", body: "名前を変える" },
+                {
+                  path: "src/retry.ts",
+                  line: 2,
+                  severity: "should",
+                  body: "名前を変える",
+                },
               ],
             }),
             block({ "sacty-review-verdict": { verdict: "suggestions" } }),
@@ -8410,7 +9956,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             "# 評価",
             block({
               "sacty-review-comments": [
-                { path: "src/retry.ts", line: 2, severity: "must", body: "上限が無い" },
+                {
+                  path: "src/retry.ts",
+                  line: 2,
+                  severity: "must",
+                  body: "上限が無い",
+                },
               ],
             }),
             block({ "sacty-review-verdict": { verdict: "suggestions" } }),
@@ -8434,7 +9985,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         );
         const { activity, service, executor, id } = made;
         const reviewId = childOf(service, id);
-        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          headSha: commitOf(service, id),
+        };
         await runReview(service, reviewId);
         expect(
           pulls.reviews.map((r) => r.number),
@@ -8449,7 +10004,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           expect(task.importedFeedback, c.name).toEqual(["review:50"]);
           expect(taskOf(service, reviewId).reviewVerdicts, c.name).toEqual([
             // 判定のブロックが無い回は、レビューが判定を付けなかったと残す（PBI-378）
-            { round: 1, ...(c.verdict ? { verdict: c.verdict } : { missing: "absent" }) },
+            {
+              round: 1,
+              ...(c.verdict ? { verdict: c.verdict } : { missing: "absent" }),
+            },
           ]);
           expect(task.status, c.name).toBe("queued");
         } else {
@@ -8502,7 +10060,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
     it("親を中止したら、PR が開いたままでも、終わっていない子タスクを中止する（受け入れ条件 6）", async () => {
       const pulls = new FakePulls();
-      const made = await start([out("# 要求要件 v1")], { pulls, reviewTasks: true });
+      const made = await start([out("# 要求要件 v1")], {
+        pulls,
+        reviewTasks: true,
+      });
       const { activity, service, id } = made;
       const childId = childOf(service, id);
       // 中止の片付けで PR を閉じられなかった（PR は開いたまま）
@@ -8520,7 +10081,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
     it("PR のクローズで中止した子タスクは、PR を開き直したら新しい子タスクで作り直す。人が中止した子タスクは作り直さない（受け入れ条件 6）", async () => {
       const pulls = new FakePulls();
-      const made = await start([out("# 要求要件 v1")], { pulls, reviewTasks: true });
+      const made = await start([out("# 要求要件 v1")], {
+        pulls,
+        reviewTasks: true,
+      });
       const { activity, service, id } = made;
       const first = childOf(service, id);
       pulls.states[7] = { state: "closed" };
@@ -8536,7 +10100,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(records.map((r) => r.number)).toEqual([7, 7]);
       const second = records[1]?.taskId ?? "";
       expect(second).not.toBe(first);
-      expect(taskOf(service, second).reviewOf).toEqual({ taskId: id, step: "requirements" });
+      expect(taskOf(service, second).reviewOf).toEqual({
+        taskId: id,
+        step: "requirements",
+      });
       expect(service.queuedTaskIds()).toContain(second);
       // もう一度確かめても、増やさない。人が中止した子タスクも作り直さない
       await service.checkPullRequests();
@@ -8547,7 +10114,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       // 記録は再起動しても読める
       activity.close();
       const again = new SqliteActivityStore(dbPath);
-      const restarted = makeService(again, [], { stepPullRequests: true }).service;
+      const restarted = makeService(again, [], {
+        stepPullRequests: true,
+      }).service;
       expect(restarted.get(id)?.task.reviewTasks).toHaveLength(2);
       again.close();
     });
@@ -8643,7 +10212,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             actor: "sacty",
             event: {
               type: "PullRequestLabeled",
-              payload: { repo: "https://github.com/acme/app", number: 7, label: "sacty-review" },
+              payload: {
+                repo: "https://github.com/acme/app",
+                number: 7,
+                label: "sacty-review",
+              },
             },
           },
         ],
@@ -8693,13 +10266,20 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
     it("sacty が作った PR は、レビュー用のラベル・取り込むラベル・レビューの依頼のどれでも取り込まない。sacty が作っていない PR のレビュー用のラベルは、今までどおりレビューのタスク（受け入れ条件 5）", async () => {
       const { activity, service } = await start([out("# 要求要件 v1")], {
-        settings: new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty" }),
+        settings: new MemorySettingsStore({
+          intakeLabel: "sacty",
+          reviewLabel: "sacty",
+        }),
       });
       expect(
         service.importIssues([
           labeledPr(7),
           labeledPr(7, ["sacty"]),
-          { ...labeledPr(7, []), review: "requested" as const, requestedFor: "me" },
+          {
+            ...labeledPr(7, []),
+            review: "requested" as const,
+            requestedFor: "me",
+          },
         ]),
       ).toEqual([]);
       const [other] = service.importIssues([labeledPr(41, ["sacty"])]);
@@ -8728,15 +10308,35 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       it("判定に指摘のある回（修正が必要・提案あり・読めない）は元のタスクの PR の指摘として取り込み、指摘なしの回は取り込まない", async () => {
         const cases: { name: string; review: string; imported: boolean }[] = [
-          { name: "修正が必要", review: verdictOf("changes_required"), imported: true },
-          { name: "提案あり", review: verdictOf("suggestions"), imported: true },
-          { name: "評価なし", review: "# 評価\n\n直す点がある", imported: true },
-          { name: "指摘なし", review: verdictOf("no_findings"), imported: false },
+          {
+            name: "修正が必要",
+            review: verdictOf("changes_required"),
+            imported: true,
+          },
+          {
+            name: "提案あり",
+            review: verdictOf("suggestions"),
+            imported: true,
+          },
+          {
+            name: "評価なし",
+            review: "# 評価\n\n直す点がある",
+            imported: true,
+          },
+          {
+            name: "指摘なし",
+            review: verdictOf("no_findings"),
+            imported: false,
+          },
         ];
         for (const c of cases) {
           rmSync(dbPath, { force: true });
           const pulls = new FakePulls();
-          pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+          pulls.prInfo = {
+            ...pulls.prInfo,
+            number: 7,
+            url: "https://github.com/acme/app/pull/7",
+          };
           const made = await start(
             [
               out("# 要求要件 v1"),
@@ -8761,7 +10361,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           ).toEqual([7]);
           expect(pulls.reviews[0]?.body, c.name).toContain(`<!-- sacty-review:${manual.id} -->`);
           pulls.feedbackBy[7] = [
-            item("review:50", { kind: "review", author: "me", body: pulls.reviews[0]?.body ?? "" }),
+            item("review:50", {
+              kind: "review",
+              author: "me",
+              body: pulls.reviews[0]?.body ?? "",
+            }),
           ];
           const before = executor.calls.length;
           await service.checkPullRequests();
@@ -8793,7 +10397,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       it("sacty が作った PR をレビューする、人が作ったレビューのタスクは、見守り中に PR の先頭が変わっても再レビューを始めない。PR がマージされたら完了する（PBI-411）", async () => {
         const pulls = new FakePulls();
-        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          url: "https://github.com/acme/app/pull/7",
+        };
         const clock = { offset: 0 };
         const made = await start([out("# 要求要件 v1"), out(verdictOf("suggestions"))], {
           pulls,
@@ -8827,8 +10435,15 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       it("判定の記録が無い回（PR を参照するだけで、レビューの工程を持たないタスク）は取り込まない", async () => {
         const pulls = new FakePulls();
-        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
-        const made = await start([out("# 要求要件 v1"), out("# 調査")], { pulls, planner });
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          url: "https://github.com/acme/app/pull/7",
+        };
+        const made = await start([out("# 要求要件 v1"), out("# 調査")], {
+          pulls,
+          planner,
+        });
         const { activity, service, id } = made;
         // レビューの工程を持たないタスクが、PR を参照する（工程を実行した）
         const other = service.createTask({
@@ -8856,7 +10471,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       it("再レビューも回ごとに判定する（指摘なしの1回目は取り込まず、修正が必要の2回目は取り込む）", async () => {
         const pulls = new FakePulls();
-        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          url: "https://github.com/acme/app/pull/7",
+        };
         const made = await start(
           [
             out("# 要求要件 v1"),
@@ -8906,12 +10525,19 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           githubAccounts: { "github.com": "parent" },
         });
         const pulls = new FakePulls();
-        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+        pulls.prInfo = {
+          ...pulls.prInfo,
+          number: 7,
+          url: "https://github.com/acme/app/pull/7",
+        };
         const made = await start([out("# 要求要件 v1"), out(verdictOf("changes_required"))], {
           pulls,
           projects,
           planner,
-          github: new FakeGitHub({ parent: "ghp_parent", reviewer: "ghp_reviewer" }),
+          github: new FakeGitHub({
+            parent: "ghp_parent",
+            reviewer: "ghp_reviewer",
+          }),
         });
         const { activity, service, id } = made;
         projects.put("default", {
@@ -8993,7 +10619,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         "# 設計 v2（直しの成果）",
         block({
           "sacty-test-viewpoints": [
-            { title: "直しの観点", input: "直しの入力", expected: "直しの期待" },
+            {
+              title: "直しの観点",
+              input: "直しの入力",
+              expected: "直しの期待",
+            },
           ],
         }),
       ].join("\n\n"),
@@ -9009,7 +10639,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       );
       await merge(made, "requirements");
       await made.service.runNext(made.id);
-      expect(taskOf(made.service, made.id).gate).toEqual({ step: "design", submission: 1 });
+      expect(taskOf(made.service, made.id).gate).toEqual({
+        step: "design",
+        submission: 1,
+      });
       made.service.requestChanges(made.id, {
         step: "design",
         submission: 1,
@@ -9049,7 +10682,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         step: "design",
         was: "running",
         stoppedRuns: [runId],
-        discardedRemarks: REMARKS.map((text, i) => ({ id: `design-1-${i + 1}`, text })),
+        discardedRemarks: REMARKS.map((text, i) => ({
+          id: `design-1-${i + 1}`,
+          text,
+        })),
       });
       expectApprovedWithoutNewPr(made, 2);
       const task = taskOf(service, id);
@@ -9057,7 +10693,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(task.approved.design?.testViewpoints).toEqual(first);
       expect(task.remarks.every((r) => r.voided)).toBe(true);
       // get_task と画面が見る PR の状態は、マージ済みになる
-      expect(task.stepPullRequests.find((p) => p.number === 8)).toMatchObject({ state: "merged" });
+      expect(task.stepPullRequests.find((p) => p.number === 8)).toMatchObject({
+        state: "merged",
+      });
       expect(taskPullRequests(task).find((p) => p.number === 8)).toMatchObject({
         role: "design",
         state: "merged",
@@ -9100,7 +10738,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(taskOf(paused.service, paused.id).status).toBe("paused");
       mergeDesign(paused);
       await paused.service.checkPullRequests();
-      expect(stoppedOf(paused)[0]?.payload).toMatchObject({ step: "design", was: "paused" });
+      expect(stoppedOf(paused)[0]?.payload).toMatchObject({
+        step: "design",
+        was: "paused",
+      });
       expectApprovedWithoutNewPr(paused, 2);
       paused.activity.close();
     });
@@ -9125,7 +10766,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       const submitted = taskOf(service, id).testViewpoints;
       mergeDesign(made);
       await service.runNext(id);
-      expect(stoppedOf(made)[0]?.payload).toMatchObject({ step: "design", was: "publishing" });
+      expect(stoppedOf(made)[0]?.payload).toMatchObject({
+        step: "design",
+        was: "publishing",
+      });
       expectApprovedWithoutNewPr(made, 2);
       const task = taskOf(service, id);
       expect(task.outputs.design).toContain("# 設計 v1");
@@ -9156,7 +10800,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     });
 
     it("新しい PR を作る経路では、前の PR を閉じた後の読み直しでマージを見つけたら、新しい PR を作らず、PR に知らせ、プッシュしたブランチは残す（TV-5）", async () => {
-      const made = await toDesignRework([NEW_DESIGN], { projects: projectsWithAccount() });
+      const made = await toDesignRework([NEW_DESIGN], {
+        projects: projectsWithAccount(),
+      });
       const { service, pulls, repos, id } = made;
       // タスクブランチが進んでいる：新しい PR を作る経路
       repos.remote[taskBranchOf(id)] = "e".repeat(40);
@@ -9172,7 +10818,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         "PullRequestMerged",
         "StepApproved",
       ]);
-      expect(stoppedOf(made)[0]?.payload).toMatchObject({ step: "design", number: 8 });
+      expect(stoppedOf(made)[0]?.payload).toMatchObject({
+        step: "design",
+        number: 8,
+      });
       expect(countOf(made, "StepPullRequestPublished")).toBe(2);
       expect(pulls.calls).toHaveLength(2);
       expect(taskOf(service, id).stepBranches).toContain(`${taskBranchOf(id)}-design-2`);
@@ -9199,7 +10848,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         pulls.states[8] = { state: "open" };
         mergeDesign(made);
         await service.checkPullRequests();
-        expect(stoppedOf(made)[0]?.payload).toMatchObject({ step: "design", was: "paused" });
+        expect(stoppedOf(made)[0]?.payload).toMatchObject({
+          step: "design",
+          was: "paused",
+        });
         expect(approvedTail(made)).toEqual([
           "ReworkStoppedByMerge",
           "PullRequestMerged",
@@ -9228,7 +10880,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         pulls.closeFail = undefined;
         service.resume(id, {});
         await service.runNext(id);
-        expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+        expect(taskOf(service, id).gate).toEqual({
+          step: "design",
+          submission: 2,
+        });
         expect(stoppedOf(made)).toHaveLength(0);
         expect(taskOf(service, id).stepBranches.filter((b) => /-design-\d+$/.test(b))).toEqual([
           `${taskBranchOf(id)}-design-1`,
@@ -9261,7 +10916,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         branch,
       ]);
       expect(repos.pushedCommits.filter((p) => p.branch === branch)).toHaveLength(2);
-      expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+      expect(taskOf(service, id).gate).toEqual({
+        step: "design",
+        submission: 2,
+      });
       made.activity.close();
     });
 
@@ -9284,7 +10942,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await merge(made, "requirements");
         pulls.closeFail = "close failed";
         await service.runNext(id);
-        expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+        expect(taskOf(service, id).gate).toEqual({
+          step: "design",
+          submission: 2,
+        });
         expect(countOf(made, "StepPullRequestPublished")).toBe(4);
         expect(taskOf(service, id).status).toBe("awaiting_approval");
         made.activity.close();
@@ -9312,7 +10973,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(taskOf(service, id).stepBranches).toContain(`${taskBranchOf(id)}-design-2`);
       // 実装まで進め、実装の PR の指摘で設計に戻す
       await drain(service);
-      expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
+      expect(taskOf(service, id).gate).toEqual({
+        step: "implement",
+        submission: 1,
+      });
       service.requestChanges(id, {
         step: "implement",
         submission: 1,
@@ -9324,12 +10988,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(repos.pushedCommits.filter((p) => p.branch.endsWith("-design-2"))).toHaveLength(1);
       expect(repos.pushedCommits.map((p) => p.branch)).toContain(branch3);
       expect(pulls.calls.at(-1)).toMatchObject({ branch: branch3 });
-      expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+      expect(taskOf(service, id).gate).toEqual({
+        step: "design",
+        submission: 2,
+      });
       made.activity.close();
     });
 
     it("publish の最中にマージされ、その間に PR の確認が走っても、確認は止めず記録せず、publish の読み直しが1組だけ記録し、PR に知らせが1件書かれる（TV-8）", async () => {
-      const made = await toDesignRework([NEW_DESIGN], { projects: projectsWithAccount() });
+      const made = await toDesignRework([NEW_DESIGN], {
+        projects: projectsWithAccount(),
+      });
       const { service, pulls, id } = made;
       const submittedCommit = designPr(made)?.commit;
       const checks: Promise<void>[] = [];
@@ -9360,7 +11029,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await executor.started.promise;
         const human = "f".repeat(40);
         const mergeCommit = "9".repeat(40);
-        repos.files[mergeCommit] = { [docOf(id, "design")]: "# 人が直した設計\n" };
+        repos.files[mergeCommit] = {
+          [docOf(id, "design")]: "# 人が直した設計\n",
+        };
         pulls.states[8] = mergedState(human, mergeCommit);
         repos.readError = "git が見つからない";
         await service.checkPullRequests();
@@ -9369,7 +11040,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await service.checkPullRequests();
         expect(
           service.get(id)?.activity.findLast((e) => e.type === "PullRequestMerged")?.payload,
-        ).toMatchObject({ edited: true, commit: human, document: { commit: mergeCommit } });
+        ).toMatchObject({
+          edited: true,
+          commit: human,
+          document: { commit: mergeCommit },
+        });
         expect(taskOf(service, id).approved.design).toMatchObject({
           output: "# 人が直した設計",
           edited: { sacty: expect.stringContaining("# 設計 v1") },
@@ -9395,10 +11070,15 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     });
 
     it("直しのコミットを PR に push して更新した後のマージは、これまでどおり記録の後の確認が承認する。作り直しの記録も知らせも書かない（TV-16）", async () => {
-      const made = await toDesignRework([NEW_DESIGN], { projects: projectsWithAccount() });
+      const made = await toDesignRework([NEW_DESIGN], {
+        projects: projectsWithAccount(),
+      });
       const { service, pulls, id } = made;
       await service.runNext(id);
-      expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+      expect(taskOf(service, id).gate).toEqual({
+        step: "design",
+        submission: 2,
+      });
       const commit = designPr(made)?.commit;
       pulls.states[8] = mergedState(commit);
       await service.checkPullRequests();
@@ -9413,7 +11093,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     });
 
     it("マージを承認として扱った知らせは、確認が2回走っても PR に1件だけ書き、残っていた提案の件数を書く。アカウントの無いプロジェクトとセキュリティのタスクには書かない（TV-13）", async () => {
-      const made = await toDesignRework([HOLD], { projects: projectsWithAccount() });
+      const made = await toDesignRework([HOLD], {
+        projects: projectsWithAccount(),
+      });
       const { service, pulls, executor, id } = made;
       void service.runNext(id);
       await executor.started.promise;
@@ -9549,7 +11231,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(made.early).toBe(1);
       expect(stoppedOf(made)).toHaveLength(0);
       expect(taskOf(service, id).approved.design).toBeUndefined();
-      expect(taskOf(service, id).gate).toEqual({ step: "design", submission: 2 });
+      expect(taskOf(service, id).gate).toEqual({
+        step: "design",
+        submission: 2,
+      });
       expect(designPr(made)?.number).toBe(10);
       expect(designPr(made)?.branch).toBe(`${taskBranchOf(id)}-design-2`);
       const notices = pulls.issueComments.filter((c) =>

@@ -280,7 +280,7 @@ The task details look like this.
 
 The top part of the screen shows the following.
 
-- The title, status, steps, actions (pause, cancel, re-review), and tabs are fixed at the top of the screen and stay visible when you scroll.
+- The title, status, steps, actions (pause, cancel, re-review, create a follow-up task), and tabs are fixed at the top of the screen and stay visible when you scroll.
 - When the task is waiting for an approval or a decision, or is paused, the notice appears below the tabs whichever tab is open.
 - While the PR awaiting approval is open, "Sacty AI review" appears below the notice.
   It shows whether a Sacty AI review is attached to the PR's current head (its latest commit): not yet, reviewing, or attached ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
@@ -617,6 +617,8 @@ When the PR of the current submission is not open, or the task is escalated, you
 ### The order of the PRs
 
 Approval in PRs proceeds in this order.
+A task whose plan has no Implementation step (`design-only`, the parent of a Task split, and so on) creates no task branch and opens the Requirements and Design PRs straight against the base branch ([PRs without an implementation](#prs-without-an-implementation)).
+The steps below are for a plan that has an Implementation step.
 
 1. sacty creates a task branch (`sacty/task-<short task ID>`) from the starting commit of the base branch.
 2. The Requirements are written to a file (by default `docs/sacty/<short task ID>/requirements.md`) and opened as a PR to the task branch. When it is merged, sacty records it as approval of the Requirements and the task moves to the next step.
@@ -626,15 +628,40 @@ Approval in PRs proceeds in this order.
    - Implement waits for approval, and merging the PR approves the implementation and moves on to the after-merge watch step. If the target repository has no after-merge watch skill and this step was skipped, the task is completed.
    - In the after-merge watch, sacty follows CI/CD and the deployment, and the task is completed when it ends ([After-merge watch](deployment-watch.en.md)).
 
-When Requirements, Design, and Implementation are all approved in PRs, the branches and PRs look like this (an example where the short task ID is 1a2b3c4d).
+When Requirements, Design, and Implementation are all approved in PRs (a plan with an Implementation step), the branches and PRs look like this (an example where the short task ID is 1a2b3c4d).
 
-![Branches when approving through PRs](images/approval-branches.en.svg)
+![Branches when approving through PRs (a plan with an implementation)](images/approval-branches.en.svg)
 
 The following rules apply to the files and branches.
 
 - If the rules of the repository or the project's context decide where the files go, the Orchestrator follows them.
 - Each child task of a Task split has its own task branch.
-  The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
+  The parent of a split has no Implementation step, so it creates no task branch and opens the parent's Requirements and Design PRs straight against the base branch ("PRs without an implementation" below).
+
+#### PRs without an implementation
+
+A task whose plan has no Implementation step (`design-only`, the parent of a Task split, and so on) creates no task branch.
+The Requirements and Design PRs go from the step branch straight to the base branch (such as main).
+
+![Branches when approving through PRs (a plan without an implementation)](images/approval-branches-direct.en.svg)
+
+- Merging a PR approves that step.
+  When the last step's approval completes the task, the documents (by default `docs/sacty/<short task ID>/`) are on the base branch.
+  A follow-up task (derive) started from the base branch has the earlier task's documents in its workspace.
+  The original task's record gives the document location on the line of each merged PR.
+- An open PR is not recreated when other people's merges move the base branch; the same PR is updated.
+  Only when the PR of an earlier step was merged afterwards (for example, the task went back to Requirements while the Design PR was open) is the earlier PR closed and recreated from the latest base branch that includes that merge.
+  An open PR does not take in the latest base branch, so when other changes edited the same document, resolve the conflict on GitHub when you merge.
+- Because the PR targets the base branch, CI runs.
+  If branch protection requires reviews or checks, follow those rules when merging.
+- sacty does not leave the branches it made on the remote.
+  The branch of a merged PR and the branch of a PR sacty itself closed when recreating are deleted.
+  The branch of a PR a person closed is deleted only if the remote head equals sacty's last push.
+  At completion and at cancel, the sacty branches that remain are deleted with the same rule.
+- The branch of a step PR that a person added commits to is kept, not deleted, and recorded in the activity log (so the person's commits are not lost).
+  When that PR is merged, the branch is deleted. Delete it on GitHub if you do not need it.
+- Among tasks created before the update, one that has neither a task branch nor a Requirements or Design PR yet opens the Requirements PR, started after the update, against the base branch.
+  A task that already has a task branch goes on with PRs to the task branch (it does not switch midway).
 
 In the following cases, no Requirements or Design PRs are created.
 
@@ -694,7 +721,7 @@ The judgment and its reasons are kept and passed to the redo as follows.
 - When there is something for a person to check, the approval screen and the task details show it, and the same content is also commented on the PR ([Things for a person to check](#things-for-a-person-to-check)).
 - After the redo, sacty replies on the PR, per comment, whether it was addressed or why it was not ([Replies to your comments](#replies-to-your-comments)).
 
-When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created.
+When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch (to the base branch in a plan without an implementation) is created.
 When the fix is merged, the PRs of the later steps are recreated.
 The previous open PRs are closed (the implementation PR is updated in place).
 
@@ -714,7 +741,7 @@ When a comment goes back to Design, sacty posts one notice on the implementation
 When a round fixes a comment in Implementation and the approved design document needs a local fix, the design document is fixed inside the implementation PR.
 
 - The notice for work that went back to Design says that it went back, the reason (which decision changes), and what to do next (approve the design PR).
-  - To have the comment fixed in the implementation step instead, write "fix it in the implementation step" in the comment from the next round. The redo of the design has already started.
+  - To have the comment fixed in the implementation instead, write "fix it in the implementation step" in the comment from the next round. The redo of the design has already started.
   - There is one notice per request for changes. The notice is not imported as a comment, and it does not count toward the replies when watching the review.
 - In a round that fixes a local change (wording, one row of a table or list, a default value, adding a row) in Implementation, when the approved design document needs a fix, the implementation gives the fix, and sacty applies it to the approved design and puts it in the same implementation PR.
   - The "Design fixes" section of the PR body lists, for each fix, the before, the after, and the comment. Fixes that were not applied are listed with their reasons.
@@ -732,8 +759,8 @@ If you operate sacty, keep the following in mind.
 
 In a redo started by PR comments, there can be things you have to check yourself: whether your comment was read as you meant it.
 In that case, "N things for you to check" appears on the approval screen and, in the task details, under the approval notice.
-The same content is posted as a comment on the PR, starting with "Sacty：人に確かめてほしいことがあります". The sentence with the task-screen link is followed by "タスクの画面は、依頼した人のマシンでだけ開けます。" (the task screen opens only on the requester's machine) when the screen URL is `127.0.0.1`, `localhost`, or `[::1]`.
-If the result is not what you meant, comment on the PR or request changes on the task screen.
+The same content is posted as a comment on the PR, starting with "Sacty：人に確かめてほしいことがあります". The comment names each remark by a link to its original comment (or, when there is no link, by a one-line gist), and writes no task ID or screen URL.
+If the result is not what you meant, comment on the PR or request changes on the Sacty screen.
 
 It appears in the following cases.
 
@@ -780,16 +807,16 @@ Without opening the sacty screen, you can read, where you commented, whether it 
   When permission is missing, it does not turn the reply into a PR comment and records in the Activity that it could not reply.
   When GitHub's posting limit is hit, it does not turn the reply into a PR comment either, and retries after waiting.
 - For a review body and a regular comment, it posts a PR comment.
-  Its opening sentence shows the kind of the original post (a review body, a regular comment, or a line comment), whether the sacty AI or a person wrote it, and a link to the original.
+  Its opening sentence is `[この指摘](link)への返信です。` (a reply to this remark), with a link to the original post (the kind of the original post and who wrote it are not written).
   A reply to a regular comment quotes the start of the original comment on one line right after the opening (up to 100 characters; secrets are hidden).
   Even when several replies are posted together, the first few lines show which post each one replies to.
-  A reply to a finding handed to the implementation of a taken-over PR shows neither the source nor a quotation. A reply to a finding taken in after the implementation started shows them.
+  A reply to a finding handed to the implementation of a taken-over PR has no quotation. A reply to a finding taken in after the implementation started has one.
 - The reply starts with "対応しました。" (addressed) or "対応していません。理由：" (not addressed, with the reason).
   When it was not addressed, the reason (for example, out of this task's scope) follows.
   For a comment the implementation would rather defer than fix in this PR, the reply says that it is a proposal, that a person is being asked, and that nothing is decided yet ([Deciding the findings proposed for deferral](#deciding-the-findings-proposed-for-deferral)).
   For a suggestion the AI decided before fixing not to handle in this PR, the reply says that the AI decided it, gives the reason for each suggestion it does not handle, and says how to have it fixed ([Sorting AI review suggestions](#sorting-ai-review-suggestions)).
   When the AI declared neither, only the explanation of the response is shown.
-- The end of the reply says "Sacty の<工程名>の工程で、AI が書きました。" (AI wrote this in the <step> step of Sacty; the task ID is not written).
+- The end of the reply says "Sacty の AI が書きました。" (a Sacty AI wrote this; the step name and the task ID are not written).
 - Secret values are hidden and long text is cut.
   Paths inside sacty's workspace are replaced with names a person can follow.
 - A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) also replies the same way, per PR comment passed to the implementation.
@@ -898,7 +925,7 @@ The decisions have the following results.
 | Decide later | It stays in the list |
 
 - sacty records the decisions and the list of those comments in a PR comment.
-  For a comment written on the sacty screen, it shows only the comment's number and the decision (text written on the screen is not put on the PR).
+  Each remark is shown by a link to its original comment and a one-line gist (a copy of the AI review body is not shown; a remark written on the Sacty screen is shown by the gist only). The reason for the proposal stays, with remark IDs and secrets removed. It ends with "意図と違うときは、Sacty の画面で差し戻してください。".
   The Activity shows whether it could comment, or why not.
   It does not comment in a project with no GitHub account chosen, or in security check and security fix tasks.
 - The sacty PR review does not count a comment you decided to defer as unaddressed, and does not raise it again.
@@ -919,8 +946,8 @@ Choose "Handling when deferred" from the following three.
   The created task starts right away like any other task ([Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task)).
   The original PR is already merged, so the follow-up task makes its fix in a new PR.
   The link to the created follow-up task appears under "Results for deferred findings" in the completed task's details.
-- The issue is created right away when you decide with "Defer". Its title is the first line of the comment. The body has the comment, the reason for the proposal, and a link to the original PR.
-  Even for a comment written on the sacty screen, choosing to create an issue puts its text in the issue.
+- The issue is created right away when you decide with "Defer". Its title is "[PR #number follow-up] gist of the remark". The body has the gist and a link to the original comment, the reason for the proposal, and a link to the original PR (no task ID, remark ID, or copy of the AI review body).
+  A follow-up task's title is made the same way (it becomes the title of the PR it opens; no URL, secret value, or internal path goes in). The heading of the instructions to the agent is a fixed "後続に回した指摘への対応" instead of the title, so a sentence written in the title is never read as an instruction.
 - When it could not be created, the reason appears under "Results for deferred findings" in the task details and in the Activity. It is not retried, so create one yourself if you need it.
   The reason an issue could not be created also appears under "Decided" on the approval screen.
   When the reason says the issue may have been created (the request did not finish in time, or sacty stopped partway), check GitHub before you create one.
@@ -989,9 +1016,8 @@ When the body follows the template's headings, sacty fills it as follows.
 
 When sacty uses its own format, the implementation PR body looks as follows.
 
-- The "結論" (conclusion) section at the top holds only a summary of the change and the last fix (followed by the record of moving on despite a failure and what you should confirm, if any).
-- The "レビューの進め方" (How the review goes) section after it has, one sentence per item, Sacty's review (the child task that reviews the PR reviews it and posts the review, the draft is removed when there are no findings, and CI results are checked on the PR) and the AI review state.
-  In a body that follows a template, the same items are at the end of the body, before the approval guidance.
+- The "結論" (conclusion) section at the top holds a summary of the change and the last fix (followed by the record of moving on despite a failure and what you should confirm, if any). It does not have the line "Sacty のタスク…の成果物です", nor an explanation of Sacty's process or the state of the AI review. The task ID is only in a hidden marker.
+- The end of the body has "この PR は Sacty が作成しました。" and two approval sentences ("この PR をマージすると（PR の中で直してからでも）、実装を承認したことになります。" and "直してほしい所は、この PR にコメントかレビューで書いてください。").
 - When an item or the list of what you should confirm, the findings of a record of moving on despite a failure, or the content of a child task is long, the full text goes into the collapsible section "省いた続き" of the body.
   When the whole body exceeds the limit (65,000 characters) and its end is cut, the number of omitted characters and GitHub's limit are written.
 - The approved requirements and design are given as key points and a link to the PR approved by merging.
@@ -1001,13 +1027,13 @@ When sacty uses its own format, the implementation PR body looks as follows.
 - The PR of a child task of a split has a "この PR の範囲（分割の子タスク）" (scope of this PR) section ([Scope of the PR of a child task of a split](#scope-of-the-pr-of-a-child-task-of-a-split)).
 - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated).
   When the implementation's description itself starts with a heading such as "## 変更内容", no empty "変更" heading is put in front of it.
-- The table matching viewpoints to tests is kept short, and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint).
+- "確かめ方" (how it was checked) has a table matching viewpoints to tests (the test is "N 件（file）"; full test names are not listed), and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint). When the only viewpoint is the one line of the request, there is no table, just one line "テスト：N 件（file）".
+- When the requirements were skipped, the body says "要求要件の文書は作らず、依頼の内容を受け入れの基準にしました。". When only the requirements are skipped and the design is approved, it says "依頼の内容と承認済みの設計を受け入れの基準にしました。".
+- If a remark ID is written in the description, Sacty removes it (an ID in parentheses with "への対応" is removed with its parentheses; an ID inside a sentence becomes "指摘").
 
 After the implementation is redone (whether the redo started from a request for changes or from AI review comments), the body describes the whole PR, not only the last fix.
 
-- What the last fix changed is shown separately in a "最後の直し" (last fix) section (and one line in the conclusion).
-  This section is also what remains after the first paragraph that the conclusion's "最後の直し" already shows.
-  When it fits in the conclusion, the section is not shown.
+- What the last fix changed appears once. When the first paragraph fits in the conclusion, it is shown there and the rest goes into a "最後の直し" (last fix) section (no section if nothing remains). When it does not fit (including a bullet list), it is not shown in the conclusion and the whole text goes only into the section.
 - The table of viewpoints and tests also keeps the tests mapped in the earlier submissions.
 
 The following rules apply to the viewpoint-test mapping and to internal paths.
@@ -1124,7 +1150,7 @@ In more detail, each section holds the following.
     A long section is copied up to a limit, and you read the rest in the result file.
   - To answer, comment on that PR. sacty takes the comment in and reflects the answer in the output.
   - If you merge without answering, work goes on to the next step with the recommended answers. This is the same when a must question is left unanswered.
-  - 確かめる所 is a check of sources; the questions a person should decide appear in 確認したいこと. Even when it says "確かめる項目：0件", there may be questions in 確認したいこと.
+  - 確かめる所 is a check of sources; the questions a person should decide appear in 確認したいこと. Even when there is nothing to confirm there, there may be questions in 確認したいこと.
 - 既定で決めたこと
   - A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと.
 
@@ -1163,7 +1189,7 @@ Anything mixed into the middle of the body cannot be removed, so the self-review
 
 For requirements and designs, the deliverable cards and the approval screen show "Items to check: n".
 The items to check may not match your intent, so check them one by one.
-When you approve the requirements or design on a PR, the same content appears under "確かめる所" in the PR body.
+When you approve the requirements or design on a PR, the items to confirm and their grounds appear under "確かめる所" in the PR body (the counts of items and of quotes, derivations, and inferences are not written there).
 
 Which items you need to check is decided by how the basis of each item is classified.
 In the Requirements and Design steps, an agent other than the author sorts the basis of each item (`R-n` of the requirements, `TV-n` of the test viewpoints) into the following three.
@@ -1197,12 +1223,11 @@ The implementation PR is reviewed by the child task that reviews the PR, and onc
 From the end of the Implementation step to the merge, things go in this order.
 
 1. When the Implementation step finishes, sacty pushes the implementation, opens the implementation PR as a draft, and creates the child task that reviews the PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
-   The "レビューの進め方" section of the PR body gets a note about Sacty's review.
 2. The child task reviews the PR and posts the review to the PR. It also reads the CI result at that point.
    - A CI failure caused by the change becomes a "changes required" finding.
    - A failure unrelated to the change is written in the review body as something a person should check.
    - If the CI has not finished, the child task reviews without waiting and writes that the CI is running.
-3. If there are findings, sacty fixes the implementation and updates the PR (putting it back to draft), and the child task reviews it again.
+3. If there are findings, sacty fixes the implementation and updates the PR (putting it back to draft, except a PR whose draft you removed on GitHub), and the child task reviews it again.
 4. When the child task gives "no findings", sacty removes the draft.
 5. Check the PR's CI result, then merge the PR (sacty does not wait for the CI).
    Merging this PR approves the implementation.
@@ -1211,7 +1236,10 @@ In "Related tasks" of the task details, you can see the child task's status, whi
 
 At every PR check (every minute), sacty checks the PR's draft state and sets it as follows.
 
-- If you remove the draft on GitHub before "no findings", sacty turns the PR back into a draft (except stacked PRs; [PRs of dependent child tasks (stacked PRs)](#prs-of-dependent-child-tasks-stacked-prs)).
+- If you remove the draft on GitHub before "no findings", sacty does not turn the PR back into a draft. This holds when it submits a fix, at a PR check, at the start of a review round, and when it retargets a stacked PR, and also after you add commits ([PRs of dependent child tasks (stacked PRs)](#prs-of-dependent-child-tasks-stacked-prs)).
+  The task's activity records "Did not convert PR #number back to a draft (a person marked it ready)", one entry for each time you removed the draft.
+- If sacty cannot read the draft switch history from GitHub, or cannot tell whether sacty or you made the last switch, it does not turn the PR back into a draft either.
+  The activity records the reason as "the switch history could not be read" or "could not tell who switched it last". While the history stays unreadable, only one entry is recorded.
 - If the PR is turned back into a draft on GitHub after sacty removed the draft, sacty removes it again.
   However, if you add commits to the PR after sacty removed the draft, sacty turns the PR back into a draft until the child task re-reviews that head and gives "no findings".
 
@@ -1315,7 +1343,7 @@ If another PR is merged while the task waits for approval and the implementation
 - The task details and the approval screen show that it conflicts and how to merge the base in (send the task back with a comment from this screen, or write a comment on the GitHub PR).
 - The status in "Needs you" (the dashboard and the task list) and in the header notifications also becomes "Implement PR conflicts with the base branch".
   The rows in "Needs you" add "Send it back or comment on the PR to merge the base branch in".
-- It is not shown for Requirements and Design PRs (PRs to the task branch).
+- It is not shown for Requirements and Design PRs (PRs to the task branch, or to the base branch in a plan without an implementation).
 
 sacty only shows it on the screen. It does not merge the base in or start a run on its own.
 It waits until you send the task back or write a comment.
@@ -1453,7 +1481,7 @@ The details of what happens when the dependency's PR is merged are as follows.
 - When the dependency was squash-merged, the diff can show the dependency's changes on top.
   When you send it back or write a comment on the PR, sacty merges in the base branch and redoes it, and the diff goes back to only the child task's changes.
 - When you send the child task back while the base is being changed, sacty does not record the change and updates the PR with the reworked submission.
-  If you sent it back while the draft was being removed, sacty turns it back into a draft.
+  If you sent it back while the draft was being removed, sacty turns it back into a draft, except a PR whose draft you removed.
 - When the child task had not started yet, it starts from the branch the dependency's PR was merged into.
 
 In the following cases, things go differently.
@@ -1463,6 +1491,7 @@ In the following cases, things go differently.
   - They are not in the base branch yet, so child tasks that depend on that child task wait until the dependency's PR is merged.
   - A child task stacked on that child task's PR also waits, without its base being changed, until the dependency's PR is merged.
 - When it cannot be made a draft (the repository cannot use draft PRs, or the change failed), sacty does not make it a normal PR and pauses the child task. Resuming tries again.
+  However, for a PR whose draft you removed, or a PR whose switch history cannot be read or whose last switch cannot be attributed, sacty does not turn it back into a draft when it submits a fix, and moves the child task on to approval without stopping it.
   If you resume after the dependency's PR is merged, sacty opens the PR as a draft without stacking it, like any other PR (the draft is removed when the child task that reviews the PR gives "no findings").
 - When the dependency's PR is fixed (sent back or commented on) and the child task that reviews the PR gives it "no findings" again, the dependent child task takes in the new content when its implementation is redone.
   How it is merged in and how conflicts are handled are the same as in [When the base branch moves ahead](#when-the-base-branch-moves-ahead). It is not merged in while waiting for approval.
@@ -1692,6 +1721,17 @@ In the resume section, you can change the following along with the resume.
   The current settings are selected first, only what you changed is recorded, and it is used from the next run.
   Resuming without deciding the tests does not choose the steps again, so you can change them here ([Deciding the tests on resume](#deciding-the-tests-on-resume)).
 
+#### When a push fails temporarily
+
+When the `git push` that opens a PR or stacks a rework (the implementation PR, a taken-over PR, and the requirements and design PRs) is rejected by what looks like a temporary failure, sacty does not stop. It waits and retries only the push of the same commit (up to 3 times, after 15 seconds, 1 minute, and 3 minutes).
+
+- sacty treats these as temporary: `[remote rejected] ... (failed)`, a GitHub internal error, HTTP 5xx, a rate limit, and a connection failure.
+- The retries and the result (it went through or it did not) show in the task's Activity.
+- A failure that waiting does not change stops at once without a retry: a rejection by protection or a rule, a rejection because the token has no `workflow` scope, a non-fast-forward, and an authentication failure.
+- If you pause or cancel while sacty waits, it stops without pushing.
+- If the push still fails after 3 retries, the task stops. Press "Resume" and sacty redoes the push that stopped without running an agent (if a new comment has reached the PR, it reads the comment and sends the task back).
+- In the reason text of the stop, the `remote:` guidance lines (such as `Create a pull request ...` and URLs) are removed and the failure line comes first. The `remote:` lines that give the reason for a rejection stay.
+
 ### Pausing a task
 
 To stop a task, press "Pause" in the task details.
@@ -1724,6 +1764,7 @@ When the comments that arrived all ask for nothing ("Understood", for example), 
 ### Cancelling and rerunning
 
 Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched).
+In a plan without an implementation, the branch of a step PR that a person added commits to is kept, not deleted (the same applies when the remote head differs from sacty's last push).
 A cancelled task cannot be resumed.
 
 A cancelled task can be started over (a rerun).
@@ -1742,7 +1783,7 @@ It adds the notes and the record of the previous attempt (step outputs, remarks,
 
 You can carry on with follow-up work (handling issues it found, further improvements, and so on) as a separate task based on a completed task's results.
 
-1. In the "Follow-up tasks" section of a completed task's details, press "Create a follow-up task".
+1. In the row of actions at the top of a completed task's details (the same place as "Review again"), press "Create a follow-up task".
 2. In the dialog, write the repository to work in (empty means no repository), the plan, the title, and the description (what to do next).
    The description is required.
 
@@ -1753,7 +1794,7 @@ It adds the original task's record (step outputs, PRs, an earlier version's fina
   You can create as many follow-up tasks from one task as you need.
 - It does not take over a PR in the original task's record.
   To take over an open PR and fix it, write a link to that PR in the title or the description.
-- The tasks you create are listed in the "Follow-up tasks" section, and "Follow-up of" in the properties of a follow-up task's details shows a link to the original task.
+- The tasks you create are listed in the "Follow-up tasks" section of the Overview tab, and "Follow-up of" in the properties of a follow-up task's details shows a link to the original task.
 - The ticket and the intake source (issue or PR) are not carried over (results are not returned to the ticket or issue).
 - From a security check or security fix task, you can create only a follow-up whose plan is "Security fix" or "Security check" ("Security fix" if you don't choose).
   This keeps the report's contents out of public places.
@@ -2026,7 +2067,8 @@ When the Implementation step changes nothing (it decided the requirements are al
    - If no changes is fine, press "Approve". The task becomes "Done (no changes)" without a PR.
    - If changes are needed, write your feedback and request changes. Implementation starts over, and a PR is created if there are changes.
 
-In tasks whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).
+In tasks with an Implementation step whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).
+A plan without an implementation creates no task branch.
 
 If a PR was already created and the implementation redone after a request for changes no longer differs from the base branch at all, the task stops with an error. Decide what to do with the open PR, then cancel the task or request changes again.
 When the redone implementation changes nothing from the content of the PR it published before, the task is handled differently ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)).

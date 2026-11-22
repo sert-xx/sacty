@@ -9,11 +9,20 @@ import { type CodeFence, closesFence, openingFence } from "@sacty/core";
 /** 写す中身の上限（文字）。 */
 export const STEP_QUESTIONS_MAX = 6_000;
 
+export type StepQuestionItem = { kind: "must" | "should"; text: string };
+
 type StepQuestions =
   | { kind: "empty" }
   | { kind: "missing" }
   | { kind: "none" }
-  | { kind: "counted"; must: number; should: number; content: string }
+  | {
+      kind: "counted";
+      must: number;
+      should: number;
+      content: string;
+      /** 問いごとの文（must、should の順）。件数は items の数と同じ。 */
+      items: StepQuestionItem[];
+    }
   | { kind: "uncounted"; content: string };
 
 /** 見出し・札として読む行の長さの上限（これより長い行は読まない。正規表現が長い行で遅くならないようにする）。 */
@@ -134,8 +143,8 @@ function labelOf(line: string): { kind: "must" | "should"; rest: string } | unde
   };
 }
 
-/** must・should の件数。数えられなければ undefined。 */
-function countQuestions(body: string[]): { must: number; should: number } | undefined {
+/** must・should の問いごとの文。数えられなければ undefined。件数は返す items の数で決まる。 */
+function splitQuestions(body: string[]): StepQuestionItem[] | undefined {
   const entries = scan(body.join("\n"));
   const labels: Label[] = [];
   entries.forEach((entry, at) => {
@@ -143,27 +152,51 @@ function countQuestions(body: string[]): { must: number; should: number } | unde
     const label = labelOf(entry.line);
     if (label) labels.push({ ...label, at });
   });
-  const counts: Partial<Record<"must" | "should", number>> = {};
+  const found: Partial<Record<"must" | "should", StepQuestionItem[]>> = {};
   for (let n = 0; n < labels.length; n += 1) {
     const label = labels[n] as Label;
-    if (counts[label.kind] !== undefined) return undefined;
+    if (found[label.kind] !== undefined) return undefined;
     const end = labels[n + 1]?.at ?? entries.length;
-    const range = entries.slice(label.at + 1, end).filter((e) => !e.fenced && e.line.trim());
-    const items = range.flatMap((e) => {
+    const all = entries.slice(label.at + 1, end);
+    const range = all.filter((e) => !e.fenced && e.line.trim());
+    const indents = range.flatMap((e) => {
       const item = LIST_HEAD.exec(e.line);
       return item ? [(item[1] as string).replace(/\t/g, "    ").length] : [];
     });
-    if (label.rest && isNone(label.rest)) counts[label.kind] = 0;
+    // 先頭の行の箇条書きの記号は外す（続きの行・入れ子の行は、そのまま）
+    const asItem = (lines: string[]): StepQuestionItem => ({
+      kind: label.kind,
+      text: [(LIST_HEAD.exec(lines[0] ?? "")?.[2] ?? lines[0] ?? "").trim(), ...lines.slice(1)]
+        .join("\n")
+        .trim(),
+    });
+    if (label.rest && isNone(label.rest)) found[label.kind] = [];
     else if (!label.rest && range.length > 0 && range.every((e) => isNone(e.line)))
-      counts[label.kind] = 0;
-    else if (items.length > 0) {
-      const top = Math.min(...items);
-      counts[label.kind] = items.filter((i) => i === top).length;
-    } else if (label.rest) counts[label.kind] = 1;
+      found[label.kind] = [];
+    else if (indents.length > 0) {
+      const top = Math.min(...indents);
+      const groups: string[][] = [];
+      // 札の行の文と最初の項目より前の導入の行は、最初の項目の文の先頭に足す
+      const lead: string[] = label.rest ? [label.rest] : [];
+      for (const e of all) {
+        const item = e.fenced ? undefined : LIST_HEAD.exec(e.line);
+        const indent = item ? (item[1] as string).replace(/\t/g, "    ").length : -1;
+        if (item && indent === top) groups.push([e.line]);
+        else if (groups.length === 0) {
+          if (e.line.trim() || e.fenced) lead.push(e.line);
+        } else groups[groups.length - 1]?.push(e.line);
+      }
+      found[label.kind] = groups.map((g, i) => {
+        const one = asItem(g);
+        return i === 0 && lead.length > 0
+          ? { kind: one.kind, text: [...lead, one.text].join("\n").trim() }
+          : one;
+      });
+    } else if (label.rest) found[label.kind] = [asItem([label.rest, ...range.map((e) => e.line)])];
     else return undefined;
   }
-  if (counts.must === undefined || counts.should === undefined) return undefined;
-  return { must: counts.must, should: counts.should };
+  if (found.must === undefined || found.should === undefined) return undefined;
+  return [...found.must, ...found.should];
 }
 
 /** 成果物（内部のパスの置き換えと秘密の伏せを済ませたもの）から、「確認したいこと」の節を読み取る。 */
@@ -174,10 +207,11 @@ export function readStepQuestions(output: string | undefined): StepQuestions {
   const text = body.join("\n").trim();
   if (!text) return { kind: "missing" };
   if (isNone(text)) return { kind: "none" };
-  const counts = countQuestions(body);
-  if (!counts) return { kind: "uncounted", content: text };
-  if (counts.must === 0 && counts.should === 0) return { kind: "none" };
-  return { kind: "counted", ...counts, content: text };
+  const items = splitQuestions(body);
+  if (!items) return { kind: "uncounted", content: text };
+  if (items.length === 0) return { kind: "none" };
+  const must = items.filter((i) => i.kind === "must").length;
+  return { kind: "counted", must, should: items.length - must, content: text, items };
 }
 
 /** @ の直後に見えない文字を挟み、@名前で知らない人に通知が飛ばないようにする（`human-ask-notice.ts` の withoutMentions と同じ）。 */
@@ -248,7 +282,7 @@ function openFence(text: string): string | undefined {
 const QUESTIONS_NONE_LINE = "確認したいこと：なし（must・should とも問いはありません）";
 const answerLines = [
   "- 答えるには、この PR にコメントしてください。Sacty が取り込み、答えを成果物に反映します。",
-  "- 答えずにマージすると、推奨の答えで次の工程に進みます（must も同じです）。",
+  "- 答えずにマージすると、推奨の答えで次に進みます（must も同じです）。",
 ];
 
 type StepQuestionsSection = {

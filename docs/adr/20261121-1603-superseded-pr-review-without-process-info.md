@@ -1,10 +1,10 @@
 # PR に投稿するレビューには判断に要る情報だけを書き、Sacty の過程の情報は Sacty の記録に残す
 
 - 日時: 2026-11-21 16:03 UTC
-- ステータス: 採用
+- ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-460
 - 置き換え元: [PR のレビューで親が担当に渡す範囲を差分で決め、観点をどう見たかを本文に書く](20261115-1515-superseded-review-range-decided-by-diff-and-viewpoint-line.md)（本文に観点の見方を1行書く部分）、[観点ごとの担当を 1 件も起動しなかった PR のレビューは、採らずにやり直させ、続いたら止める](20261117-1015-superseded-reject-reviews-that-start-no-reviewers.md)（決定 6 の、本文の最後にエージェント・モデル・担当の数・切り替えを出す部分）
-- 置き換え先: なし
+- 置き換え先: [PR の説明とコメントを、Sacty を使っていない人が読んで判断できる情報だけにする](20261121-2200-pr-description-and-comments-for-decision-only.md)（決定 9 の返信と成果物のコメントの末尾の工程名）
 
 ## 背景
 

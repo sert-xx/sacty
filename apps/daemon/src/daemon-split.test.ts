@@ -836,10 +836,10 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     const child = taskOf(service, b);
     expect(child.stack?.taskId).toBe(a);
     expect(child.pullRequest).toMatchObject({ number: 8, draft: true, awaitingReview: true });
-    // 本文は、付け替えの後にレビューの子タスクが指摘なしにしてから外すと案内する（PR #348 5回目のレビュー提案）
+    // 本文は、付け替えの後にレビューが指摘なしになってから外すと案内する（PR #348 5回目のレビュー提案）
     const stackedBody = pulls.calls.findLast((c) => c.body.includes("に重ねています"))?.body ?? "";
     expect(stackedBody).toContain(
-      "Sacty のレビューの子タスクがこの PR をレビューします。指摘なしになると、ドラフトを外します。",
+      "AI がこの PR をレビューします。指摘なしになると、ドラフトを外します。",
     );
     await service.checkPullRequests();
     expect(taskOf(service, b).reviewTasks).toBeUndefined();
@@ -947,11 +947,15 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     await drain(service);
     // 人が、子の PR の本文の先頭に補足を足した。作業領域へのリンクと、外すと秘密の値（GitHub のトークン ghp_secret）になる文字がある
     const kept = "> 人のメモ：[設計](https://example.com/design) を見ること。";
+    // 本文の最初の見出しの前に足す（先頭の重ねた PR の案内は、付け替えで書き換わるので、その直前に足すと重なる）
+    const original = pulls.bodies[8] ?? "";
+    const at = original.indexOf("\n## 要求要件");
     pulls.bodies[8] = [
+      original.slice(0, at),
+      "",
       kept,
       "> [手順](/workspace/docs/setup.md) に沿う。値は ghp_[s](/workspace)ecret です。",
-      "",
-      pulls.bodies[8] ?? "",
+      original.slice(at),
     ].join("\n");
     merge(pulls, service, a);
     await service.checkPullRequests();
@@ -960,9 +964,9 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     const call = pulls.calls.at(-1);
     expect(call).toMatchObject({ number: 8, baseBranch: "main", retarget: true });
     const updated = call?.body ?? "";
-    expect(
-      updated.startsWith(`${kept}\n> 手順（\`docs/setup.md\`） に沿う。値は [REDACTED] です。\n\n`),
-    ).toBe(true);
+    expect(updated).toContain(
+      `${kept}\n> 手順（\`docs/setup.md\`） に沿う。値は [REDACTED] です。\n`,
+    );
     expect(updated).not.toContain("ghp_secret");
     expect(updated).not.toContain("](/workspace");
     expect(JSON.stringify(service.get(b)?.activity)).not.toContain("ghp_secret");
@@ -1412,7 +1416,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     activity.close();
   });
 
-  it("付け替えで、ドラフトを外す操作の答えを受け取れず、その間にタスクが変わっていたら、ドラフトに戻して記録しない", async () => {
+  it("付け替えで、ドラフトを外す操作の答えを受け取れず、その間にタスクが変わっていたら、最後の外しが sacty のものか決められないので戻さず、記録しない（PBI-468）", async () => {
     const { activity, service, pulls, ids } = await splitParent(chain, [
       implement("# A の実装"),
       implement("# B の実装"),
@@ -1433,15 +1437,107 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     gate.resolve();
     await checking;
     pulls.setDraftAnswerLost = undefined;
-    expect(pulls.draftChanges).toEqual([
-      { number: 8, draft: false },
-      { number: 8, draft: true },
-    ]);
-    expect(pulls.drafts[8]).toBe(true);
+    expect(pulls.draftChanges).toEqual([{ number: 8, draft: false }]);
+    expect(pulls.drafts[8]).toBe(false);
     expect(types(service, b)).not.toContain("PullRequestRetargeted");
-    expect(taskOf(service, b).pullRequest?.draft).toBe(true);
+    // 答えを受け取れなかった外しは、ID なしで記録し、戻さなかったことを「決められなかった」として1件だけ記録する
+    const events = service.get(b)?.activity ?? [];
+    expect(
+      events.filter((e) => e.type === "PullRequestUndraftNoted").map((e) => e.payload),
+    ).toEqual([{ number: 8 }]);
+    expect(
+      events.filter((e) => e.type === "PullRequestRedraftSkipped").map((e) => e.payload),
+    ).toEqual([{ number: 8, reason: "undetermined" }]);
     activity.close();
   });
+
+  /** 指定した種類のイベントの内容（PBI-468）。 */
+  const payloadsOf = (svc: TaskService, id: string, type: string) =>
+    (svc.get(id)?.activity ?? []).filter((e) => e.type === type).map((e) => e.payload);
+
+  it("付け替えで、ドラフトを外す操作を待つ間に差し戻されても、人が外した重ねた PR はドラフトに戻さず、1件だけ記録する（PBI-468）", async () => {
+    const { activity, service, pulls, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      implement("# B の実装"),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    // 人が GitHub でドラフトを外した（sacty の外す要求は、変化なしで答える）
+    const human = pulls.humanUndraft(8);
+    const gate = Promise.withResolvers<void>();
+    pulls.setDraftGate = gate.promise;
+    const checking = service.checkPullRequests();
+    await pulls.setDraftStarted.promise;
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    pulls.setDraftGate = undefined;
+    gate.resolve();
+    await checking;
+    expect(pulls.draftChanges).toEqual([]);
+    expect(pulls.drafts[8]).toBe(false);
+    expect(types(service, b)).not.toContain("PullRequestRetargeted");
+    expect(types(service, b)).not.toContain("PullRequestUndraftNoted");
+    expect(payloadsOf(service, b, "PullRequestRedraftSkipped")).toEqual([
+      { number: 8, reason: "person", eventId: human },
+    ]);
+    activity.close();
+  });
+
+  it("人が外した重ねた PR に、やり直しの実装を提出しても、ドラフトに戻さず、止めずに承認待ちへ進める（PBI-468）", async () => {
+    const { activity, service, pulls, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      implement("# B の実装"),
+      implement("# B の実装 v2"),
+    ]);
+    const [, b] = ids as [string, string];
+    await drain(service);
+    const human = pulls.humanUndraft(8);
+    pulls.setDraftFail = "GraphQL down";
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    await drain(service);
+    const child = taskOf(service, b);
+    expect(child.status).toBe("awaiting_approval");
+    expect(child.gate).toEqual({ step: "implement", submission: 2 });
+    expect(pulls.drafts[8]).toBe(false);
+    expect(
+      (service.get(b)?.activity ?? []).some(
+        (e) =>
+          e.type === "AgentRunFailed" &&
+          renderMessage(e.payload.message, "ja").includes("ドラフトにできませんでした"),
+      ),
+    ).toBe(false);
+    expect(payloadsOf(service, b, "PullRequestRedraftSkipped")).toEqual([
+      { number: 8, reason: "person", eventId: human },
+    ]);
+    activity.close();
+  });
+
+  for (const mode of ["timeline", "draft"] as const) {
+    it(`ドラフトの切り替えの履歴を読めない（${mode}）重ねた PR に、やり直しの実装を提出しても、止めずに承認待ちへ進め、読めなかったことを1件記録する（PBI-468）`, async () => {
+      const { activity, service, pulls, ids } = await splitParent(chain, [
+        implement("# A の実装"),
+        implement("# B の実装"),
+        implement("# B の実装 v2"),
+      ]);
+      const [, b] = ids as [string, string];
+      await drain(service);
+      // ドラフトでない重ねた PR（切り替えの履歴を読めない）
+      pulls.drafts[8] = false;
+      pulls.draftHistoryFail = mode;
+      service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+      await drain(service);
+      const child = taskOf(service, b);
+      expect(child.status).toBe("awaiting_approval");
+      expect(child.gate).toEqual({ step: "implement", submission: 2 });
+      expect(pulls.drafts[8]).toBe(false);
+      expect(payloadsOf(service, b, "PullRequestRedraftSkipped")).toEqual([
+        { number: 8, reason: "unreadable" },
+      ]);
+      activity.close();
+    });
+  }
 
   it("重ねた PR をドラフトにできなければ（ドラフトを使えないリポジトリ・切り替えの失敗）、普通の PR のまま承認待ちにせずに止める", async () => {
     const { activity, service, pulls, ids } = await splitParent(chain, [
@@ -1468,7 +1564,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     expect(pulls.drafts[8]).toBe(true);
     expect(pulls.calls.at(-1)).toMatchObject({ draft: true, requireDraft: true });
 
-    // 人がドラフトを外した PR を、やり直しでドラフトに戻せなければ止める（承認待ちにしない）
+    // ドラフトでなくなった PR（切り替えの履歴に外しが無い）を、やり直しでドラフトに戻せなければ止める（承認待ちにしない）
     pulls.drafts[8] = false;
     pulls.setDraftFail = "GraphQL down";
     service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
@@ -1698,7 +1794,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     ];
     const verdict = (value: string, text: string) =>
       out(`${text}\n\n${block({ "sacty-review-verdict": { verdict: value } })}`);
-    const HEADING = "## この PR の範囲（分割の子タスク）";
+    const HEADING = "## この PR の範囲";
     const SCOPE = "--- この PR の範囲（分割の子タスク） ---";
     const quoted = CONTENT.split("\n")
       .map((l) => (l === "" ? ">" : `> ${l}`))
@@ -1748,9 +1844,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       // 最初の提出の PR の本文
       const first = pulls.bodies[7] ?? "";
       expect(first).toContain(HEADING);
-      expect(first).toContain(
-        "この PR は、親タスク「決済をまるごと作る」をタスク分割で分けた子タスクの1つの PR です。",
-      );
+      expect(first).toContain("この PR は、「決済をまるごと作る」を分けた作業の1つの PR です。");
       expect(first).toContain(quoted);
       // 親タスクの要求要件・設計の全文は、範囲ではないので載せない
       expect(first).not.toContain("親タスクの要求要件（承認済み）");
@@ -1864,9 +1958,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       const body = pulls.bodies[7] ?? "";
       expect(body).toContain(HEADING);
       expect(body).toContain("> - 例の後ろの受け入れ条件");
-      expect(body).toContain(
-        "この PR は、親タスク「決済をまるごと作る」をタスク分割で分けた子タスクの1つの PR です。",
-      );
+      expect(body).toContain("この PR は、「決済をまるごと作る」を分けた作業の1つの PR です。");
       // レビューの指示
       const before = executor.calls.length;
       await runReview(service, pulls, a);
@@ -1892,7 +1984,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       const number = taskOf(service, b).pullRequest?.number ?? 0;
       expect(number).toBeGreaterThan(7);
       expect(pulls.bodies[number]).toContain(
-        "この PR は、親タスク「決済を作り直す」をタスク分割で分けた子タスクの1つの PR です。",
+        "この PR は、「決済を作り直す」を分けた作業の1つの PR です。",
       );
       expect(pulls.bodies[number]).toContain("> - 画面を作る");
       activity.close();

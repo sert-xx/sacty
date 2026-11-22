@@ -77,7 +77,13 @@ export type TestsRunResult = PayloadOf<"TestsRun"> & { at: string };
 /** 前回投稿したレビュー（PBI-111）。round は前回の回、headCommit は前回レビューしたコミット、at は投稿を記録した時刻。 */
 export type PreviousReview = NonNullable<
   PayloadOf<"TaskCreated">["reviewRerequest"]
->["previousReview"];
+>["previousReview"] & {
+  /**
+   * その回を投稿したとき、PR の先頭がレビューした先頭と違っていたときの、その先頭（PBI-465。reviewPost.latestCommit を写す。
+   * 作業履歴の欄は増えない）。親のいないタスクで、その回を親に届かなかった回と見分ける根拠にする。
+   */
+  latestCommit?: string;
+};
 
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
 
@@ -140,6 +146,36 @@ export function canOverrideVerification(task: Task): boolean {
     // 競合の目印が残ったままの実装は、レビューへ進められない（目印を消して提出し直す）
     task.verifyFeedback?.kind !== "merge"
   );
+}
+
+/** PR ごとのドラフトの切り替えの記録（Task.draftTrail。PBI-468）。 */
+export type PullRequestDraftTrail = {
+  /** sacty が外した切り替えの ID（PullRequestUndraftNoted の eventId）。 */
+  undraftIds: string[];
+  /** 最後の PullRequestUndraftNoted が ID を持つか。その記録が無ければ無い。 */
+  lastUndraftHasId?: boolean;
+  /** 前の版が外した記録（PullRequestMarkedReady・ready の PullRequestRetargeted）がある。 */
+  previousVersionUndraft?: true;
+  /** 人が外したので戻さなかった外しの ID（PullRequestRedraftSkipped の person）。 */
+  skippedPersonIds: string[];
+  /** 最後の PullRequestRedraftSkipped の理由。 */
+  lastSkipped?: "person" | "unreadable" | "undetermined";
+  /** 決められなかった（undetermined）ので戻さなかった記録がある。 */
+  undeterminedSkipped?: true;
+};
+
+/** PR のドラフトの切り替えの記録を更新する（前の状態の写しは書き換えない。PBI-468）。 */
+function updateDraftTrail(
+  task: Task,
+  number: number,
+  change: (trail: PullRequestDraftTrail) => PullRequestDraftTrail,
+): void {
+  const key = String(number);
+  const trail = task.draftTrail?.[key] ?? {
+    undraftIds: [],
+    skippedPersonIds: [],
+  };
+  task.draftTrail = { ...task.draftTrail, [key]: change(trail) };
 }
 
 /** sacty が PR に書いた本文の記録（Task.pullRequestBodies）のキー（PBI-334）。 */
@@ -346,6 +382,8 @@ export type TaskRemark = {
   respondedIn?: number;
   /** 対応と一緒に、工程エージェントが人に確かめたいこととして挙げたこと（PBI-301）。対応と同じ提出回のものだけ持つ。 */
   confirm?: string;
+  /** 指摘の要点の1行（PBI-471）。対応と同じ提出回のものだけ持つ。以前の記録には無い。 */
+  gist?: string;
   /** 対応したか、理由があって対応しなかったか（PBI-352）。対応と同じ提出回のものだけ持つ。申告が無ければ無い。 */
   status?: RemarkResponseStatus;
   /** PR のレビュー・コメントから取り込んだ指摘の、元のコメント（PBI-352）。画面から書いた指摘には無い。 */
@@ -385,6 +423,8 @@ export type TaskRemark = {
   deferral?: {
     proposedIn: number;
     reason: string;
+    /** 申告のときの、指摘の要点（PBI-471）。後の提出で対応が無くなっても、後続のタスク・Issue の題に使えるよう残す。 */
+    gist?: string;
     decision?: DeferralDecision;
     /** 後続に回すと決めた指摘の扱い（無ければ、何もしない）。 */
     handling?: DeferralHandling;
@@ -917,6 +957,11 @@ export type Task = {
    */
   pullRequestBodies?: Record<string, string>;
   /**
+   * PR ごとの、ドラフトの切り替えの記録（キーは PR の番号。PBI-468）。sacty が外した切り替えの ID と、ドラフトへ戻さなかった記録
+   * から、人が外した PR をドラフトへ戻さない判定と、記録の重複の判定を、作業履歴から復元する。
+   */
+  draftTrail?: Record<string, PullRequestDraftTrail>;
+  /**
    * PR のリスク評価の最後のもの（PullRequestRiskAssessed。PBI-362）。assessment が無ければ、評価できなかった（reason に理由）。
    * PR の説明（via が publish）と、投稿するレビューのコメント（via が review）に載せる。
    */
@@ -1078,6 +1123,8 @@ export type Task = {
    * 同じコミットなら使い回し、違うコミットのときだけ次の回の名前にする。
    */
   stepBranchCommits?: Record<string, string>;
+  /** 人がコミットを足したので消さずに残す工程のブランチ（PBI-464）。その PR のマージを記録すると外れる。 */
+  stepBranchesKept?: Record<string, { head: string; pushed: string }>;
   /**
    * 要求要件・設計の提出ごとの、成果とテスト観点の写し（StepSubmitted の時点のもの。PBI-462）。直しの間にその工程の PR が
    * マージされたとき、直しの成果を捨てて、承認待ちだった提出の版に戻すために持つ。
@@ -1238,6 +1285,18 @@ export type Task = {
    * commit は待っている先頭。再レビューを始める・見守りを終える・新しく投稿すると消える。
    */
   reviewHold?: { commit: string };
+  /**
+   * レビューの実行を、PR の先頭が変わったために打ち切って、始め直しを待っている（ReviewRunStopped の head_changed。PBI-465）。
+   * from は打ち切った回がレビューしていた先頭、to は打ち切りを決めたときの新しい先頭、at はその時刻。repo・number は、消した
+   * reviewTarget の PR（待ちの間の PR の先頭を、source の無いタスクも同じ PR で読むため）。次の ReviewTargetResolved で消える。
+   */
+  reviewStop?: {
+    from: string;
+    to: string;
+    at: string;
+    repo?: string;
+    number?: number;
+  };
   /**
    * 今の回のレビューの、最後の実行を始めた時刻（AgentRunStarted。PBI-411）。名前は「対象を確かめた時刻」だが、実行を始める
    * たびに上書きする（対象を確かめた時刻が入っているのは、実行を始める前だけ）。レビューが PR のコメントを読むのは、この後
@@ -2066,6 +2125,7 @@ export function applyEvent(
                 respondedIn: submission,
                 // 人に確かめたいことは、同じ提出の中の持ち越し（申告した実行が、まだ提出されていない）のときだけ残す
                 confirm: r.deferral.proposedIn === submission ? r.confirm : undefined,
+                gist: r.deferral.proposedIn === submission ? r.gist : undefined,
                 status: "deferred" as const,
                 submittedIn: submission,
               };
@@ -2075,6 +2135,7 @@ export function applyEvent(
               response: undefined,
               respondedIn: undefined,
               confirm: undefined,
+              gist: undefined,
               status: undefined,
               submittedIn: submission,
             };
@@ -2091,7 +2152,11 @@ export function applyEvent(
             proposed?.decision !== undefined
               ? proposed
               : proposable && response.status === "deferred"
-                ? { proposedIn: submission, reason: response.text }
+                ? {
+                    proposedIn: submission,
+                    reason: response.text,
+                    ...(response.gist ? { gist: response.gist } : {}),
+                  }
                 : response.status === "addressed"
                   ? undefined
                   : proposed;
@@ -2100,6 +2165,7 @@ export function applyEvent(
             response: response.text,
             respondedIn: submission,
             confirm: response.confirm,
+            gist: response.gist,
             status: response.status === "deferred" && !proposable ? undefined : response.status,
             submittedIn: submission,
             ...(deferral ? { deferral } : {}),
@@ -2523,6 +2589,33 @@ export function applyEvent(
       };
       break;
 
+    case "PullRequestUndraftNoted": {
+      const id = event.payload.eventId;
+      updateDraftTrail(task, event.payload.number, (trail) => ({
+        ...trail,
+        lastUndraftHasId: id !== undefined,
+        undraftIds:
+          id !== undefined && !trail.undraftIds.includes(id)
+            ? [...trail.undraftIds, id]
+            : trail.undraftIds,
+      }));
+      break;
+    }
+
+    case "PullRequestRedraftSkipped": {
+      const { reason, eventId } = event.payload;
+      updateDraftTrail(task, event.payload.number, (trail) => ({
+        ...trail,
+        lastSkipped: reason,
+        skippedPersonIds:
+          reason === "person" && eventId !== undefined
+            ? [...trail.skippedPersonIds, eventId]
+            : trail.skippedPersonIds,
+        ...(reason === "undetermined" ? { undeterminedSkipped: true as const } : {}),
+      }));
+      break;
+    }
+
     case "PullRequestBodyResolved":
       // 費用は chargeBudget が足す。本文は、更新した後の PullRequestBodyWritten で記録する
       break;
@@ -2705,6 +2798,12 @@ export function applyEvent(
       if (!pr || pr.number !== event.payload.number) {
         throw new ActivityIntegrityError(event, "not the pull request of the task");
       }
+      if (event.payload.ready && !event.payload.undraftTracked) {
+        updateDraftTrail(task, event.payload.number, (trail) => ({
+          ...trail,
+          previousVersionUndraft: true,
+        }));
+      }
       const { draft: _draft, ...rest } = pr;
       task.pullRequest = {
         ...(event.payload.ready ? rest : pr),
@@ -2783,6 +2882,12 @@ export function applyEvent(
         (!pr.awaitingReview && pr.reviewedCommit === undefined)
       ) {
         throw new ActivityIntegrityError(event, "the pull request is not waiting for the review");
+      }
+      if (!event.payload.undraftTracked) {
+        updateDraftTrail(task, event.payload.number, (trail) => ({
+          ...trail,
+          previousVersionUndraft: true,
+        }));
       }
       const { draft: _draft, awaitingReview: _awaiting, suggestionsLeft: _left, ...rest } = pr;
       task.pullRequest = {
@@ -3307,6 +3412,7 @@ export function applyEvent(
       }
       if (task.reviewTarget) throw new ActivityIntegrityError(event, "already resolved");
       task.reviewTarget = event.payload;
+      task.reviewStop = undefined;
       task.reviewResolvedAt = event.at;
       // 読めなかった回は、前に読めた名前を残す（PR の元のブランチは変わらない。PBI-392）
       if (event.payload.headBranch) task.reviewBranch = event.payload.headBranch;
@@ -3314,6 +3420,11 @@ export function applyEvent(
 
     case "ReviewGitHubRetried":
       // 記録だけ（GitHub の一時的な失敗で、間を置いてやり直した。PBI-301）
+      break;
+
+    case "PushRetried":
+    case "PushRetryEnded":
+      // 記録だけ（PR の push を、一時的な失敗で、間を置いてやり直した・やり直しが終わった。PBI-467）
       break;
 
     case "PullRequestReviewPosted": {
@@ -3355,6 +3466,43 @@ export function applyEvent(
       task.reviewWatchEnded = { reason: event.payload.reason };
       break;
 
+    case "ReviewRunStopped": {
+      // 投稿していないレビューの、実行中・対象の確認中・投稿待ちだけ（PBI-465）。一時停止・完了などでは記録できない。
+      // 始め直しの待ち（reviewStop があって対象が無い）は止める実行が無いので記録しない
+      if (
+        activeStep(task) !== "review" ||
+        task.reviewPost ||
+        (task.status !== "running" && task.status !== "queued" && task.status !== "idle") ||
+        (task.reviewStop && !task.reviewTarget)
+      ) {
+        throw new ActivityIntegrityError(event, "no unposted review run to stop");
+      }
+      task.status = "queued";
+      task.currentRunId = undefined;
+      if (event.payload.reason !== "head_changed") break;
+      // 打ち切った回の、回ごとの記録・今の回の本文と行へのコメントは消す。回の番号と前回の記録は変えない
+      const stopped = task.reviewTarget;
+      const round = task.reviewRound ?? 1;
+      task.reviewStop = {
+        from: event.payload.from,
+        to: event.payload.to ?? event.payload.from,
+        at: event.at,
+        ...(stopped ? { repo: stopped.repo, number: stopped.number } : {}),
+      };
+      task.reviewTarget = undefined;
+      task.reviewResolvedAt = undefined;
+      task.reviewComments = [];
+      task.outputs = Object.fromEntries(
+        Object.entries(task.outputs).filter(([key]) => key !== "review"),
+      );
+      task.reviewVerdicts = task.reviewVerdicts?.filter((v) => v.round !== round);
+      if (task.reviewVerdicts?.length === 0) task.reviewVerdicts = undefined;
+      task.reviewRecords = task.reviewRecords?.filter((r) => r.round !== round);
+      if (task.reviewRecords?.length === 0) task.reviewRecords = undefined;
+      if (task.reviewDispatch?.round === round) task.reviewDispatch = undefined;
+      break;
+    }
+
     case "ReviewRestartHeld":
       if (task.status === "cancelled" || !task.reviewWatch || !task.reviewPost) {
         throw new ActivityIntegrityError(event, "the review is not watched");
@@ -3388,6 +3536,7 @@ export function applyEvent(
           comments: task.reviewComments,
           ...(task.reviewTarget.baseCommit ? { baseCommit: task.reviewTarget.baseCommit } : {}),
           ...(task.reviewTarget.baseBranch ? { baseBranch: task.reviewTarget.baseBranch } : {}),
+          ...(task.reviewPost.latestCommit ? { latestCommit: task.reviewPost.latestCommit } : {}),
           ...(recorded ? { record: recorded.record } : {}),
         };
       }
@@ -3700,8 +3849,17 @@ export function applyEvent(
       task.taskBranch = event.payload;
       break;
 
+    case "StepBranchKept": {
+      if (!task.stepBranches.includes(event.payload.branch)) {
+        throw new ActivityIntegrityError(event, "the step branch is unknown");
+      }
+      const { branch, head, pushed } = event.payload;
+      task.stepBranchesKept = { ...task.stepBranchesKept, [branch]: { head, pushed } };
+      break;
+    }
+
     case "StepBranchPushed":
-      if (!task.taskBranch || activeStep(task) !== event.payload.step) {
+      if (!stepBranchesAllowed(task) || activeStep(task) !== event.payload.step) {
         throw new ActivityIntegrityError(event, "the step is not active");
       }
       if (!task.stepBranches.includes(event.payload.branch)) {
@@ -3716,7 +3874,7 @@ export function applyEvent(
     case "StepPullRequestPublished": {
       const p = event.payload;
       if (
-        !task.taskBranch ||
+        !stepBranchesAllowed(task) ||
         task.status !== "idle" ||
         activeStep(task) !== p.step ||
         task.outputs[p.step] === undefined
@@ -5147,6 +5305,7 @@ export function deferProposals(task: Task): {
 export function decidedDeferrals(task: Task): {
   remarkId: string;
   text: string;
+  gist?: string;
   reason: string;
   decision: DeferralDecision;
   origin?: RemarkOrigin;
@@ -5159,6 +5318,7 @@ export function decidedDeferrals(task: Task): {
           {
             remarkId: r.id,
             text: r.text,
+            ...((r.deferral.gist ?? r.gist) ? { gist: r.deferral.gist ?? r.gist } : {}),
             reason: r.deferral.reason,
             decision: r.deferral.decision,
             ...(r.origin ? { origin: r.origin } : {}),
@@ -5288,6 +5448,32 @@ export function canRetryExport(task: Task, step: StepKey): boolean {
     last?.failed !== undefined &&
     task.approved[step]?.at === last.approvedAt &&
     exportDue(task) === undefined
+  );
+}
+
+/**
+ * タスクブランチを作らずに、要求要件・設計の PR をベースブランチへ直接出す進め方（PBI-464）か。タスクブランチが無く、
+ * 進め方に実装の工程が無いタスク。工程は StepsChosen の後で実装を増減しないので、途中で切り替わらない。
+ */
+export function directStepFlow(task: Task): boolean {
+  return !task.taskBranch && !task.steps.some((s) => s.key === "implement");
+}
+
+/** 工程のブランチ・PR の記録を受け付けるか（タスクブランチがある、または直接の流れ。PBI-464）。 */
+function stepBranchesAllowed(task: Task): boolean {
+  return Boolean(task.taskBranch) || directStepFlow(task);
+}
+
+/**
+ * 人がコミットを足したので消さずに残している工程のブランチ（PBI-464）。その PR のマージを記録したものは含めない
+ * （マージで人のコミットは取り込み済みなので、消してよい）。
+ */
+export function keptStepBranches(task: Task): string[] {
+  return Object.keys(task.stepBranchesKept ?? {}).filter(
+    (branch) =>
+      !task.stepPullRequests.some(
+        (p) => p.branch === branch && (p.state === "merged" || p.state === "merged_outdated"),
+      ),
   );
 }
 

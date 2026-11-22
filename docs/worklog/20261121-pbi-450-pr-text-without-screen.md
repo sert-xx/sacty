@@ -4,7 +4,7 @@
 - タスク: PBI-450
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: [20261121-1800-pr-text-readable-without-screen.md](../adr/20261121-1800-pr-text-readable-without-screen.md)
+- 関係する ADR: [20261121-1800-superseded-pr-text-readable-without-screen.md](../adr/20261121-1800-superseded-pr-text-readable-without-screen.md)
 
 ## 目的
 

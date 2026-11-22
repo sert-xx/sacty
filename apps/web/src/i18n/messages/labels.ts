@@ -515,6 +515,15 @@ const ja = {
       `PR のレビューの子タスクが指摘なしにしたので、PR #${number} のドラフトを外して人の承認待ちにした`,
     PullRequestMarkedReadyWithSuggestions: (number: number) =>
       `残った提案をすべて対応しないとしたので、PR #${number} のドラフトを外して人の承認待ちにした（判定は「提案あり」のまま。再レビューはせず、リスク評価だけを先に 1 回行った）`,
+    PullRequestUndraftNoted: (number: number) => `sacty が PR #${number} のドラフトを外した`,
+    PullRequestRedraftSkipped: (number: number, reason: "person" | "unreadable" | "undetermined") =>
+      `PR #${number} をドラフトへ戻さなかった（${
+        reason === "person"
+          ? "人が外した"
+          : reason === "unreadable"
+            ? "切り替えの履歴を読めなかった"
+            : "最後の切り替えが sacty のものか決められなかった"
+      }）`,
     ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
     WorkspaceFilesSkipped: (count: number) =>
       `読めないファイルが${count}件あり、作業領域の写しには入れなかった（権限など。エージェントが入れたツールの可能性）`,
@@ -524,6 +533,8 @@ const ja = {
       `タスクブランチを作成（${branch}・${commit}）`,
     StepBranchPushed: (step: string, branch: string, commit: string) =>
       `${step}のファイルをブランチにプッシュ（${branch}・${commit}）`,
+    StepBranchKept: (branch: string, head: string, pushed: string) =>
+      `人がコミットを足したので、ブランチを消さずに残す（${branch}・先頭 ${head}・sacty の最後の push ${pushed}）`,
     ReviewTaskCreated: (step: string, number: number) =>
       `${step}の PR #${number} をレビューする子タスクを作成`,
     PullRequestLabeled: (number: number, label: string, created: boolean) =>
@@ -595,6 +606,12 @@ const ja = {
       message: string,
     ) =>
       `GitHub の一時的な失敗のため、${seconds}秒後に${where === "reviewTarget" ? "レビューの対象の PR の確認" : "レビューの投稿"}を自動でやり直す（${attempt}/${maxAttempts}回目。${message}）`,
+    PushRetried: (attempt: number, maxAttempts: number, seconds: number, message: string) =>
+      `git のプッシュが一時的な失敗で拒まれたので、${seconds}秒待ってプッシュをやり直す（${attempt}/${maxAttempts}回目。${message}）`,
+    PushRetryEnded: (outcome: "pushed" | "failed", retries: number) =>
+      outcome === "pushed"
+        ? `プッシュのやり直しが通った（やり直し ${retries}回）`
+        : `プッシュは、${retries}回やり直しても通らなかった`,
     PullRequestReviewPosted: (url: string) => `レビューを PR に投稿した（${url}）`,
     ReviewRestarted: (actor: string) => `再レビューを始めた（${actor}）`,
     ReviewRestartedByUpdate: (commit: string) =>
@@ -607,6 +624,16 @@ const ja = {
       `見守っていた PR の先頭が変わったので、最新のコミットの再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
     ReviewRestartedByReply: (commit: string) =>
       `見守っていた PR に作者が返信したので、同じコミットを判定し直す再レビューを始めた（${commit}。同じコミットには 1 回だけ）`,
+    ReviewRunStopped: (
+      reason: "head_changed" | "merged" | "closed",
+      from: string,
+      to: string | undefined,
+    ): string =>
+      reason === "head_changed"
+        ? `レビューの途中で PR の先頭が ${from} から ${to ?? ""} に変わったので、実行を打ち切った（古い先頭宛てには投稿しない。先頭が落ち着いてから、新しい先頭で始め直す）`
+        : reason === "merged"
+          ? `PR がマージされたので、${from} のレビューの実行を止めた`
+          : `PR がマージされずに閉じられたので、${from} のレビューの実行を止めた`,
     ReviewRestartHeld: (commit: string) =>
       `フォークからの PR の新しいコミット（${commit}）は、自動では再レビューしない（人が再レビューを押すまで待つ）`,
     ReviewWatchEnded: (reason: "merged" | "closed" | "parent_completed"): string =>
@@ -719,14 +746,24 @@ const ja = {
     ContextResolved: (layers: string[], warnings: string[]) =>
       `コンテキストを用意：${layers.join(" → ")}${warnings.length > 0 ? `／注意：${warnings.join(" ")}` : ""}`,
     ContextPlatforms: (
-      platforms: { name: string; from?: string; description: string; allow: string[] }[],
+      platforms: {
+        name: string;
+        from?: string;
+        description: string;
+        allow: string[];
+      }[],
     ) =>
       platforms.length > 0
         ? `使える外部 PF：${platforms.map((p) => `${p.name}（${p.from ?? "config.yaml"}${p.description ? `。${p.description}` : ""}。${p.allow.join("、")}）`).join("・")}`
         : "",
     /** 置いた段階のサブエージェントの定義（PBI-119）。詳細（展開）に出す。 */
     ContextTiers: (
-      tiers: { tier: string; agentId: string; model?: string; reasoningEffort?: string }[],
+      tiers: {
+        tier: string;
+        agentId: string;
+        model?: string;
+        reasoningEffort?: string;
+      }[],
     ) =>
       tiers.length > 0
         ? `段階のサブエージェント：${tiers.map((t) => `${t.tier}＝${t.agentId}${t.model || t.reasoningEffort ? `（${[t.model, t.reasoningEffort].filter(Boolean).join("・")}）` : ""}`).join("、")}`
@@ -1119,7 +1156,11 @@ const en: LabelMessages = {
     files_broken: "the copied session files were missing or broken",
     resume_failed: "the AI did not accept the resume",
   },
-  cleanupResult: { done: "Cleaned up", skipped: "Nothing to clean", failed: "Failed" },
+  cleanupResult: {
+    done: "Cleaned up",
+    skipped: "Nothing to clean",
+    failed: "Failed",
+  },
   event: {
     estimated: " · estimate",
     costUnknown: "cost unknown",
@@ -1310,6 +1351,15 @@ const en: LabelMessages = {
       `The PR's review child task found nothing, so PR #${number} was marked ready (waiting for a person's approval)`,
     PullRequestMarkedReadyWithSuggestions: (number) =>
       `All remaining suggestions were declined, so PR #${number} was marked ready (waiting for a person's approval). The verdict stays "suggestions"; the PR was not reviewed again, and only the risk assessment was run once beforehand`,
+    PullRequestUndraftNoted: (number) => `sacty marked PR #${number} ready for review`,
+    PullRequestRedraftSkipped: (number, reason) =>
+      `Did not convert PR #${number} back to a draft (${
+        reason === "person"
+          ? "a person marked it ready"
+          : reason === "unreadable"
+            ? "the switch history could not be read"
+            : "could not tell who switched it last"
+      })`,
     ContinuedFeedbackPassed: (count) =>
       `Passed the feedback on the taken-over PR to the implementation (${count})`,
     WorkspaceFilesSkipped: (count) =>
@@ -1318,6 +1368,8 @@ const en: LabelMessages = {
     TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
     StepBranchPushed: (step, branch, commit) =>
       `Pushed the ${step} file to a branch (${branch} · ${commit})`,
+    StepBranchKept: (branch, head, pushed) =>
+      `Kept the branch because a person added commits (${branch} · head ${head} · sacty's last push ${pushed})`,
     ReviewTaskCreated: (step, number) => `Created a child task to review the ${step} PR #${number}`,
     PullRequestLabeled: (number, label, created) =>
       `Added the review label "${label}" to PR #${number}${created ? " (created the label)" : ""}`,
@@ -1347,6 +1399,12 @@ const en: LabelMessages = {
     ReviewTargetResolved: (url, commit) => `Confirmed the PR to review (${url} · ${commit})`,
     ReviewGitHubRetried: (where, attempt, maxAttempts, seconds, message) =>
       `Because of a temporary GitHub failure, retrying ${where === "reviewTarget" ? "the check of the PR to review" : "posting the review"} automatically in ${seconds}s (retry ${attempt} of ${maxAttempts}; ${message})`,
+    PushRetried: (attempt, maxAttempts, seconds, message) =>
+      `The git push was rejected by a temporary failure, so pushing again after ${seconds}s (retry ${attempt} of ${maxAttempts}; ${message})`,
+    PushRetryEnded: (outcome, retries) =>
+      outcome === "pushed"
+        ? `The push went through after retrying (${retries} ${retries === 1 ? "retry" : "retries"})`
+        : `The push still failed after ${retries} ${retries === 1 ? "retry" : "retries"}`,
     PullRequestReviewPosted: (url) => `Posted the review to the PR (${url})`,
     ReviewRestarted: (actor) => `Started a re-review (${actor})`,
     ReviewRestartedByUpdate: (commit) =>
@@ -1359,6 +1417,12 @@ const en: LabelMessages = {
       `The head of the watched PR changed, so started a re-review of the latest commit (${commit}; once per commit)`,
     ReviewRestartedByReply: (commit) =>
       `The author replied on the watched PR, so started a re-review that judges the same commit again (${commit}; once per commit)`,
+    ReviewRunStopped: (reason, from, to) =>
+      reason === "head_changed"
+        ? `The head of the PR changed from ${from} to ${to ?? ""} during the review, so stopped the run (nothing is posted for the old head; the review starts again on the new head once it settles)`
+        : reason === "merged"
+          ? `The PR was merged, so stopped the review run of ${from}`
+          : `The PR was closed without merging, so stopped the review run of ${from}`,
     ReviewRestartHeld: (commit) =>
       `A new commit (${commit}) on a PR from a fork is not re-reviewed automatically (waits until a person starts the re-review)`,
     ReviewWatchEnded: (reason) =>
