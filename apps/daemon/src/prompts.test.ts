@@ -2928,14 +2928,63 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(extractBlocks("# 説明", new Set(), [], DECLARE)).not.toHaveProperty("testCommand");
     const empty = `\`\`\`sacty-test-command\n${JSON.stringify({ command: "" })}\n\`\`\``;
     expect(extractBlocks(empty, new Set(), [], DECLARE)).not.toHaveProperty("testCommand");
+    const secret = " secret with spaces ";
+    const protectedOutput = `\`\`\`sacty-test-command\n${JSON.stringify({ command: secret })}\n\`\`\``;
+    expect(
+      extractBlocks(protectedOutput, new Set(), [], {
+        testCommand: true,
+        redactBeforeTruncation: (value) => value.replaceAll(secret, "[REDACTED]"),
+      }).testCommand,
+    ).toBe("[REDACTED]");
   });
 
   it("整形の申告は実装でだけ読み、本文から除く", () => {
     const output = `説明\n\n${JSON.stringify({ "sacty-formatting": { files: [{ path: "a.ts", reason: "依頼された整形" }] } })}`;
     const result = extractBlocks(output, new Set(), [], { formatting: true });
     expect(result.output).toBe("説明");
-    expect(result.formatting).toEqual([{ path: "a.ts", reason: "依頼された整形" }]);
+    expect(result.formatting).toEqual([{ path: "a.ts" }]);
     expect(extractBlocks(output, new Set()).output).toBe(output);
+  });
+
+  it("申告の自由記述は長さの上限で切る前に伏せる", () => {
+    const secret = "secret-across-boundary";
+    const at = (limit: number) => `${"x".repeat(limit - 5)}${secret}`;
+    const output = [
+      JSON.stringify({
+        "sacty-test-map": [{ viewpointId: "TV-1", tests: [], untested: at(1000) }],
+      }),
+      JSON.stringify({
+        "sacty-responses": [{ remarkId: "r1", text: "done", confirm: at(1000), gist: at(120) }],
+      }),
+      JSON.stringify({
+        "sacty-verification": {
+          commands: [
+            {
+              kind: "test",
+              command: "npm test",
+              coverage: "full",
+              status: "passed",
+              note: at(1000),
+              excerpt: at(1000),
+            },
+          ],
+        },
+      }),
+      `\`\`\`sacty-completion\n${JSON.stringify({ status: "incomplete", remaining: [at(300)] })}\n\`\`\``,
+    ].join("\n\n");
+    const result = extractBlocks(output, new Set(["r1"]), [], {
+      completion: true,
+      redactBeforeTruncation: (value) => value.replaceAll(secret, "[REDACTED]"),
+    });
+    expect(result.testMap[0]?.untested).not.toContain("secret");
+    expect(result.responses[0]?.confirm).not.toContain("secret");
+    expect(result.responses[0]?.gist).not.toContain("secret");
+    expect(result.verificationRecord?.commands[0]?.note).not.toContain("secret");
+    expect(result.verificationRecord?.commands[0]?.excerpt).not.toContain("secret");
+    expect(result.completion?.status).toBe("incomplete");
+    if (result.completion?.status === "incomplete") {
+      expect(result.completion.remaining[0]).not.toContain("secret");
+    }
   });
 
   it("実装の各指示に整形の範囲と申告の決まりを含める", () => {
@@ -2963,8 +3012,8 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
       expect(prompt).toContain("作業領域の外の写しで整形しない");
       expect(prompt).toContain("そのファイルを戻してから提出");
       expect(prompt).toContain("sacty-formatting");
-      expect(prompt).toContain("整形だけで変えたファイルのパスと理由");
-      expect(prompt).toContain('"path":"…","reason":"…"');
+      expect(prompt).toContain("整形だけで変えたファイルのパス");
+      expect(prompt).toContain('"path":"…"');
     }
   });
 

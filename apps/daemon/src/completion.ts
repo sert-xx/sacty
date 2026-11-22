@@ -54,10 +54,10 @@ export function implementCompletionLines(): string[] {
  * 残っていることの一覧を読む。空の項目は除き、件数と1件の長さの上限で切る（文字の途中では切らない）。一覧として読めない形
  * （配列でない・文でない項目がある）なら undefined（残っていることがあるかを、決められない）。
  */
-function readRemaining(value: unknown): string[] | undefined {
+function readRemaining(value: unknown, redact: (s: string) => string): string[] | undefined {
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return undefined;
   return (value as string[])
-    .map((item) => cut(item.trim(), COMPLETION_REMAINING_ITEM_MAX))
+    .map((item) => cut(redact(item).trim(), COMPLETION_REMAINING_ITEM_MAX))
     .filter((item) => item.length > 0)
     .slice(0, COMPLETION_REMAINING_MAX);
 }
@@ -72,7 +72,10 @@ function readRemaining(value: unknown): string[] | undefined {
  * - remaining が、文の一覧でない（文字列・文でない項目など）
  * status が complete でも、remaining に残っていることがあれば未完了にする（食い違う申告は、提出に進めない側に倒す）。
  */
-function readDeclaration(body: string): ImplementationCompletion | undefined {
+function readDeclaration(
+  body: string,
+  redact: (s: string) => string,
+): ImplementationCompletion | undefined {
   let value: unknown;
   try {
     value = JSON.parse(body);
@@ -86,7 +89,8 @@ function readDeclaration(body: string): ImplementationCompletion | undefined {
     return undefined;
   }
   // remaining を書いていなければ、残っていることは無い
-  const remaining = declared.remaining === undefined ? [] : readRemaining(declared.remaining);
+  const remaining =
+    declared.remaining === undefined ? [] : readRemaining(declared.remaining, redact);
   if (remaining === undefined) return undefined;
   if (declared.status === "incomplete") return { status: "incomplete", remaining };
   if (declared.status !== "complete") return undefined;
@@ -102,13 +106,16 @@ function readDeclaration(body: string): ImplementationCompletion | undefined {
  * - すべて読めて、すべてが完了のときだけ、完了。最後の申告が完了でも、ほかに未完了の申告があれば、申告なし（どちらを意図
  *   したかを決められない）。
  */
-export function extractCompletion(output: string): {
+export function extractCompletion(
+  output: string,
+  redact: (s: string) => string = (s) => s,
+): {
   output: string;
   completion?: ImplementationCompletion;
 } {
   const taken = takeFences(output, COMPLETION_FENCE);
   const declarations = taken.fences.map((fence) =>
-    fence.closed ? readDeclaration(fence.body) : undefined,
+    fence.closed ? readDeclaration(fence.body, redact) : undefined,
   );
   const last = declarations.at(-1);
   if (last === undefined || declarations.includes(undefined)) return { output: taken.output };

@@ -244,7 +244,7 @@
 ## 整形の検査の記録
 
 `AgentRunStarted` の `formattingBaseline` は起点のツリーと、間の取り込みの前後のツリーを持つ。
-`AgentRunCompleted` の `formatting` は伏せた申告を持ち、`FormattingOnlyRejected` は件数だけを持つ。
+`AgentRunCompleted` の `formatting` は申告のパスを持ち、`FormattingOnlyRejected` は件数だけを持つ。
 `FinalReviewSkipped` の `formatting` は残った件数と申告を持ち、投影は最後の提出の値に置き換える。
 前の版は既存の記録に足した欄を捨てるが、新しい種類を読めない。
 版を戻す前に、作業履歴の `activity` テーブルで `type` が `FormattingOnlyRejected` の行が無いことを確認する。

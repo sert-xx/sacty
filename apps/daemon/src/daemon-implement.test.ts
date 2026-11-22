@@ -413,11 +413,11 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     expect(types(service, id)).not.toContain("FormattingOnlyRejected");
     expect(service.get(id)?.task.formattingCheck).toEqual({
       remained: 0,
-      declared: [{ path: "a.ts", reason: "依頼の整形" }],
+      declared: [{ path: "a.ts" }],
     });
     const finalTask = service.get(id)?.task;
     if (!finalTask) throw new Error("task missing");
-    expect(buildPullRequestBody(finalTask)).toContain("a.ts: 依頼の整形");
+    expect(buildPullRequestBody(finalTask)).toContain("- a.ts");
     activity.close();
   });
 
@@ -459,9 +459,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     };
     await drain(service);
     expect(types(service, id)).not.toContain("FormattingOnlyRejected");
-    expect(service.get(id)?.task.formattingCheck?.declared).toEqual([
-      { path: "a.ts", reason: "依頼の整形" },
-    ]);
+    expect(service.get(id)?.task.formattingCheck?.declared).toEqual([{ path: "a.ts" }]);
     activity.close();
   });
 
@@ -505,9 +503,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       return undefined;
     };
     await drain(service);
-    expect(service.get(id)?.task.formattingCheck?.declared).toEqual([
-      { path: "a.ts", reason: "依頼の整形" },
-    ]);
+    expect(service.get(id)?.task.formattingCheck?.declared).toEqual([{ path: "a.ts" }]);
     activity.close();
   });
 
@@ -960,7 +956,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     },
   );
 
-  it("申告されたパスと理由の秘密値を伏せて照合し、記録と本文に残さない", async () => {
+  it("申告のパスをそのまま照合し、理由は記録しない", async () => {
     const repos = new FakeRepos();
     repos.diffFileList = [{ status: "M", path: "oauth-secret.ts" }];
     const base = repos.tree;
@@ -992,15 +988,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     const result = service.get(id);
     if (!result) throw new Error("task missing");
     expect(types(service, id)).not.toContain("FormattingOnlyRejected");
-    expect(result.task.formattingCheck?.declared).toEqual([
-      { path: "[REDACTED].ts", reason: "[REDACTED] の整形" },
-    ]);
-    expect(JSON.stringify(result.activity)).not.toContain("oauth-secret");
-    expect(buildPullRequestBody(result.task)).not.toContain("oauth-secret");
+    expect(result.task.formattingCheck?.declared).toEqual([{ path: "oauth-secret.ts" }]);
+    expect(JSON.stringify(result.activity)).not.toContain("oauth-secret の整形");
+    expect(buildPullRequestBody(result.task)).toContain("oauth-secret.ts");
     activity.close();
   });
 
-  it("申告理由は実行に使わない秘密値も切り詰める前に伏せる", async () => {
+  it("申告理由は記録しない", async () => {
     const repos = new FakeRepos();
     repos.diffFileList = [{ status: "M", path: "a.ts" }];
     const base = repos.tree;
@@ -1030,9 +1024,23 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     await drain(service);
     const result = service.get(id);
     if (!result) throw new Error("task missing");
-    expect(result.task.formattingCheck?.declared[0]?.reason).toBe(`${"x".repeat(294)}😀[REDA`);
+    expect(result.task.formattingCheck?.declared).toEqual([{ path: "a.ts" }]);
     expect(JSON.stringify(result.activity)).not.toContain("ghp_");
     expect(buildPullRequestBody(result.task)).not.toContain("ghp_");
+    activity.close();
+  });
+
+  it("深く入れ子になった出典申告を受けても実装の完了処理を続ける", async () => {
+    const nested = `${"[".repeat(200)}0${"]".repeat(200)}`;
+    const answer = implement(`# 実装\n\n{"sacty-provenance":${nested}}`);
+    const { activity, service, id } = await toImplement([answer]);
+    await service.runNext(id);
+    const completed = service
+      .get(id)
+      ?.activity.findLast((event) => event.type === "AgentRunCompleted");
+    expect(completed?.type).toBe("AgentRunCompleted");
+    if (completed?.type !== "AgentRunCompleted") throw new Error("missing run");
+    expect(completed.payload.provenance).toBeUndefined();
     activity.close();
   });
 
@@ -1094,104 +1102,46 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
-  it.each(["pause", "cancel"] as const)(
-    "実行前の秘密情報取得が応答しなくても %s できる",
-    async (operation) => {
-      let hold = false;
-      const entered = Promise.withResolvers<void>();
-      const secretStore = {
-        get: async () => {
-          if (!hold) return "oauth-secret";
-          entered.resolve();
-          return new Promise<string>(() => {});
-        },
+  it("実装の申告では上限をまたぐ秘密値を切る前に伏せる", async () => {
+    const secret = "private-boundary-value";
+    const description = `${"x".repeat(995)}${secret}`;
+    const map = block({
+      "sacty-test-map": [{ viewpointId: "TV-1", tests: [], untested: description }],
+    });
+    const verification = block({
+      "sacty-verification": {
+        commands: [
+          {
+            kind: "test",
+            command: "npm test",
+            coverage: "full",
+            status: "passed",
+            note: description,
+            excerpt: description,
+          },
+        ],
+      },
+    });
+    const answer = `# 実装\n\n${map}\n\n${verification}\n\n\`\`\`sacty-completion\n${JSON.stringify({ status: "incomplete", remaining: [`${"y".repeat(295)}${secret}`] })}\n\`\`\``;
+    const { activity, service, executor, id } = await toImplement([implement(answer)]);
+    const run = executor.run.bind(executor);
+    vi.spyOn(executor, "run").mockImplementation(async (input) => {
+      const result = await run(input);
+      if (result.kind !== "completed") return result;
+      const control = input as typeof input & {
+        onControlOutput?: (output: string, secrets: readonly string[]) => void;
       };
-      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
-        secretStore,
-      });
-      hold = true;
-      const before = executor.calls.length;
-      const running = service.runNext(id);
-      await entered.promise;
-      await (operation === "pause" ? service.pause(id) : service.cancel(id));
-      await running;
-      expect(executor.calls).toHaveLength(before);
-      expect(service.get(id)?.task.status).toBe(operation === "pause" ? "paused" : "cancelled");
-      activity.close();
-    },
-  );
-
-  it.each(["failure", "timeout"] as const)(
-    "実行前の秘密情報取得が %s のときは実行せずに停止する",
-    async (mode) => {
-      let fail = false;
-      const secretStore = {
-        get: async () => {
-          if (fail) throw new Error("private credential failure");
-          return "oauth-secret";
-        },
-      };
-      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
-        secretStore,
-      });
-      fail = mode === "failure";
-      const timeout =
-        mode === "timeout"
-          ? vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(AbortSignal.abort())
-          : undefined;
-      const before = executor.calls.length;
-      try {
-        await service.runNext(id);
-        expect(executor.calls).toHaveLength(before);
-        expect(service.get(id)?.task.status).toBe("paused");
-        expect(JSON.stringify(service.get(id)?.activity)).not.toContain(
-          "private credential failure",
-        );
-      } finally {
-        timeout?.mockRestore();
-        activity.close();
-      }
-    },
-  );
-
-  it.each(["pause", "timeout"] as const)(
-    "GitHub の認証取得が応答しない場合も %s で中断する",
-    async (mode) => {
-      const entered = Promise.withResolvers<AbortSignal>();
-      class BlockingGitHub extends FakeGitHub {
-        blocked = false;
-        override async token(host: string, account: string, signal?: AbortSignal): Promise<string> {
-          if (!this.blocked || !signal) return super.token(host, account);
-          entered.resolve(signal);
-          return new Promise<string>(() => {});
-        }
-      }
-      const github = new BlockingGitHub();
-      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
-        github,
-      });
-      const deadline = new AbortController();
-      const timeout =
-        mode === "timeout"
-          ? vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal)
-          : undefined;
-      github.blocked = true;
-      const before = executor.calls.length;
-      try {
-        const running = service.runNext(id);
-        const signal = await entered.promise;
-        if (mode === "pause") await service.pause(id);
-        else deadline.abort();
-        await running;
-        expect(signal.aborted).toBe(true);
-        expect(executor.calls).toHaveLength(before);
-        expect(service.get(id)?.task.status).toBe("paused");
-      } finally {
-        timeout?.mockRestore();
-        activity.close();
-      }
-    },
-  );
+      control.onControlOutput?.(result.output, [secret]);
+      return { ...result, output: result.output.replaceAll(secret, "[REDACTED]") };
+    });
+    await service.runNext(id);
+    const completed = service
+      .get(id)
+      ?.activity.findLast((event) => event.type === "AgentRunCompleted");
+    expect(completed?.type).toBe("AgentRunCompleted");
+    expect(JSON.stringify(completed)).not.toContain("private-boundary");
+    activity.close();
+  });
 
   it("未申告のパスに秘密値があっても、上限後の記録と本文に出さない", async () => {
     const repos = new FakeRepos();
@@ -1318,7 +1268,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
-  it("伏せる秘密値を取得できないときはパスを指示に渡さず受け付ける", async () => {
+  it("検査は実行に使わない秘密値を取得せず整形を検出する", async () => {
     let unavailable = false;
     const secretStore = {
       get: async () => {
@@ -1351,12 +1301,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     repos.tree = submitted;
     unavailable = true;
     await service.runNext(id);
-    expect(types(service, id)).not.toContain("FormattingOnlyRejected");
+    expect(types(service, id)).toContain("FormattingOnlyRejected");
     expect(types(service, id)).not.toContain("TaskPaused");
-    unavailable = false;
-    await drain(service);
-    expect(pulls.calls).toHaveLength(1);
-    expect(JSON.stringify(service.get(id)?.activity)).not.toContain("oauth-secret");
+    expect(pulls.calls).toHaveLength(0);
     activity.close();
   });
 
@@ -3814,7 +3761,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(promptOf(executor, 3)).toContain("- redis：redis:6379 または localhost:6379");
       const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
       expect(started.map((e) => e.type === "ServicesStarted" && e.payload.compose)).toEqual([
-        { name: "infra", commit: "abc1234def5678" },
+        { name: "infra", repo: "https://github.com/acme/test-infra", commit: "abc1234def5678" },
       ]);
       // 認証の値は、作業履歴に残さない
       expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
@@ -6428,7 +6375,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(pulls.calls).toEqual([]);
       expect(service.get(id)?.task.formattingCheck).toEqual({
         remained: 1,
-        declared: [{ path: "a.ts", reason: "依頼された整形" }],
+        declared: [{ path: "a.ts" }],
       });
       expect(
         service.get(id)?.activity.filter((event) => event.type === "FormattingOnlyRejected"),

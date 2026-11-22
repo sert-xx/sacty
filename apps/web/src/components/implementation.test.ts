@@ -64,11 +64,11 @@ describe("整形の検査結果", () => {
   it("申告と残った件数を日英で表示し、申告していないパスは表示しない", () => {
     const t = {
       ...task(review()),
-      formattingCheck: { declared: [{ path: "a.ts", reason: "依頼された整形" }], remained: 2 },
+      formattingCheck: { declared: [{ path: "a.ts" }], remained: 2 },
     };
     const ja = render(t);
     expect(ja).toContain("依頼で求められた整形");
-    expect(ja).toContain("a.ts: 依頼された整形");
+    expect(ja).toContain("a.ts");
     expect(ja).toContain("2 件残っています");
     expect(ja).not.toContain("b.ts");
     const en = render(t, "en");

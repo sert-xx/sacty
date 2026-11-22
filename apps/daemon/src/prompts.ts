@@ -4447,7 +4447,7 @@ export type Extracted = {
   designEdit?: { value: unknown } | { unreadable: true };
   /** 実装の工程が申告した、観点とテストの対応。 */
   testMap: TestMapping[];
-  formatting?: { path: string; reason: string }[];
+  formatting?: { path: string }[];
   /** 実装の工程が、テストの仕組みを用意して申告したテストのコマンド（PBI-94。1〜1000 文字）。 */
   testCommand?: string;
   /**
@@ -4571,8 +4571,11 @@ export function extractBlocks(
     /** 設計の直し（sacty-design-edit。PBI-446）を読み、本文から取り除くか。PR の指摘で実装に戻した回の実装の工程だけ true にする。 */
     designEdit?: boolean;
     formatting?: boolean;
+    redactBeforeTruncation?: (value: string) => string;
+    validViewpointId?: (value: string) => boolean;
   } = {},
 ): Extracted {
+  const redactBeforeTruncation = options.redactBeforeTruncation ?? ((value: string) => value);
   let responses: RemarkResponse[] | undefined;
   let testViewpoints: TestViewpoint[] | undefined;
   let viewpointPositions: (string | undefined)[] | undefined;
@@ -4580,12 +4583,14 @@ export function extractBlocks(
   let proposalSeen = false;
   let designEdit: Extracted["designEdit"];
   let testMap: TestMapping[] | undefined;
-  let formatting: { path: string; reason: string }[] | undefined;
+  let formatting: { path: string }[] | undefined;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
-  const declared = options.testCommand ? extractTestCommandFences(output) : { output };
+  const declared = options.testCommand
+    ? extractTestCommandFences(output, redactBeforeTruncation)
+    : { output };
   // 完了の申告（PBI-347）も、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く
   const completed = options.completion
-    ? extractCompletion(declared.output)
+    ? extractCompletion(declared.output, redactBeforeTruncation)
     : { output: declared.output };
   const body = completed.output;
   const used: JsonCandidate[] = [];
@@ -4618,11 +4623,10 @@ export function extractBlocks(
       read = true;
       const files = (declaredFormatting as Record<string, unknown>).files;
       if (!formatting && Array.isArray(files)) {
-        formatting = files.flatMap((entry): { path: string; reason: string }[] => {
+        formatting = files.flatMap((entry): { path: string }[] => {
           if (!entry || typeof entry !== "object") return [];
           const path = text(entry.path);
-          const reason = typeof entry.reason === "string" ? entry.reason : "";
-          return path && reason ? [{ path, reason }] : [];
+          return path ? [{ path }] : [];
         });
       }
     }
@@ -4639,11 +4643,24 @@ export function extractBlocks(
       testMap ??= map
         .map((m): TestMapping => {
           const r = (m ?? {}) as Record<string, unknown>;
-          const tests = Array.isArray(r.tests) ? r.tests.map(text).filter(Boolean) : [];
+          const tests = Array.isArray(r.tests)
+            ? r.tests
+                .map((value: unknown) =>
+                  text(typeof value === "string" ? redactBeforeTruncation(value) : ""),
+                )
+                .filter(Boolean)
+            : [];
           // テストを書かずに差分で確かめる観点（実行される振る舞いの無い変更）。テストがあれば、テストの対応にする
-          const untested = text(r.untested).slice(0, UNTESTED_REASON_MAX);
+          const untested = text(
+            typeof r.untested === "string" ? redactBeforeTruncation(r.untested) : "",
+          ).slice(0, UNTESTED_REASON_MAX);
           return {
-            viewpointId: text(r.viewpointId),
+            viewpointId:
+              typeof r.viewpointId === "string" &&
+              options.validViewpointId &&
+              !options.validViewpointId(text(r.viewpointId))
+                ? text(redactBeforeTruncation(r.viewpointId))
+                : text(r.viewpointId),
             tests,
             ...(tests.length === 0 && untested ? { untested } : {}),
           };
@@ -4659,21 +4676,29 @@ export function extractBlocks(
       read = true;
       if (!proposalSeen) {
         proposalSeen = true;
-        proposal = toProposal(proposed as Record<string, unknown>, changeable);
+        proposal = toProposal(
+          proposed as Record<string, unknown>,
+          changeable,
+          redactBeforeTruncation,
+        );
       }
     }
     if (Array.isArray(list)) {
       read = true;
       responses ??= list
         .map((r) => {
-          const confirm = text(r?.confirm).slice(0, CONFIRM_MAX);
+          const confirm = text(
+            typeof r?.confirm === "string" ? redactBeforeTruncation(r.confirm) : "",
+          ).slice(0, CONFIRM_MAX);
           // 指摘の要点（PBI-471）。改行・前後の空白を除いて1行にし、上限で切って記録する
-          const gist = normalizeGist(text(r?.gist));
+          const gist = normalizeGist(
+            text(typeof r?.gist === "string" ? redactBeforeTruncation(r.gist) : ""),
+          );
           // 対応したか・しなかったかの申告（PBI-352）。知らない値・無い申告は、無いものとして扱う
           const status = RemarkResponseStatus.safeParse(r?.status);
           return {
             remarkId: text(r?.remarkId),
-            text: text(r?.text),
+            text: text(typeof r?.text === "string" ? redactBeforeTruncation(r.text) : ""),
             ...(status.success ? { status: status.data } : {}),
             ...(confirm ? { confirm } : {}),
             ...(gist ? { gist } : {}),
@@ -4712,7 +4737,7 @@ export function extractBlocks(
   const testCommand = "testCommand" in declared ? declared.testCommand : undefined;
   const testCommandInvalid = "invalid" in declared ? declared.invalid : undefined;
   // 検証の記録（PBI-305）。最後のものだけを使い、どの記録も本文からは取り除く
-  const verification = extractVerificationRecord(body);
+  const verification = extractVerificationRecord(body, redactBeforeTruncation);
   // 見出しはあるが JSON として読めない直しは、読めなかったものとして扱う（本文には残る）
   if (options.designEdit && !designEdit && body.includes(`"${DESIGN_EDIT_HEADING}"`)) {
     designEdit = { unreadable: true };
@@ -4747,7 +4772,10 @@ export function extractBlocks(
  * - 中身が JSON のオブジェクトで、command が 1〜1000 文字の文字列なら、その command（複数あれば最後のもの）
  * - 中身が読めない・形が違う・閉じていないフェンスが1つでもあれば invalid（申告が無いものとして扱わない）
  */
-export function extractTestCommandFences(output: string): {
+export function extractTestCommandFences(
+  output: string,
+  redact: (value: string) => string = (value) => value,
+): {
   output: string;
   testCommand?: string;
   invalid?: true;
@@ -4770,7 +4798,7 @@ export function extractTestCommandFences(output: string): {
         ? (value as Record<string, unknown>).command
         : undefined;
     const command = typeof raw === "string" ? raw.trim() : "";
-    if (command && command.length <= 1000) testCommand = command;
+    if (command && command.length <= 1000) testCommand = redact(raw as string).trim();
     else invalid = true;
   }
   return {
@@ -4807,12 +4835,17 @@ function viewpointsWithPositions(list: unknown[]): {
 function toProposal(
   raw: Record<string, unknown>,
   changeable: readonly StepKey[],
+  redact: (value: string) => string = (value) => value,
 ): ExtractedProposal | undefined {
   const target = changeable.find((s) => s === raw.target);
-  const reason = text(raw.reason);
-  const proposed = text(raw.proposed);
+  const reason = text(typeof raw.reason === "string" ? redact(raw.reason) : "");
+  const proposed = text(typeof raw.proposed === "string" ? redact(raw.proposed) : "");
   if (!target || !reason || !proposed) return undefined;
-  const facts = Array.isArray(raw.facts) ? raw.facts.map(text).filter(Boolean) : [];
+  const facts = Array.isArray(raw.facts)
+    ? raw.facts
+        .map((value: unknown) => text(typeof value === "string" ? redact(value) : ""))
+        .filter(Boolean)
+    : [];
   const viewpoints =
     target === "design" && Array.isArray(raw.testViewpoints)
       ? toViewpoints(raw.testViewpoints)
@@ -4895,7 +4928,7 @@ function implementVerificationLines(task: Task, selfReview = true): string[] {
     "--- 提出の前の検証 ---",
     "- 整形はリポジトリが定めるコマンドと設定だけで行う。ほかのツール（依存に無いものを npx で取る場合を含む）・ほかの設定・作業領域の外の写しで整形しない",
     "- 依頼で変えたファイルの外が整形だけで変わったら、そのファイルを戻してから提出する。sacty は整形だけの変更を検査し、未申告のファイルがあれば出し直しを求める",
-    '- 依頼が整形を求めるときは、整形だけで変えたファイルのパスと理由を `{"sacty-formatting":{"files":[{"path":"…","reason":"…"}]}}` の形式で提出に申告する',
+    '- 依頼が整形を求めるときは、整形だけで変えたファイルのパスを `{"sacty-formatting":{"files":[{"path":"…"}]}}` の形式で提出に申告する',
     // 文書だけの依頼（documentsOnly）は、文書に効く検証に限る（セルフレビューの文書向けの規則と食い違わせない。型チェックは命じない）
     task.documentsOnly === true
       ? "- リポジトリが定める、文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査など。AGENTS.md・CONTRIBUTING・README の開発手順、CI の設定、パッケージの設定やタスクランナーの定義で探す）を、PR に入る変更すべて（あなたが足したファイルを含む）に対して実行し、通してから提出する。変更したファイルだけに絞れるツールは絞ってよいが、変更したファイルの種類を、対象から外さない。テスト・ビルド・型チェック・コードのリンターは実行しない（文書だけの依頼の決まり）"
@@ -6399,7 +6432,7 @@ function formattingBodyLines(task: Task, style: "##" | "bold"): string[] {
       ? [
           style === "##" ? "## 依頼で求められた整形" : "**依頼で求められた整形**",
           "",
-          ...check.declared.map(({ path, reason }) => `- ${path}: ${reason}`),
+          ...check.declared.map(({ path }) => `- ${path}`),
           "",
         ]
       : []),

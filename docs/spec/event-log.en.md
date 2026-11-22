@@ -214,7 +214,7 @@ Code: `apps/web/src/lib/labels.ts` (`describeEvent`), `apps/web/src/lib/step-cos
 
 ## Formatting check records
 
-The `formattingBaseline` on `AgentRunStarted` holds the baseline tree and the trees before and after intervening merges. The `formatting` on `AgentRunCompleted` holds redacted declarations, and `FormattingOnlyRejected` holds only the count. The `formatting` on `FinalReviewSkipped` holds the remaining count and declarations; the projection replaces it with the latest submission's value.
+The `formattingBaseline` on `AgentRunStarted` holds the baseline tree and the trees before and after intervening merges. The `formatting` on `AgentRunCompleted` holds declared paths, and `FormattingOnlyRejected` holds only the count. The `formatting` on `FinalReviewSkipped` holds the remaining count and declarations; the projection replaces it with the latest submission's value.
 
 An earlier version discards fields added to existing records but cannot read the new event type. Before downgrading, check the `activity` table for rows whose `type` is `FormattingOnlyRejected`. If any exist, use a fixed version instead of downgrading.
 

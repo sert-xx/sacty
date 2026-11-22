@@ -24,7 +24,7 @@ export const VERIFICATION_HEADING = "sacty-verification";
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
 /** 1件の申告を読む。形の合わないもの（種類・コマンド・結果が無い）は捨てる。 */
-function readCommand(raw: unknown): VerificationCommand | undefined {
+function readCommand(raw: unknown, redact: (s: string) => string): VerificationCommand | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const r = raw as Record<string, unknown>;
   const kind = (VERIFICATION_KINDS as readonly string[]).includes(text(r.kind))
@@ -41,12 +41,15 @@ function readCommand(raw: unknown): VerificationCommand | undefined {
   // 実装の工程は、自分で実行したものだけを申告する
   return {
     kind,
-    command,
+    command: text(typeof r.command === "string" ? redact(r.command) : ""),
     coverage,
-    note: text(r.note).slice(0, VERIFICATION_NOTE_MAX),
+    note: text(typeof r.note === "string" ? redact(r.note) : "").slice(0, VERIFICATION_NOTE_MAX),
     status,
     ...(exitCode !== undefined ? { exitCode } : {}),
-    excerpt: text(r.excerpt).slice(0, VERIFICATION_EXCERPT_MAX),
+    excerpt: text(typeof r.excerpt === "string" ? redact(r.excerpt) : "").slice(
+      0,
+      VERIFICATION_EXCERPT_MAX,
+    ),
     by: "self-review",
   };
 }
@@ -56,7 +59,10 @@ function readCommand(raw: unknown): VerificationCommand | undefined {
  * 記録が無い・形が合わない・1件も読めなければ record は無い。最後の記録が JSON として読めない（末尾のカンマなど）ときも、
  * 前の記録には戻らず、記録なしにする（前の記録は、最後の変更より前の結果でありうるため。PR #309 のレビュー）。
  */
-export function extractVerificationRecord(output: string): {
+export function extractVerificationRecord(
+  output: string,
+  redact: (s: string) => string = (s) => s,
+): {
   record?: VerificationRecord;
   spans: HeadingSpan[];
 } {
@@ -85,7 +91,7 @@ export function extractVerificationRecord(output: string): {
       : undefined;
   if (!Array.isArray(list)) return { spans };
   const commands = list
-    .map((c) => readCommand(c))
+    .map((c) => readCommand(c, redact))
     .filter((c): c is VerificationCommand => c !== undefined)
     .slice(0, VERIFICATION_COMMANDS_MAX);
   return commands.length > 0 ? { record: { commands }, spans } : { spans };

@@ -1472,7 +1472,7 @@ const AgentRunCompleted = z.object({
      */
     costUnknown: z.boolean().optional(),
     output: z.string(),
-    formatting: z.array(z.object({ path: z.string(), reason: z.string() })).optional(),
+    formatting: z.array(z.object({ path: z.string() })).optional(),
     /** 指摘への対応（再提出のとき）。PBI-2の作業履歴には無い。 */
     responses: z.array(RemarkResponse).default([]),
     /** 設計の工程で作ったテスト観点。PBI-7までの作業履歴には無い。 */
@@ -2723,7 +2723,9 @@ const ServicesStarted = z.object({
       }),
     ),
     /** 共用の compose（PBI-70）から起動したとき、その名前と、取得したコミット。 */
-    compose: z.object({ name: z.string(), commit: z.string() }).optional(),
+    compose: z
+      .object({ name: z.string(), commit: z.string(), repo: z.string().optional() })
+      .optional(),
     /** 実装の検証（最終レビューの中のテスト）のための起動か（無ければ工程のエージェントの実行）。 */
     forTests: z.boolean().optional(),
     /** 複数のサービスが使うため、localhost に転送しなかった番号（ホスト・コンテナのポート。PBI-60）。 */
@@ -2917,7 +2919,7 @@ const FinalReviewSkipped = z.object({
     formatting: z
       .object({
         remained: z.number().int().nonnegative(),
-        declared: z.array(z.object({ path: z.string(), reason: z.string() })),
+        declared: z.array(z.object({ path: z.string() })),
       })
       .optional(),
     /**

@@ -203,6 +203,7 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
   Its title is `[PR #<number>] <parent title>` (a form that does not depend on the language; up to 200 characters; a long parent title is cut with `…` without splitting a character), its project is the parent's, and its budget cap is `budget.default_per_task_usd` (the child task's cost counts toward the child task's budget).
   It is separate from split subtasks (`parent`), and is not waited for by a split or included in an integration review.
   When the parent task has information it gathered at its start, the child task inherits it and does not run the information gatherer ([Information gathering](tasks-and-steps.en.md#information-gathering)).
+  For an implementation PR, the child uses the parent implementation service record associated with the reviewed head ([Services](services.en.md#when-services-start)).
 - Review scope: for a requirements or design PR whose task still has an implementation step, the child task's review is narrowed to direction and gaps (implementation details and test-viewpoint details are left to the later implementation PR review; [Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks)). Implementation PRs and document PRs of tasks with no remaining implementation are not narrowed.
 - `ReviewTaskCreated` (the child task's ID, step, and PR) is recorded on the parent (`Task.reviewTasks`).
   One per PR (repository and number). A PR with a record does not get another when updated. When the PR is recreated (new number), one is created for the new PR.
@@ -1284,6 +1285,6 @@ Code: `apps/daemon/src/service.ts` (`requestChanges`, `decideChange`), `packages
 
 ## Formatting declarations and remaining count
 
-The body of an implementation PR created by sacty lists paths and reasons for requested formatting under “依頼で求められた整形”. If formatting-only files remain after the retry limit, it shows only their count. Sacty leaves an inherited PR's title and body unchanged and displays declarations and the count in task details.
+The body of an implementation PR created by sacty lists paths for requested formatting under “依頼で求められた整形”. If formatting-only files remain after the retry limit, it shows only their count. Sacty leaves an inherited PR's title and body unchanged and displays declarations and the count in task details.
 
 Code: `apps/daemon/src/prompts.ts`, `apps/web/src/components/implementation.tsx`

@@ -139,9 +139,9 @@ export function Implementation({ task }: { task: Task }) {
             <>
               <h3 className="font-semibold">{m.formattingDeclared}</h3>
               <ul className="list-disc pl-5">
-                {task.formattingCheck.declared.map(({ path, reason }) => (
+                {task.formattingCheck.declared.map(({ path }) => (
                   <li key={path} className="break-words">
-                    {path}: {reason}
+                    {path}
                   </li>
                 ))}
               </ul>
