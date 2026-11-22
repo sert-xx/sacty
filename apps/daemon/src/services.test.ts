@@ -801,7 +801,7 @@ describe("共用の compose の起動（PBI-70）", () => {
           child.stdout.emit("data", JSON.stringify(normalized({ db: { image: "db" } })));
           child.emit("close", 0);
         } else if (args[0] === "network" && args[1] === "create") {
-          child.stderr.emit("data", "secret-value");
+          child.stderr.emit("data", "network unavailable: secret-value");
         } else child.emit("close", 0);
       });
       return child;
@@ -825,6 +825,7 @@ describe("共用の compose の起動（PBI-70）", () => {
 
     const result = await runner.startGroup({ runId: "timeout-network", members });
     expect(result).toMatchObject({ ok: false, message: { code: "services.failed" } });
+    expect(JSON.stringify(result)).toContain("network unavailable");
     expect(JSON.stringify(result)).not.toContain("secret-value");
   });
   it("複数の compose は衝突を起動前に検査し、同じネットワークで起動して片付ける", async () => {
