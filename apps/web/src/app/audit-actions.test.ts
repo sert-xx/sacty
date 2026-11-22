@@ -82,7 +82,7 @@ describe("提案の採用（PBI-124）", () => {
     expect(
       await adoptAuditProposalAction({}, form({ proposalId: "x", target, note: "足したい" })),
     ).toEqual({
-      message: "手入れの種類（補足・差し替え）を選んでください。",
+      message: "手入れの種類は、補足か差し替えを選んでください。",
       note: "足したい",
     });
     expect(

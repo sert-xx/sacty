@@ -1,7 +1,8 @@
 import type { ScheduleView, Task } from "@sacty/core";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import { CardSection } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
 import { DeleteScheduleButton, ScheduleDialog } from "@/components/schedule-dialog";
@@ -11,9 +12,34 @@ import { Hint } from "@/components/ui/hint";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getSchedule, listProjects } from "@/lib/daemon";
 import { formatStamp, statusText, statusTone } from "@/lib/labels";
+import { notFoundMetadata } from "@/lib/not-found-metadata";
 import { projectSchedulesPath, taskPath } from "@/lib/paths";
 import { repoNameOf } from "@/lib/repo-name";
 import { ruleText } from "@/lib/schedule-form";
+
+/** 描く部品と `generateMetadata` が同じ読み込みを共有する（デーモンへの問い合わせは 1 回）。 */
+const loadPage = cache(async (id: string, scheduleId: string) => {
+  const [projects, found] = await Promise.all([listProjects(), getSchedule(scheduleId)]);
+  return { project: projects.find((p) => p.id === id), found };
+});
+
+/** 無いプロジェクト・スケジュールタスク、別のプロジェクトのスケジュールタスクのときは、無いページのタイトルにする。 */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string; scheduleId: string }>;
+}): Promise<Metadata> {
+  const { id, scheduleId } = await params;
+  try {
+    const { project, found } = await loadPage(id, scheduleId);
+    if (!project || !found || found.schedule.projectId !== project.id) {
+      return await notFoundMetadata();
+    }
+  } catch {
+    // 取れなければ既定のタイトル
+  }
+  return {};
+}
 
 /**
  * スケジュールタスクの詳細。設定（予定・作るタスクの内容）と、このスケジュールタスクが作ったタスクの一覧を出す。
@@ -39,9 +65,7 @@ async function Schedule({ params }: { params: Promise<{ id: string; scheduleId: 
   let project: Awaited<ReturnType<typeof listProjects>>[number] | undefined;
   let found: Awaited<ReturnType<typeof getSchedule>>;
   try {
-    const [projects, detail] = await Promise.all([listProjects(), getSchedule(scheduleId)]);
-    project = projects.find((p) => p.id === id);
-    found = detail;
+    ({ project, found } = await loadPage(id, scheduleId));
   } catch (error) {
     if (error instanceof DaemonUnavailableError) {
       return (

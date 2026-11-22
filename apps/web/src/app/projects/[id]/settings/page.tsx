@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { DeleteProjectSection } from "@/components/delete-project";
 import { ProjectEditor } from "@/components/project-editor";
@@ -18,9 +18,15 @@ import {
   getStatus,
 } from "@/lib/daemon";
 import { projectImages } from "@/lib/labels";
+import { notFoundMetadata } from "@/lib/not-found-metadata";
 import { PROJECTS_PATH } from "@/lib/paths";
 
-/** ブラウザーのタイトルは見出しと同じ文言にする。プロジェクトを取れなければ、既定のタイトルのまま。 */
+const loadProject = cache((id: string) => getProject(id));
+
+/**
+ * ブラウザーのタイトルは見出しと同じ文言にする。プロジェクトが無ければ無いページのタイトル、デーモンに届かないなど
+ * 取れなければ既定のタイトルのまま。
+ */
 export async function generateMetadata({
   params,
 }: {
@@ -28,8 +34,9 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   try {
-    const view = await getProject(id);
-    if (view) return { title: (await getMessages()).projects.settingsTitle(view.project.name) };
+    const view = await loadProject(id);
+    if (!view) return await notFoundMetadata();
+    return { title: (await getMessages()).projects.settingsTitle(view.project.name) };
   } catch {
     // 取れなければ既定のタイトル
   }
@@ -71,7 +78,7 @@ async function ProjectSettings({
   const t = messages.projects;
   let view: Awaited<ReturnType<typeof getProject>>;
   try {
-    view = await getProject(id);
+    view = await loadProject(id);
   } catch (error) {
     if (error instanceof DaemonUnavailableError) return <DaemonError message={error.message} />;
     throw error;

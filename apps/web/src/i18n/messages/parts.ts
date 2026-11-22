@@ -37,7 +37,7 @@ const ja = {
     testsPassed: "テスト合格",
     testsPassedEnvironment: "テスト合格（環境による失敗のみ）",
     environmentPassNote: (exitCode: number | undefined, workspaceOnly: boolean, flaky = false) =>
-      `終了コードは ${exitCode ?? "申告なし"} ですが、${workspaceOnly ? "失敗が Sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため" : flaky ? "失敗が環境によるものか、差分と無関係で実行し直すと結果が変わる（既知の不安定なテストは、実行し直しを省いた）ものだけと最終レビューで判断したため（失敗の内容は「人が確かめること」にあります）" : "失敗がすべて環境によるものと最終レビューで判断したため（失敗の内容は「人が確かめること」にあります）"}、合格にしました。`,
+      `終了コードは ${exitCode ?? "申告なし"} ですが、${workspaceOnly ? "失敗が Sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため" : flaky ? "失敗が環境によるものか、差分と無関係で実行し直すと結果が変わるものだけと最終レビューで判断したため" : "失敗がすべて環境によるものと最終レビューで判断したため"}、合格にしました。${flaky ? "既知の不安定なテストは、実行し直しを省きました。" : ""}${workspaceOnly ? "" : "失敗の内容は「人が確かめること」にあります。"}`,
     testsFailed: "テスト不合格",
     verified: "観点を検証している",
     notVerified: "観点を検証していない",
@@ -393,7 +393,7 @@ const en: PartsMessages = {
     testsPassed: "Tests passed",
     testsPassedEnvironment: "Tests passed (environment failures only)",
     environmentPassNote: (exitCode, workspaceOnly, flaky = false) =>
-      `The exit code is ${exitCode ?? "not reported"}, but the run counts as passed because ${workspaceOnly ? "the only failures came from Sacty's own working files, which are not part of the repository's checks" : flaky ? 'the final review judged every failure to be environmental, or unrelated to the diff with a result that changes when rerun (for a known flaky test, the reruns were skipped) (the failures are listed under "For a person to check")' : 'the final review judged every failure to be environmental (the failures are listed under "For a person to check")'}.`,
+      `The exit code is ${exitCode ?? "not reported"}, but the run counts as passed because ${workspaceOnly ? "the only failures came from Sacty's own working files, which are not part of the repository's checks" : flaky ? "the final review judged every failure to be environmental, or unrelated to the diff with a result that changes when rerun" : "the final review judged every failure to be environmental"}.${flaky ? " The reruns were skipped for a known flaky test." : ""}${workspaceOnly ? "" : ' The failures are listed under "For a person to check".'}`,
     testsFailed: "Tests failed",
     verified: "Verifies the viewpoint",
     notVerified: "Does not verify the viewpoint",

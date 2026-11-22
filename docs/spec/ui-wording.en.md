@@ -13,7 +13,9 @@ Related ADR: [Split screen wording into body and hints, and show explanations of
 - Write the product name as Sacty in both Japanese and English, including the header, browser title, sign-in page, activity, and errors. Keep identifiers such as commands, settings keys, cookies, label names, and paths unchanged.
 - The body says only what is happening now and what to do next. How things work, reasons, numbers such as intervals and limits, settings file locations and definitions of terms go into a hint or are left out.
 - One message is one sentence. Headings, labels and statuses are nouns, and buttons are verbs. The length guide is 40 characters in Japanese and 80 in English.
-- No parenthesized notes in the body. Parentheses only attach a number or an ID (for example "PR #12", "3rd").
+- No parenthesized notes in a sentence (guidance or an error in the body, ending with a period or "?"). Parentheses only attach a number with a unit ("3 items"), an ID ("PR #12", "PBI-477"), or a format name (`JSONL`).
+  A message that takes arguments may also put a command, file name, path, ID, number, or name identifier itself in parentheses. Parentheses for a reason or an explanation are not allowed.
+- A heading, label, or choice may use parentheses for a short word. Keep it under 14 characters in Japanese and 30 in English.
 - Explanatory sentences become a status noun or a short imperative.
 - Internal roles (Orchestrator, step agent) appear only when a person's decision needs them.
 - Never say the same thing twice (heading and note, body and hint).
@@ -60,9 +62,14 @@ Code: `apps/web/src/components/ui/hint.tsx` (`Hint`, `WithHint`), `apps/web/src/
 - The wording lives in per-area dictionaries, and the type of the Japanese dictionary is applied to English. A message missing in one language is a type error.
 - Hint keys are `hint` and `*Hint`. Decision guidance keys are `*Help` (guidance of up to two sentences that stays in the body), checked as body text.
 - A test checks the string leaves of the dictionaries in both languages. Messages that take arguments (functions) are not checked.
-  - The body contains no line break, is within 60 characters in Japanese and 130 in English, and contains no parenthesized note of 14 or more characters in Japanese or 30 or more in English.
+  - The body contains no line break and is within 60 characters in Japanese and 130 in English.
+  - Parentheses are checked with the two languages of a key as a pair.
+    If either is a sentence (a period outside parentheses followed by a space or the end, "。", or an ending in "?", "!", or "…"), the contents of the parentheses in both must be only a number with a unit, an ID (preceded only by `PR`, `PBI`, or `Issue`), or a format name from the list (`FORMAT_NAMES`), regardless of length.
+    A "." inside a word (`Node.js`), an abbreviation (`e.g.`, `i.e.`, `etc.`), and a "。" inside parentheses do not make a sentence.
+    Anything else (a label, heading, or choice) must not contain a parenthesized note of 14 or more characters in Japanese or 30 or more in English.
   - Hints are within 150 characters in Japanese and 320 in English.
-  - Exceptions are listed with the key path and the reason (parentheses in headings, two-sentence guidance and so on).
+  - Exceptions to the line-break and length rules are in `EXCEPTIONS`, and exceptions to the parentheses rule are in `PAREN_EXCEPTIONS`, each with the key path and the reason.
+    A parentheses exception is only a key with a reason for the parentheses (a word added to a heading or label), and it skips the parentheses checks. Keys in `EXCEPTIONS` are still checked for parentheses.
 - Messages the daemon creates and the screen shows (reasons for pauses and failures, intake errors and so on) are shown as they are in the core dictionary. They are errors and reasons, shared with the CLI and Slack notifications, so the screen rules do not apply to them.
 
-Code: `apps/web/src/i18n/index.ts` (`messagesFor`), `apps/web/src/i18n/wording-policy.test.ts` (`EXCEPTIONS`), `packages/core/src/messages.ts` (`renderMessage`)
+Code: `apps/web/src/i18n/index.ts` (`messagesFor`), `apps/web/src/i18n/wording-policy.test.ts` (`EXCEPTIONS`, `PAREN_EXCEPTIONS`, `parenViolations`), `packages/core/src/messages.ts` (`renderMessage`)

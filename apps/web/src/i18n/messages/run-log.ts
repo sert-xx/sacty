@@ -24,8 +24,8 @@ const ja = {
   stderr: "標準エラー出力",
   stderrEmpty: "標準エラー出力はありません。",
   shown: (shown: number, total: number) =>
-    `出来事が多いため、最初と最後の${shown}件ずつを出しています（全${total}件）。残りは生のファイルにあります。`,
-  skipped: (n: number) => `…${n}件を省略（生のファイルにあります）…`,
+    `出来事が多いため、最初と最後の${shown}件ずつを出しています。全部で${total}件で、残りは生のファイルにあります。`,
+  skipped: (n: number) => `…${n}件を省略。生のファイルにあります…`,
   clipped: "……（長いため先頭と末尾だけ。全文は生のファイルにあります）……",
   notFound: "この実行のセッションログはありません。",
   notFoundHelp: "ログを残す前の実行か、エージェントを起動する前に止まった実行です。",
@@ -123,7 +123,7 @@ const en: RunLogMessages = {
   stderrEmpty: "No standard error output.",
   shown: (shown: number, total: number) =>
     `Many events, so the first and last ${shown} of ${total} are shown. The rest is in the raw file.`,
-  skipped: (n: number) => `… ${n} events omitted (they are in the raw file) …`,
+  skipped: (n: number) => `… ${n} events omitted. They are in the raw file …`,
   clipped: "…… (Long: only the beginning and the end. The raw file has the full text.) ……",
   notFound: "There is no session log for this run.",
   notFoundHelp:

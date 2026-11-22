@@ -54,7 +54,7 @@ const ja = {
     stepReset: "既定に戻す",
     stepCustomized: "指定あり",
     taskImage: "タスクのイメージ",
-    taskImageNote: "すべての工程（工程の中のテストも含む）を、このイメージで実行します。",
+    taskImageNote: "工程の中のテストも含め、すべての工程をこのイメージで実行します。",
     stepAgent: "エージェント",
     stepImageAuto: "自動",
     stepAgentDefault: (name?: string) => (name ? `既定：${name}` : "既定"),
@@ -83,7 +83,7 @@ const ja = {
     repositoriesEmpty: "候補はありません。",
     repositoriesNoAnswer: "応答を受け取れませんでした",
     noRepository:
-      "対象のリポジトリがありません。プロジェクトの設定で対象（Org・リポジトリ）を追加してください。",
+      "対象のリポジトリがありません。プロジェクトの設定で、Org かリポジトリを対象に追加してください。",
     projectSettings: "プロジェクトの設定を開く",
     close: "閉じる",
     createFailed:
@@ -181,7 +181,7 @@ const en: FormsMessages = {
     repositoriesEmpty: "No suggestions.",
     repositoriesNoAnswer: "no answer was received",
     noRepository:
-      "No target repository. Add targets (orgs or repositories) in the project settings.",
+      "No target repository. Add an org or a repository as a target in the project settings.",
     projectSettings: "Open project settings",
     close: "Close",
     createFailed:

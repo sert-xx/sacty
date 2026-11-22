@@ -332,7 +332,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
       "PR #7 の AI のレビューの指摘（sert-xx）を2件取り込んだ",
     );
     expect(imported([{ source: "sacty_review" }, {}])).toBe(
-      "PR #7 の指摘（sert-xx）を2件取り込んだ（うち AI のレビューの指摘 1件）",
+      "PR #7 の指摘（sert-xx）を2件取り込んだ。うち AI のレビューの指摘は 1件",
     );
     // 一時停止の間に届いて、未反映として残した指摘（PBI-279）
     const heldImport = event({
@@ -985,7 +985,9 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
           },
         } as never),
       ),
-    ).toBe("PR #7 の CI が失敗していた（abcdef1。CI、test ほか2件）。sacty は何も始めない");
+    ).toBe(
+      "PR #7 の CI が失敗していた（abcdef1）。失敗した検査は CI、test ほか2件。sacty は何も始めない",
+    );
     // 読んでいる間に通って、表示を消したこと（PBI-375）
     expect(
       describeEvent(
@@ -1064,10 +1066,10 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       discardedFeedback: "review",
     });
     expect(describeEvent(running)).toBe(
-      "PR #7 がマージされたため、実装の作り直しを止めた（実行中・実行1件を停止）。作り直しに渡す前の指摘1件を捨てた（implement-2-1）。やり直しに渡すはずだった最終レビューの結果を捨てた。マージを承認として進める",
+      "PR #7 がマージされたため、実装の作り直しを止めた。段階は実行中で、実行1件を停止した。作り直しに渡す前の指摘1件を捨てた（implement-2-1）。やり直しに渡すはずだった最終レビューの結果を捨てた。マージを承認として進める",
     );
     expect(describeIn(running, labels.en)).toBe(
-      "PR #7 was merged, so the rework of the implementation was stopped (running, 1 run stopped). Discarded 1 comment not yet passed to the rework (implement-2-1). Discarded the final review result meant for the next attempt. The merge is taken as the approval",
+      "PR #7 was merged, so the rework of the implementation was stopped. Stage: running, 1 run stopped. Discarded 1 comment not yet passed to the rework (implement-2-1). Discarded the final review result meant for the next attempt. The merge is taken as the approval",
     );
     // 一時停止の間に届いて、まだ作り直しに渡していない PR の指摘も捨てる（PBI-279）
     const heldDiscarded = event({
@@ -1078,7 +1080,7 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       discardedReview: 2,
     });
     expect(describeEvent(heldDiscarded)).toBe(
-      "PR #7 がマージされたため、実装の作り直しを止めた（一時停止中）。一時停止の間に届いて未反映だった PR の指摘2件を捨てた。マージを承認として進める",
+      "PR #7 がマージされたため、実装の作り直しを止めた。段階は一時停止中。一時停止の間に届いて未反映だった PR の指摘2件を捨てた。マージを承認として進める",
     );
     expect(describeIn(heldDiscarded, labels.en)).toContain(
       "Discarded 2 PR comments that arrived while paused and were not yet applied",
@@ -1094,7 +1096,7 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
         }),
       ),
     ).toBe(
-      "PR #7 がマージされたため、実装の作り直しを止めた（実行待ち）。マージを承認として進める",
+      "PR #7 がマージされたため、実装の作り直しを止めた。段階は実行待ち。マージを承認として進める",
     );
   });
 
@@ -1118,10 +1120,10 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       discardedRemarks: [{ id: "design-1-1", text: "提案" }],
     });
     expect(describeEvent(design)).toBe(
-      "PR #8 がマージされたため、設計の直しを止めた（実行中・実行1件を停止）。作り直しに渡す前の指摘1件を捨てた（design-1-1）。マージを承認として進める",
+      "PR #8 がマージされたため、設計の直しを止めた。段階は実行中で、実行1件を停止した。作り直しに渡す前の指摘1件を捨てた（design-1-1）。マージを承認として進める",
     );
     expect(describeIn(design, labels.en)).toContain(
-      "PR #8 was merged, so the rework of the design was stopped (running, 1 run stopped)",
+      "PR #8 was merged, so the rework of the design was stopped. Stage: running, 1 run stopped",
     );
     const requirements = event({
       number: 7,
@@ -1305,7 +1307,7 @@ describe("要求要件・設計の PR（PBI-57）", () => {
           },
         }),
       ),
-    ).toBe("設計の PR を作成・更新（#10・docs/sacty/t1/design.md）。PR #8 を閉じた");
+    ).toBe("設計の PR #10 を作成・更新（docs/sacty/t1/design.md）。PR #8 を閉じた");
   });
 });
 
@@ -2402,7 +2404,7 @@ describe("オーケストレーターのセッションの記録の表示（PBI-
         }),
       ),
     ).toBe(
-      "オーケストレーターのセッションを新しく始めた（AI が再開を受け付けなかったため）。セッションは保存できなかった（セッションの ID が分からない）",
+      "オーケストレーターのセッションを新しく始めた（AI が再開を受け付けなかったため）。セッションは保存できなかった：セッションの ID が分からない",
     );
     expect(
       describeEvent(

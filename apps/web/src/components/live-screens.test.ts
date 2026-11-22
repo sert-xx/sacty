@@ -628,7 +628,7 @@ describe("更新できない間・描いたときに届かなかったとき・�
     server = "down";
     await wait();
     expect(container.querySelector('[data-testid="live-stale"]')?.textContent).toContain(
-      "デーモンに届きません",
+      "デーモンに届かないため",
     );
     expect(container.querySelector("#gate")).not.toBeNull();
     server = detail(awaiting);
@@ -649,7 +649,7 @@ describe("更新できない間・描いたときに届かなかったとき・�
     await wait();
     const notice = container.querySelector('[data-testid="live-stale"]')?.textContent ?? "";
     expect(notice).toContain("端末に表示された新しい URL を開いてください");
-    expect(notice).not.toContain("デーモンに届きません");
+    expect(notice).not.toContain("デーモンに届かないため");
     // 表示は残す
     expect(container.querySelector("#gate")).not.toBeNull();
     // 入り直して取れたら消える
@@ -1031,7 +1031,7 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     await wait();
     expect(notice()?.textContent).toContain("一時停止の間に、PR の指摘が2件届いています");
     expect(notice()?.textContent).toContain("PR #7");
-    expect(notice()?.textContent).toContain("うち AI のレビューの指摘 1件");
+    expect(notice()?.textContent).toContain("指摘のうち 1件は AI のレビューのものです");
     expect(notice()?.textContent).toContain("走り直す前に、戻し先を判断して差し戻します");
     // 再開したら（実行待ち）、お知らせは消える
     server = detail(
