@@ -642,7 +642,6 @@ while true; do sleep 0.05; done
   });
 
   it("合図の前に偽の docker が終わったら、待ち続けずに、実行の結果がわかるエラーですぐ落ちる（PR #94 レビュー指摘）", async () => {
-    const started = Date.now();
     const error = await stopAfterReady(`echo "no such image: img" >&2
 exit 1
 `).then(
@@ -653,8 +652,7 @@ exit 1
       "合図（ready）を待っている間に、偽の docker の実行が、合図を出さないまま終わった",
     );
     expect(error?.message).toContain("no such image: img");
-    // 既定の時間切れ（5秒）や、待ちの期限（10秒）を待たない
-    expect(Date.now() - started).toBeLessThan(3_000);
+    // 既定の時間切れ（5秒）や、待ちの期限（10秒）を待たない：上のエラーの文は、終わったのを見て落ちたときだけ出る
   });
 });
 

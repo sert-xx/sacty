@@ -491,10 +491,9 @@ describe("工程の実行と費用", () => {
     const task = service.createTask({ projectId: "default", title: "クラウドを調べる" });
     const running = service.runNext(task.id);
     await vi.waitFor(() => expect(waiting).toBe(true));
-    const started = Date.now();
+    // 準備は終わらないので、人の停止だけが待ちを抜ける（上限を待たない）。固まればテストの時間切れで落ちる
     await service.pause(task.id);
     await running;
-    expect(Date.now() - started).toBeLessThan(2_000);
     expect(executor.calls).toHaveLength(0);
     expect(service.get(task.id)?.task.pausedReason).toBe("manual");
     activity.close();

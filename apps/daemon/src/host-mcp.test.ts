@@ -632,21 +632,32 @@ describe("実行の前に、ホストの MCP サーバーの準備を待つ（PB
 
   it("起動に失敗したら、どの MCP サーバーかと理由を返す。起動し直すのを待っているものは、待たずに理由を返す", async () => {
     const fake = fakeServers({ fail: () => true });
-    host = new HostMcpServers({
-      specs: () => [spec()],
-      secrets: new MemorySecretStore({}),
-      connect: fake.connect,
-      retryMs: 60_000,
-    });
-    const [problem] = await host.ready(["cloud"]);
-    expect(problem).toMatchObject({ code: "gateway.mcpUnavailable", params: { name: "cloud" } });
-    expect(renderMessage(problem as never, "ja")).toContain("「cloud」");
-    expect(renderMessage(problem as never, "ja")).toContain("Okta login did not complete");
-    // 次の実行では起動し直さない（1分ごとに起動し直すのを待つ。ブラウザでの再認証を増やさない）
-    const started = Date.now();
-    expect(await host.ready(["cloud"])).toEqual([problem]);
-    expect(Date.now() - started).toBeLessThan(500);
-    expect(fake.envs).toHaveLength(1);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      host = new HostMcpServers({
+        specs: () => [spec()],
+        secrets: new MemorySecretStore({}),
+        connect: fake.connect,
+        retryMs: 60_000,
+      });
+      const [problem] = await host.ready(["cloud"]);
+      expect(problem).toMatchObject({ code: "gateway.mcpUnavailable", params: { name: "cloud" } });
+      expect(renderMessage(problem as never, "ja")).toContain("「cloud」");
+      expect(renderMessage(problem as never, "ja")).toContain("Okta login did not complete");
+      // 次の実行では起動し直さない（1分ごとに起動し直すのを待つ。ブラウザでの再認証を増やさない）。
+      // 時計を進めずに終わる（待たずに理由を返す）。偽の時計なので、機械の速さに左右されない
+      let settled = false;
+      const second = host.ready(["cloud"]).then((p) => {
+        settled = true;
+        return p;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
+      expect(await second).toEqual([problem]);
+      expect(fake.envs).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("並行する実行は、同じ MCP サーバーの起動の待ちを共有する（起動は1度だけ）", async () => {
@@ -676,11 +687,24 @@ describe("実行の前に、ホストの MCP サーバーの準備を待つ（PB
       connect: fake.connect,
       readyWaitMs: 50,
     });
-    const started = Date.now();
-    expect(await host.ready(["cloud"])).toEqual([
-      { code: "gateway.mcpReadyTimeout", params: { name: "cloud", seconds: 0 } },
-    ]);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(45);
+    // 偽の時計で、上限の直前（49ms）ではまだ待ち、上限（50ms）で時間切れを返すことを確かめる
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      let settled = false;
+      const waiting = host.ready(["cloud"]).then((p) => {
+        settled = true;
+        return p;
+      });
+      await vi.advanceTimersByTimeAsync(49);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      expect(await waiting).toEqual([
+        { code: "gateway.mcpReadyTimeout", params: { name: "cloud", seconds: 0 } },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
     fake.release();
     await until(() => fake.generation() === 1);
     expect(await host.ready(["cloud"])).toEqual([]);
@@ -886,9 +910,20 @@ describe("設定を変えた MCP サーバーの準備を待つ（PBI-77 レビ�
     });
     expect(await host.ready(["cloud"])).toEqual([]);
     specs = [spec({ tool_timeout_sec: 1800, startup_timeout_sec: 120 })];
-    const started = Date.now();
-    expect(await host.ready(["cloud"])).toEqual([]);
-    expect(Date.now() - started).toBeLessThan(500);
+    // 時計を進めずに終わる（待たずに使う）。偽の時計なので、機械の速さに左右されない
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      let settled = false;
+      const second = host.ready(["cloud"]).then((p) => {
+        settled = true;
+        return p;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
+      expect(await second).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
     expect(fake.calls()).toBe(1);
   });
 });
