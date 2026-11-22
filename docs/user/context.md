@@ -539,6 +539,13 @@ npx sacty context preview 決済 --runtime codex
 エージェントが図（`.drawio`。PNG・SVG・PDF への書き出しを含む）を作るときに使います。
 Mermaid で書いた図の変換と書き出しには、イメージの draw.io の CLI（[コンテナイメージ](images.md#drawio-の-cli)）を使います。
 
+### サービス用スキル
+
+各工程には、サービスを起動しない場合も生成された `docker-services` スキルを渡します。
+サービスの起動・接続ではこのスキルを先に読みます。
+層の同名のスキルは使わず、`context.reservedSkill` の注意を出します。
+工程の指示にも先に読むよう書きます。
+
 ## 関係するページ
 
 - [ゲートウェイ](gateway.md)

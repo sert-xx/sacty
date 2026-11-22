@@ -508,6 +508,7 @@ import {
   type SubtaskSummary,
   selectablePlans,
   servicePromptLines,
+  serviceSkill,
   skippedFilesLines,
   verificationBasis,
   viewpointRename,
@@ -7416,7 +7417,16 @@ export class TaskService {
         (repo) => this.gitAuth({ projectId: id }, repo, usedSecrets, definition),
         this.deps.defaultContext,
         this.mcpRouting(config),
-        tierFiles(runtime, tiers.entries),
+        [
+          ...tierFiles(runtime, tiers.entries),
+          {
+            path: "skills/docker-services/SKILL.md",
+            content: serviceSkill([]).replace(
+              /^サービスは起動していません。.*$/m,
+              "プレビューです。サービスの起動状況と接続先は実行時に決まります。",
+            ),
+          },
+        ],
       );
       // 使える外部 PF：ホストの PF と、合成した PF（同じ名前ならホストのもの。実行と同じ。PBI-74）
       const merged = mergePlatforms(config?.platforms ?? [], preview.platforms);
@@ -13584,7 +13594,15 @@ export class TaskService {
     let context: RunContext | undefined;
     const contextSecrets: string[] = [];
     try {
-      context = await this.runContext(task, agent, config.config, contextSecrets, undefined, step);
+      context = await this.runContext(
+        task,
+        agent,
+        config.config,
+        contextSecrets,
+        undefined,
+        step,
+        true,
+      );
     } catch (error) {
       const multiPreparation = copiesRepositories(task, step);
       const manual = multiPreparation ? await this.manualPauseInfo(task.id) : {};
@@ -13968,6 +13986,24 @@ export class TaskService {
         };
       }
       const started = services?.ok ? services.started : undefined;
+      if (started && context) {
+        try {
+          writeFileSync(
+            join(context.dir, "skills/docker-services/SKILL.md"),
+            serviceSkill(started.services),
+          );
+        } catch (error) {
+          executed = {
+            outcome: {
+              kind: "failed",
+              reason: "error",
+              message: redactText(errorText(error), contextSecrets),
+            },
+            costUsd: 0,
+            estimated: false,
+          };
+        }
+      }
       // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
       const reviewVerification =
         step === "review" ? this.reviewVerification(this.mustGet(task.id)) : undefined;
@@ -14704,6 +14740,7 @@ export class TaskService {
     onlyMcp: string | undefined,
     /** その実行の役割（MCP の時間切れの警告を、その役割の実行の上限で判断する。PBI-150）。 */
     role: string,
+    stepSkill = false,
   ): Promise<RunContext | undefined> {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
@@ -14711,6 +14748,7 @@ export class TaskService {
     // 段階のサブエージェントの定義（PBI-119）。置くものがあれば、コンテキストが無くても設定のディレクトリに置く
     const tiers = this.tiersFor(agent, config);
     if (
+      !stepSkill &&
       !contextSource &&
       !defaultContext &&
       hostMcp.length === 0 &&
@@ -14745,7 +14783,12 @@ export class TaskService {
         gatewayOrigin,
         onlyMcp,
         hostCommands,
-        tierFiles(runtime, tiers.entries),
+        [
+          ...tierFiles(runtime, tiers.entries),
+          ...(stepSkill
+            ? [{ path: "skills/docker-services/SKILL.md", content: serviceSkill([]) }]
+            : []),
+        ],
         runLimitMs,
       )),
       tiers: tiers.entries,

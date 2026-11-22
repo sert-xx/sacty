@@ -2548,6 +2548,7 @@ describe("最初の工程が始まる前の処理の段階（PBI-410）", () => 
       "InformationGathered",
       "StepsChosen",
       "AgentRunStarted",
+      "ContextResolved",
       "RunCostRecorded",
       "AgentRunCompleted",
       "StepSubmitted",

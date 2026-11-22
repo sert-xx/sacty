@@ -115,6 +115,12 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
       [0, 17],
     );
     await service.runNext(id);
+    const skill = executor.seeds[0]?.["skills/docker-services/SKILL.md"] ?? "";
+    expect(skill).toContain("docker・docker compose のコマンドは使えません");
+    expect(skill).toContain("サービスは起動していません");
+    expect(skill).toContain("サービスが無いので確かめられなかった");
+    expect(skill).toContain("作業の報告・PR・レビューの本文");
+    expect(prompt(executor, 0)).toContain("リポジトリのスキル・手順より先にスキル docker-services");
     const first = service.get(id)?.task;
     // 止めずに実行待ちに戻す。判定も本文も採らない
     expect(first?.status).toBe("queued");

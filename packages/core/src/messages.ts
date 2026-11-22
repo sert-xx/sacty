@@ -911,6 +911,7 @@ const PARAMS = {
     id: z.string(),
     parent: z.string(),
   }),
+  "context.reservedSkill": z.object({ from: z.string(), name: z.string() }),
   "context.reservedTierFile": z.object({ from: z.string(), path: z.string() }),
   // ローカルのセッション（sacty launch）
   "local.tiersSkipped": z.object({ parent: z.string(), mode: z.string() }),
@@ -1929,6 +1930,8 @@ const ja: MessageDictionary = {
     `agents の "${id}" は段階のエージェントなので、runtime を ${expected} にしてください（${runtime} になっています）。`,
   "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
     `段階「${tier}」（${id}）は、工程のエージェント（${parent}）と認証・接続先が違うため、サブエージェントの定義を置きませんでした。`,
+  "context.reservedSkill": ({ from, name }) =>
+    `${from} のスキル ${name} は予約されているため、写しませんでした。`,
   "context.reservedTierFile": ({ from, path }) =>
     `${from} の ${path} は、Sacty が段階のサブエージェントの定義として作るため、写しませんでした。`,
   "local.tiersSkipped": ({ parent, mode }) =>
@@ -2826,6 +2829,8 @@ const en: MessageDictionary = {
     `"${id}" in agents is a tier agent, so its runtime must be ${expected} (it is ${runtime}).`,
   "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
     `The tier "${tier}" (${id}) uses a different authentication or endpoint from the step agent (${parent}), so its subagent definition was not placed.`,
+  "context.reservedSkill": ({ from, name }) =>
+    `The skill ${name} from ${from} was not copied because its name is reserved.`,
   "context.reservedTierFile": ({ from, path }) =>
     `${path} of ${from} was not copied because Sacty writes it as the subagent definition of a tier.`,
   "local.tiersSkipped": ({ parent, mode }) =>

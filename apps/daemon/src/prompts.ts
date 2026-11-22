@@ -9044,8 +9044,11 @@ export const SERVICE_STEPS: readonly StepKey[] = ["investigate", "reproduce", "i
  * 工程のエージェントに伝える、起動したサービスの接続先（PBI-47）。ポートは localhost にも転送する（PBI-60）。
  * 複数のサービスが使うポートは転送しないので、サービス名で接続してもらう。
  */
-export function servicePromptLines(services: readonly StartedService[]): string[] {
-  if (services.length === 0) return [];
+export const SERVICE_SKILL_DESCRIPTION =
+  "docker・docker compose を使うとき、DB（MySQL・PostgreSQL・Redis など）・キャッシュ・モックの API を起動する・つなぐ必要があるときは、リポジトリのスキル・手順より先に読む。";
+
+/** 起動したサービスの接続先の候補。localhost は転送の予定。 */
+function serviceTargets(services: readonly StartedService[]): string[] {
   const { forwards, shared } = localForwards(services);
   // コンテナのポートごとに、localhost で届く番号と、ぶつかるため転送しなかった番号
   const target = (service: StartedService, port: number) => {
@@ -9069,10 +9072,6 @@ export function servicePromptLines(services: readonly StartedService[]): string[
     ].join("");
   };
   return [
-    "",
-    "--- 起動しているサービス（docker compose） ---",
-    'sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポート（db:5432 など）でも、localhost のそのポート（localhost:5432・127.0.0.1:5432 など）でも接続できます。compose ファイルでホストに別のポートで出している（ports: "15432:5432" など）なら、そのポート（localhost:15432）でも届きます（sacty がサービスに転送しています）。リポジトリの設定の接続先は、書き換えずにそのまま使ってください。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。このリポジトリのアプリを起動して確かめるときは、docker を使わずに、このコンテナの中でリポジトリの手順のコマンドで起動し、これらのサービスにつないでください。この実行が終わると、サービスとデータは消えます。',
-    "localhost で届かないとき（そのポートをほかのものが使っていたときなど）は、サービス名で接続してください。MySQL のクライアントなど、ホストに localhost と書くと UNIX ソケットで接続するものは、127.0.0.1 と書いてください。サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります（アプリのポートを変えてください）。",
     ...services.map((s) => {
       const targets = [
         ...s.ports.map((p) => target(s, p)),
@@ -9083,6 +9082,39 @@ export function servicePromptLines(services: readonly StartedService[]): string[
       ];
       return `- ${s.name}${targets.length > 0 ? `：${targets.join("、")}` : ""}`;
     }),
+  ];
+}
+
+export function serviceSkill(services: readonly StartedService[]): string {
+  return [
+    "---",
+    "name: docker-services",
+    `description: ${SERVICE_SKILL_DESCRIPTION}`,
+    "---",
+    "",
+    "# docker・サービス",
+    "",
+    "この環境では docker・docker compose のコマンドは使えません。サービスの起動・接続はリポジトリのスキル・手順より先にこのスキルに従ってください。",
+    ...(services.length === 0
+      ? [
+          "サービスは起動していません。リポジトリの docker の手順は試さず、サービスが要らない確かめを行ってください。サービスが要る確かめは黙って飛ばさず、サービスが無いので確かめられなかったことと、その内容を作業の報告・PR・レビューの本文に書いてください。",
+        ]
+      : [
+          "サービスの起動・停止はこの環境がするので、リポジトリの手順の起動・停止は飛ばしてください。アプリは docker を使わずにコンテナの中で起動してください。実行が終わるとサービスとデータは消えます。",
+          "接続先の候補は次のとおりです。localhost は転送の予定であり、ポートの使用中などにより転送できない場合があります。",
+          ...serviceTargets(services),
+          "まず設定のまま試してください。届かない、または目的のサービスでないときは、別の候補を環境変数かコミットしない設定で渡して試してください。すべての候補に届かなければ、どのサービスのどの接続先に届かず、何を確かめられなかったかを作業の報告・PR・レビューの本文に書いてください。",
+        ]),
+    "",
+  ].join("\n");
+}
+
+export function servicePromptLines(services: readonly StartedService[]): string[] {
+  return [
+    "docker・docker compose・DB などのサービスを起動する・つなぐ必要があるときは、リポジトリのスキル・手順より先にスキル docker-services を読み、詳しくはその指示に従ってください。",
+    ...(services.length
+      ? ["サービスの接続先の候補（localhost は転送の予定）：", ...serviceTargets(services)]
+      : []),
   ];
 }
 

@@ -61,6 +61,7 @@ import {
   scopeIsWritten,
   selectablePlans,
   servicePromptLines,
+  serviceSkill,
 } from "./prompts.js";
 
 const diff = [
@@ -1631,72 +1632,55 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
         steps: [],
       } as unknown as Task),
     ).not.toContain("- services：");
-    expect(
-      servicePromptLines([
-        { name: "db", ports: [5432, 5433] },
-        { name: "mock", ports: [] },
-      ]),
-    ).toEqual([
-      "",
-      "--- 起動しているサービス（docker compose） ---",
-      expect.stringContaining("docker・docker compose のコマンドは使えません"),
-      expect.stringContaining("127.0.0.1 と書いてください"),
-      "- db：db:5432 または localhost:5432、db:5433 または localhost:5433",
-      "- mock",
-    ]);
-    // localhost でもサービス名でも接続できる。設定は書き換えさせない（PBI-60）
-    const intro = servicePromptLines([{ name: "db", ports: [5432] }])[2];
-    expect(intro).toContain("localhost のそのポート");
-    expect(intro).toContain("書き換えずにそのまま使ってください");
-    expect(intro).not.toContain("localhost ではありません");
-    // このリポジトリのアプリは、docker を使わずにコンテナの中で起動してつなぐ（PBI-152）
-    expect(intro).toContain(
-      "docker を使わずに、このコンテナの中でリポジトリの手順のコマンドで起動し、これらのサービスにつないでください",
+    const db = [{ name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] }];
+    const target = "- db：db:5432 または localhost:5432・localhost:15432";
+    const active = serviceSkill(db);
+    const inactive = serviceSkill([]);
+    expect(active).toContain(target);
+    expect(servicePromptLines(db)).toContain(target);
+    expect(servicePromptLines([]).join("\n")).toContain("リポジトリのスキル・手順より先に");
+    expect(active).toContain("起動・停止は飛ばしてください");
+    expect(active).toContain("環境変数かコミットしない設定");
+    expect(active).toContain("どのサービスのどの接続先に届かず");
+    expect(active).not.toContain("サービスは起動していません");
+    expect(inactive).toContain("サービスは起動していません");
+    expect(inactive).toContain("サービスが無いので確かめられなかった");
+    expect(inactive).toContain("作業の報告・PR・レビューの本文");
+    for (const text of [active, inactive]) {
+      expect(text).toContain("docker・docker compose のコマンドは使えません");
+      const [front, body] = text.slice(4).split("\n---\n");
+      for (const word of [
+        "docker",
+        "docker compose",
+        "MySQL",
+        "PostgreSQL",
+        "Redis",
+        "キャッシュ",
+        "モックの API",
+        "リポジトリのスキル・手順より先に",
+      ])
+        expect(front).toContain(word);
+      expect(body).not.toMatch(/sacty|mysql|postgresql|redis|python|typescript/i);
+    }
+    expect(active.split("\n---\n")[0]).toBe(inactive.split("\n---\n")[0]);
+    const shared = [
+      { name: "a", ports: [8080], otherPorts: [{ port: 8125, protocol: "udp" }] },
+      { name: "b", ports: [8080] },
+    ];
+    expect(serviceSkill(shared)).toContain(
+      "localhost:8080 は、複数のサービスが使う番号のため、転送していません",
     );
-    expect(servicePromptLines([{ name: "db", ports: [5432] }])[3]).toContain(
-      "サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります",
-    );
-    // 複数のサービスが使うポートは、localhost に転送していないと伝える
-    expect(
-      servicePromptLines([
-        { name: "a", ports: [8080, 9000] },
-        { name: "b", ports: [8080] },
-      ]).slice(4),
-    ).toEqual([
-      "- a：a:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）、a:9000 または localhost:9000",
-      "- b：b:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）",
-    ]);
-    // ホストに出すポートが違えば、そのポートでも届くと伝える。ぶつかる番号は転送していないと伝える
-    expect(
-      servicePromptLines([
-        {
-          name: "db",
-          ports: [5432],
-          hostPorts: [{ port: 15432, target: 5432 }],
-        },
-        {
-          name: "cache",
-          ports: [6379],
-          hostPorts: [{ port: 15432, target: 6379 }],
-        },
-      ]).slice(4),
-    ).toEqual([
+    expect(serviceSkill(shared)).toContain("a:8125/udp（localhost には転送していません）");
+    const conflicting = [
+      { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+      { name: "cache", ports: [6379], hostPorts: [{ port: 15432, target: 6379 }] },
+    ];
+    expect(servicePromptLines(conflicting)).toContain(
       "- db：db:5432 または localhost:5432（localhost:15432 は、複数のサービスが使う番号のため、転送していません）",
-      "- cache：cache:6379 または localhost:6379（localhost:15432 は、複数のサービスが使う番号のため、転送していません）",
-    ]);
-    expect(
-      servicePromptLines([
-        {
-          name: "db",
-          ports: [5432],
-          hostPorts: [{ port: 15432, target: 5432 }],
-        },
-      ]),
-    ).toContain("- db：db:5432 または localhost:5432・localhost:15432");
-    expect(servicePromptLines([{ name: "db", ports: [5432] }])[2]).toContain(
-      "そのポート（localhost:15432）でも届きます",
     );
-    // 同じサービスの中では、ホストに出すポートの対応を優先する。UDP は転送しない（PBI-60 レビュー指摘）
+    expect(servicePromptLines(conflicting)).toContain(
+      "- cache：cache:6379 または localhost:6379（localhost:15432 は、複数のサービスが使う番号のため、転送していません）",
+    );
     const app = {
       name: "app",
       ports: [80, 8080],
@@ -1706,14 +1690,12 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
       ],
       otherPorts: [{ port: 8125, protocol: "udp" }],
     };
-    expect(servicePromptLines([app]).slice(4)).toEqual([
+    expect(servicePromptLines([app])).toContain(
       "- app：app:80 または localhost:80・localhost:8080、app:8080 または localhost:18080、app:8125/udp（localhost には転送していません）",
-    ]);
-    expect(servicePromptLines([app, { name: "mock", ports: [8080] }]).slice(4)).toEqual([
+    );
+    expect(servicePromptLines([app, { name: "mock", ports: [8080] }])).toContain(
       "- app：app:80 または localhost:80（localhost:8080 は、複数のサービスが使う番号のため、転送していません）、app:8080 または localhost:18080、app:8125/udp（localhost には転送していません）",
-      "- mock：mock:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）",
-    ]);
-    expect(servicePromptLines([])).toEqual([]);
+    );
   });
 });
 

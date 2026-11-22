@@ -16,7 +16,10 @@ compose ファイルは、対象リポジトリのものか、プロジェクト
   このリポジトリのコードを動かすサービス（工程で変える・確かめるアプリ）は選ばせない。工程のエージェントが、コンテナの中で起動してサービスにつなぐ。
   分け方は compose の `build` の有無ではなく、何を動かすかによる（指示。強制はしない）。
   情報収集のまとめに分類があれば、それをもとにし、compose ファイルなどで確かめて確定させる（[タスクと工程](tasks-and-steps.md#実行の環境とサービス)）。
-- 工程の指示には、サービスの接続先と一緒に、このリポジトリのアプリは docker を使わずにコンテナの中で起動して、サービスにつなぐよう添える（`servicePromptLines`）。
+- 工程の指示は `servicePromptLines` でスキルを先に読むよう伝え、起動したサービスの接続先の候補も添える。
+  `serviceSkill` は同じ候補をスキルに書き、localhost は転送の予定であると伝える。
+  届かない場合は別の候補を試し、すべて届かなければ何を確かめられなかったかを報告する。
+  起動しない工程にもスキルを置き、サービスが無いため確かめられなかったことの報告を求める。
 - 工程のエージェントの実行の1回ごとに起動し、終わったら消す。
 - 実装の工程の後に、テストのためにサービスを起動することはない（sacty はテストを実行しない。[タスクと工程](tasks-and-steps.md#最終レビューをしない流れ)）。
   以前の版の最終レビューのための起動の記録（`ServicesStarted` の `forTests` が `true`）は、読むためだけに残す。
@@ -24,7 +27,7 @@ compose ファイルは、対象リポジトリのものか、プロジェクト
   オーケストレーターが名前で選んだときだけ、取得・起動する（対象リポジトリがあるタスクだけ）。
   設定に無い名前を選んだら止める（`services.sharedUnknown`）。
 
-コード: `apps/daemon/src/service.ts`（`serviceSpec`・`startServices`・`stopServices`・`withSharedCompose`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`・`composeServicesOf`・`servicePromptLines`）
+コード: `apps/daemon/src/service.ts`（`serviceSpec`・`startServices`・`stopServices`・`withSharedCompose`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`・`composeServicesOf`・`servicePromptLines`・`serviceSkill`）
 
 ## 起動と停止
 
