@@ -222,8 +222,8 @@ function LiveTaskListBody({
               <p className="px-5 pb-8 text-sm text-muted-foreground">{m.filter.none}</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] border-collapse text-sm">
-                  <thead>
+                <table className="w-full border-collapse text-sm max-sm:block sm:min-w-[760px]">
+                  <thead className="max-sm:hidden">
                     <tr className="text-left text-xs text-muted-foreground">
                       <th scope="col" className="px-5 py-2.5 font-medium">
                         {m.column.task}
@@ -239,35 +239,38 @@ function LiveTaskListBody({
                       </th>
                     </tr>
                   </thead>
-                  <tbody ref={tbody}>
+                  <tbody ref={tbody} className="max-sm:block">
                     {/* 分割で作った子タスク・PR のレビューの子タスクは、親のすぐ下に字下げして出す（PBI-27・PBI-341） */}
                     {/* 絞り込みで親が隠れた子は、無関係なタスクの子に見えないよう字下げしない（PBI-341） */}
                     {rows.map((task) => (
                       <tr
                         key={task.id}
-                        className="border-t border-border hover:bg-muted"
+                        className="border-t border-border hover:bg-muted max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-1 max-sm:px-4 max-sm:py-3"
                         data-testid={`task-row-${task.id}`}
                       >
                         <td
                           className={
                             task.shownDepth >= 2
-                              ? "py-3.5 pr-5 pl-16"
+                              ? "py-3.5 pr-5 pl-16 max-sm:col-start-1 max-sm:row-start-1 max-sm:block max-sm:min-w-0 max-sm:p-0 max-sm:pl-8"
                               : task.shownDepth === 1
-                                ? "py-3.5 pr-5 pl-10"
-                                : "px-5 py-3.5"
+                                ? "py-3.5 pr-5 pl-10 max-sm:col-start-1 max-sm:row-start-1 max-sm:block max-sm:min-w-0 max-sm:p-0 max-sm:pl-4"
+                                : "px-5 py-3.5 max-sm:col-start-1 max-sm:row-start-1 max-sm:block max-sm:min-w-0 max-sm:p-0"
                           }
                         >
-                          {task.shownDepth > 0 && (
-                            <span aria-hidden="true" className="mr-1.5 text-muted-foreground">
-                              ↳
-                            </span>
-                          )}
-                          <Link
-                            href={`/tasks/${task.id}`}
-                            className="font-medium text-foreground hover:underline"
-                          >
-                            {task.title}
-                          </Link>
+                          {/* 狭い幅では、題を 2 行までに省略する（↳ は題の左に置く） */}
+                          <div className="max-sm:flex max-sm:items-baseline sm:contents">
+                            {task.shownDepth > 0 && (
+                              <span aria-hidden="true" className="mr-1.5 text-muted-foreground">
+                                ↳
+                              </span>
+                            )}
+                            <Link
+                              href={`/tasks/${task.id}`}
+                              className="font-medium text-foreground hover:underline max-sm:line-clamp-2 max-sm:min-w-0 max-sm:[overflow-wrap:anywhere]"
+                            >
+                              {task.title}
+                            </Link>
+                          </div>
                           {/* 字下げは読み上げられないので、親を文で伝える（PBI-341） */}
                           {task.parentTitle !== undefined && (
                             <span className="sr-only">{m.childOf(task.parentTitle)}</span>
@@ -300,7 +303,10 @@ function LiveTaskListBody({
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-3.5 whitespace-nowrap text-muted-foreground">
+                        <td
+                          data-label={`${m.column.start}: `}
+                          className="px-3 py-3.5 whitespace-nowrap text-muted-foreground max-sm:col-span-2 max-sm:row-start-2 max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-2 max-sm:p-0 max-sm:text-xs max-sm:whitespace-normal max-sm:before:sr-only max-sm:before:content-[attr(data-label)]"
+                        >
                           {labels.start[task.start]}
                           {/* テンプレートで作ったタスク（PBI-90） */}
                           {task.template && (
@@ -322,16 +328,22 @@ function LiveTaskListBody({
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-3.5">
+                        <td
+                          data-label={`${m.column.steps}: `}
+                          className="px-3 py-3.5 max-sm:col-span-2 max-sm:row-start-3 max-sm:block max-sm:p-0 max-sm:before:sr-only max-sm:before:content-[attr(data-label)]"
+                        >
                           <StepChipsView steps={task.steps} />
                         </td>
-                        <td className="px-5 py-3.5">
+                        <td
+                          data-label={`${m.column.status}: `}
+                          className="px-5 py-3.5 max-sm:col-start-2 max-sm:row-start-1 max-sm:block max-sm:p-0 max-sm:text-right max-sm:before:sr-only max-sm:before:content-[attr(data-label)]"
+                        >
                           <StatusLabelView text={task.status.text} tone={task.status.tone} />
                           {/* 承認待ちの実装の PR の CI が失敗していた印（状態は変えない。色だけに頼らず、
                               アイコンと文字で出す。PBI-371） */}
                           {task.ciFailed && (
                             <span
-                              className="mt-1 flex w-fit items-center gap-1 text-xs font-medium whitespace-nowrap text-warn"
+                              className="mt-1 flex w-fit items-center gap-1 text-xs font-medium whitespace-nowrap text-warn max-sm:ml-auto"
                               data-testid={`task-ci-failed-${task.id}`}
                             >
                               <CircleX aria-hidden="true" className="size-3.5" />
@@ -385,13 +397,17 @@ function TaskFilterBar({
   const set = <K extends keyof TaskFilter>(key: K, value: TaskFilter[K]) =>
     onChange({ ...filter, [key]: value });
   const field = "flex flex-col gap-1 text-xs text-muted-foreground";
+  // 狭い幅では、開始時期・開始地点・リポジトリを閉じておく（検索と状態だけを出す）。閉じている間も、使っている条件の数を出す
+  const [open, setOpen] = useState(false);
+  const hiddenActive = [filter.from, filter.to, filter.start, filter.repo].filter(Boolean).length;
+  const narrow = open ? "" : " max-sm:hidden";
   return (
     <search
       aria-label={m.filter.label}
       className="flex flex-wrap items-end gap-3 px-5 pb-4"
       data-testid="task-filter"
     >
-      <label htmlFor={`${uid}-query`} className={`${field} min-w-48 flex-1`}>
+      <label htmlFor={`${uid}-query`} className={`${field} min-w-48 flex-1 max-sm:basis-full`}>
         {m.filter.query}
         <Input
           id={`${uid}-query`}
@@ -401,7 +417,7 @@ function TaskFilterBar({
           onChange={(e) => set("query", e.target.value)}
         />
       </label>
-      <label htmlFor={`${uid}-from`} className={field}>
+      <label id={`${uid}-from-field`} htmlFor={`${uid}-from`} className={`${field}${narrow}`}>
         {m.filter.from}
         <Input
           id={`${uid}-from`}
@@ -412,7 +428,7 @@ function TaskFilterBar({
           onChange={(e) => set("from", e.target.value)}
         />
       </label>
-      <label htmlFor={`${uid}-to`} className={field}>
+      <label id={`${uid}-to-field`} htmlFor={`${uid}-to`} className={`${field}${narrow}`}>
         {m.filter.to}
         <Input
           id={`${uid}-to`}
@@ -423,7 +439,7 @@ function TaskFilterBar({
           onChange={(e) => set("to", e.target.value)}
         />
       </label>
-      <label className={field}>
+      <label id={`${uid}-start-field`} className={`${field}${narrow}`}>
         {m.filter.start}
         <select
           className={SELECT}
@@ -438,7 +454,7 @@ function TaskFilterBar({
           ))}
         </select>
       </label>
-      <label className={field}>
+      <label id={`${uid}-repo-field`} className={`${field}${narrow}`}>
         {m.filter.repo}
         <select
           className={SELECT}
@@ -453,7 +469,7 @@ function TaskFilterBar({
           ))}
         </select>
       </label>
-      <label className={field}>
+      <label className={`${field} max-sm:flex-1`}>
         {m.filter.status}
         <select
           className={SELECT}
@@ -470,6 +486,17 @@ function TaskFilterBar({
           )}
         </select>
       </label>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="sm:hidden"
+        aria-expanded={open}
+        aria-controls={["from", "to", "start", "repo"].map((k) => `${uid}-${k}-field`).join(" ")}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {m.filter.toggle(hiddenActive)}
+      </Button>
       <div className="flex items-center gap-3 text-xs text-muted-foreground">
         <span role="status" data-testid="task-filter-count" className="[overflow-wrap:anywhere]">
           {count}

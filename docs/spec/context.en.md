@@ -162,6 +162,7 @@ A PR review (the `pr-review` flow) and posting to a PR with the default `git` sk
   - Findings start with `[要修正]` or `[提案]`.
   - There are three verdicts: changes required, suggestions only (OK to merge), and no findings.
   - For a finding with no line in the diff to attach to, the agent asks how to handle it before posting if there is someone to ask (a person who asked in a conversation). Otherwise it writes the finding in the summary without stopping.
+  - In sacty's PR review tasks, a finding made into a line comment is not written again in the body of the review (the "指摘" section of the body holds only findings that are not line comments; the same when the requester does the posting. The `pr-review.md` section "結果の返し方と投稿" says so, and `aggregation.md` lists the other appearances in the body of the representative finding, that is, in the line comment itself when it is one).
 - Existing reviews
   - Before reviewing, the parent checks the reviews already on the PR (findings by other reviewers and the author's replies). It uses what the requester passed, or fetches them from the PR only when readable.
   - The parent does not repeat a problem already raised at the same place, even for `must`. It dismisses the finding with the reason "already raised in an existing review" and does not count it in the verdict.

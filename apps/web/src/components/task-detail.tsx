@@ -207,7 +207,9 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
     (task.status === "idle" && reviewWatching(task));
 
   const stickyRef = useRef<HTMLDivElement>(null);
-  useStickyOffset(stickyRef);
+  // 640px 未満では、外側の箱は固定にせず（display: contents）、題（1 行）とタブの帯だけを固定する
+  const barRef = useRef<HTMLDivElement>(null);
+  useStickyOffset(stickyRef, barRef);
   const [tab, setTab] = useState<TabKey>("overview");
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: "overview", label: l.overview },
@@ -242,12 +244,13 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
 
   return (
     <>
-      {/* 題・状態・工程・操作・タブは、スクロールしても見えるよう上に固定する */}
+      {/* 題・状態・工程・操作・タブは、スクロールしても見えるよう上に固定する。640px 未満では、固定するのは
+          題（1 行に省略した写し）とタブの帯だけで、題・状態・工程・操作はページの先頭で流れる */}
       <div
         ref={stickyRef}
-        className="sticky top-16 z-20 -mr-[max(1rem,env(safe-area-inset-right))] -ml-[max(1rem,env(safe-area-inset-left))] flex flex-col gap-3 border-b border-border bg-background/95 pt-4 pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))] backdrop-blur sm:-mr-[max(2rem,env(safe-area-inset-right))] sm:-ml-8 sm:pr-[max(2rem,env(safe-area-inset-right))] sm:pl-8"
+        className="max-sm:contents sticky top-16 z-20 -mr-[max(1rem,env(safe-area-inset-right))] -ml-[max(1rem,env(safe-area-inset-left))] flex flex-col gap-3 border-b border-border bg-background/95 pt-4 pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))] backdrop-blur sm:-mr-[max(2rem,env(safe-area-inset-right))] sm:-ml-8 sm:pr-[max(2rem,env(safe-area-inset-right))] sm:pl-8"
       >
-        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 max-sm:pb-3">
           <div className="flex min-w-0 flex-col gap-2">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {/* 編集中にほかの所で題が変わっても作り直さない（入力した題を消さない） */}
@@ -275,36 +278,50 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           </div>
         </div>
         <div
-          role="tablist"
-          aria-label={l.tabs}
-          className="-mb-px flex gap-1 overflow-x-auto"
-          onKeyDown={(e) => moveTab(e, keys, shown, choose, (k) => `tab-${k}`)}
+          ref={barRef}
+          data-testid="task-sticky-bar"
+          className="max-sm:sticky max-sm:top-16 max-sm:z-20 max-sm:-mr-[max(1rem,env(safe-area-inset-right))] max-sm:-ml-[max(1rem,env(safe-area-inset-left))] max-sm:border-b max-sm:border-border max-sm:bg-background/95 max-sm:pr-[max(1rem,env(safe-area-inset-right))] max-sm:pl-[max(1rem,env(safe-area-inset-left))] max-sm:backdrop-blur"
         >
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              id={`tab-${t.key}`}
-              aria-selected={shown === t.key}
-              aria-controls={`panel-${t.key}`}
-              tabIndex={shown === t.key ? 0 : -1}
-              onClick={() => choose(t.key)}
-              className={cn(
-                "inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap",
-                shown === t.key
-                  ? "border-primary font-semibold text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t.label}
-              {t.count !== undefined && (
-                <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
-                  {t.count}
-                </span>
-              )}
-            </button>
-          ))}
+          {/* 狭い幅の固定の帯に出す題の写し（読み上げない。題の h1 は流れる側にある） */}
+          <p
+            aria-hidden="true"
+            data-testid="task-sticky-title"
+            className="truncate pt-2 text-sm font-semibold sm:hidden"
+          >
+            {task.title}
+          </p>
+          <div
+            role="tablist"
+            aria-label={l.tabs}
+            className="-mb-px flex gap-1 overflow-x-auto"
+            onKeyDown={(e) => moveTab(e, keys, shown, choose, (k) => `tab-${k}`)}
+          >
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                id={`tab-${t.key}`}
+                aria-selected={shown === t.key}
+                aria-controls={`panel-${t.key}`}
+                tabIndex={shown === t.key ? 0 : -1}
+                onClick={() => choose(t.key)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap",
+                  shown === t.key
+                    ? "border-primary font-semibold text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t.label}
+                {t.count !== undefined && (
+                  <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
+                    {t.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -697,6 +714,15 @@ function Overview({ data }: { data: TaskDetailData }) {
   return (
     <>
       {task.status === "cancelled" && task.cancelled && <CancelledCard data={data} />}
+      {/* 1024px 未満では、右の列のプロパティが本文の後ろに回るので、PR と費用だけを内容の前に出す */}
+      <section
+        className="rounded-xl border border-border bg-card p-4 text-[13px] lg:hidden"
+        data-testid="overview-pr-cost"
+      >
+        <dl className="flex flex-col">
+          <PullRequestAndCost task={task} className="" prefix="overview" />
+        </dl>
+      </section>
       <TaskContent task={task} />
       <RunStatusLine data={data} />
       <Deliverables data={data} />
@@ -1032,12 +1058,80 @@ function CancelledCard({ data }: { data: TaskDetailData }) {
 }
 
 /** プロパティの1行。 */
-function Prop({ label, children }: { label: string; children: ReactNode }) {
+function Prop({
+  label,
+  children,
+  className,
+  testId,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+  testId?: string;
+}) {
   return (
-    <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-2 py-1">
+    <div
+      className={cn("grid grid-cols-[88px_minmax(0,1fr)] gap-2 py-1", className)}
+      data-testid={testId}
+    >
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="[overflow-wrap:anywhere]">{children}</dd>
     </div>
+  );
+}
+
+/**
+ * PR へのリンクと費用の行（PR があるときだけ PR）。1024px 以上は右の列のプロパティに出し、未満では概要の先頭に出す
+ * （プロパティの方は隠す。同じものを 2 か所に出さない）。
+ */
+function PullRequestAndCost({
+  task,
+  className,
+  prefix,
+}: {
+  task: Task;
+  className: string;
+  prefix: string;
+}) {
+  const { task: m } = useMessages();
+  const l = m.layout;
+  return (
+    <>
+      {task.pullRequest?.url && (
+        <Prop label={l.pullRequest} className={className} testId={`${prefix}-pull-request`}>
+          <a
+            href={task.pullRequest.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-accent-foreground underline"
+          >
+            #{task.pullRequest.number}
+          </a>
+        </Prop>
+      )}
+      <Prop label={l.cost} className={className} testId={`${prefix}-cost`}>
+        <span className="font-mono tabular-nums">
+          {usd(task.budget.usedUsd)} / {usd(task.budget.capUsd)}
+        </span>
+        <span
+          aria-hidden="true"
+          className="mt-1 block h-1.5 w-full overflow-hidden rounded-full bg-border"
+        >
+          <span
+            className={cn(
+              "block h-full",
+              task.budget.usedUsd >= task.budget.capUsd ? "bg-warn" : "bg-primary",
+            )}
+            style={{ width: `${Math.min(1, task.budget.usedUsd / task.budget.capUsd) * 100}%` }}
+          />
+        </span>
+        {(task.budget.unknownRuns ?? 0) > 0 && (
+          <span className="mt-1 block text-xs text-muted-foreground">
+            {l.costUnknown(task.budget.unknownRuns ?? 0)}
+          </span>
+        )}
+      </Prop>
+    </>
   );
 }
 
@@ -1170,40 +1264,7 @@ function Properties({ data }: { data: TaskDetailData }) {
       </h2>
       <dl className="flex flex-col">
         {step && <Prop label={l.currentStep}>{labels.step[step]}</Prop>}
-        {task.pullRequest?.url && (
-          <Prop label={l.pullRequest}>
-            <a
-              href={task.pullRequest.url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-accent-foreground underline"
-            >
-              #{task.pullRequest.number}
-            </a>
-          </Prop>
-        )}
-        <Prop label={l.cost}>
-          <span className="font-mono tabular-nums">
-            {usd(task.budget.usedUsd)} / {usd(task.budget.capUsd)}
-          </span>
-          <span
-            aria-hidden="true"
-            className="mt-1 block h-1.5 w-full overflow-hidden rounded-full bg-border"
-          >
-            <span
-              className={cn(
-                "block h-full",
-                task.budget.usedUsd >= task.budget.capUsd ? "bg-warn" : "bg-primary",
-              )}
-              style={{ width: `${Math.min(1, task.budget.usedUsd / task.budget.capUsd) * 100}%` }}
-            />
-          </span>
-          {(task.budget.unknownRuns ?? 0) > 0 && (
-            <span className="mt-1 block text-xs text-muted-foreground">
-              {l.costUnknown(task.budget.unknownRuns ?? 0)}
-            </span>
-          )}
-        </Prop>
+        <PullRequestAndCost task={task} className="max-lg:hidden" prefix="properties" />
         <Prop label={l.project}>
           <Link
             href={projectSettingsPath(task.projectId)}

@@ -46,6 +46,8 @@ const ja = {
       completed: "完了",
       cancelled: "中止",
     },
+    /** 狭い幅で、隠した項目（開始時期・開始地点・リポジトリ）を開閉するボタン。使っている条件があれば数を付ける。 */
+    toggle: (active: number) => (active > 0 ? `絞り込む（${active}）` : "絞り込む"),
     clear: "条件をクリア",
     count: (shown: number, total: number) => `${total}件中 ${shown}件`,
     /** 絞り込みに合う行が、一度に出す行数より多いとき（出している件数も伝える）。 */
@@ -102,6 +104,7 @@ const en: TasksMessages = {
       completed: "Completed",
       cancelled: "Cancelled",
     },
+    toggle: (active) => (active > 0 ? `Filter (${active})` : "Filter"),
     clear: "Clear filters",
     count: (shown, total) => `${shown} of ${total}`,
     countPartial: (shown, total, displayed) => `${shown} of ${total} (showing ${displayed})`,
