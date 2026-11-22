@@ -1111,6 +1111,9 @@ A run that ended after implementing only part of its scope, and a run that chang
   - The instruction for the completion declaration also tells the agent not to end the run partway (`implementCompletionLines`).
     - Implement the whole scope within this run. Ending unfinished only makes sacty resume the same session and continue; it does not move the work forward.
     - Ending unfinished is allowed only when the agent cannot go any further (a person's decision or a change in external state is needed).
+    - Changes brought in by merging the base branch or a PR are not this task's changes and may be included in the submission. Resolve conflicts while preserving both behaviors, and make no other changes to them.
+    - Work assigned to a person or outside the step by approved requirements or design is not counted as remaining; record it in the work log as work for a person and submit.
+    - When declaring unfinished work that needs a person's decision, write one question in `remaining` asking what to decide, and recommend an option if the step can choose one itself.
     - What the agent cannot check (the result of CI, and so on) is written in the implementation description as something for a person to check, not in `remaining`.
   - The instruction for the completion declaration also tells the agent that, if it keeps working after writing a report with a declaration and the outcome changes, it must output the report and declaration again as its last output (`implementCompletionLines`). sacty reads the last `result` that contains a declaration as the answer, so without this the earlier report and declaration are submitted (see "Output handling" in the agent-execution spec).
   - sacty continues while the workspace keeps changing. If the run is still unfinished when the continuations reach 10 (`MAX_INCOMPLETE_CONTINUATIONS`), the task pauses (`nextIncompleteRuns`; the reason is `incomplete`, the message is `implement.incomplete`).

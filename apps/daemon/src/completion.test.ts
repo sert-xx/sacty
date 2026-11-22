@@ -46,6 +46,28 @@ describe("実装の完了の申告（PBI-347）", () => {
     });
   });
 
+  it("取り込んだベースと PR の変更を提出に含め、競合だけを両方の振る舞いを保って解消するよう伝える", () => {
+    const lines = implementCompletionLines().join("\n");
+    expect(lines).toContain(
+      "ベースブランチや PR の取り込みで入った変更は、今回の変更ではなく、提出に含まれてよい",
+    );
+    expect(lines).toContain("競合は両方の振る舞いを保って合わせ、それ以外に手を入れない");
+  });
+
+  it("承認済みの要求要件・設計で人や工程外に委ねた作業を残りに数えず、作業履歴に書いて提出するよう伝える", () => {
+    const lines = implementCompletionLines().join("\n");
+    expect(lines).toContain(
+      "承認された要求要件・設計で人がする、またはこの工程の外ですると決まった作業は、remaining に数えない",
+    );
+    expect(lines).toContain("作業履歴に人がすることとして書いて提出する");
+  });
+
+  it("人の判断が必要な未完了の申告では、問いと候補の推奨を remaining に書くよう伝える", () => {
+    const lines = implementCompletionLines().join("\n");
+    expect(lines).toContain("remaining に何を決めてほしいかを1つの問いで書く");
+    expect(lines).toContain("工程が自分で決められる候補があれば推奨を添える");
+  });
+
   it("完了の申告を読み、申告のコードブロックを本文から取り除く", () => {
     const extracted = extractCompletion(`# 実装の説明\n\n本文\n\n${COMPLETE}`);
     expect(extracted.completion).toEqual({ status: "complete" });
