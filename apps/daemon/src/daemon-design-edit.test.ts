@@ -374,6 +374,44 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     activity.close();
   });
 
+  it("利用者の Git 設定と環境変数を分離して文書の修正を公開する", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, executor, activity } = made;
+    const path = docOf(id, "requirements");
+    const run = executor.run.bind(executor);
+    executor.run = async (input) => {
+      if (input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        writeFileSync(file, `${readFileSync(file, "utf8")}\n修正済み\n`);
+      }
+      return run(input);
+    };
+    const previous = [
+      process.env.GIT_CONFIG_COUNT,
+      process.env.GIT_CONFIG_KEY_0,
+      process.env.GIT_CONFIG_VALUE_0,
+    ];
+    try {
+      process.env.GIT_CONFIG_COUNT = "1";
+      process.env.GIT_CONFIG_KEY_0 = "diff.orderFile";
+      process.env.GIT_CONFIG_VALUE_0 = "missing-order-file";
+      await service.runNext(id);
+      await drain(service);
+      expect(taskOf(service, id).documentFixes?.at(-1)?.diff).toContain("+修正済み");
+      expect(bodiesOf(service, id).at(-1)).toContain("+修正済み");
+    } finally {
+      for (const [i, key] of [
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+      ].entries()) {
+        if (previous[i] === undefined) delete process.env[key];
+        else process.env[key] = previous[i];
+      }
+      activity.close();
+    }
+  });
+
   it("文書の配置前の取得は一時停止で中断され、再開後に実装できる", async () => {
     const made = await toRework([implement(), implement()]);
     const { service, id, repos, activity } = made;

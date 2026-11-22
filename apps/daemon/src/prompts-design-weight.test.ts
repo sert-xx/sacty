@@ -106,6 +106,40 @@ const BASELINE_LINES = [
 ];
 
 describe("実装の PR：戻し先を決定の重さで分ける基準（PBI-446）", () => {
+  it("承認済み文書を実装で直す場所と範囲と記録方法を伝える", () => {
+    const paths = ["docs/sacty/t1/requirements.md", "docs/sacty/t1/design.md"];
+    const task = taskOf({ stepPullRequests: paths.map((path) => ({ path })) });
+    const prompt = buildPrompt(task, "implement", { pullRequestReview: true });
+    for (const path of paths) expect(prompt).toContain(path);
+    for (const phrase of [
+      "指示に写した承認済み全文より新しい正",
+      "テスト・書式・リンクの誤り",
+      "レビュー・人の指摘は判断を変えない範囲で直す",
+      "設計の直しか変更の申し出にする",
+      "sacty-document-fixes",
+      "何をなぜ直したか",
+    ])
+      expect(prompt).toContain(phrase);
+    expect(prompt).not.toContain("書き換えても PR には残らない");
+    expect(prompt).not.toContain("凍結されていて、あなたは変更できません");
+  });
+
+  it("レビューと戻し先の判断に文書の正と修正できる範囲を伝える", () => {
+    for (const prompt of [
+      buildReworkPrompt(taskOf(), ["x"], TARGETS, "implement"),
+      review("implement", taskOf()),
+    ]) {
+      for (const phrase of [
+        "渡した全文の写しより新しい正",
+        "想定された差分として指摘しません",
+        "中身を変えない誤りは implement で直せます",
+        "その誤りには needs_decision を付けません",
+        "要求要件・設計の決定を変える指摘は前の工程に戻します",
+      ])
+        expect(prompt).toContain(phrase);
+    }
+  });
+
   it("古い文が残らない：決定を変える指摘の2行と implement の説明も、設計の局所の変更を除く（両方の経路）", () => {
     const own = buildReworkPrompt(taskOf(), ["x"], TARGETS, "implement");
     const child = review("implement", taskOf());

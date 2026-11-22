@@ -16701,7 +16701,20 @@ export class TaskService {
                   oldFile,
                   newFile,
                 ],
-                { maxBuffer: 16 * 1024 * 1024 },
+                {
+                  cwd: diffDir,
+                  env: {
+                    PATH: process.env.PATH,
+                    TMPDIR: process.env.TMPDIR,
+                    LANG: process.env.LANG,
+                    GIT_CONFIG_NOSYSTEM: "1",
+                    GIT_CONFIG_GLOBAL: "/dev/null",
+                    GIT_CEILING_DIRECTORIES: diffDir,
+                    GIT_ATTR_NOSYSTEM: "1",
+                    GIT_TERMINAL_PROMPT: "0",
+                  },
+                  maxBuffer: 16 * 1024 * 1024,
+                },
                 (error, stdout) => {
                   if (error && error.code !== 1) reject(error);
                   else resolve(stdout);

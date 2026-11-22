@@ -19,9 +19,7 @@
 ## 確かめたこと
 
 実装の公開、競合、再開、文書の配置、秘密情報の伏せを対象にテストを追加した。
-Git 2.48.1 を使った `npx vitest run --no-file-parallelism` は 344 ファイル、7,073 件が通り、1 件をスキップした。
-`npm run lint`、`npm run typecheck`、`npm run build` は通った。
-公開への取り込み、本文への表示、全文への伏せをそれぞれ外すと、対応するテストが失敗することを確かめた。
+Git 2.48.1 を使った `npx vitest run --no-file-parallelism`、`npm run lint`、`npm run typecheck`、`npm run build` は通った。
 
 ## レビューの指摘と対応
 
@@ -29,6 +27,7 @@ Git 2.48.1 を使った `npx vitest run --no-file-parallelism` は 344 ファイ
 | --- | --- |
 | 再実行で文書の修正が消える | 控えと異なる修正を置き直さず、続きの実行で確かめる |
 | 複数行の秘密情報が差分に残る | 差分を作る前に文書の全文を伏せる |
+| 利用者の Git 設定で文書差分の生成が失敗する | Git の設定と環境変数を分離し、公開のテストで確かめる |
 
 ## 残したこと
 
