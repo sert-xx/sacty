@@ -98,8 +98,8 @@
 - ADR
   - 新しい ADR に、許可した申し出を人の判断なしに受け入れる理由と、Q-1 の判断の仕方を書く。
   - 次の 2 件を、一部を置き換えた `superseded` にする。
-    - `20261112-0820-remove-goal-guardian.md`（申し出は人が判断する）
-    - `20261119-0800-mcp-pause-resume-minimal-resume.md`（MCP の再開は補足だけ）
+    - `20261112-0820-superseded-remove-goal-guardian.md`（申し出は人が判断する）
+    - `20261119-0800-superseded-mcp-pause-resume-minimal-resume.md`（MCP の再開は補足だけ）
 - 実画面の確認：マージ前に `sacty up` の画面で、許可を付けた再開から、補足に沿う申し出の受け入れ、作業の履歴と申し出の一覧の表示までを通して確かめ、動画を PR に残す。
 
 ## テスト観点
@@ -166,7 +166,7 @@
   - 期待結果：再開の欄の許可のチェックボックスと resume_task の allow_approved_edits の付け方、許可が次の一時停止まで効くこと、作業の履歴と申し出の一覧で補足で受け入れた申し出と設計・テスト観点の差分を読む方法が書かれている
 - [TV-21] ADR が 1 件増え、既存の 2 件がその ADR に一部を置き換えられている
   - 入力：docs/adr の差分
-  - 期待結果：新しい ADR に、補足で許した申し出を人の判断なしに受け入れる理由と byNote の照合・design.inScope の申告による判断の仕方が書かれ、20261112-0820-remove-goal-guardian.md と 20261119-0800-mcp-pause-resume-minimal-resume.md が superseded で置き換え先と置き換わった部分を持ち、新しい ADR の置き換え元が両方を指す
+  - 期待結果：新しい ADR に、補足で許した申し出を人の判断なしに受け入れる理由と byNote の照合・design.inScope の申告による判断の仕方が書かれ、20261112-0820-superseded-remove-goal-guardian.md と 20261119-0800-superseded-mcp-pause-resume-minimal-resume.md が superseded で置き換え先と置き換わった部分を持ち、新しい ADR の置き換え元が両方を指す
 - [TV-22] このタスクの作業履歴が 1 件ある
   - 入力：docs/worklog の差分
   - 期待結果：PBI-490 の作業履歴が 1 件足され、docs/README.md の作業履歴の決まりの節が書かれている

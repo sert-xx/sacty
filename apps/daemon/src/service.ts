@@ -121,6 +121,7 @@ import {
   nextIncompleteRuns,
   OperationSettings,
   openProposal,
+  orgUrlOf,
   type PauseReason,
   PR_CI_CHECK_NAME_MAX,
   PR_CI_FAILED_CHECKS_MAX,
@@ -7043,8 +7044,17 @@ export class TaskService {
     // 成果の書き出し先に使える接続先と、プロジェクトのコンテキストの規約（PBI-56）
     const exports = await this.exportDestinations(task, config);
     // プロジェクトの共用の compose（PBI-70）。要るかはオーケストレーターが決める（ここでは取得しない）
-    const shared = task.repository
-      ? (this.deps.projects.get(task.projectId)?.sharedComposes ?? [])
+    const repositoryUrl = task.repository?.url;
+    const shared = repositoryUrl
+      ? (this.deps.projects.get(task.projectId)?.sharedComposes ?? []).filter(
+          (s) =>
+            !s.forRepos ||
+            s.forRepos.some(
+              (target) =>
+                sameGitHubUrl(target, repositoryUrl) ||
+                sameGitHubUrl(target, orgUrlOf(repositoryUrl)),
+            ),
+        )
       : [];
     // 対象リポジトリの無いタスク（PBI-73）は、プロジェクトの対象（作業するリポジトリの候補）とコンテキストを渡して選ばせる
     const contextSource = (() => {
@@ -7256,20 +7266,14 @@ export class TaskService {
     const { services: raw, ...rest } = choice;
     const offered = shared.length > 0 ? { sharedComposes: shared.map((s) => s.name) } : {};
     if (!raw) return { ...rest, ...offered };
-    if (raw.compose === undefined) {
-      return {
-        ...rest,
-        ...offered,
-        services: { file: raw.file, names: raw.names, steps: raw.steps },
-      };
-    }
-    const found = shared.find((s) => s.name === raw.compose);
-    if (!found) {
+    const names = typeof raw.compose === "string" ? [raw.compose] : (raw.compose ?? []);
+    const unknown = names.find((name) => !shared.some((s) => s.name === name));
+    if (unknown) {
       return {
         failure: {
           reason: "error",
           message: message("orchestrator.failed", {
-            detail: message("services.sharedUnknown", { name: raw.compose }),
+            detail: message("services.sharedUnknown", { name: unknown }),
           }),
           agentId: choice.agentId ?? "unknown",
           ...(choice.authMode ? { authMode: choice.authMode } : {}),
@@ -7283,19 +7287,28 @@ export class TaskService {
         },
       };
     }
+    const selections = names.flatMap((name) => {
+      const found = shared.find((s) => s.name === name);
+      return found
+        ? [
+            {
+              file: found.file,
+              names: raw.names,
+              compose: {
+                name: found.name,
+                repo: found.repo,
+                ...(found.ref ? { ref: found.ref } : {}),
+              },
+            },
+          ]
+        : [];
+    });
+    const first = raw.file ? { file: raw.file, names: raw.names } : selections.shift();
+    if (!first) return { ...rest, ...offered };
     return {
       ...rest,
       ...offered,
-      services: {
-        file: found.file,
-        names: raw.names,
-        steps: raw.steps,
-        compose: {
-          name: found.name,
-          repo: found.repo,
-          ...(found.ref ? { ref: found.ref } : {}),
-        },
-      },
+      services: { ...first, steps: raw.steps, ...(selections.length ? { more: selections } : {}) },
     };
   }
 
@@ -7803,6 +7816,7 @@ export class TaskService {
   ):
     | (ServicesSpec & {
         compose?: { name: string; repo: string; ref?: string };
+        more?: NonNullable<Task["services"]>["more"];
       })
     | undefined {
     if (step === "review" && task.reviewOf?.step === "implement") {
@@ -7823,24 +7837,46 @@ export class TaskService {
       if (run?.type !== "AgentRunStarted") return undefined;
       const started = events
         .slice(0, push)
-        .findLast(
-          (event) => event.type === "ServicesStarted" && event.payload.runId === run.payload.runId,
+        .filter(
+          (event) =>
+            event.type === "ServicesStarted" &&
+            event.payload.runId === run.payload.runId &&
+            event.payload.services.length > 0,
         );
-      if (started?.type !== "ServicesStarted") return undefined;
-      const { file, services, compose } = started.payload;
-      if (compose && !compose.repo) {
+      const missing = started.find(
+        (event) =>
+          event.type === "ServicesStarted" && event.payload.compose && !event.payload.compose.repo,
+      );
+      if (missing?.type === "ServicesStarted" && missing.payload.compose) {
+        const { compose, services } = missing.payload;
         unavailable?.(
           `共用の compose の取得元が記録されていません（${compose.name}：${services.map((service) => service.name).join("・")}）`,
         );
         return undefined;
       }
+      const restored = started.flatMap((event) => {
+        if (event.type !== "ServicesStarted") return [];
+        const { file, services, compose } = event.payload;
+        return [
+          {
+            file,
+            names: services.map((service) => service.name),
+            ...(compose?.repo
+              ? { compose: { name: compose.name, repo: compose.repo, ref: compose.commit } }
+              : {}),
+          },
+        ];
+      });
+      const [first, ...others] = restored;
+      if (!first) return undefined;
       return {
-        file,
-        names: services.map((service) => service.name),
-        ...(compose?.repo
+        ...first,
+        ...(first.compose ? { shared: first.compose.name } : {}),
+        ...(others.length
           ? {
-              shared: compose.name,
-              compose: { name: compose.name, repo: compose.repo, ref: compose.commit },
+              more: others.flatMap((item) =>
+                item.compose ? [{ ...item, compose: item.compose }] : [],
+              ),
             }
           : {}),
       };
@@ -7852,6 +7888,7 @@ export class TaskService {
       file: services.file,
       names: services.names,
       ...(services.compose ? { shared: services.compose.name, compose: services.compose } : {}),
+      ...(services.more ? { more: services.more } : {}),
     };
   }
 
@@ -7883,6 +7920,135 @@ export class TaskService {
   > {
     const services = this.deps.services;
     if (!found || !services) return undefined;
+    if (found.more?.length) {
+      const members = [found, ...found.more.map((s) => ({ ...s, shared: s.compose.name }))];
+      const runDir = sharedComposeRunDir(this.deps.workspaceRoot, runId);
+      const inputs: {
+        workspaceDir: string;
+        spec: ServicesSpec;
+        secrets?: string[];
+        compose?: { name: string; repo: string; commit: string };
+      }[] = [];
+      this.track(runId);
+      for (const [i, member] of members.entries()) {
+        if (this.stopRequested(task.id)) {
+          await rm(runDir, { recursive: true, force: true });
+          return { ok: false, message: message("run.stoppedByPerson") };
+        }
+        const { compose } = member;
+        const spec: ServicesSpec = {
+          file: member.file,
+          names: member.names,
+          ...(member.shared ? { shared: member.shared } : {}),
+        };
+        let dir = workspaceDir;
+        const secrets: string[] = [];
+        let commit: string | undefined;
+        if (compose) {
+          dir = join(runDir, String(i));
+          try {
+            const authEnv = await this.gitAuth(task, compose.repo, secrets);
+            if (this.stopRequested(task.id)) {
+              await rm(runDir, { recursive: true, force: true });
+              return { ok: false, message: message("run.stoppedByPerson") };
+            }
+            ({ commit } = await this.sharedComposeFetcher.checkout({
+              repo: compose.repo,
+              ...(compose.ref ? { ref: compose.ref } : {}),
+              dest: dir,
+              signal: this.inflight.get(task.id)?.abort.signal,
+              ...(authEnv ? { authEnv } : {}),
+            }));
+          } catch (error) {
+            await rm(runDir, { recursive: true, force: true });
+            if (this.stopRequested(task.id))
+              return { ok: false, message: message("run.stoppedByPerson") };
+            return {
+              ok: false,
+              message: message("services.sharedFetchFailed", {
+                name: compose.name,
+                repo: compose.repo,
+                detail: clipText(redactText(errorText(error), secrets), SHARED_FETCH_DETAIL_MAX),
+              }),
+            };
+          }
+        }
+        if (this.stopRequested(task.id)) {
+          await rm(runDir, { recursive: true, force: true });
+          return { ok: false, message: message("run.stoppedByPerson") };
+        }
+        inputs.push({
+          workspaceDir: dir,
+          spec,
+          ...(secrets.length ? { secrets } : {}),
+          ...(compose && commit
+            ? { compose: { name: compose.name, repo: compose.repo, commit } }
+            : {}),
+        });
+      }
+      if (!services.startGroup) {
+        await rm(runDir, { recursive: true, force: true });
+        return {
+          ok: false,
+          message: message("services.failed", {
+            file: found.file,
+            detail: "複数の compose を起動できません",
+          }),
+        };
+      }
+      const image = agentImage ? await services.imageId?.(agentImage, runId) : undefined;
+      if (this.stopRequested(task.id)) {
+        await rm(runDir, { recursive: true, force: true });
+        return { ok: false, message: message("run.stoppedByPerson") };
+      }
+      let result: Awaited<ReturnType<NonNullable<ServiceRunner["startGroup"]>>>;
+      try {
+        result = await services.startGroup({ runId, members: inputs });
+      } catch (error) {
+        await services.stopGroup?.(runId, inputs.length).catch(() => undefined);
+        await rm(runDir, { recursive: true, force: true });
+        return {
+          ok: false,
+          message: message("services.failed", {
+            file: found.file,
+            detail: renderMessage(
+              redactText(
+                errorText(error),
+                inputs.flatMap((input) => input.secrets ?? []),
+              ),
+              "ja",
+            ).slice(0, SHARED_FETCH_DETAIL_MAX),
+          }),
+        };
+      }
+      if (!result.ok || this.stopRequested(task.id)) {
+        if (result.ok) await services.stopGroup?.(runId, inputs.length).catch(() => undefined);
+        await rm(runDir, { recursive: true, force: true });
+        return this.stopRequested(task.id)
+          ? { ok: false, message: message("run.stoppedByPerson") }
+          : result;
+      }
+      const { shared } = localForwards(result.started.services);
+      this.append(
+        this.mustGet(task.id),
+        inputs.map((input, i) => ({
+          actor: "sacty" as const,
+          event: {
+            type: "ServicesStarted" as const,
+            payload: {
+              runId,
+              step,
+              file: input.spec.file,
+              services: result.members[i]?.services ?? [],
+              ...(input.compose ? { compose: input.compose } : {}),
+              ...(forTests ? { forTests } : {}),
+              ...(shared.length ? { sharedPorts: shared } : {}),
+            },
+          },
+        })),
+      );
+      return { ok: true, started: result.started, ...(image ? { image } : {}) };
+    }
     // 人間が止めた（一時停止・中止）なら、起動しない
     const stopped = {
       ok: false as const,
@@ -7891,7 +8057,7 @@ export class TaskService {
     if (this.stopRequested(task.id)) return stopped;
     // 起動の待ち（up --wait）の間に止められたら、起動を打ち切れるように、実行として覚える
     this.track(runId);
-    const { compose, ...spec } = found;
+    const { compose, more: _more, ...spec } = found;
     // 共用の compose（PBI-70）は、実行ごとのディレクトリに取得して、そこを作業領域として起動する（マウントできるのは、
     // 取得したリポジトリの中だけ）。HTTPS の GitHub は、コンテキストリポジトリと同じくプロジェクトの gh のアカウントで取得する
     const usedSecrets: string[] = [];
@@ -7901,10 +8067,12 @@ export class TaskService {
       dir = sharedComposeRunDir(this.deps.workspaceRoot, runId);
       try {
         const authEnv = await this.gitAuth(task, compose.repo, usedSecrets);
+        if (this.stopRequested(task.id)) return stopped;
         ({ commit } = await this.sharedComposeFetcher.checkout({
           repo: compose.repo,
           ...(compose.ref ? { ref: compose.ref } : {}),
           dest: dir,
+          signal: this.inflight.get(task.id)?.abort.signal,
           ...(authEnv ? { authEnv } : {}),
         }));
       } catch (error) {
@@ -7974,9 +8142,11 @@ export class TaskService {
     spec: ReturnType<TaskService["serviceSpec"]>,
   ): Promise<void> {
     if (!spec || !this.deps.services) return;
-    await this.deps.services.stop(runId).catch(() => undefined);
+    if (spec.more?.length)
+      await this.deps.services.stopGroup?.(runId, spec.more.length + 1).catch(() => undefined);
+    else await this.deps.services.stop(runId).catch(() => undefined);
     // 共用の compose を取得したディレクトリも消す（PBI-70）
-    if (spec.compose) {
+    if (spec.compose || spec.more?.length) {
       await rm(sharedComposeRunDir(this.deps.workspaceRoot, runId), {
         recursive: true,
         force: true,
@@ -8481,6 +8651,7 @@ export class TaskService {
                   name: s.name,
                   file: s.file,
                   ...(s.description ? { description: s.description } : {}),
+                  ...(s.forRepos ? { forRepos: s.forRepos } : {}),
                 })),
               }
             : {}),
@@ -9783,6 +9954,7 @@ export class TaskService {
       name: s.name,
       file: s.file,
       ...(s.description ? { description: s.description } : {}),
+      ...(s.forRepos ? { forRepos: s.forRepos } : {}),
     }));
     const ran = await this.runOrchestrator(
       task,
@@ -11468,7 +11640,7 @@ export class TaskService {
     }
     for (const task of this.tasks.values()) {
       // 以前の版で、AI（ゴールガーディアン）が判定している間に止まった申し出は、人の判断待ちにする（PBI-333）
-      const judging = task.proposals.find((p) => !p.judgement && !p.decision);
+      const judging = task.proposals.find((p) => !p.byNote && !p.judgement && !p.decision);
       if (task.status === "idle" && judging) {
         this.append(task, [
           {
@@ -14766,16 +14938,76 @@ export class TaskService {
         payload: { proposalId, fromStep: step, ...proposal },
       },
     });
+    const normalizedExcerpt = proposal.byNote?.replace(/\s+/g, " ").trim();
+    const noteMatches = Boolean(
+      latest.approvedEdits &&
+        normalizedExcerpt &&
+        latest.approvedEdits.note.replace(/\s+/g, " ").trim().includes(normalizedExcerpt),
+    );
+    const designNeeded = proposal.target === "requirements" && latest.approved.design;
+    if (
+      noteMatches &&
+      latest.approvedEdits &&
+      (!designNeeded || proposal.design?.inScope === true)
+    ) {
+      let diff: { design: string; testViewpoints: string } | undefined;
+      if (designNeeded && proposal.design) {
+        const before = [
+          designNeeded.output,
+          (designNeeded.testViewpoints ?? []).map((v) => JSON.stringify(v)).join("\n"),
+        ];
+        const after = [
+          proposal.design.proposed,
+          proposal.design.testViewpoints.map((v) => JSON.stringify(v)).join("\n"),
+        ];
+        const changes = before.map((old, i) => {
+          const a = old.split("\n");
+          const b = (after[i] ?? "").split("\n");
+          let start = 0;
+          while (start < a.length && start < b.length && a[start] === b[start]) start++;
+          let endA = a.length;
+          let endB = b.length;
+          while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+            endA--;
+            endB--;
+          }
+          return [
+            ...a.slice(start, endA).map((line) => `-${line}`),
+            ...b.slice(start, endB).map((line) => `+${line}`),
+          ].join("\n");
+        });
+        diff = { design: changes[0] ?? "", testViewpoints: changes[1] ?? "" };
+      }
+      const submitted = this.append(task, [
+        ...events,
+        {
+          actor: "sacty",
+          event: {
+            type: "ChangeAcceptedByNote",
+            payload: {
+              proposalId,
+              resumedAt: latest.approvedEdits.resumedAt,
+              ...(diff ? { diff } : {}),
+            },
+          },
+        },
+        { actor: "sacty", event: { type: "ChangeApplied", payload: { proposalId } } },
+        ...this.submitEvents(latest, step),
+      ]);
+      const stepPr = this.awaitingStepPullRequest(submitted);
+      if (stepPr) {
+        await this.publishStepPullRequest(submitted, stepPr);
+        this.checkBudget(this.mustGet(task.id));
+        return;
+      }
+      this.checkBudget(submitted);
+      return;
+    }
     events.push({
       actor: "sacty",
       event: {
         type: "TaskEscalated",
-        payload: {
-          step,
-          target: proposal.target,
-          reason: "change_proposed",
-          proposalId,
-        },
+        payload: { step, target: proposal.target, reason: "change_proposed", proposalId },
       },
     });
     this.append(task, events);
@@ -20979,7 +21211,7 @@ export class TaskService {
       return false;
     }
     const proposal = task.proposals.find((p) => p.id === last.payload.proposalId);
-    if (!proposal) return false;
+    if (!proposal || proposal.byNote) return false;
     const accepted = proposalAccepted(proposal);
     const events =
       last.type === "ChangeApplied"
@@ -23520,6 +23752,7 @@ export class TaskService {
         payload: {
           retry: task.resumeTo === "queued",
           ...(input.note ? { note: input.note } : {}),
+          ...(input.approvedEdits ? { approvedEdits: true as const } : {}),
         },
       },
     });

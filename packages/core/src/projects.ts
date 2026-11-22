@@ -343,6 +343,14 @@ export const SharedCompose = z.object({
     (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
     z.string().trim().max(1000).optional(),
   ),
+  forRepos: z
+    .array(
+      z.union([RepoUrl, OrgUrl], code("input.sharedComposeForRepo")),
+      code("input.sharedComposeForRepo"),
+    )
+    .min(1, code("input.sharedComposeForRepo"))
+    .max(50, code("input.sharedComposeForRepo"))
+    .optional(),
 });
 export type SharedCompose = z.infer<typeof SharedCompose>;
 
@@ -509,6 +517,23 @@ export function projectConflicts(
       problems.push(message("project.sharedComposeDuplicated", { name: shared.name }));
     }
     composeNames.add(shared.name);
+    const seenRepos: string[] = [];
+    for (const url of shared.forRepos ?? []) {
+      if (seenRepos.some((seen) => sameGitHubUrl(seen, url))) {
+        problems.push(message("project.sharedComposeForRepoDuplicated", { target: url }));
+      }
+      seenRepos.push(url);
+      const repo = parseRepoUrl(url);
+      if (
+        !definition.targets.some(
+          (target) =>
+            sameGitHubUrl(target.target, url) ||
+            (repo && target.scope === "org" && sameGitHubUrl(target.target, orgUrlOf(url))),
+        )
+      ) {
+        problems.push(message("project.sharedComposeForRepoNotTarget", { target: url }));
+      }
+    }
   }
   return problems;
 }

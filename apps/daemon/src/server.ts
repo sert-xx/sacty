@@ -154,7 +154,9 @@ export function createApp(
   app.get("/api/tasks/:id", (c) => {
     const id = c.req.param("id");
     const found = service.visibleTask(id) ? service.view(id) : undefined;
-    return found ? c.json(found) : c.json({ error: "not_found" }, 404);
+    return found
+      ? c.json({ ...found, resumeApprovedEdits: true })
+      : c.json({ error: "not_found" }, 404);
   });
 
   // --- sacty mcp が読む、成果物と実行の読み取り（PBI-395）。どれも読むだけで、記録は変えない ---

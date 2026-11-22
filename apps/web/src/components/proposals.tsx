@@ -18,7 +18,7 @@ function outcome(
   if (accepted === undefined) return { text: m.awaitingPerson, tone: "wait" };
   if (!accepted) return { text: m.notApplied, tone: "no" };
   if (!p.applied) return { text: m.awaitingApply, tone: "wait" };
-  return p.target === "requirements"
+  return p.target === "requirements" && !p.byNote
     ? { text: m.appliedRequirements, tone: "ok" }
     : { text: m.applied, tone: "ok" };
 }
@@ -85,6 +85,16 @@ function ProposalItem({
           {formatStamp(p.proposedAt, messages.locale)}
         </time>
       </p>
+      {p.byNote && <p>{m.acceptedByNote(formatStamp(p.byNote.resumedAt, messages.locale))}</p>}
+      {p.byNote?.diff && (
+        <details>
+          <summary>{m.alignedDiff}</summary>
+          <h4>{m.designDiff}</h4>
+          <pre>{p.byNote.diff.design}</pre>
+          <h4>{m.viewpointsDiff}</h4>
+          <pre>{p.byNote.diff.testViewpoints}</pre>
+        </details>
+      )}
       <dl className="grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
         <dt className="pt-0.5 text-xs text-muted-foreground">{m.reason}</dt>
         <dd className="break-words">{p.reason}</dd>

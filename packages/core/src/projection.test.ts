@@ -261,6 +261,34 @@ describe("project", () => {
     expect(many?.budget).toMatchObject({ usedUsd: 0.3, unknownRuns: 2 });
   });
 
+  it("再開の許可は補足と日時を保持し、次の一時停止で消える", () => {
+    const prefix = [
+      created("t1"),
+      steps("t1"),
+      started("t1", "r1"),
+      completed("t1", "r1", 0),
+      ev("t1", { type: "TaskPaused", payload: { reason: "manual" } }),
+      ev(
+        "t1",
+        { type: "TaskResumed", payload: { retry: false, note: "範囲を絞る", approvedEdits: true } },
+        "person",
+      ),
+    ];
+    expect(project(prefix).get("t1")?.approvedEdits).toEqual({
+      resumedAt: "2026-10-10T00:00:00.000Z",
+      note: "範囲を絞る",
+    });
+    const paused = ev("t1", { type: "TaskPaused", payload: { reason: "manual" } });
+    expect(project([...prefix, paused]).get("t1")?.approvedEdits).toBeUndefined();
+    expect(
+      project([
+        ...prefix,
+        paused,
+        ev("t1", { type: "TaskResumed", payload: { retry: false, note: "別の補足" } }, "person"),
+      ]).get("t1")?.approvedEdits,
+    ).toBeUndefined();
+  });
+
   it("予算で止まり、新しい上限で再開すると待機に戻る", () => {
     seq = 0;
     const task = project([

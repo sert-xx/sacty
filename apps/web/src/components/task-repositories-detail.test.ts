@@ -61,6 +61,51 @@ function task(
 }
 
 describe("複数リポジトリの詳細（R-8）", () => {
+  it("同じ実行のサービス起動を1行にまとめ、それぞれの記録に移動できる", () => {
+    const base = {
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-20T00:00:00.000Z",
+      actor: "sacty",
+      type: "ServicesStarted",
+    };
+    const activity = [
+      {
+        ...base,
+        id: "first",
+        seq: 1,
+        payload: {
+          runId: "run1",
+          step: "implement",
+          file: "compose.yml",
+          services: [{ name: "db", ports: [5432] }],
+        },
+      },
+      {
+        ...base,
+        id: "second",
+        seq: 2,
+        payload: {
+          runId: "run1",
+          step: "implement",
+          file: "shared.yml",
+          compose: { name: "infra", commit: "abcdef123" },
+          services: [{ name: "redis", ports: [6379] }],
+        },
+      },
+    ] as ActivityEvent[];
+    const html = renderToStaticMarkup(
+      createElement(TaskDetailView, {
+        data: { task: task(false, false), activity, projectName: "Project", children: [] },
+      }),
+    );
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const first = document.getElementById("event-first");
+    const second = document.getElementById("event-second");
+    expect(first?.closest("li")).toBe(second?.closest("li"));
+    expect(first?.closest("li")?.textContent).toContain("db");
+    expect(first?.closest("li")?.textContent).toContain("redis");
+  });
   for (const lang of ["ja", "en"] as const) {
     for (const chosen of [false, true]) {
       for (const urls of [false, true]) {

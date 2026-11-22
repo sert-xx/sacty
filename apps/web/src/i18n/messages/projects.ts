@@ -194,6 +194,7 @@ const ja = {
     sharedFile: "compose ファイル",
     sharedFilePlaceholder: "例：compose/cassandra.yml",
     sharedDescription: "説明",
+    sharedForRepos: "使うリポジトリ（1行に1つの URL）",
     sharedDescriptionPlaceholder: "例：Cassandra と Redis。payments の結合テストに要る",
     addShared: "共用の compose を追加",
     removeShared: (name: string) => `共用の compose「${name || "（未入力）"}」を削除`,
@@ -425,6 +426,7 @@ const en: ProjectsMessages = {
     sharedFile: "Compose file",
     sharedFilePlaceholder: "e.g. compose/cassandra.yml",
     sharedDescription: "Description",
+    sharedForRepos: "Repositories to use (one URL per line)",
     sharedDescriptionPlaceholder:
       "e.g. Cassandra and Redis, needed by the payments integration tests",
     addShared: "Add a shared compose",

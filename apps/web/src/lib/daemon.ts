@@ -677,6 +677,7 @@ export async function submitTaskForReview(
 /** 再開と一緒に渡す補足と、人が変えたタスクのイメージ・工程のエージェント（無い・空なら何も変えない）。 */
 export type ResumeOptions = {
   note: string;
+  approvedEdits?: boolean;
   image?: string;
   agents: Partial<Record<StepKey, string>>;
 };
@@ -695,6 +696,7 @@ export async function resumeTask(
       ...(capUsd === undefined ? {} : { capUsd }),
       ...(tests ? { tests } : {}),
       ...(options.note ? { note: options.note } : {}),
+      ...(options.approvedEdits ? { approvedEdits: true } : {}),
       ...(options.image ? { image: options.image } : {}),
       agents: options.agents,
     }),

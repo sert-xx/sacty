@@ -1572,6 +1572,23 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     expect(describeEventParts(shared, labels.en).detail).toContain(
       "Why these services: 結合テストが Redis を使う",
     );
+    const combined = chosen({
+      services: {
+        file: "compose.yml",
+        names: [],
+        steps: ["implement"],
+        more: [
+          {
+            file: "shared.yml",
+            names: [],
+            compose: { name: "infra", repo: "https://github.com/acme/infra" },
+          },
+        ],
+      },
+    });
+    const combinedText = describeEventParts(combined, ja).text;
+    expect(combinedText).toContain("compose.yml");
+    expect(combinedText).toContain("共用の compose「infra」の shared.yml");
     // 対象リポジトリの compose（names が空ならすべて）
     expect(
       describeEventParts(
@@ -4298,5 +4315,38 @@ describe("ドラフトの切り替えの記録の表示（PBI-468）", () => {
     expect(describeIn(skipped("person"), labels.en)).toContain("a person marked it ready");
     expect(describeIn(skipped("unreadable"), labels.en)).toContain("could not be read");
     expect(describeIn(skipped("undetermined"), labels.en)).toContain("could not tell");
+  });
+});
+
+describe("補足による申し出の受け入れ", () => {
+  it.each(["ja", "en"] as const)("%s の履歴に再開日時と差分を出す", (locale) => {
+    const base = {
+      type: "ChangeAcceptedByNote",
+      payload: { proposalId: "CP-1", resumedAt: "2026-11-22T12:00:00Z" },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-11-22T12:01:00Z",
+      actor: "sacty",
+    } as ActivityEvent;
+    const simple = describeEventParts(base, labels[locale]);
+    expect(simple.text).toContain("CP-1");
+    expect(simple.text).toContain("2026-11-22T12:00:00Z");
+    expect(simple.text).toContain(locale === "ja" ? "補足" : "accepted by note");
+    expect(simple.detail).toBeUndefined();
+    expect(simple.text).not.toContain(
+      locale === "ja" ? "設計とテスト観点を合わせ直した" : "design and test viewpoints aligned",
+    );
+    const withDiff = {
+      ...base,
+      payload: { ...base.payload, diff: { design: "-old\n+new", testViewpoints: "-a\n+b" } },
+    } as ActivityEvent;
+    const detail = describeEventParts(withDiff, labels[locale]);
+    expect(detail.text).toContain(
+      locale === "ja" ? "設計とテスト観点を合わせ直した" : "design and test viewpoints aligned",
+    );
+    expect(detail.detail).toContain("-old\n+new");
+    expect(detail.detail).toContain("-a\n+b");
   });
 });

@@ -114,6 +114,19 @@ describe("PR に付けるラベルの予定（PBI-88・PBI-99）", () => {
 });
 
 describe("ResumeTaskInput の補足", () => {
+  it("許可には空でない補足を必要とする", () => {
+    for (const note of [undefined, "", "  "]) {
+      const result = ResumeTaskInput.safeParse({ approvedEdits: true, note });
+      expect(result.success).toBe(false);
+      if (!result.success)
+        expect(result.error.issues[0]?.message).toBe("input.resumeEditsNeedNote");
+    }
+    expect(ResumeTaskInput.parse({ note: " 方針 ", approvedEdits: true })).toMatchObject({
+      note: "方針",
+      approvedEdits: true,
+    });
+  });
+
   it("改行を LF にそろえてから数える（デーモンの API を直接呼んでも、画面の欄と同じ数え方）", () => {
     const note = `${"あ".repeat(4_999)}\r\n${"い".repeat(5_000)}`;
     expect(ResumeTaskInput.parse({ note }).note).toBe(

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { CiCheck, DaemonText, Remark, StepKey, Task } from "@sacty/core";
 import {
   activeStep,
@@ -174,6 +174,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       services?: ServiceRunner;
       sharedComposes?: SharedComposeFetcher;
       projects?: MemoryProjectStore;
+      repo?: string;
       /** メモリーを書き出す・渡す（PBI-126）。 */
       memory?: boolean;
       /** 実装の PR をドラフトで作り、レビューの子タスクの指摘なしを待つ。 */
@@ -210,6 +211,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       projectId: "default",
       title: "決済API",
       body: "タスクの本文",
+      ...(options.repo ? { repo: options.repo } : {}),
     });
     await service.runNext(id);
     service.requestChanges(id, {
@@ -232,6 +234,140 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       for (const id of ids) await service.runNext(id);
     }
   }
+
+  it("再開 API は補足なしの許可を拒否し、記録しない", async () => {
+    const { activity, service, id } = await toImplement([]);
+    await service.pause(id);
+    const before = service.get(id)?.activity.length;
+    const response = await createApp(service, "tok").request(`/api/tasks/${id}/resume`, {
+      method: "POST",
+      headers: { authorization: "Bearer tok", "content-type": "application/json" },
+      body: JSON.stringify({ note: "  ", approvedEdits: true }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      issues: [{ message: { code: "input.resumeEditsNeedNote" } }],
+    });
+    expect(service.get(id)?.activity.length).toBe(before);
+    expect(service.get(id)?.task.status).toBe("paused");
+    activity.close();
+  });
+
+  it("補足に沿う設計の申し出を受け入れ、実装の提出に進む", async () => {
+    const output = out(
+      [
+        "# 実装",
+        block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["test › 修正"] }] }),
+        block({
+          "sacty-change-proposal": {
+            target: "design",
+            reason: "補足",
+            facts: ["事実"],
+            proposed: "# 新しい設計",
+            testViewpoints: [{ title: "修正", input: "入力", expected: "結果" }],
+            byNote: "範囲を絞る",
+          },
+        }),
+      ].join("\n\n"),
+    );
+    const { activity, service, id } = await toImplement([output]);
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.approved.design?.output).toBe("# 新しい設計");
+    expect(result?.task.testViewpoints[0]?.title).toBe("修正");
+    expect(result?.task.proposals[0]?.applied).toBe(true);
+    const resumed = result?.activity.findLast((event) => event.type === "TaskResumed");
+    const accepted = result?.activity.findLast((event) => event.type === "ChangeAcceptedByNote");
+    expect(accepted?.payload).toMatchObject({ proposalId: "CP-1", resumedAt: resumed?.at });
+    expect(result?.task.proposals[0]?.byNote?.resumedAt).toBe(resumed?.at);
+    expect(result?.activity.map((e) => e.type).slice(-3)).toEqual([
+      "ChangeProposed",
+      "ChangeAcceptedByNote",
+      "ChangeApplied",
+    ]);
+    expect(result?.task.status).not.toBe("escalated");
+    expect(result?.task.verification).toBe("pending");
+    activity.close();
+  });
+
+  it.each([true, false, undefined, "missing"] as const)(
+    "補足で要求を変更するとき設計の範囲申告が %s の場合",
+    async (inScope) => {
+      const aligned = {
+        proposed: "# 合わせ直した設計",
+        testViewpoints: [{ title: "新しい観点", input: "入力", expected: "結果" }],
+        ...(typeof inScope === "boolean" ? { inScope } : {}),
+      };
+      const output = out(
+        [
+          "# 実装",
+          block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["test › 新しい観点"] }] }),
+          block({
+            "sacty-change-proposal": {
+              target: "requirements",
+              reason: "補足に合わせる",
+              facts: ["事実"],
+              proposed: "# 新しい要求",
+              byNote: "範囲を絞る",
+              ...(inScope === "missing" ? {} : { design: aligned }),
+            },
+          }),
+        ].join("\n\n"),
+      );
+      const { activity, service, executor, id } = await toImplement([output]);
+      await service.pause(id);
+      service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+      const before = service.get(id);
+      await service.runNext(id);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("byNote に補足の文を抜き出す");
+      expect(prompt).toContain("補足に無い方針の変更");
+      expect(prompt).toContain("この工程の成果を申し出の内容に従って");
+      expect(prompt).toContain("要求要件への申し出には design");
+      expect(prompt).toContain("設計の全文 proposed と testViewpoints");
+      expect(prompt).toContain("範囲内だけなら inScope を true");
+      expect(prompt).toContain("範囲を超えるか判断できないときは false");
+      const result = service.get(id);
+      if (inScope === true) {
+        expect(result?.task.approved.requirements?.output).toBe("# 新しい要求");
+        expect(result?.task.approved.design?.output).toBe("# 合わせ直した設計");
+        expect(result?.task.testViewpoints[0]?.title).toBe("新しい観点");
+        const accepted = result?.activity.find((e) => e.type === "ChangeAcceptedByNote");
+        expect(accepted?.payload).toMatchObject({
+          diff: {
+            design: expect.stringContaining("# 合わせ直した設計"),
+            testViewpoints: expect.stringContaining("新しい観点"),
+          },
+        });
+        if (accepted?.type !== "ChangeAcceptedByNote") throw new Error("acceptance missing");
+        expect(accepted.payload.diff?.design).toContain("-# 設計");
+        expect(accepted.payload.diff?.testViewpoints).toContain("同じキーの再送");
+        expect(result?.task.verification).toBe("pending");
+        const again = new SqliteActivityStore(dbPath);
+        const restarted = makeService(again);
+        restarted.service.recoverInterrupted();
+        const recovered = restarted.service.get(id)?.task;
+        expect(recovered?.status).not.toBe("escalated");
+        expect(recovered?.approved.requirements?.output).toBe("# 新しい要求");
+        expect(recovered?.approved.design?.output).toBe("# 合わせ直した設計");
+        expect(recovered?.verification).toBe("pending");
+        again.close();
+      } else {
+        expect(result?.task.status).toBe("escalated");
+        expect(result?.task.approved.requirements?.output).toBe("# 要求要件 v2");
+        expect(result?.task.approved.design?.output).toBe("# 設計");
+        expect(result?.task.testViewpoints).toEqual(before?.task.testViewpoints);
+        expect(result?.activity.slice(before?.activity.length).map((e) => e.type)).not.toContain(
+          "StepSubmitted",
+        );
+        expect(result?.activity.map((e) => e.type)).not.toContain("ChangeAcceptedByNote");
+        expect(result?.activity.map((e) => e.type)).not.toContain("ChangeApplied");
+      }
+      activity.close();
+    },
+  );
 
   describe("観点とテストの対応に、設計のテスト観点が欠けた実装は提出しない（PBI-348）", () => {
     const TV1 = { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] };
@@ -2519,6 +2655,164 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         ...extra,
       });
 
+    it("対象と共用の compose を同じネットワークで起動し、記録して片付ける", async () => {
+      const services = new FakeServices();
+      const shared = new FakeSharedComposes();
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+        services,
+        sharedComposes: shared,
+        projects: projectsWithShared(),
+        planner: plan({
+          services: {
+            file: "compose.yml",
+            compose: ["infra", "kafka"],
+            names: [],
+            steps: ["implement"],
+          },
+        }),
+      });
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload.services).toMatchObject({
+        file: "compose.yml",
+        more: [{ compose: { name: "infra" } }, { compose: { name: "kafka" } }],
+      });
+      await drain(service);
+      expect(services.groups).toHaveLength(1);
+      const group = services.groups[0];
+      expect(group?.members.map((m) => m.spec.shared ?? "target")).toEqual([
+        "target",
+        "infra",
+        "kafka",
+      ]);
+      expect(services.stopped).toEqual([group?.runId]);
+      expect(executor.networks[3]).toBe(`sacty-group-${group?.runId}`);
+      expect(shared.calls.every((call) => !existsSync(call.dest))).toBe(true);
+      const events = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
+      expect(events).toHaveLength(3);
+      expect(
+        events.map((event) => event.type === "ServicesStarted" && event.payload.compose),
+      ).toEqual([
+        undefined,
+        { name: "infra", repo: "https://github.com/acme/test-infra", commit: expect.any(String) },
+        { name: "kafka", repo: "/srv/kafka-compose", commit: expect.any(String) },
+      ]);
+      expect(executor.forwards[3]).toEqual([
+        { port: 5000, host: "service0" },
+        { port: 5001, host: "service1" },
+        { port: 5002, host: "service2" },
+      ]);
+      activity.close();
+    });
+
+    it("対象の compose と共用 compose 1つを起動し、同じネットワークにつないで片付ける", async () => {
+      const services = new FakeServices();
+      const shared = new FakeSharedComposes();
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+        services,
+        sharedComposes: shared,
+        projects: projectsWithShared(),
+        planner: plan({
+          services: { file: "compose.yml", compose: ["infra"], names: [], steps: ["implement"] },
+        }),
+      });
+      await drain(service);
+      expect(services.groups).toHaveLength(1);
+      const group = services.groups[0];
+      expect(group?.members.map((member) => member.spec.shared ?? "target")).toEqual([
+        "target",
+        "infra",
+      ]);
+      expect(executor.networks[3]).toBe(`sacty-group-${group?.runId}`);
+      expect(executor.forwards[3]).toEqual([
+        { port: 5000, host: "service0" },
+        { port: 5001, host: "service1" },
+      ]);
+      expect(
+        service.get(id)?.activity.filter((event) => event.type === "ServicesStarted"),
+      ).toHaveLength(2);
+      expect(services.stopped).toEqual([group?.runId]);
+      expect(shared.calls).toHaveLength(1);
+      expect(existsSync(shared.calls[0]?.dest ?? "")).toBe(false);
+      activity.close();
+    });
+
+    it("共用 compose の取得に失敗したら取得先を片付け、工程を止める", async () => {
+      const services = new FakeServices();
+      const shared = new FakeSharedComposes(new Error("fetch failed"));
+      const { activity, service, id } = await toImplement([implement("# 実装")], {
+        services,
+        sharedComposes: shared,
+        projects: projectsWithShared(),
+        planner: plan({
+          services: { file: "compose.yml", compose: ["infra"], names: [], steps: ["implement"] },
+        }),
+      });
+      await drain(service);
+      expect(services.groups).toHaveLength(0);
+      expect(shared.calls.every((call) => !existsSync(call.dest))).toBe(true);
+      expect(JSON.stringify(service.get(id)?.activity)).toContain("services.sharedFetchFailed");
+      activity.close();
+    });
+
+    it("共用 compose の取得失敗時に起動済みの対象 compose とネットワークを片付ける", async () => {
+      class RunningServices extends FakeServices {
+        readonly running = new Set<string>();
+        readonly networks = new Set<string>();
+        override async startGroup(input: Parameters<FakeServices["startGroup"]>[0]) {
+          const result = await super.startGroup(input);
+          if (result.ok) {
+            this.running.add(input.runId);
+            this.networks.add(result.started.network);
+          }
+          return result;
+        }
+        override async stopGroup(runId: string, count: number) {
+          await super.stopGroup(runId, count);
+          this.running.delete(runId);
+          this.networks.delete(`sacty-group-${runId}`);
+        }
+      }
+      const services = new RunningServices();
+      class FetchFailure extends FakeSharedComposes {
+        override async checkout(input: Parameters<FakeSharedComposes["checkout"]>[0]) {
+          // 取得の失敗時に、同じ工程の対象 compose とネットワークが既にある状態を与える。
+          const runId = basename(dirname(input.dest));
+          await services.startGroup({
+            runId,
+            members: [{ workspaceDir: dir, spec: { file: "compose.yml", names: [] } }],
+          });
+          expect(services.running.has(runId)).toBe(true);
+          expect(services.networks.has(`sacty-group-${runId}`)).toBe(true);
+          return super.checkout(input);
+        }
+      }
+      const shared = new FetchFailure(new Error("fetch failed"));
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+        services,
+        sharedComposes: shared,
+        projects: projectsWithShared(),
+        planner: plan({
+          services: { file: "compose.yml", compose: ["infra"], names: [], steps: ["implement"] },
+        }),
+      });
+      const invokedBefore = executor.calls.length;
+      await drain(service);
+      expect(shared.calls).toHaveLength(1);
+      expect(services.groups).toHaveLength(1);
+      expect(services.stopped).toEqual([services.groups[0]?.runId]);
+      expect(services.running.size).toBe(0);
+      expect(services.networks.size).toBe(0);
+      expect(existsSync(shared.calls[0]?.dest ?? "")).toBe(false);
+      expect(executor.calls).toHaveLength(invokedBefore);
+      expect(service.get(id)?.task.status).toBe("paused");
+      const failed = service.get(id)?.activity.find((event) => event.type === "AgentRunFailed");
+      expect(failed?.type === "AgentRunFailed" && failed.payload.message).toMatchObject({
+        code: "services.sharedFetchFailed",
+        params: { name: "infra", repo: "https://github.com/acme/test-infra" },
+      });
+      activity.close();
+    });
+
     it("設定しただけでは取得も起動もしない。使わないと判断した理由と、選ばせた共用の compose を残す", async () => {
       const services = new FakeServices();
       const shared = new FakeSharedComposes();
@@ -2542,6 +2836,27 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(service.get(id)?.task.servicesReason).toBe(
         "単体テストだけで、外部のサービスを使わない",
       );
+      activity.close();
+    });
+
+    it("別のリポジトリにだけひもづいた共用 compose は候補の記録に含めない", async () => {
+      const projects = projectsWithShared();
+      const existing = projects.get("default");
+      if (!existing) throw new Error("no project");
+      projects.put("default", {
+        ...existing,
+        targets: [...existing.targets, { scope: "repo", target: "https://github.com/acme/other" }],
+        sharedComposes: existing.sharedComposes?.map((s) =>
+          s.name === "kafka" ? { ...s, forRepos: ["https://github.com/acme/other"] } : s,
+        ),
+      });
+      const { activity, service, id } = await toImplement([implement("# 実装")], {
+        projects,
+        repo: "https://github.com/acme/app",
+        planner: plan(),
+      });
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload.sharedComposes).toEqual(["infra"]);
       activity.close();
     });
 
@@ -2673,6 +2988,38 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
 
     for (const mode of ["pause", "cancel"] as const) {
       const label = mode === "pause" ? "一時停止" : "中止";
+      it(`複数の共用 compose の最初の取得を${label}したら残りを取得しない`, async () => {
+        const entered = Promise.withResolvers<void>();
+        const calls: string[] = [];
+        const shared: SharedComposeFetcher = {
+          checkout: async ({ repo, signal }) => {
+            calls.push(repo);
+            entered.resolve();
+            await new Promise<void>((_resolve, reject) => {
+              if (signal?.aborted) reject(signal.reason);
+              else signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+            return { commit: "unused" };
+          },
+        };
+        const services = new FakeServices();
+        const { activity, service, id } = await toImplement([implement("# 実装")], {
+          services,
+          sharedComposes: shared,
+          projects: projectsWithShared(),
+          planner: plan({
+            services: { compose: ["infra", "kafka"], names: [], steps: ["implement"] },
+          }),
+        });
+        const running = service.runNext(id);
+        await entered.promise;
+        await (mode === "pause" ? service.pause(id) : service.cancel(id));
+        await running;
+        expect(calls).toHaveLength(1);
+        expect(services.groups).toHaveLength(0);
+        expect(service.get(id)?.task.status).toBe(mode === "pause" ? "paused" : "cancelled");
+        activity.close();
+      });
       it(`取得の待ちの間に${label}されたら、取得したものを片付けて起動しない（レビュー指摘）`, async () => {
         const services = new FakeServices();
         const shared = new FakeSharedComposes();

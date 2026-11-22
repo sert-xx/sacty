@@ -206,6 +206,30 @@ export class FakeServices implements ServiceRunner {
     secrets?: readonly string[];
   }[] = [];
   stopped: string[] = [];
+  groups: {
+    runId: string;
+    members: { workspaceDir: string; spec: ServicesSpec; secrets?: readonly string[] }[];
+  }[] = [];
+  async startGroup(input: {
+    runId: string;
+    members: { workspaceDir: string; spec: ServicesSpec; secrets?: readonly string[] }[];
+  }) {
+    this.groups.push(input);
+    if (this.fail) return { ok: false as const, message: this.fail };
+    const network = `sacty-group-${input.runId}`;
+    const members = input.members.map((_, i) => ({
+      network,
+      services: [{ name: `service${i}`, ports: [5000 + i] }],
+    }));
+    return {
+      ok: true as const,
+      started: { network, services: members.flatMap((m) => m.services) },
+      members,
+    };
+  }
+  async stopGroup(runId: string, _count: number) {
+    this.stopped.push(runId);
+  }
   constructor(
     private readonly fail?: DaemonText,
     private readonly services: {

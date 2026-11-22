@@ -1241,6 +1241,20 @@ const StepsChosen = z.object({
             ref: z.string().max(200).optional(),
           })
           .optional(),
+        more: z
+          .array(
+            z.object({
+              file: z.string().min(1).max(300),
+              names: z.array(z.string().min(1).max(100)).max(20),
+              compose: z.object({
+                name: z.string().min(1).max(40),
+                repo: z.string().min(1).max(500),
+                ref: z.string().max(200).optional(),
+              }),
+            }),
+          )
+          .max(20)
+          .optional(),
       })
       .optional(),
     /**
@@ -1600,6 +1614,7 @@ const TaskResumed = z.object({
      * 人がテストを決めずに再開したとき（同じ工程のまま進めて、費用をかけた後の検証で同じ理由で止まらないように）。
      */
     rechooseSteps: z.literal(true).optional(),
+    approvedEdits: z.literal(true).optional(),
     /**
      * 人が再開のときに足した補足。投影が、タスクの説明の後に見出しを付けて足す（オーケストレーターとすべての工程は説明を
      * 読むので、工程ごとに指示を変えずに届く。人も画面の説明で確かめられる）。
@@ -1681,6 +1696,23 @@ const ChangeProposed = z.object({
     proposed: z.string().min(1),
     /** 設計の変更で、テスト観点も変える場合の変更後の全件。 */
     testViewpoints: z.array(TestViewpoint).optional(),
+    byNote: z.string().optional(),
+    design: z
+      .object({
+        proposed: z.string().min(1),
+        testViewpoints: z.array(TestViewpoint),
+        inScope: z.boolean().optional(),
+      })
+      .optional(),
+  }),
+});
+
+const ChangeAcceptedByNote = z.object({
+  type: z.literal("ChangeAcceptedByNote"),
+  payload: z.object({
+    proposalId: z.string(),
+    resumedAt: z.string(),
+    diff: z.object({ design: z.string(), testViewpoints: z.string() }).optional(),
   }),
 });
 
@@ -4626,6 +4658,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepApproved,
   StepQueued,
   ChangeProposed,
+  ChangeAcceptedByNote,
   ChangeJudged,
   ChangeDecided,
   ChangeApplied,
@@ -4959,22 +4992,28 @@ export function derivedRecord(task: { derivedFrom?: { record?: string } }): stri
  * 一時停止中のタスクを再開する入力。予算で止まった場合は新しい上限（累計）が必要。テストのコマンドが決まらずに止まった
  * タスクは、tests でテストのコマンドか、テストなしで進める理由を渡せる（TestsDecided）。
  */
-export const ResumeTaskInput = z.object({
-  capUsd: z.number().positive().max(10_000).optional(),
-  tests: TestsDecided.shape.payload.optional(),
-  /** 再開のときに足す補足（タスクの説明の後に足す。TaskResumed の note）。空なら足さない。 */
-  note: z
-    .string()
-    .transform(normalizeNewlines)
-    .pipe(z.string().trim().max(RESUME_NOTE_MAX, code("input.resumeNoteTooLong")))
-    .optional(),
-  /**
-   * 再開と一緒に変えるタスクのイメージ（PBI-318）と工程のエージェント（タスクの詳細で変えるのと同じ。TaskImageChanged・
-   * StepAgentChanged）。エージェントは選んだ工程だけを指定でき、今と同じ名前は変えない。
-   */
-  image: TaskImageName.optional(),
-  agents: StepAgentMap.optional(),
-});
+export const ResumeTaskInput = z
+  .object({
+    approvedEdits: z.boolean().optional(),
+    capUsd: z.number().positive().max(10_000).optional(),
+    tests: TestsDecided.shape.payload.optional(),
+    /** 再開のときに足す補足（タスクの説明の後に足す。TaskResumed の note）。空なら足さない。 */
+    note: z
+      .string()
+      .transform(normalizeNewlines)
+      .pipe(z.string().trim().max(RESUME_NOTE_MAX, code("input.resumeNoteTooLong")))
+      .optional(),
+    /**
+     * 再開と一緒に変えるタスクのイメージ（PBI-318）と工程のエージェント（タスクの詳細で変えるのと同じ。TaskImageChanged・
+     * StepAgentChanged）。エージェントは選んだ工程だけを指定でき、今と同じ名前は変えない。
+     */
+    image: TaskImageName.optional(),
+    agents: StepAgentMap.optional(),
+  })
+  .refine((input) => !input.approvedEdits || Boolean(input.note), {
+    message: code("input.resumeEditsNeedNote"),
+    path: ["note"],
+  });
 export type ResumeTaskInput = z.infer<typeof ResumeTaskInput>;
 
 /** 承認ゲートで承認する入力。 */

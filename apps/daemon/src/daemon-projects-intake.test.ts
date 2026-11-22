@@ -1626,6 +1626,109 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
 });
 
 describe("プロジェクト定義のエクスポート・インポート（PBI-5b）", () => {
+  it("共用 compose の対象を API で保存・書き出し・読み込みし、不正な対象を拒否する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const otherActivity = new SqliteActivityStore(join(dir, "other.db"));
+    const { service } = makeService(activity, [], { projects: new MemoryProjectStore() });
+    const other = makeService(otherActivity, [], { projects: new MemoryProjectStore() });
+    const app = createApp(service, "test-token");
+    const otherApp = createApp(other.service, "test-token");
+    const headers = { authorization: "Bearer test-token", "content-type": "application/json" };
+    const repo = "https://github.com/acme/app";
+    const compose = { name: "infra", repo: "/srv/infra", file: "compose.yml" };
+    const definition = {
+      name: "project",
+      targets: [
+        { scope: "org", target: "https://github.com/acme" },
+        { scope: "repo", target: repo },
+      ],
+      sharedComposes: [{ ...compose, forRepos: [repo] }],
+    };
+    const post = (app: typeof otherApp, url: string, body: unknown) =>
+      app.request(url, { method: "POST", headers, body: JSON.stringify(body) });
+    const created = await post(app, "/api/projects", definition);
+    expect(created.status).toBe(201);
+    const saved = (await created.json()).project;
+    expect(saved.sharedComposes[0].forRepos).toEqual([repo]);
+    const fetched = await (await app.request(`/api/projects/${saved.id}`, { headers })).json();
+    expect(fetched.project.sharedComposes[0].forRepos).toEqual([repo]);
+    const exported = await (
+      await app.request(`/api/projects/${saved.id}/export`, { headers })
+    ).json();
+    expect(exported.project.sharedComposes[0].forRepos).toEqual([repo]);
+    const imported = await post(otherApp, "/api/projects/import", exported);
+    expect(imported.status).toBe(201);
+    expect((await imported.json()).project.sharedComposes).toEqual(saved.sharedComposes);
+    for (const [forRepos, code] of [
+      [[], "input.sharedComposeForRepo"],
+      [["not-a-url"], "input.sharedComposeForRepo"],
+      [
+        Array.from({ length: 51 }, (_, i) => `https://github.com/acme/r${i}`),
+        "input.sharedComposeForRepo",
+      ],
+      [[repo, "https://github.com/ACME/APP"], "project.sharedComposeForRepoDuplicated"],
+      [["https://github.com/elsewhere/app"], "project.sharedComposeForRepoNotTarget"],
+      [["https://github.com/elsewhere"], "project.sharedComposeForRepoNotTarget"],
+    ] as const) {
+      const invalid = { ...definition, sharedComposes: [{ ...compose, forRepos }] };
+      const savedInvalid = await post(app, "/api/projects", invalid);
+      expect(savedInvalid.status).toBeGreaterThanOrEqual(400);
+      expect(JSON.stringify(await savedInvalid.json())).toContain(code);
+      const importedInvalid = await post(otherApp, "/api/projects/import", {
+        ...exported,
+        project: invalid,
+      });
+      expect(importedInvalid.status).toBeGreaterThanOrEqual(400);
+      expect(JSON.stringify(await importedInvalid.json())).toContain(code);
+    }
+    const third = makeService(new SqliteActivityStore(join(dir, "third.db")), [], {
+      projects: new MemoryProjectStore(),
+    });
+    const without = { ...definition, sharedComposes: [compose] };
+    const unlinked = await post(createApp(third.service, "test-token"), "/api/projects", without);
+    const unlinkedProject = (await unlinked.json()).project;
+    const unlinkedExport = third.service.exportProject(unlinkedProject.id);
+    expect(unlinkedExport?.project.sharedComposes?.[0]).not.toHaveProperty("forRepos");
+    const fourth = makeService(new SqliteActivityStore(join(dir, "fourth.db")), [], {
+      projects: new MemoryProjectStore(),
+    });
+    const unlinkedImport = await post(
+      createApp(fourth.service, "test-token"),
+      "/api/projects/import",
+      unlinkedExport,
+    );
+    expect(unlinkedImport.status).toBe(201);
+    expect((await unlinkedImport.json()).project.sharedComposes[0]).not.toHaveProperty("forRepos");
+    const orgActivity = new SqliteActivityStore(join(dir, "org.db"));
+    const orgService = makeService(orgActivity, [], { projects: new MemoryProjectStore() });
+    const orgApp = createApp(orgService.service, "test-token");
+    const orgDefinition = {
+      ...definition,
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
+      sharedComposes: [{ ...compose, forRepos: ["https://github.com/acme", repo] }],
+    };
+    const orgSaved = await post(orgApp, "/api/projects", orgDefinition);
+    expect(orgSaved.status).toBe(201);
+    const orgProject = (await orgSaved.json()).project;
+    const orgExport = orgService.service.exportProject(orgProject.id);
+    const importActivity = new SqliteActivityStore(join(dir, "org-import.db"));
+    const importService = makeService(importActivity, [], { projects: new MemoryProjectStore() });
+    const orgImported = await post(
+      createApp(importService.service, "test-token"),
+      "/api/projects/import",
+      orgExport,
+    );
+    expect(orgImported.status).toBe(201);
+    expect((await orgImported.json()).project.sharedComposes[0].forRepos).toEqual([
+      "https://github.com/acme",
+      repo,
+    ]);
+    orgActivity.close();
+    importActivity.close();
+    expect(other.service.listProjects()).toHaveLength(1);
+    activity.close();
+    otherActivity.close();
+  });
   it("エクスポートした定義を、新しいプロジェクトとしてインポートでき、重複していれば拒否する", () => {
     const activity = new SqliteActivityStore(dbPath);
     const projects = new MemoryProjectStore();

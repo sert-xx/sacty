@@ -506,6 +506,14 @@ export interface ServiceRunner {
   }): Promise<{ ok: true; started: StartedServices } | { ok: false; message: DaemonText }>;
   /** 止めて消す（コンテナ・ネットワーク・ボリューム）。無ければ何もしない。 */
   stop(runId: string): Promise<void>;
+  startGroup?(input: {
+    runId: string;
+    members: { workspaceDir: string; spec: ServicesSpec; secrets?: readonly string[] }[];
+  }): Promise<
+    | { ok: true; started: StartedServices; members: StartedServices[] }
+    | { ok: false; message: DaemonText }
+  >;
+  stopGroup?(runId: string, count: number): Promise<void>;
   /**
    * 起動している最中（正規化・up --wait の待ち）なら、打ち切る（人間の一時停止・中止。PBI-70 レビュー指摘）。start は
    * 起動したものを止めて消してから、失敗として返る。起動していなければ何もしない。
@@ -569,23 +577,46 @@ export class DockerComposeServices implements ServiceRunner {
       table?: () => Promise<ProcessInfo[]>;
       /** 起動したサービスの所有元（既定はこのプロセス。テストでは差し替える）。 */
       owner?: ProcessIdentity;
+      dockerTimeoutMs?: number;
     } = {},
   ) {}
 
-  /** docker を実行する（compose 以外。stdout だけを返す）。 */
-  private docker(args: string[]): Promise<{ code: number; stdout: string }> {
+  /** docker を実行する（compose 以外）。 */
+  private docker(
+    args: string[],
+    state?: { aborted: boolean; child?: ChildProcess },
+  ): Promise<{ code: number; stdout: string; out: string; failure?: "timeout" | "spawn" }> {
     return new Promise((done) => {
       const child = this.spawnImpl("docker", args, {
         env: dockerClientEnv(),
         stdio: ["ignore", "pipe", "pipe"],
       });
+      if (state) state.child = child;
       let stdout = "";
+      let stderr = "";
+      const timer = setTimeout(() => {
+        done({
+          code: 1,
+          stdout,
+          out: `${stdout}${stderr}\nDocker command timed out`,
+          failure: "timeout",
+        });
+        child.kill("SIGTERM");
+      }, this.deps.dockerTimeoutMs ?? IMAGE_ID_TIMEOUT_MS);
       child.stdout?.on("data", (chunk) => {
         stdout += chunk;
       });
-      child.stderr?.on("data", () => {});
-      child.on("error", () => done({ code: 127, stdout }));
-      child.on("close", (code) => done({ code: code ?? 1, stdout }));
+      child.stderr?.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        done({ code: 127, stdout, out: stdout + stderr + error.message, failure: "spawn" });
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        done({ code: code ?? 1, stdout, out: stdout + stderr });
+      });
     });
   }
 
@@ -598,7 +629,8 @@ export class DockerComposeServices implements ServiceRunner {
     cwd?: string,
     /** 起動した子プロセス（打ち切るために覚える）。 */
     onSpawn?: (child: ChildProcess) => void,
-  ): Promise<{ code: number; stdout: string; out: string }> {
+    timeoutMs?: number,
+  ): Promise<{ code: number; stdout: string; out: string; failure?: "timeout" | "spawn" }> {
     return new Promise((done) => {
       const child = this.spawnImpl("docker", ["compose", ...args], {
         env: dockerClientEnv(),
@@ -608,14 +640,32 @@ export class DockerComposeServices implements ServiceRunner {
       onSpawn?.(child);
       let stdout = "";
       let stderr = "";
+      const timer =
+        timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              done({
+                code: 1,
+                stdout,
+                out: "Docker compose command timed out",
+                failure: "timeout",
+              });
+              child.kill("SIGKILL");
+            }, timeoutMs);
       child.stdout?.on("data", (chunk) => {
         stdout += chunk;
       });
       child.stderr?.on("data", (chunk) => {
         stderr += chunk;
       });
-      child.on("error", (error) => done({ code: 127, stdout, out: error.message }));
-      child.on("close", (code) => done({ code: code ?? 1, stdout, out: stdout + stderr }));
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        done({ code: 127, stdout, out: error.message, failure: "spawn" });
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        done({ code: code ?? 1, stdout, out: stdout + stderr });
+      });
     });
   }
 
@@ -673,9 +723,180 @@ export class DockerComposeServices implements ServiceRunner {
     }
   }
 
-  private async startOnce(
-    { runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0],
+  async startGroup(input: {
+    runId: string;
+    members: { workspaceDir: string; spec: ServicesSpec; secrets?: readonly string[] }[];
+  }) {
+    const state: { aborted: boolean; child?: ChildProcess } = { aborted: false };
+    this.starting.set(input.runId, state);
+    const prepared: {
+      safe: Extract<Awaited<ReturnType<DockerComposeServices["prepare"]>>, { ok: true }>["safe"];
+      failed: (out: string) => DaemonText;
+      workspaceDir: string;
+    }[] = [];
+    const network = `${composeProject(input.runId)}-network`;
+    let createdNetwork = false;
+    try {
+      const remaining = new Set(input.members.flatMap((member) => member.spec.names));
+      for (const member of input.members) {
+        const result = await this.prepare({ ...member, runId: input.runId }, state, remaining);
+        if (!result.ok) return result;
+        prepared.push({ ...result, workspaceDir: member.workspaceDir });
+      }
+      if (remaining.size > 0) {
+        return {
+          ok: false as const,
+          message:
+            prepared[0]?.failed(`サービス ${[...remaining].join("・")} がありません`) ??
+            message("services.failed", { file: "", detail: "サービスがありません" }),
+        };
+      }
+      const seen = new Set<string>();
+      for (const item of prepared) {
+        const configServices = item.safe.config.services as Json;
+        const names = new Set<string>();
+        for (const [name, raw] of Object.entries(configServices)) {
+          names.add(name);
+          const service = raw as Json;
+          const networks = isObject(service.networks) ? service.networks : {};
+          const sacty = isObject(networks[SACTY_NETWORK]) ? networks[SACTY_NETWORK] : {};
+          if (Array.isArray(sacty.aliases))
+            for (const alias of sacty.aliases) if (typeof alias === "string") names.add(alias);
+        }
+        for (const name of names) {
+          if (seen.has(name))
+            return { ok: false as const, message: message("services.nameConflict", { name }) };
+          seen.add(name);
+        }
+      }
+      if (state.aborted) return { ok: false as const, message: message("run.stoppedByPerson") };
+      const created = await this.docker(["network", "create", network], state);
+      if (state.aborted) {
+        await this.stopGroup(input.runId, prepared.length);
+        return { ok: false as const, message: message("run.stoppedByPerson") };
+      }
+      if (created.code !== 0)
+        return {
+          ok: false as const,
+          message:
+            prepared[0]?.failed(
+              redact(
+                created.out,
+                input.members.flatMap((item) => item.secrets ?? []),
+              ),
+            ) ??
+            message("services.failed", {
+              file: "",
+              detail: redact(
+                created.out,
+                input.members.flatMap((item) => item.secrets ?? []),
+              ),
+            }),
+        };
+      createdNetwork = true;
+      const owner = this.deps.owner ?? selfIn(await (this.deps.table ?? psTable)());
+      for (const [i, item] of prepared.entries()) {
+        if (item.safe.services.length === 0) continue;
+        if (state.aborted) {
+          await this.stopGroup(input.runId, prepared.length);
+          return { ok: false as const, message: message("run.stoppedByPerson") };
+        }
+        const networks = item.safe.config.networks as Json;
+        networks[SACTY_NETWORK] = { external: true, name: network };
+        if (owner) labelOwner(item.safe.config, owner);
+        const dir = mkdtempSync(join(tmpdir(), "sacty-compose-"));
+        try {
+          const file = join(dir, "compose.json");
+          writeFileSync(file, JSON.stringify(item.safe.config));
+          const up = await this.compose(
+            [
+              "-p",
+              composeProject(`g${i}${input.runId}`),
+              "-f",
+              file,
+              "up",
+              "-d",
+              "--wait",
+              "--wait-timeout",
+              String(this.waitSec),
+              ...item.safe.services.map((s) => s.name),
+            ],
+            item.workspaceDir,
+            (child) => {
+              state.child = child;
+            },
+          );
+          if (state.aborted || up.code !== 0) {
+            await this.stopGroup(input.runId, prepared.length);
+            return {
+              ok: false as const,
+              message: state.aborted ? message("run.stoppedByPerson") : item.failed(up.out),
+            };
+          }
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+      const members = prepared.map((item) => ({ network, services: item.safe.services }));
+      return {
+        ok: true as const,
+        started: { network, services: members.flatMap((item) => item.services) },
+        members,
+      };
+    } catch (error) {
+      if (createdNetwork) await this.stopGroup(input.runId, prepared.length).catch(() => undefined);
+      const detail = redact(
+        String(error),
+        input.members.flatMap((item) => item.secrets ?? []),
+      );
+      return {
+        ok: false as const,
+        message:
+          prepared[0]?.failed(detail) ??
+          message("services.failed", {
+            file: input.members[0]?.spec.file ?? "",
+            detail,
+          }),
+      };
+    } finally {
+      this.starting.delete(input.runId);
+    }
+  }
+
+  async stopGroup(runId: string, count: number): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      const project = composeProject(`g${i}${runId}`);
+      try {
+        const result = await this.compose(
+          ["-p", project, "down", "-v", "--remove-orphans", "--rmi", "local"],
+          undefined,
+          undefined,
+          this.deps.dockerTimeoutMs ?? 120_000,
+        );
+        if (result.code !== 0)
+          console.warn(
+            `[services] compose の回収に失敗しました: ${project} (${result.failure ?? "exit"}, code=${result.failure ? "なし" : result.code})`,
+          );
+      } catch {
+        console.warn(`[services] compose の回収に失敗しました: ${project} (spawn, code=なし)`);
+      }
+    }
+    const network = `${composeProject(runId)}-network`;
+    try {
+      const result = await this.docker(["network", "rm", network]);
+      if (result.code !== 0)
+        console.warn(
+          `[services] ネットワークの回収に失敗しました: ${network} (${result.failure ?? "exit"}, code=${result.failure ? "なし" : result.code})`,
+        );
+    } catch {
+      console.warn(`[services] ネットワークの回収に失敗しました: ${network} (spawn, code=なし)`);
+    }
+  }
+
+  private async prepare(
+    { runId: _runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0],
     state: { aborted: boolean; child?: ChildProcess },
+    remaining?: Set<string>,
   ) {
     const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
     const track = (child: ChildProcess) => {
@@ -727,12 +948,38 @@ export class DockerComposeServices implements ServiceRunner {
     } catch {
       return { ok: false as const, message: failed(normalized.out) };
     }
-    const safe = sanitizeCompose(parsed, workspaceDir, spec.names, {
+    let selected = spec.names;
+    if (remaining && selected.length && isObject(parsed) && isObject(parsed.services)) {
+      selected = selected.filter((name) => isObject((parsed.services as Json)[name]));
+      for (const name of selected) remaining.delete(name);
+      if (selected.length === 0) {
+        return {
+          ok: true as const,
+          safe: { config: { services: {}, networks: {} }, services: [] },
+          failed,
+        };
+      }
+    }
+    const safe = sanitizeCompose(parsed, workspaceDir, selected, {
       aliasContainerNames: shared !== undefined,
     });
     if (!safe.ok) {
       return { ok: false as const, message: unsafe(safe.problems.join("、")) };
     }
+    return { ok: true as const, safe, failed };
+  }
+
+  private async startOnce(
+    { runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0],
+    state: { aborted: boolean; child?: ChildProcess },
+  ) {
+    const prepared = await this.prepare({ runId, workspaceDir, spec, secrets }, state);
+    if (!prepared.ok) return prepared;
+    const { safe, failed } = prepared;
+    const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
+    const track = (child: ChildProcess) => {
+      state.child = child;
+    };
     // 起動したデーモンを、コンテナのラベルに残す（ほかの sacty の起動時の片付けで止められないように。PBI-78 レビュー指摘）
     const owner = this.deps.owner ?? selfIn(await (this.deps.table ?? psTable)());
     if (owner) labelOwner(safe.config, owner);

@@ -474,6 +474,9 @@ export type TaskProposal = {
   proposed: string;
   testViewpoints?: TestViewpoint[];
   proposedAt: string;
+  noteExcerpt?: string;
+  design?: { proposed: string; testViewpoints: TestViewpoint[]; inScope?: boolean };
+  byNote?: { resumedAt: string; at: string; diff?: { design: string; testViewpoints: string } };
   /** ゴールガーディアンの判定。無ければ判定中。 */
   judgement?: { verdict: Verdict; reason: DaemonText; at: string };
   /** 判定できなかった申し出への、人間の判断。 */
@@ -547,6 +550,7 @@ export type StepPullRequest = PayloadOf<"StepPullRequestPublished"> & {
 
 /** 申し出が認められたか（ゴールガーディアンの承認か、人間の判断）。未決なら undefined。 */
 export function proposalAccepted(p: TaskProposal): boolean | undefined {
+  if (p.byNote) return true;
   if (p.decision) return p.decision.accept;
   if (p.judgement?.verdict === "approved") return true;
   if (p.judgement?.verdict === "rejected") return false;
@@ -660,6 +664,7 @@ export type Task = {
    * 取り込み（チケットのトリアージ）では、説明の見出しから読み直さずにこれを使う（チケットの文を人の補足と取り違えない）。
    */
   resumeNotes?: string[];
+  approvedEdits?: { resumedAt: string; note: string };
   start:
     | "sacty"
     | "github_issue"
@@ -2448,13 +2453,33 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "only approved steps can be changed");
       }
       {
-        const { proposalId, ...rest } = event.payload;
+        const { proposalId, byNote, ...rest } = event.payload;
         task.proposals = [
           ...task.proposals,
-          { ...rest, id: proposalId, proposedAt: event.at, applied: false },
+          {
+            ...rest,
+            ...(byNote !== undefined ? { noteExcerpt: byNote } : {}),
+            id: proposalId,
+            proposedAt: event.at,
+            applied: false,
+          },
         ];
       }
       break;
+
+    case "ChangeAcceptedByNote": {
+      const proposal = findProposal(task, event, event.payload.proposalId);
+      if (!task.approvedEdits || proposal.decision || proposal.byNote)
+        throw new ActivityIntegrityError(event, "proposal cannot be accepted by note");
+      updateProposal(task, proposal.id, {
+        byNote: {
+          resumedAt: event.payload.resumedAt,
+          at: event.at,
+          ...(event.payload.diff ? { diff: event.payload.diff } : {}),
+        },
+      });
+      break;
+    }
 
     case "ChangeJudged": {
       const proposal = findProposal(task, event, event.payload.proposalId);
@@ -2493,7 +2518,7 @@ export function applyEvent(
       }
       const approved = task.approved[proposal.target];
       if (!approved) throw new ActivityIntegrityError(event, "the target is no longer approved");
-      if (proposal.target === "requirements") {
+      if (proposal.target === "requirements" && !proposal.byNote) {
         // 要求要件の変更は、承認を取り消して人間の再承認に回す
         reopen(task, proposal.target);
       } else {
@@ -2506,6 +2531,24 @@ export function applyEvent(
             at: event.at,
           },
         };
+      }
+      if (
+        proposal.byNote &&
+        proposal.target === "requirements" &&
+        proposal.design &&
+        task.approved.design
+      ) {
+        task.approved = {
+          ...task.approved,
+          design: {
+            ...task.approved.design,
+            output: proposal.design.proposed,
+            testViewpoints: proposal.design.testViewpoints,
+            at: event.at,
+          },
+        };
+        task.outputs = { ...task.outputs, design: proposal.design.proposed };
+        task.testViewpoints = proposal.design.testViewpoints;
       }
       task.outputs = { ...task.outputs, [proposal.target]: proposal.proposed };
       voidSubmissionChecks(task, proposal.target);
@@ -4257,7 +4300,7 @@ export function applyEvent(
         if (task.status !== "idle")
           throw new ActivityIntegrityError(event, `status ${task.status}`);
         const proposal = findProposal(task, event, event.payload.proposalId ?? "");
-        if (proposal.judgement || proposal.decision) {
+        if (proposal.judgement || proposal.decision || proposal.byNote) {
           throw new ActivityIntegrityError(event, "the proposal is already judged");
         }
         task.status = "escalated";
@@ -4293,6 +4336,7 @@ export function applyEvent(
       break;
 
     case "TaskPaused":
+      task.approvedEdits = undefined;
       // PR のマージで作り直しを止めるとき、実行の費用で先に一時停止していた（予算など）なら、止めたと確かめられなかった実行を
       // 足す（PBI-276。一時停止の理由・説明はそのまま）
       if (task.status === "paused" && event.payload.unstoppedRuns?.length) {
@@ -4776,6 +4820,10 @@ export function applyEvent(
       }
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
+      task.approvedEdits =
+        event.payload.approvedEdits && event.payload.note
+          ? { resumedAt: event.at, note: event.payload.note }
+          : undefined;
       // 人が再開のときに足した補足は、説明の後に足す（後の工程とオーケストレーターは説明を読む）
       if (event.payload.note) {
         task.body = bodyWithResumeNote(task, event.payload.note);
@@ -5571,7 +5619,7 @@ export function lastChangeRound(task: Task, step: StepKey): number {
  */
 export function openProposal(task: Task): TaskProposal | undefined {
   return task.proposals.find(
-    (p) => !p.decision && (!p.judgement || p.judgement.verdict === "undecidable"),
+    (p) => !p.byNote && !p.decision && (!p.judgement || p.judgement.verdict === "undecidable"),
   );
 }
 

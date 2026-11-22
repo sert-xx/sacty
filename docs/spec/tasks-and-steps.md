@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)、[PR のレビューの子タスクは、親タスクが開始時に集めた情報を引き継ぎ、情報収集をし直さない](../adr/20261115-0230-review-child-task-inherits-gathered-information.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-superseded-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)、[PR のレビューの子タスクは、親タスクが開始時に集めた情報を引き継ぎ、情報収集をし直さない](../adr/20261115-0230-review-child-task-inherits-gathered-information.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -923,7 +923,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 - テストと動作確認に要るものを、compose の build の有無ではなく何を動かすかで、次の3つに分けて、まとめの見出し「テストと動作確認に要るサービス」に書く。
   1. このリポジトリのコードを動かすアプリ：工程のエージェントがコンテナの中で起動する（起動の手順・要る環境変数の名前・つなぐサービス）
   2. 別で管理されている依存アプリと、DB・キャッシュ・モックなど：sacty が起動できる候補（compose ファイルとサービスの名前）
-  3. compose に無い依存：プロジェクトの共用の compose（名前・ファイル・説明を指示に並べる）に合うものがあればその名前、無ければ sacty が起動できない依存
+  3. compose に無い依存：対象に合うプロジェクトの共用 compose（名前・ファイル・説明を指示に並べる）に合うものがあればその名前、無ければ sacty が起動できない依存。対象が未決定のトリアージでは全件とひもづけ先を示す
 
 オーケストレーターは、この分類をもとにサービスを確定させる（[サービス](services.md#いつ起動するか)）。
 リポジトリの無いタスクでは、この節を足さない。
@@ -1749,9 +1749,9 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 ## 変更の申し出
 
 工程のエージェントは、承認済みの要求要件・設計の変更を申し出られる（ID は `CP-<番号>`）。
-AI の判定は挟まず、人が判断する。
+AI の判定は挟まず、人が判断する。ただし、再開の補足で許可した申し出は条件を満たすと自動で受け入れる。
 
-- 申し出たら、`ChangeProposed`（actor `agent`）と `TaskEscalated`（理由 `change_proposed`、actor `sacty`）を同じトランザクションで記録し、タスクを人の判断待ち（`escalated`）にする（間でデーモンが止まっても、判断待ちにならない申し出を残さないため）。
+- 自動受け入れの条件を満たさない申し出は、`ChangeProposed`（actor `agent`）と `TaskEscalated`（理由 `change_proposed`、actor `sacty`）を同じトランザクションで記録し、タスクを人の判断待ち（`escalated`）にする（間でデーモンが止まっても、判断待ちにならない申し出を残さないため）。
 - 人は、タスクの詳細の「変更の申し出」（`/tasks/<ID>#proposals`）で、理由・根拠の事実・変更後の全文を読んで、認めるか認めないかを決める（`ChangeDecided`。`decideChange`）。人の判断待ちの申し出は `openProposal`。
 - 認めたら、変更を反映し（`ChangeApplied`）、要求要件は承認を取り消して承認し直しに回し、設計は承認済みの版を置き換える。
   認めなかったら、申し出た工程の成果を提出する（`settleEvents`・`submitEvents`）。
@@ -2266,3 +2266,9 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
 - 見守り中も、作業領域の片付け（[終わったタスクの作業領域の片付け](#終わったタスクの作業領域の片付け)）・完了したタスクの監査（[監査](audit.md)）・続きのタスクの作成（[派生](#完了したタスクから続きのタスクを作る派生)）は、工程がすべて終わったタスクとして、投稿の後に行える（`isCompleted` で決める）。
 
 コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`rereviewDocsOnlyOf`・`documentsOnlySince`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`composeReviewPost`・`rereview`・`checkReviewPullRequests`・`watchReview`・`reviewWatchDue`・`supersededWatch`・`sactyMadePullRequests`・`statusWithin`・`FEEDBACK_QUIET_MS`・`REVIEW_WATCH_INTERVALS`）、`apps/daemon/src/github.ts`（`PullRequestStatus`）、`apps/daemon/src/test-files.ts`（`isChangeDocumentsOnly`）、`apps/daemon/src/repository.ts`（`mergeBaseOf`）、`apps/daemon/src/prompts.ts`（`rereviewDocsOnlyLines`・`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`rejudgeLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`・`reviewDispatchInstructionLines`・`reviewUndispatchedLines`・`reviewRecordInstructionLines`・`buildReviewComments`）、`apps/daemon/src/review-dispatch-count.ts`（`countReviewDispatch`）、`apps/daemon/src/review-record.ts`（`readReviewRecordBlock`・`checkReviewRecord`・`stripReviewRecord`・`withoutReviewRecord`・`reviewRecordBlocksNarrowing`）、`packages/core/src/events.ts`（`ReviewVerdict`・`ReviewDispatch`・`ReviewRecord`・`REVIEW_UNDISPATCHED_RETRIES`）、`packages/core/src/projection.ts`（`applyEvent`・`PullRequestReviewPosted`・`ReviewWatchEnded`・`ReviewRestarted`・`EARLIER_REVIEWS_MAX`・`reviewWatching`・`currentReviewVerdict`・`isDone`・`isFinished`・`canRereview`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`・`canControl`）、`apps/web/src/components/review-watch-notice.tsx`、`apps/web/src/components/review-records.tsx`（`ReviewRecords`）
+
+## 再開の補足による許可
+
+画面または API の再開で、補足と `approvedEdits` を指定すると、次の一時停止まで許可が効く。空の補足では断る。工程が補足の文を `byNote` に引用し、空白をそろえて補足に含まれる場合だけ自動で受け入れる。補足に無い方針の変更を含むときは引用しない。要求要件の申し出で承認済みの設計があれば、`design` に設計全文とテスト観点を添え、必要な範囲内に限ったことを `inScope` で申告する。読めないか真でなければ人の判断待ちにする。
+
+自動受け入れは `ChangeProposed`・`ChangeAcceptedByNote`・`ChangeApplied` と、その場で提出する工程の提出を同じトランザクションに記録する。実装は検証と PR の提出に進む。要求要件の承認は取り消さず、必要な設計とテスト観点も置き換える。履歴と申し出の一覧で再開の日時と両方の差分を読める。人が認めた申し出は要求要件を再承認に回す。

@@ -1263,7 +1263,7 @@ Code: `apps/daemon/src/service.ts` (`requestChanges`, `stepSettingChanges`, `voi
 | Reason | When |
 | --- | --- |
 | `too_many_changes` | A record from an earlier version (no longer recorded). It stopped at a request for changes after a person's requests to the same step reached the limit. It carries the remaining comments ([Tasks stopped by the limit in an earlier version](#tasks-stopped-by-the-limit-in-an-earlier-version)) |
-| `change_proposed` | A step agent made a change request. A person decides without an AI judging it (`ChangeDecided`; [Change requests](tasks-and-steps.en.md#change-requests)) |
+| `change_proposed` | A step agent made a change request that does not qualify for automatic acceptance. A person decides without an AI judging it (`ChangeDecided`; [Change requests](tasks-and-steps.en.md#change-requests)) |
 | `change_undecidable` | A record from earlier versions (the AI could not judge a change request). Now it is recorded only when moving on a task that stopped after an earlier version recorded an undecided judgment (`ChangeJudged`) but before recording the follow-up (`resumeSettlement`). A person decides (`ChangeDecided`) |
 | `rework_confirmation` | A record from an earlier version (no longer recorded) |
 

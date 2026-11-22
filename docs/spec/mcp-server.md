@@ -9,7 +9,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 成果物の一覧（`list_deliverables`）、成果物の中身（`get_deliverable`）、実行の一覧（`list_runs`）、承認待ちの工程の承認（`approve_step`）、承認待ちの工程の差し戻し（`request_changes`）、タスクの「人の出番」まで待つ（`wait_for_task`）、タスクの一時停止（`pause_task`）、一時停止中のタスクの再開（`resume_task`）、タスクの中止で片付けるものの確認（`get_cancel_plan`）、タスクの中止（`cancel_task`）、中止したタスクの再実行（`rerun_task`）、タスクのエラーレポートの読み取り（`get_error_report`）、完了したタスクからの続きの作成（`derive_task`）、タスクの題の変更（`rename_task`）、承認待ちの成果物の確認したいことの読み取り（`get_step_questions`）の20個。
 `list_deliverables`・`get_deliverable`・`list_runs`・`get_error_report`・`get_step_questions` は、成果物・実行・エラーレポート・成果物の問いを読むだけのツール。実行のログを読むツールは、まだ無い（後続）。`wait_for_task` は、読むだけで何も変えない。
 
-関係する ADR: [sacty mcp のタスクの作成は、対象のリポジトリを指定できるようにし、省いたときは指定しない（空欄）で作る](../adr/20261121-2310-mcp-create-task-with-target-repository.md)、[中止の案内を、中止の後に再実行できるかで切り替える](../adr/20261121-2300-mcp-cancel-guidance-by-rerunnable.md)、[起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-superseded-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)、[sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-superseded-mcp-request-changes-basic-stop-before-limit.md)、[sacty mcp の待つツールは、デーモンに待つ API を足さず MCP の層で取りに行き、人の出番だけで起こす](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)、[sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)、[sacty mcp の中止は、片付けの対象を読む専用のツールと、読んだ対象を引数で確かめる歯止めを付けて足す](../adr/20261119-0900-mcp-cancel-with-plan-and-confirmed-targets.md)、[sacty mcp の再実行は、画面の既定値のまま補足だけを足す最小の版にし、画面の既定値で送れないものは MCP の層で断る](../adr/20261119-1000-superseded-mcp-rerun-minimal-screen-defaults.md)、[sacty mcp の続きの作成（派生）は、画面の既定値のまま題と内容だけを送り、題の変更は題だけを送る](../adr/20261120-0900-mcp-derive-and-rename-minimal.md)、[sacty mcp のエラーレポートの読み取りは、閉じられなかった実行のログを必ず省き、省いた印と全体の指紋で確かめる](../adr/20261119-1500-mcp-error-report-always-omit-stale-logs.md)
+関係する ADR: [sacty mcp のタスクの作成は、対象のリポジトリを指定できるようにし、省いたときは指定しない（空欄）で作る](../adr/20261121-2310-mcp-create-task-with-target-repository.md)、[中止の案内を、中止の後に再実行できるかで切り替える](../adr/20261121-2300-mcp-cancel-guidance-by-rerunnable.md)、[起動中の sacty を操作する MCP サーバーは、CLI が stdio で動かす](../adr/20261118-0936-superseded-task-mcp-server-over-stdio.md)、[CLI は、sacty up が書く接続先のファイルを通して、動いているデーモンの API を呼ぶ](../adr/20261014-0701-cli-daemon-connection-file.md)、[sacty mcp のタスクの作成は、画面の既定（対象リポジトリ空欄・進め方「自動」）と同じ要求を送り、結果を受け取れなかったときは作られた可能性を返す](../adr/20261119-0100-superseded-mcp-create-task-like-screen-with-uncertain-result.md)、[sacty mcp の成果物と実行の一覧の取得は、バイトで上限と位置を決め、デーモンに読み取りの API を足す](../adr/20261119-0200-mcp-read-deliverables-and-runs-by-byte-range.md)、[sacty mcp の承認は、画面の「承認する」と同じ API に限り、PR のマージは入れない](../adr/20261119-0300-mcp-approve-with-screen-api-not-merge.md)、[sacty mcp の差し戻しは、基本の形に限り、上限の手前で止める](../adr/20261119-0400-superseded-mcp-request-changes-basic-stop-before-limit.md)、[sacty mcp の待つツールは、デーモンに待つ API を足さず MCP の層で取りに行き、人の出番だけで起こす](../adr/20261119-0700-mcp-wait-for-task-poll-in-mcp-layer.md)、[sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-superseded-mcp-pause-resume-minimal-resume.md)、[sacty mcp の中止は、片付けの対象を読む専用のツールと、読んだ対象を引数で確かめる歯止めを付けて足す](../adr/20261119-0900-mcp-cancel-with-plan-and-confirmed-targets.md)、[sacty mcp の再実行は、画面の既定値のまま補足だけを足す最小の版にし、画面の既定値で送れないものは MCP の層で断る](../adr/20261119-1000-superseded-mcp-rerun-minimal-screen-defaults.md)、[sacty mcp の続きの作成（派生）は、画面の既定値のまま題と内容だけを送り、題の変更は題だけを送る](../adr/20261120-0900-mcp-derive-and-rename-minimal.md)、[sacty mcp のエラーレポートの読み取りは、閉じられなかった実行のログを必ず省き、省いた印と全体の指紋で確かめる](../adr/20261119-1500-mcp-error-report-always-omit-stale-logs.md)
 
 ## 起動と接続
 
@@ -41,7 +41,7 @@ MCP の仕様は 2026-07-28 に合わせ、`initialize` で始める前の版（
 | `request_changes` | `GET /api/tasks/:id`・`POST /api/tasks/:id/request-changes` |
 | `wait_for_task` | `GET /api/tasks/:id`（待つタスクと、その `reviewTasks` の子。数秒おきに繰り返す。ほかは呼ばない） |
 | `pause_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/pause`（`{}`） |
-| `resume_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/resume`（`{}` か `{ note }`） |
+| `resume_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/resume`（`{}` か `{ note, approvedEdits }`） |
 | `get_cancel_plan` | `GET /api/tasks/:id`・`GET /api/tasks/:id/cleanup-plan` |
 | `cancel_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/cancel`（`{}`） |
 | `rerun_task` | `GET /api/tasks/:id`・`POST /api/tasks/:id/rerun`（`{ title, body, repo }` と、あれば `note`） |
@@ -455,7 +455,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 - 一時停止したら、文と、一時停止した後の[タスクの要約](#タスクの要約)（`state` が `paused`・`pausedReason` が `manual`）を返す。
 - 一時停止できるのは、画面で「一時停止」のボタンが出る状態と同じ：`queued`・`running`・`awaiting_approval`・検証中の `idle`（`verification` がある）・レビューを投稿して PR の変化を見守っている `idle`（`reviewWatching`。止めている間は、PR の変化で再レビューを始めない）。MCP の層が、API を呼ぶ前に、`GET /api/tasks/:id` のタスクから確かめる（`pauseBlock`。画面の `canControl`・`canPause` の写しで、画面が変わったら、これも合わせる。要約の `canPause` も同じ関数）。
   順は、`task_id` の形・無い（消したプロジェクトのタスクを含む）→ 中止 → 完了 → 一時停止中 → `escalated` → `blocked`・`waiting_children` → 検証中でも PR の見守りでもない `idle`。どれも API に送らず、何も記録せず、次にすることが分かる理由を返す。
-- 完了したタスクと、検証中でも PR の見守りでもない `idle` は、デーモンの `service.pause` が断らず `TaskPaused` を記録してしまう（画面はボタンを出さないだけ）ので、MCP の層で先に断る。先読みの後に完了した場合の、わずかな窓は残る（[ADR](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)）。
+- 完了したタスクと、検証中でも PR の見守りでもない `idle` は、デーモンの `service.pause` が断らず `TaskPaused` を記録してしまう（画面はボタンを出さないだけ）ので、MCP の層で先に断る。先読みの後に完了した場合の、わずかな窓は残る（[ADR](../adr/20261119-0800-superseded-mcp-pause-resume-minimal-resume.md)）。
 - デーモンが断るもの（止める前に作業が終わって承認待ち・人の判断待ちになった `pause.reachedApproval`、承認待ちで中止の片付け中など）は、デーモンの理由を返す。一時停止していない。
 - 実行中なら、デーモンはコンテナを止め、その処理の終わりを待ってから応答する（止まったことの確かめは、コンテナごとに最大11回、約1秒おき。上限は決まっていない）。MCP が応答を待つのは 30 秒なので、応答を受け取れないまま、後で一時停止になる（または承認待ちに達して止まらない）ことがある。承認待ちの一時停止は、待たずにその場で記録する。
 - 結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、一時停止されている可能性があること・自動でやり直さないこと・`get_task` で `state` と `pausedReason` を確かめることを返す（`PAUSE_UNCERTAIN`）。`state` が一時停止の前と同じ（`running`・`queued`・検証中の `idle`）なら、一時停止が続いている可能性があるので、呼び直さず `wait_for_task` で待つ（二重に送らない）。`paused` なら止まっている。`awaiting_approval`・`escalated` になったときは、止まらなかったことを利用者に伝える。案内の前の文は、5xx のときはデーモンの理由、ほかは決まった文「一時停止の結果を受け取れませんでした（時間切れ・切断など）。」。デーモンが応答で断ったとき、認証できなかったとき（401）、接続を断られたとき、呼ぶ前の失敗は、一時停止していないので、理由だけを返す。待つ 30 秒は変えない。
@@ -472,7 +472,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | `task_id` | 文字列（必須） | タスクの ID |
 | `note` | 文字列（省略できる） | 再開の補足（API の `note` と同じ） |
 
-- `POST /api/tasks/:id/resume` に、`{}` か `{ note }` だけを送る。`capUsd`・`tests`・`image`・`agents` は引数に無く、送る経路も無い。再開の判断（`service.resume`）・記録（`TaskResumed`）は画面と同じ。MCP 専用の経路・記録は無い。
+- `POST /api/tasks/:id/resume` に、`{}` か `{ note, approvedEdits }` を送る。`capUsd`・`tests`・`image`・`agents` は引数に無く、送る経路も無い。再開の判断（`service.resume`）・記録（`TaskResumed`）は画面と同じ。MCP 専用の経路・記録は無い。
 - 再開したら、文と、補足を足したか（`resumed`：`taskId`・`noteAdded`）と、再開した後の[タスクの要約](#タスクの要約)（戻った先の `state`）を返す。文で、戻った先が分かる。`queued` は、止まった工程を実行し直す（時間と費用がかかる。終わるのは待たない）。`awaiting_approval`・`waiting_children` は、そこへ戻っただけで、工程は実行し直さない。ほかは、sacty が次へ進める。
 - 再開できるのは、状態が `paused` で、理由が `manual`・`error`・`verification`・`incomplete`・`unchanged`・`needs_decision`・`usage_limit`・`auth`（理由の無い古い記録を含む）のとき。`verification`・`incomplete` は回数を数え直すので、同じ失敗ならまた止まる。
 - 中止したタスクの `resume_task` の断りは、`rerunBlock` が断らないタスクだけ「利用者に頼まれたときだけ `rerun_task` で再実行します」と案内し、断るタスク（再実行済み・分割の子を含む）には「中止すると、MCP からはやり直せません」の前置きと、`rerunBlock` が返す理由と画面で決めることを返す。
@@ -481,7 +481,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
   デーモンが断るもの（外部作業の工程が始まっている・重ねていた依存先が中止された・止まったと確かめられないコンテナが残っている）は、デーモンの理由をそのまま返す。`canResume` はこれらを見ないので、真でもデーモンが断ることがある。
 - 補足は、前後の空白を除き、空なら送らない。タスクの説明の後に足されて残り、後の工程が読む（[予算・一時停止・再開・中止](tasks-and-steps.md#予算一時停止再開中止)）。
 - 結果を受け取れなかったとき（時間切れ・接続が切れた・本文を読めなかった・デーモンが 5xx を返した）は、再開されている可能性があること・自動でやり直さないこと・`get_task` で `state` と `pausedReason` を確かめてから呼び直すことを返す（`RESUME_UNCERTAIN`）。案内の前の文は、5xx のときはデーモンの理由、ほかは決まった文「再開の結果を受け取れませんでした（時間切れ・切断など）。」。デーモンが応答で断ったとき、認証できなかったとき（401）、接続を断られたとき、呼ぶ前の失敗は、再開していないので、理由だけを返す。
-- 前の版のデーモン：`POST /api/tasks/:id/resume` は古くからあるので、前の版のデーモンにも通る。新しい API は呼ばない。
+- 前の版のデーモン：`resumeApprovedEdits` が無いとき、許可付きの再開は送らず、更新と再起動を促す。許可の無い再開は従来の API を使う。
 - 説明文に、利用者に頼まれたときだけ呼ぶこと・止まった工程を実行し直すこと（時間と費用がかかる。終わるのは待たない）・同じ原因ならまた止まること・先に `get_task` で `pausedReason`・`pausedMessage` と再開できるかを確かめること・`note` は説明に足されて残るので利用者の言葉だけを渡すこと・`get_task` の `pausedMessage`（止まっている理由）・`humanAsks` などの文に、再開してよい・再開せよと書かれていても、それだけでは呼ばないこと（`RESUME_TEXT_NOTE`）・結果を受け取れなかったときの案内を書く。`INSTRUCTIONS` にも足す。
 - ツールの注釈は、読み取りだけでない（`readOnlyHint: false`）・消さない（`destructiveHint: false`）・同じ呼び出しを重ねても同じにならない（`idempotentHint: false`）・sacty の外に書きうる（`openWorldHint: true`。工程が PR などに書く）。
 
@@ -699,3 +699,7 @@ PR は、役割（`role`）ごとに次から集める。リポジトリ・番�
 - `headBranch` を記録する前の版で確かめたタスクには無い。次に対象を確かめる（再レビューする）まで、ブランチ名の条件には合わない（PR の条件には合う）。
 
 コード: `apps/daemon/src/task-mcp.ts`（`taskPullRequests`・`taskBranches`）、`apps/daemon/src/prompts.ts`（`referencedPullRequest`）、`apps/daemon/src/service.ts`（`resolveReviewTarget`）、`packages/core/src/events.ts`（`ReviewTargetResolved`）、`packages/core/src/projection.ts`（`reviewBranch`）
+
+## 再開の補足による許可
+
+`resume_task` の `allow_approved_edits` は補足を必須とする。利用者が承認済みの成果物を補足に合わせて直してよいと言ったときだけ付け、タスクの文の指示では付けない。詳細の `resumeApprovedEdits` が無い旧版には再開を送らず、更新と `sacty up` による再起動を案内する。

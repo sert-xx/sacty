@@ -2285,6 +2285,100 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(existsSync(t.shared.calls[0]?.dest ?? "")).toBe(false);
         t.activity.close();
       });
+      it("同じ実行の複数 compose を復元し、空の記録は全サービスとして起動しない", async () => {
+        const t = await fixture();
+        const commit = "a".repeat(40);
+        t.activity.append({
+          taskId: t.id,
+          projectId: "default",
+          events: [
+            {
+              actor: "sacty",
+              event: {
+                type: "AgentRunStarted",
+                payload: {
+                  runId: "multiple",
+                  step: "implement",
+                  agentId: "a",
+                  authMode: "subscription",
+                },
+              },
+            },
+            {
+              actor: "sacty",
+              event: {
+                type: "ServicesStarted",
+                payload: {
+                  runId: "multiple",
+                  step: "implement",
+                  file: "compose.yaml",
+                  services: [{ name: "db", ports: [5432] }],
+                },
+              },
+            },
+            {
+              actor: "sacty",
+              event: {
+                type: "ServicesStarted",
+                payload: {
+                  runId: "multiple",
+                  step: "implement",
+                  file: "infra.yml",
+                  services: [{ name: "cache", ports: [6379] }],
+                  compose: { name: "infra", repo: "/srv/infra", commit: "abc1234def5678" },
+                },
+              },
+            },
+            {
+              actor: "sacty",
+              event: {
+                type: "ServicesStarted",
+                payload: {
+                  runId: "multiple",
+                  step: "implement",
+                  file: "queue.yml",
+                  services: [{ name: "queue", ports: [5672] }],
+                  compose: { name: "queue", repo: "/srv/queue", commit: "fed1234abc5678" },
+                },
+              },
+            },
+            {
+              actor: "sacty",
+              event: {
+                type: "ServicesStarted",
+                payload: {
+                  runId: "multiple",
+                  step: "implement",
+                  file: "empty.yml",
+                  services: [],
+                  compose: { name: "empty", repo: "/srv/empty", commit: "def1234abc5678" },
+                },
+              },
+            },
+            {
+              actor: "sacty",
+              event: { type: "BranchPushed", payload: { branch: "task", commit } },
+            },
+          ],
+        });
+        t.pulls.prInfo = { ...t.pulls.prInfo, number: 7, headSha: commit };
+        await runReview(t.service, t.child);
+        expect(t.services.groups[0]?.members.map((x) => x.spec)).toEqual([
+          { file: "compose.yaml", names: ["db"] },
+          { file: "infra.yml", names: ["cache"], shared: "infra" },
+          { file: "queue.yml", names: ["queue"], shared: "queue" },
+        ]);
+        expect(t.shared.calls).toMatchObject([
+          { repo: "/srv/infra", ref: "abc1234def5678" },
+          { repo: "/srv/queue", ref: "fed1234abc5678" },
+        ]);
+        expect(payloads(t.service, t.child, "ServicesStarted")).toMatchObject([
+          { file: "compose.yaml" },
+          { file: "infra.yml", compose: { repo: "/srv/infra", commit: "abc1234def5678" } },
+          { file: "queue.yml", compose: { repo: "/srv/queue", commit: "abc1234def5678" } },
+        ]);
+        t.activity.close();
+      });
       it("文書だけの再レビューと判定された回も起動する", async () => {
         const t = await fixture();
         vi.spyOn(

@@ -69,6 +69,16 @@ async function submit() {
 }
 
 describe("テストが決まらずに止まったタスクの再開の欄", () => {
+  it("許可は既定でオフで、選ぶと補足とともに送る", async () => {
+    renderForm();
+    const checkbox = container.querySelector<HTMLInputElement>('input[name="approvedEdits"]');
+    const note = container.querySelector<HTMLTextAreaElement>("#resume-note");
+    expect(checkbox?.checked).toBe(false);
+    if (note) act(() => typeInto(note, "範囲を絞る"));
+    act(() => checkbox?.click());
+    expect(await submit()).toMatchObject({ note: "範囲を絞る", approvedEdits: "on" });
+  });
+
   it("テストのコマンドを選ぶと入力欄が出て、入れたコマンドを送る", async () => {
     renderForm();
     expect(container.querySelector("#test-command")).toBeNull();
