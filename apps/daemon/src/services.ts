@@ -624,6 +624,7 @@ export class DockerComposeServices implements ServiceRunner {
     cwd?: string,
     /** 起動した子プロセス（打ち切るために覚える）。 */
     onSpawn?: (child: ChildProcess) => void,
+    timeoutMs?: number,
   ): Promise<{ code: number; stdout: string; out: string }> {
     return new Promise((done) => {
       const child = this.spawnImpl("docker", ["compose", ...args], {
@@ -634,14 +635,27 @@ export class DockerComposeServices implements ServiceRunner {
       onSpawn?.(child);
       let stdout = "";
       let stderr = "";
+      const timer =
+        timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              child.kill("SIGKILL");
+              done({ code: 1, stdout, out: "Docker compose command timed out" });
+            }, timeoutMs);
       child.stdout?.on("data", (chunk) => {
         stdout += chunk;
       });
       child.stderr?.on("data", (chunk) => {
         stderr += chunk;
       });
-      child.on("error", (error) => done({ code: 127, stdout, out: error.message }));
-      child.on("close", (code) => done({ code: code ?? 1, stdout, out: stdout + stderr }));
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        done({ code: 127, stdout, out: error.message });
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        done({ code: code ?? 1, stdout, out: stdout + stderr });
+      });
     });
   }
 
@@ -840,8 +854,28 @@ export class DockerComposeServices implements ServiceRunner {
   }
 
   async stopGroup(runId: string, count: number): Promise<void> {
-    for (let i = 0; i < count; i++) await this.stop(`g${i}${runId}`).catch(() => undefined);
-    await this.docker(["network", "rm", `${composeProject(runId)}-network`]);
+    for (let i = 0; i < count; i++) {
+      const project = composeProject(`g${i}${runId}`);
+      try {
+        const result = await this.compose(
+          ["-p", project, "down", "-v", "--remove-orphans", "--rmi", "local"],
+          undefined,
+          undefined,
+          this.deps.dockerTimeoutMs ?? 120_000,
+        );
+        if (result.code !== 0) console.warn(`[services] compose の回収に失敗しました: ${project}`);
+      } catch {
+        console.warn(`[services] compose の回収に失敗しました: ${project}`);
+      }
+    }
+    const network = `${composeProject(runId)}-network`;
+    try {
+      const result = await this.docker(["network", "rm", network]);
+      if (result.code !== 0)
+        console.warn(`[services] ネットワークの回収に失敗しました: ${network}`);
+    } catch {
+      console.warn(`[services] ネットワークの回収に失敗しました: ${network}`);
+    }
   }
 
   private async prepare(

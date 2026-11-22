@@ -782,6 +782,31 @@ describe("正規化した compose の設定から、localhost に転送するポ
 });
 
 describe("共用の compose の起動（PBI-70）", () => {
+  it("compose down が応答しなくても期限後に残りとネットワークを回収する", async () => {
+    const calls: string[][] = [];
+    const kill = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const spawnImpl = ((_cmd: string, args: string[]) => {
+        calls.push(args);
+        const child = Object.assign(new EventEmitter(), {
+          stdout: new EventEmitter(),
+          stderr: new EventEmitter(),
+          kill,
+        });
+        if (calls.length !== 1) queueMicrotask(() => child.emit("close", 0));
+        return child;
+      }) as never;
+      const runner = new DockerComposeServices(spawnImpl, 300, { dockerTimeoutMs: 20 });
+      await runner.stopGroup("stalled", 2);
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+      expect(calls[1]).toContain("sacty-svc-g1stalled");
+      expect(calls[2]).toEqual(["network", "rm", "sacty-svc-stalled-network"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("sacty-svc-g0stalled"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
   it("ネットワーク作成の停止と時間切れは待ち続けず、エラーの秘密を伏せる", async () => {
     const children: { args: string[]; kill: ReturnType<typeof vi.fn> }[] = [];
     const entered = Promise.withResolvers<void>();
