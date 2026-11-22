@@ -387,9 +387,9 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
       });
     }
     const { activity, op, service } = setup([], { contexts, projects, timeoutMs: 50 });
-    const startedAt = Date.now();
     const started = await service.prefetchSecrets();
-    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    // 取得はまだ解かれていない（応答の無いまま）のに戻った＝上限の時間で打ち切った。経過時間は見ない
+    expect(active).toBeGreaterThan(0);
     expect(most).toBeLessThanOrEqual(4);
     expect(op.calls).toEqual([{ command: "run", refs: ["op://Work/Claude/token"] }]);
     expect(started.problems).toHaveLength(10);

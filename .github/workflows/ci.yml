@@ -32,7 +32,9 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       # 画面のテスト（*.browser.test.ts）が使う Chromium。版は依存の playwright に合わせて入る
-      - run: npx playwright install --with-deps --only-shell chromium
+      # OS のライブラリとフォントは、ランナーのイメージに入っているものに頼る（`--with-deps` は使わない）。
+      # 足りないものが出たら、足りない分だけ apt で入れる。`--with-deps` には戻さない
+      - run: npx playwright install --only-shell chromium
       # 時間が入力の長さに比例するかを測るテストが、ほかのテストと CPU を取り合って落ちないよう、ファイルを1つずつ動かす
       # （2つずつでも上限を超えたことがある）
       - run: npx vitest run --no-file-parallelism

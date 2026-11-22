@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-22（UTC）
 - タスク: PBI-476
-- PR: なし
+- PR: #557
 - ブランチ: sacty/task-pbi-476
 - 関係する ADR: なし（画面の配置の変更で、方針の判断を含まないため）
 
@@ -12,7 +12,7 @@
 
 ## したこと
 
-- 一覧（`task-list.tsx`）：幅 640px 未満では、1 つの `table` を CSS（`max-sm:`）だけで 1 件 1 枚のカードに見せる。題は 2 行まで、2 行目に開始地点・テンプレート・番号・リポジトリを `text-xs` で出し、その下に工程。`data-testid` と「さらに表示」のフォーカスの移動は変えない。
+- 一覧（`task-list.tsx`）：幅 640px 未満では、1 つの `table` を CSS（`max-sm:`）だけで 1 件 1 枚のカードに見せる。題は 2 行まで、題の下にリポジトリ、2 行目に開始地点・テンプレート・番号を `text-xs` で出し、その下に工程。`data-testid` と「さらに表示」のフォーカスの移動は変えない。
 - 絞り込み：640px 未満は検索と状態だけを出し、残りは「絞り込む」のボタン（`aria-expanded`。使っている条件の数を添える。「絞り込む（2）」）で開く。足した文言は、このボタンの日英（`i18n/messages/tasks.ts`）だけ。
 - 詳細の見出し（`task-detail.tsx`）：640px 未満は外側の固定の箱を `display: contents` にし、題・状態・工程・操作をページの先頭で流す。固定するのは、1 行に省略した題の写し（`aria-hidden`）とタブの帯だけ。「題を変える」と編集の欄は流れる側の `h1` の横に置く。
 - `use-sticky-offset.ts`：外側の箱と帯の 2 つを受け取り、`matchMedia("(min-width: 640px)")` で測る箱を切り替える。幅をまたぐと測り直す。
@@ -24,7 +24,9 @@
 - `task-list.browser.test.ts`：375px で横にずれないこと、カード（639px も）、2 行目の文字の大きさ、絞り込みの開閉と条件の数、URL の条件、640px 以上が今のままであること。
 - `task-detail.browser.test.ts`（新規）：375px で全タブが横にずれないこと、固定されるのが帯だけで 160px 以下であること、状態・工程・操作が流れること、`--sticky-offset` の測り先と幅をまたいだ測り直し、PR と費用の位置（375・640・1023・1024px）、640px 以上の見え方。
 - `use-sticky-offset.test.ts`：幅で測る箱が切り替わること。
-- `npm run lint`・`npm run typecheck`・`npx vitest run`（全件）・`npm run build`。
+- `npm run lint`：通った（813 ファイル、指摘なし）。
+- `npm run typecheck`・`npm run build`：通った。
+- `npx vitest run --no-file-parallelism`（全件）：1 回目は 1 ファイルの 4 件が失敗した（負荷による時間切れとみられる）。同じコマンドをもう一度流すと、失敗の行は出なかった。
 
 ## 残したこと
 

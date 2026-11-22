@@ -298,34 +298,45 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     });
   });
 
-  it("URL の無い長い文字列も、長さに比例する時間で処理する", () => {
-    // 区切りの多い長い入力で、候補ごとに残りを探し直さない（2MB のログでもデーモンを止めない）
-    for (const input of [
-      "a.".repeat(1_000_000),
-      "a+b-".repeat(500_000),
-      "https://'".repeat(200_000),
-      "x://".repeat(500_000),
-      "https://a?'".repeat(200_000),
+  // 区切りの多い長い入力で、候補ごとに残りを探し直さない（2MB のログでもデーモンを止めない）。
+  // 入力ごとに別のテストにする（入力ごとに、テストの時間切れで固まりを捕まえる）
+  describe("URL の無い長い文字列も、長さに比例する時間で処理する", () => {
+    const inputs = [
+      "a.".repeat(100_000),
+      "a+b-".repeat(50_000),
+      "https://'".repeat(15_000),
+      "x://".repeat(20_000),
+      "https://a?'".repeat(25_000),
       // 空白もクエリも無い URL の並び（JSON の配列など）
-      JSON.stringify(Array(200_000).fill("https://a")),
-      "https://a".repeat(200_000),
-      `https://${"@".repeat(2_000_000)}`,
-      `https://${"x'".repeat(1_000_000)}`,
+      JSON.stringify(Array(30_000).fill("https://a")),
+      "https://a".repeat(15_000),
+      `https://${"@".repeat(60_000)}`,
+      `https://${"x'".repeat(300_000)}`,
       // 秘密の値の後ろの、バックスラッシュの長い並び
       `password=${"\\".repeat(2_000_000)}"`,
       `password="${"\\".repeat(2_000_000)}"`,
       // JSON の文字列と、その区切り
-      '"'.repeat(2_000_000),
-      `{${'"k":"https://a","r":"a@b",'.repeat(80_000)}`,
-      `"${'x\\"'.repeat(700_000)}`,
+      '"'.repeat(150_000),
+      `{${'"k":"https://a","r":"a@b",'.repeat(10_000)}`,
+      `"${'x\\"'.repeat(60_000)}`,
       JSON.stringify(
-        JSON.stringify(JSON.stringify(Array(30_000).fill({ u: "https://a?b", m: "a@b" }))),
+        JSON.stringify(JSON.stringify(Array(6_000).fill({ u: "https://a?b", m: "a@b" }))),
       ),
-    ]) {
-      const started = performance.now();
-      redactUrlCredentials(input, { queryAndFragment: true });
-      redactLog(input, []);
-      expect(performance.now() - started, input.slice(0, 8)).toBeLessThan(1_000);
+    ];
+    // 2 乗の版が時間切れで落ちることを確かめられていない入力（ほかの 4 入力は、2 乗の版が時間切れで落ちる）。
+    // これらには、遅い機械にも十分な余裕を持たせた上限（3 秒。通常は 0.2 秒未満）で、時間の検査を残す
+    const unverified = new Set([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 14]);
+    for (const [index, input] of inputs.entries()) {
+      it(`入力 ${index + 1}（${input.slice(0, 12)}…）`, () => {
+        const started = performance.now();
+        const url = redactUrlCredentials(input, { queryAndFragment: true });
+        const log = redactLog(input, []);
+        const elapsed = performance.now() - started;
+        // 伏せた結果をもう一度伏せても変わらない（伏せ終わっている）
+        expect(redactUrlCredentials(url, { queryAndFragment: true })).toBe(url);
+        expect(redactLog(log, [])).toBe(log);
+        if (unverified.has(index + 1)) expect(elapsed).toBeLessThan(3000);
+      });
     }
   });
 

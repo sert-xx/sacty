@@ -408,7 +408,7 @@ function TaskFilterBar({
           onChange={(e) => set("query", e.target.value)}
         />
       </label>
-      <label htmlFor={`${uid}-from`} className={`${field}${narrow}`}>
+      <label id={`${uid}-from-field`} htmlFor={`${uid}-from`} className={`${field}${narrow}`}>
         {m.filter.from}
         <Input
           id={`${uid}-from`}
@@ -419,7 +419,7 @@ function TaskFilterBar({
           onChange={(e) => set("from", e.target.value)}
         />
       </label>
-      <label htmlFor={`${uid}-to`} className={`${field}${narrow}`}>
+      <label id={`${uid}-to-field`} htmlFor={`${uid}-to`} className={`${field}${narrow}`}>
         {m.filter.to}
         <Input
           id={`${uid}-to`}
@@ -430,7 +430,7 @@ function TaskFilterBar({
           onChange={(e) => set("to", e.target.value)}
         />
       </label>
-      <label className={`${field}${narrow}`}>
+      <label id={`${uid}-start-field`} className={`${field}${narrow}`}>
         {m.filter.start}
         <select
           className={SELECT}
@@ -445,7 +445,7 @@ function TaskFilterBar({
           ))}
         </select>
       </label>
-      <label className={`${field}${narrow}`}>
+      <label id={`${uid}-repo-field`} className={`${field}${narrow}`}>
         {m.filter.repo}
         <select
           className={SELECT}
@@ -483,6 +483,7 @@ function TaskFilterBar({
         size="sm"
         className="sm:hidden"
         aria-expanded={open}
+        aria-controls={["from", "to", "start", "repo"].map((k) => `${uid}-${k}-field`).join(" ")}
         onClick={() => setOpen((v) => !v)}
       >
         {m.filter.toggle(hiddenActive)}

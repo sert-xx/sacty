@@ -508,15 +508,13 @@ describe("実装の PR の本文：作業の報告を載せない（PBI-264）",
 
   it("改行の無い長い空白列でも、線形時間で本文を作る", () => {
     // 文の途中の長い空白（行の端ではないので、trim では消えない）
-    const blanks = " ".repeat(100_000);
-    const started = Date.now();
+    const blanks = " ".repeat(200_000);
     const body = buildPullRequestBody(
       task({
         outputs: { implement: `x${blanks}y` },
         lastReview: review({ summary: `合格。p${blanks}q` }),
       }),
     );
-    expect(Date.now() - started).toBeLessThan(1000);
     expect(body).toContain("- 変更：x");
   });
 

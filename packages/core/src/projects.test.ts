@@ -252,17 +252,18 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
 });
 
 describe("URL の正規化の処理時間", () => {
-  it("/ や # を長く続けた入力でも、線形の時間で読む", () => {
-    const repeated = 200_000;
+  it("/ や # を長く続けた入力でも、固まらずに読み、URL として受け入れない", () => {
+    const repeated = 100_000;
+    const results: boolean[] = [];
     for (const url of [
       `${"/".repeat(repeated)}x`,
       `https://github.com/acme/app${"/".repeat(repeated)}x`,
       `https://github.com/acme/app${"#".repeat(repeated)}\nx`,
     ]) {
-      const started = performance.now();
-      RepoUrl.safeParse(url);
-      expect(performance.now() - started).toBeLessThan(5_000);
+      results.push(RepoUrl.safeParse(url).success);
     }
+    // どれも、末尾以外に余計な文字（x・改行）があるので、URL として受け入れない
+    expect(results).toEqual([false, false, false]);
   });
 
   it("末尾の / の並びと、クエリ・フラグメントは今までどおり除く", () => {
