@@ -66,9 +66,18 @@ describe("レビューの指示：行へのコメントにした指摘を本文�
 
   it("TV-1：本文のどの節にも同じ内容を書かず、総評に件数を書かない。本文の指摘の行は、行へのコメントにしない指摘だけを対象にする", () => {
     expect(prompt).toContain(
-      "行へのコメントにした指摘は、本文のどの節（総評・指摘・前回の指摘など）にも、同じ内容（言い換えを含む。起きる条件・実害・直し方）を書かないでください",
+      "行へのコメントにした指摘（JSON に入れた指摘）は、本文のどの節（総評・指摘・前回の指摘など）にも、同じ内容（言い換えを含む。起きる条件・実害・直し方）を書かないでください",
     );
     expect(prompt).toContain("総評に件数を書かないでください");
+    // 行へのコメントにするのは行番号を特定できる指摘だけ。JSON に入れた指摘は本文に重ねない
+    expect(prompt).toContain(
+      "行へのコメントにするのは、行番号を特定できる指摘だけです。行へのコメントにした指摘（JSON に入れた指摘）は",
+    );
+    expect(prompt).toContain(
+      "行番号を付けない差分の外の指摘は、下のとおり本文の「指摘」の節に書きます",
+    );
+    // 本文の記録の指示（reviewRecordInstructionLines）も、本文には行へのコメントにしない指摘だけを書かせる
+    expect(prompt).toContain("本文には、行へのコメントにしない指摘だけを書く");
     // 本文の「指摘」の節に書かせる行は、すべて「行へのコメントにしない指摘」に限っている
     const lines = prompt
       .split("\n")
@@ -209,6 +218,29 @@ describe("本文が減っても、指摘の選り分けが行へのコメント�
         verdictOf: () => "changes_required",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("再レビューの指示の、本文の指摘の節（TV-1）", () => {
+  it("HEAD_CHECK_LINES は、本文の「指摘」の節に、行へのコメントにしない指摘だけを書かせる", () => {
+    const prompt = buildPrompt(
+      reviewTask({
+        reviewRound: 2,
+        previousReview: {
+          round: 1,
+          url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+          at: "2026-11-22T01:00:00.000Z",
+          headCommit: "p".repeat(40),
+          body: "## 総評\n\n総評だけ。",
+          comments: [],
+        },
+      }),
+      "review",
+      { diff },
+    );
+    expect(prompt).toContain(
+      "この節に書くのは、行へのコメントにしない指摘（差分の中に付けられる行が無い指摘）だけにする（行へのコメントにした指摘は、この節に書かない）",
+    );
   });
 });
 

@@ -168,8 +168,8 @@ The weight is decided from the size of the impact when the problem happens and h
 
 Each finding states the conditions under which it happens and the harm when it does.
 
-A finding about a specific line is posted as a line comment on the PR and is not written in the body of the review.
-Just under the verdict line of the body, the count appears as "行へのコメントに N 件の指摘があります。" (N findings are in line comments); it does not appear when there are no line comments.
+A finding that could be made into a line comment is posted as a line comment on the PR and is not written in the body of the review. A finding about a line outside the diff, or about a line whose comment could not be posted as a line comment, appears in the "行についての指摘" section of the body.
+Just under the verdict line of the body, the count appears as "行へのコメントに N 件の指摘があります。" (N findings are in line comments); it does not appear when there are no line comments, or when the line comments were put into the body and posted again.
 The "指摘" (findings) section of the body holds only the findings that cannot be line comments (about a whole file, the whole PR, or code or documents outside the diff).
 
 Who the @ mention goes to is decided as follows.
