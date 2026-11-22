@@ -444,7 +444,7 @@ describe("知らない引数・待ち始めを読めないとき・読むだけ�
     }
     expect(t.requests).toHaveLength(before);
     const tools = (await t.client.listTools()).tools;
-    expect(tools).toHaveLength(19);
+    expect(tools).toHaveLength(20);
     const list = tools.find((x) => x.name === "list_tasks");
     expect(list?.inputSchema.additionalProperties).toBe(false);
     expect(list?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });

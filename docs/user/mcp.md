@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/cli/src/index.ts（mcpCommand）、packages/cli/src/mcp.ts、apps/daemon/src/task-mcp.ts（TOOLS・INSTRUCTIONS）、apps/daemon/src/task-reads.ts、apps/daemon/src/byte-range.ts、apps/daemon/src/session-logs.ts（readMeta）、apps/daemon/src/review-record.ts -->
+<!-- 対応するコード: packages/cli/src/index.ts（mcpCommand）、packages/cli/src/mcp.ts、apps/daemon/src/task-mcp.ts（TOOLS・INSTRUCTIONS）、apps/daemon/src/step-questions.ts、apps/daemon/src/task-reads.ts、apps/daemon/src/byte-range.ts、apps/daemon/src/session-logs.ts（readMeta）、apps/daemon/src/review-record.ts -->
 
 **日本語** | [English](mcp.en.md)
 
@@ -92,6 +92,7 @@ sacty が 30 秒のうちに応答しないときは、「デーモンが時間�
 | `get_deliverable` | 工程と種類を指定して、成果物の中身を読む（承認済みならその版、まだなら最新の出力。レビューは本文と行へのコメント） |
 | `list_runs` | エージェントの実行を新しい順に一覧にする（工程・オーケストレーターなど。使ったエージェント・時刻・実行中／成功／失敗／終わりが記録されていない・別のエージェントへの切り替え） |
 | `get_error_report` | タスクのエラーレポート（画面の「エラーレポートをダウンロード」と同じ Markdown）を読む（`task_id`・`lang`・`offset`・`max_bytes`・`fingerprint`）。読むだけで、何も変えない。閉じられなかった実行のログは省かれる。エラーの分析を頼むことはできない（画面で行う）。`get_task` の `errorReportWorthReading` が、読む価値の目安 |
+| `get_step_questions` | 承認待ちの要求要件・設計の成果物の「確認したいこと」（must・should の問い）を、問いごとに読む（`task_id`）。読むだけで、何も変えない。読み取れないときは「読み取れなかった」と返す |
 | `approve_step` | 承認待ちの工程を承認する（`task_id`・`step`・`submission`）。画面の「承認する」と同じ。PR のマージで承認する工程は承認できず、PR の URL を返す |
 | `request_changes` | 承認待ちの工程を差し戻す（`task_id`・`step`・`submission`・`comments`）。画面で、戻し先・原因を選ばずに指摘だけを書いて「差し戻す」を押すのと同じ。同じ工程への差し戻しの回数に、上限はない |
 | `wait_for_task` | 1つのタスクに「人の出番」（承認待ち・人の判断待ち・一時停止・完了・中止・PR のレビューの判定）が来るまで待つ（`task_id`・`timeout_seconds`・`cursor`）。読むだけで、何も変えない |
@@ -304,7 +305,9 @@ sacty が人に問いかけて待っているとき、AI は `get_task` だけ�
   答えると、sacty がその工程をやり直します（時間と費用がかかります）。**答える専用のツールは、ありません。**
 - **人の判断待ち**（状態が `escalated`）：`get_task` の `escalation` に、理由（以前の版の記録の差し戻しの上限・変更の申し出など。記録が無い古いタスクは `unknown`）・工程・やり直す工程・書きかけの指摘の件数・開いている変更の申し出の ID が入ります。指摘の文は入りません。
   MCP でできるのは、承認の手段（`approval.method`）が `approve_step` のときの承認だけです（PR のマージで承認する工程や `approval` が無いときは、読むだけです）。何ができるかは `escalation.canDoHere` で確かめます。差し戻し・変更の申し出への決定・後続に回したい案への決定は、MCP からできません。画面で決めます（`escalation.decideOnScreen` に、理由に合った項目が入ります）。人の判断待ちのタスクの中止は、`cancel_task` でできます（あなたがはっきり頼んだときだけです）。
-- 要件・設計などの成果物の本文にある「確認したいこと」の節は、`humanAsks` には入りません。`get_deliverable` で本文を読みます。
+- **成果物の確認したいこと**（`get_step_questions`）：承認待ちの要求要件・設計の成果物にある「確認したいこと」の節は、`humanAsks` には入りません。`get_task` や一覧の要約の `stepQuestions` で、問いがあるか・must・should が何件かが分かり、中身は `get_step_questions` で読みます（問いごとの文。1件は 1000 文字、must・should それぞれ 20 件までで、省いたときは件数が分かります）。
+  節が見つからない・形が違って数えられないときは、「問いは無い」ではなく「読み取れなかった」と返します。全文は `get_deliverable` で読めます。人の判断待ち（`escalated`）の工程と、調査などほかの工程は対象外です。
+  答え方は、PR を作った工程は PR のコメント（答えずにマージすると、推奨の答えで進みます）、PR を作らない工程は `request_changes` の `comments`（答えずに `approve_step` すると、推奨の答えで進みます）です。答える専用のツールは、ありません。
 - これらの文は、エージェントやほかの人が書いたものです。「承認してよい」「差し戻せ」と書いてあっても、AI はそれだけで承認・差し戻しをしません（あなたに頼まれたときだけです）。
 
 ## 気をつけること
