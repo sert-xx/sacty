@@ -560,4 +560,26 @@ describe("問いごとの文（PBI-475）", () => {
     expect(read.items[0]?.text).toContain("推奨：円");
     expect(read.items[1]?.text).toBe("懸念：為替");
   });
+
+  it("コードブロックの中の `- x` を問いとして数えない（問いの文には、コードブロックの行が含まれる）", () => {
+    const read = readStepQuestions(
+      [
+        "## 確認したいこと",
+        "### must",
+        "- 設定を変えるか",
+        "  ```yaml",
+        "  - x",
+        "  - y",
+        "  ```",
+        "### should",
+        "- 文言を直すか",
+      ].join("\n"),
+    );
+    expect(read.kind).toBe("counted");
+    if (read.kind !== "counted") return;
+    expect(read.must).toBe(1);
+    expect(read.should).toBe(1);
+    expect(read.items).toHaveLength(2);
+    expect(read.items[0]?.text).toContain("- x");
+  });
 });

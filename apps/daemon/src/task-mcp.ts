@@ -393,7 +393,7 @@ const StepQuestionsSummarySchema = z.object({
 });
 
 const STEP_QUESTION_TEXT_MAX = 1000;
-const STEP_QUESTIONS_MAX = 20;
+const STEP_QUESTION_ITEMS_MAX = 20;
 const STEP_QUESTIONS_CONTENT_MAX = 4000;
 
 const StepQuestionsResultSchema = z.object({
@@ -1561,11 +1561,11 @@ function describeStepQuestions(task: Task): z.infer<typeof StepQuestionsResultSc
     const each = (kind: "must" | "should") => {
       const all = read.items.filter((i) => i.kind === kind);
       return {
-        shown: all.slice(0, STEP_QUESTIONS_MAX).map((i) => ({
+        shown: all.slice(0, STEP_QUESTION_ITEMS_MAX).map((i) => ({
           kind,
           text: clip(i.text, STEP_QUESTION_TEXT_MAX),
         })),
-        omitted: Math.max(0, all.length - STEP_QUESTIONS_MAX),
+        omitted: Math.max(0, all.length - STEP_QUESTION_ITEMS_MAX),
       };
     };
     const must = each("must");

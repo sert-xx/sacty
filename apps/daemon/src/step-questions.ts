@@ -144,7 +144,7 @@ function labelOf(line: string): { kind: "must" | "should"; rest: string } | unde
 }
 
 /** must・should の問いごとの文。数えられなければ undefined。件数は返す items の数で決まる。 */
-function countQuestions(body: string[]): StepQuestionItem[] | undefined {
+function splitQuestions(body: string[]): StepQuestionItem[] | undefined {
   const entries = scan(body.join("\n"));
   const labels: Label[] = [];
   entries.forEach((entry, at) => {
@@ -207,7 +207,7 @@ export function readStepQuestions(output: string | undefined): StepQuestions {
   const text = body.join("\n").trim();
   if (!text) return { kind: "missing" };
   if (isNone(text)) return { kind: "none" };
-  const items = countQuestions(body);
+  const items = splitQuestions(body);
   if (!items) return { kind: "uncounted", content: text };
   if (items.length === 0) return { kind: "none" };
   const must = items.filter((i) => i.kind === "must").length;
