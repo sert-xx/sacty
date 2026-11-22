@@ -585,7 +585,7 @@ export class DockerComposeServices implements ServiceRunner {
   private docker(
     args: string[],
     state?: { aborted: boolean; child?: ChildProcess },
-  ): Promise<{ code: number; stdout: string; out: string }> {
+  ): Promise<{ code: number; stdout: string; out: string; failure?: "timeout" | "spawn" }> {
     return new Promise((done) => {
       const child = this.spawnImpl("docker", args, {
         env: dockerClientEnv(),
@@ -595,8 +595,13 @@ export class DockerComposeServices implements ServiceRunner {
       let stdout = "";
       let stderr = "";
       const timer = setTimeout(() => {
+        done({
+          code: 1,
+          stdout,
+          out: `${stdout}${stderr}\nDocker command timed out`,
+          failure: "timeout",
+        });
         child.kill("SIGTERM");
-        done({ code: 1, stdout, out: `${stdout}${stderr}\nDocker command timed out` });
       }, this.deps.dockerTimeoutMs ?? IMAGE_ID_TIMEOUT_MS);
       child.stdout?.on("data", (chunk) => {
         stdout += chunk;
@@ -606,7 +611,7 @@ export class DockerComposeServices implements ServiceRunner {
       });
       child.on("error", (error) => {
         clearTimeout(timer);
-        done({ code: 127, stdout, out: stdout + stderr + error.message });
+        done({ code: 127, stdout, out: stdout + stderr + error.message, failure: "spawn" });
       });
       child.on("close", (code) => {
         clearTimeout(timer);
@@ -625,7 +630,7 @@ export class DockerComposeServices implements ServiceRunner {
     /** 起動した子プロセス（打ち切るために覚える）。 */
     onSpawn?: (child: ChildProcess) => void,
     timeoutMs?: number,
-  ): Promise<{ code: number; stdout: string; out: string }> {
+  ): Promise<{ code: number; stdout: string; out: string; failure?: "timeout" | "spawn" }> {
     return new Promise((done) => {
       const child = this.spawnImpl("docker", ["compose", ...args], {
         env: dockerClientEnv(),
@@ -639,8 +644,13 @@ export class DockerComposeServices implements ServiceRunner {
         timeoutMs === undefined
           ? undefined
           : setTimeout(() => {
+              done({
+                code: 1,
+                stdout,
+                out: "Docker compose command timed out",
+                failure: "timeout",
+              });
               child.kill("SIGKILL");
-              done({ code: 1, stdout, out: "Docker compose command timed out" });
             }, timeoutMs);
       child.stdout?.on("data", (chunk) => {
         stdout += chunk;
@@ -650,7 +660,7 @@ export class DockerComposeServices implements ServiceRunner {
       });
       child.on("error", (error) => {
         clearTimeout(timer);
-        done({ code: 127, stdout, out: error.message });
+        done({ code: 127, stdout, out: error.message, failure: "spawn" });
       });
       child.on("close", (code) => {
         clearTimeout(timer);
@@ -863,18 +873,23 @@ export class DockerComposeServices implements ServiceRunner {
           undefined,
           this.deps.dockerTimeoutMs ?? 120_000,
         );
-        if (result.code !== 0) console.warn(`[services] compose の回収に失敗しました: ${project}`);
+        if (result.code !== 0)
+          console.warn(
+            `[services] compose の回収に失敗しました: ${project} (${result.failure ?? "exit"}, code=${result.failure ? "なし" : result.code})`,
+          );
       } catch {
-        console.warn(`[services] compose の回収に失敗しました: ${project}`);
+        console.warn(`[services] compose の回収に失敗しました: ${project} (spawn, code=なし)`);
       }
     }
     const network = `${composeProject(runId)}-network`;
     try {
       const result = await this.docker(["network", "rm", network]);
       if (result.code !== 0)
-        console.warn(`[services] ネットワークの回収に失敗しました: ${network}`);
+        console.warn(
+          `[services] ネットワークの回収に失敗しました: ${network} (${result.failure ?? "exit"}, code=${result.failure ? "なし" : result.code})`,
+        );
     } catch {
-      console.warn(`[services] ネットワークの回収に失敗しました: ${network}`);
+      console.warn(`[services] ネットワークの回収に失敗しました: ${network} (spawn, code=なし)`);
     }
   }
 

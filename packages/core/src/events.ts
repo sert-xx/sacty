@@ -2730,7 +2730,9 @@ const ServicesStarted = z.object({
       }),
     ),
     /** 共用の compose（PBI-70）から起動したとき、その名前と、取得したコミット。 */
-    compose: z.object({ name: z.string(), commit: z.string() }).optional(),
+    compose: z
+      .object({ name: z.string(), commit: z.string(), repo: z.string().optional() })
+      .optional(),
     /** 実装の検証（最終レビューの中のテスト）のための起動か（無ければ工程のエージェントの実行）。 */
     forTests: z.boolean().optional(),
     /** 複数のサービスが使うため、localhost に転送しなかった番号（ホスト・コンテナのポート。PBI-60）。 */

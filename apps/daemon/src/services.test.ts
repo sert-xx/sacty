@@ -802,7 +802,41 @@ describe("共用の compose の起動（PBI-70）", () => {
       expect(kill).toHaveBeenCalledWith("SIGKILL");
       expect(calls[1]).toContain("sacty-svc-g1stalled");
       expect(calls[2]).toEqual(["network", "rm", "sacty-svc-stalled-network"]);
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("sacty-svc-g0stalled"));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-g0stalled (timeout, code=なし)"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("回収失敗の種類と終了コードを秘密を含めず記録する", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    try {
+      const spawnImpl = ((_cmd: string, _args: string[]) => {
+        const child = Object.assign(new EventEmitter(), {
+          stdout: new EventEmitter(),
+          stderr: new EventEmitter(),
+          kill: vi.fn(),
+        });
+        calls++;
+        const current = calls;
+        queueMicrotask(() => {
+          child.stderr.emit("data", "secret-value");
+          if (current === 1) child.emit("error", new Error("secret-value"));
+          else child.emit("close", 42);
+        });
+        return child;
+      }) as never;
+      const runner = new DockerComposeServices(spawnImpl);
+      await runner.stopGroup("failed", 1);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-g0failed (spawn, code=なし)"),
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-failed-network (exit, code=42)"),
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("secret-value");
     } finally {
       warn.mockRestore();
     }
