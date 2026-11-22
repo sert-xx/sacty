@@ -39,14 +39,14 @@ should
 - 新しいイベントは足さず、`ReworkStoppedByMerge`（step なし）・`PullRequestMerged`・`StepApproved` を記録し、工程の PR の片付けは `PullRequestClosed` で記録する。記録した後は前の版のデーモンが投影で止まるので、版を戻せないことを ADR と仕様に書く。
 - 捨てた指摘（`discardedRemarks`）は、やり直している工程の未反映の指摘にする。
 - 前の工程へ戻している間に閉じられた実装の PR も見守り続け、GitHub で開き直されたら `PullRequestReopened` を記録する（開き直してマージされることがあるため）。
-- 戻す承認の基準は、最後に作った・更新した実装の PR の時点のもの。人が PR のブランチへ直接積んだコミットでは基準を変えない。
+- 戻す承認の基準は、最後に作った・更新した実装の PR の時点のもの。実装へ進み直しただけのときと、人が PR のブランチへ直接積んだコミットでは基準を変えない。
 
 ## 構成
 
 | 場所 | 変更 |
 | --- | --- |
 | `packages/core/src/projection.ts` | `sentBackImplementPullRequest(task)` を足す。実行対象の工程が実装より前、状態が `queued`・`running`・`idle`・`paused`・`awaiting_approval`・`escalated` のとき、`pullRequest` があり記録が `open`・`closed` ならその PR を、`pullRequest` が無く `continuedPullRequest` があれば引き継いだ PR（コミットは `reworkingPullRequest` と同じ）を返す |
-| 同上 `Task.implementBasis` | 実装より前の全工程の承認・成果・テスト観点を残す。実装へ進んだとき（前の工程の `StepApproved`）と、実装の `PullRequestPublished`（作成・更新）のたびに、その時点のもので置き換える。`reopen`・やり直しの間の承認では変えない |
+| 同上 `Task.implementBasis` | 実装より前の全工程の承認・成果・テスト観点を残す。実装の `PullRequestPublished`（作成・更新）のたびに、その時点のもので置き換える。`pullRequest` がまだ無い（引き継いだ PR だけの）間に限り、実装へ進んだとき（前の工程の `StepApproved`）にも置き換える。`pullRequest` がある間の実装へ進み直し・`reopen`・やり直しの間の承認では変えない |
 | 同上 `ReworkStoppedByMerge`（step なし） | 上の PR も受け付ける。引き継いだ PR なら、いまと同じく `pullRequest` に記録する。戻している工程から実装の前までを done にし、実装より前の全工程の承認・成果・テスト観点を `implementBasis` で置き換える（やり直しの間に承認し直した工程も戻す。基準が無い工程は Q-2）。工程の PR の記録は変えない |
 | 同上 `PullRequestMerged`・`PullRequestClosed`・`PullRequestReopened` | ゲートの PR に加えて、上の PR も受け付け、`pullRequestState` を `merged`・`closed`・`open` にする（`Closed`・`Reopened` では工程と状態は変えない）。`PullRequestClosed` は、実装の PR がマージ済みのタスクの開いた工程の PR も受け付け、closed・置き換え済みにする |
 | `apps/daemon/src/service.ts` `reworkTarget` | 実装の作り直しの PR が無ければ、上の PR を返す。`checkReworkMerges`・`stopReworkForMerge`・`endReworkByMerge` がそのまま扱う（実行中の工程はコンテナを止めて確かめる） |
@@ -89,27 +89,30 @@ should
 - [TV-8] 実装の PR を更新した後に戻してマージされたら、更新した時点の承認に戻る
   - 入力：設計 D1 の承認で実装の PR を作り、設計へ戻して D2 で承認し直し、実装の PR を D2 で更新（PullRequestPublished）した後、もう一度設計へ戻して D3 にやり直している間に、上の 3 つの記録を投影する
   - 期待結果：approved.design と outputs.design が D2、テスト観点が D2 のものになり、D1・D3 は残らない
-- [TV-9] 引き継いだ PR が、実装の PR を出す前の前の工程でマージされても進む
+- [TV-9] 実装へ進み直しても PR を更新する前に戻してマージされたら、最後に作った PR の時点の承認に戻る
+  - 入力：設計 D1 の承認で実装の PR を作り、設計へ戻して D2 で承認し直して実装へ進み（StepApproved）、実装の PR を更新する前にもう一度設計へ戻してやり直している間に、上の 3 つの記録を投影する
+  - 期待結果：approved.design と outputs.design が D1、テスト観点が D1 のものになり、D2 の承認は残らない
+- [TV-10] 引き継いだ PR が、実装の PR を出す前の前の工程でマージされても進む
   - 入力：continuedPullRequest があり pullRequest が無いタスクで、設計の承認で実装へ進んだ後に要求要件へ戻し、要求要件をやり直している間に、偽の GitHub が引き継いだ PR を merged と返す
   - 期待結果：上と同じ 3 つの記録でタスクが進み、pullRequest が引き継いだ PR の番号で記録されて pullRequestState が merged、承認と成果は実装へ進んだ時点のものになる
-- [TV-10] やり直しの間に作った工程の PR を、GitHub で閉じてから記録し、失敗したら閉じ直す
+- [TV-11] やり直しの間に作った工程の PR を、GitHub で閉じてから記録し、失敗したら閉じ直す
   - 入力：設計へ戻した後に作った設計の PR（タスクブランチ向き）が開いて設計の承認待ちのときに実装の PR が merged になり、偽の GitHub の pulls.close が 1 回目は失敗し、2 回目は成功する（2 回目の前にデーモンを起動し直す）
   - 期待結果：タスクは 1 回目の確認で実装の承認へ進み、1 回目は設計の PR が記録で open のまま残って PullRequestClosed は無く、起動し直した後の確認で pulls.close が呼ばれ、成功の後に PullRequestClosed が1回記録されて設計の PR が closed・superseded になる
-- [TV-11] 前の工程へ戻している間に閉じた・開き直した実装の PR の状態を記録に合わせる
+- [TV-12] 前の工程へ戻している間に閉じた・開き直した実装の PR の状態を記録に合わせる
   - 入力：設計へ戻して設計をやり直している間に、偽の GitHub が実装の PR を closed と返し、次の PR の確認では open と返す
   - 期待結果：1 回目の確認で PullRequestClosed が記録されて pullRequestState が closed になり、cleanupPlan と get_cancel_plan の閉じる対象に実装の PR が出ず、2 回目の確認で PullRequestReopened が記録されて open に戻り、どちらでも設計の工程と状態は変わらない
-- [TV-12] すでにこの状態で一時停止したタスクが、修正の版で進む
+- [TV-13] すでにこの状態で一時停止したタスクが、修正の版で進む
   - 入力：作業履歴に、設計へ戻した後の TaskPaused（error、文言は pr.failed の couldn't find remote ref）までがあるタスクを読み込んでデーモンを起動し、偽の GitHub は実装の PR を merged と返す
   - 期待結果：PR の確認、または resume の後の実行で、上と同じ 3 つの記録が記録され、タスクはマージの後の監視か完了に進み、記録の pullRequestState は merged になる
-- [TV-13] 取り消しの確認は、記録が open でない実装の PR を閉じる対象に挙げない
+- [TV-14] 取り消しの確認は、記録が open でない実装の PR を閉じる対象に挙げない
   - 入力：pullRequestState が merged・merged_outdated・closed の実装の PR を持つタスクで、cleanupPlan と get_cancel_plan（cancelTargets）を読む
   - 期待結果：どちらも実装の PR を閉じる対象（pull_request の detail・willClose.pullRequests）に含めず、get_cancel_plan は untouched.pullRequests に理由つきで出す
-- [TV-14] 中止の片付けは、GitHub で開いていない実装の PR を閉じない
+- [TV-15] 中止の片付けは、GitHub で開いていない実装の PR を閉じない
   - 入力：記録の pullRequestState が open で、偽の GitHub が merged と返す実装の PR を持つタスクを中止する
   - 期待結果：pulls.close は実装の PR に対して呼ばれず、片付けの結果に失敗が出ない
-- [TV-15] 作業履歴に原因が書いてある
+- [TV-16] 作業履歴に原因が書いてある
   - 入力：docs/worklog/YYYYMMDD-pbi-494-<スラッグ>.md
   - 期待結果：PR #590 で設計へ戻した後（21:53:27Z）にマージ（21:53:59Z）され、実行対象が設計のため実装の PR を見守らず、工程の PR の作成がタスクブランチの取得で失敗して一時停止した経緯が書いてある
-- [TV-16] 仕様書・利用者の文書と ADR に新しい扱いが書いてある
+- [TV-17] 仕様書・利用者の文書と ADR に新しい扱いが書いてある
   - 入力：docs/spec/approval.md・approval.en.md・mcp-server.md・mcp-server.en.md・docs/user/tasks.md・tasks.en.md と追加の ADR
   - 期待結果：approval の日英に、前の工程へ戻している間も実装の PR（引き継いだ PR を含む）を見守りマージで実装の承認として進めること・工程の PR の作成の前とブランチの取得の失敗の後に確かめること・承認を最後に作った・更新した実装の PR の時点に戻すこと・やり直しの間の工程の PR を閉じられるまで閉じ直すこと・閉じた・開き直した状態を記録すること・記録した後は版を戻せないことが、mcp-server の日英に、記録が open の実装の PR だけを閉じる対象にすることが、tasks の日英に、要求要件・設計をやり直している間に実装の PR がマージされたらやり直しを止めて承認として進めることが書いてあり、ADR が PBI-276 の決めを変える理由を述べている
