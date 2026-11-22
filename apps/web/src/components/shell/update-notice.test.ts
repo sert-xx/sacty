@@ -31,7 +31,7 @@ describe("sacty の新しい版の知らせ（PBI-135・PBI-147）", () => {
   it("新しい版があれば、最新の版と動いている版・リリースのリンク・止めてから実行する更新の手順（イメージの作り直しを含む）を出す", () => {
     const text = view(newer());
     expect(text).toContain("Sacty の新しい版があります");
-    expect(text).toContain("Sacty 1.1.0 がリリースされました（動いているのは 1.0.0）");
+    expect(text).toContain("Sacty 1.1.0 がリリースされました。動いているのは 1.0.0 で");
     expect(text).toContain(`href="${RELEASE}"`);
     expect(text).toContain("リリースの内容を見る");
     // 動いている sacty up を止めてから、更新・ビルド・イメージの作り直しをして起動する（PR #147 レビュー提案・PBI-147）
@@ -77,7 +77,7 @@ describe("sacty の新しい版の知らせ（PBI-135・PBI-147）", () => {
   it("英語の文言もある", () => {
     const text = view(newer(), shell.en.update);
     expect(text).toContain("A new version of Sacty is available");
-    expect(text).toContain("Sacty 1.1.0 has been released (you are running 1.0.0)");
+    expect(text).toContain("Sacty 1.1.0 has been released. You are running 1.0.0");
     expect(text).toContain("See the release notes");
     expect(text).toContain("Stop the running sacty up with Ctrl+C");
   });

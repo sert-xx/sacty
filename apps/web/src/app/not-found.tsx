@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getMessages } from "@/i18n/server";
+import { notFoundMetadata } from "@/lib/not-found-metadata";
 import { DASHBOARD_PATH } from "@/lib/paths";
 
 /** ブラウザーのタイトルも、画面の言語に従う。 */
 export async function generateMetadata(): Promise<Metadata> {
-  const t = (await getMessages()).common.notFound;
-  return { title: `${t.title} - Sacty` };
+  return notFoundMetadata();
 }
 
 /**

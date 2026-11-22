@@ -1,12 +1,27 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import { LiveRunLog } from "@/components/run-log";
 import { FollowProject } from "@/components/shell/follow-project";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError } from "@/lib/daemon";
+import { notFoundMetadata } from "@/lib/not-found-metadata";
 import { loadRunLog } from "@/lib/run-log-data";
 
 type Params = { params: Promise<{ id: string; runId: string }> };
+
+const loadLog = cache((id: string, runId: string) => loadRunLog(id, runId));
+
+/** 無いタスク・実行のときは、無いページのタイトルにする。 */
+export async function generateMetadata({ params }: Params): Promise<Metadata> {
+  const { id, runId } = await params;
+  try {
+    if (!(await loadLog(id, runId))) return await notFoundMetadata();
+  } catch {
+    // 取れなければ既定のタイトル
+  }
+  return {};
+}
 
 /** エージェントの実行のセッションログ（PBI-62）。作業履歴の実行の行の「ログを見る」から開く。 */
 export default async function RunLogPage({ params }: Params) {
@@ -20,9 +35,9 @@ export default async function RunLogPage({ params }: Params) {
 
 async function RunLog({ params }: Params) {
   const { id, runId } = await params;
-  let data: Awaited<ReturnType<typeof loadRunLog>>;
+  let data: Awaited<ReturnType<typeof loadLog>>;
   try {
-    data = await loadRunLog(id, runId);
+    data = await loadLog(id, runId);
   } catch (error) {
     // 届くようになったら、取り直したログを出す（PBI-108）
     if (error instanceof DaemonUnavailableError) {

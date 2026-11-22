@@ -1,13 +1,32 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import { NewTask, NewTaskPlaceholder } from "@/components/new-task";
 import { FollowProject } from "@/components/shell/follow-project";
 import { LiveTaskList, TasksSection } from "@/components/task-list";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getStatus, listProjects } from "@/lib/daemon";
 import { liveVersion } from "@/lib/live-server";
+import { notFoundMetadata } from "@/lib/not-found-metadata";
 import { parseTaskFilter } from "@/lib/task-filter";
 import { loadTaskList } from "@/lib/task-list-data";
+
+const loadList = cache((id: string) => loadTaskList(id));
+
+/** 無いプロジェクトのときは、無いページのタイトルにする。 */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  try {
+    if (!(await loadList(id))) return await notFoundMetadata();
+  } catch {
+    // 取れなければ既定のタイトル
+  }
+  return {};
+}
 
 /**
  * プロジェクトのタスクの一覧（PBI-114 で `/` から移した）。表示するプロジェクトは URL の ID で決め、表示している
@@ -125,9 +144,9 @@ async function Tasks({
   const { id } = await params;
   // 絞り込みは URL のクエリから読み、描いたときから出す（開いた後に切り替えない。PBI-441）
   const initialFilter = parseTaskFilter(await searchParams);
-  let data: Awaited<ReturnType<typeof loadTaskList>>;
+  let data: Awaited<ReturnType<typeof loadList>>;
   try {
-    data = await loadTaskList(id);
+    data = await loadList(id);
   } catch (error) {
     if (error instanceof DaemonUnavailableError) {
       return (

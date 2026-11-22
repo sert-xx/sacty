@@ -27,7 +27,7 @@ const ja = {
   /** 取り直しで更新できない間に出す（PR #119 レビュー指摘）。 */
   live: {
     stale:
-      "デーモンに届きません。`sacty up` が動いているか確認してください（表示は最後に取得した内容）。",
+      "デーモンに届かないため、最後に取得した内容を表示しています。`sacty up` が動いているか確認してください。",
     staleShort: "更新が止まっています",
     /** 画面の認証が無い（sacty を起動し直した。PBI-129）。 */
     signedOut: "Sacty が起動し直されました。端末に表示された新しい URL を開いてください。",
@@ -67,7 +67,7 @@ const ja = {
     invalidStep: "工程が不正です。",
     invalidTarget: "宛先が不正です。",
     invalidCategory: "区分が不正です。画面を更新してください。",
-    invalidAdoptNote: "手入れの種類（補足・差し替え）を選んでください。",
+    invalidAdoptNote: "手入れの種類は、補足か差し替えを選んでください。",
     adoptNoteRequired:
       "手入れの中身を入力してください。手を入れないなら、種類を選ばないでください。",
     invalidSubmission: "提出回が不正です。画面を更新してください。",
@@ -98,7 +98,7 @@ const en: CommonMessages = {
   },
   live: {
     stale:
-      "The daemon cannot be reached. Check that `sacty up` is running (showing the last data).",
+      "The daemon cannot be reached, so the last fetched data is shown. Check that `sacty up` is running.",
     staleShort: "Updates paused",
     signedOut: "Sacty was restarted. Open the new URL printed in the terminal.",
     signedOutShort: "Sign in again",
@@ -134,7 +134,7 @@ const en: CommonMessages = {
     invalidStep: "Invalid step.",
     invalidTarget: "Invalid target.",
     invalidCategory: "The category is not valid. Reload the page.",
-    invalidAdoptNote: "Choose the kind of note (supplement or replacement).",
+    invalidAdoptNote: "Choose supplement or replacement as the kind of note.",
     adoptNoteRequired: "Enter the note. To adopt the proposal as it is, choose no kind.",
     invalidSubmission: "Invalid submission. Reload the page.",
     unreadableInput: "Could not read the input. Reload the page.",

@@ -1,7 +1,8 @@
 import type { ScheduleView } from "@sacty/core";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { ScheduleDialog } from "@/components/schedule-dialog";
 import { FollowProject } from "@/components/shell/follow-project";
@@ -9,8 +10,31 @@ import { Hint } from "@/components/ui/hint";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, listProjects, listSchedules } from "@/lib/daemon";
 import { formatStamp } from "@/lib/labels";
+import { notFoundMetadata } from "@/lib/not-found-metadata";
 import { schedulePath } from "@/lib/paths";
 import { ruleText } from "@/lib/schedule-form";
+
+/** 描く部品と `generateMetadata` が同じ読み込みを共有する（デーモンへの問い合わせは 1 回）。 */
+const loadPage = cache(async (id: string) => {
+  const [projects, schedules] = await Promise.all([listProjects(), listSchedules(id)]);
+  return { project: projects.find((p) => p.id === id), schedules };
+});
+
+/** 無いプロジェクトのときは、無いページのタイトルにする。 */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  try {
+    const { project, schedules } = await loadPage(id);
+    if (!project || !schedules) return await notFoundMetadata();
+  } catch {
+    // 取れなければ既定のタイトル
+  }
+  return {};
+}
 
 /**
  * プロジェクトのスケジュールタスクの一覧。表示するプロジェクトは URL の ID で決め、表示しているプロジェクト（cookie）を
@@ -42,9 +66,7 @@ async function Schedules({ params }: { params: Promise<{ id: string }> }) {
   let project: Awaited<ReturnType<typeof listProjects>>[number] | undefined;
   let schedules: ScheduleView[] | null;
   try {
-    const [projects, found] = await Promise.all([listProjects(), listSchedules(id)]);
-    project = projects.find((p) => p.id === id);
-    schedules = found;
+    ({ project, schedules } = await loadPage(id));
   } catch (error) {
     if (error instanceof DaemonUnavailableError) {
       return (

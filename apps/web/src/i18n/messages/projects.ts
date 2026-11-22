@@ -14,7 +14,7 @@ const ja = {
   },
   intake: {
     title: "Issue・PR・チケットの取り込み",
-    stopped: "設定ファイル（config.yaml）を読めないため、止まっています。",
+    stopped: "設定ファイルの config.yaml を読めないため、止まっています。",
     lastRun: (kind: string, at: string, n: number) =>
       `最後の取り込み（${kind}）：${at}・${n}件のタスクを作成`,
     runKinds: { issues: "Issue", reviews: "PR のレビュー", tickets: "チケット" },
@@ -209,7 +209,7 @@ const ja = {
     githubReload: "アカウントを読み直す",
     githubReloading: "読み直しています…",
     githubReloadTimeout:
-      "アカウントを読み直せませんでした（時間切れ）。デーモンが動いているか確かめて、もう一度押してください。",
+      "アカウントを、時間切れで読み直せませんでした。デーモンが動いているか確かめて、もう一度押してください。",
     githubKnownHost: "ホスト",
     githubKnownLogin: "アカウント",
     githubKnownState: "状態",
@@ -246,7 +246,7 @@ const en: ProjectsMessages = {
   },
   intake: {
     title: "Issue, PR, and ticket intake",
-    stopped: "Stopped because the settings file (config.yaml) cannot be read.",
+    stopped: "Stopped because the settings file config.yaml cannot be read.",
     lastRun: (kind, at, n) => `Last ${kind} intake: ${at} · ${n} task${n === 1 ? "" : "s"} created`,
     runKinds: { issues: "issue", reviews: "PR review", tickets: "ticket" },
     errorKind: (kind) => `[${kind}] `,
@@ -441,7 +441,7 @@ const en: ProjectsMessages = {
     githubReload: "Reload accounts",
     githubReloading: "Reloading…",
     githubReloadTimeout:
-      "Could not reload the accounts (timed out). Check that the daemon is running, then try again.",
+      "Could not reload the accounts because it timed out. Check that the daemon is running, then try again.",
     githubKnownHost: "Host",
     githubKnownLogin: "Account",
     githubKnownState: "Status",
