@@ -1828,14 +1828,13 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       expect(placed && Object.keys(placed).length).toBeGreaterThan(5);
       const previewFiles = Object.fromEntries(view.files.map((f) => [f.path, f.content]));
       expect(placed?.["skills/docker-services/SKILL.md"]).toContain("サービスは起動していません");
-      for (const [path, content] of Object.entries(previewFiles)) {
-        if (runtime === "codex" && path === "AGENTS.md") {
-          expect(placed?.[path]?.replace(/^- docker-services：.*\n/m, "")).toBe(content);
-        } else expect(placed?.[path]).toBe(content);
-      }
-      expect(Object.keys(placed ?? {}).sort()).toEqual(
-        [...Object.keys(previewFiles), "skills/docker-services/SKILL.md"].sort(),
+      expect(previewFiles["skills/docker-services/SKILL.md"]).toContain(
+        "接続先は実行時に決まります",
       );
+      for (const [path, content] of Object.entries(previewFiles)) {
+        if (path !== "skills/docker-services/SKILL.md") expect(placed?.[path]).toBe(content);
+      }
+      expect(Object.keys(placed ?? {}).sort()).toEqual(Object.keys(previewFiles).sort());
       // AI の種類ごとの設定のファイル
       expect(Object.keys(placed ?? {})).toContain(
         runtime === "codex" ? "config.toml" : "settings.json",
@@ -1843,6 +1842,27 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       activity.close();
     });
   }
+
+  it("予約スキルのプレビューは層の内容を使わず、警告と実行時に決まる接続先を示す", async () => {
+    const { activity, app } = setup(agent(), {
+      [ctxRepo]: {
+        ...files,
+        "skills/docker-services/SKILL.md": "---\ndescription: custom\n---\ncustom instructions",
+      },
+    });
+    const res = await preview(app, "p", undefined, "codex");
+    const { preview: view } = await res.json();
+    const skill = view.files.find(
+      (file: { path: string }) => file.path === "skills/docker-services/SKILL.md",
+    );
+    expect(skill.content).toContain("接続先は実行時に決まります");
+    expect(skill.content).not.toContain("custom instructions");
+    expect(view.warnings).toContainEqual(
+      expect.objectContaining({ code: "context.reservedSkill" }),
+    );
+    expect(view.skills).toContainEqual({ name: "docker-services", from: "sacty" });
+    activity.close();
+  });
 
   it("秘密情報の値・ゲートウェイの実行ごとのトークン・gh のトークンを出さず、秘密情報を取り出さない", async () => {
     const { activity, app, gets, registered, contexts, ready } = setup();

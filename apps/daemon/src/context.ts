@@ -2255,7 +2255,14 @@ export async function previewContext(
           ...pickTimeouts(server),
         };
       }),
-      skills: composed.skills.map((s) => ({ name: s.name, from: s.from })),
+      skills: [
+        ...composed.skills
+          .filter((s) => !extraFiles.some((f) => f.path === `skills/${s.name}/SKILL.md`))
+          .map((s) => ({ name: s.name, from: s.from })),
+        ...extraFiles
+          .filter((f) => f.path === "skills/docker-services/SKILL.md")
+          .map(() => ({ name: "docker-services", from: "sacty" })),
+      ],
       rules: composed.rulesFrom,
       agentSettings: composed.agentsFrom[runtime === "codex" ? "codex" : "claude"],
       effects: composed.effects,

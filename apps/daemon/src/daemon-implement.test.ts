@@ -115,6 +115,24 @@ const linksKeptLogs = (warn: { mock: { calls: unknown[][] } }) =>
     .map((call) => String(call[0]))
     .filter((line) => line.includes("作業領域へのリンクを外せませんでした"));
 
+const skillWriteFailure = vi.hoisted(() => ({ enabled: false }));
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...original,
+    writeFileSync: (...args: Parameters<typeof original.writeFileSync>) => {
+      if (
+        skillWriteFailure.enabled &&
+        String(args[0]).endsWith("skills/docker-services/SKILL.md") &&
+        String(args[1]).includes("db:5432")
+      ) {
+        throw new Error("skill write failed");
+      }
+      return original.writeFileSync(...args);
+    },
+  };
+});
+
 describe("実装の工程と実装の PR（PBI-10a）", () => {
   const out = (text: string, usageOutput = 100): AgentOutcome => ({
     kind: "completed",
@@ -2286,8 +2304,10 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(executor.seeds[2]?.["skills/docker-services/SKILL.md"]).toContain(
         "サービスは起動していません",
       );
-      expect(promptOf(executor, 3)).toContain("- db：db:5432");
-      expect(promptOf(executor, 2)).not.toContain("起動しているサービス");
+      expect(promptOf(executor, 3)).toContain(
+        "- db：db:5432 または localhost:5432・localhost:15432",
+      );
+      expect(promptOf(executor, 2)).not.toContain("- db：");
       // 起動したことを作業履歴に残す
       const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
       expect(started.map((e) => e.type === "ServicesStarted" && e.payload.forTests)).toEqual([
@@ -2303,6 +2323,29 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         true,
       );
       activity.close();
+    });
+
+    it("サービス起動後のスキル書き込みに失敗すると理由を記録して一時停止し、サービスを片付ける", async () => {
+      const services = new FakeServices();
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+        services,
+        planner: servicesPlan(),
+      });
+      skillWriteFailure.enabled = true;
+      try {
+        await drain(service);
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(JSON.stringify(activity.forTask(id))).toContain("skill write failed");
+        expect(services.stopped).toEqual(services.started.map((entry) => entry.runId));
+        expect(
+          executor.seeds.some((seed) =>
+            seed?.["skills/docker-services/SKILL.md"]?.includes("db:5432"),
+          ),
+        ).toBe(false);
+      } finally {
+        skillWriteFailure.enabled = false;
+        activity.close();
+      }
     });
 
     it("エージェントのイメージを、サービスを起動する前にイメージ ID に確定させ、その ID で実行する（PBI-130）", async () => {

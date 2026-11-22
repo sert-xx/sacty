@@ -55,6 +55,9 @@ Code: `apps/daemon/src/context.ts` (`loadLayers`, `loadDefaultContext`, `resolve
 ## Service skill
 
 Each step receives the generated `docker-services` skill, including steps without services. It takes precedence for starting and connecting services; a layered skill of the same name is ignored and produces `context.reservedSkill`. The instructions also ask the agent to read it first.
+The preview includes the reserved skill and warnings and states that connection addresses are determined at runtime.
+
+Code: `apps/daemon/src/context.ts` (`planContext`, `previewContext`), `apps/daemon/src/service.ts` (`runContext`, `projectContextPreview`), `apps/daemon/src/prompts.ts` (`serviceSkill`)
 
 ## Default review skills
 

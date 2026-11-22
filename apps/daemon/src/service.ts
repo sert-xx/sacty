@@ -7417,7 +7417,16 @@ export class TaskService {
         (repo) => this.gitAuth({ projectId: id }, repo, usedSecrets, definition),
         this.deps.defaultContext,
         this.mcpRouting(config),
-        tierFiles(runtime, tiers.entries),
+        [
+          ...tierFiles(runtime, tiers.entries),
+          {
+            path: "skills/docker-services/SKILL.md",
+            content: serviceSkill([]).replace(
+              /^サービスは起動していません。.*$/m,
+              "プレビューです。サービスの起動状況と接続先は実行時に決まります。",
+            ),
+          },
+        ],
       );
       // 使える外部 PF：ホストの PF と、合成した PF（同じ名前ならホストのもの。実行と同じ。PBI-74）
       const merged = mergePlatforms(config?.platforms ?? [], preview.platforms);
@@ -13978,10 +13987,22 @@ export class TaskService {
       }
       const started = services?.ok ? services.started : undefined;
       if (started && context) {
-        writeFileSync(
-          join(context.dir, "skills/docker-services/SKILL.md"),
-          serviceSkill(started.services),
-        );
+        try {
+          writeFileSync(
+            join(context.dir, "skills/docker-services/SKILL.md"),
+            serviceSkill(started.services),
+          );
+        } catch (error) {
+          executed = {
+            outcome: {
+              kind: "failed",
+              reason: "error",
+              message: redactText(errorText(error), contextSecrets),
+            },
+            costUsd: 0,
+            estimated: false,
+          };
+        }
       }
       // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
       const reviewVerification =

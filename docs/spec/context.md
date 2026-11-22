@@ -80,7 +80,11 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
 各工程には、サービスを起動しない場合も生成された `docker-services` スキルを渡します。
 サービスの起動・接続ではこのスキルを先に読みます。
 層の同名のスキルは使わず、`context.reservedSkill` の注意を出します。
+
+コード: `apps/daemon/src/context.ts`（`planContext`・`previewContext`）、`apps/daemon/src/service.ts`（`runContext`・`projectContextPreview`）、`apps/daemon/src/prompts.ts`（`serviceSkill`）
+
 工程の指示にも先に読むよう書きます。
+プレビューにも予約スキルと警告を表示し、接続先は実行時に決まると示します。
 
 ## 既定のレビュー用スキル
 
