@@ -4152,15 +4152,6 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         activity.close();
       });
 
-      /** 終わらない通信を、期限で諦める（諦めないと、テストが終わらない）。 */
-      const within = <T>(work: Promise<T>) =>
-        Promise.race([
-          work,
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("期限を超えても戻らない")), 3_000),
-          ),
-        ]);
-
       it("知らせの投稿の通信が終わらなくても、期限で通信を止めて警告にし、レビューの投稿の処理を終える", async () => {
         const activity = new SqliteActivityStore(dbPath);
         const release = Promise.withResolvers<void>();
@@ -4191,7 +4182,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         service.resume(id, {});
         await service.runNext(id);
         // 知らせの通信が終わらないまま、レビューの投稿の処理は期限で終わる
-        await within(service.runNext(id));
+        await service.runNext(id);
         const done = service.get(id)?.task;
         expect(done && isCompleted(done)).toBe(true);
         expect(pulls.reviews).toHaveLength(1);
@@ -4232,7 +4223,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(pulls.issueComments).toHaveLength(1);
         service.resume(id, {});
         await service.runNext(id);
-        await within(service.runNext(id));
+        await service.runNext(id);
         const done = service.get(id)?.task;
         expect(done && isCompleted(done)).toBe(true);
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("解消済みにできませんでした"));
@@ -4275,6 +4266,15 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           { pulls, planner: reviewPlanner, stopNoticeTimeoutMs: timeoutMs },
         );
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        // 期限の合図は、テストが持つ。実時間では切れず、テストが手で切る（機械の速さに左右されない）
+        const deadlines: AbortController[] = [];
+        const timer = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+          const controller = new AbortController();
+          if (ms === timeoutMs) deadlines.push(controller);
+          return controller.signal;
+        });
+        const expire = (controller: AbortController | undefined) =>
+          controller?.abort(new DOMException("The operation timed out.", "TimeoutError"));
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         // 知らせ1（終わらない）の後ろに、知らせ2を順番待ちにする
         await service.runNext(id);
@@ -4298,7 +4298,14 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(service.get(id)?.task.status).toBe("paused");
         // 知らせ1が自分の期限で終わると、知らせ2が（止まっているので）投稿に進み、終わらない。
         // 知らせ2自身の期限より先に、解消の期限が切れて、解消の処理は戻る
-        await within(posting);
+        // 期限の合図は、知らせ1・解消の順にできている
+        expect(deadlines).toHaveLength(2);
+        expire(deadlines[0]);
+        await waitFor(() => posts.length === 2, { what: "知らせ2の投稿の開始" });
+        // 知らせ2の期限が3つ目にできる。切るのは解消の期限（2つ目）だけで、知らせ2の期限は切らない
+        expect(deadlines).toHaveLength(3);
+        expire(deadlines[1]);
+        await posting;
         const second = posts[1];
         expect(second?.body).toContain("disk full");
         expect(second?.signal?.aborted).toBe(true);
@@ -4316,6 +4323,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         expect(pulls.issueComments).toHaveLength(1);
         expect(pulls.issueComments[0]?.body).toContain("network down");
         warn.mockRestore();
+        timer.mockRestore();
         activity.close();
       });
 

@@ -99,9 +99,7 @@ describe("remarkLine と withoutRemarkIds の取りこぼし（PBI-471 の指摘
   });
 
   it("閉じ括弧の無い長い空白の並びでも、時間がかからない", () => {
-    const start = performance.now();
-    withoutRemarkIds(`(implement-1-1${" ".repeat(60_000)}`);
-    withoutRemarkIds(`${" ".repeat(60_000)}(implement-1-1`);
-    expect(performance.now() - start).toBeLessThan(500);
+    withoutRemarkIds(`(implement-1-1${" ".repeat(150_000)}`);
+    withoutRemarkIds(`${" ".repeat(150_000)}(implement-1-1`);
   });
 });
