@@ -1355,7 +1355,8 @@ const en: LabelMessages = {
     PullRequestCiRerunRequested: (failed) =>
       `The PR's CI failed: ${failed.join(", ")}; rerunning the failed jobs once`,
     VerificationOverridden: "A person moved the task to review despite the failed final review",
-    FormattingOnlyRejected: (count) => `Requested resubmission for ${count} formatting-only files`,
+    FormattingOnlyRejected: (count) =>
+      `Requested resubmission for ${count} formatting-only ${count === 1 ? "file" : "files"}`,
     FinalReviewSkipped:
       "Got ready to open the implementation PR without the final review or CI wait",
     PullRequestMarkedReady: (number) =>

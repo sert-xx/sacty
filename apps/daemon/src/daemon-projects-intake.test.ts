@@ -1549,7 +1549,8 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     await service.runNext(id);
     service.approve(id, { step: "design", submission: 1 });
     await service.runNext(id);
-    expect(github.requested).toEqual(["side-job"]);
+    // 取得した値は clone の認証と、提出時の秘密値の伏せに使う。
+    expect(github.requested).toEqual(["side-job", "side-job"]);
     expect(repos.prepared[0]?.url).toBe("https://github.com/acme/payments.git");
     // トークンは環境変数でだけ渡し、選んだアカウントのものを使う
     expect(repos.prepared[0]?.authEnv?.GIT_CONFIG_VALUE_0).toBe(

@@ -20668,6 +20668,10 @@ export class TaskService {
       () => usedSecrets,
     );
     try {
+      if (run.role === "implement") {
+        const task = this.tasks.get(run.taskId);
+        if (task) usedSecrets.push(...(await this.auditSecretValues(task.projectId)));
+      }
       const executed = await this.executeLogged(run, usedSecrets, log);
       // 失敗した実行・止めた実行も、結果を残して閉じる（結果の文は、伏せた後のもの）
       log?.close(executed.outcome);

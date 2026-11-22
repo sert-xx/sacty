@@ -33,10 +33,9 @@ biome_binary="$PWD/node_modules/.bin/biome"; sample='export type GitHubRepo = { 
 | --- | --- |
 | `npm run lint` | 成功 |
 | `npm run typecheck` | 成功 |
-| `npm test`（Git 2.51.2） | 成功（AI の評価テストを除く） |
+| `npm test`（Git 2.51.2、一般ユーザー） | 7,187 件成功、AI の評価テスト 1 件スキップ |
 | `npm run build` | 成功 |
 
-整形の検出を一時的に無効にすると、実際の Git 作業領域を使うテストは、出し直しの記録が無いため失敗した。
 
 ## レビューの指摘と対応
 
@@ -53,6 +52,7 @@ biome_binary="$PWD/node_modules/.bin/biome"; sample='export type GitHubRepo = { 
 実行前のコンテキスト取得が失敗しても、続きの起点とセッションを引き継ぐ。
 作業領域の準備・取り込み・文書取得・コンテキスト取得・サービス起動の失敗について、未完了・整形の出し直し・時間切れの続行との組み合わせをテストした。
 大きなファイルを検査から外し、申告理由は文字の境界で切り詰める。
+英語の作業履歴で、出し直しのファイル数に応じて単数形と複数形を使う。
 
 ## 残したこと
 

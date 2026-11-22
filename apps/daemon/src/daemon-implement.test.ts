@@ -9996,9 +9996,23 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const merge = repos.mergeBase.bind(repos);
       vi.spyOn(repos, "mergeBase").mockImplementation(async (input) => {
         const result = await merge(input);
-        if (input.target === firstHead) repos.tree = firstTree;
-        if (input.target === secondHead) repos.tree = secondTree;
+        if (input.target === firstHead) {
+          repos.tree = firstTree;
+          writeFileSync(join(input.dir, "p.ts"), "first merged content\n");
+        }
+        if (input.target === secondHead) {
+          repos.tree = secondTree;
+          writeFileSync(join(input.dir, "q.ts"), "second merged content\n");
+        }
         return result;
+      });
+      let publishedFiles: string[] = [];
+      const publish = repos.publish.bind(repos);
+      vi.spyOn(repos, "publish").mockImplementation(async (input) => {
+        const work = repos.prepared.at(-1)?.dir;
+        if (!work) throw new Error("workspace missing");
+        publishedFiles = ["p.ts", "q.ts"].map((path) => readFileSync(join(work, path), "utf8"));
+        return publish(input);
       });
       repos.remote[pushed.branch] = firstHead;
       sendBack(service, id);
@@ -10012,6 +10026,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(eventsOf(service, id, "FormattingOnlyRejected")).toEqual([]);
       expect(repos.tree).toBe(secondTree);
       expect(repos.published.at(-1)).toMatchObject({ parent: secondHead });
+      expect(publishedFiles).toEqual(["first merged content\n", "second merged content\n"]);
       expect(pulls.calls.at(-1)?.number).toBe(7);
       activity.close();
     });

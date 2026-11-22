@@ -35,6 +35,15 @@ const statusText = (task: Task) => statusTextIn(task, ja);
 const personAction = (task: Task) => personActionIn(task, ja);
 const describeEvent = (event: ActivityEvent) => describeIn(event, ja);
 
+it("整形の出し直しの履歴は英語の件数に応じて単数と複数を使う", () => {
+  expect(labels.en.event.FormattingOnlyRejected(1)).toBe(
+    "Requested resubmission for 1 formatting-only file",
+  );
+  expect(labels.en.event.FormattingOnlyRejected(2)).toBe(
+    "Requested resubmission for 2 formatting-only files",
+  );
+});
+
 const proposal = (patch: Partial<TaskProposal> = {}): TaskProposal => ({
   id: "CP-1",
   fromStep: "design",

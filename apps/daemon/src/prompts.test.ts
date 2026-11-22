@@ -2958,9 +2958,13 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     for (const prompt of prompts) {
       expect(prompt).toContain("整形はリポジトリが定めるコマンドと設定だけ");
       expect(prompt).toContain("依存に無いものを npx で取る");
+      expect(prompt).toContain("ほかのツール");
+      expect(prompt).toContain("ほかの設定");
       expect(prompt).toContain("作業領域の外の写しで整形しない");
       expect(prompt).toContain("そのファイルを戻してから提出");
       expect(prompt).toContain("sacty-formatting");
+      expect(prompt).toContain("整形だけで変えたファイルのパスと理由");
+      expect(prompt).toContain('"path":"…","reason":"…"');
     }
   });
 
