@@ -132,9 +132,18 @@ function collect(locale: Locale): Leaf[] {
   return out.map((l) => ({ ...l, path: l.path.slice(1) }));
 }
 
-/** 括弧書き（全角・半角）の中身を、外側から順に取り出す。 */
+/** 括弧書き（全角・半角）の中身を、閉じた順に取り出す。入れ子は、内側と、内側を含む外側の両方を返す。 */
 function parentheses(text: string): string[] {
-  return [...text.matchAll(/[（(]([^（()）]*)[)）]/g)].map((m) => m[1] ?? "");
+  const out: string[] = [];
+  const opens: number[] = [];
+  [...text].forEach((ch, i) => {
+    if (ch === "（" || ch === "(") opens.push(i);
+    else if ((ch === "）" || ch === ")") && opens.length > 0) {
+      const start = opens.pop() as number;
+      out.push([...text].slice(start + 1, i).join(""));
+    }
+  });
+  return out;
 }
 
 /** 括弧書きを取り除いた、括弧の外の本文。 */
@@ -339,6 +348,25 @@ describe("括弧の判定（固定の入力）", () => {
       pair("x.e4", "種類（i.e. 補足）", "Kind (i.e. a note)"),
     ]);
     expect(v.map((x) => x.path)).toEqual(["x.e1", "x.e1", "x.e2", "x.e2"]);
+  });
+
+  it("括弧の外の略語（e.g.・i.e.・etc.）の . は文と数えず、括弧の外の文末の . は文と数える", () => {
+    expect(isSentence("Use a tool, e.g. Codex")).toBe(false);
+    expect(isSentence("Targets, i.e. tools, etc.")).toBe(false);
+    expect(isSentence("Use a tool, e.g. Codex. Then wait.")).toBe(true);
+  });
+
+  it("入れ子の括弧は、外側の中身も確かめる（内側が数字でも、外側が注釈なら落ちる）", () => {
+    expect(parentheses("表示（最後（3件）に取得）")).toEqual(["3件", "最後（3件）に取得"]);
+    const v = run([
+      pair(
+        "x.nest",
+        "表示します（最後（3件）に取得した内容）。",
+        "Shown (last (3 items) fetched).",
+      ),
+      pair("x.nestok", "表示します（3件）。", "Shown (3 items)."),
+    ]);
+    expect(v.map((x) => x.path)).toEqual(["x.nest", "x.nest"]);
   });
 
   it("ラベルの括弧は、日 13 字・英 29 字は通り、日 14 字・英 30 字は落ちる", () => {

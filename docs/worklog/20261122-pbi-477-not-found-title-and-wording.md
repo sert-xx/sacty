@@ -40,7 +40,7 @@
 
 - `npm run format`・`npm run lint`・`npm run typecheck`・`npm run build`・`npm test`（全件）：すべて通った（`npm test` は 341 ファイル、6989 件が通り、14 件はスキップ）
 - ブラウザーのテスト（`*.browser.test.ts`）は、この環境に Chromium が無い場合は実行できない。実行できたかは上の結果に含む。
-- 応答コード（404 か 200 か）は実機で確かめていない（下の「残したこと」）。
+- 応答コードは、人が本番のビルドの実ブラウザーで確かめた値（`notFound()` を呼ぶ 8 ページは 200、無い URL は 404）を、仕様書に反映した（下の「残したこと」）。この作業領域では実機で確かめていない。
 
 - `not-found-pages.test.ts`：8 ページの無いとする条件ごとに、部品が `notFound()` で止まり、題が日英で無いページのものになる。あるとき・デーモンに届かないときの題は今のまま。
 - `wording-policy.test.ts`：辞書の全体と、判定の固定の入力（直す前の `live.stale`、「？」で終わる文、認める括弧、`Node.js`・`e.g.`、片方だけが文のキー、`PAREN_EXCEPTIONS`）。
@@ -54,7 +54,10 @@
 | 括弧を外すために文が増え、1 文・2 文までの規則と日英の文数が崩れた | 注釈を語句・読点でつなぐ形にまとめ、文数を括弧を足す前（日英とも）に戻した。対象は、設定の `*Current`・`intervalWhenOn`（「既定の」を数の前に置く）、作業履歴の `ReworkStoppedByMerge`・`PullRequestMarkedReadyWithSuggestions`・`PullRequestReviewImported`・CI の失敗・セッションの引き継ぎ、`environmentPassNote`、`discardedReview.help`・`heldReview.help`・`task.costs.unknownNote`・`reviewDispatchRound`。文数を見る検査は足していない |
 | 括弧に認める「数字」の判定が緩い | 単位・助数詞の一覧の語だけに絞り、注釈が落ちる入力と、長さの境界（日 13／14 字・英 29／30 字）、「！」「…」で終わる文、`etc.`・`i.e.` の固定入力のテストを足した |
 | 作業履歴の件数・記録が合っていない | 件数を数え直し、確かめたこと・この節・PR 番号を足した |
+| 3 回目のレビューの提案 5 件 | `ReviewRejudgeRequested` の選り分けの枝を、日英とも 2 文に戻した。作業履歴の英語の段階を "stopped while it was ${stage}" にして文法を直した。`discardedReview.help` を日英とも 2 文にした。略語が括弧の外にある入力と、入れ子の括弧（外側の中身も確かめる）の固定入力のテストを足した |
+| 応答コードは 200（人の確かめ） | `architecture`（日英）の「404 になる」を、無いページを出して応答コードは 200 に直し、「応答コードは変えない」に値を添えた |
+
 
 ## 残したこと
 
-- 応答コード（404 か 200 か）は、実機（`sacty up`）で無いタスクの `/tasks/<ID>` を開いて確かめ、記録する。`architecture` の「URL を直接開いても 404 になる」は、確かめるまで直さない。200 なら同じ PR で、この記述と無いページの記述を直す。
+- 無いタスク・プロジェクトを開いたときの応答コードが 200 であることは、人の確かめで得た値。`architecture`（日英）の 404 の記述を実際の値に直した。応答コードは変えていない。

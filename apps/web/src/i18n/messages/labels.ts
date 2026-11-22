@@ -474,7 +474,7 @@ const ja = {
       triaged: boolean,
     ) =>
       triaged
-        ? `直しに入る前の選り分けで、PR #${number}（${commit}）の AI のレビューの提案をすべて「この PR では対応しない」とした。実装は実行しない。理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる`
+        ? `直しに入る前の選り分けで、PR #${number}（${commit}）の AI のレビューの提案をすべて「この PR では対応しない」として、実装は実行しない。理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる`
         : awaitsDecision
           ? `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘を、断るか、後続に回したい案にして、何も変えなかった。理由を PR に返信し、案を人が決めた後、AI のレビューに同じ内容を 1 回だけ判定し直させる`
           : `やり直しの実装が、PR #${number}（${commit}）の AI のレビューの指摘をすべて、理由を付けて断り、何も変えなかった。断った理由を PR に返信し、AI のレビューに同じ内容を 1 回だけ判定し直させる`,
@@ -1314,7 +1314,7 @@ const en: LabelMessages = {
       `The rework changed nothing in PR #${number} (${commit}), on which the AI review left findings, so it is not submitted`,
     ReviewRejudgeRequested: (number, commit, awaitsDecision, triaged) =>
       triaged
-        ? `Before reworking, the sorting declined every suggestion of the AI review on PR #${number} (${commit}) for this PR. No implementation run. sacty replies on the PR with the reasons and has the AI review judge the same content once more`
+        ? `Before reworking, the sorting declined every suggestion of the AI review on PR #${number} (${commit}) for this PR, so no implementation was run. sacty replies on the PR with the reasons and has the AI review judge the same content once more`
         : awaitsDecision
           ? `The rework declined the findings of the AI review on PR #${number} (${commit}) or proposed to defer them, and changed nothing. Sacty replies on the PR with the reasons and, after a person decides the proposals, has the AI review judge the same content once more`
           : `The rework declined every finding of the AI review on PR #${number} (${commit}) with a reason and changed nothing. sacty replies on the PR with the reasons and has the AI review judge the same content once more`,
@@ -1387,7 +1387,7 @@ const en: LabelMessages = {
     ReworkStoppedByMerge: (number, stage, runs, remarks, feedback, held, decision, step) =>
       decision
         ? `PR #${number}, which was paused waiting for a human decision, was merged. The merge is taken as the approval, without applying the ${held} finding${held === 1 ? "" : "s"} that caused the pause`
-        : `PR #${number} was merged, so the rework of ${step ? `the ${step.toLowerCase()}` : "the implementation"} was stopped at stage ${stage}${runs > 0 ? `, with ${runs} run${runs === 1 ? "" : "s"} stopped` : ""}${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}${held > 0 ? `. Discarded ${held} PR comment${held === 1 ? "" : "s"} that arrived while paused and were not yet applied` : ""}. The merge is taken as the approval`,
+        : `PR #${number} was merged, so the rework of ${step ? `the ${step.toLowerCase()}` : "the implementation"} was stopped while it was ${stage}${runs > 0 ? `, with ${runs} run${runs === 1 ? "" : "s"} stopped` : ""}${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}${held > 0 ? `. Discarded ${held} PR comment${held === 1 ? "" : "s"} that arrived while paused and were not yet applied` : ""}. The merge is taken as the approval`,
     PullRequestConflicted: (number) =>
       `PR #${number} conflicts with the base branch (it is merged in when you send it back or comment)`,
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,

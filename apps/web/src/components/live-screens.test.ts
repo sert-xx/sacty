@@ -1189,7 +1189,7 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(notice()?.textContent).toContain("取り込んでいない AI のレビューの指摘が1件あります");
     expect(notice()?.textContent).toContain("PR #7");
     expect(notice()?.textContent).toContain("古い head");
-    expect(notice()?.textContent).toContain("捨てた時点の PR の head は ddddddd");
+    expect(notice()?.textContent).toContain("最後に捨てた時点の head が ddddddd");
     expect(notice()?.textContent).toContain("対象：ooooooo");
     expect(notice()?.textContent).toContain("要点 review:1");
     expect(notice()?.textContent).toContain("差し戻しで指摘として伝えてください");
@@ -1219,7 +1219,7 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     );
     await wait();
     expect(notice()?.textContent).toContain("3件あります");
-    expect(notice()?.textContent).toContain("捨てた時点の PR の head は eeeeeee");
+    expect(notice()?.textContent).toContain("最後に捨てた時点の head が eeeeeee");
     expect(notice()?.querySelectorAll("li")).toHaveLength(3);
     expect(notice()?.querySelectorAll("a")).toHaveLength(2);
     // PR がマージされたら（承認は済んだので）消える

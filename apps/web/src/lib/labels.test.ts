@@ -1067,7 +1067,7 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       "PR #7 がマージされたため、実装の作り直しを実行中で止め、実行1件を停止した。作り直しに渡す前の指摘1件を捨てた（implement-2-1）。やり直しに渡すはずだった最終レビューの結果を捨てた。マージを承認として進める",
     );
     expect(describeIn(running, labels.en)).toBe(
-      "PR #7 was merged, so the rework of the implementation was stopped at stage running, with 1 run stopped. Discarded 1 comment not yet passed to the rework (implement-2-1). Discarded the final review result meant for the next attempt. The merge is taken as the approval",
+      "PR #7 was merged, so the rework of the implementation was stopped while it was running, with 1 run stopped. Discarded 1 comment not yet passed to the rework (implement-2-1). Discarded the final review result meant for the next attempt. The merge is taken as the approval",
     );
     // 一時停止の間に届いて、まだ作り直しに渡していない PR の指摘も捨てる（PBI-279）
     const heldDiscarded = event({
@@ -1119,7 +1119,7 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       "PR #8 がマージされたため、設計の直しを実行中で止め、実行1件を停止した。作り直しに渡す前の指摘1件を捨てた（design-1-1）。マージを承認として進める",
     );
     expect(describeIn(design, labels.en)).toContain(
-      "PR #8 was merged, so the rework of the design was stopped at stage running, with 1 run stopped",
+      "PR #8 was merged, so the rework of the design was stopped while it was running, with 1 run stopped",
     );
     const requirements = event({
       number: 7,
