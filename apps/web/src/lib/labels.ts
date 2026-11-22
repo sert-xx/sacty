@@ -317,13 +317,17 @@ function servicesChoice(
   const e = l.event;
   const services = payload.services;
   if (services) {
-    const source = services.compose
-      ? e.sharedComposeFile(
-          services.compose.name,
-          services.file,
-          `${services.compose.repo}${services.compose.ref ? `#${services.compose.ref}` : ""}`,
-        )
-      : services.file;
+    const source = [services, ...(services.more ?? [])]
+      .map((item) =>
+        item.compose
+          ? e.sharedComposeFile(
+              item.compose.name,
+              item.file,
+              `${item.compose.repo}${item.compose.ref ? `#${item.compose.ref}` : ""}`,
+            )
+          : item.file,
+      )
+      .join(e.imagesJoin);
     return e.stepsServices(
       services.names.join(e.imagesJoin),
       source,

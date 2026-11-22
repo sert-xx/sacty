@@ -4,9 +4,9 @@
 
 テストや動作確認に DB・モック API などが要るとき、sacty はホストで docker compose のサービスを起動し、工程のエージェントのコンテナをそのネットワークにつなぐ。
 エージェントには Docker の権限を渡さない。
-compose ファイルは、対象リポジトリのものか、プロジェクトに書いた共用の compose（別のリポジトリ）のどちらか一方を使う。
+対象リポジトリの compose と、プロジェクトに書いた複数の共用 compose を同じ工程で使える。
 
-関係する ADR: [サービスのビルドに共有のタグを付けさせず、エージェントのイメージを ID に確定させる](../adr/20261018-0430-compose-build-image-isolation.md)、[最終レビューのエージェントが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)
+関係する ADR: [サービスのビルドに共有のタグを付けさせず、エージェントのイメージを ID に確定させる](../adr/20261018-0430-compose-build-image-isolation.md)、[最終レビューのエージェントが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-superseded-gather-sorts-services-for-orchestrator.md)
 
 ## いつ起動するか
 
@@ -45,8 +45,11 @@ compose ファイルは、対象リポジトリのものか、プロジェクト
      compose が `<プロジェクト>-<サービス>` の名前を付ける。
    - 所有のラベル `io.sacty.owner`（起動したデーモンの PID と開始時刻）を付ける。
 5. 一時ファイルに書いた設定で、`docker compose -p sacty-svc-<実行 ID から作った名前> -f <設定> up -d --wait --wait-timeout 300 <サービス>` で起動する。
-   エージェントのコンテナは `--network sacty-svc-…_sacty` でつなぎ、サービス名とコンテナのポートで接続する。
+   単一の compose ではエージェントのコンテナを `--network sacty-svc-…_sacty` でつなぐ。
+   複数の compose では共通ネットワークを作り、それぞれを別のプロジェクトとして同じネットワークで起動する。
+   エージェントはそのネットワーク1つにつなぎ、サービス名とコンテナのポートで接続する。
 6. 終わったら（失敗・打ち切りでも）、`docker compose -p <名前> down -v --remove-orphans --rmi local` で、コンテナ・ネットワーク・ボリュームと、ビルドしたイメージを消す。
+   複数の compose では、各プロジェクトを止めてから共通ネットワークも消す。
 
 - エージェントのイメージの確定
   - サービスを使う工程では、起動する前に、エージェントのイメージ（タスクのイメージ）を `docker image inspect` でイメージ ID に確定させ、その ID で実行する。
@@ -58,7 +61,7 @@ compose ファイルは、対象リポジトリのものか、プロジェクト
 - デーモンの起動のとき、名前が `sacty-svc-` で始まるプロジェクトのうち、所有のラベルのデーモンが動いていないもの（ラベルが無いものを含む）を消す。
   `ps` を読めなければ何も消さない。
 
-コード: `apps/daemon/src/services.ts`（`DockerComposeServices.startOnce`・`stop`・`cleanupAll`・`imageId`・`sanitizeCompose`・`composeProject`・`labelOwner`・`OWNER_LABEL`・`LOG_TAIL`）
+コード: `apps/daemon/src/services.ts`（`DockerComposeServices.startOnce`・`startGroup`・`stopGroup`・`stop`・`cleanupAll`・`imageId`・`sanitizeCompose`・`composeProject`・`labelOwner`・`OWNER_LABEL`・`LOG_TAIL`）
 
 ## 安全の検査
 
@@ -100,6 +103,13 @@ compose ファイルは、対象リポジトリのものか、プロジェクト
 | `ref` | ブランチかタグ（省けば既定のブランチ） |
 | `file` | リポジトリの根からの相対パス（`..`・`$` を含まない） |
 | `description` | オーケストレーターが選ぶときの手がかり（1000 文字まで） |
+| `forRepos` | 任意。対象のリポジトリか Org の URL を1〜50件。重複と対象外は拒否する |
+
+ひもづいたリポジトリ（Org の場合はその配下）では、原則使うよう指示し、使わない理由を `servicesReason` に書かせる。
+ひもづけが無いものは説明から判断し、別のリポジトリにだけひもづいたものは候補から除く。
+対象が未決定の情報収集には全件とひもづけ先を示す。
+複数の compose は1つのネットワークで起動する。
+サービス名か `container_name` の別名が compose 間で衝突すると、起動前に `services.nameConflict` で止める。
 
 - 取得
   - 実行のたびに、リポジトリごとのキャッシュ `SACTY_HOME/cache/shared-compose/<URL の SHA-256 の先頭24桁>.git`（bare）に、`git fetch --depth 1` で ref の最新を取る。

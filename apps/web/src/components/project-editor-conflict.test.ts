@@ -8,10 +8,12 @@ import { messagesFor } from "@/i18n";
 
 // 保存の結果は、テストから返すものにする。送られた版も記録する
 const sent: string[] = [];
+const definitions: string[] = [];
 let results: SaveProjectState[] = [];
 vi.mock("@/app/actions", () => ({
   saveProjectAction: async (_prev: SaveProjectState, data: FormData) => {
     sent.push(String(data.get("baseUpdatedAt")));
+    definitions.push(String(data.get("definition")));
     return results.shift() ?? {};
   },
   previewContextAction: async () => ({}),
@@ -28,6 +30,7 @@ let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   sent.length = 0;
+  definitions.length = 0;
   results = [];
   container = document.createElement("div");
   document.body.append(container);
@@ -68,6 +71,43 @@ const reloadButton = () =>
   [...container.querySelectorAll("button")].find((b) => b.textContent === t.reloadLatest);
 
 describe("設定の画面は、読み込んだ版を保存に添える（PBI-274）", () => {
+  it("共用 compose の使うリポジトリを保存し、再表示と削除ができる", async () => {
+    results = [{ saved: true, updatedAt: "2026-10-30T00:00:02.000Z" }, { saved: true }];
+    const configured = {
+      ...project,
+      targets: [
+        { scope: "repo", target: "https://github.com/acme/app" },
+        { scope: "repo", target: "https://github.com/acme/other" },
+      ],
+      sharedComposes: [{ name: "infra", repo: "/srv/infra", file: "compose.yml" }],
+    } as Project;
+    render(configured);
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      'textarea[id$="-for-repos"]',
+    ) as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    const urls = "https://github.com/acme/app\nhttps://github.com/acme/other";
+    act(() => {
+      setter?.call(textarea, urls);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await submit();
+    const saved = JSON.parse(definitions[0] ?? "{}");
+    expect(saved.sharedComposes[0].forRepos).toEqual(urls.split("\n"));
+    act(() => root.unmount());
+    root = createRoot(container);
+    render({ ...configured, sharedComposes: saved.sharedComposes });
+    const reopened = container.querySelector<HTMLTextAreaElement>(
+      'textarea[id$="-for-repos"]',
+    ) as HTMLTextAreaElement;
+    expect(reopened.value).toBe(urls);
+    act(() => {
+      setter?.call(reopened, "");
+      reopened.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await submit();
+    expect(JSON.parse(definitions[1] ?? "{}").sharedComposes[0]).not.toHaveProperty("forRepos");
+  });
   it("最初は読み込んだ版を送り、自分で保存したら、保存した版に進める", async () => {
     results = [{ saved: true, updatedAt: "2026-10-30T00:00:02.000Z" }, {}];
     render();

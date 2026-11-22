@@ -506,6 +506,14 @@ export interface ServiceRunner {
   }): Promise<{ ok: true; started: StartedServices } | { ok: false; message: DaemonText }>;
   /** 止めて消す（コンテナ・ネットワーク・ボリューム）。無ければ何もしない。 */
   stop(runId: string): Promise<void>;
+  startGroup?(input: {
+    runId: string;
+    members: { workspaceDir: string; spec: ServicesSpec; secrets?: readonly string[] }[];
+  }): Promise<
+    | { ok: true; started: StartedServices; members: StartedServices[] }
+    | { ok: false; message: DaemonText }
+  >;
+  stopGroup?(runId: string, count: number): Promise<void>;
   /**
    * 起動している最中（正規化・up --wait の待ち）なら、打ち切る（人間の一時停止・中止。PBI-70 レビュー指摘）。start は
    * 起動したものを止めて消してから、失敗として返る。起動していなければ何もしない。
@@ -673,8 +681,127 @@ export class DockerComposeServices implements ServiceRunner {
     }
   }
 
-  private async startOnce(
-    { runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0],
+  async startGroup(input: {
+    runId: string;
+    members: { workspaceDir: string; spec: ServicesSpec; secrets?: readonly string[] }[];
+  }) {
+    const state: { aborted: boolean; child?: ChildProcess } = { aborted: false };
+    this.starting.set(input.runId, state);
+    const prepared: {
+      safe: Extract<Awaited<ReturnType<DockerComposeServices["prepare"]>>, { ok: true }>["safe"];
+      failed: (out: string) => DaemonText;
+      workspaceDir: string;
+    }[] = [];
+    const network = `${composeProject(input.runId)}-network`;
+    let createdNetwork = false;
+    try {
+      for (const member of input.members) {
+        const result = await this.prepare({ ...member, runId: input.runId }, state);
+        if (!result.ok) return result;
+        prepared.push({ ...result, workspaceDir: member.workspaceDir });
+      }
+      const seen = new Set<string>();
+      for (const item of prepared) {
+        const configServices = item.safe.config.services as Json;
+        const names = new Set<string>();
+        for (const [name, raw] of Object.entries(configServices)) {
+          names.add(name);
+          const service = raw as Json;
+          const networks = isObject(service.networks) ? service.networks : {};
+          const sacty = isObject(networks[SACTY_NETWORK]) ? networks[SACTY_NETWORK] : {};
+          if (Array.isArray(sacty.aliases))
+            for (const alias of sacty.aliases) if (typeof alias === "string") names.add(alias);
+        }
+        for (const name of names) {
+          if (seen.has(name))
+            return { ok: false as const, message: message("services.nameConflict", { name }) };
+          seen.add(name);
+        }
+      }
+      const created = await this.docker(["network", "create", network]);
+      if (created.code !== 0)
+        return {
+          ok: false as const,
+          message:
+            prepared[0]?.failed(created.stdout) ??
+            message("services.failed", { file: "", detail: created.stdout }),
+        };
+      createdNetwork = true;
+      const owner = this.deps.owner ?? selfIn(await (this.deps.table ?? psTable)());
+      for (const [i, item] of prepared.entries()) {
+        if (state.aborted) {
+          await this.stopGroup(input.runId, prepared.length);
+          return { ok: false as const, message: message("run.stoppedByPerson") };
+        }
+        const networks = item.safe.config.networks as Json;
+        networks[SACTY_NETWORK] = { external: true, name: network };
+        if (owner) labelOwner(item.safe.config, owner);
+        const dir = mkdtempSync(join(tmpdir(), "sacty-compose-"));
+        try {
+          const file = join(dir, "compose.json");
+          writeFileSync(file, JSON.stringify(item.safe.config));
+          const up = await this.compose(
+            [
+              "-p",
+              composeProject(`g${i}${input.runId}`),
+              "-f",
+              file,
+              "up",
+              "-d",
+              "--wait",
+              "--wait-timeout",
+              String(this.waitSec),
+              ...item.safe.services.map((s) => s.name),
+            ],
+            item.workspaceDir,
+            (child) => {
+              state.child = child;
+            },
+          );
+          if (state.aborted || up.code !== 0) {
+            await this.stopGroup(input.runId, prepared.length);
+            return {
+              ok: false as const,
+              message: state.aborted ? message("run.stoppedByPerson") : item.failed(up.out),
+            };
+          }
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+      const members = prepared.map((item) => ({ network, services: item.safe.services }));
+      return {
+        ok: true as const,
+        started: { network, services: members.flatMap((item) => item.services) },
+        members,
+      };
+    } catch (error) {
+      if (createdNetwork) await this.stopGroup(input.runId, prepared.length).catch(() => undefined);
+      const detail = redact(
+        String(error),
+        input.members.flatMap((item) => item.secrets ?? []),
+      );
+      return {
+        ok: false as const,
+        message:
+          prepared[0]?.failed(detail) ??
+          message("services.failed", {
+            file: input.members[0]?.spec.file ?? "",
+            detail,
+          }),
+      };
+    } finally {
+      this.starting.delete(input.runId);
+    }
+  }
+
+  async stopGroup(runId: string, count: number): Promise<void> {
+    for (let i = 0; i < count; i++) await this.stop(`g${i}${runId}`).catch(() => undefined);
+    await this.docker(["network", "rm", `${composeProject(runId)}-network`]);
+  }
+
+  private async prepare(
+    { runId: _runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0],
     state: { aborted: boolean; child?: ChildProcess },
   ) {
     const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
@@ -733,6 +860,20 @@ export class DockerComposeServices implements ServiceRunner {
     if (!safe.ok) {
       return { ok: false as const, message: unsafe(safe.problems.join("、")) };
     }
+    return { ok: true as const, safe, failed };
+  }
+
+  private async startOnce(
+    { runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0],
+    state: { aborted: boolean; child?: ChildProcess },
+  ) {
+    const prepared = await this.prepare({ runId, workspaceDir, spec, secrets }, state);
+    if (!prepared.ok) return prepared;
+    const { safe, failed } = prepared;
+    const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
+    const track = (child: ChildProcess) => {
+      state.child = child;
+    };
     // 起動したデーモンを、コンテナのラベルに残す（ほかの sacty の起動時の片付けで止められないように。PBI-78 レビュー指摘）
     const owner = this.deps.owner ?? selfIn(await (this.deps.table ?? psTable)());
     if (owner) labelOwner(safe.config, owner);

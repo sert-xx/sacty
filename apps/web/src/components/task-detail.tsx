@@ -1432,39 +1432,53 @@ function ActivityList({
   const messages = useMessages();
   return (
     <ol className="flex flex-col">
-      {events.map((event) => (
-        <li
-          key={event.id}
-          id={anchors ? `event-${event.id}` : undefined}
-          className={cn(
-            "grid gap-3 border-t border-border text-[13px] target:bg-accent",
-            compact
-              ? "grid-cols-[76px_minmax(0,1fr)] py-2"
-              : "scroll-mt-60 grid-cols-[96px_minmax(0,1fr)] py-2.5",
-          )}
-        >
-          <time
-            dateTime={event.at}
-            className="font-mono text-xs text-muted-foreground tabular-nums"
-          >
-            {formatStamp(event.at, messages.locale)}
-          </time>
-          {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
-          {/* 概要の2行の制限は、行の文にだけ掛ける（作業履歴のタブの詳細は切らない。右の列は詳細を出さない） */}
-          <span className="[overflow-wrap:anywhere]">
-            <EventText event={event} clamp={compact} />
-            {/* エージェントの実行の行から、その実行のセッションログを開く（PBI-62） */}
-            {!compact && runLogId(event) && (
-              <Link
-                href={`/tasks/${encodeURIComponent(task.id)}/runs/${encodeURIComponent(runLogId(event) ?? "")}`}
-                className="ml-2 text-xs whitespace-nowrap text-accent-foreground underline"
-              >
-                {messages.runLog.open}
-              </Link>
+      {events.map((event, index) => {
+        const sameRun = (other: ActivityEvent) =>
+          event.type === "ServicesStarted" &&
+          other.type === "ServicesStarted" &&
+          event.payload.runId === other.payload.runId;
+        if (event.type === "ServicesStarted" && events.slice(0, index).some(sameRun)) return null;
+        const grouped =
+          event.type === "ServicesStarted" ? events.slice(index).filter(sameRun) : [event];
+        return (
+          <li
+            key={event.id}
+            id={anchors ? `event-${event.id}` : undefined}
+            className={cn(
+              "grid gap-3 border-t border-border text-[13px] target:bg-accent",
+              compact
+                ? "grid-cols-[76px_minmax(0,1fr)] py-2"
+                : "scroll-mt-60 grid-cols-[96px_minmax(0,1fr)] py-2.5",
             )}
-          </span>
-        </li>
-      ))}
+          >
+            <time
+              dateTime={event.at}
+              className="font-mono text-xs text-muted-foreground tabular-nums"
+            >
+              {formatStamp(event.at, messages.locale)}
+            </time>
+            {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
+            {/* 概要の2行の制限は、行の文にだけ掛ける（作業履歴のタブの詳細は切らない。右の列は詳細を出さない） */}
+            <span className="[overflow-wrap:anywhere]">
+              {grouped.map((item, i) => (
+                <span key={item.id} id={anchors && i > 0 ? `event-${item.id}` : undefined}>
+                  {i > 0 ? " / " : ""}
+                  <EventText event={item} clamp={compact} />
+                </span>
+              ))}
+              {/* エージェントの実行の行から、その実行のセッションログを開く（PBI-62） */}
+              {!compact && runLogId(event) && (
+                <Link
+                  href={`/tasks/${encodeURIComponent(task.id)}/runs/${encodeURIComponent(runLogId(event) ?? "")}`}
+                  className="ml-2 text-xs whitespace-nowrap text-accent-foreground underline"
+                >
+                  {messages.runLog.open}
+                </Link>
+              )}
+            </span>
+          </li>
+        );
+      })}
     </ol>
   );
 }

@@ -81,7 +81,7 @@
 | `packages/core/src/events.ts` | `StepsChosen.services` に、2つ目からの compose を `more`（任意）として足す。1つだけのときの記録は今と同じ形。`ServicesStarted` は compose ごとに1件記録する |
 | `packages/core/src/projection.ts`・`apps/web/src/lib/labels.ts` | 同じ実行の `ServicesStarted` をまとめて読み、表示する |
 | `docs/spec/services.md`・`export.md`・`docs/user/compose.md`・`project-settings.md`（各日英） | ひもづけの項目・候補の規則・両方の起動・ネットワーク・名前のぶつかり・切り戻しの手順（エクスポート・複数の compose を選んだタスクの中止・付け直し・再実行。Q-4） |
-| ADR・作業履歴 | 新しい ADR を足し、`20261023-1410-gather-sorts-services-for-orchestrator.md` を一部置き換え（superseded。置き換えた部分：情報収集に出す共用の compose をリポジトリで絞る）にする。作業履歴に実機の確認の結果を書く |
+| ADR・作業履歴 | 新しい ADR を足し、`20261023-1410-superseded-gather-sorts-services-for-orchestrator.md` を一部置き換え（superseded。置き換えた部分：情報収集に出す共用の compose をリポジトリで絞る）にする。作業履歴に実機の確認の結果を書く |
 
 ## エラー時の振る舞い
 

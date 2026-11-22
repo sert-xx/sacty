@@ -28,7 +28,7 @@ The project settings have the following fields.
 | Context repository (optional) | Rules, skills, MCP, and external platforms passed to step agents | [Context repository](context.en.md) |
 | Available external platforms | APIs that step agents can call through `$SACTY_PF_URL` (display only) | [Gateway](gateway.en.md#organization-platform-pf-apis) |
 | GitHub account | The `gh` account to use for each host | [GitHub account](#github-account) |
-| Shared compose (optional) | A team-shared docker compose used for tests | [docker compose services](compose.en.md#shared-compose) |
+| Shared compose (optional) | A docker compose used for tests and optional repository or org URLs that use it | [docker compose services](compose.en.md#shared-compose) |
 | Handling of deferred findings | The initial choice for how a finding you decide to defer is handled | [Handling of deferred findings](#handling-of-deferred-findings) |
 
 The following two are not set in project settings.
@@ -216,3 +216,7 @@ The dialog shows the count; complete or cancel the tasks, then delete the projec
 - [Issue, PR, and ticket intake](intake.en.md)
 - [Working with tasks](tasks.en.md)
 - [Context repository](context.en.md)
+
+## Rolling back to an earlier version
+
+Before rolling back, export the project and cancel unfinished tasks that selected multiple composes. Saving project settings in the earlier version removes the links. After returning to the new version, restore the links and rerun the cancelled tasks. An export containing links cannot be imported by the earlier version.

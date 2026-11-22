@@ -2,9 +2,9 @@
 
 # Services (docker compose)
 
-When tests or checks need a database, a mock API, or similar, sacty starts docker compose services on the host and connects the step agent containers to their network. Agents are not given Docker permissions. The compose file is either the target repository's own or a shared compose (in another repository) written in the project, never both.
+When tests or checks need a database, a mock API, or similar, sacty starts docker compose services on the host and connects the step agent containers to their network. Agents are not given Docker permissions. The target repository's compose and multiple shared composes can run in the same step.
 
-Related ADRs: [Service builds cannot tag shared images, and the agent image is pinned to an ID](../adr/20261018-0430-compose-build-image-isolation.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-superseded-guardian-runs-tests.md), [Information gathering sorts the services needed for tests and manual checks; the Orchestrator starts only the dependencies based on it, and the step starts the target apps inside its container](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)
+Related ADRs: [Service builds cannot tag shared images, and the agent image is pinned to an ID](../adr/20261018-0430-compose-build-image-isolation.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-superseded-guardian-runs-tests.md), [Information gathering sorts the services needed for tests and manual checks; the Orchestrator starts only the dependencies based on it, and the step starts the target apps inside its container](../adr/20261023-1410-superseded-gather-sorts-services-for-orchestrator.md)
 
 ## When services start
 
@@ -26,8 +26,8 @@ Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopService
    - It removes fixed names of networks and volumes.
    - From services with `build`, it removes `image` and `build.tags` and sets `pull_policy: build`. This keeps built images from taking tags shared on the host, such as the agent image. compose names them `<project>-<service>`.
    - It adds the owner label `io.sacty.owner` (the PID and start time of the daemon that started it).
-5. With the settings written to a temporary file, the services start with `docker compose -p sacty-svc-<name derived from the run ID> -f <settings> up -d --wait --wait-timeout 300 <services>`. The agent containers connect with `--network sacty-svc-…_sacty`, and reach the services by service name and container port.
-6. Afterward (even on failure or timeout), `docker compose -p <name> down -v --remove-orphans --rmi local` removes the containers, networks, volumes, and built images.
+5. With the settings written to a temporary file, the services start with `docker compose -p sacty-svc-<name derived from the run ID> -f <settings> up -d --wait --wait-timeout 300 <services>`. For a single compose, the agent container connects with `--network sacty-svc-…_sacty`. For multiple composes, sacty creates one common network and starts each as a separate project on that network. The agent joins that one network and reaches services by name and container port.
+6. Afterward (even on failure or timeout), `docker compose -p <name> down -v --remove-orphans --rmi local` removes the containers, networks, volumes, and built images. For multiple composes, sacty stops each project and then removes the common network.
 
 - Pinning the agent image
   - In steps that use services, before starting them, sacty pins the agent image (the task image) to its image ID with `docker image inspect`, and the run uses that ID. The run keeps the pinned image even if the tag changes after the services start.
@@ -37,7 +37,7 @@ Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopService
 - Failure reasons are the last 2000 characters after redacting secrets.
 - At daemon startup, sacty removes projects whose names start with `sacty-svc-` and whose owner-label daemon is not running (including those without the label). If `ps` cannot be read, nothing is removed.
 
-Code: `apps/daemon/src/services.ts` (`DockerComposeServices.startOnce`, `stop`, `cleanupAll`, `imageId`, `sanitizeCompose`, `composeProject`, `labelOwner`, `OWNER_LABEL`, `LOG_TAIL`)
+Code: `apps/daemon/src/services.ts` (`DockerComposeServices.startOnce`, `startGroup`, `stopGroup`, `stop`, `cleanupAll`, `imageId`, `sanitizeCompose`, `composeProject`, `labelOwner`, `OWNER_LABEL`, `LOG_TAIL`)
 
 ## Safety check
 
@@ -76,6 +76,11 @@ Written in the project's `sharedComposes` (up to 20; names must be unique).
 | `ref` | A branch or tag (the default branch if omitted) |
 | `file` | A path relative to the repository root (not containing `..` or `$`) |
 | `description` | A hint for the Orchestrator when choosing (up to 1000 characters) |
+| `forRepos` | Optional. One to 50 target repository or org URLs. Duplicates and values outside the targets are rejected |
+
+For linked repositories (including those under a linked org), the Orchestrator is instructed to use the compose by default and explain omissions in `servicesReason`. Unlinked entries are judged from their descriptions; entries linked only to other repositories are excluded. Information gathering for an undecided target lists all entries and their links.
+
+Multiple composes use one network. A service name or `container_name` alias shared by different composes stops the step before startup with `services.nameConflict`.
 
 - Fetching
   - For each run, sacty fetches the latest of the ref with `git fetch --depth 1` into a per-repository cache `SACTY_HOME/cache/shared-compose/<first 24 digits of the URL's SHA-256>.git` (bare).

@@ -1241,6 +1241,20 @@ const StepsChosen = z.object({
             ref: z.string().max(200).optional(),
           })
           .optional(),
+        more: z
+          .array(
+            z.object({
+              file: z.string().min(1).max(300),
+              names: z.array(z.string().min(1).max(100)).max(20),
+              compose: z.object({
+                name: z.string().min(1).max(40),
+                repo: z.string().min(1).max(500),
+                ref: z.string().max(200).optional(),
+              }),
+            }),
+          )
+          .max(20)
+          .optional(),
       })
       .optional(),
     /**

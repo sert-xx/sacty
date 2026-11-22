@@ -121,6 +121,7 @@ import {
   nextIncompleteRuns,
   OperationSettings,
   openProposal,
+  orgUrlOf,
   type PauseReason,
   PR_CI_CHECK_NAME_MAX,
   PR_CI_FAILED_CHECKS_MAX,
@@ -7043,8 +7044,17 @@ export class TaskService {
     // 成果の書き出し先に使える接続先と、プロジェクトのコンテキストの規約（PBI-56）
     const exports = await this.exportDestinations(task, config);
     // プロジェクトの共用の compose（PBI-70）。要るかはオーケストレーターが決める（ここでは取得しない）
-    const shared = task.repository
-      ? (this.deps.projects.get(task.projectId)?.sharedComposes ?? [])
+    const repositoryUrl = task.repository?.url;
+    const shared = repositoryUrl
+      ? (this.deps.projects.get(task.projectId)?.sharedComposes ?? []).filter(
+          (s) =>
+            !s.forRepos ||
+            s.forRepos.some(
+              (target) =>
+                sameGitHubUrl(target, repositoryUrl) ||
+                sameGitHubUrl(target, orgUrlOf(repositoryUrl)),
+            ),
+        )
       : [];
     // 対象リポジトリの無いタスク（PBI-73）は、プロジェクトの対象（作業するリポジトリの候補）とコンテキストを渡して選ばせる
     const contextSource = (() => {
@@ -7256,20 +7266,14 @@ export class TaskService {
     const { services: raw, ...rest } = choice;
     const offered = shared.length > 0 ? { sharedComposes: shared.map((s) => s.name) } : {};
     if (!raw) return { ...rest, ...offered };
-    if (raw.compose === undefined) {
-      return {
-        ...rest,
-        ...offered,
-        services: { file: raw.file, names: raw.names, steps: raw.steps },
-      };
-    }
-    const found = shared.find((s) => s.name === raw.compose);
-    if (!found) {
+    const names = typeof raw.compose === "string" ? [raw.compose] : (raw.compose ?? []);
+    const unknown = names.find((name) => !shared.some((s) => s.name === name));
+    if (unknown) {
       return {
         failure: {
           reason: "error",
           message: message("orchestrator.failed", {
-            detail: message("services.sharedUnknown", { name: raw.compose }),
+            detail: message("services.sharedUnknown", { name: unknown }),
           }),
           agentId: choice.agentId ?? "unknown",
           ...(choice.authMode ? { authMode: choice.authMode } : {}),
@@ -7283,19 +7287,28 @@ export class TaskService {
         },
       };
     }
+    const selections = names.flatMap((name) => {
+      const found = shared.find((s) => s.name === name);
+      return found
+        ? [
+            {
+              file: found.file,
+              names: raw.names,
+              compose: {
+                name: found.name,
+                repo: found.repo,
+                ...(found.ref ? { ref: found.ref } : {}),
+              },
+            },
+          ]
+        : [];
+    });
+    const first = raw.file ? { file: raw.file, names: raw.names } : selections.shift();
+    if (!first) return { ...rest, ...offered };
     return {
       ...rest,
       ...offered,
-      services: {
-        file: found.file,
-        names: raw.names,
-        steps: raw.steps,
-        compose: {
-          name: found.name,
-          repo: found.repo,
-          ...(found.ref ? { ref: found.ref } : {}),
-        },
-      },
+      services: { ...first, steps: raw.steps, ...(selections.length ? { more: selections } : {}) },
     };
   }
 
@@ -7802,6 +7815,7 @@ export class TaskService {
   ):
     | (ServicesSpec & {
         compose?: { name: string; repo: string; ref?: string };
+        more?: NonNullable<Task["services"]>["more"];
       })
     | undefined {
     const services = task.services;
@@ -7811,6 +7825,7 @@ export class TaskService {
       file: services.file,
       names: services.names,
       ...(services.compose ? { shared: services.compose.name, compose: services.compose } : {}),
+      ...(services.more ? { more: services.more } : {}),
     };
   }
 
@@ -7842,6 +7857,120 @@ export class TaskService {
     const found = this.serviceSpec(task, step);
     const services = this.deps.services;
     if (!found || !services) return undefined;
+    if (found.more?.length) {
+      const members = [found, ...found.more.map((s) => ({ ...s, shared: s.compose.name }))];
+      const runDir = sharedComposeRunDir(this.deps.workspaceRoot, runId);
+      const inputs: {
+        workspaceDir: string;
+        spec: ServicesSpec;
+        secrets?: string[];
+        compose?: { name: string; commit: string };
+      }[] = [];
+      this.track(runId);
+      for (const [i, member] of members.entries()) {
+        const { compose } = member;
+        const spec: ServicesSpec = {
+          file: member.file,
+          names: member.names,
+          ...(member.shared ? { shared: member.shared } : {}),
+        };
+        let dir = workspaceDir;
+        const secrets: string[] = [];
+        let commit: string | undefined;
+        if (compose) {
+          dir = join(runDir, String(i));
+          try {
+            const authEnv = await this.gitAuth(task, compose.repo, secrets);
+            ({ commit } = await this.sharedComposeFetcher.checkout({
+              repo: compose.repo,
+              ...(compose.ref ? { ref: compose.ref } : {}),
+              dest: dir,
+              ...(authEnv ? { authEnv } : {}),
+            }));
+          } catch (error) {
+            await rm(runDir, { recursive: true, force: true });
+            if (this.stopRequested(task.id))
+              return { ok: false, message: message("run.stoppedByPerson") };
+            return {
+              ok: false,
+              message: message("services.sharedFetchFailed", {
+                name: compose.name,
+                repo: compose.repo,
+                detail: clipText(redactText(errorText(error), secrets), SHARED_FETCH_DETAIL_MAX),
+              }),
+            };
+          }
+        }
+        inputs.push({
+          workspaceDir: dir,
+          spec,
+          ...(secrets.length ? { secrets } : {}),
+          ...(compose && commit ? { compose: { name: compose.name, commit } } : {}),
+        });
+      }
+      if (!services.startGroup) {
+        await rm(runDir, { recursive: true, force: true });
+        return {
+          ok: false,
+          message: message("services.failed", {
+            file: found.file,
+            detail: "複数の compose を起動できません",
+          }),
+        };
+      }
+      const image = agentImage ? await services.imageId?.(agentImage, runId) : undefined;
+      if (this.stopRequested(task.id)) {
+        await rm(runDir, { recursive: true, force: true });
+        return { ok: false, message: message("run.stoppedByPerson") };
+      }
+      let result: Awaited<ReturnType<NonNullable<ServiceRunner["startGroup"]>>>;
+      try {
+        result = await services.startGroup({ runId, members: inputs });
+      } catch (error) {
+        await services.stopGroup?.(runId, inputs.length).catch(() => undefined);
+        await rm(runDir, { recursive: true, force: true });
+        return {
+          ok: false,
+          message: message("services.failed", {
+            file: found.file,
+            detail: renderMessage(
+              redactText(
+                errorText(error),
+                inputs.flatMap((input) => input.secrets ?? []),
+              ),
+              "ja",
+            ).slice(0, SHARED_FETCH_DETAIL_MAX),
+          }),
+        };
+      }
+      if (!result.ok || this.stopRequested(task.id)) {
+        if (result.ok) await services.stopGroup?.(runId, inputs.length).catch(() => undefined);
+        await rm(runDir, { recursive: true, force: true });
+        return this.stopRequested(task.id)
+          ? { ok: false, message: message("run.stoppedByPerson") }
+          : result;
+      }
+      const { shared } = localForwards(result.started.services);
+      this.append(
+        this.mustGet(task.id),
+        inputs.map((input, i) => ({
+          actor: "sacty" as const,
+          event: {
+            type: "ServicesStarted" as const,
+            payload: {
+              runId,
+              step,
+              file: input.spec.file,
+              services: result.members[i]?.services ?? [],
+              ...(input.compose ? { compose: input.compose } : {}),
+              ...(forTests ? { forTests } : {}),
+              ...(shared.length ? { sharedPorts: shared } : {}),
+            },
+          },
+        })),
+      );
+      return { ok: true, started: result.started, ...(image ? { image } : {}) };
+    }
     // 人間が止めた（一時停止・中止）なら、起動しない
     const stopped = {
       ok: false as const,
@@ -7850,7 +7979,7 @@ export class TaskService {
     if (this.stopRequested(task.id)) return stopped;
     // 起動の待ち（up --wait）の間に止められたら、起動を打ち切れるように、実行として覚える
     this.track(runId);
-    const { compose, ...spec } = found;
+    const { compose, more: _more, ...spec } = found;
     // 共用の compose（PBI-70）は、実行ごとのディレクトリに取得して、そこを作業領域として起動する（マウントできるのは、
     // 取得したリポジトリの中だけ）。HTTPS の GitHub は、コンテキストリポジトリと同じくプロジェクトの gh のアカウントで取得する
     const usedSecrets: string[] = [];
@@ -7929,9 +8058,11 @@ export class TaskService {
   private async stopServices(task: Task, step: StepKey, runId: string): Promise<void> {
     const spec = this.serviceSpec(this.tasks.get(task.id) ?? task, step);
     if (!spec || !this.deps.services) return;
-    await this.deps.services.stop(runId).catch(() => undefined);
+    if (spec.more?.length)
+      await this.deps.services.stopGroup?.(runId, spec.more.length + 1).catch(() => undefined);
+    else await this.deps.services.stop(runId).catch(() => undefined);
     // 共用の compose を取得したディレクトリも消す（PBI-70）
-    if (spec.compose) {
+    if (spec.compose || spec.more?.length) {
       await rm(sharedComposeRunDir(this.deps.workspaceRoot, runId), {
         recursive: true,
         force: true,
@@ -8436,6 +8567,7 @@ export class TaskService {
                   name: s.name,
                   file: s.file,
                   ...(s.description ? { description: s.description } : {}),
+                  ...(s.forRepos ? { forRepos: s.forRepos } : {}),
                 })),
               }
             : {}),
@@ -9738,6 +9870,7 @@ export class TaskService {
       name: s.name,
       file: s.file,
       ...(s.description ? { description: s.description } : {}),
+      ...(s.forRepos ? { forRepos: s.forRepos } : {}),
     }));
     const ran = await this.runOrchestrator(
       task,

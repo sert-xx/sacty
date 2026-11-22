@@ -1524,7 +1524,7 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
   it("共用の compose は名前で選ばせ、使う・使わない理由を書かせる。設定が無い・対象リポジトリが無いなら聞かない（PBI-70）", () => {
     const output = (v: Record<string, unknown>) =>
       `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", ...v } })}\n\`\`\``;
-    // 名前で選ぶ（ファイルは設定のものを使うので読まない。両方あれば共用の compose）
+    // 対象の compose と共用の compose を一緒に選べる
     expect(
       extractStepPlan(
         output({
@@ -1538,7 +1538,7 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
         }),
       ),
     ).toMatchObject({
-      services: { compose: "infra", names: ["redis"], steps: ["implement"] },
+      services: { file: "x.yml", compose: ["infra"], names: ["redis"], steps: ["implement"] },
       servicesReason: "結合テストが Redis を使う",
     });
     expect(
@@ -1548,6 +1548,18 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
         }),
       )?.services,
     ).not.toHaveProperty("file");
+    expect(
+      extractStepPlan(
+        output({
+          services: { file: "compose.yml", compose: ["infra", "kafka"], steps: ["implement"] },
+        }),
+      )?.services,
+    ).toEqual({
+      file: "compose.yml",
+      compose: ["infra", "kafka"],
+      names: [],
+      steps: ["implement"],
+    });
     // 名前の形でなければ、対象リポジトリの compose ファイルとして読む（無ければ指定しなかったことにする）
     expect(
       extractStepPlan(
@@ -1599,7 +1611,7 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     );
     expect(prompt).toContain("- kafka：compose ファイル compose.yaml\n");
     expect(prompt).toContain("- servicesReason：");
-    expect(prompt).toContain('"compose": "または共用の compose の名前"');
+    expect(prompt).toContain('"compose": ["共用の compose の名前"]');
     // 1つだけでも聞く
     expect(
       buildOrchestratorPrompt(withRepo, {
@@ -6587,6 +6599,46 @@ describe("タスクの開始時に集めた情報", () => {
     expect(prompt).not.toContain("読まなくてよい");
     // 候補を gh api で読ませるのは、リポジトリが決まっていないときだけ
     expect(prompt).not.toContain("gh api");
+  });
+
+  it("共用 compose の候補を対象に合わせ、未決定のときはひもづけ先を示す", () => {
+    const task = taskOf(false);
+    const sharedComposes = [
+      { name: "linked", file: "a.yml", forRepos: ["https://github.com/acme"] },
+      { name: "direct", file: "direct.yml", forRepos: ["https://github.com/acme/app"] },
+      { name: "free", file: "b.yml", description: "Redis" },
+      { name: "other", file: "c.yml", forRepos: ["https://github.com/other/repo"] },
+    ];
+    const prompt = buildOrchestratorPrompt(task, { sharedComposes });
+    expect(prompt).toContain(
+      "linked：compose ファイル a.yml。このリポジトリのテスト・動作確認には原則これを使う。使わないなら servicesReason に理由を書く",
+    );
+    expect(prompt).toContain(
+      "direct：compose ファイル direct.yml。このリポジトリのテスト・動作確認には原則これを使う。使わないなら servicesReason に理由を書く",
+    );
+    expect(prompt.split("\n").find((line) => line.includes("free：compose"))).toBe(
+      "    - free：compose ファイル b.yml。Redis",
+    );
+    expect(prompt).not.toContain("other：compose");
+    const outside = {
+      ...task,
+      repository: { ...task.repository, url: "https://github.com/elsewhere/app" },
+    } as Task;
+    expect(buildOrchestratorPrompt(outside, { sharedComposes })).not.toContain("linked：compose");
+    const gather = buildGatherPrompt(task, undefined, { sharedComposes });
+    expect(gather.split("\n").find((line) => line.includes("free：compose"))).toBe(
+      "     - free：compose ファイル b.yml。Redis",
+    );
+    expect(gather).not.toContain("other：compose");
+    const undecided = { ...task, repository: undefined };
+    const triage = buildGatherPrompt(
+      undecided,
+      { candidates: ["https://github.com/acme/app"], fixed: false },
+      { sharedComposes },
+    );
+    expect(triage).toContain(
+      "other：compose ファイル c.yml。使うリポジトリ：https://github.com/other/repo",
+    );
   });
 
   it("リポジトリのあるタスクの情報収集は、自分の環境を後の工程の事実にさせず、テストと動作確認に要るサービスを分けさせる（PBI-152）", () => {

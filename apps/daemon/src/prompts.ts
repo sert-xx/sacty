@@ -34,6 +34,7 @@ import {
   needsCheck,
   OperationSettings,
   openingFence,
+  orgUrlOf,
   PROVENANCE_EXCERPT_MAX,
   PROVENANCE_ITEMS_MAX,
   PROVENANCE_KINDS,
@@ -8193,7 +8194,12 @@ export function buildOrchestratorPrompt(
      * プロジェクトの共用の compose（名前・compose ファイル・説明。PBI-70）。対象リポジトリがあるタスクだけで渡す。
      * 設定しただけでは起動しないので、要るかをタスクごとに判断させる（取得はしないので、中身は説明から判断する）。
      */
-    sharedComposes?: readonly { name: string; file: string; description?: string }[];
+    sharedComposes?: readonly {
+      name: string;
+      file: string;
+      description?: string;
+      forRepos?: readonly string[];
+    }[];
     /**
      * 対象リポジトリの無いタスク（PBI-73）。プロジェクトの対象のリポジトリ（コードの変更が要るときに選ぶ候補）・
      * コンテキストリポジトリ・プロジェクトのコンテキストの規約。リポジトリの無いタスクでだけ渡す。
@@ -8211,7 +8217,18 @@ export function buildOrchestratorPrompt(
 ): string {
   if (isRepoless(task) && options.repoless) return buildRepolessOrchestratorPrompt(task, options);
   const images = options.images ?? [];
-  const shared = task.repository ? (options.sharedComposes ?? []) : [];
+  const repositoryUrl = task.repository?.url;
+  const shared = repositoryUrl
+    ? (options.sharedComposes ?? []).filter(
+        (s) =>
+          !s.forRepos ||
+          s.forRepos.some(
+            (target) =>
+              sameGitHubUrl(target, repositoryUrl) ||
+              sameGitHubUrl(target, orgUrlOf(repositoryUrl)),
+          ),
+      )
+    : [];
   const destinations = options.exports?.destinations ?? [];
   const allowed = allowedPlans(task);
   const plans = Object.fromEntries(allowed.map((plan) => [plan, planDescriptions[plan]]));
@@ -8267,10 +8284,10 @@ export function buildOrchestratorPrompt(
           "  - 集めた情報に、テストと動作確認に要るサービスの分類があれば、それをもとにし、compose ファイルなどで確かめて確定する",
           ...(shared.length > 0
             ? [
-                "  - 共用の compose：このプロジェクトには、チームで共用するリポジトリの compose（対象リポジトリの外。PBI-70）があります。設定してあるだけでは起動しません。このタスク・このリポジトリのテストや動作確認に要るか（テストの設定・README・AGENTS.md・CI の設定が、そのサービスを前提にしているか）を、説明と照らして判断してください。使うときは、file の代わりに compose に共用の compose の名前を書く（対象リポジトリの compose と共用の compose は、どちらか一方）。names は説明から分かるサービスの名前（分からなければ空にすると、すべて起動する）。要らないタスクでは書かない（取得も起動もしない）",
+                "  - 共用の compose：このプロジェクトには、チームで共用するリポジトリの compose（対象リポジトリの外。PBI-70）があります。設定してあるだけでは起動しません。このタスク・このリポジトリのテストや動作確認に要るか（テストの設定・README・AGENTS.md・CI の設定が、そのサービスを前提にしているか）を、説明と照らして判断してください。使うときは compose に共用の compose の名前の配列を書く。対象リポジトリの file と複数の共用 compose を一緒に選べる。names は起動するサービスの名前で、空ならすべて起動する。複数の compose を使うときは names を空にする。要らないタスクでは書かない（取得も起動もしない）",
                 ...shared.map(
                   (s) =>
-                    `    - ${s.name}：compose ファイル ${s.file}${s.description ? `。${clip(s.description, 1000)}` : ""}`,
+                    `    - ${s.name}：compose ファイル ${s.file}${s.description ? `。${clip(s.description, 1000)}` : ""}${s.forRepos ? "。このリポジトリのテスト・動作確認には原則これを使う。使わないなら servicesReason に理由を書く" : ""}`,
                 ),
               ]
             : []),
@@ -8305,7 +8322,7 @@ export function buildOrchestratorPrompt(
     ...planAnswerLines(),
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${SELF_REVIEW_DEPTH_ANSWER}${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "image": "イメージの名前", "imageReason": "イメージを選んだ理由", "defaultReason": "images のどれも合わない理由"（default を使うときだけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "要るサービスを選ばなかったときは、そのサービスと理由"') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${documentsOnlyAnswer}${continueAnswer}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${SELF_REVIEW_DEPTH_ANSWER}${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "image": "イメージの名前", "imageReason": "イメージを選んだ理由", "defaultReason": "images のどれも合わない理由"（default を使うときだけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": ["共用の compose の名前"], "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "要るサービスを選ばなかったときは、そのサービスと理由"') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${documentsOnlyAnswer}${continueAnswer}}}`,
     "```",
     "",
     "調べてもテストの仕組みが見つからないときは、testCommand を書かずに、代わりに noTests に根拠を書いてください（ほかの項目は上と同じ）。testCommand と noTests を両方書かないでください。実装する組み合わせでは、両方を空にしないでください（sacty が検証できずに止まります）。",
@@ -9004,9 +9021,12 @@ function exportPlansOf(value: unknown): Partial<Record<StepKey, RawExportPlan>> 
  * オーケストレーターが書いたサービスの指定（PBI-47）。file は対象リポジトリの compose ファイル、compose は共用の compose の
  * 名前（PBI-70。どちらか一方。両方あれば共用の compose）。
  */
-export type RawServices =
-  | { file: string; compose?: undefined; names: string[]; steps: StepKey[] }
-  | { compose: string; file?: undefined; names: string[]; steps: StepKey[] };
+export type RawServices = {
+  file?: string;
+  compose?: string | string[];
+  names: string[];
+  steps: StepKey[];
+};
 
 /**
  * オーケストレーターが書いたサービスの指定（PBI-47）。ファイルはリポジトリの中の相対パス、サービスの名前は compose の
@@ -9016,13 +9036,14 @@ export type RawServices =
 function composeServicesOf(value: unknown): RawServices | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const v = value as Record<string, unknown>;
-  const compose = text(v.compose);
+  const compose = (Array.isArray(v.compose) ? v.compose : [v.compose])
+    .map(text)
+    .filter((name) => /^[a-z0-9][a-z0-9_-]{0,39}$/.test(name))
+    .slice(0, 20);
   const file = text(v.file);
-  const sharedName = /^[a-z0-9][a-z0-9_-]{0,39}$/.test(compose) ? compose : undefined;
-  if (
-    !sharedName &&
-    (!file || file.length > 300 || file.startsWith("/") || file.split(/[\\/]/).includes(".."))
-  ) {
+  const validFile =
+    file && file.length <= 300 && !file.startsWith("/") && !file.split(/[\\/]/).includes("..");
+  if (compose.length === 0 && !validFile) {
     return undefined;
   }
   const names = (Array.isArray(v.names) ? v.names : [])
@@ -9035,7 +9056,11 @@ function composeServicesOf(value: unknown): RawServices | undefined {
   });
   if (steps.length === 0) return undefined;
   const picked = { names: [...new Set(names)], steps: [...new Set(steps)] };
-  return sharedName ? { compose: sharedName, ...picked } : { file, ...picked };
+  return {
+    ...(validFile ? { file } : {}),
+    ...(compose.length ? { compose: [...new Set(compose)] } : {}),
+    ...picked,
+  };
 }
 
 /** docker compose のサービスを使える工程（コードを動かす工程。PBI-47）。 */
@@ -9303,7 +9328,12 @@ export function buildGatherPrompt(
     /** プロジェクトの対象のうち、リポジトリの一覧を読めなかった Org と理由（秘密は伏せたもの）。 */
     unreadable?: readonly { org: string; message: DaemonText }[];
     /** プロジェクトの共用の compose（PBI-70）。サービスを分けるとき（gatherServiceLines）に、compose に無い依存の候補にする。 */
-    sharedComposes?: readonly { name: string; file: string; description?: string }[];
+    sharedComposes?: readonly {
+      name: string;
+      file: string;
+      description?: string;
+      forRepos?: readonly string[];
+    }[];
   } = {},
 ): string {
   const ticket = task.ticket;
@@ -9325,7 +9355,21 @@ export function buildGatherPrompt(
   const readsCode = codeSection.reads;
   // 作業するリポジトリがある（決まる）タスクだけ、サービスを分けさせる（オーケストレーターがサービスを選ぶのも、そのときだけ）
   const servicesSection =
-    readsCode && (task.repository || triage) ? gatherServiceLines(code.sharedComposes ?? []) : [];
+    readsCode && (task.repository || triage)
+      ? gatherServiceLines(
+          (code.sharedComposes ?? []).filter(
+            (s) =>
+              !task.repository ||
+              !s.forRepos ||
+              s.forRepos.some(
+                (target) =>
+                  sameGitHubUrl(target, task.repository?.url ?? "") ||
+                  sameGitHubUrl(target, orgUrlOf(task.repository?.url ?? "")),
+              ),
+          ),
+          !task.repository,
+        )
+      : [];
   // 作業するリポジトリを指定した（用意した）タスクだけ、テストの書き方もまとめさせる。前段の調査が書いていたもの。
   // テストを書くかどうかはオーケストレーターが決めるので、慣習の事実だけを書かせる
   const readsTests = readsCode && Boolean(task.repository);
@@ -9447,7 +9491,13 @@ export const GATHER_GH_EXAMPLES: readonly { command: string; purpose: string }[]
  * サービスを確定させる）。共用の compose（PBI-70）は、compose に無い依存の候補として出す。
  */
 function gatherServiceLines(
-  sharedComposes: readonly { name: string; file: string; description?: string }[],
+  sharedComposes: readonly {
+    name: string;
+    file: string;
+    description?: string;
+    forRepos?: readonly string[];
+  }[],
+  triage: boolean,
 ): string[] {
   return [
     "--- 実行の環境とサービス ---",
@@ -9460,7 +9510,7 @@ function gatherServiceLines(
     `  3. compose に無い依存：${sharedComposes.length > 0 ? "次の共用の compose（チームで共用するリポジトリの compose）に合うものがあれば、その名前を書く。無ければ、" : ""}sacty が起動できない依存として書く`,
     ...sharedComposes.map(
       (s) =>
-        `     - ${s.name}：compose ファイル ${s.file}${s.description ? `。${clip(s.description, 1000)}` : ""}`,
+        `     - ${s.name}：compose ファイル ${s.file}${s.description ? `。${clip(s.description, 1000)}` : ""}${s.forRepos ? (triage ? `。使うリポジトリ：${s.forRepos.join("、")}` : "。このリポジトリのテスト・動作確認には原則使う") : ""}`,
     ),
   ];
 }

@@ -884,6 +884,45 @@ describe("共用の compose（PBI-70）", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("使うリポジトリを検査し、定義の書き出しと読み込みで保持する", () => {
+    const a = "https://github.com/acme/app";
+    const org = "https://github.com/acme";
+    const definition = ProjectDefinition.parse({
+      ...base,
+      targets: [{ scope: "org", target: org }],
+      sharedComposes: [{ ...infra, forRepos: [a, org] }],
+    });
+    expect(projectConflicts([], undefined, definition)).toEqual([]);
+    const exported = exportProject(make("p1", definition));
+    expect(
+      ProjectExport.parse(JSON.parse(JSON.stringify(exported))).project.sharedComposes?.[0]
+        ?.forRepos,
+    ).toEqual([a, org]);
+    for (const forRepos of [
+      [],
+      ["invalid"],
+      Array.from({ length: 51 }, (_, i) => `https://github.com/acme/r${i}`),
+    ]) {
+      expect(
+        ProjectDefinition.safeParse({ ...base, sharedComposes: [{ ...infra, forRepos }] }).success,
+      ).toBe(false);
+    }
+    const duplicate = ProjectDefinition.parse({
+      ...definition,
+      sharedComposes: [{ ...infra, forRepos: [a, "https://github.com/ACME/APP"] }],
+    });
+    expect(projectConflicts([], undefined, duplicate).map((p) => p.code)).toContain(
+      "project.sharedComposeForRepoDuplicated",
+    );
+    const outside = ProjectDefinition.parse({
+      ...definition,
+      sharedComposes: [{ ...infra, forRepos: ["https://github.com/other/app"] }],
+    });
+    expect(projectConflicts([], undefined, outside).map((p) => p.code)).toContain(
+      "project.sharedComposeForRepoNotTarget",
+    );
+  });
 });
 
 describe("取り込みの種類ごとの間隔（PBI-100）", () => {

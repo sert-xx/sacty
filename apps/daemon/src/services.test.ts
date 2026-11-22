@@ -782,6 +782,74 @@ describe("正規化した compose の設定から、localhost に転送するポ
 });
 
 describe("共用の compose の起動（PBI-70）", () => {
+  it("複数の compose は衝突を起動前に検査し、同じネットワークで起動して片付ける", async () => {
+    const calls: string[][] = [];
+    const configs: unknown[] = [];
+    let answer: unknown[] = [];
+    let failSecond = false;
+    let upCount = 0;
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      });
+      if (args.includes("up"))
+        configs.push(JSON.parse(readFileSync(args[args.indexOf("-f") + 1] as string, "utf8")));
+      setTimeout(() => {
+        if (args.includes("config")) child.stdout.emit("data", JSON.stringify(answer.shift()));
+        if (args.includes("up")) upCount++;
+        child.emit("close", failSecond && args.includes("up") && upCount === 2 ? 1 : 0);
+      }, 0);
+      return child;
+    }) as never;
+    const runner = new DockerComposeServices(spawnImpl, 300, { table: async () => [] });
+    const members = [
+      { workspaceDir: ws, spec: { file: "compose/redis.yml", names: [] } },
+      { workspaceDir: ws, spec: { file: "compose/redis.yml", names: [], shared: "infra" } },
+    ];
+    for (const shared of [
+      { db: { image: "redis" } },
+      { redis: { image: "redis", container_name: "db" } },
+    ]) {
+      answer = [normalized({ db: { image: "postgres" } }), normalized(shared)];
+      expect(await runner.startGroup({ runId: "conflict", members })).toMatchObject({
+        ok: false,
+        message: { code: "services.nameConflict" },
+      });
+      expect(calls.some((args) => args.includes("up"))).toBe(false);
+    }
+    answer = [normalized({ db: { image: "postgres" } }), normalized({ redis: { image: "redis" } })];
+    failSecond = true;
+    expect(await runner.startGroup({ runId: "failed", members })).toMatchObject({
+      ok: false,
+      message: { code: "services.sharedFailed" },
+    });
+    expect(calls.filter((args) => args.includes("down"))).toHaveLength(2);
+    expect(calls).toContainEqual(["network", "rm", "sacty-svc-failed-network"]);
+    calls.length = 0;
+    configs.length = 0;
+    upCount = 0;
+    failSecond = false;
+    answer = [
+      normalized({ db: { image: "postgres" } }),
+      normalized({ redis: { image: "redis", container_name: "cache" } }),
+    ];
+    const result = await runner.startGroup({ runId: "success", members });
+    expect(result).toMatchObject({
+      ok: true,
+      started: {
+        network: "sacty-svc-success-network",
+        services: [{ name: "db" }, { name: "redis" }],
+      },
+    });
+    expect(configs).toHaveLength(2);
+    for (const config of configs as { networks: Record<string, unknown> }[])
+      expect(config.networks.sacty).toEqual({ external: true, name: "sacty-svc-success-network" });
+    await runner.stopGroup("success", 2);
+    expect(calls.filter((args) => args.includes("down"))).toHaveLength(2);
+    expect(calls).toContainEqual(["network", "rm", "sacty-svc-success-network"]);
+  });
   /** docker compose の偽物。config は決めた設定を返し、up は決めた終了コードと出力を返す。 */
   function fakeCompose(config: unknown, up: { code: number; out: string } = { code: 0, out: "" }) {
     const calls: string[][] = [];

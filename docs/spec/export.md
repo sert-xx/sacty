@@ -46,6 +46,8 @@ sacty は書き出し先の種類ごとの設定を持たない。
 ## プロジェクトのエクスポート・インポート
 
 - `GET /api/projects/:id/export` は `{ sacty: "project", version: 5, project: { … } }`（`PROJECT_EXPORT_VERSION`）を返す。
+  共用 compose の `forRepos` は指定時だけ含め、リポジトリか Org の対象の URL を1〜50件受け付ける。
+  重複と対象外はインポートでも拒否する。
   - `project` には `name`・`targets`・`context`・`tickets`・`sharedComposes` を入れる。
   - ID・日時・`githubAccounts`（個人の設定）は入れない。`deferralHandling`（後続に回す指摘の扱いの既定）も入れない。
   - 画面からは `sacty-project-<名前>.json` としてダウンロードする。
@@ -61,3 +63,10 @@ sacty は書き出し先の種類ごとの設定を持たない。
     どちらも、版の誤りを最初の誤りとして返す（画面は最初の誤りを出す）。
 
 コード: `packages/core/src/projects.ts`（`ProjectExport`・`exportProject`・`PROJECT_EXPORT_VERSION`）、`apps/daemon/src/service.ts`（`exportProject`・`importProject`・`saveProject`）、`apps/web/src/app/projects/[id]/export/route.ts`、`apps/web/src/app/actions.ts`（`importProjectAction`）
+
+## 前の版への切り戻し
+
+切り戻す前にプロジェクトをエクスポートし、複数の compose を選んだ未完了タスクを中止します。
+前の版で設定を保存すると、ひもづけが消えます。
+新版に戻したら、ひもづけを付け直し、中止したタスクを再実行します。
+ひもづけを含むエクスポートは前の版ではインポートできません。

@@ -122,6 +122,9 @@ Fill in the fields as follows.
 | Branch or tag | Optional. The default branch if omitted |
 | Compose file | A path relative to the repository root (paths starting with `/` or `-`, or containing `..` or `$`, are not allowed) |
 | Description | Optional (up to 1000 characters). A hint for the Orchestrator's decision |
+| Repositories to use | Optional. Up to 50 project target repository or org URLs, one per line |
+
+URLs that differ only in letter case count as duplicates. An org target covers repositories under that org. If the field is empty, the Orchestrator decides from the description whether to use the compose.
 
 ### Authentication for fetching
 
@@ -136,7 +139,9 @@ The authentication used to fetch the repository is decided as follows.
 For each task, the Orchestrator decides whether to use a shared compose. Adding it does not start anything by itself.
 
 - The Orchestrator decides whether it is needed from the repository (test configuration, README, AGENTS.md) and the description, and selects it by name only when needed.
-- It selects either the target repository's compose or a shared compose, not both.
+- It can select the target repository's compose and multiple shared composes together.
+- It is instructed to use a linked compose by default and explain omissions. Entries linked only to other repositories are excluded.
+- Multiple composes run on one network. A conflicting service name or alias stops the step before startup.
 - Tasks that do not need it neither fetch nor start it.
 
 The reason for using or not using it, and which shared compose (repository, ref, file) is used, are recorded in the Activity (the task page). Writing in the description which services it starts and which tests need them helps the decision.
