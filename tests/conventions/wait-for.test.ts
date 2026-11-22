@@ -28,31 +28,62 @@ function violations(base: string, paths: string[]): string[] {
         value.forEach(visit);
         return;
       }
-      const node = value as {
+      type Node = {
         type?: string;
-        callee?: {
-          type: string;
-          object?: { type: string; name?: string };
-          property?: { type: string; name?: string; value?: string };
-          computed?: boolean;
-        };
+        name?: string;
+        value?: string;
+        expression?: Node;
+        callee?: Node;
+        object?: Node;
+        property?: Node;
+        computed?: boolean;
+        operator?: string;
+        left?: Node;
+        right?: Node;
+        quasis?: { value: { cooked: string | null } }[];
+        expressions?: Node[];
         loc?: { start: { line: number } };
       };
+      function unwrap(node: Node | undefined): Node | undefined {
+        while (
+          node &&
+          [
+            "TSAsExpression",
+            "TSTypeAssertion",
+            "TSNonNullExpression",
+            "TSSatisfiesExpression",
+            "TSInstantiationExpression",
+            "ParenthesizedExpression",
+          ].includes(node.type ?? "")
+        )
+          node = node.expression;
+        return node;
+      }
+      function staticString(value: Node | undefined): string | undefined {
+        const node = unwrap(value);
+        if (node?.type === "StringLiteral") return node.value;
+        if (node?.type === "TemplateLiteral" && node.expressions?.length === 0)
+          return node.quasis?.[0]?.value.cooked ?? undefined;
+        if (node?.type === "BinaryExpression" && node.operator === "+") {
+          const left = staticString(node.left);
+          const right = staticString(node.right);
+          if (left !== undefined && right !== undefined) return left + right;
+        }
+        return undefined;
+      }
+      const node = value as Node;
       if (node.type === "CallExpression" || node.type === "OptionalCallExpression") {
-        const target = node.callee;
+        const target = unwrap(node.callee);
+        const object = unwrap(target?.object);
+        const property = unwrap(target?.property);
+        const key = staticString(property);
         if (
-          target?.object &&
-          target.property &&
+          (target?.type === "MemberExpression" || target?.type === "OptionalMemberExpression") &&
+          object?.type === "Identifier" &&
+          object.name === "vi" &&
           node.loc &&
-          (target.type === "MemberExpression" || target.type === "OptionalMemberExpression") &&
-          target.object.type === "Identifier" &&
-          target.object.name === "vi" &&
-          ((!target.computed &&
-            target.property.type === "Identifier" &&
-            target.property.name === "waitFor") ||
-            (target.computed &&
-              target.property.type === "StringLiteral" &&
-              target.property.value === "waitFor"))
+          ((!target.computed && property?.type === "Identifier" && property.name === "waitFor") ||
+            (target.computed && key === "waitFor"))
         )
           found.push(`${name}:${node.loc.start.line}`);
       }
@@ -95,6 +126,37 @@ other.waitFor(() => {});
     ]);
     writeFileSync(path, "// test\n");
     expect(violations(dir, files(dir))).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("型式と静的なキーを組み合わせた直接呼び出しを検出する", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wait-check-"));
+  try {
+    const path = join(dir, "sample.test.ts");
+    const objects = [
+      "vi",
+      "(vi as typeof vi)",
+      "vi!",
+      "(vi satisfies typeof vi)",
+      "(<typeof vi>vi)",
+    ];
+    const keys = [
+      ".waitFor",
+      '["waitFor"]',
+      "[`waitFor`]",
+      '["wait" + "For"]',
+      '[("waitFor" as const)]',
+    ];
+    const calls = objects.flatMap((object) => keys.map((key) => `${object}${key}(() => {});`));
+    writeFileSync(
+      path,
+      [...calls, 'other["waitFor"](() => {});', `vi[\`wait\${suffix}\`](() => {});`].join("\n"),
+    );
+    expect(violations(dir, files(dir))).toEqual(
+      calls.map((_, index) => `sample.test.ts:${index + 1}`),
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
