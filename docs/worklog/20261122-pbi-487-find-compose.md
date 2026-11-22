@@ -20,11 +20,13 @@
 
 | コマンド | 結果 |
 | --- | --- |
-| `npm test` | 346 ファイル、7108 件成功、14 件スキップ（Git の `merge-tree --merge-base` 非対応 13 件、実際の AI を使う評価 1 件） |
+| `npx vitest run apps/daemon/src/prompts.test.ts apps/web/src/lib/labels.test.ts tests/docs --no-file-parallelism` | 503 件成功 |
 | `npm run lint` | 成功 |
 | `npm run typecheck` | 成功 |
 | `npm run build` | 成功 |
-指示の変更を戻す検証は今回実行していない。
+| `npm test` | 346 ファイル、7089 件成功、14 件スキップ |
+
+指示の変更を戻すと、計画と情報収集のテストがそれぞれ失敗した。
 
 ## レビューの指摘と対応
 
