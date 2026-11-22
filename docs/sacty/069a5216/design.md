@@ -11,7 +11,7 @@
 - 対象
   - 設定の型と検査・保存・エクスポート・インポート・画面の「共用の compose」に、「使うリポジトリ」の欄を足す
   - オーケストレーターと情報収集への指示で、共用の compose の候補をタスクの対象のリポジトリで絞り、ひもづいたものに印を付ける
-  - 1つの工程で、対象のリポジトリの compose 1つと共用の compose 複数を起動し、担当のコンテナをすべてのネットワークにつなぐ
+  - 1つの工程で、対象のリポジトリの compose 1つと共用の compose 複数を、sacty が作る1つのネットワークで起動し、担当のコンテナをそのネットワークにつなぐ
   - 実機（docker）で選択・取得・起動・接続を確かめ、見つかった失敗を直す
   - 仕様書・ユーザー文書（日英）、ADR、作業履歴
 - 対象外
@@ -25,6 +25,8 @@
   - 推奨：使えるようにする。
     対象のリポジトリに自分の compose があると、「どちらか一方」という指示のために共用のものが選ばれない。
     これが報告された不具合の有力な原因で、ひもづけて「原則使う」と伝えても、この制約が残る限り選べない。
+  - 制約：選んだ compose の間でサービス名か別名（`container_name`）が同じだと、工程を止める（`services.nameConflict`）。
+    両方に `db` があるリポジトリでは、共用の compose のサービス名を変えるか、どちらか一方だけを選ばせることになる。
   - 懸念：推奨で進めた後に要らないと分かると、ネットワーク・転送・記録の型・答えの形を複数に広げた実装（この PBI の大半）が無駄になる。
 - Q-2（should）：ひもづけ先を、プロジェクトの対象（リポジトリの対象と、Org の対象の下のリポジトリ）に限るか。
   - 推奨：限る。
@@ -37,6 +39,10 @@
     画面の録画もそのときに撮る。
   - 懸念：実装の工程が実機で確かめる前提にすると、確認が済まないまま PR が出る。
     今の版の失敗（取得・起動・接続のどれか）を直し漏らす。
+- Q-4（should）：前の版へ切り戻したときにひもづけが消えることを、文書の注意と付け直しの手順で済ませるか。
+  - 推奨：済ませる。前の版はプロジェクトを保存するときに知らない `forRepos` を捨てるので、この PBI では防げない。
+    仕様書・ユーザー文書に「切り戻す前にエクスポートしておき、新しい版に戻したら画面で付け直す」と書く。
+  - 懸念：切り戻した間にプロジェクトを保存した利用者のひもづけは、付け直すまで消えたままになる。原則使う指示が出ず、共用の compose がまた選ばれにくくなる。
 
 確認しないと決めたこと
 
@@ -55,8 +61,8 @@
 
 - 項目の名前は `forRepos`（GitHub のリポジトリの URL の配列。1〜50件、省略可）にする。既存の `repo`（取得元）と区別するため。
 - 画面の欄は「使うリポジトリ」のテキストエリア（1行に1つの URL）にする。空なら項目を書かない。
-- 担当のコンテナは、`docker run` に `--network` を compose の数だけ並べてつなぐ（Docker Engine 25 以降の書き方）。
-- 選んだ compose の間でサービス名がぶつかったら、起動せずに `services.nameConflict` で工程を止める。どちらに名前解決されるか決まらないため。
+- 複数の compose は、sacty が工程ごとに作るネットワーク1つにまとめ（各 compose の `sacty` ネットワークをそれに差し替える）、担当のコンテナは `--network` 1つでつなぐ。複数の `--network`（Docker Engine 25 以降）に頼らないため。
+- 選んだ compose の間で、サービス名と `container_name` の別名を合わせてぶつかりを調べ、ぶつかったら起動せずに `services.nameConflict` で工程を止める。同じネットワークでどちらに名前解決されるか決まらないため。
 
 ## 構成
 
@@ -66,23 +72,24 @@
 | `apps/web/src/components/project-editor.tsx`・`apps/web/src/i18n/messages/projects.ts` | 行ごとの「使うリポジトリ」の欄と文言（`docs/spec/ui-wording.md` に従う） |
 | `apps/daemon/src/prompts.ts`（`buildOrchestratorPrompt`） | 候補を「ひもづけていないもの」と「このリポジトリにひもづいたもの」に絞る。ひもづいたものには「このリポジトリのテスト・動作確認には原則これを使う。使わないなら servicesReason に理由を書く」と添える。「どちらか一方」の文を外し、答えの形を `services: {file?, compose: [名前…], names, steps}` にする（`compose` が文字列の答えも読む） |
 | 同（`gatherServiceLines`） | 同じ規則で絞る。triage では全件を出し、ひもづけ先を添える |
-| `apps/daemon/src/service.ts`・`services.ts` | `withSharedCompose`・`startServices`・`stopServices`・`serviceConnection` を compose の一覧に対応させる。`ExecuteRun.network` を配列にする。転送のぶつかりは、全 compose のサービスを合わせて判定する |
-| `apps/daemon/src/agents/docker.ts` | ネットワークの配列を `--network` に並べる |
+| `apps/daemon/src/service.ts`・`services.ts` | `withSharedCompose`・`startServices`・`stopServices` を compose の一覧に対応させる。工程ごとのネットワークを作り、各 compose の `sacty` ネットワークをそれ（sacty が付ける external）に差し替え、止めた後に消す。起動の前に、全 compose のサービス名と別名のぶつかりを調べる。転送のぶつかりは、全 compose のサービスを合わせて判定する |
 | `packages/core/src/events.ts` | `StepsChosen.services` に、2つ目からの compose を `more`（任意）として足す。1つだけのときの記録は今と同じ形。`ServicesStarted` は compose ごとに1件記録する |
 | `packages/core/src/projection.ts`・`apps/web/src/lib/labels.ts` | 同じ実行の `ServicesStarted` をまとめて読み、表示する |
-| `docs/spec/services.md`・`export.md`・`docs/user/compose.md`・`project-settings.md`（各日英） | ひもづけの項目・候補の規則・両方の起動・ネットワーク |
-| ADR・作業履歴 | 新しい ADR を足す（既存の ADR は「どちらか一方」を決めていないので置き換えない）。作業履歴に実機の確認の結果を書く |
+| `docs/spec/services.md`・`export.md`・`docs/user/compose.md`・`project-settings.md`（各日英） | ひもづけの項目・候補の規則・両方の起動・ネットワーク・名前のぶつかり・切り戻しの注意と付け直し |
+| ADR・作業履歴 | 新しい ADR を足し、`20261023-1410-gather-sorts-services-for-orchestrator.md` を一部置き換え（superseded。置き換えた部分：情報収集に出す共用の compose をリポジトリで絞る）にする。作業履歴に実機の確認の結果を書く |
 
 ## エラー時の振る舞い
 
 - 保存・インポート：`forRepos` の形の誤り（`input.sharedComposeForRepo`）・重複・対象に無いリポジトリは誤りにし、保存しない。
-- 工程：選んだ compose のどれかの取得・起動に失敗したら、起動済みのものも止めてから、今の失敗のコードで工程を止める。
+- 工程：サービス名か別名がぶつかったら、何も起動せずに `services.nameConflict` で止める。
+- 工程：ネットワークの作成か、選んだ compose のどれかの取得・起動に失敗したら、起動済みのものとネットワークを片づけてから、今の失敗のコードで工程を止める。
 
 ## 影響範囲
 
 - `more` を記録した作業履歴を前の版のデーモンで読むと、2つ目からの compose は無いものとして読まれる（`z.object` が知らない項目を捨てる）。
   デーモンは起動できる。
 - `forRepos` を書いた定義のエクスポートは、前の版の sacty ではインポートできない（`input.unknownKeys`）。
+- 前の版に切り戻してプロジェクトを保存すると、`forRepos` が消える（Q-4）。
 - 画面を変えるので、マージの前に実機で確かめて録画を残し、`npm run docs:screenshots` でスクリーンショットを撮り直す。
 
 ## テスト観点
@@ -116,16 +123,16 @@
   - 期待結果：前者は対象のリポジトリの compose と X・W を選んだ記録になり、後者は X だけを選んだ記録（今と同じ形）になる。
 - [TV-10] 両方の compose の起動と接続
   - 入力：対象のリポジトリの compose と共用の compose X を選んだ implement の工程を、偽の services と実行の仕組みで動かす
-  - 期待結果：2つの compose が起動され、ServicesStarted が2件記録され、担当のコンテナの docker run に --network が2つ並び、工程の後に2つとも止まり X の取得のディレクトリが消える。
-- [TV-11] サービス名のぶつかり
-  - 入力：対象のリポジトリの compose と共用の compose X の両方に db というサービスがあり、両方を選んだ工程を動かす
-  - 期待結果：どちらも起動せずに services.nameConflict で工程が止まる。
+  - 期待結果：工程のネットワークが1つ作られて2つの compose がそのネットワークで起動され、ServicesStarted が2件記録され、担当のコンテナの docker run の --network がそのネットワーク1つだけで、工程の後に2つの compose とネットワークが片づき X の取得のディレクトリが消える。
+- [TV-11] サービス名と別名のぶつかり
+  - 入力：対象のリポジトリの compose に db というサービスがある工程で、共用の compose X に db というサービスがある場合と、X のサービスの container_name が db の場合で、両方を選んで動かす
+  - 期待結果：どちらの場合も、どちらの compose も起動せずに services.nameConflict で工程が止まる。
 - [TV-12] 一部の起動の失敗
   - 入力：対象のリポジトリの compose は起動でき、共用の compose X の取得が失敗する工程を動かす
-  - 期待結果：起動済みの compose が止められ、services.sharedFetchFailed で工程が止まる。
+  - 期待結果：起動済みの compose と工程のネットワークが片づけられ、services.sharedFetchFailed で工程が止まる。
 - [TV-13] 実機での一通りの確認
   - 入力：docker のある環境で、対象のリポジトリにひもづいた共用の compose（redis など）を設定したタスクを実行する
   - 期待結果：オーケストレーターが選び、取得・起動され、担当のコンテナからサービス名で接続でき、結果と見つかった失敗の修正が作業履歴に書かれている。
 - [TV-14] 文書の記述
   - 入力：docs/spec/services.md・export.md・docs/user/compose.md・project-settings.md の日英と ADR の差分を読む
-  - 期待結果：forRepos の書き方と検査、ひもづけと候補の規則、両方の compose の起動とネットワーク、前の版との互換が日英で同じ内容で書かれている。
+  - 期待結果：forRepos の書き方と検査、ひもづけと候補の規則、両方の compose を1つのネットワークで起動すること、名前のぶつかりで止まること、前の版との互換と切り戻しでひもづけが消えることと付け直しの手順が日英で同じ内容で書かれ、20261023-1410 の ADR が置き換えた部分を書いた superseded になっている。
