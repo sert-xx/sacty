@@ -10,7 +10,7 @@
 
 - 対象
   - sacty のレビューの指示（`apps/daemon/src/prompts.ts` の判定の節・`VERDICT_ABSENT_LINE`）
-  - 既定のスキル `review-dispatch` の `pr-review.md`・`aggregation.md`
+  - 既定のスキル `review-dispatch` の `SKILL.md`（入力の確認）・`pr-review.md`・`aggregation.md`・`linked-docs.md`
   - 仕様書・ユーザー文書（日英）、ADR の置き換え、作業履歴、テスト
 - 対象外
   - 判定なしの回の扱い（直しの対象の決め方・直しに入るか）。要求要件・設計の PR も実装の PR も今のまま、その PR の工程の直しに入る
@@ -35,10 +35,11 @@
 - `VERDICT_ABSENT_LINE` は「判定：付いていません（レビューが判定を付けませんでした。差分も対象の文書も読めなかったレビューには、判定を付けません。本文と行へのコメントを確かめてください）」にする。
 - `pr-review.md` の、見られなかった観点がある回は、本文の最初に確かめられなかった所を書く。判定を付ける回なので、「レビューを完了できませんでした」「確かめられた範囲での暫定」は書かない。
 - 集約の記録の `verdict` の `incomplete` は、自己レビューのためだけに残す。PR のレビューでは使わず、`must` の有無で `passed`・`changes_required` にする。
+- `SKILL.md` の入力の確認は、`pr-review` のときだけ条件表に合わせる。`self-review` の「揃わない」の条件は変えない（判定なしの扱いが無いため）。
 
 ## 判定を付けるかの条件
 
-指示（`prompts.ts`）・スキル（`pr-review.md`・`aggregation.md`）・テスト観点で、この1つの条件を使う。
+指示（`prompts.ts`）・スキル（`SKILL.md` の入力の確認・`linked-docs.md` の取得できないとき・`pr-review.md`・`aggregation.md`）・テスト観点で、この1つの条件を使う。
 
 | 差分 | 作業領域 | 本文で示された主対象の文書 | 判定 |
 | --- | --- | --- | --- |
@@ -55,6 +56,8 @@
 | --- | --- |
 | `prompts.ts` 判定の節 | 付けないのは、「判定を付けるかの条件」の付けない行（差分も作業領域も主対象の文書も読めなかった）のときだけ。確かめられなかった所があっても、`must` が無ければ `suggestions`・`no_findings` を付け、確かめられなかったことを本文の最初に書く。CI の実行中・画面を確かめられない・環境で動かないテストは、判定を付けない理由にしない、と明記する。`changes_required` の行は変えない |
 | `prompts.ts` `VERDICT_ABSENT_LINE` | 既定で決めた文に変える |
+| `SKILL.md`「入力の確認」の「対象の本体」 | `pr-review` では、差分・作業領域・主対象の文書のどれか1つを読めれば揃ったとみなし、読めなかったものを記録して担当を起動する。揃わないのは条件表の付けない行のときだけ |
+| `linked-docs.md`「取得できないとき」 | 主対象にした文書を取得できなくても、差分か作業領域を読めれば残りで続け、読めなかった文書を本文の最初に書く（完了できないとしない）。「見られなかった文書がある `pr-review` は合格と書かない」を外す |
 | `pr-review.md`「完了できないとき」「指摘と判定の書き方」 | 判定を書かないのは「判定を付けるかの条件」の付けない行のときだけ。「主対象の文書を取得できない：差分も作業領域も読めないときと同じに扱う」を外す。見られなかった観点があっても、判定は `must` の有無と重さで決め、見られなかった所を本文の最初に書く。例は特定のリポジトリに寄せない |
 | `aggregation.md`「判定」と記録の形 | 「見られなかった観点がある初回の PR レビューは合格と書かない」を外し、`incomplete` を自己レビューだけの値にする。「対象にした文書を取得できなかった PR レビューは合格と書かない」を、付けない行のときだけにする |
 | 仕様書 | `tasks-and-steps`・`context`・`risk-assessment`・`intake`（日英） |
@@ -88,8 +91,8 @@
   - 入力：設計の PR の承認待ちで、PR のレビューの子タスクの最後の回が判定なし（missing が absent）で、指摘の無いその回の投稿だけが取り込まれた
   - 期待結果：起点のコミットと同じく、その回の投稿が PullRequestReviewImported で取り込まれ、ReworkJudged（理由 rework.reviewTaskUnreadable）が記録されて設計の工程の直しに入る
 - [TV-7] 既定のスキルのレビューの判定の規則
-  - 入力：apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md と aggregation.md
-  - 期待結果：判定を書かないのは差分も作業領域も主対象の文書も読めないときだけで、主対象の文書を取得できなくても差分か作業領域を読めれば判定を書き、見られなかった観点があっても must の有無と重さで判定して見られなかった所を本文の最初に書くとあり、PR のレビューでは incomplete を使わず、例に特定のリポジトリ・sacty に寄せた語が無い
+  - 入力：apps/daemon/default-context/skills/review/review-dispatch/ の SKILL.md（入力の確認）・references/linked-docs.md（取得できないとき）・references/pr-review.md・references/aggregation.md
+  - 期待結果：pr-review では、差分・作業領域・主対象の文書のどれか1つを読めれば入力が揃ったとして担当を起動し、主対象の文書を取得できなくても差分か作業領域を読めれば完了できないとせずに判定を書き、判定を書かないのはどれも読めないときだけで、見られなかった観点・文書があっても must の有無と重さで判定して見られなかった所を本文の最初に書くとあり、PR のレビューでは incomplete を使わず、self-review の入力の条件は起点のコミットと同じで、例に特定のリポジトリ・sacty に寄せた語が無い
 - [TV-8] 仕様書・ユーザー文書・ADR の記述
   - 入力：docs/spec の tasks-and-steps・context・risk-assessment・intake、docs/user/intake（それぞれ日英）、docs/adr
   - 期待結果：判定なしが差分も作業領域も主対象の文書も読めなかった場合だけであることと、判定なしの回の扱いは今のまま（要求要件・設計の PR でも直しに入る）で、受け入れ条件 5 は判定なしを限ることで足りるとしたことが日英で同じ内容で書かれ、新しい ADR が 20261114-0158 の判定の部分を置き換えている（superseded に改名・置き換え先と置き換え元のリンク）
