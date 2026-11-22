@@ -56,7 +56,7 @@ describe("投稿するレビューの本文の組み立て（PBI-460）", () => 
     // 先頭の @ メンションの後に、判定の行が続く
     expect(line?.replace(/^@\S+ /, "").startsWith("判定：付いていません")).toBe(true);
     expect(line).not.toContain("観点");
-    expect(line).toContain("確かめられなかった所がある");
+    expect(line).toContain("差分も対象の文書も読めなかった");
   });
 
   it("リスク評価の省略の案内は「リスク評価は長いため省略しました」だけで、画面・get_task・依頼した人への案内とタスクの ID を書かない", () => {

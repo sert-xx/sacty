@@ -194,8 +194,10 @@ describe("PR のレビューの判定が無い理由（PBI-378）", () => {
   it("投稿する本文の判定の行で、レビューが判定を付けなかった回と、判定を読めなかった回を書き分ける", () => {
     const line = (verdict: NonNullable<Task["reviewVerdicts"]>[number]) =>
       buildReviewBody(task(verdict)).split("\n")[3];
-    expect(line({ round: 1, missing: "absent" })).toBe(
-      "@alice 判定：付いていません（レビューが判定を付けませんでした。確かめられなかった所がある・対象を読めなかったレビューには、判定を付けません。本文と行へのコメントを確かめてください）",
+    const missing = read("総評\n\nレビューを完了できませんでした。").verdictMissing;
+    expect(missing).toBe("absent");
+    expect(line({ round: 1, missing })).toBe(
+      "@alice 判定：付いていません（レビューが判定を付けませんでした。差分も対象の文書も読めなかったレビューには、判定を付けません。本文と行へのコメントを確かめてください）",
     );
     const unreadable =
       "@alice 判定：読み取れませんでした（本文と行へのコメントを確かめてください）";
