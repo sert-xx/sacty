@@ -25,6 +25,8 @@ sacty starts the services and cleans them up as follows.
 
 - Services and steps to use: the Orchestrator decides them when it chooses the steps.
   - The Orchestrator reads the repository (compose files, README, AGENTS.md, and test configuration) and decides which services in which compose file to use, and in which steps (Implementation, Reproduce, bug Investigation).
+  - The instructions ask it to search subdirectories and various names for compose files, including files referenced by test and development instructions or skills.
+  - When it does not select services needed for tests or manual checks, the instructions ask it to record the services and reason in the activity history.
   - If the information gathering at the start of the task has sorted the services needed for tests and manual checks, the Orchestrator bases its choice on that.
   - Services are not started for an Investigation of content (as opposed to a bug Investigation).
 - What is started: sacty starts dependency apps managed elsewhere (ones that do not run the target repository's code) and databases, caches, mocks, and so on.

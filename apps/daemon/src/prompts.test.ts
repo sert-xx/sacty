@@ -1614,7 +1614,43 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
       }),
     ]) {
       expect(without).not.toContain("共用の compose");
-      expect(without).not.toContain("servicesReason");
+      if (without.includes("- services：")) {
+        expect(without).toContain("servicesReason");
+      } else {
+        expect(without).not.toContain("servicesReason");
+      }
+    }
+  });
+
+  it("計画は compose の探索先を指示する", () => {
+    const task = {
+      title: "x",
+      body: "",
+      steps: [],
+      repository: { url: "https://github.com/a/b.git", baseBranch: "main", baseCommit: "abc1234" },
+    } as unknown as Task;
+    for (const sharedComposes of [[], [{ name: "infra", file: "compose.yml" }]]) {
+      const prompt = buildOrchestratorPrompt(task, { sharedComposes });
+      expect(prompt).toContain("compose ファイルはリポジトリの根に限らずサブディレクトリも探す");
+      expect(prompt).toContain(
+        "compose.yaml・docker-compose.*.yml などの名前や、テスト・開発の手順書やスキルから参照されるファイルも調べる",
+      );
+    }
+  });
+
+  it("計画は必要なサービスを選ばないとき、そのサービスと理由を書くよう指示する", () => {
+    const task = {
+      title: "x",
+      body: "",
+      steps: [],
+      repository: { url: "https://github.com/a/b.git", baseBranch: "main", baseCommit: "abc1234" },
+    } as unknown as Task;
+    for (const sharedComposes of [[], [{ name: "infra", file: "compose.yml" }]]) {
+      const prompt = buildOrchestratorPrompt(task, { sharedComposes });
+      expect(prompt).toContain(
+        "テストや動作確認にサービスが要ると分かったのに選ばないときは、要るサービスと選ばなかった理由を書く",
+      );
+      expect(prompt).toContain('"servicesReason":');
     }
   });
 
@@ -6558,6 +6594,10 @@ describe("タスクの開始時に集めた情報", () => {
     expect(prompt).toContain("--- 実行の環境とサービス ---");
     expect(prompt).toContain("後の工程の環境の事実として書かないでください");
     expect(prompt).toContain("工程の実行のたびに起動し");
+    expect(prompt).toContain("compose ファイルはリポジトリの根に限らずサブディレクトリも探す");
+    expect(prompt).toContain(
+      "compose.yaml・docker-compose.*.yml などの名前や、テスト・開発の手順書やスキルから参照されるファイルも調べる",
+    );
     expect(prompt).toContain("1. このリポジトリのコードを動かすアプリ");
     expect(prompt).toContain("2. 別で管理されている依存アプリ");
     expect(prompt).toContain("sacty が起動できない依存として書く");
