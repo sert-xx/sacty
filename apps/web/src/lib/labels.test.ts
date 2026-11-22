@@ -1581,6 +1581,15 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
         ja,
       ).text,
     ).toBe("工程を決定：実装 / サービス：すべて（compose.yaml。実装で使う）");
+    const omitted = chosen({ servicesReason: "DB が必要だが利用できない" });
+    expect(describeEventParts(omitted, ja)).toEqual({
+      text: "工程を決定：実装 / サービス：使わない",
+      detail: "工程を選んだ理由：小さな変更\nサービスを決めた理由：DB が必要だが利用できない",
+    });
+    expect(describeEventParts(omitted, labels.en).text).toContain("Services: not used");
+    expect(describeEventParts(omitted, labels.en).detail).toContain(
+      "Why these services: DB が必要だが利用できない",
+    );
     // 共用の compose を使わない（理由あり・なし）
     const noServices = describeEventParts(
       chosen({ sharedComposes: ["infra"], servicesReason: "単体テストだけ" }),

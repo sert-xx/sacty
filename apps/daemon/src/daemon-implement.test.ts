@@ -2788,7 +2788,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           prompt.includes("- infra：compose ファイル compose/redis.yml。Redis。結合テストに要る"),
         ).toBe(expected);
         expect(prompt.includes("- kafka：compose ファイル compose.yaml")).toBe(expected);
-        expect(prompt.includes("servicesReason")).toBe(expected);
+        expect(prompt).toContain("servicesReason");
         expect(service.get(task.id)?.task.servicesReason).toBe("Redis は使わない");
         activity.close();
       }

@@ -636,6 +636,7 @@ Information gathering runs in a container of the default image without starting 
 
 - Do not write the tools, versions, or running things (such as a database) found in the gathering container as facts about the later steps' environment. Read the needed language versions and tools from the repository's configuration and write them.
 - Assume that sacty starts the compose services the Orchestrator chose for each step run (they are not running during gathering), and that step agents cannot use docker commands but can connect to the services.
+- Search for compose files in subdirectories and under various names, including files referenced by test and development instructions or skills.
 - Sort what tests and manual checks need into the following three groups by what each one runs, not by whether the compose service has `build`, and write them under the summary heading "Services needed for tests and manual checks".
   1. Apps that run this repository's code: the step agent starts them inside its container (the start procedure, the names of needed environment variables, and the services they connect to)
   2. Dependency apps managed elsewhere, and databases, caches, mocks, and so on: candidates sacty can start (the compose file and the service names)
@@ -673,7 +674,7 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 | `selfReviewDepth`, `selfReviewDepthReason` | The size of the request (`light`, `normal`) and the reason. A light task narrows the viewpoints of the self-review before submitting ([Self-review depth](#self-review-depth)) |
 | `image`, `imageReason` | The task image (one image, used for every step) and the reason. If an image is already decided (a rerun, the image specified at creation, or the project's target), it is used without asking. A name not in `images` stops the task |
 | `defaultReason` | When the default image (`default`) is used, why none of `images` fits ("Task image" below) |
-| `services`, `servicesReason` | The compose files, services, and steps to start ([Services](services.en.md)). Shared compose files are chosen by name (an unknown name stops the task) |
+| `services`, `servicesReason` | The compose files, services, and steps to start ([Services](services.en.md)). Shared compose files are chosen by name (an unknown name stops the task). When required services are not selected, write the services and the reason |
 | `exports` | The export destination and reason per step ([Export](export.en.md)) |
 | `operation` | Execution settings for a one-off operation (`via`, `name`, `target`, `change`, `verification`). Part of step selection, not a separate deliverable. If the target is unknown, this is omitted and execution stops before starting. |
 | `documentsDir` | The directory for the requirements and design files ([Approval and request changes](approval.en.md)) |
