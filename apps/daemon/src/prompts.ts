@@ -8262,6 +8262,7 @@ export function buildOrchestratorPrompt(
     ...(task.repository
       ? [
           "- services：テストや動作確認に、docker compose で起動するサービス（DB・モック API など）が要るとき（PBI-47）。compose ファイル（docker-compose.yml・compose.yaml など）・README・AGENTS.md・テストの設定から判断する。file は compose ファイルの、リポジトリの根からの相対パス、names は起動するサービスの名前（依存するサービスも起動する）、steps はサービスを使う工程（コードを動かす reproduce・implement と、不具合の調査の investigate）。sacty が工程とテストの実行ごとに起動し、終わったら消す。工程のエージェントは、サービス名とコンテナのポート（例 db:5432）でも、localhost のそのポートでも接続できる。要らなければ書かない",
+          "  - compose ファイルはリポジトリの根に限らずサブディレクトリも探す。compose.yaml・docker-compose.*.yml などの名前や、テスト・開発の手順書やスキルから参照されるファイルも調べる",
           "  - names に、このリポジトリのコードを動かすサービス（工程で変える・確かめるアプリ）は含めない。工程のエージェントが、コンテナの中で起動してサービスにつなぐ。別で管理されている依存アプリ（このリポジトリのコードを動かさないもの）と、DB・キャッシュ・モックなどは含める。compose の build の有無ではなく、何を動かすかで判断する（このリポジトリの Dockerfile でビルドする DB も依存。このリポジトリのコードをマウントして動かすものは対象のアプリ）",
           "  - 集めた情報に、テストと動作確認に要るサービスの分類があれば、それをもとにし、compose ファイルなどで確かめて確定する",
           ...(shared.length > 0
@@ -8271,9 +8272,9 @@ export function buildOrchestratorPrompt(
                   (s) =>
                     `    - ${s.name}：compose ファイル ${s.file}${s.description ? `。${clip(s.description, 1000)}` : ""}`,
                 ),
-                "- servicesReason：サービスを使う・使わないと判断した理由（共用の compose を使わないときも、その理由。根拠にしたファイル）。必ず書く",
               ]
             : []),
+          `- servicesReason：サービスを使う・使わないと判断した理由と根拠にしたファイル。テストや動作確認にサービスが要ると分かったのに選ばないときは、要るサービスと選ばなかった理由を書く。${shared.length > 0 ? "共用の compose を使わない理由も含め必ず書く" : ""}`,
         ]
       : []),
     ...(destinations.length > 0
@@ -8304,7 +8305,7 @@ export function buildOrchestratorPrompt(
     ...planAnswerLines(),
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${SELF_REVIEW_DEPTH_ANSWER}${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "image": "イメージの名前", "imageReason": "イメージを選んだ理由", "defaultReason": "images のどれも合わない理由"（default を使うときだけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${documentsOnlyAnswer}${continueAnswer}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${SELF_REVIEW_DEPTH_ANSWER}${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "image": "イメージの名前", "imageReason": "イメージを選んだ理由", "defaultReason": "images のどれも合わない理由"（default を使うときだけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "要るサービスを選ばなかったときは、そのサービスと理由"') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${documentsOnlyAnswer}${continueAnswer}}}`,
     "```",
     "",
     "調べてもテストの仕組みが見つからないときは、testCommand を書かずに、代わりに noTests に根拠を書いてください（ほかの項目は上と同じ）。testCommand と noTests を両方書かないでください。実装する組み合わせでは、両方を空にしないでください（sacty が検証できずに止まります）。",
@@ -9453,6 +9454,7 @@ function gatherServiceLines(
     "- あなたのコンテナは、情報収集のためのもので、後の工程の環境ではありません。後の工程は、オーケストレーターがリポジトリに合わせて選ぶイメージのコンテナで動きます。このコンテナで確かめたツールの有無・版・動いているもの（DB など）を、後の工程の環境の事実として書かないでください。要る言語の版・ツールは、リポジトリの設定（package.json・go.mod・pom.xml・pyproject.toml・.tool-versions・CI の設定など）から読んで書いてください",
     "- sacty は、オーケストレーターが選んだ docker compose のサービス（DB・モック API など）を、工程の実行のたびに起動し、工程のコンテナから接続できるようにします（いまは起動していません）。工程のエージェントは docker のコマンドを使えませんが、起動したサービスにはつなげます",
     "- compose ファイル・CI の設定・README・テストの設定から、テストと動作確認に要るものを次の3つに分けて、まとめに書いてください。compose の build の有無ではなく、何を動かすかで分けます",
+    "  - compose ファイルはリポジトリの根に限らずサブディレクトリも探す。compose.yaml・docker-compose.*.yml などの名前や、テスト・開発の手順書やスキルから参照されるファイルも調べる",
     "  1. このリポジトリのコードを動かすアプリ（工程で変える・確かめるもの）：工程のエージェントがコンテナの中で起動する。起動の手順（コマンド・要る環境変数の名前・つなぐサービス）を書く",
     "  2. 別で管理されている依存アプリ（このリポジトリのコードを動かさないもの）と、DB・キャッシュ・モックなど：sacty が起動できる候補。compose ファイルとサービスの名前を書く（このリポジトリの Dockerfile でビルドする DB なども、ここに入る）",
     `  3. compose に無い依存：${sharedComposes.length > 0 ? "次の共用の compose（チームで共用するリポジトリの compose）に合うものがあれば、その名前を書く。無ければ、" : ""}sacty が起動できない依存として書く`,

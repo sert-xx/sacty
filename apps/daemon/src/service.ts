@@ -7799,11 +7799,52 @@ export class TaskService {
   private serviceSpec(
     task: Task,
     step: StepKey,
+    unavailable?: (reason: string) => void,
   ):
     | (ServicesSpec & {
         compose?: { name: string; repo: string; ref?: string };
       })
     | undefined {
+    if (step === "review" && task.reviewOf?.step === "implement") {
+      const events = this.deps.activity.forTask(task.reviewOf.taskId);
+      const push = events.findLastIndex(
+        (event) =>
+          event.type === "BranchPushed" && event.payload.commit === task.reviewTarget?.headCommit,
+      );
+      if (push < 0) {
+        unavailable?.("PR の先頭に対応する記録がありません");
+        return undefined;
+      }
+      const run = events
+        .slice(0, push)
+        .findLast(
+          (event) => event.type === "AgentRunStarted" && event.payload.step === "implement",
+        );
+      if (run?.type !== "AgentRunStarted") return undefined;
+      const started = events
+        .slice(0, push)
+        .findLast(
+          (event) => event.type === "ServicesStarted" && event.payload.runId === run.payload.runId,
+        );
+      if (started?.type !== "ServicesStarted") return undefined;
+      const { file, services, compose } = started.payload;
+      if (compose && !compose.repo) {
+        unavailable?.(
+          `共用の compose の取得元が記録されていません（${compose.name}：${services.map((service) => service.name).join("・")}）`,
+        );
+        return undefined;
+      }
+      return {
+        file,
+        names: services.map((service) => service.name),
+        ...(compose?.repo
+          ? {
+              shared: compose.name,
+              compose: { name: compose.name, repo: compose.repo, ref: compose.commit },
+            }
+          : {}),
+      };
+    }
     const services = task.services;
     if (!this.deps.services || !services?.steps.includes(step)) return undefined;
     if (step === "investigate" && task.investigation !== "bug") return undefined;
@@ -7834,12 +7875,12 @@ export class TaskService {
      * タグを書き換えても、確定したイメージで動かす）。確かめられなければ返さない（名前のまま実行する）。
      */
     agentImage?: string,
+    found?: ReturnType<TaskService["serviceSpec"]>,
   ): Promise<
     | { ok: true; started: StartedServices; image?: string }
     | { ok: false; message: DaemonText }
     | undefined
   > {
-    const found = this.serviceSpec(task, step);
     const services = this.deps.services;
     if (!found || !services) return undefined;
     // 人間が止めた（一時停止・中止）なら、起動しない
@@ -7914,7 +7955,9 @@ export class TaskService {
               step,
               file: spec.file,
               services: result.started.services,
-              ...(compose && commit ? { compose: { name: compose.name, commit } } : {}),
+              ...(compose && commit
+                ? { compose: { name: compose.name, repo: compose.repo, commit } }
+                : {}),
               ...(forTests ? { forTests } : {}),
               ...(shared.length > 0 ? { sharedPorts: shared } : {}),
             },
@@ -7926,8 +7969,10 @@ export class TaskService {
   }
 
   /** サービスを止めて消す（PBI-47）。使わない工程なら何もしない。止められなくても、工程の結果は変えない。 */
-  private async stopServices(task: Task, step: StepKey, runId: string): Promise<void> {
-    const spec = this.serviceSpec(this.tasks.get(task.id) ?? task, step);
+  private async stopServices(
+    runId: string,
+    spec: ReturnType<TaskService["serviceSpec"]>,
+  ): Promise<void> {
     if (!spec || !this.deps.services) return;
     await this.deps.services.stop(runId).catch(() => undefined);
     // 共用の compose を取得したディレクトリも消す（PBI-70）
@@ -13648,6 +13693,7 @@ export class TaskService {
       throw error;
     }
     let executed: Executed | undefined;
+    let runServiceSpec: ReturnType<TaskService["serviceSpec"]>;
     // レビューの工程は、起点ではなく PR の先頭のコミットのコードを読ませ、PR の差分を渡す（PBI-19）
     const reviewTarget = step === "review" ? this.mustGet(task.id).reviewTarget : undefined;
     let reviewDiff: string | undefined;
@@ -13964,6 +14010,28 @@ export class TaskService {
       // エージェントのイメージを ID に確定させ、その ID で実行する（PBI-130）
       const workspaceDir = snapshotDir ?? ready.dir;
       const imageName = stepImage.ok ? stepImage.image : config.config.image;
+      let serviceUnavailable: string | undefined;
+      if (!executed) {
+        try {
+          runServiceSpec = this.serviceSpec(
+            { ...this.mustGet(task.id), ...(reviewTarget ? { reviewTarget } : {}) },
+            step,
+            (reason) => {
+              serviceUnavailable = reason;
+            },
+          );
+        } catch (error) {
+          executed = {
+            outcome: {
+              kind: "failed",
+              reason: "error",
+              message: redactText(errorText(error), contextSecrets),
+            },
+            costUsd: 0,
+            estimated: false,
+          };
+        }
+      }
       const services = executed
         ? undefined
         : await this.startServices(
@@ -13973,8 +14041,18 @@ export class TaskService {
             workspaceDir,
             false,
             imageName,
+            runServiceSpec,
           );
-      if (services && !services.ok) {
+      const reviewServiceFailure =
+        services &&
+        !services.ok &&
+        step === "review" &&
+        task.reviewOf?.step === "implement" &&
+        !(
+          typeof services.message !== "string" && services.message.code === "run.stoppedByPerson"
+        ) &&
+        !this.stopRequested(task.id);
+      if (services && !services.ok && !reviewServiceFailure) {
         executed = {
           outcome: {
             kind: "failed",
@@ -14073,6 +14151,12 @@ export class TaskService {
             ...platformPromptLines(runPlatforms.platforms),
             // 起動したサービスの接続先（PBI-47）
             ...servicePromptLines(started?.services ?? []),
+            ...(serviceUnavailable ? [`サービスを起動していません：${serviceUnavailable}`] : []),
+            ...(reviewServiceFailure && services && !services.ok
+              ? [
+                  `サービス（${runServiceSpec?.file}：${runServiceSpec?.names.join("・")}）を起動していません：${renderMessage(services.message, "ja")}`,
+                ]
+              : []),
           ].join("\n"),
           platforms: runPlatforms.platforms,
           role: step,
@@ -14124,7 +14208,7 @@ export class TaskService {
       }
     } finally {
       // サービスは、作業領域（ビルドの context）を消す前に止めて消す
-      await this.stopServices(task, step, runId);
+      await this.stopServices(runId, runServiceSpec);
       context?.dispose();
       if (await this.confirmStopped([runId])) {
         for (const dir of [snapshotDir, reviewDiffDir, inputDir, otherReposDir]) {

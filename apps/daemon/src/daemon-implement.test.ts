@@ -2597,7 +2597,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(promptOf(executor, 3)).toContain("- redis：redis:6379 または localhost:6379");
       const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
       expect(started.map((e) => e.type === "ServicesStarted" && e.payload.compose)).toEqual([
-        { name: "infra", commit: "abc1234def5678" },
+        { name: "infra", repo: "https://github.com/acme/test-infra", commit: "abc1234def5678" },
       ]);
       // 認証の値は、作業履歴に残さない
       expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
@@ -2788,7 +2788,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           prompt.includes("- infra：compose ファイル compose/redis.yml。Redis。結合テストに要る"),
         ).toBe(expected);
         expect(prompt.includes("- kafka：compose ファイル compose.yaml")).toBe(expected);
-        expect(prompt.includes("servicesReason")).toBe(expected);
+        expect(prompt).toContain("servicesReason");
         expect(service.get(task.id)?.task.servicesReason).toBe("Redis は使わない");
         activity.close();
       }

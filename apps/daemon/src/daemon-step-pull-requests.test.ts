@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { DaemonText, StepKey, Task } from "@sacty/core";
 import {
@@ -54,6 +54,8 @@ import {
   FakeGitHub,
   FakePulls,
   FakeRepos,
+  FakeServices,
+  FakeSharedComposes,
   fakeGateway,
   HOLD,
   ja,
@@ -153,6 +155,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       /** PR の CI の読み取り（PR のレビューの子タスクに渡す）。渡すと、実装の PR をドラフトで作る。 */
       ci?: ServiceDeps["ci"];
       /** sacty が作った PR をレビューする子タスクを作る（PBI-330）。 */
+      services?: ServiceDeps["services"];
+      sharedComposes?: ServiceDeps["sharedComposes"];
       reviewTasks?: boolean;
       /** 情報収集を差し替える（無ければ、集めずに進める）。 */
       gatherer?: ServiceDeps["gatherer"];
@@ -176,6 +180,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const pulls = options.pulls ?? new FakePulls();
     const repos = options.repos ?? new FakeRepos();
     const made = makeService(activity, outcomes, {
+      ...(options.services ? { services: options.services } : {}),
+      ...(options.sharedComposes ? { sharedComposes: options.sharedComposes } : {}),
       ...(options.settings ? { settings: options.settings } : {}),
       ...(options.webUrl !== undefined ? { webUrl: options.webUrl } : {}),
       ...(options.github ? { github: options.github } : {}),
@@ -2173,6 +2179,304 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         author,
         body: pulls.reviews[n]?.body ?? "",
       });
+
+    describe("実装 PR のレビューのサービス（PBI-489）", () => {
+      async function fixture(
+        kind: "file" | "shared" | "old" | "none" | "missing" = "file",
+        services = new FakeServices(),
+        hold = false,
+      ) {
+        const shared = new FakeSharedComposes();
+        const made = await start(
+          [implement(), hold ? (HOLD as unknown as AgentOutcome) : verdictOut("no_findings")],
+          {
+            steps: ["implement"],
+            reviewTasks: true,
+            services,
+            sharedComposes: shared,
+            ci: {
+              snapshot: async () => ({ checks: [], jobs: [], failedRuns: [] }),
+            } as unknown as ServiceDeps["ci"],
+          },
+        );
+        const { service, id, activity, pulls } = made;
+        for (let i = 0; i < 8 && !childOf(service, id); i++) await service.runNext(id);
+        const child = childOf(service, id);
+        expect(child).not.toBe("");
+        const commit = "a".repeat(40);
+        const entries: Parameters<typeof activity.append>[0]["events"] = [
+          {
+            actor: "sacty",
+            event: {
+              type: "AgentRunStarted",
+              payload: {
+                runId: "original",
+                step: "implement",
+                agentId: "a",
+                authMode: "subscription",
+              },
+            },
+          },
+        ];
+        if (kind !== "none")
+          entries.push({
+            actor: "sacty",
+            event: {
+              type: "ServicesStarted",
+              payload: {
+                runId: "original",
+                step: "implement",
+                file: "compose.yaml",
+                services: [{ name: "db", ports: [5432] }],
+                ...(kind === "shared"
+                  ? { compose: { name: "infra", repo: "/srv/infra", commit: "abc1234def5678" } }
+                  : {}),
+                ...(kind === "old" ? { compose: { name: "infra", commit: "abc1234def5678" } } : {}),
+              },
+            },
+          });
+        entries.push({
+          actor: "sacty",
+          event: {
+            type: "BranchPushed",
+            payload: { branch: "task", commit: kind === "missing" ? "b".repeat(40) : commit },
+          },
+        });
+        activity.append({ taskId: id, projectId: "default", events: entries });
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commit };
+        return { ...made, child, services, shared };
+      }
+      it("ファイルの compose を起動し、レビューを接続して停止する", async () => {
+        const t = await fixture();
+        await runReview(t.service, t.child);
+        expect(t.services.started.map((x) => x.spec)).toEqual([
+          { file: "compose.yaml", names: ["db"] },
+        ]);
+        expect(t.services.stopped).toEqual(t.services.started.map((x) => x.runId));
+        expect(payloads(t.service, t.child, "ServicesStarted")).toMatchObject([
+          { step: "review", file: "compose.yaml" },
+        ]);
+        expect(t.executor.networks.at(-1)).toContain("sacty-svc-");
+        expect(promptOf(t.executor, t.executor.calls.length - 1)).toContain("db:5432");
+        expect(t.executor.seeds.at(-1)?.["skills/docker-services/SKILL.md"]).toContain("db:5432");
+        t.activity.close();
+      });
+      it("記録した共用 compose のリポジトリとコミットを使い、取得先を消す", async () => {
+        const t = await fixture("shared");
+        const parent = (t.service as unknown as { tasks: Map<string, Task> }).tasks.get(t.id);
+        if (!parent) throw new Error("parent missing");
+        parent.services = {
+          file: "other.yml",
+          names: ["other"],
+          steps: ["implement"],
+          compose: { name: "infra", repo: "/srv/other" },
+        };
+        await runReview(t.service, t.child);
+        expect(t.shared.calls).toMatchObject([{ repo: "/srv/infra", ref: "abc1234def5678" }]);
+        expect(t.services.started[0]?.spec).toEqual({
+          file: "compose.yaml",
+          names: ["db"],
+          shared: "infra",
+        });
+        expect(payloads(t.service, t.child, "ServicesStarted")).toMatchObject([
+          { compose: { name: "infra", repo: "/srv/infra", commit: "abc1234def5678" } },
+        ]);
+        expect(t.services.stopped).toEqual(t.services.started.map((x) => x.runId));
+        expect(existsSync(t.shared.calls[0]?.dest ?? "")).toBe(false);
+        t.activity.close();
+      });
+      it("文書だけの再レビューと判定された回も起動する", async () => {
+        const t = await fixture();
+        vi.spyOn(
+          t.service as unknown as { rereviewDocsOnlyOf: () => Promise<unknown> },
+          "rereviewDocsOnlyOf",
+        ).mockResolvedValue({ previousCommit: "c".repeat(40), paths: ["docs/a.md"] });
+        await runReview(t.service, t.child);
+        expect(promptOf(t.executor, t.executor.calls.length - 1)).toContain("前回以降が文書だけ");
+        expect(t.services.started.map((x) => x.spec)).toEqual([
+          { file: "compose.yaml", names: ["db"] },
+        ]);
+        expect(payloads(t.service, t.child, "ServicesStarted")).toMatchObject([{ step: "review" }]);
+        expect(t.services.stopped).toEqual(t.services.started.map((x) => x.runId));
+        t.activity.close();
+      });
+      it.each(["requirements", "design"] as const)(
+        "%s の PR では親の実装記録があっても起動しない",
+        async (step) => {
+          const services = new FakeServices();
+          const t = await start([out("# 要求要件"), design(), verdictOut("no_findings")], {
+            reviewTasks: true,
+            services,
+          });
+          if (step === "design") {
+            await merge(t, "requirements");
+            await t.service.runNext(t.id);
+          }
+          const child = childOf(t.service, t.id, step === "design" ? 8 : 7);
+          const commit = commitOf(t.service, t.id, step === "design" ? 8 : 7);
+          t.activity.append({
+            taskId: t.id,
+            projectId: "default",
+            events: [
+              {
+                actor: "sacty",
+                event: {
+                  type: "ServicesStarted",
+                  payload: {
+                    runId: "other",
+                    step: "implement",
+                    file: "compose.yaml",
+                    services: [{ name: "db", ports: [5432] }],
+                  },
+                },
+              },
+            ],
+          });
+          t.pulls.prInfo = {
+            ...t.pulls.prInfo,
+            number: step === "design" ? 8 : 7,
+            headSha: commit,
+          };
+          await runReview(t.service, child);
+          expect(services.started).toEqual([]);
+          expect(payloads(t.service, child, "ServicesStarted")).toEqual([]);
+          t.activity.close();
+        },
+      );
+      it("後の実装とプッシュより、対象の先頭を作った実行を選ぶ", async () => {
+        const t = await fixture();
+        const parent = (t.service as unknown as { tasks: Map<string, Task> }).tasks.get(t.id);
+        if (!parent) throw new Error("parent missing");
+        parent.services = { file: "current.yml", names: ["current"], steps: ["implement"] };
+        t.activity.append({
+          taskId: t.id,
+          projectId: "default",
+          events: [
+            {
+              actor: "sacty",
+              event: {
+                type: "AgentRunStarted",
+                payload: {
+                  runId: "later",
+                  step: "implement",
+                  agentId: "a",
+                  authMode: "subscription",
+                },
+              },
+            },
+            {
+              actor: "sacty",
+              event: {
+                type: "ServicesStarted",
+                payload: {
+                  runId: "later",
+                  step: "implement",
+                  file: "other.yml",
+                  services: [{ name: "other", ports: [] }],
+                },
+              },
+            },
+            {
+              actor: "sacty",
+              event: { type: "BranchPushed", payload: { branch: "task", commit: "b".repeat(40) } },
+            },
+          ],
+        });
+        await runReview(t.service, t.child);
+        expect(t.services.started.map((x) => x.spec)).toEqual([
+          { file: "compose.yaml", names: ["db"] },
+        ]);
+        t.activity.close();
+      });
+      it("レビュー中に親が再プッシュしても起動時の共用 compose を片付ける", async () => {
+        const t = await fixture("shared", new FakeServices(), true);
+        const done = t.service.runNext(t.child);
+        const runId = await t.executor.started.promise;
+        expect(existsSync(t.shared.calls[0]?.dest ?? "")).toBe(true);
+        t.activity.append({
+          taskId: t.id,
+          projectId: "default",
+          events: [
+            {
+              actor: "sacty",
+              event: {
+                type: "AgentRunStarted",
+                payload: {
+                  runId: "later",
+                  step: "implement",
+                  agentId: "a",
+                  authMode: "subscription",
+                },
+              },
+            },
+            {
+              actor: "sacty",
+              event: { type: "BranchPushed", payload: { branch: "task", commit: "b".repeat(40) } },
+            },
+          ],
+        });
+        t.executor.finishHeld(runId, verdictOut("no_findings"));
+        await done;
+        expect(t.services.stopped).toEqual([runId]);
+        expect(existsSync(t.shared.calls[0]?.dest ?? "")).toBe(false);
+        t.activity.close();
+      });
+      it("起動失敗を伝え、サービス無しでレビューを続ける", async () => {
+        const services = new FakeServices(
+          message("services.unsafe", { file: "compose.yaml", detail: "privileged" }),
+        );
+        const t = await fixture("file", services);
+        await runReview(t.service, t.child);
+        expect(t.executor.calls).toHaveLength(2);
+        expect(promptOf(t.executor, 1)).toContain("privileged");
+        expect(t.executor.seeds.at(-1)?.["skills/docker-services/SKILL.md"]).toContain(
+          "サービスは起動していません",
+        );
+        expect(payloads(t.service, t.child, "ServicesStarted")).toEqual([]);
+        t.activity.close();
+      });
+      it("起動中に人が停止したらエージェントを実行せず、起動したサービスを消す", async () => {
+        const services = new FakeServices();
+        services.hold = true;
+        const t = await fixture("file", services);
+        const done = t.service.runNext(t.child);
+        await services.entered.promise;
+        await t.service.pause(t.child);
+        await done;
+        expect(t.executor.calls).toHaveLength(1);
+        expect(services.stopped).toContain(services.started[0]?.runId);
+        expect(JSON.stringify(t.service.get(t.child)?.activity)).toContain("run.stoppedByPerson");
+        t.activity.close();
+      });
+      it.each([
+        ["old", "共用の compose の取得元"],
+        ["missing", "PR の先頭に対応する記録"],
+        ["none", undefined],
+      ] as const)("%s の記録では起動せずレビューを続ける", async (kind, reason) => {
+        const t = await fixture(kind);
+        if (kind === "old") {
+          const parent = (t.service as unknown as { tasks: Map<string, Task> }).tasks.get(t.id);
+          if (!parent) throw new Error("parent missing");
+          parent.services = {
+            file: "other.yml",
+            names: ["other"],
+            steps: ["implement"],
+            compose: { name: "infra", repo: "/srv/other" },
+          };
+        }
+        await runReview(t.service, t.child);
+        expect(t.services.started).toEqual([]);
+        expect(t.services.stopped).toEqual([]);
+        expect(payloads(t.service, t.child, "ServicesStarted")).toEqual([]);
+        const prompt = promptOf(t.executor, t.executor.calls.length - 1);
+        if (reason) expect(prompt).toContain(reason);
+        else expect(prompt).not.toContain("サービスを起動していません：");
+        expect(t.executor.seeds.at(-1)?.["skills/docker-services/SKILL.md"]).toContain(
+          "サービスは起動していません",
+        );
+        t.activity.close();
+      });
+    });
 
     describe("レビューの往復の待ちを削る：投稿の直後の取り込みと、提出の直後の再レビュー（PBI-425）", () => {
       const CI0 = {
