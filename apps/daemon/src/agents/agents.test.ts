@@ -2803,6 +2803,7 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
     sessionFiles?: "codex",
     syncBack = false,
     timeoutMs?: number,
+    onControlOutput?: (output: string, secrets: readonly string[]) => void,
   ) {
     const { chmodSync } = await import("node:fs");
     const { DockerExecutor } = await import("./docker.js");
@@ -2818,6 +2819,7 @@ describe("大きすぎる認証ファイルは、伏せる対象から外さず�
       runId: "r-large-auth",
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...(log ? { log } : {}),
+      ...(onControlOutput ? { onControlOutput } : {}),
       image: "img",
       workspaceDir: dir,
       invocation: {
@@ -2972,6 +2974,26 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
 `,
     );
     expect(outcome).toMatchObject({ kind: "completed", output: "key [REDACTED]" });
+  });
+
+  it("制御情報を読む呼び出しに元の出力と伏せる値を渡し、戻り値は伏せる", async () => {
+    const received: { output: string; secrets: readonly string[] }[] = [];
+    const { outcome } = await run(
+      "complete",
+      `#!/bin/sh
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"complete"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      (output, secrets) => received.push({ output, secrets: [...secrets] }),
+    );
+    expect(received).toEqual([
+      { output: "complete", secrets: expect.arrayContaining(["complete"]) },
+    ]);
+    expect(outcome).toMatchObject({ kind: "completed", output: "[REDACTED]" });
   });
 });
 

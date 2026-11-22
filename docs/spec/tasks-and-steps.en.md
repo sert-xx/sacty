@@ -1627,4 +1627,6 @@ If sacty stops after recording a merge but before recording the next run's start
 
 When undeclared formatting is found, sacty rejects the submission and gives the agent only the paths, asking it to inspect the git diff, undo only its formatting, and resubmit. Sacty neither constructs a diff body nor rewrites files. It permits two resubmissions, then accepts and records the remaining count. Declarations from all implementation runs are combined, restricted to changed files, and secrets in paths and reasons are redacted before recording. Reasons are truncated to 300 characters after redaction.
 
+Before an implementation run, sacty retrieves secrets for redacting output and logs. Retrieval observes stop requests and has a 30-second limit; failure stops the run before the agent starts. Completion declarations and viewpoint IDs are parsed before redaction, while the body and free text are redacted before recording.
+
 Code: `apps/daemon/src/formatting-only.ts`, `apps/daemon/src/service.ts`, `apps/daemon/src/prompts.ts`, `apps/daemon/src/repository.ts`

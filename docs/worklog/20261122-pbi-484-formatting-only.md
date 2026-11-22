@@ -31,10 +31,9 @@ biome_binary="$PWD/node_modules/.bin/biome"; sample='export type GitHubRepo = { 
 
 | コマンド | 結果 |
 | --- | --- |
-| `npm run lint` | 成功 |
-| `npm run typecheck` | 成功 |
-| `npm test`（Git 2.51.2、一般ユーザー） | 7,187 件成功、AI の評価テスト 1 件スキップ |
-| `npm run build` | 成功 |
+| `npx vitest run apps/daemon/src/daemon-implement.test.ts apps/daemon/src/agents/agents.test.ts -t '秘密値 .*申告の構造\|実行前の秘密情報取得\|認証ファイルの秘密値で伏せ\|制御情報を読む呼び出し\|GitHub の認証取得が応答' --no-file-parallelism` | 対象の15件が成功 |
+
+整形の検出結果を空に変えた写しでは、実際の Git 作業領域を使う提出のテストが、検出の記録が無いため失敗した。
 
 
 ## レビューの指摘と対応
@@ -53,6 +52,9 @@ biome_binary="$PWD/node_modules/.bin/biome"; sample='export type GitHubRepo = { 
 作業領域の準備・取り込み・文書取得・コンテキスト取得・サービス起動の失敗について、未完了・整形の出し直し・時間切れの続行との組み合わせをテストした。
 大きなファイルを検査から外し、申告理由は文字の境界で切り詰める。
 英語の作業履歴で、出し直しのファイル数に応じて単数形と複数形を使う。
+制御情報を伏せる前に解析し、本文と自由記述は記録前に伏せる。
+認証ファイルから得た秘密値についても、実行結果を伏せる前に制御情報を読み取る。
+実行前の秘密情報の取得に停止と時間上限を適用する。
 
 ## 残したこと
 

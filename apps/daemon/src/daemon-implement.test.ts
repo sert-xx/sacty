@@ -1036,6 +1036,163 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
+  it.each(["complete", "sacty-test-map", "viewpointId", "TV-1", "passed", "full", "kind"])(
+    "秘密値 %s が申告の構造と重なっても完了と観点を読み、本文を伏せる",
+    async (secret) => {
+      let active = false;
+      const secretStore = { get: async () => (active ? secret : "oauth-secret") };
+      const verification = block({
+        "sacty-verification": {
+          commands: [{ kind: "test", command: "npm test", coverage: "full", status: "passed" }],
+        },
+      });
+      const answer = implement(
+        `本文 ${secret}\n\n${verification}\n\n\`\`\`sacty-completion\n{"status":"complete"}\n\`\`\``,
+      );
+      const { activity, service, id } = await toImplement([answer], { secretStore });
+      active = true;
+      await service.runNext(id);
+      const run = service.get(id)?.activity.findLast((e) => e.type === "AgentRunCompleted");
+      expect(run?.type).toBe("AgentRunCompleted");
+      if (run?.type !== "AgentRunCompleted") throw new Error("missing run");
+      expect(run.payload.completion).toEqual({ status: "complete" });
+      expect(run.payload.testMap?.map((item) => item.viewpointId)).toEqual(["TV-1", "TV-2"]);
+      expect(run.payload.verificationRecord?.commands[0]).toMatchObject({
+        kind: "test",
+        coverage: "full",
+        status: "passed",
+      });
+      expect(run.payload.output).not.toContain(secret);
+      activity.close();
+    },
+  );
+
+  it("認証ファイルの秘密値で伏せられる前に完了申告を読み、本文は伏せる", async () => {
+    const secret = "complete";
+    const answer = implement(
+      `本文 ${secret}\n\n\`\`\`sacty-completion\n{"status":"complete"}\n\`\`\``,
+    );
+    const { activity, service, executor, id } = await toImplement([answer]);
+    const run = executor.run.bind(executor);
+    vi.spyOn(executor, "run").mockImplementation(async (input) => {
+      const result = await run(input);
+      if (result.kind !== "completed") return result;
+      const control = input as typeof input & {
+        onControlOutput?: (output: string, secrets: readonly string[]) => void;
+      };
+      control.onControlOutput?.(result.output, [secret]);
+      return { ...result, output: result.output.replaceAll(secret, "[REDACTED]") };
+    });
+    await service.runNext(id);
+    const recorded = service
+      .get(id)
+      ?.activity.findLast((event) => event.type === "AgentRunCompleted");
+    expect(recorded?.type).toBe("AgentRunCompleted");
+    if (recorded?.type !== "AgentRunCompleted") throw new Error("missing run");
+    expect(recorded.payload.completion).toEqual({ status: "complete" });
+    expect(recorded.payload.output).not.toContain(secret);
+    activity.close();
+  });
+
+  it.each(["pause", "cancel"] as const)(
+    "実行前の秘密情報取得が応答しなくても %s できる",
+    async (operation) => {
+      let hold = false;
+      const entered = Promise.withResolvers<void>();
+      const secretStore = {
+        get: async () => {
+          if (!hold) return "oauth-secret";
+          entered.resolve();
+          return new Promise<string>(() => {});
+        },
+      };
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+        secretStore,
+      });
+      hold = true;
+      const before = executor.calls.length;
+      const running = service.runNext(id);
+      await entered.promise;
+      await (operation === "pause" ? service.pause(id) : service.cancel(id));
+      await running;
+      expect(executor.calls).toHaveLength(before);
+      expect(service.get(id)?.task.status).toBe(operation === "pause" ? "paused" : "cancelled");
+      activity.close();
+    },
+  );
+
+  it.each(["failure", "timeout"] as const)(
+    "実行前の秘密情報取得が %s のときは実行せずに停止する",
+    async (mode) => {
+      let fail = false;
+      const secretStore = {
+        get: async () => {
+          if (fail) throw new Error("private credential failure");
+          return "oauth-secret";
+        },
+      };
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+        secretStore,
+      });
+      fail = mode === "failure";
+      const timeout =
+        mode === "timeout"
+          ? vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(AbortSignal.abort())
+          : undefined;
+      const before = executor.calls.length;
+      try {
+        await service.runNext(id);
+        expect(executor.calls).toHaveLength(before);
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(JSON.stringify(service.get(id)?.activity)).not.toContain(
+          "private credential failure",
+        );
+      } finally {
+        timeout?.mockRestore();
+        activity.close();
+      }
+    },
+  );
+
+  it.each(["pause", "timeout"] as const)(
+    "GitHub の認証取得が応答しない場合も %s で中断する",
+    async (mode) => {
+      const entered = Promise.withResolvers<AbortSignal>();
+      class BlockingGitHub extends FakeGitHub {
+        blocked = false;
+        override async token(host: string, account: string, signal?: AbortSignal): Promise<string> {
+          if (!this.blocked || !signal) return super.token(host, account);
+          entered.resolve(signal);
+          return new Promise<string>(() => {});
+        }
+      }
+      const github = new BlockingGitHub();
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+        github,
+      });
+      const deadline = new AbortController();
+      const timeout =
+        mode === "timeout"
+          ? vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal)
+          : undefined;
+      github.blocked = true;
+      const before = executor.calls.length;
+      try {
+        const running = service.runNext(id);
+        const signal = await entered.promise;
+        if (mode === "pause") await service.pause(id);
+        else deadline.abort();
+        await running;
+        expect(signal.aborted).toBe(true);
+        expect(executor.calls).toHaveLength(before);
+        expect(service.get(id)?.task.status).toBe("paused");
+      } finally {
+        timeout?.mockRestore();
+        activity.close();
+      }
+    },
+  );
+
   it("未申告のパスに秘密値があっても、上限後の記録と本文に出さない", async () => {
     const repos = new FakeRepos();
     const base = repos.tree;

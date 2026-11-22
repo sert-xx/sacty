@@ -317,6 +317,8 @@ export interface AgentExecutor {
     log?: SessionLogSink;
     /** この実行の上限（ミリ秒。config.yaml の run_timeout。PBI-150）。無ければ既定（AGENT_RUN_TIMEOUT_MS）。 */
     timeoutMs?: number;
+    /** 実装の制御情報を、認証ファイルの値で伏せる前にメモリー内で読む。 */
+    onControlOutput?: (output: string, secrets: readonly string[]) => void;
   }): Promise<AgentOutcome>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -433,6 +435,7 @@ export class DockerExecutor implements AgentExecutor {
     forwards = [],
     log,
     timeoutMs = this.timeoutMs,
+    onControlOutput,
   }: Parameters<AgentExecutor["run"]>[0]): Promise<AgentOutcome> {
     // デーモンを止め始めた後は、新しく起動しない（作業領域を非同期で写している間に止められたとき。PBI-156）
     if (this.aborting)
@@ -787,6 +790,7 @@ export class DockerExecutor implements AgentExecutor {
         ...("costUnknown" in outcome && outcome.costUnknown ? { costUnknown: true as const } : {}),
       };
     }
+    if (outcome.kind === "completed") onControlOutput?.(outcome.output, stagedSecrets);
     return outcome.kind === "failed"
       ? { ...outcome, message: redactText(outcome.message, stagedSecrets) }
       : // デコードすると元の値に戻る JSON のエスケープも伏せる（PBI-131）

@@ -1241,6 +1241,8 @@ function unknownCost(run: { costUnknown?: boolean | undefined }): {
 /** エージェントの実行の結果（費用を含む）。 */
 type Executed = {
   outcome: AgentOutcome;
+  /** 実装の制御情報を伏せる前に読むための一時的な値。記録には使わない。 */
+  implementOutput?: { output: string; secrets: readonly string[] };
   costUsd: number;
   estimated: boolean;
   /** 使った分の全体を読めなかった（costUsd は読めた分の下限で、無ければ 0。時間切れなど。PBI-281）。 */
@@ -14536,8 +14538,8 @@ export class TaskService {
     const remarkIds = latest.remarks
       .filter((r) => r.step === step && !r.voided && !r.triaged)
       .map((r) => r.id);
-    const extracted = extractBlocks(
-      outcome.output,
+    const extractedRaw = extractBlocks(
+      executed.implementOutput?.output ?? outcome.output,
       // 引き継いだ PR の指摘への対応は、渡した指摘のキーを ID として読む（PBI-352）
       new Set([...remarkIds, ...handedOverKeys]),
       changeableSteps(latest, step),
@@ -14552,6 +14554,48 @@ export class TaskService {
         designEdit: step === "implement" && designEditRemarkIds(latest).length > 0,
       },
     );
+    // 制御情報は元の値で解析する。自由文は記録する前に伏せ、既知の ID や列挙値は照合に使う。
+    const secrets = executed.implementOutput?.secrets ?? [];
+    const hide = (value: string) => redactEscaped(redact(value, secrets), secrets);
+    const sanitize = (value: unknown): unknown => {
+      if (typeof value === "string") {
+        return hide(value);
+      }
+      if (Array.isArray(value)) return value.map((item) => sanitize(item));
+      if (value && typeof value === "object") {
+        return Object.fromEntries(
+          Object.entries(value).map(([name, item]) => [name, sanitize(item)]),
+        );
+      }
+      return value;
+    };
+    const extracted = sanitize(extractedRaw) as typeof extractedRaw;
+    if (extractedRaw.completion && extracted.completion) {
+      extracted.completion.status = extractedRaw.completion.status;
+    }
+    extracted.testMap.forEach((item, i) => {
+      item.viewpointId = extractedRaw.testMap[i]?.viewpointId ?? item.viewpointId;
+    });
+    extracted.responses.forEach((item, i) => {
+      const original = extractedRaw.responses[i];
+      if (original) {
+        item.remarkId = original.remarkId;
+        item.status = original.status;
+      }
+    });
+    if (extracted.proposal && extractedRaw.proposal)
+      extracted.proposal.target = extractedRaw.proposal.target;
+    extracted.verificationRecord?.commands.forEach((item, i) => {
+      const original = extractedRaw.verificationRecord?.commands[i];
+      if (original) {
+        item.kind = original.kind;
+        item.coverage = original.coverage;
+        item.status = original.status;
+        item.by = original.by;
+      }
+    });
+    // 設計の直しは専用の検査が ID を照合し、内容を伏せてから記録する。
+    if (extractedRaw.designEdit) extracted.designEdit = extractedRaw.designEdit;
     const { testViewpoints, proposal, testMap, testCommand } = extracted;
     const formattingDeclaration =
       step === "implement" && extracted.formatting
@@ -14728,7 +14772,7 @@ export class TaskService {
         runId,
         extracted,
         proposal !== undefined,
-        [...contextSecrets],
+        [...contextSecrets, ...secrets],
         this.inflight.get(latest.id)?.abort.signal,
       );
       // 中断されたときは、完了も提出も記録せず、失敗した実行と同じに止める（再開すると、実装の実行からやり直す。
@@ -18053,16 +18097,25 @@ export class TaskService {
       if (start?.type !== "AgentRunStarted" || !start.payload.formattingBaseline) return undefined;
       const config = this.deps.config();
       if (!config.ok) return undefined;
-      const secrets = await this.auditSecretValues(task.projectId, config.config);
+      const stop = this.inflight.get(task.id)?.abort.signal;
+      const signal = AbortSignal.any([AbortSignal.timeout(30_000), ...(stop ? [stop] : [])]);
+      const secrets = await untilAborted(
+        signal,
+        this.auditSecretValues(task.projectId, config.config, signal),
+      );
       // 伏せる値を取り出せないと、パスを記録や指示に出してよいか確かめられない。
       for (const use of uniqueUses(secretUses(config.config, this.readableSettings()))) {
-        secrets.push(await this.deps.secrets.get(use.ref));
+        secrets.push(await untilAborted(signal, this.deps.secrets.get(use.ref)));
       }
       const project = this.deps.projects.get(task.projectId);
       if (project?.context) {
-        const context = await this.contextSecretUsesOf([project], config.config);
+        const context = await untilAborted(
+          signal,
+          this.contextSecretUsesOf([project], config.config),
+        );
         if (context.problems.length) return undefined;
-        for (const use of context.uses) secrets.push(await this.deps.secrets.get(use.ref));
+        for (const use of context.uses)
+          secrets.push(await untilAborted(signal, this.deps.secrets.get(use.ref)));
       }
       const gitDir = this.trustedGitDir(task);
       const tree = await this.deps.repos.treeId(
@@ -20670,7 +20723,26 @@ export class TaskService {
     try {
       if (run.role === "implement") {
         const task = this.tasks.get(run.taskId);
-        if (task) usedSecrets.push(...(await this.auditSecretValues(task.projectId)));
+        if (task) {
+          const stop = this.inflight.get(run.taskId)?.abort.signal;
+          const signal = AbortSignal.any([AbortSignal.timeout(30_000), ...(stop ? [stop] : [])]);
+          try {
+            usedSecrets.push(
+              ...(await untilAborted(
+                signal,
+                this.auditSecretValues(task.projectId, undefined, signal),
+              )),
+            );
+          } catch {
+            const outcome = {
+              kind: "failed" as const,
+              reason: "error" as const,
+              message: "実行前の秘密情報を時間内に取得できませんでした。",
+            };
+            log?.close(outcome);
+            return { outcome, costUsd: 0, estimated: false, archived: log?.archived };
+          }
+        }
       }
       const executed = await this.executeLogged(run, usedSecrets, log);
       // 失敗した実行・止めた実行も、結果を残して閉じる（結果の文は、伏せた後のもの）
@@ -20733,6 +20805,7 @@ export class TaskService {
     log: SessionLogHandle | undefined,
   ): Promise<Executed> {
     let outcome: AgentOutcome;
+    let controlOutput: { output: string; secrets: readonly string[] } | undefined;
     let gatewayRun: ReturnType<NonNullable<ServiceDeps["gateway"]>["register"]> | undefined;
     try {
       // ゲートウェイ経由なら、API キーはゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）
@@ -20896,6 +20969,13 @@ export class TaskService {
         ...(run.network ? { network: run.network } : {}),
         ...(run.forwards ? { forwards: run.forwards } : {}),
         ...(log ? { log } : {}),
+        ...(run.role === "implement"
+          ? {
+              onControlOutput: (output: string, secrets: readonly string[]) => {
+                controlOutput = { output, secrets: [...secrets] };
+              },
+            }
+          : {}),
         // その役割の実行の上限（config.yaml の run_timeout。PBI-150）
         timeoutMs: agentTimeoutMs(config.ok ? config.config.runTimeouts : undefined, run.role),
       });
@@ -20929,6 +21009,13 @@ export class TaskService {
     if (outcome.imitatedNotices) {
       this.recordImitatedNotices(run.runId, run.agent.id, outcome.imitatedNotices);
     }
+    const implementOutput =
+      run.role === "implement" && outcome.kind === "completed"
+        ? {
+            output: controlOutput?.output ?? outcome.output,
+            secrets: [...usedSecrets, ...(controlOutput?.secrets ?? [])],
+          }
+        : undefined;
     outcome =
       outcome.kind === "failed"
         ? { ...outcome, message: redactText(outcome.message, usedSecrets) }
@@ -20951,6 +21038,7 @@ export class TaskService {
     if (cost.source) this.recordRunCost(run.runId, run.agent.id, cost);
     return {
       outcome,
+      ...(implementOutput ? { implementOutput } : {}),
       costUsd,
       estimated,
       ...(outcome.kind === "failed" && outcome.costUnknown ? { costUnknown: true as const } : {}),
@@ -22836,7 +22924,11 @@ export class TaskService {
    * GitHub のアカウントのトークン。取り出せない値は飛ばす（形で伏せる）。config を渡したときは、それと今の設定の両方から
    * 取り出す。同じ参照の値の入れ替えは知る手立てが無いので、使い回さずに毎回取り出す（PR #135 再レビュー指摘）。
    */
-  private async auditSecretValues(projectId: string, config?: SactyConfig): Promise<string[]> {
+  private async auditSecretValues(
+    projectId: string,
+    config?: SactyConfig,
+    signal?: AbortSignal,
+  ): Promise<string[]> {
     const current = this.deps.config();
     const configs = [config, current.ok ? current.config : undefined].filter(
       (c): c is SactyConfig => c !== undefined,
@@ -22852,15 +22944,25 @@ export class TaskService {
     const values: string[] = [];
     for (const ref of refs) {
       try {
-        values.push(await this.deps.secrets.get(ref));
+        const pending = this.deps.secrets.get(ref);
+        values.push(await (signal ? untilAborted(signal, pending) : pending));
       } catch {
+        if (signal) throw signal.reason ?? new Error("秘密情報を取得できませんでした");
         // 取り出せない値は伏せられないが、形で伏せる
       }
     }
     for (const host of Object.keys(accounts)) {
       try {
-        await this.githubToken({ projectId }, `https://${host}/sacty/sacty`, values);
+        const pending = this.githubToken(
+          { projectId },
+          `https://${host}/sacty/sacty`,
+          values,
+          undefined,
+          signal,
+        );
+        await (signal ? untilAborted(signal, pending) : pending);
       } catch {
+        if (signal) throw signal.reason ?? new Error("認証情報を取得できませんでした");
         // gh にログインしていないなど
       }
     }
