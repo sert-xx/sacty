@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { waitForAssertion } from "../../../daemon/src/testing/wait.js";
 
 vi.mock("next/server", () => ({ connection: async () => {} }));
 // 起動した本人のブラウザ（今の起動の cookie）からの問い合わせとする（PBI-129）
@@ -53,7 +54,7 @@ describe("画面の取り直しから、デーモンへの問い合わせに中�
       new Request("http://web/live/tasks", { signal: controller.signal }),
       () => listTasks(),
     );
-    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    await waitForAssertion(() => expect(signals).toHaveLength(1));
     controller.abort();
     expect(await (await reply).json()).toEqual({ unavailable: true });
     expect(signals[0]?.aborted).toBe(true);

@@ -123,10 +123,12 @@ git config user.email "12345678+your-account@users.noreply.github.com"
 ```sh
 npm run lint        # Biome（整形と lint。警告も失敗にする）。整形は npm run format で直せる
 npm run typecheck   # TypeScript の型検査
-npx vitest run      # テスト（docs の規則のテストを含む）
+npx vitest run --no-file-parallelism # テスト（docs の規則のテストを含む）
 npm run build       # すべてのパッケージのビルド
 ```
 
+- 全件テストを並列に流すと、ファイルどうしが CPU を取り合い、時間切れで落ちることがあります。
+- アサーションの待ちには `waitForAssertion` を使い、`vi.waitFor` を直接呼ばないでください。
 - 振る舞いを変えたら、テストを足すか直してください。
   直したテストが、変更を戻すと失敗することも確かめてください。
 - lint は、警告も失敗にします（`biome check --error-on-warnings`）。
@@ -231,7 +233,7 @@ docs は、仕様書・ユーザードキュメント・ADR・作業履歴の4�
 - README・仕様書・ユーザードキュメントは、日本語の版と英語の版（同じディレクトリの `*.en.md`）の両方を直します（[英語の版](docs/README.md#英語の版)）。
 - 方針や仕様を決めた・変えたら、[ADR](docs/adr/README.md) を足します。
   古い ADR の本文は書き換えません。
-- タスク（PR）ごとに [作業履歴](docs/worklog/README.md) を足します。
+- タスク（PR）ごとに作業履歴を足し、コマンドと結果、実行しなかった検証と理由、回ごとのレビューの指摘と対応、残したこと、PR 作成後の番号を書きます。書き方の正本は [ひな形](docs/worklog/README.md) です。
 - 公開リポジトリなので、次のものをコード・テスト・docs・コミット・PR に書かないでください。
   - 特定の組織や勤め先の内部を指す語・その組織の名前
   - 秘密の値（トークン・パスワード・鍵）

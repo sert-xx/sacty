@@ -20,6 +20,7 @@ import {
   pingDocker,
   startImagePresenceCheck,
 } from "./image-presence.js";
+import { waitForAssertion } from "./testing/wait.js";
 
 /*
  * 起動のときのエージェントのイメージの確かめ（PBI-148）。
@@ -198,10 +199,10 @@ describe("止めるときに、実行中の docker を残さない（PR #166 レ
     });
     const first: DaemonText[][] = [];
     const stop = startImagePresenceCheck(checker, (p) => first.push(p));
-    await vi.waitFor(() => expect(calls).toBe(1));
+    await waitForAssertion(() => expect(calls).toBe(1));
     stop();
     expect(signals[0]?.aborted).toBe(true);
-    await vi.waitFor(() => expect(first).toHaveLength(1));
+    await waitForAssertion(() => expect(first).toHaveLength(1));
     // 打ち切った確かめを「Docker に接続できない」として残さない
     expect(first[0]).toEqual([]);
     expect(checker.problems()).toEqual([]);
@@ -457,7 +458,7 @@ describe("起動のときと、それからの間隔", () => {
     });
     const first: DaemonText[][] = [];
     const stop = startImagePresenceCheck(checker, (p) => first.push(p));
-    await vi.waitFor(() => expect(first).toHaveLength(1));
+    await waitForAssertion(() => expect(first).toHaveLength(1));
     expect(first[0]).toHaveLength(1);
     expect(calls).toBe(1);
     await vi.advanceTimersByTimeAsync(IMAGE_CHECK_INTERVAL_MS);

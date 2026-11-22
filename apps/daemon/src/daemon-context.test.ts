@@ -54,7 +54,7 @@ import {
   triageOut,
   useTempDir,
 } from "./testing/daemon.js";
-import { idleFor } from "./testing/wait.js";
+import { idleFor, waitForAssertion } from "./testing/wait.js";
 
 useTempDir();
 
@@ -439,7 +439,7 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     });
     // コンテキストを変えて保存する
     expect((await send("PUT", "/api/projects/a", definition("A", "a", teamRepo))).status).toBe(200);
-    await vi.waitFor(() => expect(op.calls).toHaveLength(2));
+    await waitForAssertion(() => expect(op.calls).toHaveLength(2));
     expect(op.calls[1]).toEqual({ command: "run", refs: allRefs.slice(1) });
     // 同じ内容で保存し直しても、持っている参照は 1Password に問い合わせない
     expect((await send("PUT", "/api/projects/a", definition("A", "a", teamRepo))).status).toBe(200);
@@ -462,7 +462,7 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
       ].join("\n"),
     };
     expect((await send("PUT", "/api/projects/a", definition("A", "a", teamRepo))).status).toBe(200);
-    await vi.waitFor(() => expect(service.status().warnings).toHaveLength(1));
+    await waitForAssertion(() => expect(service.status().warnings).toHaveLength(1));
     expect(op.calls.slice(2)).toEqual([
       { command: "run", refs: ["op://Work/New/key", "op://Work/Missing/key"] },
       { command: "read", refs: ["op://Work/New/key"] },
@@ -481,7 +481,7 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     expect(service.status().warnings).toHaveLength(1);
     // 直してから保存し直すと、そのプロジェクトの警告は消える
     expect((await send("PUT", "/api/projects/a", definition("A", "a", teamRepo))).status).toBe(200);
-    await vi.waitFor(() => expect(service.status().warnings).toEqual([]));
+    await waitForAssertion(() => expect(service.status().warnings).toEqual([]));
     expect(op.calls).toHaveLength(5);
     // インポートしたプロジェクトも、取り出す
     const otherRepo = "https://git.example.com/other-ctx.git";
@@ -507,7 +507,7 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
       },
     });
     expect(imported.status).toBe(201);
-    await vi.waitFor(() => expect(op.calls).toHaveLength(6));
+    await waitForAssertion(() => expect(op.calls).toHaveLength(6));
     expect(op.calls[5]).toEqual({ command: "run", refs: ["op://Work/Other/key"] });
     delete values["op://Work/Other/key"];
     activity.close();
@@ -547,7 +547,7 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
         }),
       });
     expect((await save()).status).toBe(200);
-    await vi.waitFor(() => expect(op.calls).toHaveLength(2));
+    await waitForAssertion(() => expect(op.calls).toHaveLength(2));
     // 承認を待っている間に、タスクを作って実行する
     const task = service.createTask({ projectId: "a", title: "ドキュメントを直す" });
     const running = service.runNext(task.id);
@@ -577,7 +577,7 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
       slow = resolve;
     });
     const first = service.prefetchProjectSecrets("a");
-    await vi.waitFor(() => expect(op.calls).toHaveLength(3));
+    await waitForAssertion(() => expect(op.calls).toHaveLength(3));
     op.approval.wait = undefined;
     delete files[teamRepo]?.["mcp.yaml"];
     await service.prefetchProjectSecrets("a");
@@ -628,11 +628,11 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
       const op = gatedOp();
       const { activity, service } = setup([], { contexts: new FakeContexts(files), run: op.run });
       const startup = service.prefetchSecrets();
-      await vi.waitFor(() => expect(op.runs).toHaveLength(1));
+      await waitForAssertion(() => expect(op.runs).toHaveLength(1));
       // 起動側が 1Password の承認を待っている間に、取り出せない参照を足して保存する
       files[teamRepo] = { "mcp.yaml": brokenMcp };
       const saving = service.prefetchProjectSecrets("a");
-      await vi.waitFor(() => expect(op.runs).toHaveLength(2));
+      await waitForAssertion(() => expect(op.runs).toHaveLength(2));
       op.gates[1]?.();
       expect(await saving).toHaveLength(1);
       expect(service.status().warnings).toHaveLength(1);
@@ -650,11 +650,11 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
       const op = gatedOp();
       const { activity, service } = setup([], { contexts: new FakeContexts(files), run: op.run });
       const saving = service.prefetchProjectSecrets("a");
-      await vi.waitFor(() => expect(op.runs).toHaveLength(1));
+      await waitForAssertion(() => expect(op.runs).toHaveLength(1));
       // 保存側が承認を待っている間に参照を直し、取り出し直す（こちらの方が新しい）
       files[teamRepo] = { "rules.md": "規約だけ" };
       const again = service.prefetchSecrets({ fresh: true });
-      await vi.waitFor(() => expect(op.runs).toHaveLength(2));
+      await waitForAssertion(() => expect(op.runs).toHaveLength(2));
       op.gates[1]?.();
       expect((await again).problems).toEqual([]);
       op.gates[0]?.();
@@ -720,17 +720,19 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
         });
         const prefetching = service.prefetchSecrets();
         // git（sh）と、その子プロセス（sleep）が動き出すまで待つ
-        await vi.waitFor(() => expect(pids()).toHaveLength(2), { timeout: GIT_STARTUP_WAIT_MS });
+        await waitForAssertion(() => expect(pids()).toHaveLength(2), {
+          timeoutMs: GIT_STARTUP_WAIT_MS,
+        });
         expect(expire).toBeDefined();
         expire?.();
         const started = await prefetching;
         expect(ja(started.problems[0])).toContain("1 秒のうちに取得できませんでした。");
-        await vi.waitFor(
+        await waitForAssertion(
           () => {
             expect(pids().filter(alive)).toEqual([]);
             expect(readdirSync(temp)).toEqual([]);
           },
-          { timeout: GIT_STOP_WAIT_MS },
+          { timeoutMs: GIT_STOP_WAIT_MS },
         );
         activity.close();
       } finally {

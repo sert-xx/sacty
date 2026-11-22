@@ -38,7 +38,7 @@ import {
   stepReview,
   useTempDir,
 } from "./testing/daemon.js";
-import { idleFor, waitFor } from "./testing/wait.js";
+import { idleFor, waitFor, waitForAssertion } from "./testing/wait.js";
 
 useTempDir();
 
@@ -454,7 +454,7 @@ describe("工程の実行と費用", () => {
     executed = () => executor.calls.length;
     const task = service.createTask({ projectId: "default", title: "クラウドを調べる" });
     const running = service.runNext(task.id);
-    await vi.waitFor(() => expect(waits).toHaveLength(1));
+    await waitForAssertion(() => expect(waits).toHaveLength(1));
     // 準備を待たずにエージェントを動かしていないこと（何も起きないこと）を見るための猶予。準備を待ち始めた後に置く
     await idleFor(20);
     expect(executor.calls).toHaveLength(0);
@@ -490,7 +490,7 @@ describe("工程の実行と費用", () => {
     });
     const task = service.createTask({ projectId: "default", title: "クラウドを調べる" });
     const running = service.runNext(task.id);
-    await vi.waitFor(() => expect(waiting).toBe(true));
+    await waitForAssertion(() => expect(waiting).toBe(true));
     // 準備は終わらないので、人の停止だけが待ちを抜ける（上限を待たない）。固まればテストの時間切れで落ちる
     await service.pause(task.id);
     await running;

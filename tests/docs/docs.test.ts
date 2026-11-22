@@ -712,6 +712,32 @@ describe("docs の構成", () => {
     expect(checkAdrs(files)).toEqual([]);
   });
 
+  it("作業履歴のひな形は必要な節と PR の項目を持つ", () => {
+    const readme = readFileSync(join(WORKLOG_DIR, "README.md"), "utf8");
+    const template = /```markdown\n([\s\S]*?)\n```/.exec(readme)?.[1];
+    expect(template).toBeDefined();
+    const check = (body: string) => {
+      expect(body.match(/^## .+$/gm)).toEqual([
+        "## 目的",
+        "## したこと",
+        "## 確かめたこと",
+        "## レビューの指摘と対応",
+        "## 残したこと",
+      ]);
+      expect(body).toMatch(/^- PR: #<番号> \| なし$/m);
+    };
+    const body = template ?? "";
+    check(body);
+    expect(() => check(body.replace("## 残したこと", ""))).toThrow();
+    expect(() =>
+      check(
+        body
+          .replace("## レビューの指摘と対応", "## 残したこと")
+          .replace(/## 残したこと(?![\s\S]*## 残したこと)/, "## レビューの指摘と対応"),
+      ),
+    ).toThrow();
+  });
+
   it("作業履歴のファイル名・先頭の項目が規則どおり", () => {
     for (const entry of readdirSync(WORKLOG_DIR, { withFileTypes: true })) {
       expect(entry.isDirectory(), entry.name).toBe(false);
