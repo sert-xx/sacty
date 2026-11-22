@@ -1,10 +1,11 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { StepKey, Task } from "@sacty/core";
+import { message, renderMessage, type StepKey, type Task } from "@sacty/core";
 import { describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
+import { MessageError } from "./errors.js";
 import type { TaskService } from "./service.js";
 import { dbPath, dir, FakePulls, FakeRepos, makeService, useTempDir } from "./testing/daemon.js";
 import { waitFor } from "./testing/wait.js";
@@ -412,7 +413,7 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
       made.activity.close();
     });
 
-    it("TV-15: 比べた後に人が push したら、取得した先頭を期待して消そうとして断られ、ブランチはリモートに残る", async () => {
+    it("TV-15: 比べた後に人が push したら、取得した先頭を期待して消そうとして断られ、取得し直して先頭が違うので StepBranchKept を記録し、ブランチはリモートに残る（PBI-480 TV-11）", async () => {
       const made = await start([out("# 要求要件")]);
       const { repos } = made;
       const pr = prOf(made, "requirements");
@@ -427,6 +428,11 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
       expect(repos.deleteCalls).toEqual([{ branch: pr?.branch, expectedHead: pr?.commit }]);
       expect(repos.deleted).toEqual([]);
       expect(repos.remote[pr?.branch ?? ""]).toBe(HUMAN);
+      // 断られた後に、取得し直した
+      expect(repos.fetchedBranches.filter((f) => f.branch === pr?.branch)).toHaveLength(2);
+      expect(payloads(made.service, made.id, "StepBranchKept")).toEqual([
+        { branch: pr?.branch, head: HUMAN, pushed: pr?.commit },
+      ]);
       made.activity.close();
     });
 
@@ -452,6 +458,8 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
       expect(repos.deleted).toContain(second?.branch);
       expect(calls(repos, first?.branch ?? "")).toEqual([]);
       expect(payloads(service, id, "StepBranchKept")).toHaveLength(1);
+      // 完了の片付けで全部消せたときは、消せなかったブランチの記録を足さない（PBI-480 TV-4）
+      expect(types(service, id)).not.toContain("StepBranchesLeft");
       made.activity.close();
     });
 
@@ -500,6 +508,8 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
       ]);
       expect(repos.prepared).toHaveLength(prepared);
       expect(existsSync(gitDirOf)).toBe(false);
+      // 判定できなかった結果（git のメタデータが無い）は、消せなかったブランチの記録に使わない
+      expect(types(service, id)).not.toContain("StepBranchesLeft");
       expect(taskOf(service, id).status).toBe("idle");
       expect(types(service, id)).not.toContain("TaskPaused");
       made.activity.close();
@@ -591,6 +601,217 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
         made.activity.close();
       });
     }
+
+    /** 完了の片付けの再実行：消した作業領域の git のメタデータ（か、作業領域だけ）を置き直し、起動時の片付けを走らせる。 */
+    async function rerunCleanup(made: Made, only: "gitDir" | "workspace" = "gitDir") {
+      const root = join(dir, "workspaces");
+      mkdirSync(only === "gitDir" ? join(root, "_git", `${made.id}.git`) : join(root, made.id), {
+        recursive: true,
+      });
+      await made.service.cleanupWorkspacesAtStartup();
+      await made.service.workspaceCleanupsSettled();
+    }
+    /**
+     * 人がクローズした要求要件の PR（count 本）のブランチを、先頭を取得できないまま、最後の PR のマージで完了する。
+     * 取得の失敗の理由は reason で変えられる。完了の片付けで、count 本のブランチが消せずに残る。
+     */
+    async function completeWithLeft(count: 1 | 2) {
+      const made = await start([
+        out("# 要求要件 v1"),
+        out("# 要求要件 v2"),
+        out("# 要求要件 v3"),
+        design(),
+      ]);
+      const { service, repos, id } = made;
+      const state = {
+        reason: (b: string): string | undefined =>
+          b.includes("-requirements-") ? "network down" : undefined,
+      };
+      failFetch(repos, (b) => state.reason(b));
+      const left: string[] = [];
+      for (let i = 0; i < count; i++) {
+        left.push(prOf(made, "requirements")?.branch ?? "");
+        await close(made, "requirements");
+        sendBack(made, "requirements");
+        await service.runNext(id);
+      }
+      await merge(made, "requirements");
+      await service.runNext(id);
+      await merge(made, "design");
+      await waitFor(() => !existsSync(join(dir, "workspaces", id)), {
+        what: "完了の片付けの終わり",
+      });
+      await service.workspaceCleanupsSettled();
+      return { made, left, state };
+    }
+    const leftEvents = (made: Made) => payloads(made.service, made.id, "StepBranchesLeft");
+    const settleFinal = (made: Made) =>
+      (
+        made.service as unknown as {
+          settleStepBranches(
+            id: string,
+            mode: "final",
+          ): Promise<{ branch: string; result: string; detail?: unknown }[]>;
+        }
+      ).settleStepBranches(made.id, "final");
+
+    it("PBI-480 TV-1: 中止で、記録の無いブランチの知らせが、画面の言語の文になる", async () => {
+      const made = await start([out("# 要求要件")]);
+      const { service, id } = made;
+      const pr = prOf(made, "requirements");
+      // 最後の push の記録が無い状態にする
+      const live = (service as unknown as { tasks: Map<string, Task> }).tasks.get(id);
+      if (!live) throw new Error("no task");
+      live.stepBranchCommits = undefined;
+      await close(made, "requirements");
+      const cancelled = await service.cancel(id);
+      const failed = (cancelled.cancelled?.cleanup ?? []).filter(
+        (c) => c.target === "branch" && c.result === "failed",
+      );
+      expect(failed).toHaveLength(1);
+      const detail = failed[0]?.detail ?? "";
+      const en = renderMessage(detail, "en");
+      expect(en).toContain(
+        `Not deleting branch ${pr?.branch} because the commit sacty last pushed is not recorded.`,
+      );
+      expect(en).not.toContain("[object Object]");
+      const ja = renderMessage(detail, "ja");
+      expect(ja).toContain(`ブランチ ${pr?.branch} を消しません`);
+      expect(ja).not.toContain("[object Object]");
+      made.activity.close();
+    });
+
+    it("PBI-480 TV-2: 作業領域を用意できなかった知らせに、英語の画面で日本語が混ざらない", async () => {
+      const made = await start([out("# 要求要件")]);
+      const { service, repos, id } = made;
+      // 作業領域はあるが、退避した git のメタデータが無く、用意し直しも失敗する
+      rmSync(join(dir, "workspaces", "_git", `${id}.git`), { recursive: true, force: true });
+      repos.fail = "boom";
+      const cancelled = await service.cancel(id);
+      const failed = (cancelled.cancelled?.cleanup ?? []).filter(
+        (c) => c.target === "branch" && c.result === "failed",
+      );
+      expect(failed).toHaveLength(1);
+      const detail = failed[0]?.detail ?? "";
+      const en = renderMessage(detail, "en");
+      expect(en).toContain("Could not delete branch");
+      expect(en).toContain("Could not prepare a workspace");
+      expect(en).not.toMatch(/[぀-ヿ一-鿿]/);
+      expect(en).not.toContain("[object Object]");
+      expect(renderMessage(detail, "ja")).toContain("作業領域を用意できませんでした");
+      made.activity.close();
+    });
+
+    it("PBI-480 TV-3: 完了で消せなかったブランチを、理由とともに StepBranchesLeft に 1 件記録し、作業領域は消え、タスクは完了のままにする", async () => {
+      const { made, left } = await completeWithLeft(1);
+      const { service, id } = made;
+      expect(leftEvents(made)).toEqual([
+        { branches: [{ branch: left[0], detail: "network down" }] },
+      ]);
+      expect(taskOf(service, id).stepBranchesLeft).toEqual([
+        { branch: left[0], detail: "network down" },
+      ]);
+      expect(existsSync(join(dir, "workspaces", id))).toBe(false);
+      expect(taskOf(service, id).status).toBe("idle");
+      expect(types(service, id)).not.toContain("TaskPaused");
+      made.activity.close();
+    });
+
+    it("PBI-480 TV-5: 同じ結果の再実行では、重ねて記録しない", async () => {
+      const { made } = await completeWithLeft(1);
+      expect(leftEvents(made)).toHaveLength(1);
+      await rerunCleanup(made);
+      expect(leftEvents(made)).toHaveLength(1);
+      made.activity.close();
+    });
+
+    it("PBI-480 TV-6: 再実行で結果が変われば、残りのブランチと新しい理由だけの記録で置き換える", async () => {
+      const { made, left, state } = await completeWithLeft(2);
+      expect(leftEvents(made)).toEqual([
+        {
+          branches: [
+            { branch: left[0], detail: "network down" },
+            { branch: left[1], detail: "network down" },
+          ],
+        },
+      ]);
+      state.reason = (b) => (b === left[0] ? MISSING : b === left[1] ? "disk full" : undefined);
+      await rerunCleanup(made);
+      expect(leftEvents(made)).toHaveLength(2);
+      expect(leftEvents(made)[1]).toEqual({ branches: [{ branch: left[1], detail: "disk full" }] });
+      expect(taskOf(made.service, made.id).stepBranchesLeft).toEqual([
+        { branch: left[1], detail: "disk full" },
+      ]);
+      made.activity.close();
+    });
+
+    it("PBI-480 TV-7: 再実行で全部消せたら、空の記録で表示を消す", async () => {
+      const { made, left, state } = await completeWithLeft(2);
+      state.reason = () => undefined;
+      await rerunCleanup(made);
+      expect(leftEvents(made)).toHaveLength(2);
+      expect(leftEvents(made)[1]).toEqual({ branches: [] });
+      expect(taskOf(made.service, made.id).stepBranchesLeft).toBeUndefined();
+      expect(made.repos.deleted).toEqual(expect.arrayContaining(left));
+      made.activity.close();
+    });
+
+    it("PBI-480 TV-8: git のメタデータが無い再実行の結果は、記録に使わず、前の記録のままにする", async () => {
+      const { made, left } = await completeWithLeft(1);
+      await rerunCleanup(made, "workspace");
+      expect(leftEvents(made)).toHaveLength(1);
+      expect(taskOf(made.service, made.id).stepBranchesLeft).toEqual([
+        { branch: left[0], detail: "network down" },
+      ]);
+      made.activity.close();
+    });
+
+    it("PBI-480 TV-12: 断られた後に取得し直してリモートに無ければ、消せたものとし、記録は足さない", async () => {
+      const made = await start([out("# 要求要件")]);
+      const { repos } = made;
+      const pr = prOf(made, "requirements");
+      // 取得の後、削除の前に、リモートのブランチが消えた（取得し直すと無い）
+      repos.deleteLeaseCheck = true;
+      const seen: string[] = [];
+      failFetch(repos, (b) => {
+        seen.push(b);
+        return seen.length >= 2 ? MISSING : undefined;
+      });
+      const original = repos.deleteBranch.bind(repos);
+      repos.deleteBranch = async (gitDir, branch, authEnv, expectedHead) => {
+        delete repos.remote[branch];
+        return original(gitDir, branch, authEnv, expectedHead);
+      };
+      const results = await settleFinal(made);
+      expect(results).toEqual([{ branch: pr?.branch, result: "deleted" }]);
+      expect(calls(repos, pr?.branch ?? "")).toHaveLength(1);
+      expect(types(made.service, made.id)).not.toContain("StepBranchKept");
+      expect(types(made.service, made.id)).not.toContain("StepBranchesLeft");
+      made.activity.close();
+    });
+
+    it("PBI-480 TV-13: 断られた後に取得し直した先頭が最後の push と同じなら、消し直さず、リースの断りの理由で unresolved にする", async () => {
+      const made = await start([out("# 要求要件")]);
+      const { repos } = made;
+      const pr = prOf(made, "requirements");
+      // 取得は、どちらも最後の push と同じ先頭を返す。削除は断られる（誤検知・人が戻した場合）
+      repos.deleteBranch = async (_gitDir, branch, _authEnv, expectedHead) => {
+        repos.deleteCalls.push({ branch, ...(expectedHead ? { expectedHead } : {}) });
+        throw new MessageError(message("git.branchLeaseRejected", { branch }));
+      };
+      const results = await settleFinal(made);
+      expect(results).toEqual([
+        {
+          branch: pr?.branch,
+          result: "unresolved",
+          detail: { code: "git.branchLeaseRejected", params: { branch: pr?.branch } },
+        },
+      ]);
+      expect(calls(repos, pr?.branch ?? "")).toHaveLength(1);
+      expect(repos.fetchedBranches.filter((f) => f.branch === pr?.branch)).toHaveLength(2);
+      expect(types(made.service, made.id)).not.toContain("StepBranchKept");
+      made.activity.close();
+    });
   });
 
   it("TV-21: 派生の記録に、マージした工程の PR の行ごとに、文書のパスが入る", async () => {

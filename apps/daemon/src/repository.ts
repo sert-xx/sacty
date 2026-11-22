@@ -1668,6 +1668,14 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       ) {
         return;
       }
+      // 期待する先頭を付けた削除が、リースの不一致（stale info）で断られた：比べた後に先頭が動いた（人の push・ブランチの削除）
+      if (
+        expectedHead !== undefined &&
+        error instanceof MessageError &&
+        /stale info/.test(JSON.stringify(error.text))
+      ) {
+        throw new MessageError(message("git.branchLeaseRejected", { branch }));
+      }
       throw error;
     }
   }

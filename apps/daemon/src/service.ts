@@ -11507,7 +11507,8 @@ export class TaskService {
       if (!retirable()) return 0;
       // 実装の無い進め方（PBI-464）で残っている sacty のブランチは、作業領域を消す前に消す（失敗しても完了は止めない）
       try {
-        await this.settleStepBranches(taskId, "final", { prepare: false });
+        const settled = await this.settleStepBranches(taskId, "final", { prepare: false });
+        this.recordStepBranchesLeft(taskId, settled);
       } catch (error) {
         console.warn(
           `[daemon] 完了したタスクのブランチを消せませんでした：${renderMessage(redactText(errorText(error), []), "ja")}`,
@@ -11521,6 +11522,30 @@ export class TaskService {
       done.then(() => {}),
     );
     return done;
+  }
+
+  /**
+   * 完了の片付けで消せなかった工程のブランチと理由を、StepBranchesLeft に記録する（PBI-480）。やり直さず、人に任せる。
+   * git のメタデータが無くて判定できなかった結果（cleanup.stepBranchNoGitDir）は使わず、前の記録を残す。今回の結果が
+   * 記録済みの内容と同じなら足さない（起動時の片付けで再び走る）。消せて減った・空になったときも記録し、表示を直す。
+   */
+  private recordStepBranchesLeft(
+    taskId: string,
+    settled: readonly { branch: string; result: StepBranchResult; detail?: DaemonText }[],
+  ): void {
+    const left = settled
+      .filter((r) => r.result === "unresolved")
+      .map((r) => ({ branch: r.branch, detail: r.detail ?? "" }));
+    const undecided = left.some(
+      (r) => typeof r.detail !== "string" && r.detail.code === "cleanup.stepBranchNoGitDir",
+    );
+    if (undecided) return;
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+    if (JSON.stringify(left) === JSON.stringify(task.stepBranchesLeft ?? [])) return;
+    this.append(task, [
+      { actor: "sacty", event: { type: "StepBranchesLeft", payload: { branches: left } } },
+    ]);
   }
 
   /**
@@ -15676,9 +15701,7 @@ export class TaskService {
           : { ok: false as const, message: loaded.problem };
         if (!ready.ok) {
           throw new MessageError(
-            message("cleanup.stepBranchPrepareFailed", {
-              detail: renderMessage(ready.message, "ja"),
-            }),
+            message("cleanup.stepBranchPrepareFailed", { detail: ready.message }),
           );
         }
       }
@@ -15742,7 +15765,9 @@ export class TaskService {
       }
     }
     const pushed = this.mustGet(taskId).stepBranchCommits?.[branch];
-    if (!pushed) return unresolved(message("cleanup.stepBranchUnrecorded", { branch }));
+    if (!pushed) {
+      return unresolved(new MessageError(message("cleanup.stepBranchUnrecorded", { branch })));
+    }
     let head: string;
     try {
       head = await this.deps.repos.fetchBranch(
@@ -15756,24 +15781,39 @@ export class TaskService {
       if (remoteRefMissing(error)) return { result: "deleted" };
       return unresolved(error);
     }
-    if (head !== pushed) {
+    const keepChanged = (changed: string) => {
       const latest = this.mustGet(taskId);
       if (!latest.stepBranchesKept?.[branch]) {
         this.append(latest, [
           {
             actor: "sacty",
-            event: { type: "StepBranchKept", payload: { branch, head, pushed } },
+            event: { type: "StepBranchKept", payload: { branch, head: changed, pushed } },
           },
         ]);
       }
-      return { result: "kept" };
-    }
+      return { result: "kept" as const };
+    };
+    if (head !== pushed) return keepChanged(head);
     try {
       // 比べた先頭が今も同じときだけ消す（比べた後に人が push したら、断られて残る）
       await this.deps.repos.deleteBranch(gitDir, branch, authEnv, head);
       return { result: "deleted" };
     } catch (error) {
-      return unresolved(error);
+      if (!leaseRejected(error)) return unresolved(error);
+      // 断られた（比べた後に先頭が動いた）：取得し直して、先頭が違えば残し、無ければ消せたものとする。同じなら消し直さない
+      try {
+        const again = await this.deps.repos.fetchBranch(
+          gitDir,
+          branch,
+          authEnv,
+          AbortSignal.timeout(120_000),
+        );
+        if (again !== pushed) return keepChanged(again);
+        return unresolved(error);
+      } catch (fetchError) {
+        if (remoteRefMissing(fetchError)) return { result: "deleted" };
+        return unresolved(fetchError);
+      }
     }
   }
 
@@ -18986,7 +19026,7 @@ export class TaskService {
               result: "failed",
               detail: message("cleanup.stepBranchFailed", {
                 branch: r.branch,
-                detail: r.detail ? renderMessage(r.detail, "ja") : "",
+                detail: r.detail ?? "",
               }),
             });
           }
@@ -24070,6 +24110,15 @@ function sactyBranches(task: Task): string[] {
 
 /** 工程のブランチの削除の結果（PBI-464）。 */
 type StepBranchResult = "deleted" | "kept" | "unresolved";
+
+/** 期待する先頭を付けた削除が、リースの不一致で断られたか（PBI-480）。 */
+function leaseRejected(error: unknown): boolean {
+  return (
+    error instanceof MessageError &&
+    typeof error.text !== "string" &&
+    error.text.code === "git.branchLeaseRejected"
+  );
+}
 
 /** git の取得が、リモートにそのブランチが無いために失敗したか。 */
 function remoteRefMissing(error: unknown): boolean {

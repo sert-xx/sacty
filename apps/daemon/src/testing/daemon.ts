@@ -382,13 +382,9 @@ export class FakeRepos implements RepositoryWorkspace {
   ) {
     this.deleteCalls.push({ branch, ...(expectedHead ? { expectedHead } : {}) });
     if (this.deleteFail) throw new Error(this.deleteFail);
-    if (
-      this.deleteLeaseCheck &&
-      expectedHead &&
-      this.remote[branch] !== undefined &&
-      this.remote[branch] !== expectedHead
-    ) {
-      throw new Error("! [rejected] (stale info)");
+    // 実際の git と同じく、リモートに無いブランチも断る（期待する先頭が合わない）
+    if (this.deleteLeaseCheck && expectedHead && this.remote[branch] !== expectedHead) {
+      throw new MessageError(message("git.branchLeaseRejected", { branch }));
     }
     this.deleted.push(branch);
   }

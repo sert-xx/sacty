@@ -150,18 +150,35 @@ PR のマージが、これまでどおりその工程の承認になる。
     人のコミットを含むので、後で先頭が同じでも消さない（マージされたときは 1 で消す）。
   - 削除は、比べた先頭が今も同じときだけにする（`deleteBranch` に期待する先頭を渡し、`--force-with-lease` で消す）。
     取得から削除までの間に人が push したら、消せずに残る。
+  - 期待する先頭を付けた削除が `stale info`（リースの不一致）で断られたとき：`deleteBranch` が `git.branchLeaseRejected` を投げる。
+    比べた後に先頭が動いたので、確かめずには消さない。リモートの先頭を取得し直して、次のように扱う（取得は 120 秒の時間切れ）。
+    - リモートに無い：消せたものとする。
+    - 最後の push と違う：消さずに `StepBranchKept`（取得し直した `head`）を記録する。
+    - 最後の push と同じ（人が戻した・誤検知）・取得に失敗：消し直さず、消せなかったものとする（理由は `git.branchLeaseRejected` か取得のエラー）。
+      ブランチはリモートに残る。中止は cleanup の失敗として記録し、完了は下の `StepBranchesLeft` に記録する。
   - 投影は `StepBranchKept` を記録したブランチを、その PR のマージを記録するまで、消すブランチ（`sactyBranches`）から除く（`keptStepBranches`）。PR が開き直されても外さない。
-  - 削除に失敗しても、タスクは止めない（警告だけにする）。完了・中止のときに、残りを同じ規則で消し直す（すでに無いブランチは消せたものとする）。
+  - 削除に失敗しても、タスクは止めない。完了・中止のときに、残りを同じ規則で消し直す（すでに無いブランチは消せたものとする）。
+  - 完了で消せなかったブランチ（通信の失敗・最後の push の記録が無い・リースの断りなど、消せなかったものすべて）は、やり直さず、`StepBranchesLeft`（`branches`：ブランチと理由 `detail` の一覧）に記録して、タスクの詳細に出す。
+    完了の片付け（`retireWorkspace`）は作業領域を用意し直さず（`prepare: false`）、直後に作業領域と git のメタデータを消すので、後でやり直す元が残らないためである。
+    記録した後は、人が GitHub で消す。
+    - 記録は、作業領域を消す前にする。記録に失敗しても、完了の片付けは続ける。
+    - 起動時の片付けは、作業領域の削除が一部失敗して git のメタデータが残ったときだけ、もう一度走る。今回の消せなかったすべてのブランチで記録し、記録済みの内容（ブランチと `detail`）と同じなら足さない。消せて減った・空になったときも記録し、空の `branches` は表示を消す。
+    - git のメタデータが無くて判定できなかった片付け（`cleanup.stepBranchNoGitDir`）は、記録に使わず、前の記録を残す。
+    - 投影の `stepBranchesLeft` は、最新の `StepBranchesLeft` で置き換える（空なら無くなる）。`stepBranches` に無いブランチの記録は、整合性のエラーにする。
+  - 片付けの知らせ（記録の無いブランチを残す・作業領域を用意できなかった など）は、コードと引数で持ち、利用者の画面の言語の文で出す（`cleanup.stepBranchUnrecorded`・`cleanup.stepBranchPrepareFailed`・`cleanup.stepBranchFailed`。理由は入れ子の文言）。
   - 引き継いだ PR は工程の PR を作らず、`sactyBranches` から除く決まりのままなので、人のブランチは消えない。
   - 中止の確認（`cancelTargets`）は、同じ分類で消すブランチを示す（[MCP サーバー](mcp-server.md#get_cancel_plan)）。
 - 派生の記録：マージした工程の PR の行に、文書のパス（`StepPullRequestPublished` の `path`）を付ける（[派生](tasks-and-steps.md#完了したタスクから続きのタスクを作る派生)）。
   続きのタスクをベースブランチから始めると、前のタスクの文書が作業領域にある。
 - PR の本文の関係する Issue は、参照だけで、ベースブランチへの PR でも閉じない（[PR の本文](#pr-の本文と-pr-テンプレート)）。
-- 互換性：新しいイベント `StepBranchKept` を足した。
+- 互換性：新しいイベント `StepBranchKept`・`StepBranchesLeft` を足した。
   直接の流れのタスクを 1 件でも記録した後は、前の版のデーモンは整合性のエラーで作業履歴を投影できず、起動しない（前の版は、タスクブランチの無い工程の PR の記録を受け付けない）。
   前の版へ戻せなくなることは許容する（前例：[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)の互換性）。
+  `StepBranchesLeft` は、直接の流れのタスクが完了し、完了の片付けか起動時の片付けで工程のブランチが消せなかった（か、前の記録から結果が変わった）ときに記録する（`StepBranchKept` より狭い）。
+  記録した後に前の版のデーモンへ戻すと、前の版は `StepBranchesLeft` を入力の検査で読めず、起動しない。
+  `cleanup.stepBranchPrepareFailed`・`cleanup.stepBranchFailed` の `detail` を入れ子の文言にしたので、前の版は形が合わず、コードだけを出す（起動は止まらない）。
 
-コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`publishStepPullRequest`・`settleStepBranches`・`settleStepBranch`・`readMergedDocument`・`earlierStepMergedAfter`・`sactyBranches`）、`apps/daemon/src/repository.ts`（`deleteBranch`・`fetchBranch`）、`packages/core/src/projection.ts`（`directStepFlow`・`keptStepBranches`・`StepBranchKept`）、`packages/core/src/events.ts`（`StepBranchKept`）
+コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`publishStepPullRequest`・`settleStepBranches`・`settleStepBranch`・`retireWorkspace`・`readMergedDocument`・`earlierStepMergedAfter`・`sactyBranches`）、`apps/daemon/src/repository.ts`（`deleteBranch`・`fetchBranch`）、`packages/core/src/projection.ts`（`directStepFlow`・`keptStepBranches`・`StepBranchKept`・`StepBranchesLeft`）、`packages/core/src/events.ts`（`StepBranchKept`・`StepBranchesLeft`）
 
 ## 実装に変更が無いとき
 
