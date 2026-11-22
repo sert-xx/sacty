@@ -145,7 +145,7 @@
   実装は、エージェントの実行が終わったら、実装の PR をドラフトで作ってから承認待ちにする（下の「最終レビューをしない流れ」）。PR のレビューの子タスクが指摘なしにしたらドラフトを外し、人が PR をマージして承認する。
 - 差し戻しでやり直せる工程（`REWORK_STEPS`）：`investigate`・`reproduce`・`requirements`・`design`・`implement`・`document`。
 - リポジトリが要る工程（`REPO_STEPS`）：`implement`・`reproduce`・`review`。
-- docker compose のサービスを使える工程（`SERVICE_STEPS`）：`investigate`（不具合の調査のときだけ）・`reproduce`・`implement`。
+- オーケストレーターが docker compose のサービスを使うよう選べる工程（`SERVICE_STEPS`）：`investigate`（不具合の調査のときだけ）・`reproduce`・`implement`。sacty が作った実装 PR のレビューの子タスクでも、実装の記録に基づき起動する（[サービス](services.md)）。
 - 書き出せる工程（`EXPORT_STEPS`）：`investigate`（最後の工程のときだけ）・`requirements`・`design`・`document`。
 - 実行しない工程（`EXECUTABLE_STEPS` に無い）：`deployment`。
   前の工程の承認の後は待機になり、sacty が PR の確認で進める。

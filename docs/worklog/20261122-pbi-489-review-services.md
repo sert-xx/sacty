@@ -17,7 +17,7 @@
 
 ## 確かめたこと
 
-`apps/daemon/src/daemon-step-pull-requests.test.ts` の「実装 PR のレビューのサービス」を、実装を変更した2つの版で実行した。
+`npx vitest run apps/daemon/src/daemon-step-pull-requests.test.ts -t '実装 PR のレビューのサービス'` を変更を戻した3つの版で実行した。
 起動しない版では、次のテストが失敗した。
 
 - ファイルの compose を起動し、レビューを接続して停止する
@@ -26,7 +26,8 @@
 - 後の実装とプッシュより、対象の先頭を作った実行を選ぶ
 - レビュー中に親が再プッシュしても起動時の共用 compose を片付ける
 - 起動失敗を伝え、サービス無しでレビューを続ける
-- 起動中に人が停止したらエージェントを実行せず、起動したサービスを消す
+- 起動処理の例外後に片付けてレビューを続ける
+- 起動中に人が停止したらエージェントを実行せず、起動したサービスを消す（待機の時間切れ）
 - old の記録では起動せずレビューを続ける
 - missing の記録では起動せずレビューを続ける
 
@@ -40,23 +41,51 @@
 - missing の記録では起動せずレビューを続ける
 - none の記録では起動せずレビューを続ける
 
-起動しない版のレビュー中の再プッシュと人による停止のテストは、待機の時間切れで失敗した。
+停止時に指定を引き直す版では、「レビュー中に親が再プッシュしても起動時の共用 compose を片付ける」と「起動処理の例外後に片付けてレビューを続ける」が失敗した。
 
 | コマンド | 結果 |
 | --- | --- |
-| `npx vitest run apps/daemon/src/daemon-step-pull-requests.test.ts -t '実装 PR のレビューのサービス'` | 12 件成功 |
-| `npx vitest run tests/docs` | 99 件成功 |
-| `npm test` | 346 ファイル、7107 件成功、14 件スキップ |
-| `npm run lint` | 成功 |
-| `npm run typecheck` | 成功 |
-| `npm run build` | 成功 |
+| `npx vitest run apps/daemon/src/daemon-step-pull-requests.test.ts -t '実装 PR のレビューのサービス'` | 通常の版で 13 件成功、対象外 291 件スキップ |
 
-スキップした 14 件は、Git の `merge-tree --merge-base` 非対応による 13 件と、実際の AI を使う評価の 1 件。
+実機の DB テストとメモリーの測定は、この環境に Docker がないため実施していない。
+Docker のある環境で、次の手順を実行する。
 
-実機の DB テストとメモリーの測定は、Docker がないため実施していない。
-Docker のある環境では PostgreSQL の compose を使う実装タスクを作り、レビュー担当が DB 接続を含むテストを実行したログを確認する。
-実行中に `docker stats --no-stream` で担当と DB のメモリー使用量を測り、ホストの空きメモリーと比較する。
-レビュー後は所有ラベル付きコンテナが残っていないことを確かめ、測定値と不足の懸念をここに追記する。
+1. テスト用リポジトリに次の `compose.yaml` を置く。
+
+   ```yaml
+   services:
+     db:
+       image: postgres:17
+       environment:
+         POSTGRES_PASSWORD: test
+         POSTGRES_DB: test
+       healthcheck:
+         test: ["CMD-SHELL", "pg_isready -U postgres -d test"]
+         interval: 2s
+         timeout: 3s
+         retries: 30
+   ```
+
+2. 同じリポジトリに `pg` をテスト依存として追加し、`DATABASE_URL` から接続して `select 1` を検証するテストを置く。
+
+   ```js
+   import { Client } from "pg";
+   import { strict as assert } from "node:assert";
+   import { test } from "node:test";
+   test("database", async () => {
+     const client = new Client({ connectionString: process.env.DATABASE_URL });
+     await client.connect();
+     try { assert.equal((await client.query("select 1 as value")).rows[0].value, 1); }
+     finally { await client.end(); }
+   });
+   ```
+
+3. テストコマンドを `DATABASE_URL=postgresql://postgres:test@db:5432/test node --test` とし、sacty でこのリポジトリの実装タスクを作成する。
+   実装で compose の `db` を選んで PR を作成し、レビューの子タスクを実行する。
+4. 実行ログでレビューの `ServicesStarted` と DB テストの成功を確かめる。
+   レビュー中に `docker stats --no-stream` でエージェントと DB の使用量を測り、ホストの空きメモリーと比較する。
+5. レビュー後、`docker ps -a --filter label=io.sacty.owner` で所有ラベル付きコンテナが残らないことを確かめる。
+   測定値と不足の懸念をこの履歴に追記する。
 
 ## レビューの指摘と対応
 

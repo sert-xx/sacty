@@ -23,7 +23,7 @@ In either case, check the following.
 
 sacty starts the services and cleans them up as follows.
 
-Reviews of implementation PRs start the services used by the implementation that produced the reviewed commit, for each run including re-reviews. If startup fails or the source cannot be determined from the record, the review continues without services and reports checks that could not run. Reviews count toward the task concurrency limit; adjust it to the host memory.
+Review child tasks for implementation PRs opened by sacty start the services used by the implementation that produced the reviewed commit, for each run including re-reviews. Reviews of imported PRs do not start services. If startup fails or the source cannot be determined from the record, the review continues without services and reports checks that could not run. Reviews count toward the task concurrency limit; adjust it to the host memory.
 
 - Services and steps to use: the Orchestrator decides them when it chooses the steps.
   - The Orchestrator reads the repository (compose files, README, AGENTS.md, and test configuration) and decides which services in which compose file to use, and in which steps (Implementation, Reproduce, bug Investigation).
