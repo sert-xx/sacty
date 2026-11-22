@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   type ActivityEvent,
   type Actor,
@@ -16679,7 +16679,7 @@ export class TaskService {
           const oldText = redactText(before, usedSecrets);
           const newText = redactText(current, usedSecrets);
           const safePath = redactText(path, usedSecrets);
-          const diffDir = mkdtempSync(join(tmpdir(), "document-diff-"));
+          const diffDir = mkdtempSync(join(resolve(tmpdir()), "document-diff-"));
           let diff: string;
           try {
             const oldFile = join(diffDir, "before");
@@ -16715,8 +16715,8 @@ export class TaskService {
                   },
                   maxBuffer: 16 * 1024 * 1024,
                 },
-                (error, stdout) => {
-                  if (error && error.code !== 1) reject(error);
+                (error, stdout, stderr) => {
+                  if (error && (error.code !== 1 || stderr || !stdout)) reject(error);
                   else resolve(stdout);
                 },
               );

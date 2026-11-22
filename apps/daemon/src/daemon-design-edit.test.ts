@@ -412,6 +412,32 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     }
   });
 
+  it("相対 TMPDIR でも文書の変更行を記録して PR 本文に載せる", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, executor, activity } = made;
+    const path = docOf(id, "requirements");
+    const run = executor.run.bind(executor);
+    executor.run = async (input) => {
+      if (input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        writeFileSync(file, `${readFileSync(file, "utf8")}\n相対パスでの修正\n`);
+      }
+      return run(input);
+    };
+    const previous = process.env.TMPDIR;
+    try {
+      process.env.TMPDIR = ".";
+      await service.runNext(id);
+      await drain(service);
+      expect(taskOf(service, id).documentFixes?.at(-1)?.diff).toContain("+相対パスでの修正");
+      expect(bodiesOf(service, id).at(-1)).toContain("+相対パスでの修正");
+    } finally {
+      if (previous === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previous;
+      activity.close();
+    }
+  });
+
   it("文書の配置前の取得は一時停止で中断され、再開後に実装できる", async () => {
     const made = await toRework([implement(), implement()]);
     const { service, id, repos, activity } = made;
