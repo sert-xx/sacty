@@ -8,17 +8,19 @@ Related ADRs: [Service builds cannot tag shared images, and the agent image is p
 
 ## When services start
 
-- The Orchestrator decides which services of which compose file are used in which step when it chooses the steps ([Tasks and steps](tasks-and-steps.en.md)). The steps that can use them are `investigate` (only when investigating a bug), `reproduce`, and `implement`. It chooses dependency apps managed elsewhere (ones that do not run this repository's code) and databases, caches, mocks, and so on. It is told not to choose services that run this repository's code (the apps the step changes or checks); the step agent starts those inside its container and connects them to the services. The grouping depends on what each service runs, not on whether it has `build` in compose (instructions; not enforced). The instructions ask it to search subdirectories and various names for compose files, including those referenced by test and development instructions or skills. When it does not select services needed for tests or manual checks, the instructions ask it to write the services and reason in `servicesReason`. If the information gathering summary has a grouping, the Orchestrator bases its choice on it and settles it after checking the compose file and other files ([Tasks and steps](tasks-and-steps.en.md#execution-environment-and-services)).
+- The Orchestrator decides which services of which compose file are used in which step when it chooses the steps ([Tasks and steps](tasks-and-steps.en.md)). The steps the Orchestrator can select are `investigate` (only when investigating a bug), `reproduce`, and `implement`. It chooses dependency apps managed elsewhere (ones that do not run this repository's code) and databases, caches, mocks, and so on. It is told not to choose services that run this repository's code (the apps the step changes or checks); the step agent starts those inside its container and connects them to the services. The grouping depends on what each service runs, not on whether it has `build` in compose (instructions; not enforced). The instructions ask it to search subdirectories and various names for compose files, including those referenced by test and development instructions or skills. When it does not select services needed for tests or manual checks, the instructions ask it to write the services and reason in `servicesReason`. If the information gathering summary has a grouping, the Orchestrator bases its choice on it and settles it after checking the compose file and other files ([Tasks and steps](tasks-and-steps.en.md#execution-environment-and-services)).
 - The step instructions use `servicePromptLines` to ask the agent to read the skill first and list connection candidates for started services. `serviceSkill` writes the same candidates to the skill and describes localhost forwarding as planned. If a candidate is unreachable, the agent tries another and reports what could not be verified if all fail. Steps without services also receive the skill and must report checks blocked by the missing services.
 - Services start for each step agent run, and are removed afterward.
-- No services are started for tests after the Implementation step (sacty does not run the tests. [Tasks and steps](tasks-and-steps.en.md#the-flow-without-the-final-review)). Records of starts for the earlier version's final review (`forTests` of `ServicesStarted` is `true`) are kept only to be read.
+- Each review run of an implementation PR, including a docs-only re-review, selects services from the `ServicesStarted` associated with the last implementation `AgentRunStarted` before the last `BranchPushed` matching the reviewed head. It uses the recorded file and service names; a shared compose is fetched from the recorded `repo` at `commit`. It starts the services for each run and uses the same specification to stop and clean them up. If the matching push or the shared compose source is missing, it does not start services and tells the reviewer why. It also continues without services and reports the reason if startup fails, except when a person stops the run. If implementation did not start services, the review does not start them; requirements and design PRs and imported PRs are also excluded.
+- Task concurrency, including reviews, is limited by `maxParallelTasks`, and a task runs one step at a time, so at most `maxParallelTasks` compose projects run concurrently. There is no memory reservation or demand estimate; users adjust task concurrency.
+- Records of starts for the earlier version's final review (`forTests` of `ServicesStarted` is `true`) are kept only to be read.
 - A shared compose does not start just by being written in the project. It is fetched and started only when the Orchestrator chooses it by name (only for tasks that have a target repository). If a name not in the settings is chosen, the step stops (`services.sharedUnknown`).
 
 Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopServices`, `withSharedCompose`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`, `composeServicesOf`, `servicePromptLines`, `serviceSkill`)
 
 ## Starting and stopping
 
-1. If the compose file is outside the workspace, the step stops. sacty checks that referenced files (`include`, `extends`, `env_file`, `label_file`, `project_directory`) are inside the workspace (`$` cannot be used in paths).
+1. If the compose file is outside the workspace, startup fails. sacty checks that referenced files (`include`, `extends`, `env_file`, `label_file`, `project_directory`) are inside the workspace (`$` cannot be used in paths).
 2. sacty normalizes the file with `docker compose -f <file> config --format json --no-env-resolution`.
 3. sacty keeps only the services in use and their dependencies (`depends_on`, `network_mode: service:`), and runs the safety check (below).
 4. sacty rewrites the settings.
@@ -41,7 +43,7 @@ Code: `apps/daemon/src/services.ts` (`DockerComposeServices.startOnce`, `stop`, 
 
 ## Safety check
 
-If the services in use or their dependencies have any of the following, sacty does not start them and stops with the reason (`services.unsafe`).
+If the services in use or their dependencies have any of the following, sacty does not start them and reports the reason (`services.unsafe`).
 
 - `privileged`, `cap_add`, `devices`, `device_cgroup_rules`, `volumes_from`, `cgroup_parent`, `use_api_socket`, `provider`
 - `network_mode` (other than `service:` and `bridge`), `host` or `container:` for `pid`, `ipc`, `uts`, `userns_mode`, or `cgroup`, and `unconfined` in `security_opt`
@@ -83,6 +85,6 @@ Written in the project's `sharedComposes` (up to 20; names must be unique).
   - Fetches into the same cache do not run in parallel.
 - Authentication is the same as for the context repository (the gh token for HTTPS when there is a GitHub account; otherwise the host's git authentication).
 - The original `container_name` becomes an alias on sacty's network (only when it does not conflict with a service name).
-- If it cannot be fetched, the file is missing, it fails the safety check, or it cannot start, the step stops with an indication of which shared compose (`services.sharedFetchFailed`, `services.sharedMissing`, `services.sharedUnsafe`, `services.sharedFailed`).
+- If it cannot be fetched, the file is missing, it fails the safety check, or it cannot start, startup fails with an indication of which shared compose (`services.sharedFetchFailed`, `services.sharedMissing`, `services.sharedUnsafe`, `services.sharedFailed`).
 
 Code: `packages/core/src/projects.ts` (`SharedCompose`, `SharedComposeName`), `apps/daemon/src/shared-compose.ts` (`GitSharedComposeFetcher`, `sharedComposeRunDir`, `cleanupSharedComposeRuns`), `apps/daemon/src/service.ts` (`startServices`, `gitAuth`)
