@@ -24,7 +24,8 @@
 - PR を作った工程（実装、PR のある要求要件・設計）は、画面からは承認できない（`gate.approveOnPullRequest`）。
   実装に変更が無く PR を作らなかった実装は、画面で承認する（下の「実装に変更が無いとき」）。
 - 承認した成果は固定される（承認した工程の出力は、後から変わらない）。
-  例外は、実装の PR への指摘を実装で直す回の局所の設計の直しで、実装の PR のマージが承認を兼ねる（[設計の直し](#設計の直しsacty-design-edit)）。承認済みの設計は、反映した版に置き換わる。
+  例外は、判断を変えない文書の誤りと、実装の PR への指摘を実装で直す回の局所の設計の直しで、実装の PR のマージが承認を兼ねる（[設計の直し](#設計の直しsacty-design-edit)）。承認済みの設計は、反映した版に置き換わる。
+  作業領域で直接行った書式などの修正は、承認済みの本文に読み戻さない。
   承認の後、次の工程が実行できる工程なら実行待ちに、そうでなければ `idle` にする。
 
 コード: `apps/daemon/src/service.ts`（`approve`・`gateTask`・`nextAfterApproval`）、`packages/core/src/projection.ts`（`applyEvent` の `StepApproved`）
@@ -182,7 +183,7 @@ PR のマージが、これまでどおりその工程の承認になる。
 
 ## 実装に変更が無いとき
 
-実装の PR を作るとき、実装の作業領域が起点のコミットから何も変わっていなければ（`NothingToCommitError`）、PR を作らない。
+実装の PR を作るとき、配置した文書を除く作業領域が起点のコミットから変わらず、文書の直しも設計の直しも無ければ（`NothingToCommitError`）、PR を作らない。
 
 - まだ実装の PR を作っていなければ、`NoChangesFound`（この後に提出する実装の回）を記録し、実装を提出する（`StepSubmitted`）。
   PR が無いので、画面で承認できる。
@@ -202,6 +203,10 @@ PR のマージが、これまでどおりその工程の承認になる。
 コード: `apps/daemon/src/service.ts`（`publish`）、`packages/core/src/events.ts`（`NoChangesFound`）、`packages/core/src/projection.ts`（`noChanges`・`deliveredWithoutChanges`）、`apps/daemon/src/prompts.ts`（`NO_CHANGE_LINE`）、`apps/web/src/lib/labels.ts`（`statusText`）
 
 ## PR のレビューの子タスク
+
+実装の PR では、承認済み文書のファイルを渡された本文の写しより新しい正とする。
+PR 本文に記録された、承認した判断を変えない修正は指摘せず、同じ範囲の誤りは実装で直す。
+判断を変える指摘は前の工程に戻す。
 
 sacty は、作る PR（要求要件・設計の PR と実装の PR）ごとに、その PR をレビューする子タスクを作る。
 PR を作った工程とは別のコンテキスト（別のタスク・別の実行）でレビューさせ、その指摘を [PR の指摘の取り込み](#pr-の指摘の取り込み) で親（PR を作ったタスク）に届けて直させ、指摘なしになるまで繰り返すためである。
@@ -429,6 +434,8 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 
 ### 直しでは解消できない指摘での一時停止
 
+承認済み文書の判断を変えない誤りは実装で直せるため、`needs_decision` を付けない。
+
 関係する ADR: [レビューが直しでは解消できないと印を付けた指摘で止め、人の判断を待つ](../adr/20261121-2000-pause-on-findings-a-rework-cannot-resolve.md)
 
 PR のレビューの子タスクが、要修正の指摘に「直し（実装の手直し）では解消できず、人の判断が要る」と印を付けた回は、親は直しに入らず、承認待ちのまま一時停止して人の判断を待つ。
@@ -533,6 +540,13 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 どちらでも PR の作成は止めない。
 
 ### 実装の PR の本文の組み立て
+
+承認済み文書の修正は、push ごとのパス・理由・差分を本文に載せる。
+理由が無ければ「理由の記載なし」とする。
+パスと理由は伏せた後、理由を 500 文字に切る。
+控えと作業領域の全文をそれぞれ伏せてから差分を作り、40 行に切る。
+実行後に秘密の値が変更・削除され、公開時に sacty が知らない値は伏せられない。
+切った場合はその旨を示す。
 
 実装の PR の本文は、結論から短く読めるようにする。
 承認済みの要求要件・設計の全文や、レビューの長い文は載せず、リンクか折りたたみにする。
@@ -859,6 +873,9 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
 コード: `apps/daemon/src/service.ts`（`reconcilePullRequestBody`・`recordPullRequestBody`・`publish`・`publishStepPullRequest`・`retargetPullRequest`）、`apps/daemon/src/pr-body-links.ts`（`unlinkedMergedBody`）、`apps/daemon/src/pr-body-merge.ts`（`mergePullRequestBody`・`buildPullRequestBodyMergePrompt`・`extractMergedPullRequestBody`・`hasMergeMarkers`）、`apps/daemon/src/github.ts`（`pullRequestBody`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`PullRequestBodyWritten`・`PullRequestBodyResolved`）、`packages/core/src/projection.ts`（`pullRequestBodies`・`pullRequestBodyKey`）、`packages/core/src/cost.ts`（`CHARGED_EVENT_TYPES`）、`apps/web/src/lib/step-costs.ts`、`apps/web/src/lib/labels.ts`
 
 ## PR の指摘の取り込み
+
+承認済み文書の判断を変えない誤りは実装で直す。
+決定を変える指摘は該当する前の工程に戻す。
 
 - PR が開いていて承認待ちのとき、PR のレビュー・行へのコメント・通常のコメントを指摘として取り込む（`PullRequestReviewImported`、actor `person`。sacty 自身の AI のレビューの指摘だけの回は actor `sacty`）。
   - 最後のフィードバックから2分（`FEEDBACK_QUIET_MS`）待ってから取り込む。
@@ -1213,6 +1230,8 @@ AI のレビューの提案のうち、直しに入る前の選り分けで AI �
 
 ### 設計の直し（sacty-design-edit）
 
+作業領域で設計のファイルも直した場合は、その内容を土台に設計の直しを当てる。
+
 関係する ADR: [PR の指摘の戻し先は、決定の重さで分け、設計に戻すのは方針の変更だけにし、局所の設計の直しは実装の PR に入れる](../adr/20261121-0241-rework-target-by-decision-weight.md)
 
 実装の PR の指摘で実装に戻した回で、設計が承認済みのときだけ、実装の指示に設計の直しの出し方を足す。
@@ -1242,7 +1261,7 @@ AI のレビューの提案のうち、直しに入る前の選り分けで AI �
   - 同じ実行の2つ目は記録しない。実装の提出の記録より前に記録する。再開で同じ実行の記録があれば、検査をやり直さず、その記録を使う。
   - その後のレビュー・直し・設計のやり直しは、直した設計を基準にする。
 - PR での見え方：実装の PR のコミットで、設計のファイルを、まだコミットに入れていない `DesignEdited` の置き換えを記録順に当てて書く。
-  - 設計のファイルは、`keep` に残したまま、直した全文で置き換える（`overrides`）。タスクブランチの先頭のファイル（人が直した内容・テスト観点の節を含む）に当てる。観点の直しは、その観点の行の中だけで当てる。
+  - 設計のファイルは、`keep` に残したまま、直した全文で置き換える（`overrides`）。作業領域で設計のファイルを直していればその内容に、そうでなければタスクブランチの先頭のファイルに当てる。観点の直しは、その観点の行の中だけで当てる。
   - `before` は、承認済みの設計と、置き換えを当てた後のファイルの両方で探す。ファイルが無いタスクは、承認済みの設計と PR の本文だけを直す。
   - PR の本文の「設計の直し」に、直しごとの前・後・指摘を載せる。反映しなかった直しは、理由と一緒に載せる。
   - 本文の `remarks` は今回の指摘の ID、`viewpoint` は承認済みの観点の ID、`field` は3つの名前のどれかに一致する値だけをそのまま載せる。一致しない値は「（不正な値）」にする。

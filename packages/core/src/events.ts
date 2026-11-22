@@ -3892,7 +3892,21 @@ const RemarkRepliesStarted = z.object({
  */
 const BranchPushed = z.object({
   type: z.literal("BranchPushed"),
-  payload: z.object({ branch: z.string().min(1), commit: z.string().min(1) }),
+  payload: z.object({
+    branch: z.string().min(1),
+    commit: z.string().min(1),
+    documentFixes: z
+      .array(
+        z.object({
+          path: z.string(),
+          reason: z.string(),
+          diff: z.string(),
+          reasonTruncated: z.boolean().optional(),
+          diffTruncated: z.boolean().optional(),
+        }),
+      )
+      .optional(),
+  }),
 });
 
 /**

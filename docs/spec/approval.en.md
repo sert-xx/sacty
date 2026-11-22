@@ -21,7 +21,9 @@ Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval 
   - Failure or an unknown result cannot be approved to complete the task and requires checking external state.
 - A Reproduce (`reproduce`) awaiting approval (the bug was not reproduced) cannot be approved.
 - Steps that opened a PR (Implementation, and Requirements or Design with a PR) cannot be approved from the web UI (`gate.approveOnPullRequest`). An implementation for which no PR was opened because the implementation had no changes is approved in the web UI ("When the implementation has no changes" below).
-- Approved results are fixed (an approved step's output does not change later). The exception is a local design fix in a round that fixes a comment on an implementation PR in Implementation: merging the implementation PR approves it ([Design fixes](#design-fixes-sacty-design-edit)). The approved design is replaced by the applied version. After approval, the next step becomes waiting to run if it can run, and otherwise the task becomes `idle`.
+- Approved results are fixed (an approved step's output does not change later). Exceptions are corrections to documents that do not change decisions and a local design fix in a round that fixes a comment on an implementation PR in Implementation: merging the implementation PR approves it ([Design fixes](#design-fixes-sacty-design-edit)). The approved design is replaced by the applied version. After approval, the next step becomes waiting to run if it can run, and otherwise the task becomes `idle`.
+
+  Formatting and other corrections made directly in the workspace are not read back into the approved text.
 
 Code: `apps/daemon/src/service.ts` (`approve`, `gateTask`, `nextAfterApproval`), `packages/core/src/projection.ts` (`StepApproved` in `applyEvent`)
 
@@ -173,7 +175,7 @@ Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `publishStepPullReques
 
 ## When the implementation has no changes
 
-When opening the PR for an implementation, if the implementation workspace has not changed at all from the base commit (`NothingToCommitError`), no PR is opened.
+When opening an implementation PR, no PR is opened if the workspace excluding the placed documents matches the base commit and there are no document fixes or design edits (`NothingToCommitError`).
 
 - If no implementation PR has been opened yet, `NoChangesFound` (the Implementation round to be submitted next) is recorded, and the implementation is submitted (`StepSubmitted`). Since there is no PR, it can be approved in the web UI. This applies to every task (not only template tasks).
 - Before the submission, sacty runs neither the tests nor the final review (sacty does not run tests; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)). Since there is no PR, no PR review child task is created either.
@@ -186,6 +188,8 @@ When opening the PR for an implementation, if the implementation workspace has n
 Code: `apps/daemon/src/service.ts` (`publish`), `packages/core/src/events.ts` (`NoChangesFound`), `packages/core/src/projection.ts` (`noChanges`, `deliveredWithoutChanges`), `apps/daemon/src/prompts.ts` (`NO_CHANGE_LINE`), `apps/web/src/lib/labels.ts` (`statusText`)
 
 ## The review child task of a PR
+
+For an implementation PR, the approved document files are newer than the supplied copies. A correction listed in the PR body that does not change an approved decision is expected, and other errors in that scope can be fixed in Implementation. Findings that change a decision return to the earlier step.
 
 For each PR sacty opens (requirements and design PRs, and the implementation PR), sacty creates a child task that reviews that PR.
 This is so that the PR is reviewed in a context separate from the step that opened it (a separate task and run), its findings are delivered to the parent (the task that opened the PR) through [Importing PR comments](#importing-pr-comments) to be fixed, and this repeats until there are no findings.
@@ -410,6 +414,8 @@ Code: `apps/daemon/src/service.ts` (`pause`), `apps/daemon/src/notifier.ts` (`no
 
 ### Pausing on findings a rework cannot resolve
 
+An error in an approved document that does not change a decision can be fixed in Implementation, so it does not receive `needs_decision`.
+
 Related ADR: [レビューが直しでは解消できないと印を付けた指摘で止め、人の判断を待つ](../adr/20261121-2000-pause-on-findings-a-rework-cannot-resolve.md)
 
 When the review child task of a PR marks a must-fix finding as "cannot be resolved by a rework (a change to the implementation) and needs a human decision", the parent does not start a rework. It pauses while still waiting for approval and waits for a person.
@@ -513,6 +519,9 @@ Whenever sacty opens or updates a PR, it looks for the PR template of the reposi
 If there is no template or it cannot be used, sacty uses its own fixed body (`buildPullRequestBody`, `buildStepPullRequestBody`). In either case, opening the PR does not stop.
 
 ### Assembling the implementation PR body
+
+The body lists each push’s approved-document fixes with path, reason, and diff, and says when the reason is missing. Paths and reasons are redacted before the reason is truncated to 500 characters. The saved and workspace contents are redacted before the diff is made and truncated to 40 lines; truncation is indicated.
+If a secret changes or is deleted after the run, sacty cannot redact the old value when it is unknown at publication.
 
 The implementation PR body is written to be read short, conclusion first. The full text of the approved requirements and design, and long review text, are not included; they become a link or a collapsed section. The fixed body (`buildPullRequestBodyText`) contains, in this order:
 
@@ -809,6 +818,8 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
 Code: `apps/daemon/src/service.ts` (`reconcilePullRequestBody`, `recordPullRequestBody`, `publish`, `publishStepPullRequest`, `retargetPullRequest`), `apps/daemon/src/pr-body-links.ts` (`unlinkedMergedBody`), `apps/daemon/src/pr-body-merge.ts` (`mergePullRequestBody`, `buildPullRequestBodyMergePrompt`, `extractMergedPullRequestBody`, `hasMergeMarkers`), `apps/daemon/src/github.ts` (`pullRequestBody`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`PullRequestBodyWritten`, `PullRequestBodyResolved`), `packages/core/src/projection.ts` (`pullRequestBodies`, `pullRequestBodyKey`), `packages/core/src/cost.ts` (`CHARGED_EVENT_TYPES`), `apps/web/src/lib/step-costs.ts`, `apps/web/src/lib/labels.ts`
 
 ## Importing PR comments
+
+Implementation fixes errors in approved documents that do not change decisions. Findings that change a decision return to the earlier step responsible for it.
 
 - While a PR is open and waiting for approval, its reviews, line comments, and ordinary comments are imported as comments (`PullRequestReviewImported`, actor `person`; actor `sacty` for a round of sacty's own AI review comments only).
   - They are imported after waiting 2 minutes from the last feedback (`FEEDBACK_QUIET_MS`).
@@ -1140,6 +1151,8 @@ Code: `apps/web/src/lib/decision-summary.ts`, `apps/web/src/lib/labels.ts` (`des
 
 ### Design fixes (sacty-design-edit)
 
+When the workspace design file was also corrected, sacty applies the design edit on top of that file.
+
 Related ADR: [The step to redo for PR comments is decided by the weight of the decision, only a change of policy goes back to design, and a local design fix goes into the implementation PR](../adr/20261121-0241-rework-target-by-decision-weight.md)
 
 Only in a round that sends a comment on an implementation PR back to Implementation, and only when the design is approved, the implementation instruction adds how to give design fixes.
@@ -1169,7 +1182,7 @@ This path puts a local fix of the design document into the implementation PR and
   - A second record for the same run is not made. It is recorded before the implementation submission is recorded. When a resume finds a record for the same run, it uses that record without checking again.
   - Later reviews, fixes, and redoing the design use the fixed design as the base.
 - How it shows on the PR: the implementation PR's commit writes the design file by applying, in the order recorded, the replacements of `DesignEdited` not yet in a commit.
-  - The design file stays in `keep` and is replaced with the whole fixed text (`overrides`). The replacements are applied to the file at the head of the task branch (keeping what a person fixed and the test viewpoints section). A viewpoint fix is applied only inside that viewpoint's row.
+  - The design file stays in `keep` and is replaced with the whole fixed text (`overrides`). The replacements are applied to the workspace design file if it was edited, or otherwise to the file at the head of the task branch. A viewpoint fix is applied only inside that viewpoint's row.
   - `before` is looked for in both the approved design and the file after the replacements. For a task without the file, only the approved design and the PR body are fixed.
   - The "Design fixes" section of the PR body lists, for each fix, the before, the after, and the comment. Fixes not applied are listed with their reasons.
   - In the body, `remarks` shows only the IDs of this round's comments, `viewpoint` only an approved viewpoint ID, and `field` only one of the three names, as they are; any other value becomes "(invalid value)".

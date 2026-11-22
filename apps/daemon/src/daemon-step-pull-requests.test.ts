@@ -1855,6 +1855,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       // 実装の PR：人が直してマージしても、タスクを完了にする（最終レビューはやり直さない）
       const runs = executor.calls.length;
+      const readsBeforeMerge = repos.readCalls.length;
       const implSubmitted = task.pullRequest?.commit;
       const impl = mergeEdited(made, "implement", undefined);
       await service.checkPullRequests();
@@ -1870,7 +1871,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       });
       expect(mergedOf(service, id).at(-1)?.payload.document).toBeUndefined();
       // 実装の PR では、成果のファイルは読まない
-      expect(repos.readCalls).toHaveLength(2);
+      expect(repos.readCalls).toHaveLength(readsBeforeMerge);
 
       // 再起動しても、作業履歴から同じ状態を復元する
       activity.close();

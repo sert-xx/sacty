@@ -171,11 +171,9 @@ describe("A3 リポジトリが定める検証を、PR に入る変更すべて�
   it("sacty が PR に足す成果物のファイルがあるタスクでは、そのファイルも検査の対象になることを伝える", () => {
     const prompt = buildPrompt(withStepDocuments(), "implement");
     expect(prompt).toContain("docs/sacty/abcd1234/");
-    expect(prompt).toContain("リポジトリ全体を対象にする検証は、そのファイルも検査する");
+    expect(prompt).toContain("作業領域にあり、PR に入る");
     // 足さないタスクには出さない
-    expect(buildPrompt(task(), "implement")).not.toContain(
-      "リポジトリ全体を対象にする検証は、そのファイルも検査する",
-    );
+    expect(buildPrompt(task(), "implement")).not.toContain("作業領域にあり、PR に入る");
   });
 
   it("要求要件・設計の工程も、PR に入る成果物のファイルに、文書に効く検証を実行させ、実行しなかった理由を残させる（S18 r4）", () => {

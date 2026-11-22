@@ -1,8 +1,18 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import {
   type ActivityEvent,
   type Actor,
@@ -197,6 +207,7 @@ import {
 } from "@sacty/core";
 import { ZodError } from "zod";
 import type { ActivityStore } from "./activity.js";
+import { jsonCandidates } from "./agent-json.js";
 import { archivedFilePath, type CheckedAgentFile, checkArchivedFiles } from "./agent-sessions.js";
 import { type RunCost, runCost } from "./agents/cost.js";
 import { type AgentExecutor, CONTAINER_INPUT_DIR, CONTAINER_REVIEW_DIR } from "./agents/docker.js";
@@ -13460,6 +13471,60 @@ export class TaskService {
       }
       if (synced.kind === "conflicts") mergeConflicts = synced.files;
     }
+    if (step === "implement" && task.taskBranch && task.repository && !task.continuedPullRequest) {
+      const secrets: string[] = [];
+      try {
+        const gitDir = this.trustedGitDir(task);
+        const paths = [...new Set(task.stepPullRequests.map((p) => p.path))];
+        const auth = await this.gitAuth(task, task.repository.url, secrets);
+        const signal = this.inflight.get(task.id)?.abort.signal;
+        const head = await this.deps.repos.fetchBranch(
+          gitDir,
+          task.taskBranch.branch,
+          auth,
+          signal,
+        );
+        if (signal?.aborted) throw new Error("文書の取得を中断しました。");
+        mkdirSync(join(gitDir, "sacty-documents"), { recursive: true });
+        writeFileSync(join(gitDir, "sacty-document-paths.json"), JSON.stringify(paths));
+        for (const path of paths) {
+          const current = readWorkspaceDocument(ready.dir, path);
+          const backup = join(gitDir, "sacty-documents", Buffer.from(path).toString("hex"));
+          const previous = existsSync(backup) ? readFileSync(backup, "utf8") : undefined;
+          if (previous !== undefined && current !== undefined && current !== previous) continue;
+          const latest = await this.deps.repos.readFile(gitDir, head, path);
+          if (latest === undefined) continue;
+          mkdirSync(dirname(join(ready.dir, path)), { recursive: true });
+          writeFileSync(join(ready.dir, path), latest);
+          writeFileSync(backup, latest);
+        }
+      } catch (error) {
+        const manual = await this.manualPauseInfo(task.id);
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "AgentRunFailed",
+              payload: {
+                runId,
+                step,
+                agentId: agent.id,
+                reason: "error",
+                message: redactText(errorText(error), secrets),
+              },
+            },
+          },
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: { reason: this.stopReason(task.id, "error"), ...manual },
+            },
+          },
+        ]);
+        return;
+      }
+    }
     // 実装と再現（再現のテストを書く。PBI-29）は clone を作業領域にし、ほかは使い捨ての写し（書き込めるので、
     // リポジトリの手順のセットアップなども実行できる。変更は残らない。PBI-40）
     const scratch = step !== "implement" && step !== "reproduce";
@@ -16516,6 +16581,7 @@ export class TaskService {
     if (!repositoryNow) return fail(message("pr.workspaceMissing"));
     try {
       const authEnv = await this.gitAuth(task, repositoryNow.url, usedSecrets);
+      usedSecrets.push(...(await this.auditSecretValues(task.projectId, config)));
       // 人が PR のブランチに足したコミットを取り込んでいれば、その先頭に積む（PBI-334。強制プッシュしない）。PR の更新の前に
       // 止まって再開したときは、同じブランチにプッシュ済みのコミットに積む（取り込んだ先頭を親にしたコミットを、そのまま使い直す。
       // 前の PR のコミットに戻すと、別のコミットになって早送りでプッシュできない）
@@ -16532,18 +16598,157 @@ export class TaskService {
         repositoryNow.baseCommit;
       let keep: { commit: string; paths: string[] } | undefined;
       let designOverrides: Record<string, string> | undefined;
+      let documentSecretsLoaded = false;
+      const documentFixes: NonNullable<Task["documentFixes"]> = [];
+      const documentContents = new Map<string, string>();
       if (taskBranch) {
-        // タスクブランチの最新（マージした要求要件・設計の PR を含む）に積む。要求要件・設計のファイルは実装の作業領域に
-        // 無いので、タスクブランチのものを引き継ぐ
-        parent = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+        // タスクブランチの最新に積む。文書は、作業領域で直していないものをタスクブランチから引き継ぐ。
+        parent = await this.deps.repos.fetchBranch(
+          gitDir,
+          taskBranch.branch,
+          authEnv,
+          this.inflight.get(task.id)?.abort.signal,
+        );
+        if (this.stopRequested(task.id)) return "stopped";
         const paths = [...new Set(task.stepPullRequests.map((p) => p.path))];
+        // 記録後、同期前に中断した公開を再開するときは、記録済みの先頭を先に作業領域へ反映する。
+        if (
+          task.pushedBranch?.branch === branch &&
+          task.pushedBranch.commit === parent &&
+          task.pullRequest?.commit !== parent
+        ) {
+          for (const path of paths) {
+            const backup = join(gitDir, "sacty-documents", Buffer.from(path).toString("hex"));
+            if (!existsSync(backup) || readWorkspaceDocument(dir, path) === undefined) continue;
+            const content = await this.deps.repos.readFile(gitDir, parent, path);
+            if (content === undefined) continue;
+            writeFileSync(join(dir, path), content);
+            writeFileSync(backup, content);
+          }
+        }
         if (paths.length > 0) keep = { commit: parent, paths };
+        const reported = jsonCandidates(task.outputs.implement ?? "").flatMap((candidate) => {
+          const fixes = candidate.value["sacty-document-fixes"];
+          return Array.isArray(fixes) ? fixes : [];
+        });
+        for (const path of paths) {
+          const current = readWorkspaceDocument(dir, path);
+          const backup = join(gitDir, "sacty-documents", Buffer.from(path).toString("hex"));
+          if (current === undefined || !existsSync(backup)) continue;
+          const before = readFileSync(backup, "utf8");
+          if (before === current) continue;
+          if (!documentSecretsLoaded) {
+            const project = this.deps.projects.get(task.projectId);
+            if (project?.context) {
+              const context = await this.contextSecretUsesOf([project], config);
+              if (context.problems.length)
+                throw new Error("文書を伏せるためのコンテキストを取得できませんでした。");
+              for (const use of context.uses)
+                usedSecrets.push(await this.deps.secrets.get(use.ref));
+            }
+            documentSecretsLoaded = true;
+          }
+          const remote = await this.deps.repos.readFile(gitDir, parent, path);
+          const edits = path === designFilePath(task) ? pendingDesignEdits(task) : [];
+          const replay = edits.length ? applyEditsToFileChecked(current, edits) : undefined;
+          const alreadyApplied =
+            replay !== undefined && replay.skipped.length === 0 && replay.doc === remote;
+          if (remote !== before && remote !== current && !alreadyApplied) {
+            throw new Error(
+              `${path} は作業領域とタスクブランチの両方で変更されています。どちらかに合わせてから再開してください。`,
+            );
+          }
+          documentContents.set(path, current);
+          designOverrides = {
+            ...designOverrides,
+            [path]: alreadyApplied ? (remote ?? current) : current,
+          };
+          const item = reported.find((v) => v && typeof v === "object" && v.path === path);
+          for (const value of [
+            path,
+            before,
+            current,
+            typeof item?.reason === "string" ? item.reason : "",
+          ]) {
+            usedSecrets.push(...(value.match(/sacty-gw-[a-f0-9]{48}/g) ?? []));
+          }
+          const reason = redactText(
+            typeof item?.reason === "string" ? item.reason : "",
+            usedSecrets,
+          );
+          const oldText = redactText(before, usedSecrets);
+          const newText = redactText(current, usedSecrets);
+          const safePath = redactText(path, usedSecrets);
+          const diffDir = mkdtempSync(join(resolve(tmpdir()), "document-diff-"));
+          let diff: string;
+          try {
+            const oldFile = join(diffDir, "before");
+            const newFile = join(diffDir, "after");
+            writeFileSync(oldFile, oldText);
+            writeFileSync(newFile, newText);
+            diff = await new Promise<string>((resolve, reject) => {
+              execFile(
+                "git",
+                [
+                  "diff",
+                  "--no-index",
+                  "--text",
+                  "--no-color",
+                  "--no-ext-diff",
+                  "--no-textconv",
+                  "--unified=1",
+                  "--",
+                  oldFile,
+                  newFile,
+                ],
+                {
+                  cwd: diffDir,
+                  env: {
+                    PATH: process.env.PATH,
+                    TMPDIR: process.env.TMPDIR,
+                    LANG: process.env.LANG,
+                    GIT_CONFIG_NOSYSTEM: "1",
+                    GIT_CONFIG_GLOBAL: "/dev/null",
+                    GIT_CEILING_DIRECTORIES: diffDir,
+                    GIT_ATTR_NOSYSTEM: "1",
+                    GIT_TERMINAL_PROMPT: "0",
+                  },
+                  maxBuffer: 16 * 1024 * 1024,
+                },
+                (error, stdout, stderr) => {
+                  if (error && (error.code !== 1 || stderr || !stdout)) reject(error);
+                  else resolve(stdout);
+                },
+              );
+            });
+          } finally {
+            rmSync(diffDir, { recursive: true, force: true });
+          }
+          const hunks = diff.split("\n");
+          const firstHunk = hunks.findIndex((line) => line.startsWith("@@ "));
+          const lines = [
+            `--- ${safePath}`,
+            `+++ ${safePath}`,
+            ...(firstHunk < 0
+              ? []
+              : hunks.slice(firstHunk).filter((line, i, all) => i < all.length - 1 || line !== "")),
+          ];
+          documentFixes.push({
+            path: redactText(path, usedSecrets),
+            reason: reason.slice(0, 500),
+            diff: lines.slice(0, 40).join("\n"),
+            ...(reason.length > 500 ? { reasonTruncated: true } : {}),
+            ...(lines.length > 40 ? { diffTruncated: true } : {}),
+          });
+        }
         // 実装の工程が出した設計の局所の直し（反映済みで、まだコミットに入れていないもの）を、タスクブランチの設計のファイルに
         // 当てる（人が直した内容・テスト観点の節は、直しの箇所のほかは残る。PBI-446）
         const designPath = designFilePath(task);
         const pendingEdits = pendingDesignEdits(task);
         if (designPath && pendingEdits.length > 0) {
-          const file = await this.deps.repos.readFile(gitDir, parent, designPath);
+          const file =
+            documentContents.get(designPath) ??
+            (await this.deps.repos.readFile(gitDir, parent, designPath));
           if (file !== undefined) {
             // プッシュがリモートに届いた後、BranchPushed を記録する前に止まって再開したとき、タスクブランチの先頭
             // （parent）は、直しを当て済みのコミットになっている。最後に記録したプッシュのコミットの設計のファイルに
@@ -16591,7 +16796,8 @@ export class TaskService {
                   }),
                 );
               }
-              if (applied.doc !== file) designOverrides = { [designPath]: applied.doc };
+              if (applied.doc !== file)
+                designOverrides = { ...designOverrides, [designPath]: applied.doc };
             }
           }
         }
@@ -16657,9 +16863,21 @@ export class TaskService {
         this.append(task, [
           {
             actor: "sacty",
-            event: { type: "BranchPushed", payload: { branch, commit } },
+            event: {
+              type: "BranchPushed",
+              payload: { branch, commit, ...(documentFixes.length ? { documentFixes } : {}) },
+            },
           },
         ]);
+      }
+      for (const path of task.stepPullRequests.map((p) => p.path)) {
+        const backup = join(gitDir, "sacty-documents", Buffer.from(path).toString("hex"));
+        if (!existsSync(backup)) continue;
+        const content = await this.deps.repos.readFile(gitDir, commit, path);
+        if (content === undefined) continue;
+        if (readWorkspaceDocument(dir, path) === undefined) continue;
+        writeFileSync(join(dir, path), content);
+        writeFileSync(backup, content);
       }
       // やり直しの実装が何も変えず、出すコミットが、AI のレビューの指摘が残る PR の先頭のままなら、提出にせずに止める（同じ
       // 先頭は再レビューされず、ドラフトのまま進まなくなるため。PBI-347）。再開すると、実装をやり直す
@@ -16948,6 +17166,7 @@ export class TaskService {
       this.reconcileReviewTaskSoon(submitted.id, commit);
       return "published";
     } catch (error) {
+      if (this.stopRequested(task.id)) return "stopped";
       // 実装が起点から何も変えていなかった（PBI-90）。まだ PR を作っていなければ、PR を作らずに実装の承認で人間に
       // 確かめてもらう（実装の説明に、変更が要らない理由がある。承認すれば変更なしで完了、差し戻せば実装をやり直す）。
       // タスクブランチ（PBI-57）は、ベースブランチへの PR を作らないまま残る。作った PR の作り直しで変更が無くなったときは、
@@ -17661,11 +17880,20 @@ export class TaskService {
   private async workspaceFingerprint(task: Task): Promise<string | undefined> {
     if (!task.repository || !existsSync(this.repoDir(task))) return undefined;
     try {
-      return await this.deps.repos.treeId(
+      const tree = await this.deps.repos.treeId(
         this.repoDir(task),
         this.trustedGitDir(task),
         workBaseCommit(task.repository, task.baseMerge),
       );
+      if (!task.taskBranch || task.continuedPullRequest || task.stepPullRequests.length === 0)
+        return tree;
+      const hash = createHash("sha256").update(tree);
+      for (const path of [...new Set(task.stepPullRequests.map((p) => p.path))].sort()) {
+        hash.update(
+          JSON.stringify([path, readWorkspaceDocument(this.repoDir(task), path) ?? null]),
+        );
+      }
+      return hash.digest("hex");
     } catch {
       return undefined;
     }
@@ -24034,6 +24262,34 @@ function isStepPullRequestKey(step: StepKey): step is StepPullRequestKey {
  * タスクブランチの名前（PBI-57）。実装の PR は、このブランチからベースブランチに向けて作る（タスクブランチの無いタスク
  * の実装の PR のブランチと同じ名前）。
  */
+function readWorkspaceDocument(dir: string, path: string): string | undefined {
+  const segments = path.split("/");
+  if (
+    !/^[\w./-]+$/.test(path) ||
+    segments.some((p) => !p || p === "." || p === ".." || p.toLowerCase() === ".git")
+  ) {
+    throw new Error(`文書のパスが不正です：${path}`);
+  }
+  let current = dir;
+  for (const [index, segment] of segments.entries()) {
+    current = join(current, segment);
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    if (
+      stat.isSymbolicLink() ||
+      (index === segments.length - 1 ? !stat.isFile() : !stat.isDirectory())
+    ) {
+      throw new Error(`文書のパスは通常のファイルではありません：${path}`);
+    }
+  }
+  return readFileSync(current, "utf8");
+}
+
 function taskBranchName(task: Pick<Task, "id">): string {
   return `sacty/task-${task.id.slice(0, 8)}`;
 }

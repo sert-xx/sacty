@@ -1540,8 +1540,7 @@ function feedbackLines(task: Task): string[] {
     ];
   }
   const r = feedback.review;
-  // 実装の PR には、作業領域に無い、sacty が足す成果物も入る。検査がそのファイルで落ちていても、実装の作業領域では
-  // 原因が見えないので、検査の設定を直すよう伝える（出力に成果物のパスが出ているかは、指摘の書き方に頼らず、機械的に見る）
+  // 成果物のパスが検査の失敗に出ていれば、作業領域の文書を直すよう伝える。
   const places = stepDocumentPlaces(task);
   const failureText = [
     r.summary ? ja(r.summary) : "",
@@ -1616,11 +1615,11 @@ function feedbackLines(task: Task): string[] {
       : []),
     ...(places && shown.length > 0
       ? [
-          `上の出力に、sacty が PR に足す成果物（${shown.map((d) => `${d}/`).join("・")}）のファイルが出ています。検査は、このファイルで落ちています。このファイルは作業領域に無く、書き換えても PR に残りません。${stepDocumentFixText(places)}。変更の無い再提出はしないでください。`,
+          `上の出力に、sacty が PR に足す成果物（${shown.map((d) => `${d}/`).join("・")}）のファイルが出ています。検査はこのファイルで落ちています。${stepDocumentFixText(places)}。変更の無い再提出はしないでください。`,
         ]
       : places
         ? [
-            `実装の PR には、作業領域に無い、sacty が足す成果物（${places.dirs.map((d) => `${d}/`).join("・")}）も入ります。リポジトリ全体の検査がそのファイルで落ちているときは、${stepDocumentFixText(places)}。`,
+            `実装の PR には、sacty が置く成果物（${places.dirs.map((d) => `${d}/`).join("・")}）も入ります。リポジトリ全体の検査がそのファイルで落ちているときは、${stepDocumentFixText(places)}。`,
           ]
         : []),
     // 観点・指摘に問題が無く、テストが通らなかったことだけが理由のときは、直す箇所が指摘として無いので、そう伝える。
@@ -2287,7 +2286,7 @@ function designEditLines(task: Task): string[] {
     "",
     "--- 承認済みの設計の局所の直し ---",
     "今回の指摘が、承認済みの設計の局所の決定（文言・表や一覧の1行・既定値・行の追加）に触れるときは、実装と同じ PR で、承認済みの設計も合わせて直します（設計の工程には戻しません。人の承認は、この PR のマージで兼ねます）。",
-    "承認済みの設計は、あなたの作業領域には無く、書き換えられません。次の形式のブロックで、置き換え（before を after にする）の形で、直す所だけを出します（全文は出さない）。sacty が検査して、承認済みの設計と PR の設計のファイルに反映します。",
+    "設計の決定の局所の直しは、次の形式のブロックで置き換え（before を after にする）の形で出します。sacty が検査して承認済みの設計と PR の設計のファイルに反映します。",
     "```json",
     `{"${DESIGN_EDIT_HEADING}": {"edits": [{"remarks": ["指摘の ID"], "viewpoint": "TV-n（観点の文言の直しのときだけ）", "field": "title・input・expected のどれか（観点の文言の直しのときだけ）", "before": "承認済みの原文", "after": "直した後", "reason": "理由", "sensitive": false}]}}`,
     "```",
@@ -2307,7 +2306,9 @@ function proposalLines(task: Task, step: StepKey): string[] {
   return [
     "",
     `--- 承認済みの成果物（${targets.map((t) => STEP_NAME[t]).join("・")}）の変更の申し出 ---`,
-    "承認済みの成果物は凍結されていて、あなたは変更できません。",
+    step === "implement" && stepDocumentPlaces(task)
+      ? "承認済みの要求・設計の判断は変更できません。判断を変えない書式などの誤りは作業領域の文書を直接直せます。"
+      : "承認済みの成果物は凍結されていて、あなたは変更できません。",
     "それに従うとゴールを達成できないと事実で示せる場合だけ、変更を申し出てください。",
     "申し出は人間が判断します（sacty はタスクを止めて、申し出を人間に見せます）。作業を楽にするための変更は認められません。",
     "申し出は1回の実行で1件までです。次の形式で、本文のあとに付けてください。",
@@ -4876,7 +4877,9 @@ function implementVerificationLines(task: Task, selfReview = true): string[] {
       : "- リポジトリが定めるフォーマッター・リンター・型チェックなどの検証（AGENTS.md・CONTRIBUTING・README の開発手順、CI の設定、パッケージの設定やタスクランナーの定義で探す）を、PR に入る変更すべて（コード・テスト・文書・設定。あなたが足したファイルを含む）に対して実行し、通してから提出する。変更したファイルだけに絞れるツールは絞ってよいが、変更したファイルの種類（文書でも）を、対象から外さない",
     ...(places
       ? [
-          `- 実装の PR には、作業領域に無い、sacty が足す成果物（${places.dirs.map((d) => `${d}/`).join("・")}）のファイルも入る。リポジトリ全体を対象にする検証は、そのファイルも検査する。作業領域では実行できないので、検査の対象に入るかを設定（除外の定義など）で確かめ、落ちたときの直し方は、PR のレビューの指摘に従う`,
+          `- 承認済み文書（${task.stepPullRequests.map((p) => p.path).join("・")}）は作業領域にあり、PR に入る。検証で見つけた判断を変えない誤りは、このファイルを直す`,
+          `- 作業領域のファイルは、指示に写した承認済み全文より新しい正とする。テスト・書式・リンクの誤りや、レビュー・人の指摘は判断を変えない範囲で直す。人がこの PR で直してよいと明示しても、判断を変える必要がある場合は設計の直しか変更の申し出にする`,
+          '- 直したら、本文の後に `{"sacty-document-fixes":[{"path":"ファイルのパス","reason":"何をなぜ直したか"}]}` を書く',
         ]
       : []),
     // テストは、途中は関係するものだけ、全件は最後の変更の後に1回（PBI-316）。文書だけの依頼はテストを実行せず、テストの仕組みが
@@ -4925,16 +4928,10 @@ function stepDocumentPlaces(
 }
 
 /**
- * 成果物のファイルで検査が失敗したときの直し方（ゴールガーディアンが指摘に書き、実装のやり直しの指示でも伝える）。成果物は
- * 実装が書き換えても PR に残らないので、書式ではなく検査の設定を、リポジトリの方針に合わせて直させる。
+ * 成果物のファイルで検査が失敗したときの直し方。承認した判断を変えない範囲で文書を直させる。
  */
 function stepDocumentFixText(places: NonNullable<ReturnType<typeof stepDocumentPlaces>>): string {
-  const dirList = places.dirs.map((d) => `${d}/`).join("・");
-  const rootList = places.roots.map((d) => `${d}/`).join("・");
-  const scope = places.dedicated
-    ? `無ければ成果物の置き場所（${rootList}）をまとめて対象外にする`
-    : `無ければ成果物のディレクトリ（${dirList}）に当たる範囲を対象外にする。置き場所（${rootList}）はリポジトリのほかのファイルと共有されうるので、その全体は対象外にしない（ほかのファイルの検査が外れる）。タスクの ID のディレクトリに当たるパターンにして、タスクのたびに行を足さない`;
-  return `成果物は sacty が置く承認済みの文書で、実装が書き換えても PR には残らないので、ファイルの書式を直さない。リポジトリの検査の設定（例：.prettierignore・markdownlint の除外）を、リポジトリの方針に合わせて直す。リポジトリにすでに生成物・文書の扱いがあればそれに従い、${scope}。タスクの ID ごとのファイルやディレクトリを1つずつ足さない。設定を確かめるだけのテストは足さない`;
+  return `${places.dirs.map((d) => `${d}/`).join("・")} の作業領域の文書を、承認した判断を変えない範囲で直す`;
 }
 
 /**
@@ -6061,16 +6058,28 @@ export function withoutProgressReport(text: string): string {
  * 最後の説明を最後の直しとして添える。最後の直しだけの説明が PR の本文を置き換えて、何の PR か分からなくなるのを防ぐ。
  */
 function implementDescription(task: Task): { whole: string; fix: string } {
-  const latest = task.outputs.implement ?? "";
+  const rawLatest = task.outputs.implement ?? "";
+  const latest = trimBlankLines(
+    withoutCandidates(
+      rawLatest,
+      jsonCandidates(rawLatest).filter((c) => Object.hasOwn(c.value, "sacty-document-fixes")),
+    ),
+  );
   // 前の提出までの土台は projection が持つ（履歴の上限を超えても消えない）。持たない記録は、履歴から求める
   let base = task.implementBase;
   if (base === undefined) {
     const history = task.implementHistory ?? [];
-    for (const raw of history.at(-1) === latest ? history.slice(0, -1) : history) {
+    for (const raw of history.at(-1) === rawLatest ? history.slice(0, -1) : history) {
       base = advanceImplementBase(base, raw);
     }
   }
-  if (base !== undefined) base = withoutProgressReport(base);
+  if (base !== undefined)
+    base = withoutProgressReport(
+      withoutCandidates(
+        base,
+        jsonCandidates(base).filter((c) => Object.hasOwn(c.value, "sacty-document-fixes")),
+      ),
+    );
   const report = withoutProgressReport(latest);
   // 前の提出が無い（最初の実装）なら、直す対象が無い。説明をそのまま全体の説明にする（作り直しが無いタスクの本文は変えない）
   if (!base?.trim()) return { whole: withoutRemarkIds(report), fix: "" };
@@ -6446,6 +6455,9 @@ export function buildPullRequestBodyText(
     ...(changeRest ? [...changeHeading, changeRest, ""] : []),
     ...(fixRest ? [`## ${LAST_FIX_HEADING}`, "", fixRest, ""] : []),
     ...(designEditBodyLines(task, "##").length > 0 ? [...designEditBodyLines(task, "##"), ""] : []),
+    ...(documentFixBodyLines(task, "##").length > 0
+      ? [...documentFixBodyLines(task, "##"), ""]
+      : []),
     // 書き出した成果（要求要件・設計など）の URL（PBI-56）
     ...(exportedUrls(task).length > 0 ? ["## 書き出した成果", "", ...exportedUrls(task), ""] : []),
     "## 確かめ方",
@@ -6463,6 +6475,9 @@ export function buildPullRequestBodyText(
       ...closesLines(task),
       ...(override ? [override] : []),
       ...(human ? [human] : []),
+      ...(documentFixBodyLines(task, "##").length
+        ? [documentFixBodyLines(task, "##").join("\n")]
+        : []),
     ],
   };
 }
@@ -6491,6 +6506,9 @@ export function buildPullRequestBodyParts(
     ...(designEditBodyLines(task, "bold").length > 0
       ? [...designEditBodyLines(task, "bold"), ""]
       : []),
+    ...(documentFixBodyLines(task, "bold").length > 0
+      ? [...documentFixBodyLines(task, "bold"), ""]
+      : []),
     ...(exportedUrls(task).length > 0 ? ["**書き出した成果**", "", ...exportedUrls(task), ""] : []),
   ];
   return {
@@ -6507,6 +6525,9 @@ export function buildPullRequestBodyParts(
     tests: resultTableLines(task).join("\n"),
     ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
     record: record.join("\n"),
+    ...(documentFixBodyLines(task, "bold").length
+      ? { keep: [documentFixBodyLines(task, "bold").join("\n")] }
+      : {}),
     footer: [
       ...overrideBodyLines(task),
       ...humanCheckBodyLines(task),
@@ -6517,6 +6538,30 @@ export function buildPullRequestBodyParts(
       taskMarker(task.id),
     ].join("\n"),
   };
+}
+
+function documentFixBodyLines(task: Task, style: "##" | "bold"): string[] {
+  const fixes = task.documentFixes ?? [];
+  if (fixes.length === 0) return [];
+  return [
+    style === "##" ? "## 承認済みの文書の直し" : "**承認済みの文書の直し**",
+    ...fixes.flatMap((fix) => {
+      let fenceLength = 3;
+      for (const match of fix.diff.matchAll(/`+/g))
+        fenceLength = Math.max(fenceLength, match[0].length + 1);
+      const fence = "`".repeat(fenceLength);
+      return [
+        "",
+        `- ${fix.path}`,
+        `  - 理由：${fix.reason || "理由の記載なし"}${fix.reasonTruncated ? "（省略あり）" : ""}`,
+        ...(fix.diffTruncated ? ["  - 差分は一部を省略しています"] : []),
+        "",
+        `  ${fence}diff`,
+        ...fix.diff.split("\n").map((line) => `  ${line}`),
+        `  ${fence}`,
+      ];
+    }),
+  ];
 }
 
 /** PR の本文に載せる、設計の直しの 1 件の前・後の長さの上限（文字数）。 */
@@ -6951,6 +6996,7 @@ function needsDecisionLines(): string[] {
     `${MUST_TAG} の指摘のうち、直し（実装の手直し）では解消できず、人の判断が要るものにだけ、判定のブロックの findings の項目に needs_decision（直しでは解消できないと言える根拠の文）を付けてください。付いた指摘が残ると、sacty は直しに入らず、止めて人の判断を待ちます。`,
     "- 付けてよいのは、根拠で示せるときだけ。例：方式を変えても解消しない・依頼の受け入れ条件と制約がぶつかり、どちらかを人が決めない限り両方は満たせない",
     "- 迷ったら付けない（ふつうの要修正にする）。直す量が多い・直し方がまだ決まっていないだけなら付けない",
+    "- この PR の承認済み文書の中身を変えない誤りは実装で直せるので needs_decision を付けない",
     `- ${SUGGESTION_TAG} の指摘と、判定が「修正が必要」でない回には付けない`,
     "- PR に、その指摘への人の判断（了承・方針）がすでにあるときは付けない",
   ];
@@ -7019,6 +7065,11 @@ function reworkDecisionLines(own: string, gateStep?: StepKey): string[] {
     "",
     "戻し先は、指摘が承認済みの前の工程の決定（受け入れ条件・振る舞い・画面・API やデータの形・テスト観点・確認して決めたこと）を変えるかで決めてください。",
     `- 決定を変えない指摘は、この PR の${own}で直します。文書への追記、${own}の直し、決定済みのことの反映漏れがこれにあたります。${gateStep === "implement" ? "承認済みの設計の局所の変更（下の基準）も、この PR の実装で直します。" : ""}`,
+    ...(gateStep === "implement"
+      ? [
+          "PR の承認済み文書のファイルを、渡した全文の写しより新しい正とします。本文の『承認済みの文書の直し』に載った中身を変えない直しは想定された差分として指摘しません。この PR の承認済み文書の中身を変えない誤りは implement で直せます。その誤りには needs_decision を付けません。要求要件・設計の決定を変える指摘は前の工程に戻します。",
+        ]
+      : []),
     "  承認済みの成果物に書き漏れ（影響範囲の一覧に無い・テスト観点に無い、など）があっても、指摘が求めることが承認済みの決定から導けるなら、決定を変えるのではなく、決定の反映漏れです。",
     `- 決定そのものを変える指摘（決まった振る舞い・画面・API やデータの形を別のものにする、決まっていないことを新しく決める、など）だけ、その決定を持つ工程に戻します。${gateStep === "implement" ? "ただし、承認済みの設計の局所の変更は除きます（下の基準のとおり、実装で直します）。" : ""}`,
     `- 複数の指摘のうち1つでも決定を変えるなら、その決定を持つ工程に戻します（複数の工程にまたがるなら、前の工程）。${gateStep === "implement" ? "設計の決定の変更は、方針の変更が1つでもあるときだけ、これにあたります。" : ""}`,

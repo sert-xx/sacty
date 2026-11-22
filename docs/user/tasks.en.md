@@ -757,6 +757,8 @@ You add notes in a separate field, and choose between requesting changes and app
 
 ### The notice when work goes back to design, and local fixes to the design document
 
+During Implementation, the agent can fix formatting and link errors in approved requirements and design documents without changing decisions. The implementation PR body lists the files, reasons, and diffs. If the workspace and task branch changed the same document differently, reconcile them before resuming. If you downgrade during Implementation, placed documents count as implementation changes.
+
 When a comment goes back to Design, sacty posts one notice on the implementation PR.
 When a round fixes a comment in Implementation and the approved design document needs a local fix, the design document is fixed inside the implementation PR.
 
