@@ -1,6 +1,6 @@
 "use client";
 
-import type { Task } from "@sacty/core";
+import { gatePullRequest, type Task } from "@sacty/core";
 import { WithHint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
@@ -11,6 +11,14 @@ import { useMessages } from "@/i18n/client";
 export function AiReviewNotice({ task }: { task: Task }) {
   const { task: m } = useMessages();
   const state = task.aiReview;
+  const gate = gatePullRequest(task);
+  const held = task.heldSuggestions;
+  const showHeld =
+    task.status === "awaiting_approval" &&
+    held &&
+    gate?.number === held.number &&
+    state?.status !== "unknown" &&
+    state?.head === held.commit;
   // 提案が残ったまま外した先頭が、今の先頭のときだけ出す（人のコミットで先頭が進んだ後は出さない。PBI-440）
   const left =
     task.pullRequest?.suggestionsLeft === true &&
@@ -19,7 +27,7 @@ export function AiReviewNotice({ task }: { task: Task }) {
       state.head.startsWith(task.pullRequest.reviewedCommit) ||
       task.pullRequest.reviewedCommit.startsWith(state.head));
   if (!state) {
-    if (!left) return null;
+    if (!left && !showHeld) return null;
     return (
       <section
         data-testid="ai-review-suggestions-left"
@@ -49,6 +57,12 @@ export function AiReviewNotice({ task }: { task: Task }) {
       <p role="status" className="text-sm">
         {m.aiReview[state.status](head)}
       </p>
+      {showHeld && (
+        <div data-testid="step-suggestions-held">
+          <p>{m.aiReview.stepSuggestionsHeld}</p>
+          <p>{m.aiReview.stepSuggestionsHeldAction}</p>
+        </div>
+      )}
       {left && (
         <p data-testid="ai-review-suggestions-left" className="text-sm">
           <WithHint hint={m.aiReview.suggestionsLeftHint}>{m.aiReview.suggestionsLeft}</WithHint>

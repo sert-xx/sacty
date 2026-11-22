@@ -2213,6 +2213,38 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     expect(some).toContain("対応を求めていないコメント2件は除いた");
   });
 
+  it("打ち切りの履歴に、残った提案と直させる方法を日英で出す", () => {
+    const held = event("StepSuggestionsHeld", {
+      step: "design",
+      number: 12,
+      commit: "abc",
+      round: 2,
+      suggestionRounds: 2,
+    });
+    const jaLine = describeIn(held, labels.ja);
+    for (const text of [
+      "PR #12",
+      "提案だけの判定が続いた",
+      "直しに入らなかった",
+      "提案は残っている",
+      "PR に要対応とコメント",
+      "画面から差し戻す",
+    ])
+      expect(jaLine).toContain(text);
+    const enLine = describeIn(held, labels.en);
+    for (const text of [
+      "PR #12",
+      "Consecutive suggestion-only verdicts",
+      "stopped rework",
+      "Suggestions remain",
+      "comment on the PR",
+      "request changes on the screen",
+    ])
+      expect(enLine).toContain(text);
+    expect(jaLine).not.toContain("\n");
+    expect(enLine).not.toContain("\n");
+  });
+
   it("提案の選り分けの行は、件数と費用を出し、詳細に提案ごとの判断と理由を出す（PBI-436）", () => {
     const triaged = event("SuggestionsTriaged", {
       items: [

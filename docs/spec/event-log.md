@@ -16,7 +16,7 @@
 
 - 書くときの形は `{ type, payload }`。
   `type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。
-  種類は143（タスクの作成・分割、重ねた子タスクの依存先のマージ、工程の進行、エージェントの実行、予算・一時停止・再開・中止、タスクの題・イメージの変更、変更の申し出と判断、検証、終わっていない実装と変更の無いやり直し、git・PR（実装の無い進め方で、人がコミットを足したので消さずに残した工程のブランチの記録 `StepBranchKept` と、完了で消せなかった工程のブランチと理由の記録 `StepBranchesLeft` を含む）、PR のドラフトの解除・向き先の付け替え・CI のやり直しの依頼、sacty が外した切り替えの記録と、ドラフトへ戻さなかった記録（人が外した・読めなかった・決められなかった）、人が PR に足したコミットの取り込み、PR の本文の記録と人が直した本文のまとめ、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、PR のレビューの子タスクの作成、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
+  種類は144（タスクの作成・分割、重ねた子タスクの依存先のマージ、工程の進行、エージェントの実行、予算・一時停止・再開・中止、タスクの題・イメージの変更、変更の申し出と判断、検証、終わっていない実装と変更の無いやり直し、git・PR（実装の無い進め方で、人がコミットを足したので消さずに残した工程のブランチの記録 `StepBranchKept` と、完了で消せなかった工程のブランチと理由の記録 `StepBranchesLeft` を含む）、PR のドラフトの解除・向き先の付け替え・CI のやり直しの依頼、sacty が外した切り替えの記録と、ドラフトへ戻さなかった記録（人が外した・読めなかった・決められなかった）、人が PR に足したコミットの取り込み、PR の本文の記録と人が直した本文のまとめ、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、PR のレビューの子タスクの作成、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
 - 記録した後の形（`ActivityEvent`）は、書くときの形に次を足したもの。
   - `seq`（作業履歴全体で単調に増える）
   - `id`（UUID）
@@ -63,6 +63,7 @@
   ただし中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` と、監査が登録したメモリーの削除 `AuditMemoryDeleted` は受け付ける。
 - 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`SubagentNoticeImitated`・`RunCostRecorded`・`ReviewGitHubRetried`・`PushRetried`・`PushRetryEnded`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`AgentRunTimedOut`・`AgentRunContinued`・`WorkspaceFilesSkipped`・`PullRequestBodyResolved`。費用を持つものは、下のとおり予算に足す）。
 - 直しに入る前の提案の選り分け（PBI-436。[直しに入る前の提案の選り分け](approval.md#直しに入る前の提案の選り分け)）の記録は次のとおり。
+  - `StepSuggestionsHeld`（actor `sacty`）：要求要件・設計の PR で直しを打ち切った工程 `step`、PR 番号 `number`、先頭 `commit`、レビューの回 `round`、連続した提案だけの回数 `suggestionRounds`。
   - `SuggestionsTriaged`（actor `agent`）：`items[]`（提案ごとの `id`・取り込んだ指摘の位置 `remark`・提案の文 `text`・判断 `decision`（`address` か `decline`）・理由 `reason`・判断が無く対応する側にした印 `defaulted`・元のコメントの URL `url`）、`dropped[]`（提案のすべてを対応しないとして差し戻しから外した指摘の位置）、`round`・`suggestionRounds`（判断の材料にした、レビューの回と、提案だけの回が続いた数）、`stop`（判定し直した回の提案もすべて対応しないので、返信の後に、一時停止せずにドラフトを外す。以前の版は一時停止した）、実行の記録（`agentId`・`runResult`・`usage`・`costUsd` など）。
   - 直しでは解消できない指摘で止めるための記録（PBI-452）：`TaskPaused` の理由 `needs_decision` と `commit`（止めた PR の先頭）、`PullRequestReviewImported` の `items[].by`（`person`・`unverified`）、`ReworkStoppedByMerge` の `decision`、判定のブロックの `rework.findings[].needsDecision`（子タスクの `reviewVerdicts[].rework`）。投影は `Task.decisionPauses`（止めた回ごとの先頭・指摘と根拠・人の判断の文）と `pendingReview.unverified` を持つ。前の版は、足した欄を読まずに捨てるが、理由 `needs_decision` の `TaskPaused` は読めない（一度記録したら、前の版に戻せない）。`FinalReviewSkipped` の `securityScope.violation` は、`lines` を持たず、`max` に固定で 300 を書く（前の版が読める）。
   - 要求要件・設計の直しをマージで止める記録（PBI-462）：`ReworkStoppedByMerge` の `step`（工程）。前の版は、`step` を読まずに捨てて実装の作り直しの記録として投影し、整合性のエラーになって起動できない（一度記録したら、前の版に戻せない）。投影は `Task.stepSubmitted`・`reworkOf`・`sentBackFrom`・`stepBranchCommits` を持つが、これらは既存の記録から作り直すので、保存する形は増えない。

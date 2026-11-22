@@ -513,6 +513,8 @@ const ja = {
     FinalReviewSkipped: "最終レビューと CI の待ちをせず、実装の PR を作る準備をした",
     PullRequestMarkedReady: (number: number) =>
       `PR のレビューの子タスクが指摘なしにしたので、PR #${number} のドラフトを外して人の承認待ちにした`,
+    StepSuggestionsHeld: (number: number) =>
+      `PR #${number} で提案だけの判定が続いたため直しに入らなかった。提案は残っている。直させたいときは、PR に要対応とコメントするか、画面から差し戻す`,
     PullRequestMarkedReadyWithSuggestions: (number: number) =>
       `残った提案をすべて対応しないとしたので、PR #${number} のドラフトを外して人の承認待ちにした。判定は「提案あり」のまま、再レビューはせず、リスク評価だけを先に 1 回行った`,
     PullRequestUndraftNoted: (number: number) => `sacty が PR #${number} のドラフトを外した`,
@@ -1353,6 +1355,8 @@ const en: LabelMessages = {
       "Got ready to open the implementation PR without the final review or CI wait",
     PullRequestMarkedReady: (number) =>
       `The PR's review child task found nothing, so PR #${number} was marked ready (waiting for a person's approval)`,
+    StepSuggestionsHeld: (number) =>
+      `Consecutive suggestion-only verdicts stopped rework on PR #${number}. Suggestions remain. To have them fixed, comment on the PR that they need action or request changes on the screen`,
     PullRequestMarkedReadyWithSuggestions: (number) =>
       `All remaining suggestions were declined, so PR #${number} was marked ready and is waiting for a person's approval. The verdict stays "suggestions"; the PR was not reviewed again, and only the risk assessment was run once beforehand`,
     PullRequestUndraftNoted: (number) => `sacty marked PR #${number} ready for review`,

@@ -22,6 +22,36 @@ const render = (aiReview: Task["aiReview"], locale: "ja" | "en" = "ja") =>
   );
 
 describe("AiReviewNotice", () => {
+  it("打ち切った先頭だけに、残った提案と直させる方法を日英で示す", () => {
+    const renderHeld = (locale: "ja" | "en", head: string) =>
+      renderToStaticMarkup(
+        h(
+          I18nProvider as unknown as FC<{ locale: "ja" | "en" }>,
+          { locale },
+          h(AiReviewNotice, {
+            task: {
+              status: "awaiting_approval",
+              gate: { step: "design", submission: 1 },
+              stepPullRequests: [
+                { step: "design", submission: 1, number: 12, commit: "abc", state: "open" },
+              ],
+              heldSuggestions: { step: "design", number: 12, commit: "abc" },
+              aiReview: { head, status: "attached" },
+            } as unknown as Task,
+          }),
+        ),
+      );
+    const ja = renderHeld("ja", "abc");
+    expect(ja).toContain("提案が残っています");
+    expect(ja).toContain("直しと再レビューをしていません");
+    expect(ja).toContain("PR に要対応とコメントするか、画面から差し戻して");
+    const en = renderHeld("en", "abc");
+    expect(en).toContain("Suggestions remain");
+    expect(en).toContain("rework and re-review");
+    expect(en).toContain("comment on the PR");
+    expect(en).toContain("request changes on this screen");
+    expect(renderHeld("ja", "def")).not.toContain('data-testid="step-suggestions-held"');
+  });
   it("付いていない・レビュー中・付いたを、head の短い表記つきで出す", () => {
     const head = "7ed51c5aaaaaaaa";
     expect(render({ head, status: "none" })).toContain(

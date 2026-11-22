@@ -29,6 +29,7 @@ vi.mock("@/app/actions", () => {
     changeTaskImageAction: action,
     createTaskAction: action,
     decideChangeAction: action,
+    deferralAction: action,
     gateAction: action,
     pauseTaskAction: action,
     renameTaskAction: action,
@@ -41,7 +42,8 @@ vi.mock("@/app/actions", () => {
 });
 
 const { I18nProvider } = await import("@/i18n/client");
-const { LiveTaskDetail } = await import("./task-detail");
+const { LiveTaskDetail, TaskDetailView } = await import("./task-detail");
+const { ReviewView } = await import("./review");
 const { LiveTaskList } = await import("./task-list");
 const { NewTaskDialog } = await import("./new-task-dialog");
 const { LiveHeaderMenus } = await import("./shell/live-header");
@@ -208,6 +210,51 @@ afterEach(() => {
 });
 
 describe("タスクの詳細：裏で起きた変化が、操作しなくても間隔のうちに出る（PBI-108）", () => {
+  it("打ち切りの知らせを承認画面とタスクの概要に日英で出す", () => {
+    const held = task({
+      ...awaiting,
+      stepPullRequests: [
+        {
+          step: "requirements",
+          submission: 1,
+          number: 12,
+          commit: "abc",
+          state: "open",
+        } as Task["stepPullRequests"][number],
+      ],
+      heldSuggestions: { step: "requirements", number: 12, commit: "abc" },
+      aiReview: { head: "abc", status: "attached" },
+    });
+    for (const locale of ["ja", "en"] as const) {
+      for (const view of [
+        h(ReviewView, { task: held }),
+        h(TaskDetailView, { data: detail(held) }),
+      ]) {
+        act(() =>
+          root.render(
+            h(I18nProvider as FC<{ locale: "ja" | "en"; children?: ReactNode }>, { locale }, view),
+          ),
+        );
+        const notice =
+          container.querySelector('[data-testid="step-suggestions-held"]')?.textContent ?? "";
+        for (const phrase of locale === "ja"
+          ? [
+              "提案が残っています",
+              "直しと再レビューをしていません",
+              "PR に要対応とコメント",
+              "画面から差し戻して",
+            ]
+          : [
+              "Suggestions remain",
+              "rework and re-review",
+              "comment on the PR",
+              "request changes on this screen",
+            ]) {
+          expect(notice).toContain(phrase);
+        }
+      }
+    }
+  });
   it("ほかのタブ・CLI で承認すると、承認待ちの表示が消え、次の工程に進んだことが出る", async () => {
     server = detail(awaiting);
     render(

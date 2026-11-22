@@ -3066,6 +3066,17 @@ const ReviewRejudgeRequested = z.object({
  * defaulted は、判断が無かった（実行の失敗・答えを読めない・その提案の判断が無い）ので、対応する側にした。
  * 実行に失敗したときも記録する（費用と、判断できなかったことを残す）。runResult が interrupted のものは、費用だけを数える。
  */
+const StepSuggestionsHeld = z.object({
+  type: z.literal("StepSuggestionsHeld"),
+  payload: z.object({
+    step: z.enum(["requirements", "design"]),
+    number: z.number().int().positive(),
+    commit: z.string().min(1),
+    round: z.number().int().positive(),
+    suggestionRounds: z.number().int().positive(),
+  }),
+});
+
 const SuggestionsTriaged = z.object({
   type: z.literal("SuggestionsTriaged"),
   payload: z.object({
@@ -4675,6 +4686,7 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestReviewImported,
   PullRequestReviewDiscarded,
   ReworkJudged,
+  StepSuggestionsHeld,
   SuggestionsTriaged,
   IssueCommented,
   IssueCommentFailed,
