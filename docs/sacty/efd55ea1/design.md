@@ -5,7 +5,7 @@
 ## スコープ
 
 `notFound()` を呼ぶ 8 ページに `generateMetadata` を置き、無いときに「ページが見つかりません - Sacty」を返す。
-文言の検査を文とラベルに分けて括弧の基準を厳しくし、外れる文言（`live.stale` ほか 7 件ほど）を直す。
+文言の検査を文とラベルに分けて括弧の基準を厳しくし、外れる文言（`live.stale` を含む）を直す。
 
 - 対象
   - 8 ページの `generateMetadata`、共通の題の関数、`not-found.tsx`
@@ -15,6 +15,7 @@
 - 対象外
   - 対象のページのうち、データがあるときの題（今のまま。設定のページは「プロジェクト「<名前>」の設定」、ほかは「Sacty」）
   - デーモンに届かないときの題（今のまま「Sacty」）
+  - 要求要件の対象外のもの：React の #419 の例外、`CardSection`・`DashboardCard` の「補足」の名前、route.ts、補足（`hint`・`*Hint`）とデーモンの文（core の辞書）、ラベル・見出し・選択肢の短い語の括弧
 
 ## 確認したいこと
 
@@ -24,13 +25,12 @@
 
 ### should
 
-- 題を、ページの描画とは別に `generateMetadata` で決めてよいか。
-  推奨：よい。`notFound()` は今の場所（`<Suspense>` の中）のまま呼ぶので、応答コードが変わらない（R-7）。
-  懸念：実ブラウザーでストリーミングした題が付くかは、テストでは見えません。人の確かめで「Sacty」のままなら、直し方を選び直す作業が実装の後に要ります。
+なし
 
 ## 既定で決めたこと
 
-- 存在の判定は、ページの部品と `generateMetadata` が、React の `cache` で包んだ同じ読み込みの関数を使う。デーモンへの問い合わせは 1 回のままにする。
+- 題は各ページの `generateMetadata` で決める。原因は、`<Suspense>` の中で投げた `notFound()` が `not-found.tsx` の題に届かず、レイアウトの「Sacty」が残ること。`notFound()` を `<Suspense>` の外で呼ぶ案は、`cacheComponents: true` で読み込みを外に出せず、応答コードも変わりうる（R-7）ので採らない。
+- 存在の判定は、ページの部品と `generateMetadata` が、React の `cache` で包んだ同じ読み込みの関数を使う。包んだ関数の引数は ID の文字列だけにし（`tasks/[id]` は `{ repositories: true }` を関数の中で渡す）、デーモンへの問い合わせは 1 回のままにする。
 - 共通の関数は `apps/web/src/lib/not-found-metadata.ts` の `notFoundMetadata()` にし、`not-found.tsx` もこれを使う。
 - 括弧の例外は、新しい一覧 `PAREN_EXCEPTIONS` に分ける。今の `EXCEPTIONS` は改行・長さの例外だけに使う。
 - `live.stale`：日「デーモンに届かないため、最後に取得した内容を表示しています。`sacty up` が動いているか確認してください。」、英 "The daemon cannot be reached, so the last fetched data is shown. Check that `sacty up` is running."
@@ -48,12 +48,27 @@
 
 ## 処理の流れ
 
-- `generateMetadata`：ページの部品と同じ条件（例：スケジュールタスクの詳細は「プロジェクトが無い・スケジュールタスクが無い・別のプロジェクトのもの」）で無いと判定したら `notFoundMetadata()`、あれば `{}` を返す。
+- `generateMetadata`：ページの部品と同じ条件で無いと判定したら `notFoundMetadata()`、あれば `{}` を返す。条件は次のとおり（どれか 1 つで無いとする）。
+
+| ページ | 無いとする条件 |
+| --- | --- |
+| `/tasks/<ID>` | `loadTaskDetail` が `null` |
+| `/tasks/<ID>/runs/<ID>` | `loadRunLog` が `null` |
+| `/tasks/<ID>/review` | `getTask` が `null` |
+| `/projects/<ID>/tasks` | `loadTaskList` が `null` |
+| `/projects/<ID>/settings` | `getProject` が `null` |
+| `/projects/<ID>/schedules` | `listProjects` に ID が無い・`listSchedules` が `null` |
+| `/projects/<ID>/schedules/<ID>` | `listProjects` に ID が無い・`getSchedule` が `null`・予定の `projectId` が URL のプロジェクトと違う |
+| `/projects/<ID>/audit` | `listProjects` に ID が無い・`getProjectAudits` が `null` |
+
 - 文言の検査（日英の同じキーを組にして判定する）
+  - 対象は今と同じ本文だけで、補足（`hint`・`*Hint`）には括弧の確かめを当てない。
   - 片方でも文なら、両方の括弧の中身を R-1 の形（数字と単位・助数詞、`PR`・`PBI`・`Issue` を前に付けうる ID、形式名の一覧 `FORMAT_NAMES`）で確かめる。
   - 文でないもの（ラベル）は、今の長さの基準（日 14 字・英 30 字以上で失敗）で確かめる。
   - `PAREN_EXCEPTIONS` のキーだけ、両方の確かめを外す。`EXCEPTIONS` のキーも括弧は確かめる。
-  - 判定を関数にし、辞書の全体と、テストの固定の入力の両方に当てる。
+  - 判定を関数にし、辞書の全体（補足を除く）と、テストの固定の入力の両方に当てる。
+- 直す文言の見込み：関数でない文は約 7 件（`live.stale`・`common.action.invalidAdoptNote`・`forms.task.taskImageNote`・`forms.task.noRepository`・`projects.editor.githubReloadTimeout`・`labels.pauseHelp.verification`・`review.gate.notReproducedHelp`）。引数を取る文言の件数とあわせて、実装で確定して作業履歴に書く。
+  - 引数を取る文言は、値そのものの引数 1 つの括弧は残し、理由・説明の引数の括弧（`（${reason}）` など）は文に直す。
 
 ## エラー時の振る舞い
 
@@ -62,16 +77,17 @@
 ## 影響範囲
 
 - 文書（R-3〜R-5・R-12）
-  - `architecture`：無いページの題を、各ページの `generateMetadata` が付けることを書く。
-  - `ui-wording`：「本文の規則」と「辞書と検査」の括弧の記述を、文とラベルの別・認める中身・`PAREN_EXCEPTIONS` に直す。
+  - `architecture`：無いページの題を、各ページの `generateMetadata` が付けることを書く。「タスクの詳細・成果物のレビュー・実行のログの画面は、URL を直接開いても 404 になる」は残し、人の確かめで記録した値が 200 なら、同じ PR で日英ともこの記述と無いページの記述を直す。
+  - `ui-wording`：「本文の規則」と「辞書と検査」の括弧の記述を、文とラベルの別・認める中身・`PAREN_EXCEPTIONS` に直す。「辞書と検査」のコードの行（日英）に `PAREN_EXCEPTIONS` と判定の関数を足す。
   - `docs/user/tasks`：知らせの記述を新しい `live.stale` に合わせる（日本語版も括弧を外す）。
   - 作業履歴と ADR を 1 件ずつ足す。ADR は `20261016-1244-ui-wording-body-and-hints` を置き換えない。
+- 人の確かめ（要求要件の「人が確かめること」）：`sacty up` で無いタスクの `/tasks/<ID>` を実ブラウザーで開き、題と応答コード（404 か 200 か）を記録する。題が「Sacty」のままなら、直し方を選び直す。
 
 ## テスト観点
 
-- [TV-1] 8 ページの notFound() の道で、題・本文・リンクが日英で無いページのものになる
-  - 入力：8 ページそれぞれで、読み込み（getTask・loadTaskDetail・loadRunLog・loadTaskList・getProject・listProjects と listSchedules・getSchedule・getProjectAudits）を無い結果に mock し、画面の言語を ja・en にして、ページの部品を描き、ページの generateMetadata を呼び、not-found.tsx を描く。
-  - 期待結果：ページの部品の描画が notFound() で止まり、generateMetadata が ja で { title: "ページが見つかりません - Sacty" }・en で { title: "Page not found - Sacty" } を返し、not-found.tsx が h1「ページが見つかりません」（en "Page not found"）と /dashboard へのリンクを出し、ページの generateMetadata を外すとテストが落ちる。
+- [TV-1] 8 ページの notFound() の道で、無いとする条件ごとに、題・本文・リンクが日英で無いページのものになる
+  - 入力：処理の流れの表の条件ごとに、その読み込みだけを無い結果（null・listProjects に ID が無い）に mock し、ほかは見つかった結果にして、画面の言語を ja・en にしてページの部品を描き、ページの generateMetadata を呼び、not-found.tsx を描く。
+  - 期待結果：どの条件でも、ページの部品の描画が notFound() で止まり、generateMetadata が ja で { title: "ページが見つかりません - Sacty" }・en で { title: "Page not found - Sacty" } を返し、not-found.tsx が h1「ページが見つかりません」（en "Page not found"）と /dashboard へのリンクを出し、ページの generateMetadata を外すとテストが落ちる。
 - [TV-2] スケジュールタスクの詳細は、別のプロジェクトのスケジュールタスクでも無いページの題になる
   - 入力：projects/[id]/schedules/[scheduleId] で、プロジェクトとスケジュールタスクはあるが、スケジュールタスクの projectId が URL のプロジェクトと違う。
   - 期待結果：ページの部品の描画が notFound() で止まり、generateMetadata が { title: "ページが見つかりません - Sacty" } を返す。
@@ -99,9 +115,9 @@
 - [TV-10] 日英の片方だけが文のキーは、両方を文として確かめる
   - 入力：検査の関数に、ja は「。」を持たないラベルで括弧に注釈があり、en は ". " を持つ文の組を渡す。
   - 期待結果：ja の括弧も文の括弧の違反として返る。
-- [TV-11] 括弧の例外は PAREN_EXCEPTIONS だけが外し、ラベルの長い括弧は落ちる
-  - 入力：検査の関数に、PAREN_EXCEPTIONS にあるキーで注釈の括弧を持つ文の組と、どの一覧にも無いラベルで日 14 字の括弧を持つ組を渡す。
-  - 期待結果：前の組は違反にならず、後の組はラベルの括弧の違反として返る。
+- [TV-11] 括弧の例外は PAREN_EXCEPTIONS だけが外し、ラベルの長い括弧は落ち、補足には当てない
+  - 入力：検査の関数に、PAREN_EXCEPTIONS にあるキーで注釈の括弧を持つ文の組と、どの一覧にも無いラベルで日 14 字の括弧を持つ組と、キーが *Hint で注釈の括弧を持つ文の組を渡す。
+  - 期待結果：1 つ目と 3 つ目の組は違反にならず、2 つ目の組はラベルの括弧の違反として返る。
 - [TV-12] PAREN_EXCEPTIONS に、今の例外の一覧の括弧を理由にするキーが移っている
   - 入力：wording-policy.test.ts の差分を読む。
   - 期待結果：今の EXCEPTIONS のうち理由に括弧を挙げるキー（runLog.roles.* の 3 件・projects.editor.excluded・task.images.defaultDescription・projects.editor.githubForContext・githubForShared・sharedRepo・settings.notifyApi・runLog.clipped）が、括弧の要る理由を添えて PAREN_EXCEPTIONS にあり EXCEPTIONS に無く、PAREN_EXCEPTIONS のキーが実在することをテストが確かめている。
@@ -112,8 +128,8 @@
   - 入力：辞書の関数の文言（ja・en）の差分を読む。
   - 期待結果：文に当たる関数の文言の括弧が、数字と単位・ID・FORMAT_NAMES の語・値そのものの引数 1 つ（`（${command}）` など）だけで、`（${reason}）` のような理由の引数の括弧が無い。
 - [TV-15] 仕様書の無いページと括弧の記述が、直した後の振る舞いと一致する
-  - 入力：docs/spec/architecture.md・ui-wording.md と英語版の差分を読む。
-  - 期待結果：architecture に notFound() を呼ぶページの題を各ページの generateMetadata が付けることが、ui-wording の「本文の規則」と「辞書と検査」に文とラベルの別・認める括弧の中身・ラベルの長さの基準・PAREN_EXCEPTIONS が、日英で同じ内容で書かれている。
+  - 入力：docs/spec/architecture.md・ui-wording.md と英語版の差分と、人の確かめで記録した応答コードを読む。
+  - 期待結果：architecture に notFound() を呼ぶページの題を各ページの generateMetadata が付けることが、記録した値が 200 ならタスクの詳細などが 404 になるという記述の直しが、ui-wording の「本文の規則」と「辞書と検査」に文とラベルの別・認める括弧の中身・ラベルの長さの基準・PAREN_EXCEPTIONS が、コードの行に PAREN_EXCEPTIONS と判定の関数が、日英で同じ内容で書かれている。
 - [TV-16] ユーザー文書のデーモンに届かないときの記述が新しい知らせと一致する
   - 入力：docs/user/tasks.md・tasks.en.md の差分を読む。
   - 期待結果：届かないこと・最後に取得した内容を表示していること・`sacty up` を確かめることが、括弧を使わずに日英で書かれている。
