@@ -61,7 +61,7 @@ import {
   projectsWithAccount,
   useTempDir,
 } from "./testing/daemon.js";
-import { loopTurn, waitFor } from "./testing/wait.js";
+import { loopTurn, waitFor, waitForAssertion } from "./testing/wait.js";
 
 useTempDir();
 
@@ -2268,7 +2268,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           return releases;
         };
         const parentSettled = async () => {
-          await vi.waitFor(() => expect(taskOf(service, id).status).toBe("queued"));
+          await waitForAssertion(() => expect(taskOf(service, id).status).toBe("queued"));
         };
         const resubmit = async () => {
           for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
@@ -2295,7 +2295,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await runReview(service, childId);
         expect(types(service, childId)).toContain("PullRequestReviewPosted");
         // checkPullRequests は呼ばない。取り込みの記録を待つ
-        await vi.waitFor(() => expect(importedOf(service, id)).toHaveLength(1));
+        await waitForAssertion(() => expect(importedOf(service, id)).toHaveLength(1));
         const [event] = importedOf(service, id);
         expect(event?.actor).toBe("sacty");
         expect(event?.payload.items).toHaveLength(1);
@@ -2317,7 +2317,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         // 1. 読み取りが例外を投げる
         reads.fail = "throw";
         await runReview(service, childId);
-        await vi.waitFor(() =>
+        await waitForAssertion(() =>
           expect(warn).toHaveBeenCalledWith(
             expect.stringContaining("すぐには取り込めませんでした"),
           ),
@@ -2331,7 +2331,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const before = reads.parent;
         service.rereview(childId);
         await runReview(service, childId);
-        await vi.waitFor(() => expect(reads.parent).toBeGreaterThan(before));
+        await waitForAssertion(() => expect(reads.parent).toBeGreaterThan(before));
         await flush();
         expect(importedOf(service, id)).toHaveLength(0);
         // 60 秒ごとの確認が取り込む
@@ -2349,7 +2349,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         // 投稿の後に、PR の先頭が進んだ
         head.staleAfterPost = "z".repeat(40);
         await runReview(service, childId);
-        await vi.waitFor(() => expect(types(service, id)).toContain("PullRequestReviewDiscarded"));
+        await waitForAssertion(() =>
+          expect(types(service, id)).toContain("PullRequestReviewDiscarded"),
+        );
         const discarded = service
           .get(id)
           ?.activity.find((e) => e.type === "PullRequestReviewDiscarded");
@@ -2380,14 +2382,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implementedPr([verdictOut("changes_required"), implement("# 実装 v2")]);
         const { activity, service, childId, first, id } = made;
         await runReview(service, childId);
-        await vi.waitFor(() => expect(importedOf(service, id)).toHaveLength(1));
+        await waitForAssertion(() => expect(importedOf(service, id)).toHaveLength(1));
         await made.parentSettled();
         expect(restartsOf(service, childId)).toEqual([]);
         await made.resubmit();
         const second = commitOf(service, id);
         expect(second).not.toBe(first);
         // checkPullRequests は呼ばない
-        await vi.waitFor(() =>
+        await waitForAssertion(() =>
           expect(restartsOf(service, childId)).toEqual([{ reason: "updated", commit: second }]),
         );
         // 続けて確認しても、同じ先頭では 1 回だけ
@@ -2406,7 +2408,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const before = statusCalls.fromHeadRead;
         await made.resubmit();
         const second = commitOf(service, id);
-        await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
+        await waitForAssertion(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
         await flush();
         expect(restartsOf(service, childId)).toEqual([]);
         // 反映された後の確認が始める
@@ -2431,7 +2433,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           step: "implement",
           submission: 2,
         });
-        await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
+        await waitForAssertion(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
         await flush();
         expect(restartsOf(service, childId)).toEqual([]);
         head.fail = false;
@@ -2456,7 +2458,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           const restartsBefore = restartsOf(service, childId).length;
           const before = statusCalls.fromHeadRead;
           await made.resubmit();
-          await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
+          await waitForAssertion(() => expect(statusCalls.fromHeadRead).toBeGreaterThan(before));
           await flush();
           expect(restartsOf(service, childId), state).toHaveLength(restartsBefore);
           expect(
@@ -2480,7 +2482,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           const releases = holdHeadReads();
           const before = statusCalls.fromHeadRead;
           await made.resubmit();
-          await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBe(before + 1));
+          await waitForAssertion(() => expect(statusCalls.fromHeadRead).toBe(before + 1));
           if (stop === "parent-paused") await service.pause(id);
           else if (stop === "parent-cancelled") await service.cancel(id);
           else await service.cancel(childId);
@@ -2510,9 +2512,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           }),
         ];
         const check = service.checkPullRequests();
-        await vi.waitFor(() => expect(taskOf(service, id).pendingReview).toBeDefined());
+        await waitForAssertion(() => expect(taskOf(service, id).pendingReview).toBeDefined());
         // 判断の実行が始まって、止まっている
-        await vi.waitFor(() => expect(reads.parent).toBeGreaterThan(0));
+        await waitForAssertion(() => expect(reads.parent).toBeGreaterThan(0));
         await flush();
         expect(taskOf(service, id).status).toBe("awaiting_approval");
         const before = reads.parent;
@@ -2563,7 +2565,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         }
         const second = commitOf(service, id, number);
         expect(second).not.toBe(pr?.commit);
-        await vi.waitFor(() =>
+        await waitForAssertion(() =>
           expect(restartsOf(service, childId)).toEqual([{ reason: "updated", commit: second }]),
         );
         activity.close();
@@ -2578,7 +2580,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           if (order === "immediate-first") {
             // 投稿の直後の取り込みが、読み取りの答えを待っている間に、PR の確認が始まる
             await runReview(service, childId);
-            await vi.waitFor(() => expect(reads.parent).toBe(1));
+            await waitForAssertion(() => expect(reads.parent).toBe(1));
             const check = service.checkPullRequests();
             await flushUntil(() => reads.parent >= 2);
             // 直列に流すので、先の取り込みが答えを待つ間、PR の確認の取り込みは GitHub を読み始めない
@@ -2588,7 +2590,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           } else {
             // PR の確認の取り込みが読み取りの答えを待っている間に、子が投稿する
             const check = service.checkPullRequests();
-            await vi.waitFor(() => expect(reads.parent).toBe(1));
+            await waitForAssertion(() => expect(reads.parent).toBe(1));
             await runReview(service, childId);
             await flushUntil(() => reads.parent >= 2);
             expect(reads.parent, order).toBe(1);
@@ -2620,9 +2622,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           await made.resubmit();
           const second = commitOf(service, id);
           // 提出の直後の経路が、先頭の読み取りの答えを待っている間に、PR の確認も先頭を読み始める
-          await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBe(before + 1));
+          await waitForAssertion(() => expect(statusCalls.fromHeadRead).toBe(before + 1));
           const check = service.checkPullRequests();
-          await vi.waitFor(() => expect(statusCalls.fromHeadRead).toBe(before + 2));
+          await waitForAssertion(() => expect(statusCalls.fromHeadRead).toBe(before + 2));
           const [immediate, checked] = releases;
           if (order === "immediate-first") {
             immediate?.();
@@ -4374,7 +4376,26 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               }),
           );
           setDraft.mockImplementation(original);
-          await service.checkPullRequests();
+          const originalTimeout = globalThis.setTimeout;
+          let settle: (() => void) | undefined;
+          const timeoutSpy = ignoresAbort
+            ? vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+                callback: TimerHandler,
+                delay?: number,
+                ...args: unknown[]
+              ) => {
+                if (delay === 200 && typeof callback === "function") {
+                  settle = () => callback(...args);
+                  return originalTimeout(() => {}, 60_000);
+                }
+                return originalTimeout(callback, delay, ...args);
+              }) as typeof setTimeout)
+            : undefined;
+          try {
+            await service.checkPullRequests();
+          } finally {
+            timeoutSpy?.mockRestore();
+          }
           expect(signals[0]?.aborted).toBe(true);
           await runReview(service, childId);
           if (ignoresAbort) {
@@ -4383,6 +4404,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             expect(types(service, id), String(ignoresAbort)).not.toContain(
               "PullRequestMarkedReady",
             );
+            expect(settle).toBeDefined();
+            settle?.();
             await draftRequestsSettled(service);
           }
           // 中断で終わった・上限を過ぎた要求は数えず、指摘なしでドラフトを外す
@@ -4448,7 +4471,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(pulls.drafts[7]).toBe(false);
         // 遅れて届いた戻す要求で、GitHub ではドラフトに戻った
         late.resolve();
-        await vi.waitFor(() => expect(pulls.drafts[7]).toBe(true));
+        await waitForAssertion(() => expect(pulls.drafts[7]).toBe(true));
         // 次の PR の確認で、GitHub の状態を読んで外し直す
         await service.checkPullRequests();
         expect(setDraft.mock.calls.at(-1)?.[0]).toMatchObject({
@@ -7579,7 +7602,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
               );
             /** 決定を PR のコメントに残し終えるまで待つ（記録を待つ。固定の時間は待たない）。 */
             const decisionPosted = (svc: TaskService, id: string) =>
-              vi.waitFor(() => expect(count(svc, id, "DeferralDecisionsPosted")).toBe(1));
+              waitForAssertion(() => expect(count(svc, id, "DeferralDecisionsPosted")).toBe(1));
             /** 案が、持ち越されて、今の提出の対応になっている。 */
             const carried = (task: Task, submission: number) => {
               expect(task.remarks[0]).toMatchObject({
@@ -9046,10 +9069,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 ],
               });
               // 1 件目が期限を超えて、失敗が記録されるのを待つ（固定の時間では待たない）
-              await vi.waitFor(() => expect(handled(service, id)).toHaveLength(1));
+              await waitForAssertion(() => expect(handled(service, id)).toHaveLength(1));
               pulls.issueGate = undefined;
               release();
-              await vi.waitFor(() => expect(handled(service, id)).toHaveLength(2));
+              await waitForAssertion(() => expect(handled(service, id)).toHaveLength(2));
               const results = handled(service, id).map((e) => e.payload as Record<string, unknown>);
               expect(results[0]).toMatchObject({
                 remarkId: "implement-1-1",
@@ -9072,7 +9095,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 await settle(made.service, made.id);
                 made.pulls.createIssue = async () => fail();
                 issue(made.service, made.id);
-                await vi.waitFor(() => expect(handled(made.service, made.id)).toHaveLength(1));
+                await waitForAssertion(() =>
+                  expect(handled(made.service, made.id)).toHaveLength(1),
+                );
                 const payload = handled(made.service, made.id)[0]?.payload as {
                   failure?: unknown;
                 };

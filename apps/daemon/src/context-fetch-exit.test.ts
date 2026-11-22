@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -11,9 +11,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { GitContextFetcher } from "./context.js";
 import { stopFetchProcessesSync } from "./fetch-processes.js";
+import { waitForAssertion } from "./testing/wait.js";
 
 /** デーモンの代わりの子のプロセスが読む（素の Node が型を取り除いて読む。node: のほかは import しない）。 */
 const FETCH_PROCESSES = fileURLToPath(new URL("./fetch-processes.ts", import.meta.url));
@@ -26,6 +27,49 @@ const alive = (pid: number) => {
     return false;
   }
 };
+
+/** 回収前のゾンビも残存として扱い、状態を失敗に添える。 */
+const remaining = (pids: number[]) =>
+  pids.filter(alive).map((pid) => {
+    let state: string;
+    try {
+      state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
+    } catch {
+      state = "状態を取得できない";
+    }
+    return `${pid}: ${state}`;
+  });
+
+it("回収されないゾンビを残存として報告する", async () => {
+  const parent = spawn(
+    process.execPath,
+    [
+      "-e",
+      `
+    const { spawn } = require("node:child_process");
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 300)"]);
+    console.log(child.pid);
+    process.kill(process.pid, "SIGSTOP");
+    child.on("exit", () => process.exit(0));
+  `,
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
+  try {
+    const pid = Number(
+      await new Promise<string>((resolve) =>
+        parent.stdout?.once("data", (data) => resolve(String(data).trim())),
+      ),
+    );
+    await waitForAssertion(() => expect(remaining([pid])[0]).toMatch(new RegExp(`^${pid}: Z`)));
+    await expect(
+      waitForAssertion(() => expect(remaining([pid])).toEqual([]), { timeoutMs: 100 }),
+    ).rejects.toThrow(new RegExp(`${pid}: Z`));
+  } finally {
+    parent.kill("SIGCONT");
+    await new Promise<void>((resolve) => parent.once("exit", () => resolve()));
+  }
+});
 
 describe("デーモンが終わるときに、取得中の git を止める（PR #117 レビュー指摘）", () => {
   let work = "";
@@ -71,15 +115,12 @@ describe("デーモンが終わるときに、取得中の git を止める（PR
           () => "ok",
           () => "failed",
         );
-      await vi.waitFor(() => expect(pids()).toHaveLength(2), { timeout: 5_000, interval: 50 });
+      await waitForAssertion(() => expect(pids()).toHaveLength(2));
       expect(pids().every(alive)).toBe(true);
       expect(process.listeners("exit")).toContain(stopFetchProcessesSync);
       stopFetchProcessesSync();
       expect(await fetching).toBe("failed");
-      await vi.waitFor(() => expect(pids().filter(alive)).toEqual([]), {
-        timeout: 3_000,
-        interval: 50,
-      });
+      await waitForAssertion(() => expect(remaining(pids())).toEqual([]));
     } finally {
       process.env.PATH = path;
     }
@@ -138,17 +179,14 @@ const timer = setInterval(() => {
     it(`デーモンが終わったら（${how}）、git のプロセスグループが残らない`, async () => {
       const daemon = startDaemon(how);
       try {
-        await vi.waitFor(() => expect(pids()).toHaveLength(2), { timeout: 5_000, interval: 50 });
+        await waitForAssertion(() => expect(pids()).toHaveLength(2));
         if (how === "signal") {
           // 止める前は、取得の git も、その子プロセスも動いている
           expect(pids().every(alive)).toBe(true);
           daemon.child.kill("SIGTERM");
         }
         await daemon.exited;
-        await vi.waitFor(() => expect(pids().filter(alive)).toEqual([]), {
-          timeout: 3_000,
-          interval: 50,
-        });
+        await waitForAssertion(() => expect(remaining(pids())).toEqual([]));
       } finally {
         await reap(daemon);
       }

@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { PassThrough } from "node:stream";
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { waitForAssertion } from "../../apps/daemon/src/testing/wait.js";
 
 const require = createRequire(new URL("../../apps/desktop/main.cjs", import.meta.url));
 const source = readFileSync(new URL("../../apps/desktop/main.cjs", import.meta.url), "utf8");
@@ -69,7 +70,7 @@ async function fixture() {
       return require(id);
     },
   });
-  await vi.waitFor(() => expect(handlers.has("desktop:start")).toBe(true));
+  await waitForAssertion(() => expect(handlers.has("desktop:start")).toBe(true));
   const result = await handlers.get("desktop:start")({
     sender: windows[0].webContents,
     senderFrame: { url: "file:///desktop/setup.html" },

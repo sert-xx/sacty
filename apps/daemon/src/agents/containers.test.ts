@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { AgentTimeoutError } from "../errors.js";
+import { waitForAssertion } from "../testing/wait.js";
 import { DockerExecutor, RunningContainers } from "./docker.js";
 import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
 import { withOutputRelay } from "./output-relay.js";
@@ -351,7 +352,7 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
     const line = assistantLine("m1", 8);
     run?.stdout.emit("data", line.slice(0, 30));
     // 停止の確認が失敗で終わったことを観測してから（タイマーを 1 周待つので、実行側の続きは進んでいる）、後半を送る
-    await vi.waitFor(() => expect(stopCheckDone).toBe(true));
+    await waitForAssertion(() => expect(stopCheckDone).toBe(true));
     run?.stdout.emit("data", line.slice(30));
     run?.emit("close", 137);
     const error = await running;
