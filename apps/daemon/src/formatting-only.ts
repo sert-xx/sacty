@@ -40,6 +40,7 @@ export async function formattingOnlyFiles(
 
 /** Compare syntax without ignoring literal spelling, comments, or meaningful whitespace. */
 export function formattingOnly(path: string, before: string, after: string): boolean {
+  if (Buffer.byteLength(before) > 256 * 1024 || Buffer.byteLength(after) > 256 * 1024) return false;
   if (before === after || before.includes("\0") || after.includes("\0")) return false;
   const extension = extname(path);
   const plugins: ParserPlugin[] = [];

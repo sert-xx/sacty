@@ -305,7 +305,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         .at(-1)?.payload,
     ).toEqual({ count: 1 });
     await drain(service);
-    expect(promptOf(executor, executor.calls.length - 1)).toContain("a.ts");
+    const retryPrompt = promptOf(executor, executor.calls.length - 1);
+    expect(retryPrompt).toContain("a.ts");
+    expect(retryPrompt).toContain("git diff で差分を見て、自分の整形の変更だけを戻す");
+    expect(retryPrompt).toContain("ファイルを丸ごと書き戻さず");
+    expect(retryPrompt).toContain("sacty-formatting");
+    expect(retryPrompt).not.toContain("+export const data");
     expect(repos.publishedDiff).toEqual(["b.ts"]);
     expect(readFileSync(join(repos.clone, "b.ts"), "utf8")).toBe(
       `${formatted}export function added() {}\n`,
@@ -772,6 +777,189 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
+  it.each(["incomplete", "formatting"] as const)(
+    "%s の続きのコンテキスト準備失敗後も起点とセッションを引き継ぐ",
+    async (kind) => {
+      const repos = new FakeRepos();
+      const base = repos.tree;
+      const submitted = "a".repeat(40);
+      repos.treeDiffs.set(`${base}:${submitted}`, [
+        {
+          status: "M",
+          path: "a.ts",
+          oldMode: "100644",
+          newMode: "100644",
+          oldObject: "old",
+          newObject: "new",
+        },
+      ]);
+      repos.treeBlobs.set("old", "const x={a:1};");
+      repos.treeBlobs.set("new", "const x = { a: 1, };");
+      const first =
+        kind === "incomplete"
+          ? out(
+              `${implement("# 未完了").output}\n\n\`\`\`sacty-completion\n${JSON.stringify({ status: "incomplete", remaining: ["続き"] })}\n\`\`\``,
+            )
+          : implement("# 実装");
+      const sessionLogs = new SessionLogStore(join(dir, `runs-${kind}`));
+      const { activity, service, executor, id } = await toImplement([first, implement("# 続き")], {
+        repos,
+        sessionLogs,
+      });
+      executor.appendSessionFiles = true;
+      executor.sessionIdOf = (inv, runId) => {
+        const index = inv.command.indexOf("--resume");
+        return index < 0 ? `session-${runId}` : (inv.command[index + 1] ?? "");
+      };
+      executor.sessionFiles = (inv, runId) => ({
+        [`projects/-workspace/${executor.sessionIdOf?.(inv, runId)}.jsonl`]: "{}\n",
+      });
+      await service.runNext(id);
+      repos.tree = submitted;
+      await service.runNext(id);
+      const previous = service
+        .get(id)
+        ?.activity.findLast(
+          (e) => e.type === "AgentRunCompleted" && e.payload.step === "implement",
+        );
+      if (previous?.type !== "AgentRunCompleted") throw new Error("completed run missing");
+      const context = vi
+        .spyOn(service as never, "runContext")
+        .mockRejectedValueOnce(new Error("context failed"));
+      await service.runNext(id);
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed")?.payload,
+      ).toMatchObject({ preparationFailed: true });
+      context.mockRestore();
+      service.resume(id, {});
+      await service.runNext(id);
+      const start = service
+        .get(id)
+        ?.activity.findLast((e) => e.type === "AgentRunStarted" && e.payload.step === "implement");
+      expect(start?.type === "AgentRunStarted" && start.payload.formattingBaseline?.tree).toBe(
+        base,
+      );
+      expect(executor.calls.at(-1)?.command).toContain(`session-${previous.payload.runId}`);
+      activity.close();
+    },
+  );
+
+  it.each(
+    (["incomplete", "formatting", "timeout"] as const).flatMap((continuation) =>
+      (["workspace", "merge", "documents", "context", "services"] as const).map((failure) => ({
+        continuation,
+        failure,
+      })),
+    ),
+  )(
+    "$continuation の続行で $failure の準備に失敗しても元の起点とセッションを使う",
+    async ({ continuation, failure }) => {
+      const repos = new FakeRepos();
+      const base = repos.tree;
+      const submitted = "a".repeat(40);
+      repos.treeDiffs.set(`${base}:${submitted}`, [
+        {
+          status: "M",
+          path: "a.ts",
+          oldMode: "100644",
+          newMode: "100644",
+          oldObject: "old",
+          newObject: "new",
+        },
+      ]);
+      repos.treeBlobs.set("old", "const x={a:1};");
+      repos.treeBlobs.set("new", "const x = { a: 1, };");
+      const incomplete = out(
+        `${implement("# 未完了").output}\n\n\`\`\`sacty-completion\n${JSON.stringify({ status: "incomplete", remaining: ["続き"] })}\n\`\`\``,
+      );
+      const timeout: AgentOutcome = {
+        kind: "failed",
+        reason: "error",
+        message: message("run.timeout", { minutes: 3 }),
+      };
+      const first =
+        continuation === "timeout"
+          ? timeout
+          : continuation === "incomplete"
+            ? incomplete
+            : implement("# 実装");
+      const sessionLogs = new SessionLogStore(join(dir, `matrix-${continuation}-${failure}`));
+      const { activity, service, executor, id } = await toImplement([first, implement("# 続き")], {
+        repos,
+        sessionLogs,
+        mergeBase: true,
+      });
+      executor.appendSessionFiles = true;
+      executor.sessionIdOf = (inv, runId) => {
+        const index = inv.command.indexOf("--resume");
+        return index < 0 ? `session-${runId}` : (inv.command[index + 1] ?? "");
+      };
+      executor.sessionFiles = (inv, runId) => ({
+        [`projects/-workspace/${executor.sessionIdOf?.(inv, runId)}.jsonl`]: "{}\n",
+      });
+      await service.runNext(id);
+      repos.tree = submitted;
+      if (continuation === "timeout") service.resume(id, {});
+      else await service.runNext(id);
+      const previous = service
+        .get(id)
+        ?.activity.findLast((e) => e.type === "AgentRunStarted" && e.payload.step === "implement");
+      if (previous?.type !== "AgentRunStarted") throw new Error("started run missing");
+      if (failure === "documents")
+        activity.append({
+          taskId: id,
+          projectId: "default",
+          events: [
+            {
+              actor: "sacty",
+              event: {
+                type: "TaskBranchCreated",
+                payload: { branch: "sacty/test", commit: repos.head },
+              },
+            },
+          ],
+        });
+      const failed =
+        failure === "workspace"
+          ? vi
+              .spyOn(service as never, "prepareRepository")
+              .mockResolvedValueOnce({ ok: false, message: "prepare failed" } as never)
+          : failure === "merge"
+            ? vi
+                .spyOn(service as never, "syncBase")
+                .mockResolvedValueOnce({ kind: "failed", message: "merge failed" } as never)
+            : failure === "documents"
+              ? vi.spyOn(repos, "fetchBranch").mockRejectedValueOnce(new Error("fetch failed"))
+              : failure === "context"
+                ? vi
+                    .spyOn(service as never, "runContext")
+                    .mockRejectedValueOnce(new Error("context failed"))
+                : vi
+                    .spyOn(service as never, "startServices")
+                    .mockResolvedValueOnce({ ok: false, message: "service failed" } as never);
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed")?.payload,
+      ).toMatchObject({ preparationFailed: true });
+      failed.mockRestore();
+      service.resume(id, {});
+      await service.runNext(id);
+      const started = service
+        .get(id)
+        ?.activity.findLast((e) => e.type === "AgentRunStarted" && e.payload.step === "implement");
+      expect(started?.type === "AgentRunStarted" && started.payload.formattingBaseline?.tree).toBe(
+        base,
+      );
+      expect(executor.calls.at(-1)?.command).toContain(`session-${previous.payload.runId}`);
+      await service.runNext(id);
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "FormattingOnlyRejected")?.payload,
+      ).toEqual({ count: 1 });
+      activity.close();
+    },
+  );
+
   it("申告されたパスと理由の秘密値を伏せて照合し、記録と本文に残さない", async () => {
     const repos = new FakeRepos();
     repos.diffFileList = [{ status: "M", path: "oauth-secret.ts" }];
@@ -829,7 +1017,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     ]);
     repos.treeBlobs.set("old", "const x = { a: 1 };\n");
     repos.treeBlobs.set("new", "const x = {\n  a: 1,\n};\n");
-    const reason = `${"x".repeat(295)}ghp_secret`;
+    const reason = `${"x".repeat(294)}😀ghp_secret`;
     const declaration = block({ "sacty-formatting": { files: [{ path: "a.ts", reason }] } });
     const { activity, service, executor, id } = await toImplement(
       [implement(`# 実装\n\n${declaration}`)],
@@ -842,7 +1030,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     await drain(service);
     const result = service.get(id);
     if (!result) throw new Error("task missing");
-    expect(result.task.formattingCheck?.declared[0]?.reason).toBe(`${"x".repeat(295)}[REDA`);
+    expect(result.task.formattingCheck?.declared[0]?.reason).toBe(`${"x".repeat(294)}😀[REDA`);
     expect(JSON.stringify(result.activity)).not.toContain("ghp_");
     expect(buildPullRequestBody(result.task)).not.toContain("ghp_");
     activity.close();
@@ -888,6 +1076,88 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     expect(types(service, id)).not.toContain("TaskPaused");
     expect(types(service, id)).not.toContain("FormattingOnlyRejected");
     expect(pulls.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("起点のツリーが Git に存在しなくても停止せず提出する", async () => {
+    const gitDir = join(dir, "missing-baseline");
+    mkdirSync(gitDir);
+    execFileSync("git", ["init", "--quiet", gitDir]);
+    const repos = new FakeRepos();
+    repos.tree = "f".repeat(40);
+    const real = new GitRepositoryWorkspace();
+    vi.spyOn(repos, "treeChanges").mockImplementation((_ignored, from, to) =>
+      real.treeChanges(join(gitDir, ".git"), from, to),
+    );
+    const pulls = new FakePulls();
+    const { activity, service, id } = await toImplement([implement("# 実装")], { repos, pulls });
+    await service.runNext(id);
+    repos.tree = "a".repeat(40);
+    await drain(service);
+    expect(types(service, id)).not.toContain("TaskPaused");
+    expect(types(service, id)).not.toContain("FormattingOnlyRejected");
+    expect(pulls.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("検査対象外のファイルは提出時に内容とモードを保つ", async () => {
+    const origin = join(dir, "excluded-origin");
+    mkdirSync(origin);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: origin });
+    git("init", "--initial-branch=main");
+    git("config", "user.name", "test");
+    git("config", "user.email", "test@example.com");
+    for (const path of ["m.ts", "日本語.ts"]) writeFileSync(join(origin, path), "const x={a:1};\n");
+    git("add", "--all");
+    git("commit", "-m", "base");
+    class GitRepos extends FakeRepos {
+      real = new GitRepositoryWorkspace();
+      work = "";
+      metadata = "";
+      published: { path: string; mode: string; content: string }[] = [];
+      async prepare(work: string, metadata: string) {
+        this.work = work;
+        this.metadata = metadata;
+        return this.real.prepare(work, metadata, origin, undefined);
+      }
+      async treeId(work: string, metadata: string, base: string) {
+        return this.real.treeId(work, metadata, base);
+      }
+      async treeChanges(metadata: string, from: string, to: string) {
+        return this.real.treeChanges(metadata, from, to);
+      }
+      async treeBlob(metadata: string, object: string) {
+        return this.real.treeBlob(metadata, object);
+      }
+      async publish(input: Parameters<FakeRepos["publish"]>[0]) {
+        const tree = await this.real.treeId(this.work, this.metadata, input.baseCommit ?? "");
+        const changes = await this.real.treeChanges(this.metadata, input.baseCommit ?? "", tree);
+        this.published = await Promise.all(
+          changes.map(async (change) => ({
+            path: change.path,
+            mode: change.newMode,
+            content: await this.real.treeBlob(this.metadata, change.newObject),
+          })),
+        );
+        return super.publish(input);
+      }
+    }
+    const repos = new GitRepos();
+    const { activity, service, executor, id } = await toImplement([implement("# 実装")], { repos });
+    executor.respond = () => {
+      for (const path of ["m.ts", "日本語.ts"])
+        writeFileSync(join(repos.work, path), "const x = { a: 1, };\n");
+      execFileSync("chmod", ["+x", join(repos.work, "m.ts")]);
+      return undefined;
+    };
+    await drain(service);
+    expect(types(service, id)).not.toContain("FormattingOnlyRejected");
+    expect(repos.published).toEqual(
+      expect.arrayContaining([
+        { path: "m.ts", mode: "100755", content: "const x = { a: 1, };\n" },
+        { path: "日本語.ts", mode: "100644", content: "const x = { a: 1, };\n" },
+      ]),
+    );
     activity.close();
   });
 
@@ -16141,6 +16411,44 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const i = inv?.command.indexOf(name) ?? -1;
       return i >= 0 ? inv?.command[i + 1] : undefined;
     };
+
+    it("時間切れ後にコンテキストの準備が失敗しても起点とセッションを引き継ぐ", async () => {
+      const sessionLogs = new SessionLogStore(join(dir, "runs"));
+      const repos = new FakeRepos();
+      const baseline = repos.tree;
+      const { activity, service, executor, id } = await toImplement(
+        [timeout, implement("# 実装")],
+        { sessionLogs, repos },
+      );
+      executor.appendSessionFiles = true;
+      executor.sessionIdOf = (inv, runId) => argAfter(inv, "--resume") ?? `session-${runId}`;
+      executor.sessionFiles = (inv, runId) => ({
+        [`projects/-workspace/${argAfter(inv, "--resume") ?? `session-${runId}`}.jsonl`]: "{}\n",
+      });
+      await service.runNext(id);
+      const stopped = service.get(id)?.activity.find((e) => e.type === "AgentRunTimedOut");
+      if (stopped?.type !== "AgentRunTimedOut") throw new Error("timeout missing");
+      const context = vi
+        .spyOn(service as never, "runContext")
+        .mockRejectedValueOnce(new Error("context failed"));
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed")?.payload,
+      ).toMatchObject({ preparationFailed: true });
+      context.mockRestore();
+      repos.tree = "a".repeat(40);
+      service.resume(id, {});
+      await service.runNext(id);
+      const start = service
+        .get(id)
+        ?.activity.findLast((e) => e.type === "AgentRunStarted" && e.payload.step === "implement");
+      expect(start?.type === "AgentRunStarted" && start.payload.formattingBaseline?.tree).toBe(
+        baseline,
+      );
+      expect(argAfter(executor.calls.at(-1), "--resume")).toBe(`session-${stopped.payload.runId}`);
+      activity.close();
+    });
 
     it("実装が時間切れで止まっても作業領域の変更は残り、再開した実装は同じ作業領域で、同じセッションの続きから進む", async () => {
       const sessionLogs = new SessionLogStore(join(dir, "runs"));

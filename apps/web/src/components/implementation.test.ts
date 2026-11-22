@@ -74,6 +74,9 @@ describe("整形の検査結果", () => {
     const en = render(t, "en");
     expect(en).toContain("Requested formatting");
     expect(en).toContain("2 formatting-only files remain");
+    expect(render({ ...t, formattingCheck: { declared: [], remained: 1 } }, "en")).toContain(
+      "1 formatting-only file remains",
+    );
   });
 });
 

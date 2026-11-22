@@ -1619,7 +1619,7 @@ Code: `apps/daemon/src/service.ts` (`reviewOnlySteps`, `rereviewDocsOnlyOf`, `do
 
 The implementation and fix instructions require formatting only with the repository's commands and configuration, without other tools, configuration, or copies outside the workspace. They require reverting formatting-only changes outside the task and declaring the paths and reasons for requested formatting.
 
-Sacty retains the workspace tree after the initial merge as the baseline across continuations. Before submission it compares syntax trees and tokens in JavaScript, TypeScript, and JSON, detecting differences limited to positional whitespace, line breaks, and trailing commas. It compares literal and comment contents, meaningful line breaks, quotes, and semicolons. Invalid JSON, `.jsonc`, unreadable files, files over 1 MiB, and unsupported languages are not detected.
+Sacty retains the workspace tree after the initial merge as the baseline across continuations. Before submission it compares syntax trees and tokens in JavaScript, TypeScript, and JSON, detecting differences limited to positional whitespace, line breaks, and trailing commas. It compares literal and comment contents, meaningful line breaks, quotes, and semicolons. Invalid JSON, `.jsonc`, unreadable files, files over 256 KiB, and unsupported languages are not detected.
 
 Files changed by intervening merges, additions, deletions, renames, mode changes, and paths rejected by `validPath` are excluded. Paths accept only ASCII letters, digits, `_`, `.`, `/`, and `-`. Agent formatting in these files can be missed. If the baseline or diff cannot be read, or a secret needed to redact paths cannot be retrieved, the submission proceeds.
 

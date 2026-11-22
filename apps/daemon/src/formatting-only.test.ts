@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { formattingOnly } from "./formatting-only.js";
 
 describe("formattingOnly", () => {
+  it("does not parse files larger than 256 KiB", () => {
+    const large = `//${"a".repeat(256 * 1024)}\nconst x=1;`;
+    expect(formattingOnly("a.js", large, large.replace("x=", "x = "))).toBe(false);
+  });
   it("compares long sequences of comments around trailing commas", () => {
     const comments = "// comment\n".repeat(20000);
     expect(formattingOnly("a.js", `f(a,${comments});`, `f( a ${comments});`)).toBe(true);

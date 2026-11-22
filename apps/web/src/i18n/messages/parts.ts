@@ -384,7 +384,8 @@ const en: PartsMessages = {
   implementation: {
     title: "Implement",
     formattingDeclared: "Requested formatting",
-    formattingRemaining: (count) => `${count} formatting-only files remain.`,
+    formattingRemaining: (count) =>
+      count === 1 ? "1 formatting-only file remains." : `${count} formatting-only files remain.`,
     passed: "Done",
     working: "In progress",
     paused: "Paused",

@@ -2202,4 +2202,4 @@ Records from the older version are shown on the screen as follows.
 
 If an implementation submission contains undeclared formatting-only files, sacty asks the agent to undo them and resubmit. Formatting the agent declares as requested is retained. If formatting-only files remain after two resubmissions, sacty accepts the submission and shows only the count in the PR body. For an inherited PR or a task without a PR, you can see it in task details.
 
-The check covers JavaScript, TypeScript, and JSON. It excludes files changed by merges, additions, deletions, renames, mode changes, unsupported paths, files larger than 1 MiB, and files whose syntax cannot be parsed, so formatting changes can remain in the PR.
+The check covers JavaScript, TypeScript, and JSON. It excludes files changed by merges, additions, deletions, renames, mode changes, unsupported paths, files larger than 256 KiB, and files whose syntax cannot be parsed, so formatting changes can remain in the PR.

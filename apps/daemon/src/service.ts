@@ -13760,7 +13760,9 @@ export class TaskService {
               agentId: agent.id,
               reason: "error",
               message: redactText(errorText(error), contextSecrets),
-              ...(copiesRepositories(task, step) ? { preparationFailed: true as const } : {}),
+              ...(step === "implement" || copiesRepositories(task, step)
+                ? { preparationFailed: true as const }
+                : {}),
             },
           },
         },
@@ -14322,7 +14324,9 @@ export class TaskService {
             costUsd,
             estimated,
             ...unknownCost(executed),
-            ...(multiRepoStep && !agentInvoked ? { preparationFailed: true as const } : {}),
+            ...((step === "implement" || multiRepoStep) && !agentInvoked
+              ? { preparationFailed: true as const }
+              : {}),
           },
         },
       };
@@ -18084,7 +18088,7 @@ export class TaskService {
       const declaredNow = additions
         .map((item) => ({
           path: redact(item.path, secrets),
-          reason: redact(item.reason, secrets).trim().slice(0, 300),
+          reason: Array.from(redact(item.reason, secrets).trim()).slice(0, 300).join(""),
         }))
         .filter((item) => paths.has(item.path) && item.reason);
       const declared = [

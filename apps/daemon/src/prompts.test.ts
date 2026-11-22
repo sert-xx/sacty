@@ -2938,6 +2938,32 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(extractBlocks(output, new Set()).output).toBe(output);
   });
 
+  it("実装の各指示に整形の範囲と申告の決まりを含める", () => {
+    const base = task({ outputs: {} }, ["requirements", "implement"]);
+    const rework = buildPrompt(task({}, ["requirements", "implement"]), "implement", {});
+    const bugfix = buildPrompt(task({ outputs: {} }, ["reproduce", "implement"]), "implement", {});
+    expect(rework).toContain("この実行は、前の実装の説明");
+    expect(bugfix).toContain("再現の工程で、不具合を再現する失敗するテスト");
+    const prompts = [
+      buildPrompt(base, "implement", {}),
+      rework,
+      bugfix,
+      buildPrompt(task({ body: "文書だけを直す", outputs: {} }, ["implement"]), "implement", {}),
+      buildPrompt(
+        task({ securityFix: { taskId: "source", category: "dependency" } }, ["implement"]),
+        "implement",
+        {},
+      ),
+    ];
+    for (const prompt of prompts) {
+      expect(prompt).toContain("整形はリポジトリが定めるコマンドと設定だけ");
+      expect(prompt).toContain("依存に無いものを npx で取る");
+      expect(prompt).toContain("作業領域の外の写しで整形しない");
+      expect(prompt).toContain("そのファイルを戻してから提出");
+      expect(prompt).toContain("sacty-formatting");
+    }
+  });
+
   it("実装の指示で、直しの対象は AI のレビューの「指摘」の節と「前回の指摘」の未対応だけで、取り下げた・対応しないと判断した・後続に回すと決めた行は直さないと伝える（PBI-445）", () => {
     const t = task(
       {
