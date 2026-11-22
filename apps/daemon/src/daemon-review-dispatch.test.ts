@@ -109,6 +109,22 @@ describe("担当を 1 件も起動しなかった PR のレビューは、採ら
     );
   const prompt = (executor: FakeExecutor, i: number) => executor.calls[i]?.command.join(" ") ?? "";
 
+  it.each(["差分", "主対象の文書"])(
+    "%s を読めず取得を再試行した結果は、判定なしで投稿する",
+    async (missing) => {
+      const body = `総評\n\nレビューを完了できませんでした。${missing}を読めませんでした。取得して確認してください。`;
+      const { service, pulls, activity, id } = start([out(body)], [1]);
+      await service.runNext(id);
+      expect(service.get(id)?.task.reviewVerdicts).toEqual([{ round: 1, missing: "absent" }]);
+      expect(failures(service, id)).toHaveLength(0);
+      await service.runNext(id);
+      expect(pulls.reviews).toHaveLength(1);
+      expect(pulls.reviews[0]?.body).toContain(body);
+      expect(pulls.reviews[0]?.body).toContain("判定：付いていません");
+      activity.close();
+    },
+  );
+
   it("担当を起動しなかった実行は、判定を採らず、PR に投稿せず、止めずにやり直す。次の実行には、前の回が担当を起動しなかったことを伝える", async () => {
     const { service, executor, pulls, activity, id } = start(
       [out(`# 1回目\n${verdict("no_findings")}`), out(`# 2回目\n${verdict("suggestions")}`)],
