@@ -450,7 +450,7 @@ The findings of the child task's review reach the original task as follows.
    On Requirements and Design PRs, two consecutive suggestion-only verdicts leave the task waiting for approval without rework. To have them fixed, comment on the PR that action is needed or request changes on the screen.
    Must-fix findings (`[要修正]`) are always fixed.
 3. When the original task fixes them, updates the PR, and goes back to waiting for approval, the child task reviews the latest commit again right away.
-4. Steps 2 and 3 repeat until there are no findings or the task waits for approval (the cost of repetition stops at each task’s budget).
+4. Steps 2 and 3 repeat until there are no findings or consecutive suggestion-only verdicts stop the rework (the cost of repetition stops at each task’s budget).
    When every suggestion is declined and nothing is left to fix, the original task does not update the PR, and the child task reviews the same commit once more.
    A review with no findings is not delivered and does not request changes (the task waits for the PR to be merged).
 
