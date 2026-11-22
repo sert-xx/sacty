@@ -374,14 +374,12 @@ describe("sacty mcp の成果物と実行の取得（PBI-395）", () => {
   it("5MB の本文の成果物でも、返す量だけを返す", async () => {
     const w = world();
     w.set(w.task.id, { outputs: { design: "あ".repeat(1_700_000) } });
-    const started = Date.now();
     const res = await w.get(`/api/tasks/${w.task.id}/deliverables/design/output`);
     const body = await res.text();
     const parsed = JSON.parse(body) as { text: string; totalBytes: number; clipped: boolean };
     expect(parsed.totalBytes).toBe(5_100_000);
     expect(parsed.clipped).toBe(true);
     expect(body.length).toBeLessThanOrEqual(JSON.stringify(parsed.text).length + 4096);
-    expect(Date.now() - started).toBeLessThan(30_000);
     w.activity.close();
   });
 

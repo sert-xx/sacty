@@ -112,7 +112,7 @@ const ja = {
   secretsResult: (ok: number, total: number, unread = 0) => {
     const unchecked =
       unread > 0
-        ? `読めなかったコンテキストが ${unread} 件あり、その中の秘密情報は確かめていません（下の警告を見てください）。`
+        ? `読めなかったコンテキストが ${unread} 件あり、その中の秘密情報は確かめていません。詳しくは下の警告を見てください。`
         : "";
     if (total === 0)
       return unread > 0
@@ -233,7 +233,7 @@ const en: SettingsMessages = {
   secretsResult: (ok, total, unread = 0) => {
     const unchecked =
       unread > 0
-        ? ` ${unread} context${unread === 1 ? "" : "s"} could not be read, so the secrets in ${unread === 1 ? "it were" : "them were"} not checked (see the warnings below).`
+        ? ` ${unread} context${unread === 1 ? "" : "s"} could not be read, so the secrets in ${unread === 1 ? "it were" : "them were"} not checked. See the warnings below.`
         : "";
     if (total === 0)
       return unread > 0 ? `No secrets could be checked.${unchecked}` : "No secrets are used.";

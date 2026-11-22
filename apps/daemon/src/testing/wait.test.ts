@@ -14,7 +14,6 @@ describe("テストの合図の待ち（PBI-85。PR #94 レビュー指摘）", 
 
   it("合図を出すはずのプロセスが先に終わったら、期限を待たずに、終了コード・標準エラー出力の末尾を書いたエラーで落ちる", async () => {
     const child = node('process.stderr.write("cannot start: missing tool"); process.exit(3)');
-    const started = Date.now();
     await expect(
       waitFor(() => false, {
         what: "準備の合図",
@@ -24,7 +23,7 @@ describe("テストの合図の待ち（PBI-85。PR #94 レビュー指摘）", 
     ).rejects.toThrow(
       /^準備の合図を待っている間に、偽のコマンドが、合図を出さないまま終わった：終了コード 3・シグナル null・標準エラー出力の末尾 "cannot start: missing tool"$/,
     );
-    expect(Date.now() - started).toBeLessThan(5_000);
+    // 期限（60秒）を待てばテストの時間切れで落ちる。上のエラーの文は、プロセスが終わったのを見て落ちたときだけ出る
   });
 
   it("終わる直前に合図を出していれば、成功にする", async () => {
@@ -68,7 +67,6 @@ describe("テストの合図の待ち（PBI-85。PR #94 レビュー指摘）", 
     const left = testTimeLeftMs();
     expect(left).toBeDefined();
     expect(left).toBeLessThanOrEqual(5_000 - TEST_TIMEOUT_MARGIN_MS);
-    const started = Date.now();
     const error = await waitFor(() => false, {
       what: "準備の合図",
       source: { name: "偽の実行", ended: new Promise(() => {}) },
@@ -79,7 +77,7 @@ describe("テストの合図の待ち（PBI-85。PR #94 レビュー指摘）", 
     expect(error?.message).toMatch(
       /^準備の合図が来なかった：偽の実行はまだ動いている。\d+ms 待った（期限 \d+ms（テストの時間切れの前に止めた））$/,
     );
-    expect(Date.now() - started).toBeLessThan(5_000);
+    // 「テストの時間切れの前に止めた」は、期限が効いて理由を書いて落ちたときだけ出る（時間切れなら「Test timed out」になる）
   });
 
   it("テストに時間切れを指定していれば、その残りから期限を決める。明示した期限が長くても、残りに収める", {

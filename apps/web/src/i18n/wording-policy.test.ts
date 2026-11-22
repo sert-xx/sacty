@@ -156,10 +156,14 @@ function isSentence(text: string): boolean {
   return /。|\.(?:\s|$)/.test(outside) || /[？！…?!]\s*$/.test(outside);
 }
 
+/** 数字と単位・助数詞（「3 件」「30 秒」「2 MB」）。単位は一覧の語だけで、数字に続く任意の語（「2件の指摘は未対応」）は認めない。 */
+const NUMBER_WITH_UNIT =
+  /^\d[\d,.]*\s*(?:件|回|秒|分|時間|日|文字|行|個|つ|人|%|ms|s|KB|MB|GB|items?|times?|seconds?|minutes?|hours?|days?|chars?|characters?|lines?)?$/u;
+
 /** 文の括弧に認める中身：数字と単位・助数詞、ID の形（前に付ける語は ID の種類を示す語だけ）、形式名の一覧の語。 */
 function isAllowedParenthesis(inner: string): boolean {
   const s = inner.replace(/`/g, "").trim();
-  if (/^\d[\d,.]*\s*[\p{L}%]*$/u.test(s)) return true;
+  if (NUMBER_WITH_UNIT.test(s)) return true;
   if (/^(?:(?:PR|PBI|Issue)\s?)?(?:#\d+|[A-Z][A-Z0-9]*-\d+)$/.test(s)) return true;
   const names = s.split(/[・,、\s]+/).filter(Boolean);
   return names.length > 0 && names.every((n) => FORMAT_NAMES.has(n));
@@ -317,6 +321,37 @@ describe("括弧の判定（固定の入力）", () => {
       ),
     ]);
     expect(ng.map((x) => x.path)).toEqual(["x.note1", "x.note1", "x.note2", "x.note2"]);
+  });
+
+  it("数字で始まる注釈の括弧は落ちる", () => {
+    const v = run([
+      pair("x.n1", "完了しました（2件の指摘は未対応）。", "Done (2 findings are open)."),
+      pair("x.n2", "成功しました（3回目の再試行で成功）。", "Succeeded (on the 3rd retry)."),
+    ]);
+    expect(v.map((x) => x.path)).toEqual(["x.n1", "x.n1", "x.n2", "x.n2"]);
+  });
+
+  it("「！」「…」・英語の ?・! で終わる文の注釈の括弧も落ち、etc.・i.e. の . は文の終わりに数えない", () => {
+    const v = run([
+      pair("x.e1", "保存しました（あとで変えられる）！", "Saved (changeable later)!"),
+      pair("x.e2", "読み込んでいます（少し待つ）…", "Loading (wait a bit)…"),
+      pair("x.e3", "対象（Codex など）", "Targets (Codex, etc.)"),
+      pair("x.e4", "種類（i.e. 補足）", "Kind (i.e. a note)"),
+    ]);
+    expect(v.map((x) => x.path)).toEqual(["x.e1", "x.e1", "x.e2", "x.e2"]);
+  });
+
+  it("ラベルの括弧は、日 13 字・英 29 字は通り、日 14 字・英 30 字は落ちる", () => {
+    const ja13 = "あ".repeat(13);
+    const ja14 = "あ".repeat(14);
+    const en29 = "a".repeat(29);
+    const en30 = "a".repeat(30);
+    expect(run([pair("x.ok", `ラベル（${ja13}）`, `Label (${en29})`)])).toEqual([]);
+    const v = run([pair("x.ng", `ラベル（${ja14}）`, `Label (${en30})`)]);
+    expect(v.map((x) => [x.kind, x.locale])).toEqual([
+      ["label", "ja"],
+      ["label", "en"],
+    ]);
   });
 
   it('語の中の "."・e.g.・括弧の中だけの「。」は文と数えない（ラベルの長さの基準だけが当たる）', () => {
