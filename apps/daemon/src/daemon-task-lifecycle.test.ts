@@ -55,6 +55,7 @@ import {
   triageOut,
   useTempDir,
 } from "./testing/daemon.js";
+import { waitForAssertion } from "./testing/wait.js";
 import { removeEntry } from "./workspace-cleanup.js";
 
 useTempDir();
@@ -2937,7 +2938,7 @@ describe("最初の工程が始まる前の処理の段階（PBI-410）", () => 
       }
       const worker = new Worker(service, 60_000);
       void worker.tick();
-      await vi.waitFor(() => expect(startedCount).toBe(processing));
+      await waitForAssertion(() => expect(startedCount).toBe(processing));
       const states = await Promise.all(ids.map((id) => shown(service, id)));
       expect(states).toEqual(
         ids.map((_, i) => ({

@@ -209,3 +209,5 @@ sacty が実装の PR を作る・更新するときは、リスクを評価し�
 - 作業履歴には、評価した場面と段階（評価できなければ理由）を1行で出す。引き継いだ評価の記録（版を上げる前のもの）は、どのコミットの評価をどのコミットに引き継いだかを1行で出す。
 
 コード: `packages/core/src/projection.ts`（`applyEvent`）、`apps/web/src/components/risk-assessment.tsx`（`RiskAssessmentCard`・`riskAssessmentToShow`）
+
+評価対象のレビューでは、見られた範囲に指摘が無ければ、未確認の所があっても指摘なしの判定に評価が付く。

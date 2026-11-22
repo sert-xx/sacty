@@ -25,6 +25,7 @@ import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { INTAKE_SCOPES_PER_QUERY, TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
+import { waitForAssertion } from "./testing/wait.js";
 import type { TicketClient } from "./tickets.js";
 
 /** 取り込みの対象にする、n 個のリポジトリ（acme/<name>-0 …）。 */
@@ -1542,7 +1543,7 @@ describe("GitHub の時刻のずれと検索の読んだ位置（PBI-270）", ()
     });
     clock("2026-11-01T08:52:00Z");
     const running = intake.tick();
-    await vi.waitFor(() => expect(search.sinces).toHaveLength(1));
+    await waitForAssertion(() => expect(search.sinces).toHaveLength(1));
     // 検索の結果を待っている間に、時計が進む
     clock("2026-11-01T08:58:00Z");
     release();

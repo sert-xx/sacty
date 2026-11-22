@@ -181,7 +181,7 @@ Who the @ mention goes to is decided as follows.
     The author, who usually follows the PR, may still get GitHub's usual review notification.
 
 When the AI assigned to a viewpoint fails even after being started again, the parent AI reviews that viewpoint instead (the body does not say so). If it can, the viewpoint counts as checked and a verdict is given.
-When some parts still could not be checked (for example, checking documents against the implementation could not be finished), the review gives no verdict. The verdict line is "付いていません（レビューが判定を付けませんでした。…）" (the review gave no verdict), and the body starts with what was not checked and what the reader should check (for example "入力の検査の抜けは確かめていません。src/api の変更を、人が確かめてください").
+The review gives no verdict when it cannot read any of the diff, workspace, or main target document named in the body. The verdict line says "付いていません（レビューが判定を付けませんでした。…）". If any of these can be read, it gives a verdict based on the findings even if some parts remain unchecked, and the body starts with what is unchecked and what the reader should check.
 When the answer shows a verdict that sacty could not read, the verdict line is "読み取れませんでした" (could not be read).
 In both cases, the round is not treated as having no findings. Check the body and the line comments.
 However, if what was checked has a `[要修正]` finding (including an earlier one, or another reviewer's, confirmed as unaddressed), the verdict is "修正が必要" (changes required).

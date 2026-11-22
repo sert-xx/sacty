@@ -271,3 +271,5 @@ Sacty のレビューのタスクが、レビューを投稿する前に止ま�
   SSH・ローカルのパスは、ホストの認証を使う。
 
 コード: `apps/daemon/src/gh.ts`（`GhCliAuth`・`ghEnv`・`gitAuthEnv`）、`apps/web/src/components/project-editor.tsx`、`apps/web/src/app/actions.ts`（`reloadGitHubAccountsAction`）、`packages/core/src/github-url.ts`（`githubApiBase`・`targetUrlProblem`）、`apps/daemon/src/github.ts`
+
+判定なしの回も取り込み、要求要件・設計の PR でも直しの対象になる。

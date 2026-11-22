@@ -44,7 +44,7 @@ import {
   triageOut,
   useTempDir,
 } from "./testing/daemon.js";
-import { loopTurn } from "./testing/wait.js";
+import { loopTurn, waitForAssertion } from "./testing/wait.js";
 
 useTempDir();
 
@@ -1881,7 +1881,7 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
     const search = service.createTask({ projectId: "search", title: "検索の改善" });
     await service.runNext(pay.id);
     await service.runNext(search.id);
-    await vi.waitFor(() => expect(slack.calls).toHaveLength(2));
+    await waitForAssertion(() => expect(slack.calls).toHaveLength(2));
     expect(slack.calls.map((c) => [c.url, c.body.channel])).toEqual([
       [destination.url, "#sacty"],
       [destination.url, "#sacty"],
@@ -1976,8 +1976,8 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
     const b = service.createTask({ projectId: "default", title: "B" });
     await service.runNext(a.id);
     await service.runNext(b.id);
-    await vi.waitFor(() => expect(slack.calls).toHaveLength(2));
-    await vi.waitFor(() =>
+    await waitForAssertion(() => expect(slack.calls).toHaveLength(2));
+    await waitForAssertion(() =>
       expect(
         service
           .status()
@@ -2102,8 +2102,8 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
       }),
     });
     expect(res.status).toBe(200);
-    await vi.waitFor(() => expect(store.prefetched.at(-1)).toEqual(["slack-bot"]));
-    await vi.waitFor(() =>
+    await waitForAssertion(() => expect(store.prefetched.at(-1)).toEqual(["slack-bot"]));
+    await waitForAssertion(() =>
       expect(service.status().warnings.map((w) => ja(w))).toEqual([
         expect.stringContaining(
           "Sacty の設定を保存したときに、秘密情報（Sacty の設定の通知先（Slack のトークン））を取り出せませんでした",

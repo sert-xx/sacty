@@ -209,3 +209,5 @@ Code: `apps/daemon/src/risk-assessment.ts` (`riskAssessmentLines`), `apps/daemon
 - The activity shows the occasion and the level (the reason, if it could not be assessed) in one row. A record of a carried-over assessment (from before the version upgrade) shows which commit's assessment was carried over to which commit in one row.
 
 Code: `packages/core/src/projection.ts` (`applyEvent`), `apps/web/src/components/risk-assessment.tsx` (`RiskAssessmentCard`, `riskAssessmentToShow`)
+
+For an assessed review, an assessment accompanies a no-findings verdict even if some parts remain unchecked.

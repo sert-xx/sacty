@@ -211,3 +211,5 @@ Code: `apps/daemon/src/review-stop-notice.ts` (`notifiesReviewStop`, `stopSummar
 - When cloning and pushing HTTPS repositories, sacty passes the token of that host's account through `http.https://<host>/.extraheader`. SSH and local paths use the host's authentication.
 
 Code: `apps/daemon/src/gh.ts` (`GhCliAuth`, `ghEnv`, `gitAuthEnv`), `apps/web/src/components/project-editor.tsx`, `apps/web/src/app/actions.ts` (`reloadGitHubAccountsAction`), `packages/core/src/github-url.ts` (`githubApiBase`, `targetUrlProblem`), `apps/daemon/src/github.ts`
+
+A round without a verdict is also imported and can lead to rework for a requirements or design PR.

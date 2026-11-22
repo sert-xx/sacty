@@ -87,7 +87,7 @@ import {
   triageOut,
   useTempDir,
 } from "./testing/daemon.js";
-import { idleFor, loopTurn, waitFor } from "./testing/wait.js";
+import { idleFor, loopTurn, waitFor, waitForAssertion } from "./testing/wait.js";
 
 useTempDir();
 
@@ -7277,7 +7277,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       await executor.started.promise;
       mergePr(pulls, service, id);
       const checking = service.checkPullRequests();
-      await vi.waitFor(() => expect(confirms).toBe(2));
+      await waitForAssertion(() => expect(confirms).toBe(2));
       // 実行は idle・検証待ちで終わっているが、承認か一時停止を記録するまで、実行を始めさせない
       expect(service.get(id)?.task.verification).toBe("pending");
       const calls = executor.calls.length;
@@ -14079,7 +14079,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           headSha: service.get(id)?.task.pullRequest?.commit,
         };
         const periodic = service.checkPullRequests();
-        await vi.waitFor(() =>
+        await waitForAssertion(() =>
           expect((service as unknown as { mergeStopping: Set<string> }).mergeStopping.has(id)).toBe(
             true,
           ),
@@ -14227,7 +14227,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           headSha: service.get(id)?.task.pullRequest?.commit,
         };
         const periodic = service.checkPullRequests();
-        await vi.waitFor(() =>
+        await waitForAssertion(() =>
           expect((service as unknown as { mergeStopping: Set<string> }).mergeStopping.has(id)).toBe(
             true,
           ),

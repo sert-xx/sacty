@@ -62,7 +62,7 @@
 | `aggregation.md`「判定」と記録の形 | 「見られなかった観点がある初回の PR レビューは合格と書かない」を外し、`incomplete` を自己レビューだけの値にする。「対象にした文書を取得できなかった PR レビューは合格と書かない」を、付けない行のときだけにする |
 | 仕様書 | `tasks-and-steps`・`context`・`risk-assessment`・`intake`（日英） |
 | ユーザー文書 | `docs/user/intake.md`・`.en.md` の判定が付かない回の説明（184〜187 行あたり） |
-| ADR | 新しい ADR を足し、`20261114-0158-review-range-and-partial-verdict.md` の判定の部分を置き換える（`git mv` で superseded に改名。この ADR にリンクしている `20261121-1330-…` のリンクも直す） |
+| ADR | 新しい ADR を足し、`20261114-0158-superseded-review-range-and-partial-verdict.md` の判定の部分を置き換える（`git mv` で superseded に改名。この ADR にリンクしている `20261121-1330-…` のリンクも直す） |
 | 作業履歴 | `docs/worklog/YYYYMMDD-pbi-485-review-verdict-unless-unreviewable.md`（PR を作った日、UTC） |
 
 ## 影響範囲

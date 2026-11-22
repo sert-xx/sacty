@@ -161,7 +161,7 @@ describe("既定の review スキルの、段階のサブエージェント（PB
       "初回も再レビューも、全観点の結果が揃い、集約を通ってから本文を書く。揃う前に（担当を起動する前にも）指摘を本文に書き始めない",
     );
     // 「完了できないとき」は、担当を起動しない（上の例外と揃っている）
-    expect(pr).toContain("差分も作業領域も読めない：担当を起動しない");
+    expect(pr).toContain("差分も作業領域も本文で示された主対象の文書も読めない：担当を起動しない");
   });
 
   it("親は段階の名前で担当を起動し、定義が無ければ段階を指定せずに起動して起動表に「親と同じ」と書く", () => {
@@ -262,22 +262,6 @@ describe("既定の review スキルの、本文で示された文書（PBI-142�
     expect(text).toContain("対象と根拠の文書の全文を、親が取得する");
     expect(text).toContain("作業領域の外の一時ディレクトリに保存する");
     expect(text).toContain("認証情報を求めない・探さない");
-  });
-
-  it("主対象の文書を取得できなければ完了できず、ほかの対象の文書なら範囲に書いて合格と書かない", () => {
-    const text = read(linked);
-    expect(text).toContain(
-      "その文書を主対象にした（レビューの中心だった）とき：レビューを完了できない",
-    );
-    expect(text).toContain(
-      "見られなかった文書がある `pr-review` は、初回でも再レビューでも合格と書かない",
-    );
-    const pr = read("skills/review/review-dispatch/references/pr-review.md");
-    expect(pr).toContain("本文で示された文書を主対象にしたのに、その文書を取得できない");
-    expect(pr).toContain("[linked-docs.md](linked-docs.md)");
-    expect(read("skills/review/review-dispatch/references/aggregation.md")).toContain(
-      "レビューの対象にした文書（[linked-docs.md](linked-docs.md)）を取得できなかった PR レビューは、初回でも再レビューでも合格と書かない",
-    );
   });
 
   it("主対象のほかの文書を取得できなくても、記録を入力として担当を起動し、読めなかった文書と読む人が確かめることを、中身の言葉で本文に書く（PBI-460）", () => {
@@ -1446,7 +1430,7 @@ describe("既定の review スキルの、PR のレビューの範囲と観点�
     // 範囲の外だけの failed は、代わりにも見ない。担当を起動しない回にも当てはめない
     expect(agg).toContain("代わりにも見ず、見られなかった観点にも数えない");
     expect(agg).toContain(
-      "担当を1件も起動しなかった回（差分も作業領域も読めない）には当てはめない",
+      "担当を1件も起動しなかった回（差分も作業領域も主対象の文書も読めない）には当てはめない",
     );
     // 結果が揃った後だけ
     expect(agg).toContain("すべての担当の起動と起動し直しの結果が揃った後だけ");
@@ -1669,14 +1653,14 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
     );
   });
 
-  it("重みを見直した指摘が残るときの判定は、pr-review の判定の節の 1 か所で決め、見られなかった観点があれば書かない（PBI-380）", () => {
+  it("重みを見直した指摘が残るときの判定は、pr-review の判定の節で決める（PBI-380）", () => {
     const text = prReview();
     const section = text.slice(text.indexOf("## 指摘と判定の書き方"));
     expect(section).toContain(
       "- 再レビューで、重みを見直した指摘が残り、`must` が無い：採用した指摘が無くても、提案あり（「修正が必要」にも「指摘なし」にもしない）",
     );
     expect(section).toContain(
-      "- 見られなかった観点があるとき（担当が、起動し直しても失敗のままで、親が代わりに見ても見られなかった）は、上の4つより先に、「完了できないとき」で決める（`must` が無ければ、重みを見直した指摘が残っていても、判定を書かない）",
+      "- 見られなかった観点があっても、上の決め方で判定し、確かめられなかった所を本文の最初に書く",
     );
     // 判定の決めを、ほかの箇所で言い直さない（「採用の規則」と「既存の指摘との重なり」は、判定の節を指す）
     const before = text.slice(0, text.indexOf("## 指摘と判定の書き方"));

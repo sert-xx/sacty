@@ -1,6 +1,12 @@
 import { spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { processSource, TEST_TIMEOUT_MARGIN_MS, testTimeLeftMs, waitFor } from "./wait.js";
+import {
+  processSource,
+  TEST_TIMEOUT_MARGIN_MS,
+  testTimeLeftMs,
+  waitFor,
+  waitForAssertion,
+} from "./wait.js";
 
 const node = (script: string) =>
   spawn(process.execPath, ["-e", script], { stdio: ["ignore", "ignore", "pipe"] });
@@ -89,5 +95,45 @@ describe("テストの合図の待ち（PBI-85。PR #94 レビュー指摘）", 
     await expect(waitFor(() => false, { what: "合図", timeoutMs: 60_000 })).rejects.toThrow(
       /^合図が来なかった：\d+ms 待った（期限 \d+ms（テストの時間切れの前に止めた））$/,
     );
+  });
+});
+
+describe("アサーションの待ち", () => {
+  it("既定の1秒を過ぎてもテストの期限の前まで待ち最後のエラーを返す", async () => {
+    const start = Date.now();
+    await expect(
+      waitForAssertion(() => {
+        throw new Error("最後のエラー");
+      }),
+    ).rejects.toThrow("最後のエラー");
+    expect(Date.now() - start).toBeGreaterThan(1_000);
+  }, 5_000);
+
+  it("指定期限が長くてもテストの期限の前に最後のエラーを返す", async () => {
+    await expect(
+      waitForAssertion(
+        () => {
+          throw new Error("期限のエラー");
+        },
+        { timeoutMs: 60_000 },
+      ),
+    ).rejects.toThrow("期限のエラー");
+  }, 2_000);
+
+  it("条件が成り立つと戻り値を返す", async () => {
+    let ready = false;
+    const timer = setTimeout(() => {
+      ready = true;
+    }, 300);
+    try {
+      await expect(
+        waitForAssertion(() => {
+          expect(ready).toBe(true);
+          return 42;
+        }),
+      ).resolves.toBe(42);
+    } finally {
+      clearTimeout(timer);
+    }
   });
 });
