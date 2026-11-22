@@ -39,10 +39,15 @@
     画面の録画もそのときに撮る。
   - 懸念：実装の工程が実機で確かめる前提にすると、確認が済まないまま PR が出る。
     今の版の失敗（取得・起動・接続のどれか）を直し漏らす。
-- Q-4（should）：前の版へ切り戻したときにひもづけが消えることを、文書の注意と付け直しの手順で済ませるか。
-  - 推奨：済ませる。前の版はプロジェクトを保存するときに知らない `forRepos` を捨てるので、この PBI では防げない。
-    仕様書・ユーザー文書に「切り戻す前にエクスポートしておき、新しい版に戻したら画面で付け直す」と書く。
+- Q-4（should）：前の版へ切り戻したときの次の2つを、文書の注意と手順で済ませるか。ひもづけが消えること。複数の compose を選んだ未完了のタスクが、最初の compose だけで続くこと。
+  - 推奨：済ませる。前の版は、プロジェクトを保存するときに知らない `forRepos` を捨て、作業履歴を読むときに `more` を捨てるので、この PBI では防げない。
+    仕様書・ユーザー文書に手順を書く。切り戻す前に、エクスポートしておき、compose を2つ以上選んだ未完了のタスク（タスクの詳細のサービスの表示で分かる）を中止する。新しい版に戻したら、画面でひもづけを付け直し、中止したタスクを再実行する。
   - 懸念：切り戻した間にプロジェクトを保存した利用者のひもづけは、付け直すまで消えたままになる。原則使う指示が出ず、共用の compose がまた選ばれにくくなる。
+    中止せずに前の版で続けたタスクは、2つ目からのサービスが無いまま工程が進み、テストが接続の失敗で落ちるか、サービス無しで確かめた結果になる。
+- Q-5（should）：ひもづけ先に、Org の対象の URL（その Org の下のすべてのリポジトリ）も書けるようにするか。
+  - 推奨：書けるようにし、件数の上限は 50（対象の上限と同じ）のままにする。
+    リポジトリの URL だけだと、Org の下の 51 件以上のリポジトリにはひもづけられないため。Org の 1 件で、その下の何件のリポジトリにもひもづけられる。
+  - 懸念：Org でひもづけると、その Org の下の、この compose を使わないリポジトリのタスクにも「原則使う」が出る。担当は毎回 `servicesReason` に使わない理由を書く。
 
 確認しないと決めたこと
 
@@ -59,7 +64,7 @@
 
 ## 既定で決めたこと
 
-- 項目の名前は `forRepos`（GitHub のリポジトリの URL の配列。1〜50件、省略可）にする。既存の `repo`（取得元）と区別するため。
+- 項目の名前は `forRepos`（GitHub のリポジトリか Org の対象の URL の配列。1〜50件、省略可。Org は Q-5）にする。既存の `repo`（取得元）と区別するため。
 - 画面の欄は「使うリポジトリ」のテキストエリア（1行に1つの URL）にする。空なら項目を書かない。
 - 複数の compose は、sacty が工程ごとに作るネットワーク1つにまとめ（各 compose の `sacty` ネットワークをそれに差し替える）、担当のコンテナは `--network` 1つでつなぐ。複数の `--network`（Docker Engine 25 以降）に頼らないため。
 - 選んだ compose の間で、サービス名と `container_name` の別名を合わせてぶつかりを調べ、ぶつかったら起動せずに `services.nameConflict` で工程を止める。同じネットワークでどちらに名前解決されるか決まらないため。
@@ -68,14 +73,14 @@
 
 | 所 | 変えること |
 | --- | --- |
-| `packages/core/src/projects.ts` | `SharedCompose.forRepos`（`RepoUrl` の配列）を足す。検査で、重複（`project.sharedComposeForRepoDuplicated`）と対象に無いリポジトリ（`project.sharedComposeForRepoNotTarget`。照合は `sameGitHubUrl`）を誤りにする。エクスポートと併合に含める |
+| `packages/core/src/projects.ts` | `SharedCompose.forRepos`（`RepoUrl` か `OrgUrl` の配列）を足す。検査で、重複（`project.sharedComposeForRepoDuplicated`）と対象に無いリポジトリ・Org（`project.sharedComposeForRepoNotTarget`。照合は `sameGitHubUrl`。Org は Org の対象と照らす）を誤りにする。エクスポートと併合に含める |
 | `apps/web/src/components/project-editor.tsx`・`apps/web/src/i18n/messages/projects.ts` | 行ごとの「使うリポジトリ」の欄と文言（`docs/spec/ui-wording.md` に従う） |
-| `apps/daemon/src/prompts.ts`（`buildOrchestratorPrompt`） | 候補を「ひもづけていないもの」と「このリポジトリにひもづいたもの」に絞る。ひもづいたものには「このリポジトリのテスト・動作確認には原則これを使う。使わないなら servicesReason に理由を書く」と添える。「どちらか一方」の文を外し、答えの形を `services: {file?, compose: [名前…], names, steps}` にする（`compose` が文字列の答えも読む） |
+| `apps/daemon/src/prompts.ts`（`buildOrchestratorPrompt`） | 候補を「ひもづけていないもの」と「このリポジトリにひもづいたもの（リポジトリの URL が同じか、リポジトリがひもづけ先の Org の下にある）」に絞る。ひもづいたものには「このリポジトリのテスト・動作確認には原則これを使う。使わないなら servicesReason に理由を書く」と添える。「どちらか一方」の文を外し、答えの形を `services: {file?, compose: [名前…], names, steps}` にする（`compose` が文字列の答えも読む） |
 | 同（`gatherServiceLines`） | 同じ規則で絞る。triage では全件を出し、ひもづけ先を添える |
 | `apps/daemon/src/service.ts`・`services.ts` | `withSharedCompose`・`startServices`・`stopServices` を compose の一覧に対応させる。工程ごとのネットワークを作り、各 compose の `sacty` ネットワークをそれ（sacty が付ける external）に差し替え、止めた後に消す。起動の前に、全 compose のサービス名と別名のぶつかりを調べる。転送のぶつかりは、全 compose のサービスを合わせて判定する |
 | `packages/core/src/events.ts` | `StepsChosen.services` に、2つ目からの compose を `more`（任意）として足す。1つだけのときの記録は今と同じ形。`ServicesStarted` は compose ごとに1件記録する |
 | `packages/core/src/projection.ts`・`apps/web/src/lib/labels.ts` | 同じ実行の `ServicesStarted` をまとめて読み、表示する |
-| `docs/spec/services.md`・`export.md`・`docs/user/compose.md`・`project-settings.md`（各日英） | ひもづけの項目・候補の規則・両方の起動・ネットワーク・名前のぶつかり・切り戻しの注意と付け直し |
+| `docs/spec/services.md`・`export.md`・`docs/user/compose.md`・`project-settings.md`（各日英） | ひもづけの項目・候補の規則・両方の起動・ネットワーク・名前のぶつかり・切り戻しの手順（エクスポート・複数の compose を選んだタスクの中止・付け直し・再実行。Q-4） |
 | ADR・作業履歴 | 新しい ADR を足し、`20261023-1410-gather-sorts-services-for-orchestrator.md` を一部置き換え（superseded。置き換えた部分：情報収集に出す共用の compose をリポジトリで絞る）にする。作業履歴に実機の確認の結果を書く |
 
 ## エラー時の振る舞い
@@ -87,7 +92,7 @@
 ## 影響範囲
 
 - `more` を記録した作業履歴を前の版のデーモンで読むと、2つ目からの compose は無いものとして読まれる（`z.object` が知らない項目を捨てる）。
-  デーモンは起動できる。
+  デーモンは起動できるが、そのタスクは最初の compose だけで工程を続ける。切り戻す前に中止し、新しい版で再実行する（Q-4）。
 - `forRepos` を書いた定義のエクスポートは、前の版の sacty ではインポートできない（`input.unknownKeys`）。
 - 前の版に切り戻してプロジェクトを保存すると、`forRepos` が消える（Q-4）。
 - 画面を変えるので、マージの前に実機で確かめて録画を残し、`npm run docs:screenshots` でスクリーンショットを撮り直す。
@@ -101,38 +106,41 @@
   - 入力：forRepos の無い共用の compose を保存し、エクスポートする。forRepos の無い版 5 のファイルをインポートする
   - 期待結果：どちらも通り、エクスポートの JSON に forRepos の項目が無い。
 - [TV-3] ひもづけ先の書き方の検査
-  - 入力：forRepos に GitHub のリポジトリの URL でない値・空の配列・51件を入れて保存する
+  - 入力：forRepos に GitHub のリポジトリの URL でも Org の URL でもない値・空の配列・51件を入れて保存する
   - 期待結果：どれも input.sharedComposeForRepo などの誤りで保存されない。
 - [TV-4] ひもづけ先の重複と対象外の検査
-  - 入力：forRepos に大文字小文字だけ違う同じ URL を2つ入れる場合と、プロジェクトの対象に無いリポジトリを入れる場合で、保存とインポートをする
-  - 期待結果：それぞれ project.sharedComposeForRepoDuplicated・project.sharedComposeForRepoNotTarget で保存されず、Org の対象の下のリポジトリは通る。
+  - 入力：forRepos に大文字小文字だけ違う同じ URL を2つ入れる場合と、プロジェクトの対象に無いリポジトリか Org を入れる場合で、保存とインポートをする
+  - 期待結果：それぞれ project.sharedComposeForRepoDuplicated・project.sharedComposeForRepoNotTarget で保存されず、Org の対象の下のリポジトリと Org の対象の URL は通る。
 - [TV-5] 画面のひもづけの欄
   - 入力：プロジェクトの編集の画面で、共用の compose の「使うリポジトリ」に2行の URL を入れて保存し、開き直す
   - 期待結果：2つの URL が保存され、開き直すと同じ2行が表示され、欄を空にして保存すると forRepos が無くなる。
 - [TV-6] ひもづいた共用の compose の指示
   - 入力：対象のリポジトリ A のタスクで、A にひもづいた共用の compose X があるときのオーケストレーターへの指示を作る
   - 期待結果：X の行に、このリポジトリのテスト・動作確認には原則使うことと、使わないなら servicesReason に理由を書くことが書かれている。
-- [TV-7] 候補の絞り込み
+- [TV-7] Org でのひもづけ
+  - 入力：Org の対象 O があるプロジェクトで、forRepos [O] の共用の compose V を置き、O の下のリポジトリ A のタスクと、O の外のリポジトリの対象 C のタスクで、オーケストレーターへの指示を作る
+  - 期待結果：A のタスクの指示には V が原則使う文つきで出て、C のタスクの指示には V が出ない。
+- [TV-8] 候補の絞り込み
   - 入力：対象のリポジトリ A のタスクで、ひもづけていない Y と、B にだけひもづいた Z があるときの、オーケストレーターと情報収集への指示を作る
   - 期待結果：Y は今までどおり説明つきで候補に出て原則使う文が無く、Z はどちらの指示にも出ず、StepsChosen の sharedComposes にも入らない。
-- [TV-8] triage の情報収集
+- [TV-9] triage の情報収集
   - 入力：対象のリポジトリが決まっていない triage のタスクで、B にひもづいた Z があるときの情報収集の指示を作る
   - 期待結果：Z が候補に出て、ひもづけ先 B が添えられている。
-- [TV-9] 両方の compose の選択の読み取り
+- [TV-10] 両方の compose の選択の読み取り
   - 入力：オーケストレーターの答えの services に file と compose [X, W] を書く。別に compose を文字列 X で書く
   - 期待結果：前者は対象のリポジトリの compose と X・W を選んだ記録になり、後者は X だけを選んだ記録（今と同じ形）になる。
-- [TV-10] 両方の compose の起動と接続
+- [TV-11] 両方の compose の起動と接続
   - 入力：対象のリポジトリの compose と共用の compose X を選んだ implement の工程を、偽の services と実行の仕組みで動かす
   - 期待結果：工程のネットワークが1つ作られて2つの compose がそのネットワークで起動され、ServicesStarted が2件記録され、担当のコンテナの docker run の --network がそのネットワーク1つだけで、工程の後に2つの compose とネットワークが片づき X の取得のディレクトリが消える。
-- [TV-11] サービス名と別名のぶつかり
+- [TV-12] サービス名と別名のぶつかり
   - 入力：対象のリポジトリの compose に db というサービスがある工程で、共用の compose X に db というサービスがある場合と、X のサービスの container_name が db の場合で、両方を選んで動かす
   - 期待結果：どちらの場合も、どちらの compose も起動せずに services.nameConflict で工程が止まる。
-- [TV-12] 一部の起動の失敗
+- [TV-13] 一部の起動の失敗
   - 入力：対象のリポジトリの compose は起動でき、共用の compose X の取得が失敗する工程を動かす
   - 期待結果：起動済みの compose と工程のネットワークが片づけられ、services.sharedFetchFailed で工程が止まる。
-- [TV-13] 実機での一通りの確認
+- [TV-14] 実機での一通りの確認
   - 入力：docker のある環境で、対象のリポジトリにひもづいた共用の compose（redis など）を設定したタスクを実行する
   - 期待結果：オーケストレーターが選び、取得・起動され、担当のコンテナからサービス名で接続でき、結果と見つかった失敗の修正が作業履歴に書かれている。
-- [TV-14] 文書の記述
+- [TV-15] 文書の記述
   - 入力：docs/spec/services.md・export.md・docs/user/compose.md・project-settings.md の日英と ADR の差分を読む
-  - 期待結果：forRepos の書き方と検査、ひもづけと候補の規則、両方の compose を1つのネットワークで起動すること、名前のぶつかりで止まること、前の版との互換と切り戻しでひもづけが消えることと付け直しの手順が日英で同じ内容で書かれ、20261023-1410 の ADR が置き換えた部分を書いた superseded になっている。
+  - 期待結果：forRepos の書き方（リポジトリと Org の対象の URL）と検査、ひもづけと候補の規則、両方の compose を1つのネットワークで起動すること、名前のぶつかりで止まること、前の版との互換と、切り戻しの手順（前にエクスポートし compose を2つ以上選んだ未完了のタスクを中止し、戻した後にひもづけを付け直してタスクを再実行する）が日英で同じ内容で書かれ、20261023-1410 の ADR が置き換えた部分を書いた superseded になっている。
