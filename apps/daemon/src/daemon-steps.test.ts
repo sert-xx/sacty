@@ -1111,6 +1111,7 @@ describe("工程の実行と費用", () => {
       // 工程は、リポジトリを用意した後に、オーケストレーターが選ぶ（PBI-17）
       "StepsChosen",
       "AgentRunStarted",
+      "ContextResolved",
       // 費用の出どころ（CLI が費用を報告しない実行は、換算した額。PBI-302 D2）
       "RunCostRecorded",
       "AgentRunCompleted",

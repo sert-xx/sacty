@@ -428,7 +428,7 @@ const REVIEW_VERDICT_HEADING = "sacty-review-verdict";
  * sacty が読み損ねたのではないことを、PR を読む人に伝える。
  */
 const VERDICT_ABSENT_LINE =
-  "判定：付いていません（レビューが判定を付けませんでした。確かめられなかった所がある・対象を読めなかったレビューには、判定を付けません。本文と行へのコメントを確かめてください）";
+  "判定：付いていません（レビューが判定を付けませんでした。差分も対象の文書も読めなかったレビューには、判定を付けません。本文と行へのコメントを確かめてください）";
 
 /** 判定のブロックを書こうとした跡（見出しが JSON のキーの形で現れる。PBI-378）。JSON として読めなかった答えから探す。 */
 const VERDICT_KEY_PATTERN = new RegExp(`"${REVIEW_VERDICT_HEADING}"\\s*:`);
@@ -500,7 +500,7 @@ function reviewDispatchInstructionLines(narrowed: boolean): string[] {
       ? "- 担当を起動する前に、自分で差分やコードを読んで指摘・総評を書き始めない（親は、観点のレビューを自分ではしない。例外は、結果が揃った後に、起動し直しても失敗した観点を代わりに見るときだけ）。この指示に差分が入っていても、対象が小さくても、再レビューでも、担当の起動は省かない。ただし、下の「再レビューの範囲の絞り」の節が示す回は、その節のとおり、起動する観点を絞る（絞っても、担当は起動する）。「担当に分けずに自分で見た」と本文に書いて済ませる進め方は、無い"
       : "- 担当を起動する前に、自分で差分やコードを読んで指摘・総評を書き始めない（親は、観点のレビューを自分ではしない。例外は、結果が揃った後に、起動し直しても失敗した観点を代わりに見るときだけ）。この指示に差分が入っていても、対象が小さくても、再レビューでも、前回からの変更が文書だけでも、担当の起動は省かない。「担当に分けずに自分で見た」と本文に書いて済ませる進め方は、無い",
     "- sacty は、この実行が担当を何件起動したかを、実行の記録から数える。担当を起動する手段があるのに 1 件も起動しなかったレビューは、判定を使わず、PR にも投稿せずに、やり直させる",
-    "- サブエージェントを起動する手段（ツール）がこの実行に無いときだけ、スキルの逐次モードで見る。差分も作業領域も読めないなど、スキルの「完了できないとき」に当たるときは、スキルの決まりのとおりにする",
+    "- サブエージェントを起動する手段（ツール）がこの実行に無いときだけ、スキルの逐次モードで見る。差分や主対象の文書を読めないなど、スキルの「完了できないとき」に当たるときは、スキルの決まりのとおりにする",
   ];
 }
 
@@ -3922,7 +3922,7 @@ export function buildPrompt(
         "```",
         "差分の中に付けられる行が無い指摘（ファイル全体・PR 全体・差分の外のコード・PR の説明で示された文書についての指摘）は、人に確かめずに、頭を付けて本文の「指摘」の節に書いてください（この節に書くのは、この指摘だけです）。",
         "",
-        "最後に、判定を次の形式で付けてください（投稿する本文からは取り除きます）。差分やコード・レビューの対象にした文書を読めなかったときは付けません。確かめられなかった所があるときは、今回の先頭のコミットで成り立つ要修正の指摘（見られた範囲で新しく見つけたもの、または今回のコードで未対応と確かめた前回・既存の要修正）があれば changes_required を付け（見ていない所があっても、直すべきという結論は変わらないため）、無ければ付けません（sacty は、判定が付いていないことを本文に書き、指摘を落とさないように扱います）。判定を付けないときは、付けない理由を、中身の言葉（何が未確認で、読む人が何をすればよいか）で、本文の最初に書きます（PR を読む人が、判定が無い理由を本文から分かるように。観点の番号・担当の語は使わない）。",
+        "最後に、判定を次の形式で付けてください（投稿する本文からは取り除きます）。差分を読めないとき、または要求要件・設計の PR で主対象の文書を読めないときは判定を付けません。それ以外は、確かめられなかった所があっても判定を付けます。確かめられなかった所があっても、今回の先頭のコミットで成り立つ要修正の指摘（見られた範囲で新しく見つけたもの、または今回のコードで未対応と確かめた前回・既存の要修正）があれば changes_required を付け、無ければ指摘の重さに応じて suggestions か no_findings を付けます。確かめられなかったことは、本文の最初に中身の言葉で書きます。CI の実行中・画面の見え方を確かめられないこと・レビューの環境で動かないテストがあることは、判定を付けない理由にせず、本文に書きます。判定を付けないときは、付けない理由を、中身の言葉（何が未確認で、読む人が何をすればよいか）で、本文の最初に書きます（PR を読む人が、判定が無い理由を本文から分かるように。観点の番号・担当の語は使わない）。",
         `- changes_required：${MUST_TAG} の指摘が1つ以上ある（再レビューで、前回の ${MUST_TAG} が今回のコードで未対応で、今回もスキルの重要度の表で ${MUST_TAG} の重さに当たるときも）。判定は、今回の先頭のコミットで見つけた（または今回のコードで未対応と確かめた）要修正の指摘に基づける。本文の「未対応」の記述と、行へのコメントの重さ・判定が食い違わないようにする`,
         `- suggestions：${SUGGESTION_TAG} の指摘だけがある（マージしてよい）。再レビューで、未対応の前回の ${MUST_TAG} が、重みを見直して ${SUGGESTION_TAG} として扱うものだけで、ほかに ${MUST_TAG} の指摘が無いときも、これにする`,
         "- no_findings：指摘が無い",
@@ -4621,7 +4621,7 @@ export function extractBlocks(
         formatting = files.flatMap((entry): { path: string; reason: string }[] => {
           if (!entry || typeof entry !== "object") return [];
           const path = text(entry.path);
-          const reason = text(entry.reason).slice(0, 300);
+          const reason = typeof entry.reason === "string" ? entry.reason : "";
           return path && reason ? [{ path, reason }] : [];
         });
       }
@@ -8319,6 +8319,7 @@ export function buildOrchestratorPrompt(
     ...(task.repository
       ? [
           "- services：テストや動作確認に、docker compose で起動するサービス（DB・モック API など）が要るとき（PBI-47）。compose ファイル（docker-compose.yml・compose.yaml など）・README・AGENTS.md・テストの設定から判断する。file は compose ファイルの、リポジトリの根からの相対パス、names は起動するサービスの名前（依存するサービスも起動する）、steps はサービスを使う工程（コードを動かす reproduce・implement と、不具合の調査の investigate）。sacty が工程とテストの実行ごとに起動し、終わったら消す。工程のエージェントは、サービス名とコンテナのポート（例 db:5432）でも、localhost のそのポートでも接続できる。要らなければ書かない",
+          "  - compose ファイルはリポジトリの根に限らずサブディレクトリも探す。compose.yaml・docker-compose.*.yml などの名前や、テスト・開発の手順書やスキルから参照されるファイルも調べる",
           "  - names に、このリポジトリのコードを動かすサービス（工程で変える・確かめるアプリ）は含めない。工程のエージェントが、コンテナの中で起動してサービスにつなぐ。別で管理されている依存アプリ（このリポジトリのコードを動かさないもの）と、DB・キャッシュ・モックなどは含める。compose の build の有無ではなく、何を動かすかで判断する（このリポジトリの Dockerfile でビルドする DB も依存。このリポジトリのコードをマウントして動かすものは対象のアプリ）",
           "  - 集めた情報に、テストと動作確認に要るサービスの分類があれば、それをもとにし、compose ファイルなどで確かめて確定する",
           ...(shared.length > 0
@@ -8328,9 +8329,9 @@ export function buildOrchestratorPrompt(
                   (s) =>
                     `    - ${s.name}：compose ファイル ${s.file}${s.description ? `。${clip(s.description, 1000)}` : ""}`,
                 ),
-                "- servicesReason：サービスを使う・使わないと判断した理由（共用の compose を使わないときも、その理由。根拠にしたファイル）。必ず書く",
               ]
             : []),
+          `- servicesReason：サービスを使う・使わないと判断した理由と根拠にしたファイル。テストや動作確認にサービスが要ると分かったのに選ばないときは、要るサービスと選ばなかった理由を書く。${shared.length > 0 ? "共用の compose を使わない理由も含め必ず書く" : ""}`,
         ]
       : []),
     ...(destinations.length > 0
@@ -8361,7 +8362,7 @@ export function buildOrchestratorPrompt(
     ...planAnswerLines(),
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${SELF_REVIEW_DEPTH_ANSWER}${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "image": "イメージの名前", "imageReason": "イメージを選んだ理由", "defaultReason": "images のどれも合わない理由"（default を使うときだけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${documentsOnlyAnswer}${continueAnswer}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${SELF_REVIEW_DEPTH_ANSWER}${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "image": "イメージの名前", "imageReason": "イメージを選んだ理由", "defaultReason": "images のどれも合わない理由"（default を使うときだけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "要るサービスを選ばなかったときは、そのサービスと理由"') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${documentsOnlyAnswer}${continueAnswer}}}`,
     "```",
     "",
     "調べてもテストの仕組みが見つからないときは、testCommand を書かずに、代わりに noTests に根拠を書いてください（ほかの項目は上と同じ）。testCommand と noTests を両方書かないでください。実装する組み合わせでは、両方を空にしないでください（sacty が検証できずに止まります）。",
@@ -9101,8 +9102,11 @@ export const SERVICE_STEPS: readonly StepKey[] = ["investigate", "reproduce", "i
  * 工程のエージェントに伝える、起動したサービスの接続先（PBI-47）。ポートは localhost にも転送する（PBI-60）。
  * 複数のサービスが使うポートは転送しないので、サービス名で接続してもらう。
  */
-export function servicePromptLines(services: readonly StartedService[]): string[] {
-  if (services.length === 0) return [];
+export const SERVICE_SKILL_DESCRIPTION =
+  "docker・docker compose を使うとき、DB（MySQL・PostgreSQL・Redis など）・キャッシュ・モックの API を起動する・つなぐ必要があるときは、リポジトリのスキル・手順より先に読む。";
+
+/** 起動したサービスの接続先の候補。localhost は転送の予定。 */
+function serviceTargets(services: readonly StartedService[]): string[] {
   const { forwards, shared } = localForwards(services);
   // コンテナのポートごとに、localhost で届く番号と、ぶつかるため転送しなかった番号
   const target = (service: StartedService, port: number) => {
@@ -9126,10 +9130,6 @@ export function servicePromptLines(services: readonly StartedService[]): string[
     ].join("");
   };
   return [
-    "",
-    "--- 起動しているサービス（docker compose） ---",
-    'sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポート（db:5432 など）でも、localhost のそのポート（localhost:5432・127.0.0.1:5432 など）でも接続できます。compose ファイルでホストに別のポートで出している（ports: "15432:5432" など）なら、そのポート（localhost:15432）でも届きます（sacty がサービスに転送しています）。リポジトリの設定の接続先は、書き換えずにそのまま使ってください。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。このリポジトリのアプリを起動して確かめるときは、docker を使わずに、このコンテナの中でリポジトリの手順のコマンドで起動し、これらのサービスにつないでください。この実行が終わると、サービスとデータは消えます。',
-    "localhost で届かないとき（そのポートをほかのものが使っていたときなど）は、サービス名で接続してください。MySQL のクライアントなど、ホストに localhost と書くと UNIX ソケットで接続するものは、127.0.0.1 と書いてください。サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります（アプリのポートを変えてください）。",
     ...services.map((s) => {
       const targets = [
         ...s.ports.map((p) => target(s, p)),
@@ -9140,6 +9140,39 @@ export function servicePromptLines(services: readonly StartedService[]): string[
       ];
       return `- ${s.name}${targets.length > 0 ? `：${targets.join("、")}` : ""}`;
     }),
+  ];
+}
+
+export function serviceSkill(services: readonly StartedService[]): string {
+  return [
+    "---",
+    "name: docker-services",
+    `description: ${SERVICE_SKILL_DESCRIPTION}`,
+    "---",
+    "",
+    "# docker・サービス",
+    "",
+    "この環境では docker・docker compose のコマンドは使えません。サービスの起動・接続はリポジトリのスキル・手順より先にこのスキルに従ってください。",
+    ...(services.length === 0
+      ? [
+          "サービスは起動していません。リポジトリの docker の手順は試さず、サービスが要らない確かめを行ってください。サービスが要る確かめは黙って飛ばさず、サービスが無いので確かめられなかったことと、その内容を作業の報告・PR・レビューの本文に書いてください。",
+        ]
+      : [
+          "サービスの起動・停止はこの環境がするので、リポジトリの手順の起動・停止は飛ばしてください。アプリは docker を使わずにコンテナの中で起動してください。実行が終わるとサービスとデータは消えます。",
+          "接続先の候補は次のとおりです。localhost は転送の予定であり、ポートの使用中などにより転送できない場合があります。",
+          ...serviceTargets(services),
+          "まず設定のまま試してください。届かない、または目的のサービスでないときは、別の候補を環境変数かコミットしない設定で渡して試してください。すべての候補に届かなければ、どのサービスのどの接続先に届かず、何を確かめられなかったかを作業の報告・PR・レビューの本文に書いてください。",
+        ]),
+    "",
+  ].join("\n");
+}
+
+export function servicePromptLines(services: readonly StartedService[]): string[] {
+  return [
+    "docker・docker compose・DB などのサービスを起動する・つなぐ必要があるときは、リポジトリのスキル・手順より先にスキル docker-services を読み、詳しくはその指示に従ってください。",
+    ...(services.length
+      ? ["サービスの接続先の候補（localhost は転送の予定）：", ...serviceTargets(services)]
+      : []),
   ];
 }
 
@@ -9478,6 +9511,7 @@ function gatherServiceLines(
     "- あなたのコンテナは、情報収集のためのもので、後の工程の環境ではありません。後の工程は、オーケストレーターがリポジトリに合わせて選ぶイメージのコンテナで動きます。このコンテナで確かめたツールの有無・版・動いているもの（DB など）を、後の工程の環境の事実として書かないでください。要る言語の版・ツールは、リポジトリの設定（package.json・go.mod・pom.xml・pyproject.toml・.tool-versions・CI の設定など）から読んで書いてください",
     "- sacty は、オーケストレーターが選んだ docker compose のサービス（DB・モック API など）を、工程の実行のたびに起動し、工程のコンテナから接続できるようにします（いまは起動していません）。工程のエージェントは docker のコマンドを使えませんが、起動したサービスにはつなげます",
     "- compose ファイル・CI の設定・README・テストの設定から、テストと動作確認に要るものを次の3つに分けて、まとめに書いてください。compose の build の有無ではなく、何を動かすかで分けます",
+    "  - compose ファイルはリポジトリの根に限らずサブディレクトリも探す。compose.yaml・docker-compose.*.yml などの名前や、テスト・開発の手順書やスキルから参照されるファイルも調べる",
     "  1. このリポジトリのコードを動かすアプリ（工程で変える・確かめるもの）：工程のエージェントがコンテナの中で起動する。起動の手順（コマンド・要る環境変数の名前・つなぐサービス）を書く",
     "  2. 別で管理されている依存アプリ（このリポジトリのコードを動かさないもの）と、DB・キャッシュ・モックなど：sacty が起動できる候補。compose ファイルとサービスの名前を書く（このリポジトリの Dockerfile でビルドする DB なども、ここに入る）",
     `  3. compose に無い依存：${sharedComposes.length > 0 ? "次の共用の compose（チームで共用するリポジトリの compose）に合うものがあれば、その名前を書く。無ければ、" : ""}sacty が起動できない依存として書く`,

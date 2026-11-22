@@ -61,6 +61,7 @@ import {
   scopeIsWritten,
   selectablePlans,
   servicePromptLines,
+  serviceSkill,
 } from "./prompts.js";
 
 const diff = [
@@ -322,6 +323,47 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
       ...extra,
     }) as unknown as Task;
 
+  it.each([
+    ["PR のレビューの子タスク", { reviewOf: { taskId: "parent", step: "design" } }],
+    ["取り込んだ PR のレビュー", {}],
+  ] as const)("%s では未確認の所があっても指摘に応じた判定を求める", (_name, extra) => {
+    const prompt = buildPrompt(reviewTask(extra), "review", { diff });
+    expect(prompt).toContain(
+      "差分を読めないとき、または要求要件・設計の PR で主対象の文書を読めないときは判定を付けません。それ以外は、確かめられなかった所があっても判定を付けます",
+    );
+    expect(prompt).toContain("無ければ指摘の重さに応じて suggestions か no_findings を付けます");
+    expect(prompt).toContain("確かめられなかったことは、本文の最初に中身の言葉で書きます");
+    expect(prompt).not.toContain("無ければ付けません");
+  });
+
+  it("初回と再レビューの入力にかかわらず差分を読めない場合は判定を付けない", () => {
+    for (const reviewOf of [undefined, { taskId: "parent", step: "design" }] as const) {
+      for (const previousReview of [
+        undefined,
+        {
+          round: 1,
+          url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+          at: "2026-10-16T01:00:00.000Z",
+          headCommit: "p".repeat(40),
+          body: "判定がありません",
+          comments: [],
+        },
+      ]) {
+        for (const inputDiff of ["", diff]) {
+          const prompt = buildPrompt(
+            reviewTask({ reviewOf, previousReview, reviewRound: previousReview ? 2 : 1 }),
+            "review",
+            { diff: inputDiff, replies: [] },
+          );
+          expect(prompt).toContain(
+            "差分を読めないとき、または要求要件・設計の PR で主対象の文書を読めないときは判定を付けません",
+          );
+          expect(prompt).not.toContain("差分を読めないときは PR の説明などから対象を定め");
+        }
+      }
+    }
+  });
+
   it("既定のスキルを使い、自分では投稿せず、食い違えばプロンプトの出力の形を優先するよう指示する", () => {
     const prompt = buildPrompt(reviewTask(), "review", { diff });
     expect(prompt).toContain(
@@ -348,14 +390,17 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain("- no_findings：指摘が無い");
     expect(prompt).toContain('{"sacty-review-verdict": {"verdict": "changes_required"}}');
     expect(prompt).not.toContain("changesRequested");
-    // 完了できなかったときは判定を付けない。確かめられなかった所があっても、要修正があれば changes_required（スキルの「完了できないとき」と同じ。PBI-343）
     expect(prompt).toContain(
-      "差分やコード・レビューの対象にした文書を読めなかったときは付けません。",
+      "差分を読めないとき、または要求要件・設計の PR で主対象の文書を読めないときは判定を付けません。それ以外は、確かめられなかった所があっても判定を付けます",
+    );
+    expect(prompt).toContain("無ければ指摘の重さに応じて suggestions か no_findings を付けます");
+    expect(prompt).toContain(
+      "CI の実行中・画面の見え方を確かめられないこと・レビューの環境で動かないテストがあることは、判定を付けない理由にせず、本文に書きます",
     );
     expect(prompt).toContain(
-      "確かめられなかった所があるときは、今回の先頭のコミットで成り立つ要修正の指摘（見られた範囲で新しく見つけたもの、または今回のコードで未対応と確かめた前回・既存の要修正）があれば changes_required を付け",
+      "今回のコードで未対応と確かめた前回・既存の要修正）があれば changes_required を付け",
     );
-    expect(prompt).toContain("、無ければ付けません（sacty は、判定が付いていないことを本文に書き");
+    expect(prompt).not.toContain("無ければ付けません");
     // PR の説明で示された文書も、対象か根拠かを分け、対象ならレビューする（PBI-142）
     expect(prompt).toContain(
       "PR の説明で示された文書（Git の外に書いた設計書など）は、スキルの手順で、レビューの対象か根拠かを分ける。対象にした文書もレビューする",
@@ -394,7 +439,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
       "起動表を作り、スキルの起動の規則が決めた担当（必須観点、当てはまる条件付き観点、横断の観点、リポジトリの指示の担当）を、全部起動する",
     );
     expect(prompt).toContain(
-      "サブエージェントを起動する手段（ツール）がこの実行に無いときだけ、スキルの逐次モードで見る。差分も作業領域も読めないなど、スキルの「完了できないとき」に当たるときは、スキルの決まりのとおりにする",
+      "サブエージェントを起動する手段（ツール）がこの実行に無いときだけ、スキルの逐次モードで見る。差分や主対象の文書を読めないなど、スキルの「完了できないとき」に当たるときは、スキルの決まりのとおりにする",
     );
     // 前の実行が担当を起動しなかったのでなければ、やり直しの知らせは無い
     expect(prompt).not.toContain("【やり直し】");
@@ -785,11 +830,11 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain(
       "- 重みを見直して [提案] として扱う指摘は、指摘箇所が前回以降の差分の外でも、今回は残す（スキルの、前回以降の差分の外の [提案] を出さない決まりを当てない）。残す場所は、上のとおり、「前回の指摘」の節のその指摘の行と、総評の1行。残すのは、見直した回の1回だけ。前回のレビューの「前回の指摘」の節の、同じ箇所・同じ問題の行に、重みを見直して [提案] として扱うと書かれている指摘は、先頭のコミットが進んだ今回は、「前回の指摘」の節にも総評にも挙げず、判定の根拠にもしない（指摘箇所が前回以降の差分に含まれるときだけ、ほかの [提案] と同じに、新しい指摘として扱う）。そう書かれているかを読めなければ、今回の見直しとして扱う（残す）。その指摘が、今回の表で [要修正] の重さに当たると分かったときは、[要修正] として採用する。前回と同じ先頭のコミットを判定し直す回は、見直した回の続きとして扱い、前回のレビューが重みを見直したと書いた指摘も残す（挙げなくなるのは、先頭のコミットが進んだ次の回から）",
     );
-    // 判定：スキルは判定の節で「提案あり」、指示文は suggestions（下で確かめる）。見られなかった観点があるときは、どちらも判定を書かない
+    // 見られなかった観点があっても、重みを見直した指摘に応じて判定する
     expect(skill).toContain(
       "- 再レビューで、重みを見直した指摘が残り、`must` が無い：採用した指摘が無くても、提案あり（「修正が必要」にも「指摘なし」にもしない）",
     );
-    expect(skill).toContain("`must` が無ければ、重みを見直した指摘が残っていても、判定を書かない");
+    expect(skill).toContain("見られなかった観点があっても、上の決め方で判定し");
     // 指示文も、同じ決まりを言う：数えない・提案として扱う・書き方（節の行と、総評の1行）
     expect(prompt).toContain(
       "- 前回 [要修正] として出した指摘が直っていないときは、スキルの重要度の表（影響の大きさと起きやすさ）で、重さを確かめ直す。表では [提案] の重さに当たると分かったとき（影響が中で、独立した条件が 2 つ以上重なったときだけ起きるもの。影響が小のものは、起きやすさを問わない。受け入れ条件・要求要件の不適合は除き、[要修正] のままにする）は、直っていなくても、未対応の [要修正] に数えず、[提案] として扱う（この指示のほかの行が言う、未対応の前回の [要修正]・要修正にも数えない）。「前回の指摘」の節のその指摘の行には、未対応とだけ書かず、重みを見直して [提案] として扱うことと、その根拠（起きる条件と影響）を書く。総評にも、前回の指摘の状況として、重みを見直したことを1行で書く",
@@ -1569,7 +1614,43 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
       }),
     ]) {
       expect(without).not.toContain("共用の compose");
-      expect(without).not.toContain("servicesReason");
+      if (without.includes("- services：")) {
+        expect(without).toContain("servicesReason");
+      } else {
+        expect(without).not.toContain("servicesReason");
+      }
+    }
+  });
+
+  it("計画は compose の探索先を指示する", () => {
+    const task = {
+      title: "x",
+      body: "",
+      steps: [],
+      repository: { url: "https://github.com/a/b.git", baseBranch: "main", baseCommit: "abc1234" },
+    } as unknown as Task;
+    for (const sharedComposes of [[], [{ name: "infra", file: "compose.yml" }]]) {
+      const prompt = buildOrchestratorPrompt(task, { sharedComposes });
+      expect(prompt).toContain("compose ファイルはリポジトリの根に限らずサブディレクトリも探す");
+      expect(prompt).toContain(
+        "compose.yaml・docker-compose.*.yml などの名前や、テスト・開発の手順書やスキルから参照されるファイルも調べる",
+      );
+    }
+  });
+
+  it("計画は必要なサービスを選ばないとき、そのサービスと理由を書くよう指示する", () => {
+    const task = {
+      title: "x",
+      body: "",
+      steps: [],
+      repository: { url: "https://github.com/a/b.git", baseBranch: "main", baseCommit: "abc1234" },
+    } as unknown as Task;
+    for (const sharedComposes of [[], [{ name: "infra", file: "compose.yml" }]]) {
+      const prompt = buildOrchestratorPrompt(task, { sharedComposes });
+      expect(prompt).toContain(
+        "テストや動作確認にサービスが要ると分かったのに選ばないときは、要るサービスと選ばなかった理由を書く",
+      );
+      expect(prompt).toContain('"servicesReason":');
     }
   });
 
@@ -1631,72 +1712,55 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
         steps: [],
       } as unknown as Task),
     ).not.toContain("- services：");
-    expect(
-      servicePromptLines([
-        { name: "db", ports: [5432, 5433] },
-        { name: "mock", ports: [] },
-      ]),
-    ).toEqual([
-      "",
-      "--- 起動しているサービス（docker compose） ---",
-      expect.stringContaining("docker・docker compose のコマンドは使えません"),
-      expect.stringContaining("127.0.0.1 と書いてください"),
-      "- db：db:5432 または localhost:5432、db:5433 または localhost:5433",
-      "- mock",
-    ]);
-    // localhost でもサービス名でも接続できる。設定は書き換えさせない（PBI-60）
-    const intro = servicePromptLines([{ name: "db", ports: [5432] }])[2];
-    expect(intro).toContain("localhost のそのポート");
-    expect(intro).toContain("書き換えずにそのまま使ってください");
-    expect(intro).not.toContain("localhost ではありません");
-    // このリポジトリのアプリは、docker を使わずにコンテナの中で起動してつなぐ（PBI-152）
-    expect(intro).toContain(
-      "docker を使わずに、このコンテナの中でリポジトリの手順のコマンドで起動し、これらのサービスにつないでください",
+    const db = [{ name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] }];
+    const target = "- db：db:5432 または localhost:5432・localhost:15432";
+    const active = serviceSkill(db);
+    const inactive = serviceSkill([]);
+    expect(active).toContain(target);
+    expect(servicePromptLines(db)).toContain(target);
+    expect(servicePromptLines([]).join("\n")).toContain("リポジトリのスキル・手順より先に");
+    expect(active).toContain("起動・停止は飛ばしてください");
+    expect(active).toContain("環境変数かコミットしない設定");
+    expect(active).toContain("どのサービスのどの接続先に届かず");
+    expect(active).not.toContain("サービスは起動していません");
+    expect(inactive).toContain("サービスは起動していません");
+    expect(inactive).toContain("サービスが無いので確かめられなかった");
+    expect(inactive).toContain("作業の報告・PR・レビューの本文");
+    for (const text of [active, inactive]) {
+      expect(text).toContain("docker・docker compose のコマンドは使えません");
+      const [front, body] = text.slice(4).split("\n---\n");
+      for (const word of [
+        "docker",
+        "docker compose",
+        "MySQL",
+        "PostgreSQL",
+        "Redis",
+        "キャッシュ",
+        "モックの API",
+        "リポジトリのスキル・手順より先に",
+      ])
+        expect(front).toContain(word);
+      expect(body).not.toMatch(/sacty|mysql|postgresql|redis|python|typescript/i);
+    }
+    expect(active.split("\n---\n")[0]).toBe(inactive.split("\n---\n")[0]);
+    const shared = [
+      { name: "a", ports: [8080], otherPorts: [{ port: 8125, protocol: "udp" }] },
+      { name: "b", ports: [8080] },
+    ];
+    expect(serviceSkill(shared)).toContain(
+      "localhost:8080 は、複数のサービスが使う番号のため、転送していません",
     );
-    expect(servicePromptLines([{ name: "db", ports: [5432] }])[3]).toContain(
-      "サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります",
-    );
-    // 複数のサービスが使うポートは、localhost に転送していないと伝える
-    expect(
-      servicePromptLines([
-        { name: "a", ports: [8080, 9000] },
-        { name: "b", ports: [8080] },
-      ]).slice(4),
-    ).toEqual([
-      "- a：a:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）、a:9000 または localhost:9000",
-      "- b：b:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）",
-    ]);
-    // ホストに出すポートが違えば、そのポートでも届くと伝える。ぶつかる番号は転送していないと伝える
-    expect(
-      servicePromptLines([
-        {
-          name: "db",
-          ports: [5432],
-          hostPorts: [{ port: 15432, target: 5432 }],
-        },
-        {
-          name: "cache",
-          ports: [6379],
-          hostPorts: [{ port: 15432, target: 6379 }],
-        },
-      ]).slice(4),
-    ).toEqual([
+    expect(serviceSkill(shared)).toContain("a:8125/udp（localhost には転送していません）");
+    const conflicting = [
+      { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+      { name: "cache", ports: [6379], hostPorts: [{ port: 15432, target: 6379 }] },
+    ];
+    expect(servicePromptLines(conflicting)).toContain(
       "- db：db:5432 または localhost:5432（localhost:15432 は、複数のサービスが使う番号のため、転送していません）",
-      "- cache：cache:6379 または localhost:6379（localhost:15432 は、複数のサービスが使う番号のため、転送していません）",
-    ]);
-    expect(
-      servicePromptLines([
-        {
-          name: "db",
-          ports: [5432],
-          hostPorts: [{ port: 15432, target: 5432 }],
-        },
-      ]),
-    ).toContain("- db：db:5432 または localhost:5432・localhost:15432");
-    expect(servicePromptLines([{ name: "db", ports: [5432] }])[2]).toContain(
-      "そのポート（localhost:15432）でも届きます",
     );
-    // 同じサービスの中では、ホストに出すポートの対応を優先する。UDP は転送しない（PBI-60 レビュー指摘）
+    expect(servicePromptLines(conflicting)).toContain(
+      "- cache：cache:6379 または localhost:6379（localhost:15432 は、複数のサービスが使う番号のため、転送していません）",
+    );
     const app = {
       name: "app",
       ports: [80, 8080],
@@ -1706,14 +1770,12 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
       ],
       otherPorts: [{ port: 8125, protocol: "udp" }],
     };
-    expect(servicePromptLines([app]).slice(4)).toEqual([
+    expect(servicePromptLines([app])).toContain(
       "- app：app:80 または localhost:80・localhost:8080、app:8080 または localhost:18080、app:8125/udp（localhost には転送していません）",
-    ]);
-    expect(servicePromptLines([app, { name: "mock", ports: [8080] }]).slice(4)).toEqual([
+    );
+    expect(servicePromptLines([app, { name: "mock", ports: [8080] }])).toContain(
       "- app：app:80 または localhost:80（localhost:8080 は、複数のサービスが使う番号のため、転送していません）、app:8080 または localhost:18080、app:8125/udp（localhost には転送していません）",
-      "- mock：mock:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）",
-    ]);
-    expect(servicePromptLines([])).toEqual([]);
+    );
   });
 });
 
@@ -6540,6 +6602,10 @@ describe("タスクの開始時に集めた情報", () => {
     expect(prompt).toContain("--- 実行の環境とサービス ---");
     expect(prompt).toContain("後の工程の環境の事実として書かないでください");
     expect(prompt).toContain("工程の実行のたびに起動し");
+    expect(prompt).toContain("compose ファイルはリポジトリの根に限らずサブディレクトリも探す");
+    expect(prompt).toContain(
+      "compose.yaml・docker-compose.*.yml などの名前や、テスト・開発の手順書やスキルから参照されるファイルも調べる",
+    );
     expect(prompt).toContain("1. このリポジトリのコードを動かすアプリ");
     expect(prompt).toContain("2. 別で管理されている依存アプリ");
     expect(prompt).toContain("sacty が起動できない依存として書く");

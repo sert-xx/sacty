@@ -101,6 +101,7 @@ For each item in the sacty settings, sacty searches the project's targets (an or
     The task that created the PR creates a child task that reviews it ([The review child task of a PR](approval.en.md#the-review-child-task-of-a-pr)).
   - The same applies to PRs given the label by an older version and PRs that already have a review task taken in (no double review).
 - Reviews that a review task (a review child task, a task taken in by a request, a task taken in by the label, or a review task created manually with the PR URL in its description) posts on the PR, in rounds with findings (changes required or suggestions; and rounds with no verdict, where the reviewer gave no verdict or the verdict could not be read), are taken in as comments on the PR of the task that created it ([Importing PR comments](approval.en.md#importing-pr-comments)).
+A round without a verdict is also imported and can lead to rework for a requirements or design PR.
   Rounds with no findings are not taken in.
   The comments that arrive are told apart by the post's marker as AI review comments, distinct from a person's comments: they are not counted in a person's requests for changes, and are discarded when the head the review targeted differs from the PR's current head ([AI review comments](approval.en.md#ai-review-comments)).
 - For the responsible project, a repository target takes precedence over an org target (`responsibleProject`). The same Issue or PR (`<repository>#<number>`) is never taken in twice (except for new tasks created by review re-requests as described above).

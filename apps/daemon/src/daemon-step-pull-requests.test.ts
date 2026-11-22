@@ -40,6 +40,7 @@ import {
   type ServiceDeps,
   type TaskService,
 } from "./service.js";
+import { SessionLogStore } from "./session-logs.js";
 import { MemorySettingsStore } from "./settings.js";
 import { taskPullRequests } from "./task-mcp.js";
 import {
@@ -136,6 +137,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     outcomes: AgentOutcome[],
     options: {
       steps?: StepKey[];
+      sessionLogs?: SessionLogStore;
       documentsDir?: string;
       exports?: Planned["exports"];
       pulls?: FakePulls;
@@ -178,6 +180,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ...(options.webUrl !== undefined ? { webUrl: options.webUrl } : {}),
       ...(options.github ? { github: options.github } : {}),
       stepPullRequests: true,
+      ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
       ...(options.pushRetryDelaysMs ? { pushRetryDelaysMs: options.pushRetryDelaysMs } : {}),
       ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
       ...(options.reviewTasks ? { reviewTasks: true } : {}),
@@ -2834,12 +2837,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           `# 評価\n\n指摘あり\n\n${block({ "sacty-review-verdict": { verdict, ...(rework ? { rework } : {}) } })}`,
         );
       /** 要求要件の PR をマージして、設計の PR を作って承認待ちにする。 */
-      async function designed(outcomes: AgentOutcome[], config?: () => ConfigResult) {
+      async function designed(
+        outcomes: AgentOutcome[],
+        config?: () => ConfigResult,
+        sessionLogs?: SessionLogStore,
+      ) {
         const pulls = new FakePulls();
         const made = await start([out("# 要求要件 v1"), out("# 設計 v1"), ...outcomes], {
           pulls,
           steps: ["requirements", "design"],
           reviewTasks: true,
+          ...(sessionLogs ? { sessionLogs } : {}),
           ...(config ? { config } : {}),
         });
         await merge({ ...made, pulls }, "requirements");
@@ -3069,6 +3077,41 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         });
         activity.close();
       });
+
+      it.each(["差分", "主対象の文書"])(
+        "%s を読めない設計レビューを取り込み、戻し先を読めなければ設計を直す",
+        async (missing) => {
+          const made = await designed(
+            [out(`総評\n\nレビューを完了できませんでした。${missing}を読めませんでした。`)],
+            undefined,
+            new SessionLogStore(join(dir, "runs")),
+          );
+          const { activity, service, pulls, executor, id, number, childId } = made;
+          executor.sessionFiles = () => ({
+            "projects/-workspace/s1.jsonl": `${JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "a", name: "Agent", input: {} }] } })}\n`,
+          });
+          executor.logLines = () =>
+            `${JSON.stringify({ type: "system", subtype: "init", tools: ["Task", "Read"] })}\n`;
+          await runReview(service, childId);
+          expect(taskOf(service, childId).reviewVerdicts).toEqual([
+            { round: 1, missing: "absent" },
+          ]);
+          expect(taskOf(service, childId).reviewDispatch?.subagents).toBe(1);
+          expect(pulls.reviews[0]?.body).toContain(`${missing}を読めませんでした`);
+          pulls.feedbackBy[number] = [posted(pulls, 0)];
+          await service.checkPullRequests();
+          expect(types(service, id)).toContain("PullRequestReviewImported");
+          for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
+          expect(judged(service, id)[0]).toMatchObject({
+            payload: {
+              target: "design",
+              reason: { code: "rework.reviewTaskUnreadable" },
+              reviewTaskId: childId,
+            },
+          });
+          activity.close();
+        },
+      );
 
       it("子タスクの答えに戻し先が無ければ、その PR の工程で直し、読めなかったことを理由に残す（受け入れ条件 1）", async () => {
         const made = await designed([reworkOut("changes_required")]);

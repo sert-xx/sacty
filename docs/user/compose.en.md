@@ -17,7 +17,7 @@ In either case, check the following.
 
 - Images: if you use images in your organization's registry, run `docker login` on the host beforehand ([How services are started](#how-services-are-started)).
 - Compose file settings: if the file has [unsupported settings](#unsupported-settings), sacty stops without starting the services.
-- Connection targets: services are reachable even when the repository's configuration points at localhost ([Reaching services via localhost](#reaching-services-via-localhost)). There are cases where they are not reachable ([When localhost does not reach a service](#when-localhost-does-not-reach-a-service)).
+- Connection targets: sacty attempts forwarding when the repository's configuration points at localhost ([Forwarding via localhost](#forwarding-via-localhost)). There are cases where they are not reachable ([When localhost does not reach a service](#when-localhost-does-not-reach-a-service)).
 
 ## How services are started
 
@@ -25,6 +25,8 @@ sacty starts the services and cleans them up as follows.
 
 - Services and steps to use: the Orchestrator decides them when it chooses the steps.
   - The Orchestrator reads the repository (compose files, README, AGENTS.md, and test configuration) and decides which services in which compose file to use, and in which steps (Implementation, Reproduce, bug Investigation).
+  - The instructions ask it to search subdirectories and various names for compose files, including files referenced by test and development instructions or skills.
+  - When it does not select services needed for tests or manual checks, the instructions ask it to record the services and reason in the activity history.
   - If the information gathering at the start of the task has sorted the services needed for tests and manual checks, the Orchestrator bases its choice on that.
   - Services are not started for an Investigation of content (as opposed to a bug Investigation).
 - What is started: sacty starts dependency apps managed elsewhere (ones that do not run the target repository's code) and databases, caches, mocks, and so on.
@@ -41,9 +43,13 @@ sacty starts the services and cleans them up as follows.
   - sacty records the daemon that started them in the container label `io.sacty.owner`.
   - Services whose daemon is still running (those of another sacty running with the same `SACTY_HOME`) are not removed.
 
-## Reaching services via localhost
+Each step receives the generated `docker-services` skill, including steps without services. It takes precedence for starting and connecting services; a layered skill of the same name is ignored and produces `context.reservedSkill`. The instructions also ask the agent to read it first.
 
-Services are reachable even when the repository's configuration points at localhost. This is because, in runs that start services, sacty forwards `127.0.0.1:<port>` (and `[::1]:<port>` when available) inside the agent containers to the same port of the service (`<service-name>:<port>`).
+The skill explains that docker commands are unavailable and that sacty starts and stops services. Connection addresses are candidates, and localhost forwarding is planned rather than guaranteed. The agent tries another candidate if needed and reports what could not be verified if all fail; when no services are started, it reports checks blocked by their absence.
+
+## Forwarding via localhost
+
+When the repository's configuration points at localhost, sacty attempts forwarding. In runs that start services, sacty forwards `127.0.0.1:<port>` (and `[::1]:<port>` when available) inside the agent containers to the same port of the service (`<service-name>:<port>`).
 
 For example, connecting to a db service looks like this.
 
@@ -58,7 +64,7 @@ sacty forwards the following ports.
 - The service's container ports (the right-hand side of `ports`, and `expose`)
 - The ports published to the host by `ports`. This is because local development configuration often points at the host-side port.
 
-With `ports: ["15432:5432"]`, both `localhost:15432` and `localhost:5432` reach `db:5432`. sacty does not publish anything on the host's ports; the forwarding exists only inside the container.
+With `ports: ["15432:5432"]`, sacty attempts to forward both `localhost:15432` and `localhost:5432` to `db:5432`. sacty does not publish anything on the host's ports; the forwarding exists only inside the container.
 
 `ports` is read in both the short syntax and the long syntax.
 
@@ -67,19 +73,19 @@ With `ports: ["15432:5432"]`, both `localhost:15432` and `localhost:5432` reach 
 
 Entries without a published port, or whose range lengths do not match, forward only the container port.
 
-Within one service, when a port published to the host has the same number as another container port (`ports: ["8080:80", "18080:8080"]`), the mapping as seen from the host takes priority. `localhost:8080` reaches `app:80`, and `app:8080` is reached from `localhost:18080`.
+Within one service, when a port published to the host has the same number as another container port (`ports: ["8080:80", "18080:8080"]`), the mapping as seen from the host takes priority. sacty attempts to forward `localhost:8080` to `app:80` and `localhost:18080` to `app:8080`.
 
 ### When localhost does not reach a service
 
 The following ports are not forwarded.
 
 - UDP and other non-TCP ports (`/udp` in `ports`, `"8125/udp"` in `expose`) are not forwarded and are not counted when checking for collisions (a TCP port with the same number is forwarded).
-- When several services use the same number on localhost (host side or container side), that number is not forwarded, because sacty cannot decide which one to connect to. Connect by service name instead. The number is shown in the service start record in the Activity and in the instructions to the agent.
+- When several services use the same number on localhost (host side or container side), that number is not forwarded, because sacty cannot decide which one to connect to. Try the service name as another candidate. The number is shown in the service start record in the Activity and in the instructions to the agent.
 - When something else inside the container is already using the port, that port is not forwarded and the run continues (it does not fail). The reason is written to the daemon log (from the standard error of the agent run).
 
 The forwarding has the following limitations.
 
-- Forwarding is TCP only. Clients such as the MySQL client that connect over a UNIX socket instead of TCP when the host is written as `localhost` cannot reach the service (writing `127.0.0.1` works).
+- Forwarding is TCP only. Clients such as the MySQL client that connect over a UNIX socket instead of TCP when the host is written as `localhost` cannot reach the service (try `127.0.0.1`).
 - If the app under test listens on the same port as a service, it collides with the forwarding and cannot listen. Change the app's port, or connect by service name.
 
 ## Unsupported settings

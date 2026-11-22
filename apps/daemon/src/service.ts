@@ -509,6 +509,7 @@ import {
   type SubtaskSummary,
   selectablePlans,
   servicePromptLines,
+  serviceSkill,
   skippedFilesLines,
   verificationBasis,
   viewpointRename,
@@ -7422,7 +7423,16 @@ export class TaskService {
         (repo) => this.gitAuth({ projectId: id }, repo, usedSecrets, definition),
         this.deps.defaultContext,
         this.mcpRouting(config),
-        tierFiles(runtime, tiers.entries),
+        [
+          ...tierFiles(runtime, tiers.entries),
+          {
+            path: "skills/docker-services/SKILL.md",
+            content: serviceSkill([]).replace(
+              /^サービスは起動していません。.*$/m,
+              "プレビューです。サービスの起動状況と接続先は実行時に決まります。",
+            ),
+          },
+        ],
       );
       // 使える外部 PF：ホストの PF と、合成した PF（同じ名前ならホストのもの。実行と同じ。PBI-74）
       const merged = mergePlatforms(config?.platforms ?? [], preview.platforms);
@@ -12189,7 +12199,6 @@ export class TaskService {
         target: tip,
         maxConflicts: MAX_BASE_CONFLICTS,
       });
-      recordMerge(beforeBase, await tree());
       if (merged.status === "unchanged") return { kind: "clean" };
       // 作業領域に書いた結果を、すぐ記録する（以後の差分・コミットは、取り込んだ先頭を起点にする）
       // 全件を記録する（競合が多すぎるときは、mergeBase が作業領域を書き換える前に失敗する）。切り捨てると、残りの目印を検査できない
@@ -12203,6 +12212,7 @@ export class TaskService {
           },
         },
       ]);
+      recordMerge(beforeBase, await tree());
       return conflicts.length > 0
         ? { kind: "conflicts", files: conflicts, fresh: true }
         : { kind: "clean" };
@@ -13534,7 +13544,9 @@ export class TaskService {
               agentId: agent.id,
               reason: "error",
               message: failureMessage,
-              ...(copiesRepositories(task, step) ? { preparationFailed: true as const } : {}),
+              ...(step === "implement" || copiesRepositories(task, step)
+                ? { preparationFailed: true as const }
+                : {}),
             },
           },
         },
@@ -13558,9 +13570,21 @@ export class TaskService {
     // 実装の指示に渡して解消させる。取り込めなければ、実行せずに止める
     let mergeConflicts: string[] = [];
     const priorEvents = step === "implement" ? this.deps.activity.forTask(task.id) : [];
+    const preparationFailures = new Set(
+      priorEvents.flatMap((event) =>
+        event.type === "AgentRunFailed" && event.payload.preparationFailed
+          ? [event.payload.runId]
+          : [],
+      ),
+    );
     const previousStart = [...priorEvents]
       .reverse()
-      .find((event) => event.type === "AgentRunStarted" && event.payload.step === "implement");
+      .find(
+        (event) =>
+          event.type === "AgentRunStarted" &&
+          event.payload.step === "implement" &&
+          !preparationFailures.has(event.payload.runId),
+      );
     const previousBaseline =
       previousStart?.type === "AgentRunStarted"
         ? previousStart.payload.formattingBaseline
@@ -13609,6 +13633,7 @@ export class TaskService {
                 agentId: agent.id,
                 reason: "error",
                 message: synced.message,
+                preparationFailed: true,
               },
             },
           },
@@ -13663,6 +13688,7 @@ export class TaskService {
                 agentId: agent.id,
                 reason: "error",
                 message: redactText(errorText(error), secrets),
+                preparationFailed: true,
               },
             },
           },
@@ -13711,7 +13737,15 @@ export class TaskService {
     let context: RunContext | undefined;
     const contextSecrets: string[] = [];
     try {
-      context = await this.runContext(task, agent, config.config, contextSecrets, undefined, step);
+      context = await this.runContext(
+        task,
+        agent,
+        config.config,
+        contextSecrets,
+        undefined,
+        step,
+        true,
+      );
     } catch (error) {
       const multiPreparation = copiesRepositories(task, step);
       const manual = multiPreparation ? await this.manualPauseInfo(task.id) : {};
@@ -14095,6 +14129,24 @@ export class TaskService {
         };
       }
       const started = services?.ok ? services.started : undefined;
+      if (started && context) {
+        try {
+          writeFileSync(
+            join(context.dir, "skills/docker-services/SKILL.md"),
+            serviceSkill(started.services),
+          );
+        } catch (error) {
+          executed = {
+            outcome: {
+              kind: "failed",
+              reason: "error",
+              message: redactText(errorText(error), contextSecrets),
+            },
+            costUsd: 0,
+            estimated: false,
+          };
+        }
+      }
       // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
       const reviewVerification =
         step === "review" ? this.reviewVerification(this.mustGet(task.id)) : undefined;
@@ -14501,11 +14553,7 @@ export class TaskService {
       step === "implement" && extracted.formatting
         ? await this.formattingStatus(latest, extracted.formatting)
         : undefined;
-    const declaredNow = formattingDeclaration?.declared.filter((entry) =>
-      extracted.formatting?.some(
-        (item) => item.path === entry.path && item.reason === entry.reason,
-      ),
-    );
+    const declaredNow = formattingDeclaration?.declaredNow;
     // 指摘（ID の付いた差し戻しの指摘）への対応と、引き継いだ PR の指摘（ID がキー）への対応を分ける。同じ指摘への対応が
     // 2つあれば、先のものを使う
     const responses = extracted.responses.filter((r) => remarkIds.includes(r.remarkId));
@@ -14853,6 +14901,7 @@ export class TaskService {
     onlyMcp: string | undefined,
     /** その実行の役割（MCP の時間切れの警告を、その役割の実行の上限で判断する。PBI-150）。 */
     role: string,
+    stepSkill = false,
   ): Promise<RunContext | undefined> {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
@@ -14860,6 +14909,7 @@ export class TaskService {
     // 段階のサブエージェントの定義（PBI-119）。置くものがあれば、コンテキストが無くても設定のディレクトリに置く
     const tiers = this.tiersFor(agent, config);
     if (
+      !stepSkill &&
       !contextSource &&
       !defaultContext &&
       hostMcp.length === 0 &&
@@ -14894,7 +14944,12 @@ export class TaskService {
         gatewayOrigin,
         onlyMcp,
         hostCommands,
-        tierFiles(runtime, tiers.entries),
+        [
+          ...tierFiles(runtime, tiers.entries),
+          ...(stepSkill
+            ? [{ path: "skills/docker-services/SKILL.md", content: serviceSkill([]) }]
+            : []),
+        ],
         runLimitMs,
       )),
       tiers: tiers.entries,
@@ -17984,11 +18039,6 @@ export class TaskService {
     return false;
   }
 
-  /**
-   * 実装の実行が、範囲を実装し終えたと申告したか（PBI-347）。未完了と申告した・申告が無い（読めない）なら、
-   * ImplementationIncomplete を記録して実装をやり直させ（続けて終わらなければ一時停止する）、false。申告させる前の記録
-   * （完了の実行に申告の項目が無い）は、今までどおり true。
-   */
   private async formattingStatus(task: Task, additions: { path: string; reason: string }[] = []) {
     if (!task.repository) return undefined;
     try {
@@ -18031,9 +18081,15 @@ export class TaskService {
           ? (e.payload.formatting ?? [])
           : [],
       );
+      const declaredNow = additions
+        .map((item) => ({
+          path: redact(item.path, secrets),
+          reason: redact(item.reason, secrets).trim().slice(0, 300),
+        }))
+        .filter((item) => paths.has(item.path) && item.reason);
       const declared = [
         ...new Map(
-          [...declarations, ...additions]
+          [...declarations, ...declaredNow]
             .filter((item) => paths.has(item.path) && item.reason)
             .map((item) => [item.path, item]),
         ).values(),
@@ -18046,12 +18102,16 @@ export class TaskService {
       const rejected = events
         .slice(lastSubmission + 1)
         .filter((e) => e.type === "FormattingOnlyRejected").length;
-      return { files, declared, rejected };
+      return { files, declared, declaredNow, rejected };
     } catch {
       return undefined;
     }
   }
 
+  /**
+   * 実装の実行が範囲を完了したと申告したか確かめ、未完了なら実装をやり直させる。
+   * 申告を導入する前の記録は、今までどおり受け付ける。
+   */
   private async implementationCompleted(task: Task): Promise<boolean> {
     const completion = task.implementCompletion;
     // 完了と申告していても、観点とテストの対応に欠けているテスト観点があれば、提出に進めない（PBI-348）。申告させる前の

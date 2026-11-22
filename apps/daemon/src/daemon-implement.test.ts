@@ -117,6 +117,24 @@ const linksKeptLogs = (warn: { mock: { calls: unknown[][] } }) =>
     .map((call) => String(call[0]))
     .filter((line) => line.includes("作業領域へのリンクを外せませんでした"));
 
+const skillWriteFailure = vi.hoisted(() => ({ enabled: false }));
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...original,
+    writeFileSync: (...args: Parameters<typeof original.writeFileSync>) => {
+      if (
+        skillWriteFailure.enabled &&
+        String(args[0]).endsWith("skills/docker-services/SKILL.md") &&
+        String(args[1]).includes("db:5432")
+      ) {
+        throw new Error("skill write failed");
+      }
+      return original.writeFileSync(...args);
+    },
+  };
+});
+
 describe("実装の工程と実装の PR（PBI-10a）", () => {
   const out = (text: string, usageOutput = 100): AgentOutcome => ({
     kind: "completed",
@@ -695,6 +713,65 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
+  it("続きの実行前の取り込みが失敗しても起点を引き継ぐ", async () => {
+    const repos = new FakeRepos();
+    repos.branchHead = repos.head;
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    repos.treeDiffs.set(`${base}:${submitted}`, [
+      {
+        status: "M",
+        path: "a.ts",
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      },
+    ]);
+    repos.treeBlobs.set("old", "const x={a:1};");
+    repos.treeBlobs.set("new", "const x = { a: 1, };");
+    const unfinished = out(
+      `${implement("# 未完了").output}\n\n\`\`\`sacty-completion\n${JSON.stringify({ status: "incomplete", remaining: ["続き"] })}\n\`\`\``,
+    );
+    const { activity, service, id } = await toImplement([unfinished, implement("# 完了")], {
+      repos,
+      mergeBase: true,
+    });
+    await service.runNext(id);
+    repos.tree = submitted;
+    await service.runNext(id);
+    repos.branchHead = "b".repeat(40);
+    const original = repos.mergeBase.bind(repos);
+    const merge = vi.spyOn(repos, "mergeBase").mockRejectedValueOnce(new Error("merge failed"));
+    await service.runNext(id);
+    expect(
+      service
+        .get(id)
+        ?.activity.filter((e) => e.type === "AgentRunFailed")
+        .at(-1)?.payload,
+    ).toMatchObject({
+      preparationFailed: true,
+    });
+    merge.mockImplementation(original);
+    service.resume(id, {});
+    await service.runNext(id);
+    const starts =
+      service
+        .get(id)
+        ?.activity.filter(
+          (event) => event.type === "AgentRunStarted" && event.payload.step === "implement",
+        ) ?? [];
+    expect(starts.at(-1)?.payload.formattingBaseline?.tree).toBe(base);
+    await service.runNext(id);
+    expect(
+      service
+        .get(id)
+        ?.activity.filter((e) => e.type === "FormattingOnlyRejected")
+        .at(-1)?.payload,
+    ).toEqual({ count: 1 });
+    activity.close();
+  });
+
   it("申告されたパスと理由の秘密値を伏せて照合し、記録と本文に残さない", async () => {
     const repos = new FakeRepos();
     repos.diffFileList = [{ status: "M", path: "oauth-secret.ts" }];
@@ -732,6 +809,42 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     ]);
     expect(JSON.stringify(result.activity)).not.toContain("oauth-secret");
     expect(buildPullRequestBody(result.task)).not.toContain("oauth-secret");
+    activity.close();
+  });
+
+  it("申告理由は実行に使わない秘密値も切り詰める前に伏せる", async () => {
+    const repos = new FakeRepos();
+    repos.diffFileList = [{ status: "M", path: "a.ts" }];
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    repos.treeDiffs.set(`${base}:${submitted}`, [
+      {
+        status: "M",
+        path: "a.ts",
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      },
+    ]);
+    repos.treeBlobs.set("old", "const x = { a: 1 };\n");
+    repos.treeBlobs.set("new", "const x = {\n  a: 1,\n};\n");
+    const reason = `${"x".repeat(295)}ghp_secret`;
+    const declaration = block({ "sacty-formatting": { files: [{ path: "a.ts", reason }] } });
+    const { activity, service, executor, id } = await toImplement(
+      [implement(`# 実装\n\n${declaration}`)],
+      { repos },
+    );
+    executor.respond = (invocation) => {
+      if (invocation.command.join(" ").includes("テスト観点（承認済み")) repos.tree = submitted;
+      return undefined;
+    };
+    await drain(service);
+    const result = service.get(id);
+    if (!result) throw new Error("task missing");
+    expect(result.task.formattingCheck?.declared[0]?.reason).toBe(`${"x".repeat(295)}[REDA`);
+    expect(JSON.stringify(result.activity)).not.toContain("ghp_");
+    expect(buildPullRequestBody(result.task)).not.toContain("ghp_");
     activity.close();
   });
 
@@ -2951,7 +3064,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       });
 
     it("サービスを使う工程の前に起動してネットワークにつなぎ、終わったら消す。ほかの工程では起動しない", async () => {
-      const services = new FakeServices();
+      const services = new FakeServices(undefined, [
+        { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+      ]);
       const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
         services,
         planner: servicesPlan(),
@@ -2970,21 +3085,57 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(executor.networks[3]).toBe(`sacty-svc-${agentRun?.runId}_sacty`);
       expect(executor.networks.filter(Boolean)).toHaveLength(1);
       // 接続先をエージェントに伝える
-      expect(promptOf(executor, 3)).toContain("--- 起動しているサービス（docker compose） ---");
-      expect(promptOf(executor, 3)).toContain("- db：db:5432");
-      expect(promptOf(executor, 2)).not.toContain("起動しているサービス");
+      expect(promptOf(executor, 3)).toContain(
+        "リポジトリのスキル・手順より先にスキル docker-services",
+      );
+      expect(executor.seeds[3]?.["skills/docker-services/SKILL.md"]).toContain(
+        "db:5432 または localhost:5432・localhost:15432",
+      );
+      expect(executor.seeds[2]?.["skills/docker-services/SKILL.md"]).toContain(
+        "サービスは起動していません",
+      );
+      expect(promptOf(executor, 3)).toContain(
+        "- db：db:5432 または localhost:5432・localhost:15432",
+      );
+      expect(promptOf(executor, 2)).not.toContain("- db：");
       // 起動したことを作業履歴に残す
       const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
       expect(started.map((e) => e.type === "ServicesStarted" && e.payload.forTests)).toEqual([
         undefined,
       ]);
       // サービスのポートを localhost に転送する（PBI-60）。サービスを使わない工程では渡さない
-      expect(executor.forwards[3]).toEqual([{ port: 5432, host: "db" }]);
+      expect(executor.forwards[3]).toEqual([
+        { port: 5432, host: "db" },
+        { port: 15432, host: "db", target: 5432 },
+      ]);
       expect(executor.forwards.filter(Boolean)).toHaveLength(1);
       expect(started.every((e) => e.type === "ServicesStarted" && !e.payload.sharedPorts)).toBe(
         true,
       );
       activity.close();
+    });
+
+    it("サービス起動後のスキル書き込みに失敗すると理由を記録して一時停止し、サービスを片付ける", async () => {
+      const services = new FakeServices();
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+        services,
+        planner: servicesPlan(),
+      });
+      skillWriteFailure.enabled = true;
+      try {
+        await drain(service);
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(JSON.stringify(activity.forTask(id))).toContain("skill write failed");
+        expect(services.stopped).toEqual(services.started.map((entry) => entry.runId));
+        expect(
+          executor.seeds.some((seed) =>
+            seed?.["skills/docker-services/SKILL.md"]?.includes("db:5432"),
+          ),
+        ).toBe(false);
+      } finally {
+        skillWriteFailure.enabled = false;
+        activity.close();
+      }
     });
 
     it("エージェントのイメージを、サービスを起動する前にイメージ ID に確定させ、その ID で実行する（PBI-130）", async () => {
@@ -3040,7 +3191,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
 
     it("複数のサービスが使うポートは localhost に転送せず、作業履歴と指示に残す。ポートが無ければ転送を渡さない（PBI-60）", async () => {
       const services = new FakeServices(undefined, [
-        { name: "api", ports: [8080, 9000] },
+        { name: "api", ports: [8080, 9000], otherPorts: [{ port: 8125, protocol: "udp" }] },
         { name: "mock", ports: [8080] },
         { name: "worker", ports: [] },
       ]);
@@ -3050,6 +3201,11 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       });
       await drain(service);
       expect(executor.forwards[3]).toEqual([{ port: 9000, host: "api" }]);
+      const skill = executor.seeds[3]?.["skills/docker-services/SKILL.md"] ?? "";
+      expect(skill).toContain(
+        "localhost:8080 は、複数のサービスが使う番号のため、転送していません",
+      );
+      expect(skill).toContain("api:8125/udp（localhost には転送していません）");
       const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
       expect(started.map((e) => e.type === "ServicesStarted" && e.payload.sharedPorts)).toEqual([
         [8080],
@@ -3422,7 +3578,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           prompt.includes("- infra：compose ファイル compose/redis.yml。Redis。結合テストに要る"),
         ).toBe(expected);
         expect(prompt.includes("- kafka：compose ファイル compose.yaml")).toBe(expected);
-        expect(prompt.includes("servicesReason")).toBe(expected);
+        expect(prompt).toContain("servicesReason");
         expect(service.get(task.id)?.task.servicesReason).toBe("Redis は使わない");
         activity.close();
       }
@@ -9633,9 +9789,23 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const original = repos.mergeBase.bind(repos);
       vi.spyOn(repos, "mergeBase").mockImplementation(async (input) => {
         const result = await original(input);
-        if (input.target === human) repos.tree = middle;
-        if (input.target === tip) repos.tree = after;
+        if (input.target === human) {
+          repos.tree = middle;
+          writeFileSync(join(input.dir, "r.ts"), "human merge content\n");
+        }
+        if (input.target === tip) {
+          repos.tree = after;
+          writeFileSync(join(input.dir, "s.ts"), "base merge content\n");
+        }
         return result;
+      });
+      let publishedFiles: string[] = [];
+      const publish = repos.publish.bind(repos);
+      vi.spyOn(repos, "publish").mockImplementation(async (input) => {
+        const work = repos.prepared.at(-1)?.dir;
+        if (!work) throw new Error("workspace missing");
+        publishedFiles = ["r.ts", "s.ts"].map((path) => readFileSync(join(work, path), "utf8"));
+        return publish(input);
       });
       await service.runNext(id);
       const starts = (service.get(id)?.activity ?? []).filter(
@@ -9657,6 +9827,12 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(prompt).toContain("- a.ts");
       expect(prompt).not.toContain("- r.ts");
       expect(prompt).not.toContain("- s.ts");
+      const finalTree = "f".repeat(40);
+      repos.treeDiffs.set(`${base}:${finalTree}`, [change("r.ts"), change("s.ts")]);
+      repos.tree = finalTree;
+      await drain(service);
+      expect(repos.published.at(-1)).toBeDefined();
+      expect(publishedFiles).toEqual(["human merge content\n", "base merge content\n"]);
       activity.close();
     });
 

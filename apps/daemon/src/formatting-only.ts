@@ -75,19 +75,16 @@ export function formattingOnly(path: string, before: string, after: string): boo
     // 構文木だけではセミコロンなどの付け外しを識別できないので、トークンも比較する。
     const tokens = (source: string, parsed: typeof left) => {
       const list = parsed.tokens ?? [];
-      return list.flatMap((token, index) => {
+      let following = "";
+      const result: string[] = [];
+      for (let index = list.length - 1; index >= 0; index--) {
+        const token = list[index];
+        if (!token) continue;
         const raw = source.slice(token.start, token.end);
-        let nextIndex = index + 1;
-        while (nextIndex < list.length) {
-          const candidate = list[nextIndex];
-          const value = candidate ? source.slice(candidate.start, candidate.end) : "";
-          if (!value.startsWith("//") && !value.startsWith("/*")) break;
-          nextIndex++;
-        }
-        const next = list[nextIndex];
-        const following = next ? source.slice(next.start, next.end) : "";
-        return raw === "" || (raw === "," && [")", "]", "}"].includes(following)) ? [] : [raw];
-      });
+        if (raw !== "" && !(raw === "," && [")", "]", "}"].includes(following))) result.push(raw);
+        if (!raw.startsWith("//") && !raw.startsWith("/*")) following = raw;
+      }
+      return result.reverse();
     };
     return JSON.stringify(tokens(before, left)) === JSON.stringify(tokens(after, right));
   } catch {

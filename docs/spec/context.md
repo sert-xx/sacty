@@ -75,6 +75,17 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
 
 コード: `apps/daemon/src/context.ts`（`loadLayers`・`loadDefaultContext`・`resolveContext`・`parseExtends`・`extendsRef`・`localContextDir`・`layerDir`・`copyLocalLayer`・`hashTree`・`assertSubmodulesCheckedOut`・`gitlinks`・`submoduleInLayer`・`GitContextFetcher`・`MAX_CONTEXT_DEPTH`・`DEFAULT_CONTEXT_REPO`）、`apps/daemon/src/service.ts`（`gitAuth`・`githubToken`）、`apps/daemon/src/gh.ts`（`gitAuthEnv`）、`packages/core/src/projects.ts`（`ContextSource`・`ContextPath`・`contextLabel`）
 
+## サービス用スキル
+
+各工程には、サービスを起動しない場合も生成された `docker-services` スキルを渡します。
+サービスの起動・接続ではこのスキルを先に読みます。
+層の同名のスキルは使わず、`context.reservedSkill` の注意を出します。
+
+コード: `apps/daemon/src/context.ts`（`planContext`・`previewContext`）、`apps/daemon/src/service.ts`（`runContext`・`projectContextPreview`）、`apps/daemon/src/prompts.ts`（`serviceSkill`）
+
+工程の指示にも先に読むよう書きます。
+プレビューにも予約スキルと警告を表示し、接続先は実行時に決まると示します。
+
 ## 既定のレビュー用スキル
 
 既定のコンテキストには、レビューを観点ごとに分担する `review-dispatch` と `review-execution` がある。
@@ -109,7 +120,7 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
 条件に数えるのは、障害・珍しい入力や量・処理の重なり・珍しい操作。ふつうの使い方で満たされる前提と、外部の者が意図して揃えられる条件は数えず、1 つの原因が続けて引き起こすことは、まとめて 1 つに数える。
 担当は、指摘ごとに、起きる条件（`condition`）と実害（`impact`）を書き出してから重要度を決め、起きやすさ（`likelihood`）と影響の大きさ（`impact_level`）も返す。観点の資料の NG 例に付いた重要度は、ふつうの使い方か 1 つの条件で起きるときの目安で、稀なときは表で決め直す。
 親は集約の最初に、担当の重要度を、書かれた条件と実害から同じ表で確かめる。合わなければ決め直し、記録の `reweighted` に残す。親は条件や実害を足さないが、書かれた条件に数え方の規則を当てはめて数え直すことはしてよい。「影響：小 × 稀」に当たる指摘は不採用にする。担当は、「影響：小 × 稀」として出さなかったものを、見出し・条件・実害とともに `not_raised` に残す。親はそれも同じ表で確かめ、数え直して当たらなくなるものは指摘として採用し、当たるままのものは不採用の記録に残す。
-再レビューでも、前回の指摘への直しで足した・変えた箇所への指摘でも、同じ表を当てる。`pr-review` の再レビューで、前回 `must` として出した指摘が、表では `should` に当たると分かったときは、未対応でも `must` に数えない。表で `should` に当たるものは、稀なものに限らず、すべてこう扱う。影響：小で稀なもの（表では出さない）も、前回すでに作者に出しているので、同じく `must` に数えず `should` として扱う。前回の `must` が受け入れ条件・要求要件の不適合のときは、重みを見直さず、`must` のままにする。重みを見直した指摘は、見直した回に限り、指摘箇所が前回以降の差分の外でも不採用にせず、前回の指摘の一覧のその指摘の行と、総評の 1 行に残す（新しい指摘にせず、採用した指摘にも入れない。親の記録では `reweighted` に、`previous` を `true` にして残す）。ほかに `must` が無ければ、判定は「提案あり」にする。見られなかった観点があるときは、判定を書かない。先頭のコミットが進んだ次の回からは、前回の指摘の一覧にも総評にも挙げず、ほかの `should` と同じに扱う。そのとき、今回の表で `must` に当たると分かれば、`must` として採用する。前回と同じ先頭のコミットを判定し直す回は、見直した回の続きとして扱う（PBI-380。[ADR](../adr/20261117-2120-reweighted-previous-must-kept-for-one-round.md)）。
+再レビューでも、前回の指摘への直しで足した・変えた箇所への指摘でも、同じ表を当てる。`pr-review` の再レビューで、前回 `must` として出した指摘が、表では `should` に当たると分かったときは、未対応でも `must` に数えない。表で `should` に当たるものは、稀なものに限らず、すべてこう扱う。影響：小で稀なもの（表では出さない）も、前回すでに作者に出しているので、同じく `must` に数えず `should` として扱う。前回の `must` が受け入れ条件・要求要件の不適合のときは、重みを見直さず、`must` のままにする。重みを見直した指摘は、見直した回に限り、指摘箇所が前回以降の差分の外でも不採用にせず、前回の指摘の一覧のその指摘の行と、総評の 1 行に残す（新しい指摘にせず、採用した指摘にも入れない。親の記録では `reweighted` に、`previous` を `true` にして残す）。ほかに `must` が無ければ、判定は「提案あり」にする。見られなかった観点があっても、この判定を付ける。先頭のコミットが進んだ次の回からは、前回の指摘の一覧にも総評にも挙げず、ほかの `should` と同じに扱う。そのとき、今回の表で `must` に当たると分かれば、`must` として採用する。前回と同じ先頭のコミットを判定し直す回は、見直した回の続きとして扱う（PBI-380。[ADR](../adr/20261117-2120-reweighted-previous-must-kept-for-one-round.md)）。
 判定の決まり（`must` が 1 件以上なら「修正が必要」）は、この基準で変えない。`pr-review` の指摘には、起きる条件と実害を書く。
 `self-review` は、`must` だけを修正に戻す。`must` が無い回は、`should`・`nit` を直さずに提出へ進む（`design-doc` の記述を削る `should` など、直すと決まっているものを除く）。`must` を直す回に `should`・`nit` を一緒に直すかは、作者の判断に任せる。
 
@@ -146,14 +157,14 @@ D-10 は、「確認したいこと」「既定で決めたこと」の節があ
 D-10 は、リポジトリの文書（README・AGENTS.md から参照されていないものを含む）や既存の振る舞いに根拠のある記述を、「依頼に無い」だけを理由に消す指摘にしない。消す前に根拠を探し、根拠があれば `checked` に書いて残すか、残すかを人に確かめる「確認したいこと」に回す指摘にする（PBI-301 A4。実験 S14 r4：運用の文書に根拠のある「作成・キャンセル後に取り直す」を消した）。
 U-1（正確性・コードとの同期）は、名前・値（コマンド・設定のキー・パス・既定値）の照合に加えて、文書が述べる責務・振る舞い（「A が B をする」）を、述べられた主体の本体を読んで該当するコードと照らす。名前が実在することだけで合格にしない（PBI-301 A1。実験 S2 r4）。
 U-1 が検証できる記述を拾うのは、依頼文の範囲の中だけ。範囲が変更（PR 全体・今回の変更など）なら、差分で変えた・足した記述と、差分の変更（コード・設定と、振る舞いを定める文書・仕様）で正しさが変わりうる記述（別の文書のものも）に限り、差分に関係しない節は同じファイルにあっても拾わない。対象の文書を全体で渡されたときは全体から拾う。範囲の外を見なかったことは、担当の `failed` の理由にしない（PBI-343）。
-`pr-review` で、起動し直しても失敗し、親が代わりに見ても見られなかった観点が残ったときは、先頭のコミットで成り立つ `must`（見られた観点で新しく採用したもの、未対応と確かめた前回・既存のもの）があれば判定を「修正が必要」にし、無ければ判定を書かない（PBI-343）。
+`pr-review` では、差分を読み、要求要件・設計の PR では主対象の文書も読めれば、見られなかった観点があっても指摘の重さで判定し、未確認の内容を本文の最初に書く。差分または必要な主対象の文書を読めないときは判定を書かない（PBI-485）。
 
 `pr-review` と `self-review` で、担当が1回起動し直しても失敗した（起動できない・`failed`・時間切れ）観点は、すべての担当の結果が揃った後に、親が担当に渡すはずだった依頼文・範囲・観点の資料のとおりに代わりに見る（PBI-459。[ADR](../adr/20261121-1330-parent-reviews-failed-viewpoints.md)）。見られたら「見られた観点」に数え、指摘は担当の指摘と同じに集約・採否にかける。ほかに見られなかった観点が無ければ、判定はふつうに付く。範囲の外を見ていないことだけが理由の `failed` は、起動し直さず、代わりにも見ない。代わりに見ても見られなかった（対象を読めないなど）ときは、上のとおり「見られなかった観点」にする。担当を1件も起動しない回の扱いと、結果が揃うまで親が調査・レビューをしない決まりは変えない。代わりに見たことは、投稿する本文・自己レビューの提出物の説明に書かず、集約の記録（`substituted_by_parent`・`failure_reason`）に残す。
 `pr-review` で親が担当に渡す範囲は、差分で決まる。差分に入っている文書は、PR の本文に挙げられていても、変えていない既存の本文の全体を範囲にしない。文書の全体を範囲にするのは、差分に入っていない文書を対象にしたときと、差分がその文書を新しく足した・全面的に書き直したときだけ。親は、担当の結果や前回のレビューを理由に、範囲を途中で広げない（再レビューでも）。担当は、範囲の外を見なかったことを `limitations` に書かず、見た範囲を `checked` に書く。U-6（多言語・翻訳）も、範囲が変更なら、変えた箇所ともう一方の版の対応する箇所だけを照合する。親は、`failed` の理由が範囲の外を見ていないことだけなら、起動し直さず、見られなかった観点に数えない。範囲を見きれなかったことが理由なら、同じ観点のまま範囲を分けて起動し直す。観点をどう見たか（担当に分けて見たか、逐次モードで見たか）と観点ごとの扱いは、集約の記録に残し、`pr-review` の本文には書かない（PBI-460）。
 
 `pr-review` の本文と行へのコメントには、読む人（このスキルを使っていないこともある）が、直すべきか・何が問題かを判断できる情報だけを書く（PBI-460。[ADR](../adr/20261121-1603-superseded-pr-review-without-process-info.md)）。本文は総評から始め、総評の前に作業の経過の文を書かない。残すのは、判定、総評、指摘、修正の判断に要る検証の結果（落ちたもの・確かめられなかったもの）、依頼した側が求めたリスク評価。観点の ID・数・名前、担当（サブエージェント）の数・起動・失敗、逐次モードで見たこと、採用しなかった指摘と落とした件数、動いたエージェント・モデル・切り替え、タスクの ID、検証のやり方（使い回したなど）と通った検証は、本文に書かない。確かめられなかった所（親が代わりに見ても見られなかった観点、取得できなかった文書、省略された差分、読めなかった既存のレビュー、撮れなかった画面、止まった・実行しなかった検証、基準にしなかったリポジトリの指示）は、本文の最初に、中身の言葉で、何が未確認で、読む人が何をすればよいかを書く（観点の番号・「担当」「サブエージェント」の語は使わない）。観点ごとの扱い（起動した・起動し直した・失敗した・親が代わりに見た・起動しなかった理由）、見られなかった観点と理由、採用しなかった指摘と理由、落とした件数、検証の経過、絞ったこと・絞らなかったことと理由は、集約の記録に残し、依頼した側が決めた形で返す（決めていなければ返さない）。sacty の PR のレビューのタスクは、その形を `sacty-review-record` の JSON に決める（[タスクと工程](tasks-and-steps.md#pr-のレビューだけのタスク)）。再レビューで取り下げた前回の指摘と理由は、前回の指摘の状態なので、本文の「前回の指摘」の節に残す。
 
-親は、`SKILL.md` を読み終えたら、対象を読み始める前に、流れの資料（`pr-review.md` か `self-review.md`）と観点カタログ（`viewpoints.md`）を読む。起動の規則と流れの資料が起動すると決めた担当は、省かない。その担当を起動せずに、親が自分で対象を読んで指摘を書いて終えるのは、スキルに従ったレビューではない（対象が小さい・差分が手元にある・費用がかかる、という親の判断は理由にならない。起動する観点を絞るのは、規則と流れの資料がそう決めた場合だけ。省いたことを結果に書いても、起動の代わりにはならない）。担当を 1 つも起動せずに終えるのは、逐次モード、流れの資料の「完了できないとき」、規則が起動する観点が無いと決めた再レビューだけ。`pr-review` では、対象が小さくても、再レビューでも、起動の規則が決めた担当を起動する（PBI-379）。
+親は、`SKILL.md` を読み終えたら、対象を読み始める前に、流れの資料（`pr-review.md` か `self-review.md`）と観点カタログ（`viewpoints.md`）を読む。起動の規則と流れの資料が起動すると決めた担当は、省かない。その担当を起動せずに、親が自分で対象を読んで指摘を書いて終えるのは、スキルに従ったレビューではない（対象が小さい・差分が手元にある・費用がかかる、という親の判断は理由にならない。起動する観点を絞るのは、規則と流れの資料がそう決めた場合だけ。省いたことを結果に書いても、起動の代わりにはならない）。担当を 1 つも起動せずに終えるのは、逐次モード、自己レビューで対象を読めないとき、規則が起動する観点が無いと決めた再レビューだけ。PR のレビューで差分または必要な主対象文書を読めないときは、起動できる環境なら担当に取得を再試行させ、読めなければ判定を付けずに理由を書く。`pr-review` では、対象が小さくても、再レビューでも、起動の規則が決めた担当を起動する（PBI-379）。
 検証の実行の手順（`verification-run.md`）は、0〜5 の全体を読んでから実行する。見出しや一部の行だけを読んで進めず、フォーマッター・リンターは成果物として足すファイルにも効くので、主対象の種類にかかわらず実行する範囲に入れる（PBI-301 A3。実験 S18 r4）。
 `self-review` で `scope` が `all` のときのテストは、回ごとには変更に関係するものだけでよい（選び方はテストの実行器の絞り込みで決め、決められなければ全件）。全件は修正を終えた後に1回実行し、全件の結果が無いまま提出しない（実行するテストがあるときだけ。テストの仕組みが無ければ当てはまらない。PBI-316。[タスクと工程：実装の途中のテストの範囲](tasks-and-steps.md#実装の途中のテストの範囲)）。
 
@@ -256,7 +267,7 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
   - どちらも親が全文を取得して、作業領域の外に写しを置く。
   - 対象にした文書は、主対象の種類の判断と担当の対象に含める（差分の外でも範囲から外さない）。
   - 取得できない文書は、本文に、読めなかったことと、読む人が何を確かめればよいかを、中身の言葉で書く（理由は集約の記録に残す）。
-    主対象にした文書が読めなければ、レビューを完了できなかったものとして扱う。
+    要求要件・設計の PR で主対象にした文書が読めなければ、レビューを完了できなかったものとして扱う。
   - 分けた結果は集約の記録の `linked_docs` に残す。
 
 コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-17.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-18.md`、`apps/daemon/default-context/skills/review/review-execution/SKILL.md`、`apps/daemon/src/prompts.ts`（`buildPrompt`）、`apps/daemon/default-context/skills/review/review-execution/references/D-10.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/viewpoints.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/repo-guidance.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/aggregation.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-3.md`、`apps/daemon/default-context/skills/review/review-execution/references/R.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-5.md`、`apps/daemon/src/default-skills.test.ts`、`apps/daemon/src/review-eval.test.ts`、`apps/daemon/src/testing/review-eval/index.ts`（`s18Workspace`・`runAgent`）

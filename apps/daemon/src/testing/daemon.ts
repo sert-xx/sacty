@@ -208,9 +208,12 @@ export class FakeServices implements ServiceRunner {
   stopped: string[] = [];
   constructor(
     private readonly fail?: DaemonText,
-    private readonly services: { name: string; ports: number[] }[] = [
-      { name: "db", ports: [5432] },
-    ],
+    private readonly services: {
+      name: string;
+      ports: number[];
+      hostPorts?: { port: number; target: number }[];
+      otherPorts?: { port: number; protocol: string }[];
+    }[] = [{ name: "db", ports: [5432] }],
   ) {}
   async start(input: {
     runId: string;

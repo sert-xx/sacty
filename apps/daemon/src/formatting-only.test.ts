@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { formattingOnly } from "./formatting-only.js";
 
 describe("formattingOnly", () => {
+  it("compares long sequences of comments around trailing commas", () => {
+    const comments = "// comment\n".repeat(20000);
+    expect(formattingOnly("a.js", `f(a,${comments});`, `f( a ${comments});`)).toBe(true);
+    expect(formattingOnly("a.js", `f(a,${comments}b);`, `f(a ${comments}b);`)).toBe(false);
+  });
   it.each([
     ["a.ts", "const x = { a: 1, b: 2 };", "const x = {\n  a: 1,\n  b: 2,\n};"],
     ["a.tsx", "const x = <A p={1} />;", "const x = <A\n  p={1}\n/>;"],

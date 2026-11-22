@@ -4,7 +4,7 @@
 - タスク: PBI-343
 - PR: #367
 - ブランチ: feat/issue-343-review-scope-diff
-- 関係する ADR: [PR のレビューでは文書の照合を差分の範囲に絞り、観点を見きれなくても要修正があれば判定を出す](../adr/20261114-0158-review-range-and-partial-verdict.md)
+- 関係する ADR: [PR のレビューでは文書の照合を差分の範囲に絞り、観点を見きれなくても要修正があれば判定を出す](../adr/20261114-0158-superseded-review-range-and-partial-verdict.md)
 
 ## 目的
 
