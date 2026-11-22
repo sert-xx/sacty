@@ -878,10 +878,11 @@ When suggestions (`[提案]`) from the child task that reviews the PR reach an i
 What is sorted and what is not:
 
 - Sorted: AI review suggestions (`[提案]`) that reach an implementation PR sacty opened.
-- Not sorted (these are fixed without sorting):
+- Not sorted:
   - Must-fix findings (`[要修正]`). They are always fixed.
   - Comments you wrote. Even when they arrive together with AI suggestions, your comments are fixed without sorting.
-  - Findings on Requirements and Design PRs, and findings in security check and security fix tasks.
+  - Findings in security check and security fix tasks.
+  - Findings on Requirements and Design PRs. After two consecutive suggestion-only verdicts, the task waits for approval without rework. To have them fixed, comment on the PR that action is needed or request changes on the screen.
 
 The AI decides by these criteria.
 

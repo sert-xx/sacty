@@ -9768,6 +9768,271 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it.each(["requirements", "design"] as const)(
+      "%s の提案は初回に直し、続いた回は承認待ちに保つ",
+      async (step) => {
+        const pulls = new FakePulls();
+        const made = await start(
+          [
+            out("# 要求要件 v1"),
+            verdictOut("suggestions"),
+            out("# 要求要件 v2"),
+            verdictOut("suggestions"),
+            out("# 要求要件 v3"),
+            verdictOut("suggestions"),
+          ],
+          { pulls, reviewTasks: true, steps: step === "design" ? ["design"] : undefined },
+        );
+        const { activity, service, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        pulls.feedbackBy[7] = [{ ...posted(pulls, 0), key: "review:1" }];
+        await service.checkPullRequests();
+        expect(types(service, id)).toContain("ChangesRequested");
+        expect(types(service, id)).not.toContain("StepSuggestionsHeld");
+        await service.runNext(id);
+        const second = commitOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, headSha: second };
+        await service.checkPullRequests();
+        await runReview(service, childId);
+        pulls.feedbackBy[7] = [
+          { ...posted(pulls, 0), key: "review:1" },
+          { ...posted(pulls, 1), key: "review:2" },
+        ];
+        await service.checkPullRequests();
+        const held = service.get(id)?.activity.filter((e) => e.type === "StepSuggestionsHeld");
+        expect(held).toHaveLength(1);
+        expect(held?.[0]?.payload).toMatchObject({
+          step,
+          number: 7,
+          commit: second,
+          suggestionRounds: 2,
+        });
+        expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(1);
+        expect(taskOf(service, id)).toMatchObject({
+          status: "awaiting_approval",
+          heldSuggestions: { commit: second },
+        });
+        expect(taskOf(service, id).pendingReview).toBeUndefined();
+        pulls.feedbackBy[7].push(item("comment:99", { body: "要対応です" }));
+        await service.checkPullRequests();
+        expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(2);
+        expect(taskOf(service, id).heldSuggestions).toBeUndefined();
+        await service.runNext(id);
+        pulls.prInfo = { ...pulls.prInfo, headSha: commitOf(service, id) };
+        await service.checkPullRequests();
+        await runReview(service, childId);
+        pulls.feedbackBy[7].push({ ...posted(pulls, 2), key: "review:3" });
+        await service.checkPullRequests();
+        expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(3);
+        expect(types(service, id).filter((t) => t === "StepSuggestionsHeld")).toHaveLength(1);
+        activity.close();
+      },
+    );
+
+    it("設計の PR に人が足した先頭を一度だけ再レビューし、提案を続けて数える", async () => {
+      const pulls = new FakePulls();
+      const made = await start(
+        [
+          out("# 設計 v1"),
+          verdictOut("suggestions"),
+          out("# 設計 v2"),
+          verdictOut("suggestions"),
+          verdictOut("suggestions"),
+          verdictOut("changes_required"),
+        ],
+        { pulls, reviewTasks: true, steps: ["design"] },
+      );
+      const { activity, service, id } = made;
+      const childId = childOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+      await runReview(service, childId);
+      pulls.feedbackBy[7] = [{ ...posted(pulls, 0), key: "review:1" }];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      const second = commitOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, headSha: second };
+      await service.checkPullRequests();
+      await runReview(service, childId);
+      pulls.feedbackBy[7] = [
+        { ...posted(pulls, 0), key: "review:1" },
+        { ...posted(pulls, 1), key: "review:2" },
+      ];
+      await service.checkPullRequests();
+      expect(taskOf(service, id).heldSuggestions).toMatchObject({ step: "design", commit: second });
+      const reopened = new SqliteActivityStore(dbPath);
+      const restarted = makeService(reopened, [], {
+        stepPullRequests: true,
+        reviewTasks: true,
+        pulls,
+        repos: made.repos,
+        now: later,
+      }).service;
+      const changesBefore = types(restarted, id).filter((t) => t === "ChangesRequested").length;
+      const restartsBefore = types(restarted, childId).filter(
+        (t) => t === "ReviewRestarted",
+      ).length;
+      await restarted.checkPullRequests();
+      expect(taskOf(restarted, id).status).toBe("awaiting_approval");
+      expect(taskOf(restarted, id).pendingReview).toBeUndefined();
+      expect(types(restarted, id).filter((t) => t === "ChangesRequested")).toHaveLength(
+        changesBefore,
+      );
+      expect(types(restarted, childId).filter((t) => t === "ReviewRestarted")).toHaveLength(
+        restartsBefore,
+      );
+      reopened.close();
+      const human = "a".repeat(40);
+      pulls.prInfo = { ...pulls.prInfo, headSha: human };
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      const restarts = service
+        .get(childId)
+        ?.activity.filter((e) => e.type === "ReviewRestarted" && e.payload.commit === human);
+      expect(restarts).toHaveLength(1);
+      expect(restarts?.[0]?.payload).toMatchObject({ reason: "updated", commit: human });
+      await runReview(service, childId);
+      pulls.feedbackBy[7].push({ ...posted(pulls, 2), key: "review:3" });
+      await service.checkPullRequests();
+      const held = service.get(id)?.activity.filter((e) => e.type === "StepSuggestionsHeld");
+      expect(held?.at(-1)?.payload).toMatchObject({ commit: human, suggestionRounds: 3 });
+      expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(1);
+      const human2 = "b".repeat(40);
+      pulls.prInfo = { ...pulls.prInfo, headSha: human2 };
+      await service.checkPullRequests();
+      await runReview(service, childId);
+      pulls.feedbackBy[7].push({ ...posted(pulls, 3), key: "review:4" });
+      await service.checkPullRequests();
+      expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(2);
+      expect(taskOf(service, id).heldSuggestions).toBeUndefined();
+      activity.close();
+    });
+
+    it("打ち切った要求要件を画面から差し戻すと直しが始まる", async () => {
+      const pulls = new FakePulls();
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          verdictOut("suggestions"),
+          out("# 要求要件 v2"),
+          verdictOut("suggestions"),
+          out("# 要求要件 v3"),
+        ],
+        { pulls, reviewTasks: true },
+      );
+      const { activity, service, id } = made;
+      const childId = childOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+      await runReview(service, childId);
+      pulls.feedbackBy[7] = [{ ...posted(pulls, 0), key: "review:1" }];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      pulls.prInfo = { ...pulls.prInfo, headSha: commitOf(service, id) };
+      await service.checkPullRequests();
+      await runReview(service, childId);
+      pulls.feedbackBy[7].push({ ...posted(pulls, 1), key: "review:2" });
+      await service.checkPullRequests();
+      expect(taskOf(service, id).heldSuggestions).toBeDefined();
+      service.requestChanges(id, { step: "requirements", submission: 2, comments: ["要対応"] });
+      expect(taskOf(service, id).heldSuggestions).toBeUndefined();
+      expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(2);
+      await service.runNext(id);
+      expect(taskOf(service, id).gate).toMatchObject({ step: "requirements", submission: 3 });
+      activity.close();
+    });
+
+    it("古い先頭宛てで届かなかった提案の回を数えず、次の回で打ち切る", async () => {
+      const pulls = new FakePulls();
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          verdictOut("suggestions"),
+          out("# 要求要件 v2"),
+          verdictOut("suggestions"),
+          verdictOut("suggestions"),
+        ],
+        { pulls, reviewTasks: true },
+      );
+      const { activity, service, id } = made;
+      const childId = childOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+      await runReview(service, childId);
+      pulls.feedbackBy[7] = [{ ...posted(pulls, 0), key: "review:1" }];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      const second = commitOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, headSha: second };
+      await service.checkPullRequests();
+      await runReview(service, childId);
+      const human = "c".repeat(40);
+      pulls.prInfo = { ...pulls.prInfo, headSha: human };
+      pulls.feedbackBy[7].push({
+        ...posted(pulls, 1),
+        key: "review:2",
+        commit: second,
+        url: "https://github.com/acme/app/pull/7#pullrequestreview-2",
+      });
+      await service.checkPullRequests();
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "PullRequestReviewDiscarded")?.payload,
+      ).toMatchObject({ reason: "stale_head" });
+      await runReview(service, childId);
+      pulls.feedbackBy[7].push({ ...posted(pulls, 2), key: "review:3", commit: human });
+      await service.checkPullRequests();
+      const held = service.get(id)?.activity.findLast((e) => e.type === "StepSuggestionsHeld");
+      expect(held?.payload).toMatchObject({ round: 3, suggestionRounds: 2, commit: human });
+      activity.close();
+    });
+
+    it("実装の PR の提案に工程 PR の打ち切り記録を使わない", async () => {
+      const pulls = new FakePulls();
+      const made = await start([implement(), verdictOut("suggestions")], {
+        pulls,
+        reviewTasks: true,
+        steps: ["implement"],
+      });
+      const { activity, service, id } = made;
+      for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++)
+        await service.runNext(id);
+      const childId = childOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+      await runReview(service, childId);
+      pulls.feedbackBy[7] = [posted(pulls, 0)];
+      await service.checkPullRequests();
+      expect(types(service, id)).toContain("PullRequestReviewImported");
+      expect(types(service, id)).not.toContain("StepSuggestionsHeld");
+      activity.close();
+    });
+
+    it("設計の要修正の後の提案は直しに入る", async () => {
+      const pulls = new FakePulls();
+      const made = await start(
+        [
+          out("# 設計 v1"),
+          verdictOut("changes_required"),
+          out("# 設計 v2"),
+          verdictOut("suggestions"),
+        ],
+        { pulls, reviewTasks: true, steps: ["design"] },
+      );
+      const { activity, service, id } = made;
+      const childId = childOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+      await runReview(service, childId);
+      pulls.feedbackBy[7] = [{ ...posted(pulls, 0), key: "review:1" }];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      pulls.prInfo = { ...pulls.prInfo, headSha: commitOf(service, id) };
+      await service.checkPullRequests();
+      await runReview(service, childId);
+      pulls.feedbackBy[7].push({ ...posted(pulls, 1), key: "review:2" });
+      await service.checkPullRequests();
+      expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(2);
+      expect(types(service, id)).not.toContain("StepSuggestionsHeld");
+      activity.close();
+    });
+
     it("子タスクの指摘を親が直して PR を更新したら、子タスクが最新のコミットを再レビューし、指摘なしになったら繰り返さずに人の承認を待つ（受け入れ条件 2・3）", async () => {
       const pulls = new FakePulls();
       const made = await start(
@@ -9901,14 +10166,15 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       );
       const { activity, service, id } = made;
       const childId = childOf(service, id);
-      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: "e".repeat(40) };
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
       await runReview(service, childId);
+      pulls.prInfo = { ...pulls.prInfo, headSha: "e".repeat(40) };
       await service.checkPullRequests();
       await runReview(service, childId);
       for (let i = 0; i < 3; i++) await service.checkPullRequests();
       const restarts = service.get(childId)?.activity.filter((e) => e.type === "ReviewRestarted");
       expect(restarts?.map((e) => e.payload)).toEqual([
-        { reason: "updated", commit: commitOf(service, id) },
+        { reason: "updated", commit: "e".repeat(40) },
       ]);
       expect(taskOf(service, childId).reviewRound).toBe(2);
       activity.close();

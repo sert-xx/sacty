@@ -4838,6 +4838,56 @@ export class TaskService {
       this.pauseForDecision(current, pr, marked, token);
       return;
     }
+    if (
+      (pr.step === "requirements" || pr.step === "design") &&
+      pr.repo &&
+      !pending.judgement &&
+      !pending.triage
+    ) {
+      const review = pending;
+      const record = (current.reviewTasks ?? []).findLast(
+        (r) => r.step === pr.step && r.number === pr.number && sameRepo(r.repo, pr.repo as string),
+      );
+      const child = record && this.tasks.get(record.taskId);
+      const round = child?.reviewRound ?? 1;
+      const from = child && sactyReviewKey(child.id, round);
+      const lastChanges = this.deps.activity
+        .forTask(current.id)
+        .findLast((event) => event.type === "ChangesRequested" && event.payload.step === pr.step);
+      if (
+        child &&
+        from &&
+        review.remarks.length > 0 &&
+        review.remarks.every(
+          (_, i) => review.aiReview?.includes(i) && review.aiReviewFrom?.[String(i)] === from,
+        ) &&
+        lastChanges?.type === "ChangesRequested" &&
+        lastChanges.payload.remarks.every((r) => r.source === "sacty_review")
+      ) {
+        const verdictOf = (r: number) => child.reviewVerdicts?.find((v) => v.round === r)?.verdict;
+        const undelivered = undeliveredRounds(child, current, child.reviewTarget?.headCommit);
+        const suggestionRounds = countSuggestionRounds(round, verdictOf, (r) => undelivered.has(r));
+        if (suggestionRounds >= 2) {
+          if (stillReady && !stillReady()) return;
+          this.append(current, [
+            {
+              actor: "sacty",
+              event: {
+                type: "StepSuggestionsHeld",
+                payload: {
+                  step: pr.step,
+                  number: pr.number,
+                  commit: child.reviewTarget?.headCommit ?? pr.commit,
+                  round,
+                  suggestionRounds,
+                },
+              },
+            },
+          ]);
+          return;
+        }
+      }
+    }
     // AI のレビューの提案は、直しに入る前に、AI が PR の範囲で「対応する／対応しない」に選り分ける（PBI-436）。済んでいれば
     // （pending.triage）、起動し直しても実行し直さない
     if (!pending.judgement && !pending.triage) {
@@ -17580,6 +17630,10 @@ export class TaskService {
     // 指摘なしで外した後に、人がコミットを足した（PR の確認で読んだ GitHub の先頭）なら、ドラフトかにかかわらず、その先頭を
     // 再レビューさせる（指摘なしになるまで、ドラフトにする。settleDraft）
     const seen = this.latestHeads.get(initial.id);
+    const stepHead =
+      gate.step !== "implement" && seen?.number === gate.number && seen.commit === gate.commit
+        ? seen.head
+        : undefined;
     const draftedAhead =
       !awaiting &&
       reviewed !== undefined &&
@@ -17593,7 +17647,7 @@ export class TaskService {
       ? heads?.has(key)
         ? heads.get(key)
         : await this.pullRequestHead(initial, repo, gate.number)
-      : (draftedAhead ?? reviewed ?? gate.commit);
+      : (stepHead ?? draftedAhead ?? reviewed ?? gate.commit);
     if (!target) return;
     // 提出の直後の経路は、GitHub の先頭が提出したコミットと同じときだけ進める
     if (awaiting && submittedCommit !== undefined && target !== submittedCommit) return;
