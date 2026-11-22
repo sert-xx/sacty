@@ -5125,6 +5125,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
       const task = service.get(id)?.task;
       expect(task?.continuedPullRequest?.number).toBe(12);
+      expect(existsSync(join(repos.prepared[0]?.dir ?? "", "docs/sacty"))).toBe(false);
       const prompt = promptOf(executor, executor.calls.length - 1);
       expect(prompt).toContain("既定のスキル review-dispatch（流れは self-review");
       expect(prompt).not.toContain("--- 提出の前のセルフレビュー（行わない） ---");

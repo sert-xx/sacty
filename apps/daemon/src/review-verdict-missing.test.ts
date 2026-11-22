@@ -195,9 +195,10 @@ describe("PR のレビューの判定が無い理由（PBI-378）", () => {
     const line = (verdict: NonNullable<Task["reviewVerdicts"]>[number]) =>
       buildReviewBody(task(verdict)).split("\n")[3];
     expect(line({ round: 1, missing: "absent" })).toBe(
-      "@alice 判定：付いていません（レビューが判定を付けませんでした。確かめられなかった所がある・対象を読めなかったレビューには、判定を付けません。本文を確かめてください）",
+      "@alice 判定：付いていません（レビューが判定を付けませんでした。確かめられなかった所がある・対象を読めなかったレビューには、判定を付けません。本文と行へのコメントを確かめてください）",
     );
-    const unreadable = "@alice 判定：読み取れませんでした（本文の指摘を確かめてください）";
+    const unreadable =
+      "@alice 判定：読み取れませんでした（本文と行へのコメントを確かめてください）";
     expect(line({ round: 1, missing: "invalid" })).toBe(unreadable);
     // 理由を残す前の作業履歴の回は、今までどおり
     expect(line({ round: 1 })).toBe(unreadable);

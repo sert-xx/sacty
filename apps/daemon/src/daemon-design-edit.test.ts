@@ -1,3 +1,5 @@
+import { readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { StepKey, Task } from "@sacty/core";
 import { isSecurityTask, MVP_STEPS, project } from "@sacty/core";
 import { describe, expect, it } from "vitest";
@@ -12,7 +14,7 @@ import type { MemorySettingsStore } from "./settings.js";
 import {
   dbPath,
   type FakeExecutor,
-  type FakeGitHub,
+  FakeGitHub,
   FakePulls,
   FakeRepos,
   makeService,
@@ -93,6 +95,7 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       db?: string;
       settings?: MemorySettingsStore;
       github?: FakeGitHub;
+      secrets?: Record<string, string>;
       /** 工程の選び方（無ければ、どのタスクも steps の工程にする）。 */
       planner?: ServiceDeps["planner"];
       /** PR の CI の読み取り（PR のレビューの子タスクに渡す）。渡すと、実装の PR をドラフトで作る。 */
@@ -120,6 +123,7 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       ...(options.settings ? { settings: options.settings } : {}),
       ...(options.webUrl !== undefined ? { webUrl: options.webUrl } : {}),
       ...(options.github ? { github: options.github } : {}),
+      ...(options.secrets ? { secrets: options.secrets } : {}),
       stepPullRequests: true,
       ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
       ...(options.reviewTasks ? { reviewTasks: true } : {}),
@@ -252,6 +256,260 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
   const designPath = (id: string) => docOf(id, "design");
   const eventsOf = (made: { activity: SqliteActivityStore; id: string }) =>
     made.activity.forTask(made.id);
+
+  it("作業領域の要求要件の直しを PR のコミットと本文に残す", async () => {
+    const made = await toRework([implement(), rework("implement"), implement()]);
+    const { service, id, repos, executor, activity, pulls } = made;
+    const path = docOf(id, "requirements");
+    const run = executor.run.bind(executor);
+    let changed = false;
+    executor.run = async (input) => {
+      if (!changed && input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        const before = readFileSync(file, "utf8");
+        writeFileSync(file, `${before}\n修正したリンク\n`);
+        executor.respond = () =>
+          out(
+            [
+              "# 変更",
+              block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["pay.test.ts › test"] }] }),
+              block({ "sacty-document-fixes": [{ path, reason: "リンクの誤りを修正" }] }),
+            ].join("\n\n"),
+          );
+        changed = true;
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    executor.respond = undefined;
+    await drain(service);
+    expect(changed).toBe(true);
+    expect(repos.published.at(-1)?.overrides?.[path]).toContain("修正したリンク");
+    const body = bodiesOf(service, id).at(-1) ?? "";
+    expect(body).toContain(path);
+    expect(body).toContain("リンクの誤りを修正");
+    expect(body).toContain("+修正したリンク");
+    pulls.feedbackBy[9] = [item("comment:31", { body: "コードを直してください" })];
+    await service.checkPullRequests();
+    await service.runNext(id);
+    await drain(service);
+    const laterBody = bodiesOf(service, id).at(-1) ?? "";
+    expect(laterBody).toContain(path);
+    expect(laterBody).toContain("リンクの誤りを修正");
+    expect(laterBody).toContain("+修正したリンク");
+    activity.close();
+  });
+
+  it("要求要件と設計を実装の実行時にタスクブランチから配置する", async () => {
+    const made = await start([out("# 要求要件"), designText(), implement()]);
+    const { service, id, repos, executor, activity } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    const head = repos.remote[taskBranchOf(id)] ?? "";
+    const paths = [docOf(id, "requirements"), docOf(id, "design")];
+    const expected = await Promise.all(paths.map((path) => repos.readFile("", head, path)));
+    const run = executor.run.bind(executor);
+    let seen: (string | undefined)[] = [];
+    executor.run = async (input) => {
+      if (input.workspaceDir.endsWith("/repo")) {
+        seen = paths.map((path) => readFileSync(join(input.workspaceDir, path), "utf8"));
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    expect(seen).toEqual(expected);
+    expect(seen).toHaveLength(2);
+    activity.close();
+  });
+
+  it("未完了の続きでも公開前の文書の直しを残す", async () => {
+    const made = await toRework([implement(), implement(), implement()]);
+    const { service, id, repos, executor, activity } = made;
+    const path = docOf(id, "requirements");
+    const run = executor.run.bind(executor);
+    let round = 0;
+    executor.run = async (input) => {
+      if (input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        round++;
+        if (round === 1) {
+          writeFileSync(file, `${readFileSync(file, "utf8")}\n続きに残す修正\n`);
+          executor.respond = () =>
+            out('作業中\n```sacty-completion\n{"status":"incomplete","remaining":["確認"]}\n```');
+        } else if (round === 2) {
+          expect(readFileSync(file, "utf8")).toContain("続きに残す修正");
+          writeFileSync(file, `${readFileSync(file, "utf8")}続きで進めた修正\n`);
+          executor.respond = () =>
+            out('作業中\n```sacty-completion\n{"status":"incomplete","remaining":["確認"]}\n```');
+        } else {
+          expect(readFileSync(file, "utf8")).toContain("続きで進めた修正");
+          executor.respond = () => implement();
+        }
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    await drain(service);
+    expect(round).toBeGreaterThanOrEqual(3);
+    expect(repos.published.at(-1)?.overrides?.[path]).toContain("続きに残す修正");
+    activity.close();
+  });
+
+  it("同じ承認済み文書を人と実装が別々に直したら公開を止める", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, repos, executor, activity } = made;
+    const path = docOf(id, "requirements");
+    const run = executor.run.bind(executor);
+    let changed = false;
+    executor.run = async (input) => {
+      if (!changed && input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        writeFileSync(file, `${readFileSync(file, "utf8")}\n実装の修正\n`);
+        const head = repos.remote[taskBranchOf(id)] ?? "";
+        repos.files[head] = { ...repos.files[head], [path]: "人の修正\n" };
+        changed = true;
+      }
+      return run(input);
+    };
+    const count = repos.published.length;
+    await service.runNext(id);
+    await drain(service);
+    expect(repos.published).toHaveLength(count);
+    const paused = eventsOf(made).findLast((e) => e.type === "TaskPaused");
+    expect(JSON.stringify(paused)).toContain(path);
+    expect(JSON.stringify(paused)).toContain("合わせてから再開");
+    activity.close();
+  });
+
+  it("実装が直していない文書はタスクブランチの人の修正を引き継ぐ", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, repos, executor, activity } = made;
+    const path = designPath(id);
+    const run = executor.run.bind(executor);
+    let changed = false;
+    executor.run = async (input) => {
+      if (!changed && input.workspaceDir.endsWith("/repo")) {
+        const head = repos.remote[taskBranchOf(id)] ?? "";
+        repos.files[head] = { ...repos.files[head], [path]: "人が直した設計\n" };
+        changed = true;
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    await drain(service);
+    const commit = repos.remote[taskBranchOf(id)] ?? "";
+    expect(repos.files[commit]?.[path]).toBe("人が直した設計\n");
+    expect(bodiesOf(service, id).at(-1)).not.toContain("承認済みの文書の直し");
+    activity.close();
+  });
+
+  it("控えと作業領域の文書がない提出では承認済み文書を削除しない", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, repos, executor, activity } = made;
+    const paths = [docOf(id, "requirements"), designPath(id)];
+    const run = executor.run.bind(executor);
+    let removed = false;
+    executor.run = async (input) => {
+      if (!removed && input.workspaceDir.endsWith("/repo")) {
+        for (const path of paths) {
+          rmSync(join(input.workspaceDir, path));
+          rmSync(
+            join(
+              repos.prepared[0]?.gitDir ?? "",
+              "sacty-documents",
+              Buffer.from(path).toString("hex"),
+            ),
+          );
+        }
+        removed = true;
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    await drain(service);
+    const commit = repos.remote[taskBranchOf(id)] ?? "";
+    for (const path of paths) expect(repos.files[commit]?.[path]).toBeTruthy();
+    expect(bodiesOf(service, id).at(-1)).not.toContain("承認済みの文書の直し");
+    activity.close();
+  });
+
+  it("配置した文書をシンボリックリンクに替えると公開を止める", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, repos, executor, activity } = made;
+    const path = docOf(id, "requirements");
+    const run = executor.run.bind(executor);
+    let changed = false;
+    executor.run = async (input) => {
+      if (!changed && input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        rmSync(file);
+        const outside = join(dirname(input.workspaceDir), "outside-document");
+        writeFileSync(outside, "リンク先の内容");
+        symlinkSync(outside, file);
+        changed = true;
+      }
+      return run(input);
+    };
+    const count = repos.published.length;
+    await service.runNext(id);
+    await drain(service);
+    expect(changed).toBe(true);
+    expect(repos.published).toHaveLength(count);
+    expect(JSON.stringify(repos.files)).not.toContain("リンク先の内容");
+    expect(JSON.stringify(eventsOf(made).findLast((e) => e.type === "TaskPaused"))).toContain(path);
+    activity.close();
+  });
+
+  it("文書の全文を伏せてから差分を作り、理由と差分を切り詰める", async () => {
+    const secret = "private-line-one\nprivate-line-two\nprivate-line-three";
+    const reasonSecret = "reason-secret-value-long";
+    const made = await toRework([implement()], {
+      start: {
+        secrets: { "claude-oauth-token": secret },
+        github: new FakeGitHub({ me: reasonSecret }),
+      },
+    });
+    const { service, id, executor, activity } = made;
+    const path = docOf(id, "requirements");
+    const run = executor.run.bind(executor);
+    let changed = false;
+    executor.run = async (input) => {
+      if (!changed && input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        const lines = Array.from({ length: 35 }, (_, i) => `line-${i}`).join("\n");
+        writeFileSync(file, `${readFileSync(file, "utf8")}\n${lines}\n${secret}\n${lines}\n`);
+        executor.respond = () =>
+          out(
+            [
+              "# 変更",
+              block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["pay.test.ts › test"] }] }),
+              block({
+                "sacty-document-fixes": [
+                  { path, reason: `${"a".repeat(490)}${reasonSecret}${"b".repeat(100)}` },
+                  { path: "src/index.ts", reason: "外のパス" },
+                ],
+              }),
+            ].join("\n\n"),
+          );
+        changed = true;
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    executor.respond = undefined;
+    await drain(service);
+    const fix = taskOf(service, id).documentFixes?.at(-1);
+    expect(fix?.path).toBe(path);
+    expect(fix?.reason).toHaveLength(500);
+    expect(fix?.reasonTruncated).toBe(true);
+    expect(fix?.diffTruncated).toBe(true);
+    expect(fix?.diff.split("\n")).toHaveLength(40);
+    const visible = JSON.stringify([taskOf(service, id).documentFixes, bodiesOf(service, id)]);
+    for (const part of [...secret.split("\n"), reasonSecret, "src/index.ts"])
+      expect(visible).not.toContain(part);
+    activity.close();
+  });
 
   it("局所の直しは、実装の提出の前に1件記録され、承認済みの設計と PR の設計のファイルと PR の本文に反映される（TV-7・TV-9・TV-13）", async () => {
     const made = await toRework([
@@ -388,6 +646,59 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       "";
     expect(file.match(/「決済に失敗しました」/g) ?? []).toHaveLength(1);
     expect(file).not.toContain("「決済に失敗しましたました」");
+    activity.close();
+  });
+
+  it("作業領域の文書修正と設計の直しを重ね、プッシュ後の再開でも修正の記録を残す", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, repos, executor, activity } = made;
+    const path = designPath(id);
+    const run = executor.run.bind(executor);
+    let changed = false;
+    executor.run = async (input) => {
+      if (!changed && input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        writeFileSync(file, `${readFileSync(file, "utf8")}\n書式修正\n`);
+        executor.respond = () =>
+          out(
+            [
+              "# 変更",
+              block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["pay.test.ts › test"] }] }),
+              block({ "sacty-document-fixes": [{ path, reason: "書式を修正" }] }),
+              block({
+                "sacty-design-edit": {
+                  edits: [edit(["implement-1-1"], "「失敗しました」", "「決済に失敗しました」")],
+                },
+              }),
+            ].join("\n\n"),
+          );
+        changed = true;
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    executor.respond = undefined;
+    repos.publishFailAfterPush = "connection reset";
+    await drain(service);
+    expect(taskOf(service, id).status).toBe("paused");
+    repos.publishFailAfterPush = undefined;
+    service.resume(id, {});
+    await drain(service);
+    expect(taskOf(service, id).status).not.toBe("paused");
+    const content = repos.files[repos.remote[taskBranchOf(id)] ?? ""]?.[path] ?? "";
+    expect(content.match(/書式修正/g)).toHaveLength(1);
+    expect(content.match(/「決済に失敗しました」/g)).toHaveLength(1);
+    const fixes = taskOf(service, id).documentFixes ?? [];
+    expect(fixes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path,
+          reason: "書式を修正",
+          diff: expect.stringContaining("+書式修正"),
+        }),
+      ]),
+    );
+    expect(bodiesOf(service, id).at(-1)).toContain("書式を修正");
     activity.close();
   });
 

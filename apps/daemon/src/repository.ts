@@ -1,5 +1,5 @@
 import { type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { access, constants, cp, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
@@ -689,6 +689,16 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       const base = ["--git-dir", gitDir, "--work-tree", dir, ...SAFE_CONFIG];
       const run = (label: string, args: string[]) => git(label, [...base, ...args], env);
       await run("read-tree", ["read-tree", baseCommit]);
+      const documentList = join(gitDir, "sacty-document-paths.json");
+      const documentPaths: unknown = existsSync(documentList)
+        ? JSON.parse(readFileSync(documentList, "utf8"))
+        : [];
+      if (
+        !Array.isArray(documentPaths) ||
+        !documentPaths.every((p) => typeof p === "string" && validPath(p))
+      ) {
+        throw new MessageError(message("git.invalidPath"));
+      }
       // 新しく作ったファイルも含めるため、すべてインデックスに載せる。エージェントが作業領域に入れたツールの置き場所
       // （根の .sacty-tools/）は、リポジトリの .gitignore の否定パターンでも戻らないよう、パス指定で必ず外す（起点で追跡している
       // ファイルは、インデックスに起点のまま残る。PBI-278）
@@ -701,6 +711,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           "--",
           ":/",
           `:(top,exclude)${WORKSPACE_TOOLS_DIR}`,
+          ...documentPaths.map((p: string) => `:(top,literal,exclude)${p}`),
         ],
         env,
       );
@@ -966,7 +977,9 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     const commit = await this.stage(input.dir, input.gitDir, input.baseCommit, async (run) => {
       let tree = (await run("write-tree", ["write-tree"])).trim();
       const baseTree = (await run("rev-parse", ["rev-parse", `${input.baseCommit}^{tree}`])).trim();
-      if (tree === baseTree) throw new NothingToCommitError(message("git.nothingToCommit"));
+      if (tree === baseTree && Object.keys(input.overrides ?? {}).length === 0) {
+        throw new NothingToCommitError(message("git.nothingToCommit"));
+      }
       if (keep && keep.paths.length > 0) {
         // 引き継ぐパスは、作業領域の内容ではなく、keep.commit の内容にする
         await run("rm", ["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", ...keep.paths]);

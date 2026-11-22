@@ -8,6 +8,8 @@ Related ADRs: none
 
 ## Event shape
 
+The optional `documentFixes` on `BranchPushed` holds redacted and truncated paths, reasons, and diffs. `reasonTruncated` and `diffTruncated` indicate truncation. The projection retains fixes in push order.
+
 - The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 142 kinds (task creation and split, the merge of the dependency of a stacked child task, step progress, agent runs, budget, pause, resume, and cancel, changes to a task's title and image, change proposals and their decisions, verification, unfinished implementations and reworks that change nothing, git and PRs (including `StepBranchKept`, which records a step branch kept undeleted because a person added commits to it in a flow without an implementation), marking a PR ready for review, retargeting it, requesting a CI rerun, recording the switches sacty made to remove a draft, and recording that it did not turn a PR back into a draft (a person removed it, it could not be read, or it could not be decided), merging commits a person added to a PR, recording PR bodies and reconciling bodies a person edited, CI of the draft PR before the final review in an earlier version, reviews, creating review child tasks of PRs, replies to the intake source, questions, error analysis, export, PR labels, the after-merge watch, requests for security-fix tasks, audits of completed tasks, and so on).
 - The recorded shape (`ActivityEvent`) adds the following to the shape for writing.
   - `seq` (increasing monotonically across the whole activity log)

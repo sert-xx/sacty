@@ -188,8 +188,8 @@ describe("実装の PR：戻し先を決定の重さで分ける基準（PBI-446
       expect(p).toContain("implement-1-1");
       expect(p).toContain('"sensitive": true を付ける');
       expect(p).toContain("変更の申し出（sacty-change-proposal）で出す");
-      // 承認済みの設計は作業領域に入れない（指示に入る）
-      expect(p).toContain("承認済みの設計は、あなたの作業領域には無く、書き換えられません");
+      // 局所の決定の変更は設計の直しの形式で出す。
+      expect(p).toContain("設計の決定の局所の直しは、次の形式のブロックで");
     });
 
     it("最初の実装・人が画面から差し戻した回・設計が承認済みでないタスクには入らない", () => {

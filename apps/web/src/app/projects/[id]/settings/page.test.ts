@@ -75,9 +75,11 @@ describe.each([
     expect(title).not.toBe(messagesFor(lang).settings.title);
   });
 
-  it("プロジェクトを取れなければ、タイトルは既定のまま", async () => {
+  it("プロジェクトが無ければ、タイトルは無いページのもの", async () => {
     locale = lang;
-    expect(await generateMetadata({ params: params("gone") })).toEqual({});
+    expect(await generateMetadata({ params: params("gone") })).toEqual({
+      title: `${messagesFor(lang).common.notFound.title} - Sacty`,
+    });
   });
 });
 

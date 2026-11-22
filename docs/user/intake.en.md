@@ -168,6 +168,10 @@ The weight is decided from the size of the impact when the problem happens and h
 
 Each finding states the conditions under which it happens and the harm when it does.
 
+A finding that could be made into a line comment is posted as a line comment on the PR and is not written in the body of the review. A finding about a line outside the diff, or about a line whose comment could not be posted as a line comment, appears in the "行についての指摘" section of the body.
+Just under the verdict line of the body, the count appears as "行へのコメントに N 件の指摘があります。" (N findings are in line comments); it does not appear when there are no line comments, or when the line comments were put into the body and posted again.
+The "指摘" (findings) section of the body holds only the findings that cannot be line comments (about a whole file, the whole PR, or code or documents outside the diff).
+
 Who the @ mention goes to is decided as follows.
 
 - When the PR author is a bot (such as `dependabot[bot]`), there is no @ mention, only the verdict.
@@ -179,7 +183,7 @@ Who the @ mention goes to is decided as follows.
 When the AI assigned to a viewpoint fails even after being started again, the parent AI reviews that viewpoint instead (the body does not say so). If it can, the viewpoint counts as checked and a verdict is given.
 When some parts still could not be checked (for example, checking documents against the implementation could not be finished), the review gives no verdict. The verdict line is "付いていません（レビューが判定を付けませんでした。…）" (the review gave no verdict), and the body starts with what was not checked and what the reader should check (for example "入力の検査の抜けは確かめていません。src/api の変更を、人が確かめてください").
 When the answer shows a verdict that sacty could not read, the verdict line is "読み取れませんでした" (could not be read).
-In both cases, the round is not treated as having no findings. Read the body to check.
+In both cases, the round is not treated as having no findings. Check the body and the line comments.
 However, if what was checked has a `[要修正]` finding (including an earlier one, or another reviewer's, confirmed as unaddressed), the verdict is "修正が必要" (changes required).
 
 For a PR that changes part of a long document, the review checks only the changed parts and the parts whose correctness those changes can affect against the implementation.
@@ -187,7 +191,7 @@ It does not check the whole of the unchanged text.
 
 The review posted to the PR carries only what a reader of the PR needs to decide whether to fix something and what the problem is, because a reader of the PR may not use Sacty.
 
-- The body starts with the summary, followed by the findings and the verification results needed to decide on a fix (what failed and what could not be checked).
+- The body starts with the summary, followed by the findings that are not line comments and the verification results needed to decide on a fix (what failed and what could not be checked). A finding made into a line comment is not repeated in the body.
 - For what could not be checked (a document that could not be fetched, an omitted part of the diff, screens not captured, verification that was not run or stopped, repository instructions not used as a baseline, and so on), the body says what is unchecked and what the reader should do (for example "コードのテストは実行していません").
 - The body ends with only a separator line and "AI がレビューしました（人間は確認していません）。" (AI reviewed this; no person has checked it).
 
@@ -272,7 +276,7 @@ If you re-review such a task with "Review again and post to the PR", it is watch
 ### Re-review
 
 A re-review reviews the latest commit of the PR again and posts the result.
-It says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review; on a PR sacty created, the [replies to your comments](tasks.en.md#replies-to-your-comments) that sacty posted with the same GitHub account as the PR author are read as the author's replies too).
+It says, for each previous finding, whether it is fixed or still open (a previous finding made into a line comment is listed briefly, with its place and status only, without repeating its content; it also reads the PR author's replies since the previous review; on a PR sacty created, the [replies to your comments](tasks.en.md#replies-to-your-comments) that sacty posted with the same GitHub account as the PR author are read as the author's replies too).
 When a previous `[要修正]` is not fixed but turns out, on checking again, to be of `[提案]` weight, it is not counted as must-fix, and the summary says that the weight was reconsidered. This finding stays in the body only in the review of the round in which the weight was reconsidered. When it turns out to be of must-fix weight in a later round, it is raised as must-fix. A finding that the acceptance criteria or requirements are not met does not have its weight reconsidered and stays must-fix.
 
 A re-review narrows what it looks at to the check of the previous findings and the changes from the head commit reviewed last time to the current head commit (the changes since the previous review).

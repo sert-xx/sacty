@@ -77,7 +77,7 @@ describe("指摘が無いままテストだけで不合格になったときの�
 });
 
 describe("成果物のファイルで検査が落ちて不合格になったときの、実装のやり直しの指示", () => {
-  // 要求要件・設計の PR をマージ済みのタスク（成果物は PR に入るが、実装の作業領域には無い）
+  // 要求要件・設計の PR をマージ済みのタスク（成果物は PR と実装の作業領域に入る）
   const withDocuments = (documentsDir = "docs/sacty"): Partial<Task> =>
     ({
       stepPullRequests: ["requirements", "design"].map((step) => ({
@@ -87,7 +87,7 @@ describe("成果物のファイルで検査が落ちて不合格になったと�
     }) as unknown as Partial<Task>;
   const OUTPUT = "[warn] docs/sacty/t-1/design.md\n[warn] Code style issues found in 2 files.";
 
-  it("検査の出力に成果物のパスが出ていれば、そのパスを挙げ、書式ではなく検査の設定をリポジトリの方針に合わせて直すよう伝える。変更の無い再提出をさせない", () => {
+  it("検査の出力に成果物のパスが出ていれば、そのパスを挙げ、文書を直すよう伝える。変更の無い再提出をさせない", () => {
     const prompt = buildPrompt(
       failedTask(
         { tests: { command: "prettier --check .", exitCode: 1, output: OUTPUT } },
@@ -96,12 +96,10 @@ describe("成果物のファイルで検査が落ちて不合格になったと�
       "implement",
     );
     expect(prompt).toContain("sacty が PR に足す成果物（docs/sacty/t-1/）のファイルが出ています");
-    expect(prompt).toContain("検査は、このファイルで落ちています");
-    expect(prompt).toContain("書き換えても PR に残りません");
-    expect(prompt).toContain("ファイルの書式を直さない");
-    expect(prompt).toContain("リポジトリの検査の設定（例：.prettierignore");
-    expect(prompt).toContain("リポジトリの方針に合わせて直す");
-    expect(prompt).toContain("成果物の置き場所（docs/sacty/）をまとめて対象外にする");
+    expect(prompt).toContain("検査はこのファイルで落ちています");
+    expect(prompt).toContain(
+      "docs/sacty/t-1/ の作業領域の文書を、承認した判断を変えない範囲で直す",
+    );
     expect(prompt).toContain("変更の無い再提出はしないでください");
     // 「直る失敗が無ければ無関係な変更を足さない」と矛盾しない（成果物で落ちた検査を直す対象に含める）
     expect(prompt).toContain(
@@ -113,9 +111,8 @@ describe("成果物のファイルで検査が落ちて不合格になったと�
   it("出力に成果物のパスが無くても、成果物が PR に入ることと、そのファイルで落ちているときの直し方を伝える。他のタスクのパスでは案内しない", () => {
     const prompt = buildPrompt(failedTask({}, withDocuments()), "implement");
     expect(prompt).not.toContain("のファイルが出ています");
-    expect(prompt).toContain("sacty が足す成果物（docs/sacty/t-1/）も入ります");
+    expect(prompt).toContain("sacty が置く成果物（docs/sacty/t-1/）も入ります");
     expect(prompt).toContain("リポジトリ全体の検査がそのファイルで落ちているときは");
-    expect(prompt).toContain("リポジトリの方針に合わせて直す");
     // 別のタスクの ID のディレクトリが出力に出ていても、このタスクの成果物とは見なさない
     const other = buildPrompt(
       failedTask(
@@ -145,7 +142,7 @@ describe("成果物のファイルで検査が落ちて不合格になったと�
     }
   });
 
-  it("置き場所が既定の docs/sacty でないときは、置き場所の全体を対象外にせず、タスクの ID のディレクトリに当たる範囲にさせる", () => {
+  it("置き場所が既定でないときも、該当する文書を直すよう伝える", () => {
     const prompt = buildPrompt(
       failedTask(
         {
@@ -159,9 +156,6 @@ describe("成果物のファイルで検査が落ちて不合格になったと�
       ),
       "implement",
     );
-    expect(prompt).toContain("成果物のディレクトリ（docs/t-1/）に当たる範囲を対象外にする");
-    expect(prompt).toContain("置き場所（docs/）はリポジトリのほかのファイルと共有されうる");
-    expect(prompt).toContain("その全体は対象外にしない");
-    expect(prompt).not.toContain("成果物の置き場所（docs/）をまとめて対象外にする");
+    expect(prompt).toContain("docs/t-1/ の作業領域の文書を、承認した判断を変えない範囲で直す");
   });
 });

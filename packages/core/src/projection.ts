@@ -1074,6 +1074,8 @@ export type Task = {
   cancelled?: { at: string } & PayloadOf<"TaskCancelled">;
   /** sacty がプッシュしたブランチ（PRの作成の前に記録する）。 */
   pushedBranch?: PayloadOf<"BranchPushed">;
+  /** 実装の PR で公開した承認済み文書の直し（push 順）。 */
+  documentFixes?: NonNullable<PayloadOf<"BranchPushed">["documentFixes"]>;
   /** sacty が作ったPR（またはブランチ）。 */
   /**
    * reviewedCommit は、PR のレビューの子タスクが指摘なしにして、sacty がドラフトを外した PR の先頭（PBI-331）。人がレビューの間に
@@ -3922,6 +3924,9 @@ export function applyEvent(
         );
       }
       task.pushedBranch = event.payload;
+      if (event.payload.documentFixes?.length) {
+        task.documentFixes = [...(task.documentFixes ?? []), ...event.payload.documentFixes];
+      }
       // 実装のブランチにプッシュした内容に、それまでに反映した設計の直しが入った（PBI-446）
       if (task.designEdits?.some((e) => !e.committed)) {
         task.designEdits = task.designEdits.map((e) => ({

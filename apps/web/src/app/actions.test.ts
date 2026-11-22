@@ -656,7 +656,7 @@ describe("gh のアカウントの読み直し（PR #194 レビュー指摘）",
     const result = reloadGitHubAccountsAction();
     deadline.abort(new Error("timeout"));
     expect(await result).toEqual({
-      error: expect.stringMatching(/アカウントを読み直せませんでした（時間切れ）/),
+      error: expect.stringMatching(/アカウントを、時間切れで読み直せませんでした/),
     });
     expect(getGitHubAccounts).toHaveBeenCalledWith(deadline.signal);
     timeout.mockRestore();

@@ -43,7 +43,7 @@ const ja = {
   update: {
     title: "Sacty の新しい版があります",
     newer: (latest: string, current: string) =>
-      `Sacty ${latest} がリリースされました（動いているのは ${current}）。更新すると推奨のモデルや修正が入ります。`,
+      `Sacty ${latest} がリリースされました。動いているのは ${current} で、更新すると推奨のモデルや修正が入ります。`,
     release: "リリースの内容を見る",
     steps: "動いている sacty up を Ctrl+C で止めてから、Sacty のリポジトリで次を実行してください。",
     cliInstall: "cli:install で入れたなら、build の代わりに cli:install を実行してください。",
@@ -128,7 +128,7 @@ const en: ShellMessages = {
   update: {
     title: "A new version of Sacty is available",
     newer: (latest, current) =>
-      `Sacty ${latest} has been released (you are running ${current}). Updating brings the recommended models and fixes.`,
+      `Sacty ${latest} has been released. You are running ${current}, and updating brings the recommended models and fixes.`,
     release: "See the release notes",
     steps: "Stop the running sacty up with Ctrl+C, then run these in the Sacty repository.",
     cliInstall:

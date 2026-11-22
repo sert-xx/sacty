@@ -202,7 +202,7 @@ const en: ReviewMessages = {
       "The external operation has already run, so it cannot be sent back or rerun. Check the result and approve it, or cancel and request any correction in a new task.",
     notReproducedTitle: "The bug was not reproduced",
     notReproducedHelp:
-      "The reproduction test did not fail, so the task can't move on. Request changes with hints (steps, input, environment), or cancel the task.",
+      "The reproduction test did not fail, so the task can't move on. Request changes with hints such as steps, input, or environment, or cancel the task.",
     noChangesTitle: "No changes, no PR",
     noChangesHelp:
       "The implementation changed nothing from the base. Approving finishes the task without changes; requesting changes redoes the implementation.",

@@ -143,7 +143,8 @@ const ja = {
       "選んだ全件に同じ理由を記録し、以後の監査に渡します。同じ提案を繰り返さないためです。",
     reasonRequired: "理由を入力してください。",
     reasonTooLong: (max: number) => `理由は ${max} 文字までです。`,
-    invalidSelection: (max: number) => `選んだ提案を確かめてください（1〜${max} 件）。`,
+    invalidSelection: (max: number) =>
+      `選んだ提案を確かめてください。選べるのは 1〜${max} 件です。`,
     confirm: "却下を確定する",
     rejecting: "却下しています…",
     cancel: "やめる",
@@ -397,7 +398,7 @@ const en: AuditMessages = {
       "The same reason is recorded for every selected proposal and passed to later audits, so they do not repeat them.",
     reasonRequired: "Enter a reason.",
     reasonTooLong: (max) => `The reason can be up to ${max} characters.`,
-    invalidSelection: (max) => `Check the selection (1 to ${max} proposals).`,
+    invalidSelection: (max) => `Check the selection. You can select 1 to ${max} proposals.`,
     confirm: "Confirm rejection",
     rejecting: "Rejecting…",
     cancel: "Cancel",

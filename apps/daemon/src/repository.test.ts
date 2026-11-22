@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
 import { stopFetchProcessesSync } from "./fetch-processes.js";
@@ -1961,6 +1961,60 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(other.commit).toBe(made.commit);
     // 同じコミットを同じ名前へもう一度プッシュしても失敗しない
     await workspace.pushCommit(gitDir, made.commit, stepBranch);
+  });
+
+  it("作業領域に変更がなくても成果物の上書きがあれば公開する", async () => {
+    const { origin, workspace, clone, gitDir, baseCommit, taskBranch, path, input } =
+      await prepareTask();
+    const first = await workspace.commitFiles({ ...input, branch: taskBranch });
+    const result = await workspace.publish({
+      dir: clone,
+      gitDir,
+      baseCommit,
+      parent: first.commit,
+      branch: taskBranch,
+      message: "fix document",
+      date: "2026-10-10T02:00:00.000Z",
+      keep: { commit: first.commit, paths: [path] },
+      overrides: { [path]: "# 修正済み\n" },
+    });
+    expect(result.commit).not.toBe(first.commit);
+    expect(git(origin, "show", `${taskBranch}:${path}`)).toBe("# 修正済み");
+  });
+
+  it("配置した成果物を差分から除き、コードの変更だけを数える", async () => {
+    const { workspace, clone, gitDir, baseCommit, path } = await prepareTask();
+    writeFileSync(join(gitDir, "sacty-document-paths.json"), JSON.stringify([path]));
+    mkdirSync(dirname(join(clone, path)), { recursive: true });
+    writeFileSync(join(clone, path), "# 直した要求要件\n");
+    writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+    const diff = await workspace.diff(clone, gitDir, baseCommit);
+    const files = await workspace.diffFiles(clone, gitDir, baseCommit);
+    const stats = await workspace.diffStats(clone, gitDir, baseCommit);
+    expect(diff).toContain("pay.ts");
+    expect(diff).not.toContain(path);
+    expect(files.map((entry) => entry.path)).toEqual(["pay.ts"]);
+    expect(stats.map((entry) => entry.path)).toEqual(["pay.ts"]);
+  });
+
+  it("配置した文書が未変更で実装の変更もない場合は公開しない", async () => {
+    const { workspace, clone, gitDir, baseCommit, taskBranch, path, input } = await prepareTask();
+    const first = await workspace.commitFiles({ ...input, branch: taskBranch });
+    writeFileSync(join(gitDir, "sacty-document-paths.json"), JSON.stringify([path]));
+    mkdirSync(dirname(join(clone, path)), { recursive: true });
+    writeFileSync(join(clone, path), "# 要求要件\n");
+    await expect(
+      workspace.publish({
+        dir: clone,
+        gitDir,
+        baseCommit,
+        parent: first.commit,
+        branch: taskBranch,
+        message: "empty",
+        date: "2026-10-10T02:00:00.000Z",
+        keep: { commit: first.commit, paths: [path] },
+      }),
+    ).rejects.toBeInstanceOf(NothingToCommitError);
   });
 
   it("タスクブランチを作り、成果のファイルを工程のブランチにコミットし、実装はタスクブランチのファイルを引き継いで積む（PBI-57）：マージ後のタスクブランチに、成果のファイルを引き継いで実装を積む", async () => {

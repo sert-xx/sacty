@@ -341,7 +341,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain("must（[要修正]）か should（[提案]）");
     expect(prompt).toContain('"severity": "must"');
     // 位置の無い指摘は、人に確かめずに本文に書く
-    expect(prompt).toContain("人に確かめずに、頭を付けて本文に書いてください");
+    expect(prompt).toContain("人に確かめずに、頭を付けて本文の「指摘」の節に書いてください");
     // 判定は3つ
     expect(prompt).toContain("- changes_required：[要修正] の指摘が1つ以上ある");
     expect(prompt).toContain("- suggestions：[提案] の指摘だけがある（マージしてよい）");
@@ -950,7 +950,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(body("suggestions")).toContain("\n@alice 判定：提案あり（マージは可）\n");
     expect(body("no_findings")).toContain("\n@alice 判定：指摘なし\n");
     expect(body()).toContain(
-      "\n@alice 判定：読み取れませんでした（本文の指摘を確かめてください）\n",
+      "\n@alice 判定：読み取れませんでした（本文と行へのコメントを確かめてください）\n",
     );
     expect(body("no_findings").match(/AI/g)).toHaveLength(1);
     // 作者が分からない・login の形でない（bot）なら、メンションしない
