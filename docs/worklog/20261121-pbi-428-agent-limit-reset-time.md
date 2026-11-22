@@ -4,7 +4,7 @@
 - タスク: PBI-428
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: [利用上限で失敗したエージェントは、失敗の文から明ける時刻を確かに読み取れたとき、その時刻まで使わない](../adr/20261121-0200-agent-limit-reset-from-failure-message.md)
+- 関係する ADR: [利用上限で失敗したエージェントは、失敗の文から明ける時刻を確かに読み取れたとき、その時刻まで使わない](../adr/20261121-0200-superseded-agent-limit-reset-from-failure-message.md)
 
 ## 目的
 

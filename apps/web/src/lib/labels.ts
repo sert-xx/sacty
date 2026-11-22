@@ -928,6 +928,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.branch,
         event.payload.commit.slice(0, 7),
       );
+    case "StepBranchKept":
+      return e.StepBranchKept(
+        event.payload.branch,
+        event.payload.head.slice(0, 7),
+        event.payload.pushed.slice(0, 7),
+      );
     case "StepPullRequestPublished":
       return e.StepPullRequestPublished(
         l.step[event.payload.step],

@@ -22,6 +22,7 @@ import {
 } from "./events.js";
 import type { DaemonText } from "./message-code.js";
 import {
+  ActivityIntegrityError,
   applyEvent,
   awaitingCiAfterReview,
   awaitingGathering,
@@ -40,6 +41,7 @@ import {
   deferProposals,
   deferralTasksDue,
   deliveredWithoutChanges,
+  directStepFlow,
   discardedAiReviews,
   documentOutput,
   documentsOnlyContradicted,
@@ -54,6 +56,7 @@ import {
   isDone,
   isFinished,
   isRepoless,
+  keptStepBranches,
   lastChangeRound,
   pendingErrorAnalysis,
   pendingHeadMerge,
@@ -10023,5 +10026,110 @@ describe("レビューの実行の打ち切り（PBI-465）", () => {
       }),
     ]).get(id);
     expect(task?.previousReview?.latestCommit).toBe(H2);
+  });
+});
+
+describe("実装の無い進め方の工程の PR の記録（タスクブランチを作らない直接のフロー。PBI-464）", () => {
+  const repo = "https://github.com/acme/app";
+  const base = (id: string, stepKeys: StepKey[]) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: stepKeys } }),
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: repo, baseBranch: "main", baseCommit: "b1" },
+    }),
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId: "r1", step: "requirements", agentId: "a", authMode: "subscription" },
+    }),
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId: "r1",
+        step: "requirements",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output: "# 要求要件",
+        responses: [],
+      },
+    }),
+  ];
+  const pushed = (id: string) =>
+    ev(id, {
+      type: "StepBranchPushed",
+      payload: { step: "requirements", branch: "sacty/t-requirements-1", commit: "c1" },
+    });
+  const published = (id: string) =>
+    ev(id, {
+      type: "StepPullRequestPublished",
+      payload: {
+        step: "requirements",
+        branch: "sacty/t-requirements-1",
+        commit: "c1",
+        base: "b1",
+        path: "docs/sacty/t/requirements.md",
+        url: `${repo}/pull/7`,
+        number: 7,
+        repo,
+      },
+    });
+
+  it("TV-27: タスクブランチの無いタスクの工程の PR の記録は、実装が無ければ受け付け、実装があれば整合性のエラーにする", () => {
+    seq = 0;
+    const direct = project([
+      ...base("t", ["requirements", "design"]),
+      pushed("t"),
+      published("t"),
+    ]).get("t");
+    expect(direct?.taskBranch).toBeUndefined();
+    expect(direct?.stepBranches).toEqual(["sacty/t-requirements-1"]);
+    expect(direct?.stepPullRequests.map((p) => p.number)).toEqual([7]);
+    expect(direct && directStepFlow(direct)).toBe(true);
+
+    for (const record of [pushed, (id: string) => published(id)]) {
+      seq = 0;
+      expect(() =>
+        project([
+          ...base("t", ["requirements", "design", "implement"]),
+          ...(record === pushed ? [] : [pushed("t")]),
+          record("t"),
+        ]),
+      ).toThrow(ActivityIntegrityError);
+    }
+  });
+
+  it("人がコミットを足したので残した工程のブランチ（StepBranchKept）は、その PR のマージを記録するまで、残すブランチに数える", () => {
+    seq = 0;
+    const events = [
+      ...base("t", ["requirements", "design"]),
+      pushed("t"),
+      published("t"),
+      ev("t", {
+        type: "StepBranchKept",
+        payload: { branch: "sacty/t-requirements-1", head: "h1", pushed: "c1" },
+      }),
+    ];
+    const task = project(events).get("t");
+    expect(task?.stepBranchesKept).toEqual({
+      "sacty/t-requirements-1": { head: "h1", pushed: "c1" },
+    });
+    expect(task && keptStepBranches(task)).toEqual(["sacty/t-requirements-1"]);
+    const merged = project([
+      ...events,
+      ev("t", { type: "StepSubmitted", payload: { step: "requirements", submission: 1 } }),
+      ev("t", { type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person"),
+    ]).get("t");
+    expect(merged && keptStepBranches(merged)).toEqual([]);
+    // 知らないブランチは記録できない
+    seq = 0;
+    expect(() =>
+      project([
+        ...base("t", ["requirements", "design"]),
+        ev("t", { type: "StepBranchKept", payload: { branch: "x", head: "h", pushed: "p" } }),
+      ]),
+    ).toThrow(ActivityIntegrityError);
   });
 });

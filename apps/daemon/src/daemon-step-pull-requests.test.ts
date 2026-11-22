@@ -1695,7 +1695,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         repos,
         planner: async (task) => ({
           steps: task.parent
-            ? ["requirements" as const, "design" as const]
+            ? ["requirements" as const, "design" as const, "implement" as const]
             : [...STEP_PLANS.split].filter((s) => s !== "investigate"),
           fallback: false,
           testCommand: "npm test",
@@ -1724,11 +1724,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         pulls.calls.find((c) => c.branch === `${taskBranchOf(child)}-requirements-1`),
       ).toMatchObject({ baseBranch: taskBranchOf(child) });
     }
+    // 分割の親は実装の工程が無いので、タスクブランチを作らず、要求要件・設計の PR をベースブランチへ直接出す（PBI-464）
+    expect(taskOf(service, id).taskBranch).toBeUndefined();
     expect(
       taskBranchPushes(repos)
         .map((p) => p.branch)
         .sort(),
-    ).toEqual([id, ...children].map(taskBranchOf).sort());
+    ).toEqual(children.map(taskBranchOf).sort());
     activity.close();
   });
 

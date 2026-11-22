@@ -330,7 +330,7 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     ).toBe(`${head}| [設定](/workspace/a\\|b.md) | c.md |`);
   });
 
-  it("つながりの確かめは、本文の長さの上限いっぱいでも、時間がかからない", () => {
+  it("つながりの確かめは、本文の長さの上限いっぱいの本文でも、終わって本文をそのまま返す", () => {
     // 空白の無い本文に、打ち消し・メンション・参照の形と、リンクが並ぶ
     const unit = "a\\@b#1@c[a.md](/workspace/a.md)、";
     const body = unit.repeat(Math.floor(PR_BODY_MAX / unit.length));
@@ -511,7 +511,7 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     );
   });
 
-  it("本文の長さの上限いっぱいでも、ふつうの本文は時間がかからない。対象の無い本文は解析しない", () => {
+  it("本文の長さの上限いっぱいのふつうの本文も、リンクを外して終わる。対象の無い本文は解析しない", () => {
     const link = "[a.md](/workspace/a.md) ";
     const many = link.repeat(Math.floor(PR_BODY_MAX / link.length));
     expect(withoutWorkspaceLinks(many)).toBe("a.md ".repeat(Math.floor(PR_BODY_MAX / link.length)));

@@ -1823,6 +1823,8 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   2. オーケストレーターのセッションを消す。
   3. sacty が作った実装の PR と、開いている要求要件・設計の PR を閉じる（マージはしない）。
   4. sacty のブランチ（実装の PR のブランチ・タスクブランチ・工程のブランチ）を消す。
+     実装の無い進め方（タスクブランチを作らない）の工程のブランチは、先頭を比べる規則で消し（マージした PR のブランチは無条件に消す）、人がコミットを足して残したブランチ（`StepBranchKept`）と、リモートの先頭が最後の push と違うブランチは消さない。
+     すでにリモートに無いブランチは消せたものとする（[実装の無い進め方の工程の PR](approval.md#実装の無い進め方の工程の-pr)）。
   5. 作業領域（依存のキャッシュを含む）を消す（コンテナが止まったことを確かめられなければ消さない）。
 
 コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNoteSections`・`withoutResumeNoteHeadings`・`normalizeNewlines`）、`packages/core/src/projection.ts`（`project`・`resumeNoteRoom`・`rerunnableKind`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/daemon/src/prompts.ts`（`resumeNotePromptLines`・`resumeNoteJudgeLines`・`resumeNoteLines`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
@@ -1839,6 +1841,8 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   - マージの後の監視を工程の外で待っている以前のタスクではない。
   - 停止を確かめられなかったコンテナ（`unstoppedRuns`）が無い。
 - 消すとき：
+  - 実装の無い進め方（タスクブランチを作らない）で、sacty の工程のブランチが残っていれば、作業領域を消す前に、削除の規則で消す（失敗しても完了は止めない。[実装の無い進め方の工程の PR](approval.md#実装の無い進め方の工程の-pr)）。
+    完了したときに、人がコミットを足して残したブランチ（`StepBranchKept`）は消さない。
   - そうなった追記のとき。
   - 実行・質問への答えが終わったとき（実行の途中なら、その終わりに消す）。
   - デーモンの起動のとき（[デーモンの起動と終了](daemon-lifecycle.md#デーモンの起動の順序)）。
@@ -1925,7 +1929,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   - 進め方（省略すると、オーケストレーターが選ぶ。選べるものは、画面でタスクを作るときと同じ。`selectablePlans`）
 - 説明は、人が書いた内容の後に、空行を挟んで元のタスクの記録（`## 元のタスクの記録（完了したタスク）`。`DERIVE_RECORD_HEADING`）を足したもの（`deriveRecord`・`deriveBody`）。
   再実行の画面では、`record` の本文そのものを説明から除く（見出しを探さないので、成果の本文に見出しと同じ行があっても境目を誤らない。`rerunEditableBody`）。
-  記録は、元のタスク・作業したリポジトリ・チケットと取り込み元・工程とその状態・実装の PR とその状態・要求要件と設計の PR・分割で作った子タスク・以前の版の最終レビューの結果と人が確かめること・工程の成果（承認済みなら承認したもの。1件 6000 文字まで）・答えのある質問と答え。
+  記録は、元のタスク・作業したリポジトリ・チケットと取り込み元・工程とその状態・実装の PR とその状態・要求要件と設計の PR（実装の無い進め方でマージした PR の行には、文書のパス（`StepPullRequestPublished` の `path`）も付く。続きのタスクをベースブランチから始めると、その文書が作業領域にある）・分割で作った子タスク・以前の版の最終レビューの結果と人が確かめること・工程の成果（承認済みなら承認したもの。1件 6000 文字まで）・答えのある質問と答え。
   元のタスクの変更は残っていること、依頼が記録より優先すること、依頼に無いことをしないことを書く。
 - `start` は `sacty`。
   チケット・取り込み元は引き継がない（チケットや Issue に結果を返さない）。

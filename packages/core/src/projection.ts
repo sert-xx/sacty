@@ -1123,6 +1123,8 @@ export type Task = {
    * 同じコミットなら使い回し、違うコミットのときだけ次の回の名前にする。
    */
   stepBranchCommits?: Record<string, string>;
+  /** 人がコミットを足したので消さずに残す工程のブランチ（PBI-464）。その PR のマージを記録すると外れる。 */
+  stepBranchesKept?: Record<string, { head: string; pushed: string }>;
   /**
    * 要求要件・設計の提出ごとの、成果とテスト観点の写し（StepSubmitted の時点のもの。PBI-462）。直しの間にその工程の PR が
    * マージされたとき、直しの成果を捨てて、承認待ちだった提出の版に戻すために持つ。
@@ -3847,8 +3849,17 @@ export function applyEvent(
       task.taskBranch = event.payload;
       break;
 
+    case "StepBranchKept": {
+      if (!task.stepBranches.includes(event.payload.branch)) {
+        throw new ActivityIntegrityError(event, "the step branch is unknown");
+      }
+      const { branch, head, pushed } = event.payload;
+      task.stepBranchesKept = { ...task.stepBranchesKept, [branch]: { head, pushed } };
+      break;
+    }
+
     case "StepBranchPushed":
-      if (!task.taskBranch || activeStep(task) !== event.payload.step) {
+      if (!stepBranchesAllowed(task) || activeStep(task) !== event.payload.step) {
         throw new ActivityIntegrityError(event, "the step is not active");
       }
       if (!task.stepBranches.includes(event.payload.branch)) {
@@ -3863,7 +3874,7 @@ export function applyEvent(
     case "StepPullRequestPublished": {
       const p = event.payload;
       if (
-        !task.taskBranch ||
+        !stepBranchesAllowed(task) ||
         task.status !== "idle" ||
         activeStep(task) !== p.step ||
         task.outputs[p.step] === undefined
@@ -5437,6 +5448,32 @@ export function canRetryExport(task: Task, step: StepKey): boolean {
     last?.failed !== undefined &&
     task.approved[step]?.at === last.approvedAt &&
     exportDue(task) === undefined
+  );
+}
+
+/**
+ * タスクブランチを作らずに、要求要件・設計の PR をベースブランチへ直接出す進め方（PBI-464）か。タスクブランチが無く、
+ * 進め方に実装の工程が無いタスク。工程は StepsChosen の後で実装を増減しないので、途中で切り替わらない。
+ */
+export function directStepFlow(task: Task): boolean {
+  return !task.taskBranch && !task.steps.some((s) => s.key === "implement");
+}
+
+/** 工程のブランチ・PR の記録を受け付けるか（タスクブランチがある、または直接の流れ。PBI-464）。 */
+function stepBranchesAllowed(task: Task): boolean {
+  return Boolean(task.taskBranch) || directStepFlow(task);
+}
+
+/**
+ * 人がコミットを足したので消さずに残している工程のブランチ（PBI-464）。その PR のマージを記録したものは含めない
+ * （マージで人のコミットは取り込み済みなので、消してよい）。
+ */
+export function keptStepBranches(task: Task): string[] {
+  return Object.keys(task.stepBranchesKept ?? {}).filter(
+    (branch) =>
+      !task.stepPullRequests.some(
+        (p) => p.branch === branch && (p.state === "merged" || p.state === "merged_outdated"),
+      ),
   );
 }
 

@@ -50,9 +50,10 @@ const ZERO: TokenUsage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 
 /** エラー文から、止まった理由を分類する。 */
 export function classifyFailure(message: string): FailureReason {
+  // モデルごとの上限（Opus limit・Sonnet limit）と費用の上限（spend limit）も、利用上限（PBI-472）
   // Bedrock は、混雑時に ThrottlingException・Too Many Requests を返す（PBI-32）
   if (
-    /usage limit|session limit|weekly limit|rate limit|\b429\b|quota|throttl|too many requests/i.test(
+    /usage limit|session limit|weekly limit|rate limit|\b(?:opus|sonnet) limit|\bspend limit|\b429\b|quota|throttl|too many requests/i.test(
       message,
     )
   ) {
