@@ -694,7 +694,10 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
       const { service, repos, id } = made;
       // 作業領域はあるが、退避した git のメタデータが無く、用意し直しも失敗する
       rmSync(join(dir, "workspaces", "_git", `${id}.git`), { recursive: true, force: true });
-      repos.fail = "boom";
+      repos.recordedMissing = true;
+      const commit = taskOf(service, id).repository?.baseCommit;
+      if (!commit) throw new Error("no base commit");
+      const reason = message("git.baseCommitMissing", { commit });
       const cancelled = await service.cancel(id);
       const failed = (cancelled.cancelled?.cleanup ?? []).filter(
         (c) => c.target === "branch" && c.result === "failed",
@@ -704,9 +707,13 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
       const en = renderMessage(detail, "en");
       expect(en).toContain("Could not delete branch");
       expect(en).toContain("Could not prepare a workspace");
+      expect(en).toContain(renderMessage(reason, "en"));
       expect(en).not.toMatch(/[぀-ヿ一-鿿]/);
       expect(en).not.toContain("[object Object]");
-      expect(renderMessage(detail, "ja")).toContain("作業領域を用意できませんでした");
+      const ja = renderMessage(detail, "ja");
+      expect(ja).toContain("作業領域を用意できませんでした");
+      expect(ja).toContain(renderMessage(reason, "ja"));
+      expect(renderMessage(reason, "en")).not.toBe(renderMessage(reason, "ja"));
       made.activity.close();
     });
 

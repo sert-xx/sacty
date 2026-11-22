@@ -23,7 +23,8 @@
 
 ## 確かめたこと
 
-- `npx vitest run apps/daemon/src/daemon-step-pull-requests-direct.test.ts`：36 件成功。記録の順序と再実行の到達も確かめた。
+- `npx vitest run apps/daemon/src/daemon-step-pull-requests-direct.test.ts`：36 件成功。準備失敗の理由が日英で翻訳されることも確かめた。
+- 準備失敗の理由を日本語に固定する変更を一時的に戻し、TV-2 が失敗することを確かめた。
 
 ## 残したこと
 
