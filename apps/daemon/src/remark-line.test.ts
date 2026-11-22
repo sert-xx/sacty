@@ -98,8 +98,13 @@ describe("remarkLine と withoutRemarkIds の取りこぼし（PBI-471 の指摘
     );
   });
 
-  it("閉じ括弧の無い長い空白の並びでも、時間がかからない", () => {
-    withoutRemarkIds(`(implement-1-1${" ".repeat(150_000)}`);
-    withoutRemarkIds(`${" ".repeat(150_000)}(implement-1-1`);
+  it("閉じ括弧の無い長い空白の並びでも、固まらずに終わり、指摘の ID だけを置き換える", () => {
+    for (const text of [
+      `(implement-1-1${" ".repeat(150_000)}`,
+      `${" ".repeat(150_000)}(implement-1-1`,
+    ]) {
+      // 括弧が閉じていないので括弧ごとは除かず、指摘の ID だけを「指摘」にする
+      expect(withoutRemarkIds(text).trim()).toBe("(指摘");
+    }
   });
 });

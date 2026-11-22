@@ -339,8 +339,11 @@ describe("エージェントの JSON の答えを、囲み方が揺らいでも�
     for (const [index, prose] of proses.entries()) {
       it(`入力 ${index + 1}（${prose.slice(0, 12).replace(/\n/g, " ")}…）`, () => {
         const output = `${prose}\n${answer}`;
+        const started = performance.now();
         expect(extractVerdict(output)).toEqual({ verdict: "approved", reason: "ok" });
         expect(withoutCandidates(output, jsonCandidates(output))).not.toContain("sacty-");
+        // 入力 12 は 2 乗の版を作れなかったので、遅い機械にも十分な余裕の上限（3 秒。通常は 0.3 秒未満）で時間の検査を残す
+        if (index === proses.length - 1) expect(performance.now() - started).toBeLessThan(3000);
       });
     }
   });

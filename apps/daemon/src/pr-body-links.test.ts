@@ -334,7 +334,10 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
     // 空白の無い本文に、打ち消し・メンション・参照の形と、リンクが並ぶ
     const unit = "a\\@b#1@c[a.md](/workspace/a.md)、";
     const body = unit.repeat(Math.floor(PR_BODY_MAX / unit.length));
+    // 2 乗の版でも時間切れに届かないので、遅い機械にも十分な余裕の上限（2.5 秒。通常は 0.4 秒未満）で時間の検査を残す
+    const started = performance.now();
     expect(withoutWorkspaceLinks(body)).toBe(body);
+    expect(performance.now() - started).toBeLessThan(2500);
   });
 
   it("表示の文字の中の打ち消し・文字参照は、すぐ外側に括弧・強調の記号があっても、それだけではつながりと見なさず、リンクを外す", () => {
@@ -514,7 +517,10 @@ describe("PR の本文の、コンテナの作業領域へのリンク（PBI-366
   it("本文の長さの上限いっぱいのふつうの本文も、リンクを外して終わる。対象の無い本文は解析しない", () => {
     const link = "[a.md](/workspace/a.md) ";
     const many = link.repeat(Math.floor(PR_BODY_MAX / link.length));
+    // 2 乗の版でも時間切れに届かないので、遅い機械にも十分な余裕の上限（2.5 秒。通常は 0.4 秒未満）で時間の検査を残す
+    const started = performance.now();
     expect(withoutWorkspaceLinks(many)).toBe("a.md ".repeat(Math.floor(PR_BODY_MAX / link.length)));
+    expect(performance.now() - started).toBeLessThan(2500);
     // パーサーが時間のかかる本文（記号の連続）でも、作業領域へのリンクがありえなければ、解析せずに返す
     const heavy = [
       ">".repeat(PR_BODY_MAX),

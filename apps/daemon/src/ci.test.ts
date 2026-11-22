@@ -323,10 +323,19 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
         JSON.stringify(JSON.stringify(Array(6_000).fill({ u: "https://a?b", m: "a@b" }))),
       ),
     ];
+    // 2 乗の版が時間切れで落ちることを確かめられていない入力（ほかの 4 入力は、2 乗の版が時間切れで落ちる）。
+    // これらには、遅い機械にも十分な余裕を持たせた上限（3 秒。通常は 0.2 秒未満）で、時間の検査を残す
+    const unverified = new Set([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 14]);
     for (const [index, input] of inputs.entries()) {
       it(`入力 ${index + 1}（${input.slice(0, 12)}…）`, () => {
-        redactUrlCredentials(input, { queryAndFragment: true });
-        redactLog(input, []);
+        const started = performance.now();
+        const url = redactUrlCredentials(input, { queryAndFragment: true });
+        const log = redactLog(input, []);
+        const elapsed = performance.now() - started;
+        // 伏せた結果をもう一度伏せても変わらない（伏せ終わっている）
+        expect(redactUrlCredentials(url, { queryAndFragment: true })).toBe(url);
+        expect(redactLog(log, [])).toBe(log);
+        if (unverified.has(index + 1)) expect(elapsed).toBeLessThan(3000);
       });
     }
   });

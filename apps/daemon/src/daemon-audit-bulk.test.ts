@@ -429,6 +429,8 @@ describe("まとめて却下 2,000 件が終わり、組み直しが 1 回で済
     // gh のトークンの取り出しはプロジェクトの GitHub のアカウント 1 つにつき 1 回
     expect(github.requested).toEqual(["me"]);
     expect(rebuilds).toBe(1);
+    // 本体を 2 乗にしても時間切れ（60 秒）に届かないので、遅い機械にも十分な余裕の上限（30 秒。通常は 1.5 秒未満）で時間の検査を残す
+    expect(elapsed).toBeLessThan(30_000);
     console.info(`bulk reject 2000 proposals / 50 tasks: ${Math.round(elapsed)} ms`);
   }, 60_000);
 });
