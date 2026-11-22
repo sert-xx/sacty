@@ -2,8 +2,8 @@
 
 - 日付: 2026-11-22（UTC）
 - タスク: PBI-491
-- PR: なし
-- ブランチ: main
+- PR: #593
+- ブランチ: sacty/task-ebd488c9
 - 関係する ADR: [実装の残りから取り込み済みの変更と工程外の作業を分ける](../adr/20261122-2201-implementation-remaining-boundaries.md)
 
 ## 目的
@@ -21,17 +21,16 @@
 | --- | --- |
 | `npm run lint` | 成功 |
 | `npm run typecheck` | 成功 |
-| `npx vitest run apps/daemon/src/completion.test.ts apps/daemon/src/prompts.test.ts tests/docs` | 395 件成功 |
 | `npm test` | 7132 件成功、14 件スキップ |
 | `npm run build` | 成功 |
 
-追加した取り込みの指示と工程外の作業の指示をそれぞれ取り除き、対応するテストが失敗することを確かめた。
+スキップのうち13件は Git が必要な `merge-tree` オプションに対応していないため、1件は実際の AI を使う評価を既定で実行しないため。
 
 ## レビューの指摘と対応
 
 ### この PR の最初の提出
 
-まだ無い（最初の提出）。
+CI のテストの時間切れについて再実行を確認し、スキップの内訳と理由を記した。
 
 ## 残したこと
 
