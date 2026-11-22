@@ -934,6 +934,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.head.slice(0, 7),
         event.payload.pushed.slice(0, 7),
       );
+    case "StepBranchesLeft":
+      return e.StepBranchesLeft(event.payload.branches.length);
     case "StepPullRequestPublished":
       return e.StepPullRequestPublished(
         l.step[event.payload.step],

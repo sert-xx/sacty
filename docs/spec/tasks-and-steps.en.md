@@ -1342,6 +1342,7 @@ A task's workspace (`workspaces/<task-id>`), its set-aside git metadata (`worksp
 - When they are removed:
   - In a flow without an implementation (no task branch is created), if sacty's step branches remain, they are deleted with the deletion rule before the workspace is removed (a failure does not stop the completion; [PRs of steps in a flow without an implementation](approval.en.md#prs-of-steps-in-a-flow-without-an-implementation)).
     At completion, a branch a person added commits to and sacty kept (`StepBranchKept`) is not deleted.
+    A branch that could not be deleted is not retried; it is recorded with its reason in `StepBranchesLeft` and shown in the task details. If the startup cleanup runs again and the result changes, it is recorded again. When the git metadata is missing and nothing could be decided, nothing is recorded.
   - On the append that makes the task so.
   - When a run or the answer to a question ends (if a run is in progress, they are removed at its end).
   - When the daemon starts ([Daemon startup and shutdown](daemon-lifecycle.en.md#daemon-startup-order)).

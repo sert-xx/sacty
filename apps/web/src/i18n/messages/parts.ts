@@ -298,6 +298,9 @@ const ja = {
     cancelling: "片付けています…",
     cancelledTitle: "中止しました",
     cancelledAt: (at: string) => `${at} に中止`,
+    branchesLeftTitle: "消せなかった工程のブランチ",
+    branchesLeftNote:
+      "完了の片付けで消せなかったブランチです。要らなければ GitHub で消してください。",
   },
   /** 中止したタスクを、最初からやり直す（再実行）。 */
   rerun: {
@@ -648,6 +651,9 @@ const en: PartsMessages = {
     cancelling: "Cleaning up…",
     cancelledTitle: "Cancelled",
     cancelledAt: (at) => `Cancelled at ${at}`,
+    branchesLeftTitle: "Step branches that were not deleted",
+    branchesLeftNote:
+      "The completion cleanup could not delete these branches, so delete them on GitHub if you do not need them.",
   },
   rerun: {
     open: "Rerun",

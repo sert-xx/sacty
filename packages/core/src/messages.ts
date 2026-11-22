@@ -664,8 +664,8 @@ const PARAMS = {
   "cleanup.noWorkspace": null,
   "cleanup.stepBranchUnrecorded": z.object({ branch: z.string() }),
   "cleanup.stepBranchNoGitDir": null,
-  "cleanup.stepBranchPrepareFailed": z.object({ detail: z.string() }),
-  "cleanup.stepBranchFailed": z.object({ branch: z.string(), detail: z.string() }),
+  "cleanup.stepBranchPrepareFailed": z.object({ detail: TextParam }),
+  "cleanup.stepBranchFailed": z.object({ branch: z.string(), detail: TextParam }),
   "cleanup.containerUnconfirmed": null,
   "git.unavailable": z.object({ detail: z.string() }),
   "git.failed": z.object({ command: z.string(), detail: z.string() }),
@@ -690,6 +690,7 @@ const PARAMS = {
   "git.invalidPath": null,
   "git.nothingToCommit": null,
   "git.notSactyBranch": null,
+  "git.branchLeaseRejected": z.object({ branch: z.string() }),
   "git.fileNotRegular": z.object({ path: z.string() }),
   "git.fileTooLarge": z.object({ path: z.string(), limit: Count }),
   "git.fileNotText": z.object({ path: z.string() }),
@@ -1745,10 +1746,10 @@ const ja: MessageDictionary = {
   "cleanup.noWorkspace": "作業領域が無いため、ブランチを消せません。",
   "cleanup.stepBranchNoGitDir":
     "作業領域の git のメタデータが無いため、工程のブランチを消しませんでした。",
-  "cleanup.stepBranchPrepareFailed": ({ detail }) =>
-    `工程のブランチを消すための作業領域を用意できませんでした（${detail}）。`,
-  "cleanup.stepBranchFailed": ({ branch, detail }) =>
-    `ブランチ ${branch} を消せませんでした：${detail}`,
+  "cleanup.stepBranchPrepareFailed": ({ detail }, text) =>
+    `工程のブランチを消すための作業領域を用意できませんでした：${text(detail)}`,
+  "cleanup.stepBranchFailed": ({ branch, detail }, text) =>
+    `ブランチ ${branch} を消せませんでした：${text(detail)}`,
   "cleanup.stepBranchUnrecorded": ({ branch }) =>
     `sacty が最後に push したコミットの記録が無いため、ブランチ ${branch} を消しません。`,
   "cleanup.containerUnconfirmed":
@@ -1775,6 +1776,7 @@ const ja: MessageDictionary = {
   "git.invalidPath": "コミットするファイルのパスが不正です。",
   "git.nothingToCommit": "起点から変更がないため、コミットできません。",
   "git.notSactyBranch": "Sacty のブランチではありません。",
+  "git.branchLeaseRejected": () => "削除は、リースの不一致により拒否されました。",
   "git.fileNotRegular": ({ path }) => `${path} は通常のファイルではありません。`,
   "git.fileTooLarge": ({ path, limit }) => `${path} が大きすぎます（上限 ${limit} バイト）。`,
   "git.fileNotText": ({ path }) => `${path} は UTF-8 のテキストではありません。`,
@@ -2642,10 +2644,10 @@ const en: MessageDictionary = {
   "cleanup.noWorkspace": "Cannot delete the branch because there is no workspace.",
   "cleanup.stepBranchNoGitDir":
     "Did not delete the step branches because the workspace's git metadata is missing.",
-  "cleanup.stepBranchPrepareFailed": ({ detail }) =>
-    `Could not prepare a workspace to delete the step branches (${detail}).`,
-  "cleanup.stepBranchFailed": ({ branch, detail }) =>
-    `Could not delete branch ${branch}: ${detail}`,
+  "cleanup.stepBranchPrepareFailed": ({ detail }, text) =>
+    `Could not prepare a workspace to delete the step branches: ${text(detail)}`,
+  "cleanup.stepBranchFailed": ({ branch, detail }, text) =>
+    `Could not delete branch ${branch}: ${text(detail)}`,
   "cleanup.stepBranchUnrecorded": ({ branch }) =>
     `Not deleting branch ${branch} because the commit sacty last pushed is not recorded.`,
   "cleanup.containerUnconfirmed":
@@ -2672,6 +2674,7 @@ const en: MessageDictionary = {
   "git.invalidPath": "The path of the file to commit is not valid.",
   "git.nothingToCommit": "Nothing changed since the base, so there is nothing to commit.",
   "git.notSactyBranch": "This is not a Sacty branch.",
+  "git.branchLeaseRejected": () => "Deletion was rejected because the lease did not match.",
   "git.fileNotRegular": ({ path }) => `${path} is not a regular file.`,
   "git.fileTooLarge": ({ path, limit }) => `${path} is too large (limit ${limit} bytes).`,
   "git.fileNotText": ({ path }) => `${path} is not UTF-8 text.`,

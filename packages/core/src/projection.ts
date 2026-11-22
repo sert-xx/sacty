@@ -1125,6 +1125,8 @@ export type Task = {
   stepBranchCommits?: Record<string, string>;
   /** 人がコミットを足したので消さずに残す工程のブランチ（PBI-464）。その PR のマージを記録すると外れる。 */
   stepBranchesKept?: Record<string, { head: string; pushed: string }>;
+  /** 完了の片付けで消せなかった工程のブランチと理由（PBI-480）。最新の StepBranchesLeft で置き換わり、空なら無くなる。 */
+  stepBranchesLeft?: { branch: string; detail: DaemonText }[];
   /**
    * 要求要件・設計の提出ごとの、成果とテスト観点の写し（StepSubmitted の時点のもの。PBI-462）。直しの間にその工程の PR が
    * マージされたとき、直しの成果を捨てて、承認待ちだった提出の版に戻すために持つ。
@@ -3855,6 +3857,17 @@ export function applyEvent(
       }
       const { branch, head, pushed } = event.payload;
       task.stepBranchesKept = { ...task.stepBranchesKept, [branch]: { head, pushed } };
+      break;
+    }
+
+    case "StepBranchesLeft": {
+      for (const { branch } of event.payload.branches) {
+        if (!task.stepBranches.includes(branch)) {
+          throw new ActivityIntegrityError(event, "the step branch is unknown");
+        }
+      }
+      task.stepBranchesLeft =
+        event.payload.branches.length > 0 ? event.payload.branches : undefined;
       break;
     }
 

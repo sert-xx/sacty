@@ -136,23 +136,40 @@ The branches of a flow without an implementation look like this (an example wher
   - Result of the comparison
     - If different: do not delete; record `StepBranchKept` (`branch`, the fetched `head`, and `pushed`, the last commit sacty pushed).
     - If the branch is not on the remote (the fetch fails with `couldn't find remote ref`): treat it as deleted. This includes a branch GitHub deleted after the merge.
-    - Any other fetch failure (such as the network), or no record in `stepBranchCommits`: do not delete and record nothing. Completion and cancel retry with the same rule, and if the head still cannot be fetched there, the branch stays (cancel records it as failed in the cleanup of `TaskCancelled`).
+    - Any other fetch failure (such as the network), or no record in `stepBranchCommits`: do not delete. Completion and cancel try again using the same rule. Completion records branches it could not delete in `StepBranchesLeft`, and cancel records failures in the cleanup of `TaskCancelled`.
   - When sacty updates the same PR and the fetched head of the PR's branch differs from the last push (it stacks on a person's commit), it records `StepBranchKept`.
     The branch contains a person's commit, so it is not deleted even if the head later matches (when the PR is merged, it is deleted by 1).
   - Deletion happens only if the compared head is still the same (the expected head is passed to `deleteBranch`, which deletes with `--force-with-lease`).
     If a person pushes between the fetch and the deletion, the branch stays.
+  - When a deletion with the expected head is rejected with `stale info` (a lease mismatch): `deleteBranch` throws `git.branchLeaseRejected`.
+    The branch is not deleted without checking. The remote head is fetched again (with a 120-second timeout) and handled as follows.
+    - Not on the remote: treat it as deleted.
+    - Different from the last push: do not delete; record `StepBranchKept` (with the re-fetched `head`).
+    - Same as the last push (a person reverted it, or a false alarm), or the fetch fails: do not delete again, and treat it as not deleted (the reason is `git.branchLeaseRejected` or the fetch error).
+      The branch stays on the remote. Cancel records it as a failure in the cleanup, and completion records it in `StepBranchesLeft` below.
   - The projection excludes a branch with `StepBranchKept` from the branches to delete (`sactyBranches`) until that PR's merge is recorded (`keptStepBranches`). Reopening the PR does not release it.
-  - A failure to delete does not stop the task (it only logs a warning). Completion and cancel delete what remains with the same rule (a branch already gone counts as deleted).
+  - A failure to delete does not stop the task. Completion and cancel delete what remains with the same rule (a branch already gone counts as deleted).
+  - A branch that completion could not delete (every branch that could not be deleted: a network failure, no record of the last push, a lease rejection, and so on) is not retried; it is recorded in `StepBranchesLeft` (`branches`: the list of branches with the reason `detail`) and shown in the task details. Branches retained as `StepBranchKept` are not included.
+    This is because the completion cleanup (`retireWorkspace`) does not prepare the workspace again (`prepare: false`) and removes the workspace and the git metadata right after, so nothing is left to retry from.
+    After it is recorded, a person deletes the branch on GitHub.
+    - It is recorded before the workspace is removed. If recording fails, the completion cleanup continues.
+    - The startup cleanup runs again only when removing the workspace partly failed and the git metadata remains. It records every branch that could not be deleted this time, and adds nothing when the result equals the recorded one (the branches and their `detail`). It also records when branches were deleted and the list shrank or became empty, and an empty `branches` clears the display.
+    - A cleanup that could not decide because the git metadata is missing (`cleanup.stepBranchNoGitDir`) is not used for the record, and the earlier record stays.
+    - The projection's `stepBranchesLeft` is replaced by the latest `StepBranchesLeft` (cleared when empty). A record of a branch not in `stepBranches` is an integrity error.
+  - The notices of the cleanup (leaving a branch with no record, being unable to prepare a workspace, and so on) are held as a code and arguments and shown in the user's display language (`cleanup.stepBranchUnrecorded`, `cleanup.stepBranchPrepareFailed`, `cleanup.stepBranchFailed`; the reason is a nested message).
   - A taken-over PR opens no step PR and stays excluded from `sactyBranches`, so a person's branch is never deleted.
   - The cancel confirmation (`cancelTargets`) shows the branches to delete with the same classification ([MCP server](mcp-server.en.md#get_cancel_plan)).
 - Derive record: the line of a merged step PR gets the document path (`path` of `StepPullRequestPublished`) ([Derive](tasks-and-steps.en.md#creating-a-follow-up-task-from-a-completed-task-derive)).
   A follow-up task started from the base branch has the earlier task's documents in its workspace.
 - The related Issue in the PR body is a reference only and is not closed even by a PR to the base branch ([PR body and PR template](#pr-body-and-pr-template)).
-- Compatibility: a new event `StepBranchKept` was added.
+- Compatibility: new events `StepBranchKept` and `StepBranchesLeft` were added.
   After even one task of the direct flow is recorded, a daemon of the earlier version fails with an integrity error when projecting the activity log and does not start (the earlier version does not accept step PR records without a task branch).
   Being unable to roll back to the earlier version is accepted (precedent: the compatibility note in [Merging during a rework of a step PR](#merging-during-a-rework-of-a-step-pr)).
+  `StepBranchesLeft` is recorded when a task of the direct flow has completed and the completion cleanup or the startup cleanup could not delete a step branch (or the result changed from the earlier record), which is narrower than `StepBranchKept`.
+  After one is recorded, a daemon of the earlier version cannot read `StepBranchesLeft` in the input validation and does not start if rolled back.
+  Because the `detail` of `cleanup.stepBranchPrepareFailed` and `cleanup.stepBranchFailed` became a nested message, the earlier version does not match the shape and shows only the code (it still starts).
 
-Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `publishStepPullRequest`, `settleStepBranches`, `settleStepBranch`, `readMergedDocument`, `earlierStepMergedAfter`, `sactyBranches`), `apps/daemon/src/repository.ts` (`deleteBranch`, `fetchBranch`), `packages/core/src/projection.ts` (`directStepFlow`, `keptStepBranches`, `StepBranchKept`), `packages/core/src/events.ts` (`StepBranchKept`)
+Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `publishStepPullRequest`, `settleStepBranches`, `settleStepBranch`, `retireWorkspace`, `readMergedDocument`, `earlierStepMergedAfter`, `sactyBranches`), `apps/daemon/src/repository.ts` (`deleteBranch`, `fetchBranch`), `packages/core/src/projection.ts` (`directStepFlow`, `keptStepBranches`, `StepBranchKept`, `StepBranchesLeft`), `packages/core/src/events.ts` (`StepBranchKept`, `StepBranchesLeft`)
 
 ## When the implementation has no changes
 
