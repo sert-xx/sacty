@@ -1042,6 +1042,7 @@ export type Task = {
    * PR の本文と、PR のレビューの子タスクの指示に渡す。
    */
   securityScopeCheck?: PayloadOf<"FinalReviewSkipped">["securityScope"];
+  formattingCheck?: PayloadOf<"FinalReviewSkipped">["formatting"];
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
   verifyFailures: number;
   /**
@@ -1202,6 +1203,7 @@ export type Task = {
     | { kind: "review"; review: FinalReview }
     /** 提出の前に、ベースブランチとの競合の目印が作業領域に残っていた（BaseConflictsRemained）。 */
     | { kind: "merge"; files: string[] }
+    | { kind: "formatting" }
     /** 実装の実行が、範囲を実装し終えたと申告しなかった（ImplementationIncomplete。PBI-347）。 */
     | {
         kind: "incomplete";
@@ -1500,6 +1502,7 @@ export type Task = {
      */
     triage?: { declined?: Record<string, { text: string; reason: string }[]> };
   };
+  heldSuggestions?: { step: "requirements" | "design"; number: number; commit: string };
   /**
    * 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58）。decided が false なら、
    * 戻し先を判断できなかったので実装をやり直した。人間が戻し先を確かめた作業履歴（PBI-14b）には無い。
@@ -2255,6 +2258,7 @@ export function applyEvent(
       };
       task.status = event.payload.next;
       task.pendingReview = undefined;
+      task.heldSuggestions = undefined;
       task.gate = undefined;
       task.escalation = undefined;
       task.reworkOf = undefined;
@@ -2329,6 +2333,7 @@ export function applyEvent(
       break;
 
     case "ChangesRequested": {
+      if (task.heldSuggestions?.step === event.payload.step) task.heldSuggestions = undefined;
       // 一時停止の間に届いた指摘（PBI-279）を、再開のあと、止まった工程を走り直す前に反映する差し戻し。承認ゲートは無く、
       // ゴールガーディアンが戻し先を判断し終えた指摘（pendingReview）を、実装の作り直しに渡す
       const fromHeld =
@@ -2741,6 +2746,7 @@ export function applyEvent(
       task.status = "cancelled";
       task.cancelled = { at: event.at, ...event.payload };
       task.gate = undefined;
+      task.heldSuggestions = undefined;
       task.escalation = undefined;
       task.verification = undefined;
       task.publishPending = undefined;
@@ -2866,6 +2872,7 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "final review is not pending");
       }
       passVerification(task);
+      task.formattingCheck = event.payload.formatting;
       task.pullRequestCi = undefined;
       {
         // 以前の版は、変えた行の数の超過も違反に記録した（outside が空）。いまは行の数で違反にしないので、違反なしとして読む
@@ -2875,6 +2882,19 @@ export function applyEvent(
             ? { ...check, violation: undefined }
             : check;
       }
+      break;
+
+    case "FormattingOnlyRejected":
+      if (
+        task.status !== "idle" ||
+        activeStep(task) !== "implement" ||
+        task.verification === undefined
+      ) {
+        throw new ActivityIntegrityError(event, "implementation is not waiting for verification");
+      }
+      task.verification = undefined;
+      task.verifyFeedback = { kind: "formatting" };
+      task.status = "queued";
       break;
 
     case "PullRequestMarkedReady": {
@@ -3314,6 +3334,28 @@ export function applyEvent(
           reason: event.payload.reason,
           ...(event.payload.weighed ? { weighed: true as const } : {}),
         },
+      };
+      break;
+    }
+
+    case "StepSuggestionsHeld": {
+      const pending = task.pendingReview;
+      const gate = gatePullRequest(task);
+      if (
+        task.status !== "awaiting_approval" ||
+        !pending ||
+        pending.judgement ||
+        pending.triage ||
+        gate?.step !== event.payload.step ||
+        gate.number !== event.payload.number
+      ) {
+        throw new ActivityIntegrityError(event, "no review is waiting to be held");
+      }
+      task.pendingReview = undefined;
+      task.heldSuggestions = {
+        step: event.payload.step,
+        number: event.payload.number,
+        commit: event.payload.commit,
       };
       break;
     }

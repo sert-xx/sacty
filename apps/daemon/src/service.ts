@@ -316,6 +316,7 @@ import {
 } from "./design-edit.js";
 import { buildErrorReport, type ReportLocale } from "./error-report.js";
 import { AgentTimeoutError, errorText, MessageError } from "./errors.js";
+import { formattingOnlyFiles } from "./formatting-only.js";
 import type { AiGateway, ContextMcpRoute, GatewayStats } from "./gateway.js";
 import {
   type GitHubAccount,
@@ -523,7 +524,12 @@ import {
   remarkReplyMarkerOf,
   remarkReplyOrigin,
 } from "./remark-reply.js";
-import { NothingToCommitError, PushFailedError, type RepositoryWorkspace } from "./repository.js";
+import {
+  NothingToCommitError,
+  PushFailedError,
+  type RepositoryWorkspace,
+  validPath,
+} from "./repository.js";
 import { annotateReviewComments, voidedByPersonOf } from "./review-comments.js";
 import { countReviewDispatch } from "./review-dispatch-count.js";
 import { buildForkHoldNotice, forkHoldMarker } from "./review-fork-hold-notice.js";
@@ -4837,6 +4843,56 @@ export class TaskService {
       if (stillReady && !stillReady()) return;
       this.pauseForDecision(current, pr, marked, token);
       return;
+    }
+    if (
+      (pr.step === "requirements" || pr.step === "design") &&
+      pr.repo &&
+      !pending.judgement &&
+      !pending.triage
+    ) {
+      const review = pending;
+      const record = (current.reviewTasks ?? []).findLast(
+        (r) => r.step === pr.step && r.number === pr.number && sameRepo(r.repo, pr.repo as string),
+      );
+      const child = record && this.tasks.get(record.taskId);
+      const round = child?.reviewRound ?? 1;
+      const from = child && sactyReviewKey(child.id, round);
+      const lastChanges = this.deps.activity
+        .forTask(current.id)
+        .findLast((event) => event.type === "ChangesRequested" && event.payload.step === pr.step);
+      if (
+        child &&
+        from &&
+        review.remarks.length > 0 &&
+        review.remarks.every(
+          (_, i) => review.aiReview?.includes(i) && review.aiReviewFrom?.[String(i)] === from,
+        ) &&
+        lastChanges?.type === "ChangesRequested" &&
+        lastChanges.payload.remarks.every((r) => r.source === "sacty_review")
+      ) {
+        const verdictOf = (r: number) => child.reviewVerdicts?.find((v) => v.round === r)?.verdict;
+        const undelivered = undeliveredRounds(child, current, child.reviewTarget?.headCommit);
+        const suggestionRounds = countSuggestionRounds(round, verdictOf, (r) => undelivered.has(r));
+        if (suggestionRounds >= 2) {
+          if (stillReady && !stillReady()) return;
+          this.append(current, [
+            {
+              actor: "sacty",
+              event: {
+                type: "StepSuggestionsHeld",
+                payload: {
+                  step: pr.step,
+                  number: pr.number,
+                  commit: child.reviewTarget?.headCommit ?? pr.commit,
+                  round,
+                  suggestionRounds,
+                },
+              },
+            },
+          ]);
+          return;
+        }
+      }
     }
     // AI のレビューの提案は、直しに入る前に、AI が PR の範囲で「対応する／対応しない」に選り分ける（PBI-436）。済んでいれば
     // （pending.triage）、起動し直しても実行し直さない
@@ -12073,6 +12129,7 @@ export class TaskService {
    */
   private async syncBase(
     task: Task,
+    formattingMerges?: { pairs: { before: string; after: string }[]; failed: boolean },
   ): Promise<
     | { kind: "clean" }
     | { kind: "conflicts"; files: string[]; fresh: boolean }
@@ -12083,6 +12140,23 @@ export class TaskService {
     const dir = this.repoDir(task);
     const gitDir = this.trustedGitDir(task);
     const usedSecrets: string[] = [];
+    const tree = async () => {
+      if (!formattingMerges) return undefined;
+      try {
+        return await this.deps.repos.treeId(
+          dir,
+          gitDir,
+          workBaseCommit(repository, this.mustGet(task.id).baseMerge),
+        );
+      } catch {
+        formattingMerges.failed = true;
+        return undefined;
+      }
+    };
+    const recordMerge = (before: string | undefined, after: string | undefined) => {
+      if (formattingMerges && before && after && before !== after)
+        formattingMerges.pairs.push({ before, after });
+    };
     try {
       // 前に取り込んで競合した目印が残っていれば、先に解消させる（目印の上に、さらに取り込まない）
       const pending = pendingConflicts(task);
@@ -12091,7 +12165,9 @@ export class TaskService {
         if (remaining.length > 0) return { kind: "conflicts", files: remaining, fresh: false };
       }
       // 人が PR のブランチに足したコミットを、先に取り込む（PBI-334。取り込まずに積むと、プッシュできないか、人の変更が消える）
+      const beforeHead = await tree();
       const head = await this.syncPullRequestHead(task);
+      recordMerge(beforeHead, await tree());
       if (head.kind !== "clean") return head;
       if (this.deps.mergeBase === false) return { kind: "clean" };
       task = this.mustGet(task.id);
@@ -12105,6 +12181,7 @@ export class TaskService {
       const fetched = await this.deps.repos.fetchBranch(gitDir, repository.baseBranch, authEnv);
       const tip = reviewed?.commit ?? fetched;
       if (tip === base) return { kind: "clean" };
+      const beforeBase = await tree();
       const merged = await this.deps.repos.mergeBase({
         dir,
         gitDir,
@@ -12112,6 +12189,7 @@ export class TaskService {
         target: tip,
         maxConflicts: MAX_BASE_CONFLICTS,
       });
+      recordMerge(beforeBase, await tree());
       if (merged.status === "unchanged") return { kind: "clean" };
       // 作業領域に書いた結果を、すぐ記録する（以後の差分・コミットは、取り込んだ先頭を起点にする）
       // 全件を記録する（競合が多すぎるときは、mergeBase が作業領域を書き換える前に失敗する）。切り捨てると、残りの目印を検査できない
@@ -12827,6 +12905,17 @@ export class TaskService {
       // 先に競合で戻ると、未完了の記録が残らず、残っていることが次の指示に渡らない。競合は、完了と申告した実行で確かめる
       // （競合したファイルは、解消するまで、実装の指示に載り続ける）
       if (!(await this.implementationCompleted(initial))) return;
+      const formatting = await this.formattingStatus(this.mustGet(taskId));
+      if (!awaitingVerification(this.mustGet(taskId))) return;
+      if (formatting && formatting.files.length > 0 && formatting.rejected < 2) {
+        this.append(this.mustGet(taskId), [
+          {
+            actor: "sacty",
+            event: { type: "FormattingOnlyRejected", payload: { count: formatting.files.length } },
+          },
+        ]);
+        return;
+      }
       if (!(await this.headSyncedBeforePublish(initial))) return;
       if (!(await this.conflictsResolved(this.mustGet(taskId)))) return;
       const securityScope = await this.checkSecurityScope(initial);
@@ -12836,7 +12925,17 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "FinalReviewSkipped",
-            payload: securityScope ? { securityScope } : {},
+            payload: {
+              ...(securityScope ? { securityScope } : {}),
+              ...(formatting && (formatting.files.length > 0 || formatting.declared.length > 0)
+                ? {
+                    formatting: {
+                      remained: formatting.files.length,
+                      declared: formatting.declared,
+                    },
+                  }
+                : {}),
+            },
           },
         },
       ]);
@@ -13362,22 +13461,29 @@ export class TaskService {
     // 工程のイメージは、実行を始めたときのものに決める。実行の間に人が変えても、この実行は変えない（次の実行から。PBI-106・
     // PBI-318）。使う名前を実行の記録に残す（画面が、どのイメージで動いたかを出す）
     const runImageName = stepImageOf(this.mustGet(task.id), step);
-    this.append(task, [
-      {
-        actor: "sacty",
-        event: {
-          type: "AgentRunStarted",
-          payload: {
-            runId,
-            step,
-            agentId: agent.id,
-            ...agentSetting(agent),
-            image: runImageName ?? DEFAULT_IMAGE_NAME,
-            ...(preferredOver ? { chosenAgentId: preferredOver } : {}),
+    const startRun = (formattingBaseline?: {
+      tree: string;
+      merged: { before: string; after: string }[];
+    }) => {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunStarted",
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              ...agentSetting(agent),
+              image: runImageName ?? DEFAULT_IMAGE_NAME,
+              ...(preferredOver ? { chosenAgentId: preferredOver } : {}),
+              ...(formattingBaseline ? { formattingBaseline } : {}),
+            },
           },
         },
-      },
-    ]);
+      ]);
+    };
+    if (step !== "implement") startRun();
 
     // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを使い捨ての写しで渡す
     // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
@@ -13403,7 +13509,13 @@ export class TaskService {
         message: redactText(errorText(error), []),
       };
     }
+    if (
+      step === "implement" &&
+      (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued")
+    )
+      return;
     if (!ready.ok) {
+      if (step === "implement") startRun();
       const failureMessage =
         copiesRepositories(task, step) && !preparationException && !repoless
           ? message("repo.prepareFailed", {
@@ -13445,9 +13557,47 @@ export class TaskService {
     // やり直すときも。並行する別のタスクのマージで PR が競合したままにならないように）。競合したファイルには目印が入るので、
     // 実装の指示に渡して解消させる。取り込めなければ、実行せずに止める
     let mergeConflicts: string[] = [];
+    const priorEvents = step === "implement" ? this.deps.activity.forTask(task.id) : [];
+    const previousStart = [...priorEvents]
+      .reverse()
+      .find((event) => event.type === "AgentRunStarted" && event.payload.step === "implement");
+    const previousBaseline =
+      previousStart?.type === "AgentRunStarted"
+        ? previousStart.payload.formattingBaseline
+        : undefined;
+    const continuing =
+      task.verifyFeedback?.kind === "incomplete" ||
+      task.verifyFeedback?.kind === "formatting" ||
+      (previousStart?.type === "AgentRunStarted" &&
+        priorEvents.some(
+          (event) =>
+            event.type === "AgentRunTimedOut" &&
+            event.payload.runId === previousStart.payload.runId,
+        ));
+    const formattingMerges =
+      continuing && previousBaseline
+        ? { pairs: [] as { before: string; after: string }[], failed: false }
+        : undefined;
+    // 前回の実行開始後に取り込みを記録してから停止した場合、開始の次の記録がまだ無い。
+    // 取り込み元と先のツリーの差分も除外し、取り込み済みの変更を誤って担当に戻させない。
+    if (formattingMerges && previousStart && task.repository) {
+      for (const event of priorEvents.slice(priorEvents.lastIndexOf(previousStart) + 1)) {
+        if (event.type !== "BaseBranchMerged" && event.type !== "PullRequestHeadMerged") continue;
+        try {
+          const gitDir = this.trustedGitDir(task);
+          const before = await this.deps.repos.commitTree(gitDir, event.payload.from);
+          const after = await this.deps.repos.commitTree(gitDir, event.payload.commit);
+          if (before !== after) formattingMerges.pairs.push({ before, after });
+        } catch {
+          formattingMerges.failed = true;
+        }
+      }
+    }
     if (step === "implement" && this.mergesBase(this.mustGet(task.id))) {
-      const synced = await this.syncBase(this.mustGet(task.id));
+      const synced = await this.syncBase(this.mustGet(task.id), formattingMerges);
+      if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
       if (synced.kind === "failed") {
+        startRun();
         this.append(task, [
           {
             actor: "sacty",
@@ -13499,6 +13649,8 @@ export class TaskService {
           writeFileSync(backup, latest);
         }
       } catch (error) {
+        if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
+        startRun();
         const manual = await this.manualPauseInfo(task.id);
         this.append(task, [
           {
@@ -13524,6 +13676,31 @@ export class TaskService {
         ]);
         return;
       }
+    }
+    if (step === "implement") {
+      if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
+      let baseline: { tree: string; merged: { before: string; after: string }[] } | undefined;
+      if (task.repository) {
+        try {
+          const current = this.mustGet(task.id);
+          const tree = await this.deps.repos.treeId(
+            ready.dir,
+            this.trustedGitDir(task),
+            workBaseCommit(task.repository, current.baseMerge),
+          );
+          if (continuing && previousBaseline) {
+            if (formattingMerges && !formattingMerges.failed)
+              baseline = {
+                tree: previousBaseline.tree,
+                merged: [...previousBaseline.merged, ...formattingMerges.pairs],
+              };
+          } else baseline = { tree, merged: [] };
+        } catch {
+          /* 読めない場合は検査せず受け付ける。 */
+        }
+      }
+      if (this.stopRequested(task.id) || this.mustGet(task.id).status !== "queued") return;
+      startRun(baseline);
     }
     // 実装と再現（再現のテストを書く。PBI-29）は clone を作業領域にし、ほかは使い捨ての写し（書き込めるので、
     // リポジトリの手順のセットアップなども実行できる。変更は残らない。PBI-40）
@@ -13921,6 +14098,10 @@ export class TaskService {
       // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
       const reviewVerification =
         step === "review" ? this.reviewVerification(this.mustGet(task.id)) : undefined;
+      const formattingRetry =
+        step === "implement" && task.verifyFeedback?.kind === "formatting"
+          ? await this.formattingStatus(this.mustGet(task.id))
+          : undefined;
       if (!executed) {
         const run: ExecuteRun = {
           agent,
@@ -13983,6 +14164,13 @@ export class TaskService {
                 ? { repositories: splitCandidates ?? [] }
                 : {}),
             }),
+            ...(formattingRetry
+              ? [
+                  "--- 整形だけの変更を戻して出し直してください ---",
+                  ...formattingRetry.files.map((path) => `- ${path}`),
+                  "git diff で差分を見て、自分の整形の変更だけを戻す。起点の写しなどでファイルを丸ごと書き戻さず、ほかの変更を変えない。依頼で求められた整形なら、パスと理由を sacty-formatting で申告する。",
+                ]
+              : []),
             // 使える組織内 PF の API（PBI-35。プロジェクトのコンテキストの PF も。PBI-74）
             ...platformPromptLines(runPlatforms.platforms),
             // 起動したサービスの接続先（PBI-47）
@@ -14303,11 +14491,21 @@ export class TaskService {
         keepIndent: step === "implement",
         // 完了の申告を読むのは、実装の工程だけ（PBI-347）
         completion: step === "implement",
+        formatting: step === "implement",
         // 設計の局所の直しを読むのは、PR の指摘で実装に戻した回の実装の工程だけ（PBI-446）
         designEdit: step === "implement" && designEditRemarkIds(latest).length > 0,
       },
     );
     const { testViewpoints, proposal, testMap, testCommand } = extracted;
+    const formattingDeclaration =
+      step === "implement" && extracted.formatting
+        ? await this.formattingStatus(latest, extracted.formatting)
+        : undefined;
+    const declaredNow = formattingDeclaration?.declared.filter((entry) =>
+      extracted.formatting?.some(
+        (item) => item.path === entry.path && item.reason === entry.reason,
+      ),
+    );
     // 指摘（ID の付いた差し戻しの指摘）への対応と、引き継いだ PR の指摘（ID がキー）への対応を分ける。同じ指摘への対応が
     // 2つあれば、先のものを使う
     const responses = extracted.responses.filter((r) => remarkIds.includes(r.remarkId));
@@ -14426,6 +14624,7 @@ export class TaskService {
             responses,
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
+            ...(declaredNow?.length ? { formatting: declaredNow } : {}),
             // 実装の工程が、最後の変更の後に実行した検証の記録（PBI-305）
             ...(step === "implement" && extracted.verificationRecord
               ? { verificationRecord: extracted.verificationRecord }
@@ -17580,6 +17779,10 @@ export class TaskService {
     // 指摘なしで外した後に、人がコミットを足した（PR の確認で読んだ GitHub の先頭）なら、ドラフトかにかかわらず、その先頭を
     // 再レビューさせる（指摘なしになるまで、ドラフトにする。settleDraft）
     const seen = this.latestHeads.get(initial.id);
+    const stepHead =
+      gate.step !== "implement" && seen?.number === gate.number && seen.commit === gate.commit
+        ? seen.head
+        : undefined;
     const draftedAhead =
       !awaiting &&
       reviewed !== undefined &&
@@ -17593,7 +17796,7 @@ export class TaskService {
       ? heads?.has(key)
         ? heads.get(key)
         : await this.pullRequestHead(initial, repo, gate.number)
-      : (draftedAhead ?? reviewed ?? gate.commit);
+      : (stepHead ?? draftedAhead ?? reviewed ?? gate.commit);
     if (!target) return;
     // 提出の直後の経路は、GitHub の先頭が提出したコミットと同じときだけ進める
     if (awaiting && submittedCommit !== undefined && target !== submittedCommit) return;
@@ -17786,6 +17989,69 @@ export class TaskService {
    * ImplementationIncomplete を記録して実装をやり直させ（続けて終わらなければ一時停止する）、false。申告させる前の記録
    * （完了の実行に申告の項目が無い）は、今までどおり true。
    */
+  private async formattingStatus(task: Task, additions: { path: string; reason: string }[] = []) {
+    if (!task.repository) return undefined;
+    try {
+      const events = this.deps.activity.forTask(task.id);
+      const start = [...events]
+        .reverse()
+        .find((e) => e.type === "AgentRunStarted" && e.payload.step === "implement");
+      if (start?.type !== "AgentRunStarted" || !start.payload.formattingBaseline) return undefined;
+      const config = this.deps.config();
+      if (!config.ok) return undefined;
+      const secrets = await this.auditSecretValues(task.projectId, config.config);
+      // 伏せる値を取り出せないと、パスを記録や指示に出してよいか確かめられない。
+      for (const use of uniqueUses(secretUses(config.config, this.readableSettings()))) {
+        secrets.push(await this.deps.secrets.get(use.ref));
+      }
+      const project = this.deps.projects.get(task.projectId);
+      if (project?.context) {
+        const context = await this.contextSecretUsesOf([project], config.config);
+        if (context.problems.length) return undefined;
+        for (const use of context.uses) secrets.push(await this.deps.secrets.get(use.ref));
+      }
+      const gitDir = this.trustedGitDir(task);
+      const tree = await this.deps.repos.treeId(
+        this.repoDir(task),
+        gitDir,
+        workBaseCommit(task.repository, task.baseMerge),
+      );
+      const changes = await this.deps.repos.diffFiles(
+        this.repoDir(task),
+        gitDir,
+        workBaseCommit(task.repository, task.baseMerge),
+      );
+      const paths = new Set(
+        changes
+          .filter((change) => change.status !== "D" && validPath(change.path))
+          .map((change) => redact(change.path, secrets)),
+      );
+      const declarations = events.flatMap((e) =>
+        e.type === "AgentRunCompleted" && e.payload.step === "implement"
+          ? (e.payload.formatting ?? [])
+          : [],
+      );
+      const declared = [
+        ...new Map(
+          [...declarations, ...additions]
+            .filter((item) => paths.has(item.path) && item.reason)
+            .map((item) => [item.path, item]),
+        ).values(),
+      ];
+      const declaredPaths = new Set(declared.map((item) => item.path));
+      const files = (
+        await formattingOnlyFiles(this.deps.repos, gitDir, start.payload.formattingBaseline, tree)
+      ).filter((path) => !declaredPaths.has(redact(path, secrets)));
+      const lastSubmission = events.findLastIndex((e) => e.type === "FinalReviewSkipped");
+      const rejected = events
+        .slice(lastSubmission + 1)
+        .filter((e) => e.type === "FormattingOnlyRejected").length;
+      return { files, declared, rejected };
+    } catch {
+      return undefined;
+    }
+  }
+
   private async implementationCompleted(task: Task): Promise<boolean> {
     const completion = task.implementCompletion;
     // 完了と申告していても、観点とテストの対応に欠けているテスト観点があれば、提出に進めない（PBI-348）。申告させる前の

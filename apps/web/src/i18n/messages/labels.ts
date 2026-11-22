@@ -134,6 +134,7 @@ const ja = {
     review: "最終レビュー",
     merge: "競合の目印",
     incomplete: "終わっていない実装の残り",
+    formatting: "整形だけの変更",
     unchanged: "変更の無いやり直し",
   },
   auth: {
@@ -511,8 +512,12 @@ const ja = {
       `PR の CI が失敗した：${failed.join("、")}。失敗したジョブを1回再実行する`,
     VerificationOverridden: "人が、最終レビューの不合格のままレビューへ進めた",
     FinalReviewSkipped: "最終レビューと CI の待ちをせず、実装の PR を作る準備をした",
+    FormattingOnlyRejected: (count: number) =>
+      `整形だけで変わったファイル ${count} 件の出し直しを求めた`,
     PullRequestMarkedReady: (number: number) =>
       `PR のレビューの子タスクが指摘なしにしたので、PR #${number} のドラフトを外して人の承認待ちにした`,
+    StepSuggestionsHeld: (number: number) =>
+      `PR #${number} で提案だけの判定が続いたため直しに入らなかった。提案は残っている。直させたいときは、PR に要対応とコメントするか、画面から差し戻す`,
     PullRequestMarkedReadyWithSuggestions: (number: number) =>
       `残った提案をすべて対応しないとしたので、PR #${number} のドラフトを外して人の承認待ちにした。判定は「提案あり」のまま、再レビューはせず、リスク評価だけを先に 1 回行った`,
     PullRequestUndraftNoted: (number: number) => `sacty が PR #${number} のドラフトを外した`,
@@ -1042,6 +1047,7 @@ const en: LabelMessages = {
     review: "final review",
     merge: "conflict markers",
     incomplete: "what remained of the unfinished implementation",
+    formatting: "formatting-only changes",
     unchanged: "the rework that changed nothing",
   },
   auth: {
@@ -1349,10 +1355,13 @@ const en: LabelMessages = {
     PullRequestCiRerunRequested: (failed) =>
       `The PR's CI failed: ${failed.join(", ")}; rerunning the failed jobs once`,
     VerificationOverridden: "A person moved the task to review despite the failed final review",
+    FormattingOnlyRejected: (count) => `Requested resubmission for ${count} formatting-only files`,
     FinalReviewSkipped:
       "Got ready to open the implementation PR without the final review or CI wait",
     PullRequestMarkedReady: (number) =>
       `The PR's review child task found nothing, so PR #${number} was marked ready (waiting for a person's approval)`,
+    StepSuggestionsHeld: (number) =>
+      `Consecutive suggestion-only verdicts stopped rework on PR #${number}. Suggestions remain. To have them fixed, comment on the PR that they need action or request changes on the screen`,
     PullRequestMarkedReadyWithSuggestions: (number) =>
       `All remaining suggestions were declined, so PR #${number} was marked ready and is waiting for a person's approval. The verdict stays "suggestions"; the PR was not reviewed again, and only the risk assessment was run once beforehand`,
     PullRequestUndraftNoted: (number) => `sacty marked PR #${number} ready for review`,

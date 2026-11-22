@@ -1403,6 +1403,12 @@ const AgentRunStarted = z.object({
      * （利用制限などの代わりを含む）。agentId と違うときだけ付く。
      */
     chosenAgentId: z.string().optional(),
+    formattingBaseline: z
+      .object({
+        tree: z.string(),
+        merged: z.array(z.object({ before: z.string(), after: z.string() })),
+      })
+      .optional(),
   }),
 });
 
@@ -1466,6 +1472,7 @@ const AgentRunCompleted = z.object({
      */
     costUnknown: z.boolean().optional(),
     output: z.string(),
+    formatting: z.array(z.object({ path: z.string(), reason: z.string() })).optional(),
     /** 指摘への対応（再提出のとき）。PBI-2の作業履歴には無い。 */
     responses: z.array(RemarkResponse).default([]),
     /** 設計の工程で作ったテスト観点。PBI-7までの作業履歴には無い。 */
@@ -2907,6 +2914,12 @@ const VerificationOverridden = z.object({
 const FinalReviewSkipped = z.object({
   type: z.literal("FinalReviewSkipped"),
   payload: z.object({
+    formatting: z
+      .object({
+        remained: z.number().int().nonnegative(),
+        declared: z.array(z.object({ path: z.string(), reason: z.string() })),
+      })
+      .optional(),
     /**
      * セキュリティ対応の差分を、前段の調査が宣言した修正の範囲と照らした結果（PBI-331）。violation が無ければ守っている。
      * セキュリティ対応でないタスク・以前の版の記録には無い。
@@ -2923,6 +2936,11 @@ const FinalReviewSkipped = z.object({
       })
       .optional(),
   }),
+});
+
+const FormattingOnlyRejected = z.object({
+  type: z.literal("FormattingOnlyRejected"),
+  payload: z.object({ count: z.number().int().positive() }),
 });
 
 /**
@@ -3066,6 +3084,17 @@ const ReviewRejudgeRequested = z.object({
  * defaulted は、判断が無かった（実行の失敗・答えを読めない・その提案の判断が無い）ので、対応する側にした。
  * 実行に失敗したときも記録する（費用と、判断できなかったことを残す）。runResult が interrupted のものは、費用だけを数える。
  */
+const StepSuggestionsHeld = z.object({
+  type: z.literal("StepSuggestionsHeld"),
+  payload: z.object({
+    step: z.enum(["requirements", "design"]),
+    number: z.number().int().positive(),
+    commit: z.string().min(1),
+    round: z.number().int().positive(),
+    suggestionRounds: z.number().int().positive(),
+  }),
+});
+
 const SuggestionsTriaged = z.object({
   type: z.literal("SuggestionsTriaged"),
   payload: z.object({
@@ -3415,7 +3444,9 @@ const ReworkStoppedByMerge = z.object({
      * 捨てた、やり直しの実装に渡すはずだった検証の結果（テスト・最終レビュー・競合の目印・終わっていない実装・変更の無い
      * やり直し）の種類。
      */
-    discardedFeedback: z.enum(["tests", "review", "merge", "incomplete", "unchanged"]).optional(),
+    discardedFeedback: z
+      .enum(["tests", "review", "merge", "incomplete", "unchanged", "formatting"])
+      .optional(),
     /** 捨てた、一時停止の間に届いて、まだ作り直しに渡していない PR の指摘の件数（PBI-279）。 */
     discardedReview: z.number().int().positive().optional(),
     /**
@@ -4644,6 +4675,7 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestCiRerunRequested,
   VerificationOverridden,
   FinalReviewSkipped,
+  FormattingOnlyRejected,
   PullRequestMarkedReady,
   PullRequestUndraftNoted,
   PullRequestRedraftSkipped,
@@ -4675,6 +4707,7 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestReviewImported,
   PullRequestReviewDiscarded,
   ReworkJudged,
+  StepSuggestionsHeld,
   SuggestionsTriaged,
   IssueCommented,
   IssueCommentFailed,

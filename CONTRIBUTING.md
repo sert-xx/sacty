@@ -123,10 +123,12 @@ git config user.email "12345678+your-account@users.noreply.github.com"
 ```sh
 npm run lint        # Biome（整形と lint。警告も失敗にする）。整形は npm run format で直せる
 npm run typecheck   # TypeScript の型検査
-npx vitest run      # テスト（docs の規則のテストを含む）
+npx vitest run --no-file-parallelism # テスト（docs の規則のテストを含む）
 npm run build       # すべてのパッケージのビルド
 ```
 
+- 全件テストを並列に流すと、ファイルどうしが CPU を取り合い、時間切れで落ちることがあります。
+- アサーションの待ちには `waitForAssertion` を使い、`vi.waitFor` を直接呼ばないでください。
 - 振る舞いを変えたら、テストを足すか直してください。
   直したテストが、変更を戻すと失敗することも確かめてください。
 - lint は、警告も失敗にします（`biome check --error-on-warnings`）。

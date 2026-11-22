@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { LanguageImage, SactyConfig } from "./config.js";
 import type { ContextImageFile } from "./context.js";
 import {
@@ -15,6 +15,7 @@ import {
   CONTEXT_IMAGE_PRUNE_SKIPPED_LOG as SKIPPED,
 } from "./context-images.js";
 import type { ImageState } from "./image-presence.js";
+import { waitForAssertion } from "./testing/wait.js";
 
 const def = (description: string, extra: Partial<ContextImageFile> = {}): ContextImageFile => ({
   description,
@@ -1146,7 +1147,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
   it("デーモンを止めると、ビルドキャッシュを消している途中でも止まる", async () => {
     const { builder, logs, state, cacheCalls } = wired({ hold: true });
     await builder.refresh();
-    await vi.waitFor(() => expect(cacheCalls()).toBe(1));
+    await waitForAssertion(() => expect(cacheCalls()).toBe(1));
     await builder.stop();
     expect(logs).toEqual([
       "warn: [daemon] デーモンを止めるので、ビルドキャッシュの片付けを打ち切りました。",
@@ -1180,7 +1181,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
         }),
     });
     await builder.refresh();
-    await vi.waitFor(() => expect(builder.images("p1")[0]?.state).toBe("building"));
+    await waitForAssertion(() => expect(builder.images("p1")[0]?.state).toBe("building"));
     // 作っている最中に読み直しても、片付けは動かない
     await builder.refresh();
     await new Promise((r) => setTimeout(r, 20));
@@ -1226,7 +1227,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
   it("片付けの途中に次の片付けが求められても、ビルドキャッシュの片付けを同時に2つ動かさない", async () => {
     const { builder, calls, release, cacheCalls, max } = wired({ hold: true });
     await builder.refresh();
-    await vi.waitFor(() => expect(cacheCalls()).toBe(1));
+    await waitForAssertion(() => expect(cacheCalls()).toBe(1));
     // 1つ目が builder prune の途中にいる間に、読み直しを終える（読むプロジェクトが無いので、すぐ終わって作成と片付けを求める）
     await builder.refresh("no-such-project");
     await builder.refresh("no-such-project");
@@ -1238,7 +1239,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
     release(1);
     await builder.idle();
     await builder.refresh("no-such-project");
-    await vi.waitFor(() => expect(cacheCalls()).toBe(2));
+    await waitForAssertion(() => expect(cacheCalls()).toBe(2));
     expect(max()).toBe(1);
     release(0);
     await builder.idle();
@@ -1473,7 +1474,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
           }),
       });
       await builder.refresh();
-      await vi.waitFor(() => expect(builder.images("p1")[0]?.state).toBe("building"));
+      await waitForAssertion(() => expect(builder.images("p1")[0]?.state).toBe("building"));
       await builder.refresh();
       await new Promise((r) => setTimeout(r, 20));
       expect(calls).toEqual([]);
@@ -1490,7 +1491,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
         listed,
       });
       await builder.refresh();
-      await vi.waitFor(() => expect(cacheCalls()).toBe(1));
+      await waitForAssertion(() => expect(cacheCalls()).toBe(1));
       await builder.refresh("no-such-project");
       await builder.refresh("no-such-project");
       await new Promise((r) => setTimeout(r, 20));
@@ -1528,7 +1529,7 @@ describe("使っていないビルドキャッシュの片付け（PBI-388）", 
         listed,
       });
       await builder.refresh();
-      await vi.waitFor(() => expect(cacheCalls()).toBe(1));
+      await waitForAssertion(() => expect(cacheCalls()).toBe(1));
       await builder.stop();
       expect(logs).toEqual([
         SKIPPED,

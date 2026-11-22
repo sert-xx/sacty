@@ -3,7 +3,7 @@
  * 本体のコードからは使わない（ビルドの対象から外している）。
  */
 
-import { TestRunner } from "vitest";
+import { TestRunner, vi } from "vitest";
 
 /** 待っている間に、合図を出すはずのもの（実行・プロセス）が終わったことを知らせるもの。 */
 export type WaitSource = {
@@ -46,6 +46,16 @@ export function testTimeLeftMs(now = Date.now()): number | undefined {
   const startedAt = test.result?.startTime ?? now;
   const margin = Math.min(TEST_TIMEOUT_MARGIN_MS, timeout / 5);
   return Math.max(0, startedAt + timeout - margin - now);
+}
+
+/** アサーションが通るまで、テストの残り時間を上限に待つ。 */
+export function waitForAssertion<T>(
+  callback: () => T | Promise<T>,
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T> {
+  const left = testTimeLeftMs();
+  const timeout = Math.min(options.timeoutMs ?? Infinity, left ?? FALLBACK_TIMEOUT_MS);
+  return vi.waitFor(callback, { timeout, interval: options.intervalMs ?? 50 });
 }
 
 const describeValue = (value: unknown): string => {

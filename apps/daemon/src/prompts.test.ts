@@ -2868,6 +2868,14 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(extractBlocks(empty, new Set(), [], DECLARE)).not.toHaveProperty("testCommand");
   });
 
+  it("整形の申告は実装でだけ読み、本文から除く", () => {
+    const output = `説明\n\n${JSON.stringify({ "sacty-formatting": { files: [{ path: "a.ts", reason: "依頼された整形" }] } })}`;
+    const result = extractBlocks(output, new Set(), [], { formatting: true });
+    expect(result.output).toBe("説明");
+    expect(result.formatting).toEqual([{ path: "a.ts", reason: "依頼された整形" }]);
+    expect(extractBlocks(output, new Set()).output).toBe(output);
+  });
+
   it("実装の指示で、直しの対象は AI のレビューの「指摘」の節と「前回の指摘」の未対応だけで、取り下げた・対応しないと判断した・後続に回すと決めた行は直さないと伝える（PBI-445）", () => {
     const t = task(
       {

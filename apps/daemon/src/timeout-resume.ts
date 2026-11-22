@@ -101,7 +101,7 @@ export function incompleteRunBefore(
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
     if (!event) continue;
-    if (event.type === "ImplementationIncomplete") {
+    if (event.type === "ImplementationIncomplete" || event.type === "FormattingOnlyRejected") {
       for (let j = i - 1; j >= 0; j--) {
         const before = events[j];
         if (before?.type !== "AgentRunCompleted") continue;

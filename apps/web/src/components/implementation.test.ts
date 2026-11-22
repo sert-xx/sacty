@@ -60,6 +60,23 @@ const render = (t: Task, locale: "ja" | "en" = "ja") =>
     ),
   );
 
+describe("整形の検査結果", () => {
+  it("申告と残った件数を日英で表示し、申告していないパスは表示しない", () => {
+    const t = {
+      ...task(review()),
+      formattingCheck: { declared: [{ path: "a.ts", reason: "依頼された整形" }], remained: 2 },
+    };
+    const ja = render(t);
+    expect(ja).toContain("依頼で求められた整形");
+    expect(ja).toContain("a.ts: 依頼された整形");
+    expect(ja).toContain("2 件残っています");
+    expect(ja).not.toContain("b.ts");
+    const en = render(t, "en");
+    expect(en).toContain("Requested formatting");
+    expect(en).toContain("2 formatting-only files remain");
+  });
+});
+
 describe("Implementation の人が確かめること（PBI-155）", () => {
   it("人が確かめることと環境による失敗を出し、テストは合格として出す", () => {
     const html = render(task(review()));

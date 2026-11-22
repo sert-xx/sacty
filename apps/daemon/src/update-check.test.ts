@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { CONFIG_TEMPLATE, loadConfig } from "./config.js";
+import { waitForAssertion } from "./testing/wait.js";
 import {
   compareVersions,
   packageVersion,
@@ -228,7 +229,7 @@ describe("問い合わせの途中で OFF にしたとき（PR #147 レビュー
     const { checker, state, version, respond } = controlled();
     version.resolve(CURRENT);
     const running = checker.check();
-    await vi.waitFor(() => expect(state.fetches).toBe(1));
+    await waitForAssertion(() => expect(state.fetches).toBe(1));
     state.enabled = false;
     expect(checker.status()).toBeUndefined();
     state.enabled = true;

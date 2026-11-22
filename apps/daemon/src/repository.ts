@@ -46,6 +46,14 @@ function parseNameStatus(output: string): Map<string, string> {
 /** 差分のファイル。status は git の状態（A・M・D・T・R089 など）。oldPath は、名前を変えた（R）・写した（C）元のパス。 */
 export type DiffFile = { status: string; path: string; oldPath?: string };
 
+/** ツリー間の変更。ファイルの中身は含めず、blob ID で読み取る。 */
+export type TreeChange = DiffFile & {
+  oldMode: string;
+  newMode: string;
+  oldObject: string;
+  newObject: string;
+};
+
 /** `git diff -z --name-status` の出力を、ファイルの一覧にする。名前の変更・写しは、元と先の 2 つのパスが続く。 */
 export function parseDiffFiles(output: string): DiffFile[] {
   const fields = output.split("\0");
@@ -127,6 +135,9 @@ export interface RepositoryWorkspace {
    * あれば失敗にする（除いた ID を返すと、そのファイルの変更を見落とす）。
    */
   treeId(dir: string, gitDir: string, baseCommit: string): Promise<string>;
+  treeChanges(gitDir: string, from: string, to: string): Promise<TreeChange[]>;
+  treeBlob(gitDir: string, object: string): Promise<string>;
+  commitTree(gitDir: string, commit: string): Promise<string>;
   /**
    * diff と同じ差分の、ファイルの一覧（同じ並び。名前の変更を見つける）。パスは git が引用せずに出したまま（NUL 区切り）。
    * 差分の節をファイルに結び付けるために使う（PR #304 のレビュー）。
@@ -633,7 +644,7 @@ function validBranch(branch: string): boolean {
 }
 
 /** コミットに書くファイルのパスとして受け付けるか（リポジトリの中の相対パス。.git・. と .. を含まない）。 */
-function validPath(path: string): boolean {
+export function validPath(path: string): boolean {
   if (!/^[\w./-]+$/.test(path)) return false;
   return safeSegments(path);
 }
@@ -892,6 +903,74 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       async (run) => (await run("write-tree", ["write-tree"])).trim(),
       true,
     );
+  }
+
+  async treeChanges(gitDir: string, from: string, to: string): Promise<TreeChange[]> {
+    if (!COMMIT_RE.test(from) || !COMMIT_RE.test(to)) {
+      throw new MessageError(message("git.invalidParentCommit"));
+    }
+    const output = await git(
+      "diff-tree",
+      [
+        "--git-dir",
+        gitDir,
+        ...SAFE_CONFIG,
+        "diff",
+        "--raw",
+        "--no-abbrev",
+        "-z",
+        "-M",
+        from,
+        to,
+        "--",
+      ],
+      isolatedEnv("/dev/null"),
+    );
+    const fields = output.split("\0");
+    const changes: TreeChange[] = [];
+    for (let i = 0; i < fields.length && fields[i]; ) {
+      const meta = /^:(\d+) (\d+) ([0-9a-f]+) ([0-9a-f]+) ([A-Z][0-9]*)$/.exec(fields[i] ?? "");
+      if (!meta || fields[i + 1] === undefined) throw new Error("Invalid tree diff");
+      const [, oldMode, newMode, oldObject, newObject, status] = meta;
+      const renamed = /^[RC]/.test(status ?? "");
+      const oldPath = fields[i + 1] ?? "";
+      const path = renamed ? fields[i + 2] : oldPath;
+      if (path === undefined) throw new Error("Invalid tree diff path");
+      changes.push({
+        oldMode: oldMode ?? "",
+        newMode: newMode ?? "",
+        oldObject: oldObject ?? "",
+        newObject: newObject ?? "",
+        status: status ?? "",
+        path,
+        ...(renamed ? { oldPath } : {}),
+      });
+      i += renamed ? 3 : 2;
+    }
+    return changes;
+  }
+
+  async commitTree(gitDir: string, commit: string): Promise<string> {
+    if (!COMMIT_RE.test(commit)) throw new Error("Invalid commit ID");
+    return (
+      await git(
+        "rev-parse",
+        ["--git-dir", gitDir, ...SAFE_CONFIG, "rev-parse", "--verify", `${commit}^{tree}`],
+        isolatedEnv("/dev/null"),
+      )
+    ).trim();
+  }
+
+  async treeBlob(gitDir: string, object: string): Promise<string> {
+    if (!COMMIT_RE.test(object)) throw new Error("Invalid blob ID");
+    const env = isolatedEnv("/dev/null");
+    const args = ["--git-dir", gitDir, ...SAFE_CONFIG, "cat-file"];
+    const size = Number((await git("cat-file", [...args, "-s", object], env)).trim());
+    if (!Number.isFinite(size) || size > FILE_LIMIT) throw new Error("Blob is too large");
+    const bytes = await gitBytes("cat-file", [...args, "blob", object], env);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (text.includes("\0")) throw new Error("Blob is not text");
+    return text;
   }
 
   async diffFiles(dir: string, gitDir: string, baseCommit: string) {

@@ -398,9 +398,24 @@ export class FakeRepos implements RepositoryWorkspace {
   /** 作業領域の内容の目印（ツリーの ID。PBI-347）。テストが、実行のたびに変えて「実装が進んだ」ことにする。 */
   tree = "t".padEnd(40, "0");
   treeFail: string | undefined;
-  async treeId() {
+  async treeId(_dir: string, _gitDir: string, _baseCommit: string) {
     if (this.treeFail) throw new Error(this.treeFail);
     return this.tree;
+  }
+  treeDiffs = new Map<string, import("../repository.js").TreeChange[]>();
+  treeBlobs = new Map<string, string>();
+  treeDiffFail = false;
+  async treeChanges(_gitDir: string, from: string, to: string) {
+    if (this.treeDiffFail) throw new Error("tree diff failed");
+    return this.treeDiffs.get(`${from}:${to}`) ?? [];
+  }
+  async treeBlob(_gitDir: string, object: string): Promise<string> {
+    const value = this.treeBlobs.get(object);
+    if (value === undefined) throw new Error("No test blob");
+    return value;
+  }
+  async commitTree(_gitDir: string, commit: string) {
+    return commit;
   }
   /** diff と同じ差分のファイルの一覧。無ければ、diffText の見出し（引用の無い簡単な形）から作る。 */
   diffFileList: DiffFile[] | undefined;

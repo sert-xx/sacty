@@ -1450,6 +1450,7 @@ function scopeRevertLines(task: Task): string[] {
 function feedbackLines(task: Task): string[] {
   const feedback = task.verifyFeedback;
   if (!feedback) return [];
+  if (feedback.kind === "formatting") return [];
   if (feedback.kind === "merge") {
     // 人が PR に足したコミットを取り込んで競合したファイルだけなら、そう伝える（PBI-334）
     const head = new Set(pendingHeadMerge(task)?.conflicts ?? []);
@@ -4446,6 +4447,7 @@ export type Extracted = {
   designEdit?: { value: unknown } | { unreadable: true };
   /** 実装の工程が申告した、観点とテストの対応。 */
   testMap: TestMapping[];
+  formatting?: { path: string; reason: string }[];
   /** 実装の工程が、テストの仕組みを用意して申告したテストのコマンド（PBI-94。1〜1000 文字）。 */
   testCommand?: string;
   /**
@@ -4568,6 +4570,7 @@ export function extractBlocks(
     completion?: boolean;
     /** 設計の直し（sacty-design-edit。PBI-446）を読み、本文から取り除くか。PR の指摘で実装に戻した回の実装の工程だけ true にする。 */
     designEdit?: boolean;
+    formatting?: boolean;
   } = {},
 ): Extracted {
   let responses: RemarkResponse[] | undefined;
@@ -4577,6 +4580,7 @@ export function extractBlocks(
   let proposalSeen = false;
   let designEdit: Extracted["designEdit"];
   let testMap: TestMapping[] | undefined;
+  let formatting: { path: string; reason: string }[] | undefined;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
   const declared = options.testCommand ? extractTestCommandFences(output) : { output };
   // 完了の申告（PBI-347）も、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く
@@ -4604,7 +4608,24 @@ export function extractBlocks(
     const edited = options.designEdit ? record[DESIGN_EDIT_HEADING] : undefined;
     const map = record[TEST_MAP_HEADING];
     const reviewed = record[SELF_REVIEW_HEADING];
+    const declaredFormatting = options.formatting ? record["sacty-formatting"] : undefined;
     let read = false;
+    if (
+      declaredFormatting &&
+      typeof declaredFormatting === "object" &&
+      !Array.isArray(declaredFormatting)
+    ) {
+      read = true;
+      const files = (declaredFormatting as Record<string, unknown>).files;
+      if (!formatting && Array.isArray(files)) {
+        formatting = files.flatMap((entry): { path: string; reason: string }[] => {
+          if (!entry || typeof entry !== "object") return [];
+          const path = text(entry.path);
+          const reason = text(entry.reason).slice(0, 300);
+          return path && reason ? [{ path, reason }] : [];
+        });
+      }
+    }
     if (reviewed !== undefined) {
       read = true;
       reports.push({ start: candidate.start, end: candidate.end, value: reviewed });
@@ -4707,6 +4728,7 @@ export function extractBlocks(
     proposal,
     ...(designEdit ? { designEdit } : {}),
     testMap: testMap ?? [],
+    ...(formatting ? { formatting } : {}),
     ...(selfReview ? { selfReview } : {}),
     ...(verification.record ? { verificationRecord: verification.record } : {}),
     ...("completion" in completed && completed.completion
@@ -4871,6 +4893,9 @@ function implementVerificationLines(task: Task, selfReview = true): string[] {
   return [
     "",
     "--- 提出の前の検証 ---",
+    "- 整形はリポジトリが定めるコマンドと設定だけで行う。ほかのツール（依存に無いものを npx で取る場合を含む）・ほかの設定・作業領域の外の写しで整形しない",
+    "- 依頼で変えたファイルの外が整形だけで変わったら、そのファイルを戻してから提出する。sacty は整形だけの変更を検査し、未申告のファイルがあれば出し直しを求める",
+    '- 依頼が整形を求めるときは、整形だけで変えたファイルのパスと理由を `{"sacty-formatting":{"files":[{"path":"…","reason":"…"}]}}` の形式で提出に申告する',
     // 文書だけの依頼（documentsOnly）は、文書に効く検証に限る（セルフレビューの文書向けの規則と食い違わせない。型チェックは命じない）
     task.documentsOnly === true
       ? "- リポジトリが定める、文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査など。AGENTS.md・CONTRIBUTING・README の開発手順、CI の設定、パッケージの設定やタスクランナーの定義で探す）を、PR に入る変更すべて（あなたが足したファイルを含む）に対して実行し、通してから提出する。変更したファイルだけに絞れるツールは絞ってよいが、変更したファイルの種類を、対象から外さない。テスト・ビルド・型チェック・コードのリンターは実行しない（文書だけの依頼の決まり）"
@@ -6366,6 +6391,24 @@ function securityScopeBodyLines(task: Task, heading: (text: string) => string): 
   ];
 }
 
+function formattingBodyLines(task: Task, style: "##" | "bold"): string[] {
+  const check = task.formattingCheck;
+  if (!check) return [];
+  return [
+    ...(check.declared.length
+      ? [
+          style === "##" ? "## 依頼で求められた整形" : "**依頼で求められた整形**",
+          "",
+          ...check.declared.map(({ path, reason }) => `- ${path}: ${reason}`),
+          "",
+        ]
+      : []),
+    ...(check.remained > 0
+      ? [`整形だけで変わったファイルが ${check.remained} 件残っています。`, ""]
+      : []),
+  ];
+}
+
 /** 取り込んだ Issue を、マージで閉じる行（取り込んだ Issue と同じリポジトリの PR なら閉じる）。 */
 function closesLines(task: Task): string[] {
   return task.source?.kind === "github_issue" ? [`Closes #${task.source.number}`] : [];
@@ -6454,6 +6497,7 @@ export function buildPullRequestBodyText(
     // 実装のエージェントの説明（テンプレートに沿わせるときの「変更」と同じ中身。人が変更の中身を PR で読めるように）
     ...(changeRest ? [...changeHeading, changeRest, ""] : []),
     ...(fixRest ? [`## ${LAST_FIX_HEADING}`, "", fixRest, ""] : []),
+    ...formattingBodyLines(task, "##"),
     ...(designEditBodyLines(task, "##").length > 0 ? [...designEditBodyLines(task, "##"), ""] : []),
     ...(documentFixBodyLines(task, "##").length > 0
       ? [...documentFixBodyLines(task, "##"), ""]
@@ -6475,6 +6519,9 @@ export function buildPullRequestBodyText(
       ...closesLines(task),
       ...(override ? [override] : []),
       ...(human ? [human] : []),
+      ...(formattingBodyLines(task, "##").length
+        ? [formattingBodyLines(task, "##").join("\n")]
+        : []),
       ...(documentFixBodyLines(task, "##").length
         ? [documentFixBodyLines(task, "##").join("\n")]
         : []),
@@ -6501,6 +6548,7 @@ export function buildPullRequestBodyParts(
   const scope = childScopeBodyLines(task, "bold");
   const omitted = omittedContinuationLines(task, false);
   const record = [
+    ...formattingBodyLines(task, "bold"),
     // 上限で省いた続きの全文は、sacty の記録の先頭に置く（記録は main にあり、footer には上限のある行だけを置く。PBI-450）
     ...(omitted.length > 0 ? [...omitted, ""] : []),
     ...(designEditBodyLines(task, "bold").length > 0
@@ -6525,8 +6573,17 @@ export function buildPullRequestBodyParts(
     tests: resultTableLines(task).join("\n"),
     ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
     record: record.join("\n"),
-    ...(documentFixBodyLines(task, "bold").length
-      ? { keep: [documentFixBodyLines(task, "bold").join("\n")] }
+    ...(documentFixBodyLines(task, "bold").length || formattingBodyLines(task, "bold").length
+      ? {
+          keep: [
+            ...(documentFixBodyLines(task, "bold").length
+              ? [documentFixBodyLines(task, "bold").join("\n")]
+              : []),
+            ...(formattingBodyLines(task, "bold").length
+              ? [formattingBodyLines(task, "bold").join("\n")]
+              : []),
+          ],
+        }
       : {}),
     footer: [
       ...overrideBodyLines(task),

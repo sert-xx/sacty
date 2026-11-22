@@ -242,7 +242,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   - 子タスクがレビューを投稿していて（「再レビュー」できる状態。完了したか、指摘なしでない判定を投稿して PR の変化を見守っている）、レビューした先頭のコミット（`reviewTarget.headCommit`）が、次の先頭と違えば、再レビューを始める（`ReviewRestarted`、`reason: updated`、`commit` にその先頭。actor `sacty`）。
     - 指摘なしを待つ実装の PR（`awaitingReview`）：GitHub の今の PR の先頭（`pullRequestHead`。人が足したコミットを含む）。読めなければ、次の確認でやり直す。
     - 指摘なしでドラフトを外した後の実装の PR：PR の確認で読んだ GitHub の先頭が、指摘なしにした先頭（`reviewedCommit`）と違えば（外した後に人がコミットを足した）その先頭、同じなら `reviewedCommit`。
-    - ほかの PR（要求要件・設計の PR）：親が PR に積んだ今のコミット。
+    - ほかの PR（要求要件・設計の PR）：PR の確認で読んだ今の先頭。読めなければ親が PR に積んだコミット。
     親が指摘を直して PR を更新し承認待ちに戻ったときと、人が PR にコミットを足したときにあたる。直している間（承認待ちでない）は始めない。
     同じコミットでは1回だけ始める（`Task.reviewRestartCommit`。ほかで push されてレビューした先頭が親のコミットと違っても、繰り返さない）。
     親のやり直しが実装の PR の先頭を変えなければ、再レビューは始まらない。その先頭に指摘が残っているときは、親が提出にせずに一時停止する（[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)。指摘のすべてを断ったときは、次の項目）。
@@ -267,6 +267,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   - 確かめ直して要修正の重み（不具合・セキュリティ・データの破損・要件の不適合・互換性の破壊）に当たると分かったとき、またはその後の変更で影響が大きくなったときだけ、根拠と一緒に新しい要修正にさせる（そのときは、今までどおり直しに入る）。
   - 既定のスキル `review-dispatch` の流れ `pr-review` の再レビューの決まりにも、同じ扱いを書いている（[コンテキスト](context.md#既定のレビュー用スキル)）。
 - 子タスクがレビューを投稿する前に PR の先頭が変わったら（親の直し・人が足したコミット）、子タスクは古い先頭宛ての本文を投稿せずに、その回を打ち切り、先頭が落ち着いてから新しい先頭で同じ回の番号のまま始め直す（`ReviewRunStopped` の `reason: head_changed`。PBI-465。[投稿の前の先頭の変化での打ち切り](tasks-and-steps.md#投稿の前の先頭の変化での打ち切り)）。
+- 要求要件・設計の PR では、最後の回の AI の指摘だけが届き、提案だけの判定が 2 回続き、最後の差し戻しが AI の指摘だけなら、`StepSuggestionsHeld` を記録して直さず承認を待つ。初回と、要修正・人の指摘による直しの後の提案は直す。記録は `pendingReview` を外し、取り込み済みのキーを残す。承認画面・概要と作業履歴に、残った提案と PR のコメントまたは画面からの差し戻しで直させる方法を示す。
 - 投稿した回が親に届かなかった（親が古い先頭宛てとして捨てた・まだ取り込まずに先頭が変わった）ときは、次の回の子タスクが、その回の指摘を今回の先頭で確かめ直す（再レビューの範囲の絞りにかかわらず範囲に入れ、当てはまるものを今回の指摘として出す）。その回は、同じ原因の要修正の回数にも、提案だけの回の連続にも数えない（PBI-465。[投稿の前の先頭の変化での打ち切り](tasks-and-steps.md#投稿の前の先頭の変化での打ち切り)）。
 - 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず、判定そのものでは再レビューも起きないので、PR は人の承認（マージ）を待つ。指摘なしの後でも、PR の先頭が変われば（人がコミットを足したときなど）、上のとおり再レビューを始める。
   指摘なしを待つ実装の PR は、子タスクが今の先頭を指摘なしにするまで、確認のたびにドラフトに戻す（`redraftAwaiting`。提出のときに戻せなかった PR も、レビューの途中も。人が外した PR・ドラフトの切り替えの履歴を読めない PR・最後の切り替えが sacty のものか決められない PR は、戻さずに作業履歴に残す。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
@@ -277,7 +278,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   GitHub の答えに一覧の配列が無ければ（中継の応答など）、CI がまだ無いとは扱わず、読めなかったものとする。
 - セキュリティ対応の実装の PR なら、子タスクに、前段の調査が宣言した修正の範囲（変えてよいファイル・上げる依存）と、sacty が差分を範囲と照らした結果（`FinalReviewSkipped` の `securityScope`）を渡す（`reviewSecurityLines`）。
   差分が範囲の中の最小限の変更か（観点 `SEC-MIN`）を子タスクに確かめさせ、範囲の外の変更・要らない変更を要修正の指摘にさせる。sacty が違反を見つけていれば、それも要修正の指摘にさせる。
-  繰り返しの回数に上限は無く、親と子タスクそれぞれの予算の上限で止まる。
+  繰り返しは親と子タスクそれぞれの予算の上限で止まる。要求要件・設計の PR では、提案だけの判定が続いたときも直しを止める。
 - 子タスクは、指摘なしでない判定を投稿すると、完了にならずに PR の変化を見守る（[投稿の後の PR の見守り](tasks-and-steps.md#投稿の後の-pr-の見守り)）。親の流れは変わらない：親は、子タスクの完了を待たず、投稿されたレビューと判定で進む（指摘の取り込み・再レビュー・ドラフトを外す判断は、子タスクが投稿済みか（`canRereview`・工程が終わっているか）と、今の回の判定で決める）。見守りは、子タスクを PR の先頭の変化・返信では再レビューしない（上の、親の流れによる再レビューだけ）。
 - 子タスクがレビューを投稿する前（実行待ち・実行中。再レビューの実行中も）に PR がマージ・クローズされたら、子タスクを中止する（PR のレビューだけのタスクと同じ。`checkReviewPullRequests`）。実行中・対象の確認中・投稿待ちなら、止めた実行を失敗に見せずに、`ReviewRunStopped`（`reason: merged`・`closed`）を記録してから `TaskCancelled` を残す（PBI-465。始め直しの待ちの間は `TaskCancelled` だけ。[投稿の前の先頭の変化での打ち切り](tasks-and-steps.md#投稿の前の先頭の変化での打ち切り)）。見守り中なら、中止せずに、見守りを終えて完了にする（`ReviewWatchEnded`）。見守り中の子タスクが一時停止していても同じで、sacty が再開してから見守りを終える。指摘なしで完了した後なら、完了のまま、何も記録しない。投稿する前の子タスクは、一時停止中も、PR のマージ・クローズで中止する。
 - 親が完了したら、PR の確認（`reconcileReviewTasks`）で、PR の状態を読まずに、終わっていない子タスクを片付ける。見守り中の子タスク（一時停止中を含む）は、見守りを終えて完了にし（`ReviewWatchEnded` の `reason: parent_completed`。一時停止中なら、先に sacty が再開する）、投稿する前の子タスク（一時停止中を含む）は中止する（`TaskCancelled` の `reason: parent_completed`）。
@@ -439,7 +440,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 関係する ADR: [レビューが直しでは解消できないと印を付けた指摘で止め、人の判断を待つ](../adr/20261121-2000-pause-on-findings-a-rework-cannot-resolve.md)
 
 PR のレビューの子タスクが、要修正の指摘に「直し（実装の手直し）では解消できず、人の判断が要る」と印を付けた回は、親は直しに入らず、承認待ちのまま一時停止して人の判断を待つ。
-対象は、PR のレビューの子タスクがあるすべてのタスク（実装・要求要件・設計の PR）。印の無い要修正・提案だけの回は、今までどおり直しに入る。
+対象は、PR のレビューの子タスクがあるすべてのタスク（実装・要求要件・設計の PR）。印の無い要修正は直しに入る。要求要件・設計の PR の提案だけの回は、連続する 2 回目に直さず承認を待つ。
 
 - 印：子タスクの判定のブロックの `rework.findings[]` の `needs_decision`（直しでは解消できない根拠の文。2,000 文字で切る。`ReviewRework.findings[].needsDecision`）。レビューの指示（`needsDecisionLines`）と既定のレビューのスキルが、付ける条件（方式を変えても解消しない・依頼の受け入れ条件と制約がぶつかる、など根拠で示せるときだけ。迷ったら付けない。提案・人の判断がある指摘には付けない）を書く。
 - 止める条件（`needsDecisionOf`。取り込んだ直後、選り分け・戻し先の判断より前）：次のすべて。
@@ -1035,7 +1036,7 @@ sacty が作った実装の PR に、PR のレビューの子タスクの提案�
 対応しない判断は AI で終わり、判断と理由を PR に返信する。人が 1 件ずつ決める手順は無い（承認の画面に、決定を求める欄は無い）。
 
 - 対象：承認待ちで取り込んだ指摘（`pendingReview`）のうち、AI のレビューの指摘（`pendingReview.aiReview`）の提案。次のときは選り分けない。
-  - PR が実装の PR でない（要求要件・設計の PR）。判定し直しと、再レビューに渡す後続の扱い（`ReviewDeferrals`）が実装の PR だけの仕組みのため。
+  - PR が実装の PR でない（要求要件・設計の PR）。提案だけの判定が 2 回続くと、2 回目は直さず承認を待つ。要修正または人の指摘による直しの後は数え直す。届かなかった回は数えず、人のコミット後は続けて数える。PR に要対応とコメントするか、画面から差し戻すと直しに入る。
   - セキュリティの組み合わせのタスク。その PR のレビューの子タスクの記録が無い（`Task.reviewTasks`）。
   - GitHub から取り込んだ PR のレビューだけのタスク（実装の PR を作らない）。提出の前の自己レビューの指摘も対象にしない。
   - 一時停止の間に届いて持っている指摘（[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。
@@ -1077,7 +1078,7 @@ sacty が作った実装の PR に、PR のレビューの子タスクの提案�
 - 採用しないとき：選り分けの間に、人が差し戻した・中止した・指摘が変わった・承認待ちでなくなったとき、またはデーモンの停止・中止のために実行を止めたときは、判断を採用しない。使った費用だけを `runResult: interrupted` の `SuggestionsTriaged` に残し、指摘は選り分け前のまま、次の確認で選り分け直す。
 - 人が覆す：PR に要対応とコメントすれば、人の指摘として取り込まれ（選り分けを通らない）、直しに入る。sacty の画面から差し戻すこともできる。人は、対応しないとされた提案と理由を、PR の返信と、sacty の作業履歴の両方で読める。
 - 記録と表示：`SuggestionsTriaged`（actor `agent`。[作業履歴](event-log.md#費用)）。費用はタスクの予算に入り、工程ごとの費用の表の「提案の選り分け」の行に出る。画面の作業履歴の行には「提案 N 件のうち M 件をこの PR で対応しない」と費用を出し、提案ごとの判断と理由は、行の詳細に出す（`describeEventParts`）。判断できずに対応する側にした提案があれば、行と詳細にそう添える。採用しなかった実行は、そのことを行に出す。概要の「最近の履歴」は、どの行も 2 行までで省略し、詳細は出さない。
-- 変えないもの：実装が直しの中で申告する `declined`・`deferred` と、人の決定（[後続に回したい案と、人の決定](#後続に回したい案と人の決定)）、自己レビュー、要求要件・設計の PR のレビュー、GitHub から取り込んだ PR のレビューだけのタスク、返信の組み立て（`remark-reply.ts`）。
+- 変えないもの：実装が直しの中で申告する `declined`・`deferred` と、人の決定（[後続に回したい案と、人の決定](#後続に回したい案と人の決定)）、自己レビュー、GitHub から取り込んだ PR のレビューだけのタスク、返信の組み立て（`remark-reply.ts`）。
 
 コード: `apps/daemon/src/service.ts`（`triageSuggestions`・`importFeedbackNow`・`settleReview`・`awaitingRemarkReplies`・`triageStopDue`・`rejudgeDue`）、`apps/daemon/src/suggestion-triage.ts`（`splitSuggestions`・`suggestionUnitsOf`・`extractTriage`・`settleTriage`・`TRIAGE_HEADING`）、`apps/daemon/src/triage-reply.ts`（`triageReplyTextOf`・`TRIAGE_REPLY_NOTE`）、`apps/daemon/src/prompts.ts`（`buildTriagePrompt`・`remarkLines`・`triageDeclinedLines`）、`packages/core/src/events.ts`（`SuggestionsTriaged`・`ReviewRejudgeRequested`・`Remark`）、`packages/core/src/projection.ts`（`applyEvent`・`declinedSuggestions`・`triageStop`・`suggestionsLeft`）、`packages/core/src/messages.ts`（`triage.left`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/ai-review-notice.tsx`、`apps/web/src/lib/step-costs.ts`（`stepCosts`）
 
@@ -1365,3 +1366,11 @@ PBI-450 の、リンクの注釈（「タスクの画面は、依頼した人の
 - `sacty mcp` の `request_changes` は、エスカレーション中のタスクを差し戻さない（[MCP サーバー](mcp-server.md)）。
 
 コード: `apps/daemon/src/service.ts`（`requestChanges`・`decideChange`）、`packages/core/src/events.ts`（`TaskEscalated`・`ChangesRequested`・`RequestChangesInput`）、`packages/core/src/projection.ts`（`changeRounds`）、`apps/web/src/components/gate-form.tsx`（`GateForm`）
+
+## 整形の申告と残った件数
+
+sacty が作る実装の PR の本文には、依頼された整形のパスと理由を「依頼で求められた整形」に載せる。
+出し直しの上限後に整形だけのファイルが残った場合は件数だけを載せる。
+引き継いだ PR の題と本文は変更せず、タスクの詳細に申告と件数を表示する。
+
+コード: `apps/daemon/src/prompts.ts`、`apps/web/src/components/implementation.tsx`

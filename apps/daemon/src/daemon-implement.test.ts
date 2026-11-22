@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -45,6 +46,7 @@ import { BODY_BEGIN, BODY_END } from "./pr-body-merge.js";
 import { PR_BODY_MAX } from "./pr-template.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildPullRequestBody } from "./prompts.js";
+import { GitRepositoryWorkspace } from "./repository.js";
 import { isOpenStopNotice } from "./review-stop-notice.js";
 import { createApp } from "./server.js";
 import {
@@ -87,7 +89,7 @@ import {
   triageOut,
   useTempDir,
 } from "./testing/daemon.js";
-import { idleFor, loopTurn, waitFor } from "./testing/wait.js";
+import { idleFor, loopTurn, waitFor, waitForAssertion } from "./testing/wait.js";
 
 useTempDir();
 
@@ -214,6 +216,699 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       for (const id of ids) await service.runNext(id);
     }
   }
+
+  it("実際の Git 作業領域で整形だけのファイルを戻してから残りを提出する", async () => {
+    const origin = join(dir, "format-origin");
+    mkdirSync(origin);
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: origin, encoding: "utf8" }).trim();
+    git("init", "--initial-branch=main");
+    git("config", "user.name", "test");
+    git("config", "user.email", "test@example.com");
+    const original = "export const data = { first: 1, second: 2 };\n";
+    const formatted = "export const data = {\n  first: 1,\n  second: 2,\n};\n";
+    writeFileSync(join(origin, "a.ts"), original);
+    writeFileSync(join(origin, "b.ts"), original);
+    git("add", "--all");
+    git("commit", "-m", "base");
+    class GitBackedRepos extends FakeRepos {
+      readonly git = new GitRepositoryWorkspace();
+      clone = "";
+      metadata = "";
+      publishedDiff: string[] = [];
+      async prepare(work: string, metadata: string) {
+        this.clone = work;
+        this.metadata = metadata;
+        return this.git.prepare(work, metadata, origin, undefined);
+      }
+      async treeId(work: string, metadata: string, base: string) {
+        return this.git.treeId(work, metadata, base);
+      }
+      async treeChanges(metadata: string, from: string, to: string) {
+        return this.git.treeChanges(metadata, from, to);
+      }
+      async treeBlob(metadata: string, object: string) {
+        return this.git.treeBlob(metadata, object);
+      }
+      async publish(input: Parameters<FakeRepos["publish"]>[0]) {
+        const tree = await this.git.treeId(this.clone, this.metadata, input.baseCommit ?? "");
+        this.publishedDiff = (
+          await this.git.treeChanges(this.metadata, input.baseCommit ?? "", tree)
+        ).map((c) => c.path);
+        return super.publish(input);
+      }
+    }
+    const repos = new GitBackedRepos();
+    const pulls = new FakePulls();
+    const { activity, service, executor, id } = await toImplement(
+      [implement("# 実装"), implement("# 整形を戻した")],
+      { repos, pulls },
+    );
+    let runs = 0;
+    executor.respond = (invocation) => {
+      if (invocation.command.join(" ").includes("テスト観点（承認済み")) {
+        if (++runs === 1) {
+          writeFileSync(join(repos.clone, "a.ts"), formatted);
+          writeFileSync(join(repos.clone, "b.ts"), `${formatted}export function added() {}\n`);
+        } else {
+          const patch = execFileSync("git", ["diff", "--", "a.ts"], { cwd: repos.clone });
+          execFileSync("git", ["apply", "--reverse"], { cwd: repos.clone, input: patch });
+        }
+      }
+      return undefined;
+    };
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(pulls.calls).toHaveLength(0);
+    expect(
+      service
+        .get(id)
+        ?.activity.filter((event) => event.type === "FormattingOnlyRejected")
+        .at(-1)?.payload,
+    ).toEqual({ count: 1 });
+    await drain(service);
+    expect(promptOf(executor, executor.calls.length - 1)).toContain("a.ts");
+    expect(repos.publishedDiff).toEqual(["b.ts"]);
+    expect(readFileSync(join(repos.clone, "b.ts"), "utf8")).toBe(
+      `${formatted}export function added() {}\n`,
+    );
+    expect(pulls.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("未申告の整形を2回検出し、上限後は件数を本文に載せる", async () => {
+    const repos = new FakeRepos();
+    const pulls = new FakePulls();
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    repos.treeDiffs.set(`${base}:${submitted}`, [
+      {
+        status: "M",
+        path: "a.ts",
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      },
+      {
+        status: "M",
+        path: "c.ts",
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      },
+    ]);
+    repos.treeBlobs.set("old", "const x = { a: 1, b: 2 };\n");
+    repos.treeBlobs.set("new", "const x = {\n  a: 1,\n  b: 2,\n};\n");
+    const { activity, service, executor, id } = await toImplement(
+      [implement("# 実装"), implement("# 出し直し"), implement("# 出し直し 2")],
+      { repos, pulls },
+    );
+    await service.runNext(id);
+    repos.tree = submitted;
+    await service.runNext(id);
+    expect(types(service, id).filter((type) => type === "FormattingOnlyRejected")).toHaveLength(1);
+    expect(pulls.calls).toHaveLength(0);
+    await service.runNext(id);
+    expect(promptOf(executor, executor.calls.length - 1)).toContain("a.ts");
+    expect(promptOf(executor, executor.calls.length - 1)).toContain("c.ts");
+    await service.runNext(id);
+    expect(types(service, id).filter((type) => type === "FormattingOnlyRejected")).toHaveLength(2);
+    await drain(service);
+    expect(service.get(id)?.task.formattingCheck).toEqual({ remained: 2, declared: [] });
+    expect(
+      service
+        .get(id)
+        ?.activity.filter((event) => event.type === "FormattingOnlyRejected")
+        .map((event) => event.payload),
+    ).toEqual([{ count: 2 }, { count: 2 }]);
+    expect(promptOf(executor, executor.calls.length - 1)).toContain("a.ts");
+    expect(promptOf(executor, executor.calls.length - 1)).toContain("c.ts");
+    const finalTask = service.get(id)?.task;
+    if (!finalTask) throw new Error("task missing");
+    expect(buildPullRequestBody(finalTask)).toContain(
+      "整形だけで変わったファイルが 2 件残っています",
+    );
+    expect(buildPullRequestBody(finalTask)).not.toContain("a.ts");
+    expect(buildPullRequestBody(finalTask)).not.toContain("c.ts");
+    expect(JSON.stringify(service.get(id)?.activity)).not.toContain("a.ts");
+    expect(JSON.stringify(service.get(id)?.activity)).not.toContain("c.ts");
+    activity.close();
+  });
+
+  it("依頼された整形の申告を記録し、出し直さず本文に示す", async () => {
+    const repos = new FakeRepos();
+    repos.diffFileList = [{ status: "M", path: "a.ts" }];
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    repos.treeDiffs.set(`${base}:${submitted}`, [
+      {
+        status: "M",
+        path: "a.ts",
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      },
+    ]);
+    repos.treeBlobs.set("old", "const x = { a: 1 };\n");
+    repos.treeBlobs.set("new", "const x = {\n  a: 1,\n};\n");
+    const { activity, service, executor, id } = await toImplement(
+      [
+        implement(
+          `# 実装\n\n${block({ "sacty-formatting": { files: [{ path: "a.ts", reason: "依頼の整形" }] } })}`,
+        ),
+      ],
+      { repos },
+    );
+    executor.respond = (invocation) => {
+      if (invocation.command.join(" ").includes("テスト観点（承認済み")) repos.tree = submitted;
+      return undefined;
+    };
+    await drain(service);
+    expect(types(service, id)).not.toContain("FormattingOnlyRejected");
+    expect(service.get(id)?.task.formattingCheck).toEqual({
+      remained: 0,
+      declared: [{ path: "a.ts", reason: "依頼の整形" }],
+    });
+    const finalTask = service.get(id)?.task;
+    if (!finalTask) throw new Error("task missing");
+    expect(buildPullRequestBody(finalTask)).toContain("a.ts: 依頼の整形");
+    activity.close();
+  });
+
+  it("前の実装で申告した整形は、直しの回で再申告しなくても残る", async () => {
+    const repos = new FakeRepos();
+    repos.diffFileList = [{ status: "M", path: "a.ts" }];
+    const base = repos.tree;
+    const first = "a".repeat(40);
+    const second = "b".repeat(40);
+    const change = (oldObject: string, newObject: string) => ({
+      status: "M",
+      path: "a.ts",
+      oldMode: "100644",
+      newMode: "100644",
+      oldObject,
+      newObject,
+    });
+    repos.treeDiffs.set(`${base}:${first}`, [change("old", "first")]);
+    repos.treeDiffs.set(`${first}:${second}`, [change("first", "second")]);
+    repos.treeBlobs.set("old", "const x={a:1};");
+    repos.treeBlobs.set("first", "const x = { a: 1, };");
+    repos.treeBlobs.set("second", "const x = {\n  a: 1,\n};");
+    const declaration = block({
+      "sacty-formatting": { files: [{ path: "a.ts", reason: "依頼の整形" }] },
+    });
+    const { activity, service, executor, id } = await toImplement(
+      [implement(`# 実装\n\n${declaration}`), implement("# 直し")],
+      { repos },
+    );
+    executor.respond = () => {
+      repos.tree = first;
+      return undefined;
+    };
+    await drain(service);
+    service.requestChanges(id, { step: "implement", submission: 1, comments: ["直す"] });
+    executor.respond = () => {
+      repos.tree = second;
+      return undefined;
+    };
+    await drain(service);
+    expect(types(service, id)).not.toContain("FormattingOnlyRejected");
+    expect(service.get(id)?.task.formattingCheck?.declared).toEqual([
+      { path: "a.ts", reason: "依頼の整形" },
+    ]);
+    activity.close();
+  });
+
+  it("直しの回で触れていない申告済みファイルも PR の申告に残る", async () => {
+    const repos = new FakeRepos();
+    repos.diffFileList = [
+      { status: "M", path: "a.ts" },
+      { status: "M", path: "b.ts" },
+    ];
+    const base = repos.tree;
+    const first = "a".repeat(40);
+    const second = "b".repeat(40);
+    const change = (path: string, oldObject: string, newObject: string) => ({
+      status: "M",
+      path,
+      oldMode: "100644",
+      newMode: "100644",
+      oldObject,
+      newObject,
+    });
+    repos.treeDiffs.set(`${base}:${first}`, [change("a.ts", "old", "formatted")]);
+    repos.treeDiffs.set(`${first}:${second}`, [change("b.ts", "old", "changed")]);
+    repos.treeBlobs.set("old", "const x={a:1};");
+    repos.treeBlobs.set("formatted", "const x = { a: 1, };");
+    repos.treeBlobs.set("changed", "const x={a:2};");
+    const declaration = block({
+      "sacty-formatting": { files: [{ path: "a.ts", reason: "依頼の整形" }] },
+    });
+    const { activity, service, executor, id } = await toImplement(
+      [implement(`# 実装\n\n${declaration}`), implement("# 直し")],
+      { repos },
+    );
+    executor.respond = () => {
+      repos.tree = first;
+      return undefined;
+    };
+    await drain(service);
+    service.requestChanges(id, { step: "implement", submission: 1, comments: ["直す"] });
+    executor.respond = () => {
+      repos.tree = second;
+      return undefined;
+    };
+    await drain(service);
+    expect(service.get(id)?.task.formattingCheck?.declared).toEqual([
+      { path: "a.ts", reason: "依頼の整形" },
+    ]);
+    activity.close();
+  });
+
+  it("整形だけを戻した出し直しを受け付け、残った機能変更を保持する", async () => {
+    const repos = new FakeRepos();
+    const pulls = new FakePulls();
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    const fixed = "b".repeat(40);
+    const formatting = {
+      status: "M",
+      path: "a.ts",
+      oldMode: "100644",
+      newMode: "100644",
+      oldObject: "old",
+      newObject: "new",
+    };
+    const functional = {
+      status: "M",
+      path: "b.ts",
+      oldMode: "100644",
+      newMode: "100644",
+      oldObject: "old",
+      newObject: "function",
+    };
+    repos.treeDiffs.set(`${base}:${submitted}`, [formatting, functional]);
+    repos.treeDiffs.set(`${base}:${fixed}`, [functional]);
+    repos.treeBlobs.set("old", "const x = { a: 1 };\n");
+    repos.treeBlobs.set("new", "const x = {\n  a: 1,\n};\n");
+    repos.treeBlobs.set("function", "const x = {\n  a: 1,\n};\nfunction added() {}\n");
+    const { activity, service, executor, id } = await toImplement(
+      [implement("# 実装"), implement("# 戻した")],
+      { repos, pulls },
+    );
+    await service.runNext(id);
+    repos.tree = submitted;
+    await service.runNext(id);
+    expect(pulls.calls).toHaveLength(0);
+    executor.respond = () => {
+      repos.tree = fixed;
+      return undefined;
+    };
+    await drain(service);
+    expect(promptOf(executor, executor.calls.length - 1)).toContain("a.ts");
+    expect(types(service, id).filter((type) => type === "FormattingOnlyRejected")).toHaveLength(1);
+    expect(service.get(id)?.task.formattingCheck).toBeUndefined();
+    expect(pulls.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("整形をすべて戻した提出は変更なしとして PR を作らない", async () => {
+    const repos = new FakeRepos();
+    const pulls = new FakePulls();
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    repos.treeDiffs.set(`${base}:${submitted}`, [
+      {
+        status: "M",
+        path: "a.ts",
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      },
+    ]);
+    repos.treeBlobs.set("old", "const x={a:1};");
+    repos.treeBlobs.set("new", "const x = { a: 1, };");
+    const { activity, service, executor, id } = await toImplement(
+      [implement("# 実装"), implement("# 戻した")],
+      { repos, pulls },
+    );
+    await service.runNext(id);
+    repos.tree = submitted;
+    await service.runNext(id);
+    executor.respond = () => {
+      repos.tree = base;
+      repos.unchanged = true;
+      return undefined;
+    };
+    await drain(service);
+    expect(types(service, id)).toContain("NoChangesFound");
+    expect(pulls.calls).toHaveLength(0);
+    expect(service.get(id)?.task.formattingCheck).toBeUndefined();
+    activity.close();
+  });
+
+  it("未完了の続きで起点を保持し、取り込みで変わったファイルを除外する", async () => {
+    const repos = new FakeRepos();
+    const base = repos.tree;
+    const before = "a".repeat(40);
+    const after = "b".repeat(40);
+    const change = (path: string) => ({
+      status: "M",
+      path,
+      oldMode: "100644",
+      newMode: "100644",
+      oldObject: "old",
+      newObject: "new",
+    });
+    repos.treeDiffs.set(`${base}:${after}`, [change("a.ts"), change("r.ts")]);
+    repos.treeDiffs.set(`${before}:${after}`, [change("r.ts")]);
+    repos.treeBlobs.set("old", "const x = { a: 1 };\n");
+    repos.treeBlobs.set("new", "const x = {\n  a: 1,\n};\n");
+    repos.branchHead = repos.head;
+    const incomplete = out(
+      [
+        implement("# 実装").output,
+        `\`\`\`sacty-completion\n${JSON.stringify({ status: "incomplete", remaining: ["続き"] })}\n\`\`\``,
+      ].join("\n\n"),
+    );
+    const { activity, service, executor, id } = await toImplement(
+      [incomplete, implement("# 完了"), implement("# 続き")],
+      { repos, mergeBase: true },
+    );
+    await service.runNext(id);
+    repos.tree = before;
+    await service.runNext(id);
+    repos.branchHead = "c".repeat(40);
+    const originalMerge = repos.mergeBase.bind(repos);
+    vi.spyOn(repos, "mergeBase").mockImplementation(async (input) => {
+      const result = await originalMerge(input);
+      repos.tree = after;
+      return result;
+    });
+    await service.runNext(id);
+    const starts =
+      service
+        .get(id)
+        ?.activity.filter(
+          (event) => event.type === "AgentRunStarted" && event.payload.step === "implement",
+        ) ?? [];
+    expect(starts.at(-1)?.payload).toMatchObject({
+      formattingBaseline: { tree: base, merged: [{ before, after }] },
+    });
+    await service.runNext(id);
+    expect(
+      service
+        .get(id)
+        ?.activity.filter((event) => event.type === "FormattingOnlyRejected")
+        .at(-1)?.payload,
+    ).toEqual({ count: 1 });
+    await service.runNext(id);
+    const prompt = promptOf(executor, executor.calls.length - 1);
+    expect(prompt).toContain("a.ts");
+    expect(prompt).not.toContain("- r.ts");
+    activity.close();
+  });
+
+  it("取り込み記録の直後に停止しても、再開後は取り込んだファイルを除外する", async () => {
+    const repos = new FakeRepos();
+    const baseline = repos.tree;
+    const submitted = "a".repeat(40);
+    const from = "b".repeat(40);
+    const to = "c".repeat(40);
+    const change = (path: string) => ({
+      status: "M",
+      path,
+      oldMode: "100644",
+      newMode: "100644",
+      oldObject: "old",
+      newObject: "new",
+    });
+    repos.treeDiffs.set(`${baseline}:${submitted}`, [change("a.ts"), change("r.ts")]);
+    repos.treeDiffs.set(`${from}:${to}`, [change("r.ts")]);
+    repos.treeBlobs.set("old", "const x={a:1};");
+    repos.treeBlobs.set("new", "const x = { a: 1, };");
+    const incomplete = out(
+      [
+        implement("# 未完了").output,
+        `\`\`\`sacty-completion\n${JSON.stringify({ status: "incomplete", remaining: ["続き"] })}\n\`\`\``,
+      ].join("\n\n"),
+    );
+    const { activity, service, id } = await toImplement([incomplete], { repos });
+    await service.runNext(id);
+    repos.tree = submitted;
+    await service.runNext(id);
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: { type: "BaseBranchMerged", payload: { from, commit: to, conflicts: [] } },
+        },
+      ],
+    });
+    const restarted = makeService(activity, [implement("# 続き"), implement("# 整形の修正")], {
+      repos,
+    });
+    await restarted.service.runNext(id);
+    const starts = (restarted.service.get(id)?.activity ?? []).filter(
+      (event) => event.type === "AgentRunStarted" && event.payload.step === "implement",
+    );
+    expect(starts.at(-1)?.payload).toMatchObject({
+      formattingBaseline: { tree: baseline, merged: [{ before: from, after: to }] },
+    });
+    await restarted.service.runNext(id);
+    expect(
+      restarted.service
+        .get(id)
+        ?.activity.filter((event) => event.type === "FormattingOnlyRejected")
+        .at(-1)?.payload,
+    ).toEqual({ count: 1 });
+    await restarted.service.runNext(id);
+    const prompt = promptOf(restarted.executor, restarted.executor.calls.length - 1);
+    expect(prompt).toContain("- a.ts");
+    expect(prompt).not.toContain("- r.ts");
+    activity.close();
+  });
+
+  it("申告されたパスと理由の秘密値を伏せて照合し、記録と本文に残さない", async () => {
+    const repos = new FakeRepos();
+    repos.diffFileList = [{ status: "M", path: "oauth-secret.ts" }];
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    repos.treeDiffs.set(`${base}:${submitted}`, [
+      {
+        status: "M",
+        path: "oauth-secret.ts",
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      },
+    ]);
+    repos.treeBlobs.set("old", "const x = { a: 1 };\n");
+    repos.treeBlobs.set("new", "const x = {\n  a: 1,\n};\n");
+    const declaration = block({
+      "sacty-formatting": { files: [{ path: "oauth-secret.ts", reason: "oauth-secret の整形" }] },
+    });
+    const { activity, service, executor, id } = await toImplement(
+      [implement(`# 実装\n\n${declaration}`)],
+      { repos },
+    );
+    executor.respond = (invocation) => {
+      if (invocation.command.join(" ").includes("テスト観点（承認済み")) repos.tree = submitted;
+      return undefined;
+    };
+    await drain(service);
+    const result = service.get(id);
+    if (!result) throw new Error("task missing");
+    expect(types(service, id)).not.toContain("FormattingOnlyRejected");
+    expect(result.task.formattingCheck?.declared).toEqual([
+      { path: "[REDACTED].ts", reason: "[REDACTED] の整形" },
+    ]);
+    expect(JSON.stringify(result.activity)).not.toContain("oauth-secret");
+    expect(buildPullRequestBody(result.task)).not.toContain("oauth-secret");
+    activity.close();
+  });
+
+  it("未申告のパスに秘密値があっても、上限後の記録と本文に出さない", async () => {
+    const repos = new FakeRepos();
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    repos.treeDiffs.set(`${base}:${submitted}`, [
+      {
+        status: "M",
+        path: "oauth-secret.ts",
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      },
+    ]);
+    repos.treeBlobs.set("old", "const x={a:1};");
+    repos.treeBlobs.set("new", "const x = { a: 1, };");
+    const { activity, service, id } = await toImplement(
+      [implement("# 実装"), implement("# 続き"), implement("# 続き 2")],
+      { repos },
+    );
+    await service.runNext(id);
+    repos.tree = submitted;
+    await drain(service);
+    const result = service.get(id);
+    if (!result) throw new Error("task missing");
+    expect(result.task.formattingCheck).toEqual({ remained: 1, declared: [] });
+    expect(JSON.stringify(result.activity)).not.toContain("oauth-secret");
+    expect(buildPullRequestBody(result.task)).not.toContain("oauth-secret");
+    activity.close();
+  });
+
+  it("ツリーの差分を読めない場合は停止せず提出する", async () => {
+    const repos = new FakeRepos();
+    repos.treeDiffFail = true;
+    const pulls = new FakePulls();
+    const { activity, service, id } = await toImplement([implement("# 実装")], { repos, pulls });
+    await drain(service);
+    expect(types(service, id)).not.toContain("TaskPaused");
+    expect(types(service, id)).not.toContain("FormattingOnlyRejected");
+    expect(pulls.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("伏せる秘密値を取得できないときはパスを指示に渡さず受け付ける", async () => {
+    let unavailable = false;
+    const secretStore = {
+      get: async () => {
+        if (unavailable) throw new Error("secret unavailable");
+        return "oauth-secret";
+      },
+    };
+    const repos = new FakeRepos();
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    repos.treeDiffs.set(`${base}:${submitted}`, [
+      {
+        status: "M",
+        path: "oauth-secret.ts",
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      },
+    ]);
+    repos.treeBlobs.set("old", "const x={a:1};");
+    repos.treeBlobs.set("new", "const x = { a: 1, };");
+    const pulls = new FakePulls();
+    const { activity, service, id } = await toImplement([implement("# 実装")], {
+      repos,
+      pulls,
+      secretStore,
+    });
+    await service.runNext(id);
+    repos.tree = submitted;
+    unavailable = true;
+    await service.runNext(id);
+    expect(types(service, id)).not.toContain("FormattingOnlyRejected");
+    expect(types(service, id)).not.toContain("TaskPaused");
+    unavailable = false;
+    await drain(service);
+    expect(pulls.calls).toHaveLength(1);
+    expect(JSON.stringify(service.get(id)?.activity)).not.toContain("oauth-secret");
+    activity.close();
+  });
+
+  it("解析不能な内容やモード変更・対象外パスを含む提出を受け付ける", async () => {
+    const repos = new FakeRepos();
+    const base = repos.tree;
+    const submitted = "a".repeat(40);
+    const change = (path: string, oldObject: string, newObject: string, newMode = "100644") => ({
+      status: "M",
+      path,
+      oldMode: "100644",
+      newMode,
+      oldObject,
+      newObject,
+    });
+    repos.treeDiffs.set(`${base}:${submitted}`, [
+      change("x.py", "old", "new"),
+      change("c.ts", "old", "broken"),
+      change("d.json", "json", "badjson"),
+      change("e.jsonc", "json", "new"),
+      change("binary.ts", "old", "binary"),
+      change("unreadable.ts", "old", "missing"),
+      change("m.ts", "old", "new", "100755"),
+      change("日本語.ts", "old", "new"),
+    ]);
+    repos.treeBlobs.set("old", "const x={a:1};");
+    repos.treeBlobs.set("new", "const x = { a: 1, };");
+    repos.treeBlobs.set("broken", "const x = ;");
+    repos.treeBlobs.set("json", '{"a":1}');
+    repos.treeBlobs.set("badjson", '{"a":1,}');
+    repos.treeBlobs.set("binary", "\0");
+    const pulls = new FakePulls();
+    const { activity, service, id } = await toImplement([implement("# 実装")], { repos, pulls });
+    await service.runNext(id);
+    repos.tree = submitted;
+    await drain(service);
+    expect(types(service, id)).not.toContain("FormattingOnlyRejected");
+    expect(pulls.calls).toHaveLength(1);
+    expect(repos.tree).toBe(submitted);
+    activity.close();
+  });
+
+  it.each([
+    ["a.ts", "const x = { a: 1 };", "const x = {\n a: 1,\n};", true],
+    ["a.tsx", "const x = <A p={1}/>;", "const x = <A\n p={1}\n/>;", true],
+    ["a.js", "f(a,b);", "f(\n a,\n b,\n);", true],
+    ["a.json", '{"a":1}', '{\n "a": 1\n}', true],
+    ["b.ts", "export const value = 1;", "export const value = 2;", false],
+    ["a.js", 'const x="New York";', 'const x="NewYork";', false],
+    ["a.js", "function f(){return x}", "function f(){return\nx}", false],
+    ["a.tsx", "const x=<p>hello world</p>;", "const x=<p>helloworld</p>;", false],
+    ["a.js", "const x=`a\nb`;", "const x=`ab`;", false],
+    ["a.js", "const x=/a b/;", "const x=/ab/;", false],
+    ["a.js", "const x=[a,,b];", "const x=[a,b];", false],
+    ["a.js", "// old\nf();", "// new\nf();", false],
+    ["a.js", "const x='a';", 'const x="a";', false],
+  ])(
+    "提出した %s の構文とトークンに応じて出し直しを決める",
+    async (path, before, after, reject) => {
+      const repos = new FakeRepos();
+      const base = repos.tree;
+      const submitted = "a".repeat(40);
+      repos.treeDiffs.set(`${base}:${submitted}`, [
+        {
+          status: "M",
+          path,
+          oldMode: "100644",
+          newMode: "100644",
+          oldObject: "old",
+          newObject: "new",
+        },
+      ]);
+      repos.treeBlobs.set("old", before);
+      repos.treeBlobs.set("new", after);
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplement([implement("# 実装")], { repos, pulls });
+      await service.runNext(id);
+      repos.tree = submitted;
+      await service.runNext(id);
+      expect(types(service, id).includes("FormattingOnlyRejected")).toBe(reject);
+      if (reject) expect(pulls.calls).toHaveLength(0);
+      else {
+        await drain(service);
+        expect(pulls.calls).toHaveLength(1);
+        expect(repos.tree).toBe(submitted);
+        const task = service.get(id)?.task;
+        if (!task) throw new Error("task missing");
+        expect(buildPullRequestBody(task)).not.toContain("整形だけで変わったファイルが");
+      }
+      activity.close();
+    },
+  );
 
   describe("観点とテストの対応に、設計のテスト観点が欠けた実装は提出しない（PBI-348）", () => {
     const TV1 = { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] };
@@ -5106,6 +5801,58 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       });
     });
 
+    it("引き継いだ PR の本文を変えずに申告と残った整形の件数を記録する", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.diffFileList = [{ status: "M", path: "a.ts" }];
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      pulls.feedbackBy[12] = [old];
+      const base = repos.tree;
+      const submitted = "a".repeat(40);
+      const change = (path: string) => ({
+        status: "M",
+        path,
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      });
+      repos.treeDiffs.set(`${base}:${submitted}`, [change("a.ts"), change("c.ts")]);
+      repos.treeBlobs.set("old", "const x={a:1};");
+      repos.treeBlobs.set("new", "const x = { a: 1, };");
+      const map = [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }];
+      const declaration = block({
+        "sacty-formatting": { files: [{ path: "a.ts", reason: "依頼された整形" }] },
+      });
+      const { service, executor } = makeService(
+        activity,
+        [
+          steps(),
+          implement(`# 実装\n\n${declaration}`, map),
+          implement("# 続き", map),
+          implement("# 続き 2", map),
+        ],
+        { realPlanner: true, pulls, repos, now: () => Date.now() + 10 * 60_000 },
+      );
+      executor.respond = (invocation) => {
+        if (invocation.command.join(" ").includes("引き継いで直す PR")) repos.tree = submitted;
+        return undefined;
+      };
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 15 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      expect(pulls.calls).toEqual([]);
+      expect(service.get(id)?.task.formattingCheck).toEqual({
+        remained: 1,
+        declared: [{ path: "a.ts", reason: "依頼された整形" }],
+      });
+      expect(
+        service.get(id)?.activity.filter((event) => event.type === "FormattingOnlyRejected"),
+      ).toHaveLength(2);
+      activity.close();
+    });
+
     it("引き継いだ PR にはレビューの子タスクを作らないので、子タスクを作るデーモンでも、実装のセルフレビューをさせる（PBI-346 受け入れ条件 3）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
@@ -6296,6 +7043,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       github?: FakeGitHub;
       ci?: CiStatusReader;
       draftPullRequests?: boolean;
+      mergeBase?: boolean;
       reviewCiTimeoutMs?: number;
       webUrl?: string;
     } = {},
@@ -7277,7 +8025,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       await executor.started.promise;
       mergePr(pulls, service, id);
       const checking = service.checkPullRequests();
-      await vi.waitFor(() => expect(confirms).toBe(2));
+      await waitForAssertion(() => expect(confirms).toBe(2));
       // 実行は idle・検証待ちで終わっているが、承認か一時停止を記録するまで、実行を始めさせない
       expect(service.get(id)?.task.verification).toBe("pending");
       const calls = executor.calls.length;
@@ -8798,6 +9546,119 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       });
     const eventsOf = (service: TaskService, id: string, type: string) =>
       (service.get(id)?.activity ?? []).filter((e) => e.type === type);
+
+    it("実装前と提出前の PR の取り込みを整形の出し直しに含めない", async () => {
+      const { activity, service, repos, pulls, id } = await toImplementGate(rework());
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      const firstHead = "d".repeat(40);
+      const secondHead = "e".repeat(40);
+      const firstTree = "a".repeat(40);
+      const secondTree = "b".repeat(40);
+      const change = (path: string) => ({
+        status: "M",
+        path,
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      });
+      repos.treeDiffs.set(`${repos.tree}:${firstTree}`, [change("p.ts")]);
+      repos.treeDiffs.set(`${firstTree}:${secondTree}`, [change("q.ts")]);
+      repos.treeBlobs.set("old", "const x={a:1};");
+      repos.treeBlobs.set("new", "const x = { a: 1, };");
+      const merge = repos.mergeBase.bind(repos);
+      vi.spyOn(repos, "mergeBase").mockImplementation(async (input) => {
+        const result = await merge(input);
+        if (input.target === firstHead) repos.tree = firstTree;
+        if (input.target === secondHead) repos.tree = secondTree;
+        return result;
+      });
+      repos.remote[pushed.branch] = firstHead;
+      sendBack(service, id);
+      await service.runNext(id);
+      const started = (service.get(id)?.activity ?? []).findLast(
+        (event) => event.type === "AgentRunStarted" && event.payload.step === "implement",
+      );
+      expect(started?.payload).toMatchObject({ formattingBaseline: { tree: firstTree } });
+      repos.remote[pushed.branch] = secondHead;
+      await drain(service);
+      expect(eventsOf(service, id, "FormattingOnlyRejected")).toEqual([]);
+      expect(repos.tree).toBe(secondTree);
+      expect(repos.published.at(-1)).toMatchObject({ parent: secondHead });
+      expect(pulls.calls.at(-1)?.number).toBe(7);
+      activity.close();
+    });
+
+    it("出し直しの間の PR とベースの取り込みを別々に記録し、両方で変わったファイルを除外する", async () => {
+      const repos = new FakeRepos();
+      repos.branchHead = repos.head;
+      const base = repos.tree;
+      const before = "a".repeat(40);
+      const middle = "b".repeat(40);
+      const after = "c".repeat(40);
+      const human = "d".repeat(40);
+      const tip = "e".repeat(40);
+      const change = (path: string) => ({
+        status: "M",
+        path,
+        oldMode: "100644",
+        newMode: "100644",
+        oldObject: "old",
+        newObject: "new",
+      });
+      repos.treeDiffs.set(`${base}:${after}`, [change("a.ts"), change("r.ts"), change("s.ts")]);
+      repos.treeDiffs.set(`${before}:${middle}`, [change("r.ts")]);
+      repos.treeDiffs.set(`${middle}:${after}`, [change("s.ts")]);
+      repos.treeBlobs.set("old", "const x={a:1};");
+      repos.treeBlobs.set("new", "const x = { a: 1, };");
+      const unfinished = out(
+        [
+          implement("# 未完了").output,
+          `\`\`\`sacty-completion\n${JSON.stringify({ status: "incomplete", remaining: ["続き"] })}\n\`\`\``,
+        ].join("\n\n"),
+      );
+      const { activity, service, executor, id } = await toImplementGate(
+        [unfinished, implement("# 完了"), implement("# 整形の修正")],
+        { repos, mergeBase: true },
+      );
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      sendBack(service, id);
+      await service.runNext(id);
+      repos.tree = before;
+      await service.runNext(id);
+      repos.remote[pushed.branch] = human;
+      repos.branchHead = tip;
+      const original = repos.mergeBase.bind(repos);
+      vi.spyOn(repos, "mergeBase").mockImplementation(async (input) => {
+        const result = await original(input);
+        if (input.target === human) repos.tree = middle;
+        if (input.target === tip) repos.tree = after;
+        return result;
+      });
+      await service.runNext(id);
+      const starts = (service.get(id)?.activity ?? []).filter(
+        (event) => event.type === "AgentRunStarted" && event.payload.step === "implement",
+      );
+      expect(starts.at(-1)?.payload).toMatchObject({
+        formattingBaseline: {
+          tree: base,
+          merged: [
+            { before, after: middle },
+            { before: middle, after },
+          ],
+        },
+      });
+      await service.runNext(id);
+      expect(eventsOf(service, id, "FormattingOnlyRejected").at(-1)?.payload).toEqual({ count: 1 });
+      await service.runNext(id);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("- a.ts");
+      expect(prompt).not.toContain("- r.ts");
+      expect(prompt).not.toContain("- s.ts");
+      activity.close();
+    });
 
     it("人が PR のブランチに足したコミットを、実装のやり直しの前に作業領域に取り込み、その先頭に積んで同じ PR を更新する（強制プッシュしない）", async () => {
       const { activity, service, executor, repos, pulls, id } = await toImplementGate(rework());
@@ -14079,7 +14940,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           headSha: service.get(id)?.task.pullRequest?.commit,
         };
         const periodic = service.checkPullRequests();
-        await vi.waitFor(() =>
+        await waitForAssertion(() =>
           expect((service as unknown as { mergeStopping: Set<string> }).mergeStopping.has(id)).toBe(
             true,
           ),
@@ -14227,7 +15088,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           headSha: service.get(id)?.task.pullRequest?.commit,
         };
         const periodic = service.checkPullRequests();
-        await vi.waitFor(() =>
+        await waitForAssertion(() =>
           expect((service as unknown as { mergeStopping: Set<string> }).mergeStopping.has(id)).toBe(
             true,
           ),

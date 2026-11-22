@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
 import { MessageError } from "./errors.js";
 import { stopFetchProcessesSync } from "./fetch-processes.js";
+import { formattingOnlyFiles } from "./formatting-only.js";
 import {
   classifyPushFailure,
   DIFF_LIMIT,
@@ -92,6 +93,63 @@ const itMerge = it.skipIf(!MERGE_BASE_SUPPORTED);
 
 // 実際の git を動かすので、テストをまとめて実行して重いときも時間切れにしない（PBI-35 レビューでの5秒の時間切れ）
 describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, () => {
+  it("整形の検査は取り込み・モード・パスを除外し、構文の変更を残す", async () => {
+    const origin = makeOrigin();
+    for (const name of ["a.ts", "merged.ts", "mode.ts", "日本語.ts", "change.ts"]) {
+      writeFileSync(join(origin, name), "const x = { a: 1, b: 2 };\n");
+    }
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "files");
+    const repos = new GitRepositoryWorkspace();
+    const clone = join(dir, "clone");
+    const metadata = join(dir, "metadata");
+    const { baseCommit } = await repos.prepare(clone, metadata, origin, undefined);
+    const tree = await repos.treeId(clone, metadata, baseCommit);
+    const formatted = "const x = {\n  a: 1,\n  b: 2,\n};\n";
+    for (const name of ["a.ts", "merged.ts", "mode.ts", "日本語.ts"]) {
+      writeFileSync(join(clone, name), formatted);
+    }
+    chmodSync(join(clone, "mode.ts"), 0o755);
+    writeFileSync(join(clone, "change.ts"), "const x = { a: 2, b: 2 };\n");
+    const beforeMerge = await repos.treeId(clone, metadata, baseCommit);
+    writeFileSync(join(clone, "merged.ts"), `${formatted}// merged\n`);
+    const afterMerge = await repos.treeId(clone, metadata, baseCommit);
+    expect(
+      await formattingOnlyFiles(
+        repos,
+        metadata,
+        { tree, merged: [{ before: beforeMerge, after: afterMerge }] },
+        afterMerge,
+      ),
+    ).toEqual(["a.ts"]);
+  });
+  it("ツリーの差分からモードと blob を読み、内容にはパスを使わない", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "clone");
+    const metadata = join(dir, "metadata");
+    const { baseCommit } = await workspace.prepare(clone, metadata, origin, undefined);
+    const before = await workspace.treeId(clone, metadata, baseCommit);
+    expect(await workspace.commitTree(metadata, baseCommit)).toBe(before);
+    await expect(workspace.treeChanges(metadata, "f".repeat(40), before)).rejects.toThrow();
+    writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+    chmodSync(join(clone, "pay.ts"), 0o755);
+    const after = await workspace.treeId(clone, metadata, baseCommit);
+    const changes = await workspace.treeChanges(metadata, before, after);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({
+      path: "pay.ts",
+      status: "M",
+      oldMode: "100644",
+      newMode: "100755",
+    });
+    expect(await workspace.treeBlob(metadata, changes[0]?.oldObject ?? "")).toBe(
+      "export const pay = () => 0;\n",
+    );
+    expect(await workspace.treeBlob(metadata, changes[0]?.newObject ?? "")).toBe(
+      "export const pay = () => 1;\n",
+    );
+  });
   it("応答しないリモートへの取得を中断し、復旧後に取得できる", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

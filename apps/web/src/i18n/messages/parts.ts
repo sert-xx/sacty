@@ -21,6 +21,9 @@ const ja = {
   },
   implementation: {
     title: "実装",
+    formattingDeclared: "依頼で求められた整形",
+    formattingRemaining: (count: number) =>
+      `整形だけで変わったファイルが ${count} 件残っています。`,
     passed: "完了",
     working: "作業中",
     paused: "一時停止中",
@@ -380,6 +383,8 @@ const en: PartsMessages = {
   },
   implementation: {
     title: "Implement",
+    formattingDeclared: "Requested formatting",
+    formattingRemaining: (count) => `${count} formatting-only files remain.`,
     passed: "Done",
     working: "In progress",
     paused: "Paused",

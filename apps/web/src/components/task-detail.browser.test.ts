@@ -88,15 +88,24 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { I18nProvider } from '/apps/web/src/i18n/client.tsx';
 import { TaskDetailView } from '/apps/web/src/components/task-detail.tsx';
+import { ReviewView } from '/apps/web/src/components/review.tsx';
 const h = React.createElement;
 const params = new URLSearchParams(location.search);
+if (params.has('held')) {
+  const task = window.__data.task;
+  task.status = 'awaiting_approval';
+  task.gate = { step: 'requirements', submission: 1 };
+  task.stepPullRequests = [{ step: 'requirements', submission: 1, number: 12, commit: 'abc', state: 'open' }];
+  task.heldSuggestions = { step: 'requirements', number: 12, commit: 'abc' };
+  task.aiReview = { head: 'abc', status: 'attached' };
+}
 document.documentElement.className = ${JSON.stringify(htmlClass)};
 createRoot(document.getElementById('root')).render(
   h(I18nProvider, { locale: params.get('lang') ?? 'en' },
     h('div', { className: 'flex min-h-screen flex-col' },
       h('header', { className: 'sticky top-0 z-30 h-16 bg-white', 'data-testid': 'header' }, 'Header'),
       h('main', { className: ${JSON.stringify(mainClass)} },
-        h(TaskDetailView, { data: window.__data }),
+        params.get('view') === 'review' ? h(ReviewView, { task: window.__data.task }) : h(TaskDetailView, { data: window.__data }),
         h("div", { style: { height: 3000 } }),
       ),
     ),
@@ -214,6 +223,35 @@ afterAll(async () => {
   await browser?.close();
   await server?.close();
 });
+
+it("打ち切りの知らせは承認画面とタスク概要の狭い画面と広い画面に収まる", async () => {
+  for (const width of [375, 1280]) {
+    for (const locale of ["ja", "en"]) {
+      for (const view of ["review", "detail"]) {
+        const page = await browser.newPage({ viewport: { width, height: 900 } });
+        try {
+          await page.goto(`${url}/?held=1&view=${view}&lang=${locale}`);
+          const notice = page.getByTestId("step-suggestions-held");
+          await notice.waitFor();
+          const bounds = await notice.evaluate((element) => {
+            const box = element.getBoundingClientRect();
+            return {
+              left: box.left,
+              right: box.right,
+              scrollWidth: element.scrollWidth,
+              width: element.clientWidth,
+            };
+          });
+          expect(bounds.left).toBeGreaterThanOrEqual(0);
+          expect(bounds.right).toBeLessThanOrEqual(width);
+          expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width);
+        } finally {
+          await page.close();
+        }
+      }
+    }
+  }
+}, 60000);
 
 async function open(width: number, height = 800, query = "lang=en"): Promise<Page> {
   const page = await browser.newPage({ viewport: { width, height } });

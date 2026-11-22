@@ -2263,3 +2263,27 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
 - 見守り中も、作業領域の片付け（[終わったタスクの作業領域の片付け](#終わったタスクの作業領域の片付け)）・完了したタスクの監査（[監査](audit.md)）・続きのタスクの作成（[派生](#完了したタスクから続きのタスクを作る派生)）は、工程がすべて終わったタスクとして、投稿の後に行える（`isCompleted` で決める）。
 
 コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`rereviewDocsOnlyOf`・`documentsOnlySince`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`composeReviewPost`・`rereview`・`checkReviewPullRequests`・`watchReview`・`reviewWatchDue`・`supersededWatch`・`sactyMadePullRequests`・`statusWithin`・`FEEDBACK_QUIET_MS`・`REVIEW_WATCH_INTERVALS`）、`apps/daemon/src/github.ts`（`PullRequestStatus`）、`apps/daemon/src/test-files.ts`（`isChangeDocumentsOnly`）、`apps/daemon/src/repository.ts`（`mergeBaseOf`）、`apps/daemon/src/prompts.ts`（`rereviewDocsOnlyLines`・`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`rejudgeLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`・`reviewDispatchInstructionLines`・`reviewUndispatchedLines`・`reviewRecordInstructionLines`・`buildReviewComments`）、`apps/daemon/src/review-dispatch-count.ts`（`countReviewDispatch`）、`apps/daemon/src/review-record.ts`（`readReviewRecordBlock`・`checkReviewRecord`・`stripReviewRecord`・`withoutReviewRecord`・`reviewRecordBlocksNarrowing`）、`packages/core/src/events.ts`（`ReviewVerdict`・`ReviewDispatch`・`ReviewRecord`・`REVIEW_UNDISPATCHED_RETRIES`）、`packages/core/src/projection.ts`（`applyEvent`・`PullRequestReviewPosted`・`ReviewWatchEnded`・`ReviewRestarted`・`EARLIER_REVIEWS_MAX`・`reviewWatching`・`currentReviewVerdict`・`isDone`・`isFinished`・`canRereview`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`・`canControl`）、`apps/web/src/components/review-watch-notice.tsx`、`apps/web/src/components/review-records.tsx`（`ReviewRecords`）
+
+## 整形だけの変更の検査
+
+実装・修正の指示は、リポジトリが定めるコマンドと設定だけで整形し、ほかのツール・設定や作業領域の外の写しで整形しないよう求める。
+依頼の外のファイルが整形だけで変わったら提出前に戻し、依頼された整形はパスと理由を申告する。
+
+sacty は一連の出し直しの最初の実行前、取り込み後の作業領域のツリーを起点とし、続きの実行にも引き継ぐ。
+提出前に JavaScript・TypeScript・JSON の構文木とトークンを比較し、位置と区切りの空白・改行・末尾のカンマだけが違うファイルを検出する。
+文字列やコメントの中身、意味を持つ改行、引用符やセミコロンは比較する。
+JSON の構文エラー、`.jsonc`、読めないファイル、1 MiB を超えるファイル、対象外の言語は検出しない。
+
+間の取り込みで変わったファイル、追加・削除・名前やモードの変更を含むファイル、`validPath` を通らないファイルは検査から外す。
+パスには ASCII の英数字と `_`・`.`・`/`・`-` だけを受け付ける。
+取り込みを記録した後、次の実行の開始を記録する前に停止した場合は、取り込み前後のコミットのツリーで変わったファイルも除外する。
+これらのファイルに含まれる担当の整形は見逃しうる。
+起点や差分を読めない場合と、パスを伏せるための秘密値を取得できない場合も、止めずに受け付ける。
+
+未申告の整形を見つけたら提出を受け付けず、パスの一覧だけを担当に渡して、git の差分を見て自分の整形だけを戻し、出し直すよう求める。
+sacty は差分本文を作らず、ファイルも書き戻さない。
+出し直しは2回までとし、上限後は残った件数を記録して受け付ける。
+申告は実装のすべての回を合わせ、変更されたファイルだけを対象とし、パスと理由の秘密値を記録前に伏せる。
+理由は伏せた後に300文字で切る。
+
+コード: `apps/daemon/src/formatting-only.ts`、`apps/daemon/src/service.ts`、`apps/daemon/src/prompts.ts`、`apps/daemon/src/repository.ts`

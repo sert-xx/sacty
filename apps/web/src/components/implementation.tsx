@@ -133,6 +133,25 @@ export function Implementation({ task }: { task: Task }) {
           <span className="font-mono">{task.repository.baseCommit.slice(0, 7)}</span>
         </p>
       )}
+      {task.formattingCheck && (
+        <div className="text-sm">
+          {task.formattingCheck.declared.length > 0 && (
+            <>
+              <h3 className="font-semibold">{m.formattingDeclared}</h3>
+              <ul className="list-disc pl-5">
+                {task.formattingCheck.declared.map(({ path, reason }) => (
+                  <li key={path} className="break-words">
+                    {path}: {reason}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {task.formattingCheck.remained > 0 && (
+            <p>{m.formattingRemaining(task.formattingCheck.remained)}</p>
+          )}
+        </div>
+      )}
       {noTests && (
         <div
           role="note"
