@@ -714,6 +714,7 @@ function Overview({ data }: { data: TaskDetailData }) {
   return (
     <>
       {task.status === "cancelled" && task.cancelled && <CancelledCard data={data} />}
+      {task.stepBranchesLeft && <BranchesLeftCard data={data} />}
       {/* 1024px 未満では、右の列のプロパティが本文の後ろに回るので、PR と費用だけを内容の前に出す */}
       <section
         className="rounded-xl border border-border bg-card p-4 text-[13px] lg:hidden"
@@ -992,6 +993,33 @@ function Deliverables({ data }: { data: TaskDetailData }) {
       {/* 統合レビューの工程の無いタスクでも、結果があれば出す（PBI-31） */}
       {!has("integrate") && <IntegrationResult task={task} />}
     </>
+  );
+}
+
+/** 完了の片付けで消せなかった工程のブランチと理由（PBI-480）。 */
+function BranchesLeftCard({ data }: { data: TaskDetailData }) {
+  const { task } = data;
+  const { parts, labels } = useMessages();
+  if (!task.stepBranchesLeft) return null;
+  return (
+    <section
+      aria-labelledby="branches-left"
+      data-testid="branches-left"
+      className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5 text-sm"
+    >
+      <h2 id="branches-left" className="text-[15px] font-semibold">
+        {parts.control.branchesLeftTitle}
+      </h2>
+      <p className="text-muted-foreground">{parts.control.branchesLeftNote}</p>
+      <ul className="flex flex-col gap-1.5">
+        {task.stepBranchesLeft.map((b) => (
+          <li key={b.branch} className="flex flex-wrap items-baseline gap-2">
+            <span className="font-mono text-xs break-all">{b.branch}</span>
+            <span className="text-xs break-all text-warn">{labels.text(b.detail)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -1,7 +1,17 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   type ActivityEvent,
@@ -11508,7 +11518,8 @@ export class TaskService {
       if (!retirable()) return 0;
       // 実装の無い進め方（PBI-464）で残っている sacty のブランチは、作業領域を消す前に消す（失敗しても完了は止めない）
       try {
-        await this.settleStepBranches(taskId, "final", { prepare: false });
+        const settled = await this.settleStepBranches(taskId, "final", { prepare: false });
+        this.recordStepBranchesLeft(taskId, settled);
       } catch (error) {
         console.warn(
           `[daemon] 完了したタスクのブランチを消せませんでした：${renderMessage(redactText(errorText(error), []), "ja")}`,
@@ -11522,6 +11533,30 @@ export class TaskService {
       done.then(() => {}),
     );
     return done;
+  }
+
+  /**
+   * 完了の片付けで消せなかった工程のブランチと理由を、StepBranchesLeft に記録する（PBI-480）。やり直さず、人に任せる。
+   * git のメタデータが無くて判定できなかった結果（cleanup.stepBranchNoGitDir）は使わず、前の記録を残す。今回の結果が
+   * 記録済みの内容と同じなら足さない（起動時の片付けで再び走る）。消せて減った・空になったときも記録し、表示を直す。
+   */
+  private recordStepBranchesLeft(
+    taskId: string,
+    settled: readonly { branch: string; result: StepBranchResult; detail?: DaemonText }[],
+  ): void {
+    const left = settled
+      .filter((r) => r.result === "unresolved")
+      .map((r) => ({ branch: r.branch, detail: r.detail ?? "" }));
+    const undecided = left.some(
+      (r) => typeof r.detail !== "string" && r.detail.code === "cleanup.stepBranchNoGitDir",
+    );
+    if (undecided) return;
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+    if (JSON.stringify(left) === JSON.stringify(task.stepBranchesLeft ?? [])) return;
+    this.append(task, [
+      { actor: "sacty", event: { type: "StepBranchesLeft", payload: { branches: left } } },
+    ]);
   }
 
   /**
@@ -13437,12 +13472,19 @@ export class TaskService {
       if (synced.kind === "conflicts") mergeConflicts = synced.files;
     }
     if (step === "implement" && task.taskBranch && task.repository && !task.continuedPullRequest) {
+      const secrets: string[] = [];
       try {
         const gitDir = this.trustedGitDir(task);
         const paths = [...new Set(task.stepPullRequests.map((p) => p.path))];
-        const secrets: string[] = [];
         const auth = await this.gitAuth(task, task.repository.url, secrets);
-        const head = await this.deps.repos.fetchBranch(gitDir, task.taskBranch.branch, auth);
+        const signal = this.inflight.get(task.id)?.abort.signal;
+        const head = await this.deps.repos.fetchBranch(
+          gitDir,
+          task.taskBranch.branch,
+          auth,
+          signal,
+        );
+        if (signal?.aborted) throw new Error("文書の取得を中断しました。");
         mkdirSync(join(gitDir, "sacty-documents"), { recursive: true });
         writeFileSync(join(gitDir, "sacty-document-paths.json"), JSON.stringify(paths));
         for (const path of paths) {
@@ -13457,6 +13499,7 @@ export class TaskService {
           writeFileSync(backup, latest);
         }
       } catch (error) {
+        const manual = await this.manualPauseInfo(task.id);
         this.append(task, [
           {
             actor: "sacty",
@@ -13467,11 +13510,17 @@ export class TaskService {
                 step,
                 agentId: agent.id,
                 reason: "error",
-                message: redactText(errorText(error), []),
+                message: redactText(errorText(error), secrets),
               },
             },
           },
-          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: { reason: this.stopReason(task.id, "error"), ...manual },
+            },
+          },
         ]);
         return;
       }
@@ -15668,7 +15717,7 @@ export class TaskService {
    * 3. 比べて消す：それ以外（人のクローズ・作り直しで見つけた閉じていた PR・完了と中止で残っているブランチ）。削除の直前に
    *    先頭を取得し、最後の push（stepBranchCommits）と同じときだけ、その先頭を期待して消す
    * 比べた結果が違えば、消さずに StepBranchKept を記録する。リモートに無ければ消せたものとする。それ以外の取得の失敗・
-   * 最後の push の記録が無いときは、消さず、記録も足さない（unresolved。完了・中止で同じ規則でやり直す）。
+   * 最後の push の記録が無いときは、消さず unresolved とする。完了は StepBranchesLeft、中止は cleanup に記録する。
    * events は、PR の確認・作り直し・直しの間のマージのとき（only のブランチのうち、閉じた・マージした PR のものだけ）、
    * final は、完了・中止のとき（PR の無いブランチを含む、残っているすべて）。
    */
@@ -15717,9 +15766,7 @@ export class TaskService {
           : { ok: false as const, message: loaded.problem };
         if (!ready.ok) {
           throw new MessageError(
-            message("cleanup.stepBranchPrepareFailed", {
-              detail: renderMessage(ready.message, "ja"),
-            }),
+            message("cleanup.stepBranchPrepareFailed", { detail: ready.message }),
           );
         }
       }
@@ -15783,7 +15830,9 @@ export class TaskService {
       }
     }
     const pushed = this.mustGet(taskId).stepBranchCommits?.[branch];
-    if (!pushed) return unresolved(message("cleanup.stepBranchUnrecorded", { branch }));
+    if (!pushed) {
+      return unresolved(new MessageError(message("cleanup.stepBranchUnrecorded", { branch })));
+    }
     let head: string;
     try {
       head = await this.deps.repos.fetchBranch(
@@ -15797,24 +15846,39 @@ export class TaskService {
       if (remoteRefMissing(error)) return { result: "deleted" };
       return unresolved(error);
     }
-    if (head !== pushed) {
+    const keepChanged = (changed: string) => {
       const latest = this.mustGet(taskId);
       if (!latest.stepBranchesKept?.[branch]) {
         this.append(latest, [
           {
             actor: "sacty",
-            event: { type: "StepBranchKept", payload: { branch, head, pushed } },
+            event: { type: "StepBranchKept", payload: { branch, head: changed, pushed } },
           },
         ]);
       }
-      return { result: "kept" };
-    }
+      return { result: "kept" as const };
+    };
+    if (head !== pushed) return keepChanged(head);
     try {
       // 比べた先頭が今も同じときだけ消す（比べた後に人が push したら、断られて残る）
       await this.deps.repos.deleteBranch(gitDir, branch, authEnv, head);
       return { result: "deleted" };
     } catch (error) {
-      return unresolved(error);
+      if (!leaseRejected(error)) return unresolved(error);
+      // 断られた（比べた後に先頭が動いた）：取得し直して、先頭が違えば残し、無ければ消せたものとする。同じなら消し直さない
+      try {
+        const again = await this.deps.repos.fetchBranch(
+          gitDir,
+          branch,
+          authEnv,
+          AbortSignal.timeout(120_000),
+        );
+        if (again !== pushed) return keepChanged(again);
+        return unresolved(error);
+      } catch (fetchError) {
+        if (remoteRefMissing(fetchError)) return { result: "deleted" };
+        return unresolved(fetchError);
+      }
     }
   }
 
@@ -16534,12 +16598,34 @@ export class TaskService {
         repositoryNow.baseCommit;
       let keep: { commit: string; paths: string[] } | undefined;
       let designOverrides: Record<string, string> | undefined;
+      let documentSecretsLoaded = false;
       const documentFixes: NonNullable<Task["documentFixes"]> = [];
       const documentContents = new Map<string, string>();
       if (taskBranch) {
         // タスクブランチの最新に積む。文書は、作業領域で直していないものをタスクブランチから引き継ぐ。
-        parent = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+        parent = await this.deps.repos.fetchBranch(
+          gitDir,
+          taskBranch.branch,
+          authEnv,
+          this.inflight.get(task.id)?.abort.signal,
+        );
+        if (this.stopRequested(task.id)) return "stopped";
         const paths = [...new Set(task.stepPullRequests.map((p) => p.path))];
+        // 記録後、同期前に中断した公開を再開するときは、記録済みの先頭を先に作業領域へ反映する。
+        if (
+          task.pushedBranch?.branch === branch &&
+          task.pushedBranch.commit === parent &&
+          task.pullRequest?.commit !== parent
+        ) {
+          for (const path of paths) {
+            const backup = join(gitDir, "sacty-documents", Buffer.from(path).toString("hex"));
+            if (!existsSync(backup) || readWorkspaceDocument(dir, path) === undefined) continue;
+            const content = await this.deps.repos.readFile(gitDir, parent, path);
+            if (content === undefined) continue;
+            writeFileSync(join(dir, path), content);
+            writeFileSync(backup, content);
+          }
+        }
         if (paths.length > 0) keep = { commit: parent, paths };
         const reported = jsonCandidates(task.outputs.implement ?? "").flatMap((candidate) => {
           const fixes = candidate.value["sacty-document-fixes"];
@@ -16551,6 +16637,17 @@ export class TaskService {
           if (current === undefined || !existsSync(backup)) continue;
           const before = readFileSync(backup, "utf8");
           if (before === current) continue;
+          if (!documentSecretsLoaded) {
+            const project = this.deps.projects.get(task.projectId);
+            if (project?.context) {
+              const context = await this.contextSecretUsesOf([project], config);
+              if (context.problems.length)
+                throw new Error("文書を伏せるためのコンテキストを取得できませんでした。");
+              for (const use of context.uses)
+                usedSecrets.push(await this.deps.secrets.get(use.ref));
+            }
+            documentSecretsLoaded = true;
+          }
           const remote = await this.deps.repos.readFile(gitDir, parent, path);
           const edits = path === designFilePath(task) ? pendingDesignEdits(task) : [];
           const replay = edits.length ? applyEditsToFileChecked(current, edits) : undefined;
@@ -16567,6 +16664,14 @@ export class TaskService {
             [path]: alreadyApplied ? (remote ?? current) : current,
           };
           const item = reported.find((v) => v && typeof v === "object" && v.path === path);
+          for (const value of [
+            path,
+            before,
+            current,
+            typeof item?.reason === "string" ? item.reason : "",
+          ]) {
+            usedSecrets.push(...(value.match(/sacty-gw-[a-f0-9]{48}/g) ?? []));
+          }
           const reason = redactText(
             typeof item?.reason === "string" ? item.reason : "",
             usedSecrets,
@@ -16574,31 +16679,46 @@ export class TaskService {
           const oldText = redactText(before, usedSecrets);
           const newText = redactText(current, usedSecrets);
           const safePath = redactText(path, usedSecrets);
-          const oldLines = oldText.split("\n");
-          const newLines = newText.split("\n");
-          let first = 0;
-          while (
-            first < oldLines.length &&
-            first < newLines.length &&
-            oldLines[first] === newLines[first]
-          )
-            first++;
-          let oldEnd = oldLines.length;
-          let newEnd = newLines.length;
-          while (
-            oldEnd > first &&
-            newEnd > first &&
-            oldLines[oldEnd - 1] === newLines[newEnd - 1]
-          ) {
-            oldEnd--;
-            newEnd--;
+          const diffDir = mkdtempSync(join(tmpdir(), "document-diff-"));
+          let diff: string;
+          try {
+            const oldFile = join(diffDir, "before");
+            const newFile = join(diffDir, "after");
+            writeFileSync(oldFile, oldText);
+            writeFileSync(newFile, newText);
+            diff = await new Promise<string>((resolve, reject) => {
+              execFile(
+                "git",
+                [
+                  "diff",
+                  "--no-index",
+                  "--text",
+                  "--no-color",
+                  "--no-ext-diff",
+                  "--no-textconv",
+                  "--unified=1",
+                  "--",
+                  oldFile,
+                  newFile,
+                ],
+                { maxBuffer: 16 * 1024 * 1024 },
+                (error, stdout) => {
+                  if (error && error.code !== 1) reject(error);
+                  else resolve(stdout);
+                },
+              );
+            });
+          } finally {
+            rmSync(diffDir, { recursive: true, force: true });
           }
+          const hunks = diff.split("\n");
+          const firstHunk = hunks.findIndex((line) => line.startsWith("@@ "));
           const lines = [
             `--- ${safePath}`,
             `+++ ${safePath}`,
-            `@@ -${first + 1},${oldEnd - first} +${first + 1},${newEnd - first} @@`,
-            ...oldLines.slice(first, oldEnd).map((line) => `-${line}`),
-            ...newLines.slice(first, newEnd).map((line) => `+${line}`),
+            ...(firstHunk < 0
+              ? []
+              : hunks.slice(firstHunk).filter((line, i, all) => i < all.length - 1 || line !== "")),
           ];
           documentFixes.push({
             path: redactText(path, usedSecrets),
@@ -17033,6 +17153,7 @@ export class TaskService {
       this.reconcileReviewTaskSoon(submitted.id, commit);
       return "published";
     } catch (error) {
+      if (this.stopRequested(task.id)) return "stopped";
       // 実装が起点から何も変えていなかった（PBI-90）。まだ PR を作っていなければ、PR を作らずに実装の承認で人間に
       // 確かめてもらう（実装の説明に、変更が要らない理由がある。承認すれば変更なしで完了、差し戻せば実装をやり直す）。
       // タスクブランチ（PBI-57）は、ベースブランチへの PR を作らないまま残る。作った PR の作り直しで変更が無くなったときは、
@@ -19120,7 +19241,7 @@ export class TaskService {
               result: "failed",
               detail: message("cleanup.stepBranchFailed", {
                 branch: r.branch,
-                detail: r.detail ? renderMessage(r.detail, "ja") : "",
+                detail: r.detail ?? "",
               }),
             });
           }
@@ -24232,6 +24353,15 @@ function sactyBranches(task: Task): string[] {
 
 /** 工程のブランチの削除の結果（PBI-464）。 */
 type StepBranchResult = "deleted" | "kept" | "unresolved";
+
+/** 期待する先頭を付けた削除が、リースの不一致で断られたか（PBI-480）。 */
+function leaseRejected(error: unknown): boolean {
+  return (
+    error instanceof MessageError &&
+    typeof error.text !== "string" &&
+    error.text.code === "git.branchLeaseRejected"
+  );
+}
 
 /** git の取得が、リモートにそのブランチが無いために失敗したか。 */
 function remoteRefMissing(error: unknown): boolean {

@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-22（UTC）
 - タスク: PBI-478
-- PR: なし
+- PR: #565
 - ブランチ: main
 - 関係する ADR: [実装から承認済み文書を直す](../adr/20261122-0401-edit-approved-documents-in-implementation.md)
 
@@ -19,8 +19,9 @@
 ## 確かめたこと
 
 実装の公開、競合、再開、文書の配置、秘密情報の伏せを対象にテストを追加した。
-`npx vitest run apps/daemon/src/{prompts.test,prompts-design-weight.test,daemon-design-edit.test,repository.test}.ts tests/docs --testTimeout=60000` は、Git 2.48.1 を追加した環境で 496 件が通った。
-公開への取り込み、本文の表示、全文への伏せをそれぞれ外すと、対応するテストが失敗した。
+Git 2.48.1 を使った `npx vitest run --no-file-parallelism` は 344 ファイル、7,073 件が通り、1 件をスキップした。
+`npm run lint`、`npm run typecheck`、`npm run build` は通った。
+公開への取り込み、本文への表示、全文への伏せをそれぞれ外すと、対応するテストが失敗することを確かめた。
 
 ## レビューの指摘と対応
 
@@ -31,4 +32,4 @@
 
 ## 残したこと
 
-なし。
+実行後に秘密の値が変更・削除され、公開時に sacty が知らない値は伏せられない。

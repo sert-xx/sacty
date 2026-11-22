@@ -980,7 +980,7 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
   3. If the tip equals the commit sacty last pushed (or the tip of a merge not yet submitted, if any), do nothing.
   4. Otherwise, three-way merge the workspace contents and the tip, with the commit sacty last pushed (or the tip of a merge not yet submitted, if any) as the common ancestor (`mergeBase`; the same mechanism and limit as merging the base branch).
      The requirements and design files carried over from the task branch (`path` of `stepPullRequests`) are removed from the trees on both sides before merging (`exclude` of `mergeBase`).
-     Those paths in the workspace are not changed (the task branch's version is carried over when submitting).
+     Those paths in the workspace are not changed. On submission, sacty compares them with the saved copies, includes workspace fixes, and otherwise carries over the task branch versions.
   5. Record `PullRequestHeadMerged` (the branch, sacty's commit before the merge, the merged tip, and every conflicted file).
      `Task.headMerge` holds the last merge.
      While sacty has not yet stacked on that tip (`from` is the currently pushed commit, on the same branch), it is a merge not yet submitted (`pendingHeadMerge`).
@@ -1119,7 +1119,7 @@ A run that ended after implementing only part of its scope, and a run that chang
     The list holds the first 5 items of `remaining` (kept one by one) in the `ImplementationIncomplete` recorded in the same append; when more than 5 items were declared, it adds "and more, N in total".
     When the last `ImplementationIncomplete` in the activity does not match the string in the reason, or nothing remains, the reason is shown as is, without the list.
   - If continuing does not change the workspace content, the task pauses without waiting for the count. When only the declaration is missing, though, sacty adds one run that asks only for the declaration before pausing (next item).
-    The mark is the git tree ID of the workspace content; when it equals the one of the previous unfinished run, nothing changed (`workspaceFingerprint`, `treeId`). The diff text is not used, because a large diff is truncated. If the workspace cannot be read, or even one file in it cannot be read, sacty counts up to the limit without a mark (an ID that leaves out an unreadable file would miss changes to that file).
+    The mark combines the git tree ID of the workspace excluding the placed documents with their contents; when it equals the one of the previous unfinished run, nothing changed (`workspaceFingerprint`, `treeId`). The diff text is not used, because a large diff is truncated. If the workspace cannot be read, or even one file in it cannot be read, sacty counts up to the limit without a mark (an ID that leaves out an unreadable file would miss changes to that file).
   - A run that asks only for the declaration (PBI-416): when both of the following hold, sacty does not pause but adds one run that asks only for the declaration (`implementationCompleted`).
       - The run declared completion but the viewpoint-to-test mapping has missing viewpoints, or the completion declaration is missing or unreadable (a run that declared itself unfinished does not match; it pauses at once).
       - The workspace mark equals the one of the previous unfinished run (the condition that used to pause), and the declaration has not been asked for yet within this stall.
@@ -1346,6 +1346,7 @@ A task's workspace (`workspaces/<task-id>`), its set-aside git metadata (`worksp
 - When they are removed:
   - In a flow without an implementation (no task branch is created), if sacty's step branches remain, they are deleted with the deletion rule before the workspace is removed (a failure does not stop the completion; [PRs of steps in a flow without an implementation](approval.en.md#prs-of-steps-in-a-flow-without-an-implementation)).
     At completion, a branch a person added commits to and sacty kept (`StepBranchKept`) is not deleted.
+    A branch that could not be deleted is not retried; it is recorded with its reason in `StepBranchesLeft` and shown in the task details. If the startup cleanup runs again and the result changes, it is recorded again. When the git metadata is missing and nothing could be decided, nothing is recorded.
   - On the append that makes the task so.
   - When a run or the answer to a question ends (if a run is in progress, they are removed at its end).
   - When the daemon starts ([Daemon startup and shutdown](daemon-lifecycle.en.md#daemon-startup-order)).

@@ -146,27 +146,44 @@ PR のマージが、これまでどおりその工程の承認になる。
   - 比べた結果
     - 違うとき：消さずに `StepBranchKept`（`branch`・取得した `head`・sacty が最後に push した `pushed`）を記録する。
     - リモートにブランチが無い（取得が `couldn't find remote ref` で失敗する）とき：消せたものとする。GitHub がマージの後に消した場合を含む。
-    - それ以外の取得の失敗（通信など）・`stepBranchCommits` に記録が無いとき：消さず、記録も足さない。完了・中止のときに同じ規則でやり直し、そこでも取得できなければ残す（中止は `TaskCancelled` の cleanup に失敗として記録する）。
+    - それ以外の取得の失敗（通信など）・`stepBranchCommits` に記録が無いとき：消さず、完了・中止のときに同じ規則で再び試す。完了で消せなかったものは `StepBranchesLeft` に、中止では `TaskCancelled` の cleanup に失敗として記録する。
   - sacty が同じ PR を更新するとき、取得した PR のブランチの先頭が最後の push と違えば（人のコミットに積むとき）、`StepBranchKept` を記録する。
     人のコミットを含むので、後で先頭が同じでも消さない（マージされたときは 1 で消す）。
   - 削除は、比べた先頭が今も同じときだけにする（`deleteBranch` に期待する先頭を渡し、`--force-with-lease` で消す）。
     取得から削除までの間に人が push したら、消せずに残る。
+  - 期待する先頭を付けた削除が `stale info`（リースの不一致）で断られたとき：`deleteBranch` が `git.branchLeaseRejected` を投げる。
+    確かめずには消さない。リモートの先頭を取得し直して、次のように扱う（取得は 120 秒の時間切れ）。
+    - リモートに無い：消せたものとする。
+    - 最後の push と違う：消さずに `StepBranchKept`（取得し直した `head`）を記録する。
+    - 最後の push と同じ（人が戻した・誤検知）・取得に失敗：消し直さず、消せなかったものとする（理由は `git.branchLeaseRejected` か取得のエラー）。
+      ブランチはリモートに残る。中止は cleanup の失敗として記録し、完了は下の `StepBranchesLeft` に記録する。
   - 投影は `StepBranchKept` を記録したブランチを、その PR のマージを記録するまで、消すブランチ（`sactyBranches`）から除く（`keptStepBranches`）。PR が開き直されても外さない。
-  - 削除に失敗しても、タスクは止めない（警告だけにする）。完了・中止のときに、残りを同じ規則で消し直す（すでに無いブランチは消せたものとする）。
+  - 削除に失敗しても、タスクは止めない。完了・中止のときに、残りを同じ規則で消し直す（すでに無いブランチは消せたものとする）。
+  - 完了で消せなかったブランチ（通信の失敗・最後の push の記録が無い・リースの断りなど、消せなかったものすべて）は、やり直さず、`StepBranchesLeft`（`branches`：ブランチと理由 `detail` の一覧）に記録して、タスクの詳細に出す。`StepBranchKept` として残したブランチは含めない。
+    完了の片付け（`retireWorkspace`）は作業領域を用意し直さず（`prepare: false`）、直後に作業領域と git のメタデータを消すので、後でやり直す元が残らないためである。
+    記録した後は、人が GitHub で消す。
+    - 記録は、作業領域を消す前にする。記録に失敗しても、完了の片付けは続ける。
+    - 起動時の片付けは、作業領域の削除が一部失敗して git のメタデータが残ったときだけ、もう一度走る。今回の消せなかったすべてのブランチで記録し、記録済みの内容（ブランチと `detail`）と同じなら足さない。消せて減った・空になったときも記録し、空の `branches` は表示を消す。
+    - git のメタデータが無くて判定できなかった片付け（`cleanup.stepBranchNoGitDir`）は、記録に使わず、前の記録を残す。
+    - 投影の `stepBranchesLeft` は、最新の `StepBranchesLeft` で置き換える（空なら無くなる）。`stepBranches` に無いブランチの記録は、整合性のエラーにする。
+  - 片付けの知らせ（記録の無いブランチを残す・作業領域を用意できなかった など）は、コードと引数で持ち、利用者の画面の言語の文で出す（`cleanup.stepBranchUnrecorded`・`cleanup.stepBranchPrepareFailed`・`cleanup.stepBranchFailed`。理由は入れ子の文言）。
   - 引き継いだ PR は工程の PR を作らず、`sactyBranches` から除く決まりのままなので、人のブランチは消えない。
   - 中止の確認（`cancelTargets`）は、同じ分類で消すブランチを示す（[MCP サーバー](mcp-server.md#get_cancel_plan)）。
 - 派生の記録：マージした工程の PR の行に、文書のパス（`StepPullRequestPublished` の `path`）を付ける（[派生](tasks-and-steps.md#完了したタスクから続きのタスクを作る派生)）。
   続きのタスクをベースブランチから始めると、前のタスクの文書が作業領域にある。
 - PR の本文の関係する Issue は、参照だけで、ベースブランチへの PR でも閉じない（[PR の本文](#pr-の本文と-pr-テンプレート)）。
-- 互換性：新しいイベント `StepBranchKept` を足した。
+- 互換性：新しいイベント `StepBranchKept`・`StepBranchesLeft` を足した。
   直接の流れのタスクを 1 件でも記録した後は、前の版のデーモンは整合性のエラーで作業履歴を投影できず、起動しない（前の版は、タスクブランチの無い工程の PR の記録を受け付けない）。
   前の版へ戻せなくなることは許容する（前例：[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)の互換性）。
+  `StepBranchesLeft` は、直接の流れのタスクが完了し、完了の片付けか起動時の片付けで工程のブランチが消せなかった（か、前の記録から結果が変わった）ときに記録する（`StepBranchKept` より狭い）。
+  記録した後に前の版のデーモンへ戻すと、前の版は `StepBranchesLeft` を入力の検査で読めず、起動しない。
+  `cleanup.stepBranchPrepareFailed`・`cleanup.stepBranchFailed` の `detail` を入れ子の文言にしたので、前の版は形が合わず、コードだけを出す（起動は止まらない）。
 
-コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`publishStepPullRequest`・`settleStepBranches`・`settleStepBranch`・`readMergedDocument`・`earlierStepMergedAfter`・`sactyBranches`）、`apps/daemon/src/repository.ts`（`deleteBranch`・`fetchBranch`）、`packages/core/src/projection.ts`（`directStepFlow`・`keptStepBranches`・`StepBranchKept`）、`packages/core/src/events.ts`（`StepBranchKept`）
+コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`publishStepPullRequest`・`settleStepBranches`・`settleStepBranch`・`retireWorkspace`・`readMergedDocument`・`earlierStepMergedAfter`・`sactyBranches`）、`apps/daemon/src/repository.ts`（`deleteBranch`・`fetchBranch`）、`packages/core/src/projection.ts`（`directStepFlow`・`keptStepBranches`・`StepBranchKept`・`StepBranchesLeft`）、`packages/core/src/events.ts`（`StepBranchKept`・`StepBranchesLeft`）
 
 ## 実装に変更が無いとき
 
-実装の PR を作るとき、実装の作業領域が起点のコミットから何も変わっていなければ（`NothingToCommitError`）、PR を作らない。
+実装の PR を作るとき、配置した文書を除く作業領域が起点のコミットから変わらず、文書の直しも設計の直しも無ければ（`NothingToCommitError`）、PR を作らない。
 
 - まだ実装の PR を作っていなければ、`NoChangesFound`（この後に提出する実装の回）を記録し、実装を提出する（`StepSubmitted`）。
   PR が無いので、画面で承認できる。
@@ -528,6 +545,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 理由が無ければ「理由の記載なし」とする。
 パスと理由は伏せた後、理由を 500 文字に切る。
 控えと作業領域の全文をそれぞれ伏せてから差分を作り、40 行に切る。
+実行後に秘密の値が変更・削除され、公開時に sacty が知らない値は伏せられない。
 切った場合はその旨を示す。
 
 実装の PR の本文は、結論から短く読めるようにする。
@@ -1243,7 +1261,7 @@ AI のレビューの提案のうち、直しに入る前の選り分けで AI �
   - 同じ実行の2つ目は記録しない。実装の提出の記録より前に記録する。再開で同じ実行の記録があれば、検査をやり直さず、その記録を使う。
   - その後のレビュー・直し・設計のやり直しは、直した設計を基準にする。
 - PR での見え方：実装の PR のコミットで、設計のファイルを、まだコミットに入れていない `DesignEdited` の置き換えを記録順に当てて書く。
-  - 設計のファイルは、`keep` に残したまま、直した全文で置き換える（`overrides`）。タスクブランチの先頭のファイル（人が直した内容・テスト観点の節を含む）に当てる。観点の直しは、その観点の行の中だけで当てる。
+  - 設計のファイルは、`keep` に残したまま、直した全文で置き換える（`overrides`）。作業領域で設計のファイルを直していればその内容に、そうでなければタスクブランチの先頭のファイルに当てる。観点の直しは、その観点の行の中だけで当てる。
   - `before` は、承認済みの設計と、置き換えを当てた後のファイルの両方で探す。ファイルが無いタスクは、承認済みの設計と PR の本文だけを直す。
   - PR の本文の「設計の直し」に、直しごとの前・後・指摘を載せる。反映しなかった直しは、理由と一緒に載せる。
   - 本文の `remarks` は今回の指摘の ID、`viewpoint` は承認済みの観点の ID、`field` は3つの名前のどれかに一致する値だけをそのまま載せる。一致しない値は「（不正な値）」にする。

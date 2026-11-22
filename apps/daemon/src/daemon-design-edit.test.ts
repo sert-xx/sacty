@@ -7,12 +7,13 @@ import { SqliteActivityStore } from "./activity.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { ConfigResult } from "./config.js";
 import type { PullRequestFeedback } from "./github.js";
-import type { MemoryProjectStore } from "./projects.js";
+import { MemoryProjectStore } from "./projects.js";
 import { buildPrompt, buildReworkPrompt } from "./prompts.js";
 import type { ServiceDeps, TaskService } from "./service.js";
 import type { MemorySettingsStore } from "./settings.js";
 import {
   dbPath,
+  FakeContexts,
   type FakeExecutor,
   FakeGitHub,
   FakePulls,
@@ -90,6 +91,7 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       pulls?: FakePulls;
       repos?: FakeRepos;
       projects?: MemoryProjectStore;
+      contexts?: ServiceDeps["contexts"];
       config?: () => ConfigResult;
       gateway?: ServiceDeps["gateway"];
       db?: string;
@@ -135,6 +137,7 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       pulls,
       repos,
       ...(options.projects ? { projects: options.projects } : {}),
+      ...(options.contexts ? { contexts: options.contexts } : {}),
       ...(options.config ? { config: options.config } : {}),
       ...(options.gateway ? { gateway: options.gateway } : {}),
       planner:
@@ -261,13 +264,16 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     const made = await toRework([implement(), rework("implement"), implement()]);
     const { service, id, repos, executor, activity, pulls } = made;
     const path = docOf(id, "requirements");
+    const head = repos.remote[taskBranchOf(id)] ?? "";
+    repos.files[head] = { ...repos.files[head], [path]: "# 要求要件\n\n[この指摘](URL)\n" };
     const run = executor.run.bind(executor);
     let changed = false;
+    let codeChanged = false;
     executor.run = async (input) => {
       if (!changed && input.workspaceDir.endsWith("/repo")) {
         const file = join(input.workspaceDir, path);
         const before = readFileSync(file, "utf8");
-        writeFileSync(file, `${before}\n修正したリンク\n`);
+        writeFileSync(file, before.replace("[この指摘](URL)", "`[この指摘](URL)`"));
         executor.respond = () =>
           out(
             [
@@ -277,6 +283,12 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
             ].join("\n\n"),
           );
         changed = true;
+      } else if (changed && !codeChanged && input.workspaceDir.endsWith("/repo")) {
+        writeFileSync(
+          join(input.workspaceDir, "second-change.js"),
+          "export const changed = true;\n",
+        );
+        codeChanged = true;
       }
       return run(input);
     };
@@ -284,19 +296,29 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     executor.respond = undefined;
     await drain(service);
     expect(changed).toBe(true);
-    expect(repos.published.at(-1)?.overrides?.[path]).toContain("修正したリンク");
+    expect(repos.files[repos.remote[taskBranchOf(id)] ?? ""]?.[path]).toContain(
+      "`[この指摘](URL)`",
+    );
     const body = bodiesOf(service, id).at(-1) ?? "";
     expect(body).toContain(path);
     expect(body).toContain("リンクの誤りを修正");
-    expect(body).toContain("+修正したリンク");
+    expect(body).toContain("+`[この指摘](URL)`");
+    expect(body).toContain("  ```diff\n  --- ");
+    expect(body).toContain("  +`[この指摘](URL)`\n  ```");
     pulls.feedbackBy[9] = [item("comment:31", { body: "コードを直してください" })];
+    const previousPushes = repos.published.length;
+    const previousCalls = pulls.calls.length;
     await service.checkPullRequests();
     await service.runNext(id);
     await drain(service);
-    const laterBody = bodiesOf(service, id).at(-1) ?? "";
+    expect(codeChanged).toBe(true);
+    expect(repos.published.length).toBeGreaterThan(previousPushes);
+    expect(repos.published.at(-1)?.overrides?.[path]).toBeUndefined();
+    expect(pulls.calls.length).toBeGreaterThan(previousCalls);
+    const laterBody = pulls.calls.at(-1)?.body ?? "";
     expect(laterBody).toContain(path);
     expect(laterBody).toContain("リンクの誤りを修正");
-    expect(laterBody).toContain("+修正したリンク");
+    expect(laterBody).toContain("+`[この指摘](URL)`");
     activity.close();
   });
 
@@ -320,6 +342,94 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     await service.runNext(id);
     expect(seen).toEqual(expected);
     expect(seen).toHaveLength(2);
+    activity.close();
+  });
+
+  it("離れた文書の修正は間の変更していない行で埋めずに差分に残す", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, repos, executor, activity } = made;
+    const path = docOf(id, "requirements");
+    const head = repos.remote[taskBranchOf(id)] ?? "";
+    const lines = Array.from({ length: 100 }, (_, i) => `行 ${i}`);
+    repos.files[head] = { ...repos.files[head], [path]: `${lines.join("\n")}\n` };
+    const run = executor.run.bind(executor);
+    executor.run = async (input) => {
+      if (input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        writeFileSync(
+          file,
+          readFileSync(file, "utf8")
+            .replace("行 1\n", "最初の修正\n")
+            .replace("行 98\n", "最後の修正\n"),
+        );
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    await drain(service);
+    const diff = taskOf(service, id).documentFixes?.at(-1)?.diff ?? "";
+    expect(diff).toContain("+最初の修正");
+    expect(diff).toContain("+最後の修正");
+    expect(diff).not.toContain("行 50");
+    activity.close();
+  });
+
+  it("文書の配置前の取得は一時停止で中断され、再開後に実装できる", async () => {
+    const made = await toRework([implement(), implement()]);
+    const { service, id, repos, activity } = made;
+    let observed = false;
+    let pause: Promise<unknown> | undefined;
+    repos.onFetchBranch = async (signal) => {
+      if (!signal || observed) return;
+      observed = true;
+      pause = service.pause(id);
+      if (signal.aborted) throw new Error("aborted");
+    };
+    await service.runNext(id);
+    await pause;
+    expect(observed).toBe(true);
+    expect(taskOf(service, id).status).toBe("paused");
+    repos.onFetchBranch = undefined;
+    service.resume(id, {});
+    await drain(service);
+    expect(taskOf(service, id).pullRequest).toBeDefined();
+    activity.close();
+  });
+
+  it("文書の配置前の取得は中止でも中断される", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, repos, activity } = made;
+    let cancellation: Promise<unknown> | undefined;
+    repos.onFetchBranch = async (signal) => {
+      if (!signal || cancellation) return;
+      cancellation = service.cancel(id);
+      if (signal.aborted) throw new Error("aborted");
+    };
+    await service.runNext(id);
+    await cancellation;
+    expect(cancellation).toBeDefined();
+    expect(taskOf(service, id).status).toBe("cancelled");
+    activity.close();
+  });
+
+  it("公開時のタスクブランチ取得も一時停止で中断し、再開できる", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, repos, activity } = made;
+    await service.runNext(id);
+    let pause: Promise<unknown> | undefined;
+    repos.onFetchBranch = async (signal) => {
+      if (!signal || pause) return;
+      pause = service.pause(id);
+      if (signal.aborted) throw new Error("aborted");
+    };
+    await drain(service);
+    await pause;
+    expect(pause).toBeDefined();
+    expect(taskOf(service, id).status).toBe("paused");
+    repos.onFetchBranch = undefined;
+    service.resume(id, {});
+    await drain(service);
+    expect(taskOf(service, id).status).not.toBe("paused");
     activity.close();
   });
 
@@ -408,6 +518,8 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     const made = await toRework([implement()]);
     const { service, id, repos, executor, activity } = made;
     const paths = [docOf(id, "requirements"), designPath(id)];
+    const originalHead = repos.remote[taskBranchOf(id)] ?? "";
+    const original = await Promise.all(paths.map((path) => repos.readFile("", originalHead, path)));
     const run = executor.run.bind(executor);
     let removed = false;
     executor.run = async (input) => {
@@ -429,7 +541,8 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     await service.runNext(id);
     await drain(service);
     const commit = repos.remote[taskBranchOf(id)] ?? "";
-    for (const path of paths) expect(repos.files[commit]?.[path]).toBeTruthy();
+    for (const [index, path] of paths.entries())
+      expect(repos.files[commit]?.[path]).toBe(original[index]);
     expect(bodiesOf(service, id).at(-1)).not.toContain("承認済みの文書の直し");
     activity.close();
   });
@@ -464,6 +577,7 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
   it("文書の全文を伏せてから差分を作り、理由と差分を切り詰める", async () => {
     const secret = "private-line-one\nprivate-line-two\nprivate-line-three";
     const reasonSecret = "reason-secret-value-long";
+    const gatewayToken = `sacty-gw-${"a".repeat(48)}`;
     const made = await toRework([implement()], {
       start: {
         secrets: { "claude-oauth-token": secret },
@@ -478,7 +592,10 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
       if (!changed && input.workspaceDir.endsWith("/repo")) {
         const file = join(input.workspaceDir, path);
         const lines = Array.from({ length: 35 }, (_, i) => `line-${i}`).join("\n");
-        writeFileSync(file, `${readFileSync(file, "utf8")}\n${lines}\n${secret}\n${lines}\n`);
+        writeFileSync(
+          file,
+          `${readFileSync(file, "utf8")}\n${gatewayToken}\n${lines}\n${secret}\n${lines}\n`,
+        );
         executor.respond = () =>
           out(
             [
@@ -506,8 +623,59 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
     expect(fix?.diffTruncated).toBe(true);
     expect(fix?.diff.split("\n")).toHaveLength(40);
     const visible = JSON.stringify([taskOf(service, id).documentFixes, bodiesOf(service, id)]);
+    expect(visible).not.toContain(gatewayToken);
     for (const part of [...secret.split("\n"), reasonSecret, "src/index.ts"])
       expect(visible).not.toContain(part);
+    activity.close();
+  });
+
+  it("プロジェクトのコンテキストの MCP と PF の認証値を文書の記録から伏せる", async () => {
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "A",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const contexts = new FakeContexts({
+      "https://example.com/context.git": {
+        "mcp.yaml":
+          "servers:\n  wiki:\n    url: https://example.com/mcp\n    headers:\n      Authorization: { secret: mcp-key, prefix: 'Bearer ' }\n",
+        "platforms.yaml":
+          "platforms:\n  docs:\n    upstream: https://example.com\n    auth:\n      secret: pf-key\n    allow: [GET /api/**]\n",
+      },
+    });
+    const secrets = {
+      "claude-oauth-token": "oauth-secret",
+      "mcp-key": "mcp-private-value",
+      "pf-key": "pf-private-value",
+    };
+    const made = await toRework([implement()], { start: { projects, contexts, secrets } });
+    const { service, id, executor, activity } = made;
+    const path = docOf(id, "requirements");
+    const run = executor.run.bind(executor);
+    executor.run = async (input) => {
+      if (input.workspaceDir.endsWith("/repo")) {
+        projects.put("default", {
+          name: "A",
+          targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+          githubAccounts: { "github.com": "me" },
+          context: { repo: "https://example.com/context.git" },
+        });
+        const file = join(input.workspaceDir, path);
+        writeFileSync(
+          file,
+          `${readFileSync(file, "utf8")}\n${secrets["mcp-key"]}\n${secrets["pf-key"]}\n`,
+        );
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    await drain(service);
+    const visible = JSON.stringify([taskOf(service, id).documentFixes, bodiesOf(service, id)]);
+    expect(taskOf(service, id).documentFixes?.length).toBeGreaterThan(0);
+    expect(visible).not.toContain(secrets["mcp-key"]);
+    expect(visible).not.toContain(secrets["pf-key"]);
+    expect(visible).toContain("[REDACTED]");
     activity.close();
   });
 
@@ -698,6 +866,60 @@ describe("実装の PR の局所の設計の直しと、設計に戻した知ら
         }),
       ]),
     );
+    expect(bodiesOf(service, id).at(-1)).toContain("書式を修正");
+    activity.close();
+  });
+
+  it("push の記録後に同期が失敗しても、再開して設計の直しを保持する", async () => {
+    const made = await toRework([implement()]);
+    const { service, id, repos, executor, activity } = made;
+    const path = designPath(id);
+    const run = executor.run.bind(executor);
+    executor.run = async (input) => {
+      if (input.workspaceDir.endsWith("/repo")) {
+        const file = join(input.workspaceDir, path);
+        writeFileSync(file, `${readFileSync(file, "utf8")}\n書式修正\n`);
+        executor.respond = () =>
+          out(
+            [
+              "# 変更",
+              block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["pay.test.ts › test"] }] }),
+              block({ "sacty-document-fixes": [{ path, reason: "書式を修正" }] }),
+              block({
+                "sacty-design-edit": {
+                  edits: [edit(["implement-1-1"], "「失敗しました」", "「決済に失敗しました」")],
+                },
+              }),
+            ].join("\n\n"),
+          );
+      }
+      return run(input);
+    };
+    await service.runNext(id);
+    executor.respond = undefined;
+    const read = repos.readFile.bind(repos);
+    let failed = false;
+    repos.readFile = async (gitDir, commit, file) => {
+      if (
+        !failed &&
+        taskOf(service, id).pushedBranch?.commit === commit &&
+        file === path &&
+        taskOf(service, id).documentFixes?.length
+      ) {
+        failed = true;
+        throw new Error("sync failed");
+      }
+      return read(gitDir, commit, file);
+    };
+    await drain(service);
+    expect(failed).toBe(true);
+    expect(taskOf(service, id).status).toBe("paused");
+    service.resume(id, {});
+    await drain(service);
+    expect(taskOf(service, id).status).not.toBe("paused");
+    const content = repos.files[repos.remote[taskBranchOf(id)] ?? ""]?.[path] ?? "";
+    expect(content.match(/書式修正/g)).toHaveLength(1);
+    expect(content.match(/「決済に失敗しました」/g)).toHaveLength(1);
     expect(bodiesOf(service, id).at(-1)).toContain("書式を修正");
     activity.close();
   });

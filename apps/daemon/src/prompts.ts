@@ -6475,6 +6475,9 @@ export function buildPullRequestBodyText(
       ...closesLines(task),
       ...(override ? [override] : []),
       ...(human ? [human] : []),
+      ...(documentFixBodyLines(task, "##").length
+        ? [documentFixBodyLines(task, "##").join("\n")]
+        : []),
     ],
   };
 }
@@ -6522,6 +6525,9 @@ export function buildPullRequestBodyParts(
     tests: resultTableLines(task).join("\n"),
     ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
     record: record.join("\n"),
+    ...(documentFixBodyLines(task, "bold").length
+      ? { keep: [documentFixBodyLines(task, "bold").join("\n")] }
+      : {}),
     footer: [
       ...overrideBodyLines(task),
       ...humanCheckBodyLines(task),
@@ -6539,14 +6545,22 @@ function documentFixBodyLines(task: Task, style: "##" | "bold"): string[] {
   if (fixes.length === 0) return [];
   return [
     style === "##" ? "## 承認済みの文書の直し" : "**承認済みの文書の直し**",
-    ...fixes.flatMap((fix) => [
-      "",
-      `- ${fix.path}`,
-      `  - 理由：${fix.reason || "理由の記載なし"}${fix.reasonTruncated ? "（省略あり）" : ""}`,
-      ...(fix.diffTruncated ? ["  - 差分は一部を省略しています"] : []),
-      "",
-      ...fix.diff.split("\n").map((line) => `    ${line}`),
-    ]),
+    ...fixes.flatMap((fix) => {
+      let fenceLength = 3;
+      for (const match of fix.diff.matchAll(/`+/g))
+        fenceLength = Math.max(fenceLength, match[0].length + 1);
+      const fence = "`".repeat(fenceLength);
+      return [
+        "",
+        `- ${fix.path}`,
+        `  - 理由：${fix.reason || "理由の記載なし"}${fix.reasonTruncated ? "（省略あり）" : ""}`,
+        ...(fix.diffTruncated ? ["  - 差分は一部を省略しています"] : []),
+        "",
+        `  ${fence}diff`,
+        ...fix.diff.split("\n").map((line) => `  ${line}`),
+        `  ${fence}`,
+      ];
+    }),
   ];
 }
 

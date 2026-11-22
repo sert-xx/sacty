@@ -678,6 +678,8 @@ The Requirements and Design PRs go from the step branch straight to the base bra
   At completion and at cancel, the sacty branches that remain are deleted with the same rule.
 - The branch of a step PR that a person added commits to is kept, not deleted, and recorded in the activity log (so the person's commits are not lost).
   When that PR is merged, the branch is deleted. Delete it on GitHub if you do not need it.
+- A branch that could not be deleted at completion (for example, because of a network failure) is not retried; it is shown in the task details with the reason.
+  Delete it on GitHub if you do not need it.
 - Among tasks created before the update, one that has neither a task branch nor a Requirements or Design PR yet opens the Requirements PR, started after the update, against the base branch.
   A task that already has a task branch goes on with PRs to the task branch (it does not switch midway).
 

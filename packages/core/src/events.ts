@@ -3291,6 +3291,18 @@ const StepBranchKept = z.object({
 });
 
 /**
+ * 実装の無いタスクが完了したとき、完了の片付けで消せなかった工程のブランチと理由（PBI-480）。完了の片付けと、作業領域の
+ * 削除が一部失敗した後の起動時の片付けが、今回消せなかったすべてのブランチで記録する（最新の記録が前の記録を置き換える。
+ * 空は、すべて消せたこと）。
+ */
+const StepBranchesLeft = z.object({
+  type: z.literal("StepBranchesLeft"),
+  payload: z.object({
+    branches: z.array(z.object({ branch: z.string().min(1), detail: DaemonText })),
+  }),
+});
+
+/**
  * 要求要件・設計の成果のファイルを、タスクブランチへの PR にした（作った・更新した。PBI-57）。続けてその工程の承認待ち
  * （StepSubmitted）にする。base は、工程のブランチを作ったときのタスクブランチの先頭（同じ PR を更新するときは変えない）。
  * supersedes は、作り直したので sacty が閉じた、その工程の前の PR（前の工程に戻した後など）。
@@ -4650,6 +4662,7 @@ export const EventInput = z.discriminatedUnion("type", [
   TaskBranchCreated,
   StepBranchPushed,
   StepBranchKept,
+  StepBranchesLeft,
   StepPullRequestPublished,
   PullRequestMerged,
   PullRequestClosed,

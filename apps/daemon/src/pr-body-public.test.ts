@@ -137,6 +137,24 @@ describe("決まった形の本文の結論（PBI-471）", () => {
 });
 
 describe("footer の承認の案内と目印（PBI-471）", () => {
+  it("長い説明の後にある文書の修正記録を、通常の本文とテンプレートの本文に残す", () => {
+    const t = task({
+      outputs: { implement: `説明。\n\n${"あ".repeat(70_000)}` },
+      documentFixes: [
+        { path: "docs/requirements.md", reason: "リンクを修正", diff: "@@ -1 +1 @@\n-old\n+new" },
+      ],
+    });
+    const plain = buildPullRequestBodyText(t);
+    const filled = fillTemplate(TEMPLATE, buildPullRequestBodyParts(t));
+    for (const text of [plain, filled]) {
+      const { body, truncated } = limitBody(text.main, text.footer, PR_BODY_MAX, text.keep);
+      expect(truncated).toBe(true);
+      expect(body).toContain("docs/requirements.md");
+      expect(body).toContain("リンクを修正");
+      expect(body).toContain("+new");
+      expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+    }
+  });
   it("テンプレートに沿わせても、承認の2文と目印が footer に残り、main を上限で切っても残る", () => {
     const t = task({ outputs: { implement: `説明。\n\n${"あ".repeat(70_000)}` } });
     const parts = buildPullRequestBodyParts(t, {

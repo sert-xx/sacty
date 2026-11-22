@@ -10132,4 +10132,38 @@ describe("実装の無い進め方の工程の PR の記録（タスクブラン
       ]),
     ).toThrow(ActivityIntegrityError);
   });
+
+  it("TV-9: 完了で消せなかった工程のブランチ（StepBranchesLeft）は、最新の記録で置き換わり、空なら無くなり、工程のブランチに無いブランチは拒む", () => {
+    seq = 0;
+    const left = (branches: { branch: string; detail: string }[]) =>
+      ev("t", { type: "StepBranchesLeft", payload: { branches } });
+    const events = [...base("t", ["requirements", "design"]), pushed("t"), published("t")];
+    const first = project([
+      ...events,
+      left([{ branch: "sacty/t-requirements-1", detail: "network down" }]),
+    ]).get("t");
+    expect(first?.stepBranchesLeft).toEqual([
+      { branch: "sacty/t-requirements-1", detail: "network down" },
+    ]);
+    // 最新の記録が、前の記録を置き換える（足し合わせない）
+    const replaced = project([
+      ...events,
+      left([{ branch: "sacty/t-requirements-1", detail: "network down" }]),
+      left([{ branch: "sacty/t-requirements-1", detail: "disk full" }]),
+    ]).get("t");
+    expect(replaced?.stepBranchesLeft).toEqual([
+      { branch: "sacty/t-requirements-1", detail: "disk full" },
+    ]);
+    // 空の記録は、欄を消す
+    const cleared = project([
+      ...events,
+      left([{ branch: "sacty/t-requirements-1", detail: "network down" }]),
+      left([]),
+    ]).get("t");
+    expect(cleared?.stepBranchesLeft).toBeUndefined();
+    // 工程のブランチに無いブランチは、整合性のエラー
+    expect(() => project([...events, left([{ branch: "x", detail: "y" }])])).toThrow(
+      ActivityIntegrityError,
+    );
+  });
 });

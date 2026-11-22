@@ -535,6 +535,10 @@ const ja = {
       `${step}のファイルをブランチにプッシュ（${branch}・${commit}）`,
     StepBranchKept: (branch: string, head: string, pushed: string) =>
       `人がコミットを足したので、ブランチを消さずに残す（${branch}・先頭 ${head}・sacty の最後の push ${pushed}）`,
+    StepBranchesLeft: (count: number) =>
+      count > 0
+        ? `完了の片付けで消せなかった工程のブランチを記録（${count} 本）`
+        : "完了の片付けで消せなかった工程のブランチは、なくなった",
     ReviewTaskCreated: (step: string, number: number) =>
       `${step}の PR #${number} をレビューする子タスクを作成`,
     PullRequestLabeled: (number: number, label: string, created: boolean) =>
@@ -1370,6 +1374,10 @@ const en: LabelMessages = {
       `Pushed the ${step} file to a branch (${branch} · ${commit})`,
     StepBranchKept: (branch, head, pushed) =>
       `Kept the branch because a person added commits (${branch} · head ${head} · sacty's last push ${pushed})`,
+    StepBranchesLeft: (count) =>
+      count > 0
+        ? `Recorded the step branches the completion cleanup could not delete (${count})`
+        : "No step branches remain that the completion cleanup could not delete",
     ReviewTaskCreated: (step, number) => `Created a child task to review the ${step} PR #${number}`,
     PullRequestLabeled: (number, label, created) =>
       `Added the review label "${label}" to PR #${number}${created ? " (created the label)" : ""}`,

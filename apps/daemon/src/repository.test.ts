@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
+import { MessageError } from "./errors.js";
 import { stopFetchProcessesSync } from "./fetch-processes.js";
 import {
   classifyPushFailure,
@@ -2304,7 +2305,13 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       })
     ).commit;
     git(origin, "update-ref", `refs/heads/${branch}`, moved);
-    await expect(workspace.deleteBranch(gitDir, branch, undefined, head)).rejects.toThrow();
+    const rejected = await workspace.deleteBranch(gitDir, branch, undefined, head).catch((e) => e);
+    // リースの断りは、git の文ではなく、コードと引数の文言で見分けられる（PBI-480）
+    expect(rejected).toBeInstanceOf(MessageError);
+    expect((rejected as MessageError).text).toEqual({
+      code: "git.branchLeaseRejected",
+      params: { branch },
+    });
     expect(git(origin, "branch", "--list", branch)).toContain(branch);
     // 先頭が同じなら消せる
     // 削除の push も、応答が止まっても待ち続けないよう時間切れを付ける
@@ -2316,6 +2323,29 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       timer.mockRestore();
     }
     expect(git(origin, "branch", "--list", branch)).toBe("");
+  });
+
+  it("PBI-480 TV-14: 期待する先頭を渡した削除が、すでに無いブランチでもリースで断られたら、同じコードで見分け、期待する先頭なしなら変わらず成功する", async () => {
+    const origin = makeOrigin();
+    git(origin, "config", "receive.denyCurrentBranch", "ignore");
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    const branch = "sacty/task-1234abcd-design-1";
+    git(origin, "branch", branch, baseCommit);
+    git(origin, "branch", "-D", branch);
+    expect(git(origin, "branch", "--list", branch)).toBe("");
+    const rejected = await workspace
+      .deleteBranch(gitDir, branch, undefined, baseCommit)
+      .catch((e) => e);
+    expect(rejected).toBeInstanceOf(MessageError);
+    expect((rejected as MessageError).text).toEqual({
+      code: "git.branchLeaseRejected",
+      params: { branch },
+    });
+    // 期待する先頭なしで、すでに無いブランチを消すのは、これまでどおり成功する
+    await expect(workspace.deleteBranch(gitDir, branch)).resolves.toBeUndefined();
   });
 });
 
