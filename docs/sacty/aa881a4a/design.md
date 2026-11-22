@@ -11,13 +11,13 @@
 - 対象
   - スキル `docker-services` の生成と置き方（Claude Code・Codex）。置くのは工程の実行（`StepKey` のすべて。PR のレビューを含む）
   - 工程の指示の 1 行。`servicePromptLines` の案内はスキルに移す
-  - 許可している `network_mode`（`bridge`・`service:<名前>`）のサービスにも、担当のコンテナから届く接続先を用意し、その接続先を案内する
   - 既定の review スキルの `verification-run.md` に 1 行
   - 仕様書・ユーザー文書（日英）、ADR、作業履歴
 - 対象外
   - PR のレビューの工程でサービスを起動すること（PBI-489）
   - オーケストレーターがサービスを選ぶ判断（PBI-487・PBI-488）
   - 情報収集・オーケストレーター・作業（operation の MCP の実行）・書き出し・デプロイの監視の実行に、スキルを置くこと（Q-2）
+  - 接続先に届くことの保証（`network_mode`・待受のアドレス・転送の組み合わせごとに接続先を確保すること。`services.ts` の起動の書き換えと、`network_mode: bridge` を外す変更を含む）。スキルは今の案内の接続先を候補として書き、届かなければ報告させる
 
 ## 確認したいこと
 
@@ -32,9 +32,6 @@
   - Q-3：起動したサービスの接続先を、指示から外してスキルだけに書くか。
     推奨は外す（指示は「先にスキルを読む」の 1 行だけにし、中身が 2 か所で食い違わないようにする）。
     懸念：担当がスキルを読まないと、起動したサービスの接続先を知らずに進み、今回と同じくテストを飛ばす。
-  - Q-4：`network_mode: bridge` のサービスを、`network_mode` を外して sacty のネットワーク（と compose の `default`）につないで起動してよいか。
-    推奨はつなぐ（今は担当のコンテナから届かず、起動しても使えない。拒否にすると、今は起動できている compose が失敗に変わる）。
-    懸念：Docker の既定の bridge にいる前提の compose（ほかのコンテナに既定の bridge の IP でつなぐなど）は、その通信が切れる。
 - 確認しないと決めたこと
   - 渡す工程：工程の実行の経路（`service.ts` の工程の実行）のすべての `StepKey` に置く。AC1 が「サービスを使える工程に限らず、PR のレビューを含む」と決めている。
   - review スキルとの合わせ方：`verification-run.md` に「DB などのサービスが要る検証は `docker-services` に従い、確かめられなかったことを本文に書く」を足す。AC3 がレビューの本文に書くことを求めている。
@@ -45,20 +42,18 @@
 - スキルの名前は `docker-services`。
 - 接続先が届かないとき（ぶつかった番号・使用中で転送できなかった番号・TCP 以外・localhost をソケットとして扱うクライアント）の合わせ方は、その実行の環境変数か、コミットしない設定で変える。リポジトリの設定の既定値はコミットで変えない。
 - スキルの本文は、sacty・特定の言語・特定の DB に寄せた例を書かない（AC5 は既定のコンテキストの条件だが、同じく全リポジトリに渡るため）。製品名は description の一覧（MySQL・PostgreSQL・Redis など）だけ。
-- `network_mode: service:<名前>` のサービスの接続先は、ネットワークの持ち主（`service:` を辿った先のサービス）の名前とする。localhost の転送も同じ名前に向ける。
 
 ## 構成
 
 | 所 | 変更 |
 | --- | --- |
 | `apps/daemon/src/prompts.ts` | `serviceSkill(services)` を足す（SKILL.md の全文を返す）。`servicePromptLines` を、すべての工程に出す 1 行（`serviceSkillPromptLines`）に替える |
-| `apps/daemon/src/services.ts` | `sanitizeCompose`：`network_mode: bridge` を外し、`network_mode` の無いサービスと同じく sacty のネットワークにつなぐ。`StartedService` に接続のホスト名 `host`（`service:` を辿った持ち主の名前。ふつうはサービス名）を足す。`localForwards` は転送先に `host` を使う |
 | `apps/daemon/src/context.ts` | `planContext` に sacty が作るスキルを受ける引数を足す。層のスキルの後に置き、層の同じ名前のスキルは写さずに `context.reservedSkill` で警告する。Codex の AGENTS.md のスキルの一覧にも出す |
 | `apps/daemon/src/service.ts` | 工程の実行の `runContext` で、起動していない中身のスキルを置く。サービスを起動したら、実行の前に、置いたディレクトリの SKILL.md を `serviceSkill(started.services)` で書き直す |
 | `packages/core/src/messages.ts` | `context.reservedSkill`（日英）を足す |
 | `default-context/skills/review/review-dispatch/references/verification-run.md` | サービスが要る検証の扱いの 1 行 |
-| `docs/spec/services.md`・`context.md`（日英） | スキルの中身・置く実行・予約の名前。`servicePromptLines` の記述を直す。`network_mode: bridge` の扱いと、`service:` のサービスの接続先 |
-| `docs/user/compose.md`・`context.md`（日英） | 担当にスキルで案内すること。`docker-services` の名前の層のスキルは使わないこと。`network_mode: bridge` は sacty のネットワークにつなぎ替えること |
+| `docs/spec/services.md`・`context.md`（日英） | スキルの中身・置く実行・予約の名前。`servicePromptLines` の記述を直す |
+| `docs/user/compose.md`・`context.md`（日英） | 担当にスキルで案内すること。`docker-services` の名前の層のスキルは使わないこと |
 | `docs/adr/`・`docs/worklog/` | ADR（`20261122-HHMM-docker-services-skill.md`）と作業履歴（`20261122-pbi-486-docker-services-skill.md`） |
 
 ## スキルの中身
@@ -66,11 +61,10 @@
 - description：docker・docker compose を使うとき、DB（MySQL・PostgreSQL・Redis など）・キャッシュ・モックの API を起動する・つなぐ必要があるときに、リポジトリのスキル・手順より先に読む。
 - 共通：この環境では docker・docker compose のコマンドは使えない。サービスの起動・接続は、リポジトリのスキル・手順よりこのスキルに従う。
 - 起動した実行
-  - サービスごとの接続先。`host`:ポート（ふつうはサービス名。`service:` のサービスは持ち主の名前）を、必ず届く接続先として書く。localhost の番号は「転送の予定」として書き、コンテナの起動の時点でその番号がすでに使われていると転送されないことを添える。転送しなかった番号・TCP 以外の注記は、今の `servicePromptLines` の行の作り方を使う。
-    - 理由：スキルはコンテナの起動より前に書くので、転送の実際の結果（`forward.ts` の待ち受けの失敗）は中身に入れられない。
-    - `host` が届くのは、許可する `network_mode` のすべて（無し・`bridge`・`service:`）で、持ち主が sacty のネットワークにいるため。
+  - サービスごとの接続先の候補。今の `servicePromptLines` が伝えている内容（サービス名:ポート、localhost の転送の予定、転送しなかった番号・TCP 以外の注記）を、行の作り方を変えずに書く。どの候補も届くとは書かない。
   - 起動・停止はこの環境がするので、リポジトリの手順の起動・停止は飛ばす。アプリは docker を使わずにコンテナの中で起動する。実行が終わるとサービスとデータは消える。
-  - 接続先の設定の合わせ方（まず設定のまま localhost で試し、届かない・つないだ相手が目的のサービスでないときは、サービス名:ポートを、環境変数かコミットしない設定で渡す）。
+  - 接続先の設定の合わせ方：まず設定のまま試す。届かない・つないだ相手が目的のサービスでないときは、このスキルに書いたそのサービスの別の候補を、環境変数かコミットしない設定で渡して試す。
+  - 届かないとき：理由（ポートの使用中・待受のアドレス・ネットワークの構成など）を問わず、候補をすべて試しても届かなければ、黙って飛ばさず「確かめられなかった」と、どのサービスのどの接続先に届かず何を確かめられなかったかを、結果（作業の報告・PR・レビューの本文）に書く。
 - 起動していない実行：docker は無く、サービスも起動していない。リポジトリの docker の手順は試さない。サービスが要らない確かめは行い、要るものは黙って飛ばさず、「サービスが無いので確かめられなかった」と何を確かめられなかったかを、結果（作業の報告・PR・レビューの本文）に書く。
 
 ## 処理の流れ
@@ -84,36 +78,30 @@
 - [TV-1] サービスを起動しない工程の実行に、起動していない中身のスキルが置かれること
   - 入力：PR のレビュー（review）の工程を、サービスを起動せずに Claude Code で実行する
   - 期待結果：設定の場所の skills/docker-services/SKILL.md に、docker・docker compose のコマンドが無いこと、サービスが起動していないこと、サービスが要る確かめを飛ばさず「サービスが無いので確かめられなかった」と何を確かめられなかったかを作業の報告・PR・レビューの本文に書くことが書かれている
-- [TV-2] サービスを起動した実行で、スキルが実際の接続先で書き直されること
+- [TV-2] サービスを起動した実行で、スキルが実際の接続先の候補で書き直されること
   - 入力：implement の工程で、ポート 5432 と ports "15432:5432" を持つサービス db を起動して実行する
-  - 期待結果：実行の時点の skills/docker-services/SKILL.md に、必ず届く接続先として db:5432 が、転送の予定として localhost:5432・localhost:15432 が書かれ、その番号が使用中なら転送されず db:5432 でつなぐこと、docker・docker compose のコマンドは使えないこと、リポジトリの手順の起動・停止は飛ばすこと、接続先を環境変数かコミットしない設定で合わせることが書かれ、起動していない実行の文は無い
+  - 期待結果：実行の時点の skills/docker-services/SKILL.md に、db の接続先の候補として db:5432・localhost:5432・localhost:15432 が書かれ、docker・docker compose のコマンドは使えないこと、リポジトリの手順の起動・停止は飛ばすこと、届かなければ別の候補を環境変数かコミットしない設定で渡して試し、それでも届かなければ何が届かず何を確かめられなかったかを結果に書くことが書かれ、起動していない実行の文は無い
 - [TV-3] 転送しなかった番号と TCP 以外のポートの注記がスキルに出ること
   - 入力：2 つのサービスが同じポート 8080 を使い、1 つが UDP のポートを持つサービスを起動して実行する
   - 期待結果：SKILL.md のサービスの行に、localhost:8080 は複数のサービスが使う番号のため転送していないことと、UDP のポートは localhost に転送していないことが書かれる
-- [TV-4] network_mode: bridge のサービスが sacty のネットワークにつながり、サービス名で案内されること
-  - 入力：network_mode: bridge とポート 6379 を持つサービス cache を sanitizeCompose に通し、その結果で serviceSkill を作る
-  - 期待結果：起動に使う設定の cache に network_mode が無く networks に sacty があり、SKILL.md の cache の行に cache:6379 が必ず届く接続先として書かれ、localForwards の 6379 の転送先が cache になる
-- [TV-5] network_mode: service: のサービスの接続先が、ネットワークの持ち主の名前になること
-  - 入力：ポート 5432 のサービス db と、network_mode: service:db で expose 9187 を持つサービス sidecar を sanitizeCompose に通し、その結果で serviceSkill と localForwards を作る
-  - 期待結果：sidecar の host が db で、SKILL.md の sidecar の行の接続先が db:9187 と書かれ（sidecar:9187 は書かれない）、localForwards の 9187 の転送先が db になる
-- [TV-6] スキルの description が、リポジトリの手順より先に読むものだと分かること
+- [TV-4] スキルの description が、リポジトリの手順より先に読むものだと分かること
   - 入力：serviceSkill の起動した・しなかったの両方の出力の frontmatter
   - 期待結果：description が両方で同じで、docker・docker compose・DB（MySQL・PostgreSQL・Redis）・キャッシュ・モックの API を起動する・つなぐときに、リポジトリのスキル・手順より先に読むことを書いている
-- [TV-7] スキルの本文が sacty や特定の言語・DB に寄せていないこと
+- [TV-5] スキルの本文が sacty や特定の言語・DB に寄せていないこと
   - 入力：serviceSkill の起動した・しなかったの両方の出力の本文（frontmatter を除く）
   - 期待結果：本文に sacty・Sacty の語と、MySQL・PostgreSQL・Redis などの製品名・特定の言語の名前が含まれない
-- [TV-8] 工程の指示に、スキルを先に読む 1 行が起動の有無によらず入り、接続先の案内が指示に残らないこと
+- [TV-6] 工程の指示に、スキルを先に読む 1 行が起動の有無によらず入り、接続先の案内が指示に残らないこと
   - 入力：サービスを起動した implement と、起動しない review の工程の指示
   - 期待結果：両方の指示に、docker・DB などが要るときはリポジトリのスキル・手順より先にスキル docker-services を読む 1 行があり、「--- 起動しているサービス（docker compose） ---」の見出しと接続先の行は無い
-- [TV-9] 層の同じ名前のスキルが、sacty の作るスキルを上書きしないこと
+- [TV-7] 層の同じ名前のスキルが、sacty の作るスキルを上書きしないこと
   - 入力：プロジェクトのコンテキストに skills/docker-services/SKILL.md を置いて工程を実行する
   - 期待結果：置かれる SKILL.md は sacty が作った中身で、層のものは写さず、コンテキストの注意に context.reservedSkill が記録される
-- [TV-10] Codex で、スキルの一覧に docker-services が出ること
+- [TV-8] Codex で、スキルの一覧に docker-services が出ること
   - 入力：Codex のエージェントで工程を実行する
   - 期待結果：AGENTS.md のスキルの一覧に、docker-services の description と設定の場所の skills/docker-services/SKILL.md のパスの行がある
-- [TV-11] review スキルの検証の手順に、サービスが要る検証の扱いが書かれていること
+- [TV-9] review スキルの検証の手順に、サービスが要る検証の扱いが書かれていること
   - 入力：skills/review/review-dispatch/references/verification-run.md の差分
   - 期待結果：DB などのサービスが要る検証は docker-services に従い、確かめられなかったことをレビューの本文に書くことが書かれている
-- [TV-12] 仕様書とユーザー文書（日英）が今回の振る舞いを書いていること
+- [TV-10] 仕様書とユーザー文書（日英）が今回の振る舞いを書いていること
   - 入力：docs/spec/services・context と docs/user/compose・context の日英の差分
-  - 期待結果：スキル docker-services を工程の実行に置くこと、起動した・しなかったの中身（localhost は転送の予定で、使用中ならサービス名でつなぐことを含む）、工程の指示の 1 行、層の同じ名前のスキルは使わないこと（context.reservedSkill）、network_mode: bridge は sacty のネットワークにつなぎ替え、service: のサービスは持ち主の名前でつなぐことが日英の両方に書かれ、servicePromptLines の接続先の案内の記述が残っていない
+  - 期待結果：スキル docker-services を工程の実行に置くこと、起動した・しなかったの中身（接続先は候補で、届かなければ別の候補を試し、それでも届かなければ確かめられなかったと書くことを含む）、工程の指示の 1 行、層の同じ名前のスキルは使わないこと（context.reservedSkill）が日英の両方に書かれ、servicePromptLines の接続先の案内の記述が残っていない
