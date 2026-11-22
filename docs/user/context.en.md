@@ -469,6 +469,10 @@ The default plan-selection skill `plan-steps` sets how the Orchestrator chooses 
 
 The default diagram skill `drawio` is draw.io's official skill. Agents use it when making diagrams (`.drawio`, including export to PNG, SVG, and PDF). Converting diagrams written in Mermaid and exporting them uses the draw.io CLI in the image ([Container images](images.en.md#the-drawio-cli)).
 
+### Service skill
+
+Each step receives the generated `docker-services` skill, including steps without services. It takes precedence for starting and connecting services; a layered skill of the same name is ignored and produces `context.reservedSkill`. The instructions also ask the agent to read it first.
+
 ## Related pages
 
 - [Gateway](gateway.en.md)

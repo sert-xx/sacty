@@ -508,6 +508,7 @@ import {
   type SubtaskSummary,
   selectablePlans,
   servicePromptLines,
+  serviceSkill,
   skippedFilesLines,
   verificationBasis,
   viewpointRename,
@@ -13584,7 +13585,15 @@ export class TaskService {
     let context: RunContext | undefined;
     const contextSecrets: string[] = [];
     try {
-      context = await this.runContext(task, agent, config.config, contextSecrets, undefined, step);
+      context = await this.runContext(
+        task,
+        agent,
+        config.config,
+        contextSecrets,
+        undefined,
+        step,
+        true,
+      );
     } catch (error) {
       const multiPreparation = copiesRepositories(task, step);
       const manual = multiPreparation ? await this.manualPauseInfo(task.id) : {};
@@ -13968,6 +13977,12 @@ export class TaskService {
         };
       }
       const started = services?.ok ? services.started : undefined;
+      if (started && context) {
+        writeFileSync(
+          join(context.dir, "skills/docker-services/SKILL.md"),
+          serviceSkill(started.services),
+        );
+      }
       // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
       const reviewVerification =
         step === "review" ? this.reviewVerification(this.mustGet(task.id)) : undefined;
@@ -14704,6 +14719,7 @@ export class TaskService {
     onlyMcp: string | undefined,
     /** その実行の役割（MCP の時間切れの警告を、その役割の実行の上限で判断する。PBI-150）。 */
     role: string,
+    stepSkill = false,
   ): Promise<RunContext | undefined> {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
@@ -14711,6 +14727,7 @@ export class TaskService {
     // 段階のサブエージェントの定義（PBI-119）。置くものがあれば、コンテキストが無くても設定のディレクトリに置く
     const tiers = this.tiersFor(agent, config);
     if (
+      !stepSkill &&
       !contextSource &&
       !defaultContext &&
       hostMcp.length === 0 &&
@@ -14745,7 +14762,12 @@ export class TaskService {
         gatewayOrigin,
         onlyMcp,
         hostCommands,
-        tierFiles(runtime, tiers.entries),
+        [
+          ...tierFiles(runtime, tiers.entries),
+          ...(stepSkill
+            ? [{ path: "skills/docker-services/SKILL.md", content: serviceSkill([]) }]
+            : []),
+        ],
         runLimitMs,
       )),
       tiers: tiers.entries,

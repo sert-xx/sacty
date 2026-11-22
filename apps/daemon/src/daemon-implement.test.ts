@@ -2256,7 +2256,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       });
 
     it("サービスを使う工程の前に起動してネットワークにつなぎ、終わったら消す。ほかの工程では起動しない", async () => {
-      const services = new FakeServices();
+      const services = new FakeServices(undefined, [
+        { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+      ]);
       const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
         services,
         planner: servicesPlan(),
@@ -2275,7 +2277,15 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(executor.networks[3]).toBe(`sacty-svc-${agentRun?.runId}_sacty`);
       expect(executor.networks.filter(Boolean)).toHaveLength(1);
       // 接続先をエージェントに伝える
-      expect(promptOf(executor, 3)).toContain("--- 起動しているサービス（docker compose） ---");
+      expect(promptOf(executor, 3)).toContain(
+        "リポジトリのスキル・手順より先にスキル docker-services",
+      );
+      expect(executor.seeds[3]?.["skills/docker-services/SKILL.md"]).toContain(
+        "db:5432 または localhost:5432・localhost:15432",
+      );
+      expect(executor.seeds[2]?.["skills/docker-services/SKILL.md"]).toContain(
+        "サービスは起動していません",
+      );
       expect(promptOf(executor, 3)).toContain("- db：db:5432");
       expect(promptOf(executor, 2)).not.toContain("起動しているサービス");
       // 起動したことを作業履歴に残す
@@ -2284,7 +2294,10 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         undefined,
       ]);
       // サービスのポートを localhost に転送する（PBI-60）。サービスを使わない工程では渡さない
-      expect(executor.forwards[3]).toEqual([{ port: 5432, host: "db" }]);
+      expect(executor.forwards[3]).toEqual([
+        { port: 5432, host: "db" },
+        { port: 15432, host: "db", target: 5432 },
+      ]);
       expect(executor.forwards.filter(Boolean)).toHaveLength(1);
       expect(started.every((e) => e.type === "ServicesStarted" && !e.payload.sharedPorts)).toBe(
         true,
@@ -2345,7 +2358,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
 
     it("複数のサービスが使うポートは localhost に転送せず、作業履歴と指示に残す。ポートが無ければ転送を渡さない（PBI-60）", async () => {
       const services = new FakeServices(undefined, [
-        { name: "api", ports: [8080, 9000] },
+        { name: "api", ports: [8080, 9000], otherPorts: [{ port: 8125, protocol: "udp" }] },
         { name: "mock", ports: [8080] },
         { name: "worker", ports: [] },
       ]);
@@ -2355,6 +2368,11 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       });
       await drain(service);
       expect(executor.forwards[3]).toEqual([{ port: 9000, host: "api" }]);
+      const skill = executor.seeds[3]?.["skills/docker-services/SKILL.md"] ?? "";
+      expect(skill).toContain(
+        "localhost:8080 は、複数のサービスが使う番号のため、転送していません",
+      );
+      expect(skill).toContain("api:8125/udp（localhost には転送していません）");
       const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
       expect(started.map((e) => e.type === "ServicesStarted" && e.payload.sharedPorts)).toEqual([
         [8080],

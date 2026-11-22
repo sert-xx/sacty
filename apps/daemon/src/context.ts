@@ -1390,11 +1390,31 @@ export function planContext(
     }
   }
   // sacty が足すファイル（段階のサブエージェントの定義。PBI-119）
-  for (const extra of extraFiles) put(extra);
+  for (const extra of extraFiles) {
+    if (extra.path !== "skills/docker-services/SKILL.md") put(extra);
+  }
+  const generatedSkill = extraFiles.find(
+    (f) => f.path === "skills/docker-services/SKILL.md" && "content" in f,
+  );
   for (const skill of composed.skills) {
+    if (generatedSkill && skill.name === "docker-services") {
+      warnings.push(message("context.reservedSkill", { from: skill.from, name: skill.name }));
+      continue;
+    }
     for (const rel of filesUnder(skill.dir)) {
       put({ path: `skills/${skill.name}/${rel}`, src: join(skill.dir, rel), from: skill.from });
     }
+  }
+  if (generatedSkill) {
+    for (const [path, file] of files) {
+      if (path.startsWith("skills/docker-services/") && file.from) {
+        warnings.push(
+          message("context.reservedSkill", { from: file.from, name: "docker-services" }),
+        );
+        files.delete(path);
+      }
+    }
+    put(generatedSkill);
   }
   if (runtime === "claude-code") {
     if (composed.rules) put({ path: "CLAUDE.md", content: `${composed.rules}\n` });
@@ -1451,10 +1471,18 @@ export function planContext(
     return done();
   }
   // スキルの一覧の説明は、写す SKILL.md（スキルのディレクトリのもの）から読む
-  const index = composed.skills.map((s) => {
-    const description = readSkillDescription(join(s.dir, "SKILL.md"));
-    return `- ${s.name}${description ? `：${description}` : ""}（${containerDir}/skills/${s.name}/SKILL.md）`;
-  });
+  const index = composed.skills
+    .filter((s) => !generatedSkill || s.name !== "docker-services")
+    .map((s) => {
+      const description = readSkillDescription(join(s.dir, "SKILL.md"));
+      return `- ${s.name}${description ? `：${description}` : ""}（${containerDir}/skills/${s.name}/SKILL.md）`;
+    });
+  if (generatedSkill && "content" in generatedSkill) {
+    const description = generatedSkill.content.match(/^description: (.*)$/m)?.[1] ?? "";
+    index.push(
+      `- docker-services：${description}（${containerDir}/skills/docker-services/SKILL.md）`,
+    );
+  }
   const parts = [
     composed.rules,
     index.length > 0

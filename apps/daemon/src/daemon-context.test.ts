@@ -828,7 +828,7 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     activity.close();
   });
 
-  it("コンテキストリポジトリは任意：外して保存でき、無ければ何も渡さずに工程を実行する", async () => {
+  it("コンテキストリポジトリは任意：外して保存でき、無ければ生成されたスキルだけを渡す", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const contexts = new FakeContexts({ "https://example.com/team.git": { "rules.md": "# 規約" } });
     const { service, executor } = makeService(activity, [out("# 要求要件")], {
@@ -850,7 +850,10 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     await service.runNext(id);
     expect(contexts.fetched).toEqual([]);
     expect(executor.contexts).toEqual([undefined]);
-    expect(service.get(id)?.activity.some((e) => e.type === "ContextResolved")).toBe(false);
+    expect(executor.seeds[0]?.["skills/docker-services/SKILL.md"]).toContain(
+      "サービスは起動していません",
+    );
+    expect(service.get(id)?.activity.some((e) => e.type === "ContextResolved")).toBe(true);
     expect(service.get(id)?.task.gate).toEqual({ step: "requirements", submission: 1 });
     activity.close();
   });
@@ -1823,7 +1826,16 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       await service.runNext(id);
       const placed = executor.seeds[0];
       expect(placed && Object.keys(placed).length).toBeGreaterThan(5);
-      expect(Object.fromEntries(view.files.map((f) => [f.path, f.content]))).toEqual(placed);
+      const previewFiles = Object.fromEntries(view.files.map((f) => [f.path, f.content]));
+      expect(placed?.["skills/docker-services/SKILL.md"]).toContain("サービスは起動していません");
+      for (const [path, content] of Object.entries(previewFiles)) {
+        if (runtime === "codex" && path === "AGENTS.md") {
+          expect(placed?.[path]?.replace(/^- docker-services：.*\n/m, "")).toBe(content);
+        } else expect(placed?.[path]).toBe(content);
+      }
+      expect(Object.keys(placed ?? {}).sort()).toEqual(
+        [...Object.keys(previewFiles), "skills/docker-services/SKILL.md"].sort(),
+      );
       // AI の種類ごとの設定のファイル
       expect(Object.keys(placed ?? {})).toContain(
         runtime === "codex" ? "config.toml" : "settings.json",

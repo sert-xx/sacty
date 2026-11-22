@@ -52,6 +52,10 @@ Layers are stacked from the top, and a lower layer points to an upper one with `
 
 Code: `apps/daemon/src/context.ts` (`loadLayers`, `loadDefaultContext`, `resolveContext`, `parseExtends`, `extendsRef`, `localContextDir`, `layerDir`, `copyLocalLayer`, `hashTree`, `assertSubmodulesCheckedOut`, `gitlinks`, `submoduleInLayer`, `GitContextFetcher`, `MAX_CONTEXT_DEPTH`, `DEFAULT_CONTEXT_REPO`), `apps/daemon/src/service.ts` (`gitAuth`, `githubToken`), `apps/daemon/src/gh.ts` (`gitAuthEnv`), `packages/core/src/projects.ts` (`ContextSource`, `ContextPath`, `contextLabel`)
 
+## Service skill
+
+Each step receives the generated `docker-services` skill, including steps without services. It takes precedence for starting and connecting services; a layered skill of the same name is ignored and produces `context.reservedSkill`. The instructions also ask the agent to read it first.
+
 ## Default review skills
 
 The default context has `review-dispatch` and `review-execution`, which split a review by viewpoint. The default skills apply to repositories of any language or field and to use outside sacty, so they are not written for sacty only.

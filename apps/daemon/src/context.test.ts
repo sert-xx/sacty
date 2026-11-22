@@ -2898,3 +2898,38 @@ describe("Codex の定義の name の読み取りの範囲と正規化（PR #129
     codex.dispose();
   });
 });
+
+describe("工程用の予約スキル", () => {
+  it("層のスキルを使わず生成した内容を置き Codex の一覧にも載せる", async () => {
+    const fetcher = new FakeFetcher({
+      repo: { "skills/docker-services/SKILL.md": "---\ndescription: 層の案内\n---\n層の内容" },
+    });
+    const content = "---\nname: docker-services\ndescription: 生成した案内\n---\n生成した内容\n";
+    for (const runtime of ["claude-code", "codex"] as const) {
+      const result = await prepareContext(
+        fetcher,
+        { repo: "repo" },
+        runtime,
+        "/config",
+        undefined,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        undefined,
+        [{ path: "skills/docker-services/SKILL.md", content }],
+      );
+      expect(readFileSync(join(result.dir, "skills/docker-services/SKILL.md"), "utf8")).toBe(
+        content,
+      );
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({ code: "context.reservedSkill" }),
+      );
+      if (runtime === "codex")
+        expect(readFileSync(join(result.dir, "AGENTS.md"), "utf8")).toContain(
+          "docker-services：生成した案内（/config/skills/docker-services/SKILL.md）",
+        );
+      result.dispose();
+    }
+  });
+});

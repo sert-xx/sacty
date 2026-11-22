@@ -9,12 +9,12 @@ Related ADRs: [Service builds cannot tag shared images, and the agent image is p
 ## When services start
 
 - The Orchestrator decides which services of which compose file are used in which step when it chooses the steps ([Tasks and steps](tasks-and-steps.en.md)). The steps that can use them are `investigate` (only when investigating a bug), `reproduce`, and `implement`. It chooses dependency apps managed elsewhere (ones that do not run this repository's code) and databases, caches, mocks, and so on. It is told not to choose services that run this repository's code (the apps the step changes or checks); the step agent starts those inside its container and connects them to the services. The grouping depends on what each service runs, not on whether it has `build` in compose (instructions; not enforced). If the information gathering summary has a grouping, the Orchestrator bases its choice on it and settles it after checking the compose file and other files ([Tasks and steps](tasks-and-steps.en.md#execution-environment-and-services)).
-- The instructions for a step add, along with the service connection details, that this repository's apps are started inside the container without docker and connected to the services (`servicePromptLines`).
+- The step instructions use `servicePromptLines` to ask the agent to read the skill first and list connection candidates for started services. `serviceSkill` writes the same candidates to the skill and describes localhost forwarding as planned. If a candidate is unreachable, the agent tries another and reports what could not be verified if all fail. Steps without services also receive the skill and must report checks blocked by the missing services.
 - Services start for each step agent run, and are removed afterward.
 - No services are started for tests after the Implementation step (sacty does not run the tests. [Tasks and steps](tasks-and-steps.en.md#the-flow-without-the-final-review)). Records of starts for the earlier version's final review (`forTests` of `ServicesStarted` is `true`) are kept only to be read.
 - A shared compose does not start just by being written in the project. It is fetched and started only when the Orchestrator chooses it by name (only for tasks that have a target repository). If a name not in the settings is chosen, the step stops (`services.sharedUnknown`).
 
-Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopServices`, `withSharedCompose`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`, `composeServicesOf`, `servicePromptLines`)
+Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopServices`, `withSharedCompose`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`, `composeServicesOf`, `servicePromptLines`, `serviceSkill`)
 
 ## Starting and stopping
 

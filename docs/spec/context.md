@@ -75,6 +75,13 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
 
 コード: `apps/daemon/src/context.ts`（`loadLayers`・`loadDefaultContext`・`resolveContext`・`parseExtends`・`extendsRef`・`localContextDir`・`layerDir`・`copyLocalLayer`・`hashTree`・`assertSubmodulesCheckedOut`・`gitlinks`・`submoduleInLayer`・`GitContextFetcher`・`MAX_CONTEXT_DEPTH`・`DEFAULT_CONTEXT_REPO`）、`apps/daemon/src/service.ts`（`gitAuth`・`githubToken`）、`apps/daemon/src/gh.ts`（`gitAuthEnv`）、`packages/core/src/projects.ts`（`ContextSource`・`ContextPath`・`contextLabel`）
 
+## サービス用スキル
+
+各工程には、サービスを起動しない場合も生成された `docker-services` スキルを渡します。
+サービスの起動・接続ではこのスキルを先に読みます。
+層の同名のスキルは使わず、`context.reservedSkill` の注意を出します。
+工程の指示にも先に読むよう書きます。
+
 ## 既定のレビュー用スキル
 
 既定のコンテキストには、レビューを観点ごとに分担する `review-dispatch` と `review-execution` がある。

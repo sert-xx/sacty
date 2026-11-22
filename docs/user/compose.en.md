@@ -41,6 +41,10 @@ sacty starts the services and cleans them up as follows.
   - sacty records the daemon that started them in the container label `io.sacty.owner`.
   - Services whose daemon is still running (those of another sacty running with the same `SACTY_HOME`) are not removed.
 
+Each step receives the generated `docker-services` skill, including steps without services. It takes precedence for starting and connecting services; a layered skill of the same name is ignored and produces `context.reservedSkill`. The instructions also ask the agent to read it first.
+
+The skill explains that docker commands are unavailable and that sacty starts and stops services. Connection addresses are candidates, and localhost forwarding is planned rather than guaranteed. The agent tries another candidate if needed and reports what could not be verified if all fail; when no services are started, it reports checks blocked by their absence.
+
 ## Reaching services via localhost
 
 Services are reachable even when the repository's configuration points at localhost. This is because, in runs that start services, sacty forwards `127.0.0.1:<port>` (and `[::1]:<port>` when available) inside the agent containers to the same port of the service (`<service-name>:<port>`).
