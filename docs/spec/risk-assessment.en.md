@@ -26,6 +26,7 @@ It is assessed in only two occasions.
 - The range of PRs that a child task assesses is the same as the range that was assessed before a PR was opened or updated (a requirements or design PR and a taken-over existing PR are not assessed).
 - Only a daemon that enabled the risk assessment (`riskAssessment` of `ServiceDeps`, enabled when the daemon starts) assesses in a child task of an implementation PR. A review imported from a PR does not depend on this setting, as before.
 - "No findings" means a round where sacty read the verdict of that round as no findings (`no_findings`). Even if the verdict block says no findings, a round turned into suggestions because of a line comment, a round that requires fixes, and a round with no verdict are not rounds with no findings.
+For an assessed review, an assessment accompanies a no-findings verdict even if some parts remain unchecked.
 
 Code: `apps/daemon/src/risk-assessment.ts` (`assessesRiskInReview`), `apps/daemon/src/service.ts` (`assessesReviewRisk`)
 
@@ -209,5 +210,3 @@ Code: `apps/daemon/src/risk-assessment.ts` (`riskAssessmentLines`), `apps/daemon
 - The activity shows the occasion and the level (the reason, if it could not be assessed) in one row. A record of a carried-over assessment (from before the version upgrade) shows which commit's assessment was carried over to which commit in one row.
 
 Code: `packages/core/src/projection.ts` (`applyEvent`), `apps/web/src/components/risk-assessment.tsx` (`RiskAssessmentCard`, `riskAssessmentToShow`)
-
-For an assessed review, an assessment accompanies a no-findings verdict even if some parts remain unchecked.

@@ -147,6 +147,7 @@ PR を取り込むのは、PR のレビューの取り込みだけ。
     PR を作ったタスクが、その PR をレビューする子タスクを作ってレビューさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
   - 以前の版でラベルを付けた PR・取り込んだレビューのタスクのある PR も同じ（二重にレビューしない）。
 - レビューのタスク（レビューの子タスク・依頼で取り込んだタスク・ラベルで取り込んだタスク・本文に PR の URL を書いて手動で作ったタスク）が PR に投稿したレビューのうち、指摘のある回（修正が必要・提案あり。判定が無い回（レビューが判定を付けなかった回・判定を読めなかった回）も）のものは、その PR を作ったタスクの PR の指摘として取り込む（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
+判定なしの回も取り込み、要求要件・設計の PR でも直しの対象になる。
   指摘の無い回は取り込まない。
   届いた指摘は、投稿の目印で見分けて、AI のレビューの指摘として人の指摘と区別する。人の差し戻しの回数に数えず、レビューが対象にした head が PR の今の head と違えば捨てる（[AI のレビューの指摘](approval.md#ai-のレビューの指摘)）。
 - 担当のプロジェクトは、リポジトリの指定が Org の指定より優先（`responsibleProject`）。
@@ -271,5 +272,3 @@ Sacty のレビューのタスクが、レビューを投稿する前に止ま�
   SSH・ローカルのパスは、ホストの認証を使う。
 
 コード: `apps/daemon/src/gh.ts`（`GhCliAuth`・`ghEnv`・`gitAuthEnv`）、`apps/web/src/components/project-editor.tsx`、`apps/web/src/app/actions.ts`（`reloadGitHubAccountsAction`）、`packages/core/src/github-url.ts`（`githubApiBase`・`targetUrlProblem`）、`apps/daemon/src/github.ts`
-
-判定なしの回も取り込み、要求要件・設計の PR でも直しの対象になる。

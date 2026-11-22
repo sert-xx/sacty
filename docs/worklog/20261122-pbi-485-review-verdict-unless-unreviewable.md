@@ -17,15 +17,7 @@
 
 ## 確かめたこと
 
-| コマンド | 結果 |
-| --- | --- |
-| `npm run lint` | 成功（819 ファイル） |
-| `npm run typecheck` | 成功 |
-| `npx vitest run apps/daemon/src/default-skills.test.ts apps/daemon/src/prompts.test.ts apps/daemon/src/review-verdict-missing.test.ts apps/daemon/src/daemon-step-pull-requests.test.ts --no-file-parallelism` | 成功（696 件） |
-| `npm test` | 成功（346 ファイル、7,086 件成功、14 件スキップ） |
-| `npm run build` | 成功 |
-
-Git の機能・実行権限・明示的に有効化する評価テストの条件により、14 件がスキップされた。
+提出前の検証結果は PR の説明に記載する。
 
 ## レビューの指摘と対応
 
@@ -36,7 +28,8 @@ Git の機能・実行権限・明示的に有効化する評価テストの条�
 
 ### この PR の最初の提出
 
-まだ無い（最初の提出）。
+差分を読めない場合のレビュー範囲と、検証失敗の原因を確定できない場合の判定を明確にした。
+日英の仕様の旧記述と追加文の配置を直した。
 
 ## 残したこと
 

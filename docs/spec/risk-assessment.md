@@ -26,6 +26,7 @@ PR を作る・更新する時点では評価せず、PR の説明にも載せ�
 - 子タスクで評価する PR の範囲は、PR を作る・更新する前に評価していた範囲と同じ（要求要件・設計の PR と、引き継いだ既存の PR は評価しない）。
 - 実装の PR の子タスクの評価は、リスク評価を有効にしたデーモン（`ServiceDeps` の `riskAssessment`。デーモンの起動のときに有効にする）だけが行う。取り込んだ PR のレビューは、今までどおりこの設定によらない。
 - 「指摘なし」は、sacty がその回の判定を指摘なし（`no_findings`）と読み取った回である。判定のブロックが指摘なしでも、行へのコメントがあって提案ありに直された回・修正が必要の回・判定が無い回は、指摘なしの回ではない。
+評価対象のレビューでは、見られた範囲に指摘が無ければ、未確認の所があっても指摘なしの判定に評価が付く。
 
 コード: `apps/daemon/src/risk-assessment.ts`（`assessesRiskInReview`）、`apps/daemon/src/service.ts`（`assessesReviewRisk`）
 
@@ -209,5 +210,3 @@ sacty が実装の PR を作る・更新するときは、リスクを評価し�
 - 作業履歴には、評価した場面と段階（評価できなければ理由）を1行で出す。引き継いだ評価の記録（版を上げる前のもの）は、どのコミットの評価をどのコミットに引き継いだかを1行で出す。
 
 コード: `packages/core/src/projection.ts`（`applyEvent`）、`apps/web/src/components/risk-assessment.tsx`（`RiskAssessmentCard`・`riskAssessmentToShow`）
-
-評価対象のレビューでは、見られた範囲に指摘が無ければ、未確認の所があっても指摘なしの判定に評価が付く。
