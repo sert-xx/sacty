@@ -136,20 +136,20 @@ The branches of a flow without an implementation look like this (an example wher
   - Result of the comparison
     - If different: do not delete; record `StepBranchKept` (`branch`, the fetched `head`, and `pushed`, the last commit sacty pushed).
     - If the branch is not on the remote (the fetch fails with `couldn't find remote ref`): treat it as deleted. This includes a branch GitHub deleted after the merge.
-    - Any other fetch failure (such as the network), or no record in `stepBranchCommits`: do not delete and record nothing. Completion and cancel retry with the same rule, and if the head still cannot be fetched there, the branch stays (cancel records it as failed in the cleanup of `TaskCancelled`).
+    - Any other fetch failure (such as the network), or no record in `stepBranchCommits`: do not delete. Completion and cancel try again using the same rule. Completion records branches it could not delete in `StepBranchesLeft`, and cancel records failures in the cleanup of `TaskCancelled`.
   - When sacty updates the same PR and the fetched head of the PR's branch differs from the last push (it stacks on a person's commit), it records `StepBranchKept`.
     The branch contains a person's commit, so it is not deleted even if the head later matches (when the PR is merged, it is deleted by 1).
   - Deletion happens only if the compared head is still the same (the expected head is passed to `deleteBranch`, which deletes with `--force-with-lease`).
     If a person pushes between the fetch and the deletion, the branch stays.
   - When a deletion with the expected head is rejected with `stale info` (a lease mismatch): `deleteBranch` throws `git.branchLeaseRejected`.
-    The head moved after the comparison, so the branch is not deleted without checking. The remote head is fetched again (with a 120-second timeout) and handled as follows.
+    The branch is not deleted without checking. The remote head is fetched again (with a 120-second timeout) and handled as follows.
     - Not on the remote: treat it as deleted.
     - Different from the last push: do not delete; record `StepBranchKept` (with the re-fetched `head`).
     - Same as the last push (a person reverted it, or a false alarm), or the fetch fails: do not delete again, and treat it as not deleted (the reason is `git.branchLeaseRejected` or the fetch error).
       The branch stays on the remote. Cancel records it as a failure in the cleanup, and completion records it in `StepBranchesLeft` below.
   - The projection excludes a branch with `StepBranchKept` from the branches to delete (`sactyBranches`) until that PR's merge is recorded (`keptStepBranches`). Reopening the PR does not release it.
   - A failure to delete does not stop the task. Completion and cancel delete what remains with the same rule (a branch already gone counts as deleted).
-  - A branch that completion could not delete (every one that stayed: a network failure, no record of the last push, a lease rejection, and so on) is not retried; it is recorded in `StepBranchesLeft` (`branches`: the list of branches with the reason `detail`) and shown in the task details.
+  - A branch that completion could not delete (every branch that could not be deleted: a network failure, no record of the last push, a lease rejection, and so on) is not retried; it is recorded in `StepBranchesLeft` (`branches`: the list of branches with the reason `detail`) and shown in the task details. Branches retained as `StepBranchKept` are not included.
     This is because the completion cleanup (`retireWorkspace`) does not prepare the workspace again (`prepare: false`) and removes the workspace and the git metadata right after, so nothing is left to retry from.
     After it is recorded, a person deletes the branch on GitHub.
     - It is recorded before the workspace is removed. If recording fails, the completion cleanup continues.

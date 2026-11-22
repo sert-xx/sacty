@@ -637,12 +637,20 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
       }
       await merge(made, "requirements");
       await service.runNext(id);
+      const workspaceAtAppend: boolean[] = [];
+      const append = made.activity.append.bind(made.activity);
+      vi.spyOn(made.activity, "append").mockImplementation((entry) => {
+        if (entry.events.some((event) => event.event.type === "StepBranchesLeft")) {
+          workspaceAtAppend.push(existsSync(join(dir, "workspaces", id)));
+        }
+        return append(entry);
+      });
       await merge(made, "design");
       await waitFor(() => !existsSync(join(dir, "workspaces", id)), {
         what: "完了の片付けの終わり",
       });
       await service.workspaceCleanupsSettled();
-      return { made, left, state };
+      return { made, left, state, workspaceAtAppend };
     }
     const leftEvents = (made: Made) => payloads(made.service, made.id, "StepBranchesLeft");
     const settleFinal = (made: Made) =>
@@ -703,7 +711,8 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
     });
 
     it("PBI-480 TV-3: 完了で消せなかったブランチを、理由とともに StepBranchesLeft に 1 件記録し、作業領域は消え、タスクは完了のままにする", async () => {
-      const { made, left } = await completeWithLeft(1);
+      const { made, left, workspaceAtAppend } = await completeWithLeft(1);
+      expect(workspaceAtAppend).toEqual([true]);
       const { service, id } = made;
       expect(leftEvents(made)).toEqual([
         { branches: [{ branch: left[0], detail: "network down" }] },
@@ -720,7 +729,9 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
     it("PBI-480 TV-5: 同じ結果の再実行では、重ねて記録しない", async () => {
       const { made } = await completeWithLeft(1);
       expect(leftEvents(made)).toHaveLength(1);
+      const fetch = vi.spyOn(made.repos, "fetchBranch");
       await rerunCleanup(made);
+      expect(fetch).toHaveBeenCalled();
       expect(leftEvents(made)).toHaveLength(1);
       made.activity.close();
     });
@@ -758,7 +769,18 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
 
     it("PBI-480 TV-8: git のメタデータが無い再実行の結果は、記録に使わず、前の記録のままにする", async () => {
       const { made, left } = await completeWithLeft(1);
+      const internal = made.service as unknown as {
+        settleStepBranches: (...args: never[]) => Promise<{ detail?: unknown }[]>;
+      };
+      const settle = vi.spyOn(internal, "settleStepBranches");
       await rerunCleanup(made, "workspace");
+      expect(settle).toHaveBeenCalled();
+      const results = await settle.mock.results.at(-1)?.value;
+      expect(results).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ detail: { code: "cleanup.stepBranchNoGitDir" } }),
+        ]),
+      );
       expect(leftEvents(made)).toHaveLength(1);
       expect(taskOf(made.service, made.id).stepBranchesLeft).toEqual([
         { branch: left[0], detail: "network down" },
@@ -807,6 +829,8 @@ describe("実装の無い進め方の工程の PR（ベースブランチへの�
           detail: { code: "git.branchLeaseRejected", params: { branch: pr?.branch } },
         },
       ]);
+      expect(renderMessage(results[0]?.detail ?? "", "en")).toContain("lease did not match");
+      expect(renderMessage(results[0]?.detail ?? "", "ja")).toContain("リースの不一致");
       expect(calls(repos, pr?.branch ?? "")).toHaveLength(1);
       expect(repos.fetchedBranches.filter((f) => f.branch === pr?.branch)).toHaveLength(2);
       expect(types(made.service, made.id)).not.toContain("StepBranchKept");

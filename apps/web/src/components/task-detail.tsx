@@ -996,7 +996,6 @@ function Deliverables({ data }: { data: TaskDetailData }) {
   );
 }
 
-/** 中止したときの片付けの結果と、最初からやり直す操作。 */
 /** 完了の片付けで消せなかった工程のブランチと理由（PBI-480）。 */
 function BranchesLeftCard({ data }: { data: TaskDetailData }) {
   const { task } = data;
@@ -1024,6 +1023,7 @@ function BranchesLeftCard({ data }: { data: TaskDetailData }) {
   );
 }
 
+/** 中止したときの片付けの結果と、最初からやり直す操作。 */
 function CancelledCard({ data }: { data: TaskDetailData }) {
   const { task } = data;
   const { task: m, parts, labels, locale } = useMessages();

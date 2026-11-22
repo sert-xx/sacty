@@ -23,4 +23,8 @@
 
 ## 確かめたこと
 
-`npm run lint`・`npm run typecheck`・`npx vitest run` の結果は、実装の説明に書いた。
+- `npx vitest run apps/daemon/src/daemon-step-pull-requests-direct.test.ts`：36 件成功。記録の順序と再実行の到達も確かめた。
+
+## 残したこと
+
+完了で消せなかったブランチを後で自動でやり直す仕組みは作らない。
