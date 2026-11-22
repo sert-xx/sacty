@@ -7837,24 +7837,46 @@ export class TaskService {
       if (run?.type !== "AgentRunStarted") return undefined;
       const started = events
         .slice(0, push)
-        .findLast(
-          (event) => event.type === "ServicesStarted" && event.payload.runId === run.payload.runId,
+        .filter(
+          (event) =>
+            event.type === "ServicesStarted" &&
+            event.payload.runId === run.payload.runId &&
+            event.payload.services.length > 0,
         );
-      if (started?.type !== "ServicesStarted") return undefined;
-      const { file, services, compose } = started.payload;
-      if (compose && !compose.repo) {
+      const missing = started.find(
+        (event) =>
+          event.type === "ServicesStarted" && event.payload.compose && !event.payload.compose.repo,
+      );
+      if (missing?.type === "ServicesStarted" && missing.payload.compose) {
+        const { compose, services } = missing.payload;
         unavailable?.(
           `共用の compose の取得元が記録されていません（${compose.name}：${services.map((service) => service.name).join("・")}）`,
         );
         return undefined;
       }
+      const restored = started.flatMap((event) => {
+        if (event.type !== "ServicesStarted") return [];
+        const { file, services, compose } = event.payload;
+        return [
+          {
+            file,
+            names: services.map((service) => service.name),
+            ...(compose?.repo
+              ? { compose: { name: compose.name, repo: compose.repo, ref: compose.commit } }
+              : {}),
+          },
+        ];
+      });
+      const [first, ...others] = restored;
+      if (!first) return undefined;
       return {
-        file,
-        names: services.map((service) => service.name),
-        ...(compose?.repo
+        ...first,
+        ...(first.compose ? { shared: first.compose.name } : {}),
+        ...(others.length
           ? {
-              shared: compose.name,
-              compose: { name: compose.name, repo: compose.repo, ref: compose.commit },
+              more: others.flatMap((item) =>
+                item.compose ? [{ ...item, compose: item.compose }] : [],
+              ),
             }
           : {}),
       };
@@ -7905,7 +7927,7 @@ export class TaskService {
         workspaceDir: string;
         spec: ServicesSpec;
         secrets?: string[];
-        compose?: { name: string; commit: string };
+        compose?: { name: string; repo: string; commit: string };
       }[] = [];
       this.track(runId);
       for (const [i, member] of members.entries()) {
@@ -7959,7 +7981,9 @@ export class TaskService {
           workspaceDir: dir,
           spec,
           ...(secrets.length ? { secrets } : {}),
-          ...(compose && commit ? { compose: { name: compose.name, commit } } : {}),
+          ...(compose && commit
+            ? { compose: { name: compose.name, repo: compose.repo, commit } }
+            : {}),
         });
       }
       if (!services.startGroup) {

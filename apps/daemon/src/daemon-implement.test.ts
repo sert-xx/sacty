@@ -2555,6 +2555,13 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(shared.calls.every((call) => !existsSync(call.dest))).toBe(true);
       const events = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
       expect(events).toHaveLength(3);
+      expect(
+        events.map((event) => event.type === "ServicesStarted" && event.payload.compose),
+      ).toEqual([
+        undefined,
+        { name: "infra", repo: "https://github.com/acme/test-infra", commit: expect.any(String) },
+        { name: "kafka", repo: "/srv/kafka-compose", commit: expect.any(String) },
+      ]);
       expect(executor.forwards[3]).toEqual([
         { port: 5000, host: "service0" },
         { port: 5001, host: "service1" },

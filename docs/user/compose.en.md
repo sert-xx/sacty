@@ -143,7 +143,7 @@ For each task, the Orchestrator decides whether to use a shared compose. Adding 
 - The Orchestrator decides whether it is needed from the repository (test configuration, README, AGENTS.md) and the description, and selects it by name only when needed.
 - It can select the target repository's compose and multiple shared composes together.
 - It is instructed to use a linked compose by default and explain omissions. Entries linked only to other repositories are excluded.
-- Multiple composes run on one network. A conflicting service name or alias stops the step before startup.
+- Multiple composes run on one network. A conflicting service name or alias stops the step before startup. Agents may not be able to reach services with `network_mode` set.
 - Tasks that do not need it neither fetch nor start it.
 
 The reason for using or not using it, and which shared compose (repository, ref, file) is used, are recorded in the Activity (the task page). Writing in the description which services it starts and which tests need them helps the decision.

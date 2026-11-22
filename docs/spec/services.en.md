@@ -82,7 +82,7 @@ Written in the project's `sharedComposes` (up to 20; names must be unique).
 
 For linked repositories (including those under a linked org), the Orchestrator is instructed to use the compose by default and explain omissions in `servicesReason`. Unlinked entries are judged from their descriptions; entries linked only to other repositories are excluded. Information gathering for an undecided target lists all entries and their links.
 
-Multiple composes use one network. A service name or `container_name` alias shared by different composes stops the step before startup with `services.nameConflict`.
+Multiple composes use one network. Agents may not be able to reach services with `network_mode` set. A service name or `container_name` alias shared by different composes stops the step before startup with `services.nameConflict`.
 When `names` is specified for multiple composes, each selects the names it contains. A name absent from every compose is an error; an empty list selects all services in each compose.
 
 - Fetching
