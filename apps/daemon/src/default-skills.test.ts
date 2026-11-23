@@ -1334,7 +1334,7 @@ describe("既定の review スキルの、方針の妥当性と指摘の出し�
     // 方針を見る観点はコードの C-17 と設計書の D-1。利用者向け文書には当てはめない
     expect(text).toContain("主対象が `design-doc` のときは、C-17 の代わりに D-1");
     expect(read("skills/review/review-dispatch/references/pr-review.md")).toContain(
-      "前回までの `must`（前回の指摘と、前回のレビューが「前回の指摘」として挙げたもの。依頼した側が前々回以前のレビューを渡していれば、その指摘も）と同じ原因の別の現れなら、現れをもう1件足さない",
+      "前回までの `must`（前回の指摘と、前回のレビューが「前回の指摘」として挙げたもの。依頼した側が前々回以前のレビューを渡していれば、その指摘も）と同じ原因で続いているなら（同じ指摘が残る場合も含む）、[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」に従う。同じ原因の別の現れで、主対象が `user-doc` 以外なら",
     );
     const self = read("skills/review/review-dispatch/references/self-review.md");
     expect(self).toContain(
@@ -1910,10 +1910,10 @@ describe("既定のスキル：実装の前の文書の PR のレビューの手
 describe("既定の review スキルの、同じ原因が続くときの明示と原因を断つ直し（PBI-424）", () => {
   const dir = "skills/review/review-dispatch/references/";
 
-  it("aggregation.md が、本文への明示と、直し方の案の3つの中身と、止める仕組みを足さないことを決める", () => {
+  it("aggregation.md が、本文への明示と直し方の案の中身を決める", () => {
     const text = read(`${dir}aggregation.md`);
     expect(text).toContain(
-      "方針の観点が方針を変える指摘を出したかどうかに関わらず、今回の `must` が前回までの `must` と同じ原因の別の現れなら、同じ原因が続いていることを本文に明示する",
+      "方針の観点が方針を変える指摘を出したかどうかに関わらず、今回の `must` が前回までの `must` と同じ原因で続いているなら（同じ指摘が残る場合も含む）、同じ原因が続いていることを本文に明示する",
     );
     expect(text).toContain(
       "同じ原因の `must` が何回目か（前回までの回が分からないときは「少なくとも N 回目」）、前回までの現れの一覧（回と現れを短く）",
@@ -1921,12 +1921,18 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     expect(text).toContain(
       "テストを書く場面（主対象が `code` で、文書だけの変更でも、テストなしのタスクでもない）にだけ求める",
     );
-    expect(text).toContain("2回目の時点から（方針を変える指摘が出ないときも）");
+    expect(text).toContain(
+      "2回目の時点から（方針を変える指摘が出ないときも、主対象が `user-doc` 以外なら）",
+    );
     expect(text).toContain("原因を1か所で断つ直し（同じ原因のどの現れにも効くもの）");
     expect(text).toContain("切れ目の種類 × 処理する時点 × 値どうしの関係");
     expect(text).toContain("確かめた組み合わせと、確かめていない組み合わせを分けて書く");
     expect(text).toContain("外から見える入口（利用者や呼び出し側が実際に使う経路）に当てること");
-    expect(text).toContain("自動で止めたり、通知したり、機械で読める欄を足したりしない");
+    expect(text).not.toContain("自動で止めたり、通知したり、機械で読める欄を足したりしない");
+    expect(text).toContain("2回目以降、範囲を絞る案を1つ以上");
+    expect(text).toContain("満たせなくなる条件を明記する");
+    expect(text).toContain("人の判断後に同じ原因の `must` が続いた回も同様に扱う");
+    expect(text).toContain("本文への明示・範囲を絞る案・3回目以降の人の判断の求めは適用する");
     // 既存の決まりは残る
     expect(text).toContain(
       "出さなければ（今の方針のままで原因を直せると判断した）、現れをふつうの `must` として採用する",
@@ -1937,12 +1943,82 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     expect(read(`${dir}pr-review.md`)).toContain(
       "[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」のとおりに書く（総評か、その指摘の本文の、人が読んで分かる場所に書く。性質のテストの求めは、主対象が `code` でテストを書く場面だけ）",
     );
+    const pr = read(`${dir}pr-review.md`);
+    expect(pr).toContain("同じ原因の `must` が3回目以降なら");
+    expect(pr).toContain("人の判断が PR にある原因でも");
+    expect(pr).toContain("同じ原因の3回目以降でない");
     const self = read(`${dir}self-review.md`);
+    expect(self).toContain("範囲を絞る案");
+    expect(self).toContain("needsDecision");
     expect(self).toContain("本文への明示（記録と返す結果に書く）と、直し方の案の中身を");
     expect(self).toContain("`user-doc`・`design-doc`・テストなしでは求めない");
     expect(self).toContain("- 同じ原因が続いた指摘：（あるときだけ）");
     expect(read("skills/review/review-execution/references/C-17.md")).toContain(
       "方針を変える指摘を出さないと決めたときも、同じ原因が続いている（手順 5）なら",
+    );
+  });
+
+  it("aggregation.md の追加規則 1 を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain(
+      "2回目以降、範囲を絞る案を1つ以上、総評か指摘の本文に添える。",
+    );
+  });
+
+  it("aggregation.md の案の選択肢と残る影響を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain(
+      "受け入れる・範囲の外にする・後続に回す場合と残る影響を書き、承認済みの要求要件・受け入れ条件（無ければ依頼の受け入れ条件）と照らして、満たせなくなる条件を明記する",
+    );
+  });
+
+  it("aggregation.md の3回目以降の人の判断を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain("3回目以降は人の判断を求める。");
+  });
+
+  it("aggregation.md の追加規則 2 を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain(
+      "`pr-review` はその `must` に印を付け、`self-review` は報告の `needsDecision` に原因・回数・案・満たせなくなる条件を書く。",
+    );
+  });
+
+  it("aggregation.md の追加規則 3 を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain(
+      "人の判断後に同じ原因の `must` が続いた回も同様に扱う。",
+    );
+  });
+
+  it("pr-review.md の追加規則 1 を文全体で確認する", () => {
+    expect(read(`${dir}pr-review.md`)).toContain(
+      "同じ原因の `must` が2回目以降なら、同じ指摘が残る場合も、範囲を絞る案を1つ以上本文に添え、残る影響と満たせなくなる受け入れ条件を書く。",
+    );
+  });
+
+  it("pr-review.md の追加規則 2 を文全体で確認する", () => {
+    expect(read(`${dir}pr-review.md`)).toContain(
+      "同じ原因の `must` が3回目以降なら、人の判断が PR にある原因でも、その後に続いた回ごとに印を付ける。",
+    );
+  });
+
+  it("pr-review.md の追加規則 3 を文全体で確認する", () => {
+    expect(read(`${dir}pr-review.md`)).toContain(
+      "理由に回数・範囲を絞る案・前回の人の判断とそれでも続いたことを書く。",
+    );
+  });
+
+  it("self-review.md の追加規則 1 を文全体で確認する", () => {
+    expect(read(`${dir}self-review.md`)).toContain(
+      "同じ原因の `must` が2回目以降なら、同じ指摘が残る場合も、範囲を絞る案を1つ以上記録と報告の総評に書き、残る影響と満たせなくなる受け入れ条件を書く。",
+    );
+  });
+
+  it("self-review.md の追加規則 2 を文全体で確認する", () => {
+    expect(read(`${dir}self-review.md`)).toContain(
+      "同じ原因の `must` が3回目以降なら、人の判断を求め、報告の `needsDecision` に原因・回数・案・満たせなくなる条件を書く。",
+    );
+  });
+
+  it("self-review.md の追加規則 3 を文全体で確認する", () => {
+    expect(read(`${dir}self-review.md`)).toContain(
+      "人の判断後に同じ原因の `must` が続いた回も、範囲を絞る案と人の判断を求める報告を同様に書く。",
     );
   });
 

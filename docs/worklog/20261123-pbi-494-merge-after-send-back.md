@@ -27,17 +27,9 @@ PR #590 では 2026-11-22 21:53:27 UTC に指摘を設計へ戻し、同日 21:5
 
 | コマンド | 結果 |
 | --- | --- |
-| `npm run lint` | 成功 |
-| `npm run typecheck` | 成功 |
-| `npm run build` | 成功 |
-| `npx vitest run --no-file-parallelism` | Git 2.46.4 で 7,184 件成功、実 AI を使う評価 1 件をスキップ |
-| `npx vitest run tests/conventions/wait-for.test.ts` | 全件実行中に時間切れとなった規約テストを単独で再実行し、3 件成功 |
-| `npx vitest run apps/daemon/src/daemon-step-pull-requests.test.ts -t '取得が期限切れなら'` | 認証と状態取得の中断後の再試行 2 件が成功 |
-| `npx vitest run apps/daemon/src/daemon-step-pull-requests.test.ts -t '予算停止中に両 PR|クローズが期限切れ'` | 予算上限の確認とクローズの中断後の再試行 2 件が成功 |
+| `npx vitest run apps/daemon/src/github.test.ts apps/daemon/src/daemon-step-pull-requests.test.ts packages/core/src/projection.test.ts` | 692 件成功 |
 
-前の工程での実装 PR の見守りを一時的に無効にすると、設計への差し戻しと要求要件の変更の申し出の再現テストはいずれも消えたブランチの取得による停止で失敗した。
-認証情報と Docker を隔離したローカル環境でビルド済みデーモンを起動し、タスク詳細 API の応答を確認した。
-GitHub の実 PR を操作する検証は外部の PR を変更するため行っていない。
+実際の GitHub PR を操作する検証は、外部の PR を変更するため行っていない。
 
 ## レビューの指摘と対応
 
@@ -45,9 +37,10 @@ GitHub の実 PR を操作する検証は外部の PR を変更するため行�
 
 両 PR のマージが同じ確認で見えた場合の一時停止と、後からマージされた工程 PR の状態の記録を実装する。
 
-### この PR の最初の提出
+### この PR のレビュー
 
-まだ無い（最初の提出）
+複数の工程 PR の番号を停止画面に表示し、GitHub の応答本文を読めない場合は次の確認で再試行する。
+複数の停止記録を旧版で投影するときの制約を明記した。
 
 ## 残したこと
 

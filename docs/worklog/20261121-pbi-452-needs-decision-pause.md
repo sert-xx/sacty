@@ -4,7 +4,7 @@
 - タスク: PBI-452
 - PR: なし
 - ブランチ: sacty が作るタスクのブランチ（PR の作成時に決まる）
-- 関係する ADR: [セキュリティ対応の変更行数の上限をやめ、レビューが直しでは解消できないと印を付けた指摘で止めて、人の判断を待つ](../adr/20261121-2000-pause-on-findings-a-rework-cannot-resolve.md)
+- 関係する ADR: [セキュリティ対応の変更行数の上限をやめ、レビューが直しでは解消できないと印を付けた指摘で止めて、人の判断を待つ](../adr/20261121-2000-superseded-pause-on-findings-a-rework-cannot-resolve.md)
 
 ## 目的
 

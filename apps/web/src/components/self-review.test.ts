@@ -49,6 +49,27 @@ describe("提出の前のセルフレビューの表示（PBI-120）", () => {
     expect(html).toContain("text-warn");
   });
 
+  it("判断事項を折りたたまず先頭に表示する", () => {
+    locale = "ja";
+    const html = render({
+      requirements: {
+        rounds: 3,
+        passed: true,
+        remaining: [],
+        notReviewed: [],
+        summary: "総評",
+        needsDecision: ["範囲を絞る"],
+      },
+    });
+    expect(html).toContain("人の判断が要ること");
+    expect(html.indexOf("範囲を絞る")).toBeLessThan(html.indexOf("<details"));
+    expect(html).not.toContain(" open=");
+    const previous = render({
+      requirements: { rounds: 1, passed: true, remaining: [], notReviewed: [], summary: "" },
+    });
+    expect(previous).not.toContain("人の判断が要ること");
+  });
+
   it("報告が無ければ「記録がありません」を目立たせ、セルフレビューより前の工程では何も出さない", () => {
     for (const lang of ["ja", "en"] as const) {
       locale = lang;

@@ -477,6 +477,7 @@ It does not run verification of code, such as tests, builds, and type checks.
 The reason for any verification it did not run is kept in the self-review report (it is not kept in a step without the self-review).
 
 The result of the self-review appears on the deliverable cards, the Implementation card, and the approval screen.
+When the same cause is a must-fix for the third time or later, “Needs human decision” shows a narrower-scope proposal. A self-review does not pause the task.
 
 | Shown | Meaning |
 | --- | --- |
@@ -1721,7 +1722,7 @@ Resume the task as follows, depending on why it stopped.
 | The budget limit | Enter the new cumulative limit and press "Change cap and resume" (for the budget settings, see [config.yaml settings](config.en.md#budget)) |
 | An AI usage limit, an authentication error, an error, and so on | Check the cause, then press "Resume" |
 | The implementation does not finish, or a rework changed nothing | Check the reason, change the step's agent if needed, then press "Resume" ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)) |
-| A finding a rework cannot resolve | The AI review left a finding it marked as unresolvable by a rework and needing your decision, so the task stopped without starting a rework. Comment on the PR with your approval or direction and the task resumes with it. You can also resume from the screen with a note. To accept the finding as it is, merge the PR (it is approved without applying the findings that caused the pause) |
+| A finding a rework cannot resolve | A third or later must-fix with the same cause also pauses with a narrower-scope proposal, including after a decision and when a human comment arrives in the same round. The AI review left a finding it marked as needing your decision, so the task stopped without starting a rework. Comment on the PR with your approval or direction and the task resumes with it. You can also resume from the screen with a note. To accept the finding as it is, merge the PR (it is approved without applying the findings that caused the pause) |
 | The chosen agent can no longer be used | Choose the agent again, then resume ([Changing a step's agent](#changing-a-steps-agent)) |
 | AI review suggestions remained | The draft is removed and the task waits for approval. Check the PR and the reasons for the declined suggestions. Comment on the PR that a suggestion you want fixed needs action ([Sorting AI review suggestions](#sorting-ai-review-suggestions)) |
 

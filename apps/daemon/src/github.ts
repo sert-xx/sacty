@@ -1246,7 +1246,10 @@ export class GitHubPullRequests implements PullRequests {
       },
       ...(input.signal ? { signal: input.signal } : {}),
     });
-    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const json = (await (res.ok ? res.json() : res.json().catch(() => ({})))) as Record<
+      string,
+      unknown
+    >;
     if (!res.ok) throw apiError("getPr", res.status, json);
     const sha = (json.head as { sha?: unknown } | null)?.sha;
     const repoName = (key: "head" | "base") => {

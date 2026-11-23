@@ -631,6 +631,7 @@ const PARAMS = {
   "pr.continuedNotOpen": z.object({ number: z.number() }),
   "pr.failed": z.object({ detail: TextParam }),
   "pr.bothMerged": z.object({ step: z.number(), implement: z.number() }),
+  "pr.multipleMerged": z.object({ steps: z.string(), implement: z.number() }),
   "pr.mergedDocumentUnreadable": null,
   "pr.supersededNotClosed": z.object({ number: z.number() }),
   "pr.headMergeFailed": z.object({ branch: TextParam, detail: TextParam }),
@@ -1709,6 +1710,8 @@ const ja: MessageDictionary = {
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
   "pr.bothMerged": ({ step, implement }) =>
     `工程の PR #${step} と実装の PR #${implement} が両方マージされています。再開すると実装の PR だけを承認します。`,
+  "pr.multipleMerged": ({ steps, implement }) =>
+    `工程の PR ${steps} と実装の PR #${implement} がマージされています。再開すると実装の PR だけを承認します。`,
   "pr.mergedDocumentUnreadable":
     "PR がマージされましたが、マージされた文書をまだ読めませんでした。一時停止している間は、読めるまでやり直します。",
   "pr.supersededNotClosed": ({ number }) =>
@@ -2619,6 +2622,8 @@ const en: MessageDictionary = {
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
   "pr.bothMerged": ({ step, implement }) =>
     `Step PR #${step} and implementation PR #${implement} are both merged. Resuming approves only the implementation PR.`,
+  "pr.multipleMerged": ({ steps, implement }) =>
+    `Step PRs ${steps} and implementation PR #${implement} are merged. Resuming approves only the implementation PR.`,
   "pr.mergedDocumentUnreadable":
     "The PR was merged, but the merged document could not be read yet. While paused, Sacty retries until it can be read.",
   "pr.supersededNotClosed": ({ number }) =>

@@ -1508,6 +1508,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(taskOf(service, id).mergedPullRequests).toContain(requirementsPr.number);
     if (timing === "同時")
       expect(taskOf(service, id).mergedPullRequests).toContain(designPr.number);
+    if (timing === "同時") {
+      for (const locale of ["ja", "en"] as const) {
+        const displayed = renderMessage(taskOf(service, id).pausedMessage, locale);
+        for (const number of [9, requirementsPr.number, designPr.number])
+          expect(displayed).toContain(`#${number}`);
+        expect(displayed).toContain(locale === "ja" ? "再開すると" : "Resuming approves only");
+      }
+    }
     service.resume(id, {});
     if (timing === "再開後") {
       pulls.states[designPr.number] = {
@@ -1518,6 +1526,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       await service.checkPullRequests();
       expect(taskOf(service, id).status).toBe("paused");
       expect(taskOf(service, id).mergedPullRequests).toContain(designPr.number);
+      expect(renderMessage(taskOf(service, id).pausedMessage, "ja")).toContain(
+        `#${designPr.number}`,
+      );
       expect(taskOf(service, id).pullRequestState).toBe("open");
       service.resume(id, {});
     }

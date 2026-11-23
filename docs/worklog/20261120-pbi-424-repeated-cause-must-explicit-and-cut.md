@@ -4,7 +4,7 @@
 - タスク: PBI-424
 - PR: なし
 - ブランチ: なし
-- 関係する ADR: [20261121-0000-repeated-cause-must-explicit-and-cut.md](../adr/20261121-0000-repeated-cause-must-explicit-and-cut.md)
+- 関係する ADR: [20261121-0000-superseded-repeated-cause-must-explicit-and-cut.md](../adr/20261121-0000-superseded-repeated-cause-must-explicit-and-cut.md)
 
 ## 目的
 

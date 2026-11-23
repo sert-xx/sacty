@@ -378,6 +378,7 @@ export const SelfReview = z
     remaining: z.array(z.string()).default([]),
     notReviewed: z.array(z.string()).default([]),
     summary: z.string().default(""),
+    needsDecision: z.array(z.string()).optional(),
   })
   .refine((r) => !r.passed || r.remaining.length === 0, {
     message: "a passed self-review must not have remaining must findings",

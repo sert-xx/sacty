@@ -294,12 +294,21 @@ describe("project", () => {
           mergedPullRequests: [10, 9],
         },
       }),
+      ev("t1", {
+        type: "TaskPaused",
+        payload: {
+          reason: "error",
+          message: { code: "pr.bothMerged", params: { step: 11, implement: 9 } },
+          mergedPullRequests: [11, 9],
+        },
+      }),
     ]).get("t1");
     expect(task?.status).toBe("paused");
     expect(task?.pausedReason).toBe("budget");
-    expect(task?.mergedPullRequests).toEqual([10, 9]);
+    expect(task?.mergedPullRequests).toEqual([10, 9, 11]);
     expect(renderMessage(task?.pausedMessage, "ja")).toContain("#10");
     expect(renderMessage(task?.pausedMessage, "ja")).toContain("#9");
+    expect(renderMessage(task?.pausedMessage, "ja")).toContain("#11");
   });
 
   it("工程の組み合わせの予算（StepsChosen の budgetCapUsd）で上限を変え、80% の通知をし直す", () => {

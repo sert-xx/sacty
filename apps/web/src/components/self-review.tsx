@@ -42,7 +42,17 @@ export function SelfReviewNote({ task, step }: { task: Task; step: StepKey }) {
       ? "border-accent-line text-accent-foreground"
       : "border-warn-line bg-warn-soft text-warn",
   );
-  if (!review.summary && details.length === 0) {
+  const decisions = review.needsDecision?.length ? (
+    <div className="mb-2">
+      <p className="font-medium">{m.needsDecision}</p>
+      <ul className="list-disc pl-5 [overflow-wrap:anywhere]">
+        {review.needsDecision.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  ) : null;
+  if (!review.summary && details.length === 0 && !decisions) {
     return (
       <p
         data-testid={`self-review-${step}`}
@@ -53,13 +63,13 @@ export function SelfReviewNote({ task, step }: { task: Task; step: StepKey }) {
       </p>
     );
   }
-  return (
+  const content = (
     <details
       data-testid={`self-review-${step}`}
       data-result={review.passed ? "passed" : "failed"}
       // パスしていないときは、残った指摘を最初から見せる
       open={!review.passed}
-      className={box}
+      className={decisions ? undefined : box}
     >
       <summary className="cursor-pointer">{head}</summary>
       <div className="mt-2 flex flex-col gap-2 text-foreground">
@@ -81,5 +91,13 @@ export function SelfReviewNote({ task, step }: { task: Task; step: StepKey }) {
         ))}
       </div>
     </details>
+  );
+  return decisions ? (
+    <div className={box}>
+      {decisions}
+      {content}
+    </div>
+  ) : (
+    content
   );
 }

@@ -4379,12 +4379,20 @@ export function applyEvent(
         if (task.pausedReason !== "budget") {
           task.pausedReason = event.payload.reason;
         }
-        task.pausedMessage = event.payload.message;
         task.mergedPullRequests = task.mergedPullRequests?.includes(
           event.payload.mergedPullRequests[1] ?? 0,
         )
           ? [...new Set([...task.mergedPullRequests, ...event.payload.mergedPullRequests])]
           : event.payload.mergedPullRequests;
+        const implement = event.payload.mergedPullRequests[1];
+        const steps = task.mergedPullRequests.filter((number) => number !== implement);
+        task.pausedMessage =
+          implement !== undefined && steps.length > 1
+            ? message("pr.multipleMerged", {
+                steps: steps.map((n) => `#${n}`).join(", "),
+                implement,
+              })
+            : event.payload.message;
         if (event.payload.unstoppedRuns?.length) {
           task.unstoppedRuns = [
             ...new Set([...(task.unstoppedRuns ?? []), ...event.payload.unstoppedRuns]),
