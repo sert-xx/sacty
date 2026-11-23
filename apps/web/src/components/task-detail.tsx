@@ -52,6 +52,7 @@ import {
   StaleNotice,
 } from "@/components/live-status";
 import { Markdown } from "@/components/markdown";
+import { NoteDiff } from "@/components/note-diff";
 import { OrchestratorSession } from "@/components/orchestrator-session";
 import { Proposals } from "@/components/proposals";
 import { ProvenanceNote } from "@/components/provenance";
@@ -1628,7 +1629,13 @@ export function EventText({ event, clamp = false }: { event: ActivityEvent; clam
       <summary className="inline cursor-pointer list-none [&::-webkit-details-marker]:hidden">
         {text} <span className="text-xs text-accent-foreground underline">{labels.event.more}</span>
       </summary>
-      <span className="block whitespace-pre-line pt-1 text-xs text-muted-foreground">{detail}</span>
+      {event.type === "ChangeAcceptedByNote" && event.payload.diff ? (
+        <NoteDiff diff={event.payload.diff} />
+      ) : (
+        <span className="block whitespace-pre-line pt-1 text-xs text-muted-foreground">
+          {detail}
+        </span>
+      )}
     </details>
   );
 }

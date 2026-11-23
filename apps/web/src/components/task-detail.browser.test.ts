@@ -75,9 +75,33 @@ function fixture() {
     commit: "9e1d0c4b2a7f",
   } as Task["pullRequest"];
   task.budget = { ...task.budget, usedUsd: 1.5, capUsd: 5, unknownRuns: 1 };
+  const diff = {
+    design: `+${"x".repeat(400)}`,
+    testViewpoints: `+${JSON.stringify({ id: "TV-2", title: "Long", input: "x".repeat(400), expected: "ok" })}`,
+  };
+  task.proposals = [
+    {
+      id: "CP-1",
+      fromStep: "implement",
+      target: "requirements",
+      reason: "reason",
+      facts: [],
+      proposed: "proposal",
+      proposedAt: created.at,
+      applied: true,
+      byNote: { resumedAt: created.at, at: created.at, diff },
+    },
+  ] as Task["proposals"];
+  const accepted = {
+    ...created,
+    id: "event-3",
+    seq: 3,
+    type: "ChangeAcceptedByNote",
+    payload: { proposalId: "CP-1", resumedAt: created.at, diff },
+  } as ActivityEvent;
   return {
     task,
-    activity: [created, failed],
+    activity: [created, failed, accepted],
     projectName: "Payments",
     children: [],
   };
@@ -520,3 +544,22 @@ it.each([640, 1023, 1280])(
   },
   30000,
 );
+
+it("補足の差分は狭い画面の履歴と申し出で折り返す", async () => {
+  const page = await open(375);
+  try {
+    for (const tab of ["Overview", "Activity"]) {
+      await page.getByRole("tab", { name: new RegExp(`^${tab}`) }).click();
+      const summary = page.getByText(
+        tab === "Overview" ? "Show design and test viewpoint changes" : /CP-1 accepted by note/,
+      );
+      await summary.click();
+      const diff = page.getByTestId("note-diff").filter({ visible: true });
+      await diff.waitFor();
+      expect(await diff.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      expect(await root(page)).toEqual({ scroll: 375, client: 375 });
+    }
+  } finally {
+    await page.close();
+  }
+}, 30000);

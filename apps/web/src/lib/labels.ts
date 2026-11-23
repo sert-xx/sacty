@@ -762,7 +762,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "ChangeAcceptedByNote":
       return e.ChangeAcceptedByNote(
         event.payload.proposalId,
-        event.payload.resumedAt,
+        new Date(event.payload.resumedAt),
         Boolean(event.payload.diff),
       );
     case "ChangeJudged":
