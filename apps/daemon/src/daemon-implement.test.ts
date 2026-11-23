@@ -268,6 +268,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
             byNote: "範囲を絞る",
           },
         }),
+        block({ "sacty-proposal-declaration": "present" }),
       ].join("\n\n"),
     );
     const { activity, service, id } = await toImplement([output]);
@@ -296,7 +297,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
 
   it("合わせ直した設計の途中で切れた申し出は成果を提出せず停止する", async () => {
     const output = out(
-      '# 実装\n\n{"sacty-change-proposal":{"target":"requirements","reason":"補足","proposed":"新要求","design":{"proposed":"途中',
+      '# 実装\n\n{"sacty-proposal-declaration":"present"}\n\n{"sacty-change-proposal":{"target":"requirements","reason":"補足","proposed":"新要求","design":{"proposed":"途中',
     );
     const { activity, service, id } = await toImplement([output]);
     await service.pause(id);
@@ -315,6 +316,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
   it("不完全な観点を含む設計の申し出は自動で反映しない", async () => {
     const output = out(
       block({
+        "sacty-proposal-declaration": "present",
         "sacty-change-proposal": {
           target: "design",
           reason: "補足",
@@ -363,6 +365,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
               ...(inScope === "missing" ? {} : { design: aligned }),
             },
           }),
+          block({ "sacty-proposal-declaration": "present" }),
         ].join("\n\n"),
       );
       const { activity, service, executor, id } = await toImplement([output]);

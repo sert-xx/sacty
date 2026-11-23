@@ -2306,12 +2306,13 @@ function proposalLines(task: Task, step: StepKey): string[] {
   const targets = changeableSteps(task, step);
   if (targets.length === 0) return [];
   const rejected = rejectedNoteRetry(task, step);
-  const retryRejected = Boolean(rejected);
+  const retryRejected = rejected.length > 0;
   return [
-    ...(retryRejected && rejected
-      ? [
-          `直前の申し出 ${rejected.id} は人が却下しました。却下された変更を成果に含めず、承認済みの成果物に従って作り直してください。`,
-        ]
+    ...(retryRejected
+      ? rejected.map(
+          (p) =>
+            `申し出 ${p.id}（対象: ${p.target}、変更内容: ${p.proposed}）は人が却下しました。却下された変更を成果に含めず、承認済みの成果物に従って作り直してください。`,
+        )
       : []),
     "",
     `--- 承認済みの成果物（${targets.map((t) => STEP_NAME[t]).join("・")}）の変更の申し出 ---`,
@@ -2333,6 +2334,7 @@ function proposalLines(task: Task, step: StepKey): string[] {
       : ["申し出をしても、この工程の成果物は、いまの承認済みの成果物に従って作ってください。"]),
     ...(task.approvedEdits
       ? [
+          '本文とほかの申告のあと、完了の申告がある場合はその直前に、申し出の有無を必ず申告してください。申し出がある場合は {"sacty-proposal-declaration": "present"}、無い場合は {"sacty-proposal-declaration": "absent"} を JSON のコードブロックで出してください。',
           "許可付きの補足に沿う申し出は、byNote に補足の文を抜き出すと人の判断なしに受け入れます。補足に無い方針の変更を含むときは byNote を付けないでください。",
           "申し出を付けたときは、この工程の成果を申し出の内容に従って作ってください。",
           ...(task.approved.design
@@ -3660,7 +3662,7 @@ function resumeNotePromptLines(task: Task): string[] {
   if (!notes) return [];
   return [
     "",
-    rejectedNoteRetry(task, "implement")
+    rejectedNoteRetry(task, "implement").length > 0
       ? "--- 人が再開のときに足した補足（却下された変更は承認済みの成果物に従い、それ以外は補足を優先してください） ---"
       : "--- 人が再開のときに足した補足（承認済みの要求要件・設計と食い違うときは、補足を優先してください） ---",
     notes,
@@ -4600,6 +4602,7 @@ export function extractBlocks(
     completion?: boolean;
     /** 設計の直し（sacty-design-edit。PBI-446）を読み、本文から取り除くか。PR の指摘で実装に戻した回の実装の工程だけ true にする。 */
     designEdit?: boolean;
+    requireProposalDeclaration?: boolean;
   } = {},
 ): Extracted {
   let responses: RemarkResponse[] | undefined;
@@ -4607,6 +4610,9 @@ export function extractBlocks(
   let viewpointPositions: (string | undefined)[] | undefined;
   let proposalResult: ProposalRead = { kind: "absent" };
   let proposalSeen = false;
+  let proposalDeclaration: unknown;
+  let declarationSeen = false;
+  let declarationAtEnd = false;
   let designEdit: Extracted["designEdit"];
   let testMap: TestMapping[] | undefined;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
@@ -4637,6 +4643,14 @@ export function extractBlocks(
     const map = record[TEST_MAP_HEADING];
     const reviewed = record[SELF_REVIEW_HEADING];
     let read = false;
+    if (options.requireProposalDeclaration && Object.hasOwn(record, "sacty-proposal-declaration")) {
+      read = true;
+      if (!declarationSeen) {
+        declarationSeen = true;
+        proposalDeclaration = record["sacty-proposal-declaration"];
+        declarationAtEnd = body.slice(candidate.end).trim() === "";
+      }
+    }
     if (reviewed !== undefined) {
       read = true;
       reports.push({ start: candidate.start, end: candidate.end, value: reviewed });
@@ -4741,7 +4755,15 @@ export function extractBlocks(
       ? { proposal: proposalResult.partial, proposalViewpointsInvalid: true }
       : {}),
     ...(changeable.length > 0 &&
-    ((proposalResult.kind === "invalid" && !proposalResult.partial) ||
+    ((options.requireProposalDeclaration &&
+      (!declarationAtEnd ||
+        !(
+          (proposalDeclaration === "present" &&
+            (proposalResult.kind === "valid" ||
+              (proposalResult.kind === "invalid" && proposalResult.partial))) ||
+          (proposalDeclaration === "absent" && proposalResult.kind === "absent")
+        ))) ||
+      (proposalResult.kind === "invalid" && !proposalResult.partial) ||
       headingMentions(body, PROPOSAL_HEADING, used).length > 0)
       ? { proposalInvalid: true }
       : {}),

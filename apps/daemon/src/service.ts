@@ -14661,6 +14661,7 @@ export class TaskService {
         completion: step === "implement",
         // 設計の局所の直しを読むのは、PR の指摘で実装に戻した回の実装の工程だけ（PBI-446）
         designEdit: step === "implement" && designEditRemarkIds(latest).length > 0,
+        requireProposalDeclaration: Boolean(latest.approvedEdits),
       },
     );
     const { testViewpoints, proposal, testMap, testCommand } = extracted;

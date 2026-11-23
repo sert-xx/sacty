@@ -2683,6 +2683,7 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
   ])("不正な申し出（%s）を提出しない", async (_name, proposal) => {
     const activity = new SqliteActivityStore(dbPath);
     const output = block({
+      "sacty-proposal-declaration": "present",
       "sacty-test-viewpoints": [{ title: "A", input: "I", expected: "E" }],
       "sacty-change-proposal": proposal,
     });
@@ -2697,6 +2698,29 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     expect(result?.task.status).toBe("paused");
     expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
     expect(result?.task.gate?.step).not.toBe("design");
+    activity.close();
+  });
+
+  it.each([
+    ["申告のキーが途中で切れた", '# 設計\n{"sacty-proposal-decl'],
+    ["申告と申し出が食い違う", block({ "sacty-proposal-declaration": "present" })],
+    [
+      "申告の後に出力が切れた",
+      `${block({ "sacty-proposal-declaration": "absent" })}\n{"sacty-change-prop`,
+    ],
+  ])("許可中に%s出力は提出しない", async (_name, output) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# 要求"), out(output)]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("paused");
+    expect(result?.task.gate?.step).not.toBe("design");
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
     activity.close();
   });
 
@@ -2732,6 +2756,7 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
             byNote: "範囲を絞る",
           },
         }),
+        block({ "sacty-proposal-declaration": "present" }),
       ].join("\n\n"),
     );
     const { service } = makeService(activity, [out("# 元の要求"), proposal]);
@@ -2784,6 +2809,7 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
             ...(byNote !== undefined ? { byNote } : {}),
           },
         }),
+        block({ "sacty-proposal-declaration": "present" }),
       ].join("\n\n"),
     );
     const { service, executor } = makeService(activity, [out("# 元の要求"), proposal]);
@@ -2826,6 +2852,7 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
           facts: ["事実"],
           proposed: "# 変更後",
         },
+        "sacty-proposal-declaration": "present",
       }),
     );
     const { service } = makeService(activity, [
@@ -2854,6 +2881,42 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
       "ただし、人が再開のときに足した補足と食い違う箇所は、補足に従って",
     );
     expect(restarted.service.get(id)?.task.gate?.step).toBe("design");
+    activity.close();
+  });
+
+  it("複数の却下を提出まで保持し後続の実行に渡す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const makeProposal = (proposed: string) =>
+      out(
+        block({
+          "sacty-proposal-declaration": "present",
+          "sacty-change-proposal": {
+            target: "requirements",
+            reason: "変更",
+            facts: ["事実"],
+            proposed,
+          },
+        }),
+      );
+    const { service, executor } = makeService(activity, [
+      out("# 元の要求"),
+      makeProposal("# 却下 A"),
+      makeProposal("# 却下 B"),
+      out(block({ "sacty-proposal-declaration": "absent" })),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    service.decideChange(id, "CP-1", { accept: false });
+    await service.runNext(id);
+    service.decideChange(id, "CP-2", { accept: false });
+    await service.runNext(id);
+    expect(promptOf(executor, 3)).toContain("# 却下 A");
+    expect(promptOf(executor, 3)).toContain("# 却下 B");
+    expect(service.get(id)?.task.gate?.step).toBe("design");
     activity.close();
   });
 
