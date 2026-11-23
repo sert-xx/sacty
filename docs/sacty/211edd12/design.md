@@ -56,9 +56,9 @@
 
 ## テスト観点
 
-- [TV-1] 作業の履歴の再開の日時が、申し出の一覧と同じ地域の時刻で出る（日英）
-  - 入力：resumedAt が 2026-11-22T12:00:00Z の ChangeAcceptedByNote を、ja と en の辞書で describeEventParts に渡し、同じ task の Proposals も描く
-  - 期待結果：履歴の text が formatStamp(resumedAt, locale) の文字列を含み、2026-11-22T12:00:00Z を含まず、その文字列が Proposals の「補足で受け入れた」の行の日時と一致する
+- [TV-1] 作業の履歴の画面に出る再開の日時が、申し出の一覧と同じ地域の時刻で出る（日英）
+  - 入力：画面のテスト（event-text.test.ts と proposals-note.test.ts の形）で、resumedAt が 2026-11-22T12:00:00Z の ChangeAcceptedByNote を EventText で、同じ受け入れを byNote に持つ task を Proposals で、ja と en でそれぞれ描く
+  - 期待結果：EventText の描画結果が formatStamp(resumedAt, locale) の文字列を含み、2026-11-22T12:00:00Z を含まず、その文字列が同じ locale の Proposals の「補足で受け入れた」の行の日時と一致する
 - [TV-2] テスト観点の差分が、観点ごとに ID・題・入力・期待結果のカードで出る（履歴と申し出の一覧、日英）
   - 入力：diff.testViewpoints が TV-2 の旧版の -行・TV-2 の新版の +行・TV-3 の +行（どれも JSON.stringify した観点）の ChangeAcceptedByNote を、EventText と Proposals で ja と en で描く
   - 期待結果：どちらにも TV-2 の削除・TV-2 の追加・TV-3 の追加の 3 枚のカードがこの順に並び、各カードに ID・題・入力・期待結果と削除・追加の印が出て、{"id" の文字列は出ない
