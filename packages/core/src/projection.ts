@@ -4375,12 +4375,16 @@ export function applyEvent(
 
     case "TaskPaused":
       if (task.status === "paused" && event.payload.mergedPullRequests) {
-        // 予算の上限で先に止まっていたら、理由と文言は予算のまま残す（再開で上限の引き上げを求めるため）
+        // 予算の上限で先に止まっていたら、理由を残す（再開で上限の引き上げを求めるため）
         if (task.pausedReason !== "budget") {
           task.pausedReason = event.payload.reason;
-          task.pausedMessage = event.payload.message;
         }
-        task.mergedPullRequests = event.payload.mergedPullRequests;
+        task.pausedMessage = event.payload.message;
+        task.mergedPullRequests = task.mergedPullRequests?.includes(
+          event.payload.mergedPullRequests[1] ?? 0,
+        )
+          ? [...new Set([...task.mergedPullRequests, ...event.payload.mergedPullRequests])]
+          : event.payload.mergedPullRequests;
         if (event.payload.unstoppedRuns?.length) {
           task.unstoppedRuns = [
             ...new Set([...(task.unstoppedRuns ?? []), ...event.payload.unstoppedRuns]),
@@ -4410,7 +4414,11 @@ export function applyEvent(
       task.status = "paused";
       // triageStop は一時停止で消さない（以前の版が一時停止させたタスクも、再開で同じ先頭のドラフトを外す。PBI-440）
       task.pausedReason = event.payload.reason;
-      task.mergedPullRequests = event.payload.mergedPullRequests;
+      task.mergedPullRequests =
+        event.payload.mergedPullRequests &&
+        task.mergedPullRequests?.includes(event.payload.mergedPullRequests[1] ?? 0)
+          ? [...new Set([...task.mergedPullRequests, ...event.payload.mergedPullRequests])]
+          : event.payload.mergedPullRequests;
       task.pausedMessage = event.payload.message;
       if (event.payload.reason === "needs_decision") {
         task.decisionPauses = [

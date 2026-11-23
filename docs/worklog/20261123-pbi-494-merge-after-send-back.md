@@ -29,15 +29,14 @@ PR #590 では 2026-11-22 21:53:27 UTC に指摘を設計へ戻し、同日 21:5
 | --- | --- |
 | `npm run lint` | 成功 |
 | `npm run typecheck` | 成功 |
-| `npx vitest run tests/docs` | 全件の実行に含まれ成功 |
-| `npx vitest run --no-file-parallelism` | 7,165 件成功、14 件スキップ |
 | `npm run build` | 成功 |
+| `npx vitest run --no-file-parallelism` | Git 2.46.4 で 7,184 件成功、実 AI を使う評価 1 件をスキップ |
+| `npx vitest run tests/conventions/wait-for.test.ts` | 全件実行中に時間切れとなった規約テストを単独で再実行し、3 件成功 |
+| `npx vitest run apps/daemon/src/daemon-step-pull-requests.test.ts -t '取得が期限切れなら'` | 認証と状態取得の中断後の再試行 2 件が成功 |
+| `npx vitest run apps/daemon/src/daemon-step-pull-requests.test.ts -t '予算停止中に両 PR|クローズが期限切れ'` | 予算上限の確認とクローズの中断後の再試行 2 件が成功 |
 
-スキップの内訳は、この環境の Git が `merge-tree --merge-base` に対応しないための 13 件と、実 AI を使う評価を通常は実行しない 1 件。
-前の工程の実装 PR を見守る処理を無効にすると、設計への差し戻しと要求要件の変更の申し出の両方の再現テストが、消えたブランチの取得による停止で失敗することも確かめた。
-
-認証情報と Docker コマンドの経路を持たない一時環境でビルド済みデーモンを起動し、ローカルのプロジェクトとタスクを作ってタスク取得 API を呼んだ。
-作成はそれぞれ HTTP 201、取得は HTTP 200 で、題と作業履歴の応答を確認した。
+前の工程での実装 PR の見守りを一時的に無効にすると、設計への差し戻しと要求要件の変更の申し出の再現テストはいずれも消えたブランチの取得による停止で失敗した。
+認証情報と Docker を隔離したローカル環境でビルド済みデーモンを起動し、タスク詳細 API の応答を確認した。
 GitHub の実 PR を操作する検証は外部の PR を変更するため行っていない。
 
 ## レビューの指摘と対応

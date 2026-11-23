@@ -1332,7 +1332,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
   });
 
   it("設計へ差し戻した後も実装 PR が開いたままなら、やり直しを続けて設計の承認待ちになる", async () => {
-    const made = await start([out("# 要求要件"), design("# 設計 A"), implement(), design("# 設計 B")]);
+    const made = await start([
+      out("# 要求要件"),
+      design("# 設計 A"),
+      implement(),
+      design("# 設計 B"),
+    ]);
     const { service, id, activity } = made;
     await merge(made, "requirements");
     await service.runNext(id);
@@ -1449,6 +1454,216 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(types(service, id).slice(startAt)).toEqual(["TaskPaused"]);
     expect(taskOf(service, id).status).toBe("paused");
     expect(taskOf(service, id).mergedPullRequests).toEqual([designPr?.number, 9]);
+    activity.close();
+  });
+
+  it.each(["同時", "再開後"])("複数の工程 PR のマージ（%s）を見逃さない", async (timing) => {
+    const made = await start([
+      out("# 要求要件"),
+      design(),
+      implement(),
+      design("# 設計 B"),
+      out("# 要求要件 B"),
+    ]);
+    const { service, pulls, id, activity } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    await drain(service);
+    const implementation = taskOf(service, id).pullRequest;
+    service.requestChanges(id, {
+      step: "implement",
+      submission: 1,
+      target: "design",
+      comments: ["直す"],
+    });
+    await service.runNext(id);
+    const designPr = taskOf(service, id).stepPullRequests.findLast((p) => p.step === "design");
+    if (!designPr) throw new Error("design PR missing");
+    service.requestChanges(id, {
+      step: "design",
+      submission: designPr.submission,
+      target: "requirements",
+      comments: ["直す"],
+    });
+    await service.runNext(id);
+    const requirementsPr = taskOf(service, id).stepPullRequests.findLast(
+      (p) => p.step === "requirements" && p.state === "open" && !p.superseded,
+    );
+    if (!requirementsPr) throw new Error("requirements PR missing");
+    pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "merged" };
+    pulls.states[requirementsPr.number] = {
+      state: "merged",
+      headSha: requirementsPr.commit,
+      mergeCommit: "merged-req",
+    };
+    if (timing === "同時")
+      pulls.states[designPr.number] = {
+        state: "merged",
+        headSha: designPr.commit,
+        mergeCommit: "merged-design",
+      };
+    await service.checkPullRequests();
+    expect(taskOf(service, id).status).toBe("paused");
+    expect(taskOf(service, id).mergedPullRequests).toContain(requirementsPr.number);
+    if (timing === "同時")
+      expect(taskOf(service, id).mergedPullRequests).toContain(designPr.number);
+    service.resume(id, {});
+    if (timing === "再開後") {
+      pulls.states[designPr.number] = {
+        state: "merged",
+        headSha: designPr.commit,
+        mergeCommit: "merged-design",
+      };
+      await service.checkPullRequests();
+      expect(taskOf(service, id).status).toBe("paused");
+      expect(taskOf(service, id).mergedPullRequests).toContain(designPr.number);
+      expect(taskOf(service, id).pullRequestState).toBe("open");
+      service.resume(id, {});
+    }
+    await service.checkPullRequests();
+    expect(taskOf(service, id).pullRequestState).toBe("merged");
+    activity.close();
+  });
+
+  it.each(["認証", "状態"])(
+    "実装 PR の%s取得が期限切れなら中断し、次の確認で再試行する",
+    async (kind) => {
+      const github = new FakeGitHub();
+      const made = await start([out("# 要求要件"), design(), implement(), design("# 設計 B")], {
+        github,
+      });
+      const { service, pulls, id, activity } = made;
+      await merge(made, "requirements");
+      await service.runNext(id);
+      await merge(made, "design");
+      await drain(service);
+      const impl = taskOf(service, id).pullRequest;
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "design",
+        comments: ["直す"],
+      });
+      pulls.states[9] = { state: "merged", headSha: impl?.commit, mergeCommit: "merged" };
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => timeout(10));
+      let aborted = false;
+      const tokenSpy = vi.spyOn(github, "token");
+      const statusSpy = vi.spyOn(pulls, "status");
+      const waitForAbort = <T>(signal?: AbortSignal) =>
+        new Promise<T>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(new Error("aborted"));
+            },
+            { once: true },
+          );
+        });
+      if (kind === "認証")
+        tokenSpy.mockImplementationOnce((_host, _account, signal) => waitForAbort(signal));
+      else statusSpy.mockImplementationOnce((input) => waitForAbort(input.signal));
+      try {
+        await service.checkPullRequests();
+        expect(aborted).toBe(true);
+        expect(taskOf(service, id).pullRequestState).toBe("open");
+      } finally {
+        timeoutSpy.mockRestore();
+        tokenSpy.mockRestore();
+        statusSpy.mockRestore();
+      }
+      await service.checkPullRequests();
+      expect(taskOf(service, id).pullRequestState).toBe("merged");
+      activity.close();
+    },
+  );
+
+  it("予算停止中に両 PR がマージされても上限なしでは再開できない", async () => {
+    const made = await start([out("# 要求要件"), design(), implement(), design("# 設計 B")]);
+    const { service, pulls, repos, id, activity } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    await drain(service);
+    const implementation = taskOf(service, id).pullRequest;
+    service.requestChanges(id, {
+      step: "implement",
+      submission: 1,
+      target: "design",
+      comments: ["直す"],
+    });
+    await service.runNext(id);
+    const step = taskOf(service, id).stepPullRequests.findLast((p) => p.step === "design");
+    if (!step) throw new Error("design PR missing");
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [{ actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } }],
+    });
+    const restarted = makeService(activity, [], { pulls, repos, stepPullRequests: true });
+    pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "merged" };
+    pulls.states[step.number] = {
+      state: "merged",
+      headSha: step.commit,
+      mergeCommit: "merged-step",
+    };
+    await restarted.service.checkPullRequests();
+    const task = taskOf(restarted.service, id);
+    expect(task.pausedReason).toBe("budget");
+    expect(ja(task.pausedMessage)).toContain(`#${step.number}`);
+    expect(ja(task.pausedMessage)).toContain("#9");
+    expect(() => restarted.service.resume(id, {})).toThrow();
+    restarted.service.resume(id, { capUsd: 1000 });
+    await restarted.service.checkPullRequests();
+    expect(taskOf(restarted.service, id).pullRequestState).toBe("merged");
+    activity.close();
+  });
+
+  it("工程 PR のクローズが期限切れなら通信を中断し、次の確認で閉じる", async () => {
+    const made = await start([out("# 要求要件"), design(), implement(), design("# 設計 B")]);
+    const { service, pulls, id, activity } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    await drain(service);
+    const implementation = taskOf(service, id).pullRequest;
+    service.requestChanges(id, {
+      step: "implement",
+      submission: 1,
+      target: "design",
+      comments: ["直す"],
+    });
+    await service.runNext(id);
+    pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "merged" };
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => timeout(10));
+    const closeSpy = vi.spyOn(pulls, "close");
+    let aborted = false;
+    closeSpy.mockImplementationOnce(
+      (input) =>
+        new Promise<void>((_resolve, reject) => {
+          input.signal?.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(new Error("aborted"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    try {
+      await service.checkPullRequests();
+      expect(aborted).toBe(true);
+      expect(taskOf(service, id).stepPullRequests.find((p) => p.number === 10)?.state).toBe("open");
+    } finally {
+      timeoutSpy.mockRestore();
+      closeSpy.mockRestore();
+    }
+    await service.checkPullRequests();
+    expect(taskOf(service, id).stepPullRequests.find((p) => p.number === 10)?.state).toBe("closed");
     activity.close();
   });
 

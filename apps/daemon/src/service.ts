@@ -2950,34 +2950,48 @@ export class TaskService {
     if (!implement) return false;
     if (!implement.repo || this.cancelling.has(task.id)) return true;
     const secrets: string[] = [];
-    const token = await this.githubToken(task, implement.repo, secrets);
+    const tokenSignal = AbortSignal.timeout(PR_WATCH_TIMEOUT_MS);
+    const token = await untilAborted(
+      tokenSignal,
+      this.githubToken(task, implement.repo, secrets, undefined, tokenSignal),
+    );
+    const implementationSignal = AbortSignal.timeout(PR_WATCH_TIMEOUT_MS);
     const implementationStatus = await withDeadline(
       this.deps.pulls.status({
         repo: implement.repo,
         token,
         number: implement.number,
+        signal: implementationSignal,
       }),
       PR_WATCH_TIMEOUT_MS,
     );
     // 見守る工程の PR は、1件に絞らず、すべて読む（どれかが実装の PR とともにマージ済みなら、人の判断に任せる）
     const stepStatuses: { pr: { number: number; repo: string }; status: PullRequestStatus }[] = [];
     for (const pr of this.watchedStepPullRequests(task)) {
-      stepStatuses.push({
-        pr,
-        status:
-          observed?.number === pr.number
-            ? observed.status
-            : await withDeadline(
-                this.deps.pulls.status({
-                  repo: pr.repo,
-                  token: await this.githubToken(task, pr.repo, secrets),
-                  number: pr.number,
-                }),
-                PR_WATCH_TIMEOUT_MS,
-              ),
-      });
+      if (observed?.number === pr.number) {
+        stepStatuses.push({ pr, status: observed.status });
+        continue;
+      }
+      const stepTokenSignal = AbortSignal.timeout(PR_WATCH_TIMEOUT_MS);
+      const stepToken = await untilAborted(
+        stepTokenSignal,
+        this.githubToken(task, pr.repo, secrets, undefined, stepTokenSignal),
+      );
+      const statusSignal = AbortSignal.timeout(PR_WATCH_TIMEOUT_MS);
+      const status = await withDeadline(
+        this.deps.pulls.status({
+          repo: pr.repo,
+          token: stepToken,
+          number: pr.number,
+          signal: statusSignal,
+        }),
+        PR_WATCH_TIMEOUT_MS,
+      );
+      stepStatuses.push({ pr, status });
     }
-    const mergedStep = stepStatuses.find((x) => x.status.state === "merged");
+    const mergedSteps = stepStatuses.filter((x) => x.status.state === "merged");
+    const mergedStep =
+      mergedSteps.find((x) => !task.mergedPullRequests?.includes(x.pr.number)) ?? mergedSteps[0];
     const step = mergedStep?.pr;
     const stepStatus = mergedStep?.status;
     const latest = this.tasks.get(task.id);
@@ -2989,10 +3003,12 @@ export class TaskService {
     )
       return true;
     if (implementationStatus.state === "merged" && step && stepStatus?.state === "merged") {
-      const pair = [step.number, implement.number];
-      const same =
-        latest.mergedPullRequests?.length === 2 &&
-        pair.every((n) => latest.mergedPullRequests?.includes(n));
+      const pendingSteps = mergedSteps.filter(
+        (x) =>
+          !latest.mergedPullRequests?.includes(implement.number) ||
+          !latest.mergedPullRequests?.includes(x.pr.number),
+      );
+      const same = pendingSteps.length === 0;
       if (!same || latest.status === "paused") {
         if (!same) {
           if (latest.status === "running") {
@@ -3013,23 +3029,24 @@ export class TaskService {
                     current.status === "queued" ||
                     current.status === "paused")
                 )
-                  this.append(current, [
-                    {
-                      actor: "sacty",
+                  this.append(
+                    current,
+                    pendingSteps.map(({ pr }) => ({
+                      actor: "sacty" as const,
                       event: {
-                        type: "TaskPaused",
+                        type: "TaskPaused" as const,
                         payload: {
-                          reason: "error",
+                          reason: "error" as const,
                           message: message("pr.bothMerged", {
-                            step: step.number,
+                            step: pr.number,
                             implement: implement.number,
                           }),
-                          mergedPullRequests: pair,
+                          mergedPullRequests: [pr.number, implement.number],
                           unstoppedRuns: unstopped,
                         },
                       },
-                    },
-                  ]);
+                    })),
+                  );
                 return true;
               }
             } finally {
@@ -3048,22 +3065,23 @@ export class TaskService {
             sentBackImplementPullRequest(current)?.number === implement.number &&
             currentStep?.number === step.number
           )
-            this.append(current, [
-              {
-                actor: "sacty",
+            this.append(
+              current,
+              pendingSteps.map(({ pr }) => ({
+                actor: "sacty" as const,
                 event: {
-                  type: "TaskPaused",
+                  type: "TaskPaused" as const,
                   payload: {
-                    reason: "error",
+                    reason: "error" as const,
                     message: message("pr.bothMerged", {
-                      step: step.number,
+                      step: pr.number,
                       implement: implement.number,
                     }),
-                    mergedPullRequests: pair,
+                    mergedPullRequests: [pr.number, implement.number],
                   },
                 },
-              },
-            ]);
+              })),
+            );
         }
         return true;
       }
@@ -3153,14 +3171,29 @@ export class TaskService {
       for (const pr of openStepPullRequests(task)) {
         const secrets: string[] = [];
         try {
-          const token = await this.githubToken(task, pr.repo, secrets);
+          const tokenSignal = AbortSignal.timeout(PR_WATCH_TIMEOUT_MS);
+          const token = await untilAborted(
+            tokenSignal,
+            this.githubToken(task, pr.repo, secrets, undefined, tokenSignal),
+          );
+          const statusSignal = AbortSignal.timeout(PR_WATCH_TIMEOUT_MS);
           const status = await withDeadline(
-            this.deps.pulls.status({ repo: pr.repo, token, number: pr.number }),
+            this.deps.pulls.status({
+              repo: pr.repo,
+              token,
+              number: pr.number,
+              signal: statusSignal,
+            }),
             PR_WATCH_TIMEOUT_MS,
           );
           if (status.state === "open")
             await withDeadline(
-              this.deps.pulls.close({ repo: pr.repo, token, number: pr.number }),
+              this.deps.pulls.close({
+                repo: pr.repo,
+                token,
+                number: pr.number,
+                signal: AbortSignal.timeout(PR_WATCH_TIMEOUT_MS),
+              }),
               PR_WATCH_TIMEOUT_MS,
             );
           const latest = this.tasks.get(task.id);
@@ -19895,9 +19928,19 @@ export class TaskService {
             throw new MessageError(message("cleanup.prRepoUnknown"));
           }
           // PR を作ったときと同じく、プロジェクトの gh のアカウントで閉じる
-          const token = await this.githubToken(latest, pr.repo, usedSecrets);
+          const tokenSignal = AbortSignal.timeout(PR_WATCH_TIMEOUT_MS);
+          const token = await untilAborted(
+            tokenSignal,
+            this.githubToken(latest, pr.repo, usedSecrets, undefined, tokenSignal),
+          );
+          const statusSignal = AbortSignal.timeout(PR_WATCH_TIMEOUT_MS);
           const status = await withDeadline(
-            this.deps.pulls.status({ repo: pr.repo, token, number: pr.number }),
+            this.deps.pulls.status({
+              repo: pr.repo,
+              token,
+              number: pr.number,
+              signal: statusSignal,
+            }),
             PR_WATCH_TIMEOUT_MS,
           );
           if (status.state !== "open") {
@@ -19908,6 +19951,7 @@ export class TaskService {
                 repo: pr.repo,
                 token,
                 number: pr.number,
+                signal: AbortSignal.timeout(PR_WATCH_TIMEOUT_MS),
               }),
               PR_WATCH_TIMEOUT_MS,
             );
