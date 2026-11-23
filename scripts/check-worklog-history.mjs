@@ -3,7 +3,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 function git(cwd, ...args) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: Number.MAX_SAFE_INTEGER,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 
 function linkFix(oldLine, newLine, file, head, cwd) {
@@ -15,18 +20,9 @@ function linkFix(oldLine, newLine, file, head, cwd) {
   if (skeleton(oldLine) !== skeleton(newLine)) return false;
   let changed = false;
   for (let i = 0; i < oldLinks.length; i++) {
-    const beforeBytes = oldLinks[i][2];
-    const afterBytes = newLinks[i][2];
-    if (beforeBytes === afterBytes) continue;
-    let before;
-    let after;
-    try {
-      const decoder = new TextDecoder("utf-8", { fatal: true });
-      before = decoder.decode(Buffer.from(beforeBytes, "latin1"));
-      after = decoder.decode(Buffer.from(afterBytes, "latin1"));
-    } catch {
-      return false;
-    }
+    const before = oldLinks[i][2];
+    const after = newLinks[i][2];
+    if (before === after) continue;
     changed = true;
     // 外部リンクや文書内アンカーの生存は Git のツリーから確認できない。
     if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(before)) return false;
@@ -93,7 +89,11 @@ export function checkWorklogHistory({ cwd = process.cwd(), base, head, title, nu
       continue;
     }
     const contents = [mergeBase, head].map((rev) =>
-      execFileSync("git", ["show", `${rev}:${file}`], { cwd, stdio: ["ignore", "pipe", "pipe"] }),
+      execFileSync("git", ["show", `${rev}:${file}`], {
+        cwd,
+        maxBuffer: Number.MAX_SAFE_INTEGER,
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
     );
     const binary = git(
       cwd,
@@ -137,8 +137,8 @@ export function checkWorklogHistory({ cwd = process.cwd(), base, head, title, nu
         "--",
         file,
       ],
-      { cwd, stdio: ["ignore", "pipe", "pipe"] },
-    ).toString("latin1");
+      { cwd, maxBuffer: Number.MAX_SAFE_INTEGER, stdio: ["ignore", "pipe", "pipe"] },
+    ).toString("utf8");
     const hunks = diff.split(/^@@ /m).slice(1);
     const issues = [];
     for (const hunk of hunks) {

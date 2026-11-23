@@ -168,6 +168,47 @@ describe("worklog history", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(b);
   }, 120000);
+  it("allows large histories and large diffs through the CLI", () => {
+    const r = repo();
+    const large = `${"ordinary text ".repeat(90000)}\n`;
+    r.put(a, large);
+    const base = r.commit();
+    r.put(a, `${large}${"extra text ".repeat(110000)}\n`);
+    r.commit();
+    expect(r.run(base, "PBI-489 task").status).toBe(0);
+    const rejected = r.run(base, "PBI-488 task");
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain("PR の先頭の版の行 2");
+  });
+  it("allows broken Unicode link targets through the CLI", () => {
+    const r = repo();
+    r.put("docs/adr/新しい.md", "new");
+    r.put(b, "[one](../adr/à-old.md)\n");
+    const base = r.commit();
+    r.put(b, "[one](../adr/新しい.md)\n");
+    r.commit();
+    const result = r.run(base);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+  it("rejects changing invalid bytes on both sides together with a link repair", () => {
+    for (const [before, after] of [
+      [0x80, 0x81],
+      [0xfe, 0xff],
+      [0, 1],
+    ]) {
+      const r = repo();
+      const line = (byte: number, target: string) =>
+        Buffer.concat([Buffer.from([byte]), Buffer.from(` [one](../adr/${target}.md)\n`)]);
+      r.put(b, line(before, "old"));
+      const base = r.commit();
+      r.put(b, line(after, "new"));
+      r.commit();
+      const result = r.run(base);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(b);
+    }
+  });
   it("TV-6: rejects reordered repairs but accepts ordered repairs", () => {
     const r = repo();
     r.put(b, "[one](../adr/new.md)\n[two](../adr/new2.md)\n");

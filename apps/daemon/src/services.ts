@@ -359,6 +359,14 @@ export function sanitizeCompose(
       problems.push(`ネットワーク ${name}：driver: ${String(network.driver)} は使えません`);
     }
     delete network.name;
+    if (Array.isArray(network.labels)) {
+      network.labels = network.labels.filter(
+        (label) => String(label).split("=")[0] !== OWNER_LABEL,
+      );
+    } else if (isObject(network.labels)) {
+      network.labels = { ...network.labels };
+      delete (network.labels as Json)[OWNER_LABEL];
+    }
     networks[name] = network;
   }
   const volumes: Json = {};
@@ -371,6 +379,12 @@ export function sanitizeCompose(
       problems.push(`ボリューム ${name}：driver・driver_opts は使えません`);
     }
     delete volume.name;
+    if (Array.isArray(volume.labels)) {
+      volume.labels = volume.labels.filter((label) => String(label).split("=")[0] !== OWNER_LABEL);
+    } else if (isObject(volume.labels)) {
+      volume.labels = { ...volume.labels };
+      delete (volume.labels as Json)[OWNER_LABEL];
+    }
     volumes[name] = volume;
   }
   for (const key of ["secrets", "configs"]) {
@@ -549,7 +563,8 @@ function parseOwner(value: string): ProcessIdentity | undefined {
 export function labelOwner(config: Json, owner: ProcessIdentity): void {
   const services = config.services;
   if (!services || typeof services !== "object") return;
-  for (const service of Object.values(services as Record<string, unknown>)) {
+  const volumes = isObject(config.volumes) ? Object.values(config.volumes) : [];
+  for (const service of [...Object.values(services as Record<string, unknown>), ...volumes]) {
     if (!service || typeof service !== "object") continue;
     const s = service as Json;
     if (Array.isArray(s.labels)) {
@@ -770,7 +785,17 @@ export class DockerComposeServices implements ServiceRunner {
         }
       }
       if (state.aborted) return { ok: false as const, message: message("run.stoppedByPerson") };
-      const created = await this.docker(["network", "create", network], state);
+      const owner = this.deps.owner ?? selfIn(await (this.deps.table ?? psTable)());
+      if (state.aborted) return { ok: false as const, message: message("run.stoppedByPerson") };
+      const created = await this.docker(
+        [
+          "network",
+          "create",
+          ...(owner ? ["--label", `${OWNER_LABEL}=${ownerValue(owner)}`] : []),
+          network,
+        ],
+        state,
+      );
       if (state.aborted) {
         await this.stopGroup(input.runId, prepared.length);
         return { ok: false as const, message: message("run.stoppedByPerson") };
@@ -794,7 +819,6 @@ export class DockerComposeServices implements ServiceRunner {
             }),
         };
       createdNetwork = true;
-      const owner = this.deps.owner ?? selfIn(await (this.deps.table ?? psTable)());
       for (const [i, item] of prepared.entries()) {
         if (item.safe.services.length === 0) continue;
         if (state.aborted) {
@@ -1028,35 +1052,117 @@ export class DockerComposeServices implements ServiceRunner {
    * ラベルの無いもの（所有元を残す前の sacty が起動したもの）は、これまでどおり止める。
    */
   async cleanupAll(): Promise<void> {
-    const listed = await this.compose(["ls", "--all", "--format", "json"]);
-    if (listed.code !== 0) return;
-    let projects: { Name?: string }[] = [];
+    const warn = (
+      kind: string,
+      name: string,
+      result: { code: number; failure?: "timeout" | "spawn" },
+    ) => {
+      if (result.code !== 0)
+        console.warn(
+          `[services] ${kind}の回収に失敗しました: ${name} (${result.failure ?? "exit"}, code=${result.failure ? "なし" : result.code})`,
+        );
+    };
     try {
-      projects = JSON.parse(listed.out) as { Name?: string }[];
+      const listed = await this.compose(
+        ["ls", "--all", "--format", "json"],
+        undefined,
+        undefined,
+        this.deps.dockerTimeoutMs ?? IMAGE_ID_TIMEOUT_MS,
+      );
+      warn("compose", "一覧", listed);
+      let projects: { Name?: string }[] = [];
+      try {
+        if (listed.code === 0) projects = JSON.parse(listed.stdout);
+      } catch {
+        console.warn("[services] compose の回収に失敗しました: 一覧 (exit, code=なし)");
+      }
+      const names = Array.isArray(projects)
+        ? projects.map((p) => p.Name ?? "").filter((n) => n.startsWith("sacty-svc-"))
+        : [];
+      if (names.length) {
+        const table = await (this.deps.table ?? psTable)();
+        if (table.length)
+          for (const name of names) {
+            try {
+              const owners = await this.docker([
+                "ps",
+                "--all",
+                "--filter",
+                `label=com.docker.compose.project=${name}`,
+                "--format",
+                `{{.Label "${OWNER_LABEL}"}}`,
+              ]);
+              if (
+                owners.code !== 0 ||
+                owners.stdout
+                  .split("\n")
+                  .map(parseOwner)
+                  .some((owner) => owner && isRunning(owner, table))
+              )
+                continue;
+              const down = await this.compose(
+                ["-p", name, "down", "-v", "--remove-orphans", "--rmi", "local"],
+                undefined,
+                undefined,
+                this.deps.dockerTimeoutMs ?? 120_000,
+              );
+              warn("compose", name, down);
+            } catch {
+              console.warn(`[services] compose の回収に失敗しました: ${name} (spawn, code=なし)`);
+            }
+          }
+      }
     } catch {
-      return;
+      console.warn("[services] compose の回収に失敗しました: 一覧 (spawn, code=なし)");
     }
-    const names = projects.map((p) => p.Name ?? "").filter((n) => n.startsWith("sacty-svc-"));
-    if (names.length === 0) return;
-    const table = await (this.deps.table ?? psTable)();
-    // 一覧が読めない（ps が使えない）ときは、所有元を確かめられないので止めない
-    if (table.length === 0) return;
-    for (const name of names) {
-      const owners = await this.docker([
-        "ps",
-        "--all",
-        "--filter",
-        `label=com.docker.compose.project=${name}`,
-        "--format",
-        `{{.Label "${OWNER_LABEL}"}}`,
-      ]);
-      if (owners.code !== 0) continue;
-      const alive = owners.stdout
-        .split("\n")
-        .map(parseOwner)
-        .some((owner) => owner && isRunning(owner, table));
-      if (alive) continue;
-      await this.compose(["-p", name, "down", "-v", "--remove-orphans", "--rmi", "local"]);
+    const results: { type: string; kind: string; stdout: string }[] = [];
+    for (const [type, kind] of [
+      ["network", "ネットワーク"],
+      ["volume", "ボリューム"],
+    ] as const) {
+      try {
+        const listed = await this.docker([
+          type,
+          "ls",
+          "--filter",
+          `label=${OWNER_LABEL}`,
+          "--format",
+          `{{.Name}}\t{{.Label "${OWNER_LABEL}"}}\t{{.Label "com.docker.compose.project"}}`,
+        ]);
+        warn(kind, "一覧", listed);
+        if (listed.code === 0) results.push({ type, kind, stdout: listed.stdout });
+      } catch {
+        console.warn(`[services] ${kind}の回収に失敗しました: 一覧 (spawn, code=なし)`);
+      }
+    }
+    try {
+      const table = await (this.deps.table ?? psTable)();
+      if (!table.length) {
+        console.warn(
+          "[services] プロセス一覧を読めないため、ネットワークとボリュームの回収を見送りました",
+        );
+        return;
+      }
+      for (const { type, kind, stdout } of results)
+        for (const line of stdout.split("\n")) {
+          const [name, label, project] = line.split("\t");
+          if (!name || !label) continue;
+          if (
+            type === "network"
+              ? !/^sacty-svc-[a-z0-9]+-network$/.test(name) || !!project
+              : !project?.startsWith("sacty-svc-")
+          )
+            continue;
+          const owner = parseOwner(label);
+          if (!owner || isRunning(owner, table)) continue;
+          try {
+            warn(kind, name, await this.docker([type, "rm", name]));
+          } catch {
+            console.warn(`[services] ${kind}の回収に失敗しました: ${name} (spawn, code=なし)`);
+          }
+        }
+    } catch {
+      console.warn("[services] プロセス一覧を読めませんでした");
     }
   }
 

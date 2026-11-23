@@ -27,8 +27,8 @@ Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopService
    - It removes `ports` and `container_name` from each service, and puts each on the network `sacty`.
    - It removes fixed names of networks and volumes.
    - From services with `build`, it removes `image` and `build.tags` and sets `pull_policy: build`. This keeps built images from taking tags shared on the host, such as the agent image. compose names them `<project>-<service>`.
-   - It adds the owner label `io.sacty.owner` (the PID and start time of the daemon that started it).
-5. With the settings written to a temporary file, the services start with `docker compose -p sacty-svc-<name derived from the run ID> -f <settings> up -d --wait --wait-timeout 300 <services>`. For a single compose, the agent container connects with `--network sacty-svc-…_sacty`. For multiple composes, sacty creates one common network and starts each as a separate project on that network. The agent joins that one network and reaches services by name and container port.
+   - It adds the owner label `io.sacty.owner` (the PID and start time of the daemon that started it) to services and named volumes. It removes that label from input volumes and networks. If the owner cannot be read, it does not add the label.
+5. With the settings written to a temporary file, the services start with `docker compose -p sacty-svc-<name derived from the run ID> -f <settings> up -d --wait --wait-timeout 300 <services>`. For a single compose, the agent container connects with `--network sacty-svc-…_sacty`. For multiple composes, sacty creates one common network, adds the owner label if the owner can be read, and starts each as a separate project on that network. The agent joins that one network and reaches services by name and container port.
 6. Afterward (even on failure or timeout), `docker compose -p <name> down -v --remove-orphans --rmi local` removes the containers, networks, volumes, and built images. For multiple composes, sacty stops each project and then removes the common network. Each compose stop has a 120-second limit and network removal has a 30-second limit; failures are logged and cleanup continues.
 
 - Pinning the agent image
@@ -37,7 +37,7 @@ Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopService
   - If a person stops the task (pause or cancel) while it waits, sacty stops `docker image inspect` and starts neither the services nor the agent.
   - Steps that do not use services do not check.
 - Failure reasons are the last 2000 characters after redacting secrets.
-- At daemon startup, sacty removes projects whose names start with `sacty-svc-` and whose owner-label daemon is not running (including those without the label). If `ps` cannot be read, nothing is removed.
+- At daemon startup, sacty removes projects whose names start with `sacty-svc-` and whose owner-label daemon is not running (including those without the label). It also removes common networks and named volumes whose labeled owner is no longer running. Networks must match `sacty-svc-<lowercase letters and digits>-network` and have no compose project label; volumes must belong to a `sacty-svc-` project. Resources with missing or invalid labels, running owners, or an unreadable `ps` table or resource list are left alone. Each listing and resource removal has a 30-second limit; project stops have a 120-second limit. Failures are logged and cleanup continues. Like container cleanup, this cannot reliably protect owners when Docker is shared across machines, processes are hidden by `hidepid`, or old and new versions share Docker.
 
 Code: `apps/daemon/src/services.ts` (`DockerComposeServices.startOnce`, `startGroup`, `stopGroup`, `stop`, `cleanupAll`, `imageId`, `sanitizeCompose`, `composeProject`, `labelOwner`, `OWNER_LABEL`, `LOG_TAIL`)
 
