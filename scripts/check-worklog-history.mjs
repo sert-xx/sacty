@@ -19,6 +19,8 @@ function linkFix(oldLine, newLine, file, head, cwd) {
     const after = newLinks[i][2];
     if (before === after) continue;
     changed = true;
+    // 外部リンクや文書内アンカーの生存は Git のツリーから確認できない。
+    if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(before)) return false;
     const exists = (target) => {
       if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(target)) return false;
       const clean = target.split(/[?#]/, 1)[0];
@@ -90,6 +92,9 @@ export function checkWorklogHistory({ cwd = process.cwd(), base, head, title, nu
       "--no-renames",
       "--unified=0",
       "--no-color",
+      "--text",
+      "--no-ext-diff",
+      "--no-textconv",
       mergeBase,
       head,
       "--",

@@ -105,6 +105,37 @@ describe("worklog history", () => {
     expect(x.stderr).toContain("マージベースの版の行 1");
     expect(x.stderr).toContain("git checkout");
   });
+  it("rejects binary-classified changes to merged histories", () => {
+    for (const title of ["PBI-488 task", "PBI-489 task"]) {
+      const r = repo();
+      r.put(a, "one\ntwo\nchanged\0content\nfour\nfive\n");
+      r.commit();
+      const x = r.run(r.base, title);
+      expect(x.status).toBe(1);
+      expect(x.stderr).toContain(a);
+      expect(x.stderr).toContain("マージベースの版の行 3");
+      expect(x.stderr).toContain("git checkout");
+    }
+  });
+  it("rejects link replacements when the old target cannot be checked in the tree", () => {
+    for (const target of [
+      "#section",
+      "https://example.com/a",
+      "mailto:test@example.com",
+      "//example.com/a",
+    ]) {
+      const r = repo();
+      r.put(b, `[one](${target})\n`);
+      const base = r.commit();
+      r.put(b, "[one](../adr/new.md)\n");
+      r.commit();
+      const x = r.run(base);
+      expect(x.status).toBe(1);
+      expect(x.stderr).toContain(b);
+      expect(x.stderr).toContain("マージベースの版の行 1");
+      expect(x.stderr).toContain("git checkout");
+    }
+  });
   it("TV-6: rejects reordered repairs but accepts ordered repairs", () => {
     const r = repo();
     r.put(b, "[one](../adr/new.md)\n[two](../adr/new2.md)\n");
