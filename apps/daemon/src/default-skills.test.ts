@@ -1958,6 +1958,60 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     );
   });
 
+  it("aggregation.md の追加規則 1 を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain(
+      "2回目以降、範囲を絞る案を1つ以上、総評か指摘の本文に添える。",
+    );
+  });
+
+  it("aggregation.md の追加規則 2 を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain(
+      "`pr-review` はその `must` に印を付け、`self-review` は報告の `needsDecision` に原因・回数・案・満たせなくなる条件を書く。",
+    );
+  });
+
+  it("aggregation.md の追加規則 3 を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain(
+      "人の判断後に同じ原因の `must` が続いた回も同様に扱う。",
+    );
+  });
+
+  it("pr-review.md の追加規則 1 を文全体で確認する", () => {
+    expect(read(`${dir}pr-review.md`)).toContain(
+      "同じ原因の `must` が2回目以降なら、同じ指摘が残る場合も、範囲を絞る案を1つ以上本文に添え、残る影響と満たせなくなる受け入れ条件を書く。",
+    );
+  });
+
+  it("pr-review.md の追加規則 2 を文全体で確認する", () => {
+    expect(read(`${dir}pr-review.md`)).toContain(
+      "同じ原因の `must` が3回目以降なら、人の判断が PR にある原因でも、その後に続いた回ごとに印を付ける。",
+    );
+  });
+
+  it("pr-review.md の追加規則 3 を文全体で確認する", () => {
+    expect(read(`${dir}pr-review.md`)).toContain(
+      "理由に回数・範囲を絞る案・前回の人の判断とそれでも続いたことを書く。",
+    );
+  });
+
+  it("self-review.md の追加規則 1 を文全体で確認する", () => {
+    expect(read(`${dir}self-review.md`)).toContain(
+      "同じ原因の `must` が2回目以降なら、同じ指摘が残る場合も、範囲を絞る案を1つ以上記録と報告の総評に書き、残る影響と満たせなくなる受け入れ条件を書く。",
+    );
+  });
+
+  it("self-review.md の追加規則 2 を文全体で確認する", () => {
+    expect(read(`${dir}self-review.md`)).toContain(
+      "同じ原因の `must` が3回目以降なら、人の判断を求め、報告の `needsDecision` に原因・回数・案・満たせなくなる条件を書く。",
+    );
+  });
+
+  it("self-review.md の追加規則 3 を文全体で確認する", () => {
+    expect(read(`${dir}self-review.md`)).toContain(
+      "人の判断後に同じ原因の `must` が続いた回も、範囲を絞る案と人の判断を求める報告を同様に書く。",
+    );
+  });
+
   it("設計書の観点 D-3 が、取り消せない害を防ぐ処理の境目の数え上げを見て、重さは表で決める", () => {
     const d3 = read("skills/review/review-execution/references/D-3.md");
     expect(d3).toContain("取り消せない害を防ぐ処理（秘密情報を伏せる・データの破損を防ぐ検査など");
