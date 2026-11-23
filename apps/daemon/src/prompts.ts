@@ -54,6 +54,7 @@ import {
   ReworkAnswer,
   ReworkCause,
   type RiskAssessment,
+  rejectedNoteRetry,
   renderMessage,
   rerunEditableBody,
   resumeNoteSections,
@@ -2304,7 +2305,14 @@ function designEditLines(task: Task): string[] {
 function proposalLines(task: Task, step: StepKey): string[] {
   const targets = changeableSteps(task, step);
   if (targets.length === 0) return [];
+  const rejected = rejectedNoteRetry(task, step);
+  const retryRejected = Boolean(rejected);
   return [
+    ...(retryRejected && rejected
+      ? [
+          `直前の申し出 ${rejected.id} は人が却下しました。却下された変更を成果に含めず、承認済みの成果物に従って作り直してください。`,
+        ]
+      : []),
     "",
     `--- 承認済みの成果物（${targets.map((t) => STEP_NAME[t]).join("・")}）の変更の申し出 ---`,
     step === "implement" && stepDocumentPlaces(task)
@@ -2337,7 +2345,9 @@ function proposalLines(task: Task, step: StepKey): string[] {
     // 人が再開のときに足した補足は、承認済みの成果物より優先させる（resumeNotePromptLines と同じ順位）
     ...(task.resumeNotes?.length
       ? [
-          "ただし、人が再開のときに足した補足と食い違う箇所は、補足に従って作ってください。承認済みの成果物を補足に合わせる必要があれば、その変更を申し出てください。",
+          retryRejected
+            ? "却下された変更については承認済みの成果物に従い、それ以外は再開の補足に従ってください。"
+            : "ただし、人が再開のときに足した補足と食い違う箇所は、補足に従って作ってください。承認済みの成果物を補足に合わせる必要があれば、その変更を申し出てください。",
         ]
       : []),
   ];
@@ -3650,7 +3660,9 @@ function resumeNotePromptLines(task: Task): string[] {
   if (!notes) return [];
   return [
     "",
-    "--- 人が再開のときに足した補足（承認済みの要求要件・設計と食い違うときは、補足を優先してください） ---",
+    rejectedNoteRetry(task, "implement")
+      ? "--- 人が再開のときに足した補足（却下された変更は承認済みの成果物に従い、それ以外は補足を優先してください） ---"
+      : "--- 人が再開のときに足した補足（承認済みの要求要件・設計と食い違うときは、補足を優先してください） ---",
     notes,
   ];
 }
@@ -4593,10 +4605,8 @@ export function extractBlocks(
   let responses: RemarkResponse[] | undefined;
   let testViewpoints: TestViewpoint[] | undefined;
   let viewpointPositions: (string | undefined)[] | undefined;
-  let proposal: ExtractedProposal | undefined;
+  let proposalResult: ProposalRead = { kind: "absent" };
   let proposalSeen = false;
-  let proposalShapeInvalid = false;
-  let proposalViewpointsInvalid = false;
   let designEdit: Extracted["designEdit"];
   let testMap: TestMapping[] | undefined;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
@@ -4656,17 +4666,11 @@ export function extractBlocks(
       // 最初のものを使う（候補は後ろから見るので、最後に当たったものが最初のブロック）
       designEdit = { value: edited };
     }
-    if (proposed && typeof proposed === "object" && !Array.isArray(proposed)) {
+    if (Object.hasOwn(record, PROPOSAL_HEADING)) {
       read = true;
       if (!proposalSeen) {
         proposalSeen = true;
-        const raw = proposed as Record<string, unknown>;
-        proposal = toProposal(raw, changeable);
-        proposalShapeInvalid = !proposal && changeable.some((step) => step === raw.target);
-        proposalViewpointsInvalid =
-          raw.target === "design" &&
-          Array.isArray(raw.testViewpoints) &&
-          toViewpoints(raw.testViewpoints).length !== raw.testViewpoints.length;
+        proposalResult = readProposal(proposed, changeable);
       }
     }
     if (Array.isArray(list)) {
@@ -4732,12 +4736,15 @@ export function extractBlocks(
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
     viewpointPositions: viewpointPositions ?? [],
-    proposal,
+    ...(proposalResult.kind === "valid" ? { proposal: proposalResult.proposal } : {}),
+    ...(proposalResult.kind === "invalid" && proposalResult.partial
+      ? { proposal: proposalResult.partial, proposalViewpointsInvalid: true }
+      : {}),
     ...(changeable.length > 0 &&
-    (proposalShapeInvalid || headingMentions(body, PROPOSAL_HEADING, used).length > 0)
+    ((proposalResult.kind === "invalid" && !proposalResult.partial) ||
+      headingMentions(body, PROPOSAL_HEADING, used).length > 0)
       ? { proposalInvalid: true }
       : {}),
-    ...(proposalViewpointsInvalid ? { proposalViewpointsInvalid: true } : {}),
     ...(designEdit ? { designEdit } : {}),
     testMap: testMap ?? [],
     ...(selfReview ? { selfReview } : {}),
@@ -4813,6 +4820,55 @@ function viewpointsWithPositions(list: unknown[]): {
     return id;
   });
   return { viewpoints, positions };
+}
+
+type ProposalRead =
+  | { kind: "absent" }
+  | { kind: "valid"; proposal: ExtractedProposal }
+  | { kind: "invalid"; partial?: ExtractedProposal };
+
+/** 申し出の全体を一度に分類する。対象外の既知の成果物は従来どおり無視する。 */
+function readProposal(value: unknown, changeable: readonly StepKey[]): ProposalRead {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "invalid" };
+  const raw = value as Record<string, unknown>;
+  if (
+    (raw.target === "requirements" || raw.target === "design") &&
+    !changeable.includes(raw.target)
+  ) {
+    return { kind: "absent" };
+  }
+  const proposal = toProposal(raw, changeable);
+  if (
+    !proposal ||
+    !Array.isArray(raw.facts) ||
+    raw.facts.some((fact) => typeof fact !== "string" || !fact.trim()) ||
+    (raw.byNote !== undefined && typeof raw.byNote !== "string")
+  )
+    return { kind: "invalid" };
+  if (
+    raw.testViewpoints !== undefined &&
+    (!Array.isArray(raw.testViewpoints) ||
+      toViewpoints(raw.testViewpoints).length !== raw.testViewpoints.length)
+  ) {
+    // 不完全な配列は、従来どおり人が申し出を判断する。配列以外は読み取れない。
+    return Array.isArray(raw.testViewpoints)
+      ? { kind: "invalid", partial: proposal }
+      : { kind: "invalid" };
+  }
+  if (raw.design !== undefined) {
+    if (!raw.design || typeof raw.design !== "object" || Array.isArray(raw.design)) {
+      return { kind: "invalid", partial: proposal };
+    }
+    const design = raw.design as Record<string, unknown>;
+    if (
+      !text(design.proposed) ||
+      !Array.isArray(design.testViewpoints) ||
+      toViewpoints(design.testViewpoints).length !== design.testViewpoints.length ||
+      (design.inScope !== undefined && typeof design.inScope !== "boolean")
+    )
+      return { kind: "invalid", partial: proposal };
+  }
+  return { kind: "valid", proposal };
 }
 
 function toProposal(

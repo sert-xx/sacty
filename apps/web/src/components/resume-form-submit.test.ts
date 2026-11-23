@@ -79,6 +79,15 @@ describe("テストが決まらずに止まったタスクの再開の欄", () =
     expect(await submit()).toMatchObject({ note: "範囲を絞る", approvedEdits: "on" });
   });
 
+  it("許可を選ばず補足だけを送る", async () => {
+    renderForm();
+    const note = container.querySelector<HTMLTextAreaElement>("#resume-note");
+    if (note) act(() => typeInto(note, "範囲を絞る"));
+    const sent = await submit();
+    expect(sent?.note).toBe("範囲を絞る");
+    expect(sent).not.toHaveProperty("approvedEdits");
+  });
+
   it("テストのコマンドを選ぶと入力欄が出て、入れたコマンドを送る", async () => {
     renderForm();
     expect(container.querySelector("#test-command")).toBeNull();

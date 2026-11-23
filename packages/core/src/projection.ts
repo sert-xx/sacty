@@ -654,6 +654,10 @@ export type DecisionPause = {
   decisions: { text: string; source: "note" | "comment"; author?: string }[];
 };
 
+// 最新の実装の申告を投影の内部だけに保持する（API の JSON には含めない）。
+const LAST_IMPLEMENT_TEST_MAP: unique symbol = Symbol("lastImplementTestMap");
+const REJECTED_NOTE_RETRY: unique symbol = Symbol("rejectedNoteRetry");
+
 export type Task = {
   id: string;
   projectId: string;
@@ -986,6 +990,9 @@ export type Task = {
    * 前の提出までに対応させたテストも、今回の申告に出てくる観点に残す（PBI-299）。
    */
   testMap: TestMapping[];
+  /** 最新の実装が申告した対応。上流の自動変更時に旧対応を除くために使う。 */
+  [LAST_IMPLEMENT_TEST_MAP]?: TestMapping[];
+  [REJECTED_NOTE_RETRY]?: { proposalId: string; step: StepKey };
   /**
    * 実装の提出ごとの出力（古い順。PBI-299）。直しの後の PR の本文を、最後の直しの説明だけにせず、PR 全体の説明にするために
    * 持つ。要求要件・設計などの上流の工程を承認し直したら、実装をやり直す前提が変わるので、空に戻す。上限を超えたら古いものを捨てる。
@@ -1991,6 +1998,8 @@ export function applyEvent(
         };
       }
       if (event.type === "AgentRunCompleted") {
+        if (task[REJECTED_NOTE_RETRY]?.step === event.payload.step)
+          task[REJECTED_NOTE_RETRY] = undefined;
         // 承認済みの成果物は凍結されている。変えるには、人間が差し戻して承認を取り消す必要がある
         if (task.approved[event.payload.step]) {
           throw new ActivityIntegrityError(event, "the step is already approved (frozen)");
@@ -2065,6 +2074,7 @@ export function applyEvent(
           // 完了の申告（PBI-347）。申告させる前の記録には無い（undefined のまま、提出に進める）
           task.implementCompletion = event.payload.completion;
           // 直しの提出は、PR 全体の対応にする：前の提出までに対応させたテストを、今回の申告に出てくる観点に残す（PBI-299）
+          task[LAST_IMPLEMENT_TEST_MAP] = event.payload.testMap;
           task.testMap = mergeTestMaps(
             (task.implementHistory?.length ?? 0) > 0 ? task.testMap : [],
             event.payload.testMap,
@@ -2507,6 +2517,9 @@ export function applyEvent(
       updateProposal(task, proposal.id, {
         decision: { accept: event.payload.accept, at: event.at },
       });
+      if (!event.payload.accept && task.approvedEdits) {
+        task[REJECTED_NOTE_RETRY] = { proposalId: proposal.id, step: proposal.fromStep };
+      }
       task.status = "idle";
       break;
     }
@@ -2557,6 +2570,7 @@ export function applyEvent(
       if (proposal.byNote && proposal.fromStep === "implement") {
         task.implementHistory = task.implementHistory?.slice(-1);
         task.implementBase = undefined;
+        task.testMap = task[LAST_IMPLEMENT_TEST_MAP] ?? [];
       } else {
         task.implementHistory = undefined;
         task.implementBase = undefined;
@@ -5576,6 +5590,14 @@ export function keptStepBranches(task: Task): string[] {
 }
 
 /** 現在実行対象の工程（active な工程）。 */
+/** 許可中に却下され、まだ作り直していない申し出。一時停止と再起動をまたいでも保持する。 */
+export function rejectedNoteRetry(task: Task, step: StepKey): TaskProposal | undefined {
+  const retry = task[REJECTED_NOTE_RETRY];
+  return retry?.step === step
+    ? task.proposals.find((proposal) => proposal.id === retry.proposalId)
+    : undefined;
+}
+
 export function activeStep(task: Task): StepKey | undefined {
   return task.steps.find((s) => s.state === "active")?.key;
 }

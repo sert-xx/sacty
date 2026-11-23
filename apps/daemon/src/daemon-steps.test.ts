@@ -2666,6 +2666,40 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     activity.close();
   });
 
+  it.each([
+    ["target の欠落", { reason: "r", facts: ["f"], proposed: "new" }],
+    ["target の型違い", { target: 1, reason: "r", facts: ["f"], proposed: "new" }],
+    ["別のキーと同居する null", null],
+    [
+      "配列ではないテスト観点",
+      {
+        target: "requirements",
+        reason: "r",
+        facts: ["f"],
+        proposed: "new",
+        testViewpoints: "invalid",
+      },
+    ],
+  ])("不正な申し出（%s）を提出しない", async (_name, proposal) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const output = block({
+      "sacty-test-viewpoints": [{ title: "A", input: "I", expected: "E" }],
+      "sacty-change-proposal": proposal,
+    });
+    const { service } = makeService(activity, [out("# 要求"), out(output)]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("paused");
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    expect(result?.task.gate?.step).not.toBe("design");
+    activity.close();
+  });
+
   it("空の補足での許可付き再開を記録せず断る", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [out("# 要求")]);
@@ -2779,6 +2813,47 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     expect(decided.approved.requirements).toBeUndefined();
     expect(decided.gate?.step).toBe("requirements");
     expect(decided.proposals[0]?.byNote).toBeUndefined();
+    activity.close();
+  });
+
+  it("許可中の申し出を却下すると成果を提出せず承認済みの要求に従ってやり直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const proposal = out(
+      block({
+        "sacty-change-proposal": {
+          target: "requirements",
+          reason: "変更",
+          facts: ["事実"],
+          proposed: "# 変更後",
+        },
+      }),
+    );
+    const { service } = makeService(activity, [
+      out("# 元の要求"),
+      proposal,
+      out("# 作り直した設計"),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const decided = service.decideChange(id, "CP-1", { accept: false });
+    expect(decided.gate).toBeUndefined();
+    expect(decided.approved.requirements?.output).toBe("# 元の要求");
+    await service.pause(id);
+    const restarted = makeService(activity, [out("# 作り直した設計")]);
+    restarted.service.resume(id, {});
+    await restarted.service.runNext(id);
+    expect(promptOf(restarted.executor, 0)).toContain("却下された変更を成果に含めず");
+    expect(promptOf(restarted.executor, 0)).toContain(
+      "却下された変更については承認済みの成果物に従い",
+    );
+    expect(promptOf(restarted.executor, 0)).not.toContain(
+      "ただし、人が再開のときに足した補足と食い違う箇所は、補足に従って",
+    );
+    expect(restarted.service.get(id)?.task.gate?.step).toBe("design");
     activity.close();
   });
 

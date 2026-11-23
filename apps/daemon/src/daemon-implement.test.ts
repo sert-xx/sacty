@@ -318,6 +318,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         "sacty-change-proposal": {
           target: "design",
           reason: "補足",
+          facts: ["事実"],
           proposed: "# 新しい設計",
           byNote: "範囲を絞る",
           testViewpoints: [

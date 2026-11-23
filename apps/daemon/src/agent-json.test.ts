@@ -627,6 +627,7 @@ describe("申し出のテスト観点", () => {
         "sacty-change-proposal": {
           target: "design",
           reason: "変更",
+          facts: ["事実"],
           proposed: "設計",
           byNote: "補足",
           testViewpoints: [

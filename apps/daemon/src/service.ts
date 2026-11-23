@@ -21165,7 +21165,7 @@ export class TaskService {
    * トランザクションで記録する（間で止まっても、どの状態にも進まないタスクを残さないため）。
    * - 判定できなければエスカレーションにする
    * - 認められたら変更を反映する。要求要件の変更は、人間の再承認に回す
-   * - 却下されたら（設計の変更が反映された場合も）、申し出た工程の成果物をそのまま提出する
+   * - 却下されたら、許可中の申し出は工程をやり直し、それ以外は成果物を提出する
    * 反映（ChangeApplied）は提出回を変えないので、提出回は記録前のタスクから求めてよい。
    */
   private settleEvents(
@@ -21189,7 +21189,11 @@ export class TaskService {
         },
       ];
     }
-    if (!accepted) return this.submitEvents(task, proposal.fromStep);
+    if (!accepted) {
+      return task.approvedEdits
+        ? [{ actor: "sacty", event: { type: "StepQueued", payload: { step: proposal.fromStep } } }]
+        : this.submitEvents(task, proposal.fromStep);
+    }
     return [
       {
         actor: "sacty",

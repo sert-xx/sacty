@@ -1596,7 +1596,7 @@ Requests matching a permitted resume note are accepted automatically; you decide
 3. Press "Accept change" or "Don't accept".
    - If you accept a change to the requirements, their approval is revoked, so approve them again.
    - If you accept a change to the design, it replaces the approved design.
-   - If you don't accept it, the requesting step's deliverable is submitted as is (the approved requirements and design do not change).
+   - If you don't accept it, the approved requirements and design do not change. A request made while permission is active is rerun against the approved artifacts without submitting its result. The rejected change remains excluded after a pause or daemon restart. Otherwise, the requesting step's deliverable is submitted.
 
 - While the task waits for your decision, it cannot be paused.
 - A request that an earlier version's AI was in the middle of judging waits for your decision when the updated version starts.

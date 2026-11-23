@@ -329,4 +329,4 @@ When sacty is waiting on a person, the AI can read "what is being asked" and "ho
 
 ## Allow edits with a resume note
 
-Set `allow_approved_edits` with a note in `resume_task` to accept matching requests without another decision until the next pause. The activity and request list show the resume time and design and test viewpoint diffs.
+Set `allow_approved_edits` with a note in `resume_task` to accept matching requests without another decision until the next pause. The activity and request list show the resume time. When the design and test viewpoints are aligned with changed requirements, they also show the diffs.
