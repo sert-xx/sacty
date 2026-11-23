@@ -41,7 +41,7 @@ sacty が作る共通のネットワークと、`sacty-svc-` の compose プロ�
 | --- | --- |
 | `services.ts` `sanitizeCompose` | トップレベルの `volumes` と `networks` の `labels`（配列・マップとも）から、入力の compose が書いた `io.sacty.owner` を除く。持ち主を読めないときも、ボリュームは印の無いまま起動し、回収されない |
 | `services.ts` `labelOwner` | サービスに加え、トップレベルの `volumes` の `labels` に `io.sacty.owner` を付ける（compose の値は上書き） |
-| `services.ts` `startGroup` | 持ち主を `network create` の前に読み、`docker network create --label io.sacty.owner=<pid> <started> <名前>` で作る。読めなければ、いまと同じくラベルを付けずに起動する |
+| `services.ts` `startGroup` | 持ち主を `network create` の前に読み、取得後に中断を確認してから `docker network create --label io.sacty.owner=<pid> <started> <名前>` で作る。読めなければ、いまと同じくラベルを付けずに起動する |
 | `services.ts` `cleanupAll` | `compose ls`・`down` に期限を付け、その後にネットワーク、ボリュームの順に回収する。プロセスの表は、プロジェクトの判定用と、ネットワーク・ボリュームの判定用に 1 回ずつ読む。例外で reject しない |
 | `docs/spec/services.md`・`.en.md` | 「起動と停止」の 4（ラベルの対象に共通のネットワーク・名前付きボリューム、入力のボリューム・ネットワークの `io.sacty.owner` は使わない）と、起動時の片付けの箇条（ネットワーク・ボリュームの回収と対象の選び方、ラベルの無いものは残す、期限、失敗のログ、既存と同じ前提・制約） |
 | `docs/adr/<UTC>-shared-network-volume-owner.md` | ラベルを付けて回収する決定、対象を作り方で選ぶこと、ラベルの無いものを残す理由（sacty が作ったか確かめられない）、匿名のボリュームが残りうること、既存と同じ前提・制約（別のマシン・`hidepid`・新旧の共存・sacty の印をまねた資源） |
@@ -52,7 +52,7 @@ sacty が作る共通のネットワークと、`sacty-svc-` の compose プロ�
 1. プロジェクトの回収は、いまの順（`compose ls` → `psTable` → 各プロジェクトの持ち主の判定 → `down`）のまま、期限だけを足す。表が空なら、プロジェクトは消さずに 2 へ進む。
 2. 1 が終わった後に、`docker network ls --filter label=io.sacty.owner --format '{{.Name}}\t{{.Label "io.sacty.owner"}}\t{{.Label "com.docker.compose.project"}}'` で一覧を読み、既定で決めた名前の形とプロジェクトのラベルで絞る（ボリュームは `docker volume ls` で、プロジェクトのラベルで絞る）。各 30 秒。`down -v` で消えたボリュームは、ここで一覧に出ない。
 3. 2 の 2 つの一覧を読み終えた後に、`psTable` をもう一度読む（1 の表は使わない）。一覧にあるものの持ち主は、一覧より前に起動しているので、動いていれば表に載ります。
-4. 3 の表が空、または一覧の呼び出しが失敗・期限切れなら、その種類は何も消さない。
+4. 3 の表が空、または一覧の呼び出しが失敗・期限切れなら、その種類は何も消さない。表が空の場合は、プロセス一覧を読めずに回収を見送ったことを警告する。
 5. 持ち主が `isRunning` のものは残し、残りを `docker network rm`・`docker volume rm` で消す（各 30 秒）。ホストの再起動の前のものも、持ち主が動いていないので消える。
 
 ## エラー時の振る舞い

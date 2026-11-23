@@ -887,6 +887,40 @@ describe("共用の compose の起動（PBI-70）", () => {
     expect(JSON.stringify(result)).toContain("network unavailable");
     expect(JSON.stringify(result)).not.toContain("secret-value");
   });
+  it("持ち主の取得中に中断されたらネットワークを作らない", async () => {
+    const entered = Promise.withResolvers<void>();
+    const result =
+      Promise.withResolvers<{ pid: number; ppid: number; pgid: number; started: string }[]>();
+    const calls: string[][] = [];
+    const spawnImpl = ((_command: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: vi.fn(),
+      });
+      queueMicrotask(() => {
+        if (args.includes("config"))
+          child.stdout.emit("data", JSON.stringify(normalized({ db: { image: "db" } })));
+        child.emit("close", 0);
+      });
+      return child;
+    }) as never;
+    const runner = new DockerComposeServices(spawnImpl, 300, {
+      table: () => {
+        entered.resolve();
+        return result.promise;
+      },
+    });
+    const members = [{ workspaceDir: ws, spec: { file: "compose/redis.yml", names: [] } }];
+    const pending = runner.startGroup({ runId: "abort-owner", members });
+    await entered.promise;
+    runner.abort("abort-owner");
+    result.resolve([]);
+    expect(await pending).toMatchObject({ ok: false, message: { code: "run.stoppedByPerson" } });
+    expect(calls.some((args) => args[0] === "network" && args[1] === "create")).toBe(false);
+    expect(calls.some((args) => args.includes("up"))).toBe(false);
+  });
   it("複数の compose は衝突を起動前に検査し、同じネットワークで起動して片付ける", async () => {
     const calls: string[][] = [];
     const configs: unknown[] = [];
@@ -1403,6 +1437,8 @@ describe("ネットワークとボリュームの起動時の回収", () => {
           table: async () => (failList ? [alive] : []),
         }).cleanupAll();
         expect(f.calls.filter((a) => a[1] === "rm")).toEqual([]);
+        if (!failList)
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining("プロセス一覧を読めないため"));
       }
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("一覧 (exit, code=1)"));
     } finally {
@@ -1434,12 +1470,20 @@ describe("ネットワークとボリュームの起動時の回収", () => {
       }).cleanupAll();
       expect(list.calls.filter((a) => a[0] === "network" && a[1] === "rm")).toEqual([]);
       expect(list.calls).toContainEqual(["volume", "rm", "vol-a"]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("ネットワークの回収に失敗しました: 一覧 (timeout, code=なし)"),
+      );
+      warn.mockClear();
       const volumeList = fixture({ networks, volumes, hang: "volume ls" });
       await new DockerComposeServices(volumeList.spawnImpl, 300, {
         table: async () => [alive],
         dockerTimeoutMs: 10,
       }).cleanupAll();
       expect(volumeList.calls.filter((a) => a[0] === "volume" && a[1] === "rm")).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("ボリュームの回収に失敗しました: 一覧 (timeout, code=なし)"),
+      );
+      warn.mockClear();
       const remove = fixture({
         networks,
         volumes,
@@ -1476,9 +1520,16 @@ describe("ネットワークとボリュームの起動時の回収", () => {
         }).cleanupAll();
         expect(f.calls).toContainEqual(["network", "rm", "sacty-svc-a-network"]);
         expect(f.events).toContain("volume ls");
-        if (hang !== "none") expect(f.kills).toHaveLength(1);
+        if (hang !== "none") {
+          expect(f.kills).toHaveLength(1);
+          expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining(
+              `composeの回収に失敗しました: ${hang === "down" ? "sacty-svc-old" : "一覧"} (timeout, code=なし)`,
+            ),
+          );
+          warn.mockClear();
+        }
       }
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("timeout"));
     } finally {
       warn.mockRestore();
     }

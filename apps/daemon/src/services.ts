@@ -786,6 +786,7 @@ export class DockerComposeServices implements ServiceRunner {
       }
       if (state.aborted) return { ok: false as const, message: message("run.stoppedByPerson") };
       const owner = this.deps.owner ?? selfIn(await (this.deps.table ?? psTable)());
+      if (state.aborted) return { ok: false as const, message: message("run.stoppedByPerson") };
       const created = await this.docker(
         [
           "network",
@@ -1136,7 +1137,12 @@ export class DockerComposeServices implements ServiceRunner {
     }
     try {
       const table = await (this.deps.table ?? psTable)();
-      if (!table.length) return;
+      if (!table.length) {
+        console.warn(
+          "[services] プロセス一覧を読めないため、ネットワークとボリュームの回収を見送りました",
+        );
+        return;
+      }
       for (const { type, kind, stdout } of results)
         for (const line of stdout.split("\n")) {
           const [name, label, project] = line.split("\t");
