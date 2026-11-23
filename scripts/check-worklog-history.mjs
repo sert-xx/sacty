@@ -15,9 +15,18 @@ function linkFix(oldLine, newLine, file, head, cwd) {
   if (skeleton(oldLine) !== skeleton(newLine)) return false;
   let changed = false;
   for (let i = 0; i < oldLinks.length; i++) {
-    const before = oldLinks[i][2];
-    const after = newLinks[i][2];
-    if (before === after) continue;
+    const beforeBytes = oldLinks[i][2];
+    const afterBytes = newLinks[i][2];
+    if (beforeBytes === afterBytes) continue;
+    let before;
+    let after;
+    try {
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      before = decoder.decode(Buffer.from(beforeBytes, "latin1"));
+      after = decoder.decode(Buffer.from(afterBytes, "latin1"));
+    } catch {
+      return false;
+    }
     changed = true;
     // 外部リンクや文書内アンカーの生存は Git のツリーから確認できない。
     if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(before)) return false;
@@ -83,23 +92,53 @@ export function checkWorklogHistory({ cwd = process.cwd(), base, head, title, nu
       violations.push({ file, lines: lines.length ? lines : ["空のファイルを削除"] });
       continue;
     }
-    const sameTask =
-      /^\d{8}-/.test(path.posix.basename(file)) &&
-      path.posix.basename(file).slice(9).startsWith(prefix);
-    const diff = git(
+    const contents = [mergeBase, head].map((rev) =>
+      execFileSync("git", ["show", `${rev}:${file}`], { cwd, stdio: ["ignore", "pipe", "pipe"] }),
+    );
+    const binary = git(
       cwd,
       "diff",
-      "--no-renames",
-      "--unified=0",
-      "--no-color",
-      "--text",
       "--no-ext-diff",
       "--no-textconv",
+      "--numstat",
       mergeBase,
       head,
       "--",
       file,
-    );
+    ).startsWith("-\t-\t");
+    const invalid = contents.some((content) => {
+      if (content.includes(0)) return true;
+      try {
+        new TextDecoder("utf-8", { fatal: true }).decode(content);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    if (binary || invalid) {
+      violations.push({ file, lines: ["テキストとして判定できないファイルの変更"] });
+      continue;
+    }
+    const sameTask =
+      /^\d{8}-/.test(path.posix.basename(file)) &&
+      path.posix.basename(file).slice(9).startsWith(prefix);
+    // Valid UTF-8 is checked before parsing the diff.
+    const diff = execFileSync(
+      "git",
+      [
+        "diff",
+        "--no-renames",
+        "--unified=0",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        mergeBase,
+        head,
+        "--",
+        file,
+      ],
+      { cwd, stdio: ["ignore", "pipe", "pipe"] },
+    ).toString("latin1");
     const hunks = diff.split(/^@@ /m).slice(1);
     const issues = [];
     for (const hunk of hunks) {

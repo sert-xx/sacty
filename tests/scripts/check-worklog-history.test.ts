@@ -13,7 +13,7 @@ function repo() {
   dirs.push(dir);
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: "pipe" }).trim();
-  const put = (name: string, text: string) => {
+  const put = (name: string, text: string | Buffer) => {
     mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
     writeFileSync(path.join(dir, name), text);
   };
@@ -113,7 +113,7 @@ describe("worklog history", () => {
       const x = r.run(r.base, title);
       expect(x.status).toBe(1);
       expect(x.stderr).toContain(a);
-      expect(x.stderr).toContain("マージベースの版の行 3");
+      expect(x.stderr).toContain("テキストとして判定できない");
       expect(x.stderr).toContain("git checkout");
     }
   });
@@ -136,6 +136,38 @@ describe("worklog history", () => {
       expect(x.stderr).toContain("git checkout");
     }
   });
+  it("rejects invalid bytes and binary diffs even with a link repair through the CLI", () => {
+    for (const bytes of [
+      Buffer.from([0]),
+      ...Array.from({ length: 128 }, (_, i) => Buffer.from([128 + i])),
+    ]) {
+      for (const invalidSide of ["before", "after"]) {
+        const r = repo();
+        const line = (target: string, value: Buffer) =>
+          Buffer.concat([
+            Buffer.from("prefix "),
+            value,
+            Buffer.from(` [one](../adr/${target}.md)\n`),
+          ]);
+        r.put(b, line("old", invalidSide === "before" ? bytes : Buffer.from("ok")));
+        const base = r.commit();
+        r.put(b, line("new", invalidSide === "after" ? bytes : Buffer.from("ok")));
+        r.commit();
+        const result = r.run(base);
+        expect(result.status, `${bytes.toString("hex")} ${invalidSide}`).toBe(1);
+        expect(result.stderr).toContain(b);
+        expect(result.stderr).toContain("git checkout");
+      }
+    }
+    const r = repo();
+    r.put(".gitattributes", "docs/worklog/*.md binary\n");
+    const base = r.commit();
+    r.put(b, "[one](../adr/new.md)\n[two](../adr/old2.md)\n");
+    r.commit();
+    const result = r.run(base);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(b);
+  }, 120000);
   it("TV-6: rejects reordered repairs but accepts ordered repairs", () => {
     const r = repo();
     r.put(b, "[one](../adr/new.md)\n[two](../adr/new2.md)\n");
