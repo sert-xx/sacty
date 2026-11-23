@@ -6978,7 +6978,6 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       repos.missingFetchBranches.push(`sacty/task-${id.slice(0, 8)}`);
       const before = types(service, id).length;
       await service.checkPullRequests();
-      if (service.get(id)?.task.pullRequestState !== "merged") await drain(service);
       expect(types(service, id).slice(before)).toEqual([
         "ReworkStoppedByMerge",
         "PullRequestMerged",
@@ -7037,7 +7036,6 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       repos.missingFetchBranches.push(`sacty/task-${id.slice(0, 8)}`);
       const before = types(service, id).length;
       await service.checkPullRequests();
-      if (service.get(id)?.task.pullRequestState !== "merged") await drain(service);
       expect(service.get(id)?.task.pausedMessage).toBeUndefined();
       expect(types(service, id).slice(before)).toEqual([
         "ReworkStoppedByMerge",
