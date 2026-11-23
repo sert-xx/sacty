@@ -1964,6 +1964,16 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     );
   });
 
+  it("aggregation.md の案の選択肢と残る影響を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain(
+      "受け入れる・範囲の外にする・後続に回す場合と残る影響を書き、承認済みの要求要件・受け入れ条件（無ければ依頼の受け入れ条件）と照らして、満たせなくなる条件を明記する",
+    );
+  });
+
+  it("aggregation.md の3回目以降の人の判断を文全体で確認する", () => {
+    expect(read(`${dir}aggregation.md`)).toContain("3回目以降は人の判断を求める。");
+  });
+
   it("aggregation.md の追加規則 2 を文全体で確認する", () => {
     expect(read(`${dir}aggregation.md`)).toContain(
       "`pr-review` はその `must` に印を付け、`self-review` は報告の `needsDecision` に原因・回数・案・満たせなくなる条件を書く。",
