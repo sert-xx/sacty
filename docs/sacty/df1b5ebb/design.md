@@ -37,17 +37,18 @@ sacty が作る共通のネットワークと、`sacty-svc-` の compose プロ�
 | --- | --- |
 | `services.ts` `labelOwner` | サービスに加え、トップレベルの `volumes` の `labels` に `io.sacty.owner` を付ける（compose の値は上書き） |
 | `services.ts` `startGroup` | 持ち主を `network create` の前に読み、`docker network create --label io.sacty.owner=<pid> <started> <名前>` で作る。読めなければ、いまと同じくラベルを付けずに起動する |
-| `services.ts` `cleanupAll` | `compose ls`・`down` に期限を付け、その後にネットワーク、ボリュームの順に回収する。例外で reject しない |
+| `services.ts` `cleanupAll` | `compose ls`・`down` に期限を付け、その後にネットワーク、ボリュームの順に回収する。プロセスの表は、プロジェクトの判定用と、ネットワーク・ボリュームの判定用に 1 回ずつ読む。例外で reject しない |
 | `docs/spec/services.md`・`.en.md` | 「起動と停止」の 4（ラベルの対象に共通のネットワーク・名前付きボリューム）と、起動時の片付けの箇条（ネットワーク・ボリュームの回収、ラベルの無いものは残す、期限、失敗のログ、既存と同じ前提・制約） |
 | `docs/adr/<UTC>-shared-network-volume-owner.md` | ラベルを付けて回収する決定、ラベルの無いものを残す理由（sacty が作ったか確かめられない）、匿名のボリュームが残りうること、既存と同じ前提・制約（別のマシン・`hidepid`・新旧の共存） |
 | `docs/worklog/<UTC>-pbi-498-<スラッグ>.md` | コマンドと結果。実際の docker での確かめは、依頼者がマージの前にホストで行って足す |
 
-## 処理の流れ（ネットワーク・ボリュームの回収）
+## 処理の流れ（`cleanupAll`）
 
-1. `docker network ls --filter label=io.sacty.owner --format '{{.Name}}\t{{.Label "io.sacty.owner"}}'` で一覧を読む（ボリュームは `docker volume ls` に、プロジェクトのラベルも足す）。各 30 秒。
-2. `compose ls` とこの 2 つの一覧を読み終えた後に、`psTable` を 1 回読む。一覧にあるものの持ち主は、一覧より前に起動しているので、動いていれば表に載ります。
-3. `psTable` が空、または一覧の呼び出しが失敗・期限切れなら、その種類は何も消さない。
-4. 持ち主が `isRunning` のものは残し、残りを `docker network rm`・`docker volume rm` で消す（各 30 秒）。ホストの再起動の前のものも、持ち主が動いていないので消える。
+1. プロジェクトの回収は、いまの順（`compose ls` → `psTable` → 各プロジェクトの持ち主の判定 → `down`）のまま、期限だけを足す。表が空なら、プロジェクトは消さずに 2 へ進む。
+2. 1 が終わった後に、`docker network ls --filter label=io.sacty.owner --format '{{.Name}}\t{{.Label "io.sacty.owner"}}'` で一覧を読む（ボリュームは `docker volume ls` に、プロジェクトのラベルも足す）。各 30 秒。`down -v` で消えたボリュームは、ここで一覧に出ない。
+3. 2 の 2 つの一覧を読み終えた後に、`psTable` をもう一度読む（1 の表は使わない）。一覧にあるものの持ち主は、一覧より前に起動しているので、動いていれば表に載ります。
+4. 3 の表が空、または一覧の呼び出しが失敗・期限切れなら、その種類は何も消さない。
+5. 持ち主が `isRunning` のものは残し、残りを `docker network rm`・`docker volume rm` で消す（各 30 秒）。ホストの再起動の前のものも、持ち主が動いていないので消える。
 
 ## エラー時の振る舞い
 
@@ -84,9 +85,9 @@ sacty が作る共通のネットワークと、`sacty-svc-` の compose プロ�
 - [TV-9] compose ls・down が返らない、または sacty-svc- のプロジェクトが無いときも、ネットワーク・ボリュームの回収に進む
   - 入力：持ち主の終わったネットワークを返す前提で、(a) compose ls が返らない、(b) compose ls が終わったプロジェクトを返して down が返らない（それぞれ期限を小さくする）、(c) compose ls が sacty-svc- のプロジェクトを返さない、を与える
   - 期待結果：(a)・(b) は期限で子プロセスが止まって console.warn に timeout が出て、(a)〜(c) のどれでも、その後に network ls・volume ls と network rm が呼ばれる
-- [TV-10] プロセスの表は、ネットワーク・ボリュームの一覧を読んだ後に読む
-  - 入力：偽の docker と偽の table が呼ばれた順を記録し、table は network ls・volume ls の両方が返る前に呼ばれると空を返すようにして、持ち主の終わったネットワーク・ボリュームで cleanupAll を呼ぶ
-  - 期待結果：table の呼び出しが network ls・volume ls より後で、rm が呼ばれ、一覧より前に table を読む順に戻すとこのテストが落ちる
+- [TV-10] プロセスの表を、プロジェクトの判定の前と、ネットワーク・ボリュームの一覧の後に1回ずつ読む
+  - 入力：偽の docker と偽の table が呼ばれた順を記録し、compose ls は持ち主の終わったプロジェクトを、network ls・volume ls はデーモン D のものを返し、table は network ls・volume ls の両方が返る前の呼び出しでは D の無い（空でない）表を、後の呼び出しでは D のある表を返す
+  - 期待結果：table が2回呼ばれ、1回目の後にプロジェクトの down が、2回目が network ls・volume ls の後にあり、D のネットワーク・ボリュームに rm が呼ばれず、2つ目の読み取りを外して1回目の表を使うとこのテストが落ちる
 - [TV-11] 実際の docker で、止めずに終わらせたデーモンの残りが起動し直すと消える
   - 入力：依頼者がマージの前に docker のあるホストで、複数の compose と名前付きボリュームを使う工程の実行中にデーモンを SIGKILL で終わらせ、コンテナを docker rm -f で消してから sacty up で起動し直す
   - 期待結果：起動し直した後の docker network ls・docker volume ls に、その実行の共通のネットワークと名前付きボリュームが無く、その手順と実際の結果（コマンドの出力）が作業履歴に書かれている
