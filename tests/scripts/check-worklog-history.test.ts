@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -117,6 +117,18 @@ describe("worklog history", () => {
       expect(x.stderr).toContain("git checkout");
     }
   });
+  it("rejects deletion of non-text history as a whole", () => {
+    for (const bytes of [Buffer.from([0]), Buffer.from([0xff])]) {
+      const r = repo();
+      r.put(b, bytes);
+      const base = r.commit();
+      r.git("rm", b);
+      r.commit();
+      const result = r.run(base);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("テキストとして判定できない");
+    }
+  });
   it("rejects link replacements when the old target cannot be checked in the tree", () => {
     for (const target of [
       "#section",
@@ -208,6 +220,75 @@ describe("worklog history", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(b);
     }
+  });
+  it("rejects code and escaped link changes, but allows ordinary repairs", () => {
+    for (const [before, after, expected] of [
+      ["`[x](../adr/old.md)`", "`[x](../adr/new.md)`", 1],
+      ["```md\n[x](../adr/old.md)\n```", "```md\n[x](../adr/new.md)\n```", 1],
+      ["~~~\n[x](../adr/old.md)\n~~~", "~~~\n[x](../adr/new.md)\n~~~", 1],
+      ["\\[x](../adr/old.md)", "\\[x](../adr/new.md)", 1],
+      ["![x](../adr/old.md)", "![x](../adr/new.md)", 1],
+      ["[x](../adr/old.md)", "[x](../adr/new.md)", 0],
+    ] as const) {
+      const r = repo();
+      r.put(b, `${before}\n`);
+      const base = r.commit();
+      r.put(b, `${after}\n`);
+      r.commit();
+      expect(r.run(base).status, before).toBe(expected);
+    }
+  });
+  it("requires a file target and accepts literal percent paths", () => {
+    const r = repo();
+    r.put(b, "[x](../adr/50%-old.md)\n");
+    const base = r.commit();
+    r.put(b, "[x](../adr)\n");
+    r.commit();
+    expect(r.run(base).status).toBe(1);
+    r.put("docs/adr/50%-new.md", "new");
+    r.put(b, "[x](../adr/50%-new.md)\n");
+    r.commit();
+    expect(r.run(base).status).toBe(0);
+  });
+  it("fails closed when Git cannot inspect a tree", () => {
+    const r = repo();
+    r.put(b, "[one](../adr/new.md)\n");
+    r.commit();
+    const bin = path.join(r.dir, "bin");
+    mkdirSync(bin);
+    const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    const wrapper = path.join(bin, "git");
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\nif [ "$1" = ls-tree ]; then exit 42; fi\nexec '${realGit}' "$@"\n`,
+    );
+    chmodSync(wrapper, 0o755);
+    const result = spawnSync(process.execPath, [script], {
+      cwd: r.dir,
+      encoding: "utf8",
+      env: {
+        PATH: `${bin}:${process.env.PATH}`,
+        BASE_SHA: r.base,
+        HEAD_SHA: r.git("rev-parse", "HEAD"),
+        PR_TITLE: "PBI-488",
+        PR_NUMBER: "600",
+      },
+    });
+    expect(result.status).toBe(2);
+  });
+  it("quotes special paths in the restoration command", () => {
+    const r = repo();
+    const file = "docs/worklog/20261122-pbi-489-quote ' x.md";
+    r.put(file, "old\n");
+    const base = r.commit();
+    r.put(file, "changed\n");
+    r.commit();
+    const result = r.run(base);
+    expect(result.status).toBe(1);
+    const command = result.stderr.match(/git checkout [^）]+/)?.[0];
+    expect(command).toBeDefined();
+    execFileSync("sh", ["-c", command as string], { cwd: r.dir });
+    expect(readFileSync(path.join(r.dir, file), "utf8")).toBe("old\n");
   });
   it("TV-6: rejects reordered repairs but accepts ordered repairs", () => {
     const r = repo();

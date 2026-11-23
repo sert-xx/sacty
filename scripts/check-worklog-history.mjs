@@ -11,17 +11,85 @@ function git(cwd, ...args) {
   });
 }
 
+// ls-tree succeeds with an empty result for an absent path, but fails on Git errors.
+function objectType(cwd, rev, file) {
+  const output = git(cwd, "ls-tree", "-z", rev, "--", `:(literal)${file}`);
+  const entry = output.split("\0").find((item) => item.slice(item.indexOf("\t") + 1) === file);
+  return entry ? entry.split(" ")[1] : null;
+}
+
+function fenceLines(content) {
+  let fence = null;
+  return content
+    .toString("utf8")
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      const inside = fence !== null;
+      if (match) {
+        if (!fence && !(match[1][0] === "`" && match[2].includes("`"))) fence = match[1];
+        else if (
+          fence &&
+          match[1][0] === fence[0] &&
+          match[1].length >= fence.length &&
+          !match[2].trim()
+        )
+          fence = null;
+        return true;
+      }
+      return inside;
+    });
+}
+
+function inlineLinks(line) {
+  const links = [];
+  let code = 0;
+  for (let i = 0; i < line.length; ) {
+    if (line[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (line[i] === "`") {
+      let end = i;
+      while (line[end] === "`") end++;
+      const length = end - i;
+      if (code === length) code = 0;
+      else if (!code && line.indexOf("`".repeat(length), end) !== -1) code = length;
+      i = end;
+      continue;
+    }
+    if (!code && line[i] === "[" && (i === 0 || line[i - 1] !== "!")) {
+      const match = line.slice(i).match(/^\[([^\]\\]*)\]\(([^\s)\\]+)\)/);
+      if (match) {
+        const start = i + match[1].length + 3;
+        links.push({ start, end: start + match[2].length, target: match[2] });
+        i += match[0].length;
+        continue;
+      }
+    }
+    i++;
+  }
+  return links;
+}
+
 function linkFix(oldLine, newLine, file, head, cwd) {
-  const pattern = /(!?\[[^\]]*\]\()([^\s)]+)(\))/g;
-  const oldLinks = [...oldLine.matchAll(pattern)];
-  const newLinks = [...newLine.matchAll(pattern)];
+  const oldLinks = inlineLinks(oldLine);
+  const newLinks = inlineLinks(newLine);
   if (!oldLinks.length || oldLinks.length !== newLinks.length) return false;
-  const skeleton = (line) => line.replace(pattern, "$1$3");
-  if (skeleton(oldLine) !== skeleton(newLine)) return false;
+  const skeleton = (line, links) => {
+    let result = "";
+    let offset = 0;
+    for (const link of links) {
+      result += line.slice(offset, link.start);
+      offset = link.end;
+    }
+    return result + line.slice(offset);
+  };
+  if (skeleton(oldLine, oldLinks) !== skeleton(newLine, newLinks)) return false;
   let changed = false;
   for (let i = 0; i < oldLinks.length; i++) {
-    const before = oldLinks[i][2];
-    const after = newLinks[i][2];
+    const before = oldLinks[i].target;
+    const after = newLinks[i].target;
     if (before === after) continue;
     changed = true;
     // 外部リンクや文書内アンカーの生存は Git のツリーから確認できない。
@@ -30,17 +98,16 @@ function linkFix(oldLine, newLine, file, head, cwd) {
       if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(target)) return false;
       const clean = target.split(/[?#]/, 1)[0];
       if (!clean) return false;
-      const resolved = path.posix.normalize(
-        path.posix.join(path.posix.dirname(file), decodeURIComponent(clean)),
-      );
+      let decoded;
       try {
-        git(cwd, "cat-file", "-e", `${head}:${resolved}`);
-        return true;
+        decoded = decodeURIComponent(clean);
       } catch {
-        return false;
+        decoded = clean;
       }
+      const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(file), decoded));
+      return objectType(cwd, head, resolved);
     };
-    if (exists(before) || !exists(after)) return false;
+    if (exists(before) || exists(after) !== "blob") return false;
   }
   return changed;
 }
@@ -74,21 +141,9 @@ export function checkWorklogHistory({ cwd = process.cwd(), base, head, title, nu
   const prefix = pbi ? `pbi-${pbi}-` : `pr-${number}-`;
   const violations = [];
   for (const file of files) {
-    try {
-      git(cwd, "cat-file", "-e", `${mergeBase}:${file}`);
-    } catch {
-      continue;
-    }
-    try {
-      git(cwd, "cat-file", "-e", `${head}:${file}`);
-    } catch {
-      const content = git(cwd, "show", `${mergeBase}:${file}`);
-      const count = content ? content.split("\n").length - (content.endsWith("\n") ? 1 : 0) : 0;
-      const lines = Array.from({ length: count }, (_, i) => `マージベースの版の行 ${i + 1}`);
-      violations.push({ file, lines: lines.length ? lines : ["空のファイルを削除"] });
-      continue;
-    }
-    const contents = [mergeBase, head].map((rev) =>
+    if (!objectType(cwd, mergeBase, file)) continue;
+    const headExists = objectType(cwd, head, file) !== null;
+    const contents = (headExists ? [mergeBase, head] : [mergeBase]).map((rev) =>
       execFileSync("git", ["show", `${rev}:${file}`], {
         cwd,
         maxBuffer: Number.MAX_SAFE_INTEGER,
@@ -119,6 +174,14 @@ export function checkWorklogHistory({ cwd = process.cwd(), base, head, title, nu
       violations.push({ file, lines: ["テキストとして判定できないファイルの変更"] });
       continue;
     }
+    if (!headExists) {
+      const content = contents[0].toString("utf8");
+      const count = content ? content.split("\n").length - (content.endsWith("\n") ? 1 : 0) : 0;
+      const lines = Array.from({ length: count }, (_, i) => `マージベースの版の行 ${i + 1}`);
+      violations.push({ file, lines: lines.length ? lines : ["空のファイルを削除"] });
+      continue;
+    }
+    const [oldFences, newFences] = contents.map(fenceLines);
     const sameTask =
       /^\d{8}-/.test(path.posix.basename(file)) &&
       path.posix.basename(file).slice(9).startsWith(prefix);
@@ -157,7 +220,11 @@ export function checkWorklogHistory({ cwd = process.cwd(), base, head, title, nu
       const paired = new Set();
       for (const old of removed) {
         const index = added.findIndex(
-          (item, i) => i > last && linkFix(old.text, item.text, file, head, cwd),
+          (item, i) =>
+            i > last &&
+            !oldFences[old.line - 1] &&
+            !newFences[item.line - 1] &&
+            linkFix(old.text, item.text, file, head, cwd),
         );
         if (index >= 0) {
           last = index;
@@ -184,7 +251,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     });
     for (const issue of result.violations) {
       console.error(
-        `${issue.file}: ${issue.lines.join(", ")}\nこのファイルの変更を戻してください（git checkout ${result.mergeBase} -- ${issue.file}）。同じタスクのファイルには、既存の行を変えずに書き足してください。`,
+        `${issue.file}: ${issue.lines.join(", ")}\nこのファイルの変更を戻してください（git checkout ${result.mergeBase} -- ${/^[a-zA-Z0-9_./-]+$/.test(issue.file) ? issue.file : `'${issue.file.replaceAll("'", "'\\''")}'`}）。同じタスクのファイルには、既存の行を変えずに書き足してください。`,
       );
     }
     if (result.violations.length) process.exitCode = 1;
