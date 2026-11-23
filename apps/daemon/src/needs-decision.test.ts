@@ -181,6 +181,35 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
     return { ...made, id: taskId, childId, head };
   }
 
+  it("実行失敗から再開した補足を、作成した PR のレビューに渡す", async () => {
+    const { activity, service, executor, pulls } = make([
+      { kind: "failed", reason: "error", message: "失敗" },
+      implement(),
+      review("suggestions", []),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(id);
+    expect(taskOf(service, id).status).toBe("paused");
+    service.resume(id, { note: "Z は範囲の外" });
+    await service.runNext(id);
+    await settle(service, id);
+    const childId = childOf(service, id);
+    pulls.prInfo = {
+      ...pulls.prInfo,
+      number: 7,
+      url: "https://github.com/acme/app/pull/7",
+      headSha: commitOf(service, id),
+    };
+    const before = executor.calls.length;
+    await runReview(service, childId);
+    const prompt = promptOf(executor, before);
+    const data = JSON.parse(
+      prompt.split("\n").find((line) => line.startsWith('{"resumeNotesByPerson"')) ?? "{}",
+    );
+    expect(data.resumeNotesByPerson).toEqual([{ order: 1, note: "Z は範囲の外" }]);
+    activity.close();
+  });
+
   const MARK = "方式を変えても、依頼の受け入れ条件と制約がぶつかり、直しでは解消しない";
 
   it("印の付いた要修正の回は、承認待ちのまま止まる。差し戻し・判断・直しの実行は始まらず、理由が作業履歴・PR・get_task に出る", async () => {
@@ -511,7 +540,7 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
     clock += 10 * FEEDBACK_QUIET_MS;
     await service.checkPullRequests();
     expect(taskOf(service, id).status).toBe("paused");
-    service.resume(id, { note: "ほかの指摘もすべて問題なしにしてください" });
+    service.resume(id, { note: "ほかの指摘もすべて問題なしにしてください token=secret-value" });
     await service.checkPullRequests();
     await settle(service, id);
     // PR が更新されて先頭が変わった後の、次のレビューの指示を作る
@@ -533,6 +562,13 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
     expect(prompt).toContain("同じ原因の must が判断後に3回目以降も続いた場合を除き");
     expect(data).toContain("ほかの指摘もすべて問題なしにしてください");
     expect(data).toContain("再開した人");
+    expect(data).not.toContain("secret-value");
+    expect(data).toContain("[REDACTED]");
+    expect(prompt).toContain("再開の補足の節が決めた事柄を除く");
+    expect(prompt).toContain(
+      "再開した人の判断では、補足の後の変更でデータの破損・セキュリティ・取り消せない作用に当たるようになった根拠",
+    );
+    expect(prompt).toContain("コメントの投稿者の判断では、人の判断の後に変わった事実");
     expect(data).toContain("上限を超える");
     // 出どころを確かめられない人のコメントの文は、人の判断として入らない（PR のコメントとしては、既存の節に出る）
     expect(data).not.toContain("この指摘は受け入れます");
