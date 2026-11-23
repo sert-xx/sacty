@@ -126,6 +126,8 @@ const ja = {
     running: "実行中",
     verifying: "最終レビューの途中",
     publishing: "PR の更新の途中",
+    awaiting_approval: "承認待ち",
+    escalated: "エスカレーション中",
     paused: "一時停止中",
   },
   /** 捨てた、やり直しに渡すはずだった検証の結果の種類。 */
@@ -571,17 +573,18 @@ const ja = {
     PullRequestReopened: (number: number) => `PR #${number} が開き直された・マージ待ち`,
     ReworkStoppedByMerge: (
       number: number,
-      stage: string,
+      stage: string | undefined,
       runs: number,
       remarks: string[],
       feedback: string | undefined,
       held: number,
       decision?: boolean,
       step?: string,
+      redo?: boolean,
     ) =>
       decision
         ? `人の判断を待って止めていた PR #${number} がマージされた。止めた理由の指摘${held}件を反映せずに、マージを承認として進める`
-        : `PR #${number} がマージされたため、${step ? `${step}の直し` : "実装の作り直し"}を${stage}で止め${runs > 0 ? `、実行${runs}件を停止した` : "た"}${remarks.length > 0 ? `。作り直しに渡す前の指摘${remarks.length}件を捨てた（${remarks.join("、")}）` : ""}${feedback ? `。やり直しに渡すはずだった${feedback}の結果を捨てた` : ""}${held > 0 ? `。一時停止の間に届いて未反映だった PR の指摘${held}件を捨てた` : ""}。マージを承認として進める`,
+        : `PR #${number} がマージされたため、${step ? `${step}の${redo ? "やり直し" : "直し"}` : "直し"}を${stage ? `${stage}で` : ""}止め${runs > 0 ? `、実行${runs}件を停止した` : "た"}${remarks.length > 0 ? `。作り直しに渡す前の指摘${remarks.length}件を捨てた（${remarks.join("、")}）` : ""}${feedback ? `。やり直しに渡すはずだった${feedback}の結果を捨てた` : ""}${held > 0 ? `。一時停止の間に届いて未反映だった PR の指摘${held}件を捨てた` : ""}。マージを承認として進める`,
     PullRequestConflicted: (number: number) =>
       `PR #${number} がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）`,
     PullRequestConflictResolved: (number: number) => `PR #${number} の競合が解消された`,
@@ -1043,6 +1046,8 @@ const en: LabelMessages = {
     running: "running",
     verifying: "in the final review",
     publishing: "updating the PR",
+    awaiting_approval: "awaiting approval",
+    escalated: "escalated",
     paused: "paused",
   },
   discardedFeedback: {
@@ -1408,10 +1413,10 @@ const en: LabelMessages = {
     PullRequestClosed: (number) => `PR #${number} was closed`,
     PullRequestClosedMerged: (number) => `PR #${number} was merged without approval`,
     PullRequestReopened: (number) => `PR #${number} reopened · awaiting merge`,
-    ReworkStoppedByMerge: (number, stage, runs, remarks, feedback, held, decision, step) =>
+    ReworkStoppedByMerge: (number, stage, runs, remarks, feedback, held, decision, step, redo) =>
       decision
         ? `PR #${number}, which was paused waiting for a human decision, was merged. The merge is taken as the approval, without applying the ${held} finding${held === 1 ? "" : "s"} that caused the pause`
-        : `PR #${number} was merged, so the rework of ${step ? `the ${step.toLowerCase()}` : "the implementation"} was stopped while it was ${stage}${runs > 0 ? `, with ${runs} run${runs === 1 ? "" : "s"} stopped` : ""}${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}${held > 0 ? `. Discarded ${held} PR comment${held === 1 ? "" : "s"} that arrived while paused and were not yet applied` : ""}. The merge is taken as the approval`,
+        : `PR #${number} was merged, so ${step ? `the ${redo ? "redo" : "rework"} of the ${step.toLowerCase()}` : "the rework"} was stopped${stage ? ` while it was ${stage}` : ""}${runs > 0 ? `, with ${runs} run${runs === 1 ? "" : "s"} stopped` : ""}${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}${held > 0 ? `. Discarded ${held} PR comment${held === 1 ? "" : "s"} that arrived while paused and were not yet applied` : ""}. The merge is taken as the approval`,
     PullRequestConflicted: (number) =>
       `PR #${number} conflicts with the base branch (it is merged in when you send it back or comment)`,
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,

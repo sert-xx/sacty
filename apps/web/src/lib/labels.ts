@@ -985,7 +985,13 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "ReworkStoppedByMerge":
       return e.ReworkStoppedByMerge(
         event.payload.number,
-        l.reworkStage[event.payload.was],
+        event.payload.state
+          ? event.payload.state.status
+            ? l.reworkStage[event.payload.state.status]
+            : undefined
+          : event.payload.was === "queued"
+            ? undefined
+            : l.reworkStage[event.payload.was],
         event.payload.stoppedRuns.length,
         event.payload.discardedRemarks.map((r) => r.id),
         event.payload.discardedFeedback
@@ -993,7 +999,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
           : undefined,
         event.payload.discardedReview ?? 0,
         event.payload.decision === true,
-        event.payload.step ? l.step[event.payload.step] : undefined,
+        event.payload.state
+          ? l.step[event.payload.state.step]
+          : event.payload.step
+            ? l.step[event.payload.step]
+            : undefined,
+        Boolean(event.payload.state && !event.payload.step),
       );
     case "PullRequestConflicted":
       return e.PullRequestConflicted(event.payload.number);

@@ -3010,6 +3010,9 @@ export class TaskService {
           !latest.mergedPullRequests?.includes(x.pr.number),
       );
       const same = pendingSteps.length === 0;
+      const firstState = latest.mergedPullRequests?.includes(implement.number)
+        ? undefined
+        : this.reworkState(latest);
       if (!same || latest.status === "paused") {
         if (!same) {
           if (latest.status === "running") {
@@ -3032,7 +3035,7 @@ export class TaskService {
                 )
                   this.append(
                     current,
-                    pendingSteps.map(({ pr }) => ({
+                    pendingSteps.map(({ pr }, index) => ({
                       actor: "sacty" as const,
                       event: {
                         type: "TaskPaused" as const,
@@ -3043,6 +3046,7 @@ export class TaskService {
                             implement: implement.number,
                           }),
                           mergedPullRequests: [pr.number, implement.number],
+                          ...(index === 0 && firstState ? { reworkState: firstState } : {}),
                           unstoppedRuns: unstopped,
                         },
                       },
@@ -3068,7 +3072,7 @@ export class TaskService {
           )
             this.append(
               current,
-              pendingSteps.map(({ pr }) => ({
+              pendingSteps.map(({ pr }, index) => ({
                 actor: "sacty" as const,
                 event: {
                   type: "TaskPaused" as const,
@@ -3079,6 +3083,7 @@ export class TaskService {
                       implement: implement.number,
                     }),
                     mergedPullRequests: [pr.number, implement.number],
+                    ...(index === 0 && firstState ? { reworkState: firstState } : {}),
                   },
                 },
               })),
@@ -3305,6 +3310,7 @@ export class TaskService {
       const recorded = this.endReworkByMerge(taskId, reworking.number, status, {
         stoppedRuns,
         stage: inflight && stage === "queued" ? "running" : stage,
+        state: this.reworkState(before, Boolean(inflight)),
         ...(document ? { document } : {}),
       });
       // 実装の無い進め方（PBI-464）は、マージした工程の PR のブランチを消す
@@ -3325,6 +3331,9 @@ export class TaskService {
     stopped: {
       stoppedRuns: string[];
       stage?: ReworkStage;
+      state?: NonNullable<
+        Extract<EventInput, { type: "ReworkStoppedByMerge" }>["payload"]["state"]
+      >;
       document?: PullRequestMerge["document"];
     },
   ): boolean {
@@ -3358,6 +3367,12 @@ export class TaskService {
             number,
             ...(stepRework ? { step: stepRework } : {}),
             was: stopped.stage ?? this.reworkStage(latest),
+            state: latest.mergedPullRequests?.includes(number)
+              ? (latest.reworkState ?? {
+                  step: sentBackStep ?? stepRework ?? activeStep(latest) ?? "implement",
+                })
+              : (stopped.state ??
+                this.reworkState(latest, stopped.stoppedRuns.length > 0, stopped.stage)),
             stoppedRuns: stopped.stoppedRuns,
             discardedRemarks,
             ...(!stepRework && latest.verifyFeedback
@@ -3499,6 +3514,8 @@ export class TaskService {
     );
   }
 
+  private readonly mergeNoticeRetry = new Map<string, { at: number; delay: number }>();
+
   private postMergeNotice(
     task: Task,
     target: { repo: string; number: number },
@@ -3515,7 +3532,10 @@ export class TaskService {
       kind === "approval"
         ? mergeApprovalMarker(task.id, number)
         : mergeNotApprovedMarker(task.id, number);
-    void this.serialized(`merge-notice:${kind}:${task.id}:${number}`, async () => {
+    const key = `merge-notice:${kind}:${task.id}:${number}`;
+    void this.serialized(key, async () => {
+      const retry = this.mergeNoticeRetry.get(key);
+      if (retry && retry.at > this.now()) return;
       const signal = this.stopNoticeDeadline();
       try {
         const token = await untilAborted(
@@ -3531,14 +3551,44 @@ export class TaskService {
             accounts: this.githubAccountsOnHost(repo),
           }),
         );
-        if (existing) return;
-        await untilAborted(signal, this.deps.pulls.commentIssue({ ...pr, body: build(), signal }));
+        if (!existing)
+          await untilAborted(
+            signal,
+            this.deps.pulls.commentIssue({ ...pr, body: build(), signal }),
+          );
+        this.mergeNoticeRetry.delete(key);
       } catch (error) {
+        const delay = Math.min((retry?.delay ?? 30_000) * 2, 3_600_000);
+        const at = this.now() + delay;
+        this.mergeNoticeRetry.set(key, { at, delay });
         console.warn(
-          `[daemon] タスク ${task.id} の、PR #${number} のマージの扱いを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          `[daemon] タスク ${task.id} の、PR #${number} のマージの扱いを PR に知らせられませんでした。次の試行: ${new Date(at).toISOString()}：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
         );
       }
     });
+  }
+
+  private reworkState(
+    task: Task,
+    stoppedRunning = false,
+    stage?: ReworkStage,
+  ): NonNullable<Extract<EventInput, { type: "ReworkStoppedByMerge" }>["payload"]["state"]> {
+    const step = activeStep(task) ?? "implement";
+    const status =
+      task.status === "paused"
+        ? "paused"
+        : task.status === "running" || stoppedRunning
+          ? "running"
+          : task.status === "awaiting_approval"
+            ? "awaiting_approval"
+            : task.status === "escalated"
+              ? "escalated"
+              : task.publishPending || this.awaitingStepPullRequest(task) || stage === "publishing"
+                ? "publishing"
+                : step === "implement" && task.verification !== undefined
+                  ? "verifying"
+                  : "queued";
+    return { step, status };
   }
 
   /** 実装の作り直しが、いまどの段階か（ReworkStoppedByMerge に残す）。 */

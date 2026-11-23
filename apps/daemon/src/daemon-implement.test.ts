@@ -7777,6 +7777,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(stopped(service, id)[0]?.payload).toEqual({
         number: 7,
         was: "queued",
+        state: { step: "implement", status: "queued" },
         stoppedRuns: [],
         discardedRemarks: [{ id: "implement-1-1", text: remark }],
       });

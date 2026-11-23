@@ -358,6 +358,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               }
             : {})}
           reason={task.pausedReason}
+          suppressErrorHelp={Boolean(task.mergedPullRequests?.length)}
           errorReport={showErrorReport(task, activity)}
           stoppedRunId={stoppedRunId(task, activity)}
           steps={resumeStepSettings(task, data)}

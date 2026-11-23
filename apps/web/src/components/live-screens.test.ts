@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { Task } from "@sacty/core";
+import { type ActivityEvent, applyEvent, message, type Task } from "@sacty/core";
 import { act, type FC, createElement as h, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,7 +42,7 @@ vi.mock("@/app/actions", () => {
 });
 
 const { I18nProvider } = await import("@/i18n/client");
-const { LiveTaskDetail, TaskDetailView } = await import("./task-detail");
+const { EventText, LiveTaskDetail, TaskDetailView } = await import("./task-detail");
 const { ReviewView } = await import("./review");
 const { LiveTaskList } = await import("./task-list");
 const { NewTaskDialog } = await import("./new-task-dialog");
@@ -207,6 +207,126 @@ afterEach(() => {
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+describe("作り直しを止めた作業履歴", () => {
+  it.each(["ja", "en"] as const)("新旧の状態を正しく表示する (%s)", (locale) => {
+    const base = { number: 9, was: "queued", stoppedRuns: [], discardedRemarks: [] };
+    const cases = [
+      {
+        payload: { ...base, state: { step: "design", status: "awaiting_approval" } },
+        ja: "設計のやり直しを承認待ちで止めた",
+        en: "the redo of the design was stopped while it was awaiting approval",
+      },
+      {
+        payload: { ...base, state: { step: "design" } },
+        ja: "設計のやり直しを止めた",
+        en: "the redo of the design was stopped",
+      },
+      { payload: base, ja: "直しを止めた", en: "the rework was stopped" },
+      {
+        payload: { ...base, was: "running" },
+        ja: "直しを実行中で止めた",
+        en: "the rework was stopped while it was running",
+      },
+    ];
+    for (const item of cases) {
+      const event = {
+        type: "ReworkStoppedByMerge",
+        payload: item.payload,
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "p1",
+        actor: "sacty",
+        at: "2026-10-10T00:00:00.000Z",
+      } as unknown as ActivityEvent;
+      act(() =>
+        root.render(
+          h(
+            I18nProvider as FC<{ locale: "ja" | "en"; children?: ReactNode }>,
+            { locale },
+            h(EventText, { event }),
+          ),
+        ),
+      );
+      expect(container.textContent).toContain(item[locale]);
+      expect(container.textContent).not.toContain(locale === "ja" ? "実行待ち" : "queued");
+      expect(container.textContent).not.toContain(
+        locale === "ja" ? "実装の作り直し" : "the rework of the implementation",
+      );
+    }
+  });
+});
+
+describe("マージによる一時停止の説明", () => {
+  it.each(["ja", "en"] as const)("両方マージの説明だけを表示する (%s)", (locale) => {
+    const paused = task({
+      status: "paused",
+      pausedReason: "error",
+      mergedPullRequests: [12, 9],
+      pausedMessage: message("pr.bothMerged", { step: 12, implement: 9 }),
+    });
+    act(() =>
+      root.render(
+        h(
+          I18nProvider as FC<{ locale: "ja" | "en"; children?: ReactNode }>,
+          { locale },
+          h(TaskDetailView, { data: detail(paused) }),
+        ),
+      ),
+    );
+    const content = container.textContent ?? "";
+    const expected =
+      locale === "ja"
+        ? "再開すると実装の PR だけを承認します"
+        : "Resuming approves only the implementation PR";
+    expect(content.split(expected)).toHaveLength(2);
+    expect(content).not.toContain(
+      locale === "ja" ? "止まった工程を実行し直します" : "resume to rerun the stopped step",
+    );
+  });
+
+  it.each(["ja", "en"] as const)("複数の工程 PR を昇順に表示する (%s)", (locale) => {
+    let tasks = new Map([
+      ["t1", task({ status: "paused", pausedReason: "error", resumeTo: "idle" })],
+    ]);
+    for (const [index, number] of [335, 334].entries()) {
+      const event = {
+        type: "TaskPaused",
+        taskId: "t1",
+        id: `e${index}`,
+        seq: index + 1,
+        projectId: "p1",
+        actor: "sacty",
+        at: "2026-10-10T00:00:00.000Z",
+        payload: {
+          reason: "error",
+          message: message("pr.bothMerged", { step: number, implement: 9 }),
+          mergedPullRequests: [number, 9],
+        },
+      } as ActivityEvent;
+      tasks = applyEvent(tasks, event);
+    }
+    const projected = tasks.get("t1");
+    if (!projected) throw new Error("missing task");
+    act(() =>
+      root.render(
+        h(
+          I18nProvider as FC<{ locale: "ja" | "en"; children?: ReactNode }>,
+          { locale },
+          h(TaskDetailView, { data: detail(projected) }),
+        ),
+      ),
+    );
+    expect(container.textContent).toContain("#334, #335");
+    expect(container.textContent).not.toContain("#335, #334");
+  });
+
+  it("通常のエラーでは再開の説明を表示する", () => {
+    render(h(TaskDetailView, { data: detail(task({ status: "paused", pausedReason: "error" })) }));
+    expect(container.textContent).toContain("止まった工程を実行し直します");
+  });
 });
 
 describe("タスクの詳細：裏で起きた変化が、操作しなくても間隔のうちに出る（PBI-108）", () => {

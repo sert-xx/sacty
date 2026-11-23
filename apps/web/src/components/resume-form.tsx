@@ -25,6 +25,7 @@ export type ResumeStepSetting = StepChoiceSetting;
 export function ResumeForm({
   taskId,
   reason,
+  suppressErrorHelp = false,
   errorReport = false,
   stoppedRunId,
   usedUsd,
@@ -42,6 +43,7 @@ export function ResumeForm({
 }: {
   taskId: string;
   reason: PauseReason;
+  suppressErrorHelp?: boolean;
   /** エラーレポートが画面に出ている（「エラーレポートを見る」を出す。レポートは右の列で、狭い幅では下に回る）。 */
   errorReport?: boolean;
   /** 今回の一時停止の原因になった実行（ログを開ける ID。無ければ「止まった実行のログを見る」を出さない）。 */
@@ -98,7 +100,9 @@ export function ResumeForm({
       <h2 id="paused" className="text-[15px] font-semibold text-warn">
         {m.labels.pause[reason]}
       </h2>
-      <p className="text-sm leading-6">{m.labels.pauseHelp[reason]}</p>
+      {!(reason === "error" && suppressErrorHelp) && (
+        <p className="text-sm leading-6">{m.labels.pauseHelp[reason]}</p>
+      )}
       {lastFailure && (
         <div className="rounded-md bg-card px-3 py-2 font-mono text-xs leading-5 break-words">
           <p className="whitespace-pre-wrap">{lastFailure}</p>

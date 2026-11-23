@@ -1065,10 +1065,10 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       discardedFeedback: "review",
     });
     expect(describeEvent(running)).toBe(
-      "PR #7 がマージされたため、実装の作り直しを実行中で止め、実行1件を停止した。作り直しに渡す前の指摘1件を捨てた（implement-2-1）。やり直しに渡すはずだった最終レビューの結果を捨てた。マージを承認として進める",
+      "PR #7 がマージされたため、直しを実行中で止め、実行1件を停止した。作り直しに渡す前の指摘1件を捨てた（implement-2-1）。やり直しに渡すはずだった最終レビューの結果を捨てた。マージを承認として進める",
     );
     expect(describeIn(running, labels.en)).toBe(
-      "PR #7 was merged, so the rework of the implementation was stopped while it was running, with 1 run stopped. Discarded 1 comment not yet passed to the rework (implement-2-1). Discarded the final review result meant for the next attempt. The merge is taken as the approval",
+      "PR #7 was merged, so the rework was stopped while it was running, with 1 run stopped. Discarded 1 comment not yet passed to the rework (implement-2-1). Discarded the final review result meant for the next attempt. The merge is taken as the approval",
     );
     // 一時停止の間に届いて、まだ作り直しに渡していない PR の指摘も捨てる（PBI-279）
     const heldDiscarded = event({
@@ -1079,7 +1079,7 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       discardedReview: 2,
     });
     expect(describeEvent(heldDiscarded)).toBe(
-      "PR #7 がマージされたため、実装の作り直しを一時停止中で止めた。一時停止の間に届いて未反映だった PR の指摘2件を捨てた。マージを承認として進める",
+      "PR #7 がマージされたため、直しを一時停止中で止めた。一時停止の間に届いて未反映だった PR の指摘2件を捨てた。マージを承認として進める",
     );
     expect(describeIn(heldDiscarded, labels.en)).toContain(
       "Discarded 2 PR comments that arrived while paused and were not yet applied",
@@ -1094,10 +1094,10 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
           discardedRemarks: [],
         }),
       ),
-    ).toBe("PR #7 がマージされたため、実装の作り直しを実行待ちで止めた。マージを承認として進める");
+    ).toBe("PR #7 がマージされたため、直しを止めた。マージを承認として進める");
   });
 
-  it("作業履歴に、要求要件・設計の直しを PR のマージで止めたことを、工程の名前で表示する。step の無い記録は、実装の作り直しの文言のまま（PBI-462）", () => {
+  it("作業履歴に、要求要件・設計の直しを PR のマージで止めたことを、工程の名前で表示する。step の無い記録は、工程を特定しない文言（PBI-462）", () => {
     const event = (payload: object): ActivityEvent =>
       ({
         type: "ReworkStoppedByMerge",
@@ -1129,7 +1129,7 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       stoppedRuns: [],
       discardedRemarks: [],
     });
-    expect(describeEvent(requirements)).toContain("要求要件の直しを実行待ちで止めた");
+    expect(describeEvent(requirements)).toContain("要求要件の直しを止めた");
     expect(
       describeEvent(
         event({
@@ -1139,7 +1139,7 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
           discardedRemarks: [],
         }),
       ),
-    ).toContain("実装の作り直しを実行待ちで止めた");
+    ).toContain("直しを止めた");
   });
 
   it("人の判断を待って止めていた PR のマージは、作り直しを止めた・一時停止の間に届いた指摘を捨てた、とは書かず、止めた理由の指摘を反映せずに承認として進めると表示する（PBI-452）", () => {

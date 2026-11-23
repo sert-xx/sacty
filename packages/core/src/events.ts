@@ -1573,6 +1573,23 @@ const BudgetWarned = z.object({
   payload: z.object({ usedUsd: z.number(), capUsd: z.number() }),
 });
 
+/** 停止前の工程と状態。前の版は未知の欄を捨てる。 */
+export const ReworkState = z.object({
+  step: StepKey,
+  status: z
+    .enum([
+      "queued",
+      "running",
+      "verifying",
+      "publishing",
+      "awaiting_approval",
+      "escalated",
+      "paused",
+    ])
+    .optional(),
+});
+export type ReworkState = z.infer<typeof ReworkState>;
+
 const TaskPaused = z.object({
   type: z.literal("TaskPaused"),
   payload: z.object({
@@ -1592,6 +1609,8 @@ const TaskPaused = z.object({
      */
     commit: z.string().min(1).optional(),
     mergedPullRequests: z.array(z.number().int().positive()).length(2).optional(),
+    /** 最初の両方マージの停止前の状態。前の版はこの欄を捨てる。 */
+    reworkState: ReworkState.optional(),
   }),
 });
 
@@ -3454,6 +3473,8 @@ const ReworkStoppedByMerge = z.object({
      * （とその前の PR の CI）の途中。publishing：PR の更新の待ち・途中。paused：一時停止していた。
      */
     was: z.enum(["queued", "running", "verifying", "publishing", "paused"]),
+    /** 停止前の工程と状態。前の版はこの欄を捨てる。 */
+    state: ReworkState.optional(),
     /** 止めた実行（コンテナ）の ID。実行していなければ空。 */
     stoppedRuns: z.array(z.string()),
     /** 作り直しに渡す前に捨てた、PR の指摘（まだ提出に反映していないもの）。 */

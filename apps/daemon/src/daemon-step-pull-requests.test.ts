@@ -1363,6 +1363,162 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     activity.close();
   });
 
+  it.each(["running", "paused"] as const)(
+    "設計の%sに実装 PR がマージされた状態を記録する",
+    async (status) => {
+      const made = await start([
+        out("# 要求要件"),
+        design(),
+        implement(),
+        design("# 設計 B"),
+        HOLD as unknown as AgentOutcome,
+      ]);
+      const { service, executor, pulls, id, activity } = made;
+      await merge(made, "requirements");
+      await service.runNext(id);
+      await merge(made, "design");
+      await drain(service);
+      const implementation = taskOf(service, id).pullRequest;
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "design",
+        comments: ["直す"],
+      });
+      await service.runNext(id);
+      service.requestChanges(id, { step: "design", submission: 2, comments: ["さらに直す"] });
+      let running: Promise<unknown> | undefined;
+      if (status === "running") {
+        running = service.runNext(id);
+        await executor.started.promise;
+      } else {
+        await service.pause(id);
+      }
+      expect(taskOf(service, id).status).toBe(status);
+      pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "merged" };
+      await service.checkPullRequests();
+      await running;
+      expect(payloads(service, id, "ReworkStoppedByMerge").at(-1)).toMatchObject({
+        state: { step: "design", status },
+      });
+      activity.close();
+    },
+  );
+
+  it.each(["running", "paused"] as const)(
+    "両方マージで%sから停止して再開しても元の状態を記録する",
+    async (status) => {
+      const made = await start([
+        out("# 要求要件"),
+        design(),
+        implement(),
+        design("# 設計 B"),
+        HOLD as unknown as AgentOutcome,
+      ]);
+      const { service, executor, pulls, id, activity } = made;
+      await merge(made, "requirements");
+      await service.runNext(id);
+      await merge(made, "design");
+      await drain(service);
+      const implementation = taskOf(service, id).pullRequest;
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "design",
+        comments: ["直す"],
+      });
+      await service.runNext(id);
+      const step = taskOf(service, id).stepPullRequests.findLast((pr) => pr.step === "design");
+      service.requestChanges(id, { step: "design", submission: 2, comments: ["さらに直す"] });
+      let running: Promise<unknown> | undefined;
+      if (status === "running") {
+        running = service.runNext(id);
+        await executor.started.promise;
+      } else await service.pause(id);
+      pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "merged" };
+      pulls.states[10] = { state: "merged", headSha: step?.commit, mergeCommit: "merged-step" };
+      await service.checkPullRequests();
+      await running;
+      expect(payloads(service, id, "TaskPaused").at(-1)).toMatchObject({
+        reworkState: { step: "design", status },
+      });
+      service.resume(id, {});
+      await service.checkPullRequests();
+      expect(payloads(service, id, "ReworkStoppedByMerge").at(-1)).toMatchObject({
+        state: { step: "design", status },
+      });
+      activity.close();
+    },
+  );
+
+  it("設計の承認待ちで実装 PR がマージされた時の工程と状態を記録する", async () => {
+    const made = await start([out("# 要求要件"), design(), implement(), design("# 設計 B")]);
+    const { service, pulls, id, activity } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    await drain(service);
+    const implementation = taskOf(service, id).pullRequest;
+    service.requestChanges(id, {
+      step: "implement",
+      submission: 1,
+      target: "design",
+      comments: ["直す"],
+    });
+    await service.runNext(id);
+    expect(taskOf(service, id).status).toBe("awaiting_approval");
+    pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "merged" };
+    await service.checkPullRequests();
+    const event = service.get(id)?.activity.findLast((e) => e.type === "ReworkStoppedByMerge");
+    expect(event?.payload).toMatchObject({
+      was: "queued",
+      state: { step: "design", status: "awaiting_approval" },
+    });
+    expect(event?.payload).not.toHaveProperty("step");
+    activity.close();
+  });
+
+  it("前の版の両方マージ停止から再開すると状態を推測しない", async () => {
+    const made = await start([out("# 要求要件"), design(), implement(), design("# 設計 B")]);
+    const { service, pulls, id, activity } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    await drain(service);
+    const implementation = taskOf(service, id).pullRequest;
+    service.requestChanges(id, {
+      step: "implement",
+      submission: 1,
+      target: "design",
+      comments: ["直す"],
+    });
+    await service.runNext(id);
+    const step = taskOf(service, id).stepPullRequests.findLast((p) => p.step === "design");
+    appendLegacy(service, id, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskPaused",
+          payload: {
+            reason: "error",
+            mergedPullRequests: [10, 9],
+            message: message("pr.bothMerged", { step: 10, implement: 9 }),
+          },
+        },
+      },
+    ]);
+    pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "merged" };
+    pulls.states[10] = { state: "merged", headSha: step?.commit, mergeCommit: "merged-step" };
+    service.resume(id, {});
+    await service.checkPullRequests();
+    expect(payloads(service, id, "ReworkStoppedByMerge").at(-1)).toMatchObject({
+      state: { step: "design" },
+    });
+    const event = service.get(id)?.activity.findLast((e) => e.type === "ReworkStoppedByMerge");
+    expect(event?.payload).not.toHaveProperty("state.status");
+    activity.close();
+  });
+
   it("設計 PR と実装 PR の両方がマージ済みなら停止し、再開後は実装だけ承認する", async () => {
     const made = await start([
       out("# 要求要件"),
@@ -1394,10 +1550,16 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(taskOf(service, id).mergedPullRequests).toEqual([10, 9]);
     expect(taskOf(service, id).pausedReason).toBe("error");
     expect(types(service, id).slice(startAt)).toEqual(["TaskPaused"]);
+    expect(payloads(service, id, "TaskPaused").at(-1)).toMatchObject({
+      reworkState: { step: "design", status: "awaiting_approval" },
+    });
     expect(ja(taskOf(service, id).pausedMessage)).toContain("#10");
     expect(ja(taskOf(service, id).pausedMessage)).toContain("#9");
     service.resume(id, {});
     await service.checkPullRequests();
+    expect(payloads(service, id, "ReworkStoppedByMerge").at(-1)).toMatchObject({
+      state: { step: "design", status: "awaiting_approval" },
+    });
     const task = taskOf(service, id);
     expect(task.pullRequestState).toBe("merged");
     expect(task.approved.design).toEqual(original);
@@ -1457,85 +1619,231 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     activity.close();
   });
 
-  it.each(["同時", "再開後"])("複数の工程 PR のマージ（%s）を見逃さない", async (timing) => {
-    const made = await start([
-      out("# 要求要件"),
-      design(),
-      implement(),
-      design("# 設計 B"),
-      out("# 要求要件 B"),
-    ]);
-    const { service, pulls, id, activity } = made;
-    await merge(made, "requirements");
-    await service.runNext(id);
-    await merge(made, "design");
-    await drain(service);
-    const implementation = taskOf(service, id).pullRequest;
-    service.requestChanges(id, {
-      step: "implement",
-      submission: 1,
-      target: "design",
-      comments: ["直す"],
-    });
-    await service.runNext(id);
-    const designPr = taskOf(service, id).stepPullRequests.findLast((p) => p.step === "design");
-    if (!designPr) throw new Error("design PR missing");
-    service.requestChanges(id, {
-      step: "design",
-      submission: designPr.submission,
-      target: "requirements",
-      comments: ["直す"],
-    });
-    await service.runNext(id);
-    const requirementsPr = taskOf(service, id).stepPullRequests.findLast(
-      (p) => p.step === "requirements" && p.state === "open" && !p.superseded,
-    );
-    if (!requirementsPr) throw new Error("requirements PR missing");
-    pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "merged" };
-    pulls.states[requirementsPr.number] = {
-      state: "merged",
-      headSha: requirementsPr.commit,
-      mergeCommit: "merged-req",
-    };
-    if (timing === "同時")
-      pulls.states[designPr.number] = {
-        state: "merged",
-        headSha: designPr.commit,
-        mergeCommit: "merged-design",
-      };
-    await service.checkPullRequests();
-    expect(taskOf(service, id).status).toBe("paused");
-    expect(taskOf(service, id).mergedPullRequests).toContain(requirementsPr.number);
-    if (timing === "同時")
-      expect(taskOf(service, id).mergedPullRequests).toContain(designPr.number);
-    if (timing === "同時") {
-      for (const locale of ["ja", "en"] as const) {
-        const displayed = renderMessage(taskOf(service, id).pausedMessage, locale);
-        for (const number of [9, requirementsPr.number, designPr.number])
-          expect(displayed).toContain(`#${number}`);
-        expect(displayed).toContain(locale === "ja" ? "再開すると" : "Resuming approves only");
-      }
-    }
-    service.resume(id, {});
-    if (timing === "再開後") {
-      pulls.states[designPr.number] = {
-        state: "merged",
-        headSha: designPr.commit,
-        mergeCommit: "merged-design",
-      };
-      await service.checkPullRequests();
-      expect(taskOf(service, id).status).toBe("paused");
-      expect(taskOf(service, id).mergedPullRequests).toContain(designPr.number);
-      expect(renderMessage(taskOf(service, id).pausedMessage, "ja")).toContain(
-        `#${designPr.number}`,
+  it.each(["同時", "再開後", "一時停止中", "実行中同時", "実行中時間差"])(
+    "複数の工程 PR のマージ（%s）を見逃さない",
+    async (timing) => {
+      const made = await start([
+        out("# 要求要件"),
+        design(),
+        implement(),
+        design("# 設計 B"),
+        out("# 要求要件 B"),
+        HOLD as unknown as AgentOutcome,
+      ]);
+      const { service, pulls, id, activity } = made;
+      await merge(made, "requirements");
+      await service.runNext(id);
+      await merge(made, "design");
+      await drain(service);
+      const implementation = taskOf(service, id).pullRequest;
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "design",
+        comments: ["直す"],
+      });
+      await service.runNext(id);
+      const designPr = taskOf(service, id).stepPullRequests.findLast((p) => p.step === "design");
+      if (!designPr) throw new Error("design PR missing");
+      service.requestChanges(id, {
+        step: "design",
+        submission: designPr.submission,
+        target: "requirements",
+        comments: ["直す"],
+      });
+      await service.runNext(id);
+      const requirementsPr = taskOf(service, id).stepPullRequests.findLast(
+        (p) => p.step === "requirements" && p.state === "open" && !p.superseded,
       );
-      expect(taskOf(service, id).pullRequestState).toBe("open");
+      if (!requirementsPr) throw new Error("requirements PR missing");
+      const runningCase = timing.startsWith("実行中");
+      const simultaneous = timing === "同時" || timing === "実行中同時";
+      let running: Promise<unknown> | undefined;
+      if (runningCase) {
+        service.requestChanges(id, {
+          step: "requirements",
+          submission: requirementsPr.submission,
+          comments: ["さらに直す"],
+        });
+        running = service.runNext(id);
+        await made.executor.started.promise;
+      }
+      pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "merged" };
+      pulls.states[requirementsPr.number] = {
+        state: "merged",
+        headSha: requirementsPr.commit,
+        mergeCommit: "merged-req",
+      };
+      if (simultaneous)
+        pulls.states[designPr.number] = {
+          state: "merged",
+          headSha: designPr.commit,
+          mergeCommit: "merged-design",
+        };
+      await service.checkPullRequests();
+      await running;
+      expect(taskOf(service, id).status).toBe("paused");
+      expect(taskOf(service, id).mergedPullRequests).toContain(requirementsPr.number);
+      if (simultaneous) expect(taskOf(service, id).mergedPullRequests).toContain(designPr.number);
+      if (simultaneous) {
+        for (const locale of ["ja", "en"] as const) {
+          const displayed = renderMessage(taskOf(service, id).pausedMessage, locale);
+          for (const number of [9, requirementsPr.number, designPr.number])
+            expect(displayed).toContain(`#${number}`);
+          expect(displayed).toContain(locale === "ja" ? "再開すると" : "Resuming approves only");
+        }
+      }
+      const originalState = taskOf(service, id).reworkState;
+      expect(originalState).toEqual({
+        step: "requirements",
+        status: runningCase ? "running" : "awaiting_approval",
+      });
+      if (simultaneous) {
+        const pauses = payloads(service, id, "TaskPaused").filter((p) => "mergedPullRequests" in p);
+        expect(pauses.at(-2)).toHaveProperty("reworkState", originalState);
+        expect(pauses.at(-1)).not.toHaveProperty("reworkState");
+      }
+      if (timing === "一時停止中" || timing === "実行中時間差") {
+        pulls.states[designPr.number] = {
+          state: "merged",
+          headSha: designPr.commit,
+          mergeCommit: "merged-design",
+        };
+        await service.checkPullRequests();
+        expect(payloads(service, id, "TaskPaused").at(-1)).not.toHaveProperty("reworkState");
+        const restarted = makeService(activity, [], {
+          stepPullRequests: true,
+          pulls,
+          repos: made.repos,
+          now: later,
+        }).service;
+        expect(taskOf(restarted, id).reworkState).toEqual(originalState);
+        restarted.resume(id, {});
+        await restarted.checkPullRequests();
+        expect(payloads(restarted, id, "ReworkStoppedByMerge").at(-1)).toMatchObject({
+          state: originalState,
+        });
+        activity.close();
+        return;
+      }
       service.resume(id, {});
-    }
-    await service.checkPullRequests();
-    expect(taskOf(service, id).pullRequestState).toBe("merged");
-    activity.close();
-  });
+      if (timing === "再開後") {
+        pulls.states[designPr.number] = {
+          state: "merged",
+          headSha: designPr.commit,
+          mergeCommit: "merged-design",
+        };
+        await service.checkPullRequests();
+        expect(taskOf(service, id).status).toBe("paused");
+        expect(taskOf(service, id).mergedPullRequests).toContain(designPr.number);
+        expect(renderMessage(taskOf(service, id).pausedMessage, "ja")).toContain(
+          `#${designPr.number}`,
+        );
+        expect(taskOf(service, id).pullRequestState).toBe("open");
+        service.resume(id, {});
+      }
+      await service.checkPullRequests();
+      expect(taskOf(service, id).pullRequestState).toBe("merged");
+      expect(payloads(service, id, "ReworkStoppedByMerge").at(-1)).toMatchObject({
+        state: originalState,
+      });
+      activity.close();
+    },
+  );
+
+  it.each(["同時", "時間差"] as const)(
+    "設計の実行中に複数 PR がマージされたとき最初の状態を保持する (%s)",
+    async (timing) => {
+      const made = await start(
+        [
+          design(),
+          out("# 要求要件"),
+          implement(),
+          out("# 要求要件 B"),
+          design("# 設計 B"),
+          HOLD as unknown as AgentOutcome,
+        ],
+        { steps: ["design", "requirements", "implement"] },
+      );
+      const { service, pulls, executor, id, activity } = made;
+      await merge(made, "design");
+      await service.runNext(id);
+      await merge(made, "requirements");
+      await drain(service);
+      const implementation = taskOf(service, id).pullRequest;
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "requirements",
+        comments: ["直す"],
+      });
+      await service.runNext(id);
+      const requirementsPr = taskOf(service, id).stepPullRequests.findLast(
+        (p) => p.step === "requirements" && p.state === "open",
+      );
+      if (!requirementsPr) throw new Error("requirements PR missing");
+      service.requestChanges(id, {
+        step: "requirements",
+        submission: requirementsPr.submission,
+        target: "design",
+        comments: ["設計から直す"],
+      });
+      await service.runNext(id);
+      const designPr = taskOf(service, id).stepPullRequests.findLast(
+        (p) => p.step === "design" && p.state === "open",
+      );
+      if (!designPr) throw new Error("design PR missing");
+      service.requestChanges(id, {
+        step: "design",
+        submission: designPr.submission,
+        comments: ["さらに直す"],
+      });
+      const running = service.runNext(id);
+      await executor.started.promise;
+      expect(taskOf(service, id).status).toBe("running");
+      pulls.states[9] = { state: "merged", headSha: implementation?.commit, mergeCommit: "impl" };
+      pulls.states[designPr.number] = {
+        state: "merged",
+        headSha: designPr.commit,
+        mergeCommit: "design",
+      };
+      if (timing === "同時")
+        pulls.states[requirementsPr.number] = {
+          state: "merged",
+          headSha: requirementsPr.commit,
+          mergeCommit: "requirements",
+        };
+      await service.checkPullRequests();
+      await running;
+      const pauses = payloads(service, id, "TaskPaused").filter((p) => "mergedPullRequests" in p);
+      expect(pauses[0]).toHaveProperty("reworkState", { step: "design", status: "running" });
+      if (timing === "同時") {
+        expect(pauses).toHaveLength(2);
+        expect(pauses[1]).not.toHaveProperty("reworkState");
+      } else {
+        pulls.states[requirementsPr.number] = {
+          state: "merged",
+          headSha: requirementsPr.commit,
+          mergeCommit: "requirements",
+        };
+        await service.checkPullRequests();
+        expect(payloads(service, id, "TaskPaused").at(-1)).not.toHaveProperty("reworkState");
+      }
+      const restarted = makeService(activity, [], {
+        stepPullRequests: true,
+        pulls,
+        repos: made.repos,
+        now: later,
+      }).service;
+      expect(taskOf(restarted, id).reworkState).toEqual({ step: "design", status: "running" });
+      restarted.resume(id, {});
+      await restarted.checkPullRequests();
+      expect(payloads(restarted, id, "ReworkStoppedByMerge").at(-1)).toMatchObject({
+        state: { step: "design", status: "running" },
+      });
+      activity.close();
+    },
+  );
 
   it.each(["認証", "状態"])(
     "実装 PR の%s取得が期限切れなら中断し、次の確認で再試行する",
@@ -12744,6 +13052,55 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       });
       expect(restarted.service.get(id)?.task.approved.design).toBeDefined();
       activity.close();
+    });
+
+    it("承認しないマージの通知は失敗後に間隔を倍にして再試行する", async () => {
+      let now = Date.parse("2026-10-11T01:00:00Z");
+      const pulls = new FakePulls();
+      const post = pulls.commentIssue.bind(pulls);
+      const comment = vi.spyOn(pulls, "commentIssue").mockRejectedValue(new Error("failed"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const made = await start(
+        [out("# 要求要件"), design(), rework("requirements"), out("# 要求要件 B")],
+        { pulls, now: () => now, projects: projectsWithAccount() },
+      );
+      const { service, id, activity } = made;
+      try {
+        await merge(made, "requirements");
+        await service.runNext(id);
+        pulls.feedbackBy[8] = [item("comment:20", { body: "前提が違う" })];
+        await service.checkPullRequests();
+        pulls.states[8] = mergedState(designPr(made)?.commit);
+        const started = now;
+        for (let minute = 0; minute < 8; minute++) {
+          now = started + minute * 60_000;
+          await service.checkPullRequests();
+          await noticesSettled(service);
+          expect(comment.mock.calls.length).toBe(
+            minute < 1 ? 1 : minute < 3 ? 2 : minute < 7 ? 3 : 4,
+          );
+        }
+        expect(warn.mock.calls.map((call) => String(call[0]))).toEqual(
+          expect.arrayContaining(
+            [1, 3, 7, 15].map((minute) =>
+              expect.stringContaining(new Date(started + minute * 60_000).toISOString()),
+            ),
+          ),
+        );
+        comment.mockImplementation(post);
+        now = started + 15 * 60_000;
+        await service.checkPullRequests();
+        await noticesSettled(service);
+        expect(comment).toHaveBeenCalledTimes(5);
+        expect(pulls.issueComments).toHaveLength(1);
+        now += 60_000;
+        await service.checkPullRequests();
+        await noticesSettled(service);
+        expect(comment).toHaveBeenCalledTimes(5);
+      } finally {
+        warn.mockRestore();
+        activity.close();
+      }
     });
 
     it("要求要件へ戻している間に設計の PR がマージされても、承認にせず、PR に1回だけ知らせ、設計は作り直す。アカウントの無いプロジェクトとセキュリティのタスクには書かない（TV-18）", async () => {
