@@ -30,6 +30,7 @@ import type {
   ReviewVerdictMissing,
   ReworkAnswer,
   ReworkCause,
+  ReworkState,
   RiskAssessment,
   SecurityCategory,
   SelfReview,
@@ -927,6 +928,7 @@ export type Task = {
     testViewpoints: TestViewpoint[];
   };
   mergedPullRequests?: number[];
+  reworkState?: ReworkState;
   budget: {
     usedUsd: number;
     capUsd: number;
@@ -3850,6 +3852,7 @@ export function applyEvent(
     }
 
     case "ReworkStoppedByMerge": {
+      task.reworkState = undefined;
       // 要求要件・設計の直しの間に、その工程の PR がマージされた（PBI-462）。直しの成果を捨てて、承認待ちだった提出の版に
       // 戻し、その工程の承認待ちに戻す（同じ追記で、続けて PullRequestMerged・StepApproved を記録する）
       if (event.payload.step) {
@@ -4452,7 +4455,13 @@ export function applyEvent(
       task.budget = { ...task.budget, warned: true };
       break;
 
-    case "TaskPaused":
+    case "TaskPaused": {
+      if (
+        event.payload.mergedPullRequests &&
+        !task.mergedPullRequests?.includes(event.payload.mergedPullRequests[1] ?? 0)
+      ) {
+        task.reworkState = event.payload.reworkState;
+      }
       task.approvedEdits = undefined;
       if (task.status === "paused" && event.payload.mergedPullRequests) {
         // 予算の上限で先に止まっていたら、理由を残す（再開で上限の引き上げを求めるため）
@@ -4465,7 +4474,9 @@ export function applyEvent(
           ? [...new Set([...task.mergedPullRequests, ...event.payload.mergedPullRequests])]
           : event.payload.mergedPullRequests;
         const implement = event.payload.mergedPullRequests[1];
-        const steps = task.mergedPullRequests.filter((number) => number !== implement);
+        const steps = task.mergedPullRequests
+          .filter((number) => number !== implement)
+          .sort((a, b) => a - b);
         task.pausedMessage =
           implement !== undefined && steps.length > 1
             ? message("pr.multipleMerged", {
@@ -4507,7 +4518,14 @@ export function applyEvent(
         task.mergedPullRequests?.includes(event.payload.mergedPullRequests[1] ?? 0)
           ? [...new Set([...task.mergedPullRequests, ...event.payload.mergedPullRequests])]
           : event.payload.mergedPullRequests;
-      task.pausedMessage = event.payload.message;
+      const implement = event.payload.mergedPullRequests?.[1];
+      const steps = task.mergedPullRequests
+        ?.filter((number) => number !== implement)
+        .sort((a, b) => a - b);
+      task.pausedMessage =
+        implement !== undefined && steps && steps.length > 1
+          ? message("pr.multipleMerged", { steps: steps.map((n) => `#${n}`).join(", "), implement })
+          : event.payload.message;
       if (event.payload.reason === "needs_decision") {
         task.decisionPauses = [
           ...(task.decisionPauses ?? []),
@@ -4522,6 +4540,7 @@ export function applyEvent(
       task.unstoppedRuns = event.payload.unstoppedRuns;
       task.pausedCancelledChildren = event.payload.cancelledChildren;
       break;
+    }
 
     case "TaskSplit": {
       if (task.status !== "idle" || activeStep(task) !== "split") {

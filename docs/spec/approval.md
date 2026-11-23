@@ -351,11 +351,15 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   2. 止めている間に、承認待ちになった・中止された・別の状態になったなら、ここでは記録しない（承認待ちになったなら、上の確認が扱う）。
   3. `ReworkStoppedByMerge`（actor `sacty`）に続けて、`PullRequestMerged`・`StepApproved`（actor `person`。マージの後の監視の開始も、上の「マージされた」と同じ）を同じ追記で記録する。
 - `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`・`incomplete`・`unchanged`）、一時停止の間に届いて反映していなかった PR の指摘の件数（`discardedReview`。`decision: true` のときは、止めた回の印の付いた指摘の数で、止めた後に届いた人のコメントは数えない。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）、人の判断を待って止めていた PR のマージか（`decision: true`。[直しでは解消できない指摘での一時停止](#直しでは解消できない指摘での一時停止)）。理由はマージ。
+  - `state` に停止時の `step` と省略可能な `status` を記録する。状態は `queued`・`running`・`verifying`・`publishing`・`awaiting_approval`・`escalated`・`paused` のいずれかで、判別できないときは省く。
+  - 両 PR のマージでは最初の `TaskPaused` に停止前の `reworkState` を記録する。同じ実装 PR の追加の停止では記録せず、投影は最初の値を起動し直しと再開を通じて保持する。再開後の `ReworkStoppedByMerge` に写し、最初の値が無い場合は工程だけを記録する。前の版は新しい欄を捨てる。
+  - 画面は `state` の工程と状態を表示する。`state` の無い記録では `was: queued` の状態を省き、`step` が無ければ対象を「直し」とする。両 PR のマージでエラー停止したときは共通の再実行の説明を出さず、複数の工程 PR 番号は昇順に表示する。
   - projection は、実装の承認待ち（ゲートの提出回は、これまでの提出の回数。提出が無ければ 1）に戻し、捨てた指摘を無効にし、検証・PR の作成の待ち・一時停止の状態を消す。続く `PullRequestMerged`・`StepApproved` が承認として進める。
   - 承認した成果の本文（`approved.implement.output`）は、記録している最新の実装の報告。マージされた内容は PR のコミットが正。
 - PR の更新の直前（`publish`。引き継いだ既存の PR の更新も含む）にも、前の PR がマージされていないかを確かめる。マージされていれば、プッシュも PR の作成もせず、同じ記録で承認として進める（確認の前に PR の更新が始まる場合）。
   プッシュの後の確認（新しい PR を作るかの確認、引き継いだ PR の確認）でマージされていたときも、新しい PR は作らず、一時停止にもせず、同じ記録で承認として進める（プッシュの間にマージされた場合）。
 - 続きの確認では、承認済みのタスクなので、重ねて記録しない。
+- 承認にしなかったマージの知らせが失敗したときは、タスク・PR ごとに 1 分から倍にして最大 1 時間待つ。次の試行可能時刻を警告に残し、投稿または既存の投稿の確認に成功すると待ちを消す。待ちはデーモンの再起動で消える。タスクが進んで確認の対象から外れると再試行されない。承認にしたマージの知らせは記録時に一度だけ試み、失敗を警告する。
 - PR への知らせ：記録の後に、マージを承認として扱ったことを PR に書く（[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)の知らせと同じ）。人の判断を待って止めていた PR のマージ（`decision: true`）は、作り直しを始めていないので書かない。
 
 コード: `apps/daemon/src/service.ts`（`checkReworkMerges`・`checkSentBackImplementation`・`cleanupMergedStepPullRequests`・`publishStepPullRequest`・`stopReworkForMerge`・`endReworkByMerge`・`mergeApprovalItems`・`announceMergeApproval`・`publish`・`pauseIfRequested`）、`packages/core/src/projection.ts`（`reworkingPullRequest`・`sentBackImplementPullRequest`・`implementBasis`・`unreflectedImplementRemarks`・`ReworkStoppedByMerge`）

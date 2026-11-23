@@ -10395,3 +10395,58 @@ describe("実装の無い進め方の工程の PR の記録（タスクブラン
     );
   });
 });
+
+describe("両方マージの停止前の状態", () => {
+  it("再開後に追加のマージが見つかっても工程 PR を昇順で表示する", () => {
+    const id = "merge-order";
+    let tasks = project([created(id)]);
+    tasks = applyEvent(
+      tasks,
+      ev(id, { type: "TaskPaused", payload: { reason: "error", mergedPullRequests: [335, 9] } }),
+    );
+    tasks = applyEvent(tasks, ev(id, { type: "TaskResumed", payload: { retry: false } }, "person"));
+    tasks = applyEvent(
+      tasks,
+      ev(id, { type: "TaskPaused", payload: { reason: "error", mergedPullRequests: [334, 9] } }),
+    );
+    for (const locale of ["ja", "en"] as const) {
+      const text = renderMessage(tasks.get(id)?.pausedMessage, locale);
+      expect(text).toContain("#334, #335");
+      expect(text).not.toContain("#335, #334");
+    }
+  });
+
+  it.each([true, false])("最初の記録に状態がある=%s とき、追加と再開で値を変えない", (hasState) => {
+    const id = "merge-state";
+    let tasks = project([created(id)]);
+    const initial = tasks.get(id);
+    if (!initial) throw new Error("missing task");
+    tasks.set(id, { ...initial, status: "paused", pausedReason: "manual", resumeTo: "idle" });
+    tasks = applyEvent(
+      tasks,
+      ev(id, {
+        type: "TaskPaused",
+        payload: {
+          reason: "error",
+          mergedPullRequests: [12, 9],
+          ...(hasState ? { reworkState: { step: "design", status: "running" } } : {}),
+        },
+      }),
+    );
+    tasks = applyEvent(
+      tasks,
+      ev(id, {
+        type: "TaskPaused",
+        payload: {
+          reason: "error",
+          mergedPullRequests: [13, 9],
+          reworkState: { step: "design", status: "paused" },
+        },
+      }),
+    );
+    tasks = applyEvent(tasks, ev(id, { type: "TaskResumed", payload: { retry: false } }, "person"));
+    expect(tasks.get(id)?.reworkState).toEqual(
+      hasState ? { step: "design", status: "running" } : undefined,
+    );
+  });
+});
