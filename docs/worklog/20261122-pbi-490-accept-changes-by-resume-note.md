@@ -19,7 +19,7 @@ MCP と画面に許可の指定を追加し、旧版のデーモンには許可�
 
 | コマンド・方法 | 結果 |
 | --- | --- |
-| `npx vitest run apps/daemon/src/daemon-steps.test.ts apps/daemon/src/daemon-implement.test.ts apps/daemon/src/prompts.test.ts apps/daemon/src/completion.test.ts` | 926 件成功 |
+| `npx vitest run apps/daemon/src/daemon-steps.test.ts apps/daemon/src/daemon-implement.test.ts` | 631 件成功 |
 
 実画面での確かめと動画の記録は、マージ前に承認の代理が人として行う。
 
@@ -49,7 +49,12 @@ MCP と画面に許可の指定を追加し、旧版のデーモンには許可�
 ### 実装のレビュー 4 回目
 
 許可中の出力を本文と申し出を含む一つの JSON として読み、途中で切れた出力や複数の申告を提出しない。
-切断位置を変えた入力を実行して確かめた。
+外側の JSON 全体を検証する。
+
+### 実装のレビュー 5 回目
+
+申し出は外側の JSON だけから読み、本文中の断片を判定に使わない。
+設計への申し出で空のテスト観点を指定したとき、旧観点を消す。
 
 ## 残したこと
 

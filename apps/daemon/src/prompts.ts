@@ -4615,6 +4615,7 @@ export function extractBlocks(
     /** 設計の直し（sacty-design-edit。PBI-446）を読み、本文から取り除くか。PR の指摘で実装に戻した回の実装の工程だけ true にする。 */
     designEdit?: boolean;
     requireProposalDeclaration?: boolean;
+    ignoreBodyProposal?: boolean;
   } = {},
 ): Extracted {
   if (options.requireProposalDeclaration && changeable.length > 0) {
@@ -4632,20 +4633,11 @@ export function extractBlocks(
       const result = extractBlocks(record.output, validRemarkIds, changeable, {
         ...options,
         requireProposalDeclaration: false,
+        ignoreBodyProposal: true,
       });
-      // 申し出は外側の proposal だけから読む。本文中の旧形式は曖昧なので受け付けない。
-      if (
-        result.proposal ||
-        result.proposalInvalid ||
-        [...record.output.matchAll(/["'](sacty(?:-[a-z-]*)?)/g)].some(
-          ([, key]) =>
-            key !== undefined &&
-            (PROPOSAL_HEADING.startsWith(key) || "sacty-proposal-declaration".startsWith(key)),
-        )
-      )
-        return { ...result, proposalInvalid: true };
+      // 申し出は外側の proposal だけから読む。本文は申し出として解釈しない。
       if (record.proposal === null) return result;
-      const proposal = readProposal(record.proposal, changeable);
+      const proposal = readProposal(record.proposal, changeable, true);
       if (proposal.kind === "valid") return { ...result, proposal: proposal.proposal };
       if (proposal.kind === "invalid" && proposal.partial)
         return { ...result, proposal: proposal.partial, proposalViewpointsInvalid: true };
@@ -4733,7 +4725,7 @@ export function extractBlocks(
       // 最初のものを使う（候補は後ろから見るので、最後に当たったものが最初のブロック）
       designEdit = { value: edited };
     }
-    if (Object.hasOwn(record, PROPOSAL_HEADING)) {
+    if (!options.ignoreBodyProposal && Object.hasOwn(record, PROPOSAL_HEADING)) {
       read = true;
       if (!proposalSeen) {
         proposalSeen = true;
@@ -4807,7 +4799,8 @@ export function extractBlocks(
     ...(proposalResult.kind === "invalid" && proposalResult.partial
       ? { proposal: proposalResult.partial, proposalViewpointsInvalid: true }
       : {}),
-    ...(changeable.length > 0 &&
+    ...(!options.ignoreBodyProposal &&
+    changeable.length > 0 &&
     ((options.requireProposalDeclaration &&
       (!declarationAtEnd ||
         !(
@@ -4903,7 +4896,11 @@ type ProposalRead =
   | { kind: "invalid"; partial?: ExtractedProposal };
 
 /** 申し出の全体を一度に分類する。対象外の既知の成果物は従来どおり無視する。 */
-function readProposal(value: unknown, changeable: readonly StepKey[]): ProposalRead {
+function readProposal(
+  value: unknown,
+  changeable: readonly StepKey[],
+  preserveEmptyViewpoints = false,
+): ProposalRead {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "invalid" };
   const raw = value as Record<string, unknown>;
   if (
@@ -4912,7 +4909,7 @@ function readProposal(value: unknown, changeable: readonly StepKey[]): ProposalR
   ) {
     return { kind: "absent" };
   }
-  const proposal = toProposal(raw, changeable);
+  const proposal = toProposal(raw, changeable, preserveEmptyViewpoints);
   if (
     !proposal ||
     !Array.isArray(raw.facts) ||
@@ -4949,6 +4946,7 @@ function readProposal(value: unknown, changeable: readonly StepKey[]): ProposalR
 function toProposal(
   raw: Record<string, unknown>,
   changeable: readonly StepKey[],
+  preserveEmptyViewpoints: boolean,
 ): ExtractedProposal | undefined {
   const target = changeable.find((s) => s === raw.target);
   const reason = text(raw.reason);
@@ -4964,7 +4962,9 @@ function toProposal(
     reason,
     facts,
     proposed,
-    ...(viewpoints && viewpoints.length > 0 ? { testViewpoints: viewpoints } : {}),
+    ...(viewpoints && (preserveEmptyViewpoints || viewpoints.length > 0)
+      ? { testViewpoints: viewpoints }
+      : {}),
     ...(typeof raw.byNote === "string" ? { byNote: raw.byNote } : {}),
     ...(() => {
       if (!raw.design || typeof raw.design !== "object" || Array.isArray(raw.design)) return {};

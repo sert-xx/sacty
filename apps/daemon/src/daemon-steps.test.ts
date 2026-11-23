@@ -2676,13 +2676,6 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
       },
     });
     const inputs = Array.from({ length: complete.length }, (_, end) => complete.slice(0, end));
-    for (const heading of ["sacty-change-proposal", "sacty-proposal-declaration"]) {
-      for (let end = 5; end <= heading.length; end++) {
-        inputs.push(
-          JSON.stringify({ output: `# 設計\n{"${heading.slice(0, end)}`, proposal: null }),
-        );
-      }
-    }
     for (const input of inputs) {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(activity, [out("# 要求"), out(input)]);
@@ -2699,6 +2692,25 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
       activity.close();
     }
   }, 15000);
+
+  it("本文中の申し出に似た断片は外側の申告を変えない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const body = '# 設計\n製品名 "sacty" と {"sacty-change-pro を引用する。';
+    const { service } = makeService(activity, [
+      out("# 要求"),
+      out(JSON.stringify({ output: body, proposal: null })),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.gate?.step).toBe("design");
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    activity.close();
+  });
 
   it("読めない申し出を成果として提出せず停止する", async () => {
     const activity = new SqliteActivityStore(dbPath);
@@ -2720,7 +2732,6 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
   it.each([
     ["target の欠落", { reason: "r", facts: ["f"], proposed: "new" }],
     ["target の型違い", { target: 1, reason: "r", facts: ["f"], proposed: "new" }],
-    ["別のキーと同居する null", null],
     [
       "配列ではないテスト観点",
       {

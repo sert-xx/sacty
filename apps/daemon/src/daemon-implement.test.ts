@@ -268,47 +268,50 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
-  it("補足に沿う設計の申し出を受け入れ、実装の提出に進む", async () => {
-    const output = out(
-      [
-        "# 実装",
-        block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["test › 修正"] }] }),
-        block({
-          "sacty-change-proposal": {
-            target: "design",
-            reason: "補足",
-            facts: ["事実"],
-            proposed: "# 新しい設計",
-            testViewpoints: [{ title: "修正", input: "入力", expected: "結果" }],
-            byNote: "範囲を絞る",
-          },
-        }),
-        block({ "sacty-proposal-declaration": "present" }),
-      ].join("\n\n"),
-    );
-    const { activity, service, id } = await toImplement([noteResult(output)]);
-    await service.pause(id);
-    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
-    await service.runNext(id);
-    const result = service.get(id);
-    expect(result?.task.approved.design?.output).toBe("# 新しい設計");
-    expect(result?.task.testViewpoints[0]?.title).toBe("修正");
-    expect(result?.task.proposals[0]?.applied).toBe(true);
-    const resumed = result?.activity.findLast((event) => event.type === "TaskResumed");
-    const accepted = result?.activity.findLast((event) => event.type === "ChangeAcceptedByNote");
-    expect(accepted?.payload).toMatchObject({ proposalId: "CP-1", resumedAt: resumed?.at });
-    expect(result?.task.proposals[0]?.byNote?.resumedAt).toBe(resumed?.at);
-    expect(result?.activity.map((e) => e.type).slice(-3)).toEqual([
-      "ChangeProposed",
-      "ChangeAcceptedByNote",
-      "ChangeApplied",
-    ]);
-    expect(result?.task.status).not.toBe("escalated");
-    expect(result?.task.verification).toBe("pending");
-    expect(result?.task.implementHistory?.at(-1)).toContain("# 実装");
-    expect(result?.task.testMap).toEqual([{ viewpointId: "TV-1", tests: ["test › 修正"] }]);
-    activity.close();
-  });
+  it.each([false, true])(
+    "補足に沿う設計の申し出を受け入れ、空の観点も反映する（空: %s）",
+    async (empty) => {
+      const output = out(
+        [
+          "# 実装",
+          block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["test › 修正"] }] }),
+          block({
+            "sacty-change-proposal": {
+              target: "design",
+              reason: "補足",
+              facts: ["事実"],
+              proposed: "# 新しい設計",
+              testViewpoints: empty ? [] : [{ title: "修正", input: "入力", expected: "結果" }],
+              byNote: "範囲を絞る",
+            },
+          }),
+          block({ "sacty-proposal-declaration": "present" }),
+        ].join("\n\n"),
+      );
+      const { activity, service, id } = await toImplement([noteResult(output)]);
+      await service.pause(id);
+      service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+      await service.runNext(id);
+      const result = service.get(id);
+      expect(result?.task.approved.design?.output).toBe("# 新しい設計");
+      expect(result?.task.testViewpoints.map((v) => v.title)).toEqual(empty ? [] : ["修正"]);
+      expect(result?.task.proposals[0]?.applied).toBe(true);
+      const resumed = result?.activity.findLast((event) => event.type === "TaskResumed");
+      const accepted = result?.activity.findLast((event) => event.type === "ChangeAcceptedByNote");
+      expect(accepted?.payload).toMatchObject({ proposalId: "CP-1", resumedAt: resumed?.at });
+      expect(result?.task.proposals[0]?.byNote?.resumedAt).toBe(resumed?.at);
+      expect(result?.activity.map((e) => e.type).slice(-3)).toEqual([
+        "ChangeProposed",
+        "ChangeAcceptedByNote",
+        "ChangeApplied",
+      ]);
+      expect(result?.task.status).not.toBe("escalated");
+      expect(result?.task.verification).toBe("pending");
+      expect(result?.task.implementHistory?.at(-1)).toContain("# 実装");
+      expect(result?.task.testMap).toEqual([{ viewpointId: "TV-1", tests: ["test › 修正"] }]);
+      activity.close();
+    },
+  );
 
   it("合わせ直した設計の途中で切れた申し出は成果を提出せず停止する", async () => {
     const output = out(
