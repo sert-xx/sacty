@@ -10,12 +10,13 @@
 - 対象
   - 再開の画面：両方マージの一時停止で、理由 error の決まった説明を出さない
   - `ReworkStoppedByMerge`：止めたときの工程と状態を、省略できる新しい欄 `state` に記録し、画面の行はそれを言う
+  - 両方マージの一時停止：一時停止した時点の工程と状態を、`TaskPaused` の省略できる新しい欄 `reworkState` に残し、再開の後の `ReworkStoppedByMerge` の `state` に写す
   - 記録済みの行（`state` 無し）：`was: queued` のときは状態を言わない。`step` が無いときは、止めた対象を工程に依存しない語で言う
   - `pr.multipleMerged` の工程の PR の番号を昇順にする（投影で並べるので、記録済みのタスクにも効く）
   - `postMergeNotice`：失敗したら、同じ知らせのやり直しを 1 分から倍にして最大 1 時間まで待つ
   - 仕様書 `docs/spec/approval.md`・`approval.en.md`、作業履歴、テスト
 - 対象外
-  - 両方マージのときの止め方・進め方、`TaskPaused` の理由・形（依頼の範囲の外）
+  - 両方マージのときの止め方・進め方、`TaskPaused` の理由（依頼の範囲の外）
   - `was` の値の追加（前の版のデーモンが作業履歴を読めなくなるため、欄を足す）
   - 一時停止の見出し「エラーで一時停止」の文言
 
@@ -31,6 +32,7 @@
   - 記録済みの `was: queued` の表示：状態を言わない。実行待ちと承認待ち・PR の作成待ちを見分けられないため（依頼の「言えないときは状態を言わない」）。
   - 記録済みで `step` の無い行の主語：工程に依存しない「直し」にする。記録からは、実装の作り直しか、前の工程へ戻していた回かを見分けられないため。
   - やり直されていた知らせ：承認にしなかったマージの知らせ（`checkSentBackMerges` が確認のたびに呼ぶ）。承認にした知らせは記録のときに1回だけ呼ぶ。間を伸ばす方式は `noteRemarkReplyLimited` の前例に合わせる。
+  - 両方マージから再開した後の行の状態：両方マージで一時停止した時点（実行を止める前）の状態を言う。再開の後の状態（`idle` など）は止めたときの状態ではないため。
 
 ## 既定で決めたこと
 
@@ -46,15 +48,17 @@
 | 欄 | 値 | 意味 |
 | --- | --- | --- |
 | `state.step` | `requirements`・`design`・`implement` など（`StepKey`） | 止めたときに動いていた工程（戻していた回は `activeStep`） |
-| `state.status` | `queued`・`running`・`verifying`・`publishing`・`awaiting_approval`・`escalated`・`paused` | 止めたときの状態 |
+| `state.status` | `queued`・`running`・`verifying`・`publishing`・`awaiting_approval`・`escalated`・`paused`（省略できる） | 止めたときの状態。復元できないときは省く |
 
 - `state.status` の決め方：paused → `paused`、実行中か実行を止めた → `running`、awaiting_approval → `awaiting_approval`、escalated → `escalated`、`publishPending` か工程の PR の作成待ち → `publishing`、実装で `verification` あり → `verifying`、ほかは `queued`。
+- 両方マージの一時停止の `TaskPaused` に、省略できる欄 `reworkState`（`state` と同じ形）を足す。一時停止の前（実行を止める前）の状態を上の決め方で記録する。投影はタスクに残し、`ReworkStoppedByMerge` で消す。
+- 再開の後の `ReworkStoppedByMerge`（タスクの `mergedPullRequests` に実装の PR がある）は、残した `reworkState` を `state` に写す。`reworkState` が無い（前の版が一時停止させた）なら、`state.step` だけを記録し、`state.status` を省く。
 - `was` は今の `reworkStage` のまま記録する（前の版の投影のため）。
-- 前の版のデーモンは `state` を読まずに捨てる。仕様書と events.ts の注釈に書く。
+- 前の版のデーモンは `state`・`reworkState` を読まずに捨てる。仕様書と events.ts の注釈に書く。
 
 ## 処理の流れ
 
-- 画面の行（`apps/web/src/lib/labels.ts`）：`state` があれば、主語と状態を `state` から作る。無ければ次のとおり。
+- 画面の行（`apps/web/src/lib/labels.ts`）：`state` があれば、主語と状態を `state` から作る（`state.status` が無ければ状態を言わない）。`state` が無ければ次のとおり。
   - 主語：`step` があれば「{工程}の直し」、無ければ「直し」（英 "the rework"）。「実装の作り直し」とは言わない
   - 状態：`was` が `queued` のときは言わず（「…を止めた」）、ほかは今の語を使う
 - 投影（`projection.ts` の `TaskPaused`）：`pr.multipleMerged` の `steps` を番号の昇順にする。
@@ -78,18 +82,24 @@
 - [TV-4] 設計へ戻して実行中・一時停止中に実装の PR がマージされると、その状態を記録する
   - 入力：設計へ戻し、設計の実行中（status running）のタスクと、一時停止中（status paused）のタスクのそれぞれで、実装の PR をマージ済みにして PR の確認を流す
   - 期待結果：state が、実行中のタスクでは { step: design, status: running }、一時停止中のタスクでは { step: design, status: paused } で記録される。
-- [TV-5] state のある行は、工程と状態を言う（日英）
-  - 入力：payload が number 9・was queued・state { step: design, status: awaiting_approval }・stoppedRuns 空の ReworkStoppedByMerge を、作業履歴の行の部品 EventText（task-detail.tsx）で日英それぞれ描く
-  - 期待結果：日は「設計のやり直しを承認待ちで止めた」、英は "the redo of the design was stopped while it was awaiting approval" を含み、「実行待ち」「queued」を含まない。
-- [TV-6] 記録済みの state・step の無い行は、工程に依存しない主語で言い、was が queued のときだけ状態を言わない
+- [TV-5] 両方マージで一時停止して再開した後の記録が、一時停止した時点の状態を言う
+  - 入力：設計へ戻して設計の実行中（status running）のタスクと、手動で一時停止中（status paused）のタスクのそれぞれで、偽の GitHub が設計の PR と実装の PR をどちらもマージ済みと返し、PR の確認で両方マージの一時停止にしてから再開し、PR の確認をもう1回流す（daemon-step-pull-requests.test.ts）
+  - 期待結果：両方マージの TaskPaused の reworkState と、再開の後の ReworkStoppedByMerge の state が、実行中のタスクでは { step: design, status: running }、一時停止中のタスクでは { step: design, status: paused } になる。
+- [TV-6] reworkState の無い両方マージの一時停止から再開すると、状態を記録しない
+  - 入力：reworkState 無しの両方マージの TaskPaused（mergedPullRequests [12, 9]）で一時停止した、設計へ戻していたタスクを再開し、実装の PR をマージ済みにして PR の確認を流す
+  - 期待結果：ReworkStoppedByMerge が state { step: design } で記録され、state.status を持たない。
+- [TV-7] state のある行は、工程と状態を言う（日英）
+  - 入力：payload が number 9・was queued・state { step: design, status: awaiting_approval }・stoppedRuns 空の ReworkStoppedByMerge と、state { step: design }（status 無し）のものを、作業履歴の行の部品 EventText（task-detail.tsx）で日英それぞれ描く
+  - 期待結果：前者は日「設計のやり直しを承認待ちで止めた」、英 "the redo of the design was stopped while it was awaiting approval" を含み、後者は日「設計のやり直しを止めた」、英 "the redo of the design was stopped" で状態の語を含まず、どちらも「実行待ち」「queued」を含まない。
+- [TV-8] 記録済みの state・step の無い行は、工程に依存しない主語で言い、was が queued のときだけ状態を言わない
   - 入力：state 無し・step 無しで、was が queued の ReworkStoppedByMerge と、was が running のものを、EventText で日英それぞれ描く
   - 期待結果：queued の行は「PR #9 がマージされたため、直しを止めた」（英 "the rework was stopped"）で、running の行は「直しを実行中で止め」（英 "the rework was stopped while it was running"）を含み、どちらも「実装の作り直し」「the rework of the implementation」「実行待ち」「queued」を含まない。
-- [TV-7] 複数の工程の PR の番号が昇順で出る（日英）
+- [TV-9] 複数の工程の PR の番号が昇順で出る（日英）
   - 入力：paused のタスクに、mergedPullRequests [335, 9] の TaskPaused、続けて [334, 9] の TaskPaused を投影し、その Task を TaskDetailView で日英それぞれ描く
   - 期待結果：再開の画面の説明が「#334, #335」の順で、「#335, #334」を含まない。
-- [TV-8] 承認にしなかったマージの知らせが失敗し続けると、やり直しの間が伸びる
+- [TV-10] 承認にしなかったマージの知らせが失敗し続けると、やり直しの間が伸びる
   - 入力：要求要件へ戻している間に設計の PR がマージ済みで、偽の GitHub の commentIssue が毎回失敗するタスクで、時計を1分ずつ進めて PR の確認を 8 回流す
   - 期待結果：commentIssue は 0・1・3・7 分目の 4 回だけ呼ばれ、失敗ごとの警告に次に試す時刻が出る。
-- [TV-9] 仕様書（日英）が新しい振る舞いを書いている
+- [TV-11] 仕様書（日英）が新しい振る舞いを書いている
   - 入力：docs/spec/approval.md と approval.en.md の「実装の作り直しの間のマージ」と知らせの節の差分
-  - 期待結果：state の欄と値・前の版が欄を捨てること・state の無い記録は was queued のとき状態を言わず step が無いとき主語を「直し」にすること・両方マージで決まった説明を出さないこと・工程の PR の番号を昇順に出すこと・知らせのやり直しを 1 分から倍にして最大 1 時間置くことが、日英で同じ意味で書かれている。
+  - 期待結果：state の欄と値・両方マージの TaskPaused の reworkState と再開の後の state への写し方（無ければ state.status を省く）・前の版が欄を捨てること・state の無い記録は was queued のとき状態を言わず step が無いとき主語を「直し」にすること・両方マージで決まった説明を出さないこと・工程の PR の番号を昇順に出すこと・知らせのやり直しを 1 分から倍にして最大 1 時間置くことが、日英で同じ意味で書かれている。
