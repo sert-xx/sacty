@@ -887,6 +887,40 @@ describe("共用の compose の起動（PBI-70）", () => {
     expect(JSON.stringify(result)).toContain("network unavailable");
     expect(JSON.stringify(result)).not.toContain("secret-value");
   });
+  it("持ち主の取得中に中断されたらネットワークを作らない", async () => {
+    const entered = Promise.withResolvers<void>();
+    const result =
+      Promise.withResolvers<{ pid: number; ppid: number; pgid: number; started: string }[]>();
+    const calls: string[][] = [];
+    const spawnImpl = ((_command: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: vi.fn(),
+      });
+      queueMicrotask(() => {
+        if (args.includes("config"))
+          child.stdout.emit("data", JSON.stringify(normalized({ db: { image: "db" } })));
+        child.emit("close", 0);
+      });
+      return child;
+    }) as never;
+    const runner = new DockerComposeServices(spawnImpl, 300, {
+      table: () => {
+        entered.resolve();
+        return result.promise;
+      },
+    });
+    const members = [{ workspaceDir: ws, spec: { file: "compose/redis.yml", names: [] } }];
+    const pending = runner.startGroup({ runId: "abort-owner", members });
+    await entered.promise;
+    runner.abort("abort-owner");
+    result.resolve([]);
+    expect(await pending).toMatchObject({ ok: false, message: { code: "run.stoppedByPerson" } });
+    expect(calls.some((args) => args[0] === "network" && args[1] === "create")).toBe(false);
+    expect(calls.some((args) => args.includes("up"))).toBe(false);
+  });
   it("複数の compose は衝突を起動前に検査し、同じネットワークで起動して片付ける", async () => {
     const calls: string[][] = [];
     const configs: unknown[] = [];
@@ -1091,7 +1125,9 @@ describe("共用の compose の起動（PBI-70）", () => {
       // 固定の名前・ホストのポート・ボリュームとネットワークの固定の名前を外す（プロジェクトごとの名前になる）
       expect(redis).not.toHaveProperty("container_name");
       expect(redis).not.toHaveProperty("ports");
-      expect(written.volumes).toEqual({ data: {} });
+      expect(written.volumes).toEqual({
+        data: { labels: { "io.sacty.owner": expect.any(String) } },
+      });
       expect(written.networks).toEqual({ sacty: {}, default: { ipam: {} } });
     }
   });
@@ -1318,4 +1354,319 @@ describe("前回の残りのサービスの片付け（PBI-78 レビュー指摘
     expect(config.services.a.labels).toEqual({ team: "x", "io.sacty.owner": `50 ${T1}` });
     expect(config.services.b.labels).toEqual(["team=y", `io.sacty.owner=50 ${T1}`]);
   });
+});
+
+describe("ネットワークとボリュームの起動時の回収", () => {
+  const alive = { pid: 50, ppid: 1, pgid: 50, started: "T0" };
+  function fixture(
+    options: {
+      networks?: string;
+      volumes?: string;
+      failList?: boolean;
+      hang?: string;
+      projects?: string;
+      failRemove?: boolean;
+    } = {},
+  ) {
+    const calls: string[][] = [];
+    const events: string[] = [];
+    const kills: string[] = [];
+    const spawnImpl = ((_command: string, args: string[]) => {
+      calls.push(args);
+      events.push(args.slice(0, 2).join(" "));
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: () => {
+          kills.push(args.join(" "));
+        },
+      });
+      const key = args.slice(0, 2).join(" ");
+      if (
+        options.hang === key ||
+        options.hang === args.join(" ") ||
+        (options.hang === "down" && args.includes("down"))
+      )
+        return child;
+      queueMicrotask(() => {
+        if (key === "compose ls") child.stdout.emit("data", options.projects ?? "[]");
+        if (key === "network ls") child.stdout.emit("data", options.networks ?? "");
+        if (key === "volume ls") child.stdout.emit("data", options.volumes ?? "");
+        child.emit(
+          "close",
+          (options.failList && args[1] === "ls" && args[0] !== "compose") ||
+            (options.failRemove && args[1] === "rm")
+            ? 1
+            : 0,
+        );
+      });
+      return child;
+    }) as never;
+    return { calls, events, kills, spawnImpl };
+  }
+  const networks = "sacty-svc-a-network\t60 T0\t\nsacty-svc-b-network\t50 T1\t\n";
+  const volumes = "vol-a\t60 T0\tsacty-svc-a\nvol-b\t50 T1\tsacty-svc-b\n";
+  it("終了済みと PID が再利用された資源をネットワークから先に消す", async () => {
+    const f = fixture({ networks, volumes });
+    await new DockerComposeServices(f.spawnImpl, 300, { table: async () => [alive] }).cleanupAll();
+    expect(f.calls.filter((a) => a[1] === "rm")).toEqual([
+      ["network", "rm", "sacty-svc-a-network"],
+      ["network", "rm", "sacty-svc-b-network"],
+      ["volume", "rm", "vol-a"],
+      ["volume", "rm", "vol-b"],
+    ]);
+  });
+  it("稼働中・不正な印・対象外・印のない資源を消さない", async () => {
+    const f = fixture({
+      networks:
+        "sacty-svc-live-network\t50 T0\t\nsacty-svc-bad-network\tabc\t\nsacty-svc-g0x_sacty\t60 T0\tsacty-svc-x\nsacty-svc-forged-network\t60 T0\tsacty-svc-x\nother-network\t60 T0\t\nsacty-svc-x-network-2\t60 T0\t\nsacty-svc-x-network\t\t",
+      volumes:
+        "live\t50 T0\tsacty-svc-a\nbad\tabc\tsacty-svc-a\nother\t60 T0\tother\nempty\t\tsacty-svc-a",
+    });
+    await new DockerComposeServices(f.spawnImpl, 300, { table: async () => [alive] }).cleanupAll();
+    expect(f.calls.filter((a) => a[1] === "rm")).toEqual([]);
+    for (const args of f.calls.filter((a) => a[1] === "ls" && a[0] !== "compose"))
+      expect(args).toContain("label=io.sacty.owner");
+  });
+  it("プロセス表が空か一覧が失敗した場合は削除しない", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const failList of [false, true]) {
+        const f = fixture({ networks, volumes, failList });
+        await new DockerComposeServices(f.spawnImpl, 300, {
+          table: async () => (failList ? [alive] : []),
+        }).cleanupAll();
+        expect(f.calls.filter((a) => a[1] === "rm")).toEqual([]);
+        if (!failList)
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining("プロセス一覧を読めないため"));
+      }
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("一覧 (exit, code=1)"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("削除に失敗しても残りを試す", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const f = fixture({ networks, volumes, failRemove: true });
+      await new DockerComposeServices(f.spawnImpl, 300, {
+        table: async () => [alive],
+      }).cleanupAll();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-a-network (exit, code=1)"),
+      );
+      expect(f.calls).toContainEqual(["volume", "rm", "vol-a"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("一覧と削除の時間切れを記録し、残りを続ける", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const list = fixture({ networks, volumes, hang: "network ls" });
+      await new DockerComposeServices(list.spawnImpl, 300, {
+        table: async () => [alive],
+        dockerTimeoutMs: 10,
+      }).cleanupAll();
+      expect(list.calls.filter((a) => a[0] === "network" && a[1] === "rm")).toEqual([]);
+      expect(list.calls).toContainEqual(["volume", "rm", "vol-a"]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("ネットワークの回収に失敗しました: 一覧 (timeout, code=なし)"),
+      );
+      warn.mockClear();
+      const volumeList = fixture({ networks, volumes, hang: "volume ls" });
+      await new DockerComposeServices(volumeList.spawnImpl, 300, {
+        table: async () => [alive],
+        dockerTimeoutMs: 10,
+      }).cleanupAll();
+      expect(volumeList.calls.filter((a) => a[0] === "volume" && a[1] === "rm")).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("ボリュームの回収に失敗しました: 一覧 (timeout, code=なし)"),
+      );
+      warn.mockClear();
+      const remove = fixture({
+        networks,
+        volumes,
+        hang: "network rm sacty-svc-b-network",
+        failRemove: true,
+      });
+      await new DockerComposeServices(remove.spawnImpl, 300, {
+        table: async () => [alive],
+        dockerTimeoutMs: 10,
+      }).cleanupAll();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-a-network (exit, code=1)"),
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-b-network (timeout, code=なし)"),
+      );
+      expect(remove.calls).toContainEqual(["volume", "rm", "vol-a"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("compose の一覧や停止が時間切れでも回収を続ける", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const hang of ["compose ls", "down", "none"]) {
+        const f = fixture({
+          networks,
+          hang,
+          projects: hang === "down" ? '[{"Name":"sacty-svc-old"}]' : "[]",
+        });
+        await new DockerComposeServices(f.spawnImpl, 300, {
+          table: async () => [alive],
+          dockerTimeoutMs: 10,
+        }).cleanupAll();
+        expect(f.calls).toContainEqual(["network", "rm", "sacty-svc-a-network"]);
+        expect(f.events).toContain("volume ls");
+        if (hang !== "none") {
+          expect(f.kills).toHaveLength(1);
+          expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining(
+              `composeの回収に失敗しました: ${hang === "down" ? "sacty-svc-old" : "一覧"} (timeout, code=なし)`,
+            ),
+          );
+          warn.mockClear();
+        }
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("プロジェクトの停止を起動できなくても対象を記録して回収を続ける", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const f = fixture({ networks, projects: '[{"Name":"sacty-svc-old"}]' });
+      const spawnImpl = ((_command: string, args: string[]) => {
+        if (args.includes("down")) throw new Error("spawn failed");
+        return (f.spawnImpl as typeof import("node:child_process").spawn)(_command, args);
+      }) as never;
+      await new DockerComposeServices(spawnImpl, 300, { table: async () => [alive] }).cleanupAll();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sacty-svc-old (spawn, code=なし)"),
+      );
+      expect(f.calls).toContainEqual(["network", "rm", "sacty-svc-a-network"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("資源の列挙の後にプロセス表を読み直す", async () => {
+    const f = fixture({
+      networks: "sacty-svc-live-network\t50 T0\t",
+      volumes: "live\t50 T0\tsacty-svc-x",
+      projects: '[{"Name":"sacty-svc-old"}]',
+    });
+    let count = 0;
+    const table = async () => {
+      f.events.push("table");
+      return ++count === 1 ? [{ ...alive, pid: 99 }] : [alive];
+    };
+    await new DockerComposeServices(f.spawnImpl, 300, { table }).cleanupAll();
+    expect(count).toBe(2);
+    expect(f.events.indexOf("table")).toBeLessThan(
+      f.events.findIndex((e) => e.startsWith("compose -p")),
+    );
+    expect(f.events.lastIndexOf("table")).toBeGreaterThan(f.events.indexOf("volume ls"));
+    expect(f.calls.filter((a) => a[1] === "rm")).toEqual([]);
+  });
+});
+
+describe("資源の所有ラベル", () => {
+  it("名前付きボリュームにラベルを付け、外部ネットワークは変えない", () => {
+    const config = {
+      services: { db: {} },
+      volumes: { a: {}, b: { labels: { "io.sacty.owner": "1 T9" } } },
+      networks: { sacty: { external: true } },
+    };
+    labelOwner(config, { pid: 50, started: "T0" });
+    expect(config.volumes).toEqual({
+      a: { labels: { "io.sacty.owner": "50 T0" } },
+      b: { labels: { "io.sacty.owner": "50 T0" } },
+    });
+    expect(config.networks.sacty).toEqual({ external: true });
+  });
+  it("入力のネットワークの所有ラベルを除き、ほかのラベルを残す", () => {
+    const result = sanitizeCompose(
+      normalized(
+        { db: { image: "db", networks: { a: null, b: null } } },
+        {
+          networks: {
+            a: { labels: { "io.sacty.owner": "1 T9" } },
+            b: { labels: ["io.sacty.owner=1 T9", "keep=1"] },
+          },
+        },
+      ),
+      ws,
+      [],
+    );
+    if (!result.ok) throw new Error(result.problems.join());
+    expect(result.config.networks).toEqual({
+      sacty: {},
+      a: { labels: {} },
+      b: { labels: ["keep=1"] },
+    });
+  });
+  it.each([true, false])(
+    "共通ネットワークを所有元に応じて作成し、up より先に作る (owner=%s)",
+    async (hasOwner) => {
+      writeFileSync(join(ws, "compose.yml"), "services:\n  db:\n    image: db\n");
+      const calls: string[][] = [];
+      const configs: { volumes: unknown }[] = [];
+      let index = 0;
+      const spawnImpl = ((_command: string, args: string[]) => {
+        calls.push(args);
+        const child = Object.assign(new EventEmitter(), {
+          stdout: new EventEmitter(),
+          stderr: new EventEmitter(),
+        });
+        if (args.includes("up"))
+          configs.push(JSON.parse(readFileSync(args[args.indexOf("-f") + 1] as string, "utf8")));
+        queueMicrotask(() => {
+          if (args.includes("config"))
+            child.stdout.emit(
+              "data",
+              JSON.stringify(
+                normalized(
+                  {
+                    [index++ === 0 ? "db" : "cache"]: {
+                      image: "db",
+                      volumes: [
+                        { type: "volume", source: "a", target: "/a" },
+                        { type: "volume", source: "b", target: "/b" },
+                      ],
+                    },
+                  },
+                  {
+                    volumes: {
+                      a: { labels: { "io.sacty.owner": "1 T9" } },
+                      b: { labels: ["io.sacty.owner=1 T9", "keep=1"] },
+                    },
+                  },
+                ),
+              ),
+            );
+          child.emit("close", 0);
+        });
+        return child;
+      }) as never;
+      const runner = new DockerComposeServices(spawnImpl, 300, {
+        ...(hasOwner ? { owner: { pid: 50, started: "T0" } } : { table: async () => [] }),
+      });
+      const member = { workspaceDir: ws, spec: { file: "compose.yml", names: [] } };
+      expect(await runner.startGroup({ runId: "test", members: [member, member] })).toMatchObject({
+        ok: true,
+      });
+      const create = calls.findIndex((a) => a[0] === "network" && a[1] === "create");
+      expect(create).toBeLessThan(calls.findIndex((a) => a.includes("up")));
+      expect(calls[create]).toEqual(
+        hasOwner
+          ? ["network", "create", "--label", "io.sacty.owner=50 T0", "sacty-svc-test-network"]
+          : ["network", "create", "sacty-svc-test-network"],
+      );
+      if (!hasOwner)
+        for (const config of configs)
+          expect(config.volumes).toEqual({ a: { labels: {} }, b: { labels: ["keep=1"] } });
+    },
+  );
 });
