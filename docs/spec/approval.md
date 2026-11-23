@@ -359,7 +359,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - PR の更新の直前（`publish`。引き継いだ既存の PR の更新も含む）にも、前の PR がマージされていないかを確かめる。マージされていれば、プッシュも PR の作成もせず、同じ記録で承認として進める（確認の前に PR の更新が始まる場合）。
   プッシュの後の確認（新しい PR を作るかの確認、引き継いだ PR の確認）でマージされていたときも、新しい PR は作らず、一時停止にもせず、同じ記録で承認として進める（プッシュの間にマージされた場合）。
 - 続きの確認では、承認済みのタスクなので、重ねて記録しない。
-- 知らせの失敗時は種類・タスク・PR ごとに 1 分から倍にして最大 1 時間待つ。次の試行時刻を警告に残し、投稿または既存の投稿の確認に成功すると待ちを消す。待ちはデーモンの再起動で消える。
+- 承認にしなかったマージの知らせが失敗したときは、タスク・PR ごとに 1 分から倍にして最大 1 時間待つ。次の試行可能時刻を警告に残し、投稿または既存の投稿の確認に成功すると待ちを消す。待ちはデーモンの再起動で消える。タスクが進んで確認の対象から外れると再試行されない。承認にしたマージの知らせは記録時に一度だけ試み、失敗を警告する。
 - PR への知らせ：記録の後に、マージを承認として扱ったことを PR に書く（[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)の知らせと同じ）。人の判断を待って止めていた PR のマージ（`decision: true`）は、作り直しを始めていないので書かない。
 
 コード: `apps/daemon/src/service.ts`（`checkReworkMerges`・`checkSentBackImplementation`・`cleanupMergedStepPullRequests`・`publishStepPullRequest`・`stopReworkForMerge`・`endReworkByMerge`・`mergeApprovalItems`・`announceMergeApproval`・`publish`・`pauseIfRequested`）、`packages/core/src/projection.ts`（`reworkingPullRequest`・`sentBackImplementPullRequest`・`implementBasis`・`unreflectedImplementRemarks`・`ReworkStoppedByMerge`）

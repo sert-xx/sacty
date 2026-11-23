@@ -13054,6 +13054,26 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it("承認したマージの通知の失敗には再試行時刻を表示しない", async () => {
+      const pulls = new FakePulls();
+      const comment = vi.spyOn(pulls, "commentIssue").mockRejectedValue(new Error("failed"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const made = await toDesignRework([HOLD], { pulls, projects: projectsWithAccount() });
+      try {
+        void made.service.runNext(made.id);
+        await made.executor.started.promise;
+        mergeDesign(made);
+        await made.service.checkPullRequests();
+        await noticesSettled(made.service);
+        expect(comment).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("知らせられませんでした"));
+        expect(warn.mock.calls.map((call) => String(call[0])).join(" ")).not.toContain("次の試行");
+      } finally {
+        warn.mockRestore();
+        made.activity.close();
+      }
+    });
+
     it("承認しないマージの通知は失敗後に間隔を倍にして再試行する", async () => {
       let now = Date.parse("2026-10-11T01:00:00Z");
       const pulls = new FakePulls();

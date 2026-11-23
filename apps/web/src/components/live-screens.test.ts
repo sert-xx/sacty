@@ -251,6 +251,16 @@ describe("作り直しを止めた作業履歴", () => {
         ),
       );
       expect(container.textContent).toContain(item[locale]);
+      if (
+        item.payload.was === "queued" &&
+        !("status" in ("state" in item.payload ? item.payload.state : {}))
+      ) {
+        expect(container.textContent).toBe(
+          locale === "ja"
+            ? `PR #9 がマージされたため、${item.ja}。マージを承認として進める`
+            : `PR #9 was merged, so ${item.en}. The merge is taken as the approval`,
+        );
+      }
       expect(container.textContent).not.toContain(locale === "ja" ? "実行待ち" : "queued");
       expect(container.textContent).not.toContain(
         locale === "ja" ? "実装の作り直し" : "the rework of the implementation",

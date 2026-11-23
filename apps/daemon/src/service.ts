@@ -3558,11 +3558,15 @@ export class TaskService {
           );
         this.mergeNoticeRetry.delete(key);
       } catch (error) {
-        const delay = Math.min((retry?.delay ?? 30_000) * 2, 3_600_000);
-        const at = this.now() + delay;
-        this.mergeNoticeRetry.set(key, { at, delay });
+        let nextAttempt = "";
+        if (kind === "not-approved") {
+          const delay = Math.min((retry?.delay ?? 30_000) * 2, 3_600_000);
+          const at = this.now() + delay;
+          this.mergeNoticeRetry.set(key, { at, delay });
+          nextAttempt = `。次の試行可能時刻: ${new Date(at).toISOString()}`;
+        }
         console.warn(
-          `[daemon] タスク ${task.id} の、PR #${number} のマージの扱いを PR に知らせられませんでした。次の試行: ${new Date(at).toISOString()}：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          `[daemon] タスク ${task.id} の、PR #${number} のマージの扱いを PR に知らせられませんでした${nextAttempt}：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
         );
       }
     });
