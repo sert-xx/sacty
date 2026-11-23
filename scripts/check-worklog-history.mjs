@@ -18,27 +18,60 @@ function objectType(cwd, rev, file) {
   return entry ? entry.split(" ")[1] : null;
 }
 
-function fenceLines(content) {
+function codeMaskedLines(content) {
+  const lines = content.toString("utf8").split("\n");
   let fence = null;
-  return content
-    .toString("utf8")
-    .split("\n")
-    .map((line) => {
-      const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-      const inside = fence !== null;
-      if (match) {
-        if (!fence && !(match[1][0] === "`" && match[2].includes("`"))) fence = match[1];
-        else if (
-          fence &&
-          match[1][0] === fence[0] &&
-          match[1].length >= fence.length &&
-          !match[2].trim()
-        )
-          fence = null;
-        return true;
-      }
-      return inside;
-    });
+  const masked = lines.map((line) => {
+    // Block quotes can contain fenced and indented code blocks.
+    const body = line.replace(/^ {0,3}(?:> ?)+/, "");
+    const match = body.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    const inside = fence !== null;
+    if (match) {
+      if (!fence && !(match[1][0] === "`" && match[2].includes("`"))) fence = match[1];
+      else if (
+        fence &&
+        match[1][0] === fence[0] &&
+        match[1].length >= fence.length &&
+        !match[2].trim()
+      )
+        fence = null;
+      return " ".repeat(line.length);
+    }
+    if (inside || /^(?: {4}|\t)/.test(body)) return " ".repeat(line.length);
+    return line;
+  });
+  // A matching backtick run may close on a later line. Mask only matched spans.
+  const text = masked.join("\n");
+  const chars = text.split("");
+  for (let i = 0; i < text.length; ) {
+    if (text[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (text[i] !== "`") {
+      i++;
+      continue;
+    }
+    let end = i;
+    while (text[end] === "`") end++;
+    const length = end - i;
+    let close = end;
+    while (close < text.length) {
+      close = text.indexOf("`", close);
+      if (close < 0) break;
+      let stop = close;
+      while (text[stop] === "`") stop++;
+      if (stop - close === length) break;
+      close = stop;
+    }
+    if (close < 0 || close >= text.length) {
+      i = end;
+      continue;
+    }
+    for (let j = i; j < close + length; j++) if (chars[j] !== "\n") chars[j] = " ";
+    i = close + length;
+  }
+  return chars.join("").split("\n");
 }
 
 function inlineLinks(line) {
@@ -72,9 +105,9 @@ function inlineLinks(line) {
   return links;
 }
 
-function linkFix(oldLine, newLine, file, head, cwd) {
-  const oldLinks = inlineLinks(oldLine);
-  const newLinks = inlineLinks(newLine);
+function linkFix(oldLine, newLine, oldMask, newMask, file, head, cwd) {
+  const oldLinks = inlineLinks(oldMask);
+  const newLinks = inlineLinks(newMask);
   if (!oldLinks.length || oldLinks.length !== newLinks.length) return false;
   const skeleton = (line, links) => {
     let result = "";
@@ -104,6 +137,7 @@ function linkFix(oldLine, newLine, file, head, cwd) {
       } catch {
         decoded = clean;
       }
+      if (decoded.includes("\0")) return null;
       const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(file), decoded));
       return objectType(cwd, head, resolved);
     };
@@ -181,7 +215,7 @@ export function checkWorklogHistory({ cwd = process.cwd(), base, head, title, nu
       violations.push({ file, lines: lines.length ? lines : ["空のファイルを削除"] });
       continue;
     }
-    const [oldFences, newFences] = contents.map(fenceLines);
+    const [oldMasks, newMasks] = contents.map(codeMaskedLines);
     const sameTask =
       /^\d{8}-/.test(path.posix.basename(file)) &&
       path.posix.basename(file).slice(9).startsWith(prefix);
@@ -222,9 +256,15 @@ export function checkWorklogHistory({ cwd = process.cwd(), base, head, title, nu
         const index = added.findIndex(
           (item, i) =>
             i > last &&
-            !oldFences[old.line - 1] &&
-            !newFences[item.line - 1] &&
-            linkFix(old.text, item.text, file, head, cwd),
+            linkFix(
+              old.text,
+              item.text,
+              oldMasks[old.line - 1],
+              newMasks[item.line - 1],
+              file,
+              head,
+              cwd,
+            ),
         );
         if (index >= 0) {
           last = index;

@@ -238,6 +238,38 @@ describe("worklog history", () => {
       expect(r.run(base).status, before).toBe(expected);
     }
   });
+  it("rejects link-like changes across code contexts through the CLI", () => {
+    const contexts = [
+      (x: string) => `start \`\`\n${x}\nend\`\``,
+      (x: string) => `> \`\`\`md\n> ${x}\n> \`\`\``,
+      (x: string) => `> ~~~~\n> ${x}\n> ~~~~`,
+      (x: string) => `    ${x}`,
+      (x: string) => `>     ${x}`,
+      (x: string) => `\`outer \`\`\n${x}\n\`\` end\``,
+    ];
+    for (const context of contexts) {
+      for (const target of ["new", "new2"]) {
+        const r = repo();
+        r.put(b, `${context("[x](../adr/old.md)")}\n`);
+        const base = r.commit();
+        r.put(b, `${context(`[x](../adr/${target}.md)`)}\n`);
+        r.commit();
+        const result = r.run(base);
+        expect(result.status, context(target)).toBe(1);
+        expect(result.stderr).toContain(b);
+      }
+    }
+  });
+  it("treats decoded NUL targets as absent through the CLI", () => {
+    for (const target of ["%00", "old%00.md", "%00/old.md"]) {
+      const r = repo();
+      r.put(b, `[x](../adr/${target})\n`);
+      const base = r.commit();
+      r.put(b, "[x](../adr/new.md)\n");
+      r.commit();
+      expect(r.run(base).status, target).toBe(0);
+    }
+  });
   it("requires a file target and accepts literal percent paths", () => {
     const r = repo();
     r.put(b, "[x](../adr/50%-old.md)\n");
