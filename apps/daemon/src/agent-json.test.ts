@@ -619,3 +619,27 @@ describe("入れ子のオブジェクトの閉じ括弧の欠けを補って読�
     expect(safeNear("sk-secret", "x y", hide)).toBe("");
   });
 });
+
+describe("申し出のテスト観点", () => {
+  it("不完全な行が混在する設計の申し出を検出する", () => {
+    const result = extractBlocks(
+      JSON.stringify({
+        "sacty-change-proposal": {
+          target: "design",
+          reason: "変更",
+          facts: ["事実"],
+          proposed: "設計",
+          byNote: "補足",
+          testViewpoints: [
+            { title: "有効", input: "入力", expected: "結果" },
+            { title: "不足", input: "入力" },
+          ],
+        },
+      }),
+      new Set(),
+      ["design"],
+    );
+    expect(result.proposal).toBeDefined();
+    expect(result.proposalViewpointsInvalid).toBe(true);
+  });
+});

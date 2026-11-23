@@ -368,7 +368,7 @@ export function daemonApi(
       });
       if (res.status === 404) return undefined;
       if (!res.ok) throw await refusal(res);
-      return read<{ task: Task; activity: ActivityEvent[] }>(res);
+      return read<{ task: Task; activity: ActivityEvent[]; resumeApprovedEdits?: boolean }>(res);
     },
     async rereview(id) {
       const at = endpoint();
@@ -421,7 +421,10 @@ export function daemonApi(
     // 送るのは {} か { note } だけ（capUsd・tests・image・agents は送らない）
     async resume(id, input) {
       const at = endpoint(); // 接続先が無いのは、頼む前の失敗（再開していない）
-      const body = input.note ? { note: input.note } : {};
+      const body = {
+        ...(input.note ? { note: input.note } : {}),
+        ...(input.approvedEdits ? { approvedEdits: true } : {}),
+      };
       return writeTask(at, `/api/tasks/${encodeURIComponent(id)}/resume`, body, uncertainResume);
     },
     // 消したプロジェクトのタスクの確かめと、中止できる状態かの確かめ・片付けの対象の確かめは、ツールが先に getTask で行う

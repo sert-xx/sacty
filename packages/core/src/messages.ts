@@ -146,6 +146,7 @@ const PARAMS = {
   "input.bodyTooLong": null,
   "input.noteTooLong": null,
   "input.resumeNoteTooLong": null,
+  "input.resumeEditsNeedNote": null,
   "input.auditNoteTooLong": null,
   "input.remarkTooLong": null,
   // オーケストレーターへの質問（PBI-54）
@@ -1186,6 +1187,7 @@ const ja: MessageDictionary = {
   "input.titleTooLong": `タイトルは${TASK_TITLE_MAX}文字以内で入力してください。`,
   "input.bodyTooLong": `内容は${TASK_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.noteTooLong": `補足は${RERUN_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
+  "input.resumeEditsNeedNote": "承認済みの成果物の直しを許可するには補足が必要です。",
   "input.resumeNoteTooLong": `補足は${RESUME_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.auditNoteTooLong": `採用に添える手入れは${AUDIT_ADOPT_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.remarkTooLong": "指摘は1件あたり2,000文字以内にしてください。",
@@ -2087,6 +2089,8 @@ const en: MessageDictionary = {
   "input.titleTooLong": `Keep the title within ${TASK_TITLE_MAX} characters.`,
   "input.bodyTooLong": `Keep the details within ${TASK_BODY_MAX.toLocaleString("en-US")} characters.`,
   "input.noteTooLong": `Keep the additional notes within ${RERUN_NOTE_MAX.toLocaleString("en-US")} characters.`,
+  "input.resumeEditsNeedNote":
+    "Additional notes are required to allow edits to approved artifacts.",
   "input.resumeNoteTooLong": `Keep the additional notes within ${RESUME_NOTE_MAX.toLocaleString("en-US")} characters.`,
   "input.auditNoteTooLong": `Keep the note you attach to the adoption within ${AUDIT_ADOPT_NOTE_MAX.toLocaleString("en-US")} characters.`,
   "input.remarkTooLong": "Keep each comment within 2,000 characters.",

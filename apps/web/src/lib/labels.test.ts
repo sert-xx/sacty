@@ -1226,8 +1226,17 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       "PR #7 was merged with a person's edits and approved (reviewer) (aaaaaaa → eeeeeee)",
     );
     expect(describeEvent(event({ type: "PullRequestClosed", payload: { number: 7 } }))).toBe(
-      "PR #7 がマージされずに閉じられた・判断待ち",
+      "PR #7 が閉じられた",
     );
+    expect(
+      describeEvent(event({ type: "PullRequestClosed", payload: { number: 7, merged: true } })),
+    ).toBe("PR #7 はマージ済み（承認にはしない）");
+    expect(
+      describeIn(
+        event({ type: "PullRequestClosed", payload: { number: 7, merged: true } }),
+        labels.en,
+      ),
+    ).toBe("PR #7 was merged without approval");
   });
 });
 
@@ -4315,5 +4324,38 @@ describe("ドラフトの切り替えの記録の表示（PBI-468）", () => {
     expect(describeIn(skipped("person"), labels.en)).toContain("a person marked it ready");
     expect(describeIn(skipped("unreadable"), labels.en)).toContain("could not be read");
     expect(describeIn(skipped("undetermined"), labels.en)).toContain("could not tell");
+  });
+});
+
+describe("補足による申し出の受け入れ", () => {
+  it.each(["ja", "en"] as const)("%s の履歴に再開日時と差分を出す", (locale) => {
+    const base = {
+      type: "ChangeAcceptedByNote",
+      payload: { proposalId: "CP-1", resumedAt: "2026-11-22T12:00:00Z" },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-11-22T12:01:00Z",
+      actor: "sacty",
+    } as ActivityEvent;
+    const simple = describeEventParts(base, labels[locale]);
+    expect(simple.text).toContain("CP-1");
+    expect(simple.text).toContain("2026-11-22T12:00:00Z");
+    expect(simple.text).toContain(locale === "ja" ? "補足" : "accepted by note");
+    expect(simple.detail).toBeUndefined();
+    expect(simple.text).not.toContain(
+      locale === "ja" ? "設計とテスト観点を合わせ直した" : "design and test viewpoints aligned",
+    );
+    const withDiff = {
+      ...base,
+      payload: { ...base.payload, diff: { design: "-old\n+new", testViewpoints: "-a\n+b" } },
+    } as ActivityEvent;
+    const detail = describeEventParts(withDiff, labels[locale]);
+    expect(detail.text).toContain(
+      locale === "ja" ? "設計とテスト観点を合わせ直した" : "design and test viewpoints aligned",
+    );
+    expect(detail.detail).toContain("-old\n+new");
+    expect(detail.detail).toContain("-a\n+b");
   });
 });

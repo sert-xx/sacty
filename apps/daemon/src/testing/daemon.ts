@@ -1694,6 +1694,20 @@ export class FakeExecutor implements AgentExecutor {
     if (this.undeclaredCompletion || outcome.kind !== "completed") return outcome;
     const asked = invocation.command.some((arg) => arg.includes("--- 完了の申告 ---"));
     if (!asked || outcome.output.includes(COMPLETION_FENCE)) return outcome;
+    try {
+      const envelope = JSON.parse(outcome.output);
+      if (typeof envelope?.output === "string" && Object.hasOwn(envelope, "proposal")) {
+        return {
+          ...outcome,
+          output: JSON.stringify({
+            ...envelope,
+            output: `${envelope.output}\n\n${completionBlock({ status: "complete" })}`,
+          }),
+        };
+      }
+    } catch {
+      // 通常の文章はそのまま申告を足す。
+    }
     return {
       ...outcome,
       output: `${outcome.output}\n\n${completionBlock({ status: "complete" })}`,

@@ -54,6 +54,7 @@ import {
   ReworkAnswer,
   ReworkCause,
   type RiskAssessment,
+  rejectedNoteRetry,
   renderMessage,
   rerunEditableBody,
   resumeNoteSections,
@@ -79,6 +80,7 @@ import {
 } from "@sacty/core";
 import {
   explainUnreadableAnswer,
+  hasDuplicateKeys,
   headedObject,
   headingMentions,
   headingSpans,
@@ -2306,23 +2308,57 @@ function designEditLines(task: Task): string[] {
 function proposalLines(task: Task, step: StepKey): string[] {
   const targets = changeableSteps(task, step);
   if (targets.length === 0) return [];
+  const rejected = rejectedNoteRetry(task, step);
+  const retryRejected = rejected.length > 0;
   return [
+    ...(retryRejected
+      ? rejected.map(
+          (p) =>
+            `申し出 ${p.id}（対象: ${p.target}、変更内容: ${p.proposed}）は人が却下しました。却下された変更を成果に含めず、承認済みの成果物に従って作り直してください。`,
+        )
+      : []),
     "",
     `--- 承認済みの成果物（${targets.map((t) => STEP_NAME[t]).join("・")}）の変更の申し出 ---`,
     step === "implement" && stepDocumentPlaces(task)
       ? "承認済みの要求・設計の判断は変更できません。判断を変えない書式などの誤りは作業領域の文書を直接直せます。"
       : "承認済みの成果物は凍結されていて、あなたは変更できません。",
-    "それに従うとゴールを達成できないと事実で示せる場合だけ、変更を申し出てください。",
-    "申し出は人間が判断します（sacty はタスクを止めて、申し出を人間に見せます）。作業を楽にするための変更は認められません。",
-    "申し出は1回の実行で1件までです。次の形式で、本文のあとに付けてください。",
-    "```json",
-    `{"${PROPOSAL_HEADING}": {"target": "${targets.join('" または "')}", "reason": "変更したい理由", "facts": ["根拠となる事実（仕様、コード、実行結果など）"], "proposed": "変更後の成果物の全文"}}`,
-    "```",
-    "申し出をしても、この工程の成果物は、いまの承認済みの成果物に従って作ってください。",
+    task.approvedEdits
+      ? "承認済みの成果物を補足に合わせる必要がある場合か、それに従うとゴールを達成できないと事実で示せる場合だけ、変更を申し出てください。"
+      : "それに従うとゴールを達成できないと事実で示せる場合だけ、変更を申し出てください。",
+    task.approvedEdits
+      ? "補足の許可の条件を満たさない申し出は人間が判断します。作業を楽にするための変更は認められません。"
+      : "申し出は人間が判断します（sacty はタスクを止めて、申し出を人間に見せます）。作業を楽にするための変更は認められません。",
+    ...(task.approvedEdits
+      ? []
+      : ["申し出は1回の実行で1件までです。次の形式で、本文のあとに付けてください。"]),
+    ...(task.approvedEdits
+      ? []
+      : [
+          "```json",
+          `{"${PROPOSAL_HEADING}": {"target": "${targets.join('" または "')}", "reason": "変更したい理由", "facts": ["根拠となる事実（仕様、コード、実行結果など）"], "proposed": "変更後の成果物の全文"}}`,
+          "```",
+        ]),
+    ...(task.approvedEdits
+      ? []
+      : ["申し出をしても、この工程の成果物は、いまの承認済みの成果物に従って作ってください。"]),
+    ...(task.approvedEdits
+      ? [
+          '出力全体を JSON オブジェクト一つだけにしてください。{"output":"本文と他の申告を含む全文", "proposal":null} の形式で、申し出があれば proposal に target・reason・facts・proposed を持つ申し出のオブジェクトを入れ、無ければ null にしてください。本文と申告は output の文字列に入れ、JSON の外には何も書かないでください。',
+          "許可付きの補足に沿う申し出は、byNote に補足の文を抜き出すと人の判断なしに受け入れます。補足に無い方針の変更を含むときは byNote を付けないでください。",
+          "申し出を付けたときは、この工程の成果を申し出の内容に従って作ってください。",
+          ...(task.approved.design
+            ? [
+                "要求要件への申し出には design に補足と申し出に要る所だけを直した設計の全文 proposed と testViewpoints を付け、範囲内だけなら inScope を true、範囲を超えるか判断できないときは false にしてください。",
+              ]
+            : []),
+        ]
+      : []),
     // 人が再開のときに足した補足は、承認済みの成果物より優先させる（resumeNotePromptLines と同じ順位）
     ...(task.resumeNotes?.length
       ? [
-          "ただし、人が再開のときに足した補足と食い違う箇所は、補足に従って作ってください。承認済みの成果物を補足に合わせる必要があれば、その変更を申し出てください。",
+          retryRejected
+            ? "却下された変更については承認済みの成果物に従い、それ以外は再開の補足に従ってください。"
+            : "ただし、人が再開のときに足した補足と食い違う箇所は、補足に従って作ってください。承認済みの成果物を補足に合わせる必要があれば、その変更を申し出てください。",
         ]
       : []),
   ];
@@ -3201,6 +3237,11 @@ function implementSelfReviewLines(
     ...implementVerificationRecordLines(runsTests(task), !pullRequestReview),
     // 実装し終えたかを申告させる（未完了の実行を提出にしない。PBI-347）
     ...implementCompletionLines(),
+    ...(task.approvedEdits && changeableSteps(task, "implement").length > 0
+      ? [
+          "上の完了の申告は、出力全体を包む JSON の output 文字列の末尾に書いてください。JSON の外には書かないでください。",
+        ]
+      : []),
   ];
 }
 
@@ -3635,7 +3676,9 @@ function resumeNotePromptLines(task: Task): string[] {
   if (!notes) return [];
   return [
     "",
-    "--- 人が再開のときに足した補足（承認済みの要求要件・設計と食い違うときは、補足を優先してください） ---",
+    rejectedNoteRetry(task, "implement").length > 0
+      ? "--- 人が再開のときに足した補足（却下された変更は承認済みの成果物に従い、それ以外は補足を優先してください） ---"
+      : "--- 人が再開のときに足した補足（承認済みの要求要件・設計と食い違うときは、補足を優先してください） ---",
     notes,
   ];
 }
@@ -4442,6 +4485,8 @@ export type Extracted = {
   viewpointPositions: (string | undefined)[];
   /** 承認済みの成果物への変更の申し出（1件まで）。 */
   proposal?: ExtractedProposal;
+  proposalInvalid?: boolean;
+  proposalViewpointsInvalid?: boolean;
   /**
    * 設計の直し（見出し sacty-design-edit の値。最初のもの。PBI-446）。読ませていない・無ければ undefined。中身はまだ確かめていない
    * （design-edit.ts の readDesignEditBlock で読む）。見出しはあるが JSON として読めないときは、unreadable。
@@ -4461,8 +4506,8 @@ export type Extracted = {
 
 export type ExtractedProposal = Pick<
   TaskProposal,
-  "target" | "reason" | "facts" | "proposed" | "testViewpoints"
->;
+  "target" | "reason" | "facts" | "proposed" | "testViewpoints" | "design"
+> & { byNote?: string };
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
@@ -4571,13 +4616,50 @@ export function extractBlocks(
     completion?: boolean;
     /** 設計の直し（sacty-design-edit。PBI-446）を読み、本文から取り除くか。PR の指摘で実装に戻した回の実装の工程だけ true にする。 */
     designEdit?: boolean;
+    requireProposalDeclaration?: boolean;
+    ignoreBodyProposal?: boolean;
   } = {},
 ): Extracted {
+  if (options.requireProposalDeclaration && changeable.length > 0) {
+    try {
+      const value: unknown = JSON.parse(output);
+      if (hasDuplicateKeys(output) || !value || typeof value !== "object" || Array.isArray(value))
+        throw new Error();
+      const record = value as Record<string, unknown>;
+      if (
+        Object.keys(record).length !== 2 ||
+        typeof record.output !== "string" ||
+        !Object.hasOwn(record, "proposal")
+      )
+        throw new Error();
+      const result = extractBlocks(record.output, validRemarkIds, changeable, {
+        ...options,
+        requireProposalDeclaration: false,
+        ignoreBodyProposal: true,
+      });
+      // 申し出は外側の proposal だけから読む。本文は申し出として解釈しない。
+      if (record.proposal === null) return result;
+      const proposal = readProposal(record.proposal, changeable, true);
+      if (proposal.kind === "valid") return { ...result, proposal: proposal.proposal };
+      if (proposal.kind === "invalid" && proposal.partial)
+        return { ...result, proposal: proposal.partial, proposalViewpointsInvalid: true };
+      return { ...result, proposalInvalid: true };
+    } catch {
+      const result = extractBlocks("", validRemarkIds, changeable, {
+        ...options,
+        requireProposalDeclaration: false,
+      });
+      return { ...result, proposalInvalid: true };
+    }
+  }
   let responses: RemarkResponse[] | undefined;
   let testViewpoints: TestViewpoint[] | undefined;
   let viewpointPositions: (string | undefined)[] | undefined;
-  let proposal: ExtractedProposal | undefined;
+  let proposalResult: ProposalRead = { kind: "absent" };
   let proposalSeen = false;
+  let proposalDeclaration: unknown;
+  let declarationSeen = false;
+  let declarationAtEnd = false;
   let designEdit: Extracted["designEdit"];
   let testMap: TestMapping[] | undefined;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
@@ -4608,6 +4690,14 @@ export function extractBlocks(
     const map = record[TEST_MAP_HEADING];
     const reviewed = record[SELF_REVIEW_HEADING];
     let read = false;
+    if (options.requireProposalDeclaration && Object.hasOwn(record, "sacty-proposal-declaration")) {
+      read = true;
+      if (!declarationSeen) {
+        declarationSeen = true;
+        proposalDeclaration = record["sacty-proposal-declaration"];
+        declarationAtEnd = body.slice(candidate.end).trim() === "";
+      }
+    }
     if (reviewed !== undefined) {
       read = true;
       reports.push({ start: candidate.start, end: candidate.end, value: reviewed });
@@ -4637,11 +4727,11 @@ export function extractBlocks(
       // 最初のものを使う（候補は後ろから見るので、最後に当たったものが最初のブロック）
       designEdit = { value: edited };
     }
-    if (proposed && typeof proposed === "object" && !Array.isArray(proposed)) {
+    if (!options.ignoreBodyProposal && Object.hasOwn(record, PROPOSAL_HEADING)) {
       read = true;
       if (!proposalSeen) {
         proposalSeen = true;
-        proposal = toProposal(proposed as Record<string, unknown>, changeable);
+        proposalResult = readProposal(proposed, changeable);
       }
     }
     if (Array.isArray(list)) {
@@ -4707,7 +4797,24 @@ export function extractBlocks(
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
     viewpointPositions: viewpointPositions ?? [],
-    proposal,
+    ...(proposalResult.kind === "valid" ? { proposal: proposalResult.proposal } : {}),
+    ...(proposalResult.kind === "invalid" && proposalResult.partial
+      ? { proposal: proposalResult.partial, proposalViewpointsInvalid: true }
+      : {}),
+    ...(!options.ignoreBodyProposal &&
+    changeable.length > 0 &&
+    ((options.requireProposalDeclaration &&
+      (!declarationAtEnd ||
+        !(
+          (proposalDeclaration === "present" &&
+            (proposalResult.kind === "valid" ||
+              (proposalResult.kind === "invalid" && proposalResult.partial))) ||
+          (proposalDeclaration === "absent" && proposalResult.kind === "absent")
+        ))) ||
+      (proposalResult.kind === "invalid" && !proposalResult.partial) ||
+      headingMentions(body, PROPOSAL_HEADING, used).length > 0)
+      ? { proposalInvalid: true }
+      : {}),
     ...(designEdit ? { designEdit } : {}),
     testMap: testMap ?? [],
     ...(selfReview ? { selfReview } : {}),
@@ -4785,9 +4892,63 @@ function viewpointsWithPositions(list: unknown[]): {
   return { viewpoints, positions };
 }
 
+type ProposalRead =
+  | { kind: "absent" }
+  | { kind: "valid"; proposal: ExtractedProposal }
+  | { kind: "invalid"; partial?: ExtractedProposal };
+
+/** 申し出の全体を一度に分類する。対象外の既知の成果物は従来どおり無視する。 */
+function readProposal(
+  value: unknown,
+  changeable: readonly StepKey[],
+  preserveEmptyViewpoints = false,
+): ProposalRead {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "invalid" };
+  const raw = value as Record<string, unknown>;
+  if (
+    (raw.target === "requirements" || raw.target === "design") &&
+    !changeable.includes(raw.target)
+  ) {
+    return { kind: "absent" };
+  }
+  const proposal = toProposal(raw, changeable, preserveEmptyViewpoints);
+  if (
+    !proposal ||
+    !Array.isArray(raw.facts) ||
+    raw.facts.some((fact) => typeof fact !== "string" || !fact.trim()) ||
+    (raw.byNote !== undefined && typeof raw.byNote !== "string")
+  )
+    return { kind: "invalid" };
+  if (
+    raw.testViewpoints !== undefined &&
+    (!Array.isArray(raw.testViewpoints) ||
+      toViewpoints(raw.testViewpoints).length !== raw.testViewpoints.length)
+  ) {
+    // 不完全な配列は、従来どおり人が申し出を判断する。配列以外は読み取れない。
+    return Array.isArray(raw.testViewpoints)
+      ? { kind: "invalid", partial: proposal }
+      : { kind: "invalid" };
+  }
+  if (raw.design !== undefined) {
+    if (!raw.design || typeof raw.design !== "object" || Array.isArray(raw.design)) {
+      return { kind: "invalid", partial: proposal };
+    }
+    const design = raw.design as Record<string, unknown>;
+    if (
+      !text(design.proposed) ||
+      !Array.isArray(design.testViewpoints) ||
+      toViewpoints(design.testViewpoints).length !== design.testViewpoints.length ||
+      (design.inScope !== undefined && typeof design.inScope !== "boolean")
+    )
+      return { kind: "invalid", partial: proposal };
+  }
+  return { kind: "valid", proposal };
+}
+
 function toProposal(
   raw: Record<string, unknown>,
   changeable: readonly StepKey[],
+  preserveEmptyViewpoints: boolean,
 ): ExtractedProposal | undefined {
   const target = changeable.find((s) => s === raw.target);
   const reason = text(raw.reason);
@@ -4803,7 +4964,24 @@ function toProposal(
     reason,
     facts,
     proposed,
-    ...(viewpoints && viewpoints.length > 0 ? { testViewpoints: viewpoints } : {}),
+    ...(viewpoints && (preserveEmptyViewpoints || viewpoints.length > 0)
+      ? { testViewpoints: viewpoints }
+      : {}),
+    ...(typeof raw.byNote === "string" ? { byNote: raw.byNote } : {}),
+    ...(() => {
+      if (!raw.design || typeof raw.design !== "object" || Array.isArray(raw.design)) return {};
+      const d = raw.design as Record<string, unknown>;
+      if (!text(d.proposed) || !Array.isArray(d.testViewpoints)) return {};
+      const vs = toViewpoints(d.testViewpoints);
+      if (vs.length !== d.testViewpoints.length) return {};
+      return {
+        design: {
+          proposed: text(d.proposed),
+          testViewpoints: vs,
+          ...(typeof d.inScope === "boolean" ? { inScope: d.inScope } : {}),
+        },
+      };
+    })(),
   };
 }
 

@@ -140,6 +140,21 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
   });
   const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const noteResult = (result: AgentOutcome): AgentOutcome => {
+    if (result.kind !== "completed") return result;
+    let proposal: unknown = null;
+    const output = result.output.replace(/```json\n([^\n]+)\n```/g, (_whole, json: string) => {
+      const value = JSON.parse(json) as Record<string, unknown>;
+      if (Object.hasOwn(value, "sacty-change-proposal")) {
+        proposal = value["sacty-change-proposal"];
+        delete value["sacty-change-proposal"];
+      }
+      delete value["sacty-proposal-declaration"];
+      return Object.keys(value).length ? block(value) : "";
+    });
+    return { ...result, output: JSON.stringify({ output, proposal }) };
+  };
+
   const design = out(
     [
       "# 設計",
@@ -234,6 +249,195 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       for (const id of ids) await service.runNext(id);
     }
   }
+
+  it("再開 API は補足なしの許可を拒否し、記録しない", async () => {
+    const { activity, service, id } = await toImplement([]);
+    await service.pause(id);
+    const before = service.get(id)?.activity.length;
+    const response = await createApp(service, "tok").request(`/api/tasks/${id}/resume`, {
+      method: "POST",
+      headers: { authorization: "Bearer tok", "content-type": "application/json" },
+      body: JSON.stringify({ note: "  ", approvedEdits: true }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      issues: [{ message: { code: "input.resumeEditsNeedNote" } }],
+    });
+    expect(service.get(id)?.activity.length).toBe(before);
+    expect(service.get(id)?.task.status).toBe("paused");
+    activity.close();
+  });
+
+  it.each([false, true])(
+    "補足に沿う設計の申し出を受け入れ、空の観点も反映する（空: %s）",
+    async (empty) => {
+      const output = out(
+        [
+          "# 実装",
+          block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["test › 修正"] }] }),
+          block({
+            "sacty-change-proposal": {
+              target: "design",
+              reason: "補足",
+              facts: ["事実"],
+              proposed: "# 新しい設計",
+              testViewpoints: empty ? [] : [{ title: "修正", input: "入力", expected: "結果" }],
+              byNote: "範囲を絞る",
+            },
+          }),
+          block({ "sacty-proposal-declaration": "present" }),
+        ].join("\n\n"),
+      );
+      const { activity, service, id } = await toImplement([noteResult(output)]);
+      await service.pause(id);
+      service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+      await service.runNext(id);
+      const result = service.get(id);
+      expect(result?.task.approved.design?.output).toBe("# 新しい設計");
+      expect(result?.task.testViewpoints.map((v) => v.title)).toEqual(empty ? [] : ["修正"]);
+      expect(result?.task.proposals[0]?.applied).toBe(true);
+      const resumed = result?.activity.findLast((event) => event.type === "TaskResumed");
+      const accepted = result?.activity.findLast((event) => event.type === "ChangeAcceptedByNote");
+      expect(accepted?.payload).toMatchObject({ proposalId: "CP-1", resumedAt: resumed?.at });
+      expect(result?.task.proposals[0]?.byNote?.resumedAt).toBe(resumed?.at);
+      expect(result?.activity.map((e) => e.type).slice(-3)).toEqual([
+        "ChangeProposed",
+        "ChangeAcceptedByNote",
+        "ChangeApplied",
+      ]);
+      expect(result?.task.status).not.toBe("escalated");
+      expect(result?.task.verification).toBe("pending");
+      expect(result?.task.implementHistory?.at(-1)).toContain("# 実装");
+      expect(result?.task.testMap).toEqual([{ viewpointId: "TV-1", tests: ["test › 修正"] }]);
+      activity.close();
+    },
+  );
+
+  it("合わせ直した設計の途中で切れた申し出は成果を提出せず停止する", async () => {
+    const output = out(
+      '# 実装\n\n{"sacty-proposal-declaration":"present"}\n\n{"sacty-change-proposal":{"target":"requirements","reason":"補足","proposed":"新要求","design":{"proposed":"途中',
+    );
+    const { activity, service, id } = await toImplement([output]);
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    const before = service.get(id)?.task;
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("paused");
+    expect(result?.task.approved).toEqual(before?.approved);
+    expect(result?.task.testViewpoints).toEqual(before?.testViewpoints);
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    expect(result?.task.verification).not.toBe("pending");
+    activity.close();
+  });
+
+  it("不完全な観点を含む設計の申し出は自動で反映しない", async () => {
+    const output = out(
+      block({
+        "sacty-proposal-declaration": "present",
+        "sacty-change-proposal": {
+          target: "design",
+          reason: "補足",
+          facts: ["事実"],
+          proposed: "# 新しい設計",
+          byNote: "範囲を絞る",
+          testViewpoints: [
+            { title: "完全", input: "入力", expected: "結果" },
+            { title: "不完全", input: "入力" },
+          ],
+        },
+      }),
+    );
+    const { activity, service, id } = await toImplement([noteResult(output)]);
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    const before = service.get(id)?.task.testViewpoints;
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("escalated");
+    expect(result?.task.approved.design?.output).toBe("# 設計");
+    expect(result?.task.testViewpoints).toEqual(before);
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    activity.close();
+  });
+
+  it.each([true, false, undefined, "missing"] as const)(
+    "補足で要求を変更するとき設計の範囲申告が %s の場合",
+    async (inScope) => {
+      const aligned = {
+        proposed: "# 合わせ直した設計",
+        testViewpoints: [{ title: "新しい観点", input: "入力", expected: "結果" }],
+        ...(typeof inScope === "boolean" ? { inScope } : {}),
+      };
+      const output = out(
+        [
+          "# 実装",
+          block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["test › 新しい観点"] }] }),
+          block({
+            "sacty-change-proposal": {
+              target: "requirements",
+              reason: "補足に合わせる",
+              facts: ["事実"],
+              proposed: "# 新しい要求",
+              byNote: "範囲を絞る",
+              ...(inScope === "missing" ? {} : { design: aligned }),
+            },
+          }),
+          block({ "sacty-proposal-declaration": "present" }),
+        ].join("\n\n"),
+      );
+      const { activity, service, executor, id } = await toImplement([noteResult(output)]);
+      await service.pause(id);
+      service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+      const before = service.get(id);
+      await service.runNext(id);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("byNote に補足の文を抜き出す");
+      expect(prompt).toContain("補足に無い方針の変更");
+      expect(prompt).toContain("この工程の成果を申し出の内容に従って");
+      expect(prompt).toContain("要求要件への申し出には design");
+      expect(prompt).toContain("設計の全文 proposed と testViewpoints");
+      expect(prompt).toContain("範囲内だけなら inScope を true");
+      expect(prompt).toContain("範囲を超えるか判断できないときは false");
+      const result = service.get(id);
+      if (inScope === true) {
+        expect(result?.task.approved.requirements?.output).toBe("# 新しい要求");
+        expect(result?.task.approved.design?.output).toBe("# 合わせ直した設計");
+        expect(result?.task.testViewpoints[0]?.title).toBe("新しい観点");
+        const accepted = result?.activity.find((e) => e.type === "ChangeAcceptedByNote");
+        expect(accepted?.payload).toMatchObject({
+          diff: {
+            design: expect.stringContaining("# 合わせ直した設計"),
+            testViewpoints: expect.stringContaining("新しい観点"),
+          },
+        });
+        if (accepted?.type !== "ChangeAcceptedByNote") throw new Error("acceptance missing");
+        expect(accepted.payload.diff?.design).toContain("-# 設計");
+        expect(accepted.payload.diff?.testViewpoints).toContain("同じキーの再送");
+        expect(result?.task.verification).toBe("pending");
+        const again = new SqliteActivityStore(dbPath);
+        const restarted = makeService(again);
+        restarted.service.recoverInterrupted();
+        const recovered = restarted.service.get(id)?.task;
+        expect(recovered?.status).not.toBe("escalated");
+        expect(recovered?.approved.requirements?.output).toBe("# 新しい要求");
+        expect(recovered?.approved.design?.output).toBe("# 合わせ直した設計");
+        expect(recovered?.verification).toBe("pending");
+        again.close();
+      } else {
+        expect(result?.task.status).toBe("escalated");
+        expect(result?.task.approved.requirements?.output).toBe("# 要求要件 v2");
+        expect(result?.task.approved.design?.output).toBe("# 設計");
+        expect(result?.task.testViewpoints).toEqual(before?.task.testViewpoints);
+        expect(result?.activity.slice(before?.activity.length).map((e) => e.type)).not.toContain(
+          "StepSubmitted",
+        );
+        expect(result?.activity.map((e) => e.type)).not.toContain("ChangeAcceptedByNote");
+        expect(result?.activity.map((e) => e.type)).not.toContain("ChangeApplied");
+      }
+      activity.close();
+    },
+  );
 
   describe("観点とテストの対応に、設計のテスト観点が欠けた実装は提出しない（PBI-348）", () => {
     const TV1 = { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] };
@@ -6824,6 +7028,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(service.get(id)?.task.steps.find((s) => s.state === "active")?.key).toBe(
         "requirements",
       );
+      expect(service.get(id)?.task.outputs.requirements).toBe("# 要求要件 B");
       pulls.states[pr?.number ?? 0] = {
         state: "merged",
         headSha: pr?.commit,

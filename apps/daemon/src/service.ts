@@ -11974,7 +11974,7 @@ export class TaskService {
     }
     for (const task of this.tasks.values()) {
       // 以前の版で、AI（ゴールガーディアン）が判定している間に止まった申し出は、人の判断待ちにする（PBI-333）
-      const judging = task.proposals.find((p) => !p.judgement && !p.decision);
+      const judging = task.proposals.find((p) => !p.byNote && !p.judgement && !p.decision);
       if (task.status === "idle" && judging) {
         this.append(task, [
           {
@@ -15000,6 +15000,7 @@ export class TaskService {
         completion: step === "implement",
         // 設計の局所の直しを読むのは、PR の指摘で実装に戻した回の実装の工程だけ（PBI-446）
         designEdit: step === "implement" && designEditRemarkIds(latest).length > 0,
+        requireProposalDeclaration: Boolean(latest.approvedEdits),
       },
     );
     const { testViewpoints, proposal, testMap, testCommand } = extracted;
@@ -15024,8 +15025,13 @@ export class TaskService {
       }));
     // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない
     // （用意したテストを飛ばして通らないように）。止めて、再開すると実装をやり直す（PR #105 レビュー指摘）
-    if (step === "implement" && latest.noTestsReason && extracted.testCommandInvalid) {
-      const failure = message("implement.testCommandInvalid");
+    if (
+      extracted.proposalInvalid ||
+      (step === "implement" && latest.noTestsReason && extracted.testCommandInvalid)
+    ) {
+      const failure = extracted.proposalInvalid
+        ? "変更の申し出を読み取れません。出力を確認して再開してください。"
+        : message("implement.testCommandInvalid");
       this.append(latest, [
         {
           actor: "sacty",
@@ -15277,16 +15283,77 @@ export class TaskService {
         payload: { proposalId, fromStep: step, ...proposal },
       },
     });
+    const normalizedExcerpt = proposal.byNote?.replace(/\s+/g, " ").trim();
+    const noteMatches = Boolean(
+      latest.approvedEdits &&
+        normalizedExcerpt &&
+        latest.approvedEdits.note.replace(/\s+/g, " ").trim().includes(normalizedExcerpt),
+    );
+    const designNeeded = proposal.target === "requirements" && latest.approved.design;
+    if (
+      noteMatches &&
+      !extracted.proposalViewpointsInvalid &&
+      latest.approvedEdits &&
+      (!designNeeded || proposal.design?.inScope === true)
+    ) {
+      let diff: { design: string; testViewpoints: string } | undefined;
+      if (designNeeded && proposal.design) {
+        const before = [
+          designNeeded.output,
+          (designNeeded.testViewpoints ?? []).map((v) => JSON.stringify(v)).join("\n"),
+        ];
+        const after = [
+          proposal.design.proposed,
+          proposal.design.testViewpoints.map((v) => JSON.stringify(v)).join("\n"),
+        ];
+        const changes = before.map((old, i) => {
+          const a = old.split("\n");
+          const b = (after[i] ?? "").split("\n");
+          let start = 0;
+          while (start < a.length && start < b.length && a[start] === b[start]) start++;
+          let endA = a.length;
+          let endB = b.length;
+          while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+            endA--;
+            endB--;
+          }
+          return [
+            ...a.slice(start, endA).map((line) => `-${line}`),
+            ...b.slice(start, endB).map((line) => `+${line}`),
+          ].join("\n");
+        });
+        diff = { design: changes[0] ?? "", testViewpoints: changes[1] ?? "" };
+      }
+      const submitted = this.append(task, [
+        ...events,
+        {
+          actor: "sacty",
+          event: {
+            type: "ChangeAcceptedByNote",
+            payload: {
+              proposalId,
+              resumedAt: latest.approvedEdits.resumedAt,
+              ...(diff ? { diff } : {}),
+            },
+          },
+        },
+        { actor: "sacty", event: { type: "ChangeApplied", payload: { proposalId } } },
+        ...this.submitEvents(latest, step),
+      ]);
+      const stepPr = this.awaitingStepPullRequest(submitted);
+      if (stepPr) {
+        await this.publishStepPullRequest(submitted, stepPr);
+        this.checkBudget(this.mustGet(task.id));
+        return;
+      }
+      this.checkBudget(submitted);
+      return;
+    }
     events.push({
       actor: "sacty",
       event: {
         type: "TaskEscalated",
-        payload: {
-          step,
-          target: proposal.target,
-          reason: "change_proposed",
-          proposalId,
-        },
+        payload: { step, target: proposal.target, reason: "change_proposed", proposalId },
       },
     });
     this.append(task, events);
@@ -21514,7 +21581,7 @@ export class TaskService {
    * トランザクションで記録する（間で止まっても、どの状態にも進まないタスクを残さないため）。
    * - 判定できなければエスカレーションにする
    * - 認められたら変更を反映する。要求要件の変更は、人間の再承認に回す
-   * - 却下されたら（設計の変更が反映された場合も）、申し出た工程の成果物をそのまま提出する
+   * - 却下されたら、許可中の申し出は工程をやり直し、それ以外は成果物を提出する
    * 反映（ChangeApplied）は提出回を変えないので、提出回は記録前のタスクから求めてよい。
    */
   private settleEvents(
@@ -21538,7 +21605,11 @@ export class TaskService {
         },
       ];
     }
-    if (!accepted) return this.submitEvents(task, proposal.fromStep);
+    if (!accepted) {
+      return task.approvedEdits
+        ? [{ actor: "sacty", event: { type: "StepQueued", payload: { step: proposal.fromStep } } }]
+        : this.submitEvents(task, proposal.fromStep);
+    }
     return [
       {
         actor: "sacty",
@@ -21566,7 +21637,7 @@ export class TaskService {
       return false;
     }
     const proposal = task.proposals.find((p) => p.id === last.payload.proposalId);
-    if (!proposal) return false;
+    if (!proposal || proposal.byNote) return false;
     const accepted = proposalAccepted(proposal);
     const events =
       last.type === "ChangeApplied"
@@ -24107,6 +24178,7 @@ export class TaskService {
         payload: {
           retry: task.resumeTo === "queued",
           ...(input.note ? { note: input.note } : {}),
+          ...(input.approvedEdits ? { approvedEdits: true as const } : {}),
         },
       },
     });

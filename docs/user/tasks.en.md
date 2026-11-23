@@ -1593,14 +1593,14 @@ On the dashboard, a request for changes with a miss record is counted as a miss,
 ## Change requests
 
 When a step's agent cannot proceed without changing the approved requirements or design, it makes a change request (numbered like `CP-1`).
-You decide whether to accept the request (sacty does not have an AI judge it).
+Requests matching a permitted resume note are accepted automatically; you decide the others (sacty does not have an AI judge them).
 
-1. When there is a request, the task is escalated ("Change request needs you") and appears in "Needs you".
+1. When a request is not accepted automatically, the task is escalated ("Change request needs you") and appears in "Needs you".
 2. Press "Decide" to go to the "Change requests" section in the task details. Read the reason, the supporting facts, and the full proposed text.
 3. Press "Accept change" or "Don't accept".
    - If you accept a change to the requirements, their approval is revoked, so approve them again.
    - If you accept a change to the design, it replaces the approved design.
-   - If you don't accept it, the requesting step's deliverable is submitted as is (the approved requirements and design do not change).
+   - If you don't accept it, the approved requirements and design do not change. A request made while permission is active is rerun against the approved artifacts without submitting its result. The rejected change remains excluded after a pause or daemon restart. Otherwise, the requesting step's deliverable is submitted.
 
 - While the task waits for your decision, it cannot be paused.
 - A request that an earlier version's AI was in the middle of judging waits for your decision when the updated version starts.
@@ -1736,7 +1736,7 @@ While the task is paused, the deliverables do not show an in-progress word such 
 
 The details of a task stopped by the budget limit show a field for the new cumulative limit and "Change cap and resume".
 
-![Details of a task paused at the budget limit (the cost, the notes field, the "Change the task image and step agents" section, the new limit field, and "Change cap and resume")](images/task-budget-paused.en.png)
+![Details of a task paused at the budget limit (the cost, the notes and permission fields, the "Change the task image and step agents" section, the new limit field, and "Change cap and resume")](images/task-budget-paused.en.png)
 
 In the resume section, you can change the following along with the resume.
 
@@ -2201,3 +2201,7 @@ Records from the older version are shown on the screen as follows.
 - [After-merge watch](deployment-watch.en.md)
 - [Notifications](notifications.en.md)
 - [Troubleshooting](troubleshooting.en.md)
+
+## Allow edits to approved artifacts with a resume note
+
+Enter a resume note and select “Allow edits to approved artifacts” to accept matching requests without another decision. Permission lasts until the next pause. The activity and change request list show the supporting resume time and, when the design and test viewpoints were aligned, their diffs.

@@ -382,6 +382,11 @@ const ja = {
       `タスクの題を「${from}」から「${to}」に変更（${actor}）`,
     TaskResumed: (actor: string) => `再開（${actor}）`,
     TaskResumedWithNote: (text: string) => `${text}・補足あり`,
+    TaskResumedApprovedEdits: (text: string) => `${text}・承認済みの成果物の直しを許可`,
+    ChangeAcceptedByNote: (id: string, at: string, aligned: boolean) =>
+      `${id}を補足（${at} の再開）で受け入れた${aligned ? "・設計とテスト観点を合わせ直した" : ""}`,
+    designDiff: "設計の差分",
+    viewpointsDiff: "テスト観点の差分",
     /** テストのコマンドが決まらずに止まったタスクを、テストを決めずに再開し、工程の選択からやり直した。 */
     TaskResumedRechoose: (actor: string) => `再開（${actor}）：工程の選択からやり直します`,
     /** テストのコマンドが決まらずに止まったタスクで、人がテストの扱いを決めた。 */
@@ -561,7 +566,8 @@ const ja = {
       fallback?: "deleted" | "unreadable",
     ) =>
       `PR #${number} が人の直した内容でマージされ、承認${by ? `（${by}）` : ""}（${submitted} → ${final}）${fallback === "deleted" ? "。成果のファイルが消されていたため、Sacty の版を承認済みにした" : fallback === "unreadable" ? "。成果のファイルを読めなかったため、Sacty の版を承認済みにした" : ""}`,
-    PullRequestClosed: (number: number) => `PR #${number} がマージされずに閉じられた・判断待ち`,
+    PullRequestClosed: (number: number) => `PR #${number} が閉じられた`,
+    PullRequestClosedMerged: (number: number) => `PR #${number} はマージ済み（承認にはしない）`,
     PullRequestReopened: (number: number) => `PR #${number} が開き直された・マージ待ち`,
     ReworkStoppedByMerge: (
       number: number,
@@ -1252,6 +1258,11 @@ const en: LabelMessages = {
     TaskRenamed: (from, to, actor) => `Task renamed from "${from}" to "${to}" (${actor})`,
     TaskResumed: (actor) => `Resumed (${actor})`,
     TaskResumedWithNote: (text) => `${text}, with notes`,
+    TaskResumedApprovedEdits: (text) => `${text}, edits to approved artifacts allowed`,
+    ChangeAcceptedByNote: (id, at, aligned) =>
+      `${id} accepted by note (resumed ${at})${aligned ? " · design and test viewpoints aligned" : ""}`,
+    designDiff: "Design diff",
+    viewpointsDiff: "Test viewpoints diff",
     TaskResumedRechoose: (actor) => `Resumed (${actor}): choosing the steps again`,
     TestsDecidedCommand: (command, actor) => `Set the test command to ${command} (${actor})`,
     TestsDecidedNone: (reason, actor) => `Decided to proceed without tests (${actor}): ${reason}`,
@@ -1394,7 +1405,8 @@ const en: LabelMessages = {
       `PR #${number} was merged with content older than the latest submission${by ? ` (${by})` : ""} · needs you`,
     PullRequestMergedEdited: (number, by, submitted, final, fallback) =>
       `PR #${number} was merged with a person's edits and approved${by ? ` (${by})` : ""} (${submitted} → ${final})${fallback === "deleted" ? ". The file was deleted, so Sacty's version was approved" : fallback === "unreadable" ? ". The file could not be read, so Sacty's version was approved" : ""}`,
-    PullRequestClosed: (number) => `PR #${number} closed without merging · needs you`,
+    PullRequestClosed: (number) => `PR #${number} was closed`,
+    PullRequestClosedMerged: (number) => `PR #${number} was merged without approval`,
     PullRequestReopened: (number) => `PR #${number} reopened · awaiting merge`,
     ReworkStoppedByMerge: (number, stage, runs, remarks, feedback, held, decision, step) =>
       decision

@@ -38,6 +38,22 @@ beforeEach(() => {
 });
 
 describe("タスクの再開のテストの扱い", () => {
+  it("許可と補足を渡し、補足が空なら再開しない", async () => {
+    await resumeTaskAction({}, form({ taskId: "t1", note: " 方針 ", approvedEdits: "on" }));
+    expect(resumeTask).toHaveBeenCalledWith("t1", undefined, undefined, {
+      note: "方針",
+      approvedEdits: true,
+      agents: {},
+    });
+    resumeTask.mockClear();
+    const result = await resumeTaskAction(
+      {},
+      form({ taskId: "t1", note: "  ", approvedEdits: "on" }),
+    );
+    expect(result.message).toBe(messagesFor("ja").parts.resume.approvedEditsNeedNote);
+    expect(resumeTask).not.toHaveBeenCalled();
+  });
+
   it("テストのコマンドを選んだら、前後の空白を除いて testCommand として渡す", async () => {
     expect(
       await resumeTaskAction(

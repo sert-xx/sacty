@@ -4,7 +4,7 @@
 - タスク: PBI-400
 - PR: #443
 - ブランチ: sacty/task-8768c9bc
-- 関係する ADR: [sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-mcp-pause-resume-minimal-resume.md)
+- 関係する ADR: [sacty mcp の再開は補足だけの最小の版にし、完了したタスクの一時停止は MCP の層で断る](../adr/20261119-0800-superseded-mcp-pause-resume-minimal-resume.md)
 
 ## 目的
 

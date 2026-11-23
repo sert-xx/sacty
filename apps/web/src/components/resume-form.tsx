@@ -271,6 +271,14 @@ export function ResumeForm({
             </p>
           )}
         </div>
+        <label className="flex w-full items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="approvedEdits"
+            defaultChecked={state.approvedEdits ?? false}
+          />
+          <span>{r.approvedEdits}</span>
+        </label>
         {image && (
           <ResumeStepSettings
             image={image}
