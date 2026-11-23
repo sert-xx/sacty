@@ -518,6 +518,7 @@ const ja = {
     missingHint:
       "エージェントがセルフレビューの結果を報告しませんでした。成果物を自分で確かめてください。",
     remaining: "残った指摘",
+    needsDecision: "人の判断が要ること",
     notReviewed: "見られなかった観点",
     summary: "総評",
   },
@@ -1210,6 +1211,7 @@ const en: TaskMessages = {
     hint: "Before submitting, the agent reviewed the work by viewpoint with the review-dispatch skill and fixed it until no must findings were left (up to 5 rounds).",
     missingHint: "The agent did not report a self-review. Check the deliverable yourself.",
     remaining: "Findings left",
+    needsDecision: "Needs human decision",
     notReviewed: "Viewpoints not reviewed",
     summary: "Summary",
   },
