@@ -14,6 +14,7 @@ import {
   canControl,
   describeEventParts,
   describeEvent as describeIn,
+  formatStamp,
   judgedByGoalForCurrent,
   personAction as personActionIn,
   personStatusText as personStatusTextIn,
@@ -4332,7 +4333,7 @@ describe("補足による申し出の受け入れ", () => {
     } as ActivityEvent;
     const simple = describeEventParts(base, labels[locale]);
     expect(simple.text).toContain("CP-1");
-    expect(simple.text).toContain("2026-11-22T12:00:00Z");
+    expect(simple.text).toContain(formatStamp("2026-11-22T12:00:00Z", locale));
     expect(simple.text).toContain(locale === "ja" ? "補足" : "accepted by note");
     expect(simple.detail).toBeUndefined();
     expect(simple.text).not.toContain(

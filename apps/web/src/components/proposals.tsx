@@ -4,6 +4,7 @@ import { openProposal, proposalAccepted, type Task, type TaskProposal } from "@s
 import { cn } from "cn";
 import { ChangeDecisionForm } from "@/components/change-decision-form";
 import { Markdown } from "@/components/markdown";
+import { NoteDiff } from "@/components/note-diff";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { Hint } from "@/components/ui/hint";
 import type { Messages } from "@/i18n";
@@ -89,10 +90,7 @@ function ProposalItem({
       {p.byNote?.diff && (
         <details>
           <summary>{m.alignedDiff}</summary>
-          <h4>{m.designDiff}</h4>
-          <pre className="overflow-x-auto">{p.byNote.diff.design}</pre>
-          <h4>{m.viewpointsDiff}</h4>
-          <pre className="overflow-x-auto">{p.byNote.diff.testViewpoints}</pre>
+          <NoteDiff diff={p.byNote.diff} />
         </details>
       )}
       <dl className="grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-1.5">

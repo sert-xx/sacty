@@ -383,8 +383,8 @@ const ja = {
     TaskResumed: (actor: string) => `再開（${actor}）`,
     TaskResumedWithNote: (text: string) => `${text}・補足あり`,
     TaskResumedApprovedEdits: (text: string) => `${text}・承認済みの成果物の直しを許可`,
-    ChangeAcceptedByNote: (id: string, at: string, aligned: boolean) =>
-      `${id}を補足（${at} の再開）で受け入れた${aligned ? "・設計とテスト観点を合わせ直した" : ""}`,
+    ChangeAcceptedByNote: (id: string, at: Date, aligned: boolean) =>
+      `${id}を補足（${at.toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} の再開）で受け入れた${aligned ? "・設計とテスト観点を合わせ直した" : ""}`,
     designDiff: "設計の差分",
     viewpointsDiff: "テスト観点の差分",
     /** テストのコマンドが決まらずに止まったタスクを、テストを決めずに再開し、工程の選択からやり直した。 */
@@ -1259,7 +1259,7 @@ const en: LabelMessages = {
     TaskResumedWithNote: (text) => `${text}, with notes`,
     TaskResumedApprovedEdits: (text) => `${text}, edits to approved artifacts allowed`,
     ChangeAcceptedByNote: (id, at, aligned) =>
-      `${id} accepted by note (resumed ${at})${aligned ? " · design and test viewpoints aligned" : ""}`,
+      `${id} accepted by note (resumed ${at.toLocaleString("en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })})${aligned ? " · design and test viewpoints aligned" : ""}`,
     designDiff: "Design diff",
     viewpointsDiff: "Test viewpoints diff",
     TaskResumedRechoose: (actor) => `Resumed (${actor}): choosing the steps again`,
