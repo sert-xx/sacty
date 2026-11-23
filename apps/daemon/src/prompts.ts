@@ -80,6 +80,7 @@ import {
 } from "@sacty/core";
 import {
   explainUnreadableAnswer,
+  hasDuplicateKeys,
   headedObject,
   headingMentions,
   headingSpans,
@@ -2325,16 +2326,22 @@ function proposalLines(task: Task, step: StepKey): string[] {
     task.approvedEdits
       ? "補足の許可の条件を満たさない申し出は人間が判断します。作業を楽にするための変更は認められません。"
       : "申し出は人間が判断します（sacty はタスクを止めて、申し出を人間に見せます）。作業を楽にするための変更は認められません。",
-    "申し出は1回の実行で1件までです。次の形式で、本文のあとに付けてください。",
-    "```json",
-    `{"${PROPOSAL_HEADING}": {"target": "${targets.join('" または "')}", "reason": "変更したい理由", "facts": ["根拠となる事実（仕様、コード、実行結果など）"], "proposed": "変更後の成果物の全文"}}`,
-    "```",
+    ...(task.approvedEdits
+      ? []
+      : ["申し出は1回の実行で1件までです。次の形式で、本文のあとに付けてください。"]),
+    ...(task.approvedEdits
+      ? []
+      : [
+          "```json",
+          `{"${PROPOSAL_HEADING}": {"target": "${targets.join('" または "')}", "reason": "変更したい理由", "facts": ["根拠となる事実（仕様、コード、実行結果など）"], "proposed": "変更後の成果物の全文"}}`,
+          "```",
+        ]),
     ...(task.approvedEdits
       ? []
       : ["申し出をしても、この工程の成果物は、いまの承認済みの成果物に従って作ってください。"]),
     ...(task.approvedEdits
       ? [
-          '本文とほかの申告のあと、完了の申告がある場合はその直前に、申し出の有無を必ず申告してください。申し出がある場合は {"sacty-proposal-declaration": "present"}、無い場合は {"sacty-proposal-declaration": "absent"} を JSON のコードブロックで出してください。',
+          '出力全体を JSON オブジェクト一つだけにしてください。{"output":"本文と他の申告を含む全文", "proposal":null} の形式で、申し出があれば proposal に target・reason・facts・proposed を持つ申し出のオブジェクトを入れ、無ければ null にしてください。本文と申告は output の文字列に入れ、JSON の外には何も書かないでください。',
           "許可付きの補足に沿う申し出は、byNote に補足の文を抜き出すと人の判断なしに受け入れます。補足に無い方針の変更を含むときは byNote を付けないでください。",
           "申し出を付けたときは、この工程の成果を申し出の内容に従って作ってください。",
           ...(task.approved.design
@@ -3228,6 +3235,11 @@ function implementSelfReviewLines(
     ...implementVerificationRecordLines(runsTests(task), !pullRequestReview),
     // 実装し終えたかを申告させる（未完了の実行を提出にしない。PBI-347）
     ...implementCompletionLines(),
+    ...(task.approvedEdits && changeableSteps(task, "implement").length > 0
+      ? [
+          "上の完了の申告は、出力全体を包む JSON の output 文字列の末尾に書いてください。JSON の外には書かないでください。",
+        ]
+      : []),
   ];
 }
 
@@ -4605,6 +4617,47 @@ export function extractBlocks(
     requireProposalDeclaration?: boolean;
   } = {},
 ): Extracted {
+  if (options.requireProposalDeclaration && changeable.length > 0) {
+    try {
+      const value: unknown = JSON.parse(output);
+      if (hasDuplicateKeys(output) || !value || typeof value !== "object" || Array.isArray(value))
+        throw new Error();
+      const record = value as Record<string, unknown>;
+      if (
+        Object.keys(record).length !== 2 ||
+        typeof record.output !== "string" ||
+        !Object.hasOwn(record, "proposal")
+      )
+        throw new Error();
+      const result = extractBlocks(record.output, validRemarkIds, changeable, {
+        ...options,
+        requireProposalDeclaration: false,
+      });
+      // 申し出は外側の proposal だけから読む。本文中の旧形式は曖昧なので受け付けない。
+      if (
+        result.proposal ||
+        result.proposalInvalid ||
+        [...record.output.matchAll(/["'](sacty(?:-[a-z-]*)?)/g)].some(
+          ([, key]) =>
+            key !== undefined &&
+            (PROPOSAL_HEADING.startsWith(key) || "sacty-proposal-declaration".startsWith(key)),
+        )
+      )
+        return { ...result, proposalInvalid: true };
+      if (record.proposal === null) return result;
+      const proposal = readProposal(record.proposal, changeable);
+      if (proposal.kind === "valid") return { ...result, proposal: proposal.proposal };
+      if (proposal.kind === "invalid" && proposal.partial)
+        return { ...result, proposal: proposal.partial, proposalViewpointsInvalid: true };
+      return { ...result, proposalInvalid: true };
+    } catch {
+      const result = extractBlocks("", validRemarkIds, changeable, {
+        ...options,
+        requireProposalDeclaration: false,
+      });
+      return { ...result, proposalInvalid: true };
+    }
+  }
   let responses: RemarkResponse[] | undefined;
   let testViewpoints: TestViewpoint[] | undefined;
   let viewpointPositions: (string | undefined)[] | undefined;

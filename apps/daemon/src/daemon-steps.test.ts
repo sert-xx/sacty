@@ -2614,6 +2614,21 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
   });
   const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const noteResult = (result: AgentOutcome): AgentOutcome => {
+    if (result.kind !== "completed") return result;
+    let proposal: unknown = null;
+    const output = result.output.replace(/```json\n([^\n]+)\n```/g, (_whole, json: string) => {
+      const value = JSON.parse(json) as Record<string, unknown>;
+      if (Object.hasOwn(value, "sacty-change-proposal")) {
+        proposal = value["sacty-change-proposal"];
+        delete value["sacty-change-proposal"];
+      }
+      delete value["sacty-proposal-declaration"];
+      return Object.keys(value).length ? block(value) : "";
+    });
+    return { ...result, output: JSON.stringify({ output, proposal }) };
+  };
+
   const designWithProposal = (target = "requirements") =>
     out(
       [
@@ -2649,6 +2664,42 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     return { activity, ...made, id: task.id };
   }
 
+  it("許可中の不完全な出力はどの切断位置でも提出しない", async () => {
+    const complete = JSON.stringify({
+      output: "# 設計",
+      proposal: {
+        target: "requirements",
+        reason: "補足",
+        facts: ["事実"],
+        proposed: "# 新要求",
+        byNote: "範囲を絞る",
+      },
+    });
+    const inputs = Array.from({ length: complete.length }, (_, end) => complete.slice(0, end));
+    for (const heading of ["sacty-change-proposal", "sacty-proposal-declaration"]) {
+      for (let end = 5; end <= heading.length; end++) {
+        inputs.push(
+          JSON.stringify({ output: `# 設計\n{"${heading.slice(0, end)}`, proposal: null }),
+        );
+      }
+    }
+    for (const input of inputs) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求"), out(input)]);
+      const { id } = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.pause(id);
+      service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+      await service.runNext(id);
+      const result = service.get(id);
+      expect(result?.task.status).toBe("paused");
+      expect(result?.task.gate?.step).not.toBe("design");
+      expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+      activity.close();
+    }
+  }, 15000);
+
   it("読めない申し出を成果として提出せず停止する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [
@@ -2682,11 +2733,16 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     ],
   ])("不正な申し出（%s）を提出しない", async (_name, proposal) => {
     const activity = new SqliteActivityStore(dbPath);
-    const output = block({
-      "sacty-proposal-declaration": "present",
-      "sacty-test-viewpoints": [{ title: "A", input: "I", expected: "E" }],
-      "sacty-change-proposal": proposal,
-    });
+    const output =
+      proposal === null
+        ? JSON.stringify({
+            output: block({ "sacty-test-viewpoints": [], "sacty-change-proposal": null }),
+            proposal: null,
+          })
+        : JSON.stringify({
+            output: block({ "sacty-test-viewpoints": [{ title: "A", input: "I", expected: "E" }] }),
+            proposal,
+          });
     const { service } = makeService(activity, [out("# 要求"), out(output)]);
     const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
@@ -2708,6 +2764,12 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
       "申告の後に出力が切れた",
       `${block({ "sacty-proposal-declaration": "absent" })}\n{"sacty-change-prop`,
     ],
+    [
+      "不完全な申し出の後に不存在を申告した",
+      `{"sacty-change-pro\n${block({ "sacty-proposal-declaration": "absent" })}`,
+    ],
+    ["矛盾する申告がある", '{"output":"# 設計","proposal":null,"proposal":{}}'],
+    ["余分な申告がある", '{"output":"# 設計","proposal":null,"declaration":"present"}'],
   ])("許可中に%s出力は提出しない", async (_name, output) => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [out("# 要求"), out(output)]);
@@ -2759,7 +2821,7 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
         block({ "sacty-proposal-declaration": "present" }),
       ].join("\n\n"),
     );
-    const { service } = makeService(activity, [out("# 元の要求"), proposal]);
+    const { service } = makeService(activity, [out("# 元の要求"), noteResult(proposal)]);
     const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
@@ -2812,7 +2874,10 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
         block({ "sacty-proposal-declaration": "present" }),
       ].join("\n\n"),
     );
-    const { service, executor } = makeService(activity, [out("# 元の要求"), proposal]);
+    const { service, executor } = makeService(activity, [
+      out("# 元の要求"),
+      allow ? noteResult(proposal) : proposal,
+    ]);
     const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
@@ -2857,7 +2922,7 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     );
     const { service } = makeService(activity, [
       out("# 元の要求"),
-      proposal,
+      noteResult(proposal),
       out("# 作り直した設計"),
     ]);
     const { id } = service.createTask({ projectId: "default", title: "A" });
@@ -2900,9 +2965,9 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
       );
     const { service, executor } = makeService(activity, [
       out("# 元の要求"),
-      makeProposal("# 却下 A"),
-      makeProposal("# 却下 B"),
-      out(block({ "sacty-proposal-declaration": "absent" })),
+      noteResult(makeProposal("# 却下 A")),
+      noteResult(makeProposal("# 却下 B")),
+      noteResult(out(block({ "sacty-proposal-declaration": "absent" }))),
     ]);
     const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);

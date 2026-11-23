@@ -140,6 +140,21 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
   });
   const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const noteResult = (result: AgentOutcome): AgentOutcome => {
+    if (result.kind !== "completed") return result;
+    let proposal: unknown = null;
+    const output = result.output.replace(/```json\n([^\n]+)\n```/g, (_whole, json: string) => {
+      const value = JSON.parse(json) as Record<string, unknown>;
+      if (Object.hasOwn(value, "sacty-change-proposal")) {
+        proposal = value["sacty-change-proposal"];
+        delete value["sacty-change-proposal"];
+      }
+      delete value["sacty-proposal-declaration"];
+      return Object.keys(value).length ? block(value) : "";
+    });
+    return { ...result, output: JSON.stringify({ output, proposal }) };
+  };
+
   const design = out(
     [
       "# 設計",
@@ -271,7 +286,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         block({ "sacty-proposal-declaration": "present" }),
       ].join("\n\n"),
     );
-    const { activity, service, id } = await toImplement([output]);
+    const { activity, service, id } = await toImplement([noteResult(output)]);
     await service.pause(id);
     service.resume(id, { note: "範囲を絞る", approvedEdits: true });
     await service.runNext(id);
@@ -330,7 +345,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
         },
       }),
     );
-    const { activity, service, id } = await toImplement([output]);
+    const { activity, service, id } = await toImplement([noteResult(output)]);
     await service.pause(id);
     service.resume(id, { note: "範囲を絞る", approvedEdits: true });
     const before = service.get(id)?.task.testViewpoints;
@@ -368,7 +383,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           block({ "sacty-proposal-declaration": "present" }),
         ].join("\n\n"),
       );
-      const { activity, service, executor, id } = await toImplement([output]);
+      const { activity, service, executor, id } = await toImplement([noteResult(output)]);
       await service.pause(id);
       service.resume(id, { note: "範囲を絞る", approvedEdits: true });
       const before = service.get(id);
