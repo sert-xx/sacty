@@ -1334,7 +1334,7 @@ describe("既定の review スキルの、方針の妥当性と指摘の出し�
     // 方針を見る観点はコードの C-17 と設計書の D-1。利用者向け文書には当てはめない
     expect(text).toContain("主対象が `design-doc` のときは、C-17 の代わりに D-1");
     expect(read("skills/review/review-dispatch/references/pr-review.md")).toContain(
-      "前回までの `must`（前回の指摘と、前回のレビューが「前回の指摘」として挙げたもの。依頼した側が前々回以前のレビューを渡していれば、その指摘も）と同じ原因で続いているなら（同じ指摘が残る場合も含む）、[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」に従う。主対象が `user-doc` 以外なら",
+      "前回までの `must`（前回の指摘と、前回のレビューが「前回の指摘」として挙げたもの。依頼した側が前々回以前のレビューを渡していれば、その指摘も）と同じ原因で続いているなら（同じ指摘が残る場合も含む）、[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」に従う。同じ原因の別の現れで、主対象が `user-doc` 以外なら",
     );
     const self = read("skills/review/review-dispatch/references/self-review.md");
     expect(self).toContain(

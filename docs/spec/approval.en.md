@@ -420,7 +420,7 @@ An error in an approved document that does not change a decision does not receiv
 
 Related ADR: [レビューが直しでは解消できないと印を付けた指摘で止め、人の判断を待つ](../adr/20261121-2000-superseded-pause-on-findings-a-rework-cannot-resolve.md)
 
-When the review child task of a PR marks a must-fix finding as "cannot be resolved by a rework (a change to the implementation) and needs a human decision", the parent does not start a rework. It pauses while still waiting for approval and waits for a person.
+When the review child task of a PR marks a must-fix finding as needing a human decision because a rework cannot resolve it or because the same cause has recurred for the third time or later, the parent does not start a rework. It pauses while still waiting for approval and waits for a person.
 This applies to every task that has a review child task (implementation, requirements, and design PRs). Unmarked must-fix findings go into a rework. For a requirements or design PR, a second consecutive suggestion-only verdict waits for approval without rework.
 
 - The mark: `needs_decision` in `rework.findings[]` of the verdict block (a sentence giving the grounds; cut at 2,000 characters; `ReviewRework.findings[].needsDecision`). The review instruction (`needsDecisionLines`) and the default review skill say when to add it: from the third occurrence of the same cause; otherwise only when the grounds show it, not when unsure or a person already decided. Suggestions are not marked.
