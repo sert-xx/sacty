@@ -471,7 +471,7 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
     expect(prompt).toContain(
       "delivered が false の回は数えず、少なくとも N 回目で3に届かないときは付けない",
     );
-    expect(prompt).toContain("根拠の文の先頭に「同じ原因の要修正が3回目以降：」と書き");
+    expect(prompt).toContain("識別用の印「[repeated-cause] 」を先頭に付け");
     expect(prompt).toContain(
       "同じ原因の3回目以降でない must は、付けてよいのは、根拠で示せるときだけ",
     );
@@ -592,7 +592,7 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
     });
 
     it("判断後の同じ先頭で同じ原因が続く新しい回は再び止まり、再開では止め直さない", async () => {
-      const reason = "同じ原因の要修正が3回目以降：3回目。範囲を絞り、以前の判断後も続いた";
+      const reason = "[repeated-cause] Third occurrence: exclude this case, leaving a missed case.";
       const made = await rejudged(
         review("changes_required", [{ title: "上限を超える", needs: reason }]),
       );
@@ -603,7 +603,10 @@ describe("直しでは解消できない指摘で止める（PBI-452）", () => 
         status: "paused",
         pausedReason: "needs_decision",
       });
-      expect(JSON.stringify(taskOf(service, id).pausedMessage)).toContain(reason);
+      expect(JSON.stringify(taskOf(service, id).pausedMessage)).toContain(
+        reason.replace("[repeated-cause] ", ""),
+      );
+      expect(JSON.stringify(taskOf(service, id).pausedMessage)).not.toContain("[repeated-cause]");
       const changes = types(service, id).filter((type) => type === "ChangesRequested").length;
       service.resume(id, { note: "直しを続ける" });
       await service.checkPullRequests();

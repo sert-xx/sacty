@@ -19,16 +19,18 @@
 
 ## 確かめたこと
 
-| コマンド | 結果 |
+| コマンド・確認 | 結果 |
 | --- | --- |
 | `npm run lint` | 成功 |
 | `npm run typecheck` | 成功 |
 | `npm run build` | 成功 |
 | `npm test` | 346ファイル、7,137件成功、14件スキップ（Git の機能が無い13件と AI 評価1件） |
-| `npx vitest run apps/daemon/src/needs-decision.test.ts apps/daemon/src/prompts.test.ts apps/daemon/src/prompts-design-weight.test.ts apps/daemon/src/default-skills.test.ts apps/daemon/src/daemon-deliverables.test.ts apps/web/src/components/self-review.test.ts tests/docs` | 10ファイル、608件成功 |
-| 同じ先頭での停止条件を戻したテスト | 新しい再停止のテストが失敗 |
-| プロンプト・停止処理・報告の型・画面表示をそれぞれ戻したテスト | それぞれ関連テストが失敗 |
-| ビルド済みデーモンの `GET /api/tasks/example-task` | 認証情報を隔離し、架空のタスクの応答に判断事項が残ることを確認（HTTP 200） |
+| `npx vitest run apps/daemon/src/rereview-narrow.test.ts` | 22件成功 |
+| `npx vitest run apps/daemon/src/prompts.test.ts apps/daemon/src/default-skills.test.ts apps/daemon/src/needs-decision.test.ts tests/docs` | 511件成功 |
+| 変更を戻した検査 | 指示・停止処理・報告の型・画面と既定スキルの各変更を戻すと、対応するテストが失敗 |
+| ビルド済みデーモンの `GET /api/tasks/example-task` | 隔離した設定と架空のタスクで HTTP 200、判断事項を含む応答を確認 |
+
+画面の見た目と、対象の Git 機能がある環境での検査は実施していない。
 
 ## レビューの指摘と対応
 
@@ -39,7 +41,7 @@
 
 ### この PR の最初の提出
 
-まだ無い（最初の提出）。
+同じ指摘が残る場合も案と判断事項を求め、識別用の印を表示理由から分けた。既定の規則の検査と日英の説明を補った。
 
 ## 残したこと
 

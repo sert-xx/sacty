@@ -5053,7 +5053,9 @@ export class TaskService {
       return undefined;
     return marked.map((f) => ({
       finding: f.finding,
-      reason: f.needsDecision ?? "",
+      reason: f.needsDecision?.startsWith(REPEATED_CAUSE_DECISION_PREFIX)
+        ? f.needsDecision.slice(REPEATED_CAUSE_DECISION_PREFIX.length)
+        : (f.needsDecision ?? ""),
     }));
   }
 

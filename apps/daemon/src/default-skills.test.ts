@@ -1334,7 +1334,7 @@ describe("既定の review スキルの、方針の妥当性と指摘の出し�
     // 方針を見る観点はコードの C-17 と設計書の D-1。利用者向け文書には当てはめない
     expect(text).toContain("主対象が `design-doc` のときは、C-17 の代わりに D-1");
     expect(read("skills/review/review-dispatch/references/pr-review.md")).toContain(
-      "前回までの `must`（前回の指摘と、前回のレビューが「前回の指摘」として挙げたもの。依頼した側が前々回以前のレビューを渡していれば、その指摘も）と同じ原因の別の現れなら、[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」に従う。主対象が `user-doc` 以外なら",
+      "前回までの `must`（前回の指摘と、前回のレビューが「前回の指摘」として挙げたもの。依頼した側が前々回以前のレビューを渡していれば、その指摘も）と同じ原因で続いているなら（同じ指摘が残る場合も含む）、[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」に従う。主対象が `user-doc` 以外なら",
     );
     const self = read("skills/review/review-dispatch/references/self-review.md");
     expect(self).toContain(
@@ -1913,7 +1913,7 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
   it("aggregation.md が、本文への明示と直し方の案の中身を決める", () => {
     const text = read(`${dir}aggregation.md`);
     expect(text).toContain(
-      "方針の観点が方針を変える指摘を出したかどうかに関わらず、今回の `must` が前回までの `must` と同じ原因の別の現れなら、同じ原因が続いていることを本文に明示する",
+      "方針の観点が方針を変える指摘を出したかどうかに関わらず、今回の `must` が前回までの `must` と同じ原因で続いているなら（同じ指摘が残る場合も含む）、同じ原因が続いていることを本文に明示する",
     );
     expect(text).toContain(
       "同じ原因の `must` が何回目か（前回までの回が分からないときは「少なくとも N 回目」）、前回までの現れの一覧（回と現れを短く）",
@@ -1929,6 +1929,10 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     expect(text).toContain("確かめた組み合わせと、確かめていない組み合わせを分けて書く");
     expect(text).toContain("外から見える入口（利用者や呼び出し側が実際に使う経路）に当てること");
     expect(text).not.toContain("自動で止めたり、通知したり、機械で読める欄を足したりしない");
+    expect(text).toContain("2回目以降、範囲を絞る案を1つ以上");
+    expect(text).toContain("満たせなくなる条件を明記する");
+    expect(text).toContain("人の判断後に同じ原因の `must` が続いた回も同様に扱う");
+    expect(text).toContain("本文への明示・範囲を絞る案・3回目以降の人の判断の求めは適用する");
     // 既存の決まりは残る
     expect(text).toContain(
       "出さなければ（今の方針のままで原因を直せると判断した）、現れをふつうの `must` として採用する",
@@ -1939,7 +1943,13 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     expect(read(`${dir}pr-review.md`)).toContain(
       "[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」のとおりに書く（総評か、その指摘の本文の、人が読んで分かる場所に書く。性質のテストの求めは、主対象が `code` でテストを書く場面だけ）",
     );
+    const pr = read(`${dir}pr-review.md`);
+    expect(pr).toContain("同じ原因の `must` が3回目以降なら");
+    expect(pr).toContain("人の判断が PR にある原因でも");
+    expect(pr).toContain("同じ原因の3回目以降でない");
     const self = read(`${dir}self-review.md`);
+    expect(self).toContain("範囲を絞る案");
+    expect(self).toContain("needsDecision");
     expect(self).toContain("本文への明示（記録と返す結果に書く）と、直し方の案の中身を");
     expect(self).toContain("`user-doc`・`design-doc`・テストなしでは求めない");
     expect(self).toContain("- 同じ原因が続いた指摘：（あるときだけ）");
