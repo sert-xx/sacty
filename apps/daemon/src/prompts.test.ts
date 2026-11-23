@@ -463,6 +463,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain("changes_required：[要修正] の指摘が1つ以上ある");
     // 最初のレビューには、再レビューの指示を入れない
     expect(prompt).not.toContain("--- 再レビュー ---");
+    expect(prompt).not.toContain("再レビューでは、前回以降の変更が生んだ後退");
   });
 
   it("依存関係を取得して検証を実行させ、オーケストレーターのテストのコマンドがあれば候補として示す（PBI-153）", () => {
@@ -670,7 +671,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(rereview).toContain("満たせなくなる条件を書く");
     // 既存の決まりは変わらない
     expect(rereview).toContain(
-      "出なければ、または方針の指摘が [提案] なら、現れを [要修正] のまま残す",
+      "出なければ、または方針の指摘が [提案] なら、上の範囲を絞る案の例外に当たるかを確かめる",
     );
     // 初回のレビューには入らない
     const first = buildPrompt(reviewTask({ reviewRound: 1, previousReview: undefined }), "review", {
@@ -720,6 +721,13 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     ];
     const prompt = buildPrompt(task, "review", { diff, replies });
     expect(prompt).toContain("--- 再レビュー ---");
+    expect(prompt).toContain("ふつうの使い方で起き影響が中のものだけを要修正にする。");
+    expect(prompt).toContain(
+      "1つの条件で起き影響が中で不適合でないものを含む、ほかの新しい指摘は表の重さによらず提案にする。",
+    );
+    expect(prompt).toContain(
+      "その現れは提案にし、人の判断を求めず、印も needsDecision も付けない。その回の総評に、範囲を絞って提案にしたことと残る現れを書く。",
+    );
     // 再レビューの「PR 全体」は差分で決まる範囲で、前回のレビューを理由に広げない（PBI-349）
     expect(prompt).toContain(
       "範囲は PR 全体にする（前回の後の変更だけを見ない）。PR 全体は PR の差分で決まる範囲で、変えていない既存の本文の全体ではない。前回のレビューに、変えていない箇所を見ていないと書かれていても、範囲を広げない",
@@ -731,7 +739,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).not.toContain("earlierReviews");
     // 同じ原因の別の現れが続いたら、方針を見直す指摘にする（PBI-342）
     expect(prompt).toContain(
-      "今回の [要修正] が、前回までの [要修正] と同じ原因の別の現れなら、スキルの集約の規則（「回をまたいで同じ原因が続くとき」）どおりに扱う。主対象が利用者向け文書以外なら、方針の観点（コードは C-17、設計書は D-1）に方針を見直させ、方針を変える [要修正] が出ればその指摘にまとめる。出なければ、または方針の指摘が [提案] なら、現れを [要修正] のまま残す。利用者向け文書では方針の観点を起動せず、現れを [要修正] のまま残す",
+      "今回の [要修正] が、前回までの [要修正] と同じ原因の別の現れなら、スキルの集約の規則（「回をまたいで同じ原因が続くとき」）どおりに扱う。主対象が利用者向け文書以外なら、方針の観点（コードは C-17、設計書は D-1）に方針を見直させ、方針を変える [要修正] が出ればその指摘にまとめる。出なければ、または方針の指摘が [提案] なら、上の範囲を絞る案の例外に当たるかを確かめる。利用者向け文書では方針の観点を起動せず、同じ例外を確かめる",
     );
     expect(prompt).toContain(
       "本文に「前回の指摘」の節を作り、前回の指摘ごとに、対応を確かめた（直っている）か、未対応かを1行ずつ書く",
@@ -4309,6 +4317,21 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
       },
       ...extra,
     }) as unknown as Task;
+  it("自己レビューの初回には当てず、2回目以降の判定と範囲を絞る案を指示する", () => {
+    const prompt = buildPrompt(task(steps), "requirements");
+    expect(prompt).toContain("2回目以降の再レビューでは、前回以降の変更が生んだ後退");
+    expect(prompt).toContain("ふつうの使い方で起き影響が中のものだけを要修正にする。");
+    expect(prompt).toContain(
+      "1つの条件で起き影響が中で不適合でないものを含む、ほかの新しい指摘は表の重さによらず提案にする。",
+    );
+    expect(prompt).toContain(
+      "2回目以降のレビューで、同じ原因が続き、レビューが示した範囲を絞る案で残る現れ",
+    );
+    expect(prompt).toContain(
+      "その現れは提案にし、人の判断を求めず、印も needsDecision も付けない。その回の総評に、範囲を絞って提案にしたことと残る現れを書く。",
+    );
+  });
+
   const HEADING = '{"sacty-self-review": {"rounds": 2, "passed": true';
   const steps: Task["steps"][number]["key"][] = ["requirements", "design", "implement"];
 

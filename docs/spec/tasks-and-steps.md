@@ -305,6 +305,8 @@
   - 答えの反映だけの直し（`answerOnlyCheckLines`）は、今までどおり。
   - 省いた実行は、`AgentRunCompleted` に `selfReview` を持たない（記録なしの `null` にもしない）。画面には何も出さない。
 
+レビューが示した範囲を絞る案で、再レビューの要修正に当たらない現れだけが残る場合は提案にし、判断の印も `needsDecision` も付けない。総評に範囲を絞ったことと残る現れを書く。
+
 同じ原因の要修正が3回目以降のときは、報告の `needsDecision` に原因・回数・範囲を絞る案・満たせなくなる条件を書く。画面は判断事項を折りたたまずに先頭へ表示し、タスクは停止しない。
 
 - 結果は、見出し `sacty-self-review` の JSON（`rounds`・`passed`・`remaining`・`notReviewed`・`summary`・`needsDecision`）で報告させる。

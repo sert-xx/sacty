@@ -4,7 +4,7 @@
 - タスク: PBI-492
 - PR: #598
 - ブランチ: main
-- 関係する ADR: [同じ原因の要修正が続く場合に人の判断を求める](../adr/20261123-0007-repeated-cause-decision.md)
+- 関係する ADR: [同じ原因の要修正が続く場合に人の判断を求める](../adr/20261123-0007-superseded-repeated-cause-decision.md)
 
 ## 目的
 

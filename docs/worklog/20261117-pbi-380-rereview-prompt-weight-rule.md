@@ -4,7 +4,7 @@
 - タスク: PBI-380
 - PR: #416
 - ブランチ: feat/pbi-380-rereview-prompt
-- 関係する ADR: [レビューの指摘の重みを、影響の大きさと起きやすさで決め、自己レビューは要修正だけを修正に戻す](../adr/20261117-0244-review-finding-weight-by-impact-and-likelihood.md)
+- 関係する ADR: [レビューの指摘の重みを、影響の大きさと起きやすさで決め、自己レビューは要修正だけを修正に戻す](../adr/20261117-0244-superseded-review-finding-weight-by-impact-and-likelihood.md)
 
 ## 目的
 

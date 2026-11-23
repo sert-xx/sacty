@@ -8,7 +8,7 @@
 
 ## 背景
 
-[レビューの指摘の重みを、影響の大きさと起きやすさで決める ADR](20261117-0244-review-finding-weight-by-impact-and-likelihood.md) は、`pr-review` の再レビューについて、「前回 `must` として出した指摘が、表では `should` に当たると分かったときは、未対応でも `must` に数えない」と決めた。
+[レビューの指摘の重みを、影響の大きさと起きやすさで決める ADR](20261117-0244-superseded-review-finding-weight-by-impact-and-likelihood.md) は、`pr-review` の再レビューについて、「前回 `must` として出した指摘が、表では `should` に当たると分かったときは、未対応でも `must` に数えない」と決めた。
 
 この決定を既定のスキルの文にするときに、表と ADR からは決まらないことが 3 つ残った。
 
