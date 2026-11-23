@@ -76,8 +76,8 @@ function fixture() {
   } as Task["pullRequest"];
   task.budget = { ...task.budget, usedUsd: 1.5, capUsd: 5, unknownRuns: 1 };
   const diff = {
-    design: `+${"x".repeat(400)}`,
-    testViewpoints: `+${JSON.stringify({ id: "TV-2", title: "Long", input: "x".repeat(400), expected: "ok" })}`,
+    design: `-old\n+${"x".repeat(400)}`,
+    testViewpoints: `-${JSON.stringify({ id: "TV-2", title: "Old", input: "old", expected: "ok" })}\n+${JSON.stringify({ id: "TV-2", title: "Long", input: "x".repeat(400), expected: "ok" })}`,
   };
   task.proposals = [
     {
@@ -558,6 +558,65 @@ it("補足の差分は狭い画面の履歴と申し出で折り返す", async (
       await diff.waitFor();
       expect(await diff.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       expect(await root(page)).toEqual({ scroll: 375, client: 375 });
+    }
+  } finally {
+    await page.close();
+  }
+}, 30000);
+
+it("補足の差分は明暗両テーマの履歴と申し出で読める色になる", async () => {
+  const page = await open(1280);
+  try {
+    for (const dark of [false, true]) {
+      await page.evaluate(
+        (enabled) => document.documentElement.classList.toggle("dark", enabled),
+        dark,
+      );
+      for (const tab of ["Overview", "Activity"]) {
+        await page.getByRole("tab", { name: new RegExp(`^${tab}`) }).click();
+        const summary = page.getByText(
+          tab === "Overview" ? "Show design and test viewpoint changes" : /CP-1 accepted by note/,
+        );
+        if (!(await summary.evaluate((el) => el.closest("details")?.open))) await summary.click();
+        const diff = page.getByTestId("note-diff").filter({ visible: true });
+        for (const testId of ["design-diff-line", "viewpoint-diff-card"]) {
+          const items = diff.getByTestId(testId);
+          expect(await items.count()).toBe(2);
+          const colors = await items.evaluateAll((elements) =>
+            elements.map((element) => {
+              const canvas = document.createElement("canvas");
+              canvas.width = canvas.height = 1;
+              const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+              const ancestors: Element[] = [];
+              for (let current: Element | null = element; current; current = current.parentElement)
+                ancestors.unshift(current);
+              ctx.fillStyle = "white";
+              ctx.fillRect(0, 0, 1, 1);
+              for (const ancestor of ancestors) {
+                ctx.fillStyle = getComputedStyle(ancestor).backgroundColor;
+                ctx.fillRect(0, 0, 1, 1);
+              }
+              const background = [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3);
+              ctx.fillStyle = getComputedStyle(element).color;
+              ctx.fillRect(0, 0, 1, 1);
+              const foreground = [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3);
+              const luminance = (rgb: number[]) =>
+                rgb.reduce((sum, value, i) => {
+                  const c = value / 255;
+                  return (
+                    sum +
+                    (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4) *
+                      [0.2126, 0.7152, 0.0722][i]
+                  );
+                }, 0);
+              const values = [luminance(background), luminance(foreground)].sort((a, b) => a - b);
+              return { background, contrast: (values[1] + 0.05) / (values[0] + 0.05) };
+            }),
+          );
+          expect(colors[0].background).not.toEqual(colors[1].background);
+          for (const color of colors) expect(color.contrast).toBeGreaterThanOrEqual(4.5);
+        }
+      }
     }
   } finally {
     await page.close();

@@ -9,7 +9,7 @@ export function NoteDiff({ diff }: { diff: { design: string; testViewpoints: str
   const { parts } = useMessages();
   const m = parts.proposals;
   const label = (sign: string) => (sign === "-" ? m.removed : m.added);
-  const color = (sign: string) => (sign === "-" ? "bg-red-100" : "bg-green-100");
+  const color = (sign: string) => (sign === "-" ? "bg-destructive/10" : "bg-ok-soft");
   const entries: Entry[] = diff.testViewpoints
     ? diff.testViewpoints.split("\n").map((raw) => {
         const sign = raw[0] === "-" || raw[0] === "+" ? raw[0] : "";
@@ -53,7 +53,7 @@ export function NoteDiff({ diff }: { diff: { design: string; testViewpoints: str
                     .slice(0, i)
                     .filter((v) => v === line).length
                 }`}
-                className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2 ${sign ? color(sign) : ""}`}
+                className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2 text-foreground ${sign ? color(sign) : ""}`}
                 data-testid="design-diff-line"
               >
                 <span>
@@ -89,7 +89,7 @@ export function NoteDiff({ diff }: { diff: { design: string; testViewpoints: str
                   entry.viewpoint ? (
                     <article
                       key={`${entry.raw}:${group.slice(0, j).filter((v) => v.raw === entry.raw).length}`}
-                      className={`min-w-0 rounded-lg border border-border p-3 ${color(entry.sign)}`}
+                      className={`min-w-0 rounded-lg border border-border p-3 text-foreground ${color(entry.sign)}`}
                       data-testid="viewpoint-diff-card"
                     >
                       <p>{label(entry.sign)}</p>

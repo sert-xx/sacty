@@ -20,14 +20,21 @@ const at = "2026-11-22T12:00:00Z";
 const old = { id: "TV-2", title: "Old title", input: "Old input", expected: "Old expected" };
 const updated = { id: "TV-2", title: "New title", input: "New input", expected: "New expected" };
 const added = {
-  id: "TV-3",
+  id: "TV-4",
   title: "Third title",
   input: "Third input",
   expected: "Third expected",
 };
+const oldThird = { id: "TV-3", title: "Old third", input: "Input 3", expected: "Expected 3" };
+const newThird = {
+  id: "TV-3",
+  title: "New third",
+  input: "Input 3 new",
+  expected: "Expected 3 new",
+};
 const diff = {
   design: "-- 旧い項目\n+- 新しい項目",
-  testViewpoints: `-${JSON.stringify(old)}\n+${JSON.stringify(updated)}\n+${JSON.stringify(added)}`,
+  testViewpoints: `-${JSON.stringify(old)}\n-${JSON.stringify(oldThird)}\n+${JSON.stringify(updated)}\n+${JSON.stringify(newThird)}\n+${JSON.stringify(added)}`,
 };
 function renderBoth(value = diff) {
   const event = {
@@ -81,11 +88,11 @@ describe("補足の差分表示", () => {
         const doc = new DOMParser().parseFromString(html, "text/html");
         expect(doc.body.textContent).not.toContain(at);
         const cards = [...doc.querySelectorAll('[data-testid="viewpoint-diff-card"]')];
-        expect(cards).toHaveLength(3);
-        for (const [index, item] of [old, updated, added].entries()) {
+        expect(cards).toHaveLength(5);
+        for (const [index, item] of [old, updated, oldThird, newThird, added].entries()) {
           for (const text of Object.values(item)) expect(cards[index].textContent).toContain(text);
           expect(cards[index].textContent).toContain(
-            index === 0
+            index === 0 || index === 2
               ? messagesFor(lang).parts.proposals.removed
               : messagesFor(lang).parts.proposals.added,
           );
@@ -98,8 +105,8 @@ describe("補足の差分表示", () => {
           ["-", "- 旧い項目"],
           ["+", "- 新しい項目"],
         ]);
-        expect(lines[0].className).toContain("bg-red-100");
-        expect(lines[1].className).toContain("bg-green-100");
+        expect(lines[0].className).toContain("bg-destructive/10");
+        expect(lines[1].className).toContain("bg-ok-soft");
       }
     },
   );
