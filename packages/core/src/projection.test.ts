@@ -7253,6 +7253,98 @@ describe("実装の作り直しの間の PR のマージ（PBI-276）", () => {
     ev(id, { type: "StepApproved", payload: { step: "implement", next: "idle" } }, "person"),
   ];
 
+  it("前の工程へ戻した後のマージで、PR 公開時の承認・成果・テスト観点を復元する", () => {
+    seq = 0;
+    const run = (
+      runId: string,
+      step: "requirements" | "design",
+      output: string,
+      testViewpoints: { id: string; title: string; input: string; expected: string }[] = [],
+    ) => [
+      ev("t", {
+        type: "AgentRunStarted",
+        payload: { runId, step, agentId: "a", authMode: "subscription" },
+      }),
+      ev("t", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId,
+          step,
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: false,
+          output,
+          testViewpoints,
+        },
+      }),
+    ];
+    const first = [{ id: "TV-1", title: "A", input: "入力 A", expected: "結果 A" }];
+    const second = [{ id: "TV-1", title: "B", input: "入力 B", expected: "結果 B" }];
+    const task = project([
+      created("t"),
+      steps("t"),
+      ev("t", {
+        type: "RepositoryPrepared",
+        payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+      }),
+      ...run("requirements", "requirements", "# 要求要件 A"),
+      ev("t", { type: "StepSubmitted", payload: { step: "requirements", submission: 1 } }),
+      ev(
+        "t",
+        { type: "StepApproved", payload: { step: "requirements", next: "queued" } },
+        "person",
+      ),
+      ...run("design-a", "design", "# 設計 A", first),
+      ev("t", { type: "StepSubmitted", payload: { step: "design", submission: 1 } }),
+      ev("t", { type: "StepApproved", payload: { step: "design", next: "queued" } }, "person"),
+      ...verifiedImplementation("t"),
+      ev("t", {
+        type: "PullRequestPublished",
+        payload: {
+          branch: "sacty/t",
+          commit: "c1",
+          number: 7,
+          repo: "https://github.com/acme/app",
+          url: "https://github.com/acme/app/pull/7",
+        },
+      }),
+      ev("t", { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
+      ev(
+        "t",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "design",
+            round: 1,
+            remarks: [{ id: "design-1-1", text: "直す" }],
+          },
+        },
+        "person",
+      ),
+      ...run("design-b", "design", "# 設計 B", second),
+      ev("t", {
+        type: "ReworkStoppedByMerge",
+        payload: {
+          number: 7,
+          was: "queued",
+          stoppedRuns: [],
+          discardedRemarks: [{ id: "design-1-1", text: "直す" }],
+        },
+      }),
+      ...merged("t"),
+    ]).get("t");
+    expect(task?.steps.map((step) => step.state)).toEqual(["done", "done", "done"]);
+    expect(task?.approved.design?.output).toBe("# 設計 A");
+    expect(task?.approved.design?.testViewpoints).toEqual(first);
+    expect(task?.outputs.design).toBe("# 設計 A");
+    expect(task?.testViewpoints).toEqual(first);
+    expect(task?.remarks[0]?.voided).toBe(true);
+    expect(task?.pullRequestState).toBe("merged");
+  });
+
   it("見守る対象は、承認待ちではなく、実装の作り直しの間の開いた PR だけ", () => {
     seq = 0;
     const waiting = project(base("t")).get("t");

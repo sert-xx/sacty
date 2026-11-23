@@ -1004,7 +1004,10 @@ If a person merges the implementation PR while the implementation is being rewor
 - sacty stops the running implementation and PR update (it does not create a new PR) and moves on to the next step (the after-merge watch, or completion if it is skipped).
 - The stopped runs and the comments discarded before being passed to the rework (the ones not yet reflected in the PR) stay in the task's activity as "PR #N was merged, so the rework of the implementation was stopped".
 - To handle the discarded comments (including PR comments that arrived while paused and had not been applied yet), create a follow-up task ([Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task)).
-- While Requirements or Design is being redone, a merge of the implementation PR does not stop it.
+- If the implementation PR is merged while Requirements or Design is being redone, sacty stops the rework and takes the merge as approval.
+
+If the step PR and implementation PR are both found merged in the same check, the task pauses for your decision. If you resume it, only the implementation PR is taken as approval.
+
 
 If a person merges the PR of Requirements or Design while that step is being revised (after a request for changes, or imported PR comments or suggestions), the merge is also taken as the approval.
 

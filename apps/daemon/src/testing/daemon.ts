@@ -504,6 +504,8 @@ export class FakeRepos implements RepositoryWorkspace {
     authEnv?: Record<string, string>;
   }[] = [];
   fetchBranchFail?: string;
+  missingFetchBranches: string[] = [];
+  fetchBranchAttempts: string[] = [];
   async remoteDefaultBranch(
     _gitDir: string,
     _authEnv?: Record<string, string>,
@@ -519,8 +521,11 @@ export class FakeRepos implements RepositoryWorkspace {
     authEnv?: Record<string, string>,
     signal?: AbortSignal,
   ) {
+    this.fetchBranchAttempts.push(branch);
     await this.onFetchBranch?.(signal);
     if (this.fetchBranchFail) throw new Error(this.fetchBranchFail);
+    if (this.missingFetchBranches.includes(branch))
+      throw new Error(`fatal: couldn't find remote ref refs/heads/${branch}`);
     this.fetchedBranches.push({
       gitDir,
       branch,

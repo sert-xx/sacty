@@ -1590,6 +1590,7 @@ const TaskPaused = z.object({
      * 止めないため。前の版は、この欄を読まずに捨てる。
      */
     commit: z.string().min(1).optional(),
+    mergedPullRequests: z.array(z.number().int().positive()).length(2).optional(),
   }),
 });
 
@@ -3406,7 +3407,7 @@ const PullRequestMerged = z.object({
 });
 const PullRequestClosed = z.object({
   type: z.literal("PullRequestClosed"),
-  payload: z.object({ number: z.number().int().positive() }),
+  payload: z.object({ number: z.number().int().positive(), merged: z.boolean().optional() }),
 });
 const PullRequestReopened = z.object({
   type: z.literal("PullRequestReopened"),

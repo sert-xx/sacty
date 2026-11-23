@@ -893,7 +893,7 @@ export type Task = {
    * 一時停止の直前の状態。再開時、実行待ち（やり直し）に戻すか待機に戻すかを決める。
    * 子タスクの完了を待っていたタスクは、その待ちに戻す（PBI-27）。
    */
-  resumeTo?: "queued" | "idle" | "waiting_children" | "awaiting_approval";
+  resumeTo?: "queued" | "idle" | "waiting_children" | "awaiting_approval" | "escalated";
   steps: { key: StepKey; state: StepState }[];
   /** 工程ごとの最新の出力。 */
   outputs: Partial<Record<StepKey, string>>;
@@ -911,6 +911,13 @@ export type Task = {
   childScope?: ChildScope;
   /** 承認済みで凍結された成果物。 */
   approved: Partial<Record<StepKey, ApprovedOutput>>;
+  implementBasis?: {
+    commit: string;
+    approved: Partial<Record<StepKey, ApprovedOutput>>;
+    outputs: Partial<Record<StepKey, string>>;
+    testViewpoints: TestViewpoint[];
+  };
+  mergedPullRequests?: number[];
   budget: {
     usedUsd: number;
     capUsd: number;
@@ -1561,6 +1568,27 @@ function reopen(task: Task, target: StepKey) {
   task.approved = Object.fromEntries(
     Object.entries(task.approved).filter(([key]) => keep.has(key as StepKey)),
   );
+}
+
+function saveImplementBasis(task: Task, commit: string) {
+  const keys = new Set(
+    task.steps
+      .slice(
+        0,
+        task.steps.findIndex((s) => s.key === "implement"),
+      )
+      .map((s) => s.key),
+  );
+  task.implementBasis = {
+    commit,
+    approved: Object.fromEntries(
+      Object.entries(task.approved).filter(([k]) => keys.has(k as StepKey)),
+    ),
+    outputs: Object.fromEntries(
+      Object.entries(task.outputs).filter(([k]) => keys.has(k as StepKey)),
+    ),
+    testViewpoints: [...task.testViewpoints],
+  };
 }
 
 /**
@@ -2254,6 +2282,12 @@ export function applyEvent(
             : {}),
         },
       };
+      if (step !== "implement" && task.steps.some((s) => s.key === "implement")) {
+        if (merge && task.taskBranch && merge.mergeCommit)
+          saveImplementBasis(task, merge.mergeCommit);
+        else if (!task.pullRequest && task.continuedPullRequest && activeStep(task) === "implement")
+          saveImplementBasis(task, task.repository?.baseCommit ?? "");
+      }
       task.status = event.payload.next;
       task.pendingReview = undefined;
       task.heldSuggestions = undefined;
@@ -2771,6 +2805,7 @@ export function applyEvent(
             "the implementation is not waiting for a pull request before the final review",
           );
         }
+        saveImplementBasis(task, event.payload.commit);
         task.pullRequest = event.payload;
         task.pullRequestState = event.payload.number ? "open" : undefined;
         task.pullRequestMerge = undefined;
@@ -2790,6 +2825,7 @@ export function applyEvent(
           "the implementation is not waiting for a pull request",
         );
       }
+      saveImplementBasis(task, event.payload.commit);
       task.publishPending = undefined;
       task.pullRequest = event.payload;
       // 作り直した・更新した PR は、開いているものとして見守り直す
@@ -3680,6 +3716,24 @@ export function applyEvent(
     case "PullRequestMerged":
     case "PullRequestClosed":
     case "PullRequestReopened": {
+      const sentBack = sentBackImplementPullRequest(task);
+      if (event.type !== "PullRequestMerged" && sentBack?.number === event.payload.number) {
+        task.pullRequestState = event.type === "PullRequestClosed" ? "closed" : "open";
+        break;
+      }
+      if (event.type === "PullRequestClosed" && task.pullRequestState === "merged") {
+        const pr = task.stepPullRequests.find(
+          (p) => p.number === event.payload.number && p.state === "open",
+        );
+        if (pr) {
+          task.stepPullRequests = task.stepPullRequests.map((p) =>
+            p === pr
+              ? { ...p, state: event.payload.merged ? "merged" : "closed", superseded: true }
+              : p,
+          );
+          break;
+        }
+      }
       // 見守るのは、承認ゲートで待っている、sacty が作った PR だけ（実装と、要求要件・設計。PBI-57・PBI-110）
       const watched = gatePullRequest(task);
       if (!watched || (task.status !== "awaiting_approval" && task.status !== "escalated")) {
@@ -3764,12 +3818,39 @@ export function applyEvent(
       }
       // 実装の作り直しの間に、実装の PR がマージされた（PBI-276）。作り直しの途中経過を捨てて、実装の承認待ちに戻す
       // （同じ追記で、続けて PullRequestMerged・StepApproved を記録する）
-      const reworking = reworkingPullRequest(task);
+      const sentBack = sentBackImplementPullRequest(task);
+      const reworking = reworkingPullRequest(task) ?? sentBack;
       if (!reworking || reworking.number !== event.payload.number) {
         throw new ActivityIntegrityError(event, "the implementation is not being reworked");
       }
       if (task.status === "running") {
         throw new ActivityIntegrityError(event, "stop the run before stopping the rework");
+      }
+      if (sentBack) {
+        const implementIndex = task.steps.findIndex((s) => s.key === "implement");
+        task.steps = task.steps.map((s, i) =>
+          i < implementIndex && s.state !== "skip"
+            ? { ...s, state: "done" as const }
+            : i === implementIndex
+              ? { ...s, state: "active" as const }
+              : s,
+        );
+        if (task.implementBasis) {
+          const earlier = new Set(task.steps.slice(0, implementIndex).map((s) => s.key));
+          task.approved = {
+            ...Object.fromEntries(
+              Object.entries(task.approved).filter(([k]) => !earlier.has(k as StepKey)),
+            ),
+            ...task.implementBasis.approved,
+          };
+          task.outputs = {
+            ...Object.fromEntries(
+              Object.entries(task.outputs).filter(([k]) => !earlier.has(k as StepKey)),
+            ),
+            ...task.implementBasis.outputs,
+          };
+          task.testViewpoints = [...task.implementBasis.testViewpoints];
+        }
       }
       // 初めて提出する前に引き継いだ PR がマージされたときは、その PR を実装の PR として記録する（続く PullRequestMerged が見る）
       const continued = task.continuedPullRequest;
@@ -4293,6 +4374,17 @@ export function applyEvent(
       break;
 
     case "TaskPaused":
+      if (task.status === "paused" && event.payload.mergedPullRequests) {
+        task.pausedReason = event.payload.reason;
+        task.pausedMessage = event.payload.message;
+        task.mergedPullRequests = event.payload.mergedPullRequests;
+        if (event.payload.unstoppedRuns?.length) {
+          task.unstoppedRuns = [
+            ...new Set([...(task.unstoppedRuns ?? []), ...event.payload.unstoppedRuns]),
+          ];
+        }
+        break;
+      }
       // PR のマージで作り直しを止めるとき、実行の費用で先に一時停止していた（予算など）なら、止めたと確かめられなかった実行を
       // 足す（PBI-276。一時停止の理由・説明はそのまま）
       if (task.status === "paused" && event.payload.unstoppedRuns?.length) {
@@ -4306,7 +4398,8 @@ export function applyEvent(
         task.status !== "queued" &&
         task.status !== "idle" &&
         task.status !== "waiting_children" &&
-        task.status !== "awaiting_approval"
+        task.status !== "awaiting_approval" &&
+        !(task.status === "escalated" && event.payload.mergedPullRequests)
       ) {
         throw new ActivityIntegrityError(event, `pause while ${task.status}`);
       }
@@ -4314,6 +4407,7 @@ export function applyEvent(
       task.status = "paused";
       // triageStop は一時停止で消さない（以前の版が一時停止させたタスクも、再開で同じ先頭のドラフトを外す。PBI-440）
       task.pausedReason = event.payload.reason;
+      task.mergedPullRequests = event.payload.mergedPullRequests;
       task.pausedMessage = event.payload.message;
       if (event.payload.reason === "needs_decision") {
         task.decisionPauses = [
@@ -4722,7 +4816,9 @@ export function applyEvent(
         clearChosenSteps(task);
       }
       task.status =
-        task.resumeTo === "waiting_children" || task.resumeTo === "awaiting_approval"
+        task.resumeTo === "waiting_children" ||
+        task.resumeTo === "awaiting_approval" ||
+        task.resumeTo === "escalated"
           ? task.resumeTo
           : event.payload.retry
             ? "queued"
@@ -4963,12 +5059,41 @@ export function project(
   return tasks;
 }
 
-/**
- * 実装の作り直しの間（実装・最終レビュー・PR の更新が走っている・待っている。一時停止中も）に、開いた（または閉じられた）実装の PR
- * （PBI-276）。人がこの PR をマージしたら、作り直しを止めて、マージを承認として進める（ReworkStoppedByMerge）。
- * 承認待ち・エスカレーション中は、ゲートの PR として見守る（gatePullRequest）ので、ここには含めない。実装より前の工程を
- * やり直している間（要求要件・設計への差し戻し）も含めない。
- */
+/** 前の工程を実行している間も見守る、開いたまたは閉じた実装 PR。 */
+export function sentBackImplementPullRequest(
+  task: Task,
+): { number: number; repo?: string; commit: string } | undefined {
+  if (
+    !["queued", "running", "idle", "paused", "awaiting_approval", "escalated"].includes(task.status)
+  )
+    return undefined;
+  const active = task.steps.findIndex((s) => s.state === "active");
+  const implement = task.steps.findIndex((s) => s.key === "implement");
+  if (active < 0 || implement < 0 || active >= implement) return undefined;
+  const pr = task.pullRequest;
+  if (
+    !pr &&
+    task.continuedPullRequest &&
+    (task.pullRequestState === undefined ||
+      task.pullRequestState === "open" ||
+      task.pullRequestState === "closed")
+  ) {
+    return {
+      number: task.continuedPullRequest.number,
+      repo: task.continuedPullRequest.repo,
+      commit: task.implementBasis?.commit ?? task.repository?.baseCommit ?? "",
+    };
+  }
+  if (!pr?.number || (task.pullRequestState !== "open" && task.pullRequestState !== "closed"))
+    return undefined;
+  return {
+    number: pr.number,
+    ...(pr.repo ? { repo: pr.repo } : {}),
+    commit: task.implementBasis?.commit ?? pr.commit,
+  };
+}
+
+/** 実装の作り直しの間に見守る実装 PR。承認待ちはゲートで見守る。 */
 export function reworkingPullRequest(
   task: Task,
 ): { number: number; repo?: string; commit: string } | undefined {

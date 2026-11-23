@@ -184,6 +184,7 @@ import {
   type StepSettingMap,
   sameAuditTarget,
   sameGitHubUrl,
+  sentBackImplementPullRequest,
   skippableSteps,
   stepAgentChangeable,
   stepDocumentPath,
@@ -1881,6 +1882,7 @@ export class TaskService {
   async checkPullRequests(): Promise<void> {
     // 実装の作り直しの間に、実装の PR がマージされたタスクは、作り直しを止めて承認として進める（PBI-276）
     await this.checkReworkMerges();
+    await this.cleanupMergedStepPullRequests();
     // 前の工程へ戻している間に、元の工程の PR がマージされたら、承認にせず PR に知らせる（PBI-462）
     await this.checkSentBackMerges();
     // 重ねた子タスクの承認待ちの PR の向き先を、依存先の PR のマージの後のブランチに付け替える（PBI-317）
@@ -2000,6 +2002,17 @@ export class TaskService {
         continue;
       }
       if (status.state === "merged") {
+        if (pr.step !== "implement" && sentBackImplementPullRequest(latest)) {
+          try {
+            if (
+              await this.checkSentBackImplementation(latest, false, { number: pr.number, status })
+            )
+              continue;
+          } catch {
+            console.warn("[daemon] 実装 PR の状態を確認できませんでした");
+            continue;
+          }
+        }
         // sacty が出したコミットと違う内容でマージされた（人が PR の中で直した・提案のコミットを積んだ）も、人がマージした
         // ＝人が承認したので、承認として進める（最終レビューはやり直さない。PBI-63）。監査のため、sacty が出したコミットと
         // 人が直した最終のコミットを両方残す。要求要件・設計は、人が直したファイルを承認済みの成果にする
@@ -2875,6 +2888,21 @@ export class TaskService {
    */
   private async checkReworkMerges(): Promise<void> {
     for (const task of [...this.tasks.values()]) {
+      if (sentBackImplementPullRequest(task)) {
+        if (
+          task.status === "idle" &&
+          this.inflight.has(task.id) &&
+          this.awaitingStepPullRequest(task)
+        )
+          continue;
+        try {
+          if (await this.checkSentBackImplementation(task, false)) continue;
+        } catch {
+          console.warn("[daemon] PR の状態を確認できませんでした");
+          continue;
+        }
+        continue;
+      }
       const reworking = this.reworkTarget(task);
       if (!reworking?.repo || this.cancelling.has(task.id)) continue;
       // PR を更新・作成している最中の要求要件・設計は止めず、記録は publishStepPullRequest に任せる（PBI-462）
@@ -2910,6 +2938,221 @@ export class TaskService {
     }
   }
 
+  private async checkSentBackImplementation(
+    task: Task,
+    publishing: boolean,
+    observed?: { number: number; status: PullRequestStatus },
+  ): Promise<boolean> {
+    const implement = sentBackImplementPullRequest(task);
+    if (!implement) return false;
+    if (!implement.repo || this.cancelling.has(task.id)) return true;
+    const gate = gatePullRequest(task);
+    const step =
+      reworkingStepPullRequest(task) ??
+      (gate && gate.step !== "implement" ? gate : undefined) ??
+      task.stepPullRequests.find(
+        (p) => p.number === task.sentBackFrom?.number && p.state === "open" && !p.superseded,
+      );
+    const secrets: string[] = [];
+    const token = await this.githubToken(task, implement.repo, secrets);
+    const implementationStatus = await this.deps.pulls.status({
+      repo: implement.repo,
+      token,
+      number: implement.number,
+    });
+    const stepStatus = step?.repo
+      ? observed?.number === step.number
+        ? observed.status
+        : await this.deps.pulls.status({
+            repo: step.repo,
+            token: await this.githubToken(task, step.repo, secrets),
+            number: step.number,
+          })
+      : undefined;
+    const latest = this.tasks.get(task.id);
+    if (
+      !latest ||
+      sentBackImplementPullRequest(latest)?.number !== implement.number ||
+      latest.updatedAt !== task.updatedAt ||
+      this.cancelling.has(task.id)
+    )
+      return true;
+    if (implementationStatus.state === "merged" && step && stepStatus?.state === "merged") {
+      const pair = [step.number, implement.number];
+      const same =
+        latest.mergedPullRequests?.length === 2 &&
+        pair.every((n) => latest.mergedPullRequests?.includes(n));
+      if (!same || latest.status === "paused") {
+        if (!same) {
+          if (latest.status === "running") {
+            if (this.pauseRequested.has(task.id)) return true;
+            const inflight = this.inflight.get(task.id);
+            if (!inflight) return true;
+            this.mergeStopping.add(task.id);
+            this.pauseRequested.add(task.id);
+            try {
+              this.stopRuns(inflight.runIds);
+              await inflight.done.catch(() => {});
+              const unstopped = await this.unstopped([...inflight.runIds]);
+              if (unstopped.length > 0) {
+                const current = this.tasks.get(task.id);
+                if (current && (current.status === "idle" || current.status === "queued"))
+                  this.append(current, [
+                    {
+                      actor: "sacty",
+                      event: {
+                        type: "TaskPaused",
+                        payload: {
+                          reason: "error",
+                          message: message("pr.bothMerged", {
+                            step: step.number,
+                            implement: implement.number,
+                          }),
+                          mergedPullRequests: pair,
+                          unstoppedRuns: unstopped,
+                        },
+                      },
+                    },
+                  ]);
+                return true;
+              }
+            } finally {
+              this.pauseRequested.delete(task.id);
+              this.mergeStopping.delete(task.id);
+            }
+          }
+          const current = this.tasks.get(task.id);
+          const currentGate = current ? gatePullRequest(current) : undefined;
+          const currentStep =
+            current &&
+            (reworkingStepPullRequest(current) ??
+              (currentGate?.step !== "implement" ? currentGate : undefined) ??
+              current.stepPullRequests.find(
+                (p) =>
+                  p.number === current.sentBackFrom?.number && p.state === "open" && !p.superseded,
+              ));
+          if (
+            current &&
+            current.status !== "running" &&
+            !this.cancelling.has(task.id) &&
+            sentBackImplementPullRequest(current)?.number === implement.number &&
+            currentStep?.number === step.number
+          )
+            this.append(current, [
+              {
+                actor: "sacty",
+                event: {
+                  type: "TaskPaused",
+                  payload: {
+                    reason: "error",
+                    message: message("pr.bothMerged", {
+                      step: step.number,
+                      implement: implement.number,
+                    }),
+                    mergedPullRequests: pair,
+                  },
+                },
+              },
+            ]);
+        }
+        return true;
+      }
+    }
+    if (implementationStatus.state === "merged") {
+      if (publishing)
+        this.endReworkByMerge(task.id, implement.number, implementationStatus, { stoppedRuns: [] });
+      else await this.stopReworkForMerge(task.id, implement, implementationStatus);
+      return true;
+    }
+    const rework = reworkingStepPullRequest(latest);
+    if (rework && step?.number === rework.number && stepStatus?.state === "merged") {
+      if (publishing) {
+        if ((await this.endStepReworkInPublish(task.id, rework, stepStatus, secrets)) === "retry")
+          throw new MessageError(message("pr.mergedDocumentUnreadable"));
+        return true;
+      }
+      let document: PullRequestMerge["document"];
+      if (stepStatus.headSha !== rework.commit) {
+        const read = await this.readMergedDocument(
+          latest,
+          rework.number,
+          stepStatus.mergeCommit ?? stepStatus.headSha,
+          secrets,
+        );
+        if (read === "retry") return true;
+        document = read;
+      }
+      await this.stopReworkForMerge(
+        task.id,
+        { step: rework.step, number: rework.number, repo: rework.repo, commit: rework.commit },
+        stepStatus,
+        document,
+      );
+      return true;
+    }
+    if (
+      (implementationStatus.state === "closed" && latest.pullRequestState !== "closed") ||
+      (implementationStatus.state === "open" && latest.pullRequestState === "closed")
+    ) {
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type:
+              implementationStatus.state === "closed" ? "PullRequestClosed" : "PullRequestReopened",
+            payload: { number: implement.number },
+          },
+        },
+      ]);
+    }
+    return false;
+  }
+
+  private async cleanupMergedStepPullRequests(): Promise<void> {
+    for (const task of [...this.tasks.values()]) {
+      if (
+        task.pullRequestState !== "merged" ||
+        task.status === "cancelled" ||
+        this.cancelling.has(task.id)
+      )
+        continue;
+      for (const pr of openStepPullRequests(task)) {
+        const secrets: string[] = [];
+        try {
+          const token = await this.githubToken(task, pr.repo, secrets);
+          const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+          if (status.state === "open")
+            await this.deps.pulls.close({ repo: pr.repo, token, number: pr.number });
+          const latest = this.tasks.get(task.id);
+          if (
+            latest &&
+            latest.status !== "cancelled" &&
+            !this.cancelling.has(task.id) &&
+            latest.pullRequestState === "merged" &&
+            openStepPullRequests(latest).some((p) => p.number === pr.number)
+          ) {
+            this.append(latest, [
+              {
+                actor: "sacty",
+                event: {
+                  type: "PullRequestClosed",
+                  payload: {
+                    number: pr.number,
+                    ...(status.state === "merged" ? { merged: true } : {}),
+                  },
+                },
+              },
+            ]);
+          }
+        } catch (error) {
+          console.warn(
+            `[daemon] 工程 PR の片付けに失敗しました：${renderMessage(redactText(errorText(error), secrets), "ja")}`,
+          );
+        }
+      }
+    }
+  }
+
   /**
    * 実装の作り直しの間に実装の PR がマージされたので、作り直しを止めて、マージを承認として進める（PBI-276）。
    * 実行中ならコンテナを止めて終わりを待ち、止めたコンテナが無くなったことを確かめてから、作業履歴に残す。
@@ -2926,7 +3169,7 @@ export class TaskService {
   ): Promise<void> {
     const same = () => {
       const task = this.tasks.get(taskId);
-      const now = task ? this.reworkTarget(task) : undefined;
+      const now = task ? this.reworkTarget(task, reworking.number) : undefined;
       return task && now?.number === reworking.number && !this.cancelling.has(taskId)
         ? task
         : undefined;
@@ -3012,16 +3255,22 @@ export class TaskService {
     },
   ): boolean {
     const latest = this.tasks.get(taskId);
-    const reworking = latest ? this.reworkTarget(latest) : undefined;
+    const reworking = latest ? this.reworkTarget(latest, number) : undefined;
     if (!latest || !reworking || reworking.number !== number || latest.status === "running") {
       return false;
     }
     if (this.cancelling.has(taskId)) return false;
     const stepRework = reworking.step;
     const decision =
-      !stepRework && latest.status === "paused" && latest.pausedReason === "needs_decision";
+      !stepRework &&
+      !sentBackImplementPullRequest(latest) &&
+      latest.status === "paused" &&
+      latest.pausedReason === "needs_decision";
+    const sentBackStep = sentBackImplementPullRequest(latest) ? activeStep(latest) : undefined;
     const discardedRemarks = (
-      stepRework ? unreflectedStepRemarks(latest, stepRework) : unreflectedImplementRemarks(latest)
+      stepRework || sentBackStep
+        ? unreflectedStepRemarks(latest, (stepRework ?? sentBackStep) as StepKey)
+        : unreflectedImplementRemarks(latest)
     ).map((r) => ({ id: r.id, text: r.text }));
     const discarded = decision
       ? (latest.decisionPauses?.findLast((p) => !p.decided)?.findings.length ?? 0)
@@ -3105,7 +3354,10 @@ export class TaskService {
   }
 
   /** 直しの間にマージを承認にする対象の PR（実装の作り直しか、要求要件・設計の自動の直し。PBI-462）。 */
-  private reworkTarget(task: Task):
+  private reworkTarget(
+    task: Task,
+    number?: number,
+  ):
     | {
         step?: StepPullRequestKey;
         number: number;
@@ -3113,16 +3365,17 @@ export class TaskService {
         commit: string;
       }
     | undefined {
-    const implement = reworkingPullRequest(task);
-    if (implement) return implement;
     const step = reworkingStepPullRequest(task);
-    return step
-      ? {
-          step: step.step,
-          number: step.number,
-          repo: step.repo,
-          commit: step.commit,
-        }
+    if (step && (number === undefined || number === step.number))
+      return {
+        step: step.step,
+        number: step.number,
+        repo: step.repo,
+        commit: step.commit,
+      };
+    const implement = reworkingPullRequest(task) ?? sentBackImplementPullRequest(task);
+    return implement && (number === undefined || number === implement.number)
+      ? implement
       : undefined;
   }
 
@@ -3133,6 +3386,7 @@ export class TaskService {
   private stepPublishing(task: Task, reworking: { step?: StepPullRequestKey }): boolean {
     return (
       reworking.step !== undefined &&
+      this.inflight.has(task.id) &&
       task.status === "idle" &&
       this.awaitingStepPullRequest(task) === reworking.step
     );
@@ -11685,6 +11939,7 @@ export class TaskService {
               // 作り直しを止めるとき（PBI-276）、停止を確かめてから承認へ進むため
               ...(step === "operation" ||
               reworkingPullRequest(task) ||
+              sentBackImplementPullRequest(task) ||
               reworkingStepPullRequest(task)
                 ? this.unstoppedPayload([task.currentRunId])
                 : {}),
@@ -14442,6 +14697,10 @@ export class TaskService {
           },
         },
       };
+      if (this.mergeStopping.has(task.id) && sentBackImplementPullRequest(this.mustGet(task.id))) {
+        this.append(task, [failed]);
+        return;
+      }
       // 未完了の続きで、AI がセッションの再開を受け付けなかった（何も使わずに失敗した）ときは、タスクを止めず、エージェントも
       // 変えない（PBI-350）。失敗を記録して実行待ちに戻すので、次の実行は、新しいセッションで、指示の全文から実行し直す
       // （失敗の記録が後にあるので、続きにはしない）。人間が止めた・中止したときは、今までどおり止める
@@ -15723,6 +15982,12 @@ export class TaskService {
         },
       ]);
     };
+    try {
+      if (await this.checkSentBackImplementation(task, true)) return;
+    } catch {
+      fail(message("pr.failed", { detail: "PR の状態を確認できません" }));
+      return;
+    }
     const repo = this.taskRepo(task);
     if (!repo) {
       fail(
@@ -15732,15 +15997,31 @@ export class TaskService {
       );
       return;
     }
+    const handledAfterFailure = async () => {
+      try {
+        const latest = this.tasks.get(task.id);
+        return latest ? await this.checkSentBackImplementation(latest, true) : false;
+      } catch {
+        return false;
+      }
+    };
     // 退避した git のメタデータが無ければ、同じ起点で用意し直す
-    const ready = await this.prepareRepository(task, loaded.config);
+    let ready: Awaited<ReturnType<TaskService["prepareRepository"]>>;
+    try {
+      ready = await this.prepareRepository(task, loaded.config);
+    } catch (error) {
+      if (await handledAfterFailure()) return;
+      throw error;
+    }
     if (!ready.ok) {
+      if (await handledAfterFailure()) return;
       fail(message("pr.failed", { detail: ready.message }));
       return;
     }
     let current = this.mustGet(task.id);
     const repository = current.repository;
     if (!repository) {
+      if (await handledAfterFailure()) return;
       fail(message("pr.workspaceMissing"));
       return;
     }
@@ -15803,6 +16084,11 @@ export class TaskService {
         } else if (status.state === "closed") {
           superseded = last.number;
         } else if (status.state === "merged") {
+          if (
+            sentBackImplementPullRequest(current) &&
+            (await this.checkSentBackImplementation(current, true, { number: last.number, status }))
+          )
+            return;
           if (reworkLast) {
             // 直しの間にマージされた：直しの結果は使わず、マージを承認として進める。新しいブランチ・PR は作らない
             if (
@@ -15930,6 +16216,14 @@ export class TaskService {
           });
           if (reread.state === "merged") {
             if (
+              sentBackImplementPullRequest(current) &&
+              (await this.checkSentBackImplementation(current, true, {
+                number: last.number,
+                status: reread,
+              }))
+            )
+              return;
+            if (
               (await this.endStepReworkInPublish(task.id, reworkLast, reread, usedSecrets)) ===
               "retry"
             ) {
@@ -15998,6 +16292,15 @@ export class TaskService {
           token,
           number: reuse.number,
         });
+        if (
+          reread.state === "merged" &&
+          sentBackImplementPullRequest(current) &&
+          (await this.checkSentBackImplementation(current, true, {
+            number: reuse.number,
+            status: reread,
+          }))
+        )
+          return;
         if (reread.state === "merged" && reread.headSha !== commit) {
           if (
             (await this.endStepReworkInPublish(task.id, reworkLast, reread, usedSecrets)) ===
@@ -16066,6 +16369,7 @@ export class TaskService {
     } catch (error) {
       // push のやり直しを待つ間に、一時停止・中止・デーモンの停止を求められた：何も記録せずに終える（PBI-467）
       if (error instanceof RetryAbandoned) return;
+      if (await handledAfterFailure()) return;
       fail(message("pr.failed", { detail: errorText(error) }));
     }
   }
@@ -19410,10 +19714,19 @@ export class TaskService {
       },
       {
         target: "pull_request",
-        present: Boolean(task.pullRequest?.number) || openStepPullRequests(task).length > 0,
+        present:
+          Boolean(
+            task.pullRequest?.number &&
+              task.pullRequestState === "open" &&
+              !task.continuedPullRequest,
+          ) || openStepPullRequests(task).length > 0,
         detail:
           [
-            task.pullRequest?.number ? task.pullRequest.url : undefined,
+            task.pullRequest?.number &&
+            task.pullRequestState === "open" &&
+            !task.continuedPullRequest
+              ? task.pullRequest.url
+              : undefined,
             ...openStepPullRequests(task).map((p) => p.url),
           ]
             .filter(Boolean)
@@ -19535,7 +19848,7 @@ export class TaskService {
       // 作ったときに記録したリポジトリに対してだけ閉じる（いまの設定のリポジトリは使わない）
       // マージした実装の PR（マージの後の監視の工程の間に中止した。PBI-116）は、閉じられないので触れない
       // 引き継いだ既存の PR（人が作った PR）は閉じない。sacty が積んだコミットも PR に残る
-      if (pr?.number && latest.pullRequestState !== "merged" && !latest.continuedPullRequest) {
+      if (pr?.number && latest.pullRequestState === "open" && !latest.continuedPullRequest) {
         const usedSecrets: string[] = [];
         try {
           if (!pr.repo) {
@@ -19543,16 +19856,21 @@ export class TaskService {
           }
           // PR を作ったときと同じく、プロジェクトの gh のアカウントで閉じる
           const token = await this.githubToken(latest, pr.repo, usedSecrets);
-          await this.deps.pulls.close({
-            repo: pr.repo,
-            token,
-            number: pr.number,
-          });
-          cleanup.push({
-            target: "pull_request",
-            result: "done",
-            detail: pr.url,
-          });
+          const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+          if (status.state !== "open") {
+            cleanup.push({ target: "pull_request", result: "skipped", detail: pr.url });
+          } else {
+            await this.deps.pulls.close({
+              repo: pr.repo,
+              token,
+              number: pr.number,
+            });
+            cleanup.push({
+              target: "pull_request",
+              result: "done",
+              detail: pr.url,
+            });
+          }
         } catch (error) {
           cleanup.push({
             target: "pull_request",

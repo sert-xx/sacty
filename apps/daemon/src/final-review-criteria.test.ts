@@ -213,3 +213,39 @@ describe("実装・直しの指示に、指示を作った時刻を入れる（P
     },
   );
 });
+
+describe("実装・直しの整形の範囲（PBI-493）", () => {
+  it.each([
+    ["整形の対象", "整形は自分が変えたファイルだけに実行し、リポジトリ全体には実行しない"],
+    ["変更したファイル内の整形", "依頼で変えたファイル内はリポジトリの整形結果に従ってよい"],
+    [
+      "不要な整形の除外と復元",
+      "依頼で変えていないファイルの整形だけの変更は提出に含めず、含めてしまったら戻す",
+    ],
+  ])("各実装の枝とレビュー対応で%sを指示する", (_name, expected) => {
+    const bug = task({
+      plan: "bug-fix",
+      steps: [
+        { key: "reproduce", status: "approved" },
+        { key: "implement", status: "running" },
+      ] as unknown as Task["steps"],
+      reproductionTests: ["repro.test.ts › 再現"],
+    } as Partial<Task>);
+    const remarks = [
+      { id: "r1", step: "implement", text: "直す", source: "human", submission: 1 },
+    ] as unknown as Task["remarks"];
+    const cases = [
+      [designed(), {}],
+      [designed({ noTestsReason: "無い", testCommand: undefined }), {}],
+      [direct(), {}],
+      [direct({ noTestsReason: "無い", testCommand: undefined }), {}],
+      [bug, {}],
+      [designed({ remarks }), { pullRequestReview: true }],
+      [designed({ documentsOnly: true }), {}],
+    ] as const;
+    for (const [t, options] of cases) {
+      const prompt = buildPrompt(t, "implement", options);
+      expect(prompt).toContain(expected);
+    }
+  });
+});
