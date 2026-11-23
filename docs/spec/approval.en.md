@@ -318,7 +318,7 @@ If a person merges the implementation PR while the implementation or an earlier 
   - Known limitation: if both the step PR and implementation PR appear merged in the same check, the task pauses without deciding inclusion. Resuming approves only the implementation PR, not the step PR.
     If an older record has no repository for the implementation PR, the two PRs cannot be checked together, so publishing and approving the step PR are held.
   - A step PR left after the implementation merge is retried on every check until closed. If already merged, it is recorded with `PullRequestClosed` and `merged: true` without approval or a close call.
-  - A ledger recording a merge after a send-back cannot be projected by the earlier daemon version, so that version cannot be restored.
+  - A ledger that records, while an earlier step is running, a merge, a closed or reopened state of the implementation PR, a pause for both PRs merged (`mergedPullRequests`, including when recorded on a task already paused or escalated), or a cleanup `PullRequestClosed` cannot be projected by the earlier daemon version, so that version cannot be restored.
 
 - Check: the PR status is read (with the project's gh account; if it cannot be read, the next check tries again). When it is merged, the following is done. While sent back to an earlier step, closed and reopened states are recorded too.
   1. If something is running, its containers are stopped and the task waits for it to end (the same as pause and cancel; the stopped run is not recorded as a person's pause). If it cannot be confirmed that the stopped containers are gone, the task is paused and does not move on (the next check confirms again).

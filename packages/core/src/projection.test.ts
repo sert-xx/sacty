@@ -277,6 +277,24 @@ describe("project", () => {
     expect(task?.pausedReason).toBeUndefined();
   });
 
+  it("予算で止まっている間に両 PR のマージを記録しても、一時停止の理由は予算のまま残る", () => {
+    seq = 0;
+    const task = project([
+      created("t1"),
+      steps("t1"),
+      started("t1", "r1"),
+      completed("t1", "r1", 1.02),
+      ev("t1", { type: "TaskPaused", payload: { reason: "budget" } }),
+      ev("t1", {
+        type: "TaskPaused",
+        payload: { reason: "error", message: "both", mergedPullRequests: [10, 9] },
+      }),
+    ]).get("t1");
+    expect(task?.status).toBe("paused");
+    expect(task?.pausedReason).toBe("budget");
+    expect(task?.mergedPullRequests).toEqual([10, 9]);
+  });
+
   it("工程の組み合わせの予算（StepsChosen の budgetCapUsd）で上限を変え、80% の通知をし直す", () => {
     seq = 0;
     const tasks = project([

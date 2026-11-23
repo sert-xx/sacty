@@ -4375,8 +4375,11 @@ export function applyEvent(
 
     case "TaskPaused":
       if (task.status === "paused" && event.payload.mergedPullRequests) {
-        task.pausedReason = event.payload.reason;
-        task.pausedMessage = event.payload.message;
+        // 予算の上限で先に止まっていたら、理由と文言は予算のまま残す（再開で上限の引き上げを求めるため）
+        if (task.pausedReason !== "budget") {
+          task.pausedReason = event.payload.reason;
+          task.pausedMessage = event.payload.message;
+        }
         task.mergedPullRequests = event.payload.mergedPullRequests;
         if (event.payload.unstoppedRuns?.length) {
           task.unstoppedRuns = [

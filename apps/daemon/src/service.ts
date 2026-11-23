@@ -1434,6 +1434,9 @@ async function inParallel<T>(
  */
 export const DRAFT_SETTLE_FACTOR = 10;
 
+/** 前の工程にいる間の実装の PR の確認・工程の PR の片付けで、GitHub の応答を待つ上限（PBI-494）。定期確認を止めない。 */
+const PR_WATCH_TIMEOUT_MS = 30_000;
+
 /** 答えが ms のうちに返らなければ、時間切れの失敗にする（PBI-331）。時間切れの後に届いた失敗は知らせない。 */
 async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
   promise.catch(() => {});
@@ -2946,29 +2949,37 @@ export class TaskService {
     const implement = sentBackImplementPullRequest(task);
     if (!implement) return false;
     if (!implement.repo || this.cancelling.has(task.id)) return true;
-    const gate = gatePullRequest(task);
-    const step =
-      reworkingStepPullRequest(task) ??
-      (gate && gate.step !== "implement" ? gate : undefined) ??
-      task.stepPullRequests.find(
-        (p) => p.number === task.sentBackFrom?.number && p.state === "open" && !p.superseded,
-      );
     const secrets: string[] = [];
     const token = await this.githubToken(task, implement.repo, secrets);
-    const implementationStatus = await this.deps.pulls.status({
-      repo: implement.repo,
-      token,
-      number: implement.number,
-    });
-    const stepStatus = step?.repo
-      ? observed?.number === step.number
-        ? observed.status
-        : await this.deps.pulls.status({
-            repo: step.repo,
-            token: await this.githubToken(task, step.repo, secrets),
-            number: step.number,
-          })
-      : undefined;
+    const implementationStatus = await withDeadline(
+      this.deps.pulls.status({
+        repo: implement.repo,
+        token,
+        number: implement.number,
+      }),
+      PR_WATCH_TIMEOUT_MS,
+    );
+    // 見守る工程の PR は、1件に絞らず、すべて読む（どれかが実装の PR とともにマージ済みなら、人の判断に任せる）
+    const stepStatuses: { pr: { number: number; repo: string }; status: PullRequestStatus }[] = [];
+    for (const pr of this.watchedStepPullRequests(task)) {
+      stepStatuses.push({
+        pr,
+        status:
+          observed?.number === pr.number
+            ? observed.status
+            : await withDeadline(
+                this.deps.pulls.status({
+                  repo: pr.repo,
+                  token: await this.githubToken(task, pr.repo, secrets),
+                  number: pr.number,
+                }),
+                PR_WATCH_TIMEOUT_MS,
+              ),
+      });
+    }
+    const mergedStep = stepStatuses.find((x) => x.status.state === "merged");
+    const step = mergedStep?.pr;
+    const stepStatus = mergedStep?.status;
     const latest = this.tasks.get(task.id);
     if (
       !latest ||
@@ -2996,7 +3007,12 @@ export class TaskService {
               const unstopped = await this.unstopped([...inflight.runIds]);
               if (unstopped.length > 0) {
                 const current = this.tasks.get(task.id);
-                if (current && (current.status === "idle" || current.status === "queued"))
+                if (
+                  current &&
+                  (current.status === "idle" ||
+                    current.status === "queued" ||
+                    current.status === "paused")
+                )
                   this.append(current, [
                     {
                       actor: "sacty",
@@ -3022,15 +3038,9 @@ export class TaskService {
             }
           }
           const current = this.tasks.get(task.id);
-          const currentGate = current ? gatePullRequest(current) : undefined;
-          const currentStep =
-            current &&
-            (reworkingStepPullRequest(current) ??
-              (currentGate?.step !== "implement" ? currentGate : undefined) ??
-              current.stepPullRequests.find(
-                (p) =>
-                  p.number === current.sentBackFrom?.number && p.state === "open" && !p.superseded,
-              ));
+          const currentStep = current
+            ? this.watchedStepPullRequests(current).find((p) => p.number === step.number)
+            : undefined;
           if (
             current &&
             current.status !== "running" &&
@@ -3065,7 +3075,11 @@ export class TaskService {
       return true;
     }
     const rework = reworkingStepPullRequest(latest);
-    if (rework && step?.number === rework.number && stepStatus?.state === "merged") {
+    const reworkStatus = rework
+      ? stepStatuses.find((x) => x.pr.number === rework.number)?.status
+      : undefined;
+    if (rework && reworkStatus?.state === "merged") {
+      const stepStatus = reworkStatus;
       if (publishing) {
         if ((await this.endStepReworkInPublish(task.id, rework, stepStatus, secrets)) === "retry")
           throw new MessageError(message("pr.mergedDocumentUnreadable"));
@@ -3108,6 +3122,26 @@ export class TaskService {
     return false;
   }
 
+  /** 前の工程にいる間にマージを見守る、工程の PR（直している PR・承認待ちの PR・差し戻した元の PR）。重ねずにすべて返す。 */
+  private watchedStepPullRequests(task: Task): { number: number; repo: string }[] {
+    const gate = gatePullRequest(task);
+    const list = [
+      reworkingStepPullRequest(task),
+      gate && gate.step !== "implement" ? gate : undefined,
+      task.stepPullRequests.find(
+        (p) => p.number === task.sentBackFrom?.number && p.state === "open" && !p.superseded,
+      ),
+    ];
+    const seen = new Set<number>();
+    const out: { number: number; repo: string }[] = [];
+    for (const p of list) {
+      if (!p?.repo || seen.has(p.number)) continue;
+      seen.add(p.number);
+      out.push({ number: p.number, repo: p.repo });
+    }
+    return out;
+  }
+
   private async cleanupMergedStepPullRequests(): Promise<void> {
     for (const task of [...this.tasks.values()]) {
       if (
@@ -3120,9 +3154,15 @@ export class TaskService {
         const secrets: string[] = [];
         try {
           const token = await this.githubToken(task, pr.repo, secrets);
-          const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+          const status = await withDeadline(
+            this.deps.pulls.status({ repo: pr.repo, token, number: pr.number }),
+            PR_WATCH_TIMEOUT_MS,
+          );
           if (status.state === "open")
-            await this.deps.pulls.close({ repo: pr.repo, token, number: pr.number });
+            await withDeadline(
+              this.deps.pulls.close({ repo: pr.repo, token, number: pr.number }),
+              PR_WATCH_TIMEOUT_MS,
+            );
           const latest = this.tasks.get(task.id);
           if (
             latest &&
@@ -19856,15 +19896,21 @@ export class TaskService {
           }
           // PR を作ったときと同じく、プロジェクトの gh のアカウントで閉じる
           const token = await this.githubToken(latest, pr.repo, usedSecrets);
-          const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+          const status = await withDeadline(
+            this.deps.pulls.status({ repo: pr.repo, token, number: pr.number }),
+            PR_WATCH_TIMEOUT_MS,
+          );
           if (status.state !== "open") {
             cleanup.push({ target: "pull_request", result: "skipped", detail: pr.url });
           } else {
-            await this.deps.pulls.close({
-              repo: pr.repo,
-              token,
-              number: pr.number,
-            });
+            await withDeadline(
+              this.deps.pulls.close({
+                repo: pr.repo,
+                token,
+                number: pr.number,
+              }),
+              PR_WATCH_TIMEOUT_MS,
+            );
             cleanup.push({
               target: "pull_request",
               result: "done",

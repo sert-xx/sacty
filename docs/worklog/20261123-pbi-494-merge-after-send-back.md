@@ -29,8 +29,8 @@ PR #590 では 2026-11-22 21:53:27 UTC に指摘を設計へ戻し、同日 21:5
 | --- | --- |
 | `npm run lint` | 成功 |
 | `npm run typecheck` | 成功 |
-| `npx vitest run tests/docs` | 99 件成功 |
-| `npx vitest run --no-file-parallelism` | 7,162 件成功、14 件スキップ |
+| `npx vitest run tests/docs` | 全件の実行に含まれ成功 |
+| `npx vitest run --no-file-parallelism` | 7,165 件成功、14 件スキップ |
 | `npm run build` | 成功 |
 
 スキップの内訳は、この環境の Git が `merge-tree --merge-base` に対応しないための 13 件と、実 AI を使う評価を通常は実行しない 1 件。
