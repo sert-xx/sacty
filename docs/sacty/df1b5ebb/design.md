@@ -18,6 +18,7 @@ sacty が作る共通のネットワークと、`sacty-svc-` の compose プロ�
   - ラベルの無い、いまより前のネットワーク・ボリュームの回収
   - 持ち主の判定の強化（別のマシンとの docker の共有、`/proc` の `hidepid`、旧版と新版の sacty の共存）。今のコンテナの片付けと同じ前提・制約として、ADR と仕様に書く
   - コンテナのプロジェクトの `down` の判定、`stop`・`stopGroup` の期限、イメージの回収
+  - 持ち主を読めないときの、サービス（コンテナ）の `labels` に入力の compose が書いた `io.sacty.owner` の扱い（今のまま）
 
 ## 確認したいこと
 
@@ -35,10 +36,11 @@ sacty が作る共通のネットワークと、`sacty-svc-` の compose プロ�
 
 | 場所 | 変更 |
 | --- | --- |
+| `services.ts` `sanitizeCompose` | トップレベルの `volumes` の `labels`（配列・マップとも）から、入力の compose が書いた `io.sacty.owner` を除く。持ち主を読めないときも、ボリュームは印の無いまま起動し、回収されない |
 | `services.ts` `labelOwner` | サービスに加え、トップレベルの `volumes` の `labels` に `io.sacty.owner` を付ける（compose の値は上書き） |
 | `services.ts` `startGroup` | 持ち主を `network create` の前に読み、`docker network create --label io.sacty.owner=<pid> <started> <名前>` で作る。読めなければ、いまと同じくラベルを付けずに起動する |
 | `services.ts` `cleanupAll` | `compose ls`・`down` に期限を付け、その後にネットワーク、ボリュームの順に回収する。プロセスの表は、プロジェクトの判定用と、ネットワーク・ボリュームの判定用に 1 回ずつ読む。例外で reject しない |
-| `docs/spec/services.md`・`.en.md` | 「起動と停止」の 4（ラベルの対象に共通のネットワーク・名前付きボリューム）と、起動時の片付けの箇条（ネットワーク・ボリュームの回収、ラベルの無いものは残す、期限、失敗のログ、既存と同じ前提・制約） |
+| `docs/spec/services.md`・`.en.md` | 「起動と停止」の 4（ラベルの対象に共通のネットワーク・名前付きボリューム、入力のボリュームの `io.sacty.owner` は使わない）と、起動時の片付けの箇条（ネットワーク・ボリュームの回収、ラベルの無いものは残す、期限、失敗のログ、既存と同じ前提・制約） |
 | `docs/adr/<UTC>-shared-network-volume-owner.md` | ラベルを付けて回収する決定、ラベルの無いものを残す理由（sacty が作ったか確かめられない）、匿名のボリュームが残りうること、既存と同じ前提・制約（別のマシン・`hidepid`・新旧の共存） |
 | `docs/worklog/<UTC>-pbi-498-<スラッグ>.md` | コマンドと結果。実際の docker での確かめは、依頼者がマージの前にホストで行って足す |
 
@@ -64,9 +66,9 @@ sacty が作る共通のネットワークと、`sacty-svc-` の compose プロ�
 - [TV-2] compose の名前付きボリュームに持ち主のラベルを付け、external のネットワークは変えない
   - 入力：トップレベルの名前付きボリューム2つ（1つは compose 側で io.sacty.owner=1 T9 を書いたもの）と external: true の共通のネットワークを持つ compose を、labelOwner（PID 50・T0）に通す
   - 期待結果：2つのボリュームの labels の io.sacty.owner がどちらも `50 T0` になり、external のネットワークには labels が無い
-- [TV-3] 持ち主を読めないときは、いまと同じくラベルを付けずに起動する
-  - 入力：deps.owner を渡さず、table が自分の行を含まない状態で startGroup を呼ぶ
-  - 期待結果：network create の引数に `--label` が無く、compose の up に渡した設定のボリュームに io.sacty.owner が無く、起動は ok: true で返る
+- [TV-3] 持ち主を読めないときは、ラベルを付けず、入力の compose のボリュームの持ち主のラベルも除いて起動する
+  - 入力：deps.owner を渡さず、table が自分の行を含まない状態で、トップレベルの名前付きボリューム2つ（labels をマップで io.sacty.owner=1 T9 と書いたもの、配列で `io.sacty.owner=1 T9` と `keep=1` を書いたもの）を持つ compose で startGroup を呼ぶ
+  - 期待結果：network create の引数に `--label` が無く、compose の up に渡した設定のどちらのボリュームにも io.sacty.owner が無く `keep=1` は残り、起動は ok: true で返り、sanitizeCompose の除去を外すとこのテストが落ちる
 - [TV-4] 持ち主の終わったネットワーク・ボリュームを消す
   - 入力：network ls・volume ls が、持ち主が終わった PID のもの・PID が再利用されたもの（開始時刻が違う）を1つずつ返し（ボリュームのプロジェクトは sacty-svc-…）、table はどれも動いていない
   - 期待結果：その全部に network rm・volume rm が呼ばれ、network rm がどの volume rm よりも前にあり、cleanupAll のネットワーク・ボリュームの回収を外すとこのテストが落ちる
@@ -93,7 +95,7 @@ sacty が作る共通のネットワークと、`sacty-svc-` の compose プロ�
   - 期待結果：起動し直した後の docker network ls・docker volume ls に、その実行の共通のネットワークと名前付きボリュームが無く、その手順と実際の結果（コマンドの出力）が作業履歴に書かれている
 - [TV-12] 仕様（日英）に印と回収の振る舞いと前提・制約が書かれている
   - 入力：docs/spec/services.md と services.en.md の「起動と停止」
-  - 期待結果：日英とも、io.sacty.owner をサービス・共通のネットワーク・名前付きボリュームに付けること、起動時に持ち主の終わったネットワーク・ボリュームを消すこと、ラベルの無いもの・持ち主が動いているもの・ps や一覧を読めないときは消さないこと、各呼び出しの期限と失敗のログ、別のマシンとの共有・hidepid・新旧の共存はコンテナの片付けと同じく守れないことが書かれ、英語の版のコードの参照が `Code:` で始まる
+  - 期待結果：日英とも、io.sacty.owner をサービス・共通のネットワーク・名前付きボリュームに付けること、入力の compose がボリュームに書いた io.sacty.owner は使わないこと、起動時に持ち主の終わったネットワーク・ボリュームを消すこと、ラベルの無いもの・持ち主が動いているもの・ps や一覧を読めないときは消さないこと、各呼び出しの期限と失敗のログ、別のマシンとの共有・hidepid・新旧の共存はコンテナの片付けと同じく守れないことが書かれ、英語の版のコードの参照が `Code:` で始まる
 - [TV-13] ADR に、回収の決定と、残すものの理由と、既存と同じ前提・制約が書かれている
   - 入力：新しく足した docs/adr/ の ADR
   - 期待結果：共通のネットワークと名前付きボリュームに持ち主のラベルを付けて起動時に回収する決定、ラベルの無いものは sacty が作ったか確かめられないので残す理由、匿名のボリュームは対象外で残りうること、別のマシンとの共有・hidepid・新旧の共存は既存のコンテナの片付けと同じ前提・制約であることが日本語で書かれ、古い ADR の本文は変わっていない
