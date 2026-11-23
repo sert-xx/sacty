@@ -10,7 +10,7 @@
 
 - 対象
   - 前の工程へ戻している間の実装の PR の見守り（PR の確認・工程の PR の作成の前後）と、マージ・閉じた・開き直した記録の投影
-  - 工程の PR と実装の PR が同じ確認でどちらもマージ済みのときの一時停止
+  - 工程の PR と実装の PR が同じ確認でどちらもマージ済みのときの一時停止（PR の確認と工程の PR の公開で同じ判定を使う）
   - マージの後に残った、やり直しの間の工程の PR の片付け（閉じるまで繰り返す。後で main へマージされたものは merged と記録する）
   - 取り消しの閉じる対象（画面の `cleanupPlan`・中止の片付け・MCP の `cancelTargets`）
   - 再現のテスト、仕様書（日英）、利用者の文書（日英）、ADR、作業履歴（原因）
@@ -61,10 +61,10 @@ should
 | 同上 `PullRequestMerged`・`PullRequestClosed`・`PullRequestReopened` | ゲートの PR に加えて、上の PR も受け付け、`pullRequestState` を `merged`・`closed`・`open` にする（`Closed`・`Reopened` では工程と状態は変えない。`pullRequest` の無い引き継いだ PR も、同じ `pullRequestState` に残す）。`PullRequestClosed` は、実装の PR がマージ済みのタスクの開いた工程の PR も受け付け、置き換え済みにする。任意の欄 `merged: true` があれば工程の PR の state を `merged`、無ければ `closed` にし、どちらも承認にしない |
 | 同上 `TaskPaused` | 任意の欄 `mergedPullRequests` を `Task` に残し、`TaskResumed` の後もその番号の組に限って残す（Q-5 の再開の扱いに使う） |
 | `packages/core/src/events.ts` | `PullRequestClosed` に任意の `merged`、`TaskPaused` に任意の `mergedPullRequests` を足す（前の版は欄を読み飛ばすので読める） |
-| `apps/daemon/src/service.ts` `reworkTarget` | 1 件ではなく、見守る PR をすべて返す（工程の PR の直しの PR と、上の PR）。`checkReworkMerges`・`stopReworkForMerge`・`endReworkByMerge` が順に扱う（実行中の工程はコンテナを止めて確かめる）。同じ確認で両方がマージ済みなら、どちらも記録せず、一時停止する（既定で決めたこと）。`mergedPullRequests` の組と同じ両 PR で再開された後は、実装の PR だけを承認として記録し、工程の PR は片付けで merged と記録する（Q-5） |
-| 同上 `checkReworkMerges` | 上の PR が GitHub で閉じていて記録が `open`（引き継いだ PR は記録が無いときも）なら `PullRequestClosed` を、開いていて記録が `closed` なら `PullRequestReopened` を記録する |
+| `apps/daemon/src/service.ts` `reworkTarget` | 1 件ではなく、見守る PR をすべて返す（工程の PR の直しの PR・要求要件へ戻している間の設計の PR と、上の PR）。両 PR の状態をまとめて読み、どれを記録するか・一時停止するかを決める共通の判定（新しい関数）を、`checkReworkMerges` と `publishStepPullRequest` の両方が使う。判定：実装の PR だけがマージ済みなら実装の承認、工程の PR だけならいまの PBI-462 の扱い、同じ確認で両方がマージ済みならどちらも記録せず一時停止（既定で決めたこと）。`mergedPullRequests` の組と同じ両 PR で再開された後は、実装の PR だけを承認として記録し、工程の PR は片付けで merged と記録する（Q-5）。実行中の工程はコンテナを止めて確かめる |
+| 同上 `checkReworkMerges` | 工程の PR の公開中（`stepPublishing`）のタスクは、実装の PR も含めて見守る PR をすべて飛ばし、`publishStepPullRequest` に任せる（片方だけを記録しないため）。上の PR が GitHub で閉じていて記録が `open`（引き継いだ PR は記録が無いときも）なら `PullRequestClosed` を、開いていて記録が `closed` なら `PullRequestReopened` を記録する |
 | 同上 マージの記録 | マージされたコミット（`PullRequestMerged` の `commit`）が `implementBasis` のコミットと違えば、基準のまま進め、`edited` にする（Q-3） |
-| 同上 `publishStepPullRequest` | タスクブランチを取りに行く前に、上の PR の状態を読む。マージ済みなら、PR を作らず同じ記録で進める。工程の PR の公開のどこで失敗しても（取得・push・PR の作成・更新）、共通の失敗の処理で状態を読み直し、マージ済みなら同じく進める（そうでなければいまの `pr.failed`） |
+| 同上 `publishStepPullRequest` | タスクブランチを取りに行く前に、前の工程の PR と上の PR の状態をまとめて読み、共通の判定で決める。どちらかのマージを記録したか一時停止したなら、PR を作らない。工程の PR の公開のどこで失敗しても（取得・push・PR の作成・更新）、共通の失敗の処理で両方を読み直して同じ判定を使う（どちらもマージ済みでなければいまの `pr.failed`） |
 | 同上 `checkPullRequests` の片付け | 実装の PR がマージ済みで、開いた工程の PR が記録に残るタスク（完了したタスクを含む）を毎回見る。GitHub で閉じてから（すでに閉じていればそのまま）`PullRequestClosed` を記録する。GitHub で main へマージされていれば、閉じずに `merged: true` 付きで記録する。閉じるのに失敗したら記録せず、次の確認（再起動の後を含む）で閉じ直す（Q-1） |
 | 同上 記録の後 | PR に、マージを承認にしたことを知らせる（既存の知らせ） |
 | 同上 `cleanupPlan`・中止の片付け、`apps/daemon/src/task-mcp.ts` `cancelTargets` | 実装の PR は、記録が `open` のものだけを閉じる対象にする。片付けは、閉じる直前に GitHub で開いているかを確かめる |
@@ -85,12 +85,10 @@ should
 
 ---
 
-設計とテスト観点を、design-6 の指摘と承認の代理の方針に合わせて直しました。テスト観点は 24 件から 20 件になりました。基準の組み合わせを並べた 4 件を、方針どおりに外しています。設計の下書きを提出先と同じパスに一時的に置いて `npx vitest run tests/docs` を流し、99 件すべて通りました。そのあと下書きは消しています。
+工程の PR を公開するときにも、PR の確認と同じ判定で両方の PR を確かめるように設計を直しました。公開は、タスクブランチを取りに行く前と、途中で失敗した後の両方で行います。テスト観点は、この2つの場合を足して 22 件です。
 
-**確かめてほしいこと**
-
-- **再開の進め方（Q-5）：** 工程の PR と実装の PR がどちらもマージ済みで止まったタスクを人が再開した場合の扱いです。実装の PR だけを承認にし、工程の PR は承認にせず merged と記録する答えを推奨しています。止めたままにすると、再開するたびに同じ一時停止を繰り返すためです。ただし、工程の PR が実際には実装に入っていた場合は、記録の承認済みの設計が実装より古いまま完了します。
-- **既定で決めたこと：** 一時停止には既存の理由 `error` を使い、文言と、両 PR の番号を入れる任意の欄を付けます。新しい理由の値を足すと、前の版のデーモンが作業履歴を読めなくなるためです。
+- **文書の検証：** `npx vitest run tests/docs` は、5 秒の既定の時間切れで、リンクの検査の1件が落ちました。この1件は、設計の下書きを置かないときも同じ時間切れで落ちています。時間切れを 60 秒にして流すと、下書きを置いて 99 件すべて通りました。時間切れの短さはこのコンテナの遅さによるもので、下書きの中身とは関係ないと見ています。CI の結果は、PR で確かめてください。
+- **確かめてほしいこと（Q-5）：** 両方の PR がマージ済みで止まったタスクを再開したときの扱いです。推奨は、実装の PR だけを承認にし、工程の PR は承認にせず merged と記録することです。止めたままにすると、再開するたびに同じ一時停止を繰り返します。ただし、工程の PR が実際には実装に入っていた場合、記録の承認済みの設計が実装より古いまま完了します。
 
 ## テスト観点
 
@@ -118,39 +116,45 @@ should
 - [TV-8] 工程の PR と実装の PR が同じ確認でどちらもマージ済みなら一時停止し、再開で実装の PR だけを承認にする
   - 入力：設計へ戻して設計の PR（タスクブランチ向き）を直している間に、偽の GitHub が設計の PR と実装の PR をどちらも merged と返し（merged_at は同じ秒）、その後にタスクを再開する
   - 期待結果：1 回目の確認で ReworkStoppedByMerge・PullRequestMerged・StepApproved はどちらの PR にも記録されず、TaskPaused（error）が両 PR の番号を含む文言と mergedPullRequests で1回だけ記録され、再開の後の確認で実装の PR の 3 つの記録だけが記録されて設計の StepApproved は無く、設計の PR は PullRequestClosed（merged: true）で state が merged になる
-- [TV-9] 実装の PR のマージで main へ付け替わった工程の PR が後でマージされても、承認にせず merged と記録する
+- [TV-9] 工程の PR の公開の入口で両方がマージ済みなら、PR の確認と同じく一時停止する
+  - 入力：設計へ戻して直した設計の PR（タスクブランチ向き）の更新を待つ（idle）タスクで、PR の確認を呼ばずに実行（runNext）だけを進め、偽の GitHub が設計の PR と実装の PR をどちらも merged と返す
+  - 期待結果：publishStepPullRequest が fetchBranch も pulls.create も呼ばず、ReworkStoppedByMerge・PullRequestMerged・StepApproved はどちらの PR にも記録されず、PR の確認のときと同じ文言と mergedPullRequests の TaskPaused（error）が1回だけ記録される
+- [TV-10] 工程の PR の公開の途中の失敗の後に両方がマージ済みと分かっても、一時停止する
+  - 入力：上と同じタスクで、偽の GitHub が両 PR を最初の読み取りでは open、2 回目からは merged と返し、タスクブランチの fetchBranch は couldn't find remote ref で失敗する
+  - 期待結果：pr.failed は記録されず、実装の承認も設計の承認も記録されず、上と同じ TaskPaused（error・mergedPullRequests）が1回だけ記録される
+- [TV-11] 実装の PR のマージで main へ付け替わった工程の PR が後でマージされても、承認にせず merged と記録する
   - 入力：設計へ戻して設計の PR（D2）を直している間に、偽の GitHub が実装の PR（基準は D1）だけを merged と返して実装の承認が記録された後、片付けの前の確認で設計の PR を base.ref が main の merged と返す
   - 期待結果：設計の PR の StepApproved（design）は記録されず、approved.design と outputs.design が D1 のままで、pulls.close は呼ばれずに PullRequestClosed（merged: true）が1回記録され、設計の PR の state が merged・superseded になる
-- [TV-10] マージの後の投影で、工程と承認が実装の PR を作った時点に戻る
+- [TV-12] マージの後の投影で、工程と承認が実装の PR を作った時点に戻る
   - 入力：承認済みの設計 A で実装の PR を作り、設計へ差し戻して設計の出力を B にやり直した後、上の 3 つの記録を投影する
   - 期待結果：要求要件・設計・実装の工程が done、approved.design.output と outputs.design が A、テスト観点が A のもので、設計へ戻した指摘は無効（voided）、記録の pullRequestState は merged になる
-- [TV-11] マージされたコミットが基準のコミットと違っても、一時停止せずに基準の承認で進む
+- [TV-13] マージされたコミットが基準のコミットと違っても、一時停止せずに基準の承認で進む
   - 入力：設計 D1 で実装の PR を作り（commit C1）、設計へ戻してやり直している間に、偽の GitHub が実装の PR を、先頭が C1 と違うコミット（人が積んだもの）で merged と返す
   - 期待結果：TaskPaused は記録されず、上と同じ 3 つの記録で進み、PullRequestMerged の edited が true で、approved.design と outputs.design が D1 になる
-- [TV-12] 引き継いだ PR が、実装の PR を出す前の前の工程でマージされても進む
+- [TV-14] 引き継いだ PR が、実装の PR を出す前の前の工程でマージされても進む
   - 入力：continuedPullRequest があり pullRequest が無いタスクで、設計の承認で実装へ進んだ後に要求要件へ戻し、要求要件をやり直している間に、偽の GitHub が引き継いだ PR を merged と返す
   - 期待結果：上と同じ 3 つの記録でタスクが進み、pullRequest が引き継いだ PR の番号で記録されて pullRequestState が merged、承認と成果は実装へ進んだ時点のものになる
-- [TV-13] 引き継いだ PR が、実装の PR を出す前の前の工程で閉じられたら、記録の無い状態から closed に合わせる
+- [TV-15] 引き継いだ PR が、実装の PR を出す前の前の工程で閉じられたら、記録の無い状態から closed に合わせる
   - 入力：continuedPullRequest があり pullRequest も pullRequestState も無いタスクで、要求要件へ戻してやり直している間に、偽の GitHub が引き継いだ PR を closed と返し、次の確認では open と返す
   - 期待結果：1 回目の確認で引き継いだ PR の番号の PullRequestClosed が記録されて pullRequestState が closed になり、cleanupPlan と get_cancel_plan の閉じる対象に引き継いだ PR が出ず、2 回目の確認で PullRequestReopened が記録されて open に戻る
-- [TV-14] やり直しの間に作った工程の PR を、GitHub で閉じてから記録し、失敗したら閉じ直す
+- [TV-16] やり直しの間に作った工程の PR を、GitHub で閉じてから記録し、失敗したら閉じ直す
   - 入力：設計へ戻した後に作った設計の PR（タスクブランチ向き）が開いて設計の承認待ちのときに実装の PR が merged になり、偽の GitHub の pulls.close が 1 回目は失敗し、2 回目は成功する（2 回目の前にデーモンを起動し直す）
   - 期待結果：タスクは 1 回目の確認で実装の承認へ進み、1 回目は設計の PR が記録で open のまま残って PullRequestClosed は無く、起動し直した後の確認で pulls.close が呼ばれ、成功の後に PullRequestClosed が1回記録されて設計の PR が closed・superseded になる
-- [TV-15] 前の工程へ戻している間に閉じた・開き直した実装の PR の状態を記録に合わせる
+- [TV-17] 前の工程へ戻している間に閉じた・開き直した実装の PR の状態を記録に合わせる
   - 入力：設計へ戻して設計をやり直している間に、偽の GitHub が実装の PR を closed と返し、次の PR の確認では open と返す
   - 期待結果：1 回目の確認で PullRequestClosed が記録されて pullRequestState が closed になり、cleanupPlan と get_cancel_plan の閉じる対象に実装の PR が出ず、2 回目の確認で PullRequestReopened が記録されて open に戻り、どちらでも設計の工程と状態は変わらない
-- [TV-16] すでにこの状態で一時停止したタスクが、修正の版で進む
+- [TV-18] すでにこの状態で一時停止したタスクが、修正の版で進む
   - 入力：作業履歴に、設計へ戻した後の TaskPaused（error、文言は pr.failed の couldn't find remote ref）までがあるタスクを読み込んでデーモンを起動し、偽の GitHub は実装の PR を merged と返す
   - 期待結果：PR の確認、または resume の後の実行で、上と同じ 3 つの記録が記録され、タスクはマージの後の監視か完了に進み、記録の pullRequestState は merged になる
-- [TV-17] 取り消しの確認は、記録が open でない実装の PR を閉じる対象に挙げない
+- [TV-19] 取り消しの確認は、記録が open でない実装の PR を閉じる対象に挙げない
   - 入力：pullRequestState が merged・merged_outdated・closed の実装の PR を持つタスクで、cleanupPlan と get_cancel_plan（cancelTargets）を読む
   - 期待結果：どちらも実装の PR を閉じる対象（pull_request の detail・willClose.pullRequests）に含めず、get_cancel_plan は untouched.pullRequests に理由つきで出す
-- [TV-18] 中止の片付けは、GitHub で開いていない実装の PR を閉じない
+- [TV-20] 中止の片付けは、GitHub で開いていない実装の PR を閉じない
   - 入力：記録の pullRequestState が open で、偽の GitHub が merged と返す実装の PR を持つタスクを中止する
   - 期待結果：pulls.close は実装の PR に対して呼ばれず、片付けの結果に失敗が出ない
-- [TV-19] 作業履歴に原因が書いてある
+- [TV-21] 作業履歴に原因が書いてある
   - 入力：docs/worklog/YYYYMMDD-pbi-494-<スラッグ>.md
   - 期待結果：PR #590 で設計へ戻した後（21:53:27Z）にマージ（21:53:59Z）され、実行対象が設計のため実装の PR を見守らず、工程の PR の作成がタスクブランチの取得で失敗して一時停止した経緯が書いてある
-- [TV-20] 仕様書・利用者の文書と ADR に新しい扱いが書いてある
+- [TV-22] 仕様書・利用者の文書と ADR に新しい扱いが書いてある
   - 入力：docs/spec/approval.md・approval.en.md・mcp-server.md・mcp-server.en.md・tasks-and-steps.md・tasks-and-steps.en.md・docs/user/tasks.md・tasks.en.md と追加の ADR
-  - 期待結果：approval の日英に、前の工程へ戻している間も実装の PR（引き継いだ PR を含む）を見守りマージで実装の承認として進めること・工程の PR の作成の前と公開の失敗の後に確かめること・承認を sacty がタスクブランチの先頭を最後に変えた時点に戻し、マージされたコミットが違えば edited にすること・同じ確認で工程の PR と実装の PR がどちらもマージ済みなら一時停止し、再開すると実装の PR だけを承認にすることを既知の制約（まれな競合）として・やり直しの間の工程の PR を閉じられるまで閉じ直し、main へマージされていれば承認にせず merged と記録すること・閉じた・開き直した状態を（引き継いだ PR は記録の無い状態からも）記録すること・記録した後は版を戻せないことが、mcp-server と tasks-and-steps の中止の片付けの日英に、記録が open の実装の PR だけを閉じる対象にすることが、tasks の日英に、要求要件・設計をやり直している間に実装の PR がマージされたらやり直しを止めて承認として進めることが書いてあり、ADR が PBI-276 の決めを変える理由を述べている
+  - 期待結果：approval の日英に、前の工程へ戻している間も実装の PR（引き継いだ PR を含む）を見守りマージで実装の承認として進めること・工程の PR の作成の前と公開の失敗の後に工程の PR と実装の PR をまとめて確かめ、PR の確認と同じ判定を使うこと・承認を sacty がタスクブランチの先頭を最後に変えた時点に戻し、マージされたコミットが違えば edited にすること・同じ確認で工程の PR と実装の PR がどちらもマージ済みなら（PR の確認でも工程の PR の公開でも）一時停止し、再開すると実装の PR だけを承認にすることを既知の制約（まれな競合）として・やり直しの間の工程の PR を閉じられるまで閉じ直し、main へマージされていれば承認にせず merged と記録すること・閉じた・開き直した状態を（引き継いだ PR は記録の無い状態からも）記録すること・記録した後は版を戻せないことが、mcp-server と tasks-and-steps の中止の片付けの日英に、記録が open の実装の PR だけを閉じる対象にすることが、tasks の日英に、要求要件・設計をやり直している間に実装の PR がマージされたらやり直しを止めて承認として進めることが書いてあり、ADR が PBI-276 の決めを変える理由を述べている
