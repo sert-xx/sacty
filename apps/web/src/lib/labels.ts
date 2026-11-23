@@ -977,7 +977,9 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
             )
           : e.PullRequestMerged(event.payload.number, event.payload.by);
     case "PullRequestClosed":
-      return e.PullRequestClosed(event.payload.number);
+      return event.payload.merged
+        ? e.PullRequestClosedMerged(event.payload.number)
+        : e.PullRequestClosed(event.payload.number);
     case "PullRequestReopened":
       return e.PullRequestReopened(event.payload.number);
     case "ReworkStoppedByMerge":

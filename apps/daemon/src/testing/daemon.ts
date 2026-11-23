@@ -174,7 +174,7 @@ export class FakeGitHub implements GitHubAuth {
       };
     });
   }
-  async token(host: string, account: string) {
+  async token(host: string, account: string, _signal?: AbortSignal) {
     const key = host === "github.com" ? account : `${host}/${account}`;
     this.requested.push(key);
     const token = this.tokens[key];
@@ -504,6 +504,8 @@ export class FakeRepos implements RepositoryWorkspace {
     authEnv?: Record<string, string>;
   }[] = [];
   fetchBranchFail?: string;
+  missingFetchBranches: string[] = [];
+  fetchBranchAttempts: string[] = [];
   async remoteDefaultBranch(
     _gitDir: string,
     _authEnv?: Record<string, string>,
@@ -519,8 +521,11 @@ export class FakeRepos implements RepositoryWorkspace {
     authEnv?: Record<string, string>,
     signal?: AbortSignal,
   ) {
+    this.fetchBranchAttempts.push(branch);
     await this.onFetchBranch?.(signal);
     if (this.fetchBranchFail) throw new Error(this.fetchBranchFail);
+    if (this.missingFetchBranches.includes(branch))
+      throw new Error(`fatal: couldn't find remote ref refs/heads/${branch}`);
     this.fetchedBranches.push({
       gitDir,
       branch,
@@ -976,9 +981,9 @@ export class FakePulls implements PullRequests {
   }
   closed: { repo: string; token: string; number: number }[] = [];
   closeFail?: string;
-  async close(input: { repo: string; token: string; number: number }) {
+  async close(input: { repo: string; token: string; number: number; signal?: AbortSignal }) {
     if (this.closeFail) throw new Error(this.closeFail);
-    this.closed.push(input);
+    this.closed.push({ repo: input.repo, token: input.token, number: input.number });
     this.states[input.number] = { state: "closed" };
   }
   /** 返す PR の状態（承認待ちの見守り。PBI-14a）。states に番号があれば、その PR はそちら（PBI-57）。 */
@@ -987,7 +992,7 @@ export class FakePulls implements PullRequests {
   statusFail?: string;
   checked: { repo: string; token: string; number: number }[] = [];
   async status(input: { repo: string; token: string; number: number }) {
-    this.checked.push(input);
+    this.checked.push({ repo: input.repo, token: input.token, number: input.number });
     if (this.statusFail) throw new Error(this.statusFail);
     // 先頭のコミットを指定していなければ、レビューの対象の PR の先頭とする（投稿の直前の確認。PBI-111）
     const state = this.states[input.number] ?? this.state;

@@ -326,18 +326,28 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 
 ### 実装の作り直しの間のマージ
 
-差し戻し・PR の指摘の取り込みで実装を作り直している間（承認待ちではない）に、人が実装の PR をマージしたら、マージを承認として扱い、作り直しを止める。新しい PR は作らない。
+差し戻し・PR の指摘の取り込みで実装や前の工程をやり直している間に、人が実装の PR をマージしたら、マージを承認として扱い、やり直しを止める。
+新しい PR は作らない。
 
 - 対象（`reworkingPullRequest`）：実行対象の工程が実装で、状態が実行待ち（`queued`）・実行中（`running`）・待機（`idle`。PR の作成の待ちなど）・一時停止（`paused`）のタスクのうち、`Task.pullRequest` の PR が開いている（`pullRequestState` が `open`）か、承認待ちで閉じられたまま差し戻したもの（`closed`。GitHub で開き直してマージされることがある。マージかどうかは GitHub の状態で決める）。
   - 引き継いだ既存の PR（`Task.continuedPullRequest`）は、初めて提出するまで `Task.pullRequest` が無い。その間も、引き継いだ PR を見守る。投影は、このとき引き継いだ PR を実装の PR として記録してから、マージを記録する（コミットは、引き継いだ時点の PR の先頭）。
-  - 要求要件・設計をやり直している間（実行対象の工程が実装でない）は、実装の PR を見守らない。実装に進んだ時点で、PR がマージ済みなら同じく止める。その間の要求要件・設計の PR のマージは、[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)が扱う。
+  - 要求要件・設計へ戻している間も、引き継いだ PR を含む実装の PR を見守り、マージされたらやり直しを止めて実装の承認として進める。
+    その間の要求要件・設計の PR のマージは、[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)も扱う。
   - 承認待ち・エスカレーション中のタスクは、上の確認が見守る。
-- 確認：PR の状態を読み（プロジェクトの gh のアカウント。読めなければ次の確認でやり直す）、マージされていたら次を行う。開いたまま・閉じられたときは何もしない。
+  - 前の工程へ戻したタスクの閉じた・開き直した実装 PR の状態も記録する。引き継いだ PR に状態の記録がない場合も閉鎖を記録する。
+  - 工程 PR の公開前と公開失敗後、工程 PR と実装 PR をまとめて確かめる。定期確認と承認待ちのゲートでも同じ判定を使う。
+  - 実装 PR の公開・更新、タスクブランチ向きの工程 PR のマージの記録で、承認・成果・テスト観点を基準として保存する。マージ時はその基準に戻し、PR の先頭が基準のコミットと異なれば編集済みと記録する。
+  - 既知の制約：工程 PR と実装 PR が同じ確認でともにマージ済みなら、包含関係を判定せず一時停止する。再開すると実装 PR だけを承認し、工程 PR は承認にしない。複数の工程 PR がマージ済みならそれぞれの番号を記録し、再開後に新たな工程 PR のマージを見つけたら再び一時停止する。
+    古い記録に実装 PR のリポジトリが無い場合も、両 PR を確かめられないため、工程 PR の公開と承認を保留する。
+  - 実装のマージ後に残った工程 PR は閉じるまで確認ごとに再試行する。すでにマージ済みなら閉じずに、承認にせず `PullRequestClosed` の `merged: true` で記録する。
+  - 前の工程へ戻している間に、マージ・実装の PR の閉じた・開き直した状態・片付けの `PullRequestClosed`、または一時停止中・エスカレーション中の両 PR マージによる一時停止を記録すると、前の版のデーモンは投影できない。通常の待機状態からの停止が1件なら前の版でも投影できるが、`mergedPullRequests` の情報は失われる。複数の工程 PR に対する停止が続くと2件目の投影で止まるため、いずれも版を戻せない。
+
+- 確認：PR の状態を読み（プロジェクトの gh のアカウント。読めなければ次の確認でやり直す）、マージされていたら次を行う。前の工程に戻している間は、閉じられた・開き直された状態も記録する。
   1. 実行中の処理があれば、コンテナを止めて終わりを待つ（一時停止・中止と同じ。止めた実行は、人の一時停止としては記録しない）。止めたコンテナが無くなったと確かめられなければ、一時停止にして進めない（次の確認で確かめ直す）。
      承認か一時停止を記録するまで、このタスクの実行を始めさせない（止めた実行が正常に終わっていても、続きの検証をワーカーが始めない。`runNext` と `queuedTaskIds` が `mergeStopping` を見る）。
-     デーモンが実装の実行中に止まって再起動したときは、復旧（`recoverInterrupted`）が、実装の作り直し（開いた PR がある）の実行を `unstoppedRuns` に残して一時停止にするので、停止を確かめるまで承認へ進まない。
+     デーモンが実行中に止まって再起動したときは、復旧（`recoverInterrupted`）が、実装の作り直しと前の工程への差し戻しの実行を `unstoppedRuns` に残して一時停止にするので、停止を確かめるまで承認へ進まない。
      一時停止のときに止めたコンテナを確かめられなかった実行（`unstoppedRuns`）は、止めた実行に含めて残す。
-     止めた実行が正常に終わった費用で先に一時停止していた（予算など）ときも、確かめられなかった実行を `unstoppedRuns` に足す（一時停止の理由はそのまま。すでに一時停止しているタスクへの `TaskPaused` は、`unstoppedRuns` を足すときだけ受け付ける）。確かめるまで承認へ進まない。
+     止めた実行が正常に終わった費用で先に一時停止していた（予算など）ときも、確かめられなかった実行を `unstoppedRuns` に足す（一時停止の理由はそのまま。すでに一時停止しているタスクへの `TaskPaused` は、`unstoppedRuns` を足すときと、両 PR のマージを記録して判断を求めるときに受け付ける）。確かめるまで承認へ進まない。
   2. 止めている間に、承認待ちになった・中止された・別の状態になったなら、ここでは記録しない（承認待ちになったなら、上の確認が扱う）。
   3. `ReworkStoppedByMerge`（actor `sacty`）に続けて、`PullRequestMerged`・`StepApproved`（actor `person`。マージの後の監視の開始も、上の「マージされた」と同じ）を同じ追記で記録する。
 - `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`・`incomplete`・`unchanged`）、一時停止の間に届いて反映していなかった PR の指摘の件数（`discardedReview`。`decision: true` のときは、止めた回の印の付いた指摘の数で、止めた後に届いた人のコメントは数えない。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）、人の判断を待って止めていた PR のマージか（`decision: true`。[直しでは解消できない指摘での一時停止](#直しでは解消できない指摘での一時停止)）。理由はマージ。
@@ -348,7 +358,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - 続きの確認では、承認済みのタスクなので、重ねて記録しない。
 - PR への知らせ：記録の後に、マージを承認として扱ったことを PR に書く（[工程の PR の直しの間のマージ](#工程の-pr-の直しの間のマージ)の知らせと同じ）。人の判断を待って止めていた PR のマージ（`decision: true`）は、作り直しを始めていないので書かない。
 
-コード: `apps/daemon/src/service.ts`（`checkReworkMerges`・`stopReworkForMerge`・`endReworkByMerge`・`mergeApprovalItems`・`announceMergeApproval`・`publish`・`pauseIfRequested`）、`packages/core/src/projection.ts`（`reworkingPullRequest`・`unreflectedImplementRemarks`・`ReworkStoppedByMerge`）
+コード: `apps/daemon/src/service.ts`（`checkReworkMerges`・`checkSentBackImplementation`・`cleanupMergedStepPullRequests`・`publishStepPullRequest`・`stopReworkForMerge`・`endReworkByMerge`・`mergeApprovalItems`・`announceMergeApproval`・`publish`・`pauseIfRequested`）、`packages/core/src/projection.ts`（`reworkingPullRequest`・`sentBackImplementPullRequest`・`implementBasis`・`unreflectedImplementRemarks`・`ReworkStoppedByMerge`）
 
 ### 工程の PR の直しの間のマージ
 

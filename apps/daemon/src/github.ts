@@ -95,7 +95,12 @@ export interface PullRequests {
     signal?: AbortSignal;
   }): Promise<DraftHistory>;
   /** PRを閉じる（中止したとき。マージはしない）。 */
-  close(input: { repo: string; token: string; number: number }): Promise<void>;
+  close(input: {
+    repo: string;
+    token: string;
+    number: number;
+    signal?: AbortSignal;
+  }): Promise<void>;
   /** PR の状態（承認待ちの間に見守る。PBI-14a）。 */
   /** signal で中断できる（答えを待つのをやめた通信を残さない。PBI-331）。 */
   status(input: {
@@ -1241,7 +1246,10 @@ export class GitHubPullRequests implements PullRequests {
       },
       ...(input.signal ? { signal: input.signal } : {}),
     });
-    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const json = (await (res.ok ? res.json() : res.json().catch(() => ({})))) as Record<
+      string,
+      unknown
+    >;
     if (!res.ok) throw apiError("getPr", res.status, json);
     const sha = (json.head as { sha?: unknown } | null)?.sha;
     const repoName = (key: "head" | "base") => {
@@ -1566,10 +1574,11 @@ async function setPullRequestDraft(
 /** PRを閉じる。GitHubPullRequests の一部だが、upsert と分けて読みやすくする。 */
 async function closePullRequest(
   fetchImpl: Fetch,
-  input: { repo: string; token: string; number: number },
+  input: { repo: string; token: string; number: number; signal?: AbortSignal },
 ): Promise<void> {
   const res = await fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
     method: "PATCH",
+    signal: input.signal,
     headers: {
       accept: "application/vnd.github+json",
       authorization: `Bearer ${input.token}`,

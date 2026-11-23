@@ -1379,8 +1379,8 @@ function rerunKindBlock(task: Task): { reason: string; decideOnScreen: string[] 
 
 /**
  * 中止で閉じる PR・消すブランチ・触れないもの。デーモンの片付け（service.cancel の PR を閉じる条件・`sactyBranches`・
- * `openStepPullRequests`）の写しで、そちらが変わったら、これも合わせる。実装の PR は、マージ済み（pullRequestState が
- * merged）と、引き継いだ人の PR は閉じない。要求要件・設計の PR は、記録で開いていて置き換えられていないもの
+ * `openStepPullRequests`）の写しで、そちらが変わったら、これも合わせる。実装の PR は、記録で開いているものだけを対象にし、
+ * 引き継いだ人の PR は閉じない。要求要件・設計の PR は、記録で開いていて置き換えられていないもの
  * （閉じる直前に GitHub で開いていなければ、デーモンは閉じずに飛ばす）。ブランチは、プッシュしたブランチ（無ければ実装の
  * PR のブランチ）・タスクブランチ・要求要件と設計のブランチで、引き継いだ PR のブランチは消さない。
  */
@@ -1400,10 +1400,13 @@ function cancelTargets(task: Task): {
         url,
         reason: "引き継いだ人の PR のため、閉じません",
       });
-    } else if (task.pullRequestState === "merged") {
+    } else if (task.pullRequestState !== "open") {
       untouchedPullRequests.push({
         url,
-        reason: "マージ済みのため、閉じません",
+        reason:
+          task.pullRequestState === "merged"
+            ? "マージ済みのため、閉じません"
+            : "開いていないため、閉じません",
       });
     } else {
       closePullRequests.push(url);

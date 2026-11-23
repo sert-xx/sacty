@@ -566,7 +566,8 @@ const ja = {
       fallback?: "deleted" | "unreadable",
     ) =>
       `PR #${number} が人の直した内容でマージされ、承認${by ? `（${by}）` : ""}（${submitted} → ${final}）${fallback === "deleted" ? "。成果のファイルが消されていたため、Sacty の版を承認済みにした" : fallback === "unreadable" ? "。成果のファイルを読めなかったため、Sacty の版を承認済みにした" : ""}`,
-    PullRequestClosed: (number: number) => `PR #${number} がマージされずに閉じられた・判断待ち`,
+    PullRequestClosed: (number: number) => `PR #${number} が閉じられた`,
+    PullRequestClosedMerged: (number: number) => `PR #${number} はマージ済み（承認にはしない）`,
     PullRequestReopened: (number: number) => `PR #${number} が開き直された・マージ待ち`,
     ReworkStoppedByMerge: (
       number: number,
@@ -1404,7 +1405,8 @@ const en: LabelMessages = {
       `PR #${number} was merged with content older than the latest submission${by ? ` (${by})` : ""} · needs you`,
     PullRequestMergedEdited: (number, by, submitted, final, fallback) =>
       `PR #${number} was merged with a person's edits and approved${by ? ` (${by})` : ""} (${submitted} → ${final})${fallback === "deleted" ? ". The file was deleted, so Sacty's version was approved" : fallback === "unreadable" ? ". The file could not be read, so Sacty's version was approved" : ""}`,
-    PullRequestClosed: (number) => `PR #${number} closed without merging · needs you`,
+    PullRequestClosed: (number) => `PR #${number} was closed`,
+    PullRequestClosedMerged: (number) => `PR #${number} was merged without approval`,
     PullRequestReopened: (number) => `PR #${number} reopened · awaiting merge`,
     ReworkStoppedByMerge: (number, stage, runs, remarks, feedback, held, decision, step) =>
       decision

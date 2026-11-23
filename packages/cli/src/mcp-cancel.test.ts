@@ -269,6 +269,54 @@ describe("本物のデーモンのサービスを通した、タスクの中止�
     t.activity.close();
   });
 
+  it("記録が開いていない実装 PR は中止の確認で閉じる対象にしない", async () => {
+    const t = await withPullRequest();
+    for (const state of ["merged", "merged_outdated", "closed"] as const) {
+      t.live(t.id).pullRequestState = state;
+      const plan = await t.planOf(t.id);
+      expect(plan.willClose.pullRequests).toEqual([]);
+      expect(
+        t.service.cleanupPlan(t.id)?.find((item) => item.target === "pull_request"),
+      ).toMatchObject({ present: false });
+      expect(
+        t.service.cleanupPlan(t.id)?.find((item) => item.target === "pull_request")?.detail,
+      ).toBeUndefined();
+      expect(plan.untouched.pullRequests).toEqual([
+        { url: "https://github.com/acme/app/pull/7", reason: expect.stringMatching(/\S/) },
+      ]);
+    }
+    t.activity.close();
+  });
+
+  it("記録では開いていても GitHub でマージ済みなら中止で閉じない", async () => {
+    const t = await withPullRequest();
+    t.pulls.state = { state: "merged", headSha: "abc", mergeCommit: "def" };
+    const result = await t.cancel(t.id);
+    expect(result.isError).toBe(false);
+    expect((result.data as Cancelled).failed).toEqual([]);
+    expect(t.pulls.closed).toEqual([]);
+    t.activity.close();
+  });
+
+  it("実装 PR の記録がない引き継ぎ PR は、閉じられた状態でも中止で閉じる対象にしない", async () => {
+    const t = await withPullRequest();
+    const task = t.live(t.id);
+    task.continuedPullRequest = {
+      repo: "https://github.com/acme/app",
+      number: 7,
+      url: "https://github.com/acme/app/pull/7",
+      branch: "feature/existing",
+      baseBranch: "main",
+    };
+    task.pullRequest = undefined;
+    task.pullRequestState = "closed";
+    expect((await t.planOf(t.id)).willClose.pullRequests).toEqual([]);
+    expect(
+      t.service.cleanupPlan(t.id)?.find((item) => item.target === "pull_request")?.present,
+    ).toBe(false);
+    t.activity.close();
+  });
+
   it("要求要件・設計の PR のうち、開いていて置き換えられていないものだけが、閉じる PR・消すブランチに出て、中止で閉じる", async () => {
     const t = await withPullRequest();
     t.live(t.id).stepPullRequests = [

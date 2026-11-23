@@ -41,6 +41,21 @@ function fakeFetch(
   return { impl, calls };
 }
 
+it("PR の状態の本文を読めないときは open とせずエラーを返す", async () => {
+  const failure = new Error("body aborted");
+  const fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw failure;
+    },
+  })) as unknown as typeof globalThis.fetch;
+  const client = new GitHubPullRequests(fetch);
+  await expect(
+    client.status({ repo: "https://github.com/acme/app", token: "t", number: 7 }),
+  ).rejects.toBe(failure);
+});
+
 /** 要求の前の最後の外しの読み取り・タイムラインの答え（PBI-468）。 */
 const timelineAnswer = (...nodes: unknown[]) => ({
   status: 200,

@@ -1227,8 +1227,17 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       "PR #7 was merged with a person's edits and approved (reviewer) (aaaaaaa → eeeeeee)",
     );
     expect(describeEvent(event({ type: "PullRequestClosed", payload: { number: 7 } }))).toBe(
-      "PR #7 がマージされずに閉じられた・判断待ち",
+      "PR #7 が閉じられた",
     );
+    expect(
+      describeEvent(event({ type: "PullRequestClosed", payload: { number: 7, merged: true } })),
+    ).toBe("PR #7 はマージ済み（承認にはしない）");
+    expect(
+      describeIn(
+        event({ type: "PullRequestClosed", payload: { number: 7, merged: true } }),
+        labels.en,
+      ),
+    ).toBe("PR #7 was merged without approval");
   });
 });
 

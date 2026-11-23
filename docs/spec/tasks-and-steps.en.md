@@ -1334,7 +1334,7 @@ Code: `apps/daemon/src/service.ts` (`runGuardian`, `judgeRework`, `triageSuggest
 - Cancel: session logs (`runs/`) are not deleted. Canceling a parent also cancels its unfinished child tasks. sacty cleans up in the following order and records the result (`done`, `skipped`, `failed`) for each target (`container`, `workspace`, `session`, `branch`, `pull_request`) in `TaskCancelled`.
   1. Stop runs answering questions and running containers.
   2. Delete the Orchestrator session.
-  3. Close the implementation PR sacty opened and the open requirements and design PRs (without merging).
+  3. Close the implementation PR sacty opened and the requirements and design PRs that are recorded as open (without merging). Check GitHub immediately before closing and skip any PR that is no longer open.
   4. Delete sacty's branches (the implementation PR's branch, the task branch, and step branches).
      The step branches of a flow without an implementation (no task branch is created) are deleted with the head-comparing rule (the branch of a merged PR is deleted unconditionally); a branch a person added commits to and sacty kept (`StepBranchKept`), and a branch whose remote head differs from the last push, are not deleted.
      A branch already gone from the remote counts as deleted ([PRs of steps in a flow without an implementation](approval.en.md#prs-of-steps-in-a-flow-without-an-implementation)).

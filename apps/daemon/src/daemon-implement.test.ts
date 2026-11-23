@@ -6331,6 +6331,117 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       return { activity, service, executor, pulls, repos, id };
     }
 
+    it("引き継いだ PR の初回提出前に要求要件へ戻った後、マージを認める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const proposal = out(
+        [
+          "# 実装",
+          block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["test"] }] }),
+          block({
+            "sacty-change-proposal": {
+              target: "requirements",
+              reason: "要件を見直す",
+              facts: ["前提が変わった"],
+              proposed: "# 要求要件 B",
+            },
+          }),
+        ].join("\n\n"),
+      );
+      const { service } = makeService(
+        activity,
+        [steps({ plan: "standard" }), out("# 要求要件 A"), stepReview(), design, proposal],
+        { realPlanner: true, pulls, repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 5 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      for (let i = 0; i < 5 && service.get(id)?.task.gate?.step !== "design"; i++)
+        await service.runNext(id);
+      service.approve(id, { step: "design", submission: 1 });
+      const original = service.get(id)?.task.approved.design;
+      const originalRequirements = service.get(id)?.task.approved.requirements;
+      await service.runNext(id);
+      service.decideChange(id, "CP-1", { accept: true });
+      expect(service.get(id)?.task.pullRequest).toBeUndefined();
+      pulls.state = { state: "merged", headSha: head };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequest).toMatchObject({ number: 12 });
+      expect(service.get(id)?.task.pullRequestState).toBe("merged");
+      expect(service.get(id)?.task.approved.design).toEqual(original);
+      expect(service.get(id)?.task.outputs.design).toBe(original?.output);
+      expect(service.get(id)?.task.approved.requirements).toEqual(originalRequirements);
+      expect(service.get(id)?.task.outputs.requirements).toBe(originalRequirements?.output);
+      expect(types(service, id).slice(-3)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      activity.close();
+    });
+
+    it("初回提出前の引き継ぎ PR の閉鎖と再開を記録する", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const proposal = out(
+        [
+          "# 実装",
+          block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["test"] }] }),
+          block({
+            "sacty-change-proposal": {
+              target: "requirements",
+              reason: "要件を見直す",
+              facts: ["前提が変わった"],
+              proposed: "# 要求要件 B",
+            },
+          }),
+        ].join("\n\n"),
+      );
+      const { service } = makeService(
+        activity,
+        [steps({ plan: "standard" }), out("# 要求要件"), stepReview(), design, proposal],
+        { realPlanner: true, pulls, repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 5 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      for (let i = 0; i < 5 && service.get(id)?.task.gate?.step !== "design"; i++)
+        await service.runNext(id);
+      service.approve(id, { step: "design", submission: 1 });
+      await service.runNext(id);
+      service.decideChange(id, "CP-1", { accept: true });
+      expect(service.get(id)?.task.steps.find((s) => s.state === "active")?.key).toBe(
+        "requirements",
+      );
+      expect(service.get(id)?.task.continuedPullRequest?.number).toBe(12);
+      expect(service.get(id)?.task.pullRequestState).toBeUndefined();
+      const state = { status: service.get(id)?.task.status, gate: service.get(id)?.task.gate };
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestState).toBe("closed");
+      expect(service.get(id)?.task).toMatchObject(state);
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "PullRequestClosed")?.payload,
+      ).toEqual({ number: 12 });
+      expect(service.cleanupPlan(id)?.find((item) => item.target === "pull_request")?.present).toBe(
+        false,
+      );
+      pulls.state = { state: "open" };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestState).toBe("open");
+      expect(service.get(id)?.task).toMatchObject(state);
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "PullRequestReopened")?.payload,
+      ).toEqual({ number: 12 });
+      activity.close();
+    });
+
     it("引き継いだ PR の実装が終わり、初回の提出の前に PR がマージされたら、プッシュせず、一時停止にもせず、マージを承認として完了する（PBI-276）", async () => {
       const { activity, service, executor, pulls, repos, id } =
         await continuedBeforeFirstSubmission();
@@ -6782,6 +6893,165 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     await drain(made.service);
     return made;
   }
+
+  describe("前の工程へ戻した後の実装 PR のマージ（PBI-494）", () => {
+    async function withStepPullRequests(extra: AgentOutcome[] = []) {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      const made = makeService(
+        activity,
+        [out("# 要求要件 A"), design, implement("# 実装"), ...extra],
+        {
+          pulls,
+          repos,
+          stepPullRequests: true,
+          planner: async () => ({
+            steps: [...MVP_STEPS],
+            fallback: false,
+            testCommand: "npm test",
+            costUsd: 0,
+            estimated: false,
+          }),
+        },
+      );
+      const { id } = made.service.createTask({ projectId: "default", title: "決済 API" });
+      await made.service.runNext(id);
+      for (const step of ["requirements", "design"] as const) {
+        const pr = made.service.get(id)?.task.stepPullRequests.findLast((p) => p.step === step);
+        if (!pr) throw new Error(`missing ${step} PR`);
+        pulls.states[pr.number] = {
+          state: "merged",
+          headSha: pr.commit,
+          mergeCommit: `merge-${step}`,
+        };
+        repos.remote[`sacty/task-${id.slice(0, 8)}`] = `merge-${step}`;
+        await made.service.checkPullRequests();
+        if (step === "requirements") await made.service.runNext(id);
+      }
+      await drain(made.service);
+      return { activity, ...made, pulls, repos, id };
+    }
+
+    it("設計の差し戻し後、工程 PR の公開待ちで実装 PR のマージを認める", async () => {
+      const { service, activity, pulls, repos, id } = await withStepPullRequests();
+      const pr = service.get(id)?.task.pullRequest;
+      const original = service.get(id)?.task.approved.design;
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "design",
+        comments: ["直す"],
+      });
+      appendLegacy(service, id, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunStarted",
+            payload: { runId: "redo", step: "design", agentId: "agent", authMode: "subscription" },
+          },
+        },
+        {
+          actor: "agent",
+          event: {
+            type: "AgentRunCompleted",
+            payload: {
+              runId: "redo",
+              step: "design",
+              agentId: "agent",
+              authMode: "subscription",
+              usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+              costUsd: 0,
+              estimated: false,
+              output: "# 設計 B",
+              testViewpoints: [],
+            },
+          },
+        },
+      ]);
+      expect(service.get(id)?.task.status).toBe("idle");
+      pulls.states[pr?.number ?? 0] = {
+        state: "merged",
+        headSha: pr?.commit,
+        mergeCommit: "merge",
+      };
+      repos.missingFetchBranches.push(`sacty/task-${id.slice(0, 8)}`);
+      const before = types(service, id).length;
+      await service.checkPullRequests();
+      expect(types(service, id).slice(before)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "ReworkStoppedByMerge")?.payload,
+      ).not.toHaveProperty("step");
+      expect(service.get(id)?.activity.at(-1)?.payload).toMatchObject({ step: "implement" });
+      expect(service.get(id)?.task.pullRequestState).toBe("merged");
+      expect(service.get(id)?.task.outputs.design).toBe(original?.output);
+      expect(
+        service.get(id)?.task.steps.every((step) => step.state === "done" || step.state === "skip"),
+      ).toBe(true);
+      expect(service.get(id)?.task.status).not.toBe("paused");
+      activity.close();
+    });
+
+    it("要求要件への変更の申し出の反映後、実装 PR のマージを認める", async () => {
+      const proposal = out(
+        [
+          "# 実装",
+          block({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["test"] }] }),
+          block({
+            "sacty-change-proposal": {
+              target: "requirements",
+              reason: "要件の見直し",
+              facts: ["前提が変わった"],
+              proposed: "# 要求要件 B",
+            },
+          }),
+        ].join("\n\n"),
+      );
+      const { service, activity, pulls, repos, id } = await withStepPullRequests([proposal]);
+      const pr = service.get(id)?.task.pullRequest;
+      const original = service.get(id)?.task.approved.requirements;
+      service.requestChanges(id, { step: "implement", submission: 1, comments: ["直す"] });
+      await service.runNext(id);
+      appendLegacy(service, id, [
+        {
+          actor: "person",
+          event: { type: "ChangeDecided", payload: { proposalId: "CP-1", accept: true } },
+        },
+        { actor: "sacty", event: { type: "ChangeApplied", payload: { proposalId: "CP-1" } } },
+      ]);
+      expect(service.get(id)?.task.status).toBe("idle");
+      expect(service.get(id)?.task.steps.find((s) => s.state === "active")?.key).toBe(
+        "requirements",
+      );
+      expect(service.get(id)?.task.outputs.requirements).toBe("# 要求要件 B");
+      pulls.states[pr?.number ?? 0] = {
+        state: "merged",
+        headSha: pr?.commit,
+        mergeCommit: "merge",
+      };
+      repos.missingFetchBranches.push(`sacty/task-${id.slice(0, 8)}`);
+      const before = types(service, id).length;
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pausedMessage).toBeUndefined();
+      expect(types(service, id).slice(before)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "ReworkStoppedByMerge")?.payload,
+      ).not.toHaveProperty("step");
+      expect(service.get(id)?.activity.at(-1)?.payload).toMatchObject({ step: "implement" });
+      expect(service.get(id)?.task.approved.requirements).toEqual(original);
+      expect(service.get(id)?.task.pullRequestState).toBe("merged");
+      expect(service.get(id)?.task.status).not.toBe("paused");
+      activity.close();
+    });
+  });
 
   it("画面に返すタスクには、承認待ちの PR の今の head の AI のレビューの状況を足す（PR の本文には書かない）。承認待ちでなければ足さない（PBI-302 D1）", async () => {
     const { activity, service, pulls, id } = await toImplementGate();
@@ -7673,15 +7943,177 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
-    it("要求要件・設計をやり直している間は、実装の PR のマージで作り直しを止めない", async () => {
+    it("設計に戻した後のマージでやり直しを止め、実装の承認として進める", async () => {
       const pulls = new FakePulls();
       const { activity, service, id } = await toImplementGate([], { pulls });
+      const design = service.get(id)?.task.approved.design;
       sendBack(service, id, "design");
       expect(service.get(id)?.task.steps.find((st) => st.state === "active")?.key).toBe("design");
       mergePr(pulls, service, id);
       await service.checkPullRequests();
-      expect(stopped(service, id)).toHaveLength(0);
+      expect(stopped(service, id)).toHaveLength(1);
+      expect(tail(service, id, 3)).toEqual([
+        ["ReworkStoppedByMerge", "sacty"],
+        ["PullRequestMerged", "person"],
+        ["StepApproved", "person"],
+      ]);
+      expect(service.get(id)?.task.approved.design).toEqual(design);
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("設計のやり直しの実行中にマージされたら実行を止めて承認する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([HOLD], { pulls });
+      sendBack(service, id, "design");
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      expect(executor.killed).toContain(runId);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ stoppedRuns: [runId] });
+      expect(
+        types(service, id).slice(types(service, id).lastIndexOf("ChangesRequested")),
+      ).not.toContain("TaskPaused");
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("設計に戻している間の実装 PR の閉鎖と再開を記録する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id, "design");
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestState).toBe("closed");
       expect(service.get(id)?.task.status).toBe("queued");
+      expect(types(service, id)).toContain("PullRequestClosed");
+      expect(service.cleanupPlan(id)?.find((item) => item.target === "pull_request")?.present).toBe(
+        false,
+      );
+      pulls.state = { state: "open" };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestState).toBe("open");
+      expect(types(service, id)).toContain("PullRequestReopened");
+      expect(service.get(id)?.task.status).toBe("queued");
+      activity.close();
+    });
+
+    it("前の工程で PR 状態の取得に失敗しても次の確認でマージを認める", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id, "design");
+      mergePr(pulls, service, id);
+      pulls.statusFail = "network";
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await service.checkPullRequests();
+        expect(stopped(service, id)).toHaveLength(0);
+        pulls.statusFail = undefined;
+        await service.checkPullRequests();
+        expect(stopped(service, id)).toHaveLength(1);
+        expectDone(service, id, pulls);
+      } finally {
+        warn.mockRestore();
+        activity.close();
+      }
+    });
+
+    it("設計に戻した後、人が積んだコミットでマージしても元の設計を承認に使う", async () => {
+      const pulls = new FakePulls();
+      const replacement = out(
+        [
+          "# 設計 D2",
+          block({
+            "sacty-test-viewpoints": [{ title: "新しい観点", input: "入力", expected: "結果" }],
+          }),
+        ].join("\n\n"),
+      );
+      const { activity, service, id } = await toImplementGate([replacement], { pulls });
+      const original = service.get(id)?.task.approved.design;
+      const before = types(service, id).length;
+      sendBack(service, id, "design");
+      await service.runNext(id);
+      expect(service.get(id)?.task.outputs.design).toContain("# 設計 D2");
+      mergePr(pulls, service, id, "f".repeat(40));
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.approved.design).toEqual(original);
+      expect(service.get(id)?.task.outputs.design).toBe(original?.output);
+      expect(types(service, id).slice(before)).not.toContain("TaskPaused");
+      expect(
+        service.get(id)?.activity.findLast((e) => e.type === "PullRequestMerged")?.payload,
+      ).toMatchObject({ edited: true, commit: "f".repeat(40) });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("設計へ戻した後に一時停止した作業履歴から再起動してもマージを認める", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id, "design");
+      appendLegacy(service, id, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: message("pr.failed", {
+                detail: "fatal: couldn't find remote ref refs/heads/sacty/task-test",
+              }),
+            },
+          },
+        },
+      ]);
+      mergePr(pulls, service, id);
+      const restarted = makeService(activity, [], { pulls });
+      await restarted.service.checkPullRequests();
+      expect(stopped(restarted.service, id)).toHaveLength(1);
+      const events = types(restarted.service, id);
+      expect(
+        events.slice(
+          events.lastIndexOf("ReworkStoppedByMerge"),
+          events.lastIndexOf("ReworkStoppedByMerge") + 3,
+        ),
+      ).toEqual(["ReworkStoppedByMerge", "PullRequestMerged", "StepApproved"]);
+      expect(restarted.service.get(id)?.task.pullRequestState).toBe("merged");
+      expect(restarted.service.get(id)?.task.status).not.toBe("paused");
+      activity.close();
+    });
+
+    it("設計の実行中に再起動したら、コンテナの停止を確認してからマージを認める", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id, "design");
+      appendLegacy(service, id, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunStarted",
+            payload: {
+              runId: "interrupted-design",
+              step: "design",
+              agentId: "agent",
+              authMode: "subscription",
+            },
+          },
+        },
+      ]);
+      const restarted = makeService(activity, [], { pulls });
+      restarted.service.recoverInterrupted();
+      expect(restarted.service.get(id)?.task.unstoppedRuns).toEqual(["interrupted-design"]);
+      mergePr(pulls, restarted.service, id);
+      restarted.executor.stops = false;
+      await restarted.service.checkPullRequests();
+      expect(stopped(restarted.service, id)).toHaveLength(0);
+      expect(restarted.service.get(id)?.task.status).toBe("paused");
+      restarted.executor.stops = true;
+      await restarted.service.checkPullRequests();
+      expect(stopped(restarted.service, id)[0]?.payload).toMatchObject({
+        stoppedRuns: ["interrupted-design"],
+      });
+      expect(restarted.service.get(id)?.task.pullRequestState).toBe("merged");
       activity.close();
     });
 
