@@ -205,7 +205,7 @@ The AI calls it only when you ask. It is safer to ask after it has checked `appr
 `resume_task` resumes a paused task (the same as pressing "Resume" in the web UI without changing the cap, tests, image, or agents). The AI calls it only when you ask.
 It first checks with `get_task` why the task is stopped (`pausedReason` and `pausedMessage`) and whether it can be resumed (`canResume`).
 
-- You specify the task and an optional note (`note`). The note is appended after the task description and stays, and later steps read it. Pass only your own words. Surrounding whitespace is removed, and an empty note is not added. If it is too long, it returns the reason without resuming.
+- You specify the task, an optional note (`note`), and permission to change approved deliverables (`allow_approved_edits`). The note is appended after the task description and stays, and later steps read it. Pass only your own words. Surrounding whitespace is removed, and an empty note is not added. If it is too long, it returns the reason without resuming.
 - Resuming runs the stopped step again (it takes time and money; it returns without waiting for the end). If the task was awaiting approval or waiting for child tasks before it stopped, it just goes back there and does not run the step again (the sentence of the result and `state` tell you).
 - If the cause is the same, it stops again. When it stopped for "verification" or "incomplete", the count starts over, so the same failure stops it again.
 - **What you decide on the screen**: for the following pauses, MCP does not resume, changes nothing, and tells you what to decide on the screen (it is also in `resumeBlocked` of `get_task`).

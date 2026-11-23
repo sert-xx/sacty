@@ -2649,6 +2649,23 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     return { activity, ...made, id: task.id };
   }
 
+  it("読めない申し出を成果として提出せず停止する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [
+      out("# 要求"),
+      out('# 設計\n\n{"sacty-change-proposal": {"target":"requirements", "design": {'),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("paused");
+    expect(result?.task.gate?.step).not.toBe("design");
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    activity.close();
+  });
+
   it("空の補足での許可付き再開を記録せず断る", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [out("# 要求")]);

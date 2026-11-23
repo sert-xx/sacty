@@ -2549,12 +2549,18 @@ export function applyEvent(
         };
         task.outputs = { ...task.outputs, design: proposal.design.proposed };
         task.testViewpoints = proposal.design.testViewpoints;
+        voidSubmissionChecks(task, "design");
       }
       task.outputs = { ...task.outputs, [proposal.target]: proposal.proposed };
       voidSubmissionChecks(task, proposal.target);
       // 承認済みの上流の成果物が変わったら、前の実装の説明・テストの対応は引き継がない（PBI-299）
-      task.implementHistory = undefined;
-      task.implementBase = undefined;
+      if (proposal.byNote && proposal.fromStep === "implement") {
+        task.implementHistory = task.implementHistory?.slice(-1);
+        task.implementBase = undefined;
+      } else {
+        task.implementHistory = undefined;
+        task.implementBase = undefined;
+      }
       if (proposal.target === "design" && proposal.testViewpoints) {
         task.testViewpoints = proposal.testViewpoints;
       }

@@ -289,6 +289,54 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     ]);
     expect(result?.task.status).not.toBe("escalated");
     expect(result?.task.verification).toBe("pending");
+    expect(result?.task.implementHistory?.at(-1)).toContain("# 実装");
+    expect(result?.task.testMap).toEqual([{ viewpointId: "TV-1", tests: ["test › 修正"] }]);
+    activity.close();
+  });
+
+  it("合わせ直した設計の途中で切れた申し出は成果を提出せず停止する", async () => {
+    const output = out(
+      '# 実装\n\n{"sacty-change-proposal":{"target":"requirements","reason":"補足","proposed":"新要求","design":{"proposed":"途中',
+    );
+    const { activity, service, id } = await toImplement([output]);
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    const before = service.get(id)?.task;
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("paused");
+    expect(result?.task.approved).toEqual(before?.approved);
+    expect(result?.task.testViewpoints).toEqual(before?.testViewpoints);
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    expect(result?.task.verification).not.toBe("pending");
+    activity.close();
+  });
+
+  it("不完全な観点を含む設計の申し出は自動で反映しない", async () => {
+    const output = out(
+      block({
+        "sacty-change-proposal": {
+          target: "design",
+          reason: "補足",
+          proposed: "# 新しい設計",
+          byNote: "範囲を絞る",
+          testViewpoints: [
+            { title: "完全", input: "入力", expected: "結果" },
+            { title: "不完全", input: "入力" },
+          ],
+        },
+      }),
+    );
+    const { activity, service, id } = await toImplement([output]);
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    const before = service.get(id)?.task.testViewpoints;
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("escalated");
+    expect(result?.task.approved.design?.output).toBe("# 設計");
+    expect(result?.task.testViewpoints).toEqual(before);
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
     activity.close();
   });
 

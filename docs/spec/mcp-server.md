@@ -471,6 +471,7 @@ PR のレビューのタスクを、再レビューにする。引数は `task_i
 | --- | --- | --- |
 | `task_id` | 文字列（必須） | タスクの ID |
 | `note` | 文字列（省略できる） | 再開の補足（API の `note` と同じ） |
+| `allow_approved_edits` | 真偽値（省略できる） | 補足に沿う承認済み成果物の変更を許可する |
 
 - `POST /api/tasks/:id/resume` に、`{}` か `{ note, approvedEdits }` を送る。`capUsd`・`tests`・`image`・`agents` は引数に無く、送る経路も無い。再開の判断（`service.resume`）・記録（`TaskResumed`）は画面と同じ。MCP 専用の経路・記録は無い。
 - 再開したら、文と、補足を足したか（`resumed`：`taskId`・`noteAdded`）と、再開した後の[タスクの要約](#タスクの要約)（戻った先の `state`）を返す。文で、戻った先が分かる。`queued` は、止まった工程を実行し直す（時間と費用がかかる。終わるのは待たない）。`awaiting_approval`・`waiting_children` は、そこへ戻っただけで、工程は実行し直さない。ほかは、sacty が次へ進める。

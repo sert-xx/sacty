@@ -90,9 +90,9 @@ function ProposalItem({
         <details>
           <summary>{m.alignedDiff}</summary>
           <h4>{m.designDiff}</h4>
-          <pre>{p.byNote.diff.design}</pre>
+          <pre className="overflow-x-auto">{p.byNote.diff.design}</pre>
           <h4>{m.viewpointsDiff}</h4>
-          <pre>{p.byNote.diff.testViewpoints}</pre>
+          <pre className="overflow-x-auto">{p.byNote.diff.testViewpoints}</pre>
         </details>
       )}
       <dl className="grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-1.5">

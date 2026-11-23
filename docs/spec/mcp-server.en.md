@@ -471,6 +471,7 @@ Resumes a paused task (the same as pressing "Resume" in the web UI without chang
 | --- | --- | --- |
 | `task_id` | String (required) | The task ID |
 | `note` | String (optional) | A note for the resume (the same as `note` of the API) |
+| `allow_approved_edits` | Boolean (optional) | Allow changes to approved deliverables that follow the note |
 
 - It sends `{}` or `{ note, approvedEdits }` to `POST /api/tasks/:id/resume`. `capUsd`, `tests`, `image`, and `agents` are not arguments and there is no path to send them. The decision to resume (`service.resume`) and the record (`TaskResumed`) are the same as the web UI. There is no MCP-specific path or record.
 - When it resumes the task, it returns a sentence, whether a note was added (`resumed`: `taskId` and `noteAdded`), and the [task summary](#task-summary) after the resume (`state` is where it went back to). The sentence tells where it went back to. `queued` runs the stopped step again (it takes time and money; it does not wait for the end). `awaiting_approval` and `waiting_children` only went back there and do not run the step again. Otherwise sacty moves on to the next step.

@@ -14685,8 +14685,13 @@ export class TaskService {
       }));
     // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない
     // （用意したテストを飛ばして通らないように）。止めて、再開すると実装をやり直す（PR #105 レビュー指摘）
-    if (step === "implement" && latest.noTestsReason && extracted.testCommandInvalid) {
-      const failure = message("implement.testCommandInvalid");
+    if (
+      extracted.proposalInvalid ||
+      (step === "implement" && latest.noTestsReason && extracted.testCommandInvalid)
+    ) {
+      const failure = extracted.proposalInvalid
+        ? "変更の申し出を読み取れません。出力を確認して再開してください。"
+        : message("implement.testCommandInvalid");
       this.append(latest, [
         {
           actor: "sacty",
@@ -14947,6 +14952,7 @@ export class TaskService {
     const designNeeded = proposal.target === "requirements" && latest.approved.design;
     if (
       noteMatches &&
+      !extracted.proposalViewpointsInvalid &&
       latest.approvedEdits &&
       (!designNeeded || proposal.design?.inScope === true)
     ) {

@@ -4457,6 +4457,8 @@ export type Extracted = {
   viewpointPositions: (string | undefined)[];
   /** 承認済みの成果物への変更の申し出（1件まで）。 */
   proposal?: ExtractedProposal;
+  proposalInvalid?: boolean;
+  proposalViewpointsInvalid?: boolean;
   /**
    * 設計の直し（見出し sacty-design-edit の値。最初のもの。PBI-446）。読ませていない・無ければ undefined。中身はまだ確かめていない
    * （design-edit.ts の readDesignEditBlock で読む）。見出しはあるが JSON として読めないときは、unreadable。
@@ -4593,6 +4595,8 @@ export function extractBlocks(
   let viewpointPositions: (string | undefined)[] | undefined;
   let proposal: ExtractedProposal | undefined;
   let proposalSeen = false;
+  let proposalShapeInvalid = false;
+  let proposalViewpointsInvalid = false;
   let designEdit: Extracted["designEdit"];
   let testMap: TestMapping[] | undefined;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
@@ -4656,7 +4660,13 @@ export function extractBlocks(
       read = true;
       if (!proposalSeen) {
         proposalSeen = true;
-        proposal = toProposal(proposed as Record<string, unknown>, changeable);
+        const raw = proposed as Record<string, unknown>;
+        proposal = toProposal(raw, changeable);
+        proposalShapeInvalid = !proposal && changeable.some((step) => step === raw.target);
+        proposalViewpointsInvalid =
+          raw.target === "design" &&
+          Array.isArray(raw.testViewpoints) &&
+          toViewpoints(raw.testViewpoints).length !== raw.testViewpoints.length;
       }
     }
     if (Array.isArray(list)) {
@@ -4723,6 +4733,11 @@ export function extractBlocks(
     testViewpoints: testViewpoints ?? [],
     viewpointPositions: viewpointPositions ?? [],
     proposal,
+    ...(changeable.length > 0 &&
+    (proposalShapeInvalid || headingMentions(body, PROPOSAL_HEADING, used).length > 0)
+      ? { proposalInvalid: true }
+      : {}),
+    ...(proposalViewpointsInvalid ? { proposalViewpointsInvalid: true } : {}),
     ...(designEdit ? { designEdit } : {}),
     testMap: testMap ?? [],
     ...(selfReview ? { selfReview } : {}),
@@ -4904,6 +4919,7 @@ function implementVerificationLines(task: Task, selfReview = true): string[] {
   return [
     "",
     "--- 提出の前の検証 ---",
+    "- 整形は自分が変えたファイルだけに実行し、リポジトリ全体には実行しない。依頼で変えたファイル内はリポジトリの整形結果に従ってよい。依頼で変えていないファイルの整形だけの変更は提出に含めず、含めてしまったら戻す",
     // 文書だけの依頼（documentsOnly）は、文書に効く検証に限る（セルフレビューの文書向けの規則と食い違わせない。型チェックは命じない）
     task.documentsOnly === true
       ? "- リポジトリが定める、文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査など。AGENTS.md・CONTRIBUTING・README の開発手順、CI の設定、パッケージの設定やタスクランナーの定義で探す）を、PR に入る変更すべて（あなたが足したファイルを含む）に対して実行し、通してから提出する。変更したファイルだけに絞れるツールは絞ってよいが、変更したファイルの種類を、対象から外さない。テスト・ビルド・型チェック・コードのリンターは実行しない（文書だけの依頼の決まり）"
