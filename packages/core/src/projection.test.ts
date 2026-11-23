@@ -261,6 +261,72 @@ describe("project", () => {
     expect(many?.budget).toMatchObject({ usedUsd: 0.3, unknownRuns: 2 });
   });
 
+  it("再開の許可は補足と日時を保持し、次の一時停止で消える", () => {
+    const prefix = [
+      created("t1"),
+      steps("t1"),
+      started("t1", "r1"),
+      completed("t1", "r1", 0),
+      ev("t1", { type: "TaskPaused", payload: { reason: "manual" } }),
+      ev(
+        "t1",
+        { type: "TaskResumed", payload: { retry: false, note: "範囲を絞る", approvedEdits: true } },
+        "person",
+      ),
+    ];
+    expect(project(prefix).get("t1")?.approvedEdits).toEqual({
+      resumedAt: "2026-10-10T00:00:00.000Z",
+      note: "範囲を絞る",
+    });
+    const paused = ev("t1", { type: "TaskPaused", payload: { reason: "manual" } });
+    expect(project([...prefix, paused]).get("t1")?.approvedEdits).toBeUndefined();
+    expect(
+      project([
+        ...prefix,
+        paused,
+        ev("t1", { type: "TaskResumed", payload: { retry: false, note: "別の補足" } }, "person"),
+      ]).get("t1")?.approvedEdits,
+    ).toBeUndefined();
+  });
+
+  it("補足による要求の反映で設計の検証記録を無効にし今回の実装履歴を残す", () => {
+    const original = project([created("t1"), steps("t1")]).get("t1") as Task;
+    const approved = { submission: 1, output: "元", testViewpoints: [], at: "2026-10-10" };
+    const review = { rounds: 1, passed: true, remaining: [], notReviewed: [], summary: "確認" };
+    const provenance = { sequential: false, items: [], unclassified: [] };
+    const task: Task = {
+      ...original,
+      approved: { requirements: approved, design: approved },
+      selfReviews: { design: review },
+      provenances: { design: provenance },
+      implementHistory: ["旧実装", "今回の実装"],
+      implementBase: "旧説明",
+      proposals: [
+        {
+          id: "CP-1",
+          fromStep: "implement",
+          target: "requirements",
+          reason: "補足",
+          facts: [],
+          proposed: "新要求",
+          proposedAt: "2026-10-10",
+          applied: false,
+          design: { proposed: "新設計", testViewpoints: [], inScope: true },
+          byNote: { resumedAt: "2026-10-10", at: "2026-10-10" },
+        },
+      ],
+    };
+    const result = applyEvent(
+      new Map([["t1", task]]),
+      ev("t1", { type: "ChangeApplied", payload: { proposalId: "CP-1" } }),
+    ).get("t1");
+    expect(result?.approved.design?.output).toBe("新設計");
+    expect(result?.selfReviews?.design).toBeNull();
+    expect(result?.provenances?.design).toBeNull();
+    expect(result?.implementHistory).toEqual(["今回の実装"]);
+    expect(result?.implementBase).toBeUndefined();
+  });
+
   it("予算で止まり、新しい上限で再開すると待機に戻る", () => {
     seq = 0;
     const task = project([
@@ -8341,6 +8407,42 @@ describe("上流の成果物が変わったら、前の実装の説明・テス�
     ),
     ...run("impl-2", "implement", "v2"),
   ];
+
+  it("補足による設計変更では今回の実装が申告したテスト対応だけを残す", () => {
+    seq = 0;
+    const events = [
+      ...upstream(),
+      ev("t1", { type: "TaskPaused", payload: { reason: "manual" } }),
+      ev(
+        "t1",
+        { type: "TaskResumed", payload: { retry: false, note: "変更", approvedEdits: true } },
+        "person",
+      ),
+      ev("t1", { type: "StepQueued", payload: { step: "implement" } }),
+      ...run("impl-3", "implement", "v3"),
+      ev("t1", {
+        type: "ChangeProposed",
+        payload: {
+          proposalId: "CP-1",
+          fromStep: "implement",
+          target: "design",
+          reason: "変更",
+          facts: [],
+          proposed: "新設計",
+          testViewpoints: [{ id: "TV-1", title: "新", input: "i", expected: "e" }],
+        },
+      }),
+      ev("t1", {
+        type: "ChangeAcceptedByNote",
+        payload: { proposalId: "CP-1", resumedAt: "2026-10-10T00:00:00.000Z" },
+      }),
+      ev("t1", { type: "ChangeApplied", payload: { proposalId: "CP-1" } }),
+    ];
+    const task = project(events).get("t1");
+    expect(task?.testMap).toEqual([{ viewpointId: "TV-1", tests: ["v3.test.ts › 1"] }]);
+    expect(task?.implementHistory).toEqual(["v3"]);
+    expect(JSON.parse(JSON.stringify(task))).not.toHaveProperty("lastImplementTestMap");
+  });
 
   it("設計の変更を認めたら、実装の説明の履歴は空に戻る。認める前（申し出と判定の後、適用の前）は引き継ぐ", () => {
     const proposalEvents = (apply: boolean) => [

@@ -2614,6 +2614,21 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
   });
   const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const noteResult = (result: AgentOutcome): AgentOutcome => {
+    if (result.kind !== "completed") return result;
+    let proposal: unknown = null;
+    const output = result.output.replace(/```json\n([^\n]+)\n```/g, (_whole, json: string) => {
+      const value = JSON.parse(json) as Record<string, unknown>;
+      if (Object.hasOwn(value, "sacty-change-proposal")) {
+        proposal = value["sacty-change-proposal"];
+        delete value["sacty-change-proposal"];
+      }
+      delete value["sacty-proposal-declaration"];
+      return Object.keys(value).length ? block(value) : "";
+    });
+    return { ...result, output: JSON.stringify({ output, proposal }) };
+  };
+
   const designWithProposal = (target = "requirements") =>
     out(
       [
@@ -2648,6 +2663,338 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
     await made.service.runNext(task.id);
     return { activity, ...made, id: task.id };
   }
+
+  it("許可中の不完全な出力はどの切断位置でも提出しない", async () => {
+    const complete = JSON.stringify({
+      output: "# 設計",
+      proposal: {
+        target: "requirements",
+        reason: "補足",
+        facts: ["事実"],
+        proposed: "# 新要求",
+        byNote: "範囲を絞る",
+      },
+    });
+    const inputs = Array.from({ length: complete.length }, (_, end) => complete.slice(0, end));
+    for (const input of inputs) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求"), out(input)]);
+      const { id } = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.pause(id);
+      service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+      await service.runNext(id);
+      const result = service.get(id);
+      expect(result?.task.status).toBe("paused");
+      expect(result?.task.gate?.step).not.toBe("design");
+      expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+      activity.close();
+    }
+  }, 15000);
+
+  it("本文中の申し出に似た断片は外側の申告を変えない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const body = '# 設計\n製品名 "sacty" と {"sacty-change-pro を引用する。';
+    const { service } = makeService(activity, [
+      out("# 要求"),
+      out(JSON.stringify({ output: body, proposal: null })),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.gate?.step).toBe("design");
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    activity.close();
+  });
+
+  it("読めない申し出を成果として提出せず停止する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [
+      out("# 要求"),
+      out('# 設計\n\n{"sacty-change-proposal": {"target":"requirements", "design": {'),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("paused");
+    expect(result?.task.gate?.step).not.toBe("design");
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    activity.close();
+  });
+
+  it.each([
+    ["target の欠落", { reason: "r", facts: ["f"], proposed: "new" }],
+    ["target の型違い", { target: 1, reason: "r", facts: ["f"], proposed: "new" }],
+    [
+      "配列ではないテスト観点",
+      {
+        target: "requirements",
+        reason: "r",
+        facts: ["f"],
+        proposed: "new",
+        testViewpoints: "invalid",
+      },
+    ],
+  ])("不正な申し出（%s）を提出しない", async (_name, proposal) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const output =
+      proposal === null
+        ? JSON.stringify({
+            output: block({ "sacty-test-viewpoints": [], "sacty-change-proposal": null }),
+            proposal: null,
+          })
+        : JSON.stringify({
+            output: block({ "sacty-test-viewpoints": [{ title: "A", input: "I", expected: "E" }] }),
+            proposal,
+          });
+    const { service } = makeService(activity, [out("# 要求"), out(output)]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("paused");
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    expect(result?.task.gate?.step).not.toBe("design");
+    activity.close();
+  });
+
+  it.each([
+    ["申告のキーが途中で切れた", '# 設計\n{"sacty-proposal-decl'],
+    ["申告と申し出が食い違う", block({ "sacty-proposal-declaration": "present" })],
+    [
+      "申告の後に出力が切れた",
+      `${block({ "sacty-proposal-declaration": "absent" })}\n{"sacty-change-prop`,
+    ],
+    [
+      "不完全な申し出の後に不存在を申告した",
+      `{"sacty-change-pro\n${block({ "sacty-proposal-declaration": "absent" })}`,
+    ],
+    ["矛盾する申告がある", '{"output":"# 設計","proposal":null,"proposal":{}}'],
+    ["余分な申告がある", '{"output":"# 設計","proposal":null,"declaration":"present"}'],
+  ])("許可中に%s出力は提出しない", async (_name, output) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# 要求"), out(output)]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.status).toBe("paused");
+    expect(result?.task.gate?.step).not.toBe("design");
+    expect(result?.activity.map((event) => event.type)).not.toContain("ChangeApplied");
+    activity.close();
+  });
+
+  it("空の補足での許可付き再開を記録せず断る", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# 要求")]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    await service.pause(id);
+    const before = service.get(id)?.activity.length;
+    expect(() => service.resume(id, { note: "  ", approvedEdits: true })).toThrow(
+      expect.objectContaining({
+        issues: [expect.objectContaining({ message: "input.resumeEditsNeedNote" })],
+      }),
+    );
+    expect(service.get(id)?.activity.length).toBe(before);
+    expect(service.get(id)?.task.status).toBe("paused");
+    activity.close();
+  });
+
+  it("許可した補足に沿う要求要件の申し出は再承認せず設計を提出する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const proposal = out(
+      [
+        "# 設計",
+        block({ "sacty-test-viewpoints": [{ title: "A", input: "入力", expected: "結果" }] }),
+        block({
+          "sacty-change-proposal": {
+            target: "requirements",
+            reason: "範囲変更",
+            facts: ["補足"],
+            proposed: "# 新しい要求",
+            byNote: "範囲を絞る",
+          },
+        }),
+        block({ "sacty-proposal-declaration": "present" }),
+      ].join("\n\n"),
+    );
+    const { service } = makeService(activity, [out("# 元の要求"), noteResult(proposal)]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const result = service.get(id);
+    expect(result?.task.approved.requirements?.output).toBe("# 新しい要求");
+    expect(result?.task.gate?.step).toBe("design");
+    expect(result?.task.proposals[0]?.byNote).toBeDefined();
+    expect(result?.activity.map((e) => e.type)).toContain("ChangeAcceptedByNote");
+    expect(result?.activity.map((e) => e.type)).not.toContain("TaskEscalated");
+    activity.close();
+  });
+
+  it.each([
+    { name: "引用がない", byNote: undefined, allow: true, note: "範囲を絞る", previous: false },
+    { name: "引用が空", byNote: "", allow: true, note: "範囲を絞る", previous: false },
+    {
+      name: "補足に含まれない",
+      byNote: "別の方針",
+      allow: true,
+      note: "範囲を絞る",
+      previous: false,
+    },
+    { name: "許可がない", byNote: "範囲を絞る", allow: false, note: "範囲を絞る", previous: false },
+    { name: "補足がない", byNote: "範囲を絞る", allow: false, note: "", previous: false },
+    {
+      name: "一時停止で許可が失効した",
+      byNote: "範囲を絞る",
+      allow: false,
+      note: "範囲を絞る",
+      previous: true,
+    },
+  ])("$name 申し出は人の判断を待つ", async ({ byNote, allow, note, previous }) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const proposal = out(
+      [
+        "# 設計",
+        block({ "sacty-test-viewpoints": [{ title: "A", input: "入力", expected: "結果" }] }),
+        block({
+          "sacty-change-proposal": {
+            target: "requirements",
+            reason: "変更",
+            facts: ["事実"],
+            proposed: "# 新しい要求",
+            ...(byNote !== undefined ? { byNote } : {}),
+          },
+        }),
+        block({ "sacty-proposal-declaration": "present" }),
+      ].join("\n\n"),
+    );
+    const { service, executor } = makeService(activity, [
+      out("# 元の要求"),
+      allow ? noteResult(proposal) : proposal,
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    if (previous) {
+      service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+      await service.pause(id);
+    }
+    service.resume(id, { ...(note ? { note } : {}), ...(allow ? { approvedEdits: true } : {}) });
+    await service.runNext(id);
+    const result = service.get(id);
+    if (!allow) {
+      expect(result?.task.approvedEdits).toBeUndefined();
+      expect(promptOf(executor, 1)).not.toContain("byNote");
+    }
+    expect(result?.task.status).toBe("escalated");
+    expect(result?.task.approved.requirements?.output).toBe("# 元の要求");
+    expect(result?.activity.map((e) => e.type)).not.toContain("ChangeAcceptedByNote");
+    expect(result?.activity.at(-1)).toMatchObject({
+      type: "TaskEscalated",
+      payload: { reason: "change_proposed" },
+    });
+    const decided = service.decideChange(id, "CP-1", { accept: true });
+    expect(decided.approved.requirements).toBeUndefined();
+    expect(decided.gate?.step).toBe("requirements");
+    expect(decided.proposals[0]?.byNote).toBeUndefined();
+    activity.close();
+  });
+
+  it("許可中の申し出を却下すると成果を提出せず承認済みの要求に従ってやり直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const proposal = out(
+      block({
+        "sacty-change-proposal": {
+          target: "requirements",
+          reason: "変更",
+          facts: ["事実"],
+          proposed: "# 変更後",
+        },
+        "sacty-proposal-declaration": "present",
+      }),
+    );
+    const { service } = makeService(activity, [
+      out("# 元の要求"),
+      noteResult(proposal),
+      out("# 作り直した設計"),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    const decided = service.decideChange(id, "CP-1", { accept: false });
+    expect(decided.gate).toBeUndefined();
+    expect(decided.approved.requirements?.output).toBe("# 元の要求");
+    await service.pause(id);
+    const restarted = makeService(activity, [out("# 作り直した設計")]);
+    restarted.service.resume(id, {});
+    await restarted.service.runNext(id);
+    expect(promptOf(restarted.executor, 0)).toContain("却下された変更を成果に含めず");
+    expect(promptOf(restarted.executor, 0)).toContain(
+      "却下された変更については承認済みの成果物に従い",
+    );
+    expect(promptOf(restarted.executor, 0)).not.toContain(
+      "ただし、人が再開のときに足した補足と食い違う箇所は、補足に従って",
+    );
+    expect(restarted.service.get(id)?.task.gate?.step).toBe("design");
+    activity.close();
+  });
+
+  it("複数の却下を提出まで保持し後続の実行に渡す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const makeProposal = (proposed: string) =>
+      out(
+        block({
+          "sacty-proposal-declaration": "present",
+          "sacty-change-proposal": {
+            target: "requirements",
+            reason: "変更",
+            facts: ["事実"],
+            proposed,
+          },
+        }),
+      );
+    const { service, executor } = makeService(activity, [
+      out("# 元の要求"),
+      noteResult(makeProposal("# 却下 A")),
+      noteResult(makeProposal("# 却下 B")),
+      noteResult(out(block({ "sacty-proposal-declaration": "absent" }))),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.pause(id);
+    service.resume(id, { note: "範囲を絞る", approvedEdits: true });
+    await service.runNext(id);
+    service.decideChange(id, "CP-1", { accept: false });
+    await service.runNext(id);
+    service.decideChange(id, "CP-2", { accept: false });
+    await service.runNext(id);
+    expect(promptOf(executor, 3)).toContain("# 却下 A");
+    expect(promptOf(executor, 3)).toContain("# 却下 B");
+    expect(service.get(id)?.task.gate?.step).toBe("design");
+    activity.close();
+  });
 
   it("設計の工程は要求要件の変更を申し出られ、AI の判定を挟まずに人の判断待ちになる（PBI-333）", async () => {
     const { activity, service, executor, id } = await propose([designWithProposal()]);

@@ -474,6 +474,9 @@ export type TaskProposal = {
   proposed: string;
   testViewpoints?: TestViewpoint[];
   proposedAt: string;
+  noteExcerpt?: string;
+  design?: { proposed: string; testViewpoints: TestViewpoint[]; inScope?: boolean };
+  byNote?: { resumedAt: string; at: string; diff?: { design: string; testViewpoints: string } };
   /** ゴールガーディアンの判定。無ければ判定中。 */
   judgement?: { verdict: Verdict; reason: DaemonText; at: string };
   /** 判定できなかった申し出への、人間の判断。 */
@@ -547,6 +550,7 @@ export type StepPullRequest = PayloadOf<"StepPullRequestPublished"> & {
 
 /** 申し出が認められたか（ゴールガーディアンの承認か、人間の判断）。未決なら undefined。 */
 export function proposalAccepted(p: TaskProposal): boolean | undefined {
+  if (p.byNote) return true;
   if (p.decision) return p.decision.accept;
   if (p.judgement?.verdict === "approved") return true;
   if (p.judgement?.verdict === "rejected") return false;
@@ -650,6 +654,10 @@ export type DecisionPause = {
   decisions: { text: string; source: "note" | "comment"; author?: string }[];
 };
 
+// 最新の実装の申告を投影の内部だけに保持する（API の JSON には含めない）。
+const LAST_IMPLEMENT_TEST_MAP: unique symbol = Symbol("lastImplementTestMap");
+const REJECTED_NOTE_RETRY: unique symbol = Symbol("rejectedNoteRetry");
+
 export type Task = {
   id: string;
   projectId: string;
@@ -660,6 +668,7 @@ export type Task = {
    * 取り込み（チケットのトリアージ）では、説明の見出しから読み直さずにこれを使う（チケットの文を人の補足と取り違えない）。
    */
   resumeNotes?: string[];
+  approvedEdits?: { resumedAt: string; note: string };
   start:
     | "sacty"
     | "github_issue"
@@ -981,6 +990,9 @@ export type Task = {
    * 前の提出までに対応させたテストも、今回の申告に出てくる観点に残す（PBI-299）。
    */
   testMap: TestMapping[];
+  /** 最新の実装が申告した対応。上流の自動変更時に旧対応を除くために使う。 */
+  [LAST_IMPLEMENT_TEST_MAP]?: TestMapping[];
+  [REJECTED_NOTE_RETRY]?: { proposalId: string; step: StepKey }[];
   /**
    * 実装の提出ごとの出力（古い順。PBI-299）。直しの後の PR の本文を、最後の直しの説明だけにせず、PR 全体の説明にするために
    * 持つ。要求要件・設計などの上流の工程を承認し直したら、実装をやり直す前提が変わるので、空に戻す。上限を超えたら古いものを捨てる。
@@ -2060,6 +2072,7 @@ export function applyEvent(
           // 完了の申告（PBI-347）。申告させる前の記録には無い（undefined のまま、提出に進める）
           task.implementCompletion = event.payload.completion;
           // 直しの提出は、PR 全体の対応にする：前の提出までに対応させたテストを、今回の申告に出てくる観点に残す（PBI-299）
+          task[LAST_IMPLEMENT_TEST_MAP] = event.payload.testMap;
           task.testMap = mergeTestMaps(
             (task.implementHistory?.length ?? 0) > 0 ? task.testMap : [],
             event.payload.testMap,
@@ -2181,6 +2194,11 @@ export function applyEvent(
     }
 
     case "StepSubmitted":
+      if (task[REJECTED_NOTE_RETRY]) {
+        task[REJECTED_NOTE_RETRY] = task[REJECTED_NOTE_RETRY].filter(
+          (r) => r.step !== event.payload.step,
+        );
+      }
       if (task.status !== "idle") throw new ActivityIntegrityError(event, `status ${task.status}`);
       task.status = "awaiting_approval";
       task.gate = {
@@ -2210,6 +2228,11 @@ export function applyEvent(
       }
       if (task.gate?.step !== event.payload.step) {
         throw new ActivityIntegrityError(event, "approved step is not at the gate");
+      }
+      if (task[REJECTED_NOTE_RETRY]) {
+        task[REJECTED_NOTE_RETRY] = task[REJECTED_NOTE_RETRY].filter(
+          (r) => r.step !== event.payload.step,
+        );
       }
       advance(
         task,
@@ -2271,6 +2294,11 @@ export function applyEvent(
     case "StepCompleted": {
       if (task.status !== "idle" || activeStep(task) !== event.payload.step) {
         throw new ActivityIntegrityError(event, "the completed step is not the active step");
+      }
+      if (task[REJECTED_NOTE_RETRY]) {
+        task[REJECTED_NOTE_RETRY] = task[REJECTED_NOTE_RETRY].filter(
+          (r) => r.step !== event.payload.step,
+        );
       }
       advance(
         task,
@@ -2448,13 +2476,33 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "only approved steps can be changed");
       }
       {
-        const { proposalId, ...rest } = event.payload;
+        const { proposalId, byNote, ...rest } = event.payload;
         task.proposals = [
           ...task.proposals,
-          { ...rest, id: proposalId, proposedAt: event.at, applied: false },
+          {
+            ...rest,
+            ...(byNote !== undefined ? { noteExcerpt: byNote } : {}),
+            id: proposalId,
+            proposedAt: event.at,
+            applied: false,
+          },
         ];
       }
       break;
+
+    case "ChangeAcceptedByNote": {
+      const proposal = findProposal(task, event, event.payload.proposalId);
+      if (!task.approvedEdits || proposal.decision || proposal.byNote)
+        throw new ActivityIntegrityError(event, "proposal cannot be accepted by note");
+      updateProposal(task, proposal.id, {
+        byNote: {
+          resumedAt: event.payload.resumedAt,
+          at: event.at,
+          ...(event.payload.diff ? { diff: event.payload.diff } : {}),
+        },
+      });
+      break;
+    }
 
     case "ChangeJudged": {
       const proposal = findProposal(task, event, event.payload.proposalId);
@@ -2482,6 +2530,12 @@ export function applyEvent(
       updateProposal(task, proposal.id, {
         decision: { accept: event.payload.accept, at: event.at },
       });
+      if (!event.payload.accept && task.approvedEdits) {
+        task[REJECTED_NOTE_RETRY] = [
+          ...(task[REJECTED_NOTE_RETRY] ?? []),
+          { proposalId: proposal.id, step: proposal.fromStep },
+        ];
+      }
       task.status = "idle";
       break;
     }
@@ -2493,7 +2547,7 @@ export function applyEvent(
       }
       const approved = task.approved[proposal.target];
       if (!approved) throw new ActivityIntegrityError(event, "the target is no longer approved");
-      if (proposal.target === "requirements") {
+      if (proposal.target === "requirements" && !proposal.byNote) {
         // 要求要件の変更は、承認を取り消して人間の再承認に回す
         reopen(task, proposal.target);
       } else {
@@ -2507,11 +2561,36 @@ export function applyEvent(
           },
         };
       }
+      if (
+        proposal.byNote &&
+        proposal.target === "requirements" &&
+        proposal.design &&
+        task.approved.design
+      ) {
+        task.approved = {
+          ...task.approved,
+          design: {
+            ...task.approved.design,
+            output: proposal.design.proposed,
+            testViewpoints: proposal.design.testViewpoints,
+            at: event.at,
+          },
+        };
+        task.outputs = { ...task.outputs, design: proposal.design.proposed };
+        task.testViewpoints = proposal.design.testViewpoints;
+        voidSubmissionChecks(task, "design");
+      }
       task.outputs = { ...task.outputs, [proposal.target]: proposal.proposed };
       voidSubmissionChecks(task, proposal.target);
       // 承認済みの上流の成果物が変わったら、前の実装の説明・テストの対応は引き継がない（PBI-299）
-      task.implementHistory = undefined;
-      task.implementBase = undefined;
+      if (proposal.byNote && proposal.fromStep === "implement") {
+        task.implementHistory = task.implementHistory?.slice(-1);
+        task.implementBase = undefined;
+        task.testMap = task[LAST_IMPLEMENT_TEST_MAP] ?? [];
+      } else {
+        task.implementHistory = undefined;
+        task.implementBase = undefined;
+      }
       if (proposal.target === "design" && proposal.testViewpoints) {
         task.testViewpoints = proposal.testViewpoints;
       }
@@ -4257,7 +4336,7 @@ export function applyEvent(
         if (task.status !== "idle")
           throw new ActivityIntegrityError(event, `status ${task.status}`);
         const proposal = findProposal(task, event, event.payload.proposalId ?? "");
-        if (proposal.judgement || proposal.decision) {
+        if (proposal.judgement || proposal.decision || proposal.byNote) {
           throw new ActivityIntegrityError(event, "the proposal is already judged");
         }
         task.status = "escalated";
@@ -4293,6 +4372,7 @@ export function applyEvent(
       break;
 
     case "TaskPaused":
+      task.approvedEdits = undefined;
       // PR のマージで作り直しを止めるとき、実行の費用で先に一時停止していた（予算など）なら、止めたと確かめられなかった実行を
       // 足す（PBI-276。一時停止の理由・説明はそのまま）
       if (task.status === "paused" && event.payload.unstoppedRuns?.length) {
@@ -4776,6 +4856,10 @@ export function applyEvent(
       }
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
+      task.approvedEdits =
+        event.payload.approvedEdits && event.payload.note
+          ? { resumedAt: event.at, note: event.payload.note }
+          : undefined;
       // 人が再開のときに足した補足は、説明の後に足す（後の工程とオーケストレーターは説明を読む）
       if (event.payload.note) {
         task.body = bodyWithResumeNote(task, event.payload.note);
@@ -5522,6 +5606,14 @@ export function keptStepBranches(task: Task): string[] {
 }
 
 /** 現在実行対象の工程（active な工程）。 */
+/** 許可中に却下され、まだ作り直していない申し出。一時停止と再起動をまたいでも保持する。 */
+export function rejectedNoteRetry(task: Task, step: StepKey): TaskProposal[] {
+  const ids = new Set(
+    task[REJECTED_NOTE_RETRY]?.filter((r) => r.step === step).map((r) => r.proposalId),
+  );
+  return ids.size === 0 ? [] : task.proposals.filter((proposal) => ids.has(proposal.id));
+}
+
 export function activeStep(task: Task): StepKey | undefined {
   return task.steps.find((s) => s.state === "active")?.key;
 }
@@ -5571,7 +5663,7 @@ export function lastChangeRound(task: Task, step: StepKey): number {
  */
 export function openProposal(task: Task): TaskProposal | undefined {
   return task.proposals.find(
-    (p) => !p.decision && (!p.judgement || p.judgement.verdict === "undecidable"),
+    (p) => !p.byNote && !p.decision && (!p.judgement || p.judgement.verdict === "undecidable"),
   );
 }
 

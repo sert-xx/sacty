@@ -6,7 +6,7 @@
 どの工程の組み合わせ（進め方）にするかは、タスクの開始時にオーケストレーターが選ぶ（人がタスクの作成時に指定していれば、それを使う）。
 その前に、情報収集のエージェントがタスクに関係する情報を集めて絞り込み、まとめをオーケストレーター・すべての工程・判定をする実行（PR の指摘の戻し先の判断・統合レビュー）に渡す（下の「情報収集」）。
 工程はエージェントが実行し、人間は承認の工程（承認ゲート）でだけ判断する。
-工程のエージェントが承認済みの要求要件・設計の変更を申し出たら、AI の判定を挟まずに人が判断する（下の「変更の申し出」）。PR の指摘の戻し先は、指摘がすべてその PR のレビューの子タスクの最後の回の投稿（AI のレビューの指摘）なら子タスクの答えから決め、それ以外（人の指摘・ほかのレビューのタスクや前の回の投稿・出どころの回が分からない指摘を含むとき）は PR の工程のエージェントが決める（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
+工程のエージェントが承認済みの要求要件・設計の変更を申し出たら、AI の判定を挟まずに人が判断する。ただし、再開の補足で許可された申し出は自動で受け入れる（下の「変更の申し出」）。PR の指摘の戻し先は、指摘がすべてその PR のレビューの子タスクの最後の回の投稿（AI のレビューの指摘）なら子タスクの答えから決め、それ以外（人の指摘・ほかのレビューのタスクや前の回の投稿・出どころの回が分からない指摘を含むとき）は PR の工程のエージェントが決める（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
@@ -1756,12 +1756,13 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 ## 変更の申し出
 
 工程のエージェントは、承認済みの要求要件・設計の変更を申し出られる（ID は `CP-<番号>`）。
-AI の判定は挟まず、人が判断する。
+AI の判定は挟まず、人が判断する。ただし、再開の補足で許可した申し出は条件を満たすと自動で受け入れる。
 
-- 申し出たら、`ChangeProposed`（actor `agent`）と `TaskEscalated`（理由 `change_proposed`、actor `sacty`）を同じトランザクションで記録し、タスクを人の判断待ち（`escalated`）にする（間でデーモンが止まっても、判断待ちにならない申し出を残さないため）。
+- 申し出の JSON や必須項目を読めない場合は、成果を提出せず一時停止する。不完全なテスト観点を含む申し出は、自動で反映せず人の判断を待つ。
+- 自動受け入れの条件を満たさない申し出は、`ChangeProposed`（actor `agent`）と `TaskEscalated`（理由 `change_proposed`、actor `sacty`）を同じトランザクションで記録し、タスクを人の判断待ち（`escalated`）にする（間でデーモンが止まっても、判断待ちにならない申し出を残さないため）。
 - 人は、タスクの詳細の「変更の申し出」（`/tasks/<ID>#proposals`）で、理由・根拠の事実・変更後の全文を読んで、認めるか認めないかを決める（`ChangeDecided`。`decideChange`）。人の判断待ちの申し出は `openProposal`。
 - 認めたら、変更を反映し（`ChangeApplied`）、要求要件は承認を取り消して承認し直しに回し、設計は承認済みの版を置き換える。
-  認めなかったら、申し出た工程の成果を提出する（`settleEvents`・`submitEvents`）。
+  認めなかったら、許可中の申し出は成果を提出せず、承認済みの成果物に従って同じ工程をやり直す。一時停止やデーモンの再起動を挟んでも、却下された変更を除いて作り直す。許可の無い申し出は成果を提出する（`settleEvents`・`submitEvents`）。
 - 以前の版で、AI の判定の途中で止まった申し出（判定も人の判断も無いもの）は、起動のときに `change_proposed` で人の判断待ちにする（`recoverInterrupted`）。
   以前の版の AI の判定の記録（`ChangeJudged`）と、判定できなかったときのエスカレーション（理由 `change_undecidable`）は、古い作業履歴を読むためだけに残す（判定できなかった申し出は、今の申し出と同じく人が判断する）。
 - 局所の設計書の直し（文言・表や一覧の1行・既定値・行の追加）は、変更の申し出にしない。実装の PR の指摘を実装で直す回に、実装が設計の直し（`sacty-design-edit`）を出し、sacty が承認済みの設計に反映して、同じ実装の PR に入れる（イベント `DesignEdited`。承認は実装の PR のマージで兼ねる）。方針の変更（方式・構成の選び直し、範囲・受け入れ条件の変更など）は、設計の直しでは出さず、この変更の申し出で出す。
@@ -2273,3 +2274,11 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
 - 見守り中も、作業領域の片付け（[終わったタスクの作業領域の片付け](#終わったタスクの作業領域の片付け)）・完了したタスクの監査（[監査](audit.md)）・続きのタスクの作成（[派生](#完了したタスクから続きのタスクを作る派生)）は、工程がすべて終わったタスクとして、投稿の後に行える（`isCompleted` で決める）。
 
 コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`rereviewDocsOnlyOf`・`documentsOnlySince`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`composeReviewPost`・`rereview`・`checkReviewPullRequests`・`watchReview`・`reviewWatchDue`・`supersededWatch`・`sactyMadePullRequests`・`statusWithin`・`FEEDBACK_QUIET_MS`・`REVIEW_WATCH_INTERVALS`）、`apps/daemon/src/github.ts`（`PullRequestStatus`）、`apps/daemon/src/test-files.ts`（`isChangeDocumentsOnly`）、`apps/daemon/src/repository.ts`（`mergeBaseOf`）、`apps/daemon/src/prompts.ts`（`rereviewDocsOnlyLines`・`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`rejudgeLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`・`reviewDispatchInstructionLines`・`reviewUndispatchedLines`・`reviewRecordInstructionLines`・`buildReviewComments`）、`apps/daemon/src/review-dispatch-count.ts`（`countReviewDispatch`）、`apps/daemon/src/review-record.ts`（`readReviewRecordBlock`・`checkReviewRecord`・`stripReviewRecord`・`withoutReviewRecord`・`reviewRecordBlocksNarrowing`）、`packages/core/src/events.ts`（`ReviewVerdict`・`ReviewDispatch`・`ReviewRecord`・`REVIEW_UNDISPATCHED_RETRIES`）、`packages/core/src/projection.ts`（`applyEvent`・`PullRequestReviewPosted`・`ReviewWatchEnded`・`ReviewRestarted`・`EARLIER_REVIEWS_MAX`・`reviewWatching`・`currentReviewVerdict`・`isDone`・`isFinished`・`canRereview`）、`apps/web/src/lib/labels.ts`（`statusText`・`statusTone`・`canControl`）、`apps/web/src/components/review-watch-notice.tsx`、`apps/web/src/components/review-records.tsx`（`ReviewRecords`）
+
+## 再開の補足による許可
+
+画面または API の再開で、補足と `approvedEdits` を指定すると、次の一時停止まで許可が効く。空の補足では断る。工程が補足の文を `byNote` に引用し、空白をそろえて補足に含まれる場合だけ自動で受け入れる。補足に無い方針の変更を含むときは引用しない。要求要件の申し出で承認済みの設計があれば、`design` に設計全文とテスト観点を添え、必要な範囲内に限ったことを `inScope` で申告する。読めないか真でなければ人の判断待ちにする。
+
+許可中は、申し出が可能な工程の出力を、本文と申し出を含む一つの JSON として読む。申し出が無い場合は null を指定する。出力全体を読めない場合は提出せず停止する。申し出は外側の proposal だけで判断し、本文中の申し出に似た断片は解釈しない。そのため、本文に不完全な申し出の断片があっても外側が申し出なしなら提出に進み、本文だけに書かれた申し出は反映されない。却下された申し出は成果の確定まで保持し、後続の実行に対象と変更内容を渡す。
+
+自動受け入れは `ChangeProposed`・`ChangeAcceptedByNote`・`ChangeApplied` と、その場で提出する工程の提出を同じトランザクションに記録する。実装は検証と PR の提出に進む。要求要件の承認は取り消さず、必要な設計とテスト観点も置き換える。履歴と申し出の一覧で再開の日時を読める。要求要件の変更に伴い設計とテスト観点を合わせ直した場合は、両方の差分も読める。実装からの自動受け入れでは、前の実装のテスト対応を除き、今回の申告だけを残す。人が認めた申し出は要求要件を再承認に回す。

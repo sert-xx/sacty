@@ -260,6 +260,7 @@ export type ResumeState = {
   noTestsReason?: string;
   /** 再開のときに足す補足と、選んだタスクのイメージ・工程のエージェント（エラーのときに戻す）。 */
   note?: string;
+  approvedEdits?: boolean;
   image?: string;
   agents?: StepChoices;
 };
@@ -287,6 +288,7 @@ export async function resumeTaskAction(
   const noTestsReason = String(formData.get("noTestsReason") ?? "").trim();
   // 改行は LF にそろえてから数える（フォームの送信は改行を CRLF にし、画面の欄の上限は LF で数えるため）
   const note = normalizeNewlines(String(formData.get("note") ?? "")).trim();
+  const approvedEdits = formData.get("approvedEdits") === "on";
   // 人が変えた工程の設定だけを、デーモンへ渡し、エラーのときに戻す（React はフォームの送信の後に、非制御の選択を初めの値に
   // 戻す）。触っていない工程は戻さず、今の名前から始める（エラーの後にタスクの詳細で変えた名前を、古い名前で戻さない）
   const { image, agents } = changedStepChoices(formData);
@@ -296,9 +298,12 @@ export async function resumeTaskAction(
     testCommand,
     noTestsReason,
     note,
+    ...(approvedEdits ? { approvedEdits: true } : {}),
     ...(image ? { image } : {}),
     agents,
   };
+  if (approvedEdits && !note)
+    return { ...kept, message: (await getMessages()).parts.resume.approvedEditsNeedNote };
   if (note.length > RESUME_NOTE_MAX) {
     return { ...kept, message: a.resumeNoteTooLong(RESUME_NOTE_MAX) };
   }
@@ -323,6 +328,7 @@ export async function resumeTaskAction(
     }
     const result = await resumeTask(taskId, capUsd, tests, {
       note,
+      ...(approvedEdits ? { approvedEdits: true } : {}),
       ...(image ? { image } : {}),
       agents,
     });

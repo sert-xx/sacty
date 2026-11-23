@@ -513,8 +513,16 @@ export function describeEventParts(
   if (event.type === "TaskResumed" && event.payload.note) {
     // 再開のときに人が足した補足（説明の後にも足すが、どの再開で足したかを作業履歴で読み返せるようにする）
     return {
-      text: l.event.TaskResumedWithNote(describeEventText(event, l)),
+      text: event.payload.approvedEdits
+        ? l.event.TaskResumedApprovedEdits(l.event.TaskResumedWithNote(describeEventText(event, l)))
+        : l.event.TaskResumedWithNote(describeEventText(event, l)),
       detail: event.payload.note,
+    };
+  }
+  if (event.type === "ChangeAcceptedByNote" && event.payload.diff) {
+    return {
+      text: describeEventText(event, l),
+      detail: `${l.event.designDiff}\n${event.payload.diff.design}\n\n${l.event.viewpointsDiff}\n${event.payload.diff.testViewpoints}`,
     };
   }
   if (event.type === "StepsChosen" || event.type === "RepositoryChosen") {
@@ -750,6 +758,12 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         l.step[event.payload.fromStep],
         l.step[event.payload.target],
         event.payload.proposalId,
+      );
+    case "ChangeAcceptedByNote":
+      return e.ChangeAcceptedByNote(
+        event.payload.proposalId,
+        event.payload.resumedAt,
+        Boolean(event.payload.diff),
       );
     case "ChangeJudged":
       return e.ChangeJudged(

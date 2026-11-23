@@ -382,6 +382,11 @@ const ja = {
       `タスクの題を「${from}」から「${to}」に変更（${actor}）`,
     TaskResumed: (actor: string) => `再開（${actor}）`,
     TaskResumedWithNote: (text: string) => `${text}・補足あり`,
+    TaskResumedApprovedEdits: (text: string) => `${text}・承認済みの成果物の直しを許可`,
+    ChangeAcceptedByNote: (id: string, at: string, aligned: boolean) =>
+      `${id}を補足（${at} の再開）で受け入れた${aligned ? "・設計とテスト観点を合わせ直した" : ""}`,
+    designDiff: "設計の差分",
+    viewpointsDiff: "テスト観点の差分",
     /** テストのコマンドが決まらずに止まったタスクを、テストを決めずに再開し、工程の選択からやり直した。 */
     TaskResumedRechoose: (actor: string) => `再開（${actor}）：工程の選択からやり直します`,
     /** テストのコマンドが決まらずに止まったタスクで、人がテストの扱いを決めた。 */
@@ -1252,6 +1257,11 @@ const en: LabelMessages = {
     TaskRenamed: (from, to, actor) => `Task renamed from "${from}" to "${to}" (${actor})`,
     TaskResumed: (actor) => `Resumed (${actor})`,
     TaskResumedWithNote: (text) => `${text}, with notes`,
+    TaskResumedApprovedEdits: (text) => `${text}, edits to approved artifacts allowed`,
+    ChangeAcceptedByNote: (id, at, aligned) =>
+      `${id} accepted by note (resumed ${at})${aligned ? " · design and test viewpoints aligned" : ""}`,
+    designDiff: "Design diff",
+    viewpointsDiff: "Test viewpoints diff",
     TaskResumedRechoose: (actor) => `Resumed (${actor}): choosing the steps again`,
     TestsDecidedCommand: (command, actor) => `Set the test command to ${command} (${actor})`,
     TestsDecidedNone: (reason, actor) => `Decided to proceed without tests (${actor}): ${reason}`,
