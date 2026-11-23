@@ -1334,7 +1334,7 @@ describe("既定の review スキルの、方針の妥当性と指摘の出し�
     // 方針を見る観点はコードの C-17 と設計書の D-1。利用者向け文書には当てはめない
     expect(text).toContain("主対象が `design-doc` のときは、C-17 の代わりに D-1");
     expect(read("skills/review/review-dispatch/references/pr-review.md")).toContain(
-      "前回までの `must`（前回の指摘と、前回のレビューが「前回の指摘」として挙げたもの。依頼した側が前々回以前のレビューを渡していれば、その指摘も）と同じ原因の別の現れなら、現れをもう1件足さない",
+      "前回までの `must`（前回の指摘と、前回のレビューが「前回の指摘」として挙げたもの。依頼した側が前々回以前のレビューを渡していれば、その指摘も）と同じ原因の別の現れなら、[aggregation.md](aggregation.md) の「回をまたいで同じ原因が続くとき」に従う。主対象が `user-doc` 以外なら",
     );
     const self = read("skills/review/review-dispatch/references/self-review.md");
     expect(self).toContain(
@@ -1910,7 +1910,7 @@ describe("既定のスキル：実装の前の文書の PR のレビューの手
 describe("既定の review スキルの、同じ原因が続くときの明示と原因を断つ直し（PBI-424）", () => {
   const dir = "skills/review/review-dispatch/references/";
 
-  it("aggregation.md が、本文への明示と、直し方の案の3つの中身と、止める仕組みを足さないことを決める", () => {
+  it("aggregation.md が、本文への明示と直し方の案の中身を決める", () => {
     const text = read(`${dir}aggregation.md`);
     expect(text).toContain(
       "方針の観点が方針を変える指摘を出したかどうかに関わらず、今回の `must` が前回までの `must` と同じ原因の別の現れなら、同じ原因が続いていることを本文に明示する",
@@ -1921,12 +1921,14 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     expect(text).toContain(
       "テストを書く場面（主対象が `code` で、文書だけの変更でも、テストなしのタスクでもない）にだけ求める",
     );
-    expect(text).toContain("2回目の時点から（方針を変える指摘が出ないときも）");
+    expect(text).toContain(
+      "2回目の時点から（方針を変える指摘が出ないときも、主対象が `user-doc` 以外なら）",
+    );
     expect(text).toContain("原因を1か所で断つ直し（同じ原因のどの現れにも効くもの）");
     expect(text).toContain("切れ目の種類 × 処理する時点 × 値どうしの関係");
     expect(text).toContain("確かめた組み合わせと、確かめていない組み合わせを分けて書く");
     expect(text).toContain("外から見える入口（利用者や呼び出し側が実際に使う経路）に当てること");
-    expect(text).toContain("自動で止めたり、通知したり、機械で読める欄を足したりしない");
+    expect(text).not.toContain("自動で止めたり、通知したり、機械で読める欄を足したりしない");
     // 既存の決まりは残る
     expect(text).toContain(
       "出さなければ（今の方針のままで原因を直せると判断した）、現れをふつうの `must` として採用する",

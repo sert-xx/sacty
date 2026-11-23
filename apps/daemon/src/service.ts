@@ -494,6 +494,7 @@ import {
   pullRequestInText,
   type RawExportPlan,
   type RawServices,
+  REPEATED_CAUSE_DECISION_PREFIX,
   REREVIEW_DOCS_ONLY_PATHS_MAX,
   type RereviewDocsOnly,
   type RereviewNarrow,
@@ -5017,9 +5018,8 @@ export class TaskService {
 
   /**
    * 取り込んだ指摘が、直しでは解消できず人の判断が要る、と PR のレビューが印を付けた要修正の回か（PBI-452）。止めるのは、次の
-   * すべてがそろうときだけ：人（by が person）の指摘が無い（出どころを確かめられない人と AI のレビューは数えない）・取り込んだ
-   * AI のレビューの指摘がすべて、レビューの子タスクの最後の回のもの・その回の判定が修正が必要で、印（needsDecision）の付いた指摘が
-   * ある・この PR の先頭で、人の判断が済んでいない。止める指摘（印の付いたもの）を返す。判断・選り分けの前だけ判定する。
+   * AI のレビューの指摘がすべて子タスクの最後の回のもので、判定が修正が必要で、印の付いた指摘があるときに判定する。
+   * 同じ先頭で判断済みなら、同じ回は止め直さず、別の回で同じ原因が続いた場合に止める。
    * 戻し先（reviewTaskRework）は通さない（人の指摘を含む回も、ここで別に判定する）。
    */
   private needsDecisionOf(
@@ -5029,9 +5029,7 @@ export class TaskService {
   ): { finding: string; reason: string }[] | undefined {
     if (pending.judgement || pending.triage) return undefined;
     const ai = new Set(pending.aiReview ?? []);
-    const unverified = new Set(pending.unverified ?? []);
     if (ai.size === 0) return undefined;
-    if (pending.remarks.some((_, i) => !ai.has(i) && !unverified.has(i))) return undefined;
     const record = (task.reviewTasks ?? []).findLast(
       (r) => r.step === pr.step && r.number === pr.number,
     );
@@ -5044,8 +5042,15 @@ export class TaskService {
     if (last?.verdict !== "changes_required") return undefined;
     const marked = (last.rework?.findings ?? []).filter((f) => f.needsDecision);
     if (marked.length === 0) return undefined;
-    // 人の判断が済んだ先頭では、同じ印で止めない（同じ指摘で止まり続けない）
-    if (!pr.commit || decidedPause(task, pr.commit)) return undefined;
+    if (!pr.commit) return undefined;
+    const decided = decidedPause(task, pr.commit);
+    // 同じ回は止め直さない。新しい回で同じ原因が続くときだけ、同じ先頭でも再び判断を求める。
+    if (
+      decided &&
+      (decided.from.includes(from) ||
+        !marked.some((f) => f.needsDecision?.startsWith(REPEATED_CAUSE_DECISION_PREFIX)))
+    )
+      return undefined;
     return marked.map((f) => ({
       finding: f.finding,
       reason: f.needsDecision ?? "",

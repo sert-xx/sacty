@@ -2469,7 +2469,14 @@ describe("提出の前のセルフレビューの記録（PBI-120）", () => {
 
   it("要求要件の報告を作業履歴とタスクに残し、成果物の本文からは取り除く", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const report = { rounds: 2, passed: true, remaining: [], notReviewed: [], summary: "直した" };
+    const report = {
+      rounds: 2,
+      passed: true,
+      remaining: [],
+      notReviewed: [],
+      summary: "直した",
+      needsDecision: ["同じ原因が3回目。範囲を絞る"],
+    };
     const { service } = makeService(activity, [withReport("# 要求要件", report)]);
     const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
