@@ -467,6 +467,37 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).not.toContain("再レビューでは、前回以降の変更が生んだ後退");
   });
 
+  it("PR の初回と前回のある各レビューで規則を分ける", () => {
+    const previousReview = {
+      round: 1,
+      url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+      at: "2026-10-16T01:00:00.000Z",
+      headCommit: "p".repeat(40),
+      body: "前回のレビュー",
+      comments: [],
+    };
+    const rules = [
+      "再レビューでは、前回以降の変更が生んだ後退",
+      "前回以降の変更が生んだ後退は、独立した条件が2つ以上重なる場合も要修正にする。",
+      "同じ原因が続き、レビューが示した範囲を絞る案で残る現れ",
+    ];
+    for (const round of [1, 2, 3, 4, 5]) {
+      for (const previous of [undefined, previousReview]) {
+        const prompt = buildPrompt(
+          reviewTask({ reviewRound: round, previousReview: previous }),
+          "review",
+          { diff },
+        );
+        for (const rule of rules) {
+          expect(
+            prompt.includes(rule),
+            `round=${round}, previous=${Boolean(previous)}: ${rule}`,
+          ).toBe(Boolean(previous));
+        }
+      }
+    }
+  });
+
   it("依存関係を取得して検証を実行させ、オーケストレーターのテストのコマンドがあれば候補として示す（PBI-153）", () => {
     const withCommand = buildPrompt(reviewTask({ testCommand: "make ci" }), "review", { diff });
     expect(withCommand).toContain(
@@ -4343,7 +4374,7 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     const first = run("1");
     expect(first.status).toBe(0);
     expect(first.stdout).toBe("");
-    for (const args of [["2"], ["3"], ["5"], ["1", "--rereview"]]) {
+    for (const args of [["2"], ["3"], ["4"], ["5"], ["1", "--rereview"]]) {
       const result = run(args[0], ...args.slice(1));
       expect(result.status).toBe(0);
       expect(result.stdout).toContain(

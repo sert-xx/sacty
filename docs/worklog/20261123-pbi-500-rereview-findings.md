@@ -19,11 +19,8 @@
 
 ## 確かめたこと
 
-`npm run lint`・`npm run typecheck`・`npm run build` は通過した。
-`npm test` は 7,305 件が通過し、14 件がスキップされた（Git の `merge-tree --merge-base` 非対応が 13 件、AI 評価が 1 件）。
-`npx vitest run apps/daemon/src/prompts.test.ts apps/daemon/src/default-skills.test.ts tests/docs` は 507 件通過した。
-スキルと回ごとの指示の規則を一つずつ除く検査では、28箇所すべてで対応するテストが失敗した。
-認証情報を外した環境で `node apps/daemon/default-context/skills/review/review-dispatch/scripts/self-review-round.mjs 2` を実行し、再レビューの規則を出力した。
+`npx vitest run apps/daemon/src/prompts.test.ts apps/daemon/src/default-skills.test.ts tests/docs` で、レビュー指示とスキル、文書を検査した。
+スキルと指示の規則を写しから1文ずつ除き、22箇所すべてで対応するテストが失敗することを確かめた。
 
 ## レビューの指摘と対応
 
@@ -34,6 +31,7 @@
 ### この PR のレビュー
 
 後退の例外、承認の仕様、コード参照とテストの条件を修正した。
+PR の共通指示から後退の例外を再レビュー専用の指示へ移し、前回のレビューの有無と回数の組み合わせを検査した。
 自己レビューの共通指示から再レビューの規則の本文を除き、回数から各回の指示を生成するスクリプトを加えた。初回は出力せず、2回目以降は再レビューの規則を出力する。直しの最初のレビューを再レビューとして扱う場合は、回数を 1 としたまま指定を加えて規則を出力する。
 
 ## 残したこと
