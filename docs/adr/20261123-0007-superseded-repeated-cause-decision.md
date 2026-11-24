@@ -1,10 +1,10 @@
 # 同じ原因の要修正が続く場合に人の判断を求める
 
 - 日時: 2026-11-23 00:07 UTC
-- ステータス: 採用
+- ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-492
 - 置き換え元: [同じ原因の要修正](20261121-0000-superseded-repeated-cause-must-explicit-and-cut.md)、[直しでは解消できない指摘](20261121-2000-superseded-pause-on-findings-a-rework-cannot-resolve.md)
-- 置き換え先: なし
+- 置き換え先: [再レビューの要修正を絞る](20261123-2239-rereview-findings.md)（再レビューの重さと条件の数え方・同じ原因の判断の一部）
 
 ## 背景
 

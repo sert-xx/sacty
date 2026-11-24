@@ -4,7 +4,7 @@
 - タスク: PBI-358
 - PR: #401
 - ブランチ: claude/pbi-358-review-finding-weight-02412d
-- 関係する ADR: [レビューの指摘の重みを、影響の大きさと起きやすさで決め、自己レビューは要修正だけを修正に戻す](../adr/20261117-0244-review-finding-weight-by-impact-and-likelihood.md)
+- 関係する ADR: [レビューの指摘の重みを、影響の大きさと起きやすさで決め、自己レビューは要修正だけを修正に戻す](../adr/20261117-0244-superseded-review-finding-weight-by-impact-and-likelihood.md)
 
 ## 目的
 

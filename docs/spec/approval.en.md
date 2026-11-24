@@ -437,6 +437,8 @@ When the review child task of a PR marks a must-fix finding as needing a human d
 This applies to every task that has a review child task (implementation, requirements, and design PRs). Unmarked must-fix findings go into a rework. For a requirements or design PR, a second consecutive suggestion-only verdict waits for approval without rework.
 
 - The mark: `needs_decision` in `rework.findings[]` of the verdict block (a sentence giving the grounds; cut at 2,000 characters; `ReviewRework.findings[].needsDecision`). The review instruction (`needsDecisionLines`) and the default review skill say when to add it: from the third occurrence of the same cause; otherwise only when the grounds show it, not when unsure or a person already decided. Suggestions are not marked.
+When the review proposes a narrower scope and only forms that do not qualify as a re-review must-fix remain, those forms are suggestions; no decision mark or `needsDecision` is attached. The summary records the narrowing and remaining forms.
+
 A must-fix with the same cause is marked from the third occurrence, including after a human decision. The reason follows the identifier `[repeated-cause]`, is written in the review language, and includes the count and a narrower-scope proposal. The identifier is removed from the displayed pause reason. The task pauses even when the same import includes a human comment, and sends both back after resumption.
 
 - Conditions to stop (`needsDecisionOf`; right after the import, before sorting and the send-back judgment): all of the following.

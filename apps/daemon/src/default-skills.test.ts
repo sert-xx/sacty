@@ -1529,7 +1529,9 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
     );
     expect(text).toContain("「起こりうる」だけでは `must` にしない");
     // 条件の数え方（稀に逃がしすぎない）
-    expect(text).toContain("外部の者が意図して揃えられる条件は、数えない");
+    expect(text).toContain(
+      "要求要件・設計・依頼が入力を信頼できないとする場合、または秘密の値・認証・認可・権限に関わる場合は、外部の者が意図して揃えられる条件を数えない。それ以外では、細工した入力も条件として数える",
+    );
     expect(text).toContain("1 つの原因が続けて引き起こすことは、まとめて 1 つに数える");
     expect(text).toContain("ふつうの使い方で満たされる前提");
     // 観点の資料の NG 例の重要度より、表を優先する
@@ -1567,6 +1569,9 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
     const text = aggregation();
     expect(text).toContain("担当が `not_raised` に残したもの");
     expect(text).toContain(
+      "「影響：小 × 稀」のままのものは、再レビューの新しい指摘なら、前回以降の変更が生んだ後退は `must`、それ以外は `should` にし、初回なら `dismissed` に",
+    );
+    expect(text).toContain(
       "数え直して「影響：小 × 稀」でなくなるものは、表の重要度の指摘として採用し",
     );
     // 親は条件を足さないが、数え方の規則を当てはめて数え直してよい
@@ -1580,7 +1585,7 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
     expect(text).toContain("条件と実害から表で決め直す");
     expect(text).toContain("親は、条件や実害を足さない・削らない");
     expect(text).toContain('"reweighted":');
-    expect(text).toContain("稀で、実害が小さい（上の「重みの確認」の「影響：小 × 稀」）");
+    expect(text).toContain("稀で、実害が小さい（初回だけ。上の「重みの確認」の「影響：小 × 稀」）");
     // 重みの確認は、指摘の統合より前に行う
     expect(text.indexOf("## 重みの確認")).toBeLessThan(text.indexOf("## 指摘の統合"));
   });
@@ -1590,7 +1595,7 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
       expect(text).toContain("前回の指摘への直しで足した・変えた箇所への指摘でも、同じ表");
     }
     const text = prReview();
-    expect(text).toContain("直しに見つけた穴だからといって `must` にしない");
+    expect(text).toContain("前回以降の変更が生んだ後退は `must` にする。");
     expect(text).toContain(
       "表では `should` に当たる、または影響：小で稀（表では出さない）と分かったときは、未対応でも `must` に数えず、`should` として扱う（以下、重みを見直した指摘）",
     );
@@ -1710,7 +1715,7 @@ describe("既定の review スキルの、指摘の重みの基準（PBI-358）"
     );
     // 「重みの確認」の 2 つの行（不採用にする行、not_raised を dismissed に残す行）は、この節を指す
     expect(agg).toContain(
-      "- 「影響：小 × 稀」に当たる指摘は不採用にする（理由は「稀で、実害が小さい」。`pr-review` の再レビューで重みを見直した前回の指摘は除く。下の「重みを見直した前回の指摘」）",
+      "- 「影響：小 × 稀」に当たる指摘は不採用にする（理由は「稀で、実害が小さい」。再レビューの新しい指摘と、`pr-review` の再レビューで重みを見直した前回の指摘は除く。再レビューの新しい指摘は、前回以降の変更が生んだ後退なら `must`、それ以外は `should` にする。下の「重みを見直した前回の指摘」）",
     );
     expect(agg).toContain(
       "を残す（PR には投稿しない）。`pr-review` の再レビューで、前回の `must` を確かめ直したものは除く（下の「重みを見直した前回の指摘」）",
@@ -1935,7 +1940,7 @@ describe("既定の review スキルの、同じ原因が続くときの明示�
     expect(text).toContain("本文への明示・範囲を絞る案・3回目以降の人の判断の求めは適用する");
     // 既存の決まりは残る
     expect(text).toContain(
-      "出さなければ（今の方針のままで原因を直せると判断した）、現れをふつうの `must` として採用する",
+      "出さなければ（今の方針のままで原因を直せると判断した）、上の例外に当たらない現れをふつうの `must` として採用する",
     );
   });
 
@@ -2187,5 +2192,22 @@ describe("既定のスキル：再レビューの範囲と観点の絞り（PBI-
     expect(all).not.toMatch(
       /sacty|デーモン|\.sacty-tools|\/tmp\/|\/sacty-|npm |vitest|biome|TypeScript|\.ts\b/,
     );
+  });
+});
+
+describe("再レビューの採用と範囲を絞る案（PBI-500）", () => {
+  it("各レビューの規則が要修正と提案の境界と判断不要の例外を示す", () => {
+    for (const file of ["aggregation.md", "pr-review.md", "self-review.md"]) {
+      const text = read(`skills/review/review-dispatch/references/${file}`);
+      expect(text).toContain(
+        "再レビューでは、前回以降の変更が生んだ後退、直っていない前回の `must`（重みの見直しの規則を適用する）、ふつうの使い方か1つの条件で起きる不適合または影響が大のもの、ふつうの使い方で起き影響が中のものだけを `must` にする。",
+      );
+      expect(text).toContain(
+        "1つの条件で起き影響が中で不適合でないものを含む、ほかの新しい指摘は表の重さによらず `should` にする。",
+      );
+      expect(text).toContain(
+        "同じ原因が続き、レビューが示した範囲を絞る案で残る現れが再レビューの `must` に当たらないものだけなら、その現れは `should` にし、人の判断を求めず、印も `needsDecision` も付けない。その回の総評に、範囲を絞って提案にしたことと残る現れを書く。",
+      );
+    }
   });
 });

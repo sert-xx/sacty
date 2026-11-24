@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -463,6 +464,44 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain("changes_required：[要修正] の指摘が1つ以上ある");
     // 最初のレビューには、再レビューの指示を入れない
     expect(prompt).not.toContain("--- 再レビュー ---");
+    expect(prompt).not.toContain("再レビューでは、前回以降の変更が生んだ後退");
+  });
+
+  it("PR の初回と前回のある各レビューで規則を分ける", () => {
+    const previousReview = {
+      round: 1,
+      url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+      at: "2026-10-16T01:00:00.000Z",
+      headCommit: "p".repeat(40),
+      body: "前回のレビュー",
+      comments: [],
+    };
+    const rules = [
+      "再レビューでは、前回以降の変更が生んだ後退",
+      "前回以降の変更が生んだ後退は、独立した条件が2つ以上重なる場合も要修正にする。",
+      "同じ原因が続き、レビューが示した範囲を絞る案で残る現れ",
+    ];
+    for (const round of [1, 2, 3, 4, 5]) {
+      for (const previous of [undefined, previousReview]) {
+        const prompt = buildPrompt(
+          reviewTask({ reviewRound: round, previousReview: previous }),
+          "review",
+          { diff },
+        );
+        for (const rule of rules) {
+          expect(
+            prompt.includes(rule),
+            `round=${round}, previous=${Boolean(previous)}: ${rule}`,
+          ).toBe(Boolean(previous));
+        }
+        const rareRule =
+          "独立した条件が 2 つ以上重なったときだけ起き、データの破損・セキュリティ・取り消せない作用・互換性の破壊・受け入れ条件の不適合に当たらないものは、[要修正] にしない";
+        expect(prompt.includes(rareRule)).toBe(!previous);
+        expect(
+          prompt.includes("重要度の表（影響の大きさと起きやすさ）と、再レビューの規則で決める"),
+        ).toBe(Boolean(previous));
+      }
+    }
   });
 
   it("依存関係を取得して検証を実行させ、オーケストレーターのテストのコマンドがあれば候補として示す（PBI-153）", () => {
@@ -670,7 +709,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(rereview).toContain("満たせなくなる条件を書く");
     // 既存の決まりは変わらない
     expect(rereview).toContain(
-      "出なければ、または方針の指摘が [提案] なら、現れを [要修正] のまま残す",
+      "出なければ、または方針の指摘が [提案] なら、上の範囲を絞る案の例外に当たるかを確かめる",
     );
     // 初回のレビューには入らない
     const first = buildPrompt(reviewTask({ reviewRound: 1, previousReview: undefined }), "review", {
@@ -720,6 +759,15 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     ];
     const prompt = buildPrompt(task, "review", { diff, replies });
     expect(prompt).toContain("--- 再レビュー ---");
+    expect(prompt).toContain(
+      "再レビューでは、前回以降の変更が生んだ後退、直っていない前回の要修正（重みの見直しの規則を適用）、ふつうの使い方か1つの条件で起きる不適合または影響が大のもの、ふつうの使い方で起き影響が中のものだけを要修正にする。",
+    );
+    expect(prompt).toContain(
+      "1つの条件で起き影響が中で不適合でないものを含む、ほかの新しい指摘は表の重さによらず提案にする。",
+    );
+    expect(prompt).toContain(
+      "同じ原因が続き、レビューが示した範囲を絞る案で残る現れが再レビューの要修正に当たらないものだけなら、その現れは提案にし、人の判断を求めず、印も needsDecision も付けない。その回の総評に、範囲を絞って提案にしたことと残る現れを書く。",
+    );
     // 再レビューの「PR 全体」は差分で決まる範囲で、前回のレビューを理由に広げない（PBI-349）
     expect(prompt).toContain(
       "範囲は PR 全体にする（前回の後の変更だけを見ない）。PR 全体は PR の差分で決まる範囲で、変えていない既存の本文の全体ではない。前回のレビューに、変えていない箇所を見ていないと書かれていても、範囲を広げない",
@@ -731,7 +779,7 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).not.toContain("earlierReviews");
     // 同じ原因の別の現れが続いたら、方針を見直す指摘にする（PBI-342）
     expect(prompt).toContain(
-      "今回の [要修正] が、前回までの [要修正] と同じ原因の別の現れなら、スキルの集約の規則（「回をまたいで同じ原因が続くとき」）どおりに扱う。主対象が利用者向け文書以外なら、方針の観点（コードは C-17、設計書は D-1）に方針を見直させ、方針を変える [要修正] が出ればその指摘にまとめる。出なければ、または方針の指摘が [提案] なら、現れを [要修正] のまま残す。利用者向け文書では方針の観点を起動せず、現れを [要修正] のまま残す",
+      "今回の [要修正] が、前回までの [要修正] と同じ原因の別の現れなら、スキルの集約の規則（「回をまたいで同じ原因が続くとき」）どおりに扱う。主対象が利用者向け文書以外なら、方針の観点（コードは C-17、設計書は D-1）に方針を見直させ、方針を変える [要修正] が出ればその指摘にまとめる。出なければ、または方針の指摘が [提案] なら、上の範囲を絞る案の例外に当たるかを確かめる。利用者向け文書では方針の観点を起動せず、同じ例外を確かめる",
     );
     expect(prompt).toContain(
       "本文に「前回の指摘」の節を作り、前回の指摘ごとに、対応を確かめた（直っている）か、未対応かを1行ずつ書く",
@@ -4309,6 +4357,75 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
       },
       ...extra,
     }) as unknown as Task;
+  it("自己レビューの初回には再レビュー規則を渡さず、2回目以降はスキルの規則を使う", () => {
+    for (const step of ["requirements", "design", "implement"] as const) {
+      const prompt = buildPrompt(task(steps), step);
+      expect(prompt).toContain(
+        "自己レビューの各回は、スキル review-dispatch の scripts/self-review-round.mjs を node で実行し、引数に今回の回数を渡す。出力をその回の担当への指示と集約に適用する（初回は出力なし）。直しの実行の最初のレビューを再レビューとして扱うと明示された場合だけ、その回は回数 1 に --rereview を付ける。スキルを差し替えてスクリプトが無い場合は、スキルの各回の規則に従う",
+      );
+      expect(prompt).not.toContain("再レビューでは、前回以降の変更が生んだ後退");
+      expect(prompt).not.toContain("同じ原因が続き、レビューが示した範囲を絞る案で残る現れ");
+    }
+  });
+
+  it("自己レビューの回に応じて初回と再レビューの指示を生成する", () => {
+    const script = fileURLToPath(
+      new URL(
+        "../default-context/skills/review/review-dispatch/scripts/self-review-round.mjs",
+        import.meta.url,
+      ),
+    );
+    const run = (round: string, ...options: string[]) =>
+      spawnSync(process.execPath, [script, round, ...options], { encoding: "utf8" });
+    const first = run("1");
+    expect(first.status).toBe(0);
+    expect(first.stdout).toBe("");
+    for (const args of [["2"], ["3"], ["4"], ["5"], ["1", "--rereview"]]) {
+      const result = run(args[0], ...args.slice(1));
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        "再レビューでは、前回以降の変更が生んだ後退、直っていない前回の要修正（重みの見直しの規則を適用）、ふつうの使い方か1つの条件で起きる不適合または影響が大のもの、ふつうの使い方で起き影響が中のものだけを要修正にする。",
+      );
+      expect(result.stdout).toContain(
+        "1つの条件で起き影響が中で不適合でないものを含む、ほかの新しい指摘は表の重さによらず提案にする。",
+      );
+      expect(result.stdout).toContain(
+        "同じ原因が続き、レビューが示した範囲を絞る案で残る現れが再レビューの要修正に当たらないものだけなら、その現れは提案にし、人の判断を求めず、印も needsDecision も付けない。その回の総評に、範囲を絞って提案にしたことと残る現れを書く。",
+      );
+    }
+    expect(run("0").status).not.toBe(0);
+    expect(run("1", "--unknown").status).not.toBe(0);
+    expect(run("2").status).toBe(0);
+  });
+
+  it("自己レビューの各入口と各回で重さの指示が衝突しない", () => {
+    const script = fileURLToPath(
+      new URL(
+        "../default-context/skills/review/review-dispatch/scripts/self-review-round.mjs",
+        import.meta.url,
+      ),
+    );
+    for (const step of ["requirements", "design", "implement"] as const) {
+      const prompt = buildPrompt(task(steps), step);
+      for (const round of [1, 2, 3, 4, 5]) {
+        for (const rereview of [false, true]) {
+          const result = spawnSync(
+            process.execPath,
+            [script, String(round), ...(rereview ? ["--rereview"] : [])],
+            { encoding: "utf8" },
+          );
+          expect(result.status).toBe(0);
+          const combined = prompt + result.stdout;
+          const isRereview = round > 1 || rereview;
+          expect(combined.includes("再レビューでは、前回以降の変更が生んだ後退")).toBe(isRereview);
+          expect(combined).not.toContain(
+            "独立した条件が 2 つ以上重なったときだけ起き、データの破損・セキュリティ・取り消せない作用・互換性の破壊・受け入れ条件の不適合に当たらないものは、[要修正] にしない",
+          );
+        }
+      }
+    }
+  });
+
   const HEADING = '{"sacty-self-review": {"rounds": 2, "passed": true';
   const steps: Task["steps"][number]["key"][] = ["requirements", "design", "implement"];
 
