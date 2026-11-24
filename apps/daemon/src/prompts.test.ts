@@ -494,6 +494,12 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
             `round=${round}, previous=${Boolean(previous)}: ${rule}`,
           ).toBe(Boolean(previous));
         }
+        const rareRule =
+          "独立した条件が 2 つ以上重なったときだけ起き、データの破損・セキュリティ・取り消せない作用・互換性の破壊・受け入れ条件の不適合に当たらないものは、[要修正] にしない";
+        expect(prompt.includes(rareRule)).toBe(!previous);
+        expect(
+          prompt.includes("重要度の表（影響の大きさと起きやすさ）と、再レビューの規則で決める"),
+        ).toBe(Boolean(previous));
       }
     }
   });
@@ -4390,6 +4396,34 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     expect(run("0").status).not.toBe(0);
     expect(run("1", "--unknown").status).not.toBe(0);
     expect(run("2").status).toBe(0);
+  });
+
+  it("自己レビューの各入口と各回で重さの指示が衝突しない", () => {
+    const script = fileURLToPath(
+      new URL(
+        "../default-context/skills/review/review-dispatch/scripts/self-review-round.mjs",
+        import.meta.url,
+      ),
+    );
+    for (const step of ["requirements", "design", "implement"] as const) {
+      const prompt = buildPrompt(task(steps), step);
+      for (const round of [1, 2, 3, 4, 5]) {
+        for (const rereview of [false, true]) {
+          const result = spawnSync(
+            process.execPath,
+            [script, String(round), ...(rereview ? ["--rereview"] : [])],
+            { encoding: "utf8" },
+          );
+          expect(result.status).toBe(0);
+          const combined = prompt + result.stdout;
+          const isRereview = round > 1 || rereview;
+          expect(combined.includes("再レビューでは、前回以降の変更が生んだ後退")).toBe(isRereview);
+          expect(combined).not.toContain(
+            "独立した条件が 2 つ以上重なったときだけ起き、データの破損・セキュリティ・取り消せない作用・互換性の破壊・受け入れ条件の不適合に当たらないものは、[要修正] にしない",
+          );
+        }
+      }
+    }
   });
 
   const HEADING = '{"sacty-self-review": {"rounds": 2, "passed": true';
