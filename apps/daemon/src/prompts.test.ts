@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -721,12 +722,14 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     ];
     const prompt = buildPrompt(task, "review", { diff, replies });
     expect(prompt).toContain("--- 再レビュー ---");
-    expect(prompt).toContain("ふつうの使い方で起き影響が中のものだけを要修正にする。");
+    expect(prompt).toContain(
+      "再レビューでは、前回以降の変更が生んだ後退、直っていない前回の要修正（重みの見直しの規則を適用）、ふつうの使い方か1つの条件で起きる不適合または影響が大のもの、ふつうの使い方で起き影響が中のものだけを要修正にする。",
+    );
     expect(prompt).toContain(
       "1つの条件で起き影響が中で不適合でないものを含む、ほかの新しい指摘は表の重さによらず提案にする。",
     );
     expect(prompt).toContain(
-      "その現れは提案にし、人の判断を求めず、印も needsDecision も付けない。その回の総評に、範囲を絞って提案にしたことと残る現れを書く。",
+      "同じ原因が続き、レビューが示した範囲を絞る案で残る現れが再レビューの要修正に当たらないものだけなら、その現れは提案にし、人の判断を求めず、印も needsDecision も付けない。その回の総評に、範囲を絞って提案にしたことと残る現れを書く。",
     );
     // 再レビューの「PR 全体」は差分で決まる範囲で、前回のレビューを理由に広げない（PBI-349）
     expect(prompt).toContain(
@@ -4317,19 +4320,45 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
       },
       ...extra,
     }) as unknown as Task;
-  it("自己レビューの初回には当てず、2回目以降の判定と範囲を絞る案を指示する", () => {
-    const prompt = buildPrompt(task(steps), "requirements");
-    expect(prompt).toContain("2回目以降の再レビューでは、前回以降の変更が生んだ後退");
-    expect(prompt).toContain("ふつうの使い方で起き影響が中のものだけを要修正にする。");
-    expect(prompt).toContain(
-      "1つの条件で起き影響が中で不適合でないものを含む、ほかの新しい指摘は表の重さによらず提案にする。",
+  it("自己レビューの初回には再レビュー規則を渡さず、2回目以降はスキルの規則を使う", () => {
+    for (const step of ["requirements", "design", "implement"] as const) {
+      const prompt = buildPrompt(task(steps), step);
+      expect(prompt).toContain(
+        "自己レビューの各回は、スキル review-dispatch の scripts/self-review-round.mjs を node で実行し、引数に今回の回数を渡す。出力をその回の担当への指示と集約に適用する（初回は出力なし）。直しの実行の最初のレビューを再レビューとして扱うと明示された場合だけ、その回は回数 1 に --rereview を付ける。スキルを差し替えてスクリプトが無い場合は、スキルの各回の規則に従う",
+      );
+      expect(prompt).not.toContain("再レビューでは、前回以降の変更が生んだ後退");
+      expect(prompt).not.toContain("同じ原因が続き、レビューが示した範囲を絞る案で残る現れ");
+    }
+  });
+
+  it("自己レビューの回に応じて初回と再レビューの指示を生成する", () => {
+    const script = fileURLToPath(
+      new URL(
+        "../default-context/skills/review/review-dispatch/scripts/self-review-round.mjs",
+        import.meta.url,
+      ),
     );
-    expect(prompt).toContain(
-      "2回目以降のレビューで、同じ原因が続き、レビューが示した範囲を絞る案で残る現れ",
-    );
-    expect(prompt).toContain(
-      "その現れは提案にし、人の判断を求めず、印も needsDecision も付けない。その回の総評に、範囲を絞って提案にしたことと残る現れを書く。",
-    );
+    const run = (round: string, ...options: string[]) =>
+      spawnSync(process.execPath, [script, round, ...options], { encoding: "utf8" });
+    const first = run("1");
+    expect(first.status).toBe(0);
+    expect(first.stdout).toBe("");
+    for (const args of [["2"], ["3"], ["5"], ["1", "--rereview"]]) {
+      const result = run(args[0], ...args.slice(1));
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        "再レビューでは、前回以降の変更が生んだ後退、直っていない前回の要修正（重みの見直しの規則を適用）、ふつうの使い方か1つの条件で起きる不適合または影響が大のもの、ふつうの使い方で起き影響が中のものだけを要修正にする。",
+      );
+      expect(result.stdout).toContain(
+        "1つの条件で起き影響が中で不適合でないものを含む、ほかの新しい指摘は表の重さによらず提案にする。",
+      );
+      expect(result.stdout).toContain(
+        "同じ原因が続き、レビューが示した範囲を絞る案で残る現れが再レビューの要修正に当たらないものだけなら、その現れは提案にし、人の判断を求めず、印も needsDecision も付けない。その回の総評に、範囲を絞って提案にしたことと残る現れを書く。",
+      );
+    }
+    expect(run("0").status).not.toBe(0);
+    expect(run("1", "--unknown").status).not.toBe(0);
+    expect(run("2").status).toBe(0);
   });
 
   const HEADING = '{"sacty-self-review": {"rounds": 2, "passed": true';
